@@ -35,14 +35,14 @@ func _enter_tree() -> void:
 	# 也得停 —— 否则会话节点留在进程里空转、占着 peer 与内存,而列表上再也看不见它)。
 	lobby.inproc_room_teardown.connect(_on_inproc_room_teardown)
 	add_child(lobby)
-	# 编排侧的四条 RPC(它们要启动 Worker 子进程,故不归房间账本)
+	# 编排侧的四条 RPC(用于对局编排与启动，故不归房间账本)
 	NetBusExt.royale_start_requested.connect(royale_start)
 	NetBusExt.ai_duel_requested.connect(ai_duel)
 	NetBusExt.royale_start_ai_requested.connect(royale_start_ai)
 	# 3v3 的**第六条**上行归本类(其余五条 team_create/join/pick/leave/list 在 LobbyRooms)
 	# —— 与大乱斗逐字相同机制的分工:账本接 royale_list,编排接 royale_start。
 	NetBusExt.team_start_requested.connect(team_start)
-	# 统一大厅:房主上报地图(只写房记录的展示字段,不启动 Worker 子进程、不碰对局)
+	# 统一大厅:房主上报地图(只写房记录的展示字段，不启动对局会话、不碰对局)
 	NetBusExt.room_map_requested.connect(lobby.on_room_map)
 
 
@@ -166,7 +166,7 @@ func royale_start_ai(caller: int) -> void:
 	_open_match(rr, MatchSession.Mode.ROYALE, roles, ai_roles, {})
 
 
-# ── 3v3:房主开局(**两队各 3 人**才允许)→ 启动 --team worker → 全员 go_match 转连 ──
+# ── 3v3:房主开局(**两队各 3 人**才允许)→ 创建 3v3 会话 → 全员 go_match 转连 ──
 # - 与 royale_start 的三处实质差异:
 #   ① 满员判据是"两队各 3 人"(不是"人数 ≥2")—— 4v2 人数也够 6,但那不是 3v3;
 #   ② 命令行多一个 `--teams`(与 `--roles` **同序等长**),它才是队伍归属的唯一来源
@@ -281,7 +281,7 @@ func _mode_name(mode: int) -> String:
 		_:
 			return "1v1"
 
-# ── 定时扫描:每 SWEEP_INTERVAL 清理存在超 MAX_ROOM_AGE 的僵尸房间(连 worker 一起杀)──
+# ── 定时扫描:每 SWEEP_INTERVAL 清理存在超 MAX_ROOM_AGE 的僵尸房间(连带终止超龄会话)──
 func _process(delta: float) -> void:
 	_sweep_acc += delta
 	if _sweep_acc >= SWEEP_INTERVAL:
@@ -293,12 +293,11 @@ func _process(delta: float) -> void:
 		_match_sweep_acc = 0.0
 		_reclaim_finished_matches()
 
-# 清理:房间从创建起超 MAX_ROOM_AGE 秒 → 杀其 worker(若有)→ 踢房内玩家 → 删房归还端口。
+# 清理:房间从创建起超 MAX_ROOM_AGE 秒 → 终止其对局(若有)→ 踢房内玩家 → 删房归还端口。
 # 刻意偏离移植来源(非误改):原清扫只遍历 rooms(1v1),royale_rooms / team_rooms 是合并后
 # 并存的第二、第三张注册表。
-# 大乱斗/3v3 房的 worker_port 只在开局时分配,而唯一归还路径是 on_peer_left 的「空房」分支——
-# 成员若一直连着不吭声(ENet 不会超时「连接仍在但对端沉默」的 peer),端口就被永久占用
-# (WORKER_PORT_SPAN=500 耗尽后 WorkerLauncher.pick_port 恒 -1,大厅彻底拉不起 worker)。
+# 房间资源若因异常未释放，唯一归还路径是 on_peer_left 的「空房」分支——
+# 成员若一直连着不吭声(ENet 不会超时「连接仍在但对端沉默」的 peer),端口与资源就被永久占用。
 # 故三表共用同一 MAX_ROOM_AGE 一并清扫。不跳过 in_match 房:在局中的房另加
 # 「一整个扫描周期 + 一局时长」的宽限(大乱斗那一档的「一局」取**可证上界**,见
 # ROYALE_MATCH_TIME_CEILING),推导见下方 royale / team 两个分支 —— 3v3 那档仍是估值,
@@ -320,8 +319,8 @@ func _sweep_stale_rooms() -> void:
 		# 房龄从**建房**起算,含此前在大厅等待的全部时间——一个等满 MAX_ROOM_AGE 才开局的房,在开局
 		# 那一刻就已"超龄";而清扫由 _process 的 SWEEP_INTERVAL 计时器驱动(不是每帧),房间可能已经
 		# 比阈值老上**整整一个扫描周期**才等到判它超龄的那次 tick,即最迟可在房龄 MAX_ROOM_AGE +
-		# SWEEP_INTERVAL 时开局。从 royale_start/royale_start_ai 启动 worker 到成员转连离厅还有
-		# 0.3~1.5s 的窗口,若宽限只有一局时长,紧随其后的那次 tick 仍会终止一个刚起几秒的 worker
+		# SWEEP_INTERVAL 时开局。从开局到成员转连对局离厅还有
+		# 0.3~1.5s 的窗口,若宽限只有一局时长,紧随其后的那次 tick 仍会终止一个刚起几秒的对局
 		# 并剔除断开正在转连的成员(边界竞态只是被推窄,没被关闭)。宽限覆盖「阈值 + 整个扫描周期 +
 		# 最长一局」后,等待期攒下的那一整个周期与整局对局都落在界内 —— -  这里的「一局」取的是
 		# **可证上界** ROYALE_MATCH_TIME_CEILING(2026-09-28 之前取的是默认时长,房主配长时长时
@@ -329,13 +328,13 @@ func _sweep_stale_rooms() -> void:
 		# 等待中(in_match=false)的房不占端口、杀不到任何东西,仍按裸 MAX_ROOM_AGE 清,无需宽限。
 		# - 1v1 分支**刻意不享受**同样宽限。2026-09-21 订正本条的**理由**(行为一字未动):
 		#   旧理由引的是「started 房一方掉线即整房作废」(_start_match / on_peer_left 那条 started 分支)
-		#   —— 那条分支**已删除**,对局中的 1v1 房现在活到 worker 退出、回收改按 worker 进程活性判。
+		#   —— 那条分支**已删除**,对局中的 1v1 房现在活到会话退出、回收改按会话活性判。
 		#   即 1v1 与另两个模式**在房间寿命上已经相同机制**,而宽限**仍然只有它没有** —— 这是一条
 		#   **照实登记的既有不对称**,不是"因为不会发生所以不必加"。
 		#   - 不收紧的**实际**依据是**量级**:触发它得先满足"房龄 ≥2h",而一局只有几分钟(正常房
 		#   建房后几分钟内就开局)。但那不等于那扇窗不存在:同一个"开局转连窗口"在 1v1 同样成立 ——
 		#   started 房在 `_start_match` 的 await 与客户端转连期间仍持有端口,一个房龄恰好 ≥2h 的房
-		#   会在那次 tick 被连 worker 一起终止。本批**刻意不改**(范围裁剪,而非已修好);要收紧需另行评估。
+		#   会在那次 tick 被连对局会话一起终止。本批**刻意不改**(范围裁剪,而非已修好);要收紧需另行评估。
 		var in_match_grace := (SWEEP_INTERVAL + ROYALE_MATCH_TIME_CEILING) if rr.in_match else 0.0
 		if now - rr.created_at > MAX_ROOM_AGE + in_match_grace:
 			stale_royale.append(rr)
@@ -364,21 +363,21 @@ func _sweep_stale_rooms() -> void:
 			MAX_ROOM_AGE + SWEEP_INTERVAL + ROYALE_MATCH_TIME_CEILING,
 			stale_team.size(), MAX_ROOM_AGE,
 			MAX_ROOM_AGE + SWEEP_INTERVAL + TEAM_MATCH_ESTIMATE])
-	# 三张注册表共用同一条拆除(worker 已被杀 → 端口直接回收,**不经** ROYALE/TEAM_PORT_REUSE_DELAY:
-	# 那条延迟是给「没被杀、还在跑」的 worker 的)。通知 + 立刻断开房内玩家都交给统一集中处理函数。
+	# 三张注册表共用同一条拆除(会话已被终止 → 端口直接回收,**不经** ROYALE/TEAM_PORT_REUSE_DELAY:
+	# 那条延迟是给「未被强制终止、还在跑」的对局的)。通知 + 立刻断开房内玩家都交给统一集中处理函数。
 	for room in stale + stale_royale + stale_team:
 		lobby.teardown_room(room, LobbyRooms.TEARDOWN_KILL, "房间超时(>2h),已关闭", true)
 		print("%s %s 超时清理完成(已存活 %.0f 秒)" % [
 				"大乱斗房" if room is LobbyRooms.RoyaleRoom else ("3v3 房" if room is LobbyRooms.TeamRoom else "房间"),
 				room.code, now - room.created_at])
 
-# 对局结束即回收:`in_match`(1v1 是 `started`)的房不再在"客户端转连 worker"那一刻被拆,
+# 对局结束即回收:`in_match`(1v1 是 `started`)的房不再在"客户端转连对局"那一刻被拆,
 # 于是**必须有替代的回收路径** —— 否则端口与列表位永久占用(本层为「端口泄漏」这同一个失败
 # 模式补过的第五次)。
-# - 判据 = **worker 进程还在不在**(`WorkerLauncher.pid_alive`):三种模式的 worker 都在对局
-#   结束时自己退(1v1 宽限到点收场退进程 / 大乱斗与 3v3 全员走光),这是"这局结束了吗"的
+# - 判据 = 会话还在不在:三种模式的对局都在对局
+#   结束时自行清理(1v1 宽限到点收场 / 大乱斗与 3v3 全员走光),这是"这局结束了吗"的
 #   **精确**答案;任何按"一局大约多久"估的界都会既早(收掉还在打的局)又晚(白占端口)。
-# - 保底处理仍在:2h 超龄清扫(`_sweep_stale_rooms`)会把"worker 一直不退"的僵尸房连进程一起终止
+# - 保底处理仍在:2h 超龄清扫(`_sweep_stale_rooms`)会把一直不退的僵尸房连会话一起终止
 #   —— 两条路径并存,不是二选一。
 # 定期清理已结束的对局与超龄房间，资源释放统一经由 lobby.teardown_room 处理。
 func _reclaim_finished_matches() -> void:

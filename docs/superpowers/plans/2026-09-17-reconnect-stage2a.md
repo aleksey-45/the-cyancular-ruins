@@ -4,7 +4,7 @@
 
 **Goal:** 闭合阶段 1 留下的缺口 —— 掉线那 30 秒里**被拆的墙**与**变动过的地面武器**在重连后补回客户端，消掉"幻影墙"导致的预测分歧。
 
-**Architecture:** 不新造通道。`match_sync` 本来就是**客户端主动拉取**的进场载荷（且已带 `ground_weapons`）—— 给它加一个 `destroyed` 字段（服务端 `grid` 与 `_base_grid` 的差异格），并让**重连成功后也拉一次**。一箭双雕：`destroyed` 与 `ground_weapons` 一起回来，覆盖掉线期间丢掉的两类可靠事件。客户端侧**复用现有的 `_on_remote_tile_destroyed`**（它已经会清瓦片 + 碰撞层），只给它加一个"静默"开关（补态时不播碎片）。
+**Architecture:** 不新造通道。`match_sync` 本来就是**客户端主动拉取**的进场数据包（且已带 `ground_weapons`）—— 给它加一个 `destroyed` 字段（服务端 `grid` 与 `_base_grid` 的差异格），并让**重连成功后也拉一次**。一箭双雕：`destroyed` 与 `ground_weapons` 一起回来，覆盖掉线期间丢掉的两类可靠事件。客户端侧**复用现有的 `_on_remote_tile_destroyed`**（它已经会清瓦片 + 碰撞层），只给它加一个"静默"开关（补态时不播碎片）。
 
 **Tech Stack:** Godot 4.7.1 GDScript；`NetBus`（客户端 ↔ worker 的 RPC 通道，**方法表一律不动**）；`-s` 冒烟与 `tests/*.tscn` 场景探针。
 
@@ -18,7 +18,7 @@
 - **场景探针 `--quit-after` 给足**：本仓既有教训是"安全网太薄会把'跑得慢'读成'功能坏了'"。`reconnect_probe` 用 **14400**（它要跑满 30s 宽限期，整跑 ≈42s 墙钟）。
 - 判据 grep 文本 `ALL-OK`，**不看退出码**。
 - **提交信息用单引号或 `-F 文件`**，不带任何 Claude/AI 署名行；提交后回读。
-- 每次 `git add` 只加本任务点名的文件。工作区有未跟踪的 `_crashtest/`，**不要动**（`.superpowers/` 已自带 `.gitignore`）。
+- 每次 `git add` 只加本任务明确指定的文件。工作区有未跟踪的 `_crashtest/`，**不要动**（`.superpowers/` 已自带 `.gitignore`）。
 - **字号只用 16 的倍数**（`kh_l4/l5` 扫 `res://tests`）。
 
 ## 文件结构
@@ -201,7 +201,7 @@ git commit -m 'feat(net): MatchHost.destroyed_cells() —— 与建局基线的�
 
 **Interfaces:**
 - Consumes: `MatchHost.destroyed_cells()`（Task 1）
-- Produces: `match_sync_data` 载荷新增可选字段 `destroyed: Array[Vector2i]`（**空数组时不带该键**）
+- Produces: `match_sync_data` 数据包新增可选字段 `destroyed: Array[Vector2i]`（**空数组时不带该键**）
 
 - [ ] **Step 1: 改 `_on_match_sync` 的应答**
 
@@ -436,19 +436,19 @@ git commit -m 'feat(pvp): 重连成功后拉 match_sync 补破坏态;地面武�
        (这条专钉"先清后灌"—— 只 add 不 clear 的实现会在这里红)。
 ```
 
-★ **反向断言不能省**：只断言"补上了新的"会让"只 add 不 clear"的实现全绿，而那正是幽灵枪的成因。
+★ **否定断言不能省**：只断言"补上了新的"会让"只 add 不 clear"的实现全部通过，而那正是幽灵枪的成因。
 
 ★ 相⑦ 需要裁判能在**服务端侧**动手（本探针的 worker 是它自己拉起的，`_host` 可达）。若现有骨架取不到 `_host`，就用**已有的喂枪/拆墙调试入口**（阶段 1 之前的 `weapon_pickup` 探针就有"仅测试用的喂枪入口"，`tests/ground_action_probe` 也用过）。
 
 - [ ] **Step 2: 跑（可自己跑，不占 7777）**
 
 Run: `timeout 900 "$GODOT" --headless --path . --quit-after 14400 res://tests/reconnect_probe.tscn`
-Expected: `RECONNECT PROBE: ALL-OK`（七相全绿）。
+Expected: `RECONNECT PROBE: ALL-OK`（七相全部通过）。
 ★ 跑前确认没有别的 godot 在跑（本机可能有个真大厅占着 7777 —— 探针用池外端口，不冲突，但**不要杀它**）。
 
 - [ ] **Step 3: 反向验证**
 
-把 Task 4 Step 2 的 `_clear_ground_weapons()` 那一行**去掉** → 重跑 → 确认相⑦ 的**反向断言变红** → 加回。
+把 Task 4 Step 2 的 `_clear_ground_weapons()` 那一行**去掉** → 重跑 → 确认相⑦ 的**否定断言报错失败** → 加回。
 把两次输出写进报告。
 
 - [ ] **Step 4: 提交**
@@ -481,7 +481,7 @@ git commit -m 'docs: CLAUDE.md 记录阶段 2-A(destroyed / 路径甲也要拉 m
 
 ## 自检记录
 
-**spec 覆盖**：spec §2.1（复用 `match_sync` + 路径甲也要拉）→ Task 4；§2.2（`destroyed_cells()` + 只在非空时带）→ Task 1/2；§2.3（复用 `_on_remote_tile_destroyed` + 静默开关）→ Task 3；§2.4（先清后灌 + 顺序：先重置 C2 再拉）→ Task 4；§7 风险 1（载荷大小）→ Task 1 的注释记了规模上限，Task 5 可量一次；§7 风险 2（空窗）→ Task 4 Step 2 的注释；§7 风险 3 → 属 2-B，不在本计划。
+**spec 覆盖**：spec §2.1（复用 `match_sync` + 路径甲也要拉）→ Task 4；§2.2（`destroyed_cells()` + 只在非空时带）→ Task 1/2；§2.3（复用 `_on_remote_tile_destroyed` + 静默开关）→ Task 3；§2.4（先清后灌 + 顺序：先重置 C2 再拉）→ Task 4；§7 风险 1（数据包大小）→ Task 1 的注释记了规模上限，Task 5 可量一次；§7 风险 2（空窗）→ Task 4 Step 2 的注释；§7 风险 3 → 属 2-B，不在本计划。
 
 **本计划不做**（属 2-B / 3）：`rejoin_request` 与大厅房间保留、HUD 可见性、`opponent_left` 不可达、`ai_duel`、端口 360（§0 第 2 条，一行常量，可并入 2-B）。
 

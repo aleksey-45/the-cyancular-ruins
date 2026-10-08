@@ -29,20 +29,20 @@ func _run() -> void:
 	for p in _collect("res://"):
 		_total += 1
 		var s = load(p)
-		# 注意： 2026-10-02 合并时实测补的判据:只判 `s == null` **抓不到解析错误** ——
-		#   GDScript 解析失败时 `load()` 仍返回**非 null** 的、只是 `can_instantiate() == false`
+		# 注意事项：2026-10-02 合并时实测补的验收标准：只判 `s == null` 抓不到解析错误 ——
+		#   GDScript 解析失败时 `load()` 仍返回非 null 的、只是 `can_instantiate() == false`
 		#   的 GDScript。实测:往树上放一个引用未声明标识符的脚本,旧实现照样打
 		#   "ALLSCRIPT: OK(N 个脚本全部加载)"(`load()` 只在"文件不存在/资源类型不认"时才返回 null)。
-		#    ->  必须**两条都判**。合并时就有一个真解析错误(`pvp_match_client.gd` 的 `_delta` /
-		#   `cell` 未声明)从旧判据下溜过去,是靠 `team_room_smoke` 红才发现的。
+		#    ->  必须两条都判。合并时就有一个真解析错误(`pvp_match_client.gd` 的 `_delta` /
+		#   `cell` 未声明)从旧判定条件下溜过去,是靠 `team_room_smoke` 红才发现的。
 		var broken := s is GDScript and not (s as GDScript).can_instantiate()
 		if s == null or broken:
 			_fails.append(p)
 			print("LOAD[FAIL]: %s(%s)" % [p, "解析失败/不可实例化" if broken else "load() 返回 null"])
-	# - 收尾两道(与 `tests/lib/probe_base.gd` 的 `_checks >= EXPECTED_CHECKS` 同一条纪律,
-	#   只是这里的"条数"是**被扫的脚本数**):① 扫到的脚本数 `!= EXPECTED_SCRIPTS`  ->  红
-	#   (**两侧都红**:少了是覆盖缺口,多了是覆盖变了);② 有加载失败  ->  红。
-	#   判词**明确提示条数**,否则"闸红了"与"扫描面塌了"在输出上分不出来。
+	# - 收尾执行双重门禁校验（与 `tests/lib/probe_base.gd` 的 `_checks >= EXPECTED_CHECKS` 准则一致，
+	#   此处的计数为待扫描脚本总数）：① 实际扫描到的脚本数 `!= EXPECTED_SCRIPTS` 时判定断言失败
+	#   （双向校验：偏少存在测试覆盖漏洞，偏多表明脚本列表需更新）；② 存在脚本加载失败时判定断言失败。
+	#   诊断信息需明确输出具体脚本数，便于区分是脚本加载出错还是扫描范围发生变动。
 	var count_ok := _total == EXPECTED_SCRIPTS
 	if not count_ok:
 		print("ALLSCRIPT: 条数闸 FAIL —— 实扫 %d 个脚本,期望 %d(覆盖面对不上;见本文件头部)"
@@ -51,7 +51,7 @@ func _run() -> void:
 		print("ALLSCRIPT: OK(%d 个脚本全部加载)" % _total)
 		get_tree().quit(0)
 	else:
-		# 计数检查失败时把原因并进裁决行 —— 否则会打出一行像"零失败"的 `FAIL(0/131 失败)`。
+		# 计数检查失败时把原因并进判定输出行 —— 否则会输出一行像"零失败"的 `FAIL(0/131 失败)`。
 		print("ALLSCRIPT: FAIL(%d/%d 失败%s)" % [_fails.size(), _total,
 				("" if count_ok else " · 条数闸红(期望 %d)" % EXPECTED_SCRIPTS)])
 		get_tree().quit(1)

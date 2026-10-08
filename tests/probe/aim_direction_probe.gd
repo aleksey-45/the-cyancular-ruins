@@ -45,13 +45,13 @@ func _initialize() -> void:
 
 	var bullet_script := load("res://scenes/weapons/bullet_base.gd")
 
-	# 场景1: 走路把朝向覆盖为左(-1),瞄准方向在右(相机右移) → 子弹必须朝右
+	# 场景1: 走路把朝向覆盖为左(-1),瞄准方向在右(相机右移) -> 子弹必须朝右
 	stub.facing = -1
 	cam.global_position = Vector2(4000, 0)
 	await physics_frame
 	_run_case(w, root, bullet_script, stub, "走路朝左/瞄右侧", +1.0)
 
-	# 场景2: 走路把朝向覆盖为右(+1),瞄准方向在左(相机左移) → 子弹必须朝左
+	# 场景2: 走路把朝向覆盖为右(+1),瞄准方向在左(相机左移) -> 子弹必须朝左
 	stub.facing = 1
 	cam.global_position = Vector2(-4000, 0)
 	await physics_frame

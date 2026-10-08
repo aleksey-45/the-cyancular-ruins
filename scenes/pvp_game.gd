@@ -109,7 +109,7 @@ func _ready() -> void:
 	# P2 本体固定为青(`UiFactory.C_TEAM_B`;区分双方。只染角色 AnimatedSprite2D 本体,武器/预瞄不染)
 	_apply_p2_tint()
 	# Esc 暂停菜单(PvP:PauseMenu 不暂停树 → 对手实时;回主菜单 = PauseMenu.go_menu 内先
-	# NetBus.stop() 断连,worker 检测对局任一方断线即拆局)。开关/退出由 PauseMenu 自理
+	# NetBus.stop() 断连,服务端检测对局任一方断线即拆局)。开关/退出由 PauseMenu 自理
 	# (自带 ui_cancel 处理 + set_input_as_handled),但**本地输入锁必须宿主接线**:PvP 不暂停树,
 	# 不锁就是"菜单开着还能边跑边开枪"(旧 EscMenu 靠 toggled 接的正是这一条)。
 	_pause_menu = PauseMenu.new(true)
@@ -121,7 +121,7 @@ func _ready() -> void:
 	# - 进场**主动拉**一次(昵称/色相/生效选项/出生点)。本场景此刻已经建好、订阅齐了才开口要,
 	#   所以不存在"推给一个正在切场景的客户端"那个竞态(B2 的根因)。晚到也无所谓。
 	# - 存活检测再发(全仓纪律「定向发送前一律先存活检测」):这是**定向可靠包**,而"进场景 → 请求"之间
-	#   连接完全可能已经不可用(worker 中途死掉 / 被踢)→ 往 ENet 已拆掉的 peer 发就是那条
+	#   连接完全可能已经不可用(服务端中途终止 / 被踢)→ 往 ENet 已拆掉的 peer 发就是那条
 	#   `Unable to send packet on channel 0`。客户端侧的判据是 `can_send_to_server()`
 	#   (它比 `is_peer_live(1)` 多要求"本端已 CONNECTED")。
 	if NetBus.can_send_to_server():
@@ -240,7 +240,7 @@ func _on_opponent_left() -> void:
 	if _match_ended or _local == null:
 		return
 	_match_ended = true
-	# - **与到达顺序无关的统一集中处理**:若"服务器断开"先到(worker 收场两条消息同拍),重连循环
+	# - **与到达顺序无关的统一集中处理**:若"服务器断开"先到(服务端收场两条消息同拍),重连循环
 	#   已经在飞 —— 这里把它停掉,否则它会继续跑满 60 秒(见 `_cancel_reconnect` 的注释)。
 	_cancel_reconnect()
 	print("[pvp] 对手已离开(2.5s 后回主菜单)")
@@ -300,7 +300,7 @@ func _apply_p2_tint() -> void:
 #     - P2 的实测色 == `UiFactory.C_TEAM_B`(同上)。
 # - `Settings.pvp_color_hue` 这个设置项**仍然存在**,大乱斗照旧消费(4~8 人靠颜色区分才有意义);
 #   共享钩子(`PvpMatchClient._apply_peer_hues_or_team` / `_apply_tint`)**一字未动**。
-# - 不要连回 NetBusExt.local_peer_hues —— 那条**推送**路径在本项目已不存在(worker 不再广播),
+# - 不要连回 NetBusExt.local_peer_hues —— 那条**推送**路径在本项目已不存在(服务端不再主动广播),
 #   连上去会让本载荷走两条路(推送 + 拉取),正是自检 B2 那个形状。
 # 应用函数(不是信号回调):唯一入口 = `_on_match_sync`(进场拉取)。
 func _apply_peer_hues(_hues: Dictionary) -> void:
@@ -314,7 +314,7 @@ func _apply_peer_hues(_hues: Dictionary) -> void:
 # 应用函数(不是信号回调):唯一入口 = _on_match_sync(进场拉取)。
 # - 不要连回 NetBusExt.local_match_options —— 同 _apply_peer_hues 的告警。
 
-# ── 头上 ID:worker 开局广播 peer_info({role:int -> 昵称}),两端据此显示自己/对手昵称 ──
+# ── 头上 ID:服务端开局通过 match_sync 下发 peer_info({role:int -> 昵称}),两端据此显示自己/对手昵称 ──
 # 应用函数(不是信号回调):唯一入口 = _on_match_sync(进场拉取)。
 # - 不要连回 NetBus.local_peer_info —— 同 _apply_peer_hues 的告警。
 func _apply_peer_names(names: Dictionary) -> void:

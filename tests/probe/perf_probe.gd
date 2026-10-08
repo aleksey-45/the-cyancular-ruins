@@ -15,7 +15,7 @@ var grid: Array[Array] = []
 var fly_scene: PackedScene = null
 var _aborted: bool = false
 func _initialize() -> void:
-	# 每段后查 _aborted:段内原来的 `return` 退出的是**整个函数**,拆完只退出该段。
+	# 每段后查 _aborted:段内原来的 `return` 退出的是整个函数,拆完只退出该段。
 	_setup_world()
 	if _aborted:
 		return

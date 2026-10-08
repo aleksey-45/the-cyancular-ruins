@@ -1,11 +1,11 @@
 extends Control
 
-# 圆形小地图探针(**必须带真实渲染,不能加 --headless**)。
-# 跑法: "$GODOT" --path . --quit-after 3600 res://tests/probe/minimap_circle_probe.tscn
-# 判据: 圆外的像素仍是背景色(discard 生效)+ 圆内有地形 + 敌人点只在范围内显示。
+# 圆形小地图探针(必须带真实渲染,不能加 --headless)。
+# 运行方式： "$GODOT" --path . --quit-after 3600 res://tests/probe/minimap_circle_probe.tscn
+# 验收标准： 圆外的像素仍是背景色(discard 生效)+ 圆内有地形 + 敌人点只在范围内显示。
 # PNG 落 res://.superpowers/sdd/(该目录自带 .gitignore = *,不入库)。
 #
-# - 判据为什么是这三个:圆形裁剪与"范围过滤"都是**数值断言抓不住**的东西 ——
+# - 判定条件为什么是这三个:圆形裁剪与"范围过滤"都是数值断言抓不住的东西 ——
 #   旧实现(整图缩略贴右下角)在这三条里会挂一、二、四,而它看起来"功能正常"。
 # - 背景故意铺品红:与地图三色(空气深/水蓝/墙灰)都不会撞,圆外只要不是品红就说明没裁干净。
 
@@ -31,9 +31,9 @@ func _ready() -> void:
 	#   就构造不出范围外样本 —— 断言会从"该红"变成"真绿"或反过来。
 	const COLS := 250
 	const ROWS := 150
-	# - 底图**故意做成有结构的图案**(空底 + 每 8 列/6 行一道墙),不是"整张全实心":
+	# - 底图故意做成有结构的图案(空底 + 每 8 列/6 行一道墙),不是"整张全实心":
 	#   全实心取出来是一块均匀灰盘,人眼验收读不出"地形在 2.8px/格 下清不清楚" ——
-	#   而那正是调过 RANGE_CELLS 之后**唯一需要人眼回答**的问题。
+	#   而那正是调过 RANGE_CELLS 之后唯一需要人眼回答的问题。
 	var grid: Array[Array] = []
 	for y in range(ROWS):
 		var row: Array[int] = []
@@ -42,7 +42,7 @@ func _ready() -> void:
 			if x % 8 == 0 or y % 6 == 0:
 				row[x] = MazeGenerator.SOLID
 		grid.append(row)
-	# - MAP_WIDTH/HEIGHT 是 **int**(core/config/game_parameters.gd:22),别用浮点赋值
+	# - MAP_WIDTH/HEIGHT 是 int(core/config/game_parameters.gd:22),别用浮点赋值
 	GameParameters.MAP_WIDTH = COLS * GameParameters.TILE_SIZE
 	GameParameters.MAP_HEIGHT = ROWS * GameParameters.TILE_SIZE
 	MazeGenerator.current_grid = grid
@@ -57,8 +57,8 @@ func _ready() -> void:
 	mm.setup(func() -> Vector2: return _local, func() -> Vector2: return _enemy)
 	add_child(mm)
 
-	# - 两个样本距离都从 Minimap.RANGE_CELLS **推导**,不写死格数 ——
-	#   写死的话调一次范围常量,这两条断言就可能悄悄翻面(本该红的变绿,或反之)。
+	# - 采样距离均由 Minimap.RANGE_CELLS 动态派生，避免硬编码网格距离 ——
+	#   若硬编码数值，一旦调整雷达探测范围常量，断言可能会因阈值漂移而产生误判或漏判。
 	var ts := float(GameParameters.TILE_SIZE)
 	var in_cells: float = minf(3.0, float(Minimap.RANGE_CELLS) * 0.5)
 	var out_cells: float = float(Minimap.RANGE_CELLS) + 10.0
@@ -75,15 +75,15 @@ func _ready() -> void:
 	await _frames(3)
 	_check(not mm._dot_enemy.visible, "范围外(%.0f 格)的敌人点不得显示" % out_cells)
 
-	# ── ③ 跨接缝:地图另一头、但环面距离在范围内的敌人**必须**显示 ──
+	# ── ③ 跨接缝:地图另一头、但环面距离在范围内的敌人必须显示 ──
 	# 放到玩家左边整整一张图宽再回退 2 格 —— 直线距离 123 格,环面距离只有 2 格。
 	_enemy = Vector2(_local.x - float(GameParameters.MAP_WIDTH) + ts * 2.0, _local.y)
 	await _frames(3)
 	_check(mm._dot_enemy.visible, "跨接缝 2 格的敌人点应显示(走环面最短向量)")
 
 	# ── ⑤ 小地图的圆不得压到右下角的延迟条 ──
-	# - 为什么单开这一条:小地图 layer 131 画在 PvpHud(130) **之上**,而两者都在右下角 ——
-	#   2026-09-17 就是从"整图缩略 200px 高"换成"圆 280×280"时**盖住了延迟数字**
+	# - 为什么单开这一条:小地图 layer 131 画在 PvpHud(130) 之上,而两者都在右下角 ——
+	#   2026-09-17 就是从"整图缩略 200px 高"换成"圆 280×280"时盖住了延迟数字
 	#   (用户报「不要挡住下方的延迟」)。这条只有把两块 HUD 真摆在一起才测得出来。
 	#   也在取图之前挂,好让 PNG 里能一眼看出圆和延迟条的间距。
 	var pvp: CanvasLayer = (load(PVP_HUD_SCENE) as PackedScene).instantiate()
@@ -99,7 +99,7 @@ func _ready() -> void:
 	var ping_rect: Rect2 = (pvp.get_node("PingWrap") as Control).get_global_rect()
 	var c := _circle_center_on_screen()
 	var r := Minimap.RADIUS_PX
-	# 矩形上离圆心最近的点:若它落在圆内 → 圆压住了延迟条
+	# 矩形上离圆心最近的点:若它落在圆内 -> 圆压住了延迟条
 	var q := Vector2(clampf(c.x, ping_rect.position.x, ping_rect.end.x),
 			clampf(c.y, ping_rect.position.y, ping_rect.end.y))
 	_check(c.distance_to(q) > r,
@@ -112,24 +112,24 @@ func _ready() -> void:
 	var img := await _shot("minimap_circle.png")
 	if img.get_width() > 0:
 		var g := _circle_geom(img)
-		# 圆的**外接方框**左上角往内 4px —— 在方框内、但在圆外(距圆心 ≈192px > 140)
+		# 圆的外接方框左上角往内 4px —— 在方框内、但在圆外(距圆心 ≈192px > 140)
 		var outside := Vector2i(int(g["left"]) + 4, int(g["top"]) + 4)
 		_check(_near(img.get_pixelv(outside), BG, 0.08),
 				"圆外像素应仍是背景色(实际 %s)" % str(img.get_pixelv(outside)))
 		# 圆内:地形真的画出来了。-  判"墙色像素够多"而不是"某一点是墙色" ——
 		#   底图现在有结构,某一点恰好落在空气上是正常的(而且玩家自己的点也画在圆心,
 		#   采圆心会取到 SELF_COLOR,实测踩过)。
-		#   墙色 alpha 0.95 压在品红上 → 实际像素是两者的合成,故给 0.12 容差。
+		#   墙色 alpha 0.95 压在品红上 -> 实际像素是两者的合成,故给 0.12 容差。
 		var wall_px := _count_near(img, g, WALL, 0.12)
 		_check(wall_px > 500, "圆内应画出地形(墙色像素 %d,期望 > 500)" % wall_px)
 
-	# ── ⑥ 3v3:自己那个点 = **队色** + 一圈白描边(与颜色正交的维度)──
-	# - 必须真实视口渲染:判据落在像素上(headless 下 get_image() 返回 null  ->  整段静默跳过)。
+	# ── ⑥ 3v3:自己那个点 = 队色 + 一圈白描边(与颜色正交的维度)──
+	# - 必须真实视口渲染:判定条件落在像素上(headless 下 get_image() 返回 null  ->  整段静默跳过)。
 	# - 编号从 ⑥ 起 —— 上面那个 ⑤ 是"圆不得压到延迟条"(几何断言),别与它混。
 	mm.visible = false
 	var TEAM_B := UiFactory.C_TEAM_B
-	# - 一格数组:下面 ④ 要**改它**来验"提供器是每帧求值、不是建点时缓存一次"。
-	#   写成 `func() -> Color: return TEAM_B` 那个常量闭包**验不出**这条(两种实现测试均通过)。
+	# - 一格数组:下面 ④ 要改它来验"提供器是每帧求值、不是建点时缓存一次"。
+	#   写成 `func() -> Color: return TEAM_B` 那个常量闭包验不出这条(两种实现测试均通过)。
 	var self_col := [TEAM_B]
 	var mm_team := Minimap.new()
 	mm_team.setup_multi(
@@ -142,7 +142,7 @@ func _ready() -> void:
 	var img_team := await _shot("minimap_self_dot.png")
 	if img_team.get_width() > 0:
 		var center := _circle_center_on_screen()
-		# ① 点的**底色**是队色,不是 SELF_COLOR
+		# ① 点的底色是队色,不是 SELF_COLOR
 		var px_dot := img_team.get_pixelv(Vector2i(int(center.x), int(center.y)))
 		_check(_near(px_dot, TEAM_B, 0.08),
 				"3v3 自己那个点的底色应是队色(实际 %s、期望 %s、SELF_COLOR 是 %s)" % [
@@ -160,10 +160,10 @@ func _ready() -> void:
 				ring_px += 1
 		_check(ring_px >= 18,
 				"自己那个点应有**白描边**(24 个采样点里 %d 个命中白色,期望 ≥ 18)" % ring_px)
-		# ③ 正交维度的**测试有效性**:把描边关掉,同样的采样必须掉下来
+		# ③ 正交维度的测试有效性:把描边关掉,同样的采样必须掉下来
 		# - 必须先 `set_process(false)` —— `Minimap._process` 每帧都会把 `_ring_self.visible`
 		#   按 `_self_color_provider` 写回去,直接改 `visible` 会被下一帧覆盖
-		#    ->  两张图一模一样  ->  下面那条**必然**失败(那是探针自己的错,不是实现的错)。
+		#    ->  两张图一模一样  ->  下面那条必然失败(那是探针自己的错,不是实现的错)。
 		mm_team.set_process(false)
 		mm_team._ring_self.visible = false
 		await _frames(2)
@@ -177,17 +177,17 @@ func _ready() -> void:
 					ring2 += 1
 			_check(ring2 < 6,
 					"★ 关掉描边后白色采样必须掉下来(实际 %d)—— 否则上面那条是恒真的" % ring2)
-		# - 恢复写在内层 `if` **之外**:`img_no_ring` 取图失败(width 0)时内层整段跳过,
+		# - 恢复写在内层 `if` 之外:`img_no_ring` 取图失败(width 0)时内层整段跳过,
 		#   恢复写在内层就会漏  ->  下面 ④ 的换色验不到(那是探针自己的错,不是实现的错)。
 		mm_team.set_process(true)
 		mm_team._ring_self.visible = true
 
-		# ── ④ 提供器必须**每帧求值**,不是建点时缓存一次 ──
+		# ── ④ 提供器必须每帧求值,不是建点时缓存一次 ──
 		# - 这条钉的正是"第四参为什么是 Callable 而不是 Color":队色由 `match_sync` 下发、
-		#   比小地图建立**晚**  ->  若在 `setup_multi` 里把颜色解析一次存起来,3v3 整局那个点
-		#   会**恒为建点时的颜色**(中性亮白)—— 而那正是设计要避免的那个失败。
-		# - 判据必须**跟着一次变化**走(改掉闭包返回的颜色,看像素跟不跟);恒定的闭包
-		#   (`func() -> Color: return TEAM_B`)对"每帧求值"与"缓存一次"**两种实现都给绿**。
+		#   比小地图建立晚  ->  若在 `setup_multi` 里把颜色解析一次存起来,3v3 整局那个点
+		#   会恒为建点时的颜色(中性亮白)—— 而那正是设计要避免的那个失败。
+		# - 判定条件必须跟着一次变化走(改掉闭包返回的颜色,看像素跟不跟);恒定的闭包
+		#   (`func() -> Color: return TEAM_B`)对"每帧求值"与"缓存一次"两种实现都给绿。
 		self_col[0] = UiFactory.C_TEAM_A
 		await _frames(2)
 		var img_swap := await _shot("minimap_self_dot_swapped.png")
@@ -198,12 +198,12 @@ func _ready() -> void:
 						str(px_swap), str(UiFactory.C_TEAM_A)])
 
 	# ── ⑦ 反向对照:不传自色提供器  ->  退回 SELF_COLOR、且描边不可见 ──
-	# - 这条是"1v1 / 大乱斗行为逐字不变"的守卫 —— 没有它,把默认分支写成"恒走队色"
-	#   (或干脆恒真)也能让阶段 6测试全部通过,而那会让那两模式的小地图自己那个点变成中性亮白。
+	# - 这条是"1v1 / 大乱斗行为逐字不变"的防御性校验 —— 没有它,把默认分支写成"恒走队色"
+	#   (或干脆始终为 true)也能让阶段 6全部断言通过,而那会让那两模式的小地图自己那个点变成中性亮白。
 	mm_team.visible = false
 	var mm_plain := Minimap.new()
-	# - 2026-09-29 起 `setup_multi` 四个参数**全部必填**(B 项)——大乱斗这条"不给自己上色"
-	#   现在是**显式**的空 `Callable()`,不再是默认值。
+	# - 2026-09-29 起 `setup_multi` 四个参数全部必填(B 项)——大乱斗这条"不给自己上色"
+	#   现在是显式的空 `Callable()`,不再是默认值。
 	mm_plain.setup_multi(
 		func() -> Vector2: return _local,
 		func() -> Array: return [],
@@ -216,13 +216,13 @@ func _ready() -> void:
 	_check(not mm_plain._ring_self.visible,
 			"传空自色提供器 ⇒ 白描边**不可见**(1v1 / 大乱斗没有这个问题,别给它们加标记)")
 
-	# ── ⑧ 他人点是**按下标**取色(大乱斗上色那条改动的地基)──
-	# - 为什么必须有:2026-09-29 起大乱斗的他人点不再恒红,而是按 role 取 `ROLE_COLORS`。
-	#   而 `Minimap` 的取色是 `_other_dots[i].color = cols[i]` —— **下标**对齐,不是按 role 查表。
+	# ── ⑧ 他人点是按下标取色(大乱斗上色那条改动的地基)──
+	# - 为什么必须有:2026-09-29 起大乱斗的他人点不再始终断言失败,而是按 role 取 `ROLE_COLORS`。
+	#   而 `Minimap` 的取色是 `_other_dots[i].color = cols[i]` —— 下标对齐,不是按 role 查表。
 	#   这一条严格校验"颜色数组是按提供器给的顺序、一个不差地落到对应点上";同时它也严格校验
 	#   "点比颜色数组多时,多出来的点保持 ENEMY_COLOR"(不然越界会被读成 0 号色)。
-	# - 本阶段**不看像素**(读的是 `ColorRect.color`),故 headless 下也真的在跑 ——
-	#   但整个探针仍需要真实视口渲染(前面几相要取图),所以判据仍是那一行 verdict。
+	# - 本阶段不看像素(读的是 `ColorRect.color`),故 headless 下也真的在跑 ——
+	#   但整个探针仍需要真实视口渲染(前面几相要取图),所以判定条件仍是那一行 verdict。
 	mm_plain.visible = false
 	var mm_multi := Minimap.new()
 	var COL_A := Color(0.1, 0.9, 0.2)
@@ -246,12 +246,12 @@ func _ready() -> void:
 		_check(not _near(mm_multi._other_dots[0].color, Minimap.ENEMY_COLOR, 0.001),
 				"⑧ ★ 反向:喂了颜色提供器之后**不得**还是 ENEMY_COLOR(那就是没生效)")
 
-	# ── ⑨ 源码级:**大乱斗**两个提供器必须共用同一份 entries(2026-09-29,A 项)──
-	# - 为什么行为相(⑧)不够:`Minimap` 只保证"按下标落色"**,它管不到上游两个数组是否同长**。
+	# ── ⑨ 源码级:大乱斗两个提供器必须共用同一份 entries(2026-09-29,A 项)──
+	# - 为什么行为相(⑧)不够:`Minimap` 只保证"按下标落色",它管不到上游两个数组是否同长。
 	#   大乱斗的副本是懒建 + 会 erase(`_remove_replica`),位置提供器自带 `is_instance_valid`
-	#   过滤 —— 颜色提供器少写一个同样的过滤就会**错位一格**。这条纪律 3v3 已经吃过一次
-	#   (`team_room_smoke` ⑨③),这里是它的**大乱斗那一半**。
-	# - 判据落在**函数体**里:`royale_game.gd` 里**没有 `static func`**,故 `func_body` 的
+	#   过滤 —— 颜色提供器少写一个同样的过滤就会错位一格。这条纪律 3v3 已经吃过一次
+	#   (`team_room_smoke` ⑨③),这里是它的大乱斗那一半。
+	# - 判定条件落在函数体里:`royale_game.gd` 里没有 `static func`,故 `func_body` 的
 	#   边界(`\nfunc `)是准的(那处 `static func` 盲区对本文件不成立 —— 已在落地时核过)。
 	var rg := ScanUtil.read(ROYALE_GAME)
 	_check(not rg.is_empty(), "⑨ 读到 %s(读不到就是红,不是静默跳过)" % ROYALE_GAME)
@@ -275,7 +275,7 @@ func _ready() -> void:
 	_finish()
 
 
-# 圆心在**屏幕**坐标(未按取图缩放)。与 ui/minimap.gd 的常量保持一致:
+# 圆心在屏幕坐标(未按取图缩放)。与 ui/minimap.gd 的常量保持一致:
 # 右留白 EDGE、下留白 EDGE_BOTTOM(-  两者不同 —— 下边要给延迟条让位)。
 func _circle_center_on_screen() -> Vector2:
 	var r: float = Minimap.RADIUS_PX
@@ -296,7 +296,7 @@ func _near(a: Color, b: Color, tol: float) -> bool:
 	return absf(a.r - b.r) < tol and absf(a.g - b.g) < tol and absf(a.b - b.b) < tol
 
 
-# 圆**内部**(按 _circle_geom 给的圆心/半径)里接近给定颜色的像素数。
+# 圆内部(按 _circle_geom 给的圆心/半径)里接近给定颜色的像素数。
 func _count_near(img: Image, g: Dictionary, want: Color, tol: float) -> int:
 	var r: float = Minimap.RADIUS_PX
 	var cx: float = g["cx"]

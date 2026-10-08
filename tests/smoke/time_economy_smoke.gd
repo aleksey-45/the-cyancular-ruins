@@ -43,11 +43,11 @@ func _test_accounts_and_tick() -> void:
 func _test_kill() -> void:
 	var rules := TimeRules.new()
 	var e := TimeEconomy.new(rules, [1, 2])
-	(e.accounts[2] as GrainAccount).deposit(600)   # 受害者攒到 1600
+	(e.accounts[2] as GrainAccount).deposit(600)   # 模拟受害者累计余额达 1600
 	e.award_kill(1, 2)
 	_near((e.accounts[1] as GrainAccount).balance, 1000.0 + 1600.0 * 0.5, "击杀得受害者余额一半")
 	_near((e.accounts[2] as GrainAccount).balance, 1600.0, "被击杀者余额不减")
-	# 未识别攻击来源 / 自杀:谁都不给
+	# 攻击来源未识别或自杀结算：均不奖励时间颗粒
 	var b0 := (e.accounts[1] as GrainAccount).balance
 	e.award_kill(0, 2)
 	e.award_kill(2, 2)
@@ -61,8 +61,8 @@ func _test_damage() -> void:
 	_near((e.accounts[1] as GrainAccount).balance, 1040.0, "10 点伤害 ×4 = +40")
 	var b0 := (e.accounts[1] as GrainAccount).balance
 	e.award_damage(0, 2, 10)      # 未识别攻击来源
-	e.award_damage(2, 2, 10)      # 自身伤害
-	e.award_damage(1, 2, 0)       # 0 伤害
+	e.award_damage(2, 2, 10)      # 自身造成的伤害
+	e.award_damage(1, 2, 0)       # 零伤害不结算
 	_near((e.accounts[1] as GrainAccount).balance, b0, "无归因/自伤/零伤不结算")
 
 
@@ -74,6 +74,6 @@ func _test_blocks() -> void:
 	e.award_blocks(0, 5)
 	e.award_blocks(1, 0)
 	_near((e.accounts[1] as GrainAccount).balance, b0, "无归因/零块不结算")
-	# 上限夹断
+	# 数值上限钳制（Clamp）：单次入账不得超出账户最大上限
 	e.award_blocks(2, 100000)
 	_chk((e.accounts[2] as GrainAccount).balance <= 1800.0 + 0.001, "入账夹上限 1800")

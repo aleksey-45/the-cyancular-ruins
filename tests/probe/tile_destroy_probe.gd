@@ -1,7 +1,8 @@
 extends SceneTree
 
-# 破坏机制诊断:隔离验证 tile_defs.json 加载 + damage_tile 逻辑(无需完整游戏)。
-# 用法:godot --headless --path . -s res://tests/probe/tile_destroy_probe.gd
+# 瓦片破坏机制独立验证探针：
+# 独立加载 tile_defs.json 瓦片定义并测试 damage_tile 伤害结算与破坏逻辑，无需启动完整游戏场景。
+# 运行方式："$GODOT" --headless --path . -s res://tests/probe/tile_destroy_probe.gd
 
 func _init() -> void:
 	TileDefs.load_defs()
@@ -21,8 +22,8 @@ func _init() -> void:
 		for c in range(4):
 			row.append(0)
 		grid.append(row)
-	grid[1][1] = MazeGenerator.pack(15, 15)  # 树叶-1 全砖
-	grid[1][2] = MazeGenerator.pack(19, 15)  # 树干竖 全砖
+	grid[1][1] = MazeGenerator.pack(15, 15)  # 树叶瓦片（完整 4x4 子格）
+	grid[1][2] = MazeGenerator.pack(19, 15)  # 树干竖向瓦片（完整 4x4 子格）
 	MazeGenerator.current_grid = grid
 	TileDefs.init_hp(grid)
 

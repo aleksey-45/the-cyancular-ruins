@@ -28,7 +28,7 @@
 | `tests/grace_window_smoke.gd` (+`.uid`) | **新建** | `-s` 冒烟钉 `GraceWindow` 语义 |
 | `core/net/net_bus_ext.gd` | 修改 | 新增 3 条 RPC + 3 个信号（`session_token` / `report_token` / `reclaim_role`） |
 | `core/net/pvp_session.gd` | 修改 | 新增 `token` / `worker_port` 两个**有读者**的字段 |
-| `server/lobby_rooms.gd` | 修改 | `Room`/`RoyaleRoom` 加 `in_match` + `tokens`；生成 token 的收口 |
+| `server/lobby_rooms.gd` | 修改 | `Room`/`RoyaleRoom` 加 `in_match` + `tokens`；生成 token 的统一收拢 |
 | `server/room_manager.gd` | 修改 | 三处 spawn 后**先发 token 再发 go_match** |
 | `scenes/lobby_page.gd` | 修改 | 接 `session_token`，`_do_go_match` 落到 `PvpSession`；claim 时报给 worker |
 | `server/server_main.gd` | 修改 | 宽限期状态机 + `reclaim_role` 处理 + 收 token |
@@ -374,7 +374,7 @@ git commit -m 'feat(net): NetBusExt 重连三 RPC + PvpSession.token/worker_port
 ## Task 3: 大厅生成 token 并在 `go_match` **之前**下发
 
 **Files:**
-- Modify: `server/lobby_rooms.gd`（`Room`/`RoyaleRoom` 加字段 + 生成收口）
+- Modify: `server/lobby_rooms.gd`（`Room`/`RoyaleRoom` 加字段 + 生成统一收拢）
 - Modify: `server/room_manager.gd`（三处 spawn 后先发 token 再发 go_match）
 - Modify: `scenes/lobby_page.gd`（接 token → `PvpSession`）
 
@@ -390,9 +390,9 @@ git commit -m 'feat(net): NetBusExt 重连三 RPC + PvpSession.token/worker_port
 	var tokens: Dictionary = {}          # peer_id -> 一次性会话令牌(断线重连用;开局时按 role 下发)
 ```
 
-- [ ] **Step 2: 在 `server/lobby_rooms.gd` 加 token 生成收口**
+- [ ] **Step 2: 在 `server/lobby_rooms.gd` 加 token 生成统一收拢**
 
-放在 `_generate_code`（`:94-95`）附近，同一条纪律（生成逻辑单一来源）：
+放在 `_generate_code`（`:94-95`）附近，同一条纪律（生成逻辑统一数据源）：
 
 ```gdscript
 # 一次性会话令牌(16 位 hex)。★ 旧 Godot 的 `randi()` 是 32 位,拼两次取 16 hex 得 64 位熵 ——

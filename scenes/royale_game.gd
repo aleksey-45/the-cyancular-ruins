@@ -210,7 +210,7 @@ func _on_kill_event(killer: int, victim: int) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if _match_ended or _local == null:
 		return
-	# - 存活检测再发(全仓纪律):按 K 的那一刻连接可能已经不可用(worker 中途死掉 / 被踢),
+	# - 存活检测再发(全仓纪律):按 K 的那一刻连接可能已经不可用(服务端中途终止 / 被踢),
 	#   而这是**定向可靠包**  ->  不判就是那条 channel 0 错误。
 	if not NetBus.can_send_to_server():
 		return
@@ -250,7 +250,7 @@ func _build_result_payload() -> Dictionary:
 
 # ── 名字 / 颜色 ──
 # 应用函数(不是信号回调):唯一入口 = _on_match_sync(进场拉取)。
-# - 不要连回 NetBus.local_peer_info —— 那条**推送**路径在本项目已不存在(worker 不再广播),
+# - 不要连回 NetBus.local_peer_info —— 那条**推送**路径在本项目已不存在(服务端不再广播),
 #   连上去会让本载荷走两条路(推送 + 拉取),正是自检 B2 那个形状。
 func _apply_peer_names(names: Dictionary) -> void:
 	_names = names

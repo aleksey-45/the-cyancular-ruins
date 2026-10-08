@@ -104,7 +104,7 @@ func _apply_team_layers() -> void:
 				p.collision_layer = TEAM_ENEMY_LAYER
 
 
-# ── 开局(在 worker 进程调用):算散点 → 逐角色 match_start → 建 TeamHost ──
+# ── 开局:算散点 → 逐角色 match_start → 建 TeamHost ──
 static func start_on(role_peers: Dictionary, map_path: String, options: Dictionary = {},
 		teams: Dictionary = {}) -> Node:
 	MazeGenerator.set_map_file(map_path)
@@ -242,7 +242,7 @@ func _spawn_cell(role: int) -> Vector2i:
 #   **孤立单格区**的复活点里(与"开局被关住"同一个病)。池序列现在只有一处来源,且与
 #   royale 那一侧是**同一份**(两处各抄一遍正是这个病的成因)。
 # - `SpawnPicker` 的四张缓存是**每进程**的 `static var`,**从不主动清**。
-#   本模式 worker 一局一进程、且用固定图(`MatchBootstrap.PVP_MAP`)→ 不需要 `reset_cache()`。
+#   本模式使用固定图(`MatchBootstrap.PVP_MAP`)，单局内不需要 `reset_cache()`。
 #   **若将来同一个进程里换图**(例如大厅进程也建宿主),必须显式 `SpawnPicker.reset_cache()`,
 #   否则会**静默**沿用旧图的地板格池子(不报错,只是出生点全落在上一张图的格上)。
 func _respawn_cell_for(role: int) -> Vector2i:
@@ -583,8 +583,8 @@ func _finish_match() -> void:
 # 注意： 本函数**必须留在子类**:`tests/probe/kh_l5_probe.gd` 的"新接口归属"反向断言把
 #    `request_suicide_role` 列进**禁入基类**名单(搬进基类 = 未定义符号)。
 # - 为什么值得为它单独接一条闸:三局两胜里卡死的玩家比大乱斗难受得多(不能退、只能等对局
-#   被别人打完),而 royale 那份现成 —— `server_main._on_suicide_request` 原先只认 `_royale`,
-#   3v3 worker 上 `suicide_request` 被**静默丢掉**(K 键毫无反应,且不报错)。
+#   被别人打完),而 royale 那份现成 —— `MatchSession._on_suicide_request` 原先只认 `_royale`,
+#   3v3 服务端上 `suicide_request` 此前若未接则会被静默丢掉。
 func request_suicide_role(role: int) -> void:
 	if _round_state != RoundState.PLAYING:
 		return

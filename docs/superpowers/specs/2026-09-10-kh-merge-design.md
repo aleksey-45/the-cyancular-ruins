@@ -119,9 +119,9 @@ autoload 由 main 的 2 个增至 4 个（+`NetBusExt`、+`Settings`）。
 
 - `scenes/weapons/weapon_base.gd`：`mag_size` / `reload_time` / `mag_ammo` / `start_reload()` / `reload_active()` / `reload_progress()` / `_update_reload_pose()` + 开火闸（装填中不开火、空夹自动换弹）
 - 5 把枪 `.tscn` 补弹夹数值：手枪 12/1.0s、步枪 30/1.8s、重狙 5/2.6s、霰弹 2/2.2s、榴弹 4/2.8s；榴弹另加 `max_live_projectiles = 3`
-- `scenes/player/weapon_component.gd`：`DISPLAY_NAMES`、`silhouette(slot)`、`enabled_slots` 闸门、滚轮切枪、`_mag_state` 残弹记忆
+- `scenes/player/weapon_component.gd`：`DISPLAY_NAMES`、`silhouette(slot)`、`enabled_slots` 限制条件、滚轮切枪、`_mag_state` 残弹记忆
 - `scenes/player/player.gd`：站立 R=换弹（仅单机 + `Settings.reload_enabled`）+ 滚轮切枪；**倒地 R 保持 main 的 `reload_current_scene()` 不动**——`restart_single()` 是 L4 的产物，L3 引用即**编译错误**；「倒地 R = `restart_single()`」整体并入 L4（见下）
-- `scenes/level_0.gd`（**+1 行**）：建好玩家后应用禁用武器闸门 —— `$WorldViewport/Player.weapons.set_enabled_slots(RunOptions.disabled_weapons)`。**不加这一行，本层做出的闸门就是没有调用方的死代码**（侦察发现：规格原先在 L3/L4/L5 里都没写这个调用点）
+- `scenes/level_0.gd`（**+1 行**）：建好玩家后应用禁用武器限制条件 —— `$WorldViewport/Player.weapons.set_enabled_slots(RunOptions.disabled_weapons)`。**不加这一行，本层做出的限制条件就是没有调用方的死代码**（侦察发现：规格原先在 L3/L4/L5 里都没写这个调用点）
 - `ui/hud.gd` 换成 KH 版（`scenes/hud.gd` 移植过来，落 `ui/`）
 - ⚠️ **保留** `weapon_base.tick(delta)` 的物理 tick 驱动（C2 确定性）
 
@@ -155,20 +155,20 @@ autoload 由 main 的 2 个增至 4 个（+`NetBusExt`、+`Settings`）。
 > **✅ 已完成（2026-09-11）** —— 实施计划 `docs/superpowers/plans/2026-09-11-kh-merge-l6.md`，6 个任务（T1 探针 → T2/T3 加法 → T4 退出路径 → T5 激光 → T6 收尾）。
 > **本节原有的三处内容在开工前已过时，实施时按侦察与代码更正**：
 > 1. 下文引的行号**全部漂移**（L5 改过这些文件）。实施时以侦察件 `.superpowers/sdd/l6-recon.md` 的行为准。
-> 2. 「禁用武器闸门在 PvP 侧必须两端都接」—— **服务器那一端已在 L5 落地**（`match_host` 按 role 调 `set_enabled_slots`）；L6 只补了**客户端消费端**（`_on_match_options`）。
+> 2. 「禁用武器限制条件在 PvP 侧必须两端都接」—— **服务器那一端已在 L5 落地**（`match_host` 按 role 调 `set_enabled_slots`）；L6 只补了**客户端消费端**（`_on_match_options`）。
 > 3. 「`player_options`/`claim_role` 乱序竞态」—— **已在 L5 终审后修掉**（`_defer_begin_match`），本条见上方已勾掉的登记。
 > **L6 期间实测得到的结论（写在此处，免得后人再从推断出发）**：
-> - **`U2`（开局三载荷的到达性）**：实测**会到达**，但那份"确定性"是**相位相关**而非结构性保证 —— worker 从**同一调用栈**发出 `match_start`/`match_options`/`peer_info`/`peer_hues`，是否落在同一次客户端 `poll()` 取决于 ENet flush 分帧与客户端帧率。故补了**第二条投递路径**（`matchmaking` 缓存 → `PvpSession.pending_*` → `pvp_client._ready` 取用），与直接订阅并存；否则一次 poll 吞两段 flush 时三条载荷**静默丢失**（禁武器闸门不生效 → 两端槽位永久错位）。
+> - **`U2`（开局三数据包的到达性）**：实测**会到达**，但那份"确定性"是**相位相关**而非结构性保证 —— worker 从**同一调用栈**发出 `match_start`/`match_options`/`peer_info`/`peer_hues`，是否落在同一次客户端 `poll()` 取决于 ENet flush 分帧与客户端帧率。故补了**第二条投递路径**（`matchmaking` 缓存 → `PvpSession.pending_*` → `pvp_client._ready` 取用），与直接订阅并存；否则一次 poll 吞两段 flush 时三条数据包**静默丢失**（禁武器限制条件不生效 → 两端槽位永久错位）。
 > - **`U3`（单机激光缺 `hit_marker`）**：**已补**，且不双标记 —— `LaserWeaponBase._apply_*` 只在 `_authoritative()` 侧被调（客户端不跑），而 PvP 的标记来自服务器 `hit_confirm`，与 `bullet_base._register_player_hit` 的既有形状一致。
-> - **加一条 L6 引入的不变量**：`Level0.safe_change_scene` 带**防重入**（`_switching`）—— 它首行 `await` 一帧，两次调用可同时在飞，无守卫时第二次会把刚建出的新场景当 old 摘掉并污染 `_retired`。守卫放在**收口点**而非各调用点。
-> - 回归钉：`tests/kh_l6_probe.tscn`（15 条：C2 四不变量 / 输入锁单一收口 / HUD 走声明式 tscn / 激光走 NetBus / 三条退出路径全走 `safe_change_scene` 且裸切恰为 0 / 头顶名中性白 / 不引用 `menu_demo` …），含反证。
+> - **加一条 L6 引入的不变量**：`Level0.safe_change_scene` 带**防重入**（`_switching`）—— 它首行 `await` 一帧，两次调用可同时在飞，无守卫时第二次会把刚建出的新场景当 old 摘掉并污染 `_retired`。守卫放在**统一收拢点**而非各调用点。
+> - 回归钉：`tests/kh_l6_probe.tscn`（15 条：C2 四不变量 / 输入锁单一统一收拢 / HUD 走声明式 tscn / 激光走 NetBus / 三条退出路径全走 `safe_change_scene` 且裸切恰为 0 / 头顶名中性白 / 不引用 `menu_demo` …），含反证。
 
 - `scenes/pvp_client.gd`：以 main 的 C2 版本为基底，**只做加法**接入 KH 的反馈/选项/血条/小地图/拖尾/暂停菜单/`safe_change_scene`；`hit_confirm` / `match_options` / `peer_hues` 经 `NetBusExt` 消费；**`beam_fired` 不在此列**——main 现役激光链路走 `NetBus`（发送端 `server/match_host.gd:391` 的 `NetBus.rpc_id(..., "beam_fired", ...)`，接收端 `scenes/pvp_client.gd:79` 的 `NetBus.local_beam_fired`），`core/net_bus_ext.gd` 里的同名 RPC 是 KH 遗留重复。**L6 必须沿用 main 现役 `NetBus`，不得启用 `NetBusExt.beam_fired`**；若确要启用，必须同步把 `match_host` 的发送端一起迁过去，否则收发落在不同节点 = 对手端激光视觉静默 no-op
 - 服务器渲染保底路径（`server_rendered`）保持可用
-- **禁用武器闸门在 PvP 侧必须两端都接（不是「唯一调用点」）**：`server/match_host.gd`（按 role）与 `scenes/pvp_client.gd` **两处**各调一次 `weapons.set_enabled_slots(PvpSession.disabled_weapons)`，且**必须是同一份** `match_options`（L3 只接了单机侧 `level_0`，不做这一步则 PvP 的禁用武器不生效）
-  - **只接客户端 = C2 永久分歧（必须按上面两端接）**：`pvp_client.gd:153` 把 `src.get_weapon_slot_pressed()` **无条件**打进输入包（不管本地闸门是否拒绝）；客户端 `weapon_component.gd:140-142` 对禁用槽 `Sfx.play("deny"); return`（本地留在旧槽）；服务器若没同步禁用表（`set_enabled_slots` 在 `server/` 侧无调用方），`equip("1")` 会**成功** → 服务器在槽 1、客户端在槽 3；随后每帧 `restore_state`（`player.gd:508`）又去 `equip("1")` → 再次被拒 → **每帧重试、永久错位**（冷却/散布/伤害全不对，且看不到任何报错）。
-  - **不要**改 `core/net_bus_ext.gd` 或任何逐字节照搬的文件来「顺手」接这个闸门。
-- **★ 换场机制收口（L4 终审登记，必须做）**：`scenes/pvp_client.gd` 有**三条离开对局世界的路径，只有一条受保护**——
+- **禁用武器限制条件在 PvP 侧必须两端都接（不是「唯一调用点」）**：`server/match_host.gd`（按 role）与 `scenes/pvp_client.gd` **两处**各调一次 `weapons.set_enabled_slots(PvpSession.disabled_weapons)`，且**必须是同一份** `match_options`（L3 只接了单机侧 `level_0`，不做这一步则 PvP 的禁用武器不生效）
+  - **只接客户端 = C2 永久分歧（必须按上面两端接）**：`pvp_client.gd:153` 把 `src.get_weapon_slot_pressed()` **无条件**打进输入包（不管本地限制条件是否拒绝）；客户端 `weapon_component.gd:140-142` 对禁用槽 `Sfx.play("deny"); return`（本地留在旧槽）；服务器若没同步禁用表（`set_enabled_slots` 在 `server/` 侧无调用方），`equip("1")` 会**成功** → 服务器在槽 1、客户端在槽 3；随后每帧 `restore_state`（`player.gd:508`）又去 `equip("1")` → 再次被拒 → **每帧重试、永久错位**（冷却/散布/伤害全不对，且看不到任何报错）。
+  - **不要**改 `core/net_bus_ext.gd` 或任何逐字节照搬的文件来「顺手」接这个限制条件。
+- **★ 换场机制统一收拢（L4 终审登记，必须做）**：`scenes/pvp_client.gd` 有**三条离开对局世界的路径，只有一条受保护**——
   - `:97-101`（ESC → 回到主菜单）经 `PauseMenu.go_menu` → `ui/pause_menu.gd` 的 `Level0.safe_change_scene` ✓ **已保护**
   - **`:311`（MATCH_OVER 的 5s 定时器）与 `:328`（`_on_opponent_left` 的 2.5s 定时器）仍是裸 `get_tree().change_scene_to_file("res://scenes/main_menu.tscn")`** ← 正是 KH 实测会同步 `memdelete` 数万碰撞体、`safe_change_scene` 被造出来规避的那条路径。
   **两处都要改成 `Level0.safe_change_scene(get_tree(), "res://scenes/main_menu.tscn")`。**
@@ -176,7 +176,7 @@ autoload 由 main 的 2 个增至 4 个（+`NetBusExt`、+`Settings`）。
 - **✅ 已修（2026-09-11，L5 终审后一并落地 `8a1288b`）** —— 修法取的是「把开局延到帧末」（下文修法①的轻量版）：`_defer_begin_match()`。**L6 只需在第 2 条接线后回归一次确认**，不必再实现本条。以下为原始登记，保留以存档问题成因：
 - **★ `player_options` 与 `claim_role` 的乱序竞态（L5 T5 评审登记，用户裁定「记为 L6 待办」——必须做）**：`scenes/matchmaking.gd` 先发 `claim_role` 再发 `player_options`（**同一 reliable 通道 → 每个 peer 内部 claim 先到**）；而 `server/server_main.gd` 的 `_on_role_claimed` 在**收齐法定人数的那一包上同步调 `_begin_match()`**，后者立刻读 `_claim_opts.get(1, {})` / `_claim_hues()` —— **此时 role 1 的 `player_options` 包还没被派发**。
   → **每当 role 1 的 claim 最后到达**（连接顺序决定，约五成概率），**房主的规则选项被静默丢弃**：`round_full_heal` / `disabled_weapons` 不生效，且 `NetBusExt.rpc_id(..., "peer_hues", {})` 把**空色表**发给两端。`_on_player_options` 随后把迟到的包归档进 `_claim_opts`，但已无人读取。
-  **为什么必须在 L6 收口**：本层（L5）的 `_begin_match` 同时服务 1v1（`else` 分支走 `RoomManager.start_match_on`），而 L6 的「禁用武器闸门」正依赖这份 `match_options`（规格 §3 L6 上一段要求两端各调一次 `set_enabled_slots` 且**必须是同一份** options）→ **不修则 L6 的禁用武器本身就不生效**，且是静默的。L6 落消费端时一并收口，才能端到端验证。
+  **为什么必须在 L6 统一收拢**：本层（L5）的 `_begin_match` 同时服务 1v1（`else` 分支走 `RoomManager.start_match_on`），而 L6 的「禁用武器限制条件」正依赖这份 `match_options`（规格 §3 L6 上一段要求两端各调一次 `set_enabled_slots` 且**必须是同一份** options）→ **不修则 L6 的禁用武器本身就不生效**，且是静默的。L6 落消费端时一并统一收拢，才能端到端验证。
   **修法二选一（L6 定）**：① 把 `_begin_match` 延后到各 human claim 的 options 都到齐（带宽限超时兜底）；② 在 `_on_player_options` 里**按 caller 缓冲**先到的 opts，并把 claim→caller 的映射留在开局前可查。
   **另注**：`_on_player_options` 目前**会丢弃先于 claim 到达的 opts**，与它自己 docstring 写的「可能先于/晚于 claim 到达，按 caller 归档」**自相矛盾**——修法 ② 正是把它兑现。
 - **`royale_rooms` 纳入超龄清扫（L5 T4 评审登记，用户裁定「现在补」）**：见 `server/room_manager.gd` 的 `_sweep_stale_rooms`。原 sweep 只遍历 `rooms`；大乱斗房若开局后客户端保持大厅连接却既不发言也不断开（ENet 不超时静默 peer），`worker_port` **永久不归还**（未开局的等待房不占端口，`worker_port` 只在开局时分配）。**阈值安全性**：单局上限 `RoyaleHost.MATCH_TIME`=300s ≪ `MAX_ROOM_AGE`=7200s → 创建满 2h 仍在 `in_match` 的房绝不可能是进行中的对局，故**全部 `royale_rooms` 同一阈值扫**，不为 in_match 单设例外。

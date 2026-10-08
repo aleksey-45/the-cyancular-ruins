@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 把结构编辑器扩展成地图生成器——整图模式 + 环面预览 + spawn 放置;地图文件记录玩家/敌人生成;游戏从地图读取出生点;敌人种类由共享 JSON 单一来源。
+**Goal:** 把结构编辑器扩展成地图生成器——整图模式 + 环面预览 + spawn 放置;地图文件记录玩家/敌人生成;游戏从地图读取出生点;敌人种类由共享 JSON 统一数据源。
 
-**Architecture:** 地图格式用 `#` 注释元数据行记录 spawn,网格保持纯 0/1;`data/enemies.json` 是敌人注册表单一来源,游戏 `EnemySpawner.TYPES` 从它加载,HTML 内嵌副本由 node 脚本重新生成;编辑器加"整图模式"勾选,开启后渲染整张地图、可开环面平铺预览、可放 spawn。
+**Architecture:** 地图格式用 `#` 注释元数据行记录 spawn,网格保持纯 0/1;`data/enemies.json` 是敌人统一注册表数据源,游戏 `EnemySpawner.TYPES` 从它加载,HTML 内嵌副本由 node 脚本重新生成;编辑器加"整图模式"勾选,开启后渲染整张地图、可开环面平铺预览、可放 spawn。
 
 **Tech Stack:** Godot 4.7 GDScript、纯 HTML+JS 单文件编辑器、node 脚本(`sync-enemies.js` 生成器 + `smoke.js` 测试)、JSON。
 

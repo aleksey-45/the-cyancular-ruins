@@ -30,7 +30,7 @@
 - 提交**按名 `git add`** 单个文件；提交信息含引号/反引号时用 `git commit -F - <<'EOF'`。
 - 字号必须是 **16 的倍数**（本计划不引入新字号）。
 - 改 GDScript 只需重导出，别重编裁剪模板。
-- ★ **助攻窗口复用 `CombatFeedback.ATTRIB_WINDOW_MS`（3s，底座常量 `ATTRIB_WINDOW`）**，
+- ★ **助攻窗口复用 `CombatFeedback.ATTRIB_WINDOW_MS`（3s，基础层常量 `ATTRIB_WINDOW`）**，
   **不新开第二个窗口常量**（"归因口径只有一处来源"）。§5.3 已登记：将来要分开调是另一件事。
 - ★ **`same_team` 的 0 语义不许"优化"**：任一方 0 → false。1v1 / 大乱斗的队伍表为空 ⇒
   那两模式**天然拿不到助攻**、也天然不会把队友伤害算进惩罚 —— 这是本计划的免费正确性，
@@ -45,7 +45,7 @@
 
 | 文件 | 责任 | 本计划怎么动 |
 |---|---|---|
-| `server/match_state.gd` | 对局底座（计划 1 起持有逐人统计） | **加** `_assist_times` 表 + `_note_hit` + `_respawn_player` 清表；`_record_down` 记助攻与击杀队友 |
+| `server/match_state.gd` | 对局基础层（计划 1 起持有逐人统计） | **加** `_assist_times` 表 + `_note_hit` + `_respawn_player` 清表；`_record_down` 记助攻与击杀队友 |
 | `server/match_combat.gd` | 子弹/爆炸/光束裁决域 | `_on_player_hit` **加**助攻表写入、`self_damage` / `team_damage` 两笔账 |
 | `server/match_round.gd` | 回合机（1v1 与另两模式的公共基类） | `_respawn_player` **加**一行：清该受害者的助攻表（一处覆盖三模式） |
 | `ui/combat_feedback.gd` | 归因写端（UI 层上的静态入口） | **加** `note_self_hit` / `is_fresh_self_hit`（自伤标记通道） |
@@ -139,7 +139,7 @@ func _park_all_but(host, keep: Array, at: Vector2) -> void:
 
 > ★★ **落地版与本代码块有两处已实现的差异**（评审 F6-1/F6-2 的补丁，`tests/team_host_probe.gd`
 > 是权威）：① **(k1) 放两位攻击者**（甲打 20、丁(3 号)再打 60，两位都得 +1）—— 只有一个候选的
-> 夹具里"只给一位 attacker 记账"的实现全绿；两枪的顺序不能反（先 60 会把 50 血的乙当场打倒，
+> 夹具里"只给一位 attacker 记账"的实现全部通过；两枪的顺序不能反（先 60 会把 50 血的乙当场打倒，
 > 而 `take_hit` 在 `downed` 时早退 ⇒ 第二枪**静默不入表**）。② 末尾多一条 **(k4)**：乙(2 号,1 队)
 > 先被**敌人**(4 号)与**队友**(3 号)各打一下，再由乙的**队友**(1 号)补掉乙 ⇒ **谁都不记助攻**。
 > ★ **(k4) 的实测鉴别力矩阵**（先看这条，免得照 F6-2 的直觉去等一个不会红的变异）：**只**把助攻块
@@ -295,7 +295,7 @@ Expected（补表**之前**）—— 五条，逐条对：
 ★ 因此本步 Expected 与探针写法**必须成对**改：只改一半（探针直接取字段 / Expected 照旧写
 一串 FAIL）会让差分不清成因。
 
-- [ ] **Step 3: 底座加表（先只加字段与写入口，读端留空）**
+- [ ] **Step 3: 基础层加表（先只加字段与写入口，读端留空）**
 
 `server/match_state.gd`，在计划 1 加的 `_stats` 那一组字段之后加：
 
@@ -432,7 +432,7 @@ Expected: 红**两条** —— **`★ ⑬k 受害者的**队友**误伤之后、
 与 **`★ ⑬l 队伍表为空 ⇒ **没有任何助攻**(实际 1)`**。确认后**改回来**。
 
 ★★ **别用"只删前半句"当变异**：`if same_team(attacker, victim_role): continue`（= 去掉
-"与击杀者同队"那半、留着"与受害者同队"那半）**不会让 (k3) 变红** —— (k3) 的 attacker 是
+"与击杀者同队"那半、留着"与受害者同队"那半）**不会让 (k3) 报错失败** —— (k3) 的 attacker 是
 **受害者的队友**（5 号 vs 4 号同属 2 队）⇒ 后半个合取项**照样把它挡掉**。照那个变异去"验证"
 会得出"这条断言没有鉴别力"的**错误结论**。实测（HEAD 逐条跑过）：**只有 ⑬l 红**（`实际 1`）、
 (k3) 仍绿、`ok` 从 150 掉到 149（⑬k 扩容后：从 156 掉到 155）—— 即"必须与击杀者同队"这条规则
@@ -636,11 +636,11 @@ Step 6 之后：⑬n2 会在"惩罚口径把敌方伤害也吃进去"时红，�
 ★ 两条**只差顺序**的判据都在探针里：**⑬n3**（自伤在前 ⇒ 敌方那一下不得进 `self_damage`）与
 **⑬n4**（敌方在前 ⇒ 自伤**仍须**进 `self_damage`）。
 ★★ **⑬n4 的必要性要照这条念（2026-09-26 评审 M3 订正 —— 旧理由经实测不成立）**：初稿说
-"少了 ⑬n4，把标记**整个作废**的坏实现能让 ⑬n3 全绿" —— **假的**：实测删掉 `note_self_hit`
-那一笔 ⇒ **⑬n 自己就红两条**（连 ⑬n3/⑬n4 共 4 红）⇒ 那一族由 **⑬n** 兜住，⑬n4 不承重。
+"少了 ⑬n4，把标记**整个作废**的坏实现能让 ⑬n3 全部通过" —— **假的**：实测删掉 `note_self_hit`
+那一笔 ⇒ **⑬n 自己就红两条**（连 ⑬n3/⑬n4 共 4 红）⇒ 那一族由 **⑬n** 兜住，⑬n4 不核心关键。
 ⑬n4 **独有**覆盖的是**另一族**实现：**在读端**以"存在新鲜攻击者"为前置去清标记（而不是在写端
 `attribute()` 里清）—— 那一族下 ⑬n 与 ⑬n3 **都绿**，**只有 ⑬n4 红**（`+0,期望 +20`）。
-⇒ 两条一起才钉住"标记只在**真实归因落地**时作废"这条不变量。
+⇒ 两条一起才断言约束"标记只在**真实归因落地**时作废"这条不变量。
 ★ 与上面那条"已知边界"的**分工别合并**：那条说的是"同一笔伤害**同时**进 `dealt`（给那位敌人）
 与 `self_damage`（给自己）"—— **两个不同的账户、不是双计**，它仍然成立、不在本次修复范围内。
 
@@ -783,7 +783,7 @@ Expected（★ 2026-09-26 评审 M4 订正 —— 本行原先只列 ⑬n 两条
 跑同样的命令。
 Expected: 红在 **`★ ⑬m 对队友造成的伤害进 team_damage(实际 0,期望 60)`** 与
 **`★ ⑬m 炸死队友 ⇒ kscore **减少** -112(实际 -100)`**（`team_kills` 的 100 仍在 ⇒ 只剩伤害项缺席）。
-确认后**都改回来**，再跑 Step 6 的命令确认全绿。
+确认后**都改回来**，再跑 Step 6 的命令确认全部通过。
 
 - [ ] **Step 8: 提交**
 
@@ -815,7 +815,7 @@ for t in score_rules_smoke enemy_logic_smoke team_room_smoke; do
   "$GODOT" --headless --path . -s res://tests/$t.gd 2>&1 | grep -E "OK|FAIL|SCRIPT ERROR"
 done
 ```
-Expected: 全绿（`TEAM HOST: ALL-OK` / `TEAM TABLE: ALL-OK` / `TEAM DISCONNECT: ALL-OK` /
+Expected: 全部通过（`TEAM HOST: ALL-OK` / `TEAM TABLE: ALL-OK` / `TEAM DISCONNECT: ALL-OK` /
 `LASER TEAM PROBE: ALL-OK` / `SMOKE OK` / `SCORE RULES: ALL-OK` / `TEAM ROOM SMOKE: ALL-OK`）。
 ★ `grenade_player_hit_probe` 与 `laser_team_probe` 必跑：本计划动了
 `core/sim/explosion.gd` 与受击钩子，而那两个探针走的是同两条路径（爆炸直击 / 激光直击）。
@@ -869,8 +869,8 @@ EOF
 **不在本计划**（spec §8）：把 `ATTRIB_WINDOW` 拆成两个窗口 / 局内伤害 HUD / 结算页列（计划 3）。
 
 **2. 占位符扫描**：无 TBD / "类似 Task N" / "适当处理"。五段探针都是完整可跑的代码块；
-每个反证都点名**会红哪一条**并给出**夹具为什么能到达那个状态**（Step 2 的 Expected 一律是表格）。
-★ 两个**防御式探针助手**是承重的、不是风格选择：`_assist_table()` / `_age_assist()` 走
+每个反证都明确指出**会红哪一条**并给出**夹具为什么能到达那个状态**（Step 2 的 Expected 一律是表格）。
+★ 两个**防御式探针助手**是核心关键的、不是风格选择：`_assist_table()` / `_age_assist()` 走
 `host.get("_assist_times")`（不存在的属性静默返回 null），把"字段还没建"退化成**带表内容的值不匹配**；
 直接写 `host._assist_times` 会抛 `Invalid access to property or key …`（**实测**）。
 ★ 订正：旧稿这里写"直接写 ⇒ `_run()` 中断 ⇒ 打 `ALL-OK` = 假绿"，**实测不成立** ——

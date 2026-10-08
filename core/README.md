@@ -20,8 +20,8 @@ present/  表现:字体、音效、视觉特效(与玩法无关的"给人看/听
 - `net/`(10)`ai_input_source` `local_input_source` `packet_input_source` `player_input`
   `net_bus` `net_bus_ext` `prediction_rollback` `pvp_session` `proc_util`
   `local_server`
-  —— 改协议/联机手感/进程编排时动这里。★ 原第 11 个是 `snapshot_interp`(副本位置的双快照
-  tick 域插值),2026-09-21 随副本改回**自身差分指数追赶**整体删除(实测那套插值在
+  —— 改协议/联机手感/会话编排时动这里。★ 原第 11 个是 `snapshot_interp`(副本位置的双快照
+  tick 域插值),2026-09-21 随副本改回**指数平滑滤波 (Exponential Smoothing)**整体删除(实测那套插值在
   60fps 渲染 + 60Hz 快照下是空操作,平滑度等于包的到达平滑度)。★ **输入源放这里**(`player_input` 纯接口 +
   `local_input_source` / `packet_input_source` / `ai_input_source` 三个实现):
   它们的价值就体现在"本地输入 / 网络包 / AI 脚本"三种来源可换,与联机是同一条轴。
@@ -37,7 +37,7 @@ present/  表现:字体、音效、视觉特效(与玩法无关的"给人看/听
   `_ready` 按地图回写 `MAP_WIDTH/HEIGHT`。
 - `net/net_bus.gd`(`NetBus`)—— PvP 网络 RPC 唯一收口,客户端/服务器共用。**方法表与原版服务端
   逐字节兼容**,别动。
-- `net/net_bus_ext.gd`(`NetBusExt`)—— 旁路扩展协议,与原版 worker 优雅降级(那边本节点不存在)。
+- `net/net_bus_ext.gd`(`NetBusExt`)—— 旁路扩展协议,与旧版服务端优雅降级(未实现该节点时自动忽略)。
 - `config/settings.gd`(`Settings`)—— 持久化设置,落盘 `user://settings.cfg`。
 
 ★ **移动 autoload 文件时,`project.godot` 的 `[autoload]` 路径必须同步改** —— 改漏的表现是

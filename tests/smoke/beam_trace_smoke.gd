@@ -25,7 +25,7 @@ func _init() -> void:
 	_check(p1.size() == 2, "无墙 2 点(起+止)")
 	_check(absf(p1[1].x - 650.0) < 0.01 and absf(p1[1].y - 150.0) < 0.01, "无墙止于射程末端")
 
-	# ── 单墙反射:竖墙 col1(像素 x 64..128),从右往左打 → 撞墙反弹后飞向空旷 ──
+	# ── 单墙反射:竖墙 col1(像素 x 64..128),从右往左打 -> 撞墙反弹后飞向空旷 ──
 	var grid := _make_grid(20, 6)
 	for y in range(6):
 		grid[y][1] = MazeGenerator.SOLID
@@ -42,7 +42,7 @@ func _init() -> void:
 	for y in range(6):
 		grid[y][3] = MazeGenerator.SOLID  # col3(x 192..256)
 	MazeGenerator.current_grid = grid
-	# 从 col2(x128..192)中间往左打:碰 col1(128)反→碰 col3(192)反→再碰 col1(128)吸收
+	# 从 col2(x128..192)中间往左打:碰 col1(128)反 -> 碰 col3(192)反 -> 再碰 col1(128)吸收
 	var r3 := BeamTrace.trace(Vector2(150, 150), Vector2.LEFT, 10000.0, 2)
 	var p3: PackedVector2Array = r3["points"]
 	var c3: Array = r3["contacts"]

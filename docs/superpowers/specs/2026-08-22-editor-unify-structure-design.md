@@ -2,7 +2,7 @@
 
 日期: 2026-08-22
 状态: 已确认
-相关文件: `editor/structure-editor.html`、`editor/smoke.js`(Godot 侧零改动)
+相关文件: `editor/structure-editor.html`、`editor/smoke.js`(Godot 侧无需修改)
 
 ## 背景与问题
 
@@ -76,7 +76,7 @@
 
 ## 不动
 
-- Godot 侧零改动:游戏仍读 `map/demo.txt` 的 0/1 + `# player`/`# enemy` 格式。
+- Godot 侧无需修改:游戏仍读 `map/demo.txt` 的 0/1 + `# player`/`# enemy` 格式。
 - `data/enemies.json` 共享注册表 + `editor/sync-enemies.js` 继续用。
 - `brushOffsets` 修复保持;`parseMap` 保持(导入 0/1);`serializeMap` 保持为纯 0/1 地图写出器,
   `serializeMapStructure` 先做 1-9→'1' 归一化、再调 `serializeMap` 复用行格式。

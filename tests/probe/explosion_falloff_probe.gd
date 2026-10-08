@@ -7,7 +7,7 @@ extends SceneTree
 #
 # main 侧适配(只改取用方式,断言与 KH 一字不差):
 #   Explosion 是 class_name 全局类,其脚本内部引用 autoload 标识符(GameParameters)。
-#   `-s` 脚本加载期编译全局类拿不到 autoload → 静态写 `Explosion.x` 会连带编译失败
+#   `-s` 脚本加载期编译全局类拿不到 autoload -> 静态写 `Explosion.x` 会连带编译失败
 #   (见 grenade_smoke 里同一处注释)。故改为在 _initialize() 内 load() 运行时解析
 #   (grenade_smoke 既有做法),调用点随之写 Exp.。
 
@@ -18,7 +18,7 @@ const MAX_DMG := 35
 func _initialize() -> void:
 	var Exp: GDScript = load("res://core/sim/explosion.gd")
 	# cover_multiplier 未实现(修复前)时先短路:否则运行期报错会中断 _initialize()、
-	# 永不 quit → 进程挂死;短路后 RED = SMOKE FAILED + 退出码 1。
+	# 永不 quit -> 进程挂死;短路后 RED = SMOKE FAILED + 退出码 1。
 	if not Exp.has_method("cover_multiplier"):
 		print("SMOKE FAILED: Explosion.cover_multiplier 未实现")
 		quit(1)

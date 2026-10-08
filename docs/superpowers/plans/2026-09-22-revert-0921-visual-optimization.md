@@ -15,7 +15,7 @@
 - **判据一律 grep 输出文本**（`ALL-OK` / `OK` / `SMOKE OK` / `ALL-OK`），**不看退出码** —— 探针中途报错时 `--quit-after` 仍 exit 0 且什么都不打印。
 - **不要碰工作区里那 6 个未提交文件**（`core/net/local_server.gd`、`scenes/main_menu.gd`、`scenes/royale_lobby.gd`、`scenes/team_lobby.gd`、`server/server_main.gd`、`tests/menu_autotest.gd`）与未跟踪目录 `_crashtest/`。
 - **不要跑会占 7777 的探针**（`royale_probe` / `royale_c2_probe` / `team_match_probe`）。
-- **★ 绝对不要 `git cherry-pick 6e2ef6d`。** 它同时改了形变（删副本形变 + 加 `set_landing_only` 模式闸门），而用户明确裁定「剩下都别动」。
+- **★ 绝对不要 `git cherry-pick 6e2ef6d`。** 它同时改了形变（删副本形变 + 加 `set_landing_only` 模式限制条件），而用户明确裁定「剩下都别动」。
 
 ---
 
@@ -24,7 +24,7 @@
 | 线 | 本次动不动 |
 |---|---|
 | **副本位置平滑** | ★ **动** —— 改回「自身差分指数追赶」 |
-| 补间形变 squash（组件 / 参数 `0.06/16.0/0.10` / 副本形变 / 模式闸门） | **不动** |
+| 补间形变 squash（组件 / 参数 `0.06/16.0/0.10` / 副本形变 / 模式限制条件） | **不动** |
 | 小地图（09-17 圆形视野） | **不动** |
 | 角色色相 / 队色（09-19 那批） | **不动** |
 | 副本枪口折叠（`9239469`） | **不动** |
@@ -50,7 +50,7 @@
 - 删 `core/net/snapshot_interp.gd`(+`.uid`) 与 `tests/snapshot_interp_smoke.gd`(+`.uid`)
 - `core/README.md` 相应订正
 
-★ **两个 `anchor_to_nearest` 是承重的，别"顺手简化"掉**：旧方案当年有致命缺陷 —— 渲染位置与目标相隔整幅地图时最短向量为 0 ⇒ 副本一旦漂到远副本就**永远留在那儿**（对手被渲染到屏幕外「看不见」）。解法是把**目标点**锚到本地玩家最近副本再以普通差量追赶；这与「平滑 vs 插值」无关，是独立的一件事。
+★ **两个 `anchor_to_nearest` 是核心关键的，别"顺手简化"掉**：旧方案当年有致命缺陷 —— 渲染位置与目标相隔整幅地图时最短向量为 0 ⇒ 副本一旦漂到远副本就**永远留在那儿**（对手被渲染到屏幕外「看不见」）。解法是把**目标点**锚到本地玩家最近副本再以普通差量追赶；这与「平滑 vs 插值」无关，是独立的一件事。
 
 ---
 
@@ -254,7 +254,7 @@ Expected: `REPLICA SMOOTHNESS PROBE: FAIL | 相A ...`,且**零位移占比在 0.
 
 - [ ] **Step 4: 生成 `.uid` 再提交**
 
-本仓每个 `.gd` 都有配套 `.gd.uid`（Godot 首次导入时生成）。跑一次 Step 3 那条命令即可让它落盘。
+本仓每个 `.gd` 都有配套 `.gd.uid`（Godot 首次导入时生成）。跑一次 Step 3 那条命令即可让它写入磁盘。
 
 Run: `ls tests/replica_smoothness_probe.gd.uid`
 Expected: 文件存在。若不存在，用 `"$GODOT" --headless --path . --import` 刷一次再确认。

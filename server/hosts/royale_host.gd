@@ -43,7 +43,7 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 	super._init(map_path, role_peers, options, ai_roles)
 
 
-# ── 开局(在 worker 进程调用):算散点出生 → 逐角色 match_start → 建 RoyaleHost ──
+# ── 开局:算散点出生 → 逐角色 match_start → 建 RoyaleHost ──
 # ai_roles = AI 补位 role 列表(这些 role 由服务端 AI 驱动,不发 match_start)
 static func start_on(role_peers: Dictionary, map_path: String, options: Dictionary = {},
 		ai_roles: Array = []) -> Node:
@@ -370,7 +370,7 @@ func _broadcast_round_state() -> void:
 	_send_round_state(data)
 
 
-# 房主昵称表(worker 开局后由 server_main 注入;排行榜展示用)
+# 房主昵称表(开局后由服务端会话注入;排行榜展示用)
 var _display_names: Dictionary = {}
 
 func set_display_names(names: Dictionary) -> void:

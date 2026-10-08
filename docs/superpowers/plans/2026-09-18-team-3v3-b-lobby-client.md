@@ -13,11 +13,11 @@
 - **本项目约定：测试由用户自己跑，不要代跑。** 计划里 `Run:` 是**写给用户**的；agent 自己可跑的是 `--import`、不占端口的 `--quit-after`、以及**不占 7777 的探针**。占 7777 的（`royale_probe` / `pvp_room_smoke` / `--autotest-*`）一律留给用户。
 - **引擎路径**：`GODOT` 环境变量，未设时回落 `"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe"`。
 - **★ `NetBus` 的方法表一律不动**：新 RPC 全进 `NetBusExt`，且**不得与 `NetBus` 的任何方法同名**（同名 = 接收端挂错节点 = 静默 no-op，`beam_fired` 是那个先例）。守卫：`tests/reconnect_smoke.gd` 的节点归属双向断言，本册扩一条 `team_*` 的。
-- **★ 定向发送前一律先判活**：`NetBus.reply(id, method, …)`（大厅侧答复 caller 的收口）或 `NetBus.is_peer_live(id)`。**不要**用 `multiplayer.get_peers()`（它滞后）。
+- **★ 定向发送前一律先判活**：`NetBus.reply(id, method, …)`（大厅侧答复 caller 的统一收拢）或 `NetBus.is_peer_live(id)`。**不要**用 `multiplayer.get_peers()`（它滞后）。
 - **大乱斗/1v1 的既有行为一行不改**（除 Task 3 那处**必要**的三态化扩展：`is_royale` 二分 → 三态）。
 - **新 `class_name` 文件建完先 `--import`** 刷全局类缓存（否则引用处 Parse Error）。
 - 场景探针 `--quit-after` 统一 **3600**；判据 grep `ALL-OK`，**不看退出码**。
-- 提交信息用单引号或 `-F 文件`，不带任何 Claude/AI 署名行；提交后回读。每次 `git add` **只加本任务点名的文件**；未跟踪的 `_crashtest/` 不要动。
+- 提交信息用单引号或 `-F 文件`，不带任何 Claude/AI 署名行；提交后回读。每次 `git add` **只加本任务明确指定的文件**；未跟踪的 `_crashtest/` 不要动。
 - **字号只用 16 的倍数**（`kh_l4/l5` 扫 `res://tests`）。新增 HUD 场景后要给 `tests/hud_declarative_probe.gd` 的 `PAIRS` 加一行。
 
 ## 文件结构
@@ -48,7 +48,7 @@
 - [ ] **Step 1: 确认 A 册已落地**
 
 Run: `git log --oneline -12`
-Expected: 能看到 A 册的十个提交（队伍表 / 穿透队友 / SpawnPicker / TeamHost 骨架 / 计分 / 复位 / 换边 / 掉线 / `--team` 契约 / `match_sync` 带 teams）。**缺哪个就停下等**。
+Expected: 能看到 A 册的十个提交（队伍表 / 穿透队友 / SpawnPicker / TeamHost 骨架 / 计分 / 复位 / 换边 / 掉线 / `--team` 接口规范 / `match_sync` 带 teams）。**缺哪个就停下等**。
 
 - [ ] **Step 2: 确认工作区干净**
 
@@ -900,7 +900,7 @@ func _on_match_sync(payload: Dictionary) -> void:
 	_sync_spawn_and_payloads(payload)   # 出生点校正 + 地面武器先清后灌 + destroyed 补态(基类逻辑)
 ```
 
-★ **实施注意**：基类 `_on_match_sync` 已经把"名字/色相/选项/出生点/地面武器/destroyed"六件事写在一起了。3v3 要的差异只有"色相那一段不要、多一段 teams"。**推荐做法**：在基类加一个可覆写的钩子 `_apply_peer_hues_or_team(hues)`（默认调 `_apply_peer_hues`，3v3 覆写成 `_apply_teams`），而不是把整段抄一遍 —— 抄一遍就等于把"先清后灌""静默补态"那两条纪律复制成两份，将来只改一处。**这条改动要连 1v1/大乱斗两个客户端一起验**（它们的探针全绿）。
+★ **实施注意**：基类 `_on_match_sync` 已经把"名字/色相/选项/出生点/地面武器/destroyed"六件事写在一起了。3v3 要的差异只有"色相那一段不要、多一段 teams"。**推荐做法**：在基类加一个可覆写的钩子 `_apply_peer_hues_or_team(hues)`（默认调 `_apply_peer_hues`，3v3 覆写成 `_apply_teams`），而不是把整段抄一遍 —— 抄一遍就等于把"先清后灌""静默补态"那两条纪律复制成两份，将来只改一处。**这条改动要连 1v1/大乱斗两个客户端一起验**（它们的探针全部通过）。
 
 ⑤ **队友不互挡的客户端一半**（★ 服务端那一半在 A 册 Task 11；设计 §4.7）：
 
@@ -1199,7 +1199,7 @@ Expected: `TEAM MATCH PROBE: ALL-OK`
 
 - [ ] **Step 4: 反向验证（至少做一条）**
 
-把 A 册 `_match_round_tick` 里 `_enemy_team_of` 换成基类的 `_opponent_of`（= 回到"非我即敌"）→ 重跑 → 期望相④ 的比分断言**变红**（两队分数会在同一人倒地时都涨/乱）。写进报告后换回。
+把 A 册 `_match_round_tick` 里 `_enemy_team_of` 换成基类的 `_opponent_of`（= 回到"非我即敌"）→ 重跑 → 期望相④ 的比分断言**报错失败**（两队分数会在同一人倒地时都涨/乱）。写进报告后换回。
 
 - [ ] **Step 5: 提交**
 
@@ -1240,7 +1240,7 @@ git commit -m 'docs: CLAUDE.md 记录 3v3 B 册(三协议互斥/拆除三态/队
 
 ## 自检记录
 
-**spec 覆盖**：§4.5 三态化（Task 3 的 `teardown_room` + Task 4 的 sweep；端口延迟常量在 A 册）→ ✓；§5 客户端（Task 6/7：5 副本、队色、最小 HUD、小地图参数）→ ✓；§3 规则 2/3 的进房与选边（Task 3 的 handler + Task 5 的等待室）→ ✓；§10 的"6 人真链路压测"（Task 8）→ ✓；§11 的契约（`match_sync.teams` 的**消费**在 Task 6；其余五项是给 UI 那份的输入）→ ✓。
+**spec 覆盖**：§4.5 三态化（Task 3 的 `teardown_room` + Task 4 的 sweep；端口延迟常量在 A 册）→ ✓；§5 客户端（Task 6/7：5 副本、队色、最小 HUD、小地图参数）→ ✓；§3 规则 2/3 的进房与选边（Task 3 的 handler + Task 5 的等待室）→ ✓；§10 的"6 人真链路压测"（Task 8）→ ✓；§11 的接口规范（`match_sync.teams` 的**消费**在 Task 6；其余五项是给 UI 那份的输入）→ ✓。
 
 **本册不做（明写）**：联机 UI 的版式/配色/字号定稿（`TeamHud` 与 `team_lobby` 都是"最小可用"，版式归 UI 重做那份）；2v2/4v4；观战；`match_sync` 带破坏态（属重连阶段 2-B）。
 

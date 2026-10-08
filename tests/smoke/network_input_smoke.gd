@@ -9,20 +9,20 @@ func _initialize() -> void:
 	var src := PacketInputSource.new()
 	var fail := 0
 
-	# 上爬:held=UP、水平 ax=0 → 垂直轴应 -1,水平轴应 0
+	# 上爬:held=UP、水平 ax=0 -> 垂直轴应 -1,水平轴应 0
 	src.apply_packet({"ax": 0.0, "held": PacketInputSource.BIT_UP, "pressed": 0, "released": 0, "winst": 0})
 	fail += _check("UP held → 垂直 -1", is_equal_approx(src.get_axis("up", "down"), -1.0))
 	fail += _check("UP held → 水平 0", is_equal_approx(src.get_axis("left", "right"), 0.0))
 
-	# 下爬:held=DOWN → 垂直 +1
+	# 下爬:held=DOWN -> 垂直 +1
 	src.apply_packet({"ax": 0.0, "held": PacketInputSource.BIT_DOWN, "pressed": 0, "released": 0, "winst": 0})
 	fail += _check("DOWN held → 垂直 +1", is_equal_approx(src.get_axis("up", "down"), 1.0))
 
-	# 未按上下 → 垂直 0(挂住)
+	# 未按上下 -> 垂直 0(阻塞挂起)
 	src.apply_packet({"ax": 0.0, "held": 0, "pressed": 0, "released": 0, "winst": 0})
 	fail += _check("无上下 → 垂直 0", is_equal_approx(src.get_axis("up", "down"), 0.0))
 
-	# 水平移动:ax=1 → left/right 返回 1;垂直仍 0(无 held 上下)
+	# 水平移动:ax=1 -> left/right 返回 1;垂直仍 0(无 held 上下)
 	src.apply_packet({"ax": 1.0, "held": 0, "pressed": 0, "released": 0, "winst": 0})
 	fail += _check("ax=1 → 水平 1", is_equal_approx(src.get_axis("left", "right"), 1.0))
 	fail += _check("ax=1 时垂直仍 0", is_equal_approx(src.get_axis("up", "down"), 0.0))

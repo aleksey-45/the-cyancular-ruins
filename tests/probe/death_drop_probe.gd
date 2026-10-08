@@ -1,50 +1,50 @@
 extends Node
 
-# 「掉落武器留在**死亡点**」探针(场景模式,`-s` 做不了 —— 要实际创建宿主实例)。
-# 跑法:
+# 「掉落武器留在死亡点」探针(场景模式,`-s` 做不了 —— 要实际创建宿主实例)。
+# 运行方式：
 #   "$GODOT" --headless --path . --quit-after 3600 res://tests/probe/death_drop_probe.tscn
 # 期望:每条 [dd] ok,末行 "DEATH DROP PROBE: ALL-OK"。
 #
-# ═══ 为什么需要它(用户 2026-09-21)═══
+# ── 为什么需要它(用户 2026-09-21)──
 # 「掉落的武器应该在死亡后直接原地掉落,而不是复活后在玩家出生点掉落」。
-# 旧实现把这个错法藏得**完全静默**:`_respawn_player` 先 `p.global_position = 出生点`、
-# **再**调 `_drop_all_but_one`(它取 `p.global_position`) ->  全掉在出生点 —— 而两处的注释
-# 都写着「死亡点」。没有任何报错,既有断言也一条都无法覆盖检测(别处的位置断言只查**玩家**的坐标)。
+# 旧实现把这个错法藏得完全静默:`_respawn_player` 先 `p.global_position = 出生点`、
+# 再调 `_drop_all_but_one`(它取 `p.global_position`) ->  全掉在出生点 —— 而两处的注释
+# 都写着「死亡点」。没有任何报错,既有断言也一条都无法覆盖检测(别处的位置断言只查玩家的坐标)。
 #
-# - 本探针的另一半同样重要:**就算**把掉落留在复活流程里、只改成「用死亡时记下的那一格」,
+# - 本探针的另一半同样重要:就算把掉落留在复活流程里、只改成「用死亡时记下的那一格」,
 #   也还是错的 —— 尸体在 2s 倒地窗里继续走物理(重力/击退衰减/滑行),到复活那一刻它早已
-#   不在死亡的那一格了。所以「掉在 D」必须在**复活之前**断言(下面 ①②),那才是
+#   不在死亡的那一格了。所以「掉在 D」必须在复活之前断言(下面 ①②),那才是
 #   「死亡后直接原地」。③ 再钉复活那一侧:不再掉第二次、且保留的那把仍在手上。
 #
-# ═══ 做法 ═══
-# 与 grenade_player_hit_probe / team_host_probe 同一手法:实际创建宿主实例,但 **role_peers 传空**
+# ── 做法 ──
+# 与 grenade_player_hit_probe / team_host_probe 同一手法:实际创建宿主实例,但 role_peers 传空
 # —— 不建玩家、不排 peer、所有 `rpc_id` 无对象(广播静默提前返回,不会在无多人连接时报错)。
 # 玩家由本探针自己摆进 `host.players`,宿主自己的物理帧关掉(只手动推一帧状态机)。
-# - 三个模式各走一遍:三处倒地边沿是**同一规范的三种具体实现**(基类 `_respawn_player`
+# - 三个模式各走一遍:三处倒地边沿是同一规范的三种具体实现(基类 `_respawn_player`
 #   那一支已删),少写一处就静默退化成「该模式死亡不掉武器」。
 # - 地图严格约束 `newfactory.cyrm`(不钉图的探针每进程随机选一份,跨进程输出不可比);
-#   出生点也**显式传**(大乱斗 / 3v3 的 spawns 参数),不依赖任何 shuffle。
+#   出生点也显式传(大乱斗 / 3v3 的 spawns 参数),不依赖任何 shuffle。
 #
-# ⚠ 判据 grep 文本 "DEATH DROP PROBE: ALL-OK"(不只看退出码:场景探针在脚本报错时
-#   仍然会 --quit-after 到点 exit 0,只看退出码会把「根本没跑完」读成「通过」)。
+# - 判定条件 grep 文本 "DEATH DROP PROBE: ALL-OK"(不只看退出码:场景探针在脚本报错时
+#   仍然会 --quit-after 到点 exit 0,只看退出码会把「根本未完整执行」读成「通过」)。
 
 const MAP := "res://maps/newfactory.cyrm"
 
-# 注意： 死亡点与出生点**从地图自己的 spawn 元数据推导**,不写死坐标(2026-10-02 改)。
+# 注意事项：死亡点与出生点从地图自己的 spawn 元数据推导,不写死坐标(2026-10-02 改)。
 #   原先写死的是旧 PvP 图的 `(17,65)` / `(133,64)` —— 但 1v1 那一路
-#   (`MatchHost.new(MAP, {})`)的 role 1 家 = **地图的** `# player`,不是这个常量。
-#   旧图上两者恰好相等,换一张图就分家  ->  ③「复活后站到本局出生点」**测试误报**(实测差 1459px)。
+#   (`MatchHost.new(MAP, {})`)的 role 1 家 = 地图的 `# player`,不是这个常量。
+#   旧图上两者恰好相等,换一张图就分家  ->  ③「复活后站到本局出生点」测试误报(实测差 1459px)。
 #   推导之后本探针与"用的是哪张图"解耦:`_death` 只需离 `_home` 足够远,
-#   而下面那条[仪器]断言会**真的量**这个距离 —— 不够远它自己会红,不用靠人记得。
+#   而下面那条[仪器]断言会真的量这个距离 —— 不够远它自己会红,不用靠人记得。
 const NEAR_CELLS := 2.0        # 「就在旁边」的判定半径(格);掉落物生成在 D + (0,-12)px
-const KEEP_ONE := 3            # 倒地前塞进背包的枪数 → 应掉 KEEP_ONE - 1 把
+const KEEP_ONE := 3            # 倒地前塞进背包的枪数 -> 应掉 KEEP_ONE - 1 把
 
 const TEAMS := {1: 1, 2: 1, 3: 1, 4: 2, 5: 2, 6: 2}
 
 var _home := Vector2i(-1, -1)      # role 1 的家(1v1 来自地图;另两个模式走显式 spawns)
 var _death := Vector2i(-1, -1)     # 本探针把玩家瞬移到那里去死
 # 3v3 / 大乱斗出生点:显式给死(不走 `plan_team_spawns`,那里面有 shuffle)。
-# --role ≥ 2 在本探针里**没有玩家节点**(只 `players[1] = p`) ->  它们的格**是惰性的**,
+# --role ≥ 2 在本探针里没有玩家节点(只 `players[1] = p`) ->  它们的格是惰性的,
 #   本探针只用 role 1 那一格;给相对偏移只是为了读起来像个真实布局。
 var _team_spawns := {}
 var _royale_spawns := {}
@@ -61,8 +61,8 @@ func _check(ok: bool, msg: String) -> void:
 
 
 func _ready() -> void:
-	# - 先推导出生点/死亡点(见文件头注释)。缺 `# player2` 就**直接失败、不保底处理** ——
-	#   "没有第二个远隔的出生点"会让 ② 的两条断言失去区分度,那种情况下测试全部通过毫无意义。
+	# - 先推导出生点/死亡点(见文件头注释)。缺 `# player2` 就直接失败、不兜底保护 ——
+	#   "没有第二个远隔的出生点"会让 ② 的两条断言失去区分度,那种情况下全部断言通过毫无意义。
 	var sp := MapFormat.load_spawns(MAP)
 	_home = sp.get("player", Vector2i(-1, -1))
 	_death = sp.get("player2", Vector2i(-1, -1))
@@ -96,8 +96,8 @@ func _ready() -> void:
 func _run_phase(tag: String, host: Node, home_cell: Vector2i) -> void:
 	print("[dd] ── %s ──" % tag)
 	add_child(host)
-	# - 关掉宿主自己的 `_physics_process`:本探针只**手动**推一帧状态机。不关的话帧末那一跑
-	#   会让快照/复活调度来搅局,读数就不是「我这一帧」的了(与 team_host_probe 相同机制理由)。
+	# - 禁用宿主自身的 `_physics_process`：本探针仅由测试逻辑手动单步推进状态机。若不禁用，帧末由引擎
+	#   自动驱动的物理帧会引入快照与复活调度的副作用，干扰当前帧的确定性度量（与 team_host_probe 设计一致）。
 	host.set_physics_process(false)
 
 	var ts: int = GameParameters.TILE_SIZE
@@ -117,7 +117,7 @@ func _run_phase(tag: String, host: Node, home_cell: Vector2i) -> void:
 	host.players[1] = p
 	# 跳过 COUNTDOWN:复活调度只在 PLAYING 里安排(倒计时里倒地不会被排上)。
 	host._round_state = MatchHost.RoundState.PLAYING
-	# 开局那批散布是「背景」:下面的断言必须在**新增**的那几把上做
+	# 开局那批散布是「背景」:下面的断言必须在新增的那几把上做
 	# (出生点附近本来就可能躺着开局撒的一把 —— 直接查「附近有没有枪」会测试误报)。
 	p.weapons.set_initial_inventory([1, 2, 3])
 	var before := _insts(host)
@@ -128,7 +128,7 @@ func _run_phase(tag: String, host: Node, home_cell: Vector2i) -> void:
 	(p.get_node("Combat") as Node).force_down()
 	host._match_round_tick(0.016)
 
-	# ── ① 时机:掉落发生在**复活之前** ──
+	# ── ① 时机:掉落发生在复活之前 ──
 	_check(p.is_downed(), "[%s] ① 这一帧玩家仍是倒地态(复活还没到)" % tag)
 	var pending := float(host._respawn_pending.get(1, -1.0))
 	_check(pending > 1.0,
@@ -143,13 +143,13 @@ func _run_phase(tag: String, host: Node, home_cell: Vector2i) -> void:
 			% [tag, p.weapons.inventory.held.size(),
 					"有" if p.weapons.current_weapon() != null else "无"])
 
-	# ── ② 位置:在死亡点旁边、**不在**出生点旁边 ──
-	# 判据走**生产那一份**查找(`GroundWeaponField.nearest_within`:环面最短距离 + 与拾取判定
+	# ── ② 位置:在死亡点旁边、不在出生点旁边 ──
+	# 判定条件走生产那一份查找(`GroundWeaponField.nearest_within`:环面最短距离 + 与拾取判定
 	# 同口径的半径)而不是自己算绝对距离 —— 自算的话跨接缝那一侧会判错。
-	# - `exclude` 传「除新掉的以外全部」而不是留空:开局散点**可能**恰好落在 DEATH_CELL
+	# - `exclude` 传「除新掉的以外全部」而不是留空:开局散点可能恰好落在 DEATH_CELL
 	#   那一格上(`spread_cells` 从 ~800 个地板格里挑 12 个  ->  约 1.5% 概率),那件背景武器
-	#   离 d_pos 是 0px、比新掉的(12px)更近  ->  不排除的话会**偶发测试误报**。
-	#   排除背景后本条语义反而更准:「这批**刚掉的**武器就在 D 附近」(而不是"D 附近最近的那件")。
+	#   离 d_pos 是 0px、比新掉的(12px)更近  ->  不排除的话会偶发测试误报。
+	#   排除背景后本条语义反而更准:「这批刚掉的武器就在 D 附近」(而不是"D 附近最近的那件")。
 	var at_d: Dictionary = host.ground_weapons.nearest_within(
 			d_pos, near, _all_but(host, dropped))
 	_check(not at_d.is_empty() and dropped.has(int(at_d["inst"])),
@@ -162,7 +162,7 @@ func _run_phase(tag: String, host: Node, home_cell: Vector2i) -> void:
 			% [tag, near, str(at_home.get("inst", -1))])
 
 	# ── ③ 复活那一侧:不再掉第二次,保留的那把仍在手上 ──
-	# - 走**生产**的复活入口(不是直接调 `_respawn_player`)—— 与「复活调度」同一条路。
+	# - 走生产的复活入口(不是直接调 `_respawn_player`)—— 与「复活调度」同一条路。
 	host._handle_respawns(2.0)
 	_check(not p.is_downed(), "[%s] ③ 复活了(不再倒地)" % tag)
 	_check(p.global_position.distance_to(home_pos) < 2.0,
@@ -176,7 +176,7 @@ func _run_phase(tag: String, host: Node, home_cell: Vector2i) -> void:
 	_check(all_dropped.size() == dropped.size(),
 			"[%s] ★ ③ 复活**没有再掉一次**(自本次死亡起掉落总数仍是 %d,实得 %d)"
 			% [tag, dropped.size(), all_dropped.size()])
-	# - 反向那一半:旧实现正是在**这里**掉的 —— 复活后出生点旁边会冒出一批。
+	# - 反向那一半:旧实现正是在这里掉的 —— 复活后出生点旁边会冒出一批。
 	var at_home_after: Dictionary = host.ground_weapons.nearest_within(
 			home_pos, near, _all_but(host, all_dropped))
 	_check(at_home_after.is_empty(),

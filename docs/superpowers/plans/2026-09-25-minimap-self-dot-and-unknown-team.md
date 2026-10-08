@@ -310,9 +310,9 @@ Expected: 两行都是 `0`。
 source tests/env.sh && "$GODOT" --path . --quit-after 3600 res://tests/minimap_circle_probe.tscn 2>&1 | grep -E "MINIMAP|FAIL"
 ```
 Expected: 相⑤ 的底色与描边两条 **FAIL**。确认后改回来。
-★ 这一步证明相⑤**真的会红**（而不是恒真）—— 本仓反复在删那种"加了断言之后全绿"的假证据。
+★ 这一步证明相⑤**真的会红**（而不是恒真）—— 本仓反复在删那种"加了断言之后全部通过"的假证据。
 
-- [ ] **Step 3: 跑 —— 确认全绿**
+- [ ] **Step 3: 跑 —— 确认全部通过**
 
 Run:
 ```bash
@@ -320,7 +320,7 @@ source tests/env.sh && "$GODOT" --path . --quit-after 3600 res://tests/minimap_c
 ```
 Expected: 全 ok，末行 `MINIMAP CIRCLE PROBE: ALL-OK`。
 
-- [ ] **Step 4: 读图（人眼验收，自己读）**
+- [ ] **Step 4: 读图（人工视觉核验，自己读）**
 
 Read `.superpowers/sdd/minimap_self_dot.png`：圆心那个点应是**青色**（`C_TEAM_B` = `#80F4FF`）
 且**带一圈白边**，与既有那张无描边的对照图肉眼可分。**自己读，别推回给用户。**
@@ -384,7 +384,7 @@ Read `.superpowers/sdd/minimap_self_dot.png`：圆心那个点应是**青色**�
 ```bash
 source tests/env.sh && "$GODOT" --headless --path . -s res://tests/team_room_smoke.gd 2>&1 | grep -E "TEAM ROOM|_ghost_layer_of"
 ```
-Expected: `FAIL`，且点名 `_ghost_layer_of`。确认后改回新实现。
+Expected: `FAIL`，且明确指出 `_ghost_layer_of`。确认后改回新实现。
 
 - [ ] **Step 3: 回归**
 
@@ -398,7 +398,7 @@ done
 "$GODOT" --headless --path . -s res://tests/team_room_smoke.gd 2>&1 | grep -E "TEAM ROOM|FAIL"
 "$GODOT" --path . --quit-after 3600 res://tests/hue_tint_probe.tscn 2>&1 | grep -E "KH HUE-TINT|FAIL"
 ```
-Expected: 全绿（`hue_tint_probe` **必须真渲染**，不加 `--headless`；它的守卫 C/D/E 覆盖 1v1/大乱斗/3v3
+Expected: 全部通过（`hue_tint_probe` **必须真渲染**，不加 `--headless`；它的守卫 C/D/E 覆盖 1v1/大乱斗/3v3
 三条色相链，本批动了 `team_game`，必须复跑）。
 
 - [ ] **Step 4: 登记进 CLAUDE.md**
@@ -430,7 +430,7 @@ git commit -m "feat(team): 小地图自己那个点改队色 + 白描边;未知�
 **1. 覆盖面**（对照 spec §3.2 + §3.3）：可选第四参 ✅ Task 1 Step 2；每帧求值 ✅ Task 1 Step 4；
 白描边（正交维度）✅ Task 1 Step 3；team_game 接线 ✅ Task 2 Step 1/2；1v1/大乱斗不变 ✅ 相⑥；
 未知队号统一 ✅ Task 2 Step 3 + Task 4 那两条函数体断言；验收判据 2（新渲染断言 + 反证）✅ Task 3 Step 2；
-判据 3（既有探针全绿）✅ Task 4 Step 3。
+判据 3（既有探针全部通过）✅ Task 4 Step 3。
 
 **2. 占位符扫描**：无 TBD / "类似 Task N"；每处改动都给了完整代码与确切锚点。
 唯一一处"照抄既有写法"是 Task 4 Step 1 的函数体取法 —— 那是**刻意的**（同文件的 ⑨② 已经有

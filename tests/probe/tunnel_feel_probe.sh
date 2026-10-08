@@ -8,7 +8,7 @@
 #   bash tests/probe/tunnel_feel_probe.sh --seconds=60
 #   bash tests/probe/tunnel_feel_probe.sh --analyze-only            # 仅根据已有日志生成分析报告
 #
-# 测试判据: 各实例日志输出包含 `TUNNEL FEEL [<side>]: OK`。
+# 测试验收标准： 各实例日志输出包含 `TUNNEL FEEL [<side>]: OK`。
 #
 # 目录隔离架构:
 #   测试运行于 `tests/multiplayer/<mode>/inst<N>/` 独立子目录下，分别存放：
@@ -90,8 +90,8 @@ if [ "$ANALYZE_ONLY" = "0" ]; then
   #   日志里于是出现空洞与陈旧行(与仓里各探针同一条纪律)。
   rm -f "$OUT"/*.log
 
-  # 日志走 **shell 重定向**而不是 Godot 的 `--log-file`:`--log-file` 是**带缓冲**的,
-  # 房号那行在轮询窗口内可能还没落盘 -> 拿到空房号 -> 整跑白等(实测踩过)。
+  # 日志走 shell 重定向而不是 Godot 的 `--log-file`:`--log-file` 是带缓冲的,
+  # 房号那行在轮询窗口内可能还没落盘 -> 拿到空房号 -> 完整测试运行无效等待(实测踩过)。
   # 任务控制关掉(`set +m`)以免 job 通知混进日志。
   start_inst() {   # $1=序号,其余=探针参数;回显 pid
     local i="$1"; shift
@@ -102,8 +102,8 @@ if [ "$ANALYZE_ONLY" = "0" ]; then
   HOST_PID=$(start_inst 0 --side=host --mode="$MODE" --expect=$((GUESTS + 1)) --team=1 --seconds="$SECONDS_PLAY" --netstat)
   echo "[feel] 起房主(pid=$HOST_PID)"
 
-  # - 等房号:房主建完房会打「PROBE[host]: 房间号 = NNNNN」。客机必须拿**真房号**去加入
-  #   (手敲假号会走"房间不存在",而那条路**不会**起隧道 -> 客机永远进不去,像隧道坏了)。
+  # - 等房号:房主建完房会打「PROBE[host]: 房间号 = NNNNN」。客机必须拿真房号去加入
+  #   (手敲假号会走"房间不存在",而那条路不会起隧道 -> 客机永远进不去,像隧道坏了)。
   echo "[feel] 等房主建房(最多 60s)…"
   CODE=""
   for _ in $(seq 1 120); do

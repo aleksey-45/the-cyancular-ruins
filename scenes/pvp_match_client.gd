@@ -1023,7 +1023,7 @@ func _live_self_drops() -> Array:
 
 
 # ── 断线重连(2026-09-17;spec §3.4 **路径甲**:局内自动重连)──
-# 「与 worker 的连接闪断」→ 自己连回去、重新认领 role、重置本地 C2 —— **不切场景、不重建世界**。
+# 「与服务端的连接闪断」→ 自己连回去、重新认领 role、重置本地 C2 —— **不切场景、不重建世界**。
 # (路径乙"回大厅后回局、重建场景"是 spec §3.5,归下一阶段,不在本文件。)
 #
 # - 触发点只有"服务器断开"一条(`NetBus.local_server_message`,由 `multiplayer.server_disconnected`
@@ -1068,7 +1068,7 @@ var _banner: StatusBanner = null
 # 两个子类各自 `_ready` 里调一次(与 `_subscribe_ground_weapons()` 并列)。
 func _subscribe_reconnect() -> void:
 	NetBus.local_server_message.connect(_on_server_message)
-	# --worker 在宽限期内接受 reclaim 后会**重发一条 match_start**(载荷与首次开局同源)。
+	# 服务端在宽限期内接受 reclaim 后会**重发一条 match_start**(载荷与首次开局同源)。
 	#   **实读确认**:对局里 `local_match_start` 此前**零订阅者** —— 它唯一的消费者是
 	#   `lobby_page._on_match_start`(统一大厅 `mp_lobby` 的基类),而那个页面在对局
 	#   场景里**不在树上** → 这条信号到对局里是**静默 no-op**。所以"重连成功"的收尾必须在这里接
@@ -1132,7 +1132,7 @@ func _begin_reconnect() -> void:
 		_reconnect_started_ms = Time.get_ticks_msec()
 	# - 菜单开着**先不动,但不是放弃**(放弃会把真掉线也一起漏掉)。注意： 2026-09-17 订正本守卫的
 	#   理由:原先写的是"按 ESC →「回到主菜单」也走 `NetBus.stop()`,此刻接着重连会在回主菜单的
-	#   路上把连接接回 worker" —— **那个前提不成立**:`NetBus.stop()` 把 `multiplayer_peer` 置空,
+	#   路上把连接接回服务端" —— **那个前提不成立**:`NetBus.stop()` 把 `multiplayer_peer` 置空,
 	#   引擎在 `set_multiplayer_peer` 里先 `clear()`、`last_connection_status` 当场复位成
 	#   DISCONNECTED,CONNECTED→DISCONNECTED 那一跃**从未被观测到** → `server_disconnected`
 	#   (本文件 `_on_server_message` 的唯一上游)**根本不会发**;而且 `PauseMenu.go_menu()` 走的是
@@ -1140,14 +1140,14 @@ func _begin_reconnect() -> void:
 	#   这条路径不存在。
 	#   - 守卫**仍然保留**,理由换成成立的这一条:**菜单开着时真掉线是可能的**(服务器踢人 /
 	#   网络断),而那一刻的重连要**推迟到关菜单**再发 —— 玩家下一秒可能就点「回到主菜单」,
-	#   先把连接接回 worker 再走人,就会留下"人已走、role 仍被占"的幽灵(对手那边卡死、无报错)。
+	#   先把连接接回服务端再走人,就会留下"人已走、role 仍被占"的幽灵(对手那边卡死、无报错)。
 	#   推迟的账记在 `_pending_disconnect` 上,由 `_recheck_disconnect()` 在关菜单时补。
 	#   (另一侧:`_exit_tree` 兜"重连已经在飞、玩家又按 ESC 走了"。)
 	if _menu_open:
 		return
 	_pending_disconnect = false
 	if PvpSession.token == "" or PvpSession.worker_port <= 0:
-		_abort_reconnect("重连失败(无会话令牌)")   # 原版 worker / 老大厅 → 优雅降级
+		_abort_reconnect("重连失败(无会话令牌)")   # 无对局端口/令牌 → 优雅降级
 		return
 	_reconnecting = true
 	# - 阶段 3(3.2 / 3.4):**断开一被侦测到就亮横幅**,而不是等某次重试失败之后。
@@ -1157,7 +1157,7 @@ func _begin_reconnect() -> void:
 	_retry_connect.call_deferred()
 
 
-# 连一轮(先把上一轮拆干净)。-  与 `lobby_page` 转连 worker 那一处相同机制:
+# 连一轮(先把上一轮拆干净)。- 与 `lobby_page` 连接对局端口那一处相同机制:
 # `start_client` 的地址/端口取自 `PvpSession`(大厅填好的,不重新走大厅)。
 func _retry_connect() -> void:
 	if not _reconnecting:
@@ -1200,7 +1200,7 @@ func _on_reconnect_failed() -> void:
 func _try_reclaim() -> void:
 	if not _reconnecting:
 		return   # 期间已收场(超时/已离开) → 不发
-	# 注意： **本条连接上只发一次**(本功能最要害的不变量):worker 接受第一次时就 `_grace.leave(role)`
+	# 注意： **本条连接上只发一次**(本功能最要害的不变量):服务端接受第一次时就 `_grace.leave(role)`
 	#   了,同一条连接上再发一次,进 `_on_reclaim` 的判据②必不成立 → 它**踢连接**。
 	#   这一行是**保底处理**:正常路径由 `_retry_connect` 每次重连把旧的一次性回调摘干净来保证
 	#   (见那里的注释),但"只发一次"这件事值得在发的地方再写死一次。
@@ -1210,7 +1210,7 @@ func _try_reclaim() -> void:
 	_attempt_started_ms = 0
 	_reclaim_sent = true
 	NetBusExt.rpc_id(1, "reclaim_role", PvpSession.role, PvpSession.token)
-	# - 等 worker 回的 match_start(它带 spawn/map_path)。等到了才算成功,见 _on_resumed。
+	# - 等服务端回的 match_start(它带 spawn/map_path)。等到了才算成功,见 _on_resumed。
 	_schedule_reconnect_retry()
 
 
@@ -1243,7 +1243,7 @@ func _on_reconnect_retry_tick() -> void:
 		_abort_reconnect("重连超时,对局已结束")
 		return
 	# 注意： **同一个 role 只许发一次 reclaim**(本功能最易写错、且症状最怪的一处):
-	#   worker 接受第一次时就 `_grace.leave(role)` 了,第二次进 `_on_reclaim` 的判据②
+	#   服务端接受第一次时就 `_grace.leave(role)` 了,第二次进 `_on_reclaim` 的判据②
 	#   ("该 role 必须在宽限期里")必不成立 → 它**踢连接**。表现是"刚重连上几秒又断",
 	#   看着像网络抖动,实则是自己把自己踢了,而且因为 token 是对的,查 token 查不出问题。
 	#   判据:这条连接**还活着**、且**已发过** reclaim → 该做的是**等**它的 match_start
@@ -1264,7 +1264,7 @@ func _on_reconnect_retry_tick() -> void:
 	_retry_connect()
 
 
-# worker 接受 reclaim 后重发的那条 match_start 到达 → 重连成功。
+# 服务端接受 reclaim 后重发的那条 match_start 到达 → 重连成功。
 func _on_match_start_event(_role: int, _spawn: Vector2i, _map_path: String) -> void:
 	# 非重连态收到它 = 首次进场那一份(由 `lobby_page` 消费;本场景那时还没建出来)或异常来源,
 	# 两种都**不动本地世界** —— 本路径不重建场景,故 role/spawn/map_path 一个都不回写
@@ -1282,7 +1282,7 @@ func _on_resumed() -> void:
 	_reclaim_sent = false
 	_attempt_started_ms = 0
 	_set_status("")   # 重连成功 → 收起横幅(阶段 3)
-	# - 必须重置:worker 在 reclaim 时把 `_ack_seq[role]` 归 0 重协商锚点,而客户端这边的 `_acked`
+	# - 必须重置:服务端在 reclaim 时把 `_ack_seq[role]` 归 0 重协商锚点,而客户端这边的 `_acked`
 	#   还停在断线前那个数 —— 不重置的话新快照的 ack 一律 `<= _acked`,`on_authoritative` 全数丢弃
 	#   (C2 静默失效,要等 seq 重新爬过断线前那个数才恢复),同时环里那些断线前的记录会被当成
 	#   未确认输入重放,与服务器的新锚点错位。
@@ -1314,7 +1314,7 @@ func _on_resumed() -> void:
 
 # 「对手已离开」是**终局**信号:把在飞的重连循环停掉(并收起状态横幅,见 Task 4)。
 #
-# 注意： 为什么必须有它 —— worker 收场是「先发 `opponent_left`、紧接着 `quit(0)`」,两条消息
+# 注意： 为什么必须有它 —— 对局宿主收场是「先发 `opponent_left`、紧接着清理会话」,两条消息
 #   (可靠通知 + ENet 断开)几乎是同一拍到达客户端,**到达顺序不保证**。于是有两种时序:
 #     - 通知先到:`_on_opponent_left` 置 `_match_ended = true`  ->  随后那条 `服务器断开` 被
 #       `_on_server_message` 的 `if _match_ended or _reconnecting: return` 挡住,**重连循环
@@ -1346,7 +1346,7 @@ func _abort_reconnect(reason: String) -> void:
 
 # 场景离开(ESC / MATCH_OVER / 对手离开 / 进程退出)→ 停掉在飞的重连。
 # - 必须有:`_reconnecting` 期间玩家仍可按 ESC 离场,不停的话重连循环会**从主菜单**继续跑,
-#   连上还 reclaim 成功 → worker 认为这个 role 有人管(正是 `_begin_reconnect` 那道守卫要防的
+#   连上还 reclaim 成功 → 服务端认为这个 role 有人管(正是 `_begin_reconnect` 那道守卫要防的
 #   同一个后果,只是入口在另一侧:那边防"开始时",这边防"开始后")。
 # - 只在**真在重连**时断连:本函数跑在新场景 `_ready` **之后**(`safe_change_scene` 先 add 新场景
 #   再摘旧场景),无条件 `NetBus.stop()` 会将新场景刚建立的连接意外断开。

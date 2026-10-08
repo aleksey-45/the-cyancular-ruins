@@ -3,14 +3,14 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 把逐人统计（含 `deaths` / `dealt` / `taken` / `assists` / 惩罚项）从 `TeamHost` **上提到
-`MatchState` 底座**，并把计分从「按敌方存活人数加权 + 死亡不扣分」换成**三模式通用、含死亡与惩罚**的
+`MatchState` 基础层**，并把计分从「按敌方存活人数加权 + 死亡不扣分」换成**三模式通用、含死亡与惩罚**的
 一套（`kscore` / `acs` / `mvp` 全部读时推导）。
 
 **Architecture:** 三层分工，缺一层都会让口径漂：
 ① **纯逻辑层** 新建 `core/sim/score_rules.gd`（`ScoreRules`，无 autoload、`-s` 可测）—— 公式与权重
 **只有这一份**，它能被 `-s` 冒烟直接钉性质；
-② **底座** `MatchState` 持原始计数 + 读时推导（`_kscore_of` / `_acs_of` / `stats_payload` / `mvp_role`），
-由此三模式共用（1v1 与大乱斗的**写入点**归计划 3，本计划只保证底座接得住）；
+② **基础层** `MatchState` 持原始计数 + 读时推导（`_kscore_of` / `_acs_of` / `stats_payload` / `mvp_role`），
+由此三模式共用（1v1 与大乱斗的**写入点**归计划 3，本计划只保证基础层接得住）；
 ③ **写入钩子** `MatchCombat._on_player_hit`（`took_hit` 的唯一消费者）—— 三模式**已经**都接在这条线上
 （`MatchHost._wire_hit_feedback`），故 `dealt`/`taken` 自动覆盖三模式，一行都不用改各模式的 `_ready`。
 
@@ -38,7 +38,7 @@
   本计划上提 `_left` / `_stats` / `_left_round` / `ATTRIB_WINDOW` / `ATTRIB_FRESH_MS`，
   **同一步里必须删掉子类那几行声明**（`server/team_host.gd:28,71,78,79,80`、
   `server/royale_host.gd:26,253`）。
-- ★ **底座代码里不得出现 `_attributed_killer` 这个字面量**（`tests/kh_l5_probe.gd:544-549` 的反向
+- ★ **基础代码里不得出现 `_attributed_killer` 这个字面量**（`tests/kh_l5_probe.gd:544-549` 的反向
   断言按**剥注释后的子串**扫基类并集，命中即红，且它把 5 个名字列为"子类方法不得进基类"）。
   注释会被剥掉、安全；写进**字符串**就红。
 
@@ -50,12 +50,12 @@
 |---|---|---|
 | `core/sim/score_rules.gd` | 计分口径（纯静态、无 autoload、`-s` 可测） | **全新建** |
 | `tests/score_rules_smoke.gd` | `-s` 冒烟：钉**性质**（不是数值） | **全新建** |
-| `server/match_state.gd` | 对局底座：状态 + 出生点 + RPC 助手 | **加**逐人统计的字段与推导口（从 `TeamHost` 上提）；**加** `ATTRIB_WINDOW`/`ATTRIB_FRESH_MS` |
+| `server/match_state.gd` | 对局基础层：状态 + 出生点 + RPC 助手 | **加**逐人统计的字段与推导口（从 `TeamHost` 上提）；**加** `ATTRIB_WINDOW`/`ATTRIB_FRESH_MS` |
 | `server/match_combat.gd` | 子弹/爆炸/光束裁决域 | `_on_player_hit` **加** `dealt`/`taken` 累计（从 `TeamHost` 上提） |
 | `server/team_host.gd` | 3v3 权威对局 | **删**逐人统计那一整段 + 旧公式 + `_on_player_hit` 覆写 + 5 处重复声明 |
 | `server/royale_host.gd` | 大乱斗权威对局 | **删** `var _left` 与 `const ATTRIB_WINDOW`（上提到基类） |
 | `tests/team_host_probe.gd` | 3v3 权威探针（⑬ 一族 = 逐人数据/ACS/MVP） | **改写** ⑬d/⑬e/⑬f/⑬g/⑬h 的期望值与夹具、`dmg`→`dealt`、新增"旧公式已删"的负向断言 |
-| `CLAUDE.md` | 项目约定 | **订正** `stats` 载荷的字段集与计分口径 |
+| `CLAUDE.md` | 项目约定 | **订正** `stats` 数据包的字段集与计分口径 |
 
 ---
 
@@ -250,8 +250,8 @@ git commit -m "feat(stats): 三模式通用计分口径 ScoreRules(纯静态 + �
 **Interfaces:**
 - Consumes: Task 1 的 `ScoreRules`。
 - Produces（计划 2 / 3 依赖）:
-  - 底座字段 `_stats`（原始计数）/ `_left` / `_left_round`、常量 `ATTRIB_WINDOW` / `ATTRIB_FRESH_MS`
-  - 底座函数 `_stat_entry(role) -> Dictionary`、`_kscore_of(role) -> int`、`_acs_of(role) -> float`、
+  - 基础层字段 `_stats`（原始计数）/ `_left` / `_left_round`、常量 `ATTRIB_WINDOW` / `ATTRIB_FRESH_MS`
+  - 基础层函数 `_stat_entry(role) -> Dictionary`、`_kscore_of(role) -> int`、`_acs_of(role) -> float`、
     `_rounds_for(role) -> int`、`_roster() -> Dictionary`、`stats_payload() -> Dictionary`、
     `mvp_role() -> int`、`_fresh_attacker_role(victim_role) -> int`、
     `_attributed_role_within(victim, window_ms) -> int`、`_record_down(victim_role, killer_role) -> void`
@@ -506,7 +506,7 @@ Expected（改生产**之前**）—— 下面这些**逐条**应当红（这是
 后者在旧生产里是 `Invalid call. Nonexistent function` ⇒ `_run()` 当场结束、`_finish()` 照打
 `ALL-OK` = **假绿**（本仓的已知陷阱；这条差别就是"探针真的会红"与"探针假绿"的差别）。
 
-- [ ] **Step 3: 底座加字段与推导口**
+- [ ] **Step 3: 基础层加字段与推导口**
 
 `server/match_state.gd`，在 `var _last_round_winner := 0`（`:108`）之后加：
 
@@ -733,7 +733,7 @@ func _on_player_hit(source_pos: Vector2, damage: int, role: int) -> void:
 5. **整段删除** `:549-561`（`_attributed_role_within`，上提到基类）。
 6. **整段删除** `:667-837`（`_stat_entry` / `kill_bonus_score` / `_fresh_attacker_role` /
    `_on_player_hit` / `_record_down` / `_enemy_alive_including_victim` / `_rounds_for` / `_acs_of` /
-   `_roster` / `stats_payload` / `mvp_role`）—— 全部由底座/`MatchCombat` 提供。
+   `_roster` / `stats_payload` / `mvp_role`）—— 全部由基础层/`MatchCombat` 提供。
    ★ 该段上方 `:652-663` 的说明注释（用户三条裁定）**不要一起删**：把"逐人数据 / ACS / MVP"
    那三条裁定改写成一段 6 行的指针注释（"这套口径已上提到 `MatchState`，见
    `core/sim/score_rules.gd` 与 `_stat_entry`；本文件只留 3v3 特有的两处写入
@@ -774,7 +774,7 @@ Expected: 冒烟红在 **`★ 死亡更多 ⇒ ACS 更低 不成立`**；探针�
 出来的（dealt 1300 vs 300 正是为了抵掉 `5×50` 与 `1×50` 的差），死亡项一撤，`460 vs 260`，
 **前提当场不成立**。那是同一个成因的连带，不是第二处独立缺陷（确认成因后一起还原）。
 ★ 两步缺一不可：只跑冒烟证明不了"生产真的走了 `ScoreRules`"（探针那条是生产路径的读数）。
-确认后**改回来**，再跑一次上一步确认全绿。
+确认后**改回来**，再跑一次上一步确认全部通过。
 
 - [ ] **Step 8: 提交**
 
@@ -807,11 +807,11 @@ for t in score_rules_smoke team_room_smoke enemy_logic_smoke match_result_payloa
 done
 "$GODOT" --headless --path . --quit-after 3600 res://tests/kh_l5_probe.tscn 2>&1 | grep -E "KH L5|FAIL"
 ```
-Expected: 全绿（`TEAM HOST: ALL-OK` / `TEAM TABLE: ALL-OK` / `TEAM DISCONNECT: ALL-OK` /
+Expected: 全部通过（`TEAM HOST: ALL-OK` / `TEAM TABLE: ALL-OK` / `TEAM DISCONNECT: ALL-OK` /
 `LASER TEAM PROBE: ALL-OK` / `SCORE RULES: ALL-OK` / `TEAM ROOM SMOKE: ALL-OK` / `SMOKE OK` /
 `MATCH RESULT PAYLOAD: ALL-OK` / `KH L5 PROBE: ALL-OK`）。
 ★ `kh_l5_probe` **必须复跑**：本计划往 `match_state.gd` / `match_round.gd` / `match_combat.gd`
-（都在它的 `HOST_SRC` 并集里）加了东西，它的反向断言（5 个名字不得进基类）与 C2 四条都在这一跑里。
+（都在它的 `HOST_SRC` 并集里）加了东西，它的否定断言（5 个名字不得进基类）与 C2 四条都在这一跑里。
 
 - [ ] **Step 2: 登记进 CLAUDE.md**
 
@@ -844,9 +844,9 @@ CLAUDE.md 的 3v3 小节里另有一条独立 bullet（**不是**上面那条 `s
 - **★ `ATTRIB_FRESH_MS = 8ms` 的成立前提是"归因与伤害在**同一调用栈**":… 该提示写在 `team_host.gd` 的 `ATTRIB_FRESH_MS` 上方。
 ```
 
-本计划把这个常量连同**它上方那整段契约注释**搬到了 `server/match_state.gd`（Task 2 Step 3）——
+本计划把这个常量连同**它上方那整段接口规范注释**搬到了 `server/match_state.gd`（Task 2 Step 3）——
 不改这一句的话，权威落点会指向一个**已经不存在的注释**（后面的人按它去 `team_host.gd` 找，
-找不到就会以为那条契约被删了，从而把"延迟扣血要自己重写归因"这条要求一起丢掉）。
+找不到就会以为那条接口规范被删了，从而把"延迟扣血要自己重写归因"这条要求一起丢掉）。
 把结尾那句改成：
 
 ```markdown
@@ -892,5 +892,5 @@ team_kills) -> int`（Task 1 定义）与 `_kscore_of` 的调用实参**逐位�
 - 归因 8ms 的"同一帧内先被敌人打中再自己炸自己"错记（承自既有实现，`ATTRIB_FRESH_MS` 上方已登记）。
 - 加权的**探针性质**（"两种敌方存活人数下增量相等"）只在有人**重新加回**加权时才红；
   它钉的是"公式不再看那个量"，不是"公式一定对"。
-- 1v1 / 大乱斗此时**只在底座接得住，还没有任何写入**（`deaths`/`dealt`/`taken` 都靠各模式的
+- 1v1 / 大乱斗此时**只在基础层接得住，还没有任何写入**（`deaths`/`dealt`/`taken` 都靠各模式的
   倒地边沿与 `_on_player_hit`；`_on_player_hit` 是共用的、已生效，倒地边沿归计划 3）。

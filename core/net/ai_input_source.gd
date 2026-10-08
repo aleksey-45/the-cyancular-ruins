@@ -3,7 +3,7 @@ extends PlayerInput
 
 # AI 玩家的"手柄"(实验性 AI 补位,test-ai 分支):字段由服务端 AiNavigator 每帧写,
 # player/weapon 经基类接口读取——与 PacketInputSource/DemoInputSource 同一套注入机制。
-# 仅 worker 侧存在;客户端对 AI 玩家的显示走快照副本,无需感知。
+# 仅服务端对局宿主侧存在;客户端对 AI 玩家的显示走快照副本,无需感知。
 
 var axis := 0.0               # 水平移动 -1/0/1
 var aim := Vector2.RIGHT      # 瞄准方向(世界单位向量;get_aim_dir_override 注入)

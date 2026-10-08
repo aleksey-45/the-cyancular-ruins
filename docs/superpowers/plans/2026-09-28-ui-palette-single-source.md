@@ -1,10 +1,10 @@
-# UI 调色板单一来源（底板色 + 队色）实现计划
+# 统一 UI 调色板配置（底板色 + 队色）实现计划
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 底板色与队色各收敛到**一个数值源**；两个结构上派生不了的 `.tscn` 落点用守卫把「改漏」从**静默**变成**响亮**。
 
-**Architecture:** 调色板 `ui/ui_factory.gd` 新增 `C_PLATE` 作为底板色的唯一源 → 四个 `.gd` 落点改成**别名**（`const PLATE_COLOR := UiFactory.C_PLATE`，别名里**没有字面量** ⇒ 不构成第二个源）→ 两个 `.tscn` 的 `bg_color` **结构上引用不到 GDScript 的 const**（它是 `StyleBoxFlat` 的属性，不是资源引用），故**保留字面量 + 新增一条 `-s` 守卫读文本钉住逐位相等** → `BODY_BASE_COLOR` 同样改成 `C_TEAM_A` 的别名。
+**Architecture:** 调色板 `ui/ui_factory.gd` 新增 `C_PLATE` 作为底板色的唯一源 → 四个 `.gd` 落点改成**别名**（`const PLATE_COLOR := UiFactory.C_PLATE`，别名里**没有字面量** ⇒ 不构成第二个源）→ 两个 `.tscn` 的 `bg_color` **结构上引用不到 GDScript 的 const**（它是 `StyleBoxFlat` 的属性，不是资源引用），故**保留字面量 + 新增一条 `-s` 守卫读文本断言约束逐位相等** → `BODY_BASE_COLOR` 同样改成 `C_TEAM_A` 的别名。
 本计划**不引入 Theme / `.tres`、不改任何渲染初始化顺序**（那是 spec §7 明确不做的事）。
 
 **Tech Stack:** Godot 4.7.1（标准版）、GDScript、`ScanUtil`（`tests/lib/scan_util.gd`，纯静态、无 Node 依赖、`-s` 可用）。
@@ -29,7 +29,7 @@
   别用 `-m "…"`（双引号会**静默吞掉**反引号与 `$`）。
 - **字号必须是 16 的倍数**（`kh_l4`/`kh_l5` 扫 `res://ui` 与 `res://tests`）。本计划**不引入任何新字号**。
 - ★★ **本计划会改 `res://ui` 与 `res://tests` 下的文件**，而 `kh_l5_probe` 的「新接口归属」扫描
-  （含反向断言：基类不得含子类方法）与字号规范都覆盖这两个目录 ⇒ Task 4 必须跑 `kh_l4` / `kh_l5`。
+  （含否定断言：基类不得含子类方法）与字号规范都覆盖这两个目录 ⇒ Task 4 必须跑 `kh_l4` / `kh_l5`。
 - 改 GDScript **只需重导出**，不要重编裁剪模板。
 
 ---
@@ -46,7 +46,7 @@
 | `ui/pvp_hud.tscn` | 1v1 HUD | `Plate` 的 `bg_color` **原样保留**，加一行 `;` 注释说明它是「副本」 |
 | `ui/team_hud.tscn` | 3v3 HUD | 同上 |
 | `scenes/pvp_match_client.gd` | PvP 客户端基类（染色 / 快照消费） | `BODY_BASE_COLOR` 改**别名** |
-| `tests/ui_palette_single_source_smoke.gd` | **新守卫**：调色板单一来源 | 全新建（`-s`、headless） |
+| `tests/ui_palette_single_source_smoke.gd` | **新守卫**：统一调色板配置 | 全新建（`-s`、headless） |
 | `CLAUDE.md` | 项目说明 | §UI 那段「已知落点 + grep 命令」改写成指向唯一源与守卫 |
 
 ---
@@ -382,7 +382,7 @@ Expected：末行 `UI PALETTE: FAIL(2 条)`，且**只剩 `③` 的那两条** �
 
 ---
 
-### Task 3: `BODY_BASE_COLOR` 改别名 + 两个 `.tscn` 加副本注释 → 守卫全绿
+### Task 3: `BODY_BASE_COLOR` 改别名 + 两个 `.tscn` 加副本注释 → 守卫全部通过
 
 **Files:**
 - Modify: `scenes/pvp_match_client.gd:67`
@@ -391,7 +391,7 @@ Expected：末行 `UI PALETTE: FAIL(2 条)`，且**只剩 `③` 的那两条** �
 
 **Interfaces:**
 - Consumes: `UiFactory.C_TEAM_A`（既有，`ui/ui_factory.gd:132`）、`UiFactory.C_PLATE`（Task 2 建的）。
-- Produces: 守卫全绿。
+- Produces: 守卫全部通过。
 
 - [ ] **Step 1: `BODY_BASE_COLOR` 改成 `C_TEAM_A` 的别名**
 
@@ -435,7 +435,7 @@ Expected: `UI PALETTE: ALL-OK`（**没有**任何 `  FAIL ` 行）。
 
 - [ ] **Step 4: 反向验证 —— 证明 ④ 这条断言**真能红**（不是空转）**
 
-★ 这一步是**变异验证**（本仓纪律：每条"会红"的断言都要证明它**真能红**，"加了断言之后全绿"不是证据）。
+★ 这一步是**变异验证**（本仓纪律：每条"会红"的断言都要证明它**真能红**，"加了断言之后全部通过"不是证据）。
 
 把 `ui/pvp_hud.tscn` 的 `bg_color = Color(0, 0, 0, 0.1)` 临时改成 `bg_color = Color(0, 0, 0, 0.2)`，
 重跑 Step 3 的命令。Expected：出现
@@ -509,7 +509,7 @@ Expected: 逐个 `SMOKE OK` / `CONTRACT OK` / `WEAPON_INVENTORY OK` / `KH L* PRO
 `GROUND CLIENT PROBE: ALL-OK`，末行 `UI PALETTE: ALL-OK`。**无 FAIL。**
 
 ★ `kh_l5_probe` 与 `kh_l4_probe` 是**必须**的：它们扫 `res://ui` 与 `res://tests` 的字号规范与
-「新接口归属」（含反向断言：**基类不得含子类方法**），而本计划在这两个目录里都改了文件。
+「新接口归属」（含否定断言：**基类不得含子类方法**），而本计划在这两个目录里都改了文件。
 ★ `kh_l6_probe` 必须绿：它第 15 条钉的 `NAME_COLOR` **本计划一个字都没动** —— 它红了说明越界了。
 
 - [ ] **Step 2: 请用户跑真渲染探针并读图**
@@ -593,8 +593,8 @@ EOF
 | §4.4 `CLAUDE.md` 同步改写 | Task 4 Step 3 |
 | §5.1 单向派生 | 守卫 ② （Task 2 Step 6 观察 ① ② 转绿） |
 | §5.2 改漏会红 | Task 3 Step 4（定向变异） |
-| §5.3 既有守卫全绿 | Task 4 Step 1（agent 跑）+ Step 2（用户跑真渲染） |
-| §5.4 人眼验收：像素不变 | Task 4 Step 2 |
+| §5.3 既有测试用例全部通过 | Task 4 Step 1（agent 跑）+ Step 2（用户跑真渲染） |
+| §5.4 人工视觉核验：像素不变 | Task 4 Step 2 |
 | §7 不引 Theme/`.tres`、不改渲染初始化 | **全计划无此类改动**（Global Constraints 与 Task 3 的提交信息都写明） |
 
 **2. 占位符扫描**：无 TBD / "类似 Task N" / "适当处理"。每个改动都给了**完整代码块**与确切锚点
@@ -607,6 +607,6 @@ EOF
   `LITERAL_ALLOWED` / `SCAN_DIRS` 与两个助手 `_rhs_of` / `_tscn_bg_color` / `_norm` 在 Task 1 内
   自洽、且后续 Task 只通过**跑它**使用，不引用其内部名字。
 
-**4. 已知的判据上限（从 spec §4.3 带过来，如实登记）**：守卫只钉那 **6 处**具名落点 + 一条反向断言；
-将来新增第 7 处若写成**第三种 `const` 名字**，反向断言抓不到（② 只钉那四个具名文件）。
+**4. 已知的判据上限（从 spec §4.3 带过来，如实登记）**：守卫只钉那 **6 处**具名落点 + 一条否定断言；
+将来新增第 7 处若写成**第三种 `const` 名字**，否定断言抓不到（② 只钉那四个具名文件）。
 真接能力系统/新增 HUD 时，第一个要接的线是**给守卫补一个落点**。

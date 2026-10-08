@@ -16,7 +16,7 @@
 |---|---|---|
 | Task 1 立探针（先红） | ✅ 先红如实达成：`royale_game 没有 _rollback 字段` + A① 7 处残留 | `7a42430` |
 | Task 2 `royale_game` 接 C2 | ✅ 预期状态精确达成（只剩 A① 红） | `1d1cb05` |
-| Task 3 删 §3A/§3B | ✅ 探针 `ALL-OK`；三个 1v1 冒烟全绿；全仓 grep 只剩注释 | `1095727` |
+| Task 3 删 §3A/§3B | ✅ 探针 `ALL-OK`；三个 1v1 冒烟全部通过；全仓 grep 只剩注释 | `1095727` |
 | Task 4 改 `kh_l6_probe` | ✅ `KH L6 PROBE: ALL-OK`（含新判据自检） | `339a329` |
 | Task 5 反证与收尾 | ✅ 四条反证全部实跑（见下） | 本笔 |
 
@@ -57,7 +57,7 @@ B 的客户端消失、A 随即"胜利"。已确定的结构：A 的胜利是 B 
   —— 两个机器人在 11s 里一次没打中对方，所以"可跑"≠"可靠触发"，那条路径仍未被真正压到。
 - 客户端子进程 stdout 父进程看不到（Windows `CreateProcess` 不继承句柄）→ 已给 spawn 加 `--log-file`，
   并加 5s 心跳；**这两个是当时唯一能归因的手段**，没有它们我只看到"进程没了、结果也没写"。
-- 探针退出时偶发一次原生段错误（仓库既有的"游戏世界退役"问题，在结果落盘之后），不影响判据。
+- 探针退出时偶发一次原生段错误（仓库既有的"游戏世界退役"问题，在结果写入磁盘之后），不影响判据。
 
 ---
 
@@ -109,7 +109,7 @@ B 的客户端消失、A 随即"胜利"。已确定的结构：A 的胜利是 B 
 |---|---|---|
 | `tests/royale_c2_probe.tscn` / `.gd` | **新建**。探针入口：大厅/裁判进程 + 两个客户端子进程（`--role=c1|c2`），收结果文件 | Create |
 | `tests/royale_c2_watcher.gd` | **新建**。客户端子进程里挂 root 的观察者：驱动真大厅 → 换场后读真 `royale_game` 的 C2 状态 + 按 K 自杀 → 断言 | Create |
-| `scenes/royale_game.gd` | 大乱斗客户端。接 C2（seq / rollback / 输入锁收口 / 不消费自己那份世界包） | Modify |
+| `scenes/royale_game.gd` | 大乱斗客户端。接 C2（seq / rollback / 输入锁统一收拢 / 不消费自己那份世界包） | Modify |
 | `scenes/player/player.gd` | `server_rendered` 一族整体删除（§3A） | Modify |
 | `scenes/pvp_client.gd` | `LOCAL_PREDICTION_ENABLED` 开关与保底分支删除（§3B） | Modify |
 | `tests/kh_l6_probe.gd` | 第 2 条按新形状重写；第 5/6 条（开关存在性）删除 | Modify |
@@ -720,14 +720,14 @@ git commit -m "test(royale): 大乱斗 C2 真链路探针(先红)——自杀→
 ### Task 2: `royale_game.gd` 接入 C2（§4.3）
 
 **Files:**
-- Modify: `scenes/royale_game.gd`（字段区 / `_ready` / `_physics_process` / `_on_snapshot_world` / 新增 `_on_snapshot_own` / 输入锁收口）
+- Modify: `scenes/royale_game.gd`（字段区 / `_ready` / `_physics_process` / `_on_snapshot_world` / 新增 `_on_snapshot_own` / 输入锁统一收拢）
 
 **Interfaces:**
 - Consumes: `PredictionRollback`（`bind(p)` / `map_px` / `note_post_step(seq, capture)` / `reconcile()` / `note_input(seq, pkt)` / `on_authoritative(ack, c2)`）—— 全部已存在，本批不改控制器
 - Produces: `royale_game._rollback`（探针 Task 1 读它）；`royale_game._refresh_input_lock()`
 
 > 本任务做完**探针不会整体转绿** —— A① （生产目录零残留）还有 `player.gd` / `pvp_client.gd` 那几处，
-> 要等 Task 3 删。**预期状态：只剩 A① 的红**，A② 与整个 B 组必须全绿。
+> 要等 Task 3 删。**预期状态：只剩 A① 的红**，A② 与整个 B 组必须全部通过。
 > 若还有别的红（尤其 `last_applied < 60`、`rollback_count=0`、"未收敛"、"倒地态与权威不一致"），
 > 那是**真问题**，别往下走。
 
@@ -955,7 +955,7 @@ func _on_snapshot_own(own: Dictionary) -> void:
 
 ```
 
-- [ ] **Step 8: 输入锁收口（`_refresh_input_lock`）**
+- [ ] **Step 8: 输入锁统一收拢（`_refresh_input_lock`）**
 
 把（原第 347-372 行）整个 `_on_round_state` 改为：
 
@@ -1297,10 +1297,10 @@ func _apply_local_state(data: Dictionary) -> void:
 
 > ⚠ **注记(2026-09-20;只加注记,不改上面的原文)**:这一步的结论**已被取代** —— `vel` 现在**有消费者**:
 > `player_replica` 的补间形变(squash & stretch)读 `vel.y`(空中连续项直接用它,落地推导还要
-> 「上一帧 `vel.y` 大 / 这一帧 ≈ 0」这一**对**值)。⇒ **`vel` 不得从载荷里去掉**;去掉会**静默**关掉
+> 「上一帧 `vel.y` 大 / 这一帧 ≈ 0」这一**对**值)。⇒ **`vel` 不得从数据包里去掉**;去掉会**静默**关掉
 > 对手的形变与落地效果(不报错、探针也不会红 —— 那个探针只打印、不断言 `vel` 的去留)。
 > 上面那段推理在**当时**成立(2026-09-12:`apply_server_snapshot` 刚删、副本还没读 `vel`),故原文**保留不动**;
-> 要动载荷请先读 `tests/snapshot_size_probe.gd` 顶部那段说明与
+> 要动数据包请先读 `tests/snapshot_size_probe.gd` 顶部那段说明与
 > `docs/superpowers/specs/2026-09-20-squash-stretch-design.md` §4.3。
 
 - [ ] **Step 4: 全仓 grep 确认删干净**
@@ -1312,7 +1312,7 @@ grep -rn "server_rendered\|apply_server_snapshot\|LOCAL_PREDICTION_ENABLED\|_app
 Expected: 只剩**注释里**提到这些名字的几行（说明"这里删过什么"是合法的文档，本仓有先例：
 `core/pvp_session.gd` 就有一整段讲被删掉的 `pending_*` 交接）。**一条代码行都不许剩。**
 真正的门是探针的 A① —— 它走**去注释视图**，注释既不能喂绿也不能判红。所以：
-逐条看过每一处命中都确实是注释，然后靠 Step 6 的探针转绿来收口。
+逐条看过每一处命中都确实是注释，然后靠 Step 6 的探针转绿来统一收拢。
 
 ⚠ 这条 grep **不是**判据（它会命中注释）；它只是给人看的快速核对。`tests/` 不在此列
 —— `kh_l6_probe` 里还有引用，Task 4 处理。
@@ -1333,7 +1333,7 @@ Run（**先确认 7777 空闲**）：
 ```
 Expected: `PROBE: ALL-OK`，两个结果文件都是 `OK ...`。
 
-- [ ] **Step 7: 跑 1v1 的三个 PvP 冒烟（硬门：绿变红即停）**
+- [ ] **Step 7: 跑 1v1 的三个 PvP 冒烟（硬性条件：绿报错失败即停）**
 
 Run:
 ```bash
@@ -1361,7 +1361,7 @@ git commit -m "refactor(net): 删掉服务器渲染一族与本地预测开关 �
 - Consumes: Task 3 的删除结果
 - Produces: 无（探针内部）
 
-> **为什么在本批做**（设计把它排在批次 6）：Task 3 一落地，`kh_l6_probe` 的第 5、6 条就会**变红**
+> **为什么在本批做**（设计把它排在批次 6）：Task 3 一落地，`kh_l6_probe` 的第 5、6 条就会**报错失败**
 > —— 它们钉的正是被删掉的那个开关。留着红门 = 分不清"真坏了"和"已删除"。所以本批顺手改掉。
 > §3D（`NetBusExt` 的 `local_beam_fired` 重复 RPC）、`kh_l5_probe` 第 1 条、`royale_soak_probe` 的
 > 边界说明、`CLAUDE.md` 回写仍归**批次 6**。

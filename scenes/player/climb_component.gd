@@ -114,7 +114,7 @@ func _climb_foot_offset() -> float:
 #   PvP/菜单恒 null  ->  `player_speed_mult()` 恒 1.0,与本文件"加速时爬梯/爬链也按主角时间加快"
 #   的注释自相矛盾(一下水/一上梯,加速就没了)。
 #   改成与根 `player.gd:191` **同一条判据**:有世界时间场就走它,否则读自己那个
-#   `pvp_haste_mult`(worker 与本端预测各自每帧写的同一字段)。
+#   `pvp_haste_mult`(服务端权威与本端预测各自每帧写的同一字段)。
 func _time_mult() -> float:
 	var m := 1.0
 	if TimeField.current != null:

@@ -18,7 +18,7 @@ const MATCH_MOUNT := "MatchSession.new("
 
 
 func _initialize() -> void:
-	# 加载守卫：加载失败立即退出，避免进程挂起
+	# 加载防御性校验：加载失败立即退出，避免进程挂起
 	var S: GDScript = load("res://server/match_session.gd")
 	if S == null:
 		print("DUEL SPAWN TIMEOUT SMOKE: FAIL(读不到 match_session.gd)")
@@ -96,7 +96,7 @@ func _initialize() -> void:
 	_finish(fails)
 
 
-# ────────────────────────── 源码级判据 ──────────────────────────
+# ────────────────────────── 源码级判定条件 ──────────────────────────
 
 # 静态断言：1v1 超时门控中必须包含托管标记 `_worker`
 func _check_gate(gate: String, code: String, fails: Array[String]) -> void:

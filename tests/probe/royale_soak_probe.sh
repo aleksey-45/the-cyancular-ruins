@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# 大乱斗压力探针:起大厅 + N 个跑真 royale_game 的 headless 客户端,压一局,汇总读数。
-# 用法:  bash tests/probe/royale_soak_probe.sh [客户端数] [一局秒数] [观测窗秒数]
-# 默认:  4 个客户端,一局 60s,观测窗 120s
+# 大乱斗压力探针：启动大厅服务端与 N 个无头客户端加载 royale_game 场景，执行长时间对局压测并汇总性能指标。
+# 运行方式：bash tests/probe/royale_soak_probe.sh [客户端数] [单局时长秒数] [观测窗口秒数]
+# 默认参数：4 个客户端，单局 60 秒，观测窗口 120 秒
 #
-# ⚠ Windows 下 bash `kill` 杀不死 headless Godot,会留僵尸占 7777 —— 收尾一律 taskkill 按 PID,
-#   再按端口找属主补杀(同 pvp_*_smoke.sh 的既有做法)。
-# ⚠ 崩溃判据:`grep "SOAK: ALL-OK"` **且** 没有 "SCRIPT ERROR"/"无结果文件"。
-#   只看退出码会把"没跑完"读成通过(--quit-after 之类安全网可能让它 exit 0)。
+# - Windows 环境下 bash 的 kill 命令无法完全回收无头 Godot 进程，可能遗留僵尸进程占用端口 7777；
+#   因此收尾统一通过 taskkill 按 PID 终止，并按端口占用精准清理。
+# - 测试通过验收标准：日志包含 "SOAK: ALL-OK" 且无 "SCRIPT ERROR" 或 "无结果文件" 报错。
+#   严禁仅依据退出码判定，避免因 --quit-after 超时导致的假阳性结果。
 set -u
 
 CLIENTS="${1:-4}"
@@ -20,8 +20,7 @@ LOG="tests/probe/royale_soak_probe.log"
 PYDIR="$ENV_DIR"   # 仓库根(env.sh 已算好并 cd 过去;保留别名以免动下面所有引用)
 
 echo "[soak] 检查 7777 是否空闲…"
-# - 判据**不带 `LISTENING`**:ENet 走 UDP、UDP 行没有状态列  ->  带它是**结构性恒假**
-#   (2026-09-27 实测),原先这一支的"已被占用  ->  清理"**从未触发过**。理由见 env.sh 的 lobby_alive。
+# 注意：判定条件不得过滤 LISTENING 状态（ENet 基于 UDP 协议，UDP 端口在 netstat 中无 LISTENING 状态字样）。
 if lobby_alive; then
   echo "[soak] 7777 已被占用 —— 先清理僵尸 Godot:"
   kill_port 7777

@@ -4,7 +4,7 @@ extends RefCounted
 # 进程 / 端口相关的平台工具(**仅 Windows 有效**:taskkill 与 PowerShell)。纯静态、不引 autoload。
 #
 # - 为什么收这里:同一段「按 UDP 端口找属主进程并强制终止进程」的 PowerShell 串原先在
-#   `server/worker_launcher.gd`(按端口杀 worker)与 `server/server_main.gd`(大厅启动前清残留)
+#   端口清理与 `server/server_main.gd`(大厅启动前清残留)
 #   各写一遍,**逐字相同** —— 而其中一条写法是曾遇到过此类隐患才修对的(见下),抄第二份时没有任何提示。
 #   同一个已知缺陷在本仓补过不止一次,故把「正确写法」收成一处,别再给第二次抄的机会。
 #

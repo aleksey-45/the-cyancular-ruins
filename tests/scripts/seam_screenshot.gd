@@ -1,8 +1,11 @@
 extends SceneTree
-# 接缝可视化: 玩家在右端(W-100),敌人在左端(100)——环面上仅相距 200。
-# A = 旧行为: 从 player 组摘掉锚点 → _wrap 回退绝对取模,敌人停远副本(100)→ 屏外消失。
-# B = 修复后: 锚点回归 → _wrap 锚定到玩家最近副本(2500)→ 屏内可见。
-# 需要真实渲染(非 --headless):  `Godot --path . -s Tests/seam_screenshot.gd`
+# 环面地图接缝渲染可视化测试：
+# 玩家位于地图右端（W-100），敌人物理位置位于左端（100），环面拓扑最短距离仅为 200px。
+# 对比两种处理模式：
+#   A（未启用锚定）：缺失玩家组锚点时回退至绝对坐标取模，敌人保留在左侧（100），处于视口范围外；
+#   B（启用就近锚定）：通过 GridPathfinder.anchor_to_nearest 锚定至相对玩家最近的环面副本位置（2500），视口内正常可见。
+# 运行方式（需启用图形渲染，非无头模式）：
+#   "$GODOT" --path . -s res://tests/scripts/seam_screenshot.gd
 
 func _initialize() -> void:
 	var autoload := root.get_node("GameParameters")
@@ -19,12 +22,12 @@ func _initialize() -> void:
 	var cam := Camera2D.new()
 	vp.add_child(cam)
 
-	# 玩家锚点(供 _wrap 读 group)
+	# 玩家位置锚点（供 _wrap 逻辑检索 player 分组）
 	var anchor := Node2D.new()
 	anchor.global_position = Vector2(W - 100, 200)
 	vp.add_child(anchor)
 
-	# 接缝参考线: x=0 与 x=W
+	# 绘制地图接缝参考线（x=0 与 x=W）
 	for sx in [0.0, W]:
 		var line := ColorRect.new()
 		line.size = Vector2(4, 400)
@@ -32,17 +35,17 @@ func _initialize() -> void:
 		line.color = Color(1, 0.3, 0.3, 0.9)
 		vp.add_child(line)
 
-	# 敌人: 物理上在左端副本(100),环面上紧挨玩家
+	# 敌人物理坐标位于左端（100），环面拓扑距离紧邻玩家
 	var scene: PackedScene = load("res://scenes/enemies/enemy_jump_bird.tscn")
 	var e = scene.instantiate()
 	vp.add_child(e)
 	e.global_position = Vector2(100, 200)
 
 	await process_frame
-	cam.make_current()          # 加入场景树后再设为当前相机
+	cam.make_current()          # 挂载至场景树后激活为主摄像机
 	cam.global_position = Vector2(W - 100, 200)
 
-	# ── A: 旧行为(无玩家组 → 绝对取模,停在 100,屏外) ──
+	# ── 测试阶段 A：移除锚点，验证回退至绝对取模坐标（视口外） ──
 	anchor.remove_from_group("player")
 	await process_frame
 	await process_frame
@@ -50,7 +53,7 @@ func _initialize() -> void:
 	img_a.save_png("res://tests/_seam_a_old.png")
 	print("A: 无锚点,敌人位置=", e.global_position, " → 应屏外消失")
 
-	# ── B: 修复后(锚点回归 → 锚定玩家最近副本 2500,屏内) ──
+	# ── 测试阶段 B：恢复锚点，验证实体平滑锚定至最近渲染副本（视口内可见） ──
 	anchor.add_to_group("player")
 	await process_frame
 	await process_frame

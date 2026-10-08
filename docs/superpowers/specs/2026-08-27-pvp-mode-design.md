@@ -191,14 +191,14 @@ LOBBY（等 2 人就绪）→ COUNTDOWN → PLAYING
 4. `maze_generator.gd` `parse_spawn_metadata` 加 `# player2`
 5. Level0 抽 `WorldBuilder`（世界构建可复用：地图/瓦片/碰撞/水/后处理；单人行为不变）
 6. `Level0.pvp_mode` 静态标志（pvp 跳过敌人/单玩家放置）
-7. `MazeGenerator` 钉住地图入口（服务器定图，客户端加载同名文件）
-8. transport 抽象（peer 创建/连接/收发收口；ENet 实现，预留 WebRTC/Steam 切换）
+7. `MazeGenerator` 断言约束地图入口（服务器定图，客户端加载同名文件）
+8. transport 抽象（peer 创建/连接/收发统一收拢；ENet 实现，预留 WebRTC/Steam 切换）
 
 **承诺**：每一步都是行为不变的纯重构，`enemy_logic_smoke.gd` / `player_contract_smoke.gd` 保持绿，单机玩起来和今天一样。
 
 ## 8. 测试
 
-- 输入抽象落地后：`player_contract_smoke.gd` 保绿（契约不变）。
+- 输入抽象落地后：`player_contract_smoke.gd` 保绿（接口规范不变）。
 - 新增 `-s` **loopback 冒烟**：`server_main` 脚本进程 + 2 个客户端脚本进程同机对 `127.0.0.1`，测输入重放 / 快照 / 事件 / 记分 / 回合推进。测试由用户自己跑（项目惯例）。
 
 ## 9. 风险与边界
@@ -215,7 +215,7 @@ LOBBY（等 2 人就绪）→ COUNTDOWN → PLAYING
 
 ## 10. 后端化预留（未来项，不在本次实现）
 
-- 网络层收口成 **transport 抽象**，`ENetMultiplayerPeer` 只是实现之一。
+- 网络层统一收拢成 **transport 抽象**，`ENetMultiplayerPeer` 只是实现之一。
 - 将来若要"公网房间号 + 免配置服务器地址"，可从 Nakama（房间+信号+托管）或 GodotSteam（Steam 大厅 + Datagram Relay）二选一，只换 transport 实现，协议/环面/回合状态机不动。
 - 服务器权威上云（权威搬到 Nakama/自建服务器）已是本设计形态，无需额外演进。
 

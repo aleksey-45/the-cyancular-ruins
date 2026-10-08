@@ -1,23 +1,23 @@
 extends Node
 
 # 局内「捡枪 / 丢枪」探针(服务器权威侧,场景模式):钉 `MatchGround._handle_ground_actions` 全链路。
-# 跑法:
+# 运行方式：
 #   "$GODOT" --headless --path . --quit-after 3600 res://tests/probe/ground_action_probe.tscn
 # 期望:每条 [ga] … 通过,末行 "GROUND ACTION PROBE: ALL-OK"。
 #
 # 为什么单开一个:单机侧那条路(`Level0.try_pickup_for`)有 `level0_weapon_scatter_probe` 负责校验,
-# 而**联机侧**的权威路径(`MatchGround._try_server_pickup` / `_try_server_drop`)此前零覆盖 ——
+# 而联机侧的权威路径(`MatchGround._try_server_pickup` / `_try_server_drop`)此前零覆盖 ——
 # 用户 2026-09-16 报「1v1/大乱斗里捡武器会崩溃」,这条正是两者共用的那段。
 #
 # 做法(与 grenade_player_hit_probe / match_host_hygiene_probe 同一手法):
-# 实际创建一个 MatchHost(真地图 + 真 WorldBuilder 碰撞),但 **role_peers 传空** ——
+# 实际创建一个 MatchHost(真地图 + 真 WorldBuilder 碰撞),但 role_peers 传空 ——
 # 不建玩家、不排 peer,于是 `_rpc_all` 的循环体一次都不进(广播静默提前返回,
 # 不会在无多人连接时尝试发包)。玩家由本探针自己摆、输入包由本探针自己塞进
-# `_pending_input`,走的是**与生产完全同一条消费路径**(clear_edges → apply_packet →
+# `_pending_input`,走的是与生产完全同一条消费路径(clear_edges -> apply_packet -> 
 # _handle_ground_actions),不是直接调函数。
 #
-# ⚠ 判据 grep 文本 "GROUND ACTION PROBE: ALL-OK"(不只看退出码;场景探针在脚本报错时
-#   仍然 --quit-after 到点 exit 0,只看退出码会把"根本没跑完"读成"通过")。
+# - 判定条件 grep 文本 "GROUND ACTION PROBE: ALL-OK"(不只看退出码;场景探针在脚本报错时
+#   仍然 --quit-after 到点 exit 0,只看退出码会把"根本未完整执行"读成"通过")。
 
 const MAP := "res://maps/newfactory.cyrm"
 const SETTLE_FRAMES := 150     # 等开局那批落体停稳(拾取判定读的是落点)
@@ -40,13 +40,13 @@ func _check(ok: bool, msg: String) -> void:
 
 func _ready() -> void:
 	_host = MatchHost.new(MAP, {})   # 空 role_peers:不建玩家、不排 peer
-	add_child(_host)                 # _ready 跑 → 铺 12 把地面武器(此时无玩家)
+	add_child(_host)                 # _ready 跑 -> 铺 12 把地面武器(此时无玩家)
 	_make_player(1)
 	_make_player(2)
 	# 服务器玩家必须有枪(player.tscn 自身 _ready 给的是空背包)
 	for r in _players:
 		(_players[r] as Node).weapons.set_initial_inventory([1])
-	# 跳过开局 COUNTDOWN:那一档 `_physics_process` 会把注入的包**清空**(冻结期不注入输入),
+	# 跳过开局 COUNTDOWN:那一档 `_physics_process` 会把注入的包清空(冻结期不注入输入),
 	# 探针要测的是 PLAYING 下的拾取/丢弃。
 	_host._round_state = MatchHost.RoundState.PLAYING
 	_host._round_timer = 999999.0
@@ -76,14 +76,14 @@ func _run() -> void:
 
 
 # ── ⓪(最先跑,趁地面还是开局那批)下发坐标规范:`pos` 必须是 canonical ──
-# 为什么单开这一相:`ground_weapons_payload()` 曾经读"已被逐帧刷新的 entries"、发出
+# 为什么单开该测试阶段:`ground_weapons_payload()` 曾经读"已被逐帧刷新的 entries"、发出
 # visual_center(= canonical + visual_offset),而客户端把载荷的 `pos` 直接当
 # `WeaponPickup.canonical_pos`(见 pvp_match_client 的注释:契约就是 canonical)。后果是
-# 开局那批在客户端被画在 canonical + **2×offset**、落体也从错的地方开始,而服务器按
+# 开局那批在客户端被画在 canonical + 2×offset、落体也从错的地方开始,而服务器按
 # canonical + offset 判距离 —— 差整整一个 offset(手枪 ≈60px,拾取半径只有 64px),于是
 # "站在看得见的枪上,按 F 却捡不起来"。掉落那批走事件、刚好是对的,所以症状只在开局那批上。
 # - 2026-09-17 起 `visual_offset` 已删除(视觉中心被挪到节点原点),于是"载荷 pos"与
-#   "服务器判定圆心"**本来就是同一个值** —— 判据随之收成一句相等。
+#   "服务器判定圆心"本来就是同一个值 —— 判定条件随之收成一句相等。
 func _phase_payload_position_contract() -> void:
 	print("[ga] ── ⓪ 下发位置契约(canonical,不是判定圆心)──")
 	var payload: Array = _host.ground_weapons_payload()
@@ -114,16 +114,16 @@ func _phase_payload_position_contract() -> void:
 
 
 # ── ⓪b 投掷落点坐标规范:状态补充同步载荷(`match_sync` 的 `ground_weapons`)里的 `vel` 必须是
-#        **活速度**,不是条目里那份"生成时刻的 vel" ──
-# 为什么单开这一相:`ground_weapons_payload()` 曾把**活的 pos** 与**条目里那份生成时刻的 vel**
+#        活速度,不是条目里那份"生成时刻的 vel" ──
+# 为什么单开该测试阶段:`ground_weapons_payload()` 曾把活的 pos 与条目里那份生成时刻的 vel
 # 配成一对发货。客户端 `WeaponPickup.configure()` 见 vel 非零就置 `_settled = false` 并从
-# "枪现在所在处"重演一整段投掷(400px/s 初速 + `weapon_fall_gravity` → 约 2 格),于是重连后
-# 那把**被丢出去的枪**在客户端被画在别处,而 F 提示读的正是客户端那份表 → "提示了 A、服务器
+# "枪现在所在处"重演一整段投掷(400px/s 初速 + `weapon_fall_gravity` -> 约 2 格),于是重连后
+# 那把被丢出去的枪在客户端被画在别处,而 F 提示读的正是客户端那份表 -> "提示了 A、服务器
 # 却按 B 的位置判定";且只有那把枪下次被捡走/被扔掉才自愈。已在 `e10411f` 修
-# (`d["vel"] = _live_velocity_of(inst)`),但没有常驻守卫。
-# - 必须**自己造一件带初速的枪**才算数:开局那批的 vel 恒为 0、且 ⓪ 之前已 `_settle()` 全都停稳
-#   → 拿它们写"载荷 vel == 活速度"是**无效操作的绿**(两边都是零)。所以直给一条投掷速度生成一件、
-#   等它停稳,再断载荷里那件。**第 3 条断言(条目里仍是初速)就是"非无效操作"的前置** ——
+# (`d["vel"] = _live_velocity_of(inst)`),但没有自动化测试探针。
+# - 必须自己造一件带初速的枪才算数:开局那批的 vel 恒为 0、且 ⓪ 之前已 `_settle()` 全都停稳
+# -> 拿它们写"载荷 vel == 活速度"是无效操作的绿(两边都是零)。所以直给一条投掷速度生成一件、
+#   等它停稳,再断载荷里那件。第 3 条断言(条目里仍是初速)就是"非无效操作"的前置 ——
 #   没有它,"载荷 vel 恒 0"照样能让主断言绿。
 func _phase_payload_velocity_contract() -> void:
 	print("[ga] ── ⓪b 补态载荷的 vel 必须是活速度(不是生成时刻那一份)──")
@@ -135,7 +135,7 @@ func _phase_payload_velocity_contract() -> void:
 	_check(pk != null, "投掷生成的那件有活节点(inst %d)" % inst)
 	if pk == null:
 		return
-	# 等它停稳(落体确定性;上限给足 —— 超了下面几条会如实红)
+	# 等待拾取物静止（物理落体确定性；配置充分超时帧数上限，超时将正确触发断言失败）
 	var waited := 0
 	while not pk._settled and waited < SETTLE_FRAMES * 2:
 		await get_tree().physics_frame
@@ -143,13 +143,13 @@ func _phase_payload_velocity_contract() -> void:
 	_check(pk._settled, "那件带初速丢出的枪已停稳(等了 %d 帧)" % waited)
 	_check(pk.velocity == Vector2.ZERO,
 			"停稳后活速度就是零(实得 %s)" % str(pk.velocity))
-	# - 非无效操作前置:`_sync_ground_positions` 只刷 `pos`、**不刷 vel**,故条目里那份仍是出生时
-	#   那条初速 —— 它绿了,下一条才在判"载荷取的是活速度还是这份初速"。
+	# - 前置校验：`_sync_ground_positions` 仅同步 `pos` 而不同步 `vel`，故存储条目中仍保留生成时的
+	#   初速度向量 —— 只有该前提断言通过，后续断言才能有效区分“载荷取用的是实时速度还是初始速度”。
 	var entry: Dictionary = _host.ground_weapons.get_entry(inst)
 	var entry_vel: Vector2 = entry.get("vel", Vector2.ZERO)
 	_check(entry_vel == throw_vel,
 			"条目里仍是出生时那条初速 %s(实得 %s)—— 前置:证明下一条非空转" % [str(throw_vel), str(entry_vel)])
-	# - 主判据 + 顺带复核投掷那件的 pos 契约(⓪ 跑在它被生成之前,管不到它)
+	# - 主判定条件 + 顺带复核投掷那件的 pos 契约(⓪ 跑在它被生成之前,管不到它)
 	var got_vel := Vector2.INF
 	var got_pos := Vector2.INF
 	for e in _host.ground_weapons_payload():
@@ -162,7 +162,7 @@ func _phase_payload_velocity_contract() -> void:
 			"投掷那件的载荷 pos 仍是 canonical(%s vs %s)" % [str(got_pos), str(pk.canonical_pos)])
 
 
-# ── 阶段 ①:背包有空位 → 捡起后地面少一件、背包多一件、无替换 ──
+# ── 阶段 ①:背包有空位 -> 捡起后地面少一件、背包多一件、无替换 ──
 func _phase_pickup_into_free_slot() -> void:
 	print("[ga] ── ① 有空位时拾取 ──")
 	var p: Node2D = _players[1]
@@ -184,20 +184,20 @@ func _phase_pickup_into_free_slot() -> void:
 	_check(p.global_position == p.global_position, "玩家仍有效(未在拾取中被释放)")
 
 
-# ── 阶段 ②:背包放不下 → 替换手上那把,被换下的掉在脚下(地面净增 0:一进一出)──
+# ── 阶段 ②:背包放不下 -> 替换手上那把,被换下的掉在脚下(地面净增 0:一进一出)──
 func _phase_pickup_replaces_when_full() -> void:
 	print("[ga] ── ② 放不下时替换手上那把 ──")
 	var p: Node2D = _players[1]
-	# - 容量取**这个背包自己的**字段,不再读类常量(常量已删;语义也从"默认值"变成"本实例")。
+	# - 容量取这个背包自己的字段,不再读类常量(常量已删;语义也从"默认值"变成"本实例")。
 	var cap: int = p.weapons.inventory.capacity
-	# 先把背包塞满:两把重型 = 4+4 = 8 格 = 默认容量(-  用 set_initial_inventory 是**发放**路径,
+	# 先把背包塞满:两把重型 = 4+4 = 8 格 = 默认容量(-  用 set_initial_inventory 是发放路径,
 	# 它照 `add()` 直加、不过容量门控前置校验;要测门控前置校验就得自己摆成"刚好满"的合法状态,别拿它塞 4 把)
 	p.weapons.set_initial_inventory([3, 3])
 	_check(p.weapons.inventory.held.size() == 2, "塞满后是 2 把重型(实际 %d)" % p.weapons.inventory.held.size())
 	_check(p.weapons.inventory.used_cell_count() == cap,
 			"且正好占满容量(%d/%d)" % [p.weapons.inventory.used_cell_count(), cap])
 	var before_ground: int = _host.ground_weapons.size()
-	# 挑一把**没被禁**且不在手上的:捡起它会超出容量 → 必须走"替换手上那把"这条分支
+	# 挑一把没被禁且不在手上的:捡起它会超出容量 -> 必须走"替换手上那把"这条分支
 	var e: Dictionary = _nearest_entry(p.global_position)
 	if e.is_empty():
 		_check(false, "场上有可捡的武器(②)")
@@ -209,14 +209,14 @@ func _phase_pickup_replaces_when_full() -> void:
 			"替换而非丢弃:背包仍是 2 把(实际 %d)" % p.weapons.inventory.held.size())
 	_check(p.weapons.inventory.used_cell_count() <= cap,
 			"替换后不超容(%d/%d)" % [p.weapons.inventory.used_cell_count(), cap])
-	# 一进一出 → 地面数量不变(捡走 1、掉下 1)
+	# 一进一出 -> 地面数量不变(捡走 1、掉下 1)
 	_check(_host.ground_weapons.size() == before_ground,
 			"地面数量不变(捡 1 掉 1):%d → %d" % [before_ground, _host.ground_weapons.size()])
 	_check(p.weapons.current_type_id() != held_type or held_type == int(e["type_id"]),
 			"手上换成了新捡的那把(旧 %d → 新 %d)" % [held_type, p.weapons.current_type_id()])
 
 
-# ── 阶段 ③:Q 长按的**完成边沿**上行 → 手上那把掉出 ──
+# ── 阶段 ③:Q 长按的完成边沿上行 -> 手上那把掉出 ──
 func _phase_drop() -> void:
 	print("[ga] ── ③ 丢弃 ──")
 	var p: Node2D = _players[1]
@@ -242,7 +242,7 @@ func _phase_self_drop_cooldown() -> void:
 	var ground_before: int = _host.ground_weapons.size()
 	await _press(1, PacketInputSource.BIT_DROP)
 	_check(_host.ground_weapons.size() == ground_before + 1, "丢出的那把进了地面表")
-	# 站在刚丢下的那把上按 F:冷却期内应被排除 → 捡不到
+	# 站在刚丢下的那把上按 F:冷却期内应被排除 -> 捡不到
 	var e: Dictionary = _nearest_entry(p.global_position)
 	if e.is_empty():
 		_check(false, "刚丢下的那把在表里(④)")
@@ -273,12 +273,12 @@ func _phase_stress() -> void:
 	_check(_host.ground_weapons.size() > 0, "40 轮后地面仍有武器(%d 件)" % _host.ground_weapons.size())
 
 
-# ── 阶段 ⑥:`_drop_all_but_one` **自身的契约**(除随机一把外,其余全丢在 `p` 当前所在位置)──
-# 注意： 2026-09-21 订正本阶段标题:原先写的是「复活路径 `_drop_all_but_one`」—— 它**已不是**复活路径。
+# ── 阶段 ⑥:`_drop_all_but_one` 自身的契约(除随机一把外,其余全丢在 `p` 当前所接口已声明且生效置)──
+# 注意事项：2026-09-21 订正本阶段标题:原先写的是「复活路径 `_drop_all_but_one`」—— 它已不是复活路径。
 #   用户 2026-09-21 裁定「掉落的武器应该在死亡后直接原地掉落」,调用点因此从 `_respawn_player`
-#   移到了**倒地边沿**(三处各一条:`MatchRound` / `RoyaleHost` / `TeamHost` 的 `_match_round_tick`)。
-# - 本探针**直接调** `_host._drop_all_but_one(p, 1)`,验的是**函数自身**的契约(留一把 + 其余
-#   落在 `p` 当前所在位置)—— 契约未变,故本阶段照旧有效、断言一字不改。**时机**那一半(必须在
+#   移到了倒地边沿(三处各一条:`MatchRound` / `RoyaleHost` / `TeamHost` 的 `_match_round_tick`)。
+# - 本探针直接调 `_host._drop_all_but_one(p, 1)`,验的是函数自身的契约(留一把 + 其余
+#   落在 `p` 当前所接口已声明且生效置)—— 契约未变,故本阶段照旧有效、断言一字不改。时机那一半(必须在
 #   倒地边沿掉、且复活时不得再掉第二次)不在这里,由 `tests/probe/death_drop_probe` 钉。
 func _phase_drop_all_but_one() -> void:
 	print("[ga] ── ⑥ _drop_all_but_one:除随机一把外全丢出 ──")
@@ -296,9 +296,9 @@ func _phase_drop_all_but_one() -> void:
 
 # ── ⑦ 换局重铺:inst 必须单调,且重铺出来那批仍要捡得动、坐标规范仍成立 ──
 # 为什么:`_reset_ground_weapons` 曾把 `_next_ground_inst` 重置回 1 —— 新一轮那批的 inst 于是与
-# 客户端**残留的上一局节点撞号**,而客户端的 `_spawn_pickup_node` 对已有 inst 是**静默 return**
-# → 新一轮那批在客户端一件都建不出来(它画的还是上一局的幽灵枪,按 F 也无效)。
-# 这条严格校验"inst 单调"这个前提;换局的**广播**那一半在 net_ground_probe(源码级)里钉。
+# 客户端残留的上一局节点撞号,而客户端的 `_spawn_pickup_node` 对已有 inst 是静默 return
+# -> 新一轮那批在客户端一件都建不出来(它画的还是上一局的残留幽灵武器,按 F 也无效)。
+# 这条严格校验"inst 单调"这个前提;换局的广播那一半在 net_ground_probe(源码级)里钉。
 func _phase_round_reset() -> void:
 	print("[ga] ── ⑦ 换局重铺:inst 单调 + 重铺后仍捡得动 ──")
 	var before_max := _max_inst()
@@ -309,7 +309,7 @@ func _phase_round_reset() -> void:
 			"重铺后 inst 继续变大(旧最大 %d → 新最大 %d)" % [before_max, _max_inst()])
 	_check(_host.ground_weapons.size() > 0,
 			"重铺后有货(实际 %d 件;旧 %d 件)" % [_host.ground_weapons.size(), before_ground])
-	# 重铺那批的坐标规范(与 ⓪ 同一判据)
+	# 重铺那批的坐标规范(与 ⓪ 同一判定条件)
 	var bad := 0
 	for e in _host.ground_weapons_payload():
 		var n = _host._ground_nodes.get(int(e["inst"]), null)
@@ -318,7 +318,7 @@ func _phase_round_reset() -> void:
 		if (e["pos"] as Vector2).distance_to((n as WeaponPickup).canonical_pos) > 0.5:
 			bad += 1
 	_check(bad == 0, "重铺后载荷 pos 仍是 canonical(%d 件不符)" % bad)
-	# 而且**捡得动**(站到服务器判定圆心上按 F:这条与客户端画在哪无关,只证表与判定没坏)
+	# 而且捡得动(站到服务器判定圆心上按 F:这条与客户端画在哪无关,只证表与判定没坏)
 	var p: Node2D = _players[1]
 	p.weapons.set_initial_inventory([1])
 	var e2: Dictionary = _nearest_entry(p.global_position)
@@ -377,9 +377,9 @@ func _stand_on(p: Node2D, pos: Vector2) -> void:
 	p.velocity = Vector2.ZERO
 
 
-# 把一个输入包塞进服务器的待消费队列,并**等它真的被消费掉** ——
-# 走的就是 `_on_input` 之后那条路(`_physics_process` 每 tick 弹一个包 → clear_edges 已在本轮开头
-# 调过 → apply_packet 写入边沿 → 紧跟 `_handle_ground_actions` 读边沿)。
+# 把一个输入包塞进服务器的待消费队列,并等它真的被消费掉 ——
+# 走的就是 `_on_input` 之后那条路(`_physics_process` 每 tick 弹一个包 -> clear_edges 已在本轮开头
+# 调过 -> apply_packet 写入边沿 -> 紧跟 `_handle_ground_actions` 读边沿)。
 func _press(role: int, bits: int) -> void:
 	_seq += 1
 	if not _host._pending_input.has(role):

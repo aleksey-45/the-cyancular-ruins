@@ -68,7 +68,7 @@ func _test_loan_and_lock() -> void:
 	_near(a.loan_depth(), 0.5, 0.001, "贷款深度 0.5")
 	_chk(a.can_spend(), "贷中仍可耗(未满)")
 	_chk(locked_fired[0] == 0, "未贷满不应锁")
-	a.spend(1.0, 100.0)   # 借满 100 → 锁
+	a.spend(1.0, 100.0)   # 借满 100 -> 锁
 	_near(a.loan_used, TimeParams.LOAN_LIMIT, 0.01, "借满 100")
 	_chk(locked_fired[0] == 1, "贷满应发 loan_locked")
 	_chk(a.locked, "贷满应 locked")
@@ -85,10 +85,10 @@ func _test_lock_release() -> void:
 	a.spend(4.0, 100.0)      # 窗满
 	a.spend(0.3, 100.0)      # 借 30
 	a.spend(1.0, 100.0)      # 借满锁
-	a.regen(1.0)             # 偿还透支 50 → 贷 80... 不对:先偿还透支 50,贷 100-50=50
+	a.regen(1.0)             # 偿还透支 50 -> 贷 80... 不对:先偿还透支 50,贷 100-50=50
 	_near(a.loan_used, 50.0, 0.01, "1 秒先还贷 50")
 	_chk(a.locked, "贷未清仍锁")
-	a.regen(1.0)             # 再还 50 → 贷清 → 解锁;窗也开始回
+	a.regen(1.0)             # 再还 50 -> 贷清 -> 解锁;窗也开始回
 	_near(a.loan_used, 0.0, 0.01, "贷款还清")
 	_chk(unlocked[0] == 1, "还清应解锁一次")
 	_chk(not a.locked, "解锁后 locked=false")
@@ -121,7 +121,7 @@ func _test_deposit_cap() -> void:
 # 断言的是"参数真的生效"而不是"单机的默认值还在":
 #   - PvP 的透支上限 = 短期额度(账户本身不透支);
 #   - 余额永不为负(透支只发生在短期时间窗口那一档);
-#   - 透支达到上限锁定 → 回复先偿还透支 → 还清解锁。
+#   - 透支达到上限锁定 -> 回复先偿还透支 -> 还清解锁。
 func _test_custom_params() -> void:
 	var a := GrainAccount.new(1000.0, 1800.0, 250.0, 50.0, 250.0)
 	_near(a.balance, 1000.0, 1e-3, "自定义初始值")
@@ -129,11 +129,11 @@ func _test_custom_params() -> void:
 	_near(a.window, 250.0, 1e-3, "自定义短时窗")
 	_near(a.regen_rate, 50.0, 1e-3, "自定义回复")
 	_near(a.loan_max, 250.0, 1e-3, "贷款上限 = 短时额度")
-	# 烧满短期时间窗口(250)→ 继续消耗进透支;透支上限 250 → 透支达到上限后立即锁定
+	# 烧满短期时间窗口(250) -> 继续消耗进透支;透支上限 250 -> 透支达到上限后立即锁定
 	a.spend(250.0 / 150.0, 150.0)          # 正好用完短期时间窗口
 	_near(a.short_used, 250.0, 1e-3, "短时窗应正好用满")
 	_near(a.loan_used, 0.0, 1e-3, "此时不该有贷款")
-	a.spend(250.0 / 150.0, 150.0)          # 再烧一个窗的量 → 全进透支并透支达到上限
+	a.spend(250.0 / 150.0, 150.0)          # 再烧一个窗的量 -> 全进透支并透支达到上限
 	_near(a.loan_used, 250.0, 1e-3, "贷款应到上限(250)")
 	_near(a.loan_depth(), 1.0, 1e-3, "贷满时深度应为 1")
 	_chk(a.locked, "贷满应强制锁定")
@@ -143,7 +143,7 @@ func _test_custom_params() -> void:
 	_chk(a.spend(10.0, 150.0) == 0.0, "锁定期间 spend 应返回 0")
 	_near(a.balance, bal_before, 1e-6, "锁定期间余额不变")
 	_chk(a.balance >= 0.0, "余额永不为负")
-	# 回复先偿还透支:250/50 = 5s 还清 → 解锁
+	# 回复先偿还透支:250/50 = 5s 还清 -> 解锁
 	a.regen(5.0)
 	_near(a.loan_used, 0.0, 1e-3, "回补应先还清贷款")
 	_chk(not a.locked, "还清后应解锁")

@@ -17,8 +17,7 @@ extends MatchState
 # 按 64px 半径走的。让机器人自己走过去需要寻路(实测两轮都栽在这上面:地图是每进程
 # 随机选的一份 `.cyrm`,只会"水平走 + 卡住跳"的机器人在窄台上会永久卡死)。
 # 打开后服务器每帧保证**每个站着的玩家脚下 64px 内至少有一把枪** —— 探针就完全不用走位。
-# - 默认关,且只由 worker 的 `--test-ground-teleport` 打开(见 server_main.gd 的 argv 解析
-#   与 worker_launcher 的转发):生产路径上这个开关**不可达**,不进任何真实对局。
+# - 默认关,且只由服务端的 `--test-ground-teleport` 开关打开(见 server_main.gd 的 argv 解析):生产路径上这个开关**不可达**,不进任何真实对局。
 static var test_ground_teleport := false
 
 var ground_weapons := GroundWeaponField.new()

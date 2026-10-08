@@ -4,9 +4,9 @@
 
 **Goal:** 把"背包 8 格容量"与"最多 4 把"从**编译期常量**改成**实例字段**（带 setter、
 默认值不变），并让左下角容量格子阵的**行数/面板高**由容量派生。
-**默认值一个字不变 ⇒ 协议零改动、对局行为零改动。**
+**默认值一个字不变 ⇒ 协议无需修改、对局行为无需修改。**
 
-**Architecture:** 两条闸门都在 `core/sim/weapon_inventory.gd` 的 `can_hold()` 里，改成读
+**Architecture:** 两条限制条件都在 `core/sim/weapon_inventory.gd` 的 `can_hold()` 里，改成读
 实例字段；`ui/weapon_slots.gd` 的 `capacity` 从背包取、`rows` / `panel_h` 由它派生
 （`COLS` 恒 4，容量长大时格阵**向下长**，不换行宽）——
 `PANEL_W` 只跟列数有关 ⇒ **仍是常量**，`PANEL_H` 与 `ROWS` 两个常量**删掉**。
@@ -93,14 +93,14 @@
 
 | 文件 | 责任 | 本计划怎么动 |
 |---|---|---|
-| `core/sim/weapon_inventory.gd` | 背包纯逻辑（两条闸门 / 残弹记账） | `MAX_WEAPONS` / `CAPACITY` **常量删除** → 实例字段 `max_weapons` / `capacity`；加 `DEFAULT_*` 与 setter；`_init` 收三个参数 |
+| `core/sim/weapon_inventory.gd` | 背包纯逻辑（两条限制条件 / 残弹记账） | `MAX_WEAPONS` / `CAPACITY` **常量删除** → 实例字段 `max_weapons` / `capacity`；加 `DEFAULT_*` 与 setter；`_init` 收三个参数 |
 | `ui/weapon_slots.gd` | 左下角容量格子（自绘） | `ROWS` / `PANEL_H` **常量删除** → `capacity` / `rows` / `panel_h` 实例字段；加 `rows_for()` / `panel_h_for()` / `_derive_layout()`；4 处静态读改本地 |
 | `ui/hud.gd` | 单机 HUD | `WeaponSlots.PANEL_H` → `_slots.panel_h`（:303 一处） |
 | `tests/weapon_inventory_smoke.gd` | 背包纯逻辑冒烟 | `:74-78` 默认值两条改指 `DEFAULT_*`；**新增**一段"容量/把数可配" |
 | `tests/enemy_logic_smoke.gd` | 主冒烟 | 两条 `wi.MAX_WEAPONS`/`wi.CAPACITY` 改指 `DEFAULT_*`；**末尾追加** `_phase_weapon_capacity()` |
 | `tests/ground_action_probe.gd` | 联机拾取/丢弃探针 | 4 处 `WeaponInventory.CAPACITY` → `p.weapons.inventory.capacity` |
 | `tests/level0_weapon_scatter_probe.gd` | 单机散落/版式探针 | `_phase_slot_placement` 加一条"默认容量下面板高 = 59" |
-| `CLAUDE.md` | 项目文档 | §参数体系 / §武器背包 登记"两条闸门可配" + **已知边界** |
+| `CLAUDE.md` | 项目文档 | §参数体系 / §武器背包 登记"两条限制条件可配" + **已知边界** |
 
 ---
 
@@ -168,13 +168,13 @@ Expected: 前两行都是 `0`；**紧接着两行都必须 ≥ 1**（计划 1 �
 	_check(int(WI.CELL_COST[int(WI.TIER_LIGHT)]) * def_max == def_cap,
 		"轻武器 cost × 4 应恰好等于容量(这条等式一旦不成立,上面那条注释就该重写)")
 ```
-★ 上面那段注释里"上面那条注释"指的是本节开头那段**关于两条闸门互相蕴含**的长注释
-（`:71-78`），**保留不动** —— 它讲的道理（`4 把 × 2 格 == 8` 让把数闸门被容量蕴含，
+★ 上面那段注释里"上面那条注释"指的是本节开头那段**关于两条限制条件互相蕴含**的长注释
+（`:71-78`），**保留不动** —— 它讲的道理（`4 把 × 2 格 == 8` 让武器数量校验被容量蕴含，
 但它不是死代码）正是本次改动之后仍然成立的那件事。
 
 - [ ] **Step 2: `weapon_inventory_smoke.gd` 追加"容量/把数可配"一段**
 
-插在 `# ── 紧凑排布 ──` 那一段**之前**（即紧接上面那组两条闸门的断言之后）：
+插在 `# ── 紧凑排布 ──` 那一段**之前**（即紧接上面那组两条限制条件的断言之后）：
 
 ```gdscript
 	# ══ 容量 / 把数可配(2026-09-25)══
@@ -250,7 +250,7 @@ Expected: 前两行都是 `0`；**紧接着两行都必须 ≥ 1**（计划 1 �
 	_check(int(wconsts.get("DEFAULT_CAPACITY", -1)) == 8,
 			"WeaponInventory.DEFAULT_CAPACITY == 8(实际 %s)" % str(wconsts.get("DEFAULT_CAPACITY")))
 ```
-★ **这两行是计划 3 点名"别删"的**（它的 ④ 组末尾写着"归容量可配那份计划改判据"）——
+★ **这两行是计划 3 明确指出"别删"的**（它的 ④ 组末尾写着"归容量可配那份计划改判据"）——
 按内容找它们，行号会被计划 3 改写的那一段带漂。
 
 - [ ] **Step 4: `enemy_logic_smoke.gd` 追加 `_phase_weapon_capacity()`**
@@ -323,13 +323,13 @@ func _phase_weapon_capacity() -> void:
 ★ **②b 是源码级判据**(格数组是 `draw_rect` 画出来的,不渲染就数不到)—— 真像素版的替代是
 `kh_l3_visual_probe`,**本次不做**,登记在 Self-Review 的已知边界里。
 
-★★ **这些断言各自钉住哪个"半迁移"(2026-09-26 逐条核过,答案:除了下面补掉的那个洞,
-半迁移过不去)** —— "半迁移"= 字段/构造/setter 都加了,但**闸门或绘制仍读默认值**:
+★★ **这些断言各自断言约束哪个"半迁移"(2026-09-26 逐条核过,答案:除了下面补掉的那个洞,
+半迁移过不去)** —— "半迁移"= 字段/构造/setter 都加了,但**限制条件或绘制仍读默认值**:
 
 | 半迁移的形状 | 哪个断言红 | 为什么它红 |
 |---|---|---|
 | `can_hold` 仍读 `DEFAULT_CAPACITY`(字段白加了) | `★ 容量闸门单独生效` | `by_cap` 是 **4 格容量占 4 格** ⇒ 换回默认 8 之后 `4+2 <= 8` 成立,"放不下"变成"放得下" |
-| `can_hold` 仍读 `DEFAULT_MAX_WEAPONS` | `★ 把数闸门单独生效` | `by_max` 是 **容量 100 / 上限 1** ⇒ 上限换回 4 之后 `1 >= 4` 不成立,闸门穿到容量那层(98 格够) |
+| `can_hold` 仍读 `DEFAULT_MAX_WEAPONS` | `★ 把数闸门单独生效` | `by_max` 是 **容量 100 / 上限 1** ⇒ 上限换回 4 之后 `1 >= 4` 不成立,限制条件穿到容量那层(98 格够) |
 | 构造实参没存进字段 | `构造实参生效` | 直接读 `wide.capacity` / `wide.max_weapons` |
 | setter 没写进字段 | `setter 设值生效` | `set_capacity(12)` 后直接读字段 |
 | 缺 `capacity`/`max_weapons` 字段 | 两条字段存在性 + `else` 分支的"被跳过" | `get_property_list()` 探不到 |
@@ -380,7 +380,7 @@ Expected（改动前，**必须是这一组**）:
 [FAIL] ★ 容量/把数可配的四组行为断言被跳过(字段还没改,期望在这一步红)
 WEAPON_INVENTORY FAILED: 6
 ```
-★★ **逐条来历（核验报告点名要求过的"红为什么会出现"，别只抄数字）**：
+★★ **逐条来历（核验报告明确要求过的"红为什么会出现"，别只抄数字）**：
 - 前两条：`DEFAULT_*` 还**不是**常量（本计划的 Task 2 才加），`get_script_constant_map()`
   查不到 ⇒ `.get(name, -1)` 拿到哨兵 `-1` ⇒ `-1 == 4` / `-1 == 8` 为假 ⇒ 干净 FAIL。
 - 第三条：`CELL_COST[TIER_LIGHT] = 2`，而 `def_max = -1`、`def_cap = -1`
@@ -414,7 +414,7 @@ FAILURES: ["WeaponInventory.DEFAULT_MAX_WEAPONS == 4(实际 <null>)", … 共 3 
   （那会抛错 ⇒ 挂住），**再**去查 Step 2 的 `if has_capacity and has_max:` 守卫。
   ★ 顺序不能反 —— 这条判读规则上一版写成"hang ⇒ 一定是守卫少了"，而计划自己在
   Step 1 里留着 `SLOT_COST` 时**恰好**会以那种形状挂住，会把人指到错的方向（核验报告 §2.6）。
-- `enemy_logic_smoke` 的尾行必须是 `FAILURES:`，且列表里**恰好是上面点名的那 3 条**。
+- `enemy_logic_smoke` 的尾行必须是 `FAILURES:`，且列表里**恰好是上面明确指定的那 3 条**。
   ★ 这才是"新断言干净地红了"与"被静默跳过"的分界 —— 判据是**逐条比名字与条数**
   （`FAILURES` 里少了 `rows_for` 那一条，说明那条断言被跳过了），
   **不是**"有没有 `SMOKE OK`"（这一趟本来就不该有 `SMOKE OK`）。
@@ -426,7 +426,7 @@ Task 1 是 TDD 的中间态（断言红、实现还没写）。它与 Task 2 **�
 
 ---
 
-### Task 2: 生产改造 —— 两条闸门字段化 + 格子面板派生
+### Task 2: 生产改造 —— 两条限制条件字段化 + 格子面板派生
 
 **Files:**
 - Modify: `core/sim/weapon_inventory.gd`（:11-16 注释、:23-24 常量、:38-39 `_init`、:59-62 `can_hold`）
@@ -653,7 +653,7 @@ Step 2 已改）。
 			"替换后不超容(%d/%d)" % [p.weapons.inventory.used_cell_count(), cap])
 ```
 
-- [ ] **Step 5: 跑 —— 应该全绿；然后逐条反证**
+- [ ] **Step 5: 跑 —— 应该全部通过；然后逐条反证**
 
 Run:
 ```bash
@@ -676,7 +676,7 @@ Expected: `WEAPON_INVENTORY OK`、`SMOKE OK`（无 FAIL）、
 最后一行形如 `错误行数=0  总行数=<几十以上>`（**总行数 0 = 假绿**，不是通过）。
 
 **反证（逐条，改回来再跑下一条）**：
-1. **闸门读的到底是字段吗**：把 `weapon_inventory.gd` 的 `can_hold` 里
+1. **限制条件读的到底是字段吗**：把 `weapon_inventory.gd` 的 `can_hold` 里
    `<= capacity` 临时改回 `<= DEFAULT_CAPACITY`，跑第 1 条命令。
    Expected: `[FAIL] ★ 容量闸门单独生效(把数上限 9 没拦,是容量拦的)` ——
    成因：`by_cap` 的配置是 4 格容量、占 4 格，判据换回常量 8 之后 `4 + 2 <= 8` 成立 ⇒
@@ -698,15 +698,15 @@ Expected: `WEAPON_INVENTORY OK`、`SMOKE OK`（无 FAIL）、
    —— 那是同一处变异的第二个观测点（跑第 2 条命令能看到）。两条一起红是预期的，
    别按"越界"读。
    ★ 既有的**间隙**断言（`间隙恒为 8px`）**不会**红 —— `offset_top` 与 `size.y` 都由同一个
-   `panel_h` 推出，两者一起平移 ⇒ 间隙不变。所以要钉住"默认高没变"只能靠这一条。
+   `panel_h` 推出，两者一起平移 ⇒ 间隙不变。所以要断言约束"默认高没变"只能靠这一条。
 6. **绘制的格数真的跟着容量吗（②b 的变异）**：把 `_draw` 里那三处 `capacity` 临时换成
    `DEFAULT_CAPACITY`（`owner_of.resize(…)` / `c < …` / `for cell in …` 各一处），跑第 2 条命令。
    Expected: `FAIL - ★ _draw() 必须按**本实例的 capacity** 画格子,不得读 DEFAULT_CAPACITY(…)`。
-   ★ **上面 ①–⑤ 全绿**（`panel_h_for`、`_derive_layout`、接线三条一个都不红）——
+   ★ **上面 ①–⑤ 全部通过**（`panel_h_for`、`_derive_layout`、接线三条一个都不红）——
    这正是 ②b 存在的理由:那是唯一能看见"面板长了、格阵没长"的判据。
    ★ 同一条变异也会让 `_draw_empty_cells` 那条红（如果它的 `for cell in capacity` 也换了）。
    确认后改回来。
-7. 全部改回来，再跑一遍上面那组命令确认恢复全绿。
+7. 全部改回来，再跑一遍上面那组命令确认恢复全部通过。
 
 - [ ] **Step 6: 提交（Task 1 + Task 2 合并为一次）**
 
@@ -721,7 +721,7 @@ EOF
 
 ---
 
-### Task 3: 回归 + 登记（含"按能力分叉必须进权威同步"那条已知边界）
+### Task 3: 回归 + 登记（含"按能力分叉必须进服务端权威同步"那条已知边界）
 
 **Files:**
 - Modify: `CLAUDE.md`（§参数体系 的 `Settings` 那条之后、§武器与子弹 的「武器背包与地面拾取」小节内）
@@ -755,13 +755,13 @@ Expected: 逐行 `ALL-OK` / `SMOKE OK` / `*_OK`，无 FAIL。
 ★ `kh_l4`/`kh_l5` 扫的是 `res://ui` 与 `res://tests` 的**字号规范** —— 本计划在
 `weapon_slots.gd` 里没引入任何字号载体（`CELL`/`GAP`/`PAD` 是像素尺寸，不受该约定限制），
 应当原样绿。
-★ `squash_replica_probe` 的**相⓪**按函数体/字段清单对账 `match_snapshot.gd` 的玩家载荷表 ——
+★ `squash_replica_probe` 的**相⓪**按函数体/字段清单对账 `match_snapshot.gd` 的玩家数据包表 ——
 本计划不动协议，应当原样绿；它红了说明越界了。
 
 - [ ] **Step 2: 登记进 CLAUDE.md**
 
 在 **§武器与子弹** 的「**武器背包与地面拾取（2026-09-15）**」小节里，
-紧跟"**背包 = 8 格容量预算 + 4 把上限两条并行闸门**"那一条之后补一条：
+紧跟"**背包 = 8 格容量预算 + 4 把上限两条并行限制条件**"那一条之后补一条：
 
 ```markdown
 - ★ **两条闸门自 2026-09-25 起是**可配的实例字段**（`WeaponInventory.capacity` /
@@ -806,17 +806,17 @@ EOF
 
 **1. 覆盖面**（对照 spec §4.4）：`CAPACITY` / `MAX_WEAPONS` → 实例字段 + 默认值 + setter ✅
 Task 2 Step 1；`WeaponSlots` 的 `ROWS` 派生、`COLS` 固定 4、`PANEL_W`/`PANEL_H` 跟随 ✅
-Task 2 Step 2；"协议零改动" ✅（默认值不变，没有任何协议字段被碰，Task 3 Step 1 的
+Task 2 Step 2；"协议无需修改" ✅（默认值不变，没有任何协议字段被碰，Task 3 Step 1 的
 `squash_replica_probe` / `pvp_twin_smoke` 是它的守卫）；§6.2 的已知边界 ✅ Task 3 Step 2。
 
 **1b. "半迁移会不会过"（2026-09-26 逐条核过 —— 除一个洞外,过不去;洞已补）**：
 判据的**分工**在 Task 1 Step 4 的对照表里（九种半迁移 → 各自哪条红）。要点：
-- **容量闸门**由 `by_cap = WI.new(tiers, 4, 9)` 的 `★ 容量闸门单独生效` 钉住,
-  **把数闸门**由 `by_max = WI.new(tiers, 100, 1)` 的 `★ 把数闸门单独生效` 钉住 ——
+- **容量限制校验**由 `by_cap = WI.new(tiers, 4, 9)` 的 `★ 容量闸门单独生效` 断言约束,
+  **武器数量校验**由 `by_max = WI.new(tiers, 100, 1)` 的 `★ 把数闸门单独生效` 断言约束 ——
   两个夹具的**构造实参刻意选成"换回默认值就反转"**（4 格 vs 默认 8；上限 1 vs 默认 4）,
   否则那两条断言会像 `wide`(12/6) 那条一样**两种实现都给假**、等于空转。
 - **已补的洞**：原来没有任何断言管 `_draw` / `_draw_empty_cells` 用不用派生的 `capacity`
-  ⇒ "面板高了、格阵还是 8 格"能全绿穿过。现由 **②b** 钉住（含 `capacity` **且不含**
+  ⇒ "面板高了、格阵还是 8 格"能全部通过穿过。现由 **②b** 断言约束（含 `capacity` **且不含**
   `DEFAULT_CAPACITY` —— 只判前半会漏）,反证见 Task 2 Step 5 的第 6 条。
 - **两处刻意不判**（登记）：`rows` / `capacity` 字段本身只判"存在"（值由同一条链决定,
   再断言等于数两遍）；"容器真画了 12 格"没有像素级断言（②b 是源码级）。
@@ -845,11 +845,11 @@ Task 2 Step 2；"协议零改动" ✅（默认值不变，没有任何协议字�
 **一行都不改它**（计划 3 改完之后它仍是一次普通构造，默认参数正好给出 8 / 4）。
 
 **5. 明确不在本计划范围**
-- 能力/解锁系统（spec §2 非目标、§9）：本计划只把两条闸门改成**可配**。
+- 能力/解锁系统（spec §2 非目标、§9）：本计划只把两条限制条件改成**可配**。
 - 把容量/把数塞进 `capture_state` / `match_options`：**刻意不做**（默认值不变 ⇒
   两端天然一致），另一半写成了 Task 3 Step 2 的已知边界。
 - 数字键 5/6（spec §6.1）：`project.godot` 的 input 段**只有** `1`–`4`
-  （`:97/:102/:107/:112`），且 `kh_l3_probe.gd:116-118` **反向断言** 5–0 不得有动作。
+  （`:97/:102/:107/:112`），且 `kh_l3_probe.gd:116-118` **否定断言** 5–0 不得有动作。
   ⇒ 把数调到 5+ 时第 5 把**只能靠滚轮**；要开 5/6 号键得先加动作 + 改
   `LocalInputSource` 的 `range(1, 5)`。**本计划不做**（spec 明确登记为已知边界）。
 - **没有"运行时把容量改成 N 之后 UI 自动跟上"的路径**：`WeaponSlots.refresh()` 会重取容量
@@ -858,4 +858,4 @@ Task 2 Step 2；"协议零改动" ✅（默认值不变，没有任何协议字�
 - **"容器真画了 N 格"没有像素级守卫**：②b 是**源码级**的（格数组是 `draw_rect` 出来的,
   不渲染数不到）。要真像素得加在 `kh_l3_visual_probe`（真渲染探针）里,本次不做。
 - **`rows` / `panel_h` 是"派生出来的",不是"协议里同步的"**：与容量本身一样,默认值不变
-  所以两端天然一致;按能力分叉那天,容量必须进权威同步（Task 3 Step 2 已登记）。
+  所以两端天然一致;按能力分叉那天,容量必须进服务端权威同步（Task 3 Step 2 已登记）。

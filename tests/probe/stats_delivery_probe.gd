@@ -1,51 +1,40 @@
 extends Node
 
-# 三个模式的逐人统计**写入与投递**守卫。
-# 注意： 2026-09-26(终审 重要 1):3v3 的那一半原先只是 `tests/probe/team_host_probe` ⑬g 的**三条
-#   `contains` 文本断言**,本文件那句"(3v3 的那一半在 team_host_probe ⑬g)"把**两种强度不同**
-#   的守卫说成了等价 —— 而本文件头注自己刚宣布那种强度是已知测试漏检(F1)。实测:把
+# 三个模式的逐人统计写入与投递防御性校验。
+# 注意事项：2026-09-26(终审 重要 1):3v3 的那一半原先只是 `tests/probe/team_host_probe` ⑬g 的**三条
+#   `contains` 文本断言,本文件那句"(3v3 的那一半在 team_host_probe ⑬g)"把两种强度不同**
+#   的防御性校验说成了等价 —— 而本文件头注自己刚宣布那种强度是已知测试漏报(F1)。实测:把
 #   `TeamHost._broadcast_round_state` 的 `_rpc_all("round_state", [data])` 提到挂载
 #   `stats`/`mvp` 之前  ->  `TEAM HOST: ALL-OK`(175 ok)/`STATS DELIVERY: ALL-OK`(34 ok)/
-#   `KH HUD PROBE: ALL-OK` **三条测试全部通过**,而 3v3 客户端收到的是**两个键都没有**的终局帧
-#   (结算页两节皆空、没有 MVP 星)。现在 3v3 走 **⑥**,与 1v1/大乱斗相同机制(截获式);`team_host_probe`
-#   ⑬g 那三条文本断言已**删除**(该段只剩"载荷形状与数值"那一半,见那段注释)。
+#   `KH HUD PROBE: ALL-OK` 三条全部断言通过,而 3v3 客户端收到的是两个键都没有的终局帧
+#   (结算页两节皆空、没有 MVP 星)。现在 3v3 走 ⑥,与 1v1/大乱斗相同处理逻辑(截获式);`team_host_probe`
+#   ⑬g 那三条文本断言已删除(该段只剩"载荷形状与数值"那一半,见那段注释)。
 #
-# 跑法: "$GODOT" --headless --path . --quit-after 3600 res://tests/probe/stats_delivery_probe.tscn
-# 判据: 文本 `STATS DELIVERY: ALL-OK`(**不看退出码** —— 探针挂住时 --quit-after 到期仍 exit 0)。
+# 运行方式： "$GODOT" --headless --path . --quit-after 3600 res://tests/probe/stats_delivery_probe.tscn
+# 验收标准： 文本 `STATS DELIVERY: ALL-OK`(不看退出码 —— 探针阻塞挂起时 --quit-after 到期仍 exit 0)。
 #
-# ═══ 为什么需要它 ═══
-# "数值"那一半**实际创建宿主实例**、走生产倒地边沿后读逐人表;"投递"那一半(⑤)则把**真正要发出去的
+# ── 为什么需要它 ──
+# "数值"那一半实际创建宿主实例、走生产倒地边沿后读逐人表;"投递"那一半(⑤)则把**真正要发出去的
 # `round_state` 字典**截获下来 —— 覆写 `_rpc_all`(见 `RpcPayload` 的注释)。
-# - 两半缺一不可:只断数值  ->  键没挂上去(客户端永远收不到)照样测试全部通过;只断投递  ->  数值算错也测试全部通过。
+# - 双向逻辑缺一不可:只断数值  ->  键没挂上去(客户端永远收不到)照样全部断言通过;只断投递  ->  数值算错也全部断言通过。
 #
-# 注意： 本文件 2026-09-26 修掉一处**判据强度**缺陷(F1):旧版的"投递"三问是
-#    `函数体里含不含 data["stats"]` 这类**次序无关的文本共现**,于是把
-#    `_rpc_all("round_state", [data])` 提到挂载 `stats`/`mvp` **之前**(广播里一个键都不带)
-#    三条断言**照样测试全部通过**、verdict 与基线逐字相同  ->  唯一的"投递"守卫在最该红的地方是绿的。
-#    旧头注里那句「探针手里没有 peer  ->  投递那一半**只能**源码级」**不成立**:`_rpc_all` 是
-#    可覆写的普通方法(不是引擎虚函数),覆写它就能在封包那一刻拿到载荷。**别改回去。**
-#    - 仍然保留的**源码级**守卫只剩两条(见 ③/④ 的注释):它们问的是**路由/来源**,不是
-#      "文本在不在" —— 那一类(以及 `mvp`、"只在非空时带键")现在**一律行为面**。
+# 注意事项：修复过一处断言有效性缺陷：旧版本针对广播投递的判定仅检查函数体文本包含，
+#    导致若将 `_rpc_all("round_state", [data])` 提前至挂载 `stats`/`mvp` 之前，
+#    断言仍会全部通过导致测试假阳性。现已改为覆写 `_rpc_all` 动态拦截真实封包字典进行校验。
+#    - 源码级静态扫描探针仅用于结构路由校验，业务状态与载荷内容一律通过行为面动态断言。
 #
-# 注意： 同日再修一处**判据强度**缺陷(F2,评审 Critical):③ 的旧夹具(受害者 role 3 / 归因射手
-#    role 1)里,大乱斗的正确口径(`_record_down(role, _attributed_killer(p))`)与 1v1 的错形状
-#    (`_record_down(role, _opponent_of(role))`)在那一格**算出同一个 role**(都是 1) ->  把生产那行
-#    换成错形状,③ **测试全部通过**、verdict 与基线逐字相同(实测 31 ok / 0 FAIL / `ALL-OK`)。
-#     ->  代码里那句"别照抄 1v1 那一份"的**注释不是守卫**。现在 ③ 把归因目标改成 role 2(两个实现
-#      给出**不同**答案 + 一条夹具自检钉住这个鉴别前提),并补上大乱斗这条链上的**无归因**档。
-#    详见 ③ 段的注释。
+# 注意事项：大乱斗击杀归因校验：确保使用 `_attributed_killer` 而非 1v1 的 `_opponent_of` 逻辑，
+#    并在测试夹具中区分归因角色与无归因场景。
 #
-# - 宿主构造走本仓既有手法(`match_host_hygiene_probe` / `team_host_probe`):
-#   实际创建宿主实例、`role_peers` 传空、玩家手工摆位、显式补调生产的 `_wire_hit_feedback()`。
-# - 段数对账(本仓"测试漏检"纪律:`ALL-OK` 只证明"没有断言失败",不证明"该跑的断言都跑过")
-#   —— 末尾拿 `_done` 与 `CHECK_NAMES` 对账,名单不全即红。
+# - 宿主构造沿用测试规范：实例化真实对象、`role_peers` 传空、手动配置玩家位置并绑定信号反馈。
+# - 断言项完整性核对：确保预期的断言清单（CHECK_NAMES）全部执行，末尾核对 _done 集合，存在未执行项则判定失败。
 
 const MAP := "res://maps/newfactory.cyrm"
-# 载荷七个字段的**逐码点升序**(`_keys_of` 走 `Array.sort()`)。
-# 注意： `dealt` 排在 `deaths` **之前**,别"顺手纠正"成字母表顺序:Godot 的 `Array.sort()` 对 String
-#   走**逐码点**比较(`Variant::operator<` → `String::operator<` → `str_compare`),不是按
+# 载荷七个字段的逐码点升序(`_keys_of` 走 `Array.sort()`)。
+# 注意事项：`dealt` 排在 `deaths` 之前,别"顺手纠正"成字母表顺序:Godot 的 `Array.sort()` 对 String
+#   走逐码点比较(`Variant::operator<` -> `String::operator<` -> `str_compare`),不是按
 #   "dealt < deaths 看着不像"的直觉 —— 第 4 个字符 `l`(0x6C) vs `t`(0x74)  ->  `dealt < deaths`。
-#   写成 `[…, deaths, dealt, …]` 会让**生产改对了形状断言照样红**;而错误的修法(放宽成
+#   写成 `[…, deaths, dealt, …]` 会让生产改对了形状断言照样红;而错误的修法(放宽成
 #   "包含这七个键就行")会把"载荷字段集"这条真契约拆掉 —— 所以这里必须是逐码点升序。
 const WANT_KEYS := ["acs", "assists", "dealt", "deaths", "kills", "kscore", "taken"]
 const CHECK_NAMES := ["duel_phase", "duel_kill_rule", "duel_bullet_path", "royale_phase",
@@ -56,27 +45,27 @@ const DUEL_BULLET_DAMAGE := 7
 var _fails: Array[String] = []
 var _done: Array[String] = []
 
-# - 两个摆位的期望值**取自地图自己的 spawn 元数据**(`MapFormat.load_spawns(MAP)` 的
+# - 两个摆位的期望值取自地图自己的 spawn 元数据(`MapFormat.load_spawns(MAP)` 的
 #   `player` / `player2`),不写死 (17,65)/(133,64)——那是上一版 PvP 图的出生点,本图上
-#   早就不在这两格了。本文件只用它们当"两个**相距很远**的点"(各条判据都不依赖具体坐标:
+#   早就不在这两格了。本文件只用它们当"两个相距很远的点"(各条判定条件都不依赖具体坐标:
 #   子弹夹具把弹摆在受害者身上、0 距离),距离不够远时那条夹具自检会红。
 #   - 改写后仍拦得住的变异:夹具与地图脱钩(两个 role 摆到同一格 / 摆进与断言无关的点),
-#     —— 旧的写死值在**换图之后**恰恰就是这一档(两点仍分离,但已与地图无关,没人看得见)。
+#     —— 旧的写死值在换图之后恰恰就是这一档(两点仍分离,但已与地图无关,没人看得见)。
 var _p1_cell := Vector2i(-1, -1)
 var _p2_cell := Vector2i(-1, -1)
 
 
-# ═══ 载荷截获(把"投递"那一半从**源码文本**升到**真正要发出去的字典**)═══
+# ── 载荷截获(把"投递"那一半从源码文本升到真正要发出去的字典)──
 #
-# - `_rpc_all`(`server/match_state.gd`)是**可覆写**的普通方法,不是引擎虚函数:覆写它就能在
+# - `_rpc_all`(`server/match_state.gd`)是可覆写的普通方法,不是引擎虚函数:覆写它就能在
 #   "封包那一刻"把 `args[0]` 拿到手 —— 探针手里没有 peer(于是 `_rpc_all` 循环无效操作、一个包都不发)
-#   也照样能验投递。`super._rpc_all(...)` 照常跑,故**真实发包路径一字未变**。
+#   也照样能验投递。`super._rpc_all(...)` 照常跑,故真实发包路径一字未变。
 #
-# 注意： 唯一必须搞对的一处:**在调用时刻取快照**。`_broadcast_round_state` 先建一个 `data` 字典、
-#   再**就地**往里补 `match_winner` / `mvp` / `stats`,**最后**才 `_rpc_all("round_state", [data])`;
-#   而字典是**引用类型**  ->  覆写里只把 `args[0]` 存下来、事后再读,会看到**之后**才挂上去的键,
-#   于是"把 `_rpc_all` 提到挂载之前"那个变异下守卫**照样测试全部通过** —— 正是本次要堵的那个测试漏检。
-#   故 `snap()` 在**调用那一刻**就 `duplicate(true)` 一份带走。
+# 注意事项：唯一必须搞对的一处:在调用时刻取快照。`_broadcast_round_state` 先建一个 `data` 字典、
+#   再就地往里补 `match_winner` / `mvp` / `stats`,最后才 `_rpc_all("round_state", [data])`;
+#   而字典是引用类型  ->  覆写里只把 `args[0]` 存下来、事后再读,会看到之后才挂上去的键,
+#   于是"把 `_rpc_all` 提到挂载之前"那个变异下防御性校验照样全部断言通过 —— 正是本次要堵的那个测试漏报。
+#   故 `snap()` 在调用那一刻就 `duplicate(true)` 一份带走。
 class RpcPayload:
 	static func snap(args: Array) -> Dictionary:
 		if args.is_empty() or not (args[0] is Dictionary):
@@ -87,7 +76,7 @@ class RpcPayload:
 
 # 1v1 的截获宿主:与生产 `MatchHost` 的唯一差别就是下面这个覆写。
 class CapturingDuelHost extends MatchHost:
-	var frames: Array = []      # 每次 `round_state` 广播的**调用时刻**快照
+	var frames: Array = []      # 每次 `round_state` 广播的调用时刻快照
 
 	func _rpc_all(method: String, args: Array = [], except_role: int = -1,
 			live_only: bool = true) -> void:
@@ -96,7 +85,7 @@ class CapturingDuelHost extends MatchHost:
 		super._rpc_all(method, args, except_role, live_only)
 
 
-# 大乱斗那一份(`RoyaleHost` **整体覆写**了 `_broadcast_round_state`,故要单独截获它那一份)。
+# 大乱斗那一份(`RoyaleHost` 整体覆写了 `_broadcast_round_state`,故要单独截获它那一份)。
 class CapturingRoyaleHost extends RoyaleHost:
 	var frames: Array = []
 
@@ -107,10 +96,10 @@ class CapturingRoyaleHost extends RoyaleHost:
 		super._rpc_all(method, args, except_role, live_only)
 
 
-# 3v3 那一份(`TeamHost` 同样**整体覆写**了 `_broadcast_round_state`)。
-# 注意： 为什么必须有它:`team_host_probe` ⑬g 原先那三条文本断言(`contains('data["stats"]')` 一族)
-#   在"把 `_rpc_all` 提到挂载之前"的变异下**三条测试全部通过**(见文件头那段实测读数)—— 那种强度
-#   只能证明"源码里出现过这串字",证明不了"真要发出去的字典里有这个键"。形状与上面两份逐字相同机制。
+# 3v3 那一份(`TeamHost` 同样整体覆写了 `_broadcast_round_state`)。
+# 注意事项：为什么必须有它:`team_host_probe` ⑬g 原先那三条文本断言(`contains('data["stats"]')` 一族)
+#   在"把 `_rpc_all` 提到挂载之前"的变异下三条全部断言通过(见文件头那段实测读数)—— 那种强度
+#   只能证明"源码里出现过这串字",证明不了"真要发出去的字典里有这个键"。形状与上面两份逐字相同处理逻辑。
 class CapturingTeamHost extends TeamHost:
 	var frames: Array = []
 
@@ -130,9 +119,9 @@ func _check(ok: bool, what: String) -> void:
 
 
 # - 必须 `await _run()` 再 `_finish()`:`_run()` 里有 `await get_tree().physics_frame`(协程),
-#   同步调 `_finish()` 会在断言跑完**之前**执行 → 所有真断言都 ok 却打出 FAIL(测试误报)。
+#   同步调 `_finish()` 会在断言跑完之前执行 -> 所有真断言都 ok 却输出 FAIL(测试误报)。
 func _ready() -> void:
-	# - 摆位先派生(见 `_p1_cell` 上方):缺任一个出生点就直接红、走保底处理 (-1,-1) 会让
+	# - 摆位先派生(见 `_p1_cell` 上方):缺任一个出生点就直接红、走兜底保护 (-1,-1) 会让
 	#   两个玩家重合在同一个点上,几条断言随之静默变松。
 	var sp := MapFormat.load_spawns(MAP)
 	_p1_cell = sp.get("player", Vector2i(-1, -1))
@@ -145,7 +134,7 @@ func _ready() -> void:
 
 func _finish() -> void:
 	# - 段数对账:每个 `_check_*` 末行都要把自己的名字记进 `_done`;名单不全 = 有一段
-	#   中途出错被静默跳过(脚本错误只让**出错的那个函数**结束,调用方继续  ->  verdict 照打 ALL-OK)。
+	#   中途出错被静默跳过(脚本错误只让出错的那个函数结束,调用方继续  ->  verdict 照打 ALL-OK)。
 	var missing: Array[String] = []
 	for n in CHECK_NAMES:
 		if not _done.has(n):
@@ -178,8 +167,8 @@ func _stat(host, role: int, key: String) -> int:
 	return int(s.get(key, 0))
 
 
-# 整张逐人表里 `kills` **非零**的那些条目,形如 `["role 2=1"]`(按 `stats_payload()` 的 role 序)。
-# - 用**整张表**而不是写死的 `[1,2,3]`:记到一个**表外**的 role 上时(`_roster()` 会把 `_stats`
+# 整张逐人表里 `kills` 非零的那些条目,形如 `["role 2=1"]`(按 `stats_payload()` 的 role 序)。
+# - 用整张表而不是写死的 `[1,2,3]`:记到一个表外的 role 上时(`_roster()` 会把 `_stats`
 #   里的一切都收进载荷)写死列表看不见 —— 而那正是一个更隐蔽的错形状。
 func _kills_table(host) -> Array[String]:
 	var out: Array[String] = []
@@ -195,11 +184,11 @@ func _force_down(host, role: int) -> void:
 	(host.players[int(role)] as Node).get_node("Combat").force_down()
 
 
-# 造一颗**真子弹**、走生产裁决链(`_adjudicate_bullets` → `_on_bullet_hit`)—— ⑦ 专用。
-# - 摆在受害者**身上**(0 距离 < `HIT_RADIUS`)。
-# - **不 await**:一 await 子弹就按自己的 `_physics_process` 飞走了。
-# - 射手与伤害**照 `WeaponBase.fire()` 的注入方式**手工设(`shooter` / `hit_damage` 就是 fire 设的两个量),
-#   本函数不重造那半条链 —— ⑦ 要验的是**裁决侧**(`_on_bullet_hit` 写不写归因),不是出膛侧。
+# 造一颗真子弹、走生产判定结果链(`_adjudicate_bullets` -> `_on_bullet_hit`)—— ⑦ 专用。
+# - 摆在受害者身上(0 距离 < `HIT_RADIUS`)。
+# - 不 await:一 await 子弹就按自己的 `_physics_process` 飞走了。
+# - 射手与伤害照 `WeaponBase.fire()` 的注入方式手工设(`shooter` / `hit_damage` 就是 fire 设的两个量),
+#   本函数不重造那半条链 —— ⑦ 要验的是判定结果侧(`_on_bullet_hit` 写不写归因),不是出膛侧。
 func _fire_bullet_at(host, shooter: Node2D, victim: Node2D) -> void:
 	var bullet: CharacterBody2D = preload("res://scenes/weapons/bullet.tscn").instantiate()
 	bullet.shooter = shooter
@@ -220,19 +209,19 @@ func _keys_of(host, role: int) -> Array:
 	return k
 
 
-# ── 截获帧的读法(都只读 `RpcPayload.snap` 在**调用时刻**留下的那份拷贝)──
+# ── 截获帧的读法(都只读 `RpcPayload.snap` 在调用时刻留下的那份拷贝)──
 
 # 该帧里有没有这个键。
 func _has(frame: Dictionary, key: String) -> bool:
 	return (frame.get("payload", {}) as Dictionary).has(key)
 
 
-# 该帧真正带的键集(打印进失败消息用 —— "广播里到底有什么"是这条守卫唯一该看的东西)。
+# 该帧真正带的键集(打印进失败消息用 —— "广播里到底有什么"是这条防御性校验唯一该看的东西)。
 func _keys_of_frame(frame: Dictionary) -> Array:
 	return (frame.get("payload", {}) as Dictionary).keys()
 
 
-# **任何**一帧里带过这个键吗(反向断言用:遍历全部帧,而不是只看某一帧)。
+# 任何一帧里带过这个键吗(反向断言用:遍历全部帧,而不是只看某一帧)。
 func _any_has(frames: Array, key: String) -> bool:
 	for f in frames:
 		if _has(f, key):
@@ -240,7 +229,7 @@ func _any_has(frames: Array, key: String) -> bool:
 	return false
 
 
-# 最后一条 `state == s` 的帧;从没广播过该状态 → 空字典(调用方**必须先**判空,否则为无效操作断言)。
+# 最后一条 `state == s` 的帧;从没广播过该状态 -> 空字典(调用方必须先判空,否则为无效操作断言)。
 func _frame_at(host, s: int) -> Dictionary:
 	var found: Dictionary = {}
 	for f in host.frames:
@@ -269,11 +258,11 @@ func _check_duel_phase() -> void:
 	GameParameters.refresh_map_size()
 	_place(host, 1, _p1_cell)
 	_place(host, 2, _p2_cell)
-	host._wire_hit_feedback()     # - 手工摆位路径必须补调**生产那一份**接线(否则一条线都没有)
+	host._wire_hit_feedback()     # - 手工摆位路径必须补调生产那一份接线(否则一条线都没有)
 	host._round_state = MatchHost.RoundState.PLAYING
 	await get_tree().physics_frame     # 让 `@onready` 的 combat/weapons 就绪
 
-	# (a) 一次已知伤害 → dealt 记给射手、taken 记给受害者
+	# (a) 一次已知伤害 -> dealt 记给射手、taken 记给受害者
 	var dealt0 := _stat(host, 1, "dealt")
 	var taken0 := _stat(host, 2, "taken")
 	CombatFeedback.attribute(host.players[2], host.players[1])
@@ -285,7 +274,7 @@ func _check_duel_phase() -> void:
 			"★ ① 1v1:同一笔进**受害者**的 taken(实际 +%d,期望 +7)"
 			% (_stat(host, 2, "taken") - taken0))
 
-	# (b) 倒地 → deaths 一律 +1、击杀记给对手(1v1 的计分口径)
+	# (b) 倒地 -> deaths 一律 +1、击杀记给对手(1v1 的计分口径)
 	_force_down(host, 2)     # 走生产那条强制倒地入口
 	host._match_round_tick(0.016)
 	_check(_stat(host, 2, "deaths") == 1,
@@ -304,7 +293,7 @@ func _check_duel_phase() -> void:
 	await get_tree().process_frame
 
 
-# ── ② 1v1 的击杀规则是**无归因**的:自杀也给对手 +1(结算页必须与记分条同口径)──
+# ── ② 1v1 的击杀规则是无归因的:自杀也给对手 +1(结算页必须与记分条同口径)──
 func _check_duel_kill_rule() -> void:
 	var host = MatchHost.new(MAP, {}, {})
 	host.name = "StatsDuelSuicideHost"
@@ -332,19 +321,19 @@ func _check_duel_kill_rule() -> void:
 	await get_tree().process_frame
 
 
-# ── ⑦ 1v1 的**子弹链**:生产裁决函数**自己**必须写归因 ──
+# ── ⑦ 1v1 的子弹链:生产判定结果函数自己必须写归因 ──
 #
-# 注意： 为什么单列一段、而不是并进 ①:① 走的是**手工** `CombatFeedback.attribute(...)` +
-#   `take_hit(...)` —— **整条子弹链一次都没走**。而缺口恰恰在子弹链上:基类
-#   `MatchCombat._on_bullet_hit` 原先**自己不写归因**,只有 `RoyaleHost` / `TeamHost` 的覆写写;
-#   而 1v1 走 `MatchBootstrap.start_on` **直接建 `MatchHost`**(全仓唯一实例化点) ->  1v1 的子弹
+# 注意事项：为什么单列一段、而不是并进 ①:① 走的是手工 `CombatFeedback.attribute(...)` +
+#   `take_hit(...)` —— 整条子弹链一次都没走。而缺口恰恰在子弹链上:基类
+#   `MatchCombat._on_bullet_hit` 原先自己不写归因,只有 `RoyaleHost` / `TeamHost` 的覆写写;
+#   而 1v1 走 `MatchBootstrap.start_on` 直接建 `MatchHost`(全仓唯一实例化点) ->  1v1 的子弹
 #   (主要伤害来源)不计入 `dealt`/`taken`,结算页显示 `击杀 5 / 造成 0 / 承受 0`。
-#   - ① 长期测试全部通过**正是因为它绕开了被破坏的那一跳** —— 它是"归因 → 统计"的守卫,
-#     本段是"**生产自己写不写归因**"的守卫,两条互不替代。
+#   - ① 长期全部断言通过正是因为它绕开了被破坏的那一跳 —— 它是"归因 -> 统计"的防御性校验,
+#     本段是"生产自己写不写归因"的防御性校验,两条互不替代。
 # - 夹具走生产路径:`_adjudicate_bullets()` 是生产同一个函数、同一个 `HIT_RADIUS`
-#   (单一来源 `BulletBase.PLAYER_HIT_RADIUS`)。宿主用**裸 `MatchHost`** —— 那正是 1v1 的形态。
+#   (单一来源 `BulletBase.PLAYER_HIT_RADIUS`)。宿主用裸 `MatchHost` —— 那正是 1v1 的形态。
 func _check_duel_bullet_path() -> void:
-	# ── (a) 干净 1v1:子弹命中 → dealt 记给射手、taken 记给受害者 ──
+	# ── (a) 干净 1v1:子弹命中 -> dealt 记给射手、taken 记给受害者 ──
 	var host = MatchHost.new(MAP, {}, {})
 	host.name = "StatsDuelBulletHost"
 	add_child(host)
@@ -358,11 +347,11 @@ func _check_duel_bullet_path() -> void:
 	var dealt0 := _stat(host, 1, "dealt")
 	var taken0 := _stat(host, 2, "taken")
 	# - 用 `get("hp")` 而不是 `victim.hp`:静态类型是 `Node2D`,编译期看不到 `Player.hp`
-	#   (Godot 4 对已标注类型的变量取未知属性是**编译错误**,不是运行期错误)。
+	#   (Godot 4 对已标注类型的变量取未知属性是编译错误,不是运行期错误)。
 	var hp0 := int(victim.get("hp"))
 	_fire_bullet_at(host, shooter, victim)
-	# 夹具自检:命中必须真的发生。少了它,万一子弹没进 `bullet` 组/没走到裁决,
-	# 下面两条会因为 `dealt`/`taken` **两边都是 0** 而以"期望 +7 实得 +0"报红(不会测试漏检),
+	# 夹具自检:命中必须真的发生。少了它,万一子弹没进 `bullet` 组/没走到判定结果,
+	# 下面两条会因为 `dealt`/`taken` 两边都是 0 而以"期望 +7 实得 +0"报红(不会测试漏报),
 	# 但报的是"没打中",不是"归因缺了" —— 自检把这两种成因分开。
 	_check(int(victim.get("hp")) < hp0,
 			("★ ⑦(a) 夹具自检:子弹必须真的命中(受害者 hp %d → %d)"
@@ -378,11 +367,11 @@ func _check_duel_bullet_path() -> void:
 	host.free()
 	await get_tree().process_frame
 
-	# ── (b) 自伤标记在场时的子弹命中:必须记进**射手**的 dealt,不得记成受害者的 self_damage ──
-	# - 这一半是修法**顺带闭合**的耦合症状(见 `CombatFeedback.attribute()` 末尾那句
+	# ── (b) 自伤标记在场时的子弹命中:必须记进射手的 dealt,不得记成受害者的 self_damage ──
+	# - 这一半是修法顺带闭合的耦合症状(见 `CombatFeedback.attribute()` 末尾那句
 	#   `remove_meta("last_self_hit_time")`):1v1 没有归因写端  ->  那个标记永不失效  -> 
-	#   "自己炸自己之后 8ms 内被敌人打中"会**扣自己的分**(记成 self_damage)。
-	# - 受害者取**干净**的一具(另建宿主):若沿用 (a) 那具,`last_damager` 还是新鲜的
+	#   "自己炸自己之后 8ms 内被敌人打中"会扣自己的分(记成 self_damage)。
+	# - 受害者取干净的一具(另建宿主):若沿用 (a) 那具,`last_damager` 还是新鲜的
 	#    ->  `stat_attacker` 非 0  ->  缺了修法那一半时 dealt 照样会涨,(b) 就只剩 self_damage 一条在鉴别。
 	var host2 = MatchHost.new(MAP, {}, {})
 	host2.name = "StatsDuelBulletSelfHost"
@@ -413,17 +402,17 @@ func _check_duel_bullet_path() -> void:
 
 # ── ③ 大乱斗:同一个倒地边沿记 deaths/击杀,`deaths` 载荷只从逐人表来 ──
 #
-# 注意： F2(评审 Critical,2026-09-26):本段的**测试有效性**是专门为下面这一对形状设计的,动夹具
+# 注意事项：F2(评审 Critical,2026-09-26):本段的测试有效性是专门为下面这一对形状设计的,动夹具
 #    里的 role 号之前先读完这段。
-#    大乱斗的计分口径 = **归因制**(`_record_down(int(role), _attributed_killer(p))`:无归因的
+#    大乱斗的计分口径 = 归因制(`_record_down(int(role), _attributed_killer(p))`:无归因的
 #    死亡不计任何人的击杀);1v1 的是「不分死因、对方死亡都算」(`_opponent_of(role)`)。
-#    旧夹具(受害者 3 / 归因射手 1)里两者**恰好同值**  ->  把生产那行换成 1v1 的错形状,
-#    本段断言(含新加的 dealt/taken)**全部照旧绿**,verdict 与基线逐字相同。
-#    现在归因目标取 **role 2**,于是:
+#    旧夹具(受害者 3 / 归因射手 1)里两者恰好同值  ->  把生产那行换成 1v1 的错形状,
+#    本段断言(含新加的 dealt/taken)全部照旧绿,verdict 与基线逐字相同。
+#    现在归因目标取 role 2,于是:
 #      正确实现(`_attributed_killer`)= 2 / 错形状(`_opponent_of(3)` = 按位置第一个非 3 的 role)= 1
-#    两者**必然不同**(夹具自检那条钉住这个前提;谁把 `_place` 的顺序或 role 号改了,自检先红)。
-#    另有 (b) 的**无归因**档:旧夹具在大乱斗这条链上**从没造过**它(只在 1v1 的 ② 里清过 meta),
-#    所以"未归因 = 不计任何人击杀"这条规则在本链上是**零覆盖**的。
+#    两者必然不同(夹具自检那条固定绑定这个前提;谁把 `_place` 的顺序或 role 号改了,自检先红)。
+#    另有 (b) 的无归因档:旧夹具在大乱斗这条链上从没造过它(只在 1v1 的 ② 里清过 meta),
+#    所以"未归因 = 不计任何人击杀"这条规则在本链上是零覆盖的。
 func _check_royale_phase() -> void:
 	var host = RoyaleHost.new(MAP, {}, {}, [], {})
 	host.name = "StatsRoyaleHost"
@@ -436,28 +425,28 @@ func _check_royale_phase() -> void:
 	host._round_state = MatchHost.RoundState.PLAYING
 	await get_tree().physics_frame
 
-	# - 夹具自检:本段的测试有效性**只**在"两个实现给出不同答案"时存在。写成"应当不同"而不是
-	#   严格约束某个具体值(比如 `== 1`),是为了让它只在**测试有效性消失**时报红,而不去复述
+	# - 夹具自检:本段的测试有效性只在"两个实现给出不同答案"时存在。写成"应当不同"而不是
+	#   严格约束某个具体值(比如 `== 1`),是为了让它只在测试有效性消失时报红,而不去复述
 	#   `_opponent_of` 的实现细节 —— 但它确实会因 `_place` 顺序/role 号改动而红,那正是要的。
 	_check(host._opponent_of(3) != 2,
 			("★ ③ 夹具自检:1v1 的错形状(`_opponent_of(3)` = %d)必须与正确归因(role 2)"
 			+ "**给出不同答案** —— 同值则下面那条断言区分不了两种实现(本段旧版就是这么瞎的)")
 			% host._opponent_of(3))
 
-	# (a) 有归因:击杀记给**归因到的射手**(role 2),不是按位置推出的对手(role 1)
+	# (a) 有归因:击杀记给归因到的射手(role 2),不是按位置推出的对手(role 1)
 	CombatFeedback.attribute(host.players[3], host.players[2])
 	(host.players[3] as Node2D).take_hit(Vector2.ZERO, 8)
 	_force_down(host, 3)
 	host._match_round_tick(0.016)
 	_check(_stat(host, 3, "deaths") == 1,
 			"★ ③ 大乱斗:倒地边沿记 deaths(实际 %d,期望 1)" % _stat(host, 3, "deaths"))
-	# 注意： 为什么用**整表**（`kills` 非零的 role 集合 == 恰好一个）而不是只钉 "role 2 == 1"：
-	#   整表形式对任何**固定 role 子集**都是**严格加强**，它**唯一多换取收益**的是
-	#   "**记对了 role 之外还多记一笔**"那一族（`给所有人都记一笔`）。
-	#   - 订正（评审复核实测）：初稿还举了"记到一个**表外** role 上"当理由 —— **举错了**：
-	#     那种实现下正确的 role 2 拿到 0 笔，**"role 2 == 1" 的固定断言照样会红**（隔离株 M99 实测）。
-	#   代价（登记在此，按本仓"belt 的代价记在守卫处"的惯例）：将来大乱斗若出现
-	#   **一次倒地合法地记多笔击杀**的规则，这条会**测试误报** —— 今天没有这条规则。
+	# 注意事项：为什么用整表（`kills` 非零的 role 集合 == 恰好一个）而不是只钉 "role 2 == 1"：
+	#   整表形式对任何固定 role 子集都是严格加强，它唯一多换取收益的是
+	#   "记对了 role 之外还多记一笔"那一族（`给所有人都记一笔`）。
+	#   - 订正（评审复核实测）：初稿还举了"记到一个表外 role 上"当理由 —— 举错了：
+	#     那种实现下正确的 role 2 拿到 0 笔，"role 2 == 1" 的固定断言照样会红（隔离株 M99 实测）。
+	#   代价（登记在此，按本仓"belt 的代价记在防御性校验处"的惯例）：将来大乱斗若出现
+	#   一次倒地合法地记多笔击杀的规则，这条会测试误报 —— 今天没有这条规则。
 	_check(_kills_table(host) == ["role 2=1"],
 			("★ ③ 大乱斗:有归因的击杀**恰好**记给归因射手(整表 kills 非零者 = %s,期望"
 			+ " ['role 2=1'])—— 两个错形状落在这条上:按位置取对手(`_opponent_of(3)` 在这格"
@@ -469,8 +458,8 @@ func _check_royale_phase() -> void:
 	_check(_keys_of(host, 3) == WANT_KEYS,
 			"★ ③ 大乱斗:载荷每行恰好七个字段(实际 %s)" % str(_keys_of(host, 3)))
 
-	# (b) 无归因:大乱斗**不是** 1v1 那套"不分死因都算对手的击杀" —— deaths 照记,
-	#     但**任何人**的 kills 都不许动。受害者取 role 1(从头到尾没挨过打),并照 ② 的做法
+	# (b) 无归因:大乱斗不是 1v1 那套"不分死因都算对手的击杀" —— deaths 照记,
+	#     但任何人的 kills 都不许动。受害者取 role 1(从头到尾没挨过打),并照 ② 的做法
 	#     显式清一遍 meta(不依赖"没人打过他"这个隐含前提)。
 	var victim: Node2D = host.players[1]
 	for m in ["last_damager", "last_damager_time"]:
@@ -479,8 +468,8 @@ func _check_royale_phase() -> void:
 	var before := host.stats_payload()      # 真快照:`stats_payload()` 每次现建一份
 	_force_down(host, 1)
 	host._match_round_tick(0.016)
-	# 这条同时是 (b) 的**夹具自检**:deaths 不动就说明这一 tick 根本没走到倒地边沿
-	# (下面那条"谁的 kills 都没涨"会**无效操作通过**)。
+	# 这条同时是 (b) 的夹具自检:deaths 不动就说明这一 tick 根本没走到倒地边沿
+	# (下面那条"谁的 kills 都没涨"会无效操作通过)。
 	_check(_stat(host, 1, "deaths") == 1,
 			"★ ③ 大乱斗:无归因的死亡**照记** deaths(实际 %d,期望 1)"
 			% _stat(host, 1, "deaths"))
@@ -503,9 +492,9 @@ func _check_royale_phase() -> void:
 	await get_tree().process_frame
 
 
-# 大乱斗载荷里的 `deaths` 必须**从逐人表读**(旧的 `_deaths` 是同一件事的第二份计数,已删)。
-# - 这一条**留源码级**,理由与 ④ 那条相同机制:它问的是**来源**(载荷里那个键是从哪张表构造的),
-#   而不是"某段文本在不在" —— 行为面的**等价物**在 ⑤(`广播出去的 deaths == 逐人表的 deaths`),
+# 大乱斗载荷里的 `deaths` 必须从逐人表读(旧的 `_deaths` 是同一件事的第二份计数,已删)。
+# - 这一条留源码级,理由与 ④ 那条相同处理逻辑:它问的是来源(载荷里那个键是从哪张表构造的),
+#   而不是"某段文本在不在" —— 行为面的等价物在 ⑤(`广播出去的 deaths == 逐人表的 deaths`),
 #   两者不是冗余:行为面证明"两边的值今天相等",这一条证明"值取自哪里"(并行维护两份计数
 #   也能让值相等,而那正是要禁的东西)。
 func check_royale_deaths_source() -> void:
@@ -519,13 +508,13 @@ func check_royale_deaths_source() -> void:
 			"★ ③ 大乱斗载荷的 `deaths` 必须从逐人表的 role 集合(`_roster()`)构造(第二份计数会漂)")
 
 
-# ── ④ 写入口那一半(**源码级**):1v1 的倒地边沿必须走**唯一**的写入口 `_record_down` ──
+# ── ④ 写入口那一半(源码级):1v1 的倒地边沿必须走唯一的写入口 `_record_down` ──
 #
-# - 为什么这一条**留源码级**(投递那三条已改到 ⑤ 的**行为面**):
-#   "倒地边沿记了 deaths/kills"这一半,① / ② 已用**行为**咬住了(把那行注释掉  ->  五条红);
-#   但"必须**经由** `_record_down`"是一个**路由**不变量,行为面表达不了 —— 助攻表与惩罚账都写在
-#   `_record_down` **体内**,另起一份并行写入会在数字上"看着对",却把助攻/惩罚静默漏掉。
-#   - 它**不是**次序无关的文本共现(不涉及与 `_rpc_all` 的先后) —— 那一类已从本文件**删除**。
+# - 为什么这一条留源码级(投递那三条已改到 ⑤ 的行为面):
+#   "倒地边沿记了 deaths/kills"这一半,① / ② 已用行为咬住了(把那行注释掉  ->  五条红);
+#   但"必须经由 `_record_down`"是一个路由不变量,行为面表达不了 —— 助攻表与惩罚账都写在
+#   `_record_down` 体内,另起一份并行写入会在数字上"看着对",却把助攻/惩罚静默漏掉。
+#   - 它不是次序无关的文本共现(不涉及与 `_rpc_all` 的先后) —— 那一类已从本文件删除。
 func _check_delivery_source() -> void:
 	var tick := ScanUtil.func_body(
 			ScanUtil.code_only(ScanUtil.read("res://server/match/match_round.gd")), "_match_round_tick")
@@ -538,25 +527,25 @@ func _check_delivery_source() -> void:
 	_done.append("delivery_source")
 
 
-# ── ⑤ 投递那一半(**行为面**):截获真正要发出去的 `round_state` 字典 ──
+# ── ⑤ 投递那一半(行为面):截获真正要发出去的 `round_state` 字典 ──
 #
 # - 旧版的三问是"函数体里含不含 `data["stats"]` / `data["mvp"]` / `if not table.is_empty():`"
-#   —— **次序无关的文本共现**:把 `_rpc_all("round_state", [data])` 提到挂载之前(客户端一个键
-#   都收不到)、或把 `mvp` 挪出 MATCH_OVER 分支(每帧多带一个没有意义的键),三条**照样测试全部通过**。
-#   现在这三件事一律按**广播件**判:截获手段见 `RpcPayload` 的注释(**调用时刻取快照**)。
+#   —— 次序无关的文本共现:把 `_rpc_all("round_state", [data])` 提到挂载之前(客户端一个键
+#   都收不到)、或把 `mvp` 挪出 MATCH_OVER 分支(每帧多带一个没有意义的键),三条照样全部断言通过。
+#   现在这三件事一律按广播件判:截获手段见 `RpcPayload` 的注释(调用时刻取快照)。
 #
-# - 三个 MATCH_OVER 的判据都配了"夹具自检"(先断言真的广播过那个状态),否则"从没走到那里"
-#   会让那几条**无效操作通过** —— 那是本仓登记过的测试漏检形状。
+# - 三个 MATCH_OVER 的判定条件都配了"夹具自检"(先断言真的广播过那个状态),否则"从没走到那里"
+#   会让那几条无效操作通过 —— 那是本仓登记过的测试漏报形状。
 func _check_delivery_payload() -> void:
 	# ── (甲)1v1:`MatchRound._broadcast_round_state` ──
 	var host = CapturingDuelHost.new(MAP, {}, {})
 	host.name = "StatsDeliveryDuelHost"
-	add_child(host)                    # ← `_ready` 在这里广播一次(**此刻 `players` 还是空的**)
+	add_child(host)                    # ← `_ready` 在这里广播一次(此刻 `players` 还是空的)
 	GameParameters.refresh_map_size()
-	# (a) 逐人表为空时不得带 `stats` 键 —— 在 `_place` **之前**取,故它验的**就是**那个分支
+	# (a) 逐人表为空时不得带 `stats` 键 —— 在 `_place` 之前取,故它验的就是那个分支
 	#     (`stats_payload()` 对空 `_roster()` 返回 `{}`;生产靠 `if not table.is_empty():` 省键)。
 	#     - 这替代了旧版那条 `函数体里含 'if not table.is_empty():'` 的文本断言 —— 后者在
-	#       "句子还在、语意没了"(`if …: pass` + 赋值挪到 if 之外)的写法下**测试全部通过**。
+	#       "句子还在、语意没了"(`if …: pass` + 赋值挪到 if 之外)的写法下全部断言通过。
 	var empty_n: int = host.frames.size()
 	_check(empty_n > 0 and not _any_has(host.frames, "stats"),
 			"★ ⑤ 1v1:逐人表为空时的 round_state **不带** `stats` 键(带宽纪律,与 teams/destroyed 同款;"
@@ -579,14 +568,14 @@ func _check_delivery_payload() -> void:
 	_check(not _has(playing, "mvp"),
 			"★ ⑤ 1v1:PLAYING **不带** `mvp`(它只在 MATCH_OVER 支内挂;挪出分支 = 每帧多带一个"
 			+ "没有读者的键)截获的键集 = " + str(_keys_of_frame(playing)))
-	# 载荷内容:每行恰好七个字段(① 那条读的是 `stats_payload()` 的**返回值**,这条读**广播件**)。
+	# 载荷内容:每行恰好七个字段(① 那条读的是 `stats_payload()` 的返回值,这条读广播件)。
 	var sent_row: Dictionary = (playing.get("payload", {}) as Dictionary).get("stats", {}).get(1, {})
 	var sent_keys: Array = sent_row.keys()
 	sent_keys.sort()
 	_check(sent_keys == WANT_KEYS,
 			"★ ⑤ 1v1:广播出去的逐人表每行恰好七个字段(实际 " + str(sent_keys) + ")")
 
-	# (b) MATCH_OVER:走生产**唯一**那条进 MATCH_OVER 的路(`_start_next_round` 的局胜分支)。
+	# (b) MATCH_OVER:走生产唯一那条进 MATCH_OVER 的路(`_start_next_round` 的局胜分支)。
 	host._rounds_won[1] = MatchHost.ROUNDS_TO_WIN
 	host._start_next_round()
 	var over := _frame_at(host, MatchHost.RoundState.MATCH_OVER)
@@ -605,7 +594,7 @@ func _check_delivery_payload() -> void:
 	host.free()
 	await get_tree().process_frame
 
-	# ── (乙)大乱斗:`RoyaleHost._broadcast_round_state`(**整体覆写**了基类那一份)──
+	# ── (乙)大乱斗:`RoyaleHost._broadcast_round_state`(整体覆写了基类那一份)──
 	var rhost = CapturingRoyaleHost.new(MAP, {}, {}, [], {})
 	rhost.name = "StatsDeliveryRoyaleHost"
 	add_child(rhost)                   # 同上:此刻 `players` 还是空的
@@ -629,8 +618,8 @@ func _check_delivery_payload() -> void:
 	_check(_has(rplaying, "stats"),
 			"★ ⑤ 大乱斗:PLAYING 的 round_state **确实带** `stats`(截获的键集 = "
 			+ str(_keys_of_frame(rplaying)) + ")")
-	# `deaths` 必须与逐人表**同源**(旧的 `_deaths` 是同一件事的第二份计数;两份必然漂,
-	# 且漂了不会有任何报错)—— ③ 那条是**来源**守卫,这条是**值**守卫,两条都要。
+	# `deaths` 必须与逐人表同源(旧的 `_deaths` 是同一件事的第二份计数;两份必然漂,
+	# 且漂了不会有任何报错)—— ③ 那条是来源防御性校验,这条是值防御性校验,两条都要。
 	var rdeaths: Dictionary = (rplaying.get("payload", {}) as Dictionary).get("deaths", {})
 	var want_deaths := {}
 	var rtable := rhost.stats_payload()
@@ -640,7 +629,7 @@ func _check_delivery_payload() -> void:
 			"★ ⑤ 大乱斗:广播出去的 `deaths` == 逐人表的 deaths(实际 " + str(rdeaths)
 			+ " / 期望 " + str(want_deaths) + ")")
 
-	# MATCH_OVER:生产路线是 `_match_time` 归零 → `_finish_match()`。
+	# MATCH_OVER:生产路线是 `_match_time` 归零 -> `_finish_match()`。
 	rhost._match_time = 0.0
 	rhost._match_round_tick(0.016)
 	var rover := _frame_at(rhost, MatchHost.RoundState.MATCH_OVER)
@@ -655,23 +644,23 @@ func _check_delivery_payload() -> void:
 	_done.append("delivery_payload")
 
 
-# ── ⑥ 3v3 的投递那一半(**行为面**):`TeamHost._broadcast_round_state`(**整体覆写**了基类那一份)──
+# ── ⑥ 3v3 的投递那一半(行为面):`TeamHost._broadcast_round_state`(整体覆写了基类那一份)──
 #
-# 注意： 本段是"3v3 投递有守卫"这句话**唯一**的落点(替代 `team_host_probe` ⑬g 那三条文本共现 ——
-#   它们的失败模式见文件头那段实测读数)。判据与 ⑤ 逐条同形:全部读**截获帧**(调用时刻深拷贝),
-#   每一条 MATCH_OVER 判据都配一条"夹具自检",否则"从没走到那里"会让它**无效操作通过**。
-# - 夹具与其它段相同机制:实际创建 3v3 宿主、`role_peers` 传空、玩家手工摆位(role 1 = 1 队 / role 4 = 2 队)。
-#   - 散点显式传进去(与 `team_host_probe` 相同机制;`spawns` 传空会让 `_init` 自己再 shuffle 一份)。
-#   - **本段最后跑**:建宿主会重载全局网格(`MatchHost._init` → `WorldBuilder.load_grid`),
+# 注意事项：本段是"3v3 投递有防御性校验"这句话唯一的落点(替代 `team_host_probe` ⑬g 那三条文本共现 ——
+#   它们的失败模式见文件头那段实测读数)。判定条件与 ⑤ 逐条同形:全部读截获帧(调用时刻深拷贝),
+#   每一条 MATCH_OVER 判定条件都配一条"夹具自检",否则"从没走到那里"会让它无效操作通过。
+# - 夹具与其它段相同处理逻辑:实际创建 3v3 宿主、`role_peers` 传空、玩家手工摆位(role 1 = 1 队 / role 4 = 2 队)。
+#   - 散点显式传进去(与 `team_host_probe` 相同处理逻辑;`spawns` 传空会让 `_init` 自己再 shuffle 一份)。
+#   - 本段最后跑:建宿主会重载全局网格(`MatchHost._init` -> `WorldBuilder.load_grid`),
 #     前面的段(尤其大乱斗那两份夹具的摆位)依赖它保持不动。
 func _check_team_phase() -> void:
 	var teams := {1: 1, 2: 1, 3: 1, 4: 2, 5: 2, 6: 2}
 	var host = CapturingTeamHost.new(MAP, {}, {}, [], TeamHost.plan_team_spawns(teams), teams)
 	host.name = "StatsDeliveryTeamHost"
-	add_child(host)                    # ← `_ready` 在这里广播一次(**此刻 `players` 还是空的**)
+	add_child(host)                    # ← `_ready` 在这里广播一次(此刻 `players` 还是空的)
 	GameParameters.refresh_map_size()
 	# (a) 逐人表为空时不得带 `stats` 键 —— 它同时是旧版第三条文本断言
-	#     (`if not table.is_empty():`)的**行为面等价物**(那句在"句子还在、语意没了"的写法下测试全部通过)。
+	#     (`if not table.is_empty():`)的行为面等价物(那句在"句子还在、语意没了"的写法下全部断言通过)。
 	var tempty_n: int = host.frames.size()
 	_check(tempty_n > 0 and not _any_has(host.frames, "stats"),
 			"★ ⑥ 3v3:逐人表为空时的 round_state **不带** `stats` 键(带宽纪律;截获 "
@@ -695,7 +684,7 @@ func _check_team_phase() -> void:
 	_check(not _has(tplaying, "mvp"),
 			("★ ⑥ 3v3:PLAYING **不带** `mvp`(它只在 MATCH_OVER 支内挂;挪出分支 = 每帧多带一个"
 			+ "没有读者的键)截获的键集 = " + str(_keys_of_frame(tplaying))))
-	# 载荷内容:每行恰好七个字段(读的是**广播件**,与 `team_host_probe` ⑬g 读 `stats_payload()`
+	# 载荷内容:每行恰好七个字段(读的是广播件,与 `team_host_probe` ⑬g 读 `stats_payload()`
 	# 返回值那条不是同一件事)。
 	var tsent_row: Dictionary = (tplaying.get("payload", {}) as Dictionary).get("stats", {}).get(4, {})
 	var tsent_keys: Array = tsent_row.keys()
@@ -703,7 +692,7 @@ func _check_team_phase() -> void:
 	_check(tsent_keys == WANT_KEYS,
 			"★ ⑥ 3v3:广播出去的逐人表每行恰好七个字段(实际 " + str(tsent_keys) + ")")
 
-	# (b) MATCH_OVER:走生产**唯一**那条进 MATCH_OVER 的路(`_start_next_round` 的局胜分支)。
+	# (b) MATCH_OVER:走生产唯一那条进 MATCH_OVER 的路(`_start_next_round` 的局胜分支)。
 	host._rounds_won[1] = TeamHost.TEAM_ROUNDS_TO_WIN
 	host._start_next_round()
 	var tover := _frame_at(host, MatchHost.RoundState.MATCH_OVER)

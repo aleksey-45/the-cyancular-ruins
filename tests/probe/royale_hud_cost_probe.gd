@@ -1,26 +1,26 @@
 extends Node
 
 # 大乱斗排行榜重建成本探针(场景模式):把"每秒卡一下"归因到具体一行代码。
-# 跑法:
+# 运行方式：
 #   "$GODOT" --headless --path . res://tests/probe/royale_hud_cost_probe.tscn
 # 期望:每条 [hudcost] … 通过,末行 "ROYALE HUD COST PROBE: ALL-OK"。
 #
-# 存在理由:6 人压力跑里,所有客户端**每秒**都卡 50~60ms,时间点严格落在 1.0s 整数倍上 ——
+# 存在理由:6 人压力跑里,所有客户端每秒都卡 50~60ms,时间点严格落在 1.0s 整数倍上 ——
 # 正是 RoyaleHost.HUD_SYNC_INTERVAL 的 round_state 广播周期。本探针把相机挪近:
 # 单独建一个 RoyaleHud,按真实节奏(每帧一次、帧间让 queue_free 结算)喂 N 行 round_state,
-# 量每次 `_on_round_state` 的墙钟耗时。
+# 量每次 `_on_round_state` 的实际物理耗时（Wall-clock time）耗时。
 #
-# ⚠ 它量的是 **headless 下**的成本。headless 用 dummy renderer,但 TextServer 照常
+# - 它量的是 headless 下的成本。headless 用 dummy renderer,但 TextServer 照常
 #   shape/rasterize 字形 —— 真机的渲染侧开销既可能更大(要画)也可能更小(字形已缓存)。
 #   故本探针的结论只能写成"客户端侧确有 N ms 的每秒重建成本",不能写成"真机就卡这么多"。
 #
-# ⚠ 判据 grep 文本 "ROYALE HUD COST PROBE: ALL-OK"(不只看退出码)。
+# - 判定条件 grep 文本 "ROYALE HUD COST PROBE: ALL-OK"(不只看退出码)。
 #
 # 两条断言分开看:
-#   ① **结构**(硬断言):排行榜行 Label 必须被**复用** —— 每秒重建 N 个 Label 是纯浪费,
-#      实测同步成本 2.6/3.8/4.7 ms(4/6/8 行)。判据是"行 Label 的 instance_id 跨多次更新不变"
-#      (重建的话每次都是新 id)。这条不看时间,不受机器负载影响,是**可靠的回归守卫**。
-#   ② **耗时**(读数 + 宽松门槛):中位必须 < 一帧预算(16.7ms)。门槛刻意不设在 1ms ——
+#   ① 结构(硬断言):排行榜行 Label 必须被复用 —— 每秒重建 N 个 Label 是纯浪费,
+#      实测同步成本 2.6/3.8/4.7 ms(4/6/8 行)。判定依据为"行 Label 的 instance_id 跨多次更新不变"
+#      (重建的话每次都是新 id)。这条不看时间,不受机器负载影响,是可靠的回归防御性校验。
+#   ② 耗时(读数 + 宽松门槛):中位必须 < 一帧预算(16.7ms)。门槛刻意不设在 1ms ——
 #      本探针是"归因工具",不是"逼这行代码变快"的指标。
 
 const ROWS := [4, 6, 8]
@@ -79,7 +79,7 @@ func _measure(n: int) -> void:
 	var top: Label = hud._rows[0] if not hud._rows.is_empty() else null
 	_check(top != null and top.text.contains("99"),
 			"复用行仍然更新文字(榜首文字=%s)" % ("(空)" if top == null else top.text))
-	# ② 耗时:稳态中位必须在**一帧预算**内。超了就是"每秒必掉一帧"。
+	# ② 耗时:稳态中位必须在一帧预算内。超了就是"每秒必掉一帧"。
 	if median >= 16.7:
 		_fail = true
 		print("[hudcost]   ✗ %d 行中位耗时已超一帧预算(%.2f ms)" % [n, median])

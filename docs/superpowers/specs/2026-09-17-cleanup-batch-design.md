@@ -107,7 +107,7 @@ var show := Settings.pvp_minimap_show_enemy and s.length() <= RADIUS_PX
 - 往 `MazeGenerator.current_grid` 塞一张合成网格（非空即可），实例化 `Minimap` 并 `setup(...)` 喂假 provider。
 - 断言：**范围外的敌人点不显示、范围内的显示、跨接缝的（对玩家取最短向量后在范围内）也显示**。
 - 背景铺一块已知纯色，取图后断言**圆外像素仍是背景色**（= `discard` 生效）、**圆内出现地形色**。
-- 存一张 PNG。★ **图要自己读**（这个项目里数值全绿而画面错的事出过两次）。
+- 存一张 PNG。★ **图要自己读**（这个项目里数值全部通过而画面错的事出过两次）。
 
 ---
 
@@ -157,7 +157,7 @@ var show := Settings.pvp_minimap_show_enemy and s.length() <= RADIUS_PX
 ### 2.4 守卫
 
 - `tests/feedback_probe.gd`：删掉显示名断言（:142-148）与"归因 → 播报"的段落；`_check_writer_register_player_hit` 因 `_register_player_hit` 被删而要改写为"敌人命中只出 X 标记"；三个 e2e 段（直接命中 / 爆炸 AoE / 激光）判据从"写了 `last_damager`"改成"出了命中标记"。**`kill()` + 文字/骷髅/连杀的断言保留**（PvP 仍在用）。
-- 实施时逐个核对（按"探针因重构变红时改探针认新入口，别回退重构"的既有纪律）：`kh_l4_probe.gd:83-105`、`kh_l5_probe.gd:290`、`kh_l6_probe.gd`、`hud_declarative_probe.gd:24`、`grenade_player_hit_probe.gd:68-70`、`royale_soak_probe.gd:159`、`enemy_logic_smoke`。
+- 实施时逐个核对（按"探针因重构报错失败时改探针认新入口，别回退重构"的既有纪律）：`kh_l4_probe.gd:83-105`、`kh_l5_probe.gd:290`、`kh_l6_probe.gd`、`hud_declarative_probe.gd:24`、`grenade_player_hit_probe.gd:68-70`、`royale_soak_probe.gd:159`、`enemy_logic_smoke`。
 
 ---
 
@@ -259,7 +259,7 @@ func _build_collision() -> void:
 - `tests/level0_weapon_scatter_probe.gd:172-174, :215`：站到 `target.visual_offset` / `anchor_pk.visual_offset` → 直接站到节点位置。
 - `tests/ground_client_probe.gd:112`：`pk.visual_center()` → `pk.canonical_pos`。
 - `tests/sprite_bounds_smoke.gd` / `weapon_pickup_probe.gd`：**预期不动**（`SpriteBounds` 不改），实施时确认。
-- 新增断言（可选，落在 `level0_weapon_scatter_probe` 或 `weapon_pickup_probe`）：**六把枪逐个实例化后，`CollisionShape2D.position` 都必须是 `Vector2.ZERO`，且 Visual 的平移使枪的 alpha 包围盒中心落在原点**——这条直接钉住 m82a1 那个错位不再回来。
+- 新增断言（可选，落在 `level0_weapon_scatter_probe` 或 `weapon_pickup_probe`）：**六把枪逐个实例化后，`CollisionShape2D.position` 都必须是 `Vector2.ZERO`，且 Visual 的平移使枪的 alpha 包围盒中心落在原点**——这条直接断言约束 m82a1 那个错位不再回来。
 
 ---
 
@@ -373,7 +373,7 @@ func _unstick_up() -> bool:
 
 - §UI 新增小地图一节（圆形/以玩家为中心/`RANGE_CELLS` 是范围唯一入口/环面走 `toroidal_delta_px`）。
 - §武器背包与地面拾取：`★ 下发出去的 pos 一律是 canonical…`（:84）整段重写（两个中心已合并）；`visual_offset` 相关段落改写。
-- §敌人：删掉 `display_name` 收口那段（显示名链已整体移除），`data/enemies.json` 的字段说明同步。
+- §敌人：删掉 `display_name` 统一收拢那段（显示名链已整体移除），`data/enemies.json` 的字段说明同步。
 - §碰撞/新增 `core/sim/unstick.gd` 的位置与用途。
 
 `node level_editor/sync-enemies.js --check` 与 `node level_editor/smoke.js` 在实施后各跑一次（用户自己跑）。

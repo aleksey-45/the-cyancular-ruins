@@ -387,7 +387,7 @@ git commit -m "feat: BlackBird 注册进编辑器与地图"
 
 **Interfaces:**
 - Consumes: Task 1 的 `EnemyBlackBird`/`EnemyParams.BlackBird`、Task 2 的 `EnemySpawner.TYPES["black_bird"]`。
-- Produces: 黑鸟全行为覆盖的断言;`SMOKE OK` 全绿。
+- Produces: 黑鸟全行为覆盖的断言;`SMOKE OK` 全部通过。
 
 - [ ] **Step 1: 插入 BlackBird 测试块**
 

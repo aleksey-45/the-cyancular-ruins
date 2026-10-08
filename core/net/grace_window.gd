@@ -22,23 +22,20 @@ extends RefCounted
 #     ② **测试预算**:凡按"宽限期多久"算出来的窗口都要重算 —— `tests/probe/reconnect_probe.gd`
 #        的 `GRACE_MIN/MAX` 与 `FINAL_TIMEOUT`、`tests/harness/team_match_watcher.gd` 的 `OBSERVE_MAX`、
 #        `tests/probe/team_match_probe.gd` 的 `RESULT_WAIT`(它的头部注释要求**逐项求和**算,别凭印象)。
-#        这三处是 Task 2。
-# - 端口归还延迟(`WorkerLauncher` 的三个 `*_PORT_REUSE_DELAY`)**不再与本值绑定**:
-#   核心关键点是"worker 进程活着  ->  房与它占的端口都还在"(房活到 worker 退出,见
-#   `RoomManager._reclaim_finished_matches`)。守卫只留一条 belt 形式的宽松下界
-#   (`tests/smoke/grace_window_smoke` ⑧),口径写在那一处。
+# - 单进程单端口架构下，房间由 RoomManager 统一按会话状态回收。
+#   对局进行中时房间保持在列表中供断线重连识别。
 const DEFAULT_SECONDS := 60.0
 
 # ── 宽限期**到点之后**该做什么:纯分派(无 autoload、无副作用、可 `-s` 测)──
 # 三个模式的答案就在这里,由 tests/smoke/grace_window_smoke 逐个钉住;调用方只做一次比较,
 # **不得**再抄一遍 if/else —— 那种写法出过一次真事故:原先 server_main 只有"大乱斗 / 其余"
 # 两支,`else` 把 1v1 **和 3v3** 一起吞了,于是 3v3 里第一个宽限到期的人会带着整局退进程
-# (设计约定是"该队少人继续打"),而它当时不可达只因大厅还没有起 team worker 的入口。
+# (设计约定是"该队少人继续打")。
 const ACTION_REMOVE := 0     # 移出对局(身体销毁),其余人继续打 —— 大乱斗 / 3v3
 const ACTION_TEARDOWN := 1   # 收场退进程 —— 1v1(对手走了就没人可打)
 
 
-# is_royale / is_team 直接来自 worker 的模式开关。两者任一为真都走"移出对局":
+# is_royale / is_team 直接来自对局会话的模式开关。两者任一为真都走"移出对局":
 # 大乱斗的自由混战与 3v3 的团队对抗都是"少一个人照样打得下去";1v1 少一个人就不成局。
 static func expire_action(is_royale: bool, is_team: bool) -> int:
 	return ACTION_REMOVE if (is_royale or is_team) else ACTION_TEARDOWN

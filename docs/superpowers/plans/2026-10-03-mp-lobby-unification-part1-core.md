@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 把 1v1 / 3v3 / 大乱斗三个大厅页合成一个 `mp_lobby`，服务端三套注册表原样保留、只对列表载荷加法式扩键；主菜单的联机入口收成一颗。
+**Goal:** 把 1v1 / 3v3 / 大乱斗三个大厅页合成一个 `mp_lobby`，服务端三套注册表原样保留、只对房间列表数据向后兼容增量扩展扩键；主菜单的联机入口收成一颗。
 
-**Architecture:** 复用现有 `LobbyPage` 基类（连接状态机 / 转连 worker / 回局路径 / 超时梯全在它里面），新页只写版式与三模式分派。列表**不新增统一 RPC** —— 一页并发调三次现有列房 RPC，前端合并打标。凭据模型从「从哪个菜单按钮进来」改成「凭据自带模式」。
+**Architecture:** 复用现有 `LobbyPage` 基类（连接状态机 / 转连 worker / 回局路径 / 超时梯全在它里面），新页只写版式与三模式分派。列表**不新增统一 RPC** —— 一页并发调三次现有列房 RPC，前端合并标记。凭据模型从「从哪个菜单按钮进来」改成「凭据自带模式」。
 
 **Tech Stack:** Godot 4.7.1（标准版）、GDScript、ENet（`NetBus` / `NetBusExt` autoload）。
 
@@ -43,7 +43,7 @@
 | `scenes/main_menu.gd` | 改 | 联机入口收成一颗「多 人 模 式」 |
 | `scenes/beta_menu.gd` | 改 | 两张卡改指向 `mp_lobby` + 预选模式 |
 | `scenes/matchmaking.*` / `royale_lobby.*` / `team_lobby.*` | 删 | 三个旧页退役 |
-| `tests/probe/lobby_payload_probe.gd` / `.tscn` | 建 | 新守卫：载荷扩键 + `room_map` 房主校验 |
+| `tests/probe/lobby_payload_probe.gd` / `.tscn` | 建 | 新守卫：数据包扩键 + `room_map` 房主校验 |
 | `tests/probe/lobby_row_probe.gd` | 改 | 单页化（卡片可点性的两半） |
 | `tests/probe/lobby_visibility_probe.gd` | 改 | 单页化 + 相⑦ 加「模式不同 ⇒ 不可点」 |
 | `tests/smoke/lobby_parse_smoke.gd` | 改 | 目标场景换成 `mp_lobby.tscn` |
@@ -55,7 +55,7 @@
 
 ---
 
-## Task 1: 服务端列表载荷扩键 + `room_map`
+## Task 1: 服务端房间列表数据扩键 + `room_map`
 
 **Files:**
 - Modify: `server/lobby/lobby_rooms.gd`（三个房类定义 + 三个 `*_list_payload()` + 新增两个函数）
@@ -257,7 +257,7 @@ script = ExtResource("1")
 	var map := ""
 ```
 
-- [ ] **Step 4: 三个载荷扩键**
+- [ ] **Step 4: 三个数据包扩键**
 
 `room_list_payload()` 的 `arr.append({...})` 改成：
 
@@ -419,7 +419,7 @@ func room_map(code: String, path: String) -> void:
 	NetBusExt.room_map_requested.connect(lobby.on_room_map)
 ```
 
-- [ ] **Step 8: 跑探针，确认全绿**
+- [ ] **Step 8: 跑探针，确认全部通过**
 
 ```bash
 "$GODOT" --headless --path . --quit-after 3600 res://tests/probe/lobby_payload_probe.tscn
@@ -433,7 +433,7 @@ func room_map(code: String, path: String) -> void:
 "$GODOT" --headless --path . --quit-after 3600 res://tests/probe/lobby_visibility_probe.tscn
 ```
 
-期望：`LOBBY VISIBILITY PROBE: ALL-OK`（45 条）。**这一条不能被本任务弄红** —— 载荷只是加键，可见性语义一字未动。
+期望：`LOBBY VISIBILITY PROBE: ALL-OK`（45 条）。**这一条不能被本任务弄红** —— 数据包只是加键，可见性语义一字未动。
 
 - [ ] **Step 10: 刷导入缓存，再提交**
 
@@ -800,7 +800,7 @@ func _ready() -> void:
 	_finish()
 ```
 
-并把 `_check_page` 改成"把三份载荷分别喂给 `_on_room_list` / `_on_royale_rooms` / `_on_team_rooms`，再对**同一张网格**断言"：
+并把 `_check_page` 改成"把三份数据包分别喂给 `_on_room_list` / `_on_royale_rooms` / `_on_team_rooms`，再对**同一张网格**断言"：
 
 ```gdscript
 const EXPECTED_CHECKS := 8
@@ -1020,7 +1020,7 @@ func _redraw_cards() -> void:
 			return not a_full and b_full)
 ```
 
-（1v1 的载荷没有 `max_players` ⇒ 取默认 2，与卡片那一处同一个默认值。）
+（1v1 的数据包没有 `max_players` ⇒ 取默认 2，与卡片那一处同一个默认值。）
 ★ **在 `for r in rows:` 里遍历 `rows`，不要再遍历 `_rooms_by_mode[mode]`** —— 排完序不遍历它等于没排。
 
 - [ ] **Step 5: 造卡**
@@ -1504,7 +1504,7 @@ func _apply_create_form(mode: String) -> void:
 	(_create_mode_btns[mode] as Button).disabled = true   # 当前模式置灰(与等待室的选边同款)
 ```
 
-- [ ] **Step 4: 建房载荷**
+- [ ] **Step 4: 建房数据包**
 
 ```gdscript
 # 按模式给三套 payload 的**公共部分** + 各自的私有键。
@@ -1599,12 +1599,12 @@ Settings.pvp_disabled_weapons,在 3v3 勾一下会连带改掉另两个模式。
 
 1. 1v1 状态 ⇒ 等待室可见、标题含房间号、有 `退出房间` 按钮、**没有**选边按钮
 2. 3v3 状态 ⇒ 两队标题都在（`A 队` / `B 队`）、未选边档在、两颗选边按钮在
-3. 大乱斗状态 ⇒ 名单行数 == 载荷 players 条数
+3. 大乱斗状态 ⇒ 名单行数 == 数据包 players 条数
 4. 3v3 且我在 A 队 ⇒ 「加入 A 队」按钮**不可见**（已在队里，少一次无意义上行）
 5. 只有房主且两队各满 ⇒ `开始游戏` 可见
 6. 非房主 ⇒ `开始游戏` 不可见
 7. 1v1 / 大乱斗 ⇒ 角色颜色行可见；3v3 ⇒ 不可见（3v3 用队色）
-8. 名单行编号印**行序**（1./2./3.）而不是 role —— 喂一份 `roles = [1, 3]` 的载荷，断言第 2 行文案以 `2.` 开头
+8. 名单行编号印**行序**（1./2./3.）而不是 role —— 喂一份 `roles = [1, 3]` 的数据包，断言第 2 行文案以 `2.` 开头
 
 - [ ] **Step 2: 跑探针，确认红**
 
@@ -1636,17 +1636,17 @@ Settings.pvp_disabled_weapons,在 3v3 勾一下会连带改掉另两个模式。
 
 | 按钮 | 1v1 | 大乱斗 | 3v3 |
 |---|---|---|---|
-| `退出房间` | `_return_to_lobby("已退出房间")`（★ 1v1 **没有** leave RPC：旧页是 `NetBus.stop()` 走人；这里用基类那条现成的收口，它会 `NetBus.stop()` + 重连 + 刷新） | `NetBusExt.rpc_id(1, "royale_leave")`（**不断大厅 peer**，见旧页注释） | `NetBusExt.rpc_id(1, "team_leave")` |
+| `退出房间` | `_return_to_lobby("已退出房间")`（★ 1v1 **没有** leave RPC：旧页是 `NetBus.stop()` 走人；这里用基类那条现成的统一收拢，它会 `NetBus.stop()` + 重连 + 刷新） | `NetBusExt.rpc_id(1, "royale_leave")`（**不断大厅 peer**，见旧页注释） | `NetBusExt.rpc_id(1, "team_leave")` |
 | `开始游戏` | **没有这颗按钮**（1v1 两人凑齐自动开局） | `NetBusExt.rpc_id(1, "royale_start")` | `NetBusExt.rpc_id(1, "team_start")` |
 | 选边 `加入 A/B 队` | 无 | 无 | `NetBusExt.rpc_id(1, "team_pick", 1/2)` |
 
-**(b2) ★★ 补回「已在房间里」那道闸门 —— 本计划初稿漏了，而它是两个旧页都有的行为**
+**(b2) ★★ 补回「已在房间里」那道限制条件 —— 本计划初稿漏了，而它是两个旧页都有的行为**
 
 `mp_lobby.gd` 现有 `_lobby_action_allowed()` 一律 `return true`，上挂一句注释「本任务还没有『已在房间里』这一档(Task 5 的等待室会补)」—— **那句注释是对的，Task 5 必须补上**，否则：
 - 进等待室后，四周的房卡与「＋创建房间」**仍然可点**，点了只会被服务端拒（状态栏给一句文案）；
 - 更难看的是**层级**：此时打开创建弹层，压暗罩在等待室面板**底下**（后者建得更晚）。
 
-两个旧页都有这道闸门，可直读：
+两个旧页都有这道限制条件，可直读：
 ```gdscript
 # scenes/royale_lobby.gd:424  /  scenes/team_lobby.gd:412  逐字同形
 func _lobby_action_allowed() -> bool:
@@ -1661,19 +1661,19 @@ func _lobby_action_allowed() -> bool:
 ★★★ **只加 `_lobby_action_allowed()` 是**不够**的 —— 这一点是本计划初稿没想到的：**
 
 - `_open_create_dialog()` 是**直接**绑在「＋创建房间」按钮上的（`connect(_open_create_dialog)`），
-  **它压根不问 `_lobby_action_allowed()`**。⇒ 闸门只挡得住最后那一次建/加的 RPC，
+  **它压根不问 `_lobby_action_allowed()`**。⇒ 限制条件只挡得住最后那一次建/加的 RPC，
   **玩家照样能把创建弹层开在等待室上面，压暗罩照样落在等待室底下**（层级问题原样保留）。
 - 同理 `_toggle_join_panel()`（加入弹层）也会留在屏幕上。
 - ⇒ **修法必须包含"进等待室时把这两个入口一起收掉"**：最省事且不会漏的形状是
   **在 `_show_wait_room` 里直接隐藏「＋创建房间」/「加入房间」两颗按钮**（`_hide_wait_room` 里恢复），
-  与 `_in_room` 同生命周期；`_lobby_action_allowed()` 那道闸门**仍然要加**（它挡的是别的路径，且旧页有）。
+  与 `_in_room` 同生命周期；`_lobby_action_allowed()` 那道限制条件**仍然要加**（它挡的是别的路径，且旧页有）。
 - ★ **顺序坑**：大乱斗/3v3 的「退出房间」是 `rpc_id` 之后**紧接**一句 `_request_list.call_deferred(...)`。
   `_hide_wait_room()` 必须在**那句 deferred 之前**跑完（它 `call_deferred` 到帧末才执行，故只要在同一个函数里排在前面就安全）；
-  排反了 ⇒ 那次刷新被自己的闸门拒掉，列表永远不更新且不报错。
+  排反了 ⇒ 那次刷新被自己的限制条件拒掉，列表永远不更新且不报错。
 - ★ **探针一并要断**：进等待室后「＋创建房间」/「加入房间」两颗按钮**不可见**；退回后恢复可见。
 
 **(c) 探针要能数"名单行"**：每加一行名单都 `label.set_meta("roster_row", true)`，
-否则断言 3（"名单行数 == 载荷 players 条数"）只能靠遍历所有 Label 猜、极易假绿。
+否则断言 3（"名单行数 == 数据包 players 条数"）只能靠遍历所有 Label 猜、极易假绿。
 同理，选边/开始/退出三颗按钮都要能在探针里按文案找到（`_find_button(panel, "开 始 游 戏")` 之类）。
 
 - [ ] **Step 4: 跑探针，确认绿**
@@ -1851,7 +1851,7 @@ mp/royale/team 三模式改按同一颗按钮、must_reach 指向同一场景。
 "$GODOT" --headless --path . -s res://tests/smoke/room_sweep_smoke.gd
 ```
 
-期望：**九条全绿**。任何一条红 = 前六个任务有欠账，先修它，别往下走。
+期望：**九条全部通过**。任何一条红 = 前六个任务有欠账，先修它，别往下走。
 
 - [ ] **Step 2: 删三个旧页**
 
@@ -1912,7 +1912,7 @@ grep -rn "matchmaking\|royale_lobby\|team_lobby" --include=*.gd --include=*.tscn
 逐条判断是**代码引用**（必须改）还是**注释里的历史叙述**（改文案即可，但别留下会把人点错路的旧路径）。
 下面的枚举**只用于交叉核对有没有漏**，不是完备清单：
 
-- `tests/probe/lobby_visibility_probe.gd`：相⑤⑥⑦⑧⑨ 挂的页换成 `mp_lobby`；`_check_page` 那类的三页循环收敛成一页；相⑧ 的**次序断言与它的正向对照必须原样保留**（那是用一次全绿事故换来的）。
+- `tests/probe/lobby_visibility_probe.gd`：相⑤⑥⑦⑧⑨ 挂的页换成 `mp_lobby`；`_check_page` 那类的三页循环收敛成一页；相⑧ 的**次序断言与它的正向对照必须原样保留**（那是用一次全部通过事故换来的）。
 - `tests/probe/rejoin_probe.gd` / `royale_bound_probe.gd` / `royale_c2_probe.gd` / `royale_soak_probe.gd` / `team_match_probe.gd`：场景路径换成 `mp_lobby.tscn`。
 - `tests/harness/*.gd`（5 个 watcher）：按脚本名匹配的地方换成 `mp_lobby.gd`。
   ★★ **但 `rejoin_watcher` 只换名字是不够的**（Task 6 的实现者实测报回来的）—— 它是按**旧页接口**写的，
@@ -1927,7 +1927,7 @@ grep -rn "matchmaking\|royale_lobby\|team_lobby" --include=*.gd --include=*.tscn
 
 - [ ] **Step 8: 全量重跑（与 Step 1 同九条）**
 
-期望：九条**全绿**。另外补一条 grep（应当**零命中**，`docs/` 与 `.superpowers/` 除外）：
+期望：九条**全部通过**。另外补一条 grep（应当**零命中**，`docs/` 与 `.superpowers/` 除外）：
 
 ```bash
 grep -rn "matchmaking\|royale_lobby\|team_lobby" --include=*.gd --include=*.tscn . \
@@ -1938,7 +1938,7 @@ grep -rn "matchmaking\|royale_lobby\|team_lobby" --include=*.gd --include=*.tscn
 
 ★★ **不要 `git add -A scenes tests server`**（本计划初稿就是这么写的，**是错的**）—— 我们与另一个
 Claude 会话共用这棵工作树，而它在改 `scenes/enemies/*`。按目录 add 会把**它的**改动一起带走。
-一律**逐个文件点名**，把本任务真正动过的文件列全（`git rm` 那 9 个已由上一步入索引，这里只需补其余）：
+一律**逐个显式指定文件**，把本任务真正动过的文件列全（`git rm` 那 9 个已由上一步入索引，这里只需补其余）：
 
 ```bash
 git add tests/smoke/lobby_parse_smoke.gd tests/smoke/reconnect_smoke.gd \

@@ -2,11 +2,11 @@ extends Node
 
 # 大乱斗全链路探针(RoyaleServer 分支,场景模式):一个进程当大厅/裁判,再启动两个
 # headless 客户端子进程,走完整流程:
-#   c1 建私密房(邀请码 777,房号写中间文件) → c2 读房号 → 错码加入(应被拒)
-#   → 对码加入 → c1 见房内 2 人开局 → 双方收 go_match 转连 worker → claim
-#   → match_start → RoyaleHost 广播 round_state/snapshot;客户端**拉** match_sync 取生效选项 → 写结果文件。
+#   c1 建私密房(邀请码 777,房号写中间文件) -> c2 读房号 -> 错码加入(应被拒)
+# -> 对码加入 -> c1 见房内 2 人开局 -> 双方收 go_match 转连 worker -> claim
+# -> match_start -> RoyaleHost 广播 round_state/snapshot;客户端拉 match_sync 取生效选项 -> 写结果文件。
 # 断言(进 _finish 判定,不只打印):match_start 出生点有效 + round_state 到达 +
-# **round_state 载荷里的昵称表 names ≥2 项** + match_options 到达 + 快照数 ≥30。
+# round_state 载荷里的昵称表 names ≥2 项 + match_options 到达 + 快照数 ≥30。
 # 中间文件 user://royale_probe_room.txt = 房号;结果 user://royale_probe_c{1,2}.result。
 # 用法: Godot_console --headless --path . res://tests/probe/royale_probe.tscn [--role=lobby|c1|c2]
 # (无参 = lobby/裁判。)
@@ -88,7 +88,7 @@ func _finish(ok: bool, who: String, msg: String) -> void:
 	print("PROBE[%s]: %s" % [who, ("OK " + msg) if ok else ("FAIL " + msg)])
 	get_tree().quit(0 if ok else 1)
 
-# ── 公共:连大厅 → lobby_name → on_connected 回调 ──
+# ── 公共:连大厅 -> lobby_name -> on_connected 回调 ──
 func _connect_lobby(who: String, on_connected: Callable) -> void:
 	multiplayer.connected_to_server.connect(func() -> void:
 		print("PROBE[%s]: 已连大厅" % who)
@@ -105,7 +105,7 @@ func _connect_lobby(who: String, on_connected: Callable) -> void:
 		if is_inside_tree():
 			_finish(false, who, "超时(流程未走完)"))
 
-# ── c1:建私密房(房号写中间文件)→ 等 c2 进房 → 开局 → 转连 worker 验证 ──
+# ── c1:建私密房(房号写中间文件) -> 等 c2 进房 -> 开局 -> 转连 worker 验证 ──
 func _run_client_1() -> void:
 	_connect_lobby("c1", func() -> void:
 		NetBusExt.local_royale_room_state.connect(func(state: Dictionary) -> void:
@@ -124,7 +124,7 @@ func _run_client_1() -> void:
 		}))
 	_go_and_verify("c1")
 
-# ── c2:读房号 → 错码加入(应拒)→ 对码加入 → 转连 worker 验证 ──
+# ── c2:读房号 -> 错码加入(应拒) -> 对码加入 -> 转连 worker 验证 ──
 func _run_client_2() -> void:
 	# 等 c1 把房号写出来
 	var code := ""
@@ -168,14 +168,14 @@ func _go_and_verify(who: String) -> void:
 		if spawn.x < 0:
 			_finish(false, who, "match_start 出生点无效")
 			return
-		# - 批次 3:生效选项改由**进场拉取**下发(服务器那次"推"已删 —— 它与 match_start 落在同一次
+		# - 批次 3:生效选项改由进场拉取下发(服务器那次"推"已删 —— 它与 match_start 落在同一次
 		#   poll,而那一刻新场景订阅方还不存在,会静默丢,自检 B2)。
-		#   本探针是**轻量监听客户端**(不起真 royale_game),故这里自己发一次 match_sync 并消费应答;
+		#   本探针是轻量监听客户端(不起真 royale_game),故这里自己发一次 match_sync 并消费应答;
 		#   真实客户端实例由各自场景的 `_ready` 发出请求。
 		NetBus.local_match_sync.connect(func(payload: Dictionary) -> void:
 			if not (payload.get("options", {}) as Dictionary).is_empty():
 				_got_match_options = true
-			# D1 色相断言:hues 必须含**两端**的非零值(自己那份 + 对面那份)。
+			# D1 色相断言:hues 必须含两端的非零值(自己那份 + 对面那份)。
 			# 自己那份错 = 本端选项没归档;对面那份缺 = 对端没送到/没汇总。
 			var hues: Dictionary = payload.get("hues", {})
 			var mine_ok := absf(float(hues.get(PvpSession.role, -1.0)) - (137.0 if who == "c1" else 246.0)) < 0.5
@@ -222,7 +222,7 @@ func _go_and_verify(who: String) -> void:
 func _to_worker(who: String, role: int, _port: int) -> void:
 	PvpSession.role = role
 	# 非零色相(D1):两客户端各报一个可互相区分的值 —— match_sync 的 hues 回包
-	# 必须把**两端**的值都带回,否则"房间里选的颜色进不了实战"就是协议层断的。
+	# 必须把两端的值都带回,否则"房间里选的颜色进不了实战"就是协议层断的。
 	var my_hue := 137.0 if who == "c1" else 246.0
 	print("PROBE[%s]: claim role %d(既有连接)" % [who, role])
 	NetBus.rpc_id(1, "claim_role", role, who.to_upper())

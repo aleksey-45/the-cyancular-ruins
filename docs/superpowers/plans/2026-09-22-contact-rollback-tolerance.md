@@ -4,7 +4,7 @@
 
 **Goal:** 让 C2 客户端预测在"与远端玩家贴身"时使用一个更宽的位置容差,从而把贴身缠斗的回滚次数从"贴着阈值跳变"变成稳定低位 —— 且非接触期保持严格。
 
-**Architecture:** 接触与否的判据取自**物理真值**(本地玩家本物理步的滑动碰撞里有没有非地形层),由 `Player.touching_player()` 暴露;`PredictionRollback` 新增 `in_contact` + `contact_pos_tol` 两个字段,`_close_enough` 按 `in_contact` 在两条容差之间选;接线只有一处(`PvpMatchClient._physics_process`)。**服务端与协议零改动**。
+**Architecture:** 接触与否的判据取自**物理真值**(本地玩家本物理步的滑动碰撞里有没有非地形层),由 `Player.touching_player()` 暴露;`PredictionRollback` 新增 `in_contact` + `contact_pos_tol` 两个字段,`_close_enough` 按 `in_contact` 在两条容差之间选;接线只有一处(`PvpMatchClient._physics_process`)。**服务端与协议无需修改**。
 
 **Tech Stack:** Godot 4.7.1(标准版,非 mono)· GDScript · 本仓自研的 `-s` 冒烟 + `--headless` 场景探针(无单测框架)
 
@@ -14,7 +14,7 @@
 
 - 引擎不在 PATH,一律走 `source tests/env.sh` 取 `$GODOT`;不要往脚本里抄绝对路径。
 - **判据一律是 grep 文本**(`ALL-OK` / `SMOKE OK`),**不看退出码** —— 探针挂住时 `--quit-after` 到期仍 exit 0 且一行裁决都不打印。
-- **`ALL-OK` 只证明"没有任何断言失败",不证明"该跑的断言都跑过"**(权威表述在 `tests/lib/probe_base.gd` 文件头)。**每加一条断言,先证明它会红**(看着变红再还原),别拿"加了之后全绿"当证据。
+- **`ALL-OK` 只证明"没有任何断言失败",不证明"该跑的断言都跑过"**(权威表述在 `tests/lib/probe_base.gd` 文件头)。**每加一条断言,先证明它会红**(看着报错失败再还原),别拿"加了之后全部通过"当证据。
 - 注释用中文,密度与周边一致;本仓注释风格是"写清为什么 + 踩过的坑"。
 - **不许**改协议、不许改服务端任何文件、不许改 `player.tscn` 的碰撞层/掩码。
 - `player.gd` **不得新增任何 import**(不引 `server/`、不引 `player_replica`)。

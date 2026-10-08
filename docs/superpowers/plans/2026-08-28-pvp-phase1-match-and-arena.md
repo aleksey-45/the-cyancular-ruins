@@ -4,7 +4,7 @@
 
 **Goal:** 搭起联网骨架：主菜单 → 匹配（建房/输房间号）→ 服务器开房、签发房间号、双方就绪 → 两端进入竞技场（`pvp_game`），本地玩家能动（C2 本地模拟）。**本期不做对局互通**（输入/快照/远端副本 = 阶段 2）。
 
-**Architecture:** 新增 `NetBus` autoload 作为唯一网络 RPC 收口（服务器与客户端共用同一节点路径 `/root/NetBus`，跨场景常驻）。服务器端 `server_main` + `RoomManager`（房间注册表）；客户端 `main_menu` → `matchmaking` → `pvp_game`。会话配置用静态 `PvpSession` 传递。地图由服务器钉定、发文件名，客户端 `set_map_file` 加载同一张。
+**Architecture:** 新增 `NetBus` autoload 作为唯一网络 RPC 统一收拢（服务器与客户端共用同一节点路径 `/root/NetBus`，跨场景常驻）。服务器端 `server_main` + `RoomManager`（房间注册表）；客户端 `main_menu` → `matchmaking` → `pvp_game`。会话配置用静态 `PvpSession` 传递。地图由服务器钉定、发文件名，客户端 `set_map_file` 加载同一张。
 
 **Tech Stack:** Godot 4.7.1 标准版，ENet 高层多人（`ENetMultiplayerPeer` + `MultiplayerAPI` RPC），无测试框架（`-s` 冒烟 + headless 启动 + 多进程 loopback 冒烟）。
 
@@ -20,7 +20,7 @@
 
 ---
 
-### Task 1: NetBus autoload（网络收口）
+### Task 1: NetBus autoload（网络统一收拢）
 
 **Files:**
 - Create: `Globals/net_bus.gd`
@@ -138,7 +138,7 @@ git commit -m "feat: NetBus autoload——PvP 网络 RPC 唯一收口(第二个 
 
 ---
 
-### Task 2: PvpSession + 钉住地图
+### Task 2: PvpSession + 断言约束地图
 
 **Files:**
 - Create: `Globals/pvp_session.gd`
@@ -147,7 +147,7 @@ git commit -m "feat: NetBus autoload——PvP 网络 RPC 唯一收口(第二个 
 
 **Interfaces:**
 - Produces: `PvpSession`（静态 RefCounted）：`server_address/port/room_code/role/spawn/map_path` + `reset()`。
-- Produces: `MazeGenerator.set_map_file(path: String)`（钉住会话地图）。
+- Produces: `MazeGenerator.set_map_file(path: String)`（断言约束会话地图）。
 - Consumes: Task 3 菜单 `PvpSession.reset()`；Task 5 匹配读写；Task 6 对局读取；Task 4 服务器 `MazeGenerator.map_file_path()` 定图 + `set_map_file`。
 
 - [ ] **Step 1: 新建 `Globals/pvp_session.gd`**
@@ -716,7 +716,7 @@ git commit -m "test: loopback 冒烟——服务器+双客户端 建房/加入/�
 - [ ] **Step 1: 更新 `CLAUDE.md`**
 
 1. 改「唯一 autoload 是 GameParameters」那句 → 加上 NetBus 与放宽说明。
-2. 加一小节（网络）简述：NetBus autoload 是 PvP 网络收口、`PvpSession` 会话配置、`RoomManager` 房间注册表、`server_main.tscn` 服务器入口、`pvp_game.tscn` 客户端对局场景。
+2. 加一小节（网络）简述：NetBus autoload 是 PvP 网络统一收拢、`PvpSession` 会话配置、`RoomManager` 房间注册表、`server_main.tscn` 服务器入口、`pvp_game.tscn` 客户端对局场景。
 
 - [ ] **Step 2: 提交**
 
@@ -729,7 +729,7 @@ git commit -m "docs: CLAUDE.md 更新 PvP 网络约定(NetBus autoload 放宽)"
 
 ## 自检（写完后）
 
-- **Spec 覆盖**：设计文档 §3.2（场景流程）由 Task 3/5/6 落地；§3.4（服务器/RoomManager）由 Task 4 落地；§7 的「钉住地图」由 Task 2 落地（transport 收口以 `NetBus` autoload 形式落地，比独立抽象类更贴合 Godot 惯例）；会话状态 `PvpSession` 由 Task 2 落地。阶段 2（输入/快照/副本）明确不在本期,留 Plan B2。
+- **Spec 覆盖**：设计文档 §3.2（场景流程）由 Task 3/5/6 落地；§3.4（服务器/RoomManager）由 Task 4 落地；§7 的「断言约束地图」由 Task 2 落地（transport 统一收拢以 `NetBus` autoload 形式落地，比独立抽象类更贴合 Godot 惯例）；会话状态 `PvpSession` 由 Task 2 落地。阶段 2（输入/快照/副本）明确不在本期,留 Plan B2。
 - **占位符**：每步有完整代码/命令,无 TBD。
 - **类型一致**：`NetBus.start_client/start_server`、`NetBus.rpc_id(1,"create_room")`、`RoomManager.instance`、`PvpSession.role/spawn/map_path`、`MazeGenerator.set_map_file`、`Level0.pvp_mode` 全计划命名一致。
 - **已知遗留**：`matchmaking.gd` 里 `_on_match_start` 在 `match_start` 与 `room_joined` 可能竞态（服务器先发 `room_joined` 再发 `match_start`,顺序可靠,RPC 可靠有序 → 无竞态）。`attack`/切枪未进本期输入协议（阶段 2 补）。

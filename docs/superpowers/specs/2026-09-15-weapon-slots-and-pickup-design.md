@@ -36,7 +36,7 @@
 | 10 | `_mag_state` **按槽位号记账** | `weapon_component.gd:24,111,124` | 新系统里"槽位"语义变了；且**允许重复武器**（用户裁定）意味着按类型记账会串——见 §4.3 |
 | 11 | `player.gd:147` 在 `_ready` 里**硬编码** `equip("1")` | `player.gd:147` | 不是 `default_slot()`；单机靠 `level_0.gd:239` 事后纠正，服务器靠 `match_host.gd:81`。**新增"开局给什么枪"的入口时这是绕过点** |
 | 12 | 散点布点算法**长在 `RoyaleHost` 实例上**（`plan_spawns` / `_spawn_candidates` / `_floor_cells`） | `royale_host.gd:72-215` | 单机用不了。判据本体 `MazeGenerator.is_floor_cell_with_headroom` 已是共享的 |
-| 13 | 开局三载荷踩过"客户端正在切场景 → RPC 静默丢失"的坑，解法是**客户端 `_ready` 末尾主动拉取**（`match_sync`） | CLAUDE.md §网络；`match_sync_probe` 有反向断言 | **初始地面武器分布必须走 `match_sync` 一起下发**，不能靠 `weapon_spawned` 推 |
+| 13 | 开局三数据包踩过"客户端正在切场景 → RPC 静默丢失"的坑，解法是**客户端 `_ready` 末尾主动拉取**（`match_sync`） | CLAUDE.md §网络；`match_sync_probe` 有否定断言 | **初始地面武器分布必须走 `match_sync` 一起下发**，不能靠 `weapon_spawned` 推 |
 | 14 | 子弹 `collision_mask = 5`（地形+敌人） | `bullet_base.gd` | 不含新的掉落物层 → 子弹天然穿过地上的枪，无需额外处理 |
 
 ## 3. 已裁定的设计决定
@@ -44,7 +44,7 @@
 | 项 | 决定 |
 |---|---|
 | 容量 | 8 格；轻 2 / 中 3 / 重 4 |
-| 持有上限 | **4 把**，与容量是**两条并行闸门**（容量给 100 也是最多 4 把） |
+| 持有上限 | **4 把**，与容量是**两条并行限制条件**（容量给 100 也是最多 4 把） |
 | 放不下时 | **替换手上当前那把**（被换下的掉在玩家脚下） |
 | 重复武器 | **允许**，无特例（可以有 2 把手枪甚至 4 把） |
 | 单机初始 | 玩家**空手**；12 把（每种 2 把）随机散落全图 |
@@ -109,7 +109,7 @@ func total_cost_of(types: Array) -> int         # 纯静态查询,不依赖 held
 
 ### 4.2 tier 注册表
 
-`WeaponComponent` 新增（与 `DISPLAY_NAMES` 同款做法，单一来源、不实例化场景）：
+`WeaponComponent` 新增（与 `DISPLAY_NAMES` 同款做法，统一数据源、不实例化场景）：
 
 ```gdscript
 const TIERS: Dictionary = {
@@ -122,14 +122,14 @@ const TIERS: Dictionary = {
 }
 ```
 
-与 `.tscn` 里的 `tier =` export **重复**，这条重复是刻意的（避免为了问"这枪多重"而实例化一个会 preload 子弹的武器场景）。**由 `enemy_logic_smoke` 的断言钉住两边一致**，漂移即红。
+与 `.tscn` 里的 `tier =` export **重复**，这条重复是刻意的（避免为了问"这枪多重"而实例化一个会 preload 子弹的武器场景）。**由 `enemy_logic_smoke` 的断言断言约束两边一致**，漂移即红。
 
 ### 4.3 `WeaponComponent` 改造
 
-- `_current_slot: int` **语义不变**（当前手持的**类型 id**）。快照 `weapon` 字段、`capture_state` 的 `wslot`、副本 `_swap_weapon` 因此全部零改动。
+- `_current_slot: int` **语义不变**（当前手持的**类型 id**）。快照 `weapon` 字段、`capture_state` 的 `wslot`、副本 `_swap_weapon` 因此全部无需修改。
 - 新增 `inventory: WeaponInventory`，`_init` 里 `WeaponInventory.new(TIERS)`。
 - **删** `_mag_state`、`_restore_mag`、`_restore_mag.call_deferred` 整条链（残弹进背包条目）。
-- `enabled_slots`（禁用武器闸门）**语义不变**，仍按类型 id。被禁的类型不出现在初始分布里、不能被捡。
+- `enabled_slots`（禁用武器限制条件）**语义不变**，仍按类型 id。被禁的类型不出现在初始分布里、不能被捡。
 - `equip(slot: String)` 语义调整为：按类型 id 切换到背包里**第一个**该类型的条目；**若背包里没有该类型，则加入一条**。
   - 这条"没有就加"是**必需的**，不是便利：联机不做客户端预测（§6.4），服务器说"你现在有重狙"时客户端背包里可能还没有它；`restore_state` 重放 `wslot` 时会走到这条路径。**这也是 `inv` 必须进 `capture_state` 的原因**（§6.5）。
 - 新增 `equip_index(i: int)`：按背包位置切枪。数字键 1-4 与滚轮走这条。
@@ -160,7 +160,7 @@ const TIERS: Dictionary = {
   func is_drop_pressed() -> bool         # Q 长按满 2s 后的那一次边沿 (客户端判定,见 §5.6)
   ```
   三种实现（`LocalInputSource` / `PacketInputSource` / `AiInputSource`）各自实现。`AiInputSource` 恒 `false`——**AI 不捡也不丢枪**（大乱斗补位 AI 开局照样随机 1 把，复活照样走 §7.3）。
-  - `frozen` 短路契约照旧：冻结期 F/Q 读口也返回中性值。
+  - `frozen` 短路接口规范照旧：冻结期 F/Q 读口也返回中性值。
 - 包协议新增两位（`packet_input_source.gd`）：
   ```gdscript
   const BIT_PICKUP := 32
@@ -182,7 +182,7 @@ const TIERS: Dictionary = {
   ```
   ★ **"深青"按"高饱和/更醒目"实现，不按"更暗"**：这几块 UI 垫在**不透明深底板**上（`panel_box()`），若手持格比已占格更暗，视觉上反而更弱，出现"当前武器最不显眼"的倒挂。**真正的不变量是：手持格必须比已占格对比度更高**。色值以实图为准（用户 2026-09-15 的 HUD 改色就是这么定的）。
 - **不画键位号**：从左到右的顺序即键位 1-4 的顺序，再画数字是冗余（且 32px 格里塞 16px 字会挤）。
-- **控件必须自包含**：`WeaponSlots` 是一个能自己 `new()` 出来、挂到任意 `CanvasLayer` 下就能用的控件，**不依赖任何 HUD 的继承关系**。因为 `PvpHud` 与 `RoyaleHud` 是**并列的两个 `CanvasLayer extends`**（`pvp_hud.gd:1-2` / `royale_hud.gd:1-2`），**没有继承关系**，不存在"大乱斗复用 PvP 那块"这条路。定位参数抽成控件内的常量，三处（单机 / 1v1 / 大乱斗）引用同一组值。
+- **控件必须自包含**：`WeaponSlots` 是一个能自己 `new()` 出来、挂到任意 `CanvasLayer` 下就能用的控件，**不依赖任何 HUD 的继承关系**。因为 `PvpHud` 与 `RoyaleHud` 是**并列的两个 `CanvasLayer extends`**（`pvp_hud.gd:1-2` / `royale_hud.gd:1-2`），**没有继承关系**，不存在"大乱斗复用 PvP 那块"这条路。定位参数提取为控件内的常量，三处（单机 / 1v1 / 大乱斗）引用同一组值。
 - 单机（`ui/hud.gd`）：左下角重排——`WeaponSlots` 与原有"图标 + 中文名 + 残弹"那一排构成一个整体块，共用一个 `PanelContainer` 底板（底板继续遵守全局的"黑 0.1"）。
 - 1v1（`ui/pvp_hud.tscn` 挂 `PvpHud`）与大乱斗（`RoyaleHud`）各自 `WeaponSlots.new()` 挂到自己的 `CanvasLayer` 下，位置用控件内的同一组常量。
 
@@ -295,7 +295,7 @@ func nearest_within(pos: Vector2, radius: float, exclude: Array = []) -> Diction
 
 ### 6.2 新事件
 
-| 事件 | 载荷 | 通道 |
+| 事件 | 数据包 | 通道 |
 |---|---|---|
 | `weapon_spawned` | `{inst, type_id, mag, pos, vel}` | `NetBus`，reliable |
 | `weapon_removed` | `{inst, by_role}` | `NetBus`，reliable |
@@ -306,9 +306,9 @@ func nearest_within(pos: Vector2, radius: float, exclude: Array = []) -> Diction
 
 ### 6.3 初始分布走 `match_sync`，不走 `weapon_spawned`
 
-★ **这是本阶段最容易踩的坑**。开局那批地面武器若用 `weapon_spawned` 逐条推给客户端，会**精确复现** CLAUDE.md 记录过的事故：客户端在 `match_start` 后那一帧正在帧末切场景，订阅方一个都不存在 → **静默丢失**（当年是三载荷丢失，现在是整批地面武器消失）。
+★ **这是本阶段最容易踩的坑**。开局那批地面武器若用 `weapon_spawned` 逐条推给客户端，会**精确复现** CLAUDE.md 记录过的事故：客户端在 `match_start` 后那一帧正在帧末切场景，订阅方一个都不存在 → **静默丢失**（当年是三数据包丢失，现在是整批地面武器消失）。
 
-**做法**：服务器的 `match_sync_data` 载荷增加一个 `ground_weapons` 字段（`Array[Dictionary]`，与客户端 `GroundWeaponField.add` 的条目同构），客户端 `_ready` 末尾主动 `rpc_id(1, "match_sync")` 拉取时一并拿到。这与现有 `names`/`hues`/`options`/`roles`/`spawns` 走的是**同一条**路径，不再新增投递路径。
+**做法**：服务器的 `match_sync_data` 数据包增加一个 `ground_weapons` 字段（`Array[Dictionary]`，与客户端 `GroundWeaponField.add` 的条目同构），客户端 `_ready` 末尾主动 `rpc_id(1, "match_sync")` 拉取时一并拿到。这与现有 `names`/`hues`/`options`/`roles`/`spawns` 走的是**同一条**路径，不再新增投递路径。
 
 **之后的动态掉落/捡起**才走 `weapon_spawned` / `weapon_removed`——那时客户端早就订阅好了。
 
@@ -317,7 +317,7 @@ func nearest_within(pos: Vector2, radius: float, exclude: Array = []) -> Diction
 按 F/Q 只上行，客户端**等服务器事件回来才动背包**。
 
 - **延迟**：局域网 1 个 RTT（<50ms），捡枪一局十几次，无感。
-- **落体视觉**：客户端收到 `weapon_spawned` 后用载荷里的 `pos` + `vel` **本地模拟**落体（两端同一套 §5.3 的运动代码与参数）。因为 §5.3 保证了"停止位置与何时开始模拟无关"，客户端即使晚 1 个 RTT 才开始，落点也与服务器一致。
+- **落体视觉**：客户端收到 `weapon_spawned` 后用数据包里的 `pos` + `vel` **本地模拟**落体（两端同一套 §5.3 的运动代码与参数）。因为 §5.3 保证了"停止位置与何时开始模拟无关"，客户端即使晚 1 个 RTT 才开始，落点也与服务器一致。
 - **抢枪**：两个玩家同时按 F 抢同一把 → 服务器裁决，输的一方**本地从未预测过**，所以不需要回滚，只是没收到该事件而已。这正是选方案 ① 的主要收益。
 - **本地即时反馈的缺失**要补偿：按 F 那一帧给一个"拾取尝试"的音效/提示（不改变背包状态），避免按下到落地之间的静默。
 
@@ -368,7 +368,7 @@ func nearest_within(pos: Vector2, radius: float, exclude: Array = []) -> Diction
 
 ### 7.1 抽公共布点工具
 
-把 `royale_host.gd:185-215 plan_spawns` 的几何部分抽成静态工具：
+把 `royale_host.gd:185-215 plan_spawns` 的几何部分提取为静态工具：
 
 ```gdscript
 # core/sim/grid_pathfinder.gd
@@ -412,16 +412,16 @@ static func spread_cells(cells: Array, count: int, clearance: int) -> Array
 
 | 探针 | 类型 | 钉什么 |
 |---|---|---|
-| `tests/weapon_inventory_smoke.gd` | `-s` | 容量/4 把上限**两条闸门各自独立生效**；放不下时替换；紧凑排布 `slot_start`；**允许重复**（两把同类型各有各的 inst/mag）；删中间条目后索引与残弹不错位 |
+| `tests/weapon_inventory_smoke.gd` | `-s` | 容量/4 把上限**两条限制条件各自独立生效**；放不下时替换；紧凑排布 `slot_start`；**允许重复**（两把同类型各有各的 inst/mag）；删中间条目后索引与残弹不错位 |
 | `tests/ground_weapon_field_smoke.gd` | `-s` | `nearest_within` 的**环面最短距离**（跨接缝）；距离并列时按 `inst` 升序（确定性）；半径外不选中 |
 | `tests/sprite_bounds_smoke.gd` | `-s` | 像素包围盒：含透明边的贴图、`region_enabled` 的图集切片、全透明返回空矩形 |
 | `enemy_logic_smoke.gd`（补断言） | `-s` | ① `WeaponComponent.TIERS` 与 6 个 `.tscn` 的 `tier =` export **逐条一致**；② `WeaponInventory.TIER_*` 与 `WeaponBase.Tier` 数值对齐；③ `WEAPONS`/`DISPLAY_NAMES`/`TIERS` 三个注册表**键集相同**（加新武器漏填其一的守卫） |
-| `tests/kh_l3_probe.gd`（**重写**） | `extends Node`，场景 | 现有那一大批 `enabled_slots`/`cycle_slot`/残弹记忆断言要按新语义改：循环范围变成背包位置、残弹记账变成 per-inst。**加反向断言**：`_mag_state` 一族标识符一个都不许复活；`BIT_PICKUP`/`BIT_DROP` 的位值不许被改动（改位 = 改协议） |
+| `tests/kh_l3_probe.gd`（**重写**） | `extends Node`，场景 | 现有那一大批 `enabled_slots`/`cycle_slot`/残弹记忆断言要按新语义改：循环范围变成背包位置、残弹记账变成 per-inst。**加否定断言**：`_mag_state` 一族标识符一个都不许复活；`BIT_PICKUP`/`BIT_DROP` 的位值不许被改动（改位 = 改协议） |
 | `tests/kh_l3_visual_probe.gd`（扩） | 真实渲染 | 4×2 格子的**三种颜色各在正确位置**：未占=灰、已占=青、**手持那把的格=高对比度青**。双向断言（该青的要青，不该青的一个都不能有）——沿用现有 `_bright_in`/`_gold_in`/`_accent_in` 的写法 |
-| `tests/weapon_pickup_probe.tscn` | 场景 | 真建一个 `WeaponPickup`：碰撞层/掩码是 8/9；**玩家 mask 与子弹 mask 都不含 4**（反向断言：把掉落物放在玩家脚下，玩家照样能走过去、子弹照样穿过）；落体停止位置与起始时刻无关（同一初速、不同延迟启动，落点一致） |
+| `tests/weapon_pickup_probe.tscn` | 场景 | 真建一个 `WeaponPickup`：碰撞层/掩码是 8/9；**玩家 mask 与子弹 mask 都不含 4**（否定断言：把掉落物放在玩家脚下，玩家照样能走过去、子弹照样穿过）；落体停止位置与起始时刻无关（同一初速、不同延迟启动，落点一致） |
 | `tests/pvp_match_smoke.sh`（扩） | 脚本 | 拾取/丢弃链路：上行位 → 服务器裁决 → `weapon_spawned`/`weapon_removed` 到达；`weapon_spawned` 走的是 **`NetBus`** 而非 `NetBusExt`（走错会静默 no-op） |
-| `tests/match_sync_probe.tscn`（扩） | 场景 | `match_sync_data` 带 `ground_weapons`；**反向断言**：不得新增"推给正在切场景的客户端"的第二条投递路径 |
-| `tests/pvp_twin_smoke.sh`（扩） | 脚本 | `capture_state`/`restore_state` 的 `inv` 往返完整；**`inv` 不在 `_close_enough` 的比对字段里**（反向断言，防每帧判分歧） |
+| `tests/match_sync_probe.tscn`（扩） | 场景 | `match_sync_data` 带 `ground_weapons`；**否定断言**：不得新增"推给正在切场景的客户端"的第二条投递路径 |
+| `tests/pvp_twin_smoke.sh`（扩） | 脚本 | `capture_state`/`restore_state` 的 `inv` 往返完整；**`inv` 不在 `_close_enough` 的比对字段里**（否定断言，防每帧判分歧） |
 | `tests/pvp_reconcile_smoke.sh`（扩） | 脚本 | 服务器权威改变背包（模拟"别人抢走了我刚捡的枪"）后，客户端 `reconcile()` 一次性收敛，且重放不会凭空造枪 |
 
 ## 9. 风险与已知边界

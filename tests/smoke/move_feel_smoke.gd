@@ -52,7 +52,7 @@ func _build_grid() -> Array[Array]:
 		grid.append(row)
 	return grid
 
-# 喂一帧:清边沿 → apply(held/pressed/released/ax)→ 手动步进
+# 喂一帧:清边沿 -> apply(held/pressed/released/ax) -> 手动步进
 func _feed(held: int, pressed: int, released: int, ax: float) -> void:
 	src.clear_edges()
 	src.apply_packet({"seq": 0, "ax": ax, "held": held,
@@ -69,12 +69,12 @@ func _reset_ground() -> void:
 	p.is_charge = false
 	p.is_squat = false
 	p.charge_timer = 0.0
-	# - 必须**显式**重置朝向(2026-09-26 修):本冒烟此前一直没写这一行,靠的是一个**副作用** ——
+	# - 必须显式重置朝向(2026-09-26 修):本冒烟此前一直没写这一行,靠的是一个副作用 ——
 	#   当年 `player._ready` 会发一把手枪  ->  武器每帧跑 `_auto_aim()`  ->  它顺带
 	#   `player.set_facing(+1)`(本冒烟喂的 aim 是 (1,0)),把朝向按回 +1。
 	#   后来那次改动把"发手枪"换成空背包  ->  副作用消失  ->  冲刺方向翻成 -1  -> 
 	#   `_test_dash_jump_cancel` 的 `absf(velocity.x) < 900` 红成 `vx=-877.0`
-	#   (= 冲刺向左后地面加速缓动一帧,分毫不差),**红了 10 天**。
+	#   (= 冲刺向左后地面加速缓动一帧,分毫不差),红了 10 天。
 	#   - 别用"把 900 调低"来消它:877 与 900 只差 2.5%,调低会让"朝反方向冲"也算通过。
 	p.facing_direction = 1
 	src.reset_state()
@@ -107,10 +107,10 @@ func _run_all() -> void:
 	_test_air_dash_gravity()
 	_finish()
 
-# 1) 卡蹲:地面蹲 → 抬到空中(仍按 S)离地清除 → 空中松开 S 落地不蹲。
+# 1) 卡蹲:地面蹲 -> 抬到空中(仍按 S)离地清除 -> 空中松开 S 落地不蹲。
 func _test_crouch_air_release() -> void:
 	_reset_ground()
-	# 地面按住 S → 蹲
+	# 地面按住 S -> 蹲
 	for _i in range(6):
 		_feed(BIT_DOWN, BIT_DOWN, 0, 0.0)
 	if not p.is_squat:

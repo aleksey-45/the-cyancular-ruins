@@ -25,10 +25,10 @@ extends Node
 
 const PREFIX := "tunnel_feel_"
 
-# ── 固定操作序列(时间表;两端同一份)──
-#   - 每一项 `[起, 止, 动作]`,单位秒。动作在 `_seq_tick` 里映射成真实的 Input 动作。
-#   - **不用随机、不看对手位置**:随机化的走位会让两跑的帧时间不可比(见纪律 ①)。
-#   - 覆盖四种会暴露 C2 回滚差异的形态:长距离平移 / 贴地跳 / 开火(带后坐与弹丸) / 急停反向。
+# ── 固定操作序列（确定性时间表；双端执行同一份序列）──
+#   - 每一项包含 `[起始时间, 结束时间, 动作名称]`（单位：秒）。在 _seq_tick 中映射为具体的输入动作。
+#   - 采用确定性时间表而非随机走位：避免随机行为导致多次测试之间的帧耗时数据失去可比性。
+#   - 覆盖四种典型回滚敏感场景：长距离水平移动、贴地跳跃、开火射击（含后坐力与弹丸生成）、急停反向。
 const SEQ: Array = [
 	[0.0, 2.5, "run_right"],
 	[2.5, 3.5, "jump_right"],
@@ -41,15 +41,15 @@ const SEQ: Array = [
 	[13.0, 15.0, "run_left"],
 	[15.0, 15.2, "stop"],
 ]
-const SEQ_PERIOD := 15.2      # 一轮时长;循环
-const FIRE_EVERY := 0.5       # 定时开火(与走位解耦,故"边跑边打"的帧也要采到)
+const SEQ_PERIOD := 15.2      # 单轮序列循环周期（秒）
+const FIRE_EVERY := 0.5       # 定时开火间隔（与走位解耦，确保采集到移动中射击的单帧耗时）
 
-const ENTER_TIMEOUT := 120.0  # 等进对局的上限(隧道建链 + 房间码交换,冷启动给足)
+const ENTER_TIMEOUT := 120.0  # 进入对局超时上限（包含 P2P 隧道建立与房间码握手协商，冷启动预留充足冗余）
 const LOBBY_TIMEOUT := 20.0   # 等大厅页挂上的上限
 # - 3v3 选边:等一会儿再选,让 `team_pick` 落在大厅已经把本端登记进房之后
 #   (`team_pick` 要按 peer 反查房,太早会被当"不在房里"丢掉)。
 const TEAM_PICK_DELAY := 2.0
-# - 房主点「开始」:必须等成员**陆续**进来。等太短会被"人数不足/未满员"拒掉,而那次拒绝
+# - 房主点「开始」:必须等成员陆续进来。等太短会被"人数不足/未满员"拒掉,而那次拒绝
 #   只出现在房主状态栏,客机侧完全看不到 -> 表象与"隧道没通"难以分辨。
 const START_DELAY := 14.0
 
@@ -57,8 +57,8 @@ var _side := "host"
 var _code := ""
 var _seconds := 90.0
 var _seconds_set := false
-# 模式:duel(1v1)/ royale(大乱斗)/ team(3v3)。三者在**同一个统一大厅页**(`mp_lobby`)里,
-# 差别只在:建房前的模式选择、加入时发的 RPC、以及 royale/team 要房主**点开始**、3v3 还要**选边**。
+# 模式:duel(1v1)/ royale(大乱斗)/ team(3v3)。三者在同一个统一大厅页(`mp_lobby`)里,
+# 差别只在:建房前的模式选择、加入时发的 RPC、以及 royale/team 要房主点开始、3v3 还要选边。
 var _mode := "duel"
 var _team := 1                # 仅 team:本端选哪一队(1 或 2)
 
@@ -96,16 +96,16 @@ func _ready() -> void:
 		elif a.begins_with("--expect="):
 			_expect = int(a.trim_prefix("--expect="))
 	# - 测量器挂 `root`(不是本场景):主菜单 -> 大厅页 -> 对局 这一串换场都不该把它带走,
-	#   而帧时间恰恰要**跨这三段**连续量(进场那一下的卡顿正是最该看到的)。
+	#   而帧时间恰恰要跨这三段连续量(进场那一下的卡顿正是最该看到的)。
 	var m: Node = load("res://tests/probe/tunnel_feel_measure.gd").new()
 	m.set("side", _side)
 	get_tree().root.add_child.call_deferred(m)
 	_measure = m
 	print("PROBE[%s]: 启动(side=%s mode=%s code=%s seconds=%s)" % [_side, _side, _mode, _code, str(_seconds)])
-	# - 客机的**前置门**:没有 `easytier/`(四件套)或 `relay.txt` 里一个节点都没有时,
+	# - 客机的前置门:没有 `easytier/`(四件套)或 `relay.txt` 里一个节点都没有时,
 	#   `Tunnel.available()` / `has_initial_peers()` 会让 `_join_with_code` 直接走
-	#   `missing_hint()` 返回 —— 客机**一步都不会走**,而下面等进对局那条梯会在 120s 后
-	#   报 NO-MATCH。那种输出与"隧道建起来了但对局进不去"**长得一样**,读的人会去查错的地方。
+	#   `missing_hint()` 返回 —— 客机一步都不会走,而下面等进对局那条梯会在 120s 后
+	#   报 NO-MATCH。那种输出与"隧道建起来了但对局进不去"长得一样,读的人会去查错的地方。
 	#   故在这里当场判掉,并把它自己的提示原样带出来。
 	if _side != "host":
 		if not Tunnel.available():
@@ -139,18 +139,18 @@ func _process(delta: float) -> void:
 			pass
 
 
-# ════════════════════ 阶段 1:主菜单 → 大厅页 ════════════════════
+# ── 阶段 1:主菜单 -> 大厅页 ──
 
 func _to_lobby() -> void:
-	# 走**生产入口**:主菜单那颗「多人模式」按钮做的正是 `PvpSession.reset()` + 换场。
+	# 走生产入口:主菜单那颗「多人模式」按钮做的正是 `PvpSession.reset()` + 换场。
 	# 手搓换场会漏掉 reset,而 reset 决定了地址/端口从零开始 —— 那正是双实例互不串的前提。
 	if _side == "host":
 		# 房主:自建房 -> 必须让 `_ensure_own_server` 起本机服务端并起隧道。
-		# 本机服务端 exe 只在**导出包**里存在(开发树没有 `Cyancular Ruins Server.exe`),
+		# 本机服务端 exe 只在导出包里存在(开发树没有 `Cyancular Ruins Server.exe`),
 		# 故本探针要求跑在导出目录(`.sh` 会负责铺好)。
 		pass
 	else:
-		# 客机:预置地址(回环)—— 它要连的是**自己那条隧道转发口**,而转发口是隧道起来之后
+		# 客机:预置地址(回环)—— 它要连的是自己那条隧道转发口,而转发口是隧道起来之后
 		# 才知道的(`Tunnel.forward_port()`),由大厅页自己填。这里只把地址摆对。
 		PvpSession.server_address = "127.0.0.1"
 	PvpSession.player_name = "FEEL-%s" % _side
@@ -199,12 +199,12 @@ func _mode_const() -> String:
 
 
 # 房里现在有几个人。房主靠它判"够不够开局"。
-# - 取 `_wait_count` 那一行**渲染出来的文案**再解出第一个整数。那是本页当下唯一的权威陈述:
+# - 取 `_wait_count` 那一行渲染出来的文案再解出第一个整数。那是本页当下唯一的权威陈述:
 #   它由服务端广播(`team_room_state` / `room_state`)驱动 —— 大乱斗写
 #   `"N / M 人(至少 2 人可开局)"`、3v3 由 `_team_count_text` 拼,两种都以 `"N /"` 开头。
-# - 不去数名单行的子节点:3v3 的名单里混着**队头行**与**空位行**,数出来不是人数。
-# - **不用 `RegEx`**:导出模板把该模块裁掉了(`export_presets.cfg` 的自定义模板),
-#   在导出包里 `RegEx` 是未声明标识符 —— 本探针是**跑在导出包上**的,故只能手解。
+# - 不去数名单行的子节点:3v3 的名单里混着队头行与空位行,数出来不是人数。
+# - 不用 `RegEx`:导出模板把该模块裁掉了(`export_presets.cfg` 的自定义模板),
+#   在导出包里 `RegEx` 是未声明标识符 —— 本探针是跑在导出包上的,故只能手解。
 func _room_player_count() -> int:
 	if _page == null:
 		return 0
@@ -216,7 +216,7 @@ func _room_player_count() -> int:
 	return int(head) if head.is_valid_int() else 0
 
 
-# ════════════════════ 阶段 2:等进对局 ════════════════════
+# ── 阶段 2:等进对局 ──
 
 func _entering_tick() -> void:
 	# 主机端：获取并输出当前房间号（供测试编排脚本传递给客机实例）
@@ -264,7 +264,7 @@ func _in_match() -> bool:
 	return p.ends_with("pvp_game.tscn") or p.ends_with("royale_game.tscn") or p.ends_with("team_game.tscn")
 
 
-# ════════════════════ 阶段 3:固定操作序列 + 采样 ════════════════════
+# ── 阶段 3:固定操作序列 + 采样 ──
 
 func _playing_tick(delta: float) -> void:
 	if not _seconds_set:
@@ -275,7 +275,7 @@ func _playing_tick(delta: float) -> void:
 		_finish("")
 
 
-# 时间表驱动的走位。**只按时间**,不读任何游戏状态 —— 两端跑的是同一份表。
+# 基于确定性时间序列驱动角色移动：仅根据时间步进触发预设动作，确保双端执行完全一致的操作序列。
 func _seq_tick(delta: float) -> void:
 	_seq_t += delta
 	if _seq_t >= SEQ_PERIOD:
@@ -303,8 +303,8 @@ func _seq_tick(delta: float) -> void:
 		"stop":
 			pass
 	# 定时开火:按住不放只会算一次 just_pressed,故"按下 -> 松开"。
-	# - 动作名是 **`attack`**(见 `project.godot` 的 `[input]` 段与 `player.gd` 的读法);
-	#   本夹具第一版写成 `fire` —— 那个动作**不存在**,`Input.action_press("fire")` 会静默
+	# - 动作名是 `attack`(见 `project.godot` 的 `[input]` 段与 `player.gd` 的读法);
+	#   本夹具第一版写成 `fire` —— 那个动作不存在,`Input.action_press("fire")` 会静默
 	#   什么都不做(不报错),于是"开火帧"整段没被采到,而读数上看不出任何异常。
 	_fire_t += delta
 	if _fire_t >= FIRE_EVERY:
@@ -316,9 +316,9 @@ func _seq_tick(delta: float) -> void:
 
 func _read_host_code() -> String:
 	# 房号来自 `PvpSession.room_code` —— 大厅页在 `_on_room_created` 里经 `note_room(code, …)`
-	# 落的正是它(见 `mp_lobby.gd` 那段),它是这条信息的**单一来源**。
-	# - 早先这里想去翻大厅页的 `_grid` 房卡元数据,那是**错的**:`_grid` 是收到 `room_list`
-	#   之后才填的,而房主建房后列表**不会**自动回来(本页没有轮询) -> 恒读到空串。
+	# 落的正是它(见 `mp_lobby.gd` 那段),它是这条信息的单一来源。
+	# - 早先这里想去翻大厅页的 `_grid` 房卡元数据,那是错的:`_grid` 是收到 `room_list`
+	#   之后才填的,而房主建房后列表不会自动回来(本页没有轮询) -> 恒读到空串。
 	#   而且那种写法还把一个本该直接读的值绕成了"从 UI 反推"。
 	return PvpSession.room_code
 
@@ -328,7 +328,7 @@ func _advance(p: String) -> void:
 	_phase_t = 0.0
 
 
-# ════════════════════ 收尾:写这一侧的读数 ════════════════════
+# ── 收尾:写这一侧的读数 ──
 
 func _finish(fail: String) -> void:
 	var lines: Array[String] = []

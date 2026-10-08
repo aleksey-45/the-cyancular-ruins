@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 把「队伍」这一维做进服务器权威层 —— 队伍表、子弹穿透队友、按队出生/复活、按队计分与胜负、只复位击杀者、换边、掉线后整队走光才终局、`--team/--teams` 启动契约 —— 并用探针证明每一条。
+**Goal:** 把「队伍」这一维做进服务器权威层 —— 队伍表、子弹穿透队友、按队出生/复活、按队计分与胜负、只复位击杀者、换边、掉线后整队走光才终局、`--team/--teams` 启动接口规范 —— 并用探针证明每一条。
 
-**Architecture:** 队伍归属是**一个字典**（role → 1/2），由大厅经 worker 命令行显式传入（role 号有空洞、**不能**从编号推导）。它住在 `MatchState._team_of`（共享状态底座 —— 父类方法解析不了子类符号，故必须住这里），对子类暴露只读口 `team_of()` / `same_team()`。规则层是新的 `TeamHost extends MatchHost`（与 `RoyaleHost` 平级的第二个模式宿主），照 `RoyaleHost` 那套"中间层纪律 + `_init` 先算出生点再 `super`"写。**C2 四条不变量、`MatchBootstrap`、`RoyaleHost` 的行为一律不动。**
+**Architecture:** 队伍归属是**一个字典**（role → 1/2），由大厅经 worker 命令行显式传入（role 号有空洞、**不能**从编号推导）。它住在 `MatchState._team_of`（共享状态基础层 —— 父类方法解析不了子类符号，故必须住这里），对子类暴露只读口 `team_of()` / `same_team()`。规则层是新的 `TeamHost extends MatchHost`（与 `RoyaleHost` 平级的第二个模式宿主），照 `RoyaleHost` 那套"中间层纪律 + `_init` 先算出生点再 `super`"写。**C2 四条不变量、`MatchBootstrap`、`RoyaleHost` 的行为一律不动。**
 
 **Tech Stack:** Godot 4.7.1 GDScript；`NetBus`（方法表**一个字不动**，本册**不新增任何 RPC**）；场景探针（`tests/*.tscn`，判据 grep `ALL-OK`）与 `-s` 冒烟。
 
@@ -19,9 +19,9 @@
 - **场景探针 `--quit-after` 统一给 3600**（安全网只在探针挂住时用得上；给少了会把"跑得慢"读成"功能坏了"）。
 - **判据 grep 文本 `ALL-OK`，不看退出码**。
 - **`-s` 冒烟必须写空载守卫**（`load()` 之后 `if X == null: print(...); quit(1); return`，否则抛错就走到不 `quit()` → 进程永久挂起）。
-- **改成共享层时"空参数 = 原行为"**：`MatchHost._init` 的第 5 个参数、`same_team()` 在无队伍时返回 false —— 1v1 / 大乱斗 / 单机的既有探针**必须全绿**，那是本册的回归线。
+- **改成共享层时"空参数 = 原行为"**：`MatchHost._init` 的第 5 个参数、`same_team()` 在无队伍时返回 false —— 1v1 / 大乱斗 / 单机的既有探针**必须全部通过**，那是本册的回归线。
 - **提交信息用单引号或 `-F 文件`**，不带任何 Claude/AI 署名行；提交后回读 `git show --stat`。
-- 每次 `git add` **只加本任务点名的文件**。工作区有未跟踪的 `_crashtest/`，**不要动**。
+- 每次 `git add` **只加本任务明确指定的文件**。工作区有未跟踪的 `_crashtest/`，**不要动**。
 - **字号只用 16 的倍数**（`kh_l4/l5` 会扫 `res://tests`）。
 
 ## 文件结构
@@ -38,7 +38,7 @@
 | `server/worker_launcher.gd` | 修改 | `spawn_team_worker()` + `TEAM_PORT_REUSE_DELAY`（与解析端逐字对应） |
 | `server/server_main.gd` | 修改 | `--team`/`--teams` 解析 + 开局分支 + 超时梯 + `_on_peer_left`/`_expire_graces` 的 team 分支 + `match_sync` 带 `teams` |
 | `tests/room_sweep_smoke.gd` | 修改 | 双向断言扩到 `--team`/`--teams` |
-| `tests/team_table_probe.tscn/.gd` | **新建** | 队伍表进权威底座 + 子弹穿透队友 |
+| `tests/team_table_probe.tscn/.gd` | **新建** | 队伍表进权威基础层 + 子弹穿透队友 |
 | `tests/team_host_probe.tscn/.gd` | **新建** | 按队出生散点 / 按队计分 / 只复位击杀者 / 换边 |
 | `tests/team_disconnect_probe.tscn/.gd` | **新建** | 掉线双向：掉 1 人不得终局 / 整队走光必须终局 |
 
@@ -69,7 +69,7 @@ Expected: `Switched to a new branch 'feat/team-3v3-a'`
 
 ---
 
-## Task 2: 队伍表进权威底座 + 子弹穿透队友
+## Task 2: 队伍表进权威基础层 + 子弹穿透队友
 
 **Files:**
 - Modify: `server/match_state.gd`（字段区 `:21-27` 之后；`_role_of` 在 `:106`）
@@ -1210,7 +1210,7 @@ Expected: `TEAM DISCONNECT: ALL-OK`
 		_finish_match()
 ```
 
-重跑 → 期望 **③ 的"必须终局"那条变红**（此刻场上还有 3 人，royale 判据判 false）。把两次输出写进报告，然后**换回**按队判据、再跑一次确认绿。
+重跑 → 期望 **③ 的"必须终局"那条报错失败**（此刻场上还有 3 人，royale 判据判 false）。把两次输出写进报告，然后**换回**按队判据、再跑一次确认绿。
 
 - [ ] **Step 5: 提交**
 
@@ -1222,7 +1222,7 @@ git commit -m 'feat(team): 掉线整队走光才终局(mark_disconnected 覆写)
 
 ---
 
-## Task 9: `--team` / `--teams` 启动契约
+## Task 9: `--team` / `--teams` 启动接口规范
 
 **Files:**
 - Modify: `server/worker_launcher.gd`（新增 `spawn_team_worker` + `TEAM_PORT_REUSE_DELAY`）
@@ -1416,7 +1416,7 @@ git commit -m 'feat(team): --team/--teams 启动契约(两处逐字对应 + 双�
 
 **Interfaces:**
 - Consumes: `TeamHost.team_map()`（Task 4）
-- Produces: `match_sync_data` 载荷新增 `teams: {role: 1|2}`（**A 册只负责发，消费在 B 册**）
+- Produces: `match_sync_data` 数据包新增 `teams: {role: 1|2}`（**A 册只负责发，消费在 B 册**）
 
 - [ ] **Step 1: 在 `_on_match_sync` 的应答里加 `teams`**
 
@@ -1548,7 +1548,7 @@ Run（**让用户跑**，回归线）：`timeout 600 "$GODOT" --headless --path 
 
 - [ ] **Step 4: 变异反证（本仓纪律）**
 
-把 `TEAM_ENEMY_LAYER` 临时改回 `2`（= 两队同层，退化成"全员互挡"）→ 期望 Step 2 的两条 ★ 断言**变红** → 逐字还原并 `git diff` 确认。
+把 `TEAM_ENEMY_LAYER` 临时改回 `2`（= 两队同层，退化成"全员互挡"）→ 期望 Step 2 的两条 ★ 断言**报错失败** → 逐字还原并 `git diff` 确认。
 
 - [ ] **Step 5: 提交**
 
@@ -1557,13 +1557,13 @@ git add server/team_host.gd tests/team_host_probe.gd
 git commit -m 'feat(team): 队友不互挡(分队碰撞层:1 队 layer2 / 2 队 layer16)+ 行为断言'
 ```
 
-★ **客户端那一半（本地玩家掩码按自己的队、副本幽灵体按它代表的队）归 B 册 Task 6** —— 只做服务端这一半时，3v3 还跑不起来（B 册未落地），但两侧的**契约**（层位 16 与"掩码互指"）在本任务里定死。
+★ **客户端那一半（本地玩家掩码按自己的队、副本幽灵体按它代表的队）归 B 册 Task 6** —— 只做服务端这一半时，3v3 还跑不起来（B 册未落地），但两侧的**接口规范**（层位 16 与"掩码互指"）在本任务里定死。
 
 ---
 
 ## 自检记录
 
-**spec 覆盖**：§4.1 权威链（Task 9 的命令行 + Task 4 的 `start_on`）→ ✓；§4.2 覆写表（Task 4/5/6/7/8）→ ✓；§4.3 友伤（Task 2；**§4.3 里"给 `apply_aoe` 加参数"一说是错的** —— 队友吃爆炸满效是现状默认行为，已改为"不动"）→ ✓；§4.4 出生/复活（Task 3 的 `SpawnPicker` + Task 4）→ ✓；§4.5 三态化（**一半**：worker 侧在 Task 9；大厅侧 `teardown_room` 的三态、端口延迟的接线上归 B 册。★ **收尾批（全支最终审查）补上了清单漏掉的第五处** —— `server_main._on_suicide_request` 的闸改 `not (_royale or _team_mode)` + `TeamHost.request_suicide_role`；`TEAM_PORT_REUSE_DELAY` 零读者一条已写进 B 册计划与 `b-task-3-brief.md`）→ 部分；§4.6 掉线重连（Task 8；**宽限期机制本身不动**，`reclaim_role` 已按 role 工作、与队伍无关）→ ✓；§6 协议（Task 10 的 `teams`；`kill_event` 载荷保持 role 粒度 → Task 5 的注释）→ ✓；§7 常量（Task 4/5 的 `TEAM_*`）→ ✓；§10 守卫（各任务的探针；**6 人真链路压测归 B 册**）→ 部分。
+**spec 覆盖**：§4.1 权威链（Task 9 的命令行 + Task 4 的 `start_on`）→ ✓；§4.2 覆写表（Task 4/5/6/7/8）→ ✓；§4.3 友伤（Task 2；**§4.3 里"给 `apply_aoe` 加参数"一说是错的** —— 队友吃爆炸满效是现状默认行为，已改为"不动"）→ ✓；§4.4 出生/复活（Task 3 的 `SpawnPicker` + Task 4）→ ✓；§4.5 三态化（**一半**：worker 侧在 Task 9；大厅侧 `teardown_room` 的三态、端口延迟的接线上归 B 册。★ **收尾批（全支最终审查）补上了清单漏掉的第五处** —— `server_main._on_suicide_request` 的闸改 `not (_royale or _team_mode)` + `TeamHost.request_suicide_role`；`TEAM_PORT_REUSE_DELAY` 零读者一条已写进 B 册计划与 `b-task-3-brief.md`）→ 部分；§4.6 掉线重连（Task 8；**宽限期机制本身不动**，`reclaim_role` 已按 role 工作、与队伍无关）→ ✓；§6 协议（Task 10 的 `teams`；`kill_event` 数据包保持 role 粒度 → Task 5 的注释）→ ✓；§7 常量（Task 4/5 的 `TEAM_*`）→ ✓；§10 守卫（各任务的探针；**6 人真链路压测归 B 册**）→ 部分。
 
 **本册不做（明写）**：大厅选边房间与 NetBusExt RPC、`teardown_room` 三态与端口延迟接线、客户端 `team_game` 与 `TeamHud`、主菜单入口、6 人真链路压测、`match_sync.teams` 的**消费** —— 全部归 B 册。
 

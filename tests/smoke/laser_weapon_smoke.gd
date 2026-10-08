@@ -21,7 +21,7 @@ func _initialize() -> void:
 	_check(BaseScript != null, "LaserWeaponBase 脚本可 load")
 	_check(GunScript != null, "laser_gun 脚本可 load")
 
-	# ── 基类默认几何 = 直线 hitscan:空网格无墙 → 起点 + 射程末端两点 ──
+	# ── 基类默认几何 = 直线 hitscan:空网格无墙 -> 起点 + 射程末端两点 ──
 	MazeGenerator.current_grid = _make_grid(20, 6)
 	var base_weapon: Variant = BaseScript.new()
 	base_weapon.bullet_range = 500.0
@@ -30,7 +30,7 @@ func _initialize() -> void:
 	_check(p1.size() == 2, "基类默认直线 2 点(起+止)")
 	_check(absf(p1[1].x - 650.0) < 0.01 and absf(p1[1].y - 150.0) < 0.01, "基类默认止于射程末端")
 
-	# ── 反射子类可解析 + 几何(竖墙 col1,从右往左打 → 撞墙反射)── 顺带证明 extends LaserWeaponBase 就绪
+	# ── 反射子类可解析 + 几何(竖墙 col1,从右往左打 -> 撞墙反射)── 顺带证明 extends LaserWeaponBase 就绪
 	var grid := _make_grid(20, 6)
 	for y in range(6):
 		grid[y][1] = MazeGenerator.SOLID
@@ -46,9 +46,9 @@ func _initialize() -> void:
 	_check(p2[2].x > 128.0, "反射后继续向右(离开墙面)")
 	_check(c2.size() == 1 and c2[0] == Vector2i(1, 2), "接触格 = 墙格 (1,2)")
 
-	# ── 三个缝 + 两个上报口(走**方法表**,不再钉 `contains("func _emit_beam(")` 逐字写法)+
+	# ── 三个缝 + 两个上报口(走方法表,不再钉 `contains("func _emit_beam(")` 逐字写法)+
 	#    PvP 权威门控 + 上报取后即清 ──
-	# - 方法表只证明"口在"、**不重复**下面那些真实行为调用(默认直线几何 / 反射几何 / 上报
+	# - 方法表只证明"口在"、不重复下面那些真实行为调用(默认直线几何 / 反射几何 / 上报
 	#   round-trip 都真调了这些口)—— 两者互补。要拦的变异:缝被改名/删掉  ->  域内调用点与子类
 	#   覆写当场落空(可覆写缝,删了不会有编译错)。
 	var base_src := FileAccess.get_file_as_string("res://scenes/weapons/laser_weapon_base.gd")
@@ -57,7 +57,7 @@ func _initialize() -> void:
 	for seam in ["_emit_beam", "_apply_beam_damage", "_spawn_beam_visual",
 			"collect_pending_beam_report", "_make_beam_report"]:
 		_check(ScanUtil.method_info(BaseScript, seam) != null, "基类含可覆写缝/上报口(方法表): " + seam)
-	# 权威门控:只要求**引用了** `Level0.pvp_mode`(等价写法 —— 提前取局部量 / 加括号 / 取反 —— 不该红)。
+	# 权威门控:只要求引用了 `Level0.pvp_mode`(等价写法 —— 提前取局部量 / 加括号 / 取反 —— 不该红)。
 	# 要拦的变异:门控不再看 pvp_mode(恒 true/false 或换了别的开关) ->  权威开火判断与出弹不同 gate。
 	_check(ScanUtil.code_only(base_src).contains("Level0.pvp_mode"),
 			"权威门控引用 Level0.pvp_mode(与出弹同 gate)")
@@ -78,7 +78,7 @@ func _initialize() -> void:
 	_check(taken == rep, "collect_pending_beam_report 首次取到上报")
 	_check(w2.collect_pending_beam_report().is_empty(), "collect_pending_beam_report 二次为空(读到即清)")
 
-	# ── 远端"粘副本"公式:跨接缝原始 pts 逐点锚到射手副本渲染位置 → 全落在可见副本、连续 ──
+	# ── 远端"粘副本"公式:跨接缝原始 pts 逐点锚到射手副本渲染位置 -> 全落在可见副本、连续 ──
 	var w_map := 9600.0   # factory 图宽
 	var h_map := 6400.0
 	var anchor := Vector2(9500, 1500)      # 射手副本已渲染在本地附近的副本

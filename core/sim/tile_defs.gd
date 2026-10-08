@@ -197,10 +197,10 @@ static func init_hp(grid: Array) -> void:
 static var sub_hp: PackedInt32Array = PackedInt32Array()
 static var sub_cols: int = 0
 static var sub_rows: int = 0
-# 子格被摧毁的回调,由 level_0(渲染/账本/碰撞)与 worker(广播/颗粒结算)分别注册。
+# 子格被摧毁的回调,由 level_0(渲染/账本/碰撞)与服务端权威宿主(广播/颗粒结算)分别注册。
 # 参数 (sub: Vector2i, pre_hp: int, owner: Node) —— pre_hp 供回溯账本记"改前值";
 # owner = 造成破坏的射手节点(子弹的 shooter / 爆炸的 shooter;单人模式由 Level0 忽略,
-# worker 侧用它映射 role 结算"破坏瓦片得颗粒")。
+# 服务端对局宿主侧用它映射 role 结算"破坏瓦片得颗粒")。
 static var on_sub_destroyed: Callable = Callable()
 
 

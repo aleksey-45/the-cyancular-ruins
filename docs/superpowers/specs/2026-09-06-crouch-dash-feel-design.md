@@ -26,7 +26,7 @@
 
 ### 2. 冲刺
 - **时长**:`charge_duration` 0.6 → **0.4**(×1500 = 600px,约 9 身位)。方向判定、锁向逻辑不变。
-- **跳跃打断**:冲刺中触发跳跃(`up` just_pressed)即结束冲刺(`is_charge=false`、`charge_timer=0`),保留当前水平速度作为动量(落地/空中由正常 accel/air-brake 平滑接管),转跳。手感"冲→跳→惯性继续"而非钉住。
+- **跳跃打断**:冲刺中触发跳跃(`up` just_pressed)即结束冲刺(`is_charge=false`、`charge_timer=0`),保留当前水平速度作为动量(落地/空中由正常 accel/air-brake 平滑接管),转跳。手感"冲→跳→惯性继续"而非断言约束。
 - **撞墙自然停**:`is_charge` 且本帧 `move_and_slide` 撞到水平墙(normal.x≠0)→ 立即结束冲刺(不再顶着墙冲满)。
 - **空中重力削减**:空中冲刺期间垂直重力累加 ×`charge_air_gravity_mult=0.35`(仅 is_charge 且非地面那几帧);结束恢复全额。`player.gd` 垂直逻辑段按此折算。
 - **收尾平滑**:删掉 `is_charge` 结束时的 `velocity.x -= charge_velocity*facing*0.5` 突变;结束时速度交回水平 accel/brake 分支自然过渡(冲刺惯性由 `brake_ground`/`brake_air` 指数收)。

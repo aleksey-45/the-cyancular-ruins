@@ -4,30 +4,30 @@ extends Node
 # Godot 的 RPC 按「节点路径+方法名」解析,但实测改动原 NetBus 的方法列表(改签名/
 # 插新方法)会让与原版大厅(120.53.107.140:7777)的 RPC 全部失联——建房间无应答。
 # 因此:原 NetBus 保持与原版逐字节一致;实验新增 RPC 全部放本节点。
-# 对原版 worker:本节点不存在 → 扩展 RPC 静默丢弃,优雅降级(选项/颜色不生效,对局照常);
-# 对自建 worker(同版本构建):选项/颜色功能齐全。
+# 对旧版服务端:若本节点不存在则扩展 RPC 静默丢弃,优雅降级(选项/颜色不生效,对局照常);
+# 对同版本构建:选项/颜色功能齐全。
 
-signal local_match_options(opts: Dictionary)      # worker → 客户端:生效对局选项(房主下发)
-signal local_peer_hues(hues: Dictionary)          # worker → 客户端:双方自选角色颜色 {role -> 色相}
-signal local_hit_confirm(shooter_role: int, victim_role: int)  # worker → 射手客户端:你的子弹命中了玩家
-signal player_options_received(caller: int, opts: Dictionary)  # worker:某客户端上报的本端选项
+signal local_match_options(opts: Dictionary)      # 服务端 → 客户端:生效对局选项(房主下发)
+signal local_peer_hues(hues: Dictionary)          # 服务端 → 客户端:双方自选角色颜色 {role -> 色相}
+signal local_hit_confirm(shooter_role: int, victim_role: int)  # 服务端 → 射手客户端:你的子弹命中了玩家
+signal player_options_received(caller: int, opts: Dictionary)  # 服务端对局宿主:某客户端上报的本端选项
 
-# 客户端 → worker:本端选项(角色颜色/规则偏好)。服务器权威项以房主(role1)为准。
+# 客户端 → 服务端:本端选项(角色颜色/规则偏好)。服务器权威项以房主(role1)为准。
 @rpc("any_peer", "reliable")
 func player_options(opts: Dictionary) -> void:
 	player_options_received.emit(multiplayer.get_remote_sender_id(), opts)
 
-# worker → 客户端:本局生效选项(禁武器/回合回血),进局广播一次
+# 服务端 → 客户端:本局生效选项(禁武器/回合回血),进局广播一次
 @rpc("authority", "reliable")
 func match_options(opts: Dictionary) -> void:
 	local_match_options.emit(opts)
 
-# worker → 客户端:双方角色颜色 {role(int) -> 色相度数},开局广播一次
+# 服务端 → 客户端:双方角色颜色 {role(int) -> 色相度数},开局广播一次
 @rpc("authority", "reliable")
 func peer_hues(hues: Dictionary) -> void:
 	local_peer_hues.emit(hues)
 
-# worker → 射手客户端:你的子弹命中了一名玩家(FPS 式命中反馈,只发给射手本人)。
+# 服务端 → 射手客户端:你的子弹命中了一名玩家(FPS 式命中反馈,只发给射手本人)。
 # 仅弹直击(服务器裁决 _on_bullet_hit)发;爆炸 AoE 不发(伤害方不明确,击杀仍有 kill_event)。
 @rpc("authority", "reliable")
 func hit_confirm(shooter_role: int, victim_role: int) -> void:
@@ -42,7 +42,7 @@ signal local_beam_fired(data: Dictionary)
 func beam_fired(data: Dictionary) -> void:
 	local_beam_fired.emit(data)
 
-# 客户端 → worker:自杀脱困(大乱斗卡死自救;服务器校验存活/对局中,转发给 RoyaleHost)
+# 客户端 → 服务端:自杀脱困(大乱斗卡死自救;服务器校验存活/对局中,转发给 RoyaleHost)
 signal suicide_requested(caller: int)
 
 @rpc("any_peer", "reliable")
@@ -83,7 +83,7 @@ func royale_leave() -> void:
 #   "**本人自己那间私密房**"也列给他(B1 之前私密房一律不列  ->  私密房里回主菜单的玩家
 #   没有回局入口)。它**不是**身份认证 —— 列表只是一个显示面,真正的准入由
 #   `rejoin_request` 的 `RejoinRegistry.decision` 判。
-# - 加参数 = 改 **NetBusExt** 的方法表,**可以**:本类是本仓自己的扩展协议(对原版 worker
+# - 加参数 = 改 **NetBusExt** 的方法表,**可以**:本类是本仓自己的扩展协议(对旧版服务端
 #   整个节点不存在  ->  扩展 RPC 静默丢弃、优雅降级)。原版 `NetBus` 的方法表**一个字没动**。
 @rpc("any_peer", "reliable")
 func royale_list(token: String) -> void:
@@ -204,25 +204,24 @@ func room_map(code: String, path: String) -> void:
 
 # ── 断线重连(2026-09-17)──
 # - 全部进本节点,理由见文件头:原 NetBus 的方法表一律不动(改了会让与原版服务端的 RPC
-#   全部失联)。对原版 worker 本节点不存在 → 这三条静默丢弃,优雅降级成"不能重连"。
+#   全部失联)。对旧版服务端若本节点不存在 → 这三条静默丢弃,优雅降级成"不能重连"。
 #
-# 一次性会话令牌:大厅生成(它必须知道 token,否则"回大厅后回局"无法把客户端对回那一局),
-# 在客户端**转连 worker 之前**下发(必须早于 go_match —— go_match 一到客户端就 NetBus.stop()
-# 断大厅,之后再发就丢了)。两者都是 reliable 同通道,保序到达。
+# 一次性会话令牌:服务端生成(用于断线重连时核验玩家身份),
+# 在客户端进入对局之前下发(必须早于 go_match)。两者都是 reliable 同通道,保序到达。
 signal local_session_token(token: String)
 
 @rpc("authority", "reliable")
 func session_token(token: String) -> void:
 	local_session_token.emit(token)
 
-# 客户端 → worker:把 token 报到本局(claim 之后立刻发)。worker 存 role→token 供日后核验。
+# 客户端 → 服务端:把 token 报到本局(claim 之后立刻发)。服务端存 role→token 供日后核验。
 signal token_reported(caller: int, token: String)
 
 @rpc("any_peer", "reliable")
 func report_token(token: String) -> void:
 	token_reported.emit(multiplayer.get_remote_sender_id(), token)
 
-# 客户端 → worker:宽限期内重新认领自己那个 role。token 不对一律拒(并踢连接)。
+# 客户端 → 服务端:宽限期内重新认领自己那个 role。token 不对一律拒(并踢连接)。
 signal reclaim_requested(caller: int, role: int, token: String)
 
 @rpc("any_peer", "reliable")

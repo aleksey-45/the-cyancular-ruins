@@ -46,11 +46,11 @@ _match_started = true
 NetBus.role_claimed.disconnect(_on_role_claimed)   # ← 此后 claim 无人监听
 ```
 
-于是 `_on_role_claimed` 的防串线闸门（`server_main.gd:269-274`）**在信号路径上不可达**：既不解包、也不 `disconnect_peer`、也不回包。客户端只能等 `lobby_page.gd:335-339` 的 **25s claim 超时**回大厅。
+于是 `_on_role_claimed` 的防串线校验（`server_main.gd:269-274`）**在信号路径上不可达**：既不解包、也不 `disconnect_peer`、也不回包。客户端只能等 `lobby_page.gd:335-339` 的 **25s claim 超时**回大厅。
 
 **② 身份不可验证。** role 从不重排也从不显式释放；`_claims`（`server_main.gd:14`，role→peer）在 worker 进程内、无回写大厅的通道。守卫 `_claims.has(role) and _claims[role] != caller` 的语义是"先到先得 + 一律拒绝"，没有"原主可以回来"这一态。
 
-**③ 对局状态只在 worker 进程内存**：`_scores` / `_deaths` / `_left` / `_match_time` / `grid` 破坏态 / `TileDefs.hp_grid`（进程级 static）/ `ground_weapons` 全表 / `_next_ground_inst` / `_ack_seq`。**无落盘、无序列化、无回大厅通道**（`MatchHost` 没有任何 `save`/`restore` 方法）。
+**③ 对局状态只在 worker 进程内存**：`_scores` / `_deaths` / `_left` / `_match_time` / `grid` 破坏态 / `TileDefs.hp_grid`（进程级 static）/ `ground_weapons` 全表 / `_next_ground_inst` / `_ack_seq`。**未持久化到磁盘、无序列化、无回大厅通道**（`MatchHost` 没有任何 `save`/`restore` 方法）。
 
 ### 1.3 顺手挖出的两个既有缺陷（与本设计相邻，建议一并修）
 
@@ -69,7 +69,7 @@ NetBus.role_claimed.disconnect(_on_role_claimed)   # ← 此后 claim 无人监�
 
 **非目标（明确不做）**
 
-- worker 进程崩溃后的恢复（需要状态落盘，属另一量级）。
+- worker 进程崩溃后的恢复（需要状态写入磁盘，属另一量级）。
 - 观战、语音。
 - 掉线者**离开后**（宽限期超时）的回归 —— 超时即按现有语义"移出对局"。
 - 反作弊级别身份验证（token 是"防误顶替"，不是"防恶意"）。
@@ -179,7 +179,7 @@ if _tokens.get(role, "") != token: 拒绝(令牌不对)
 
 - 客户端记住 `(server_address, worker_port, role, token, room_code)`（`PvpSession` 新增字段；`room_code` 曾被删除，需重新加入）。
 - 从主菜单进"多人对战/大乱斗"时，若 `PvpSession` 里有一条**未过期**的回局记录 → 大厅页给出一个入口：「你有一局在进行中，返回对局」。
-- 点它 → 向大厅发 `rejoin_request(room_code, token)` → 大厅校验（房间还在 + token 匹配 + worker 端口有效）→ 回 `go_match(role, port, token)`（复用现有载荷形状）→ 客户端照常转连 + `claim_role`。
+- 点它 → 向大厅发 `rejoin_request(room_code, token)` → 大厅校验（房间还在 + token 匹配 + worker 端口有效）→ 回 `go_match(role, port, token)`（复用现有数据包形状）→ 客户端照常转连 + `claim_role`。
 - ★ **重建场景需要世界破坏态**：客户端重进 `pvp_game.tscn` 会从 `map_path` 重建初始地图，而服务器上是破坏后的 `grid` → 两端发散。**必须让 `match_sync` 带上破坏态**（见 §3.5）。
 
 ### 3.5 `match_sync` 增加「世界破坏态」
@@ -194,7 +194,7 @@ if _tokens.get(role, "") != token: 拒绝(令牌不对)
 
 ### 3.6 HUD：掉线中 / 重连中
 
-- **服务端**：`round_state` 载荷加一个 `grace` 字段（`{role: 剩余秒}`，仅在有宽限角色时带）。大乱斗排行榜的行状态增加一档「掉线中」；1v1 的记分条旁显示对手状态。
+- **服务端**：`round_state` 数据包加一个 `grace` 字段（`{role: 剩余秒}`，仅在有宽限角色时带）。大乱斗排行榜的行状态增加一档「掉线中」；1v1 的记分条旁显示对手状态。
 - **客户端本身**：路径甲期间本地显示「重连中…」（自己知道，不需要服务器广播）。
 
 ### 3.7 大厅侧：房间记录在局内保留
@@ -235,7 +235,7 @@ if _tokens.get(role, "") != token: 拒绝(令牌不对)
 | `_scores` / `_deaths` / `_left` | worker 内存 | **不动** | **不动** ✓ |
 | `_match_time` / `_round_state` | worker 内存 | **不停**（对局继续） | **不动** ✓ |
 | 世界破坏态 / `TileDefs.hp_grid` | worker 内存 | **不动** | **不动** ✓（路径甲）；路径乙靠 `match_sync` 的 `destroyed` 下发 |
-| 地面武器表 | worker 内存 | **不动** | **不动** ✓（路径甲）；路径乙靠现有 `ground_weapons` 载荷 |
+| 地面武器表 | worker 内存 | **不动** | **不动** ✓（路径甲）；路径乙靠现有 `ground_weapons` 数据包 |
 | `peer_by_role[role]` | worker | erase | **重绑新 peer** |
 | `input_sources[role]` | worker | `reset_state()` 置空 | **换新 PacketInputSource** |
 | `_pending_input[role]` | worker | 清空 | 清空 |
@@ -258,7 +258,7 @@ if _tokens.get(role, "") != token: 拒绝(令牌不对)
 ## 6. 探针与文档
 
 - **`tests/reconnect_probe.tscn`（新）**：真大厅 + 真 worker + 真客户端。脚本化地掐掉一个客户端的连接（或直接 `NetBus.stop()` 再重连），断言：① 宽限期内该 role 的身体**留在场上**且**输入被冻结**（位置不再变化）；② `reclaim_role` 带对 token 成功、带错 token 被拒；③ 重连后 `_scores`/`_deaths` 未变；④ 宽限期到点仍不回来 → 移出对局。
-  ★ 必须有**反向断言**：错 token 必须被拒（否则"谁都能顶替"这条会假绿）。
+  ★ 必须有**否定断言**：错 token 必须被拒（否则"谁都能顶替"这条会假绿）。
 - **`tests/rejoin_probe.tscn`（新，路径乙）**：客户端回主菜单后再经 `rejoin_request` 回局，断言重进场景后**世界破坏态与服务器一致**（拆两堵墙再回局，比对两端）。
 - **扩展 `tests/unstick`… 无关**。扩展 `tests/royale_disconnect_count_probe`：宽限期内的 role 不应触发终局（现在掉线即 `mark_disconnected`，改后 30s 内不终局）。
 - **CLAUDE.md**：§网络与 PvP 新增「断线重连与回局」一节；把 §1.3 那两个既有缺陷一并记上（或在本批修掉后记为已修）。
@@ -279,7 +279,7 @@ if _tokens.get(role, "") != token: 拒绝(令牌不对)
 
 ## 8. 明确不做
 
-- worker 崩溃后的恢复（要落盘/回传，另一量级）。
+- worker 崩溃后的恢复（要写入磁盘/回传，另一量级）。
 - 观战、语音。
 - 宽限期超时后的回归。
 - 反作弊级身份验证。

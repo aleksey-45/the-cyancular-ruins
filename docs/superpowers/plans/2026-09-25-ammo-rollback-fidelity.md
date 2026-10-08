@@ -410,7 +410,7 @@ done
 "$G" --headless --path . -s res://tests/enemy_logic_smoke.gd 2>&1 | grep -E "SMOKE OK|FAIL|SCRIPT ERROR"
 "$G" --headless --path . -s res://tests/weapon_inventory_smoke.gd 2>&1 | grep -E "OK|FAIL"
 ```
-Expected: 全绿。★ 特别注意 `weapon_pickup_probe`（它验"落点与起始时刻无关"）——
+Expected: 全部通过。★ 特别注意 `weapon_pickup_probe`（它验"落点与起始时刻无关"）——
 本批没碰落体，若它红了说明改动越界。
 
 - [ ] **Step 2: 真链路验收（用户跑）**
@@ -419,7 +419,7 @@ Run:
 ```bash
 bash tests/pvp_match_smoke.sh          # 先确认 7777 空闲
 ```
-Expected: 判据行全绿。
+Expected: 判据行全部通过。
 
 - [ ] **Step 3: 实机验收（探针答不了的那半）**
 

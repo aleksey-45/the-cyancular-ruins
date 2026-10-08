@@ -3,11 +3,11 @@ extends Node
 # 打击反馈层探针(KH-hit-feedback,场景模式):headless 验证 CombatFeedback 的
 #   1) 击杀播报(PvP 侧入口 kill():文本设置 + 浮现动画)  2) 命中 X 标记显隐
 #   3) 归因写端(attribute/attribute_hit:只服务大乱斗计分)
-#   - 2026-09-17 起单机的「敌人死 → 播报」那条链已删(notify_enemy_killed/enemy_display_name
+#   - 2026-09-17 起单机的「敌人死 -> 播报」那条链已删(notify_enemy_killed/enemy_display_name
 #     与 EnemySpawner.display_name_of 一起),故本探针改为断言"敌人命中只出 X 标记、身上不留
 #     归因 meta"。
-# 跑法: Godot_console --headless --path . --quit-after 600 res://tests/probe/feedback_probe.tscn
-#   (--quit-after 保底处理:脚本若解析失败则场景无脚本、一行不打印就会挂死到超时;与兄弟探针一致)
+# 运行方式： Godot_console --headless --path . --quit-after 600 res://tests/probe/feedback_probe.tscn
+#   (--quit-after 兜底保护:脚本若解析失败则场景无脚本、一行不打印就会挂死到超时;与兄弟探针一致)
 
 
 # hoisted from locals when __ready was split (first assignment stays where it was).
@@ -77,7 +77,7 @@ func _mount_feedback() -> void:
 	await get_tree().process_frame
 	if CombatFeedback.current != null:
 		_failures.append("未挂载实例时 current 应为 null")
-	# 挂载实例(与 Level0/pvp_client/royale_game 相同机制 spawn)
+	# 挂载实例(与 Level0/pvp_client/royale_game 相同处理逻辑 spawn)
 	_CF.spawn(self)
 	await get_tree().process_frame
 	await get_tree().process_frame   # spawn 是 call_deferred,多等一帧
@@ -119,8 +119,8 @@ func _check_marker_and_banner() -> void:
 
 func _check_e2e_direct_hit() -> void:
 	# ── 端到端:致命一击走真实 BulletBase._direct_hit 路径 ──
-	# - 2026-09-17 起单机击杀播报已删,判据从"播报了击杀"改成"出了命中标记 + 敌人身上
-	#   **没有**归因 meta"(last_damager 是播报的产物,随播报一起消失)。
+	# - 2026-09-17 起单机击杀播报已删,判定条件从"播报了击杀"改成"出了命中标记 + 敌人身上
+	#   没有归因 meta"(last_damager 是播报的产物,随播报一起消失)。
 	enemy_scene = load("res://scenes/enemies/enemy_jump_bird.tscn")
 	if enemy_scene == null:
 		_failures.append("enemy_jump_bird.tscn 载入失败,无法验证端到端命中")
@@ -128,7 +128,7 @@ func _check_e2e_direct_hit() -> void:
 	bullet_scene = load("res://scenes/weapons/bullet.tscn")
 	if bullet_scene == null:
 		_failures.append("bullet.tscn 载入失败,无法验证端到端命中")
-	# 空守卫:下面要用 bullet_scene.instantiate(),若它为 null 会抛错中断 _ready() →
+	# 空防御性校验:下面要用 bullet_scene.instantiate(),若它为 null 会抛错中断 _ready() -> 
 	# 探针一行都不打印就挂到 --quit-after 超时(失败串永远看不到)。提前收尾,失败也走正常退出码。
 	if enemy_scene == null or bullet_scene == null:
 		_finish(_failures)
@@ -142,7 +142,7 @@ func _check_e2e_direct_hit() -> void:
 	b2.set("shooter", shooter2)
 	b2.set("direct_hit_damage", 999)
 	_fx._hit_age = -1.0                       # 清掉上一次的 X 标记,便于断言
-	b2.call("_direct_hit", enemy)            # ← 真实命中路径(内部 hit_marker → hurt 同步判死)
+	b2.call("_direct_hit", enemy)            # ← 真实命中路径(内部 hit_marker -> hurt 同步判死)
 	if _fx._hit_age < 0.0:
 		_failures.append("致命一击未出命中标记(_direct_hit 的反馈路径断了)")
 	if enemy.has_meta("last_damager"):
@@ -151,7 +151,7 @@ func _check_e2e_direct_hit() -> void:
 	b2.queue_free()
 
 func _check_e2e_explosion_aoe() -> void:
-	# ── 端到端:真实 Explosion.apply_aoe 命中敌人时出命中标记(判据见 _check_e2e_direct_hit)──
+	# ── 端到端:真实 Explosion.apply_aoe 命中敌人时出命中标记(判定条件见 _check_e2e_direct_hit)──
 	var enemy3: Node = load("res://scenes/enemies/enemy_jump_bird.tscn").instantiate()
 	add_child(enemy3)
 	enemy3.set("hp", 1)
@@ -170,8 +170,8 @@ func _check_e2e_explosion_aoe() -> void:
 func _check_e2e_laser() -> void:
 	# ── 端到端归因(激光,Task 16):走真实 LaserWeaponBase 伤害入口 _apply_beam_damage ──
 	# 不 fire():fire 要读鼠标/相机/枪口并做 BeamTrace 几何,真机方向不可控;此处直接进缝2
-	# (_apply_beam_damage → _damage_path_targets → _apply_to_enemy),即激光唯一的敌人伤害点,
-	# 几何(缝1)不参与本断言 —— 要钉的是「伤害点写没写归因」。
+	# (_apply_beam_damage -> _damage_path_targets -> _apply_to_enemy),即激光唯一的敌人伤害点,
+	# 几何(缝1)不参与本断言 —— 要约束的是「伤害点写没写归因」。
 	var laser_scene: PackedScene = load("res://scenes/weapons/laser_gun.tscn")
 	if laser_scene == null:
 		_failures.append("laser_gun.tscn 载入失败,无法验证激光归因")
@@ -182,7 +182,7 @@ func _check_e2e_laser() -> void:
 	shooter4.global_position = Vector2(0, 0)
 	var laser: Node = laser_scene.instantiate()
 	add_child(laser)                          # _ready 建好 muzzle/_laser 才能 equip
-	laser.call("equip", shooter4)             # 建立射手(player)→ _apply_to_enemy 的归因来源
+	laser.call("equip", shooter4)             # 建立射手(player) -> _apply_to_enemy 的归因来源
 	var enemy4: Node = enemy_scene.instantiate()
 	add_child(enemy4)
 	enemy4.set("hp", 1)                       # 保证一击致死(laser_gun damage=6)
@@ -201,7 +201,7 @@ func _check_e2e_laser() -> void:
 
 func _check_scene_change_idempotent() -> void:
 	# ── 换场幂等(必修复归):换场时旧世界仍在树上,新宿主仍须拿到实例 ──
-	# 旧行为「存在任何 current 就 return」会让新世界拿不到实例 → 反馈层静默消失。
+	# 旧行为「存在任何 current 就 return」会让新世界拿不到实例 -> 反馈层静默消失。
 	var host_b := Node.new()
 	add_child(host_b)
 	_CF.spawn(host_b)                       # 此刻 current 仍是挂在 self 下的旧实例(正是换场那一刻)

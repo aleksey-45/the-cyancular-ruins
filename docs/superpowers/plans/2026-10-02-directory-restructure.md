@@ -4,7 +4,7 @@
 
 **Goal:** 把 `render/` 并入 `core/present/`、`ui/` 拆三组、`server/` 拆四组、`tests/` 拆五组；先建一条**路径一致性守卫**，让每一次搬动都能被机械验证。
 
-**Architecture:** 先用一个 `-s` 冒烟探针把「全仓 `res://` 字面量是否都指向真实存在的资源」变成可反复运行的红/绿判据；拿到**全绿基线**之后再逐目录 `git mv`（`.gd` 连同 `.gd.uid` 一起走），搬完用 python 按**显式映射表**重写 `.gd`/`.tscn` 里的路径字面量，再跑守卫确认仍全绿。不依赖 Godot 编辑器做路径改写。
+**Architecture:** 先用一个 `-s` 冒烟探针把「全仓 `res://` 字面量是否都指向真实存在的资源」变成可反复运行的红/绿判据；拿到**全部通过基线**之后再逐目录 `git mv`（`.gd` 连同 `.gd.uid` 一起走），搬完用 python 按**显式映射表**重写 `.gd`/`.tscn` 里的路径字面量，再跑守卫确认仍全部通过。不依赖 Godot 编辑器做路径改写。
 
 **Tech Stack:** Godot 4.7（标准版非 mono）、git、python3（仅做确定性文本替换）、`tests/lib/scan_util.gd`（`class_name ScanUtil`，纯静态、`-s` 可用）。
 
@@ -19,7 +19,7 @@
 - 本项目约定「测试由用户自己跑」。**例外**：Task 1 建的守卫是**迁移的验证工具**（`-s`、不占端口、秒级），实施者每搬一步都要跑它才能知道自己有没有搬坏；其余场景探针/真链路脚本仍由用户跑。
 - 本 plan 的守卫判据是**文本** `PATH INTEGRITY: ALL-OK`，**不看退出码**（本仓既有纪律）。
 - ★ **所有改写脚本必须传 `newline="\n"`**。Python 的 `write_text()` 在 Windows 上默认 `newline=None` ⇒ 会把**每个 `\n` 写成 `\r\n`**，整个文件行尾全变。本仓 `.gitattributes` 是 `* text=auto eol=lf`，所以 git 提交时**会**把它归一回去（这正是它不容易被发现的原因）—— 但工作树会被弄脏、编辑器后续保存会再翻一次。**Task 2 实测踩到**，已把 `newline="\n"` 补进下面每一处 `write_text`。
-- ★★ **守卫有一个已知盲区：拆串路径它测不到。** 形如 `"res://server/" + "match_host.gd"` 的写法，守卫的正则只取第一个字面量 ⇒ 削成 `res://server/`（**目录仍然存在**）⇒ 通过；而映射表的键是完整路径 ⇒ 也匹配不到。**两个网都漏，且不会有任何测试变红。**
+- ★★ **守卫有一个已知盲区：拆串路径它测不到。** 形如 `"res://server/" + "match_host.gd"` 的写法，守卫的正则只取第一个字面量 ⇒ 削成 `res://server/`（**目录仍然存在**）⇒ 通过；而映射表的键是完整路径 ⇒ 也匹配不到。**两个网都漏，且不会有任何测试报错失败。**
   **每个搬迁 task 都必须自己扫一遍这个形态**（Task 4 的 Step 3b 有现成命令，Task 3 与 Task 5 同理）。全仓实测共 18 处，分布 5 个文件，其中**只有**引用 `res://server/` 的那 5 处会受剩余搬动影响（`res://tests/` 的拆串为 0）。
   ⚠️ 其中部分拆串是**负向断言**（断言某字符串**不该**出现），**必须保持原样** —— 看到拆串先判它是"活的引用"还是"负向断言"。
 
@@ -51,7 +51,7 @@
 > ⚠️ **下面 Step 1 的代码是初稿，有 bug —— 别照抄。最终实现以 `tests/path_integrity_probe.gd` 为准。**
 > 教训集中在**同一个语义**上：`ResourceLoader.exists()` **只认已导入资源**，对普通文件恒假。它在这份代码里咬了三口：
 > 1. `_exists_any` 缺 `FileAccess.file_exists` ⇒ `maps/*.cyrm`、`tests/*.txt` 被判不存在，**28 条假红**；
-> 2. `_load_allow` 走 `ScanUtil.read`（首行也是那道闸门）⇒ 豁免文件是 `.txt`，**豁免表恒空**，放进去的路径照样报红；
+> 2. `_load_allow` 走 `ScanUtil.read`（首行也是那道限制条件）⇒ 豁免文件是 `.txt`，**豁免表恒空**，放进去的路径照样测试报错；
 > 3. 扫描面扩到 `.sh` 后，`.sh` 同样读不出 ⇒ **11 个全落进 SKIP**（"看着扩了、其实一条没查"）。
 >
 > 引擎侧依据：`resource_loader.cpp:1247` 的 `exists()` 在 loader 不认路径时 **`:1267` 直接 `return false`，没有 `FileAccess` 兜底**。
@@ -195,7 +195,7 @@ func _initialize() -> void:
 res://__l5_synthetic__.gd	# kh_l5_probe 故意造的不存在脚本,用来验"读不到源码要报红"
 ```
 
-- [ ] **Step 3: 跑守卫，拿到全绿基线**
+- [ ] **Step 3: 跑守卫，拿到全部通过基线**
 
 Run:
 ```bash
@@ -204,7 +204,7 @@ source tests/env.sh
 ```
 Expected: `PATH INTEGRITY: ALL-OK（扫描 N 个文件）`，N ≈ 400+。
 
-**若报红**：先把报出来的每一条判定是「真断链」还是「又一个故意不存在的路径」。
+**若测试报错**：先把报出来的每一条判定是「真断链」还是「又一个故意不存在的路径」。
 - 真断链 ⇒ **停下来**，它说明仓库现在就有坏的路径引用，先单独修（那是本 plan 之外的既有 bug）。
 - 故意不存在 ⇒ 追加进豁免文件，重跑。
 
@@ -227,7 +227,7 @@ git commit -m "test: 加路径一致性守卫(目录重构的前置安全网)"
 > 1. **它只替换带斜杠的 `res://render/`，漏了不带斜杠的 `"res://render"`。** 那 6 处是**扫描根常量**
 >    （5 个探针的 `SCAN_ROOTS`/`ALL_DIRS` + 守卫自己）。这类根一旦指向不存在的目录，
 >    `ScanUtil.walk` 会**静默返回空** ⇒ 那些探针的源码级断言**悄悄少扫一批文件**，
->    **不会有任何测试变红** —— 正是本仓最忌讳的失效形态。
+>    **不会有任何测试报错失败** —— 正是本仓最忌讳的失效形态。
 >    **咬住它的是 Task 1 的守卫**（Step 4 报 6 条红）。安全网第一次实战就还本了。
 > 2. **Step 7 的 `git add` 清单漏了 `tests`** ⇒ 那个提交自相矛盾（守卫在别人检出上必红）。
 >
@@ -290,7 +290,7 @@ PY
 rmdir render 2>/dev/null; ls render/ 2>&1 | head -1
 ```
 
-- [ ] **Step 4: 跑守卫，确认仍全绿**
+- [ ] **Step 4: 跑守卫，确认仍全部通过**
 
 Run:
 ```bash
@@ -315,7 +315,7 @@ const SCAN_ROOTS := ["res://core", "res://scenes", "res://server", "res://ui",
 	"res://tests"]
 ```
 
-改完再跑一次守卫确认仍全绿：
+改完再跑一次守卫确认仍全部通过：
 
 ```bash
 "$GODOT" --headless --path . -s res://tests/path_integrity_probe.gd
@@ -338,7 +338,7 @@ git commit -m "refactor(dir): render/ 并入 core/present/(职责本就是一回
 > ★★ **本轮发现了守卫的一个盲区 —— 修前守卫是绿的。** `tests/kh_l6_probe.gd` 里有 5 处**拆串**路径
 > （`"res://ui/" + "pause_menu.gd"` 这种）：Step 3 的映射表键是完整路径 ⇒ 匹配不到；
 > 守卫的正则只取第一个字面量 ⇒ 削成 `res://ui/`，而**那个目录仍然存在** ⇒ 通过。
-> **两个网都漏，且不会有任何测试变红** —— 漏掉的话 `kh_l6` 约 6 条断言会在运行时 FAIL。
+> **两个网都漏，且不会有任何测试报错失败** —— 漏掉的话 `kh_l6` 约 6 条断言会在运行时 FAIL。
 > 这个形态不是偶然：`kh_l6_probe.gd:25-27` 自己写着「本探针要找的字面量一律用 `"前" + "后"` 碎片拼出来」
 > —— 那些探针**故意**绕开字面量扫描。细节见 Global Constraints 的拆串条目。
 >
@@ -440,7 +440,7 @@ for k in keys:
 PY
 ```
 
-- [ ] **Step 4: 跑守卫，确认仍全绿**
+- [ ] **Step 4: 跑守卫，确认仍全部通过**
 
 Run:
 ```bash
@@ -476,7 +476,7 @@ git commit -m "refactor(dir): ui/ 拆成 factory/hud/screens 三组"
 > ★ **Step 3b 里我写错了一步**：我说「改完再扫一次确认**零输出**」—— 那条正则**到不了零**，
 > 因为 `"res://server/match/" + "match_host.gd"` 里 `[^"]*` 会把 `match/` 一起吸收，改完照样匹配。
 > 实现者指出后用「把拆串拼起来、判磁盘上是否存在」作判据 —— 那才是**有鉴别力**的判据
-> （陈旧的 `"res://server/" + "match_host.gd"` 会拼成已不存在的路径而被点名）。评审确认这个替代成立。
+> （陈旧的 `"res://server/" + "match_host.gd"` 会拼成已不存在的路径而被明确指出）。评审确认这个替代成立。
 >
 > ★ 评审另自验一条：**`server_main.gd`（未搬）对新位置的引用全走 `class_name`**（`RoomManager.new()`、
 > `GraceWindow`、`PacketInputSource.new()`），**没有任何路径 `load()`** ⇒ 类缓存刷新后这次搬动对它完全透明。
@@ -492,7 +492,7 @@ git commit -m "refactor(dir): ui/ 拆成 factory/hud/screens 三组"
 
 **分类判据（按继承链与职责）：**
 - `lobby/` = 大厅侧：房间账本、进程编排、worker 拉起、回局凭据表
-- `match/` = 对局底座（`MatchSnapshot → MatchGround → MatchState` 那条继承链 + 战斗/宿主基类/启动器）
+- `match/` = 对局基础层（`MatchSnapshot → MatchGround → MatchState` 那条继承链 + 战斗/宿主基类/启动器）
 - `hosts/` = 三个模式的权威宿主（都 `extends MatchHost`）
 - `ai/` = AI 导航
 
@@ -558,7 +558,7 @@ for k in sorted(mapping):
 PY
 ```
 
-- [ ] **Step 3b: 处理**拆串**路径（★ 守卫**测不到**这一类，漏了不会有任何测试变红）**
+- [ ] **Step 3b: 处理**拆串**路径（★ 守卫**测不到**这一类，漏了不会有任何测试报错失败）**
 
 本仓有一类路径写法把字符串**拆成多段拼接**，常用于**故意绕开字面量扫描**（那些探针自己就是扫源码文本的）：
 
@@ -566,7 +566,7 @@ PY
 const MH_PATHS := ["res://server/" + "match_host.gd", …]
 ```
 
-**为什么守卫抓不到它**：守卫的正则只认单个字符串字面量，于是 `"res://server/" + "match_host.gd"` 被削成 `res://server/` —— 那是个**仍然存在的目录** ⇒ `_exists_any` 通过 ⇒ **不报红**。而 Step 3 的映射表键是**完整路径**（`res://server/match_host.gd`），也匹配不到这种分段写法。**两个网都漏。**
+**为什么守卫抓不到它**：守卫的正则只认单个字符串字面量，于是 `"res://server/" + "match_host.gd"` 被削成 `res://server/` —— 那是个**仍然存在的目录** ⇒ `_exists_any` 通过 ⇒ **不测试报错**。而 Step 3 的映射表键是**完整路径**（`res://server/match_host.gd`），也匹配不到这种分段写法。**两个网都漏。**
 
 **先扫一遍**（这是本 task 必须自己做的，不要只看已知清单）：
 
@@ -587,7 +587,7 @@ const MH_PATHS := ["res://server/match/" + "match_host.gd", "res://server/match/
 
 **改完再扫一次确认零输出**，然后才进 Step 4。
 
-★ **注意区分**：有些拆串是**反向断言**（断言"这个字符串**不该**出现"），例如 `tests/kh_l4_probe.gd` 里那条关于已退役 `esc_menu` 的。那些**必须保持原样** —— 看到一个拆串先判它是"活的路径引用"还是"负向断言"，再决定动不动。
+★ **注意区分**：有些拆串是**否定断言**（断言"这个字符串**不该**出现"），例如 `tests/kh_l4_probe.gd` 里那条关于已退役 `esc_menu` 的。那些**必须保持原样** —— 看到一个拆串先判它是"活的路径引用"还是"负向断言"，再决定动不动。
 
 - [ ] **Step 4: 跑守卫 + 确认 `server_main` 两个路径没被动**
 
@@ -631,7 +631,7 @@ git commit -m "refactor(dir): server/ 拆成 lobby/match/hosts/ai 四组"
 >    `grace_window_smoke.gd` 的 **变量拼接**（`"res://" + rel`，且它读不到就 `quit(1)`，会整条探针全红）。
 >    ⇒ **"我给的是已知清单"这个做法再次被证明不可靠**，这就是为什么每个 task 都要实现者自己再扫一遍。
 > 3. Step 4 的 `roots` 里含 `docs`，与 Task 6「`docs/` 历史文档不改」冲突 —— 已剔除。
-> 4. Step 6(b) 点名的 `tests/probe/reconnect_probe.sh` **从来不存在**。
+> 4. Step 6(b) 明确指定的 `tests/probe/reconnect_probe.sh` **从来不存在**。
 >
 > ★ **一处超 brief 的范围扩展（256 处非 `res://` 的注释路径更新）**：评审**机械核过**生产目录里
 > 除了 `scenes/main_menu.gd` 那 2 行真引用外**全是注释**，裁定 **keep 不回退**（零行为风险，
@@ -689,7 +689,7 @@ cd ..
 
 ★ **`env.sh` **不搬** —— 它是所有脚本共享的基础设施，没有"伙伴文件"，留在 `tests/` 顶层。**（搬家后每个 `.sh` 都下沉了一层，`source "$(dirname "$0")/env.sh"` 会**失效**，见 Step 4b。）
 
-★ **`path_integrity_allow.txt` 也不搬。** 它不被上面任何 glob 匹配（`.txt`），所以默认就会留在原地 —— 而**守卫自己**用一个**字面量常量**指着它：`const ALLOW_PATH := "res://tests/path_integrity_allow.txt"`。守卫本身会被 `*_probe` 规则搬进 `tests/probe/`，但**那个常量**在 Step 4 的映射表里查不到（`path_integrity_allow` 不属于任何 bucket）⇒ 保持原值 ⇒ 与留在原地的 `.txt` 仍然对得上。**两边一起不动才是对的**；只动一边会让豁免表静默失效（那时守卫会开始对 `__l5_synthetic__.gd` 报红，而那正是豁免表存在的理由）。
+★ **`path_integrity_allow.txt` 也不搬。** 它不被上面任何 glob 匹配（`.txt`），所以默认就会留在原地 —— 而**守卫自己**用一个**字面量常量**指着它：`const ALLOW_PATH := "res://tests/path_integrity_allow.txt"`。守卫本身会被 `*_probe` 规则搬进 `tests/probe/`，但**那个常量**在 Step 4 的映射表里查不到（`path_integrity_allow` 不属于任何 bucket）⇒ 保持原值 ⇒ 与留在原地的 `.txt` 仍然对得上。**两边一起不动才是对的**；只动一边会让豁免表静默失效（那时守卫会开始对 `__l5_synthetic__.gd` 测试报错，而那正是豁免表存在的理由）。
 
 - [ ] **Step 2: 人工定位剩下 5 个 stem（必须逐个决定，不能靠规则）**
 
@@ -930,7 +930,7 @@ grep -n 'server/\(lobby\|match\|hosts\|ai\)/\|ui/\(factory\|hud\|screens\)/\|cor
 
 ★ **重点看**：CLAUDE.md 里大量"守卫:`tests/xxx_probe.tscn`"式引用。同 stem 不同 bucket 的情况**不存在**（Task 5 评审已核过 121 个 stem 无碰撞），但**同名不同目录**的文件是存在的（例如 `hud.gd` 只在 `ui/hud/` 下一个）—— 抽查确认改出来的路径**读起来对**。
 
-- [ ] **Step 5: 收尾两处注释（Task 5 评审点名）**
+- [ ] **Step 5: 收尾两处注释（Task 5 评审明确指出）**
 
 1. `tests/env.sh:3` 的用法注释仍写着 `source "$(dirname "${BASH_SOURCE[0]}")/env.sh"` —— 现在**没有任何调用方**还是这个相对深度（都下沉了一层）。改成实际的形式（`.../../env.sh`），并把第 9 行的 `tests/*.log` 一并订正。
 2. `tests/README.md` 仍按**平铺版式**描述（`*_smoke.gd——…` / `*_probe.gd——…`），改成四个 bucket 的说法。
@@ -1115,5 +1115,5 @@ git commit -m "fix(ui): 补全设置页动作名覆盖 + 删掉 royale_lobby 的
   1. **7 个 const 直接用作函数默认参数值**（`GraceWindow.enter(seconds = DEFAULT_SECONDS)`、`NetBus.start_server(port = DEFAULT_PORT)`、`WeaponInventory._init(capacity = DEFAULT_CAPACITY, …)`、`LobbyRooms.team_ready(size = TEAM_SIZE)`、`MatchBootstrap.start_on(map_path = PVP_MAP)`、`LobbyRooms._release_port_later(delay = …)`）。这些在**解析期**求值 —— Godot 没有"从资源取 const"，改成运行期加载会**直接编不过**，且要连带改掉每个调用点。
   2. **另有约 10 条写在别的 const 的初始化式里**：`CELL_COST := {TIER_LIGHT: 2, …}`、`PX_PER_CELL := RADIUS_PX / RANGE_CELLS`、`PANEL_W := COLS * CELL + …`、`HIT_RADIUS := BulletBase.PLAYER_HIT_RADIUS`、`BODY_BASE_COLOR := UiFactory.C_TEAM_A` 等。同样解析期。
   3. **`core/sim/*` 与 `core/config/*` 刻意是"纯静态、不引 autoload、可 `-s` 测"** —— `spawn_pool_smoke` / `squash_stretch_smoke` / `weapon_inventory_smoke` / `enemy_logic_smoke` 等直接 `load()` 这些文件读常量。外置成 `.tres` 等于给每个读者加一次加载 + 缓存，并打破这条性质。
-  再加两条环境事实：**协议常量**（位掩码 / 端口 / 超时）改值 = 改协议、两端必须同 build，编译期常量在这里是**特性**；**结构不变量**那一档（约 30 组）的价值恰恰是"写在同一处 + 被探针逐位钉住"，外置反而削弱"改一处立刻红"。
+  再加两条环境事实：**协议常量**（位掩码 / 端口 / 超时）改值 = 改协议、两端必须同 build，编译期常量在这里是**特性**；**结构不变量**那一档（约 30 组）的价值恰恰是"写在同一处 + 被探针逐位断言约束"，外置反而削弱"改一处立刻红"。
   ⇒ 那份盘点里真正要动的**只有 Task 7 那两条**；其余 476 条保持不变。若日后团队里出现专职策划，**唯一**值得重估的是 `EnemyParams`（93 个值、4 个嵌套类）→ `data/` 或 `.tres`，但那时也要先解决上面第 3 条（`-s` 冒烟直读）。

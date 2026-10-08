@@ -27,7 +27,7 @@ func _init() -> void:
 	else:
 		print("A/B 差异像素=", count, " 包围盒 x[", minx, ",", maxx,
 				"] y[", miny, ",", maxy, "]")
-		# 相机在 W-100=2300,视口 800 宽 → 视口 x = 世界x - 2300 + 400
+		# 摄像机位于 W-100=2300，视口宽度 800：视口 x = 世界坐标 x - 2300 + 400
 		print("视口 x≈", minx, "~", maxx, " 对应世界 x≈",
 				int(minx + 2300 - 400), "~", int(maxx + 2300 - 400))
 	quit()

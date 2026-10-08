@@ -17,7 +17,7 @@ signal lobby_name_set(caller: int, name: String)   # 客户端连上大厅时报
 signal peer_left(peer_id: int)
 # 服务器端 → MatchHost 的输入包
 signal input_received(caller: int, pkt: Dictionary)
-# worker:客户端连上后 claim_role 转交(caller=peer id, role=客户端在大厅领的角色, player_name=昵称)
+# 服务端:客户端连上后 claim_role 认领角色转交(caller=peer id, role=分配的角色, player_name=昵称)
 signal role_claimed(caller: int, role: int, player_name: String)
 # 服务器 → 客户端
 # 快照拆两条(2026-09-12,取代原单条 `local_snapshot`)
@@ -25,8 +25,8 @@ signal local_snapshot_world(world: Dictionary)   # 全部玩家的渲染字段(�
 signal local_snapshot_own(own: Dictionary)       # 只有本人需要的 ack_seq + 权威完整状态（c2）
 signal local_bullet_spawn(data: Dictionary)
 signal local_beam_fired(data: Dictionary)   # 即时光束武器(激光)权威开火:对手端据此画光束视觉副本
-signal local_go_match(role: int, port: int)   # 大厅配对完:客户端去连对局 worker(role/port 由此给)
-signal local_peer_info(names: Dictionary)     # worker 开局:双方昵称 {role(int) -> name}(头上显示)
+signal local_go_match(role: int, port: int)   # 大厅配对完:客户端进入对局(role/port 由此下发)
+signal local_peer_info(names: Dictionary)     # 对局开局:双方昵称 {role(int) -> name}(头上显示)
 signal local_hit_event(victim_role: int, damage: int, source_pos: Vector2)
 signal local_tile_destroyed(cell: Vector2i)
 signal local_round_state(data: Dictionary)
@@ -38,7 +38,7 @@ signal ping_updated(ms: int)        # 平滑后延迟 ms
 # (原 local_enemy_spawn / local_enemy_died 已删:它们只服务 PvPvE 中立鸟,该特性 2026-09-14 定案不开
 #  并整体移除 —— 客户端副本机制/服务端刷鸟/快照 enemies 键/本节点两条 @rpc 一并删干净。)
 # 进场拉取(取代"服务器推三载荷"):见下方 match_sync/match_sync_data 的注释
-signal match_sync_received(caller: int)          # worker 侧转交 → server_main
+signal match_sync_received(caller: int)          # 服务端对局宿主侧转交
 signal local_match_sync(payload: Dictionary)     # 客户端侧:应答到达
 
 const DEFAULT_PORT := 7777
@@ -144,7 +144,7 @@ func can_send_to_server() -> bool:
 #   所以表里只要还剩**一个**处于"队列已拆、MultiplayerAPI 还没忘掉"窗口的 peer,这一发就报错。
 #   而那个 peer 往往正是**我们自己刚剔除断开的那个**:`disconnect_peer()` 当场把它的通道数清零
 #   (`enet_peer_reset_queues`),而它要从 `get_peers()` 里消失得等**下一次 poll**。
-#   实测证据(2026-09-21,`tests/probe/reconnect_probe` 的 worker 日志,当前树、未改之前):
+#   实测证据(2026-09-21,`tests/probe/reconnect_probe` 的服务端日志,当前树、未改之前):
 #   每拒绝一次错的 reclaim 就有一帧**同时**报 channel 0 与 channel 1,且 GDScript backtrace
 #   两行都指向 `_broadcast_snapshot (server/match_snapshot.gd:34)` → `_physics_process`。
 #   (通道号是证据:`0` = reliable、`1` = unreliable —— 一帧里两条都出现,说明那一发在
@@ -168,8 +168,8 @@ func all_peers_sendable() -> bool:
 #   收到的命令,**处理 DISCONNECT 命令时当场就把那个 peer 的通道数清零**,而同批里排在它前面的
 #   RECEIVE 事件要等到 dispatch 阶段才派发 → 于是"客户端发完请求就 `stop()`"这一拍,
 #   服务端是在**通道已清零**的状态下处理那个请求、并发它的应答 → 应答必然打
-#   `Unable to send packet on channel 0, max channels: 0`(实测:1v1 配对完成 → 客户端转连
-#   worker 那一拍必现一条;大厅/worker 里所有"答复 caller"的站定都是这一类)。
+#   `Unable to send packet on channel 0, max channels: 0`(实测:配对完成进入对局那一拍必现一条;
+#   大厅/对局服务里所有"答复 caller"的站点都是这一类)。
 #   判据同 `is_peer_live`(它读 ENet 自己的 state + 通道数,不滞后)。
 #
 # 实参形状与 `rpc_id` 一致(最多 4 个),故所有调用点只需把方法名换成 `reply` ——
@@ -209,13 +209,13 @@ func lobby_name(name: String) -> void:
 func send_input(pkt: Dictionary) -> void:
 	input_received.emit(multiplayer.get_remote_sender_id(), pkt)
 
-# 客户端→worker:报到自己在对局里的角色+昵称(role 大厅已发;player_name 用于对方头上显示)。
-# worker 据此建 role→peer 映射,并在两人到齐后把双方昵称回传给各端(peer_info)。
+# 客户端→服务端:认领自己在对局里的角色+昵称(role 已由服务端指定;player_name 用于对方头上显示)。
+# 服务端据此建立 role→peer 映射,并在满员后把双方昵称广播给各端(peer_info)。
 @rpc("any_peer", "reliable")
 func claim_role(role: int, player_name: String) -> void:
 	role_claimed.emit(multiplayer.get_remote_sender_id(), role, player_name)
 
-# 客户端→worker:**进场拉取**。对局场景建好之后主动要一次(昵称/色相/生效选项/出生点/role 集合)。
+# 客户端→服务端:**进场拉取**。对局场景建好之后主动请求一次完整对局状态(昵称/色相/生效选项/出生点/role 集合)。
 # - 它**取代**原来"服务器推三载荷"那条路径。推的根因问题是「推给一个正在切场景的客户端」:
 #   服务器在**同一次 poll** 里推 4 条,而那一刻新场景的订阅方一个都不存在 → 静默丢失(自检 B2,
 #   后果是对手颜色不生效、昵称表空、禁用武器校验逻辑未生效)。拉的方向反过来:客户端建好之后才开口,
@@ -254,7 +254,7 @@ func bullet_spawn(data: Dictionary) -> void:
 func beam_fired(data: Dictionary) -> void:
 	local_beam_fired.emit(data)
 
-# worker→客户端:match_sync 的应答(一次性完整快照)。
+# 服务端→客户端:match_sync 的应答(一次性完整快照)。
 # 载荷 = {names:{role->昵称}, hues:{role->色相}, options:生效选项, roles:[int], spawns:{role->Vector2i}}。
 # 可靠通道:一次性、必须到(不像快照那样可以丢一帧)。
 @rpc("authority", "reliable")
@@ -262,7 +262,7 @@ func match_sync_data(payload: Dictionary) -> void:
 	# 诊断开关(默认关):客户端侧确认这条应答**到底有没有到达**。
 	# - 纯诊断:开关关着时一行都不打  ->  生产行为逐字不变(与 `--pickup-diag` / `--registry-report` 相同机制,
 	#   且同样必须写在 `--` 之后)。当初(2026-10-03)用来把
-	#   「worker 已调用 `rpc_id` 且返回 0」 与 「客户端收到/没收到」 这段链路一分为二。
+	#   「服务端已调用 `rpc_id` 且返回 0」 与 「客户端收到/没收到」 这段链路一分为二。
 	if OS.get_cmdline_user_args().has("--matchsync-diag"):
 		print("[matchsync-diag] 客户端收到 match_sync_data: 键=%s" % str(payload.keys()))
 	local_match_sync.emit(payload)
@@ -317,12 +317,12 @@ func room_list(rooms: Array) -> void:
 func match_start(role: int, spawn: Vector2i, map_path: String) -> void:
 	local_match_start.emit(role, spawn, map_path)
 
-# 大厅→客户端:配对完成,去连对局 worker(role 由大厅定;端口是 worker 独占的 UDP 端口)。
+# 大厅→客户端:配对完成,进入对局(role 由大厅指定;单进程架构下复用同一连接)。
 @rpc("authority", "reliable")
 func go_match(role: int, port: int) -> void:
 	local_go_match.emit(role, port)
 
-# worker→客户端:开局广播双方昵称(role -> name),两端据此在头上显示各自 ID。
+# 服务端→客户端:开局广播双方昵称(role -> name),两端据此在头上显示各自 ID。
 @rpc("authority", "reliable")
 func peer_info(names: Dictionary) -> void:
 	local_peer_info.emit(names)

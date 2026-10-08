@@ -13,15 +13,15 @@ var _frames := 0
 var _last_pos := Vector2(-999999, -999999)
 var _moved := false
 var _got_snapshot := false
-var _world_pos := Vector2.INF   # 世界包里的本端 pos(与本人包的 c2.pos 跨包比对)
+var _world_pos := Vector2.INF   # 全局世界快照包里的本端 pos(与本端专属状态包的 c2.pos 跨包比对)
 var _got_bullet_spawn := false
 var _got_round_state := false   # 回合制:收到 round_state(初始 COUNTDOWN 广播)
 # C2 rollback(阶段3):create 端发带 seq 的输入包,断言服务器 1/tick 消费、ack 随 tick 前进、
-# 快照带权威完整状态(c2)且其 pos 与散字段 pos 一致(证明全态快照在链路上可用)。
+# 快照带权威完整状态(c2)且其 pos 与独立状态字段 pos 一致(证明全态快照在链路上可用)。
 var _sent_seq := 0
 var _max_ack := -1
 var _ack_sane := false     # create:ack 已推进到 ≥30
-var _full_state_ok := false  # create:快照 c2 完整状态携带且 pos 与散字段一致
+var _full_state_ok := false  # create:快照 c2 完整状态携带且 pos 与独立状态字段一致
 
 func _ready() -> void:
 	var args := OS.get_cmdline_user_args()
@@ -68,15 +68,15 @@ func _on_snapshot_world(world: Dictionary) -> void:
 	var me: Dictionary = players_snap.get(str(PvpSession.role), {})
 	if not me.is_empty():
 		var pos_now: Vector2 = me.get("pos", Vector2.ZERO)
-		# 位移跟踪:相邻世界包之间位置变了 = 服务器确实在模拟我们这一端
+		# 位移跟踪:相邻全局世界快照包之间位置变了 = 服务器确实在模拟我们这一端
 		if _world_pos != Vector2.INF and pos_now.distance_to(_world_pos) > 1.0:
 			_moved = true
 		_world_pos = pos_now
 
 
-# 本人包:只有自己需要的 ack_seq + 权威完整状态（c2）。
-# - 拆包后这条断言反而**更强**了:原先 c2 与散字段 pos 在同一个字典里,比的是"同一份数据的两个副本";
-#   现在 c2 走本人包、pos 走世界包 —— 比的是**两条独立报文是否一致**,那才是真正要保证的事。
+# 本端专属状态包:只有自己需要的 ack_seq + 权威完整状态（c2）。
+# - 拆包后这条断言反而更强了:原先 c2 与独立状态字段 pos 在同一个字典里,比的是"同一份数据的两个副本";
+#   现在 c2 走本端专属状态包、pos 走全局世界快照包 —— 比的是两条独立报文是否一致,那才是真正要保证的事。
 func _on_snapshot_own(own: Dictionary) -> void:
 	var ack: int = int(own.get("ack_seq", -1))
 	if ack > _max_ack:
@@ -104,10 +104,10 @@ func _physics_process(_delta: float) -> void:
 		var released := 0
 		var ax := 1.0
 		if _frames > 240:
-			# - 开火必须能覆盖**任何**武器。服务器发给这个角色的是**随机**一把,而
-			#   `m82a1` 与榴弹发射器是 **heavy_aim**(按住预瞄、**松开**才发射)——
-			#   只发 held/pressed、从不发 released 的话,拿到这两把就**一枪都不开**,
-			#   join 端永远等不到 bullet_spawn。实测:强制发 m82a1 → 必红,发手枪 → 必绿。
+			# - 开火必须能覆盖任何武器。服务器发给这个角色的是随机一把,而
+			#   `m82a1` 与榴弹发射器是 heavy_aim(按住预瞄、松开才发射)——
+			#   只发 held/pressed、从不发 released 的话,拿到这两把就一枪都不开,
+			#   join 端永远等不到 bullet_spawn。实测:强制发 m82a1 -> 必红,发手枪 -> 必绿。
 			#   按下 20 帧 / 松开 10 帧的循环同时对三种武器都成立:
 			#   full_auto 连发、半自动吃 pressed 边沿、heavy_aim 吃 released 边沿。
 			var cyc := (_frames - 240) % 30
@@ -131,7 +131,7 @@ func _physics_process(_delta: float) -> void:
 	# 成功判定
 	if role == "create":
 		# 多打一会儿(到 ~480 帧)再退:帧>240 只够开火但不够 bullet 广播到 join 端,
-		# 提前 quit 会触发"中途断线拆房"→ join 永远等不到 bullet_spawn。
+		# 提前 quit 会触发"中途断线拆房" -> join 永远等不到 bullet_spawn。
 		if _got_snapshot and _got_round_state and _moved and _ack_sane and _full_state_ok and _frames > 480:
 			print("SMOKE_MATCH OK create: snapshot+round_state+moved+ack(seq)%d>=30+fullstate" % _max_ack)
 			get_tree().quit(0)

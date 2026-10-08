@@ -1,27 +1,27 @@
 extends Node
 
-# 「信 息」整页的常驻守卫。
-# 跑法: "$GODOT" --headless --path . --quit-after 3600 res://tests/probe/info_page_probe.tscn
-# 判据: 文本 `INFO PAGE PROBE: ALL-OK`(不看退出码)。
+# 「信 息」整页的自动化测试探针。
+# 运行方式： "$GODOT" --headless --path . --quit-after 3600 res://tests/probe/info_page_probe.tscn
+# 验收标准： 文本 `INFO PAGE PROBE: ALL-OK`(不看退出码)。
 #
-# - 为什么需要它:这一页的内容(名单/致谢/版本)是**人手抄进去的**,而抄错一个字
+# - 为什么需要它:这一页的内容(名单/致谢/版本)属于手动维护的配置数据,而抄错一个字
 #   没有任何东西会红 —— 它只表现为"页面上少一个人"或"致谢写错了名"。
-#   本探针把那三块内容**逐字**严格校验。
+#   本探针把那三块内容逐字严格校验。
 # - 断言计数:改本探针必须同步改这个数(见 tests/lib/probe_base.gd 文件头)。
-#   数法(逐行数 `_check(...)` 的**运行时**实参个数,循环里的也算):
+#   数法(逐行数 `_check(...)` 的运行时实参个数,循环里的也算):
 #     4 个分节标题(信 息 / 版 本 信 息 / 开 发 团 队 / 特 别 感 谢 / 致 谢)
 #   + 7 个人名(DEV_TEAM 逐条一条;2026-10-04 加 ofbwyx / Lycoris Max / hsk)
-#   + 7 条致谢(CREDITS 逐条一条;**逐字**比渲染出来的那一行;加 Deepseek / GLM)
-#   + 1 条空历史**前置**(打断 PATH 后 `commit_log()` 真的返回空)
-#   + 1 条空历史**保底处理文案**(逐字)
+#   + 7 条致谢(CREDITS 逐条一条;逐字比渲染出来的那一行;加 Deepseek / GLM)
+#   + 1 条空历史前置(打断 PATH 后 `commit_log()` 真的返回空)
+#   + 1 条空历史兜底保护文案(逐字)
 #   + 1 个「返 回」按钮
 #   + 1 条版本号真值比对
 #   + 3 条布局(找到滚动区+提交行 / 严格约束行宽 ≤ 滚动区宽 / 左栏比右栏宽)
 #   = 20
-# - 2026-10-03:原先**单列**的两条许可证断言(MIT / SIL OFL 1.1)已删除 —— 它们被
-#   「致谢行逐字是「Godot Engine　MIT」」这类**更强**的整行断言**吞掉**了(不是丢了覆盖):
+# - 2026-10-03:原先单列的两条许可证断言(MIT / SIL OFL 1.1)已删除 —— 它们被
+#   「致谢行逐字是「Godot Engine　MIT」」这类更强的整行断言吞掉了(不是丢了覆盖):
 #   子串「MIT 出现在某处」是整行逐字相等的一个必要条件,后者严格更强。
-# - 注意这是**运行时**条数:静态 `grep -cE '^\s*_check\('` 只数到 **13 行**(其中两行在循环体里,
+# - 注意这是运行时条数:静态 `grep -cE '^\s*_check\('` 只数到 13 行(其中两行在循环体里,
 #   展开后是 4 + 5 = 9 条) ->  运行时 20 与静态 13 本来就对不上,别拿 grep 的数来对这里。
 #   (这一行原写"9",是错的 —— 2026-10-03 实测 grep 给 13;订正为实测值。)
 const EXPECTED_CHECKS := 25
@@ -29,12 +29,12 @@ const EXPECTED_CHECKS := 25
 const SCENE := "res://scenes/info_menu.tscn"
 const DEV_TEAM := ["RoFtaCD", "KikuchiH", "Lord Nahiz Waugh", "siri2048",
 	"ofbwyx", "Lycoris Max", "hsk"]
-# - 与 `scenes/info_menu.gd` 的 `CREDITS` 同构:名 + 许可/署名;**空串 = 无许可**,那种条目
-#   渲染出来**不带**中间那个全角空格(U+3000)后缀。
-# - 两份都是**手抄**的(不从生产 `preload` 读):从生产读就成了"生产写什么就断言什么"的
-#   恒真比对,抄错一个字也就没人拦得住了。
-# - 逐字比的是**渲染出来的那一行**(如 `Godot Engine　MIT`)—— 用 `_has`(子串)时把
-#   `Godot Engine` 改成 `Godot EngineX` 照样绿,而判词写着"逐字严格校验"(评审 Minor,2026-10-03)。
+# - 与 `scenes/info_menu.gd` 的 `CREDITS` 同构:名 + 许可/署名;空串 = 无许可,那种条目
+#   渲染出来不带中间那个全角空格(U+3000)后缀。
+# - 两份都是硬编码复制的(不从生产 `preload` 读):从生产读就成了"生产写什么就断言什么"的
+#   始终为 true比对,抄错一个字也就没人拦得住了。
+# - 精确匹配渲染生成的文本行（如 `Godot Engine　MIT`）—— 若采用子串包含匹配，即使将
+#   `Godot Engine` 篡改为 `Godot EngineX` 也能错误通过测试，而断言说明却标注为“严格全字匹配”。
 const CREDITS := [
 	["Godot Engine", "MIT"],
 	["GNU Unifont", "SIL OFL 1.1"],
@@ -44,7 +44,7 @@ const CREDITS := [
 	["Thomas Stearns Eliot", ""],
 	["Jorge Luis Borges", ""],
 ]
-# 空历史保底处理文案:同样**手抄**的生产字面量(`scenes/info_menu.gd` 的 `_fill_version_block`)。
+# 空历史兜底保护文案:同样硬编码复制的生产字面量(`scenes/info_menu.gd` 的 `_fill_version_block`)。
 const NO_GIT_NOTE := "(读不到 git 历史:仓库不可用或未安装 git)"
 
 var _checks := 0
@@ -61,7 +61,7 @@ func _check(ok: bool, what: String) -> void:
 
 
 func _ready() -> void:
-	# - 版本号真值必须在**打断 PATH 之前**取:`AppInfo` 有静态缓存,先取一次之后页面拿到的是
+	# - 版本号真值必须在打断 PATH 之前取:`AppInfo` 有静态缓存,先取一次之后页面拿到的是
 	#   同一份(否则页面会因 git 不可用而显示 "dev",而真值仍是 git 那一份,两边对不上)。
 	var ver: String = preload("res://core/config/app_info.gd").version_string()
 
@@ -74,14 +74,14 @@ func _ready() -> void:
 	add_child(host)
 
 	# ── 空历史相(2026-10-03,评审 Important #2)──────────────────────────────
-	# 发布版 exe 常跑在**没有 git** 的机器上  ->  `AppInfo.commit_log()` 返回 `[]`  ->  左栏会是
-	# 一个**没有任何解释的空框**,而那恰恰是这一页存在的理由。
-	# 本阶段**故意**把 PATH 指到一个不存在的目录,把"发布机无 git"这个条件**真的复现出来** ——
-	# 于是这一条是**行为级**的(页面实际运行过那个分支),不是源码级扫描。
+	# 发布版 exe 常跑在没有 git 的机器上  ->  `AppInfo.commit_log()` 返回 `[]`  ->  左栏会是
+	# 一个没有任何解释的空框,而那恰恰是这一页存在的理由。
+	# 本阶段故意把 PATH 指到一个不存在的目录,把"发布机无 git"这个条件真的复现出来 ——
+	# 于是这一条是行为级的(页面实际运行过那个分支),不是源码级扫描。
 	# - 你会在输出里看到几行 `ERROR: Could not create child process: git …`:那是**本阶段要复现的
-	#   条件本身**(git 不可用),**不是**失败。判据仍是文本 `INFO PAGE PROBE: ALL-OK`。
+	#   条件本身(git 不可用),不是**失败。判定条件仍是文本 `INFO PAGE PROBE: ALL-OK`。
 	# - 前置那一条不是客套:若 `commit_log()` 仍非空(例如静态缓存已被别处填过),页面走的是
-	#   正常分支,下面的保底处理断言就**测的是别的东西** —— 前置先红,免得测试漏检。
+	#   正常分支,下面的兜底保护断言就测的是别的东西 —— 前置先红,免得测试漏报。
 	var saved_path := OS.get_environment("PATH")
 	OS.set_environment("PATH", "C:\\definitely\\not\\a\\real\\path")
 	_check(preload("res://core/config/app_info.gd").commit_log().is_empty(),
@@ -90,9 +90,9 @@ func _ready() -> void:
 	var texts := _collect_labels(p)
 	OS.set_environment("PATH", saved_path)
 
-	# 注意： 标题必须**逐字**认(`_has` 会让这条永远绿:紧邻的「版 本 信 息」**本身含**"信 息"
-	#    ->  把整页那个 48pt 标题删掉,子串断言照样命中,而判词写着它守标题)。
-	#   现在只认**标题 Label 自己**:文字逐字 == 「信 息」且字号 48。
+	# 注意事项：标题必须精确全字匹配（子串包含会导致假阳性：紧邻的「版 本 信 息」本身包含“信 息”，
+	#    若删除 48pt 的页面主标题，子串断言仍会命中并误报通过）。
+	#   现校验主标题 Label 节点自身：文本内容严格等于「信 息」且字号为 48。
 	var title := _find_label_exact(p, "信 息")
 	_check(title != null and title.get_theme_font_size("font_size") == 48,
 			"整页标题 Label 逐字是「信 息」且字号 48(不是「版 本 信 息」的子串命中)")
@@ -113,7 +113,7 @@ func _ready() -> void:
 			"「返 回」按钮存在且恰有 1 个 handler")
 	# - 版本号那一行必须来自 AppInfo(不是写死的占位串) —— 拿 AppInfo 的真值去比。
 	_check(_has(texts, ver), "版本号那一行是 AppInfo.version_string() 的真值(「%s」)" % ver)
-	# - 布局断言必须在**真帧之后**量:容器排序(NOTIFICATION_SORT_CHILDREN)是下一帧的事,
+	# - 布局断言必须在真帧之后量:容器排序(NOTIFICATION_SORT_CHILDREN)是下一帧的事,
 	#   加进树里就立刻读 size 会全读到 0。故先让两帧跑过再量。
 	await get_tree().process_frame
 	await get_tree().process_frame
@@ -123,14 +123,14 @@ func _ready() -> void:
 
 
 # ── 布局断言(必须在真帧之后量)────────────────────────────────────────
-# - 为什么这三条必须有(它们是 2026-10-03 那次排版修复的**常驻护栏**):
-#   ① 「严格约束行宽」若大于左栏可见内宽,ScrollContainer 会出**横向滚动条**,而
-#      `OVERRUN_TRIM_ELLIPSIS` 的省略号落在**可视区之外** —— 比不钉行宽更糟
+# - 为什么这三条必须有(它们是 2026-10-03 那次排版修复的常驻护栏):
+#   ① 「严格约束行宽」若大于左栏可见内宽,ScrollContainer 会出横向滚动条,而
+#      `OVERRUN_TRIM_ELLIPSIS` 的省略号落在可视区之外 —— 比不钉行宽更糟
 #      (既滚动又看不见截断提示)。写死一个数字挡不住它(实测 `ROW_W = 900` 曾
-#      大于左栏内宽 829),故拿**测量值**比:行的严格约束宽度 ≤ 它的滚动区宽度。
-#   ② 设计 §3.10 要的是左 1.25 : 右 1,而 `ScrollContainer` 的最小尺寸**不向上传播**
+#      大于左栏内宽 829),故拿测量值比:行的严格约束宽度 ≤ 它的滚动区宽度。
+#   ② 设计 §3.10 要的是左 1.25 : 右 1,而 `ScrollContainer` 的最小尺寸不向上传播
 #      子节点宽度  ->  单靠 `ROW_W` 撑不宽(实测会塌成 1:1 = 885/885),必须靠
-#      `size_flags_stretch_ratio` 并**量出来**。
+#      `size_flags_stretch_ratio` 并量出来。
 func _check_layout(root: Node) -> void:
 	var scroll := _find_scroll(root)
 	var row := _first_label_under(scroll)
@@ -142,8 +142,8 @@ func _check_layout(root: Node) -> void:
 	# - 两栏 = 含 scroll 的那条 `HBoxContainer`,它的两个直接子节点就是左右两栏。
 	#   原先写的是 `scroll.get_parent().get_parent()` —— 左栏从裸 `PanelContainer` 换成
 	#   `UiFactory.menu_panel()`(内多一层 `Body`)之后,那个表达式量到的是 `Body`,
-	#   而 `Body` 的父(外层 `PanelContainer`)只有 1 个子节点  ->  右栏取不到  ->  **测试误报**。
-	#   改成"往上找含 scroll 的两子 HBox":版式再套一层也不瞎,而**删掉右栏仍会红**。
+	#   而 `Body` 的父(外层 `PanelContainer`)只有 1 个子节点  ->  右栏取不到  ->  测试误报。
+	#   改成"往上找含 scroll 的两子 HBox":版式再套一层也不瞎,而删掉右栏仍会红。
 	var cols := _find_two_col_box(root, scroll)
 	var left: Control = cols.get_child(0) if cols != null else null
 	var right: Control = cols.get_child(1) if cols != null and cols.get_child_count() >= 2 else null
@@ -219,7 +219,7 @@ func _has_exact(texts: Array, want: String) -> bool:
 	return false
 
 
-# 找**文字逐字等于** `want` 的那个 Label(与 `_has` 的子串命中相对)。
+# 找文字逐字等于 `want` 的那个 Label(与 `_has` 的子串命中相对)。
 func _find_label_exact(root: Node, want: String) -> Label:
 	if root is Label and (root as Label).text.strip_edges() == want:
 		return root

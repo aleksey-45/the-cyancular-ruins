@@ -18,7 +18,7 @@ func _check(ok: bool, msg: String) -> void:
 
 
 # rows×cols 的网格:默认全空,再把 solid_rows 里的行填成实心砖。
-# - 必须用**带类型**的 Array[Array] / Array[int]:MazeGenerator.current_grid 是
+# - 必须用带类型的 Array[Array] / Array[int]:MazeGenerator.current_grid 是
 #   `static var current_grid: Array[Array]`,把无类型的 Array 赋给它会在运行期报类型错。
 #   相同实现方式见 tests/smoke/beam_trace_smoke.gd 的 _make_grid。
 func _grid(rows: int, cols: int, solid_rows: Array) -> Array[Array]:
@@ -33,22 +33,22 @@ func _grid(rows: int, cols: int, solid_rows: Array) -> Array[Array]:
 
 func _initialize() -> void:
 	var U: GDScript = load("res://core/sim/unstick.gd")
-	# - 空载守卫:load() 失败还往下走会抛错,而 -s 抛错走不到 quit() → 永久挂起
+	# - 空载防御性校验:load() 失败还往下走会抛错,而 -s 抛错走不到 quit() -> 永久挂起
 	if U == null:
 		print("UNSTICK FAILED: 找不到 core/sim/unstick.gd")
 		quit(1)
 		return
 	TileDefs.load_defs()   # is_blocked 依赖属性表,不自带惰性加载
 
-	# ── ① 正踩在地板上沿(600..640,地板行 10 从 640 起)→ 不卡 ──
+	# ── ① 正踩在地板上沿(600..640,地板行 10 从 640 起) -> 不卡 ──
 	MazeGenerator.current_grid = _grid(20, 20, [10])
 	var resting := Rect2(300.0, 600.0, 40.0, 40.0)
 	_check(U.push_up_dy(resting, TS) == 0.0,
 			"正踩在地板上沿不得判为卡住(实际 %f)" % U.push_up_dy(resting, TS))
 
-	# ── ② 正好 64 宽、正好对齐格线地嵌在 1 格宽竖井里(左右都是墙)→ 不卡 ──
+	# ── ② 正好 64 宽、正好对齐格线地嵌在 1 格宽竖井里(左右都是墙) -> 不卡 ──
 	# 竖井 = 第 5 列(x 320..384)。矩形 x 320..384:不加内缩时 floori(384/64)=6
-	# 会把第 6 列(实心)也算进去 → 误判成卡住。这一条专门钉内缩。
+	# 会把第 6 列(实心)也算进去 -> 误判成卡住。这一条专门钉内缩。
 	var shaft := _grid(20, 20, [])
 	for y in range(20):
 		shaft[y][4] = MazeGenerator.SOLID
@@ -58,25 +58,25 @@ func _initialize() -> void:
 	_check(U.push_up_dy(in_shaft, TS) == 0.0,
 			"正好对齐并贴着竖井两侧墙不得判为卡住(实际 %f)" % U.push_up_dy(in_shaft, TS))
 
-	# ── ③ 压进地板 20px → **刚好**擦出去 20px(不是整格 64)──
+	# ── ③ 压进地板 20px -> 刚好擦出去 20px(不是整格 64)──
 	MazeGenerator.current_grid = _grid(20, 20, [10])
 	var sunk := Rect2(300.0, 620.0, 40.0, 40.0)     # 620..660,地板行 10 = 640..704
 	_check(absf(U.push_up_dy(sunk, TS) - 20.0) < 0.01,
 			"压进地板 20px 应上移 20px(实际 %f)" % U.push_up_dy(sunk, TS))
 
-	# ── ④ 嵌在 8/9/10 三行实心里 → 推到最上行(8)的上边 ──
-	# 矩形 500..540:覆盖行 7、8;最上实心行 = 8 → 位移 = 540 - 8*64 = 28
+	# ── ④ 嵌在 8/9/10 三行实心里 -> 推到最上行(8)的上边 ──
+	# 矩形 500..540:覆盖行 7、8;最上实心行 = 8 -> 位移 = 540 - 8*64 = 28
 	MazeGenerator.current_grid = _grid(20, 20, [8, 9, 10])
 	var buried := Rect2(300.0, 500.0, 40.0, 40.0)
 	_check(absf(U.push_up_dy(buried, TS) - 28.0) < 0.01,
 			"嵌墙时推到最上实心行的上边(实际 %f)" % U.push_up_dy(buried, TS))
 
-	# ── ⑤ 全实心 → 迭代到上限仍返回累计值,不崩不挂 ──
+	# ── ⑤ 全实心 -> 迭代到上限仍返回累计值,不崩不挂 ──
 	MazeGenerator.current_grid = _grid(20, 20, range(0, 20))
 	var dy_all: float = U.push_up_dy(resting, TS)
 	_check(dy_all > 0.0, "全实心时也应有位移(实际 %f)" % dy_all)
 
-	# ── ⑥ 空网格 → 0(TileQuery 的空网格语义:一律"没压到东西")──
+	# ── ⑥ 空网格 -> 0(TileQuery 的空网格语义:一律"没压到东西")──
 	var empty: Array[Array] = []
 	MazeGenerator.current_grid = empty
 	_check(U.push_up_dy(sunk, TS) == 0.0, "空网格应返回 0")

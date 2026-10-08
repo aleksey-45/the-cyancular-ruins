@@ -25,7 +25,7 @@ var _pending_input: Dictionary = {} # role -> Array[输入包队列],按序消�
 var grid: Array = []
 var _base_grid: Array = []   # 建局原始(未破坏)网格深拷贝:每局复位重铺,防客户端/服务器砖状态漂移
 
-# 队伍表:role(int) -> 队号(1/2)。**唯一权威** —— 由大厅在 worker 命令行 `--teams` 显式传入。
+# 队伍表:role(int) -> 队号(1/2)。**唯一权威** —— 由大厅在会话初始化或命令行 `--teams` 显式传入。
 # - 为什么不从 role 号推导:role 由大厅的「最小空闲号」分配、有人退出后不重排,编号会留空洞
 #   ({1,3,5} 而只有 3 人),奇偶/区间推导必然出错。
 # - 空表 = 无队伍(1v1 / 大乱斗 / 单机):`team_of` 恒 0、`same_team` 恒 false,行为与今天一致。
@@ -160,11 +160,11 @@ var _assist_times: Dictionary = {}
 # 基类成员是硬 Parse Error,见 Global Constraints)。
 var _left: Dictionary = {}
 # ── 断线宽限期读数(阶段 3,2026-09-28)──
-# `{role(int) -> 剩余秒(float)}`;**由 worker 进程的 `server_main` 写入**(它是宽限期表的持有者),
+# `{role(int) -> 剩余秒(float)}`;**由会话宿主写入**(它是宽限期表的持有者),
 # 三个 `round_state` 生产者只负责把它并进载荷(见 `_send_round_state`)。
-# - 为什么是"推"而不是"宿主去问":宽限期住在 `server_main._grace` 里,宿主反向持有它的引用
+# - 为什么是"推"而不是"宿主去问":宽限期住在会话宿主手里,宿主反向持有它的引用
 #   会造一条 back-reference(本仓明确避免的那类)。推的代价只是"值可能旧 ≤1 秒" ——
-#   `server_main` 每秒刷一次(见 `_expire_graces` 的调用点),客户端那两个 HUD 在两次广播
+#   会话宿主每秒刷一次(见 `_expire_graces` 的调用点),客户端那两个 HUD 在两次广播
 #   之间**自己倒计时更新**(`GraceWindow.tick_display`)。
 # - **每实例字段、不是 `static`**:探针会在同一个进程里建多个宿主,`static` 会让它们互相污染。
 #   空 = 此刻没人掉线(载荷里连 `grace` 键都不带)。
@@ -191,8 +191,8 @@ const ATTRIB_FRESH_MS := 8
 # ── 仅测试用:定时拆一格(阶段 7 用)──
 # 由 `--test-destroy-tile <col>,<row>[,<delay>]` 写入;到点拆一次,之后置回 (-1,-1) 只拆一次。
 # - 默认 (-1,-1) = 关:生产路径不带这个开关,行为与今天逐字一致。
-# - 为什么需要它:重连探针的 worker 是**独立进程**,探针拿不到 `_host`,只能靠命令行开关
-#   让 worker 自己在指定时刻制造"世界变了"这件事(既有的 `--test-ground-teleport` 相同机制手法)。
+# - 为什么需要它:重连探针单测时拿不到外部宿主的 `_host`,只能靠命令行开关
+#   让对局服务端自己在指定时刻制造"世界变了"这件事(既有的 `--test-ground-teleport` 相同机制手法)。
 # - 与 `test_ground_teleport` 一样住在**基类**(`MatchGround` 那条是本域的开关):钩子要读它,
 #   而钩子由 `MatchHost._physics_process` 每帧调,兄弟域之间互相看不见。
 static var test_destroy_cell := Vector2i(-1, -1)
@@ -222,7 +222,7 @@ func _rpc_all(method: String, args: Array = [], except_role: int = -1,
 #   RPC configuration for the function …")`),查不到就**直接 return,`_send_rpc` 根本走不到**
 #    ->  这两个 RPC **从未发出**,且每次尝试打一条错误(`time_state` 是 10Hz,即每 100ms 一条)。
 #   本仓其它地方发 NetBusExt 的 RPC 一律写 `NetBusExt.rpc_id(...)`(大厅 / `hit_confirm` 都是)。
-#   - 一直没被发现:worker 子进程的 stdout **不继承进探针管道**(本仓自己登记的盲区)。
+#   - 一直没被发现:独立子进程的 stdout 此前未直接接入探针管道(本仓自己登记的盲区)。
 #   - 影响面:`time_state` = PvP 怀表镜像;`sub_destroyed` = B18 的"PvP 破坏瓦片广播"(防幽灵墙)。
 #    ->  这两个函数**首次真正生效**;需要一次真链路复核。
 func _rpc_all_ext(method: String, args: Array = [], except_role: int = -1,

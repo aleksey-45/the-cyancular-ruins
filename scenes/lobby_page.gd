@@ -3,7 +3,7 @@ extends Control
 
 # 大厅页的**共享基类**(统一大厅 `mp_lobby` extends 它)。
 #
-# - 为什么:大厅页本是一份「连大厅 → 列房间 → 配对了转连 worker」的状态机,历史上按
+# - 为什么:大厅页负责房间列表展示、对局匹配与进入对局的状态机，历史上按
 #   「1v1 / 大乱斗 / 3v3」叉开时**复制**成了三份实现 —— 于是同一处修正要改三遍,漏一处**不报错**
 #   (表现是"1v1 里好了、另两个没变")。2026-09-15 起逐批统一集中处理(计划 3.6),2026-10-03 三页合一:
 #   凡是各模式**语义相同**的都上提到这里;子类只留真正的差异。
@@ -164,7 +164,7 @@ func _on_server_message(t: String) -> void:
 	_status.text = t
 
 
-# ── 转连对局 worker ──
+# ── 进入对局会话 ──
 
 # 大厅在 go_match **之前**下发的一次性会话令牌(断线重连用)。
 # - 先存进 `_pending_token` 而不是直接写 PvpSession:go_match 也是本帧到达的,两者由
@@ -200,7 +200,7 @@ func _on_go_match(role: int, port: int) -> void:
 #   ① 发 `rejoin_request(房间号, token)` —— -  **此刻本页一定连着大厅**(那一行就是 `room_list`
 #      载荷里来的),故这里**不连大厅、不碰地址框、也不走 `_with_lobby`**:照原稿搬会
 #      `NetBus.stop()` + 重连一次,把刚拿到的列表连同自己那一行一起丢掉。
-#   ② 大厅复用 `go_match` 把它送回原 worker —— 之后与首次进场**逐字同一条路**。
+#   ② 大厅复用 `go_match` 把它送回原对局会话 —— 之后与首次进场**逐字同一条路**。
 #   ③ 唯一的岔路在 `_claim_role`(对局已经开着 → 必须发 `reclaim_role`)。
 # - 原稿那条"地址取 `PvpSession.server_address` 而不是地址框(三个页的地址框默认值不同)"的绕法
 #   随入口一起作废:它防的是"从主菜单按按钮进来时页还没连上、只能照地址框连"那一档,而现在
@@ -265,7 +265,7 @@ func _on_rejoin_denied(reason: String) -> void:
 
 
 # 回局请求发出后大厅一直没应答的保底处理(15s)。没有它,玩家会停在一句"正在回到对局…"上,
-# 而本页的其它保底处理梯(worker 转连 / claim)此时**都还没启动**(它们要等 `go_match` 之后)。
+# 而本页的其它保底处理梯(对局认领 / claim)此时**都还没启动**(它们要等 `go_match` 之后)。
 # - 判据里带 `PvpSession.rejoin`:回局成功时它已被清掉,这条梯自然失效(claim 那条接管)。
 func _tick_rejoin_timeout() -> bool:
 	if PvpSession.rejoin and _rejoin_sent_ms > 0 \
@@ -302,24 +302,24 @@ func _claim_role(role: int) -> void:
 	#   必须改发 `reclaim_role`(宽限期内重新认领自己那个 role)。
 	#   - **它的失败形态是"静默"、不是"被踢"**(2026-09-21 订正;原先这里写的是"会被
 	#   `_on_role_claimed` 当判定为串线连接并主动断开,日志里留一行拒绝串线" —— **那句话是错的**,真链路探针
-	#   实测 worker 侧连一行拒绝都没有):`server_main._begin_match` 在开局那一刻就
+	#   实测服务端侧连一行拒绝都没有):`server_main._begin_match` 在开局那一刻就
 	#   `NetBus.role_claimed.disconnect(_on_role_claimed)` —— 迟到的 `claim_role`
 	#   **根本没有收件人**,既不踢人也不打印(`_match_started` 那第一款判据因此**不可达**)。
 	#    ->  可观察的后果是"**这个客户端再也回不来**":它卡在大厅页,靠本页 claim 保底处理梯
 	#   (`_return_to_lobby`)收场。-  反证(删掉本分支)红的仍是"点了自己那间房 30s 没回到对局"
-	#   那条契约断言,证据是 **worker 日志里"某个拒绝行的缺席"** —— 最弱的一种信号形状,
+	#   那条契约断言,证据是 **服务端日志里"某个拒绝行的缺席"** —— 最弱的一种信号形状,
 	#   别指望日志告诉你走错了哪条。
-	# - 回局时**不发** `player_options`/`report_token`:worker 侧两条 handler 都按
+	# - 回局时**不发** `player_options`/`report_token`:服务端对局宿主侧两条 handler 都按
 	#   `_claims[r] == caller` 反查,而此刻新 peer 还没进 `_claims`(要等 reclaim 被接受)
-	#   → 两条都静默 no-op;而 token 首次 claim 时就报过一次,worker 手里那份正是要比对的那份。
+	#   → 两条都静默 no-op;而 token 首次 claim 时就报过一次,服务端手里那份正是要比对的那份。
 	if PvpSession.rejoin:
 		PvpSession.rejoin = false
 		NetBusExt.rpc_id(1, "reclaim_role", role, PvpSession.token)
 		return
-	# claim_role 保持原版 2 参(大厅/worker 兼容);本端选项走扩展节点 NetBusExt
+	# claim_role 保持原版 2 参(协议方法表兼容);本端选项走扩展节点 NetBusExt
 	NetBus.rpc_id(1, "claim_role", role, PvpSession.player_name)
 	NetBusExt.rpc_id(1, "player_options", _player_options())
-	# token 走扩展节点(原 NetBus 的 claim_role 签名一律不动)。原版 worker 无本节点 →
+	# token 走扩展节点(原 NetBus 的 claim_role 签名一律不动)。未包含本节点的对端 →
 	# 静默丢弃 → 那局就是"不能重连",不影响对局本身。
 	if PvpSession.token != "":
 		NetBusExt.rpc_id(1, "report_token", PvpSession.token)
@@ -529,7 +529,7 @@ func _beta_payload() -> Dictionary:
 
 
 # ── 建房/对战选项面板里的「选图」一节(三个联机页共用)──
-# 房主选 → 存 Settings.mp_map_path → 报到时随 player_options 上报 → worker 开局定图
+# 房主选 → 存 Settings.mp_map_path → 报到时随 player_options 上报 → 服务端开局定图
 # (`server_main._on_player_options` 归档、`MapCatalog.resolve_pvp_map` 校验、`match_start` 下发)。
 # - 存档里那张图被删/改名时**归一化成"随机"**:否则上报的坏路径只会让服务器静默回落默认图,
 #   玩家以为选的是别的图。

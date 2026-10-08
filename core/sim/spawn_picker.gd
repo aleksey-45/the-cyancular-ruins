@@ -6,7 +6,7 @@ extends RefCounted
 # 都要用同一套"别出生在走不出去的密封小间"的判据,抄第二份就会改一处漏一处。
 # - 全部 `static`、且**不引任何 autoload**(只读 `MazeGenerator.current_grid`,它本身是 class_name
 #   的 RefCounted)→ 本文件可被 `-s` 测试加载。
-# - 缓存是**每进程**的(与搬出前相同运行行为):worker 进程一局一进程,故没有跨局失效问题。
+# - 缓存是**每进程**的:由 reset_cache() 在换图/新局时清空。
 
 const OPEN_AREA_MIN: int = 20    # 出生可走连通区最小规模(格);密封死角小间远小于此。**绝对**阈值(见自适应)
 const PREFER_MIN: int = 8        # 优选格不足此数才回退下一级宽松判据
@@ -294,7 +294,7 @@ const FAR_CELLS := 15   # role2 的自动出生点离 role1 至少这么远(格;
 static func far_spawn_from(anchor: Vector2i, grid: Array) -> Vector2i:
 	if grid.is_empty():
 		return Vector2i(-1, -1)
-	TileDefs.load_defs()   # 幂等;worker 建局早于建世界,这里不加载的话 is_blocked 全是默认值
+	TileDefs.load_defs()   # 幂等;服务端建局早于建世界,这里不加载的话 is_blocked 全是默认值
 	var rows := grid.size()
 	var cols: int = (grid[0] as Array).size()
 	var best := Vector2i(-1, -1)

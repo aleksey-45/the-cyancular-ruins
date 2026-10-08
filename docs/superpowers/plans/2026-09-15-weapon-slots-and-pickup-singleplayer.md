@@ -4,7 +4,7 @@
 
 **Goal:** 把武器从"按类型 id 直接切枪"改成"有容量预算的背包 + 地上可捡可丢的物理实体"，单机侧完整可玩。
 
-**Architecture:** 背包逻辑收进纯 `RefCounted`（`WeaponInventory`，无 autoload、可 `-s` 测）；地面武器是独立的 `CharacterBody2D` 场景（`WeaponPickup`），视觉复用武器场景实例（`WeaponBase` 无 `_process`，不驱动即静止），碰撞箱由 sprite 像素包围盒生成；布点算法从 `RoyaleHost` 抽成静态工具供单机复用。`_current_slot` **保持"类型 id"语义**，因此 PvP 快照协议与 `PlayerReplica` 在本计划中零改动。
+**Architecture:** 背包逻辑收进纯 `RefCounted`（`WeaponInventory`，无 autoload、可 `-s` 测）；地面武器是独立的 `CharacterBody2D` 场景（`WeaponPickup`），视觉复用武器场景实例（`WeaponBase` 无 `_process`，不驱动即静止），碰撞箱由 sprite 像素包围盒生成；布点算法从 `RoyaleHost` 提取为静态工具供单机复用。`_current_slot` **保持"类型 id"语义**，因此 PvP 快照协议与 `PlayerReplica` 在本计划中无需修改。
 
 **Tech Stack:** Godot 4.7 标准版、GDScript、无单测框架（`extends SceneTree` 的 `-s` 冒烟 + `extends Node` 的场景探针）。
 
@@ -26,7 +26,7 @@
   跑新冒烟时**一律套 `timeout`**（`timeout 60 "<godot>" …`），否则红了会把会话卡死。
 - **测试由用户自己跑**，实施者只负责写测试与跑"红→绿"那两步所需的命令。
 - `docs/` 之外的源码改动一律**不得**改动 `Player.tscn` 的碰撞层常量（`enemy_logic_smoke` 有 `player mask == 5` 断言）。
-- **中间态说明**：Task 3 落地后到 Task 11 之前，单机的初始背包是临时的 3 把（`[1,2,6]` = 8 格刚好占满），重狙/霰弹/榴弹在单机里暂时拿不到。**这是计划内的中间态**，Task 10/11 落地后恢复完整（12 把散落在地图上）。不要为了让中间态"好看"而临时放宽容量闸门。
+- **中间态说明**：Task 3 落地后到 Task 11 之前，单机的初始背包是临时的 3 把（`[1,2,6]` = 8 格刚好占满），重狙/霰弹/榴弹在单机里暂时拿不到。**这是计划内的中间态**，Task 10/11 落地后恢复完整（12 把散落在地图上）。不要为了让中间态"好看"而临时放宽容量限制校验。
 
 ---
 
@@ -36,7 +36,7 @@
 
 | 文件 | 职责 |
 |---|---|
-| `core/sim/weapon_inventory.gd` | 背包纯逻辑：持有表、容量/把数两条闸门、紧凑排布、快照/恢复 |
+| `core/sim/weapon_inventory.gd` | 背包纯逻辑：持有表、容量/把数两条限制条件、紧凑排布、快照/恢复 |
 | `core/sim/ground_weapon_field.gd` | 地面武器表的纯逻辑：增删查 + 环面最近拾取 |
 | `core/present/sprite_bounds.gd` | 从 `Sprite2D` 像素求包围盒（地面武器碰撞箱的来源） |
 | `ui/weapon_slots.gd` | 4×2 格子控件（自包含，可挂任意 `CanvasLayer`） |
@@ -786,13 +786,13 @@ func cancel_aim() -> void:
 	weapons.set_initial_inventory([1, 2, 6])
 ```
 
-- [ ] **Step 3: 跑 kh_l3 探针确认它变红**
+- [ ] **Step 3: 跑 kh_l3 探针确认它报错失败**
 
 Run:
 ```bash
 "$GODOT" --headless --path . --quit-after 3600 res://tests/kh_l3_probe.tscn
 ```
-Expected: 输出里**没有** `ALL-OK`（`_enabled_slots` / 残弹记忆两节的断言按旧语义写的，现在会红）。这一步确认探针真的在跑、真的能变红。
+Expected: 输出里**没有** `ALL-OK`（`_enabled_slots` / 残弹记忆两节的断言按旧语义写的，现在会红）。这一步确认探针真的在跑、真的能报错失败。
 
 - [ ] **Step 4: 按新语义重写探针里的两节**
 
@@ -805,7 +805,7 @@ Expected: 输出里**没有** `ALL-OK`（`_enabled_slots` / 残弹记忆两节�
 
 ② 把"残弹记忆"一节改成 per-inst：`set_initial_inventory([1, 3])` → 打掉几发 → `equip_index(1)` → 再 `equip_index(0)` → 断言残弹不是满的、且**第二把的残弹不受影响**。
 
-③ 新增反向断言（防止旧机制复活）：
+③ 新增否定断言（防止旧机制复活）：
 
 ```gdscript
 	# 反向断言:_mag_state 一族不许复活。残弹现在按**背包条目**记(每条一个 inst),
@@ -987,7 +987,7 @@ Run:
 "$GODOT" --headless --path . -s res://tests/ai_input_source_smoke.gd
 "$GODOT" --headless --path . --quit-after 3600
 ```
-Expected: 冒烟全绿；启动 0 报错（若报 "Unknown action" 说明 `project.godot` 的两个动作没加对）。
+Expected: 冒烟全部通过；启动 0 报错（若报 "Unknown action" 说明 `project.godot` 的两个动作没加对）。
 
 - [ ] **Step 7: 提交**
 
@@ -1140,7 +1140,7 @@ Run:
 ```bash
 "$GODOT" --headless=false --path . res://tests/kh_l3_visual_probe.tscn
 ```
-（该探针必须真实渲染；按它文件头记的跑法执行，取图落盘。）
+（该探针必须真实渲染；按它文件头记的跑法执行，取图写入磁盘。）
 Expected: 先看基线图，确认格子块位置可用。
 
 - [ ] **Step 5: 加取色断言**
@@ -2181,6 +2181,6 @@ git commit -m "docs(CLAUDE): 武器槽位/地面拾取落地后的架构与约�
 
 **spec 覆盖**：spec §4（背包/容量/键位/滚轮/HUD）→ Task 1-5；§5（地面实体/碰撞层/像素箱/拾取/丢弃）→ Task 6-8、10；§7.1/§7.2（布点工具/单机初始）→ Task 9、11；§8 测试计划 → 各 Task 内。**spec §6（联机）与 §7.3（复活/换局）不在本计划**，属独立的"联机"计划。
 
-**已知的中间态**：Task 3 落地后到 Task 11 之间，单机初始背包是临时的 `[1,2,6]`（重狙/霰弹/榴弹暂时拿不到）。已在 Global Constraints 里写明，不要为它放宽容量闸门。
+**已知的中间态**：Task 3 落地后到 Task 11 之间，单机初始背包是临时的 `[1,2,6]`（重狙/霰弹/榴弹暂时拿不到）。已在 Global Constraints 里写明，不要为它放宽容量限制校验。
 
 **耦合提醒**：`restart_at()` 被单机与联机共用，本计划只允许删掉它的武器复位三行（迁到 `Level0.restart_single`），**不得**把"背包清空"塞进 `restart_at` —— 联机复活的武器规则不同。

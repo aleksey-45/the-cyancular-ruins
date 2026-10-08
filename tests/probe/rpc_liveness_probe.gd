@@ -1,68 +1,68 @@
 extends ProbeBase
 
-# 「**定向发送前一律先存活检测**」这条硬纪律的**常驻源码级守卫**(场景模式;`--headless` 即可)。
+# 「定向发送前一律先存活检测」这条硬纪律的常驻源码级静态分析探针(场景模式;`--headless` 即可)。
 #
-# 跑法:
+# 运行方式：
 #   "$GODOT" --headless --path . --quit-after 3600 res://tests/probe/rpc_liveness_probe.tscn
-# 判据:末行 `KH RPC-LIVE PROBE: ALL-OK`(grep 文本,不看退出码)。
+# 验收标准：末行 `KH RPC-LIVE PROBE: ALL-OK`(grep 文本,不看退出码)。
 #
-# ═══ 守的是什么 ═══
+# ── 守的是什么 ──
 # 引擎那条 `Unable to send packet on channel 0, max channels: 0`
-# (`enet_packet_peer.cpp:64`,判据 = **目标 peer 的 ENet 通道数为 0**,即"往一个 ENet 已拆掉、
-#  MultiplayerAPI 还没忘掉的 peer 发包")只可能由**定向/广播的发送**打出。本探针把 `server/` 与
-#  `core/net/` 下**每一处**发送点收进来,要求它落在一条**活的判据**里:
+# (`enet_packet_peer.cpp:64`,判定条件 = 目标 peer 的 ENet 通道数为 0,即"往一个 ENet 已拆掉、
+#  MultiplayerAPI 还没忘掉的 peer 发包")只可能由定向/广播的发送输出。本探针把 `server/` 与
+#  `core/net/` 下每一处发送点收进来,要求它落在一条活的判定条件里:
 #
-#   ① 定向发送(`rpc_id(` / `callv("rpc_id"`) —— 需要**包围它的**判据含
+#   ① 定向发送(`rpc_id(` / `callv("rpc_id"`) —— 需要包围它的判定条件含
 #      `NetBus.is_peer_live` / `is_peer_online(` / `can_send_to_server` / `all_peers_sendable`
 #      (或直接走 `NetBus.reply(` —— 那本身就是"答复 caller"的统一集中处理,体内先存活检测);
-#   ② **广播**(`NetBus.rpc(` / `NetBusExt.rpc(`)—— 只认 `all_peers_sendable()`:
-#      广播在 ENet 层是**逐 peer** 发包,表里只要还剩一个处于"队列已拆"窗口的 peer 就会报错,
-#      **单个 peer 存活检测不够用**(2026-09-21 定位:`_broadcast_snapshot` 每帧一发,
+#   ② 广播(`NetBus.rpc(` / `NetBusExt.rpc(`)—— 只认 `all_peers_sendable()`:
+#      广播在 ENet 层是逐 peer 发包,表里只要还剩一个处于"队列已拆"窗口的 peer 就会报错,
+#      单个 peer 存活检测不够用(2026-09-21 定位:`_broadcast_snapshot` 每帧一发,
 #      每拒绝一次错的 reclaim 就报一对 channel 0 / channel 1 —— 见 `match_snapshot.gd` 的注释)。
 #
-# ═══ 判据是「包围它的那一层」,不是"整文件出现过" ═══
-# 这是本探针最容易写成测试漏检的地方,所以算法写死成两条(**都在**同一个函数体内、且**都在**站点
-# **之前**):
-#   - 块头判据:`if`/`elif` 的条件里含判据词,而**它的块体里就包着这个站点**;或
-#   - 提前返回判据:相同机制条件的块体里有 `return` / `continue` / `break`(站点在它**之后**)。
-# 两条都要求 `块头缩进 ≤ 站点缩进` —— **缩进更深**的 `if`(例如
-# `if a:` 里套的 `if not is_peer_live(p): return`)**不算**,因为只有 `a` 成立时才提前返回,
+# ── 判定依据为「包围它的那一层」,不是"整文件出现过" ──
+# 这是本探针最容易写成测试漏报的地方,所以算法写死成两条(都在同一个函数体内、且都在站点
+# 之前):
+#   - 块头验收标准：`if`/`elif` 的条件里含判定条件词,而它的块体里就包着这个站点;或
+#   - 提前返回验收标准：相同处理逻辑条件的块体里有 `return` / `continue` / `break`(站点在它之后)。
+# 两条都要求 `块头缩进 ≤ 站点缩进` —— 缩进更深的 `if`(例如
+# `if a:` 里套的 `if not is_peer_live(p): return`)不算,因为只有 `a` 成立时才提前返回,
 # 而站点在两条路之外  ->  那种写法照旧报红。
 # - 这一条挡的正是 brief 明确提示的坑:整文件 `contains("is_peer_live")` 会让
-#   "判据写在**别的分支**上"的实现照旧测试全部通过。
+#   "判定条件写在别的分支上"的实现照旧全部断言通过。
 #
-# ═══ 盲区自检(不写就是"扫描器瞎了也测试全部通过")═══
-#   - `MIN_SITES`:站点总数下限(改名 / 改写法让扫描器**认不出**发送点时必须报红);
-#   - `MUST_HAVE`:必须**至少各贡献一处**发送点的文件(逐文件下限,相同机制理由);
-#   - 例外表里的条目**必须命中**:陈旧例外(写法变了、站点没了)一律报红 —— 否则"加一条例外"
-#     就等于把规则对那一处**永久关掉**,而没人会再回来看它。
+# ── 盲区自检(不写就是"扫描器瞎了也全部断言通过")──
+#   - `MIN_SITES`:站点总数下限(改名 / 改写法让扫描器认不出发送点时必须报红);
+#   - `MUST_HAVE`:必须至少各贡献一处发送点的文件(逐文件下限,相同处理逻辑理由);
+#   - 例外表里的条目必须命中:陈旧例外(写法变了、站点没了)一律报红 —— 否则"加一条例外"
+#     就等于把规则对那一处永久关掉,而没人会再回来看它。
 #
-# ═══ 例外表(空 = 今天没有一处需要例外)═══
-# 现在**是空的**,这是有意的:审计(2026-09-21)下来 `server/` + `core/net/` 的每一处发送点
-# 都能落在一条活判据里。将来真出现"结构上没法存活检测"的站点,加一条带**理由**的例外 ——
+# ── 例外表(空 = 今天没有一处需要例外)──
+# 现在是空的,这是有意的:审计(2026-09-21)下来 `server/` + `core/net/` 的每一处发送点
+# 都能落在一条活判定条件里。将来真出现"结构上没法存活检测"的站点,加一条带理由的例外 ——
 # 而不是把规则对全部站点放松。
 const EXCEPTIONS := []
 
-# 判据词(出现在 `if`/`elif` 条件里才算)
+# 判定条件词(出现在 `if`/`elif` 条件里才算)
 # - 两种写法都要认:`server/` 里一律是 `NetBus.is_peer_live(...)`,而 `core/net/net_bus.gd`
 #   自己体内是裸的 `is_peer_live(...)`(它就是那个方法的家)—— 只认带前缀那种会把
-#   `reply()` / `ping()` 里的**正确**实现判成裸站点(实测踩到)。
+#   `reply()` / `ping()` 里的正确实现判成裸站点(实测踩到)。
 const GUARD_TOKENS := ["is_peer_live(", "is_peer_online(", "can_send_to_server(", "all_peers_sendable("]
-# 广播**只认**这一条(单个 peer 存活检测不够,见文件头)
+# 广播只认这一条(单个 peer 存活检测不够,见文件头)
 const BROADCAST_TOKEN := "all_peers_sendable("
 # 走这个助手 = 已存活检测(它体内首行就是 `if not is_peer_live(id): return false`)
 const REPLY_HELPER := "NetBus.reply("
 
 const DIRS := ["res://server", "res://core/net"]
-# - **扫描面的边界(照实登记)**:`scenes/` **不在**这里面。客户端那侧的同一类站点
+# - 扫描面的边界(照实登记):`scenes/` 不在这里面。客户端那侧的同一类站点
 #   (`lobby_page` / 三个对局场景 / `pvp_match_client` 的上行)2026-09-21 一并审计过、该补的
-#   也补了(见 `.superpowers/sdd/tint-and-channel-report.md` 的审计表),但客户端站点的判据
+#   也补了(见 `.superpowers/sdd/tint-and-channel-report.md` 的审计表),但客户端站点的判定条件
 #   形态是 `NetBus.can_send_to_server()`,而其中几处(claim / player_options / report_token)
-#   是**事件驱动**的(`connected_to_server` 回调里发,那一刻连接必然可用) ->  把它们一起收进本
-#   探针需要一张更长的例外表,而这轮没做。**别把"本探针测试全部通过"读成"客户端那侧也有常驻守卫"**。
+#   是事件驱动的(`connected_to_server` 回调里发,那一刻连接必然可用) ->  把它们一起收进本
+#   探针需要一张更长的例外表,而这轮没做。别把"本探针全部断言通过"读成"客户端那侧也有自动化测试探针"。
 const MIN_SITES := 20
 const MUST_HAVE := [
-	"res://server/match/match_snapshot.gd",     # 60Hz 世界包广播 + 本人包定向
+	"res://server/match/match_snapshot.gd",     # 60Hz 全局世界快照包广播 + 本端专属状态包定向
 	"res://server/match/match_state.gd",        # `_rpc_all` 样板(广播的单一出口)
 	"res://server/match/match_combat.gd",       # 交火时最密的一处定向发送
 	"res://server/lobby/lobby_rooms.gd",        # 大厅:答复 caller + 逐成员状态广播
@@ -111,9 +111,9 @@ func _ready() -> void:
 
 
 # ── 取发送点 ──
-# 判据:剥注释后的代码行里出现 `rpc_id(` / `"rpc_id"`(定向;后者提供容错保障 `callv("rpc_id", …)`)
+# 验收标准：剥注释后的代码行里出现 `rpc_id(` / `"rpc_id"`(定向;后者提供容错保障 `callv("rpc_id", …)`)
 # 或 `NetBus.rpc(` / `NetBusExt.rpc(` / `multiplayer.rpc(`(广播)。
-# - 必须用**保留缩进**的视图(`code_view`):下面的包围判据全靠缩进定块。
+# - 必须用保留缩进的视图(`code_view`):下面的包围判定条件全靠缩进定块。
 func _collect_sites() -> Array:
 	var sites: Array = []
 	for path in _collect(DIRS):
@@ -140,10 +140,10 @@ func _collect_sites() -> Array:
 
 # 每行 -> {text(去缩进), indent, line(文件里的真实行号)}。空行 / 纯注释行去掉。
 # - 两件必须做的事:
-#   - 用**原始文件行号**(不是"剥注释视图里的第几行")—— 报告里明确提示要看的是文件的行号;
-#   - **续行折叠**(行尾 `\`):GDScript 的 `if` 条件可以跨行写,而判据词常落在**第二行**上
+#   - 用原始文件行号(不是"剥注释视图里的第几行")—— 报告里明确提示要看的是文件的行号;
+#   - 续行折叠(行尾 `\`):GDScript 的 `if` 条件可以跨行写,而判定条件词常落在第二行上
 #     (实测:`if shooter_role != 0 and peer_by_role.has(shooter_role) \` / `and NetBus.is_peer_live(...)`)
-#     —— 不折的话那处**正确**的判据会被判成裸站点(测试误报)。
+#     —— 不折的话那处正确的判定条件会被判成裸站点(测试误报)。
 func _lines_of(src: String) -> Array:
 	var out: Array = []
 	var pending := ""
@@ -174,14 +174,14 @@ func _lines_of(src: String) -> Array:
 
 
 # ── 判定一处站点 ──
-# 返回 ""(有活判据)或一句人话(为什么它裸着)。
+# 返回 ""(有活判定条件)或一句人话(为什么它裸着)。
 func _verdict(site: Dictionary) -> String:
 	var t: String = site["text"]
 	# Reply 助手:体内首行就存活检测(它本身就是"答复 caller"的统一集中处理)
 	if t.contains(REPLY_HELPER):
 		return ""
 	var tokens: Array = [BROADCAST_TOKEN] if site["kind"] == "broadcast" else GUARD_TOKENS
-	# 站点行自己就是判据(如 `if NetBus.is_peer_live(x): NetBus.rpc_id(...)` 单行写)
+	# 站点行自己就是判定条件(如 `if NetBus.is_peer_live(x): NetBus.rpc_id(...)` 单行写)
 	if _mentions(t, tokens):
 		return ""
 	var path: String = site["path"]
@@ -201,7 +201,7 @@ func _verdict(site: Dictionary) -> String:
 		var body_end := j + 1
 		while body_end < lines.size() and int(lines[body_end]["indent"]) > int(head["indent"]):
 			body_end += 1
-		# ① 块体里就包着这个站点  ->  走这条路时判据成立
+		# ① 块体里就包着这个站点  ->  走这条路时判定条件成立
 		if si > j and si < body_end:
 			return ""
 		# ② 提前返回型:块体里有 return / continue / break(站点在它之后)

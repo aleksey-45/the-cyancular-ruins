@@ -82,7 +82,7 @@ func _test_aoe() -> void:
 	exp.apply_aoe(Vector2(200, 200), 128.0, 35, 900.0)
 	_check(e1.hp == 50 - 35, "AoE 中心满伤 35")
 	e1.free()
-	# 边缘(≈radius)→ 0 伤
+	# 边缘(≈radius) -> 0 伤
 	var e2 := StubEnemy.new()
 	e2.global_position = Vector2(200, 200) + Vector2(127, 0)
 	root.add_child(e2)
@@ -90,7 +90,7 @@ func _test_aoe() -> void:
 	exp.apply_aoe(Vector2(200, 200), 128.0, 35, 900.0)
 	_check(e2.hp == 50, "AoE 边缘 0 伤")
 	e2.free()
-	# 中段衰减(1-t²): d=64, inner=51.2 → t=(64-51.2)/76.8=0.167, 35*(1-0.028)=34
+	# 中段衰减(1-t²): d=64, inner=51.2 -> t=(64-51.2)/76.8=0.167, 35*(1-0.028)=34
 	var e3 := StubEnemy.new()
 	e3.global_position = Vector2(200, 200) + Vector2(64, 0)
 	root.add_child(e3)
@@ -115,7 +115,7 @@ func _test_aoe() -> void:
 	_check(p.hit_log.has(35), "玩家友伤满值 35")
 	_check(is_equal_approx(p.knock_log, 900.0), "玩家受击收到满值击退 900")
 	p.free()
-	# LOS 遮挡:墙列 x=4 挡住「向左绕行的环面最短路径」→ 0 伤;右侧开阔 → 满伤
+	# LOS 遮挡:墙列 x=4 挡住「向左绕行的环面最短路径」 -> 0 伤;右侧开阔 -> 满伤
 	var g: Array[Array] = []
 	for _y in range(25):
 		var row: Array[int] = []
@@ -125,11 +125,11 @@ func _test_aoe() -> void:
 	for y in range(25):
 		g[y][4] = MazeGenerator.SOLID
 	MazeGenerator.current_grid = g
-	# ⚠ 分格单位坐标映射隐患:遮挡判定按 TILE_SIZE=64 分格(Explosion._has_los → MazeGenerator.cell_of),
+	# - 分格单位坐标映射隐患:遮挡判定按 TILE_SIZE=64 分格(Explosion._has_los -> MazeGenerator.cell_of),
 	# 而本文件其它几何是按「16px 一格」写的。x=4 那根整列墙的世界范围其实是 [256,320)。
-	# 所以爆心放第 5 格(x=5*64+32=352)、目标放第 3 格(x=3*64=192):墙**真的**夹在两者之间,
-	# 环面最短路径 5→4(墙列)→3 被挡。d=160px 也在 radius×INNER_FRACTION=120px 内圈之外 ——
-	# 内圈按设计免疫遮挡,贴脸目标测不出掩护(旧几何 (5,12)→(1,12) 两格都在墙同侧且落在内圈,断言恒红)。
+	# 所以爆心放第 5 格(x=5*64+32=352)、目标放第 3 格(x=3*64=192):墙真的夹在两者之间,
+	# 环面最短路径 5 -> 4(墙列) -> 3 被挡。d=160px 也在 radius×INNER_FRACTION=120px 内圈之外 ——
+	# 内圈按设计免疫遮挡,贴脸目标测不出掩护(旧几何 (5,12) -> (1,12) 两格都在墙同侧且落在内圈,断言始终断言失败)。
 	var blast := Vector2(5 * 64 + 32, 12 * 16)
 	var walled := StubEnemy.new()
 	walled.global_position = Vector2(3 * 64, 12 * 16)
@@ -142,7 +142,7 @@ func _test_aoe() -> void:
 	_check(walled.hp > 50 - int(exp._falloff(d_walled, 300.0, 35)),
 			"墙后敌人伤害应低于同距离无遮挡(d=%.0f, 实际 hp=%d)" % [d_walled, walled.hp])
 	walled.free()
-	# 爆心(5,12)→(8,12):右弧 5→6→7→8 无墙 → 满伤
+	# 爆心(5,12) -> (8,12):右弧 5 -> 6 -> 7 -> 8 无墙 -> 满伤
 	var open := StubEnemy.new()
 	open.global_position = Vector2(8 * 16, 12 * 16)
 	root.add_child(open)
@@ -193,7 +193,7 @@ func _test_fuse() -> void:
 			break
 	_check(exploded2, "命中敌人反弹后约 0.1s 短引信爆炸")
 	enemy.free()
-	# ── 撞墙 → 停驻 → 0.5s 后才爆(飞行中不炸)──
+	# ── 撞墙 -> 停驻 -> 0.5s 后才爆(飞行中不炸)──
 	var wall := StaticBody2D.new()
 	var shape := CollisionShape2D.new()
 	var rect := RectangleShape2D.new()
@@ -231,17 +231,17 @@ func _test_fuse() -> void:
 # ── 榴弹碰玩家:短引信(hit_fuse_time)+ 「首次碰撞决定引信时长、不刷新」的纪律 ──
 # 判定在 BulletBase._check_player_contact(两端同源:服务器/客户端视觉副本共用),
 # 权威的直接伤在 server/match_host.gd 的 _adjudicate_grenade(不在本 -s 冒烟覆盖范围,
-# 它要整局 MatchHost;这里钉的是引信侧)。
+# 它要整局 MatchHost;这里约束的是引信侧)。
 func _test_player_contact() -> void:
 	MazeGenerator.current_grid = []
-	# 场景值保底处理:本冒烟全程手写 0.4/0.15,若 grenade_bullet.tscn 被改成别的数,这里先报
+	# 场景值兜底保护:本冒烟全程手写 0.4/0.15,若 grenade_bullet.tscn 被改成别的数,这里先报
 	var scene = (load("res://scenes/weapons/grenade_bullet.tscn") as PackedScene).instantiate()
 	_check(is_equal_approx(float(scene.fuse_time), 0.4) \
 			and is_equal_approx(float(scene.hit_fuse_time), 0.15),
 			"grenade_bullet.tscn 引信值仍是 撞墙0.4s / 命中玩家0.15s")
 	scene.free()
 
-	# ① 飞行中碰到玩家 → 起 hit_fuse_time 短引信(而不是撞墙的 fuse_time)
+	# ① 飞行中碰到玩家 -> 起 hit_fuse_time 短引信(而不是撞墙的 fuse_time)
 	var p := StubPlayer.new()
 	p.global_position = Vector2(300, 200)
 	root.add_child(p)
@@ -267,7 +267,7 @@ func _test_player_contact() -> void:
 	_check(exploded, "短引信在 0.25s 内爆炸(明显早于撞墙的 0.4s)")
 	p.free()
 
-	# ② 视觉副本(apply_damage=false,对手端那份)按相同机制判定同样起短引信
+	# ② 视觉副本(apply_damage=false,对手端那份)按相同处理逻辑判定同样起短引信
 	var p2 := StubPlayer.new()
 	p2.global_position = Vector2(300, 200)
 	root.add_child(p2)
@@ -306,7 +306,7 @@ func _test_player_contact() -> void:
 	selfp.free()
 
 	# ④ 纪律:首次碰撞决定引信时长,之后不刷新 —— 已因撞墙起 0.4s 长引信的榴弹碰到玩家
-	#    **不会**缩短(直接伤是另一个独立的闩,不受此限,由 MatchHost 结算)。
+	#    不会缩短(直接伤是另一个独立的闩,不受此限,由 MatchHost 结算)。
 	var b2 = _make_bullet()
 	root.add_child(b2)
 	b2.set("fuse_time", 0.4)
@@ -335,7 +335,7 @@ func _test_non_explosive_default() -> void:
 			break
 	_check(enemy.hp == 50 - 5, "非爆炸弹直击走 apply_hit(武器 damage=5)")
 	enemy.free()
-	# 切枪后 source 失效:在途子弹用自带 damage/impact 保底处理仍造成伤害(回归)
+	# 切枪后 source 失效:在途子弹用自带 damage/impact 兜底保护仍造成伤害(回归)
 	var b3 = _make_bullet()
 	b3.set("explodes", false)
 	root.add_child(b3)

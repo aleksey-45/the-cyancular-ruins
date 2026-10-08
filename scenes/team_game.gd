@@ -125,7 +125,7 @@ func _ready() -> void:
 func _apply_peer_hues_or_team(payload: Dictionary) -> void:
 	var teams: Dictionary = payload.get("teams", {})
 	if teams.is_empty():
-		# 3v3 worker 的 `team_map()` 恒非空(队伍表由 `--teams` 显式传入),故这里到不了。
+		# 3v3 服务端的 `team_map()` 恒非空(队伍表由开局参数显式传入),故这里到不了。
 		# 真到这儿的话后果是 `_my_team` 恒 0 → **赢的局会被 HUD 报成输的**(见 `_apply_teams` 的注释),
 		# 故留一条痕而不是静默。
 		push_warning("match_sync: 3v3 载荷里没有 teams(队伍表没到 → HUD 判不出我方胜负)")
@@ -211,7 +211,7 @@ func _refresh_team_colors() -> void:
 #   它把"未知"当成了**队 2**,于是客户端与服务端对同一具身体放**不同的层**
 #   (服务端层 2 / 客户端幽灵体层 16),而两队掩码不同  ->  队 2 的玩家在服务端**会**被挡住、
 #   在客户端**不会**  ->  C2 每帧分歧。
-# - 今天这条在**生产路径上到不了**(3v3 worker 的 `team_map()` 恒非空),所以修它是
+# - 今天这条在**生产路径上到不了**(3v3 服务端的 `team_map()` 恒非空),所以修它是
 #   "消除一个静默不对称",不是修一个用户可见的 bug —— 别把它写成用户报的症状。
 func _ghost_layer_of(role: int) -> int:
 	match _team_of_role(role):
@@ -385,7 +385,7 @@ func _on_kill_event(killer: int, victim: int) -> void:
 
 
 # K = 自杀脱困:卡进墙/夹缝时主动放弃生命,走服务器权威 2s 复活(不计入任何人击杀,
-# 但按「不分死因」给对方队 +1)。-  worker 侧门控前置校验认 `_team_mode`(A 册收尾批接的)。
+# 但按「不分死因」给对方队 +1)。-  服务端门控前置校验认 `_team_mode`(A 册收尾批接的)。
 func _unhandled_input(event: InputEvent) -> void:
 	if _match_ended or _local == null:
 		return

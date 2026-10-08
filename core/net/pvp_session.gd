@@ -14,13 +14,13 @@ static var server_address: String = "127.0.0.1"   # 本地回环(EasyTier 隧道
 static var server_port: int = DEFAULT_PORT
 static var role: int = 1          # 1=P1(大乱斗里是第 N 人)。真读者多:出生点/副本/输入上报
 static var player_name: String = "Anon"   # 匹配界面输入的昵称(默认 Anon;头上显示;会话内不清)
-static var map_path: String = ""       # 服务器定图:worker 在 match_start 里下发,对局场景加载同名文件
+static var map_path: String = ""       # 服务器定图:服务端在 match_start 里下发,对局场景加载同名文件
 static var spawn: Vector2i = Vector2i(-1, -1)   # 本端出生点(match_sync 下发,与服务器同源)
 
 # ── 断线重连(2026-09-17)──
 # - 与本文件的其他字段一样:**加之前先 grep 确认有读者**。
-#   token      : 大厅生成、随 session_token 下发;claim 时报给 worker;重连时用来 reclaim
-#   worker_port: 客户端重连要直连**同一个端口**,不重新走大厅(局内自动重连那条路径)
+#   token      : 服务端生成、随 session_token 下发;claim 认领时上报;重连时用于 reclaim 恢复
+#   worker_port: 对局服务端口(历史命名保留以兼容既有协议与测试断言);局内自动重连时直连此端口
 static var token: String = ""
 static var worker_port: int = 0
 
@@ -36,7 +36,7 @@ static var rejoin: bool = false
 
 # 时间玩法(Beta,2026-09-28 P2):本局是否从主菜单「Beta」页进来。语义上有两重:
 # ①大厅侧——beta 房与普通房**互不可进**(创建带 beta 标,加入按本标校验,列表按本标过滤);
-# ②对局侧——worker/宿主据此启用时间玩法(TimeRules,见 PvP 时间玩法计划)。
+# ②对局侧——服务端权威宿主据此启用时间玩法(TimeRules,见 PvP 时间玩法计划)。
 # - 放 reset() 里复位:主菜单那颗联机入口走 reset(),天然把它清掉。
 static var beta_mode := false
 
@@ -117,7 +117,7 @@ static func note_room(code: String, mode: String) -> void:
 #   原先的 `PvpSession.royale` 已删(两处赋 true、全仓无读)。
 
 # ── 「开局三载荷的跨场景交接」已删除(2026-09-12)──
-# 原先 worker 在 match_start 同一批 flush 里**推** peer_info/peer_hues/match_options,而客户端
+# 早期架构在 match_start 同一批 flush 里**推** peer_info/peer_hues/match_options,而客户端
 # 那一刻正在帧末切场景 → 订阅方一个都不存在 → 静默丢失(自检 B2:对手颜色不生效 / 昵称表空到
 # 连自己头顶 ID 都建不出来 / 禁用武器校验逻辑未生效)。当时的解法是大厅先接住、缓存成本文件的
 # pending_* 静态字段、新场景进场景时取用。

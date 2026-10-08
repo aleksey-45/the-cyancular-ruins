@@ -44,7 +44,7 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 		return
 	_base_grid = MazeGenerator.copy_grid(grid)
 	TileDefs.on_destroyed = Callable(self, "_on_tile_destroyed")
-	# cyrm v4(B18):破坏已下沉 16px 子格 —— worker 必须连**子格**回调,否则客户端永远收不到
+	# cyrm v4(B18):破坏已下沉 16px 子格 —— 服务端宿主必须连**子格**回调,否则客户端永远收不到
 	# 破坏瓦片事件(幽灵墙:服务器碰撞已消、客户端还在渲染/预测碰撞)。格级 on_destroyed 保留,
 	# 供 _debug_destroy_tile / 复位那条 damage_tile 老路径。
 	TileDefs.on_sub_destroyed = Callable(self, "_on_sub_destroyed")
@@ -270,7 +270,7 @@ func _physics_process(delta: float) -> void:
 # - 为什么走 `TileDefs.damage_tile` 而不是直接改 grid:那样才会经 `TileDefs.on_destroyed`
 #   → `MatchCombat._on_tile_destroyed` → `_rpc_all("tile_destroyed", …)`,也就是
 #   **与真爆炸完全同一条广播链**(重连探针的阶段 7 要验的正是这条链 + 客户端的状态补充同步)。
-# - 那条 print 是探针的"非无效操作"证据:worker 是**独立 OS 进程**(探针拿不到它的 `_host`),
+# - 那条 print 是探针的"非无效操作"证据:探针进程拿不到外部对局内部的 `_host`,
 #   日志是唯一能读到它内部动作的通道;没有它,"客户端那格是空气"可以靠"那格本来就是空气"骗过。
 func _debug_destroy_tile(delta: float) -> void:
 	if MatchState.test_destroy_cell.x < 0:

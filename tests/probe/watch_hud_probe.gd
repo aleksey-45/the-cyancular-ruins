@@ -71,7 +71,7 @@ func _run() -> void:
 	if center.text != expect_center:
 		_fail("表心短时余额不符(显示 %s 期望 %s)" % [center.text, expect_center])
 
-	# ② 扣减滚动:花 250 → 20 帧内应显示到位(0.2s ≈ 12 帧)
+	# ② 扣减滚动:花 250 -> 20 帧内应显示到位(0.2s ≈ 12 帧)
 	acc.spend(2.0, 125.0)
 	var target := int(acc.balance)
 	await _wait_ms(300)
@@ -110,8 +110,8 @@ func _run() -> void:
 	if not center.text.begins_with("-"):
 		_fail("贷款中表心应显示负数(现 %s)" % center.text)
 
-	# ⑥ Sfx 全局音调随透支深度上抬;透支达到上限锁定 → 怀表红闪
-	acc.spend(0.5, 100.0)   # 借满 100 → 锁定
+	# ⑥ Sfx 全局音调随透支深度上抬;透支达到上限锁定 -> 怀表红闪
+	acc.spend(0.5, 100.0)   # 借满 100 -> 锁定
 	await _wait_ms(150)
 	if Sfx.pitch_mult <= 1.0:
 		_fail("贷款中 Sfx 音调未上抬(%.2f)" % Sfx.pitch_mult)

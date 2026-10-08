@@ -1,33 +1,33 @@
 extends Node
 
-# 大乱斗 C2 探针的**观察者**(客户端子进程用;见 royale_c2_probe.gd 文件头)。
-# 挂在 get_tree().root 上:换场(真 mp_lobby → 真 royale_game)不会把它带走 →
-# 它能在**换场之后**读真 royale_game 实例的 C2 状态。
+# 大乱斗 C2 探针的观察者(客户端子进程用;见 royale_c2_probe.gd 文件头)。
+# 挂在 get_tree().root 上:换场(真 mp_lobby -> 真 royale_game)不会销毁该节点（跨场景保持驻留） -> 
+# 它能在换场之后读真 royale_game 实例的 C2 状态。
 #
 # 流程:
-#   0/1  驱动实际大厅(建房 / 加入房间),等换场到真 royale_game;
-#   2    等对局进 PLAYING → c1 按一次 K(自杀脱困,走游戏自己的 _unhandled_input);
-#   3/4  等「自己倒地」→ 等「自己复活」(服务器 2s 后复活并瞬移回出生点 —— 这次瞬移
+#   0/1  驱动真实大厅服务(建房 / 加入房间),等换场到真 royale_game;
+#   2    等对局进 PLAYING -> c1 按一次 K(自杀脱困,走游戏自己的 _unhandled_input);
+#   3/4  等「自己倒地」 -> 等「自己复活」(服务器 2s 后复活并瞬移回出生点 —— 这次瞬移
 #        客户端不可预测,正是要 reconcile 去收敛的那次服务器外部事件);
 #   5    静置 SETTLE 秒后断言。
 #
 # 断言分两组:
-# ── B 组 · 运行时(读**生产对象**的真状态):
+# ── B 组 · 运行时(读生产对象的真状态):
 #   - _rollback 存在,且 last_applied() ≥ MIN_LAST_APPLIED  —— 接线在推进(seq 与 note_post_step 都通了)
 #   - c1:rollback_count() ≥ 1                              —— 复活那次外部事件确实触发了回滚
-#   - 本地玩家与**权威快照**收敛:位置 ≤ POS_TOL 且倒地态一致  —— reconcile 真的在收敛(删掉即红)
-#   - c1:观察到「倒地 → 复活」这条链走完
+#   - 本地玩家与权威快照收敛:位置 ≤ POS_TOL 且倒地态一致  —— reconcile 真的在收敛(缺失该逻辑将直接触发断言失败)
+#   - c1:观察到「倒地 -> 复活」这条链走完
 # ── A 组 · 源码级(生产目录零残留 + 一条禁区):
 #   - 不存在 server_rendered / apply_server_snapshot / LOCAL_PREDICTION_ENABLED(设计 §0「彻底删干净」)
-#   - 持有本地玩家状态的客户端文件(royale_game / pvp_client,**及合并后的共享基类**)
+#   - 持有本地玩家状态的客户端文件(royale_game / pvp_client,及合并后的共享基类)
 #     一律不得消费 round_state 的 `alive` —— 理由与扫描对象清单见 _check_no_alive_consume
 #
 # - 关于「K 自杀是不是广播的」——A 组第 2 条就是为了回答它:
-#   - **请求**不广播:`NetBusExt.rpc_id(1, "suicide_request")` 定向发给 worker,无回执;
-#   - **"谁死了/谁活着"确实广播**:倒地边沿 → `_broadcast_round_state()`,载荷带 `alive`({role: bool})
+#   - 请求不广播:`NetBusExt.rpc_id(1, "suicide_request")` 定向发给 worker,无回执;
+#   - "谁死了/谁活着"确实广播:倒地边沿 -> `_broadcast_round_state()`,载荷带 `alive`({role: bool})
 #     与 `deaths` —— 客户端读得到,今天唯一消费者是排行榜(ui/royale_hud.gd)。
-#   - 但 C2 下**不许**把它接去写本地玩家(第二条权威入口 + 并不更快),见断言的理由。
-#   本探针的测试有效性正依赖这一点:若消费了 alive,删掉 reconcile 后本地玩家仍会被 alive 拉成"活着",
+#   - 但 C2 下不许把它接去写本地玩家(第二条权威入口 + 并不更快),见断言的理由。
+#   本探针的测试有效性正依赖这一点:若消费了 alive,删掉 reconcile 后本地玩家仍会被 alive 强制覆盖为"活着",
 #   那条"分歧不收敛"的反证就失去信号。
 
 const RESULT_PREFIX := "royale_c2_probe_"
@@ -35,24 +35,24 @@ const GO_FILE := "user://royale_c2_probe_go.txt"
 const DEADLINE := 75.0
 const SETTLE := 1.5              # 复活后静置(等 reconcile 收敛;快照 60Hz,1.5s 绰绰有余)
 const MIN_LAST_APPLIED := 60     # 接线在推进的下限(换场到断言约 6s ≈ 360 tick,留 6 倍余量)
-const POS_TOL := 100.0           # 收敛判据(px):快照滞后一 tick ≈ 11.7px,100 留足余量
-# - 「两边必须一起退」的等待上限(见 _wait_peer_then_quit)。对端挂死时不能干等到底。
+const POS_TOL := 100.0           # 收敛判定条件(px):快照滞后一 tick ≈ 11.7px,100 留足余量
+# - 「两边必须一起退」的等待上限(见 _wait_peer_then_quit)。对端挂死时不能阻塞等待到底。
 const PEER_WAIT := 25.0
 
 # ── A 组:源码级(与运行时读数无关,但两支一起跑省一次进程)──
-# 判据一律取**去注释视图**(注释不是代码:一句"这里以前调过 set_server_rendered"的注释既不能
-# 让"在位"类断言变绿,也不能让"零残留"类断言变红)。
+# 判定条件一律取去注释视图(注释不是代码:一句"这里以前调过 set_server_rendered"的注释既不能
+# 让"接口已声明且生效"类断言变绿,也不能让"零残留"类断言变红)。
 const PROD_DIRS := ["res://core", "res://scenes", "res://server", "res://ui"]
-const MIN_PROD_FILES := 40   # 扫到的源文件数下限:防"扫描坏了 → 零命中 = 测试漏检"
+const MIN_PROD_FILES := 40   # 扫到的源文件数下限:防"扫描坏了 -> 零命中 = 测试漏报"
 # 碎片拼接(与 kh_l6_probe 同一条纪律):别让针的字面量在自扫时自伤。
 const N_SSR := "set_server" + "_rendered"
 const N_LOCAL_PRED := "LOCAL_PREDICTION" + "_ENABLED"
 const N_APPLY_SNAP := "apply_server" + "_snapshot("
-# round_state 载荷里那个键的字面量(`"alive"`,带引号)。**切在词中间** —— 否则本文件自己的
+# round_state 载荷里那个键的字面量(`"alive"`,带引号)。切在词中间 —— 否则本文件自己的
 # 源码里就出现了要找的那串字面量(虽然 tests/ 不在扫描根里,纪律照旧)。
 const N_ALIVE_KEY := "\"ali" + "ve\""
 
-# 本探针自当大厅时客户端该连的地址。-  与 `tests/probe/royale_c2_probe.gd` 的同名常量**必须同值**
+# 本探针自当大厅时客户端该连的地址。-  与 `tests/probe/royale_c2_probe.gd` 的同名常量必须同值
 # (那边用它拨地址,这边用它核对"确实连上了本探针的大厅,而不是云服")。
 const LOBBY_ADDR := "127.0.0.1"
 
@@ -63,20 +63,20 @@ var _t := 0.0
 var _stage := 0
 var _stage_t := 0.0
 var _game: Node = null           # 换场后的真 royale_game 实例
-var _own_snap: Dictionary = {}   # 最新世界包里**自己**那一份(服务器权威渲染字段)
+var _own_snap: Dictionary = {}   # 最新全局世界快照包里自己那一份(服务器权威渲染字段)
 var _round_state := -1
 var _saw_downed := false
 var _respawned := false
 var _logged_once: Dictionary = {}
-var _snap_count := 0             # 收到世界包的计数(心跳用:区分"客户端没在跑"与"快照不来了")
+var _snap_count := 0             # 收到全局世界快照包的计数(心跳用:区分"客户端没在跑"与"快照不来了")
 var _hb_t := 0.0
 var _quitting := false           # 已写结果、正在等对端也写完(见 _wait_peer_then_quit)
 
 
 func _ready() -> void:
 	_log("观察者就绪(role=%s);真大厅实例=%s" % [who, str(lobby != null)])
-	# 世界包里**自己**那一份 = 服务器权威(canonical pos / downed / hp)。C2 下客户端不再消费它,
-	# 但作为**判据的地面真值**它正好:拿它和本地玩家的实际状态比,就知道收敛没收敛。
+	# 全局世界快照包里自己那一份 = 服务器权威(canonical pos / downed / hp)。C2 下客户端不再消费它,
+	# 但作为判定条件的地面真值它正好:拿它和本地玩家的实际状态比,就知道收敛没收敛。
 	NetBus.local_snapshot_world.connect(func(snap: Dictionary) -> void:
 		_snap_count += 1
 		var players_snap: Dictionary = snap.get("players", {})
@@ -87,12 +87,12 @@ func _ready() -> void:
 		_round_state = int(data.get("state", -1)))
 
 
-# 子进程的 stdout 不会被父进程继承(Windows CreateProcess 不继承句柄)→ 落盘一份,
+# 子进程的 stdout 不会被父进程继承(Windows CreateProcess 不继承句柄) -> 落盘一份,
 # 父进程在失败/超时时把它打印输出,否则客户端子进程里发生了什么完全看不见。
 func _log(msg: String) -> void:
 	print("PROBE[%s]: %s" % [who, msg])
 	var p := "user://%s%s.log" % [RESULT_PREFIX, who]
-	# READ_WRITE 不会创建文件(文件不存在时 open 直接返回 null)→ 首次落盘用 WRITE 建出来
+	# READ_WRITE 不会创建文件(文件不存在时 open 直接返回 null) -> 首次落盘用 WRITE 建出来
 	var fmode := FileAccess.READ_WRITE if FileAccess.file_exists(p) else FileAccess.WRITE
 	var f := FileAccess.open(p, fmode)
 	if f != null:
@@ -145,19 +145,19 @@ func _process(delta: float) -> void:
 				_assert()
 
 
-# ── 阶段 0:等实际大厅连上大厅服 → c1 建房 / c2 等 GO 文件后加入 ──
+# ── 阶段 0:等真实大厅服务连上大厅服 -> c1 建房 / c2 等 GO 文件后加入 ──
 func _stage_lobby() -> void:
 	if lobby == null or not is_instance_valid(lobby):
 		_log_once("等真大厅实例挂上(add_child 被推迟到帧末)")
 		return
 	if not bool(lobby.get("_connected")):
 		_log_once("等大厅连接(_connected=false)")
-		return   # 实际大厅面板自己会连(`_ready` 的 `_request_list` 按 `PvpSession.server_address`)
-	# 注意： 守卫:连上的必须是**本探针的大厅**,不能是云服。生产默认地址就是云
+		return   # 真实大厅服务面板自己会连(`_ready` 的 `_request_list` 按 `PvpSession.server_address`)
+	# 注意事项：防御性校验:连上的必须是本探针的大厅,不能是云服。生产默认地址就是云
 	#   (`PvpSession.server_address` 初值 120.53.107.140),而本探针是**实例化真
 	#   `mp_lobby.tscn` 让它自己连** —— `royale_c2_probe._run_client` 漏了那句地址预置时,
-	#   两端会**静默连云**(还会在云上那台真服务器上真的建房):日志里满是 c1/c2 自己的
-	#   「已连接服务器」(它们确实连上了,只是连的是**别人**),而编排器一条 `玩家连入` 都没有
+	#   两端会静默连云(还会在云上那台真服务器上真的建房):日志里满是 c1/c2 自己的
+	#   「已连接服务器」(它们确实连上了,只是连的是别人),而编排器一条 `玩家连入` 都没有
 	#    ->  只剩一个 90 秒超时,看着像"大厅坏了"。当场明确提示,别让下一个人再从超时逆推。
 	if String(lobby.get("_connected_addr")) != LOBBY_ADDR:
 		_finish(false, "本端连的是 %s,不是本探针大厅 %s —— 检查 royale_c2_probe._run_client 的地址预置"
@@ -186,7 +186,7 @@ func _stage_lobby() -> void:
 	_stage_t = 0.0
 
 
-# ── 阶段 1:等换场(实际大厅 → 真 royale_game)──
+# ── 阶段 1:等换场(真实大厅服务 -> 真 royale_game)──
 func _stage_wait_game() -> void:
 	var cs := get_tree().current_scene
 	if cs == null or not _is_royale_game(cs):
@@ -204,8 +204,8 @@ func _stage_playing() -> void:
 		_finish(false, "royale_game 实例失效")
 		return
 	if _game.get("_rollback") == null:
-		# 接线没上 → 不必等 PLAYING:这一条本身就是本批要找的红。顺带把 A 组也跑掉 ——
-		# "先红"那一步一次就能看到**全部**缺什么,而不是挤牙膏。
+		# 接线没上 -> 不必等 PLAYING:这一条本身就是本批要找的红。顺带把 A 组也跑掉 ——
+		# "先红"那一步一次就能看到全部缺什么,而不是挤牙膏。
 		var early: Array = ["royale_game 没有 _rollback 字段(C2 没接线)"]
 		_check_residue(early)
 		_check_no_alive_consume(early)
@@ -219,7 +219,7 @@ func _stage_playing() -> void:
 		_stage = 5
 		_stage_t = 0.0
 		return
-	# - 走**游戏自己的** K 键路径(不直接发 RPC):顺带把「_unhandled_input 的 K 分支还在」也验了。
+	# - 走游戏自己的 K 键路径(不直接发 RPC):顺带把「_unhandled_input 的 K 分支还在」也验了。
 	var ev := InputEventKey.new()
 	ev.pressed = true
 	ev.physical_keycode = KEY_K
@@ -270,10 +270,10 @@ func _assert() -> void:
 	else:
 		var la: int = int(rb.last_applied())
 		if la < MIN_LAST_APPLIED:
-			# ⚠ 它只管「note_post_step 没被调」这一件事。**管不到输入包缺 seq** ——
+			# - 它只管「note_post_step 没被调」这一件事。管不到输入包缺 seq ——
 			#   note_post_step 用的是客户端自己的 _prev_sent_seq,与包里带不带 seq 无关
 			#   (反证二实测:去掉 "seq" 后 last_applied 照样 364)。缺 seq 由下面的
-			#   rollback_count / 收敛两条抓(服务器 _ack_seq 恒 0 → 永不回滚 → 不收敛)。
+			#   rollback_count / 收敛两条抓(服务器 _ack_seq 恒 0 -> 永不回滚 -> 不收敛)。
 			problems.append("last_applied=%d < %d(note_post_step 没接上 → 预测整态没进 ring)"
 					% [la, MIN_LAST_APPLIED])
 		if who == "c1":
@@ -298,10 +298,10 @@ func _assert() -> void:
 					% [str(snap_downed), str(local.is_downed())])
 		if who == "c1" and not _respawned:
 			problems.append("没观察到「倒地 → 复活」这条链走完(_saw_downed=%s)" % str(_saw_downed))
-	# - 地面武器:客户端必须**真的收到开局那批**。
+	# - 地面武器:客户端必须真的收到开局那批。
 	#   开局那批走 `match_sync` 进场拉取(不走 weapon_spawned 推送 —— 推送会撞上
-	#   "客户端正在帧末切场景 → 订阅方还不存在 → 静默丢失")。这条断言盖的正是那条链:
-	#   服务器铺了 → 载荷带了 → 客户端建出节点了。只验"没报错"是漏的 —— 丢光了也不报错。
+	#   "客户端正在帧末切场景 -> 订阅方还不存在 -> 静默丢失")。这条断言盖的正是那条链:
+	#   服务器铺了 -> 载荷带了 -> 客户端建出节点了。只验"没报错"是漏的 —— 丢光了也不报错。
 	var pk = _game.get("_pickup_nodes") if _game != null else null
 	if pk == null or not (pk is Dictionary) or (pk as Dictionary).is_empty():
 		problems.append("客户端一件地面武器都没收到(match_sync 的 ground_weapons 没到/没建出节点)")
@@ -315,14 +315,14 @@ func _assert() -> void:
 	_finish(problems.is_empty(), detail)
 
 
-# ══ A 组 · 源码级 ═══════════════════════════════════════════════════
+# ══ A 组 · 源码级 ──
 
 # ── A①:生产目录零残留 ──
-# 设计 §0 的删除裁定是「**彻底删干净**:终态只有一套联机模型」。这三样是旧路径的全部构件:
+# 设计 §0 的删除裁定是「彻底删干净:终态只有一套联机模型」。这三样是旧路径的全部构件:
 #   server_rendered / set_server_rendered / apply_server_snapshot —— 服务器渲染一族(§3A)
 #   LOCAL_PREDICTION_ENABLED —— 1v1 那条"翻个常量就回落"的双路开关(§3B)
-# 残留**不一定报错**:"字段还在但没人用"完全是静默的,而它正是"还有第二套模型"的存在形式。
-# 故做成无条件判据。-  反证已实跑:在 royale_game 里加回一行 set_server_rendered → 红。
+# 残留不一定报错:"字段还在但没人用"完全是静默的,而它正是"还有第二套模型"的存在形式。
+# 故做成无条件判定条件。-  反证已实跑:在 royale_game 里加回一行 set_server_rendered -> 红。
 func _check_residue(problems: Array) -> void:
 	var files := _scan_prod()
 	if files.size() < MIN_PROD_FILES:
@@ -338,25 +338,25 @@ func _check_residue(problems: Array) -> void:
 	_log("A①:扫了 %d 个生产源文件,零残留 %s" % [files.size(), "✓" if hits == 0 else "✗(%d 处)" % hits])
 
 
-# ── A②:不得消费 round_state 的 `alive`(一条**禁区**,理由见下)──
+# ── A②:不得消费 round_state 的 `alive`(一条禁区,理由见下)──
 # 服务器在倒地边沿会广播 round_state,载荷里带 `alive`({role: bool})—— 也就是说"你死了/
-# 你活了"这件事**是广播的**,客户端读得到(今天唯一消费者是排行榜 ui/royale_hud.gd)。
-# - C2 下**不许**把它接去写本地玩家,两条理由:
-#   ① 那是**第二条权威入口**:C2 的纪律是权威状态只经 on_authoritative → restore_state + 重放
+# 你活了"这件事是广播的,客户端读得到(今天唯一消费者是排行榜 ui/royale_hud.gd)。
+# - C2 下不许把它接去写本地玩家,两条理由:
+#   ① 那是第二条权威入口:C2 的纪律是权威状态只经 on_authoritative -> restore_state + 重放
 #      进来。绕过它的"顺手补上"正是被删掉的那条旧路径的写法,会重新引入橡皮筋;
-#   ② 它**并不更快** —— 同样是服务器往返广播,只是换了条通道(反过来说:它连"更快"这个
+#   ② 它并不更快 —— 同样是服务器往返广播,只是换了条通道(反过来说:它连"更快"这个
 #      唯一可能的理由都没有)。
-# 本探针的**测试有效性也依赖这条**:若消费了 alive,删掉 reconcile 后本地玩家仍会被 alive 拉成
-# "活着" → 那条"分歧不收敛"的反证就失去信号。
-# 判据取**全文零出现**这个键。若日后真要在 royale_game 里用 alive 做别的事(观战/结算),
-# 把判据改成"不得写进 _local"的形态并同步改本注释 —— 别直接删掉这条门。
+# 本探针的测试有效性也依赖这条:若消费了 alive,删掉 reconcile 后本地玩家仍会被 alive 强制覆盖为
+# "活着" -> 那条"分歧不收敛"的反证就失去信号。
+# 判定条件取全文零出现这个键。若日后真要在 royale_game 里用 alive 做别的事(观战/结算),
+# 把判定条件改成"不得写进 _local"的形态并同步改本注释 —— 别直接删掉这条门。
 #
-# - 扫描对象 = **所有持有本地玩家状态的客户端文件**,且「必须在位」(2026-09-14 修):
+# - 扫描对象 = 所有持有本地玩家状态的客户端文件,且「必须接口已声明且生效」(2026-09-14 修):
 #   原先只扫 royale_game.gd 一个名字。一旦「客户端事件消费层合并」把这段搬进共享基类,
-#   该文件里自然就没有了 → 判据零命中 → **恒绿**。注意它不是变红 —— 所以没人会去看它,
+#   该文件里自然就没有了 -> 匹配条件零命中 -> 产生静默假阳性通过。由于测试未报错失败，缺陷极易被忽略，
 #   测试有效性就这么静默消失了。它原只防了"读不到源文件",没防"代码搬走了"。
-#   现在两条都防:①每个候选文件都必须含 C2 接线标记才算"在位"(不负责任的文件跳过);
-#   ②**一个在位的都没有**就判红(说明消费层搬了家,该来改这张表)。
+#   现在两条都防:①每个候选文件都必须含 C2 接线标记才算"接口已声明且生效"(不负责任的文件跳过);
+#   ② 若无任何符合条件的候选文件，则判定断言失败（表明事件消费层已迁移，需同步维护本白名单）。
 #   - 2026-09-14:合并批次已落地(基类 = A2_BASE),它已在 A2_OWNERS 里。
 # 共享基类路径(单列常量:列表与失败消息共用一处,别写两遍字面量)
 const A2_BASE := "res://scenes/pvp_match_client.gd"
@@ -364,9 +364,9 @@ const A2_OWNERS := [
 	"res://scenes/" + "royale" + "_game.gd",
 	"res://scenes/pvp_game.gd",
 	# - 2026-09-14:共享基类已落地(scenes/pvp_match_client.gd,7 个公共函数体搬了进去)。
-	#   它当前**还不含** C2 接线(接线仍在两个子类各自的 _ready 里),故按 A2_WIRING 判据会被
-	#   跳过、在位数仍是 2 —— 这正是要的:等后续把接线也搬进来,这道门**自动**把它算成持有者,
-	#   不必再回来改一次(当年 A② 只盯 royale_game.gd 一个文件名,搬走就恒绿)。
+	#   它当前还不含 C2 接线(接线仍在两个子类各自的 _ready 里),故按 A2_WIRING 判定条件会被
+	#   跳过、接口已声明且生效数仍是 2 —— 这正是要的:等后续把接线也搬进来,这道门自动把它算成持有者,
+	#   不必再回来改一次（此前规则仅匹配单一文件名，代码迁移后容易产生假阳性漏洞）。
 	A2_BASE,
 ]
 # C2 接线标记:含它才算"这个文件持有本地玩家状态"、才负 A② 的责任。
@@ -379,8 +379,8 @@ func _check_no_alive_consume(problems: Array) -> void:
 	for path in A2_OWNERS:
 		var code := ScanUtil.code_view(ScanUtil.read(path))
 		if code.is_empty():
-			# 读不到源文件时**不能**判绿:那正是"零命中 = 测试漏检"的形状
-			problems.append("读不到 %s → A② 无从判定(不判绿)" % path)
+			# 读取源文件失败时不能视为测试通过：避免零命中导致测试假阳性漏报
+			problems.append("读不到 %s → A② 无法读取源文件(断言失败)" % path)
 			continue
 		if not code.contains(A2_WIRING):
 			continue   # 不持有本地玩家状态的文件不负本条责任(例如已被合并拆空)
@@ -399,12 +399,12 @@ func _check_no_alive_consume(problems: Array) -> void:
 
 # ── 源码扫描的小工具 ──
 # 2026-09-15(阶段 6.1):本文件原先自带 `_read` / `_code_view` / `_strip_line_comment` 三份
-# **第 6 处副本**(计划只数了 5 处 —— 全在 `kh_l*_probe` 族里)。三份的**函数体**与
-# `tests/lib/scan_util.gd` 逐字相同(只有 `_read` 少一条 `ResourceLoader.exists` 前置守卫,
+# 第 6 处副本(计划只数了 5 处 —— 全在 `kh_l*_probe` 族里)。三份的函数体与
+# `tests/lib/scan_util.gd` 逐字相同(只有 `_read` 少一条 `ResourceLoader.exists` 前置防御性校验,
 # 对 .gd/.tscn 等价),故直接改指 ScanUtil,不再保留本地副本 —— 同一算法的两个来源正是
 # "改了这处忘了那处"的漂移温床。
-# - 只搬这三个**纯函数**:本文件的 `_finish(ok, msg, …)` 与 ProbeBase 的 `_finish()` **签名不同**
-# (观察者是被 probe 启动的子进程,判成功败要靠消息回传),所以**没有**改成 extends ProbeBase。
+# - 只搬这三个纯函数:本文件的 `_finish(ok, msg, …)` 与 ProbeBase 的 `_finish()` 签名不同
+# (观察者是被 probe 启动的子进程,判成功败要靠消息回传),所以没有改成 extends ProbeBase。
 
 
 func _scan_prod() -> Dictionary:
@@ -439,16 +439,16 @@ func _finish(ok: bool, msg: String) -> void:
 	await _wait_peer_then_quit(ok)
 
 
-# - 不能写完结果就退:**对局是两个人的**。任一方先退 → 服务器 `online < 2` → 立即终局
-#   (RoyaleHost.mark_disconnected → _finish_match → MATCH_OVER);而 MATCH_OVER 期间
-#   `_match_round_tick` 的 PLAYING 分支不再跑 → **另一方正在等的「2s 复活」永远不会发生**。
-#   本探针第一版实测就踩到了:spawned 模式下 c2 断言完(PLAYING+1.5s)先退 → c1 卡在"等复活"
-#   → -  2026-09-21 修订说明:当年那条链的最后一环是「6s 后 MATCH_OVER 的退场定时器把场景一换,
-#     挂在 root 上的本观察者被摘出树 → `_process` 停 → 结果文件没写」。那条**自动换场已随结算页
-#     批次删除**(改成玩家自己退) ->  那一环不再存在;但下面那条纪律**仍要守**、且理由更强了:
+# - 不能写完结果就退:对局是两个人的。任一方先退 -> 服务器 `online < 2` -> 立即终局
+#   (RoyaleHost.mark_disconnected -> _finish_match -> MATCH_OVER);而 MATCH_OVER 期间
+#   `_match_round_tick` 的 PLAYING 分支不再跑 -> 另一方正在等的「2s 复活」永远不会发生。
+#   本探针第一版实测就踩到了:spawned 模式下 c2 断言完(PLAYING+1.5s)先退 -> c1 卡在"等复活"
+# -> -  2026-09-21 修订说明:当年那条链的最后一环是「6s 后 MATCH_OVER 的退场定时器把场景一换,
+#     挂在 root 上的本观察者被摘出树 -> `_process` 停 -> 结果文件没写」。那条**自动换场已随结算页
+#     批次删除(改成玩家自己退) ->  那一环不再存在;但下面那条纪律仍要守**、且理由更强了:
 #     现在没有任何东西会自动换场,谁先退谁就把对方留在 MATCH_OVER 之后的静止世界里 ——
-#     两边都**先写好结果**再等对面,是唯一不依赖退出时序的收尾方式。
-#   故:两边都**先写好结果**再等对面也写好,然后一起退 —— 退出顺序不再由胜负时序决定。
+#     两边都先写好结果再等对面,是唯一不依赖退出时序的收尾方式。
+#   故:两边都先写好结果再等对面也写好,然后一起退 —— 退出顺序不再由胜负时序决定。
 #   (这也是大乱斗的既有性质,不是 bug:剩余 <2 人即终局。)
 func _wait_peer_then_quit(ok: bool) -> void:
 	_quitting = true

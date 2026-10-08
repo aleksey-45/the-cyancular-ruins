@@ -1975,7 +1975,7 @@ EOF
 
 ## 收尾
 
-- [ ] **跑一遍完整冒烟确认全绿**
+- [ ] **跑一遍完整冒烟确认全部通过**
 
 Run: `cd level_editor && node smoke.js`
 Expected: 末行 `SMOKE OK`,退出码 0

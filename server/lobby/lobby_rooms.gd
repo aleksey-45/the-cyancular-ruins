@@ -318,22 +318,21 @@ func on_peer_left(peer_id: int) -> void:
 		#   大厅,拆了它就再也不会出现在列表里 —— "看得见"与"回局"两件事都要求它活到对局结束。
 		#   回收改由 `RoomManager._reclaim_finished_matches` 按"**worker 进程还在不在**"判(精确)。
 		# - 这里**不再发**"配对已取消(对手离开)"那句提示:房没有被取消,那句话会是假的。
-		#   真出问题(对手根本没连上 worker)由客户端自己的 12s 转连保底处理 / 25s claim 保底处理收尾。
-		# - 代价照实登记(见设计 §2.4):双方都在 go_match 后立刻消失时,那一个 worker 与那一个
-		#   端口会白占到 2h 超龄清扫为止;玩家不会卡住。
+		#   真出问题(对手根本没连上对局)由客户端自己的 12s 转连保底处理 / 25s claim 保底处理收尾。
+		# - 代价照实登记(见设计 §2.4):双方都在 go_match 后立刻消失时,该会话与端口会占用至超龄清扫为止;玩家不会卡住。
 		if room.started:
 			continue
 		if room.players.is_empty():
-			teardown_room(room)   # 延迟归还端口(worker 会自己退;见 WORKER_PORT_REUSE_DELAY)
-	# 大乱斗房:掉线即离房(未开局的空房才关闭;房主掉线转移;开局后成员转连 worker 断开大厅属正常流转)
+			teardown_room(room)   # 延迟归还端口(会话结束自动退出;见 WORKER_PORT_REUSE_DELAY)
+	# 大乱斗房:掉线即离房(未开局的空房才关闭;房主掉线转移;开局后成员转连对局断开大厅属正常流转)
 	for rcode in royale_rooms.keys():
 		var rr: RoyaleRoom = royale_rooms[rcode]
 		if not rr.players.has(peer_id):
 			continue
 		rr.players.erase(peer_id)
 		rr.player_role.erase(peer_id)
-		# - 对局中(`in_match`)的房**不拆**(2026-09-21):成员转连 worker 时会全部断开大厅,
-		#   拆了就再也不会出现在列表里。回收改由 `_reclaim_finished_matches` 按"worker 进程还在不在"判。
+		# - 对局中(`in_match`)的房**不拆**(2026-09-21):成员转连对局会话时会全部断开大厅,
+		#   拆了就再也不会出现在列表里。回收改由 `_reclaim_finished_matches` 按会话活性判。
 		#   - 这里**不再发**那句"配对已取消"式的提示(与 1v1 相同机制理由:房没有被取消)。
 		if rr.in_match:
 			continue
@@ -345,20 +344,20 @@ func on_peer_left(peer_id: int) -> void:
 			if rr.host_peer == peer_id:
 				rr.host_peer = rr.players[0]
 				print("大乱斗房间 %s 房主移交 → peer %d" % [rcode, rr.host_peer])
-			# - 已开局的房**不广播等待室状态**(既有理由:成员正在转连 worker,发给它们必然踩
+			# - 已开局的房**不广播等待室状态**(既有理由:成员正在转连对局,发给它们必然踩
 			#   "max channels: 0" 且包丢)。这一条 `if` 现在永远为真(in_match 已在上面 continue),
 			#   但**保留**它:它是那件事的守卫,不是死代码 —— 删了会让后来者以为"开局后也可以广播"。
 			if not rr.in_match:
 				_broadcast_royale_state(rr)
-	# 3v3 房:与大乱斗逐字相同机制(掉线即离房;空房关闭;房主掉线转移;开局后成员转连 worker 断开大厅
+	# 3v3 房:与大乱斗逐字相同机制(掉线即离房;空房关闭;房主掉线转移;开局后成员转连对局断开大厅
 	# 属正常流转)。-  **这一段不在 brief 的代码块里,但没有它 3v3 房会漏两处**:
 	#   ① 等待期有人关掉客户端(或踢网线)→ 该 peer 永久留在 `players` 里,房间列表显示幽灵人数、
 	#      `host_peer` 可能指向死人 → **这个房再也不可能凑齐 6 人开局**,也没人认领;
-	#   ② 开局后 6 人转连 worker 会**全部**触发本函数 → 那时若不摘人,`players` 会一直显示 6 个
+	#   ② 开局后 6 人转连对局会**全部**触发本函数 → 那时若不摘人,`players` 会一直显示 6 个
 	#      早已不在大厅的 peer(列表人数造假),`host_peer` 也可能指向死人。
 	# - 2026-09-21 订正:本条原先写的是「若这里不摘房,worker_port 直到 sweep 的 2h 超龄才归还」
 	#   —— 房现在是**刻意不拆**的(对局中的房必须活到对局结束,见下面那条 `if tr.in_match`,
-	#   否则"看得见"与"回局"都无从谈起),端口归还改由回收梯按 **worker 进程活性**判(设计 §2.4)。
+	#   否则"看得见"与"回局"都无从谈起),端口归还改由回收梯按会话活性判(设计 §2.4)。
 	#   本循环剩下的职责是 ①② 里的"摘人/转移房主",不是"拆房"。
 	for tcode in team_rooms.keys():
 		var tr: TeamRoom = team_rooms[tcode]
@@ -371,14 +370,14 @@ func on_peer_left(peer_id: int) -> void:
 			if not tr.player_role.values().has(int(r)):
 				tr.team_of.erase(r)
 		if tr.in_match:
-			continue   # 对局中:房活到 worker 退出(理由与大乱斗逐字相同机制)
+			continue   # 对局中:房活到对局会话退出(理由与大乱斗逐字相同机制)
 		if tr.players.is_empty():
 			teardown_room(tr)
 		else:
 			if tr.host_peer == peer_id:
 				tr.host_peer = tr.players[0]
 				print("3v3 房间 %s 房主移交 → peer %d" % [tcode, tr.host_peer])
-			# 已开局的房不广播等待室状态(与 royale 同一理由:成员正在转连 worker,发给它们
+			# 已开局的房不广播等待室状态(与 royale 同一理由:成员正在转连对局,发给它们
 			# 只会踩 "max channels: 0" 并丢包,等待室界面也已不存在)
 			if not tr.in_match:
 				_broadcast_team_state(tr)
@@ -400,7 +399,7 @@ func _flush_royale_state(rr: RoyaleRoom) -> void:
 	await get_tree().process_frame
 	# 注意： 真正发送前**再判一次开局**(调用点那层的 in_match 守卫只挡住"排队时已开局"的情况):
 	#    本函数是 call_deferred + 再等一帧,从"排队"到"发送"之间房间完全可能已经开局 ——
-	#    开局那一刻正是成员集体转连 worker、陆续断开大厅的窗口,发给他们必然打
+	#    开局那一刻正是成员集体转连对局、陆续断开大厅的窗口,发给他们必然打
 	#    "max channels: 0" 且包丢(实测:6 人局开局后瞬间 5 条)。等待室此刻也已不存在,
 	#    这份状态广播本来就没人要了。
 	if rr.in_match:
@@ -587,7 +586,7 @@ func royale_list(caller: int, token: String = "") -> void:
 # AI 补位用的 role 号:取 1..max_players 内**人类未占用**的最小空闲号。
 # 不能用「成员数 + 1 + i」——那是「编号恒连续」的假设;有人退出留空洞时(如真人 {1,3}),
 # 按人数推出来的 AI 号会撞上仍在房里的高号真人(3 号既是真人又是 AI)→ 同 role 双份玩家、
-# 且 worker 侧的「人类 claim 数」算术跟着失真(自检 B1)。
+# 且服务端对局侧的「人类 claim 数」算术跟着失真(自检 B1)。
 func royale_free_roles(rr: RoyaleRoom, count: int) -> Array:
 	var used := {}
 	for r in rr.player_role.values():
@@ -742,7 +741,7 @@ func team_leave(caller: int) -> void:
 
 
 # 已开局的房:host_role 由 player_role[host_peer] 得来,再从 roster 里按 role 取名。
-# - roster 是 [{role, name}](开局那一刻冻结);成员转连 worker 后 players/_peer_names 都会空,
+# - roster 是 [{role, name}](开局那一刻冻结);成员转连对局后 players/_peer_names 都会空,
 #   对局中的房**只能**读这一份(否则第三人看到的是「玩家」)。
 func _room_host_role(rr) -> int:
 	if rr is RoyaleRoom or rr is TeamRoom:
@@ -845,12 +844,12 @@ func _is_room_host(r: Variant, caller: int) -> bool:
 # ── 回大厅后回局(spec §3.4 路径乙)──
 # 客户端在自己的大厅页上**点自己那间房**(对局中的房照常列在列表里,对别人点它只会被
 # `join_room`/`*_join` 那句「该房间的对局已进行中,无法加入」拒掉)。**应答复用 `go_match`**
-# (方法表一个字不动),于是客户端那条"连 worker → 认领 role → 进对局场景"的路与首次进场
+# (方法表一个字不动),于是客户端那条"转连对局 → 认领 role → 进对局场景"的路与首次进场
 # **逐字同一条**。
-# - 这里**不判对局状态**("你还在宽限期吗"只有 worker 手里的 `_grace` 知道),只判两件事:
-#   凭据对不对得上、以及**这一局的 worker 还在不在** —— 后者防止把一个客户端送到一个已经结束、
+# - 这里**不判对局状态**("你还在宽限期吗"只有服务端对局手里的 `_grace` 知道),只判两件事:
+#   凭据对不对得上、以及**这一局的对局会话还在不在** —— 后者防止把一个客户端送到一个已经结束、
 #   端口可能已被复用给别的对局的地址上。-  "晚了"的那一档(认领时该 role 已不在宽限期)由
-#   worker 的 `_on_reclaim` 判并踢连接,客户端会回到大厅页并看到失败提示(路径乙的已知边界)。
+#   服务端的 `_on_reclaim` 判并踢连接,客户端会回到大厅页并看到失败提示(路径乙的已知边界)。
 # - 判据本体是**纯函数**(`RejoinRegistry.decision`):四种组合在 `-s` 冒烟里逐个钉住,
 #   本函数只做"查 → 判 → 发",不在这里再写一遍 if/else(那正是漂的成因)。
 func on_rejoin_request(caller: int, code: String, token: String) -> void:
@@ -882,7 +881,7 @@ func _flush_team_state(tr: TeamRoom) -> void:
 	# - 等**下一帧**再发(理由与 _flush_royale_state 逐字相同):调用点几乎都在"刚有人断开"的路径上,
 	#   此刻其余成员的 ENet 状态可能还没收敛 —— 同步发/帧末发都会踩 "max channels: 0" 且包会丢。
 	# - 真正发送前再判一次 `in_match`:从"排队"到"发送"之间房间完全可能已经开局,而开局那一刻
-	#   正是成员集体转连 worker、陆续断开大厅的窗口(等待室此刻也已不存在)。
+	#   正是成员集体转连对局、陆续断开大厅的窗口(等待室此刻也已不存在)。
 	await get_tree().process_frame
 	if tr.in_match:
 		return
@@ -907,9 +906,9 @@ func _flush_team_state(tr: TeamRoom) -> void:
 
 # ── 房间拆除的**统一集中处理入口** ──
 # 三种形态:
-const TEARDOWN_DELAYED := 0   # 正常关房:worker 会自己退 → **延迟**归还端口(防立刻复用撞车)
-const TEARDOWN_KILL := 1      # 僵尸清扫:worker 还活着占着端口 → 强制终止进程 + **立即**回收
-const TEARDOWN_ABORT := 2     # 启动失败:worker 根本没起来 → **立即**归还(不必延迟,也无从杀)
+const TEARDOWN_DELAYED := 0   # 正常关房:会话会自己退出 → **延迟**归还端口(防立刻复用撞车)
+const TEARDOWN_KILL := 1      # 僵尸清扫:会话还占着端口 → 强制终止会话 + **立即**回收
+const TEARDOWN_ABORT := 2     # 启动失败:会话根本没起来 → **立即**归还(不必延迟)
 
 # 全部拆除路径都必须走它。理由不是"整洁":本层为「端口泄漏」这**同一个**失败模式补过三次
 # (on_peer_left 空房分支 / royale_leave 空房分支 / ai_duel 摘房前的手动释放),散着写就还会漏

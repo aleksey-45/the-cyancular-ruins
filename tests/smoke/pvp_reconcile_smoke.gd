@@ -18,9 +18,9 @@ const TILE := 64
 
 const DELAY := 8          # 权威投递延迟(tick)——模拟 ~RTT/2×60 上界,rollback 窗口
 const EVENT_TICK := 200   # 服务器外部事件注入时刻
-# 只改背包、**不动位置**的服务器外部事件:权威孪生给自己发一把枪。
-# - 与 EVENT_TICK 那次瞬移刻意分开:那次改的是**被预测的量**(位置)→ 会回滚、会收敛;
-#   这次改的 inv/wslot 是**非预测字段** → 既不回滚、也不落地 —— 这条正是要钉的洞。
+# 只改背包、不动位置的服务器外部事件:权威孪生给自己发一把枪。
+# - 与 EVENT_TICK 那次瞬移刻意分开:那次改的是被预测的量(位置) -> 会回滚、会收敛;
+#   这次改的 inv/wslot 是非预测字段 -> 既不回滚、也不落地 —— 这条正是要钉的洞。
 const INV_EVENT_TICK := 320
 const INV_TYPE := 3          # 重狙(任意一个与开局不同的类型即可)
 const WARMUP := 30
@@ -59,7 +59,7 @@ func _ready() -> void:
 	A.set_physics_process(false)
 	P.set_physics_process(false)
 	ctrl.bind(P)
-	# 两边给同一个起始背包:否则"事件后两边不一致"这条判据分不清是事件造成的还是开局就有的。
+	# 两边给同一个起始背包:否则"事件后两边不一致"这条判定条件分不清是事件造成的还是开局就有的。
 	# (player.tscn 自身 _ready 给的是空背包 —— 见 docs/eng/weapons.md「服务器玩家必须有枪」那一段)
 	A.weapons.set_initial_inventory([1])
 	P.weapons.set_initial_inventory([1])
@@ -155,7 +155,7 @@ func _physics_process(_delta: float) -> void:
 	elif t > INV_EVENT_TICK + DELAY + 5:
 		_rb_after_inv = ctrl.rollback_count()
 	_a_hist.append(A.capture_state())
-	# 2) 到期投递 ack → 控制器(reconcile 在 advance 内先处理)
+	# 2) 到期投递 ack -> 控制器(reconcile 在 advance 内先处理)
 	var ack_t := t - DELAY
 	if ack_t >= 0 and ack_t < _a_hist.size():
 		ctrl.on_authoritative(ack_t, _a_hist[ack_t])
@@ -188,16 +188,16 @@ func _assert_state(t: int) -> void:
 		_fail()
 
 
-# - 判据是"预测侧的背包与权威**逐条一致**",不是"预测侧背包非空" ——
+# - 判定依据为"预测侧的背包与权威逐条一致",不是"预测侧背包非空" ——
 #   非空可能只是它自己开局那把还在,证明不了"权威那把到了"。
 # 为什么单开一条:位置/血量那些被预测的量走 ack 回滚那套,权威一变就会收敛;
-# 而 inv/wslot 是**非预测字段**,`_close_enough` 的显式白名单里没有它们 ——
-# 于是"预测被证实"那一支直接 return,背包**永远**不落地。这条就是把它钉成红灯。
+# 而 inv/wslot 是非预测字段,`_close_enough` 的显式白名单里没有它们 ——
+# 于是"预测被证实"那一支直接 return,背包永远不落地。这条就是把它固化为红灯。
 func _assert_inventory_landed(t: int) -> void:
 	if not _inv_event_fired:
 		return
 	# - 权威要走 DELAY 个 tick 才投递到预测侧(与 `_assert_state` 里那条
-	#   `t > EVENT_TICK + DELAY` 相同机制)。不等就是拿"还没送到"当分歧 —— 必红,且红得没意义。
+	#   `t > EVENT_TICK + DELAY` 相同处理逻辑)。不等就是拿"还没送到"当分歧 —— 必红,且红得没意义。
 	if t <= INV_EVENT_TICK + DELAY:
 		return
 	var want: Array = A.weapons.inventory.snapshot()
@@ -207,7 +207,7 @@ func _assert_inventory_landed(t: int) -> void:
 				want.size(), got.size()]
 		return
 	for i in want.size():
-		# 只比 (type, inst):mag 是连续量、两边每帧都在各自演化,比它会把这条判据变成噪声源。
+		# 只比 (type, inst):mag 是连续量、两边每帧都在各自演化,比它会把这条判定条件变成噪声源。
 		if int(want[i]["type"]) != int(got[i]["type"]) \
 				or int(want[i]["inst"]) != int(got[i]["inst"]):
 			_violation = "背包内容不一致:权威 %s,预测 %s" % [str(want), str(got)]
@@ -216,8 +216,7 @@ func _assert_inventory_landed(t: int) -> void:
 		_violation = "手持槽位没落地:权威 %d,预测 %d" % [
 				A.weapons.current_type_id(), P.weapons.current_type_id()]
 		return
-	# - 反向断言:这条修复**不得**引入新的回滚 —— 它买的是"零回滚也能同步",
-	#   不是"多回滚几次"。撤掉 Task 2 的改动时,红的是上面那条,不是这条。
+	# 反向断言：背包状态同步机制不得触发额外的客户端预测回滚，应维持平滑同步。
 	if _rb_after_inv > _rb_before_inv:
 		_violation = "背包同步引入了额外回滚(%d → %d)—— 那是把它塞进 _close_enough 的写法" % [
 				_rb_before_inv, _rb_after_inv]

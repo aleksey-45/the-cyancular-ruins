@@ -1,31 +1,30 @@
 extends Node
 
-# 统一大厅 `mp_lobby` 的**创建房间弹层**探针。
-# 跑法: "$GODOT" --headless --path . --quit-after 3600 res://tests/probe/lobby_create_form_probe.tscn
-# 判据: 文本 `LOBBY CREATE FORM PROBE: ALL-OK(N 条断言)`(不看退出码 —— 探针挂住时 --quit-after
-#       到期仍 exit 0 且一行 ALL-OK 都不打印,只看退出码会把"没跑完"读成"通过")。
+# 统一大厅 `mp_lobby` 的创建房间弹层探针。
+# 运行方式： "$GODOT" --headless --path . --quit-after 3600 res://tests/probe/lobby_create_form_probe.tscn
+# 验收标准： 文本 `LOBBY CREATE FORM PROBE: ALL-OK(N 条断言)`(不看退出码 —— 探针阻塞挂起时 --quit-after
+#       到期仍 exit 0 且一行 ALL-OK 都不打印,只看退出码会把"未完整执行"读成"通过")。
 #
-# ═══ 为什么需要它 ═══
-# - 弹层"按模式变形"的实暴露异常状**静默无报错**:`_apply_create_form` 按 `_form_rows[...]` 取容器
-#   置 `visible`,而**键名对不上不报错** —— 表现只是"那一行永远不隐藏"。这类"少登记一个键"的
+# ── 为什么需要它 ──
+# - 弹层"按模式变形"的实暴露异常状静默无报错:`_apply_create_form` 按 `_form_rows[...]` 取容器
+#   置 `visible`,而键名对不上不报错 —— 表现只是"那一行永远不隐藏"。这类"少登记一个键"的
 #   缺陷没有任何运行时信号,只有断言看得见。
-# - 3v3 关掉禁用武器网格和 1v1 关掉"公开/私密"**都不是审美**,是真的功能缺陷:
+# - 3v3 关掉禁用武器网格和 1v1 关掉"公开/私密"都不是审美,是真的功能缺陷:
 #   - 禁用武器的勾选框写的是 `Settings.pvp_disabled_weapons`(全局),在 3v3 页勾一下会
-#     **连带改掉另两个模式**;
+#     连带改掉另两个模式;
 #   - 1v1 的 `create_room(caller)` 是原版 NetBus 的冻结签名、收不了 opts  ->  那一行的
-#     "私密 + 邀请码"在 1v1 下**永远不生效**(服务端恒建公开房)= 骗人的控件。
+#     "私密 + 邀请码"在 1v1 下永远不生效(服务端恒建公开房)= 骗人的控件。
 #    ->  故阶段 5 / ⑧ 是有真实危害的断言,不是"版式检查"。
-# 注意： 前三段用**不加入场景树**实例(读 `_form_rows` / payload / 信号接线,以及 `emit pressed` 驱动的
+# 注意事项：前三段用不加入场景树实例(读 `_form_rows` / payload / 信号接线,以及 `emit pressed` 驱动的
 #   纯 UI 行为),最后一相才 `add_child`(ESC 与"按创建房间收起"都要页面自己 `_ready` 建出来的
-#   `_addr_edit` / `_status` / `_grid` 与 viewport)。**该相不发任何一个包**:加入场景树后在**同一次
+#   `_addr_edit` / `_status` / `_grid` 与 viewport)。该相不发任何一个包:加入场景树后在**同一次
 #   同步调用栈内** `free()`  ->  `_ready` 里那句 `_request_list.call_deferred` 因对象已失效被跳过;
-#   ㉔ 里 `_with_lobby` 会**建一个 client peer**(对象连着用户配置的地址),但同一帧紧跟
-#   `NetBus.stop()` 拆掉它,而 ENet 只在 poll 里 flush  ->  本帧就 quit,**没有报文出网**。
+#   ㉔ 里 `_with_lobby` 会建一个 client peer(对象连着用户配置的地址),但同一帧紧跟
+#   `NetBus.stop()` 拆掉它,而 ENet 只在 poll 里 flush  ->  本帧就 quit,没有报文出网。
 #   - 明确说明该约束的原因是:1v1 页默认地址是用户的云服,本仓对"探针去连用户服务端"有明令 ——
-#   本探针的口径是"**不发出任何包**",不是"从不建 peer"。
+#   本探针的口径是"不发出任何包",不是"从不建 peer"。
 #
-# - `EXPECTED_CHECKS` 是"ALL-OK 不等于全都跑过"那条纪律的落点 —— 出错只会让当前函数
-#   当场结束、调用方继续,判词照打。少跑一条即红。
+# - EXPECTED_CHECKS 用于断言完整性校验：防止脚本中途出错静默跳过后续测试而误报 ALL-OK。断言数不足即判定失败。
 const EXPECTED_CHECKS := 28
 
 var _checks := 0
@@ -43,8 +42,8 @@ func _check(ok: bool, what: String) -> void:
 
 func _ready() -> void:
 	var packed: PackedScene = load("res://scenes/mp_lobby.tscn")
-	# 空载守卫:解析失败时 `load()` 仍返回非 null 但 `instantiate()` 会炸;两者都挡住,
-	# 免得走不到 `_finish()` 而让进程挂在 --quit-after 上(一行裁决都不打)。
+	# 空载防御性校验:解析失败时 `load()` 仍返回非 null 但 `instantiate()` 会炸;两者都挡住,
+	# 免得走不到 `_finish()` 而让进程挂在 --quit-after 上(一行判定结果都不打)。
 	if packed == null or not packed.can_instantiate():
 		print("LOBBY CREATE FORM PROBE: 无法加载 mp_lobby.tscn")
 		get_tree().quit(1)
@@ -60,12 +59,12 @@ func _ready() -> void:
 
 # ── ①-⑭:变形逻辑 / 三套载荷 / 信号接线面(不加入场景树)──
 func _phase_form(packed: PackedScene) -> void:
-	# - 无类型声明(Variant):本探针按**脚本成员名**访问(`_form_rows` / `_create_payload` …),
+	# - 无类型声明(Variant):本探针按脚本成员名访问(`_form_rows` / `_create_payload` …),
 	#   声明成 `Control` 会让分析器在编译期报"未知成员"、整份探针加载失败。
 	var page = _page(packed)
 	page._open_create_dialog()
 
-	# ① 首次打开**不会**自关(与 Task 3 那个"首点把自己关掉"的形状相反:新建节点 visible=false,
+	# ① 首次打开不会自关(与 Task 3 那个"首点把自己关掉"的形状相反:新建节点 visible=false,
 	#    `_open_create_dialog` 显式置真)。
 	_check(page._create_panel.visible and page._create_mask.visible,
 			"① 首次打开:弹层 + 压暗罩都可见(没有自己关掉)")
@@ -106,14 +105,14 @@ func _phase_form(packed: PackedScene) -> void:
 	_check((not pvp_privacy) and team_privacy and royale_privacy,
 			"⑧ 1v1:公开/私密 + 邀请码整块不可见;3v3 / 大乱斗:可见")
 
-	# ⑧b/⑧c 「每回合开始回满血」(2026-10-03 ②):被删的 1v1 旧页有这颗勾选框,统一弹层**必须**
+	# ⑧b/⑧c 「每回合开始回满血」(2026-10-03 ②):被删的 1v1 旧页有这颗勾选框,统一弹层必须
 	#   收下它 —— 否则 `Settings.pvp_round_full_heal` 失去唯一写入方,仍被 `_player_options()`
-	#   读取上报而玩家再也打不开它。它是房主/服务器规则  ->  归属创建弹层,**仅 1v1 显示**
+	#   读取上报而玩家再也打不开它。它是房主/服务器规则  ->  归属创建弹层,仅 1v1 显示
 	#   (大乱斗恒 false、3v3 压根不发)。
 	_check(pvp_heal and (not team_heal) and (not royale_heal),
 			"⑧b 每回合回满血行:仅 1v1 可见(1v1=%s / 3v3=%s / 大乱斗=%s)"
 					% [str(pvp_heal), str(team_heal), str(royale_heal)])
-	# - ⑧c:那一行必须**真有一颗勾选框**且接线恰一次 —— 光登记一个空容器的话,"玩家打不开它"
+	# - ⑧c:那一行必须真有一颗勾选框且接线恰一次 —— 光登记一个空容器的话,"玩家打不开它"
 	#   这条原始缺陷原样还在,而⑧b 的可见性照样绿。
 	var heal_cb := _find_check(page._form_rows.get("full_heal"))
 	_check(heal_cb != null and heal_cb.toggled.get_connections().size() == 1,
@@ -128,15 +127,13 @@ func _phase_form(packed: PackedScene) -> void:
 	var rp: Dictionary = page._create_payload(PvpSession.MODE_ROYALE)
 	_check(rp.has("match_time") and typeof(rp["match_time"]) == TYPE_INT,
 			"⑪ _create_payload(大乱斗) 含 match_time 且为整数(秒)")
-	# - 这条是 **builder 的形状断言**:1v1 分支压根不传 payload(`create_room` 是冻结签名),
-	#   且隐私行在 1v1 下已整块隐藏  ->  这两个键在 1v1 上**确定不会被使用**。它保护的是
-	#   `_create_payload` 的返回形状,**不是**一条真在跑的路径 —— 别读成"1v1 会用到它们"。
+	# - 此处为 builder 数据结构断言：1v1 分支并不直接下发该载荷，验证目的在于保障 _create_payload 的数据结构完整性。
 	var pp: Dictionary = page._create_payload(PvpSession.MODE_PVP)
 	_check(pp.has("is_public") and pp.has("invite_code"),
 			"⑫ _create_payload(1v1) 含 is_public 与 invite_code 键(builder 形状断言;1v1 不传该 payload)")
 
-	# ⑬ 三颗模式按钮**各恰 1 个 handler**。-  它抓的是"连接被删 / 被重复添加"这一类;
-	#   **不抓**"lambda 捕错循环变量" —— 那种情况下计数仍是 1(⑯ 按真按钮看可见性才抓得到)。
+	# ⑬ 三颗模式按钮各恰 1 个 handler。-  它抓的是"连接被删 / 被重复添加"这一类;
+	#   不抓"lambda 捕错循环变量" —— 那种情况下计数仍是 1(⑯ 按真按钮看可见性才抓得到)。
 	var counts_ok := true
 	var counts_msg := ""
 	for m: String in [PvpSession.MODE_PVP, PvpSession.MODE_TEAM, PvpSession.MODE_ROYALE]:
@@ -147,7 +144,7 @@ func _phase_form(packed: PackedScene) -> void:
 			counts_msg += " %s=%s" % [m, "缺" if b == null else str(n)]
 	_check(counts_ok, "⑬ 三颗模式按钮各恰 1 个 handler%s" % counts_msg)
 
-	# ⑭ `×` 与 `取 消` **各恰 1 个 handler**(两条关闭路径的接线面)。
+	# ⑭ `×` 与 `取 消` 各恰 1 个 handler(两条关闭路径的接线面)。
 	var xb := _find_button(page._create_panel, "×")
 	var cb := _find_button(page._create_panel, "取 消")
 	_check(xb != null and cb != null and xb.pressed.get_connections().size() == 1
@@ -164,7 +161,7 @@ func _phase_buttons(packed: PackedScene) -> void:
 	var page = _page(packed)
 	page._open_create_dialog()
 
-	# ⑮ 按「大乱斗」按钮  ->  可见性**真的重排**(接线 + 变形一起验,不是只读 _apply_create_form)。
+	# ⑮ 按「大乱斗」按钮  ->  可见性真的重排(接线 + 变形一起验,不是只读 _apply_create_form)。
 	page._create_mode_btns[PvpSession.MODE_ROYALE].pressed.emit()
 	_check(page._form_rows["max_players"].visible and page._form_rows["match_time"].visible
 			and page._form_rows["privacy"].visible
@@ -196,7 +193,7 @@ func _phase_beta(packed: PackedScene) -> void:
 	_check(not plain._form_rows["beta"].visible, "⑲ 非 Beta 态:时间参数块不可见")
 	plain.free()
 
-	# ⑳ Beta 态:弹层只建一次,故用**新实例**建(重建路径 = 新页面 + `_open_create_dialog`)。
+	# ⑳ Beta 态:弹层只建一次,故用新实例建(重建路径 = 新页面 + `_open_create_dialog`)。
 	PvpSession.beta_mode = true
 	var beta = _page(packed)
 	beta._open_create_dialog()
@@ -211,8 +208,8 @@ func _phase_beta(packed: PackedScene) -> void:
 func _phase_live(packed: PackedScene) -> void:
 	var live = packed.instantiate()
 	# - 加入场景树  ->  `_ready` 会建 `_addr_edit`/`_status`/`_grid` 并排一句
-	#   `_request_list.call_deferred`。本阶段在**同一次同步调用栈内** `free()` 它  -> 
-	#   那句 deferred 因对象已失效被 Godot 跳过,**不会** `NetBus.start_client`(不碰用户服)。
+	#   `_request_list.call_deferred`。本阶段在同一次同步调用栈内 `free()` 它  -> 
+	#   那句 deferred 因对象已失效被 Godot 跳过,不会 `NetBus.start_client`(不碰用户服)。
 	add_child(live)
 	live._open_create_dialog()
 
@@ -221,27 +218,27 @@ func _phase_live(packed: PackedScene) -> void:
 	esc.keycode = KEY_ESCAPE
 	esc.physical_keycode = KEY_ESCAPE
 
-	# ㉑ 弹层**不可见**时:ESC 一律不处理(不抢大厅页自己的返回语义)。
+	# ㉑ 弹层不可见时:ESC 一律不处理(不抢大厅页自己的返回语义)。
 	live._set_create_visible(false)
 	live._unhandled_input(esc)
 	_check(not live.get_viewport().is_input_handled(),
 			"㉑ 弹层不可见时 ESC 不被吞掉(大厅自己的返回语义不被抢)")
 
-	# ㉒ 弹层**可见**时:关掉 + 标记已处理(不再往下传)。
+	# ㉒ 弹层可见时:关掉 + 标记已处理(不再往下传)。
 	live._open_create_dialog()
 	live._unhandled_input(esc)
 	_check((not live._create_panel.visible) and live.get_viewport().is_input_handled(),
 			"㉒ 弹层可见时 ESC:关弹层 + `set_input_as_handled`")
 
-	# ㉓ 弹层**主行动按钮**「创 建 房 间」的接线面:恰 1 个 handler。
+	# ㉓ 弹层主行动按钮「创 建 房 间」的接线面:恰 1 个 handler。
 	# - 少了它:`create.pressed.connect(_on_create_pressed)` 被删  ->  ⑬/⑭ 覆盖了三颗模式按钮与
-	#   两条关闭路径,**唯独漏了主行动按钮** —— 断言测试全部通过而弹层永远提交不了(⑭ + ⑱ 的配对同形)。
+	#   两条关闭路径,唯独漏了主行动按钮 —— 断言全部断言通过而弹层永远提交不了(⑭ + ⑱ 的配对同形)。
 	var ok_btn := _find_button(live._create_panel, "创 建 房 间")
 	_check(ok_btn != null and ok_btn.pressed.get_connections().size() == 1,
 			"㉓ 创 建 房 间 按钮恰 1 个 handler(%s)" % (
 					"缺" if ok_btn == null else str(ok_btn.pressed.get_connections().size())))
 
-	# ㉔ **走真按钮**(`emit pressed`,与 ⑰/⑱ 相同机制) ->  弹层立即收起(不等异步应答)。
+	# ㉔ 走真按钮(`emit pressed`,与 ⑰/⑱ 相同处理逻辑) ->  弹层立即收起(不等异步应答)。
 	#   - 上一版这里直接调 `_on_create_pressed()`,于是"主行动按钮的接线"整条没被覆盖。
 	live._open_create_dialog()
 	_find_button(live._create_panel, "创 建 房 间").pressed.emit()
@@ -251,15 +248,14 @@ func _phase_live(packed: PackedScene) -> void:
 	live.free()
 
 
-# ── ㉕-㉖:Beta 会话下上报的 `time` 键(worker 侧**唯一**权威来源)──
-# - 为什么必须常驻:在此之前唯一守它的是**手工跑**的 `--autotest-beta`,而这个键的失效
-#   **完全静默** —— worker 侧 `MatchHost` 读 `options.get("time")`,拿不到就 `TimeEconomy`
-#   为 null  ->  一切结算短路,而**一行错都不打**(建房载荷里的 `time` 只挂在房对象上、无读者)。
-# 注意： ㉖(1v1 必须为空)是**大厅统一之后才出现的新路**:`beta_mode` 是**会话级**的,而统一
+# ── ㉕-㉖:Beta 会话下上报的 `time` 键(worker 侧唯一权威来源)──
+# - 自动化回归测试保障：防止 options.get("time") 字段解析异常导致时间经济系统静默短路。
+#   worker 侧 MatchHost 读取 options.get("time") 进行初始化。
+# 注意事项：㉖(1v1 必须为空)是大厅统一之后才出现的新路:`beta_mode` 是会话级的,而统一
 #   大厅让 Beta 会话里的玩家能切到 1v1 建局;1v1 的 `create_room` 是冻结签名、载荷里没有
-#   beta 标记  ->  那间房**没法按 beta 隔离**  ->  一个没勾 Beta 的普通玩家能加进来打带时间经济
-#   的 1v1。设计里 Beta 页**没有 1v1**  ->  1v1 退回普通局才是对的。
-# - 两相各用一个**新实例**(避免上一相残留的弹层/连接);`beta_mode` 用完还原,别污染后面的相。
+#   beta 标记  ->  那间房没法按 beta 隔离  ->  一个没勾 Beta 的普通玩家能加进来打带时间经济
+#   的 1v1。设计里 Beta 页没有 1v1  ->  1v1 退回普通局才是对的。
+# - 两相各用一个新实例(避免上一相残留的弹层/连接);`beta_mode` 用完还原,别污染后面的相。
 func _phase_time_options(packed: PackedScene) -> void:
 	var page = _page(packed)
 	PvpSession.beta_mode = true
@@ -268,7 +264,7 @@ func _phase_time_options(packed: PackedScene) -> void:
 	var ro: Dictionary = page._player_options()
 	_check(ro.has("time") and not (ro["time"] as Dictionary).is_empty(),
 			"㉕ Beta 会话 + 大乱斗:`_player_options()[\"time\"]` 存在且非空(worker 侧唯一权威来源)")
-	# ㉖ Beta 会话 + 1v1  ->  `time` 必须**空**(1v1 载荷无 beta 标记、无法隔离  ->  退回普通局)。
+	# ㉖ Beta 会话 + 1v1  ->  `time` 必须空(1v1 载荷无 beta 标记、无法隔离  ->  退回普通局)。
 	page._current_mode = PvpSession.MODE_PVP
 	var pv: Dictionary = page._player_options()
 	_check(pv.has("time") and (pv["time"] as Dictionary).is_empty(),
@@ -279,12 +275,12 @@ func _phase_time_options(packed: PackedScene) -> void:
 
 # ── 小工具 ──
 
-# 树外页面实例(T1 起弹层**启动即建**)。
-# 注意： 为什么需要:三个弹层由 `_build_ui()` 建(启动即建、默认隐藏;`_ready` 调它),而本探针
-#   前三段**故意不加入场景树**(`_ready` 不跑  ->  不建 socket、不排 deferred)。此前那几段靠
-#   `_open_create_dialog` 里的**懒建分支**拿到弹层 —— T1 删掉懒建后,树外实例上
+# 树外页面实例(T1 起弹层启动即建)。
+# 注意事项：为什么需要:三个弹层由 `_build_ui()` 建(启动即建、默认隐藏;`_ready` 调它),而本探针
+#   前三段故意不加入场景树(`_ready` 不跑  ->  不建 socket、不排 deferred)。此前那几段靠
+#   `_open_create_dialog` 里的懒建分支拿到弹层 —— T1 删掉懒建后,树外实例上
 #   `_create_panel` / `_form_rows` 恒为 null。故夹具在此显式调一次 `_build_ui()`。
-#   - 走这个**生产缝**而不是逐个调 `_build_*`:T2 把建树代码整体搬进 `.tscn` 时只要重写
+#   - 走这个生产缝而不是逐个调 `_build_*`:T2 把建树代码整体搬进 `.tscn` 时只要重写
 #     `_build_ui()` 的方法体,本夹具不用再改;也保证隐藏态与生产一致。
 #   - 这是"新契约的镜像",不是绕过断言:探针验的变形/载荷/接线一条没动。
 #   - 同步义务:`_build_ui` 里若增删 UI,这里跟着走(见 `scenes/mp_lobby.gd`)。
@@ -295,7 +291,7 @@ func _page(packed: PackedScene):
 
 
 # 弹层子树里有没有一颗文案是 `×` 的 Button?(右上角那颗关闭键。)
-# - 按**子树的任何深度**找:版式若把 × 挪进一层 HBox / 另一容器,断言不该跟着失效;
+# - 按子树的任何深度找:版式若把 × 挪进一层 HBox / 另一容器,断言不该跟着失效;
 #   要断的是"有一颗 × 按钮",不是"它在第几层"。
 func _has_close_button(page) -> bool:
 	var panel: PanelContainer = page._create_panel

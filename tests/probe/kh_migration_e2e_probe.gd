@@ -1,21 +1,21 @@
 extends Node
 
-# ═══ 迁移后的端到端真实网络链路冒烟(场景模式;必须用场景模式 —— 本链路全程吃 autoload)═══
+# ── 迁移后的端到端真实网络链路冒烟(场景模式;必须用场景模式 —— 本链路全程吃 autoload)──
 #
-# 跑法:
+# 运行方式：
 #   "$GODOT" --headless --path . --quit-after 3600 res://tests/kh_migration_e2e_probe.tscn
-# 判据:末行 `MIGRATION E2E: ALL-OK`。
+# 验收标准：末行 `MIGRATION E2E: ALL-OK`。
 #
-# ═══ 为什么单独写一支(与 netplay_probe 的分工)═══
-# `tests/netplay_probe.gd` 是 `-s`,只覆盖**纯逻辑**(房间码生成/凭据派生/hostname 切端口/peer JSON 解析)。
-# 本支补的是**真进程**那一段 —— 也就是"移植到 KH 基线之后还走不走得通"这个问题的真正答案:
-#   ① 房主:启动真 `Cyancular Ruins Server.exe --port P` → 存活探测连上
-#   ② 房主:在同一连接上 `create_room` → 拿到 5 位房间码
-#   ③ 房主:按房间码起真 EasyTier 隧道(`--no-tun`)→ 等自己的 RPC 门户就绪
+# ── 为什么单独写一支(与 netplay_probe 的分工)──
+# `tests/netplay_probe.gd` 是 `-s`,只覆盖纯逻辑(房间码生成/凭据派生/hostname 切端口/peer JSON 解析)。
+# 本支补的是真进程那一段 —— 也就是"移植到 KH 基线之后还走不走得通"这个问题的真正答案:
+#   ① 房主:启动真 `Cyancular Ruins Server.exe --port P` -> 存活探测连上
+#   ② 房主:在同一连接上 `create_room` -> 拿到 5 位房间码
+#   ③ 房主:按房间码起真 EasyTier 隧道(`--no-tun`) -> 等自己的 RPC 门户就绪
 #   ④ 收摊:停隧道 + 停本机服务端(不留残留进程)
 # 这四步就是「建房」按钮背后的全部内容;它们绿 = 单进程单端口 + no-tun 隧道在 KH 基线上成立。
 #
-# ⚠ 前提:仓库根要有 `Cyancular Ruins Server.exe` 与 EasyTier 四件套
+# - 前提:仓库根要有 `Cyancular Ruins Server.exe` 与 EasyTier 四件套
 #   (前者由 tools/build_release.py 导出;后者见 tools/fetch_easytier.py)。
 #   缺了本支会明确报"缺哪个",不是静默跳过。
 
@@ -53,7 +53,7 @@ func _ready() -> void:
 		_finish()
 		return
 
-	# ② 同一连接上建房 → 拿房间码
+	# ② 同一连接上建房 -> 拿房间码
 	var got := [false]
 	NetBus.local_room_created.connect(func(c: String) -> void:
 		_code = c

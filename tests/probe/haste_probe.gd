@@ -4,11 +4,11 @@ extends Node
 # 机器自动化断言时间加速状态下的各项物理倍率与视觉反馈：
 #
 # 核心验证规则：
-#   ① "加速 = 主角的时间被加快"  ->  **除主角外一切实体变慢**:移动、攻击间隔、子弹都算。
-#   ② 加速时主角与敌人要**高亮**;精英怪在**加速与回溯两种状态下都是极为亮眼的黄色**。
+#   ① "加速 = 主角的时间被加快"  ->  除主角外一切实体变慢:移动、攻击间隔、子弹都算。
+#   ② 加速时主角与敌人要高亮;精英怪在加速与回溯两种状态下都是极为亮眼的黄色。
 #
-# 核心物理事实:`move_and_slide()` 用**引擎自己的 delta**,缩放传入的 delta 只改变重力/计时器,
-# 不改变位移 —— 所以实体的"快/慢"必须作用在**速度域**(玩家速度目标 ×1.4、敌 velocity.x ×0.7);
+# 核心物理事实:`move_and_slide()` 用引擎自己的 delta,缩放传入的 delta 只改变重力/计时器,
+# 不改变位移 —— 所以实体的"快/慢"必须作用在速度域(玩家速度目标 ×1.4、敌 velocity.x ×0.7);
 # 而子弹走 `move_and_collide(velocity * delta)`,缩放 delta 就是真的变慢。
 #
 # 覆盖:倍率表(玩家/普通敌/精英 × NONE/HASTE/REWIND) · 普通敌速度 ×HASTE_WORLD ·
@@ -17,7 +17,7 @@ extends Node
 #       高亮:加速=主角+近敌、回溯=只有精英、精英两层亮黄 · 松开全部卸掉 · 回 NONE · 扣颗粒。
 # 用法:godot --headless --path . res://tests/probe/haste_probe.tscn
 #
-# - 输入走**可注入桩**(tests/probe/haste_probe_input.gd),理由见该文件头(just_pressed 的帧号问题)。
+# - 输入走可注入桩(tests/probe/haste_probe_input.gd),理由见该文件头(just_pressed 的帧号问题)。
 
 const StubInput := preload("res://tests/probe/haste_probe_input.gd")
 const GhostScript := preload("res://scenes/effects/after_image.gd")
@@ -112,7 +112,7 @@ func _run() -> void:
 			_fail("加速没放慢普通敌(普通 %.2f → 加速 %.2f,比 %.2f 期望≈%.2f)" % [en, eh, eh / en, TimeParams.HASTE_WORLD])
 
 	# ── ③ 敌方子弹:加速时必须变慢 ──
-	# - EnemyBullet **整个覆写了** 基类的 _physics_process  ->  基类首行的 bullet_delta 在这条
+	# - EnemyBullet 整个覆写了 基类的 _physics_process  ->  基类首行的 bullet_delta 在这条
 	#   路径上永不执行,这就是"加速时子弹没变慢"的根因(修在 scenes/enemies/enemy_bullet.gd)。
 	var spot := _find_open_spot(player.global_position)
 	if spot.x >= 0:
@@ -133,7 +133,7 @@ func _run() -> void:
 	else:
 		_note("找不到净空格:敌方子弹对比跳过")
 
-	# ── ④ 跳跃高度:普通 vs 加速(重力/跳跃**不该**被时间场碰)──
+	# ── ④ 跳跃高度:普通 vs 加速(重力/跳跃不该被时间场碰)──
 	# 挪到一格"上方 4 格净空 + 下方实心"的地板格:两段测量在同一几何下,高度才可比。
 	if spot.x >= 0:
 		player.global_position = Vector2(spot) * float(GameParameters.TILE_SIZE) + Vector2(32.0, 32.0)
@@ -174,7 +174,7 @@ func _run() -> void:
 	_ghost_blue = false
 	_haste_frames = 0
 	Input.action_press("haste")
-	# - 必须等速度**真正进入平台期**再采样:空中加速很温和(`accel_air`),固定等 45 帧可能还在
+	# - 必须等速度真正进入平台期再采样:空中加速很温和(`accel_air`),固定等 45 帧可能还在
 	#   爬坡 —— 实测同一份代码在不同地图/落点下分别量到 1.17 / 1.21 / 1.40(偶发误判"加速无效")。
 	await _settle_vx(player)
 	var v_haste := await _mean_vx(player, 20, true)
@@ -246,7 +246,7 @@ func _run() -> void:
 		_fail("松开加速后仍有 %d 个高亮副本未卸" % leftover)
 
 	# 回溯:只有精英亮黄,主角与普通敌都不该有高亮
-	# - 精英**当场重挑**:上一段高亮检查期间那个标本可能已经被打死了(它是活物)。
+	# - 精英当场重挑:上一段高亮检查期间那个标本可能已经被打死了(它是活物)。
 	var re_elite: Node2D = null
 	for e in tree.get_nodes_in_group("enemies"):
 		if is_instance_valid(e) and e is Node2D and not bool(e.get("is_dead")):
@@ -261,9 +261,9 @@ func _run() -> void:
 		await tree.process_frame
 	await _wait_phys(6)
 	var re_mode := tf.mode
-	# 规则断言走**集合**:回溯中每个存活精英都必须挂着"两层亮黄"副本。
+	# 规则断言走集合:回溯中每个存活精英都必须挂着"两层亮黄"副本。
 	# - 单点断言(只看某个标本)会被"管理器这一帧刚 free、下一帧又 attach"的抖动骗过 ——
-	#   所以再配一条**抖动检测**(3 帧内新建数),两者一起才代表规则真的成立。
+	#   所以再配一条抖动检测(3 帧内新建数),两者一起才代表规则真的成立。
 	var elites: Array[Node2D] = []
 	var missing := 0
 	var bad := 0
@@ -410,10 +410,10 @@ func _pick_moving_enemy(tree: SceneTree) -> Node2D:
 	return best if best_v > 4.0 else null
 
 
-# 打一颗**无重力、向上**的敌方弹,量它每帧位移的**中位数**(px)。
+# 打一颗无重力、向上的敌方弹,量它每帧位移的中位数(px)。
 # 向上 + 只有地形碰撞(mask=1)+ 放在净空格  ->  不会撞墙/不会打到玩家,
 # 位移 = velocity_vec × delta  ->  加速时应当恰好 ×HASTE_WORLD(比值 ~0.7)。
-# - 取中位数而不是总和:撞墙/被锚副本瞬移只会让**帧数**变少,不改变单帧步长,
+# - 取中位数而不是总和:撞墙/被锚副本瞬移只会让帧数变少,不改变单帧步长,
 #   总和会被"提前死掉"污染成假失败。
 func _bullet_step(tree: SceneTree, player: Node2D, at: Vector2) -> float:
 	var b := BulletScene.instantiate() as EnemyBullet
@@ -463,7 +463,7 @@ func _jump_apex(player: CharacterBody2D, stub, tree: SceneTree) -> float:
 	return (y0 - apex) if airborne else -1.0
 
 
-# 找一格"上方 4 格净空(跳跃/弹道要空间)+ 下方实心(有地板)"的格子,并取**离玩家环面最近**的那一格:
+# 找一格"上方 4 格净空(跳跃/弹道要空间)+ 下方实心(有地板)"的格子,并取离玩家环面最近的那一格:
 # ① 地形无关的确定性几何 —— 否则两次测量在不同位置,高度/弹道不可比;
 # ② 离玩家近  ->  子弹不会被 `anchor_to_nearest` 锚到别的副本上瞬移。
 func _find_open_spot(from: Vector2) -> Vector2i:

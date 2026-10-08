@@ -1,15 +1,15 @@
 extends Node
 
-# 精英掉落探针(场景级,实际关卡场景,走**真实击杀路径**):打死一只乌鸫 → 结晶 FX 出现 →
-# 飞向怀表 → 吸收入账 +300。
+# 精英掉落探针(场景级,实际关卡场景,走真实击杀路径):打死一只乌鸫 -> 结晶 FX 出现 -> 
+# 飞向怀表 -> 吸收入账 +300。
 #
-# - 为什么必须另有一条:B5 的 `tests/probe/grain_crystal_probe.tscn` 是**直接 spawn FX**
-#   (只验 FX 自己:散开/飞行/入账/颤抖),证明不了"击杀 → `enemy_base._begin_death` →
-#   `EnemyBlackBird._on_death` → `GrainCrystalFx.spawn`"这条**真路径**没被后来的改动碰断。
+# - 为什么必须另有一条:B5 的 `tests/probe/grain_crystal_probe.tscn` 是直接 spawn FX
+#   (只验 FX 自己:散开/飞行/入账/颤抖),证明不了"击杀 -> `enemy_base._begin_death` -> 
+#   `EnemyBlackBird._on_death` -> `GrainCrystalFx.spawn`"这条真路径没被后来的改动碰断。
 #   用户报"击杀精英不掉颗粒"时,可疑的正是中间这段而不是 FX 本体。
 #
-# 判定:入账判据用**余额增量**而不是"有没有 FX 节点" —— 余额会自动回补(50/s),故取
-# "增量 ≥ 290" 这一档:真的入了 300 时增量必 ≥300(还叠回补),没入账则只有回补(~3s→150)。
+# 判定:入账判定条件用余额增量而不是"有没有 FX 节点" —— 余额会自动回补(50/s),故取
+# "增量 ≥ 290" 这一档:真的入了 300 时增量必 ≥300(还叠回补),没入账则只有回补(~3s -> 150)。
 # 用法:godot --headless --path . res://tests/probe/elite_drop_probe.tscn
 
 var _fails: Array[String] = []
@@ -42,7 +42,7 @@ func _run() -> void:
 		tree.quit(1)
 		return
 
-	# 找到那只真乌鸫(场景 `_ready` 自带 elite 标;找不到就用备用怪并打标)
+	# 找到那只真乌鸫(场景 `_ready` 自带 elite 标;找不到就用备用怪并设置标记)
 	var elite: Node2D = null
 	var marked_by_probe := false
 	for e in tree.get_nodes_in_group("enemies"):
@@ -85,7 +85,7 @@ func _run() -> void:
 		break
 	var bal_events := [0]
 	Level0.grain_account.balance_changed.connect(func(_b: float) -> void: bal_events[0] += 1)
-	# 逐帧盯到吸收那一刻:报告"吸收入账"发生在第几秒、以及是不是保底处理那条路(HAS_ABSORB_TIMEOUT)
+	# 逐帧盯到吸收那一刻:报告"吸收入账"发生在第几秒、以及是不是兜底保护那条路(HAS_ABSORB_TIMEOUT)
 	var absorb_t := -1.0
 	for i in 420:
 		await tree.physics_frame
@@ -97,10 +97,10 @@ func _run() -> void:
 	print("ELITE DROP PROBE[diag]: 吸收方式=%s 发生在 t=%.2fs;入账事件=%d 余额=%.1f FX已释放=%s" % [
 			GrainCrystalFx.last_absorb_kind, GrainCrystalFx.last_absorb_t,
 			bal_events[0], float(Level0.grain_account.balance), str(not is_instance_valid(fx_node))])
-	# 这条是**可视**承诺:碎片要真的飞进怀表,而不是半路消失、只靠保底处理把钱写入来
-	# (2026-09-26 的 bug 正是"永远飞不进 → 保底处理也没写 → 击杀精英颗粒根本不涨")。
-	# - 只对**屏幕附近的击杀**断言 fly:精英死在离玩家很远的地方时(150×100 大图上完全可能),
-	#   碎片要飞的距离本来就可能超过保底处理时限 —— 那时"入账"由保底处理保证,fly 无从谈起。
+	# 这条是可视承诺:碎片要真的飞进怀表,而不是半路消失、只靠兜底保护把钱写入来
+	# (2026-09-26 的 bug 正是"永远飞不进 -> 兜底保护也没写 -> 击杀精英颗粒根本不涨")。
+	# - 只对屏幕附近的击杀断言 fly:精英死在离玩家很远的地方时(150×100 大图上完全可能),
+	#   碎片要飞的距离本来就可能超过兜底保护时限 —— 那时"入账"由兜底保护保证,fly 无从谈起。
 	if kill_dist <= 1500.0 and GrainCrystalFx.last_absorb_kind != "fly":
 		_fail("屏幕附近的击杀(%dpx)没飞到怀表(吸收方式=%s,t=%.2fs):碎片半路消失" % [
 				int(kill_dist), GrainCrystalFx.last_absorb_kind, GrainCrystalFx.last_absorb_t])

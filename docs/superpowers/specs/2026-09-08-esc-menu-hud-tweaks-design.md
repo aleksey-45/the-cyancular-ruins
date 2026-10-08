@@ -29,7 +29,7 @@
 
 - `Center/VBox/BigLabel` 与 `Center/VBox/SubLabel` 都加 `horizontal_alignment = 2`(CENTER)。
 - VBox 内两行同宽(取最宽行),文字各自在各自行内居中 → 两行都居中、小行落大标题正下方正中。
-- 走 `_set_broadcast` / `show_notice` 的全部公告统一生效;`ui/pvp_hud.gd` 逻辑零改动。
+- 走 `_set_broadcast` / `show_notice` 的全部公告统一生效;`ui/pvp_hud.gd` 逻辑无需修改。
 
 ### 改动 3:ESC 菜单(新 `ui/esc_menu.tscn` + `ui/esc_menu.gd`,复用一份)
 

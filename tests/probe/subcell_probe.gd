@@ -1,9 +1,9 @@
 extends SceneTree
 
 # cyrm v4 子格破坏探针(-s 数据级):选项 A 的核心语义 ——
-#   破坏/碰撞按 **16px 子格**算;格级 `current_grid` 在**整格 16 个子格全部死光**时才清零。
+#   破坏/碰撞按 16px 子格算;格级 `current_grid` 在整格 16 个子格全部死光时才清零。
 # 覆盖:① v4 真图的子格表尺寸与装填;② 子格 HP 初始化;③ 单子格摧毁(碰撞子格随之变空,
-#       所属格级网格**保持**非零);④ 全 16 子格死光 → 格级网格清零;⑤ restore_sub 写回。
+#       所属格级网格保持非零);④ 全 16 子格死光 -> 格级网格清零;⑤ restore_sub 写回。
 # (爆炸的子格扫描 `Explosion.destructible_subs` 引用 autoload,-s 编译不了 —— 由场景级
 #   探针与实机覆盖;它的几何就是"以爆心为圆心的 16px 子格圆扫"。)
 # 用法:godot --headless --path . -s res://tests/probe/subcell_probe.gd
@@ -36,10 +36,10 @@ func _test_real_subgrid() -> void:
 	if sgrid.is_empty():
 		return
 	var cell_grid := MapFormat.load_map_file(DEMO)
-	# - 期望值 = **格级网格维度 × 每格子格数**,不写死 500×300("这张图恰好多大"换图就测试误报)。
+	# - 期望值 = 格级网格维度 × 每格子格数,不写死 500×300("这张图恰好多大"换图就测试误报)。
 	#   每格子格数取 `CollisionBuilder` 的两个公开尺度常量(格 64px / 子格 16px  ->  4),
 	#   而不是魔数。期望值取自 `MapFormat.load_map_file`(整图解析)—— 与 `load_subgrid`
-	#   **是两条读法**(后者在 v4 下直接吃头部的 sub_cols/sub_rows) ->  头部与 body 对不上直接断言失败。
+	#   是两条读法(后者在 v4 下直接吃头部的 sub_cols/sub_rows) ->  头部与 body 对不上直接断言失败。
 	var per_cell: int = CollisionBuilder.TILE_TS / CollisionBuilder.SUB_TS
 	var want := Vector2i.ZERO
 	if not cell_grid.is_empty():
@@ -75,10 +75,10 @@ func _test_damage_model() -> void:
 
 	var cell := Vector2i(1, 1)
 	var sub0 := Vector2i(4, 4)   # 该格的第一个子格
-	# ① 碰撞子格:整格 16 子格都是树叶 → build_sub(可破坏侧)全 SOLID
+	# ① 碰撞子格:整格 16 子格都是树叶 -> build_sub(可破坏侧)全 SOLID
 	var sub := CollisionBuilder.build_sub(grid, true)
 	_chk(sub[4][4] == MazeGenerator.SOLID, "树叶格子格应进可破坏碰撞")
-	# ② 打死一个子格:碰撞子格变空,但**格级网格保持非零**(其它 15 个还活着)
+	# ② 打死一个子格:碰撞子格变空,但格级网格保持非零(其它 15 个还活着)
 	_chk(TileDefs.damage_sub(sub0, 9999, "explosion"), "树叶子格应可被爆炸摧毁")
 	_chk(not TileDefs.sub_alive(sub0), "被摧毁的子格应不再存活")
 	_chk(int(MazeGenerator.current_grid[cell.y][cell.x]) != 0,
@@ -88,7 +88,7 @@ func _test_damage_model() -> void:
 	_chk(sub2[5][5] == MazeGenerator.SOLID, "相邻子格的碰撞应保留")
 	# ③ 空气子格不可"摧毁"
 	_chk(not TileDefs.damage_sub(Vector2i(0, 0), 9999, "explosion"), "空气子格不可摧毁")
-	# ④ 全部 16 子格死光 → 格级网格才清零
+	# ④ 全部 16 子格死光 -> 格级网格才清零
 	for sy in 4:
 		for sx in 4:
 			TileDefs.damage_sub(Vector2i(4 + sx, 4 + sy), 9999, "explosion")

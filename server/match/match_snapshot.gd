@@ -37,7 +37,7 @@ func _broadcast_snapshot() -> void:
 	#    `not get_peers().is_empty()`:广播在 ENet 层是**逐 peer** 发包,表里只要还剩一个
 	#    处于"队列已拆、API 还没忘掉"窗口的 peer(典型:本帧刚被 `disconnect_peer` 剔除断开的那个),
 	#    这一发就会打 `Unable to send packet on channel 0/1, max channels: 0`。
-	#    2026-09-21 实测(未改之前,reconnect_probe 的 worker 日志):每拒绝一次错的 reclaim,
+	#    2026-09-21 实测(未改之前,reconnect_probe 的服务端日志):每拒绝一次错的 reclaim,
 	#    有一帧**同时**报 channel 0 与 channel 1,backtrace 两行都指向本行 —— 老判据拦不住它
 	#    (`get_peers()` 滞后,正是 `NetBus.is_peer_live` 那段注释里说过的那件事)。
 	#    代价只有"那一帧不发世界包":它本来就是 unreliable,少一帧无后果。

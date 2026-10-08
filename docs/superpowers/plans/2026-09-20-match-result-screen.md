@@ -4,7 +4,7 @@
 
 **Goal:** MATCH_OVER 之后不再"挂 6 秒大字然后自动回主菜单",而是进入一个**玩家自己退**的结算页,显示该模式现有的逐人数据。
 
-**Architecture:** 一个**模式无关**的控件 `ui/match_result.gd`(只吃一份统一载荷、画出来、发一个 `leave_requested` 信号)+ 一组**纯静态适配器** `ui/match_result_payload.gd`(把三个模式各不相同的 `round_state` 折成那一个载荷形状)+ 三个客户端各自把 MATCH_OVER 分支从"起定时器"改成"挂结算页、等信号"。**服务端零改动**。
+**Architecture:** 一个**模式无关**的控件 `ui/match_result.gd`(只吃一份统一数据包、画出来、发一个 `leave_requested` 信号)+ 一组**纯静态适配器** `ui/match_result_payload.gd`(把三个模式各不相同的 `round_state` 折成那一个数据包形状)+ 三个客户端各自把 MATCH_OVER 分支从"起定时器"改成"挂结算页、等信号"。**服务端无需修改**。
 
 **Tech Stack:** Godot 4.7.1 GDScript；`UiFactory`(UI 唯一工厂与调色板)；场景探针 + `-s` 冒烟；判据 grep 文本。
 
@@ -15,16 +15,16 @@
 - **本项目默认：测试由用户自己跑。** agent 可跑：`--import`、不占 7777 的探针。★ 需要**真渲染**的探针(带取图的)headless 下跑不出像素 —— 那类写完留给用户，但**实施者要先自己读一遍取图**(本仓纪律)。
 - **颜色只在 `ui/ui_factory.gd` 定义**；字号只用 **16 的倍数**；`NetBus` 的方法表**一个字不动**。
 - 判据一律**文本**(`ALL-OK` / 探针自己的串)，**不看退出码**；场景探针 `--quit-after` 统一给足 **3600**。
-- 提交信息用**单引号**或 `git commit -F 文件`，**不带任何 Claude/AI 署名行**；每次 `git add` 只加本任务点名的文件。
+- 提交信息用**单引号**或 `git commit -F 文件`，**不带任何 Claude/AI 署名行**；每次 `git add` 只加本任务明确指定的文件。
 - ★ **`kh_l6_probe.gd` 第 9/9b 条**守着 MATCH_OVER 退场块(菜单失效 + `is_inside_tree()` 早退)。动了那两块必须**同步改它**，**不许放宽**。
 
 ## 文件结构
 
 | 文件 | 新建/修改 | 责任 |
 |---|---|---|
-| `ui/match_result.gd` + `.tscn` | **新建** | 结算控件：把载荷画出来 + 一个 `leave_requested` 信号。**不知道任何模式规则** |
-| `ui/match_result_payload.gd` | **新建** | 三个**纯静态**适配器：模式 `round_state` → 统一载荷 |
-| `ui/ui_factory.gd` | 修改 | `fit_name()` 收口(从 `RoyaleHud` 提上来) |
+| `ui/match_result.gd` + `.tscn` | **新建** | 结算控件：把数据包画出来 + 一个 `leave_requested` 信号。**不知道任何模式规则** |
+| `ui/match_result_payload.gd` | **新建** | 三个**纯静态**适配器：模式 `round_state` → 统一数据包 |
+| `ui/ui_factory.gd` | 修改 | `fit_name()` 统一收拢(从 `RoyaleHud` 提上来) |
 | `ui/royale_hud.gd` | 修改 | `_fit_name` 改为委托 `UiFactory.fit_name`(行为不变) |
 | `scenes/pvp_match_client.gd` | 修改 | **公共挂载/离场**:`_show_result()` / `_leave_to_main_menu()` + `_build_result_payload()` 默认钩子(三个客户端本就都 extends 它) |
 | `scenes/pvp_game.gd` | 修改 | MATCH_OVER 分支 + `_build_result_payload()` **覆写** |
@@ -38,7 +38,7 @@
 
 ---
 
-## 载荷契约(全计划共用，Task 2/3/4 都产出这个形状)
+## 数据包接口规范(全计划共用，Task 2/3/4 都产出这个形状)
 
 ```
 {
@@ -60,7 +60,7 @@ row = { "rank": int, "name": String, "kills": int, "deaths": int,
 
 ---
 
-## Task 1: `UiFactory.fit_name` 收口
+## Task 1: `UiFactory.fit_name` 统一收拢
 
 **Files:**
 - Modify: `ui/ui_factory.gd`(在 `pixel_font()` / `label()` 那一区之后追加)
@@ -109,7 +109,7 @@ static func _fit_name(s: String, max_units: int) -> String:
 - [ ] **Step 3: 核对行为未变**
 
 Run（**让用户跑**，或实施者用 PowerShell）：`& $GODOT --headless --path . --quit-after 3600 res://tests/combat_hud_visual_probe.tscn`
-Expected: 现有四张图的断言全绿(该探针断言大乱斗榜的可见性与行数 —— 昵称列宽若变了它会红)。
+Expected: 现有四张图的断言全部通过(该探针断言大乱斗榜的可见性与行数 —— 昵称列宽若变了它会红)。
 
 - [ ] **Step 4: 提交**
 
@@ -361,14 +361,14 @@ static func _verdict_team(match_winner: int, my_team: int) -> String:
 	return "胜利!" if match_winner == my_team else "失败"
 ```
 
-- [ ] **Step 4: 跑冒烟确认全绿**
+- [ ] **Step 4: 跑冒烟确认全部通过**
 
 Run（PowerShell）：`& $GODOT --headless --path . -s res://tests/match_result_payload_smoke.gd`
 Expected: `MATCH RESULT PAYLOAD: ALL-OK`。
 
 - [ ] **Step 5: 变异反证(至少两条)**
 
-把以下两处各改一次，跑冒烟确认**变红**，然后**逐字还原**再跑确认绿。两段输出都写进报告：
+把以下两处各改一次，跑冒烟确认**报错失败**，然后**逐字还原**再跑确认绿。两段输出都写进报告：
 1. 把 `for_duel` 的 `"columns": C_KILLS` 改成 `["kills", "deaths"]` ⇒ ① 那条应红。
 2. 把 `_finish` 的 `sort_custom` 整段注释掉 ⇒ ③ 或 ⑥ 应红。
 
@@ -392,7 +392,7 @@ git commit -m 'feat(ui): 结算载荷适配器(三模式 -> 统一形状)+ 纯�
 - Modify: `tests/hud_declarative_probe.gd`
 
 **Interfaces:**
-- Consumes: `UiFactory.label/button/panel_box/apply_font_recursive/fit_name`；Task 2 的载荷形状
+- Consumes: `UiFactory.label/button/panel_box/apply_font_recursive/fit_name`；Task 2 的数据包形状
 - Produces: `MatchResult`(`class_name`，`extends CanvasLayer`)，`show_result(payload: Dictionary) -> void`，信号 `leave_requested`
 
 - [ ] **Step 1: 建 `ui/match_result.tscn`(最小骨架 —— 面板全部由 `_ready()` 用 `UiFactory` 建)**
@@ -559,8 +559,8 @@ func _build_section(sec: Dictionary, idx: int, columns: Array, mvp: Dictionary) 
 	return box
 ```
 
-★ `_ready()` 里**不显示**自己(`visible` 默认 true,但内容为空)⇒ 调用方 `add_child` 之后立刻 `show_result()`。若你发现空窗可见，在 `_ready()` 末尾加 `visible = false` 并在 `show_result()` 里置 true —— **但探针要断言"空载荷不崩"仍然成立**。
-★★ **`show_result()` 的清理必须 `remove_child` 再 `queue_free`**(与 `WeaponPickup.configure` 同款纪律):只 `queue_free` 的话旧节在本帧余下时间仍是子节点 → ① Godot 把新加的 `Section0` **自动改名**成 `Section0@2`(名字还被占着),② 随后那次 `get_combined_minimum_size()` **把两份一起算**,面板被设成约两倍宽且**此后再不重算**。触发点是真实存在的:3v3 的 `round_state` 可能在 MATCH_OVER 之后再广播一条带新 `mvp` 的终局载荷(见 CLAUDE.md §逐人数据/ACS/MVP 边界 ②)。
+★ `_ready()` 里**不显示**自己(`visible` 默认 true,但内容为空)⇒ 调用方 `add_child` 之后立刻 `show_result()`。若你发现空窗可见，在 `_ready()` 末尾加 `visible = false` 并在 `show_result()` 里置 true —— **但探针要断言"空数据包不崩"仍然成立**。
+★★ **`show_result()` 的清理必须 `remove_child` 再 `queue_free`**(与 `WeaponPickup.configure` 同款纪律):只 `queue_free` 的话旧节在本帧余下时间仍是子节点 → ① Godot 把新加的 `Section0` **自动改名**成 `Section0@2`(名字还被占着),② 随后那次 `get_combined_minimum_size()` **把两份一起算**,面板被设成约两倍宽且**此后再不重算**。触发点是真实存在的:3v3 的 `round_state` 可能在 MATCH_OVER 之后再广播一条带新 `mvp` 的结算数据包(见 CLAUDE.md §逐人数据/ACS/MVP 边界 ②)。
 ★ **探针也用 `.tscn` 实例化**(不是 `MatchResult.new()`)—— 与生产同一条构造路径,否则 `layer` 这类「只写在场景里」的值探针**照不到**;并补一条 `layer == 150` 断言。
 
 - [ ] **Step 3: 写场景探针(取图 + 信号防重入)**
@@ -811,7 +811,7 @@ func _build_result_payload() -> Dictionary:
 
 Run（PowerShell）：`& $GODOT --headless --path . --import`
 Run（**让用户跑**）：`timeout 300 bash tests/pvp_match_smoke.sh`(占 7777，用户跑)
-Expected: 全绿。
+Expected: 全部通过。
 
 - [ ] **Step 5: 提交**
 
@@ -920,7 +920,7 @@ git commit -m 'feat(team): 3v3 接入结算页(两节按队 + MVP)'
 - Modify: `tests/kh_l6_probe.gd`(**第 9 / 9b / 12 三条**)
 - Modify: `CLAUDE.md`
 
-★★ **是三条,不是两条**。计划原先只点名 9 / 9b;实测第 **12** 条 `_check_exit_paths()` 也压在同一段 MATCH_OVER 退场块上,Task 4 删掉定时器后它**必然变红**,而它不在原文件清单里 —— **一并改**。
+★★ **是三条,不是两条**。计划原先只明确指出 9 / 9b;实测第 **12** 条 `_check_exit_paths()` 也压在同一段 MATCH_OVER 退场块上,Task 4 删掉定时器后它**必然报错失败**,而它不在原文件清单里 —— **一并改**。
 
 - [ ] **Step 1: 先跑一次,把三条的红都看清楚**
 
@@ -955,12 +955,12 @@ Expected: FAIL。三条各自的红点(动手前先逐条对上):
 Run（PowerShell）：`& $GODOT --headless --path . --quit-after 3600 res://tests/kh_l6_probe.tscn`
 Expected: `ALL-OK`。
 
-★ **反证一条**(证明新入口真的被验到,而不是断言被架空):把基类 `_leave_to_main_menu` 里 `is_inside_tree()` 那两行注释掉 → 探针必须**变红**;还原 → 复绿。两段输出写进报告。
+★ **反证一条**(证明新入口真的被验到,而不是断言被架空):把基类 `_leave_to_main_menu` 里 `is_inside_tree()` 那两行注释掉 → 探针必须**报错失败**;还原 → 复绿。两段输出写进报告。
 
 - [ ] **Step 4: `CLAUDE.md` 记录四条**
 
 在「网络与 PvP」一节里补一小段，写清:
-1. **结算页是模式无关的**:`ui/match_result.gd` 不知道任何模式规则，载荷由 `ui/match_result_payload.gd` 的三个适配器产出;`columns` **由数据决定**(没数据的列不列，不硬造 0)。
+1. **结算页是模式无关的**:`ui/match_result.gd` 不知道任何模式规则，数据包由 `ui/match_result_payload.gd` 的三个适配器产出;`columns` **由数据决定**(没数据的列不列，不硬造 0)。
 2. **`leave_requested` 只发一次**(防重入)，下游仍走 `Level0.safe_change_scene`。
 3. ★ **ESC 的双重语义依赖"MATCH_OVER 时销毁暂停菜单"**:对局中 ESC = 菜单，结算页上 ESC = 返回主菜单。删掉那两行会让两者同时触发。
 4. `ui/match_result.tscn` 层位 **150**(三个 HUD 130、小地图 131、暂停菜单 145)。
@@ -980,15 +980,15 @@ Expected: `ALL-OK`。
    - **`scenes/royale_game.gd` 的 `state == 3` 块里必须含 `_show_result()`**;
    - **`scenes/team_game.gd` 的 `state == 3` 块里必须含 `_show_result()`**;
    - ★★ **`scenes/team_game.gd` 的 `_build_result_payload()` 里 `_names` 与 `_teams` 的实参顺序不得写反。**
-     理由:基类那两条常驻守卫(扫 `MatchResult.new(`、扫 `_show_result` 不得早退)**只扫基类**;而三个模式各自的调用点是临时探针验的,已删。★ 计划给 Task 5 点名的验收跑法(`royale_soak_probe.sh`「顺带验离场」)**其实验不到它**:该探针的客户端在 MATCH_OVER 自己就退出了(`tests/royale_soak_probe.gd:421-423`),永远走不到大乱斗结算页那一段。
-   ★★ **那两个 Dictionary 实参写反了**会**照样编译、照样全绿**:`for_team(round, names, teams, my_team)` 里 `_names` 与 `_teams` 都是 `Dictionary`,写反只会让榜渲染成乱码/空表,而**所有常驻测试都不会红**。这是本计划里最安静的一种错法。
+     理由:基类那两条常驻守卫(扫 `MatchResult.new(`、扫 `_show_result` 不得早退)**只扫基类**;而三个模式各自的调用点是临时探针验的,已删。★ 计划给 Task 5 明确指定的验收跑法(`royale_soak_probe.sh`「顺带验离场」)**其实验不到它**:该探针的客户端在 MATCH_OVER 自己就退出了(`tests/royale_soak_probe.gd:421-423`),永远走不到大乱斗结算页那一段。
+   ★★ **那两个 Dictionary 实参写反了**会**照样编译、照样全部通过**:`for_team(round, names, teams, my_team)` 里 `_names` 与 `_teams` 都是 `Dictionary`,写反只会让榜渲染成乱码/空表,而**所有常驻测试都不会红**。这是本计划里最安静的一种错法。
    ★ **不需要新探针文件**:`tests/team_room_smoke.gd` 已经在读 `res://scenes/team_game.gd` 并按**函数体**断言(见该文件 ⑨ 一族),在那里加两行即可。
 9. ★ **四处被这次改动证伪的注释要一起订正**(Task 5 评审登记;它们都不支撑任何断言,所以**不会红**,但正是"半年后让人白花一小时"的那类):
    - `server/royale_host.gd:238` —— `# 结果展示阶段:客户端 6s 后自行回菜单`
    - `tests/royale_soak_probe.gd:25-26` 与 `:420` —— 「那条 6s 换场会把本探针一起摘掉」
    - `tests/royale_c2_watcher.gd:429` —— 拿 6s 定时器解释 watcher 为什么死
 10. **登记(不改)**:`scenes/royale_game.gd:219` 那句「退出只走结算页这一条路(与 `pvp_client` / `team_game` 同款)」对 `pvp_client` 已是事实、对 `team_game` 是**前瞻**(它 Task 6 之前仍走自己的定时器)。`scenes/royale_game.gd:240-243` 是一条**孤儿注释**:它描述 `_refresh_input_lock`,而那个函数**根本不在本文件里**(在基类),且基类注释已说明合并后 1v1 也带 `_match_ended` —— 该说法是**反的**。
-11. ★★ **登记(绝对不要"顺手对齐")**:`scenes/royale_game.gd:215` 的 `and not _match_ended` 门**是承重的,不是不一致**。`RoyaleHost._match_winner()` 迭代的是 `players ∪ _scores`(`server/royale_host.gd:283-296`),所以**移除一个没有 `_scores` 条目(0 杀)的玩家**会少一个并列候选 ⇒ **全场都是 0 杀**时 `match_winner` 会从 `0` 翻成幸存的那个 role。今天这道门**挡住了**那次翻转;谁为了"和基类契约对齐"删掉它,大乱斗就会把该念「平 局」的场面念成「胜利!/失败」。**要删先修 `_match_winner`。**
+11. ★★ **登记(绝对不要"顺手对齐")**:`scenes/royale_game.gd:215` 的 `and not _match_ended` 门**是核心关键的,不是不一致**。`RoyaleHost._match_winner()` 迭代的是 `players ∪ _scores`(`server/royale_host.gd:283-296`),所以**移除一个没有 `_scores` 条目(0 杀)的玩家**会少一个并列候选 ⇒ **全场都是 0 杀**时 `match_winner` 会从 `0` 翻成幸存的那个 role。今天这道门**挡住了**那次翻转;谁为了"和基类接口规范对齐"删掉它,大乱斗就会把该念「平 局」的场面念成「胜利!/失败」。**要删先修 `_match_winner`。**
 
 - [ ] **Step 5: 提交**
 
@@ -1001,12 +1001,12 @@ git commit -m 'test/docs: kh_l6 第 9/9b/12 认结算页的退场块 + CLAUDE.md
 
 ## 自检
 
-**spec 覆盖**：§3.1 控件 → Task 3；§3.2 适配器 → Task 2；§3.3 挂载与离场 → Task 4(基类公共挂载 + 1v1)/ Task 5 / Task 6；§4 载荷契约 → Task 2 的产出 + Task 3 的消费；§5 数据缺口 → Task 2 的 `_finish`/`_verdict*` 与 Task 4 Step 1；§6 边界 → Task 3 的 `show_result` 默认值 + `_request_leave` 防重入 + 类头 ESC 注释；§7 测试 → Task 2/3 的探针 + Task 4/5/6 的真链路跑法；Task 1 是 §3.1 里"`0.1` 常量"那条之外的 DRY 收口(`fit_name`)。
+**spec 覆盖**：§3.1 控件 → Task 3；§3.2 适配器 → Task 2；§3.3 挂载与离场 → Task 4(基类公共挂载 + 1v1)/ Task 5 / Task 6；§4 数据包接口规范 → Task 2 的产出 + Task 3 的消费；§5 数据缺口 → Task 2 的 `_finish`/`_verdict*` 与 Task 4 Step 1；§6 边界 → Task 3 的 `show_result` 默认值 + `_request_leave` 防重入 + 类头 ESC 注释；§7 测试 → Task 2/3 的探针 + Task 4/5/6 的真链路跑法；Task 1 是 §3.1 里"`0.1` 常量"那条之外的 DRY 统一收拢(`fit_name`)。
 
 **2026-09-20 执行前修订(控制者,经用户裁定)**：
 - Task 4/5/6 原写"三个客户端各抄一份 `_show_result` / `_leave_to_main_menu`",理由是"抽公共基类要动 `PvpMatchClient` 的继承链" —— **该理由不成立**:三个客户端本来就都 `extends PvpMatchClient`(`:1` 行)。改为**放基类 + 子类只覆写 `_build_result_payload()`**。逐字重复逻辑块是评审规则会判缺陷的那类。
-- Task 7 原只点名 `kh_l6_probe` 第 9 / 9b 条;**第 12 条 `_check_exit_paths()` 也压在同一段退场块上**(断言 `_on_round_state` 体内必须有换场调用),Task 4 删定时器后必然变红 → 一并纳入 Task 7。
-- ★ **Task 2 的 `for_duel` 已偏离本文件上面的写法(2026-09-21,执行中修,方向正确)。** 本文件 Task 2 那段给的实现是 `if not scores.has(role): continue` —— **那是错的**:1v1 的 `_scores` 缺条目意味着**本局 0 杀**,不是"没数据",照它写会让 **5-0 那局的输家从自己的结算页上消失**(只剩一行)。已落地的 `ui/match_result_payload.gd` 改为对两个 duel role 取 `int(scores.get(role, 0))`,由 `tests/match_result_payload_smoke.gd` 的 ②b 钉住。★ **`for_team` 的相反规则(缺 `stats` ⇒ 跳过该行)是刻意的,没动** —— 那里缺条目真的是"没数据"(掉线/中途加入)。两条规则方向相反,smoke 的 ②b 与 ⑤ 双向钉住,**别统一成一版**。(本条原先只记在 progress 台账里,最终评审指出计划正文仍写着旧写法、下个照计划执行的人会把代码"修"回去,故补记在此。)
+- Task 7 原只明确指出 `kh_l6_probe` 第 9 / 9b 条;**第 12 条 `_check_exit_paths()` 也压在同一段退场块上**(断言 `_on_round_state` 体内必须有换场调用),Task 4 删定时器后必然报错失败 → 一并纳入 Task 7。
+- ★ **Task 2 的 `for_duel` 已偏离本文件上面的写法(2026-09-21,执行中修,方向正确)。** 本文件 Task 2 那段给的实现是 `if not scores.has(role): continue` —— **那是错的**:1v1 的 `_scores` 缺条目意味着**本局 0 杀**,不是"没数据",照它写会让 **5-0 那局的输家从自己的结算页上消失**(只剩一行)。已落地的 `ui/match_result_payload.gd` 改为对两个 duel role 取 `int(scores.get(role, 0))`,由 `tests/match_result_payload_smoke.gd` 的 ②b 断言约束。★ **`for_team` 的相反规则(缺 `stats` ⇒ 跳过该行)是刻意的,没动** —— 那里缺条目真的是"没数据"(掉线/中途加入)。两条规则方向相反,smoke 的 ②b 与 ⑤ 双向断言约束,**别统一成一版**。(本条原先只记在 progress 台账里,最终评审指出计划正文仍写着旧写法、下个照计划执行的人会把代码"修"回去,故补记在此。)
 
 **占位符扫描**：无 TBD/TODO；每个改代码的步骤都给了代码。
 

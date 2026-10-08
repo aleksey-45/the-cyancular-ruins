@@ -1,56 +1,41 @@
 class_name ProbeBase
 extends Node
 
-# 源码级探针的**运行环境**:断言账本 + 汇总/收尾 + 一套扫描词汇(转发给 ScanUtil)。
-# 用法:`extends ProbeBase`,然后覆写 `probe_id() -> String`(如返回 "L5")。
+# 源码级测试探针基类：
+# 提供断言收集、测试结果汇总与退出管理，并转发静态代码分析工具（ScanUtil）。
+# 派生类需继承此类并覆写 probe_id() 方法返回探针标识（如 "L5"）。
 #
-# - 为什么算法在 ScanUtil 而不在这里:那些是纯字符串/路径函数,不需要 Node,单独放便于
-#   单测与 `-s` 阶段复用。这里保留同名转发,是为了**探针正文读起来还是 `_read(...)`
-#   而不是 `ScanUtil.read(...)`** —— 正文里这类调用有上百处,包一层比到处改调用点值。
+# 架构设计说明：
+# - 纯文本/路径解析函数统一定义在 ScanUtil 中，解耦 Node 场景依赖，便于单测与 -s 模式复用。
+# - 本基类提供同名转发方法（如 _read()），保持探针代码风格简洁统一。
 #
-# - 收尾约定(仓内 CI 判据):**必须**打印 "KH <id> PROBE: ALL-OK" 且退出码 0,失败打印
-#   "KH <id> PROBE: FAIL | <原因;原因>" 并退出 1。判据是 **grep 这行文本**,不能只看退出码。
+# 测试判定与退出规范：
+# - 全部断言通过时打印 "KH <id> PROBE: ALL-OK" 并以退出码 0 退出；
+# - 任一断言失败时打印 "KH <id> PROBE: FAIL | <失败原因列表>" 并以退出码 1 退出。
+# - CI 脚本以控制台输出中的 ALL-OK 标记作为通过判定，不得仅依据进程退出码。
 #
-# 注意： 但"grep 那行文本"证明的是**没有任何断言失败**,**不是**"每条断言都跑过"。2026-09-21
-#   实测(三层各跑一遍):脚本错误(如 `get_node` 取不到节点、在 null 上调用方法)只让
-#   **出错的那个函数当场结束**,**调用方继续** ——
-#     - 出错在 **lambda / helper** 里 → 它结束,调用方往下走;
-#     - 出错在 **`_run()` 自己**里 → `_run` 结束,`_ready()` 的 `await _run()` 照常恢复。
-#   两种都**照常打印 ALL-OK**:后面那些断言**被静默跳过**,而 verdict 读成"全过"  ->  **测试漏检**。
-#   (旧文档写的"探针中途报错就**不会**打印 ALL-OK"只对一种形状成立:出错在 `_ready()`
-#   **自己身上** —— 那时确实一行都不打印,靠 `--quit-after` 保底处理退出;而它**照样 exit 0**,
-#   与"跑通了"在退出码上不可分。所以退出码从来不是判据,这条没变。)
-#   - 比"跳过若干断言"更尖的一层见 `_summary()`:整组一条都没跑时,**那个 ✓ 汇总行也会打**,
-#   于是汇总行与最终 verdict **一起读成通过**。
+# 异常处理注意事项：
+# - GDScript 在发生运行时错误（如空引用）时会中断当前函数并恢复调用方执行，
+#   可能导致后续断言被跳过却依然打印 ALL-OK（假阳性漏检）。
+# - 因此重要断言前应先校验引用有效性（如 _check(node != null)），或在测试块末尾设置执行完成标志。
 
 var _failures: Array[String] = []
 
 
-# - 子类**必须**覆写:返回本探针的短名(如 "L5"),用于拼 ALL-OK / FAIL / [L5] 汇总行。
-#   漏覆写会 push_error 且拼出 "KH  PROBE: ALL-OK" —— 那句 grep 不到 → 门变红,
-#   不会静默变成"通过"(这正是想要的失败方向)。
+# 子类必须覆写：返回探针短标识（如 "L5"），用于生成汇总与判定日志。
 func probe_id() -> String:
 	push_error("ProbeBase: 子类未覆写 probe_id()")
 	return ""
 
 
-# 记一条断言失败。仓内惯例:第二条实参写**人话**——断言在守什么、坏了会怎样。
+# 记录单条断言结果。ok 为 false 时将 msg 记录至失败列表。
 func _check(ok: bool, msg: String) -> void:
 	if not ok:
 		_failures.append(msg)
 
 
-# 每条断言的汇总行:**本次断言测试全部通过**才打 ✓,否则打 ✗。旧写法是裸 print,失败运行时
-# 汇总行照样打印(措辞还像报喜),读者容易把"打印了 N 行 [L5] ..."读成"N 条都过了"。
-# 参数 = 该条断言开始前的 _failures.size()(取差值判本组是否有新增失败)。
-#
-# 注意： 这个判据有个**盲区**(2026-09-21 实测,与文件头那条同源):它问的是"本组有没有**新增
-#   失败**",所以**一条断言都没跑**的组照样打 ✓。出错(在 null 上解引用等)若落在本组**第一条
-#   `_check` 之前**,整组被静默跳过 —— 这里打 ✓、`_finish()` 打 ALL-OK,**两行一起读成通过**。
-#   即:**✓ 汇总行 + ALL-OK 并不蕴含"这一组跑过"**。
-#   想让 ✓ 有意义:组内第一条断言要**无效操作不了**(先 `_check(x != null)` 再解引用;见
-#   `tests/probe/match_result_probe.gd` 文件头 ②),或在本组**最后**补一条"确实跑到这里了"的自检
-#   断言(它没跑  ->  整组缺一条,而不是多一条 ✓)。
+# 打印测试块汇总：若本步骤无新增失败输出 ✓，否则输出 ✗。
+# 参数 fails_before：本测试步骤开始前 _failures 数组的初始长度。
 func _summary(fails_before: int, msg: String) -> void:
 	print("[%s] " % probe_id() + ("✓ " if _failures.size() == fails_before else "✗ ") + msg)
 
@@ -64,7 +49,7 @@ func _finish() -> void:
 		get_tree().quit(1)
 
 
-# ── 扫描词汇(实现在 ScanUtil;见该文件头)──
+# ── 静态代码扫描接口转发（底层实现在 ScanUtil）──
 func _read(path: String) -> String:
 	return ScanUtil.read(path)
 
@@ -86,8 +71,7 @@ func _code_view(src: String) -> String:
 func _func_body(code: String, name: String) -> String:
 	return ScanUtil.func_body(code, name)
 
-# 只认**行首**的顶层函数定义(见 ScanUtil.top_func_body 上方:内部类会同名骗过 func_body)。
-# - 配套:传进来的 code 要用 `_code_view`(保留缩进),不能是 `_code_only`。
+# 仅匹配行首定义的顶层函数体（防止内部类同名方法干扰），输入 code 需为保留缩进的 code_view。
 func _top_func_body(code: String, name: String) -> String:
 	return ScanUtil.top_func_body(code, name)
 

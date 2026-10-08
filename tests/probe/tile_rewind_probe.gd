@@ -1,6 +1,6 @@
 extends Node
 
-# 瓦片回溯探针(场景级):破坏瓦片入账 → 回溯 → 砖块(网格+渲染)复原。
+# 瓦片回溯探针(场景级):破坏瓦片入账 -> 回溯 -> 砖块(网格+渲染)复原。
 # 用法:godot --headless --path . res://tests/probe/tile_rewind_probe.tscn
 
 var _fails: Array[String] = []
@@ -49,8 +49,8 @@ func _run() -> void:
 	var ledger = lvl.get("_tile_ledger")
 	var count0: int = ledger.count()
 
-	# ② 拆掉它(cyrm v4:破坏按 **16px 子格**算 —— 把该格 16 个子格逐一拆掉;
-	#    每个子格死亡都走 on_sub_destroyed → 账本捕获;全部死光时格级网格才清零)
+	# ② 拆掉它(cyrm v4:破坏按 16px 子格算 —— 把该格 16 个子格逐一拆掉;
+	#    每个子格死亡都走 on_sub_destroyed -> 账本捕获;全部死光时格级网格才清零)
 	for sy in 4:
 		for sx in 4:
 			TileDefs.damage_sub(Vector2i(cell.x * 4 + sx, cell.y * 4 + sy), 9999, "explosion")
@@ -73,7 +73,7 @@ func _run() -> void:
 		_fail("回溯后网格未复原(现 %d 期望 %d)" % [v_now, v0])
 	var wall: TileMapLayer = Level0.wall_layer
 	if wall != null:
-		# cyrm v4:瓦片层是 **16px 子格** —— 检查该 64px 格的 16 个子格至少一个有贴图
+		# cyrm v4:瓦片层是 16px 子格 —— 检查该 64px 格的 16 个子格至少一个有贴图
 		var painted := 0
 		for sy in 4:
 			for sx in 4:

@@ -1,10 +1,10 @@
 extends SceneTree
 
-# 一次性/可复用工具:把 maps/ 下所有 v1/v2/v3 文本地图转换成 **v4 二进制**并原地覆盖。
-# 每张图写盘前先做"往返同源循环验证":serialize_v4 → parse_v4 → flatten 必须与原网格逐格一致,
-# spawn 解析结果也必须一致,否则**拒写**(宁可不转,不可转坏)。
-# 已是 v4(头 4 字节 CYRM)则跳过。旧文件内容都在 git 历史里,不另做备份副本。
-# 用法:godot --headless --path . -s res://tests/scripts/convert_map_v4.gd
+# 地图格式转换工具：将 maps/ 目录下的所有旧版（v1/v2/v3）文本地图转换为 v4 二进制格式（.cyrm）并原地覆盖。
+# 写入前执行往返一致性校验：序列化后立即重新解析并展平网格，必须与原始网格及出生点元数据完全一致；若校验失败则中止写入，防止地图损坏。
+# 若文件已具备 v4 格式标识（文件头魔数 CYRM）则自动跳过。
+# 运行方式：
+#   "$GODOT" --headless --path . -s res://tests/scripts/convert_map_v4.gd
 
 func _initialize() -> void:
 	var dir := "res://maps"
@@ -35,14 +35,14 @@ func _initialize() -> void:
 			print("CONVERT V4: FAIL(解析不出网格) %s" % path)
 			failed += 1
 			continue
-		# 注释/出生点行原样带走(只丢版本标记行)
+		# 保留注释与出生点元数据行（过滤旧格式标记行）
 		var meta: Array = []
 		for l in MapFormat.read_lines(path):
 			var s := String(l).strip_edges()
 			if s.begins_with("#") and not s.begins_with("# cyrm-v3") and not s.begins_with("# cyrm-v2"):
 				meta.append(s)
 		var blob := MapFormatV4.serialize(grid, meta)
-		# ── 往返同源循环验证(拒写坏图)──
+		# ── 往返一致性校验（验证解析正确性）──
 		var v := MapFormatV4.parse(blob)
 		if not bool(v.get("ok", false)):
 			print("CONVERT V4: FAIL(自证解析失败:%s) %s" % [str(v.get("error")), path])

@@ -3,13 +3,13 @@ extends Node
 # 回溯「虚空碰撞箱」探针(场景级,单机实际关卡场景)。
 #
 # 背景(2026-10-03 用户报「时间回溯还是会导致有些时候有虚空碰撞箱」):录制期为回溯保留的
-# 尸体(`hold_corpses` → 死亡白闪结束后 `visible=false` + 停物理)**只藏了画、没摘碰撞** ——
+# 尸体(`hold_corpses` -> 死亡白闪结束后 `visible=false` + 停物理)只藏了画、没摘碰撞 ——
 # 玩家 `collision_mask = 5` 里含敌人层(值 4) ->  一具看不见却仍在层 4 的实体就是"虚空碰撞箱"。
 #
-# 阶段 1:隐藏尸体仍在玩家 mask 上可被命中吗(物理空间查询,用**玩家自己的 mask**)。
+# 阶段 1:隐藏尸体仍在玩家 mask 上可被命中吗(物理空间查询,用玩家自己的 mask)。
 # 阶段 2:可破坏砖 —— 破坏后不得留碰撞(幽灵墙),回溯复原后碰撞必须回来
-#      (现有 tile_rewind_probe 只验网格+渲染,**碰撞那一维此前无守卫**)。
-# 阶段 3:反向 —— 回溯复活后尸体必须**看得见且碰撞层还原**(不能变成"看不见地穿人")。
+#      (现有 tile_rewind_probe 只验网格+渲染,碰撞那一维此前无防御性校验)。
+# 阶段 3:反向 —— 回溯复活后尸体必须看得见且碰撞层还原(不能变成"看不见地穿人")。
 # 阶段 4:全场扫描:任何"不可见却仍带碰撞层"的节点(= 虚空碰撞箱的完整定义)一律点出来。
 #
 # 用法:godot --headless --path . res://tests/probe/rewind_phantom_probe.tscn
@@ -132,7 +132,7 @@ func _run() -> void:
 		var tref := target
 		corpse_layer = int((tref as CollisionObject2D).collision_layer)
 		tref.call("hurt", 9999, Vector2.RIGHT, 0.0)
-		await _wait_ms(900)   # 死亡白闪 0.5s + 余量 → 应已进入"保留尸体"态
+		await _wait_ms(900)   # 死亡白闪 0.5s + 余量 -> 应已进入"保留尸体"态
 		if not is_instance_valid(tref):
 			_fail("目标怪被释放了(未进入尸体保留;用例前置不成立)")
 		else:
@@ -154,7 +154,7 @@ func _run() -> void:
 	# ── 阶段 4 全场扫描(尸体处于隐藏态时)──────────────────────────
 	_scan("相④·尸体隐藏期", lvl, world, MazeGenerator.current_grid, Level0.wall_layer)
 
-	# ── 阶段 2 可破坏砖:破坏 → 回溯复原后的**碰撞**状态 ────────────
+	# ── 阶段 2 可破坏砖:破坏 -> 回溯复原后的碰撞状态 ────────────
 	var grid: Array = MazeGenerator.current_grid
 	var cell := Vector2i(-1, -1)
 	for y in grid.size():
@@ -182,10 +182,10 @@ func _run() -> void:
 			_fail("砖块已炸掉但地形碰撞仍在(%d→%d):幽灵墙"
 					% [before.size(), after_destroy.size()])
 
-		# 回溯跨过破坏时刻(2.5s 也跨过尸体死亡时刻)→ 砖块与尸体都应复原
+		# 回溯跨过破坏时刻(2.5s 也跨过尸体死亡时刻) -> 砖块与尸体都应复原
 		Input.action_press("rewind")
 		await _wait_ms(1200)
-		# 阶段 5:回溯**进行中**再扫一遍 —— 回溯期位置由回放器每帧摆,是"虚空碰撞箱"最可能的窗口
+		# 阶段 5:回溯进行中再扫一遍 —— 回溯期位置由回放器每帧摆,是"虚空碰撞箱"最可能的窗口
 		_scan("相⑤·回溯进行中", lvl, world, MazeGenerator.current_grid, Level0.wall_layer)
 		await _wait_ms(1300)
 		Input.action_release("rewind")
