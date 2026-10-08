@@ -42,18 +42,27 @@ func _parse_table() -> Dictionary:
 	for line in f.get_as_text().split("\n"):
 		if line.begins_with("| **") and line.contains(" | "):
 			var m := line.split("|")
-			# ["", " **0** ", " 语义 ", " 为什么 ", " `a` / `b` ", ""]
-			if m.size() < 6:
+			# 现行表是 **5 列**:["", " **0**（默认） ", " 实际 ENet 道 ", " 语义 ", " 为什么 ", " `a` / `b` ", ""]
+			# ★ 所以「名列」取**最后一个非空字段**、通道号取**行首那个整数** —— 都别写死下标
+			#   (表列数变过一次,写死下标就会静默读错列;这里靠"空转守卫"兜底)。
+			if m.size() < 4:
 				continue
-			var ch_txt := m[1].strip_edges().trim_prefix("**").trim_suffix("**")
-			if not ch_txt.is_valid_int():
+			var mt := RegEx.new()
+			mt.compile("^\\s*\\*\\*(\\d+)\\*\\*")
+			var hit := mt.search(m[1])
+			if hit == null:
 				continue
-			var ch := int(ch_txt)
-			for tok in m[4].split("`"):
+			var ch := int(hit.get_string(1))
+			var name_col := ""
+			for j in range(m.size() - 1, 0, -1):
+				if m[j].strip_edges() != "":
+					name_col = m[j]
+					break
+			if name_col == "":
+				continue
+			for tok in name_col.split("`"):
 				var name := tok.strip_edges()
-				if name != "" and not name.contains("/") and name != "":
-					if name.begins_with("`"):
-						continue
+				if name != "" and not name.contains("/") and not name.contains(" "):
 					out[name] = ch
 					in_table = true
 	if not in_table:

@@ -200,7 +200,7 @@ func list_rooms() -> void:
 func lobby_name(name: String) -> void:
 	lobby_name_set.emit(multiplayer.get_remote_sender_id(), name)
 
-@rpc("any_peer", "call_remote", "reliable", 2)
+@rpc("any_peer", "call_remote", "reliable", 1)
 func send_input(pkt: Dictionary) -> void:
 	input_received.emit(multiplayer.get_remote_sender_id(), pkt)
 
@@ -231,11 +231,11 @@ func match_sync() -> void:
 #   ② 本人包 = 自己的 ack_seq + c2,定向发给本人
 # 顺带好处:两者**互不连累** —— c2 丢只少一个回滚锚点(下一个快照补),世界包丢只冻结一帧副本插值。
 # 实测(拆包后估算):8 人局服务器上行 3555KB/s → 446KB/s(≈29Mbps → 3.6Mbps)。
-@rpc("authority", "call_remote", "unreliable", 1)
+@rpc("authority", "call_remote", "unreliable", 0)
 func snapshot_world(world: Dictionary) -> void:
 	local_snapshot_world.emit(world)
 
-@rpc("authority", "call_remote", "unreliable", 1)
+@rpc("authority", "call_remote", "unreliable", 0)
 func snapshot_own(own: Dictionary) -> void:
 	local_snapshot_own.emit(own)
 
