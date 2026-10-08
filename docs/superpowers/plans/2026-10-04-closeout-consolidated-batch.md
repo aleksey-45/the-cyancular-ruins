@@ -2,6 +2,22 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `subagent-driven-development` (recommended) or `executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> ★★★ **2026-10-08 状态横幅 —— 进度以 `git log` 与账本为准，别照下面的 `- [ ]` 判断。**
+> 下面那 42 个复选框是**写计划当时(2026-10-04)的原样,没有回填**(本仓的老毛病:「枚举会过期」)。
+> 实际状态:
+> | 工作包 | 状态 | 证据 |
+> |---|---|---|
+> | Task 1(聚合入口 + 测试工具收口) | **已完成** | 账本 R1–R23;`tests/run_all.sh` / `run_real.sh` / `known_red.txt` 都在库里 |
+> | Task 2(回溯武器快照往返保真,档 3) | **已完成** | `5d98f9b` 之前一批;账本 R24–R45;逐任务评审已收口 |
+> | Task 3(反射清理收口,档 3) | **已完成(4 轮)** | 提交 `4692759..94e5413`;终局:**Critical 0 / Important 0 / Minor 7** |
+> | Task 6(`run_all.sh` 第二条件的假红) | **已完成** | `--classify-check = OK(24 cases)` |
+> | Task 4(服务端收口客户端输入,档 3) | **已完成(控制器内联)** | 提交 `80a377a`;判据 17 条 + 4 个变异;定向回归 11 支全绿 |
+> | Task 5(RPC 按流量分流到通道,档 3) | **已完成(控制器内联 + 两轮自我订正)** | 提交 `801dc8b` → `b7e8731` → `4e48641`;判据 6 条 + 4 个变异 |
+> | **各任务的「真链路」步** | **唯一未完成** | 合并成一批跑:`.superpowers/sdd/test-economy/real_link_runbook.md`(两遍) |
+> | 终局评审 | **已完成(控制器自审)** | `.superpowers/sdd/2026-10-04-closeout-consolidated-batch/final-review-2026-10-08.md` |
+> ★ 用户裁定 **本批全部内联执行、不派子代理** ⇒ Task 4/5 与削减工作**没有独立评审者**,该上限已写在终局评审第一行。
+> ★ 另有一批**计划外的**工作(用户当日追加):**测试经济学削减**(见 `docs/eng/test-economy.md`)。
+
 > ★★ **本计划是"合并执行"的**。用户裁定:**全做**,但**减少子代理数量**、**相似任务排同一个做**、**别拆那么细**。
 > 因此把四份计划里剩余的 12 个原子任务按「**同文件 / 同族 / 同档位**」合并成 5 个工作包。
 > **原子任务的内容一个字都没少** —— 少的是**派发次数**(以及随之而来的评审座位数),不是要求。
