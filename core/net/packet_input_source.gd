@@ -117,8 +117,45 @@ func source_kind() -> int:
 	return Kind.PACKET
 
 
+# ★★ 2026-10-05(closeout 批 Task 4):轴是**归一化**量,但协议上**无界** —— `ax=50` 在服务端
+#   约等于 35000px/s(全图才 9600px)。这里把**不可信入口**收口:非有限(NAN / ±INF)→ 0,
+#   否则钳到 [-1,1]。
+#   ★ 为什么**先判有限性再钳**:不能假设 `clampf` 对 NaN 的行为(它可能原样返回 NaN)。
+#   ★ 动机是**协议健壮性**(版本不匹配的客户端 / 有 bug 的客户端 / 单机壳里跑出来的包),
+#     **不是反作弊** —— 伪造**合法范围内**的包不在此列的防护目标(用户已裁定不承担)。
+#   ★ 合法输入(`|ax| ≤ 1`)**逐位不变** ⇒ 不动手感。
+#   ★ 它是**静态纯函数**:判据可以 headless 直调,不需要真服务器
+#     (见 `tests/smoke/server_input_sanitize_smoke.gd`)。
+## 输入队列上限(closeout 批 Task 4)。★ 上限**住在这里**而不是 `MatchHost`:本函数操作的是
+## `pressed`/`released`/`winst` 这些**由本类定义语义**的字段,而 `MatchHost` 引用了 `NetBus` 自动加载 ⇒
+## `-s` 冒烟里**加载不了**(`-s` 阶段没有 autoload)。放在这里,纯逻辑判据就能用最便宜的方式跑。
+## 8 = 单帧突刺的量级(60Hz 下 8 包 ≈ 0.13s);正常速率永不触发 ⇒ 合法路径零行为变化。
+const MAX_PENDING_INPUT := 8
+
+
+## 入队 + **有界化**(静态纯函数)。丢谁 = **最旧那一包**,并把它的**边沿**并进新的队首 ——
+## `pressed`/`released`/`winst` 走可靠通道就是为了"不丢边沿"(见本文件头),丢掉它 = **偶发丢一跳**。
+static func push_pending(q: Array, pkt: Dictionary) -> void:
+	q.append(pkt)
+	while q.size() > MAX_PENDING_INPUT:
+		var old: Dictionary = q.pop_front()
+		var nxt: Dictionary = q[0]
+		nxt["pressed"] = int(nxt.get("pressed", 0)) | int(old.get("pressed", 0))
+		nxt["released"] = int(nxt.get("released", 0)) | int(old.get("released", 0))
+		# 切枪请求:>0 才覆盖(`apply_packet` 同款语义)⇒ 只在新队首没有请求时承接旧的。
+		if int(nxt.get("winst", 0)) <= 0 and int(old.get("winst", 0)) > 0:
+			nxt["winst"] = int(old.get("winst", 0))
+		q[0] = nxt
+
+
+static func sanitize_axis(v: float) -> float:
+	if not is_finite(v):
+		return 0.0
+	return clampf(v, -1.0, 1.0)
+
+
 func apply_packet(pkt: Dictionary) -> void:
-	_axis = pkt.get("ax", 0.0)
+	_axis = sanitize_axis(float(pkt.get("ax", 0.0)))
 	_held = pkt.get("held", 0)
 	_aim = pkt.get("aim", Vector2.ZERO)
 	# 与旧 `_weapon` 同款语义:>0 才覆盖(0 = 本包没有切枪请求),由 clear_edges() 清空。

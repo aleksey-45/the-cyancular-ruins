@@ -49,7 +49,7 @@ const SKIP_DIRS := ["res://.godot", "res://builds", "res://releases", "res://gam
 # ★ 它是**覆盖面**闸,不是质量闸:以后**故意**增删 `.gd` 时它会红并点名两个数,照着改这个
 #   常量即可 —— 那正是"覆盖变了得有人过目"的意思。**别把它降级成 `<`**(对"多扫了一条"
 #   就瞎了,而多出来的可能正是 scratch 副本)。
-#   ★★ **2026-10-08 ⇒ 286**(测试经济 D2/D5;当日 287 过期):
+#   ★★ **2026-10-08 ⇒ 286**(测试经济 D2/D5;当日 287 过期)，**同日 Task 4 新增 `tests/smoke/server_input_sanitize_smoke.gd` ⇒ 287**:
 #     · 净变化 = **−1**,是**删除**:`tests/probe/perf_probe.gd`(它的读数是"服务器清格子格"算法的
 #       **第二份口径**、且仍是 v3 的 `*2`/`x/2` ⇒ **读数本身不可信**,留在 `tests/` 只会误导)。
 #       `git ls-files '*.gd' | wc -l` = **286** 独立对上。
@@ -63,7 +63,7 @@ const SKIP_DIRS := ["res://.godot", "res://builds", "res://releases", "res://gam
 #       `core/net/prediction_rollback.gd` 的注释指着它说"要重测得重跑它" ⇒ **移**到 `tests/manual/`;
 #       `perf_probe` 是**读数本身错** ⇒ **删**。
 #   ⇒ 上面 283/287 那几段是**历史值**(数法留着供复核),现行值以本常量为准。
-const EXPECTED_SCRIPTS := 286
+const EXPECTED_SCRIPTS := 287
 
 var _fails: Array[String] = []
 var _total := 0

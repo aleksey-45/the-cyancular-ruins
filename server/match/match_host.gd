@@ -8,6 +8,10 @@ extends MatchRound
 #   **C2 四条不变量仍在 `_physics_process` 与 `_on_input` 里,原样未动。**
 
 const TIME_SYNC_INTERVAL := 0.1   # Beta:颗粒状态下发节律(10Hz;怀表数字平滑够了)
+# ★★ 2026-10-08(closeout 批 Task 4):**输入队列上限**住 `PacketInputSource.MAX_PENDING_INPUT`
+#   (那里也住 `push_pending`;★ 为什么不住本文件:`MatchHost` 引用 `NetBus` 自动加载 ⇒ `-s` 冒烟
+#   加载不了本脚本,而那条上限的判据要能用最便宜的方式跑)。服务端自述 ρ≈1,开局/换场有
+#   "1 秒内 0→8"的突刺;无界 ⇒ 积压不可恢复。8 = 单帧突刺的量级,正常速率永不触发。
 
 var _time_sync := 0.0
 # ── Beta 回溯(每 role 自身;他人不受影响)──
@@ -185,9 +189,11 @@ func _on_input(caller: int, pkt: Dictionary) -> void:
 			# 缓冲本帧到达的包,按 seq 序 FIFO,每物理 tick 消费一个(见 _physics_process):
 			# 1 包/ tick → 服务器权威模拟与客户端"重放未确认输入"1:1 同序(C2 rollback 需要,
 			# 见 docs/pvp-c2-retrospective.md P1)。held/axis 由被消费的那包决定,边沿不丢。
+			# ★ 2026-10-05(Task 4):入队走 `push_pending()` —— **有界**,且丢包时**保住边沿**
+			#   (见该函数;`MAX_PENDING_INPUT`)。
 			if not _pending_input.has(role):
 				_pending_input[role] = []
-			(_pending_input[role] as Array).append(pkt)
+			PacketInputSource.push_pending(_pending_input[role] as Array, pkt)
 			return
 
 
