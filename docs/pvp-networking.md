@@ -11,7 +11,7 @@
 **专用服务器权威（authoritative dedicated server）+ 客户端本地预测自己（C2，client-side prediction）。**
 
 - 一台 headless 服务器进程跑全部权威模拟（世界、两个玩家、子弹、命中裁决）；客户端**不裁决任何伤害**。
-- 客户端本地玩家照常跑完整 `player.gd` 物理（C2），保证零延迟手感；服务器每 30Hz 广播快照，客户端用它**插值远端对手** + **校正自己**。
+- 客户端本地玩家照常跑完整 `player.gd` 物理（C2），保证零延迟手感；服务器每 60Hz 广播快照，客户端用它**插值远端对手** + **校正自己**。
 - 环面世界纪律：**协议只传 canonical `[0,MAP)` 坐标**；渲染各端归最近副本；插值走最短路径增量（绝不 naive lerp canonical）。
 - 服务器/客户端共用同一个 autoload `NetBus` 收口 RPC，跨场景常驻。
 
@@ -23,9 +23,9 @@
 │                         └─ MatchHost × N（每房间一个权威对局模拟）                     │
 │                              ├─ WorldBuilder 建世界（只碰撞不渲染）                     │
 │                              ├─ Player.tscn ×2（完整物理，注入 NetworkInputSource）    │
-│                              └─ 子弹模拟 + 命中裁决 + 30Hz 快照广播                     │
+│                              └─ 子弹模拟 + 命中裁决 + 60Hz 快照广播                     │
 └────────────────────────────────────────────────────────────────────────────────────┘
-        ▲ reliable 输入包 60Hz          ▼ unreliable 快照 30Hz / reliable 事件
+        ▲ reliable 输入包 60Hz          ▼ unreliable 快照 60Hz / reliable 事件
 ┌───────────────┐          ┌───────────────┐
 │  客户端 P1      │   对称    │  客户端 P2     │    ← 完全对称，无房主优势
 │  pvp_game.tscn │          │  pvp_game.tscn │
@@ -143,7 +143,7 @@ class Room:
      q.clear()
 2. 玩家/子弹的 _physics_process 由树自动跑（父先于子 → 读到的已是最新注入）
 3. _adjudicate_bullets()                    # 命中裁决 + 新子弹广播
-4. 30Hz 快照广播                            # _snapshot_accum 计时
+4. 60Hz 快照广播                            # _snapshot_accum 计时
 5. 分帧重建可破坏碰撞块                     # 每帧最多重建 2 块（爆炸拆墙）
 ```
 
@@ -157,22 +157,32 @@ class Room:
 > 边沿对抓梯/跳跃/开火至关重要。早期实现"每帧覆盖单包"，批量到达时 just_pressed 边沿被后包覆盖丢失，服务器模拟与客户端脱节 → 抓梯失败/跳不起来/开火丢失，表现为"被回拉"。改队列按序消费后修复。
 > 缺包时：`held` 保持上一包（沿用），边沿被 `clear_edges()` 清空。
 
-### 快照（30Hz unreliable，canonical 坐标）
+### 快照（60Hz unreliable，canonical 坐标）
 
 ```jsonc
 {
   "tick": 123,          // 递增序号，客户端靠它丢乱序旧快照
   "players": {
     "1": { "pos": Vector2, "vel": Vector2, "facing": int,
-           "pose": int, "weapon": int, "hp": int,
-           "waterproof": int, "downed": bool },
+           "pose": int, "type_id": int, "hp": int,
+           "waterproof": bool, "downed": bool,
+           "aim": Vector2, "previewing": bool,
+           "haste": bool, "rewind": bool, "trail": Array },
     "2": { ... }
   }
 }
 ```
+★ **2026-10-08 订正(控制器,读源码所得)**:上面这份字段表原先**少列了 5 个**(`aim`/`previewing`/`haste`/`rewind`/`trail`),
+且**完全没提本人包**。真实字段表以 [`server/match/match_snapshot.gd`](../server/match/match_snapshot.gd) 为准。
+★★ **另有一条同源快照,文档原先漏掉**:`snapshot_own` —— **逐 peer、每帧每人一份**,
+载荷 = `{ack_seq, c2}`,其中 `c2 = player.capture_state()` = **约 26 个字段 + 整个背包表**
+(见 [`scenes/player/player.gd`](../scenes/player/player.gd) 的 `capture_state()`)。
+⇒ 每帧给**同一个客户端**发两份关于**他自己**的东西:世界包里那份(客户端**刻意不消费**) + 本人包。
+体积账见 [`registered-debt.md`](eng/registered-debt.md) §六.28。
 
 - `pos` 是 canonical（服务器玩家每帧 `wrap_to_range` 到 `[0,MAP)`），**协议绝不传副本偏移坐标**。
-- 用 `rpc_id` 逐 peer 发送（unreliable，30Hz）。
+- 世界包用**一次 `NetBus.rpc()` 广播**（不是逐 peer;逐 peer 是 `snapshot_own` 那条）。
+  ★ 世界包里**也含自己那份**,而客户端**刻意不消费**它(权威态走 `snapshot_own`) ⇒ **同一份数据每帧发两遍给同一个人**。
 
 ### 子弹裁决（`_adjudicate_bullets`）
 
@@ -267,7 +277,7 @@ SELF_CORRECT_SNAP   = 128px   分歧 > 2 格：直接回位 → 真性大分歧�
 | 包 | 方向 | 频率/模式 | 字段 |
 |---|---|---|---|
 | **输入包** | 客户端→服务器 | 每物理帧 / **reliable** | `ax`(float) `held`(int) `pressed`(int) `released`(int) `weapon`(int) `aim`(Vector2) |
-| **快照包** | 服务器→客户端 | 30Hz / **unreliable** | `tick` + `players{role:{pos vel facing pose weapon hp waterproof downed}}` |
+| **快照包** | 服务器→客户端 | 60Hz / **unreliable** | `tick` + `players{role:{pos vel facing pose weapon hp waterproof downed}}` |
 | **事件包** `bullet_spawn` | 服务器→客户端 | reliable | `scene pos vel speed range size color gravity hit_damage hit_impact explodes direct_damage fuse hit_fuse radius expl_damage expl_knock visual` |
 | **事件包** `hit_event` | 服务器→客户端 | reliable | `victim_role damage source_pos` |
 | **房间/对局** | — | reliable | `create_room join_room room_created room_joined match_start server_message` |
@@ -297,7 +307,7 @@ SELF_CORRECT_SNAP   = 128px   分歧 > 2 格：直接回位 → 真性大分歧�
                             ↓ 下帧开头注入两个 NetworkInputSource
                             双方 Player._physics_process 权威模拟
                             子弹命中裁决 / 拆墙 / 新子弹登记
-                            30Hz ── unreliable 快照(tick) ──→ 收快照
+                            60Hz ── unreliable 快照(tick) ──→ 收快照
                                                               ├ 自己→自校正(分档)
                                                               └ 对手→Replica 最短路径插值
                             新子弹 ── reliable bullet_spawn ─→ 生成视觉子弹副本(apply_damage=false)
