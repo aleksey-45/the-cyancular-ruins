@@ -6,7 +6,7 @@ extends Node
 #
 # ★ `--quit-after 3600`(=60s @60fps)的取值依据:本探针**全部断言都在 `_ready` 里同步跑完**,
 #   跑完自己 `quit()`;安全网只在挂住时才用得上。本仓的教训是"安全网给薄了会把跑得慢读成
-#   功能坏了"(`tests/probe/brawl_rollback_probe.tscn` 用 3600 就跑不完,实测要 30000),而这里没有
+#   功能坏了"(`tests/manual/brawl_rollback_probe.tscn` 用 3600 就跑不完,实测要 30000),而这里没有
 #   任何等待。3600 是"绝不可能耗尽"的量级。
 #
 # ═══ 为什么页面**不入树** ═══

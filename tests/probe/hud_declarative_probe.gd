@@ -141,7 +141,7 @@ func _check_team_my_team_contract() -> void:
 
 # ── ④ 结算页必须从 `.tscn` 实例化:`res://scenes/` 下零 `MatchResult.new(` ──────
 # ★★ 为什么住在**这里**,以及为什么**这两处写法都不能"化简"**(2026-09-21 评审后从
-#    `tests/probe/match_result_probe.gd` 整段搬来 —— 那边是**放错了地方**,理由见 ①②):
+#    `tests/manual/match_result_probe.gd` 整段搬来 —— 那边是**放错了地方**,理由见 ①②):
 #
 #   ① **扫描面必须在「接线真正落地的地方」**。结算页的挂载点在**基类**
 #      `scenes/pvp_match_client.gd`:三个客户端(`pvp_game`/`royale_game`/`team_game`)
@@ -218,7 +218,7 @@ func _scan_forbidden_literal(root: String, literal: String, cls: String, why: St
 #     `MatchResult.show_result` 的清场重建(`ui/match_result.gd` 的 remove_child→queue_free
 #     那段)**在生产里一次都不会跑**。这个缺陷 2026-09-21 修过,但当时唯一的守卫是**一次性**
 #   探针(跑完已删)⇒ 谁把它改回去,今天没有任何探针会红。
-#   `tests/probe/match_result_probe.gd` 抓不到:**它直接调 `MatchResult.show_result`**,
+#   `tests/manual/match_result_probe.gd` 抓不到:**它直接调 `MatchResult.show_result`**,
 #   从不经过生产入口 `_show_result()` —— 于是"探针比产品更绿"。
 # ★★ **判据必须剥注释(`_code_only`),这是本检查唯一的实现难点**:正确实现自己的注释里
 #    (该文件 `_show_result()` 上方那段,原文写着「写成 `if _result != null: return` 会…」)

@@ -114,18 +114,12 @@ declare -A BUDGET_OVERRIDE=(
 #   C 登记在册的仪器 —— 见 docs/eng/registered-debt.md §一。
 # ★ 任何一条**匹配不到文件**= 过期 ⇒ 入口直接红(防"改名后偷偷进批")。所以改探针名时
 #   必须同步改这里。
+# ★★ 2026-10-08(测试经济 D2/D5):原 A 组(10 支非 headless 视觉探针)与原 E 组(8 支无判词/词汇不符的
+#   读数工具 + 1 支 helper)、C 组的 `brawl_rollback_probe`(自陈读数不可信)、D 组的 `menu_autotest`
+#   **都不再住在本入口的 glob 直径内** ⇒ 相应排除规则一并删除(留着就是"匹配不到文件"的过期规则,
+#   本块开头那条闸会直接红)。它们的去处与跑法见 `tests/manual/README.md`;判据与理由见
+#   `docs/eng/test-economy.md`(D2 仪器不是守卫 / D5 只证明别的东西 / K1-K5 什么才值得留)。
 EXCLUDED=(
-	# ── A 非 headless(取图 / 真渲染)────────────────────────────────────────
-	"tests/probe/combat_hud_visual_probe.tscn|A 非 headless:头注『必须带真实渲染,不能加 --headless』"
-	"tests/probe/hue_tint_probe.tscn|A 非 headless:头注『必须真渲染』;headless 下 get_image() 返回 null ⇒ 量不到像素"
-	"tests/probe/kh_l3_visual_probe.tscn|A 非 headless:头注『必须带真实渲染』"
-	"tests/probe/kh_l4_visual_probe.tscn|A 非 headless:头注『必须带真实渲染』"
-	"tests/probe/kh_visual_probe.tscn|A 非 headless:头注『必须带真实渲染』"
-	"tests/probe/match_result_probe.tscn|A 非 headless:头注『必须真渲染;headless 下取不到像素』"
-	"tests/probe/menu_shot_probe.tscn|A 非 headless:头注『必须不带 --headless』"
-	"tests/probe/minimap_circle_probe.tscn|A 非 headless:头注『必须带真实渲染,不能加 --headless』"
-	"tests/probe/render_forensics.tscn|A 非 headless:头注『窗口模式跑,非 headless』"
-	"tests/probe/squash_stretch_probe.tscn|A 非 headless:头注『不要加 --headless —— 本探针要取图』"
 	# ── B 真链路 / 多进程 / 占 7777 ────────────────────────────────────────
 	"tests/probe/ground_net_probe.tscn|B 真链路:NetBus.start_server() 默认端口 = 7777 + 拉两个 royale_game 客户端子进程"
 	"tests/probe/reconnect_probe.tscn|B 真链路:全部子进程由本进程 OS.create_process 拉起"
@@ -136,32 +130,6 @@ EXCLUDED=(
 	"tests/probe/royale_soak_probe.tscn|B 真链路(压力):起大厅 + N 个真 royale_game 客户端;其 .sh 会 kill_port 7777"
 	"tests/probe/team_match_probe.tscn|B 真链路:六人;自当大厅(池外 29200)+ 拉子进程"
 	"tests/smoke/pvp_match_smoke.gd|B 真链路客户端:要 --role、且要 7777 上有大厅;由 tests/smoke/pvp_match_smoke.sh 编排"
-	# ── C 登记在册的仪器(不属"便宜判据")────────────────────────────────────
-	"tests/probe/brawl_rollback_probe.tscn|C 登记:registered-debt.md §一第 3 行(读 N>=4 自身在抖 + 变异下有一格假绿);docs/eng/tests.md『本批不跑,真要跑得给 --quit-after 30000』(约 8 分钟,失败形状 = 无裁决行 + exit 0)"
-	# ── D 形状不合默认批口径 ──────────────────────────────────────────────
-	'tests/smoke/menu_autotest.gd|D 形状:extends Node 但**没有同名 .tscn**(它不是独立入口,由 scenes/main_menu.gd 按 `-- --autotest-*` 挂到树根)'
-	# ── E `tests/probe/*.gd` 里**不进批**的那些(2026-10-05 补;评审 C1)─────────
-	# ★ 背景:它们**没有同名 `.tscn`**,所以原先既不在 scene 枚举里、也不在 `-s` 枚举里 ——
-	#   评审指出这正是"落选一律显式"那句保证的**反向漏洞**。现在:① 安全且有判词的按 `-s` **进批**;
-	#   ② 进不了的**逐支**写在这里带理由;③ 下面有**机械闸**(`tests/probe/*.gd` 覆盖率断言)
-	#   保证**不会有下一支静默漏掉**(去掉那道闸,新建一支 `tests/probe/foo_probe.gd` 就会静默不进批)。
-	# ★ 这一组的共同理由(2026-10-05 修复轮3 写准)= **现判据读不了它们的判词**。它有两种形态,别混为一谈:
-	#   ① **没有判词行**(`aim_probe` / `climb_probe` / `muzzle_probe` / `order_probe` / `perf_probe` /
-	#      `preview_probe` / `tile_destroy_probe`:逐支核过 `print` 里没有 `OK`/`PASS`/`DONE` 形状的判词);
-	#   ② **有判词行、但词汇不是 `OK`/`ALL-OK`**(`aim_direction_probe` 打 `== PASS, failures=0`;
-	#      ★ 注意它**失败**时打 `== FAIL, …` —— 那个词汇现判据**认**,所以它绿跑落 `NO-VERDICT`(假红)、
-	#      红跑会被正确判红。⇒ 它的危险是**假红**,不是"红的被藏起来")。
-	#   ⇒ 要让它们进批:① 类得**先加判词行**;② 类得**先把判词换成 `OK` 形状**。
-	#   ★ 照实说清:它们**从来不是守卫**(与 `registered-debt.md` §一 那三条"不算守卫"的探针同类)。
-	'tests/probe/aim_direction_probe.gd|E 判词**词汇不同**(2026-10-05 修复轮2 写准):它**有**判词行但打的是 `== PASS, failures=0`(`:61`)—— 现判据只认 `OK`/`ALL-OK` ⇒ 绿跑会落 `NO-VERDICT`(假红);★ 失败时它打 `== FAIL, …`,现判据**认**(会被判红)。⇒ 要它进批,得先把判词换成 `OK` 形状。headless 安全但**不是守卫**(无条数闸)'
-	'tests/probe/aim_probe.gd|E **无判词行**:逐支核过它的 `print` 里没有任何 `OK`/`PASS`/`DONE` 形状的判词 ⇒ 文本判据判不了它;headless 安全但**不是守卫**'
-	'tests/probe/climb_probe.gd|E **无判词行**;它是 T14 的读数修复对象,判据是人读 `latched=` ⇒ **仍不是守卫**(无断言、无条数闸)'
-	"tests/probe/muzzle_probe.gd|E **无判词行**(同 aim_probe 的核法)"
-	"tests/probe/order_probe.gd|E **无判词行**(同 aim_probe 的核法)"
-	'tests/probe/perf_probe.gd|E **无判词行**(只有 `[perf] DONE`(`:41`)与中文 通过/失败 行)+ 口径已与生产分家(`registered-debt.md` §五.3:清格子格的第二份口径、仍是 v3 的 `*2`/`x/2`)⇒ 读数本身也不可信'
-	"tests/probe/preview_probe.gd|E **无判词行**(同 aim_probe 的核法)"
-	"tests/probe/tile_destroy_probe.gd|E **无判词行**(同 aim_probe 的核法)"
-	'tests/probe/haste_probe_input.gd|E **helper 不是入口**:`extends PlayerInput`,由 tests/probe/haste_probe.gd:21 `preload()` 当输入桩用(那个 haste_probe.tscn 已在默认批里)'
 )
 
 # ── 不在本入口 glob 直径内、但要**显式交代**的候选(`pattern|理由`)────────────────

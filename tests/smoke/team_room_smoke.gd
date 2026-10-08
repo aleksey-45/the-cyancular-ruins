@@ -23,7 +23,7 @@ extends SceneTree
 #   而那个文件在 `_enter_tree` 里引用了 autoload `NetBus` —— `-s` 阶段 autoload 未注册,
 #   于是整条链编不过:`Identifier not found: NetBus` + `Failed to compile depended scripts`,
 #   连本脚本自己的 `_initialize` 都进不去(实测:进程挂到 timeout)。`load()` 走的是动态路径,
-#   随后 `reload()` 判编译结果 —— 与 `room_sweep_smoke` 加载 room_manager.gd 同一个手法。
+#   随后 `reload()` 判编译结果 —— 与 `room_sweep_lint` 加载 room_manager.gd 同一个手法。
 
 func _initialize() -> void:
 	var script = load("res://server/lobby/lobby_rooms.gd")

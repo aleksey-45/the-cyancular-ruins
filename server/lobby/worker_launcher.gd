@@ -182,7 +182,7 @@ func spawn_royale_worker(port: int, roles: Array, ai_roles: Array = []) -> bool:
 # ★ 为什么队号要显式传、不从 role 号推:role 由大厅「最小空闲号」分配,有人退出会留空洞
 #   ({1,3,5} 而 3 人),奇偶/区间推导必然出错(与 --roles 同一条纪律)。
 # ★ 本函数与 server_main.gd 的 argv 解析**逐字对应**,两边改一处必须同步改另一处
-#   (守卫见 tests/smoke/room_sweep_smoke.gd 的双向断言)。
+#   (守卫见 tools/room_sweep_lint.gd 的双向断言)。
 func spawn_team_worker(port: int, roles: Array, teams: Array) -> bool:
 	if roles.size() != teams.size():
 		push_error("spawn_team_worker: roles 与 teams 长度不等(%d vs %d),拒绝拉起" % [roles.size(), teams.size()])

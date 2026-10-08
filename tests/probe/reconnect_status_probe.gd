@@ -354,7 +354,7 @@ func _check_hud_consumers() -> void:
 	#    上面两条都是**函数体内的文本共现**,控制流一概看不见 —— 用 `if false:` 包住整支、
 	#    或把 `col` 算完再在下游整体覆写,两条**照样全绿**。
 	#    真正钉住"这一档在**画面上**真的生效"的是**用户跑的真渲染探针**
-	#    (`tests/probe/combat_hud_visual_probe.gd` 的态8:数像素差 + 念出「掉线 42s」+ 量文本宽度)。
+	#    (`tests/manual/combat_hud_visual_probe.gd` 的态8:数像素差 + 念出「掉线 42s」+ 量文本宽度)。
 	#    headless 这一侧**没有**等价物(本探针不看像素),故这条缺口是**登记的**,不是"已闭合"。
 	_check(not _code(TEAM_HUD).contains("grace"),
 			"★ team_hud 也在消费 `grace` —— 3v3 **刻意不做**(spec §4 的 3.1 只点大乱斗与 1v1);"

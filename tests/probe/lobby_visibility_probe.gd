@@ -7,7 +7,7 @@ extends Node
 #
 # ★ `--quit-after 3600`(=60s @60fps)的取值依据:本探针**全部断言都在 `_ready` 里同步跑完**,
 #   跑完自己 `quit()` —— 安全网**只在探针挂住时**才用得上。本仓的教训是"安全网给薄了会把跑得
-#   慢读成功能坏了"(`tests/probe/brawl_rollback_probe.tscn` 用 3600 就跑不完,实测要 30000),
+#   慢读成功能坏了"(`tests/manual/brawl_rollback_probe.tscn` 用 3600 就跑不完,实测要 30000),
 #   而这里没有任何等待(不 await、不开 socket、不拉子进程),故 3600 是"绝不可能耗尽"的量级。
 #
 # ═══ 为什么需要它 ═══
@@ -480,7 +480,7 @@ func _find_row(arr: Array, code: String) -> Dictionary:
 #   `disabled` + `FOCUS_NONE` 收拾掉 ⇒ 回局这一档**连点都点不到**,而**一行报错都没有**
 #   (症状只是"回到大厅后自己那间房是灰的,回不去")。
 #   ★ 实测(2026-09-21):次序写反时,本探针**原有 37 条**断言、`lobby_row_probe` 的 24 条、
-#     `room_sweep_smoke`、`team_room_smoke`、以及四个场景加载**全部照绿** —— 这一条是唯一咬得住的。
+#     `room_sweep_lint`、`team_room_smoke`、以及四个场景加载**全部照绿** —— 这一条是唯一咬得住的。
 # ★ 页面**不入树**(与 `lobby_row_probe` 同一手法):`_ready` 一跑就会 `_request_list(...)` 去连大厅
 #   (1v1 页默认云地址)⇒ 本探针不开任何 socket、也不碰用户的 7777。故手工摆好渲染函数要读的
 #   两个成员(`_grid` / `_status`),再直调渲染函数(见 `_own_row_reason`)。

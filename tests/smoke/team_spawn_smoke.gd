@@ -5,7 +5,7 @@ extends SceneTree
 # 通过 = `TEAM SPAWN SMOKE: ALL-OK` 退出 0。
 #
 # ═══ 为什么需要它 ═══
-# ★ `tests/smoke/room_sweep_smoke.gd` 的双向断言只能证明"两个文件里都有 `--team` / `--teams` 这两个
+# ★ `tools/room_sweep_lint.gd` 的双向断言只能证明"两个文件里都有 `--team` / `--teams` 这两个
 #   字符串",证明不了「`WorkerLauncher.spawn_team_worker` 拼出来的那条命令行真的被
 #   `server_main._ready` 的 argv 解析认下、并按 **3v3 形态**就绪」。两处各自改对了、拼起来却错
 #   (开关顺序 / 逗号串格式 / 值域)时,那一对断言**照样全绿** —— 而表象是"对局永不开始,

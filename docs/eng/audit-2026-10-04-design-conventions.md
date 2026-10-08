@@ -188,7 +188,7 @@ $ grep -a -o -P 'res://[A-Za-z0-9_./-]+' … | awk -F/ '{print $1}' | sort | uni
 **要一并知道的两件事**：
 
 - 主菜单**故意**依赖其中一个测试文件：`scenes/main_menu.gd:164-171` 在 `-- --autotest-*` 时
-  `load("res://tests/smoke/menu_autotest.gd")`；且 `:154-156` 注释里**当时已知**"tests/ 会一起打进发布包"。
+  `load("res://tests/harness/menu_autotest.gd")`；且 `:154-156` 注释里**当时已知**"tests/ 会一起打进发布包"。
   ★ **2026-10-04 起 `exclude_filter` 已含 `tests/*,tools/*`**（`10da6cc`）⇒ 发布版里这条通道**没有了**，
   该依赖在发布产物上退化为 no-op（判决与代价见 `registered-debt.md` §七 第 3 条）。
   所以这不是"没想到"，而是"知道但没当问题"。代价：向内泄漏实现 + 玩家侧多一个自动化后门。
@@ -231,7 +231,7 @@ window/stretch/mode="viewport"
 | 2.6 | **"兜底读宿主真实输入"** 还有 4 处 | `scenes/weapons/weapon_base.gd:223/228/233`（`has_method` 不成立即 `return Input.is_action_*("attack")`）；`scenes/player/swim_component.gd:13-15` `# src=null(冒烟等直接调用)回落真实 Input` → `src = LocalInputSource.new()` | 同类坑本仓**已经踩过一次**并留下注释：`core/net/ai_input_source.gd:63-67` "AI 没有鼠标(服务器 headless),不覆写就会让它去读**宿主机的真实鼠标位置** —— 瞄准变成随服务器桌面而变的随机值"。瞄准修了，攻击/游泳这两处同形状的兜底没修 |
 | 2.7 | **菜单没有键盘/手柄焦点入口** | `grep grab_focus\|focus_neighbor` 生产代码 **0 命中**（只有 gitignore 的 `.superpowers/sdd/_gen/*` 里有）；唯一被处理的是返回：`scenes/settings_menu.gd:142` `if event.is_action_pressed("ui_cancel"):` | Godot 不自动点亮首个可聚焦控件 ⇒ 冷启动后 Tab/方向键/手柄一个按钮都到不了。而 `scenes/mp_lobby.gd:506/509` 专门改过 `focus_mode`，说明机制被用过、只是没喂初值 |
 | 2.8 | **零 i18n** | `tr("` 全仓 **0 命中**、`TranslationServer`/`tr_n(` **0 命中**、无 `.po/.csv/.translation`、`project.godot` 无 `internationalization` 段 —— 且项目文档**没有一处**把它写成有意取舍 ⇒ 标不了"有理由"。量级：子代理实测 `ui/`+`scenes/` 约 **328** 处中文串面（❓ 该计数我未复核） | 迁进 `.tscn` 后文案又多一种落点；且多条探针**按文案找控件**（`scenes/main_menu.gd:204` 自述 `kh_l4_visual_probe` 按文案找按钮）⇒ 改文案 = 改测试。真要 i18n，得先把探针判据换成 `unique_name_in_owner`/`meta` |
-| 2.9 | **无 CI、无聚合回归入口**；判据靠逐脚本自造文本行 | 无 `.github`；`tools/check_naming.py:9` 自称"检查,有违规 → exit 1(CI/本地都能用)"但没人调它。覆盖缺口：`EXPECTED_CHECKS` 只在 **18/152** 个测试脚本里（实测），`tests/lib/probe_base.gd:49-53` 自己写明盲区"**✓ 汇总行 + ALL-OK 并不蕴含'这一组跑过'**"，`tests/smoke/room_sweep_smoke.gd:61` 有实例（"而 verdict **仍是 `SMOKE_ROOM_SWEEP OK`** —— 那一组断言被静默跳过"） | 主流用 GUT/gdUnit4 + CI 拿 JUnit XML 与退出码。★ 本仓**已有**退出码通道：`probe_base.gd:61-64` 真调 `quit(0/1)`，只是文档统一要求"判据取 grep 文本"⇒ 现成通道被浪费。另：`--quit-after` 值实测有 8 种（3600×46、600×6、54000、36000、14400、10800、7200、300），"统一 3600"只活在文档里；11 个 `.sh` **无一**自己 `timeout`（`team_match_probe.sh:4` 那条只是**注释**里教人怎么包） |
+| 2.9 | **无 CI、无聚合回归入口**；判据靠逐脚本自造文本行 | 无 `.github`；`tools/check_naming.py:9` 自称"检查,有违规 → exit 1(CI/本地都能用)"但没人调它。覆盖缺口：`EXPECTED_CHECKS` 只在 **18/152** 个测试脚本里（实测），`tests/lib/probe_base.gd:49-53` 自己写明盲区"**✓ 汇总行 + ALL-OK 并不蕴含'这一组跑过'**"，`tools/room_sweep_lint.gd:61` 有实例（"而 verdict **仍是 `SMOKE_ROOM_SWEEP OK`** —— 那一组断言被静默跳过"） | 主流用 GUT/gdUnit4 + CI 拿 JUnit XML 与退出码。★ 本仓**已有**退出码通道：`probe_base.gd:61-64` 真调 `quit(0/1)`，只是文档统一要求"判据取 grep 文本"⇒ 现成通道被浪费。另：`--quit-after` 值实测有 8 种（3600×46、600×6、54000、36000、14400、10800、7200、300），"统一 3600"只活在文档里；11 个 `.sh` **无一**自己 `timeout`（`team_match_probe.sh:4` 那条只是**注释**里教人怎么包） |
 | 2.10 | **守卫有盲区，恰好盖住唯一的违规** | `tools/check_naming.py:69-73` 在项目根 `if rel == ".": continue` ⇒ 规则 A（目录名一律小写）**从不检查顶层目录**。实测 `python tools/check_naming.py` 打 `命名检查 OK` 并 exit 0，而当时顶层就躺着大写的 `DevTools/`（且 `SKIP_DIRS:34` 未收录它；★ 2026-10-04：`DevTools/` 已 `git rm` 出库 —— **盲区本身仍未修**） | 正对上本仓自己的硬规则"**守卫能给的保证总是比它读起来少**"。修法：把 `continue` 改成跳过 `rel == "."` 这个**自身**而不是跳过它的子目录 |
 | 2.11 | **自订规则被自己违反，且没机制守** | `AGENTS.md:103` 要求 `.ps1` 纯 ASCII+CRLF，而 `tools/gamelog/capture_session.ps1` 有 **49 行非 ASCII**（靠 UTF-8 BOM 侥幸）；`start_server.bat:4` 那句自述已被 `b815c68` 改写（现文只说 CRLF 由 `.gitattributes` 钉住、**命令**保持 ASCII，不再自称 pure ASCII）；`.gitattributes` **现已钉 `*.bat text eol=crlf`** ⇒ 本行"从未被机制覆盖"**已不再成立**（存量索引 EOL 自己查 `git ls-files --eol '*.bat'`） | 规则只存在于文档；`.bat` 那条从未被机制覆盖。cmd.exe 对角/多行 `for` 块的 LF 容忍度是出了名的差 |
 
@@ -432,7 +432,7 @@ window/stretch/mode="viewport"
 | 固定视口下的绝对定位 | `1920×1440` + `resizable=false` ⇒ 无需重排；★ **订正（出处挂错对象）**：原写「计划『已知边界 2』已登记」，而 `docs/` 里"已知边界 2"只存在于本行自己（UI 计划「已知边界」第 2 条是"`.tscn` 魔数不会消失"，与绝对定位无关）—— 真正的登记在 [窗口与显示设置计划](../superpowers/plans/2026-10-04-window-and-display-settings.md):5/82（"不改任何一处版式……绝对定位逐像素不变"） |
 | 生成器产出 `.tscn` 不入库、无 `--check` | `tools/gen_menu_scene.gd:54-61` 明写覆盖上限（"只保证同一份代码建出来的树 == `.tscn`"） |
 | `allscript_probe` 排除点目录 + 条数下限 | `allscript_probe.gd:24-35` 写明数法与"别降级成 `<`"的理由 |
-| 「退出码不可作判据」 | `probe_base.gd:49-53` + `room_sweep_smoke.gd:58-63` 的具体事故；★ 但这条被**过度概括**了，见 §2.9 |
+| 「退出码不可作判据」 | `probe_base.gd:49-53` + `room_sweep_lint.gd:58-63` 的具体事故；★ 但这条被**过度概括**了，见 §2.9 |
 | `env.sh` 不设 `set -e/-u`、按端口杀、`[7800,8300)` 不扫 | `env.sh:12-14/42-43/55-66` 三条都写明理由（★ 2026-10-04 订正行号：原文写 `:39-40/52-63` —— `9e4ccbe` 在本文件上方插了 3 行，整段随之下移） |
 
 ---
@@ -484,7 +484,7 @@ window/stretch/mode="viewport"
 2. **§1.2 `[debug]` 键**：删 `:35-36`、按 `6b5f3fb` 补回三条真键 + 一条"键名必须匹配 `^[a-z_]+/`"的守卫。
 3. **§1.3 发布包瘦身**：`exclude_filter` 加 `tests/*,tools/*`（**不加 `DevTools/*`** ——
    那 3 个文件已 `git rm` 出库，见 §1.3 的结案；已由 `10da6cc` 落地）；同时决定
-   `tests/smoke/menu_autotest.gd` 这个"生产依赖测试文件"该怎么办。
+   `tests/harness/menu_autotest.gd` 这个"生产依赖测试文件"该怎么办。
 4. **§2.10 命名检查盲区**：一行修（顶层目录也要过规则 A）+ 决定 `DevTools/` 的去向 —— 今天有三条路：
    改名小写 / 收进 `SKIP_DIRS` / **`git rm` 出库**（★ 2026-10-04 新证据：那 3 个文件**是已入库的**，
    且会进导出包，见 §1.3 的订正）。★ **去向已定：第三条路** —— `9e4ccbe` 已 `git rm` 出库 ⇒

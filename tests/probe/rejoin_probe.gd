@@ -11,7 +11,7 @@ extends Node
 # ★ `--quit-after 36000`(=600s @60fps)的**推导**:本跑的量级 = 进局 ~8s + PLAYING 静置 ~3s
 #   + 离场/主菜单/回局各 ~2s + c2 的观察窗 40s + c3 的 40s 窗口 + 收尾 ~5s ≈ **60~100s**;
 #   取 600s = 6~10 倍余量。★ 本仓教训:安全网给薄了会把"跑得慢"读成"功能坏了"
-#   (`tests/probe/brawl_rollback_probe.tscn` 就是被 3600 误判过的那一个,实测要 30000),故这里按量级
+#   (`tests/manual/brawl_rollback_probe.tscn` 就是被 3600 误判过的那一个,实测要 30000),故这里按量级
 #   给足而不是照抄别处的数。
 #
 # ═══ 拓扑(自当大厅/裁判;全部子进程由本进程 `OS.create_process` 直接拉起)═══

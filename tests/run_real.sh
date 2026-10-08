@@ -103,7 +103,6 @@ WRAPPERS=(
 	"tests/smoke/move_feel_smoke.sh|单进程:一条 scene + tee;同一个 move_feel_smoke.tscn 已在 run_all 默认批里"
 	"tests/smoke/pvp_reconcile_smoke.sh|单进程:一条 scene + tee;同一个 pvp_reconcile_smoke.tscn 已在 run_all 默认批里"
 	"tests/smoke/pvp_twin_smoke.sh|单进程:一条 scene + tee;同一个 pvp_twin_smoke.tscn 已在 run_all 默认批里"
-	"tests/smoke/room_sweep_smoke.sh|单进程:一条 -s + tee;同一个 room_sweep_smoke.gd 已在 run_all 默认批里"
 )
 
 ASSUME_YES=0

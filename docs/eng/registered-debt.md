@@ -14,7 +14,7 @@
 |---|---|---|---|---|---|
 | [`tests/probe/team_match_probe.sh`](../../tests/probe/team_match_probe.sh) | 用户(六人真链路只能由用户跑) | 2026-10-04 **静态复核,未跑** | **长期 FAIL,且判词与实况矛盾**:判词说"大厅队伍表是空的 / 45s 内没有 3v3 房",而**同一次跑**的客户端日志里房建成了、客户端进了等待室。★ **2026-10-04 状态订正**:根因**已修** —— `9003dae`(2026-09-28)"客户端不再被拨到生产云服 —— 预置 `PvpSession.server_address`",正是本行原先那句"客户端被某个不是探针大厅的东西服务着"。但**修复后没有留下六人整跑的判决**,而三个落点互相矛盾(`docs/superpowers/plans/2026-09-29-unowned-debt-sweep.md:11` 说"已修待验"、`.superpowers` 账本记 2026-09-20 曾 PASS 33 条、同一账本靠后段落仍称"既有的 FAIL") | 根因未钉死时的追查成本太高,且它是**唯一**"过真协议"的 3v3 覆盖 | **跑一次六人整链路**(池外 29200/29250、不碰 7777):绿 ⇒ 按上面「销掉时删行」删掉本行,并同步 `tests.md` / `handoff` / `AGENTS.md` §5 的复述;红 ⇒ 把"已修 `9003dae`、仍红"写进症状列并重新算根因 |
 | [`tests/probe/ground_net_probe.tscn`](../../tests/probe/ground_net_probe.tscn) | 未认领 | 2026-10-04 **静态复核,未跑** | **既有抖动**:机器人走位在**随机图**上卡死(探针自己的头注也写了这一点) | 抖动来源是"每进程随机选一份 `.cyrm`"(见 [`world.md`](world.md));探针本体仍能看趋势 | 给探针**钉图**(取图类脚本的既有纪律) |
-| [`tests/probe/brawl_rollback_probe.tscn`](../../tests/probe/brawl_rollback_probe.tscn) | 未认领 | 2026-10-04 **静态复核,未跑** | 它是"贴身缠斗扫描仪器",但**读 N≥4 时本身在抖**,且**变异下仍有一格假绿** | 留着仍能看见趋势 | 抖动与那一格假绿都消掉 |
+| [`tests/manual/brawl_rollback_probe.tscn`](../../tests/manual/brawl_rollback_probe.tscn) | 未认领 | 2026-10-04 **静态复核,未跑**；2026-10-08 **按测试经济 D5 移出默认批** | 它是"贴身缠斗扫描仪器",但**读 N≥4 时本身在抖**,且**变异下仍有一格假绿** | ★ **处置已变**：它**作为守卫不可靠**（上面那句），但它是 `PredictionRollback._close_enough` **容差常数的测量台**（[`core/net/prediction_rollback.gd`](../../core/net/prediction_rollback.gd) 的注释指着它说"要动它得重跑"）⇒ **移入 `tests/manual/`，不删**；**它不再是批内的红/假绿问题**，而是一条**人工测量台**（跑法见 [`tests/manual/README.md`](../../tests/manual/README.md)） | 抖动与那一格假绿**不再挡批**；若将来要把它变回守卫，得先让它在 N≥4 下稳定、并把判据写成行为级 |
 | [`tests/smoke/reconnect_smoke.gd`](../../tests/smoke/reconnect_smoke.gd) | 未认领(由 UI→`.tscn` 迁移那条线留下) | 2026-10-04 **实测**(聚合入口 `bash tests/run_all.sh` 首跑) | **断言的锚点没了 ⇒ 该条守卫今天不守任何东西、且永远红**:判词原文 `RECONNECT SMOKE FAILED: 1` + `[FAIL] ★ 主菜单联机入口未走 PvpSession.reset()`(rc=1,日志 tests/.run_all_logs/smoke/reconnect_smoke.log)。★ **根因不是行为回归** —— [`scenes/main_menu.gd`](../../scenes/main_menu.gd):219 那行**仍在**调 `PvpSession.reset()`;是 [`reconnect_smoke.gd`](../../tests/smoke/reconnect_smoke.gd):294-295 把判据限定在 `_build_menu_buttons` 的函数体内,而按钮已搬进 `main_menu.tscn`、接线改到 `_wire_menu()`([`scenes/main_menu.gd`](../../scenes/main_menu.gd):207)⇒ `_func_body` 取到空串 ⇒ `count("PvpSession.reset()") >= 1` **恒假** | 它是 C1 纪律("进页复位、但**不**清回局凭据")的**唯一**源码级断言;删掉等于把那条纪律的守卫一起删掉 | 锚点从 `_build_menu_buttons` 换成 `_wire_menu`(或改成"整个文件去注释后至少一处 **且** 落在 `%MultiBtn` 那个 lambda 里")⇒ 转绿后**删掉本行**,并同步 `tests/known_red.txt` |
 | [`tests/probe/elite_drop_probe.tscn`](../../tests/probe/elite_drop_probe.tscn) | 未认领 | 2026-10-04 **实测 7/7 全崩** | **判词肯定、退出时 segfault**:`rc=139`,而日志**末行**就是 `ELITE DROP PROBE: OK(真击杀 → 结晶 FX 出现 → 吸收入账 +300 颗粒)`、`FAIL` 词 **0** 行。跑法 `timeout 180 "$GODOT" --headless --path . --quit-after 3600 res://tests/probe/elite_drop_probe.tscn`,**同配置 7 次全部 139**(3 次单跑 + 2 次跑批内 + 复跑 2 次);★ 两次复跑的**判词行** md5 相同。⇒ 断言结论**不受影响**,`run_all.sh` 把它记成 `OK+RC`(**不算红**),但它在真链路里**会**留孤儿/占端口那类麻烦 | 判词仍 OK、能继续看趋势(它是"精英掉落 → 结晶 FX → 吸收"链条上唯一的行为载体) | 找出退出时崩的那条链(先怀疑 SubViewport/贴图析构 —— `ground_net_probe` 头注记过同一类"只有真窗口/真析构才照得出来"的问题)⇒ `rc=0` 后**删掉本行** |
 | [`tests/probe/elite_drop_probe.tscn`](../../tests/probe/elite_drop_probe.tscn) | (并入上一行) | 2026-10-04 **同配置跑两次** | ★ **顺带照实记一条同族边界**:该探针**跑在随机图上**(与 `climb_probe` 修 `c5804f4` 之前同一族)⇒ **非判词读数两次不一致**:墙碰撞 shapes 4032/4527、敌人数 65/24、开阔地板格 670/889、击杀距离 2294/4159px、`FX已释放` false/true。**只有判词行**可比 | 同上(读数不删 —— 探针是扫描仪器) | 按 `c5804f4` 的写法给该探针**钉图**(`MazeGenerator.set_map_file` + `load_map_file`),让非判词读数也可比;这也是 [`ground_net_probe.tscn`](../../tests/probe/ground_net_probe.tscn) 那一行"给探针钉图"的同一条纪律 |
@@ -140,7 +140,7 @@
      (非 headless 会抢焦点)。**要闭环得跑一次非 headless 并取几何**(与窗口批 Task 0 同性质)。
    - ★ **写法税**:因冒烟按源码文本查那两个 API 字面量,`apply_display()` **函数体内**的注释**不得**出现
      `window_set_size` / `window_set_mode`。
-14. **`tests/probe/menu_shot_probe.gd` 的"取屏自证"是绊线不是保证**(2026-10-04 实测)。
+14. **`tests/manual/menu_shot_probe.gd` 的"取屏自证"是绊线不是保证**(2026-10-04 实测)。
    16×16 粗比在深色 UI 上会被摊薄:4 次取屏里 3 次抓到遮挡、**1 次放过**(设置页粗差 **0.0677** < 阈值 0.08,
    而那张图里开始菜单盖住了画面中间一大块)⇒ **用它取图必须人看图**,别把自证通过当"没被遮挡"。
 15. **窗口/显示的接线没有常驻守卫 + Theme 没有 `OptionButton`**(2026-10-04 加)。
@@ -358,7 +358,7 @@
    - **什么时候能销**:按该探针自己的口径跑一次(池外 29200/29250、**不动 7777**、收尾只扫它自己那段、前后 `tasklist` 无 Godot),
      加一条"机器人宿主在真对局里确实出了弹"的断言 —— 顺带把 §一 第一条那笔"修复后无整跑判决"一起结掉。
 
-7. **「回溯退出必须读未被冻结的输入」这条不变量:已落纸；★ 形状与行为两侧都**没有守卫（2026-10-05 测试经济删掉形状半之后）**
+7. **「回溯退出必须读未被冻结的输入」这条不变量:已落纸；★ 形状与行为两侧都**没有守卫（2026-10-08 测试经济删掉形状半之后）**
    (2026-10-04 由 Plan B Task 6 复核发现；**2026-10-05 closeout 批 Task 3 补注释与守卫并改口**，提交 `fa5d32d`)。
    - **不变量**：`_tick_beta_rewind` 进出两条路读的必须是**宿主自己那一个** `input_source`
      （`_local.input_source`；实测改后在 `scenes/pvp_match_client.gd:248` 与 `:254`）—— 同一函数会把
@@ -396,7 +396,7 @@
 
 11. **§2.6 的守卫有一处覆盖上限：那道行为相只驱动了 `up` 边沿/轴**(2026-10-04 由 Plan B Task 7 引入并登记)。
    它用 `Input.action_press("up")` 驱动攀爬 ⇒ **只读别的轴 / 别的动作**的"新式兜底"它咬不住。
-   ★ 同族还有一条**测试基础设施**缺陷（已立 Plan B Task 9）：`tests/probe/climb_probe.gd` 依赖**随机地图**
+   ★ 同族还有一条**测试基础设施**缺陷（已立 Plan B Task 9）：`tests/manual/climb_probe.gd` 依赖**随机地图**
    （`core/sim/maze_generator.gd:44` `maps[randi() % maps.size()]`）⇒ **同版本两次跑结论可能相反**、**不能当基线**；
    修法 = 用 `set_map_file` 钉图。★ **已修（2026-10-04，`c5804f4`）**：`climb_probe` 现已钉 `demo.cyrm`；钉图前连跑 6 次得 **3:3 两种互斥结论**，钉图后 md5 全等且与 demo 那一支逐字节相同。
 
@@ -591,7 +591,7 @@
      或在 `top == c.y`（绕回起点）时 `break`；并补一条**纯逻辑 `-s` 断言**：全液列必须在**有限步**内返回
      （今天这条断言写出来就会**挂**，故必须先修再写，或写成"带步数上限的调用"）。
      ★ **为什么本轮不加那条常驻断言**：新增一个 `.gd` 会让 `allscript_probe` 的 `EXPECTED_SCRIPTS`
-     （287 = `git ls-files '*.gd'`）变 288 ⇒ 登记为后续（可与上一条修法一起做）。
+     （**2026-10-08 起 = 286** = `git ls-files '*.gd'`；原 287 随测试经济 D5 删掉 `perf_probe.gd` 而降）变 287 ⇒ 登记为后续（可与上一条修法一起做）。
 
 23. **T10/T11 的行为面：当前无自动化路径可达**（★ 这是"归真链路批 A"这句话的**订正**）
    (2026-10-05 由 closeout 批 Task 3 的逐任务评审 I-3 判为**过度声明**并要求登记；owner 未认领)。
@@ -601,7 +601,7 @@
      [`scenes/beta_menu.gd`](../../scenes/beta_menu.gd):131（在 `_enter_card`(`:128-135`) 内；**要人点 Beta 页**，**或**走 `main_menu.gd` 的
      `-- --autotest-*` 钩子 —— 见下面②之前那半条）、`tests/probe/lobby_create_form_probe.gd`（只建大厅面板，不建局）、
      以及——★★ **2026-10-05 修复轮 2（评审 Minor ⑧）补上的那个驱动者**——
-     [`tests/smoke/menu_autotest.gd`](../../tests/smoke/menu_autotest.gd) 的 `_run_beta_flow()`（**`func` 在 `:161`** —— 原写的 ":158 起"是它上方的注释行）：它经
+     [`tests/harness/menu_autotest.gd`](../../tests/harness/menu_autotest.gd) 的 `_run_beta_flow()`（**`func` 在 `:161`** —— 原写的 ":158 起"是它上方的注释行）：它经
      [`scenes/main_menu.gd`](../../scenes/main_menu.gd):**151-158(注释)+159-174(代码)** 的 `-- --autotest-*` 钩子走**就是** `beta_menu.gd:131`
      那条路，**headless 可达**；但今天它被 [`tests/run_all.sh`](../../tests/run_all.sh):142 的 `EXCLUDED` 挡在批外，
      **且没有任何脚本调用它** ⇒ "无自动化路径"的**结论仍成立**，只是口径要写成"**要人点 / 或走
@@ -618,7 +618,7 @@
      ④ 服务端那一写同理：[`server/match/match_host.gd`](../../server/match/match_host.gd) 的那三段全在
      `if time_economy != null:` 内，而 `time_economy` 只在 `options["time"]` 非空时建 ⇒ **普通真链路里
      `match_host.gd:223` 那一行连"写 1.0"都不发生**。
-   - **覆盖上限（照实；2026-10-05 按 [`test-economy.md`](test-economy.md) 的 D6 收紧）**：
+   - **覆盖上限（照实；2026-10-08 按 [`test-economy.md`](test-economy.md) 的 D6 收紧）**：
      **T11 零守卫**（原 S11 那 10 条**全是形状**，已删）；**T10 只剩行为 9 条**（形状 12 条已删）。
      **行为**（真 PvP 局里按住加速键）没有任何自动化路径；服务端那一写"被执行到"的证明也**没有**（只有"静态链完整 + 该字段是活真相源"：
      S10 ④ 用与 `match_host.gd:223` **逐字同款**的写法改字段，三个消费点与根速度域都跟着变）。
@@ -658,7 +658,7 @@
      (audit §5 第 5 条)⇒ 谁要引用**先自己数一遍**。
      ★ 同条点出的**结构性障碍**才是判"不做"的真正原因:多条探针**按文案找控件**
      ([`scenes/main_menu.gd`](../../scenes/main_menu.gd):204 自述 `kh_l4_visual_probe` 按文案找按钮;
-     [`tests/smoke/menu_autotest.gd`](../../tests/smoke/menu_autotest.gd) 的 `_press_by_text` 同理)⇒ **改文案 = 改测试**。
+     [`tests/harness/menu_autotest.gd`](../../tests/harness/menu_autotest.gd) 的 `_press_by_text` 同理)⇒ **改文案 = 改测试**。
    - **为什么判"不做"**:同样是用户 2026-10-04 的「记录而不修改」(audit §10)。它不是"加一份翻译文件"的工作量:
      ① 文案今天有**多个落点**(代码字面量 + `.tscn` 里的 `text=`,而"搬进 `.tscn`"这件事本身又添了这一处);
      ② 得先把"按文案找控件"的探针判据换成 `unique_name_in_owner` / `meta`,否则每换一版译文都要跟着改探针;
@@ -669,8 +669,8 @@
 
 3. **发布版里"菜单自动探针"退化为 no-op ⇒ 发布版没有菜单端到端守卫**(owner 用户;最后复核 2026-10-04;判决:**裁剪后不随包发布**)。
    - **症状**:[`scenes/main_menu.gd`](../../scenes/main_menu.gd) 的 `_ready` 在命令行含 `-- --autotest-*` 时
-     把 [`tests/smoke/menu_autotest.gd`](../../tests/smoke/menu_autotest.gd) 挂到树根,但那条依赖被 `:164` 的
-     `ResourceLoader.exists("res://tests/smoke/menu_autotest.gd")` 守着 ⇒ 文件不在包里时它**静默跳过**
+     把 [`tests/harness/menu_autotest.gd`](../../tests/harness/menu_autotest.gd) 挂到树根,但那条依赖被 `:164` 的
+     `ResourceLoader.exists("res://tests/harness/menu_autotest.gd")` 守着 ⇒ 文件不在包里时它**静默跳过**
      (不报错、不打日志、不影响退出码)—— **不是坏,是"没有"**。
      ★ 裁剪**之前**它是能用的(2026-10-04 实况):`export_presets.cfg:11-13` 是 `export_filter="all_resources"` +
      `exclude_filter="*.md,.superpowers/*"`,审计 §1.3 对仓库根那两个产物直接 grep 得 **336** 条 `res://tests/*` 路径
@@ -683,7 +683,7 @@
      **曾经是实况**,已改口为两段现况 —— 曾经会一起进包(⇒ 真守卫理由只是"文件可能不存在")+
      2026-10-04 起 `exclude_filter` 已含 `tests/*` ⇒ **发布版里**这条通道没了。
    - **为什么判"不做"**:用户 2026-10-04 裁定"发布版不再有菜单自动探针"(与发布包裁剪同批;audit §7 第 3 条那句
-     "同时决定 `tests/smoke/menu_autotest.gd` 这个'生产依赖测试文件'该怎么办"就是这件事的入口)。代价侧很实在:
+     "同时决定 `tests/harness/menu_autotest.gd` 这个'生产依赖测试文件'该怎么办"就是这件事的入口)。代价侧很实在:
      ① 探针**不是单文件** —— 它的 `sceneprobe/<名>` 分支还要 `tests/probe/<名>.tscn`(`:48-49`),
      只放一个文件等于**同一种静默 no-op**(闭包会随探针增长再次缺文件);
      ② `-- --autotest-*` 会成为**成品里可用的隐藏开关**:它真点按钮、真切场景、真往 `user://` 写截图(`:495-513`)
@@ -691,7 +691,7 @@
      ③ 它**本来也不是自动守卫**:没有任何脚本(零个 `.sh`、零个 `.py`)跑它,覆盖靠人手动拿开关跑一次再 grep。
    - **什么条件下翻案**:需要一个"**发布产物上真的跑过**"的端到端证据时(例如每次发布都必须验一遍菜单流转)。
      **翻案条件 = 把那条探针作为运行期资源随包发布**,并接受上面 ①②③:最小做法是让 `exclude_filter` 留一个白名单
-     (只放 `tests/smoke/menu_autotest.gd` + 它 `sceneprobe/` 分支要用的 `tests/probe/*.tscn`),
+     (只放 `tests/harness/menu_autotest.gd` + 它 `sceneprobe/` 分支要用的 `tests/probe/*.tscn`),
      并给白名单配一条**能红**的守卫 —— 否则又是"闭包少了文件 ⇒ 静默 no-op"的老形状。
      ★ 更便宜的替代(只要"菜单能起来"这一档):在 [`tools/build_release.py`](../../tools/build_release.py) 的产物冒烟里加一步
      `-- --autotest-mp` + grep 一条文本(它已有同款做法:`check_weapon_registry` 拿 `-- --registry-report` 那行文本对账)。

@@ -99,7 +99,7 @@ func show_result(payload: Dictionary) -> void:
 	#        `custom_minimum_size.x = 1120` 而内容最小宽只有 476(一个按钮)⇒ 偏移量按 476 算
 	#        = 面板被摆在"宽 476"的位置上,随后布局把它撑到 1120,**往右长出去 322px**。
 	#    ⇒ 唯一可靠的量就是 `get_combined_minimum_size()`(取图时打过诊断核对:此刻它 = 实收尺寸)。
-	#    实测(2026-09-20 取图,`tests/probe/match_result_probe` 的 `user://match_result_0..2.png`):
+	#    实测(2026-09-20 取图,`tests/manual/match_result_probe` 的 `user://match_result_0..2.png`):
 	#    面板右半截切在屏幕外,3v3 两节时 **B 队的「击杀/阵亡/伤害/ACS」四列整列看不见** ——
 	#    而当时**全部数值断言都是绿的**(它们只数 `columns` 与子节点个数,位置一个都照不到)。
 	#    锚点已是 (0.5,0.5)(`_ready()` 那次),偏移量取 ±半尺寸即为居中。

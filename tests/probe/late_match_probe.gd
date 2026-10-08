@@ -152,7 +152,7 @@ func _ready() -> void:
 	# ★ 断言计数闸:跑少了就是有断言被静默跳过(见 `EXPECTED_CHECKS` 上方的说明)。
 	# ★★ 判据是 **`!=`** 而不是 `<`,**两个方向都要红**:多跑一条**没登记的**断言同样是闸失守 ——
 	#    那说明 `EXPECTED_CHECKS` 已经与实况对不上,闸对**后加的那些**断言就是恒绿的摆设
-	#    (与 `tests/smoke/room_sweep_smoke.gd` 那条同款的反向断言同一个理由:`_finish()` 拿
+	#    (与 `tools/room_sweep_lint.gd` 那条同款的反向断言同一个理由:`_finish()` 拿
 	#    `CHECK_NAMES` 对账,实跑条数 ≠ 名单长度也红 —— 防的是"加了新检查却没登记")。
 	if _checks != EXPECTED_CHECKS:
 		var short_msg := ("★ 实跑 %d 条断言,与 EXPECTED_CHECKS=%d 对不上 —— 要么有断言被静默跳过、"
@@ -359,7 +359,7 @@ func _phase_disconnect_round() -> void:
 #    `server_main._enter_grace`。删掉那里的一行,`_leave_round` 就**永远为空**、
 #    `mark_disconnected` 静默退回 `_round_num` 兜底 ⇒ **原 bug 逐字复活,而 ③ 与全仓其它
 #    测试照旧全绿**(与本批 `duel_spawn_timeout_smoke` 钉 `set_process(false)` 位置、
-#    `room_sweep_smoke` 钉 `_expire_graces` 含 `mark_disconnected(role)` 是同一种形状)。
+#    `room_sweep_lint` 钉 `_expire_graces` 含 `mark_disconnected(role)` 是同一种形状)。
 #
 # ★ 手法照 `tests/probe/team_host_probe.gd` ⑫ / ⑫d:`server_main.gd` 的实例**不进树**
 #    (`_ready` 会 `NetBus.start_server(7777)` 并拉起大厅 —— 那是真端口,探针绝不能碰),

@@ -59,14 +59,12 @@
 
 **不在默认批里的,以及为什么**(全量清单与理由:`bash tests/run_all.sh --list`):
 
-1. **非 headless 取图 / 真渲染(10 支)** —— 会弹窗抢焦点,硬规定 agent 不许自跑:`combat_hud_visual_probe` / `hue_tint_probe` / `kh_l3_visual_probe` / `kh_l4_visual_probe` / `kh_visual_probe` / `match_result_probe` / `menu_shot_probe` / `minimap_circle_probe` / `render_forensics` / `squash_stretch_probe`。
-2. **真链路 / 多进程(8 支探针 + 1 支 smoke)** —— 会占 7777 或拉子进程(⇒ 走 `run_real.sh`):`ground_net_probe` / `reconnect_probe` / `rejoin_probe` / `royale_bound_probe` / `royale_c2_probe` / `royale_probe` / `royale_soak_probe` / `team_match_probe`,以及 `smoke/pvp_match_smoke.gd`(要 `--role`,且要 7777 上有大厅)。
-3. **登记在册的仪器(1 支)**:`brawl_rollback_probe` —— [`../docs/eng/registered-debt.md`](../docs/eng/registered-debt.md) §一第 3 行(读 `N≥4` 时自身在抖,变异下**仍有一格假绿**),且 [`../docs/eng/tests.md`](../docs/eng/tests.md) 明写"**本批不跑**;真要跑得给 `--quit-after 30000`"(约 8 分钟,而它的失败形状是"**无裁决行 + exit 0**")。
-4. **形状不合口径(1 支)**:`smoke/menu_autotest.gd`(`extends Node` 但**没有同名 `.tscn`**;它不是独立入口 —— 由 [`../scenes/main_menu.gd`](../scenes/main_menu.gd) 按 `-- --autotest-*` 挂到树根)。
-5. **`tests/probe/*.gd` 里没有同名 `.tscn`、又不进批的(9 支)**(2026-10-05 加;评审 C1):
-   - **8 支诊断仪器,共同理由 = 现判据读不了它们的判词**(2026-10-05 修复轮3 写准;两种形态别混为一谈):① **没有判词行**(逐支核过它的 `print` 里没有 `OK`/`PASS`/`DONE` 形状的判词):`aim_probe` / `climb_probe`(T14 的读数修复对象,判据是人读 `latched=`) / `muzzle_probe` / `order_probe` / `perf_probe`(★ 只有 `[perf] DONE` + 中文 通过/失败 行;口径已与生产分家,见 §五.3) / `preview_probe` / `tile_destroy_probe`;② **有判词行、但词汇不是 `OK`/`ALL-OK`**:`aim_direction_probe` 打 `== PASS, failures=0` ⇒ 绿跑落 `NO-VERDICT`(**假红**),而它**失败**时打 `== FAIL, …`(那个词汇现判据**认** ⇒ 会被判红)⇒ 它的危险是**假红**,**不是**"红的被藏起来"。⇒ 想让它们进批:① 类**先加判词行**;② 类**先把判词换成 `OK` 形状**。**它们从来不是守卫**(与 `registered-debt.md` §一 那三条"不算守卫"的探针同类)。
-   - **1 支是 helper 不是入口**:`haste_probe_input.gd`(`extends PlayerInput`,被 `haste_probe.gd` `preload()` 当输入桩;那个 `haste_probe.tscn` 已在批里)。
-   - ★ **另有 9 支同类探针已进批**(它们有判词行):`explosion_falloff_probe` / `map_catalog_probe` / `map_format_v4_probe` / `path_integrity_probe` / `settings_esc_probe` / `subcell_probe` / `water_probe` / `weapon_injected_fire_probe`(★ `EXPECTED_CHECKS := 158`,进批后计入 `m`)/ `wrap_probe` —— 这是它们**第一次真的被跑**。
+1. **真链路 / 多进程(8 支探针 + 1 支 smoke)** —— 会占 7777 或拉子进程(⇒ 走 `run_real.sh`):`ground_net_probe` / `reconnect_probe` / `rejoin_probe` / `royale_bound_probe` / `royale_c2_probe` / `royale_probe` / `royale_soak_probe` / `team_match_probe`,以及 `smoke/pvp_match_smoke.gd`(要 `--role`,且要 7777 上有大厅)。★ 这 9 条**就是**现在排除表的**全部**(30 条 → 9 条,见下一条)。
+2. **已移出本入口 glob 的 22 个文件(2026-10-08 测试经济学 D2/D5)** —— 它们**不再是测试,所以不再需要"为什么排除"的理由**(那笔税正是 D2 要消灭的):**18 支人工仪器**进 [`manual/`](manual/README.md)(10 支非 headless 取图探针 + 7 支只打印读数、判据读不了的工具 + `brawl_rollback_probe`);**2 支 helper**进 `harness/`(`haste_probe_input.gd`、`menu_autotest.gd`)。
+   - ★ 例外一条:`brawl_rollback_probe` 作为**守卫**不可靠(读 `N≥4` 时自身在抖、变异下**仍有一格假绿**，[`../docs/eng/registered-debt.md`](../docs/eng/registered-debt.md) §一第 3 行),但它是 `PredictionRollback._close_enough` 容差常数的**测量台**([`../core/net/prediction_rollback.gd`](../core/net/prediction_rollback.gd) 的注释指着它说"要重测得重跑它")⇒ **移而不删**。要跑它得给 `--quit-after 30000`(约 8 分钟,失败形状是"**无裁决行 + exit 0**")。
+3. **已删除的仪器**:`perf_probe` —— 它的读数是"服务器清格子格"算法的**第二份口径**、且仍是 v3 的 `*2`/`x/2` ⇒ **读数本身不可信**,留在库里只会误导(债单 §五.3 原已登记这一点)。
+4. **不在 glob 直径内的工具(4 支,`tests/scripts/*.gd`)** —— 迁移 / 诊断工具,**不是测试**:`convert_map.gd` 与 `convert_map_v4.gd` **原地写盘**(★ `convert_map.gd` 今天跑**会毁图**:两张在库图已是 v4 二进制、它认不出 v2/v3 标记 ⇒ 落进"v1 单字符 250×150"那一支并覆盖写回;债单 §六.19);`seam_analyze.gd` 读的 `tests/_seam_a_old.png` / `_seam_b_fixed.png` **不在库里**(债单 §六.20);`seam_screenshot.gd` **非 headless**。★ 所以**没有**把 `tests/scripts/*.gd` 加进 glob —— 那等于让以后任何一个新工具脚本(可能原地写盘)**自动进回归批**。
+⇒ 判据与理由见 [`../docs/eng/test-economy.md`](../docs/eng/test-economy.md)(D2 仪器不是守卫 / D5 只证明别的东西 / K1–K5 什么才值得留)。
 6. **不在 glob 直径内的工具(4 支,`tests/scripts/*.gd`)** —— 它们是**迁移 / 诊断工具,不是测试**:`convert_map.gd` 与 `convert_map_v4.gd` **原地写盘**(★ `convert_map.gd` 今天跑**会毁图**:两张在库图已是 v4 二进制,它认不出 v2/v3 标记 ⇒ 落进"v1 单字符 250×150"那一支并覆盖写回;债单 §六.19);`seam_analyze.gd` 读的 `tests/_seam_a_old.png` / `_seam_b_fixed.png` **不在库里**(债单 §六.20);`seam_screenshot.gd` **非 headless**。★ 所以**没有**把 `tests/scripts/*.gd` 加进 glob —— 那等于让以后任何一个新工具脚本(可能原地写盘)**自动进回归批**。
 
 ### `run_real.sh` —— 真链路批
@@ -81,7 +79,7 @@
 | 4 | `probe/royale_soak_probe.sh` | 7777 + pool | ~150~200s | `SOAK: ALL-OK` | 扫 `[7800,8300)` |
 | 5 | `probe/team_match_probe.sh` | 29200 / 29250(**池外**) | 3~10min | `TEAM MATCH PROBE: ALL-OK` | **不扫池** |
 
-- ★ **`tests/smoke/*.sh` 里另外 5 支不进真链路批**:`bullet_tile_fx` / `move_feel` / `pvp_reconcile` / `pvp_twin` / `room_sweep` 都只是"**一条 Godot + tee**"的单进程包装,同一个 `.gd` / `.tscn` **已在默认批里**(重复计费没有收益)。理由逐条写在脚本的 `WRAPPERS` 里。
+- ★ **`tests/smoke/*.sh` 里另外 4 支不进真链路批**:`bullet_tile_fx` / `move_feel` / `pvp_reconcile` / `pvp_twin` / `room_sweep` 都只是"**一条 Godot + tee**"的单进程包装,同一个 `.gd` / `.tscn` **已在默认批里**(重复计费没有收益)。理由逐条写在脚本的 `WRAPPERS` 里。
 - ★★ **四道闸**:① `lobby_alive` 为真 ⇒ **拒绝**(大厅 `_ready` 会 `kill_udp_port(7777)`,硬跑会端掉用户正在跑的对局);② 无 `--yes` 且 stdin 非交互 ⇒ **拒绝**并提示手动跑;③ **R20 锁 + 前后进程**:见下;④ **清单不许烂**:`tests/{smoke,probe}/*.sh` 每一支必须出现在 `ENTRIES`(跑)或 `WRAPPERS`(不跑 + 理由)里,且两边每条都要匹配到真实文件 —— 否则红(去掉它,新加的真链路 `.sh` 会**静默不进批**)。
 - ★★ **闸③的由来是一次真事故,以及 R20 锁(2026-10-05 加)**:
   - **事故**:曾经在 `run_all.sh` 跑批期间调用 `run_real.sh --yes`,那一刻"`tasklist` 单点采样"恰好落在两个 headless 测试之间的空档 ⇒ 计数 0 ⇒ 放行 ⇒ **真链路脚本真的跑了起来**(短暂占了 7777;它自己 FAIL 早退,早退路径还复现了 `registered-debt.md` §五.9 的"漏杀孙进程")。

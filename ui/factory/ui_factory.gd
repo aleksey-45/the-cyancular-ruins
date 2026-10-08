@@ -160,7 +160,7 @@ const C_TRANSPARENT := Color(0, 0, 0, 0)
 #   ★ 大乱斗的排行榜那一行是画在 `_board_bg`(**黑 0.25**)上的,底更暗:本色 **2.24:1**,
 #     而既有那两档更低(「离开」的 `C_DANGER` 只有 **1.59:1**、「复活中」的 `C_TEXT_DIM` 更低)
 #     —— 即本档在排行榜上比既有两档都**更显眼**,这是它取这个亮度的全部理由。
-#   ★ 色值是**审美值**,以实图为准:`tests/probe/combat_hud_visual_probe` 会连同既有几档一起取图,
+#   ★ 色值是**审美值**,以实图为准:`tests/manual/combat_hud_visual_probe` 会连同既有几档一起取图,
 #     由人眼验收("一眼能从满屏文字里挑出掉线的那一行")。要调整就调这一个数。
 const C_GRACE       := Color(0.72, 0.62, 0.90)      # #B89EE6
 
@@ -375,7 +375,7 @@ static func menu_button(text: String, size: int, min_size: Vector2 = Vector2(640
 	if variant == "quiet":
 		edge = C_BORDER_DIM
 		# ★ 弱化档的字色用 `C_TEXT_DIM`(不是更弱的 `C_TEXT_MUTE`)—— 如实登记成因:
-		#   `tests/probe/kh_l4_visual_probe` 对**每一颗**主菜单按钮都要求矩形内有 ≥120 个
+		#   `tests/manual/kh_l4_visual_probe` 对**每一颗**主菜单按钮都要求矩形内有 ≥120 个
 		#   "亮像素"(平均亮度 > 0.5),那是它证明"浮现动画跑完了"的判据;`C_TEXT_MUTE`
 		#   (#6C7885,平均 0.472)在整颗按钮里一个亮像素都不产生 ⇒ 那条断言当场红。
 		#   而它与 `style_button("quiet")` 的既有观感**逐字相同**(那也是这颗探针标定时用的),

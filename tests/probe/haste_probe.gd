@@ -16,9 +16,9 @@ extends Node
 #       高亮:加速=主角+近敌、回溯=只有精英、精英两层亮黄 · 松开全部卸掉 · 回 NONE · 扣颗粒。
 # 用法:godot --headless --path . res://tests/probe/haste_probe.tscn
 #
-# ★ 输入走**可注入桩**(tests/probe/haste_probe_input.gd),理由见该文件头(just_pressed 的帧号问题)。
+# ★ 输入走**可注入桩**(tests/harness/haste_probe_input.gd),理由见该文件头(just_pressed 的帧号问题)。
 
-const StubInput := preload("res://tests/probe/haste_probe_input.gd")
+const StubInput := preload("res://tests/harness/haste_probe_input.gd")
 const GhostScript := preload("res://scenes/effects/after_image.gd")
 const BulletScene := preload("res://scenes/enemies/enemy_bullet.tscn")
 

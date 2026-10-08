@@ -135,7 +135,7 @@ func fit_resolution(available: Vector2i) -> Vector2i:
 # ── 显示:把内存里的档位落到真窗口 ──
 # 两个调用方:autoload `_ready()`(开窗即用存档档)、设置页(玩家改完即时生效)。
 # ★ headless 早退:无窗口后端(服务器 / `-s` 冒烟)上不该碰窗口 API —— 仓内既有惯例,
-#   先例 tests/smoke/menu_autotest.gd:505(`DisplayServer.get_name() == "headless"`)。
+#   先例 tests/harness/menu_autotest.gd:505(`DisplayServer.get_name() == "headless"`)。
 # ★ 本函数体内的注释**刻意不写** window_set_size / window_set_mode 这两个字面量:冒烟
 #   tests/smoke/settings_display_smoke.gd 的源码半边按"早退必须排在这两个调用之前"判,
 #   注释里先出现会把那条判红。

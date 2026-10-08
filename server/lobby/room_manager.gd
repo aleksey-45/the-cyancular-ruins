@@ -41,7 +41,7 @@ const TEAM_MATCH_ESTIMATE := 1800.0
 #   不是 0。量级上无所谓,但这句话不该被读成"本界无所不包"。
 # ★★ **跨文件不变量(链有**两环**)**:环一 = 钳位放宽到 30 分钟以上;环二 =
 #   `scenes/mp_lobby.gd` 的秒换算(`Settings.royale_match_min * 60.0`)被改。
-#   任一环断裂,本上界**静默失效**(不再覆盖)。守卫在 `tests/smoke/room_sweep_smoke.gd` ——
+#   任一环断裂,本上界**静默失效**(不再覆盖)。守卫在 `tools/room_sweep_lint.gd` ——
 #   它**读两个文件**:settings.gd 的钳位片段 + mp_lobby.gd 的换算片段,任一处变了就红。
 const ROYALE_MATCH_TIME_CEILING := 1800.0
 var _sweep_acc := 0.0
@@ -439,7 +439,7 @@ func _sweep_stale_rooms() -> void:
 	#    "只有那张表的房超龄"的那次 tick 会在这里**提前 return、永远不清扫** → 端口永久泄漏
 	#    (症状是静默的:列表拼接那行照旧在,看着像清扫还在跑)。本层为「端口泄漏」这同一个失败
 	#    模式补过三次(见 lobby_rooms.teardown_room 的注释),这是它的第四种形态。
-	#    守卫:`tests/smoke/room_sweep_smoke` 的 _check 逐个点名这三张表(去掉任一张即红)。
+	#    守卫:`tools/room_sweep_lint` 的 _check 逐个点名这三张表(去掉任一张即红)。
 	if stale.is_empty() and stale_royale.is_empty() and stale_team.is_empty():
 		return
 	# 日志照实报三条不同的界:1v1 与等待中的大乱斗/3v3 房都是裸 MAX_ROOM_AGE,在局的大乱斗房另加
@@ -468,7 +468,7 @@ func _sweep_stale_rooms() -> void:
 # ★ 兜底仍在:2h 超龄清扫(`_sweep_stale_rooms`)会把"worker 一直不退"的僵尸房连进程一起杀掉
 #   —— 两条路径并存,不是二选一。
 # ★ 回收**必须走拆除单一收口**(端口归还/注册表删除只许出现在 `lobby_rooms.teardown_room`
-#   与 `_release_port_later` 里;`room_sweep_smoke` 的 `_check_reclaim_ladder` 钉住本函数)。
+#   与 `_release_port_later` 里;`room_sweep_lint` 的 `_check_reclaim_ladder` 钉住本函数)。
 func _reclaim_finished_matches() -> void:
 	# ★ 凭据表的 GC 搭这条梯(30s 一次):TTL 只是表的上界,不需要独立定时器。
 	#   ★ 这是本计划对**显示方案交付的函数**做的唯一一处改动 —— 理由是"30s 梯只有一个合理的主人",

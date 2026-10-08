@@ -65,7 +65,7 @@ var _last_round_state: Dictionary = {}      # 最近一条 round_state(结算载
 # ★ 换 sprite 素材要重测这一行 —— 它错了不报错,只是队色会**整体偏色**(整队一起偏,所以
 #   "谁是谁"照旧分得出,更容易漏)。三个分量都非 0,故下面那句比值除法不需要额外兜底。
 # ★ 唯一源是 `UiFactory.C_TEAM_A`(队 1 token,同值)—— 本处是**别名**,不存字面量。
-#   ★ 上面那段"实测出来的众数色"仍是**独立的一维**:`tests/probe/hue_tint_probe.gd` 的守卫 D
+#   ★ 上面那段"实测出来的众数色"仍是**独立的一维**:`tests/manual/hue_tint_probe.gd` 的守卫 D
 #     钉的是 `C_TEAM_A == BODY_BASE_COLOR == player.png 众数` —— 换了 sprite 素材而没改
 #     调色板时,它照样红。别因为这里变成别名就把那条守卫删了。
 const BODY_BASE_COLOR := UiFactory.C_TEAM_A   # #639BFF(本体主色 == 队 1 token)
@@ -85,7 +85,7 @@ const BODY_BASE_COLOR := UiFactory.C_TEAM_A   # #639BFF(本体主色 == 队 1 to
 #   改成 **`目标色 / 本体主色`** 这个**比值**就精确了:输出 = 主色像素 × 比值 = **恰好目标色本身**
 #   (2026-09-19 复测:队 1 得到 `#639BFF` = `C_TEAM_A`,逐字节相等;当时队 2 的 token 是 `#63FFF3`,
 #    同样是逐字节相等 —— 2026-09-20 队 2 的 token 改成 `#80F4FF`,比值随之变,链子不变,
-#    渲染侧由 `tests/probe/hue_tint_probe` 守卫 B/C 钉住)。
+#    渲染侧由 `tests/manual/hue_tint_probe` 守卫 B/C 钉住)。
 #   队色因此与头顶 ID / 小地图点位**同源同一个常量**,不存在"身体是派生色、柱子上是原色"。
 # ★ 队 2 的比值有分量 > 1(g = 244/155 ≈ 1.574、r ≈ 1.293)—— 这是**有意的**:
 #   `CanvasItem.modulate` 收 >1 的值,实测在 `rendering/mobile`(Forward Mobile)下原样生效。
@@ -686,7 +686,7 @@ func _show_result() -> void:
 		#   ⇒ 关键是"亮出来"必须排在任何可能把 `show_result()` 打断的活**之前**。放进
 		#     `show_result()` 内部同样能挡住它自己那一段;放在这里则连"挂载之后、调用之前"那一小段
 		#     也一起盖住(将来谁在中间插一句会抛错的代码,也不会退化回陷阱)。
-		#   空载荷**抛不出错**:"空载荷不崩"是本页的硬要求(`tests/probe/match_result_probe` ① 专钉),
+		#   空载荷**抛不出错**:"空载荷不崩"是本页的硬要求(`tests/manual/match_result_probe` ① 专钉),
 		#   且它只做"赋文案 + 清场建节 + `visible = true`"三件事 ⇒ 可见、ESC 生效、
 		#   "返 回 主 菜 单"按钮可用,三样退路当场到手。
 		#   ★ 正常路径**看不到这个空态**:本函数一次跑完、两句之间没有 await,布局与绘制都在帧末,

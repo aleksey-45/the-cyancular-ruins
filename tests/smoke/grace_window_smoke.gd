@@ -88,7 +88,7 @@ func _initialize() -> void:
 	# ★ 为什么这条在这里钉:`server_main._expire_graces` 原先只有"大乱斗 / 其余"两支,
 	#   那个 `else` 把 1v1 **和 3v3** 一起吞成"收场退进程" —— 3v3 里第一个宽限到期的人会
 	#   带着整局退进程,与用户裁定"该队少人继续打"**相反**。分派收成纯函数后,三个模式的
-	#   答案在这里逐个钉死;production 那边只准做一次比较(room_sweep_smoke 另断言它真走这条)。
+	#   答案在这里逐个钉死;production 那边只准做一次比较(room_sweep_lint 另断言它真走这条)。
 	# ★ 真链路(6 人局里真掉线 → 宽限到期 → 其余人继续打)归 **B 册的真链路探针**,不在本冒烟。
 	_check(G.expire_action(false, false) == G.ACTION_TEARDOWN,
 			"1v1(非大乱斗非 3v3)到点应**收场退出**")

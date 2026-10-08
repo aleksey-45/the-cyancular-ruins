@@ -4,7 +4,7 @@
 > [`registered-debt.md`](registered-debt.md))。它回答一个之前没人问过的问题:
 > **「这条守卫值它自己的维护成本吗?不值就删。」**
 >
-> **由来(2026-10-05,用户裁定)**:本仓的测试面已经长到 **1.72 : 1(测试行数 : 产品行数)**,而
+> **由来(2026-10-08,用户裁定)**:本仓的测试面已经长到 **1.72 : 1(测试行数 : 产品行数)**,而
 > 一个 AI 编码代理在**没有游戏工程经验**的情况下,会**本能地把 Web/后端/企业软件那套"防御性工程"
 > 搬过来** —— 加断言、加守卫、加护栏、加边界检查。这套在**契约稳定、可纸面判定**的领域收益很高;
 > 在**手感主导、数值天天调、确定性难**的游戏里,它产出的是**负资产**。用户要求:先弄清这个病的
@@ -89,6 +89,8 @@
 | **D4** | **与别处同源重复**(同一个事实有两份断言) | 「重复的真相源 + 一条盯着它的守卫 = 永久税」(`AGENTS.md` §2 自己写过) |
 | **D5** | **只证明"引擎/框架/第三方库的行为"**,不证明本仓契约 | 引擎自带测试;我们重复它没有收益 |
 | **D6** | **靠"读源码文本"判形态**(grep 源码里有没有某段字) | 它测的是"某人有没有写字",不是行为;可被注释/字符串/改名绕过(本批实测:字符串诱饵 ⇒ ALL-OK),且**每次重构都红**。⇒ 行为能测就测行为;**不能测就承认没覆盖**,不要拿文本形态冒充 |
+| **D6a** | ★ **D6 的"删"那一档**:文本判据的内容是**风格 / 东西住在哪**(「只许出现在这一处」「必须走单一收口」「不许再出现某标识符」) | 这类是**架构评审**项:它在无害重构时红,却**抓不到它声称的那个失败**(端口泄漏要靠行为测)。★ **再问一句"同区域有没有行为替代"**:有(如房间这块有真链路 `pvp_room_smoke.sh`)⇒ **删**,代理是多余的 |
+| **D6b** | ★ **D6 的"留"那一档**:文本判据的内容是**顺序 / 推导,且承重又无法廉价行为观测**(如"组包必须在发送之前"、"seq 必须单调"、"入 ring 的顺序") | 这类**不许删**:它挡的缺陷**真实发生过**,且行为验证要两进程真链路。但**必须诚实标注** —— 文件头写明「**代理判据**:读的是源码文本,不是行为;行为证据见 `<真链路脚本>`」,并且**别让它的判词读起来像"功能没问题"** |
 | **D7** | **真机不可达的防御分支的守卫**(为"想象的"未来写) | 臆测性通用化;典型:只有测试桩能造的输入形状 |
 | **D8** | **单文件 > 600 行且断言密度低** | 维护费高、读的人少;拆或删 |
 | **D9** | **同一条判定类别被拆成 N 条"一条断言一个数值"** | 变更时成排红;合成**一条**覆盖该类别的断言 |
@@ -127,7 +129,25 @@
 **这不是退步,是把假的覆盖换成真的空**:原来的"覆盖"是"某人写过这段字",它既抓不到改名(本批实测 M43/M44 那类)
 也抓不到行为错(那一段没有运行时可达路径)。**宁可写"零守卫",也不留一条读起来比实际强的守卫。**
 
-### 5.1 第一批:零断言文件(D2)
+### 5.1 第二批:人工仪器搬出 glob(D2 / D5)
+
+**这一批不减少跑批时间,但把入口的"自我辩护"从 30 条压到 9 条。**
+
+| 处置 | 对象 | 数量 | 依据 |
+|---|---|---|---|
+| **移到 `tests/manual/`** | 10 支非 headless 取图探针 + 7 支只打印读数、判据读不了的工具 | **17** | **D2**:它们不可能红,却让"枚举 140 个文件"虚高,并逼入口为每条写一段"为什么不是守卫"。移到 `tests/manual/`(附 `tests/manual/README.md`)后**不进任何 glob**。 |
+| **移到 `tests/manual/`** | `brawl_rollback_probe` | **1** | ★ **先删后改判**(见本表后的自陈) |
+| **移到 `tests/harness/`** | `haste_probe_input.gd`(输入桩)、`menu_autotest.gd`(`main_menu` 的 `--autotest-*` 驱动) | **2** | 它们是 helper/driver、不是入口 —— 住在 `tests/probe/`、`tests/smoke/` 里只会让入口多两条"形状不合口径"的规则。 |
+| **删除** | `tests/probe/perf_probe.gd` | **1** | **D5**:它的读数是"服务器清格子格"算法的**第二份口径**、且仍是 v3 的 `*2`/`x/2` ⇒ **读数本身不可信**(债单 §五.3 原已登记)⇒ 留在库里只会误导。★ **"移动"与"删除"在这里是有意的区分**。 |
+
+**实测结果**:枚举 **140 → 119**(smoke 40→39、probe `.tscn` 82→71、probe `.gd` 无同名 tscn 18→9);排除规则 **30 → 9**(剩下 9 条全是真链路/多进程那一类,**每条都真的匹配到文件** —— 入口自己那条"规则匹配不到文件 ⇒ 直接红"的闸因此保持有牙);**跑批仍是 110 支** —— 被移走的本来就不跑,所以这一批省的是**维护面**,不是**时间面**。
+
+★ `allscript_probe` 的 `EXPECTED_SCRIPTS` **287 → 286**(只减 1,因为移动不算):它数的是**编译面**(`_collect("res://")` 直走 `DirAccess`,**不看入口 glob**)⇒ 这条闸管"有没有静默增删 `.gd`",**不管"测试有多少"**;要减测试面只能**删文件**。
+
+★★ **一次我自己抓到的处置错误(照实记)**:我执行时先把 `brawl_rollback_probe` **直接 `git rm`** 了。随后在 `core/net/prediction_rollback.gd` 的注释里读到:"实测(见 `tests/probe/brawl_rollback_probe`)…""要动它得重跑 `brawl_rollback_probe`" —— 它虽然**作为守卫不可靠**(登记:读 `N≥4` 自身在抖、变异下仍有一格假绿),但它是 `PredictionRollback._close_enough` **容差常数的测量台**;删掉它等于让那批常数**不可复测**。⇒ 已 `git checkout` 恢复并改判为**移入 `tests/manual/`**。
+**教训**:**"不再当守卫"不等于"可以删"** —— 判据只能判"它值不值得当守卫",判不了"它是不是别的东西的唯一测量工具"。**删之前先 `git grep` 它的名字**;若产品代码的注释指着它说"要重跑",那是**测量台**,不是测试。
+
+### 5.2 第一批:零断言文件(D2)
 
 `grep -c "_check\|_chk\|_fail\|_expect"` = 0 的 19 个文件。**它们一条断言都没有**,判词是
 `print("XXX OK")` 之类的字符串,而 `run_all.sh` 靠 grep 这个字符串判绿。⇒ 它们**不可能红**
@@ -140,23 +160,39 @@
 | `tests/smoke/rejoin_registry_smoke.gd` | 184 | 待定 | ★ 注意:它里面有一句"断言段没跑全"的现网词汇,是 Task 6 的语料来源 |
 | `tests/smoke/score_rules_smoke.gd` | 82 | 待定 | |
 | `tests/smoke/team_room_smoke.gd` | 400 | 待定 | |
-| `tests/probe/aim_probe.gd` | 128 | 待定 | |
-| `tests/probe/climb_probe.gd` | 82 | 待定 | |
+| `tests/manual/aim_probe.gd` | 128 | 待定 | |
+| `tests/manual/climb_probe.gd` | 82 | 待定 | |
 | `tests/probe/explosion_falloff_probe.gd` | 64 | 待定 | |
 | `tests/probe/ground_net_probe.gd` | 228 | 待定 | |
-| `tests/probe/haste_probe_input.gd` | 66 | 待定 | |
-| `tests/probe/muzzle_probe.gd` | 98 | 待定 | |
-| `tests/probe/order_probe.gd` | 37 | 待定 | |
+| `tests/harness/haste_probe_input.gd` | 66 | 待定 | |
+| `tests/manual/muzzle_probe.gd` | 98 | 待定 | |
+| `tests/manual/order_probe.gd` | 37 | 待定 | |
 | `tests/probe/path_integrity_probe.gd` | 206 | 待定 | |
-| `tests/probe/preview_probe.gd` | 149 | 待定 | |
-| `tests/probe/render_forensics.gd` | 50 | 待定 | |
+| `tests/manual/preview_probe.gd` | 149 | 待定 | |
+| `tests/manual/render_forensics.gd` | 50 | 待定 | |
 | `tests/probe/royale_bound_probe.gd` | 304 | 待定 | |
 | `tests/probe/royale_c2_probe.gd` | 242 | 待定 | |
-| `tests/probe/tile_destroy_probe.gd` | 39 | 待定 | |
+| `tests/manual/tile_destroy_probe.gd` | 39 | 待定 | |
 | `tests/probe/wrap_probe.gd` | 55 | 待定 | |
 
 ★ **不是"零断言 ⇒ 一律删"**:有的可能**应该**补断言(它测的是档 3 面,只是当年没写断言),
 有的就是**取图/取日志工具**。逐个核完再处置,核的依据写进本表 —— **这正是本文档存在的意义**。
+
+### 5.3 待办靶子(backlog) —— 已逐个核过规模与判据,按收益排序
+
+| # | 靶子 | 规模 | 判据 | 处置方向与备注 |
+|---|---|---|---|---|
+| 1 | `tools/room_sweep_lint.gd` | **827 行 / 83 处 `_fail="…"` / 0 行为断言** | **D6a** | **移出测试面** → `tools/room_sweep_lint.gd`(规范检查器,不是测试);约定留档见 [`room-lifecycle-conventions.md`](room-lifecycle-conventions.md)。★ 判它是 D6a 的**决定性依据 = 同区域已有行为替代**:[`pvp_room_smoke.sh`](../../tests/smoke/pvp_room_smoke.sh) 走**真协议**建房→配对→`go_match`(且红了先看 `on_peer_left`),⇒ 它的文本代理是**多余的**。★ 它是本仓 D6 的旗舰实例:头部 8 个日期段落全是"守卫被绕过 ⇒ 打补丁"。 |
+| 2 | `tests/probe/kh_l6_probe.gd` | 1048 行 / **12 处读源码** / 101 条断言 | **D6b → 留** | ★★ **复核后改判**:它守的是**输入同步契约**(seq 单调 / **组包必须在发送之前** / 预测态入 ring 顺序),这些**真实发生过**(文件头记着"送出去的 seq 不是本帧新序号"),且**没有廉价的行为替代**(要两进程真链路)⇒ 属 **D6b**:**留**,但要求文件头写明「**代理判据**:读的是源码文本,不是行为」。★ 这条改判是本轮最重要的自我纠正:若按 D6 一刀切,我会删掉一个真正有牙的守卫 |
+| 3 | `tests/probe/kh_l4_probe.gd` / `kh_l3_probe.gd` | 363 / 604 行 / 12 处 + 7 处读源码 | **D6b → 逐处复核** | 同一族(KH 合并验收):先按 D6a/D6b 把每处读源码**分档** —— 属"风格/住哪"的删,属"顺序/推导且无行为替代"的留并标注。★ 别再一刀切 |
+| 4 | `tests/smoke/move_feel_smoke.gd` | 231 行 / 多条**魔数** | **D3** | **不删,改关系式**:`蹲走 > 站走×0.6`、`> ×1.25`、`< ×0.5`、`vx<900`、`冲刺疑似冲满 0.4s`、`重力倍率 ±0.2` —— 这些**调手感就红**;改成"蹲走必须比站走慢""撞墙后 vx 必须清零"这类**关系**,保住能红、去掉调参税。 |
+| 5 | `tests/probe/path_integrity_probe.gd` | 206 行 | ~~D4~~ → **留** | ★ **已核：不是重复真相源，是互补的** —— `check_naming.check_doc_paths()` 走**文档→文件系统**（根三份 + `docs/eng/*.md` 的反引号路径 token），本探针走**代码→文件系统**（`core/scenes/server/ui/tests` 的 `.gd`/`.tscn` 里的 `res://` 字面量 + `tests/**/*.sh`）。方向不同 ⇒ **删它没有依据**（账本 R25 记的重叠只是两张**排除表**：`SKIP_DIRS` ↔ `path_integrity_allow.txt`，而后者 14 行、每行带原因）。它自己还写明了覆盖边界（`project.godot` / `start_server.bat` 不在扫描面内）= 诚实。 |
+| 6 | `tests/probe/feedback_probe.gd` | 234 行 / 43 处断言 | ~~D3~~ → **留** | ★ **已核：23 条失败信息全是行为/状态断言**（"X 标记不可见" / "击杀文字没有浮现动画" / "致命一击未出命中标记" / "换场幂等回归" / "attribute 未写 `last_damager`"），**没有魔数** ⇒ D3 不适用。 |
+| 7 | `tests/harness/*.gd`（11 文件 / 5185 行） | 大 | ~~D7~~ → **留** | ★ **已核：全部在用** —— `ground_net_watcher`←`ground_net_probe`；`reconnect_watcher`←`reconnect_probe`；`rejoin_watcher`←`rejoin_probe`+`royale_c2_probe`；`royale_bound_watcher`←`royale_bound_probe`；`royale_c2_watcher`←`royale_c2_probe`+`royale_game.gd`；`team_match_watcher`/`team_bot_input`←`team_match_probe`；`soak_bot_input`←`royale_soak_probe`；`ground_bot_input`←两个 watcher；`pvp_smoke_client`←`pvp_room_smoke.sh`；`haste_probe_input`←`haste_probe`；`menu_autotest`←`main_menu` 的 `--autotest-*` 钩子。唯一"没人用"的 `net_lag_client`（154 行 + 一个只用来挂脚本的 `.tscn`）**本来就在所有 glob 之外、零运行成本**，且头注写明它是**人工**直连 worker 的 UDP 延迟测量台 ⇒ **留**。 |
+| 8 | 在批内、无 `_check`、但**能红**的 7 支 | `match_result_payload` / `rejoin_registry` / `score_rules` / `team_room` / `explosion_falloff`(356/184/82/400/64 行) + `path_integrity` / `wrap_probe` | ~~D2b~~ → **留 + 登记一处族级上限** | ★ **已核：7 支全部"能红"**（5 支用 `fails.is_empty()`、`explosion_falloff` 用 `failures == 0`、`path_integrity` 用 `bad` 列表、`wrap_probe` 用 `ok1 and ok2`）⇒ **K1 通过，不是零值守卫**。共同缺陷是**没有计数闸**：断言被静默跳过时判词照绿（`pid_of` 那次事故的形状，见 [`tests.md`](tests.md) 末节）。⇒ **裁决：不逐支补闸**（那是 7 份新增，与"减少测试"相反），而是把这条记为**族级上限**：*这 7 支的 `ALL-OK` 只证明"没有断言失败"，不证明"每条断言都跑过"* —— 抽查时按 `tests.md` 的"看 stderr 有没有 `SCRIPT ERROR`"来兜。★ 将来若真要为它们补闸，**唯一**要抄的形态是被移走的 `room_sweep_lint` 那个 `_done.size()` vs `CHECK_NAMES.size()`（"每个 `_check_*` 都必须跑到尾"）—— 那条是那份文件里**唯一值得留下**的想法。 |
+| 9 | `lobby_parse_smoke.gd` | 22 行 | ~~D2b~~ → **留 + 并入第 8 条的上限** | 判词依赖 `fails == 0` ⇒ **能红**（它逐项打 `PARSE[OK]:`/`PARSE[FAIL]`），同样**无计数闸** ⇒ 与第 8 条同一族、同一处置（不补闸；`ALL-OK` 只证明"没有失败"）。★ 附带价值：它是 `run_all.sh` 判据回归语料里那条 `PARSE[OK]:` 反例的来源（"判词前后缀"那条 C2 修复）。 |
+
+★ **处置纪律**:每一条都要在 §5 里留下"判据 + 依据 + 处置"三栏;**"我删了因为它看着多余"不算记录**。
 
 ---
 

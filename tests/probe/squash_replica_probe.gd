@@ -5,7 +5,7 @@ extends Node
 #
 # 为什么必须有(2026-09-20 Task 4 复审指出):
 #   Task 4 给副本加的**水查询**与**落地判据的第二半**,此前**没有任何常驻守卫** ——
-#   `tests/probe/squash_host_water_probe` 只驱动**玩家本体**,`tests/probe/squash_stretch_probe` 只消费
+#   `tests/probe/squash_host_water_probe` 只驱动**玩家本体**,`tests/manual/squash_stretch_probe` 只消费
 #   `player.gd` 的 `var squash`。把 `player_replica._process` 里的 `_in_water()` 那两行删掉、
 #   或把传参换回 `_vel.y`,**现有测试一条都不会红**。而副本恰恰是本特性唯一"没有物理可对照、
 #   只能从快照推导"的一环,Task 4 三轮发现的问题**全部**发生在这一环。

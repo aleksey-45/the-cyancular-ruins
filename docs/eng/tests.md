@@ -47,14 +47,14 @@
   - 3v3:`team_room_smoke.gd`(⑥⑦⑧⑨ 源码级接线 + ⑩ 像素级 `BODY_BASE_COLOR` 众数)、`team_host_probe.tscn` / `team_table_probe.tscn` / `team_disconnect_probe.tscn`(都**真建宿主但 `role_peers` 传空**)、`team_spawn_smoke.gd`、`team_match_probe.tscn`(+`.sh`,**六人真链路**)。
   - 大乱斗:`royale_probe.tscn`(**跑前先确认 7777 空闲**)、`royale_bound_probe.tscn`(B1 role 空洞 / B2 开局三载荷跨场景;★ B2 曾长期登记为「客户端**收不到** `match_sync` 应答」—— **2026-10-03 定案为探针等待窗口太短**:载荷没丢、只是**晚到 2.5~5.9s**(换场那一下客户端要建整个 `royale_game` ⇒ 主循环卡住 ~8s ⇒ UDP 收缓冲溢出 ⇒ **可靠包靠 ENet 退避重传**,客户端一恢复就整批涌进;旁证:同一瞬间 `round_state` 计数 9→20,而 `world/own` 是平滑的。前一轮"9 次请求 0 次收到"的读数是**那一跑主进程在 ~10s 被杀**,观测窗太短。⇒ 等待形状已从固定 `SETTLE=2.0` 改成**等载荷 + 截止线**;`royale_bound_watcher._log` 另加了**墙钟戳**,因为 `_t` 是 delta 累加、Godot 会钳超长帧 ⇒ 卡顿期它**严重低报**)、`royale_c2_probe.tscn`(**C2 真链路**,用「按 K 自杀 → 2s 复活瞬移」造分歧)、`royale_soak_probe.tscn`(压力;**答不了渲染卡顿**,且 worker 子进程 stdout 不继承到管道 → worker 侧打印是盲区)、`royale_disconnect_count_probe.tscn`(★ `_ready` 里要 `_host.set_physics_process(false)`)、`royale_hud_cost_probe.tscn`。
   - UI/视觉:`combat_hud_visual_probe.tscn`(★ **必须真实渲染**;**底故意铺地图开阔区的浅灰蓝**而不是深色 —— 垫深底取图会把「浅底上读不出来」整类问题遮掉;★★ `_bright_in` 判据换过:旧实现的**绝对**阈值与底板合成均值只差 0.0046 ⇒ **判据整个空转**;现在基准**从图里量**)、`kh_l3_visual_probe.gd`(按**语义**断言三种颜色,都是**双向**的)、`hue_tint_probe.tscn`(★ **必须真渲染**;headless 下截图链给 null ⇒ **FAIL 并 return**,是**失败**不是静默早退)、`minimap_circle_probe.tscn`、`match_result_probe.tscn`、`pvp_hud_layout_probe.tscn`、`hud_declarative_probe.tscn`、`ui_palette_single_source_smoke.gd`、`squash_*`。
-  - 其他:`unstick_smoke.gd`、`explosion_falloff_probe`、`score_rules_smoke.gd`、`stats_delivery_probe.tscn`、`match_result_payload_smoke.gd`、`ammo_rollback_probe.tscn`、`death_drop_probe.tscn`、`room_sweep_smoke.gd`、`lobby_visibility_probe.tscn`、`kh_l5_probe.gd`(源码级机械扫描:含**反向断言:基类不得含子类方法**)。
+  - 其他:`unstick_smoke.gd`、`explosion_falloff_probe`、`score_rules_smoke.gd`、`stats_delivery_probe.tscn`、`match_result_payload_smoke.gd`、`ammo_rollback_probe.tscn`、`death_drop_probe.tscn`、`room_sweep_lint.gd`、`lobby_visibility_probe.tscn`、`kh_l5_probe.gd`(源码级机械扫描:含**反向断言:基类不得含子类方法**)。
 - **★ 真链路跑批的两条纪律**:
   - ★★ **两支真链路测试之间必须确认 `tasklist | grep -i godot` 为空。** worker 由大厅 `OS.create_process` 拉起,是**孙进程** —— 不在任何脚本记下的 PID 里;而下一支新大厅的端口分配集合是**进程内内存** ⇒ **再次选中同一端口** ⇒ 新 worker 报 `监听失败 20` ⇒ 客户端连到的是**上一支的僵尸 worker** ⇒ 整支**挂到外层 timeout、一行裁决都不打**(与真失败**长得一样**)。★ 前台 `timeout` 掐掉某支脚本时,它收尾那段**不会跑** ⇒ 必留孤儿 ⇒ **下一支**被毒。守卫 = `tests/env.sh` 的 **`kill_port_range LO HI`**。★★ `rejoin_probe` / `team_match_probe` **绝不能**扫 `[7800,8300)`(那会端掉用户正在跑的对局)。
   - ★ **`lobby_alive` 原先那版判据是结构性恒假(已修)**:`netstat … grep -E "[:.]7777[[:space:]].*LISTENING"` —— 而 **ENet 走 UDP、UDP 行没有状态列** ⇒ `.*LISTENING` **永不命中**。现收在 `tests/env.sh` 的 `lobby_alive()`。
 - **⚠ 既有红(已登记)** —— ★ **2026-10-04 收敛**:唯一清单是 [`registered-debt.md`](registered-debt.md) §一(带 **owner / 最后复核 / 销掉条件**),此处不再复述症状,只留索引:
   - ❌ `tests/probe/team_match_probe.sh` —— **根因已于 2026-09-28 由 `9003dae` 修掉**(客户端被拨到生产云服 `120.53.107.140`),但**修复后没有留下六人整跑的判决** ⇒ 今天仍**不可**当作 3v3 的端到端守卫。跑法与销案条件见 [`registered-debt.md`](registered-debt.md) §一第 1 行。
   - ⚠ `tests/probe/ground_net_probe.tscn` —— 既有抖动(机器人走位在**随机图**上卡死)。见 §一第 2 行。
-  - ⚠ `tests/probe/brawl_rollback_probe.tscn` —— 读 N≥4 时本身在抖,变异下仍有一格假绿。见 §一第 3 行。
+  - `tests/manual/brawl_rollback_probe.tscn` —— 原登记为"读 N≥4 时本身在抖、变异下仍有一格假绿";2026-10-08 按 [`test-economy.md`](test-economy.md) 的 **D5 移出默认批**(它是容差常数的**测量台**、不是守卫,故**移而不删**)。见 §一第 3 行。
   - ★ **原注"未证假设与下一步见报告 §4.1b"是死指针**:那份报告在不入库的 `.superpowers/`,且 `§4.1b` 不在 [`docs/2026-09-17-duel-probe-lobby-rpc-blocker.md`](../../docs/2026-09-17-duel-probe-lobby-rpc-blocker.md) 的章节编号里。**已改指**该文档 §5「仍未解释的一处矛盾(下一个人的入口)」。
 - **★ B 档「登记边界」批(2026-09-28)的判据 + 回归清单** —— ★★ **2026-10-05 降级为历史记录**:
   下面那份清单是**那一批**手维护的(而"能生成就别再抄一份"是本仓明文纪律)⇒
@@ -63,7 +63,7 @@
   (判据一律是**文本**,不看退出码):
   - **`tests/probe/late_match_probe.tscn`**(`timeout 180 … --quit-after 3600`)→ 文本 `LATE MATCH PROBE: ALL-OK`。钉四项:① `_left_round` 分母的**读取端**;② MATCH_OVER 之后倒地**不**进 `_stats`(**含一条 ROUND_OVER 相**);③ `note_disconnect_round` 的**写入端**(经**真** `_enter_grace`);④ 大乱斗 `_match_winner` 的并列候选集(配 ⑤ 与 ⑤b;★ **⑤ 是必需的**反向对照)。★★ **覆盖上限(登记,不补相)**:④ 是**唯一**走到"只身幸存"的相 ⇒ 一个假想的退化实现能**全过**。★★ **另一处照实未钉**:MATCH_OVER 侧 ③ 的掉落与 ④ 的 `_reset_survivor` **没有断言**。
   - **`tests/smoke/duel_spawn_timeout_smoke.gd`**(`-s`,**真拉起一个独立 worker 进程**)→ 文本 `DUEL SPAWN TIMEOUT SMOKE: ALL-OK`。★ 三条纪律(与 `team_spawn_smoke` 同款):端口固定 **29015**(必须在真大厅 worker 端口池之外)/ **跑前先删日志**(否则上一次的"报到超时"行会把本跑**喂绿**)/ 断言要 `就绪` **与** `报到超时` **两条**行都在(少了前者,一个"开机即崩"的 worker 也会让后者失败,失败原因完全指错方向)。★ 它另有一层**源码级 belt**,判的是**语义不变量**(口径见该文件头),故标志改名 / 合取项重排 / 抽成一层 helper 都**不会**假绿。★ 三条已知上限 + "**承重的是 ③ 而不是 ①②**"见 §对局中的房。**别当它是证明** —— 真正的证明是那次**人工跑满 45 秒的真大厅**。
-  - **★ 本批回归清单**:`ammo_rollback_probe` / `late_match_probe` / `death_drop_probe` / `team_host_probe` / `room_sweep_smoke` / `kh_l5_probe` / `rpc_liveness_probe` / `duel_spawn_timeout_smoke` / `royale_disconnect_count_probe`,加 **一次真大厅跑满 45 秒**。★ `brawl_rollback_probe` **本批不跑**;**真要跑得给 `--quit-after 30000`** —— 仓库统一的 **3600 对它不够**,而它的失败形状是"**无裁决行 + exit 0**"。
+  - **★ 本批回归清单**:`ammo_rollback_probe` / `late_match_probe` / `death_drop_probe` / `team_host_probe` / `room_sweep_lint` / `kh_l5_probe` / `rpc_liveness_probe` / `duel_spawn_timeout_smoke` / `royale_disconnect_count_probe`,加 **一次真大厅跑满 45 秒**。★ `brawl_rollback_probe` **本批不跑**;**真要跑得给 `--quit-after 30000`** —— 仓库统一的 **3600 对它不够**,而它的失败形状是"**无裁决行 + exit 0**"。
   - **★ 真大厅那一步的判据与护栏**(唯一会占 **7777** 的回归步):**`lobby_alive` 为真时必须跳过**(大厅的 `_ready` 会 `kill_udp_port(7777)`)。为假时跑 `timeout 45 … server_main.tscn`:**正确** = **EXIT=124** 且输出里**没有**「报到超时」行;**有病** = 自己 ~30s 退出(**EXIT=0**)且打了那一行。★★ **两者都要看**:只看退出码会被管道骗(`| tail` 报的是 `tail` 的退出码、**恒 0**);只看文本则分不出"被掐掉"与"提前退出" —— 本仓纪律是**判据一律 grep 文本**,要取退出码就**别接管道**。
 - **★ `.uid` 入库口径**:本仓**跟踪** `*.gd.uid`、`.gitignore` 未屏蔽;而 **`*.tscn.uid` 零跟踪** ⇒ **新建 `.gd` 要跟它的 `.uid`,新建 `.tscn` 不用**。★ 成因:实现者都按名 `git add <具体文件>`,会**漏掉姐妹文件** ⇒ **给 `git add` 命令时,新建 `.gd` 的场合要显式带上 `.uid`**。
 
@@ -89,8 +89,8 @@
 所以行为断言对这类分支**天生无牙**"。
 
 **实测不成立**：`Input.action_press(...)` / `Input.action_release(...)` 在 `-s`（无 autoload、无渲染）里**照样有效** ——
-仓内已有 **6** 支这么用：`tests/probe/climb_probe.gd:28/47`、`tests/probe/haste_probe.gd`、
-`tests/probe/haste_probe_input.gd`、`tests/probe/level0_weapon_scatter_probe.gd`、
+仓内已有 **6** 支这么用：`tests/manual/climb_probe.gd:28/47`、`tests/probe/haste_probe.gd`、
+`tests/harness/haste_probe_input.gd`、`tests/probe/level0_weapon_scatter_probe.gd`、
 `tests/harness/net_lag_client.gd`、`tests/harness/reconnect_watcher.gd`。
 
 **规矩**：判断"某条兜底/分支能不能被**行为**断言咬住"时，**别**拿"headless 全局输入恒假"当理由 ——

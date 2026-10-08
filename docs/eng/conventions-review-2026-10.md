@@ -589,7 +589,7 @@
 
 ### §4-16 「退出码不可作判据」
 - **① 理由仍成立（有具体事故）**：`tests/lib/probe_base.gd:49-53` 写明"✓ 汇总行 + ALL-OK 并不蕴含
-  '这一组跑过'"，`tests/smoke/room_sweep_smoke.gd:58-63` 有那次 `pid_of` 改名的实例
+  '这一组跑过'"，`tools/room_sweep_lint.gd:58-63` 有那次 `pid_of` 改名的实例
   （`SCRIPT ERROR` + verdict 仍打 `SMOKE_ROOM_SWEEP OK`）。
   ★ **但审计自己也指出它被过度概括**：`probe_base.gd:61/64` 真调 `quit(0)`/`quit(1)`
   —— 退出码**通道是现成的**，只是文档统一要求"判据取 grep 文本"。

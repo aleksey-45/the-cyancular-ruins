@@ -161,9 +161,9 @@ func _ready() -> void:
 			continue
 		if get_tree().root.has_node(NodePath(PROBE_NODE_NAME)):
 			break
-		if not ResourceLoader.exists("res://tests/smoke/menu_autotest.gd"):
+		if not ResourceLoader.exists("res://tests/harness/menu_autotest.gd"):
 			break
-		var probe_script := load("res://tests/smoke/menu_autotest.gd")
+		var probe_script := load("res://tests/harness/menu_autotest.gd")
 		if probe_script == null:
 			break
 		var probe := Node.new()

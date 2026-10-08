@@ -133,7 +133,7 @@ func _initialize() -> void:
 	# 先把 6×3 个 (宿主, 武器) 全建好,再统一 `await` 让它们真的入树 ——
 	# ★ `SceneTree.root` 在 `_initialize()` 早期**还不在树里**(实测:`root.is_inside_tree()==false`),
 	#   子节点要等第一帧才入树、`_ready()` 才会跑(那时 `mag_ammo` 才会被置成 `mag_size`)。
-	#   同款注释见 `tests/probe/aim_direction_probe.gd`。
+	#   同款注释见 `tests/manual/aim_direction_probe.gd`。
 	#   入树后**不再 await**:所有相在一次帧内跑完 ⇒ 弹丸不移动、读数确定。
 	var cases: Array = []
 	for gun in GUNS:

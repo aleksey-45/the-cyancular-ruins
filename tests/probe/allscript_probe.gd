@@ -32,7 +32,8 @@ const SKIP_DIRS := ["res://.godot", "res://builds", "res://releases", "res://gam
 #   ★★ **2026-10-04 重测 ⇒ 287**(同日 283 过期;下面留着**逐条可复核**的数法,供下一次照着核):
 #     · 净变化 = **+5 新增 − 1 删除**:
 #       新增(`git log --diff-filter=A --name-only --pretty=format: 57aa973..HEAD -- '*.gd'`)——
-#       `tests/probe/menu_shot_probe.gd` / `tests/probe/rewind_weapon_probe.gd` /
+#       `tests/probe/menu_shot_probe.gd`（★ 2026-10-08 测试经济已把它移入 `tests/manual/`）/
+#       `tests/probe/rewind_weapon_probe.gd` /
 #       `tests/probe/weapon_injected_fire_probe.gd` / `tests/smoke/project_settings_smoke.gd` /
 #       `tests/smoke/settings_display_smoke.gd`;
 #       删除 —— `DevTools/gamelog/log_viewer.gd`(`9e4ccbe` 把 `DevTools/` 出库;当时它**在**
@@ -48,7 +49,21 @@ const SKIP_DIRS := ["res://.godot", "res://builds", "res://releases", "res://gam
 # ★ 它是**覆盖面**闸,不是质量闸:以后**故意**增删 `.gd` 时它会红并点名两个数,照着改这个
 #   常量即可 —— 那正是"覆盖变了得有人过目"的意思。**别把它降级成 `<`**(对"多扫了一条"
 #   就瞎了,而多出来的可能正是 scratch 副本)。
-const EXPECTED_SCRIPTS := 287
+#   ★★ **2026-10-08 ⇒ 286**(测试经济 D2/D5;当日 287 过期):
+#     · 净变化 = **−1**,是**删除**:`tests/probe/perf_probe.gd`(它的读数是"服务器清格子格"算法的
+#       **第二份口径**、且仍是 v3 的 `*2`/`x/2` ⇒ **读数本身不可信**,留在 `tests/` 只会误导)。
+#       `git ls-files '*.gd' | wc -l` = **286** 独立对上。
+#     · ★★ **一个必须写下来的反直觉点**:同日把 **22 个文件"移动"**出去(18 支人工仪器 +
+#       `brawl_rollback_probe` → `tests/manual/`、2 支 helper → `tests/harness/`)**没有**改变这个数 ——
+#       因为 `_collect("res://")` 数的是**编译面**,它**不看入口的 glob**。⇒ 本闸管的是
+#       "res:// 下参与编译的 `.gd` 有没有被静默增删",**不是**"测试有多少";想让测试面变小,
+#       得**删文件**,移动不算。
+#     · ★ 处置上**有意区分"不再当守卫"与"删"**:`brawl_rollback_probe` 作为守卫不可靠(读 N≥4
+#       自身在抖),但它是 `PredictionRollback._close_enough` 容差常数的**测量台** ——
+#       `core/net/prediction_rollback.gd` 的注释指着它说"要重测得重跑它" ⇒ **移**到 `tests/manual/`;
+#       `perf_probe` 是**读数本身错** ⇒ **删**。
+#   ⇒ 上面 283/287 那几段是**历史值**(数法留着供复核),现行值以本常量为准。
+const EXPECTED_SCRIPTS := 286
 
 var _fails: Array[String] = []
 var _total := 0

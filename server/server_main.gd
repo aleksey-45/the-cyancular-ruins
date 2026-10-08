@@ -347,7 +347,7 @@ func _expire_graces(now_ms: int) -> void:
 		#   原先的 `else` 把"1v1 **以及** team"一起吞了,3v3 第一个宽限到期的人会**带着整局退进程**
 		#   (用户裁定是"该队少人继续打"),而那段代码今天不可达只因大厅还没有起 team worker 的入口。
 		#   ★ 真链路验证(6 人局里真掉线 → 宽限到期 → 其余人继续打)归 **B 册的真链路探针**;
-		#     本处只保证"分派本身"可测(纯函数 + room_sweep_smoke 的双向断言)。
+		#     本处只保证"分派本身"可测(纯函数 + room_sweep_lint 的双向断言)。
 		if GraceWindow.expire_action(_royale, _team_mode) == GraceWindow.ACTION_REMOVE:
 			# 大乱斗 / 3v3:移出对局(身体销毁),其余人继续打;整队走光才终局(3v3 在 TeamHost 里判)
 			if _host != null and _host.has_method("mark_disconnected"):

@@ -271,7 +271,7 @@ func _on_opponent_left() -> void:
 #     (大乱斗的对手色、大乱斗/3v3 里自己那把自选色),见 `_apply_tint` 的第二条分支。
 #     本文件(1v1)**不再引用它**。
 # ★ 判据链(改这个颜色时会一起动,别只改一处):P2 的实测色 == `UiFactory.C_TEAM_B`,
-#   由 `tests/probe/hue_tint_probe` 的守卫 B 钉住 —— 那条守卫**真调本函数**(不自己模仿染色)。
+#   由 `tests/manual/hue_tint_probe` 的守卫 B 钉住 —— 那条守卫**真调本函数**(不自己模仿染色)。
 
 func _apply_p2_tint() -> void:
 	var body: Node = null
@@ -296,7 +296,7 @@ func _apply_p2_tint() -> void:
 # ★ 两侧都停了:**自己那一侧本来就停着** —— `_apply_p2_tint()` 用的是 `UiFactory.C_TEAM_B`
 #   这个固定 token(2026-09-20 前是等价的 `P2_DEFAULT_HUE`)而**不是** `Settings.pvp_color_hue`
 #   (1v1 从未把自选色相染到本地玩家身上),所以这里只需保证**对手侧**别把它拉进来。判据:
-#     · 本文件对 `Settings.pvp_color_hue` **零引用**(`tests/probe/hue_tint_probe` 有源码断言);
+#     · 本文件对 `Settings.pvp_color_hue` **零引用**(`tests/manual/hue_tint_probe` 有源码断言);
 #     · P2 的实测色 == `UiFactory.C_TEAM_B`(同上)。
 # ★ `Settings.pvp_color_hue` 这个设置项**仍然存在**,大乱斗照旧消费(4~8 人靠颜色区分才有意义);
 #   共享钩子(`PvpMatchClient._apply_peer_hues_or_team` / `_apply_tint`)**一字未动**。
