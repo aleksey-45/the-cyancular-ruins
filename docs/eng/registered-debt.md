@@ -12,7 +12,14 @@
 
 | 探针 | owner | 最后复核 | 症状 | 为什么留着 | 销掉的条件 |
 |---|---|---|---|---|---|
-| [`tests/probe/team_match_probe.sh`](../../tests/probe/team_match_probe.sh) | 用户(六人真链路只能由用户跑) | 2026-10-04 **静态复核,未跑** | **长期 FAIL,且判词与实况矛盾**:判词说"大厅队伍表是空的 / 45s 内没有 3v3 房",而**同一次跑**的客户端日志里房建成了、客户端进了等待室。★ **2026-10-04 状态订正**:根因**已修** —— `9003dae`(2026-09-28)"客户端不再被拨到生产云服 —— 预置 `PvpSession.server_address`",正是本行原先那句"客户端被某个不是探针大厅的东西服务着"。但**修复后没有留下六人整跑的判决**,而三个落点互相矛盾(`docs/superpowers/plans/2026-09-29-unowned-debt-sweep.md:11` 说"已修待验"、`.superpowers` 账本记 2026-09-20 曾 PASS 33 条、同一账本靠后段落仍称"既有的 FAIL") | 根因未钉死时的追查成本太高,且它是**唯一**"过真协议"的 3v3 覆盖 | **跑一次六人整链路**(池外 29200/29250、不碰 7777):绿 ⇒ 按上面「销掉时删行」删掉本行,并同步 `tests.md` / `handoff` / `AGENTS.md` §5 的复述;红 ⇒ 把"已修 `9003dae`、仍红"写进症状列并重新算根因 |
+| [`tests/probe/team_match_probe.sh`](../../tests/probe/team_match_probe.sh) | 用户(六人真链路只能由用户跑) | 2026-10-04 **静态复核,未跑**;★ **2026-10-08 补跑了一次(见行末)** | **长期 FAIL,且判词与实况矛盾**:判词说"大厅队伍表是空的 / 45s 内没有 3v3 房",而**同一次跑**的客户端日志里房建成了、客户端进了等待室。★ **2026-10-04 状态订正**:根因**已修** —— `9003dae`(2026-09-28)"客户端不再被拨到生产云服 —— 预置 `PvpSession.server_address`",正是本行原先那句"客户端被某个不是探针大厅的东西服务着"。但**修复后没有留下六人整跑的判决**,而三个落点互相矛盾(`docs/superpowers/plans/2026-09-29-unowned-debt-sweep.md:11` 说"已修待验"、`.superpowers` 账本记 2026-09-20 曾 PASS 33 条、同一账本靠后段落仍称"既有的 FAIL") | 根因未钉死时的追查成本太高,且它是**唯一**"过真协议"的 3v3 覆盖 | **跑一次六人整链路**(池外 29200/29250、不碰 7777):绿 ⇒ 按上面「销掉时删行」删掉本行,并同步 `tests.md` / `handoff` / `AGENTS.md` §5 的复述;红 ⇒ 把"已修 `9003dae`、仍红"写进症状列并重新算根因 |
+★★ **2026-10-08 六人整跑判决(补上了债单说缺的那一次)**:手工单跑 `team_match_probe.sh` ⇒ **FAIL(8 条)**,
+根因行是 `FAIL 房主没有点开始(房内 6 人,队号表 { 1: 1, 2: 2, 3: 1, 4: 1, 5: 2, 6: 2 })`。⇒ **两点更新**:
+① **旧的"队伍表是空的"症状已消失** —— 6 人全在、队号表有效(`9003dae` 那笔修复**有效**,本条原写的怀疑可以销掉);
+② 现在的卡点是**探针脚本化的"房主点开始"那一步**,后面 7 条 FAIL(出生点 0/6、无子弹/手雷读数、无 ROUND_OVER、
+自杀 0 端、ESC 离场)全是它的**下游**。★ **归因**:该次运行日志里 `RPC configuration` / `Unable to send` /
+`channel` / `SCRIPT ERROR` **一条都没有**(`team_match_start` 走 `transfer_channel = 0` = 引擎系统默认道,**本批没动**)
+⇒ **不能归因给 closeout 批的 Task 4/5**;要查的是探针的驱动脚本与等待预算。 |
 | [`tests/probe/ground_net_probe.tscn`](../../tests/probe/ground_net_probe.tscn) | 未认领 | 2026-10-04 **静态复核,未跑** | **既有抖动**:机器人走位在**随机图**上卡死(探针自己的头注也写了这一点) | 抖动来源是"每进程随机选一份 `.cyrm`"(见 [`world.md`](world.md));探针本体仍能看趋势 | 给探针**钉图**(取图类脚本的既有纪律) |
 | [`tests/manual/brawl_rollback_probe.tscn`](../../tests/manual/brawl_rollback_probe.tscn) | 未认领 | 2026-10-04 **静态复核,未跑**；2026-10-08 **按测试经济 D5 移出默认批** | 它是"贴身缠斗扫描仪器",但**读 N≥4 时本身在抖**,且**变异下仍有一格假绿** | ★ **处置已变**：它**作为守卫不可靠**（上面那句），但它是 `PredictionRollback._close_enough` **容差常数的测量台**（[`core/net/prediction_rollback.gd`](../../core/net/prediction_rollback.gd) 的注释指着它说"要动它得重跑"）⇒ **移入 `tests/manual/`，不删**；**它不再是批内的红/假绿问题**，而是一条**人工测量台**（跑法见 [`tests/manual/README.md`](../../tests/manual/README.md)） | 抖动与那一格假绿**不再挡批**；若将来要把它变回守卫，得先让它在 N≥4 下稳定、并把判据写成行为级 |
 | [`tests/smoke/reconnect_smoke.gd`](../../tests/smoke/reconnect_smoke.gd) | 未认领(由 UI→`.tscn` 迁移那条线留下) | 2026-10-04 **实测**(聚合入口 `bash tests/run_all.sh` 首跑) | **断言的锚点没了 ⇒ 该条守卫今天不守任何东西、且永远红**:判词原文 `RECONNECT SMOKE FAILED: 1` + `[FAIL] ★ 主菜单联机入口未走 PvpSession.reset()`(rc=1,日志 tests/.run_all_logs/smoke/reconnect_smoke.log)。★ **根因不是行为回归** —— [`scenes/main_menu.gd`](../../scenes/main_menu.gd):219 那行**仍在**调 `PvpSession.reset()`;是 [`reconnect_smoke.gd`](../../tests/smoke/reconnect_smoke.gd):294-295 把判据限定在 `_build_menu_buttons` 的函数体内,而按钮已搬进 `main_menu.tscn`、接线改到 `_wire_menu()`([`scenes/main_menu.gd`](../../scenes/main_menu.gd):207)⇒ `_func_body` 取到空串 ⇒ `count("PvpSession.reset()") >= 1` **恒假** | 它是 C1 纪律("进页复位、但**不**清回局凭据")的**唯一**源码级断言;删掉等于把那条纪律的守卫一起删掉 | 锚点从 `_build_menu_buttons` 换成 `_wire_menu`(或改成"整个文件去注释后至少一处 **且** 落在 `%MultiBtn` 那个 lambda 里")⇒ 转绿后**删掉本行**,并同步 `tests/known_red.txt` |
@@ -110,6 +117,16 @@
    同配置连跑两次都红(空闲机第三次同样红),把副本里的 `sleep 3`/`sleep 2` 改成 `12`/`12` 后
    **一次就绿**(`SMOKE_MATCH OK create/join`)。⇒ 症状与真因**分家**,且**与代码无关**才是真正危险的地方
    (排查人第一反应会去怀疑服务器/网络)。★ 同族脚本里凡"固定 sleep 后 grep 就断言"的都要按这条重看。
+   ★★ **2026-10-08 复现(控制器,closeout 批的"真链路批 B")**:结论**升级** —— 在这台机器上它**不是偶发**:
+   经 `bash tests/run_real.sh --yes` **连跑三次、三次都在第 1 支就中止**(判词 `SMOKE FAIL: 服务器未建房间`,约 7s),
+   而 `/tmp/pvp2_server.log` 里服务端**正常就绪**(`服务器就绪,等待玩家……(大厅 7777;配对后自动拉起对局 worker)`)
+   ⇒ 再次确认**症状与真因分家**、且**与代码无关**。
+   ★★ **它还有第二个后果(比第 1 条更值得记)**:该支失败后走早退路径 ⇒ 留下一批孙进程 ⇒ 入口的
+   "跑后 Godot 必须为 0" 那条闸**判 FAIL 并中止整批** ⇒ **整批 `run_real` 今天连第 2 支都到不了**
+   (`RUN_REAL FAIL(entries: ok=0 fail=1 ; gate-failures=1)`)。⇒ 本轮的真链路覆盖是**逐支手工跑**拿到的
+   (每支之间守 `lobby_alive` + 清端口 + 前后进程为 0),**不是**从入口拿到的;这个区别要写进任何引用它的结论里。
+   ★ 反证:同一支**单独**跑可以过(2026-10-08 实测 `SMOKE PASS`,约 20-40s),但也会先红一次
+   (`超时 role=join snapshot=true round=true moved=true bullet_spawn=false`)⇒ **两副面孔都属于这一支的抖动**。
    ★★ **同一支的早退路径还漏杀孙进程**:`:28` 只 `kill_procs $SERVER_PID $A_PID; kill_port`,
    **没调** `kill_port_range 7800 8300` ⇒ 大 spawning 的 **worker(孙进程)**留着(实测漏 4 个 / 2 个),
    正是该脚本头注自己警告的"毒害下一支"。修法:早退路径也调 `kill_port_range`;根治则把固定 sleep
@@ -723,3 +740,17 @@
     - **本批处置**：**两份给同一通道**(Task 5 的 `transfer_channel` 都是 3)，并把"重名集合恰好 = `{beam_fired}`"**钉成一条断言**
       (`rpc_channel_contract_smoke` 的 ③：新出现一个重名、或 beam_fired 被删掉一份，都会红)。
     - **翻案条件**：确认真无调用点后**删掉 ext 那份** —— 那是协议面改动，单独走档 3(别顺手删)。
+
+27. **`rejoin_probe` 的 c3「反向对照」两遍不一致**（2026-10-08 实测；owner 未认领）
+    - **事实**：两遍**同配置单跑** —— 第一遍 `REJOIN PROBE: ALL-OK(5 条断言)`；
+      第二遍 `REJOIN PROBE: 1 条失败(跑了 6 条断言)`，失败行 =
+      `WATCHER[c3] FAIL c3 ★ 那一行对**没有凭据的第三人**也是可点的 —— 可点性不是按人判的`。
+      ★ **两遍的断言条数都不一样**（5 vs 6）⇒ 这个阶段**时序相关**（第一遍根本没走到 c3 的结论时刻）。
+    - **这条断言在说什么**：[`tests/harness/rejoin_watcher.gd`](../../tests/harness/rejoin_watcher.gd) 里它是 c1 那条的**反向对照** ——
+      同一行、同一份载荷，**手里没有凭据**的人必须看到"点不动"；两条合起来才说明可点性是**按人**判的，
+      而不是"那一刻所有人都能进"。
+    - **归因**：与 closeout 批 Task 4/5 **无关**（该次日志里 RPC/通道/脚本错误 **0 条**；credential 类 RPC 都在 `transfer_channel = 0` 那条**没动过**的道上）。
+      可能是**产品侧**（那一行的 `disabled` 确实不是按人判），也可能是**探针侧**（`_c3_row_disabled` 采样早于该客户端应用状态）。
+    - **翻案条件（先做判别实验）**：把 `RESULT_WAIT` 拉长、或把采样点挪到"该行状态稳定之后"再跑两遍；
+      **仍红** ⇒ 产品侧：去 [`scenes/mp_lobby.gd`](../../scenes/mp_lobby.gd) 看那一行的 `disabled` 条件是不是只看了"房里有没有局"、
+      而漏了"**我**有没有凭据" —— 那是一条真实的**可点性**缺陷，该修产品而不是改探针。
