@@ -68,12 +68,15 @@ python tools/build_release.py
 
 ## 测试
 
-无单测框架;`tests/` 下是 `-s` 冒烟/诊断脚本:
+无单测框架;`tests/` 下是 `-s` 冒烟/诊断脚本(2026-10-09 已按证据削减到原来的 ~10%,
+台账见 [`docs/superpowers/specs/2026-10-09-test-surface-cut-90-design.md`](docs/superpowers/specs/2026-10-09-test-surface-cut-90-design.md)):
 
 ```bash
-# 敌人/武器/环面逻辑主冒烟
-Godot_console --headless --path . -s res://tests/smoke/enemy_logic_smoke.gd
-# PvP 链路(大厅→worker→建房→开局)
+# 输入包/服务端收口(默认批的入口之一)
+Godot_console --headless --path . -s res://tests/smoke/network_input_smoke.gd
+# 整批(12 支;不碰 7777、不弹窗)
+bash tests/run_all.sh
+# PvP 链路(大厅→worker→建房→开局;占 7777,走真链路批)
 bash tests/smoke/pvp_room_smoke.sh
 bash tests/smoke/pvp_match_smoke.sh
 ```

@@ -23,14 +23,18 @@ Godot **4.7.1 标准版(非 mono)** 做的 2D 横版射击 demo「The Cyancular 
 
 ```bash
 # 冒烟(`-s`,`extends SceneTree`;成功打印 SMOKE OK)
-"$GODOT" --headless --path . -s res://tests/smoke/enemy_logic_smoke.gd
+"$GODOT" --headless --path . -s res://tests/smoke/network_input_smoke.gd
 # 场景探针(`extends Node`;`--quit-after` 单位是帧,统一给 3600 当安全网)
-"$GODOT" --headless --path . --quit-after 3600 res://tests/probe/<名>.tscn
+"$GODOT" --headless --path . --quit-after 3600 res://tests/probe/tile_collision_probe.tscn
 # 起 PvP 服务端(占 7777;终端开着 = 运行中)
 "$GODOT" --headless --path . res://server/server_main.tscn
-# 取图验收(★ 不带 --headless;带了就没有视口纹理、静默不存图)
-"$GODOT" --path . --quit-after 300 res://tests/probe/<视觉探针>.tscn
 ```
+
+> ★★ **2026-10-09 测试面削减 90%**:上面两条**是仅存的例子** —— 全部**非 headless 取图探针**与
+> `tests/manual/` 已在那一批里删除,所以**本仓现在没有"取图验收"这条命令了**。
+> 那一批删了什么/留了什么/代价是什么:台账
+> [`docs/superpowers/specs/2026-10-09-test-surface-cut-90-design.md`](docs/superpowers/specs/2026-10-09-test-surface-cut-90-design.md);
+> 现行清单与跑法见 [`tests/README.md`](tests/README.md)。
 
 - ★★ **跑测试前先问用户**:进入验证阶段时列出「这轮要跑哪些测试」,用户认领的自己跑,**其余由 agent 跑**(先问后跑,禁止先斩后奏)。agent 自跑时守这五条:
   1. **7777**:任何会占 7777 的步骤先查 `lobby_alive`,为真则**跳过并问** —— 大厅 `_ready` 会 `kill_udp_port(7777)`,会端掉用户正在跑的对局;
@@ -62,6 +66,12 @@ Godot **4.7.1 标准版(非 mono)** 做的 2D 横版射击 demo「The Cyancular 
 - ★ **变异验证按档分级**,不按"每条断言"平摊:档 1 免;档 2 至少一条(挑这次改动里最承重的);档 3 逐条。
 - ★ 定档的判据是「**改坏了多久才发现**」:`test` 一秒就红 → 档 1;要跑六人真链路才发现 → 档 3。**不确定就往上取一档。**
 - ★ 档 3 的「逐任务评审」= 每个任务做完先审再进下一个(本仓既有做法,账本见 `.superpowers/sdd/`)。
+- ★★ **2026-10-09 起,上表的"必做"要打折读**:那一批把默认批从 **111 支砍到 12 支**、删掉
+  `tests/manual/` 全部 18 支人工仪器,并删掉了 4 支真链路之外的**所有**多进程探针。
+  ⇒ **档 1 的"视觉改动前后取图对比"与档 2 的"相关场景探针"多数已无对应探针**;
+  档 3 的"真链路跑批"只剩 `tests/run_real.sh` 那 5 支。**改档 1/2 时,人眼/试玩成了唯一判据** ——
+  这不是"免做",是"没有工具了"。台账与代价:
+  [`docs/superpowers/specs/2026-10-09-test-surface-cut-90-design.md`](docs/superpowers/specs/2026-10-09-test-surface-cut-90-design.md)。
 
 ### 反重复:能生成就别再加守卫
 

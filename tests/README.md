@@ -1,75 +1,85 @@
 # tests/ — 冒烟 / 诊断(无测试框架)
 
-没有单测框架。运行命令见根 `CLAUDE.md`「常用命令」(headless + `-s`),成功以打印 `SMOKE OK` / `... OK` 且退出 0 为准。
+没有单测框架。运行命令见根 `CLAUDE.md`「常用命令」(headless + `-s`),成功以打印 `SMOKE OK` / `... OK` 为准。
 
-文件分层(四个 bucket;`smoke/` 与 `probe/` 以文件名后缀为主,`harness/` 与 `scripts/` 按角色;一个 stem 的 `.gd` / `.tscn` / `.sh` / `.log` 伴随文件同桶):
+> ## ★★ 2026-10-09:本目录已按「测试经济学」削减到原来的 ~10%
+>
+> **默认批 111 支 → 12 支;删除 git 跟踪的 345 个文件;`tests/manual/` 整个删除。**
+> 判据(外部证据 + 本仓 D1–D9/K1–K5)、保留清单、逐目录删除清单、爆炸半径与**代价**
+> 全在台账:[`docs/superpowers/specs/2026-10-09-test-surface-cut-90-design.md`](../docs/superpowers/specs/2026-10-09-test-surface-cut-90-design.md)。
+>
+> ★ **读旧材料前先看这一条**:`docs/superpowers/` 里的历史 spec/plan、以及各域文档里标着
+> `（已删·2026-10-09）` 的守卫,**都已经不存在**。别把"路径还在句子里"读成"守卫还在"。
 
-- `smoke/`——行为回归主入口。`*_smoke.gd`(`extends SceneTree`,`-s` 跑)+ `*_smoke.sh`(多进程/双端编排,内部用 `taskkill` 按 PID + 杀 7777 端口兜底,别在 Windows bash 里直接 `kill`,杀不死 headless Godot)。`enemy_logic_smoke.gd` 覆盖最广(AI/LOS/环面/武器/碰撞);`grenade_smoke.gd`、`player_contract_smoke.gd`、`move_feel_smoke.gd` 等按域细分。
-- `probe/`——单点诊断与真链路探针(`*_probe.gd` / `*_probe.tscn` / `*_probe.sh`,含 `kh_l*_probe`)。
-- `harness/`——被 spawn 的辅助:`*_watcher.gd`(子进程观察者)、`*_bot_input.gd`(脚本机器人输入)、`*_client.*`(裸客户端,如 `pvp_smoke_client` / `net_lag_client`)、`net_lag_proxy.py`。
-- `scripts/`——四个独立诊断工具:`convert_map.gd` / `convert_map_v4.gd` / `seam_analyze.gd` / `seam_screenshot.gd`。
+## 文件分层(四个 bucket)
 
-`tests/` 顶层只留基础设施:`env.sh`(共享环境)、`lib/`(`scan_util.gd` / `probe_base.gd`,源码级探针的共享脚手架)、`path_integrity_allow.txt`(守卫的字面量常量指着它,故不随 `.gd` 搬进 `probe/`)与 `README.md`。
+一个 stem 的 `.gd` / `.tscn` / `.sh` / `.log` 伴随文件同桶。
 
-注意:`-s` 阶段 autoload 尚未实例化;测试脚本若静态引用会连带预加载"引用 autoload 的脚本"会在编译期失败(见 `smoke/enemy_logic_smoke.gd` 注释)。
+- `smoke/`——**行为回归主入口**,4 支:三支 `-s`(`network_input_smoke` 输入包 /
+  `server_input_sanitize_smoke` 服务端输入收口 / `rpc_channel_contract_smoke` RPC 通道契约)
+  + 一支真链路客户端 `pvp_match_smoke`(`extends Node`,走同名 `.tscn`,要 `--role`)。
+  ★ **`smoke/*.sh` 现在只剩 2 支,都是真链路包装**(`pvp_match_smoke.sh` / `pvp_room_smoke.sh`);
+  原来那 4 支"单进程 + tee"的包装(`bullet_tile_fx` / `move_feel` / `pvp_reconcile` / `pvp_twin`)
+  连同它们的被测脚本一起删了。
+- `probe/`——单点诊断与真链路探针。现存 **12 支 `-s`/场景探针 + 3 支真链路 `.sh`**:
+  - 承重面守卫:`tile_collision_probe`(命中/碰撞)· `wrap_probe`(环面几何)·
+    `rollback_fidelity_probe`(回滚等价)· `resync_world_probe`(重同步)· `snapshot_size_probe`(快照/带宽)·
+    `map_format_v4_probe`(cyrm v4 往返/CRC)· `map_catalog_probe`(目录/联机定图);
+  - **元闸两支**:`allscript_probe`(全仓 `.gd` 编译面计数,`EXPECTED_SCRIPTS`)·
+    `path_integrity_probe`(代码 → 文件系统的路径存在性);
+  - 真链路三支:`rejoin_probe.sh` / `royale_soak_probe.sh` / `team_match_probe.sh`。
+- `harness/`——被 spawn 的辅助。现存 6 支,判据是"**谁在用**":
+  `pvp_smoke_client`(← `pvp_room_smoke.sh`)· `rejoin_watcher`(← `rejoin_probe.gd`)·
+  `soak_bot_input`(← `royale_soak_probe.gd`)· `team_match_watcher` + `team_bot_input`(← `team_match_probe.gd`)·
+  ★ `menu_autotest`(← **产品代码** [`scenes/main_menu.gd`](../scenes/main_menu.gd) 的 `-- --autotest-*` 钩子 ——
+  它是**唯一一个被产品 `load()` 的测试文件**;该依赖是 [`registered-debt.md`](../docs/eng/registered-debt.md) §七 第 3 条的开放决策,本次削减**有意没动它**)。
+- `scripts/`——四个独立诊断工具(**不是测试**,各有债单登记):`convert_map.gd` / `convert_map_v4.gd` /
+  `seam_analyze.gd` / `seam_screenshot.gd`。它们**不在**任何 glob 直径内 —— 加进去等于让以后任何一个
+  新工具脚本(可能原地写盘)**自动进回归批**。
 
-## 聚合入口(2026-10-04 加)
+`tests/` 顶层只留基础设施:`env.sh`(共享环境)、`lib/`(`scan_util.gd` / `probe_base.gd`)、
+`path_integrity_allow.txt` 与 `README.md`。
+
+注意:`-s` 阶段 autoload 尚未实例化;测试脚本若静态引用会连带预加载"引用 autoload 的脚本"会在编译期出错。
+
+## 聚合入口
 
 两个入口:**判据一律 grep 文本,退出码从来不是判据**。
 
 | 入口 | 跑什么 | 逐支判词 | 全批判词(纯 ASCII) | 占 7777? | 拉子进程? |
 |---|---|---|---|---|---|
-| `bash tests/run_all.sh` | **headless 默认批**:自动枚举 `smoke/*.gd` + `probe/*.tscn` + **`probe/*.gd`(无同名 `.tscn` 的)** | `OK` / `OK+RC` / `FAIL` / `NO-VERDICT` / `TIMEOUT` / `KNOWN-RED` | `RUN_ALL OK(n runs / m gated-assertions)` / `RUN_ALL OK-WITH-KNOWN-RED(n runs, k registered)` / `RUN_ALL FAIL(r new-red + k registered)` | **不** | 仅 2 支拉**池外** worker(29014/29015) |
-| `bash tests/run_real.sh` | **真链路批**:5 支多进程 `.sh`(见下) | 同上(除 `KNOWN-RED`) | `RUN_REAL OK(n entries)` / `RUN_REAL FAIL(entries: ok=… fail=… ; gate-failures=…)` | **是**(3 支) | 是 |
+| `bash tests/run_all.sh` | **headless 默认批**:自动枚举 `smoke/*.gd` + `probe/*.tscn` + `probe/*.gd`(无同名 `.tscn` 的) | `OK` / `OK+RC` / `FAIL` / `NO-VERDICT` / `TIMEOUT` / `KNOWN-RED` | `RUN_ALL OK(n runs / m gated-assertions)` / `RUN_ALL OK-WITH-KNOWN-RED(n runs, k registered)` / `RUN_ALL FAIL(r new-red + k registered)` | **不** | **不**(现在一支都不拉) |
+| `bash tests/run_real.sh` | **真链路批**:5 支多进程 `.sh` | 同上(除 `KNOWN-RED`) | `RUN_REAL OK(n entries)` / `RUN_REAL FAIL(...)` | **是**(3 支) | 是 |
+
+**当前枚举账(可复算)**:`smoke/*.gd` **4** + `probe/*.tscn` **8** + `probe/*.gd` 无同名 `.tscn` **4**
+= **枚举 16**;减 `EXCLUDED` **4** ⇒ **跑 12**。
+被排除的 4 支 = `smoke/pvp_match_smoke.gd` + `probe/{rejoin,royale_soak,team_match}_probe.tscn`
+(它们都还在枚举集里,所以**必须**留在 `EXCLUDED` —— 清掉规则会让承重安全检查 FATAL 或让它们悄悄占 7777)。
 
 ### `run_all.sh` —— 默认批
 
-- `--list` 打印"跑哪些 + **排除哪些 + 每条理由** + **已知红基线**";`--only <子串>` 跑便宜的子集;`--classify-check` 跑**分类器自检**(**24 例**,判据核心的回归语料)。
-- ★★ **自动枚举,清单不写死**:**三个** glob —— `smoke/*.gd` + `probe/*.tscn` + **`probe/*.gd`(没有同名 `.tscn` 的,按 `-s` 跑)**。写死会让**新探针永不进默认批**而入口照样打 OK。落选一律走脚本里的 `EXCLUDED` 显式清单 + 每条理由。
-  - ★ **2026-10-05 补(评审 C1)**:第三个 glob 是**补漏** —— 原先 18 支 `tests/probe/*.gd` **既不在批、也不在任何排除里**(而文件头却写着"落选一律显式")。现在:安全且有判词的 **9 支进批**,不打判词行的 **8 支**与 helper **1 支**逐支排除 + 理由;并有**机械闸**:每一支 `probe/*.gd` 必须(有同名 `.tscn`)或(进运行集)或(在 `EXCLUDED`/`OUT_OF_SCOPE` 里带理由),否则 `FATAL` 并点名。
-- **判词分五类**(判据仍是**文本**;`rc` 只用来把"判词肯定"那一类再分一层):
-  - `OK` = 判词肯定 **且** `rc == 0`;
-  - `OK+RC` = 判词肯定 **但** `rc != 0` —— **不算红**(退出码不是判据),但**单独成类**印出来、**绝不混进 OK**。[`probe/elite_drop_probe.tscn`](probe/elite_drop_probe.tscn) 就是这一类(判词 OK,退出时 SIGSEGV ⇒ `rc=139`);
-  - `FAIL` = 判词否定(含脚本自己打的 `[FAIL]`);
-  - `NO-VERDICT` / `TIMEOUT` = 判词缺失 / 被外层 `timeout` 掐掉 ⇒ **归红**(它们正是"守卫自己瞎了"的形态:安全网耗尽与真失败在输出上**长得一样**)。★ 本入口把这两类**分开报**,别处常常把它们混为一谈。
-  - ★★ **"判词肯定" = 三条件同时成立(2026-10-05 三轮;评审 C2 + 重审 C2 残余 + Task 6 假红)**:① **形状**:`ALL-OK`,或 `OK` **紧跟行尾/一个标点**(不许"OK 后面还有空白+正文");② **位置(2026-10-05 Task 6 改口径)**:命中行必须是**非引擎噪声行**,且它**之后不许再出现"判定形状"的行**(= 判词形状 / 失败 / **分项标记** / **本仓自己的失败·中止词汇**);③ **不是分项标记**:命中行不许是方括号标签(`[OK` / `[ALL-OK`)也不许带 `✓`/`✗`。**★ "什么才算推翻判词"**(判词之后的行分三类):(a) **引擎噪声行** ⇒ **永不推翻**(噪声 = 空行 / `at: …` / `[N] …` / `GDScript backtrace` / `WARNING|ERROR|USER ERROR|USER WARNING|SCRIPT ERROR: …` / `Godot Engine v…`,清单来自真实日志的**实测尾部形状**;实测 **28/112** 的判词后面就跟这类行(★ 口径随语料批次:更早那份快照上是 30;复算命令在 `run_all.sh` 文件头「引擎退出噪声的定义」));(b) **判定形状的行** ⇒ **推翻**(判词形状由"取**最后一条**命中"兜住;**失败行由 FAIL 优先兜住、而且更重** ⇒ ② 代码里真正要查的是**两支**:分项标记 + **本仓自己的失败·中止词汇**)。★ **判准(2026-10-05 修复轮 1;评审 I-1)**:*凡在表达"本支的断言/检查有**失败**、或**没有跑完**"的行,都是判定形状* —— 它与 (a)/(c) 的区别只有一条:**它在对本次运行下判断**。今天落地它的词汇:`失败|不通过|未通过`(现网的**中文**失败汇总,`grep -rn 'print.*失败\|不通过' tests/{smoke,probe}/*.gd \| grep -vcE 'FAIL\|✗'` = **33 行**)、`[Ff]ail`(小写/混合大小写;**大写 `FAIL` 早被 FAIL 优先全局兜住**)、`[Aa]borted|did not (run|execute)|not executed|checks? +ran`("没跑完 / 一条都没跑")。★ **有意不收** `跳过`/`skipped` —— 要放行的那一行 `  notes: …:对比跳过` 说的是"**某一项**没测",不是"本支没跑完";⇒ **代价**:若某支拿"跳过"表达"整支没跑完",**判据读不出来**(落 (c) 类放行;**清单之外一律放行** —— 新措辞该按**判准**并进来,不是"再加一个词就完事");(c) **其它良性尾行**(`notes: …`、一句说明、**未见过措辞**的引擎消息)⇒ **放行**。**为什么还留着 ①③**:只靠"独立的 `OK` 单词"时 `[squash_host] OK  6 ( … )` 这类**分项行**会顶掉判词;`PARSE[OK]: res://scenes/mp_lobby.tscn`(`lobby_parse_smoke`)与一条**以 `ALL-OK` 结尾的中文说明行**(`rewind_weapon_probe`)也会被当成判词 ⇒ "跑到一半崩、判词一行没打"读成 `OK`/`OK+RC`(不算红)。★ **射程**:判词**打出来之后**才死 ⇒ 仍是 `OK+RC`(**有意**保留 —— 那正是 `elite_drop_probe` 的形态,它只保证"判词被完整打出来了");判词形状不像 `OK`/`ALL-OK` 的支(例如 `aim_direction_probe` 打 `== PASS, …`)⇒ 落 `NO-VERDICT`(**方向安全,但会假红**)。★ **2026-10-05 Task 6 改的一处**:旧口径写"脚本在**真判词之后**再打非噪声行 ⇒ 也落 `NO-VERDICT`(**有意契约**:判词是最后一句)" —— 那句**已不成立**(它让 `haste_probe` 的 `  notes: …` 尾行把一支**健康**探针**随机**判红 ⇒ 训练人忽略 `NO-VERDICT`)。现行契约 = "**判词是最后一条『判定形状』的行**"。★ **放松的代价(照实写)**:良性尾行一律放行 ⇒ "判词**之后**才发生的真报错、既不含 `FAIL` 字样、措辞又不在 `NOISE` 清单里、**也不带上面那条判准的词汇**"不再被 `NO-VERDICT` 兜住(与 `OK+RC` 同一立场:判词一旦完整打出来,善后交给 `rc` 与日志全文);判词之后**再打判词行 / 分项标记 / 本支失败·中止汇总**仍落 `NO-VERDICT`(方向安全:宁可假红,不把"判词不是最后一条判定行"读成绿)。★ **2026-10-05 修复轮 1(评审 I-1)**:初版只查分项标记 ⇒ 判词后再来一句 `APP INFO SMOKE: 3 条失败`(现网中文失败汇总)**落 `OK` / `OK+RC`(不算红)**;现已把"本支的断言有失败 / 没跑完"这一类并进 (b)(上面那条判准 + 词汇),该区**收窄**。★ 判据还先把 `\r` 剥掉(Godot 输出实测有 28 处 `\r\n`,而 `\r` 属于 `[:space:]`)。
-
-- ★★ **已知红基线 [`tests/known_red.txt`](known_red.txt)**:每行 `路径 类别 理由…`(理由**必填**;`#` 注释;**空行 = 违规**;类别 ∈ `OK+RC|FAIL|NO-VERDICT|TIMEOUT|*`)。基线内的红 = `KNOWN-RED` ⇒ **不**进新红计数,但**永远**印出文件名与条数 ⇒ 全批判词 `RUN_ALL OK-WITH-KNOWN-RED`、**退出码 0**;**不在基线的红 ⇒ `RUN_ALL FAIL`、退出码非 0**。
-  - **为什么需要**:本仓自己的话 —— [`probe/allscript_probe.gd`](probe/allscript_probe.gd) 的"一条**永远红**的闸等于没有闸"。一建起来就永远 FAIL 的入口,后面几个工作包**没法**拿它判断"我这次改坏了没有"。
-  - **修好了就删行**:条目"这次跑到了、却没红" = 过期 ⇒ **也红**(与 `registered-debt.md` §三「销掉时删行」同规)。★ 配 `--only` 时只判**这一趟真跑过**的文件,所以子集跑不会误报 —— 也因此**那句"可能已修好,请删行"的提示不再出现**(2026-10-05 修;评审 I2:旧写法在 `--only` 子集跑下会教人删掉唯一那条基线 ⇒ 入口回到"永远 FAIL")。
-  - **加行不是"让检查变绿"的手段**:每条都必须有真实的欠账指针与实测日期;基线**透明**(红照印)。★ 反过来,**写错也红**:路径不在候选面(第 7 种)或重复(第 8 种)。
-- ★★ **入口自己会红的九种情形**(每条都答得出"去掉什么才红"):
-  1. glob 空转(**枚举到 0 支**)或 `--only` 过滤后 0 支;
-  2. **过期排除项**:某条规则匹配不到任何文件(= 改名漂移)。若不红,一个改名后的 `royale_probe` 会悄悄进默认批并**占 7777**;
-  3. **`tests/probe/*.gd` 既没跑也没排除**(2026-10-05 加;评审 C1)。若不红,一支新的 `-s` 探针会**静默漏掉**,而入口照样绿;
-  4. **默认批里出现会开端口 / 拉子进程的支**(扫 `NetBus.start_server(` / `ENetMultiplayerPeer` / `OS.create_process(`)⇒ 强制人去"显式排除(带理由)"或改探针。★ **盲区**:只看**整行注释以外**的文本,且**看不见经 helper 间接开端口**(如 `WorkerLauncher.spawn_worker`)—— 今天批里那 2 支正是这种形状(池外,已知无害,不会响);
-  5. 某支 `FAIL` / `NO-VERDICT` / `TIMEOUT` **且不在基线里**;
-  6. 基线条目**过期**(跑到了却没红);
-  7. 基线里有一条**路径根本不在候选面**(不存在 / 已改名)—— 2026-10-05 加(评审 I1):若不红,那条基线就是**永久死行**,登记簿开始说谎;
-  8. 基线文件里有**空行 / 缺理由 / 类别不合法**,或**同一路径重复**(重复行原先被关联数组**静默折叠**,2026-10-05 修;评审 M5);
-  9. 某个 `EXPECTED_CHECKS` **声明了却没被用于比较**(M1)⇒ 该支 `GATE` 栏打 `-(declared,unused:N)`,且**不计入** `m`(否则 `m` 虚高而 `GATE` 栏读起来像"有闸盯着")。
-- ★★ **单支 `OK` 只证明"没有失败输出",不证明"每条断言都跑过"**(脚本错误只结束出错的那个函数、调用方继续、verdict 照打 `ALL-OK`;权威:[`lib/probe_base.gd`](lib/probe_base.gd) 文件头)。表里 `GATE` 栏是 `-` 就表示"**这一支没有闸**"(或 `-(declared,unused:N)` = 声明了没用)。全批判词里的 `m` **只统计带闸的支**(= 各支 `EXPECTED_CHECKS` 之和),**不是**全批断言总数。
-- **`OK+RC` 的由来(实测)**:[`probe/elite_drop_probe.tscn`](probe/elite_drop_probe.tscn) 同配置 7/7 次都是"**先打判词 OK、再在退出时 SIGSEGV**" ⇒ 只看文本它是**绿的**。这就是"守卫给的保证比读起来少"的活样本,登记在 [`../docs/eng/registered-debt.md`](../docs/eng/registered-debt.md) §一。
-- **日志与判词原文** —— ★★ **ASCII 的射程(2026-10-05 订正,评审 I3:别两处都说满)**:
-  - **机器可读的那部分 = 全批判词行(`RUN_ALL ...` / `RUN_REAL ...`)与逐支表那一栏 ⇒ 纯 ASCII**(本机控制台是 GBK:中文 / `⇒` / `✓` 会把脚本打崩;判词行原先掺中文 ⇒ 在缺省控制台上是乱码,现在不是了);
-  - **给人读的那部分 = `[env]`/`[enum]`/`[baseline]`/`[known-red]`/`[new-red]`/`[ok+rc]` 说明行与 `--list` 的排除理由 ⇒ 原样打印(含中文)**,不过 `ascii_only`(剥掉中文只会让理由变成残渣);
-  - **判词原文**(含中文)在 `tests/.run_all_logs/summary.log` 与每支的 `tests/.run_all_logs/smoke/<名>.log` / `tests/.run_all_logs/probe/<名>.log`;失败清单一并在 `tests/.run_all_logs/failed.log`。★ 这些 `*.log` 被根 `.gitignore` 的 `*.log` 覆盖,**不会脏工作树**;
-  - ★ **它们跨跑次混装**:同一路径会被下一趟覆盖 ⇒ 你读到的**不一定是这一趟的**(没有 run id / 时间戳 —— 这是**已知边界**,不是保证)。
-- 逐支墙钟预算:smoke 60s / scene 120s,文件头自己声明过更大 `timeout` 的走脚本里的 `BUDGET_OVERRIDE`。★ 预算给**小**了是**可见的 `TIMEOUT`**(不会静默变绿)。
-
-**不在默认批里的,以及为什么**(全量清单与理由:`bash tests/run_all.sh --list`):
-
-1. **真链路 / 多进程(8 支探针 + 1 支 smoke)** —— 会占 7777 或拉子进程(⇒ 走 `run_real.sh`):`ground_net_probe` / `reconnect_probe` / `rejoin_probe` / `royale_bound_probe` / `royale_c2_probe` / `royale_probe` / `royale_soak_probe` / `team_match_probe`,以及 `smoke/pvp_match_smoke.gd`(要 `--role`,且要 7777 上有大厅)。★ 这 9 条**就是**现在排除表的**全部**(30 条 → 9 条,见下一条)。
-2. **已移出本入口 glob 的 22 个文件(2026-10-08 测试经济学 D2/D5)** —— 它们**不再是测试,所以不再需要"为什么排除"的理由**(那笔税正是 D2 要消灭的):**18 支人工仪器**进 [`manual/`](manual/README.md)(10 支非 headless 取图探针 + 7 支只打印读数、判据读不了的工具 + `brawl_rollback_probe`);**2 支 helper**进 `harness/`(`haste_probe_input.gd`、`menu_autotest.gd`)。
-   - ★ 例外一条:`brawl_rollback_probe` 作为**守卫**不可靠(读 `N≥4` 时自身在抖、变异下**仍有一格假绿**，[`../docs/eng/registered-debt.md`](../docs/eng/registered-debt.md) §一第 3 行),但它是 `PredictionRollback._close_enough` 容差常数的**测量台**([`../core/net/prediction_rollback.gd`](../core/net/prediction_rollback.gd) 的注释指着它说"要重测得重跑它")⇒ **移而不删**。要跑它得给 `--quit-after 30000`(约 8 分钟,失败形状是"**无裁决行 + exit 0**")。
-3. **已删除的仪器**:`perf_probe` —— 它的读数是"服务器清格子格"算法的**第二份口径**、且仍是 v3 的 `*2`/`x/2` ⇒ **读数本身不可信**,留在库里只会误导(债单 §五.3 原已登记这一点)。
-4. **不在 glob 直径内的工具(4 支,`tests/scripts/*.gd`)** —— 迁移 / 诊断工具,**不是测试**:`convert_map.gd` 与 `convert_map_v4.gd` **原地写盘**(★ `convert_map.gd` 今天跑**会毁图**:两张在库图已是 v4 二进制、它认不出 v2/v3 标记 ⇒ 落进"v1 单字符 250×150"那一支并覆盖写回;债单 §六.19);`seam_analyze.gd` 读的 `tests/_seam_a_old.png` / `_seam_b_fixed.png` **不在库里**(债单 §六.20);`seam_screenshot.gd` **非 headless**。★ 所以**没有**把 `tests/scripts/*.gd` 加进 glob —— 那等于让以后任何一个新工具脚本(可能原地写盘)**自动进回归批**。
-⇒ 判据与理由见 [`../docs/eng/test-economy.md`](../docs/eng/test-economy.md)(D2 仪器不是守卫 / D5 只证明别的东西 / K1–K5 什么才值得留)。
-6. **不在 glob 直径内的工具(4 支,`tests/scripts/*.gd`)** —— 它们是**迁移 / 诊断工具,不是测试**:`convert_map.gd` 与 `convert_map_v4.gd` **原地写盘**(★ `convert_map.gd` 今天跑**会毁图**:两张在库图已是 v4 二进制,它认不出 v2/v3 标记 ⇒ 落进"v1 单字符 250×150"那一支并覆盖写回;债单 §六.19);`seam_analyze.gd` 读的 `tests/_seam_a_old.png` / `_seam_b_fixed.png` **不在库里**(债单 §六.20);`seam_screenshot.gd` **非 headless**。★ 所以**没有**把 `tests/scripts/*.gd` 加进 glob —— 那等于让以后任何一个新工具脚本(可能原地写盘)**自动进回归批**。
+- `--list` 打印"跑哪些 + 排除哪些 + 每条理由 + 已知红基线";`--only <子串>` 跑便宜的子集;
+  `--classify-check` 跑**分类器自检**(24 例)。
+- ★★ **自动枚举,清单不写死**(三个 glob)。写死会让**新探针永不进默认批**而入口照样打 OK。
+  落选一律走 `EXCLUDED` 显式清单 + 每条理由。
+- **判词分五类**,`rc` 只用来把"判词肯定"那一类再分一层:`OK`(判词肯定且 `rc==0`)、
+  `OK+RC`(**不算红**,但单独成类印出)、`FAIL`、`NO-VERDICT` / `TIMEOUT`(**归红**:安全网耗尽与真失败
+  在输出上长得一样)。
+- ★★ **已知红基线 [`tests/known_red.txt`](known_red.txt)**:每行 `路径 类别 理由…`。
+  ★ **2026-10-09 起基线是空的(0 条)** —— 原来唯一那条(`reconnect_smoke.gd`)随该支被删除而销账,
+  **不是修好了**。加行**不是**让检查变绿的手段。
+- ★★ **入口自己会红的九种情形**:glob 空转 / 过期排除项 / `probe/*.gd` 既没跑也没排除 /
+  默认批里出现开端口或拉子进程的支 / 新红 / 基线条目过期 / 基线路径不在候选面 / 基线文件本身写错 /
+  某支声明了 `EXPECTED_CHECKS` 却没用于比较。逐条的"去掉什么才红"写在 [`run_all.sh`](run_all.sh) 文件头。
+- ★★ **单支 `OK` 只证明"没有失败输出",不证明"每条断言都跑过"**(权威:[`lib/probe_base.gd`](lib/probe_base.gd) 文件头)。
+  表里 `GATE` 栏是 `-` 就表示"**这一支没有条数闸**"。
+  ★★ **2026-10-09 后的新边界(照实写)**:默认批现在带 `m gated-assertions = 0` ——
+  唯一带 `EXPECTED_CHECKS` 的 `settings_display_smoke` 被删了 ⇒ **这 10 支域守卫没有一支能自证
+  "断言都跑过了"**。抽查时按 [`docs/eng/tests.md`](../docs/eng/tests.md) 末节的"看 stderr 有没有
+  `SCRIPT ERROR`"兜;要补闸请先读 [`test-economy.md`](../docs/eng/test-economy.md) §5.3 第 8 条的裁决
+  (本仓**有意不逐支补闸** —— 那是 10 份新增,与削减方向相反)。
 
 ### `run_real.sh` —— 真链路批
-
-顺序 / 端口 / 耗时估计 / 判词(**表格**,命令 `bash tests/run_real.sh --list` 现打):
 
 | # | 脚本 | 端口 | 耗时估计 | 判词 | 池内回收 |
 |---|---|---|---|---|---|
@@ -79,16 +89,21 @@
 | 4 | `probe/royale_soak_probe.sh` | 7777 + pool | ~150~200s | `SOAK: ALL-OK` | 扫 `[7800,8300)` |
 | 5 | `probe/team_match_probe.sh` | 29200 / 29250(**池外**) | 3~10min | `TEAM MATCH PROBE: ALL-OK` | **不扫池** |
 
-- ★ **`tests/smoke/*.sh` 里另外 4 支不进真链路批**:`bullet_tile_fx` / `move_feel` / `pvp_reconcile` / `pvp_twin` / `room_sweep` 都只是"**一条 Godot + tee**"的单进程包装,同一个 `.gd` / `.tscn` **已在默认批里**(重复计费没有收益)。理由逐条写在脚本的 `WRAPPERS` 里。
-- ★★ **四道闸**:① `lobby_alive` 为真 ⇒ **拒绝**(大厅 `_ready` 会 `kill_udp_port(7777)`,硬跑会端掉用户正在跑的对局);② 无 `--yes` 且 stdin 非交互 ⇒ **拒绝**并提示手动跑;③ **R20 锁 + 前后进程**:见下;④ **清单不许烂**:`tests/{smoke,probe}/*.sh` 每一支必须出现在 `ENTRIES`(跑)或 `WRAPPERS`(不跑 + 理由)里,且两边每条都要匹配到真实文件 —— 否则红(去掉它,新加的真链路 `.sh` 会**静默不进批**)。
-- ★★ **闸③的由来是一次真事故,以及 R20 锁(2026-10-05 加)**:
-  - **事故**:曾经在 `run_all.sh` 跑批期间调用 `run_real.sh --yes`,那一刻"`tasklist` 单点采样"恰好落在两个 headless 测试之间的空档 ⇒ 计数 0 ⇒ 放行 ⇒ **真链路脚本真的跑了起来**(短暂占了 7777;它自己 FAIL 早退,早退路径还复现了 `registered-debt.md` §五.9 的"漏杀孙进程")。
-  - **R20 锁(主判据)**:`run_all.sh` 运行期持 `tests/.run_all.lock`(内容 `pid` / `start` / `heartbeat`,每支一刷心跳,正常结束或 Ctrl-C 都删);`run_real.sh` 见**活锁**即拒并打印锁里的 pid/起始/心跳。★ **判据按实现写清**(2026-10-05 订正 —— 原先 README 与脚本注释把判据说反了):**活锁 = `pid` 还活着 **且** 心跳在 `LOCK_STALE_SECS`(默认 600s)之内**;两者**任一**不成立 ⇒ **陈旧锁** ⇒ **打醒目警告后放行**(否则就成了"永远拒绝的闸"那一面)。⇒ 真正要盯的是**心跳那条**:它只在**支间**刷新 ⇒ "单支挂住"期间心跳会变旧(而单支最长预算 150s,仍 < 600s)。★ **刷新点与阈值是一对**:谁把单支预算调到 >600s(`BUDGET_OVERRIDE` / `SCENE_BUDGET`),就必须同时调 `LOCK_STALE_SECS`。
-  - **副保险两条**:①`tests/.run_all_logs/summary.log` 在 `RUN_REAL_QUIET_SECS`(默认 **240s** > 单支最长预算 150s)内被写过 ⇒ 拒;②`tasklist` 连续 `GODOT_QUIET_SAMPLES`(=3)次采样为空才放行;跑前/每支跑完都判,判空带最多 ~10s 收尾等待(免得把"刚杀掉还在回收"误判成残留)。
-  - ★ **覆盖上限**:副保险①的阈值**必然**小于"一支真的挂住"的最坏情形(挂住时长无上界)⇒ 它只是兜底;**锁才是"在飞"的判据**。锁本身也**挡不住**"有人手工绕过脚本直接跑 `.sh`"。
-- ★ `team_match_probe.sh` 在 [`../docs/eng/registered-debt.md`](../docs/eng/registered-debt.md) §一第 1 行**仍登记为不可信**:根因已修(`9003dae`),但**修复后没有留下六人整跑的判决**。⇒ 它绿了**也不改变**"3v3 今天没有可信端到端守卫"这句。
+- ★★ **`WRAPPERS` 现在是空的**(`WRAPPERS=()`)。原来那 4 支"单进程 + tee"的包装随被测脚本一起删了。
+  ★ **别把空数组删掉**:闸四同时遍历 `ENTRIES` 与 `WRAPPERS`,数组不存在会在 `set -u` 下炸;
+  空数组让"现在一支包装都没有"这件事**看得见**。
+- ★★ **四道闸**:① `lobby_alive` 为真 ⇒ 拒绝;② 无 `--yes` 且 stdin 非交互 ⇒ 拒绝;
+  ③ **R20 锁**(`run_all.sh` 运行期持 `tests/.run_all.lock`)+ 前后进程;④ **清单不许烂**
+  (`tests/{smoke,probe}/*.sh` 每一支必须在 `ENTRIES` 或 `WRAPPERS` 里,且两边每条都要匹配到真实文件)。
+- ★ `team_match_probe.sh` 在 [`registered-debt.md`](../docs/eng/registered-debt.md) §一第 1 行**仍登记为不可信**:
+  根因已修(`9003dae`),但**修复后没有留下六人整跑的判决** ⇒ 它绿了**也不改变**"3v3 今天没有可信
+  端到端守卫"这句。
 
 ### ★★ 默认批绿 ≠ 真链路绿(两条链路覆盖**不相交**)
 
-前者是纯逻辑 + in-process 场景(`-s` / 单进程 `.tscn`);后者要真端口、真子进程、真对局协议。改到**联机权威 / 协议 / 回滚 / 输入包**的改动必须**两边都看**,不能拿一边的绿代替另一边。同理:**默认批绿**也不代表非 headless 的取图验收通过(那 10 支**从不**进默认批)。
+前者是纯逻辑 + in-process 场景;后者要真端口、真子进程、真对局协议。改到**联机权威 / 协议 / 回滚 /
+输入包**的改动必须**两边都看**。
 
+★ **2026-10-09 之后还有一条更要紧的**:默认批里**一支也不拉子进程、一支也不开端口**,
+而真链路批只有 5 支 —— ⇒ **本仓今天的自动化回归面合计只有这 17 支**;
+玩法、手感、数值、AI 行为、视觉**全部只能靠人眼与试玩**。这不是意外,是那一批的**有意代价**。
