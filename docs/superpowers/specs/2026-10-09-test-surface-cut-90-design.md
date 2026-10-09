@@ -6,7 +6,9 @@
 ## 0. 一句话
 
 默认批 **111 支 → 12 支**（枚举 16 / 排除 4 / 跑 12）、真链路 **5 支不动**、`tests/manual/` **清空**、
-`tests/harness/` **只留真链路依赖**：删除 git 跟踪的 **345 个文件**，同步 **6 处机械闸**与 **9 份文档的 59 个失效路径 token**。
+`tests/harness/` **只留真链路依赖**：删除 git 跟踪的 **345 个文件**，
+同步 **6 处机械闸（5 处需改 + 1 处经核无需改，见 §9）**、**9 份现行文档的 59 个失效路径 token** 与
+**38 个产品 `.gd` 的 63 处注释**。
 
 ## 1. 判据来源
 
@@ -104,7 +106,7 @@
 | 3 | [`run_real.sh`](../../../tests/run_real.sh) `WRAPPERS` | 4 条 → **0 条**（4 个 `.sh` 全删） | 闸四匹配不到文件 ⇒ 红 |
 | 4 | [`known_red.txt`](../../../tests/known_red.txt) | 删**唯一**一行（`reconnect_smoke.gd` 已不存在） | 基线幽灵路径 ⇒ 红 |
 | 5 | [`allscript_probe.gd`](../../../tests/probe/allscript_probe.gd) `EXPECTED_SCRIPTS` | `288` → **`158`**（= 288 − 130 个被删 `.gd`；两条独立核法：`git ls-files '*.gd' \| wc -l` 与探针自打的 `_total`。`SKIP_DIRS` 不含 `tests/`，故是直接相减） | 编译面闸立刻红 —— **这是要的**：它是"删干净了"的独立证据 |
-| 6 | [`path_integrity_allow.txt`](../../../tests/path_integrity_allow.txt) | 删 `res://__l5_synthetic__.gd` 一行（`kh_l5_probe` 已删） | 留下指向不存在用例的死允许项 |
+| 6 | [`path_integrity_allow.txt`](../../../tests/path_integrity_allow.txt) | **经核：无需改动**（实测 0 处引用待删路径 —— 里面那条 `res://__l5_synthetic__.gd` 是**合成串**，不是 `kh_l5_probe` 的文件路径；只有注释里的名字提到它） | ——（第一版设计写"删一行"是错的，见 §9） |
 | 7 | [`tests/README.md`](../../../tests/README.md) | 整节重写（枚举数、桶说明、入口表、排除清单） | 文档说谎 |
 | 8 | 9 份 `DOC_FILES` 的 **59 个**失效 token | 逐处订正（见 §5.1） | `python tools/check_naming.py` **红** |
 | 9 | 产品源码注释里点名的测试 | 逐处改口（见 §5.2） | 不触发任何闸，但注释指向不存在的文件 |
@@ -114,15 +116,22 @@
 
 `docs/eng/`：weapons **4** · player **2** · render **2** · ui **2** · netplay **12** · modes **5** · tests **9** ·
 registered-debt **23**。根三份（README / CLAUDE / RELEASE）**0 处**。
-（`AGENTS.md` 不在 `DOC_FILES` 里，不会被闸抓，但按 §5.1 #10 仍需改。）
+（`AGENTS.md` 不在 `DOC_FILES` 里，不会被闸抓，但按 §5 **#10** 仍需改。）
 
 ### 5.2 产品源码注释点名（不触发闸，但要改口）
 
-点名最密的：`rewind_weapon_probe` **12** · `server_input_sanitize_smoke` **7**（保留）· `team_host_probe` **7** ·
-`ui_palette_single_source_smoke` **6** · `hud_declarative_probe` **5**（`scenes/pvp_match_client.gd` /
-`scenes/royale_game.gd` / `scenes/team_game.gd` / `ui/hud/*` / `tools/room_sweep_lint.gd`）·
-`late_match_probe` **5** · `settings_display_smoke` **5** · `reconnect_smoke` **5** · `duel_spawn_timeout_smoke` **5** ·
-`kh_l5_probe` **5**。共约 **50 个产品文件 / 200 处**。
+**实测**（`git ls-files` 全仓逐文件数待删路径的出现次数，2026-10-09）：
+
+| 区域 | 文件 | 处数 | 处置 |
+|---|---|---|---|
+| 产品 `.gd`（`core/ scenes/ server/ ui/ tools/`） | **38** | **63** | **改口**（点名最密：`core/config/settings.gd` 4 · `scenes/player/player.gd` 4 · `server/hosts/team_host.gd` 4 · `core/sim/score_rules.gd` 3 · `core/sim/world_rewind.gd` 3 · `scenes/pvp_match_client.gd` 3 · `server/server_main.gd` 3 · `ui/hud/status_banner.gd` 3） |
+| 根三份 + `docs/`（现行规范） | **15** | **129** | 改口（其中 **59** 个 token 被 `check_naming.py` 抓，见 §5.1） |
+| `docs/superpowers/`（历史 spec/plan） | 14 | 251 | **有意不动** —— 它们是**历史记录**，不是现行规范 |
+| `AGENTS.md` / `CLAUDE.md` / `README.md` | 3 | 3 | 改口（三者**各 1 处**，都是同一条示例命令里的 `tests/smoke/enemy_logic_smoke.gd`；`RELEASE.md` **0 处**） |
+
+★ 第一版设计写的"约 50 个产品文件 / 200 处"是**估的**；实测产品侧是 **38 / 63**。按实际数改。
+★ §5.1 的"根三份 0 处"与上表最后一行**不矛盾**：前者数的是 `check_naming.py` 口径（**反引号 + 带扩展名 +
+首段是真实目录**），`AGENTS.md` 根本不在 `DOC_FILES` 检查面内；后者的 3 处是**裸文本形态**，闸抓不到。
 
 ## 6. R2 红线：唯一的例外点（测量台）
 
@@ -153,9 +162,25 @@ registered-debt **23**。根三份（README / CLAUDE / RELEASE）**0 处**。
   覆盖的是"恰好可纸面判定"的一小撮；**玩法、手感、数值、AI 行为全部只能靠人工试玩**。
 - **档 3 的执行手段被削薄**：改协议 / 回滚 / 快照时，可用的只有 5 支真链路 + `rollback_fidelity` /
   `resync_world` / `snapshot_size` 三支。这比现在弱得多，且**不可逆**（要恢复得从 git 历史里捞）。
-- **产品注释会大面积指向不存在的文件**（§5.2，约 200 处）。本次改口只覆盖"点名"的那些；
-  历史 spec/plan（`docs/superpowers/`）里的引用**有意不动** —— 它们是**历史记录**，不是现行规范。
+- **产品与现行文档的注释会大面积指向不存在的文件**：产品 `.gd` **38 个文件 / 63 处**、
+  现行 `docs/` **15 个文件 / 129 处**（§5.2）。本次**全部改口**；
+  只有历史 spec/plan（`docs/superpowers/`，14 文件 / 251 处）**有意不动** —— 那是历史记录，不是现行规范。
 - **`move_feel` / `enemy_logic` 这类"最广覆盖"的支一删**，AI 与手感的回归只能靠人。
   这与 §1 的证据一致（游戏里自动化收益面窄），但**代价是真实的**，不粉饰。
 - **`tools/room_sweep_lint.gd`**（827 行 / 83 处 `_fail`）不在本次范围（它在 `tools/` 下、不在 glob 内），
   但它唯一的**行为替代** `pvp_room_smoke.sh` **保留** ⇒ 该项不受影响。
+
+## 9. 出击前复核（只读，2026-10-09；执行前的最后一道对账）
+
+对**整仓**逐文件扫过一遍"待删 345 个路径被谁引用"，结论四条：
+
+| # | 检查 | 结果 |
+|---|---|---|
+| ① | **保留的支是否依赖待删文件** | 59 个保留文件里命中 **10 处**，**逐处核过：全部是注释/文本引用，没有一处 `load()` / `preload()` / `extends`** ⇒ **依赖安全**。其中两处最像真依赖、已单独验明：`team_bot_input.gd` 只在一句"与 `ground_bot_input.gd` 逐字同款的理由"里提到它；`team_match_watcher.gd` 两处都是"范本：`royale_c2_probe.gd::_run_client`" |
+| ② | **`tests/env.sh`**（保留的基础设施） | **0 处**引用待删路径 ⇒ 不用改 |
+| ③ | **`path_integrity_allow.txt`** | **0 处** ⇒ **推翻第一版设计的"删一行"**（§5 #6 已订正）。原因：里面那条 `res://__l5_synthetic__.gd` 是**合成串**，`kh_l5_probe` 只出现在注释文字里 |
+| ④ | **`tests/run_all.sh` / `run_real.sh` / `known_red.txt`** | 分别 **8 / 4 / 1** 处，与 §5 的 1/3/4 行**逐条对上**（`run_all.sh` 的 8 = 9 条 `EXCLUDED` 里的 5 条待删 + `OUT_OF_SCOPE` 注释 3 处；`run_real.sh` 的 4 = `WRAPPERS` 4 条） |
+
+★ 这条复核的意义：**"删掉 345 个文件"最大的风险不是闸变红（那些都是显式、可见的），而是某个保留的支
+在运行时 `load()` 一个被删的 helper —— 那会静默变成 `null` 再解引用**（正是 `probe_base.gd` 文件头那段
+说的"假绿"形状）。① 已把这条风险关掉。
