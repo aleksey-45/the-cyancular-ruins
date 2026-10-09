@@ -98,12 +98,13 @@ ENTRIES=(
 # 判据 = "它是不是**单进程**:只起一个 Godot + tee 日志"。单进程的那几支**已经被
 # `tests/run_all.sh` 的默认批覆盖**(同一个 `.gd` / `.tscn`),再进真链路批只是重复计费。
 # ★ 任何一条都必须在闸四那里匹配到真实文件,否则红。
-WRAPPERS=(
-	"tests/smoke/bullet_tile_fx_smoke.sh|单进程:一条 -s + tee;同一个 bullet_tile_fx_smoke.gd 已在 run_all 默认批里"
-	"tests/smoke/move_feel_smoke.sh|单进程:一条 scene + tee;同一个 move_feel_smoke.tscn 已在 run_all 默认批里"
-	"tests/smoke/pvp_reconcile_smoke.sh|单进程:一条 scene + tee;同一个 pvp_reconcile_smoke.tscn 已在 run_all 默认批里"
-	"tests/smoke/pvp_twin_smoke.sh|单进程:一条 scene + tee;同一个 pvp_twin_smoke.tscn 已在 run_all 默认批里"
-)
+# ★★ 2026-10-09(测试面削减 90%):本表 **4 条 → 0 条**。原来那 4 支
+#   (`bullet_tile_fx` / `move_feel` / `pvp_reconcile` / `pvp_twin`)连同它们的 `.gd` / `.tscn`
+#   一起被删了,所以既没有"不跑的包装",也没有"跑的理由"。台账:
+#   `docs/superpowers/specs/2026-10-09-test-surface-cut-90-design.md`。
+#   **别把本数组删掉**:闸四同时遍历 `ENTRIES` 与 `WRAPPERS`,数组不存在会让 `set -u` 下的
+#   展开报错;留着空数组 = "现在一支包装都没有"这件事**看得见**。
+WRAPPERS=()
 
 ASSUME_YES=0
 LIST_ONLY=0

@@ -119,14 +119,14 @@ declare -A BUDGET_OVERRIDE=(
 #   **都不再住在本入口的 glob 直径内** ⇒ 相应排除规则一并删除(留着就是"匹配不到文件"的过期规则,
 #   本块开头那条闸会直接红)。它们的去处与跑法见 `tests/manual/README.md`;判据与理由见
 #   `docs/eng/test-economy.md`(D2 仪器不是守卫 / D5 只证明别的东西 / K1-K5 什么才值得留)。
+# ★★ 2026-10-09(测试面削减 90%):本表 **9 条 → 4 条** —— 删掉了 5 条指向**已删文件**的规则
+#   (`ground_net_probe` / `reconnect_probe` / `royale_bound_probe` / `royale_c2_probe` / `royale_probe`)。
+#   台账:`docs/superpowers/specs/2026-10-09-test-surface-cut-90-design.md`。
+#   ★ 留下的这 4 条**必须留**:那 4 支仍在枚举集里(`smoke/*.gd` 或 `probe/*.tscn`),
+#     清掉规则 ⇒ 承重安全检查(`DANGER_RE`)立刻 FATAL,或它们悄悄进批**占 7777**。
 EXCLUDED=(
 	# ── B 真链路 / 多进程 / 占 7777 ────────────────────────────────────────
-	"tests/probe/ground_net_probe.tscn|B 真链路:NetBus.start_server() 默认端口 = 7777 + 拉两个 royale_game 客户端子进程"
-	"tests/probe/reconnect_probe.tscn|B 真链路:全部子进程由本进程 OS.create_process 拉起"
 	"tests/probe/rejoin_probe.tscn|B 真链路:自当大厅(池外 29300)+ 拉子进程;由 tests/probe/rejoin_probe.sh 编排"
-	"tests/probe/royale_bound_probe.tscn|B 真链路:NetBus.start_server() 默认端口 = 7777 + 拉客户端子进程"
-	"tests/probe/royale_c2_probe.tscn|B 真链路:NetBus.start_server() 默认端口 = 7777 + 拉客户端子进程"
-	"tests/probe/royale_probe.tscn|B 真链路:NetBus.start_server() 默认端口 = 7777 + 拉客户端子进程"
 	"tests/probe/royale_soak_probe.tscn|B 真链路(压力):起大厅 + N 个真 royale_game 客户端;其 .sh 会 kill_port 7777"
 	"tests/probe/team_match_probe.tscn|B 真链路:六人;自当大厅(池外 29200)+ 拉子进程"
 	"tests/smoke/pvp_match_smoke.gd|B 真链路客户端:要 --role、且要 7777 上有大厅;由 tests/smoke/pvp_match_smoke.sh 编排"

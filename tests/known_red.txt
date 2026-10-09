@@ -22,4 +22,8 @@
 #   ★ 反例(本文件**不**收的那一种):一条"我刚修好、但还没重跑确认"的红 —— 那会变成
 #     过期基线条目,`run_all.sh` 照样红;该做的是修完重跑,而不是先加行。
 #
-tests/smoke/reconnect_smoke.gd FAIL docs/eng/registered-debt.md 一(既有红)reconnect_smoke 项 2026-10-04 实测
+# ★ 2026-10-09:原第 1 行 `tests/smoke/reconnect_smoke.gd FAIL …` 已**删除** —— 那支在同日的
+#   测试面削减里被删掉了(台账:docs/superpowers/specs/2026-10-09-test-surface-cut-90-design.md)。
+#   条目指向不存在的文件 = "永久死行",会让登记簿说谎(本文件头第 7 条)⇒ 删行,不是保留。
+#   ★ 连带后果(照实记):`registered-debt.md` §一 那条"reconnect 既有红"从"有守卫但不绿"
+#     变成**零守卫**;该欠账已在同批改口。⇒ **现在本基线是空的(0 条)**。
