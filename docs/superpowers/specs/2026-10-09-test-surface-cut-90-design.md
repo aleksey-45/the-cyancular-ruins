@@ -137,7 +137,7 @@ registered-debt **23**。根三份（README / CLAUDE / RELEASE）**0 处**。
 
 **红线原文**："被产品源码注释点名的**测量台**不许裸删 —— 必须先改产品注释，或先转换成别的可复测手段。"
 
-本次命中的只有一处：[`tests/manual/brawl_rollback_probe`](../../manual/brawl_rollback_probe.gd)。
+本次命中的只有一处：[`tests/manual/brawl_rollback_probe`](../../../tests/manual/brawl_rollback_probe.gd)。
 点名它的是 [`core/net/prediction_rollback.gd`](../../../core/net/prediction_rollback.gd)（*"要动它得重跑
 `brawl_rollback_probe`"*）与 [`scenes/player/player.gd`](../../../scenes/player/player.gd)。
 它是 `PredictionRollback._close_enough` **容差常数的唯一测量台** —— 本仓为它付过一次学费
