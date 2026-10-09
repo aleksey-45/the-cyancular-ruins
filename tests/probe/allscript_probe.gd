@@ -89,7 +89,11 @@ const SKIP_DIRS := ["res://.godot", "res://builds", "res://releases", "res://gam
 #     · `git ls-files '*.gd' | wc -l` = **159**(提交前)+ 该文件 = **160**;
 #       `git ls-files --others --exclude-standard '*.gd'` 由 **1** 回到 **0**。
 #     · 这也是那条"覆盖变了得有人过目"的一次正常触发:新增产品脚本 ⇒ 手改这个常量并写下来源。
-const EXPECTED_SCRIPTS := 160
+#   ★★ **2026-10-09 ⇒ 161**(同日晚些:把 `replica_smoothness_probe` 从历史**取回**、并补上"大跳变阈值"相 D):
+#     · 取回理由见该文件头:改「对手位置平滑」这类**表现层行为**没有仪器就是凭感觉调,
+#       而它当年被删时**没有留下逐文件理由**(削减设计文档里查不到它)。
+#     · `git ls-files '*.gd' | wc -l` = **160**(取回前)+ 该文件 = **161**。
+const EXPECTED_SCRIPTS := 161
 
 var _fails: Array[String] = []
 var _total := 0
