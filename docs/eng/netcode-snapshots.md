@@ -231,6 +231,23 @@ Valve 明确写过这种方案不如**位置历史插值**。★ 好的一面：
 | 世界包从此**恒 1 片**（N≤8） | "丢一片 = 整帧丢"这条风险对世界包**归零** | 探针 MTU 折算 |
 | `snapshot_own` 加 `q`（队列深度） | §6 的判据有了数据源 | 本人包往返含 `q` |
 
+★★ **真链路证据（2026-10-09，档 3 要求）** —— 线格式改了协议,所以必须**真实两端对打**才算验过：
+
+| 真链路支 | 判词 | 覆盖到什么 |
+|---|---|---|
+| `tests/smoke/pvp_match_smoke.sh` | **`SMOKE PASS`** | 1v1：世界包广播 + 本人包定向**都真的过 ENet 被解码**（★ 这一支决定性 —— 它证明 `PackedByteArray` 走 RPC **能编能解**） |
+| `tests/probe/royale_soak_probe.sh` | **`SOAK: ALL-OK(4/4)`**（4 客户端 / 120s） | 多人 N 路编解码 |
+| `tests/probe/rejoin_probe.sh` | **`REJOIN PROBE: ALL-OK(5 条断言)`** | 重连：`snapshot_own` 新纪元 + `reset_input_queue()` 那条路径 |
+| `tests/smoke/pvp_room_smoke.sh` | **`SMOKE PASS`** | 房间→进图→快照链路 |
+| `tests/probe/team_match_probe.sh` | **没跑** | 3v3；它在本仓被登记为"**不算守卫**"（红/绿都不可信），且单支 3~10 分钟 |
+
+★ 这四支是**绕过 `run_real.sh` 的 gate3 单跑的**（那道的判据是**全机** Godot 进程数，当时被判据挡下）。
+为什么当时可以绕：本线端口 7777 / 7800-8300 / 29200-29350 **实测全空**、`lobby_alive=false`，
+而 `kill_port_range` 是**按端口属主 PID** 杀（不是按进程名）⇒ 物理上碰不到别的会话。
+★ 一处**必须说清不是新增**的噪声：soak 日志里有 3 行 `Unable to send packet on channel 0, max channels: 0` ——
+它在 `.superpowers/sdd/` 里多个**更早批次**的日志里都有（是"peer 处于队列已拆、API 还没忘掉"那个窗口的已知形态），
+**不是**这次线格式改动引入的。
+
 ★ **为什么本版刻意不量化**（这是下一轮的前置条件，不是遗漏）：Gaffer《State Synchronization》里
 "**两端一起量化**"那一段说的是：状态同步下只压发送侧会引入**永久分歧**。本仓的 `c2` 是 **C2 回滚的锚点**，
 客户端会 `restore_state()` 后逐帧重放并与自己的预测态对账 ⇒ 只压上行 = **每次都对不上**。

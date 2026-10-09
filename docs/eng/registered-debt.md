@@ -788,7 +788,9 @@
     >   （一张 schema 表驱动两侧 + 首字节版本号 + `PackedByteArray`），发送点两处、解码收在 [`net_bus.gd`](../../core/net/net_bus.gd) 的 RPC 入口
     >   ⇒ **三个游戏场景与全部钩子一行没动**。实测：世界包条目 **368→51 B**、本人包 **884→102 B**、
     >   **`N=8` 服务器上行 587→72 KB/s**、世界包**在 N≤8 恒 1 片**（"丢一片=整帧丢"对世界包归零）。
-    >   **验证**：默认批 `RUN_ALL OK(12 runs / 3 gated-assertions)`；`snapshot_size_probe` 三条断言（真实产出逐键往返 / schema 与 `capture_state()` 对齐 / 武器块整体性）。
+    >   **验证**：默认批 `RUN_ALL OK(12 runs / 3 gated-assertions)`；`snapshot_size_probe` 三条断言（真实产出逐键往返 / schema 与 `capture_state()` 对齐 / 武器块整体性）；
+    >   **真链路**（协议改动 ⇒ 必须真两端对打）：`pvp_match_smoke` `SMOKE PASS`、`royale_soak` `ALL-OK(4/4)`、
+    >   `rejoin` `ALL-OK(5)`、`pvp_room` `SMOKE PASS`（`team_match` 未跑：它被登记为"不算守卫"）。
     >   ★ **量化与增量仍未做**：量化有"**两端一起量化**"的前置条件（Gaffer），而 `c2` 是回滚锚点 ⇒ 属档 3；增量要双向 ack 系统。
     >   ⇒ **本行只销"编码开销"这一半；量化/增量另立**（见 [`netcode-snapshots.md`](netcode-snapshots.md) §5.1）。
     - **架构侧不蠢**（先说清，免得读成"整套联机都是错的"）：服务器权威 + **unreliable 快照与 reliable 事件/输入分道** +
