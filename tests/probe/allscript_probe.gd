@@ -85,7 +85,11 @@ const SKIP_DIRS := ["res://.godot", "res://builds", "res://releases", "res://gam
 #       这不是"让闸变绿",而是这批改动的**验收判据之一**:它同时证明"测试面删到位了"
 #       与"没有误删产品 `.gd`"(后者若发生,`git ls-files` 与 `_total` 会**一起**变,
 #       这条闸本身抓不到 —— 所以它必须**配合**删除清单逐文件认领,不能单飞)。
-const EXPECTED_SCRIPTS := 159
+#   ★★ **2026-10-09 ⇒ 160**(同一日,快照线格式手打包:`core/net/snapshot_codec.gd` 是**新增的产品 `.gd`**):
+#     · `git ls-files '*.gd' | wc -l` = **159**(提交前)+ 该文件 = **160**;
+#       `git ls-files --others --exclude-standard '*.gd'` 由 **1** 回到 **0**。
+#     · 这也是那条"覆盖变了得有人过目"的一次正常触发:新增产品脚本 ⇒ 手改这个常量并写下来源。
+const EXPECTED_SCRIPTS := 160
 
 var _fails: Array[String] = []
 var _total := 0

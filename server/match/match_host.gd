@@ -152,6 +152,12 @@ var _netstat_acc := 0.0
 var _netstat_trace := false     # 逐帧队列追踪(`--netstat-trace`,前 600 tick)
 var _netstat_trace_f := 0
 
+# 输入队列的**抖动包络**(每 role):最近"一 tick 到过几包"的**原始**深度(丢包之前),每 tick 衰减 1。
+# 上限由它推出(`PacketInputSource.adapted_cap`),**回复力就来自"衰减"这一步** ——
+# 没有它,队列长度就是 ρ=1 的随机游走,一被顶上去就永远停在那儿(见 §六.29 的实测)。
+var _q_peak: Dictionary = {}
+var _q_drops: Dictionary = {}   # role -> 累计被丢弃的**陈旧**包数(诊断;丢包=服务器跳过一格输入)
+
 
 func _netstat_tick(delta: float) -> void:
 	if not _netstat_checked:
@@ -178,9 +184,23 @@ func _netstat_tick(delta: float) -> void:
 		return
 	_netstat_acc = 0.0
 	var parts: Array[String] = []
+	var caps: Array[String] = []
+	var drops: Array[String] = []
 	for role in _pending_input:
 		parts.append("%d=%d" % [role, (_pending_input[role] as Array).size()])
-	print("[netstat-srv] 待消费队列(包) %s" % ", ".join(parts))
+		caps.append("%d=%d" % [role, PacketInputSource.adapted_cap(int(_q_peak.get(role, 0)))])
+		drops.append("%d=%d" % [role, int(_q_drops.get(role, 0))])
+	print("[netstat-srv] 待消费队列(包) %s | 抖动上限 %s | 累计丢弃 %s" % [
+			", ".join(parts), ", ".join(caps), ", ".join(drops)])
+
+
+## 清空某 role 的输入队列**并复位抖动包络**(掉线 / 重连重协商这种**纪元边界**用)。
+## ★ 两者必须一起清:只清队列 ⇒ 旧包络把上限继续顶在高位,新纪元开局就白带一层陈旧延迟。
+## ★ 收成一个函数而不是两处各写一遍 —— "清队列"与"清包络"是**同一件事的两半**,分头写就会漏一半。
+func reset_input_queue(role: int) -> void:
+	_pending_input[role] = []
+	_q_peak.erase(role)
+	_q_drops.erase(role)
 
 
 func _on_input(caller: int, pkt: Dictionary) -> void:
@@ -190,10 +210,20 @@ func _on_input(caller: int, pkt: Dictionary) -> void:
 			# 1 包/ tick → 服务器权威模拟与客户端"重放未确认输入"1:1 同序(C2 rollback 需要,
 			# 见 docs/pvp-c2-retrospective.md P1)。held/axis 由被消费的那包决定,边沿不丢。
 			# ★ 2026-10-08(Task 4):入队走 `push_pending()` —— **有界**,且丢包时**保住边沿**
-			#   (见该函数;`MAX_PENDING_INPUT`)。
+			#   (见该函数)。
+			# ★ 2026-10-09(§六.29):上限不再是写死的 8,而是**跟着实测抖动包络走**的抖动缓冲 ——
+			#   一 tick 到几包就允许留几包(+1 余量),包络每 tick 衰减 1 ⇒ 网络一安静,上限自己缩回去,
+			#   把堆着的**陈旧**包释放掉(丢的永远是最旧那包,边沿并入下一包,玩家的按键不丢)。
+			#   没有这一步,队列是 ρ=1 的零漂移随机游走:**被顶上去就永远停在那儿**
+			#   (实测:开局 1 秒内从 0 跳到 8 后不再回落,见 `--netstat-trace` 的注释)。
 			if not _pending_input.has(role):
 				_pending_input[role] = []
-			PacketInputSource.push_pending(_pending_input[role] as Array, pkt)
+			var prev_peak := int(_q_peak.get(role, 0))
+			var cap := PacketInputSource.adapted_cap(prev_peak)
+			var raw: int = PacketInputSource.push_pending(_pending_input[role] as Array, pkt, cap)
+			if raw > cap:
+				_q_drops[role] = int(_q_drops.get(role, 0)) + (raw - cap)
+			_q_peak[role] = maxi(raw, prev_peak - 1)
 			return
 
 

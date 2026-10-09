@@ -231,13 +231,46 @@ func match_sync() -> void:
 #   ② 本人包 = 自己的 ack_seq + c2,定向发给本人
 # 顺带好处:两者**互不连累** —— c2 丢只少一个回滚锚点(下一个快照补),世界包丢只冻结一帧副本插值。
 # 实测(拆包后估算):8 人局服务器上行 3555KB/s → 446KB/s(≈29Mbps → 3.6Mbps)。
+# ★ 2026-10-09 订正:**446KB/s 偏乐观** —— 它用的是"没有武器块、只有 10 个渲染字段"的旧口径;
+#   按今天真实的 13 字段 + 武器块(真人手里有枪)量,拆包后是 **587KB/s(≈4.7Mbps)**。
+# ★★ 2026-10-09:**载荷改成手打包的 `PackedByteArray`**([`snapshot_codec.gd`](snapshot_codec.gd))——
+#   发在 `match_snapshot`、**解码就收在本文件这两个 RPC 入口** ⇒ 三个游戏场景与全部钩子**一行没动**
+#   (它们收到的仍是同形状的 `Dictionary`)。
+#   实测:世界包条目 368→**51B**、本人包 884→**102B**、**8 人局服务器上行 587→72KB/s(≈4.7→0.58Mbps)**、
+#   世界包**在 N≤8 恒 1 片** ⇒ "丢一片 = 整帧丢"对世界包归零。详表见
+#   [`docs/eng/netcode-snapshots.md`](../../docs/eng/netcode-snapshots.md) §2。
+#   ★ **载荷里没有量化**:float32 与改动前**逐位相同**(Godot 非 double 构建本来就把 FLOAT 收成 32 位、
+#     `Vector2` 收成 2×float32)⇒ 这一版换的是**开销**,不是精度(要量化得"两端一起量化",见该文档 §5.1)。
+#   ★ 解码失败(两端版本不一致)时**只报一次**并**不 emit** —— 静默丢会让客户端表现为"对手不动/自己一直回拉"
+#     而日志里一个字都没有(同 `--worker` 那条老账)。
 @rpc("authority", "call_remote", "unreliable", 0)
-func snapshot_world(world: Dictionary) -> void:
+func snapshot_world(payload: PackedByteArray) -> void:
+	var world := SnapshotCodec.decode_world(payload)
+	if world.is_empty():
+		_snapshot_decode_warned("world", payload)
+		return
 	local_snapshot_world.emit(world)
 
 @rpc("authority", "call_remote", "unreliable", 0)
-func snapshot_own(own: Dictionary) -> void:
+func snapshot_own(payload: PackedByteArray) -> void:
+	var own := SnapshotCodec.decode_own(payload)
+	if own.is_empty():
+		_snapshot_decode_warned("own", payload)
+		return
 	local_snapshot_own.emit(own)
+
+# 快照解码失败**只在第一次**大声报(两端版本不一致是**一次性**条件,而本函数 60Hz 被调)。
+# ★ 静默丢弃是最坏的选项:客户端会表现为"对局里对手不动/自己一直回拉",而日志里一个字都没有 ——
+#   正是 `--worker` 那条老账("零错误地跑错分支")的同族。见 core/net/snapshot_codec.gd 的版本字节。
+var _snap_warned := false
+
+func _snapshot_decode_warned(which: String, payload: PackedByteArray) -> void:
+	if _snap_warned:
+		return
+	_snap_warned = true
+	var ver := payload[0] if payload.size() > 0 else -1
+	push_error("快照解码失败(%s 包,长度 %d,首字节 %d):两端线格式版本不一致?" % [
+			which, payload.size(), ver])
 
 @rpc("authority", "call_remote", "reliable", 3)
 func bullet_spawn(data: Dictionary) -> void:

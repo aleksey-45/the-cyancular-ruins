@@ -126,18 +126,44 @@ func source_kind() -> int:
 #   ★ 合法输入(`|ax| ≤ 1`)**逐位不变** ⇒ 不动手感。
 #   ★ 它是**静态纯函数**:判据可以 headless 直调,不需要真服务器
 #     (见 `tests/smoke/server_input_sanitize_smoke.gd`)。
-## 输入队列上限(closeout 批 Task 4)。★ 上限**住在这里**而不是 `MatchHost`:本函数操作的是
-## `pressed`/`released`/`winst` 这些**由本类定义语义**的字段,而 `MatchHost` 引用了 `NetBus` 自动加载 ⇒
-## `-s` 冒烟里**加载不了**(`-s` 阶段没有 autoload)。放在这里,纯逻辑判据就能用最便宜的方式跑。
-## 8 = 单帧突刺的量级(60Hz 下 8 包 ≈ 0.13s);正常速率永不触发 ⇒ 合法路径零行为变化。
-const MAX_PENDING_INPUT := 8
+## ── 输入队列:自适应抖动缓冲上限(2026-10-09,债单 §六.29 落地)──
+##
+## **原来是什么**:一个写死的 `MAX_PENDING_INPUT = 8`,超了就把最旧那包丢掉(边沿并入队首)。
+## 问题不在"8 这个数",而在**它同时是上限、又是稳态**:生产恰好 1 包/tick、消费恰好 1 包/tick
+## (后者是 C2 回滚要的 1:1 同序),两边是两个独立时钟 ⇒ 队列长度是**带反射壁的零漂移随机游走**
+## ⇒ 长期停在壁附近、**没有任何机制把它拉回 0**。于是那一层 133ms 的输入延迟是**永久**的
+## (ack 永久落后 ⇒ 客户端重放窗口永久变长)。详见 `docs/eng/netcode-snapshots.md` §4.2。
+##
+## **现在是什么**:上限改成**跟着实测抖动包络走**的抖动缓冲 ——
+##   · `peak` = 最近"一 tick 内到过几包"的**原始**深度(丢包**之前**的数,见 `push_pending` 的返回值),
+##     每 tick 衰减 1 ⇒ 网络一安静,缓冲就自己缩回去(**这就是那个缺失的回复力**);
+##   · 上限 = `peak + 1`,钳在 `[QUEUE_CAP_MIN, QUEUE_CAP_MAX]`。
+## ⇒ 稳态深度 ≈ 最近的抖动幅度(典型 1~3 tick = 17~50ms),而不是永远顶在 8(133ms);
+##   只有**超出包络**(真突发)才丢,且丢的永远是**最旧**那包、边沿并入下一包 ⇒ 玩家的按键不丢。
+##   ★ 代价照实说:每丢一包 = 服务器少模拟一个 tick 的输入 ⇒ 客户端**靠 C2 回滚**纠正一次
+##     (有界、单 tick 量级)。这是"低延迟换偶发小纠正",与今天"零纠正、永久 133ms 延迟"相反。
+##
+## ★ 常量口径:`QUEUE_CAP_MAX` = 原 `MAX_PENDING_INPUT`(硬顶,不改今天的最坏情况);
+##   `QUEUE_CAP_MIN` ≥ 2 —— 1 意味着"一 tick 到两包就丢",而**抖动本身就是会一 tick 到两包**
+##   (客户端物理追赶时成串发,见 `pvp_match_client._netstat_tick` 的注释)。
+const QUEUE_CAP_MIN := 2
+const QUEUE_CAP_MAX := 8
+const QUEUE_CAP_MARGIN := 1
+
+
+## 由"最近见过的原始深度"推出本 tick 的上限(纯函数,`-s` 可直接判)。
+static func adapted_cap(peak: int) -> int:
+	return clampi(peak + QUEUE_CAP_MARGIN, QUEUE_CAP_MIN, QUEUE_CAP_MAX)
 
 
 ## 入队 + **有界化**(静态纯函数)。丢谁 = **最旧那一包**,并把它的**边沿**并进新的队首 ——
 ## `pressed`/`released`/`winst` 走可靠通道就是为了"不丢边沿"(见本文件头),丢掉它 = **偶发丢一跳**。
-static func push_pending(q: Array, pkt: Dictionary) -> void:
+## 返回值 = **丢之前**的原始深度(调用方拿它更新抖动包络 `peak`;只看丢完的深度学不到东西 ——
+## 它永远 ≤ 上限)。
+static func push_pending(q: Array, pkt: Dictionary, cap: int = QUEUE_CAP_MAX) -> int:
 	q.append(pkt)
-	while q.size() > MAX_PENDING_INPUT:
+	var raw := q.size()
+	while q.size() > cap:
 		var old: Dictionary = q.pop_front()
 		var nxt: Dictionary = q[0]
 		nxt["pressed"] = int(nxt.get("pressed", 0)) | int(old.get("pressed", 0))
@@ -146,6 +172,7 @@ static func push_pending(q: Array, pkt: Dictionary) -> void:
 		if int(nxt.get("winst", 0)) <= 0 and int(old.get("winst", 0)) > 0:
 			nxt["winst"] = int(old.get("winst", 0))
 		q[0] = nxt
+	return raw
 
 
 static func sanitize_axis(v: float) -> float:

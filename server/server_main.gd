@@ -319,7 +319,7 @@ func _enter_grace(role: int) -> void:
 		#   `reset_state()` **之后**被执行,把 `_held` 原样写回去;之后队列空了,而
 		#   `clear_edges()` **不含 `_held`** → 掉线前按着的键被重新武装、并保持整个宽限期
 		#   (身体继续走/蹲/开火)。这一行是"掉线者的身体留在场上不动"的全部内容,别删。
-		_host._pending_input[role] = []
+		_host.reset_input_queue(role)
 		# ACS 的分母口径:离开者实际参与了几局 = **掉线这一刻**的局号。
 		# ★ 必须在这里记:宽限期有 60s,到点的 `mark_disconnected` 读到的 `_round_num`
 		#   可能已经因为换局而 +1(那会让离开者的 ACS 被**压低**,与"分母更小"的取向相反)。
@@ -505,7 +505,7 @@ func _on_reclaim(caller: int, role: int, token: String) -> void:
 	var src := PacketInputSource.new()
 	(_host.players[role] as Node2D).set_input_source(src)
 	_host.input_sources[role] = src
-	_host._pending_input[role] = []
+	_host.reset_input_queue(role)
 	_host._ack_seq[role] = 0      # C2 锚点重协商:客户端 rollback ring 已失(见 spec §3.4)
 	_grace.leave(role)
 	# 回一条 match_start 让客户端重进对局场景(载荷与首次开局同源,不另造一份)。

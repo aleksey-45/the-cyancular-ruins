@@ -42,7 +42,7 @@ func _broadcast_snapshot() -> void:
 	#    (`get_peers()` 滞后,正是 `NetBus.is_peer_live` 那段注释里说过的那件事)。
 	#    代价只有"那一帧不发世界包":它本来就是 unreliable,少一帧无后果。
 	if NetBus.all_peers_sendable():
-		NetBus.rpc("snapshot_world", world)
+		NetBus.rpc("snapshot_world", SnapshotCodec.encode_world(world))
 	# ② **本人包**:各自的 ack + 权威整态 c2 —— 只有本人需要(客户端 rollback 拿它锚定/重放)。
 	# 逐 peer 定向(体积小,不构成 O(N²))。仍判 live peer:避免给正在断开的客户端发 ——
 	# ★ 这是全项目**最频繁**的一处定向发送(60Hz × 每个 role),所以判据必须不滞后:用
@@ -58,7 +58,10 @@ func _broadcast_snapshot() -> void:
 		var c2 := {}
 		if p.has_method("capture_state"):
 			c2 = p.capture_state()
+		# ★ `q` = 本 role 此刻**已到达但还没被消费**的输入包数(判据用,见
+		#   docs/eng/netcode-snapshots.md §6:客户端拿它把"在路上"与"堆在服务器"分开)。
+		var q: Array = _pending_input.get(role, [])
 		NetBus.rpc_id(peer_by_role[role], "snapshot_own",
-				{"ack_seq": _ack_seq.get(role, 0), "c2": c2})
+				SnapshotCodec.encode_own({"ack_seq": _ack_seq.get(role, 0), "q": q.size(), "c2": c2}))
 
 # 子弹裁决:遍历 bullet 组。新子弹广播给非射手客户端;命中判定 = 与对手玩家的 toroidal 距离 < HIT_RADIUS。
