@@ -1,5 +1,10 @@
 # 登记欠账(既有红 / 待还的债)
 
+> ★ **2026-10-09 测试面削减 90%**:本文件里凡标着 `（已删·2026-10-09）` 的守卫**都已不存在**。
+> 那一批删了什么、留了什么、代价是什么 —— 台账
+> [`docs/superpowers/specs/2026-10-09-test-surface-cut-90-design.md`](../superpowers/specs/2026-10-09-test-surface-cut-90-design.md)。
+> ★ 读法:**不要**因为路径还在句子里就以为守卫还在 —— 标了就是没有了。
+
 > 本文件是**这两类**欠账的清单:① 长期红的探针(**不算守卫**),② 重复真相源(该改生成式的地方)。
 > ★ **2026-10-04 校正口径**:此前 `AGENTS.md` 称本文件是"**唯一**清单",而实际只有这两类 ——
 > 性能/视觉/文档/工程类的债住别处,落点见 §四。**动手前先看本文件,再看 §四 那张表**。
@@ -20,11 +25,11 @@
 自杀 0 端、ESC 离场)全是它的**下游**。★ **归因**:该次运行日志里 `RPC configuration` / `Unable to send` /
 `channel` / `SCRIPT ERROR` **一条都没有**(`team_match_start` 走 `transfer_channel = 0` = 引擎系统默认道,**本批没动**)
 ⇒ **不能归因给 closeout 批的 Task 4/5**;要查的是探针的驱动脚本与等待预算。 |
-| [`tests/probe/ground_net_probe.tscn`](../../tests/probe/ground_net_probe.tscn) | 未认领 | 2026-10-04 **静态复核,未跑** | **既有抖动**:机器人走位在**随机图**上卡死(探针自己的头注也写了这一点) | 抖动来源是"每进程随机选一份 `.cyrm`"(见 [`world.md`](world.md));探针本体仍能看趋势 | 给探针**钉图**(取图类脚本的既有纪律) |
-| [`tests/manual/brawl_rollback_probe.tscn`](../../tests/manual/brawl_rollback_probe.tscn) | 未认领 | 2026-10-04 **静态复核,未跑**；2026-10-08 **按测试经济 D5 移出默认批** | 它是"贴身缠斗扫描仪器",但**读 N≥4 时本身在抖**,且**变异下仍有一格假绿** | ★ **处置已变**：它**作为守卫不可靠**（上面那句），但它是 `PredictionRollback._close_enough` **容差常数的测量台**（[`core/net/prediction_rollback.gd`](../../core/net/prediction_rollback.gd) 的注释指着它说"要动它得重跑"）⇒ **移入 `tests/manual/`，不删**；**它不再是批内的红/假绿问题**，而是一条**人工测量台**（跑法见 [`tests/manual/README.md`](../../tests/manual/README.md)） | 抖动与那一格假绿**不再挡批**；若将来要把它变回守卫，得先让它在 N≥4 下稳定、并把判据写成行为级 |
-| [`tests/smoke/reconnect_smoke.gd`](../../tests/smoke/reconnect_smoke.gd) | 未认领(由 UI→`.tscn` 迁移那条线留下) | 2026-10-04 **实测**(聚合入口 `bash tests/run_all.sh` 首跑) | **断言的锚点没了 ⇒ 该条守卫今天不守任何东西、且永远红**:判词原文 `RECONNECT SMOKE FAILED: 1` + `[FAIL] ★ 主菜单联机入口未走 PvpSession.reset()`(rc=1,日志 tests/.run_all_logs/smoke/reconnect_smoke.log)。★ **根因不是行为回归** —— [`scenes/main_menu.gd`](../../scenes/main_menu.gd):219 那行**仍在**调 `PvpSession.reset()`;是 [`reconnect_smoke.gd`](../../tests/smoke/reconnect_smoke.gd):294-295 把判据限定在 `_build_menu_buttons` 的函数体内,而按钮已搬进 `main_menu.tscn`、接线改到 `_wire_menu()`([`scenes/main_menu.gd`](../../scenes/main_menu.gd):207)⇒ `_func_body` 取到空串 ⇒ `count("PvpSession.reset()") >= 1` **恒假** | 它是 C1 纪律("进页复位、但**不**清回局凭据")的**唯一**源码级断言;删掉等于把那条纪律的守卫一起删掉 | 锚点从 `_build_menu_buttons` 换成 `_wire_menu`(或改成"整个文件去注释后至少一处 **且** 落在 `%MultiBtn` 那个 lambda 里")⇒ 转绿后**删掉本行**,并同步 `tests/known_red.txt` |
-| [`tests/probe/elite_drop_probe.tscn`](../../tests/probe/elite_drop_probe.tscn) | 未认领 | 2026-10-04 **实测 7/7 全崩** | **判词肯定、退出时 segfault**:`rc=139`,而日志**末行**就是 `ELITE DROP PROBE: OK(真击杀 → 结晶 FX 出现 → 吸收入账 +300 颗粒)`、`FAIL` 词 **0** 行。跑法 `timeout 180 "$GODOT" --headless --path . --quit-after 3600 res://tests/probe/elite_drop_probe.tscn`,**同配置 7 次全部 139**(3 次单跑 + 2 次跑批内 + 复跑 2 次);★ 两次复跑的**判词行** md5 相同。⇒ 断言结论**不受影响**,`run_all.sh` 把它记成 `OK+RC`(**不算红**),但它在真链路里**会**留孤儿/占端口那类麻烦 | 判词仍 OK、能继续看趋势(它是"精英掉落 → 结晶 FX → 吸收"链条上唯一的行为载体) | 找出退出时崩的那条链(先怀疑 SubViewport/贴图析构 —— `ground_net_probe` 头注记过同一类"只有真窗口/真析构才照得出来"的问题)⇒ `rc=0` 后**删掉本行** |
-| [`tests/probe/elite_drop_probe.tscn`](../../tests/probe/elite_drop_probe.tscn) | (并入上一行) | 2026-10-04 **同配置跑两次** | ★ **顺带照实记一条同族边界**:该探针**跑在随机图上**(与 `climb_probe` 修 `c5804f4` 之前同一族)⇒ **非判词读数两次不一致**:墙碰撞 shapes 4032/4527、敌人数 65/24、开阔地板格 670/889、击杀距离 2294/4159px、`FX已释放` false/true。**只有判词行**可比 | 同上(读数不删 —— 探针是扫描仪器) | 按 `c5804f4` 的写法给该探针**钉图**(`MazeGenerator.set_map_file` + `load_map_file`),让非判词读数也可比;这也是 [`ground_net_probe.tscn`](../../tests/probe/ground_net_probe.tscn) 那一行"给探针钉图"的同一条纪律 |
+| `ground_net_probe.tscn`（已删·2026-10-09） | 未认领 | 2026-10-04 **静态复核,未跑** | **既有抖动**:机器人走位在**随机图**上卡死(探针自己的头注也写了这一点) | 抖动来源是"每进程随机选一份 `.cyrm`"(见 [`world.md`](world.md));探针本体仍能看趋势 | 给探针**钉图**(取图类脚本的既有纪律) |
+| `brawl_rollback_probe.tscn`（已删·2026-10-09） | 未认领 | 2026-10-04 **静态复核,未跑**；2026-10-08 **按测试经济 D5 移出默认批** | 它是"贴身缠斗扫描仪器",但**读 N≥4 时本身在抖**,且**变异下仍有一格假绿** | ★ **处置已变**：它**作为守卫不可靠**（上面那句），但它是 `PredictionRollback._close_enough` **容差常数的测量台**（[`core/net/prediction_rollback.gd`](../../core/net/prediction_rollback.gd) 的注释指着它说"要动它得重跑"）⇒ **移入 `tests/manual/`，不删**；**它不再是批内的红/假绿问题**，而是一条**人工测量台**（跑法见 `README.md`（已删·2026-10-09）） | 抖动与那一格假绿**不再挡批**；若将来要把它变回守卫，得先让它在 N≥4 下稳定、并把判据写成行为级 |
+| `reconnect_smoke.gd`（已删·2026-10-09） | 未认领(由 UI→`.tscn` 迁移那条线留下) | 2026-10-04 **实测**(聚合入口 `bash tests/run_all.sh` 首跑) | **断言的锚点没了 ⇒ 该条守卫今天不守任何东西、且永远红**:判词原文 `RECONNECT SMOKE FAILED: 1` + `[FAIL] ★ 主菜单联机入口未走 PvpSession.reset()`(rc=1,日志 tests/.run_all_logs/smoke/reconnect_smoke.log)。★ **根因不是行为回归** —— [`scenes/main_menu.gd`](../../scenes/main_menu.gd):219 那行**仍在**调 `PvpSession.reset()`;是 `reconnect_smoke.gd`（已删·2026-10-09）:294-295 把判据限定在 `_build_menu_buttons` 的函数体内,而按钮已搬进 `main_menu.tscn`、接线改到 `_wire_menu()`([`scenes/main_menu.gd`](../../scenes/main_menu.gd):207)⇒ `_func_body` 取到空串 ⇒ `count("PvpSession.reset()") >= 1` **恒假** | 它是 C1 纪律("进页复位、但**不**清回局凭据")的**唯一**源码级断言;删掉等于把那条纪律的守卫一起删掉 | 锚点从 `_build_menu_buttons` 换成 `_wire_menu`(或改成"整个文件去注释后至少一处 **且** 落在 `%MultiBtn` 那个 lambda 里")⇒ 转绿后**删掉本行**,并同步 `tests/known_red.txt` |
+| `elite_drop_probe.tscn`（已删·2026-10-09） | 未认领 | 2026-10-04 **实测 7/7 全崩** | **判词肯定、退出时 segfault**:`rc=139`,而日志**末行**就是 `ELITE DROP PROBE: OK(真击杀 → 结晶 FX 出现 → 吸收入账 +300 颗粒)`、`FAIL` 词 **0** 行。跑法 `timeout 180 "$GODOT" --headless --path . --quit-after 3600 res://tests/probe/elite_drop_probe.tscn`,**同配置 7 次全部 139**(3 次单跑 + 2 次跑批内 + 复跑 2 次);★ 两次复跑的**判词行** md5 相同。⇒ 断言结论**不受影响**,`run_all.sh` 把它记成 `OK+RC`(**不算红**),但它在真链路里**会**留孤儿/占端口那类麻烦 | 判词仍 OK、能继续看趋势(它是"精英掉落 → 结晶 FX → 吸收"链条上唯一的行为载体) | 找出退出时崩的那条链(先怀疑 SubViewport/贴图析构 —— `ground_net_probe` 头注记过同一类"只有真窗口/真析构才照得出来"的问题)⇒ `rc=0` 后**删掉本行** |
+| `elite_drop_probe.tscn`（已删·2026-10-09） | (并入上一行) | 2026-10-04 **同配置跑两次** | ★ **顺带照实记一条同族边界**:该探针**跑在随机图上**(与 `climb_probe` 修 `c5804f4` 之前同一族)⇒ **非判词读数两次不一致**:墙碰撞 shapes 4032/4527、敌人数 65/24、开阔地板格 670/889、击杀距离 2294/4159px、`FX已释放` false/true。**只有判词行**可比 | 同上(读数不删 —— 探针是扫描仪器) | 按 `c5804f4` 的写法给该探针**钉图**(`MazeGenerator.set_map_file` + `load_map_file`),让非判词读数也可比;这也是 `ground_net_probe.tscn`（已删·2026-10-09） 那一行"给探针钉图"的同一条纪律 |
 
 ★ **影响面照实写**:第一条意味着 **3v3 真链路今天没有可信的端到端守卫** —— 改 3v3 时别把"探针绿了"当证据,要另找覆盖(或先补守卫)。
 
@@ -38,7 +43,7 @@
 
 | 重复的东西 | 现在的形态 | 打算怎么改 |
 |---|---|---|
-| HUD 底板色 `C_PLATE`(黑 0.1) | 唯一源在 `ui/factory/ui_factory.gd`;两个 `.tscn`(`ui/hud/pvp_hud.tscn` / `ui/hud/team_hud.tscn` 的 `Plate`)存**字面量**,由 `tests/smoke/ui_palette_single_source_smoke.gd` 钉住逐位相等 | 仿 `tools/gen_menu_theme.gd`:由调色板**生成**这两个 stylebox,守卫改成 `--check`。★ **别碰 HUD 视觉**(用户冻结令),只改"这个值是怎么来的"。★ **2026-10-04 补**:别照 `gen_menu_theme.gd` 现在的样子抄 —— 它自己也手抄了 `UiFactory` 的 `64/46`(`tools/gen_menu_theme.gd:218-221` vs `ui_factory.gd:305`),抄它会把同一笔税再交一次;正确姿势是调**生产入口**(`F.call("skin_menu_panel", …)`)再读回 stylebox —— 镜像守卫 `menu_theme_mirror_smoke.gd:190/200` 正是这么取值的 |
+| HUD 底板色 `C_PLATE`(黑 0.1) | 唯一源在 `ui/factory/ui_factory.gd`;两个 `.tscn`(`ui/hud/pvp_hud.tscn` / `ui/hud/team_hud.tscn` 的 `Plate`)存**字面量**,由 `ui_palette_single_source_smoke.gd`（已删·2026-10-09） 钉住逐位相等 | 仿 `tools/gen_menu_theme.gd`:由调色板**生成**这两个 stylebox,守卫改成 `--check`。★ **别碰 HUD 视觉**(用户冻结令),只改"这个值是怎么来的"。★ **2026-10-04 补**:别照 `gen_menu_theme.gd` 现在的样子抄 —— 它自己也手抄了 `UiFactory` 的 `64/46`(`tools/gen_menu_theme.gd:218-221` vs `ui_factory.gd:305`),抄它会把同一笔税再交一次;正确姿势是调**生产入口**(`F.call("skin_menu_panel", …)`)再读回 stylebox —— 镜像守卫 `menu_theme_mirror_smoke.gd:190/200` 正是这么取值的 |
 | 菜单 Theme `ui/theme/menu_theme.tres` | **生成链已建成**:`tools/gen_menu_theme.gd` 生成 + 镜像守卫(带条数下限,读**生产产出**)。★ **2026-10-04 校正**:称它"**范本**"过头了 —— 它只做到"生成物与守卫对账",没做到"**单一来源**"(上面那条手抄就是缺口) | —— |
 | 编辑器内嵌的敌人注册表 | **已完成,留作范本**:`node level_editor/sync-enemies.js`(+ `--check` 只校验不写盘) | —— |
 | `allscript_probe` 的 `SKIP_DIRS` ↔ `path_integrity_allow.txt` 的豁免清单(**R25**;owner 未认领;最后复核 **2026-10-05**) | **两份手工同步的真相源**:`tests/probe/allscript_probe.gd` 的 `SKIP_DIRS`(10 项)与 `tests/path_integrity_allow.txt` 里那 8 条"同上的 SKIP_DIRS 豁免行"。**症状(实证,不是假想)**:2026-10-03 把 `res://_crashtest` 加进 `SKIP_DIRS` 时**漏同步**豁免表 ⇒ 该目录 2026-10-04 被整个删除后,`path_integrity_probe` 一跑就红(`[FAIL] [res://tests/probe/allscript_probe.gd] res://_crashtest`);**是聚合入口第一次真跑那支探针才暴露的**(2026-10-05,`a992a12` 补上了那一行) | **翻案条件 = 改成生成式或单一来源**(任一):① 豁免表由 `SKIP_DIRS` **生成**(或反过来);② 让 `path_integrity_probe` 直接读 `allscript_probe` 的 `SKIP_DIRS` 常量当豁免源(**单一来源**);③ 把 `SKIP_DIRS` 缩到"只列**已存在**的目录",缺项交给 `DirAccess.open == null` 自然跳过。★ 在那之前,**每一次 `SKIP_DIRS` 增删都必须同时改豁免表** —— 而今天**没有任何东西会提醒你**(这就是本条要还的税) |
@@ -88,7 +93,7 @@
    ★ 准确说法是"**口径已分家的合成消融**",**别**登记成"重复真相源待合并" —— 它清 4/16 个子格、`:179` 选块也用的旧换算,
    所以它的 timing 与覆盖率跟生产实现不是一回事。
 
-4. **`tests/probe/destroyed_cells_probe.gd` 的反向断言"钉实象限"依赖格坐标奇偶**(终审 M2)。
+4. **`destroyed_cells_probe.gd`（已删·2026-10-09） 的反向断言"钉实象限"依赖格坐标奇偶**(终审 M2)。
    被钉的是 `{行 0-1 × 列 2-3}` 那 4 个子格,只有 `cell.x` **奇**、`cell.y` **偶**时才对得上 `*2` 越界写法
    会去清的位置(今天选中的 `(9,6)` ⇒ `(4,3)` 正好对得上,所以那次变异确实红了)。换奇偶组合后钉的地方
    会错位、这条反向断言**静默失去力量** —— 但变异仍被 `left == 0`(真格 16 子格没被清)抓住,故**不阻塞**。
@@ -142,11 +147,11 @@
    正是该脚本头注自己警告的"毒害下一支"。修法:早退路径也调 `kill_port_range`;根治则把固定 sleep
    改成**轮询等待**(有上限),这样既快又不脆。
 
-10. **`tests/smoke/project_settings_smoke.gd` 只判「设置值与文件原文」,够不到「日志真的落盘」与「release 模板那半边」**(2026-10-04 加,与它同批落地)。
+10. **`project_settings_smoke.gd`（已删·2026-10-09） 只判「设置值与文件原文」,够不到「日志真的落盘」与「release 模板那半边」**(2026-10-04 加,与它同批落地)。
     - **它给的最强保证**:`project.godot` 里那三行**逐字存在**(④ —— 唯一拦得住 `d6d2440` 那种"键名被乱码吞掉"的形状),
       且 `max_log_files` 读回来 == 64(③ —— 引擎默认 5,删行或改值当场红)。★ 它的 ①② **不算守卫**:
       三个键都是**引擎内置**设置,`has_setting` 与文件里写没写无关,`.pc` 的引擎默认值本来就是 `true`
-      (空工程实测,见 [`tests/smoke/project_settings_smoke.gd`](../../tests/smoke/project_settings_smoke.gd) 头注 `:15-31`)。
+      (空工程实测,见 `project_settings_smoke.gd`（已删·2026-10-09） 头注 `:15-31`)。
     - **它测不到什么(照实登记)**:① **"日志真的落到了 `user://logs/`"** —— 它只读 `ProjectSettings`
       与 `project.godot` 的原文,要证明"真的在写"得**真起一个进程**再看文件系统
       (`%APPDATA%/Godot/app_userdata/<项目名>/logs/`;审计 §1.2 记的默认路径是 `user://logs/godot.log`);
@@ -161,13 +166,13 @@
       ★ 注意它与 §七 第 3 条是**同一条通道问题**:发布产物上的守卫,得先把要跑的东西**随包发布**。
 
 13. **`Settings.apply_display()` 的"非早退分支"(真开窗/真全屏)只有源码级证据**(2026-10-04 加)。
-   - **它给的保证**:`tests/smoke/settings_display_smoke.gd` 钉住了"早退排在两个窗口调用**之前**"与
+   - **它给的保证**:`settings_display_smoke.gd`（已删·2026-10-09） 钉住了"早退排在两个窗口调用**之前**"与
      "`_ready()` 在 `load_settings()` **之后**调它"(按**源码位置**断言),外加档表/默认值/钳位/落盘往返。
    - **它测不到什么**:绿跑**全在 headless** ⇒ `window_set_size` / `window_set_mode` 真的生效**没人验**
      (非 headless 会抢焦点)。**要闭环得跑一次非 headless 并取几何**(与窗口批 Task 0 同性质)。
    - ★ **写法税**:因冒烟按源码文本查那两个 API 字面量,`apply_display()` **函数体内**的注释**不得**出现
      `window_set_size` / `window_set_mode`。
-14. **`tests/manual/menu_shot_probe.gd` 的"取屏自证"是绊线不是保证**(2026-10-04 实测)。
+14. **`menu_shot_probe.gd`（已删·2026-10-09） 的"取屏自证"是绊线不是保证**(2026-10-04 实测)。
    16×16 粗比在深色 UI 上会被摊薄:4 次取屏里 3 次抓到遮挡、**1 次放过**(设置页粗差 **0.0677** < 阈值 0.08,
    而那张图里开始菜单盖住了画面中间一大块)⇒ **用它取图必须人看图**,别把自证通过当"没被遮挡"。
 15. **窗口/显示的接线没有常驻守卫 + Theme 没有 `OptionButton`**(2026-10-04 加)。
@@ -301,7 +306,7 @@
      ★ 切枪那一帧是 **0** 而不是 9：新实例未入树、`_ready` 未跑 ⇒ `mag_ammo` 还是声明初值，
      而值已按 `apply_mag` 落在 `pending_mag` 上（这个窗口本就由 `_mag_ready` + deferred `_ready` 兜住）。
      入树后是**快照值 9** —— 登记时那个 4 消失了。
-   - **守卫**：`tests/probe/rewind_weapon_probe.gd` 的 **S8-A**（**只调一次** `rewind_restore`、等新枪入树再断言
+   - **守卫**：`rewind_weapon_probe.gd`（已删·2026-10-09） 的 **S8-A**（**只调一次** `rewind_restore`、等新枪入树再断言
      = "最后一次回溯正落在切枪帧"的口径；旧 S5 是"连续两帧喂快照"，缺陷恰好被下一帧那次调用补掉 ⇒ 旧断言全绿）。
      ★ 变异实测（`task-2-mutation-log.txt` 的 M1）：把 `apply_mag` 改回裸写 `mag_ammo` ⇒ 红在 **S8-A**（实得 4）
      **+ S6 的 `.apply_mag(` 反向令牌**（两处，属同一次改动的两个面）。
@@ -352,7 +357,7 @@
      **没有逐把实跑**"注入宿主 ⇒ 同帧开火" —— 那三条路径是在 `pistol_test` 实例上把 `full_auto` / `heavy_aim` 标志置起来验的,
      **一个非手枪 `tscn` 都没实例化** ⇒ 连"真 `full_auto` 枪(`rifle_test` / `laser_gun`)、真 `heavy_aim` 枪(`m82a1` / `grenade_launcher`)"
      都只是**结构性推断**:唯一理由是 `WeaponBase` 的三个查询只按枪种标志选边沿、与弹道/弹夹无关 —— 而**没有任何守卫钉住这一点**。
-   - **销账凭据(2026-10-04,commit `938944d`)**:`tests/probe/weapon_injected_fire_probe.gd`(`-s`,`extends SceneTree`)
+   - **销账凭据(2026-10-04,commit `938944d`)**:`weapon_injected_fire_probe.gd`（已删·2026-10-09）(`-s`,`extends SceneTree`)
      把上面那套断言**入库并参数化**到**全部 6 把真 `tscn` × 三种开火模式**(18 格;原生模式那一格**不改旗标**,另外两格才改)——
      判据 `WEAPON INJECTED FIRE PROBE: ALL-OK(158 条断言)`,并配 `_checks != EXPECTED_CHECKS` **条数闸**。每格断言:
      无输入相不开火 / 不耗弹(**阴性对照**)、注入该模式的边沿 ⇒ **同帧耗 1 发弹 + 冷却置满 + 真的产出弹丸或光束**、
@@ -363,7 +368,7 @@
      去掉入树用的 `await`(节点不入树 ⇒ `_ready` 不跑)⇒ **18 条基线断言红**;
      ★ 人为制造一处脚本错误让**一格**断言静默跳过 ⇒ **只有条数闸红(135≠158)** —— 那正是没有这条闸时会假绿的形态。
    - **仍存的边界(照实登记)**:若有哪把枪**自己覆写**了开火判定,注入路径下它的开火行为今天仍**没有行为守卫** ——
-     "覆写成别的边沿"会被边沿独占断言逮住,但"覆写成不读注入输入"只由 `tests/probe/kh_l3_probe.gd` 的**源码守卫**兜着
+     "覆写成别的边沿"会被边沿独占断言逮住,但"覆写成不读注入输入"只由 `kh_l3_probe.gd`（已删·2026-10-09） 的**源码守卫**兜着
      (headless 下全局输入恒 false ⇒ 行为守卫对那条形状**天生无牙**,Task 2 实测)。**玩家可见面**:那种覆写会让联机里
      那把枪不开火 / 乱开火,而只有源码守卫会把改名级的写法拦住。
    - **仍未覆盖**:真链路里"注入 `attack=true` 的机器人宿主真的让武器出弹" —— 见下面第 6 条(归用户跑,本探针一个网络包都不发)。
@@ -371,7 +376,7 @@
 6. **真链路里「注入 `attack=true` 的宿主」的唯一端到端载体是 PvP 机器人,而它未跑**(2026-10-04 登记;owner = 用户,六人真链路只由用户跑;Plan B Task 6 要求上纸)。
    - **载体(已核,不是照抄清单)**:`tests/harness/team_bot_input.gd`(`extends PlayerInput`,带 `attack` 字段与 `press_attack_edge()`)
      由 `tests/harness/team_match_watcher.gd` 的 `_pulse_attack()` 驱动,再经 `tests/probe/team_match_probe.sh` 起六人真链路 ——
-     这是**唯一**会在真链路里注入 `attack=true` 的宿主。★ 另两个脚本手柄**不注入开火**:`tests/harness/ground_bot_input.gd`
+     这是**唯一**会在真链路里注入 `attack=true` 的宿主。★ 另两个脚本手柄**不注入开火**:`ground_bot_input.gd`（已删·2026-10-09）
      的三个 `_attack_*_raw()` **恒 false**;`tests/harness/soak_bot_input.gd` 虽读自己的 `_held/_pressed/_released`,
      但 `tests/probe/royale_soak_probe.gd` **从没给它排过** attack。
    - **未跑的理由(★ 订正 brief 的一处口径)**:Task 6 brief 写的是"**占 7777**",而 `team_match_probe.sh` 的头注与变量写着**它自己不占 7777**
@@ -395,7 +400,7 @@
      一律按内容 `grep` 复核（`grep -n "input_source" scenes/pvp_match_client.gd`），别再抄行号。
    - **已做**：① 不变量写进 `_tick_beta_rewind` 的代码注释（该函数第一段，点名"冻结与解冻必须是同一个对象"
      与 `player.set_controls_locked()` 那条写路）；
-     ② **形状守卫：已删除**（原 `tests/probe/rewind_weapon_probe.gd` 的 **S11**，10 条，**全是**读源码判形态）。
+     ② **形状守卫：已删除**（原 `rewind_weapon_probe.gd`（已删·2026-10-09） 的 **S11**，10 条，**全是**读源码判形态）。
      删因 = [`test-economy.md`](test-economy.md) 的 **D6**：那类断言测的是"**某人有没有写这段字**"、不是行为；
      本批实测它**可被字符串诱饵喂绿**（塞一行 `var _decoy := "_local.input_source"` 即 ALL-OK），
      且三支照抄的副本**同一轮内就漂移**。⇒ **本节今天零守卫**（形状与行为都没有）；
@@ -423,7 +428,7 @@
 
 11. **§2.6 的守卫有一处覆盖上限：那道行为相只驱动了 `up` 边沿/轴**(2026-10-04 由 Plan B Task 7 引入并登记)。
    它用 `Input.action_press("up")` 驱动攀爬 ⇒ **只读别的轴 / 别的动作**的"新式兜底"它咬不住。
-   ★ 同族还有一条**测试基础设施**缺陷（已立 Plan B Task 9）：`tests/manual/climb_probe.gd` 依赖**随机地图**
+   ★ 同族还有一条**测试基础设施**缺陷（已立 Plan B Task 9）：`climb_probe.gd`（已删·2026-10-09） 依赖**随机地图**
    （`core/sim/maze_generator.gd:44` `maps[randi() % maps.size()]`）⇒ **同版本两次跑结论可能相反**、**不能当基线**；
    修法 = 用 `set_map_file` 钉图。★ **已修（2026-10-04，`c5804f4`）**：`climb_probe` 现已钉 `demo.cyrm`；钉图前连跑 6 次得 **3:3 两种互斥结论**，钉图后 md5 全等且与 demo 那一支逐字节相同。
 
@@ -460,7 +465,7 @@
      `WorldRewind._snapshot_player()`，**没有任何一条经 `record()` 落帧、再经 `rewind_restore()` 写回**去断言**武器子字典**
      （`widx` / `wmags` / `wlive`）——"空手 vs 装备武器、落哪一帧、`_frames` 裁剪"这些中间环节今天只有源码可见
      （`core/sim/world_rewind.gd` 的 `record()` 里那一行 `"player": _snapshot_player(player)`）。
-     ★ 它与 `tests/probe/rewind_weapon_probe.gd` 文件头登记的那条边界（S1-S6 只覆盖消费端、S7 只直调生产函数）**不是同一件事**。
+     ★ 它与 `rewind_weapon_probe.gd`（已删·2026-10-09） 文件头登记的那条边界（S1-S6 只覆盖消费端、S7 只直调生产函数）**不是同一件事**。
    - **它测不到什么（照实）**：也不覆盖真机"回溯到哪一帧"的帧选择（落点不可复现，`rewind_probe` 那半边只能作区间断言）。
    - **翻案条件**：补一条**武器子字典经 `record()` → `rewind_restore()` 的端到端断言** ⇒ 销账并附提交号。
      ★ 可行的形状（给动手的人一个确定性做法）：**录制窗口内把武器状态钉成常量**（例如两把枪、各格 5/7、手持 9），
@@ -523,7 +528,7 @@
      现状：行号已成 `995-998`（★ **2026-10-05 又移到 `1039-1042`**，见本条第 1 段的二次订正），
      描述已改口为"**逐名核那 5 处访问形态 + 一条 `snap["downed"] == 真值` 的行为断言
      （`EXPECTED_CHECKS` 61；**历史值**，★ 现为 **90**）**"，并保留"旧计数上界对第 ⑤ 处改名无牙"的 G-1 实测根据。
-     ★ 教训留档：Task 15 的硬约束**只允许碰** `tests/probe/rewind_weapon_probe.gd` 与本文件 ⇒ 当时那两处**没改**、
+     ★ 教训留档：Task 15 的硬约束**只允许碰** `rewind_weapon_probe.gd`（已删·2026-10-09） 与本文件 ⇒ 当时那两处**没改**、
      只在报告里点名；**是控制器放行才补上的** —— "改了 A 就过期的 B" 若落在**改动集之外**，必须显式交回控制器，别默默留着。
    - **手工复核点（将来改这一带时）**：`rewind_weapon_probe.gd` 的 `PRODUCER_NAMED_PLAYER_ACCESS` 与 `_snapshot_player`
      里那 5 处必须**同时**改（后者改名 ⇒ 前者红，这是**设计**不是误报）。
@@ -550,7 +555,7 @@
    - **动机**:`AGENTS.md` 记着"未知成员在 `class_name` 类型上只是 **warning**(`UNSAFE_*`)"。把它升成**错误**,反射一复发就是硬红 —— 这是"反射清完还剩多少"的**唯一量化判据**。
    - **键组合(试跑用的那一组)**:`[debug]` 段加 `gdscript/warnings/unsafe_property_access=2` / `unsafe_method_access=2` / `unsafe_cast=2` / `unsafe_call_argument=2`;跑 `bash tests/run_all.sh`。★ 时间盒下在**第 54 支**(共 101)处停 ⇒ 下面是**下界**。
    - **红的形态(54 支)**:**48 支 `NO-VERDICT`**(主体形态:依赖脚本解析不过 ⇒ 一行判词都不打,白等满 `--quit-after` ≈60s)· **3 支存活** `OK`(`lobby_parse_smoke` / `network_input_smoke` / `time_rules_smoke`)· **2 支 `FAIL`**(`settings_actions_smoke`:依赖 `settings.gd` 解析不过;`hud_declarative_probe`:`KH HUD PROBE: FAIL | res://ui/hud/royale_hud.gd; res://ui/hud/combat_fee…` —— **它自己点名了哪些脚本解析不过**)· **1 支 `TIMEOUT`**(`tile_query_smoke` 被 60s 外壳掐掉 ⇒ 解析错误能把一支 1 秒冒烟变成"看着像挂住")。
-   - **解析不过的脚本(从 55 份跑批日志归并)**:`4377` 行 `Parse Error: … (Warning treated as error.)`,落在 **75 个源文件**、**1531 个不同 (文件, 行)**。按引擎措辞分类:`unsafe_call_argument` **2777** · `unsafe_method_access`("The method … is not present on the inferred type …") **898** · `unsafe_property_access`("The property … is not present on the inferred type …") **419** · `unsafe_cast` **283**。位置最多的文件:`tests/smoke/enemy_logic_smoke.gd`(210 行)· `tests/probe/ground_action_probe.gd`(95)· `tests/smoke/weapon_inventory_smoke.gd`(73)· `scenes/pvp_match_client.gd`(67)· `tests/smoke/grenade_smoke.gd`(65)· `core/sim/map_format.gd` / `core/config/settings.gd` / `scenes/player/player.gd` 等。
+   - **解析不过的脚本(从 55 份跑批日志归并)**:`4377` 行 `Parse Error: … (Warning treated as error.)`,落在 **75 个源文件**、**1531 个不同 (文件, 行)**。按引擎措辞分类:`unsafe_call_argument` **2777** · `unsafe_method_access`("The method … is not present on the inferred type …") **898** · `unsafe_property_access`("The property … is not present on the inferred type …") **419** · `unsafe_cast` **283**。位置最多的文件:`enemy_logic_smoke.gd`（已删·2026-10-09）(210 行)· `ground_action_probe.gd`（已删·2026-10-09）(95)· `weapon_inventory_smoke.gd`（已删·2026-10-09）(73)· `scenes/pvp_match_client.gd`(67)· `grenade_smoke.gd`（已删·2026-10-09）(65)· `core/sim/map_format.gd` / `core/config/settings.gd` / `scenes/player/player.gd` 等。
    - ★★ **一条必须先知道的操作事实**:该模式下**普查工具自己也解析不过** —— `Parse Error: Casting "Variant" to "GDScript" is unsafe. (Warning treated as error.) at: GDScript::reload (res://tests/probe/allscript_probe.gd:71)` ⇒ `allscript_probe` 打不出一行判词。所以上面这份普查是**从跑批日志归并**出来的,更完整的清单得**先修它自己那一处**(改成 `if s is GDScript:` 收窄)再跑。
    - **粗分类**:**全仓零第三方代码**(`find . -maxdepth 2 -name addons` = 0 命中)⇒ **没有"引擎/第三方形状改不掉"这一类**。四档:(a) **类型化/收窄改得掉**(`Variant` 来路静态可知:`map_format.gd` 的 `int()/bool()/String()`、`grid_pathfinder.gd` 的实参);(b) **反射那一家**(`player.gd` 等,与 §六.12 的"参数注入"同批);(c) **工具自己**(`allscript_probe.gd:71`,5 行级);(d) **只能逐点压警告**(`Variant` 来路静态不可知:`ConfigFile.get_value()`、`load()` 返回的 `Resource`、`InputEvent` 一族 ⇒ 引擎的出路是 `@warning_ignore(...)`,**那是把警告关掉、不是改对**)。★ 本行**不写**"建议开启/不开启"。
    - ★ **还原证据(R8)**:试跑后 `cp` 回原文件,`git diff project.godot` **为空**、`git status --short project.godot` **为空**、`grep -n "unsafe_" project.godot` **零命中**;那 4 行**没有**进任何提交;收尾时无残留 Godot 进程、`lobby_alive=false`、`[7800,8300)` 无占用。
@@ -575,7 +580,7 @@
      rc=1
      ```
      **6 次跑里 1 次**（Task 6 实现者的自检跑了 6 次）。★ 本行只按这一个样本量陈述:既**不写成"必现"**,也**不写成"偶发"以外的**判断。
-   - **触发点（按源码）**:[`tests/probe/haste_probe.gd`](../../tests/probe/haste_probe.gd):150-154 —— 普通相与加速相各取一次跳跃最高点(`_jump_apex`),`tol = maxf(8.0, h_norm * 0.10)`,超差即 `_fail`。⇒ 这是**真断言真的判了假**:重力/跳跃高度**不该**被时间场碰（`:14` 的注释与设计口径都这么写）。
+   - **触发点（按源码）**:`haste_probe.gd`（已删·2026-10-09）:150-154 —— 普通相与加速相各取一次跳跃最高点(`_jump_apex`),`tol = maxf(8.0, h_norm * 0.10)`,超差即 `_fail`。⇒ 这是**真断言真的判了假**:重力/跳跃高度**不该**被时间场碰（`:14` 的注释与设计口径都这么写）。
    - **为什么说它是真缺陷、而不是判据/环境造成的假红（依据）**:这一条走的是 `_fail` + `rc=1` 的 **FAIL** 判词,而 Task 6 改的是**判词位置**口径("判词之后的良性尾行不再假红")—— **FAIL 判定与"判词位置"无关**,改前改后同判;那条断言也**不读**任何与判据有关的输出。⇒ **与 Task 6 的判据改动无因果**,也与本批（Task 2 的回溯武器域）无因果。
    - ★★ **绝对不要把它写进 `tests/known_red.txt`**:按 [`tests/README.md`](../../tests/README.md):41 的纪律，"**加行不是『让检查变绿』的手段**"；而这一条是**真守卫抓到了真问题** —— 压进基线等于**把一条真守卫压盲**，以后它再也不报。要它**继续红着被人看见**。★ 本节（§六）而不是 §一 的理由：§一 收的是"**不是守卫、别拿它们的行为当证据**"的既有红，而这一条恰恰**是**一条有效守卫的**真红**。
    - **什么时候能销**:谁能**稳定**复现出那次 FAIL 并定位"**重力被 delta 缩放带跑**"的成因（时序/采样类 ⇒ 按 §一 的纪律**同配置跑两次**再下结论）,修好之后销账并附提交号。★ 在那之前,`haste_probe` 的判决要按"**可能真红**"读,不能按"稳定绿"读。
@@ -626,7 +631,7 @@
      （评审 R43 + 实现者复核）：**批 A 结构上碰不到它们** ——
      ① `PvpSession.beta_mode` 的写点全仓只有三处，**没有一处落在自动化对局里**：
      [`scenes/beta_menu.gd`](../../scenes/beta_menu.gd):131（在 `_enter_card`(`:128-135`) 内；**要人点 Beta 页**，**或**走 `main_menu.gd` 的
-     `-- --autotest-*` 钩子 —— 见下面②之前那半条）、`tests/probe/lobby_create_form_probe.gd`（只建大厅面板，不建局）、
+     `-- --autotest-*` 钩子 —— 见下面②之前那半条）、`lobby_create_form_probe.gd`（已删·2026-10-09）（只建大厅面板，不建局）、
      以及——★★ **2026-10-05 修复轮 2（评审 Minor ⑧）补上的那个驱动者**——
      [`tests/harness/menu_autotest.gd`](../../tests/harness/menu_autotest.gd) 的 `_run_beta_flow()`（**`func` 在 `:161`** —— 原写的 ":158 起"是它上方的注释行）：它经
      [`scenes/main_menu.gd`](../../scenes/main_menu.gd):**151-158(注释)+159-174(代码)** 的 `-- --autotest-*` 钩子走**就是** `beta_menu.gd:131`
@@ -746,7 +751,7 @@
       `net_bus_ext.gd` 那份**自己的注释**写着"原版 NetBus 逐字节不动，新 RPC 进 NetBusExt" ⇒ ext 那份是**遗留**。
     - **为什么危险**：重名 = 接收端挂错节点 = **静默 no-op**。裁定与判据三处已存在：[`scenes/pvp_match_client.gd`](../../scenes/pvp_match_client.gd)
       (**必须走 NetBus**，不是 NetBusExt)、[`scenes/pvp_game.gd`](../../scenes/pvp_game.gd)(发送端走 NetBus)、
-      [`tests/probe/kh_l6_probe.gd`](../../tests/probe/kh_l6_probe.gd)(判据是**同行**必须含 `NetBus.rpc_id(`)。
+      `kh_l6_probe.gd`（已删·2026-10-09）(判据是**同行**必须含 `NetBus.rpc_id(`)。
     - **本批处置**：**两份给同一通道**(Task 5 的 `transfer_channel` 都是 3)，并把"重名集合恰好 = `{beam_fired}`"**钉成一条断言**
       (`rpc_channel_contract_smoke` 的 ③：新出现一个重名、或 beam_fired 被删掉一份，都会红)。
     - **翻案条件**：确认真无调用点后**删掉 ext 那份** —— 那是协议面改动，单独走档 3(别顺手删)。

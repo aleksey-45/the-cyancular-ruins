@@ -1,5 +1,10 @@
 # UI(调色板 / 菜单语汇 / HUD / 小地图 / 大厅版式)
 
+> ★ **2026-10-09 测试面削减 90%**:本文件里凡标着 `（已删·2026-10-09）` 的守卫**都已不存在**。
+> 那一批删了什么、留了什么、代价是什么 —— 台账
+> [`docs/superpowers/specs/2026-10-09-test-surface-cut-90-design.md`](../superpowers/specs/2026-10-09-test-surface-cut-90-design.md)。
+> ★ 读法:**不要**因为路径还在句子里就以为守卫还在 —— 标了就是没有了。
+
 > 从 [`CLAUDE.md`](../../CLAUDE.md) 拆出(2026-10-03,**原文逐字未改**)。返回索引:[`CLAUDE.md`](../../CLAUDE.md)。
 > 本文件覆盖:UI(界面)。
 > ★ 文档会过期 —— **任何冲突以源码为准**,读之前先 `grep` 复核。
@@ -13,7 +18,7 @@
 - **按钮 = 描边式**(`style_button(b, variant)`):暗填充 + 2px 亮描边、直角。标定目标是**描边对页面底 ≥3:1、对填充 ≥3:1** —— 改 `C_BORDER` 前先按这个量。`variant="quiet"` 是弱化项(退出)。其余控件各有工厂方法,新页面直接调:`panel_box()`(面板底,**不透明** —— 半透明会让下层菜单文字透上来重影)、`row_box()`/`style_row_button()`、`style_line_edit()`、`style_check()`(**自绘开关图标**:默认主题的 CheckButton 在「关」态没有可见轨道)、`style_slider()`。
 - **开关/勾选框行 = 定宽标签列 + 紧邻开关**(`HBoxContainer`,标签 `custom_minimum_size.x` 固定)。别把裸 `CheckButton` 直接塞进宽容器 —— Godot 会把它拉到容器全宽,开关被推到几百像素之外。
 - **字体**:拉丁走 `assets/fonts/less_perfect_dos_vga.ttf`(8×16 DOS 位图);**汉字走仓内 `assets/fonts/unifont-17.0.05.otf`**(GNU Unifont,SIL OFL 1.1)。两者都套 `PixelFont.shared()` 的「关抗锯齿/关微调/关子像素」。**为什么必须是 16 像素网格**:本项目字号只用 16 的倍数,只有设计像素能整除设备像素时边缘才是硬的;主流开源像素中文字体只做到 12px,在 16/32 下是 1.33x/2.67x 非整数缩放,笔画会粗细不均。换字体只改 `core/present/pixel_font.gd` 的 `CJK_FONT_PATH`。
-- **HUD 元素一律垫半透明深底板,数值的唯一源 = `UiFactory.C_PLATE`(黑 0.1)**。四个 `.gd` 落点是它的**别名/引用**:`ui/hud/hud.gd` / `ui/hud/weapon_slots.gd` / `ui/factory/world_label.gd` 的 `PLATE_COLOR`、`ui/hud/royale_hud.gd` 的 `_plate_box()`;两个 `.tscn`(`ui/hud/pvp_hud.tscn` / `ui/hud/team_hud.tscn` 的 `Plate`)的 `bg_color` **结构上引用不到 GDScript 的 const** ⇒ 保留字面量,**由 `tests/smoke/ui_palette_single_source_smoke.gd` 钉住与 `C_PLATE` 逐位相等**。⇒ 改底板色 = **调色板 + 两处 `.tscn` + 守卫里的 `PLATE_LITERAL`**;四个 `.gd` 落点**一个字都不用动**,而漏改 `.tscn` 会被**响亮地点名**。
+- **HUD 元素一律垫半透明深底板,数值的唯一源 = `UiFactory.C_PLATE`(黑 0.1)**。四个 `.gd` 落点是它的**别名/引用**:`ui/hud/hud.gd` / `ui/hud/weapon_slots.gd` / `ui/factory/world_label.gd` 的 `PLATE_COLOR`、`ui/hud/royale_hud.gd` 的 `_plate_box()`;两个 `.tscn`(`ui/hud/pvp_hud.tscn` / `ui/hud/team_hud.tscn` 的 `Plate`)的 `bg_color` **结构上引用不到 GDScript 的 const** ⇒ 保留字面量,**由 `ui_palette_single_source_smoke.gd`（已删·2026-10-09） 钉住与 `C_PLATE` 逐位相等**。⇒ 改底板色 = **调色板 + 两处 `.tscn` + 守卫里的 `PLATE_LITERAL`**;四个 `.gd` 落点**一个字都不用动**,而漏改 `.tscn` 会被**响亮地点名**。
   - ★ **例外一:大乱斗排行榜 `royale_hud._board_bg` 单独是 0.25** —— 用户点名把那张「pvp 玩家栏」排除在这轮下调之外(比别处都实);别看到"统一"就把那处一起改。
   - ★ **例外二:右上角击杀计数器(青色 `000`)不垫底板**(2026-09-17 用户要求删,三个模式一起生效)。⚠ 去掉它**只能靠 `draw_center = false`** —— `StyleBoxFlat` 默认底色是**不透明灰 (0.6,0.6,0.6,1)**、`draw_center` 默认 true,只删 `bg_color` 那行等于把半透明黑板换成实心灰板(实测踩过)。氧条那组底板与条/空槽同一 tween 淡入淡出,满氧时整组不出现。
   - ★ 各档 alpha 的对比度实测写在 `ui/factory/ui_factory.gd` 的 `C_PLATE` 注释里 —— 那是**唯一**的落点。地图开阔区是浅灰蓝,**不垫底**时青色血条压上去只有 ≈1.9:1、金色残弹 ≈2.3:1。★ **全屏压暗罩不在此列**(`pvp_hud` 的 `Mask` / royale 的 `_mask` = 0.3、暂停菜单 0.55、敌人血条底 0.45)。★ **金色(`C_WARN`)只表「弹夹见底」**这一个语义 —— 满弹用中性色,装填进度条用强调青;丢弃进度条用 `C_DANGER`。
@@ -27,7 +32,7 @@
   - ★ **"圆形范围"的唯一入口是 `RANGE_CELLS`(当前 50 格)**;与屏幕半径 `RADIUS_PX`(140px)分开算成 `PX_PER_CELL`,单独改 `RANGE_CELLS` 只换缩放、圆的大小不变。标定参照:**屏幕能看到 46×36 格**、**1v1 两出生点环面最短距离 34 格** —— 所以 50 是"雷达"语义,不是"屏幕缩略图"。地形想更清楚就调 `RADIUS_PX`。★ **环面是免费的**:地形贴图正是 cols×rows、四周无留白,采样器开 `repeat_enable` 就能让 uv 越过 1.0 绕到另一头,**不需要铺 3×3 副本**。★ 点位走 **`GridPathfinder.toroidal_delta_px(玩家, 目标, W, H)`**(注意 **a→b** 的参数顺序),超过 `RADIUS_PX` 就不显示。★ 开关是 `Settings.pvp_show_minimap`(是否挂载)与 `pvp_minimap_show_enemy`(**是否显示"他人点"** —— 3v3 下它把**队友点**一起关)。★ **两个提供器必须共用同一套过滤(`_minimap_entries()`),不只是"同序"**:`minimap.gd` 是**按下标**取色,各写一份 `for` 时"某个副本已 `queue_free`、尚未从 `_replicas` 摘掉"那个窗口会让两数组**错位一格**(= 队友点画成敌人色,**不报错、只误导人**);守卫 `team_room_smoke` ⑨③(按**函数体**断言两处都只从该函数取数)。
   - ★ 大乱斗的他人点走**头顶 ID 同源**的 `ROLE_COLORS[(role - 1) % size]`。**不跟身体**的理由:身体色相是各人自设的(`_hues`)、**可能撞色**、且**到达比小地图建立晚**;而"认得出谁是谁"靠的是能**对回头顶那个名字**。`royale_game` 因此长出自己的同款三函数(形状与 `team_game` 那三个逐字同款)。
   - ★ **"我"那个点**:1v1/大乱斗恒用 `SELF_COLOR`(无描边);**3v3 走 `_team_color(PvpSession.role)`(与身体/头顶 ID 同源)+ 一圈白描边**(`RING_SELF_PX` = 4px)。★ 描边与颜色**正交**:同队同色时颜色本身分不出"我"与队友,去掉它就等于没修。★ 走 `setup_multi` 的**第四参** `self_color_provider: () -> Color`(必须**每帧求值**—— 队色由 `match_sync` 下发、比小地图建立晚)。★ 为什么非要有描边:队色 `#80F4FF` 与 `SELF_COLOR #99F2FF` 只差 Δ=(25,2,0),只换颜色会从"分不清自己与队友"变成"完全分不清哪个是自己"。`SELF_COLOR` **不删**。守卫:`minimap_circle_probe` 相⑥(含**换色断言**钉"每帧求值")/ 相⑦(传空提供器 ⇒ `SELF_COLOR` + 描边不可见)。
-  - ★ **左右与下方留白不同**(`EDGE` 24 / `EDGE_BOTTOM` **72**):右下角是**延迟条**,而小地图 layer 131 画在 PvpHud(130) **之上** —— 换成 280×280 的圆就**盖住了延迟数字**(用户报)。已知脆弱点(未修):`_ready` 时 `current_grid` 为空会 `set_process(false)` 且**没有重建路径**,挂早了就静默失效。守卫:`tests/manual/minimap_circle_probe.tscn`(**必须真实渲染**;含"圆不得压到延迟条矩形"的几何断言)。
+  - ★ **左右与下方留白不同**(`EDGE` 24 / `EDGE_BOTTOM` **72**):右下角是**延迟条**,而小地图 layer 131 画在 PvpHud(130) **之上** —— 换成 280×280 的圆就**盖住了延迟数字**(用户报)。已知脆弱点(未修):`_ready` 时 `current_grid` 为空会 `set_process(false)` 且**没有重建路径**,挂早了就静默失效。守卫:`minimap_circle_probe.tscn`（已删·2026-10-09）(**必须真实渲染**;含"圆不得压到延迟条矩形"的几何断言)。
 - **统一大厅 `mp_lobby` 是 `scenes/lobby_page.gd`(`class_name LobbyPage`)的唯一子类**(2026-10-03:三个旧大厅页 `matchmaking` / `royale_lobby` / `team_lobby` 已整体退役删除):「连大厅 → 列房间 → 配对了转连 worker」的状态机、共用的字段、禁用武器网格与色相行两个设置区块、回局路径、超时梯都在基类;子类只留版式与三模式分派。★ **模式差异一律收在 `mp_lobby._mode`(筛选)与 `_current_mode`(我所在那间房的模式)两个量上**,别再按「哪个页面」分叉 —— 那正是本次要消灭的重复。★ 两个设置区块**不**放 `ui_factory.gd` —— 它们读 `Settings`,而那个工厂至今零 autoload 依赖。
 
 - ★★ **三个联机模式合一(2026-10-03)**:主菜单只剩**一颗**「多 人 模 式」→ `scenes/mp_lobby.tscn`;页内按 `全部 / 1v1 / 3v3 / 大乱斗` 筛选房间,**建房时才选模式**(创建弹层按模式变形)。三个旧大厅页已删除。
