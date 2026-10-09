@@ -784,6 +784,13 @@
 
 28. **快照的编码方式：60Hz × 全量绝对态 × Godot 通用 `Variant` 序列化（字符串键每包重复）**
     > ★★ **分析全文、全部实测数字与来源**见 [`netcode-snapshots.md`](netcode-snapshots.md)（**那份是单一来源**；本行是登记与翻案条件）。（owner 未认领；2026-10-08 复核源码 + 复读 2026-09-12 的实测）
+    > ★★ **状态（2026-10-09）："去编码开销"那一半已落地** —— 新增 [`core/net/snapshot_codec.gd`](../../core/net/snapshot_codec.gd)
+    >   （一张 schema 表驱动两侧 + 首字节版本号 + `PackedByteArray`），发送点两处、解码收在 [`net_bus.gd`](../../core/net/net_bus.gd) 的 RPC 入口
+    >   ⇒ **三个游戏场景与全部钩子一行没动**。实测：世界包条目 **368→51 B**、本人包 **884→102 B**、
+    >   **`N=8` 服务器上行 587→72 KB/s**、世界包**在 N≤8 恒 1 片**（"丢一片=整帧丢"对世界包归零）。
+    >   **验证**：默认批 `RUN_ALL OK(12 runs / 3 gated-assertions)`；`snapshot_size_probe` 三条断言（真实产出逐键往返 / schema 与 `capture_state()` 对齐 / 武器块整体性）。
+    >   ★ **量化与增量仍未做**：量化有"**两端一起量化**"的前置条件（Gaffer），而 `c2` 是回滚锚点 ⇒ 属档 3；增量要双向 ack 系统。
+    >   ⇒ **本行只销"编码开销"这一半；量化/增量另立**（见 [`netcode-snapshots.md`](netcode-snapshots.md) §5.1）。
     - **架构侧不蠢**（先说清，免得读成"整套联机都是错的"）：服务器权威 + **unreliable 快照与 reliable 事件/输入分道** +
       本地玩家**预测/回滚对账(C2)** + 乱序丢弃(`tick` 比较) + canonical 坐标 —— 与业界同族
       ([Gaffer《Snapshot Interpolation》](https://www.gafferongames.com/post/snapshot_interpolation/)、Source/Quake 系增量快照)。
@@ -822,6 +829,14 @@
 
 29. **输入队列："每 tick 恰好消费一个"是**无回复力**的 ⇒ 积压会**永久**留在那里（延迟加上去就不下来）**
     > ★★ **分析全文与来源**见 [`netcode-snapshots.md`](netcode-snapshots.md) §4.2；本行是登记与翻案条件。（owner 未认领；2026-10-08 读码 + 对照 Valve/Gaffer）
+    > ★★ **状态（2026-10-09）：机制已改，但本行暂不销** —— `PacketInputSource.adapted_cap` / `push_pending(q, pkt, cap)` 与
+    >   [`match_host.gd`](../../server/match/match_host.gd) 的 `_on_input` 改成：上限 = **实测抖动包络**（每 tick 一 tick 到过几包的**原始**深度）+ 1，
+    >   包络**逐 tick 衰减** ⇒ 网络一安静就把堆着的陈旧包释放掉 —— **这就是原来缺的那条回复力**；
+    >   丢的仍是最旧那包、边沿仍并入队首（玩家的按键不丢）。
+    >   ★ 判据侧：`snapshot_own` 现在带 **`q`**（服务器待消费队列深度），服务端 `--netstat` 打「队列 / 抖动上限 / **累计丢弃**」
+    >   ⇒ 翻案条件要的读数**有数据源了**（缺口是**没有真对局读数**：今天的真链路批是干净网络，无丢包/抖动注入）。
+    >   ★★ **代价照实说**：丢一包 = 服务器少模拟一 tick 输入 ⇒ 客户端靠 C2 回滚纠正一次（单 tick、有界）。
+    >   这是"低延迟 + 偶发小纠正"换掉原来的"零纠正 + 永久 ≈133ms 输入延迟"，**手感结论必须真对局读**。
     - **是不是"丢弃"的问题？不是。** 两条丢弃规则都对：
       · 世界包 `tick < _last_snap_tick` 丢掉旧包 —— Godot 的 `"unreliable"` = `TRANSFER_MODE_UNRELIABLE` = ENet **UNSEQUENCED**（**不保证顺序**），所以"新的赢"是正确做法 ✓
         （[`pvp_game.gd`](../../scenes/pvp_game.gd) `_on_snapshot_world`）。
@@ -856,7 +871,7 @@
 
 | # | 项 | 状态 | 说明与翻案条件 |
 |---|---|---|---|
-| 8.1 | **默认批的条数闸归零** | **新登记(2026-10-09,实测)** | 削减后 `bash tests/run_all.sh` 的判词是 `RUN_ALL OK(12 runs / 0 gated-assertions)` —— 全批**一支**带 `EXPECTED_CHECKS` 的都没有(唯一那支 `settings_display_smoke` 已删)。★ 含义(权威表述在 [`tests/lib/probe_base.gd`](../../tests/lib/probe_base.gd) 文件头):**这 10 支域守卫的 `ALL-OK` 只证明"没有断言失败",不证明"每条断言都跑过"** —— 脚本错误只结束出错的那个函数、调用方继续、判词照打 `ALL-OK`。**翻案条件**:给某支补上 `_checks >= EXPECTED_CHECKS`。★ **但本仓 2026-10-08 已裁定"有意不逐支补闸"**(见 [`test-economy.md`](test-economy.md) §5.3 第 8 条:那是 10 份新增,与削减方向相反)⇒ 现状 = **接受这条上限**,抽查时按 [`tests.md`](tests.md) 末节"看 stderr 有没有 `SCRIPT ERROR`"兜 |
+| 8.1 | **默认批的条数闸归零** | **新登记(2026-10-09,实测)** | 削减后 `bash tests/run_all.sh` 的判词是 `RUN_ALL OK(12 runs / 0 gated-assertions)` —— 全批**一支**带 `EXPECTED_CHECKS` 的都没有(唯一那支 `settings_display_smoke` 已删)。★ 含义(权威表述在 [`tests/lib/probe_base.gd`](../../tests/lib/probe_base.gd) 文件头):**这 10 支域守卫的 `ALL-OK` 只证明"没有断言失败",不证明"每条断言都跑过"** —— 脚本错误只结束出错的那个函数、调用方继续、判词照打 `ALL-OK`。**翻案条件**:给某支补上 `_checks >= EXPECTED_CHECKS`(**2026-10-09 当天已有一支做到**:`snapshot_size_probe` 为线格式的表对齐/往返补了 `EXPECTED_CHECKS=3` ⇒ 默认批判词由 **`0 gated-assertions`** 变 **`3 gated-assertions`**;其余 11 支仍无闸 ⇒ **本行的上限含义不变**)。★ **但本仓 2026-10-08 已裁定"有意不逐支补闸"**(见 [`test-economy.md`](test-economy.md) §5.3 第 8 条:那是 10 份新增,与削减方向相反)⇒ 现状 = **接受这条上限**,抽查时按 [`tests.md`](tests.md) 末节"看 stderr 有没有 `SCRIPT ERROR`"兜 |
 | 8.2 | **`reconnect_smoke` 那条 C1 纪律的"唯一源码级断言"随支被删** | **改口(原 §一 第 3 行)** | 原登记:"它是 C1 纪律(进页复位、但不**清回局凭据**)的**唯一**源码级断言;删掉等于把那条纪律的守卫一起删掉"。★ **2026-10-09 这一刀真的把它删了** ⇒ 那条纪律今天**零守卫**。原行的"处置"列(换锚点转绿)已作废。**翻案条件**:重写一条锚在 `_wire_menu()` / `%MultiBtn` 的 C1 断言 —— 但按本批方向,要**先答 K1–K5**(值不值),而不是默认补回来 |
 | 8.3 | **`tests/manual/` 整个目录已删除** | **新登记** | 18 支人工仪器(含 `brawl_rollback_probe` —— `PredictionRollback._close_enough` 容差常数的测量台)全部删除。★ 容差**值本身没有丢**:它连同 1/2/4/8/16/32px 的扫描读数、N=2/4/8 的回滚次数与接触期偏差,早已完整写在 [`core/net/prediction_rollback.gd`](../../core/net/prediction_rollback.gd) 的 `DEFAULT_POS_TOL` / `DEFAULT_CONTACT_POS_TOL` 注释里(这也是本次**没有**重跑那 8 分钟探针的依据)。**丢的是"可复测性"**:今后要动那两个常数**没有仪器可用**。**翻案条件**:真要重测 ⇒ 从 git 历史取回探针(`git show <cut-commit>^:tests/manual/brawl_rollback_probe.gd`) |
 | 8.4 | **"非 headless 取图验收"这条通道没了** | **新登记** | 10 支取图探针全删 ⇒ **视觉改动的"前后取图对比"**([`AGENTS.md`](../../AGENTS.md) §2 档 1 的必做项)**今天没有工具**。本仓已有一次用户裁定"看图判断,不要把对比度当验收标准";现在连"图"都得手截。**翻案条件**:需要时从历史取回,或另建一支最小取图探针 |

@@ -175,10 +175,18 @@ class Room:
 ★ **2026-10-08 订正(控制器,读源码所得)**:上面这份字段表原先**少列了 5 个**(`aim`/`previewing`/`haste`/`rewind`/`trail`),
 且**完全没提本人包**。真实字段表以 [`server/match/match_snapshot.gd`](../server/match/match_snapshot.gd) 为准。
 ★★ **另有一条同源快照,文档原先漏掉**:`snapshot_own` —— **逐 peer、每帧每人一份**,
-载荷 = `{ack_seq, c2}`,其中 `c2 = player.capture_state()` = **约 26 个字段 + 整个背包表**
+载荷 = `{ack_seq, q, c2}`,其中 `c2 = player.capture_state()` = **25 个标量 + 武器块 8 个(仅手持非空时)+ 整个背包表**
 (见 [`scenes/player/player.gd`](../scenes/player/player.gd) 的 `capture_state()`)。
 ⇒ 每帧给**同一个客户端**发两份关于**他自己**的东西:世界包里那份(客户端**刻意不消费**) + 本人包。
 体积账见 [`registered-debt.md`](eng/registered-debt.md) §六.28。
+
+★★ **2026-10-09:上面两个 JSON 形状是"内存里的形状",不再是线上字节。**
+载荷由 [`core/net/snapshot_codec.gd`](../core/net/snapshot_codec.gd) 手打包成 `PackedByteArray`
+(一张 schema 表驱动编解码两侧 + 首字节版本号),**解码收在 `net_bus.gd` 的 RPC 入口** ⇒ 场景/钩子收到的仍是同形状 `Dictionary`。
+实测(真实玩家、含武器块+背包):世界包条目 **368→51 B**、本人包 **884→102 B**、
+**8 人局服务器上行 587→72 KB/s**、世界包**在 N≤8 恒 1 片**。
+★ **没有量化**:float32 与改动前逐位相同(换的是键名与类型标签那笔开销)。
+全表与取舍:[`eng/netcode-snapshots.md`](eng/netcode-snapshots.md) §2。
 
 - `pos` 是 canonical（服务器玩家每帧 `wrap_to_range` 到 `[0,MAP)`），**协议绝不传副本偏移坐标**。
 - 世界包用**一次 `NetBus.rpc()` 广播**（不是逐 peer;逐 peer 是 `snapshot_own` 那条）。
