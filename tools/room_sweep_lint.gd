@@ -671,7 +671,7 @@ func _check_worker_pid_tracking() -> void:
 # ★ 为什么是源码级:文案是**发给玩家看的字符串**,而探针里没有对端 ——
 #   `NetBus.reply` 在 `is_peer_live(caller)` 为假时**静默跳过**(见 NetBus.reply 的注释),
 #   所以那句话在探针里根本观测不到。行为面(调用方没被 append 进 players)由
-#   `tests/probe/lobby_visibility_probe.tscn` 相①/②/③ 断言,这里断言的是**那句话本身**。
+#   lobby_visibility_probe.tscn(已删·2026-10-09) 相①/②/③ 断言,这里断言的是**那句话本身**。
 # ★ 为什么文案值得一条断言:1v1 原先对"对局进行中"说的是「房间已满」—— 那是假话,而且会命中
 #   大厅页 `_on_server_message` 的**自动刷新**分支(那条只认旧文案)。改文案 = 静默改行为。
 # ★ 另钉一条反向:三条守卫必须**用"这一局在进行中"判**(started / in_match),不许退化成
@@ -707,7 +707,7 @@ func _check_join_refusal_guards() -> void:
 
 
 # ── 2026-09-21 新增:对局中房间的**回收梯接线** ──
-# ★ 为什么"接线"要单独钉:行为探针(`tests/probe/lobby_visibility_probe.tscn` 相④)是**手工调**
+# ★ 为什么"接线"要单独钉:行为探针(lobby_visibility_probe.tscn(已删·2026-10-09) 相④)是**手工调**
 #   `_reclaim_finished_matches()` 的 —— 把 `_process` 里那次调用删掉,行为探针**照样全绿**,
 #   而生产里房永远不会被回收(端口与列表位白占)。本仓对这类"两半"的既有先例:
 #   `team_room_smoke` ⑨①(接线面)对 `hud_declarative_probe` ③(行为面)—— 缺一不可。

@@ -417,7 +417,7 @@ func _record_rw_frame(r: int, p: Node2D, now: float) -> void:
 	#        ⇒ 恒真守卫,去掉后**无实际行为差**。
 	#     ③ **去掉** `wc.has_method("current_weapon")` 探测:`wc` 已收窄成 `WeaponComponent`,
 	#        该方法必然存在(`weapon_component.gd:461`)⇒ **无实际行为差**。
-	#   ★ 形状守卫:`tests/probe/rewind_weapon_probe.gd` 的 S9(逐条钉住隔着句柄的反射为 0)。
+	#   ★ 形状守卫:rewind_weapon_probe.gd(已删·2026-10-09) 的 S9(逐条钉住隔着句柄的反射为 0)。
 	var wc := p.get("weapons") as WeaponComponent
 	if wc != null:
 		d["widx"] = wc._current_index

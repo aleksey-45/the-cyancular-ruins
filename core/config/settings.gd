@@ -106,7 +106,7 @@ func _apply_bus_volume(bus_name: String, linear: float) -> void:
 #   钳位 ⇒ 玩家看到"既不全屏也不居中"。静态键无法自适应任意屏;"收进屏幕"只能在**运行时**量
 #   可用区 ⇒ 选择逻辑落在这里,开窗动作落在 `apply_display()`。
 # ★ **纯函数**:不读 `DisplayServer`、不写任何字段、无副作用 ⇒ headless 下也可**真红真绿**
-#   (冒烟 `tests/smoke/settings_display_smoke.gd` 相⑤ 直接喂可用区进来,不必开窗)。
+#   (冒烟 settings_display_smoke.gd(已删·2026-10-09) 相⑤ 直接喂可用区进来,不必开窗)。
 # ★ 逻辑空间**不动**(仍 1920×1440):窗口档只决定**窗口多大**,`stretch/aspect="keep"` 负责
 #   等比缩放 + 黑边 ⇒ `mp_lobby.tscn` 那 21 处绝对定位零改动。
 # ★ 不靠 `DISPLAY_RESOLUTIONS` 的**下标顺序**:"放得下的最大"与"最小"都按**面积**现算 ——
@@ -137,7 +137,7 @@ func fit_resolution(available: Vector2i) -> Vector2i:
 # ★ headless 早退:无窗口后端(服务器 / `-s` 冒烟)上不该碰窗口 API —— 仓内既有惯例,
 #   先例 tests/harness/menu_autotest.gd:505(`DisplayServer.get_name() == "headless"`)。
 # ★ 本函数体内的注释**刻意不写** window_set_size / window_set_mode 这两个字面量:冒烟
-#   tests/smoke/settings_display_smoke.gd 的源码半边按"早退必须排在这两个调用之前"判,
+#   settings_display_smoke.gd(已删·2026-10-09) 的源码半边按"早退必须排在这两个调用之前"判,
 #   注释里先出现会把那条判红。
 # ★ 收进屏幕(2026-10-04 Task 5):存档档**放得下就照它**(用户"默认窗口保持当前数字"的裁定
 #   优先),放不下才改用 `fit_resolution()` 挑的"能放下的最大 4:3 档"。改完尺寸**必须按可用区
@@ -204,7 +204,7 @@ func _event_display_name(ev: InputEvent) -> String:
 
 # ── 持久化 ──
 # ★ 两个函数的 `path` 参数**只为可测**:默认值 = 真存档路径 ⇒ 所有既有调用点行为完全不变;
-#   冒烟 tests/smoke/settings_display_smoke.gd 用临时路径验"档位真的落盘 / 真的读回",
+#   冒烟 settings_display_smoke.gd(已删·2026-10-09) 用临时路径验"档位真的落盘 / 真的读回",
 #   从而**不必去读写玩家真的 user://settings.cfg**(冒烟不该有"写坏玩家存档"的副作用)。
 func save(path: String = SAVE_PATH) -> void:
 	var cf := ConfigFile.new()

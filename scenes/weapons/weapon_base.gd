@@ -182,7 +182,7 @@ var player: Node2D
 # ★ 只被 `_spawn_projectiles()` 读(出膛弹速 ×它);单机它恒 1 —— 单机的弹速倍率由
 #   `TimeField.bullet_delta` 承担,不会双乘。
 # ★ 覆盖上限(照实):默认 1.0 ⇒ 宿主忘推 = 静默回到 1×(不报错)。钉它的是
-#   `tests/probe/rewind_weapon_probe.gd` 的 S10(形状 + 行为:出膛弹速随倍率变)。
+#   rewind_weapon_probe.gd(已删·2026-10-09) 的 S10(形状 + 行为:出膛弹速随倍率变)。
 var haste_mult: float = 1.0
 var fire_cd_timer: float = 0.0
 

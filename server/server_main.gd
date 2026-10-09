@@ -172,7 +172,7 @@ func _ready() -> void:
 	#     让它成为 no-op(上面的"`_grace` 恒空"是一条,`_enter_grace` 只有 worker 会调是另一条),
 	#     但**将来大厅一旦有了 `_grace` 条目**(例如大厅自己也开始管某种宽限),它就不再是 no-op:
 	#     那条轮询得搬出 `_process`(或改挂到 `RoomManager` 上),别指望大厅的 `_process` 会跑。
-	#     守卫:`tests/smoke/duel_spawn_timeout_smoke.gd` 对**本文件这一带**做了源码级钉位(见下条)。
+	#     守卫:duel_spawn_timeout_smoke.gd(已删·2026-10-09) 对**本文件这一带**做了源码级钉位(见下条)。
 	#   ⇒ 从此"非 worker 进程进任何梯"**整类不可达**,与各条梯的标志极性无关。
 	#   ★ **必须用 `set_process(false)`,不能改成 `process_mode`** —— 后者会沿继承关掉**子节点**
 	#     的 `_process`,而**大厅的全部实际工作都在 `RoomManager`(它的子节点)里**。
@@ -180,7 +180,7 @@ func _ready() -> void:
 	#     `quit(1)` 返回 ⇒ 那条路上到不了这里。今天无害(同帧就退进程,梯子来不及点火);
 	#     但它**哪天变成"重试"**,这条早退就会跳过一个本已成立的收尾 —— 那个口子随即重开。
 	#     改那一支时记得把本行一起带上(或改成 `defer`)。守卫见下一条注释。
-	#   ★ 位置**被源码级钉住**(`tests/smoke/duel_spawn_timeout_smoke.gd` 的判据③):本行必须在 `_ready`
+	#   ★ 位置**被源码级钉住**(duel_spawn_timeout_smoke.gd(已删·2026-10-09) 的判据③):本行必须在 `_ready`
 	#     体内、`add_child(RoomManager.new())` **之后**、且两者之间**没有**早退;`_run_worker`
 	#     体内不得出现它。挪位置/插早退都会**当场红**,别只靠人眼。
 	set_process(false)
@@ -390,7 +390,7 @@ func _expire_graces(now_ms: int) -> void:
 #   即:玩家在一个**已死的静止世界**里干等一分钟,期间屏幕上**一个字都没有**。
 #
 # ★★ 发送走 `NetBus.reply`(本仓「答复 caller / 定向发送」的收口,体内首行判活)——
-#   这是 `tests/probe/rpc_liveness_probe.tscn` 对每一处发送点的硬要求。
+#   这是 rpc_liveness_probe.tscn(已删·2026-10-09) 对每一处发送点的硬要求。
 # ★ 只发给 `_claims` 里**还在的** role:掉线那位早在 `_on_peer_left` 里就被
 #   `_claims.erase(role)`(见那一行),故这里天然不会往一个已断的 peer 发。
 # ★ 为什么只在**1v1 收场**这一处发,而不是在 `_enter_grace`(掉线那一刻)发:

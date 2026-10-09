@@ -27,7 +27,7 @@ var _parent: Node = null           # 回放子弹的挂载父节点(通常 World
 #   (精英不保留尸体 `enemy_base.gd:316` + 它死前的帧留在 40s 带上,`TimeParams.SNAP_SECONDS = 40.0`),
 #   旧码靠 `and` 短路**静默跳过**它 ⇒ 断言 `invalid_ref_count() == 0` 修完仍是 30+ ⇒ **永久红**。
 #   恒红的守卫与恒绿的守卫一样没用。故断言改成:`step()` 里"应当走完 `_apply`"的次数
-#   == `_apply` 真正走到底的次数(`tests/probe/rewind_probe.gd` 的 ⑩)。
+#   == `_apply` 真正走到底的次数(rewind_probe.gd(已删·2026-10-09) 的 ⑩)。
 #   freed 引用数照旧暴露,但它是**登记用的观测量**,不是"必须为 0"的断言。
 var _apply_started := 0
 var _apply_completed := 0
@@ -167,7 +167,7 @@ func _snapshot_player(player: Node) -> Dictionary:
 	#   真事故。现改成真类型访问:拼错时**当场、点名成员、带文件:行号**地炸。
 	#   ★ 买到的**不是**"编译期红":4.7.1 对 `class_name` 类型上的未知成员只按警告级
 	#     `UNSAFE_*` 处理(`project.godot` 也没把它升成错误)⇒ 拼错同样是**运行期** SCRIPT ERROR。
-	#     与 `player.gd` 里那段同款说明(实测原文见 `tests/probe/rewind_weapon_probe.gd` 文件头)。
+	#     与 `player.gd` 里那段同款说明(实测原文见 rewind_weapon_probe.gd(已删·2026-10-09) 文件头)。
 	#   ★ 六个成员都在**已有 `class_name`** 的类上(`WeaponComponent` / `WeaponInventory` /
 	#     `WeaponBase`)⇒ **未动类结构**,反射纯属历史遗留。
 	# ★ 行为逐字段不变:键名/键序/初值(`wslot` 0、`widx` -1、`wmags` []、`wlive` -1)与两个
@@ -197,7 +197,7 @@ func _snapshot_player(player: Node) -> Dictionary:
 	#     整个函数** ⇒ 退化成**空字典**(位置/HP 一起丢)。那正是上面 R1 ④ 明确否掉的形态
 	#     ("部分还原 > 完全不还原")⇒ 保持"名字问不到就当 false"的**安全退化**,改用守卫逐名钉住。
 	#   正解是把 weapons 组件(以及其余 4 处的值)**当参数注进来**,不属本任务。
-	#   守卫:`tests/probe/rewind_weapon_probe.gd` 的 S7(行为 + 形状)+ `rewind_probe.gd` 的 ⑨。
+	#   守卫:rewind_weapon_probe.gd(已删·2026-10-09) 的 S7(行为 + 形状)+ `rewind_probe.gd` 的 ⑨。
 	d["wslot"] = wc._current_type
 	d["widx"] = wc._current_index
 	var inv: WeaponInventory = wc.inventory

@@ -52,7 +52,7 @@ func _ready() -> void:
 
 	# 标题带:琥珀标题 + C_HEADER 底 + 只有下边一条线。
 	# ★ 文案**逐字未改** —— 单机「—— 已暂停 ——」/ PvP「—— 菜单 ——」,字号仍取 64
-	#   (L4 视觉守卫按这两条钉着:`tests/manual/kh_l4_visual_probe.gd` 找得到该文本、
+	#   (L4 视觉守卫按这两条钉着:kh_l4_visual_probe.gd(已删·2026-10-09) 找得到该文本、
 	#   且断言它的 font_size == 64)。改文案/字号会当场红。
 	vb.add_child(UiFactory.header_strip("—— 已暂停 ——" if not is_pvp else "—— 菜单 ——", 64))
 

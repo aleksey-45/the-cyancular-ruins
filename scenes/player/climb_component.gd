@@ -10,7 +10,7 @@ var body: CharacterBody2D
 # ★ 为什么是"注入成员"而不是 `update()` 的调用参数或构造参数:宿主引用只在 `_ready` 里拿一次
 #   (`body = get_parent()`),而倍率**每帧都在变**(按住加速键才 >1)⇒ 只能每帧推。
 # ★ 覆盖上限(照实):默认 1.0 ⇒ 调用方忘推 = 静默不加速(不报错)。钉它的是
-#   `tests/probe/rewind_weapon_probe.gd` 的 S10(形状 + 行为两条:梯上 vy 随倍率变)。
+#   rewind_weapon_probe.gd(已删·2026-10-09) 的 S10(形状 + 行为两条:梯上 vy 随倍率变)。
 var haste_mult: float = 1.0
 
 var _latched: bool = false   # 攀附状态:中心在通道格(梯/锁链)即攀附,不受重力

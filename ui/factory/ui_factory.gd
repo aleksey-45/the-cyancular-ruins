@@ -169,7 +169,7 @@ const C_GRACE       := Color(0.72, 0.62, 0.90)      # #B89EE6
 #   `ui/world_label.gd` 三处的 `PLATE_COLOR` 是它的**别名**,`ui/royale_hud.gd` 的
 #   `_plate_box()` 直接引用它 —— 别名/引用里**没有字面量** ⇒ 不构成第二个源。
 #   `ui/pvp_hud.tscn` / `ui/team_hud.tscn` 的 `bg_color` 是**结构上无法派生**的副本
-#   (`.tscn` 引用不到 GDScript 的 const),由 `tests/smoke/ui_palette_single_source_smoke.gd`
+#   (`.tscn` 引用不到 GDScript 的 const),由 ui_palette_single_source_smoke.gd(已删·2026-10-09)
 #   钉住与它逐位相等。
 # ★ 用户 2026-09-15 定为 0.15、同日又下调到 0.1(当天这几个元素先被去掉底板、又垫回来)。
 # ★ **例外:大乱斗排行榜 `royale_hud._board_bg` 单独是 0.25** —— 用户点名把那张玩家栏

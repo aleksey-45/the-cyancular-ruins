@@ -15,7 +15,7 @@ extends Control
 #   (三个 HUD 的 .tscn 里以 `instance=` 引用)。**不要 `Broadcast.new()`** —— 那会得到一具
 #   没有子节点、也没铺满宿主的空 Control。本组件是"**裸骨架 tscn + 代码建子节点**"(与
 #   `ui/hud/status_banner.gd` 同一种取舍:手写锚点是"改错了不报错"的那一类),故脚本里
-#   **没有** `@onready $路径` —— `tests/probe/hud_declarative_probe.gd` 的文件头把这种形状
+#   **没有** `@onready $路径` —— hud_declarative_probe.gd(已删·2026-10-09) 的文件头把这种形状
 #   判为**正确**。
 #
 # ── 视觉(方向 B 的凿刻语汇)─────────────────────────────────────────────
@@ -28,7 +28,7 @@ extends Control
 #   `C_TEXT_MUTE`)在 `ui/factory/ui_factory.gd` 的注释里被划定为"**只给菜单系用**,
 #   对局内 HUD 一律不用"。广播层是**刻意的例外**(用户 2026-10-03 要求把它做得和菜单同一套
 #   器物感)。代价如实记:从此**改这几个菜单 token 会连带改到对局内广播的外观** ——
-#   它们今天被 `tests/probe/menu_style_probe.gd` 按值钉着,所以改它们会**响亮地红**,不是静默。
+#   它们今天被 menu_style_probe.gd(已删·2026-10-09) 按值钉着,所以改它们会**响亮地红**,不是静默。
 #   `C_ACCENT` / `C_TEXT` / `C_TEXT_DIM` / `C_DANGER` / `C_PLATE` 那些"被 HUD 读"的 token
 #   一个都没动,值逐位不变。
 

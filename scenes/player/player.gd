@@ -980,7 +980,7 @@ func rewind_restore(d: Dictionary) -> void:
 	# 武器弹量回溯(用户要求):背包各格残弹 + 手持那件实弹;当前武器不同则切回
 	# ★ 类型化访问(2026-10-04,audit §2.5):这一段从前用**字符串反射**读写武器域
 	#  (`wc.get` / `wc.call` / `live2.set` 带字符串参数)。反射的代价是**改名只在运行期暴露**,
-	#   实测(Godot 4.7.1;改名变异原文见 `tests/probe/rewind_weapon_probe.gd` 文件头):
+	#   实测(Godot 4.7.1;改名变异原文见 rewind_weapon_probe.gd(已删·2026-10-09) 文件头):
 	#   · `get` 拼错 ⇒ **静默返回 null**,整段被 `if inv != null` 跳过,引擎一声不吭;
 	#   · `set` 拼错 ⇒ **静默不写**,同样一声不吭;
 	#   · `call` 拼错 ⇒ 会报一条错,但报的是"`call` 这个通用 API 失败",且**中止整个
@@ -998,14 +998,14 @@ func rewind_restore(d: Dictionary) -> void:
 	#   而不是"只有 `wslot` 变 0"。端到端实测:改回退役名 ⇒ `rewind_probe` 7 条红
 	#   (位置差 276px、HP 30≠50、HUD 血量通知未触发),引擎每帧照报 `Nonexistent 'int' constructor`
 	#   (同一跑 83 行)—— 只是**当时没有任何断言会红**。生产端的订正与守卫在
-	#   `core/sim/world_rewind.gd`(Plan B Task 3)与 `tests/probe/rewind_weapon_probe.gd` 的 S7 段。
+	#   `core/sim/world_rewind.gd`(Plan B Task 3)与 rewind_weapon_probe.gd(已删·2026-10-09) 的 S7 段。
 	#   三样成员都在**已有 `class_name`** 的类上(`WeaponComponent` / `WeaponInventory` /
 	#   `WeaponBase`),且 `mag_ammo` 本来就是**公开字段**(`weapon_base.gd:102`;
 	#   `weapon_component.gd:287` 的 `apply_mag` 也直接写它)⇒ 反射纯属历史遗留,不是必需。
 	# ★ 行为逐字段不变这条**已被 2026-10-05 的 Task 2 取代**(原文:"边界 `mini(held.size(),
 	#   mags.size())` 与 `widx >= 0` / `wlive >= 0` 两处下标守卫**原样保留**")—— 边界与两条守卫
 	#   仍在,但**语句序**与**落弹的那个写法**都改了:见下面那一段 `2026-10-05 Task 2` 的说明。
-	# 行为 + 形状守卫:`tests/probe/rewind_weapon_probe.gd`(S1-S6 + S8)。
+	# 行为 + 形状守卫:rewind_weapon_probe.gd(已删·2026-10-09)(S1-S6 + S8)。
 	#
 	# ★★ 2026-10-05(closeout 批 Task 2)修两处**实测的**回溯保真缺陷(改前就有、本次才修;
 	#   实测仪器 = `reflection-and-input-fallback` Task 1 报告 §发现A / §发现B):
@@ -1075,7 +1075,7 @@ func rewind_restore(d: Dictionary) -> void:
 				#   正常回溯的 `wlive` 取自同一把枪的 `mag_ammo`,而 `_ready` 自己就把它钳进
 				#   `[0, mag_size]` ⇒ 范围内值过 `clampi` 不变(读 `clampi` 即证);
 				#   越界那一档("快照之后那一槽换了型号")**没有任何断言**,见
-				#   `tests/probe/rewind_weapon_probe.gd` 的覆盖上限与 `docs/eng/registered-debt.md` §六.13。
+				#   rewind_weapon_probe.gd(已删·2026-10-09) 的覆盖上限与 `docs/eng/registered-debt.md` §六.13。
 				WeaponComponent.apply_mag(live2, want)
 	if bool(d["downed"]) and not downed_now:
 		combat.set_downed_by_rewind(true)

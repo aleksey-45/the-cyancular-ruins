@@ -13,8 +13,8 @@ extends SceneTree
 # ═══ 跑法(改过 UiFactory 的菜单系样式之后必须重跑)═══
 #   "<GODOT 4.7.1 console>" --headless --path . -s res://tools/gen_menu_theme.gd
 # 之后跑一次 `--import`(让两个 PNG 进导入缓存),再跑两条守卫:
-#   -s res://tests/smoke/ui_palette_single_source_smoke.gd   → UI PALETTE: ALL-OK
-#   --quit-after 3600 res://tests/probe/menu_style_probe.tscn → 全绿
+#   -s res://ui_palette_single_source_smoke.gd(已删·2026-10-09)   → UI PALETTE: ALL-OK
+#   --quit-after 3600 res://menu_style_probe.tscn(已删·2026-10-09) → 全绿
 #
 # ★ 本工具**不引 autoload**(UiFactory / PixelFont 都不依赖它们),故 `-s` 可跑。
 # ★★ 两个 PNG 的 `.import` 里 **`process/fix_alpha_border` 必须为 `false`**(已提交在仓里)。

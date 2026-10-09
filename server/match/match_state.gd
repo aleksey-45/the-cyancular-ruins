@@ -425,7 +425,7 @@ func _record_down(victim_role: int, killer_role: int) -> void:
 	#   早退已经保证**击杀者与受害者异队**,而"attacker 是受害者的队友" ⇒ attacker 与 killer
 	#   **必定不同队** ⇒ 前半句早已为真 ⇒ 那个 `or` 永远不改变结果。
 	# ★★ **删它的前提是"上面那道同队早退还在"** —— 那条前提有**行为面**守卫:
-	#   `tests/probe/team_host_probe.gd` 的 (k4)(`_down(_host, 2, 1)`:受害者的**队友**补刀
+	#   team_host_probe.gd(已删·2026-10-09) 的 (k4)(`_down(_host, 2, 1)`:受害者的**队友**补刀
 	#   ⇒ 谁都不记助攻 + 记一次 `team_kills`)。⇒ 删的是**冗余**,不是**守卫**。
 	#   ★★ **失效条件有两条,不是一条**(2026-09-28 补第二条第 ②):
 	#     ① 哪天要让"队友击杀也算击杀",这道早退会一起改 —— (k4) 会当场红;
@@ -476,7 +476,7 @@ func _fresh_attacker_role(victim_role: int) -> int:
 # ★ `shooter == victim` 的守卫不可省:写端自伤时静默跳过,但万一有人绕过写端直接 set_meta,
 #   这里不能再把自伤算成"自己杀自己"。
 # ★ 本函数**住在底座**,但**调用它的击杀归因函数住子类** ——
-#   `tests/probe/kh_l5_probe.gd:544-549` 的反向断言把那个名字列为"不得出现在基类并集里"。
+#   `kh_l5_probe.gd(已删·2026-10-09):544-549` 的反向断言把那个名字列为"不得出现在基类并集里"。
 func _attributed_role_within(victim: Node2D, window_ms: int) -> int:
 	if not victim.has_meta("last_damager"):
 		return 0

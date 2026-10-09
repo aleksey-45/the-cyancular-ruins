@@ -143,7 +143,7 @@ func _on_snapshot_world(snap: Dictionary) -> void:
 		#   (见 _on_snapshot_own)。把世界包里自己那份写进玩家 = "每帧把权威位置强写进正在预测的
 		#   玩家" = 橡皮筋 —— 那正是被删掉的那条旧路径的写法。别顺手补回来。
 		#   (顺带:"你死了/你活了"这件事服务器经 round_state 的 alive 广播过,但那**不是**给
-		#    C2 玩家状态用的第二条入口 —— 权威只走 on_authoritative。见 tests/harness/royale_c2_watcher.gd 的 A②。)
+		#    C2 玩家状态用的第二条入口 —— 权威只走 on_authoritative。见 royale_c2_watcher.gd(已删·2026-10-09) 的 A②。)
 	# 清理已离开玩家(掉线者从快照消失):副本/头顶ID/血条一并移除(自检 M3 幽灵残留)
 	for role_str in _replicas.keys():
 		if not players_snap.has(str(role_str)):

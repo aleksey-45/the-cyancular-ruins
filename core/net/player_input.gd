@@ -21,7 +21,7 @@ extends RefCounted
 #   现在冻结收在本类的公开读口,子类只覆写不碰 frozen 的 `_*_raw()` 钩子 —— 契约无法绕过。
 #   历史代价(记下来别再犯):客户端 COUNTDOWN 冻结曾靠"客户端恰好用默认 InputSource"侥幸成立;
 #   服务器靠 MatchHost 另调 PacketInputSource.reset_state()、AI 靠自己查 RoundState 兜住。
-#   回归守卫:`tests/smoke/ai_input_source_smoke.gd` 的 9 条 `frozen:` 断言
+#   回归守卫:ai_input_source_smoke.gd(已删·2026-10-09) 的 9 条 `frozen:` 断言
 #   (打在**子类实例**上 —— 基类自己的实现无法证明子类听话)。
 #
 # frozen:PvP COUNTDOWN/局间冻结。置 true 后一切输入读口返回中性值(轴 0、无按键/边沿/切枪),

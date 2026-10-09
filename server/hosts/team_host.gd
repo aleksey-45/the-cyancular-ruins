@@ -26,7 +26,7 @@ const SPAWN_BASE_RADIUS := 30    # 基座附近取点半径(格);池子不够会
 const SPAWN_MAX_TRIES := 12      # 散点重试次数(见 plan_team_spawns 的说明;每份只要 ~几十微秒)
 const RESPAWN_CLEARANCE := 8     # 复活点离**存活敌人**的最小环面距离(格)
 # ★ 队 B 的身体层(层位 5,值 16)。全仓层位占用:1 地形 / 2 玩家 / 4 敌人 / 8 掉落物(WeaponPickup)
-#   —— 第 5 位在本批之前**无人占用**(唯一另一处用值 16 的是 `tests/probe/replica_ghost_probe.gd` 的
+#   —— 第 5 位在本批之前**无人占用**(唯一另一处用值 16 的是 replica_ghost_probe.gd(已删·2026-10-09) 的
 #   备用障碍层,那是探针自己世界里的东西,与生产无关)。契约由 `_init` 末段与探针 ⑩ 共同钉住。
 const TEAM_ENEMY_LAYER := 16
 
@@ -75,7 +75,7 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 # ★ 为什么单独成一个函数、而不是把这几行写在 `_init` 里:探针用「`role_peers` 传空 + 手工摆位」
 #   建宿主,那条路径下 `players` 在 `_init` 那一刻**还是空的** —— 逻辑只写在 `_init` 里的话,
 #   探针就只能**自己再抄一份**配层规则,于是它验的是抄件、不是生产代码(本仓明令禁止的
-#   "第二份真相";`tests/probe/team_host_probe.gd` 的 `_place` 正是为这个显式补调本函数)。
+#   "第二份真相";team_host_probe.gd(已删·2026-10-09) 的 `_place` 正是为这个显式补调本函数)。
 # ★ 幂等:重复调用没副作用(直接赋值,不叠加),故手工摆位路径可以放心再调一次。
 func _apply_team_layers() -> void:
 	for role in players:
@@ -502,7 +502,7 @@ func _broadcast_round_state() -> void:
 # ★ 2026-09-21:原先还有一个读端 —— 「击杀后复位击杀者」那条规则(已按用户要求删除)。
 #   现在它只服务"击杀归属"这一族(`kill_event` 的射手字段 + `_record_down` 的逐人 `kills`)。
 # ★ 为什么自带而不是把 `RoyaleHost._attributed_killer` 上提到基类:基类的归属由
-#   `tests/probe/kh_l5_probe.gd` 的"新接口归属(基类不得含子类方法)"反向断言守着,为省 12 行去动
+#   kh_l5_probe.gd(已删·2026-10-09) 的"新接口归属(基类不得含子类方法)"反向断言守着,为省 12 行去动
 #   那条探针不划算;两份都不足 15 行,读的还是同一个 meta(单一来源仍是 CombatFeedback)。
 func _attributed_killer(victim: Node2D) -> int:
 	return _attributed_role_within(victim, ATTRIB_WINDOW)
@@ -580,7 +580,7 @@ func _finish_match() -> void:
 #   (`_record_down` / `kill_event` 都读 `_attributed_killer` = 0)。
 #   ★ spec §10 第 ⑩ 行原本还写了一句"无归因 → **无人被复位**" —— 那条规则(以及那个三分档)
 #     已随「击杀者复位」整体删除(2026-09-21,见 `_match_round_tick`),现在**任何**归因下都无人被复位。
-# ★★ 本函数**必须留在子类**:`tests/probe/kh_l5_probe.gd` 的"新接口归属"反向断言把
+# ★★ 本函数**必须留在子类**:kh_l5_probe.gd(已删·2026-10-09) 的"新接口归属"反向断言把
 #    `request_suicide_role` 列进**禁入基类**名单(搬进基类 = 未定义符号)。
 # ★ 为什么值得为它单独接一条闸:三局两胜里卡死的玩家比大乱斗难受得多(不能退、只能等对局
 #   被别人打完),而 royale 那份现成 —— `server_main._on_suicide_request` 原先只认 `_royale`,

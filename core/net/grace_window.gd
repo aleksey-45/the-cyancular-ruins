@@ -19,7 +19,7 @@ extends RefCounted
 #        读的就是本常量 —— 单一来源,不会漂;60s 下 `RECONNECT_RETRY_MS`(2s)与
 #        `RECONNECT_ATTEMPT_TIMEOUT_MS`(5s)不变,一次闪断里的重试次数由 ~15 变 ~30,
 #        是"更从容"而不是行为变化。
-#     ② **测试预算**:凡按"宽限期多久"算出来的窗口都要重算 —— `tests/probe/reconnect_probe.gd`
+#     ② **测试预算**:凡按"宽限期多久"算出来的窗口都要重算 —— reconnect_probe.gd(已删·2026-10-09)
 #        的 `GRACE_MIN/MAX` 与 `FINAL_TIMEOUT`、`tests/harness/team_match_watcher.gd` 的 `OBSERVE_MAX`、
 #        `tests/probe/team_match_probe.gd` 的 `RESULT_WAIT`(它的头部注释要求**逐项求和**算,别凭印象)。
 #        这三处是 Task 2。

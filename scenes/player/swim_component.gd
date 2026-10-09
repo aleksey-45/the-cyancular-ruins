@@ -40,7 +40,7 @@ func update(parent: CharacterBody2D, delta: float, move_mult: Vector2 = Vector2.
 	#   ★ 单机那一支**原样保留**(`TimeField.current != null` 时仍自己问世界时间场):它是
 	#     "世界时间"域,不是宿主属性,去掉会把单机水中的加速一起改掉。
 	#   ★ 覆盖上限(照实):默认值 1.0 ⇒ **调用方忘了传**就是"静止加速",静默降级(不报错)。
-	#     钉住它的是 `tests/probe/rewind_weapon_probe.gd` 的 S10(形状 + 行为两条)。
+	#     钉住它的是 rewind_weapon_probe.gd(已删·2026-10-09) 的 S10(形状 + 行为两条)。
 	var tm := haste_mult
 	if TimeField.current != null:
 		tm = TimeField.player_speed_mult()
