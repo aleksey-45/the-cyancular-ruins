@@ -111,10 +111,15 @@ func _ready() -> void:
 	_check(rt_ok, "真实产出的往返逐字段一致(c2 %d/%d 键 · 世界 %d/%d 键 · ack=%s)" % [
 			d2.size(), c2.size(), we.size(), entry.size(), str(od.get("ack_seq"))])
 
-	print("[size] ── N=2..8 折算(单帧载荷 / 每秒单端下行 / 服务器每秒上行)──")
+	print("[size] ── N 折算(单帧载荷 / 每秒单端下行 / 服务器每秒上行)──")
 	print("[size]  N |        旧(dict):单帧  单端下行  服务器上行 |        新(codec):单帧  单端下行  服务器上行")
-	for n in range(2, 9):
+	# ★ 带上 12/16/24:royale 规模。世界包的分片悬崖现在在 N≈27(7+27×51=1384 < 1400)⇒ 只出这一张表。
+	for n in [2, 4, 6, 8, 12, 16, 24]:
 		_report(n, sz_old_own, sz_old_entry, sz_new_own, sz_new_entry)
+
+	# ── 量化 / 增量的**上限测算**(★ 这是**算术测算**,不是已实现的代码;字段表直接取自 schema)──
+	_report_headroom(trail_pts.size(), c2, entry)
+	await _report_change_rate()
 
 	_report_mtu(sz_old_entry, sz_new_entry)
 
@@ -205,6 +210,141 @@ func _frags(payload: int) -> int:
 		return 1
 	var usable := MTU - FRAG_HEADER
 	return int(ceil(float(payload) / float(usable)))
+
+
+# ── 量化 / 增量的上限测算 ──
+# ★ 全部绑在 `SnapshotCodec` 的 schema 表上算,避免"另抄一份字段表"(那是本仓最贵的病)。
+# ★ 这些是**算术上限**,不是实测到的收益;真正落不落地由"值不值得 + 风险"决定,见
+#   [`docs/eng/netcode-snapshots.md`](../../docs/eng/netcode-snapshots.md) §5.1。
+
+func _t_bytes(t: String, trail_n: int) -> int:
+	match t:
+		SnapshotCodec.T_F:
+			return 4
+		SnapshotCodec.T_V2:
+			return 8
+		SnapshotCodec.T_I32:
+			return 4
+		SnapshotCodec.T_TRAIL:
+			return 1 + 8 * trail_n
+	return 1   # U8 / I8 / BOOL
+
+
+func _schema_bytes(schema: Array, trail_n: int) -> int:
+	var n := 0
+	for f in schema:
+		n += _t_bytes(f[1], trail_n)
+	return n
+
+
+## 按字段名取字节(找不到返回 0)—— 让"某个字段组多少字节"始终跟着 schema 走。
+func _field_bytes(schema: Array, name: String, trail_n: int) -> int:
+	for f in schema:
+		if f[0] == name:
+			return _t_bytes(f[1], trail_n)
+	return 0
+
+
+func _mask_bytes(field_count: int) -> int:
+	return int(ceil(float(field_count) / 8.0))
+
+
+func _report_headroom(trail_n: int, c2: Dictionary, entry: Dictionary) -> void:
+	var w := _schema_bytes(SnapshotCodec.WORLD_SCHEMA, trail_n)
+	var c2s := _schema_bytes(SnapshotCodec.C2_SCHEMA, 0)
+	var wpn := _schema_bytes(SnapshotCodec.WEAPON_SCHEMA, 0)
+	var inv := 1 + 6 * (c2.get("inv", []) as Array).size()
+	var own := 8 + c2s + wpn + inv          # 8 = 版本+种类+ack+q+flags
+	print("[size] ── 上限测算(算术,不是已实现代码)──")
+	var w_pv := _field_bytes(SnapshotCodec.WORLD_SCHEMA, "pos", trail_n) \
+			+ _field_bytes(SnapshotCodec.WORLD_SCHEMA, "vel", trail_n)
+	var w_aim := _field_bytes(SnapshotCodec.WORLD_SCHEMA, "aim", trail_n)
+	var w_tr := _field_bytes(SnapshotCodec.WORLD_SCHEMA, "trail", trail_n)
+	print("[size] 世界条目 %d B = pos %d + vel %d + aim %d + trail %d + 其余 %d(★ 线上另加 1 B 的 role)" % [
+			w, _field_bytes(SnapshotCodec.WORLD_SCHEMA, "pos", trail_n),
+			_field_bytes(SnapshotCodec.WORLD_SCHEMA, "vel", trail_n), w_aim, w_tr,
+			w - w_pv - w_aim - w_tr])
+	print("[size] 本人包 %d B = 头 8 + 核心 %d + 武器 %d + 背包 %d" % [own, c2s, wpn, inv])
+
+	# ① 量化:只对**能安全量化**的量(渲染量)。pos 1/4px(9600px×4=38400<65536 ⇒ 2×u16)、
+	#    vel 1/16px/s(2×i16)、aim 1 字节角度(256 向 ≈1.4° 分辨率)。
+	var q_pos := 4
+	var q_vel := 4
+	var q_aim := 1
+	var w_q := w - (_field_bytes(SnapshotCodec.WORLD_SCHEMA, "pos", trail_n) - q_pos) \
+			- (_field_bytes(SnapshotCodec.WORLD_SCHEMA, "vel", trail_n) - q_vel) \
+			- (_field_bytes(SnapshotCodec.WORLD_SCHEMA, "aim", trail_n) - q_aim)
+	print("[size] 量化(世界):pos→2×u16、vel→2×i16、aim→1B 角度 ⇒ %d→%d B(−%d%%)" % [
+			w, w_q, int(round(100.0 * (w - w_q) / float(w)))])
+	# c2 侧只能动 pos/vel/knock(渲染/物理连续量);其余是**回滚锚点**,单方面量化 ⇒ 每次对账都判分歧。
+	var c2_q := c2s - (_field_bytes(SnapshotCodec.C2_SCHEMA, "pos", 0) - q_pos) \
+			- (_field_bytes(SnapshotCodec.C2_SCHEMA, "vel", 0) - q_vel) \
+			- (_field_bytes(SnapshotCodec.C2_SCHEMA, "knock", 0) - q_pos)
+	print("[size] 量化(本人):只动 pos/vel/knock ⇒ %d→%d B(−%d%%),★ 且必须**两端一起量化**" % [
+			c2s + wpn + inv, c2_q + wpn + inv,
+			int(round(100.0 * (c2s + wpn + inv - c2_q - wpn - inv) / float(c2s + wpn + inv)))])
+
+	# ② 增量(变更位 = mask + 只发变了的字段;掩码 1 bit/字段)
+	var wm := _mask_bytes(SnapshotCodec.WORLD_SCHEMA.size())
+	var cm := _mask_bytes(SnapshotCodec.C2_SCHEMA.size() + SnapshotCodec.WEAPON_SCHEMA.size())
+	var pv := w_pv
+	print("[size] 增量(世界):掩码 %dB + 只发变了的字段 ⇒ 只 pos/vel 变 = %dB、pos/vel/aim 变 = %dB、全变 = %dB(退回绝对更好)" % [
+			wm, wm + pv, wm + pv + w_aim, wm + w])
+	var c_lean := 16 + 4 + 4 + 8   # pos/vel + fire_cd/rld_t/aim_f/aim_cf/mag/rld ≈ 4+4+8
+	print("[size] 增量(本人):掩码 %dB ⇒ 只 pos/vel 变 = %dB(−%d%%);+ 开火/换弹那几个 = %dB(−%d%%)" % [
+			cm, cm + 16, int(round(100.0 * (own - cm - 16) / float(own))),
+			cm + c_lean, int(round(100.0 * (own - cm - c_lean) / float(own)))])
+	print("[size] ★ 增量的大头在**本人包**:核心 %d B 里 pos/vel(16 B)每帧都变,其余大部分是慢变量;" % c2s)
+	print("[size]   而世界包的大头(pos/vel/aim = %d B / %d B)**每帧都变** ⇒ 增量在世界包上省不了多少,量化才是那边的手段。" % [
+			pv + _field_bytes(SnapshotCodec.WORLD_SCHEMA, "aim", trail_n), w])
+
+
+# 变更率读数(**合成输入、不含战斗**):增量的收益取决于"每 tick 有几个字段真的变了",
+# 这个数今天没有仪器测 ⇒ 先用真实物理步进 + 注入输入量一次,当作下界/参考。
+# ★ 诚实标注:这是**探针里跑出来的玩家**(无关卡、靠重力下落 + 注入按键),不是真对局;
+#   要定案得在真链路里读(见 netcode-snapshots.md §6)。
+func _report_change_rate() -> void:
+	var src := PacketInputSource.new()
+	_player.set_input_source(src)
+	var prev_c2: Dictionary = _player.capture_state()
+	var prev_w := _entry_world([])
+	var ticks := 30
+	var w_sum := 0
+	var c_sum := 0
+	var w_max := 0
+	var c_max := 0
+	var w_fields := prev_w.size()
+	var c_fields := prev_c2.size()
+	for i in ticks:
+		# 注入一串会动的输入:前 15 tick 按右,之后按住开火(边沿/按住都有)
+		src.apply_packet({"seq": i, "ax": 1.0, "held": 8 if i >= 15 else 0,
+				"pressed": 8 if i == 15 else 0, "released": 0, "winst": 0, "aim": Vector2(1.0, 0.0)})
+		await get_tree().physics_frame
+		var now_c2: Dictionary = _player.capture_state()
+		var now_w := _entry_world([])
+		var wc := _count_changed(prev_w, now_w)
+		var cc := _count_changed(prev_c2, now_c2)
+		w_sum += wc
+		c_sum += cc
+		w_max = maxi(w_max, wc)
+		c_max = maxi(c_max, cc)
+		prev_c2 = now_c2
+		prev_w = now_w
+	print("[size] 变更率(合成输入/无战斗,%d tick):世界 %d/%d 字段均变 %.1f、峰值 %d;本人 %d/%d 字段均变 %.1f、峰值 %d" % [
+			ticks, w_sum, w_fields, float(w_sum) / float(ticks), w_max,
+			c_sum, c_fields, float(c_sum) / float(ticks), c_max])
+	print("[size]   ⇒ 每个 tick 真正变的字段数就是这个数;增量的收益 = 1 − (掩码 + 这些字段) / 全量。")
+
+
+func _count_changed(a: Dictionary, b: Dictionary) -> int:
+	var n := 0
+	for k in a:
+		if not b.has(k):
+			n += 1
+			continue
+		if not _same(a[k], b[k]):
+			n += 1
+	return n
 
 
 # ── 比对工具 ──
