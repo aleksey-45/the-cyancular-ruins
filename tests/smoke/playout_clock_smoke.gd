@@ -10,7 +10,7 @@ extends SceneTree
 # 通过 = `PLAYOUT CLOCK OK(n 条断言)`,判据 grep 文本(**不看退出码**)。
 # ⚠ `-s` 脚本一旦解析/运行出错就走不到 `quit()`、**进程永久挂起** ⇒ 跑它一律套外层 `timeout`。
 
-const EXPECTED_CHECKS := 3
+const EXPECTED_CHECKS := 4
 const PLAYOUT_TICKS := 3
 const DT := 1.0 / 60.0
 
@@ -107,11 +107,30 @@ func _initialize() -> void:
 			"快 1%% 的服务器下,300 帧后渲染时钟须追到 ±2 tick(实得 %.2f,期望 %.2f,差 %.2f)" % [
 					c3.render_tick, want, c3.render_tick - want])
 
+	# ── ④ 参考**不许是"最新收到的包"** ──────────────────────────────────
+	# ★ 抓的缺陷:把参考换回 `latest − playout`(`latest` = 最新已收到 tick)。
+	#   那样在**停流**期间参考**一个 tick 都不动**(它只能跟着包走),而正确实现(按本地时间推进 +
+	#   窗口最小延迟选样)在停流期间照样按 ≈1 tick/帧 走 —— 这正是"抖动能被吸收"的前提。
+	#   ★ 依据:没有任何一手来源主张目标 = 最新样本(NTP RFC 5905 §10 是窗口挑最小 delay;
+	#     Valve/Bernier 2003 明说"向最新目标移动"的方案在包间隔不固定时更差);
+	#     逐条出处见 docs/eng/netcode-playout-clock-sync-sources.md。
+	var c4 := PlayoutClock.new(PLAYOUT_TICKS)
+	c4.on_snapshot(0)
+	for i in 40:                          # 先喂满窗口,让参考稳下来
+		c4.on_snapshot(i + 1)
+		c4.advance(DT)
+	var ref_at := c4.target_tick()
+	for i in 25:                          # 25 帧**一个包都没有**
+		c4.advance(DT)
+	_chk(c4.target_tick() > ref_at + 20.0,
+			"停流 25 帧后**参考**(target_tick)仍须按 ≈1 tick/帧 推进(实得 +%.2f;追最新包时这里恒为 0)" % [
+					c4.target_tick() - ref_at])
+
 	if _checks != EXPECTED_CHECKS:
 		_fails.append("★ 实跑 %d 条断言,与 EXPECTED_CHECKS=%d 对不上(有断言被静默跳过?)" % [
 				_checks, EXPECTED_CHECKS])
 	if _fails.is_empty():
-		print("PLAYOUT CLOCK OK(%d 条断言:每帧推进/单调停流/纠偏)" % _checks)
+		print("PLAYOUT CLOCK OK(%d 条断言:每帧推进/单调停流/纠偏/参考非最新)" % _checks)
 		quit(0)
 	else:
 		for f in _fails:

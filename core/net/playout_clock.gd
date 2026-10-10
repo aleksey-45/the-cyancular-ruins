@@ -1,52 +1,90 @@
 class_name PlayoutClock
 extends RefCounted
 
-# 客户端**播放时钟**(按服务器 tick 计)。副本位置从"朝最新目标追赶"改成"在固定 playout 之后的
-# 时刻做夹逼插值"之后,由它回答一个问题:**此刻该渲染服务器历史的哪一 tick**。
+# 客户端**播放时钟**(按服务器 tick 计)。副本位置走"固定 playout 之后的夹逼插值"之后,
+# 由它回答一个问题:**此刻该渲染服务器历史的哪一 tick**。
 #
-# ★★ 为什么不能"每收一包就把它重置到 `latest - playout`" —— 这是本类存在的**全部理由**:
-#   2026-09-22 那套「双快照 tick 域 alpha 插值」就是这么写的(`push()` 把渲染时钟重置到 `latest - 1`),
-#   在 60fps 渲染 + 60Hz 快照下 ⇒ **缓冲深度恒为 0** ⇒ 插值退化成"直接画最新包的原值" ⇒
-#   对手的平滑度 == 包的**到达**平滑度(抖动 ±8ms 时约一半的帧零位移、另一半走两步)——
-#   用户当时的原话是「位置一跳一跳,看起来敌方掉帧」。**别把那个错误抄回来。**
-#   ⇒ 本类的规矩:**只在第一个包上做一次初始化,之后再不重置**;
-#     渲染时刻由**自己按 60Hz 推进**(与包何时到达无关),包只用来更新 `latest` 并做**小幅纠偏**。
+# ★★ **参考不是"最新收到的包"**(2026-10-09 改)。上一版把目标设成 `latest − playout`(`latest` = 最新已收到 tick),
+#   于是时钟在**追一个锯齿**:实测(3000 帧固定种子,真实现)±16ms 抖动下 p95/max 的超出量是 **+5.8 tick,
+#   且与 playout 4/6/8 无关(5.8/5.8/5.7)** —— 均值对(恒为 `playout − 0.93`)、尾巴全是这个锯齿贡献的。
+#   而**没有任何一手来源主张把目标设成最新样本**:NTP 是"从一窗样本里挑**最小 delay**那一格"(RFC 5905 §10),
+#   RTP 是对到达偏差做**一阶平滑**(RFC 3550 §6.4.1/A.8),Valve/Bernier 2003 是"`客户端时间 − 插值延迟`"
+#   —— 后者甚至明说"**向最新目标移动**的插值方案在包间隔不固定时**表现更差**"(正是本仓旧实现)。
+#   依据与逐条出处:[`docs/eng/netcode-playout-clock-sync-sources.md`](../../docs/eng/netcode-playout-clock-sync-sources.md)。
 #
-# ★ 纠偏(±`DRIFT_MAX`)是 time dilation 的**最小形态**:服务器与客户端是两个时钟(负载/帧率不同),
-#   不纠偏就会**线性累积** —— 缓冲要么被吃穿(画面冻结)、要么越涨越大(延迟无上限)。
-#   ★ 下界恒 > 0(`1 - DRIFT_MAX`)⇒ `render_tick` **单调不减**:播放历史**不许倒退**。
+# **现在的做法(三段,都能挂来源)**:
+#   ① **观测**:每个包给一个"服务器 tick 时间轴落在本地时钟哪儿"的观测 `o = local_ms − tick × 16.667`,
+#      `o` 越小 = 这条路径延迟越小(排队短)。
+#   ② **鲁棒参考**:取最近 `WINDOW`(8)个观测的**最小值**(NTP §10 的选样形态)。迟到的包只能给出
+#      **更大的** `o`,动不了参考 —— 这正是要的。且 `o` 的**长期漂移本身就是两端速率差** ⇒ 目标自动跟着
+#      服务器速率走,**不需要显式的频率状态**(顶掉了上一版"只有相位项 ⇒ 持续速率失配必然留常驻误差"的病)。
+#   ③ **深度跟着观测走**(`_depth_comp()`):`o_min` 挑的是"排队最短"那条路径 ⇒ 它**高估**服务器时间轴的位置
+#      ⇒ 光用它,有效缓冲比名义 `playout` **更浅**(实测:名义 4 在 ±8/±16ms 下单帧最大位移顶到 10.0px,
+#      上限 8.0)。⇒ 用窗口**展布**(`o_max − o_min`)折半补回来。这就是"深度按观测到的抖动设定"
+#      (Ramjee 1994 摘要的"按尖峰自适应"、Gaffer 的 2×/3× 发送间隔、RTP 的抖动估计同族)。
+#   目标 = `(local_ms − o_min) / 16.667 − playout − 深度补偿`(Valve 的形式,offset 是**测出来**的)。
 #
-# ★ 判据:`tests/smoke/playout_clock_smoke.gd`(每帧推进 / 停流后仍单调推进 / 快 1% 的服务器下能追回)。
-#   动这个文件必须先跑它。
+# ★ 时间源是**自己的** `_local_ms`,由 `advance(delta)` 推进(不是墙钟)⇒ **帧率无关、且可被夹具驱动**
+#   (探针手动调 `_process(DT)` 就能造出一条模拟时间轴;用墙钟的话探针的抖动夹具会失效)。
+# ★ `render_tick` **单调不减**:步长恒 `1 ± DRIFT_MAX > 0`;参考往上跳时只会让误差变负、让时钟快一点追,
+#   不会让它倒退。
+#
+# ★ 判据:`tests/smoke/playout_clock_smoke.gd`(每帧推进 / 抖动+乱序到达下单调且停流仍推进 / 纠偏 /
+#   **参考非最新**)。动这个文件必须先跑它。
 
-const TICKS_PER_SEC := 60.0   # 与 `MatchState.SNAPSHOT_INTERVAL`(1/60)同源;引擎物理也是 60Hz
-# ★★ 死区:`|err| ≤ DRIFT_SLACK` 时**一点都不纠偏**(推进恒 1.0)。
-#   为什么必须有它(2026-10-09 扫档实测):`latest` 是**逐包跳变**的(一帧两包/一帧零包),
-#   若按瞬时误差做比例纠偏,误差就是一条**带弱回复力的随机游走** —— ±16ms 抖动下滞后卡在
-#   **42~55 px**,而且**与缓冲深度无关**(playout 2→8 都同样差;±0ms 只有 9.5~38 px)。
-#   加死区后滞后被钉在 `playout ± SLACK` 的带里,缓冲只负责"别穿底/别涨爆"。
-const DRIFT_SLACK := 1.5      # tick:误差死区(落在这里面**不纠偏**)—— 挡住逐包跳变引起的随机游走
-const DRIFT_MAX := 0.10       # 每秒最多快/慢 10%(time dilation 的上限)
-const DRIFT_GAIN := 0.25      # 死区外按比例纠偏的增益
+const TICKS_PER_SEC := 60.0          # 与 `MatchState.SNAPSHOT_INTERVAL`(1/60)同源;引擎物理也是 60Hz
+const TICK_MS := 1000.0 / 60.0       # 一个 tick 多少毫秒(观测换算用)
+const WINDOW := 8                    # NTP §10 的窗口大小(8 级移位寄存器)
+const DRIFT_SLACK := 1.5             # tick:误差死区(落在这里面**不纠偏**)—— 挡住残余抖动
+const DRIFT_MAX := 0.10              # 每秒最多快/慢 10%(time dilation 的上限)
+const DRIFT_GAIN := 0.25             # 死区外按比例纠偏的增益
+const DEPTH_COMP_MAX := 4.0          # 深度补偿的上限(tick)
 
-var render_tick := 0.0        # 本帧要渲染的历史时刻(服务器 tick 域,可以是小数 = 夹在两条快照之间)
+var render_tick := 0.0               # 本帧要渲染的历史时刻(服务器 tick 域,可为小数 = 夹在两条快照之间)
+
 var _playout := 0
-var _latest := -1             # 收到过的最新快照 tick
+var _local_ms := 0.0                 # 本地单调毫秒(模拟时间;见文件头)
+var _offsets: Array[float] = []      # 最近 WINDOW 个观测 `local_ms - tick * TICK_MS`
+var _o_min := 0.0                    # 窗口内最小观测(= 延迟最小那条路径)
+var _o_max := 0.0                    # 窗口内最大观测(诊断 + 深度补偿用)
 var _started := false
 
 
 func _init(playout_ticks: int) -> void:
-	# playout = 我们故意落后服务器多少 tick(缓冲深度)。0 = 不缓冲(等于贴最新,见文件头)。
+	# playout = 我们故意落后服务器多少 tick(缓冲深度;实际深度还会加 `_depth_comp()`)。0 = 不缓冲。
 	_playout = maxi(0, playout_ticks)
 
 
-## 收到一个世界包。★ **只更新 `latest`**;唯一的例外是**第一个包**——那时还没有任何历史可放,
-## 必须给 `render_tick` 一个起点(否则它会从 0 开始追,追到之前一直在渲染空地)。
+## 收到一个世界包。★ 只记一个**观测**;唯一的例外是第一个包——那时要给 `render_tick` 一个起点。
 func on_snapshot(tick: int) -> void:
-	_latest = maxi(_latest, tick)
+	var o := _local_ms - float(tick) * TICK_MS
 	if not _started:
-		render_tick = float(_latest - _playout)
+		_offsets = [o]
+		_o_min = o
+		_o_max = o
 		_started = true
+		render_tick = target_tick()
+		return
+	_offsets.append(o)
+	while _offsets.size() > WINDOW:
+		_offsets.pop_front()
+	_o_min = _offsets[0]
+	_o_max = _offsets[0]
+	for v in _offsets:
+		_o_min = minf(_o_min, v)
+		_o_max = maxf(_o_max, v)
+
+
+## 深度补偿:窗口展布折半(理由见文件头 ③)。
+func _depth_comp() -> float:
+	if _offsets.size() < 2:
+		return 0.0
+	return clampf(roundf((_o_max - _o_min) / TICK_MS * 0.5), 0.0, DEPTH_COMP_MAX)
+
+
+## 本帧的参考(我们要让 `render_tick` 跟上的那个值)。★ 读数 / 判据都用它,不许拿 `latest` 顶替。
+func target_tick() -> float:
+	return (_local_ms - _o_min) / TICK_MS - float(_playout) - _depth_comp()
 
 
 ## 每帧推进一步。`delta` 是**渲染**帧间隔(秒)⇒ 帧率无关。
@@ -54,8 +92,8 @@ func on_snapshot(tick: int) -> void:
 func advance(delta: float) -> void:
 	if not _started:
 		return
-	var target := float(_latest - _playout)
-	var err := target - render_tick
+	_local_ms += delta * 1000.0
+	var err := target_tick() - render_tick
 	var corr := 0.0
 	if absf(err) > DRIFT_SLACK:
 		# 只纠**超出死区**的那部分(比例 + 上限)。死区内 corr 恒 0 ⇒ 推进恰 1.0 tick/帧。
@@ -63,9 +101,14 @@ func advance(delta: float) -> void:
 	render_tick += (1.0 + corr) * delta * TICKS_PER_SEC
 
 
-## 纠偏误差(正 = 我们落后目标,负 = 我们超前)。读数用;判据不直接断它。
+## 纠偏误差(正 = 我们落后参考)。读数用;判据不直接断它。
 func error_ticks() -> float:
-	return float(_latest - _playout) - render_tick
+	return target_tick() - render_tick
+
+
+## 窗口内最小观测(毫秒)。诊断用。
+func offset_min_ms() -> float:
+	return _o_min
 
 
 ## 是否已收到过至少一个快照(没收到之前 `render_tick` 没有意义)。

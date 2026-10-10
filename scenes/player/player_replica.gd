@@ -55,7 +55,7 @@ const SNAP_DIST := 128.0
 #   · `_clock` = 播放时钟(`PlayoutClock`),回答"此刻渲染服务器历史的哪一 tick"。
 # ★ 存 **canonical**、不存锚过的位置:锚要跟着本地玩家的副本空间走,存锚过的会在跨接缝时**整段作废**。
 # ★ 历史容量必须**定长**(不许 append 不裁剪):16 人 = 15 个副本 × 每帧插入。
-const PLAYOUT_TICKS := 4
+const PLAYOUT_TICKS := 5
 const HISTORY_MAX := 12
 
 const POSE_ANIM: Dictionary = {
