@@ -72,21 +72,28 @@ git commit -m "feat(lobby): 大乱斗人数上限 8→16(逐条排查假设 8 �
 
 - [ ] **Step 1: 写失败的断言（1 条，带条数闸 3 → 4）**
 
-在 `snapshot_size_probe` 加：
+★ **判据形式很要紧**：**不许**写成 `7 + 16 * _schema_bytes(WORLD_SCHEMA, 10) <= 1400` 这种**算术自证** ——
+那种写法里"发送侧到底截没截"根本没进判据（改 `TRAIL_SEND_MAX` 它不动 ⇒ 变异时抓不到），
+而且 `TRAIL_SEND_MAX` 一变就两边一起变（**镜像守卫**，本仓 `gen_menu_theme` 那条老账）。
+⇒ 判据要**量真实产物**：拿一个最坏的世界 dict 过一遍**真的编码**，断言**编码出来的字节数**：
 
 ```gdscript
-# ④ 世界包在最坏情况下也必须装进**一个** ENet 包:16 人 × 全员回溯(trail 10 点)
-var worst := 7 + 16 * _schema_bytes(SnapshotCodec.WORLD_SCHEMA, 10)
-_check(worst <= WORLD_PACKET_BUDGET,
-    "世界包最坏(N=16 × trail 10 点)必须 ≤ %d B(实得 %d B = %d 片)" % [
-        WORLD_PACKET_BUDGET, worst, _frags(worst)])
+# ④ 世界包在最坏情况下也必须装进**一个** ENet 包:16 人 × 全员回溯(trail 10 点)。
+#    量的是**真的 encode_world 产出**,所以"发送侧忘了截断"和"表里加了字段"两种都会红。
+var worst_players := {}
+for i in 16:
+    worst_players[str(i + 1)] = _entry_world(_trail_pts(10))     # 10 点 = match_host 的 trail 上限
+var worst_bytes := SnapshotCodec.encode_world({"tick": 0, "players": worst_players}).size()
+_check(worst_bytes <= WORLD_PACKET_BUDGET,
+    "最坏世界包(N=16 × trail 10 点)必须 ≤ %d B(实得 %d B = %d 片)" % [
+        WORLD_PACKET_BUDGET, worst_bytes, _frags(worst_bytes)])
 ```
-（并把它打进 N 表旁边的一行，让**读数**常在。）
+（`_trail_pts(n)` = 造 n 个点的辅助函数，探针本地；并把这行读数打进 N 表旁边，让**读数**常在。）
 
 - [ ] **Step 2: 跑它，确认红**
 
 Run: `"$GODOT" --headless --path . --quit-after 3600 res://tests/probe/snapshot_size_probe.tscn`
-Expected: `✗ 世界包最坏 … 实得 1831 B = 2 片`（spec §1 的算术，这里变成**实测**）。
+Expected: `✗ 最坏世界包 … 实得 1831 B = 2 片`（spec §1 的算术，这里变成**实测**）。
 
 - [ ] **Step 3: 提交（先留红？不 —— 与本批的规矩一致：Step 3 在同一次提交里带修复，见 Task 3）**
 
@@ -119,7 +126,8 @@ Expected: `✓ 世界包最坏 … ≤ 1400 B` / `SNAPSHOT SIZE PROBE: ALL-OK` /
 
 - [ ] **Step 4: 变异验证（1 条）**
 
-把 `TRAIL_SEND_MAX` 调到 10（= 不截断）⇒ 最坏那条断言**必须红**；还原后回绿。
+把 `TRAIL_SEND_MAX` 调到 10（= 不截断）⇒ 最坏那条断言**必须红**（因为判据量的是**真实编码产出**，
+不是自证的算术）；还原后回绿。
 
 - [ ] **Step 5: 提交（含 Task 2 的判据）**
 
@@ -128,6 +136,15 @@ git add server/match/match_snapshot.gd core/net/net_codec.gd tests/probe/snapsho
   docs/eng/netcode-snapshots.md
 git commit -m "fix(net): 世界包的 trail 有界化(最近 4 点) —— 16 人全员回溯时不再分片"
 ```
+
+## 测试面自审（本计划**只加 1 条断言 + 1 条变异**）
+
+| 曾打算 | 处置 | 理由 |
+|---|---|---|
+| 算术式预算断言（自证） | **改写**为"量真实编码产出" | 自证式是**镜像守卫**：改常量两边一起变、变异抓不到 |
+| 加"每字段字节数"的分解断言 | 不做 | 那是**读数**（已在 N 表里打印），钉死 = `D3` |
+| 16 人真链路断言 | 不做 | 本机跑不动；**登记**为边界（Task 4） |
+| 相关性/兴趣管理的守卫 | 不做 | 裁定**不做**该功能 ⇒ 无代码可守 |
 
 ---
 

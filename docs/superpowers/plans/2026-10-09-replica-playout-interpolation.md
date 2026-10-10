@@ -59,6 +59,8 @@
 
 Run: `bash tests/run_all.sh`；`bash tests/smoke/pvp_match_smoke.sh`（先查 `lobby_alive`）
 Expected: `RUN_ALL OK(14 runs / …)`（新增 1 支冒烟 ⇒ 支数 +1）/ `SMOKE PASS`。
+★ **先读当前值再 +1**：`grep -n EXPECTED_SCRIPTS tests/probe/allscript_probe.gd`（现为 **161**），
+改完在提交信息里点名"新增 1 个 `.gd` ⇒ 161 → 162"。**不许写死数字**（本批别的计划也会加文件，落地顺序不定）。
 ★ 这一步**还不许改渲染** ⇒ 位置表现应与改动前一致（回归对照）。
 
 - [ ] **Step 6: 提交**
@@ -121,23 +123,36 @@ git commit -m "feat(replica): 位置改夹逼线性插值(playout 3 tick) ——
 - Modify: `docs/eng/netplay.md`（副本位置平滑那一节）
 - Modify: `tests/probe/replica_smoothness_probe.gd`（打印 `playout_ticks × 滞后 px` 的小表）
 
-- [ ] **Step 1: 打印"playout tick 数 ⇒ 滞后 px / 零位移帧"的表（读数，不判）**
+- [ ] **Step 1:（**可整段砍**）打印"playout tick 数 ⇒ 滞后 px / 零位移帧"的读数表**
 
-跑 0/1/2/3/4/6 六个档（`PLAYOUT_TICKS` 由探针临时覆盖 ⇒ 需要一个 `set_playout_ticks()` 或把常量改成可注入参数）。
-★ **不要**给这张表加断言（D3）。
+★ **先问值不值**：这只是**读数**，不是判据；而为了拿到它要么给产品加一个可注入参数（**产品代码被测试牵着走**），
+要么手工改常量跑六次。**人眼一遍就能定案的话，这一步整段不做。**
+真要做，也**只许在探针里临时改常量跑几档**，**不许**为它给 `player_replica` 加 `set_playout_ticks()`
+（读数不值得换一个产品 API）。
+★ **这张表永远不加断言**（D3：把 px 数钉死）。
 
-- [ ] **Step 2: 人眼过一遍对局（**必须**）**
+- [ ] **Step 2: 人眼过一遍对局（**必须，且是唯一判据**）**
 
 Run: 起服务端 + 两个客户端（**跑前告知用户会弹窗**），左右横移看对手副本。
-Expected: "对手不抖、不忽快忽慢"；★ 这是**唯一**能判"手感"的手段（取图探针已删）。
+Expected: "对手不抖、不忽快忽慢"；★ 取图探针已全删 ⇒ **这是唯一**能判"手感"的手段。
 
 - [ ] **Step 3: 把 `PLAYOUT_TICKS` 定下来并写清依据，提交**
 
 ```bash
 git add docs/eng/netcode-snapshots.md docs/eng/netplay.md tests/probe/replica_smoothness_probe.gd
-git commit -m "docs(net): playout 插值落地 —— 读数表 + 人眼结论 + 常量依据"
+git commit -m "docs(net): playout 插值落地 —— 读数 + 人眼结论 + 常量依据"
 ```
 
 ★ **收尾**：`INTERP_RATE` 若不剩任何引用，随最后一次提交删掉（`grep -rn INTERP_RATE` 必须为空），
 并在 `netplay.md` 里把"指数追赶"整段改写成"历史 + playout"，注明 **2026-09-22 的裁定为何被推翻**
 （当年坏在缓冲深度 0，不是机制错 —— 见本计划 Review Focus #1）。
+
+## 测试面自审（本计划 **+3 条纯逻辑断言 + 1 条探针断言 + 2 条变异**）
+
+| 曾打算 | 处置 | 理由 |
+|---|---|---|
+| 新建 `playout_clock_smoke.gd` | ✅ **保留（唯一值得新建文件的场合）** | `PlayoutClock` 是**新的纯逻辑件**、现有 4 支冒烟都不覆盖；三条规则各自治一个**真实发生过**的缺陷（"每包重置时钟"正是 2026-09-22 那次退化的根因） |
+| playout 档位读数表 | ⏸ **降为可整段砍** | 读数不是判据；且为它加产品 API 不值得 |
+| 把"滞后 px ≤ 15"写成断言 | 不做 | 那是**读数**（探针只打印 `_render_err_max`）；钉死 = `D3`，且手感归人眼 |
+| 相 E"underrun 不许倒退" | ✅ 保留（探针 7 → 8 条） | 与冒烟那条不同层：一个在时钟、一个在取样器；玩家会看到"对手倒着走" |
+| 新取图探针判"顺不顺" | 不做 | 取图探针 2026-10-09 已全删；`AGENTS.md` §2：观感不归自动化 |
