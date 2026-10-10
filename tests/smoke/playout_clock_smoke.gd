@@ -99,13 +99,13 @@ func _initialize() -> void:
 		if t3 > 0:
 			c3.on_snapshot(t3)
 		c3.advance(DT)
-	var want := float(300 * 1.0167) - float(PLAYOUT_TICKS)
-	# ★ 容差取 **2 tick**,不是 1:时钟有 `DRIFT_SLACK` 死区(挡住逐包跳变引起的随机游走,
-	#   理由见 `playout_clock.gd` 的注释),持续速率失配会**收敛到死区边缘**(≈1.5 tick)。
+	# ★ 断言改成**"时钟必须跟上它自己的参考"**(而不是硬编码 `300×1.0167 − playout`):
+	#   深度现在是**抖动驱动**的(到达延迟 95 分位,见 `playout_clock.gd` ③)⇒ 参考的绝对值会随
+	#   夹具变化,硬编码会变成一条"改深度就红"的脆判据。真正要钉的不变量是"**别让误差失控增长**"。
 	#   突变体(去掉纠偏)会线性累积到 ~5 tick ⇒ 这条照样抓得住(实测 M12 CAUGHT)。
-	_chk(absf(c3.render_tick - want) <= 2.0,
-			"快 1%% 的服务器下,300 帧后渲染时钟须追到 ±2 tick(实得 %.2f,期望 %.2f,差 %.2f)" % [
-					c3.render_tick, want, c3.render_tick - want])
+	_chk(absf(c3.target_tick() - c3.render_tick) <= 2.0,
+			"快 1%% 的服务器下,300 帧后时钟须跟上**自己的参考** ±2 tick(参考 %.2f、时钟 %.2f、差 %.2f)" % [
+					c3.target_tick(), c3.render_tick, c3.target_tick() - c3.render_tick])
 
 	# ── ④ 参考**不许是"最新收到的包"** ──────────────────────────────────
 	# ★ 抓的缺陷:把参考换回 `latest − playout`(`latest` = 最新已收到 tick)。
