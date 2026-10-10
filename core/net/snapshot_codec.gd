@@ -80,9 +80,16 @@ const INV_SCHEMA: Array = [["type", T_U8], ["inst", T_I32], ["mag", T_U8]]
 
 const FLAG_WEAPON := 1
 
-# 轨迹点上限(生产者每 3 帧一个、最多 10 个;这里再钳一次 —— 载荷里的长度是**不可信输入**,
-# 不钳就会出现"一个坏字节让解码端循环 255 次分配")。
+# 解码侧**硬顶**:载荷里的长度是**不可信输入**(一个坏字节不该让解码端循环 255 次分配)。
+# ★ 它与下面的**发送侧**上限 `TRAIL_WIRE_MAX` **不是同一个东西**:那个是"线上只带几点"的取舍。
 const TRAIL_MAX := 16
+
+# **线上**最多带几个回溯点(取**最近**的;多余的截断,不报错)。
+# 依据(2026-10-09,配 16 人上限):世界包必须装进**一个** ENet 包,而 `trail` 是这个包里唯一的**变长**字段 ——
+# 16 人 × 物理上限(10 点)= **1847 B ⇒ 2 片**(探针实测),而快照是 `unreliable` 分片 ⇒ **丢一片 = 整帧丢**。
+# 4 点 ⇒ 7 + 16×66 = **1063 B**(留 24% 余量);残像只少了最老的几个点。
+# ★ 判据在 `tests/probe/snapshot_size_probe.gd` ④,量的是**本函数的真实产出**;改这个数必须先跑它。
+const TRAIL_WIRE_MAX := 4
 
 
 # ── 编码 ──
@@ -216,12 +223,13 @@ static func _unpack(r: Dictionary, schema: Array) -> Dictionary:
 	return d
 
 
-# 轨迹 = `[[x, y], …]`(生产者:`match_host._tick_beta_rewind`)。长度前缀 + 每点 2×float32。
+# 轨迹 = `[[x, y], …]`(生产者:`match_host._tick_beta_rewind`,`_rw_trail` 按时间升序)。
+# ★ **线上只带最近 `TRAIL_WIRE_MAX` 个点**(理由见该常量):取**尾部**(最新那段残像),多余的截断。
 static func _put_trail(out: PackedByteArray, trail: Variant) -> void:
 	var pts: Array = trail if trail is Array else []
-	var n := mini(pts.size(), TRAIL_MAX)
+	var n: int = mini(pts.size(), TRAIL_WIRE_MAX)
 	_put_u8(out, n)
-	for i in n:
+	for i in range(pts.size() - n, pts.size()):
 		var p: Variant = pts[i]
 		if p is Vector2:
 			_put_f(out, p.x)

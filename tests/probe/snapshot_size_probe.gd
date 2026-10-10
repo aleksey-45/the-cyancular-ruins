@@ -23,7 +23,16 @@ const MTU := 1400          # ENet 默认 MTU
 const FRAG_HEADER := 8     # 分片包每片大致头部开销(粗估,用于折算片数)
 const SNAP_HZ := 60        # SNAPSHOT_INTERVAL = 1/60
 
-const EXPECTED_CHECKS := 3
+const EXPECTED_CHECKS := 4
+
+# ④ 用到的两个常量。
+# ★ 人数上限**不抄**一份:直接读产品侧的单一来源(`LobbyRooms.ROYALE_MAX_PLAYERS`)。
+# ★ `TRAIL_PHYSICAL_MAX` 是**生产者**的 trail 上限(match_host 的回溯录像每 3 帧一点、最多 10 点),
+#   它是个字面量、没有名字 ⇒ 只能在这里抄一份,注释点名来源;线上真正发多少由
+#   `SnapshotCodec.TRAIL_WIRE_MAX` 决定(那一个才是判据真正盯的东西)。
+# ★ `WORLD_PACKET_BUDGET` = ENet MTU。超了就被分片,而快照是 `unreliable` ⇒ **丢一片 = 整帧丢**。
+const WORLD_PACKET_BUDGET := 1400
+const TRAIL_PHYSICAL_MAX := 10
 
 var _failures: Array[String] = []
 var _checks := 0
@@ -111,6 +120,24 @@ func _ready() -> void:
 	_check(rt_ok, "真实产出的往返逐字段一致(c2 %d/%d 键 · 世界 %d/%d 键 · ack=%s)" % [
 			d2.size(), c2.size(), we.size(), entry.size(), str(od.get("ack_seq"))])
 
+	# ④ **最坏情况的世界包必须装进一个 ENet 包**(2026-10-09 加,配 16 人上限)。
+	# ★ 为什么量的是**真的 encode_world 产出**、而不是 `7 + N * _schema_bytes(...)` 那种算术:
+	#   算术式是**镜像守卫** —— 发送侧到底截没截根本没进判据(改 `TRAIL_SEND_MAX` 它纹丝不动),
+	#   而且常量一变两边一起变。量真实产出,"忘了截断"与"表里加了字段"两种都会红。
+	# ★ 最坏 = 人数上限(`ROYALE_MAX_PLAYERS`=16)× 全员回溯(trail 取满,match_host 里是 10 点)。
+	# ★ 预算取 **1400 B = ENet MTU**:快照走 `unreliable`,超了就被分片,而分片是
+	#   `UNSEQUENCED|UNRELIABLE_FRAGMENT` ⇒ **丢一片 = 整帧丢**(见 docs/eng/netcode-snapshots.md §2.3)。
+	var cap: int = LobbyRooms.ROYALE_MAX_PLAYERS   # 单一来源:不在这里再抄一个 16
+	var worst_players := {}
+	for i in cap:
+		worst_players[str(i + 1)] = _entry_world(_trail_pts(TRAIL_PHYSICAL_MAX))
+	var worst_bytes := SnapshotCodec.encode_world({"tick": 0, "players": worst_players}).size()
+	_check(worst_bytes <= WORLD_PACKET_BUDGET,
+			"最坏世界包(N=%d × trail %d 点)必须 ≤ %d B(实得 %d B = %d 片)" % [
+					cap, TRAIL_PHYSICAL_MAX, WORLD_PACKET_BUDGET, worst_bytes, _frags(worst_bytes)])
+	print("[size] 最坏世界包读数:N=%d × trail %d 点 ⇒ %d B(%d 片,预算 %d B)" % [
+			cap, TRAIL_PHYSICAL_MAX, worst_bytes, _frags(worst_bytes), WORLD_PACKET_BUDGET])
+
 	print("[size] ── N 折算(单帧载荷 / 每秒单端下行 / 服务器每秒上行)──")
 	print("[size]  N |        旧(dict):单帧  单端下行  服务器上行 |        新(codec):单帧  单端下行  服务器上行")
 	# ★ 带上 12/16/24:royale 规模。世界包的分片悬崖现在在 N≈27(7+27×51=1384 < 1400)⇒ 只出这一张表。
@@ -134,6 +161,15 @@ func _ready() -> void:
 	else:
 		print("SNAPSHOT SIZE PROBE: FAIL %s" % str(_failures))
 		get_tree().quit(1)
+
+
+# 造 n 个回溯轨迹点(形状与 `match_host` 的 `_rw_trail` 一致:`[[x, y], …]`)。
+# ★ 值取"丑数"没有意义(量的是字节);这里只保证 n 个点都在。
+func _trail_pts(n: int) -> Array:
+	var out: Array = []
+	for i in n:
+		out.append([1000.0 + float(i) * 3.5, 2000.0 - float(i) * 2.25])
+	return out
 
 
 # ── 真实字段表(逐字对照 match_snapshot._broadcast_snapshot 的 world["players"][role])──
