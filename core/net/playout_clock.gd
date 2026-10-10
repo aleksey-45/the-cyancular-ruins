@@ -20,7 +20,14 @@ extends RefCounted
 #   动这个文件必须先跑它。
 
 const TICKS_PER_SEC := 60.0   # 与 `MatchState.SNAPSHOT_INTERVAL`(1/60)同源;引擎物理也是 60Hz
-const DRIFT_MAX := 0.05       # 每秒最多快/慢 5%
+# ★★ 死区:`|err| ≤ DRIFT_SLACK` 时**一点都不纠偏**(推进恒 1.0)。
+#   为什么必须有它(2026-10-09 扫档实测):`latest` 是**逐包跳变**的(一帧两包/一帧零包),
+#   若按瞬时误差做比例纠偏,误差就是一条**带弱回复力的随机游走** —— ±16ms 抖动下滞后卡在
+#   **42~55 px**,而且**与缓冲深度无关**(playout 2→8 都同样差;±0ms 只有 9.5~38 px)。
+#   加死区后滞后被钉在 `playout ± SLACK` 的带里,缓冲只负责"别穿底/别涨爆"。
+const DRIFT_SLACK := 1.5      # tick:误差死区(落在这里面**不纠偏**)—— 挡住逐包跳变引起的随机游走
+const DRIFT_MAX := 0.10       # 每秒最多快/慢 10%(time dilation 的上限)
+const DRIFT_GAIN := 0.25      # 死区外按比例纠偏的增益
 
 var render_tick := 0.0        # 本帧要渲染的历史时刻(服务器 tick 域,可以是小数 = 夹在两条快照之间)
 var _playout := 0
@@ -43,13 +50,17 @@ func on_snapshot(tick: int) -> void:
 
 
 ## 每帧推进一步。`delta` 是**渲染**帧间隔(秒)⇒ 帧率无关。
-## ★ 单调性由"步长恒正"保证:`1.0 + clamp(err, -DRIFT_MAX, +DRIFT_MAX) ≥ 1 - DRIFT_MAX > 0`。
+## ★ 单调性由"步长恒正"保证:`1.0 + clampf(纠偏, -DRIFT_MAX, +DRIFT_MAX) ≥ 1 - DRIFT_MAX > 0`。
 func advance(delta: float) -> void:
 	if not _started:
 		return
 	var target := float(_latest - _playout)
 	var err := target - render_tick
-	render_tick += (1.0 + clampf(err, -DRIFT_MAX, DRIFT_MAX)) * delta * TICKS_PER_SEC
+	var corr := 0.0
+	if absf(err) > DRIFT_SLACK:
+		# 只纠**超出死区**的那部分(比例 + 上限)。死区内 corr 恒 0 ⇒ 推进恰 1.0 tick/帧。
+		corr = clampf((err - signf(err) * DRIFT_SLACK) * DRIFT_GAIN, -DRIFT_MAX, DRIFT_MAX)
+	render_tick += (1.0 + corr) * delta * TICKS_PER_SEC
 
 
 ## 纠偏误差(正 = 我们落后目标,负 = 我们超前)。读数用;判据不直接断它。

@@ -100,8 +100,11 @@ func _initialize() -> void:
 			c3.on_snapshot(t3)
 		c3.advance(DT)
 	var want := float(300 * 1.0167) - float(PLAYOUT_TICKS)
-	_chk(absf(c3.render_tick - want) <= 1.0,
-			"快 1%% 的服务器下,300 帧后渲染时钟须追到 ±1 tick(实得 %.2f,期望 %.2f,差 %.2f)" % [
+	# ★ 容差取 **2 tick**,不是 1:时钟有 `DRIFT_SLACK` 死区(挡住逐包跳变引起的随机游走,
+	#   理由见 `playout_clock.gd` 的注释),持续速率失配会**收敛到死区边缘**(≈1.5 tick)。
+	#   突变体(去掉纠偏)会线性累积到 ~5 tick ⇒ 这条照样抓得住(实测 M12 CAUGHT)。
+	_chk(absf(c3.render_tick - want) <= 2.0,
+			"快 1%% 的服务器下,300 帧后渲染时钟须追到 ±2 tick(实得 %.2f,期望 %.2f,差 %.2f)" % [
 					c3.render_tick, want, c3.render_tick - want])
 
 	if _checks != EXPECTED_CHECKS:

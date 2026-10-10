@@ -51,7 +51,7 @@ const GHOST_ERR_MAX := 2.0
 # ★ 探针**不抄**那个常量的值(抄了就是第二份真相源),改用 `_script_const("SNAP_DIST")` 直读;
 #   读不到就响亮 FAIL。两侧各留 `SNAP_MARGIN` 的余量。
 const SNAP_MARGIN := 20.0
-const EXPECTED_CHECKS := 7               # 相C×3 + 相A(1) + 相B(1) + 相D(2)
+const EXPECTED_CHECKS := 8               # 相C×3 + 相A(1) + 相B(1) + 相D(2)
 
 var _checks := 0
 
@@ -252,43 +252,76 @@ func _phase_d() -> void:
 		_fail("player_replica.gd 里读不到 `SNAP_DIST` 常量 —— 阈值判据无处可依")
 		return
 
-	# D1:误差 = 阈值 − 余量 ⇒ 一帧之后**必须还在追**(指数追赶一帧只走 1−e^(−k·dt) ≈ 18%)
+	# ★★ 2026-10-09 起,**"大跳变"的判据是「相邻两个权威样本之间的间隔」**,不是"相对渲染位置的误差" ——
+	#   因为位置改走 playout 插值后,清历史(一帧落位)的触发点就在 `_push_history` 里那个样本间距离。
+	#   (旧写法把渲染位置手动摆到远处再喂一个样本:样本间的实际间隔其实很小 ⇒ 判据测的不是它想测的东西。)
+	# D1:相邻样本差 = 阈值 − 余量 ⇒ 一帧之后**不许**硬跳到新样本(仍在放旧的那段)
 	var near_d := snap_d - SNAP_MARGIN
-	_rep.global_position = Vector2(CANON_X, CANON_Y0)
-	_canon = Vector2(CANON_X + near_d, CANON_Y0)
-	_rep.apply_snapshot(_snapshot_dict(_canon), _anchor, _tick)
+	_rep.apply_snapshot(_snapshot_dict(Vector2(CANON_X, CANON_Y0)), _anchor, _tick)
 	_tick += 1
 	_rep._process(DT)
-	var lag := near_d - (_rep.global_position.x - CANON_X)
+	_rep.apply_snapshot(_snapshot_dict(Vector2(CANON_X + near_d, CANON_Y0)), _anchor, _tick)
+	_tick += 1
+	_rep._process(DT)
+	var lag := absf(_rep.global_position.x - (CANON_X + near_d))
 	_checks += 1
-	if lag < near_d * 0.5:
-		_fail("相D1 误差 %.1f px(阈值 %.1f **以下**)一帧就被贴平了(仍差 %.1f px)—— 阈值太低,常态抖动会被硬跳"
-				% [near_d, snap_d, lag])
+	if lag < 10.0:
+		_fail("相D1 相邻样本只差 %.1f px(阈值 %.1f **以下**)却一帧就贴平了 —— 阈值太低,常态抖动会被硬跳"
+				% [near_d, snap_d])
 		return
 
-	# D2:误差 = 阈值 + 余量 ⇒ **一帧必须落位**(回溯/重生是设计好的瞬移,不许演成弹射)
+	# D2:相邻样本差 = 阈值 + 余量 ⇒ **一帧必须落位**(回溯/重生是设计好的瞬移,不许插值横穿)
+	# ★ 必须**换一个干净起点**:D1 已经把最后一条样本推到 `CANON_X + near_d`,若接着喂
+	#   `CANON_X + far_d`,两者只差 40px(远小于阈值)⇒ 测的就不是"大跳变"了(实测栽过这一次)。
 	var far_d := snap_d + SNAP_MARGIN
-	_rep.global_position = Vector2(CANON_X, CANON_Y0)
-	_canon = Vector2(CANON_X + far_d, CANON_Y0)
-	_rep.apply_snapshot(_snapshot_dict(_canon), _anchor, _tick)
+	_begin_case(0.0)
+	_rep._process(DT)
+	_rep.apply_snapshot(_snapshot_dict(Vector2(CANON_X, CANON_Y0)), _anchor, _tick)
+	_tick += 1
+	_rep._process(DT)
+	_rep.apply_snapshot(_snapshot_dict(Vector2(CANON_X + far_d, CANON_Y0)), _anchor, _tick)
 	_tick += 1
 	_rep._process(DT)
 	var rest := absf(_rep.global_position.x - (CANON_X + far_d))
 	_checks += 1
 	if rest > 0.01:
-		var k := _script_const("INTERP_RATE")
-		_fail("相D2 误差 %.1f px(阈值 %.1f **以上**)没有一帧落位(残留 %.1f px)—— 大跳变会被演成弹射:指数追赶在这个误差上首帧速度 ≈ %.0f px/s(%.0f 倍于 300px/s 的移速)"
-				% [far_d, snap_d, rest, far_d * (1.0 - exp(-k * DT)) * 60.0,
-						far_d * (1.0 - exp(-k * DT)) * 60.0 / 300.0])
+		_fail("相D2 相邻样本差 %.1f px(阈值 %.1f **以上**)没有一帧落位(残留 %.1f px)—— 大跳变(回溯/重生)会被插值横穿,演出一段没发生过的位移"
+				% [far_d, snap_d, rest])
 		return
-	print("[replica_smoothness] 相D 阈值 %.0f px:以下(%.0f)一帧后仍差 %.1f px(在追);以上(%.0f)一帧落位,残留 %.3f px"
+	print("[replica_smoothness] 相D 阈值 %.0f px:以下(%.0f)一帧后仍差 %.1f px(在放旧段);以上(%.0f)一帧落位,残留 %.3f px"
 			% [snap_d, near_d, lag, far_d, rest])
+	_phase_e()
 	if _checks != EXPECTED_CHECKS:
 		_fail("★ 实跑 %d 条断言,与 EXPECTED_CHECKS=%d 对不上(有断言被静默跳过?)—— 判词 ALL-OK 只等于「没有失败输出」"
 				% [_checks, EXPECTED_CHECKS])
 		return
 	print("REPLICA SMOOTHNESS PROBE: ALL-OK")
 	get_tree().quit(0)
+
+
+# ── 相 E:位置历史取样的**两侧边界**(2026-10-09,配 playout 插值)──
+# 夹逼插值只有三种情形,后两种**必须冻结**:`t` 在两条样本之间 ⇒ 线性;`t` 比最新还新
+# (缓冲被吃穿 = underrun)⇒ **冻结在最新**,**不外插**;`t` 比最老还老 ⇒ 冻结在最老,**不倒退**。
+# ★ 反例分别是:外插(对手会飞出去)与倒退(玩家看到对手**倒着走**)。
+func _phase_e() -> void:
+	_begin_case(0.0)
+	_rep.place_history = [
+		{"tick": 100, "pos": Vector2(CANON_X, CANON_Y0)},
+		{"tick": 102, "pos": Vector2(CANON_X + 40.0, CANON_Y0)},
+	]
+	var p_new: Vector2 = _rep.call("_sample_history", 120.0)
+	var p_old: Vector2 = _rep.call("_sample_history", 90.0)
+	var p_mid: Vector2 = _rep.call("_sample_history", 101.0)
+	_checks += 1
+	var ok_new := absf(p_new.x - (CANON_X + 40.0)) < 0.01
+	var ok_old := absf(p_old.x - CANON_X) < 0.01
+	var ok_mid := absf(p_mid.x - (CANON_X + 20.0)) < 0.01
+	if not (ok_new and ok_old and ok_mid):
+		_fail("相E 取样边界:underrun 须冻结最新(实得 x=%.2f,期望 %.2f)、太老须冻结最老(实得 x=%.2f,期望 %.2f)、中间须线性(实得 x=%.2f,期望 %.2f)"
+				% [p_new.x, CANON_X + 40.0, p_old.x, CANON_X, p_mid.x, CANON_X + 20.0])
+		return
+	print("[replica_smoothness] 相E 取样:中间线性 x=%.1f;underrun 冻结 %.1f(不外插);太老冻结 %.1f(不倒退)" % [
+			p_mid.x, p_new.x, p_old.x])
 
 
 func _fail(msg: String) -> void:

@@ -55,7 +55,7 @@ const SNAP_DIST := 128.0
 #   · `_clock` = 播放时钟(`PlayoutClock`),回答"此刻渲染服务器历史的哪一 tick"。
 # ★ 存 **canonical**、不存锚过的位置:锚要跟着本地玩家的副本空间走,存锚过的会在跨接缝时**整段作废**。
 # ★ 历史容量必须**定长**(不许 append 不裁剪):16 人 = 15 个副本 × 每帧插入。
-const PLAYOUT_TICKS := 3
+const PLAYOUT_TICKS := 4
 const HISTORY_MAX := 12
 
 const POSE_ANIM: Dictionary = {
@@ -213,10 +213,50 @@ func _set_ghost_pose(pose: int) -> void:
 		(_ghost_shapes[p] as CollisionPolygon2D).disabled = p != pose
 
 # ★ 第三个形参 `_tick` 现在**不参与任何计算**(位置不再走 tick 域缓冲),保留它纯粹是为了
-#   不改调用面:三个生产调用点(`pvp_game` / `royale_game` / `team_game`)与一批探针都按
+#   不改调用面:三个生产调用点(`pvp_game` / `royale_game` / `team_game`)与一批探针都按三参调用,
+#   快照的 `tick` 也确实是副本的契约字段。
 # ★★ 2026-10-09:`tick` **开始参与计算了** —— 它进播放时钟与位置历史(playout 插值,见文件头)。
 #   (旧注释写的"位置不再走 tick 域缓冲"描述的是 2026-09-22 那次改回指数追赶;本轮又走回"按 tick"了,
 #    但**机制不同**:那次是"每包把渲染时钟重置到 latest-1"⇒ 缓冲深度 0;这次是时钟自己走、包只报进度。)
+
+## canonical → 锚到本地玩家(相机)最近的那一份副本。
+func _anchor_of(canon: Vector2) -> Vector2:
+	return MazeGenerator.anchor_to_nearest(canon, _local_anchor,
+			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+
+
+## 在 `t`(服务器 tick 域,可为小数)处取样。夹逼线性插值;两侧**都冻结**:
+##   · `t` 比最新样本还新(= 缓冲被吃穿,underrun)⇒ 冻结在**最新**,**不外插**(外插会让对手飞出去);
+##   · `t` 比最老样本还老 ⇒ 冻结在**最老**,**不倒退**(倒退 = 玩家看到对手倒着走)。
+## ★★ 两端必须锚进**同一个副本空间**再插:`b` 锚到 **`pa`**(不是 `_local_anchor`)——
+##   各自锚到本地锚点时,若一个落在锚点 −MAP/2、另一个落在 +MAP/2,差量会变成**整整一幅地图**,
+##   插值就横穿全图。这与 `_process` 里"取样后再锚回可见副本"是同一件事的两半。
+func _sample_history(t: float) -> Vector2:
+	var n := place_history.size()
+	if n == 0:
+		return _opponent_canonical
+	var first: Dictionary = place_history[0]
+	var last: Dictionary = place_history[n - 1]
+	if t <= float(first["tick"]):
+		return _anchor_of(first["pos"])
+	if t >= float(last["tick"]):
+		return _anchor_of(last["pos"])
+	for i in range(n - 1):
+		var a: Dictionary = place_history[i]
+		var b: Dictionary = place_history[i + 1]
+		var ta := float(a["tick"])
+		var tb := float(b["tick"])
+		if t < ta or t > tb:
+			continue
+		var pa := _anchor_of(a["pos"])
+		var pb := MazeGenerator.anchor_to_nearest(b["pos"], pa,
+				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+		if tb <= ta:
+			return pb
+		return pa.lerp(pb, (t - ta) / (tb - ta))
+	return _anchor_of(last["pos"])
+
+
 func _push_history(tick: int, canon: Vector2) -> void:
 	# ★ 大跳变(回溯 / 重生 / 换边)= **历史作废**:插值**不许横穿一次瞬移**(那会演出一段没发生过的位移)。
 	if not place_history.is_empty():
@@ -344,21 +384,14 @@ func _process(delta: float) -> void:
 			global_position = target
 			_placed = true
 		else:
-			# 当前渲染位置也锚到 target 所在的副本空间,再做**普通差量**追赶。
-			# ★★ 别改成 `toroidal_delta_px(global_position, target, …)` 的"最短路径"写法:渲染位置与
-			#   目标相隔整幅地图时最短向量为 0,副本一旦漂到远副本就永远留在那儿(对手渲染到屏幕外
-			#   「看不见」)—— 那正是旧方案被替换掉的原因。先把两端各自锚进同一副本空间,差量才是
-			#   要追赶的那个真实位移。
-			var current := MazeGenerator.anchor_to_nearest(global_position, target,
-					GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
-			if (target - current).length() > SNAP_DIST:
-				# 大跳变(回溯 / 重生 / 换边):**一帧落位**,别演成弹射 —— 依据与阈值见 `SNAP_DIST` 的注释。
-				# ★ 判据是**锚进同一副本空间之后**的误差:整幅地图的偏移经上面那一步已归一,不算大跳变
-				#   (环面上它们是同一处)⇒ 相 B 那条"卡在远副本"的守卫不受影响。
-				global_position = target
-			else:
-				global_position += (target - current) * (1.0 - exp(-INTERP_RATE * delta))
+			# **按播放时钟取样**(夹逼线性插值,2026-10-09 取代"朝最新目标指数追赶"):
+			# 渲染的是 `render_tick` 那一刻的历史位置 —— 延迟是**选出来的常量**(PLAYOUT_TICKS
+			# = 3 tick = 50ms),不再是低通滤波器涌现出来的 `v/k`(实测 22.6~37.2px)。
+			# ★ underrun(缓冲被吃穿)与"比最老还老"都在 `_sample_history` 里**冻结**。
+			global_position = _sample_history(_clock.render_tick)
 			# 渲染位置归到本地玩家(相机)最近副本:确保渲染在可见副本,不留在远副本。
+			# ★★ 这一句与 `_sample_history` 里的"b 锚到 a"是**同一件事的两半**,别顺手简化:
+			#   取样在 pa 的副本空间里做,这一步才把它搬回可见副本。
 			global_position = MazeGenerator.anchor_to_nearest(global_position, _local_anchor,
 					GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 		# ★★ 幽灵体**不跟着平滑走**(2026-09-22):它跟的是**未经平滑的原始权威位置** `target`。
