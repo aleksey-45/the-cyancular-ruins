@@ -41,8 +41,8 @@
 - Modify: `core/net/net_bus.gd:203`（`send_input` 载荷 `Dictionary` → `PackedByteArray`，在此解码再 emit）
 - Modify: `server/match/match_host.gd` `_on_input`（收到的仍是命令数组；本任务窗口 = 1）
 - Modify: `server/match/match_snapshot.gd`、`tests/probe/snapshot_size_probe.gd`（改引用名）
-- Create: `tests/smoke/input_packet_codec_smoke.gd`（+ `.gd.uid`）
-- Modify: `tests/probe/allscript_probe.gd`（`EXPECTED_SCRIPTS` 161 → **162**）
+- Modify: `tests/smoke/server_input_sanitize_smoke.gd`（21 → **24** 条：**不新建文件**，见文末"测试面为什么这么小"）
+- Create: 无
 - Modify: `docs/eng/netcode-input-uplink.md` §7（`~20B` 的订正已在 spec 里；接线后补实测）
 
 **Interfaces:**
@@ -70,27 +70,33 @@ Run: `bash tests/run_all.sh`
 Expected: `RUN_ALL OK(13 runs / 10 gated-assertions)`，且 `snapshot_size_probe` 的打印仍是
 `世界包条目 … 368 B → 51 B`、`本人包 … 884 B → 102 B`（**改名不许动任何字节**）。
 
-- [ ] **Step 3: 写失败的冒烟（3 条断言 + 条数闸）**
+- [ ] **Step 3: 在**已有**的输入冒烟里写失败判据（+3 条，21 → 24）**
 
-`tests/smoke/input_packet_codec_smoke.gd`（`extends SceneTree`；`PacketInputSource extends PlayerInput extends RefCounted`
-⇒ **纯逻辑，`-s` 可跑**）：
+★ **不新建文件**：`server_input_sanitize_smoke.gd` 的文件头写的就是"**协议健壮性**（版本不匹配的客户端 / 有 bug 的
+客户端 / 单机壳里跑出来的包）" —— 线格式编解码**正属于它**。新建一支 = 同一子系统两份冒烟 + 一次
+`EXPECTED_SCRIPTS` 改动 + 批里多一支,**全是税**（本仓 2026-10-09 那刀的精神）。
+
+在该文件加 3 条（每条的红线写在注释里）：
 
 ```gdscript
-const EXPECTED_CHECKS := 3
-# ① 表与生产者的产出**逐键对齐**(去掉什么才红:改 INPUT_SCHEMA 的键/加字段不登记)
-var src := PacketInputSource.new()
+# ① 表与生产者**逐键对齐**（★ 这是本任务**唯一**的承重断言：去掉什么才红 = 改 INPUT_SCHEMA 的键、
+#    或给 pack_record 加字段不登记 ⇒ 那个字段在线上被**静默丢掉**）
+var src := PacketInputSource.new()          # PlayerInput extends RefCounted ⇒ -s 里可 new
 var pkt := PacketInputSource.pack_record(src, 7, Vector2(0.6, -0.8))
-# 断言:pkt 的键集 == INPUT_SCHEMA 的键集(双向,差异要打印出来)
-# ② 真实产出往返一致(去掉什么才红:encode/decode 任一侧写错位)
-# 断言:decode_input_batch(encode_input_batch([pkt]))[0] 与 pkt 逐键一致(float 用 is_equal_approx)
-# ③ 坏输入必须返回空(去掉什么才红:删掉版本/长度守卫)
-# 断言:翻转首字节 ⇒ ==[];截断 5 字节 ⇒ ==[];拿世界包喂 decode_input_batch ⇒ ==[]
+# 断言:pkt 键集 == NetCodec.INPUT_SCHEMA 键集(双向,差异要打出来)
+# ② 真实产出往返一致（去掉什么才红:encode/decode 任一侧写错位 —— 这个仓真发生过，见 mutate.py 的 M1/M2）
+# 断言:decode_input_batch(encode_input_batch([pkt]))[0] 逐键一致(float 用 is_equal_approx)
+# ③ 坏输入必须返回空（去掉什么才红:删掉版本/长度守卫 ⇒ 错位的值被喂进服务器模拟）
+# 断言:翻首字节 ⇒ [];截断 5 字节 ⇒ [];拿世界包喂 decode_input_batch ⇒ []
 ```
+
+★ **刻意不加的**：体积断言（那是**读数**不是判据，改了数值就会红 = D3）；`aim`/`ax` 的精度断言（那是**手感**，
+归人眼，见 `AGENTS.md` §2 最后一行）。
 
 - [ ] **Step 4: 跑冒烟确认它红**
 
-Run: `"$GODOT" --headless --path . -s res://tests/smoke/input_packet_codec_smoke.gd`
-Expected: 脚本报 `Identifier "NetCodec"? … ` 或 `encode_input_batch` 不存在 ⇒ **FAIL**（未实现）。
+Run: `"$GODOT" --headless --path . -s res://tests/smoke/server_input_sanitize_smoke.gd`
+Expected: `SERVER INPUT SANITIZE FAILED` + `★ 实跑 21 条断言,与 EXPECTED=24 对不上`（实现还没写）。
 
 - [ ] **Step 5: 实现 `encode_input_batch` / `decode_input_batch`**
 
@@ -110,23 +116,23 @@ Expected: 脚本报 `Identifier "NetCodec"? … ` 或 `encode_input_batch` 不�
 - [ ] **Step 7: 跑三档并记录读数**
 
 Run: 冒烟 + `bash tests/run_all.sh` + 真链路 `bash tests/smoke/pvp_match_smoke.sh`（**先查 `lobby_alive`**）
-Expected: `INPUT PACKET CODEC OK(3 …)` / `RUN_ALL OK(14 runs / 13 gated-assertions)` / `SMOKE PASS`；
+Expected: `SERVER INPUT SANITIZE OK(24 …)` / `RUN_ALL OK(13 runs / 10 gated-assertions)`（**支数不变 = 没新增文件**）/ `SMOKE PASS`；
 输入包字节数打印应为 **25 B**（旧 164 B），N=8 服务器下行 **≈10 KB/s**（旧 76 KB/s）。
 
-- [ ] **Step 8: 逐条变异验证（档 3 必做）**
+- [ ] **Step 8: 逐条变异验证（档 3 必做，但只做**承重那两条**）**
 
-改 → 跑 → **确认红** → **在 `finally` 里用内存原字节还原**（见 `.superpowers/net/mutate.py` 的写法）：
-M1 `_put_f` 改 0.5 步进 ⇒ 断言②红；M2 `INPUT_SCHEMA` 的 `aim` 改 `T_I32` ⇒ 断言①②红；
-M3 `decode_input_batch` 删版本守卫 ⇒ 断言③红。
+改 → 跑 → **确认红** → **在 `finally` 里用内存原字节还原**（写法见 `.superpowers/net/mutate.py`）：
+M1 `_put_f` 改 0.5 步进 ⇒ 断言②红；M2 `decode_input_batch` 删版本守卫 ⇒ 断言③红。
+★ **不做**第三条（改 `INPUT_SCHEMA` 的键 ⇒ 断言①红）：那一条是"表被改错"，属于**改代码时一眼可见**的类型，
+变异验证的边际价值最低 —— 按档 3 的"**挑最承重的**"分级，不按条数平摊。
 
 - [ ] **Step 9: 提交**
 
 ```bash
 git add core/net/net_codec.gd core/net/net_codec.gd.uid core/net/net_bus.gd \
   core/net/packet_input_source.gd scenes/pvp_match_client.gd server/match/match_host.gd \
-  server/match/match_snapshot.gd tests/smoke/input_packet_codec_smoke.gd \
-  tests/smoke/input_packet_codec_smoke.gd.uid tests/probe/snapshot_size_probe.gd \
-  tests/probe/allscript_probe.gd docs/eng/netcode-input-uplink.md docs/eng/netcode-snapshots.md
+  server/match/match_snapshot.gd tests/smoke/server_input_sanitize_smoke.gd \
+  tests/probe/snapshot_size_probe.gd docs/eng/netcode-input-uplink.md docs/eng/netcode-snapshots.md
 git commit -m "feat(net): 输入包手打包(164B→25B) —— 复用快照那套 schema 表与版本字节"
 ```
 
@@ -187,51 +193,62 @@ git commit -m "feat(net): 输入按 seq 去重/保序入库(1 seq = 1 tick 的�
 **Files:**
 - Modify: `scenes/pvp_match_client.gd`（新增最近 N 条已发命令的环形表；每包发最近 N 条）
 - Modify: `core/net/net_bus.gd:203`（`@rpc("any_peer", "call_remote", "unreliable_ordered", 1)`）
-- Modify: `tests/smoke/server_input_sanitize_smoke.gd`（+2 条：窗口突发 / 窗口外有界）
+- Modify: 无测试文件（**见下：这一任务不加新断言**）
 
 **Interfaces:**
 - Consumes: Task 1 的 `encode_input_batch` / `decode_input_batch`（已支持 N 条）· Task 2 的 `ingest_window`
-- Produces: `pvp_match_client._recent_cmds: Array`（**存已编码过的 `Dictionary` 原样**，容量 `INPUT_REDUNDANCY := 3`）
+- Produces: `pvp_match_client._recent_cmds: Array`（**存已组好的 `Dictionary` 原样**，容量 `INPUT_REDUNDANCY := 3`）
 
-- [ ] **Step 1: 写失败判据（2 条）**
+★ **这一任务为什么一条新断言都没有**：它新增的**唯一**逻辑是"每包多发几条"和"换个传输模式"。
+- "窗口内多命令要全入队""超窗突发有界且保序" —— **Task 2 的断言③④已经逐字覆盖**（那两条喂的就是窗口/乱序），
+  在这里再写一遍 = **D4（与别处同源重复）**，是永久税。
+- "通道模式"由**既有的** `rpc_channel_contract_smoke` 管（它逐条比对 `netplay.md` 的通道表）。
+- 剩下唯一没被覆盖的失败模式是**"重发时重新采样了当前输入"**（同一 `seq` 两份内容 ⇒ 静默分歧）。
+  它**没有便宜的行为判据**（要真两端对打才现形）⇒ 归**真链路 + Review Focus #3**，不硬造一条读源码文本的守卫（那是 D6）。
 
-① 一 tick 到 3 条不同命令（`[n+1,n+2,n+3]`，窗口 3）⇒ **全部入队**（去掉冗余 ⇒ 只入 1 条 ⇒ 红）；
-② 窗口外的突发（一次 10 条）⇒ 队 ≤ `QUEUE_CAP_MAX` 且 `seq` 升序（有界 + 保序 ⇒ 红在任一侧）。
-
-- [ ] **Step 2: 实现发送端 ring**
+- [ ] **Step 1: 实现发送端 ring**
 
 `pvp_match_client._physics_process`：`_input_seq += 1` → `pack_record` → `_recent_cmds.append(pkt)` → 裁到 3 →
 `NetCodec.encode_input_batch(_recent_cmds)` → `rpc_id(1, "send_input", …)`。
 ★ **重发的是存下来的原包内容，绝不许重新采样当前输入**（重采 = 同一 `seq` 两份不同内容 = 静默分歧）。
 
-- [ ] **Step 3: 改传输模式并同步契约**
+- [ ] **Step 2: 改传输模式**
 
 `net_bus.gd` 的 `send_input` 改 `"unreliable_ordered"`，**通道号仍是 1**（⇒ ENet 道 2，flags=0 = 有序不重传）。
 Run: `"$GODOT" --headless --path . -s res://tests/smoke/rpc_channel_contract_smoke.gd`
 Expected: `RPC CHANNEL CONTRACT OK(6 …)`（通道表**无需改**）。
 
-- [ ] **Step 4: 跑默认批 + 真链路**
+- [ ] **Step 3: 跑默认批 + 真链路（这是本任务的主要验证手段）**
 
 Run: `bash tests/run_all.sh`，然后 `bash tests/probe/rejoin_probe.sh` 与 `bash tests/smoke/pvp_match_smoke.sh`
-Expected: `RUN_ALL OK(14 runs / )` / `REJOIN PROBE: ALL-OK(5 …)` / `SMOKE PASS`；输入包 **≤ 72 B**。
+Expected: `RUN_ALL OK(13 runs / 10 gated-assertions)` / `REJOIN PROBE: ALL-OK(5 …)` / `SMOKE PASS`；
+输入包 **≤ 72 B**。★ 每支**前后**本线 Godot 进程为 0。
 
-- [ ] **Step 5: 变异验证**
-
-M7 把 `_recent_cmds` 改成每包只发当前一条 ⇒ 判据①红；M8 去掉发送端裁剪 ⇒ 判据②红。
-
-- [ ] **Step 6: 提交**
+- [ ] **Step 4: 提交**
 
 ```bash
-git add scenes/pvp_match_client.gd core/net/net_bus.gd tests/smoke/server_input_sanitize_smoke.gd \
-  docs/eng/netplay.md
+git add scenes/pvp_match_client.gd core/net/net_bus.gd docs/eng/netplay.md
 git commit -m "feat(net): 输入包带最近 3 条命令冗余,通道降为 unreliable_ordered —— 解掉可靠有序的队头阻塞"
 ```
 
 ---
 
-### Task 4: 丢包注入仪器（否则 Task 3 的收益无法定案）
+### Task 4（**按需，先别写代码**）: 让 Task 3 的收益可测量
 
-**Files:**
+★ **先分层**：T1（164→25 B）是**无条件的净赚**，不需要任何仪器；T2 是廉价保险；
+**只有 T3 的"队头阻塞消失了"这个说法需要读数**。而拿读数**不一定**要自己写代理：
+
+| 路子 | 代价 | 适用 |
+|---|---|---|
+| **A. 真 WAN 局 + 现成的 `--netstat`** | **零新代码** —— `lag_ms − ping` 那一列现成 | 只要有一个异地朋友就能打一局 |
+| **B. 现成的丢包工具**（Windows `clumsy` / Linux `tc netem`） | 零新代码 | 要**可复现的档位**但不需要自动化 |
+| **C. 自己写 UDP 代理**（下面的步骤） | ≈150 行 Python + 一个产品侧的测试开关 + 一支跑法脚本 | 只有要**进批、可回归**的读数时才值 |
+
+⇒ **Step 0 是决策点**：先用 A 或 B 跑一次，把 `lag_ms − ping` 在改动前后各读一遍。
+**读数已经够定案 ⇒ 计划到此结束**，C 那三步**不做**（并把它登记为"需要时的下一步"）。
+只有 A/B 都拿不到（例如没有异地对手、也不想装第三方工具）才往下走。
+
+**Files（仅 C 路线）：**
 - Create: `tests/scripts/netem_proxy.py`（UDP 代理：丢包率/延迟/抖动，**种子固定**，退出时打印**实际**丢包数）
 - Modify: `core/net/net_bus.gd` `start_client`（读 `--proxy-port=N` ⇒ 连 `127.0.0.1:N`，**单点开关**：两处连接点都走它）
 - Create: `tests/scripts/netem_run.sh`（起大厅/worker → 起代理 → 客户端带 `-- --netstat --proxy-port=N` 跑 60s → grep 读数）
@@ -240,6 +257,11 @@ git commit -m "feat(net): 输入包带最近 3 条命令冗余,通道降为 unre
 **Interfaces:**
 - Consumes: `NetBus.start_client(addr, port)`（`scenes/lobby_page.gd:333` 与 `scenes/pvp_match_client.gd:1192` 两个调用点共用它）
 - Produces: `-- --proxy-port=N`（写在 `--` 之后）· 代理 CLI：`--listen 7801 --forward 7802 --loss 5 --delay-ms 40 --jitter-ms 20 --seed 20261009`
+
+- [ ] **Step 0: 先用 A 或 B 拿数（**不写代码**）**
+
+Run: 改动**前**打一局（`-- --netstat`），记下 `lag_ms − ping` 的**形状**；T3 落地后再打一局记同样的数。
+Expected: 两次读数能回答"积压有没有回落"。**能回答 ⇒ 停在这里**；回答不了 ⇒ 往下走 C。
 
 - [ ] **Step 1: 写代理并自证它不是瓶颈**
 
@@ -284,9 +306,30 @@ git commit -m "test(net): 补 UDP 丢包/抖动注入仪器 —— 用它结案�
 | **相关性 / 带宽上限**（大乱斗规模） | 先定**最大人数**：≤8 人则 72 KB/s 够用，**这条可以直接删掉**；≥16 人才值得做优先级累加器 | 定人数目标 |
 | **playout 缓冲插值**（渲染手感） | **仓主拍板**：现状恒滞后 22.6~37.2px vs 缓冲 3 tick = 50ms 常量 | 先做客户端时钟同步（否则"渲染在多久之前"不可算） |
 
+## 测试面为什么这么小（全计划一共只加 **6 条断言**，0 个新文件）
+
+按 `AGENTS.md` 的**三问**逐条过了一遍本计划里的每一件测试物，砍掉了三处：
+
+| 原打算 | 处置 | 理由 |
+|---|---|---|
+| **新建** `input_packet_codec_smoke.gd`（+新文件 +`EXPECTED_SCRIPTS` 改动 +批里多一支） | **并入** `server_input_sanitize_smoke.gd` | 那支的文件头写的就是"**输入包的协议健壮性**"；新建 = `D4` 同源重复 + 三笔税 |
+| T3 的 2 条（窗口突发 / 超窗有界） | **删** | T2 的断言③④**逐字覆盖**（喂的就是窗口/乱序）⇒ 再写一遍是 `D4` |
+| T4 的代理（150 行 Python + 产品侧测试开关） | **降为按需**（Step 0 决策点） | 拿 `lag_ms − ping` 有**零代码**的路子（真 WAN 局 / 现成丢包工具） |
+| T1 的**体积断言** | 不做 | 它是**读数**不是判据；钉死数值 = `D3` |
+| T1 的 `aim/ax` 精度断言 | 不做 | 那是**手感**，`AGENTS.md` §2 明文"守卫在这里没有意义" |
+| T3 的"重发不许重采样"守卫 | 不做 | 只能靠读源码文本（`D6`）⇒ 归真链路 + Review Focus |
+
+**留下的 6 条，每条都答得出"去掉什么它才会红"**：
+`schema 与 pack_record() 逐键对齐`（← **唯一承重的那条**，治"枚举会过期"）·
+`真实产出往返一致`（治编解码单侧错位，本仓真发生过）· `坏输入返回空`（治错位值喂进模拟）·
+`同一 seq 只留一条 + 幂等` · `纪元归零后 seq=1 放行`（治重连后该玩家再也动不了）· `乱序窗口作废且保序`。
+
+**外加三件不是"测试代码"的东西**（但它们是本计划的证据）：变异验证 2 条（Task 1 Step 8）·
+真链路 4 支 · 以及一行读数（输入包字节数/N=8 服务器下行）。
+
 ## Self-Review
 
-- **Spec 覆盖**：§4.1（164 B）→ Task 1；§4.2（队头阻塞）→ Task 3；§4.3（顺序依赖）→ Task 1 必须先于 Task 3；§5.2 的"去重"→ Task 2；§6 判据 → Task 1/2 的条数闸 + Task 4 的读数；§7 文档漂移 → Task 1 Step 9。
-- **类型一致**：`encode_input_batch`/`decode_input_batch`/`ingest_window` 三个签名在 Task 1/2/3 中逐字一致；`push_pending` 的签名与返回语义**全程不变**（既有 6 条断言继续成立）。
-- **Review Focus 各有归属**：#1 → Task 1 Step 3 断言③；#2 → Task 2 断言②；#3 → Task 3 断言①；#4 → Task 3 Step 4 的真链路 + §8 登记；#5 → Task 4 Step 1 的自报丢包率。
-- **未决项（不藏）**：`INPUT_REDUNDANCY = 3` 是按 §2 的"0.05s 保护"定的，不是按真对局丢包分布定的 —— Task 4 的读数可能要求改它；Task 3 若读数不利则回退。
+- **Spec 覆盖**：§4.1（164 B）→ Task 1；§4.2（队头阻塞）→ Task 3；§4.3（顺序依赖：先打包才轮到冗余）→ Task 1 必须先于 Task 3；§5.2 的"去重"→ Task 2；§6 判据 → 上表 6 条 + Task 4 的读数；§7 文档漂移 → Task 1 Step 9。
+- **类型一致**：`encode_input_batch` / `decode_input_batch` / `ingest_window` 三个签名在 Task 1/2/3 中逐字一致；`push_pending` 的签名与返回语义**全程不变**（既有 6 条断言继续成立）；`INPUT_REDUNDANCY` 只在 Task 3 引入。
+- **Review Focus 各有归属**：#1 → Task 1 Step 3 断言③；#2 → Task 2 断言②；#3 → Task 3 Step 3 真链路（**无便宜判据，照实说**）；#4 → Task 3 Step 3 + `netcode-input-uplink.md` §8 登记；#5 → 仅路线 C 的 Task 4 Step 1（自报丢包率）。
+- **未决项（不藏）**：`INPUT_REDUNDANCY = 3` 是按 spec §2 的"0.05s 保护"定的，不是按真对局丢包分布定的 —— Task 4 的读数可能要求改它；**若读数不利，T3 连同 T4 一起回退**（那时它们是净增复杂度）。
