@@ -1133,7 +1133,7 @@ unique_name_in_owner = true
 custom_minimum_size = Vector2(300, 30)
 layout_mode = 2
 min_value = 2.0
-max_value = 8.0
+max_value = 16.0
 value = 4.0
 
 [node name="MaxPlayersLabel" type="Label" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer1/MaxPlayersRow" unique_id=565950053]

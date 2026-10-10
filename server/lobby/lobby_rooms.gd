@@ -18,7 +18,15 @@ extends Node
 signal pairing_ready(room)   # 1v1 房凑齐两人 → RoomManager 接住去拉 worker + 发 go_match
 
 const ROYALE_MIN_PLAYERS := 2
-const ROYALE_MAX_PLAYERS := 8
+# 大乱斗人数上限。2026-10-09 由 8 提到 **16**(仓主裁定「上限按 16 人做」;
+# 依据:16 人实测服务器上行 143.85 KB/s = 1.15 Mbit/s,见 docs/eng/netcode-at-16-players.md §1)。
+# ★ `ROYALE_DEFAULT_MAX`(4)与 `ROYALE_MIN_PLAYERS`(2)**不动** —— 变的是**上限**。
+# ★★ 改这个数**必须同时看另外两处**,它们各自也是 8:
+#   ① `scenes/mp_lobby.tscn` 的 `MaxPlayersSlider.max_value`(建房滑块的硬上限 —— 不改它,
+#      房主最多只能选到 8,本常量就永远用不满);
+#   ② `scenes/royale_game.gd` 的 `ROLE_COLORS`(头顶 ID / 小地图点的**固定色板**,按 `% size()` 取色 ⇒
+#      只有 8 色时第 9 个人会和第 1 个人同色)。色板的来源与推导见该常量的注释。
+const ROYALE_MAX_PLAYERS := 16
 const ROYALE_DEFAULT_MAX := 4
 
 # 3v3:**无 AI 补位、无降级** —— 满 6 人才开(用户裁定)。两条闸门都是硬上界:

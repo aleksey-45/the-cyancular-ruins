@@ -17,10 +17,18 @@ var _pause_menu: PauseMenu = null   # ESC 菜单(MATCH_OVER 后销毁以失效,�
 
 # ── 头上 ID / 血条(按 role 管理)──
 const ID_HEAD_OFFSET := Vector2(0.0, -78.0)
-# 8 人角色色板(头顶 ID;本体染色仍走色相设置/peer_hues)
+# 角色色板(头顶 ID / 小地图点;本体染色仍走色相设置/peer_hues)。
+# ★★ 2026-10-09:**8 色 → 16 色**,因为大乱斗人数上限由 8 提到了 16
+#   (`LobbyRooms.ROYALE_MAX_PLAYERS`)。取色处一律写 `% ROLE_COLORS.size()`,
+#   只有 8 色时第 9 个人会和第 1 个人**同色**(头顶 ID 与地图点一起撞) ⇒ 16 人必须 16 色。
+# ★ 生成口径(可复算):**色相 22.5° 等分**(360/16,即 16 色时相邻色相的最大最小间隔)、
+#   `S = 0.45 / V = 1.0` 的 pastel。换色/加人时按这个口径重算,别手挑。
+#   ★ 这是**看得见**的改动(≤8 人时各人拿到的颜色也变了)⇒ 按档 1 处理:人眼过一眼。
 const ROLE_COLORS: Array[Color] = [
-	Color(0.72, 0.93, 1.0), Color(1.0, 0.82, 0.62), Color(0.75, 1.0, 0.7), Color(1.0, 0.7, 0.9),
-	Color(0.95, 0.95, 0.6), Color(0.7, 0.8, 1.0), Color(1.0, 0.62, 0.55), Color(0.8, 0.7, 1.0),
+	Color(1.00, 0.55, 0.55), Color(1.00, 0.72, 0.55), Color(1.00, 0.89, 0.55), Color(0.94, 1.00, 0.55),
+	Color(0.78, 1.00, 0.55), Color(0.61, 1.00, 0.55), Color(0.55, 1.00, 0.66), Color(0.55, 1.00, 0.83),
+	Color(0.55, 1.00, 1.00), Color(0.55, 0.83, 1.00), Color(0.55, 0.66, 1.00), Color(0.61, 0.55, 1.00),
+	Color(0.78, 0.55, 1.00), Color(0.94, 0.55, 1.00), Color(1.00, 0.55, 0.89), Color(1.00, 0.55, 0.72),
 ]
 var _id_labels: Dictionary = {}    # role(int) -> WorldLabel(含自己)
 var _hp_bars: Dictionary = {}      # role(int) -> EnemyHpBar(仅他人,设置开启时)
