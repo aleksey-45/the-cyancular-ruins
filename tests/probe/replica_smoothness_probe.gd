@@ -29,7 +29,6 @@ const NOMINAL_GAP_MS := 1000.0 / 60.0   # 名义到达间隔 16.667ms(服务器�
 # 均匀抖动半径(ms)。到达间隔 = 名义间隔 + U(-J, +J) ⇒ 均值恒为 60Hz。
 # 8.0 是 `6e2ef6d` 引用的那档(它记的旧法读数 49.6% 零位移)。
 const JITTER_CASES := [0.0, 8.0, 16.0]
-const ASSERT_CASE := 1                  # 断言压在 8.0ms 那一档
 const RNG_SEED := 20260922              # 固定种子:三次跑同一组到达序列,读数可比
 
 const STILL_EPS := 0.05                 # 位移小于此值 = 这一帧画面上没动
@@ -194,11 +193,22 @@ func _phase_a() -> void:
 
 
 func _finish_a() -> void:
-	var r: Dictionary = _results[ASSERT_CASE]
-	if float(r["ratio"]) > STILL_RATIO_MAX or float(r["max_step"]) > MAX_STEP_PX:
-		_fail("相A 抖动 ±%.0f ms 下零位移占比 %.4f / 最大位移 %.3f px(对手会看起来一跳一跳)"
-				% [float(r["jitter"]), float(r["ratio"]), float(r["max_step"])])
-		return
+	# ★★ 2026-10-09 补:**三档抖动都要判**,不再只看 `ASSERT_CASE`。
+	#   原来只判 ±8ms ⇒ **±16ms 那档无论多糟都不会红** —— 实测旧追赶在 ±16 的单帧最大位移是
+	#   **8.242 px(已超 8.0 上限)而判词照绿**,这是"守卫能给的保证比它读起来少"的典型形态。
+	#   ★ 一条判定类别仍然只算**一条**断言(逐档循环,不是每档一条闸)。
+	for r in _results:
+		if float(r["ratio"]) > STILL_RATIO_MAX or float(r["max_step"]) > MAX_STEP_PX:
+			_fail("相A 抖动 ±%.0f ms 下零位移占比 %.4f / 最大位移 %.3f px(上限 %.4f / %.1f px;对手会看起来一跳一跳)"
+					% [float(r["jitter"]), float(r["ratio"]), float(r["max_step"]),
+							STILL_RATIO_MAX, MAX_STEP_PX])
+			return
+	var worst: Dictionary = _results[0]
+	for r in _results:
+		if float(r["max_step"]) > float(worst["max_step"]):
+			worst = r
+	print("[replica_smoothness] 相A 三档抖动全部合规(最大单帧位移 %.3f px 出现在 ±%.0f ms;上限 %.1f)"
+			% [float(worst["max_step"]), float(worst["jitter"]), MAX_STEP_PX])
 	_checks += 1
 	# 进相 B —— 复现旧方案那条**致命缺陷**:把副本**强行摆到一个"远副本"**上(与锚点相隔
 	# 整幅地图宽、但环面坐标相同),再看它能不能自己回到锚点所在的那一份。
