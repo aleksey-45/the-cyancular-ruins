@@ -20,7 +20,7 @@ extends RefCounted
 #      服务器速率走,**不需要显式的频率状态**(顶掉了上一版"只有相位项 ⇒ 持续速率失配必然留常驻误差"的病)。
 #   ③ **深度跟着观测走**(`_depth_comp()`):`o_min` 挑的是"排队最短"那条路径 ⇒ 它**高估**服务器时间轴的位置
 #      ⇒ 光用它,有效缓冲比名义 `playout` **更浅**(实测:名义 4 在 ±8/±16ms 下单帧最大位移顶到 10.0px,
-#      上限 8.0)。⇒ 用窗口**展布**(`o_max − o_min`)折半补回来。这就是"深度按观测到的抖动设定"
+#      上限 8.0)。⇒ 用窗口**展布**(`o_max − o_min`)的 **1.5 倍**(实测选的,见 `_depth_comp`)补回来。这就是"深度按观测到的抖动设定"
 #      (Ramjee 1994 摘要的"按尖峰自适应"、Gaffer 的 2×/3× 发送间隔、RTP 的抖动估计同族)。
 #   目标 = `(local_ms − o_min) / 16.667 − playout − 深度补偿`(Valve 的形式,offset 是**测出来**的)。
 #
@@ -75,11 +75,13 @@ func on_snapshot(tick: int) -> void:
 		_o_max = maxf(_o_max, v)
 
 
-## 深度补偿:窗口展布折半(理由见文件头 ③)。
+## 深度补偿:**窗口展布的 1.5 倍**(理由见文件头 ③)。
+## ★ 系数 0.5 → 1.5 是**实测选的**(2026-10-09 仓主裁定 A 档):扫 k = 0.5/1.0/1.5 ⇒
+##   k=0.5 在 ±8ms 下单帧最大位移顶到 **10.0px**(闸 8.0)、FAIL;k=1.5 时三档全绿。
 func _depth_comp() -> float:
 	if _offsets.size() < 2:
 		return 0.0
-	return clampf(roundf((_o_max - _o_min) / TICK_MS * 0.5), 0.0, DEPTH_COMP_MAX)
+	return clampf(roundf((_o_max - _o_min) / TICK_MS * 1.5), 0.0, DEPTH_COMP_MAX)
 
 
 ## 本帧的参考(我们要让 `render_tick` 跟上的那个值)。★ 读数 / 判据都用它,不许拿 `latest` 顶替。
