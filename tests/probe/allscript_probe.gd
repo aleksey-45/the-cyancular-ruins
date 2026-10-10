@@ -93,7 +93,7 @@ const SKIP_DIRS := ["res://.godot", "res://builds", "res://releases", "res://gam
 #     · 取回理由见该文件头:改「对手位置平滑」这类**表现层行为**没有仪器就是凭感觉调,
 #       而它当年被删时**没有留下逐文件理由**(削减设计文档里查不到它)。
 #     · `git ls-files '*.gd' | wc -l` = **160**(取回前)+ 该文件 = **161**。
-const EXPECTED_SCRIPTS := 161
+const EXPECTED_SCRIPTS := 163
 
 var _fails: Array[String] = []
 var _total := 0

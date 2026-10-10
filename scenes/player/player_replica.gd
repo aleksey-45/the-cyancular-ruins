@@ -48,6 +48,16 @@ const INTERP_RATE := 12.0
 #   ★ 判据在 `tests/probe/replica_smoothness_probe.tscn` **相 D(两侧都钉)**;动这个常数**必须先跑它**。
 const SNAP_DIST := 128.0
 
+# ── playout 缓冲插值的地基(2026-10-09)──
+# 位置不再"朝最新目标追赶",而是**在固定 playout 之后的时刻做夹逼插值**:
+#   · `PLAYOUT_TICKS` = 故意落后服务器多少 tick(Gaffer:缓冲 = 3× 发送间隔 ⇒ 60Hz 下 **50ms**);
+#   · `place_history` = 每个副本一份的位置历史环(元素 `{tick:int, pos:Vector2}`,`pos` 是 **canonical**);
+#   · `_clock` = 播放时钟(`PlayoutClock`),回答"此刻渲染服务器历史的哪一 tick"。
+# ★ 存 **canonical**、不存锚过的位置:锚要跟着本地玩家的副本空间走,存锚过的会在跨接缝时**整段作废**。
+# ★ 历史容量必须**定长**(不许 append 不裁剪):16 人 = 15 个副本 × 每帧插入。
+const PLAYOUT_TICKS := 3
+const HISTORY_MAX := 12
+
 const POSE_ANIM: Dictionary = {
 	0: "idle", 1: "move", 2: "fly", 3: "charge", 4: "squat",
 }  # 与 player.gd Pose 枚举值一致
@@ -112,6 +122,10 @@ var _weapon_type_int := 0            # 服务器权威槽位
 var _opponent_canonical := Vector2.ZERO
 var _local_anchor := Vector2.ZERO         # 本地玩家(相机)位置,每帧跟随
 var _have_data := false
+# playout 插值的两件状态(见 `PLAYOUT_TICKS` 那段注释):播放时钟 + 位置历史环。
+# ★ `place_history` 里存的是 **canonical** 位置,元素 `{tick:int, pos:Vector2}`。
+var _clock: PlayoutClock = null
+var place_history: Array = []
 # 首次定位是否已**直落**(见 _process)。★ 指数追赶**不能**用于开场第一帧:副本被创建在世界
 # 原点,直接开始追赶要十几帧才到位,而那十几帧里幽灵体停在错位置 ⇒ 本地预测与权威分歧
 # ⇒ 白回滚一次(replica_ghost_probe ② 实测:直落时 rb=0,追赶时 rb=1)。旧方案(`aa1d8f0^`)
@@ -200,12 +214,35 @@ func _set_ghost_pose(pose: int) -> void:
 
 # ★ 第三个形参 `_tick` 现在**不参与任何计算**(位置不再走 tick 域缓冲),保留它纯粹是为了
 #   不改调用面:三个生产调用点(`pvp_game` / `royale_game` / `team_game`)与一批探针都按
-#   三参调用,快照的 `tick` 也确实是副本的契约字段(哪天要按 tick 丢乱序包就得用它)。
-#   名字带下划线 = GDScript 不再报 UNUSED_PARAMETER。
-func apply_snapshot(data: Dictionary, local_anchor: Vector2, _tick: int) -> void:
+# ★★ 2026-10-09:`tick` **开始参与计算了** —— 它进播放时钟与位置历史(playout 插值,见文件头)。
+#   (旧注释写的"位置不再走 tick 域缓冲"描述的是 2026-09-22 那次改回指数追赶;本轮又走回"按 tick"了,
+#    但**机制不同**:那次是"每包把渲染时钟重置到 latest-1"⇒ 缓冲深度 0;这次是时钟自己走、包只报进度。)
+func _push_history(tick: int, canon: Vector2) -> void:
+	# ★ 大跳变(回溯 / 重生 / 换边)= **历史作废**:插值**不许横穿一次瞬移**(那会演出一段没发生过的位移)。
+	if not place_history.is_empty():
+		var last: Dictionary = place_history[place_history.size() - 1]
+		var jump := GridPathfinder.toroidal_delta_px(last["pos"], canon,
+				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT).length()
+		# ★ 判据用**环面**最短距离:对手跨接缝**不是**跳变(环面上是同一处),用直线距离会误判成跳变、
+		#   把历史白白清掉。★ 这与 `_process` 里那句"别改成 toroidal 最短路径"**不矛盾**:
+		#   那里是用最短路径去**驱动**渲染位置(会卡在远副本,是那条老账);这里是**量两点之差**,
+		#   环面距离才是语义正确的那个。
+		if jump > SNAP_DIST:
+			place_history.clear()
+	place_history.append({"tick": tick, "pos": canon})
+	while place_history.size() > HISTORY_MAX:
+		place_history.pop_front()
+
+
+func apply_snapshot(data: Dictionary, local_anchor: Vector2, tick: int) -> void:
 	_opponent_canonical = data["pos"]
 	_local_anchor = local_anchor
 	_have_data = true
+	# ── 播放时钟 + 位置历史(playout 插值的地基;本步只记录,渲染仍走旧路 ⇒ 表现应与改动前一致)──
+	if _clock == null:
+		_clock = PlayoutClock.new(PLAYOUT_TICKS)
+	_clock.on_snapshot(tick)
+	_push_history(tick, _opponent_canonical)
 	_vel = data.get("vel", Vector2.ZERO)
 	_facing = 1 if int(data.get("facing", 1)) >= 0 else -1
 	var aim: Vector2 = data.get("aim", Vector2.ZERO)
@@ -295,6 +332,10 @@ func _in_water() -> bool:
 func _process(delta: float) -> void:
 	if _have_data:
 		_drive_weapon_visual()
+		# 播放时钟按**渲染帧**推进(与包何时到达无关;见 `PlayoutClock` 文件头)。
+		# ★ 本步(位置历史落地)**还不改渲染** ⇒ 画面应与改动前一致(回归对照)。
+		if _clock != null:
+			_clock.advance(delta)
 		# 目标 = 对手 canonical 锚到本地玩家(相机)最近副本,每帧重算(跟随相机跨接缝)。
 		var target := MazeGenerator.anchor_to_nearest(_opponent_canonical, _local_anchor,
 				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
