@@ -67,7 +67,8 @@ node server_smoke.js      # 本地 HTTP 服务端接口测试
 - **命名规范检查 (`tools/check_naming.py`)**：
   - 检查工程目录小写规范、`class_name` 与文件名对齐、文档引用的文件路径有效性以及 `.tscn` 命名规范。
 
-- **官方隧道安装** ([fetch_easytier.py](../../tools/fetch_easytier.py))：从本地官方 Windows 2.7.0 包复制全部运行组件和许可。
-- **进程扩展构建** ([build_process_group.py](../../tools/build_process_group.py))：使用 godot-cpp 的 godot-4.5-stable，固定提交 e83fd0904c13356ed1d4c3d09f8bb9132bdc6b77，通过 SCons 4.9.1 编译 Windows x64 DLL。默认使用 MSVC，也支持 --mingw 或 MINGW_PREFIX 指定 LLVM MinGW。SDK 与中间文件位于 .test_logs/native/，运行 DLL 位于 native/process_group/bin/，许可随发布包分发。
-- **发布归档** ([archive_build.py](../../tools/archive_build.py))：生成 builds/ 发布目录并保存 releases/ 副本，包含客户端、服务端、同目录 Job DLL、统一许可 THIRD_PARTY_NOTICES.txt；easytier/ 包含内核、CLI、Packet.dll、wintun.dll、WinDivert64.sys 和 relay.txt。
+- **官方隧道安装** ([fetch_easytier.py](../../tools/fetch_easytier.py))：从本地官方 Windows 2.7.0 包复制全部运行组件和许可，缺少 relay.txt 时生成默认公共节点列表，保留已有自定义列表。
+- **进程扩展构建** ([build_process_group.py](../../tools/build_process_group.py))：使用 godot-cpp 的 godot-4.5-stable，固定提交 e83fd0904c13356ed1d4c3d09f8bb9132bdc6b77，通过 SCons 4.9.1 编译 Windows x64 DLL。默认使用 MSVC，也支持 --mingw 或 MINGW_PREFIX 指定 LLVM MinGW。SDK 与中间文件位于 .test_logs/native/，运行 DLL 位于 native/process_group/bin/；CI 重新编译，许可随发布包分发。
+- **发布归档** ([archive_build.py](../../tools/archive_build.py))：生成 The-Cyancular-Ruins.zip，内部目录为 The-Cyancular-Ruins-YYYYMMDDHHMM/，时间戳为 UTC+8。包含客户端、服务端、同目录 Job DLL、统一许可 THIRD_PARTY_NOTICES.txt；easytier/ 包含内核、CLI、Packet.dll、wintun.dll、WinDivert64.sys 和 relay.txt。builds/ 保存当前目录，releases/ 保存目录副本与最新 ZIP。
 - **回归入口** ([run_regression.py](../../tools/run_regression.py))：分类运行逻辑、视觉和网络测试；每项使用独立用户目录，保存日志并检查退出码、成功标记和脚本错误。
+- **GitHub Actions 自动打包**：推送到 siri_v* 或手动运行 Build Windows game，使用 Godot 4.7.1、MSVC 与官方 EasyTier v2.7.0。上传 builds/ 下的时间戳目录，artifact 名为 The-Cyancular-Ruins；下载为 The-Cyancular-Ruins.zip，包含该目录。入口在运行记录的 Artifacts 区域。

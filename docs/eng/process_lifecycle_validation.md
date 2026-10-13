@@ -38,4 +38,4 @@ python tools/build_release.py
 | Windows 发布 | 完整构建、导出、独立目录启动与归档通过；实际包内服务端完成两局、重连及原房间返回 |
 | 命名、路径、UID、shell 语法 | 通过 |
 
-发布目录包含客户端、服务端、原生 DLL、THIRD_PARTY_NOTICES.txt 和 EasyTier 联机组件。原始结果与 DLL SHA-256 见 [结果 JSON](process_lifecycle_results.json)。
+发布包为 The-Cyancular-Ruins.zip，内部目录为 The-Cyancular-Ruins-<时间戳>/，包含客户端、服务端、原生 DLL、THIRD_PARTY_NOTICES.txt 和 EasyTier 联机组件。本机使用 LLVM MinGW，CI 使用 MSVC；本机覆盖直连及强制中继。原始结果与 DLL SHA-256 见 [结果 JSON](process_lifecycle_results.json)。

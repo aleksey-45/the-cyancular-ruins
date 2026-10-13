@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""将指定的本地官方 EasyTier 包安装到游戏 easytier/，构建脚本沿用此入口。"""
+"""安装官方 EasyTier 包，并在缺少时生成默认公共节点列表。"""
 import argparse
 import ast
 import re
@@ -16,9 +16,18 @@ META = PROJECT / "core/config/tunnel_meta.gd"
 
 def read_meta() -> dict:
     text = META.read_text(encoding="utf-8")
-    return {key: ast.literal_eval(value) for key, value in re.findall(
-        r'^const (ET_VERSION|CORE_EXE|CLI_EXE|CORE_DLLS|OFFICIAL_DIR) := (.+)$',
+    meta = {key: ast.literal_eval(value) for key, value in re.findall(
+        r'^const (ET_VERSION|CORE_EXE|CLI_EXE|CORE_DLLS|OFFICIAL_DIR|RELAY_FILE_NAME) := (.+)$',
         text, re.MULTILINE)}
+    meta["DEFAULT_RELAYS"] = ast.literal_eval(re.search(
+        r'^const DEFAULT_RELAYS := (\[.*?^\])', text, re.MULTILINE | re.DOTALL).group(1))
+    return meta
+
+
+def ensure_default_relay_file(dest: Path, meta: dict) -> None:
+    relay_file = dest / meta["RELAY_FILE_NAME"]
+    if not relay_file.exists():
+        relay_file.write_text("\n".join(meta["DEFAULT_RELAYS"]) + "\n", encoding="utf-8")
 
 
 def main() -> None:
@@ -42,6 +51,7 @@ def main() -> None:
             shutil.copy2(source, target)
     license_path = PROJECT / "tools/licenses/easytier-LICENSE.txt"
     shutil.copy2(license_path, args.dest / license_path.name)
+    ensure_default_relay_file(args.dest, meta)
     print(f"EASYTIER OK {version} → {args.dest}")
 
 

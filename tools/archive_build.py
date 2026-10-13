@@ -4,15 +4,15 @@
 # 规范约定：
 # 每次执行归档时清空 builds 目录并生成包含最新构建标识的产物子目录。
 #
-# 发布目录包含客户端与服务端可执行文件以及可选网络隧道组件：
+# 发布目录包含客户端、服务端、Job 扩展与 easytier/ 隧道组件：
 #   The Cyancular Ruins.exe        客户端主程序
 #   Cyancular Ruins Server.exe     专用服务端程序（客户端建房时直接从同目录拉起）
 #   process_group.windows.x86_64.dll  Windows Job 原生扩展
 #   THIRD_PARTY_NOTICES.txt         第三方组件许可与版权声明
-#   easytier-core.exe              网络隧道核心进程
-#   easytier-cli.exe               网络隧道命令行交互工具
-#   Packet.dll                     底层网卡捕获动态链接库
-#   wintun.dll                     虚拟网络驱动动态链接库
+#   easytier/easytier-core.exe     网络隧道核心进程
+#   easytier/easytier-cli.exe      网络隧道命令行交互工具
+#   easytier/Packet.dll            底层网卡捕获动态链接库
+#   easytier/wintun.dll            虚拟网络驱动动态链接库
 #
 # 架构与寻址说明：
 # 客户端探测服务端与隧道组件时优先检查当前所在目录。
@@ -21,7 +21,6 @@
 # 用法:
 #   python archive_build.py                        # 归档主程序与隧道组件
 #   python archive_build.py --stamp 202609062126   # 指定归档时间戳
-#   python archive_build.py --version 1.2.0        # 指定版本号（默认读取 project.godot）
 import datetime
 import os
 import re
@@ -36,7 +35,7 @@ PROJECT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BUILDS = os.path.join(PROJECT, "builds")
 RELEASES = os.path.join(PROJECT, "releases")   # 累积式发布档案存储目录
 PROJECT_GODOT = os.path.join(PROJECT, "project.godot")
-PKG_NAME = "The Cyancular Ruins"
+PKG_NAME = "The-Cyancular-Ruins"
 RELEASE_PREFIX_FALLBACK = "RoF"
 
 
@@ -74,17 +73,14 @@ def release_version(raw: str) -> str:
     return ("%s_v%s" % (release_prefix(), v)) if v else release_prefix()
 
 
-def release_label(raw: str, stamp: str) -> str:
-    """拼接生成完整的发布构建标识（前缀_版本_时间戳）。"""
-    return "%s_%s" % (release_version(raw), stamp)
+def package_name(stamp: str) -> str:
+    """发布目录名：The-Cyancular-Ruins-<时间戳>。"""
+    return "%s-%s" % (PKG_NAME, stamp)
 
 
-def version_tag(raw: str) -> str:
-    """将纯数字版本号转为显示用的标签格式。"""
-    raw = (raw or "").strip()
-    if not raw:
-        return ""
-    return raw if raw[0] in ("v", "V") else "v." + raw
+def build_stamp() -> str:
+    """使用 UTC+8 的 YYYYMMDDHHMM 时间戳。"""
+    return datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).strftime("%Y%m%d%H%M")
 
 
 def wipe_builds() -> None:
@@ -105,26 +101,22 @@ def find_easytier(name: str) -> str:
 
 
 def main() -> None:
-    stamp = datetime.datetime.now().strftime("%Y%m%d%H%M")
-    version = read_project_version()
+    stamp = build_stamp()
     args = sys.argv[1:]
     i = 0
     while i < len(args):
         if args[i] == "--stamp" and i + 1 < len(args):
             stamp = args[i + 1]
             i += 2
-        elif args[i] == "--version" and i + 1 < len(args):
-            version = args[i + 1]
-            i += 2
         else:
-            sys.exit("未知参数 %s(支持 --stamp <ts> / --version <v>)" % args[i])
+            sys.exit("未知参数 %s(支持 --stamp <ts>)" % args[i])
 
     # 验证主程序与服务端程序是否存在
     for f in GAME_FILES:
         if not os.path.isfile(os.path.join(PROJECT, f)):
             sys.exit("找不到 %s —— 请先完成导出构建" % f)
 
-    tag = release_label(version, stamp) if version else stamp
+    tag = package_name(stamp)
     out = os.path.join(BUILDS, tag)
     wipe_builds()
     os.makedirs(out, exist_ok=True)
@@ -168,6 +160,8 @@ def main() -> None:
     keep = os.path.join(RELEASES, os.path.basename(out))
     shutil.copytree(out, keep, dirs_exist_ok=True)
     print("\n累积档案: %s" % keep)
+    archive = shutil.make_archive(os.path.join(RELEASES, PKG_NAME), "zip", BUILDS, tag)
+    print("\n压缩包: %s" % archive)
     print("\n发布目录: %s" % out)
 
 

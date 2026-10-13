@@ -92,7 +92,7 @@ STATE 到达时保存最新待应用权威状态。在下一物理 tick 恢复�
 
 ## 官方 EasyTier、端口与重连
 
-[安装工具](../../tools/fetch_easytier.py) 从官方 Windows 2.7.0 包复制运行组件和许可：
+[安装工具](../../tools/fetch_easytier.py) 从官方 Windows 2.7.0 包复制运行组件和许可，缺少 relay.txt 时生成默认公共节点列表：
 
 ~~~powershell
 python tools/fetch_easytier.py --source D:/Codes/ChatGPT/cyr/easytier-windows-x86_64
