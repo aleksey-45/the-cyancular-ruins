@@ -1,0 +1,231 @@
+{
+  "easytier_version": "official 2.7.0",
+  "date": "2026-10-13",
+  "godot": "4.7.1",
+  "easytier": {
+    "direct": {
+      "mode": "direct",
+      "input": true,
+      "state": true,
+      "reliable_bytes": 262144,
+      "reconnect": true,
+      "room_code": "00001234",
+      "route": "p2p"
+    },
+    "relay": {
+      "mode": "relay",
+      "input": true,
+      "state": true,
+      "reliable_bytes": 262144,
+      "reconnect": true,
+      "room_code": "00001234",
+      "route": "relay(2)"
+    }
+  },
+  "lifecycle_repetitions": 2,
+  "lifecycle": [
+    {
+      "mode": "normal",
+      "exit": 0,
+      "children": [
+        "child",
+        "cli",
+        "descendant",
+        "easytier",
+        "server"
+      ],
+      "all_children_exited": true,
+      "unrelated_survived": true
+    },
+    {
+      "mode": "window",
+      "exit": 0,
+      "children": [
+        "child",
+        "cli",
+        "descendant",
+        "easytier",
+        "server"
+      ],
+      "all_children_exited": true,
+      "unrelated_survived": true
+    },
+    {
+      "mode": "leave",
+      "exit": 0,
+      "children": [
+        "child",
+        "cli",
+        "descendant",
+        "easytier",
+        "server"
+      ],
+      "all_children_exited": true,
+      "unrelated_survived": true
+    },
+    {
+      "mode": "transition",
+      "exit": 0,
+      "children": [
+        "child",
+        "descendant",
+        "easytier",
+        "server"
+      ],
+      "all_children_exited": true,
+      "unrelated_survived": true
+    },
+    {
+      "mode": "forced",
+      "exit": 1,
+      "children": [
+        "child",
+        "cli",
+        "descendant",
+        "easytier",
+        "server"
+      ],
+      "all_children_exited": true,
+      "unrelated_survived": true
+    },
+    {
+      "mode": "startup",
+      "exit": 1,
+      "children": [
+        "easytier",
+        "server"
+      ],
+      "all_children_exited": true,
+      "unrelated_survived": true
+    }
+  ],
+  "unit": {
+    "passed": 60,
+    "total": 61,
+    "failures": [
+      {
+        "test": "elite_drop_probe",
+        "ok": false,
+        "exit": 3221225477
+      }
+    ]
+  },
+  "network": {
+    "passed": 7,
+    "total": 7,
+    "failures": []
+  },
+  "visual": {
+    "passed": 8,
+    "total": 8,
+    "failures": []
+  },
+  "allscript_count": 228,
+  "match_with_stall": {
+    "count": 2,
+    "rtt": 0,
+    "jitter": 0,
+    "loss": 0.0,
+    "drop": true,
+    "compression": "zstd",
+    "failures": [],
+    "playback": [
+      {
+        "extrapolation_seconds": 0.742224333333331,
+        "frozen_seconds": 4.29999999999999,
+        "max_buffer_ticks": 9.0,
+        "max_samples": 6,
+        "min_buffer_ticks": -6.0,
+        "no_next_seconds": 5.04222433333332,
+        "repositions": 18,
+        "seconds": 21.6290540000006
+      },
+      {
+        "extrapolation_seconds": 0.998687666656562,
+        "frozen_seconds": 4.36666666666666,
+        "max_buffer_ticks": 9.0,
+        "max_samples": 6,
+        "min_buffer_ticks": -6.0,
+        "no_next_seconds": 5.36535433332322,
+        "repositions": 19,
+        "seconds": 20.8532343333334
+      }
+    ],
+    "exits": [
+      null,
+      0,
+      0
+    ],
+    "stall": {
+      "buffer_ms": 750,
+      "blackout_ms": 250,
+      "packets": [
+        {
+          "buffered": 26,
+          "lost": 25
+        },
+        {
+          "buffered": 26,
+          "lost": 25
+        }
+      ]
+    }
+  },
+  "exported_server_match": {
+    "count": 2,
+    "rtt": 0,
+    "jitter": 0,
+    "loss": 0,
+    "drop": true,
+    "compression": "zstd",
+    "failures": [],
+    "playback": [
+      {
+        "extrapolation_seconds": 1.18648866666667,
+        "frozen_seconds": 0.183332666666667,
+        "max_buffer_ticks": 5.65835999990668,
+        "max_samples": 4,
+        "min_buffer_ticks": -6.0,
+        "no_next_seconds": 1.36982133333333,
+        "repositions": 16,
+        "seconds": 35.1755033333342
+      },
+      {
+        "extrapolation_seconds": 1.407655,
+        "frozen_seconds": 0.183329,
+        "max_buffer_ticks": 6.0000399999999,
+        "max_samples": 5,
+        "min_buffer_ticks": -6.0,
+        "no_next_seconds": 1.590984,
+        "repositions": 17,
+        "seconds": 34.357448666666
+      }
+    ],
+    "exits": [
+      null,
+      0,
+      0
+    ]
+  },
+  "windows_package": {
+    "export": true,
+    "isolated_startup": true,
+    "files": [
+      "Cyancular Ruins Server.exe",
+      "THIRD_PARTY_NOTICES.txt",
+      "The Cyancular Ruins.exe",
+      "easytier/Packet.dll",
+      "easytier/WinDivert64.sys",
+      "easytier/easytier-cli.exe",
+      "easytier/easytier-core.exe",
+      "easytier/relay.txt",
+      "easytier/wintun.dll",
+      "process_group.windows.x86_64.dll"
+    ],
+    "verified_date": "2026-10-14"
+  },
+  "native_dll": {
+    "bytes": 777728,
+    "sha256": "0a610a275c4ccd347d7f93ee89579196c0c7d20542be390625b09159562699ba"
+  }
+}

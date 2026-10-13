@@ -1,0 +1,9 @@
+import os
+from SCons.Script import SConscript, Default
+
+env = SConscript(os.environ['GODOT_CPP_DIR'] + '/SConstruct')
+if env['use_mingw']:
+    env.Append(CXXFLAGS=['-include', 'cstdlib'])
+library = env.SharedLibrary('bin/process_group.windows.x86_64.dll', source=['process_group.cpp'])
+env.NoCache(library)
+Default(library)

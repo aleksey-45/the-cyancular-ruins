@@ -2,7 +2,7 @@ class_name GroundWeaponField
 extends RefCounted
 
 # 地面掉落武器逻辑数据表。
-# 单人模式由 Level0 持有，多人模式由服务端 MatchHost 权威维护、客户端维护镜像。
+# 单人模式由 Level0 持有，多人模式由服务端 AuthorityWorld 权威维护、客户端维护镜像。
 # 不直接操作场景节点，仅维护武器元数据条目（唯一实例 ID、武器类型、弹药、位置及速度）。
 # 拾取时调用方优先获取最近的一把武器，连续按键可逐一拾取。
 

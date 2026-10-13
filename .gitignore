@@ -1,67 +1,58 @@
-# Godot 4+ specific ignores
+# 本地缓存、运行日志、发布产物和编译中间文件。
 .godot/
 /android/
 
-# Claude
 .claude/
 
-# 编辑器缓存与导入残留
 *.import.bak
 *.tmp
 *.log
 
-# 临时文件与备份
 *.bak
 *~
 *.swp
 
-# 系统文件
 .DS_Store
 Thumbs.db
 desktop.ini
 
-# 构建产物与杂项
 *.exe
 
-# 发布/备份产物(不入库;版本号见 builds 内文件名与 RELEASE.md)
 builds/
-# 累积式程序包档案(每次发布沉淀一份完整包,见 tools/archive_build.py)
 releases/
 backup/
 
-# 服务端开服时落盘的本机 IP(ServerMain._write_ip_file;机器专属,不该入库)
 local_ip.txt
 
-# Python 字节码缓存(tools/ 下的脚本被 import 时会生成)
 __pycache__/
 
-# 本机残留(旧线工具/日志看守/编辑器配置;不属于上游工程)
 DevTools/*
 !DevTools/gamelog/
 gamelogs/
 .zcode/
 .mimosa/
 
-# 会话运行账本(逐任务 brief/report/进度;入库的 spec 与 plan 在 docs/superpowers/,别混淆)
-# 原先只靠 .superpowers/.gitignore 里那行 `*` 生效 —— 规则藏在一个不入库的嵌套文件里,
-# 从根 .gitignore 上看不出来 ⇒ 挪到这里当**唯一可发现的落点**(嵌套那两份留着不影响)。
 .superpowers/
 
-# 崩溃/对比现场的临时草稿目录(反汇编 dump、旧文件备份、一次性脚本;101MB 级,不入库)
-# ★ 2026-10-03 加:它此前既没被忽略、又不会被 Godot 的 `.gdignore` 挡住(根上那个 `.gdignore`
-#   只管**编辑器导入**,而 `tests/probe/allscript_probe.gd` 走的是 `DirAccess`,不认它)
-#   ⇒ 两处中招:① `git add -A` 会把它整锅收进提交(实测卷进 27 个文件,含一个 27 万行的 dump);
-#      ② `allscript_probe` 会把里面那几份**已编译不过**的旧 `.gd` 备份当成生产脚本报红(3 条)。
-#   注:它对 `allscript_probe` 的假红是**独立问题**(那条链只认文件系统,与 git 无关),
-#   真要根治得让那个探针认 `.gdignore` 或把该目录加进它的 SKIP_DIRS —— 本次只做 ignore。
 _crashtest/
 
-# EasyTier 第三方二进制(由 tools/fetch_easytier.py 下载,发布构建打包时随行分发,不入库)
 easytier/
 
 
-# 隧道手感测量的运行产物（两份日志由 .sh 每次重写，不进仓）
 tests/probe/feel_out/
 
-# 多实例联机手感测试的实例副本与产物（每次跑重铺，不进仓）
 tests/multiplayer/
+.test_logs/
+
+log/
+
+native/process_group/*.o
+native/process_group/*.obj
+native/process_group/*.os
+native/process_group/*.lib
+native/process_group/*.exp
+native/process_group/.sconsign.dblite
+native/process_group/bin/*.a
+native/process_group/bin/*.lib
+native/process_group/bin/*.exp
+/process_group.windows.x86_64.dll

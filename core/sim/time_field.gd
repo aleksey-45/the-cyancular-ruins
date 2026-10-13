@@ -17,7 +17,7 @@ static var current: TimeField = null   # 单机世界场实例;null = 全域恒 
 
 var mode: int = Mode.NONE
 var account: GrainAccount = null
-var rewind_time: float = 0.0           # 本次回溯持续(秒;视效 ramp 用)
+var rewind_time: float = 0.0
 
 
 func _init(acc: GrainAccount) -> void:

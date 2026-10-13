@@ -16,7 +16,7 @@ var was_rewinding := false         # 状态沿(Level0 用它判进入/退出回�
 var _frames: Array = []            # [{t, player:{...}, enemies:[...], bullets:[...]}]
 var _t := 0.0                      # 世界已录制时间(秒)
 var _acc := 0.0
-var _cursor := 0.0                 # 本次回溯已倒退的秒数
+var _cursor := 0.0
 var _replay_bullets: Array = []    # 回放用子弹节点(与当前应用帧的 bullets 下标对应)
 var _parent: Node = null           # 回放子弹的挂载父节点(通常 WorldViewport)
 
@@ -75,10 +75,6 @@ func record(delta: float, player: Node, enemies: Array, bullets: Array) -> void:
 		_frames.pop_front()
 
 
-# ── 回放(回溯中)──────────────────────────────────────────────
-
-## 进入回溯：清空场上子弹（改为由快照重建），回溯游标归零。
-## 玩家状态快照：记录位置、速度、生命值、朝向、倒地状态以及武器背包与当前弹药量。
 func _snapshot_player(player: Node) -> Dictionary:
 	var d := {
 		"p": (player as Node2D).global_position,

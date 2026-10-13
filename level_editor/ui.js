@@ -1,12 +1,3 @@
-// ui.js —— 编辑器界面(规格 §4.4–§4.8)。
-//
-// ★★ 顶层一行都不碰 DOM:DOM 只在 boot() 与它装上的回调里取。于是 node 能把
-//    "错了也不报错、只在屏幕上看出来"的那几层(工具内核 / 撤销差量 / 名字 / 尺寸钳制)
-//    逐条断言 —— 见 editor_smoke.js。
-// ★ 页面里不许有第二份数学:像素走 Tint.*,编解码与迁移走 Core.*,几何走 Render.*。
-// ★ 依赖顺序:core.js → tile_defs.js → tint.js → render.js → io.js → ui.js。
-// ★ 本文件是 T3 的**启动最小版**:图集 / 库列表 / 打开地图 / 挂载渲染 / 状态栏 / 自检。
-//   工具、撤销、面板交互、持久化分别在 Task 5~9 落地。
 globalThis.Editor = (function () {
   'use strict';
 
@@ -15,15 +6,8 @@ globalThis.Editor = (function () {
   if (!Render) throw new Error('ui.js: 必须先加载 render.js');
   if (!Io) throw new Error('ui.js: 必须先加载 io.js');
 
-  // ★ `UI_STATE_KEY` 在下面「持久化三层」那一节里(Task 9 之前它在这里、且**零调用点**:
-  //   一个声明了没人用的常量比没有更糟 —— 读代码的人会以为小状态那一层已经落地了)。
   var DEFAULT_CELLS_W = 125, DEFAULT_CELLS_H = 75;
 
-  // 运行时状态(页面用;node 冒烟不碰它)
-  // ★ 计划 2b 的接口表把 raw/name/sourceFormat 写成 `Editor.rawBytes()/rawName()/sourceFormat()`
-  //   —— 那三个**函数不存在**,真身是下面这个 `app` 对象上的三个字段(`Editor.app.raw` /
-  //   `Editor.app.name` / `Editor.app.sourceFormat`,经导出表的 `app: app` 暴露);
-  //   Task 8/9 消费的正是 `app.*` 那形式,故无下游断裂,是**接口表那份文本错了**。
   var app = {
     r: null, canvas: null, map: null, name: null,
     raw: null, sourceFormat: null, tileDefs: null,
@@ -42,17 +26,6 @@ globalThis.Editor = (function () {
 
   function status(msg) { var el = $('status-msg'); if (el) el.textContent = String(msg); }
 
-  // ── 错误可见性(★ 症状"按了没反应"的那条通道)──
-  // ★★ 面板与渲染里抛出的异常必须**当场说人话**。这条通道做成可替换的 sink,是因为
-  //    **两件不同的事**都要落到它上面:
-  //    ① `guard` 的同步 try/catch(工具、面板的落笔);
-  //    ② Task 4 之后 `resize` / `fit` / `setView` / `setZoomAt` / `panBy` / `setMap` /
-  //       `invalidateAll` 返回的是**分帧重建派生出来的 promise** —— 抛在任务回调里 =
-  //       一次**拒绝**,同步 try/catch 接不住,画布默默停在上一帧(用户看到的就是
-  //       "按了没反应")。`guard` 因此把 thenable 也接住;`Render.mount` 的 `onError`
-  //       指到同一个 sink,于是渲染侧那条观察者也写在这条通道上。
-  // ★ 默认 sink = 状态栏;有自定义 sink 时**不再** console.error 一次(node 冒烟会故意
-  //   触发失败,否则 stderr 里恒有字节,"stderr 有字节 = 有东西红了"这个信号就废了)。
   var errorSinkFn = null;
   function setErrorSink(fn) { errorSinkFn = (typeof fn === 'function') ? fn : null; }
   function reportError(text, err) {
@@ -83,16 +56,9 @@ globalThis.Editor = (function () {
     return out;
   }
 
-  // ── 纯函数(editor_smoke.js 直接断言)──
-  // ★★ 库的身份就是**文件名**(计划 2a 的裁决 ②),而 v4 的 body 里**没有** name 字段
-  //    (decodeMap 返回 name:'')⇒ 导入方必须自己用文件名补 map.name,否则
-  //    sanitizeName 会把它回落成 'structure'(地图名字全体变成 structure)。
   function nameFromFile(fileName) {
     return String(fileName == null ? '' : fileName).replace(/\.cyrm$/i, '');
   }
-  // 三种输入(规格 §3.6):v4 二进制 / 带 `# cyrm-v3` 标记的 v3 文本 / 旧字母格式。
-  // ★ 判据只此一处:先嗅 v4 的 magic(4 字节),否则当文本看 —— 有没有 v3 标记由
-  //   Core.isV3Text 判,没有标记就是旧字母格式(parseV3Text 自己会走 2×2 折叠那条路)。
   function detectFormat(bytes) {
     var b = (bytes && bytes.length !== undefined) ? bytes : null;
     if (b && b.length >= 4 && b[0] === 0x43 && b[1] === 0x59 && b[2] === 0x52 && b[3] === 0x4D) return 'v4';
@@ -113,12 +79,9 @@ globalThis.Editor = (function () {
     return Promise.resolve({ map: map, sourceFormat: fmt });
   }
 
-  // ── 工具集(规格 §4.4)──
   var TOOLS = ['brush', 'rect', 'bucket', 'eraser', 'line', 'select', 'picker', 'gradient'];
   var TOOL_LABELS = { brush: '画笔', rect: '矩形', bucket: '油漆桶', eraser: '橡皮',
                       line: '直线', select: '选框', picker: '吸管', gradient: '渐变' };
-  // ★ 纹理 22(水面)在编辑器里可选、在**游戏里是自动派生**(审计 A7):做成可点选调色板
-  //   只会产出"编辑器里画的、游戏里看到的"不一样的图(而且不报错),故排除,只在提示里点名。
   var DERIVED_TEXTURES = [22];
 
   // ── 尺寸与纹理的硬上限(闸 1:一律**钳制**,不报错回滚)──
@@ -156,7 +119,6 @@ globalThis.Editor = (function () {
     out.sort(function (a, b) { return a.tex - b.tex; });
     return out;
   }
-  // 校验清单(规格 §4.7):只**报告**,不阻止导出。
   function validateLines(report) {
     var out = [];
     var r = report || { errors: [], warnings: [] };
@@ -165,16 +127,6 @@ globalThis.Editor = (function () {
     return out;
   }
 
-  // ── 目标集合(单位换算 + 环面 + 选区约束)──
-  // ── 选区(clip)的成员判据 ──
-  // ★★ **判据本体只有一处**:`Render.inSel`(render.js)—— 拖动预览的源格查询
-  //    (`selectionSource`)、`moveRegion` 的 from 集合与这里转调的是同一个函数,所以
-  //    "预览 / 落笔 / 框内落笔"三处**不可能**再分岔。
-  // ★★ 给了 `W`/`H` 就按**环面**折算(先各自折算到主网格、再比相对偏移)。这修掉的是
-  //    "接缝另一侧的那半截静默漏掉"那一类:`regionCells` 此前是"先把每一格折算回主网格、
-  //    再用**非折算**的 `inRect` 比大小" —— 于是一个**自己跨着接缝**的选区(如 96 宽的图上
-  //    `{x:93,w:6}` 盖住 93..95 与 0..2)只在 93..95 上落笔,0..2 那半边**画不进去、也不报错**
-  //    (评审发现:Important 2)。非折算的调用点(不给 W/H)语义与从前逐字相同。
   function inRect(r, x, y, W, H) { return !r || Render.inSel(r, x, y, W, H); }
   function idxOf(map, X, Y) {
     return Render.wrapIdx(Y, map.subRows) * map.subCols + Render.wrapIdx(X, map.subCols);
@@ -205,9 +157,6 @@ globalThis.Editor = (function () {
     }
     return out;
   }
-  // ★★ Core.lineCells 的坐标必须是整数:非整数或 NaN 会让它的 `for(;;)` **死循环、
-  //    挂住整个标签页**(计划 1 账本 Task 2 Minor 3)。**所有**调用点都在这里 floor,
-  //    editor_smoke 相位 ⑪ 会扫源码钉住"没有第二个没 floor 的调用点"。
   function strokePoints(from, to) {
     var pts = [];
     if (!to || (from.x === to.x && from.y === to.y)) { pts.push(from); return pts; }
@@ -233,12 +182,6 @@ globalThis.Editor = (function () {
     return hit.kind === 'cell' ? { x: hit.x * k, y: hit.y * k } : { x: hit.x, y: hit.y };
   }
 
-  // ── Shift 约束(规格 §4.8:直线约束 / 选区等比)──
-  // ★ 纯函数,而且是**唯一**一处做这个判断的地方:两个调用点(预览与落笔)必须用同一个
-  //   结果,否则预览画的是 A、松手落下去的是 B。
-  // ★ 返回值一律 floor:它的产物会直接喂给 lineCells —— 非整数 = 死循环挂住整个标签页。
-  //   (★ 本行**刻意不写成**带括号的调用形式:editor_smoke 相位 ⑪ 按"同一行出现调用就必须
-  //     出现 Math.floor"这条**逐行**规则扫源码,注释里那半截会被它当成一个调用点。)
   function constrainLine(a, b, shift) {
     var bx = Math.floor(b.x), by = Math.floor(b.y);
     if (!shift) return { x: bx, y: by };
@@ -359,7 +302,6 @@ globalThis.Editor = (function () {
     return { runChunk: runChunk, result: function () { return out.slice(); } };
   }
 
-  // ── 渐变(规格 §4.4:**仅背景层**)──
   function lerpRGBA(v0, v1, t) {
     var a = v0 >>> 0, b = v1 >>> 0;
     var ch = function (shift) {
@@ -380,11 +322,6 @@ globalThis.Editor = (function () {
     var dx = Math.floor(b.x) - Math.floor(a.x), dy = Math.floor(b.y) - Math.floor(a.y);
     var ax = Math.floor(a.x), ay = Math.floor(a.y);
     var len2 = dx * dx + dy * dy;
-    // ★★ **不预展开整张图**:旧版在这里对全图调一次 regionCells(500×300 = 15 万条,外加
-    //    一个同样大的 Set)—— 那一下是**同步**跑完的,作业还没开始分帧就先卡一帧。
-    //    改成逐格推进:顺序仍是行主序(与"全图 regionCells"逐条相同 ⇒ `result()` 的次序不变),
-    //    但第一块只算第一块。★ 唯一的语义差异:`scanned` 现在数的是**扫过的格**(含被选区
-    //    挡掉的),与油漆桶那边的口径一致(它也数扫过的),而不再是"被收下的格"。
     var cols = map.subCols, rows = map.subRows;
     var totalCells = cols * rows;
     var out = [];
@@ -500,27 +437,11 @@ globalThis.Editor = (function () {
     if (w) w.value = String(Core.cellsWOf(app.map));
     if (h) h.value = String(Core.cellsHOf(app.map));
   }
-  // ★★ "这一格没有给一个数"的判据(2026-09-22 复核 Minor 6):`parseInt` 出来不是有限数。
-  //    ★ 用**同一把尺子**量 `Core.clampMapSize`(它内部就是 `parseInt(v,10)` + `isFinite`)
-  //      —— 两处口径不同的话,"什么算非数字"就有了两份答案。
-  //    ★ 为什么非要这一条:`<input type="number">` 里删光或填垃圾,读回来是**空串**,
-  //      而 `Core.clampMapSize('')` 回落到 `DEFAULT_CELLS_W/H = 125×75` —— 那是**造新图**的
-  //      语义。在"改尺寸"这条路上它是一次**静默缩图**:400×300 的图里把宽那个框删空、
-  //      按「应用尺寸」,图变成 125×300(用户以为自己什么都没输、什么都没改)。
   function sizeInputNum(el) {
     if (!el) return null;
     var n = parseInt(String(el.value == null ? '' : el.value), 10);
     return isFinite(n) ? n : null;
   }
-  // ★★ 选区必须**装得下当前尺寸**才留得住(2026-09-22 复核 Important 1)。
-  //    改尺寸(以及撤销/重做一次改尺寸)会把图**变小**,而 `invalidateAll` **不清选区**
-  //    (只有 `setMap` 清,见 render.js)—— 留下的那个框于是:① 画在**图外**
-  //    (render 按原坐标画框,而框已经没有对应的格了,它看上去贴在接缝那一侧);
-  //    ② 更要命的是**凡是消费选区**的工具都走 `idxOf` 的**取模**折算
-  //    (`mirrorRegion` / `regionCells` / `copyRegion` …)⇒ 静默把落在图外的格
-  //    **折回图里**落笔:镜像线不在框画的那条线上、接缝附近凭空空出一片改动,**一个字都不报**。
-  //    ★ 清掉是**看得见**的(框当场消失),所以这是"说得出理由"的那一半;钳到边界
-  //      会让框画在一个它从来不占的位置上(用户以为镜像还是对称的)。
   function dropStaleSelection() {
     if (!app.r || !app.map) return false;
     var sel = app.r.selection();
@@ -574,10 +495,6 @@ globalThis.Editor = (function () {
     return null;
   }
 
-  // ── 热键表(规格 §4.8)──
-  // ★ 纯函数:输入事件对象的一个子集,输出命令字符串。★ Ctrl 与 Cmd 一视同仁
-  //   (meta):本工具只在本机跑,而 Mac 上那个键是 Cmd。表外的键一律返回 null ——
-  //   返回 null 才是"不拦浏览器自己的快捷键"。
   var KEY_TOOLS = { b: 'brush', e: 'eraser', g: 'bucket', l: 'line', m: 'select', i: 'picker' };
   // 事件目标是不是一个"正在打字"的控件(评审发现 4)。★ 判据取 tagName 与 isContentEditable,
   // **不取** `ev.target === document.activeElement` 之类:合成事件 / 焦点在 body 时 target 就是
@@ -602,14 +519,6 @@ globalThis.Editor = (function () {
       return null;
     }
     if (KEY_TOOLS[k]) return 'tool:' + KEY_TOOLS[k];
-    // ★ 镜像(规格 §4.4 的选框:可移动 / 删除 / 复制粘贴 / **镜像**)—— 规格 §4.8 的热键表里
-    //   **没有**镜像键,这里是自选的:`H` 水平 / `V` 垂直。选它的理由:
-    //    ① 助记(horizontal / vertical),与「H 打不出别的意思」这条一致;
-    //    ② 两个键在**今天全部绑定**里都没被占:`B/E/G/L/M/I` 是工具、`[`/`]` 是画笔、`0-9`
-    //       是图层、方向键是平移、Del/Esc 是选区;`V` 只被 `Ctrl+V` 占(带修饰键的分支在
-    //       上面就 `return` 了,两条路不会撞)。
-    //    ③ 不借 Shift/Ctrl:H/V 是**一个轴一个键**的直接映射,而"按 Shift 再按某种镜像键"
-    //       还得记住哪个修饰键管哪条轴。
     if (k === 'h') return 'mirror:h';
     if (k === 'v') return 'mirror:v';
     if (k === '[') return 'brush-smaller';
@@ -749,12 +658,6 @@ globalThis.Editor = (function () {
     if (e.kind === 'whole') {
       var s = dir < 0 ? e.before : e.after;
       if (!s) {
-        // ★ 原先这里是**静默 return**,而它的成因只有一种:`wholeDiff` 还没 `seal()` 就把
-        //   entry 塞进了历史(seal 之前 `after` 快照根本不存在)。症状是"撤销有反应、重做
-        //   一点反应都没有",且一个字都不报 —— 接口没法强制调用顺序(entry 就是普通对象),
-        //   所以**如实上报**,而不是吞掉。
-        // ★ 不抛异常:走到这里时历史栈已经动过了(undo 已把这条 pop 进 redo 栈),
-        //   抛出会把历史留在半截状态。这是"要看得见",不是"要炸掉"。
         reportError('重做无效:这条整图级历史没有 after 快照(wholeDiff 的 seal() 还没调用,条目就进了历史)');
         return;
       }
@@ -834,12 +737,6 @@ globalThis.Editor = (function () {
     return { ok: true, diff: diff };
   }
 
-  // ── 选区移动(A1 的重写)──
-  // ★ 旧实现的病灶:maxDX = 宽 − 选区宽 **漏了 − 选区.x**,拖动越界后
-  //   moveRegion(先清源区再贴目标区)把被裁掉的列静默删掉。
-  // ★ 新实现没有"裁剪"这一步:目标格 = 源格 + 偏移(两边都环面折算),
-  //   源区里**没被目标覆盖**的格被清空。于是"拖到图外"在环面上就是恒等位移,
-  //   结果是"什么都没变"而不是"内容被裁掉"。
   function moveRegion(map, L, sel, dx, dy) {
     if (!sel) return null;
     var arr = Render.layerArray(map, L);
@@ -869,16 +766,8 @@ globalThis.Editor = (function () {
              before: Uint32Array.from(before), after: Uint32Array.from(after), tag: 'move' };
   }
 
-  // ── 镜像(规格 §4.4 的选框:可移动 / 删除 / 复制粘贴 / 镜像)──
   function mirrorRegion(map, L, sel, axis) {
     if (!sel) return null;
-    // ★★ 非法 axis 必须**当场说人话**,不能靠"两个坐标算出来一样"退化成恒等、再静默回 null ——
-    //    那与"镜像了一圈、内容恰好没变"在返回值上**完全同形**,调用方(历史栈/工具栏)分不出
-    //    "轴写错了"和"这次镜像没改动任何格"。
-    // ★ 处理方式与 `createGradientJob` 对非法图层同款(调用方的**编程错误** ⇒ 抛一条带原因的
-    //   中文错),而不是回一个 `{ok:false, why}`:后者会把本函数文档化的返回类型 `diff|null`
-    //   破成三种形状,而 Task 7 的 `history.push(mirrorRegion(...))` 会直接拿到那个对象当真。
-    //   抛出的错在上层被 `guard(...)` 接住 → 落进状态栏,用户看得见、程序不崩。
     if (axis !== 'h' && axis !== 'v') {
       throw new Error('镜像轴非法(只能是 h 水平 / v 垂直):实得 ' + String(axis));
     }
@@ -934,18 +823,6 @@ globalThis.Editor = (function () {
   var undoHistory = null;
   var clipboard = null;
 
-  // ── 磁盘状态(`#st-save` 那一格,规格 §4.5 的状态栏)──
-  // ★★ 状态栏右侧并排的是**两件事**:`#st-save` 说"磁盘上那份是不是这一份",`#status-msg`
-  //    说"刚刚发生了什么"。没有这个标志时 `#st-save` 是一格**没有任何写入者**的静态文案
-  //    (`editor.html` 写死「未保存」),于是 Ctrl+S 成功的那一刻同一条状态栏上会同时出现
-  //    「未保存 | 已保存 demo_copy.cyrm(1234 字节)」—— 两个相邻的 span 当场互相打脸。
-  // ★★ 纪律:它**只**在「保存真的成功」与「打开真的成功」两处清零,**绝不**挂在
-  //    `guard(...)` 的决议上 —— `guard` 失败时决议的是 `undefined`(见它的实现),把清零
-  //    链在它上面会把一次**失败**的保存标成「已保存」,而磁盘上那份一个字都没变。
-  // ★ 今天它写的是「未保存 / 已保存」;Task 9 的草稿盘**接管了**这一格(「已自动保存 12:34」,
-  //    规格 §4.5 的措辞),那两个文案于是降级成"没有草稿盘时"的回落值。
-  // ★★ **一个写入者**:三种文案全在这里决定,别处只改 `dirty` / `lastAutoSaveAt` 两个变量。
-  //    两个写入者(草稿盘直接写 DOM + 这里重画)会互相打脸 —— 那正是 Task 8 修过的那类 bug。
   var dirty = false;
   function renderSaveState() {
     var el = $('st-save');
@@ -957,19 +834,7 @@ globalThis.Editor = (function () {
     el.textContent = dirty ? '未保存' : '已保存';
   }
 
-  // ── 编码出口(规格 §3.5 的「压缩」勾选框)──
-  // ★★ 规格 §3.5 的退路:`compression = 0`(裸 body)是一条**完整可用的路径**,不是半成品 ——
-  //    浏览器 `CompressionStream('deflate')` 与 Godot `COMPRESSION_DEFLATE` 能不能对上,
-  //    设计期**无法实跑验证**(要同时跑浏览器与 Godot),而这条分支的浏览器那一半至今也没验过。
-  // ★★ **唯一**读这个开关的地方,而且是**一处对三处共用**的一条路:
-  //    · 真文件(`saveCurrent`,Ctrl+S / 另存为)
-  //    · 草稿盘(`saveDraft`)
-  //    · 崩溃槽位(`installCrashFence` 的 snapshot)
-  //    ★ 前两处**必须同值**,否则 `offerDraft` 那道 `sameBytes(rec.bytes, app.raw)` 会比出
-  //      "不同"——于是一次开机弹一次**假的**「发现一份还没写盘的草稿」,而两份内容其实一模一样
-  //      (那种假提示能让用户按下去,把草稿盖回真文件)。三处共用一条路,这个坑就不存在。
-  //    ★ 它也顺手满足"别处不许再硬编码这个选项":多一处硬编码就是"改一处忘一处"。
-  var DEFAULT_COMPRESS = true;         // 规格 §3.5:默认勾上
+  var DEFAULT_COMPRESS = true;
   function optCompress() {
     var el = $('opt-compress');
     return el ? !!el.checked : DEFAULT_COMPRESS;   // 控件不在(启动早期/替身)⇒ 按默认
@@ -1006,9 +871,6 @@ globalThis.Editor = (function () {
   }
   function afterStateChange(e) {
     var out = null;
-    // ★ 撤销/重做也是一次**改动**:回到"保存时那一刻"的图上仍然显示「未保存」——
-    //   这是刻意的(要判"撤销回去了没有"得比整份字节,那是 Task 9 草稿盘的事)。
-    //   反过来(把撤销当"变干净")会把"撤了两步、其实还脏着"标成已保存,那才是错的。
     markDirty();
     if (e.kind === 'whole') {
       // ★ 尺寸可能变了 ⇒ 整片重来。**不是** setMap:那个会把视图重新"适配"并清掉选区,
@@ -1091,8 +953,6 @@ globalThis.Editor = (function () {
     return { x: Math.min(x0, x1), y: Math.min(y0, y1),
              w: Math.abs(x1 - x0) + k, h: Math.abs(y1 - y0) + k };
   }
-  // Shift 约束后的落点(★ 规格 §4.8)。★ 预览与落笔**必须**走同一个函数 ——
-  //   否则预览画的是 A、松手落下去的是 B(这类不一致只在动手时才看得出来)。
   function shiftHit(from, to, shift) {
     var c = constrainLine(toSub(from), toSub(to), shift);
     return { kind: 'sub', x: c.x, y: c.y };
@@ -1105,17 +965,7 @@ globalThis.Editor = (function () {
   function installInteraction() {
     var cv = app.canvas;
     undoHistory = createHistory({});
-    // ── 空格 = 平移修饰键(规格 §4.8:「`Space` 拖拽 / 中键拖拽」平移)──
-    // ★ 它**不**放进 `commandFor`:那张表返回的是"按下即执行的一条命令",而空格本身不执行
-    //   任何东西 —— 它只是**下一次拖拽的修饰**。放进表里会长出一个与真身对不上的分支。
-    // ★ 它是一个**按下/抬起**的状态,不是一个事件:故 keydown 置位、keyup 与 `blur` 清位。
-    //   `blur` 那一条不是装饰:按住空格去点别的窗口(或 Alt+Tab)时 keyup 根本到不了这个
-    //   页面,清不掉的话回来一拖就莫名其妙地平移(而用户以为自己早松手了)。
     var spaceDown = false;
-    // ★ 两个颜色槽:规格 §4.4 的渐变是"两端各选一色" ⇒ 必须**两个**颜色状态
-    //   (rgba = 起点、rgba2 = 终点)。页面今天只有一个 #bg-color 色槽(Task 8 接),
-    //   所以第二个先给一个与起点**明显不同**的默认值 —— 给成同一个色的话渐变会退化成
-    //   纯色填充,而且看不出来(那一版的"渐变"就是那样)。
     app.st = { tool: 'brush', brushSize: 1, desc: Core.neutralDesc(1),
                rgba: 0xFF00FFFF, rgba2: 0x101820FF,
                descOnly: false, selStart: null, stroke: null, panning: null, selDrag: null,
@@ -1137,13 +987,6 @@ globalThis.Editor = (function () {
         //   早到是可能的(闸 1:钳制,不报错)
         var W = app.map ? app.map.subCols : 0, H = app.map ? app.map.subRows : 0;
         if (app.st.tool === 'select') {
-          // ★ 判"按在选区里"必须先把命中**换算到子格**:整格命中给的是格号,而选区是子格单位
-          //   —— 直接比会差 4 倍(而且**永远不成立**),表现为"选框工具一拖就是在重新框选,
-          //   选区永远拖不动"。换算只有 toSub 一处。
-          // ★★ 判据与 `regionCells` 的 clip **同一个**(`inRect` → `Render.inSel`,带环面折算):
-          //   三个"选区"口径(按下算不算在选区里 / 框内落笔算不算有目标 / moveRegion 的 from
-          //   集合)此前是**三种**,各自在接缝那一侧给出不同答案 —— 最刺眼的一种是"框里画，
-          //   一半画得进去、一半什么都没发生"。
           var hs = toSub(hit);
           if (sel && inRect(sel, hs.x, hs.y, W, H)) {
             app.st.selDrag = { from: hit, dx: 0, dy: 0 };   // 选区内按下 = 拖动它
@@ -1179,8 +1022,6 @@ globalThis.Editor = (function () {
           return;
         }
         if (app.st.tool === 'gradient') {
-          // ★ 规格 §4.4:渐变**仅背景层**。工具按钮只是压暗(视觉提示),真正的闸在这里 ——
-          //   少了它,在纹理层拖渐变会**悄悄改掉背景层**(屏幕上看不出,因为背景在最底下)。
           if (app.r.layer() !== Core.LAYER_BG) { status('渐变只能用在背景层(它改的是颜色,不是纹理)'); return; }
           app.st.gradStart = hit;
           return;
@@ -1227,15 +1068,6 @@ globalThis.Editor = (function () {
       guard('pointerup', function () {
         if (app.st.panning) { app.st.panning = null; return; }
         var hit = hitOf(ev);
-        // ★★ 拖动分支:记录先取到**局部变量**再判 —— **没有在飞的记录就整支跳过**(早退)。
-        //    这条早退是承重的,而且它挡的是**两种**"没有记录":
-        //    ① 本次按下起的是别的动作(框选/笔画),那两条分支在下面各管各的;
-        //    ② 这次拖动**已经被取消**了 —— Esc 的 cancel-selection 会把 `app.st.selDrag`
-        //       清掉(见那里):视觉上已经取消,松手就**一个格都不许搬**(否则"看着取消了、
-        //       数据却动了"是最坏那种不一致)。
-        //    ★ `sd` 的**字段**必须排在判过 `sd` 之后才读:取消之后 `sd` 是 null,少了这层
-        //      判会去读它的 `dx`(在 pointerup 里抛 TypeError = 落笔路径整个断掉 ——
-        //      "点了一下,什么都没发生,控制台里一条错")。
         var sd = app.st.selDrag;
         if (sd) {
           app.st.selDrag = null;
@@ -1292,7 +1124,6 @@ globalThis.Editor = (function () {
           if (app.st.tool === 'rect') {
             pushAndShow(applyTool(stNow(), 'rect', st0.from, hit));
           } else if (app.st.tool === 'line') {
-            // ★ Shift 约束(规格 §4.8):直线锁水平/垂直/45° —— 与预览同一个函数
             pushAndShow(applyTool(stNow(), 'line', st0.from, shiftHit(st0.from, hit, ev.shiftKey)));
           } else if (!st0.painted) {
             // ★ 按下与松开之间**没有** pointermove(单击)时,画笔/橡皮的落笔只在 pointermove
@@ -1319,22 +1150,7 @@ globalThis.Editor = (function () {
     }, { passive: false });
 
     window.addEventListener('keydown', function (ev) {
-      // ★★ 焦点在**输入控件**里时,一个键都不许拦(评审发现 4):本处理器按键**命令**分发,
-      //    而表里有 `Backspace/Delete → clear-selection`、`0-9 → 切层`、`b/e/g/l/m/i → 换工具`、
-      //    方向键 → 平移。焦点在输入框里时这些键是**打字**:按 Backspace 会**先被 preventDefault**
-      //    (数字删不掉)再**真去 erase 掉整个选区** —— 数据被改,而用户以为自己只是在删一个字符。
-      //    `#brush-size` 这类输入框今天就在 DOM 里(editor.html),Task 8 还会把面板的输入全部接上。
-      // ★ 判据:`input` / `textarea` / `select` / contenteditable(规格 §4.8 的热键只在画布上生效)。
       if (isTypingTarget(ev.target)) return;
-      // ★★ 空格(规格 §4.8:`Space` 拖拽 = 平移)—— 只有**认领了这个键**的时候才拦默认行为,
-      //    而"认领"的判据就是上面那行早退(`isTypingTarget`):焦点在输入控件里时这里一步都
-      //    不走,于是空格照旧是一个**字符**(不是"什么也没发生")。
-      // ★ 拦的是什么:空格是浏览器的**向下翻页**键,而 `#right` / `#lib-list` 都是
-      //    `overflow:auto` ⇒ 不拦的话,按下空格准备拖拽时右边栏先滚一屏;`keyup` 那一半同样
-      //    要拦 —— 浏览器还会把空格当"按下当前聚焦的按钮"(点过「应用尺寸」之后那颗按钮
-      //    仍带着焦点),不拦就是"想平移,结果又改了一次尺寸"。
-      //    ★ 一并 `return`:表外的键不拦,而空格是**被表外那条规则排除在外**的一个特例,
-      //      它自己就是修饰键,不该再往命令分派里走。
       if (ev.key === ' ') { spaceDown = true; ev.preventDefault(); return; }
       var cmd = commandFor(ev);
       if (!cmd) return;                                  // ★ 表外的键一律不拦
@@ -1378,17 +1194,6 @@ globalThis.Editor = (function () {
                                 { kind: 'sub', x: s3.x + s3.w - 1, y: s3.y + s3.h - 1 }));
         }
         else if (cmd === 'cancel-selection') {
-          // ★★ Esc 可能在**拖动途中**按下去(左键还按着、`selDrag` 还在飞)而照样合法:选区没了
-          //    ⇒ **没有可搬的东西**,这次拖动整支作废。要一起做的是三件事:
-          //    ① 清**在飞的拖动记录**(`app.st.selDrag`)—— 它是"这一支拖动还算不算数"的唯一
-          //       依据:松手时 pointerup 的拖动分支因此**根本不进**(少了它,提交与否只剩"选区
-          //       还在不在"一条判据,"取消"与"别的什么把选区清掉了"就分不开了);
-          //    ② 让渲染侧撤掉偏移(`setSelDrag(null)`):内部走一遍 `markDragDirty`,把烤过的
-          //       两块按"内容归位"重画 —— 归位是**当场**的,不必等下一次指针事件;
-          //    ③ 清选区,框消失。
-          //    ★ ②③ 谁先谁后都一样(去烤按哪几块画由 `s.selDrag` 决定,而重画出来的是**什么**
-          //      由 `dragSource` 决定 —— 两条判据现在都含 `s.selection`);① 必须排在最前,
-          //      因为紧随其后的 pointermove/pointerup 判的正是它。
           app.st.selDrag = null;
           app.r.setSelDrag(null, 0, 0);
           app.r.setSelection(null);
@@ -1400,15 +1205,6 @@ globalThis.Editor = (function () {
       });
     });
 
-    // 空格抬起 = 松开平移修饰键(见上面 keydown 里那段说明:keyup 那一半也要拦 ——
-    // 浏览器会把空格当"按下当前聚焦的按钮")。
-    // ★★ 清位必须**无条件**做,只有 `preventDefault` 才走"输入控件里不拦"那道早退
-    //    (2026-09-22 复核 Minor 1)。原先那一行早退排在清位**之前**,于是这条**极普通**的
-    //    手顺能把修饰键**永久卡住**:按住空格(此刻焦点在 body,`spaceDown = true`)→ 还按着的
-    //    同时点进一个输入框 → 松手(keyup 的 target 是那个输入框 ⇒ 早退 ⇒ `spaceDown` 仍是
-    //    true)→ 此后**每一次左键拖拽都变成平移**,而用户以为自己松开空格很久了。
-    //    ★ 判据正确的那一半("焦点在输入框里时**不认领**这个键":不 preventDefault,空格照旧
-    //      是一个字符)原样保留 —— 见下面那条断言。
     window.addEventListener('keyup', function (ev) {
       if (ev.key !== ' ') return;
       spaceDown = false;                  // ★ 清位与"认不认领"无关:键已经抬起来了
@@ -1450,35 +1246,15 @@ globalThis.Editor = (function () {
     document.querySelectorAll('#layers .layer-row').forEach(function (row) {
       row.classList.toggle('cur', parseInt(row.dataset.layer, 10) === L);
     });
-    // ★ 规格 §4.5:选中的是**背景层**时,右侧的纹理调色板换成颜色选择器,工具条里只有
-    //   「渐变」额外可用。这个 hook 由 Task 8 提供(typeof 守卫:Task 7 单独跑时也能过)。
     if (typeof syncPanelForLayer === 'function') syncPanelForLayer();
     statusLine();
   }
 
-  // ── 保存(★ 决定 ⑤:v3 源首次保存要一次显式确认 + 一份原文备份)──
-  // ★ 为什么必须确认:仓库里 maps/*.cyrm **今天全是 v3 文本**,而 Ctrl+S 写回原文件
-  //   (规格 §4.6)⇒ 一次 Ctrl+S 就把 v3 原文转成 v4 二进制,而迁移是**单向**的
-  //   (规格 §3.6「迁移是一次性的」)。期 E 会专门做迁移并先提交一份 v3 原文留档。
-  // ★★ 用户裁定(2026-09-22):**确认框要说出决定性的那件事**(游戏今天读不了 v4),
-  //    并且在这次转换写盘**之前**把 v3 原文落一份备份到同目录。
   var v3Confirmed = false;
   function needsV3Confirm(srcFmt, confirmed) {
     if (!srcFmt) return false;
     return (srcFmt === 'v3' || srcFmt === 'legacy') && !confirmed;
   }
-  // ── ★★ 原文备份是**逐文件**的,不是每会话一次(2026-09-22 修)──
-  // ★ 缺陷照实说:上一轮让**备份**与确认框共用 `v3Confirmed` 这**同一个会话级**标记 ⇒
-  //   同一会话里保存**第二张** v3 图时,`needsV3Confirm` 已经是 false,**两半都不再发生** ——
-  //   那次单向转换既没有确认、也没有备份,**静默**把一个文件转成了 v4。安全网只盖住了第一张图。
-  // ★ 修法(最小改动):确认框保持每会话一次(决定 ⑤ 的原意:同一个决定问一次就够),
-  //   另立一张「本会话已经备份过哪些文件」的表 `v3BackedUp`,键 = **保存目标那个文件名**。
-  //   于是每个被转换的源文件各自得到一份 `<名>.v3.bak`,同一个文件重复保存只写一次。
-  // ★ 用 `Set`(不是普通对象):图名合法字符里含 `_`,`__proto__.cyrm` 这种名字在普通对象上
-  //   赋值 `__proto__` 会被**静默忽略**、读回来是 `Object.prototype`(truthy)⇒ 那条分支
-  //   永远不备份而**不报错**。Set 没有这个坑。
-  // ★ 记账**只在备份真的写成功之后**落(见 saveCurrent):写失败时保存整个中止,
-  //   `sourceFormat` 仍是 v3 ⇒ 用户重试那一次**必须**再写一遍备份,否则第二遍就可能无备份落盘。
   var v3BackedUp = new Set();
   function needsV3Backup(srcFmt, fileName, backed) {
     // `fileName` 为空 = 这张图还没落过盘(新建后直接 Ctrl+S)⇒ 磁盘上没有"原文"可备,
@@ -1488,23 +1264,8 @@ globalThis.Editor = (function () {
     return !backed.has(fileName);
   }
   function freshName(base) { return Core.sanitizeName(base) + '.cyrm'; }
-  // ── 原文备份的文件名 = `<基名>_<8 位十六进制>.v3.bak` ──
-  // ★★ 结尾**不是** `.cyrm`,于是游戏的 `_random_cyrm`(`f.to_lower().ends_with(".cyrm")`)
-  //    抽不到它 —— 备份不会混进随机地图池,这一点由实证钉住(见报告 §item2)。
-  // ★ 上一轮做不出这个名字(服务器当时只放行 `<基名>.cyrm`);2026-09-22 用户裁定
-  //    **唯一**放宽一次 `editor_server.js` 的名字校验(只多接受 `.v3.bak` 这一个后缀),
-  //    于是这里改回原本想要的名字。
   var V3_BACKUP_SUFFIX = '.v3.bak';
   var V3_BACKUP_STEM_MAX = 24;
-  // ★★ 为什么要有那段哈希(2026-09-22 复核 Minor 5):"收干净 + 截前 40 字"**不是单射** ——
-  //    `图1.cyrm` 与 `1.cyrm` 收完都是 `1`,`图甲.cyrm` / `图乙.cyrm` 收完都是空(`map`),
-  //    而两个长名字截到同一个 40 字前缀的图会**共用同一份退路**。撞名的代价不是报错
-  //    (不报错更糟):第二张图的原文会把第一张的退路**静默覆盖**,而两张 v3 都已经转成 v4 了。
-  //    ★ 输入取**完整原文件名**(截断前那一份),于是"截断"这条撞法也一并闭合。
-  //    ★ FNV-1a 32 位、输出补到 8 位十六进制:这里没有攻击者,要挡的是"两个看着不相干的
-  //      名字落到同一格"这类意外,32 位足够(且比引入一个哈希依赖便宜得多)。
-  //    ★ 基名仍**只许** `[A-Za-z0-9_-]`(服务器的 `MAP_NAME_RE` 没有放宽):哈希是十六进制、
-  //      连接符用 `_` ⇒ 整名最长 24+1+8+7 = 40 < `MAX_MAP_NAME_LEN`(64,守卫在 editor_smoke)。
   function fnv1a32(str) {
     var h = 0x811c9dc5;
     for (var i = 0; i < str.length; i++) {
@@ -1541,21 +1302,10 @@ globalThis.Editor = (function () {
   }
   function saveCurrent(asNew) {
     if (!app.map) { status('先打开一张地图'); return Promise.resolve(); }
-    // ★★ 备份**不是**保存目标(2026-09-22 复核 Minor 2b):`.v3.bak` 装的是这张图**原文**
-    //    的最后一手退路,就地覆盖它 = 把退路换成 v4(名字还会漂成 `<名>v3bak.v3.bak`)。
-    //    ★ 它**不丢数据**(覆盖的是一份备份,不是地图),但退路就这么没了、而且不报错 ——
-    //      与"备份是唯一的退路"那条纪律直接冲突。要接着改这张图就用「另存为」另起一个名字。
-    //    ★ 库列表那一侧另有一道闸(`refreshLibrary` 过滤)—— 但列表只管点击,
-    //      `?p=xxx.v3.bak` 这条 URL 直接打开的路它管不到,故这里必须有。
     if (!asNew && isBackupName(app.name)) {
       status('这是一份原文备份(' + app.name + '),不是地图 —— 不能就地覆盖它。请用「另存为」另起一个名字');
       return Promise.resolve();
     }
-    // ★★ 确认与备份是**两条独立的门**(2026-09-22 拆开;上一轮它们共用一个会话级标记):
-    //    · **确认** = 每会话一次(决定 ⑤ 的原意:同一个决定问一次就够,用户已签核);
-    //    · **备份** = **每个文件一次**(`v3BackedUp`)—— 否则同一会话里保存**第二张** v3 图时
-    //      两半都不发生,那次单向转换是**静默**的,安全网只盖住第一张图。
-    // ★ 备份名先算出来:确认框的文案要**点名**那条退路(按"确定"之前用户就该知道原文落在哪)。
     var backupName = null, backupBytes = null, backupKey = null;
     if (needsV3Backup(app.sourceFormat, app.name, v3BackedUp)) {
       backupBytes = app.raw || null;                 // 磁盘上那份的**原文**(打开时留下的)
@@ -1583,11 +1333,6 @@ globalThis.Editor = (function () {
     //    (不设头 = 浏览器给 Blob 的默认类型 ⇒ 服务器 415 ⇒ "点了保存、磁盘上那份没变",
     //    而且**不报错回滚**)。这里再拼一份 fetch 就是第二个出口,迟早只改一处。
     return encodeForWrite(app.map).then(function (bytes) {
-      // ★★ 备份**排在真保存之前**,而且走的是**同一个** `putMapBytes` 出口(页面上发 PUT
-      //    的地方仍然只有一处 —— 另一个 fetch 就是第二个出口,迟早只改一处)。
-      // ★ 备份写不进去就**不写盘**:这次转换是单向的,备份是唯一的退路;先写盘再发现备份
-      //   失败 = 原文与退路一起没了。故这里把失败**抛出去**(外层 catch 会说「保存失败」,
-      //   而磁盘上那份确实一个字都没动)。
       var pre = backupName
         ? putMapBytes(backupName, backupBytes).then(function () {
             // ★★ 记账**只能在备份真的落盘之后**:写失败时保存整个中止、`sourceFormat` 仍是 v3
@@ -1639,7 +1384,6 @@ globalThis.Editor = (function () {
     return reg.map(function (e) { return String(e.id); });
   }
 
-  // ── 导出校验(规格 §4.7:只警告,不阻止导出)──
   function exportReport() {
     if (!app.map) return { lines: ['还没打开地图'], ok: false };
     var rep = Core.validateMap(app.map);
@@ -1658,25 +1402,15 @@ globalThis.Editor = (function () {
     status(rep.ok ? '导出校验:没有 error' : '导出校验:有 error(encodeMap 会拒绝导出)');
   }
 
-  // ── 持久化三层(规格 §4.6)+ 闸 4(崩溃前快照)──
-  // ① 真文件 maps/*.cyrm(Ctrl+S 写回,Task 8)② IndexedDB 草稿盘 ③ localStorage 只存 UI 小状态。
-  // ★★ 三层是**递进**的:"作品"的最高保真副本永远是**真文件**;草稿盘兜住"还没写盘的活";
-  //    localStorage 只放"下次打开时界面该长什么样"这种小状态。
   var DRAFT_DB = 'cyrm-editor';
   var DRAFT_STORE = 'draft';
   var CRASH_STORE = 'crash';
-  // ★ 库版本 **2** = 给草稿盘加 `savedAt` 索引。它换来的是两条**不物化记录本体**的查询:
-  //   「最新一条的 savedAt」(启动时的崩溃槽位比对)与「按时间升序挑淘汰对象」(闸 1 的清理)。
-  //   两条以前都靠 `getAll` 把整库读进主线程(每张草稿带着编码后的整张图,规格 §4.3:2.4MB)。
   var DRAFT_DB_VERSION = 2;
   var DRAFT_TIME_INDEX = 'savedAt';
   var UI_STATE_KEY = 'cyrm.ui.v1';       // ★ 带版本号:将来换字段可以让老的那份自然失效
-  var MAX_LIB = 60;                      // 库条目上限(规格 §4.3 闸 1)
+  var MAX_LIB = 60;
   var DRAFT_DEBOUNCE_MS = 1500;          // 最后一笔之后多久落盘(不是每笔都写)
-  var UI_SAVE_THROTTLE_MS = 500;         // localStorage 是**同步**写:每帧写会掉帧
-
-  // ★ 草稿盘的主键 = sanitizeName(文件名):库的身份就是**文件名**(计划 2a 的裁决 ②),
-  //   另铸一套 id 必然与文件那一套漂。
+  var UI_SAVE_THROTTLE_MS = 500;
   function draftKey(name) { return Core.sanitizeName(nameFromFile(name)); }
   // ★ "当前这张图"的键只有这一处:**写进去的**与**读出来的**必须是同一个键,
   //   否则症状是"草稿盘里明明有一条,恢复时说什么都没有"(而且不报错)。
@@ -1716,8 +1450,6 @@ globalThis.Editor = (function () {
 
   // ── 第 3 层:localStorage 小状态(★ 读损坏值一律回落默认:编辑器要能开)──
   function uiStateDefaults() {
-    // ★ 玩家参考图的位置**按格坐标**存(cx/cy):按屏幕像素存的话,换窗口大小/换缩放
-    //   之后语义就漂了(审计 A13)。
     return { layer: Core.LAYER_SCENE, zoom: 0, tool: 'brush', brushSize: 1,
              grid: true, subGrid: false, torus: true, dimOthers: true,
              compress: DEFAULT_COMPRESS,
@@ -1787,10 +1519,6 @@ globalThis.Editor = (function () {
     } catch (e) { return null; }
   }
 
-  // ── 第 2 层:IndexedDB 草稿盘 ──
-  // ★ 开不出来就是开不出来(私密模式 / 被策略拦 / 环境没有 indexedDB):**不降级、不抛** ——
-  //   少了草稿盘编辑器仍然能用(Ctrl+S 那条路一个字都不变),但必须**说一句**,
-  //   否则用户以为"编辑器帮我存着呢"(规格 §4.6 的失败面)。
   function openDraftStore() {
     return new Promise(function (resolve) {
       if (typeof indexedDB === 'undefined') { resolve(null); return; }
@@ -1832,8 +1560,6 @@ globalThis.Editor = (function () {
       tx.onabort = function () { reject(tx.error || new Error('IndexedDB 写被中止')); };
     });
   }
-  // ★ 只用 `count()` 问条数 —— 记录本体(每张草稿带着**编码后的整张图**,规格 §4.3 每张 2.4MB)
-  //   一个字节都不反序列化。清理闸门要判"超没超"只需要这个数(见 pruneDrafts)。
   function idbCount(db, store) {
     return new Promise(function (resolve) {
       var tx, rq;
@@ -1843,12 +1569,6 @@ globalThis.Editor = (function () {
       rq.onerror = function () { resolve(null); };    // ★ null = 读不到(不是"0 条")
     });
   }
-  // ★★ 单条读:`ok:false` = **读不到**(事务打不开 / 请求失败),`rec:null` = 读到了、那条不存在。
-  //    两者**必须**分得开(与 `idbCount` 的 `null` = 读不到 是同一条纪律,只是单条读没有
-  //    "空库"那一档):把"读失败"折成"没有这条记录"会让「上次异常退出」那一次抢救**无声消失**
-  //    —— 那是这一层最后一次兜底,静默没了就等于作品丢了而没人知道(见 checkCrashSlot)。
-  //    ★ 本文件里**没有**整库读(`getAll`)那条路了:启动与清理两条路径都改成点读/索引游标
-  //      (每张草稿带着编码后的整张图,整库读就是把几十 MB 反序列化进主线程)。
   function idbGetOne(db, store, key) {
     return new Promise(function (resolve) {
       var tx, rq;
@@ -1861,11 +1581,6 @@ globalThis.Editor = (function () {
       if (tx) tx.onabort = function () { resolve({ ok: false, rec: null }); };
     });
   }
-  // ★★ 草稿盘里**最新**一条的 savedAt:走索引的**键游标**(`openKeyCursor`)—— 交回来的
-  //    就是索引键本身(一个数),**一个字节的记录本体都不反序列化**。这原来是启动路径上的
-  //    一次整库 `getAll`(每张草稿带着编码后的整张图),而它要的只是"最新的那个时刻"。
-  //    `savedAt: null` = 库里一条都没有(索引是稀疏的:没有 savedAt 的记录不进索引 ——
-  //    今天三处写入点都写它,真出现这种记录也只是"不参与比对",不影响任何写入)。
   function idbNewestSavedAt(db) {
     return new Promise(function (resolve) {
       var tx, rq;
@@ -1881,15 +1596,6 @@ globalThis.Editor = (function () {
       if (tx) tx.onabort = function () { resolve({ ok: false, savedAt: null }); };
     });
   }
-  // ★★ 到了条数上限时找牺牲者:**按 savedAt 升序逐条走**,凑够"干净的"那几条就停 ——
-  //    不是把整库 `getAll` 进来。满库是**常态**(到上限之后每一次写入会把它顶过上限、
-  //    清一条又回到上限),所以这条路径上的 `getAll` 是"每次防抖落盘都要物化整库"。
-  //    ★ 淘汰口径**不在这里**,仍然只有一处(`evictPlan`):干净的记录在它的排序里整体排在
-  //      脏的前面,而它们在时间轴上也是升序 ⇒ "走的时候遇到的前 need 条干净的"**恰好**就是
-  //      `evictPlan` 会丢掉的那 need 条。干净的凑不够 need 时一直走到遍历完(退化成整库都读,
-  //      而非读全不可的那种库旧实现也只能这么做),此时交回的 entries 就是全库、口径逐字不变。
-  //    ★ 交回 `{entries, clean}`:调用方用 `entries.length - need` 当 cap 喂给 evictPlan
-  //      (两种情形同一条公式,见 pruneDrafts)。★ 读失败交回 **null**(与"库是空的"分开)。
   function idbWalkDraftVictims(db, need) {
     return new Promise(function (resolve) {
       var tx, rq;
@@ -1985,8 +1691,6 @@ globalThis.Editor = (function () {
       renderSaveState();               // 状态栏那一格由草稿盘接管(handoff 2)
       return pruneDrafts();
     }).catch(function (e) {
-      // ★ 配额失败要**明确告知**,不静默吞掉(规格 §4.6):作品还在(内存里),
-      //   但用户必须知道"没有第二份",该 Ctrl+S 了。
       status('草稿盘写入失败:' + msgOf(e) + '(作品仍在,请尽快 Ctrl+S 写盘)');
     });
   }
@@ -1995,12 +1699,6 @@ globalThis.Editor = (function () {
   // ★ 与 `dirty = false` 同一处、同一条纪律:只有真的写成功了才调它。
   function markDraftSaved(key) {
     if (!app.db) return Promise.resolve(false);
-    // ★ 三件事一起做,缺一条都会留下症状:
-    //   ① `draftSavedRev` 推到当前 rev —— 那个还在飞的防抖定时器到点时会走 saveDraft 顶部
-    //      那道判据,从而**不会**把刚标干净的草稿重新写脏(否则下次打开弹一次假的恢复提示);
-    //   ② `lastAutoSaveAt` 归零 —— `#st-save` 交回 Task 8 那对文案:磁盘上那份就是屏幕上
-    //      这份了,再显示「已自动保存 12:34」是**误导**(那读起来像是最新的那一份);
-    //   ③ 草稿记录本身标 `dirty:false`(启动时的 `offerDraft` 只问脏的)。
     draftSavedRev = draftRev;
     lastAutoSaveAt = 0;
     return loadDraft(key || currentDraftKey()).then(function (rec) {
@@ -2009,20 +1707,6 @@ globalThis.Editor = (function () {
       return idbPut(app.db, DRAFT_STORE, rec).then(function () { return true; });
     }).catch(function () { return false; });   // 标不干净不影响"已经存盘了"这个事实
   }
-  // ── 闸 1 的清理(库条目数上限 60)──
-  // ★★ **先数条数,再决定要不要读记录本体**:`getAll()` 会把库里每一条都反序列化进主线程
-  //    内存,而每张草稿带着**编码后的整张图**(规格 §4.3 的闸 1 表:每张 2.4MB)⇒ 满库时
-  //    每一次防抖落盘之后都要在一次 `getAll` 里物化几十 MB。没到上限的**常态**路径因此
-  //    只剩一次 `count()`(闸 2 的同一条纪律:主线程上不做与"要不要动手"无关的重活)。
-  // ★★ 到了上限**也不是**整库读:走 `idbWalkDraftVictims`(索引键序逐条,凑够就停)——
-  //    满库是**常态**(写入把它顶过上限、清一条又回到上限),故"到上限就 getAll"等于
-  //    "每次防抖落盘都物化整库",而这正是上一段要防的那件事、只是换到了"永远满着"这个状态上。
-  // ★★ 两条失败路径都必须**说出来**(读不到条数 / 读不到记录列表 / 删除事务失败):
-  //    清理不生效是静默的话,用户只会看到草稿盘悄悄涨过 60 条,直到配额炸掉才发现 —— 而
-  //    "读失败"与"没到上限"在静默实现里长得**一模一样**。
-  //    ★ 但**不拒绝这次写入**:最新的那份劳动正是这一层存在的理由,永远先保住它。
-  //    ★ 报的都是状态栏**同一行**(与成功那条「已清掉 N 条最老的」同位),**不碰** `#st-save`
-  //      —— 那一格的自动保存时刻要留住(handoff 2)。
   function pruneDrafts() {
     var didNotRun = '(这次的草稿已存下,但 ' + MAX_LIB + ' 条上限这次没生效)';
     return idbCount(app.db, DRAFT_STORE).then(function (n) {
@@ -2111,13 +1795,6 @@ globalThis.Editor = (function () {
       //   —— 拆成两行的话它就是"没被收口的视图入口",而那正是"按了没反应"那条通道。
       guard('恢复缩放', function () { return app.r.setZoomAt(app.canvas.width / 2, app.canvas.height / 2, u.zoom / cur); });
     }
-    // ★★ 这一处必须走**本文件**的 `setLayer`(它内部再调 `app.r.setLayer`)—— 直接调
-    //    `app.r.setLayer` 只换渲染层,而**面板与图层行不会跟着动**:`.layer-row.cur` 仍钉在
-    //    `editor.html` 里写死的那一行(场景),`syncPanelForLayer()` 也不会因为恢复出来的层
-    //    再跑一遍(它在 `buildPanels` 末尾跑过一次,那时渲染层还是默认的 LAYER_SCENE)。
-    //    症状是**用户看到的与正在发生的是两回事**:右侧摆着纹理调色板、图层行高亮「场景」,
-    //    而刷子已经画到存下来的那一层(背景层)上了 —— 而且一个字都不报(规格 §4.6 把
-    //    「当前图层」列为要恢复的状态,下面那几个开关走的是同一条纪律:DOM 必须与状态一致)。
     setLayer(u.layer);
     app.r.setGrid(u.grid); app.r.setSubGrid(u.subGrid);
     app.r.setTorus(u.torus); app.r.setDimOthers(u.dimOthers);
@@ -2151,8 +1828,6 @@ globalThis.Editor = (function () {
     if (bsEl) bsEl.value = String(app.st.brushSize);
   }
   var uiSaveTimer = null;
-  // ★ 节流(不是逐帧):localStorage 是**同步**写,每帧写会掉帧。挂在几个明确的变更点上,
-  //   不侵入 Task 7 的交互代码。
   function persistUi() {
     if (uiSaveTimer || !app.map || !app.st) return;
     uiSaveTimer = setTimeout(function () {
@@ -2187,12 +1862,6 @@ globalThis.Editor = (function () {
     onWin('pagehide', function () { persistUi(); flushDraft(); });
   }
 
-  // ── 闸 4:全局错误围栏 + 崩溃前快照 ──
-  // ★ 这条是兜底:就算前面三道闸哪里漏了,作品也不会丢,最坏只丢最后一笔。
-  // ★★ 与 Task 3/4 那对监听的关系:boot() 里原本挂着 `error` / `unhandledrejection`
-  //    **只写状态栏**的一对。这里**不再挂第二对**(两对同事件 = 一次异常把状态栏写两遍,
-  //    而快照只挂在其中一对上 —— 日后改一对忘一对是**静默**的),而是把那一对**整个搬进来**、
-  //    各加一行 `snapshot(...)`。装它的地方因此只剩 bootLoad() 一处。
   function installCrashFence() {
     function snapshot(why) {
       if (!app.map || !app.db) return;
@@ -2273,8 +1942,6 @@ globalThis.Editor = (function () {
     });
   }
 
-  // ── 面板构建(★ 每个控件只挂一次监听 —— 审计 A16:旧实现同时挂了 22 个独立监听
-  //    与一个容器委托,点一次跑两遍)──
   function buildPanels() {
     document.querySelectorAll('#layers .layer-row').forEach(function (row) {
       var L = parseInt(row.dataset.layer, 10);
@@ -2292,7 +1959,6 @@ globalThis.Editor = (function () {
         this.style.opacity = on ? '0.35' : '1';
       });
     });
-    // 纹理调色板(★ 从 tile_defs 派生;纹理 22 不在其中 —— 审计 A7)
     var pal = texturePalette(app.tileDefs);
     var box = $('palette');
     pal.forEach(function (e) {
@@ -2383,8 +2049,6 @@ globalThis.Editor = (function () {
         guard('改尺寸', applySize);
       });
     });
-    // ★ 压缩开关(规格 §3.5):值本身在**用的时候**读(`optCompress`),这里只负责说一句
-    //   ——"改了要不要紧"这件事没有别的可见面(它不改地图、不改历史)。
     var cpBox = $('opt-compress');
     if (cpBox) cpBox.addEventListener('change', function () {
       status(cpBox.checked ? '导出/保存:压缩(deflate)'
@@ -2413,9 +2077,7 @@ globalThis.Editor = (function () {
       app.map = m; app.name = freshName(name);
       app.sourceFormat = 'v4';
       undoHistory = createHistory({});
-      markDirty();                    // ★ 新建只活在内存里(还没写盘)⇒ 磁盘状态是「未保存」
-      // ★ setMap 返回的是**分帧重建**派生出来的 promise(Task 4)⇒ 必须收口:抛在任务回调里
-      //   是一次 promise 拒绝,同步 try/catch 接不住(用户看到的就是"点了新建、画面不动")。
+      markDirty();
       guard('新建地图', function () { return app.r.setMap(m); });
       status('新建 ' + app.name + '(还没写盘 —— Ctrl+S 才落盘)');
       refreshStatus(); statusLine();
@@ -2448,9 +2110,6 @@ globalThis.Editor = (function () {
     });
     var exp = $('btn-export');
     if (exp) exp.addEventListener('click', showExportReport);
-    // ★ 背景层的两个颜色槽(规格 §4.4/§4.5):①起点 ②终点。**两个槽是渐变的全部**——
-    //   只接一个的话"渐变"永远退化成一个纯色(两端同色),而且看不出来。
-    //   背景层是不透明的真彩(#RRGGBB → 0xRRGGBBFF;alpha 由辅码那一路管不了它)。
     [['bg-color', 'rgba'], ['bg-color2', 'rgba2']].forEach(function (spec) {
       var inp = $(spec[0]), lab = $(spec[0] + '-val');
       if (!inp) return;
@@ -2469,8 +2128,6 @@ globalThis.Editor = (function () {
     statusLine();
   }
 
-  // 背景层时把"纹理调色板 + 辅码"换成"颜色选择器"(规格 §4.5)。
-  // ★ 只切显示,不动任何数据:切回纹理层时用户刚才选的纹理/辅码还在。
   function syncPanelForLayer() {
     var isBg = (app.r.layer() === Core.LAYER_BG);
     var show = function (id, on) { var el = $(id); if (el) el.style.display = on ? '' : 'none'; };
@@ -2523,10 +2180,6 @@ globalThis.Editor = (function () {
         return;
       }
       var before = snapshotSpawns(app.map);
-      // ★★ 折算回本图范围:`addSpawn`(436)与 `spawnIndexAt`(420)都这么做,这条路此前漏了。
-      //    `panBy` **不钳**视图(render.js)⇒ 环面模式下把视图拖到图外时,"视图中心那一格"
-      //    算出来是越界的,于是磁盘上多出一条 x/y 出圈的出生点 —— 只有 `Core.validateMap`
-      //    看得见它(而游戏侧读到的位置是另一回事)。两条路必须同量纲。
       var px = Render.wrapIdx(Math.floor(cx), Core.cellsWOf(app.map));
       var py = Render.wrapIdx(Math.floor(cy), Core.cellsHOf(app.map));
       if (app.map.players.length === playerIndex) app.map.players.push({ x: px, y: py });
@@ -2539,7 +2192,6 @@ globalThis.Editor = (function () {
     status('敌人放到 (' + cx + ',' + cy + ')');
   }
 
-  // ── 图集(Task 3:结构图 一次装进来;换图由 Task 8 的"重载贴图"按钮触发)──
   function loadAtlas() {
     return new Promise(function (resolve, reject) {
       var img = new Image();
@@ -2571,19 +2223,6 @@ globalThis.Editor = (function () {
       })
       .then(function (got) {
         var out = got.out;
-        // ★★★ `app.raw` **只能**在这里认领(此刻解码已经成功)—— 2026-09-22 复核 C1:
-        //    它此前写在上一步("拿到字节"就写),于是一次**失败**的打开会把**那个失败文件**
-        //    的字节留在 `app.raw` 里,而 `app.map` / `app.name` / `app.sourceFormat` 仍是
-        //    **上一张**图的(失败路径一个字段都不改,那是刻意的:屏幕上那张图没动过)。
-        //    两个读者当场就错,而两处**都不报错**:
-        //      ① `saveCurrent` 的原文备份取的就是 `app.raw`(`backupBytes = app.raw`)——
-        //         于是 `A.v3.bak` 里装的是 **B** 的字节,而紧接着 `A.cyrm` 被写成 v4:
-        //         **A 的原文没了,磁盘上那份"退路"还在、看着还挺像回事**;
-        //      ② `offerDraft` 的 `sameBytes(rec.bytes, app.raw)` 拿草稿与**另一个文件**
-        //         比字节 ⇒ "草稿与文件逐字节相同就别问"那道闸等于不存在(假恢复提示)。
-        //    ★ 前提是**常态**:磁盘上有一张 v3 图开着,库列表里点到另一个损坏/截断/版本
-        //      不支持的 `.cyrm`,解码失败(编辑器会照实报出来,于是用户接着干活),
-        //      然后 Ctrl+S —— 一次单向转换 + 一份装错字节的备份。
         app.raw = got.bytes;
         app.map = out.map; app.name = name; app.sourceFormat = out.sourceFormat;
         dirty = false;                 // ★★ 打开 = 屏幕上这份与磁盘上那份**同源**(见 dirty 那段)
@@ -2605,14 +2244,6 @@ globalThis.Editor = (function () {
       });
   }
 
-  // ── 写端点(**页面上唯一会改磁盘的那个调用**)──
-  // ★★ 纪律:PUT **必须显式带** `Content-Type: application/json`。服务器(`editor_server.js`)
-  //    的写端点只收这一个类型,别的类型一律 415 —— 而不写 `headers` 时浏览器按 body 的
-  //    类型推,`new Blob([bytes])` 推出来的是 `application/octet-stream` ⇒ 415。
-  //    症状是"点了保存、磁盘上那份没变、只有一行红字",而且**不报错回滚**。故把这条
-  //    纪律钉在**唯一**发 PUT 的地方(Task 8 的保存流程调它,不再自己拼一份 fetch)。
-  // ★ 不写 method 的都是只读(GET:openMap / refreshLibrary)。
-  // ★ 失败原样抛出(不是静默返回):调用方(保存流程)负责把它变成状态栏上的一句话。
   function putMapBytes(name, bytes) {
     return fetch('/api/map?p=' + encodeURIComponent(name), {
       method: 'PUT',
@@ -2650,13 +2281,6 @@ globalThis.Editor = (function () {
       var ul = $('lib-list');
       if (!ul) return;
       ul.innerHTML = '';
-      // ★★ 原文备份**不进库列表**(2026-09-22 复核 Minor 2a)。服务器的 `listMaps` 照旧会
-      //    列出 `*.v3.bak`(那是它的既有语义,本次没动),但客户端**不能**把它们当地图:
-      //    ① `openFromUrl` 的兜底是"打开列表**第一行**" —— 列表里混进备份之后,开机就可能
-      //       直接打开一份退路(用户以为自己打开的是地图);
-      //    ② 打开一份备份再 Ctrl+S 会把 v4 写进那份退路里(见 `saveCurrent` 那道闸)。
-      //    ★ 只过滤**显示**这一侧:磁盘上那份文件、服务器那份列表、以及 `?p=` 直开那条路
-      //      都不受影响(所以 `saveCurrent` 那道闸不可省)。
       var rows = (data.maps || []).filter(function (mm) { return !isBackupName(mm.name); });
       if (!rows.length) { ul.textContent = 'maps/ 下没有 .cyrm'; return; }
       rows.forEach(function (mm) {
@@ -2693,15 +2317,9 @@ globalThis.Editor = (function () {
     // ★★ onError 指到 ui 的 sink:渲染侧那条观察者(resize/fit/setView/… 的拒绝)与
     //    guard 的报告写**同一条通道**,不靠 render 自己去摸 Editor.status。
     app.r = Render.mount(app.canvas, { onError: reportError });
-    // ★ 指针 / 滚轮 / 热键 / 撤销重做 / 长作业驱动都挂在 installInteraction 里(它自己初始化
-    //   工具状态)—— 必须在 mount **之后**:它一进来就要用 app.r。★ 工具条与图层行的**点击**
-    //   由 Task 8 的 installPanels() 接(那时才有面板),这里只管画布上的指针与键盘。
     installInteraction();
     var ro = new ResizeObserver(function () { guard('resize', function () { return app.r.resize(); }); });
     ro.observe(app.canvas.parentElement);
-    // ★ 页面异常 / 未处理的 promise 拒绝那**一对**监听不在这里了:它们与"崩溃前快照"是
-    //   同一件事的两半(Task 9 的闸 4),整套搬进 `installCrashFence()`(bootLoad 的第一步),
-    //   免得同一次异常挂在两对监听上、状态栏被写两遍而快照只挂在其中一对上。
     var selftestBtn = $('btn-selftest');
     if (selftestBtn) {
       selftestBtn.addEventListener('click', runSelfTest);
@@ -2713,24 +2331,6 @@ globalThis.Editor = (function () {
     bootLoad();
   }
 
-  // ── 启动装载(★ 抽成函数是为了让"打开失败"那条路也能被 node 单独驱动:editor_smoke 相位 ⑭e)──
-  // ★★ 面板**必须建在打开之前**。原先它挂在"打开之后"(计划 Step 3 的写法),那条链是
-  //    `loadAtlas → openFromUrl → buildPanels`,而 `.catch` 只有一个 —— 于是 `openFromUrl()`
-  //    一旦拒绝(`?p=` 是个陈旧或写错的名字 → `openMap` 抛 HTTP 404;`.cyrm` 解不开;
-  //    structure.png 拿不到),整条链**短路到 catch**,`buildPanels()` 一行都没跑:
-  //    工具条、图层行、调色板、出生点四个按钮**一个监听都没装上**,从此**没有重建路径**,
-  //    屏幕上只有一行「启动失败:…」。用户会以为编辑器坏了,而不是"这张图打不开"。
-  // ★ `buildPanels` 只读 `app.tileDefs`(boot 里就位)与 `app.r`(已 mount),对 `app.map`
-  //    只有**一处**引用(清空出生点那个处理器)且不读任何地图尺寸 —— 所以"等图打开"没有
-  //    任何理由;而它自己带 null 守卫,没图也能建。
-  //
-  // ★★ Task 9 的启动顺序(三段各自的**理由**都在这里,别照抄一段就删一段):
-  //    ① `installCrashFence()` 第一件事就装:后面任何一步抛出都要能被它接住;
-  //    ② 草稿盘要在**打开地图之前**就绪(`offerDraft` 要用它;它打不开只影响"自动存");
-  //    ③ 崩溃槽位 / 草稿盘的检查排在 `openFromUrl()` **之后** —— 恢复出来的那份必须
-  //       **压住**刚从文件打开的那份:反过来的话用户点了"确定",屏幕上却是文件里那张
-  //       (人眼清单第 3 条看的正是这个),而且**一个字都不报**;
-  //    ④ `applyUiState()` 必须排在 `setMap` 之后(setMap 自己会 fit,先设会被它覆盖)。
   function bootLoad() {
     installCrashFence();
     app.uist = readUiState(localStore());
@@ -2762,28 +2362,12 @@ globalThis.Editor = (function () {
     });
   }
 
-  // ── 浏览器自检(★ node 到不了的那半边 —— 人眼验收就靠它打印的那一行)──
-  // 判据:文本 `SELFTEST OK`;失败逐条列出。人在浏览器里点「自检」按钮,把那行贴回报告。
-  //
-  // ★★ 自检是页面上的**异步入口**之一,必须与别的入口同一条纪律:经 `guard` 收口
-  //    (2026-09-22 复核 Important 2)。它现在**会拒绝** —— `selfTest` 消费 `Io.ping()` /
-  //    `Io.encodeMap` / `Io.decodeMap`,而 io.js 那个 30s 超时是新的拒绝源(codec 死了 /
-  //    被 terminate 掉 / 压缩路径抛),此外自检自己也会把 `indexedDB`、`localStorage`
-  //    当成"可能失败"来探(那是它的本职)。丢掉那条 promise 就是一次**未处理的拒绝**:
-  //    闸 4 的围栏会写一份崩溃快照 ⇒ 下次开机弹一个**假的**「上次异常退出,要恢复吗?」
-  //    ——而屏幕上那张图**一次都没崩过**;同时状态栏那句自检结果被「未处理的 promise 拒绝」
-  //    顶掉(用户看到的是"自检按钮坏了")。
-  // ★ 抽成具名函数是为了让它**可被 node 驱动**:判"有没有护栏"必须是**行为**断言
-  //   (装一遍真的围栏、让一次真失败跑过去、看崩溃槽位有没有多一条),而不是源码里 grep
-  //   一个 `guard(` —— 见 editor_smoke 相位 ⑮b⑩b ③。
   function runSelfTest() {
     return guard('自检', function () {
       return selfTest().then(function (line) { status(line); return line; });
     });
   }
 
-  // ★ localStorage:写 → 读 → 删。隐私模式或被策略禁用时 setItem **会抛** ——
-  //   这是纯浏览器的失败面,node 侧一条断言都拦不住(持久化在 Task 9 落地在那上面)。
   function probeLocalStorage() {
     try {
       var k = 'cyrm.selftest', v = String(nowMs());
@@ -2835,9 +2419,6 @@ globalThis.Editor = (function () {
       check('图集已加载', Render.atlasInfo() !== null,
             Render.atlasInfo() ? '' : 'structure.png 没加载成功');
       check('图集容量 > 0', Render.atlasCapacity() > 0, '实得 ' + Render.atlasCapacity());
-      // ★ 工具内核(Task 5):它的产物是**差量**、不碰 DOM,所以能在这里拿一张一次性的
-      //   小图真落一笔 —— node 侧那 149 条断言的是同一批纯函数,这里验的是"装进浏览器
-      //   之后它们还活着"(脚本没加载全 / 被 CSP 拦 这类失败只有浏览器里看得见)。
       check('工具内核就绪(8 个工具)', TOOLS.length === 8 && typeof applyTool === 'function');
       try {
         var tm = createEmptyMap('selftest-tools', 2, 1);
@@ -2847,14 +2428,6 @@ globalThis.Editor = (function () {
         check('落笔产出差量(整格 16 个子格)', !!td && td.idx.length === 16,
               td ? ('实得 ' + td.idx.length) : '没有产出差量');
       } catch (eTool) { check('落笔产出差量(整格 16 个子格)', false, msgOf(eTool)); }
-      // ★ "按了没反应"那条通道:故意抛一次,看它有没有落在 sink 上(自定义 sink 时不会
-      //   写状态栏、也不会 console.error —— 所以这一条不会污染下面的画面与控制台)。
-      // ★★ 探完必须把调用方那个 sink **还原**(不是置 null;2026-09-22 复核 Important 2):
-      //    自检是**异步**入口,它交回的那条 promise 之后还会走 `guard` 的失败分支 ——
-      //    而那时 sink 若已被置 null,`reportError` 就会走默认那条(`else status(text)`**加**
-      //    `console.error`)。浏览器里那只是控制台噪音;node 冒烟里它是 **stderr 上的一行**,
-      //    而"stderr 有字节 = 有东西红了"正是整份冒烟赖以成立的那个信号 —— 冲掉它等于
-      //    把一条本来会红的断言洗白。
       var savedSinkST = errorSinkFn;
       var sinkGot = null;
       setErrorSink(function (t) { sinkGot = t; });
@@ -2865,8 +2438,6 @@ globalThis.Editor = (function () {
       check('地图已打开', app.map !== null);
       check('画布有尺寸', app.canvas.width > 1 && app.canvas.height > 1,
             app.canvas.width + '×' + app.canvas.height);
-      // ★ 持久化的两个 API(Task 9 才落地)现在就探一遍:它们**只在浏览器里**会失败
-      //   (隐私模式 / 被策略禁用),而那时症状是"设置存不住" —— 最难查的一类。
       check('localStorage 可读写', probeLocalStorage());
       if (app.map) {
         // ★ 真正的性质是"map.name 等于文件名去掉后缀"(v4 body 里没有 name 字段)
@@ -2918,9 +2489,6 @@ globalThis.Editor = (function () {
 
     TOOLS: TOOLS, TOOL_LABELS: TOOL_LABELS, DERIVED_TEXTURES: DERIVED_TEXTURES,
     createEmptyMap: createEmptyMap, resizeMap: resizeMap, resizeReportLines: resizeReportLines,
-    // ★ 2026-09-22:改尺寸面板(规格 A10)与"压缩"开关(规格 §3.5)接上之后,这几个才有
-    //   生产调用点 —— 在那之前 `resizeMap` 只被 `btn-dup` 用(**尺寸不变**),
-    //   `wholeDiff` / `applyEntry` 的 whole 分支 / `pushAndShow` 的 whole 分派只有测试在跑。
     applySize: applySize, sizeInputsSync: sizeInputsSync, adoptMapInto: adoptMapInto,
     optCompress: optCompress, encodeForWrite: encodeForWrite, DEFAULT_COMPRESS: DEFAULT_COMPRESS,
     texturePalette: texturePalette, clampTexture: clampTexture, validateLines: validateLines,
@@ -2945,13 +2513,10 @@ globalThis.Editor = (function () {
     saveCurrent: saveCurrent, saveTargetName: saveTargetName,
     needsV3Confirm: needsV3Confirm, needsV3Backup: needsV3Backup,
     v3BackupName: v3BackupName, isBackupName: isBackupName, freshName: freshName,
-    // ★ 2026-09-22 复核:自检那条异步入口的**具名**收口(相位 ⑮b⑩b ③ 驱动它,判据是
-    //   "一次真失败之后崩溃槽位有没有多一条");`dropStaleSelection` 给相位 ⑰ 直接用。
     runSelfTest: runSelfTest, dropStaleSelection: dropStaleSelection,
     importEnemyTypes: importEnemyTypes, exportReport: exportReport, showExportReport: showExportReport,
     spawnAt: spawnAt,
 
-    // 持久化三层 + 闸 4(Task 9)
     DRAFT_DB: DRAFT_DB, DRAFT_STORE: DRAFT_STORE, CRASH_STORE: CRASH_STORE,
     UI_STATE_KEY: UI_STATE_KEY, MAX_LIB: MAX_LIB, DRAFT_DEBOUNCE_MS: DRAFT_DEBOUNCE_MS,
     draftKey: draftKey, crashIsNewer: crashIsNewer, evictPlan: evictPlan,

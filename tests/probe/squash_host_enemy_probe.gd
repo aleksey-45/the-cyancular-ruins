@@ -1,32 +1,4 @@
 extends Node
-# 敌鸟侧宿主接线的自动化测试探针(Task 3 那份临时探针转正为常驻回归网)。
-# 验收标准：SQUASH HOST ENEMY PROBE: ALL-OK
-# 运行方式："$GODOT" --headless --path . --quit-after 3600 res://tests/probe/squash_host_enemy_probe.tscn
-# 判定依据为文本(不看退出码:阻塞挂起时 --quit-after 也退 0)。
-#
-# 为什么必须有:`tests/` 下引用 `squash` 的只有四个 squash 文件,而它们全都不碰敌人 ——
-#   于是 `enemy_base.gd` 这一整面接线"删得掉、且删了不会有任何测试变红":
-#     - `_physics_process` 最首行的 `squash.tick(...)`
-#       - 位置也是契约:必须在 `_is_far_sleeping()` 提前返回之前,否则睡眠中的鸟卡住形变
-#     - 睡眠分支里的 `_pre_move_vy = 0.0`(醒来首帧满幅重触发的唯一修法)
-#     - `_pre_move_vy = velocity.y`(裸值,敌人侧刻意不过滤,见 spec §2.4)
-#     - `_apply_hit` 里的 `SquashStretch.Impulse.HURT`
-#     - `_set_state` -> `_on_state_entered(s)` 派发本身 + 三只鸟各自的 5 处状态映射
-#   —— 而这恰恰是本特性唯一真出过 bug 的面(2026-09-20,`b89420c`:睡眠提前返回让鸟永久变形、
-#   醒来首帧的满幅挤压把起飞拉伸抵消成压扁)。断言清单照
-#   `.superpowers/sdd/task-3-report.md` 第 3 节里那份临时探针的输出逐条恢复 ——
-#   那份探针已删,它的输出是这些断言的唯一留存。
-#
-# - 极性照现在的组件读:正 v = 拉伸 = 窄高(scale.x < 1)、负 v = 挤压 = 宽矮(scale.x > 1)。
-#   task-3 报告里那几行 `拉伸(scale.x > 1)` 是 `b89420c` 之前那份反转公式下的读数,别照抄。
-# - 状态号不写死:从每个子类脚本的 `enum State` 现取(见 `_state_of`)。写死枚举号会让
-#   "有人往枚举中间插了一个状态"变成静默测错状态;取不到名字则报红,不静默跳过。
-# - 变量一律不静态定型(`var b = …` 而不是 `:=`):本探针按名字摸 `squash` / `_pre_move_vy`
-#   这类成员,而它们不在 `Node2D` 的类签名上 —— 静态定型会让这些行解析期就报错。
-# - 阶段 1②③ 一律 `_set_state(...)` / `_apply_hit(...)` 之后手动 `squash.tick(...)`,并把鸟的
-#   自驱物理关掉:宿主真帧里 tick 就在最首行、参数由宿主给,这里要的是事件映射本身,
-#   不是重跑一遍 AI。阶段 4 相反 —— 它必须走真的 `_physics_process`,因为要验的正是
-#   "tick 的调用位置 + 缓存清零 + 醒来首帧"这三件事的协作,单看任何一个都测不出来。
 
 const FLY := preload("res://scenes/enemies/enemy_fly_bird.tscn")
 const BLACK := preload("res://scenes/enemies/enemy_black_bird.tscn")
@@ -240,8 +212,7 @@ func _tick_finding_b() -> void:
 	_f += 1
 	if _landing_vy == 0.0:
 		if not _bird.is_on_floor():
-			return                                   # 还在空中
-		# 刚落地:此刻缓存里就是这次落地的落速 —— 下一个睡眠帧要消费的正是它
+			return
 		_landing_vy = _bird._pre_move_vy
 		return
 	_sleep_frames += 1

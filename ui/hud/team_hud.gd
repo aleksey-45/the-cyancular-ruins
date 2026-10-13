@@ -5,10 +5,6 @@ extends CanvasLayer
 # 包含顶部记分栏、网络延迟指示器与中央广播提示。
 # 记分与胜负结算基于队伍阵营而非单个玩家序号。
 
-const ST_COUNTDOWN := 0
-const ST_PLAYING := 1
-const ST_ROUND_OVER := 2
-const ST_MATCH_OVER := 3
 
 @onready var _broadcast: Broadcast = $Broadcast
 @onready var _score_label: Label = $ScoreWrap/ScoreLabel
@@ -31,7 +27,6 @@ func set_my_team(t: int) -> void:
 
 func _ready() -> void:
 	PixelFont.shared()
-	NetBus.local_round_state.connect(_on_round_state)
 	NetBus.ping_updated.connect(_on_ping)
 	_broadcast.set_broadcast(true, "对战开始", "第 1 局")
 
@@ -51,7 +46,7 @@ func _on_ping(ms: int) -> void:
 
 
 func _on_round_state(data: Dictionary) -> void:
-	var state: int = data.get("state", ST_PLAYING)
+	var state: int = data.get("state", NetEvent.RoundState.PLAYING)
 	var round: int = data.get("round", 1)
 	var scores: Dictionary = data.get("scores", {})
 	var rounds_won: Dictionary = data.get("rounds_won", {})
@@ -63,12 +58,12 @@ func _on_round_state(data: Dictionary) -> void:
 	_score_label.text = "A 队击杀 %d        B 队击杀 %d        局胜 %d - %d        第 %d 局" % [
 			s1, s2, w1, w2, round]
 	match state:
-		ST_COUNTDOWN:
+		NetEvent.RoundState.COUNTDOWN:
 			var sub := "对战开始" if round <= 1 else "第 %d 局" % round
 			_broadcast.start_countdown(float(data.get("timer", 3.0)), sub)
-		ST_PLAYING:
+		NetEvent.RoundState.PLAYING:
 			_broadcast.set_broadcast(false, "", "")
-		ST_ROUND_OVER:
+		NetEvent.RoundState.ROUND_OVER:
 			var winner: int = int(data.get("winner", 0))
 			if winner != 0:
 				var mine := winner == _my_team
@@ -77,7 +72,7 @@ func _on_round_state(data: Dictionary) -> void:
 						("A 队" if winner == 1 else "B 队") + " 先到 9 杀")
 			else:
 				_broadcast.set_broadcast(true, "本局结束", "局胜 %d - %d" % [w1, w2])
-		ST_MATCH_OVER:
+		NetEvent.RoundState.MATCH_OVER:
 			var mwinner: int = int(data.get("match_winner", 0))
 			# 当队伍全员离场时整场判为平局
 			if mwinner == _my_team and _my_team != 0:

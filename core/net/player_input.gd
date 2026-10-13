@@ -132,3 +132,9 @@ func get_aim_dir_override() -> Vector2:
 # 网络驱动角色的武器瞄准不会读取本机鼠标，若未提供覆盖向量则默认朝向角色面朝方向。
 func is_network_driven() -> bool:
 	return source_kind() == Kind.PACKET
+
+func haste_held() -> bool:
+	return is_action_pressed("haste")
+
+func rewind_held() -> bool:
+	return is_action_pressed("rewind")

@@ -102,16 +102,6 @@ static func is_floor_cell_with_headroom(grid: Array, cell: Vector2i) -> bool:
 	return grid[posmod(cell.y - 1, rows)][posmod(cell.x, cols)] == MapFormat.EMPTY
 
 
-# ── A* 寻路 ──
-# 环面 A*(4 邻域):启发式 = 环面曼哈顿距离(可采纳且一致)。预算 max_visit 是弹出
-# (展开)节点数上限。目标不可达/预算超限时返回「最近可达格」的路径。
-# (取代的 BFS 版在空旷区波前会铺满半径内所有格、预算很快耗尽;A* 靠启发式直奔目标,
-#  展开节点少一个量级——这正是玩家站在高平台时鸟"上不去"的根因。)
-#
-# 性能:g/prev 从 Dictionary(Vector2i 键)换成扁平 PackedInt32Array(线性索引
-# y*cols+x),visited 用 g≥0 标记;堆从「Array 装嵌套 Array」换成两条并行
-# PackedInt32Array(_heap_f 存 f、_heap_c 存 cell 索引),不打包 → 无溢出风险。
-# 静态缓冲区复用、每搜索只 fill 一遍 → 零字典分配、无 GC 压力,同预算下快一个量级。
 static var _g_cost: PackedInt32Array = PackedInt32Array()
 static var _prev: PackedInt32Array = PackedInt32Array()
 static var _heap_f: PackedInt32Array = PackedInt32Array()

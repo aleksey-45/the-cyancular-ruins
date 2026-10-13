@@ -297,15 +297,6 @@ func _find_flank_cell() -> bool:
 	return true
 
 
-# (原私有 _is_floor_cell 已收进 MazeGenerator.is_floor_cell —— 本判据全仓曾有 5 份。
-#  乌鸫检测只要求脚下实心，无需头部净空。)
-
-
-# 黑鸟碰撞箱(按 scale 换算)在 pos 处覆盖的格子是否全是 EMPTY。
-# 用于瞬移落点清空判定:落点/下落路径不能穿墙。
-# 逐格环面判定收在 core/tile_query.gd(与飞鸟避障/预瞄判墙同源)。
-# 空网格视为通行无阻
-# 与旧实现的显式 is_empty 提前返回同义(探针会清空 current_grid,真实地图不会)。
 func _body_clear_at(pos: Vector2) -> bool:
 	var ts := GameParameters.TILE_SIZE
 	var rect := Rect2(pos + _body_min, _body_max - _body_min)
@@ -332,8 +323,6 @@ func _player_facing() -> int:
 
 
 func _update_facing() -> void:
-	# 后跳:滞空水平速度刻意背离玩家(倒退跳),按它翻转会让鸟背对玩家转身;
-	# 保持冲锋时已朝向玩家的朝向,落地回 WANDER 再恢复按移动方向走。
 	if state == State.BACK_HOP:
 		return
 	if absf(velocity.x) > 5.0:

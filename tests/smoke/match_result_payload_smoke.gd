@@ -15,7 +15,6 @@ func _initialize() -> void:
 	var names := {1: "阿甲", 2: "bob", 3: "阿丙", 4: "dave", 5: "阿戊", 6: "frank"}
 	var teams := {1: 1, 2: 1, 3: 1, 4: 2, 5: 2, 6: 2}
 
-	# ① 1v1:列 = K/D/造成/承受/ACS(spec §3.6;无助攻 —— 1v1 拿不到助攻,见 §3.4)
 	var duel: Dictionary = script.for_duel({ "stats": {
 			1: {"kills": 7, "deaths": 2, "assists": 0, "dealt": 500, "taken": 200, "kscore": 800, "acs": 400},
 			2: {"kills": 3, "deaths": 5, "assists": 0, "dealt": 300, "taken": 400, "kscore": 250, "acs": 125}},
@@ -30,16 +29,9 @@ func _initialize() -> void:
 	if int(duel["sections"][0]["rows"][0]["rank"]) != 1:
 		fails.append("★ 榜首 rank 应被填成 1(_finish 的名次循环),实得 %d"
 				% int(duel["sections"][0]["rows"][0]["rank"]))
-	# 注意事项：1v1 的 MVP 指向(本批唯一的新行为)。-  本夹具里 MVP(role 1)恰好就是榜首  -> 
-	#   它只钉"`mvp` 整块不许为空/不指向别处";"行号必须在排完序之后数"那半边由 ①b 钉。
 	if int(duel["mvp"].get("section", -1)) != 0 or int(duel["mvp"].get("row", -1)) != 0:
 		fails.append("★ 1v1:mvp 应指向 {section:0, row:0}(role 1 即榜首),实得 %s"
 				% [duel["mvp"]])
-	# ①c 注意： 「造成 / 承受」两列的值必须各读各的键(`dealt` / `taken`)。
-	#   - 为什么非要有值断言(与 ④d 那条 3v3 的相同处理逻辑理由,本批给 1v1 与大乱斗补齐):
-	#     `_row(..., taken, dealt, ...)` 两个实参对调是一行就编得过的改动,而上面
-	#     所有列名/列数/排序/rank 断言照样全部断言通过 —— 图上就是「造成」「承受」两列互换。
-	#   - 两行都判、且两个数刻意取得不同:`dealt` 与 `taken` 被读成同一个键时也红。
 	var d0: Dictionary = duel["sections"][0]["rows"][0]
 	if int(d0["dealt"]) != 500 or int(d0["taken"]) != 200:
 		fails.append(("★ 1v1:role 1 应 dealt=500 / taken=200(各读各的键),实得 dealt=%d / taken=%d"
@@ -49,13 +41,6 @@ func _initialize() -> void:
 		fails.append("★ 1v1:role 2 应 dealt=300 / taken=400,实得 dealt=%d / taken=%d"
 				% [int(d1["dealt"]), int(d1["taken"])])
 
-	# ①d 注意： 「击杀 / 阵亡 / 助攻」三列的值也必须各读各的键(2026-09-26 终审 重要 2)。
-	#   - 为什么非要有它:`for_duel` 的 `_row(...)` 里 `int(s.get("deaths",0))` 与
-	#     `int(s.get("assists",0))` 对调是一行就编得过的改动,而上面所有断言
-	#     (列名/列数/排序/rank/mvp/①c 的 dealt-taken)照样全部断言通过 —— 1v1 结算页的「阵亡」
-	#     列会整列显示成助攻数。-  三种写法都落在这条上:对调、两列都读 `deaths`、两列都读
-	#     `assists`(夹具里 assists 恒 0 —— 1v1 拿不到助攻,故 `deaths` 那一列必然错)。
-	#   - 两行都判、且 kills 一起判(三列同一个调用点,漏一个就是一行改动)。
 	var d_bad: Array[String] = []
 	if int(d0["kills"]) != 7 or int(d0["deaths"]) != 2 or int(d0["assists"]) != 0:
 		d_bad.append("role 1 应 kills=7 / deaths=2 / assists=0,实得 %d/%d/%d"
@@ -67,12 +52,6 @@ func _initialize() -> void:
 		fails.append(("★ 1v1:「击杀 / 阵亡 / 助攻」三列必须各读各的键(kills/deaths/assists):%s"
 				+ " —— deaths↔assists 对调、或两列读同一个键时这里红,而其它断言全绿") % str(d_bad))
 
-	# ①b 注意： 1v1:mvp 行号必须在排完序之后数(本批唯一的新行为,此前零断言:
-	#     退回 `"mvp": {}`、或把数行号那段挪到 `_finish()` 之前,两支冒烟都会照旧全部断言通过)。
-	#     - 夹具刻意让 MVP 不是榜首:role 2 的 9 杀排到第 1 行,而它在 `for_duel`
-	#       写死的遍历次序 `[1, 2]` 里本来在第 2 行  ->  只有"排完序再数"才给得出 `row 0`;
-	#       挪到排序之前  ->  `row 1`  ->  这里红。
-	#     - 另一半:`mvp` 整块退回 `{}`(`for_royale` 那个形状)也落到这条上。
 	var duel_mvp: Dictionary = script.for_duel({ "stats": {
 			1: {"kills": 3, "deaths": 4, "assists": 0, "dealt": 100, "taken": 250, "kscore": 300, "acs": 100},
 			2: {"kills": 9, "deaths": 1, "assists": 0, "dealt": 450, "taken": 120, "kscore": 900, "acs": 450}},
@@ -113,10 +92,6 @@ func _initialize() -> void:
 		if str(one_sided["title"]) != "失败":
 			fails.append("★ role 2 看自己输掉的 1v1 应念「失败」,实得 %s" % one_sided["title"])
 
-	# ③ 大乱斗:kills/deaths/dealt/taken 四列,按 kills 降序(无 ACS —— 单局死斗  ->  acs ≡ kscore)
-	# 注意事项：标题恒为「游戏结束」——与 `match_winner` 无关(用户 2026-09-21 裁定:
-	#    「大乱斗结算榜单不应该有任何胜利/失败,而是游戏结束」)。自由混战里 N 个人只有榜首
-	#    算"赢",把其余 N-1 个人判成「失败」既不准确也没意义。原先这里断言的是「失败」。
 	var roy: Dictionary = script.for_royale({ "stats": {
 			1: {"kills": 3, "deaths": 5, "assists": 0, "dealt": 120, "taken": 300, "kscore": 3, "acs": 3},
 			2: {"kills": 9, "deaths": 2, "assists": 0, "dealt": 400, "taken": 100, "kscore": 9, "acs": 9},
@@ -199,11 +174,6 @@ func _initialize() -> void:
 	if str(team["title"]) != "失败":
 		fails.append("3v3 我(1 队)输了应念「失败」,实得 %s" % team["title"])
 
-	# ④d 注意： 伤害列必须真读到生产端现在发出的那个键(`dealt`)。
-	#     - 为什么非要有这条值断言:上面的夹具是本冒烟自己喂的,而消费端读不到的键
-	#       (`s.get("dmg", 0)` 那种旧键)在所有列名/计数/排序断言下照样全部断言通过 —— 榜上
-	#       伤害列恒 0,一个字都不报。e393f88 把生产端键从 `dmg` 改成 `dealt` 之后,
-	#       这正是线上「3v3 结算页伤害全是 0」那个静默缺陷的形状:只改列名抓不住它。
 	var t1rows: Array = team["sections"][0]["rows"]
 	var t_dealt := -1
 	if not t1rows.is_empty():
@@ -212,14 +182,6 @@ func _initialize() -> void:
 		fails.append(("★ 3v3 伤害列必须读到生产端的 `dealt` 键(role 1 应 400),实得 %d —— "
 				+ "读回旧键 `dmg` 时这里恒 0,而上面所有计数断言照样全绿") % t_dealt)
 
-	# ④e 注意： 3v3 的「击杀 / 阵亡 / 助攻」三列值也要各读各的键(2026-09-26 终审 重要 2)。
-	#   - 为什么必须有:这一条与 ④d 是同一个调用点的另一半 —— 只钉 `dealt` 时,
-	#     `deaths` 与 `assists` 两个相邻 int 实参对调照样编译、冒烟全部断言通过,而 3v3 结算页
-	#     每一行的「助攻」「阵亡」两列整列互换(错的是屏上数字,没有任何断言会红)。
-	#   - 两节都判:A 队两行的三列刻意取四个不同值(role 1 = 5/3/2、role 2 = 2/5/1),
-	#     B 队同理(role 5 = 8/1/3、role 4 = 3/4/0) ->  任何错配都落在这三条上。
-	#   - 行号依赖 `_finish` 的排序(主键降序 -> 阵亡升序 -> 昵称升序):A 队 role 1(acs 200)
-	#     在 role 2(acs 66)之前、B 队 role 5(acs 400)在 role 4(acs 100)之前。
 	var t_bad: Array[String] = []
 	var t_a0: Array = team["sections"][0]["rows"]
 	var t_b0: Array = team["sections"][1]["rows"]

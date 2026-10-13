@@ -5,17 +5,17 @@ extends RefCounted
 # 为 Tunnel 隧道管理、联机大厅与下载工具提供统一数据源。
 #
 # 许可说明：EasyTier 采用 LGPL-3.0 协议。本项目仅以独立子进程方式调用其预编译可执行文件，
-# 随发布包附带许可文件与官方源码链接。
+# 许可正文、版权声明和官方源码链接收录于发布包根部的 THIRD_PARTY_NOTICES.txt。
 
 # ── 核心可执行文件与动态库 ──
 # 必须包含 easytier-core.exe、easytier-cli.exe 以及运行时依赖库 Packet.dll 与 wintun.dll。
-const ET_VERSION := "2.6.4"
+const ET_VERSION := "2.7.0-f8a45ccc"
 const CORE_EXE := "easytier-core.exe"
 const CLI_EXE := "easytier-cli.exe"
 const CORE_DLLS := ["Packet.dll", "wintun.dll"]
 const LICENSE_NAME := "LGPL-3.0"
 const LICENSE_URL := "https://github.com/EasyTier/EasyTier/blob/main/LICENSE"
-const RELEASE_URL := "https://github.com/EasyTier/EasyTier/releases/download/v%s/easytier-windows-x86_64-v%s.zip"
+const OFFICIAL_DIR := "easytier-windows-x86_64"
 
 # ── 虚拟网络命名规范 ──
 # 房间码直接映射为网络名与接入密钥；主机名携带端口信息供加入方解析。
@@ -33,36 +33,15 @@ const VIP_HOST := "10.126.126.1"
 # 双方连接相同的中继节点以交换端点并发起 P2P 直连打洞，打洞受限时由中继节点转发。
 const RELAY_FILE_NAME := "relay.txt"
 
-# ── 本地 RPC 管理端口 ──
-# 管理端口由操作系统在运行时动态分配空闲端口，避免与系统其他进程发生端口冲突。
-
-# ── 内核日志配置 ──
-# 日志存储于游戏目录下的 log/ 目录，目录名为 "easytier-<role>-<pid>"。
-# 附加 PID 后缀可区分同机多开实例，并在下次启动时清理意外残留的历史孤儿进程。
-const ET_LOG_DIR_PREFIX := "easytier-"
-const ROLE_HOST := "host"
-const ROLE_GUEST := "guest"
-
-## 孤儿日志清理保留的历史目录上限（仅清理对应进程已退出的目录，按修改时间保留最新目录）。
-const ET_LOG_KEEP := 25
-
-
-## 生成指定角色的内核日志目录名（包含当前游戏进程 PID）。
-static func et_log_dir_name(role: String) -> String:
-	return "%s%s-%d" % [ET_LOG_DIR_PREFIX, role, OS.get_process_id()]
-
-
-## 从日志目录名解析其归属的游戏进程 PID；返回 0 表示非标准目录（跳过清理）。
-static func et_log_dir_owner(dir_name: String) -> int:
-	if not dir_name.begins_with(ET_LOG_DIR_PREFIX):
-		return 0
-	var rest := dir_name.substr(ET_LOG_DIR_PREFIX.length())
-	for role in [ROLE_HOST, ROLE_GUEST]:
-		if rest.begins_with(role + "-"):
-			var tail := rest.substr(role.length() + 1)
-			return int(tail) if tail.is_valid_int() and int(tail) > 0 else 0
-	return 0
-
-
-static func release_url() -> String:
-	return RELEASE_URL % [ET_VERSION, ET_VERSION]
+const DEFAULT_RELAYS := [
+	"udp://et.basd1.de:11010",
+	"udp://183.230.36.171:11010",
+	"udp://et.sumnight.online:11012",
+	"udp://net.vpspersonxu.xyz:11010",
+	"udp://et1.fuis.top:11010",
+	"udp://boi.de5.net:11010",
+	"udp://47.92.208.217:11010",
+	"udp://et.dnjjs.com:11010",
+	"udp://us01.225284.xyz:11010",
+	"udp://dreamlife.indevs.in:11010",
+]

@@ -7,6 +7,8 @@
 # 发布目录包含客户端与服务端可执行文件以及可选网络隧道组件：
 #   The Cyancular Ruins.exe        客户端主程序
 #   Cyancular Ruins Server.exe     专用服务端程序（客户端建房时直接从同目录拉起）
+#   process_group.windows.x86_64.dll  Windows Job 原生扩展
+#   THIRD_PARTY_NOTICES.txt         第三方组件许可与版权声明
 #   easytier-core.exe              网络隧道核心进程
 #   easytier-cli.exe               网络隧道命令行交互工具
 #   Packet.dll                     底层网卡捕获动态链接库
@@ -47,11 +49,12 @@ def release_prefix() -> str:
         return RELEASE_PREFIX_FALLBACK
     return (m.group(1).strip() if m else "") or RELEASE_PREFIX_FALLBACK
 
-GAME_FILES = ["The Cyancular Ruins.exe", "Cyancular Ruins Server.exe"]
-EASYTIER_FILES = ["easytier-core.exe", "easytier-cli.exe", "Packet.dll", "wintun.dll"]
+GAME_FILES = ["The Cyancular Ruins.exe", "Cyancular Ruins Server.exe",
+              "process_group.windows.x86_64.dll", "THIRD_PARTY_NOTICES.txt"]
+EASYTIER_FILES = ["easytier-core.exe", "easytier-cli.exe", "Packet.dll",
+                 "wintun.dll", "WinDivert64.sys"]
 EASYTIER_SRC_DIR = os.path.join(PROJECT, "easytier")
 EASYTIER_PKG_DIR = "easytier"
-LICENSE_FILE = "easytier-LICENSE.txt"
 RELAY_FILE = "relay.txt"
 
 
@@ -128,7 +131,9 @@ def main() -> None:
 
     print("归档: %s(builds 目录已清理，仅保留最新产物)" % os.path.basename(out))
     for f in GAME_FILES:
-        shutil.copy2(os.path.join(PROJECT, f), os.path.join(out, f))
+        target = os.path.join(out, f)
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        shutil.copy2(os.path.join(PROJECT, f), target)
         print("  ✓ %s" % f)
 
     # 复制隧道依赖组件至 easytier 子目录
@@ -145,12 +150,6 @@ def main() -> None:
     if missing:
         print("\n[提示] 本构建未包含网络隧道组件: %s" % " / ".join(missing))
         print("  远程 P2P 联机将不可用。如需拉取组件请运行: python tools/fetch_easytier.py")
-
-    lic_src = find_easytier(LICENSE_FILE)
-    if lic_src:
-        os.makedirs(et_out, exist_ok=True)
-        shutil.copy2(lic_src, os.path.join(et_out, LICENSE_FILE))
-        print("  ✓ %s/%s" % (EASYTIER_PKG_DIR, LICENSE_FILE))
 
     # 复制初始节点配置列表
     if not missing:

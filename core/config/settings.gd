@@ -29,7 +29,7 @@ var sp_disabled_weapons: Array[int] = []   # 禁用的武器槽位（1-6，第 6
 var sp_map_path: String = ""
 var mp_map_path: String = ""
 
-# ── PvP 选项(本地偏好类直接生效;服务器权威类由房主下发,见 MatchHost)──
+# ── PvP 选项(本地偏好类直接生效;服务器权威类由房主下发,见 AuthorityWorld)──
 var pvp_show_trajectories: bool = true  # 显示敌方武器(子弹)轨迹
 var pvp_round_full_heal: bool = false   # 每回合开始回满血(服务器生效项,房主值优先)
 var pvp_show_enemy_hp: bool = true      # 显示敌方头顶生命条

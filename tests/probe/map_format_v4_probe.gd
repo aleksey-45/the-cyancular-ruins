@@ -1,14 +1,5 @@
 extends SceneTree
 
-# cyrm v4 编解码探针(-s 数据级)。2026-09-28 起地图就是 v4 二进制,这是格式层的回归防御性校验。
-# 覆盖:
-#   ① 真地图(已被转换成 v4)能被 load_map_file / load_spawns / map_size 正常消费,
-#      且出生点格为空、其下方为实心(语义自洽);
-#   ② 写读往返:serialize_v4 -> parse_v4 -> flatten 与原网格逐格一致(含形状掩码逐位一致);
-#   ③ compression=1 读入(编辑器浏览器端导出的是 deflate):内嵌一份 Python-zlib 造的
-#      标准 v4 夹具,永久防御性校验这条链路 —— 这正是规格书交接文档列的"第一件必做的事";
-#   ④ CRC 破坏检测:改 body 一个字节必须被拒。
-# 用法:godot --headless --path . -s res://tests/probe/map_format_v4_probe.gd
 
 const DEMO := "res://maps/demo.cyrm"
 const PVP := "res://maps/newfactory.cyrm"

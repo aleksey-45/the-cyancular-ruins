@@ -1,8 +1,4 @@
 'use strict';
-// Node 冒烟 —— 本地服务器 level_editor/editor_server.js(规格 §4.9)。
-// Run: cd level_editor && node server_smoke.js
-// 判据:文本 `SERVER SMOKE OK` + 退出码 0。
-// ★ 本文件只碰 mkdtemp 出来的临时目录:真实 maps/ 目录一次都不写。
 
 const fs = require('fs');
 const path = require('path');
@@ -177,12 +173,6 @@ function lockFileExclusiveWin(files) {
   });
 }
 
-// ★ 全部相位(① ①b ② ③ ④ ⑤ 静态读失败、⑤ 地图名守卫、⑥ API)都跑在这里,由下面的 main() 包在 try/finally 里调 —— 清理因此**必定**执行。
-//   ★ 两个 ⑤ 是**有意为之**:Task 1 加固时插进来的「静态读失败」与计划里 Task 2 的「地图名守卫」撞号,
-//     改成 ⑥/⑦ 会让计划里 Task 3 / Task 6 的 ⑦ / ⑧ 整体错位 —— 故保留原号,两个相位头也都点了名。
-//   ★★ 新相位一律加在**本函数体内**:main() 里 `// ==== 断言区结束 ====` 那句在 try/finally{ cleanup() }
-//     **之后**,加在那里 = 相位跑在清理之后,每次跑都会把已删掉的 tmpRoot 重新建出来(真实踩过)。
-//   (相位体刻意留在与原先相同的缩进层级:把它们整体缩进一层会让 diff 淹没实质改动。)
 async function runAllPhases() {
   // ★ 自检缝(默认关闭,只认环境变量):用来实际验证「失败路径也会清理临时目录」(待修 4)。
   //   复现:`CYRM_SMOKE_SELFTEST_THROW=1 node server_smoke.js` → 退出码 1,且 $TEMP 下
@@ -206,10 +196,6 @@ async function runAllPhases() {
     ok(/pause/.test(bat), 'serve.bat: 结尾 pause(否则启动失败时窗口一闪而过,看不到原因)');
   })();
 
-  // ==== 相位 ①b 集成约束:入口页换人了(计划 2b 的退休动作)====
-  // ★ 相位原文是"structure-editor.html 仍在、注册表标记在它里面、sync 指向它" ——
-  //   那三条是为"2a 不碰旧页"写的。2b 把入口页换成 editor.html 并删掉旧页,
-  //   于是三条**方向全部反转**(断言不是被删掉,是被**教会**了新的真值)。
   (function () {
     const oldHtml = path.join(__dirname, 'structure-editor.html');
     ok(!fs.existsSync(oldHtml), '★ 旧页面 structure-editor.html 已退休(2b 的入口页是 editor.html)');
@@ -283,7 +269,6 @@ async function runAllPhases() {
        '本服务器跑在 ' + staticSrv.port + ' 上)(实得 ' + rHostNoPort.status + ')');
   }
 
-  // ==== 相位 ③ 路径穿越(规格 §7 风险登记点名"必须写测试"的那一条)====
   {
     const secret = 'TOP SECRET —— 本文件在静态根之外,永远不该被读到';
     const rootDir = path.join(tmpRoot, 'level_editor');
@@ -390,8 +375,6 @@ async function runAllPhases() {
            '(实得 status=' + rLock.status + ', aborted=' + rLock.aborted + ', body=' +
            rLock.body.length + '/' + lockedBytes.length + 'B, err=' + (rLock.error || '无') + ')');
 
-        // ★ 这条才是主断言:旧实现在这里已经是一具尸体 —— ReadStream 的 'error' 没人接管
-        //   → 未捕获异常 → **整个进程退出 1**,客户端一行响应都收不到,用户只能重启 serve.bat。
         const rGood = await request(lockSrv.port, 'GET', '/good.js');
         ok(rGood.status === 200,
            '★★ 待修 1:出过坏文件之后服务器**还活着**(紧接着 GET /good.js → ' + rGood.status + ')');
@@ -440,12 +423,6 @@ async function runAllPhases() {
     }
   }
 
-  // ==== 相位 ⑤ 地图名守卫(规格 §4.9,风险登记点名"必须写测试")====
-  // ★ 编号沿用计划原文:Task 1 加固时插进来的「相位 ⑤ 静态读失败」占了同一个号。
-  //   改号会让计划里 Task 3 / Task 6 的 ⑦ / ⑧ 错位,故两个 ⑤ 并存(有意为之,不是笔误)。
-  // ★★ 本相位必须留在 runAllPhases() **里面**(不是 main() 里 `// ==== 断言区结束 ====` 之前):
-  //   那句注释在 main() 的 try/finally{ cleanup() } **之后**,放那里 = 相位跑在清理之后,
-  //   每次跑都会把已删掉的 tmpRoot 重新建出来 → 每次留下一个 cyrm-srv-* 临时目录(已实测)。
   {
     const bad = ['', 'demo', 'demo.txt', 'a.cyrm.bak', '..cyrm', '.cyrm', 'demo.cyrm\n',
                  '../demo.cyrm', '..%2fdemo.cyrm', '/demo.cyrm', 'a/b.cyrm', 'a\\b.cyrm',
@@ -463,9 +440,6 @@ async function runAllPhases() {
       if (srv.isValidMapName(n) !== true) { allAccepted = false; if (!firstGoodFail) firstGoodFail = n; }
     }
     ok(allAccepted, 'isValidMapName 接受全部 ' + good.length + ' 个合法名(首个漏网:' + firstGoodFail + ')');
-    // ★★ 这条断言**逐字钉住整个正则**。★ 2026-09-22 的授权放宽后它必须跟着改(旧的
-    //    `^[A-Za-z0-9_\-]+\.cyrm$` 已经不再是事实),换成的这条**至少一样强**:它仍然钉"整串",
-    //    故任何**再**放宽(多加一个后缀、基名放行 `.`、把分组写成 `.*` …)都会在这里红。
     ok(srv.MAP_NAME_RE.source === '^[A-Za-z0-9_\\-]+(?:\\.cyrm|\\.v3\\.bak)$',
        '★★ MAP_NAME_RE 逐字钉住:规格 §4.9 的 `.cyrm` + 2026-09-22 授权放行的唯一后缀 `.v3.bak`');
     ok(srv.MAX_MAP_NAME_LEN === 64, 'MAX_MAP_NAME_LEN === 64(规格的正则没有长度上界,这条是防御性补充)');
@@ -475,14 +449,6 @@ async function runAllPhases() {
     eq(srv.mapPathFor(tmpRoot, 'ok.cyrm'), path.join(path.resolve(tmpRoot), 'ok.cyrm'),
        'mapPathFor: 合法名 = mapsDir + 名字');
 
-    // ── 相位 ⑤b ★★ 2026-09-22(用户裁定):名字校验的**唯一**一次放宽 = 多接受 `.v3.bak` ──
-    // ★ 为什么非放行不可:编辑器在 v3→v4 的**单向**转换写盘**之前**要落一份原文备份
-    //   (唯一的退路),而备份名必须是 `<名>.v3.bak` —— 结尾**不是** `.cyrm`,游戏的
-    //   `_random_cyrm`(`f.to_lower().ends_with(".cyrm")`)才抽不到它,备份不会混进随机地图池。
-    // ★★ 这一组是**双向**断言:新后缀被接受 **且** 旧的拒绝面**一条都不少**。理由:这条守卫是
-    //   "一个本地网页不许读写任意路径"的**唯一**边界,放宽成"任意后缀"、或让基名能带 `.`
-    //   (那样 `../x.v3.bak`、`a.b.v3.bak` 就进来了)都等于把边界拆掉 —— 故接受用例与
-    //   等量的拒绝用例成对出现,只加接受不加拒绝的实现会在这里红。
     ok(srv.isValidMapName('demo.v3.bak') === true,
        '★★★ 新后缀被接受:`demo.v3.bak`(= 地图名去 `.cyrm` + `.v3.bak`,编辑器的原文备份名)');
     ok(srv.isValidMapName('factory1v1.v3.bak') === true,
@@ -527,9 +493,6 @@ async function runAllPhases() {
        '★★ mapPathFor: 带新后缀的遍历名照样抛错(第二道"路径必须在 maps/ 里"的闸)');
   }
 
-  // ==== 相位 ⑥ /api/maps + GET /api/map ====
-  // ★ 同相位 ⑤ 的编号说明(计划原文的号,与 Task 1 的静态读失败 ⑤ 相撞);
-  //   位置同理,必须在 runAllPhases() 里面。
   {
     const mapsDir = path.join(tmpRoot, 'maps');
     fs.mkdirSync(mapsDir, { recursive: true });
@@ -554,9 +517,6 @@ async function runAllPhases() {
        '★ /api/maps: 只列合法且是文件的 .cyrm,按名字升序(notes.txt 与同名目录都不进来)');
     eq(data.maps[0].size, 2, '/api/maps: size = 文件字节数');
     ok(typeof data.maps[0].mtime === 'number' && data.maps[0].mtime > 0, '/api/maps: mtime 是数字');
-    // ★ 待修 2:这两条**必须分开**。原先只有一条、而且只覆盖 notes.txt —— 而 notes.txt 走的是
-    //   「名字不过守卫」那条路径;同名目录(sub.cyrm)走的是**另一条**(名字合法、stat 也成功、
-    //   只是不是文件)。一个原因一条断言,才钉得住"两种跳过都不静默"这句话。
     ok(logged.some(function (m) { return m.indexOf('notes.txt') >= 0; }),
        '★ /api/maps: **名字不过守卫**而被跳过的文件点名记日志(绝不静默消失)');
     ok(logged.some(function (m) { return m.indexOf('sub.cyrm') >= 0; }),
@@ -583,9 +543,6 @@ async function runAllPhases() {
     ok(rMapsPost.status === 405, 'POST /api/maps → 405');
   }
 
-  // ==== 相位 ⑦ PUT /api/map 原子写 ====
-  // ★ 同相位 ⑤ / ⑥ 的编号说明(计划原文的号,与 Task 1 的静态读失败 ⑤ 相撞);
-  //   位置同理,必须在 runAllPhases() 里面。
   {
     const mapsDir = path.join(tmpRoot, 'maps');
     const readBack = function (n) { return fs.readFileSync(path.join(mapsDir, n)); };
@@ -789,23 +746,6 @@ async function runAllPhases() {
     }
   }
 
-  // ==== 相位 ⑧ rename 重试(待修 1:Windows 上目标被打开时 EPERM)====
-  // ★ 号是**新给的**(⑧):前面 ①~⑦ 的号沿用计划原文,加号动它们会让计划里 Task 6 的
-  //   ⑦/⑧/⑨ 错位。本相位是 Task 1~3 之后的一次定向修复带来的,故排在最后。
-  // ★ 本相位的断言文本用「待修 1」前缀,与相位 ⑤ 的那批(静态读失败)是**两次不同的
-  //   修复 dispatch 的同一个编号**——同两个 ⑤ 并存一样是有意为之,别去统一它。
-  //   ★ 同款:「待修 2」在本文件里也已经被 listMaps 那条用过一次(相位 ⑥),而**本文的**
-  //     待修 2 是"默认退避必须让出事件循环"(下面 ①c 那两条,前缀带「待修 2:」)。
-  //     前缀是**按 dispatch 编号**的、不唯一,判据要看断言文本的内容,别按前缀 grep。
-  // ★ 为什么**不用活的读写竞态**测这条:它必然飘 —— 要掐到"读者正攥着句柄"的那一瞬
-  //   (实测:读者在,21 次尝试全 500;读者走,紧接着就 200),拿它当断言就是把
-  //   "机器负载/调度"写进了判据。这里改成把 rename **注入**进去,于是
-  //   「前两次 EPERM 第三次成功」是纯逻辑、秒级、且能顺带断言**尝试次数**
-  //   (只断言"最终成功"的话,把重试砍成 1 次也照样绿 = 空转)。
-  // ★★ 目标目录用**独立的一份**(不是相位 ⑥/⑦ 的 maps/):本相位会往盘上写文件,
-  //    而相位 ⑥ 的 /api/maps 是**精确列表**比对 —— 混用会让那条断言随相位顺序变红。
-  // ★ 不启服务器:被测的是纯逻辑(renameWithRetry / writeMapAtomic),HTTP 那一层
-  //   已由相位 ⑦ 的 200/500 覆盖。
   {
     // 注入用的"同步抛"rename(与 fs.renameSync 同形态)与一个不真的等的 sleep。
     const noSleep = function () { /* 立即返回:注入契约是"返回什么都行" */ };
@@ -827,11 +767,6 @@ async function runAllPhases() {
        srv.RENAME_RETRY_CODES.indexOf('EBUSY') >= 0 &&
        srv.RENAME_RETRY_CODES.indexOf('EACCES') >= 0,
        '★ 待修 1:重试名单含 EPERM / EBUSY / EACCES(实得 ' + JSON.stringify(srv.RENAME_RETRY_CODES) + ')');
-    // ★★ 范围随待修 1 的复审改成 10~12(原为 3~5):出厂那版 5 次**不够宽** ——
-    //    复审(真 HTTP + 真 61KB 地图 + 持续 GET 读者 + 20 次 PUT)实测出厂参数 6/20 失败、
-    //    掉重试的对照 14/20、20 次 × 固定 50ms 则 0/20。下界 10 是"至少比出厂翻一倍"、
-    //    上界 12 是"最坏总等待仍在半秒量级" —— 两边都不是凭感觉:表在 editor_server.js
-    //    那两个常量的注释里。★ 这条仍只判**范围**:具体值由断言 #7(用满 N 次)参数化跟上。
     ok(srv.RENAME_MAX_ATTEMPTS >= 10 && srv.RENAME_MAX_ATTEMPTS <= 12,
        '★ 待修 1:总尝试次数在 10~12 之间(实得 ' + srv.RENAME_MAX_ATTEMPTS + ')');
     // ★ 退避上限:少了它,额度一放宽就会退回"翻倍到 160ms"那套稀疏尝试。
@@ -871,21 +806,6 @@ async function runAllPhases() {
          ', err=' + (err === null ? '无' : errText(err)) + ')');
     }
 
-    // ①c ★★ 默认退避**必须真的让出事件循环**(待修 2 —— 这套修复赖以成立的那条缝)。
-    //    ★ 为什么必须补这条:本相位此前**每一条**注入调用都传了 noSleep,而相位 ⑦ 的真实
-    //      PUT 永远第一次就成功、从不走到 sleep ⇒ 把默认退避换成**同步等待**,整套测试
-    //      (145 通过 / 0 失败 / SERVER SMOKE OK)照样全绿 —— 而同步退避对这个 bug
-    //      **结构上无效**:它冻住的正是那个"必须把 fd 关掉"的读流(实测:同步退避 21 次
-    //      尝试期内读者前进 0 字节、全部失败,见 editor_server.js 里 renameWithRetry 的注释)。
-    //      也就是"修复静默失效"这件事,此前没有任何断言拦得住。
-    //    ★ 判据:注入「第一次 EPERM、之后成功」的 renameFn,**刻意不传 sleepFn**
-    //      (让默认退避真跑),同时在旁路开一个自续的 `setImmediate` 计数器 —— 事件循环
-    //      每转一圈 +1;重试前后各读一次,断言**重试窗口内它确实前进过**。
-    //      · 默认实现(`setTimeout`):睡必须等一个定时器相位 ⇒ 事件循环一定转过 ⇒ 计数 > 0。
-    //      · `Atomics.wait` 实现:整个重试(含那次"睡")全在微任务里跑完,一次宏任务都
-    //        不让出 ⇒ 计数**恰好为 0** ⇒ 红。(实测变异:见 task-3-report.md。)
-    //    ★ 用 setImmediate 而不是 setTimeout(0):后者受 Windows 15.6ms 定时器粒度影响、
-    //      且一个窗口里只烧一次;setImmediate 每个循环回合都烧,信号更硬、不受粒度影响。
     {
       let loopTicks = 0;
       let ticking = true;
@@ -915,20 +835,6 @@ async function runAllPhases() {
          '整个修复结构上失效)');
     }
 
-    // ①d ★★★ 退避**逐档**钉住(待修 1 的后半:RENAME_RETRY_MAX_MS 的**应用**)。
-    //    ★ 缺口是什么:上面三条(名单/额度/上限)钉的全是**常量本身**,而常量**怎么被用**
-    //      一次都没被观测过 —— 本相位此前**每一条**注入调用都传了 noSleep,退避算出来就丢。
-    //      于是把 `Math.min` 从退避公式里整个删掉、常量照留:三个冒烟**全绿**,而"无界增长"
-    //      原样回来 —— 11 档退避 20/40/80/…/20480ms ≈ **41 秒**最坏等待(用户只会以为卡死)。
-    //      这正是"常量被守卫、应用没被守卫"的教科书缺口:守卫贴着常量的**值**写,而缺陷
-    //      住在常量的**用法**里。(与上面 `RENAME_RETRY_MAX_MS <= 100` 那条不重复:那条它
-    //      删不掉,删掉的是引用它的 Math.min。)
-    //    ★ 做法:注入一个**记录型** sleepFn(只把每次的延迟推进数组、**不真睡**)+ 一个恒定
-    //      EPERM 的 renameFn 把额度用满 ⇒ 断言对象是**纯逻辑**:零耗时、不读时钟、
-    //      不受机器负载影响,且覆盖**全部**档位(不只前几档)。
-    //    ★ 三条断言各有分工:逐档相等(整条曲线) / 最大值 ≤ 上限(带名字的那条不变量) /
-    //      末档**恰好等于**上限(上限必须真的**生效**,而不只是"没被超" —— 一个把上限写成
-    //      `BASE*2^n > MAX ? BASE : ...` 之类的坏实现能混过前两条)。
     {
       const recorded = [];
       const recSleep = function (ms) { recorded.push(ms); /* 刻意不真睡:本块只要序列 */ };
@@ -958,20 +864,6 @@ async function runAllPhases() {
          '(实得末档 ' + recorded[recorded.length - 1] + 'ms)');
     }
 
-    // ①e ★★「让出了事件循环」≠「真的等了」(待修 2 的后半)。
-    //    ★ ①c 只证明重试期内事件循环**前进过**;而一个 **setImmediate** 形态的 sleep
-    //      (一个循环回合、**~0 实际时间** ⇒ 12 次重试在一个 tick 里跑完)能让 ①c **照样绿**
-    //      —— 那时攥着 fd 的持有者根本没机会释放,修复**结构上失效而断言全绿**(复审实测)。
-    //      ①c 与这条合起来才是"异步退避"的完整判据:**让出**(①c)+ **真的等**(本条)。
-    //    ★ 判据:这次**不注入 sleepFn**(走生产那条默认路径,被测的就是它),改在注入的
-    //      renameFn 里给每次尝试盖时间戳 ⇒ 相邻两次尝试的**间隔**就是那一档退避**实际**
-    //      睡掉的时间。断言每个间隔 ≥ 该档期望值的一半。
-    //      · 默认实现(`setTimeout`):间隔 ≈ 20/40/50 ⇒ 过。
-    //      · `setImmediate` 实现:间隔 ≈ 0 ⇒ **红**。
-    //    ★ 只取下界、**不设上界**:定时器只会晚醒不会早醒(故正常档不飘),而"晚醒"就是
-    //      机器负载 —— 拿它当上界等于把负载写进判据(本相位开头那句"不用活竞态测"同一个理由)。
-    //    ★ 档位只取 3 次失败(不是用满额度):本块的判据是**每个**间隔都真的等掉了,3 档
-    //      已经覆盖"首次退避"与"被上限钳住那一档",而真睡 3 次只要 ~110ms(用满要 ~510ms)。
     {
       const stamps = [];
       let calls = 0;
@@ -1055,17 +947,6 @@ async function runAllPhases() {
     }
   }
 
-  // ==== 相位 ⑧ 入口页结构(真的从服务器取,不是读盘)====
-  // ★ 本相位**只能**待在这里(runAllPhases 的函数体内):main() 里那句
-  //   `// ==== 断言区结束 ====` 在 try/finally{ cleanup() } **之后**,照计划原文放在那儿
-  //   = 相位跑在清理之后,会把已删掉的 tmpRoot 重新建出来 → 每次跑留下一个 cyrm-srv-* 目录
-  //   (Task 2 的实现者用 fs 插桩实锤过;Task 1 的相位 ⑤ 也点了同一条)。
-  // ★ 号仍是 ⑧(计划原文的号),本文件里另有一个 ⑧(rename 重试)—— 与两个 ⑤ 并存同款,
-  //   **有意为之,别去"修正"**。
-  // ★ 2b 之后本相位只判"**页面结构**":入口页由 2a 的骨架页换成真页面,原来那些
-  //   "骨架页必须有 id=roundtrip"之类的断言描述的是**已经不存在的页面**。
-  //   纪律类断言(不许第二份 HSV / lineCells 必须 floor / PUT 必须带 Content-Type)
-  //   搬到 editor_smoke.js —— 它们要扫的是 ui.js / render.js 的源码,不是页面文本。
   {
     const page = (await request(staticSrv.port, 'GET', '/')).body.toString('utf8');
     // ── 脚本清单与**顺序**:core → tile_defs → tint → render → io → ui ──
@@ -1090,11 +971,6 @@ async function runAllPhases() {
     ok(srcVals.length >= 6 && srcVals.every(function (v) {
       return v.charAt(0) !== '/' && v.indexOf('://') < 0;
     }), '★ 页面里的脚本都是相对路径、没有绝对路径/外部 URL(编辑器只走本机 HTTP)');
-    // ★★ 这一条**不是**计划原文里有的,是本次改写**刻意保留**的旧断言(原文相位 ⑧ 有,
-    //    新相位只列了"顺序"与"相对路径"两条)。理由:它判的是**页面文本**这一侧的
-    //    页面结构,而不是 ui.js/render.js 的源码 —— 不在搬去 editor_smoke.js 的那一类里。
-    //    少了它的后果很具体:`<script src>` 里打错一个字母 ⇒ 那个文件 404 ⇒ 整页在浏览器里
-    //    **静默死掉**(节点侧的其它断言全绿,因为服务器只是老老实实回了 404)。
     (function () {
       const missing = srcVals.filter(function (s) { return !fs.existsSync(path.join(__dirname, s)); });
       ok(missing.length === 0, '★ 页面引用的每个脚本文件都真实存在(否则运行时 404、整页静默死掉):' +
@@ -1106,10 +982,6 @@ async function runAllPhases() {
        /id="statusbar"/.test(page), '§4.5 的四块版式都在(工具条 / 库 / 右栏 / 状态栏)');
     ok((page.match(/class="tool" data-tool=/g) || []).length === 8,
        '工具条有 8 个工具按钮(画笔/矩形/油漆桶/橡皮/直线/选框/吸管/渐变)');
-    // ★★ 用 `class="layer-row[^"]*"` 而不是 `class="layer-row"` 字面量:图层行里有一行带
-    //    ` cur`(`.layer-row.cur` 是当前图层),字面量只匹配到 **3** 行 ⇒ 原来那条断言
-    //    **不可能通过**。也不能图省事写 `\blayer-row\b` —— 那会把上面 `<style>` 里同样含
-    //    `layer-row` 的 4 条 CSS 选择器一起数进来(得到 8)。
     ok((page.match(/class="layer-row[^"]*" data-layer="\d"/g) || []).length === 4,
        '图层列表有 4 行');
     ok(/id="boot-error"/.test(page), '★ 有启动错误条(缺 Worker 时把话说清楚,而不是静默)');

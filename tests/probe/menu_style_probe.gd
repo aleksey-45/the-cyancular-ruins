@@ -53,9 +53,6 @@ func _ready() -> void:
 	var sb := UiFactory.panel_box()
 	_check(sb.bg_color.a == 1.0, "panel_box() 的底仍是不透明")
 
-	# ── 新工厂：菜单面板要有外描边 + 内亮线两条线 ──
-	# - 判定条件落在"两个 stylebox 的 border 颜色确实不同"上 —— 它比"存在两个节点"
-	#   更贴近这条视觉规则本身;把内线改成与外线同色  ->  这条红。
 	var mp := UiFactory.menu_panel()
 	_check(mp != null and mp is PanelContainer, "menu_panel() 返回 PanelContainer")
 	if mp is PanelContainer:
@@ -92,7 +89,7 @@ func _ready() -> void:
 	# - 只断言两层 border_color 各自正确是看不见重合的:计划初稿把外层 content_margin
 	#   显式写成 0.0 时,内层铺满外层整个矩形(`body.rect == (0,0,外层全尺寸)`)、两条 1px
 	#   线落在同一环上、内层盖住外层  ->  画面上只剩一条,而上面几条照样全部断言通过。
-	#   这两条量的是"内层真的被内缩了 1px"(外层不设 content_margin  ->  默认 -1  -> 
+	#   这两条量的是"内层真的被内缩了 1px"(外层不设 content_margin  ->  默认 -1  ->
 	#   `StyleBox::get_margin()` 回落 border width  ->  `get_offset()==(1,1)`)。
 	# - 探针是 `extends Node`,要真加入场景树 + 等一帧才拿得到 rect。
 	add_child(mp)

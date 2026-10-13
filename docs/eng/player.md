@@ -22,7 +22,7 @@
 ### 4. 受击、无敌帧与倒地
 - **受击与击退**：受到非爆炸伤害时进入短暂无敌帧；受到爆炸伤害时计算独立的冲击速度（`knock_velocity`），在后续帧中指数衰减。
 - **倒地状态**：生命值归零时进入倒地状态。此时物理引擎依然正常模拟（继续受重力与击退影响），仅屏蔽玩家的操作输入。
-- **单人模式原地重置**：单人模式中按 R 键调用 `Level0.restart_single()` 执行就地重置（还原破坏瓦片、重置敌人与弹药、玩家满状态回出生点），代替重新加载场景，避免频繁重载场景造成的资源清理问题。
+- **单人模式原地重置**：按 R 键调用 `Level0.restart_single()`，还原破坏瓦片、重置敌人与弹药，并将满状态玩家放回出生点。
 
 ---
 
@@ -31,14 +31,19 @@
 为了降低玩家主脚本（[`scenes/player/player.gd`](../../scenes/player/player.gd)）的复杂度，将具体业务拆分为子组件节点，各组件不自行运行 `_physics_process`，完全由玩家根节点统一调度：
 
 ```text
-Player (scenes/player/player.gd)
+Player (CharacterBody2D；物理根节点)
+ ├─ Visuals (角色与武器的共同表现偏移)
+ │   ├─ AnimatedSprite2D
+ │   └─ WeaponSlot
  ├─ ClimbComponent (梯子与铁链攀爬逻辑)
  ├─ CombatComponent (受击伤害结算、击退、无敌帧与复活)
  ├─ WeaponComponent (背包武器管理、开火与弹药状态)
  └─ SwimComponent (水体浮力、游泳与氧气消耗)
 ```
 
-- **执行顺序**：根节点每物理帧按固定流程推进：`ClimbComponent.update()` → 水平/垂直速度计算 → `CombatComponent.apply_knock()` → `move_and_slide()`。
+- **执行顺序**：输入记录交给共享 ActorStep，推进武器、游泳、攀爬、移动与碰撞，返回动作；初次预测、单人或服务端执行这些动作。预测恢复与重放只推进玩法状态，完成后由 Player.present_tick 更新动画、预瞄线、闪烁和 HUD。
+- **位置边界**：CharacterBody2D 始终保持实际玩法位置；Visuals 的世界校正误差在 50 ms 内衰减，角色与武器一起平滑。shot_origin 剔除该视觉偏移，保证弹道不受表现校正影响。
+- **受击边界**：CombatComponent 更新 HP、倒地、击退和无敌帧；Player.play_hit_feedback 为单人受击和联机 HIT 提供音效、挤压、后处理和镜头反馈。恢复状态不重新触发死亡或受击表现。
 - **接口契约**：对外统一提供 `take_hit()`、`is_downed()`、`apply_recoil()` 等方法及 `hp_changed` 信号，契约由 `tests/smoke/player_contract_smoke.gd` 保证。
 
 ---
@@ -62,6 +67,9 @@ Player (scenes/player/player.gd)
 
 1. **弹药赋值通道 (`WeaponComponent.apply_mag`)**：
    - 武器节点已在场景树中时，直接写入 `mag_ammo`；未进入场景树时暂存至 `pending_mag`，待武器节点的 `_ready()` 触发时消费。
-   - 不采用 `call_deferred` 延迟写回，直接同步更新，防止客户端在回滚重放输入时旧弹药覆盖了新消耗。
+   - 弹药变化直接同步写回库存。
 2. **武器就绪标记 (`WeaponBase._mag_ready`)**：
    - 武器节点初始化完成时将 `_mag_ready` 置为 `true`。开火逻辑中的空弹判定依赖该标记，确保弹药数据初始化完成前不会误触发换弹动作与音效。
+3. **库存恢复与通知**：切换权威手持武器前先卸下旧武器，再写入新库存，避免旧弹药回写污染新背包。inventory_changed 只在表现更新时合并发送，HUD 使用最终状态。
+
+源码参考、预测调用顺序及断流处理见 [架构参考](architecture_references.md)。

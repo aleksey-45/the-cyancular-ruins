@@ -1,42 +1,5 @@
 extends ProbeBase
 
-# 菜单武器网格防御性校验(2026-09-29;清扫「未认领欠账」的 A2 + A5 两项)。
-#
-# 守两件此前没有任何自动化判定条件的事,两条都是"改错了不报错"的形态:
-#
-# ① A2 —— 菜单的武器勾选框真的按注册表建了 N 个。
-#    既有防御性校验是 `enemy_logic_smoke._phase_weapon_registry` 的 ⑥,而它是源码级的:
-#    只断言 `_fill_sp_panel` 的函数体里出现了 `WeaponRegistry.all_ids()`。把那个循环改成
-#    `for i in 6:` 之类,只要还调着 `all_ids()`,⑥ 照样绿,而菜单静默只显示 6 行。
-#    headless 跑 `main_menu.tscn` 也拦不住:该场景一行都不打印,而且它不会去按
-#    「单人模式」 ->  `_fill_sp_panel` 根本不被调用(实测:临时探针实例化实际游戏场景 + 调生产函数,
-#    json 7 条时得「勾选框数=7 注册表=7」)。
-#    故本探针真实例化 `main_menu.tscn`、走生产入口 `_on_single_pressed()`
-#    (它就是 `_fill_sp_panel` 唯一的调用点),再数 `CheckList` 容器下的 `CheckButton`。
-#    - 容器按名字在面板子树里找(不写死路径):2026-10-03 那轮美化给面板外层套了
-#      `Body`,写死 `VBox/CheckList` 会测试误报;改名仍会红(见 `_find_named` 的调用点)。
-#
-# ② A5 —— 勾选框上的文字只有武器名,不带编号。
-#    那个编号(1..N)看起来是键位,而键位是背包位置、与 `type_id` 毫无关系
-#    (用户 2026-09-25 裁定:菜单上不显示编号)。字号扫描(kh_l4 / kh_l5)抓不到它 ——
-#    它只查整数字面量,而这两处一处是变量实参
-#    (`WeaponIcons.make_weapon_check(type_i, …)` 那个 `type_id`)、一处是`cb.text` 赋值
-#    (`_fill_sp_panel`),都不在其射程内  ->  此前只有人眼判定条件。
-#
-# - 判定条件刻意写成 `text == WeaponRegistry.name_of(id)`(逐字相等),不是"不含数字":
-#   武器名里本来就有数字(`重狙 M82A1` / `霰弹 S686`),而「不含 str(type_id)」那种写法
-#   对将来的武器名会测试误报(给 id 5 起名 `MP5` 就当场炸),且"名字里恰好没这个数字"也
-#   不是契约。真实契约就是「显示文本 == 注册表里的名字,一个字符都不多」—— 加编号也好、
-#   加"键位 N"也好,都会破坏逐字相等。
-#
-# - 覆盖上限(照实登记):本探针只看 `text`。谁把编号画成另一条 Label / TextureRect
-#   (`WeaponIcons.make_weapon_check` 的 cell 是个 HBox,加子节点很容易),本探针看不见。
-#   今天那个 cell 只有 `[CheckButton, TextureRect, Label]` 三个子节点,这一档没有对应的
-#   "子节点数"断言 —— 别把本条读成"菜单上从此不可能再出现任何数字"。
-#
-# 运行方式(场景模式,`--quit-after` 是超时保护上限;headless 即可,本探针不取像素):
-#   "$GODOT" --headless --path . --quit-after 3600 res://tests/probe/menu_weapon_grid_probe.tscn
-# 验收标准：末行 "KH MENU-GRID PROBE: ALL-OK"(grep 文本,不看退出码)。
 
 const MAIN_MENU_SCENE := "res://scenes/main_menu.tscn"
 const LOBBY_PAGE_SRC := "res://scenes/lobby_page.gd"
@@ -74,11 +37,6 @@ func _ready() -> void:
 	var panel = menu._sp_panel
 	var list: VBoxContainer = null
 	if panel != null:
-		# 注意事项：按节明确提示在子树里找,不写死路径(`VBox/CheckList`):2026-10-03 那轮美化把
-		#   面板改成"基础结构框架在 .tscn、皮与内容在代码里套 `UiFactory.skin_menu_panel()`",
-		#   路径多了一层 `Body/` —— 写死路径的探针直接断言失败,而主题(勾选框数/文案)一个字没变。
-		#   按名找之后,版式再挪一层不会测试误报;而改名仍会红(下面那条 `list != null`),
-		#   不会退化成失去防护校验作用。
 		list = _find_named(panel, "CheckList") as VBoxContainer
 	_c(panel != null and list != null,
 			"`_on_single_pressed()` 建出了单人面板且其中的 `CheckList` 容器在位(面板 %s、列表 %s)"
@@ -131,8 +89,6 @@ func _ready() -> void:
 			"`make_weapon_check` 的 Label 文字必须是**注册表名逐字**(实得 %s、期望 %s)"
 					% [str(cell_texts), str(want)])
 
-	# 接线:上面验的是 `make_weapon_check` 本身,而两个大厅页经 `_add_weapon_grid` 调它
-	# —— 只钉函数本身的话,页面改成自己造 cell 就绕过去了,且一条断言都不会红。
 	var lb := _read(LOBBY_PAGE_SRC)
 	_c(not lb.is_empty(), "读到 %s(读不到就是红,不是静默跳过)" % LOBBY_PAGE_SRC)
 	var grid_body := _func_body(_code_only(lb), "_add_weapon_grid")
@@ -150,11 +106,6 @@ func _ready() -> void:
 	_finish()
 
 
-# 在子树里按节明确提示找第一个节点(找不到返回 null)。
-# - 为什么不写死路径:单人面板 2026-10-03 起"基础结构框架在 .tscn、皮与内容在代码里套
-#   `UiFactory.skin_menu_panel()`",内容比从前多了一层 `Body/` —— 写死路径的探针会测试误报,
-#   而它要守的东西(勾选框数 == 注册表条数、文案逐字相等)一个字都没变。
-# - 但不许退化成失去防护校验作用:调用点仍然断言 `list != null`  ->  改名 / 删节点照样红。
 func _find_named(root: Node, nm: String) -> Node:
 	if root.name == nm:
 		return root

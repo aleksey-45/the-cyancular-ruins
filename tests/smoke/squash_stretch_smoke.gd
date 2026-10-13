@@ -14,10 +14,6 @@ const MIRRORED_CONSTS := [
 	"squash_amount", "squash_recover", "squash_land_min_vy", "squash_land_ref_vy",
 	"squash_land", "squash_hurt", "squash_air", "squash_air_ref_vy",
 ]
-# 设计约定的幅度上限。写死是刻意的:这里是唯一严格校验"这个数本身"的地方。
-# - 2026-09-21 用户实测后从 0.10 收到 0.06(原话「玩家有点太果冻了」)—— 同批把
-#   `squash_recover` 9 -> 16、`squash_air` 0.30 -> 0.10(三项一起收,事件强度不动)。
-#   两侧参数文件必须同改:本文件上方逐名严格约束这 8 个同名常量。
 const RULED_AMOUNT := 0.06
 
 var _fail: int = 0
@@ -127,10 +123,6 @@ func _initialize() -> void:
 	_ok((e[1] as AnimatedSprite2D).scale.x < 1.0,
 			"空中(vel_y=-700)→ 拉伸(窄高),实测 %s" % str((e[1] as AnimatedSprite2D).scale))
 
-	# ⑥ 指数回归:30 帧后 < 0.01,60 帧后 < 0.001
-	#    按 squash_recover=16.0 + squash_amount=0.06 推(2026-09-21 更新):
-	#    exp(-8)*0.06≈2.0e-5、exp(-16)*0.06≈6.8e-9 —— 两条阈值都远宽于实测,故本阶段不受
-	#    recover 上调的影响(它只会让回归更快)。
 	var f: Array = _mk()
 	(f[0] as SquashStretch).tick(DT, 1200.0, true, false)   # 先制造一个大冲击
 	for i in 30:
@@ -142,15 +134,6 @@ func _initialize() -> void:
 	_ok(absf((f[1] as AnimatedSprite2D).scale.x - 1.0) < 0.001,
 			"60 帧后回归到 <0.001,实测 %.6f" % absf((f[1] as AnimatedSprite2D).scale.x - 1.0))
 
-	# ⑦ 多事件叠加不爆:同时起跳 + 冲刺,再叠空中项 —— 三条正项叠加必须被钳在 +1.0 上限
-	#    - 这里刻意不走满力落地那一拍(on_floor=false):落地项是 `-1.0`,会把饱和的
-	#    `+1.0` 原样抵消 -> v 落到 0,断言就退化成"读一个 0",删掉组件里两处 clampf 也照样绿。
-	#    改成"停在钳位处"之后,删 clampf 才会真红(下面两条互补)。
-	# 注意事项：`delta = 0.0` 是核心约束的(与 ⑦c 相同处理逻辑、理由同):本阶段的过冲余量**只等于
-	#    `squash_air`**,而指数恢复每帧要吃 `1-exp(-recover/60)`。2026-09-21 把 `squash_air`
-	#    0.30 -> 0.10、`squash_recover` 9 -> 16 之后,恢复吃的(0.234)压过了空中项给的(0.10)
-	#     ->  过冲消失,本阶段读到的成了 0.9480 而不是边界值 0.94 —— 断言失败,而组件是对的。
-	#    冻掉恢复项后过冲恒为 `squash_air`,与 `squash_recover` 解耦。
 	var g: Array = _mk()
 	(g[0] as SquashStretch).impulse(SquashStretch.Impulse.JUMP)   # +0.75
 	(g[0] as SquashStretch).impulse(SquashStretch.Impulse.DASH)   # +0.80 -> 饱和到 +1.0
@@ -226,12 +209,6 @@ func _initialize() -> void:
 	_ok(_near(sn1.x, sn2.x, 0.0005),
 			"下行饱和:叠四组与叠两组同值,实测 %s" % (str(sn1) + " vs " + str(sn2)))
 
-	# ⑦e 减法之后的写入口钳位(§3 末那条补记的唯一防御性校验)。它只在违约宿主连喂两帧时
-	#     才暴露异常,单帧是看不出来的 —— 单帧下 `_impulse` 只到 -1,`_apply()` 的钳位就把画面
-	#     提供容错保障了;第二帧再减一次才会掉到 -1 以下(无钳位时 -1.86 -> 恢复后 -1.60)。
-	#     - 验收标准：第二帧必须仍停在钳位处那一条指数尾巴上(`-1.0` 经一帧恢复 = -0.8607),
-	#       而不是 -1.60 被 `_apply()` 兜成 -1  ->  两者读出来分别是 1.0861 与 1.1000。
-	#     - 违约宿主不是假想:`ClimbComponent` 在梯底按住 S 时每帧喂 720(见 spec §2.4)。
 	var p: Array = _mk()
 	(p[0] as SquashStretch).tick(DT, 2000.0, true, false)   # 第一帧满幅落地
 	(p[0] as SquashStretch).tick(DT, 2000.0, true, false)   # 第二帧照喂:减法会被重来一次

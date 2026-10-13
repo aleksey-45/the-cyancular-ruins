@@ -16,7 +16,7 @@ const AIM_JITTER := 0.10         # 瞄准抖动角度（弧度）
 const TARGET_STICKY := 0.6       # 目标黏滞系数：新目标距离小于当前目标的一定比例时才切换
 const STUCK_JUMP_TIME := 0.4     # 卡墙累计判定时间（秒），超时后触发跳跃
 
-var host: Node            # MatchHost / RoyaleHost
+var host: Node            # AuthorityWorld
 var role := 0
 var src: AiInputSource
 
@@ -40,7 +40,7 @@ func _physics_process(delta: float) -> void:
 	if src == null or host == null or not is_instance_valid(host):
 		return
 	# 倒计时或对局结束阶段保持待机
-	if int(host._round_state) != int(host.RoundState.PLAYING):
+	if int(host._round_state) != int(NetEvent.RoundState.PLAYING):
 		src.fire = false
 		src.axis = 0.0
 		return

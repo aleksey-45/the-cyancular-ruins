@@ -66,3 +66,9 @@ func get_aim_dir_override() -> Vector2:
 # 而是直接使用注入的瞄准向量。
 func is_network_driven() -> bool:
 	return true
+
+func haste_held() -> bool:
+	return false
+
+func rewind_held() -> bool:
+	return false

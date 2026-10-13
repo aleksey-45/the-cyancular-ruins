@@ -68,12 +68,7 @@ func setup(weapons: WeaponComponent) -> void:
 	custom_minimum_size = Vector2(PANEL_W, panel_h)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	if _weapons != null:
-		_weapons.weapon_changed.connect(_on_changed)
 		_weapons.inventory_changed.connect(refresh)
-	refresh()
-
-
-func _on_changed(_type_id: int) -> void:
 	refresh()
 
 

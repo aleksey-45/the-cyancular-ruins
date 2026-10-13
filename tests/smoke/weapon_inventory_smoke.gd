@@ -37,9 +37,6 @@ func _initialize() -> void:
 	inv.add(3, 5)           # 中,3 格 -> 共 7 格 / 3 把
 	_check(inv.used_cell_count() == 7, "2轻+1中 = 7 格(实际 %d)" % inv.used_cell_count())
 	_check(not inv.can_hold(5), "7 格放不下 4 格的重武器(容量闸门)")
-	# 7 格只剩 1 格,而最便宜的档是 2 格 -> 此时什么都放不下
-	# (这里原先写成"放得下轻武器",是我把 7+2=9 看成了 8 —— 测试自己算错,
-	#  实现拒绝加才是对的。留着这条是因为它正好严格校验"门控前置校验按剩余格数算,不是按把数算")
 	_check(not inv.can_hold(1), "7 格只剩 1 格,放不下 2 格的轻武器")
 	# 门控前置校验要是"卡死"就测不出上面那些了 —— 腾出格后必须重新放得下
 	var freed: Dictionary = inv.remove_at(2)
@@ -55,16 +52,6 @@ func _initialize() -> void:
 	_check(inv_b.used_cell_count() == 8 and inv_b.held.size() == 3, "恰好 8 格 / 3 把")
 	_check(not inv_b.can_hold(1), "满容量后最便宜的档也放不下")
 
-	# - 关于"把数门控前置校验独立于容量门控前置校验"的实话:按今天的 cost 表,它其实是被容量蕴含的 ——
-	#   最便宜的轻武器 2 格,4 把 × 2 = 8 = CAPACITY,所以 used_cell_count() ≤ 8 已经蕴含 size ≤ 4。
-	#   没法用真表造出"容量还有余、但已满 4 把"的局面(要造就得有 cost=1 的档)。
-	#   但它不是无引用冗余代码:用户 2026-09-15 把它定为硬规则(「就算容量给 100 也最多四把」),
-	#   而一旦有人把轻武器改成 1 格 / 把 CAPACITY 调大,"最多 4 把"这个承诺就只靠这一条守着了。
-	#   这里退而固定绑定常量本身 + 那个临界等式,别假装验了门控前置校验的独立性。
-	# - 默认值一律走 `get_script_constant_map()`:常量不存在时直接取属性会抛错,而 -s 脚本
-	#   抛错走不到 quit() -> 进程永久挂起(本仓铁律,见上面 WI == null 那段)。
-	#   `.get(name, -1)` 的存在性检查让"常量还没改名"表现为干净的红。
-	# - `CELL_COST` 是计划 1 改的名(原 `SLOT_COST`)—— 写回旧名同样会抛错  ->  挂起。
 	var wconsts: Dictionary = WI.get_script_constant_map()
 	var def_cap := int(wconsts.get("DEFAULT_CAPACITY", -1))
 	var def_max := int(wconsts.get("DEFAULT_MAX_WEAPONS", -1))
@@ -79,10 +66,6 @@ func _initialize() -> void:
 	_check(inv_y.held.size() == 4 and inv_y.used_cell_count() == 8, "4 把轻武器 = 4 把 / 8 格")
 	_check(not inv_y.can_hold(1), "4 把轻武器后不能再装")
 
-	# ══ 容量 / 把数可配(2026-09-25)══
-	# 注意事项：探字段必须先探再调:直接写 `probe.capacity` 在改动前会抛 "Invalid get index"
-	# -> `_initialize()` 当场中断 -> 走不到 quit() -> 进程永久挂起。
-	#   探不到就报 FAIL 并用 if 包住后续(不要 early return —— return 同样到不了 quit)。
 	var probe = WI.new(tiers)
 	var has_capacity := false
 	var has_max := false

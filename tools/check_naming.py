@@ -25,7 +25,7 @@ PROJECT = os.path.dirname(TOOLS)
 
 # 排除检查的目录（引擎构建缓存、版本控制、构建产物与临时目录）
 # 与版本忽略规则保持一致，避免构建和运行临时文件引发偶发误报
-SKIP_DIRS = {".godot", ".git", ".superpowers", ".claude", "builds", "backup",
+SKIP_DIRS = {".test_logs", ".godot", ".git", ".superpowers", ".claude", "builds", "backup",
              "releases", "_crashtest", "__pycache__", "docs", "assets"}
 # 文档路径检查的对象（项目根文档与核心分域技术文档）
 DOC_FILES = ["README.md", "CLAUDE.md", "RELEASE.md"] + [

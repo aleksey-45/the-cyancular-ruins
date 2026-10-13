@@ -125,8 +125,6 @@ func _run() -> void:
 	if not WorldRewind.hold_corpses:
 		_fail("退出回溯后未恢复录制态(hold_corpses)")
 
-	# ⑦ 录像带模型(D3):磁带钟退回到回溯出口,被复写的帧被裁掉。
-	#    旧实现的磁带钟只增不减,"被抹掉的未来"留在带上,第二次回溯会先倒放它。
 	var t_after_rewind: float = rewind.recorded_seconds()
 	if t_after_rewind > t_before_rewind - 1.0:
 		_fail("磁带钟未随回溯回退(%.2f → %.2f)" % [t_before_rewind, t_after_rewind])

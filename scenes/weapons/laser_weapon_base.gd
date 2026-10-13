@@ -28,11 +28,9 @@ const HIT_MULT: float = 1.75
 enum BeamStyle { FLASH = 0 }
 
 # ── 开火编排（接管 WeaponBase._spawn_projectiles）──
-func _spawn_projectiles(base_dir: Vector2) -> void:
-	if muzzle == null:
-		return
-	var origin := muzzle.global_position
-	var dir := base_dir.normalized()
+func _spawn_projectiles(action: Dictionary) -> void:
+	var origin: Vector2 = action["pos"]
+	var dir: Vector2 = action["dir"].normalized()
 	if dir == Vector2.ZERO:
 		dir = Vector2(float(get_facing()), 0.0)
 	var res := _emit_beam(origin, dir)
@@ -40,7 +38,8 @@ func _spawn_projectiles(base_dir: Vector2) -> void:
 	var contacts: Array = res["contacts"]
 	var hit_points: PackedVector2Array = res["hit_points"]
 
-	_spawn_beam_visual(pts)
+	if player.authority_world == null:
+		_spawn_beam_visual(pts)
 	if not _authoritative():
 		_spawn_tile_fx(contacts, hit_points)
 		return
@@ -49,7 +48,7 @@ func _spawn_projectiles(base_dir: Vector2) -> void:
 	_report_beam_fired(pts)
 
 func _authoritative() -> bool:
-	return not Level0.pvp_mode
+	return player.authority_world != null or not Level0.pvp_mode
 
 # 计算光束几何折线（默认单段直线，碰撞障碍物即停止）
 func _emit_beam(origin: Vector2, dir: Vector2) -> Dictionary:
@@ -102,8 +101,7 @@ func _damage_path_targets(pts: PackedVector2Array) -> void:
 	for t in get_tree().get_nodes_in_group("enemies"):
 		if t is Node2D:
 			targets.append([t, true])
-	var host := player.get_parent() if player != null else null
-	var team_aware := host != null and host.has_method("is_friendly")
+	var host: Node = player.authority_world
 	for p in get_tree().get_nodes_in_group("player"):
 		if not (p is Node2D):
 			continue
@@ -111,18 +109,21 @@ func _damage_path_targets(pts: PackedVector2Array) -> void:
 			continue
 		if p.has_method("is_downed") and p.is_downed():
 			continue
-		if team_aware and host.is_friendly(player, p):
+		if host != null and host.is_friendly(player, p):
 			continue
 		targets.append([p, false])
 
 	var w := GameParameters.MAP_WIDTH
 	var h := GameParameters.MAP_HEIGHT
 	var corridor := beam_half_width * HIT_MULT
+	var hit := {}
 	for i in range(pts.size() - 1):
 		var a := pts[i]
 		var b := pts[i + 1]
 		for tg in targets:
 			var t: Node = tg[0]
+			if hit.has(t):
+				continue
 			var is_enemy: bool = tg[1]
 			var n := t as Node2D
 			var body := _body_rect(n, a, w, h)
@@ -130,6 +131,7 @@ func _damage_path_targets(pts: PackedVector2Array) -> void:
 			var near := _segment_rect_hit(a, b, body.grow(corridor))
 			if near.x == INF:
 				continue
+			hit[t] = true
 			if is_enemy:
 				_apply_to_enemy(t, c, near)
 			else:
@@ -140,6 +142,8 @@ func _body_rect(n: Node2D, near_to: Vector2, w: float, h: float) -> Rect2:
 	var r := Rect2(n.global_position - Vector2(18, 18), Vector2(36, 36))
 	if CollisionAabb.has_any(n):
 		r = CollisionAabb.world_rect(n)
+	if n.is_in_group("player") and player.authority_world != null:
+		r = player.authority_world.target_rect_at(n, player)
 	var c := MazeGenerator.anchor_to_nearest(r.get_center(), near_to, w, h)
 	return Rect2(c - r.size * 0.5, r.size)
 
@@ -179,14 +183,12 @@ func _apply_to_enemy(t: Node, pos: Vector2, near: Vector2) -> void:
 	var dir := (pos - near).normalized() if pos.distance_to(near) > 1.0 else Vector2.RIGHT
 	t.hurt(damage, dir, impact)
 
-func _apply_to_player(p: Node, pos: Vector2, near: Vector2) -> void:
-	if not p.has_method("take_hit"):
-		return
-	CombatFeedback.attribute_hit(p, player)
-	p.take_hit(near, damage, false, impact)
-	var host := player.get_parent() if player != null else null
-	if host != null and host.has_method("notify_direct_hit"):
-		host.notify_direct_hit(player, p)
+func _apply_to_player(target: Node, _pos: Vector2, hit: Vector2) -> void:
+	if player.authority_world != null:
+		player.authority_world.damage(player.role, target.role, hit, damage, false, impact)
+	else:
+		CombatFeedback.attribute_hit(target, player)
+		target.take_hit(hit, damage, false, impact)
 
 # 收集折线触点中的可破坏瓦片列表
 func _tile_contacts(contacts: Array, hit_points: PackedVector2Array) -> Array:

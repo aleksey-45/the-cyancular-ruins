@@ -40,6 +40,9 @@ func _ready() -> void:
 
 
 # 构建卡片容器面板，设置内边距与子控件鼠标事件穿透
+func _make_card(c: Dictionary) -> PanelContainer:
+	var card := UiFactory.menu_panel(CARD_PAD)
+	card.custom_minimum_size.x = CARD_W
 	card.mouse_filter = Control.MOUSE_FILTER_STOP
 	card.gui_input.connect(func(ev: InputEvent) -> void:
 		if ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed \

@@ -1,6 +1,23 @@
 extends CharacterBody2D
 
+var authority_world: Node
+var input_buffer := InputBuffer.new()
+var role := 0
+var shot_serial := 0
+var input_seq := 0
+var view_tick := 0
+var rewinding := false
+var stepping := false
+var respawn_left := 0.0
+var last_attacker := 0
+var last_hit_tick := 0
+
 @export var animator : AnimatedSprite2D
+@onready var visuals: Node2D = $Visuals
+var _visual_error := Vector2.ZERO
+var _visual_left := 0.0
+var interpolate_prediction := false
+var _visual_from := Vector2.ZERO
 
 # 物理基础参数配置
 var gravity: float = GameParameters.gravity0
@@ -47,6 +64,9 @@ var _last_move_timer: float = 0.0      # 维持最近移动方向的时间窗口
 var squash: SquashStretch = null
 # 执行 move_and_slide() 前的垂直速度，配合帧首地面检测用于计算着地形变。
 var _pre_move_vy: float = 0.0
+var _grounded := false
+var step_input := PacketInputSource.new()
+var step_actions: Array = []
 
 # 输入源：默认委托本地输入；联机服务端可注入网络输入源驱动角色。
 var input_source: PlayerInput = LocalInputSource.new()
@@ -56,27 +76,27 @@ func set_input_source(src: PlayerInput) -> void:
 
 # 获取瞄准方向覆盖：本地输入使用鼠标瞄准，网络输入返回上报的瞄准方向。
 func get_aim_dir_override() -> Vector2:
-	return input_source.get_aim_dir_override()
+	return step_input.get_aim_dir_override() if stepping else input_source.get_aim_dir_override()
 
 # 查询当前输入源是否来自网络注入，网络驱动的角色不读取本机鼠标。
 func input_is_network() -> bool:
-	return input_source != null and input_source.is_network_driven()
+	return stepping or input_source.is_network_driven()
 
 # 攻击按键状态查询接口。
 func is_attack_pressed() -> bool:
 	if _controls_locked:
 		return false
-	return input_source.is_attack_pressed()
+	return step_input.is_attack_pressed() if stepping else input_source.is_attack_pressed()
 
 func is_attack_just_pressed() -> bool:
 	if _controls_locked:
 		return false
-	return input_source.is_attack_just_pressed()
+	return step_input.is_attack_just_pressed() if stepping else input_source.is_attack_just_pressed()
 
 func is_attack_just_released() -> bool:
 	if _controls_locked:
 		return false
-	return input_source.is_attack_just_released()
+	return step_input.is_attack_just_released() if stepping else input_source.is_attack_just_released()
 
 # 当前瞄准方向（世界坐标系）：委托武器获取实际瞄准向量，用于输入上报。
 func get_current_aim_dir() -> Vector2:
@@ -85,8 +105,10 @@ func get_current_aim_dir() -> Vector2:
 		return w.get_current_aim_dir()
 	return Vector2(float(facing_direction), 0.0)
 
-signal hp_changed(current: int, max: int)   # 生命值变更信号，转发自 CombatComponent
+signal hp_changed(current: int, max: int)
 signal waterproof_changed(current: int, max: int)   # 氧气值变更信号，供 HUD 刷新
+var _shown_hp := -1
+var _shown_waterproof := -1
 
 # 生命值属性访问接口，底层数据由 CombatComponent 维护。
 var hp: int:
@@ -132,11 +154,10 @@ func set_controls_locked(locked: bool) -> void:
 
 func _ready() -> void:
 	add_to_group("player")
+	set_process(false)
 
-	# 转发战斗组件的生命值与倒地信号，倒地时取消当前武器瞄准
-	combat.hp_changed.connect(func(cur: int, mx: int) -> void: hp_changed.emit(cur, mx))
+	# 倒地时取消当前武器瞄准。
 	combat.went_down.connect(func() -> void: weapons.cancel_aim())
-	hp_changed.emit(combat.hp, combat.max_hp)
 
 	# 缓存各姿态碰撞体节点
 	for pose in Pose.values():
@@ -149,7 +170,8 @@ func _ready() -> void:
 	_reload_ring.scale = Vector2.ONE / scale.x
 	_reload_ring.visible = false
 	add_child(_reload_ring)
-	call_deferred("add_child", WaterFx.new())
+	if authority_world == null:
+		add_child(WaterFx.new())
 	# 挂载挤压与拉伸补间形变组件
 	squash = SquashStretch.new()
 	# 先将形变组件加入场景树，再完成与动画精灵的绑定
@@ -166,278 +188,112 @@ var _ghost_flip := false  # 残影颜色交替标记
 
 
 func _physics_process(delta: float) -> void:
-	# 时间场逻辑：时空回溯时整帧冻结物理模拟；时间加速仅作用于水平速度目标值与冷却节奏，跳跃物理保持一致
-	var tm := TimeField.player_speed_mult() if TimeField.current != null else pvp_haste_mult
-	_speed_mult = tm
-	if TimeField.current != null and TimeField.current.is_rewinding():
-		return
-	# 补间形变更新：必须在倒地状态判断前调用，保证倒地瞬间精灵缩放能够正确复位
-	squash.tick(delta, _pre_move_vy, is_on_floor(), combat.is_downed())
-	if combat.is_downed():
-		# 倒地状态下重置垂直速度缓存，避免击杀瞬间的下坠速度影响后续复活形变计算
-		_pre_move_vy = 0.0
-		_tick_downed(delta)
-		return
-	weapons.tick(delta * tm)   # 武器逻辑步进，加速状态下按对应时间倍率缩放冷却与装填速度
+	if not Level0.pvp_mode:
+		_poll_pickup_drop(delta)
+	var record := PacketInputSource.pack_record(input_source, 0, get_current_aim_dir())
+	record["view_tick"] = 0
+	record["winst"] = weapons.take_uplink_switch(input_source.get_switch_index_pressed())
+	execute_actions(ActorStep.step(self, record, delta))
+	present_tick(delta)
 
-	# 时间加速视觉特效：红蓝交替生成半透明残影
-	if _speed_mult > 1.0:
+func correct_visual(previous: Vector2, snap: bool) -> void:
+	_visual_error = Vector2.ZERO if snap else GridPathfinder.toroidal_delta_px(
+			global_position, previous, GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+	_visual_left = 0.0 if snap else 0.05
+	if snap: _visual_from = global_position
+	visuals.position = to_local(global_position + _visual_error)
+	set_process(not interpolate_prediction and _visual_left > 0.0)
+
+func corrected_position() -> Vector2:
+	return global_position + _visual_error * (_visual_left / 0.05)
+
+func begin_visual_step() -> void:
+	_visual_from = global_position
+
+func rebase_visual_step(previous: Vector2) -> void:
+	var motion := GridPathfinder.toroidal_delta_px(_visual_from, previous,
+			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+	_visual_from = global_position - motion
+
+func _process(delta: float) -> void:
+	_visual_left = maxf(0.0, _visual_left - delta)
+	visuals.position = to_local(corrected_position())
+	set_process(not interpolate_prediction and _visual_left > 0.0)
+
+func present_prediction(delta: float, relative_tick: float) -> void:
+	_process(delta)
+	var motion := GridPathfinder.toroidal_delta_px(_visual_from, global_position,
+			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+	# 使用最近一个模拟 tick 的位移，视觉外推最多一个 tick。
+	visuals.position = to_local(corrected_position() + motion * clampf(relative_tick, -1.0, 1.0))
+
+func shot_origin(muzzle: Node2D) -> Vector2:
+	return muzzle.global_position - (visuals.global_position - global_position)
+
+func present_tick(delta: float) -> void:
+	animator.flip_h = facing_direction < 0
+	if combat.downed:
+		animator.stop()
+	else:
+		animator.play(POSE_ANIM[state])
+	combat.present()
+	if not Level0.pvp_mode:
+		var pp := get_tree().get_first_node_in_group("post_process")
+		if pp != null:
+			pp.set_downed(combat.downed)
+	if _shown_hp != combat.hp:
+		_shown_hp = combat.hp
+		hp_changed.emit(combat.hp, combat.max_hp)
+	if _shown_waterproof != waterproof:
+		_shown_waterproof = waterproof
+		waterproof_changed.emit(waterproof, max_waterproof)
+	weapons.present()
+	if TimeField.current != null and TimeField.current.is_hasting() and not combat.is_downed():
 		_ghost_t -= delta
 		if _ghost_t <= 0.0:
 			_ghost_t = 0.03
-			var anim := animator
-			if anim != null:
-				var tint := Color(1.0, 0.25, 0.25, 0.55) if _ghost_flip else Color(0.3, 0.4, 1.0, 0.55)
-				_ghost_flip = not _ghost_flip
-				AfterImage.spawn(get_parent(), anim, tint)
-
-	combat.update_iframe_blink(delta)
-
-	# 武器切换输入轮询：
-	# 本地输入源根据数字键按槽位下标切换；
-	# 网络输入源根据上报的目标武器实例 ID 切换，避免网络延迟期间槽位下标不一致。
-	var idx := input_source.get_switch_index_pressed()
-	if idx > 0:
-		weapons.equip_index(idx - 1)
-	var winst := input_source.consume_switch_inst()
-	if winst > 0:
-		weapons.equip_inst(winst)
-
-	# 装填输入轮询：同帧切枪与装填时优先切换武器，再触发新武器装填。倒地状态不执行换弹。
-	if input_source.is_action_just_pressed("R"):
-		var reload_w := weapons.current_weapon()
-		if reload_w != null:
-			reload_w.start_reload()
-
-	# 地面武器拾取与丢弃输入轮询
-	_poll_pickup_drop(delta)
+			var tint := Color(1.0, 0.25, 0.25, 0.55) if _ghost_flip else Color(0.3, 0.4, 1.0, 0.55)
+			_ghost_flip = not _ghost_flip
+			AfterImage.spawn(get_parent(), animator, tint)
+	squash.tick(delta, _pre_move_vy, _grounded, combat.is_downed())
 	_update_reload_ring()
+	var weapon := weapons.current_weapon()
+	if weapon != null:
+		weapon._update_laser()
+		weapon._recoil_recover(delta)
+		weapon._update_reload_pose()
 
-	var mult := weapons.movement_multiplier()
+func execute_actions(actions: Array) -> void:
+	for action: Dictionary in actions:
+		match action["kind"]:
+			"fire":
+				weapons.current_weapon().execute_shot(action)
+			"sound":
+				if authority_world == null:
+					Sfx.play(action["sound"])
+			"impulse":
+				if authority_world == null:
+					squash.impulse(action["value"])
+			"hit":
+				if authority_world != null:
+					authority_world.damage(0, role, action["pos"], action["damage"], true)
+				elif not Level0.pvp_mode:
+					take_hit(action["pos"], action["damage"], true)
 
-	var horizontal_input = input_source.get_axis("left", "right")
-
-	# ── 水中与攀爬状态检测 ──
-	var in_water := swim.update(self, delta, mult, input_source)
-	_update_waterproof(delta)
-	var latched := false
-	if not in_water:
-		# 攀爬逻辑处理（攀附在梯子或锁链上时不承受重力）
-		climb.update(mult, delta, is_squat, input_source)
-		latched = climb.is_latched()
-	else:
-		# 进入水中：重置冲刺与下蹲状态，解除陆地姿态锁定
-		is_charge = false
-		is_squat = false
-
-	_tick_vertical(delta, latched, in_water, mult)
-	_tick_crouch_and_dash(delta, latched, in_water)
-	_tick_horizontal(delta, in_water, horizontal_input, mult)
-	_tick_facing(delta, horizontal_input)
-	_tick_pose_and_collision(delta, in_water)
-
-	# ── 爆炸击退位移结算 ──
-	# 采用独立的碰撞位移处理，避免击退速度污染角色常规移动速度
-	combat.apply_knock(delta)
-
-	# ── 执行物理移动 ──
-	# 缓存 move_and_slide() 执行前的下落速度供着地形变计算，游泳与攀爬时不触发着地拉伸
-	_pre_move_vy = 0.0 if (in_water or latched) else velocity.y
-	move_and_slide()
-
-	_tick_slide_reactions()
-	_wrap_position()
-
-
-# ── 垂直移动逻辑（土狼时间、跳跃缓冲与可变跳跃高度） ──
-func _tick_vertical(delta: float, latched: bool, in_water: bool, mult: Vector2) -> void:
-	if latched or in_water:
-		return
-	if is_on_floor():
-		coyote_timer = coyote_time
-	else:
-		# 空中冲刺时降低重力加速度，保持较为平直的轨迹以利于跨越障碍
-		var grav_mult := charge_air_gravity_mult if is_charge else 1.0
-		velocity.y += gravity * grav_mult * delta
-		coyote_timer = maxf(coyote_timer - delta, 0.0)
-
-	# 跳跃缓冲：落地前提前按跳，落地瞬间生效
-	if input_source.is_action_just_pressed("up"):
-		jump_buffer_timer = jump_buffer_time
-	else:
-		jump_buffer_timer = maxf(jump_buffer_timer - delta, 0.0)
-
-	# 触发跳跃：有缓冲输入且在地面或土狼窗口内
-	if jump_buffer_timer > 0.0 and (is_on_floor() or coyote_timer > 0.0) and not is_squat:
-		# 冲刺过程中跳跃可打断冲刺并保留当前水平动量
-		if is_charge:
-			is_charge = false
-			charge_timer = 0.0
-		velocity.y = jump_velocity * mult.y
-		jump_buffer_timer = 0.0
-		coyote_timer = 0.0
-		jump_cut_applied = false
-		squash.impulse(SquashStretch.Impulse.JUMP)
-
-	# 可变高度：上升中松开跳跃键，立即衰减上升速度（每次跳跃只截断一次）
-	if not jump_cut_applied and input_source.is_action_just_released("up") and velocity.y < 0.0:
-		velocity.y *= jump_cut_factor
-		jump_cut_applied = true
-
-
-# ── 下蹲、空中下冲与冲刺输入 ──
-func _tick_crouch_and_dash(delta: float, latched: bool, in_water: bool) -> void:
-	if latched or in_water:
-		return
-	# 空中按下方向键执行快速下冲（处于攀爬通道格除外）
-	if not is_on_floor() and input_source.is_action_just_pressed("down") \
-			and not climb.is_over_climb_tile():
-		velocity.y = charge_down_velocity
-	# 下蹲状态判定：地面状态且按住下蹲键时生效，避免空中松开按键导致的下蹲锁死
-	var want_squat := is_on_floor() and input_source.is_action_pressed("down")
-	if want_squat and not is_squat:
-		is_charge = false   # 冲刺中按 S → 取消冲刺进蹲
-	is_squat = want_squat
-
-	# 冲刺输入
-	if not is_charge and not is_squat and input_source.is_action_just_pressed("charge"):
-		is_charge = true
-		charge_timer = charge_duration
-		squash.impulse(SquashStretch.Impulse.DASH)
-		# 冲刺方向优先沿用最近移动方向，无移动输入时保持当前朝向
-		if _last_move_timer > 0.0:
-			facing_direction = _last_move_dir
-
-
-# ── 水平速度计算 ── 
-func _tick_horizontal(delta: float, in_water: bool, horizontal_input: float, mult: Vector2) -> void:
-	if in_water:
-		return
-	if is_charge:
-		velocity.x = charge_velocity * facing_direction
-		charge_timer -= delta
-		if charge_timer <= 0:
-			is_charge = false
-			# 冲刺结束时平滑过渡至常规减速流程
-	else:
-		# 下蹲时移动目标速度切换为蹲走速度，站立时使用常规移动速度
-		var speed_target := (crouch_walk_speed if is_squat else move_speed) * _speed_mult
-		var target_velocity_x = horizontal_input * speed_target * mult.x
-		if horizontal_input != 0:
-			if is_on_floor():
-				velocity.x = MathUtil.approach(velocity.x, target_velocity_x, accel_ground, delta)
-			else:
-				velocity.x = MathUtil.approach(velocity.x, target_velocity_x, accel_air, delta)
-		else:
-			_brake_horizontal(delta)
-
-
-# ── 角色朝向 ──
-# 有水平移动输入时跟随移动方向，无输入时保留当前瞄准朝向
-func _tick_facing(delta: float, horizontal_input: float) -> void:
-	if not is_charge and horizontal_input != 0:
-		facing_direction = 1 if horizontal_input > 0 else -1
-		_last_move_dir = facing_direction
-		_last_move_timer = PlayerParams.charge_dir_window
-	else:
-		_last_move_timer = maxf(_last_move_timer - delta, 0.0)
-
-
-# ── 姿态切换与碰撞体管理 ──
-# 根据输入与环境接触状态推导目标姿态，并通过停留锁避免高频抖动；
-# 每个姿态对应专用的多边形碰撞体，运行时仅激活当前姿态的碰撞形状。
-func _tick_pose_and_collision(delta: float, in_water: bool) -> void:
-	# 动画翻转
-	animator.flip_h = facing_direction < 0
-
-	var desired: Pose = Pose.STAND
-	if in_water:
-		desired = Pose.MOVE if absf(velocity.x) > 1.0 else Pose.STAND
-	elif is_charge:
-		desired = Pose.CHARGE
-	elif is_squat:
-		desired = Pose.SQUAT
-	elif not is_on_floor():
-		desired = Pose.FLY
-	elif velocity.x != 0:
-		desired = Pose.MOVE
-
-	if state_lock_timer > 0.0:
-		state_lock_timer -= delta
-	elif state != desired:
-		state = desired
-		state_lock_timer = STATE_LOCK_TIME
-
-	# 动画状态(跟随锁定后的姿态)
-	animator.play(POSE_ANIM[state])
-
-	for pose in _coll_by_pose:
-		_coll_by_pose[pose].disabled = pose != state
-
-
-# ── move_and_slide 之后的反应:冲刺撞墙 / 弹性瓦片 ── 
-func _tick_slide_reactions() -> void:
-	# 冲刺撞击垂直障碍物时立即结束冲刺状态
-	if is_charge:
-		for i in range(get_slide_collision_count()):
-			var col := get_slide_collision(i)
-			if col != null and absf(col.get_normal().x) > 0.5:
-				is_charge = false
-				charge_timer = 0.0
-				velocity.x = 0.0
-				break
-
-	# 弹性瓦片检测：接触特定地块（如树叶）时提供反弹冲量
-	if not MazeGenerator.current_grid.is_empty():
-		for i in range(get_slide_collision_count()):
-			var sc := get_slide_collision(i)
-			if sc == null:
-				continue
-			var ec := MazeGenerator.cell_of(sc.get_position(), GameParameters.TILE_SIZE,
-					MazeGenerator.current_grid[0].size(), MazeGenerator.current_grid.size())
-			var ev: int = MazeGenerator.current_grid[ec.y][ec.x]
-			if ev != 0 and TileDefs.elastic(MazeGenerator.texture_of(ev)):
-				velocity += sc.get_normal() * PlayerParams.elastic_bounce
-				break
-
-
-# 倒地状态逻辑：保持重力模拟与水平摩擦制动，但不响应玩家操作，不执行武器与姿态逻辑
-func _tick_downed(delta: float) -> void:
-	if is_on_floor():
-		coyote_timer = coyote_time
-	else:
-		velocity.y += gravity * delta
-	_brake_horizontal(delta)
-	combat.apply_knock(delta)
-	move_and_slide()
-	_wrap_position()
-
-
-# 无水平输入时的摩擦减速与静止吸附，速度低于阈值时直接归零以防止微小滑移
-func _brake_horizontal(delta: float) -> void:
-	if is_on_floor():
-		velocity.x = MathUtil.approach(velocity.x, 0.0, brake_ground, delta)
-	else:
-		velocity.x = MathUtil.approach(velocity.x, 0.0, brake_air, delta)
-	if absf(velocity.x) < PlayerParams.stop_snap:
-		velocity.x = 0.0
-
-
-# 环面世界坐标规范化：超出地图边界时回卷至规范区间
-func _wrap_position() -> void:
-	global_position = MazeGenerator.wrap_to_range(global_position,
-			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
-
+func simulate_tick(delta: float) -> void:
+	var record := PacketInputSource.pack_record(input_source, 0, get_current_aim_dir())
+	record["view_tick"] = 0
+	execute_actions(ActorStep.step(self, record, delta))
 
 func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, knockback: float = -1.0) -> void:
 	# 时空回溯状态下免疫一切外部伤害，防止回放过程中因瞬移误触发受击判定
-	if (TimeField.current != null and TimeField.current.is_rewinding()) or has_meta("time_rewinding"):
+	if (TimeField.current != null and TimeField.current.is_rewinding()) or rewinding:
 		return
 	# 仅在实际扣除生命值时触发受击挤压形变，无敌帧或倒地状态不重复触发
 	var before := combat.hp
 	combat.take_hit(source_pos, damage, ignore_iframes, knockback)
-	if combat.hp < before:
-		squash.impulse(SquashStretch.Impulse.HURT)
+	if combat.hp < before and authority_world == null:
+		play_hit_feedback(before - combat.hp)
 
 func get_facing() -> int:
 	return facing_direction
@@ -455,36 +311,24 @@ func is_downed() -> bool:
 func is_charging() -> bool:
 	return is_charge
 
-# 检测当前物理帧是否与其他玩家碰撞体发生接触，供预测回滚模块在近身接触时自适应调整容差
-func touching_player() -> bool:
-	for i in range(get_slide_collision_count()):
-		var col := get_slide_collision(i)
-		if col == null:
-			continue
-		var co := col.get_collider() as CollisionObject2D
-		if co != null and (co.collision_layer & ~1) != 0:
-			return true
-	return false
-
 func apply_recoil(push: float) -> void:
 	weapons.apply_recoil(push, is_squat, climb.is_latched())
 
 # 应用服务端快照中的权威状态（生命值、氧气与倒地状态）
 func apply_authoritative_state(hp_val: int, waterproof_val: int, downed_val: bool) -> void:
-	combat.hp = clampi(hp_val, 0, combat.max_hp)
-	combat.hp_changed.emit(combat.hp, combat.max_hp)
-	waterproof = clampi(waterproof_val, 0, max_waterproof)
-	waterproof_changed.emit(waterproof, max_waterproof)
-	if downed_val and not combat.is_downed():
-		combat.force_down()
-	elif not downed_val and combat.is_downed():
-		combat.revive()
+	combat.hp = hp_val
+	waterproof = waterproof_val
+	combat.downed = downed_val
+	rotation = -PI / 2.0 * facing_direction if downed_val else 0.0
 
 # ── 客户端预测：完整状态捕获与恢复（capture_state / restore_state）──
 # 记录决定下一物理帧模拟所需的全部关键变量，用于服务端权威快照生成与客户端预测回滚重放。
 func capture_state() -> Dictionary:
 	var st: Dictionary = {
 		"pos": global_position,
+		"floor": _grounded,
+		"haste_mult": pvp_haste_mult,
+		"shot_serial": shot_serial,
 		"vel": velocity,
 		"facing": facing_direction,
 		"state": state,
@@ -507,7 +351,6 @@ func capture_state() -> Dictionary:
 		"ifr": combat.iframes,
 		"down": combat.downed,
 		"knock": combat.knock_velocity,
-		"wslot": weapons._current_type,
 		# 记录手持武器唯一实例 ID
 		"winst": weapons.current_inst(),
 	}
@@ -528,99 +371,52 @@ func capture_state() -> Dictionary:
 
 func restore_state(st: Dictionary) -> void:
 	# 恢复移动与姿态变量
-	global_position = st.get("pos", global_position)
-	velocity = st.get("vel", velocity)
-	facing_direction = int(st.get("facing", facing_direction))
-	state = clampi(int(st.get("state", state)), Pose.STAND, Pose.SQUAT)
-	state_lock_timer = float(st.get("slock", state_lock_timer))
-	coyote_timer = float(st.get("coyote", coyote_timer))
-	jump_buffer_timer = float(st.get("jbuf", jump_buffer_timer))
-	jump_cut_applied = bool(st.get("jcut", jump_cut_applied))
-	is_squat = bool(st.get("squat", is_squat))
-	is_charge = bool(st.get("charge", is_charge))
-	charge_timer = float(st.get("ct", charge_timer))
-	_last_move_dir = int(st.get("lmv_d", _last_move_dir))
-	_last_move_timer = float(st.get("lmv_t", _last_move_timer))
-	climb._latched = bool(st.get("clatch", climb._latched))
-	swim.in_water = bool(st.get("swim", swim.in_water))
+	global_position = st["pos"]
+	_grounded = st["floor"]
+	pvp_haste_mult = st["haste_mult"]
+	shot_serial = st["shot_serial"]
+	velocity = st["vel"]
+	facing_direction = int(st["facing"])
+	state = st["state"]
+	state_lock_timer = float(st["slock"])
+	coyote_timer = float(st["coyote"])
+	jump_buffer_timer = float(st["jbuf"])
+	jump_cut_applied = bool(st["jcut"])
+	is_squat = bool(st["squat"])
+	is_charge = bool(st["charge"])
+	charge_timer = float(st["ct"])
+	_last_move_dir = int(st["lmv_d"])
+	_last_move_timer = float(st["lmv_t"])
+	climb._latched = bool(st["clatch"])
+	swim.in_water = bool(st["swim"])
 	# 恢复生命值、氧气与倒地状态
-	var hp_v := int(st.get("hp", hp))
-	if hp_v != combat.hp:
-		combat.hp = clampi(hp_v, 0, combat.max_hp)
-		combat.hp_changed.emit(combat.hp, combat.max_hp)
-	var wp_v := int(st.get("wp", waterproof))
-	if wp_v != waterproof:
-		waterproof = clampi(wp_v, 0, max_waterproof)
-		waterproof_changed.emit(waterproof, max_waterproof)
-	var down_v := bool(st.get("down", combat.downed))
-	if down_v and not combat.is_downed():
-		combat.force_down()
-	elif not down_v and combat.is_downed():
-		combat.revive()
-	combat.iframes = float(st.get("ifr", combat.iframes))
-	combat.knock_velocity = st.get("knock", combat.knock_velocity)
-	_waterproof_timer = float(st.get("wp_t", _waterproof_timer))
-	_was_submerged = bool(st.get("wp_s", _was_submerged))
-	_waterproof_drown_timer = float(st.get("wp_d", _waterproof_drown_timer))
+	apply_authoritative_state(st["hp"], st["wp"], st["down"])
+	combat.iframes = float(st["ifr"])
+	combat.knock_velocity = st["knock"]
+	_waterproof_timer = float(st["wp_t"])
+	_was_submerged = bool(st["wp_s"])
+	_waterproof_drown_timer = float(st["wp_d"])
 	# 恢复武器背包、手持装备及弹药状态
 	_apply_weapon_state(st)
-	# 根据恢复的姿态启用对应的碰撞体，并同步动画翻转方向
+	# 碰撞姿态属于模拟状态；动画留到 present_tick。
 	for pose in _coll_by_pose:
 		_coll_by_pose[pose].disabled = pose != state
-	animator.flip_h = facing_direction < 0
-	# 执行微量位移以刷新地面接触检测，使下一物理帧能正确读取地面状态
-	var saved := velocity
-	velocity = Vector2(0.0, 0.001)
-	move_and_slide()
-	velocity = saved
-
-
-# ── 武器与背包数据的轻量级同步 ──
-# 客户端预测命中时仅同步由服务端裁决的背包与手持数据，无需回滚物理位置
-func sync_soft_state(st: Dictionary) -> void:
-	# 比较手持武器实例与背包结构，避免无变更时冗余刷新界面
-	if int(st.get("wslot", weapons._current_type)) == weapons._current_type \
-			and int(st.get("winst", weapons.current_inst())) == weapons.current_inst() \
-			and _inv_structure_equal(st.get("inv", [])):
-		return
-	_apply_weapon_state(st)
-
-
-# 校验背包中的武器类型与实例 ID 列表结构是否完全一致
-func _inv_structure_equal(want: Array) -> bool:
-	var held: Array = weapons.inventory.held
-	if held.size() != want.size():
-		return false
-	for i in held.size():
-		if int(held[i]["type"]) != int(want[i].get("type", 0)):
-			return false
-		if int(held[i]["inst"]) != int(want[i].get("inst", 0)):
-			return false
-	return true
 
 
 # 应用服务端的武器与弹药状态，先同步背包列表，再恢复手持装备与弹药量
 func _apply_weapon_state(st: Dictionary) -> void:
-	var wslot := int(st.get("wslot", weapons._current_type))
-	# 优先按武器实例 ID 恢复手持槽位，若无法匹配则按武器类型保底处理
-	var by_inst := weapons.restore_inventory(st.get("inv", []), int(st.get("winst", 0)))
-	if wslot > 0 and wslot != weapons._current_type:
-		# 当前手持武器类型与权威状态不一致时重新装配对应武器
-		if by_inst and weapons._current_index >= 0:
-			weapons.equip_index(weapons._current_index)
-		else:
-			weapons.equip_type(wslot)
+	weapons.restore_inventory(st["inv"], st["winst"])
 	var w: WeaponBase = weapons._weapon
 	if w != null:
-		w.fire_cd_timer = float(st.get("fire_cd", w.fire_cd_timer))
-		w._aiming = bool(st.get("aiming", w._aiming))
-		w._fire_buffered = bool(st.get("fire_buf", w._fire_buffered))
-		w._aim_facing = int(st.get("aim_f", w._aim_facing))
-		w._current_aim_facing = int(st.get("aim_cf", w._current_aim_facing))
+		w.fire_cd_timer = float(st["fire_cd"])
+		w._aiming = bool(st["aiming"])
+		w._fire_buffered = bool(st["fire_buf"])
+		w._aim_facing = int(st["aim_f"])
+		w._current_aim_facing = int(st["aim_cf"])
 		# 同步武器开火冷却、瞄准状态及当前弹药量
-		WeaponComponent.apply_mag(w, int(st.get("mag", w.mag_ammo)))
-		w._reloading = bool(st.get("rld", w._reloading))
-		w._reload_t = float(st.get("rld_t", w._reload_t))
+		WeaponComponent.apply_mag(w, int(st["mag"]))
+		w._reloading = bool(st["rld"])
+		w._reload_t = float(st["rld_t"])
 
 # 清理跳跃缓冲与土狼时间标记，防止攀爬跳离梯子时因残留输入触发连跳
 func cancel_jump_state() -> void:
@@ -648,28 +444,25 @@ func _update_waterproof(delta: float) -> void:
 		_waterproof_timer += delta
 		if _waterproof_timer >= GameParameters.water_drain_interval:
 			_waterproof_timer = 0.0
-			_set_waterproof(waterproof - 1)
+			waterproof = maxi(waterproof - 1, 0)
 	else:
 		_waterproof_timer += delta
 		if _waterproof_timer >= GameParameters.water_recover_interval:
 			_waterproof_timer = 0.0
-			_set_waterproof(waterproof + 1)
+			waterproof = mini(waterproof + 1, max_waterproof)
 	if waterproof <= 0:
 		_waterproof_drown_timer += delta
 		if _waterproof_drown_timer >= GameParameters.water_drown_damage_interval:
 			_waterproof_drown_timer = 0.0
-			take_hit(global_position, PlayerParams.player_waterproof_damage, true)
-
-func _set_waterproof(v: int) -> void:
-	waterproof = clampi(v, 0, max_waterproof)
-	waterproof_changed.emit(waterproof, max_waterproof)
-
+			if not Level0.pvp_mode:
+				step_actions.append({"kind": "hit", "pos": global_position, "damage": PlayerParams.player_waterproof_damage})
 
 # 单人模式倒地重启：在指定出生点复位角色位置、生命值与氧气，清理物理状态残留
 func restart_at(spawn_cell: Vector2i) -> void:
 	var ts: int = GameParameters.TILE_SIZE
 	global_position = Vector2(spawn_cell.x * ts + ts * 0.5, spawn_cell.y * ts + ts * 0.5)
 	velocity = Vector2.ZERO
+	_grounded = false
 	is_charge = false
 	charge_timer = 0.0
 	is_squat = false
@@ -677,12 +470,10 @@ func restart_at(spawn_cell: Vector2i) -> void:
 	combat.knock_velocity = Vector2.ZERO
 	combat.iframes = 0.0
 	if combat.is_downed():
-		combat.revive()   # 重置倒地状态并恢复屏幕渲染色彩
+		combat.revive()
 	else:
 		combat.hp = combat.max_hp
-	combat.hp_changed.emit(combat.hp, combat.max_hp)   # 同步 HUD 生命值显示
 	waterproof = max_waterproof
-	waterproof_changed.emit(waterproof, max_waterproof)
 	_was_submerged = false
 	_waterproof_timer = 0.0
 	_waterproof_drown_timer = 0.0
@@ -714,7 +505,7 @@ func _poll_pickup_drop(delta: float) -> void:
 		_drop_latched = false
 
 	# 拾取操作：单人模式就地拾取，联机模式由服务端统一仲裁拾取权
-	if input_source.is_pickup_pressed() and not Level0.pvp_mode:
+	if not Level0.pvp_mode and input_source.is_pickup_pressed():
 		_try_pickup()
 
 
@@ -804,11 +595,7 @@ func rewind_restore(d: Dictionary) -> void:
 	if d["v"] != null:
 		velocity = d["v"]
 	combat.knock_velocity = Vector2.ZERO
-	# 生命值变动时发送更新信号，确保 HUD 能够即时响应回溯
-	var hp_before := combat.hp
 	combat.hp = clampi(int(d["hp"]), 0, combat.max_hp)
-	if combat.hp != hp_before:
-		combat.hp_changed.emit(combat.hp, combat.max_hp)
 	facing_direction = int(d["facing"])
 	var downed_now := is_downed()
 	# 回溯武器与弹药状态：还原背包各格弹量与手持武器
@@ -829,3 +616,15 @@ func rewind_restore(d: Dictionary) -> void:
 		combat.set_downed_by_rewind(true)
 	elif not bool(d["downed"]) and downed_now:
 		combat.revive()
+# 单人受击和联机 HIT 共用反馈；此处不修改 HP、倒地或击退。
+func play_hit_feedback(damage: int) -> void:
+	Sfx.play("hurt")
+	squash.impulse(SquashStretch.Impulse.HURT)
+	var pp := get_tree().get_first_node_in_group("post_process")
+	if pp != null:
+		pp.flash_hit(clampf(float(damage) / float(max_hp) * 2.0, 0.5, 1.0))
+	var cam := get_viewport().get_camera_2d()
+	if cam != null and cam.has_method("shake"):
+		var ratio := float(damage) / float(max_hp)
+		cam.shake(PlayerParams.hit_cam_shake * (ratio / 0.25) if ratio > 0.25 else 6.0,
+				PlayerParams.hit_cam_shake_time if ratio > 0.25 else 0.15)

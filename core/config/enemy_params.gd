@@ -15,10 +15,7 @@ class shared:
 	const bird_max_sink: float = 160.0     # 下沉最大速度
 	const bird_water_damp: float = 5.0     # 水中垂直速度阻尼
 	const drown_interval: float = 1.5      # 防水值空后扣除生命值间隔(秒)
-	const drown_damage: int = 5            # 每次扣除生命值
-
-	# ── 补间形变(squash & stretch) ── 与 PlayerParams 同名同值,但刻意不共享常量:
-	# 两个参数类互不依赖(spec §3)。改一侧要问自己另一侧是否也该改。
+	const drown_damage: int = 5
 	const squash_amount: float = 0.06
 	const squash_recover: float = 16.0
 	const squash_take_off: float = 0.80        # 鸟起飞(FlyBird / BlackBird TAKE_OFF)

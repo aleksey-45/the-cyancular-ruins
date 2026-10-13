@@ -1,30 +1,4 @@
 extends Node
-# 宿主级行为防御性校验(Task 2 Step 8b):player.gd 里 squash 的落地候选速度
-#   _pre_move_vy = 0.0 if (in_water or latched) else velocity.y
-# 是本任务唯一"改了没人会发现"的地方 —— 三条既有冒烟全都无法覆盖检测它:
-#   - tests/smoke/squash_stretch_smoke.gd 自建裸 AnimatedSprite2D,从不加载 player.gd;
-#   - tests/smoke/enemy_logic_smoke.gd 实例化真 player.tscn,但站在干地上;
-#   - tests/smoke/pvp_twin_smoke.gd 真驱动水中物理,却比对孪生态,而 squash/_pre_move_vy
-#     刻意在 capture_state() 之外(纯表现层) -> 结构上看不见。
-# 把那个谓词改回裸 `velocity.y`,上述三条全部保持测试通过。
-#
-# 脚手架照 tests/smoke/pvp_twin_smoke.gd 的先例(相同处理逻辑合成网格 + 水池 + 梯 + 真 player.tscn
-# + 真物理步进);不把断言塞进那个文件 —— 它是 C2 关键测试,混进去会把 squash 的
-# 失败误报成 C2 失败。
-#
-# 运行方式(scene 模式 headless,autoload 在;--quit-after 只作超时保护上限,本探针自己 quit):
-#   "<godot>" --headless --path . --quit-after 3600 res://tests/probe/squash_host_water_probe.tscn
-# 判定依据为文本 `SQUASH HOST PROBE: ALL-OK`(不看退出码:阻塞挂起时 --quit-after 也退 0)。
-#
-# - 断言一律打在可观测的 `player.animator.scale` 上,不打 _pre_move_vy ——
-#   前者同时验证了 suppressed/钳位链没被绕开,后者是内部量。
-# - 每相另附前提断言(water/latch/floor 帧数):没有它,几何一漂这相就变成
-#   "什么都没测"却照样全部断言通过的测试漏报。
-# 注意事项：与 brief 预期的一处出入(实测,见 _tick_water 上方的长注释):人站在实心地面上时
-#   脚底探针恒落在支撑格自己里,而支撑格是 wall  ->  站定后 in_water 始终为 false,
-#   故"站定后每帧触发落地分支、稳态 ~9% 挤压"并不成立。谓词核心作用是覆盖并解决水中下沉期
-#   那几十帧(健康态精确 1.0,删掉谓词后 0.9863)。梯那一相(spec 里同形的另一条)
-#   才是"每帧、且钳到满幅 10%"的那条,实测复数无误。
 
 const PLAYER_SCENE := preload("res://scenes/player/player.tscn")
 
@@ -62,21 +36,6 @@ const WET_EPS := 0.001
 # - 这一条不具判定有效性(那个冲击两个版本一模一样),它只是把 brief 的字面要求钉在文件里;
 #   阶段 1 真正的鉴别点是下面按 in_water 帧取的极值。
 const SETTLED_EPS := 0.01
-# 反例门槛:干地高处落地必须压到满幅的一半以上(实测 k=1 -> 满幅 0.10,再经当帧指数恢复
-# 降到 scale.x = 1.0861,仍比门槛高 0.0361)。
-# 注意事项：极值只取落地帧(`_floor_max_x`),不取整个窗口 —— 本阶段是本文件唯一的方向断言,
-#   而"方向被反过来"正是 2026-09-20 真发生过一次的缺陷,所以它的余量必须结构性成立、
-#   而不是碰巧够宽(`1.0 -> 1.0300` 差 0.02 那种)。按帧分类把两条同向写 scale.x 的路径
-#   (空中连续项 / 落地冲击)拆开,互为噪声的关系就没有了:
-#   - 正向(现公式):落地帧被下压到 1.0460(= 1 + amount·e^(−recover/60)),门槛 1.0300,
-#     余量 +0.0160;反向则是 0.9730,余量 −0.0570(2026-09-21 实测)。
-#   - 反向(`1.0 + _amount * v`):落地帧上全是拉伸(< 1.0) ->  判定条件红。
-#    ->  空中项今天不可能再稀释本判定条件(它不对任何落地帧的读数作贡献);"整窗口取极值"那版
-#     拿空中的拉伸当极值,失败余量只剩约 0.02,而 `squash_air` 一抬高就会把反向公式
-#     顶过门槛、判定条件静默转绿。那正是本阶段改用"只取落地帧"的原因。
-# 注意事项：上面两条余量随 `squash_amount` / `squash_recover` 移动,不是常数:
-#     2026-09-21 把 amount 0.10 -> 0.06、recover 9 -> 16 之后,正向余量从 +0.0361 缩到 +0.0160。
-#     改这两个常量时必须重跑本阶段并重算,别照旧数字判断余量还够不够。
 const DROP_MIN_SQUASH := 0.5
 # 注意事项：判定条件还只取落地后的前 `DROP_FLOOR_FRAMES` 帧,不是整个 floor 窗口 —— -  这一条是
 #   实测迭代出来的,别"简化"回整个 floor 窗口:落地冲击是一次性的(只在落地那一帧写
@@ -101,11 +60,7 @@ const DROP_FRAMES := 70
 const WATER_FRAMES := 60
 const LADDER_SETTLE := 12      # 抓梯/下落过程不计入窗口(那几帧的空中项是正当的)
 const LADDER_FRAMES := 75
-const LADDER_LATCH_AT := 8     # 在空中按一下「上」抓住梯子(按住 S 时落地会成为蹲,蹲会解除攀附)
-
-# ── 阶段 5(倒地)── 见 `_tick_downed` 上方那段:它一次覆盖 player.gd 里两处此前没人守的契约。
-# 落体帧数取 30:阶段 3 实测全程落地在第 ~43 帧,故此刻人还在空中(~205px 高)、落速已 ≈ 800 ——
-# 恰好是"带着落速被打倒"这个前提;再 8 帧也只落下 ~110px,窗口内始终在空中。
+const LADDER_LATCH_AT := 8
 const DOWN_AT := 30
 const DOWNED_FRAMES := 8       # 与副本探针的阶段 4 同宽:单帧窗口"两边都漏"(见那边的推导)
 const REVIVE_FRAMES := 6
@@ -131,8 +86,7 @@ var _lines: Array[String] = []
 var _max_x := -INF
 var _floor_max_x := -INF
 var _floor_max_x_frame := 0
-var _floor_seen := 0           # 已被分类为"落地帧"的采样数(判定 DROP_FLOOR_FRAMES 窗口用)
-# 上一次采样读到的 is_on_floor()。分类专用,见 _sample 上方的错帧说明。
+var _floor_seen := 0
 var _prev_on_floor := false
 var _max_dev := 0.0
 var _max_dev_frame := 0
@@ -332,26 +286,6 @@ func _tick_drop() -> void:
 		_begin(S_WATER)
 
 
-# ── 阶段 1 水中按住 S 下沉到池底:水中全程中性 ──
-# - 前提：采样窗口内必须包含处于水中的帧（否则该阶段将退化为陆地站立状态而产生假阳性通过）。
-# - 断言按 in_water 为真的帧取极值,不按整个窗口:
-#   删掉谓词后真实偏离出现在下沉期 —— 空中项 `|320|/700*0.30 = 0.1371` -> 
-#   scale.x 0.9863(健康态是 0.0000 的偏离)——而那几十帧全在 in_water 为真时;
-#   反观"整个窗口"里最大的偏离是入池触底那一下正当的重力冲量(0.0185,两个版本
-#   一模一样,见 SETTLED_EPS 的推导),拿它当判定条件会把容差撑到鉴别点之上。
-# - 另记 in_water ∧ is_on_floor 的重叠帧数:本几何下它是 0 ——
-#   `Water.feet_offset` 返回的是启用中碰撞箱的世界底边相对原点的偏移,本探针实测 58px。
-# 注意事项：但这个 58 与"某个姿态碰撞盒"不是一回事,别把它们读成同一个数(本注释 2026-09-20 订正过):
-#     - 58(探针实测值)= 第一帧缓存下来的合并值。`Water.feet_offset` 按 `_feet_signature()`
-#       缓存,而那个签名只累加 `CollisionShape2D` 子节点的 instance_id —— 玩家的 5 个姿态碰撞盒
-#       全是 `CollisionPolygon2D`  ->  签名恒 0  ->  缓存永不失效,它冻结在首次调用那一刻
-#       的几何上;那一刻 5 个姿态碰撞盒还没被 `_tick_pose_and_collision` 收敛成单一碰撞体,合并后的底边
-#       = 最低的那个 = charge 的 58。
-#     - 57 / 58(姿态碰撞盒自己的底边)= 两个档位:站立/移动/蹲/飞是 57px,只有 charge 是 58px。
-#   下面那条结论("脚底探针落在支撑格自己里")依赖的正是 57 那一档:58 > 57  ->  探针比站姿
-#   身体底边低 1px,人站在实心地面上时它就越过格线落进支撑格自己,而支撑格是 wall
-#    ->  站定后 in_water 始终为 false。故 brief 预期的"站定后每帧触发落地分支、稳态 ~9% 挤压"
-#   在本作几何下不成立;谓词核心作用是覆盖并解决下沉期那几十帧(见报告)。
 func _tick_water() -> void:
 	_f += 1
 	_apply_input(PacketInputSource.BIT_DOWN, 0)
@@ -390,18 +324,6 @@ func _tick_ladder() -> void:
 		_begin(S_DOWNED)
 
 
-# ── 阶段 5 倒地:一次覆盖 player.gd 里两处此前都没人守的契约 ──
-# `squash.tick(delta, _pre_move_vy, is_on_floor(), combat.is_downed())` 这一行里有两项关键逻辑:
-#   ① 第四参 = `combat.is_downed()`  ->  倒地强制中性。本地玩家不旋转,但副本会(根节点
-#      `rotation = -90°`,而 animator 是它的子节点) ->  此时写 scale 会沿转过的轴挤压。
-#      把这一参换成 `false` 后:倒地下落期间空中连续项照常生效  ->  屏幕上一条尸体
-#      倒地翻转过程中被异常拉伸。本测试阶段专门针对刚被击倒且仍处于空中的前 8 帧进行状态校验。
-#   ② 倒地分支里的 `_pre_move_vy = 0.0`  ->  缓存归零。不归零的话,被击杀那一刻的下坠速度
-#      会陈旧地留满整个倒地窗口(该分支不跑 move_and_slide、没人刷新它),复活首帧一落到
-#      地面上就与地面态配成一次满幅假挤压脉冲。删掉那一行,本阶段的第三段断言(复活后
-#      6 帧)即变红 —— 而前两段照样全部断言通过,所以三段缺一不可。
-# - 顺序必须"在带有下落初速度时倒地 -> 落地 -> 复活"整串走完:只读"倒地时中性"无法覆盖检测 ②(那一条的病只
-#   在复活那一帧暴露异常)。本阶段的两条鉴别信号分别落在第二段与第三段,互不遮蔽。
 func _tick_downed() -> void:
 	_f += 1
 	_apply_input(0, 0)

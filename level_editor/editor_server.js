@@ -1,14 +1,3 @@
-// editor_server.js —— 编辑器本地服务器(规格 §4.9)。
-// ★ 编辑器**只通过它打开**:`file://` 支持被刻意放弃(规格 §1.2),换来原生 Worker、
-//   无同源限制、能直接读写磁盘上的 `maps/*.cyrm`。代价是每次要先起服务器。
-// ★ 用 node 写 —— 仓库的编辑器工具链(sync-tiles.js / sync-enemies.js)本来就是 node,
-//   不引入新的运行时依赖。
-// ★ 只绑 127.0.0.1;端口 8777 刻意避开游戏侧已占用的一切端口
-//   (7777 大厅 / 7800+ worker / 7999 测试)。
-// ★ 它是**哑文件服务器**:不校验 .cyrm 格式 —— 那是 core.js 的事。
-//   服务器若也判一遍格式,就是第二份格式实现,分歧的症状是"编辑器存得下、游戏读不出",且不报错。
-// ★ **不做**:认证、TLS、目录浏览、多用户、range 请求。它是本机自用工具,不是服务。
-// 用法:node editor_server.js [--port 8777] [--maps <dir>] [--root <dir>] [--no-open]
 'use strict';
 
 const http = require('http');
@@ -21,9 +10,6 @@ const DEFAULT_PORT = 8777;
 const DEFAULT_ROOT_DIR = __dirname;
 const DEFAULT_MAPS_DIR = path.join(__dirname, '..', 'maps');
 const DEFAULT_INDEX = 'editor.html';
-// ★ 闸 1「一切有硬上限」(规格 §4.3):PUT 的请求体也要有上限,否则一个坏掉的前端
-//   循环就能把磁盘写满。取 core.js 的 MAX_BODY_SIZE 同值(64MB)—— 合法文件最坏约
-//   19.1MiB(core.js 里那段推导),对合法文件不会误拒,对跑飞的客户端是一道硬闸。
 const MAX_MAP_BYTES = 64 * 1024 * 1024;
 
 const MIME = {
@@ -83,24 +69,13 @@ function staticFileFor(rootDir, urlPath, indexName) {
 function serveStatic(res, resolved, headOnly) {
   if (resolved.status !== 200) return sendText(res, resolved.status, resolved.message);
   fs.stat(resolved.file, function (err, st) {
-    // ★ 目录也走这里 → 404:规格 §4.9 明写「不做目录浏览」。
     if (err || !st.isFile()) return sendText(res, 404, '找不到 ' + path.basename(resolved.file));
     res.writeHead(200, {
       'Content-Type': mimeOf(resolved.file),
       'Content-Length': st.size,
-      // ★ 一定要关缓存:编辑器是"改完立刻刷新看效果"的工作流,
-      //   浏览器缓存住旧 .js 会让用户对着旧代码调半天。
       'Cache-Control': 'no-store',
     });
     if (headOnly) return res.end();
-    // ★★ 响应头**已经发出去了**,这一支只能把本次响应中止掉,不能回头改状态码。
-    //   ReadStream 的 'error' 必须在这里接管:没人接管就是一次**无人认领的 'error' 事件**
-    //   = 未捕获异常 = **整个编辑器服务器进程死掉**(客户端什么响应都收不到,用户只能重启 serve.bat)。
-    //   「stat 成功但 open 失败」是真实存在的状态,不是理论:Windows 上文件被 AV/扫描器
-    //   独占锁定、ACL 拒绝、负载下的 EMFILE、以及文件在 stat 与 createReadStream 之间被删掉
-    //   (编辑器自己重写文件时正会如此)。上面那道 404 只覆盖「stat 失败」,根本走不到这里。
-    // ★ 同步抛(createReadStream 的参数非法)与异步 'error' 是同一类「这一次读不出去」,
-    //   一并兜住:它们的正确处理都是「中止这一条响应」,而不是把服务器带走。
     let stream;
     try { stream = fs.createReadStream(resolved.file); }
     catch (e) { return res.destroy(); }
@@ -111,17 +86,6 @@ function serveStatic(res, resolved, headOnly) {
   });
 }
 
-// ── 地图名守卫(规格 §4.9)──
-// ★ 没有这一条,一个本地网页就能读写整块磁盘 —— 它是本文件唯一的安全边界,
-//   也是规格 §7 风险登记里点名"这条必须写测试"的那一条。
-// 只接受**裸文件名**:不接受路径分隔符(/ 与 \)、不接受 ..、不接受空字节、不接受绝对路径。
-// ★★ 2026-09-22(用户裁定,本文件**唯一**一次放宽):除了 `.cyrm`,再接受**一个**后缀
-//    `.v3.bak`。为什么非放行不可:v3→v4 的转换是**单向**的(规格 §3.6),保存前要落一份
-//    原文备份当退路,而备份名必须是 `<名>.v3.bak` —— 结尾**不是** `.cyrm`,游戏的
-//    `_random_cyrm`(`f.to_lower().ends_with(".cyrm")`)才抽不到它,备份不会混进随机地图池。
-//    放宽得极小:基名照旧**只许** `[A-Za-z0-9_-]`(里面**连 `.` 都不许有**,`..`、`/`、
-//    `\`、空字节、其它后缀一律照旧拒),故它仍然写不出 maps/ 之外、也写不出任意后缀的文件。
-//    守卫在 server_smoke.js 相位 ⑤:新后缀被接受 + 旧的每一条拒绝路径都还在。
 const MAP_NAME_RE = /^[A-Za-z0-9_\-]+(?:\.cyrm|\.v3\.bak)$/;
 // 规格的正则没有长度上界;这条是防御性补充(真名由 core.js 的 sanitizeName 生成,
 // ≤32 字符 + ".cyrm" = 37,64 留了一倍余量)。
@@ -144,11 +108,6 @@ function mapPathFor(mapsDir, name) {
   return target;
 }
 
-// 列地图。★ 只列**打得开**的(名字不过守卫的文件列出来也点不开),但绝不静默 ——
-// 跳过的每一个都记一条日志点名。
-// ★ 待修 2:这句话原先**只在"名字不过守卫"那一条上是真的** —— stat 抛错与"同名目录"
-//   两条路径都是静默 continue。承诺与实际不符就是过度承诺(而且静默的那两条恰好是
-//   "磁盘上有个东西你以为它在库里、其实不在"这类最难自查的),故三条路径一律点名。
 function listMaps(mapsDir, logger) {
   const out = [];
   let names = [];
@@ -178,13 +137,6 @@ function serveMapFile(res, target, name, headOnly) {
       'Cache-Control': 'no-store',
     });
     if (headOnly) return res.end();
-    // ★★ 与 serveStatic 同一条教训(Task 1 的待修 1):响应头**已经发出去了**,
-    //   这一支只能把本次响应中止掉,不能回头改状态码。ReadStream 的 'error' 必须在这里接管:
-    //   没人接管就是一次**无人认领的 'error' 事件** = 未捕获异常 = **整个编辑器服务器进程死掉**
-    //   (而 serve.bat 是整场开着的 ⇒ 一个坏文件把编辑器打下来,用户只能重启)。
-    //   「stat 成功但 open 失败」是真实状态,不是理论:Windows 上 AV/扫描器独占锁、ACL 拒绝、
-    //   负载下的 EMFILE、以及文件在 stat 与 createReadStream 之间被删掉(编辑器自己正在重写它)。
-    //   上面那道 404 只覆盖「stat 失败」,根本走不到这里。
     let stream;
     try { stream = fs.createReadStream(target); }
     catch (e) { return res.destroy(); }
@@ -336,17 +288,6 @@ function defaultSleep(ms) {
   return new Promise(function (r) { setTimeout(r, ms); });
 }
 
-// 带重试的 rename。★ `renameFn` 与 `sleepFn` **可注入**就是为了让测试**确定性** ——
-// 「前两次抛 EPERM、第三次成功」这种事用"活的读写竞态"去测必然飘(要掐到读者正好在场的
-// 那一瞬),注入之后它是纯逻辑,而且能顺带断言**尝试次数**(只断言"最终成功"的话,
-// 把重试次数改成 1 也照样绿 —— 那等于没测)。
-// ★★ 刻意**不做**同步退避(虽然 `Atomics.wait` 能同步睡):同步睡会把事件循环冻住,
-//    而竞争者(正在流地图的那个读流)**恰恰需要事件循环转起来才能把 fd 关掉**。
-//    实测(2MiB 地图 + 慢客户端):同步退避 21 次尝试 / 1270ms,期内读者前进 **0 字节**、
-//    全部失败;异步退避同期读者前进 1.9MiB、第 9 次成功。同步版对这个 bug
-//    **结构上无效**,不是参数没调好。
-// ★ 返回 Promise 而不是同步值:这是 `writeMapAtomic` 由同步改成异步的直接原因,
-//   契约变化与调用链的影响见该函数与 receiveMapFile 的注释。
 function renameWithRetry(tmpPath, target, renameFn, sleepFn) {
   const rename = renameFn || function (a, b) { return fs.promises.rename(a, b); };
   const sleep = sleepFn || defaultSleep;
@@ -564,9 +505,6 @@ function createServer(opts) {
   });
 }
 
-// 端口占用时"点名是谁占的"(规格 §7 风险登记)。
-// ★ 尽力而为:拿不到就退回一句让用户自己查的命令,**绝不抛错** ——
-//   它的唯一职责是把错误信息写清楚,它自己失败会把"起不来"变成"起不来且不知道为什么"。
 function describePortOwner(port) {
   const hint = '  查占用者:netstat -ano | findstr :' + port + '(最后一列是 PID),再 taskkill /PID <PID> /F';
   if (process.platform !== 'win32') return hint;

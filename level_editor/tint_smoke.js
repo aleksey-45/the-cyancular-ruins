@@ -123,9 +123,6 @@ function makeAtlas() {
        '★ 没有 Core 时 tint.js 当场抛错(常量是派生来的,不是抄来的):' + (err ? err.message : '(没抛)'));
   })();
 
-  // ==== 相位 ④ golden:手工从规格 §2.3 推导的期望值 ====
-  // (这一组是"编辑器与游戏 shader 必须逐像素一致"的唯一硬证据 ——
-  //  期望值全部手推,不是拿实现跑出来的。)
   (function () {
     const N = Core.neutralDesc(1);
     // 纯红 (255,0,0) → HSV(0,1,1)。
@@ -249,11 +246,8 @@ function makeAtlas() {
            'buildTilePixels: 空气格没有贴图,抛错', '空气');
     throws(function () { Tint.buildTilePixels(atlas, ATLAS_W, 31, 0, 0, neutral); },
            'buildTilePixels: 图集里没有这块(越出下边界)抛错', '图集');
-    // ★ I3.3:纹理实参必须**就是**描述符里那个 —— 不一致时上面两条都拦不住(那块在坐标系里
-    //   存在),旧实现会一声不响地画出**另一块砖**的像素(屏幕上是一块颜色不对的砖)。
     throws(function () { Tint.buildTilePixels(atlas, ATLAS_W, 3, 0, 0, Core.neutralDesc(5)); },
            '★ buildTilePixels: 纹理实参与描述符里的纹理不一致 → 抛错(不许画另一块砖)', '不一致');
-    // ★ I3.2:象限坐标越界(含负数)一律抛 —— 旧实现靠 `%` 静默取负、靠 `& 3` 静默折到 3。
     throws(function () { Tint.buildTilePixels(atlas, ATLAS_W, 3, -1, 0, neutral); },
            '★ buildTilePixels: 象限坐标 -1 → 抛错(不许静默取负)', '象限坐标');
     throws(function () { Tint.buildTilePixels(atlas, ATLAS_W, 3, 0, 4, neutral); },
@@ -262,7 +256,6 @@ function makeAtlas() {
            '★ buildTilePixels: 象限坐标 0.5(非整数)→ 抛错', '象限坐标');
   })();
 
-  // ==== 相位 ⑦ tinted-tile 缓存(规格 §4.2 ④ / §4.3 闸 1)====
   (function () {
     // 注入式 backend:node 里没有 canvas,缓存把"画出来的像素"交给 backend ——
     // 我们记录它收到了什么,于是能断言"缓存给出去的像素 = 直算的像素"。
@@ -313,9 +306,6 @@ function makeAtlas() {
     ok(cache.has(2, 0, 0, N2), '★ LRU: 命中过的条目被提到最近端(没被淘汰)');
     ok(!cache.has(3, 0, 0, N3), '★ LRU: 被淘汰的是最久未用的那个');
 
-    // ★★ 换图必须整片失效 —— 审计 A2 的原样翻版:
-    //    旧编辑器在 structure.png 加载完成前写进纯色兜底且**永不失效**,
-    //    于是地图一直是色块,还"有时好有时坏"。
     const beforeStats = cache.stats();
     cache.setSource(atlas, ATLAS_W);
     eq(cache.stats().size, 0, '★★ setSource 清空缓存(资源换了 = 缓存全废,不许留旧的色块)');
@@ -357,11 +347,6 @@ function makeAtlas() {
        '★★ 缓存: backend 返回 undefined 时**照样命中**(命中判据是 has(k),不是 get(k) !== undefined)');
     ok(uc.has(1, 0, 0, N1), '★ 缓存: 上面那条的条目 has() 为 true(与命中判据同一条)');
 
-    // ── I3.2 键的象限约定必须与像素数学**同一条** ──
-    // ★ 旧实现:键用 `(qx & 3)`、像素用 `qx % SUB_PER_CELL` ⇒ `get(3,-1,0,desc)` 会先造出
-    //   一张**错图**并存进**象限 3 的键**,随后 `get(3,3,0,desc)` **直接命中那张错图**
-    //   (两次调用返回同一个对象)。今天所有调用方都只循环 0..3,但"从坐标算象限"的
-    //   调用方(2b 的环面 / 拖拽选区)出现负坐标很正常。
     const made2 = [];
     const backend2 = {
       createTile: function (pixels, size) {
@@ -380,9 +365,6 @@ function makeAtlas() {
               '★★ 象限 3 拿到的是**正确**那张(旧实现在这里会命中 -1 那趟造出来的错图)');
     ok(qc.has(3, 3, 0, Core.neutralDesc(3)), '★ 象限 3 的键确实落在 3 上');
 
-    // ── I2 setSource 的形状守卫:最自然的误用必须**当场抛**,不许静默画全透明 ──
-    // ★ 传 `ImageData` **对象**而不是 `.data`:旧实现 `atlas.length` 是 undefined ⇒
-    //   buildTilePixels 里 rows = NaN ⇒ 边界比较(`> NaN`)恒假 ⇒ 一路产出全透明小图。
     const shape = Tint.createTileCache({ backend: backend2 });
     throws(function () { shape.setSource({ data: atlas, width: ATLAS_W }, ATLAS_W); },
            '★★ setSource: 传 ImageData **对象**(而不是它的 .data)→ 抛错', 'RGBA 数组');

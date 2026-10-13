@@ -1,33 +1,5 @@
 extends Node
 
-# 设置页「联机显示」一节的自动化测试探针。
-# 运行方式： "$GODOT" --headless --path . --quit-after 3600 res://tests/probe/settings_display_section_probe.tscn
-# 验收标准： 文本 `SETTINGS DISPLAY SECTION PROBE: ALL-OK`(不看退出码)。
-#
-# - 为什么需要它:四个开关原先只长在 1v1 大厅页上,那页在计划①里被删了  ->  键还在、
-#   读者还在,但界面上再也改不了它们。本探针严格校验"这一节真的建出来了、且每个开关
-#   真的跟随/写回对应的 Settings 键"。
-# - 断言计数校验：验证预期的断言全部执行完毕（详见 tests/lib/probe_base.gd 说明）。存在未执行项即判定失败。
-# 注意事项：注意 `EXPECTED_CHECKS` 是运行时条数,不是 `grep -c` 的调用点行数(10):
-#      两条逐行循环(相 A 的 4 行 × 2 条、相 B 的 4 行 × 2 条)在计数字面上各只占 1 行。
-#
-# 注意事项：两处有意偏离实施简报(2026-10-03,评审后订正):
-#   1. 简报的 `ROWS[0][0]` 写的是 "显示子弹尾迹",而设计文档 §3.6 与旧 1v1 大厅页
-#      (`matchmaking.gd`)的权威文案是 "显示子弹尾迹(所有子弹)"。本探针的
-#      `_find_check_by_label` 是逐字相等,照简报写会始终断言失败。按设计文档取值。
-#   2. `EXPECTED_CHECKS` 由简报的 10 上调(见上)。
-#
-# 注意事项：为什么要两相基线(这是本探针最反直觉的一处):
-#   四个键的出厂默认全是 `true`(settings.gd:36,38,42,43)。若拿默认当基线,
-#   `cb.button_pressed == Settings.<key>` 就是 `true == true` —— 始终为 true,
-#   把 `Settings.<key>` 换成 `true` 字面量、或接到另一个也是 `true` 的键,照样全部断言通过。
-#   故:
-#     相 A:四个键全设 false(非默认) ->  严格校验"写死 `true` 会红"。
-#     相 B:交错基线 [false,true,false,true]  ->  相邻两键取值不同,严格校验"接错键会红"。
-#   - 覆盖上限(照实登记):布尔只有两个值,相 B 里同值的那两行(0/2 为 false、
-#     1/3 为 true)互接是结构性分辨不出的 —— 那是 booleans 的界限,不是本探针的疏漏。
-#   - 另一处未覆盖:相 A 的"全 false 基线"只在默认仍为 true 时才是非默认;若哪天把
-#     这四个键的默认改成 false,相 A 就退化成默认基线、不再能严格校验"写死 true"。
 
 const EXPECTED_CHECKS := 20
 

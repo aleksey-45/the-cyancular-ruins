@@ -11,7 +11,6 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
@@ -75,6 +74,7 @@ def smoke_check(exe: str, extra: list, expect: str = "") -> str:
     try:
         run_exe = os.path.join(tmp, os.path.basename(exe))
         shutil.copy2(exe, run_exe)
+        shutil.copy2(Path(exe).parent / "process_group.windows.x86_64.dll", tmp)
         cmd = [run_exe, "--headless", "--quit-after", "120"]
         if extra:
             cmd += ["--", *extra]
@@ -86,6 +86,7 @@ def smoke_check(exe: str, extra: list, expect: str = "") -> str:
             sys.exit("冒烟失败: %s 退出码为 %d（非正常退出）\n末尾输出:\n  %s"
                      % (os.path.basename(exe), r.returncode, tail))
     finally:
+        assert Path(tmp).resolve().parent == Path(_smoke_root()).resolve()
         shutil.rmtree(tmp, ignore_errors=True)
     bad = [ln for ln in out.splitlines()
            if "SCRIPT ERROR" in ln or "Parse Error" in ln or "Failed to load script" in ln]
@@ -167,6 +168,8 @@ def main() -> None:
     if not version:
         sys.exit("读取 project.godot 版本号失败")
 
+    subprocess.run([sys.executable, os.path.join(TOOLS, "build_process_group.py")], check=True)
+
     original = stamp_build_info(release_version(version), stamp)
     try:
         export("Windows Desktop", CLIENT_OUT)
@@ -177,7 +180,7 @@ def main() -> None:
         smoke_check(CLIENT_OUT, [])
         check_weapon_registry(smoke_check(CLIENT_OUT, ["--registry-report"],
                                           expect="[registry] weapons="))
-        smoke_check(SERVER_OUT, ["--worker", "--port", "7999"], expect="worker 就绪")
+        smoke_check(SERVER_OUT, ["--port", "0"], expect="SERVER READY")
     finally:
         _write_text_lf(_BUILD_INFO_REL, original)
 

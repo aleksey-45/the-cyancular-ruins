@@ -16,7 +16,6 @@ const body = '// 由 sync-tiles.js 从 data/tile_defs.json 生成;改配置请�
 const tileCount = Object.keys(json.tiles || {}).length;
 
 if (process.argv.includes('--check')) {
-  // 行尾归一:编辑器把生成物改成 CRLF 不算内容漂移,否则门会误报。
   const norm = function (s) { return s.replace(/\r\n/g, '\n'); };
   const actual = fs.existsSync(jsPath) ? fs.readFileSync(jsPath, 'utf8') : null;
   if (actual === null) {

@@ -194,6 +194,8 @@ static func init_hp(grid: Array) -> void:
 # sub_hp 下标 = sub_y * sub_cols + sub_x;0 = 空气或已摧毁。纹理永远读
 # MazeGenerator.current_subgrid(它不变,摧毁改的是 hp)。
 static var sub_hp: PackedInt32Array = PackedInt32Array()
+static var collision_revision := 0
+static var on_sub_damaged: Callable = Callable()
 static var sub_cols: int = 0
 static var sub_rows: int = 0
 # 子格被摧毁的回调,由 level_0(渲染/账本/碰撞)与服务端权威宿主(广播/颗粒结算)分别注册。
@@ -204,6 +206,7 @@ static var on_sub_destroyed: Callable = Callable()
 
 
 static func init_sub_hp(sgrid: Array) -> void:
+	collision_revision += 1
 	sub_cols = 0
 	sub_rows = 0
 	sub_hp = PackedInt32Array()
@@ -252,11 +255,20 @@ static func damage_sub(sub: Vector2i, amount: int, source: String, owner: Node =
 	else:
 		if not explosion_destroyable(tex):
 			return false
+	return apply_sub_hp(sub, maxi(sub_hp[sub.y * sub_cols + sub.x] - amount, 0), owner)
+
+
+## 应用已经结算的 HP；网络同步无需再次检查武器的可破坏规则。
+static func apply_sub_hp(sub: Vector2i, hp: int, owner: Node = null) -> bool:
 	var idx := sub.y * sub_cols + sub.x
 	var pre_hp := sub_hp[idx]
-	sub_hp[idx] = pre_hp - amount
+	if pre_hp == hp:
+		return false
+	sub_hp[idx] = hp
+	if on_sub_damaged.is_valid():
+		on_sub_damaged.call(sub, sub_hp[idx])
 	if sub_hp[idx] <= 0:
-		sub_hp[idx] = 0
+		collision_revision += 1
 		# 所属 64px 格全部子格死光 → 格级网格清零(选项 A:逻辑层只看格)
 		var grid := MazeGenerator.current_grid
 		if not grid.is_empty():
@@ -283,6 +295,8 @@ static func damage_sub(sub: Vector2i, amount: int, source: String, owner: Node =
 static func restore_sub(sub: Vector2i, hp: int) -> void:
 	if sub_cols == 0 or sub.x < 0 or sub.y < 0 or sub.x >= sub_cols or sub.y >= sub_rows:
 		return
+	if (sub_hp[sub.y * sub_cols + sub.x] > 0) != (hp > 0):
+		collision_revision += 1
 	sub_hp[sub.y * sub_cols + sub.x] = hp
 
 

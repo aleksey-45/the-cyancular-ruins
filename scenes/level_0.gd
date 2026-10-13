@@ -31,7 +31,7 @@ var _prev_time_mode: int = 0      # 上一帧时间场模式(判回溯进入/退
 var _post_process: PostProcess = null
 var _tile_ledger: TileLedger = null      # 玩家破坏瓦片账本(瓦片回溯)
 var _tile_pending: Array = []            # 本帧待入账的格(帧末合并)
-var _tile_cursor: float = -1.0           # 本次回溯的瓦片还原高水位
+var _tile_cursor: float = -1.0
 var _film_t: float = 0.0          # 回溯底片化强度(get 平滑 ramp,≤200ms)
 var _haste_t: float = 0.0         # 加速视效强度(ramp 100ms)
 # 时间状态高亮(B13):加色副本(见 scenes/effects/time_glow.gd),实体 → TimeGlow
@@ -85,9 +85,6 @@ static var _reap_nodes := 0
 static var _reap_frames := 0
 static var _reap_us := 0
 
-# 驱动者:挂在 root 上的小节点,随场景切换存活;队列拆空即自毁。
-# - 不写 _exit_tree 保底处理:半途被拆(退出游戏)时宁可漏掉残余,也不要在树清理期间回头 free
-#   一批已从场景树中移除的节点 —— 那正是本函数要躲开的那类同步销毁。
 class _Reaper extends Node:
 	func _ready() -> void:
 		# 换场可能发生在暂停中(暂停菜单点「回到主菜单」),拆除不该被暂停卡住
@@ -189,7 +186,6 @@ func _ready() -> void:
 	RenderingServer.set_default_clear_color(TerrainAtlas.SKY_COLOR)
 	CombatFeedback.spawn(self)
 
-	# 临时：从固定地图文件加载（随机生成已注释，两者之后一起删除）
 	var grid := WorldBuilder.load_grid()
 	if grid.is_empty():
 		push_error("Level0: 地图加载失败，跳过建图")
@@ -248,10 +244,6 @@ func _create_wall_tileset() -> TileSet:
 	return TerrainAtlas.make_wall_tileset()
 
 
-# 水体专用 64px 图集(B18 把墙体图集改成 16px 象限制后,_paint_water 的"形状列×纹理行"
-# 老格式没了着落:水体被按 16px 坐标压缩画错位,真水体看不见,还在地图 1/4 坐标处散布
-# 一堆无碰撞的"幽灵方块")。水不可破坏,永远按 64px 整格渲染——按 B18 之前的老构建
-# 逻辑原样重建,仅供 water_layer 使用。构造同样收在 TerrainAtlas。
 func _create_water_tileset() -> TileSet:
 	var ts := GameParameters.TILE_SIZE
 	# 水面合批 shader 的采样源(= 水体纹理放大到 ts×ts)
@@ -443,11 +435,6 @@ func _build_wall_collision(grid: Array[Array]) -> void:
 	_destructible_sub = WorldBuilder.build_sim($WorldViewport, grid)
 
 
-# 单人「倒地按 R 重启」:原地复位,不重建世界。
-# 旧实现走场景重载(第二份完整世界 + 退役拆旧世界),重启过程在引擎原生层偶发段错误
-# (实测表象:重启后蓝屏/地图未加载)。改为在当前 Level0 内复位:可破坏砖/瓦片/碰撞回
-# 基线 + 清子弹/敌人后重刷 + 玩家满血满氧回出生点,从机制上绕开「新建/拆毁大世界」。
-# PvP 不走这里(服务器权威管复活)。由 player.gd 倒地 R 调用。
 func restart_single() -> void:
 	if _pristine_grid.is_empty() or _grid_ref.is_empty():
 		return
@@ -784,3 +771,8 @@ func _update_pickup_prompt() -> void:
 						pk.canonical_pos, pl.global_position, w, h).length()
 				can = d <= PlayerParams.weapon_pickup_radius
 		pk.set_prompt_visible(can)
+# 基线应用后立即完成碰撞更新，再让客户端恢复输入。
+func flush_terrain_collision() -> void:
+	for chunk in _dirty_chunks:
+		CollisionBuilder.rebuild_chunk(_destructible_sub, chunk, $WorldViewport)
+	_dirty_chunks.clear()

@@ -1,406 +1,107 @@
-# 网络系统架构与通信协议规范
+# 联机系统
 
-本文档系统说明项目的网络底层架构、客户端预测与服务端校正管线、网络数据格式、会话状态流转、断线容错机制，并对现行协议的设计问题提供分析与后续重构方案。
+Godot 4.7.1 原生 ENet 使用固定二进制协议和 Zstd 包级压缩。每个房主进程管理一个房间和一个权威世界；对局结束回到同一房间。1v1、3v3、大乱斗共用客户端、模拟和表现代码。
 
----
+## 状态所有权与生命周期
 
-## 一、 架构全景与网络拓扑
+| 状态 | 持有者 |
+|---|---|
+| peer、席位、token、60 秒断线期限、READY | [RoomSession](../../server/room_session.gd) |
+| 角色、弹丸、拾取物与权威战斗 | [AuthorityWorld](../../server/authority_world.gd) |
+| 输入调度、epoch、移动与动作 ACK | [InputBuffer](../../core/net/input_buffer.gd) |
+| 本地输入时钟、重发记录和预测历史 | [PredictionRollback](../../core/net/prediction_rollback.gd) |
+| 远端实体共同播放时间 | [SnapshotBuffer](../../core/net/snapshot_buffer.gd) |
+| 本地角色与武器的视觉校正 | Player.Visuals |
+| 移动、跳跃、攀爬、水中移动和武器步进 | [ActorStep](../../core/sim/actor_step.gd) |
 
-```
-                       ┌──────────────────────────────────────────────┐
-                       │        EasyTier 应用层虚拟网 / 局域网        │
-                       └──────────────────────┬───────────────────────┘
-                                              │ UDP / ENet
-                                              ▼
-┌─────────────────────────────────────────────────────────────────────────────────────────────┐
-│                                       专用服务端权威宿主                                     │
-│                                                                                             │
-│  ┌─────────────────────────┐               ┌─────────────────────────────────────────────┐  │
-│  │       房间管理器        │  动态挂载     │                权威对局会话                 │  │
-│  │      (RoomManager)      ├──────────────►│          (MatchSession / MatchHost)         │  │
-│  │  • 大厅匹配与选边       │ (单进程单端口)│  • 60Hz 物理模拟与规则判定                  │  │
-│  │  • 端口管理与超时清理   │               │  • 先进先出输入队列消费与确认               │  │
-│  │  • 断线重连凭据管理     │               │  • 双轨快照广播（全场渲染态 / 本地校正态）  │  │
-│  └─────────────────────────┘               └─────────────────────────────────────────────┘  │
-└───────────────────────────────────────┬─────────────────────────────────────────────────────┘
-                                        │
-                 ┌──────────────────────┴──────────────────────┐
-                 ▼ (60Hz 不可靠快照 + 可靠事件 RPC)            ▼
-┌─────────────────────────────────────────────┐ ┌─────────────────────────────────────────────┐
-│                   客户端 A                  │ │                   客户端 B                  │
-│  • 本地输入预测推演                         │ │  • 本地输入预测推演                         │
-│  • 128 帧输入环形缓冲区                     │ │  • 128 帧输入环形缓冲区                     │
-│  • 环面状态比对与回滚重演                   │ │  • 环面状态比对与回滚重演                   │
-│  • 远端镜像平滑插值 (PlayerReplica)         │ │  • 远端镜像平滑插值 (PlayerReplica)         │
-│  • 实体阻挡代理体 (Ghost Collider)          │ │  • 实体阻挡代理体 (Ghost Collider)          │
-└─────────────────────────────────────────────┘ └─────────────────────────────────────────────┘
-```
+[NetBus](../../core/net/net_bus.gd) 创建 ENet、发送三条数据流并派发消息。[NetCodec](../../core/net/net_codec.gd) 负责二进制编解码和每连接的差量缓存。[MatchRules](../../server/match_rules.gd) 处理模式计分、出生点、复活和回合。SceneMultiplayer 的 server_relay 关闭，客户端消息由房间直接分发。
 
-### 1. 传输层与免驱动 P2P 隧道
-- **底层传输协议**：基于 Godot 原生 `ENetMultiplayerPeer`（底层为 UDP）。
-- **EasyTier 应用层虚拟网**：
-  - 核心进程运行于 `--no-tun` 模式，直接在应用层接管 UDP 数据包路由与转发。
-  - **零驱动依赖**：无需安装系统级虚拟网卡驱动（如 TAP/TUN），无需管理员提权。
-  - **NAT 打洞穿透**：优先通过 STUN 服务器实现对等节点直连；在对称型 NAT 等受限网络下，自动由 EasyTier 中继节点接力转发。
+加入、重连和换回合共用 BASELINE → 初始化场景与碰撞 → READY → STATE 流程。基线包含地图字节、当前子格生命值、完整动态实体和自身状态。READY 携带回合号；换回合重建地图和拾取物，并重置各席位的 ready。
 
-### 2. 单进程单端口架构
-- **避免端口切换断流**：传统联机常采用“大厅主进程分配端口 -> 派生子进程对局 -> 客户端断开并重连新端口”模型，在 NAT 穿透环境下极易产生打洞失效与握手断点。
-- **动态会话挂载**：
-  - 服务端默认监听 UDP 7777（`DEFAULT_PORT`，可通过命令行 `--port P` 覆盖）。
-  - 大厅匹配与实际对局运行在**同一进程、同一 UDP 套接字**内。
-  - 房间满员开局时，`RoomManager` 直接将 `MatchSession` 节点挂载至服务端场景树。客户端在原 ENet 连接与 Peer ID 下直接切入对局，实现零延迟平滑入场。
+客户端连接阶段为 LOADING、ONLINE、RECONNECTING、OFFLINE。回合界面读取最近的权威 NetEvent.RoundState。场景加载期间的地形事件由大厅暂存，客户端初始化后接管。
 
-### 3. 逻辑信道划分
-ENet 连接统一显式分配 4 个逻辑信道（`ENet_CHANNELS = 4`），避免因通道未初始化引发底层错误：
-- **Channel 0（可靠保序）**：承载房间匹配、开局指令、全量对齐快照、战斗判定事件、环境瓦片破坏及断线重连协议。
-- **Channel 1（不可靠有序）**：承载 60Hz 高频物理快照广播（`snapshot_world`）与客户端本人校正快照（`snapshot_own`）。
+## 进程所有权
 
----
+[NetSession](../../core/net/net_session.gd) 持有一个 Windows Job。服务端、EasyTier 内核、CLI 及后代进程都属于该 Job。[OwnedProcessGroup](../../native/process_group/process_group.cpp) 通过 PROC_THREAD_ATTRIBUTE_JOB_LIST 在创建时加入 Job，并启用 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE。Job 句柄由客户端独占且不继承。
 
-## 二、 客户端预测与服务端校正
+离开会话调用 NetSession.close()，依次断开 ENet、关闭 Job、清空 Tunnel 和 LocalServer 状态。窗口关闭与正常 quit 由 Autoload 的退出回调关闭句柄；客户端异常终止时 Windows 回收句柄，Job 随之终止子进程。大厅切换对局场景保留会话，重新进入联机创建新的 Job。组件重启可单独停止该组件。
 
-为了在 2D 横版高频对抗中提供零延迟的平台跳跃与射击手感，系统实现了严密的客户端预测与服务端权威校正管线（参见 [`PredictionRollback`](../../core/net/prediction_rollback.gd) 与 [`PvpMatchClient`](../../scenes/pvp_match_client.gd)）。
+CLI 管道按帧非阻塞读取，单次等待上限五秒；关闭会话取消等待，只处理当前会话的启动结果。Job 终止直接结束子进程，子进程退出回调不会运行。日志追加保存；EasyTier 配置写入系统临时目录，以本次 RPC 端口命名。
 
-### 1. 本地输入预测与环形缓冲区
-1. **即时推演**：本地玩家每物理帧采集输入设备（键盘、鼠标），生成带自增序号 `seq` 的输入包，并在本地即时执行物理积分（位移、跳跃、冲刺、抓墙）。
-2. **输入环形缓冲区**：
-   - 客户端维护容量为 128 帧的环形缓冲区，记录每帧的 `(seq, input_packet, predicted_state)`。
-   - 输入包以 60Hz 频率通过 `send_input` 可靠信道发往服务端。
+扩展面向 Windows 10 及以上 x64。接口依据 [Windows Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)，构建见 [开发工具](tools.md)，实测见 [进程生命周期验证](process_lifecycle_validation.md)。
 
-### 2. 服务端权威处理与确认
-1. **输入队列消费**：服务端为每位玩家维护独立的输入包队列，每个物理 Tick 从队列头部消费一个输入包，注入权威物理世界模拟。
-2. **确认序号回传**：服务端生成快照时，在专属包（`snapshot_own`）中携带当前已完成物理积分的最新输入序号 `ack_seq`。
+## 三条数据流
 
-### 3. 状态比对与回滚重演
-客户端收到 `snapshot_own` 后执行服务端校正：
-1. **历史锚点查找**：在本地环形缓冲区中定位 `seq == ack_seq` 的历史记录。丢弃所有 `seq < ack_seq` 的已确认过期记录。
-2. **分歧判定**：比对历史预测位置与服务端权威位置 `c2.pos`。
-3. **回滚重放**：若偏差超出容差阈值，执行重置并重放：
-   - 调用 `Player.restore_state(c2)` 将本地角色瞬时复原至权威状态。
-   - 提取从 `ack_seq + 1` 至当前本地最新帧的所有未确认输入包。
-   - 在单个物理帧内连续快进模拟这些输入帧，平滑回到当前时刻。
+接口为 send_input、send_state、send_event，内部使用 SceneMultiplayer.send_bytes 与 peer_packet。StreamPeerBuffer 按固定顺序写入小端字节；首字节是 flow，EVENT 随后写 kind。内部模拟与表现使用 Dictionary。
 
-### 4. 环面坐标解算
-游戏世界为环面几何（水平与垂直双向无缝连通，坐标区间 $[0, W)$ 与 $[0, H)$）：
-- **严禁直接向量相减**：若角色从坐标 $W - 1$ 跨过边界移动到 $0$，直接欧氏减法会得出幅度为 $-W$ 的巨大位移，引发灾难性误回滚。
-- **最短位移计算**：分歧比对与相对位移计算必须统一调用 `GridPathfinder.toroidal_delta_px()`：
-  $$\Delta x = \operatorname{wrap}(x_{\text{pred}} - x_{\text{auth}} + W/2, W) - W/2$$
-- 实体跨越世界接缝时，坐标通过 `GridPathfinder.wrap_to_range()` 规范化，确保预测与校正的几何拓扑连续。
+| 数据流 | flow | 通道 | 模式 | 内容 |
+|---|---:|---:|---|---|
+| INPUT | 0 | 1 | unreliable | 最新四条持续输入、未确认动作、快照 ACK |
+| STATE | 1 | 2 | unreliable_ordered | 世界差量、自身预测状态、两个输入 ACK、到达余量、map_revision |
+| EVENT | 2 | 0 | reliable | 房间操作、基线、READY、地形、回合、开火、命中和光束特效 |
 
-### 5. 动态贴身接触容差
-在 2D 平台动作游戏中，两名玩家贴身缠斗时，角色控制器的滑动挤压运算极易产生微小发散：
-- **常规状态容差**：`pos_tol = 2.0px`。
-- **贴身接触容差**：当检测到两名玩家发生物理碰撞接触时（`Player.touching_player() == true`），容差动态放宽至 `contact_pos_tol = 8.0px`。
-- **平滑消抖**：接触解除后容差立即恢复 2.0px。该自适应机制有效消除了近身推挤与肉搏过程中高频触发回滚导致的画面剧烈抖动。
+INPUT 共享 control_epoch 和连续移动记录的起始序号；每条移动保留目标 tick、观察 tick、轴、持续按键和瞄准。动作单独携带序号、目标 tick、按下/释放位图、瞄准及武器上下文。快照 ACK 占四字节。
 
-### 6. 远端玩家镜像与阻挡体
-1. **指数平滑插值**：远端玩家通过 `PlayerReplica` 渲染，从 `snapshot_world` 获取权威位置，采用指数滤波平滑渲染抖动：
-   $$\vec{P}_{\text{render}} = \vec{P}_{\text{render}} + (\vec{P}_{\text{target}} - \vec{P}_{\text{render}}) \times (1 - e^{-12 \cdot \Delta t})$$
-2. **阻挡碰撞体**：
-   - 远端镜像挂载一个轻量 `StaticBody2D`（Layer 2，Mask 0），其坐标直接与最新收到的服务端原始坐标硬对齐（不经过视觉平滑插值）。
-   - 本地玩家的碰撞检测掩码包含 Layer 2。因此本地预测步进时即可感知远端玩家的物理阻挡，杜绝了本地穿透而服务端阻挡导致的频繁回滚。
+动态实体使用整数 ID。接收端先恢复同一 tick 的完整实体列表，再交给预测和播放。弹丸编号组合玩家、射击序号和弹丸序号，用于预测表现合并。弹药、伤害、拾取、地形和胜负由服务端结算；伤害统一经 world.damage 处理统计、颗粒收益及 HIT。
 
----
+## 固定布局与差量基线
 
-## 三、 网络协议数据格式
+STATE 头为消息码、快照序号、基线序号、世界 tick 和 map_revision，共 17 字节。快照编号属于连接，换回合仍递增；基线编号零表示独立全量。全量快照提供角色顺序表，差量用该顺序的存在/变化位图描述角色。
 
-### 1. RPC 路由清单
+弹丸变化记录使用八字节 ID、一字节位图和变化的位置/速度；武器类型、生成输入序号、epoch 在创建或变化时发送。常速弹丸仅位置变化时为 17 字节。拾取物与自身背包发送变化字段，删除实体使用显式 ID 列表。弹丸场景、射程、尺寸和颜色从本地 WeaponRegistry 缓存读取。权威位置与速度反映水中阻力、碰撞和 Beta 回溯；Vector2 为 float32，预测计时器为 float64。
 
-| 节点 | 方法名 | 方向 | 传输模式 | 信道 | 触发频次 | 用途 |
-|---|---|---|---|---|---|---|
-| `NetBus` | `create_room` | 客户端 $\to$ 服务端 | 可靠 | 0 | 偶发 | 请求创建 1v1 房间 |
-| `NetBus` | `join_room` | 客户端 $\to$ 服务端 | 可靠 | 0 | 偶发 | 加入指定 1v1 房间 |
-| `NetBus` | `send_input` | 客户端 $\to$ 服务端 | 可靠 | 0 | 60Hz | 上报客户端输入包 |
-| `NetBus` | `claim_role` | 客户端 $\to$ 服务端 | 可靠 | 0 | 进场一次 | 认领角色席位与上报昵称 |
-| `NetBus` | `match_sync` | 客户端 $\to$ 服务端 | 可靠 | 0 | 进场/重连 | 主动拉取全量静态与增量状态 |
-| `NetBus` | `snapshot_world` | 服务端 $\to$ 客户端 | 不可靠 | 1 | 60Hz | 广播全场实体渲染快照 |
-| `NetBus` | `snapshot_own` | 服务端 $\to$ 客户端 | 不可靠 | 1 | 60Hz | 定向发送客户端物理校正状态 |
-| `NetBus` | `bullet_spawn` | 服务端 $\to$ 客户端 | 可靠 | 0 | 事件触发 | 广播物理子弹生成 |
-| `NetBus` | `beam_fired` | 服务端 $\to$ 客户端 | 可靠 | 0 | 事件触发 | 广播即时光束（激光）轨迹 |
-| `NetBus` | `match_sync_data` | 服务端 $\to$ 客户端 | 可靠 | 0 | 响应拉取 | 下发全量静态与环境状态 |
-| `NetBus` | `hit_event` | 服务端 $\to$ 客户端 | 可靠 | 0 | 事件触发 | 广播受击伤害与击退 |
-| `NetBus` | `tile_destroyed` | 服务端 $\to$ 客户端 | 可靠 | 0 | 事件触发 | 广播 64px 瓦片破坏 |
-| `NetBus` | `round_state` | 服务端 $\to$ 客户端 | 可靠 | 0 | 状态跳变 | 广播回合阶段与倒计时 |
-| `NetBus` | `weapon_spawned` | 服务端 $\to$ 客户端 | 可靠 | 0 | 事件触发 | 广播场上新增地面武器 |
-| `NetBus` | `weapon_removed` | 服务端 $\to$ 客户端 | 可靠 | 0 | 事件触发 | 广播场上移除地面武器 |
-| `NetBus` | `kill_event` | 服务端 $\to$ 客户端 | 可靠 | 0 | 事件触发 | 广播击杀归因事件 |
-| `NetBus` | `go_match` | 服务端 $\to$ 客户端 | 可靠 | 0 | 开局一次 | 通知客户端切入对局场景 |
-| `NetBusExt` | `sub_destroyed` | 服务端 $\to$ 客户端 | 可靠 | 0 | 事件触发 | 广播 16px 子格破坏 |
-| `NetBusExt` | `hit_confirm` | 服务端 $\to$ 客户端 | 可靠 | 0 | 事件触发 | 定向向开火者发送命中反馈 |
-| `NetBusExt` | `reclaim_role` | 客户端 $\to$ 服务端 | 可靠 | 0 | 重连触发 | 断线重连认领角色席位 |
-| `NetBusExt` | `rejoin_request` | 客户端 $\to$ 服务端 | 可靠 | 0 | 大厅触发 | 跨场景重返对局申请 |
+双方各保存最多 64 份完整快照。客户端成功解码并缓存后更新 ACK，服务端相对仍保留的 ACK 基线编码。服务端基线过期发送全量；客户端缺少指定基线时忽略该差量，并在下次 INPUT 中发 ACK=0 请求全量。该缓存与 32 个播放样本独立。
 
----
+BASELINE 清空差量历史并嵌入独立全量 STATE，服务端等待 READY 后继续发送。新连接建立新的编解码器；可靠基线编号高于该连接先前 STATE。
 
-### 2. 客户端输入报文契约 (`send_input`)
+地形每次生命值变化递增 map_revision，通过 EVENT 同步。客户端暂存最新的未来版本远端世界，待地形追上后应用；本地状态、ACK、时钟反馈和最新碰撞代理在下一物理帧处理。
 
-输入包通过 `PacketInputSource.pack_record()` 统一构造，为字典结构：
+布局与差量参考 [Quake III 消息编码](https://github.com/id-Software/Quake-III-Arena/blob/master/code/qcommon/msg.c) 和 [Snapshot Compression 的 ACK 基线](https://gafferongames.com/post/snapshot_compression/)；类型配置本地解析参考 [Teeworlds 弹丸](https://github.com/teeworlds/teeworlds/blob/master/src/game/server/entities/projectile.cpp)。读写使用 [Godot StreamPeer](https://docs.godotengine.org/en/stable/classes/class_streampeer.html)。
 
-```gdscript
-{
-    "seq": int,        # 单调递增输入序号（自 1 起算）
-    "ax": float,       # 水平移动轴 [-1.0, 1.0]
-    "held": int,       # 持续按住状态位掩码
-    "pressed": int,    # 边沿触发按下状态位掩码
-    "released": int,   # 边沿触发释放状态位掩码
-    "winst": int,      # 目标武器实例 ID（0 表示本帧无切枪请求）
-    "aim": Vector2     # 归一化鼠标瞄准方向向量
-}
-```
+## ENet 包级压缩
 
-#### 按键位掩码定义
-| 常量名 | 掩码值 | 语义 | 生效状态 |
-|---|---|---|---|
-| `BIT_UP` | `1` ($2^0$) | 向上 / 跳跃 | held, pressed, released |
-| `BIT_DOWN` | `2` ($2^1$) | 向下 / 下蹲 / 穿透平台 | held, pressed, released |
-| `BIT_CHARGE` | `4` ($2^2$) | 冲刺 | held, pressed, released |
-| `BIT_ATTACK` | `8` ($2^3$) | 主武器开火 | held, pressed, released |
-| `BIT_RELOAD` | `16` ($2^4$) | 手动装填 | held, pressed, released |
-| `BIT_PICKUP` | `32` ($2^5$) | 拾取地面武器（F 键，单次触发） | pressed |
-| `BIT_DROP` | `64` ($2^6$) | 丢弃当前武器（长按 Q 满 2 秒触发） | pressed |
-| `BIT_HASTE` | `128` ($2^7$) | 时间加速激活 | held |
-| `BIT_REWIND` | `256` ($2^8$) | 时空回溯激活 | held |
+服务端、客户端和重连新 peer 在 create 成功后、交给 MultiplayerAPI 前执行：
 
----
+~~~gdscript
+peer.get_host().compress(ENetConnection.COMPRESS_ZSTD)
+~~~
 
-### 3. 服务端双轨快照系统
+两端固定相同模式。[Godot 接口](https://docs.godotengine.org/en/stable/classes/class_enetconnection.html#class-enetconnection-method-compress) 要求双方设置一致。ENet 对实际 UDP 包体调用压缩器，结果更大时发送原包；协议头、分片与重组由 [原生实现](https://github.com/godotengine/godot/blob/master/thirdparty/enet/protocol.c) 处理。大基线和全量 STATE 可经 ENet 分片传输。
 
-为降低序列化开销，服务端快照分为两组报文：
+## 模拟与输入调度
 
-#### A. 全场渲染快照 (`snapshot_world`)
-单次序列化后广播给所有客户端，用于驱动远端玩家镜像渲染：
-```gdscript
-{
-    "tick": int,                         # 服务端权威物理 Tick
-    "players": {
-        "<role_id>": {                   # 字符串键角色编号 ("1", "2" 等)
-            "pos": Vector2,              # 角色世界绝对坐标
-            "vel": Vector2,              # 角色当前速度向量
-            "facing": int,               # 面朝方向 (1=右, -1=左)
-            "pose": int,                 # 动画姿态状态枚举
-            "type_id": int,              # 手持武器配置类型 ID (WeaponRegistry)
-            "hp": int,                   # 当前生命值
-            "waterproof": bool,          # 防水服装备状态
-            "downed": bool,              # 是否处于倒地状态
-            "aim": Vector2,              # 瞄准方向向量
-            "previewing": bool,          # 是否处于重武器蓄力预瞄状态
-            "haste": bool,               # 是否处于加速状态
-            "rewind": bool,              # 是否处于回溯状态
-            "trail": Array[Vector2]      # 最近 3 帧回溯残影轨迹点
-        }
-    }
-}
-```
+服务端 60 Hz 模拟、30 Hz 发送 STATE。InputBuffer 按 target_tick 保存未来输入，当前 tick 使用最新已到期持续状态；迟到状态安排到下一 tick。未来窗口 32 tick，持续轴和按键按原始目标时间延续最多六 tick，之后归零并保留瞄准。
 
-#### B. 本地校正快照 (`snapshot_own`)
-定向发送给角色本人，携带完整的物理内部状态，供客户端执行预测比对与回滚重演：
-```gdscript
-{
-    "ack_seq": int,                      # 服务端已确认消费的最新输入包序号
-    "c2": {                              # 角色全量物理状态字典 (Player.capture_state)
-        "pos": Vector2,                  # 权威全局坐标
-        "vel": Vector2,                  # 权威速度向量
-        "facing": int,                   # 朝向
-        "state": int,                    # 内部移动状态机状态
-        "slock": float,                  # 状态锁定计时器
-        "coyote": float,                 # 土狼时间计时器
-        "jbuf": float,                   # 跳跃输入缓冲计时器
-        "jcut": bool,                    # 跳跃可变高度截断标志
-        "squat": bool,                   # 下蹲标志
-        "charge": bool,                  # 冲刺标志
-        "ct": float,                     # 冲刺剩余时长计时器
-        "lmv_d": int,                    # 上次移动方向
-        "lmv_t": float,                  # 上次移动窗口计时器
-        "wp": bool,                      # 防水服持有标志
-        "wp_t": float,                   # 防水服防护计时器
-        "wp_s": bool,                    # 是否曾浸水标志
-        "wp_d": float,                   # 溺水伤害计时器
-        "clatch": bool,                  # 梯子抓取附着标志
-        "swim": bool,                    # 游泳涉水标志
-        "hp": int,                       # 生命值
-        "ifr": float,                    # 受击无敌帧计时器
-        "down": bool,                    # 倒地状态
-        "knock": Vector2,                # 受击击退速度向量
-        "wslot": int,                    # 当前手持武器槽位
-        "winst": int,                    # 当前手持武器唯一实例 ID
-        "wmag": int,                     # 当前武器弹匣弹药量
-        "wres": int,                     # 当前武器备弹量
-        "wrld": float                    # 换弹冷却计时器
-    }
-}
-```
+跳跃、点击、松开、换弹、切枪、拾取和丢弃属于独立动作。动作重复发送至 action_ack 确认，目标时间之后 12 tick 过期；每世界 tick 最多消费一条有效动作。移动 ack 与 action_ack 分别退休对应记录，动作效果仍受冷却、弹药、角色状态和武器实例约束。无反馈时客户端按输入时钟退休超过 44 tick 的动作，持续输入保留四条，预测历史保留 64 条。
 
----
+输入时钟从 STATE tick + RTT 对应 tick + 两 tick 余量初始化。STATE 的 timing_seq 和 lead 提供到达反馈，lead 为目标 tick 减服务器收包 tick。客户端仅平滑新反馈，以 1.02、1.00、0.96 倍速度调整预测时钟；输入采样与发送保持 60 Hz，服务器每世界 tick 模拟一次。
 
-### 4. 全量状态拉取与对齐报文 (`match_sync` & `match_sync_data`)
+ActorStep 使用相同碰撞实体为服务端、本地预测和单人执行角色步进，返回开火与音效等动作。首次步进执行动作，预测重放仅恢复玩法状态。Player.present_tick 更新动画、预瞄线、闪烁、HUD 和合并的库存通知。
 
-用于客户端场景初始化完成后的首发对齐，或断线重连后的环境状态补回：
+## 预测与共同播放
 
-```gdscript
-# match_sync_data 载荷结构
-{
-    "roles": Array[int],                 # 参战角色 ID 列表 [1, 2, ...]
-    "names": { 1: "Alice", 2: "Bob" },   # 角色名映射表
-    "hues": { 1: 0.0, 2: 180.0 },        # 角色色相度数表
-    "spawns": { 1: Vector2i, ... },      # 各角色出生网格坐标
-    "options": Dictionary,               # 生效对局选项（禁用武器、生命值规则等）
-    "destroyed": Array[Vector2i],        # 全量已被摧毁的瓦片网格坐标列表
-    "ground_weapons": [                  # 全场地面散落武器列表
-        {
-            "inst": int,                 # 武器唯一实例 ID
-            "type_id": int,              # 武器配置类型 ID
-            "mag": int,                  # 弹匣弹药量
-            "reserve": int,              # 备用弹药量
-            "pos": Vector2,              # 地面世界坐标
-            "vel": Vector2               # 抛投滑动速度
-        }
-    ]
-}
-```
+STATE 到达时保存最新待应用权威状态。在下一物理 tick 恢复完整状态，按相同 InputBuffer 重放至输入时钟，再采样新输入。历史最多 64 条，单次重放上限 32 tick；历史缺失或超预算直接采用权威状态。复活、换回合、重连和退出回溯推进 control_epoch，重建输入与预测历史。
 
----
+角色与武器共用 Visuals，校正偏移在 50 ms 内衰减。本地外观按最近一个实际模拟 tick 的位移和物理插值比例采样，视觉外推上限一个 tick。镜头与本地标签跟随 Visuals，在角色表现更新后更新镜头。物理位置、碰撞和弹道使用模拟状态。
 
-## 四、 会话生命周期与状态流转
+远端角色、弹丸、拾取物、血条和小地图共用 100 ms 播放缓冲，环面插值沿最短位移。播放样本上限 32，采样保留左端和未来样本；普通缓冲偏差平滑调速，严重落后超过 12 tick 时重定位到最新 tick 减六。断流最多外推 100 ms，随后冻结。碰撞代理在物理帧使用最新权威位置。
 
-```
-[客户端]                                              [服务端]
-   │                                                     │
-   │ 1. 房间匹配阶段                                      │
-   ├─────── create_room / royale_create / team_create ──►│ 记录房间信息
-   ├─────── join_room / royale_join / team_join ────────►│ 分配唯一 Role ID
-   │◄────── royale_room_state / team_room_state ─────────┤ 广播等待室状态
-   │                                                     │
-   │ 2. 开局调度与会话初始化                              │
-   │        (房主触发开局 / 满员自动开局)                │
-   │◄────── session_token(token) ────────────────────────┤ 生成 16 位会话凭据
-   │◄────── go_match(role, server_port) ─────────────────┤ 挂载 MatchSession 节点
-   │                                                     │
-   │ 3. 场景异步加载与席位认领                            │
-   │ (客户端切入 pvp_game 场景树并初始化)                 │
-   ├─────── claim_role(role, player_name) ──────────────►│ 绑定 PeerID 与 RoleID
-   ├─────── report_token(token) ────────────────────────►│ 注册宽限期重连凭据
-   │◄────── peer_info(names) ────────────────────────────┤ 广播全员昵称
-   │                                                     │
-   │ 4. 客户端拉取世界基准状态                            │
-   ├─────── match_sync() ───────────────────────────────►│ 收集当前世界基准状态
-   │◄────── match_sync_data(payload) ────────────────────┤ 下发出生点/选项/墙体/武器
-   │                                                     │
-   │ 5. 权威物理对局阶段 (PLAYING)                        │
-   │◄────── round_state("PLAYING") ──────────────────────┤ 解除操作冻结
-   ├─────── send_input(pkt) [60Hz 可靠] ────────────────►│ 队列消费模拟
-   │◄────── snapshot_world(world) [60Hz 不可靠] ─────────┤ 驱动远端镜像
-   │◄────── snapshot_own(own) [60Hz 不可靠] ─────────────┤ 触发本地预测校正
-```
+激光读取最多 12 tick 的角色 AABB 历史，地形使用当前状态，一条光束对同一角色判定一次。实体弹丸在当前权威世界连续检测。Beta 以 20 Hz 记录自身状态和仍存活的自身弹丸，回溯期间客户端跟随权威状态，退出后重建预测。
 
-### 1. 场景加载时序：客户端拉取机制
-- **背景**：早期实现中，服务端在开局瞬间向客户端推送配置，而客户端当时正在进行 Godot 场景切换（`safe_change_scene`）。新场景尚未入树，信号未挂载，导致开局载荷被静默丢弃。
-- **拉取解决**：改由客户端在完成场景 `_ready()` 并就绪后，主动向服务端上报 `match_sync()`。服务端收到后定向回发 `match_sync_data`，彻底解决异步加载竞态。
+参考调用图与队列规则见 [模拟、预测与网络波动](architecture_references.md)。
 
----
+## 官方 EasyTier、端口与重连
 
-## 五、 断线容错与双阶段重连机制
+[安装工具](../../tools/fetch_easytier.py) 从官方 Windows 2.7.0 包复制运行组件和许可：
 
-系统针对网络闪断与意外退房设计了双阶段宽限期恢复模型：
+~~~powershell
+python tools/fetch_easytier.py --source D:/Codes/ChatGPT/cyr/easytier-windows-x86_64
+~~~
 
-### 1. 局内掉线快速重连
-适用于网络抖动、网络切换或瞬时断开（玩家仍停留在对局界面）：
-1. **60 秒断线宽限期 (`GraceWindow`)**：
-   - 客户端断开时，服务端**保留**其局内物理实体与背包，暂停其输入队列，并启动 60 秒倒计时。
-   - 对局状态广播附带宽限期读数，其余在线玩家 HUD 显示对手掉线倒计时。
-2. **快速重连与席位认领**：
-   - 客户端检测到连接断开后，在局内启动重试，复用本地记录的 `server_port` 与 `token`。
-   - 重新连接后向服务端发送 `reclaim_role(role, token)`。服务端校验 Token 一致且该角色处于宽限期内，予以通过。
-3. **序号重置与状态回补**：
-   - 服务端重置该角色的确认序号 `_ack_seq` 为 0。
-   - 客户端重置本地回滚实例与输入序号 `_input_seq = 0`，防止历史帧错位。
-   - 客户端立即触发 `match_sync()`，服务端下发断线期间被破坏的瓦片（`destroyed`）与地面武器变动（`ground_weapons`），同步世界状态。
+网络设置写入可写 TOML，启动参数传配置文件与本地 RPC portal。使用 no-tun、UDP、延迟优先、房间凭据和主机名端口信息；bind_device=false，data_compress_algo="None"。官方 CLI 创建 UDP 转发。
 
-### 2. 大厅跨场景重连
-适用于玩家崩溃重启游戏、或误按 ESC 返回大厅：
-1. **凭据持久化 (`RejoinRegistry`)**：
-   - 开局时为玩家签发唯一的会话凭据（包含 `token`, `match_id`, `role`, `room_code`），有效期为 1 小时。
-2. **大厅对局可见性与重入**：
-   - 正在对局中的房间在大厅列表中对第三方显示为“对局中，不可加入”；但对持有合法重连凭据的本人开放重连入口。
-   - 客户端发送 `rejoin_request(room_code, token)`，服务端通过 `RejoinRegistry.decision()` 校验凭据有效性及对局是否存活。
-   - 校验通过后，服务端直接回传 `go_match(role, server_port)`，客户端载入对局场景并沿用局内协议认领席位。
+房间码是保留前导零的八位十进制字符串。端口通过绑定零、读取端口、关闭探测 socket、启动实际服务分配。断线席位保留 60 秒；客户端一个重试循环，每次 ENet 尝试最多五秒，失败间隔一秒。转发重建后连接本地新端口，以房间码和 token 请求基线。
 
----
+## 验证
 
-## 六、 网络底层防护机制
-
-在 ENet 通信中，处理节点断开与重连时极易踩中引擎底层通道清零的边缘异常。项目建立了严格的防护收口：
-
-### 1. 对等节点存活实时校验 (`is_peer_live`)
-- **引擎底层成因**：Godot 原生实现中，`enet_peer_disconnect()` 在调用的瞬间就会触发 `peer->channelCount = 0`，但引擎上层的 `multiplayer.get_peers()` 信号派发滞后至少 1 帧。此时若向该节点发送定向可靠 RPC，引擎直接报错：`Unable to send packet on channel 0, max channels: 0`。
-- **解决方案**：统一封装 `NetBus.is_peer_live(id)`：
-  ```gdscript
-  func is_peer_live(id: int) -> bool:
-      if not (multiplayer.multiplayer_peer is ENetMultiplayerPeer):
-          return multiplayer.get_peers().has(id)
-      var p := (multiplayer.multiplayer_peer as ENetMultiplayerPeer).get_peer(id)
-      return p != null and p.get_state() == ENetPacketPeer.STATE_CONNECTED and p.get_channels() > 0
-  ```
-  直接绕过滞后的引擎上层列表，精确读取 ENet 原生状态位与通道计数。
-
-### 2. 全员广播前置校验 (`all_peers_sendable`)
-在执行 `rpc("snapshot_world", ...)` 广播前，必须调用 `all_peers_sendable()` 确认表内每个 Peer 的信道计数均大于 0。若有任意节点处于正在断开握手的过渡期，当帧主动跳过不可靠快照广播，避免广播引发的底层信道崩溃。
-
-### 3. 定向响应安全收口 (`NetBus.reply`)
-所有服务端响应客户端请求的发送点，统一收口至 `NetBus.reply(id, method, args...)`。发送前自动执行 `is_peer_live(id)` 校验，对端已断开时静默丢弃，避免请求处理与客户端断连并发冲突。
-
----
-
-## 七、 协议设计分析与后续重构方案
-
-### 1. 现行协议问题分析
-
-现行协议基于动态字典开发，存在以下架构不足：
-
-1. **动态字典序列化的 CPU 与内存开销**：
-   - 所有的输入包、快照、同步数据均使用 GDScript `Dictionary` 传递。
-   - 每秒 60 次发送包含数十个字符串键名（如 `"pos"`, `"vel"`, `"facing"`, `"winst"`, `"lmv_d"`）的字典，存在字符串哈希寻址与序列化开销，并带来频繁的内存分配。
-2. **缺乏严格的时间基准与物理 Tick**：
-   - 客户端使用自增的 `input_seq`，服务端使用 `_snap_tick`。序列号未直接绑定绝对物理时间步进。
-   - 网络发生抖动或丢包重传时，两端缺乏统一的固定 Tick 步进对齐，容易引发输入队列积压或延迟。
-3. **输入流缺乏前向冗余编码**：
-   - 当前输入包完全依赖 ENet Channel 0 的可靠信道传输。
-   - 在偶发丢包环境下，可靠重传会导致后续输入包排队阻塞，导致物理模拟队列出现饥饿，丢包恢复后产生批量追帧回滚。
-4. **状态切换依赖延时避让**：
-   - 大厅与对局切换部分环节依赖 `await get_tree().process_frame` 等待一帧来规避信道清零，时序逻辑较脆弱。
-
----
-
-### 2. 重构设计方案
-
-后续协议演进建议采用以下方案：
-
-```
-┌────────────────────────────────────────────────────────────────────────┐
-│                        紧凑二进制输入报文结构                          │
-├───────────────┬───────────────┬───────────────────┬────────────────────┤
-│ 客户端 Tick   │ 服务端确认Tick│ 历史输入掩码 (x3) │ 压缩瞄准角与操作   │
-│ (uint32, 4B)  │ (uint32, 4B)  │ (Bitmask, 3x2B=6B)│ (Half-Float, 4B)   │
-└───────────────┴───────────────┴───────────────────┴────────────────────┘
- 总长度约 18 字节，相比现行字典格式带宽占用大幅减少
-```
-
-#### A. 紧凑二进制封包
-- **使用二进制结构**：使用 `PackedByteArray` 与 Godot `StreamPeerBuffer` 进行二进制序列化。
-- **定长数据布局**：
-  - 输入位掩码压缩为定长 `uint16`；
-  - 角色坐标与速度量化为定长 `int16`（定点数，精度 0.1px）或 `float32`；
-  - 瞄准角使用 `uint8` 编码（256 度量化）。
-
-#### B. 统一物理 Tick 时钟体系
-- 服务端与客户端建立统一的 60Hz 物理 Tick 标尺（`server_tick` / `client_tick`）。
-- 客户端输入与服务端快照均以明确的 `tick` 寻址，取代无量纲的序列计数器。
-- 客户端预测重放严格按照 Tick 步进差分执行，确保物理模拟确定性。
-
-#### C. 滑动窗口前向冗余输入
-- 输入包迁移至不可靠传输通道 Unreliable。
-- 每个输入包携带当前 Tick 的输入，并冗余附带过去 2~3 个历史 Tick 的紧凑输入掩码：
-  $$\text{Packet}(T) = \{ T, \text{Input}(T), \text{Input}(T-1), \text{Input}(T-2) \}$$
-- 即使遭遇单包丢失，服务端也能从后续数据包中直接还原丢失帧的输入，无需等待重传，避免网络抖动引起的输入卡顿。
-
-#### D. 严格的连接与会话状态机
-- 大厅匹配、对局移交、断线重连全流程严格基于显式状态机（`DISCONNECTED` $\to$ `CONNECTING` $\to$ `LOBBY` $\to$ `HANDSHAKE` $\to$ `IN_MATCH` $\to$ `RECONNECTING`）与超时重试策略运转。
+[网络探针与多进程对局](tests.md) 覆盖输入调度、二进制往返、ACK 差量、权威战斗、播放、地形、Beta、AI、换回合与重连。[结果与计量边界](network_validation.md) 分别报告基线和对战的 ENet 字节、包数、CPU、帧耗时及断流后的外推/冻结。

@@ -251,34 +251,6 @@ int main(int argc, char **argv) {
     pause_key();
     return 0;
 }
-#elif MODE == MODE_WATCH_START || MODE == MODE_WATCH_STOP || MODE == MODE_WATCH_REPORT
-int main(int argc, char **argv) {
-    console_init();
-    char repo[MAX_PATH], py[260];
-    repo_root(repo, sizeof(repo));
-    if (!SearchPathA(NULL, "python.exe", NULL, sizeof(py), py, NULL) &&
-        !SearchPathA(NULL, "py.exe", NULL, sizeof(py), py, NULL)) {
-        printf("[ERROR] 未找到 Python(需要 3.x 运行看守脚本)\n");
-        pause_key(); return 1;
-    }
-    char script[MAX_PATH];
-    snprintf(script, sizeof(script), "%s\\tools\\crashlog_capture.py", repo);
-    char args[512];
-#if MODE == MODE_WATCH_START
-    snprintf(args, sizeof(args), "\"%s\" start", script);
-    printf("后台看守启动中...\n");
-#elif MODE == MODE_WATCH_STOP
-    snprintf(args, sizeof(args), "\"%s\" stop", script);
-#else
-    snprintf(args, sizeof(args), "\"%s\" report --last 20", script);
-#endif
-    int rc = run_wait(py, args, repo);
-#if MODE == MODE_WATCH_START || MODE == MODE_WATCH_REPORT
-    printf("完成。关闭本窗口不影响后台看守。\n");
-#endif
-    pause_key();
-    return rc;
-}
 #endif
 
 int main(void) {

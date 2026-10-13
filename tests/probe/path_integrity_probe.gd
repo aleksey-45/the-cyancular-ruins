@@ -1,49 +1,9 @@
 extends SceneTree
 
-# 路径一致性防御性校验:全仓 .gd / .tscn / .sh 里出现的每个 `res://` 字面量都必须指向真实存在的
-# 文件或目录。目录重构期间每搬一步跑一次。
-#
-# 运行方式： "$GODOT" --headless --path . -s res://tests/probe/path_integrity_probe.gd
-# 通过 = `PATH INTEGRITY: ALL-OK` 退出 0。
-#
-# - 必须剥注释再扫:注释里的 `res://old/path` 不是代码(本仓 kh_l6 与 ui_palette 的
-#   注释里就各有一句假路径)。直接 grep 会既测试误报又遗漏修改。
-# - .tscn 只查 ext_resource 的 path=;uid= 字段不查(uid 由 .gd.uid 边车与 .tscn 头承载)。
-# - 豁免走 tests/path_integrity_allow.txt,每行一个完整路径 + 可选 `# 原因`。
-#
-# 注意事项：覆盖面边界 —— 本防御性校验能给的最强保证是什么、测不到什么:
-#   扫的是 SCAN_ROOTS(core/ scenes/ server/ ui/ tests/)下的 .gd / .tscn
-#   (走 ScanUtil.collect),外加 tests/ 下递归收的 .sh(本文件自己用 DirAccess 收,
-#   见 _collect_sh —— 刻意不动共享脚手架 ScanUtil,它另有 5 个探针依赖它"只收 .gd/.tscn"
-#   的语义)。看不见的载体(已知边界,不是漏扫,不打算在本 Task 补):
-#     - project.godot —— autoload 路径与 `main_scene` 里的 res:// 字面量都不在扫描面内;
-#     - start_server.bat —— 仓库顶层启动脚本;
-#     - tools/*.py —— 构建/导出脚本里写死的路径。
-#   要盖住这三处得另加扫描根或另写扩展名,超出"路径一致性"这一个防御性校验的职责。
-#
-# 注意事项：拆串 / `%`-格式化 / 变量拼接 —— 本防御性校验结构性看不见这一类(本分支真实咬到过
-#   人的盲区,Task 3 的 kh_l6 5 处、Task 5 又两处):正则是 `res://[A-Za-z0-9_./-]*`,只取
-#   单个字符串字面量  ->  `"res://ui/" + "pause_menu.gd"` 被削成 `res://ui/`,而那**是个
-#   仍然存在的目录**  ->  通过、不报红;`"res://tests/%s.tscn" % x` 与 `"res://" + var` 同理。
-#    ->  每个搬迁 task 必须自己按形态扫一遍(现成命令 + "活引用 vs 负向断言"的区分见
-#   `docs/superpowers/plans/2026-10-02-directory-restructure.md` 的 Task 4 Step 3b)。
-#   - 反向纪律:有些拆串是负向断言(断言"某字符串不该出现"),例如 `kh_l4_probe.gd`
-#   里那处 —— 必须原样保留;看到拆串先判它是活引用还是负向断言,再决定动不动。
-#
-# 注意事项：豁免条目是无条件的:命中即放行,不看"这条路径今天还在不在"。 ->  豁免会**活过
-#   自己的成因**。例:若 `seam_screenshot.gd` 被删、而 `seam_analyze.gd` 还在,则
-#   `res://tests/_seam_a_old.png` 那条读路径依旧豁免,`seam_analyze` 指向一个
-#   永不存在的输入的断链就此被藏住 —— 表里那一行还在,防御性校验一个字不说。
-#    ->  改豁免表 / 删被豁免路径的生产者时,必须一并复核"它当初为什么被豁免"。
-
-# - 只扫这几根:ScanUtil.collect 只收 .gd / .tscn,所以放没有 GDScript 的目录
-#   (tools/ level_editor/) 进去是白扫。Task 2 已把 render/ 并入 core/present/  ->  该根已删。
 const SCAN_ROOTS := ["res://core", "res://scenes", "res://server", "res://ui",
 	"res://tests"]
 const ALLOW_PATH := "res://tests/path_integrity_allow.txt"
 const SCAN_UTIL_PATH := "res://tests/lib/scan_util.gd"
-# - .sh 的扫描根。tests/ 下这批脚本是 Task 5 最大的搬动对象,而 ScanUtil.collect 看不见
-#   它们,故单独收(递归)。
 const SH_ROOT := "res://tests"
 
 var _su: GDScript = null      # - 显式 load,不用全局类名 —— 本仓所有 -s 冒烟都走这条路
@@ -164,8 +124,6 @@ func _initialize() -> void:
 		quit(1)
 		return
 	if sh_files.is_empty():
-		# .sh 一路一个都没收到 = _collect_sh 或 SH_ROOT 坏了  ->  别静默放行:那正是本 Task 要
-		# 扩的那半个扫描面(Task 5 要搬这批脚本),静默成 0 就等于防御性校验看着扩了、其实没扫。
 		print("PATH INTEGRITY: FAILED: %s 下没扫到任何 .sh,扫描根可疑" % SH_ROOT)
 		quit(1)
 		return

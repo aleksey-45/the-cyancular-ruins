@@ -279,10 +279,6 @@ func _on_death() -> void:
 	pass
 
 
-# 冲锋冲击力:沿远离本体的方向猛推玩家(覆盖 take_hit 的普通击退,冲锋更狠)。
-# 原本 FlyBird / BlackBird 各抄一份(除常量外逐字相同),收为基类单一来源。
-# away 为 0(与玩家完全重合)时回退:朝玩家背向推,拿不到 get_facing 就用 LEFT。
-# 冲撞攻击判定基础实现
 func _smash_player(p: Node, impact: float, impact_up: float) -> void:
 	var p2 := p as Node2D
 	if p2 == null:

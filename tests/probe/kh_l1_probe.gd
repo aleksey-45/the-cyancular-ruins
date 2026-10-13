@@ -2,35 +2,11 @@ extends ProbeBase
 
 # KH 合并 L1 探针(场景模式:autoload 需已实例化,不能用 -s 跑)。
 # 运行方式： Godot_console --headless --path . --quit-after 300 res://tests/probe/kh_l1_probe.tscn
-# (--quit-after 是超时保护上限:本脚本引用 Settings/NetBusExt 等 autoload 标识符,若某个 autoload
+# (--quit-after 是超时保护上限:本脚本引用 Settings/NetBus 等 autoload 标识符,若某个 autoload
 #  被从 project.godot 删掉,脚本会编译失败 -> 场景加载成无脚本根节点 -> 命令无输出挂死。
 #  有了它最坏只是超时退出。)
 
-const REQUIRED_AUTOLOADS := ["GameParameters", "NetBus", "NetBusExt", "Settings"]
-const NETBUS_EXT_RPCS := [
-	# 客户端 -> 服务器请求
-	"player_options", "suicide_request",
-	"royale_create", "royale_join", "royale_leave", "royale_list", "royale_start",
-	"ai_duel", "royale_start_ai",
-	# 服务器 -> 客户端
-	"match_options", "peer_hues", "hit_confirm", "beam_fired",
-	"royale_rooms", "royale_room_state",
-]
-
-# 注意事项：下面这些是信号不是方法(对应 RPC 见 NETBUS_EXT_RPCS)。
-# 用 has_method 断言它们会假失败,必须用 has_signal。
-const NETBUS_EXT_SIGNALS := [
-	"local_match_options", "local_peer_hues", "local_hit_confirm", "player_options_received",
-	"local_beam_fired", "suicide_requested",
-	"royale_create_requested", "royale_join_requested", "royale_leave_requested",
-	"royale_list_requested", "royale_start_requested",
-	"ai_duel_requested", "royale_start_ai_requested",
-	"local_royale_rooms", "local_royale_room_state",
-]
-
-
-
-# 探针短名:拼 ALL-OK / FAIL / 汇总行的方括号前缀用(ProbeBase 的必需覆写项)。
+const REQUIRED_AUTOLOADS := ["GameParameters", "NetBus", "Settings"]
 func probe_id() -> String:
 	return "L1"
 
@@ -47,16 +23,11 @@ func _ready() -> void:
 			"royale_match_min", "pvp_show_minimap", "pvp_minimap_show_enemy"]:
 		_check(_has_prop(Settings, prop), "Settings 缺属性: %s" % prop)
 	_check(not _has_prop(Settings, "old_ui"), "Settings.old_ui 未删除")
-	# 换弹恒开:不换弹开关已整个删除(反向断言,防被"顺手恢复成可选项")
 	_check(not _has_prop(Settings, "reload_enabled"), "Settings.reload_enabled 未删除(换弹不再有开关)")
 	_check(not _has_prop(Settings, "sp_difficulty"), "Settings.sp_difficulty 未删除")
 	_check(not Settings.REMAPPABLE_ACTIONS.is_empty(), "Settings.REMAPPABLE_ACTIONS 为空")
 	Settings.save()             # 存写不崩
-	Settings.load_settings()    # 读回不崩
-
-	# 3) 源码级:难度/老版 UI 不得残留
-	# - 2026-10-02 降精度:原先直接在原始文本上判(未剥注释)——
-	#   负向那几条会被墓碑注释测试误报,正向那条会被注释里提一句误判通过。改成先过 `_code_only`。
+	Settings.load_settings()
 	var ro_src := _code_only(_read("res://core/config/run_options.gd"))
 	if ro_src == "":
 		_failures.append("core/run_options.gd 读不到")
@@ -70,26 +41,22 @@ func _ready() -> void:
 		_check("old_ui" not in st_src, "core/settings.gd 仍含 old_ui")
 		_check("sp_difficulty" not in st_src, "core/settings.gd 仍含 sp_difficulty")
 
-	# 4) NetBusExt 扩展 RPC 与信号齐
-	for m in NETBUS_EXT_RPCS:
-		_check(NetBusExt.has_method(m), "NetBusExt 缺 RPC: %s" % m)
-	for s in NETBUS_EXT_SIGNALS:
-		_check(NetBusExt.has_signal(s), "NetBusExt 缺信号: %s" % s)
+	# 4) 当前传输入口可用；网络包行为由 transport_probe 验证。
+	for method in ["send_input", "send_state", "send_event"]:
+		_check(NetBus.has_method(method), "缺少数据流入口: %s" % method)
+	for signal_name in ["input_received", "state_received", "event_received"]:
+		_check(NetBus.has_signal(signal_name), "缺少数据流接收信号: %s" % signal_name)
 
-	# 5) pvp_session 的 reset 清得掉(2026-09-14:原断言的两个字段 royale/disabled_weapons
-	#    已作为"只写不读"删除;改钉仍在的 map_path/spawn —— 换局时它们必须回到初值,
-	#    否则上一局的地图/出生点会漏进下一局)
 	PvpSession.map_path = "res://maps/newfactory.cyrm"
-	PvpSession.spawn = Vector2i(9, 9)
+	PvpSession.loading_match = true
+	PvpSession.terrain_events.append({})
 	PvpSession.reset()
 	_check(PvpSession.map_path == "", "PvpSession.reset() 未清 map_path(换局会漏上一局的地图)")
-	_check(PvpSession.spawn == Vector2i(-1, -1), "PvpSession.reset() 未清 spawn(换局会漏上一局的出生点)")
+	_check(not PvpSession.loading_match and PvpSession.terrain_events.is_empty(), "PvpSession.reset() 未清加载阶段和地形队列")
 
 	# 6) Sfx 程序合成流可生成(不依赖音频设备)
 	_check(Sfx._stream("kill") != null and Sfx._stream("hit") != null, "Sfx 音效流生成失败")
 
-	# 7) LocalServer 是 class_name(非 autoload):查全局类缓存,验它真的注册成功了
-	# (原先写 `if LocalServer == null` 是编译期始终为 false的死断言,永远不触发)
 	var found_local_server := false
 	for entry in ProjectSettings.get_global_class_list():
 		if str(entry.get("class", "")) == "LocalServer":

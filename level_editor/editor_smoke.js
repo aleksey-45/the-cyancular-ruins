@@ -135,7 +135,6 @@ function countNonZero(map, L) {
     eq(Editor.clampTexture(5, -3), 1, '★★ 容量是负数(畸形图集)→ 1,不当"没信息"放宽');
     eq(Editor.clampTexture(5, undefined), 1, '★ 容量缺省时问图集:node 里没装图集 ⇒ 容量 0 ⇒ 1');
 
-    // ==== 相位 ③ 调色板从 tile_defs 派生(审计 A7:纹理 22 不可选)====
     const pal = Editor.texturePalette(TILE_DEFS);
     eq(pal.length, 21, '★ 调色板 21 项(1..22 去掉自动派生的 22)');
     ok(pal.every(function (e) { return e.tex !== 22; }),
@@ -317,7 +316,6 @@ function countNonZero(map, L) {
     eq(Editor.spawnIndexAt(ms, 4, 2), null, '★ spawnIndexAt 用环面坐标判:(4,2) 与 (3,2) 不是同一个格');
     ok(Editor.spawnIndexAt(ms, 3 - 4, 2) !== null, '★ spawnIndexAt 折算环面:(−1,2) 与 (3,2) 是同一个格');
 
-    // ==== 相位 ⑨ 热键表(规格 §4.8)====
     const k = function (key, mod) { return { key: key, ctrl: !!mod, meta: false, shift: false }; };
     eq(Editor.commandFor(k('b')), 'tool:brush', 'B → 画笔');
     eq(Editor.commandFor(k('e')), 'tool:eraser', 'E → 橡皮');
@@ -344,12 +342,6 @@ function countNonZero(map, L) {
     eq(Editor.commandFor(k('F5')), null, '★ 表外的键一律返回 null(不拦浏览器自己的快捷键)');
     eq(Editor.commandFor({ key: 'p', ctrl: true }), null, '★ 表外的 Ctrl 组合也返回 null(打印留给浏览器)');
 
-    // Shift 约束(规格 §4.8:直线约束 / 选区等比)
-    // ★★ 下面三条的期望字面量**订正过**(计划原文的值不自洽,见每条的 ★★ 说明):
-    //    · 两条 45° 的原文写的是**不按 Shift** 的结果(即 b 的 floor),与"锁成 45°"
-    //      以及同段里 `{0,0}→{10,3}` 那条(它期望的是**锁过的** {10,10})互斥;
-    //    · 选区那条原文写 {x:-6,y:1},而 |dx|=4、|dy|=3 ⇒ 等比只能是 {0,0}。
-    //    一律按规格 §4.8 的字面("其余 → 锁成 45°(取两轴较大者)"/"选区等比")取实现那一侧。
     eq(Editor.constrainLine({ x: 0, y: 0 }, { x: 10, y: 2 }, true), { x: 10, y: 0 },
        '★ Shift 直线:近水平 → 锁成水平');
     eq(Editor.constrainLine({ x: 0, y: 0 }, { x: 2, y: 10 }, true), { x: 0, y: 10 },
@@ -394,11 +386,6 @@ function countNonZero(map, L) {
     ok(calls > 0 && bad === 0,
        '★★ Core.lineCells 的每个调用点都在同一行先 Math.floor(实得 ' + calls + ' 处,未 floor 的 ' + bad + ' 处)');
 
-    // ★ createMap 只许经过一个闸(clampMapSize),否则就是 A8 原样复发
-    // ★★ 2026-09-21 订正:初版断言"只出现 **1** 次",但 `ui.js` 里**确实有两处** ——
-    //    `createEmptyMap`(经 `clampMapSize`,是唯一的造图入口)与 Task 3 的 `selfTest()`
-    //    (写死的 4×3 测试图,**不是用户输入**)。数成 1 会让这条断言**不可能通过**。
-    //    改成"逐处点名"的记账:恰好两处 —— 牙齿留在**钳制**那半边(下面那条 clampMapSize)。
     eq((ui.match(/Core\.createMap\(/g) || []).length, 2,
        '★★ ui.js 里 Core.createMap 恰好两处(createEmptyMap 与 selfTest 的写死测试图;多一处就是新开了造图入口)');
     ok(/function createEmptyMap[\s\S]{0,200}Core\.clampMapSize/.test(ui),
@@ -417,12 +404,6 @@ function countNonZero(map, L) {
     ok(/function clampTexture[\s\S]{0,700}Render\.atlasCapacity\(\)/.test(ui),
        '★★ clampTexture 的容量缺省时**自己问图集**(Render.atlasCapacity()),不写死数码');
 
-    // ★ PUT 必须显式带 Content-Type(写端点只收 application/json;不带 = 415)
-    // ★★ 2026-09-22(Task 8)订正:原来是"源码里出现过 PUT 就算过"的存在性断言。Task 8 的
-    //    保存流程接进来之后,真正的失败面是**保存流程自己又拼了一份 fetch** —— 那一份多半
-    //    漏掉 Content-Type(⇒ 415 ⇒ "点了保存、磁盘上那份没变,只有一行红字"),而存在性
-    //    断言**照样是绿的**。故改成**计数**,与同一文件里 `Core.createMap(` 那条同款口径:
-    //    写盘出口**只有** `putMapBytes` 一个。
     eq((ui.match(/method:\s*['"`]PUT['"`]/g) || []).length, 1,
        '★★ ui.js 里 PUT **恰好一处**(唯一的写出口 putMapBytes;多一处 = 保存流程自己拼了第二份 fetch)');
     ok(/['"`]Content-Type['"`]\s*:\s*['"`]application\/json['"`]/.test(ui),
@@ -609,9 +590,6 @@ function countNonZero(map, L) {
     eq(hw.subCols, 8, '★★ 撤销改尺寸:子格数回退');
     eq(hw.layers[Core.LAYER_SCENE].desc[0], Core.neutralDesc(4), '内容也回退');
 
-    // ★★ 整图级撤销之后,地图必须与 entry 里的快照**解耦**(旧实现 `desc: lay.desc` 是
-    //    alias:撤销后再落一笔就写进了历史条目,下一次撤销恢复的是被污染的 before ——
-    //    "撤销没撤干净"且一个字都不报;字节数不变,字节闸也发现不了)。
     const hz = Core.createMap('z', 2, 1);
     hz.layers[Core.LAYER_SCENE].desc[0] = Core.neutralDesc(4);
     const zd = Editor.wholeDiff(hz, 'resize');
@@ -628,13 +606,6 @@ function countNonZero(map, L) {
     eq(hz.layers[Core.LAYER_SCENE].desc[0], Core.neutralDesc(4),
        '★★ 撤销改尺寸 → 落一笔 → 再撤销:地图回到**原始**状态,不是被污染的 before');
 
-    // ★★ 快照拷贝的**另一半**:`seal()` 定格之后继续在地图上落笔,`entry.after` 快照不得
-    //    跟着变。上面那条钉的是 before(撤销之后落笔),**after 那一侧此前一条断言都没有** ——
-    //    于是 `snapshotMap` 退回 `desc: lay.desc` 时整个相位 ⑫ 照样全绿(既有的 hz 组在
-    //    seal 与 undo 之间夹了一次 resize,活数组当场被换掉,alias 照不出来),同一个退化
-    //    可以无声无息地回来。这条是它的守卫。
-    //    ★ 这里刻意**不夹 undo**:`applyEntry` 会把 map.layers 换成防御性拷贝,一旦换了,
-    //      活数组与快照就脱钩了 —— 必须在"seal 完、还没撤销"这个窗口里落笔才测得准。
     const hq = Core.createMap('q', 2, 1);
     hq.layers[Core.LAYER_SCENE].desc[0] = Core.neutralDesc(4);
     const qd = Editor.wholeDiff(hq, 'resize');
@@ -651,15 +622,6 @@ function countNonZero(map, L) {
     ok(Editor.bytesOfEntry(wd.entry) >= Editor.bytesOfSnapshot(wd.entry.before),
        '★★ bytesOfEntry(whole) ≥ before 快照的字节量(实得 ' + Editor.bytesOfEntry(wd.entry) +
        ' ≥ ' + Editor.bytesOfSnapshot(wd.entry.before) + ')—— 记常数过不了这条');
-    //    ② 行为面:预算 1000 装不下这条 whole 条目 —— `wd` 是 **2×1 格建图、改成 4×3 格之后**
-    //       才 seal 的,所以两份快照**不一样大**:
-    //         before = 2×1 格 = 8×4 子格 ×4 层 ×4 字节 = 512
-    //         after  = 4×3 格 = 16×12 子格 ×4 层 ×4 字节 = 3072
-    //         bytesOfEntry = 64 + 512 + 3072 = **3648**
-    //       ⇒ 字节闸真的在管整图级。
-    //       ★ 1088(= 64+512+512)是**下面 wd2**(没改过尺寸的 2×1 图)那条的数字 ——
-    //         原先这里错把它写在本条上(断言不受影响:它们打印的是实得值,3648 > 1000
-    //         反倒让"至少超预算"这条 guard 更结实;错的只是注释)。
     const hwb = Editor.createHistory({ maxBytes: 1000 });
     hwb.push(wd.entry);
     eq(hwb.depth(), 1, '★ 单条 whole 条目就超预算 ⇒ 只丢到"至少留一条"为止(实得 ' + hwb.depth() + ' 条)');
@@ -684,7 +646,6 @@ function countNonZero(map, L) {
        '★★ seal() 之前就进历史的 whole 条目:重做时**上报**而不是静默 no-op(实得 ' +
        JSON.stringify(wseen) + ')');
 
-    // spawn 差量能撤(审计 A9)
     const hsp = Core.createMap('s', 4, 3);
     const sd = Editor.addSpawn(hsp, 'player', 1, 1);
     eq(hsp.players.length, 1, '放了出生点');
@@ -770,23 +731,11 @@ function countNonZero(map, L) {
       eq(mi.layers[Core.LAYER_SCENE].desc[3], Core.neutralDesc(3), '★ 水平镜像:x=0 的内容到了 x=3');
       eq(mi.layers[Core.LAYER_SCENE].desc[0], Core.neutralDesc(4), '★ 水平镜像:x=3 的内容到了 x=0');
       ok(md !== null, '镜像产出差量');
-      // ★★ 非法 axis 必须**当场拒绝并给出原因** —— 旧实现里没有任何一支命中 ⇒ `di === si` ⇒
-      //    退化成恒等 ⇒ 静默返回 null,与"镜像了一圈、内容恰好没变"**完全同形**(调用方分不出
-      //    轴写错和这次镜像没改动任何格)。抛出的是带原因的中文错,而不是哑 null。
       throws(function () {
         Editor.mirrorRegion(mi, Core.LAYER_SCENE, { x: 0, y: 0, w: 4, h: 4 }, 'x');
       }, '★★ 非法镜像轴:当场拒绝并给出原因(旧实现退化成恒等、静默回 null)', '镜像轴非法');
     })();
 
-    // ==== 相位 ⑬ 画布交互接线:真装一遍 installInteraction,按**副作用**判 ====
-    // ★ Task 7 的 399 行接线(指针 / 热键 / 选区拖动)此前一条断言都没有。本相位把
-    //   `installInteraction()` 真装一遍(它只碰 `app.canvas` 与 `window`,两处都在这里替身掉),
-    //   然后**直接调它挂上去的处理器** —— 处理器本体、命令分派、落笔路径全是生产代码,
-    //   断言读的是它们真做出来的副作用(工具换了没 / 地图改了没 / 哪条渲染入口被调了)。
-    // ★ 三个替身,别的都不碰:window.addEventListener(抓注册的处理器)、document(只
-    //   getElementById / querySelectorAll 两个入口,一律回空)、一个**记账**的渲染器(app.r)。
-    //   ★ 收尾时把 app 的四样还原 + 断言**一条错误都没进过 sink**(处理器是在 `guard` 里跑的,
-    //     替身少了哪个方法都会变成一条被吞掉的异常 —— 那条断言就是防这个的)。
     const savedAdd = globalThis.addEventListener;
     const savedDoc13 = globalThis.document;
     const savedR13 = Editor.app.r, savedMap13 = Editor.app.map, savedCv13 = Editor.app.canvas;
@@ -809,9 +758,6 @@ function countNonZero(map, L) {
                             querySelectorAll: function () { return []; } };
     Editor.setErrorSink(function (t) { errs13.push(String(t)); });
     const calls13 = [];
-    // ★ 渲染侧 `setSelDrag` 的**实参**账(修复轮 3 新增的观测面):原来的记账只记"被调过",
-    //   而 Esc 取消拖动那条路的重点恰恰是**传的是 null**(= 要求撤掉偏移 ⇒ 去烤)。
-    //   分不出实参就判不了"到底有没有把偏移撤掉"。
     const selDragArgs13 = [];
     let sel13 = null;
     Editor.app.canvas = {
@@ -913,14 +859,6 @@ function countNonZero(map, L) {
       eq(inBox.length, 1,
          '★★ 拖动之后"在框内落笔"有目标(实得 ' + inBox.length + ' 个 —— 0 个就是' +
          '"用户在框里画、什么都没发生、状态栏也不说")');
-      // ── ⑬b3 ★★★ 接缝的**三个口径**必须合一(Important 2)──
-      // ★ 病灶:"选区"在本仓里此前是**三种**判据 ——
-      //   ① `regionCells` 的 clip:`inRect(clip, wx, wy)`(**非**折算的线性区间);
-      //   ② `pointerdown` 的"按在选区里":同一个非折算 inRect;
-      //   ③ `moveRegion` 的 from 集合 / 拖动预览:`Render.inSel`(**环面**折算)。
-      //   三者在接缝那一侧给出不同答案 ⇒ 最刺眼的一种是"框里画:一半画得进去、另一半
-      //   静默什么都没发生(状态栏也不说)"。
-      // ★ 现在三处都转调 `Render.inSel`(ui.js 的 `inRect` 就是它),下面按**行为**逐条钉。
       const mS = filled(Core.createMap('s', 24, 3), Core.LAYER_SCENE, Core.neutralDesc(4));  // 96×12 子格
       Editor.app.map = mS;
       const WRAP_SEL = { x: 93, y: 4, w: 6, h: 4 };          // 盖住子格 93,94,95,**0,1,2**
@@ -945,16 +883,6 @@ function countNonZero(map, L) {
          '那条症状已不可能出现,故改钉"折算后等价"这条更强的(期望 0 现在只可能来自' +
          '"判据又退回非折算"——即回归)');
 
-      // ── ⑬b4 ★★ 跨接缝的**框选**(Reachable A):子格 23 一格 → 拖过右边缘绕回格 0 ──
-      // ★ 这条**照实记录当前的语义**,不是"要它变成什么样"。命中坐标在 `hitTest`/`screenToSub`
-      //   里就已经折算回 [0, subCols),`subRectOf` 只对两个端点取 min/max ⇒ 绕过去的那一段
-      //   被读成"0 到 92 的线性区间",结果是**整整一行**(w = 96 子格 = 24 格)。
-      //   用户想要的是**两个格**(格 23 与格 0)= 子格 `{x:92,w:8}`(92..95 折回 0..3)
-      //   —— 存值的单位一律是**子格**,与下面断言的期望值同量纲。
-      //   ★ 修复轮 3 订正:此处曾写作 `{x:23,w:2}`(格),与断言消息里的子格值**不同量纲**,
-      //     两者无法对读;消息里那个 `w:5` 也是错的(8 才对,见 `subRectOf` 的 k=4 那条路)。
-      // ★ 详见报告:改成**环面区间**要动的东西不在本轮范围内(命中在 subRectOf 看到之前
-      //   就已经折算过 ⇒ 方向信息已丢失),这里先把今天的语义钉住 —— 以免"没修"被读成"没这事"。
       Editor.app.map = mS;
       Editor.app.st.tool = 'select';
       Editor.app.st.brushSize = 1;                     // 整数画笔 ⇒ 命中是**格**号
@@ -1016,10 +944,6 @@ function countNonZero(map, L) {
          '★★ 单击画笔落了一次笔(格 (1,1) 的 16 个子格都写上了纹理 7):旧实现只在 pointermove 里' +
          '落笔 ⇒ 单击一个字都不改、也不报错(矩形/直线是松手才落笔的,所以只有画笔/橡皮会这样)');
 
-      // ── ⑬b2 ★★ Esc 取消选区、左键还按着时松手(评审发现 6 的**真身**在 ui.js 这一侧)──
-      // 拖动分支此前**无条件**读 `cur.x`,而 cancel-selection 把选区置 null ⇒ 在 guard 里抛
-      // TypeError(用户看到一条错,而且这次拖动**什么都没做**,连"松开"这个动作都没收尾)。
-      // 判据两条:① 没有错误进 sink;② 没有可搬的东西就**不动地图**。
       const mE = filled(Core.createMap('e', 6, 3), Core.LAYER_SCENE, Core.neutralDesc(4));
       Editor.app.map = mE;
       const nE = countNonZero(mE, Core.LAYER_SCENE);
@@ -1111,11 +1035,6 @@ function countNonZero(map, L) {
       if (savedSt13) Editor.app.st = savedSt13;
     }
 
-    // ── ⑬ 收尾 ★★ `app.st` 必须**逐字段**还成生产初始状态(相位头那条注释的可判形式)──
-    // ★ 判据取**字段值**(tool / brushSize / 无在飞状态)而不是"还是同一个对象":对象身份
-    //   两种实现完全一样(都是同一个引用),漂出去的恰恰是**字段**;而 `tool` 的初始值是
-    //   'brush'(ui.js 建状态对象那一行),⑬b4/⑬b5 把它原地改成了 'select'。
-    // ★ 它同时钉住"还的是**生产**对象"这件事:漏掉整段还原时这里会读到 undefined。
     ok(!!Editor.app.st && Editor.app.st.tool === 'brush' && Editor.app.st.brushSize === 1 &&
        !Editor.app.st.selDrag && !Editor.app.st.selStart && !Editor.app.st.stroke,
        '★★ 相位收尾:app.st 被**逐字段**还成生产初始状态(tool=brush / brushSize=1 / 无在飞状态;' +
@@ -1200,9 +1119,6 @@ function countNonZero(map, L) {
       }
     })();
 
-    // ==== 相位 ⑭ 保存路径与面板工作流的纯逻辑(Task 8)====
-    // ★ 编号:brief 写的是「相位 ⑬」,但 Task 7 已经占用了 ⑬(画布交互接线),故顺延为 ⑭
-    //   —— 位置仍在 ⑫ 的镜像段之后(与 brief 的意图一致:接在历史/剪贴板那段后面)。
     eq(Editor.saveTargetName(false), null, 'saveTargetName(false): 未打开任何地图 → null(调用方提示先打开)');
     eq(Editor.needsV3Confirm('v4', false), false, '★★ v4 源:直接保存,不问(v4 → v4 是无损的)');
     eq(Editor.needsV3Confirm('v3', false), true,
@@ -1210,9 +1126,6 @@ function countNonZero(map, L) {
     eq(Editor.needsV3Confirm('legacy', false), true, '★ 旧字母格式源:同样要确认');
     eq(Editor.needsV3Confirm('v3', true), false, '★ 已经确认过一次的会话不再问第二次');
     eq(Editor.needsV3Confirm(null, false), false, '没打开地图时不问');
-    // ── ⑭ ★★ 备份的**逐文件**门(2026-09-22)──
-    // ★ 为什么单独立这几条:确认框每会话一次是**故意的**(决定 ⑤),但备份**不能**跟着它
-    //   一起变成每会话一次 —— 那样同一会话里第二张 v3 图既不被问、也不被备份,**静默**转成 v4。
     const backed14 = new Set();
     eq(Editor.needsV3Backup('v3', 'a.cyrm', backed14), true,
        '★★ 备份门:本会话还没备份过的 v3 文件 → 要备(哪怕确认框不会再问)');
@@ -1225,9 +1138,6 @@ function countNonZero(map, L) {
     eq(Editor.needsV3Backup('v4', 'd.cyrm', backed14), false, '★ v4 源:没有要转换的原文,不备');
     eq(Editor.needsV3Backup(null, 'e.cyrm', backed14), false, '没打开地图时不备');
     eq(Editor.needsV3Backup('v3', null, backed14), false, '还没有落过盘的新图(没有文件名)不备');
-    // ── ⑭ ★★ 备份名 = `<基名>_<8 位十六进制>.v3.bak`(结尾不是 .cyrm;用户 2026-09-22 裁定的名字)──
-    // ★★ 2026-09-22 复核 Minor 5 起**多了一段哈希**,于是这几条从"名字长什么样"升级成
-    //    "名字**单射**":金值钉住方案本身不漂,后面两组钉住"两个不同的文件名不许落到同一格"。
     eq(Editor.v3BackupName('demo.cyrm'), 'demo_c9869709.v3.bak',
        '★★ 备份名 = `<基名>_<FNV-1a 32 位十六进制>.v3.bak`(金值;换哈希 / 换截断长度都会红)');
     eq(Editor.v3BackupName('demo.cyrm'), Editor.v3BackupName('demo.cyrm'),
@@ -1242,9 +1152,6 @@ function countNonZero(map, L) {
        '★ 备份名的基名字符集合法、且不超过服务器的 MAX_MAP_NAME_LEN=64' +
        '(基名截 24 + `_` + 8 位哈希 + 后缀 = 40;实得 ' +
        Editor.v3BackupName('x'.repeat(80) + '.cyrm').length + ')');
-    // ★★★ 撞名:**旧方案**(收干净 + 截前 40)这两对各自落到**同一个**备份名上 ——
-    //     而它们的两份原文不是同一份 ⇒ 第二张图的保存会把第一张的退路**静默覆盖**
-    //     (两张 v3 那时都已经转成 v4 了,退路是唯一的一份)。
     ok(Editor.v3BackupName('图1.cyrm') !== Editor.v3BackupName('1.cyrm') &&
        Editor.v3BackupName('图甲.cyrm') !== Editor.v3BackupName('图乙.cyrm'),
        '★★★ 被"收干净"收成同一个基名(`1` / `map`)的两个**不同**文件名 ⇒ 备份名必须不同' +
@@ -1443,12 +1350,6 @@ function countNonZero(map, L) {
       eq(Editor.app.map.players.length, 1,
          '★★ 只有 P1 时再放 P1:原位覆盖,**不许**长出第 2 条(= P2 被悄悄换掉;实得 ' +
          Editor.app.map.players.length + ' 条)');
-      // ★★ 2026-09-22(修复轮 1)订正期望值 12,12 → 4,4:这张图只有 **8 格宽**,视图中心
-      //    算出来的格 12 是**越界**的。修复前那条路把越界值原样写进数据(只有
-      //    `Core.validateMap` 看得见),而这条断言当时恰恰把那个**错值**钉成了"正确答案"
-      //    (测试与代码同错 ⇒ 全绿)。修复后与 `addSpawn`/`spawnIndexAt` 同量纲:
-      //    `wrapIdx(12, 8) = 4`。判据没变(仍是"写的是**这一次**的坐标"),只是这一次的
-      //    坐标现在必须是**折算后**的。
       eq([Editor.app.map.players[0].x, Editor.app.map.players[0].y], [4, 4],
          '★ P1 原位覆盖面写的是**这一次**的坐标(**折算回本图范围**之后:8 格宽的图上,视图中心格 12 ⇒ 4)');
       // ★★ 视图拖到图外(`panBy` **不钳**视图,render.js)时,记录的坐标必须仍在 `[0, 格数)`:
@@ -1482,7 +1383,6 @@ function countNonZero(map, L) {
       eq(Editor.app.map.enemies[0].type, Editor.importEnemyTypes()[0],
          '★ 敌人类型取自注册表的第一项(实得 ' + Editor.app.map.enemies[0].type + ')');
 
-      // ── ⑭b 导出校验(规格 §4.7:只报告,不阻止导出)──
       const rep14 = Editor.exportReport();
       eq(rep14.ok, true, '★ 干净的小图:ok = true(errors 为空 ⇒ encodeMap 不会拒绝)');
       ok(rep14.lines.join('\n').indexOf('出生点 2') >= 0 &&
@@ -1499,14 +1399,6 @@ function countNonZero(map, L) {
       eq(Editor.exportReport(), { lines: ['还没打开地图'], ok: false },
          '★ 没打开地图时报告说的是人话(不是空面板)');
 
-      // ── ⑭c ★★★ `#st-save` 的三种转变(修复轮 1 / 评审 Important 1)──
-      // ★★ 状态栏右侧并排的是**两件事**:`#st-save` 说"磁盘上那份是不是这一份",`#status-msg`
-      //    说"刚刚发生了什么"。`#st-save` 原先是**没有任何写入者**的静态文案(editor.html
-      //    写死「未保存」)⇒ Ctrl+S 成功那一刻同一条状态栏上会同时出现
-      //    「未保存 | 已保存 demo_copy.cyrm(1234 字节)」—— 两个相邻的 span 当场互相打脸。
-      // ★★ 三条里最重要的是**第三条**:保存**失败**时它必须仍是「未保存」。把清零链在
-      //    `guard(...)` 的决议上(那是这个功能最自然的写法)`guard` 失败时决议的是
-      //    `undefined`,于是**失败**会被标成「已保存」,而磁盘上那份一个字都没变。
       Editor.app.map = Editor.createEmptyMap('dirty', 4, 4);
       Editor.app.name = 'before.cyrm';
       Editor.app.sourceFormat = null;                      // 无源格式 ⇒ needsV3Confirm 不问
@@ -1534,11 +1426,6 @@ function countNonZero(map, L) {
          badge14() + '")。★ 把 `dirty = false` / 徽标重画链在 `guard(...)` 的决议上,' +
          '`guard` 失败时决议的 `undefined` 会让这一格翻成「已保存」—— 本条就是那个陷阱的守卫');
 
-      // ── ⑭d ★★ 保存流程真的把字节交给了**写盘出口**,也真的更新了 app.name / sourceFormat
-      //    (评审 Important 1 的 bonus:此前一条断言都没有)──
-      // ★ 为什么必须另立一条:把 `saveCurrent` 改成一行早退(`return Promise.resolve();`)
-      //   时,⑭c 里只有 ② 会红,而 ② 的判据是**徽标文案** —— "只翻徽标、不写盘"的实现
-      //   照样能过。这条直接钉住"字节确实从那个唯一的出口出去了"。
       putMode14 = 'ok';
       Editor.app.name = 'before.cyrm';                     // 与保存后的名字**可辨**
       Editor.app.sourceFormat = null;                      // 同上:改了才看得出来
@@ -1562,14 +1449,6 @@ function countNonZero(map, L) {
       eq(Editor.app.sourceFormat, 'v4',
          '★★ app.sourceFormat 更新成 v4(落盘的就是 v4 二进制;实得 ' + Editor.app.sourceFormat + ')');
 
-      // ── ⑭d2 ★★★ v3 源首次保存:**确认框说出决定性事实** + **原文备份先落盘**(用户裁定 2026-09-22)──
-      // ★ 为什么必须另立一条:确认框原先只说「不可逆」,而**决定性的事实**是"游戏今天读不了 v4"
-      //   (实测 v4 → `map_size (3,0)`、0 行)——用户以为自己只是换了个格式,实际上是**把一张能玩的
-      //   图换成游戏打不开的**。备份那一半同理:仓库里两张真图今天都是 v3,而本分支把退休页的
-      //   `<a download>` 出口也拆了 ⇒ 一次 Ctrl+S 之后原文**只剩 git 里那份**。
-      // ★★ 断言口径:①确认文案里那三件事都在;②备份**真的**从**唯一**那个写盘出口出去了、
-      //   字节 == 打开时那份原文(逐字节);③备份**排在真保存之前**(两条 PUT 的先后);
-      //   ④第二次保存不再写备份(同一会话只写一次 —— 与确认框同一个一次性条件)。
       await (async function () {
         const savedConfirm14 = globalThis.confirm;
         let asked14 = 0, askText14 = '';
@@ -1579,7 +1458,7 @@ function countNonZero(map, L) {
           const orig14 = new TextEncoder().encode(v3text);
           Editor.app.map = Editor.createEmptyMap('demo_v3src', 4, 4);
           Editor.app.name = 'demo_v3src.cyrm';
-          Editor.app.sourceFormat = 'v3';              // ← 本次会话**第一次**转换保存
+          Editor.app.sourceFormat = 'v3';
           Editor.app.raw = orig14;                     // 磁盘上那份的原文(openMap 留下的)
           putLog14.length = 0;
           await Editor.saveCurrent(false);
@@ -1625,13 +1504,6 @@ function countNonZero(map, L) {
              '★ 那一条是真保存,不是备份(实得 "' +
              (putLog14.length ? putLog14[0].url : '(没有请求)') + '")');
 
-          // ── ⑭d2c ★★★ **逐文件**备份:同一会话里保存**第二张** v3 图,必须有它自己的一份 ──
-          // ★ 为什么必须另立一条(2026-09-22):上一轮备份与确认框共用**同一个会话级**标记
-          //   (`v3Confirmed`)⇒ 同一会话里保存第二张 v3 图时两半都不发生:既不问、也不备,
-          //   那次**单向**转换是**静默**的 —— 用户手里那张能玩的 v3 图被换成一张游戏打不开的
-          //   v4,而退路一份都没有。安全网只盖住了会话里第一张图。
-          // ★ 这里复现的正是那个场景:`v3Confirmed` 此时已经是 true(上一张已经确认过),
-          //   故确认**不该**再问(决定 ⑤ 保持),而备份**必须**照写。
           const v3textC = '# cyrm-v3\n001f001f\n001f001f\n001f001f\n';
           const origC = new TextEncoder().encode(v3textC);
           ok(Array.from(origC).join(',') !== Array.from(orig14).join(','),
@@ -1674,15 +1546,6 @@ function countNonZero(map, L) {
         }
       })();
 
-      // ── ⑭e ★★★ 启动链路:打开的成败**不决定**面板建不建(评审 Important 2)──
-      // ★★ 原先那条链是 `loadAtlas → openFromUrl → buildPanels`,而 `.catch` 只有一个 ⇒
-      //    `openFromUrl()` 一旦拒绝(`?p=` 是个陈旧/写错的名字 → `openMap` 抛 HTTP 404;
-      //    `.cyrm` 解不开;structure.png 拿不到),整条链**短路到 catch**,`buildPanels()`
-      //    一行都没跑:工具条、图层行、调色板、出生点四个按钮**一个监听都没装上**,而且
-      //    **没有重建路径** —— 屏幕上只有一行「启动失败:…」。用户会以为编辑器坏了,
-      //    而不是"这张图打不开"。★ 计划 Step 3 原写的是"排在 openFromUrl() 之后"。
-      // ★ 判据是**真驱动**(点一下按钮看它的副作用),不是"没抛":后者拦不住
-      //    "buildPanels 跑了但那只按钮没接上"。
       Editor.app.map = null;                               // 打开失败后就是这状态
       Editor.app.tileDefs = globalThis.TILE_DEFS;
       mapGetMode14 = 'fail';                               // ?p=stale_name.cyrm → HTTP 404
@@ -1755,9 +1618,6 @@ function countNonZero(map, L) {
     process.exit(1);
   }
 
-  // ==== 相位 ⑮ 持久化的纯逻辑(★ 需要 DOM 的那半边由人眼验收)====
-  // ★ 编号:brief 写的是「相位 ⑭」,但 Task 8 已经占用了 ⑭(保存路径与面板工作流)——
-  //   同一份文件里两个 ⑭ 会让"第几个相位红了"这件事失去指代,故顺延为 ⑮。
   eq(Editor.draftKey('demo.cyrm'), 'demo', '★ draftKey 由 sanitizeName 派生(不另铸一套 id)');
   eq(Editor.draftKey('my-map.cyrm'), 'my-map', 'draftKey: 连字符保留');
   eq(Editor.draftKey(''), 'structure', 'draftKey: 空名回落(与 Core.sanitizeName 同源)');
@@ -1790,10 +1650,6 @@ function countNonZero(map, L) {
     const dropped = recs.filter(function (r) { return plan.drop.indexOf(r.key) >= 0; });
     ok(dropped.every(function (r) { return !r.dirty; }),
        '★★ 先丢**已保存**的(脏的那份是用户还没写盘的劳动,不许丢)');
-    // ★★★ 上一版这里写的是 `plan.drop.length === 5` —— 那与上面那条 eq 是同一条断言(数两遍),
-    //    **同条件时的取舍(丢哪几条)从没被钉过**(只有"全是脏的"那一支钉了 k0/k1)。这里改成
-    //    判**身份**:65 条里脏的是偶数号(savedAt 更大的是后面的),故要丢的正是最老的那 5 条
-    //    **干净**记录 k1/k3/k5/k7/k9。★ 条数由身份蕴含,故没有丢掉任何东西。
     eq(plan.drop.slice().sort(), ['k1', 'k3', 'k5', 'k7', 'k9'],
        '★★★ 同条件时丢**最老的那几条干净记录**(不是"丢够 5 条就算";实得 ' + plan.drop.join(',') + ')');
     const allDirty = recs.map(function (r) { return { key: r.key, savedAt: r.savedAt, dirty: true }; });
@@ -1849,18 +1705,6 @@ function countNonZero(map, L) {
     try {
       // ── 假 IndexedDB(两张表:草稿盘、崩溃槽位)──
       const tab15 = { draft: new Map(), crash: new Map() };
-      // ★ 两个开关 + 一本读数账,专给相位 ⑫(闸 1 的**代价形状**与两条失败路径):
-      //   · `count`     —— 让 `count()` 的请求失败(读不到条数);
-      //   · `get`       —— 让**单条读**的请求失败(启动路径上"崩溃槽位读不到"那条失败面,
-      //                    真环境里是事务打不开 / 配额被拒);
-      //   · `deleteTx`  —— 让**含 delete 的**那个事务失败(真 IDB 出错时事务不提交 ⇒
-      //                    一条 `later` 都不跑);只认含 delete 的事务,否则连这次写入
-      //                    自己都会失败,那测的就不是"清理失败"了;
-      //   · `getAll` / `cursor` / `keys` —— 三种读各记一笔:**整库读**(`getAll`)、
-      //                    索引值游标**物化了几条记录本体**(`cursor`)、索引键游标用了几次
-      //                    (`keys`,只给一个数、不物化任何记录)。"常态一条都不读 / 到上限
-      //                    只读够淘汰那几条"这两条不变量只能靠计数钉住:它们是**代价**不是
-      //                    行为,断不了对错。
       const fail15 = { count: false, deleteTx: false, get: false };
       const idbReads15 = { count: 0, getAll: 0, cursor: 0, keys: 0 };
       function fakeDb15() {
@@ -1870,9 +1714,6 @@ function countNonZero(map, L) {
           let hasDelete = false;
           tx.objectStore = function () {
             return {
-              // ★ 写与删都**在事务提交那一刻**才落到表里(真 IndexedDB 就是这样:
-              //   `put()` 只是把操作排进事务)。替身若当场改表,"记录已存在"就不再等价于
-              //   "这次落盘走完了" —— 那正是本相位头几版把时序判错的地方。
               put: function (rec) { later.push(function () { tab15[store].set(rec.key, rec); }); },
               delete: function (k) {
                 hasDelete = true;
@@ -2204,7 +2045,7 @@ function countNonZero(map, L) {
       //   这件事**同步**记下(它的首行)—— 于是"保存先落地"这件事可以在同一个 tick 里造出来。
       await Editor.markDraftSaved();                       // 先把草稿标干净(起跑状态)
       await until15(function () { return recD15() && recD15().dirty === false; });
-      const racing15 = Editor.saveDraft(true);             // 这次落盘**不等它**(它在飞)
+      const racing15 = Editor.saveDraft(true);
       const savedMark15 = Editor.markDraftSaved();         // 保存的收尾插进来(同步推 rev)
       await racing15;
       await savedMark15;
@@ -2212,22 +2053,6 @@ function countNonZero(map, L) {
          '★★★ 与"保存"赛跑的那次落盘落地之后,草稿**仍然是干净的**' +
          '(编码完成后再看一眼 rev:这一版已经进真文件了 ⇒ 这次落盘必须放弃)');
 
-      // ── ⑤c ★★★ 与"**换图**/**改名**"赛跑的那次落盘(终审 C1:一次静默的内容掉包)──
-      // ★ 症状链(评审发现 Critical 1):编码在飞时用户点了库里的**另一张图** —— `openMap`
-      //   把 `app.map`/`app.name` 换成 B,而编码交回的是 **A 的字节**;记录于是写成
-      //   `{key:'B', name:'B.cyrm', bytes:<A 的地形>, dirty:true}`。下次打开 B:字节比不过
-      //   B 的文件 ⇒ 弹一次恢复 ⇒ 用户按下它 ⇒ 屏幕上是 **A 的地形而文件名写着 B.cyrm**
-      //   ⇒ 一次 Ctrl+S 就把 **A 的地形写进 maps/B.cyrm**。字节相等那道闸让这件事**更糟**:
-      //   它把"一次假提示"换成了"静默掉包"。
-      // ★ 构造法:`Io.encodeMap` 交回的是 worker 的**异步**应答 ⇒ `saveDraft()` 同步跑完
-      //   (编码已经在飞)之后、`.then` 落地**之前**,同一 tick 里把 app 的状态换掉 ——
-      //   与 ⑤b 用的是**同一个**交错手法(那次换的是 rev,这次换的是图)。
-      // ★★ 两个**独立**的一半,缺一不可(下面 A/B 两相各让一半承重):
-      //   ① 记录的两半(它**是谁** / 它是**什么内容**)必须在**同一个瞬间**取;
-      //   ② 编码期间换过图 ⇒ 这次落盘**整笔放弃**(身份判据 `app.map !== mapAtEntry`)。
-      //   A 相(换图)由 ② 承重,而 ① 被 ② 挡住(所以单看 A 相杀不掉"只改一半");B 相(**改名**
-      //   —— app.map **对象没换**,只换了名字)判据只看身份 ⇒ 这时 ① 独自承重:记录必须落在
-      //   **取字节那一刻**的那张身份上,而不是写盘那一刻的名字。
       const savedMap15c = Editor.app.map, savedName15c = Editor.app.name;
       const savedFmt15c = Editor.app.sourceFormat;
       try {
@@ -2409,15 +2234,6 @@ function countNonZero(map, L) {
       calls15.length = 0;
       Editor.applyUiState();
       ok(calls15.indexOf('setZoomAt') >= 0, '★ 真存过缩放时要恢复它(setZoomAt 被调了)');
-      // ★★ 纹理那条断言**不能写死 5**:`clampTexture` 对"容量 < 1(没有信息)"给的是 **1**
-      //    (不是放宽到描述符位宽那个上界 —— 见 ui.js 里那段说明),而图集状态是**上一个相位
-      //    留下的**(⑭ 的 finally 不还原 atlas,它留的是 512×640 ⇒ cap 320)。写死 5 的话,
-      //    哪天 ⑭ 改成空图集,这条会**因为环境**而红(而且看不出是环境问题)。故判据取
-      //    `clampTexture(5, cap)`(= 生产那条钳制本身)。
-      // ★★ 但"与图集无关"的另一面是:容量 < 5 时 5 会被钳成 cap,而 cap 可能**恰好等于**
-      //    恢复前那份的纹理位(空图集下两者都是 1)⇒ 那条就**不再证明**"纹理位真的被按回去了",
-      //    只剩"不越界"。故把前提**明文断言出来**(红了就知道是环境,而不是功能坏)——
-      //    本相位假设 ⑭ 留下的 atlas 还在;要脱离这个前提,本相位得自己 `Render.setAtlas(…)`。
       ok(cap15 >= 5,
          '★★ 前提:图集容量 ≥ 5(实得 ' + cap15 + ')—— 本相位假设 ⑭ 留下的图集还在' +
          '(512×640 ⇒ 320)。★ 容量 < 5 时下面那条只剩"不越界"这一半(5 被钳成 cap,' +
@@ -2680,7 +2496,7 @@ function countNonZero(map, L) {
                '★★★ 油漆桶失败**没有**逃到全局围栏(裸 `runJob(...)` 的实现这里 ≥1)');
             eq(tab15.crash.size, 0, '★★★ 也没有写崩溃槽位');
             // 渐变(pointerdown 起终点、pointerup 才真跑那条分帧链)
-            Editor.setLayer(Core.LAYER_BG);            // 规格 §4.4:渐变仅背景层
+            Editor.setLayer(Core.LAYER_BG);
             Editor.app.st.tool = 'gradient';
             tab15.crash.clear(); escaped15.length = 0;
             el15('status-msg').textContent = '';
@@ -2704,15 +2520,6 @@ function countNonZero(map, L) {
             Editor.app.st = savedSt15b;
           }
 
-          // ── ③ ★★★ 自检那条入口(2026-09-22 复核 Important 2:同一类"没护栏的异步入口")──
-          // ★★ `selfTest()` **会拒绝**:它消费 `Io.ping()` / `Io.encodeMap` / `Io.decodeMap`,
-          //    而 io.js 那个 30s 超时是新的拒绝源;自检自己也在探"可能失败"的东西
-          //    (`indexedDB` / `localStorage`)。丢掉那条 promise = 一次未处理的拒绝 ⇒ 闸 4 的
-          //    围栏**写一份崩溃快照** ⇒ 下次开机弹一个**假的**「上次异常退出,要恢复吗?」
-          //    (屏幕上那张图一次都没崩过),同时状态栏那句自检结果被顶掉。
-          // ★ 判据取**行为**(与 ① ② 同款):装真围栏 → 喂一次真失败 → 看崩溃槽位有没有多一条。
-          // ★★ 关键在于**不接**它交回的那个 promise:生产里按钮那一侧也不接(`addEventListener`
-          //    的返回值没人要)。接了就等于替它上了护栏,这条断言会变成空转。
           const savedStats15b = Editor.app.r.stats;
           const savedPing15b = globalThis.Io.ping;
           Editor.app.r.stats = function () { return { thumbsBuilt: 0 }; };
@@ -2801,10 +2608,6 @@ function countNonZero(map, L) {
       eq(await Editor.checkCrashSlot(), false, '★ 崩溃槽位比主草稿旧 ⇒ 不提示');
       eq(asked15, 0, '★★ 那一次连确认框都没弹(不是"问了但没恢复")');
 
-      // ── ⑪b ★★★ 启动这一路的**代价形状**:点读 + 索引键游标,不是整库读(终审评审 I3)──
-      // ★ 原来这里为了求"主草稿最新那个 `savedAt`"把**草稿盘整库**读进来(每张草稿带着编码后
-      //   的整张图,规格 §4.3:每张 2.4MB),而它要的只是一个时刻。判据是**读数**:整库读 0 次、
-      //   值游标(会物化记录本体)0 次、键游标 ≥ 1 次(只回一个数)。
       await putCrash15(Date.now() + 40000);
       idbReads15.getAll = 0; idbReads15.cursor = 0; idbReads15.keys = 0;
       eq(await Editor.checkCrashSlot(), true, '⑪b 前提:这一份崩溃快照比主草稿新 ⇒ 恢复');
@@ -2831,17 +2634,6 @@ function countNonZero(map, L) {
       ok(tab15.crash.has('crash'), '★ 读失败**不许**碰崩溃槽位里那条记录');
       tab15.crash.clear();
 
-      // ── ⑮b ⑫ 闸 1 的清理:代价形状(先数后读)+ 两条失败路径都要说话 ──
-      // ★★ 编号:这是 ⑮b 的**子相位** ⑫(与文件前面那个顶层「相位 ⑫ 历史/剪贴板/选区移动」
-      //    不是一件事)—— 子相位的编号在自己的括号里连续排,而消息里一律带 `⑮b⑫` 前缀,
-      //    免得"红的是第几相"变成指代不清(⑮ 当初顺延就是因为同一份文件里两个 ⑭)。
-      // ★★ 为什么单立一相:
-      //    ① **代价形状**——清理跑在**每一次**防抖落盘之后,而库满时每张草稿带着编码后的整张
-      //       图(规格 §4.3 的闸 1 表:每张 2.4MB)。"没到上限时一条都不反序列化"是**代价**而
-      //       不是行为,断不了对错,只能靠"`getAll` 被调了几次"这个读数钉住(变异见报告)。
-      //    ② **两条失败路径**(读不到 / 删不掉)都要在状态栏**说出话** —— 静默的话"闸 1 不
-      //       生效"与"没到上限"长得一模一样,用户只会看到草稿盘悄悄涨过 60 条。
-      //    ★ 同时钉住"失败**不拒绝这次写入**":最新那份劳动必须留下。
       tab15.draft.clear();
       Editor.app.map = Editor.createEmptyMap('draft_probe', 4, 4);
       Editor.app.name = 'draft_probe.cyrm';
@@ -2875,11 +2667,6 @@ function countNonZero(map, L) {
          '★★ 丢的是**最老的**那几条(old0/old5 都已不在)');
       ok(tab15.draft.has('draft_probe'),
          '★★ 刚写的那一条**没被丢**(清理不许动最新的活 —— 脏记录本来就排在队尾)');
-      // ★★ 判据从"到了上限**读**了记录本体"改成"到了上限**只读够淘汰那几条**" —— 更强:
-      //    旧的 `ok(idbReads15.getAll >= 1)` 只要求"读过",一个把整库 getAll 进来的实现
-      //    照样满足它(而那正是要防的代价);这条要求**上界**。
-      //    ★ 这里 66 条里只有刚写的 draft_probe 是脏的,而它按 savedAt 排在最后 ⇒ 走 6 条
-      //      (old0..old5)就凑够 6 条干净的 ⇒ 恰好 6 条。
       ok(idbReads15.getAll === 0 && idbReads15.keys === 0 && idbReads15.cursor === 6,
          '★★★ 到了上限走**索引值游标**逐条挑牺牲者:只物化 ' + idbReads15.cursor +
          ' 条记录本体(= 要丢的那 6 条,够数就停),整库读 0 次 / 键游标 0 次。' +
@@ -2957,21 +2744,6 @@ function countNonZero(map, L) {
     }
   }
 
-  // ==== 相位 ⑯ ★★★ 四条规格要求"造好了却没人能碰到"的功能:把线接上 ====
-  // ★★ 为什么必须另立一相(整支终审查出来的四条遗漏):内核写了、测试全绿、导出表也列了,
-  //    而**生产里零调用点** —— "函数写对 + 导出表列上"这两件事在冒烟里**看不出**"用户碰不到",
-  //    因为断言一直在直接调那个函数。四条各自的死法:
-  //      ① 镜像(规格 §4.4 的选框):`mirrorRegion` 只有测试在调 ⇒ 热键那条路不存在;
-  //      ② 改尺寸(审计 A10):`resizeMap` 只被 `btn-dup` 用(**尺寸不变**)⇒ 整条 `kind:'whole'`
-  //         历史分支在生产里是死的(Task 6 修的那个别名 bug、`applyEntry` 的 whole 分支、
-  //         `pushAndShow` 的 `whole ⇒ invalidateAll` 分派,全都只有测试在跑);
-  //      ③ 压缩(规格 §3.5):两处 encode 都写死 `compress:true` ⇒ 那条"完整可用的退路"
-  //         (compression=0)不可达 —— 而浏览器 deflate 与 Godot COMPRESSION_DEFLATE 的
-  //         兼容性至今**没实测过**,这条退路是唯一的兜底;
-  //      ④ 空格拖拽(规格 §4.8):`pointerdown` 只认中键与 Alt。
-  // ★ 判据一律取**副作用**(地图改了没 / 历史能不能撤 / 走的是哪条渲染入口 / 发出去的第 6 个
-  //   字节是几),而不是"没抛"。替身:window.addEventListener(抓处理器)、按 id 惰性建的假 DOM、
-  //   记账的渲染器、记账的 fetch、记账的 Io.encodeMap。
   {
     const s16 = { add: globalThis.addEventListener, doc: globalThis.document,
                   r: Editor.app.r, map: Editor.app.map, canvas: Editor.app.canvas,
@@ -3102,7 +2874,6 @@ function countNonZero(map, L) {
       //   "没存过状态时的默认"那条断言量的是**替身**的默认,而不是页面的默认。
       el16('opt-compress').checked = true;
 
-      // ════ ⑯a 镜像(规格 §4.4;热键 H/V 是自选的,规格 §4.8 的表里没有镜像键)════
       eq(Editor.commandFor({ key: 'h' }), 'mirror:h', '★★ H → 水平镜像(规格 §4.4 的选框要有镜像)');
       eq(Editor.commandFor({ key: 'H' }), 'mirror:h', '★ 大写 H 同样(判据一律小写化)');
       eq(Editor.commandFor({ key: 'v' }), 'mirror:v', '★★ V → 垂直镜像');
@@ -3164,10 +2935,7 @@ function countNonZero(map, L) {
       ok(status16.indexOf('没变') >= 0,
          '★ 说了一句"没变"(不许静默;实得 "' + status16 + '")');
       eq(await Editor.doUndo(), null, '★★ 内容没变的那次也没进历史(空差量进历史 = 撤销按下去像没反应)');
-      errs16.length = 0;      // ★ 上面那一次是**故意**触发的非法轴:清了它,末尾那条"一条错都没进过"才有牙齿
-
-      // ════ ⑯b 改尺寸(审计 A10;★ 这是 `resizeMap` / `wholeDiff` / `whole` 历史分支的
-      //      生产入口)════
+      errs16.length = 0;
       const mz16 = Editor.createEmptyMap('z16', 4, 3);
       const dz16 = mz16.layers[Core.LAYER_SCENE].desc;
       for (let i = 0; i < 4; i++) dz16[i] = Core.neutralDesc(6);      // 格(0,0) 有内容
@@ -3206,10 +2974,6 @@ function countNonZero(map, L) {
          'before === after ⇒ 撤销什么都不做');
       eq(Editor.app.map.players.length, 2, '★★ 出生点也跟着回来了(whole 快照里带着它们)');
       ok(calls16.indexOf('invalidateAll') >= 0, '★ 撤销 whole 也要重挂画布(不是 setMap:不重置视野与选区)');
-      // ★★ 2026-09-22 复核 Minor 9:撤销一次改尺寸之后,那两个框也必须跟着翻 ——
-      //    `applyEntry` 的 whole 分支调 `refreshStatus()`(`ui.js:976-980`)就是为这件事写的,
-      //    而此前只断言了 `subCols/subRows` ⇒ **删掉那一句照样全绿**(框里留着 2×3,
-      //    再按一次「应用尺寸」就把图又改回 2×3,而用户以为尺寸没变)。
       eq([el16('size-w').value, el16('size-h').value], ['4', '3'],
          '★★★ 撤销之后两个框回显的是**退回去**的尺寸(4×3)—— 只改渲染不碰面板的实现会在这里红' +
          '(实得 ' + JSON.stringify([el16('size-w').value, el16('size-h').value]) + ')');
@@ -3229,12 +2993,6 @@ function countNonZero(map, L) {
          '★ 钳制结果**回显**到框里(否则用户以为它接受了 99999)');
       ok(status16.indexOf('没有越界项') >= 0,
          '★ 放大不丢任何东西时也照实说(实得 "' + status16 + '")');
-      // ── ★★★ 2026-09-22 复核 Minor 6:"清空 / 垃圾"输入 = **这一项不改** ──
-      // ★★ 旧行为(上一版这条断言钉住的正是它):`Core.clampMapSize('')` 回落到
-      //    `DEFAULT_CELLS_W/H = 125×75` —— 那是**造新图**的语义。在"改尺寸"这条路上
-      //    它是一次**静默缩图**:把宽那个框删空(真浏览器里 `<input type=number>` 读回来
-      //    就是空串)按「应用尺寸」,400 宽的图当场变成 125 宽,用户以为自己什么都没输。
-      // ★ 先把历史清空:下面那条"不进历史"的断言只有在**本来就没有**待撤销条目时才有牙齿。
       await drain16();
       eq(await Editor.doUndo(), null, '⑯b 前提:历史已清空(下面"清空输入不进历史"才有牙齿)');
       eq([Core.cellsWOf(Editor.app.map), Core.cellsHOf(Editor.app.map)], [4, 3],
@@ -3253,7 +3011,6 @@ function countNonZero(map, L) {
          status16 + '")');
       eq(await Editor.doUndo(), null,
          '★★ 清空输入的那一次**什么都没改** ⇒ 也不进历史(空条目进历史 = 撤销按下去像没反应)');
-      // ── ★★ 一半给数、一半空着:给数的那一项照旧生效(闸 1 的"钳制不回滚"没被这次改动碰坏)──
       el16('size-w').value = '5';
       el16('size-h').value = '';
       el16('btn-resize').click();
@@ -3268,7 +3025,6 @@ function countNonZero(map, L) {
       ok(status16.indexOf('尺寸没变') >= 0, '★ 尺寸没变时说了一句(实得 "' + status16 + '")');
       eq(await Editor.doUndo(), null, '★★ 尺寸没变的那次**不进历史**(空条目进历史 = 撤销按下去像没反应)');
 
-      // ════ ⑯c 压缩开关(规格 §3.5)════
       ok(!!Editor.encodeForWrite && Editor.DEFAULT_COMPRESS === true,
          '★ 默认**勾上**(规格 §3.5:导出面板上的「压缩」默认勾上)');
       eq(Editor.optCompress(), true, '★ 控件不在/没改过时按默认走');
@@ -3326,8 +3082,6 @@ function countNonZero(map, L) {
         setItem: function (k, v) { ls16[k] = String(v); },
         removeItem: function (k) { delete ls16[k]; },
       };
-      // ★ 只把"延迟"改成 0(不是"立刻同步跑"):立刻跑会让 io.js 自己的超时定时器在**应答
-      //   之前**触发(那个 codec 在 node 里是同步替身,但定时器是真的)。
       globalThis.setTimeout = function (fn) { return realTimer16(fn, 0); };
       try {
         el16('opt-compress').checked = false;
@@ -3347,11 +3101,7 @@ function countNonZero(map, L) {
       eq(el16('opt-compress').checked, false,
          '★★★ applyUiState 把它按回界面(勾选框与状态一致)');
       Editor.app.uist = null;
-      el16('opt-compress').checked = true;         // 还原成默认,别把状态漂到后面的断言里
-
-      // ════ ⑯d 空格拖拽平移(规格 §4.8)════
-      // ★★ "不许滚页面"这一条的判据只能是 `preventDefault`:空格是浏览器的向下翻页键,
-      //    node 里没有真的滚动可观测 —— 拦下默认行为就是"不滚"的**全部**内容。
+      el16('opt-compress').checked = true;
       const evSpace16 = press16(' ', { tagName: 'BODY' });
       ok(evSpace16.defaultPrevented === true,
          '★★★ 页面上按下空格被**认领**并拦下默认行为(不拦 = 按空格准备拖拽时右边栏先滚一屏)');
@@ -3387,7 +3137,6 @@ function countNonZero(map, L) {
          '★★★ 失焦之后空格状态被清掉(不清的话回来一拖就莫名其妙地平移,而用户以为自己早松手了)');
       Editor.app.st.stroke = null;
       Editor.app.canvas.onpointerup({ button: 0, clientX: 10, clientY: 20 });
-      // ── ⑯d⑤ 中键 / Alt 那两条老路不许被这次改动碰坏(评审的"改一处忘一处"方向)──
       Editor.app.canvas.onpointerdown({ button: 1, altKey: false, clientX: 1, clientY: 2, pointerId: 1 });
       ok(!!Editor.app.st.panning, '★ (对照)中键拖拽照旧平移');
       Editor.app.canvas.onpointerup({ button: 1, clientX: 1, clientY: 2 });
@@ -3413,13 +3162,6 @@ function countNonZero(map, L) {
     }
   }
 
-  // ==== 相位 ⑰ ★★★ 2026-09-22 复核那一批修复:四处"看起来没事、其实静默出错"的路 ====
-  // ★★ 为什么必须另立一相:这四条各自都是**不报错**的坏 —— 每一条在旧实现下都"跑得通、
-  //    一行红字都没有",而代价分别是**丢掉一份原文**(C1)、**把改动写到接缝另一边**(I1)、
-  //    **一个卡住的修饰键**(Minor 1)、**把退路文件当地图打开并覆盖**(Minor 2)。
-  //    ★ 判据一律取**副作用**(PUT 的 body 字节 / 选区还在不在 / 拖拽起的是平移还是落笔 /
-  //      库列表里有没有那一行),而不是"没抛"。
-  // ★ 替身口径与 ⑯ 同款:按 id 惰性建的假 DOM、记账的渲染器、记账的 fetch、记账的 confirm。
   {
     const s17 = { add: globalThis.addEventListener, doc: globalThis.document,
                   r: Editor.app.r, map: Editor.app.map, canvas: Editor.app.canvas,
@@ -3538,14 +3280,7 @@ function countNonZero(map, L) {
     };
     try {
       Editor.buildPanels();                        // ← 真建一遍面板(尺寸按钮 / 库列表委托都得真接上)
-      Editor.installInteraction();                 // ← 真装一遍(空格修饰键那一对处理器)
-
-      // ════ ⑰a ★★★ 一次**失败**的打开不许污染 `app.raw`(复核 C1)════
-      // ★★ 复现的就是评审跑出来的那条路:打开 A.cyrm(v3 文本,`app.raw` = A 的原文)→
-      //    库列表里点一个**损坏**的 B.cyrm(解码拒绝,编辑器照实报出来)→ 不重新打开任何东西,
-      //    直接 Ctrl+S。旧实现里 `app.raw` 在**解码之前**就被赋成了 B 的字节,于是:
-      //      ① 原文备份写的是 `A.v3.bak`(名字取自 `app.name`,那还是 A),**内容是 B 的字节**;
-      //      ② 紧接着 `A.cyrm` 被写成 v4 ⇒ **A 的 v3 原文消失**,而磁盘上那份"退路"看着挺像回事。
+      Editor.installInteraction();
       await Editor.openMap('A.cyrm');
       eq([Editor.app.name, Editor.app.sourceFormat], ['A.cyrm', 'v3'],
          '⑰a 前提:A 打开成功且是 v3 文本(sourceFormat = v3 是"要写原文备份"的判据)');
@@ -3649,7 +3384,7 @@ function countNonZero(map, L) {
       await Editor.doUndo();
       eq([Core.cellsWOf(Editor.app.map), Core.cellsHOf(Editor.app.map)], [16, 16],
          '⑰b② 前提:撤销把尺寸退回 16×16');
-      sel17 = { x: 40, y: 0, w: 8, h: 4 };        // 又框了一块(这次是在 16×16 的图上)
+      sel17 = { x: 40, y: 0, w: 8, h: 4 };
       status17 = '';
       await Editor.doRedo();                      // ← 重做那次缩小:框又装不下了
       eq([Core.cellsWOf(Editor.app.map), Core.cellsHOf(Editor.app.map)], [8, 16],
@@ -3698,10 +3433,6 @@ function countNonZero(map, L) {
          '★★ 而「另存为」照旧写得出去(拒的只是"就地覆盖退路";实得 ' +
          JSON.stringify(puts17.map(function (p) { return p.url; })) + ')');
 
-      // ════ ⑰d ★★ 一个卡不住的空格修饰键(复核 Minor 1)════
-      // ★★ 原先 keyup 的早退("焦点在输入控件里 ⇒ 不拦")排在**清位之前**,于是这条极普通的
-      //    手顺能把平移修饰键**永久卡住**:按住空格 → 还按着时点进一个输入框 → 松手(keyup 的
-      //    target 是那个输入框 ⇒ 早退)⇒ `spaceDown` 仍是 true ⇒ 此后**每一次左键拖拽都变平移**。
       const press17 = function (type, key, target) {
         const ev = { key: key, target: target, ctrl: false, meta: false, shift: false,
                      altKey: false, defaultPrevented: false };
@@ -3722,7 +3453,6 @@ function countNonZero(map, L) {
          '用户以为自己早松手了,而每一次拖拽都在平移画布)');
       Editor.app.st.stroke = null;                // 那一下起的是普通笔画,清掉
       Editor.app.canvas.onpointerup({ button: 0, clientX: 10, clientY: 20 });
-      // ── 反向对照:焦点在 body 上时 keyup 照旧 preventDefault(那一半不许被这次改动碰坏)──
       press17('keydown', ' ', BODY17);
       const evUpBody17 = press17('keyup', ' ', BODY17);
       ok(evUpBody17.defaultPrevented === true,

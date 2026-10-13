@@ -1,0 +1,659 @@
+{
+  "date": "2026-10-13",
+  "engine": "Godot 4.7.1 stable",
+  "platform": "Windows-11-10.0.26100-SP0",
+  "logical_cpus": 24,
+  "seed": 123456,
+  "measurement": "Real match trace replay using binary delta and ENet Zstd. Replay ACK age: three snapshot intervals (100 ms). All peers ENet sent statistics; one sample per count.",
+  "benchmarks": [
+    {
+      "baseline": {
+        "application_bytes": 483412,
+        "decoded_states": 0,
+        "elapsed_ms": 85.172,
+        "frame_dispatch_mean_us": 280.923076923077,
+        "frame_dispatch_p95_us": 1217,
+        "messages_received": 2,
+        "missing_bases": 0,
+        "udp_packets": 386.0,
+        "udp_payload_bytes": 52834.0,
+        "process_cpu_ms": 0.0,
+        "one_core_cpu_percent": 0.0
+      },
+      "battle": {
+        "application_bytes": 451355,
+        "decoded_states": 846,
+        "elapsed_ms": 16266.184,
+        "frame_dispatch_mean_us": 372.753894080997,
+        "frame_dispatch_p95_us": 558,
+        "messages_received": 2225,
+        "missing_bases": 0,
+        "udp_packets": 2485.0,
+        "udp_payload_bytes": 273120.0,
+        "process_cpu_ms": 1109.375,
+        "one_core_cpu_percent": 6.8201306464995115
+      },
+      "compression": "zstd",
+      "count": 2,
+      "delta_ack": "fixed three snapshot intervals (100 ms), replay only",
+      "layout": "binary_delta",
+      "trace_sha256": "f38fbb4369444beccea30f4fd91b8edc34a6dc47e7d9ea46b148a137ab218da3"
+    },
+    {
+      "baseline": {
+        "application_bytes": 1453692,
+        "decoded_states": 0,
+        "elapsed_ms": 249.96,
+        "frame_dispatch_mean_us": 885.125,
+        "frame_dispatch_p95_us": 5678,
+        "messages_received": 6,
+        "missing_bases": 0,
+        "udp_packets": 1500.0,
+        "udp_payload_bytes": 197051.0,
+        "process_cpu_ms": 78.125,
+        "one_core_cpu_percent": 31.25500080012802
+      },
+      "battle": {
+        "application_bytes": 2238946,
+        "decoded_states": 2550,
+        "elapsed_ms": 20882.664,
+        "frame_dispatch_mean_us": 924.891129032258,
+        "frame_dispatch_p95_us": 1526,
+        "messages_received": 9205,
+        "missing_bases": 0,
+        "udp_packets": 10346.0,
+        "udp_payload_bytes": 1262217.0,
+        "process_cpu_ms": 2390.625,
+        "one_core_cpu_percent": 11.447892855049528
+      },
+      "compression": "zstd",
+      "count": 6,
+      "delta_ack": "fixed three snapshot intervals (100 ms), replay only",
+      "layout": "binary_delta",
+      "trace_sha256": "7cf6a19a75430dc1f97c6dcfd143f7e17db5de920223ad801058aa4daca1d5d5"
+    },
+    {
+      "baseline": {
+        "application_bytes": 1940128,
+        "decoded_states": 0,
+        "elapsed_ms": 249.915,
+        "frame_dispatch_mean_us": 1225.875,
+        "frame_dispatch_p95_us": 7865,
+        "messages_received": 8,
+        "missing_bases": 0,
+        "udp_packets": 2003.0,
+        "udp_payload_bytes": 269644.0,
+        "process_cpu_ms": 31.25,
+        "one_core_cpu_percent": 12.504251445491468
+      },
+      "battle": {
+        "application_bytes": 3926234,
+        "decoded_states": 3416,
+        "elapsed_ms": 28015.734,
+        "frame_dispatch_mean_us": 1116.22901678657,
+        "frame_dispatch_p95_us": 2207,
+        "messages_received": 17589,
+        "missing_bases": 0,
+        "udp_packets": 20540.0,
+        "udp_payload_bytes": 2329683.0,
+        "process_cpu_ms": 3781.25,
+        "one_core_cpu_percent": 13.496880003215336
+      },
+      "compression": "zstd",
+      "count": 8,
+      "delta_ack": "fixed three snapshot intervals (100 ms), replay only",
+      "layout": "binary_delta",
+      "trace_sha256": "3286e6e8719ccb6b702892188209c6b3007e6a4c3fc76c7e4bae58c99e5ebf43"
+    }
+  ],
+  "regression": {
+    "unit": {
+      "passed": 60,
+      "total": 61,
+      "failures": [
+        {
+          "test": "elite_drop_probe",
+          "ok": false,
+          "exit": 3221225477
+        }
+      ]
+    },
+    "visual": {
+      "passed": 8,
+      "total": 8,
+      "failures": []
+    },
+    "network": {
+      "passed": 7,
+      "total": 7,
+      "failures": []
+    }
+  },
+  "matches": [
+    {
+      "count": 2,
+      "rtt": 0,
+      "jitter": 0,
+      "loss": 0,
+      "drop": true,
+      "compression": "zstd",
+      "failures": [],
+      "playback": [
+        {
+          "extrapolation_seconds": 0.732874333333333,
+          "frozen_seconds": 1.06695544444444,
+          "max_buffer_ticks": 10.91374,
+          "max_samples": 7,
+          "min_buffer_ticks": -6.0,
+          "no_next_seconds": 1.79982977777778,
+          "repositions": 21,
+          "seconds": 19.0702646666671
+        },
+        {
+          "extrapolation_seconds": 2.80041155555555,
+          "frozen_seconds": 1.192345,
+          "max_buffer_ticks": 11.0,
+          "max_samples": 6,
+          "min_buffer_ticks": -6.0,
+          "no_next_seconds": 3.99275655555554,
+          "repositions": 23,
+          "seconds": 18.1091950000004
+        }
+      ],
+      "exits": [
+        null,
+        0,
+        0
+      ],
+      "stall": {
+        "buffer_ms": 750,
+        "blackout_ms": 250,
+        "packets": [
+          {
+            "buffered": 21,
+            "lost": 24
+          },
+          {
+            "buffered": 27,
+            "lost": 23
+          }
+        ]
+      }
+    },
+    {
+      "count": 6,
+      "rtt": 80,
+      "jitter": 15,
+      "loss": 0.05,
+      "drop": true,
+      "compression": "zstd",
+      "failures": [],
+      "playback": [
+        {
+          "extrapolation_seconds": 0.833348111111111,
+          "frozen_seconds": 3.60515199999999,
+          "max_buffer_ticks": 8.0,
+          "max_samples": 5,
+          "min_buffer_ticks": -6.0,
+          "no_next_seconds": 4.4385001111111,
+          "repositions": 20,
+          "seconds": 27.1130042222219
+        },
+        {
+          "extrapolation_seconds": 1.66952255555556,
+          "frozen_seconds": 15.5205282222225,
+          "max_buffer_ticks": 9.77583333333331,
+          "max_samples": 6,
+          "min_buffer_ticks": -6.0,
+          "no_next_seconds": 17.1900507777781,
+          "repositions": 21,
+          "seconds": 25.2920677777785
+        },
+        {
+          "extrapolation_seconds": 1.65572477777778,
+          "frozen_seconds": 3.46653533333332,
+          "max_buffer_ticks": 10.8207672,
+          "max_samples": 7,
+          "min_buffer_ticks": -6.0,
+          "no_next_seconds": 5.12226011111109,
+          "repositions": 20,
+          "seconds": 27.1745722222219
+        },
+        {
+          "extrapolation_seconds": 1.3439367777633,
+          "frozen_seconds": 3.77977788888888,
+          "max_buffer_ticks": 9.68705333333338,
+          "max_samples": 6,
+          "min_buffer_ticks": -6.0,
+          "no_next_seconds": 5.12371466665217,
+          "repositions": 20,
+          "seconds": 27.2509315555553
+        },
+        {
+          "extrapolation_seconds": 2.03342211111111,
+          "frozen_seconds": 3.98865533333332,
+          "max_buffer_ticks": 10.0143333333333,
+          "max_samples": 6,
+          "min_buffer_ticks": -6.0,
+          "no_next_seconds": 6.02207744444443,
+          "repositions": 21,
+          "seconds": 27.3232196666664
+        },
+        {
+          "extrapolation_seconds": 1.63330166666667,
+          "frozen_seconds": 4.41806899999999,
+          "max_buffer_ticks": 10.0,
+          "max_samples": 6,
+          "min_buffer_ticks": -6.0,
+          "no_next_seconds": 6.05137066666665,
+          "repositions": 20,
+          "seconds": 27.2557787777775
+        }
+      ],
+      "exits": [
+        null,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "stall": {
+        "buffer_ms": 750,
+        "blackout_ms": 250,
+        "packets": [
+          {
+            "buffered": 66,
+            "lost": 26
+          },
+          {
+            "buffered": 66,
+            "lost": 27
+          },
+          {
+            "buffered": 63,
+            "lost": 25
+          },
+          {
+            "buffered": 65,
+            "lost": 28
+          },
+          {
+            "buffered": 63,
+            "lost": 26
+          },
+          {
+            "buffered": 63,
+            "lost": 24
+          }
+        ]
+      }
+    },
+    {
+      "count": 8,
+      "rtt": 150,
+      "jitter": 25,
+      "loss": 0.05,
+      "drop": true,
+      "compression": "zstd",
+      "failures": [],
+      "playback": [
+        {
+          "extrapolation_seconds": 2.225767,
+          "frozen_seconds": 3.67486399999999,
+          "max_buffer_ticks": 10.0007200000002,
+          "max_samples": 6,
+          "min_buffer_ticks": -6.0,
+          "no_next_seconds": 5.90063099999997,
+          "repositions": 20,
+          "seconds": 23.4648456666673
+        },
+        {
+          "extrapolation_seconds": 1.50143233333333,
+          "frozen_seconds": 5.26605166666666,
+          "max_buffer_ticks": 11.00004,
+          "max_samples": 7,
+          "min_buffer_ticks": -6.0,
+          "no_next_seconds": 6.76748399999998,
+          "repositions": 23,
+          "seconds": 20.2754414444445
+        },
+        {
+          "extrapolation_seconds": 1.95634533333333,
+          "frozen_seconds": 3.18540166666666,
+          "max_buffer_ticks": 11.0,
+          "max_samples": 5,
+          "min_buffer_ticks": -6.0,
+          "no_next_seconds": 5.14174699999999,
+          "repositions": 23,
+          "seconds": 23.3817067777777
+        },
+        {
+          "extrapolation_seconds": 2.448123,
+          "frozen_seconds": 2.576969,
+          "max_buffer_ticks": 11.0400384,
+          "max_samples": 7,
+          "min_buffer_ticks": -6.0,
+          "no_next_seconds": 5.02509199999998,
+          "repositions": 21,
+          "seconds": 23.4459713333332
+        },
+        {
+          "extrapolation_seconds": 0.865456333333332,
+          "frozen_seconds": 6.08801799999997,
+          "max_buffer_ticks": 9.92112320000024,
+          "max_samples": 6,
+          "min_buffer_ticks": -6.0,
+          "no_next_seconds": 6.95347433333329,
+          "repositions": 19,
+          "seconds": 23.3773406666673
+        },
+        {
+          "extrapolation_seconds": 0.782944666666666,
+          "frozen_seconds": 3.68494033333332,
+          "max_buffer_ticks": 11.0000399999999,
+          "max_samples": 5,
+          "min_buffer_ticks": -6.0,
+          "no_next_seconds": 4.46788499999999,
+          "repositions": 20,
+          "seconds": 22.7665340000006
+        },
+        {
+          "extrapolation_seconds": 0.643827333333333,
+          "frozen_seconds": 7.4892113333333,
+          "max_buffer_ticks": 9.00004000000001,
+          "max_samples": 6,
+          "min_buffer_ticks": -6.0,
+          "no_next_seconds": 8.13303866666663,
+          "repositions": 19,
+          "seconds": 23.6588242222221
+        },
+        {
+          "extrapolation_seconds": 0.977863000000001,
+          "frozen_seconds": 3.44987399999999,
+          "max_buffer_ticks": 11.0,
+          "max_samples": 6,
+          "min_buffer_ticks": -6.0,
+          "no_next_seconds": 4.42773699999999,
+          "repositions": 19,
+          "seconds": 23.3015719999999
+        }
+      ],
+      "exits": [
+        null,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "stall": {
+        "buffer_ms": 750,
+        "blackout_ms": 250,
+        "packets": [
+          {
+            "buffered": 64,
+            "lost": 27
+          },
+          {
+            "buffered": 63,
+            "lost": 28
+          },
+          {
+            "buffered": 49,
+            "lost": 24
+          },
+          {
+            "buffered": 65,
+            "lost": 26
+          },
+          {
+            "buffered": 67,
+            "lost": 27
+          },
+          {
+            "buffered": 59,
+            "lost": 26
+          },
+          {
+            "buffered": 66,
+            "lost": 26
+          },
+          {
+            "buffered": 70,
+            "lost": 28
+          }
+        ]
+      }
+    },
+    {
+      "count": 2,
+      "rtt": 0,
+      "jitter": 0,
+      "loss": 0,
+      "drop": true,
+      "compression": "zstd",
+      "failures": [],
+      "playback": [
+        {
+          "extrapolation_seconds": 0.447061111111112,
+          "frozen_seconds": 0.688798444444445,
+          "max_buffer_ticks": 6.68059999999923,
+          "max_samples": 5,
+          "min_buffer_ticks": -6.0,
+          "no_next_seconds": 1.13585955555556,
+          "repositions": 16,
+          "seconds": 32.0952491111106
+        },
+        {
+          "extrapolation_seconds": 1.47011244444445,
+          "frozen_seconds": 0.342689555555556,
+          "max_buffer_ticks": 5.73964666666279,
+          "max_samples": 4,
+          "min_buffer_ticks": -6.0,
+          "no_next_seconds": 1.812802,
+          "repositions": 18,
+          "seconds": 31.9679366666662
+        }
+      ],
+      "exits": [
+        null,
+        0,
+        0
+      ],
+      "exported_server": "D:\\Codes\\ChatGPT\\cyr\\the-cyancular-ruins\\.test_logs\\windows_export\\Cyancular Ruins Server.exe"
+    }
+  ],
+  "behavior": {
+    "2_0_0_zstd_stall": {
+      "max_queue": 10,
+      "clients": [
+        "MATCH CLIENT OK index=0 states=579 baselines=2 haste=true rewind=true error=0.000 result=true same_room=true",
+        "MATCH CLIENT OK index=1 states=496 baselines=3 haste=true rewind=true error=0.000 result=true same_room=true"
+      ]
+    },
+    "6_80_0.05_zstd_stall": {
+      "max_queue": 18,
+      "clients": [
+        "MATCH CLIENT OK index=0 states=767 baselines=2 haste=true rewind=true error=0.000 result=true same_room=true",
+        "MATCH CLIENT OK index=1 states=385 baselines=3 haste=true rewind=true error=0.000 result=true same_room=true",
+        "MATCH CLIENT OK index=2 states=785 baselines=2 haste=true rewind=true error=0.000 result=true same_room=true",
+        "MATCH CLIENT OK index=3 states=780 baselines=2 haste=true rewind=true error=0.000 result=true same_room=true",
+        "MATCH CLIENT OK index=4 states=774 baselines=2 haste=true rewind=true error=0.000 result=true same_room=true",
+        "MATCH CLIENT OK index=5 states=778 baselines=2 haste=true rewind=true error=0.000 result=true same_room=true"
+      ]
+    },
+    "8_150_0.05_zstd_stall": {
+      "max_queue": 19,
+      "clients": [
+        "MATCH CLIENT OK index=0 states=606 baselines=2 haste=true rewind=true error=0.000 result=true same_room=true",
+        "MATCH CLIENT OK index=1 states=461 baselines=3 haste=true rewind=true error=0.000 result=true same_room=true",
+        "MATCH CLIENT OK index=2 states=526 baselines=2 haste=true rewind=true error=0.000 result=true same_room=true",
+        "MATCH CLIENT OK index=3 states=621 baselines=2 haste=true rewind=true error=0.000 result=true same_room=true",
+        "MATCH CLIENT OK index=4 states=600 baselines=2 haste=true rewind=true error=0.000 result=true same_room=true",
+        "MATCH CLIENT OK index=5 states=593 baselines=2 haste=true rewind=true error=0.000 result=true same_room=true",
+        "MATCH CLIENT OK index=6 states=620 baselines=2 haste=true rewind=true error=0.000 result=true same_room=true",
+        "MATCH CLIENT OK index=7 states=623 baselines=2 haste=true rewind=true error=0.000 result=true same_room=true"
+      ]
+    }
+  },
+  "easytier": [
+    {
+      "mode": "direct",
+      "route": {
+        "cidr": "10.126.126.1/24",
+        "ipv4": "10.126.126.1",
+        "hostname": "cyr-host-55383",
+        "cost": "p2p",
+        "lat_ms": "0.06",
+        "loss_rate": "0.0%",
+        "rx_bytes": "149.48 kB",
+        "tx_bytes": "8.87 kB",
+        "tunnel_proto": "udp",
+        "nat_type": "Unknown",
+        "id": "3149969539",
+        "version": "2.7.0-f8a45ccc"
+      },
+      "input": true,
+      "state": true,
+      "reliable_bytes": 262144,
+      "reconnect": true,
+      "room_code": "00001234"
+    },
+    {
+      "mode": "relay",
+      "route": {
+        "cidr": "10.126.126.1/24",
+        "ipv4": "10.126.126.1",
+        "hostname": "cyr-host-56969",
+        "cost": "relay(2)",
+        "lat_ms": "2.00",
+        "loss_rate": "0.0%",
+        "rx_bytes": "0 B",
+        "tx_bytes": "0 B",
+        "tunnel_proto": "",
+        "nat_type": "Unknown",
+        "id": "2315541271",
+        "version": "2.7.0-f8a45ccc"
+      },
+      "input": true,
+      "state": true,
+      "reliable_bytes": 262144,
+      "reconnect": true,
+      "room_code": "00001234"
+    }
+  ],
+  "windows_export": {
+    "godot": "4.7.1",
+    "easytier": "easytier-core 2.7.0-f8a45ccc",
+    "runtime_files": [
+      "Packet.dll",
+      "WinDivert64.sys",
+      "easytier-cli.exe",
+      "easytier-core.exe",
+      "relay.txt",
+      "wintun.dll"
+    ],
+    "smoke": {
+      "The Cyancular Ruins.exe": {
+        "exit": 0,
+        "output": "Godot Engine v4.7.1.stable.official.a13da4feb - https://godotengine.org\n\n[registry] weapons=6 ids=[1, 2, 3, 4, 5, 6]\n"
+      },
+      "Cyancular Ruins Server.exe": {
+        "exit": 0,
+        "output": "Godot Engine v4.7.1.stable.official.a13da4feb - https://godotengine.org\n\nSERVER READY port=60675\n"
+      }
+    },
+    "third_party_notices": "THIRD_PARTY_NOTICES.txt"
+  },
+  "references": [
+    "https://github.com/id-Software/Quake-III-Arena/blob/master/code/qcommon/msg.c",
+    "https://gafferongames.com/post/snapshot_compression/",
+    "https://github.com/teeworlds/teeworlds/blob/master/src/game/server/entities/projectile.cpp",
+    "https://docs.godotengine.org/en/stable/classes/class_streampeer.html",
+    "https://docs.godotengine.org/en/stable/classes/class_characterbody2d.html#class-characterbody2d-method-move-and-slide",
+    "https://raw.githubusercontent.com/godotengine/godot/4.7/scene/2d/physics/character_body_2d.cpp",
+    "https://docs.godotengine.org/en/stable/classes/class_engine.html#class-engine-method-get-physics-interpolation-fraction"
+  ],
+  "known_limits": [
+    "elite_drop_probe completes gameplay assertions but does not exit normally; counted as failed.",
+    "Long freezes remain under loss/stall/terrain loading; convergence and match completion are not playback-quality acceptance.",
+    "EasyTier tests are local direct/forced local relay, not cross-ISP public NAT.",
+    "Native unreliable delivery counts and reliable retransmissions vary in a single-run benchmark."
+  ],
+  "movement_verification": {
+    "date": "2026-10-13",
+    "method": "Identical constant movement input isolates render-delta replay errors from legitimate corrections due to late input. Real ENet, ActorStep, PvpMatchClient and Player. Exercises 0.96/1.02 prediction clock rates.",
+    "fps": "30/144/240 are configured caps, not guaranteed measured frame rates; see average_fps.",
+    "runs": [
+      [
+        {
+          "fps_limit": 30,
+          "corrections": 73,
+          "max_correction_px": 0.0,
+          "render_samples": 74,
+          "stationary_frames": 0,
+          "average_fps": 29.77,
+          "exit": 0
+        },
+        {
+          "fps_limit": 144,
+          "corrections": 74,
+          "max_correction_px": 0.0,
+          "render_samples": 348,
+          "stationary_frames": 0,
+          "average_fps": 139.18,
+          "exit": 0
+        },
+        {
+          "fps_limit": 240,
+          "corrections": 74,
+          "max_correction_px": 0.0,
+          "render_samples": 349,
+          "stationary_frames": 0,
+          "average_fps": 139.72,
+          "exit": 0
+        }
+      ],
+      [
+        {
+          "fps_limit": 30,
+          "corrections": 73,
+          "max_correction_px": 0.0,
+          "render_samples": 74,
+          "stationary_frames": 0,
+          "average_fps": 29.81,
+          "exit": 0
+        },
+        {
+          "fps_limit": 144,
+          "corrections": 74,
+          "max_correction_px": 0.0,
+          "render_samples": 349,
+          "stationary_frames": 0,
+          "average_fps": 139.36,
+          "exit": 0
+        },
+        {
+          "fps_limit": 240,
+          "corrections": 74,
+          "max_correction_px": 0.0,
+          "render_samples": 350,
+          "stationary_frames": 0,
+          "average_fps": 140.04,
+          "exit": 0
+        }
+      ]
+    ],
+    "real_matches": "2/6/8 players include camera-follow assertions, reconnect, backlog/blackout and same-tick convergence. Exported server checks normal rounds and reconnect.",
+    "implementation": [
+      "Latest authority state applied at the next physics tick.",
+      "Visual correction separated from sampling of predicted simulation time.",
+      "Camera follows Visuals after local and remote presentation updates."
+    ]
+  }
+}
