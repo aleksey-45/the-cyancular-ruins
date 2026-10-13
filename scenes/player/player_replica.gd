@@ -50,7 +50,7 @@ const SNAP_DIST := 128.0
 
 # ── playout 缓冲插值的地基(2026-10-09)──
 # 位置不再"朝最新目标追赶",而是**在固定 playout 之后的时刻做夹逼插值**:
-#   · `PLAYOUT_TICKS` = 故意落后服务器多少 tick(Gaffer:缓冲 = 3× 发送间隔 ⇒ 60Hz 下 **50ms**);
+#   · `PLAYOUT_TICKS` = 故意落后服务器多少 tick(Gaffer:缓冲 = 3× 发送间隔;**现取 4 tick ≈ 67ms**,系数是扫档实测定的);
 #   · `place_history` = 每个副本一份的位置历史环(元素 `{tick:int, pos:Vector2}`,`pos` 是 **canonical**);
 #   · `_clock` = 播放时钟(`PlayoutClock`),回答"此刻渲染服务器历史的哪一 tick"。
 # ★ 存 **canonical**、不存锚过的位置:锚要跟着本地玩家的副本空间走,存锚过的会在跨接缝时**整段作废**。
@@ -386,7 +386,7 @@ func _process(delta: float) -> void:
 		else:
 			# **按播放时钟取样**(夹逼线性插值,2026-10-09 取代"朝最新目标指数追赶"):
 			# 渲染的是 `render_tick` 那一刻的历史位置 —— 延迟是**选出来的常量**(PLAYOUT_TICKS
-			# = 3 tick = 50ms),不再是低通滤波器涌现出来的 `v/k`(实测 22.6~37.2px)。
+			# = 4 tick ≈ 67ms),不再是低通滤波器涌现出来的 `v/k`(实测 22.6~37.2px)。
 			# ★ underrun(缓冲被吃穿)与"比最老还老"都在 `_sample_history` 里**冻结**。
 			global_position = _sample_history(_clock.render_tick)
 			# 渲染位置归到本地玩家(相机)最近副本:确保渲染在可见副本,不留在远副本。
