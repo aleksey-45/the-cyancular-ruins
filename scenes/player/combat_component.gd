@@ -1,7 +1,7 @@
 class_name CombatComponent
 extends Node
 
-# 战斗子系统：负责管理生命值、受击无敌帧、击退向量与倒地状态。hp_changed 信号由根节点转发给 HUD。
+# 战斗子系统：负责生命值、受击无敌帧、击退向量与倒地状态。HUD 由 Player.present_tick 更新。
 # 由根节点 player.gd 在物理帧中驱动更新。
 
 # PvP 对战模式下取消常规受击无敌帧，确保多发弹丸（如霰弹枪散布）能够分别准确结算伤害。
@@ -9,9 +9,8 @@ extends Node
 static var pvp_arena := false
 
 
-signal hp_changed(current: int, max: int)
 signal went_down   # 倒地瞬间触发，根节点接收后调用 weapons.cancel_aim 取消瞄准
-signal took_hit(source_pos: Vector2, damage: int)  # 受到有效伤害（服务端 MatchHost 接收后广播受击反馈）
+signal took_hit(source_pos: Vector2, damage: int)  # 受到有效伤害（服务端 AuthorityWorld 接收后广播受击反馈）
 
 var max_hp: int = PlayerParams.player_max_hp
 var hp: int = PlayerParams.player_max_hp
@@ -29,9 +28,8 @@ func _ready() -> void:
 func is_downed() -> bool:
 	return downed
 
-# 无敌帧时间递减与闪烁表现，每物理帧在移动逻辑执行前调用。
-func update_iframe_blink(delta: float) -> void:
-	iframes = maxf(iframes - delta, 0.0)
+# 无敌帧由共享步进递减；闪烁只在最终状态确定后更新。
+func present() -> void:
 	if iframes > 0.0:
 		body.modulate.a = 0.4 if int(iframes * IFRAME_BLINK_RATE) % 2 == 0 else 1.0
 	else:
@@ -42,11 +40,9 @@ func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, kn
 	# PvP 模式取消无敌帧阻挡（pvp_arena），但仍保证每颗弹丸独立结算单次伤害
 	if downed or (not pvp_arena and iframes > 0.0 and not ignore_iframes):
 		return
-	# 受击打断冲刺状态，防止后续冲刺速度覆盖本次击退速度
 	body.cancel_charge()
 	hp -= damage
 	took_hit.emit(source_pos, damage)
-	Sfx.play("hurt")
 	iframes = PlayerParams.iframes_time
 	# 击退方向采用环面最短位移向量计算，而非简单绝对坐标相减：
 	# 在环面循环地图与多人网络同步下，跨越接缝对射时命中源坐标与受击玩家可能相距近整张地图宽度，
@@ -67,21 +63,6 @@ func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, kn
 	else:
 		# 爆炸受击：设置独立击退向量，按指数衰减结算
 		knock_velocity = away * knockback
-	# 受击屏幕反馈：微红闪烁与相机震动
-	var tree := body.get_tree()
-	if tree != null:
-		var pp := tree.get_first_node_in_group("post_process")
-		if pp != null and pp.has_method("flash_hit"):
-			pp.flash_hit(clampf(float(damage) / float(max_hp) * 2.0, 0.5, 1.0))
-	# 大伤害反馈：扣血超过 25% 时强化相机震动幅度
-	var hit_ratio := float(damage) / float(max_hp)
-	var cam: Camera2D = body.get_viewport().get_camera_2d()
-	if cam != null and cam.has_method("shake"):
-		if hit_ratio > 0.25:
-			cam.shake(PlayerParams.hit_cam_shake * (hit_ratio / 0.25), PlayerParams.hit_cam_shake_time)
-		else:
-			cam.shake(6.0, 0.15)
-	hp_changed.emit(hp, max_hp)
 	if hp <= 0:
 		_downed()
 
@@ -100,9 +81,7 @@ func set_downed_by_rewind(v: bool) -> void:
 	if downed == v:
 		return
 	downed = v
-	var animator: AnimatedSprite2D = body.animator
-	if animator != null:
-		animator.play("downed" if v else "idle")
+	body.rotation = -PI / 2.0 * float(body.get_facing()) if v else 0.0
 	if v:
 		went_down.emit()
 
@@ -113,26 +92,9 @@ func revive() -> void:
 	downed = false
 	hp = max_hp
 	body.rotation = 0.0
-	var animator: AnimatedSprite2D = body.animator
-	if animator != null:
-		animator.play("idle")
-	# 复位后处理屏幕变灰特效
-	var tree := body.get_tree()
-	if tree != null:
-		var pp := tree.get_first_node_in_group("post_process")
-		if pp != null and pp.has_method("set_downed"):
-			pp.set_downed(false)
 
 func _downed() -> void:
 	downed = true
-	# 倒地状态下保持物理模拟，角色精灵倒地旋转
+	# 旋转碰撞体属于物理状态；动画由 Player.present_tick 更新。
 	body.rotation = -PI / 2.0 * float(body.get_facing())
-	var animator: AnimatedSprite2D = body.animator
-	if animator != null:
-		animator.stop()
 	went_down.emit()
-	var tree := body.get_tree()
-	if tree != null:
-		var pp := tree.get_first_node_in_group("post_process")
-		if pp != null and pp.has_method("set_downed"):
-			pp.set_downed(true)

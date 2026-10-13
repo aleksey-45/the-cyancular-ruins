@@ -47,24 +47,12 @@ var _join_btn: Button = null
 var _current_mode := ""
 var _ack := true
 var _sent_ms := 0
-var _got := {"pvp": false, "royale": false, "team": false}
 var _join_pending := ""
-var _probe_multi_join := false
-var _multi_left := 0
-var _auto_refreshed := false
 
 
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_build_ui()
-
-	NetBus.local_room_list.connect(_on_room_list)
-	NetBus.local_room_created.connect(_on_room_created)
-	NetBus.local_room_joined.connect(_on_room_joined)
-	NetBusExt.local_royale_rooms.connect(_on_royale_rooms)
-	NetBusExt.local_royale_room_state.connect(_on_room_state_royale)
-	NetBusExt.local_team_rooms.connect(_on_team_rooms)
-	NetBusExt.local_team_room_state.connect(_on_room_state_team)
 
 	_finish_lobby_ready()
 
@@ -202,9 +190,7 @@ func _build_ui() -> void:
 
 
 func _on_back_pressed() -> void:
-	NetBus.stop()
-	Tunnel.stop()
-	LocalServer.stop_owned()
+	NetSession.close()
 	get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
 
 
@@ -217,38 +203,31 @@ func _set_filter(mode: String) -> void:
 
 
 # 汇总各模式服务端下发的房间数据
-func _ingest_rooms(mode: String, rooms: Array) -> void:
-	var tagged: Array = []
-	for r in rooms:
-		if typeof(r) != TYPE_DICTIONARY:
-			continue
-		var d: Dictionary = (r as Dictionary).duplicate()
-		d["mode"] = mode
-		tagged.append(d)
-	_rooms_by_mode[mode] = tagged
-	_got[mode] = true
-	if _join_pending.is_empty():
-		_ack = true
-		_sent_ms = 0
-	if _got.values().all(func(v: bool) -> bool: return v):
-		_redraw_cards()
+func _on_rooms(rooms: Array) -> void:
+	_rooms_by_mode = {"pvp": [], "team": [], "royale": []}
+	for room: Dictionary in rooms:
+		_rooms_by_mode[room["mode"]].append(room)
+	_ack = true
+	_sent_ms = 0
+	_redraw_cards()
 
+func _on_room(state: Dictionary) -> void:
+	PvpSession.note_room(state["code"], state["mode"])
+	PvpSession.role = state["your_role"]
+	PvpSession.token = state["token"]
+	PvpSession.room = state
+	_current_mode = state["mode"]
+	_room_code = state["code"]
+	_update_code_label()
+	_join_pending = ""
+	_ack = true
+	_sent_ms = 0
+	var is_host: bool = state["host_role"] == state["your_role"]
+	if is_host and not Tunnel.on_network(_room_code) and Tunnel.available():
+		Tunnel.start_host(PvpSession.server_port, _room_code)
+	_set_room_entered_status(_room_code, is_host)
+	_show_wait_room(state, _current_mode)
 
-func _on_room_list(rooms: Array) -> void:
-	_ingest_rooms(PvpSession.MODE_PVP, rooms)
-
-
-func _on_royale_rooms(rooms: Array) -> void:
-	_ingest_rooms(PvpSession.MODE_ROYALE, rooms.filter(func(r) -> bool:
-		return typeof(r) == TYPE_DICTIONARY and bool(r.get("beta", false)) == PvpSession.beta_mode))
-
-
-func _on_team_rooms(rooms: Array) -> void:
-	_ingest_rooms(PvpSession.MODE_TEAM, rooms.filter(func(r) -> bool:
-		return typeof(r) == TYPE_DICTIONARY and bool(r.get("beta", false)) == PvpSession.beta_mode))
-
-
-# 重新构建并渲染房卡网格
 func _redraw_cards() -> void:
 	for c in _grid.get_children():
 		_grid.remove_child(c)
@@ -258,8 +237,8 @@ func _redraw_cards() -> void:
 	for mode in [PvpSession.MODE_PVP, PvpSession.MODE_ROYALE, PvpSession.MODE_TEAM]:
 		var rows: Array = _rooms_by_mode.get(mode, []).duplicate()
 		rows.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-			var a_full := int(a.get("players", 0)) >= int(a.get("max_players", 2))
-			var b_full := int(b.get("players", 0)) >= int(b.get("max_players", 2))
+			var a_full := int(a.get("count", 0)) >= int(a.get("max_players", 2))
+			var b_full := int(b.get("count", 0)) >= int(b.get("max_players", 2))
 			return not a_full and b_full)
 		for r in rows:
 			total += 1
@@ -420,8 +399,8 @@ func _card_body(r: Dictionary) -> Control:
 	var meta := VBoxContainer.new()
 	meta.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var maxp := int(r.get("max_players", 2))
-	meta.add_child(UiFactory.label("人数 %d / %d" % [int(r.get("players", 0)), maxp], 32, UiFactory.C_TEXT_DIM))
-	meta.add_child(UiFactory.label("房主 %s" % str(r.get("host", "玩家")), 32, UiFactory.C_TEXT_DIM))
+	meta.add_child(UiFactory.label("人数 %d / %d" % [int(r.get("count", 0)), maxp], 32, UiFactory.C_TEXT_DIM))
+	meta.add_child(UiFactory.label("房主 %s" % str(r.get("host_name", "玩家")), 32, UiFactory.C_TEXT_DIM))
 	mid.add_child(meta)
 	box.add_child(mid)
 
@@ -436,7 +415,7 @@ func _card_subtitle(mode: String, r: Dictionary) -> String:
 		return "%s · 限时 %d 分" % [pub, mins] if mins > 0 else pub
 	if mode == PvpSession.MODE_TEAM:
 		var tc: Dictionary = r.get("team_counts", {})
-		return "%s · A%d / B%d / 未选%d" % [pub, int(tc.get("1", 0)), int(tc.get("2", 0)), int(tc.get("0", 0))]
+		return "%s · A%d / B%d / 未选%d" % [pub, int(tc.get(1, 0)), int(tc.get(2, 0)), int(tc.get(0, 0))]
 	return "%s · 三局两胜" % pub
 
 
@@ -477,134 +456,21 @@ func _card_names(names_raw: Variant) -> Control:
 
 # 发送并发房间查询请求
 func _send_list_request() -> void:
-	_got = {"pvp": false, "royale": false, "team": false}
-	_rooms_by_mode.clear()
-	NetBus.rpc_id(1, "list_rooms")
-	NetBusExt.rpc_id(1, "royale_list", PvpSession.token)
-	NetBusExt.rpc_id(1, "team_list", PvpSession.token)
+	NetBus.send_event(NetEvent.Kind.LIST, {"token": PvpSession.token, "beta": PvpSession.beta_mode})
 
 
-# 1v1 创建房间成功回调
-func _on_room_created(code: String) -> void:
-	_current_mode = PvpSession.MODE_PVP
-	PvpSession.note_room(code, _current_mode)
-	_room_code = code
-	_update_code_label()
-	if not Tunnel.on_network(code) and Tunnel.available() and PvpSession.server_port > 0:
-		Tunnel.start_host(PvpSession.server_port, code)
+
+
+
+
+
+
+
+func _on_server_message(text: String) -> void:
 	_ack = true
 	_sent_ms = 0
-	_claim_multi_reply()
-	NetBusExt.rpc_id(1, "room_map", code, Settings.mp_map_path)
-	_set_room_entered_status(code, true)
-	_show_wait_room(_pvp_wait_state(code, 1), PvpSession.MODE_PVP)
-
-
-# 1v1 加入房间成功回调
-func _on_room_joined(role: int) -> void:
-	_current_mode = PvpSession.MODE_PVP
-	var code := _join_pending
-	if not _join_pending.is_empty():
-		PvpSession.note_room(_join_pending, _current_mode)
-		_room_code = _join_pending
-		_update_code_label()
-		_join_pending = ""
-	_ack = true
-	_sent_ms = 0
-	_claim_multi_reply()
-	_set_room_entered_status(code, false)
-	if not code.is_empty():
-		_show_wait_room(_pvp_wait_state(code, role), PvpSession.MODE_PVP)
-
-
-# 大乱斗房间状态更新回调
-func _on_room_state_royale(state: Dictionary) -> void:
-	_current_mode = PvpSession.MODE_ROYALE
-	var code := str(state.get("code", ""))
-	PvpSession.note_room(code, _current_mode)
-	_room_code = code
-	_update_code_label()
 	_join_pending = ""
-	_ack = true
-	_sent_ms = 0
-	_claim_multi_reply()
-	var is_host := int(state.get("host_role", 0)) == int(state.get("your_role", 0))
-	if is_host:
-		if not Tunnel.on_network(code) and Tunnel.available() and PvpSession.server_port > 0:
-			Tunnel.start_host(PvpSession.server_port, code)
-		NetBusExt.rpc_id(1, "room_map", code, Settings.mp_map_path)
-	_set_room_entered_status(code, is_host)
-	_show_wait_room(state, PvpSession.MODE_ROYALE)
-
-
-# 3v3 房间状态更新回调
-func _on_room_state_team(state: Dictionary) -> void:
-	_current_mode = PvpSession.MODE_TEAM
-	var code := str(state.get("code", ""))
-	PvpSession.note_room(code, _current_mode)
-	_room_code = code
-	_update_code_label()
-	_join_pending = ""
-	_ack = true
-	_sent_ms = 0
-	_claim_multi_reply()
-	var is_host := int(state.get("host_role", 0)) == int(state.get("your_role", 0))
-	if is_host:
-		if not Tunnel.on_network(code) and Tunnel.available() and PvpSession.server_port > 0:
-			Tunnel.start_host(PvpSession.server_port, code)
-		NetBusExt.rpc_id(1, "room_map", code, Settings.mp_map_path)
-	_set_room_entered_status(code, is_host)
-	_show_wait_room(state, PvpSession.MODE_TEAM)
-
-
-# 处理服务端文本广播通知
-func _on_server_message(t: String) -> void:
-	if LocalServer.restarting:
-		return
-	_ack = true
-	_sent_ms = 0
-	if _swallow_absent(t):
-		_claim_multi_reply()
-		if not _probe_multi_join and not _join_pending.is_empty():
-			_settle_multi_fail(t)
-		return
-	if t == "房间已满" or t == "房间不存在":
-		_join_pending = ""
-		if not _auto_refreshed:
-			_auto_refreshed = true
-			_request_list.call_deferred("%s → 已自动刷新列表" % t)
-		else:
-			_status.text = t
-	elif t.begins_with("配对已取消"):
-		_join_pending = ""
-		_request_list.call_deferred("配对已取消(对手离开)——已刷新列表,请重选")
-	else:
-		_status.text = t
-
-
-# 多表并发尝试期间过滤预期的不存在回复
-func _swallow_absent(t: String) -> bool:
-	return _probe_multi_join and (t == "房间不存在" or t == "房间已满")
-
-
-# 所有模式查询均未命中的失败结算
-func _settle_multi_fail(t: String) -> void:
-	_join_pending = ""
-	if not _auto_refreshed:
-		_auto_refreshed = true
-		_request_list.call_deferred("%s → 已自动刷新列表" % t)
-	else:
-		_status.text = t
-
-
-# 递减并关闭多表并发尝试计数
-func _claim_multi_reply() -> void:
-	if not _probe_multi_join:
-		return
-	_multi_left -= 1
-	if _multi_left <= 0:
-		_probe_multi_join = false
-
+	_status.text = text
 
 func _toggle_join_panel() -> void:
 	_join_panel.visible = not _join_panel.visible
@@ -619,33 +485,13 @@ func _on_join_pressed() -> void:
 
 
 # 根据房间号与模式发起加入请求
-func _join_code(code: String, mode: String, invite: String = "") -> void:
-	if code.is_empty():
-		_status.text = "请填房间号"
-		return
-	var join_action := func() -> void:
+func _join_code(code: String, _mode_hint: String, invite: String = "") -> void:
+	_join_with_code(code, func() -> void:
 		_ack = false
 		_sent_ms = Time.get_ticks_msec()
 		_join_pending = code
-		if mode != "":
-			_current_mode = mode
-		_probe_multi_join = mode == ""
-		_multi_left = 3 if _probe_multi_join else 0
-		_status.text = "加入房间 %s,等待配对…" % code
-		if mode == PvpSession.MODE_ROYALE:
-			NetBusExt.rpc_id(1, "royale_join", code, invite, PvpSession.beta_mode)
-		elif mode == PvpSession.MODE_TEAM:
-			NetBusExt.rpc_id(1, "team_join", code, invite, PvpSession.beta_mode)
-		elif mode == PvpSession.MODE_PVP:
-			NetBus.rpc_id(1, "join_room", code)
-		else:
-			NetBus.rpc_id(1, "join_room", code)
-			NetBusExt.rpc_id(1, "royale_join", code, invite, PvpSession.beta_mode)
-			NetBusExt.rpc_id(1, "team_join", code, invite, PvpSession.beta_mode)
-	_join_with_code(code, join_action)
+		NetBus.send_event(NetEvent.Kind.JOIN, {"code": code, "invite": invite, "beta": PvpSession.beta_mode}))
 
-
-# 打开创建房间弹窗
 func _open_create_dialog() -> void:
 	_create_mode = _mode if _mode != "" else PvpSession.MODE_PVP
 	_apply_create_form(_create_mode)
@@ -701,27 +547,15 @@ func _create_payload(mode: String) -> Dictionary:
 
 # 发送创建房间请求
 func _on_create_pressed() -> void:
-	if not _lobby_action_allowed():
-		return
 	_set_create_visible(false)
-	var mode := _create_mode
 	if not await _ensure_own_server():
 		return
-	_with_lobby(func() -> void:
-		_ack = false
-		_sent_ms = Time.get_ticks_msec()
-		var payload := _create_payload(mode)
-		payload.merge(_beta_payload())
-		if mode == PvpSession.MODE_ROYALE:
-			NetBusExt.rpc_id(1, "royale_create", payload)
-		elif mode == PvpSession.MODE_TEAM:
-			NetBusExt.rpc_id(1, "team_create", payload)
-		else:
-			NetBus.rpc_id(1, "create_room")
-		_status.text = "正在建房…")
+	var payload := _create_payload(_create_mode)
+	payload["round_full_heal"] = Settings.pvp_round_full_heal
+	payload.merge(_beta_payload())
+	NetBus.send_event(NetEvent.Kind.CREATE, {"mode": _create_mode, "options": payload})
+	_status.text = "正在建房…"
 
-
-# 处理快捷键取消输入
 func _unhandled_input(ev: InputEvent) -> void:
 	if not _create_panel.visible:
 		return
@@ -753,7 +587,8 @@ func _show_wait_room(state: Dictionary, mode: String) -> void:
 	var is_team := mode == PvpSession.MODE_TEAM
 
 	if is_pvp:
-		_wait_count.text = "等待对手… 1 / 2"
+		_fill_flat_roster(plist, my_role, host_role)
+		_wait_count.text = "%d / 2 人" % plist.size()
 	elif mode == PvpSession.MODE_ROYALE:
 		_fill_flat_roster(plist, my_role, host_role)
 		_wait_count.text = "%d / %d 人(至少 2 人可开局)" % [
@@ -767,12 +602,12 @@ func _show_wait_room(state: Dictionary, mode: String) -> void:
 	_wait_pick_a.visible = is_team and my_team != 1
 	_wait_pick_b.visible = is_team and my_team != 2
 	if is_pvp:
-		_wait_start.visible = false
+		_wait_start.visible = is_host and plist.size() == 2
 	elif mode == PvpSession.MODE_ROYALE:
 		_wait_start.visible = is_host
 	else:
 		_wait_start.visible = is_host and _both_teams_full(
-				state, int(state.get("team_size", LobbyRooms.TEAM_SIZE)))
+				state, int(state.get("team_size", 3)))
 
 
 # 隐藏等待室面板并恢复入口按钮
@@ -784,29 +619,13 @@ func _hide_wait_room() -> void:
 
 
 func _on_wait_pick(team: int) -> void:
-	NetBusExt.rpc_id(1, "team_pick", team)
-
+	NetBus.send_event(NetEvent.Kind.PICK_TEAM, team)
 
 func _on_wait_start_pressed() -> void:
-	_status.text = "开局中…"
-	if _wait_mode == PvpSession.MODE_ROYALE:
-		NetBusExt.rpc_id(1, "royale_start")
-	elif _wait_mode == PvpSession.MODE_TEAM:
-		NetBusExt.rpc_id(1, "team_start")
-
+	NetBus.send_event(NetEvent.Kind.START, 0)
 
 func _on_wait_leave_pressed() -> void:
-	if _wait_mode == PvpSession.MODE_ROYALE:
-		NetBusExt.rpc_id(1, "royale_leave")
-		_on_return_to_lobby()
-		_request_list.call_deferred("已退出房间")
-	elif _wait_mode == PvpSession.MODE_TEAM:
-		NetBusExt.rpc_id(1, "team_leave")
-		_on_return_to_lobby()
-		_request_list.call_deferred("已退出房间")
-	else:
-		_return_to_lobby("已退出房间")
-
+	_return_to_lobby("已退出房间")
 
 func _wait_title_text(state: Dictionary, mode: String) -> String:
 	var code := str(state.get("code", ""))
@@ -834,7 +653,7 @@ func _fill_team_roster(state: Dictionary, plist: Array, my_role: int, host_role:
 		if not buckets.has(t):
 			t = 0
 		(buckets[t] as Array).append(p)
-	var team_size := int(state.get("team_size", LobbyRooms.TEAM_SIZE))
+	var team_size := int(state.get("team_size", 3))
 	var shown := 0
 	for t in [1, 2]:
 		var tag := "A 队" if t == 1 else "B 队"
@@ -884,44 +703,21 @@ func _team_count_text(state: Dictionary, plist: Array) -> String:
 		if typeof(p) == TYPE_DICTIONARY and int(p.get("team", 0)) != 0:
 			picked += 1
 	return "%d / %d 人(已选边 %d 人;两队各 %d 人才可开局)" % [
-			plist.size(), LobbyRooms.TEAM_ROLES, picked,
-			int(state.get("team_size", LobbyRooms.TEAM_SIZE))]
+			plist.size(), 6, picked,
+			int(state.get("team_size", 3))]
 
 
-func _pvp_wait_state(code: String, role: int) -> Dictionary:
-	return {
-		"code": code,
-		"is_public": true,
-		"players": [],
-		"your_role": role,
-		"host_role": role,
-	}
 
 
-# 切换至对局场景
 func _enter_match_scene() -> void:
-	if _current_mode == PvpSession.MODE_PVP:
-		get_tree().change_scene_to_file("res://scenes/pvp_game.tscn")
-	elif _current_mode == PvpSession.MODE_ROYALE:
-		get_tree().call_deferred("change_scene_to_file", "res://scenes/royale_game.tscn")
-	elif _current_mode == PvpSession.MODE_TEAM:
-		get_tree().call_deferred("change_scene_to_file", "res://scenes/team_game.tscn")
-	else:
-		var msg := "mp_lobby: match_start 触发但 _current_mode 为空: %s"
-		push_error(msg % _current_mode)
+	Level0.safe_change_scene(get_tree(), "res://scenes/pvp_game.tscn")
 
-
-# 超时检测轮询
 func _process(_delta: float) -> void:
 	if _tick_rejoin_timeout():
-		return
-	if _tick_claim_timeout():
 		return
 	_tick_lobby_connect_timeout()
 	if not _ack and _sent_ms > 0 and Time.get_ticks_msec() - _sent_ms > 8000:
 		_sent_ms = 0
-		_probe_multi_join = false
-		_multi_left = 0
 		_status.text = "8 秒无响应——地址不通,或该服务器不是最新版(开服方请用最新服务端)"
 
 
@@ -951,24 +747,21 @@ func _player_options() -> Dictionary:
 	}
 
 
-func _go_match_status() -> String:
-	return "配对成功,进入对局……"
 
 
-func _claim_timeout_msg() -> String:
-	return "对手未就绪(房间可能已失效)——已返回大厅并刷新,请换一个房间"
 
 
-func _on_go_match_extra() -> void:
-	_sent_ms = 0
 
 
 func _on_return_to_lobby() -> void:
 	_sent_ms = 0
-	_probe_multi_join = false
 	_room_code = ""
 	_update_code_label()
 	_hide_wait_room()
+
+func _on_room_closed() -> void:
+	_on_return_to_lobby()
+	_send_list_request()
 
 
 func _on_lobby_reconnect() -> void:

@@ -13,6 +13,8 @@ const MASK_GROUND := 9
 const WORLD_SCALE := 2.5
 
 @export var type_id: int = 1
+var locked_role := 0
+var unlock_tick := 0
 var inst: int = 0
 var mag: int = 0
 var drop_velocity: Vector2 = Vector2.ZERO
@@ -109,6 +111,9 @@ func _build_collision() -> void:
 
 
 func _physics_process(delta: float) -> void:
+	simulate_tick(delta)
+
+func simulate_tick(delta: float) -> void:
 	delta = TimeField.world_delta(delta)
 	_age += delta
 	if _settled:

@@ -25,6 +25,7 @@ class StubEnemy:
 # 桩玩家:入 player 组,记录 take_hit
 class StubPlayer:
 	extends CharacterBody2D
+	var authority_world: Node
 	var hit_log: Array = []
 	var knock_log: float = -1.0
 	func _init() -> void:
@@ -230,11 +231,10 @@ func _test_fuse() -> void:
 
 # ── 榴弹碰玩家:短引信(hit_fuse_time)+ 「首次碰撞决定引信时长、不刷新」的纪律 ──
 # 判定在 BulletBase._check_player_contact(两端同源:服务器/客户端视觉副本共用),
-# 权威的直接伤在 server/match_host.gd 的 _adjudicate_grenade(不在本 -s 冒烟覆盖范围,
-# 它要整局 MatchHost;这里约束的是引信侧)。
+# 权威的直接伤在 server/authority_world.gd 的 _grenade_direct_hit(不在本 -s 冒烟覆盖范围,
+# 它要整局 AuthorityWorld;这里约束的是引信侧)。
 func _test_player_contact() -> void:
 	MazeGenerator.current_grid = []
-	# 场景值兜底保护:本冒烟全程手写 0.4/0.15,若 grenade_bullet.tscn 被改成别的数,这里先报
 	var scene = (load("res://scenes/weapons/grenade_bullet.tscn") as PackedScene).instantiate()
 	_check(is_equal_approx(float(scene.fuse_time), 0.4) \
 			and is_equal_approx(float(scene.hit_fuse_time), 0.15),
@@ -306,7 +306,7 @@ func _test_player_contact() -> void:
 	selfp.free()
 
 	# ④ 纪律:首次碰撞决定引信时长,之后不刷新 —— 已因撞墙起 0.4s 长引信的榴弹碰到玩家
-	#    不会缩短(直接伤是另一个独立的闩,不受此限,由 MatchHost 结算)。
+	#    不会缩短(直接伤是另一个独立的闩,不受此限,由 AuthorityWorld 结算)。
 	var b2 = _make_bullet()
 	root.add_child(b2)
 	b2.set("fuse_time", 0.4)

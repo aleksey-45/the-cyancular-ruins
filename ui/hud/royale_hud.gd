@@ -17,10 +17,6 @@ const COLOR_GRACE := UiFactory.C_GRACE
 const BOARD_W := 720.0
 const NAME_UNITS := 14
 
-const ST_COUNTDOWN := 0
-const ST_PLAYING := 1
-const ST_ROUND_OVER := 2
-const ST_MATCH_OVER := 3
 
 @onready var _board_bg: ColorRect = $BoardBg
 @onready var _board_vbox: VBoxContainer = $BoardBox
@@ -37,7 +33,7 @@ var _big: Label:
 
 var _rows: Array[Label] = []
 var _last_row_count := -1
-var _state := ST_COUNTDOWN
+var _state := NetEvent.RoundState.COUNTDOWN
 var _grace: Dictionary = {}
 var _my_name := "Anon"
 
@@ -47,14 +43,13 @@ func _ready() -> void:
 	_my_name = PvpSession.player_name
 	_ping_wrap.add_theme_stylebox_override("panel", _plate_box(14.0, 6.0))
 	_hint_wrap.add_theme_stylebox_override("panel", _plate_box(10.0, 4.0))
-	NetBus.local_round_state.connect(_on_round_state)
 	NetBus.ping_updated.connect(_on_ping)
 	_broadcast.countdown_finished.connect(_on_countdown_finished)
 	_broadcast.set_broadcast(true, "大乱斗", "等待开局…")
 
 
 func _on_countdown_finished() -> void:
-	if _state == ST_PLAYING:
+	if _state == NetEvent.RoundState.PLAYING:
 		_broadcast.set_broadcast(false, "", "")
 
 
@@ -90,7 +85,7 @@ func show_notice(big: String, sub: String = "") -> void:
 func _process(delta: float) -> void:
 	_broadcast.tick(delta)
 	# 对局进行中平滑更新剩余时间
-	if _state == ST_PLAYING and not _broadcast.is_counting() and _timer_label.has_meta("remain"):
+	if _state == NetEvent.RoundState.PLAYING and not _broadcast.is_counting() and _timer_label.has_meta("remain"):
 		var remain := float(_timer_label.get_meta("remain")) - delta
 		_timer_label.set_meta("remain", remain)
 		_timer_label.text = "剩余时间  %d:%02d" % [int(maxf(remain, 0.0)) / 60, int(maxf(remain, 0.0)) % 60]
@@ -100,7 +95,7 @@ func _on_ping(ms: int) -> void:
 	_ping_label.add_theme_color_override("font_color", UiFactory.ping_color(ms))
 
 func _on_round_state(data: Dictionary) -> void:
-	var state := int(data.get("state", ST_PLAYING))
+	var state := int(data.get("state", NetEvent.RoundState.PLAYING))
 	_state = state
 	var names: Dictionary = data.get("names", {})
 	var alive: Dictionary = data.get("alive", {})
@@ -148,7 +143,7 @@ func _refresh_board(names: Dictionary, scores: Dictionary, deaths: Dictionary,
 		elif grace.has(e["role"]):
 			tag = "掉线 %ds" % int(ceilf(float(grace[e["role"]])))
 			col = COLOR_GRACE
-		elif not bool(alive.get(e["role"], true)) and state == ST_PLAYING:
+		elif not bool(alive.get(e["role"], true)) and state == NetEvent.RoundState.PLAYING:
 			tag = "复活中"
 			col = COLOR_DEAD if not is_me else COLOR_ME
 		var row: Label = _rows[i]
@@ -162,15 +157,15 @@ func _refresh_board(names: Dictionary, scores: Dictionary, deaths: Dictionary,
 func _refresh_broadcast(state: int, data: Dictionary, names: Dictionary, rows: Array,
 		alive: Dictionary) -> void:
 	match state:
-		ST_COUNTDOWN:
+		NetEvent.RoundState.COUNTDOWN:
 			_timer_label.text = "准备…"
 			_broadcast.start_countdown(float(data.get("timer", 3.0)), "大乱斗开始")
-		ST_PLAYING:
+		NetEvent.RoundState.PLAYING:
 			_broadcast.set_broadcast(false, "", "")
 			var remain := float(data.get("timer", 300.0))
 			_timer_label.set_meta("remain", remain)
 			_timer_label.text = "剩余时间  %d:%02d" % [int(remain) / 60, int(remain) % 60]
-		ST_MATCH_OVER:
+		NetEvent.RoundState.MATCH_OVER:
 			_timer_label.text = "对局结束"
 			var mw := int(data.get("match_winner", 0))
 			if mw == 0:

@@ -4,10 +4,7 @@ extends PlayerInput
 # 网络数据包输入源（服务端权威模拟与回滚推演的输入消费者）。
 # 从网络输入包中解析轴向移动、按键状态、触发边沿、切枪请求及瞄准方向。
 #
-# 同步策略：
-# - 持续状态（held、axis、aim）：每当新数据包到达即更新为最新值，紧跟客户端状态。
-# - 触发边沿（pressed、released）：采用按位或累积，避免批量到达时丢失边沿动作。
-# - 缺包处理：未到达新包时保持上一包的持续状态，边沿状态在物理帧末通过 clear_edges() 清除。
+# InputBuffer 每 tick 提供一条记录；缺包延续和边沿去重由队列完成。
 
 const BIT_UP := 1
 const BIT_DOWN := 2
@@ -34,7 +31,7 @@ static func pack_record(src: PlayerInput, seq: int, aim: Vector2) -> Dictionary:
 		held |= BIT_DOWN
 	if src.is_action_pressed("charge"):
 		held |= BIT_CHARGE
-	if src.is_action_pressed("attack"):
+	if src.is_attack_pressed():
 		held |= BIT_ATTACK
 	if src.is_action_pressed("R"):
 		held |= BIT_RELOAD
@@ -48,7 +45,7 @@ static func pack_record(src: PlayerInput, seq: int, aim: Vector2) -> Dictionary:
 		pressed |= BIT_DOWN
 	if src.is_action_just_pressed("charge"):
 		pressed |= BIT_CHARGE
-	if src.is_action_just_pressed("attack"):
+	if src.is_attack_just_pressed():
 		pressed |= BIT_ATTACK
 	if src.is_action_just_pressed("R"):
 		pressed |= BIT_RELOAD
@@ -58,7 +55,7 @@ static func pack_record(src: PlayerInput, seq: int, aim: Vector2) -> Dictionary:
 		released |= BIT_DOWN
 	if src.is_action_just_released("charge"):
 		released |= BIT_CHARGE
-	if src.is_action_just_released("attack"):
+	if src.is_attack_just_released():
 		released |= BIT_ATTACK
 	if src.is_action_just_released("R"):
 		released |= BIT_RELOAD
@@ -82,24 +79,22 @@ var _axis := 0.0
 var _held := 0
 var _aim := Vector2.ZERO   # 注入的瞄准方向（世界坐标系）
 var _switch_inst := 0      # 切枪目标武器实例 ID，大于 0 表示当前有切枪请求
-var _pressed := 0          # 累积的按下触发边沿掩码
-var _released := 0         # 累积的松开触发边沿掩码
+var _pressed := 0
+var _released := 0
 
 # 输入源类型标识。
 func source_kind() -> int:
 	return Kind.PACKET
 
 
-# 应用网络输入数据包：持续状态覆盖为最新，边沿状态按位或累积。
+# 应用本 tick 的完整输入记录。
 func apply_packet(pkt: Dictionary) -> void:
-	_axis = pkt.get("ax", 0.0)
-	_held = pkt.get("held", 0)
-	_aim = pkt.get("aim", Vector2.ZERO)
-	var inst: int = pkt.get("winst", 0)
-	if inst > 0:
-		_switch_inst = inst
-	_pressed |= pkt.get("pressed", 0)
-	_released |= pkt.get("released", 0)
+	_axis = pkt["ax"]
+	_held = pkt["held"]
+	_aim = pkt["aim"]
+	_switch_inst = pkt["winst"]
+	_pressed = pkt["pressed"]
+	_released = pkt["released"]
 
 # 读取当前是否按住时间加速键。
 func haste_held() -> bool:
@@ -190,4 +185,6 @@ static func _bit(action: String) -> int:
 		"charge": return BIT_CHARGE
 		"attack": return BIT_ATTACK
 		"R": return BIT_RELOAD
+		"haste": return BIT_HASTE
+		"rewind": return BIT_REWIND
 	return 0

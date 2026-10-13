@@ -16,6 +16,7 @@ func _check(cond: bool, name: String) -> void:
 
 func _initialize() -> void:
 	var src := FileAccess.get_file_as_string("res://scenes/player/player.gd")
+	var step := FileAccess.get_file_as_string("res://core/sim/actor_step.gd")
 	var lsrc := FileAccess.get_file_as_string("res://scenes/player/climb_component.gd")
 	var csrc := FileAccess.get_file_as_string("res://scenes/player/combat_component.gd")
 	var wsrc := FileAccess.get_file_as_string("res://scenes/player/weapon_component.gd")
@@ -34,7 +35,7 @@ func _initialize() -> void:
 	_check(src.contains("var hp: int:"), "player.gd 公开 hp 属性")
 	_check(src.contains("var max_hp: int:"), "player.gd 公开 max_hp 属性")
 	# 输入源抽象(行为不变重构):根不再直接读全局 Input,且可注入
-	_check(src.contains("input_source.get_axis"), "player.gd 输入走 input_source")
+	_check(step.contains("actor.step_input.get_axis"), "共享步进读取固定输入记录")
 	_check(src.contains("func set_input_source("), "player.gd 输入可注入")
 	# 三个组件文件 + class_name
 	var comps: Array = [
@@ -45,13 +46,6 @@ func _initialize() -> void:
 	for pair in comps:
 		_check(str(pair[0]).length() > 0 and str(pair[0]).contains(str(pair[2])),
 				"含 " + str(pair[1]) + " 的 " + str(pair[2]))
-	# 武器类型来自注册表的单一来源(2026-09-26 改写)。
-	# - 旧断言查的是 `weapon_component.gd` 里 `"1"`..`"5"` 这几个字符串键 —— 那是当年
-	#   那份硬编码表(`WEAPONS`/`DISPLAY_NAMES`/`TIERS`)的形状。注册表那批把那三张表整体删除
-	#   (见 docs/eng/weapons.md),于是这条断言始终断言失败(`"1"` 还碰巧在别处出现,`"2"`..`"5"` 不在)
-	#   —— 而它现在断言的是新不变量的反面:`enemy_logic_smoke` 的 ⑤b 反向要求那三个标识符
-	#   在生产目录里零命中(防半途迁移)。 ->  按本仓纪律"探针因重构变红时改探针认新入口":
-	#   契约改成当前形态 —— 组件的武器类型必须取自注册表,而不是自己再抄一份清单。
 	_check(wsrc.contains("WeaponRegistry"),
 			"weapon_component.gd 的武器类型取自 WeaponRegistry(单一来源)")
 	# - 判定条件走 `code_only`(剥注释)而不是裸 `contains`:本仓爱留墓碑注释,而墓碑里很可能
@@ -69,10 +63,9 @@ func _initialize() -> void:
 	for k in ["WEAPONS", "DISPLAY_NAMES", "TIERS"]:
 		_check(not wcode.contains(k),
 				"weapon_component.gd 不得再有旧表 %s(半迁移守卫;与 enemy_logic_smoke ⑤b 同口径)" % k)
-	# 根每物理帧显式驱动三个组件
-	_check(src.contains("climb.update("), "根驱动 climb.update")
-	_check(src.contains("combat.apply_knock("), "根驱动 combat.apply_knock")
-	_check(src.contains("weapons.movement_multiplier()"), "根驱动 weapons.movement_multiplier")
+	_check(step.contains("actor.climb.update("), "共享步进驱动 climb.update")
+	_check(step.contains("actor.combat.apply_knock("), "共享步进驱动 combat.apply_knock")
+	_check(step.contains("actor.weapons.movement_multiplier()"), "共享步进驱动 weapons.movement_multiplier")
 
 	if _failures.is_empty():
 		print("\nCONTRACT OK")

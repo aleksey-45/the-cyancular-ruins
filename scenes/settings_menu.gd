@@ -48,9 +48,6 @@ func _ready() -> void:
 	_check(_wheel, Settings.wheel_switch, func(on: bool) -> void:
 		Settings.wheel_switch = on
 		Settings.save())
-	# - 这四个原先只长在 1v1 大厅页的右侧面板上,而那页在「大厅合一」里被删了  -> 
-	#   键与读者都还在,但界面上再也改不了。这里把它们放回来。
-	# 本地设置项存储
 	_check(_traj, Settings.pvp_show_trajectories, func(on: bool) -> void:
 		Settings.pvp_show_trajectories = on
 		Settings.save())
@@ -100,7 +97,7 @@ func _fill_bind_grid() -> void:
 		name_l.custom_minimum_size = Vector2(BIND_NAME_W, 0)
 		_bind_grid.add_child(name_l)
 		# 键位按钮是网格单元(不是主菜单按钮列)。-  高度 40 会被按钮内边距顶到 72,
-		
+
 		var bind_btn := Button.new()
 		bind_btn.theme_type_variation = &"BtnLegacy"
 		bind_btn.custom_minimum_size = Vector2(BIND_BTN_W, ROW_H)

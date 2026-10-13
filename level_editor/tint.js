@@ -1,17 +1,3 @@
-// tint.js —— 辅码(descriptor)的像素数学 + tinted-tile 缓存(规格 §2.3 / §4.2 ④)。
-//
-// ★ 本模块**必须在 core.js 之后加载**:档位的中性行、象限数、位域取值全部取自
-//   `globalThis.Core`,不自己抄一份 —— 抄一份就意味着两处会漂,而漂了的表现是
-//   "编辑器里调好的颜色进游戏就变样"(不报错,只在玩的时候看出来)。没有 Core 就当场抛错。
-// ★ 像素数学必须与游戏侧 shader **逐像素一致**(规格 §2.3;交接文档 §2.2 是同一份公式):
-//     · 是 **HSV** 不是 HSL(饱和度/亮度取的是 HSV 的 S 与 V);
-//     · 色相 h' = fposmod(h + (H-4)*15, 360),八档**不对称**(−60°…+45°);
-//     · 亮度/饱和度是**乘法**,乘数 = (k+6)/10(即 MUL 表 0.6…1.3)——
-//       暗部不会被压成纯黑,中性档 4 恰好是恒等元(×1.0);
-//       ★ 别写成 (k-4)*0.1:那既不是乘数、也不是正确的增量(它是"加法"那一支的形状,
-//         而在"乘法 vs 加法"正是本文件判别性要求的地方,写错一支等于把结论说反);
-//     · alpha a' = a * (A/7),中性档在 **7**(不在 4)。
-// ★ 纯逻辑 + 注入式画布:node 里能直接 require 进来断言(`node tint_smoke.js`)。
 globalThis.Tint = (function () {
   'use strict';
 
@@ -20,7 +6,6 @@ globalThis.Tint = (function () {
     throw new Error('tint.js: 必须先加载 core.js(本模块的档位常量全部取自 Core,不自己抄一份)');
   }
 
-  // ── 档位含义表(规格 §2.3 的那张表,直接抄成按下标取的数组)──
   var LEVELS = 8;
   var HUE_OFFSET_DEG = [-60, -45, -30, -15, 0, 15, 30, 45];      // = (k - 4) * 15
   var MUL = [0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3];             // = (k + 6) / 10
@@ -35,9 +20,6 @@ globalThis.Tint = (function () {
   function mulOf(level) { return MUL[level & 7]; }
   function alphaScaleOf(level) { return ALPHA_NUM[level & 7] / Core.ALPHA_NEUTRAL; }
 
-  // ── HSV(标准定义,h ∈ [0,360),s/v ∈ [0,1])──
-  // ★ 为什么不用 HSL:规格 §2.3 写死是 HSV,而这两个在同一个 (r,g,b) 上会给出**不同的**
-  //   饱和度与亮度 —— 用错一个,"编辑器里调好的颜色进游戏就变样"。
   function fposmod(a, n) { var r = a % n; return r < 0 ? r + n : r; }
 
   function rgbToHsv(r, g, b) {
@@ -69,8 +51,6 @@ globalThis.Tint = (function () {
 
   function clamp01(x) { return x < 0 ? 0 : (x > 1 ? 1 : x); }
 
-  // ★★ 规范定义(规格 §2.3),浮点进浮点出 —— **与游戏 shader 对齐的就是这一个**。
-  //    任何 8 位取整都只是它的落地实现(tintBytes / buildTilePixels)。
   function tintRGBA(r, g, b, a, desc) {
     var hsv = rgbToHsv(r, g, b);
     var h2 = fposmod(hsv.h + hueOffsetOf(Core.hueOf(desc)), 360);
@@ -95,15 +75,7 @@ globalThis.Tint = (function () {
   // 象限由 core.js 的 subcellRender 给出(块内 8px 偏移),这里只负责"第 T 块在哪"。
   var BLOCK_PX = 32;
   var QUAD_PX = 32 / Core.SUB_PER_CELL;     // 8
-  var TILE_PX = Core.SUB_PX;                // 16 = 象限 8px 放大 2×,正好一个子格
-
-  // ★★ 象限坐标归一化 + 越界守卫(键与像素数学**必须用同一个约定**)。
-  //    旧实现有**两条平行的约定**:缓存的键用 `(qx & 3)`(负数被位运算折到 3),
-  //    而像素数学用 `qx % Core.SUB_PER_CELL`(负数保持负)。实测后果比"键不好看"重得多:
-  //    `get(1,-1,0,desc)` 会**先造出一张错图、并存进象限 3 的键**,随后 `get(1,3,0,desc)`
-  //    **直接命中那张错图**(两次调用返回同一个对象)。
-  //    今天所有调用方都只循环 0..3,但"从坐标算象限"的调用方(2b 的环面 / 拖拽选区)
-  //    出现负坐标很正常 ⇒ 这里把越界坐标**当场抛掉**,回绕由调用方自己先做(别猜)。
+  var TILE_PX = Core.SUB_PX;
   var SUB = Core.SUB_PER_CELL;
   function quadIndex(q, which) {
     if (typeof q !== 'number' || !isFinite(q) || Math.floor(q) !== q || q < 0 || q >= SUB) {
@@ -167,11 +139,6 @@ globalThis.Tint = (function () {
     return out;
   }
 
-  // ── tinted-tile 缓存(规格 §4.2 ④)──
-  // 键 = (纹理, 象限, 描述符) → 一张 16×16 小图。贴图源只有 32×32,一块小图 256 像素,
-  // 手算极便宜 —— 但同一块会被画成千上万次,故必须缓存。
-  // ★ 画布是**注入**的:node 里没有 document,缓存把"画出来的像素"交给 backend,
-  //   于是缓存的键/淘汰/失效逻辑在 node 里可以完整断言。
   var DEFAULT_BACKEND = {
     createTile: function (pixels, size) {
       if (typeof document === 'undefined') {
@@ -197,18 +164,7 @@ globalThis.Tint = (function () {
     var atlas = null, atlasWidth = 0;
     var hits = 0, misses = 0, evictions = 0;
 
-    // ★★ 换图**必须**整片失效(审计 A2):旧编辑器在 structure.png 加载完成前写进
-    //    纯色兜底、且永不失效 —— 于是地图一直是色块,而且"有时好有时坏"。
-    //    资源换了就是换了,没有"部分还新鲜"这回事。
-    // ★★ 调用方契约:必须传**平坦的 RGBA 数组**(浏览器里就是 `imageData.data`),
-    //    **不是** `ImageData` 对象本身 —— 传对象会**静默**画出一整张全透明小图
-    //    (理由见下面的形状守卫)。这不是"建议",是形状闸:不符合形状当场抛。
     function setSource(data, width) {
-      // ★★ 形状守卫(I2):最自然的误用是把 `ImageData` **对象**传进来,而不是它的 `.data`。
-      //    那时 `atlas.length` 是 `undefined` ⇒ `buildTilePixels` 里 rows = NaN ⇒
-      //    那条边界比较(`> NaN`)恒为 false ⇒ **一路产出全透明小图且不报错**
-      //    (规格 §7 风险登记里"不静默画空白"那条缓解,在 setSource 这一层原本是开着的)。
-      //    ★ 守卫只做在**参数形状**上:像素数学里的抛错仍旧是"编程错误"的哨兵,别动它。
       if (!data || typeof data.length !== 'number' || !isFinite(data.length) || data.length <= 0) {
         throw new Error('setSource: data 必须是平坦的 RGBA 数组(ImageData 的话请传它的 .data),实得 ' +
                         (data === null || data === undefined ? String(data) : typeof data) +
@@ -272,7 +228,6 @@ globalThis.Tint = (function () {
              tileKey: tileKey };
   }
 
-  // 缓存上限(Task 5 用):8192 × 16×16×4 字节 = 正好 8MB(规格 §4.3 闸 1)。
   var DEFAULT_MAX_TILES = 8192;
 
   return {

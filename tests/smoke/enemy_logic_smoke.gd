@@ -9,6 +9,27 @@ extends SceneTree
 class StubPlayer:
 	extends Node2D
 	var facing: int = 1
+	var step_actions: Array = []
+	var pvp_haste_mult := 1.0
+	var authority_world: Node
+	var role := 0
+	var shot_serial := 0
+	var input_seq := 0
+	var input_buffer := InputBuffer.new()
+	func get_aim_dir_override() -> Vector2:
+		return Vector2.ZERO
+	func input_is_network() -> bool:
+		return false
+	func is_attack_pressed() -> bool:
+		return Input.is_action_pressed("attack")
+	func is_attack_just_pressed() -> bool:
+		return Input.is_action_just_pressed("attack")
+	func is_attack_just_released() -> bool:
+		return Input.is_action_just_released("attack")
+	func is_charging() -> bool:
+		return false
+	func shot_origin(muzzle: Node2D) -> Vector2:
+		return muzzle.global_position
 	func get_facing() -> int:
 		return facing
 	func set_facing(v: int) -> void:
@@ -56,13 +77,6 @@ func _check(cond: bool, name: String) -> void:
 		printerr("  FAIL - " + name)
 
 
-# ── 地板生成点采样算法参考实现 ──
-# 原先它是 `EnemySpawner.sample_spawn_cells`(生产侧):但单机敌人早已改从地图元数据布点
-# (`MazeGenerator.load_spawns()` -> `spawner.spawn_all(spawns)`,地图里没有 `# enemy` 就是 0 只),
-# 它成了无引用的冗余函数 —— 而它留在生产侧会让人误以为「敌人是运行时随机的」。
-# 它测试覆盖的核心算法(地板格 + 环面最小距离采样)本身仍有效,且与 `RoyaleHost.plan_spawns` / `MatchHost`
-# 的散点逻辑同族,故搬到测试侧做参考实现持续进行测试覆盖,而不是连同下面 5 条断言一起删掉。
-# 地板格 = EMPTY 且正下方(y+1,环面取模)非 EMPTY:敌人站立/落地要有实心表面兜底。
 func _sample_spawn_cells(grid: Array[Array], player_cell: Vector2i,
 		count: int, min_dist_cells: int) -> Array[Vector2i]:
 	var rows := grid.size()
@@ -128,7 +142,6 @@ func _initialize() -> void:
 
 
 
-# ── Task 2: 纯函数 ──
 func _phase_pure_helpers() -> void:
 	_check(MazeGenerator.toroidal_delta_px(Vector2(10, 10), Vector2(10, 10), 2400.0, 2400.0) == Vector2.ZERO, "delta 零")
 	_check(MazeGenerator.toroidal_delta_px(Vector2(2380, 10), Vector2(20, 10), 2400.0, 2400.0) == Vector2(40, 0), "delta 环面 +x")
@@ -158,7 +171,6 @@ func _phase_pure_helpers() -> void:
 	_check(all_on_floor, "spawn 全部位于地板上面")
 
 
-# ── Task 4: 双出生点解析(# player2)──
 func _phase_spawn_metadata_player2() -> void:
 	var meta := MazeGenerator.parse_spawn_metadata(["# player2 3 4"])
 	_check(meta.get("player2") == Vector2i(3, 4), "player2 spawn 解析")
@@ -166,12 +178,10 @@ func _phase_spawn_metadata_player2() -> void:
 	_check(meta2.get("player") == Vector2i(1, 2) and meta2.get("player2") == Vector2i(5, 6), "player+player2 并存")
 
 
-# ── Task 3: EnemyBase 加载 ──
 func _phase_enemy_base_load() -> void:
 	_check(load("res://scenes/enemies/enemy_base.gd") != null, "EnemyBase 脚本加载")
 
 
-# ── Task 4: 敌人实例化 ──
 func _phase_enemy_instantiate() -> void:
 	var scene: PackedScene = load("res://scenes/enemies/enemy_jump_bird.tscn")
 	_check(scene != null, "JumpBird 场景加载")
@@ -185,9 +195,7 @@ func _phase_enemy_instantiate() -> void:
 	_check(e.get_node_or_null("ContactArea") != null, "ContactArea 创建")
 
 
-# ── Task 6: 子弹 ──
 func _phase_bullet_free() -> void:
-	# 清掉 Task 4 遗留的敌人(在原点,碰撞层3);否则子弹出生即命中并立即消失
 	e.free()
 	bscene = load("res://scenes/weapons/bullet.tscn")
 	_check(bscene != null, "子弹场景加载")
@@ -205,7 +213,6 @@ func _phase_bullet_free() -> void:
 	_check(freed, "子弹超射程消失")
 
 
-# ── Task 7: clamp_pitch(迁到 WeaponBase)──
 func _phase_clamp_pitch() -> void:
 	# 用 load()+资源调用,避免 -s 编译期解析 WeaponBase 时连带预加载 bullet_base.gd
 	# (autoload 实例变量在 -s 主脚本编译期不可解析,见 bullet_base.gd 的 GameParameters.MAP_WIDTH)。
@@ -218,7 +225,6 @@ func _phase_clamp_pitch() -> void:
 	_check(is_equal_approx(wb.clamp_pitch(Vector2(0, 1), -1), deg_to_rad(45.0)), "pitch 左朝向")
 
 
-# ── Task 8: 环面锚定(敌人/子弹跟随主角取模) ──
 func _phase_toroidal_anchor() -> void:
 	const W := 8640.0
 	const H := 5184.0
@@ -242,13 +248,11 @@ func _phase_toroidal_anchor() -> void:
 			"锚定:自身不变")
 
 
-# ── Task 2: 固定绑定地图 ──
 func _phase_pin_map() -> void:
 	MazeGenerator.set_map_file("res://maps/demo.cyrm")
 	_check(MazeGenerator.map_file_path() == "res://maps/demo.cyrm", "set_map_file 钉住地图")
 
 
-# ── Task 9: 地图尺寸读取(map_size) ──
 func _phase_map_size() -> void:
 	# - 期望值从地图自己派生,不写死 125×75("这张图恰好多大"换图就测试误报)。
 	#   取自 `MazeGenerator.load_map_file()` 的整图解析维度 —— 刻意不用
@@ -294,26 +298,17 @@ func _phase_weapon_stats_and_hit() -> void:
 	var w = pistol.instantiate()
 	stub.add_child(w)
 	w.equip(stub)
-	# 避免 -s 静态引用 WeaponBase(编译期连带预加载 bullet_base.gd 引用 autoload
-	# 实例变量 GameParameters.MAP_WIDTH,而 -s 阶段 autoload 尚未实例化) -> 用运行时
-	# load()+脚本比较代替 is WeaponBase。
 	_check(w.get_script() == load("res://scenes/weapons/weapon_base.gd"), "武器继承 WeaponBase")
 	_check(w.weapon_name == "Pistol", "手枪参数")
-	# 2026-09-20 用户调参:射程 900 -> 1100,并新增 `spread_deg = 0.4`(此前该 tscn 里没有这个 export,
-	# 单弹丸武器同样吃散布 —— `weapon_base._spawn_projectiles` 每发都做 `randf_range(-s, s)`)。
-	# 射程/散布在本文件里只由本档钉(后面的多弹丸/爆炸阶段不碰它们,那两把枪的 tscn 改动
-	# 否则会零覆盖地过去)。
-	# 2026-09-21 用户调参(同批两项关键逻辑,一起改):腰射散布 0.4 -> 0.6、射程 1100 -> 1400。
-	# 步枪同批 0.6 -> 0.8 / 1400 -> 1600;霰弹 4.0 -> 3.0 / 700 -> 1100(见下面各自那一档)。
 	_check(is_equal_approx(w.bullet_range, 1400.0) and is_equal_approx(w.spread_deg, 0.6),
 			"手枪射程1400/±0.6°")
 	var e_scene: PackedScene = load("res://scenes/enemies/enemy_jump_bird.tscn")
-	# 复用上面 Task 4 已声明的 e(已 free 过,不能重复 var 声明)
 	e = e_scene.instantiate()
 	root.add_child(e)
 	e.global_position = Vector2(520, 400)
 	var hp_before: int = e.hp
 	w.fire()
+	_flush_shots(stub, w)
 	for i in range(30):
 		await physics_frame
 		if not is_instance_valid(e):
@@ -330,6 +325,7 @@ func _phase_weapon_stats_and_hit() -> void:
 		if child.get_script() == bullet_script:
 			b_before += 1
 	w.fire()
+	_flush_shots(stub, w)
 	var b_after := 0
 	for child in root.get_children():
 		if child.get_script() == bullet_script:
@@ -341,9 +337,7 @@ func _phase_weapon_stats_and_hit() -> void:
 	# 霰弹枪场景加载 + 参数
 	sg_scene = load("res://scenes/weapons/s686.tscn")
 	_check(sg_scene != null, "霰弹枪场景加载")
-	var sg = sg_scene.instantiate()  # 无类型:访问自定义属性需要动态分派(项目惯例)
-	# 2026-09-21 用户调参:散布 4.0 -> 3.0、射程 700 -> 1100(全中伤害仍是 5×8=40,见下一条)。
-	# - 霰弹射程仍是三把里最短的(1100 < 手枪 1400 < 步枪 1600)—— 保持武器的近战战斗定位。
+	var sg = sg_scene.instantiate()
 	_check(sg.pellet_count == 8 and is_equal_approx(sg.spread_deg, 3.0), "霰弹枪 8 丸 ±3°")
 	_check(sg.damage == 5 and is_equal_approx(sg.bullet_range, 1100.0), "霰弹枪单丸5伤/射程1100")
 	# 全中伤害 = damage × pellet_count —— 校验总伤害为 40 点
@@ -352,9 +346,6 @@ func _phase_weapon_stats_and_hit() -> void:
 	_check(sg.tier == 0, "霰弹枪轻武器")
 	sg.queue_free()
 
-	# 步枪:2026-09-20 用户调参(射程 1100 -> 1400,并新增 `spread_deg = 0.6`)。
-	# 本档是它射程/散布的唯一防御性校验(该场景在本文件里此前只是"能加载",从未被实例化)。
-	# 2026-09-21 用户调参:腰射散布 0.6 -> 0.8、射程 1400 -> 1600(与手枪同一批)。
 	var rf = rifle.instantiate()
 	_check(is_equal_approx(rf.bullet_range, 1600.0) and is_equal_approx(rf.spread_deg, 0.8),
 			"步枪射程1600/±0.8°")
@@ -396,6 +387,7 @@ func _phase_buffered_fire() -> void:
 			break
 		var prev_cd: float = buf_w.fire_cd_timer
 		buf_w.tick(1.0 / 60.0)
+		_flush_shots(buf_stub, buf_w)
 		if buf_w.fire_cd_timer > prev_cd:
 			break
 	var bf_after := 0
@@ -445,8 +437,6 @@ func _phase_equip_switch() -> void:
 	var p = player_scene.instantiate()
 	root.add_child(p)
 	await physics_frame
-	# - 2026-09-15(背包化):单机现在开局空手(武器散落在地图上,由 Level0 铺)。
-	#   本节测的是"切枪/冷却继承"这件事,与开局带不带枪无关 —— 显式摆一个已知背包。
 	_check(p.weapons._weapon == null, "开局空手(单机初始背包为空)")
 	p.weapons.set_initial_inventory([1, 2])
 	await physics_frame
@@ -464,7 +454,6 @@ func _phase_equip_switch() -> void:
 	p.free()
 
 
-# ── Task 1: 碰撞层重构(敌人层3, 玩家子弹不打玩家)──
 func _phase_collision_layers() -> void:
 	jump2 = load("res://scenes/enemies/enemy_jump_bird.tscn")
 	var e2 := jump2.instantiate()
@@ -496,7 +485,6 @@ func _phase_collision_layers() -> void:
 	combat.free()
 
 
-# ── Task 2: MazeGenerator A* + LOS ──
 func _phase_astar_los() -> void:
 	var g: Array[Array] = []
 	for _y in range(20):
@@ -533,7 +521,6 @@ func _phase_astar_los() -> void:
 	MazeGenerator.current_grid = g2
 	_check(not MazeGenerator.has_line_of_sight(Vector2i(0, 2), Vector2i(6, 2)), "LOS 墙阻挡")
 	_check(MazeGenerator.has_line_of_sight(Vector2i(0, 0), Vector2i(6, 0)), "LOS 无墙通视")
-	# LOS 斜线(旧实现的斜对角走法在 |dx|≠|dy| 时会越过目标行/列,采样到线外格子)
 	var g3: Array[Array] = []
 	for _y in range(20):
 		var row5: Array[int] = []
@@ -542,7 +529,7 @@ func _phase_astar_los() -> void:
 		g3.append(row5)
 	MazeGenerator.current_grid = g3
 	_check(MazeGenerator.has_line_of_sight(Vector2i(0, 0), Vector2i(5, 3)), "LOS 斜线通视")
-	g3[5][5] = MazeGenerator.SOLID  # 在旧实现越行路径上,不在直线上 -> 不应阻挡
+	g3[5][5] = MazeGenerator.SOLID
 	_check(MazeGenerator.has_line_of_sight(Vector2i(0, 0), Vector2i(5, 3)), "LOS 斜线旁路墙不阻挡")
 	g3[5][5] = MazeGenerator.EMPTY
 	g3[2][3] = MazeGenerator.SOLID  # 直线上格(3,2) -> 阻挡
@@ -550,7 +537,6 @@ func _phase_astar_los() -> void:
 	MazeGenerator.current_grid = []
 
 
-# ── Task 3: 敌方抛物线子弹 ──
 func _phase_enemy_bullet_arc() -> void:
 	var bscene_e: PackedScene = load("res://scenes/enemies/enemy_bullet.tscn")
 	_check(bscene_e != null, "敌方子弹场景加载")
@@ -581,7 +567,6 @@ func _phase_enemy_bullet_arc() -> void:
 	combat2.free()
 
 
-# ── Task 4: 接触伤害防御性校验(contact_damage<=0 不触发)──
 func _phase_contact_damage_guard() -> void:
 	var combat3 := StubCombatPlayer.new()
 	combat3.global_position = Vector2(400, 400)
@@ -601,7 +586,6 @@ func _phase_contact_damage_guard() -> void:
 	combat3.free()
 
 
-# ── Task 5: FlyBird 基础(睡眠/唤醒/起飞/射击/死亡)──
 func _phase_flybird_basics() -> void:
 	var fb_grid: Array[Array] = []
 	for _y in range(150):
@@ -715,7 +699,6 @@ func _phase_flybird_basics() -> void:
 	MazeGenerator.current_grid = []
 
 
-# ── Task 6: FlyBird 冲撞 + 返程 ──
 func _phase_flybird_charge_return() -> void:
 	var fb2_grid: Array[Array] = []
 	for _y in range(150):
@@ -840,7 +823,6 @@ func _phase_flybird_charge_return() -> void:
 	MazeGenerator.current_grid = []
 
 
-# ── Task 7: A* 扁平数组 + 路径缓存 ──
 func _phase_astar_flat_cache() -> void:
 	# 大网格(demo 全尺寸)上跑 A*:不崩、路径逐格相邻且在界内(扁平数组索引正确)。
 	var big_grid := MazeGenerator.load_map_file()
@@ -870,7 +852,7 @@ func _phase_astar_flat_cache() -> void:
 		cache_grid.append(row_c)
 	MazeGenerator.current_grid = cache_grid
 	var fb_cache := fb_scene.instantiate()
-	fb_cache.global_position = Vector2(2000, 400)  # 远离 Task6 遗留的睡眠鸟(488,1208),不被当障碍
+	fb_cache.global_position = Vector2(2000, 400)
 	root.add_child(fb_cache)
 	await physics_frame
 	# 无玩家在组:鸟保持睡眠(不自己 repath),且 _collect_obstacles 只对 ≤600px 的实体收障碍
@@ -982,7 +964,6 @@ func _phase_player_knockback() -> void:
 	jdc.free()
 
 
-# ── Task 7: FlyBird 死区先下飞(逐行下探)──
 func _phase_flybird_deadzone() -> void:
 	# 宽天花板:行 10..12 全实心横跨 300 列。鸟被压到行 13,该行按飞行高度判全撞墙
 	# (A* 空路径)。旧逃逸只在当前行左右扫,找不到列就原地悬停;新逻辑逐行下探到
@@ -1005,8 +986,6 @@ func _phase_flybird_deadzone() -> void:
 	_check(esc_t.y > esc.global_position.y, "死区逃逸先下飞(目标在鸟下方)")
 	var esc_cell := MazeGenerator.cell_of(esc_t, 16, 300, 30)
 	_check(esc._bird_can_pass(esc_cell), "下潜目标格可走(A* 可起路)")
-	# 下潜运动:_follow_path 逃逸分支应给向下的速度(旧实现锁 y,只水平飞)。
-	# _path 新实例本为空,不必(也不能)赋 untyped [](_path 是 Array[Vector2i])。
 	esc._escape_target = esc_t
 	esc._follow_path(0.01, Vector2.ZERO)
 	_check(esc.velocity.y > 0.0, "死区逃逸对角下潜(velocity.y>0)")
@@ -1061,11 +1040,6 @@ func _phase_enemy_types_json() -> void:
 			and EnemySpawner.TYPES.has("black_bird") and EnemySpawner.TYPES.size() == 3,
 			"EnemySpawner.TYPES 从 enemies.json 加载(含 black_bird)")
 
-	# ── 反方向:scenes/enemies 下的敌人 .tscn 必须都在 enemies.json 里(2026-09-29)──
-	# 与 §武器注册表 的 ⑧ 相同处理逻辑、同理由(`data/enemies.json` -> `scenes/enemies/` 那一半
-	# 一直有:`_load_registry` 逐条收 `scene`,而反向靠人眼)。判定条件同样是根脚本链,
-	# 不是目录清单 —— 该目录里另有 `enemy_bullet.tscn`(根脚本 `enemy_bullet.gd` extends
-	# `BulletBase`),它不是敌人、本来就不该进 enemies.json。
 	var ebase: GDScript = load("res://scenes/enemies/enemy_base.gd")
 	_check(ebase != null, "enemy_base.gd 可加载(反方向覆盖判据依赖它)")
 	var e_registered: Dictionary = {}
@@ -1083,13 +1057,6 @@ func _phase_enemy_types_json() -> void:
 			"scenes/enemies/ 下的敌人场景必须都在 data/enemies.json 里(漏登记的是 %s)" % str(e_orphans))
 
 
-# ── CollisionAabb:必须认出 CollisionPolygon2D(本作所有身体都用它)──
-# 2026-09-15:原先 `has_any`/`world_rect` 只认 `child is CollisionShape2D`,而 Godot 4 里
-# CollisionPolygon2D 与它是并列类(都直接继承 Node2D,不是子类关系;该文件里那句
-# "CollisionPolygon2D 继承自 CollisionShape2D" 的注释是错的,已一并改正)。
-# 后果不是"少算一点":敌人/玩家的身体几何一律读不到,三个调用方静默走兜底保护 ——
-# 激光的判定框恒为「原点周围 36×36」(和身体大小/位置无关,实测扫偏移量 ±16 命中、
-# ±24 不中),water 的脚底偏移恒 24px,飞鸟避障恒 40×40。这一节把该语义严格约束。
 func _phase_collision_aabb() -> void:
 	var host := Node2D.new()
 	root.add_child(host)
@@ -1125,14 +1092,6 @@ func _phase_collision_aabb() -> void:
 	e.free()
 
 
-# ── 「注册表 json ↔ 场景目录」双向覆盖用的两个小工具(2026-09-29)──
-# 注意事项：为什么必须有反方向那一条:json -> tscn 是覆盖到的(逐条 load 每个 json 的 scene),
-#   而 tscn -> json 零防御性校验 —— 往 `scenes/weapons/` 放一个新武器场景而不写 json 条目,
-#   那一把枪在菜单/散落/图标/HUD 名字里全都不存在,而当时三条相关测试(enemy_logic_smoke /
-#   level0_weapon_scatter_probe / kh_l3_probe)全部全部断言通过、一条断言都不红。
-#
-# `scene_path` 的根节点脚本(读 `PackedScene.get_state()` 的节点属性,不实例化)。
-# 读不到(场景缺失/无根/根无 script)返回 null。
 func _root_script_of(scene_path: String) -> Script:
 	var ps: PackedScene = load(scene_path)
 	if ps == null:
@@ -1189,19 +1148,6 @@ const REGISTRY_JSON := "res://data/weapons.json"
 const TIER_STRINGS := {"light": 0, "medium": 1, "heavy": 2}
 
 
-# ── 武器注册表单一来源(data/weapons.json,2026-09-25)──
-# 旧口径(三张 GDScript 常量表)下,加新武器时漏填的表现各不相同:
-#   WEAPONS 漏 -> 切枪时 load("") 报错(响);DISPLAY_NAMES 漏 -> HUD 显示空(看得见);
-#   TIERS 漏 -> 容量算错(轻武器被当成重武器,8 格只能带两把),完全不报错。
-# 现在三样都在同一份 json 的同一行里,结构性地不可能漏一半;但"改了 json 忘了改
-# tscn 的 tier export"仍然可能(两份数据刻意重复,与 `data/enemies.json` 同构),故逐条比。
-#
-# 注意事项：为什么用 `load()` 拿到 GDScript 再调它的静态函数,而不直接写 `WeaponRegistry.xxx()`:
-#   本文件是 `-s` 冒烟,而全局类名在文件不存在时会让整个脚本 Parse Error  ->  一条断言都
-#   跑不到、进程挂死(`-s` 脚本抛错走不到 quit(),本仓踩过)。`load()` + 空防御性校验让"文件还没建"
-#   表现为干净的红,而不是超时。
-#   - 静态函数可以在 GDScript 对象上调:引擎 `modules/gdscript/gdscript.cpp:928-940` 的
-#   `GDScript::callp` 就是查 `member_functions` 并 `ERR_FAIL` 掉非 static 的那一个。
 func _phase_weapon_registry() -> void:
 	var wc: GDScript = load("res://scenes/player/weapon_component.gd")
 	var wi: GDScript = load("res://core/sim/weapon_inventory.gd")
@@ -1286,24 +1232,12 @@ func _phase_weapon_registry() -> void:
 	_check(int(wi.TIER_LIGHT) == int(wb.Tier.LIGHT), "TIER_LIGHT 与 WeaponBase.Tier.LIGHT 对齐")
 	_check(int(wi.TIER_MEDIUM) == int(wb.Tier.MEDIUM), "TIER_MEDIUM 与 WeaponBase.Tier.MEDIUM 对齐")
 	_check(int(wi.TIER_HEAVY) == int(wb.Tier.HEAVY), "TIER_HEAVY 与 WeaponBase.Tier.HEAVY 对齐")
-	# - 下面两条原样保留(旧版 `:1158-1159`)。它们是"容量 8 / 把数上限 4 是游戏规则"
-	#   的钉子 —— 2026-09-25 按容量/把数可配那份计划改成读默认值常量(见下)。
-	# - 原先是 `int(wi.MAX_WEAPONS)` / `int(wi.CAPACITY)` 直取属性 —— 常量改名成字段之后
-	#   那是运行时错,而本文件是 -s 冒烟  ->  错在 helper 里"该函数当场结束、调用方继续"
-	#    ->  后面断言被静默跳过、一个字都不出现,而判定输出行照打(测试漏报——
-	#   只有"逐条比名字/条数"才拦得住)。故走常量表 + 哨兵默认值。
 	var wconsts: Dictionary = wi.get_script_constant_map()
 	_check(int(wconsts.get("DEFAULT_MAX_WEAPONS", -1)) == 4,
 			"WeaponInventory.DEFAULT_MAX_WEAPONS == 4(实际 %s)" % str(wconsts.get("DEFAULT_MAX_WEAPONS")))
 	_check(int(wconsts.get("DEFAULT_CAPACITY", -1)) == 8,
 			"WeaponInventory.DEFAULT_CAPACITY == 8(实际 %s)" % str(wconsts.get("DEFAULT_CAPACITY")))
 
-	# ── ⑤ 生产代码里不得再有硬编码的武器 id 列表 ──
-	# 6 个字面量 / 5 个文件(weapon_component.gd 里有两处)全部改问 all_ids() 之后,本阶段零命中。
-	# - 判定条件用剥注释 + 去空格的视图:`[1,2,3,4,5,6]`(无空格)也要挡住。
-	# - 只扫生产目录(scenes/core/server/ui):tests 里的 `[1, 2, 3, 4, 5, 6]` 有合法的
-	#   role 列表用途(`team_host_probe.gd:373,421`、`team_spawn_smoke.gd:28,36`),扫进
-	#   tests 会始终断言失败 —— 唯一例外(`kh_l3_probe.gd:187` 那处真是武器列表)由 Task 4 明确提示处理。
 	var offenders: Array = []
 	for path in ScanUtil.collect(["res://scenes", "res://core", "res://server", "res://ui"]):
 		var src := ScanUtil.read(path)
@@ -1314,30 +1248,6 @@ func _phase_weapon_registry() -> void:
 	_check(offenders.is_empty(),
 			"生产代码里不得再有硬编码的武器 id 列表(命中:%s)" % str(offenders))
 
-	# ── ⑤b 那三张表必须被删掉,不是被绕过(2026-09-26 补:本阶段才是"本计划成败判定条件"的防御性校验)──
-	# 注意事项：为什么单开一条、而且它比 ⑤/⑥ 都重要:
-	#   ⑤ 的判定依据为 `contains("[1,2,3,4,5,6]")`,而那三张表的键/值是 `"1".."6"` 与 `1..6:` ——
-	#   一个 `[1, 2, 3, 4, 5, 6]` 字面量都不含  ->  表就算原样留着,⑤ 也全部断言通过。
-	#   ⑥ 只覆盖六处循环/初始化的宿主(`_default_weapon_types` / `_add_weapon_grid` /
-	#   `_fill_sp_panel` / `_server_weapon_types` / `_init` / `set_enabled_types`);
-	#   而三张表还有五个真正的读点不在⑥ 里 ——
-	#     `scenes/player/player_replica.gd`(对手手里的枪外观)
-	#     `scenes/weapons/weapon_pickup.gd`(地面武器的视觉)
-	#     `ui/weapon_icons.gd`(剪影 + 选择格上的名字)
-	#     `ui/hud.gd`(左下角武器名)
-	#    ->  只把⑥ 的六处接上注册表、留下三张表的"半迁移"会让本计划的承诺
-	#   (「加第 7 把枪只改一个 json」)静默失效:菜单/散落里出现了 7 号枪,
-	#   而它在对手手里、在地上、在图标与 HUD 名字上全都不存在,且一条断言都不红。
-	# - 为什么"断言表被删"就足够、不必逐点断言读点改对了:
-	#   表一删,任何没改到注册表的读点当场是 Parse Error(类常量不存在)——
-	#   响亮、定位精确、无法静默绕过。 ->  这一条 + 编译器合起来就把"删干净"严格约束了。
-	# - 判定条件必须用 `\b…\b`,不能用裸 `contains()` —— 裸的会踩 `MAX_WEAPONS`:
-	#   `const MAX_WEAPONS := 4` 含子串 `WEAPONS`  ->  始终断言失败,而它是该留的常量名
-	#   (计划 4 之后叫 `DEFAULT_MAX_WEAPONS`,一样含)。
-	#   PCRE 的 `\w` 含下划线  ->  `\bWEAPONS\b` 不命中 `MAX_WEAPONS`。
-	# - `ScanUtil.read` 读不到时返回 `""`  ->  这里 `continue`(跳过)。目录扫描可以接受这个形状
-	#   (文件是同一次 walk 列出来的,列得出就读得到);⑥ 那 6 个具名文件则另有显式的
-	#   "读不到就红"。
 	var re_tbl := RegEx.create_from_string("\\b(WEAPONS|DISPLAY_NAMES|TIERS)\\b")
 	var stale_tables: Array = []
 	for path in ScanUtil.collect(["res://scenes", "res://core", "res://server", "res://ui"]):
@@ -1349,16 +1259,11 @@ func _phase_weapon_registry() -> void:
 	_check(stale_tables.is_empty(),
 			"那三张旧表必须**删掉**(不是绕过);命中(文件::表名)= %s" % str(stale_tables))
 
-	# ── ⑥ 六处字面量的宿主确实改问了注册表 ──
-	# - ⑤ 挡的是"还留着旧版写法",⑥ 挡的是"新写法没接上" —— 只有 ⑤ 时,把
-	#   `_default_weapon_types` 整个删掉(或改成 `return []`)照样全部断言通过。
-	# - 按函数体判,不按整文件 contains:同一文件里别处出现 `all_ids()` 不能替这一处背书
-	#   (level_0.gd 有 600+ 行)。
 	var sites := [
 		{"path": "res://scenes/level_0.gd", "func": "_default_weapon_types"},
 		{"path": "res://scenes/lobby_page.gd", "func": "_add_weapon_grid"},
 		{"path": "res://scenes/main_menu.gd", "func": "_fill_sp_panel"},
-		{"path": "res://server/match/match_ground.gd", "func": "_server_weapon_types"},
+		{"path": "res://server/authority_world.gd", "func": "_setup_ground_weapons"},
 		{"path": "res://scenes/player/weapon_component.gd", "func": "_init"},
 		{"path": "res://scenes/player/weapon_component.gd", "func": "set_enabled_types"},
 	]
@@ -1372,20 +1277,10 @@ func _phase_weapon_registry() -> void:
 		if body.is_empty():
 			_check(false, "在 %s 里找到函数 %s()" % [s["path"], s["func"]])
 			continue
-		# - 2026-10-02 降精度:原钉 `body.contains("WeaponRegistry.all_ids()")` —— 把取 id
-		#   包成一层本文件内的 helper(如 `_weapon_ids()` 自己调 all_ids())就测试误报,
-		#   而接线其实是通的。改判"函数体引用了注册表派生的取 id 调用":直接出现 `all_ids(`,
-		#   或调用了本文件里某个自己也含 `all_ids(` 的函数(只追一层)。
-		# 要拦的变异:宿主不接注册表(硬编码 id 列表) ->  加第 7 把枪时新枪在这一处静默消失。
 		_check(_body_reaches_registry_ids(whole, body, s["func"]),
 				"%s 的 %s() 应改用注册表派生的取 id 调用(WeaponRegistry.all_ids() 或其一层 helper)"
 				% [s["path"], s["func"]])
 
-	# ── ⑦ 覆盖性:默认启用表必须等于注册表全部 id ──
-	# 这是 spec §4.2 明确提示要加、而今天没有的那条防御性校验。
-	# - 三处散落/菜单/禁用网格现在都从 all_ids() 取数  ->  "覆盖"是构造性的(由 ⑥ 保证);
-	#   真正会漂的是默认启用表 —— 它今天是一条硬编码的 `[1, 2, 3, 4, 5, 6]`,
-	#   加第 7 把枪时遗漏修改它,新枪永远拿不到也开不了,而完全不报错。
 	if wr != null:
 		var want_ids: Array = wr.all_ids()
 		var comp = wc.new()
@@ -1394,13 +1289,6 @@ func _phase_weapon_registry() -> void:
 					str(comp.enabled_types), str(want_ids)])
 		comp.free()
 
-	# ── ⑧ 反方向:scenes/weapons 下的武器 .tscn 必须都有 json 条目(2026-09-29)──
-	# - ② 只覆盖 json -> tscn 这一个方向;反方向此前零防御性校验(症状与量级见 `_root_script_of`
-	#   上方那段)。"加第 7 把枪 = 改 1 个 json + 加 1 个 tscn"这句承诺,**先放 tscn、忘了接
-	#   json**这一半今天靠人眼 —— 本条就是那半步的防御性校验。
-	# - 判定依据为「根脚本链上有 `weapon_base.gd`」,不是「scenes/weapons/ 下所有 .tscn」:
-	#   该目录同时住着 `bullet` / `grenade_bullet` / `laser_beam` / `weapon_pickup` 四个
-	#   非武器场景(它们本来就不该进 weapons.json),拿目录清单当判定条件会当场始终断言失败。
 	var registered: Dictionary = {}
 	for rid in rows:
 		registered[str((rows[rid] as Dictionary)["scene"])] = int(rid)
@@ -1417,10 +1305,6 @@ func _phase_weapon_registry() -> void:
 			+ " 漏登记的是 %s)" % str(orphans))
 
 
-# ── 容量格子面板的派生(2026-09-25)──
-# 判定条件分双向逻辑:① 派生公式本身(纯静态,不需要实例化 Control);
-# ② 接线 —— 公式必须真的被 setup()/refresh() 用上。只有 ① 的话,把两个静态函数写出来
-#    却没人调,断言照样全部断言通过(本仓反复在删那种"加了断言之后全部断言通过"的无效测试证据)。
 func _phase_weapon_capacity() -> void:
 	var ws: GDScript = load("res://ui/hud/weapon_slots.gd")
 	_check(ws != null, "ui/hud/weapon_slots.gd 可加载")
@@ -1461,12 +1345,6 @@ func _phase_weapon_capacity() -> void:
 	var body_derive := ScanUtil.func_body(ScanUtil.code_only(src), "_derive_layout")
 	_check(body_derive.contains("inventory.capacity"),
 			"_derive_layout() 必须从**背包**读容量(不能是另一个写死的数)")
-	# ②b 画的格数必须跟着派生的 `capacity`(2026-09-26 补:这是"半迁移"的最后一个洞)
-	# - 潜在缺陷场景:把 `_draw` 里的 `WeaponInventory.CAPACITY`(常量被删  ->  必须改)临时写法换成
-	#   `DEFAULT_CAPACITY` —— 于是 `_derive_layout()` 照样被调、`panel_h` 照样对,
-	#   而格阵恒画 8 格,容量调到 12 也不长。上面三条全部断言通过。
-	# - 判定条件不能只是 `contains("capacity")`:错误写法里的 `DEFAULT_CAPACITY` 也含这个词  -> 
-	#   必须反面一起判(不得出现 `DEFAULT_CAPACITY`)。
 	var body_draw := ScanUtil.func_body(ScanUtil.code_only(src), "_draw")
 	_check(body_draw.contains("capacity") and not body_draw.contains("DEFAULT_CAPACITY"),
 			"★ _draw() 必须按**本实例的 capacity** 画格子,不得读 DEFAULT_CAPACITY(那是默认值,不是本实例的容量)")
@@ -1475,8 +1353,6 @@ func _phase_weapon_capacity() -> void:
 			"★ _draw_empty_cells() 同上(空背包那条路径也要跟着容量长)")
 
 
-# ── 布点工具 spread_cells(2026-09-15 从 RoyaleHost.plan_spawns 抽出)──
-# 三条:取满 / 两两距离达标 / 池子不够时放宽而不返回空。
 func _phase_spread_cells() -> void:
 	var cells: Array = []
 	for y in 10:
@@ -1503,3 +1379,9 @@ func _phase_spread_cells() -> void:
 	# 边界:空池 / count<=0 都返回空表,不崩
 	_check(GridPathfinder.spread_cells([], 3, 3, 10, 10).is_empty(), "空池应返回空表")
 	_check(GridPathfinder.spread_cells(few.duplicate(), 0, 3, 10, 10).is_empty(), "count=0 应返回空表")
+
+func _flush_shots(actor: StubPlayer, weapon: Node2D) -> void:
+	for action: Dictionary in actor.step_actions:
+		if action["kind"] == "fire":
+			weapon.execute_shot(action)
+	actor.step_actions.clear()

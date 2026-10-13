@@ -1,36 +1,9 @@
 extends Node
-# C1 专用探针:`restore_state` 之后同帧输出的那一发,会不会被帧末的延迟写回抹掉。
-#
-# 运行方式：`--headless --quit-after 3600 res://tests/probe/ammo_rollback_probe.tscn`
-# 验收标准：文本 `AMMO ROLLBACK PROBE: ALL-OK`(不看退出码 —— 探针阻塞挂起时 --quit-after 到期仍
-#       exit 0,一行判定结果都不打印)。
-#
-# 机制(修复前):`WeaponComponent.restore_inventory` 把权威弹数按
-# `_restore_mag.call_deferred(...)` 排到帧末,而 `restore_state` 之后同帧输出的每一发
-# 都排在它之前  ->  帧末被覆盖回旧值,客户端弹数只增不减。本探针把那个序列直接构造出来:
-#   ① 等玩家落地、武器加入场景树,把手上弹数置成非满(4),并同步进背包条目;
-#   ② 取快照 -> `restore_state(快照)` —— 修复前这一步排下 deferred(值 = 4);
-#   ③ 同一物理帧内按一次开火边沿  ->  玩家 `_physics_process` 输出一发(4 -> 3);
-#   ④ 等 SETTLE 帧读 `mag_ammo`:修复前 = 4(被覆盖),修复后 = 3。
-#
-# - 为什么每条前置都要显式断言:本探针每一步都踩在同一类陷阱上 ——
-#   「未加入场景树时写状态会被 `_ready` 冲掉,而且不报错」。
-#   - 手上弹数要在武器加入场景树之后写(否则被 `_ready` 的 `mag_ammo = mag_size` 冲掉);
-#   - 背包条目的 mag 要显式同步(条目默认是 `MAG_FULL = -1`,而 `restore_inventory` 只在
-#     条目 mag ≠ MAG_FULL 时才排 deferred  ->  不同步的话 C1 那一支根本不会被走到,
-#     会导致修复前的代码也能通过测试，丧失测试有效性）；
-#   - `reset_mag_state()` / `_flush_current_mag()` 自身也只在武器加入场景树时才写。
-#   上述三者任一失效，探针都会静默退化为无法检出缺陷的假阳性状态，故每项均配置独立断言。
 
 const COLS := 24
 const ROWS := 10
 const TILE_WALL := 31      # 纹理 1 全砖(墙)
-const WARMUP := 30         # 无输入:落地 + 等武器加入场景树
-# 非满弹。-  必须 ≠ `WeaponInventory.MAG_FULL`(-1):条目是满弹时 `restore_inventory` 那一支
-# 不会触发 deferred 处理，导致分支未被覆盖，修复前也会错误地通过测试（测试漏报）。
-# - 它与手枪(`pistol_test.tscn`)的 `mag_size` 耦合:那个值被改到 ≤ 4 时,下面那次
-# `w.mag_ammo = MAG_START` 仍会"成功"(裸写不钳位),但 `_ready`/`apply_mag` 那条路会钳到
-# `mag_size`  ->  期望值 3 变成测试误报。改手枪弹夹容量时回来一起看这个数。
+const WARMUP := 30
 const MAG_START := 4
 const SETTLE := 3          # 输出那一发之后等几帧再读(帧末 flush 至少要一帧)
 
@@ -59,7 +32,7 @@ func _ready() -> void:
 	host.add_child(P)
 	P.global_position = Vector2(6 * ts + ts * 0.5, 3 * ts + ts * 0.5)
 	P.weapons.set_initial_inventory([1])   # 只给手枪(type_id 1)
-	_run_pre_tree_tick_phase()   # 阶段 2:未加入场景树窗口的 tick()(2026-09-28)
+	_run_pre_tree_tick_phase()
 
 
 func _build_grid() -> Array[Array]:
@@ -101,9 +74,6 @@ func _physics_process(_delta: float) -> void:
 			"背包条目残弹没同步上 ⇒ restore_inventory 不会排 deferred,C1 根本没被走到(探针会假绿)")
 		if not _fail.is_empty():
 			return
-		# - 同一物理帧内:restore(修复前在此排下帧末 deferred) -> 开火边沿。
-		#   本节点是场景根、玩家是它的孙子节点  ->  玩家的 `_physics_process` 在本函数之后跑,
-		#   那一发正落在"restore 之后、帧末 flush 之前"—— C1 的窗口就是这一段。
 		P.restore_state(P.capture_state())
 		_apply_attack()
 		_fired_at = _tick
@@ -131,20 +101,6 @@ func _apply_attack() -> void:
 	})
 
 
-# ── 阶段 2(2026-09-28):未加入场景树窗口的 `tick()` 不得把权威 `_reloading=false` 冲成 true ──
-# 复现 `WeaponComponent._equip_index` 那个窗口:`equip()` 是同步的,而 `add_child` 是
-# deferred 的  ->  加入场景树前 `player` 已非空、`_player_ok()` 为真  ->  `tick()` 照跑,
-# 而 `mag_ammo` 还是声明初值 0(`_ready()` 才置 `mag_size`) ->  `fire()` 的
-# "空弹夹自动换弹"被这个假前提触发  ->  `start_reload()` 把权威刚写下的 `_reloading = false`
-# 冲成 true,并多播一次没按键的 `Sfx.play("reload")`。
-# - 判定条件分双向逻辑,双向逻辑缺一不可:
-#   ① 负向(前提 + 结论):未加入场景树时 `mag_ammo` 仍是 0（若前提不成立则后续将沦为无意义的恒真断言），
-#      而 `tick()` 之后 `_reloading` 仍为 false 且 `mag_ammo` 未被写(设计里的判定条件原文);
-#   ② 正向对照:加入场景树之后空弹夹开火仍应自动换弹。没有这一半,本阶段只固定绑定了"不该换弹时
-#      不换" —— 把 `_mag_ready` 的置真删掉、或把那个分支改成裸 `return`,都会让一个已上线
-#      的功能(空弹夹自动换弹)静默消失,而全仓其余断言一条都不会红。这是"单向断言"形态。
-#   - 阶段 2c = 同窗口里的第二条入口:按 R 那条路(`player.gd` 直接调 `start_reload()`)
-#     绕过 `fire()`  ->  它的防御性校验必须独立成立,别以为 `fire()` 那条盖住了它(见该相上方注释)。
 func _run_pre_tree_tick_phase() -> void:
 	var scene: PackedScene = load(WeaponRegistry.scene_of(1))
 	if scene == null:
@@ -195,11 +151,6 @@ func _run_pre_tree_tick_phase() -> void:
 	#   `reset_state()`。
 	(P.input_source as PacketInputSource).reset_state()
 
-	# ── 阶段 2的正向对照:加入场景树之后,空弹夹仍然会自动换弹 ──
-	# - 没有这一半,本阶段只固定绑定了"不该换弹时不换" —— 而把 `_mag_ready` 从 `_ready()` 里删掉、
-	#   或把那个分支改成裸 `return`,都会让已上线的一个功能静默消失(空弹夹开火不再自动换弹),
-	#   而本探针与全仓其余断言一条都不会红(`kh_l3_probe` / `kh_l3_visual_probe` 都是直接
-	#   驱动 `start_reload()`,不走 `fire()` 这条路)。这是本仓反复强调的"单向断言"形态。
 	var w2: WeaponBase = scene.instantiate()
 	w2.equip(P, 0.0)
 	add_child(w2)                  # - 加入场景树  ->  `_ready()` 真的跑一次(这正是 `_mag_ready` 的置真点)
@@ -229,10 +180,7 @@ func _run_pre_tree_tick_phase() -> void:
 	# - 夹具与阶段 2 同形:一个 `equip()` 过、不在树上的实例 + 权威 `_reloading = false`。
 	var w3: WeaponBase = scene.instantiate()
 	w3.equip(P, 0.0)
-	w3._reloading = false          # 模拟 `_apply_weapon_state` 刚写下的权威值
-	# - [仪器] 两条前提缺一不可,两条都断言:不在树上(否则 `_ready()` 已把 `mag_ammo`
-	#   落定成 `mag_size`);且 `mag_ammo` 仍是声明初值 0(否则 `mag_ammo >= mag_size`
-	#   会替防御性校验把这次换弹挡下)。任一项不满足，后续主断言都会退化为无检测效力的空断言。
+	w3._reloading = false
 	_check(not w3.is_inside_tree(),
 			"相②c 前提:武器确实**不在**树上(否则 `_ready()` 已把弹数落定,本相恒绿)")
 	_check(int(w3.mag_ammo) == 0,

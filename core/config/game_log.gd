@@ -4,15 +4,12 @@ extends Node
 # 客户端与服务端日志分别写入游戏目录的 log/ 路径下：
 #   log/client.log        客户端运行日志
 #   log/server.log        服务端运行日志
-#   log/<角色>.old.log    上一轮的历史日志（单文件超过 MAX_BYTES 时自动轮转）
 #
 # 通过 OS.add_logger() 挂载自定义日志接收器，接管引擎的所有输出（print / push_warning / push_error），
-# 支持统一的日志落盘路径、进程隔离与文件大小轮转控制。
+# 日志只记录引擎输出，不参与进程管理或自动清理。
 
 const ROLE_CLIENT := "client"
 const ROLE_SERVER := "server"
-## 单份日志大小上限（字节）。超过阈值时轮转为 <角色>.old.log 并清理更早的历史文件。
-const MAX_BYTES := 2 * 1024 * 1024
 
 static var _sink: Logger = null
 static var _file: FileAccess = null
@@ -121,7 +118,6 @@ static func _open() -> void:
 	var dir := AppPaths.log_dir()
 	DirAccess.make_dir_recursive_absolute(dir)
 	var path := dir.path_join("%s.log" % _role)
-	_rotate(dir, path)
 	if FileAccess.file_exists(path):
 		_file = FileAccess.open(path, FileAccess.READ_WRITE)
 	else:
@@ -132,23 +128,6 @@ static func _open() -> void:
 	_file.seek_end()
 	_path = path
 	_session_header()
-
-
-# 文件大小超限时将旧日志轮转重命名为 <角色>.old.log，覆盖更早的历史文件
-static func _rotate(dir: String, path: String) -> void:
-	if not FileAccess.file_exists(path):
-		return
-	var f := FileAccess.open(path, FileAccess.READ)
-	if f == null:
-		return
-	var size := f.get_length()
-	f.close()
-	if size < MAX_BYTES:
-		return
-	var old := dir.path_join("%s.old.log" % _role)
-	if FileAccess.file_exists(old):
-		DirAccess.remove_absolute(old)
-	DirAccess.rename_absolute(path, old)
 
 
 # 默认目录不可写时（如无管理员写权限目录）回退写入 user://logs/

@@ -1,19 +1,12 @@
 class_name EnemyFlyBase
 extends EnemyBase
 
-# 飞行敌人基类:网格寻路 + 避障 + 直线保底处理 + 站/飞碰撞箱切换。
-# 这些能力原本都混在 EnemyFlyBird 里,与 FlyBird 的具体行为(射击/冲撞/返程)
-# 无关,抽出来供"能飞的敌人"复用。
-#
-# 注意:寻路方法引用了 EnemyParams.FlyBird 的参数(hover_altitude / fly_speed /
-# path_max_visit / repath_interval)。当前项目只有 FlyBird 一种飞行敌人,接受该耦合;
-# 若将来新增飞行敌人,可把这些参数改成虚 getter 让子类覆写。
 
 var _ground_polygon: CollisionPolygon2D = null
 var _fly_polygon: CollisionPolygon2D = null
 var _fly_box_min: Vector2 = Vector2.ZERO   # 飞行碰撞箱 AABB 最小角(已按 scale 换算)
 var _fly_box_max: Vector2 = Vector2.ZERO   # 飞行碰撞箱 AABB 最大角(已按 scale 换算)
-var _obstacle_boxes: Array[Rect2] = []     # 本次寻路的场上实体碰撞箱(玩家/其他敌人),当矩形障碍
+var _obstacle_boxes: Array[Rect2] = []
 var _path: Array[Vector2i] = []
 var _path_index: int = 0
 var _path_target: Vector2i = Vector2i(-1, -1)  # 上次寻路目标格;未变且路径还在时跳过重寻(静态战斗砍搜索量)
@@ -89,11 +82,6 @@ func _fly_straight_to(target: Vector2, delta: float) -> void:
 	velocity = to_target.normalized() * spd
 
 
-# 死区逃逸目标:寻路空路径(A* 无路)时鸟找不到可走的飞行格。先在当前列逐行下探,
-# 找第一个「鸟所在格可走」的行 —— 越贴近地面越开阔,宽天花板/悬挑基本必能脱困;
-# 下潜失败(如地板级矮檐)退回当前行水平逃逸(与改动前一致)。目标是可走格的格中心
-# (不是飞行高度):鸟必须真的落进这个可走格,A* 才能从该格起路;飞行高度中心会让鸟
-# 停在格上两行(悬停高度 40px ≈ 2.5 格)、重回死区。
 func _find_escape_column() -> Vector2:
 	var grid := MazeGenerator.current_grid
 	if grid.is_empty():
@@ -146,8 +134,6 @@ func _bird_can_pass(cell: Vector2i) -> bool:
 	return true
 
 
-# 收集本次寻路的场上实体碰撞箱(玩家 + 其他敌人),只收附近(≈600px)的,避免 BFS
-# 每格都和全图几十个实体判重叠。
 func _collect_obstacles() -> void:
 	_obstacle_boxes.clear()
 	# PvP 有两个玩家:两人都当飞行障碍物(寻路别从对方身上/头顶穿)。走帧缓存去 group 分配。

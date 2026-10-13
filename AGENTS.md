@@ -13,7 +13,7 @@
 - **空间几何**：**环面世界**，场景在水平与垂直方向均无缝循环连通，实体、子弹与摄像机平滑跨越地图接缝。
 - **单人模式**：核心关卡 `Level0`，支持加载 `.cyrm` 格式地图，支持时间控制系统（时空回溯与时间加速机制）。
 - **多人对战**：包含 1v1 回合死斗、3v3 团队对抗以及多人大乱斗模式。采用专用服务端权威架构，支持客户端预测与回滚、断线重连宽限期保护，以及基于 EasyTier 的免驱动应用层 P2P 网络隧道。
-- **版本标识规范**：版本号唯一来源为 `project.godot` 中的 `application/config/version`（仅使用数字和点分格式，如 `0.5.0`）。发布标识使用 `<前缀>_v<版本>_<时间戳>` 规范（如 `siri_v0.5.0_20261008`）。
+- **版本标识**：版本号从 project.godot 的 application/config/version 读取，使用数字与点分格式。
 
 ---
 
@@ -30,7 +30,7 @@
 "$GODOT" --headless --path . --quit-after 3600 res://tests/probe/haste_probe.tscn
 
 # 运行网络联机冒烟测试
-"$GODOT" --headless --path . -s res://tests/smoke/pvp_match_smoke.gd
+python tests/network/run_matches.py --godot "$GODOT" --count 2 --drop
 ```
 
 ### 2. 本地服务与开发调试
@@ -125,15 +125,15 @@ python tools/check_naming.py
   - 优先通过 STUN 进行 NAT 打洞实现对等网络直连，直连受限网络环境下自动由中继节点转发。
 - **单进程单端口会话架构**：
   - 服务端与客户端通信采用动态端口分配机制，由操作系统在运行时按需分配可用空闲端口（避免端口占用冲突）。
-  - 大厅与实际对战统一运行在同一服务端进程与同一 UDP 端口内；当房间满员开局时，`RoomManager` 直接将 `MatchSession` 对局节点挂载至服务端场景树，客户端全程无需断开或切换连接，避免了跨进程交接带来的网络断点与延时。
+  - 大厅与实际对战统一运行在同一服务端进程与同一 UDP 端口内；当房间满员开局时，`RoomSession` 直接将 `AuthorityWorld` 对局节点挂载至服务端场景树，客户端全程无需断开或切换连接，避免了跨进程交接带来的网络断点与延时。
 - **客户端预测与回滚**：
   - 本地玩家输入即时生效，保障平台跳跃与射击操作零延迟手感。
-  - 客户端每帧向服务端上报携带自增序号的输入数据包，服务端以 60Hz 频率广播权威世界状态快照。
-  - 当客户端检测到本地预测状态与服务端快照超出容差范围时，触发回滚校正：重置为权威状态并重新模拟未确认的输入帧。
-  - 针对贴身接触场景采用自适应容差模型，有效消除近身缠斗过程中的位置抖动。
+  - 客户端以 60Hz 上报带目标服务器 tick 的最新 4 条持续输入及未确认动作，移动与动作分别确认；服务端以 60Hz 模拟、30Hz 发送相对已确认基线的二进制 STATE 与到达余量反馈，客户端重建完整状态后预测和播放。
+  - 每次收到新权威状态时，重置为权威状态并按模拟 tick 重放未确认输入；未来调度、动作过期与缺包延续由共享 InputBuffer 处理。
+  - 所有远端实体使用共同的 100 ms 播放缓冲；本地校正视觉偏移在 50 ms 内衰减。
 - **断线重连与增量同步**：
   - 玩家网络闪断时，服务端保留其局内物理实体与背包数据，并启动 60 秒宽限期倒计时。
-  - 客户端重连成功后，通过增量拉取机制同步掉线期间被破坏的瓦片与地面武器变动，快速恢复对齐。
+  - 客户端重连成功后，接收完整基线并完成碰撞初始化后报告 READY，再恢复 STATE 同步。
 
 ---
 
@@ -146,5 +146,5 @@ python tools/check_naming.py
 | **时间机制** | `tests/smoke/grain_account_smoke.gd`<br>`tests/smoke/time_field_smoke.gd`<br>`tests/probe/haste_probe.tscn`<br>`tests/probe/rewind_probe.tscn`<br>`tests/probe/elite_drop_probe.tscn` | 颗粒账户状态流转、时间场倍率计算、时间加速移速与残影、时空回溯位置与敌人复活、精英掉落吸收。 |
 | **地图与子格** | `tests/probe/subcell_probe.gd`<br>`tests/probe/map_catalog_probe.gd`<br>`tests/probe/map_format_v4_probe.gd` | 16px 子格破坏判定、宏观大格状态转换、cyrm v4 编解码与校验、地图目录扫描与缩略图生成。 |
 | **武器与战斗** | `tests/smoke/weapon_inventory_smoke.gd`<br>`tests/smoke/enemy_logic_smoke.gd`<br>`tests/probe/weapon_pickup_probe.gd`<br>`tests/probe/ammo_rollback_probe.gd` | 背包容量双重限制、武器注册表数据校验、地面武器拾取丢弃、弹药回滚校正。 |
-| **网络与同步** | `tests/smoke/pvp_match_smoke.gd`<br>`tests/smoke/pvp_room_smoke.sh`<br>`tests/probe/reconnect_probe.gd`<br>`tests/probe/netplay_probe.gd` | 服务端房间管理、预测回滚收敛性、断线重连握手与世界同步、网络隧道连通性。 |
+| **网络与同步** | `tests/network/transport_probe.gd`<br>`tests/network/authority_probe.gd`<br>`tests/network/run_matches.py`<br>`tests/network/run_easytier.py` | 服务端房间管理、预测回滚收敛性、断线重连握手与世界同步、网络隧道连通性。 |
 | **界面与规范** | `tests/smoke/ui_palette_single_source_smoke.gd`<br>`tests/probe/menu_weapon_grid_probe.gd`<br>`python tools/check_naming.py` | 全局调色板单一数据源、菜单武器列表渲染、命名规范与文档路径有效性。 |

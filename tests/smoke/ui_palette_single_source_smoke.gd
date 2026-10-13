@@ -28,9 +28,6 @@ const BODY_BASE_SITE := "res://scenes/pvp_match_client.gd"
 
 # ⑥ Theme 资源:里面每个 `Color(...)` 必须等于调色板某个 `const C_*`。
 const THEME_SITE := "res://ui/theme/menu_theme.tres"
-# ⑥ 抽到的 `Color(...)` 个数下限(防无效操作):.tres 形状变了 / 读坏了  ->  零命中 = 测试漏报。
-#   今日实测 2026-10-03:menu_theme.tres 共 34 个 Color(...)(11 个 StyleBoxFlat 21 个 +
-#   [resource] 13 个),取 20 留健康余量。
 const THEME_COLOR_MIN := 20
 # 颜色值比较的容差(逐位相等,但容忍 .tres 的浮点序列化位数):
 #   ResourceSaver 把 float32 写成十进制再解析回来,噪声只有 ~1e-8 量级(float32 的十进制
@@ -44,17 +41,9 @@ const COLOR_TOL := 1.0 / 65536.0
 #   (`PLATE_LITERAL` 这个常量本身就把那串字写在了源码里 —— 不白名单它,⑤ 会自己判自己红)。
 const LITERAL_ALLOWED := [PALETTE, "res://ui/hud/pvp_hud.tscn", "res://ui/hud/team_hud.tscn",
 		"res://tests/smoke/ui_palette_single_source_smoke.gd"]
-# ⑤ 扫的目录(生产 + 测试)。
-#   - `render/` 这个根曾必须在列(`camera_2d.gd` / `post_process.gd` 原住那里);Task 2 把
-#     `render/` 并入 `core/present/` 后那两份文件由 `res://core` 递归覆盖(`ScanUtil.walk`
-#     是递归的) ->  该根已删 —— 留着它只会让下面那条"逐根 ≥1 文件"的检查报"根被搬走"。
 const SCAN_DIRS := ["res://ui", "res://scenes", "res://core", "res://server", "res://tests"]
 # `_rhs_of` 的词界判定条件用的标识符字符集(needle 后面紧跟其中任一个 = 命中的是兄弟常量)。
 const IDENT_CHARS := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
-# ⑤ 扫描到的源文件数下限:防止"扫描根本坏了 -> 一个文件都没扫到 -> 零命中 = 测试漏报"
-#   (照 `tests/probe/kh_l4_probe.gd:41-43` 的 `MIN_PROD_FILES` / `MIN_ALL_FILES` 先例)。
-#   今日实测(Task 2 搬完 render/ 后)SCAN_DIRS 共 334 个(ui 26 / scenes 62 / core 41 /
-#   server 16 / tests 189),取 250 留健康余量,只拦"整档坏掉"那一类。
 const MIN_SCANNED := 250
 
 
@@ -189,15 +178,6 @@ func _rhs_of(code: String, needle: String) -> String:
 	return ""
 
 
-# 取 `.tscn` 原文里所有 `bg_color = <Color(...)>` 的右值(按出现顺序),并剔掉 `;` 注释行。
-# - 用正则而不是 `split("=")` —— 要容忍空格差异,且 `StyleBoxFlat` 段里还有别的 `=` 行。
-# 注意事项：为什么这两项关键逻辑都不可省:
-#    ① 剔注释 —— 属性行正上方就是一条说明注释(`; ... 改底板色必须同步这一行 ...`),
-#       而注释不是代码、不受任何约束:它里面一旦出现 `bg_color = ...`,只取首个匹配的实现会读
-#       注释、真属性漂了也报绿。那种静默漏报正是本防御性校验存在的理由。
-#    ② 全取 —— 两个 `.tscn` 在 ⑤ 里是整文件白名单  ->  同文件里多出来的第二处 `bg_color`
-#       ④(原先只看首个)与 ⑤ 都看不见。全取之后由调用方断言"恰好一条":0 条 = 形状变了、
-#       多条 = 本防御性校验看不懂 —— 两种都要红,而不是静默固定绑定其中一条。
 func _tscn_bg_colors(raw: String) -> Array[String]:
 	var out: Array[String] = []
 	var re := RegEx.create_from_string("bg_color\\s*=\\s*(Color\\([^)]*\\))")

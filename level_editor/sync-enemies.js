@@ -16,9 +16,6 @@ const enemies = (json.enemies || []).map(function (e) {
   return {
     id: String(e.id),
     name: String(e.name),
-    // ★ 本脚本是**字段级手抄**:enemies.json 加字段时必须同步加到这里,否则 HTML 内嵌的这份
-    //   会静默丢字段(编辑器当下不用它,丢了也没人报错 —— 正是那种安静的漂移)。
-    //   (原先这里还有 display_name:击杀播报用的中文名。2026-09-17 随单机击杀播报一起删除。)
     scene: String(e.scene),
     color: String(e.color || '#999999')
   };
@@ -53,8 +50,6 @@ if (!re.test(html)) {
 }
 
 if (process.argv.includes('--check')) {
-  // 只比**注册表块**本身(HTML 其余部分与本脚本无关);行尾归一,免得编辑器改成 CRLF 就误报
-  // (该 HTML 主体本来就是 CRLF,内嵌块是 LF —— 正是这种混排最容易踩)。
   const norm = function (s) { return s.replace(/\r\n/g, '\n'); };
   const actual = norm(html.match(re)[0]);
   const expected = norm(block);

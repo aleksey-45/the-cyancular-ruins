@@ -1,6 +1,4 @@
 extends SceneTree
-# 像素差异比对工具脚本：
-# 比对修复前后截图的像素差异，差集区域即为修复后敌人精灵渲染的位置。
 
 func _init() -> void:
 	var a := Image.load_from_file("res://tests/_seam_a_old.png")

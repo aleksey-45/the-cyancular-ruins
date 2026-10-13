@@ -1,6 +1,14 @@
 class_name BulletBase
 extends CharacterBody2D
 
+var entity_id := 0
+var type_id := 0
+var input_seq := 0
+var input_epoch := 1
+var adjudicated_pos := Vector2.ZERO
+var adjudicated := false
+var authority_world: Node
+
 const BOUNCE_DAMPING: float = 0.6  # 撞墙反弹速度保留比例
 const TileHitFx := preload("res://scenes/effects/tile_hit_fx.gd")
 
@@ -37,7 +45,7 @@ var apply_damage: bool = true  # 是否结算伤害（客户端视觉副本为 f
 
 var _fuse_active: bool = false   # 引信是否已激活
 var _fuse_elapsed: float = 0.0
-var _fuse_duration: float = 0.0  # 本次引信时长
+var _fuse_duration: float = 0.0
 
 func setup(dir: Vector2, spd: float, rng: float, siz: float, col: Color, src: Node) -> void:
 	velocity_vec = dir.normalized() * spd
@@ -58,6 +66,9 @@ func _ready() -> void:
 		BulletTrail.attach(self, bullet_color)
 
 func _physics_process(delta: float) -> void:
+	simulate_tick(delta)
+
+func simulate_tick(delta: float) -> void:
 	delta = TimeField.bullet_delta(delta, self)
 	if TimeField.current != null and TimeField.current.is_rewinding():
 		return
@@ -179,6 +190,8 @@ func _check_player_contact() -> void:
 			var d := MazeGenerator.toroidal_delta_px(global_position, (n as Node2D).global_position,
 					GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT).length()
 			if d < PLAYER_HIT_RADIUS:
+				if authority_world != null and authority_world.is_friendly(shooter, n):
+					continue
 				start_player_fuse()
 				return
 

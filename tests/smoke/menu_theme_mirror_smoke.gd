@@ -7,8 +7,6 @@ extends SceneTree
 
 const THEME_PATH := "res://ui/theme/menu_theme.tres"
 const FACTORY_PATH := "res://ui/factory/ui_factory.gd"
-# 抽到的检查条数下限:防止"读坏了 / 变体名写错了  ->  一条都没比到  ->  零失败 = 测试漏报"。
-# 今日实测(2026-10-03 建此防御性校验时):92 条。取 60 留健康余量。
 const MIN_CHECKS := 60
 
 var _fails: Array[String] = []
@@ -47,19 +45,6 @@ func _initialize() -> void:
 		quit(1)
 
 
-# ── 类链泄漏:挂上本 Theme 不许改变 CheckButton 的最小尺寸 ──
-#
-# 注意事项：为什么必须有这一条(2026-10-03 补;Task 1/2 建的 Theme 在这上面已经错过一次,
-#   而当时的三条防御性校验一条都不红):
-#   Godot 的主题查找是沿类链回退的 —— 某类型在本 Theme 里查不到条目时会落到它的父类。
-#   而 `CheckButton : public Button`(`CheckBox` / `OptionButton` 同)。本 Theme 原先设的是
-#   基础类型 `Button/styles/*`  ->  任何挂上本 Theme 的场景里,每个 CheckButton 都静默
-#   穿上了按钮的皮:实测一个空 CheckButton 的最小尺寸从 `(40,22)` 涨到 `(120,62)`
-#   (= `_btn_box` 的 40/20 内边距 + 40 宽的图标),画面上开关外面多一圈描边,
-#   并把它下面的行整体推走(设置页左栏实测差 3.5% 像素)。
-#
-# 判定依据为行为表现验证而非源码文本匹配：同一个 CheckButton 挂载主题前后，其最小尺寸必须保持一致。
-# 验证原理：若基础类型 Button 配置了样式盒，CheckButton 作为子类会继承该样式导致控件尺寸发生异常膨胀。
 func _no_class_chain_leak(t: Theme) -> void:
 	# ① 数据级:本 Theme 的基础类型 `Button` 上不许有条目(名字直接点出成因)。
 	for s in ["normal", "hover", "pressed", "focus", "disabled", "hover_pressed"]:
@@ -111,9 +96,6 @@ func _leak_cmp(a: CheckButton, b: CheckButton, slot: String) -> void:
 func _buttons(F: GDScript, t: Theme, C: Dictionary) -> void:
 	# (Theme 变体名, 生产入口, 生产入口的实参)
 	var cases := [
-		# - 主按钮自 2026-10-03 起挂变体 `BtnPrimary`,不再是基础类型 `Button` ——
-		#   理由见 `tools/gen_menu_theme.gd` 的 `_button_variants()` 顶上那段
-		#   (设基础 `Button` 会让 `CheckButton : public Button` 沿类链静默穿上按钮的皮)。
 		["BtnPrimary", "menu_button", ["m", 32, Vector2(640, 88), "primary"]],
 		["BtnQuiet", "menu_button", ["m", 32, Vector2(640, 88), "quiet"]],
 		["BtnGold", "menu_button", ["m", 32, Vector2(640, 88), "gold"]],

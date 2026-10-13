@@ -3,10 +3,10 @@ extends Node2D
 # 多人对战远端玩家副本节点：
 # 负责在客户端渲染远端玩家的外观动画、武器外观与受击特效，由服务端快照驱动。
 # 包含独立的碰撞体节点，使本地客户端预测移动时能与远端玩家产生阻挡碰撞。
-# 位置通过平滑指数插值朝向最近环面副本坐标收敛，确保视觉连续平滑。
+# 按服务端 tick 缓冲插值，跨地图接缝使用最近环面副本。
 
-# 指数追赶平滑速率
-const INTERP_RATE := 12.0
+# 视觉时间线与权威阻挡体独立。
+
 
 # 姿态到动画名称映射，与 Player.Pose 枚举对齐
 const POSE_ANIM: Dictionary = {
@@ -43,12 +43,11 @@ var _pose: int = 0
 var _prev_vel_y: float = 0.0
 
 var _weapon_slot_node: Node2D        # 武器挂载节点
-var _weapon: Node2D = null           # 当前手持武器视觉实例
+var _weapon: WeaponBase = null       # 当前手持武器视觉实例
 var _weapon_type_int := 0            # 当前武器类型 ID
 var _opponent_canonical := Vector2.ZERO  # 服务端权威规范位置
 var _local_anchor := Vector2.ZERO        # 本地玩家位置锚点
 var _have_data := false
-var _placed := false                     # 首次位置初始化标记
 var _facing := 1                         # 移动朝向
 var _aim_facing := 1                     # 瞄准朝向
 var _aim := Vector2(1.0, 0.0)            # 瞄准向量
@@ -65,10 +64,10 @@ func _ready() -> void:
 	add_to_group(GROUP)
 	# 复用 Player 场景的动画帧与碰撞多边形定义
 	var tmp := preload("res://scenes/player/player.tscn").instantiate()
-	animator.sprite_frames = tmp.get_node("AnimatedSprite2D").sprite_frames
+	animator.sprite_frames = tmp.get_node("Visuals/AnimatedSprite2D").sprite_frames
 	_build_ghost_body(tmp)
 	tmp.free()
-	_water_feet_off = Water.feet_offset(_ghost) if _ghost != null else 24.0
+	_water_feet_off = Water.feet_offset(_ghost)
 	_weapon_slot_node = Node2D.new()
 	_weapon_slot_node.name = "WeaponSlot"
 	add_child(_weapon_slot_node)
@@ -81,13 +80,12 @@ func _ready() -> void:
 func _build_ghost_body(src: Node) -> void:
 	_ghost = StaticBody2D.new()
 	_ghost.name = "GhostBody"
+	_ghost.top_level = true
 	_ghost.collision_layer = 2
 	_ghost.collision_mask = 0
 	add_child(_ghost)
 	for pose in POSE_SHAPE:
-		var from := src.get_node_or_null(POSE_SHAPE[pose]) as CollisionPolygon2D
-		if from == null:
-			continue
+		var from := src.get_node(POSE_SHAPE[pose]) as CollisionPolygon2D
 		var poly := CollisionPolygon2D.new()
 		poly.name = POSE_SHAPE[pose]
 		poly.polygon = from.polygon
@@ -99,8 +97,7 @@ func _build_ghost_body(src: Node) -> void:
 
 # 设置幽灵碰撞体所属碰撞层（团队模式根据阵营动态配置）
 func set_ghost_layer(n: int) -> void:
-	if _ghost != null and is_instance_valid(_ghost):
-		_ghost.collision_layer = n
+	_ghost.collision_layer = n
 
 
 # 根据当前姿态切换幽灵碰撞体
@@ -114,35 +111,42 @@ func apply_snapshot(data: Dictionary, local_anchor: Vector2, _tick: int) -> void
 	_opponent_canonical = data["pos"]
 	_local_anchor = local_anchor
 	_have_data = true
-	_vel = data.get("vel", Vector2.ZERO)
-	_facing = 1 if int(data.get("facing", 1)) >= 0 else -1
-	var aim: Vector2 = data.get("aim", Vector2.ZERO)
+	_ghost.global_position = GridPathfinder.anchor_to_nearest(_opponent_canonical,
+			_local_anchor, GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+	_set_ghost_pose(int(data["pose"]))
+
+func _apply_visual(data: Dictionary) -> void:
+	_vel = data["vel"]
+	_facing = data["facing"]
+	var aim: Vector2 = data["aim"]
 	_aim = aim if aim != Vector2.ZERO else Vector2(float(_facing), 0.0)
 	if absf(_aim.x) > 0.1:
 		_aim_facing = 1 if _aim.x > 0.0 else -1
 	animator.flip_h = _facing < 0
-	var type_id := int(data.get("type_id", 0))
+	var type_id: int = data["type_id"]
 	if type_id != _weapon_type_int:
 		_swap_weapon(type_id)
-	_previewing = bool(data.get("previewing", false))
-	_downed = bool(data.get("downed", false))
+	_previewing = data["previewing"]
+	_downed = data["downed"]
 	if _downed:
 		animator.stop()
 		rotation = -PI / 2.0 * float(_facing)
 	else:
 		rotation = 0.0
-		var pose: int = clampi(int(data["pose"]), 0, POSE_SHAPE.size() - 1)
+		var pose: int = data["pose"]
 		_pose = pose
-		animator.play(POSE_ANIM.get(pose, "idle"))
-		_set_ghost_pose(pose)
-	if _ghost != null:
-		_ghost.global_rotation = 0.0
+		animator.play(POSE_ANIM[pose])
+
+	_ghost.global_rotation = 0.0
 
 
 # 播放受击反馈闪烁动画
 func play_hit(_source_pos: Vector2) -> void:
 	_hit_flash_t = HIT_FLASH_TIME
 
+func play_fire(type_id: int) -> void:
+	if _weapon != null and _weapon_type_int == type_id:
+		_weapon.play_recoil()
 
 # 切换当前展示的武器外观实例
 func _swap_weapon(type_id: int) -> void:
@@ -150,19 +154,16 @@ func _swap_weapon(type_id: int) -> void:
 	if _weapon != null:
 		_weapon.queue_free()
 		_weapon = null
-	var scene_path: String = WeaponRegistry.scene_of(type_id)
-	if scene_path.is_empty():
+	if type_id == 0:
 		return
-	var scene: PackedScene = load(scene_path)
-	if scene == null:
-		return
+	var scene: PackedScene = load(WeaponRegistry.scene_of(type_id))
 	_weapon = scene.instantiate()
 	_weapon_slot_node.add_child(_weapon)
 
 
 # 驱动武器视觉方向与枪口仰角
 func _drive_weapon_visual() -> void:
-	if _weapon == null or not _weapon.has_method("drive_remote_visual"):
+	if _weapon == null:
 		return
 	_weapon.drive_remote_visual(_aim, _aim_facing)
 
@@ -173,25 +174,15 @@ func _in_water() -> bool:
 	return Water.is_in_water(Vector2(gp.x, gp.y + _water_feet_off))
 
 
+func render_snapshot(data: Dictionary, anchor: Vector2) -> void:
+	_local_anchor = anchor
+	_apply_visual(data)
+	_drive_weapon_visual()
+	global_position = GridPathfinder.anchor_to_nearest(data["pos"], anchor, GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+
 func _process(delta: float) -> void:
-	if _have_data:
-		_drive_weapon_visual()
-		# 将权威位置对齐至相对本地玩家最近的环面副本位置
-		var target := MazeGenerator.anchor_to_nearest(_opponent_canonical, _local_anchor,
-				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
-		if not _placed:
-			global_position = target
-			_placed = true
-		else:
-			# 平滑追赶目标副本位置
-			var current := MazeGenerator.anchor_to_nearest(global_position, target,
-					GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
-			global_position += (target - current) * (1.0 - exp(-INTERP_RATE * delta))
-			global_position = MazeGenerator.anchor_to_nearest(global_position, _local_anchor,
-					GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
-		# 幽灵碰撞体直接对齐权威目标位置，保证客户端预测碰撞的准确性
-		if _ghost != null:
-			_ghost.global_position = target
+	if _weapon != null:
+		_weapon._recoil_recover(delta)
 	# 受击半透明闪烁反馈
 	if _hit_flash_t > 0.0:
 		_hit_flash_t = maxf(_hit_flash_t - delta, 0.0)

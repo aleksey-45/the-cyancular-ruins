@@ -2,8 +2,7 @@
 
 本文件为项目工程指南与核心架构索引，面向使用 Claude Code 或其他 AI 编程助手的开发者。
 
-> **架构文档索引**：本项目核心机制与子系统技术细节已按领域拆分至 [`docs/eng/`](docs/eng/) 目录下。本文件保留**项目概览**、**常用命令**、**全局架构总览**及**开发关键约束**。
-> **历史全量归档**：[`docs/claude-md-full-archive.md`](docs/claude-md-full-archive.md) 记录了早期版本的完整推导过程与测试数据，供历史查证。
+> **架构文档索引**：核心机制与子系统技术细节位于 [`docs/eng/`](docs/eng/)。本文件提供**项目概览**、**常用命令**、**全局架构总览**及**开发关键约束**。
 > **权威准则**：任何文档与代码出现冲突时，一律以**最新源码实现与自动化测试断言**为最终准则。
 
 ---
@@ -63,11 +62,11 @@ python tools/check_naming.py
 | **玩家控制** | [`docs/eng/player.md`](docs/eng/player.md) | 角色平滑移动、土狼时间与跳跃缓冲、姿态碰撞多边形切换、组件化拆分（攀爬/战斗/武器）、输入源抽象接口、弹药权威状态同步。 |
 | **渲染管线** | [`docs/eng/render.md`](docs/eng/render.md) | `SubViewport` 独立渲染树、瓦片图集构造器 `TerrainAtlas`、屏幕后处理 Shader、角色与敌人补间挤压拉伸形变。 |
 | **UI 系统** | [`docs/eng/ui.md`](docs/eng/ui.md) | 全局调色板与工厂 `UiFactory`、16px 位图与 Unifont 字体规范、战斗 HUD、武器槽位、小地图（圆形雷达）、统一联机大厅。 |
-| **网络联机** | [`docs/eng/netplay.md`](docs/eng/netplay.md) | 单进程单端口会话架构（`MatchSession`）、EasyTier 免驱动应用层 P2P 网络隧道、全链路动态端口分配、客户端预测与回滚、断线重连与宽限期。 |
+| **网络联机** | [`docs/eng/netplay.md`](docs/eng/netplay.md) | 单进程单端口会话架构（`RoomSession` 与 `AuthorityWorld`）、EasyTier 免驱动应用层 P2P 网络隧道、全链路动态端口分配、客户端预测与回滚、断线重连与宽限期。 |
 | **对局模式** | [`docs/eng/modes.md`](docs/eng/modes.md) | 1v1 回合制死斗、3v3 团队对抗（分队碰撞、队伍色彩映射、助攻判定）、多人大乱斗、通用结算界面与评分规则。 |
 | **测试体系** | [`docs/eng/tests.md`](docs/eng/tests.md) | 冒烟测试（`tests/smoke/`）与场景探针（`tests/probe/`）、源码级静态检测脚本、网络集成测试规范、残留子进程回收。 |
 | **开发工具** | [`docs/eng/tools.md`](docs/eng/tools.md) | 基于 Web Canvas 的关卡编辑器、数据表代码同步脚本（`sync-enemies.js` / `sync-tiles.js`）、发布打包与产物冒烟工具。 |
-| **技术债务** | [`docs/eng/registered-debt.md`](docs/eng/registered-debt.md) | 当前系统记录的已知边界、历史容差处理与待重构清单。 |
+| **技术债务** | [`docs/eng/registered-debt.md`](docs/eng/registered-debt.md) | 当前已知缺陷与验证边界。 |
 
 ---
 
@@ -87,8 +86,8 @@ python tools/check_naming.py
 
 ### 3. 网络与同步安全准则
 - **服务端权威原则**：所有伤害结算、子弹生成销毁、拾取判定与胜负裁决均由服务端权威执行；客户端仅执行本地表现预测与视觉模拟。
-- **输入序列协议**：客户端输入包严格按递增序号（`seq`）发送，服务端按物理帧消费并回传确认序号（`ack_seq`）。当快照状态与预测状态超出容差时，客户端执行回滚并重放未确认的输入帧。
-- **单进程单端口会话**：大厅与对局运行于同一 ENet 主机端口上，通过将 `MatchSession` 节点动态挂载至场景树实现零中断无缝开局。
+- **输入序列协议**：客户端输入包按控制阶段（epoch）和递增序号（seq）发送，服务端每物理帧消费一条，ACK 覆盖处理或退休的指令。收到权威状态后恢复并重放未确认输入，历史或重放预算不足时直接采用权威状态；重放不执行表现动作。
+- **单进程单端口会话**：大厅与对局运行于同一 ENet 主机端口上，通过将 `AuthorityWorld` 节点动态挂载至场景树实现零中断无缝开局。
 
 ### 4. 自动化测试规范
 - **行为断言明确**：每个新增的测试断言必须明确其失败条件与检验意图，禁止编写无实际校验价值的形式断言。

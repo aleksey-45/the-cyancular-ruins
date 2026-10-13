@@ -1,16 +1,5 @@
 extends Node
 
-# 打击反馈层探针(KH-hit-feedback,场景模式):headless 验证 CombatFeedback 的
-#   1) 击杀播报(PvP 侧入口 kill():文本设置 + 浮现动画)  2) 命中 X 标记显隐
-#   3) 归因写端(attribute/attribute_hit:只服务大乱斗计分)
-#   - 2026-09-17 起单机的「敌人死 -> 播报」那条链已删(notify_enemy_killed/enemy_display_name
-#     与 EnemySpawner.display_name_of 一起),故本探针改为断言"敌人命中只出 X 标记、身上不留
-#     归因 meta"。
-# 运行方式： Godot_console --headless --path . --quit-after 600 res://tests/probe/feedback_probe.tscn
-#   (--quit-after 兜底保护:脚本若解析失败则场景无脚本、一行不打印就会挂死到超时;与兄弟探针一致)
-
-
-# hoisted from locals when __ready was split (first assignment stays where it was).
 var _failures: Array[String] = []
 var _CF: GDScript = null
 var _fx: CanvasLayer = null
@@ -44,8 +33,14 @@ func _ready() -> void:
 		return
 	_finish(_failures)
 
+class FeedbackPlayer:
+	extends Node2D
+	var authority_world: Node
+	func take_hit(_pos: Vector2, _damage: int, _ignore: bool = false, _knock: float = -1.0) -> void:
+		pass
+
 func _make_player() -> Node2D:
-	var p := Node2D.new()
+	var p := FeedbackPlayer.new()
 	add_child(p)
 	p.add_to_group("player")
 	return p
@@ -55,7 +50,7 @@ func _victim_killed_by(killer: Node) -> Node2D:
 	add_child(v)
 	if killer != null:
 		v.set_meta("last_damager", killer)
-		v.set_meta("last_damager_time", Time.get_ticks_msec())   # 归因时效戳(Task 15 起为必需)
+		v.set_meta("last_damager_time", Time.get_ticks_msec())
 	return v
 
 func _finish(failures: Array[String]) -> void:
@@ -118,17 +113,13 @@ func _check_marker_and_banner() -> void:
 		_failures.append("Sfx kill 音效流缺失")
 
 func _check_e2e_direct_hit() -> void:
-	# ── 端到端:致命一击走真实 BulletBase._direct_hit 路径 ──
-	# - 2026-09-17 起单机击杀播报已删,判定条件从"播报了击杀"改成"出了命中标记 + 敌人身上
-	#   没有归因 meta"(last_damager 是播报的产物,随播报一起消失)。
 	enemy_scene = load("res://scenes/enemies/enemy_jump_bird.tscn")
 	if enemy_scene == null:
 		_failures.append("enemy_jump_bird.tscn 载入失败,无法验证端到端命中")
-	# - bullet_scene 原先由 _check_writer_register_player_hit 载入(该函数已删),搬到这里。
 	bullet_scene = load("res://scenes/weapons/bullet.tscn")
 	if bullet_scene == null:
 		_failures.append("bullet.tscn 载入失败,无法验证端到端命中")
-	# 空防御性校验:下面要用 bullet_scene.instantiate(),若它为 null 会抛错中断 _ready() -> 
+	# 空防御性校验:下面要用 bullet_scene.instantiate(),若它为 null 会抛错中断 _ready() ->
 	# 探针一行都不打印就挂到 --quit-after 超时(失败串永远看不到)。提前收尾,失败也走正常退出码。
 	if enemy_scene == null or bullet_scene == null:
 		_finish(_failures)
@@ -168,10 +159,6 @@ func _check_e2e_explosion_aoe() -> void:
 	shooter3.queue_free()
 
 func _check_e2e_laser() -> void:
-	# ── 端到端归因(激光,Task 16):走真实 LaserWeaponBase 伤害入口 _apply_beam_damage ──
-	# 不 fire():fire 要读鼠标/相机/枪口并做 BeamTrace 几何,真机方向不可控;此处直接进缝2
-	# (_apply_beam_damage -> _damage_path_targets -> _apply_to_enemy),即激光唯一的敌人伤害点,
-	# 几何(缝1)不参与本断言 —— 要约束的是「伤害点写没写归因」。
 	var laser_scene: PackedScene = load("res://scenes/weapons/laser_gun.tscn")
 	if laser_scene == null:
 		_failures.append("laser_gun.tscn 载入失败,无法验证激光归因")

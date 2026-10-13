@@ -4,10 +4,6 @@ extends CanvasLayer
 # 1v1 PvP 对局 HUD 界面：
 # 包含中央广播通知、顶部记分栏、网络延迟显示以及对手掉线重连提示。
 
-const ST_COUNTDOWN := 0
-const ST_PLAYING := 1
-const ST_ROUND_OVER := 2
-const ST_MATCH_OVER := 3
 
 @onready var _broadcast: Broadcast = $Broadcast
 @onready var _score_label: Label = $ScoreWrap/ScoreLabel
@@ -28,7 +24,6 @@ var _grace: Dictionary = {}
 
 func _ready() -> void:
 	PixelFont.shared()
-	NetBus.local_round_state.connect(_on_round_state)
 	NetBus.ping_updated.connect(_on_ping)
 	_grace_label.add_theme_color_override("font_color", UiFactory.C_GRACE)
 	_broadcast.set_broadcast(true, "对战开始", "第 1 局")
@@ -41,7 +36,8 @@ func show_notice(big: String, sub: String = "") -> void:
 func _process(delta: float) -> void:
 	_broadcast.tick(delta)
 	if not _grace.is_empty():
-		_grace = GraceWindow.tick_display(_grace, delta)
+		for role in _grace:
+			_grace[role] = maxf(0.0, _grace[role] - delta)
 		_refresh_grace()
 
 # 刷新对手掉线重连提示框
@@ -58,9 +54,9 @@ func _on_ping(ms: int) -> void:
 
 func _on_round_state(data: Dictionary) -> void:
 	# 服务端下发宽限期状态更新并刷新界面
-	_grace = data.get("grace", {})
+	_grace = data["grace"].duplicate()
 	_refresh_grace()
-	var state: int = data.get("state", ST_PLAYING)
+	var state: int = data.get("state", NetEvent.RoundState.PLAYING)
 	var round: int = data.get("round", 1)
 	var scores: Dictionary = data.get("scores", {})
 	var rounds_won: Dictionary = data.get("rounds_won", {})
@@ -72,23 +68,23 @@ func _on_round_state(data: Dictionary) -> void:
 			s1, s2, w1, w2, round]
 	var me: int = PvpSession.role
 	match state:
-		ST_COUNTDOWN:
+		NetEvent.RoundState.COUNTDOWN:
 			var sub := "对战开始" if round <= 1 else "第 %d 局" % round
 			_broadcast.start_countdown(float(data.get("timer", 3.0)), sub)
-		ST_PLAYING:
+		NetEvent.RoundState.PLAYING:
 			_broadcast.set_broadcast(false, "", "")
-		ST_ROUND_OVER:
+		NetEvent.RoundState.ROUND_OVER:
 			var winner: int = int(data.get("winner", 0))
 			if winner != 0:
 				_broadcast.set_broadcast(true, "本局胜利!" if winner == me else "本局落败",
 						"局胜 %d - %d" % [w1, w2])
 			else:
 				_broadcast.set_broadcast(true, "P%d 赢得本局!" % (1 if w1 > w2 else 2), "局胜 %d - %d" % [w1, w2])
-		ST_MATCH_OVER:
+		NetEvent.RoundState.MATCH_OVER:
 			var mwinner: int = int(data.get("match_winner", 0))
 			if mwinner == me:
 				_broadcast.set_broadcast(true, "胜利!", "你赢得了整场对战")
 			elif mwinner != 0:
 				_broadcast.set_broadcast(true, "失败", "再接再厉…")
 			else:
-				_broadcast.set_broadcast(true, "P%d 获胜!" % (1 if w1 > w2 else 2), "对局结束,返回菜单…")
+				_broadcast.set_broadcast(true, "平 局", "对局结束")

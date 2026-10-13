@@ -1,23 +1,5 @@
 extends Node
 
-# 地面武器(WeaponPickup)探针。场景模式 —— 判定依据为 grep 文本 `WEAPON PICKUP: ALL-OK`,
-# 不能只看退出码(中途报错时 --quit-after 仍 exit 0,退出码与"测试通过"不可分)。
-# 注意事项：运行期脚本错误会导致当前函数提前中断但调用方继续执行，可能导致断言被跳过却依然输出 ALL-OK；
-#   因此需结合执行断言计数确保所有用例完整执行（详见 tests/lib/probe_base.gd）。
-#
-#   - 配置充足的超时保护帧数(3600 帧):探针正常跑完会自己 quit(),这个值只在探针阻塞挂起时才用得上 ——
-#     适当放宽超时保护可避免环境负载波动引发误报。原先的 600/900 在机器负载重时可能先耗尽、探针来不及跑完
-#     就被意外中断(表现为"一行 ALL-OK 都没有",看着像功能坏了)。
-# 运行方式：
-#   "$GODOT" --headless --path . --quit-after 3600 res://tests/probe/weapon_pickup_probe.tscn
-#
-# ── 钉三件日常看不出来的事 ──
-#   ① 碰撞层归属:玩家与子弹都不该碰地上的枪。改错了的表现是"走过去被枪挡住"
-#      或"子弹打在地上消失",而两者都不会报错。
-#   ② 像素碰撞箱真的生成了(而不是走了空壳、碰撞箱缺席 —— 那会让拾取判定飘)。
-#   ③ 落点与"何时开始模拟"无关 —— 这是联机端"客户端晚一个 RTT 才收到事件、
-#      却必须落在同一位置"的前提。把摩擦从"速度阈值置零"改成"滑固定时长"就会破,
-#      而破了之后单机完全正常,只在联机端表现为"看着够不着"。
 
 var _failures: Array[String] = []
 
@@ -87,7 +69,6 @@ func _phase_collision_shape() -> void:
 	if cs != null and cs.shape is RectangleShape2D:
 		var sz: Vector2 = (cs.shape as RectangleShape2D).size
 		_check(sz.x > 4.0 and sz.y > 2.0, "碰撞箱尺寸应来自真实像素(实际 %s)" % str(sz))
-		# - A4(2026-09-17):视觉中心已被挪到 body 原点 -> 碰撞箱必须在 Vector2.ZERO。
 		_check(cs.position == Vector2.ZERO, "碰撞箱须在节点原点(实际 %s)" % str(cs.position))
 	else:
 		_failures.append("碰撞箱不是矩形(或不存在)")
@@ -95,11 +76,6 @@ func _phase_collision_shape() -> void:
 	await get_tree().physics_frame
 
 
-# ── ①b 六把枪逐个:视觉中心都在节点原点(钉 A4 与 m82a1 那个历史 bug)──
-# - 为什么单开一相:2026-09-17 之前 `_build_collision` 只把 `spr.position` 算进判定圆心、
-#   漏了武器根节点自己的 position,于是 m82a1 的判定圆心比画出来的枪偏
-#   (6,3)×WORLD_SCALE = (15, 7.5) 世界像素 —— 而拾取半径只有 64px,且不报错。
-#   只测手枪(上面那一相)是抓不到的:手枪的根节点本来就是零变换。
 func _phase_all_weapons_centered() -> void:
 	for t in WeaponRegistry.all_ids():
 		var type_id := int(t)
@@ -111,8 +87,6 @@ func _phase_all_weapons_centered() -> void:
 		var vis: Node2D = pk.get_node_or_null("Visual")
 		_check(cs != null and cs.position == Vector2.ZERO,
 				"槽 %d:碰撞箱须在节点原点(实际 %s)" % [type_id, str(cs.position if cs else Vector2.INF)])
-		# 视觉被反向平移过 = 枪画在原点(根节点原本零变换的枪不要求平移量为 0,
-		# 只要求"平移后画出来的中心在原点",故判定依据为 cs 在原点 + Visual 存在)
 		_check(vis != null, "槽 %d:应有 Visual 子节点" % type_id)
 		pk.queue_free()
 		await get_tree().physics_frame
@@ -142,7 +116,7 @@ func _phase_landing_determinism() -> void:
 	for i in 20:
 		await get_tree().physics_frame
 	# - 两把必须同型号(这里都是 type_id=1)。用不同型号会得到一个测试误报:不同武器的
-	#   精灵碰撞箱高度不同 -> 下落距离不同 -> 空中时长不同 -> 空气阻力的衰减量不同 -> 
+	#   精灵碰撞箱高度不同 -> 下落距离不同 -> 空中时长不同 -> 空气阻力的衰减量不同 ->
 	#   落点天然不同。那不是"相位依赖",是"拿两种东西比"。
 	# - 两把还必须拉开距离:掉落物掩码含层 8(= 与其它掉落物碰),同 x 起滑会互相顶,
 	#   测出来的是"两把枪挤在一起",不是"相位依赖"。1000px 远超各自的滑行距离(~220px),
@@ -188,10 +162,6 @@ func _phase_landing_determinism() -> void:
 	await get_tree().physics_frame
 
 
-# ── ④ 背包的拾取 / 替换 / 丢弃往返 ──
-# 这是玩家按 F/Q 时会走的实际那几行(Level0.try_pickup_for / player._try_drop
-# 只是把它们接起来)。原先只有零散覆盖,这里把整条语义严格校验:
-#   放得下 -> 直接进背包;放不下 -> 替换手上当前那把并把被换下的交还调用方。
 func _phase_inventory_roundtrip() -> void:
 	var ps: PackedScene = load(PLAYER_SCENE)
 	var pl: Node = ps.instantiate()
@@ -277,12 +247,6 @@ func _phase_inventory_roundtrip() -> void:
 	await get_tree().physics_frame
 
 
-# ── ⑤ 视觉真的建出来了(两条配置路径都要) ──
-# - 这条 bug 是真的漏过一次:`Level0.spawn_pickup` 原先先 `add_child` 再 `configure`,
-#   而 `_ready` 一加入场景树就用 @export 默认值(type_id=1 手枪)建过一次视觉;`configure` 再建时
-#   旧的 "Visual" 还占着名字(queue_free 要到帧末),新节点被自动改名,
-#   于是 `get_node_or_null("Visual")` 抓到旧的那份 -> 地面武器没有视觉、碰撞箱按错的枪算。
-#   探针当时只走"configure 在 add_child 之前"那条路,所以全部断言通过 —— 补上另一条。
 func _phase_visual_built() -> void:
 	# 路径 A:configure 在 add_child 之前(生产路径,Level0.spawn_pickup)
 	var a: WeaponPickup = load(PICKUP_SCENE).instantiate()

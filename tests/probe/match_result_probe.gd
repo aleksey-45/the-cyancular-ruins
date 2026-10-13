@@ -1,38 +1,8 @@
 extends Node
 
-# 结算页的版式与信号防御性校验(必须真实视口渲染;headless 下取不到像素,那是留给用户的运行方式)。
-# 运行方式： "$GODOT" --path . --quit-after 3600 res://tests/probe/match_result_probe.tscn
-# 验收标准： 文本 `MATCH RESULT PROBE: ALL-OK`。
-#
-# ── 为什么需要它 ──
-# - 版式是"改了不报错"的一类:两节画成一栏、列数不随 columns 变、MVP 高亮落错行、
-#   面板不居中,全都不会报错,只会画出一张读不出来的图。所以要取图 + 节点级断言两条一起。
-# - 信号那一条是本页唯一的行为:连点两次按钮若发两次 leave_requested,
-#   下游 safe_change_scene 会被调两次 —— 第一次切到主菜单、第二次把刚建出来的主菜单当 old 退役。
-# - 空载荷不崩是硬要求:结算页崩了玩家卡在对局里出不去。
-#
-# ── 注意： 两条"别改回去"的纪律(2026-09-20 评审后补)──
-# ① 控件必须从 `.tscn` 实例化,不许 `MatchResult.new()`。`layer = 150` 只住在
-#    `ui/match_result.tscn` 里,脚本一个字都不设(与三个 HUD 相同处理逻辑:层位值只有一处来源)。
-#    `.new()` 建出来的是 layer 1 的 CanvasLayer  ->  结算页画在三个 HUD(130)与小地图(131)
-#    底下,压暗罩无法覆盖测试耗时它们。本探针此前正是用 `.new()` —— 那等于在验一条生产不会走
-#    的路,这一类缺陷它一个都无法覆盖检测。下面每次构造都过 `_make()`,并断言 `layer == LAYER_WANT`。
-# ② 每条断言都要能真的红。取到 null 就直接解引用/`save_png` 会在出错那一行中止所在函数。
-#    - 2026-09-21 实测定案(本文件只教这一个模型,先前的"强制中断协程、一行 verdict 都没有"
-#    是过期说法,已按实测改写):`get_node` 取不到节点 / 在 null 上调用方法时,引擎只 `ERROR`
-#    一行,然后出错的那个函数当场结束、调用方继续。三层实测:
-#      - 出错在 lambda(`_shot` 的 `verify`) -> lambda 结束,`_shot` 在 `verify.call(m)`
-#        之后照常往下走;
-#      - 出错在 `_shot` 自己(即下面 `save_png` 那个形状) -> `_shot` 结束,`_run` 继续;
-#      - 出错在 `_run` 里 -> `_run` 结束,`_ready()` 的 `await _run()` 照常恢复。
-#    三层都打印 ALL-OK  ->  测试漏报(读者把那行当"后面那些都过了")。唯一"一行都不打印"
-#    的形状是出错在 `_ready()` 自己身上(那时连 verdict 都到不了,只能靠 `--quit-after` 收尾
-#    —— 而它照样 exit 0,与"测试通过"在退出码上不可分)。
-#    故:取图先判 `img == null` 并响亮地记一条 FAIL,取节点一律先 `_check(x != null)`。
-#    (下面三处取节点都按这条改过,失败形态记在各自注释里。)
 
 const MATCH_RESULT_SCENE := "res://ui/screens/match_result.tscn"
-# - 面板改走 `UiFactory.menu_panel()` 后,内容容器在多出来的一层 `Body` 里  -> 
+# - 面板改走 `UiFactory.menu_panel()` 后,内容容器在多出来的一层 `Body` 里  ->
 #   本文件里所有取节点的路径都是 `Root/Panel/Body/VBox/...`(改版前没有 `Body` 那一层)。
 #   `Root/Panel`(居中量它)与 `Section{N}/Rows` 这两段的形状没变。
 const LAYER_WANT := 150        # 只住在 .tscn 里;三个 HUD = 130、小地图 = 131、暂停菜单 = 145
@@ -69,41 +39,20 @@ func _run() -> void:
 	# ① 空载荷:不崩，且只画标题
 	await _shot({"title": "空"}, func(m):
 		var s: Node = m.get_node_or_null("Root/Panel/Body/VBox/Sections")
-		# - 先判 null 再解引用(模型见文件头 ②)。直接 `get_node_or_null(...).get_child_count()`
-		#   在节点缺失时只结束这个 lambda,而 `_shot` 在 `verify.call(m)` 之后照常往下走、
-		#   `_run`/`_ready` 也照常恢复  ->  "空载荷不崩"这条硬要求被静默跳过,verdict 仍是
-		#   ALL-OK(2026-09-21 实测:这一层不是"强制中断 `_shot`、一行 verdict 都没有"—— 那是
-		#   本文件原先的旧说法,已在文件头 ② 更正)。
 		_check(s != null, "空载荷:找不到 Root/Panel/Body/VBox/Sections(节点路径变了?)")
 		if s != null:
 			_check(s.get_child_count() == 0, "空载荷应 0 节"))
 
-	# ② 1v1 单节两行：列数 == 2 + columns.size()
-	# - 夹具与 `-s` 冒烟的 ①b 相同处理逻辑(行数据走 `stats`;`scores` 已经不是本页的数据面)。
-	# 注意事项：刻意让 MVP 不是榜首:role 2 的 9 杀排到第 1 行,而它在 `for_duel` 写死的遍历
-	#   次序 `[1, 2]` 里本来在第 2 行  ->  下面那条 -  位置断言对"行号排序前数 / 排序后数"
-	#   才不无效操作。原先的夹具里 role 1 既是榜首又是 MVP,两种实现给出同一个行号,
-	#   位置那一半是始终为 true的 —— 而"高亮落错行"正是这一类断言唯一要拦的东西。
 	await _shot(MatchResultPayload.for_duel({"stats": {
 			1: {"kills": 3, "deaths": 4, "assists": 0, "dealt": 100, "taken": 250, "kscore": 300, "acs": 100},
 			2: {"kills": 9, "deaths": 1, "assists": 0, "dealt": 450, "taken": 120, "kscore": 900, "acs": 450}},
 			"rounds_won": {1: 0, 2: 2}, "mvp": 2, "match_winner": 2},
 			{1: "阿甲", 2: "bob"}, 1), func(m):
-		# - 先判 null 再解引用(文件头 ②)。实测的失败形态(2026-09-21,把 `Rows` 改名):
-		#   直接 `get_node(...)` 取不到节点  ->  引擎只 `ERROR` 一行,而**出错的那个函数当场结束、
-		#   调用方继续 —— 于是这个 lambda 里剩下的断言被静默跳过**,`_shot`/`_run` 照常往下走。
-		#   若没有别处恰好也撞到同一个改名(那次碰巧是 ③ 替它报了红),verdict 就是 ALL-OK:
-		#   一条测试漏报(读者会以为这两条都过了),比"探针阻塞挂起"危险得多。
 		var g := m.get_node_or_null("Root/Panel/Body/VBox/Sections/Section0/Rows") as GridContainer
 		_check(g != null, "1v1:找不到 Root/Panel/Body/VBox/Sections/Section0/Rows(节点路径变了?)")
 		if g != null:
 			_check(g.columns == 2 + 5, "1v1 表头列数应为 2+5=7,实得 %d" % g.columns)
 			_check(g.get_child_count() == 7 + 2 * 7, "1v1 应有 7 表头 + 2 行×7 格")
-		# 注意事项：1v1 的 MVP 星标(本批唯一的新行为;② 此前只判列数与格子数  -> 
-		#   `for_duel` 的 `mvp` 退回 `{}`、或指向错的行,②/③ 都不会红 —— ③ 守的是 3v3
-		#   那份载荷。"1v1 结算页没有 MVP 星 / 星标落在别人那一行"就是这样静默上线的。
-		#   判定条件与 ③ 相同处理逻辑:恰好一个 - ,且它落在 MVP 行的昵称格上;本夹具的 MVP 在
-		#   第 1 行的 role 2(见上文),故位置那一半对"排序前数 / 排序后数"真的有效。
 		var secs1: Node = m.get_node_or_null("Root/Panel/Body/VBox/Sections")
 		_check(secs1 != null, "1v1:Sections 取不到(MVP 星标断言无从成立)")
 		if secs1 != null:
@@ -160,12 +109,6 @@ func _run() -> void:
 					"★ 必须落在 MVP 行(eve,第二行)的昵称格:期望「%s」,实得「%s」" % [
 							want, "" if name_lbl == null else name_lbl.text]))
 
-	# ④a 可见性门控前置校验 + ④b ESC 那一路(实例 A;下面 ④c 的按钮那一路用另一个新实例)
-	# 注意事项：两条路各用各的实例 —— 这是本探针最要紧的一处修法。此前两者共用一个实例、且 ESC 先驱动:
-	#    ESC 一发就把 `_leaving` 闩上,后面两次 `emit_signal("pressed")` 物理上发不出信号
-	#     ->  删掉 `back.pressed.connect(_request_leave)` 整条探针照样全部断言通过 —— 而"返回主菜单按钮点了
-	#    没反应"正是本页最该拦住的缺陷(结算页坏了 = 玩家卡在对局里出不去)。
-	#    分开实例之后两条断言各自非无效操作:删连接  ->  ④c 红;删 `_unhandled_input` 的 ESC 分支  ->  ④b 红。
 	var ma := _make()
 	add_child(ma)
 	_check(ma.layer == LAYER_WANT,
@@ -207,11 +150,6 @@ func _run() -> void:
 	mb.show_result({"title": "信号"})
 	var fb := [0]
 	mb.leave_requested.connect(func() -> void: fb[0] += 1)
-	# - 先判 null 再解引用(文件头 ②)。这里与上面两处形态不同:它直接在 `_run` 里
-	#   (不经过 lambda),出错会结束 `_run` 本身 —— ④c 自己的断言与整段 ⑤ 一起被跳过,
-	#   而 `_ready` 的 `await _run()` 照常恢复、打印的却是 ALL-OK(2026-09-21 实测:把
-	#   `BackButton` 改名即复现,输出里只有一行 `ERROR: Node not found` + `ALL-OK`)。
-	#   那是测试漏报,比文件头 ② 预言的"一行都不打印"更坏:读者会把那行 ALL-OK 当成"④c 与 ⑤ 都过了"。
 	var bb := mb.get_node_or_null("Root/Panel/Body/VBox/BackButton") as Button
 	_check(bb != null, "④c:找不到 Root/Panel/Body/VBox/BackButton(节点路径变了?)")
 	if bb != null:
@@ -221,13 +159,6 @@ func _run() -> void:
 	mb.queue_free()
 	await get_tree().process_frame
 
-	# ⑤ 同一实例连调两次 `show_result` -> 旧节当场摘掉、名字没被顶成 `@2`、面板不翻倍
-	# - 这条约束的是 `show_result()` 的清场纪律(见 `ui/match_result.gd` 里那段注释):
-	#   `queue_free()` 只是标记,旧节本帧仍是子节点  ->  新节的名字被 Godot 自动改成
-	#   `Section0@2`,而 `get_combined_minimum_size()` 把新旧两份一起量进去  ->  偏移量按
-	#   约两倍宽算、布局一旦摆定就不再重算  ->  该实例永久偏宽(全程不报错)。
-	# - 触发是真实的:3v3 的 `round_state` 会带第二次 MATCH_OVER 载荷(新 mvp)进来。
-	#   `_shot` 每次新建实例,无法覆盖检测它 —— 所以这条必须两次都调在同一个实例上。
 	var dup := _make()
 	add_child(dup)
 	var team_payload := MatchResultPayload.for_team({"stats": {
@@ -262,15 +193,6 @@ func _run() -> void:
 	dup.queue_free()
 	await get_tree().process_frame
 
-	# - 这里此前还有一条「三个客户端必须从 `.tscn` 实例化」的源码扫描(⑥)。已整段搬走:
-	#   它的挂载点在基类 `scenes/pvp_match_client.gd`(三个客户端全部 extends 它),而它
-	#   守的却是一份手写的三个子类清单;且裸 `contains` 对注释是盲的(基类里那句注释原文
-	#   就写着 `MatchResult.new()`)。现在住在 `tests/probe/hud_declarative_probe.gd` 的
-	#   `_check_result_scene_instantiation()`(走盘 + 剥注释,理由写在那里)。
-	#   - 别在这儿"补回来":本文件是需要真实视口渲染的窗口探针,只在有人开窗口时才跑。
-
-
-# 找「带 -  的那个 Label」所在网格与其下标;找不到返回空数组。
 func _find_mark(sections: Node) -> Array:
 	for box in sections.get_children():
 		var g: GridContainer = box.get_node_or_null("Rows") as GridContainer
@@ -292,10 +214,6 @@ func _count_marks(n: Node) -> int:
 	return c
 
 
-# - 版式断言的位置面。上面那些断言(包括本节新加的)数的是个数/列数/名字,**位置一个都
-#   无法覆盖检测** —— 而"面板没居中、右半截切在屏幕外"正是那样全部断言通过溜过去的(2026-09-20 取图才发现,
-#   3v3 时整块 B 队数据都在屏幕外)。居中量的口径写在 `ui/match_result.gd` 的 `show_result()`
-#   里;这里只核结果:面板屏幕矩形中心 == 视口中心。
 func _check_centred(m: MatchResult) -> void:
 	var p: Control = m.get_node_or_null("Root/Panel") as Control
 	_check(p != null, "找不到 Root/Panel(居中无从断言)")
@@ -329,14 +247,6 @@ func _shot(payload: Dictionary, verify: Callable) -> void:
 	verify.call(m)
 	_check_centred(m)
 	var img := get_viewport().get_texture().get_image()
-	# - 与 `tests/probe/hue_tint_probe.tscn` 相同处理逻辑,必须响亮地记一条 FAIL 再退出:
-	#   `--headless` 下这条链给 null,而 `save_png` 在 null 值上只结束 `_shot` 本身
-	#   (模型见文件头 ②)—— `_shot` 的调用方 `_run`、以及 `_run` 的调用方 `_ready()`
-	#   全部照常恢复  ->  verdict 仍打 ALL-OK,整段 ①~⑤ 一条都没验却看着全部断言通过。
-	#   - 本文件原先写的是"强制中断 `_shot` 协程  ->  `_run` 再也不恢复、一行 verdict 都不打印":
-	#   2026-09-21 实测推翻(见文件头 ②)—— 那个说法只在出错于 `_ready()` 自己身上
-	#   时才成立,而这里是 `_shot`。本探针的先决条件是真实视口渲染,误加 `--headless` 必须当场
-	#   说出来,不能装死。
 	if img == null:
 		_check(false, "截图失败 —— 是不是误加了 --headless?(真渲染是本探针的前提)")
 		m.queue_free()

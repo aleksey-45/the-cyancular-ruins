@@ -86,8 +86,6 @@ func _ai(delta: float) -> void:
 			_tick_return(delta, dist)
 
 
-# 状态机帧逻辑更新，各状态逻辑分派至独立方法处理
-#   等于原来在 _ai 里 return(都是"本帧到此为止")。
 
 func _tick_sleep(delta: float, dist: float) -> void:
 	if _wake_timer > 0.0:
@@ -152,7 +150,6 @@ func _tick_shoot(delta: float, dist: float) -> void:
 	if intent == Intent.CHARGE:
 		if _try_charge():
 			return
-		# LOS 被堵:不再原地抛弹,退回 FLY 拉距离找 LOS(对齐 spec §1.4)
 		_set_state(State.FLY)
 		_schedule_repath()
 		return

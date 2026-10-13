@@ -1,18 +1,10 @@
-// core.js —— `.cyrm` v4 数据模型 + 二进制编解码 + v3 迁移 + 校验。
-// ★ 纯逻辑,不引用任何 DOM API:必须能被 node 直接 new Function(src)() 求值(smoke.js 就是这么跑的)。
-// ★ 格式规格:docs/superpowers/specs/2026-09-19-cyrm-v4-editor-design.md §2 / §3。
-//   v3 packed = texture*16 + shape 与 v4 descriptor 是两种完全不同的编码 —— 本文件里
-//   _v3Pack / _v3TexOf / _v3ShapeOf 专管前者,packDesc / texOf 专管后者,不得混用。
 globalThis.Core = (function () {
   'use strict';
 
   // ── 常量 ──
-  const SUB_PER_CELL = 4;          // 每 64px 格细分成 4×4 个 16px 子格(规格 §2.1)
+  const SUB_PER_CELL = 4;
   const SUB_PX = 16;               // 子格边长(世界像素)
-  const CELL_PX = 64;              // 格边长(世界像素)
-
-  // ── 图层(规格 §2.1)──
-  // 顺序从外到内:前景 / 场景 / 后景 / 背景。只有「场景」参与碰撞。
+  const CELL_PX = 64;
   const LAYER_COUNT = 4;
   const LAYER_FRONT = 0, LAYER_SCENE = 1, LAYER_BACK = 2, LAYER_BG = 3;
   const LAYER_NAMES = ['前景', '场景', '后景', '背景'];
@@ -138,13 +130,9 @@ globalThis.Core = (function () {
     return (c ^ 0xFFFFFFFF) >>> 0;
   }
 
-  // ── 层块种类(规格 §3.3 / §3.4)──
   const KIND_TEX = 1;
   const KIND_COLOR = 2;
 
-  // 纹理层块:kind(1) + 调色板 + 索引流(规格 §3.3)。
-  // ★ 索引 0 恒为空气 —— 即使本层一个空气格都没有,也要占住第 0 位,
-  //   这样"空图 = 调色板 [0] + 全 0 索引流"是一条无条件成立的不变量。
   function encodeTexLayer(desc, subCols, subRows) {
     var n = subCols * subRows;
     if (desc.length !== n) {
@@ -159,13 +147,6 @@ globalThis.Core = (function () {
       var p = seen.get(d);
       if (p === undefined) {
         p = pal.length;
-        // ★ 上界必须判在 push **之前**、且必须是 `>=`(指令 A1)。
-        //   palette_count 是 u16,能表达的最大值就是 65535;而这里的 p 是**加入该项之前**的
-        //   pal.length ⇒ 加入后 pal.length === p + 1,故合法条件是 p + 1 ≤ 65535 即 p ≤ 65534。
-        //   写成 `p > 65535` 会放行**恰好 65536 项**的调色板:紧接着的 w.u16(65536) 按位截断
-        //   成 0,产出的是「本文件自己的解码器当场拒绝(调色板为空)」的 .cyrm —— 本仓历史上
-        //   A6 类缺陷(「导出后再也导不回来」)的逐字翻版,而这次重写存在的意义正是消灭它。
-        //   错误信息里的数字必须与实际限值一致(65535 = u16 上限,不是 p 的上限)。
         if (p >= 65535) throw new Error('encodeTexLayer: 调色板超过 65535 项(u16 上限)');
         pal.push(d);
         seen.set(d, p);
@@ -202,8 +183,6 @@ globalThis.Core = (function () {
     return { kind: 'tex', desc: desc };
   }
 
-  // 背景层块:kind(2) + 逐格 RGBA8888(规格 §3.4)。
-  // 不做调色板 —— 背景是真彩,而平滑渐变恰好是 deflate 最擅长的一类数据。
   function encodeColorLayer(rgba, subCols, subRows) {
     var n = subCols * subRows;
     if (rgba.length !== n) {
@@ -224,10 +203,6 @@ globalThis.Core = (function () {
     return { kind: 'color', rgba: rgba };
   }
 
-  // ── meta 文本(规格 §3.2)──
-  // 形状就是今天那几行 `# ...` 注释:deflate 压得掉,而且游戏侧
-  // MapFormat.parse_spawn_metadata() 零改动就能继续用。
-  // 本函数输出:先注释,再出生点(player / player2 / player3…),最后敌人。
   function buildMeta(map) {
     var lines = [];
     var i;
@@ -277,11 +252,6 @@ globalThis.Core = (function () {
     return { players: players, enemies: enemies, comments: comments };
   }
 
-  // ── 压缩(规格 §3.5)──
-  // 用运行时原生的 CompressionStream('deflate') —— 产出 zlib(RFC1950)格式,
-  // 与 Godot 侧 PackedByteArray.decompress(n, COMPRESSION_DEFLATE) 对应。
-  // ★ 刻意不自造压缩器:自己写 RLE 就要自己写解压器,而解压器写错是那种
-  //   "大部分时候对、偶尔静默出错"的 bug。
   function deflateBytes(bytes) {
     // ★ 三个全局都要守:`new Response(...)` 在 Response 缺失的环境里是**同步抛**,
     //   那会逃出 encodeMap 的 promise 契约(它承诺的是 reject,不是 throw)。
@@ -309,8 +279,6 @@ globalThis.Core = (function () {
       return Promise.reject(new Error('inflateBytes: 本环境没有 DecompressionStream/Blob/Response'));
     }
     var stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate'));
-    // ★ 不传 maxBytes = 不设限:走原来那条一条龙实现,返回语义与旧版逐字一致 ——
-    //   「不设限」不另造一条分块路径,免得给"向后兼容"这句承诺多留一条会漂的分支。
     if (maxBytes === undefined) {
       return new Response(stream).arrayBuffer().then(function (buf) { return new Uint8Array(buf); });
     }
@@ -332,13 +300,6 @@ globalThis.Core = (function () {
         if (total > maxBytes) {
           var err = new Error('inflateBytes: 解压输出超过 ' + maxBytes + ' 字节上限(已累计 ' +
                               total + ' 字节),中止');
-          // ★ 先抛再 cancel,且 cancel 是 fire-and-forget(指令 B2)。旧写法
-          //   `return reader.cancel().then(throw, throw)` 把「抛不抛得出来」押在
-          //   cancel() 会不会 settle 上 —— 它若不 settle(实现差异/流已进错误态),
-          //   这段代码就不是抛错而是**这条路永远不 settle**:本次实测,旧形态配一个
-          //   永不 settle 的 cancel 会让 node 在**跑到一半时静默退出、退出码 0、
-          //   连 `结果:` 行都不打**(未决 promise + 事件循环空转)—— 只看退出码的话
-          //   那是完美的假绿。取消只是"别继续解压"的礼貌动作,不该挂在安全路径上。
           reader.cancel().catch(function () {});
           throw err;
         }
@@ -349,7 +310,6 @@ globalThis.Core = (function () {
     return pump();
   }
 
-  // ── 整文件容器(规格 §3.1 / §3.2)──
   const FORMAT_VERSION = 4;
   const HEADER_SIZE = 20;
   const MAGIC = [0x43, 0x59, 0x52, 0x4D];   // "CYRM"
@@ -439,13 +399,6 @@ globalThis.Core = (function () {
   // "两端 deflate 实现对不上"这类风险,是一条完整可用的路径而不是半成品。
   function encodeMap(map, opts) {
     opts = opts || {};
-    // ★ 导出前必须跑一遍 validateMap(指令 A3)。decodeMap 在尺寸/图层长度上是**严格**的
-    //   (非 4 倍数、图层长度不符一律拒收),而 encodeMap 此前**一处校验都没有** ⇒
-    //   一张 subCols 非 4 倍数的图能编码成功,产出的文件却连本编辑器自己都读不回来
-    //   —— 又一个「导出后再也导不回来」(A6 类)。errors / warnings 的划分本来就是为
-    //   这件事定的:errors 是「导出去就是坏文件」,warnings 是「能导出,但游戏里大概
-    //   不按你预期跑」。★ **只拒 errors** —— 规格 §4.7 明说校验只报告不阻止导出,
-    //   编辑器不该替用户做决定,拿 warnings 拦导出就是把"只报告"变成"阻止"。
     var report = validateMap(map);
     if (report.errors.length) {
       return Promise.reject(new Error('encodeMap: 地图校验未通过 —— ' + report.errors.join(';')));
@@ -476,28 +429,6 @@ globalThis.Core = (function () {
     });
   }
 
-  // ── 解码一份**外来**文件时,这个函数保证什么、不保证什么(指令 C2)──
-  // 「解码一份来路不明的 .cyrm 能得到什么」此前在代码里没有答案,只有一串散在各处的
-  // throw。写在这里,免得下游(渲染端/迁移端)误以为拿到的是一份"已校验过"的数据。
-  //
-  // 保证(不满足就 reject,绝不静默返回一张残缺的图):
-  //   ① 头部合理性:长度 ≥ 20、magic === "CYRM"、version === 4、compression ∈ {0,1};
-  //   ② 尺寸合理:sub_cols / sub_rows > 0 且都是 SUB_PER_CELL 的倍数;
-  //   ③ 解压闸门:头部声明的 body_size ≤ MAX_BODY_SIZE(判在解压之前),且解压的**实际
-  //      输出**不超过 body_size(inflateBytes 的 maxBytes);
-  //   ④ body 长度精确:解压后字节数 === 头部声明的 body_size;
-  //   ⑤ CRC 相符:算得的 CRC32 与头部字段逐位相等(CRC 只覆盖 body,**不覆盖头部**);
-  //   ⑥ body 全消费:解完四层后剩余字节必须是 0(尾部多余字节 = 文件坏了);
-  //   ⑦ 索引与调色板边界:调色板非空、index_width ∈ {1,2}、每个索引都 < palette_count;
-  //   ⑧ 每层分配前的粗筛:头部尺寸反推出的格数不得超过该层剩余字节能装下的量。
-  //
-  // **不**保证(下游要自己判,今天靠 validateMap / 渲染端):
-  //   · 调色板[0] 是空气(规格把它列为**编码端**义务,解码端不代偿);
-  //   · 描述符的纹理位 ≤ 22、或纹理 0 与整体 0 一致(0 ≡ 空气 这条不变量在解码侧**不**成立
-  //     —— 见 isAir 上方那段注释);
-  //   · 尺寸在上限内(MAX_CELLS_W/H 是**编辑器**的输入钳制,不是格式的边界条件);
-  //   · 出生点/敌人坐标在地图内、或落在非实心格里;
-  //   · sub_cols / sub_rows 与 body 里实际排布的子格数一致(那由 ⑧ 的粗筛兜底,不是精确校验)。
   function decodeMap(bytes) {
     return new Promise(function (resolve) { resolve(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)); })
       .then(function (b) {
@@ -565,20 +496,9 @@ globalThis.Core = (function () {
       });
   }
 
-  // ── v3 / 旧字母格式解析(只读迁移用,规格 §3.6)──
-  // ★ 这里的 packed = texture*16 + shape 是 **v3 的编码**,与 v4 的 descriptor 毫无关系。
-  //   故一律走 _v3Pack / _v3TexOf / _v3ShapeOf,绝不与 packDesc / texOf 混用。
   const SHAPE_HEX = '0123456789ABCDEF';
   // 旧字母格式只认 0-9 与 A(大小写均可),与游戏侧 MapFormat._tile_char_to_value 一致。
   const LEGACY_CHAR = { '0':0,'1':1,'2':2,'3':3,'4':4,'5':5,'6':6,'7':7,'8':8,'9':9,'A':10 };
-  // ★ 版本标记行的**唯一**谓词(指令 B4)—— `isV3Text` 与 `parseV3Text` 两处都必须走它。
-  //   规格 §3.6 的规范写法是 `# cyrm-v3`;这里比字面**稍宽**:容许 `#cyrm-v3` 这种无空格
-  //   写法、也容许标记行尾还跟着别的字(如 `# cyrm-v3 (demo)`)。宽严本身不是重点 ——
-  //   **重点是两处必须同宽**。此前两处各写一份且不等价(跳过用 /^#\s*cyrm-v\d+\s*$/、
-  //   识别用 indexOf('# cyrm-v3') === 0),于是两种输入一头一尾各错一半:
-  //     `#cyrm-v3`        → 被跳过、却**不被识别为 v3** ⇒ 网格掉进旧字母格式(报错/错位)
-  //     `# cyrm-v3 (demo)`→ 被识别为 v3、却**不被跳过** ⇒ 标记行落进 comments,污染往返
-  //   两侧的后果都不轻,而根因只是"同一条规则写了两遍"。故收成一个函数。
   function isV3MarkerLine(line) {
     return /^#\s*cyrm-v\d+(\s|$)/.test(String(line).trim());
   }
@@ -627,7 +547,6 @@ globalThis.Core = (function () {
     var lines = String(text == null ? '' : text).split(/\r?\n/);
     var v3 = false;
     for (var i = 0; i < lines.length; i++) {
-      // ★ 与 isV3Text 共用同一个谓词(指令 B4)—— 这两处此前是两份不等价的实现。
       if (isV3MarkerLine(lines[i])) { v3 = true; break; }
     }
     var rows = [], width = -1;
@@ -679,14 +598,6 @@ globalThis.Core = (function () {
     var meta = parseMeta(metaText);
     var players = meta.players, enemies = meta.enemies;
     if (!v3) {
-      // ★ 指令 A4:旧字母格式靠 2×2 折叠成 1 格,所以宽高**必须都是 ≥2 的偶数**。
-      //   此前直接交给 `Math.floor(h/2)` / `Math.floor(w/2)`,后果有两档:
-      //     · 单行输入 → `rows[0].length` 是唯一那行,可 `rows[ny*2+1]` 是 undefined,
-      //       抛的是裸 TypeError(读 undefined 的 length)—— 用户看到的是引擎报错;
-      //     · 宽 3 × 高 4 → 返回 1×2 格,**一句话不说,两整列永久消失**。
-      //   而按规格 §3.6 迁移是**单向**的(迁移后不再导出文本),吃掉的东西找不回来。
-      //   本模块自己的绑定约束是「编辑器不许静默吃掉用户写的东西」,故在这里拦成一条
-      //   与邻近解析错误同形状的中文错误(带实际收到的宽高,便于用户对照原文)。
       if (width < 2 || width % 2 !== 0 || rows.length < 2 || rows.length % 2 !== 0) {
         throw new Error('parseV3Text: 旧字母格式的宽高必须都是 ≥2 的偶数(收到 ' +
                         width + '×' + rows.length + '),否则 2×2 折叠会静默丢掉边缘行/列');
@@ -705,18 +616,6 @@ globalThis.Core = (function () {
              players: players, enemies: enemies, comments: meta.comments };
   }
 
-  // ── 取角映射(规格 §2.2,规范定义)──
-  // 子格全局坐标 (X,Y) → 目标矩形(世界像素)+ 源矩形(贴图块内偏移)。
-  // 调用方按 (texture-1) 定位贴图块,再加这里的 src 偏移。
-  //   dst: [x, y, w, h] 世界像素,恒为 16×16
-  //   src: [x, y, w, h] 贴图块内偏移,恒为 8×8
-  // ★ 象限由子格在 64px 格内的位置决定(X % 4 / Y % 4),不是存在数据里的字段 ——
-  //   每个子格要能独立推出自己该画哪一块。
-  // ★★ 调用方约束(指令 C1):**X / Y 必须非负,调用方自己 posmod**。
-  //   JS 的 `%` 保留被除数的符号,X = -1 会得到 qx = -1 ⇒ src[0] = -8 —— 落在贴图块外,
-  //   而这里**不做**任何归一化(也不该做:归一化是"负坐标该绕到哪一格"的环面语义,
-  //   属于调用方的世界模型,不是本函数的事)。故负坐标请先用 posmod(X, subCols) 之类
-  //   绕进 [0, subCols) 再调;本函数不抛错、只会安静地给出错误的源矩形。
   function subcellRender(X, Y) {
     var qx = X % SUB_PER_CELL, qy = Y % SUB_PER_CELL;
     return { dst: [X * SUB_PX, Y * SUB_PX, SUB_PX, SUB_PX],
@@ -724,11 +623,6 @@ globalThis.Core = (function () {
                    32 / SUB_PER_CELL, 32 / SUB_PER_CELL] };
   }
 
-  // ── v3 → v4 迁移(规格 §3.6)──
-  // 旧掩码 bit (qy*2+qx) 为 1 → 新网格的 4 个子格 X∈[2qx,2qx+1], Y∈[2qy,2qy+1] 填同一纹理。
-  // 配合 subcellRender 的取角映射,这保证迁移后**视觉逐像素不变**:
-  // 旧的那块 32px 区域由 4 个 16px 子格拼回,每个取到的正是原来那 8px 象限放大 2×。
-  // 前/后/背景三层留空 —— v3 里没有它们。
   function migrateV3(parsed) {
     var map = createMap('', parsed.cellsW, parsed.cellsH);
     var scene = map.layers[LAYER_SCENE].desc;
@@ -760,9 +654,6 @@ globalThis.Core = (function () {
     return map;
   }
 
-  // ── 尺寸上限(规格 §4.3 闸 1)──
-  // 旧编辑器的 clampMin(v, min, def) 第三参是"非数字时的默认值"而不是上限,
-  // 输 99999 就会去分配一张巨图然后卡死浏览器。这里给硬上限。
   const MAX_CELLS_W = 400;
   const MAX_CELLS_H = 300;
   const DEFAULT_CELLS_W = 125, DEFAULT_CELLS_H = 75;
@@ -777,10 +668,6 @@ globalThis.Core = (function () {
     };
   }
 
-  // ── 导出前校验(规格 §4.7)──
-  // 只报告,不阻止导出 —— 编辑器不该替用户做决定。
-  // errors   = 真正非法,导出会产出坏文件
-  // warnings = 能导出,但游戏里大概不按你预期跑
   function validateMap(map) {
     var errors = [], warnings = [];
     if (!map || !map.layers || map.layers.length !== LAYER_COUNT) {
@@ -897,13 +784,6 @@ globalThis.Core = (function () {
              w: Math.abs(x1 - x0) + 1, h: Math.abs(y1 - y0) + 1 };
   }
 
-  // ── descriptor 位域(规格 §2.3)──
-  //   bit  0- 2  hue         0-7
-  //   bit  3- 5  brightness  0-7
-  //   bit  6- 8  saturation  0-7
-  //   bit  9-11  alpha       0-7
-  //   bit 12-23  texture     1-4095(0 = 空气)
-  //   bit 24-31  保留,固定 0
   const DESC_AIR = 0;
   const TEXTURE_MAX = 4095;
   const HUE_NEUTRAL = 4, BRI_NEUTRAL = 4, SAT_NEUTRAL = 4, ALPHA_NEUTRAL = 7;
@@ -923,17 +803,6 @@ globalThis.Core = (function () {
   function brightOf(d) { return (d >>> 3) & 7; }
   function satOf(d)    { return (d >>> 6) & 7; }
   function alphaOf(d)  { return (d >>> 9) & 7; }
-  // ★ 指令 D(本轮刻意**只加注释、不动接口**)—— isAir 的适用域,写清楚免得被误用:
-  //   · `isAir(d)` 判的是**整体等于 DESC_AIR(0)**,只对**本编码器产出的**数据可靠:
-  //     packDesc() 保证空气恒为 0,decodeTexLayer 又原样回读自己写进去的调色板项,
-  //     所以"自己导出、自己导入"这条闭环里 isAir 是对的。
-  //   · 读**外来**文件时唯一的空气判据是 `texOf(d) === 0`(按纹理位域取值)。
-  //     一个「辅码非 0 而纹理为 0」的畸形描述符(如 0x000007FF)会让
-  //     isAir(d) === false 与 texOf(d) === 0 得出**相反**结论,而 decodeMap /
-  //     decodeTexLayer 当前**不**归一化来路不明的描述符(它是原样穿过编解码的)。
-  //   · 两种收口方式(在 decodeTexLayer 里加一行归一化 / 取消导出 isAir 并声明
-  //     `texOf(d) === 0` 是唯一判据)**都要动公开接口**,属接口决定 —— 本次不自行选,
-  //     留给控制器 / 计划 2 定。
   function isAir(d)    { return d === DESC_AIR; }
 
   // 中性描述符 = 完全按原图,一点色都不改。

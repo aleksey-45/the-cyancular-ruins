@@ -5,7 +5,7 @@ extends RefCounted
 #
 # 特性说明：
 # - 纯静态工具类，无 Autoload 依赖，可在无头命令行模式（-s）下直接测试。
-# - 本类不直接 load() 武器场景预制体，tier_of() 返回基础整数，避免在纯逻辑测试中触发预加载场景的初始化。
+# - 元数据查询不加载场景；客户端首次查询弹丸表现参数时加载并缓存对应武器场景配置。
 # - 仅负责武器基础元数据（id、name、tier、scene 路径），具体战斗数值在各武器场景的 @export 中配置。
 # - all_ids() 返回顺序严格保持与 JSON 数组中定义的顺序一致。
 
@@ -20,6 +20,15 @@ const TIER_NAMES: Dictionary = {
 
 static var _entries: Array[Dictionary] = []   # [{id, name, tier, scene}]
 static var _loaded := false
+static var _projectile_profiles: Dictionary = {}
+
+static func projectile_profile(type_id: int) -> Dictionary:
+	if not _projectile_profiles.has(type_id):
+		var weapon: WeaponBase = load(scene_of(type_id)).instantiate()
+		_projectile_profiles[type_id] = {"scene": weapon.bullet_scene, "range": weapon.bullet_range,
+				"size": weapon.bullet_size, "color": weapon.bullet_color}
+		weapon.free()
+	return _projectile_profiles[type_id]
 
 
 # 懒加载：首次查询时自动读取配置文件
@@ -126,6 +135,7 @@ static func tiers_map() -> Dictionary:
 
 ## 重新从磁盘加载武器配置（主要用于测试热重载）
 static func reload() -> void:
+	_projectile_profiles.clear()
 	_loaded = false
 	_entries = []
 	_ensure_loaded()

@@ -1,5 +1,6 @@
 class_name WeaponBase
 extends Node2D
+var type_id := 0
 
 enum Tier { LIGHT, MEDIUM, HEAVY }
 enum PenaltyMode { NONE, WHILE_FIRING, WHILE_AIM_OR_COOLDOWN }
@@ -115,7 +116,7 @@ func start_reload() -> void:
 		return
 	_reloading = true
 	_reload_t = reload_time
-	Sfx.play("reload")
+	_play_sfx("reload")
 
 # 换弹姿态：每帧在 _recoil_recover 之后调用（换弹压枪优先级高于后坐复位）
 func _update_reload_pose() -> void:
@@ -165,31 +166,12 @@ func _ready() -> void:
 	_laser.width = 1.0
 	_laser.default_color = laser_color
 	_laser.visible = false
-	call_deferred("add_child", _laser)
+	add_child(_laser)
 	_explosion_marker = Sprite2D.new()
 	_explosion_marker.texture = Explosion.make_circle_texture(16)
 	_explosion_marker.modulate = Color(1.0, 0.4, 0.2, 0.9)
 	_explosion_marker.visible = false
-	call_deferred("add_child", _explosion_marker)
-
-func _player_ok() -> bool:
-	return player != null and (not player.has_method("is_downed") or not player.is_downed())
-
-# 攻击输入查询：优先读取角色节点的注入输入，若不存在则回退至原生 Input
-func _attack_pressed() -> bool:
-	if player != null and player.has_method("is_attack_pressed"):
-		return player.is_attack_pressed()
-	return Input.is_action_pressed("attack")
-
-func _attack_just_pressed() -> bool:
-	if player != null and player.has_method("is_attack_just_pressed"):
-		return player.is_attack_just_pressed()
-	return Input.is_action_just_pressed("attack")
-
-func _attack_just_released() -> bool:
-	if player != null and player.has_method("is_attack_just_released"):
-		return player.is_attack_just_released()
-	return Input.is_action_just_released("attack")
+	add_child(_explosion_marker)
 
 func equip(p: Node2D, inherit_cooldown: float = 0.0) -> void:
 	player = p
@@ -200,7 +182,7 @@ func equip(p: Node2D, inherit_cooldown: float = 0.0) -> void:
 
 # 武器物理逻辑由所属角色的物理帧循环显式驱动，确保回滚模拟的确定性
 func tick(delta: float) -> void:
-	if not _player_ok():
+	if player.is_downed():
 		return
 	fire_cd_timer = maxf(fire_cd_timer - delta, 0.0)
 	# 换弹倒计时
@@ -209,27 +191,25 @@ func tick(delta: float) -> void:
 		if _reload_t <= 0.0:
 			_reloading = false
 			mag_ammo = mag_size
-			Sfx.play("switch")
+			_play_sfx("switch")
 	_auto_aim()
 	if _fire_buffered and fire_cd_timer == 0.0:
 		_fire_buffered = false
 		fire()
 	if heavy_aim:
-		if _attack_just_pressed():
+		if player.is_attack_just_pressed():
 			_aiming = true
-		if _attack_just_released():
+		if player.is_attack_just_released():
 			_aiming = false
-			_update_laser()
 			try_fire()
-		_update_laser()
+		if not player.is_attack_pressed() and not player.is_attack_just_pressed():
+			_aiming = false
 	elif full_auto:
-		if _attack_pressed():
+		if player.is_attack_pressed() or player.is_attack_just_pressed():
 			try_fire()
 	else:
-		if _attack_just_pressed():
+		if player.is_attack_just_pressed():
 			try_fire()
-	_recoil_recover(delta)
-	_update_reload_pose()
 
 func try_fire() -> void:
 	if fire_cd_timer > 0.0:
@@ -239,7 +219,7 @@ func try_fire() -> void:
 	fire()
 
 func fire() -> void:
-	if not _player_ok():
+	if player.is_downed():
 		return
 	if _reloading:
 		return
@@ -252,18 +232,31 @@ func fire() -> void:
 		return
 	_auto_aim()
 	var base_dir := _clamped_aim_dir()
-	_spawn_projectiles(base_dir)
-	Sfx.play("shoot_heavy" if heavy_aim else ("shotgun" if pellet_count > 1 else "shoot"))
+	var serial: int = player.shot_serial + 1
+	player.shot_serial = serial
+	player.step_actions.append({"kind": "fire", "dir": base_dir, "serial": serial,
+			"pos": player.shot_origin(muzzle), "input_seq": player.input_seq, "input_epoch": player.input_buffer.epoch})
 	mag_ammo = maxi(mag_ammo - 1, 0)
 	if mag_ammo == 0:
 		start_reload()
-	if player != null and player.has_method("apply_recoil"):
-		player.apply_recoil(recoil_push)
-	_recoil_timer = RECOIL_TIME
-	sprite.position = _base_sprite_pos - Vector2(1.0, 0.0) * recoil_kick
-	var cam: Camera2D = get_viewport().get_camera_2d()
+	player.apply_recoil(recoil_push)
+
+func execute_shot(action: Dictionary) -> void:
+	_spawn_projectiles(action)
+	if player.authority_world != null:
+		return
+	Sfx.play(shot_sound())
+	play_recoil()
+	var cam := get_viewport().get_camera_2d()
 	if cam != null and cam.has_method("shake"):
 		cam.shake(cam_shake, cam_shake_time)
+
+func shot_sound() -> String:
+	return "shoot_heavy" if heavy_aim else ("shotgun" if pellet_count > 1 else "shoot")
+
+func play_recoil() -> void:
+	_recoil_timer = RECOIL_TIME
+	sprite.position = _base_sprite_pos - Vector2(recoil_kick, 0.0)
 
 # 命中目标伤害结算
 func apply_hit(target: Node, dir: Vector2) -> void:
@@ -271,21 +264,36 @@ func apply_hit(target: Node, dir: Vector2) -> void:
 		target.hurt(damage, dir, impact)
 
 # 发射弹丸
-func _spawn_projectiles(base_dir: Vector2) -> void:
+func _spawn_projectiles(action: Dictionary) -> void:
 	var spread := deg_to_rad(spread_deg)
+	var serial: int = action["serial"]
+	var role: int = player.role
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash("%d:%d" % [role, serial])
 	for i in range(pellet_count):
 		var b: BulletBase = bullet_scene.instantiate()
-		var hm := float(player.get("pvp_haste_mult")) if player != null and player is Node 				and "pvp_haste_mult" in player else 1.0
-		var ang := base_dir.angle() + randf_range(-spread, spread)
+		var hm: float = player.pvp_haste_mult
+		var ang: float = action["dir"].angle() + rng.randf_range(-spread, spread)
 		b.setup(Vector2.from_angle(ang), bullet_speed * hm, bullet_range, bullet_size, bullet_color, self)
 		b.shooter = player
+		b.authority_world = player.authority_world
+		b.entity_id = (role << 48) | (serial << 8) | i
+		b.type_id = type_id
+		b.input_seq = action["input_seq"]
+		b.input_epoch = action["input_epoch"]
 		b.gravity_factor = bullet_gravity
 		b.hit_damage = damage
 		b.hit_impact = impact
-		b.global_position = muzzle.global_position
+		b.global_position = action["pos"]
+		b.adjudicated_pos = b.global_position
+		b.adjudicated = true
 		b.apply_damage = not Level0.pvp_mode
 		b.set_meta("scene_path", bullet_scene.resource_path)
-		get_viewport().add_child(b)
+		if player.authority_world != null:
+			player.authority_world.add_projectile(b)
+			b.set_physics_process(false)
+		else:
+			get_viewport().add_child(b)
 
 # 统计本武器当前存活的弹丸数
 func _live_projectiles() -> int:
@@ -299,8 +307,6 @@ func _live_projectiles() -> int:
 
 func cancel_aim() -> void:
 	_aiming = false
-	if _laser != null:
-		_laser.visible = false
 
 # 当前是否处于蓄力/预瞄状态
 func is_previewing() -> bool:
@@ -345,12 +351,9 @@ func _auto_aim() -> void:
 	if absf(dir.x) > 0.1:
 		facing = 1 if dir.x > 0.0 else -1
 		_aim_facing = facing
-	if player != null and player.has_method("set_facing") and absf(dir.x) > 0.1:
+	if absf(dir.x) > 0.1:
 		player.set_facing(facing)
-		var charging := false
-		if player.has_method("is_charging"):
-			charging = bool(player.is_charging())
-		if not charging:
+		if not player.is_charging():
 			facing = get_facing()
 	_current_aim_facing = facing
 	rotation = clamp_pitch(dir, facing, pitch_clamp_deg) * float(facing)
@@ -422,12 +425,11 @@ func get_current_aim_dir() -> Vector2:
 
 # 计算世界坐标系下从武器指向鼠标的单位向量
 func _aim_world_dir() -> Vector2:
-	if player != null and player.has_method("get_aim_dir_override"):
-		var override: Vector2 = player.get_aim_dir_override()
-		if override != Vector2.ZERO:
-			return override
-		if player.has_method("input_is_network") and player.input_is_network():
-			return Vector2(float(get_facing()), 0.0)
+	var override: Vector2 = player.get_aim_dir_override()
+	if override != Vector2.ZERO:
+		return override
+	if player.input_is_network():
+		return Vector2(float(get_facing()), 0.0)
 	var sub: Viewport = get_viewport()
 	if sub == null:
 		return Vector2(float(get_facing()), 0.0)
@@ -443,13 +445,14 @@ func _aim_world_dir() -> Vector2:
 	if cam.has_method("get_base_global_position"):
 		cam_center = cam.get_base_global_position()
 	var world_mouse := cam_center + (mouse - win_size * 0.5) / cam.zoom
-	var origin := player.global_position if player != null else global_position
+	var origin := player.global_position
 	var dir := world_mouse - origin
 	if dir.length_squared() < 0.0001:
 		return Vector2(float(get_facing()), 0.0)
 	return dir.normalized()
 
 func get_facing() -> int:
-	if player != null and player.has_method("get_facing"):
-		return player.get_facing()
-	return 1
+	return player.get_facing()
+func _play_sfx(sound: String) -> void:
+	if player != null:
+		player.step_actions.append({"kind": "sound", "sound": sound})

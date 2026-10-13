@@ -12,10 +12,7 @@ const SKIP_DIRS := ["res://.godot", "res://builds", "res://releases", "res://gam
 		"res://crashlogs", "res://maps", "res://map", "res://backup", "res://editor/_build",
 		"res://_crashtest"]
 
-# 预期扫描脚本总数：
-# 设定固定的扫描脚本数量基准，防止因目录过滤规则异常或遍历失败导致跳过检查却误判为通过。
-# 若后续工程正常增删源码脚本，需同步更新该基准值。
-const EXPECTED_SCRIPTS := 290
+const EXPECTED_SCRIPTS := 228
 
 var _fails: Array[String] = []
 var _total := 0
@@ -29,12 +26,6 @@ func _run() -> void:
 	for p in _collect("res://"):
 		_total += 1
 		var s = load(p)
-		# 注意事项：2026-10-02 合并时实测补的验收标准：只判 `s == null` 抓不到解析错误 ——
-		#   GDScript 解析失败时 `load()` 仍返回非 null 的、只是 `can_instantiate() == false`
-		#   的 GDScript。实测:往树上放一个引用未声明标识符的脚本,旧实现照样打
-		#   "ALLSCRIPT: OK(N 个脚本全部加载)"(`load()` 只在"文件不存在/资源类型不认"时才返回 null)。
-		#    ->  必须两条都判。合并时就有一个真解析错误(`pvp_match_client.gd` 的 `_delta` /
-		#   `cell` 未声明)从旧判定条件下溜过去,是靠 `team_room_smoke` 红才发现的。
 		var broken := s is GDScript and not (s as GDScript).can_instantiate()
 		if s == null or broken:
 			_fails.append(p)

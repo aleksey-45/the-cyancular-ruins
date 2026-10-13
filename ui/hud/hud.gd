@@ -146,7 +146,6 @@ func _build_weapon_display(p: Node) -> void:
 	_drop_bar.visible = false
 	col.add_child(_drop_bar)
 
-	p.weapons.weapon_changed.connect(_on_weapon_changed)
 	p.weapons.inventory_changed.connect(_refresh_weapon_boxes)
 	_refresh_weapon_boxes()
 
@@ -248,10 +247,6 @@ func _place_weapon_slots() -> void:
 	_slots.offset_right = MARGIN.x + WeaponSlots.PANEL_W
 	_slots.offset_bottom = _weapon_wrap.position.y - WEAPON_SLOTS_GAP
 	_slots.offset_top = _slots.offset_bottom - _slots.panel_h
-
-
-func _on_weapon_changed(_type_id: int) -> void:
-	_refresh_weapon_boxes()
 
 
 # 构建分段式生命值条

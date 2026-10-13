@@ -189,9 +189,6 @@ eq(Core.normRegion(1, 1, 1, 1), { x: 1, y: 1, w: 1, h: 1 }, 'normRegion: 单格'
   eq(r.u8(), 0x12, 'ByteReader: u8');
   eq(r.u16(), 0x3456, 'ByteReader: u16');
   eq(r.u32(), 0x789ABCDE, 'ByteReader: u32 高位不为负');
-  // ★ 指令 B6:`>>> 0` 此前没有确定性断言 —— 上面那串 0x789ABCDE 的 bit31 是 0,
-  //   把 u32 写成 `|` 拼完不回绕也照样绿。全 0xFF 是唯一能逼出符号位的那组字节:
-  //   少了 `>>> 0`,`(0xFF<<24)` 是 -16777216,读出来的会是 -1 而不是 4294967295。
   eq(new Core.ByteReader(new Uint8Array([0xFF, 0xFF, 0xFF, 0xFF])).u32(), 4294967295,
      'ByteReader: u32 读 [FF FF FF FF] → 4294967295(bit31 置位仍是无符号)');
   eq(new Core.ByteReader(new Uint8Array([0x00, 0x00, 0x00, 0x80])).u32(), 2147483648,
@@ -264,12 +261,6 @@ eq(Core.crc32(new Uint8Array([0x00])), 0xD202EF8D, 'crc32: 单字节 0x00');
   throws(function () { Core.decodeTexLayer(new Core.ByteReader(new Uint8Array([9])), 1, 1); }, 'decodeTexLayer: 错 kind 报错', 'decodeTexLayer: kind=');
 })();
 
-// ---- 双字节索引(index_width = 2)与调色板上界(指令 A2)----
-// ★ 为什么单起一块:此前 grep 全仓(断言里)没有任何一处涉及 iw === 2 / 65535 / 65536 ——
-//   已覆盖的只有 index_width = 1。于是**双字节编码循环、双字节解码分支、它的
-//   `p >= palCount` 错误臂、以及编码器的调色板上界本身统统没有验证**。
-//   iw = 2 不是罕见分支:任何描述符种类超过 256 的层都会走它,一张装饰丰富的
-//   400×300 地图完全够得着(1,920,000 个子格,而描述符的组合有 90,112 种)。
 await (async function () {
   // 第 i 个非空气描述符 —— 给出一个**合法且互不相同**的描述符。
   // texture 取 1..4095 循环,再用 (hue, bright) 区分档:共 4095×64 种 ≫ 65535。
@@ -517,14 +508,6 @@ await (async function () {
   var badVer = bytes.slice(); badVer[4] = 99;
   await rejects(function () { return Core.decodeMap(badVer); }, 'decodeMap: 未知版本抛错', '版本');
 
-  // ★ 这一条与 brief 给的字节不同(报告里已点名):brief 是翻压缩流的最后一个字节,
-  //   而那是 zlib 的 Adler-32 校验尾 —— Node 的 DecompressionStream 会直接以
-  //   「message 为空的 TypeError」拒绝,根本走不到我们自己的 CRC 比对。
-  //   于是断言名(CRC 不符)与实际验到的东西(解压流损坏)不是一回事,带上期望子串后当场红。
-  //   改成翻**不压缩文件 body 的最后一个字节**:这步没有解压,长度不变(body_size 仍对),
-  //   唯一能抓住它的就是 crc32(body) 的比对 —— 这才真的验到「CRC 是算在 body 内容上的」。
-  // ★ 指令 B5:期望子串必须**只有它该触发的那个错误**才有。'CRC' 太松 ——
-  //   任何含 "CRC" 的运行时错误(如 `ReferenceError: CRC is not defined`)都会命中。
   var badCrc = raw.slice(); badCrc[badCrc.length - 1] ^= 0xFF;
   await rejects(function () { return Core.decodeMap(badCrc); }, 'decodeMap: CRC 不符抛错', 'CRC 不符');
 
@@ -571,16 +554,6 @@ await (async function () {
   await rejects(function () { return Core.decodeMap(badComp); }, 'decodeMap: 未知 compression 抛错', '未知 compression');
 })();
 
-// ---- golden 字节向量(1×1 格、compress:false)----
-// ★ 为什么需要这一块:上面所有断言都是「同一个 encode/decode 对跑往返」,两端一起
-//   把字节序改反(比如 u32 写成大端)整套照样全绿,而产出的文件 Godot 读不了。
-//   这里把**完整文件字节**(20 字节头 + 161 字节 body)逐字节钉死。
-// ★ 期望序列是照着规格 §3.1/§3.2/§3.3/§3.4 **手推**出来的,不是跑一遍 encodeMap 抄的
-//   —— 抄输出只能冻结当前行为,抓不出今天就存在的字节序错。推导见下面每行注释。
-// ★ 唯一的例外是头部那 4 个 CRC 字节:CRC32 无法手算,故用一个**独立的按位实现**
-//   (下面的 refCrc32,与 core.js 的表驱动实现是两套代码)对手推出来的那 161 字节
-//   body 求值 —— 值在下面写死为 0xA9 0x79 0xF5 0x3F,并在同一个断言块里用 refCrc32
-//   复核一遍(顺带用标准向量 123456789 → 0xCBF43926 自证 refCrc32 本身是对的)。
 await (async function () {
   // 独立按位 CRC32(无查表),只服务于本断言块
   function refCrc32(bytes) {
@@ -666,7 +639,7 @@ await (async function () {
   eq(crcLe, [0xA9, 0x79, 0xF5, 0x3F], 'golden: 头部 CRC 字段的小端字节');
 
   var expectedFile = [].concat(
-    [0x43, 0x59, 0x52, 0x4D],           // 0..3    magic "CYRM"(规格 §3.1)
+    [0x43, 0x59, 0x52, 0x4D],
     [0x04],                             // 4       version = 4
     [0x00],                             // 5       compression = 0(compress:false)
     [0xA1, 0x00, 0x00, 0x00],           // 6..9    body_size = 161(**解压后**字节数,小端)
@@ -691,13 +664,6 @@ await (async function () {
      Array.prototype.slice.call(g.layers[1].desc), 'golden: 回读场景层');
 })();
 
-// ---- 压缩路径的独立验证(golden 用 compress:false,覆盖不到的那一半)----
-// ★ 为什么还缺这一块:golden 走的是不压缩路径,那里 payload === body —— 所以
-//   「body_size / body_crc32 算在**解压后**的 body 上」这条不变量在**默认(压缩)路径**
-//   上一条断言都没有。实测:把 crc32(body) 与解码侧的比对**两端同时**改成 crc32(payload),
-//   170 条断言全绿 —— 因为往返是对称的,而文件里的 CRC 值谁也没验过。
-//   这正是指令 A 想堵的那类洞(只是 golden 按指令用的是 compress:false,够不到压缩侧),
-//   故补下面两条。★ 超出 brief,报告里已点名。
 await (async function () {
   var zlib = require('zlib');         // smoke.js 是 Node 测试,这里刻意用另一套 zlib 实现
 
@@ -710,11 +676,7 @@ await (async function () {
 
   var enc = await Core.encodeMap(m);                              // 默认压缩
   var plain = await Core.encodeMap(m, { compress: false });
-  var body = plain.subarray(Core.HEADER_SIZE);                    // compression=0:body 就是 payload
-
-  // ① 用 Node 自带的 zlib 独立解压我们的流 —— 验它确实是 zlib(RFC1950)。
-  //    这是规格 §3.5 登记的头号风险(「两端库对 zlib 头的处理历史上有过细微差异」),
-  //    也是在没有 Godot 的情况下能对它做的最强验证:换一套实现解出来必须一模一样。
+  var body = plain.subarray(Core.HEADER_SIZE);
   var got = new Uint8Array(zlib.inflateSync(Buffer.from(enc.subarray(Core.HEADER_SIZE))));
   sameBytes(got, Array.prototype.slice.call(body), '压缩: Node zlib 独立解压结果 == 裸 body');
   ok(enc.length < plain.length, '压缩: 压缩后确实比裸 body + 20 小');
@@ -726,14 +688,6 @@ await (async function () {
   eq(zr.u32(), Core.crc32(body), '压缩: body_crc32 是解压后 body 的 CRC(不是压缩流的)');
 })();
 
-// ---- 上限尺寸必须不受「按余量反推格数上界」那条检查的影响 ----
-// ★ 上面新加的检查是**上界**(不精确,只需要不可能通过),但松紧仍有真实风险:
-//   合法文件的余量并不宽裕 —— 最后一层若是背景层,room 恰好 = 1 + 4n,
-//   而纹理层的第一个块也只比 n 多出 6 + 4×调色板项。检查若被写成 `n >= room`
-//   或对纹理层也用 `room/4`,上限尺寸的图就会被**误拒**(而且只在图够大时才现形)。
-//   故这里拿规格 §1 的上限 400×300 格 = 1600×1200 子格真跑一遍整文件往返。
-//   ★ 走 compress:false 只为省掉这 13MB body 的 deflate 时间,与这条检查无关
-//     (检查作用在解压后的 body 上,两条路径的 body 逐字节相同)。
 await (async function () {
   var big = Core.createMap('big', 400, 300);
   eq(big.subCols, 1600, '上限尺寸: subCols = 400 格 × 4');
@@ -786,18 +740,6 @@ await (async function () {
   ok(Core.isV3Text('# cyrm-v3\n0000001F0031\n'), 'isV3Text: 有标记为真');
   ok(!Core.isV3Text('# 普通地图\n11\n11\n'), 'isV3Text: 无标记为假');
 
-  // ★ 指令 B4:版本标记行的**同一个**谓词。此前 isV3Text 与 parseV3Text 各写一份且
-  //   不等价(跳过用 /^#\s*cyrm-v\d+\s*$/,识别用 indexOf('# cyrm-v3') === 0),
-  //   于是两种输入一头一尾各错一半:
-  //     '#cyrm-v3'(无空格)  → 被跳过、却**不被识别为 v3** ⇒ 网格掉进旧字母格式(静默错位)
-  //     '# cyrm-v3 (demo)'  → 被识别为 v3、却**不被跳过** ⇒ 标记行落进 comments,污染往返
-  //   ★ 判据刻意用**全是 0-9 的网格行** `0011`:它在两种解析器下都合法,于是旧实现
-  //     不抛错,而是安静地给出"被 2×2 折叠、格数减半"的结果 —— 那正是这类缺陷最危险的
-  //     样子。两边的期望值**自行推导**:
-  //       v3(正确)  : `0011` = 纹理 001 + 形状 hex 1 → 1*16+1 = 17;两行各 1 格 → [17,17],1×2 格
-  //       旧字母(错) : [[0,0,1,1],[0,0,1,1]] 折叠 → 组(0)=[[0,0],[0,0]]=0、组(1)=[[1,1],[1,1]]=31
-  //                    → [0,31],2×1 格
-  //     三个维度(格宽/格高/packed)都不同,不存在"改错方向却仍撞对"的巧合。
   ok(Core.isV3Text('#cyrm-v3\n0000001F0031\n'),
      'B4 标记行:无空格的 #cyrm-v3 也算 v3(此前不算)');
   var nospace = Core.parseV3Text('#cyrm-v3\n0011\n0011\n');
@@ -824,9 +766,6 @@ await (async function () {
   eq(p.enemies, [{ type: 'jump_bird', x: 100, y: 50 }], 'parseV3Text: enemies');
   eq(p.comments, ['demo'], 'parseV3Text: 注释保留,标记行不算注释');
 
-  // 旧字母格式:单字符 0-9/A,2×2 收缩成 1 格,spawn 坐标 ÷2
-  // ★ 指令 B:样本里必须带 `# enemy` 行 —— 唯一那份旧样本里没有它,于是
-  //   **enemies 的 ÷2 与 `type` 字段此前零覆盖**(写漏一个 ÷2、或把 type 丢了都不会报错)。
   var old = Core.parseV3Text('# old\n# player 112 95\n# enemy jump_bird 100 50\n11\n11\n');
   eq(old.cellsW, 1, '旧格式: 2×2 → 1 格宽');
   eq(old.cellsH, 1, '旧格式: 2×2 → 1 格高');
@@ -834,54 +773,20 @@ await (async function () {
   eq(old.players, [{ x: 56, y: 47 }], '旧格式: spawn 坐标 ÷2');
   eq(old.enemies, [{ type: 'jump_bird', x: 50, y: 25 }], '旧格式: enemies 坐标 ÷2 且 type 不丢');
 
-  // ★ 指令 B(续):`LEGACY_CHAR['A']` 到此前只被**拒绝**路径碰过(b/B 报错),
-  //   **接受**路径上一次都没走到 —— 把它写成 11、或整行漏出 LEGACY_CHAR
-  //   (查表得 undefined → 报「非法字符」)都是"看着能跑"的静默错。
-  //   `A1\n11` 的 4 个象限全实心、组内首个非零是 `A` ⇒ pack 成 10*16+15。
   var oldA = Core.parseV3Text('# old\nA1\n11\n');
   eq(Array.prototype.slice.call(oldA.packed), [175], '旧格式: A 参与 pack(2×2 全实心 → 10*16+15)');
   eq(Core._v3TexOf(oldA.packed[0]), 10, '旧格式: A 映射成纹理 10(不是 0/9/11)');
 
-  // ★ 指令 E:旧字母格式的**非对称**象限样本。
-  //   `_convertLegacy2x2` 里那句 `shape |= 1 << (sy * 2 + sx)` 此前只被两类样本碰过:
-  //   全实心的 2×2(→ shape 15,**与象限顺序无关**)与抛错样本(b/B)。于是把它写成
-  //   转置的 `1 << (sx * 2 + sy)` —— 或把 `sy/sx` 取反 —— 整份 smoke 仍然全绿,
-  //   而**每张导入的旧 `.txt` 的每个非对称象限都转 90°**(静默错位)。
-  //   这与 Task 9 刚修的 `migrateV3` 是同一类缺陷的另一处;区别是 migrateV3 那边
-  //   已被「非对称形状逐个钉死」那块覆盖,这边没有。
-  //   ★ 期望值**自行推导**(不照抄任何现成数字),依据就是本文件那两句实现:
-  //       shape |= 1 << (sy * 2 + sx)      sy = 行偏移(0 上 / 1 下),sx = 列偏移(0 左 / 1 右)
-  //       _v3Pack(tex, shape) = tex * 16 + shape
-  //     样本一 `'10'` / `'11'`:非零象限 (sy,sx) = (0,0)、(1,0)、(1,1)
-  //       → shape = 1<<0 | 1<<2 | 1<<3 = 1 + 4 + 8 = 13 → packed = 1*16 + 13 = 29
-  //     样本二 `'11'` / `'01'`:非零象限 (sy,sx) = (0,0)、(0,1)、(1,1)
-  //       → shape = 1<<0 | 1<<1 | 1<<3 = 1 + 2 + 8 = 11 → packed = 1*16 + 11 = 27
-  //   ★ 两个样本互为「上/下镜像」,在转置下**恰好互换**(29 ↔ 27)—— 即变异会让两条
-  //     断言同时变红,不存在"改错方向却仍撞对"的巧合。
   eq(Array.prototype.slice.call(Core.parseV3Text('# old\n10\n11\n').packed), [29],
      '旧格式: 非对称样本(右上缺)→ packed 29 = 纹理1 + shape 13(bit0|bit2|bit3)');
   eq(Array.prototype.slice.call(Core.parseV3Text('# old\n11\n01\n').packed), [27],
      '旧格式: 非对称样本(左下缺)→ packed 27 = 纹理1 + shape 11(bit0|bit1|bit3)');
 
-  // 旧格式只认 0-9 与 A —— 游戏侧 _tile_char_to_value 就是这么定的,
-  // 编辑器多认 b-k 会让"导得进、跑起来一片变空气"(审计 A11)。
-  // ★ 指令 C(Task 8 遗留的 8 条裸 `throws` 补齐 —— 超出 brief,报告已点名):
-  //   这 8 条是 A11/A12 审计的守卫点,偏偏是**最不能假绿**的一批:裸 `throws` 只要
-  //   "抛了任何异常"就算过,`parseV3Text` 哪天因拼写错误而不存在、抛出的 `TypeError`
-  //   会让它们**全部静默变绿**。故每条都给一个只属于它该触发的那个错误的子串。
   throws(function () { Core.parseV3Text('# old\n1b\n11\n'); },
          '旧格式: 小写 b 报错(游戏侧不认)', '非法字符 "b"');
   throws(function () { Core.parseV3Text('# old\n1B\n11\n'); },
          '旧格式: 大写 B 报错(游戏侧不认)', '非法字符 "B"');
 
-  // ★ 指令 A4:旧字母格式靠 2×2 折叠成 1 格 ⇒ 宽高必须都是 **≥2 的偶数**。
-  //   此前直接交给 Math.floor(h/2) / Math.floor(w/2),后果分两档:
-  //     · 单行输入 → 转换后 rows 为空,紧接着的 rows[0].length 抛**裸 TypeError**;
-  //     · 宽 3 × 高 4 → 返回 1×2 格,**一句话不说、两整列永久消失**(而按 §3.6 迁移是
-  //       单向的,吃掉的东西找不回来)。本模块自己的约束是「编辑器不许静默吃掉用户写的东西」,
-  //       故必须在进转换之前拦成一条与邻近解析错误同形状的中文错误。
-  //   ★ 期望子串挑「旧字母格式的宽高」—— 它只属于这一条错误;并另钉一条「收到 3×2」,
-  //     确保错误信息里带**实际收到的尺寸**(否则用户拿着报错也对照不出原文哪不对)。
   throws(function () { Core.parseV3Text('# old\n111\n111\n'); },
          'A4 旧格式: 奇数宽(3)报错,不再静默丢掉一整列', '旧字母格式的宽高');
   throws(function () { Core.parseV3Text('# old\n111\n111\n'); },
@@ -898,7 +803,6 @@ await (async function () {
   eq(Core.parseV3Text('# old\n1111\n1111\n').cellsW, 2, 'A4 旧格式: 宽 4(偶数)仍可解析');
   eq(Core.parseV3Text('# old\n11\n11\n11\n11\n').cellsH, 2, 'A4 旧格式: 高 4(偶数)仍可解析');
 
-  // 非法输入必须抛错,不能静默截断成空气(审计 A12:parseInt("0A1") === 0)
   throws(function () { Core.parseV3Text('# cyrm-v3\n0A10\n'); },
          'v3: 纹理位含字母报错', '不是 3 位数字');
   throws(function () { Core.parseV3Text('# cyrm-v3\n000X\n'); },
@@ -916,17 +820,8 @@ await (async function () {
   var crlf = Core.parseV3Text('# cyrm-v3\r\n\r\n0000001F0031\r\n');
   eq(Array.prototype.slice.call(crlf.packed), [0, 31, 49], 'parseV3Text: CRLF 与空行');
 
-  // 小写形状字符仍要能读(v3 写法上允许,游戏侧 shape_char_to_value 也认)
-  // ★ 输入从 brief 的 "000f" 改成 "001f"(报告里已点名):brief 里纹理位 000 = 空气,
-  //   而 _v3Pack 对 texture === 0 无条件返回 0(与游戏侧 MapFormat.pack 逐字一致),
-  //   故 "000f" 恒为 0 —— 那个输入根本走不到形状字符,断言等于空转(实测 got [0])。
-  //   换成 001 后,31 = 1*16 + 15 才真的证明 'f' 被读成了 15 而不是被当成 0/报错。
   eq(Array.prototype.slice.call(Core.parseV3Text('# cyrm-v3\n001f\n').packed), [31], 'v3: 小写形状字符 f 可读');
 
-  // ★ 指令 A：`_v3Pack` 的两个空气守卫（`shape === 0 || texture === 0` → 0）
-  //   是「迁移等价」所依赖的地基之一，此前**只被 `0000` 这一个退化样本覆盖过** ——
-  //   那里 shape 与 texture 同时为 0，分不出是哪一条守卫在生效（任意一条删掉都照样绿）。
-  //   下面两条各钉一条独立情形，两者都与游戏侧 `MapFormat.pack` 逐字同款。
   eq(Array.prototype.slice.call(Core.parseV3Text('# cyrm-v3\n000f\n').packed), [0],
      'v3: 纹理 000 = 空气,形状位不生效(与游戏 MapFormat.pack 同)');
   eq(Array.prototype.slice.call(Core.parseV3Text('# cyrm-v3\n0010\n').packed), [0],
@@ -1039,18 +934,6 @@ await (async function () {
   eq(back.comments, ['demo'], 'migrateV3: 往返后注释仍是 demo(标记行没被当成注释)');
 })();
 
-// ---- migrateV3:非对称象限的位序与展开方向(规格 §3.6「必须写死」)----
-// ★ 上面那批样本全都**对位序不敏感**,构成一个真实的盲区:
-//     shape 15(全砖)填满四格 —— 与象限顺序无关;
-//     shape 1(bit0)的象限 (qx=0,qy=0) —— 是唯一在象限转置下不变的形状。
-//   于是把 `1 << (qy*2+qx)` 写成 `1 << (qx*2+qy)`、或把展开处的 X/Y 对调,
-//   整份 smoke 仍然全绿,而每张导入图的每个非对称象限整体转 90°(静默错位)。
-//   ★ 取角等价那条断言帮不上忙:它在自己的循环里硬编码了 `cellX*4+qx*2+dx`,
-//     从不调用 migrateV3,证明不了 migrateV3 里的 qx/qy 有没有被对调。
-//   故这里用**非对称**形状逐个钉死 bit → 子格位置:
-//     bit(qy*2+qx) 为 1 → 展开到 X∈[2qx,2qx+1]、Y∈[2qy,2qy+1](各 2×2 子格)。
-//   '#' = 该子格是纹理2 的中性描述、'.' = 空气、'?' = 非空气但纹理不对
-//   —— 三者是同一串图案里的不同字符,所以"填错纹理"与"填错位置"一样会让断言变红。
 (function () {
   var SAMPLES = [
     ['1', '左上/bit0 (qx0,qy0)', ['##..', '##..', '....', '....']],
@@ -1074,7 +957,6 @@ await (async function () {
   });
 })();
 
-// ---- 尺寸钳制(审计 A8:旧 clampMin 的第三参是"默认值"而不是上限,输 99999 直接卡死)----
 eq(Core.MAX_CELLS_W, 400, 'MAX_CELLS_W');
 eq(Core.MAX_CELLS_H, 300, 'MAX_CELLS_H');
 eq(Core.clampMapSize(125, 75), { w: 125, h: 75 }, 'clampMapSize: 正常值原样');
@@ -1093,11 +975,6 @@ eq(Core.clampMapSize(NaN, 'x'), { w: 125, h: 75 }, 'clampMapSize: 非数字回�
   // 出生点落在实心格里
   var inWall = Core.createMap('bad', 8, 8);
   var sc = inWall.layers[Core.LAYER_SCENE].desc;
-  // ★ 超出 brief(报告已点名):brief 这里写的是 `for (i = 0; i < 16; i++) sc[i] = ...`,
-  //   注释声称「格 (0,0) 填实」—— 但那是**行主序的前 16 个子格**,即子行 0 的 X∈[0,15],
-  //   只铺满了 (0,0)(1,0)(2,0)(3,0) 四格各自的**顶行**。判据要求该格 4×4 子格**全**非空
-  //   ⇒ 格 (0,0) 远没被填实 ⇒ 恒不产生 warning ⇒ 这条断言**空转到永远为假**
-  //   (实测 brief 原样跑必红)。改成按「格内 4×4」逐个填,才是注释声称的那件事。
   for (var dy = 0; dy < 4; dy++) {
     for (var dx = 0; dx < 4; dx++) sc[dy * inWall.subCols + dx] = Core.neutralDesc(1);
   }
@@ -1113,13 +990,11 @@ eq(Core.clampMapSize(NaN, 'x'), { w: 125, h: 75 }, 'clampMapSize: 非数字回�
   ok(Core.validateMap(noSpawn).warnings.some(function (s) { return s.indexOf('出生点') >= 0; }),
      'validateMap: 没有出生点给 warning');
 
-  // 第 3 个及以后的出生点游戏读不到(审计 A3)
   var three = Core.createMap('t', 8, 8);
   three.players = [{ x: 1, y: 1 }, { x: 2, y: 2 }, { x: 3, y: 3 }];
   ok(Core.validateMap(three).warnings.some(function (s) { return s.indexOf('第 3 个') >= 0; }),
      'validateMap: >2 个出生点给 warning');
 
-  // 敌人坐标越界(改尺寸后的残留,审计 A10)
   var oob = Core.createMap('o', 8, 8);
   oob.players = [{ x: 1, y: 1 }];
   oob.enemies = [{ type: 'fly_bird', x: 99, y: 0 }];
@@ -1138,12 +1013,6 @@ eq(Core.clampMapSize(NaN, 'x'), { w: 125, h: 75 }, 'clampMapSize: 非数字回�
   ok(Core.validateMap(badSize).errors.length > 0, 'validateMap: 尺寸非 4 倍数给 error');
 })();
 
-// ---- encodeMap 必须自己校验(指令 A3)----
-// ★ 为什么:decodeMap 在尺寸/图层长度上是**严格**的,而 encodeMap 此前**一处校验都没有**
-//   ⇒ 一张 subCols 非 4 倍数的图能编码成功,产出的文件却连本编辑器自己都读不回来
-//   —— 又一个「导出后再也导不回来」(A6 类)。errors / warnings 的划分本来就是为这件事
-//   定的。★ 同时钉住**反向**:只有 warnings 时**不许**拒导出 —— 规格 §4.7 明说校验
-//   只报告不阻止,拿 warnings 拦导出就是把"只报告"偷偷变成"阻止"。
 await (async function () {
   // ① errors 非空 ⇒ reject(两条导出路径都要)
   var bad = Core.createMap('bad', 8, 8);
@@ -1174,14 +1043,6 @@ await (async function () {
   eq(wBack.subCols, warnOnly.subCols, 'A3: 只有 warnings 的地图照常导出(warnings 不阻止导出)');
   eq(wBack.subRows, warnOnly.subRows, 'A3: 只有 warnings 的地图照常导出(subRows)');
 
-  // ④ ★ 真正「导出后再也导不回来」的那一格 —— 上面那两张图 encodeBody 自己也会顺手抛
-  //   (尺寸与图层长度对不上),所以它们**证明不了**这道校验是必须的。这里手工构造一张
-  //   **自洽**的图:subCols 非 4 的倍数,但每层数组长度**恰好**等于 subCols×subRows
-  //   ⇒ encodeBody 一路成功(它只看 layer.desc.length 与 subCols×subRows 是否相等),
-  //     而产出的文件头写着 sub_cols = 6,decodeMap 的尺寸检查**当场拒收**。
-  //   这正是 A3 要堵的那个洞:不加校验就会**安静地写出一份自己读不回来的 .cyrm**。
-  //   ★ 那份"未过校验的文件"的结局另有断言钉住('decodeMap: 尺寸非 4 倍数抛错' ——
-  //     把合法文件的头部改成 sub_cols = 6 后 decodeMap 当场拒收),这里不重复造一遍。
   var odd = Core.createMap('odd', 8, 8);
   odd.subCols = 6;                                       // 6 不是 SUB_PER_CELL(4)的倍数
   var oddN = odd.subCols * odd.subRows;                  // 6×32 = 192
@@ -1248,22 +1109,12 @@ await (async function () {
   var m = Core.createMap('bomb', 6, 5);
   m.layers[Core.LAYER_SCENE].desc[9] = Core.neutralDesc(3);
   m.players = [{ x: 1, y: 1 }];
-  var enc = await Core.encodeMap(m);              // 默认走 deflate 压缩
-
-  // 只把头部 6..9(body_size,u32 小端)篡改成 0x7FFFFFFF ≈ 2GB,payload 一个字节不动
-  // —— 这正是"声明侧"的炸弹:任何在解压之后才判的守卫都已经晚了。
+  var enc = await Core.encodeMap(m);
   var bomb = enc.slice();
   bomb[6] = 0xFF; bomb[7] = 0xFF; bomb[8] = 0xFF; bomb[9] = 0x7F;
   await rejects(function () { return Core.decodeMap(bomb); },
     'decodeMap: body_size 被声明成 0x7FFFFFFF 时在解压前拒绝', '64MB');
 
-  // ★★ 声明侧之外的另一半:头里的 body_size **本身也是攻击者可控的** —— 把它谎报成
-  //   一个能过闸门的小值(4096)、而 deflate 流里塞真炸弹,则上面那道闸**完全挡不住**:
-  //   真正的分配发生在解压那一步(`new Response(stream).arrayBuffer()` 会先把整份解压
-  //   结果分配出来),判在后面的长度比对处等于拒是拒了、内存已经花掉了。
-  //   判据必须落在**实际输出**上(core.js inflateBytes 的 maxBytes),这条断言钉的就是它。
-  //   造法:合法文件头(尺寸/flags 都对)+ 把 body_size 改成 4096 + payload 换成
-  //   65MB 零字节的 deflate 流(压完 ≈66KB;DEFLATE 单流最大压缩比 ≈1032:1)。
   var zlib = require('zlib');
   var bombPayload = zlib.deflateSync(Buffer.alloc(65 * 1024 * 1024));   // 65MB > 64MB 上限
   var head = enc.slice(0, Core.HEADER_SIZE);
@@ -1277,14 +1128,6 @@ await (async function () {
     'decodeMap: body_size 谎报成 4096 + 真炸弹,在 inflateBytes 的实际输出上界处被拒',
     'inflateBytes');
 
-  // ★ 指令 B1:上界传的必须是**头部声明的 body_size**,不是 MAX_BODY_SIZE。
-  //   两者的差别只在"谎报得**不太大**"时现形 —— 上面那条 65MB 炸弹太大,两种实现**都会拒**
-  //   (只是一个在 4KB 处拒、一个在 64MB 处拒),所以它**证明不了**上界用的是哪个值。
-  //   这里谎报 4096、真输出 8MB:远小于 64MB 上限 ⇒
-  //     传 MAX_BODY_SIZE 时这道闸**完全不响**,要等解压完 8MB、走到长度比对处才拒(已经花掉 8MB)
-  //     传 bodySize 时第一个 chunk 就拒(约 4KB + 一个 chunk)
-  //   ★ 期望子串必须挑**只有新实现才产生**的那句:'4096' 不能用 —— 旧实现那句
-  //     "解压后 8388608 字节,头部声明 4096" 里也含 '4096',拿它当判据会**假绿**。
   var smallBomb = zlib.deflateSync(Buffer.alloc(8 * 1024 * 1024));       // 8MB ≪ 64MB 上限
   var head2 = enc.slice(0, Core.HEADER_SIZE);
   head2[6] = 0x00; head2[7] = 0x10; head2[8] = 0x00; head2[9] = 0x00;    // body_size = 4096

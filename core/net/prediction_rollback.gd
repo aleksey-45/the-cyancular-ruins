@@ -1,156 +1,124 @@
 class_name PredictionRollback
 extends RefCounted
-# 客户端回滚与预测控制器。负责在客户端推演本地输入，并在收到服务端权威快照时进行校验与对齐回滚。
-# 支持两种驱动方式：
-#   A) 手动步进：测试或无场景树环境下调用 advance(record)，使用内部临时输入源驱动玩家步进。
-#   B) 引擎物理步进：本地真实玩家在 _physics_process 步进后记录 note_post_step()，
-#      并在下一帧物理步进前调用 reconcile() 处理到期的服务端权威快照。
-#
-# 权威状态校验流程：
-#   - 本地预测状态与服务端快照一致：在容差范围内认为预测成功，清理对应输入缓存。
-#   - 本地预测状态与服务端快照分歧：恢复至服务端权威状态，并按序重放未确认的历史输入帧。
-# 前提：服务端每物理帧消费 1 个输入包，并返回包含 ack_seq 与完整状态 capture_state() 的快照。
+const KEEP := 64
+const MAX_REPLAY := 32
+const MARGIN := 2.0
+var history: Array = []
+var epoch := 1
+var sequence := 0
+var sent: Array = []
+var actions: Array = []
+var _clock := 0.0
+var _sim_tick := 0
+var _lead := MARGIN
+var _rate := 1.0
+var _timing_seq := 0
+var _clock_correction_seq := 0
+var _discarded_through := 0
+var _input := InputBuffer.new()
+var _player: CharacterBody2D
 
-const KEEP := 256           # ring 保留窗口
-const PHYS_DT := 1.0 / 60.0 # 回滚重放一律按固定物理步(确定性)
+func bind(player: CharacterBody2D) -> void:
+	_player = player
 
-var _p = null               # 被预测 Player(动态)
-var _scratch: PacketInputSource = PacketInputSource.new()   # 步进/重放传入源
+func reset(new_epoch: int, ack: int, tick: int, ping_ms: int) -> void:
+	epoch = new_epoch
+	sequence = ack
+	sent.clear()
+	history.clear()
+	actions.clear()
+	_input.reset(epoch)
+	_clock = tick + ceilf(ping_ms * 0.06) + MARGIN
+	_sim_tick = tick
+	_lead = MARGIN
+	_rate = 1.0
+	_timing_seq = 0
+	_clock_correction_seq = 0
+	_discarded_through = 0
 
-var _inputs: Dictionary = {}   # seq(int) -> 输入包记录(重放用)
-var _captures: Dictionary = {} # seq(int) -> 步进后 capture_state()(比对/锚点)
-var _seqs: Array[int] = []     # _captures 键升序
-var _last_applied := 0
-var _acked := 0
-var _pending: Array = []       # [[ack, state], ...] 待 reconcile
-var _rollbacks := 0
+func capture(source: PlayerInput, aim: Vector2, view_tick: int, weapon_inst: int) -> void:
+	actions = actions.filter(func(action: Dictionary) -> bool:
+		return _clock - action["target_tick"] <= InputBuffer.FUTURE_TICKS + InputBuffer.ACTION_TICKS)
+	sequence += 1
+	var record := PacketInputSource.pack_record(source, sequence, aim)
+	record["epoch"] = epoch
+	record["target_tick"] = int(_clock) + 1
+	record["view_tick"] = view_tick
+	record["winst"] = weapon_inst
+	if record["pressed"] != 0 or record["released"] != 0 or weapon_inst != 0:
+		var action := record.duplicate()
+		if weapon_inst == 0 and (record["pressed"] | record["released"]) & (PacketInputSource.BIT_ATTACK | PacketInputSource.BIT_RELOAD | PacketInputSource.BIT_DROP):
+			action["winst"] = _player.weapons.current_inst()
+		action.erase("ax")
+		action.erase("held")
+		actions.append(action)
+	for key in ["pressed", "released", "winst"]:
+		record.erase(key)
+	sent.append(record)
+	if sent.size() > InputBuffer.REDUNDANCY:
+		sent.pop_front()
+	history.append(record)
+	if history.size() > KEEP:
+		_discarded_through = history.pop_front()["seq"]
+	_input.push(packet(), _sim_tick)
 
-# 环面地图尺寸（像素）。若为零向量则不做环面处理，直接使用平面欧氏距离。
-# 不直接引用全局单例，由接入方显式配置，便于无场景树环境独立测试。
-var map_px: Vector2 = Vector2.ZERO
+func packet() -> Dictionary:
+	return {"frames": sent, "actions": actions}
 
-# 预测一致性位置容差（像素）。超出容差将判定为状态分歧并触发回滚。
-# 取值 2.0 像素，在消除抖动与保持同步手感之间取得平衡。
-const DEFAULT_POS_TOL := 2.0
-var pos_tol: float = DEFAULT_POS_TOL
+func advance(delta: float) -> void:
+	_clock += delta * 60.0 * _rate
+	while _sim_tick < int(_clock):
+		_sim_tick += 1
+		var record := _input.take(_sim_tick)
+		if not _player.rewinding:
+			_player.begin_visual_step()
+			_player.execute_actions(ActorStep.step(_player, record))
 
-# 接触状态下的位置容差（像素）。
-# 当实体与远端对手身体贴身近战时，将容差放宽至 8.0 像素，避免因碰撞几何微小抖动引发每帧高频回滚。
-const DEFAULT_CONTACT_POS_TOL := 8.0
-var contact_pos_tol: float = DEFAULT_CONTACT_POS_TOL
-
-# 本帧是否处于近身接触状态（由 Player.touching_player() 更新，纯本地状态提示，不参与网络同步）
-var in_contact: bool = false
-
-func bind(p) -> void:
-	_p = p
-
-func last_applied() -> int:
-	return _last_applied
-
-func rollback_count() -> int:
-	return _rollbacks
-
-# 驱动方式 A：手动步进（通过临时输入源步进一次并记录预测状态）。
-func advance(record: Dictionary) -> void:
-	reconcile()
-	if _p == null:
-		return
-	var seq := int(record.get("seq", _last_applied + 1))
-	_step(record)
-	_last_applied = seq
-	_inputs[seq] = record
-	_captures[seq] = _p.capture_state()
-	_seqs.append(seq)
-	while _seqs.size() > KEEP:
-		var old: int = _seqs.pop_front()
-		_inputs.erase(old)
-		_captures.erase(old)
-
-# 驱动方式 B：引擎物理步进（接入方在实体完成物理步进后记录状态，下次步进前调谐）。
-func note_post_step(seq: int, capture: Dictionary) -> void:
-	_last_applied = maxi(_last_applied, seq)
-	_captures[seq] = capture
-	_seqs.append(seq)
-	while _seqs.size() > KEEP:
-		var old: int = _seqs.pop_front()
-		_captures.erase(old)
-
-func note_input(seq: int, record: Dictionary) -> void:
-	_inputs[seq] = record
-
-# 服务端权威快照到达。
-func on_authoritative(ack: int, state: Dictionary) -> void:
-	if ack <= _acked:
-		return
-	_pending.append([ack, state])
-
-# 每帧处理已收到的服务端权威快照。
-func reconcile() -> void:
-	while not _pending.is_empty():
-		var pk: Array = _pending.pop_front()
-		_handle_ack(int(pk[0]), pk[1])
-
-# 使用历史输入记录执行单步重放：临时将实体输入源替换为缓存输入源，步进后还原。
-func _step(record: Dictionary) -> void:
-	if _p == null:
-		return
-	var prev = _p.input_source
-	_p.set_input_source(_scratch)
-	_scratch.clear_edges()
-	_scratch.apply_packet(record)
-	_p._physics_process(PHYS_DT)
-	_p.set_input_source(prev)
-
-func _handle_ack(ack: int, S: Dictionary) -> void:
-	if ack <= _acked:
-		return
-	_acked = ack
-	if _p == null or not _captures.has(ack):
-		_trim(ack)
-		return
-	var predicted: Dictionary = _captures[ack]
-	if _close_enough(predicted, S):
-		# 预测一致时，同步背包（武器槽与弹药）等由服务端权威决定的非预测状态
-		if _p.has_method("sync_soft_state"):
-			_p.sync_soft_state(S)
-		_trim(ack)          # 预测成功：清理已确认的历史输入
-		return
-	# 状态分歧：对齐至服务端权威状态，并按序重放未确认的本地输入帧
-	_rollbacks += 1
-	_p.restore_state(S)
-	for s in _seqs:
-		if s > ack and s <= _last_applied:
-			var rec: Dictionary = _inputs.get(s, {})
-			if rec.is_empty():
-				continue
-			_step(rec)
-			_captures[s] = _p.capture_state()   # 刷新为重放后的真实完整状态
-	_trim(ack)
-
-func _trim(below: int) -> void:
-	while not _seqs.is_empty() and _seqs[0] <= below:
-		var s: int = _seqs.pop_front()
-		_inputs.erase(s)
-		_captures.erase(s)
-
-# 比对本地预测状态与服务端权威状态是否在容差范围内一致。
-func _close_enough(a: Dictionary, b: Dictionary) -> bool:
-	if a.get("down", false) != b.get("down", false):
-		return false
-	if int(a.get("hp", 0)) != int(b.get("hp", 0)):
-		return false
-	# 根据当前是否近身接触选择对应容差
-	var tol: float = contact_pos_tol if in_contact else pos_tol
-	if _pos_dist(a.get("pos", Vector2.ZERO), b.get("pos", Vector2.ZERO)) > tol:
-		return false
-	var va: Vector2 = a.get("vel", Vector2.ZERO)
-	var vb: Vector2 = b.get("vel", Vector2.ZERO)
-	return va.distance_to(vb) < 20.0
-
-
-# 计算环面上的最短位置差，避免跨越地图边界时误判为位置分歧
-func _pos_dist(a: Vector2, b: Vector2) -> float:
-	if map_px.x <= 0.0 or map_px.y <= 0.0:
-		return a.distance_to(b)
-	return MazeGenerator.toroidal_delta_px(a, b, map_px.x, map_px.y).length()
+func reconcile(own: Dictionary, tick: int, ping_ms: int) -> bool:
+	var changed: bool = own["epoch"] != epoch
+	if changed:
+		reset(own["epoch"], own["ack"], tick, ping_ms)
+	var desired := tick + ceilf(ping_ms * 0.06) + MARGIN
+	if absf(_clock - desired) > MAX_REPLAY:
+		_clock = desired
+		history.clear()
+		sent.clear()
+		actions.clear()
+		_clock_correction_seq = sequence
+	if own["timing_seq"] > _timing_seq and own["timing_seq"] > _clock_correction_seq:
+		_timing_seq = own["timing_seq"]
+		if absf(own["lead"] - MARGIN) > InputBuffer.ACTION_TICKS:
+			var offset: int = int(MARGIN) - own["lead"]
+			_clock += offset
+			for record: Dictionary in history:
+				record["target_tick"] += offset
+			for action: Dictionary in actions:
+				action["target_tick"] += offset
+			_clock_correction_seq = sequence
+			_lead = MARGIN
+		else:
+			_lead = lerpf(_lead, own["lead"], 0.1)
+		_rate = 1.02 if _lead < MARGIN - 1.0 else 0.96 if _lead > MARGIN + 1.0 else 1.0
+	history = history.filter(func(record: Dictionary) -> bool: return record["seq"] > own["ack"])
+	sent = sent.filter(func(record: Dictionary) -> bool: return record["seq"] > own["ack"])
+	actions = actions.filter(func(action: Dictionary) -> bool:
+		return action["seq"] > own["action_ack"] and tick - action["target_tick"] <= InputBuffer.ACTION_TICKS)
+	var previous := _player.global_position
+	_player.restore_state(own["state"])
+	_player.rebase_visual_step(previous)
+	_input.reset(epoch)
+	_input.ack = own["ack"]
+	_input.action_ack = own["action_ack"]
+	_input.seed(own["input"])
+	_input.push({"frames": history, "actions": actions}, tick)
+	_sim_tick = tick
+	if own["ack"] < _discarded_through or int(_clock) - tick > MAX_REPLAY or own["rewind"]:
+		history.clear()
+		_sim_tick = int(_clock)
+	else:
+		while _sim_tick < int(_clock):
+			_sim_tick += 1
+			_player.begin_visual_step()
+			ActorStep.step(_player, _input.take(_sim_tick))
+	_discarded_through = 0
+	return changed or own["rewind"]

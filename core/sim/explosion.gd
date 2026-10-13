@@ -46,13 +46,15 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 			var blocked := has_grid and not _has_los(center, pp, grid)
 			var mult := cover_multiplier(d, radius, blocked)
 			mult *= Water.water_mult(pp.global_position, grid)  # 目标在水里:×0.25
-			# 自伤标记：投掷者在自身爆区内时记录自伤，用于负向得分结算
-			if shooter == pp:
-				CombatFeedback.note_self_hit(pp)
-			CombatFeedback.attribute(pp, shooter)   # 击杀与伤害归因统一入口
-			# 击退随距离衰减传入玩家(独立击退向量结算);ignore_iframes=true 穿透无敌帧
-			pp.take_hit(center, int(_falloff(d, radius, max_damage) * mult), true,
-					_falloff(d, radius, max_knockback) * mult)
+			var amount := int(_falloff(d, radius, max_damage) * mult)
+			var knock := _falloff(d, radius, max_knockback) * mult
+			if pp.authority_world != null:
+				pp.authority_world.damage(shooter.role if shooter != null else 0, pp.role, center, amount, true, knock)
+			else:
+				if shooter == pp:
+					CombatFeedback.note_self_hit(pp)
+				CombatFeedback.attribute(pp, shooter)
+				pp.take_hit(center, amount, true, knock)
 	# 可破坏瓦片(树叶/树干):按 tile_defs 爆炸衰减(75%)扣除生命值,破坏后变空气
 	if has_grid:
 		_damage_tiles(center, radius, max_damage, shooter)

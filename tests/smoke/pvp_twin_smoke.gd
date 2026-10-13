@@ -55,16 +55,11 @@ func _ready() -> void:
 	#   `_inv_key` 比的是条目,不是实例(条目默认 `MAG_FULL`,不同步则指纹恒不动)。
 	for p in [A, B]:
 		var w = p.weapons.current_weapon()
-		# - 等待必须有上界:没有它,fixture 漂移(武器始终没装上)会让本冒烟耗尽 `--quit-after`
-		#   且一行判定结果都不打印 —— 与真失败在输出上不可分(2026-09-25 评审指出,与
-		#   `ammo_rollback_probe` 那条超时防御性校验同一类)。
 		var waited := 0
 		while w != null and not w.is_inside_tree() and waited < 120:
 			await get_tree().physics_frame
 			waited += 1
 		if w != null and not w.is_inside_tree():
-			# - 判定依据为"仍然不在树里",不是 `waited >= 120`:循环可能在那一帧刚好等到它加入场景树,
-			#   而 `waited` 照样等于 120  ->  边界帧测试误报(2026-09-25 复核指出)。
 			_violation = "等待武器入树超时(120 帧,current_weapon=%s)" % str(w)
 			_fail()
 			return
@@ -198,8 +193,6 @@ func _physics_process(_delta: float) -> void:
 		var snap: Dictionary = A.capture_state()
 		B.global_position = Vector2(-9999, -9999)   # 主动造成严重分歧
 		B.velocity = Vector2.ZERO
-		# - 连背包一起搞乱:若 `inv` 没进 capture/restore,restore 后 B 会是空手,
-		#   下面 _compare 的 `inv` 指纹立刻发散。这条是本轮新增字段的唯一鉴别点。
 		B.weapons.set_initial_inventory([])
 		B.restore_state(snap)
 		_compare(A, B, snap, true)   # 恢复后立即字段级比对(不含 pos 的 settle 微差)
@@ -207,7 +200,6 @@ func _physics_process(_delta: float) -> void:
 	if i % RESTORE_EVERY != 0:
 		_compare(A, B, {}, false)
 
-# 字段级比对。restored=true 时本轮 B 刚 restore(A 快照),pos 允许 settle 微差;逐 tick 仍全比。
 func _compare(a, b, _snap: Dictionary, restored: bool) -> void:
 	if not _violation.is_empty():
 		return

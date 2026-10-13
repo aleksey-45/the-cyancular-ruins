@@ -9,12 +9,6 @@ extends SceneTree
 var _fail := 0
 
 
-# ── AiNavigator._pick_target 的桩(只为断言方向符号,不模拟任何真实玩法)──
-# 为什么必须真调 `_pick_target`:它返回的 `"dir"` 有两个分支(黏滞锁定 / 重选最近),
-# 两处都要是「我 -> 对手」。只断言成员存在或方法可调照不出符号错 —— 2026-09-14 那个
-# 「锁定约束后瞄反」的 bug 正是这么漏过去的(冒烟只查了 host/role/src 三个成员名)。
-# 注:`-s` 脚本自身不能引用 autoload(编译期 Identifier not found),但运行期 load 进来的
-# 脚本可以 —— `_pick_target` 里的 `GameParameters.MAP_WIDTH` 在下面这条路径上是可用的(实测)。
 class StubHost extends Node:
 	var players: Dictionary = {}
 
@@ -26,9 +20,6 @@ class StubBody extends Node2D:
 func _initialize() -> void:
 	# -s 阶段 autoload 未实例化 -> 这里只 load 不静态引用任何 autoload 标识符
 	var ai_script: GDScript = load("res://core/net/ai_input_source.gd")
-	# - 路径修正：接口已重命名为 `player_input.gd`。
-	#   若沿用旧路径则 load 结果为 null 但此前未受断言约束，导致每次运行均输出资源加载失败日志。
-	#   此处显式纳入断言校验。
 	var base_script: GDScript = load("res://core/net/player_input.gd")
 	_check(base_script != null, "player_input.gd(接口)可加载")
 	_check(ai_script != null, "ai_input_source.gd 可加载")
@@ -60,15 +51,6 @@ func _initialize() -> void:
 	_check(src.is_action_just_pressed("up"), "press_jump() 后 just_pressed('up') 为真")
 	_check(not src.is_action_just_pressed("up"), "跳跃是**边沿**不是电平(第二次读为假)")
 
-	# - frozen 契约回归(2026-09-14):基类承诺「置 true 后一切输入接口返回中性值」,
-	#   而本类此前覆写了全部公开输入读取接口 -> 基类的 if frozen 整个被绕过,
-	#   player.set_controls_locked(true) 对 AI/网络输入源是静默空操作。
-	#   此断言必须打在子类实例上:仅验证基类实现无法保证子类是否正确重写并遵循接口规范。
-	#   口径来自 core/input_source.gd 的类头注释与 player.set_controls_locked 的调用点。
-	#   注:本类把 is_action_pressed / is_action_just_released / is_attack_just_released /
-	#   get_switch_index_pressed 实现成常量(与 frozen 无关),故那 4 条不具判定有效性 —— 但
-	#   它们仍要断言(修完必须全部断言通过),具有判定有效性的是 get_axis / just_pressed / attack_pressed /
-	#   attack_just_pressed 这 4 条(它们会回放写入的值,能照出"未被短路拦截")。
 	src.aim = Vector2.UP
 	src.axis = -1.0
 	src.fire = true
@@ -104,11 +86,6 @@ func _initialize() -> void:
 			_check(props.has(m), "AiNavigator 有成员 %s" % m)
 		_check(nav.has_method("_physics_process"), "AiNavigator 有 _physics_process")
 
-		# ── -  AI 目标方向(2026-09-14 修 H1)──
-		# `_pick_target` 的 "dir" 约定是 我 -> 对手(消费者:`_aim_and_fire` 拿它当开火方向、
-		# `_move` 的 `signf(dir.x)` 追人/后拉)。而 `toroidal_delta_px(a,b)` 返回 a -> b,传
-		# `(对手, 我)` 得到的是「对手 -> 我」必须取负。黏滞分支曾漏掉取负 -> 锁定后整局
-		# 瞄反 + 远则逃近则贴。两条分支都要断言:它们的取负是各写一遍的。
 		var h := StubHost.new()
 		nav.host = h
 		nav.role = 1

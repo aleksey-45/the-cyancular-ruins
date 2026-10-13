@@ -2,7 +2,7 @@ class_name LobbyPage
 extends Control
 
 # 大厅页面共享基类，封装房间列表获取、加入与创建流程、断线重连、EasyTier P2P 隧道配置以及向对局场景的切换。
-# 子类负责具体布局、列表项渲染以及模式特定的 RPC 协议派发。
+# 子类负责具体布局、列表项渲染以及布局与房间展示。
 
 const LocalServer := preload("res://core/net/local_server.gd")
 const Tunnel := preload("res://core/net/tunnel.gd")
@@ -15,24 +15,62 @@ var _connected := false
 var _connected_addr := "127.0.0.1"
 var _pending_action: Callable = Callable()
 var _lobby_start_ms := 0
-var _claimed_ms := 0
-var _pending_go_role := -1
+var _rejoin_sent_ms := 0
 
 
 # 初始化大厅通用信号接线与字体设置
 func _finish_lobby_ready() -> void:
-	NetBus.local_go_match.connect(_on_go_match)
-	NetBus.local_match_start.connect(_on_match_start)
-	NetBus.local_server_message.connect(_on_server_message)
-	NetBusExt.local_session_token.connect(_on_session_token)
+	NetBus.event_received.connect(_on_net_event)
 	multiplayer.connected_to_server.connect(_on_lobby_connected)
 	multiplayer.connection_failed.connect(_on_lobby_connect_failed)
-	NetBusExt.local_rejoin_denied.connect(_on_rejoin_denied)
 	UiFactory.apply_font_recursive(self)
-	_request_list.call_deferred("正在连接服务器获取房间列表…")
+	if NetBus.can_send_to_server():
+		_connected = true
+		_push_lobby_name()
+		if not PvpSession.room.is_empty():
+			_on_room(PvpSession.room)
+		else:
+			_request_list.call_deferred("正在获取房间列表…")
+	else:
+		_request_list.call_deferred("正在连接服务器…")
 
+func _on_net_event(_peer: int, kind: int, data: Variant) -> void:
+	match kind:
+		NetEvent.Kind.MESSAGE: _on_server_message(data)
+		NetEvent.Kind.ROOM: _on_room(data)
+		NetEvent.Kind.ROOMS: _on_rooms(data)
+		NetEvent.Kind.REJOIN_DENIED: _on_rejoin_denied(data)
+		NetEvent.Kind.ROOM_CLOSED:
+			PvpSession.clear_rejoin()
+			PvpSession.room.clear()
+			_status.text = data
+			_on_room_closed()
+		NetEvent.Kind.BASELINE:
+			PvpSession.baseline = data
+			PvpSession.role = data["role"]
+			PvpSession.room_code = data["code"]
+			PvpSession.room_mode = data["mode"]
+			PvpSession.beta_mode = data["options"].get("beta", false)
+			PvpSession.loading_match = true
+			_enter_match_scene()
+		NetEvent.Kind.TERRAIN:
+			if PvpSession.loading_match:
+				PvpSession.terrain_events.append(data)
 
-# 构建禁用武器配置网格
+func _exit_tree() -> void:
+	NetBus.event_received.disconnect(_on_net_event)
+	multiplayer.connected_to_server.disconnect(_on_lobby_connected)
+	multiplayer.connection_failed.disconnect(_on_lobby_connect_failed)
+
+func _on_room(_state: Dictionary) -> void:
+	pass
+
+func _on_rooms(_rooms: Array) -> void:
+	pass
+
+func _on_room_closed() -> void:
+	pass
+
 func _add_weapon_grid(parent: Node, h_sep: int, on_cell: Callable = Callable()) -> void:
 	var wgrid := GridContainer.new()
 	wgrid.columns = 2
@@ -55,9 +93,7 @@ func _add_weapon_grid(parent: Node, h_sep: int, on_cell: Callable = Callable()) 
 
 # 上报当前玩家昵称至大厅
 func _push_lobby_name() -> void:
-	if _connected:
-		NetBus.rpc_id(1, "lobby_name", PvpSession.player_name)
-
+	NetBus.send_event(NetEvent.Kind.HELLO, {"name": PvpSession.player_name, "hue": Settings.pvp_color_hue})
 
 func _on_lobby_connected() -> void:
 	_lobby_start_ms = 0
@@ -76,7 +112,7 @@ func _on_lobby_connect_failed() -> void:
 	_lobby_start_ms = 0
 	_connected = false
 	_pending_action = Callable()
-	_status.text = "未检测到本地服务器——请创建房间或输入 5 位房间号加入"
+	_status.text = "未检测到本地服务器——请创建房间或输入 8 位房间号加入"
 
 
 # 确保连接到大厅后执行指定动作
@@ -84,6 +120,7 @@ func _with_lobby(action: Callable) -> void:
 	if not _lobby_action_allowed():
 		return
 	if _connected and NetBus.can_send_to_server():
+		_push_lobby_name()
 		action.call()
 		return
 	_status.text = "正在连接本地大厅…"
@@ -114,49 +151,30 @@ func _on_server_message(t: String) -> void:
 
 
 # ── 进入对局会话 ──
-var _pending_token := ""
-
-func _on_session_token(token: String) -> void:
-	_pending_token = token
 
 
-# 收到进入对局信号后推迟至帧末执行场景切换
-func _on_go_match(role: int, port: int) -> void:
-	if port > 0 and Tunnel.forward_port() <= 0:
-		PvpSession.server_port = port
-	_pending_go_role = role
-	_on_go_match_extra()
-	_status.text = _go_match_status()
-	_do_go_match.call_deferred()
 
 
-# ── 重返对局处理 ──
-var _rejoin_sent_ms := 0
 
-
-# 检测并尝试重连回到正在进行中的对局
 func try_rejoin_row(code: String, in_match: bool, mode: String) -> bool:
 	if not PvpSession.can_rejoin_to(code, mode):
 		return false
 	if not in_match:
 		return false
-	PvpSession.rejoin = true
 	_request_rejoin()
 	return true
 
 
 func _request_rejoin() -> void:
 	if not PvpSession.can_rejoin():
-		PvpSession.rejoin = false
 		_status.text = "回局凭据已失效,请重新建房/加入"
 		return
 	if not NetBus.can_send_to_server():
-		PvpSession.rejoin = false
 		_request_list("与大厅的连接已断开——正在重连并刷新房间列表…")
 		return
 	_rejoin_sent_ms = Time.get_ticks_msec()
 	_status.text = "正在回到对局…"
-	NetBusExt.rpc_id(1, "rejoin_request", PvpSession.room_code, PvpSession.token)
+	NetBus.send_event(NetEvent.Kind.REJOIN, {"code": PvpSession.room_code, "token": PvpSession.token})
 
 
 # 服务端拒绝回局请求时清除凭据并刷新列表
@@ -169,7 +187,7 @@ func _on_rejoin_denied(reason: String) -> void:
 
 # 回局请求超时处理
 func _tick_rejoin_timeout() -> bool:
-	if PvpSession.rejoin and _rejoin_sent_ms > 0 \
+	if _rejoin_sent_ms > 0 \
 			and Time.get_ticks_msec() - _rejoin_sent_ms > 15000:
 		_rejoin_sent_ms = 0
 		PvpSession.clear_rejoin()
@@ -178,75 +196,31 @@ func _tick_rejoin_timeout() -> bool:
 	return false
 
 
-func _do_go_match() -> void:
-	if _pending_go_role < 0:
-		return
-	var role := _pending_go_role
-	_pending_go_role = -1
-	PvpSession.role = role
-	if _pending_token != "":
-		PvpSession.token = _pending_token
-	_pending_token = ""
-	PvpSession.worker_port = PvpSession.server_port
-	_claim_role(role)
 
 
-func _claim_role(role: int) -> void:
-	_claimed_ms = Time.get_ticks_msec()
-	if PvpSession.rejoin:
-		PvpSession.rejoin = false
-		NetBusExt.rpc_id(1, "reclaim_role", role, PvpSession.token)
-		return
-	NetBus.rpc_id(1, "claim_role", role, PvpSession.player_name)
-	NetBusExt.rpc_id(1, "player_options", _player_options())
-	if PvpSession.token != "":
-		NetBusExt.rpc_id(1, "report_token", PvpSession.token)
 
 
-# 对局启动失败或对端无响应时的兜底清理
 func _return_to_lobby(msg: String) -> void:
-	_claimed_ms = 0
-	PvpSession.rejoin = false
-	_rejoin_sent_ms = 0
+	NetBus.send_event(NetEvent.Kind.LEAVE)
+	PvpSession.room.clear()
+	PvpSession.clear_rejoin()
 	_on_return_to_lobby()
-	NetBus.stop()
-	_connected = false
-	_lobby_start_ms = Time.get_ticks_msec()
 	_status.text = msg
-	NetBus.start_client("127.0.0.1", PvpSession.server_port)
+	_request_list("正在刷新房间列表…")
 
-
-func _on_match_start(role: int, spawn: Vector2i, map_path: String) -> void:
-	PvpSession.role = role
-	PvpSession.spawn = spawn
-	PvpSession.map_path = map_path
-	_enter_match_scene()
-
-
-# ── 超时检测 ──
-
-# 大厅连接超时检测
 func _tick_lobby_connect_timeout() -> void:
 	if _lobby_start_ms > 0 and not _connected \
 			and Time.get_ticks_msec() - _lobby_start_ms > 8000:
 		_lobby_start_ms = 0
 		_pending_action = Callable()
-		_status.text = "未检测到本地服务器——请创建房间或输入 5 位房间号加入"
+		_status.text = "未检测到本地服务器——请创建房间或输入 8 位房间号加入"
 
 
 # 角色认领超时检测
-func _tick_claim_timeout() -> bool:
-	if _claimed_ms > 0 and Time.get_ticks_msec() - _claimed_ms > 25000:
-		_return_to_lobby(_claim_timeout_msg())
-		return true
-	return false
 
 
-# 启动本机专属服务端进程并建立连接
 func _ensure_own_server() -> bool:
-	NetBus.stop()
-	Tunnel.stop()
-	LocalServer.stop_owned()
+	NetSession.close()
 	_status.text = "正在启动本机专属服务器…"
 	PvpSession.server_address = "127.0.0.1"
 	var port: int = await LocalServer.launch_and_connect()
@@ -256,6 +230,7 @@ func _ensure_own_server() -> bool:
 	PvpSession.server_port = port
 	_connected = true
 	_connected_addr = PvpSession.server_address
+	_push_lobby_name()
 	_update_code_label()
 	return true
 
@@ -266,9 +241,10 @@ func _join_with_code(code: String, action: Callable) -> void:
 		_status.text = "请填房间码"
 		return
 	if not Tunnel.is_valid_room(code):
-		_status.text = "房间码是 5 位数字(例 48213)"
+		_status.text = "房间码是 8 位数字(例 00048213)"
 		return
 	if Tunnel.on_network(code) and NetBus.can_send_to_server():
+		_push_lobby_name()
 		action.call()
 		return
 	if not Tunnel.available():
@@ -280,10 +256,8 @@ func _join_with_code(code: String, action: Callable) -> void:
 				+ "房主与客机填同一份。")
 		return
 	if Tunnel.is_running() or not Tunnel.current_code().is_empty():
-		NetBus.stop()
+		NetSession.close()
 		_connected = false
-		LocalServer.stop_owned()
-		Tunnel.stop()
 		_status.text = "正在切换到房间 %s 所在的网络…" % code
 	else:
 		_status.text = "正在加入房间 %s 的网络,打洞中…" % code
@@ -400,14 +374,8 @@ func _add_map_picker(vb: VBoxContainer) -> void:
 		Settings.save())
 
 
-func _go_match_status() -> String:
-	push_error("LobbyPage: 子类必须覆写 _go_match_status()")
-	return ""
 
 
-func _claim_timeout_msg() -> String:
-	push_error("LobbyPage: 子类必须覆写 _claim_timeout_msg()")
-	return ""
 
 
 func _enter_match_scene() -> void:
@@ -424,8 +392,6 @@ func _on_lobby_reconnect() -> void:
 	pass
 
 
-func _on_go_match_extra() -> void:
-	pass
 
 
 func _on_return_to_lobby() -> void:

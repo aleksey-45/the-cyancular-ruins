@@ -121,12 +121,6 @@ function deliver(w, out) {
   batch.sort(function (a, b) { return a.id - b.id; });    // ← 规范序:只由 id 决定,与到达顺序无关
   const k = Math.ceil(batch.length / 3) % batch.length;   // ← 再整体左移 k 位(n=1 → 0)
   const ordered = batch.slice(k).concat(batch.slice(0, k));
-  // ★★ 桩**自己**的排列也要断言(修复轮 3 的 A2):相位 ⑤ 那条「按 id 配对」断言的全部力量
-  //    都压在上面那条约定("交付序既非到达序、亦非其倒序")上,而它此前只存在于本段注释的
-  //    算式里 —— 谁把 ⌈n/3⌉ 改回退化值(0 = 恒等 / reverse() = 倒序),注释不会红、相位 ⑤
-  //    也不会红,那条约定就**静默**失效了。这里直接对**实际交付出去的那个序列**下断言。
-  //    n ≥ 3 时左移量落进 [1, n-2],两个退化排列都够不着;n=1 只有恒等一种排列、n=2 只有
-  //    恒等与倒序两种(见上),故这两个尺寸不判 —— 当前用例的并发批只有 n=6(相位 ⑤)与 n=1。
   if (arrivals.length >= 3) {
     const delivered = ordered.map(function (o) { return o.id; });
     const reversed = arrivals.slice().reverse();
@@ -175,7 +169,7 @@ async function tailPhases() {
 
   // ==== 相位 ⑨ onerror:必须被**订阅**,且把在飞请求响亮拒掉并把 codec 标死 ====
   // ⑨a 工厂**预置**了 onerror —— io.js 必须无条件覆盖它(有就不装 = 失败处理静默失效)。
-  const preset = function () { /* 工厂自带的 onerror:旧实现会因此**不**订阅本 codec 的处理 */ };
+  const preset = function () {   };
   const c5 = Io.createCodec({
     workerFactory: function () { const w = makeWorker(); w.onerror = preset; return w; },
   });
@@ -225,12 +219,6 @@ async function tailPhases() {
   eq(c3.pendingCount(), 0, '★ terminate() 之后 pending 表清空(pendingCount() 回到 0)');
   ok(c3.isDead() === true, '★ terminate() 之后 codec 标死 —— 下一次调用不会**静默**新建一个 worker');
   await rejects(function () { return c3.ping(); }, 'terminate 之后再调用也失败', 'terminate');
-  // ★ 两条计数各钉各的(w3.sent 与"有没有另起一个 worker"是**两件事**):
-  //   ★★ 本行标签原先还带一句"(worker 引用确实被置空了)" —— 那句话 `eq(w3.sent, 1)`
-  //     **证不出来**(修复轮 3 的 B):失败那次调用在 ensure() 里就抛了,根本走不到
-  //     postMessage,所以"terminate() 置了 dead 但忘了把 worker 置空"与"确实置空了"
-  //     都会让 sent 停在 1,整段 ⑩ 照样全绿。要真证它得给 io.js 加一个读 worker 引用的
-  //     API —— 那是给生产面扩权,不做。故只留这条断言真正钉得住的那半句。
   eq(w3.sent, 1, '那次失败没有**又往那个已 terminate 的 worker 投一条消息**');
   eq(spawns, spawnsBefore, '★ 那次失败也没有**另起一个 worker**(测试工厂的调用次数不变)');
 
@@ -474,9 +462,6 @@ async function tailPhases() {
     if (fail === 0) console.log('WORKER IO SMOKE OK');
     process.exit(fail === 0 ? 0 : 1);
   });
-  // ★ 计划 2b Task 1 的代码块**漏印了这一行**(相位 ⑤ 那个 `.then(function () {` 回调的收尾)。
-  //   缺了它整个文件是 SyntaxError: Unexpected end of input —— 一行断言都跑不到。
-  //   按括号平衡补上;**没有任何断言被改动**。
   });
 })().catch(function (err) {
   console.error('FAIL: 未捕获异常(后面的断言一行都没跑):');

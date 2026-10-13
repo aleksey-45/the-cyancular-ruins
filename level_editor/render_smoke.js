@@ -274,13 +274,6 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
          '★★ screenToSub(subToScreen(X,Y)) 回到 (X,Y):两条方向互为逆(错一个整支画笔偏到别处)');
       ok(r1.screenToSub(-1000, -1000).X >= 0, '★ 负的屏幕坐标也折回 [0, subCols)(环面世界里这是常态)');
 
-      // ── ⑩f 层可见性 / 压暗 / 选区框 ──
-      // ★★ 判据从"drawImage 总次数为 0"改成"少了几次":② 之后主画布上画的是四张离屏层
-      //    (每层各几份副本),藏掉一层只会让**它那几份**消失,其余三层照画(总次数 4 → 3)。
-      //    "次数变成 0"是**逐子格**那条旧路径的说法。
-      // ★★ 但**次数分不出两件事**(评审发现 5):"可见性闸拦住了那一层"与"那一层压根没有
-      //    离屏层"—— drawLayerPath 里 `!s.layerVisible[L]` 与 `!layerCv[L]` 走的是**同一个**
-      //    continue。真守卫在 ⑪a(按**对象身份**判"主画布合成的就是那一层的离屏层")。
       cv1.ctx.ops.length = 0;
       r1.setLayerVisible(Core.LAYER_SCENE, false);
       const hidden = countOps(cv1.ctx, 'op', 'drawImage');
@@ -384,7 +377,7 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
       // ★ 缺席层不进 thumbTasks(省一次全图扫描),于是它**不会**被重画 —— 尺寸相同时
       //   ensureThumbs 走复用那条路,旧像素就留在那儿了(症状:换图后那一层继续显示上一张图)。
       const noBg = Core.createMap('nobg', 2, 2);         // 同尺寸 ⇒ 复用缩略图
-      noBg.layers[Core.LAYER_BG] = null;                 // 缺席层 = 全空气(规格 §2.4)
+      noBg.layers[Core.LAYER_BG] = null;
       thumbBg.ctx.ops.length = 0;
       await rBg.setMap(noBg);
       ok(someOp(thumbBg.ctx, function (o) {
@@ -479,8 +472,6 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
   eq(Render.descAt(m2, Core.LAYER_SCENE, -8, -4), Core.neutralDesc(3), '★ descAt: 负数环面折算');
   eq(Render.descAt(m2, Core.LAYER_FRONT, 0, 0), 0, 'descAt: 空的前景层 → 0(空气)');
 
-  // ★★ 缺席层(null)= 全空气。规格 §2.4 的 createMap 恒建四层,而 layer_flags 允许缺层
-  //    ⇒ 解码出来的一层可以是 null。渲染必须把 null 当"全空气",而不是当场抛。
   const mNull = makeMap(2, 1);
   mNull.layers[Core.LAYER_BACK] = null;
   eq(Render.layerArray(mNull, Core.LAYER_BACK), null, 'layerArray: 缺席层返回 null');
@@ -537,9 +528,6 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
   // ==== 相位 ③ ③ 格位图缓存:两条独立的失效轴 ====
   (function () {
     let built = 0;
-    // ★ 判据是"**这一步**有没有动模块状态",不是"模块里现在是不是 null":Task 4 起
-    //   mount 的 setMap 会 attachCells(换图的作废链条靠它闭合,见相位 ③b),所以
-    //   本相位跑到这里时模块里**已经有**一个(前面那些 mount 装上去的)。
     const cellsBefore = Render.cellCache();
     const c3 = Render.createCellCache({
       maxCells: 4,
@@ -572,12 +560,6 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
     eq(c3.stats().evictions, 1, 'LRU: 超出上限淘汰 1 个');
     eq(c3.stats().size, 4, 'LRU: 容量守住 maxCells');
 
-    // ★★ 重建出来的条目也必须挪到**最近端**。`Map.set` 对**已存在**的键保留原来的插入位置,
-    //   而这条重建路径恰恰常落在"换图后 setSource 刻意不清表"留下的陈旧条目上 —— 不先
-    //   `delete` 的话,刚重建出来的条目仍蹲在最冷位置,下一次淘汰就把它扔掉(它才刚建过)。
-    //   ★ 两面各用一个**新**缓存:同一个缓存里连着判两面的话,第一个 `get` 已经把 LRU 序改了,
-    //     第二面在新旧实现下都是 miss,分不出来。两面共用同一个序列(`lruSeq`):
-    //   get(A) → get(B) → touch(A) → get(A)(★ 走**重建**)→ get(C)(超上限 → 淘汰一个)。
     const lruSeq = function (c) {
       c.get(Core.LAYER_SCENE, 0, 0);               // A
       c.get(Core.LAYER_SCENE, 1, 0);               // B
@@ -613,10 +595,6 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
        'stats 的键是 {hits, misses, evictions, size, maxCells, generation}');
   })();
 
-  // ==== 相位 ③b ★★ 换图必须**同时**作废 ③ 与 ④(走生产路径 setAtlas)====
-  // ★ 账本点名带进计划 2b 的那条不变量。判据走 setAtlas 这条**真实**路径,不各自
-  //   调一遍 setSource —— 只测"每个缓存自己的 setSource 有效"证明不了"换图事件
-  //   真的碰到了两层",而漏掉 ③ 的症状是审计 A2 在上一层原样复发。
   (function () {
     const be = spyBackend();
     const a1 = makeAtlas(), a2 = makeAtlas();
@@ -644,18 +622,6 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
     ok(after4 !== before4, '★★ 换图之后同一块小图也是新对象(调用方不得跨换图持有 tile)');
     ok(be.calls.length >= 2, '换图之后 ④ 真的重算过(实得 backend 调用 ' + be.calls.length + ' 次)');
 
-    // ★★ 相位 ②b(承相位 ② 那条 throws 的另一半 —— 那一条只判了"抛没抛"):换图**抛错时
-    //    一层都不许提交**。③ 要先 `attachCells` 才有,故这一相位落在相位 ③b 里。
-    //    ★ 本相位**不是**"这个缺陷唯一抓得住的地方":真正承重的是**两面** —— **④ 的对象
-    //      身份**与**"旧图集还能不能画"** —— 而相位 ② 那一对(`tileCache()` 身份 +
-    //      `tileFor` 照旧返回小图)没挂 ③ 也照样抓得住同一个缺陷(变异实测:四条红全在这两面上)。
-    //    ★ 反过来,下面这几条在这个缺陷(先换 ④ 再校验)下**照样绿**,别把它们读成判据:
-    //      `atlasInfo()`、③ 的**代际**、③ 的条目身份 —— 改动只落在 ④ 那一侧,
-    //      `cells.setSource()` 压根没被走到;旧 ④ 的条目那条同理(旧缓存对象根本没被碰过)。
-    //    ★ 其中"③ 的代际"与"③ 的条目身份"是一对:凡是"把 ③ 的作废提到校验之前"这一类变异,
-    //      两条会**一起**红(代际一动,条目身份那条必然跟着变)—— 即那种变异下有一条是冗余的。
-    //      两条都留着,是因为它们各自记录一件事(代际动没动 / 条目还是不是原来那个);
-    //      这里只是**不**声称"每一面都能独立判别"。
     const infoBefore = Render.atlasInfo(), genBefore = c3.stats().generation;
     const warm3 = c3.get(Core.LAYER_SCENE, 0, 0);        // 先预热,好判"③ 没被作废"
     const warm4 = t4.get(3, 0, 0, d3);
@@ -672,16 +638,6 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
     ok(stillWorks, '★★ 抛错之后 tileFor 照旧返回小图(不是抛 `Tint: 还没 setSource,…`)');
   })();
 
-  // ==== 相位 ③c ★★ 换图必须**连 ① 与 ② 一起**作废(终审评审发现 I2)====
-  // ★ ③b 钉的是 ③ 与 ④(那条不变量当年就是按这两层写的),①② **此前零覆盖** —— 而它们
-  //   各有一条"看着不对、一个字都不报"的路:
-  //     · ① 是**默认 fit 视图**走的那条(大图必然 < 8 px/子格)⇒ 换图之后继续画旧图集的砖,
-  //       直到某次 invalidateAll/setMap(A2 原样复发);
-  //     · ② 更糟:`layersClean` 不被碰 ⇒ ≥8 下平移时 `panBy` 判"这一层是干净的",自拷贝
-  //       旧像素、只把新露出的边条按**新**图集补上 ⇒ 屏幕上是**新旧混着**。
-  // ★ 判据落在**像素的来源**上(与 ③b 同款,不是"重画过没有"):换图之后 ①/② 收到的每一张
-  //   小图都必须是**新图集**算出来的。替身 backend 每次建图都记一个序号 ⇒ "旧图集的小图"
-  //   可以被指名(它画出来的正是"一半新一半旧"那张脸)。
   await (async function () {
     const savedDoc3c = globalThis.document;
     const made3c = [];
@@ -874,7 +830,6 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
     ok(back.X >= 0 && back.X < 500, 'hitTest: 负的屏幕坐标也落在 [0, subCols) 内');
   })();
 
-  // ==== 相位 ⑧ 画笔几何(规格 §4.4 的吸附规则)====
   (function () {
     eq(Render.brushSpan(1), { unit: 'cell', n: 1 }, 'brushSpan(1) = 1 格');
     eq(Render.brushSpan(3), { unit: 'cell', n: 3 }, 'brushSpan(3) = 3 格');
@@ -908,7 +863,6 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
        'snapHit: 小数画笔吸附到子格(当前子格就是命中子格)');
   })();
 
-  // ==== 相位 ⑨ 选区拖动:纯读的偏移查询(B3 / 规格 §4.2)====
   (function () {
     const sel = { x: 4, y: 4, w: 4, h: 4 };
     eq(Render.selectionSource(sel, 2, 0, 6, 5), { hit: true, X: 4, Y: 5 },
@@ -921,7 +875,6 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
        'rectUnion: 脏区合并(缩略图/离屏层按它重画)');
   })();
 
-  // ==== 相位 ⑩ 脏区与"编辑一格只重画一格"(规格 §4.2 ②③)====
   (function () {
     // ② 的脏区簿记是纯逻辑:编辑 → 脏矩形;切层 → 只合成;平移 → 搬移 + 补边条。
     const d = Render.createDirtySet();
@@ -1099,12 +1052,6 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
       eq(r.stats().panCopies, pc1 + 1,
          '★ 对齐之后平移才走搬移那条路(上一条不是"把搬移整条删掉"也能过的空断言)');
 
-      // ── ⑪h ★★ 直接调 buildLayers()(不经 viewChanged)时,平移同样不许自拷贝 ──
-      // ⑪d2 钉的是"不干净就不搬移"这条**后果**;这一条钉"谁把 layersClean 放下的"。
-      // 本方法是**公开入口**(文件尾的导出表里有它),调用方(编辑后整批重建 / Task 8 换贴图源)
-      // 完全可能**不**先走 viewChanged() 就进来 —— 那一刻重建已经在飞、离屏层是半旧的,
-      // 而 layersClean 若还是 true,panBy 就会拿一张半旧的图自拷贝搬移,脏标记此刻已经清干净
-      // ⇒ **永久错位**(谁也补不回来)。故 layersClean 必须在 buildLayers 的**入口**就放下。
       const pc2 = r.stats().panCopies;
       const pRebuild = r.buildLayers();               // 不 await:重建在飞,且**没**走 viewChanged
       await r.panBy(16, 0);
@@ -1120,7 +1067,7 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
       const v0i = r.view();
       const opsBefore = offScene.ctx.ops.length;
       await r.panBy(16.4, 0);
-      const opsPan = offScene.ctx.ops.slice(opsBefore);   // ★ 只看这次平移新记下的那几笔
+      const opsPan = offScene.ctx.ops.slice(opsBefore);
       ok(opsPan.some(function (o) {
            return o.op === 'drawImage' && o.comp === 'copy' && o.x === -16 && o.y === 0;
          }),
@@ -1152,10 +1099,6 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
          '★★ 视图越过右边界(主网格右缘落在屏幕 x = 96)时,离屏层被画到 x = ' + maxX +
          ':接缝另一侧的格由**环面折算**补上(按主网格裁剪 = 右边一大条黑 —— 人眼清单第 4 条)');
 
-      // ── ⑪f 闸 2:全屏重建经分帧器(不是一帧画完)──
-      // ★★ 判据取**一次纯 buildLayers()** 前后的让出次数:setMap 里那条 rebuild 与缩略图
-      //    共用同一座分帧器,拿"setMap 之后 yields > 0"判会**被缩略图那条路蒙过去**
-      //    (变异实测:把 buildLayers 改成一次循环画完,那版断言照样全绿)。
       let yields = 0;
       const cvF = fakeCanvas(200, 150);
       const sinceF = made2.length;
@@ -1208,14 +1151,6 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
        made2.length + ' 张:每层一张 × 每张图)');
   })();
 
-  // ==== 相位 ⑫ ★★ 视图入口的失败必须**看得见**(不能变成一条没人观察的 promise 拒绝)====
-  // ★★ 要防的症状(评审发现 1):改图集/换图之后 `tileFor` 会抛(`图集里没有纹理 N`)。
-  //    Task 4 **之前** ≥8 那条路是 render() 里的**同步**循环 ⇒ 抛出直接落进 ui.js 的 guard
-  //    (同步 try/catch),用户看到 `出错了(...)`。Task 4 **之后**同一个抛出发生在**分帧器的
-  //    任务回调**里 ⇒ 它变成 run() 的**拒绝**:guard 接不住,而 render() 这一次根本没执行
-  //    ⇒ 画布**默默停在上一帧**、只在控制台留一行错 —— 正是本仓最防的"按了没反应"。
-  // ★ 本相位把两条契约**分开**钉:① 屏幕上看得见(经渲染自己的 error sink);② 想 await 的
-  //   调用方**照样拿到那次拒绝**(修法只挂观察者:不吞错、也不替换返回的那个 promise)。
   await (async function () {
     const savedDoc2 = globalThis.document;
     const savedEditor = globalThis.Editor;
@@ -1290,18 +1225,6 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
        made3.length + ' 张)');
   })();
 
-  // ==== 相位 ⑬ ★★ 拖动预览:三种目标格 / 环面折算 / **去烤**(评审发现 1、2、5、6)====
-  // ★ 这条链(Task 7 的 `dragSource` 一族)此前**零覆盖**,而它正是 D6 的全部内容:
-  //   `paintLayerRect` 的纹理分支在"拖动中"改用**源格**的 `cellCache.get`(③ 的键替换)。
-  //   故这里在**纹理层 + 真图集**上按 tile 的**对象身份**逐子格判三种情形:
-  //     ① 目标格读**源格**的内容;② 被腾空的源区**一个子格都不画**;③ 源∪目标之外原样不动。
-  // ★ 另两件只有"真的画一遍并记账"才看得见:
-  //   · 拖动跨过接缝时预览读的是**哪一格**(评审发现 2:非折算的查询会让预览与落笔分岔);
-  //   · 偏移一变 / 清除时「源 ∪ 目标」必须被**重画**(评审发现 1:烤进 ② 的偏移内容若不
-  //     重画,会在更早的偏移上**永远留着** —— 提交只按最终偏移结算)。
-  // ★ 替身与相位 ⑩/⑪/⑫ 同款(document.createElement / 记录型 ctx / 注入的 nextFrame),
-  //   图集必须**带替身 backend** 重设一次:相位 ⑫ 收尾时还原的是**默认** backend(它走
-  //   ImageData,node 里没有)⇒ 本相位里任何一次 tileFor 都会抛。
   await (async function () {
     Render.setAtlas(makeAtlas(), ATLAS_W, ATLAS_H, { backend: spyBackend() });
     const savedDocD = globalThis.document;
@@ -1474,12 +1397,6 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
       ok(!cellAnyDraw(offD, 0, 1) && cellMatches(offD, 5, 1, tB),
          '★★★ 改偏移之后:格 0 那块被**清掉且什么都没画**(它是空气)、内容跟到新目标格 5 —— ' +
          '两条合起来才说明"格 0 上那次烤痕真的被抹掉了"(只看没画 = 分不出"重画过"与"没重画")');
-      // ★★ 同一块**不重复画**(Minor):源格 (4,1) 在这次偏移里是源、在上一次偏移里**也是源**
-      //    (选区没变 ⇒ 源块必然同时落在「当前偏移的源∪目标」与「上一次那两块」里)⇒ 两组
-      //    直接 concat 会把它画两遍。旧实现取 `rectUnion` 的包围盒,顺带把重复"吃掉"了 ——
-      //    改成逐块之后这份去重得自己补上(四元组判等,见 `dedupRects`)。
-      // ★ 判据取**块数恰好 3**(源格 4 / 新目标格 5 / 上一次的目标格 0):不去重是 4。
-      //   它与上面两条都不同面 —— 上面两条判"哪些块被画了",这条判"有没有一块被画两遍"。
       const bakeClears = offD.ctx.ops.filter(function (o) { return o.op === 'clearRect'; })
         .map(function (o) { return [o.x, o.y, o.w, o.h]; });
       eq(bakeClears.length, 3,
@@ -1488,7 +1405,6 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
          '**最大那块**(整块选区)的 clearRect + 一格 16 次 drawImage,而画出来的像素与前一遍' +
          '逐字节相同');
 
-      // ── ⑬d ★★ 清除(松手 / 取消):烤痕不许活过这次拖动 ──
       const rb1 = rD.stats().layerRebuilds;
       offD.ctx.ops.length = 0;
       rD.setSelDrag(null, 0, 0);
@@ -1617,11 +1533,7 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
          '★★★ ① 也被去烤:目标格 0 的 16 个子格画的是**源格 (4,1)** 的 tile、被腾空的源格一格不画' +
          '(实得目标格 ' + tG0.length + ' 笔 / 源格 ' + thumbDrawsIn(4, 1).length + ' 笔;' +
          '不重画的话这里是 0 笔 —— 偏移被烤进 ①,而 < 8 合成的正是 ①)');
-      await rD.setView({ x: 0, y: 0, zoom: ZD });                // 回到 ② 那条路
-
-      // ── ⑬f ★★ 颜色层的拖动:同一个 dragSource,但这条分支传进去的是**子格**坐标 ──
-      // ★ 它可能是**负的**(视图越过左侧接缝时 cx = −1 ⇒ Xc = −4),全靠 `wrapIdx` 折回来。
-      //   ⑪c 只钉过"颜色层不把 RGBA 喂进 texOf",拖动这一段此前一条断言都没有。
+      await rD.setView({ x: 0, y: 0, zoom: ZD });
       const mCol = Core.createMap('col6', 6, 3);
       mCol.layers[Core.LAYER_BG].rgba[(1 * SB) * mCol.subCols + (4 * SB)] = 0xff0000ff;  // 格(4,1)的左上子格 = 不透明红
       const cvCol = fakeCanvas(640, 400);
@@ -1631,9 +1543,6 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
       const offCol = layerCanvasesSince(made4, sinceCol, 640, 400)[Core.LAYER_BG];
       ok(!!offCol, '⑬ 前提:颜色层的离屏层建出来了');
       await rCol.setView({ x: 0, y: 0, zoom: ZD });
-      // ★★ 必须先切到**背景层**再拖:偏移只烤在活动层上(与落笔 `moveRegion` 同口径),
-      //   而 mount 的默认活动层是场景层 —— 这条红在 BG 上,不切层的话它**根本不该动**
-      //   (旧实现在这条上是"四层都动",所以不切层也能过;那正是被修掉的行为)。
       rCol.setLayer(Core.LAYER_BG);
       offCol.ctx.ops.length = 0;
       dragOn(rCol, { x: 4 * SB, y: 1 * SB, w: SB, h: SB }, 2 * SB, 0);
@@ -1663,23 +1572,6 @@ function layerCanvasesSince(made, sinceIdx, w, h) {
       eq(Render.selectionSource({ x: 22, y: 4, w: 4, h: 4 }, 0, 0, 8, 4, 24, 12).hit, false,
          '★ 折算不是"整行都算在选区内"(子格 8 不在 22..25 折算后的那一段里)');
 
-      // ── ⑬h ★★ Esc 取消选区、左键还按着(拖动中)时 render() 不许抛 ──
-      // ★ "选区为空而 selDrag 还在"是**真到得了**的状态(Esc 走 cancel-selection,而左键
-      //   还按着)。今天挡住这次读的是**外层**那句 `if (s.selection)`(不是 drawOverlay 里
-      //   的那一行)⇒ 下面两条钉的是**不变量**本身:
-      //     ① 这个状态下 render() 不抛(外层判据哪天被放松、而块内照旧读 `s.selection.x`,
-      //        这条会红 —— 那是每帧一次 TypeError、画布整个停住);
-      //     ② 选区为空时**不画**那个拖动框(框是"选区"的视觉,没有选区就没有框)。
-      //   ★ 别把 ① 读成"review 说的 TypeError 今天在场上":实测把块内换回 `s.selection`
-      //     (保留外层判据)照样全绿 —— 机制到不了这里,false positive 已写进报告。
-      //     ③ ★★ 而且**取消选区那一刻内容就该归位**(见下第 ③ 条断言)。
-      //     ★★ ③ 的判据必须落在**内容**上(逐子格比 tile),不能是"哪一块被重画过":
-      //        "重画过"这件事在**旧实现**里同样成立 —— 去烤重画的偏移来源是 `s.selDrag`
-      //        (它此刻还在),画的还是**同一份偏移**,像素与重画前逐字节相同 ⇒
-      //        `clearRect(5*SB*ZD, …) 存在`这类断言**恒真**,它只证明"setSelection 调过
-      //        markDragDirty",证不了内容归位(旧写法就是那样,两种实现都放行)。
-      //        换成"源格 (4,1) 画回**它自己**的 tile、偏移目标格 (5,1) 一格都不画"之后:
-      //        旧实现下这两半**同时**红(源格继续空着、目标格继续是 tB)。
       let threwSel = null;
       cvD.ctx.ops.length = 0;
       try {

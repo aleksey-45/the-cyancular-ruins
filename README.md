@@ -10,7 +10,8 @@
 像素风 2D 横版平台动作射击游戏演示项目，基于 Godot 引擎开发，内置 P2P 联机支持。
 
 - [架构文档与索引](CLAUDE.md)
-- [网络架构文档](docs/netplay.md)
+- [网络架构文档](docs/eng/netplay.md)
+- [模拟、预测与网络波动的架构参考](docs/eng/architecture_references.md)
 - [编译与发布手册](RELEASE.md)
 
 ---
@@ -43,7 +44,8 @@ python tools/build_release.py
 godot --headless --path . -s res://tests/smoke/grain_account_smoke.gd
 godot --headless --path . -s res://tests/smoke/time_field_smoke.gd
 godot --headless --path . -s res://tests/probe/subcell_probe.gd
-godot --headless --path . -s res://tests/probe/netplay_probe.gd
+python tools/run_regression.py --godot godot --scenes --kind network
+python tests/network/run_matches.py --godot godot --count 2 --drop --stall
 godot --headless --path . -s res://tests/smoke/enemy_logic_smoke.gd
 ```
 

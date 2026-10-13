@@ -53,8 +53,6 @@ func _run() -> void:
 		_verify_map_picker(tree)
 		_press_by_text(tree.current_scene, "开 始 探 索")
 	elif mode == "mp" or mode == "royale" or mode == "team":
-		# 2026-10-03:三个联机模式的入口收成主菜单上唯一一颗「多 人 模 式」,都进统一大厅
-		# `mp_lobby`。三个 mode 仍分开走(到达断言按各自的名字判,见 must_reach)。
 		_press_by_text(tree.current_scene, "多 人 模 式")
 	elif mode == "set":
 		_press_by_text(tree.current_scene, "设 置")
@@ -64,14 +62,6 @@ func _run() -> void:
 	var cur := tree.current_scene
 	print("AUTOTEST[%s]: 当前场景 = %s" % [mode, cur.scene_file_path if cur != null else "<null>"])
 	_dump_render_chain(tree, cur)
-	# - 硬断言:每个会切场景的模式都必须真的抵达目标场景。
-	# 少了这条,本探针会「假通过」:末尾唯一的硬断言是「回主菜单后 = main_menu.tscn」,
-	# 而"从没离开过主菜单"(菜单文案被改 -> 找不到按钮 -> 一次都没点到)正好满足它 ——
-	# mp/set 原先只 print 到达情况,文案一变就静默 DONE。
-	# sp 那句原本内联在此,现与 mp/set 共用同一个函数(同形,不抄三遍)。
-	# - ver 自 2026-10-03 起也是整页、会切场景(「版 本 信 息」弹层已删除):
-	#   原先"弹层不切场景  ->  断言 scene 路径是同义反复"那条论证随之作废,故它与
-	#   sp/mp/set 同列 —— 留着旧论证就是留一条与代码相反的注释。
 	var must_reach := {
 		"sp": "level_0.tscn",
 		"mp": "mp_lobby.tscn",
@@ -302,10 +292,6 @@ func _run_play_session(tree: SceneTree) -> void:
 	for _i in range(6):
 		_fire_once(player)
 		await tree.create_timer(0.12).timeout
-	# 打炮:拿到第 5 槽(榴弹发射器)轰两发,等引信炸开 + 碎砖落定
-	# - 必须走发放路径(pick_up),不能走 equip_type —— 后者自 2026-09-25 起对
-	#   "背包里没有这个类型"是 push_error + 不加入(§4.5),照旧调它会静默拿到手枪
-	#   (打炮那段变成打手枪,榴弹自杀那一段直接不倒地),而那只是个 ERROR 日志。
 	player.weapons.pick_up(5, WeaponInventory.MAG_FULL)
 	await tree.create_timer(0.4).timeout
 	for _i in range(2):
@@ -351,10 +337,6 @@ func _run_play_session(tree: SceneTree) -> void:
 		await tree.create_timer(0.12).timeout
 	await tree.create_timer(0.5).timeout
 	print("AUTOTEST[play]: 复位后两枪已开,准备回主菜单")
-	# - `--perf-quit-ingame`:走到这里直接在局内退(等价于按窗口叉号)—— 这一条
-	#   和"回主菜单"是完全不同的成本:引擎同步销毁整棵在树场景(整具世界 +
-	#   2208×1728 的 SubViewport),而回主菜单那条是把世界退役挂起、不付这笔。
-	#   用户报的"玩好一局以后点退出/叉号卡"极可能就是这条,此前从没量过。
 	if OS.get_cmdline_user_args().has("--perf-quit-ingame"):
 		print("AUTOTEST[play]: MARK-QUIT-INGAME %d ms" % Time.get_ticks_msec())
 		await tree.create_timer(0.3).timeout
@@ -482,7 +464,6 @@ func _press_key(action: String) -> void:
 func _shot(tree: SceneTree, file: String) -> void:
 	await tree.process_frame
 	await tree.process_frame
-	# 只有真的存下去了才报「已存」——headless 跳过时不该声称存了(原实现无条件打印)
 	if _save_root_png(tree, "user://" + file):
 		print("AUTOTEST: 截图已存 user://" + file)
 

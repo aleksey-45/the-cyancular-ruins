@@ -1,17 +1,9 @@
 extends Control
 
-# 圆形小地图探针(必须带真实渲染,不能加 --headless)。
-# 运行方式： "$GODOT" --path . --quit-after 3600 res://tests/probe/minimap_circle_probe.tscn
-# 验收标准： 圆外的像素仍是背景色(discard 生效)+ 圆内有地形 + 敌人点只在范围内显示。
-# PNG 落 res://.superpowers/sdd/(该目录自带 .gitignore = *,不入库)。
-#
-# - 判定条件为什么是这三个:圆形裁剪与"范围过滤"都是数值断言抓不住的东西 ——
-#   旧实现(整图缩略贴右下角)在这三条里会挂一、二、四,而它看起来"功能正常"。
-# - 背景故意铺品红:与地图三色(空气深/水蓝/墙灰)都不会撞,圆外只要不是品红就说明没裁干净。
 
 const OUT_DIR := "res://.superpowers/sdd"
 const PVP_HUD_SCENE := "res://ui/hud/pvp_hud.tscn"
-const ROYALE_GAME := "res://scenes/royale_game.gd"   # 阶段 9 的源码级面(A 项)
+const ROYALE_GAME := "res://scenes/pvp_match_client.gd"   # 阶段 9 的源码级面(A 项)
 const BG := Color(1.0, 0.0, 1.0)          # 品红背景
 const WALL := Color(0.62, 0.68, 0.75)     # ui/minimap.gd 里墙的颜色(半透明 alpha 0.95)
 
@@ -81,11 +73,6 @@ func _ready() -> void:
 	await _frames(3)
 	_check(mm._dot_enemy.visible, "跨接缝 2 格的敌人点应显示(走环面最短向量)")
 
-	# ── ⑤ 小地图的圆不得压到右下角的延迟条 ──
-	# - 为什么单开这一条:小地图 layer 131 画在 PvpHud(130) 之上,而两者都在右下角 ——
-	#   2026-09-17 就是从"整图缩略 200px 高"换成"圆 280×280"时盖住了延迟数字
-	#   (用户报「不要挡住下方的延迟」)。这条只有把两块 HUD 真摆在一起才测得出来。
-	#   也在取图之前挂,好让 PNG 里能一眼看出圆和延迟条的间距。
 	var pvp: CanvasLayer = (load(PVP_HUD_SCENE) as PackedScene).instantiate()
 	add_child(pvp)
 	# - 必须收掉它的全屏压暗罩:Mask 是一整块黑 0.3,会把下面④要验的"圆外=纯背景色"
@@ -202,8 +189,6 @@ func _ready() -> void:
 	#   (或干脆始终为 true)也能让阶段 6全部断言通过,而那会让那两模式的小地图自己那个点变成中性亮白。
 	mm_team.visible = false
 	var mm_plain := Minimap.new()
-	# - 2026-09-29 起 `setup_multi` 四个参数全部必填(B 项)——大乱斗这条"不给自己上色"
-	#   现在是显式的空 `Callable()`,不再是默认值。
 	mm_plain.setup_multi(
 		func() -> Vector2: return _local,
 		func() -> Array: return [],
@@ -216,13 +201,6 @@ func _ready() -> void:
 	_check(not mm_plain._ring_self.visible,
 			"传空自色提供器 ⇒ 白描边**不可见**(1v1 / 大乱斗没有这个问题,别给它们加标记)")
 
-	# ── ⑧ 他人点是按下标取色(大乱斗上色那条改动的地基)──
-	# - 为什么必须有:2026-09-29 起大乱斗的他人点不再始终断言失败,而是按 role 取 `ROLE_COLORS`。
-	#   而 `Minimap` 的取色是 `_other_dots[i].color = cols[i]` —— 下标对齐,不是按 role 查表。
-	#   这一条严格校验"颜色数组是按提供器给的顺序、一个不差地落到对应点上";同时它也严格校验
-	#   "点比颜色数组多时,多出来的点保持 ENEMY_COLOR"(不然越界会被读成 0 号色)。
-	# - 本阶段不看像素(读的是 `ColorRect.color`),故 headless 下也真的在跑 ——
-	#   但整个探针仍需要真实视口渲染(前面几相要取图),所以判定条件仍是那一行 verdict。
 	mm_plain.visible = false
 	var mm_multi := Minimap.new()
 	var COL_A := Color(0.1, 0.9, 0.2)
@@ -246,31 +224,29 @@ func _ready() -> void:
 		_check(not _near(mm_multi._other_dots[0].color, Minimap.ENEMY_COLOR, 0.001),
 				"⑧ ★ 反向:喂了颜色提供器之后**不得**还是 ENEMY_COLOR(那就是没生效)")
 
-	# ── ⑨ 源码级:大乱斗两个提供器必须共用同一份 entries(2026-09-29,A 项)──
-	# - 为什么行为相(⑧)不够:`Minimap` 只保证"按下标落色",它管不到上游两个数组是否同长。
-	#   大乱斗的副本是懒建 + 会 erase(`_remove_replica`),位置提供器自带 `is_instance_valid`
-	#   过滤 —— 颜色提供器少写一个同样的过滤就会错位一格。这条纪律 3v3 已经吃过一次
-	#   (`team_room_smoke` ⑨③),这里是它的大乱斗那一半。
-	# - 判定条件落在函数体里:`royale_game.gd` 里没有 `static func`,故 `func_body` 的
-	#   边界(`\nfunc `)是准的(那处 `static func` 盲区对本文件不成立 —— 已在落地时核过)。
-	var rg := ScanUtil.read(ROYALE_GAME)
-	_check(not rg.is_empty(), "⑨ 读到 %s(读不到就是红,不是静默跳过)" % ROYALE_GAME)
-	var rgc := ScanUtil.code_only(rg)
-	var ent := ScanUtil.func_body(rgc, "_minimap_entries")
-	_check(ent.contains("is_instance_valid("),
-			"⑨ ★ `_minimap_entries` 必须**自己**带 `is_instance_valid` 过滤(两个数组同源的唯一落点)")
-	var oth := ScanUtil.func_body(rgc, "_minimap_others")
-	var cols := ScanUtil.func_body(rgc, "_minimap_colors")
-	_check(oth.contains("_minimap_entries()") and cols.contains("_minimap_entries()"),
-			"⑨ ★★ 位置与颜色两个提供器**都**必须从 `_minimap_entries()` 取数"
-			+ "(各写一份 `for role in _replicas` = 错位一格的成因,而不报错)")
-	_check(not oth.contains("for role in _replicas") and not cols.contains("for role in _replicas"),
-			"⑨ ★ 反向:两个提供器体内**不得**再出现 `for role in _replicas`(那是第二份过滤)")
-	_check(cols.contains("ROLE_COLORS["),
-			"⑨ 他人点的颜色必须走**头顶 ID 同源**的色板 `ROLE_COLORS`(实得体内「%s」)" % cols)
-	_check(rgc.contains("Callable(self, \"_minimap_colors\")")
-			and rgc.contains("Callable(self, \"_minimap_others\")"),
-			"⑨ 两个提供器必须**真的接到** `setup_multi` 上(定义了没人用 = 点还是恒红)")
+	# 位置与颜色由同一份副本列表产生；删除一个角色后仍一一对应。
+	var game := PvpMatchClient.new()
+	var a := Node2D.new()
+	var b := Node2D.new()
+	a.position = Vector2(40, 50)
+	b.position = Vector2(60, 70)
+	game._replicas = {1: a, 2: b}
+	game._teams = {1: 1, 2: 2}
+	var saved_mode := PvpSession.room_mode
+	PvpSession.room_mode = PvpSession.MODE_TEAM
+	_check(game._minimap_others() == [a.position, b.position], "⑨ 小地图角色顺序")
+	_check(game._minimap_colors() == [UiFactory.C_TEAM_A, UiFactory.C_TEAM_B], "⑨ 队伍颜色同序")
+	game._replicas.erase(1)
+	_check(game._minimap_others() == [b.position], "⑨ 删除角色后位置列表")
+	_check(game._minimap_colors() == [UiFactory.C_TEAM_B], "⑨ 删除角色后颜色列表")
+	PvpSession.room_mode = PvpSession.MODE_ROYALE
+	game._hues = {2: 120.0}
+	_check(game._minimap_colors()[0] == game._role_color(2), "⑨ 大乱斗小地图与 ID 同色")
+	_check(game._role_color(2) != UiFactory.C_TEAM_A, "⑨ 个人色相生效")
+	PvpSession.room_mode = saved_mode
+	a.free()
+	b.free()
+	game.free()
 
 	_finish()
 

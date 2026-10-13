@@ -18,20 +18,20 @@ extends Node
 #   仍然连着 handler"会全部断言通过 —— 那种实现里键盘焦点按下去照样会加入。
 #
 # ── 断言计数 ──
-# - 断言完整性校验：验证实际执行断言数量与 EXPECTED_CHECKS 一致（共 14 条），
+# - 断言完整性校验：验证实际执行断言数量与 EXPECTED_CHECKS 一致（共 15 条），
 #   防止因异常提前退出导致测试假阳性。少跑一条即判定失败。
 
-const EXPECTED_CHECKS := 14
+const EXPECTED_CHECKS := 15
 
 # - 载荷里满房那间(5678)喂在前 —— 排序断言(第 9 条)靠它才有意义:
 #   若输入顺序本来就对,把满房排后面也能全部断言通过(排序等于没验)。
 const ROWS_1V1 := [
-	{"code": "5678", "players": 2, "names": ["阿甲", "bob"], "in_match": true},
-	{"code": "1234", "players": 1, "names": ["阿甲"], "in_match": false},
+	{"code": "5678", "count": 2, "names": ["阿甲", "bob"], "in_match": true},
+	{"code": "1234", "count": 1, "names": ["阿甲"], "in_match": false},
 ]
 const ROWS_N := [
-	{"code": "5678", "players": 2, "max_players": 4, "names": ["阿甲", "bob"], "in_match": true},
-	{"code": "1234", "players": 1, "max_players": 4, "names": ["阿甲"], "in_match": false},
+	{"code": "5678", "count": 2, "max_players": 4, "names": ["阿甲", "bob"], "in_match": true},
+	{"code": "1234", "count": 1, "max_players": 4, "names": ["阿甲"], "in_match": false},
 ]
 
 var _checks := 0
@@ -50,13 +50,11 @@ func _check(ok: bool, what: String) -> void:
 func _ready() -> void:
 	_check_page([ROWS_1V1, ROWS_N, ROWS_N], [PvpSession.MODE_PVP,
 			PvpSession.MODE_ROYALE, PvpSession.MODE_TEAM])
-	_check_multi_join_dead_end()
+	_check_join_error()
 	_finish()
 
 
 func _finish() -> void:
-	# - 条数闸用 `!=`:少了 = 有断言没跑到,多了 = 多跑了一条没登记的断言(2026-10-03 最终
-	#   整体评审 Minor① 把这一族从 `<` 统一过来)。两种都是账目对不上,都不算 ALL-OK。
 	if _checks != EXPECTED_CHECKS:
 		_fails.append("★ 只跑了 %d 条断言(期望恰好 %d 条,多了少了都算账目对不上)—— 这个 ALL-OK 不算数"
 				% [_checks, EXPECTED_CHECKS])
@@ -84,8 +82,13 @@ func _check_page(rows_per_mode: Array, modes: Array) -> void:
 	# - 三次 `_ingest_rooms`:第三次(三份都到齐)自己会触发一次 `_redraw_cards`。
 	#   这里不再补调一次 —— 同帧调两遍会考出"网格里两批卡叠着"(见 `_redraw_cards` 里
 	#   那句 remove_child 的注释);生产里三条 RPC 应答确实可能落在同一帧。
+	var rooms: Array = []
 	for i in modes.size():
-		p.call("_ingest_rooms", modes[i], rows_per_mode[i])
+		for row: Dictionary in rows_per_mode[i]:
+			var entry := row.duplicate()
+			entry["mode"] = modes[i]
+			rooms.append(entry)
+	p.call("_on_rooms", rooms)
 	var grid: Node = p.get("_grid")
 	var live := _find_card(grid, "5678")     # 对局中的那张
 	var open_ := _find_card(grid, "1234")    # 普通的那张(正向对照)
@@ -114,64 +117,26 @@ func _check_page(rows_per_mode: Array, modes: Array) -> void:
 		first_code = str((first as Button).get_meta("code", ""))
 	_check(first_code == "1234",
 			"排序:未满的卡排在满房之前(网格第一张 = 「%s」,期望 1234)" % first_code)
+	_check(p.call("_card_subtitle", PvpSession.MODE_TEAM,
+			{"is_public": true, "team_counts": {0: 1, 1: 2, 2: 3}}) == "公开 · A2 / B3 / 未选1",
+			"Variant 整数队伍编号正确显示房卡人数")
 	p.free()
 
 
-# ── 多表加入「三张表全拒」的收尾(2026-10-03 ①)──────────────────────────────
-# - 为什么必须常驻:加入弹层传的 `_mode` 默认是 ""(全部),而手敲房号正是走
-#   `_join_code(code, "", invite)`  ->  三张表都问一次。三条应答全是 absent 时,
-#   `_on_server_message` 在吞掉检查之前就 `_ack = true; _sent_ms = 0`(解除 8s 兜底保护),
-#   而 `_swallow_absent` 又同时吞「房间不存在」与「房间已满」 ->  房号写错 / 房间已满时
-#   一条文案都不显示、也不刷新,状态栏永远停在「加入房间 X,等待配对…」。
-#   卡片点击那条路总是传已知模式,所以只有手敲房号这一档会撞上(统一大厅之后才出现的洞)。
-# - 夹具直接摆状态、调 `_on_server_message`,不建 socket(与 `_check_page` 相同处理逻辑,页面不加入场景树
-#    ->  `_ready` 不跑  ->  没有 deferred 网络;同帧 free 掉那句 `_request_list.call_deferred`)。
-func _check_multi_join_dead_end() -> void:
-	var p: Node = (load("res://scenes/mp_lobby.tscn") as PackedScene).instantiate()
+func _check_join_error() -> void:
+	var p: Node = load("res://scenes/mp_lobby.tscn").instantiate()
 	p.set("_status", Label.new())
-	var st: Label = p.get("_status")
-	var busy := "加入房间 4321,等待配对…"
-	var absent := ["房间不存在", "房间已满", "房间不存在"]
-
-	# 相 A:第一次「三张表全拒」 ->  必须走一次自动刷新(门控前置校验 `_auto_refreshed` 被翻起)+ 清脏凭据。
-	p.set("_probe_multi_join", true)
-	p.set("_multi_left", 3)
-	p.set("_join_pending", "4321")
-	st.text = busy
-	for m: String in absent:
-		p.call("_on_server_message", m)
-	_check(int(p.get("_multi_left")) == 0 and bool(p.get("_probe_multi_join")) == false,
-			"①A 三张表全拒后多表闸门关闭(_multi_left=0 / _probe_multi_join=false)")
-	_check(bool(p.get("_auto_refreshed")) == true,
-			"①A 三张表全拒后走了一次自动刷新(_auto_refreshed=true)")
-	_check(str(p.get("_join_pending")) == "",
-			"①A 三张表全拒后 _join_pending 被清(失败不留脏凭据)")
-
-	# 相 B:刷新额度已花光(`_auto_refreshed=true`)时再全拒一次  ->  状态栏显示最后一条文案。
-	p.set("_probe_multi_join", true)
-	p.set("_multi_left", 3)
-	p.set("_join_pending", "4321")
-	st.text = busy
-	for m: String in ["房间不存在", "房间不存在", "房间已满"]:
-		p.call("_on_server_message", m)
-	_check(st.text == "房间已满",
-			"①B 刷新额度用光时,状态栏显示**最后一条**服务端文案(实得「%s」)" % st.text)
-
-	# 相 C(正向对照):同样的三条 absent,但 `_join_pending` 已被清(= 有一张表接受了)
-	#    ->  不得误判失败、不得多刷一次。-  没有该测试阶段,把收尾写成"门控前置校验一关就报错"会全部断言通过,
-	#   而那会让成功的多表加入(1v1 成功 + 另两张表 absent)每次都被误报一次失败。
-	p.set("_probe_multi_join", true)
-	p.set("_multi_left", 3)
-	p.set("_join_pending", "")
-	p.set("_auto_refreshed", false)
-	st.text = "已加入,等待开战……"
-	for m: String in absent:
-		p.call("_on_server_message", m)
-	_check(bool(p.get("_auto_refreshed")) == false and st.text == "已加入,等待开战……",
-			"①C 有一张表接受时不误触发刷新/文案(正向对照;实得 auto_refreshed=%s text=「%s」)"
-			% [str(p.get("_auto_refreshed")), st.text])
+	p.set("_ack", false)
+	p.set("_sent_ms", 100)
+	p.set("_join_pending", "00004321")
+	p.call("_on_server_message", "房间不存在")
+	_check(p.get("_ack"), "加入拒绝有应答")
+	_check(p.get("_sent_ms") == 0, "加入拒绝关闭超时计时")
+	_check(p.get("_join_pending") == "", "加入拒绝清空待加入房号")
+	_check(p.get("_status").text == "房间不存在", "错误直接显示")
+	p.call("_on_server_message", "房间已满")
+	_check(p.get("_status").text == "房间已满", "第二次错误直接显示")
 	p.free()
-
 
 # 卡是 Button,内容全在子节点里 —— 按 meta 找卡、递归找文案。
 # - 不能按 `Button.text` 找:卡的 `text` 是空串(内容自绘),那是有意的。

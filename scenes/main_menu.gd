@@ -4,7 +4,6 @@ extends Control
 # 控件风格与尺寸规范统一遵循 UiFactory。
 
 const PROBE_NODE_NAME := "MenuAutotestProbe"
-const TUNNEL_FEEL_NODE_NAME := "TunnelFeelProbe"
 
 var _sp_panel: PanelContainer = null
 
@@ -73,26 +72,6 @@ func _ready() -> void:
 		probe.set("mode", arg.trim_prefix("--autotest-"))
 		get_tree().root.add_child.call_deferred(probe)
 		break
-
-	# P2P 隧道网络性能基准测试探针
-	if _tunnel_feel_requested():
-		if not get_tree().root.has_node(NodePath(TUNNEL_FEEL_NODE_NAME)) \
-				and ResourceLoader.exists("res://tests/probe/tunnel_feel_probe.tscn"):
-			var tf: Node = (load("res://tests/probe/tunnel_feel_probe.tscn") as PackedScene).instantiate()
-			tf.name = TUNNEL_FEEL_NODE_NAME
-			get_tree().root.add_child.call_deferred(tf)
-
-
-# 检查命令行是否请求执行网络基准测试
-func _tunnel_feel_requested() -> bool:
-	var side := false
-	var secs := false
-	for arg in OS.get_cmdline_user_args():
-		if arg.begins_with("--side="):
-			side = true
-		elif arg.begins_with("--seconds="):
-			secs = true
-	return side and secs
 
 
 # 启动单人模式并加载主关卡场景

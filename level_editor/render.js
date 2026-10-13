@@ -1,11 +1,3 @@
-// render.js —— 画布渲染 + 四层缓存 + 脏区(规格 §4.2;闸 2 见 §4.3)。
-//
-// ★★ 本文件的**顶层一行都不碰 DOM**:DOM 只出现在 Task 3/4 加进来的 mount() 一族里。
-//    于是 node 能 require 它,把"错了也不报错、只在屏幕上看出来"的那几层逐条断言 ——
-//    缓存 ③ 的失效、空层、空气短路、环面命中、画笔几何、单帧预算。
-// ★ 依赖顺序:core.js → tint.js → render.js(tint 要 Core,render 要两者)。
-// ★ 规格 §4.2 的四层缓存:① 地图缩略图(每层一张)② 视口离屏层 ③ 格位图缓存 ④ tinted-tile。
-//    ④ 住在 tint.js 里(它自己的 8192 张上限),本文件只负责**在换图时同时作废 ③ 与 ④**。
 globalThis.Render = (function () {
   'use strict';
 
@@ -16,8 +8,8 @@ globalThis.Render = (function () {
   var SUB = Core.SUB_PER_CELL;
 
   var MIN_ZOOM = 1, MAX_ZOOM = 64;              // px / 子格
-  var ZOOM_THRESHOLD = 8;                       // 规格 §4.2 的分工阈:< 8 走缩略图,≥ 8 走离屏层
-  var THUMB_PX = 2;                             // 缩略图 2px/子格(规格 §4.2 ①)
+  var ZOOM_THRESHOLD = 8;
+  var THUMB_PX = 2;
   var THUMB_MAX_BYTES = 24 * 1024 * 1024;       // 超过就降到 1px/子格(400×300 格 @2px = 30MB,偏大)
   var DEFAULT_BUDGET_MS = 8;                    // 闸 2 的单帧 CPU 预算
   // ③ 的条目上限。条目 = **16 个 tile 引用**(不是 64×64 的 canvas),约 128 字节,
@@ -29,12 +21,7 @@ globalThis.Render = (function () {
   // ★ 两处都要它:格/子格坐标的读取,与象限坐标(quadOf)。负数在环面世界里是常态
   //   (视图越过接缝、选区拖动),而 `%` 对负数返回负数。
   function wrapIdx(v, n) { return v - Math.floor(v / n) * n; }
-  function quadOf(v) { return wrapIdx(v, SUB); }        // 恒在 0..SUB-1(否则 Tint 会抛)
-
-  // ── 图层读取(缺席层 = 全空气)──
-  // ★ 规格 §2.4 的 createMap 恒建四层,而 layer_flags 允许某个层**不存在** ⇒ 解码出来的
-  //   map.layers[L] 可以是 null(null = 全空气,不是"错误")。渲染路径上任何地方
-  //   直接摸 map.layers[L].desc 都会在"打开一个缺层的文件"时当场炸。
+  function quadOf(v) { return wrapIdx(v, SUB); }
   function layerArray(map, L) {
     var lay = map.layers[L];
     if (!lay) return null;
@@ -54,7 +41,7 @@ globalThis.Render = (function () {
   // ── 贴图源与 ④(换图 = **四层一起作废**:①②③④,见 setAtlas)──
   var atlasPixels = null, atlasW = 0, atlasH = 0;
   var tiles = null;                              // ④:惰性建(见 tileCache())
-  var cells = null;                              // ③:由 attachCells 装上(Task 4 的 mount 装它)
+  var cells = null;
 
   function tileCache() { if (!tiles) tiles = Tint.createTileCache(); return tiles; }
   // 装上 ③。★ 做成显式的 attach 而不是"createCellCache 顺手写进模块变量":
@@ -62,23 +49,6 @@ globalThis.Render = (function () {
   function attachCells(cache) { cells = cache; return cells; }
   function cellCache() { return cells; }
 
-  // ★★ 换图要作废的是**四层**(① 缩略图 / ② 视口离屏层 / ③ 格位图 / ④ 小图缓存),而模块层
-  //   只拿得到 ③ 与 ④(③ 靠 attachCells 那条接缝交上来,④ 由 Tint.setSource 自己清)。
-  //   ① 与 ② **住在 mount 的闭包里**(它们的 state 是每挂载一份的)—— 故 mount 用
-  //   `attachViewInvalidator` 把"这次换图作废你那一份 ①②"登记上来,setAtlas 提交完 ④/③
-  //   之后调它。
-  //   ★ 少了这条接缝的症状**两条路各一个、且都不报错**:
-  //     · ① 那条路(默认 fit 视图走的就是它,大图必然 < 8 px/子格)会继续画**旧图集**的砖,
-  //       直到某次 invalidateAll/setMap —— 正是本文件组织起来要防的那类 A2 复发("看着不对、
-  //       一个字都不说");
-  //     · ② 那条路更糟:它的 `layersClean` 不会被碰,于是 ≥8 下平移时 `panBy` 判"这一层是
-  //       干净的" ⇒ 自拷贝旧像素、只把新露出的边条按**新**图集补上 ⇒ 屏幕上是**新旧混着**,
-  //       连"慢慢重画"那种退化都没有。
-  //   ★ 作废器**只做同步的丢弃/记账,不做重画**:大图的 ①② 重画是几十万次 drawImage,
-  //     必须经 `createSlicer` 分帧(闸 2),那是挂载侧自己在下一次 `render()` 里安排的事。
-  //   ★ 收成**一张表**而不是单个槽位:第二个 mount(今天没有,但这是公开入口,与
-  //     `attachCells` 同一个先例)不该把前一个的作废悄悄吞掉 —— 单槽位下前一个 mount 的
-  //     ①② 会留着旧图集的砖块,而它一个字都不报。
   var atlasInvalidators = [];
   function attachViewInvalidator(fn) {
     if (typeof fn !== 'function' || atlasInvalidators.indexOf(fn) >= 0) return fn;
@@ -86,21 +56,6 @@ globalThis.Render = (function () {
     return fn;
   }
 
-  // ★ 唯一的换图入口。它必须**同时**作废 ①②③④ —— 这一条是账本点名带进计划 2b 的
-  //   不变量(规格 §4.2 的 ③ 与 ④ 是两层,换图是它们共同的失效事件),**① 与 ② 同属这一条**
-  //   (它们是"像素/位图"那一侧的两条路,换图之后一样一个字都不成立,见 attachViewInvalidator)。
-  //   ④ 那一侧由 Tint.setSource 自己做;③ 这一侧漏了的话,它会继续交出"用旧图集算出来、
-  //   内容版本却没变"的格位图 ⇒ 审计 A2 在上一层原样复发(整张图是色块,"有时好有时坏",
-  //   不报错)。★ 顺序是"先把新 ④ 建出来、让它校验形状,**校验过了才提交**" —— 形状非法时
-  //   `setSource` 抛错,此时 `tiles`/`atlasPixels`/③ 的代际**一个字都没动**,两层都还是旧的
-  //   (而不是"作废了一半")。
-  // ★★ 注入 backend 那条路**尤其**要这样写(先 `tiles = 新缓存` 再 `setSource` 是缺陷):
-  //   抛错会留下一个**没有贴图源的新 ④**,而 `atlasInfo()` 仍报旧图集、③ 也没作废 ——
-  //   下一次 `tileFor` 于是抛 `Tint: 还没 setSource,拿不到贴图`,而不是照旧画老图集
-  //   (上面那句"两层都还是旧的"就成了一句假话。no-backend 那条路看不出来,因为它复用的
-  //   是同一个对象,换不换都一样)。守卫:render_smoke 相位 ②b。
-  // ★ opts.backend 是给 node 冒烟用的注入缝(与 tint.js 的注入式画布同一个先例):
-  //   传它就换一个新的 ④,于是"空气到底有没有进 Tint"能被**记账**而不是靠肉眼。
   function setAtlas(pixels, w, h, opts) {
     // ★ 这里**不**走 `tileCache()`:那个 getter 自己就会写 `tiles`(惰性建),先调它等于
     //   先把 ④ 换了再校验 —— 正是本条要修的那件事。没注入 backend 时就复用现成的那个。
@@ -128,12 +83,6 @@ globalThis.Render = (function () {
     return atlasW > 0 ? Math.max(0, Math.floor(atlasW / Tint.BLOCK_PX) * Math.floor(atlasH / Tint.BLOCK_PX)) : 0;
   }
 
-  // 取一张 16×16 小图。**唯一**该调 Tint.get 的地方。
-  // ★★ desc === 0(空气)必须在**进 Tint 之前**短路:空气是地图数据里最常见的一格,
-  //    而 Tint.get → buildTilePixels 对空气**会抛**(I4 契约)—— 渲染循环漏了这句,
-  //    第一帧就抛、而且每帧都在同一处抛。
-  // ★ 纹理实参**从 desc 推导**(不另传):账本 Task 5 的遗留是"实参与 texOf(desc) 不一致时
-  //   buildTilePixels 会静默画另一块砖";从 desc 推导让不一致**不可能发生**。
   function tileFor(desc, qx, qy) {
     if (desc === 0) return null;
     var tex = Core.texOf(desc);
@@ -141,13 +90,6 @@ globalThis.Render = (function () {
     return tileCache().get(tex, quadOf(qx), quadOf(qy), desc);
   }
 
-  // ── ③ 格位图缓存(规格 §4.2 ③)──
-  // 缓存的是"这一格的 16 个子格**各用哪张 tile**",不是像素 —— 像素只存在 ④ 里。
-  // ★★ 两条**独立**的失效轴,必须都判:
-  //    ① 内容版本号(touch):编辑某格 → 该格版本 +1 → 下次只重建这一格;
-  //    ② 代际(gen,由 setSource 递增):换贴图源之后,即便内容一个字没改,
-  //       旧的 tile 也已作废 —— 只判 ① 的话这里会交出**上一张图集**算出来的 tile,
-  //       症状与审计 A2 一模一样(整张图是色块,"有时好有时坏",不报错)。
   function createCellCache(opts) {
     opts = opts || {};
     var maxCells = opts.maxCells === undefined ? DEFAULT_CELL_MAX : opts.maxCells;
@@ -160,11 +102,6 @@ globalThis.Render = (function () {
     function key(L, cx, cy) { return L + '/' + cx + '/' + cy; }
     function version(L, cx, cy) { var v = ver.get(key(L, cx, cy)); return v === undefined ? 0 : v; }
     function touch(L, cx, cy) { ver.set(key(L, cx, cy), version(L, cx, cy) + 1); }
-    // ★★ ③ 的作废。规格 §4.2 ③ 的"内容版本号"说的是轴 ①;换图是轴 ②。
-    // ★★ **刻意不清表**:陈旧条目留着,靠 gen 不等**恒 miss**、被重建覆盖。
-  //   清了表的话 `get` 里那句 `e.gen === gen` 就成了**死代码** —— 表里不可能有旧代际的条目,
-  //   那句判断永远为真,Task 2 Step 5 那条变异(删掉 gen 比较)便再也杀不掉任何东西,
-  //   而它正是审计 A2 复发时唯一抓得住的地方。2026-09-21 用户裁定:让 gen 承重。
   function setSource() { gen++; }
     function get(L, cx, cy) {
       var k = key(L, cx, cy);
@@ -177,10 +114,6 @@ globalThis.Render = (function () {
       }
       misses++;
       var tile = build(L, cx, cy);
-      // ★ 重建的键也要移到**最近端**。`Map.set` 对**已存在**的键会保留原来的插入位置,
-      //   而这条路径恰恰常发生在"换图后 setSource 刻意不清表"留下的陈旧条目上 ——
-      //   不先删,刚重建出来的条目可能还蹲在最冷的位置,下一次淘汰就把它扔掉(它才刚建过)。
-      //   与上面命中那条(`entries.delete(k); entries.set(k, e)`)同款。
       entries.delete(k);
       entries.set(k, { v: v, gen: gen, tile: tile });
       while (entries.size > maxCells) { entries.delete(entries.keys().next().value); evictions++; }
@@ -195,11 +128,6 @@ globalThis.Render = (function () {
              get: get, clear: clear, stats: stats };
   }
 
-  // ── 闸 2:单帧预算的时间切片器(规格 §4.3)──
-  // ★ 分帧是"慢慢画出来",不是"页面死掉"。注入 now/nextFrame 是为了在 node 里
-  //   确定性地断言"确实切了、且单帧真的没超预算"(真 rAF 在 node 里不存在)。
-  // ★ 「每帧至少做一项」是必须的:否则 budgetMs = 0 时循环会一项不做就让出、
-  //   让出之后又一项不做 —— 死循环(而 0 是合法的注入值,测试就在用它)。
   function createSlicer(opts) {
     opts = opts || {};
     var raw = opts.budgetMs === undefined ? DEFAULT_BUDGET_MS : opts.budgetMs;
@@ -277,9 +205,6 @@ globalThis.Render = (function () {
     return { x0: x0, y0: y0, x1: x1, y1: y1 };
   }
 
-  // ── 环面 3×3:A4 说旧实现只铺 [0,1]、少一侧,且副本上不能落笔 ──
-  // ★ 返回"与视口相交"的那些副本偏移(最多 3×3 = 9 份,通常 1 份)——
-  //   无脑铺 9 份是 9 倍开销,而屏幕上绝大多数时候只看得到一份。
   function intersects(a0, a1, b0, b1) { return a1 > b0 && a0 < b1; }
   function torusOffsets(view, viewW, viewH, mapW, mapH) {
     var r = visibleSubRange(view, viewW, viewH, mapW, mapH);
@@ -304,10 +229,6 @@ globalThis.Render = (function () {
     return { X: wrapIdx(X, subCols), Y: wrapIdx(Y, subRows) };
   }
 
-  // ── 画笔几何(规格 §4.4 的吸附规则)──
-  // 单位仍是 64px 格,输入步进 0.25:
-  //   整数大小 → 只画**整格**,吸附到 64px 格边界;
-  //   小数(0.25/0.5/0.75)→ 画**子格**,吸附到 16px 子格边界(0.25=1 子格、0.5=2、0.75=3)。
   var MAX_BRUSH_CELLS = 15;
   function brushSpan(size) {
     var s = (typeof size === 'number' && isFinite(size)) ? size : 1;
@@ -322,35 +243,14 @@ globalThis.Render = (function () {
     var x = Math.floor(isFinite(c.x) ? c.x : 0);
     var y = Math.floor(isFinite(c.y) ? c.y : 0);
     var lo = Math.floor((sp.n - 1) / 2), hi = Math.ceil((sp.n - 1) / 2);
-    // ★★ unit 必须描述 x0..x1 **所在的**坐标空间:它们就是 `hit` 的空间(hit.x 是格号还是
-    //    子格号 —— Task 5 的 `regionCells` 正是据此决定要不要 ×4),而**不是** `size` 那一侧的
-    //    空间。稳态下两者相等(UI 的 `hitOf` 用 `brushSpan(size).unit` 定 kind,且只在那里
-    //    定一次),但一旦不等,按 size 标注就会让 `regionCells` 把子格坐标当成格号去 ×4
-    //    ⇒ 整支画笔偏到别处 —— 即下面注释警告的"错 4 倍"。Task 5 的 rect 分支就是这么标
-    //    它的 region 的(`unit: from.kind`,同样取自 hit)。
     var unit = (c.kind === 'cell' || c.kind === 'sub') ? c.kind : sp.unit;
     return { unit: unit, x0: x - lo, y0: y - lo, x1: x + hi, y1: y + hi };
   }
-  // ★★ 吸附 = **换算坐标空间**,不只是贴个标签。`hitTest` 交出来的 X/Y 是**子格号**
-  //    (与 `kind` 无关),所以 `kind: 'cell'` 的命中必须 `floor(X / SUB)` 换成**格号** ——
-  //    两个分支只差一个 `kind` 标签的话,格空间的命中会把子格号当成格号传下去,而下游
-  //    (`brushRegion` 的 unit、Task 5 的 `regionCells`)正是按 `kind` 决定要不要 ×4,
-  //    于是整支画笔偏到别处(即上文警告的"错 4 倍")。
-  //    与 UI 的 `hitOf` 同一条式子:`Math.floor(p.X / Core.SUB_PER_CELL)`。
-  //    `sub` 分支就是子格本身,`floor` 只作取整(命中坐标已经是整数)。
   function snapHit(h) {
     if (h.kind === 'sub') return { kind: 'sub', x: Math.floor(h.X), y: Math.floor(h.Y) };
     return { kind: 'cell', x: Math.floor(h.X / SUB), y: Math.floor(h.Y / SUB) };
   }
 
-  // ── 选区拖动:纯读的偏移查询(B3;规格 §4.2「拖动只记 dx/dy,松手才提交」)──
-  // ★★ `W`/`H`(= map.subCols/subRows)是**可选**的:给了就按**环面折算**(与 UI 的 `idxOf`
-  //    / `moveRegion` 同一套 wrap),不给 = 不折算。★ 拖动查询**必须**给 —— 拖动跨过接缝时
-  //    目标格落在图的另一头(24 → 0),不折算的话预览读到的是"目标格**自己**的内容"、
-  //    而松手 `moveRegion` 真搬过去的是**源格的内容**(`idxOf` 折算) ⇒ 预览 ≠ 落笔
-  //    (评审发现 2:同一个"偏移查询"两套坐标,只在接缝那一侧现形)。
-  // ★ 旧的非折算调用点都是"整数都在主网格内"的纯逻辑查询(`sel` 与 `X` 本就规范),
-  //    折算与否是恒等 —— 故 5 实参的旧口径**保留**(不是第二份实现:`inSel` 只有一处判据)。
   function selectionSource(sel, dx, dy, X, Y, W, H) {
     var sx = X - dx, sy = Y - dy;
     if (W > 0 && H > 0) { sx = wrapIdx(sx, W); sy = wrapIdx(sy, H); }
@@ -375,14 +275,6 @@ globalThis.Render = (function () {
     return ox < sel.w && oy < sel.h;
   }
 
-  // 一批规范块**按四元组去重**(顺序保持首次出现的那次)。
-  // ★★ 为什么必须有:去烤要把「当前偏移的 源∪目标」与「上一次那两块」并起来重画,而
-  //    选区**没变**时源块必然同时出现在这两组里(`now` 的第一块就是源块)⇒ 直接 concat
-  //    会把**同一块画两遍**。旧实现取 `rectUnion` 的包围盒,顺带把重复"吃掉"了 ——
-  //    改成逐块重画之后,这份去重必须自己补上:否则每次 pointermove 白付一次该块的
-  //    clearRect + 一格 16 次 drawImage,而它偏偏是**最大**的那一块(整块选区)。
-  // ★ 判据取 (x, y, w, h) 四元组而不是对象身份:两组矩形是各自 `canonRects` 算出来的,
-  //   同一块在两边是**两个不同对象**(值相等)。
   function dedupRects(list) {
     var out = [], seen = {};
     for (var i = 0; i < list.length; i++) {
@@ -433,17 +325,10 @@ globalThis.Render = (function () {
   //    那就是第二份实现,而两份实现迟早漂、且漂了不报错。
   function layerIsColor(L) { return Core.LAYER_KINDS[L] === 'color'; }
 
-  // ── 画布挂载(规格 §4.2)──
-  // ★ T3 这一版是**朴素**的:缩略图路径走 ①(每层一张、按脏矩形更新),
-  //   而 ≥ 8 px/子格 的路径逐子格 drawImage(旧编辑器的 B2 做法,能看但慢)。
-  //   Task 4 把后者换成 ② 视口离屏层 + ③ 格位图缓存 + 脏区 + 3×3。
-  // ★ opts.slicer 是**注入缝**(与 setAtlas 的 opts.backend / createSlicer 的 opts.now 同款):
-  //   浏览器里不传,node 冒烟传一个确定的 nextFrame —— 不传的话缩略图那座分帧器在 node 里
-  //   会去碰不存在的 requestAnimationFrame。
   function mount(canvas, opts) {
     opts = opts || {};
     var ctx = canvas.getContext('2d');
-    ctx.imageSmoothingEnabled = false;      // ★ 审计 A5:主 ctx 不关插值 ⇒ 放大后砖块是糊的
+    ctx.imageSmoothingEnabled = false;
     var s = {
       map: null, layer: Core.LAYER_SCENE,
       view: { x: 0, y: 0, zoom: 8 },
@@ -469,23 +354,7 @@ globalThis.Render = (function () {
     var atlasSync = false;                          // 换图之后 ①② 需要整片重来
     attachViewInvalidator(function () { atlasSync = !!s.map; return null; });
 
-    // ── ★★ 视图入口的失败**必须看得见**(评审发现 1)──
-    // Task 4 之后 resize/fit/setView/setZoomAt/panBy/setMap/invalidateAll 都返回**由分帧器
-    // 派生出来的 promise**(全屏重建是分帧的)。而 ≥8 那条路上的抛错(`tileFor` 的
-    // `Tint: 图集里没有纹理 N` —— 改图集/换图之后就够得着)现在发生在**任务回调**里,
-    // 于是它变成 run() 的**拒绝**,不再是 render() 里那次同步抛出:
-    //   · 页面侧唯一的消费者(ui.js 的 guard)是**同步** try/catch ⇒ 接不住;
-    //   · `render()` 这一次根本没执行 ⇒ 画布**默默停在上一帧**,只在控制台留一行错。
-    // 这正是本仓最防的那类"按了没反应"。⇒ 在**返回之前**给链子挂一个观察者。
-    // ★ 两条契约同时成立,缺一不可:
-    //   ① 想 await / 想自己 catch 的调用方**照样拿到那次拒绝**(这里只挂观察者,不改、不吞
-    //      也不替换返回的那个 promise);
-    //   ② 完全不管返回值的调用方,也能在**屏幕上的同一条通道**里看到原因(状态栏)。
-    // ★ 副作用(这正是我们要的):它把这条拒绝从全局 unhandledrejection 那张网里摘了出来
-    //   (窗口有了拒绝处理函数,引擎就不再报"未处理")⇒ 用户收到的是一条**指名道姓**的消息,
-    //   而不是"未处理的 promise 拒绝"。两条都出现才是坏味道(catch 写在 then 链末端)。
     function msgOf(e) {
-      // ui.js 有一份同款(msgOf);它本批冻结,故这里不能共享 —— 两边都只做"取出人能读的那句"。
       if (!e) return '未知错误';
       var m = (e.message !== undefined) ? String(e.message) : String(e);
       if (m === '' && e.cause && e.cause.message) m = String(e.cause.message);
@@ -636,7 +505,6 @@ globalThis.Render = (function () {
       return torusOffsets(s.view, W, H, s.map.subCols, s.map.subRows);
     }
 
-    // 路径一:< 8 px/子格 → 一次 drawImage 顶掉几十万次(规格 §4.2 ①)
     function drawThumbPath(W, H) {
       var px = thumbPx;
       var scale = s.view.zoom / px;                  // 缩略图像素 → 屏幕像素
@@ -793,12 +661,6 @@ globalThis.Render = (function () {
     //    ⇒ 裁 = 视图拖过边界时左边一条黑带(人眼清单第 4 条会当场看到)。
     function buildLayers() {
       if (!s.map) return Promise.resolve();
-      // ★★ 入口就把 layersClean **放下**(评审发现 2):`++layerGen` 只作废**在飞**的那一轮,
-      //    管不到"这一轮还没落地"—— 而"还没落地"这段时间里离屏层是**半旧**的。
-      //    本方法是**公开入口**(见文件尾的导出表),调用方(编辑后整批重建 / Task 8 换贴图源)
-      //    完全可能**不**先走 viewChanged() 就进来;那时 layersClean 若还是 true,panBy 就会拿
-      //    一张半旧的图自拷贝搬移,而脏标记此刻已经清干净了 ⇒ 谁也补不回来 = **永久错位**。
-      //    仓内现有调用方都先 viewChanged(),所以今天不出事 —— 这一行是给"将来的直接调用方"的。
       layersClean = false;
       var myGen = ++layerGen;
       var r = visibleSubRange(s.view, canvas.width, canvas.height, s.map.subCols, s.map.subRows);
@@ -929,16 +791,6 @@ globalThis.Render = (function () {
         ctx.setLineDash([]);
       }
       if (s.selection) {
-        // ★ 拖动中:框按**偏移后**的位置画(数据还没动 —— 松手才 moveRegion)。框跟手走
-        //   是拖动过程中**唯一**看得见的反馈:`setSelDrag` 只调 render()。
-        //   ★ 2026-09-22:拖动预览的**内容**现在也跟手了(`setSelDrag`/`setSelection` 会重画
-        //     源∪目标,见 markDragDirty)—— 那时这一句"要等别的重画才显形"的描述已过时。
-        // ★★ `|| (s.selDrag ? s.selDrag.sel : null)` 这一段是**防御性、今天不可达**:
-        //    外层那句 `if (s.selection)` 就在上面一行,而 `s.selDrag` 只在选区非空时才会被设上
-        //    (实测:外层留着、这里换回 `s.selection`,render() 照样不抛)。
-        //    ★ 而且它**不能**被"放松外层判据"这条路用上:那时它会在选区为空、拖动还在的状态下
-        //      **画出一个框**,正是 ⑬h 那条"选区为空时不画框"要禁止的。留着只是为了"外层若被
-        //      放松,这一行至少不抛"(不抛的不变量由 ⑬h 钉住),不是一条活路径。
         var base = s.selection || (s.selDrag ? s.selDrag.sel : null);
         var sel = (base && s.selDrag)
           ? { x: base.x + s.selDrag.dx, y: base.y + s.selDrag.dy, w: base.w, h: base.h }
@@ -953,14 +805,6 @@ globalThis.Render = (function () {
       ctx.restore();
     }
 
-    // ★ 唯一渲染入口(B6:旧实现同一帧连画两次画布)
-    // ★★ 三条路径按 zoom 分工:① 缩略图(< 8)、② 视口离屏层(≥ 8);**合成**那一步
-    //    (层可见性/压暗/3×3 副本)两条路都走 ⇒ "切层"只是重新合成,永远不重画任何一层。
-    // ★★ 换图之后的**唯一**收口就在这里:①② 的像素全是按旧图集算出来的,而它们只可能被
-    //    **这一条路**合成到屏幕上(drawThumbPath / drawLayerPath)⇒ 在唯一入口上作废,
-    //    既不会漏(没有第二条显示路径),也不会白付(没人看的时候一次重画都不做 —— 例如
-    //    换过图之后这个 mount 再也没被 render 过)。★ 本帧**不画**:上一次的画面留在屏幕上,
-    //    重建落地后由它自己的 `.then(render)` 画(与 invalidateAll 那条链同一个形状)。
     function render() {
       if (!s.map) return;
       if (atlasSync) { syncAtlas(); return; }
@@ -1100,43 +944,16 @@ globalThis.Render = (function () {
       // ★★ 层变了:上一次那批烤在**旧层**上 —— 旧层此刻读到的是"没拖过"的内容,那些像素
       //    必须擦掉(不擦 = 旧层留着一次拖动预览的残影,直到有别的东西标脏它)。
       if (prev && prev.L !== L) repaintDrag(prev.L, prev.rects);
-      // ★ 这次拖动结束(松手 / 选区被取消):账结清。**必须排在上面两次重画之后** ——
-      //   清除那一步同样要把 ① 上最后那批偏移像素擦掉(它此刻还存着偏移,`live` 已经是 false,
-      //   而 `repaintDrag` 读的是 `dragSource`,同一个判据)。
       if (!live) dragBakedThumb = false;
     }
 
-    // 把一批规范块在**当前那条路**上重画。
-    // ★ `layerRebuilds` 与 `flushDirty` 记的是**同一本账**(该层 +1)——"偏移一变重画一次"
-    //   在自检数字里看得见。
-    // ★ 缺席层(`map.layers[L] === null`)直接跳过:它一个像素都没有,不存在"偏移内容"可擦;
-    //   而 `flushDirty` 对缺席层走的是"整张画布 clearRect"那条路 —— 拖动中每帧白付几次全屏
-    //   清屏,且它**不计数**(layerRebuilds 只数 paintLayerRect 那一条)。这正是闸 2 要避免的
-    //   那种看不见的成本。
-    // ★★ **按当前路径分派**(闸 2 的成本形状,评审发现 I1):① 缩略图(< 8 px/子格 时由
-    //    `drawThumbPath` 合成)与 ② 视口离屏层(≥ 8 时由 `drawLayerPath` 合成)是**两份**数据,
-    //    同一时刻只有一份在屏幕上。两条路的成本形状**恰好相反**:
-    //      · ② 的成本 = "与画布相交的格"数 × 每格 16 次 drawImage —— **低倍时最大**(整幅图
-    //        都可能落在画布内),而低倍走的正是 ① 那条路 ⇒ 那份活一个字都看不见,却是每次
-    //        pointermove 几十到几百毫秒(1600×1200 画布、z≈3、大选区 ⇒ 约 1.2 万格 × 16 次
-    //        drawImage);实测读数见 render_smoke 相位 ⑬i。
-    //      · ① 的成本 = 选区面积 × 缩略图刻度(与缩放无关),高倍时同样看不见。
-    //    ★ 另一条路的像素**不会被留在半旧状态**:换回 ≥8 一定经过 `setZoomAt`/`setView`/`fit`/
-    //      `resize`,它们都走 `viewChanged()` ⇒ `layersClean=false` ⇒ `buildLayers()` 整片重建
-    //      ②(按**当前**偏移)。① 侧见下面的 `dragBakedThumb`。
-    // ★★ 但 ① 还有**第二条**被烤进去的路,光跳过它就会留下错内容:拖动途中 `invalidateAll`
-    //    (撤销/重做一条 kind='whole' 的差量)会走 `buildThumbs`,而 `paintThumbRect` 读的正是
-    //    `dragSource` ⇒ 那一整张缩略图都被按**当时**的偏移烤一遍;此后每步只重画"当前偏移的
-    //    源∪目标"是补不回来的(烤的是**整张**),所以它必须在**换回 ① 那条路时**才归位。
-    //    ⇒ 记一个 `dragBakedThumb`:这次拖动动过 ① 就照旧两侧都重画(此时那一侧的重画是
-    //    **必要的**,不是白付);没动过才跳过(常态:高倍下拖一次,① 上根本没有偏移像素)。
-    var dragBakedThumb = false;                       // 本次拖动是否往 ① 烤过偏移
+    var dragBakedThumb = false;
     function repaintDrag(L, rects) {
       if (!rects.length || !layerArray(s.map, L)) return;
       if (zoomPath(s.view.zoom) === 'layers') {
         for (var i = 0; i < rects.length; i++) paintLayerRect(L, rects[i]);
         stat2.layerRebuilds++;
-        if (!dragBakedThumb) return;                  // ★ 常态:① 上没有这次拖动的偏移像素
+        if (!dragBakedThumb) return;
       } else {
         dragBakedThumb = true;                        // ★ 这一次拖动把偏移烤进了 ①
       }
@@ -1158,20 +975,7 @@ globalThis.Render = (function () {
     }
     function invalidateAll() {
       if (!s.map) return Promise.resolve();
-      // ★★ 先让缩略图的**尺寸**对齐当前图:本方法是一条**公开入口**,而它此前不经过
-      //    ensureThumbs —— 调用方完全可能在"改了 s.map 的尺寸"之后直接进来(撤销/重做一条
-      //    kind='whole' 的差量就是这么把 subCols/subRows 就地改掉的)。少了这一步,
-      //    paintThumbRect 会往画布外写(被静默裁掉)、drawThumbPath 又会把那张旧画布拉伸到
-      //    新尺寸的目标框里 —— 两条路径都是"画面错了但不报错"。
-      // ★ 只有本方法配得起这一步:它紧接着 buildThumbs() 把**整张**重画一遍,故"重建出
-      //    空白画布"不会留下半张空白。invalidateCells(单块脏矩形)恰恰相反 —— 那里重建 =
-      //    只补一小块、其余留白,所以它继续依赖 setMap 那一侧的 ensureThumbs(尺寸只在
-      //    setMap 或本方法里才可能变,而 setMap 自己会调)。
       ensureThumbs(s.map);
-      // ★★ 同理,② 的离屏层也是"按内容铺的位图":整张图变了(或是尺寸变了)之后,
-      //    它们一个像素都不再成立 ⇒ 与缩略图一起整片重建(丢弃 + 分帧重来)。
-      //    只 render() 的话,≥8 px/子格 那条路上会继续显示**改动前**的内容(缩略图对了、
-      //    放大之后不对 —— 而"放大才看得见"正是这条路径的常态)。
       for (var L = 0; L < Core.LAYER_COUNT; L++) { layerCv[L] = null; layerDirty[L] = null; }
       viewChanged();
       return observed('invalidateAll', buildThumbs().then(function () {
@@ -1221,9 +1025,6 @@ globalThis.Render = (function () {
       }).then(render));
     }
 
-    // ── 编辑与视图操作(规格 §4.2)──
-    // 把脏矩形裁到主网格(单位 = 子格)。★ 编辑永远落在 [0, 子格数) 里,所以这是**守卫**
-    //   而不是必需:越界的脏矩形(将来的调用方算错)不该让离屏层去画一片莫名其妙的东西。
     function clipped(r) {
       if (!r) return null;
       var x0 = Math.max(0, r.x), y0 = Math.max(0, r.y);
@@ -1334,15 +1135,6 @@ globalThis.Render = (function () {
       layerVisible: function (L) { return s.layerVisible[L]; },
       setLayerLocked: function (L, b) { s.layerLocked[L] = !!b; },
       layerLocked: function (L) { return s.layerLocked[L]; },
-      // ★★ 选区一变也要去烤:Esc 取消选区**时左键还按着**(selDrag 还在)是合法状态。
-      //    ★ 但这一句 `markDragDirty()` **单独并不足以**让内容归位 —— 它只负责"把烤过的那几块
-      //      重画一遍",而重画画出来的是**什么**,由 `dragSource` 决定:选区空掉之后
-      //      `dragSource` 的早退(gate 里含 `!s.selection`)才让它一律读原格。两半合起来
-      //      才是"选区为空 ⇒ 内容**当场**归位"这条不变量:少了 `dragSource` 那一半,这次重画
-      //      画的还是**同一份偏移**(偏移来源是 `s.selDrag`,而它此刻仍然在),像素与重画前
-      //      逐字节相同 —— 框没了,内容却还在偏移上,而且一条错误都没有。
-      //    ★ 调用方(ui.js 的 cancel-selection)另外还要 `setSelDrag(null, 0, 0)`:把这次
-      //      拖动整个作废(松手时 pointerup 也就不会再提交它)。
       setSelection: function (sel) { s.selection = sel; markDragDirty(); render(); },
       selection: function () { return s.selection; },
       setSelDrag: setSelDrag, setPreview: setPreview,

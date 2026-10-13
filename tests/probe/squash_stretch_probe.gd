@@ -1,27 +1,4 @@
 extends Node
-# SquashStretch 真实视口渲染探针。验收标准：SQUASH PROBE: ALL-OK
-# 运行方式："$GODOT" --path . --quit-after 3600 res://tests/probe/squash_stretch_probe.tscn
-#      - 不要加 --headless —— 本探针要取图,headless 下截图链给 null。
-#
-# 两个目的:
-#   ① 断言形变真的发生了、且没有影响碰撞箱与世界位置(Global Constraints 的硬约束)
-#   ② 存一张图给人眼验收观感 —— 图要自己读,别推回给用户(历史上这一步抓到过两个
-#      数值全部断言通过的 bug)
-#
-# - 与 brief 基础结构框架的两处偏差(都是为了让 ② 真的成立,断言条目与判定条件文本与 brief 逐字一致):
-#   ① 基础结构框架给精灵一个零帧空 SpriteFrames  ->  渲染不出任何像素,取出来的图是一片纯背景色,
-#      "人眼验收方向"就成了一句空话。这里改为从 player.tscn 抄真 SpriteFrames 并冻在 idle
-#      第 0 帧(与 PlayerReplica._ready 抄同一份素材相同处理逻辑)。
-#   ② 基础结构框架只有一只精灵、画面里没有参照物  ->  静态图上无从判断"哪个方向"。这里摆成
-#      中性 | 拉伸 | 挤压 三栏,三栏共用同一张贴图与同一个 2.5 倍世界缩放
-#      (与 player.tscn / player_replica.tscn 根节点同值),方向一眼可判,顺带能看到
-#      2.5× 最近邻放大有没有糊边。
-#
-# - 每栏的结构照抄 player.tscn 的基础结构框架关系(而不是简化成一只裸精灵):
-#      actor(Node2D, scale=2.5) ├─ AnimatedSprite2D(形变写在这里)
-#                               └─ CollisionPolygon2D(与 animator 并列,形变不得碰它)
-#   只有这个形状才能真的验到 §5.1 那条"形变不碰碰撞箱":精灵 `centered=true`、局部原点就是
-#   actor 原点  ->  连根节点一起缩放时 `spr.global_position` 同样不变,只看位置抓不到那类错。
 
 const SHOT_PATH := "user://squash_stretch_probe.png"
 const DT := 1.0 / 60.0
@@ -111,7 +88,7 @@ func _ready() -> void:
 
 	# 真 SpriteFrames:与 PlayerReplica._ready 相同处理逻辑手法(实例化 player.tscn 后抄它的素材)。
 	var tmp := preload("res://scenes/player/player.tscn").instantiate()
-	var frames: SpriteFrames = tmp.get_node("AnimatedSprite2D").sprite_frames
+	var frames: SpriteFrames = tmp.get_node("Visuals/AnimatedSprite2D").sprite_frames
 	tmp.free()
 
 	var center: Vector2 = get_viewport().get_visible_rect().size * 0.5
@@ -157,7 +134,7 @@ func _ready() -> void:
 	# ② 落地冲击真的改了 scale(挤压 = 宽矮:x>1, y<1)
 	#    - 方向不是凭直觉写的,是从组件自己的代码路径推出来的:
 	#      _apply() 是 `Vector2(1 - amount*v, 1 + amount*v)`,而落地项在 tick() 里是
-	#      `_impulse -= land_gain * k`(负);vel_y=1200 时 k=clamp((1200-220)/680)=1 -> 
+	#      `_impulse -= land_gain * k`(负);vel_y=1200 时 k=clamp((1200-220)/680)=1 ->
 	#      _impulse = -1,当帧指数回归后的 v = -1·(1 - exp(-9/60)) = -0.86071
 	#       ->  scale = (1 + 0.10·0.86071, 1 - 0.10·0.86071) = (1.086071, 0.913929)。
 	s.tick(DT, 1200.0, true, false)

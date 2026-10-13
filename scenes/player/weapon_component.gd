@@ -10,8 +10,8 @@ extends Node
 # - 背包位置索引仅用于本地切枪与背包界面高亮。
 # - 武器属性统一由 core/sim/weapon_registry.gd（WeaponRegistry）从 data/weapons.json 中读取。
 
-signal weapon_changed(type_id: int)    # 装备武器变更信号（0 为空手）
 signal inventory_changed()          # 背包内容变更信号，供 UI 刷新
+var _changed := false
 
 # 当前手持武器类型 ID（0 为空手）
 var _current_type: int = 0
@@ -76,7 +76,7 @@ func set_initial_inventory(types: Array) -> void:
 	for t in types:
 		if is_type_enabled(int(t)):
 			inventory.add(int(t), WeaponInventory.MAG_FULL)
-	inventory_changed.emit()
+	_changed = true
 	var idx := _first_enabled_index()
 	if idx >= 0:
 		_equip_index(idx)
@@ -157,7 +157,7 @@ func inst_at_index(index: int) -> int:
 # 若背包中不存在该类型武器，记录错误并不执行装配。
 func equip_type(type_id: int) -> void:
 	if not is_type_enabled(type_id):
-		Sfx.play("deny")
+		_play_sfx("deny")
 		return
 	var idx := inventory.first_index_of_type(type_id)
 	if idx < 0:
@@ -169,7 +169,7 @@ func equip_type(type_id: int) -> void:
 # 按武器实例 ID 切换装备（用于处理网络输入与服务端同步）。
 # 若指定实例不存在（已被丢弃或替换），则保持当前状态不变。
 func equip_inst(inst: int) -> void:
-	if inst <= 0:
+	if inst <= 0 or inst == current_inst():
 		return
 	var idx := inventory.index_of_inst(inst)
 	if idx < 0:
@@ -207,14 +207,14 @@ func _equip_index(index: int) -> void:
 	_current_index = index
 	_current_type = type_id
 	_weapon = scene.instantiate() as WeaponBase
+	_weapon.type_id = type_id
 	# 必须在 add_child 之前设置 pending_mag，确保新武器 _ready 时能正确读取待恢复弹药
 	if int(inventory.held[index]["mag"]) != WeaponInventory.MAG_FULL:
 		_weapon.pending_mag = clampi(int(inventory.held[index]["mag"]), 0, _weapon.mag_size)
-	body.weapon_slot.call_deferred("add_child", _weapon)
 	_weapon.equip(body, inherit_cd)
-	Sfx.play("switch")
-	weapon_changed.emit(type_id)
-	inventory_changed.emit()
+	body.weapon_slot.add_child(_weapon)
+	_play_sfx("switch")
+	_changed = true
 
 
 # 清空手持武器状态（背包为空或当前武器被禁用且无替代时调用）
@@ -226,8 +226,7 @@ func _unequip() -> void:
 	_weapon = null
 	_current_index = -1
 	_current_type = 0
-	weapon_changed.emit(0)
-	inventory_changed.emit()
+	_changed = true
 
 
 # 同步写入武器弹药量：
@@ -253,16 +252,16 @@ const PICKUP_DENIED := -1
 # 返回值：>0 为被替换掉的武器类型 ID；0 为正常拾取未发生替换；PICKUP_DENIED (-1) 为背包已满无法拾取
 func pick_up(type_id: int, mag: int) -> int:
 	if not is_type_enabled(type_id):
-		Sfx.play("deny")
+		_play_sfx("deny")
 		return PICKUP_DENIED
 	if inventory.can_hold(type_id):
 		inventory.add(type_id, mag)
-		inventory_changed.emit()
+		_changed = true
 		_equip_index(inventory.held.size() - 1)
 		return 0
 	# 容量不足或数量达到上限时，与当前手持武器进行替换
 	if _current_index < 0:
-		Sfx.play("deny")
+		_play_sfx("deny")
 		return PICKUP_DENIED
 	var entry: Dictionary = inventory.held[_current_index]
 	var dropped := int(entry["type"])
@@ -296,13 +295,11 @@ func drop_current() -> Dictionary:
 	_weapon = null
 	_current_index = -1
 	_current_type = 0
-	inventory_changed.emit()
+	_changed = true
 	# 丢弃后自动切换至背包中第一把可用武器；若背包为空则保持空手
 	var idx := _first_enabled_index()
 	if idx >= 0:
 		_equip_index(idx)
-	else:
-		weapon_changed.emit(0)
 	return out
 
 
@@ -330,31 +327,21 @@ func snapshot_inventory() -> Array:
 	return inventory.snapshot()
 
 
-# 根据服务端权威状态恢复背包。
-# 返回值：是否成功按 want_inst 匹配到手持武器
-func restore_inventory(entries: Array, want_inst: int = 0) -> bool:
-	var keep_type := _current_type
+func restore_inventory(entries: Array, equipped_inst: int) -> void:
+	var previous := current_inst()
+	if previous != equipped_inst:
+		_unequip()
 	inventory.restore(entries)
-	# 优先按武器实例 ID 查找对应槽位；若未指定或未找到则按武器类型查找
-	var idx := inventory.index_of_inst(want_inst) if want_inst > 0 else -1
-	var by_inst := idx >= 0
-	if not by_inst:
-		idx = inventory.first_index_of_type(keep_type) if keep_type > 0 else -1
-	if idx >= 0:
-		_current_index = idx
-		# 保持当前手持类型记录，供外部逻辑比对是否需要重新实例化武器
-		_current_type = keep_type
-		inventory_changed.emit()
-		return by_inst
-	# 若权威状态表明手持武器已被移除，则清理手持武器实例
-	if _weapon != null and is_instance_valid(_weapon):
-		_weapon.queue_free()
-	_weapon = null
-	_current_index = -1
-	_current_type = 0
-	inventory_changed.emit()
-	return false
+	if equipped_inst != 0 and previous != equipped_inst:
+		_equip_index(inventory.index_of_inst(equipped_inst))
+	elif equipped_inst != 0:
+		_current_index = inventory.index_of_inst(equipped_inst)
+	_changed = true
 
+func present() -> void:
+	if _changed:
+		_changed = false
+		inventory_changed.emit()
 
 func _flush_current_mag() -> void:
 	if _weapon == null or not is_instance_valid(_weapon) or not _weapon.is_inside_tree():
@@ -406,3 +393,5 @@ func apply_recoil(push: float, is_squat: bool, is_latched: bool) -> void:
 func cancel_aim() -> void:
 	if _weapon != null:
 		_weapon.cancel_aim()
+func _play_sfx(sound: String) -> void:
+	body.step_actions.append({"kind": "sound", "sound": sound})

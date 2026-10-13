@@ -137,10 +137,6 @@ func _test_far_spawn() -> void:
 	_chk(grid.size() > 0 and sp.has("player"), "demo 应有网格与 player 出生点")
 	if grid.is_empty() or not sp.has("player"):
 		return
-	# - 直连 `SpawnPicker` 而不是 `load("res://server/match/match_bootstrap.gd")`:
-	#   后者静态引用 autoload(`GameParameters`/`NetBus`),在 `-s` 下编译失败  ->  `load()`
-	#   拿到没有成员的 GDScript  ->  下面那几行从来没跑过,而 verdict 照打 OK。
-	#   (2026-10-02 合并时发现;`far_spawn_from` 本体已一并搬进 `SpawnPicker`。)
 	var anchor: Vector2i = sp["player"]
 	var cell: Vector2i = SpawnPicker.far_spawn_from(anchor, grid)
 	_chk(cell.x >= 0 and cell.y >= 0, "应能挑出 role2 的自动出生格(实为 %s)" % str(cell))
