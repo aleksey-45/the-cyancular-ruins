@@ -13,7 +13,7 @@
 - **空间几何**：**环面世界**，场景在水平与垂直方向均无缝循环连通，实体、子弹与摄像机平滑跨越地图接缝。
 - **单人模式**：核心关卡 `Level0`，支持加载 `.cyrm` 格式地图，支持时间控制系统（时空回溯与时间加速机制）。
 - **多人对战**：包含 1v1 回合死斗、3v3 团队对抗以及多人大乱斗模式。采用专用服务端权威架构，支持客户端预测与回滚、断线重连宽限期保护，以及基于 EasyTier 的免驱动应用层 P2P 网络隧道。
-- **版本标识**：版本号从 project.godot 的 application/config/version 读取，使用数字与点分格式。
+- **版本与发布命名**：版本号唯一来源为 `project.godot` 中的 `application/config/version`（数字和点分格式）。发布压缩包为 `The-Cyancular-Ruins.zip`，内部目录为 `The-Cyancular-Ruins-YYYYMMDDHHMM/`，时间戳使用 UTC+8。
 
 ---
 

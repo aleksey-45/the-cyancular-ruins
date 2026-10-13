@@ -2,7 +2,6 @@
 # 一键发布构建脚本：导出客户端程序与服务端程序，配置服务端控制台子系统并执行归档。
 # 构建过程依赖 project.godot 中配置的统一版本号。
 # 用法: python build_release.py (可选 --stamp <时间戳> / --version <版本号>)
-import datetime
 import json
 import os
 import re
@@ -35,7 +34,7 @@ if os.path.realpath(_BUILD_INFO_REL) != os.path.realpath(BUILD_INFO):
     sys.exit("build_info path mismatch: %s" % BUILD_INFO)
 
 sys.path.insert(0, TOOLS)
-from archive_build import read_project_version, version_tag, release_version, release_label
+from archive_build import read_project_version, release_version, package_name, build_stamp
 
 
 def stamp_build_info(version: str, stamp: str) -> str:
@@ -152,7 +151,7 @@ def export(preset: str, out: str) -> None:
 
 
 def main() -> None:
-    stamp = datetime.datetime.now().strftime("%Y%m%d%H%M")
+    stamp = build_stamp()
     version = read_project_version()
     args = sys.argv[1:]
     i = 0
@@ -185,13 +184,13 @@ def main() -> None:
         _write_text_lf(_BUILD_INFO_REL, original)
 
     r = subprocess.run([sys.executable, os.path.join(TOOLS, "archive_build.py"),
-                        "--stamp", stamp, "--version", version],
+                        "--stamp", stamp],
                        cwd=PROJECT, capture_output=True, text=True, encoding="utf-8", errors="replace")
     print((r.stdout or "").strip() or (r.stderr or "").strip())
     if r.returncode != 0:
         sys.exit(r.stderr or "归档失败")
     print("\n发布完成(%s):\n  %s\n  %s"
-          % (release_label(version, stamp), CLIENT_OUT, SERVER_OUT))
+          % (package_name(stamp), CLIENT_OUT, SERVER_OUT))
 
 
 if __name__ == "__main__":

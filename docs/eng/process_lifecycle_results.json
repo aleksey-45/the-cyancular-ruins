@@ -208,6 +208,7 @@
     ]
   },
   "windows_package": {
+    "label": "The-Cyancular-Ruins-202610140115",
     "export": true,
     "isolated_startup": true,
     "files": [
@@ -222,6 +223,9 @@
       "easytier/wintun.dll",
       "process_group.windows.x86_64.dll"
     ],
+    "archive": "The-Cyancular-Ruins.zip",
+    "archive_bytes": 93288591,
+    "archive_sha256": "a97bccf611aa3c04e0148777b62217a4101069eb1a3366347adf444ed8ed74a1",
     "verified_date": "2026-10-14"
   },
   "native_dll": {

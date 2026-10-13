@@ -9,7 +9,7 @@ extends RefCounted
 
 # ── 核心可执行文件与动态库 ──
 # 必须包含 easytier-core.exe、easytier-cli.exe 以及运行时依赖库 Packet.dll 与 wintun.dll。
-const ET_VERSION := "2.7.0-f8a45ccc"
+const ET_VERSION := "2.7.0"
 const CORE_EXE := "easytier-core.exe"
 const CLI_EXE := "easytier-cli.exe"
 const CORE_DLLS := ["Packet.dll", "wintun.dll"]

@@ -46,6 +46,7 @@ python tools/check_naming.py
 **版本号管理准则**：
 - 版本号唯一来源为 `project.godot` 中的 `application/config/version`，格式必须遵循严格的数字与点分规范（例如 `0.5.0`，禁止带有前缀 `v`，否则会导致导出模板预设校验失败）。
 - 构建脚本 `tools/build_release.py` 会在导出前将版本号与时间戳写入 `core/config/build_info.gd`，导出完成后自动还原为开发占位符。
+- 发布压缩包为 `The-Cyancular-Ruins.zip`，内部目录为 `The-Cyancular-Ruins-YYYYMMDDHHMM/`，时间戳使用 UTC+8。
 - 自定义启动参数必须置于 `--` 之后传递（由 `server_main.gd` 通过 `OS.get_cmdline_user_args()` 读取），置于 `--` 之前的非引擎参数会被 Godot 静默丢弃。
 
 ---

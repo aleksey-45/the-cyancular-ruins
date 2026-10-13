@@ -1,0 +1,86 @@
+name: Build Windows game
+
+on:
+  push:
+    branches:
+      - "siri_v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out project
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Godot
+        uses: chickensoft-games/setup-godot@v2.4.1
+        with:
+          version: 4.7.1
+          use-dotnet: false
+          include-templates: true
+
+      - name: Build Windows process lifecycle extension
+        shell: pwsh
+        run: |
+          python -m pip install scons==4.9.1
+          python tools/build_process_group.py
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+      - name: Install official EasyTier
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP "easytier-windows-x86_64-v2.7.0.zip"
+          $extract = Join-Path $env:RUNNER_TEMP "easytier-v2.7.0"
+          Invoke-WebRequest `
+            -Uri "https://github.com/EasyTier/EasyTier/releases/download/v2.7.0/easytier-windows-x86_64-v2.7.0.zip" `
+            -OutFile $archive
+          Expand-Archive -LiteralPath $archive -DestinationPath $extract
+
+          $core = Get-ChildItem -LiteralPath $extract -Recurse -File -Filter "easytier-core.exe" | Select-Object -First 1
+          if ($null -eq $core) {
+            throw "Official EasyTier archive does not contain easytier-core.exe"
+          }
+
+          python tools/fetch_easytier.py --source "$($core.Directory.FullName)"
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+      - name: Import project resources
+        shell: pwsh
+        run: |
+          $env:GODOT_EDITOR = $env:GODOT4
+          & $env:GODOT_EDITOR --headless --editor --path . --import
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+      - name: Export and package game
+        shell: pwsh
+        run: |
+          $env:GODOT_EDITOR = $env:GODOT4
+          python tools/build_release.py
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
+      - name: Upload game package
+        uses: actions/upload-artifact@v4
+        with:
+          name: The-Cyancular-Ruins
+          path: builds/
+          if-no-files-found: error
+          compression-level: 1
