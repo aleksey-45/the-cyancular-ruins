@@ -7,9 +7,8 @@ extends Node
 #   ① "加速 = 主角的时间被加快"  ->  除主角外一切实体变慢:移动、攻击间隔、子弹都算。
 #   ② 加速时主角与敌人要高亮;精英怪在加速与回溯两种状态下都是极为亮眼的黄色。
 #
-# 核心物理事实:`move_and_slide()` 用引擎自己的 delta,缩放传入的 delta 只改变重力/计时器,
-# 不改变位移 —— 所以实体的"快/慢"必须作用在速度域(玩家速度目标 ×1.4、敌 velocity.x ×0.7);
-# 而子弹走 `move_and_collide(velocity * delta)`,缩放 delta 就是真的变慢。
+# 物理设定说明：move_and_slide 使用引擎内部物理步长，缩放传入的 delta 仅影响重力与计时器，
+# 水平移速通过调整目标速度实现；子弹基于 move_and_collide(velocity * delta) 实现时间缩放。
 #
 # 覆盖:倍率表(玩家/普通敌/精英 × NONE/HASTE/REWIND) · 普通敌速度 ×HASTE_WORLD ·
 #       主角水平移速 ×HASTE_PLAYER(关碰撞,纯速度域) · 跳跃高度不变(重力没被带跑) ·
@@ -174,8 +173,7 @@ func _run() -> void:
 	_ghost_blue = false
 	_haste_frames = 0
 	Input.action_press("haste")
-	# - 必须等速度真正进入平台期再采样:空中加速很温和(`accel_air`),固定等 45 帧可能还在
-	#   爬坡 —— 实测同一份代码在不同地图/落点下分别量到 1.17 / 1.21 / 1.40(偶发误判"加速无效")。
+	# 等待速度进入稳定平台期后再采样
 	await _settle_vx(player)
 	var v_haste := await _mean_vx(player, 20, true)
 	var mult_seen := float(player.get("_speed_mult"))
@@ -255,8 +253,7 @@ func _run() -> void:
 	if re_elite != null:
 		re_elite.set_meta("elite", true)
 	Input.action_press("rewind")
-	# - 高亮挂在 `_process` 里(视效驱动),只等 `physics_frame` 会读到"还没跑 _process"的中间态
-	#   —— 实测:紧接第二次读就有副本了(同一个协程切片内,中间只可能插进一帧 _process)。
+	# 高亮基于 _process 驱动，等待若干视觉帧确保渲染节点就绪
 	for i in 5:
 		await tree.process_frame
 	await _wait_phys(6)
@@ -463,9 +460,7 @@ func _jump_apex(player: CharacterBody2D, stub, tree: SceneTree) -> float:
 	return (y0 - apex) if airborne else -1.0
 
 
-# 找一格"上方 4 格净空(跳跃/弹道要空间)+ 下方实心(有地板)"的格子,并取离玩家环面最近的那一格:
-# ① 地形无关的确定性几何 —— 否则两次测量在不同位置,高度/弹道不可比;
-# ② 离玩家近  ->  子弹不会被 `anchor_to_nearest` 锚到别的副本上瞬移。
+# 查找具备净空与地面支持的开阔格子，就近选择离玩家最近的采样点
 func _find_open_spot(from: Vector2) -> Vector2i:
 	var grid: Array = MazeGenerator.current_grid
 	if grid.is_empty():

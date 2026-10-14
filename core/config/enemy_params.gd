@@ -76,8 +76,8 @@ class FlyBird:
 	const landing_time: float = 0.4       # 到家落地后多久直接入睡(不再等地板接触)
 	const path_max_visit: int = 600       # 寻路(A*)展开格数上限(32×32 最小单位下已调小)
 	const search_radius_cells: int = 45  # A* 搜索半径(格):限定鸟的寻路范围,不搜太远
-	const escape_search_range: int = 90   # 死区逃逸时向左右搜索的格数上限
-	const escape_max_descent: int = 40      # 死区逃逸下探行数上限(当前行无解时往下逐行找)
+	const escape_search_range: int = 90   # 避障脱困时向左右搜索的格数上限
+	const escape_max_descent: int = 40      # 避障脱困下探行数上限(当前行无解时往下逐行找)
 
 class BlackBird:
 	const wake_radius: float = 1000.0     # 玩家多近苏醒

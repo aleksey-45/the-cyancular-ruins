@@ -46,19 +46,14 @@ func _initialize() -> void:
 	_check(p2[2].x > 128.0, "反射后继续向右(离开墙面)")
 	_check(c2.size() == 1 and c2[0] == Vector2i(1, 2), "接触格 = 墙格 (1,2)")
 
-	# ── 三个缝 + 两个上报口(走方法表,不再钉 `contains("func _emit_beam(")` 逐字写法)+
-	#    PvP 权威门控 + 上报取后即清 ──
-	# - 方法表只证明"口在"、不重复下面那些真实行为调用(默认直线几何 / 反射几何 / 上报
-	#   round-trip 都真调了这些口)—— 两者互补。要拦的变异:缝被改名/删掉  ->  域内调用点与子类
-	#   覆写当场落空(可覆写缝,删了不会有编译错)。
+	# 验证基类方法表接口（光束发射、伤害判定、特效生成及数据上报）与 PvP 权威判定逻辑
 	var base_src := FileAccess.get_file_as_string("res://scenes/weapons/laser_weapon_base.gd")
 	var gun_src := FileAccess.get_file_as_string("res://scenes/weapons/laser_gun.gd")
 	_check(gun_src.contains("extends LaserWeaponBase"), "laser_gun extends LaserWeaponBase")
 	for seam in ["_emit_beam", "_apply_beam_damage", "_spawn_beam_visual",
 			"collect_pending_beam_report", "_make_beam_report"]:
 		_check(ScanUtil.method_info(BaseScript, seam) != null, "基类含可覆写缝/上报口(方法表): " + seam)
-	# 权威门控:只要求引用了 `Level0.pvp_mode`(等价写法 —— 提前取局部量 / 加括号 / 取反 —— 不该红)。
-	# 要拦的变异:门控不再看 pvp_mode(恒 true/false 或换了别的开关) ->  权威开火判断与出弹不同 gate。
+	# 验证激光开火逻辑引用 Level0.pvp_mode 进行服务端权威门控
 	_check(ScanUtil.code_only(base_src).contains("Level0.pvp_mode"),
 			"权威门控引用 Level0.pvp_mode(与出弹同 gate)")
 

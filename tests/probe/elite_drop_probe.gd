@@ -3,10 +3,7 @@ extends Node
 # 精英掉落探针(场景级,实际关卡场景,走真实击杀路径):打死一只乌鸫 -> 结晶 FX 出现 ->
 # 飞向怀表 -> 吸收入账 +300。
 #
-# - 为什么必须另有一条:B5 的 `tests/probe/grain_crystal_probe.tscn` 是直接 spawn FX
-#   (只验 FX 自己:散开/飞行/入账/颤抖),证明不了"击杀 -> `enemy_base._begin_death` ->
-#   `EnemyBlackBird._on_death` -> `GrainCrystalFx.spawn`"这条真路径没被后来的改动碰断。
-#   用户报"击杀精英不掉颗粒"时,可疑的正是中间这段而不是 FX 本体。
+# 验证击杀精英敌人触发死亡回调生成时间颗粒结晶并吸收入账的完整链路
 #
 # 判定:入账判定条件用余额增量而不是"有没有 FX 节点" —— 余额会自动回补(50/s),故取
 # "增量 ≥ 290" 这一档:真的入了 300 时增量必 ≥300(还叠回补),没入账则只有回补(~3s -> 150)。
@@ -42,7 +39,7 @@ func _run() -> void:
 		tree.quit(1)
 		return
 
-	# 找到那只真乌鸫(场景 `_ready` 自带 elite 标;找不到就用备用怪并设置标记)
+	# 查找乌鸫精英敌人，若不存在则使用备用敌人并标记为精英
 	var elite: Node2D = null
 	var marked_by_probe := false
 	for e in tree.get_nodes_in_group("enemies"):

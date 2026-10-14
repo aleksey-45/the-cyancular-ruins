@@ -45,12 +45,11 @@ func _initialize() -> void:
 	# ⑤ 水:矩形落在 (5,5) 那格水上 —— 水不算实心,但飞鸟版要算
 	var seam_water := Rect2(TS * 5.2, TS * 4.5, TS * 0.6, TS)
 	_check(not TileQuery.rect_overlaps_solid(seam_water, TS),
-			"★ 水**不算**实心 → rect_overlaps_solid 为 false")
+			"水不算实心瓦片，rect_overlaps_solid 为 false")
 	_check(TileQuery.rect_overlaps_solid_or_liquid(seam_water, TS),
-			"★ 但 solid_or_liquid 把水算进去 → true(飞鸟不能游过水)")
+			"solid_or_liquid 将水体判定为有效阻挡，返回 true")
 
-	# ⑥ 空网格:一律 false(= 没压到东西)。调用方各自决定方向:
-	#    黑鸟 `not` 之后 = "全清"、预瞄直接 false = "无墙"、飞鸟必须自己提前返回成"不可走"。
+	# ⑥ 空网格：全部返回 false（无阻挡判定）
 	MazeGenerator.current_grid = []
 	_check(not TileQuery.rect_overlaps_solid(_rect(0, 0, TS * 3), TS),
 			"空网格 → false(调用方自备方向:飞鸟要的是不可走,故它必须保留自己的 is_empty 早退)")
@@ -65,10 +64,7 @@ func _initialize() -> void:
 		quit(1)
 
 
-# - 返回类型必须写 `Array[Array]`:`MazeGenerator.current_grid` 是强类型 static var,
-#   赋普通 `Array` 会运行时报错("Invalid assignment … base object of type 'GDScript'"),
-#   且因为发生在 _initialize 里 -> 走不到 quit() -> `-s` 表现为挂死而不是报错退出。
-#   同一个已知缺陷仓库在 GridPathfinder.copy_grid 的注释里记过。
+# 返回类型声明为 Array[Array]，与 MazeGenerator.current_grid 的强类型保持一致。
 func _blank(cols: int, rows: int) -> Array[Array]:
 	var g: Array[Array] = []
 	for _y in range(rows):

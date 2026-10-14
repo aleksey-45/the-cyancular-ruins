@@ -226,7 +226,7 @@ func _check_tick_dispatch() -> void:
 	own["timing_seq"] = 2
 	clock.reconcile(own, 1000, 300)
 	assert(clock._clock == 1002.0)
-	# 长时间没有 STATE 仍按模拟时间退休重发动作，不积成越来越大的 INPUT。
+	# 长时间未收到 STATE 快照时仍按模拟时间清理超时动作，防止待发队列无限积压。
 	clock.reset(1, 0, 1000, 0)
 	for tick in 200:
 		clock._clock += 1.0

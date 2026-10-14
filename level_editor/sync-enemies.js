@@ -2,8 +2,7 @@
 // 从 data/enemies.json 重新生成 editor.html 内嵌的敌人注册表
 // (/*__ENEMY_REGISTRY_BEGIN__*/ ... /*__ENEMY_REGISTRY_END__*/ 之间)。
 // 用法:node level_editor/sync-enemies.js [--check]
-//   --check: 只校验不写盘。改了 data/enemies.json 忘跑本脚本(或在 json 里加了字段却忘了
-//            同步下面的字段级手抄)→ HTML 内嵌的那份**静默漂移**。一致退出 0;漂移退出 1。
+//   --check: 仅校验不写入。若与 data/enemies.json 不一致则退出码为 1。
 const fs = require('fs');
 const path = require('path');
 
@@ -23,11 +22,8 @@ const enemies = (json.enemies || []).map(function (e) {
 const block = '/*__ENEMY_REGISTRY_BEGIN__*/\nwindow.ENEMY_REGISTRY = ' +
   JSON.stringify(enemies, null, 2) + ';\n/*__ENEMY_REGISTRY_END__*/';
 
-// ★ 上面那份是**字段级手抄**的守卫:源 json 里出现的每个键都必须被映射到。
-//   只比对"生成物 vs 重新生成"是**抓不到**这个的 —— 两边用的是同一份映射,漏抄的字段
-//   在两边一样地缺,`--check` 照样绿。故单独查一遍键覆盖。
-//   有字段**故意**不进编辑器时,加进下面这个名单并写明理由,别默默漏掉。
-const NOT_IN_EDITOR = [];   // 当前为空:enemies.json 的 4 个字段(id/name/scene/color)全部进注册表
+// 字段覆盖校验：确保 enemies.json 中的字段均映射至注册表
+const NOT_IN_EDITOR = [];   // 暂无忽略字段: enemies.json 的 4 个字段全部进入注册表
 const generatedKeys = {};
 enemies.forEach(function (e) { Object.keys(e).forEach(function (k) { generatedKeys[k] = true; }); });
 const dropped = {};

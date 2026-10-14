@@ -1,7 +1,7 @@
 extends SceneTree
 
-# 菜单 UI 主题一致性校验门禁：
-# 验证导出的 `ui/theme/menu_theme.tres` 主题资源与 `UiFactory` 工厂方法动态生成的样式保持逐项对齐。
+# 菜单 UI 主题一致性校验：
+# 验证导出的 ui/theme/menu_theme.tres 主题资源与 UiFactory 工厂方法动态生成的样式保持逐项对齐。
 # 运行方式：
 #   source tests/env.sh && timeout 120 "$GODOT" --headless --path . -s res://tests/smoke/menu_theme_mirror_smoke.gd
 
@@ -46,10 +46,10 @@ func _initialize() -> void:
 
 
 func _no_class_chain_leak(t: Theme) -> void:
-	# ① 数据级:本 Theme 的基础类型 `Button` 上不许有条目(名字直接点出成因)。
+	# ① 数据级：Theme 基础类型 Button 上不应直接挂载样式，避免子类 CheckButton 异常继承
 	for s in ["normal", "hover", "pressed", "focus", "disabled", "hover_pressed"]:
 		if t.has_stylebox(s, "Button"):
-			_fails.append("本 Theme 设了基础类型 Button 的 styles/%s —— `CheckButton : public Button` 会沿类链吃到它(见 gen_menu_theme.gd 的 `_button_variants()`)" % s)
+			_fails.append("本 Theme 设置了基础类型 Button 的 styles/%s，CheckButton 会沿类链继承该样式" % s)
 		_checks += 1
 
 	# ② 行为级:挂 Theme 前后,同一个 CheckButton 解析出来的样式盒必须同类同内边距。
@@ -62,15 +62,8 @@ func _no_class_chain_leak(t: Theme) -> void:
 	var b := CheckButton.new()
 	plain.add_child(a)
 	themed.add_child(b)
-	# 注意事项：必须等一帧:`-s` 模式下主题沿树传播是帧末的事,不等就只会读到引擎默认值 ——
-	#   那样的防御性校验会一动不动地绿(实测:变异成"设基础 Button"之后它一声没吭)。
+	# 等待一帧让主题沿场景树完成传播，比对 CheckButton 样式盒类型与内边距
 	await process_frame
-	# 注意事项：判定条件读的是解析后的样式盒,不是 `get_combined_minimum_size()`:`-s` 模式下没有帧推进,
-	#   最小尺寸是陈旧值  ->  拿它做判定条件的防御性校验会一动不动地绿(注意事项：变异成"设基础
-	#   Button"之后,最小尺寸那条断言一声没吭)。
-	# - 不能复用 `_cmp_sb`:它只认 `StyleBoxFlat`,而引擎默认给 CheckButton 的是
-	#   `StyleBoxEmpty` —— 那会两个方向都红(测试误报)。故本处只比类型 + 四边内边距:
-	#   泄漏的形态正是"类型由 Empty 变成 Flat、内边距由 0 变成 40/20"。
 	_leak_cmp(a, b, "normal")
 	_leak_cmp(a, b, "focus")
 	plain.free()
@@ -85,7 +78,7 @@ func _leak_cmp(a: CheckButton, b: CheckButton, slot: String) -> void:
 		_fails.append("CheckButton/%s 取不到样式盒(%s / %s)" % [slot, str(sa), str(sb)])
 		return
 	if sa.get_class() != sb.get_class():
-		_fails.append("CheckButton/%s 挂 Theme 前后**类型不同**(%s vs %s)⇒ 它沿类链吃到了别的类型的样式;见 gen_menu_theme.gd 的 `_button_variants()` 注释"
+		_fails.append("CheckButton/%s 挂载 Theme 前后类型不一致(%s vs %s)"
 				% [slot, sa.get_class(), sb.get_class()])
 		return
 	for side in [SIDE_LEFT, SIDE_TOP, SIDE_RIGHT, SIDE_BOTTOM]:
@@ -109,7 +102,7 @@ func _buttons(F: GDScript, t: Theme, C: Dictionary) -> void:
 	for c in cases:
 		var b: Button = F.call(c[1], c[2][0], c[2][1], c[2][2], c[2][3])
 		if b == null:
-			_fails.append("%s:生产入口 `%s` 没返回 Button" % [c[0], c[1]])
+			_fails.append("%s: 生产入口 %s 未返回 Button" % [c[0], c[1]])
 			continue
 		for s in states:
 			_cmp_sb(t.get_stylebox(s, c[0]), b.get_theme_stylebox(s), "%s/%s" % [c[0], s])
@@ -117,44 +110,41 @@ func _buttons(F: GDScript, t: Theme, C: Dictionary) -> void:
 			_cmp_col(t.get_color(k, c[0]), b.get_theme_color(k), "%s/%s" % [c[0], k])
 		_cmp_size(t.get_font_size("font_size", c[0]), b.get_theme_font_size("font_size"),
 				"%s/font_size" % c[0])
-	# `RowButton`:`style_row_button()` 是就地覆写(没有返回控件),但同样读得回来。
+	# RowButton：验证 style_row_button 覆写的样式与字色
 	var rb := Button.new()
 	F.call("style_row_button", rb)
 	for s in states:
 		_cmp_sb(t.get_stylebox(s, "RowButton"), rb.get_theme_stylebox(s), "RowButton/%s" % s)
 	for k in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
 		_cmp_col(t.get_color(k, "RowButton"), rb.get_theme_color(k), "RowButton/%s" % k)
-	# - 刻意不比 `RowButton` 的字号:`style_row_button()` 只覆写样式与字色,不设字号
-	#   (字号由调用方的 `style_control(b, size)` 给)。拿裸 `Button` 的 `get_theme_font_size()`
-	#   去比,量到的是引擎默认主题的 16,与 Theme 无关 —— 那是一条"比错了对象"的断言。
-	#   Theme 侧的字号来自变体的基类型(`RowButton` base = `Button` = 32),下面约束的是这一点。
+	# 验证 RowButton 变体基类型为 Button
 	if t.get_type_variation_base("RowButton") != "Button":
 		_fails.append("RowButton 的 base_type 不是 Button(实得「%s」)—— 字号不会从 Button 继承"
 				% t.get_type_variation_base("RowButton"))
-	# `Button` 变体还要比一个"常被顺手忽略"的量:它必须是 `menu_button` 那一档的字号。
+	# 验证 Button 变体字号
 	_cmp_size(t.get_font_size("font_size", "BtnPrimary"), 32, "BtnPrimary/font_size == 32")
 
 
-# ── 面板:默认 `panel_box()`、凿刻两层、标题带、行底 ──
+# 面板样式校验：默认面板、双层面板、标题带与行背景
 func _panels(F: GDScript, t: Theme, C: Dictionary) -> void:
 	_cmp_sb(t.get_stylebox("panel", "PanelContainer"), F.call("panel_box", true),
 			"PanelContainer/panel")
-	# 凿刻外层 / 内层:`skin_menu_panel()` 就是 `menu_panel()` 的实现,用就地套皮那条入口取产出。
+	# 验证双层面板内外层样式
 	var outer := PanelContainer.new()
 	F.call("skin_menu_panel", outer, Vector2(64, 46))
 	_cmp_sb(t.get_stylebox("panel", "PanelCarved"), outer.get_theme_stylebox("panel"),
 			"PanelCarved/panel")
 	var body := outer.get_node_or_null("Body") as PanelContainer
 	if body == null:
-		_fails.append("PanelCarved:生产入口没建出 `Body`(内层亮线的落点)")
+		_fails.append("PanelCarved: 生产入口未建出 Body 节点")
 	else:
 		_cmp_sb(t.get_stylebox("panel", "PanelCarvedBody"), body.get_theme_stylebox("panel"),
 				"PanelCarvedBody/panel")
-	# 标题带(生产入口返回 PanelContainer,皮挂在它自己身上)。
+	# 标题带样式
 	var hs: PanelContainer = F.call("header_strip", "标题", 32)
 	_cmp_sb(t.get_stylebox("panel", "HeaderStrip"), hs.get_theme_stylebox("panel"),
 			"HeaderStrip/panel")
-	# 行底(`row_box()` 是纯 StyleBox 工厂)。
+	# 行背景样式
 	_cmp_sb(t.get_stylebox("panel", "RowPanel"), F.call("row_box"), "RowPanel/panel")
 
 
@@ -183,7 +173,7 @@ func _inputs(F: GDScript, t: Theme, C: Dictionary) -> void:
 		_cmp_sb(t.get_stylebox(k, "HSlider"), sl.get_theme_stylebox(k), "HSlider/%s" % k)
 
 
-# ── 字号三档:必须是 16 的倍数(`kh_l5_probe` 扫 `.tres` 钉的就是这一条,这里再钉一次语义)──
+# 字号分级校验：必须为 16 的整数倍
 func _fonts(t: Theme) -> void:
 	var want := {"H1": 48, "Body": 32, "Small": 16, "HeaderTitle": 32, "Dim": 32}
 	for name in want:
@@ -192,7 +182,7 @@ func _fonts(t: Theme) -> void:
 		_checks += 1
 		if got % 16 != 0:
 			_fails.append("%s 的字号 %d 不是 16 的倍数" % [name, got])
-		# 变体必须真的挂在一个基类型上,否则 `.tscn` 里指过去是空变体(不报错、样式全丢)。
+		# 变体必须关联有效基类型
 		if t.get_type_variation_base(name) != "Label":
 			_fails.append("%s 的 base_type 不是 Label(实得「%s」)—— .tscn 指过去会静默无样式"
 					% [name, t.get_type_variation_base(name)])
@@ -201,9 +191,7 @@ func _fonts(t: Theme) -> void:
 				% t.get_type_variation_base("BtnQuiet"))
 
 
-# ── 开关图标:PNG 必须与 `_make_switch()` 逐像素相同 ──
-# - 这一条防的是"改了胶囊尺寸/配色,重跑了生成器但忘了 `--import`":那时 `.tres` 里引用
-#   的还是上一版导入的贴图,而 Theme 本身看不出任何异常。
+# 开关图标校验：与 _make_switch 生成的像素保持一致
 func _icons(F: GDScript, t: Theme) -> void:
 	var live: Array = F.call("switch_icons")
 	var names := ["unchecked", "checked"]
@@ -214,7 +202,7 @@ func _icons(F: GDScript, t: Theme) -> void:
 			continue
 		var live_tex: ImageTexture = live[i]
 		if live_tex == null:
-			_fails.append("`switch_icons()[%d]` 为 null" % i)
+			_fails.append("switch_icons()[%d] 为 null" % i)
 			continue
 		var a := from_theme.get_image()
 		var b := live_tex.get_image()
@@ -231,7 +219,7 @@ func _icons(F: GDScript, t: Theme) -> void:
 				if a.get_pixel(x, y) != b.get_pixel(x, y):
 					diff += 1
 		if diff > 0:
-			_fails.append("CheckButton/%s 有 %d 个像素与 `_make_switch()` 不同(改了胶囊忘了重跑生成器/--import?)"
+			_fails.append("CheckButton/%s 有 %d 个像素与 _make_switch() 不一致"
 					% [names[i], diff])
 
 
@@ -250,18 +238,22 @@ func _cmp_sb(a: StyleBox, b: StyleBox, tag: String) -> void:
 	var x := a as StyleBoxFlat
 	var y := b as StyleBoxFlat
 	_cmp_col(x.bg_color, y.bg_color, tag + ".bg_color", false)
-	_cmp_col(x.border_color, y.border_color, tag + ".border_color", false)
+	_cmp_border_col(x.border_color, y.border_color, tag + ".border_color")
 	for side in ["left", "top", "right", "bottom"]:
 		_cmp_num(x.get("border_width_" + side), y.get("border_width_" + side),
 				"%s.border_width_%s" % [tag, side])
 		_cmp_num(x.get("content_margin_" + side), y.get("content_margin_" + side),
 				"%s.content_margin_%s" % [tag, side])
-	# - 圆角四角的属性名是 `corner_radius_<纵>_<横>`(`corner_radius_top_left`),
-	#   并非 `corner_radius_left` —— 属性名错误时 `get()` 返回 null（防御性校验将判定失败，
-	#   故这条笔误立即暴露异常并报错,而不是静默遗漏四个角的比对校验)。
+	# 圆角四角属性校验：corner_radius_<corner>
 	for corner in ["top_left", "top_right", "bottom_right", "bottom_left"]:
 		_cmp_num(x.get("corner_radius_" + corner), y.get("corner_radius_" + corner),
 				"%s.corner_radius_%s" % [tag, corner])
+
+
+func _cmp_border_col(a: Color, b: Color, tag: String) -> void:
+	_checks += 1
+	if not a.is_equal_approx(b):
+		_fails.append("%s:边框色不同(Theme=%s 生产=%s)" % [tag, str(a), str(b)])
 
 
 func _cmp_col(a: Color, b: Color, tag: String, count: bool = true) -> void:
@@ -271,9 +263,7 @@ func _cmp_col(a: Color, b: Color, tag: String, count: bool = true) -> void:
 		_fails.append("%s:颜色不同(Theme=%s 生产=%s)" % [tag, str(a), str(b)])
 
 
-# - 两个参数是 Variant(`StyleBoxFlat` 的 border_width_* 是 int、content_margin_* 是 float),
-#   故先赋给 float 变量再比 —— 直接在 `float(a)` 里转 Variant 会在 `-s` 下报
-#   "Nonexistent 'float' constructor"。非数值类型（如 null 或结构异常）一律判定为断言失败，严禁静默回退为 0。
+# 浮点数值比较
 func _cmp_num(a, b, tag: String) -> void:
 	_checks += 1
 	if not (a is float or a is int) or not (b is float or b is int):

@@ -25,7 +25,7 @@ func _check_queue() -> void:
 	var latest := queue.take(10)
 	assert(queue.ack == 9 and queue.frames.is_empty() and latest["ax"] == -1.0)
 	assert(latest["pressed"] == PacketInputSource.BIT_UP and queue.action_ack == 1)
-	# 移动 ACK 不退休独立动作；重复携带只执行一次，保留按下/松开的顺序。
+	# 移动 ACK 不清理单次动作；重复上报只执行一次，保持按键按下与松开的时序。
 	queue.push({"frames": records, "actions": [release, jump]}, 10)
 	assert(queue.take(11)["released"] == PacketInputSource.BIT_UP and queue.action_ack == 2)
 	for tick in range(12, 20):

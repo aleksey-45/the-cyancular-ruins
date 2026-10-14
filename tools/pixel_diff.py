@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""逐像素比对两张截图 —— 「迁移 = 外观不变」那条判据的量尺。
+"""逐像素比对两张截图。
 
 用法:
     python tools/pixel_diff.py <A.png> <B.png> [--threshold 0.004] [--out diff.png]
 
-输出(一律给**文本**,本仓纪律:退出码从来不是判据,调用方 grep `DIFF 0 /`):
-    DIFF <n> / <total>    n = 通道差超过阈值的像素数(=0 才算不变)
-    MAXDELTA <d>          d = 全部像素里**单通道**最大差的 0~255 整数(定位量级用)
-    SIZE MISMATCH <Wa>x<Ha> vs <Wb>x<Hb>   尺寸不同,直接判失败
+输出格式:
+    DIFF <n> / <total>    n 为通道差超过阈值的像素数（0 表示完全一致）
+    MAXDELTA <d>          d 为全部像素中单通道最大差值（0-255 整数）
+    SIZE MISMATCH <Wa>x<Ha> vs <Wb>x<Hb>   图像尺寸不匹配
 
-★ 阈值语义:单像素取 **R/G/B/A 四通道差里的最大者**,再除以 255 归一。故 `--threshold 0.004`
-  等价于"单通道差 > 1.02 才算一个不同像素" —— 容掉 PNG 编解码的 ±1 抖动,又不放过真正的
-  alpha 混合差异(2 及以上一律计入)。★ 含 **alpha**:两张图都先 `convert("RGBA")`
-  (`bands` 因此是 4 条),半透明遮罩处的漂移只改 alpha、RGB 一模一样,只在 RGB 上比是**看不见**的。
+阈值说明:
+    单像素计算 RGBA 四通道差值的最大值，并除以 255 归一化。
+    例如 --threshold 0.004 允许单通道差值在 1 以内，容忍 PNG 编解码的微小浮点误差，
+    同时覆盖 RGB 与 Alpha 通道的实质性变动。
 
-★ `--out` 是可选的**人眼定位**产物:逐像素差放大 16 倍后贴在 B 图上,超阈值处涂红。
-  它不参与判据 —— 判据永远只有上面那行 DIFF 文本。
+差异输出:
+    --out 可选输出差异可视化图片，将逐像素差值放大 16 倍并高亮标红，便于人工排查。
 """
 
 import sys
@@ -24,12 +24,7 @@ from PIL import Image, ImageChops
 
 
 def _parse_threshold(raw):
-    """`--threshold` 的取值;不是数字就打一句干净的用法错误并返回 None。
-
-    ★ 为什么必须包一层:原先两处都是裸的 `float(...)` ⇒ `--threshold abc` 抛 Python traceback,
-      而本文件其余每一条坏输入路径(缺参数 / 路径数不对 / 读图失败)都打**干净的中文消息** ——
-      调用方(脚本 / 人)拿到的是一句可读的话,不是一段栈。
-    """
+    """解析 --threshold 参数值。若输入非合法数字则打印错误提示并返回 None。"""
     try:
         v = float(raw)
     except ValueError:

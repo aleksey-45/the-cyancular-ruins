@@ -119,9 +119,7 @@ func _frames(n: int) -> void:
 		await get_tree().process_frame
 
 
-# - PNG 只是给人看的那一份,断言全在像素上  ->  落盘失败不算探针失败(否则
-#   `.superpowers/sdd/`(gitignore 目录)在别的机器上不存在就会把防御性校验染红,理由还与本
-#   guard 无关)。目录不存在就自己建。
+# 截取视口图像并保存，目录不存在时自动创建
 func _shot(png_name: String) -> Image:
 	await _frames(2)
 	var img := get_viewport().get_texture().get_image()

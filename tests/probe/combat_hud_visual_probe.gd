@@ -1,6 +1,6 @@
 extends Control
 
-const MAP_OPEN_COLOR := Color(0.47, 0.588, 0.624)   # ≈#78969F,实测取的地图开阔区色
+const MAP_OPEN_COLOR := Color(0.47, 0.588, 0.624)   # 地图开阔区域底色
 
 const OUT_DIR := "res://.superpowers/sdd"
 const PVP_HUD_SCENE := "res://ui/hud/pvp_hud.tscn"
@@ -9,84 +9,67 @@ const TEAM_HUD_SCENE := "res://ui/hud/team_hud.tscn"
 
 var _failures: Array[String] = []
 
+# 预期断言总数：15 处顶层检查 + 1 处排行榜首行 + 1 处掉线行裁切 + 5 处状态差异比较 = 22
 const EXPECTED_CHECKS := 22
-# - 22 是逐个数出来的,不是估的(全部 18 处 `_check(` 调用点都在 `_run_round()` 里):
-#   - 函数体顶层 15 处(记分条 / 大字 / 外框 / 标题带 / 遮罩 / 掉线 / 掉线像素差 / 掉线位置 /
-#     榜行数 / 终局大字 / 掉线行文案 / 态8 像素差 / 3v3 记分条 / 3v3 大字 / 平局文案);
-#   - `if royale._rows.size() == 4:` 里 1 处(榜首行文本)—— 执行通过的那条路上成立;
-#   - `if grace_row != null:` 里 1 处(掉线行没被 clip_text 裁)—— 同上;
-#   - `for pair in [ … 5 组 … ]` 里 1 处  ->  跑 5 次(态 1 -> 2 / 2 -> 3 / 3 -> 4 / 4 -> 5 / 5 -> 6)。
-#   15 + 1 + 1 + 5 = 22。
-#   - 那两个条件分支:条件不成立时既红那条断言、又少一条计数  ->  两条信号,不是漏报。
-#   - `_shot()` 里的两处失败是直接 `_failures.append`(截图失败/写盘失败),不经过 `_check`
-#      ->  不计入 22,与 `kh_l3_visual_probe` 同一口径。
-#   - 用 `!=` 而不是 `<`:新增断言忘了登记同样要红(`tests/probe/late_match_probe.gd` 相同处理逻辑)。
 var _checks := 0
 
-# 广播布局基线：原 HEAD 与重构版在 1920×1440 的真实渲染下均为这组尺寸。
-# header_strip 当前左边距为 0、右边距为 40；原断言仍按左右各 40 计算，宽度多了 40。
-# 比较 Control.size，避免将倒计时的脉冲缩放计入布局尺寸。
+# 广播布局基线：在 1920×1440 渲染分辨率下的标准布局尺寸
 const BROADCAST_OUTER_W := 826.0
 const BROADCAST_OUTER_H := 371.0
 const BROADCAST_STRIP_W := 680.0
 const BROADCAST_STRIP_H := 185.0
 
 func _ready() -> void:
-	Level0.pvp_mode = false   # 对局 HUD 与单机 HUD 会同时在场,量的是对局 HUD 自己的元素
+	Level0.pvp_mode = false   # 仅测试对局 HUD 自身元素，避免单人 HUD 干扰
 	await _run_round()
 	_finish()
 
 
 func _run_round() -> void:
-	# 地图色底:整个视口铺满,两块 HUD 都叠在它上面
+	# 创建全屏底色矩形，模拟游戏背景
 	var bg := ColorRect.new()
 	bg.color = MAP_OPEN_COLOR
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(bg)
 
-	# 两块 HUD 分别在场:它们都常驻同一屏(1v1 与 大乱斗 各一套),但取图必须分开 ——
-	# 否则 PvP 的中央倒计时广播会串进大乱斗那张,读图时无法判断哪条属于哪套。
+	# 实例化各模式 HUD，按测试阶段分别显示
 	var pvp: CanvasLayer = (load(PVP_HUD_SCENE) as PackedScene).instantiate()
 	add_child(pvp)
-	# - 声明式场景实例化,不能 RoyaleHud.new():.new() 建出来的节点没有子节点,
-	#   HUD 的 @onready 全是 null、_ready 解引用必崩(B11)。
+
 	var royale: RoyaleHud = (load(ROYALE_HUD_SCENE) as PackedScene).instantiate() as RoyaleHud
 	add_child(royale)
 	royale.visible = false
-	# 3v3 那一套同样先建后藏:它 _ready 就会弹出「对战开始」广播,不藏会串进态1~4 的取图
-	# (那 4 张是既有基线,本探针加 TeamHud 时必须逐字不变)。
+
 	var team: TeamHud = (load(TEAM_HUD_SCENE) as PackedScene).instantiate() as TeamHud
 	add_child(team)
 	team.visible = false
 	await _frames(3)
 
-	# ── 态1:1v1 PLAYING ──
+	# 态1: 1v1 进行中状态
 	pvp._on_round_state({"state": 1, "round": 2, "scores": {1: 3, 2: 5},
 			"rounds_won": {1: 1, 2: 0}, "timer": 0.0, "grace": {}})
 	pvp._on_ping(72)
 	await _frames(2)
 	var img1 := await _shot("_hud_1_pvp_playing.png")
-	_check(_bright_in(img1, pvp._score_label) > 0, "态1:1v1 记分条画出了文本")
+	_check(_bright_in(img1, pvp._score_label) > 0, "态1: 1v1 记分条绘制正常")
 	print("[HUD-VISUAL] 态1 记分条 = 「%s」" % pvp._score_label.text)
 
-	# ── 态2:1v1 中央广播(倒计时)──
+	# 态2: 1v1 局中倒计时广播
 	pvp._on_round_state({"state": 0, "round": 2, "scores": {1: 3, 2: 5},
 			"rounds_won": {1: 1, 2: 0}, "timer": 3.0, "grace": {}})
 	await _frames(2)
 	var img2 := await _shot("_hud_2_pvp_broadcast.png")
-	_check(_bright_in(img2, pvp._big) > 0, "态2:中央大字画出来了")
-	# 大字那条 Label 的字体度量(解释标题带高度从哪来;也只是印出来,不做断言)。
+	_check(_bright_in(img2, pvp._big) > 0, "态2: 中央大字广播绘制正常")
 	var big_f: Font = pvp._big.get_theme_font("font")
 	var big_fs: int = pvp._big.get_theme_font_size("font_size")
-	print("[HUD-VISUAL] 态2 大字度量:font_size=%d get_height=%s label.size=%s"
+	print("[HUD-VISUAL] 态2 大字度量: font_size=%d get_height=%s label.size=%s"
 			% [big_fs, "<无字体>" if big_f == null else str(big_f.get_height(big_fs)),
 			str(pvp._big.size)])
-	# 固定布局尺寸，并先确认节点存在，让路径变化产生明确的测试失败。
 	var bcast = pvp.get("_broadcast")
 	var panel: Control = null if bcast == null else bcast.get("_panel") as Control
 	var strip: Control = pvp._big.get_parent() as Control
-	print("[HUD-VISUAL] 态2 广播外框 size = %s rect = %s;标题带 size = %s rect = %s;panel.scale = %s"
+	print("[HUD-VISUAL] 态2 广播外框 size = %s rect = %s; 标题带 size = %s rect = %s; panel.scale = %s"
 			% ["<无节点>" if panel == null else str(panel.size),
 			"<无节点>" if panel == null else str(panel.get_global_rect()),
 			"<无节点>" if strip == null else str(strip.size),
@@ -94,38 +77,35 @@ func _run_round() -> void:
 			"<无节点>" if panel == null else str(panel.scale)])
 	_check(panel != null and panel.size.is_equal_approx(
 			Vector2(BROADCAST_OUTER_W, BROADCAST_OUTER_H)),
-			"态2:广播**外框**布局尺寸 = %d×%d(实得 %s;原 HEAD 与当前版的布局基线)"
+			"态2: 广播外框布局尺寸 = %d×%d(实得 %s)"
 			% [BROADCAST_OUTER_W, BROADCAST_OUTER_H,
 			"无节点" if panel == null else str(panel.size)])
 	_check(strip != null and strip.size.is_equal_approx(
 			Vector2(BROADCAST_STRIP_W, BROADCAST_STRIP_H)),
-			"态2:广播**标题带**布局尺寸 = %d×%d(实得 %s;菜单尺度一改它就跟着变)"
+			"态2: 广播标题带布局尺寸 = %d×%d(实得 %s)"
 			% [BROADCAST_STRIP_W, BROADCAST_STRIP_H,
 			"无节点" if strip == null else str(strip.size)])
-	_check(pvp._mask.visible, "态2:广播遮罩可见")
+	_check(pvp._mask.visible, "态2: 广播背景遮罩可见")
 
-	# ── 态7:1v1「对手掉线中」(阶段 3 的 3.1)──
-	# `grace` 的键是对手的 role(1v1 恒为 `3 - 自己`);缺键 = 此刻没人掉线。
-	# - 与态1 同一个 PLAYING 态、同一份比分,唯一差别就是这一条 —— 故 `_diff(img1, img7)`
-	#   量到的差异只可能来自它(取图前 1v1 是可见的、大乱斗那两套都藏着,与态1 一致)。
+	# 态7: 1v1 对手断线保护提示
 	pvp._on_round_state({"state": 1, "round": 2, "scores": {1: 3, 2: 5},
 			"rounds_won": {1: 1, 2: 0}, "grace": {3 - PvpSession.role: 42.0}})
 	await _frames(2)
 	var img7 := await _shot("_hud_7_pvp_grace.png")
 	_check(pvp._grace_wrap.visible and pvp._grace_label.text.contains("42"),
-			"态7:1v1 的「对手掉线中」画出来了(role %d / 「%s」)"
+			"态7: 1v1 对手掉线提示正常显示(role %d / 「%s」)"
 			% [3 - PvpSession.role, pvp._grace_label.text])
 	print("[HUD-VISUAL] 态7 掉线条 = 「%s」 rect=%s(记分条 rect=%s)"
 			% [pvp._grace_label.text, str(pvp._grace_wrap.get_global_rect()),
 			str(pvp.get_node("ScoreWrap").get_global_rect())])
 	var d17 := _diff(img1, img7)
-	_check(d17 > 500, "态7:相对态1(同态、无 grace)的像素差异 = %d(应当只来自这一条)" % d17)
+	_check(d17 > 500, "态7: 相对态1的像素差异 = %d" % d17)
 	_check(pvp._grace_wrap.get_global_rect().position.y
 			>= pvp.get_node("ScoreWrap").get_global_rect().end.y,
-			"态7:掉线条必须落在记分条**之下**、不与它重叠")
+			"态7: 掉线提示框必须位于记分条下方，不与记分条重叠")
 
-	# ── 态3:大乱斗排行榜 ──
-	pvp.visible = false    # 收起 1v1(含它的中央广播),只留大乱斗这一套
+	# 态3: 大乱斗排行榜
+	pvp.visible = false
 	royale.visible = true
 	royale._on_round_state({
 		"state": 1, "timer": 187.0,
@@ -137,13 +117,13 @@ func _run_round() -> void:
 	})
 	await _frames(2)
 	var img3 := await _shot("_hud_3_royale_board.png")
-	_check(royale._rows.size() == 4, "态3:排行榜行数 = %d(期望 4)" % royale._rows.size())
+	_check(royale._rows.size() == 4, "态3: 排行榜行数 = %d(期望 4)" % royale._rows.size())
 	if royale._rows.size() == 4:
-		_check(_bright_in(img3, royale._rows[0]) > 0, "态3:排行榜首行画出了文本")
+		_check(_bright_in(img3, royale._rows[0]) > 0, "态3: 排行榜首行绘制正常")
 		print("[HUD-VISUAL] 态3 首行 = 「%s」" % royale._rows[0].text)
 		print("[HUD-VISUAL] 态3 底板 = %s" % str(royale._board_bg.get_rect()))
 
-	# ── 态4:大乱斗终局广播 ──
+	# 态4: 大乱斗结算广播
 	royale._on_round_state({
 		"state": 3, "timer": 0.0, "match_winner": 1,
 		"names": {"1": "Anon", "2": "一个很长很长的昵称"},
@@ -152,12 +132,9 @@ func _run_round() -> void:
 	})
 	await _frames(2)
 	var img4 := await _shot("_hud_4_royale_over.png")
-	_check(_bright_in(img4, royale._big) > 0, "态4:终局大字画出来了")
+	_check(_bright_in(img4, royale._big) > 0, "态4: 结算广播文本绘制正常")
 
-	# ── 态8:大乱斗排行榜的「掉线 42s」(阶段 3 的 3.1)──
-	# role 2 掉线中(grace 表里有它),而它照旧 `alive = false` —— **同一个载荷去掉 `grace`
-	# 那一行会念「复活中」**,故本阶段同时是"grace 档压过 alive 档"的鉴别器。
-	# - `grace` 缺键 = 此刻没人掉线(服务端空表不带键),故上面态3 那几次载荷不改也合法。
+	# 态8: 大乱斗排行榜显示断线重连倒计时
 	royale._on_round_state({"state": 1, "round": 1, "scores": {1: 7, 2: 3, 3: 1},
 			"deaths": {1: 0, 2: 1, 3: 2}, "rounds_won": {}, "timer": 214.0,
 			"names": {1: "阿甲", 2: "bob", 3: "电脑玩家3-computer"},
@@ -169,47 +146,42 @@ func _run_round() -> void:
 		if r.text.contains("掉线"):
 			grace_row = r
 	_check(grace_row != null and grace_row.text.contains("掉线 42s"),
-			"态8:排行榜里掉线那行念「掉线 42s」;实得「%s」"
+			"态8: 排行榜断线玩家状态应显示为「掉线 42s」; 实得「%s」"
 			% ("(没有任何一行带「掉线」)" if grace_row == null else grace_row.text))
 	if grace_row != null:
-		# - 末段真的没被裁:`clip_text = true` 是静默裁的(不报错,`row.text` 也照旧是
-		#   完整的那一句  ->  只判 `contains` 是看不出裁没裁的),故只能量文本宽与裁剪界比。
-		#   裁剪界就是 `_refresh_board` 建行时钉的那个 `BOARD_W - 8`(= 712)。
 		var gf: Font = grace_row.get_theme_font("font")
 		var tw: float = gf.get_string_size(grace_row.text, HORIZONTAL_ALIGNMENT_LEFT, -1,
 				grace_row.get_theme_font_size("font_size")).x
 		var clip_w: float = RoyaleHud.BOARD_W - 8.0
 		_check(tw <= clip_w,
-				"态8:掉线那行没被 clip_text 裁掉(文本宽 %0.1f ≤ 裁剪界 %0.1f)" % [tw, clip_w])
+			"态8: 掉线状态行文本未被裁切(文本宽度 %0.1f ≤ 限制宽度 %0.1f)" % [tw, clip_w])
 		print("[HUD-VISUAL] 态8 掉线行 = 「%s」 文本宽=%0.1f 裁剪界=%0.1f 行宽=%0.1f"
 				% [grace_row.text, tw, clip_w, grace_row.size.x])
 	var d48 := _diff(img4, img8)
-	_check(d48 > 500, "态8:相对态4(终局广播)的像素差异 = %d(★ 弱鉴别力,见上方登记)" % d48)
+	_check(d48 > 500, "态8: 相对态4的像素差异 = %d" % d48)
 
-	# ── 态5:3v3 记分条(scores/rounds_won 的键是队号)──
-	royale.visible = false   # 收起大乱斗那一套(含它的终局广播),只留 3v3 这套
+	# 态5: 3v3 团队记分条
+	royale.visible = false
 	team.visible = true
-	team.set_my_team(1)      # 外部在 match_sync 到达后写入;两队的文案都按它判"我方/对方"
+	team.set_my_team(1)
 	team._on_round_state({"state": 1, "round": 2, "scores": {1: 4, 2: 6},
 			"rounds_won": {1: 1, 2: 0}, "timer": 0.0})
 	team._on_ping(48)
 	await _frames(2)
 	var img5 := await _shot("_hud_5_team_playing.png")
-	_check(_bright_in(img5, team._score_label) > 0, "态5:3v3 记分条画出了文本")
+	_check(_bright_in(img5, team._score_label) > 0, "态5: 3v3 记分条绘制正常")
 	print("[HUD-VISUAL] 态5 记分条 = 「%s」" % team._score_label.text)
 
-	# ── 态6:3v3 终局平局(match_winner == 0)──
-	# - 0 在 3v3 是新可达值(两队都走光),而 pvp_hud 对 0 用的是 1v1 口径的兜底保护
-	#   (`"P%d 获胜!" % (1 if w1 > w2 else 2)`) ->  照抄会把平局念成「P2 获胜」。本阶段钉的就是文案。
+	# 态6: 3v3 平局广播
 	team._on_round_state({"state": 3, "round": 3, "scores": {1: 12, 2: 11},
 			"rounds_won": {1: 1, 2: 1}, "match_winner": 0, "timer": 0.0})
 	await _frames(2)
 	var img6 := await _shot("_hud_6_team_tie.png")
-	_check(_bright_in(img6, team._big) > 0, "态6:3v3 终局大字画出来了")
-	_check(team._big.text.contains("平"), "态6:平局文案是「平 局」(照抄 1v1 的 P%d 兜底会把平局念成「P2 获胜」)")
+	_check(_bright_in(img6, team._big) > 0, "态6: 3v3 终局平局大字绘制正常")
+	_check(team._big.text.contains("平"), "态6: 平局文案应包含「平」")
 	print("[HUD-VISUAL] 态6 终局大字 = 「%s」/ 副文案 = 「%s」" % [team._big.text, team._sub.text])
 
-	# ── 各态两两不同(证明"切了状态"而不是"拍了六张一样的")──
+	# 验证各状态画面之间存在显著差异
 	for pair in [[img1, img2, "1→2"], [img2, img3, "2→3"], [img3, img4, "3→4"],
 			[img4, img5, "4→5"], [img5, img6, "5→6"]]:
 		var d := _diff(pair[0], pair[1])
@@ -223,12 +195,12 @@ func _run_round() -> void:
 	await _frames(2)
 
 
-# ── 截图与数值工具 ──
+# 截图与视觉比对工具
 func _shot(png_name: String) -> Image:
 	await _frames(2)
 	var img := get_viewport().get_texture().get_image()
 	if img == null or img.get_width() == 0:
-		_failures.append("截图 %s 失败(是不是误加了 --headless?)" % png_name)
+		_failures.append("截图 %s 失败(无头渲染环境下视口未激活)" % png_name)
 		return Image.new()
 	var path := OUT_DIR.path_join(png_name)
 	if img.save_png(path) != OK:
@@ -306,13 +278,10 @@ func _check(ok: bool, msg: String) -> void:
 
 
 func _finish() -> void:
-	# - 断言计数门禁先于 verdict:跑少了 = 有断言被静默跳过(见文件头那条说明) ->  必须红,
-	#   而不是照打 ALL-OK —— 那正是本文件里"无防御性校验属性访问  ->  中途抛错"那一族的形状。
+	# 校验断言总数是否与预期一致
 	if _checks != EXPECTED_CHECKS:
-		_failures.append("★ 实跑 %d 条断言,与 EXPECTED_CHECKS=%d 对不上"
-				% [_checks, EXPECTED_CHECKS]
-				+ "(要么有断言被静默跳过 —— 脚本错误只结束出错的那个函数、调用方继续;"
-				+ "要么新加的断言没登记进 EXPECTED_CHECKS)")
+		_failures.append("实跑 %d 条断言，与预期数量 EXPECTED_CHECKS=%d 不一致"
+				% [_checks, EXPECTED_CHECKS])
 	if _failures.is_empty():
 		print("COMBAT HUD VISUAL PROBE: ALL-OK(%d 条断言)" % _checks)
 		get_tree().quit(0)

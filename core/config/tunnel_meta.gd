@@ -28,9 +28,9 @@ const GUEST_PREFIX := "cyr-guest-"
 const VIP_CIDR := "10.126.126.0/24"
 const VIP_HOST := "10.126.126.1"
 
-# ── 初始中继与打洞辅助节点 ──
+# ── 初始中继与 NAT 穿透辅助节点 ──
 # 节点地址从游戏目录下的 relay.txt 文件读取，每行一个节点（支持 host:port 或 tcp:// / udp:// 格式）。
-# 双方连接相同的中继节点以交换端点并发起 P2P 直连打洞，打洞受限时由中继节点转发。
+# 双方连接相同的中继节点以交换端点并尝试 P2P 直连，直连受限时由中继节点转发。
 const RELAY_FILE_NAME := "relay.txt"
 
 const DEFAULT_RELAYS := [

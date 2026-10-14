@@ -8,8 +8,7 @@ const FRAMES := 300                     # 每档帧数(5 秒)
 const STEP_PX := 5.0                    # 每物理帧 5px = 300px/s
 const NOMINAL_GAP_MS := 1000.0 / 30.0   # 服务器每两物理帧发送一次快照
 const LATENCY_MS := 60.0
-# 均匀抖动半径(ms)。发送频率固定 30Hz，各包单程延迟为 60ms ± J。
-# 8.0 是 `6e2ef6d` 引用的那档(它记的旧法读数 49.6% 零位移)。
+# 均匀抖动半径(ms)。发送频率固定 30Hz，各包单程延迟为 60ms ± J
 const JITTER_CASES := [0.0, 8.0, 16.0]
 const ASSERT_CASE := 1                  # 断言压在 8.0ms 那一档
 const RNG_SEED := 20260922              # 固定种子:三次跑同一组到达序列,读数可比
@@ -62,16 +61,14 @@ func _begin_case(jitter_ms: float) -> void:
 	_buffer.map_px = Vector2(GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 	_tick = 0
 	_rep = REPLICA_SCENE.instantiate()
-	# - 空载防御性校验(与 squash_replica_probe 相同处理逻辑):`player_replica.gd` 一旦解析不过,
-	#   tscn 的根会退化成裸 Node2D —— 场景照样加载、一行判定条件都不打印、退出码还是 0,
-	#   那正是 docs/eng/tests.md 记的"看着像功能坏了"的形态。这里把它变成一条响亮的 FAIL。
+	# 校验副本脚本是否正确加载
 	if not _rep.has_method("apply_snapshot"):
 		_fail("PlayerReplica 脚本没加载起来(解析错?根节点是 %s)" % _rep.get_class())
 		return
 	add_child(_rep)
 	_canon = Vector2(CANON_X, CANON_Y0)
 	_rep.global_position = _canon
-	# 逐帧显式调 `_process(DT)`,不交给引擎(与 squash_replica_probe 相同处理逻辑)
+	# 手动调用 _process(DT) 驱动步进
 	_rep.set_process(false)
 	_anchor = _canon
 	_rep.apply_snapshot(_snapshot_dict(_canon), _anchor, _tick)

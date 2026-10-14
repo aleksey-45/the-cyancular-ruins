@@ -1,44 +1,42 @@
-# core/ — 核心通用逻辑与系统模块
+# core/ — 核心通用模块
 
-本目录包含游戏跨场景共享的核心算法、模拟逻辑、网络系统、配置与表现层模块。目录按功能职责划分为四个子系统：
+本目录包含游戏跨场景共享的核心算法、物理模拟、网络通信、配置与表现层模块。按功能职责划分为四个子目录：
 
-```
-sim/      世界模拟与几何：环面物理计算、地图格式编解码、碰撞判定与时间控制
-net/      网络同步与联机：网络通信总线、输入源抽象、会话编排、预测回滚与网络隧道
-config/   系统配置与参数：游戏玩法常量、玩家/敌人属性参数、持久化设置与运行元数据
-present/  视听表现与特效：像素字体排版、音效合成与激光/粒子视觉呈现
+```text
+sim/      物理模拟与空间几何：环形世界坐标计算、地图格式编解码、碰撞检测与时间控制系统
+net/      网络同步与联机：网络通信通道、输入抽象、客户端预测与回滚、P2P 隧道与会话管理
+config/   系统配置与参数：游戏全局参数、角色与敌人属性、用户本地设置及版本信息
+present/  视听表现与特效：像素字体适配、音效播放、贴图边界计算与激光渲染
 ```
 
 ## 子目录职责说明
 
-- `sim/`（模拟与世界几何）
-  - 维护地形破坏、射线检测、环面几何寻路与碰撞判定。
-  - 包含地图格式编解码（`map_format`、`map_format_v4`）、时间控制（`time_field`、`grain_account`、`world_rewind`）等核心玩法算法。
+- `sim/`（物理模拟与空间几何）
+  - 维护 16px 子格地形破坏、射线检测、环形世界寻路与碰撞判定。
+  - 包含地图格式编解码（`map_format`、`map_format_v4`）、时间控制系统（`time_field`、`grain_account`、`world_rewind`、`tile_ledger`）等玩法核心算法。
 - `net/`（网络同步与联机）
-  - 维护客户端与服务端网络协议、RPC 通信总线（`net_bus`、`net_bus_ext`）与 EasyTier 网络隧道（`tunnel`）。
-  - 提供统一的输入源抽象接口（`player_input`），支持本地输入（`local_input_source`）、网络数据包（`packet_input_source`）及 AI 机器人（`ai_input_source`）无缝替换。
-  - 包含客户端预测与回滚机制（`prediction_rollback`）及断线重连宽限期保护。
+  - 负责网络数据传输（`net_bus`、`net_codec`）、输入缓冲与调度（`input_buffer`）、客户端预测回滚（`prediction_rollback`）与远端快照播放（`snapshot_buffer`）。
+  - 提供统一的玩家输入源抽象（`player_input`），支持本地键鼠输入（`local_input_source`）、网络数据包输入（`packet_input_source`）及 AI 机器人（`ai_input_source`）。
+  - 提供基于 EasyTier 的应用层 P2P 网络隧道（`tunnel`）与 Windows 进程管理（`net_session`）。
 - `config/`（配置与参数）
-  - 集中维护全局常量、平衡性数值及配置文件持久化。
-  - 包含游戏运行参数（`game_parameters`）、玩家/敌人属性（`player_params`、`enemy_params`）、设置持久化（`settings`）及版本构建元数据（`app_info`、`build_info`）。
+  - 集中管理游戏全局常量与运行参数（`game_parameters`）、角色与敌人配置（`player_params`、`enemy_params`）、本地设置（`settings`）以及构建版本信息（`build_info`）。
 - `present/`（视觉与音频表现）
-  - 负责纯表现层的视听效果实现，与游戏玩法逻辑解耦。
-  - 包含像素字体抗锯齿优化（`pixel_font`）、程序化白噪声与音效合成（`sfx`）、贴图非透明边界测量（`sprite_bounds`）以及激光光束渲染（`laser_visual`）。
+  - 负责渲染与视听反馈效果，与游戏逻辑解耦。
+  - 包含像素字体渲染（`pixel_font`）、程序化音效合成（`sfx`）、贴图不透明包围盒测量（`sprite_bounds`）以及激光光束渲染（`laser_visual`）。
 
 ## 全局 Autoload 单例
 
-项目在 `project.godot` 中注册的 Autoload 单例：
+在 `project.godot` 中配置的 Autoload 单例：
 
-- `GameParameters` (`core/config/game_parameters.gd`)：全局共享常量与世界尺寸状态，关卡加载时初始化地图宽高。
-- `NetBus` (`core/net/net_bus.gd`)：专用服务端与客户端核心 RPC 通信总线。
-- `NetBusExt` (`core/net/net_bus_ext.gd`)：联机扩展协议总线，提供旁路消息与向后兼容支持。
-- `Settings` (`core/config/settings.gd`)：客户端本地设置管理，持久化存储于 `user://settings.cfg`。
+- `GameLog` (`core/config/game_log.gd`)：接管日志输出，分流写入本地日志文件。
+- `GameParameters` (`core/config/game_parameters.gd`)：全局共享常量与世界边界尺寸。
+- `NetBus` (`core/net/net_bus.gd`)：基于 ENet 的网络通信核心接口。
+- `NetSession` (`core/net/net_session.gd`)：联机会话与 Windows Job 子进程生命周期管理。
+- `Settings` (`core/config/settings.gd`)：用户本地配置管理，持久化存储于 `user://settings.cfg`。
 
-> 注意：调整 Autoload 脚本路径时，必须同步更新 `project.godot` 中的配置。
+## 数据配置文件关联
 
-## 数据驱动文件关联
-
-核心运行时配置数据独立维护于 `data/` 目录：
-- 瓦片属性定义：`data/tile_defs.json`（由 `tile_defs.gd` 加载解析）
-- 武器配置数据：`data/weapons.json`（由 `WeaponRegistry` 加载解析）
-- 敌人属性配置：`data/enemies.json`（由 `EnemySpawner` 加载解析）
+运行时基础数据集中在 `data/` 目录维护：
+- 瓦片属性定义：`data/tile_defs.json`（由 `tile_defs.gd` 解析）
+- 武器配置数据：`data/weapons.json`（由 `WeaponRegistry` 解析）
+- 敌人属性配置：`data/enemies.json`（由 `EnemySpawner` 解析）

@@ -72,8 +72,7 @@ func _first_bind_button() -> Button:
 
 
 func _send_escape() -> void:
-	# - 两个都要设:真实按键事件 `keycode` 与 `physical_keycode` 都有值 ——
-	#   `ui_cancel` 的动作匹配读 `keycode`,而设置页的键位捕获读 `physical_keycode`。
+	# 同步配置 keycode 与 physical_keycode 以满足动作匹配与键位捕获逻辑
 	var down := InputEventKey.new()
 	down.keycode = KEY_ESCAPE
 	down.physical_keycode = KEY_ESCAPE

@@ -254,11 +254,7 @@ func _phase_pin_map() -> void:
 
 
 func _phase_map_size() -> void:
-	# - 期望值从地图自己派生,不写死 125×75("这张图恰好多大"换图就测试误报)。
-	#   取自 `MazeGenerator.load_map_file()` 的整图解析维度 —— 刻意不用
-	#   `MapFormat.map_size`:`MazeGenerator.map_size()` 就是它的一行转发(同一函数  ->  往返一致性校验)。
-	#   两条读法各走一路(v4 头部 vs 整图解析),对不上才是真实缺陷。
-	#   顺带仍严格校验"会话选中的是哪张图"这件事(`_phase_pin_map` 刚把它固化为 demo)。
+	# 校验 map_size 与 MazeGenerator.load_map_file() 整图解析维度保持一致
 	var g := MazeGenerator.load_map_file()
 	var want := Vector2i.ZERO
 	if not g.is_empty():
@@ -1099,7 +1095,7 @@ func _root_script_of(scene_path: String) -> Script:
 	var st := ps.get_state()
 	if st == null or st.get_node_count() == 0:
 		return null
-	# 节点 0 = 根(引擎侧 `nodes[0]` 就是根,见 packed_scene.cpp 的 instantiate)。
+	# 根节点索引为 0
 	for i in st.get_node_property_count(0):
 		if str(st.get_node_property_name(0, i)) != "script":
 			continue
@@ -1111,10 +1107,7 @@ func _root_script_of(scene_path: String) -> Script:
 	return null
 
 
-# 脚本 `scr` 是否继承自 `base_scr`(沿 `get_base_script()` 链走,含自身)。
-# - 走脚本链而不是「读 .tscn 文本里有没有 `weapon_base.gd`」:后者认不出
-#   `extends LaserWeaponBase` 这种间接继承(laser_gun 就是),而它恰恰是"加新武器"的常见形状;
-#   文本法还会被注释/别处的路径字符串误判通过。
+# 递归沿脚本链判断 scr 是否继承自 base_scr
 func _script_extends(scr: Script, base_scr: Script) -> bool:
 	var s := scr
 	while s != null:
@@ -1124,9 +1117,7 @@ func _script_extends(scr: Script, base_scr: Script) -> bool:
 	return false
 
 
-# 宿主函数体是否"取到了注册表的 id":直接出现 `all_ids(`;否则看它调用的本文件内函数里
-# 有没有一层 `all_ids(`(只追一层 —— 避免把无关的调用链拉进来、也避免自引用死循环)。
-# 判定条件问的是"这处被动地问了注册表",不钉调用链的形状(直接调 / 经一层 helper 都算数)。
+# 检查函数体是否直接或通过一层辅助函数调用 all_ids()
 func _body_reaches_registry_ids(whole: String, body: String, self_name: String) -> bool:
 	if body.contains("all_ids("):
 		return true
@@ -1176,9 +1167,7 @@ func _phase_weapon_registry() -> void:
 					_check(false, "每条都应是对象(实际 %s)" % str(raw))
 					continue
 				var e: Dictionary = raw
-				# - 用 `int(...)` 归一化:JSON 的数字在 GDScript 里解析成 float,
-				#   不归一化的话 `rows.has(id)` 会永远假(1.0 != 1),而 `row.size()` 却是对的 ——
-				#   那种"一半对一半错"最难查。
+				# 转换为 int 类型比较，避免 JSON 解析浮点数引起的类型匹配问题
 				var id := int(e.get("id", 0))
 				var tier_s := str(e.get("tier", ""))
 				var scene_path := str(e.get("scene", ""))
@@ -1257,7 +1246,7 @@ func _phase_weapon_registry() -> void:
 		for m in re_tbl.search_all(code):
 			stale_tables.append("%s::%s" % [path, m.get_string(1)])
 	_check(stale_tables.is_empty(),
-			"那三张旧表必须**删掉**(不是绕过);命中(文件::表名)= %s" % str(stale_tables))
+			"旧武器映射表已彻底清理; 命中(文件::表名)= %s" % str(stale_tables))
 
 	var sites := [
 		{"path": "res://scenes/level_0.gd", "func": "_default_weapon_types"},
@@ -1312,12 +1301,9 @@ func _phase_weapon_capacity() -> void:
 		return
 	var src := ScanUtil.read("res://ui/hud/weapon_slots.gd")
 	_check(not src.is_empty(), "读到 ui/weapon_slots.gd(读不到就是红,不是静默跳过)")
-	# 注意事项：必须先看源码文本再敢调:`ws.rows_for(...)` 在函数不存在时会抛错,
-	#   而 -s 冒烟里 helper 抛错  ->  本函数当场结束、调用方继续  ->  下面那些断言
-	#   被静默跳过(判定输出行照打 —— 测试漏报)。本函数是 helper(不是 _initialize),
-	#   所以这里 `return` 是安全的、不会挂进程。
+	# 预检静态函数声明
 	var has_derivation := src.contains("static func rows_for") and src.contains("static func panel_h_for")
-	_check(has_derivation, "★ WeaponSlots 应导出 rows_for() / panel_h_for() 两个静态派生函数")
+	_check(has_derivation, "WeaponSlots 应导出 rows_for() 与 panel_h_for() 两个静态派生函数")
 	if not has_derivation:
 		return
 	# ① 派生公式
@@ -1329,13 +1315,12 @@ func _phase_weapon_capacity() -> void:
 	_check(int(ws.rows_for(16)) == 4, "rows_for(16) = 4(实际 %s)" % str(ws.rows_for(16)))
 	_check(int(ws.rows_for(1)) == 1, "rows_for(1) = 1(至少一行,不能 0;实际 %s)" % str(ws.rows_for(1)))
 	_check(is_equal_approx(float(ws.panel_h_for(8)), 59.0),
-			"panel_h_for(8) = 59(默认值**一个字没变**;实际 %s)" % str(ws.panel_h_for(8)))
+			"panel_h_for(8) = 59（默认值保持一致; 实际 %s）" % str(ws.panel_h_for(8)))
 	_check(is_equal_approx(float(ws.panel_h_for(12)), 84.0),
 			"panel_h_for(12) = 84(实际 %s)" % str(ws.panel_h_for(12)))
 	_check(is_equal_approx(float(ws.panel_h_for(1)), 34.0),
 			"panel_h_for(1) = 34(实际 %s)" % str(ws.panel_h_for(1)))
-	# ② 接线(按函数体判,不按整文件 contains —— 同一文件里别处出现 `_derive_layout()`
-	#    不能替 `setup()` 那一处背书)
+	# ② 验证函数体内的调用接线
 	var body_setup := ScanUtil.func_body(ScanUtil.code_only(src), "setup")
 	_check(body_setup.contains("_derive_layout()"),
 			"WeaponSlots.setup() 必须调 _derive_layout()(否则容量只活在公式里,格子阵不长)")
@@ -1344,13 +1329,13 @@ func _phase_weapon_capacity() -> void:
 			"WeaponSlots.refresh() 必须重取容量(容量改了之后 UI 要能跟上)")
 	var body_derive := ScanUtil.func_body(ScanUtil.code_only(src), "_derive_layout")
 	_check(body_derive.contains("inventory.capacity"),
-			"_derive_layout() 必须从**背包**读容量(不能是另一个写死的数)")
+			"_derive_layout() 必须从背包读取 capacity 属性")
 	var body_draw := ScanUtil.func_body(ScanUtil.code_only(src), "_draw")
 	_check(body_draw.contains("capacity") and not body_draw.contains("DEFAULT_CAPACITY"),
-			"★ _draw() 必须按**本实例的 capacity** 画格子,不得读 DEFAULT_CAPACITY(那是默认值,不是本实例的容量)")
+			"_draw() 必须按当前实例的 capacity 绘制槽位，不得读取默认常量")
 	var body_empty := ScanUtil.func_body(ScanUtil.code_only(src), "_draw_empty_cells")
 	_check(body_empty.contains("capacity") and not body_empty.contains("DEFAULT_CAPACITY"),
-			"★ _draw_empty_cells() 同上(空背包那条路径也要跟着容量长)")
+			"_draw_empty_cells() 必须按当前实例的 capacity 绘制空槽位")
 
 
 func _phase_spread_cells() -> void:

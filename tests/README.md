@@ -1,15 +1,17 @@
-# tests/ — 冒烟 / 诊断(无测试框架)
+# tests/ — 自动化测试套件
 
-没有单测框架。运行命令见根 `CLAUDE.md`「常用命令」(headless + `-s`),成功以打印 `SMOKE OK` / `... OK` 且退出 0 为准。
+本项目基于 Godot 引擎原生能力构建自动化测试体系，不依赖第三方测试框架。常用运行命令请参考根目录 [`CLAUDE.md`](../CLAUDE.md)；测试通过以控制台输出 `SMOKE OK` 或 `ALL-OK`、退出码为 0 且无脚本报错为准。
 
-文件分层（同一 stem 的脚本与场景放在同目录）：
+## 目录分层与结构说明
 
-- `smoke/`——行为回归主入口。`*_smoke.gd`（`extends SceneTree`，用 `-s` 跑）与少量 shell 编排。测试只结束自己记录的 PID，不按端口或名称扫描、结束其他进程。`enemy_logic_smoke.gd` 覆盖 AI、环面、武器和碰撞；其余按域细分。
-- `probe/`——单点诊断与真链路探针(`*_probe.gd` / `*_probe.tscn` / `*_probe.sh`,含 `kh_l*_probe`)。
-- `harness/`——被 spawn 的辅助:`*_watcher.gd`(子进程观察者)、`*_bot_input.gd`(脚本机器人输入)、`*_client.*`(裸客户端,如 `pvp_smoke_client` / `net_lag_client`)、`net_lag_proxy.py`。
-- `scripts/`——三个独立诊断工具:`convert_map.gd` / `seam_analyze.gd` / `seam_screenshot.gd`。
-- `network/`——三条数据流、权威模拟、预测、真实对局、官方 EasyTier 和 Windows Job 生命周期测试。完整入口见 [测试说明](../docs/eng/tests.md)。
+- `smoke/`：纯逻辑冒烟测试。包含基于 `SceneTree`（通过 `-s` 参数执行）的轻量测试脚本，用于验证核心算法、数学模型、状态机与数据表完整性。
+- `probe/`：场景级自动化探针测试。加载完整的 `.tscn` 场景，模拟实际物理、渲染与网络交互，通过 `--quit-after` 设置最大超时帧数。
+- `network/`：网络与联机专项测试。覆盖客户端预测与回滚、权威服务端同步、真实网络延迟与丢包模拟、EasyTier P2P 隧道及 Windows Job 子进程生命周期。完整入口请参考 [测试体系说明](../docs/eng/tests.md)。
+- `harness/`：测试辅助夹具与桩代码。包含测试观察器（`*_watcher.gd`）、模拟机器人输入源（`*_bot_input.gd`）及网络延迟代理（`net_lag_proxy.py`）。
+- `scripts/`：测试诊断脚本与独立工具（如地图格式转换、接缝分析与截图工具）。
+- `lib/`：测试通用基础库。包含断言基类（`probe_base.gd`）与源码文本静态分析工具（`scan_util.gd`）。
 
-`tests/` 顶层只留基础设施:`env.sh`(共享环境)、`lib/`(`scan_util.gd` / `probe_base.gd`,源码级探针的共享脚手架)、`path_integrity_allow.txt`(守卫的字面量常量指着它,故不随 `.gd` 搬进 `probe/`)与 `README.md`。
+## 注意事项
 
-注意:`-s` 阶段 autoload 尚未实例化;测试脚本若静态引用会连带预加载"引用 autoload 的脚本"会在编译期失败(见 `smoke/enemy_logic_smoke.gd` 注释)。
+- 在使用 `-s` 参数运行独立脚本冒烟测试时，Godot 尚未实例化 Autoload 全局单例。若被测脚本依赖全局变量，需显式传入或改用静态工具方法，避免在编译阶段因找不到单例而报错。
+- 测试脚本在管理网络子进程时，仅通过记录的进程 PID 安全关闭自身启动的子进程，禁止按进程名或端口号强杀系统其他进程。

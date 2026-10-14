@@ -7,9 +7,7 @@ extends SceneTree
 
 const DT: float = 1.0 / 60.0
 
-# 两侧刻意重复的同名 squash_* 常量(见 player_params.gd / enemy_params.gd 的互相指引注释)。
-# 同名同值是约定,不是巧合 —— 漂移会让"同一套手感"在两个宿主上分叉,而四处测试的阈值
-# 全是相对 `squash_amount` 表达的,抬一侧的值不会让任何一条变红。
+# 验证 player_params.gd 与 enemy_params.gd 中同名 squash_* 常量保持一致，避免手感参数分叉。
 const MIRRORED_CONSTS := [
 	"squash_amount", "squash_recover", "squash_land_min_vy", "squash_land_ref_vy",
 	"squash_land", "squash_hurt", "squash_air", "squash_air_ref_vy",
@@ -17,8 +15,7 @@ const MIRRORED_CONSTS := [
 const RULED_AMOUNT := 0.06
 
 var _fail: int = 0
-# 本冒烟建的所有节点(`_mk()` 与 ⑨ 的手搭实例)。不加入场景树  ->  不 free 就是 ObjectDB 泄漏,
-# 退出时刷一屏 `leaked` 警告把真正的失败淹掉(另两个场景探针都 free 了,这里对齐)。
+# 本测试创建的所有未挂载节点统一登记至 _owned，退出前统一释放，避免内存泄漏警告。
 var _owned: Array[Node] = []
 
 
@@ -36,7 +33,7 @@ func _near(a: float, b: float, eps: float) -> bool:
 
 func _mk() -> Array:
 	# 返回 [组件, 精灵]。精灵不加入场景树 —— scale 是 Node2D 属性,不加入场景树也能读写。
-	# 两者都记进 `_owned`,退出前统一 free(见该字段的注释)。
+	# 登记至 _owned，退出前统一释放
 	var spr := AnimatedSprite2D.new()
 	var s := SquashStretch.new()
 	s.setup(spr, SquashStretch.Profile.PLAYER)
@@ -55,11 +52,7 @@ func _free_owned() -> void:
 func _initialize() -> void:
 	print("== SquashStretch 纯逻辑冒烟 ==")
 
-	# ⓪ 参数镜像:两侧那 8 个同名 `squash_*` 常量必须同值 + 幅度必须还是设计约定的那个数。
-	#    - 为什么必须有:四处测试的阈值全部相对 `PlayerParams.squash_amount` 表达,
-	#    把 0.10 抬到 0.20(单侧或双侧)一条都不会红 —— 而"不要太夸张"是设计约定。
-	#    - 用 `get_script_constant_map()` 而不是直接取属性:后者在名字被改名时会抛错,
-	#    而改名恰恰是这条防御性校验最该产出"响亮的红"的场景(取不到 = 少一个常量,必须报出来)。
+	# ⓪ 参数镜像：验证两份配置中 8 个同名 squash_* 常量保持一致
 	var pp_script = load("res://core/config/player_params.gd")
 	var ep_script = load("res://core/config/enemy_params.gd")
 	if pp_script == null or ep_script == null:
@@ -69,7 +62,7 @@ func _initialize() -> void:
 	var p_map: Dictionary = pp_script.get_script_constant_map()
 	var e_map: Dictionary = ep_script.get_script_constant_map()
 	if not e_map.has("shared"):
-		print("SQUASH SMOKE: FAIL | EnemyParams 里找不到嵌套类 `shared`(守卫已失明,拒绝静默跳过)")
+		print("SQUASH SMOKE: FAIL | EnemyParams 里找不到嵌套类 shared")
 		quit(1)
 		return
 	var es_map: Dictionary = (e_map["shared"] as GDScript).get_script_constant_map()
@@ -138,9 +131,7 @@ func _initialize() -> void:
 	(g[0] as SquashStretch).impulse(SquashStretch.Impulse.JUMP)   # +0.75
 	(g[0] as SquashStretch).impulse(SquashStretch.Impulse.DASH)   # +0.80 -> 饱和到 +1.0
 	(g[0] as SquashStretch).tick(0.0, -700.0, false, false)       # 空中项再叠 squash_air(未钳位时 v = 1 + air)
-	# 注意事项：前提断言:本阶段的有效判定能力 == `amount × squash_air`。把"余量被调到看不见"变成红,
-	#    而不是让本阶段静默退化成一个始终为 true断言(`squash_air` 降到 0.02 时余量只剩 0.0012,
-	#    与下面的 0.001 epsilon 同量级  ->  会悄悄失去判定有效性)。这是本文件反复用到的同一手法。
+	# 前置断言：验证测试参数分辨率充足（amount * squash_air > 0.002）
 	_ok(PlayerParams.squash_amount * PlayerParams.squash_air > 0.002,
 			"本相过冲余量足够(== amount × squash_air = %.4f);不够就调回 squash_air 或改本相构造"
 			% (PlayerParams.squash_amount * PlayerParams.squash_air))
@@ -148,14 +139,11 @@ func _initialize() -> void:
 	_ok(absf(gs.x - 1.0) <= PlayerParams.squash_amount + 0.0001
 			and absf(gs.y - 1.0) <= PlayerParams.squash_amount + 0.0001,
 			"多事件叠加不越上限,实测 %s" % str(gs))
-	# 且必须是"顶在上限上"而不是"被抵消回中性" —— 上一条若退化回抵消,这里立刻红
-	# (v=+1.0 是拉伸  ->  x 顶在 1.0 - amount)
+	# 验证数值停留在钳位边界
 	_ok(_near(gs.x, 1.0 - PlayerParams.squash_amount, 0.001),
 			"叠加确实停在钳位处(v=+1.0,窄高),实测 %.4f" % gs.x)
 
-	# ⑦b 饱和的语义防御性校验:同一组事件叠两次,结果必须与叠一次完全相同
-	#     (impulse() 的钳位让第二组落在同一个饱和点)。只删 impulse() 里那个 clampf 时,
-	#     两组各自累积到 1.55 / 3.10,再被同一次落地冲击减掉同一个值 -> 两者分叉 = 红。
+	# ⑦b 饱和语义断言：多次冲量叠加后保持在同一饱和点
 	var g1: Array = _mk()
 	(g1[0] as SquashStretch).impulse(SquashStretch.Impulse.JUMP)
 	(g1[0] as SquashStretch).impulse(SquashStretch.Impulse.DASH)
@@ -170,14 +158,8 @@ func _initialize() -> void:
 	_ok(_near(s1.x, s2.x, 0.0005),
 			"叠加饱和:叠两次与叠一次同值,实测 %s" % (str(s1) + " vs " + str(s2)))
 
-	# ⑦c 下行饱和的边界防御性校验(⑦ 的镜像):⑦ 严格校验 v == +1.0,这条严格校验 v == -1.0。
-	#     构造:三次 HURT(-0.50 ×3)把 `_impulse` 压到下行钳位(-1.0),再用一次满力落地
-	#     (`-1.0`,与 ⑦ 里那个 `+0.30` 的空中项相同处理逻辑"反向的满幅项")让它稳稳停在钳位处。
-	#     - `delta = 0.0` 是刻意的:指数恢复每帧要拦截屏蔽 14%,拿 `DT` 读到的会是
-	#     `-0.8607`(scale.x 1.0861)而不是边界值本身。本阶段要钉的正是"v 到底钳在哪",
-	#     故把恢复项冻掉(`approach(x, 0, r, 0) == x`,浮点精确);帧内其余部分照常。
-	#     - 它不鉴别 `impulse()` 的下钳位(那里无论钳不钳都被 `_apply` 收进 -1.0),
-	#     鉴别的是 `_apply()` 的下钳位 —— 去掉它 -> v = -2.5 -> scale.x = 1.25,红。
+	# ⑦c 下行饱和边界断言：验证负向冲量被严格钳制在 -1.0
+	# 构造：3 次受击冲量叠加满力落地，delta=0 冻结恢复项直接采样瞬时钳位值
 	var n: Array = _mk()
 	(n[0] as SquashStretch).impulse(SquashStretch.Impulse.HURT)
 	(n[0] as SquashStretch).impulse(SquashStretch.Impulse.HURT)
@@ -187,15 +169,11 @@ func _initialize() -> void:
 	_ok(absf(ns.x - 1.0) <= PlayerParams.squash_amount + 0.0001
 			and absf(ns.y - 1.0) <= PlayerParams.squash_amount + 0.0001,
 			"下行叠加不越下限,实测 %s" % str(ns))
-	# 且必须"顶在下限上"而不是收缩回中性:v == -1.0 是挤压  ->  x 顶在 1.0 + amount
+	# 验证数值停留在下限钳位处（v == -1.0 时 scale.x 为 1.0 + amount）
 	_ok(_near(ns.x, 1.0 + PlayerParams.squash_amount, 0.0005),
 			"下行叠加停在钳位处(v=-1.0,宽矮),实测 %.4f(需 %.4f)" % [
 				ns.x, 1.0 + PlayerParams.squash_amount])
-	# ⑦d 下行饱和的语义防御性校验(⑦b 的镜像):叠的组数翻倍,结果必须完全相同 ——
-	#     `impulse()` 的下钳位让第二组落在同一个饱和点。
-	#     - 这里不能照抄 ⑦b 的"再叠一次满力落地":落地项会把两组一起压到 `_apply` 的
-	#       钳位上(都是 -1.0),分叉被消除差异、判定条件变成无效操作。去掉那个附加项才看得见
-	#       "未钳位时四组是 -2.0(−1.72 被 `_apply` 收成 -1.0)vs 两组 -0.8607"。
+	# ⑦d 下行饱和语义断言：多次冲量叠加后保持在同一饱和点
 	var n1: Array = _mk()
 	for i in 2:
 		(n1[0] as SquashStretch).impulse(SquashStretch.Impulse.HURT)

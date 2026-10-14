@@ -70,15 +70,14 @@ func _initialize() -> void:
 	var has_capacity := false
 	var has_max := false
 	for pr in probe.get_property_list():
-		# - 用 if/elif,不用 `match` —— GDScript 的 match 体内 `continue` 是 fall-through
-		#   (落到下一个 pattern、两支都跑),本仓踩过;这里虽没写 continue,但别开这个头。
+		# 遍历属性列表，查找 capacity 与 max_weapons
 		var n := str(pr.get("name", ""))
 		if n == "capacity":
 			has_capacity = true
 		elif n == "max_weapons":
 			has_max = true
-	_check(has_capacity, "★ WeaponInventory 应有**实例字段** capacity(不再是类常量 CAPACITY)")
-	_check(has_max, "★ WeaponInventory 应有**实例字段** max_weapons(不再是类常量 MAX_WEAPONS)")
+	_check(has_capacity, "WeaponInventory 应包含实例字段 capacity（支持动态配置）")
+	_check(has_max, "WeaponInventory 应包含实例字段 max_weapons（支持动态配置）")
 	if has_capacity and has_max:
 		# ① 不带额外实参  ->  默认值不变(协议零改动的前提)
 		var dflt = WI.new(tiers)
@@ -93,30 +92,30 @@ func _initialize() -> void:
 		wide.add(5, 5)                      # 三把重型 = 12 格(加起来正好到顶)
 		_check(wide.used_cell_count() == 12,
 				"宽松配置下三把重型 = 12 格(实际 %d)" % wide.used_cell_count())
-		_check(not wide.can_hold(1), "★ 容量闸门读的是**字段**:12 格满了,最便宜的档也放不下")
+		_check(not wide.can_hold(1), "背包容量满时无法继续添加新武器")
 		# ③ 两条门控前置校验互相独立 —— 这是本节的核心断言,今天靠真表造不出来(见上面那段长注释)
 		var by_cap = WI.new(tiers, 4, 9)
 		by_cap.add(5, 5)                    # 重型 4 格 = 正好占满 4 格,而把数还剩 8
 		_check(by_cap.used_cell_count() == 4,
 				"容量 4 的背包放一把重型正好占满(实际 %d)" % by_cap.used_cell_count())
-		_check(not by_cap.can_hold(1), "★ 容量闸门单独生效(把数上限 9 没拦,是容量拦的)")
+		_check(not by_cap.can_hold(1), "背包容量门控单独生效")
 		var by_max = WI.new(tiers, 100, 1)
 		by_max.add(1, 5)                    # 轻 2 格,容量还剩 98
 		_check(by_max.used_cell_count() == 2,
 				"容量 100 的背包放一把轻型只占 2 格(实际 %d)" % by_max.used_cell_count())
-		_check(not by_max.can_hold(1), "★ 把数闸门单独生效(容量剩 98 格,是把数上限拦的)")
+		_check(not by_max.can_hold(1), "武器数量门控单独生效")
 		# ④ setter 路径
 		by_max.set_capacity(0)
 		by_max.set_max_weapons(0)
 		_check(by_max.capacity >= 1 and by_max.max_weapons >= 1,
-				"setter 必须把容量/把数**钳到 ≥ 1**(0 会让闸门变成'永远放不下'的死锁;实际 %d / %d)"
+				"setter 必须将容量与数量下限钳制为 >= 1（实际 %d / %d）"
 						% [by_max.capacity, by_max.max_weapons])
 		by_max.set_capacity(12)
 		by_max.set_max_weapons(6)
 		_check(by_max.capacity == 12 and by_max.max_weapons == 6,
 				"setter 设值生效(实际 %d / %d)" % [by_max.capacity, by_max.max_weapons])
 	else:
-		_check(false, "★ 容量/把数可配的四组行为断言被跳过(字段还没改,期望在这一步红)")
+		_check(false, "容量与武器数量配置测试被跳过（字段未就绪）")
 
 	# ── 紧凑排布 ──
 	var inv3 = WI.new(tiers)

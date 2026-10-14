@@ -148,11 +148,7 @@ func _count_near(img: Image, rc: Rect2i, want: Color, tol: float = 0.06) -> int:
 
 
 # ── 槽位格子三态 ─────────────────────────────────────────────────────
-# - 这里只断言"每格是不是它该有的颜色"+"三态两两可区分",不断言"哪个更醒目":
-#   本探针的底是深色(见 _setup_scene 的 bg),而实机 HUD 的底板是压在地图浅灰蓝上的
-#   `黑 0.1`(≈#6C8790,浅底)—— 同一个色在这两种底上的醒目程度是相反的,
-#   在深底上比"谁更醒目"会把实机上正确的配色判成错的。
-#   明度阶梯那条不变量写在 ui_factory.gd 的常量注释里,由人眼看实图确认。
+# 验证每格对应状态颜色及三态两两可区分
 func _check_slot_colors() -> void:
 	var slots: WeaponSlots = _hud._slots
 	var img := await _shot("l3_slots")
@@ -185,12 +181,8 @@ func _check_slot_colors() -> void:
 	_check(_count_near(img, _slot_cell_rect(slots, 6), _slot_screen_color(UiFactory.C_SLOT_EMPTY)) > full / 2,
 		"第 7 格应是空的(1只手枪2格 + 1把重狙4格 = 6 格,后两格空)")
 
-	# ── 再取一张浅底的图 ──
-	# - 实机 HUD 垫的是 `黑 0.1` 压在地图开阔区(≈#78969F,浅灰蓝)上 —— 底板是浅的。
-	#   本探针默认的深色底会把"浅底上读不出来"这类问题遮掉(正是 docs/eng/ui.md 里
-	#   combat_hud_visual_probe 记过的坑:单机 HUD 的 1.9:1 生命条就是这么漏掉的)。
-	#   这一张不参与断言(两种底上"谁更醒目"的答案是相反的,拿它判会把对的配色判错),
-	#   只落盘供人眼验收 —— 配色是审美值,以实图为准。
+	# ── 浅底对比截图 ──
+	# 使用地图浅色背景额外截取一张供对比查看
 	if _bg != null:
 		_bg.color = Color(0.471, 0.588, 0.624)   # = 地图开阔区 #78969F
 		await _frames(2)
@@ -292,8 +284,7 @@ func _setup_scene() -> void:
 	# 用 手枪(2格)+ 重狙(4格)= 6 格 / 2 把,手持的是手枪:
 	#   格 0-1 = 手持(深青) · 格 2-5 = 已占(淡青) · 格 6-7 = 空(淡灰)
 	# 三段各占多个格且不重叠,取色时不会互相串。
-	# - 单机开局空手之后,player.tscn 直接实例化出来是没有武器的(_ready 给空背包),
-	#   而下面几段都要 current_weapon() 非空 —— 所以这一段必须排在任何 `_w = ...` 之前。
+	# 初始化背包武器配置，确保 current_weapon() 正常解析
 	p.weapons.set_initial_inventory([1, 3])
 	await _frames(4)   # 武器是 call_deferred 加入场景树的,等它 _ready(mag_ammo = mag_size)
 
@@ -339,8 +330,7 @@ func _capture_reloading() -> void:
 	_check(_w.is_reloading(), "态2:start_reload()+tick(0.5) 后未处于装填中")
 	var prog := _w.reload_progress()
 	_check(prog > 0.0 and prog < 1.0, "态2:换弹进度 %.3f 不在 (0,1) 中段" % prog)
-	# - 探针冻了玩家物理 -> `_update_reload_ring` 不跑,得自己推一拍;
-	#   必须在取图之前(第一版加在断言里,结果断言绿了、PNG 里却没环)。
+	# 手动触发换弹圆环状态更新，确保截图前完成渲染状态同步
 	p._update_reload_ring()
 	img2 = await _shot("_l3_2_reloading.png")
 	_check(_hud._ammo_label.text == "%d/%d" % [_w.mag_ammo, _w.mag_size],

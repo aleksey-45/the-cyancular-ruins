@@ -9,8 +9,7 @@ function errText(e) {
   return m === '' ? String(e) : m;
 }
 
-// ★ 刻意**不**用 transfer 列表搬 Uint8Array:一次保存/载入才走一趟,复制那点字节
-//   远比"transfer 之后 buffer 被 detach"这一类跨环境差异便宜。少一个变量。
+// 避免使用 transfer 转移 Uint8Array 所有权，保持结构化克隆以确保环境兼容性
 function reply(id, payload) {
   var msg = { id: id };
   for (var k in payload) msg[k] = payload[k];

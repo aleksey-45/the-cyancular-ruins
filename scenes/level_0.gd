@@ -40,22 +40,22 @@ var _glows: Dictionary = {}
 
 static func safe_change_scene(tree: SceneTree, path: String) -> void:
 	if _switching:
-		return   # 已有正在进行的场景切换：忽略后续并发请求（目标均为同一菜单，保留最先发起者）
+		return   # 已有正在进行的场景切换：忽略并发请求
 	_switching = true
-	# 先回到帧末再动树:调用方(按钮按下/R 重载的输入处理)可能正处于旧场景节点发出的
-	# 信号调用栈里,立刻从场景树中移除会触发 CanvasItem EXIT_TREE 状态错误(headless 实测)。
+	# 等待当前帧处理完毕后再操作场景树：调用方可能处于旧场景信号的回调栈中，
+	# 立刻从场景树移除会触发 CanvasItem EXIT_TREE 状态错误。
 	await tree.process_frame
 	var t0 := Time.get_ticks_usec()
 	var t := t0
 	var old: Node = tree.current_scene
 	var next: Node = load(path).instantiate()
 	t = _perf_log("load+instantiate", t)
-	tree.root.add_child(next)      # 新场景 _ready 先跑(旧世界仍在树上,静态引用完好)
+	tree.root.add_child(next)      # 先添加新场景至场景树（旧场景仍在树上，静态引用有效）
 	t = _perf_log("add_child(next)", t)
-	tree.current_scene = next      # 接管 current_scene 指针,旧场景不再被 change 流程释放
+	tree.current_scene = next      # 切换当前主场景指针
 	if old != null and old != next:
 		if OS.get_cmdline_user_args().has("--perf-teardown-detail"):
-			# 诊断模式：逐子树拆解计时
+			# 诊断模式：统计各子树卸载耗时
 			_teardown_detail(tree, old)
 			_perf_log("总计", t0)
 			_switching = false
@@ -63,7 +63,7 @@ static func safe_change_scene(tree: SceneTree, path: String) -> void:
 		tree.root.remove_child(old)
 		t = _perf_log("remove_child(old)", t)
 		old.visible = false
-		# 移出场景树后立即交给分帧拆除器分批回收，避免内存与句柄泄漏
+		# 移出场景树后交给异步分帧释放器逐帧回收，避免大量节点同时释放引起单帧卡顿
 		if OS.get_cmdline_user_args().has("--perf-reap-sync"):
 			old.free()
 			t = _perf_log("free() 同步(对照)", t)
@@ -71,25 +71,24 @@ static func safe_change_scene(tree: SceneTree, path: String) -> void:
 			start_reap(tree, old)
 			t = _perf_log("start_reap(旧世界)", t)
 	_perf_log("总计", t0)
-	_switching = false   # 换场完成:放行后续换场(回菜单→再进游戏→再回菜单是一串合法调用)
+	_switching = false   # 场景切换完成，允许后续换场
 
-# ── 退役世界的分帧拆除器 ──
-# 将同步释放拆分为跨多帧的平摊释放，并在菜单显示期间后台运行。
-# 拆除顺序采用逆前序遍历，保证子节点先于父节点被释放。
-# 每帧执行受时间预算限制，避免单帧卡顿。
-const REAP_BUDGET_US := 3000      # 每帧拆除预算(≈0.18 帧 @60fps)
+# ── 旧场景节点异步分帧释放器 ──
+# 将大场景节点的同步销毁平摊到多个帧中，并在显示菜单期间后台逐步回收。
+# 销毁顺序采用逆前序遍历，确保子节点优先于父节点被释放。
+# 每物理帧执行受时间预算限制，避免瞬时卡顿。
+const REAP_BUDGET_US := 3000      # 每帧销毁耗时预算（微秒）
 static var _reap_queue: Array[Node] = []
 static var _reaper_driver: Node = null
-# 诊断计数(只在 --perf-switch 下打印):拆了多少节点、摊了多少帧。
+# 性能诊断统计
 static var _reap_nodes := 0
 static var _reap_frames := 0
 static var _reap_us := 0
 
 class _Reaper extends Node:
 	func _ready() -> void:
-		# 换场可能发生在暂停中(暂停菜单点「回到主菜单」),拆除不该被暂停卡住
+		# 切换场景可能在暂停中发生，销毁驱动节点不受暂停影响
 		process_mode = Node.PROCESS_MODE_ALWAYS
-		# 内部类需显式启用 process 循环
 		set_process(true)
 
 	func _process(_delta: float) -> void:
@@ -100,7 +99,7 @@ class _Reaper extends Node:
 		if Level0._reaper_driver == self:
 			Level0._reaper_driver = null
 
-# 把一具退役世界交给分帧拆除器。上一具若还没拆完,先就地拆掉(通常已近空壳,代价很小)。
+# 将待释放的旧场景节点加入分帧释放队列；若上一个场景尚未完全释放，则就地同步释放剩余节点。
 static func start_reap(tree: SceneTree, world: Node) -> void:
 	if world == null or not is_instance_valid(world):
 		return
@@ -687,13 +686,13 @@ func _near_player(n: Node2D) -> bool:
 	return d.length() <= GLOW_RADIUS
 
 
-## 时间场驱动缝(探针直调;正常路径由 _process 传真实按键态)
+## 时间场按键驱动接口（用于探针测试直接调用；常规流程由 _process 传递输入状态）
 var _prev_want_rewind := false
 var _prev_want_haste := false
 
 
 func _drive_time(delta: float, want_rewind: bool, want_haste: bool) -> void:
-	# 锁定/空账时的按键无效操作:按下那一下给 deny 反馈(否则玩家以为键坏了)
+	# 锁定或余额耗尽时按下技能按键给出拒绝音效反馈
 	if grain_account != null and want_rewind and not _prev_want_rewind and not grain_account.can_spend():
 		Sfx.play("deny")
 	if grain_account != null and want_haste and not _prev_want_haste and not grain_account.can_spend():
@@ -703,7 +702,7 @@ func _drive_time(delta: float, want_rewind: bool, want_haste: bool) -> void:
 	time_field.update(delta, want_rewind, want_haste)
 
 
-## 世界回放 tick:录制 ↔ 回放的状态机 + 尸体保留/过期清理(单机)
+## 世界回溯步进：录制与回放状态机，以及击败实体的暂时隐藏与恢复
 func _tick_rewind(delta: float) -> void:
 	if _rewind == null:
 		return
@@ -745,7 +744,7 @@ func _tick_rewind(delta: float) -> void:
 
 func _update_pickup_prompt() -> void:
 	var pl := $WorldViewport.get_node_or_null("Player") as Node2D
-	# 拾取判定与渲染位置统一以就近副本对齐锚点为准
+	# 地面武器拾取判定与渲染坐标映射到距离本地玩家最近的可视副本
 	var anchor: Vector2 = pl.global_position if pl != null else Vector2.ZERO
 	for inst in _pickup_nodes:
 		var n0 = _pickup_nodes.get(inst, null)

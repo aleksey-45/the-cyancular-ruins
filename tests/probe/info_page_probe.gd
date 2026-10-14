@@ -14,7 +14,7 @@ const CREDITS := [
 	["Thomas Stearns Eliot", ""],
 	["Jorge Luis Borges", ""],
 ]
-# 空历史兜底保护文案:同样硬编码复制的生产字面量(`scenes/info_menu.gd` 的 `_fill_version_block`)。
+# Git 历史不可用时的回退提示文案
 const NO_GIT_NOTE := "(读不到 git 历史:仓库不可用或未安装 git)"
 
 var _checks := 0
@@ -31,8 +31,7 @@ func _check(ok: bool, what: String) -> void:
 
 
 func _ready() -> void:
-	# - 版本号真值必须在打断 PATH 之前取:`AppInfo` 有静态缓存,先取一次之后页面拿到的是
-	#   同一份(否则页面会因 git 不可用而显示 "dev",而真值仍是 git 那一份,两边对不上)。
+	# 先读取 AppInfo 版本字符串
 	var ver: String = preload("res://core/config/app_info.gd").version_string()
 
 	var p: Node = (load(SCENE) as PackedScene).instantiate()
@@ -100,7 +99,7 @@ func _check_layout(root: Node) -> void:
 					right.size.x if right != null else -1.0])
 
 
-# 找含 `scroll` 的、恰有 2 个直接子节点的 HBoxContainer(= 那两栏)。
+# 查找包含指定滚动容器的双栏 HBoxContainer
 func _find_two_col_box(root: Node, scroll: Node) -> Node:
 	if root is HBoxContainer and root.get_child_count() == 2 and _subtree_has(root, scroll):
 		return root
@@ -166,7 +165,7 @@ func _has_exact(texts: Array, want: String) -> bool:
 	return false
 
 
-# 找文字逐字等于 `want` 的那个 Label(与 `_has` 的子串命中相对)。
+# 查找文本严格匹配的 Label 节点
 func _find_label_exact(root: Node, want: String) -> Label:
 	if root is Label and (root as Label).text.strip_edges() == want:
 		return root

@@ -61,7 +61,7 @@ func _physics_process(delta: float) -> void:
 		return
 	_wrap()
 
-# 多人对战权威端约束在规范坐标区间内，单人模式与客户端锚定至就近副本
+# 多人对战服务端将子弹坐标约束在地图区间内，单人模式与客户端映射至最近可视副本
 func _wrap() -> void:
 	if get_tree().get_nodes_in_group("player").size() >= 2:
 		global_position = MazeGenerator.wrap_to_range(global_position,

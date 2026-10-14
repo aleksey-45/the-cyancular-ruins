@@ -17,10 +17,8 @@ func _check(ok: bool, msg: String) -> void:
 	print("[FAIL] ", msg)
 
 
-# rows×cols 的网格:默认全空,再把 solid_rows 里的行填成实心砖。
-# - 必须用带类型的 Array[Array] / Array[int]:MazeGenerator.current_grid 是
-#   `static var current_grid: Array[Array]`,把无类型的 Array 赋给它会在运行期报类型错。
-#   相同实现方式见 tests/smoke/beam_trace_smoke.gd 的 _make_grid。
+# 构建 rows×cols 测试网格：默认全空，将 solid_rows 指定行填为实心。
+# 使用强类型 Array[Array] 与 Array[int]，避免向 MazeGenerator.current_grid 赋值时触发类型错误。
 func _grid(rows: int, cols: int, solid_rows: Array) -> Array[Array]:
 	var g: Array[Array] = []
 	for y in range(rows):
@@ -33,7 +31,7 @@ func _grid(rows: int, cols: int, solid_rows: Array) -> Array[Array]:
 
 func _initialize() -> void:
 	var U: GDScript = load("res://core/sim/unstick.gd")
-	# - 空载防御性校验:load() 失败还往下走会抛错,而 -s 抛错走不到 quit() -> 永久挂起
+	# 校验脚本加载状态，若加载失败立即退出
 	if U == null:
 		print("UNSTICK FAILED: 找不到 core/sim/unstick.gd")
 		quit(1)
