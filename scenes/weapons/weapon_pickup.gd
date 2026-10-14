@@ -21,9 +21,9 @@ var drop_velocity: Vector2 = Vector2.ZERO
 var _settled: bool = false
 var _age: float = 0.0
 
-# 权威坐标与渲染坐标：
-# canonical_pos 维持在 [0, MAP) 规范区间内，由服务端权威计算与拾取判定读取；
-# global_position 为就近副本对齐后的渲染坐标，由 set_anchor 锚定至本地视口最近副本。
+# 逻辑坐标与渲染坐标：
+# canonical_pos 保持在 [0, MAP) 逻辑区间内，供服务端物理模拟与拾取判定使用；
+# global_position 为渲染坐标，通过 set_anchor 映射到距离本地视口最近的可视副本位置。
 var canonical_pos: Vector2 = Vector2.ZERO
 var _anchor: Vector2 = Vector2.ZERO
 var _has_anchor: bool = false
@@ -34,7 +34,7 @@ func set_anchor(p: Vector2) -> void:
 	_has_anchor = true
 
 
-# 根据规范坐标同步就近副本渲染位置
+# 根据逻辑坐标更新最近可视副本的渲染位置
 func sync_render_from_canonical() -> void:
 	if not _has_anchor:
 		global_position = canonical_pos

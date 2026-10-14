@@ -1,9 +1,9 @@
 'use strict';
 
-// Node smoke test —— `.cyrm` v4 格式核心层(level_editor/core.js)。
-// 直接读 core.js 并求值,不依赖浏览器、不依赖 structure-editor.html。
+// Node 冒烟测试：.cyrm v4 格式核心层（level_editor/core.js）
+// 直接读 core.js 并求值，不依赖浏览器与 structure-editor.html。
 //
-// Run: node smoke.js
+// 运行命令: node smoke.js
 
 const fs = require('fs');
 const path = require('path');
@@ -38,15 +38,8 @@ function eq(actual, expected, msg) {
   if (a === e) { pass++; console.log('  ok  - ' + msg); }
   else { fail++; console.error('  FAIL - ' + msg + '\n        got: ' + a + '\n        exp: ' + e); }
 }
-// ★ 反向断言必须断言「错在哪」,不能只断言「抛了」—— 只判「有没有抛」是假绿:
-//   Core.decodeMap 若因拼写错误根本不存在,抛出来的 TypeError 一样算通过。
-//   故 expectSub 是可选但强烈建议的期望子串;给了就必须出现在异常文本里。
-// ★ 为什么还要看 e.cause:Node 的 DecompressionStream 在 zlib 的 Adler-32 尾损坏时,
-//   抛的是一个 **message 为空字符串**的 TypeError,真实原因只在 e.cause.message 里
-//   (实测 "incorrect data check")。只看 e.message 的话那条断言永远取不到错因,
-//   就退化成「任何异常都算过」的假绿。
-// ★ e.cause 是 **非标准扩展**(浏览器里可能没有),故写成「有则用、无则退回空串」,
-//   绝不能让它成为硬依赖。
+// 异常断言校验：检查异常是否抛出，若指定 expectSub 则同时校验异常信息是否包含该子串
+// 支持兼容 Node 环境下 e.cause 结构
 function errText(e) {
   var msg = (e && e.message !== undefined) ? String(e.message) : String(e);
   if (msg === '' && e && e.cause && e.cause.message) msg = String(e.cause.message);
@@ -73,8 +66,7 @@ async function rejects(fn, msg, expectSub) {
   }
   pass++; console.log('  ok  - ' + msg);
 }
-// 逐字节比对,失败时报**第一个不同的下标** —— 整文件 golden 向量要用它,
-// 用 eq(JSON) 时一条差字节会打出 181 个数字的 got/exp,读不出是哪一位错。
+// 逐字节比对，失败时输出首个不一致的字节索引
 function sameBytes(actual, expected, msg) {
   const a = Array.prototype.slice.call(actual);
   if (a.length !== expected.length) {
@@ -195,8 +187,7 @@ eq(Core.normRegion(1, 1, 1, 1), { x: 1, y: 1, w: 1, h: 1 }, 'normRegion: 单格'
      'ByteReader: u32 读 [00 00 00 80] → 2147483648(高位单 bit 也不是负数)');
   eq(Array.prototype.slice.call(r.bytes(2)), [0xAA, 0xBB], 'ByteReader: bytes');
   eq(r.remaining(), 0, 'ByteReader: remaining 归零');
-  // ByteReader 的三处越界共用一个错误信息('ByteReader: 越界读(p+n > len)'),
-  // 故三处的期望子串相同 —— 它仍是**本类错误独有**的(不含通用词)。
+  // 校验 ByteReader 越界读异常
   throws(function () { r.u8(); }, 'ByteReader: 越界读抛错', '越界读');
   throws(function () { new Core.ByteReader(b).bytes(b.length + 1); }, 'ByteReader: bytes 越界抛错', '越界读');
   throws(function () { new Core.ByteReader(new Uint8Array(0)).u8(); }, 'ByteReader: 空 buffer 读抛错', '越界读');
@@ -262,14 +253,13 @@ eq(Core.crc32(new Uint8Array([0x00])), 0xD202EF8D, 'crc32: 单字节 0x00');
 })();
 
 await (async function () {
-  // 第 i 个非空气描述符 —— 给出一个**合法且互不相同**的描述符。
-  // texture 取 1..4095 循环,再用 (hue, bright) 区分档:共 4095×64 种 ≫ 65535。
+  // 第 i 个非空气描述符：生成合法且互不相同的描述符
+  // texture 取 1..4095 循环，结合 (hue, bright) 生成不同组合
   function distinctDesc(i) {
     var block = (i / 4095) | 0;
     return Core.packDesc(1 + (i % 4095), block & 7, (block >> 3) & 7, 4, 7);
   }
-  // ★ 自证 distinctDesc 真的两两不同 —— 否则"300 种不同描述符"是假的,
-  //   调色板会缩回 ≤256 项、双字节路径根本不会被触发,而断言照样全绿。
+  // 验证 distinctDesc 生成的描述符互不相同
   var PROBE_N = 17 * 4095;                 // 覆盖下界测试用到的全部 (texture, block) 组合
   var probe = new Set();
   for (var q = 0; q < PROBE_N; q++) probe.add(distinctDesc(q));
@@ -302,9 +292,8 @@ await (async function () {
   ok(allOk, 'A2: 300 种描述符各自按位置回读正确' + (badAt < 0 ? '' : '(首个失败 i=' + badAt + ')'));
   eq(backL.desc[300], 0, 'A2: 第 301 格是空气(索引 0,没被串到别处)');
 
-  // ── ② 整文件往返也要真的走通 iw = 2 ──
-  // 把 300 种放在**前景层**(层 0),且不带任何 meta ⇒ body = metaLen(2,值为 0) + 层0 块,
-  // 于是层0 块在文件里的偏移是固定的,可以直接读它的 palette_count / index_width。
+  // ── ② 整文件往返验证 iw = 2 ──
+  // 将 300 种描述符放入前景层（层 0），不带元数据直接编码测试
   var mPal = Core.createMap('pal', 5, 4);                  // 5×4 格 = 20×16 = 320 子格
   var front = mPal.layers[Core.LAYER_FRONT].desc;
   for (i = 0; i < 300; i++) front[i] = distinctDesc(i);
@@ -322,9 +311,7 @@ await (async function () {
   eq(Array.prototype.slice.call(backPal.layers[Core.LAYER_FRONT].desc),
      Array.prototype.slice.call(front), 'A2: 整文件往返(压缩路径,300 种描述符 / iw = 2)');
 
-  // ── ③ 调色板上界:恰好 65535 项可以,65536 项必须抛(指令 A1 的边界)──
-  // palette_count 是 u16 ⇒ 能表达的最大值是 65535;索引 0 又必须留给空气,
-  // 故"装得下的非空气描述符"上限恰好 65534 种。两条都取**恰好**那一格。
+  // ── ③ 调色板容量边界校验：上限支持 65535 项，超出则抛出异常 ──
   var nOk = 65534;
   var descOk = new Uint32Array(nOk);
   for (i = 0; i < nOk; i++) descOk[i] = distinctDesc(i);
@@ -339,8 +326,7 @@ await (async function () {
   eq(backOk.desc[0], distinctDesc(0), 'A2 上界: 65535 项 → 第 0 格回读');
   eq(backOk.desc[nOk - 1], distinctDesc(nOk - 1), 'A2 上界: 65535 项 → 最后一格回读');
 
-  // 65536 项:加入第 65535 个非空气描述符时 pal.length 会到 65536 ⇒ w.u16 按位截断成 0
-  // ⇒ 解码端「调色板为空」—— 即"编码器产出自己的解码器拒绝的文件"。必须在 push 之前就拒。
+  // 调色板超过 65535 项时抛出异常
   var nBad = 65535;
   var descBad = new Uint32Array(nBad);
   for (i = 0; i < nBad; i++) descBad[i] = distinctDesc(i);
@@ -411,7 +397,7 @@ await (async function () {
   // CRLF 要能吃
   eq(Core.parseMeta('# demo\r\n# player 1 2\r\n').players, [{ x: 1, y: 2 }], 'parseMeta: CRLF');
 
-  // ★ parseInt 的前缀截断必须走降级路径,不能把原文吃掉
+  // 包含非数字前缀的字符串降级保留为注释
   eq(Core.parseMeta('# player 3.5 4\n').comments, ['player 3.5 4'], 'parseMeta: 小数坐标整行降级为注释');
   eq(Core.parseMeta('# player 3.5 4\n').players, [], 'parseMeta: 小数坐标不产生出生点');
   eq(Core.parseMeta('# player 7abc 4\n').comments, ['player 7abc 4'], 'parseMeta: 带后缀坐标整行降级');
@@ -500,8 +486,7 @@ await (async function () {
   eq(pBack.layers[2], null, '缺层: 后景回来是 null');
   ok(pBack.layers[1] !== null && pBack.layers[3] !== null, '缺层: 场景与背景仍在');
 
-  // ── 反向断言:损坏的文件必须抛错,不能静默读成一张空图 ──
-  // ★ 每条都带期望子串:只判「抛了」的话,decodeMap 拼错名字抛的 TypeError 也会全绿。
+  // ── 反向断言：损坏的文件必须抛出相应异常 ──
   var badMagic = bytes.slice(); badMagic[0] = 0x00;
   await rejects(function () { return Core.decodeMap(badMagic); }, 'decodeMap: 坏 magic 抛错', 'magic');
 
@@ -511,9 +496,7 @@ await (async function () {
   var badCrc = raw.slice(); badCrc[badCrc.length - 1] ^= 0xFF;
   await rejects(function () { return Core.decodeMap(badCrc); }, 'decodeMap: CRC 不符抛错', 'CRC 不符');
 
-  // 压缩流本身损坏(另一个损坏面):翻的是 zlib 的 Adler-32 校验尾,Node 的
-  // DecompressionStream 会以「message 为空的 TypeError」拒绝 —— 错因只在 e.cause.message 里
-  // ("incorrect data check")。故这条**能**带期望子串,依据是 errText 的 cause 回退。
+  // 压缩数据损坏时正确抛出异常
   var badStream = bytes.slice(); badStream[badStream.length - 1] ^= 0xFF;
   await rejects(function () { return Core.decodeMap(badStream); },
     'decodeMap: deflate 流损坏抛错(不静默读成空图)', 'incorrect data check');
@@ -524,16 +507,7 @@ await (async function () {
   var badAlign = bytes.slice(); badAlign[14] = 6; badAlign[15] = 0;  // sub_cols = 6,非 4 倍数
   await rejects(function () { return Core.decodeMap(badAlign); }, 'decodeMap: 尺寸非 4 倍数抛错', '倍数');
 
-  // ★★ 防「损坏的文件头触发巨量分配」:CRC32 只覆盖 body、**不覆盖文件头**,所以
-  //   「CRC 有效」根本不代表头是对的 —— 这两个尺寸字段是**未经验证**的输入。
-  //   65532 既 > 0 又能被 4 整除,两道既有校验都拦不住;若不按 body 实际大小反推上界,
-  //   就会一路走到 decodeTexLayer 的 new Uint32Array(65532×65532) ≈ 17GB。
-  //   ★ 期望子串在这里**同时**承担「不是走到分配才炸」的判据:实测本机
-  //     new Uint32Array(4294443024) 是**能成功**的(实测 arrayBuffers 涨到 17177.8MB,
-  //     即 17.2GB 真的分配出去了),所以去掉这条检查后**也是抛错的** —— 抛的是解码途中的
-  //     另一个错误(实测 "decodeTexLayer: 索引 2 越出调色板 2 项",那时内存已经分配完了)。
-  //     因此「断言它不是 RangeError」在这台机器上是**空转**的:那条断言在检查被删掉时照样通过。
-  //     只有钉住我们自己的错误文本(下面这个子串)才真的验到这条检查在跑。
+  // 防御损坏的文件头：当行列尺寸异常过大时，在分配前直接拒绝
   var badDims = raw.slice();
   badDims[14] = 0xFC; badDims[15] = 0xFF;      // sub_cols = 65532(>0,且是 4 的倍数)
   badDims[16] = 0xFC; badDims[17] = 0xFF;      // sub_rows = 65532
@@ -547,9 +521,7 @@ await (async function () {
   badLen[6] = (bodySize + 1) & 0xFF;
   await rejects(function () { return Core.decodeMap(badLen); }, 'decodeMap: body_size 不符抛错', '头部声明');
 
-  // ★ 指令 B5:同理,'compression' 这个子串**任何一个**未声明标识符的
-  //   `ReferenceError: compression is not defined` 都会命中 —— 而那种红是"探针写错了",
-  //   不是"这条守卫真的在跑"。钉住完整短语才排得掉这类假绿。
+  // 校验未知 compression 抛出异常
   var badComp = bytes.slice(); badComp[5] = 7;
   await rejects(function () { return Core.decodeMap(badComp); }, 'decodeMap: 未知 compression 抛错', '未知 compression');
 })();
@@ -642,8 +614,8 @@ await (async function () {
     [0x43, 0x59, 0x52, 0x4D],
     [0x04],                             // 4       version = 4
     [0x00],                             // 5       compression = 0(compress:false)
-    [0xA1, 0x00, 0x00, 0x00],           // 6..9    body_size = 161(**解压后**字节数,小端)
-    crcLe,                              // 10..13  body_crc32(**解压后** body 的 CRC32,小端)
+    [0xA1, 0x00, 0x00, 0x00],           // 6..9    body_size = 161(解压后字节数,小端)
+    crcLe,                              // 10..13  body_crc32(解压后 body 的 CRC32,小端)
     [0x04, 0x00],                       // 14..15  sub_cols = 4(1 格 × 4 子格)
     [0x04, 0x00],                       // 16..17  sub_rows = 4
     [0x0F],                             // 18      layer_flags = 0b1111(四层全在)
@@ -681,7 +653,7 @@ await (async function () {
   sameBytes(got, Array.prototype.slice.call(body), '压缩: Node zlib 独立解压结果 == 裸 body');
   ok(enc.length < plain.length, '压缩: 压缩后确实比裸 body + 20 小');
 
-  // ② 头部那两个字段必须算在**解压后**的 body 上(两端对称改错时往返抓不到)
+  // 校验头部 body_size 与 CRC32 针对解压后数据计算
   var zr = new Core.ByteReader(enc);
   zr.bytes(6);
   eq(zr.u32(), body.length, '压缩: body_size 是解压后的字节数(不是压缩后的)');
@@ -704,9 +676,7 @@ await (async function () {
   eq(back.layers[3].rgba[999], 0x11223344, '上限尺寸: 背景层点格回读');
   eq(back.layers[1].desc.length, bigN, '上限尺寸: 场景层长度 = 子格总数');
 
-  // 最紧的一档:整份文件**只有背景层**时,进入该层那一刻的余量恰好 = 1 + n×4,
-  // 上界必须**恰好放行**(n > floor((1+4n)/4) 为假)。紧不紧与图多大无关,小图即可验。
-  // 这条专钉"把上界收紧一格"这类回归 —— 它只在余量贴边时现形。
+  // 背景层边界容量检查
   var bgOnly = Core.createMap('bg', 40, 30);
   bgOnly.layers[0] = null; bgOnly.layers[1] = null; bgOnly.layers[2] = null;
   bgOnly.layers[3].rgba[7] = 0xAABBCCDD;
@@ -715,11 +685,8 @@ await (async function () {
   eq(bgBack.layers[0], null, '上限尺寸: 缺层仍回 null');
 })();
 
-// ---- descriptor 位域 vs 任意字节:解码路径不许用 isAir 判空气 ----
-// ★ 这一块钉 指令 B:isAir(d) 是 d === 0 的严格相等,而 decodeTexLayer 读的是**任意
-//   字节**。一个「辅码非 0 而纹理为 0」的畸形描述符(0x000007FF)会让 isAir(d)===false
-//   与 texOf(d)===0 得出相反结论 —— 解码路径若拿 isAir 判「这格是空气」就会判错。
-//   解码路径的正确判据是 texOf(d) === 0(按纹理位域取值),不是整体等 0。
+// ---- 描述符位域：解码路径中按 texOf 位域判断是否为空气 ----
+// 针对纹理位为 0 但调色位非 0 的描述符，必须通过 texOf(d) === 0 判定为空气
 await (async function () {
   var malformed = 0x000007FF;                    // 纹理 0,但色相/亮度/饱和度三位全 1
   eq(Core.texOf(malformed), 0, '任意字节: texOf(0x7FF) === 0(纹理位域为 0)');
@@ -797,8 +764,7 @@ await (async function () {
          'A4 旧格式: 单行输入报错(此前抛裸 TypeError: 读 undefined 的 length)', '旧字母格式的宽高');
   throws(function () { Core.parseV3Text('# old\n1\n1\n'); },
          'A4 旧格式: 宽 1(奇数且 <2)报错', '旧字母格式的宽高');
-  // 反面:合法的偶数尺寸一个都不能被误伤 —— 上面那串旧格式样本已经全跑通了,
-  // 这里再钉一条 2×2 的下界与一条更宽的偶数尺寸,免得把守卫写成 `width <= 2`。
+  // 校验合法的偶数尺寸正常解析
   eq(Core.parseV3Text('# old\n11\n11\n').cellsW, 1, 'A4 旧格式: 下界 2×2 仍可解析');
   eq(Core.parseV3Text('# old\n1111\n1111\n').cellsW, 2, 'A4 旧格式: 宽 4(偶数)仍可解析');
   eq(Core.parseV3Text('# old\n11\n11\n11\n11\n').cellsH, 2, 'A4 旧格式: 高 4(偶数)仍可解析');
@@ -836,8 +802,7 @@ await (async function () {
   eq(Core.subcellRender(4, 4), { dst: [64, 64, 16, 16], src: [0, 0, 8, 8] }, 'subcellRender: 象限按 X%4 循环');
   eq(Core.subcellRender(7, 5), { dst: [112, 80, 16, 16], src: [24, 8, 8, 8] }, 'subcellRender: 第二格右下');
 
-  // ★ 迁移正确性的全部依据:v3 的一个 32px 象限 ↔ v4 的 2×2 个 16px 子格,
-  //   目标矩形与源矩形都必须**精确铺满**(尺寸相等 + 包围盒相等 ⇒ 不重不漏)。
+  // 映射等价性：v3 象限与 v4 的 2x2 子格相互精确对应
   function v3QuadrantRender(cellX, cellY, qx, qy) {
     return { dst: [cellX * 64 + qx * 32, cellY * 64 + qy * 32, 32, 32],
              src: [qx * 16, qy * 16, 16, 16] };
@@ -862,8 +827,7 @@ await (async function () {
            sMinX === o.src[0] && sMinY === o.src[1] &&
            sMaxX === o.src[0] + o.src[2] && sMaxY === o.src[1] + o.src[3];
   }
-  // ★ 累积成一个布尔量时失败只知道"错了",不知道是哪个格/象限;这条断言是本计划的关键
-  //   证明,失败必须可诊断 —— 故把**首个**失败组合记进消息(一旦失败就短路,不再往下算)。
+  // 记录首个不匹配的组合以定位问题
   var eqAll = true, firstBad = null;
   for (var cx = 0; cx < 3; cx++) for (var cy = 0; cy < 3; cy++)
     for (var qx = 0; qx < 2; qx++) for (var qy = 0; qy < 2; qy++)
@@ -871,7 +835,7 @@ await (async function () {
         eqAll = false;
         firstBad = 'cx=' + cx + ' cy=' + cy + ' qx=' + qx + ' qy=' + qy;
       }
-  ok(eqAll, '★ 取角等价:v3 的每个象限都能被 v4 的 2×2 子格精确铺满(3×3 格 × 4 象限全查)'
+  ok(eqAll, '取角等价:v3 的每个象限都能被 v4 的 2×2 子格精确铺满(3×3 格 × 4 象限全查)'
             + (firstBad === null ? '' : ' —— 首个失败组合:' + firstBad));
 })();
 
@@ -885,10 +849,7 @@ await (async function () {
   eq(m.subRows, p.cellsH * 4, 'migrateV3: subRows = 格数×4');
   eq(m.comments, ['demo'], 'migrateV3: 注释带过来');
   eq(m.players, [{ x: 1, y: 1 }], 'migrateV3: 出生点带过来(坐标不缩放)');
-  // ★ 超出 brief(报告已点名):brief 的样本里没有 `# enemy` 行,于是同在 migrateV3 里的
-  //   `map.enemies = parsed.enemies.map(…)` 那**一行零覆盖** —— `type` 字段写丢或坐标
-  //   被缩放都不会让任何断言变红(指令 B 点名的正是这个风险类,只是它还有这半边)。
-  //   单起一格样本钉住它,不动上面那段的样本。
+  // 验证 migrateV3 正确迁移 enemies 属性
   var em = Core.migrateV3(Core.parseV3Text('# cyrm-v3\n# enemy jump_bird 100 50\n001F\n'));
   eq(em.enemies, [{ type: 'jump_bird', x: 100, y: 50 }],
      'migrateV3: 敌人带过来(type 保留、坐标不缩放)');
@@ -979,9 +940,7 @@ eq(Core.clampMapSize(NaN, 'x'), { w: 125, h: 75 }, 'clampMapSize: 非数字回�
     for (var dx = 0; dx < 4; dx++) sc[dy * inWall.subCols + dx] = Core.neutralDesc(1);
   }
   inWall.players = [{ x: 0, y: 0 }];
-  // ★ 判据是 '实心' 而不是 '出生点':后者**任何**出生点相关的 warning 都满足
-  //   (「一个出生点都没有」/「坐标越界」),这条断言今天只能匹配到实心那一支,
-  //   纯粹因为 (0,0) 恰好没越界。钉住'实心'才真正钉在它要覆盖的那一支上。
+  // 校验出生点落在实心格时产生警告
   ok(Core.validateMap(inWall).warnings.some(function (s) { return s.indexOf('实心') >= 0; }),
      'validateMap: 出生点在实心格里给 warning');
 
@@ -1097,12 +1056,8 @@ await (async function () {
      '大图: 压缩后 ' + bytes.length + ' 字节 < 场景层裸索引流 ' + sc.length + ' 字节');
 })();
 
-// ---- 指令 D:解压后 body 的硬上限(堵 deflate 炸弹)----
-// ★ 为什么需要单独一道闸:deflate 的最大压缩比约 1032:1 ⇒ **几十 KB** 的恶意/损坏
-//   文件就能解出 **GB 级**内存,而它**完全不碰头部字段**(magic/版本/尺寸/CRC 全合法),
-//   所以「按 body 实际余量反推格数上界」那条检查对它**天然无效** —— 那条管的是
-//   「头部声称的尺寸大于 body 装得下的量」,炸弹是反过来的:body 声称很小、解出来极大。
-//   判在解压之后等于拒是拒了、内存已经先分配出去了,故必须判在**解压之前**。
+// ---- 解压后 body 硬上限（防止超大解压数据耗尽内存）----
+// 解压前校验声明的 body_size，超过 MAX_BODY_SIZE 直接拒绝
 await (async function () {
   eq(Core.MAX_BODY_SIZE, 64 * 1024 * 1024, 'MAX_BODY_SIZE === 64MB');
 
@@ -1145,27 +1100,17 @@ await (async function () {
   sameBytes(await Core.inflateBytes(tiny), [0x63, 0x79, 0x72, 0x6D],
     'inflateBytes: 不传 maxBytes 时仍解出全部内容(向后兼容)');
 
-  // 反向:这道闸不许误伤合法文件。上限尺寸(400×300)的合法 body 最坏约 20MB
-  // (推导见 core.js 该常量上方的注释),64MB 是它的 ≈3.3 倍。
-  // 把这层余量本身变成断言 —— 有人把常量调小到会误拒合法大图时,「上限尺寸」那块
-  // 的往返断言也会红,但这条给出的是**直接错因**(而不是"图读不回来了")。
+  // 确保 MAX_BODY_SIZE 留有充足余量，不误伤合法大尺寸地图
   ok(Core.MAX_BODY_SIZE > 20 * 1024 * 1024,
      'MAX_BODY_SIZE: 大于上限尺寸合法文件的最坏 body(≈20MB),不会误拒');
 })();
 
-// ---- 源码顺序:body_size 闸门必须**早于**解压(指令 D 的证据机制)----
-// ★ 为什么需要这条:上面那条反向断言用 expectSub 匹配 '64MB' —— 而**把闸门挪到
-//   inflateBytes 之后、长度比对之前**的实现**同样会**匹配到 '64MB'(拒的还是同一份文件),
-//   于是"它确实在解压之前生效"这件事只靠读源码、没有断言钉住。本仓有源码级探针的习惯
-//   (tests/*_probe.gd 直接读生产源码做断言),这里照办:读 core.js 的源码文本比位置。
-// ★ 锚 'inflateBytes(payload' 而不锚 'inflateBytes(' —— 后者会先在**函数定义**
-//   (function inflateBytes(bytes, maxBytes))处命中,那个位置在闸门之前,
-//   断言会与实现无关地恒红。
+// ---- 源码约束校验：bodySize 校验必须早于 inflateBytes 调用 ----
 (function () {
   var dmAt = coreSrc.indexOf('function decodeMap');
   ok(dmAt >= 0, '源码顺序: core.js 里找得到 function decodeMap');
   if (dmAt < 0) return;
-  // 剥掉行注释再找 —— 否则注释里提一句 'inflateBytes(' 就能让断言在代码没动时"通过"。
+  // 去除行注释后检测代码调用顺序
   var body = coreSrc.slice(dmAt).split('\n')
     .map(function (l) { return l.replace(/\/\/.*$/, ''); }).join('\n');
   var gateAt = body.indexOf('bodySize > MAX_BODY_SIZE');

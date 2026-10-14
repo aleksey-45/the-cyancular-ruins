@@ -17,7 +17,7 @@ func _initialize() -> void:
 	_finish()
 
 func _check(src: String) -> void:
-	# 取 _damage_tile_at 函数体(从 func 声明到下一个 `\nfunc `)
+	# 获取 _damage_tile_at 函数体（从 func 声明到下一个 \nfunc）
 	var fn_start := src.find("func _damage_tile_at")
 	if fn_start < 0:
 		_fail = "未找到 _damage_tile_at"
@@ -45,27 +45,26 @@ func _check(src: String) -> void:
 		_fail = "_damage_tile_at 内无瓦片伤害调用(damage_tile(cell / damage_sub()"
 		return
 	if guard_idx < 0:
-		_fail = "_damage_tile_at 内无 `if apply_damage:`"
+		_fail = "_damage_tile_at 内无 if apply_damage:"
 		return
 	if spawn_idx > guard_idx:
-		_fail = "TileHitFx.spawn 出现在 `if apply_damage:` 之后(播碎片被权威开关挡住,应无条件)"
+		_fail = "TileHitFx.spawn 出现在 if apply_damage: 之后（碎屑播放被权威开关阻挡，应无条件执行）"
 		return
-	# 每一次伤害调用,往前 120 字符内必须看得到 `apply_damage`(覆盖 `if apply_damage:` 单独一行
-	# 与 `… and apply_damage:` 复合条件两种写法)。改无条件扣除生命值、或换个名字绕过,照样红。
+	# 每次伤害调用前 120 字符内必须包含 apply_damage 条件守卫。
 	for di in dmg_idx:
 		var back := maxi(di - 120, 0)
 		var ctx := body.substr(back, di - back)
 		if not ctx.contains("apply_damage"):
 			_fail = "瓦片伤害调用未被 apply_damage 守住(前 120 字符内无该守卫):…%s" % body.substr(di, 40)
 			return
-	# 撞墙分支调用 _damage_tile_at 前 80 字符内不应有 `if apply_damage:`(否则视觉副本走不到)
+	# 撞墙分支调用 _damage_tile_at 前 80 字符内不应有 if apply_damage:（确保视觉副本正常执行）
 	var call_idx := src.find("_damage_tile_at(col.get_position()")
 	if call_idx < 0:
 		_fail = "未找到撞墙分支的 _damage_tile_at 调用"
 		return
 	var ctx := src.substr(maxi(0, call_idx - 80), call_idx - maxi(0, call_idx - 80))
 	if ctx.find("if apply_damage:") >= 0:
-		_fail = "撞墙分支 _damage_tile_at 仍被 `if apply_damage:` 包住(视觉副本走不到)"
+		_fail = "撞墙分支 _damage_tile_at 仍被 if apply_damage: 守卫限制（视觉副本无法触发）"
 		return
 
 func _finish() -> void:

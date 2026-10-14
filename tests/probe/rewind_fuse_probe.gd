@@ -102,8 +102,7 @@ func _run() -> void:
 		var tr_re := float(rb.get("traveled"))
 		if tr_re >= tr_live - 1.0:
 			_fail("射程累计没有随回溯倒退(回溯中 %.1f 应 < 按下时 %.1f)" % [tr_re, tr_live])
-		# - 第二条真凶:max_range 也是"开火时注入"的,不还原  ->  重建弹 max_range=场景默认 0
-		#    ->  一松手就 `traveled >= max_range` 当场爆炸(正好炸在回溯落点)。
+		# 重建弹需还原射程上限，避免误触发超射程爆炸
 		if absf(float(rb.get("max_range")) - 100000.0) > 1.0:
 			_fail("重建弹的 max_range 没还原(%.1f,应为 100000)= 一松手就会超射程爆炸" % float(rb.get("max_range")))
 		if absf(float(rb.get("gravity_factor")) - 0.0) > 1e-4:

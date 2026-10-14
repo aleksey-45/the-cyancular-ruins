@@ -1,21 +1,8 @@
 extends Node
 
-# 菜单系视觉重做的基座防御性校验。
-# 运行方式： "$GODOT" --headless --path . --quit-after 3600 res://tests/probe/menu_style_probe.tscn
-# 验收标准： 文本 `MENU STYLE PROBE: ALL-OK`(不看退出码)。
-#
-# 注意事项：本探针最要紧的不是"新 token 在不在",而是共享 token 冻结那几条:
-#    改菜单配色最容易随意修改到 `C_ACCENT` / `C_TEXT_DIM`,而它们被对局内 HUD读
-#    (`ui/hud/hud.gd:16` 击杀色、`royale_hud.gd:17/18` 的「我」那行与「复活中」)——
-#    改了不会有任何编译错误,只表现为"打起来之后 HUD 颜色不对",而那时你早忘了。
-#    - 这四条约束的是值,不是名字:把颜色调深一点也会红。
-# - 断言计数:改本探针必须同步改这个数(见 tests/lib/probe_base.gd 文件头)。
-#   数法 = 5(新 token)+ 4(冻结防御性校验)+ 1(panel_box 底不透明)+ 3(menu_panel 返回 /
-#              外线 / 内线)+ 2(-  位置:内层真内缩 / 内层宽度 < 外层 −2px)
-#              + 5(menu_button 常态/悬停/填充 3 条 + header_strip 底/下边线 2 条)= 20。
-#
-# - 注:新 token 的期望值统一用 hex 字符串 —— `ui_factory.gd` 里也必须写成
-#   `Color("#RRGGBB")`,两侧同写法才逐位相等(浮点反算会差 1/255  ->  始终断言失败)。
+# 菜单视觉规范自动化探针
+# 验证标准：输出 "MENU STYLE PROBE: ALL-OK"
+
 const EXPECTED_CHECKS := 20
 
 var _checks := 0
@@ -32,26 +19,22 @@ func _check(ok: bool, what: String) -> void:
 
 
 func _ready() -> void:
-	# ── 新增的 5 个 token(菜单专用) ──
+	# 阶段 1：新增菜单主题色常量
 	_check(UiFactory.C_HEADER == Color("#1B242C"), "C_HEADER 存在且值正确")
 	_check(UiFactory.C_INNER == Color("#1E2830"), "C_INNER 存在且值正确")
 	_check(UiFactory.C_EDGE == Color("#46545F"), "C_EDGE 存在且值正确")
 	_check(UiFactory.C_GOLD == Color("#E0A94F"), "C_GOLD 存在且值正确")
 	_check(UiFactory.C_TEXT_MUTE == Color("#6C7885"), "C_TEXT_MUTE 存在且值正确")
 
-	# ── 注意： 冻结防御性校验:被 HUD 读的 token 行为保持一致 ──
-	# 期望值是本计划开始前的实测值(不是设计 §3.9.1 那张表 —— 那张表与
-	# "HUD 一行不动"自相矛盾,已由设计约定以 HUD 为准)。
-	_check(UiFactory.C_ACCENT == Color(0.349, 0.851, 0.902),
-			"★ C_ACCENT 未变(对局内击杀色/「我」那行在用)")
-	_check(UiFactory.C_TEXT_DIM == Color(0.510, 0.573, 0.639),
-			"★ C_TEXT_DIM 未变(对局内「复活中」在用)")
-	_check(UiFactory.C_TEXT == Color(0.878, 0.914, 0.949), "★ C_TEXT 未变")
-	_check(UiFactory.C_DANGER == Color(0.900, 0.400, 0.400), "★ C_DANGER 未变(对局内「离开」/延迟条在用)")
+	# 阶段 2：共享颜色常量回归验证，确保局内 HUD 颜色不受影响
+	_check(UiFactory.C_ACCENT == Color(0.349, 0.851, 0.902), "C_ACCENT 保持不变")
+	_check(UiFactory.C_TEXT_DIM == Color(0.510, 0.573, 0.639), "C_TEXT_DIM 保持不变")
+	_check(UiFactory.C_TEXT == Color(0.878, 0.914, 0.949), "C_TEXT 保持不变")
+	_check(UiFactory.C_DANGER == Color(0.900, 0.400, 0.400), "C_DANGER 保持不变")
 
-	# ── 面板底仍然不透明 ──
+	# 阶段 3：面板基础样式
 	var sb := UiFactory.panel_box()
-	_check(sb.bg_color.a == 1.0, "panel_box() 的底仍是不透明")
+	_check(sb.bg_color.a == 1.0, "panel_box() 背景保持不透明")
 
 	var mp := UiFactory.menu_panel()
 	_check(mp != null and mp is PanelContainer, "menu_panel() 返回 PanelContainer")
@@ -59,52 +42,42 @@ func _ready() -> void:
 		var outer := (mp as PanelContainer).get_theme_stylebox("panel") as StyleBoxFlat
 		var body := (mp as PanelContainer).get_node_or_null("Body")
 		_check(outer != null and outer.border_color == UiFactory.C_BORDER,
-				"menu_panel() 的外描边是 C_BORDER")
+				"menu_panel() 外边框颜色为 C_BORDER")
 		var inner: StyleBoxFlat = null
 		if body is PanelContainer:
 			inner = (body as PanelContainer).get_theme_stylebox("panel") as StyleBoxFlat
 		_check(inner != null and inner.border_color == UiFactory.C_INNER,
-				"menu_panel() 的内亮线是 C_INNER(凿刻感的来源)")
+				"menu_panel() 内亮线颜色为 C_INNER")
 
-	# ── 菜单按钮:常态描边 = C_EDGE、填充 = C_HEADER、悬停描边转 C_ACCENT ──
-	# - 断言落在这三个主题项上而不是"按钮建出来了":把 variant="quiet" 误当默认、
-	#   或把填充写成底色的差一档,都会在这里红。
+	# 阶段 4：菜单按钮样式
 	var mb := UiFactory.menu_button("测试", 32, Vector2(200, 48))
 	var bn := mb.get_theme_stylebox("normal") as StyleBoxFlat
 	var bh := mb.get_theme_stylebox("hover") as StyleBoxFlat
-	_check(bn != null and bn.border_color == UiFactory.C_EDGE, "menu_button() 常态描边是 C_EDGE")
-	_check(bh != null and bh.border_color == UiFactory.C_ACCENT, "menu_button() 悬停描边转 C_ACCENT")
-	_check(bn != null and bn.bg_color == UiFactory.C_HEADER, "menu_button() 填充是 C_HEADER")
+	_check(bn != null and bn.border_color == UiFactory.C_EDGE, "menu_button() 默认边框为 C_EDGE")
+	_check(bh != null and bh.border_color == UiFactory.C_ACCENT, "menu_button() 悬停边框切换为 C_ACCENT")
+	_check(bn != null and bn.bg_color == UiFactory.C_HEADER, "menu_button() 背景填充为 C_HEADER")
 
-	# ── 标题带:C_HEADER 底 + 只有下边一条 C_BORDER 线 ──
-	# - 那条 `border_width_bottom == 1` 是这一档的全部形状:四边都画就退化成又一个面板
-	#   (与 menu_panel 的凿刻压边逻辑冲突),而只断言"有 border"是看不出来的。
+	# 阶段 5：标题带样式
 	var strip := UiFactory.header_strip("测 试", 32)
 	var ssb := (strip as PanelContainer).get_theme_stylebox("panel") as StyleBoxFlat
-	_check(ssb != null and ssb.bg_color == UiFactory.C_HEADER, "header_strip() 的底是 C_HEADER")
+	_check(ssb != null and ssb.bg_color == UiFactory.C_HEADER, "header_strip() 背景色为 C_HEADER")
 	_check(ssb != null and ssb.border_width_bottom == 1 and ssb.border_color == UiFactory.C_BORDER,
-			"header_strip() 只有**下边**一条 C_BORDER 线(其余三边为 0)")
+			"header_strip() 仅保留底边一条 C_BORDER 边框线")
 
-	# ── -  位置断言:两条线必须落在不同的像素环上 ──
-	# - 只断言两层 border_color 各自正确是看不见重合的:计划初稿把外层 content_margin
-	#   显式写成 0.0 时,内层铺满外层整个矩形(`body.rect == (0,0,外层全尺寸)`)、两条 1px
-	#   线落在同一环上、内层盖住外层  ->  画面上只剩一条,而上面几条照样全部断言通过。
-	#   这两条量的是"内层真的被内缩了 1px"(外层不设 content_margin  ->  默认 -1  ->
-	#   `StyleBox::get_margin()` 回落 border width  ->  `get_offset()==(1,1)`)。
-	# - 探针是 `extends Node`,要真加入场景树 + 等一帧才拿得到 rect。
+	# 阶段 6：布局内缩与边距判定
 	add_child(mp)
 	await get_tree().process_frame
 	var body_n: Control = mp.get_node_or_null("Body") as Control
 	_check(body_n != null and body_n.position.x >= 1.0 and body_n.position.y >= 1.0,
-			"★ 内亮线**真的内缩**(否则它与外线落在同一像素环上,只看得见一条)")
+			"内层 Body 节点发生有效内缩")
 	_check(body_n != null and body_n.size.x <= (mp as PanelContainer).size.x - 2.0,
-			"★ 内层宽度 < 外层 − 两侧各 1px")
+			"内层宽度小于外层总宽度")
 	_finish()
 
 
 func _finish() -> void:
 	if _checks < EXPECTED_CHECKS:
-		_fails.append("★ 只跑了 %d 条断言(期望 ≥ %d)" % [_checks, EXPECTED_CHECKS])
+		_fails.append("实际执行断言数 %d 低于预期 %d" % [_checks, EXPECTED_CHECKS])
 	if _fails.is_empty():
 		print("MENU STYLE PROBE: ALL-OK(%d 条断言)" % _checks)
 		get_tree().quit(0)

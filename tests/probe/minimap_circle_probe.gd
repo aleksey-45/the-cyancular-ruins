@@ -110,18 +110,15 @@ func _ready() -> void:
 		var wall_px := _count_near(img, g, WALL, 0.12)
 		_check(wall_px > 500, "圆内应画出地形(墙色像素 %d,期望 > 500)" % wall_px)
 
-	# ── ⑥ 3v3:自己那个点 = 队色 + 一圈白描边(与颜色正交的维度)──
-	# - 必须真实视口渲染:判定条件落在像素上(headless 下 get_image() 返回 null  ->  整段静默跳过)。
-	# - 编号从 ⑥ 起 —— 上面那个 ⑤ 是"圆不得压到延迟条"(几何断言),别与它混。
+	# 阶段 6: 3v3 模式下自身标记点颜色为队伍色并包含白色描边
 	mm.visible = false
 	var TEAM_B := UiFactory.C_TEAM_B
-	# - 一格数组:下面 ④ 要改它来验"提供器是每帧求值、不是建点时缓存一次"。
-	#   写成 `func() -> Color: return TEAM_B` 那个常量闭包验不出这条(两种实现测试均通过)。
+	# 使用数组闭包以动态测试颜色提供器在每帧的动态求值
 	var self_col := [TEAM_B]
 	var mm_team := Minimap.new()
 	mm_team.setup_multi(
 		func() -> Vector2: return _local,
-		func() -> Array: return [],          # 无他人点:本阶段只验"我"
+		func() -> Array: return [],          # 仅测试自身标记点
 		func() -> Array: return [],
 		func() -> Color: return self_col[0])
 	add_child(mm_team)
@@ -129,28 +126,23 @@ func _ready() -> void:
 	var img_team := await _shot("minimap_self_dot.png")
 	if img_team.get_width() > 0:
 		var center := _circle_center_on_screen()
-		# ① 点的底色是队色,不是 SELF_COLOR
+		# 标记点底色为队伍色
 		var px_dot := img_team.get_pixelv(Vector2i(int(center.x), int(center.y)))
 		_check(_near(px_dot, TEAM_B, 0.08),
-				"3v3 自己那个点的底色应是队色(实际 %s、期望 %s、SELF_COLOR 是 %s)" % [
-					str(px_dot), str(TEAM_B), str(Minimap.SELF_COLOR)])
+				"3v3 自身标记点底色应为队伍色(实际 %s，期望 %s)" % [
+					str(px_dot), str(TEAM_B)])
 		_check(not _near(px_dot, Minimap.SELF_COLOR, 0.08),
-				"★ 反向:底色**不得**还是 SELF_COLOR(那就是没修)")
-		# ② 描边存在:点在点外侧、但仍在描边框内的一圈取色(8×8 点 + 4px 边框  ->  半径 4..8 那一带)
+				"自身标记点底色不应保持默认 SELF_COLOR")
+		# 描边判定：采样外圈颜色验证白色描边
 		var ring_px := 0
 		for i in range(24):
 			var a := TAU * float(i) / 24.0
-			# - 变量名不能叫 `q`:`_ready()` 上面那条"圆不压延迟条"的几何断言已经声明过 `q`
-			#   (GDScript 里嵌套块重名是 Parse Error  ->  整条探针一行都跑不到)。
 			var q_ring := Vector2i(int(center.x + cos(a) * 6.0), int(center.y + sin(a) * 6.0))
 			if _near(img_team.get_pixelv(q_ring), Color(1, 1, 1), 0.08):
 				ring_px += 1
 		_check(ring_px >= 18,
-				"自己那个点应有**白描边**(24 个采样点里 %d 个命中白色,期望 ≥ 18)" % ring_px)
-		# ③ 正交维度的测试有效性:把描边关掉,同样的采样必须掉下来
-		# - 必须先 `set_process(false)` —— `Minimap._process` 每帧都会把 `_ring_self.visible`
-		#   按 `_self_color_provider` 写回去,直接改 `visible` 会被下一帧覆盖
-		#    ->  两张图一模一样  ->  下面那条必然失败(那是探针自己的错,不是实现的错)。
+				"自身标记点应包含白色描边(24 个采样点命中 %d 个，期望 >= 18)" % ring_px)
+		# 关闭描边以进行对照验证
 		mm_team.set_process(false)
 		mm_team._ring_self.visible = false
 		await _frames(2)
@@ -163,25 +155,18 @@ func _ready() -> void:
 				if _near(img_no_ring.get_pixelv(q_ring2), Color(1, 1, 1), 0.08):
 					ring2 += 1
 			_check(ring2 < 6,
-					"★ 关掉描边后白色采样必须掉下来(实际 %d)—— 否则上面那条是恒真的" % ring2)
-		# - 恢复写在内层 `if` 之外:`img_no_ring` 取图失败(width 0)时内层整段跳过,
-		#   恢复写在内层就会漏  ->  下面 ④ 的换色验不到(那是探针自己的错,不是实现的错)。
+					"关闭描边后白色采样点应显著下降(实际 %d)" % ring2)
 		mm_team.set_process(true)
 		mm_team._ring_self.visible = true
 
-		# ── ④ 提供器必须每帧求值,不是建点时缓存一次 ──
-		# - 这条钉的正是"第四参为什么是 Callable 而不是 Color":队色由 `match_sync` 下发、
-		#   比小地图建立晚  ->  若在 `setup_multi` 里把颜色解析一次存起来,3v3 整局那个点
-		#   会恒为建点时的颜色(中性亮白)—— 而那正是设计要避免的那个失败。
-		# - 判定条件必须跟着一次变化走(改掉闭包返回的颜色,看像素跟不跟);恒定的闭包
-		#   (`func() -> Color: return TEAM_B`)对"每帧求值"与"缓存一次"两种实现都给绿。
+		# 验证颜色提供器每帧动态求值，而非仅在初始化时缓存
 		self_col[0] = UiFactory.C_TEAM_A
 		await _frames(2)
 		var img_swap := await _shot("minimap_self_dot_swapped.png")
 		if img_swap.get_width() > 0:
 			var px_swap := img_swap.get_pixelv(Vector2i(int(center.x), int(center.y)))
 			_check(_near(px_swap, UiFactory.C_TEAM_A, 0.08),
-					"★ 提供器必须**每帧求值**:返回色从 C_TEAM_B 改成 C_TEAM_A 后自己那个点应跟着变(实际 %s、期望 %s;停在上一个颜色 = 建点时缓存了一次)" % [
+					"颜色提供器每帧求值：修改闭包返回值后自身标记点颜色应同步更新(实际 %s，期望 %s)" % [
 						str(px_swap), str(UiFactory.C_TEAM_A)])
 
 	# ── ⑦ 反向对照:不传自色提供器  ->  退回 SELF_COLOR、且描边不可见 ──

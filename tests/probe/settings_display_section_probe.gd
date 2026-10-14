@@ -35,14 +35,12 @@ func _ready() -> void:
 		print("SETTINGS DISPLAY SECTION PROBE: FAIL(场景加载不到)")
 		get_tree().quit(1)
 		return
-	# 探针会真的拨开关,而 `settings_menu.gd` 的 `_check()` 挂的 lambda 会 `Settings.save()`
-	#  ->  会写用户的 cfg。记下原值,收尾还原后再 save() 一次(见 _restore)。
+	# 备份当前设置，测试结束后还原配置
 	var orig := {}
 	for row in ROWS:
 		orig[str(row[1])] = bool(Settings.get(str(row[1])))
 
-	# ── 相 A:非默认基线(四个键全 false;出厂默认全是 true)──
-	# 见文件头:默认基线会让"初值跟随 Settings"这条断言始终为 true,mutation 咬不住。
+	# 阶段 A：非默认基线(设置项置为 false)
 	_set_all_keys(false)
 	var a := _build(ps)
 	var labels_a := _collect_labels(a["page"])
@@ -50,25 +48,22 @@ func _ready() -> void:
 	for l in labels_a:
 		if str(l).contains("联机显示"):
 			section_found = true
-	_check(section_found, "设置页有「联机显示」一节(实得标签:%s)" % str(labels_a))
+	_check(section_found, "设置页包含「联机显示」分组(实得标签: %s)" % str(labels_a))
 	_check(_count_label(labels_a, "联机显示") == 1,
-			"「联机显示」这个标题**恰好出现 1 次**(插两遍会红)")
+			"「联机显示」标题仅出现一次")
 	var checks_a := _collect_checks(a["page"])
 	for row in ROWS:
 		var want := str(row[0])
 		var key := str(row[1])
 		var cb := _find_check_by_label(checks_a, want)
-		_check(cb != null, "开关「%s」建出来了" % want)
+		_check(cb != null, "开关「%s」创建成功" % want)
 		if cb == null:
 			continue
-		# - 非默认基线  ->  把 `Settings.<key>` 换成 `true` 字面量、或接到另一个真值为 true
-		#   的键,都会让这条红。
 		_check(cb.button_pressed == false,
-				"「%s」的初值跟随 `Settings.%s`(非默认基线 false;写死 `true` 会红)"
-						% [want, key])
-	_check(_section_precedes_keymap(a["page"]), "「联机显示」排在「按键映射」**之前**")
-	_check(_section_after_general(a["page"]), "「联机显示」排在「通用开关」**之后**")
-	a["host"].free()   # 同一同步调用栈内 free:上面的断言全是同步的
+				"「%s」初始值与 Settings.%s 一致" % [want, key])
+	_check(_section_precedes_keymap(a["page"]), "「联机显示」位于「按键映射」之前")
+	_check(_section_after_general(a["page"]), "「联机显示」位于「通用开关」之后")
+	a["host"].free()
 
 	# ── 相 B:交错基线(相邻两键取值不同)+ 行为面 ──
 	for i in ROWS.size():
@@ -83,8 +78,8 @@ func _ready() -> void:
 			_check(false, "相 B:开关「%s」找不到" % want)
 			continue
 		_check(cb.button_pressed == bool(Settings.get(key)),
-				"「%s」的初值来自 `Settings.%s`(基线交错,接错键会红)" % [want, key])
-	# - 行为面:逐行拨动,断言只写它自己那个键(写错键 / 随意将别的键也写了都会红)。
+				"「%s」初始值与 Settings.%s 匹配" % [want, key])
+	# 交互验证：逐行切换开关，验证仅更新对应配置项
 	for i in ROWS.size():
 		var want := str(ROWS[i][0])
 		var key := str(ROWS[i][1])
@@ -100,15 +95,14 @@ func _ready() -> void:
 			if j != i and bool(Settings.get(str(ROWS[j][1]))):
 				others_untouched = false
 		_check(bool(Settings.get(key)) == true and others_untouched,
-				"拨动「%s」写回的是 `Settings.%s`,且不碰其它三个键" % [want, key])
+				"切换「%s」仅更新 Settings.%s，未影响其余配置" % [want, key])
 	b["host"].free()
 
 	_restore(orig)
 	_finish()
 
 
-# 造一页:加入场景树 -> `_ready` 跑完(控件齐全) -> 返回 {"host","page"};free 由调用方做。
-# - 设置页 `_ready` 里没有 deferred 的网络动作(它不连大厅) ->  同一同步栈内 free 安全。
+# 实例化设置页面并挂载至场景树，返回包含 host 与 page 的字典
 func _build(ps: PackedScene) -> Dictionary:
 	var host := Node.new()
 	add_child(host)

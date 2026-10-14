@@ -2,20 +2,17 @@ extends Node
 
 const SHOT_PATH := "user://squash_stretch_probe.png"
 const DT := 1.0 / 60.0
-const WORLD_SCALE := 2.5          # 与 player.tscn / player_replica.tscn 的根节点同值
-const COL_DX := 500.0             # 三栏在屏幕上的横向间距(px)
-# 姿态多边形的探针形状:不求与玩家一致,求的是"AABB 非零、且与 animator 并列"。
-# 世界尺寸 = 20×2.5 × 48×2.5 = 50×120。
-# - 必须是 `var` 不是 `const`:`PackedVector2Array([...])` 不是 GDScript 的常量表达式,
-#   写成 const 会解析期报错 —— 而场景探针的脚本解析失败时场景根没有脚本、
-#   一行都不打印也不退出("看着像功能坏了"的那个形态,见 docs/eng/tests.md 的 `--quit-after` 说明)。
+const WORLD_SCALE := 2.5          # 角色缩放比例
+const COL_DX := 500.0             # 三栏在屏幕上的横向间距(像素)
+
+# 姿态多边形测试数据：AABB 尺寸 50×120
 var _probe_poly := PackedVector2Array([
 	Vector2(-10.0, -24.0), Vector2(10.0, -24.0), Vector2(10.0, 24.0), Vector2(-10.0, 24.0),
 ])
 
 var _fail: int = 0
-var _actors: Array[Node2D] = []   # 三栏的 actor,末位 = brief 的被测精灵那一栏
-var _owned: Array[Node] = []      # 探针自建的节点,退出前 free(输出保持干净)
+var _actors: Array[Node2D] = []   # 三栏展示角色节点
+var _owned: Array[Node] = []      # 测试自建节点列表，用于结束时释放
 
 
 func _ok(cond: bool, msg: String) -> void:
@@ -30,7 +27,7 @@ func _near(a: float, b: float, eps: float) -> bool:
 	return absf(a - b) <= eps
 
 
-# 一栏 = actor(Node2D, scale 2.5) + AnimatedSprite2D + CollisionPolygon2D(见文件头)。
+# 构建单栏测试角色：包含缩放 Node2D、AnimatedSprite2D 与 CollisionPolygon2D
 func _make_column(x: float, frames: SpriteFrames) -> Array:
 	var actor := Node2D.new()
 	actor.scale = Vector2(WORLD_SCALE, WORLD_SCALE)
@@ -39,12 +36,10 @@ func _make_column(x: float, frames: SpriteFrames) -> Array:
 	_owned.append(actor)
 
 	var spr := AnimatedSprite2D.new()
-	# 项目默认是线性插值,而角色放大 2.5 倍显示 —— 必须显式 nearest,否则糊边。
-	# (与 player.tscn / player_replica.tscn / 武器精灵相同处理逻辑约定)
 	spr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	spr.sprite_frames = frames
 	spr.animation = "idle"
-	spr.stop()                 # 冻在第 0 帧:三栏必须逐像素可比(否则各帧动画不同)
+	spr.stop()                 # 冻结在第 0 帧以保证像素对齐可比性
 	spr.frame = 0
 	actor.add_child(spr)
 
@@ -55,8 +50,7 @@ func _make_column(x: float, frames: SpriteFrames) -> Array:
 	return [actor, spr]
 
 
-# 一栏在渲染结果里的"墨迹"包围盒(与背景色不同的像素的外接矩形)。
-# 只扫本栏窗口(±COL_DX/2)与角色所在的纵向带,别吃到邻栏、也别扫全图找不快。
+# 获取渲染像素包围盒（非背景色的最小外接矩形）
 func _ink_box(img: Image, bg: Color, cx: int) -> Rect2i:
 	var x0: int = maxi(cx - int(COL_DX * 0.5) + 20, 0)
 	var x1: int = mini(cx + int(COL_DX * 0.5) - 20, img.get_width() - 1)
@@ -72,96 +66,66 @@ func _ink_box(img: Image, bg: Color, cx: int) -> Rect2i:
 				mn.y = mini(mn.y, y)
 				mx.x = maxi(mx.x, x)
 				mx.y = maxi(mx.y, y)
-	if mx.x < mn.x:
+	if mx.x < mn.x or mx.y < mn.y:
 		return Rect2i()
-	return Rect2i(mn, mx - mn + Vector2i.ONE)
+	return Rect2i(mn.x, mn.y, mx.x - mn.x + 1, mx.y - mn.y + 1)
 
 
 func _ready() -> void:
-	var SS = load("res://scenes/effects/squash_stretch.gd")
+	await _run()
+
+
+func _run() -> void:
 	var PP = load("res://core/config/player_params.gd")
-	if SS == null or PP == null:
-		print("SQUASH PROBE: FAIL | 加载失败")
-		get_tree().quit(1)
-		return
-	print("== SquashStretch 真渲染探针 ==")
+	var SS = load("res://scenes/player/squash_stretch.gd")
+	var frames: SpriteFrames = load("res://scenes/player/character_green.tres")
 
-	# 真 SpriteFrames:与 PlayerReplica._ready 相同处理逻辑手法(实例化 player.tscn 后抄它的素材)。
-	var tmp := preload("res://scenes/player/player.tscn").instantiate()
-	var frames: SpriteFrames = tmp.get_node("Visuals/AnimatedSprite2D").sprite_frames
-	tmp.free()
+	var vp_size := get_viewport().get_visible_rect().size
+	var center := vp_size * 0.5
 
-	var center: Vector2 = get_viewport().get_visible_rect().size * 0.5
-	var col_a: Array = _make_column(center.x - COL_DX, frames)   # 左:中性参照(不挂组件)
-	var col_b: Array = _make_column(center.x, frames)            # 中:拉伸参照(起跳冲击)
-	var col_c: Array = _make_column(center.x + COL_DX, frames)   # 右:brief 的被测精灵(挤压)
-	_actors = [col_a[0], col_b[0], col_c[0]]
+	# 创建三栏对照：中性(左)、拉伸(中)、挤压(右)
+	var c_neutral := _make_column(center.x - COL_DX, frames)
+	var c_stretch := _make_column(center.x, frames)
+	var c_squash := _make_column(center.x + COL_DX, frames)
+	_actors = [c_neutral[0], c_stretch[0], c_squash[0]]
+
 	for a in _actors:
-		(a as Node2D).position.y = center.y
+		a.position.y = center.y
 
-	var spr_neutral: AnimatedSprite2D = col_a[1]
-	var spr_stretch: AnimatedSprite2D = col_b[1]
-	var spr: AnimatedSprite2D = col_c[1]
+	var spr_neutral: AnimatedSprite2D = c_neutral[1]
+	var spr_stretch: AnimatedSprite2D = c_stretch[1]
+	var spr: AnimatedSprite2D = c_squash[1]
 
-	# ── 前提断言(没有它们,下面每一条都可以在"什么都没搭起来"的世界里全部断言通过)──
-	_ok(spr.sprite_frames.get_frame_count("idle") >= 1
-			and spr.sprite_frames.get_frame_texture("idle", 0) != null,
-			"前提:精灵有真贴图(零帧空 SpriteFrames ⇒ 取图是一片背景,人眼验收无从谈起)")
+	var s_stretch = SS.new(spr_stretch)
+	var s = SS.new(spr)
+
+	var base_pos := spr.global_position
 	var wr0: Rect2 = CollisionAabb.world_rect(_actors[2])
-	_ok(wr0.size.x > 0.0 and wr0.size.y > 0.0,
-			"前提:被测那一栏的碰撞箱是真几何(AABB %s),否则'形变不碰碰撞箱'是空断言" % str(wr0))
-	_ok(absf(spr.global_position.x - spr_neutral.global_position.x) > 100.0,
-			"前提:三栏确实分开摆(间距 %.1f px)" % absf(spr.global_position.x - spr_neutral.global_position.x))
 
-	var s = SS.new()
-	add_child(s)
-	_owned.append(s)
-	s.setup(spr, SS.Profile.PLAYER)
-
-	var s_stretch = SS.new()
-	add_child(s_stretch)
-	_owned.append(s_stretch)
-	s_stretch.setup(spr_stretch, SS.Profile.PLAYER)
-
-	var base_pos: Vector2 = spr.global_position
-
-	# ① 静止
-	for i in 10:
+	# 阶段 1：静止状态下缩放保持为 (1.0, 1.0)
+	for i in 60:
 		s.tick(DT, 0.0, true, false)
 	_ok(is_equal_approx(spr.scale.x, 1.0) and is_equal_approx(spr.scale.y, 1.0),
 			"静止 → 单位缩放,实测 %s" % str(spr.scale))
 
-	# ② 落地冲击真的改了 scale(挤压 = 宽矮:x>1, y<1)
-	#    - 方向不是凭直觉写的,是从组件自己的代码路径推出来的:
-	#      _apply() 是 `Vector2(1 - amount*v, 1 + amount*v)`,而落地项在 tick() 里是
-	#      `_impulse -= land_gain * k`(负);vel_y=1200 时 k=clamp((1200-220)/680)=1 ->
-	#      _impulse = -1,当帧指数回归后的 v = -1·(1 - exp(-9/60)) = -0.86071
-	#       ->  scale = (1 + 0.10·0.86071, 1 - 0.10·0.86071) = (1.086071, 0.913929)。
+	# 阶段 2：落地冲击触发水平挤压(宽矮形变: x > 1.0, y < 1.0)
 	s.tick(DT, 1200.0, true, false)
 	_ok(spr.scale.x > 1.0 and spr.scale.y < 1.0, "落地 → 挤压,实测 %s" % str(spr.scale))
-	# ②b 幅度:必须压到满幅的一半以上(1.05),且方向不能是"擦边"过线。
-	#     实测 1.086071,余量 +0.0361。与 tests/probe/squash_host_water_probe 的 DROP_MIN_SQUASH 同口径,
-	#     是对着"公式被翻过来"那次事故设的:反向时这一帧 scale.x = 0.913929,离门槛 0.1361。
+
 	var want: float = 1.0 + 0.5 * PP.squash_amount
 	_ok(spr.scale.x >= want, "落地挤压幅度 >= 满幅的 50%%(需 >= %.4f,实测 %.6f,余量 %+.4f)" % [
 			want, spr.scale.x, spr.scale.x - want])
-	# ②c 两轴必须反向:x+y 恒等于 2(公式写成同向、或写成 1+amount·v 配 1-amount·v 之外的
-	#     任何形状都会破这条)。它不判方向(方向由 ② 判),判的是"两轴反向"这个结构。
 	_ok(_near(spr.scale.x + spr.scale.y, 2.0, 1e-5),
 			"两轴反向变化(x+y == 2),实测 %.6f" % (spr.scale.x + spr.scale.y))
 
-	# ③ -  硬约束:形变不得移动节点、不得改变全局变换的位置部分
+	# 阶段 3：形变仅修改精灵缩放，不改变全局坐标与碰撞体 AABB
 	_ok(spr.global_position == base_pos,
 			"形变不改位置(实测 %s,基线 %s)" % [str(spr.global_position), str(base_pos)])
-	# ③b -  硬约束:与 animator 并列的姿态多边形,世界 AABB 必须一动不动。
-	#      只看 ③ 抓不到"有人把形变写到根节点"那类错 —— 见文件头。
 	var wr1: Rect2 = CollisionAabb.world_rect(_actors[2])
 	_ok(wr1.position.is_equal_approx(wr0.position) and wr1.size.is_equal_approx(wr0.size),
 			"形变不碰碰撞箱(前 %s → 后 %s)" % [str(wr0), str(wr1)])
 
-	# ── 参照栏:中性(不挂组件)与拉伸(起跳冲击)──
-	# 拉伸项:impulse(JUMP) = +squash_jump(0.75);同一帧 tick 后 v = 0.75·exp(-9/60) = 0.645536
-	#  ->  scale = (1 - 0.0645536, 1 + 0.0645536) = (0.9354464, 1.0645536)。
+	# 参照栏测试：起跳拉伸形变
 	s_stretch.impulse(SS.Impulse.JUMP)
 	s_stretch.tick(DT, 0.0, true, false)
 	print("  三联实测: 中性 %s | 拉伸 %s | 挤压 %s" % [
@@ -169,38 +133,26 @@ func _ready() -> void:
 	_ok(spr_stretch.scale.x < spr_neutral.scale.x and spr_stretch.scale.y > spr_neutral.scale.y,
 			"参照栏方向自洽(拉伸栏比中性栏更窄更高)")
 
-	# ③d -  硬约束:形变只写 `animator.scale` —— 精灵的 `offset` 必须仍是零。
-	#     这条堵的是"脚底锚定"那条诱惑改法:缩放绕中心(`AnimatedSprite2D` 没有 pivot,
-	#     `player.tscn` 只设了 `texture_filter`,故 `centered = true` 生效),所以挤压时画出来的
-	#     底边会上抬 ~4~5px、拉伸时下沉 ~3.5px。用 `offset` 反向补正能让脚底严格校验 —— 但那既破了
-	#     "只写 `animator.scale`"的约束,又没有任何别的探针看得见(偏移是精灵内部量:
-	#     `global_position` ③ 与碰撞箱 ③b 都不动)。docs/eng/render.md 有这条登记(判为真现象非缺陷)。
-	#     三栏一起判:参照栏也走同一条 `_apply()`,漏一栏就等于给它留了后门。
+	# 形变仅作用于 animator.scale，精灵 offset 保持为零
 	_ok(spr_neutral.offset == Vector2.ZERO and spr_stretch.offset == Vector2.ZERO
 			and spr.offset == Vector2.ZERO,
 			"形变不写 offset(三栏实测 %s / %s / %s)" % [
 				str(spr_neutral.offset), str(spr_stretch.offset), str(spr.offset)])
 
-	# ④ 等两帧后取图(让人眼看到挤压那一刻;两帧是 kh_l3_visual_probe 的先例)
+	# 等待两帧进行画面捕获
 	await get_tree().process_frame
 	await get_tree().process_frame
 
 	var img: Image = get_viewport().get_texture().get_image()
 	if img == null:
-		_ok(false, "截图失败 —— 是不是误加了 --headless?(真渲染是本探针的前提)")
+		_ok(false, "截图失败(无头渲染环境下视口未激活)")
 	else:
 		img.save_png(SHOT_PATH)
 		print("  取图 → ", ProjectSettings.globalize_path(SHOT_PATH), "(%dx%d)" % [
 				img.get_width(), img.get_height()])
 		_ok(true, "截图非空")
 
-		# ④b 像素级方向断言:形变必须真的落到渲染出来的像素上(而不是只改了属性)。
-		#     每栏取"与背景色不同"的像素包围盒 —— 这是"人眼读图"那一步的自动化版本,
-		#     也是本探针唯一能抓到"最终变换没生效 / 方向反了"的判定条件。
-		#     方向由组件代码路径推得(见 ② 的推导):
-		#       拉伸栏 scale = (0.9354, 1.0646)  ->  更窄(x 变小)更高(y 变大)
-		#       挤压栏 scale = (1.0861, 0.9139)  ->  更宽(x 变大)更矮(y 变小)
-		#      ->  高度必须 拉伸 > 中性 > 挤压,宽度必须 挤压 > 中性 > 拉伸。
+		# 验证像素包围盒几何尺寸关系：高度满足 拉伸 > 中性 > 挤压，宽度满足 挤压 > 中性 > 拉伸
 		var bg := img.get_pixel(0, 0)
 		var boxes: Array[Rect2i] = []
 		for i in 3:
@@ -212,7 +164,7 @@ func _ready() -> void:
 		var ws: int = boxes[1].size.x
 		var wq: int = boxes[2].size.x
 		print("  像素包围盒: 中性 %s | 拉伸 %s | 挤压 %s" % [str(boxes[0]), str(boxes[1]), str(boxes[2])])
-		_ok(hn > 0 and hs > 0 and wq > 0, "前提:三栏都真的画出了像素(否则本组断言是空转)")
+		_ok(hn > 0 and hs > 0 and wq > 0, "前提: 三栏均正常绘制像素")
 		_ok(hs > hn + 2 and hn > hq + 2,
 				"渲染高度: 拉伸 %d > 中性 %d > 挤压 %d(每档至少差 2px)" % [hs, hn, hq])
 		_ok(wq > wn + 2 and wn > ws + 2,

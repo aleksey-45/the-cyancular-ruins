@@ -1,8 +1,8 @@
 'use strict';
 // Node 冒烟 —— 辅码像素数学与 tinted-tile 缓存(level_editor/tint.js)。
 // Run: cd level_editor && node tint_smoke.js
-// 判据:文本 `TINT SMOKE OK` + 退出码 0。
-// ★ tint.js 是经典脚本(globalThis.Tint),core.js 是它的硬依赖 —— 加载顺序不能反。
+// 判据: 文本 TINT SMOKE OK + 退出码 0。
+// tint.js 依赖 core.js 先行加载。
 
 require('./core.js');
 require('./tint.js');
@@ -34,7 +34,7 @@ function sameBytes(actual, expected, msg) {
   }
   pass++; console.log('  ok  - ' + msg);
 }
-// ★ 反向断言必须同时断言「错在哪」:只判「有没有抛」是假绿。
+// 异常断言校验：检查异常是否抛出，若指定 expectSub 则同时校验异常信息是否包含该子串
 function throws(fn, msg, expectSub) {
   let e = null;
   try { fn(); } catch (err) { e = err; }
@@ -83,9 +83,7 @@ function makeAtlas() {
   eq(Tint.mulOf(4), 1, '亮度/饱和度中性档 4 → ×1.0(恒等元)');
   eq(Tint.alphaScaleOf(7), 1, 'alpha 中性档 7 → ×1');
   ok(Math.abs(Tint.alphaScaleOf(4) - 4 / 7) < 1e-12, '★ alpha 档 4 是 4/7 而不是 1');
-  // ★★ 整表钉住(M2),不只钉中性档与档 4 两个采样点:变异实测 —— 把 ALPHA_NUM 的档 1 与
-  //    档 2 **对调**,上面每一条(含 alphaScaleOf(4)=4/7 与 alphaScaleOf(7)=1)**全绿**,
-  //    而 alpha 档 1 与档 2 的整体透明度互换 —— 透明度的档位表正是本文件头号关切。
+  // 校验完整 alpha 档位映射关系
   eq(Tint.ALPHA_NUM, [0, 1, 2, 3, 4, 5, 6, 7], 'alpha 档位表(分子 0..7,中性档在 7)');
   eq([0, 1, 2, 3, 4, 5, 6, 7].map(Tint.alphaScaleOf),
      [0, 1 / 7, 2 / 7, 3 / 7, 4 / 7, 5 / 7, 6 / 7, 1],
@@ -327,17 +325,11 @@ function makeAtlas() {
     eq(Tint.createTileCache({ backend: backend }).stats().maxSize, Tint.DEFAULT_MAX_TILES,
        '默认 maxSize = DEFAULT_MAX_TILES');
 
-    // ★ 浏览器默认后端在 node 里必须**明确报错**,而不是悄悄画不出来
+    // 默认后端在 node 环境中应明确报错
     throws(function () { Tint.DEFAULT_BACKEND.createTile(new Uint8ClampedArray(4), 1); },
-           '★ DEFAULT_BACKEND 在 node(没有 document)里明确抛错', 'document');
+           'DEFAULT_BACKEND 在 node 环境中明确抛错', 'document');
 
-    // ════════════ 下面三条(I2 / I3.1 / I3.2)刻意放在本块**最后**:
-    //   上面好几条断言数的是 `made.length` 这类相对计数,插在中间会把它们整体挪位。
-    //   各自用自己的 backend(与共享的 `made` 完全隔离)。
-
-    // ── I3.1 命中判据:必须是 `has(k)`,不能是 `get(k) !== undefined` ──
-    // ★ 一个返回 undefined 的 backend 在旧判据下:那张图**永不命中**,却已经占着槽位、
-    //   计入 size、还能把活条目挤掉 —— 实测 {hits:0,misses:2,size:1} 且 has() 为 true。
+    // 命中判据测试：基于 has(k)
     const undefBackend = { createTile: function () { return undefined; } };
     const uc = Tint.createTileCache({ maxSize: 3, backend: undefBackend });
     uc.setSource(atlas, ATLAS_W);
@@ -376,7 +368,7 @@ function makeAtlas() {
            '★ setSource: 宽度 0 → 抛错', '4 的倍数');
     throws(function () { shape.setSource(atlas.subarray(0, 100), ATLAS_W); },
            '★ setSource: 字节数不是整行(宽×4)的整数倍 → 抛错(否则 rows 是分数)', '整数倍');
-    // ★ 被形状闸拒掉的调用**不许**动到上一份图集(守卫在赋值之前)
+    // 校验失败时不覆盖已有图集数据
     shape.setSource(atlas, ATLAS_W);
     const s1 = shape.get(3, 0, 0, N3);
     throws(function () { shape.setSource(atlas.subarray(0, 100), ATLAS_W); },

@@ -97,8 +97,7 @@ func _ready() -> void:
 		# 取图前摆一个已知背包,好让左下角的"持有武器剪影行"出现在图里
 		# (丢弃那段结束时把背包清空了)。手持第一把 -> 它应当是白的、其余灰的。
 		player.weapons.set_initial_inventory([1, 3, 4])
-		# - 冻掉物理后 `_poll_pickup_drop` 不再跑,丢弃闩锁会一直挂着 -> 进度条常红(探针残留)。
-		#   补一拍空 delta 让它复位(真机松手自然就复位)。
+		# 传入空 delta 复位丢弃交互检测
 		player._poll_pickup_drop(0.0)
 		for i in 90:
 			await get_tree().process_frame
@@ -120,9 +119,7 @@ func _phase_slot_placement(player: Node, lvl: Node) -> void:
 	if hud == null:
 		_check(false, "Level0 里有 HUD 节点")
 		return
-	# - 取常量走 `get_script_constant_map()`,不要 `hud.get("WEAPON_SLOTS_GAP")` ——
-	#   后者在这个引擎版本上碰巧能取到,但本仓踩过"直接取不存在的属性抛错 -> 探针挂起"
-	#   的坑,查常量一律用这个口(与 kh_l3/kh_l5 相同处理逻辑)。
+	# 通过 get_script_constant_map 安全读取脚本常量
 	var consts: Dictionary = (hud.get_script() as Script).get_script_constant_map()
 	if not consts.has("WEAPON_SLOTS_GAP"):
 		_check(false, "hud.gd 里没有 WEAPON_SLOTS_GAP 常量")
@@ -170,7 +167,7 @@ func _phase_same_type_selection(player: Node, lvl: Node) -> void:
 		return
 	var boxes: Array = []
 	for c in box.get_children():
-		if c is PanelContainer:      # `_drop_bar` 是 ColorRect,天然排除
+		if c is PanelContainer:      # 仅收集武器卡片 PanelContainer
 			boxes.append(c)
 	_check(boxes.size() == 2, "两把同型号应画出 2 个武器框(实得 %d)" % boxes.size())
 	# 判定条件①:深底(选中外观)的框恰好一个

@@ -39,8 +39,7 @@ function errText(e) {
   if (msg === '' && e && e.cause && e.cause.message) msg = String(e.cause.message);
   return msg;
 }
-// ★ 反向断言必须同时断言「错在哪」:只判「有没有抛」是假绿 ——
-//   srv.startServer 若因拼写错误根本不存在,抛出来的 TypeError 一样算通过。
+// 异常断言校验：检查异常是否抛出，若指定 expectSub 则同时校验异常信息是否包含该子串
 async function rejects(fn, msg, expectSub) {
   let e = null;
   try { await fn(); } catch (err) { e = err; }
@@ -63,29 +62,29 @@ async function shutdown() {
   }
   openServers.length = 0;
 }
-// ★★ 清理只此一份(待修 4):**每一条**退出路径都调它 —— try/finally(正常路径)、
-//   看门狗超时、`.catch`。旧写法是各写各的、而且都是「先 process.exit(1) 才轮到 rmSync」,
-//   于是**恰好在一跑失败时**留下一个 cyrm-srv-* 临时目录(跑成功反而清得掉)。
+// 清理只此一份:每一条退出路径都调它 —— try/finally(正常路径)、
+//   看门狗超时、.catch。旧写法是各写各的、而且都是「先 process.exit(1) 才轮到 rmSync」,
+//   于是恰好在一跑失败时留下一个 cyrm-srv-* 临时目录(跑成功反而清得掉)。
 //   幂等:shutdown() 自己清空列表,rmSync 带 force。
 async function cleanup() {
-  // ★ 先收相位 ⑤ 那个攥着独占句柄的 PowerShell:它在,临时目录就删不掉(EBUSY)。
+  // 先收相位 ⑤ 那个攥着独占句柄的 PowerShell:它在,临时目录就删不掉(EBUSY)。
   await releaseLocker();
   await shutdown();
   try { fs.rmSync(tmpRoot, { recursive: true, force: true }); }
   catch (e) { console.error('  --    临时目录没删干净(' + errText(e) + '):' + tmpRoot); }
 }
-// ★ 模块级:清理路径(包括看门狗那一条)要能拿到它,不能是相位里的局部变量。
+// 模块级:清理路径(包括看门狗那一条)要能拿到它,不能是相位里的局部变量。
 let lockerChild = null;
 async function releaseLocker() {
   if (!lockerChild) return;
   const c = lockerChild;
   lockerChild = null;
   try { c.kill(); } catch (e) { /* 已经死了 */ }
-  await exited(c);            // ★ 句柄随进程终止释放,不等它就没法安全删目录
+  await exited(c);            // 句柄随进程终止释放,不等它就没法安全删目录
 }
 function request(port, method, reqPath, body, headers) {
   return new Promise(function (resolve, reject) {
-    // ★ 不传 headers 时 node 会按 host/port 自动生成 `Host: 127.0.0.1:<port>`
+    // 不传 headers 时 node 会按 host/port 自动生成 Host: 127.0.0.1:<port>
     //   —— 本文件的其余断言都靠这一条默认行为过 Host 白名单闸。
     const req = http.request({ host: '127.0.0.1', port: port, method: method, path: reqPath, headers: headers },
       function (res) {
@@ -100,7 +99,7 @@ function request(port, method, reqPath, body, headers) {
     req.end();
   });
 }
-// ★ 只用于「这条响应**可能被中止**」的请求(待修 1):**不 reject** —— 中止本身就是要断言的事实。
+// 只用于「这条响应可能被中止」的请求:不 reject —— 中止本身就是要断言的事实。
 //   两种中止形态都算:①请求侧直接 error(socket hang up / ECONNRESET);
 //   ②响应头已到但正文短于 Content-Length 就断了(res 'aborted' / 提前 close)。
 function requestSettled(port, method, reqPath, body) {
@@ -131,22 +130,22 @@ function requestSettled(port, method, reqPath, body) {
     req.end();
   });
 }
-// ★ 等一个子进程真的退出(句柄/锁随进程终止释放,不等它就没法安全删临时目录)。
+// 等一个子进程真的退出(句柄/锁随进程终止释放,不等它就没法安全删临时目录)。
 function exited(child) {
   return new Promise(function (resolve) {
     if (child.exitCode !== null || child.signalCode !== null) return resolve();
     child.once('exit', function () { resolve(); });
   });
 }
-// ★ 用**真的共享冲突**制造「stat 成功但 open 失败」。
+// 用真的共享冲突制造「stat 成功但 open 失败」。
 //   为什么非得借外力:node 在 Windows 上开文件时恒定带 FILE_SHARE_READ|WRITE|DELETE
-//   (libuv 写死的行为),所以**另一个 node 进程**根本锁不住文件 —— 要制造冲突,
+//   (libuv 写死的行为),所以另一个 node 进程根本锁不住文件 —— 要制造冲突,
 //   必须有一个能指定 FileShare.None 的句柄,PowerShell 的 [IO.File]::Open(...,'None') 就是。
 //   实测:句柄在手时 fs.stat 照样成功(它只读目录项属性),而 createReadStream 异步抛 EBUSY。
-// ★ 待修 1 起它**可以一次锁多个文件**(传数组;传字符串 = 只锁一个,与原行为一致)。
-//   为什么必须是一个进程锁两份:句柄槽 `lockerChild` 只有**一个**(releaseLocker 只 kill 得到
+// 待修 1 起它可以一次锁多个文件(传数组;传字符串 = 只锁一个,与原行为一致)。
+//   为什么必须是一个进程锁两份:句柄槽 lockerChild 只有一个(releaseLocker 只 kill 得到
 //   最后一个),起两个 PowerShell 会让先那个句柄失去引用 —— 它的释放时机交给 GC,于是
-//   `cleanup()` 删临时目录会 EBUSY。一次进程、一张句柄表,释放路径仍然只有 releaseLocker() 一条。
+//   cleanup() 删临时目录会 EBUSY。一次进程、一张句柄表,释放路径仍然只有 releaseLocker() 一条。
 function lockFileExclusiveWin(files) {
   const list = Array.isArray(files) ? files : [files];
   const openList = list.map(function (f) { return "'" + f + "'"; }).join(',');
@@ -174,13 +173,13 @@ function lockFileExclusiveWin(files) {
 }
 
 async function runAllPhases() {
-  // ★ 自检缝(默认关闭,只认环境变量):用来实际验证「失败路径也会清理临时目录」(待修 4)。
-  //   复现:`CYRM_SMOKE_SELFTEST_THROW=1 node server_smoke.js` → 退出码 1,且 $TEMP 下
-  //   **不留** cyrm-srv-* 目录(把 main() 里 try/finally 的 `await cleanup()` 去掉即可看到它留下)。
+  // 自检缝(默认关闭,只认环境变量):用来实际验证「失败路径也会清理临时目录」。
+  //   复现:CYRM_SMOKE_SELFTEST_THROW=1 node server_smoke.js → 退出码 1,且 $TEMP 下
+  //   不留 cyrm-srv-* 目录(把 main() 里 try/finally 的 await cleanup() 去掉即可看到它留下)。
   if (process.env.CYRM_SMOKE_SELFTEST_THROW === '1') throw new Error('待修 4 自检:人为抛错');
   // ==== 相位 ① 常量与文件结构 ====
   ok(srv.DEFAULT_PORT === 8777, 'DEFAULT_PORT === 8777(避开游戏侧 7777/7800+/7999)');
-  ok(srv.DEFAULT_HOST === '127.0.0.1', '★ DEFAULT_HOST === 127.0.0.1(绝不绑 0.0.0.0)');
+  ok(srv.DEFAULT_HOST === '127.0.0.1', 'DEFAULT_HOST === 127.0.0.1(绝不绑 0.0.0.0)');
   ok(srv.MAX_MAP_BYTES === 64 * 1024 * 1024, 'MAX_MAP_BYTES === 64MB(与 core.js 的 MAX_BODY_SIZE 同值)');
   ok(srv.DEFAULT_ROOT_DIR === __dirname, 'DEFAULT_ROOT_DIR === level_editor/');
   ok(srv.DEFAULT_MAPS_DIR === path.join(__dirname, '..', 'maps'), 'DEFAULT_MAPS_DIR === 仓库根的 maps/');
@@ -189,7 +188,7 @@ async function runAllPhases() {
   ok(fs.existsSync(path.join(__dirname, 'serve.bat')), 'serve.bat 存在');
   (function () {
     const bat = fs.readFileSync(path.join(__dirname, 'serve.bat'), 'utf8');
-    ok(bat.charCodeAt(0) !== 0xFEFF, '★ serve.bat 不带 UTF-8 BOM(带了 cmd 会把第一行当命令报错)');
+    ok(bat.charCodeAt(0) !== 0xFEFF, 'serve.bat 不带 UTF-8 BOM(带了 cmd 会把第一行当命令报错)');
     ok(/chcp 65001/.test(bat), 'serve.bat: 切 UTF-8 代码页(否则中文错误信息在 cmd 里是乱码)');
     ok(/cd \/d "%~dp0"/.test(bat), 'serve.bat: cd 到脚本所在目录(双击时 cwd 是别的地方)');
     ok(/node\s+editor_server\.js/.test(bat), 'serve.bat: 用 node 起 editor_server.js');
@@ -198,14 +197,14 @@ async function runAllPhases() {
 
   (function () {
     const oldHtml = path.join(__dirname, 'structure-editor.html');
-    ok(!fs.existsSync(oldHtml), '★ 旧页面 structure-editor.html 已退休(2b 的入口页是 editor.html)');
+    ok(!fs.existsSync(oldHtml), '旧页面 structure-editor.html 已退休(2b 的入口页是 editor.html)');
     const newHtml = fs.readFileSync(path.join(__dirname, 'editor.html'), 'utf8');
     ok(newHtml.indexOf('/*__ENEMY_REGISTRY_BEGIN__*/') >= 0 &&
        newHtml.indexOf('/*__ENEMY_REGISTRY_END__*/') >= 0,
-       '★★ 敌人注册表两个标记已经搬进 editor.html(少了它 --check 直接红)');
+       '敌人注册表两个标记已经搬进 editor.html(少了它 --check 直接红)');
     const sync = fs.readFileSync(path.join(__dirname, 'sync-enemies.js'), 'utf8');
     ok(/htmlPath = path\.join\(dir, 'editor\.html'\)/.test(sync),
-       '★★ sync-enemies.js 的 htmlPath 指向 editor.html(漏了它 = 注册表静默漂移)');
+       'sync-enemies.js 的 htmlPath 指向 editor.html(漏了它 = 注册表静默漂移)');
     let out = '', code = 0;
     try {
       out = execFileSync(process.execPath, [path.join(__dirname, 'sync-enemies.js'), '--check'],
@@ -243,29 +242,27 @@ async function runAllPhases() {
     ok(r5.status === 404, '未实现的 /api/* → 404');
     const addr = staticSrv.server.address();
     ok(addr.address === '127.0.0.1' || addr.address === '::ffff:127.0.0.1',
-       '★ 实际绑定地址是回环(实得 ' + addr.address + ')');
+       '实际绑定地址是回环(实得 ' + addr.address + ')');
 
-    // ── Host 白名单闸(待修 2)──
-    // ★ 只绑 127.0.0.1 挡不住 DNS rebinding:恶意页面把域名解析到 127.0.0.1 就**同源**打进来了。
-    //   本文件其余所有断言都靠 node http 客户端自动生成的 `Host: 127.0.0.1:<port>` —— 它们
-    //   上面全绿,本身就是「正常 Host 不被误伤」的实证(闸没放太前、也没误判)。
+    // ── Host 请求头白名单检查 ──
+    // 校验仅允许 127.0.0.1 和 localhost 访问，防御 DNS 重绑定攻击
     const rHostOk = await request(staticSrv.port, 'GET', '/');
     ok(rHostOk.status === 200,
-       '★ Host 闸:正常 Host(127.0.0.1:' + staticSrv.port + ')→ 200(实得 ' + rHostOk.status + ')');
+       'Host 闸:正常 Host(127.0.0.1:' + staticSrv.port + ')→ 200(实得 ' + rHostOk.status + ')');
     const rHostLocal = await request(staticSrv.port, 'GET', '/', null,
                                      { Host: 'localhost:' + staticSrv.port });
     ok(rHostLocal.status === 200,
-       '★ Host 闸:Host: localhost:<实际端口> → 200(实得 ' + rHostLocal.status + ')');
+       'Host 闸:Host: localhost:<实际端口> → 200(实得 ' + rHostLocal.status + ')');
     const rHostEvil = await request(staticSrv.port, 'GET', '/', null, { Host: 'evil.example.com' });
     ok(rHostEvil.status === 403,
-       '★★ Host 闸:Host: evil.example.com → 403(DNS rebinding 打过来时 Host 就是那个恶意域名)(实得 ' +
+       'Host 闸:Host: evil.example.com → 403(DNS rebinding 打过来时 Host 就是那个恶意域名)(实得 ' +
        rHostEvil.status + ')');
     const rHostEvilApi = await request(staticSrv.port, 'GET', '/api/nope', null, { Host: 'evil.example.com' });
     ok(rHostEvilApi.status === 403,
-       '★ Host 闸在**所有路由之前** —— /api/* 也过它(实得 ' + rHostEvilApi.status + ')');
+       'Host 闸在所有路由之前 —— /api/* 也过它(实得 ' + rHostEvilApi.status + ')');
     const rHostNoPort = await request(staticSrv.port, 'GET', '/', null, { Host: '127.0.0.1:1' });
     ok(rHostNoPort.status === 403,
-       '★ Host 闸比对的是**本服务器实际监听的端口**(端口写错 → 403;这条同时证明没写死 8777 —— ' +
+       'Host 闸比对的是本服务器实际监听的端口(端口写错 → 403;这条同时证明没写死 8777 —— ' +
        '本服务器跑在 ' + staticSrv.port + ' 上)(实得 ' + rHostNoPort.status + ')');
   }
 
@@ -281,11 +278,11 @@ async function runAllPhases() {
        'staticFileFor: / → 索引页');
     eq(srv.staticFileFor(rootDir, '/core.js', 'editor.html').status, 200, 'staticFileFor: 正常文件 → 200');
     eq(srv.staticFileFor(rootDir, '/..%2f..%2fsecret.txt', 'editor.html').status, 403,
-       '★ staticFileFor: /..%2f..%2fsecret.txt → 403');
+       'staticFileFor: /..%2f..%2fsecret.txt → 403');
     eq(srv.staticFileFor(rootDir, '/..%5c..%5csecret.txt', 'editor.html').status, 403,
-       '★ staticFileFor: 反斜杠编码 %5c 一样被挡');
+       'staticFileFor: 反斜杠编码 %5c 一样被挡');
     eq(srv.staticFileFor(path.join(rootDir, 'sub'), '/..%2f..%2fsecret.txt', 'editor.html').status, 403,
-       '★ staticFileFor: 根目录是子目录时同样被挡(判据是"落在根里面",不是"有没有 ..")');
+       'staticFileFor: 根目录是子目录时同样被挡(判据是"落在根里面",不是"有没有 ..")');
     eq(srv.staticFileFor(rootDir, '/a%00b', 'editor.html').status, 400, 'staticFileFor: 空字节 → 400');
 
     const travSrv = track(await srv.startServer({ rootDir: rootDir, mapsDir: path.join(tmpRoot, 'maps'), port: 0 }));
@@ -294,13 +291,13 @@ async function runAllPhases() {
     for (const p of paths) {
       const r = await request(travSrv.port, 'GET', p);
       ok(r.body.toString('utf8').indexOf('TOP SECRET') < 0,
-         '★ HTTP 穿越被挡: GET ' + p + ' → ' + r.status + ',正文里没有那个文件');
-      // ★ 只断言「正文里没 secret」是不够的:一个 500 或**空正文**也会通过(两者都读不到 secret)。
-      //   这里补状态断言。★ 接受 403 **或** 404:`/../secret.txt` 会被 URL 解析器**归一化**成
-      //   `/secret.txt`(节点本来就不存在)⇒ 合法地走 404;真正被穿越闸拦下的是编码过的那几条(403)。
+         'HTTP 穿越被挡: GET ' + p + ' → ' + r.status + ',正文里没有那个文件');
+      // 只断言「正文里没 secret」是不够的:一个 500 或空正文也会通过(两者都读不到 secret)。
+      //   这里补状态断言。接受 403 或 404:/../secret.txt 会被 URL 解析器归一化成
+      //   /secret.txt(节点本来就不存在)⇒ 合法地走 404;真正被穿越闸拦下的是编码过的那几条(403)。
       //   只认 403 会把归一化那条判成失败 —— 那是判据错,不是实现错。
       ok(r.status === 403 || r.status === 404,
-         '★ 穿越被挡的状态码是 403(闸拦下)或 404(URL 归一化成根内不存在的名字): GET ' + p +
+         '穿越被挡的状态码是 403(闸拦下)或 404(URL 归一化成根内不存在的名字): GET ' + p +
          ' → ' + r.status);
     }
     const rDir = await request(travSrv.port, 'GET', '/sub');
@@ -312,15 +309,15 @@ async function runAllPhases() {
     const a = track(await srv.startServer({ rootDir: __dirname, mapsDir: path.join(tmpRoot, 'maps'), port: 0 }));
     await rejects(function () {
       return srv.startServer({ rootDir: __dirname, mapsDir: path.join(tmpRoot, 'maps'), port: a.port });
-    }, '★ 同端口再起一个 → 抛错(不是静默退出)', '已被占用');
-    // ★ 报错文本的**首行**必须点名端口号。只断言「含端口号」会被 netstat 提示里那两处
+    }, '同端口再起一个 → 抛错(不是静默退出)', '已被占用');
+    // 报错文本的首行必须点名端口号。只断言「含端口号」会被 netstat 提示里那两处
     //   出现蒙混过去(提示里本来就带端口),那样首行丢了端口也照样绿。
     let addrErr = null;
     try {
       await srv.startServer({ rootDir: __dirname, mapsDir: path.join(tmpRoot, 'maps'), port: a.port });
     } catch (e) { addrErr = e; }
     ok(addrErr !== null && errText(addrErr).split('\n')[0].indexOf('端口 ' + a.port + ' 已被占用') === 0,
-       '★ EADDRINUSE 的**首行**点名端口号(实得:' +
+       'EADDRINUSE 的首行点名端口号(实得:' +
        JSON.stringify(addrErr === null ? '(未抛错)' : errText(addrErr).split('\n')[0]) + ')');
 
     ok(srv.describePortOwner(a.port).indexOf('netstat') >= 0, 'describePortOwner: 给出查占用者的命令');
@@ -330,11 +327,11 @@ async function runAllPhases() {
        'parseArgs: 默认不设该键 —— 默认值只在命令行入口变成 true(库默认弹浏览器 = 每个冒烟用例弹一个窗口)');
   }
 
-  // ==== 相位 ⑤ 静态读失败:stat 成功但 open 失败 —— 服务器必须活着(待修 1)====
+  // ==== 相位 ⑤ 静态读失败:stat 成功但 open 失败 —— 服务器必须活着====
   {
-    // ★ 这里复现的是**真实的文件状态**,不是打桩:fs.stat 成功(它只读目录项属性),
+    // 这里复现的是真实的文件状态,不是打桩:fs.stat 成功(它只读目录项属性),
     //   而随后的 open 失败(共享冲突)。制造手段与理由见 lockFileExclusiveWin 的注释。
-    //   ★ 非 Windows 上跳过(打印一行,不计入 ok/FAIL):[IO.File]::Open 是 .NET API。
+    //   非 Windows 上跳过(打印一行,不计入 ok/FAIL):[IO.File]::Open 是 .NET API。
     const lockDir = path.join(tmpRoot, 'locked');
     fs.mkdirSync(lockDir, { recursive: true });
     const lockedPath = path.join(lockDir, 'editor.html');
@@ -345,11 +342,11 @@ async function runAllPhases() {
     const lockSrv = track(await srv.startServer({
       rootDir: lockDir, mapsDir: path.join(tmpRoot, 'maps'), port: 0,
     }));
-    // ★★ 待修 1(/api/map 那一支):`serveMapFile` 里那 6 行守卫当时**一行断言都没有** ——
-    //   把它删掉 85/0 依然全绿,直到有人在 Windows 上撞上 AV 独占锁。本仓口径是:**这类守卫
-    //   必须有自己的反证**,不能靠"照抄了一份已经测过的代码"(serveStatic 那条根本盖不到这条分支)。
-    //   ★ 落点必须是 tmpRoot/maps 下面(地图名守卫只放行**裸文件名**),而相位 ⑥ 的
-    //     `GET /api/maps` 是**精确列表**比对 ⇒ 这个文件在本相位结束前必须删掉(见 finally)。
+    // 待修 1(/api/map 那一支):serveMapFile 里那 6 行守卫当时一行断言都没有 ——
+    //   把它删掉 85/0 依然全绿,直到有人在 Windows 上撞上 AV 独占锁。本仓口径是:这类守卫
+    //   必须有自己的反证,不能靠"照抄了一份已经测过的代码"(serveStatic 那条根本盖不到这条分支)。
+    //   落点必须是 tmpRoot/maps 下面(地图名守卫只放行裸文件名),而相位 ⑥ 的
+    //     GET /api/maps 是精确列表比对 ⇒ 这个文件在本相位结束前必须删掉(见 finally)。
     const mapsDir = path.join(tmpRoot, 'maps');
     fs.mkdirSync(mapsDir, { recursive: true });
     const lockedMapName = 'locked.cyrm';
@@ -361,62 +358,62 @@ async function runAllPhases() {
       if (process.platform !== 'win32') {
         console.log('  --    相位 ⑤ 跳过:非 Windows(独占句柄需要 .NET 的 FileShare.None)');
       } else {
-        // ★ 一次锁住两个:入口页(静态那条分支)与 locked.cyrm(/api/map 那条分支)。
+        // 一次锁住两个:入口页(静态那条分支)与 locked.cyrm(/api/map 那条分支)。
         lockerChild = await lockFileExclusiveWin([lockedPath, lockedMapPath]);
         // 前置:故障点必须真的在 open 而不在 stat —— 否则下面几条什么都没验(比如文件已被删)。
         let st = null;
         try { st = fs.statSync(lockedPath); } catch (e) { /* 前置不成立 */ }
         ok(st !== null && st.isFile(),
-           '待修 1 前置:被独占锁住的文件 fs.stat **照样成功**(故障点因此在 open,不在 stat)');
+           '待修 1 前置:被独占锁住的文件 fs.stat 照样成功(故障点因此在 open,不在 stat)');
 
         const rLock = await requestSettled(lockSrv.port, 'GET', '/editor.html');
         ok(rLock.aborted === true && rLock.body.length < lockedBytes.length,
-           '★★ 待修 1:open 失败 → 客户端拿到的是**已中止**的响应,而不是一个完整的 200 ' +
+           'open 失败 → 客户端拿到的是已中止的响应,而不是一个完整的 200 ' +
            '(实得 status=' + rLock.status + ', aborted=' + rLock.aborted + ', body=' +
            rLock.body.length + '/' + lockedBytes.length + 'B, err=' + (rLock.error || '无') + ')');
 
         const rGood = await request(lockSrv.port, 'GET', '/good.js');
         ok(rGood.status === 200,
-           '★★ 待修 1:出过坏文件之后服务器**还活着**(紧接着 GET /good.js → ' + rGood.status + ')');
-        sameBytes(rGood.body, goodBytes, '待修 1:活着,而且读出来的字节正确(不是「活着但坏了」)');
+           '出过坏文件之后服务器还活着(紧接着 GET /good.js → ' + rGood.status + ')');
+        sameBytes(rGood.body, goodBytes, '活着,而且读出来的字节正确(不是「活着但坏了」)');
 
-        // ── ★★ 待修 1 补:/api/map 这一支(**serveMapFile**)──
-        //   与上面两条同款,但走的是**另一份代码**:两份守卫各自独立,serveStatic 测到不证明这条测到。
+        // ── 待修 1 补:/api/map 这一支(serveMapFile)──
+        //   与上面两条同款,但走的是另一份代码:两份守卫各自独立,serveStatic 测到不证明这条测到。
         //   前置:与 /editor.html 同理,故障点必须在 open 而不在 stat。
         let stMap = null;
         try { stMap = fs.statSync(lockedMapPath); } catch (e) { /* 前置不成立 */ }
         ok(stMap !== null && stMap.isFile(),
-           '待修 1 前置:被独占锁住的地图 fs.stat **照样成功**(故障点因此在 serveMapFile 的 open)');
+           '待修 1 前置:被独占锁住的地图 fs.stat 照样成功(故障点因此在 serveMapFile 的 open)');
 
         const rMapLock = await requestSettled(lockSrv.port, 'GET', '/api/map?p=' + lockedMapName);
         ok(rMapLock.aborted === true && rMapLock.body.length < lockedMapBytes.length,
-           '★★ 待修 1:/api/map 的 open 失败 → 客户端拿到的是**已中止**的响应,而不是一个完整的 200 ' +
+           '/api/map 的 open 失败 → 客户端拿到的是已中止的响应,而不是一个完整的 200 ' +
            '(实得 status=' + rMapLock.status + ', aborted=' + rMapLock.aborted + ', body=' +
            rMapLock.body.length + '/' + lockedMapBytes.length + 'B, err=' + (rMapLock.error || '无') + ')');
 
-        // ★ 这条才是主断言:这 6 行缺席时,ReadStream 的 'error' 无人接管 → 未捕获异常
-        //   → **整个进程退出**,这条请求根本等不到响应(整支冒烟连一行结果都打不出来)。
+        // 这条才是主断言:这 6 行缺席时,ReadStream 的 'error' 无人接管 → 未捕获异常
+        //   → 整个进程退出,这条请求根本等不到响应(整支冒烟连一行结果都打不出来)。
         const rMapsAlive = await request(lockSrv.port, 'GET', '/api/maps');
         ok(rMapsAlive.status === 200,
-           '★★ 待修 1:出过坏地图之后服务器**还活着**(紧接着 GET /api/maps → ' + rMapsAlive.status + ')');
+           '出过坏地图之后服务器还活着(紧接着 GET /api/maps → ' + rMapsAlive.status + ')');
 
-        // ★ 反证:证明刚才那条**确实是**锁造成的,而不是"没锁上、一切正常"。
+        // 反证:证明刚才那条确实是锁造成的,而不是"没锁上、一切正常"。
         await releaseLocker();
         const rAfter = await requestSettled(lockSrv.port, 'GET', '/editor.html');
         ok(rAfter.status === 200 && rAfter.body.length === lockedBytes.length,
            '待修 1 反证:句柄一放开,同一个 URL 立刻恢复正常(证明前一条确实栽在 open 上)(实得 ' +
            rAfter.status + ', ' + rAfter.body.length + 'B)');
-        // ★ 反证(/api/map 那一支):同一把锁、同一时刻放开,地图这条也要恢复 —— 且字节正确。
+        // 反证(/api/map 那一支):同一把锁、同一时刻放开,地图这条也要恢复 —— 且字节正确。
         const rMapAfter = await requestSettled(lockSrv.port, 'GET', '/api/map?p=' + lockedMapName);
         ok(rMapAfter.status === 200 && rMapAfter.body.length === lockedMapBytes.length,
            '待修 1 反证(/api/map):句柄一放开立刻恢复(证明前一条确实栽在 serveMapFile 的 open 上)(实得 ' +
            rMapAfter.status + ', ' + rMapAfter.body.length + 'B)');
       }
     } finally {
-      // ★ 子进程一定要收掉:它握着句柄时连临时目录都删不掉(rmSync 会 EBUSY)。
+      // 子进程一定要收掉:它握着句柄时连临时目录都删不掉(rmSync 会 EBUSY)。
       //   (断言失败走不到 kill 那一步 —— 所以这里必须再兜一次。)
       await releaseLocker();
-      // ★ locked.cyrm 必须在这里删掉:相位 ⑥ 的 GET /api/maps 是**精确列表**比对
+      // locked.cyrm 必须在这里删掉:相位 ⑥ 的 GET /api/maps 是精确列表比对
       //   (['a_first.cyrm','b_second.cyrm']),留着它会把那条一直绿着的断言判红。
       //   非 Windows 上这个文件只是建了没用,一并删掉;删不到(例如上面提前抛错)也不该盖住真失败。
       try { fs.unlinkSync(lockedMapPath); } catch (e) { /* 不在就跳过 */ }
@@ -430,10 +427,10 @@ async function runAllPhases() {
                  'demo\u0000.cyrm', 'x'.repeat(65) + '.cyrm', null, 42, undefined];
     let allRejected = true, firstFail = '';
     for (const n of bad) {
-      // ★ 用「不提前 return」的写法:一条失败不该让后面 15 条一条都不跑(否则修一处红一处)。
+      // 用「不提前 return」的写法:一条失败不该让后面 15 条一条都不跑(否则修一处红一处)。
       if (srv.isValidMapName(n) !== false) { allRejected = false; if (!firstFail) firstFail = JSON.stringify(n); }
     }
-    ok(allRejected, '★ isValidMapName 拒绝全部 ' + bad.length + ' 个非法名(首个漏网:' + firstFail + ')');
+    ok(allRejected, 'isValidMapName 拒绝全部 ' + bad.length + ' 个非法名(首个漏网:' + firstFail + ')');
     const good = ['demo.cyrm', 'factory1v1.cyrm', 'a.cyrm', 'A_1-2.cyrm', 'x'.repeat(58) + '.cyrm'];
     let allAccepted = true, firstGoodFail = '';
     for (const n of good) {
@@ -441,7 +438,7 @@ async function runAllPhases() {
     }
     ok(allAccepted, 'isValidMapName 接受全部 ' + good.length + ' 个合法名(首个漏网:' + firstGoodFail + ')');
     ok(srv.MAP_NAME_RE.source === '^[A-Za-z0-9_\\-]+(?:\\.cyrm|\\.v3\\.bak)$',
-       '★★ MAP_NAME_RE 逐字钉住:规格 §4.9 的 `.cyrm` + 2026-09-22 授权放行的唯一后缀 `.v3.bak`');
+       'MAP_NAME_RE 逐字钉住:规格 §4.9 的 .cyrm + 2026-09-22 授权放行的唯一后缀 .v3.bak');
     ok(srv.MAX_MAP_NAME_LEN === 64, 'MAX_MAP_NAME_LEN === 64(规格的正则没有长度上界,这条是防御性补充)');
     let threw = false;
     try { srv.mapPathFor(tmpRoot, '../evil.cyrm'); } catch (e) { threw = true; }
@@ -450,11 +447,11 @@ async function runAllPhases() {
        'mapPathFor: 合法名 = mapsDir + 名字');
 
     ok(srv.isValidMapName('demo.v3.bak') === true,
-       '★★★ 新后缀被接受:`demo.v3.bak`(= 地图名去 `.cyrm` + `.v3.bak`,编辑器的原文备份名)');
+       '新后缀被接受:demo.v3.bak(= 地图名去 .cyrm + .v3.bak,编辑器的原文备份名)');
     ok(srv.isValidMapName('factory1v1.v3.bak') === true,
-       '★ 真地图名 + 新后缀也接受(factory1v1.v3.bak)');
+       '真地图名 + 新后缀也接受(factory1v1.v3.bak)');
     ok(srv.isValidMapName('x'.repeat(57) + '.v3.bak') === true,
-       '★ 新后缀下长度上界仍然生效:恰好 64 字符(57 + 7)接受');
+       '新后缀下长度上界仍然生效:恰好 64 字符(57 + 7)接受');
     const badBak = ['a.bak', 'a.v3bak', 'a.v3.bak.cyrm', 'a.cyrm.bak', 'v3.bak', '.v3.bak',
                     '..v3.bak', '../a.v3.bak', '..%2fa.v3.bak', '/a.v3.bak', 'a/b.v3.bak',
                     'a\\b.v3.bak', 'C:\\a.v3.bak', 'a.b.v3.bak', 'a b.v3.bak', 'a.v3.bak\n',
@@ -463,34 +460,34 @@ async function runAllPhases() {
     for (const n of badBak) {
       if (srv.isValidMapName(n) !== false) { bakRejected = false; if (!firstBakFail) firstBakFail = JSON.stringify(n); }
     }
-    ok(bakRejected, '★★★ 放宽**只**多了那一个后缀:另外 ' + badBak.length +
-       ' 个"名字里有 `.` 但不是 `.v3.bak` 后缀 / 想走路径 / 过长"的名字**照样全拒**' +
+    ok(bakRejected, '放宽只多了那一个后缀:另外 ' + badBak.length +
+       ' 个"名字里有 . 但不是 .v3.bak 后缀 / 想走路径 / 过长"的名字照样全拒' +
        '(首个漏网:' + firstBakFail + ')');
-    // ★ 逐个子集点名(上面那条是"全拒"的汇总;这几条说明每个子集**各自**被拒,不是靠运气)
+    // 逐个子集点名(上面那条是"全拒"的汇总;这几条说明每个子集各自被拒,不是靠运气)
     ok(srv.isValidMapName('a.bak') === false && srv.isValidMapName('demo.txt') === false &&
        srv.isValidMapName('a.v3bak') === false,
-       '★★ 例外只给 `.v3.bak` 这一个后缀:`.bak` / `.txt` / `.v3bak`(少个点)都不行');
+       '例外只给 .v3.bak 这一个后缀:.bak / .txt / .v3bak(少个点)都不行');
     ok(srv.isValidMapName('a.b.v3.bak') === false && srv.isValidMapName('a.cyrm.bak') === false,
-       '★★ 基名里**不许有 `.`**(`a.b.v3.bak`、`a.cyrm.bak` 都拒 —— 备份名是"去 `.cyrm` 再接后缀")');
+       '基名里不许有 .(a.b.v3.bak、a.cyrm.bak 都拒 —— 备份名是"去 .cyrm 再接后缀")');
     ok(srv.isValidMapName('../a.v3.bak') === false && srv.isValidMapName('..v3.bak') === false &&
        srv.isValidMapName('/a.v3.bak') === false && srv.isValidMapName('a/b.v3.bak') === false &&
        srv.isValidMapName('a\\b.v3.bak') === false && srv.isValidMapName('C:\\a.v3.bak') === false,
-       '★★★ 新后缀**不是**绕过路径守卫的后门:遍历(`../a.v3.bak`、`..v3.bak`、`..%2fa.v3.bak`)' +
+       '新后缀不是绕过路径守卫的后门:遍历(../a.v3.bak、..v3.bak、..%2fa.v3.bak)' +
        '与绝对/含分隔符的名字一律照拒');
-    // ③ 旧的 `.cyrm` 那一档**一个字都没动**:同一个名字在放宽前后都接受
+    // ③ 旧的 .cyrm 那一档一个字都没动:同一个名字在放宽前后都接受
     ok(srv.isValidMapName('demo.cyrm') === true && srv.isValidMapName('A_1-2.cyrm') === true,
-       '★★ 放宽**没有**碰 `.cyrm` 那一档:普通地图名照旧接受(旧行为一字未变)');
-    // ④ 新旧两档在**真路径**上的一致性:`mapPathFor` 对新后缀同样只拼 mapsDir + 名字
-    // ★ 两条都写成"不抛出去"的形式:`mapPathFor` 对非法名是**抛错**,直接写在 `eq(...)` 里
-    //   一旦正则被改坏就会把整场冒烟**中断**在异常上(后面几十条断言一条都跑不到、也没有
+       '放宽没有碰 .cyrm 那一档:普通地图名照旧接受(旧行为一字未变)');
+    // ④ 新旧两档在真路径上的一致性:mapPathFor 对新后缀同样只拼 mapsDir + 名字
+    // 两条都写成"不抛出去"的形式:mapPathFor 对非法名是抛错,直接写在 eq(...) 里
+    //   一旦正则被改坏就会把整场冒烟中断在异常上(后面几十条断言一条都跑不到、也没有
     //   计数行)—— 症状看着像"冒烟自己坏了",而不是"这条守卫坏了"。
     function tryPathFor(n) { try { return { ok: true, p: srv.mapPathFor(tmpRoot, n) }; } catch (e) { return { ok: false }; } }
     const pBak = tryPathFor('demo.v3.bak');
     ok(pBak.ok && pBak.p === path.join(path.resolve(tmpRoot), 'demo.v3.bak'),
-       '★ mapPathFor: 新后缀 = mapsDir + 名字(与 `.cyrm` 同一条路径拼接;实得 ' +
+       'mapPathFor: 新后缀 = mapsDir + 名字(与 .cyrm 同一条路径拼接;实得 ' +
        (pBak.ok ? pBak.p : '(抛错了 —— 名字没被接受)') + ')');
     ok(tryPathFor('../evil.v3.bak').ok === false,
-       '★★ mapPathFor: 带新后缀的遍历名照样抛错(第二道"路径必须在 maps/ 里"的闸)');
+       'mapPathFor: 带新后缀的遍历名照样抛错(第二道"路径必须在 maps/ 里"的闸)');
   }
 
   {
@@ -514,13 +511,13 @@ async function runAllPhases() {
     ok(/^application\/json/.test(String(rm.headers['content-type'])), 'GET /api/maps → application/json');
     const data = JSON.parse(rm.body.toString('utf8'));
     eq(data.maps.map(function (m) { return m.name; }), ['a_first.cyrm', 'b_second.cyrm'],
-       '★ /api/maps: 只列合法且是文件的 .cyrm,按名字升序(notes.txt 与同名目录都不进来)');
+       '/api/maps: 只列合法且是文件的 .cyrm,按名字升序(notes.txt 与同名目录都不进来)');
     eq(data.maps[0].size, 2, '/api/maps: size = 文件字节数');
     ok(typeof data.maps[0].mtime === 'number' && data.maps[0].mtime > 0, '/api/maps: mtime 是数字');
     ok(logged.some(function (m) { return m.indexOf('notes.txt') >= 0; }),
-       '★ /api/maps: **名字不过守卫**而被跳过的文件点名记日志(绝不静默消失)');
+       '/api/maps: 名字不过守卫而被跳过的文件点名记日志(绝不静默消失)');
     ok(logged.some(function (m) { return m.indexOf('sub.cyrm') >= 0; }),
-       '★ /api/maps: **不是文件**(同名目录)而被跳过的**也**点名记日志 —— 这条路径待修 2 之前是静默 continue');
+       '/api/maps: 不是文件(同名目录)而被跳过的也点名记日志 —— 这条路径待修 2 之前是静默 continue');
 
     const rg = await request(apiSrv.port, 'GET', '/api/map?p=b_second.cyrm');
     ok(rg.status === 200, 'GET /api/map → 200');
@@ -533,10 +530,10 @@ async function runAllPhases() {
     const rMiss = await request(apiSrv.port, 'GET', '/api/map');
     ok(rMiss.status === 400, 'GET /api/map 缺 p 参数 → 400');
     const rTrav = await request(apiSrv.port, 'GET', '/api/map?p=' + encodeURIComponent('../package.json'));
-    ok(rTrav.status === 400, '★ GET /api/map 路径穿越名 → 400');
-    ok(rTrav.body.toString('utf8').indexOf('"name"') < 0, '★ 那个 400 的正文里没有 package.json 的内容');
+    ok(rTrav.status === 400, 'GET /api/map 路径穿越名 → 400');
+    ok(rTrav.body.toString('utf8').indexOf('"name"') < 0, '那个 400 的正文里没有 package.json 的内容');
     const rTrav2 = await request(apiSrv.port, 'GET', '/api/map?p=' + encodeURIComponent('..%2fdemo.cyrm'));
-    ok(rTrav2.status === 400, '★ GET /api/map 编码过的穿越名 → 400');
+    ok(rTrav2.status === 400, 'GET /api/map 编码过的穿越名 → 400');
     const rPost = await request(apiSrv.port, 'POST', '/api/map?p=b_second.cyrm', Buffer.from([1]));
     ok(rPost.status === 405, 'POST /api/map → 405');
     const rMapsPost = await request(apiSrv.port, 'POST', '/api/maps', Buffer.from([1]));
@@ -553,8 +550,8 @@ async function runAllPhases() {
         return n.indexOf('.tmp') < 0;
       });
     };
-    // ★ 写端点只收 application/json(硬要求 A:CSRF,理由见相位末尾那一块)——
-    //   所以本相位每一条**合法**的 PUT 都必须显式带上它。下面是它们的公共头。
+    // 写端点只收 application/json(CSRF,理由见相位末尾那一块)——
+    //   所以本相位每一条合法的 PUT 都必须显式带上它。下面是它们的公共头。
     const PUT_JSON = { 'Content-Type': 'application/json' };
     const apiSrv = track(await srv.startServer({
       rootDir: __dirname, mapsDir: mapsDir, port: 0,
@@ -568,7 +565,7 @@ async function runAllPhases() {
     ok(put.status === 200, 'PUT 新文件 → 200(实得 ' + put.status + ')');
     eq(JSON.parse(put.body.toString('utf8')), { name: 'c_new.cyrm', size: 3 }, 'PUT 回 JSON {name,size}');
     sameBytes(readBack('c_new.cyrm'), Buffer.from([7, 7, 7]), 'PUT: 落盘字节与请求体一致');
-    ok(noTmpLeft(), '★ PUT 之后没有残留临时文件');
+    ok(noTmpLeft(), 'PUT 之后没有残留临时文件');
 
     const put2 = await request(apiSrv.port, 'PUT', '/api/map?p=c_new.cyrm', Buffer.from([1, 2, 3, 4]), PUT_JSON);
     ok(put2.status === 200, 'PUT 覆盖已有文件 → 200');
@@ -578,65 +575,65 @@ async function runAllPhases() {
     const before = readBack('c_new.cyrm');
     const rBadName = await request(apiSrv.port, 'PUT', '/api/map?p=' + encodeURIComponent('../evil.cyrm'),
                                    Buffer.from([0xEE]), PUT_JSON);
-    ok(rBadName.status === 400, '★ PUT 路径穿越名 → 400');
-    ok(!fs.existsSync(path.join(tmpRoot, 'evil.cyrm')), '★ PUT 没有在 maps/ 之外写出任何文件');
+    ok(rBadName.status === 400, 'PUT 路径穿越名 → 400');
+    ok(!fs.existsSync(path.join(tmpRoot, 'evil.cyrm')), 'PUT 没有在 maps/ 之外写出任何文件');
     const rEmpty = await request(apiSrv.port, 'PUT', '/api/map?p=c_new.cyrm', Buffer.alloc(0), PUT_JSON);
     ok(rEmpty.status === 400, 'PUT 空请求体 → 400(不许用空内容覆盖地图)');
     const rBig = await request(smallSrv.port, 'PUT', '/api/map?p=c_new.cyrm', Buffer.alloc(64, 1), PUT_JSON);
-    ok(rBig.status === 413, '★ PUT 超过 maxMapBytes → 413(实得 ' + rBig.status + ')');
+    ok(rBig.status === 413, 'PUT 超过 maxMapBytes → 413(实得 ' + rBig.status + ')');
     sameBytes(readBack('c_new.cyrm'), before,
-              '★★ 三种被拒的 PUT 之后,原文件逐字节没变');
+              '三种被拒的 PUT 之后,原文件逐字节没变');
     ok(noTmpLeft(), '被拒的 PUT 也没留临时文件');
 
-    // ★ 写失败的清理路径:目标是**一个非空目录** → rename 必失败 → 临时文件必须被删掉。
+    // 写失败的清理路径:目标是一个非空目录 → rename 必失败 → 临时文件必须被删掉。
     const rDir = await request(apiSrv.port, 'PUT', '/api/map?p=sub.cyrm', Buffer.from([1, 2]), PUT_JSON);
-    ok(rDir.status === 500, '★ PUT 目标是个目录 → 500(写失败,实得 ' + rDir.status + ')');
+    ok(rDir.status === 500, 'PUT 目标是个目录 → 500(写失败,实得 ' + rDir.status + ')');
     ok(fs.statSync(path.join(mapsDir, 'sub.cyrm')).isDirectory() &&
        fs.existsSync(path.join(mapsDir, 'sub.cyrm', 'keep.txt')),
-       '★ 写失败后那个目录连同里面的文件都还在(没有被毁掉)');
-    ok(noTmpLeft(), '★★ 写失败后临时文件被清掉(否则每次失败都在 maps/ 里留垃圾)');
+       '写失败后那个目录连同里面的文件都还在(没有被毁掉)');
+    ok(noTmpLeft(), '写失败后临时文件被清掉(否则每次失败都在 maps/ 里留垃圾)');
 
     // 头请求不能带 body(顺带验 HEAD 分支)
     const rHead = await request(apiSrv.port, 'HEAD', '/api/map?p=c_new.cyrm');
     ok(rHead.status === 200 && rHead.body.length === 0, 'HEAD /api/map → 200 且无正文');
 
-    // ── ★★ 硬要求 A:CSRF —— 写端点只收 application/json,且一个 CORS 头都不答 ──
-    // ★ Host 白名单闸挡的是 **DNS rebinding**;它挡不住这一类:恶意页面直接
-    //   `fetch('http://127.0.0.1:8777/api/map', {method:'PUT', body})` 时,浏览器发的 `Host`
-    //   **就是** `127.0.0.1:8777` —— 完全合法,闸照过。读端点安全(没有 CORS 头 ⇒ 跨源拿不到
-    //   响应体),但**写端点**上,一个「简单请求」(不触发预检的那些组合)会被**直接处理**。
-    //   故写端点必须自己要求一个**非简单**形态,逼浏览器先发预检 —— 而预检我们一个 CORS 头都不答
+    // ── CSRF —— 写端点只收 application/json,且一个 CORS 头都不答 ──
+    // Host 白名单闸挡的是 DNS rebinding;它挡不住这一类:恶意页面直接
+    //   fetch('http://127.0.0.1:8777/api/map', {method:'PUT', body}) 时,浏览器发的 Host
+    //   就是 127.0.0.1:8777 —— 完全合法,闸照过。读端点安全(没有 CORS 头 ⇒ 跨源拿不到
+    //   响应体),但写端点上,一个「简单请求」(不触发预检的那些组合)会被直接处理。
+    //   故写端点必须自己要求一个非简单形态,逼浏览器先发预检 —— 而预检我们一个 CORS 头都不答
     //   ⇒ 浏览器根本不会把那条 PUT 发出来。
-    // ★★ 反过来:**绝不要加 `Access-Control-Allow-Origin`** —— 那等于把预检答成通过,
-    //    会把本来安全的**读**端点一起拖下水。下面第 ④ / ⑤ 条就是钉这个的。
+    // 反过来:绝不要加 Access-Control-Allow-Origin —— 那等于把预检答成通过,
+    //    会把本来安全的读端点一起拖下水。下面第 ④ / ⑤ 条就是钉这个的。
     {
       const beforeA = readBack('c_new.cyrm');
-      // ① 简单请求的经典内容类型。★ 它本身不是"简单方法"(PUT 不在 CORS 安全方法名单里),
-      //    这条钉的是**类型闸**本身:哪天有人给写端点加上 POST,它就是唯一还站着的东西。
+      // ① 简单请求的经典内容类型。它本身不是"简单方法"(PUT 不在 CORS 安全方法名单里),
+      //    这条钉的是类型闸本身:哪天有人给写端点加上 POST,它就是唯一还站着的东西。
       const rPlain = await request(apiSrv.port, 'PUT', '/api/map?p=c_new.cyrm', Buffer.from([0xDE, 0xAD]),
                                    { 'Content-Type': 'text/plain' });
       ok(rPlain.status === 415,
-         '★★ 硬要求 A:Content-Type: text/plain(简单请求的组合)→ 415 拒绝(实得 ' + rPlain.status + ')');
+         'Content-Type: text/plain(简单请求的组合)→ 415 拒绝(实得 ' + rPlain.status + ')');
       // ② 一个 Content-Type 都不带(node/curl 的默认行为)也一样拒 —— "缺省即放行"是最容易漏的缺口。
       const rNoCt = await request(apiSrv.port, 'PUT', '/api/map?p=c_new.cyrm', Buffer.from([0xDE, 0xAD]));
-      ok(rNoCt.status === 415, '★ 硬要求 A:不带 Content-Type → 415(实得 ' + rNoCt.status + ')');
+      ok(rNoCt.status === 415, '不带 Content-Type → 415(实得 ' + rNoCt.status + ')');
       // ③ Origin 是别的站 → 403。跨源的非简单请求一定会带 Origin。
       const rCross = await request(apiSrv.port, 'PUT', '/api/map?p=c_new.cyrm', Buffer.from([0xDE, 0xAD]),
                                    { 'Content-Type': 'application/json', Origin: 'http://evil.example.com' });
       ok(rCross.status === 403,
-         '★ 硬要求 A:Origin 是别的站(类型对、来源错)→ 403(实得 ' + rCross.status + ')');
-      // ④ Sec-Fetch-Site 是**浏览器专有**头(在 forbidden header 名单上,页面 JS 改不了它)。
-      //    ★ 这条**刻意不带 Origin**:Sec-Fetch-Site 是"没有 Origin 可判"时的兜底(见实现注释)。
+         'Origin 是别的站(类型对、来源错)→ 403(实得 ' + rCross.status + ')');
+      // ④ Sec-Fetch-Site 是浏览器专有头(在 forbidden header 名单上,页面 JS 改不了它)。
+      //    这条刻意不带 Origin:Sec-Fetch-Site 是"没有 Origin 可判"时的兜底(见实现注释)。
       const rSite = await request(apiSrv.port, 'PUT', '/api/map?p=c_new.cyrm', Buffer.from([0xDE, 0xAD]),
                                   { 'Content-Type': 'application/json', 'Sec-Fetch-Site': 'cross-site' });
       ok(rSite.status === 403,
-         '★ 硬要求 A:没有 Origin、而 Sec-Fetch-Site: cross-site → 403(兜底那道)(实得 ' +
+         '没有 Origin、而 Sec-Fetch-Site: cross-site → 403(兜底那道)(实得 ' +
          rSite.status + ')');
       sameBytes(readBack('c_new.cyrm'), beforeA,
-                '★★ 硬要求 A:四条被拒的跨源 / 非 JSON PUT 之后,原文件逐字节没变');
-      ok(noTmpLeft(), '★ 硬要求 A:被拒的跨源 PUT 也没留临时文件');
+                '四条被拒的跨源 / 非 JSON PUT 之后,原文件逐字节没变');
+      ok(noTmpLeft(), '被拒的跨源 PUT 也没留临时文件');
 
-      // ⑤ 预检本身:浏览器发的 OPTIONS 必须拿不到**任何** Access-Control-* 头 ——
+      // ⑤ 预检本身:浏览器发的 OPTIONS 必须拿不到任何 Access-Control-* 头 ——
       //    这是"跨源写根本发不出来"的地基(答了 ACAO 就等于把预检放行)。
       const rOpt = await request(apiSrv.port, 'OPTIONS', '/api/map?p=c_new.cyrm', null,
                                  { Origin: 'http://evil.example.com',
@@ -644,78 +641,75 @@ async function runAllPhases() {
                                    'Access-Control-Request-Headers': 'content-type' });
       const corsKeys = Object.keys(rOpt.headers).filter(function (h) { return h.indexOf('access-control-') === 0; });
       ok(corsKeys.length === 0,
-         '★★ 硬要求 A:跨源预检(OPTIONS)一个 Access-Control-* 头都不答(实得 status=' + rOpt.status +
+         '跨源预检(OPTIONS)一个 Access-Control-* 头都不答(实得 status=' + rOpt.status +
          ', ' + (corsKeys.length ? corsKeys.join(',') : '无 CORS 头') + ')');
 
-      // ④b ★ 防**误伤自己人**:编辑器可以从 localhost 或 127.0.0.1 任一个名字打开,而按 Fetch
-      //     的"同站"定义这**两个名字是两个站** —— 于是从 localhost 打开的页面去写 127.0.0.1 时,
-      //     浏览器会诚实地标 `Sec-Fetch-Site: cross-site`。那时**必须放行**(Origin 是主闸),
+      // ④b 防误伤自己人:编辑器可以从 localhost 或 127.0.0.1 任一个名字打开,而按 Fetch
+      //     的"同站"定义这两个名字是两个站 —— 于是从 localhost 打开的页面去写 127.0.0.1 时,
+      //     浏览器会诚实地标 Sec-Fetch-Site: cross-site。那时必须放行(Origin 是主闸),
       //     否则"用 localhost 打开编辑器"就存不进任何地图(而且只在写端点现形,读端点一切正常)。
       const rLoop = await request(apiSrv.port, 'PUT', '/api/map?p=c_new.cyrm', Buffer.from([4, 4]),
                                   { 'Content-Type': 'application/json',
                                     Origin: 'http://localhost:' + apiSrv.port,
                                     'Sec-Fetch-Site': 'cross-site' });
       ok(rLoop.status === 200,
-         '★★ 硬要求 A:Origin 是回环的另一个名字(localhost)+ Sec-Fetch-Site: cross-site → 放行' +
+         'Origin 是回环的另一个名字(localhost)+ Sec-Fetch-Site: cross-site → 放行' +
          '(Origin 是主闸,别用"同站"判自家页面)(实得 ' + rLoop.status + ')');
       const rLoop2 = await request(apiSrv.port, 'PUT', '/api/map?p=c_new.cyrm', Buffer.from([4, 4]),
                                    { 'Content-Type': 'application/json',
                                      Origin: 'http://127.0.0.1:' + apiSrv.port });
       ok(rLoop2.status === 200,
-         '★ 硬要求 A:Origin: http://127.0.0.1:<实际端口>(浏览器在非简单请求上一定会带)→ 放行' +
+         'Origin: http://127.0.0.1:<实际端口>(浏览器在非简单请求上一定会带)→ 放行' +
          '(实得 ' + rLoop2.status + ')');
 
-      // ⑥ 那条**成功**的 PUT 也不许带 CORS 头(带了 = 跨源读得到响应体,把读端点也拖下水)。
+      // ⑥ 那条成功的 PUT 也不许带 CORS 头(带了 = 跨源读得到响应体,把读端点也拖下水)。
       const rOkA = await request(apiSrv.port, 'PUT', '/api/map?p=c_new.cyrm', Buffer.from([5, 5]), PUT_JSON);
       ok(rOkA.status === 200 && rOkA.headers['access-control-allow-origin'] === undefined,
-         '★ 硬要求 A:同源 PUT 照常 200、且响应里没有 Access-Control-Allow-Origin(实得 ' +
+         '同源 PUT 照常 200、且响应里没有 Access-Control-Allow-Origin(实得 ' +
          rOkA.status + ')');
-      // ⑦ 带参数的 JSON 类型必须照收 —— 不然会**误伤自家前端**(浏览器 fetch 带 charset 时发的就是它)。
+      // ⑦ 带参数的 JSON 类型必须照收 —— 不然会误伤自家前端(浏览器 fetch 带 charset 时发的就是它)。
       const rCharset = await request(apiSrv.port, 'PUT', '/api/map?p=c_new.cyrm', Buffer.from([6, 6]),
                                      { 'Content-Type': 'application/json; charset=utf-8' });
       ok(rCharset.status === 200,
-         '★ 硬要求 A:application/json; charset=utf-8 照收(否则自家 fetch 会被自己挡掉)(实得 ' +
+         'application/json; charset=utf-8 照收(否则自家 fetch 会被自己挡掉)(实得 ' +
          rCharset.status + ')');
-      sameBytes(readBack('c_new.cyrm'), Buffer.from([6, 6]), '★ 硬要求 A:带参数的 JSON 类型确实写进去了');
-      // ⑧ 那个"简单请求"的**真实攻击形态**:POST + text/plain + 跨源 Origin。它**不预检**、
+      sameBytes(readBack('c_new.cyrm'), Buffer.from([6, 6]), '带参数的 JSON 类型确实写进去了');
+      // ⑧ 那个"简单请求"的真实攻击形态:POST + text/plain + 跨源 Origin。它不预检、
       //    会被浏览器直接发出去 —— 而本端点只收 PUT ⇒ 它根本进不了写路径。
       const rSimple = await request(apiSrv.port, 'POST', '/api/map?p=c_new.cyrm', Buffer.from([0xDE, 0xAD]),
                                     { 'Content-Type': 'text/plain', Origin: 'http://evil.example.com' });
       ok(rSimple.status === 405,
-         '★ 硬要求 A:简单请求的真实形态(POST + text/plain + 跨源 Origin)→ 405(实得 ' +
+         '简单请求的真实形态(POST + text/plain + 跨源 Origin)→ 405(实得 ' +
          rSimple.status + ')');
-      sameBytes(readBack('c_new.cyrm'), Buffer.from([6, 6]), '★ 硬要求 A:那条简单请求也没动到文件');
+      sameBytes(readBack('c_new.cyrm'), Buffer.from([6, 6]), '那条简单请求也没动到文件');
     }
 
-    // ── ★★ 硬要求 B:符号链接 —— 写端点必须按**真实路径**再判一次包含性 ──
-    // ★ 现有两道闸(裸文件名正则 + mapPathFor 里的字符串包含性)判的都是**路径字符串**,
-    //   而 `fs.stat` / `fs.writeFile` / `fs.realpath` 这一族**会跟随符号链接**。
-    //   对读端点这只是低危(要求攻击者已经能往 maps/ 里放一个链接);但写端点走同一条路径时
-    //   会升级成「把编辑器当任意文件写入器」—— 故这里按 realpath 再判一次。
+    // ── 符号链接真实路径包含性校验 ──
+    // 确保写入目标解析真实路径后仍位于 mapsDir 目录下
     {
       const outsideDir = path.join(tmpRoot, 'outside');
       fs.mkdirSync(outsideDir, { recursive: true });
       const victimPath = path.join(outsideDir, 'victim.cyrm');
-      const victimBytes = Buffer.from('★ maps/ 之外的文件 —— 写端点一个字节都不许碰它', 'utf8');
+      const victimBytes = Buffer.from('maps/ 之外的文件 —— 写端点一个字节都不许碰它', 'utf8');
       fs.writeFileSync(victimPath, victimBytes);
       const linkName = 'link_out.cyrm';
       const linkPath = path.join(mapsDir, linkName);
 
       // ① 守卫本体(与"能不能建链接"无关的那一半):目标经 realpath 后落在 maps/ 之外 → 必须抛。
-      //    ★ 断言必须同时判**错在哪**(照 rejects() 的纪律):只判"有没有抛"是假绿 ——
+      //    断言必须同时判错在哪(照 rejects() 的纪律):只判"有没有抛"是假绿 ——
       //      守卫不存在时抛出来的 TypeError 一样算通过。
       let guardErr = null;
       try { srv.assertWriteTargetInside(mapsDir, victimPath, linkName); } catch (e) { guardErr = e; }
       ok(guardErr !== null && errText(guardErr).indexOf('maps 目录之外') >= 0,
-         '★ 硬要求 B 守卫本体:目标真实路径落在 maps/ 之外 → 抛错并点名原因(实得:' +
+         '硬要求 B 守卫本体:目标真实路径落在 maps/ 之外 → 抛错并点名原因(实得:' +
          (guardErr === null ? '(未抛错)' : errText(guardErr)) + ')');
       sameBytes(fs.readFileSync(victimPath), victimBytes,
-                '★ 硬要求 B:那次调用(它只是判,不写)之后外部文件仍逐字节未变');
+                '那次调用(它只是判,不写)之后外部文件仍逐字节未变');
 
-      // ② 端到端:在 maps/ 里造一个指向**外部**的链接,PUT 它必须被拒。
-      //    ★ 本机(Windows、非管理员)建不了**文件**符号链接(EPERM —— 需要 SeCreateSymbolicLinkPrivilege
-      //      或开发者模式),但**目录联接(junction)**不需要特权。守卫判的是"真实路径落在哪里",
-      //      与链接的类型无关,故这是等价的实测。建不了就打印一行跳过(**不计入 ok/FAIL**),
+      // ② 端到端:在 maps/ 里造一个指向外部的链接,PUT 它必须被拒。
+      //    本机(Windows、非管理员)建不了文件符号链接(EPERM —— 需要 SeCreateSymbolicLinkPrivilege
+      //      或开发者模式),但目录联接(junction)不需要特权。守卫判的是"真实路径落在哪里",
+      //      与链接的类型无关,故这是等价的实测。建不了就打印一行跳过(不计入 ok/FAIL),
       //      绝不写会飘的断言。
       let linked = false;
       try { fs.symlinkSync(outsideDir, linkPath, 'junction'); linked = true; }
@@ -725,22 +719,22 @@ async function runAllPhases() {
           ok(fs.lstatSync(linkPath).isSymbolicLink(),
              '硬要求 B 前置:' + linkName + ' 确实是一个链接(不是普通文件)');
           ok(fs.realpathSync(linkPath) === fs.realpathSync(outsideDir),
-             '硬要求 B 前置:它的**真实路径**落在 maps/ 之外(' + fs.realpathSync(linkPath) + ')');
+             '硬要求 B 前置:它的真实路径落在 maps/ 之外(' + fs.realpathSync(linkPath) + ')');
           const rLink = await request(apiSrv.port, 'PUT', '/api/map?p=' + linkName, Buffer.from([0xAA, 0xBB]),
                                       PUT_JSON);
           ok(rLink.status === 403,
-             '★★ 硬要求 B:PUT 一个指向 maps/ 之外的链接 → 403 拒绝(实得 ' + rLink.status +
+             'PUT 一个指向 maps/ 之外的链接 → 403 拒绝(实得 ' + rLink.status +
              ';若实得 500 说明它是走到 rename 才失败的,那就不是 realpath 闸挡的)');
           sameBytes(fs.readFileSync(victimPath), victimBytes,
-                    '★★ 硬要求 B:那个外部文件逐字节未变(被拒的写一个字节都没落盘)');
-          ok(fs.existsSync(linkPath), '★ 硬要求 B:链接本身也还在(没有被 rename 覆盖掉)');
+                    '那个外部文件逐字节未变(被拒的写一个字节都没落盘)');
+          ok(fs.existsSync(linkPath), '链接本身也还在(没有被 rename 覆盖掉)');
           ok(fs.readdirSync(outsideDir).length === 1,
-             '★ 硬要求 B:maps/ 之外那个目录里没有多出任何东西(实得 ' +
+             'maps/ 之外那个目录里没有多出任何东西(实得 ' +
              fs.readdirSync(outsideDir).join(',') + ')');
-          ok(noTmpLeft(), '★ 硬要求 B:被拒的链接写也没在 maps/ 里留临时文件');
+          ok(noTmpLeft(), '被拒的链接写也没在 maps/ 里留临时文件');
         }
       } finally {
-        // ★ 一定要收掉:留着它会让后面任何一个"列 maps/ 目录"的断言多出一个条目。
+        // 一定要收掉:留着它会让后面任何一个"列 maps/ 目录"的断言多出一个条目。
         try { if (fs.existsSync(linkPath)) fs.unlinkSync(linkPath); } catch (e) { /* 清不掉不该盖住真失败 */ }
       }
     }
@@ -754,26 +748,26 @@ async function runAllPhases() {
     fs.mkdirSync(retryDir, { recursive: true });
     const keepName = 'keep.cyrm';
     const keepPath = path.join(retryDir, keepName);
-    const originalBytes = Buffer.from('★ 原来那张地图 —— 失败的写一个字节都不许动它', 'utf8');
+    const originalBytes = Buffer.from('原来那张地图 —— 失败的写一个字节都不许动它', 'utf8');
     fs.writeFileSync(keepPath, originalBytes);
     const noTmpInRetryDir = function () {
       return fs.readdirSync(retryDir).every(function (n) { return n.indexOf('.tmp') < 0; });
     };
 
-    // ★ 常量本身也钉住:重试名单少了 EPERM,下面那条"两次 EPERM 第三次成功"会红;
-    //   但少了 EBUSY/EACCES 没有任何断言会红 —— 那两码是**同一个根因**的别称,
+    // 常量本身也钉住:重试名单少了 EPERM,下面那条"两次 EPERM 第三次成功"会红;
+    //   但少了 EBUSY/EACCES 没有任何断言会红 —— 那两码是同一个根因的别称,
     //   漏一个就等于在那些机器上静默退回"保存失败对用户可见"。
     ok(srv.RENAME_RETRY_CODES.indexOf('EPERM') >= 0 &&
        srv.RENAME_RETRY_CODES.indexOf('EBUSY') >= 0 &&
        srv.RENAME_RETRY_CODES.indexOf('EACCES') >= 0,
-       '★ 待修 1:重试名单含 EPERM / EBUSY / EACCES(实得 ' + JSON.stringify(srv.RENAME_RETRY_CODES) + ')');
+       '重试名单含 EPERM / EBUSY / EACCES(实得 ' + JSON.stringify(srv.RENAME_RETRY_CODES) + ')');
     ok(srv.RENAME_MAX_ATTEMPTS >= 10 && srv.RENAME_MAX_ATTEMPTS <= 12,
-       '★ 待修 1:总尝试次数在 10~12 之间(实得 ' + srv.RENAME_MAX_ATTEMPTS + ')');
-    // ★ 退避上限:少了它,额度一放宽就会退回"翻倍到 160ms"那套稀疏尝试。
+       '总尝试次数在 10~12 之间(实得 ' + srv.RENAME_MAX_ATTEMPTS + ')');
+    // 退避上限:少了它,额度一放宽就会退回"翻倍到 160ms"那套稀疏尝试。
     ok(srv.RENAME_RETRY_MAX_MS > 0 && srv.RENAME_RETRY_MAX_MS <= 100,
-       '★ 待修 1:退避封顶在 100ms 以内(实得 ' + srv.RENAME_RETRY_MAX_MS + 'ms)');
+       '退避封顶在 100ms 以内(实得 ' + srv.RENAME_RETRY_MAX_MS + 'ms)');
 
-    // ① 前两次 EPERM、第三次成功 → 成功,且**恰好**调用了 3 次。
+    // ① 前两次 EPERM、第三次成功 → 成功,且恰好调用了 3 次。
     {
       let calls = 0;
       const flaky = function () {
@@ -783,15 +777,15 @@ async function runAllPhases() {
       };
       let err = null;
       try { await srv.renameWithRetry('t', 'g', flaky, noSleep); } catch (e) { err = e; }
-      ok(err === null, '★ 待修 1:EPERM 两次后第三次成功 → 不抛(实得 ' +
+      ok(err === null, 'EPERM 两次后第三次成功 → 不抛(实得 ' +
          (err === null ? '成功' : errText(err)) + ')');
-      ok(calls === 3, '★★ 待修 1:重试确实发生了 —— 调用次数 3(实得 ' + calls +
+      ok(calls === 3, '重试确实发生了 —— 调用次数 3(实得 ' + calls +
          ';为 1 = 根本没重试,> 3 = 退避多算了)');
     }
 
-    // ①b 同一条,但注入的是**异步 reject** 形态 —— 那才是生产里的默认实现
-    //     (fs.promises.rename)。★ 这一条与 ① 不重复:同步抛与异步 reject 走的是
-    //     两条不同的 catch 路径,只兜住一条的实现会在另一条上**一次都不重试**。
+    // ①b 同一条,但注入的是异步 reject 形态 —— 那才是生产里的默认实现
+    //     (fs.promises.rename)。这一条与 ① 不重复:同步抛与异步 reject 走的是
+    //     两条不同的 catch 路径,只兜住一条的实现会在另一条上一次都不重试。
     {
       let calls = 0;
       const flakyAsync = function () {
@@ -802,7 +796,7 @@ async function runAllPhases() {
       let err = null;
       try { await srv.renameWithRetry('t', 'g', flakyAsync, noSleep); } catch (e) { err = e; }
       ok(err === null && calls === 3,
-         '★ 待修 1:异步 reject 形态(生产默认那条)同样重试到第 3 次成功(实得 calls=' + calls +
+         '异步 reject 形态(生产默认那条)同样重试到第 3 次成功(实得 calls=' + calls +
          ', err=' + (err === null ? '无' : errText(err)) + ')');
     }
 
@@ -821,16 +815,16 @@ async function runAllPhases() {
       let err = null;
       const ticksBefore = loopTicks;
       try {
-        // ★ 只有一个实参:走**默认** sleep(生产那条路径)。
+        // 只有一个实参:走默认 sleep(生产那条路径)。
         await srv.renameWithRetry('t', 'g', oneEperm);
       } catch (e) { err = e; }
       const ticksDuring = loopTicks - ticksBefore;
       ticking = false;
       ok(err === null && calls === 2,
-         '★ 待修 2:默认退避(不注入 sleepFn)下 EPERM 一次后第二次成功(实得 calls=' + calls +
+         '默认退避(不注入 sleepFn)下 EPERM 一次后第二次成功(实得 calls=' + calls +
          ', err=' + (err === null ? '无' : errText(err)) + ')');
       ok(ticksDuring > 0,
-         '★★ 待修 2:重试期间**事件循环确实前进过** —— 默认退避是异步让出,不是同步等待' +
+         '重试期间事件循环确实前进过 —— 默认退避是异步让出,不是同步等待' +
          '(实得 ' + ticksDuring + ' 个循环回合;为 0 = 换成了 Atomics.wait 那类同步 sleep,' +
          '整个修复结构上失效)');
     }
@@ -847,20 +841,20 @@ async function runAllPhases() {
                                srv.RENAME_RETRY_BASE_MS * Math.pow(2, i)));
       }
       const maxRecorded = Math.max.apply(null, recorded.concat([0]));
-      ok(err !== null, '★ 待修 1:恒定 EPERM 用满额度后照原样抛出(实得:' +
+      ok(err !== null, '恒定 EPERM 用满额度后照原样抛出(实得:' +
          (err === null ? '(未抛错 —— 重试变成无限循环了)' : errText(err)) + ')');
-      // ★ 断言的是**整条曲线**,不是"最大值没超":后者漏得掉"前几档就没按 base 翻倍"
+      // 断言的是整条曲线,不是"最大值没超":后者漏得掉"前几档就没按 base 翻倍"
       //   这类错(曲线整体平移一格也照样不超上限)。
       eq(recorded, expected,
-         '★★ 待修 1:退避序列**逐档** = min(' + srv.RENAME_RETRY_MAX_MS + 'ms, ' +
+         '退避序列逐档 = min(' + srv.RENAME_RETRY_MAX_MS + 'ms, ' +
          srv.RENAME_RETRY_BASE_MS + '×2^(n-1)) —— 前两档按 base 翻倍、之后被上限钳住,' +
          '共 ' + expected.length + ' 档(实得 ' + JSON.stringify(recorded) + ')');
       ok(maxRecorded <= srv.RENAME_RETRY_MAX_MS,
-         '★★ 待修 1:退避最大值 ≤ 上限 ' + srv.RENAME_RETRY_MAX_MS + 'ms' +
+         '退避最大值 ≤ 上限 ' + srv.RENAME_RETRY_MAX_MS + 'ms' +
          '(把 Math.min 从退避公式里拿掉 = 在这里红;实得最大 ' + maxRecorded + 'ms)');
       ok(recorded.length > 0 &&
          recorded[recorded.length - 1] === srv.RENAME_RETRY_MAX_MS,
-         '★★ 待修 1:末档**恰好**被钳到上限(上限必须真的生效,而不只是"恰好没被超")' +
+         '末档恰好被钳到上限(上限必须真的生效,而不只是"恰好没被超")' +
          '(实得末档 ' + recorded[recorded.length - 1] + 'ms)');
     }
 
@@ -883,18 +877,18 @@ async function runAllPhases() {
                                srv.RENAME_RETRY_BASE_MS * Math.pow(2, i)));
       }
       ok(err === null && calls === 4,
-         '★ 待修 2:默认退避(不注入 sleepFn)下第 4 次尝试成功(实得 calls=' + calls +
+         '默认退避(不注入 sleepFn)下第 4 次尝试成功(实得 calls=' + calls +
          ', err=' + (err === null ? '无' : errText(err)) + ')');
       let waited = gaps.length === 3;
       for (let i = 0; i < 3 && waited; i++) waited = gaps[i] >= wantGaps[i] / 2;
       ok(waited,
-         '★★ 待修 2:每次退避**真的把那一档睡掉了**(相邻尝试间隔 ≥ 该档期望的一半)' +
+         '每次退避真的把那一档睡掉了(相邻尝试间隔 ≥ 该档期望的一半)' +
          ' —— 不是 setImmediate 那种"让出循环但不等"的假 sleep(实得间隔 ' +
          JSON.stringify(gaps) + 'ms / 期望档位 ' + JSON.stringify(wantGaps) + 'ms)');
     }
 
-    // ② 一直 EPERM → 抛出,且**临时文件已清理**、**原文件逐字节未变**。
-    //    ★ 走 writeMapAtomic(不是 renameWithRetry):"临时文件被清掉"这条清理逻辑
+    // ② 一直 EPERM → 抛出,且临时文件已清理、原文件逐字节未变。
+    //    走 writeMapAtomic(不是 renameWithRetry):"临时文件被清掉"这条清理逻辑
     //      住在 writeMapAtomic 的 catch 里,只测 renameWithRetry 覆盖不到它。
     {
       let calls = 0;
@@ -903,45 +897,45 @@ async function runAllPhases() {
       try { await srv.writeMapAtomic(retryDir, keepName, Buffer.from([0xEE, 0xEE]), alwaysEperm, noSleep); }
       catch (e) { err = e; }
       ok(err !== null && errText(err).indexOf('EPERM') >= 0,
-         '★ 待修 1:一直 EPERM → 抛出并保留错误码(实得:' +
+         '一直 EPERM → 抛出并保留错误码(实得:' +
          (err === null ? '(未抛错)' : errText(err)) + ')');
       ok(calls === srv.RENAME_MAX_ATTEMPTS,
-         '★ 待修 1:用满 ' + srv.RENAME_MAX_ATTEMPTS + ' 次尝试才放弃(实得 ' + calls + ')');
+         '用满 ' + srv.RENAME_MAX_ATTEMPTS + ' 次尝试才放弃(实得 ' + calls + ')');
       sameBytes(fs.readFileSync(keepPath), originalBytes,
-                '★★ 待修 1:写失败之后原文件逐字节未变(失败是 fail-safe 的)');
-      ok(noTmpInRetryDir(), '★★ 待修 1:写失败之后临时文件被清掉(否则每次失败都在 maps/ 里留垃圾)');
+                '写失败之后原文件逐字节未变(失败是 fail-safe 的)');
+      ok(noTmpInRetryDir(), '写失败之后临时文件被清掉(否则每次失败都在 maps/ 里留垃圾)');
     }
 
-    // ③ 不在重试名单里的码(EIO / ENOENT)→ **立即抛,一次都不重试**。
-    //    ★ 这条防的是"图省事写成无条件重试":那会让真正的磁盘错误也多等一整套退避才报,
+    // ③ 不在重试名单里的码(EIO / ENOENT)→ 立即抛,一次都不重试。
+    //    这条防的是"图省事写成无条件重试":那会让真正的磁盘错误也多等一整套退避才报,
     //      而且掩盖掉"错在哪"。
     {
       const cases = ['EIO', 'ENOENT'];
       for (const code of cases) {
         let calls = 0;
-        // ★ 必须**真的抛**(返回一个 Error 对象不算失败 —— 那会被 Promise 当成成功值),
+        // 必须真的抛(返回一个 Error 对象不算失败 —— 那会被 Promise 当成成功值),
         //   否则这条断言测的是"什么都没发生"。
         const other = function () { calls++; const e = new Error(code + ': 注入的别的错'); e.code = code; throw e; };
         let err = null;
         try { await srv.writeMapAtomic(retryDir, keepName, Buffer.from([0x01]), other, noSleep); }
         catch (e) { err = e; }
         ok(err !== null && errText(err).indexOf(code) >= 0 && calls === 1,
-           '★ 待修 1:' + code + ' 不在重试名单 → 立即抛且只调用 1 次(实得 calls=' + calls +
+           '' + code + ' 不在重试名单 → 立即抛且只调用 1 次(实得 calls=' + calls +
            ', err=' + (err === null ? '(未抛错)' : errText(err)) + ')');
       }
       sameBytes(fs.readFileSync(keepPath), originalBytes,
-                '★ 待修 1:两条"立即抛"之后原文件仍逐字节未变');
-      ok(noTmpInRetryDir(), '★ 待修 1:两条"立即抛"也没留临时文件');
+                '两条"立即抛"之后原文件仍逐字节未变');
+      ok(noTmpInRetryDir(), '两条"立即抛"也没留临时文件');
     }
 
-    // ④ 重试的**成功**路径:同一张图连做两次 PUT(注入 rename)后,盘上就是新字节、
+    // ④ 重试的成功路径:同一张图连做两次 PUT(注入 rename)后,盘上就是新字节、
     //    mapPathFor 的返回值照旧是 {name,size} —— 钉住"异步化没把成功路径改坏"。
     {
       const okRename = function (t, g) { fs.renameSync(t, g); };
       const out = await srv.writeMapAtomic(retryDir, keepName, Buffer.from([7, 7, 7, 7]), okRename, noSleep);
-      eq(out, { name: keepName, size: 4 }, '★ 待修 1:异步化之后成功路径照旧返回 {name,size}');
-      sameBytes(fs.readFileSync(keepPath), Buffer.from([7, 7, 7, 7]), '★ 待修 1:成功路径确实落盘');
-      ok(noTmpInRetryDir(), '★ 待修 1:成功路径不留临时文件');
+      eq(out, { name: keepName, size: 4 }, '异步化之后成功路径照旧返回 {name,size}');
+      sameBytes(fs.readFileSync(keepPath), Buffer.from([7, 7, 7, 7]), '成功路径确实落盘');
+      ok(noTmpInRetryDir(), '成功路径不留临时文件');
       // 收尾:还原成原始内容,免得将来有人把这个目录也列进某个"精确列表"断言。
       fs.writeFileSync(keepPath, originalBytes);
     }
@@ -949,7 +943,7 @@ async function runAllPhases() {
 
   {
     const page = (await request(staticSrv.port, 'GET', '/')).body.toString('utf8');
-    // ── 脚本清单与**顺序**:core → tile_defs → tint → render → io → ui ──
+    // ── 脚本清单与顺序:core → tile_defs → tint → render → io → ui ──
     const want = ['core.js', 'tile_defs.js', 'tint.js', 'render.js', 'io.js', 'ui.js'];
     let prev = -1, orderOk = true, firstBad = '';
     want.forEach(function (s) {
@@ -959,10 +953,10 @@ async function runAllPhases() {
       if (at < prev) { orderOk = false; if (!firstBad) firstBad = s + '(顺序)'; }
       prev = at;
     });
-    ok(orderOk, '★★ 六个外部脚本按依赖顺序排:core → tile_defs → tint → render → io → ui' +
+    ok(orderOk, '六个外部脚本按依赖顺序排:core → tile_defs → tint → render → io → ui' +
        '(首个不对:' + firstBad + ';tint 对 Core 是硬依赖,render 对两者是硬依赖)');
-    // ★★ 只查 `<script src>` 的**值**。初版拿整页做 `page.indexOf('://') < 0`,而页面里
-    //    **合法地**含 `://` —— 敌人注册表每条都带 `"scene": "res://…"`(Step 4 刚写进去的)
+    // 只查 <script src> 的值。初版拿整页做 page.indexOf('://') < 0,而页面里
+    //    合法地含 :// —— 敌人注册表每条都带 "scene": "res://…"(Step 4 刚写进去的)
     //    ⇒ 这条断言在同一个 commit 落地的那一刻就假红。要判的是"脚本从哪来",不是
     //    "整页有没有冒号斜杠"。
     const srcVals = (page.match(/<script\s+src="[^"]*"/g) || []).map(function (t) {
@@ -970,13 +964,13 @@ async function runAllPhases() {
     });
     ok(srcVals.length >= 6 && srcVals.every(function (v) {
       return v.charAt(0) !== '/' && v.indexOf('://') < 0;
-    }), '★ 页面里的脚本都是相对路径、没有绝对路径/外部 URL(编辑器只走本机 HTTP)');
+    }), '页面里的脚本都是相对路径、没有绝对路径/外部 URL(编辑器只走本机 HTTP)');
     (function () {
       const missing = srcVals.filter(function (s) { return !fs.existsSync(path.join(__dirname, s)); });
-      ok(missing.length === 0, '★ 页面引用的每个脚本文件都真实存在(否则运行时 404、整页静默死掉):' +
+      ok(missing.length === 0, '页面引用的每个脚本文件都真实存在(否则运行时 404、整页静默死掉):' +
          (missing.length ? missing.join(', ') : '全部命中'));
     })();
-    ok(page.indexOf('file://') < 0, '★ 页面里没有 file://(规格 §1.2:只走 HTTP)');
+    ok(page.indexOf('file://') < 0, '页面里没有 file://(规格 §1.2:只走 HTTP)');
     ok(/id="map-canvas"/.test(page), '页面有 id="map-canvas"');
     ok(/id="toolbar"/.test(page) && /id="lib"/.test(page) && /id="right"/.test(page) &&
        /id="statusbar"/.test(page), '§4.5 的四块版式都在(工具条 / 库 / 右栏 / 状态栏)');
@@ -984,44 +978,24 @@ async function runAllPhases() {
        '工具条有 8 个工具按钮(画笔/矩形/油漆桶/橡皮/直线/选框/吸管/渐变)');
     ok((page.match(/class="layer-row[^"]*" data-layer="\d"/g) || []).length === 4,
        '图层列表有 4 行');
-    ok(/id="boot-error"/.test(page), '★ 有启动错误条(缺 Worker 时把话说清楚,而不是静默)');
-    // ★★ `ui.js` 拿这两个按钮的写法是 `var selftestBtn = $('btn-selftest'); if (selftestBtn) …`
-    //    —— 那个 `if` 是**静默降级**的闸:页面上的 id 打错一个字母、或者按钮被顺手删掉,
-    //    浏览器里**一声不响**,症状只有"这个按钮按了没反应"(控制台干净、node 侧全绿)。
-    //    而 `#btn-selftest` 打印的那行 `SELFTEST OK` 是本计划**后续每个 Task** 在浏览器侧
-    //    唯一的验收判据(#btn-fit 也一样:它是画布唯一的复位入口)—— 判据本身丢了,
-    //    后面的 Task 就再也拿不到那一行。故页面结构这一侧必须点名它们。
+    // 校验页面包含自检按钮和画布复位按钮
     ok(/id="btn-selftest"/.test(page),
-       '★★ 页面有 id="btn-selftest"(ui.js 用 if(selftestBtn) 守卫 ⇒ id 打错 = 按钮静默失效,' +
+       '页面有 id="btn-selftest"(ui.js 用 if(selftestBtn) 守卫 ⇒ id 打错 = 按钮静默失效,' +
        '而浏览器侧的唯一验收判据就是它打印的那行 SELFTEST OK)');
     ok(/id="btn-fit"/.test(page),
-       '★★ 页面有 id="btn-fit"(同上,同一个静默守卫;它是画布唯一的复位入口)');
-    ok(page.indexOf('Editor.boot()') >= 0, '★ 页面只负责把 DOM 交给 ui.js(页面里没有编辑器逻辑)');
+       '页面有 id="btn-fit"(同上,同一个静默守卫;它是画布唯一的复位入口)');
+    ok(page.indexOf('Editor.boot()') >= 0, '页面只负责把 DOM 交给 ui.js(页面里没有编辑器逻辑)');
     ok(/__ENEMY_REGISTRY_BEGIN__/.test(page) && /window\.ENEMY_REGISTRY\s*=/.test(page),
-       '★ 敌人注册表标记与 registry 都在入口页里(由 sync-enemies.js 生成)');
+       '敌人注册表标记与 registry 都在入口页里(由 sync-enemies.js 生成)');
     ok(page.indexOf('rgbToHsv') < 0 && page.indexOf('hsvToRgb') < 0,
-       '★ 页面里没有第二份 HSV 数学(像素一律走 Tint.*)');
+       '页面里没有第二份 HSV 数学(像素一律走 Tint.*)');
   }
 
-  // ==== 相位 ⑨ 端到端:core.js 编出来的字节 → 服务器 → core.js 解回来 ====
-  // ★ 位置同上(任务约定 A):必须在 runAllPhases() 的**函数体内** —— main() 里那句
-  //   `// ==== 断言区结束 ====` 在 try/finally{ cleanup() } **之后**,放那儿 = 相位跑在清理
-  //   之后,会把已删掉的 tmpRoot 重新建出来 → 每次跑漏一个 cyrm-srv-*(Task 2 用 fs 插桩实锤过)。
-  // ★ 号从 ⑨ 起(本文件里已经有两个 ⑤、两个 ⑧,都是**有意为之**,别去"修正")。
-  // ★ 本相位是**纯增量覆盖**:它消费的接口(core.js 的 encodeMap/decodeMap/sanitizeName、
-  //   服务器的 PUT/GET/列库)全在 Task 1~6 里做完了,故它应该**一上来就全绿**;
-  //   报红就是前面某个 Task 的实现有问题 —— 回那个 Task 修,不在这里绕过。
-  // ★ 为什么它值得写(不是"再抄一遍相位 ⑦"):相位 ⑦ 喂的是手搓的 [7,7,7] 之类,
-  //   它证明的是"服务器会写文件";本相位喂的是 **core.js 真的编出来的地图字节**,
-  //   证明的是"两半对得上" —— 编码器与服务器各自单测都绿、拼起来错位,是上一代编辑器
-  //   最典型的一类坏法。
+  // ==== 相位 9 端到端验证：core.js 编码 -> HTTP 服务端接收 -> core.js 解码 ====
   {
     require('./core.js');
     const Core = globalThis.Core;
-    // ★★ 计划原文的相位 ⑨ 直接 request(port,'PUT',path,body) —— 漏了头(任务约定 B /
-    //    硬要求 A):写端点只收 application/json(非简单内容类型 ⇒ 逼浏览器先发预检),
-    //    不带头一律 **415**。故这里照相位 ⑦ 的先例显式带上(载荷是二进制的,这个类型
-    //    只是个协议令牌,不代表 body 是 JSON)。
+    // 写端点请求头要求带上 Content-Type: application/json
     const PUT_JSON = { 'Content-Type': 'application/json' };
     const mapsDir = path.join(tmpRoot, 'maps');
     const apiSrv = track(await srv.startServer({ rootDir: __dirname, mapsDir: mapsDir, port: 0 }));
@@ -1046,9 +1020,9 @@ async function runAllPhases() {
     eq(JSON.parse(putE2E.body.toString('utf8')).size, bytes.length, '端到端: 服务器记的 size = 字节数');
 
     const got = await request(apiSrv.port, 'GET', '/api/map?p=e2e.cyrm');
-    sameBytes(got.body, bytes, '★ 端到端: 服务器上存着的就是 encodeMap 产出的那串字节');
+    sameBytes(got.body, bytes, '端到端: 服务器上存着的就是 encodeMap 产出的那串字节');
     sameBytes(got.body.subarray(0, 4), Buffer.from([0x43, 0x59, 0x52, 0x4D]),
-              '★ 端到端: 落盘的文件 magic 仍是 "CYRM"(服务器没动过内容)');
+              '端到端: 落盘的文件 magic 仍是 "CYRM"(服务器没动过内容)');
 
     const back = await Core.decodeMap(new Uint8Array(got.body));
     eq(back.subCols, m.subCols, '端到端: subCols 往返');
@@ -1061,10 +1035,10 @@ async function runAllPhases() {
     eq(back.enemies, m.enemies, '端到端: enemies 往返');
     eq(back.comments, m.comments, '端到端: comments 往返');
 
-    // ★ 账本 Task 7 Minor 4:v4 的 body 里没有 name 字段 —— 导入方必须自己用文件名补。
-    eq(back.name, '', '★ decodeMap 返回的 name 是空串(v4 body 无 name 字段)');
+    // v4 规范中 body 不包含 name 字段，导入端使用文件名作为地图名称
+    eq(back.name, '', 'decodeMap 返回的 name 是空串(v4 body 无 name 字段)');
     back.name = 'e2e';
-    eq(Core.sanitizeName(back.name), 'e2e', '★ 用文件名补 map.name 之后 sanitizeName 不回落成 structure');
+    eq(Core.sanitizeName(back.name), 'e2e', '用文件名补 map.name 之后 sanitizeName 不回落成 structure');
     eq(Core.sanitizeName(''), 'structure', '(对照)空名字才会回落成 structure');
 
     // 裸 body(compression=0)是一条完整可用的退路,也要能过服务器
@@ -1083,23 +1057,21 @@ async function runAllPhases() {
     ok(names.indexOf('e2e.cyrm') >= 0 && names.indexOf('e2e_raw.cyrm') >= 0,
        '端到端: /api/maps 列出了刚写进去的两张(' + names.join(', ') + ')');
 
-    // ★ 全流程之后 maps/ 里不许有临时文件残留
+    // 全流程之后 maps/ 里不许有临时文件残留
     ok(fs.readdirSync(mapsDir).every(function (n) { return n.indexOf('.tmp') < 0; }),
-       '★ 端到端跑完之后 maps/ 里没有临时文件残留');
+       '端到端跑完之后 maps/ 里没有临时文件残留');
   }
 }
 
 (async function main() {
-  // ★ 看门狗:任何一处挂住(server 没关 / promise 永不 settle)都走到这里,
-  //   而不是让 node 静默退出。★ 刻意**不 unref**:事件循环空转时静默退出(退出码 0、
-  //   一行不打)才是最难发现的假绿 —— core.js 的 inflateBytes 实测踩过这一档。
+  // 看门狗：超时未完成时输出错误并退出
   setTimeout(async function () {
     console.error('FAIL: 120 秒超时 —— 有 server 没关,或某个 promise 永不 settle');
-    await cleanup();            // ★ 超时这一支也必须清(待修 4)
+    await cleanup();
     process.exit(1);
   }, 120000);
 
-  // ★★ 清理走 try/finally(不是「跑完再清」):见 cleanup() 的说明。
+  // 测试执行与环境清理
   try {
     await runAllPhases();
   } finally {

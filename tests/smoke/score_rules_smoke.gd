@@ -12,7 +12,7 @@ func _initialize() -> void:
 		quit(1)
 		return
 	var fails: Array[String] = []
-	# 直取静态口:本文件不 `new()`,全部是 static func。
+	# 直接通过静态方法调用：ScoreRules 全由 static func 构成
 	var SR: GDScript = script
 
 	# ① 击杀更多  ->  ACS 更高
@@ -55,7 +55,7 @@ func _initialize() -> void:
 	if p_kill != int(SR.TEAM_KILL_PENALTY):
 		fails.append("★ 惩罚的击杀队友项应 = TEAM_KILL_PENALTY,实得 %d" % p_kill)
 
-	# ⑦ 局数下限 1:0 局不得除零(既有口径 `maxi(rounds, 1)`)
+	# ⑦ 局数下限兜底：0 局时按 1 局计算，防止除零错误
 	if SR.acs(SR.kscore(1, 0, 0, 0), 0) != float(SR.kscore(1, 0, 0, 0)):
 		fails.append("★ 局数 0 时必须按 1 局算(不得除零/不得给 0)")
 

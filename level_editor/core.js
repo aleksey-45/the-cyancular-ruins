@@ -218,8 +218,7 @@ globalThis.Core = (function () {
     return lines.length ? lines.join('\n') + '\n' : '';
   }
 
-  // 解析失败(坐标不是整数、坐标个数不够)的行**降级成注释**而不是丢掉 ——
-  // 编辑器不许静默吃掉用户写的东西。
+  // 解析失败的行降级为注释保留，避免丢失用户输入
   function parseMeta(text) {
     // 整数字面量(允许前导正负号)。用它而不是 isFinite,是为了拒绝 parseInt 的
     // 前缀截断:3.5 / 7abc / 1e3 / 0x10 都必须整行走降级路径。
@@ -233,9 +232,7 @@ globalThis.Core = (function () {
       var body = s.slice(1).trim();
       var parts = body.split(/\s+/);
       var head = parts[0];
-      // ★ 成功条件必须是「token 本身是整数字面量」,不能只判 isFinite ——
-      //   parseInt('3.5')===3 / parseInt('7abc')===7 / parseInt('1e3')===1 全都不是 NaN,
-      //   只判 isFinite 会把 "# player 3.5 4" 静默改写成 "# player 3 4",原文被吃掉。
+      // 仅当 token 为整数字面量时才解析成功，避免 parseInt 截断非纯数字字符串
       if (/^player\d*$/.test(head) && parts.length >= 3) {
         if (INT_TOKEN.test(parts[1]) && INT_TOKEN.test(parts[2])) {
           players.push({ x: parseInt(parts[1], 10), y: parseInt(parts[2], 10) });
@@ -253,8 +250,7 @@ globalThis.Core = (function () {
   }
 
   function deflateBytes(bytes) {
-    // ★ 三个全局都要守:`new Response(...)` 在 Response 缺失的环境里是**同步抛**,
-    //   那会逃出 encodeMap 的 promise 契约(它承诺的是 reject,不是 throw)。
+    // 兼容性检查：确保运行环境包含 CompressionStream、Blob 与 Response
     if (typeof CompressionStream === 'undefined' || typeof Blob === 'undefined' ||
         typeof Response === 'undefined') {
       return Promise.reject(new Error(
@@ -263,17 +259,8 @@ globalThis.Core = (function () {
     var stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate'));
     return new Response(stream).arrayBuffer().then(function (buf) { return new Uint8Array(buf); });
   }
-  // 流式解压,累计输出超过 maxBytes 就中止并拒绝。
-  // maxBytes 缺省 = 不设限(向后兼容;本仓唯一调用方是 decodeMap,它传的是头部声明的 body_size)。
-  // ★ 为什么不能只靠文件头里的 body_size:那个字段**本身也是攻击者可控的** —— 把它谎报成
-  //   一个通过闸门的小值(比如 4096)、而 deflate 流里塞真炸弹,则「判在解压之前」那道闸
-  //   完全挡不住:new Response(stream).arrayBuffer() 会**先把整份解压结果分配出来**,
-  //   判在后面的长度比对处等于拒是拒了、内存已经花掉了。DEFLATE 单流最大压缩比 ≈ 1032:1
-  //   ⇒ 64KB 的 .cyrm 能解出 ≈64MB、1MB 的能解出 ≈1GB(arrayBuffer 的峰值还约等于输出的
-  //   2 倍)—— **结果无界、输入有界**。所以上界必须作用在**实际输出**上。
+  // 流式解压：限制解压输出最大字节数，防止超大解压数据耗尽内存
   function inflateBytes(bytes, maxBytes) {
-    // ★ 三个全局都要守(理由同 deflateBytes):少了 Response 这一条,在「前两个有、
-    //   Response 没有」的环境里 new Response(...) 会同步抛,逃出调用方的 promise 契约。
     if (typeof DecompressionStream === 'undefined' || typeof Blob === 'undefined' ||
         typeof Response === 'undefined') {
       return Promise.reject(new Error('inflateBytes: 本环境没有 DecompressionStream/Blob/Response'));
@@ -295,8 +282,7 @@ globalThis.Core = (function () {
         }
         var chunk = res.value || new Uint8Array(0);
         total += chunk.length;
-        // ★ 判在 push **之前**:超限的那一块根本不留下 —— "先收后判"等于已经把超限数据存住了。
-        //   错误信息带上上限值与已累计字节数,便于诊断是"文件坏了"还是"真炸弹"。
+        // 校验解压输出累计大小，超限立即中止
         if (total > maxBytes) {
           var err = new Error('inflateBytes: 解压输出超过 ' + maxBytes + ' 字节上限(已累计 ' +
                               total + ' 字节),中止');
@@ -314,26 +300,7 @@ globalThis.Core = (function () {
   const HEADER_SIZE = 20;
   const MAGIC = [0x43, 0x59, 0x52, 0x4D];   // "CYRM"
 
-  // ── 解压后 body 的硬上限「解压后大小上限」/ MAX_BODY_SIZE(指令 D)──
-  // ★ 它堵的是 **deflate 炸弹**:deflate 的最大压缩比约 1032:1 ⇒ **几十 KB** 的
-  //   恶意/损坏文件就能解出 **GB 级**内存。而它**完全不碰头部字段**(magic / 版本 /
-  //   尺寸 / CRC 全合法),所以下面 decodeBody 里那条「按 body 实际余量反推格数上界」
-  //   的检查对它**天然无效** —— 那条管的是「头部声称的尺寸大于 body 装得下的量」,
-  //   炸弹是反过来的:声明的 body 很小、解出来极大。故必须拿**头部声明的解压后大小**
-  //   单独设一道闸,且判在**任何解压动作之前**:判在解压之后等于拒是拒了、
-  //   内存已经先分配出去了。
-  // ★ 64MB 是怎么来的 —— 合法文件最坏就多大:上限尺寸 400×300 格 = 1600×1200 子格
-  //   = 1,920,000 子格(n),四层全在、且全都取到最坏编码:
-  //     背景层(颜色)  1 + 4n                        = 1 + 7,680,000   ≈ 7.68MB
-  //     三个纹理层各   1+2+4×调色板+1+2n,调色板 ≤65535 ⇒ 4 + 262,140 + 2n
-  //                                                 = 4,102,144  ≈ 4.10MB → ×3 ≈ 12.31MB
-  //     meta          2 + 65535(u16 长度字段的上限)                    ≈ 0.07MB
-  //   合计 20,051,970 字节 ≈ 19.1MiB。取 64MB(67,108,864)= 它的 ≈3.3 倍:
-  //   对**任何**合法文件都不可能误拒,对炸弹则是一道明确的硬闸。
-  // ★ 这个常量今天用在**两道**闸上,两道都不可省(只留一道就会漏掉半个炸弹面):
-  //     ① decodeMap 里「头部声明的 body_size」—— 挡"声明侧"的炸弹(头部就写着 2GB);
-  //     ② inflateBytes 的 maxBytes —— 挡"谎报声明 + 真炸弹"(声明很小、解出来极大),
-  //        它是作用在**实际输出**上的那一道。详见 inflateBytes 上方注释。
+  // 解压后数据体硬上限（64MB），防止超大解压数据耗尽内存
   const MAX_BODY_SIZE = 64 * 1024 * 1024;
 
   function layerFlags(map) {
@@ -367,14 +334,7 @@ globalThis.Core = (function () {
     for (var L = 0; L < LAYER_COUNT; L++) {
       if (!(flags & (1 << L))) { layers.push(null); continue; }
       var kind = LAYER_KINDS[L];
-      // ★ 防「损坏的文件头触发巨量分配」:CRC32 只覆盖 body、**不覆盖文件头**,
-      //   所以头部的 sub_cols / sub_rows 是**未经验证**的 —— 一枚翻错的头字节就能
-      //   让格数到 65532×65532 ≈ 43 亿(解压成功 / body_size 相符 / CRC 相符 三关全照过),
-      //   然后 decodeTexLayer 里那句 new Uint32Array(n) 就是一次 ≈17GB 的分配。
-      //   用「本层剩余字节数」反推格数的上界 —— 纹理层每格至少 1 字节索引、
-      //   颜色层每格 4 字节 RGBA,所以剩余字节数本身就是**任何一层都不可能超过**的粗筛上界
-      //   (纹理层的每格下限更低,统一拿它当粗筛即可)。**不需要精确,只需要不可能通过**。
-      //   ★ 必须判在 new Uint32Array(n) **之前** —— 判在后面等于拒是拒了、内存已经分配出去了。
+      // 防御损坏的文件头：根据本层剩余字节数粗估容量上界，避免非法尺寸触发异常大内存分配
       var room = r.remaining();
       var maxCells = kind === 'tex' ? room : ((room / 4) | 0);
       if (n > maxCells) {
@@ -418,7 +378,7 @@ globalThis.Core = (function () {
       w.u8(MAGIC[0]); w.u8(MAGIC[1]); w.u8(MAGIC[2]); w.u8(MAGIC[3]);
       w.u8(FORMAT_VERSION);
       w.u8(compression);
-      w.u32(body.length);          // ★ 解压后的大小
+      w.u32(body.length);          // 解压后数据长度
       w.u32(crc32(body));
       w.u16(map.subCols);
       w.u16(map.subRows);
@@ -446,18 +406,9 @@ globalThis.Core = (function () {
         var expectCrc = r.u32();
         var subCols = r.u16(), subRows = r.u16();
         var flags = r.u8();
-        // ★ reserved 字节与 layer_flags 的 bit4-7 一律**读掉不判**(指令 B7):
-        //   今天写侧恒写 0(encodeMap 里 w.u8(0) / layerFlags 只看 bit0-3),
-        //   读侧刻意只认低 4 位。这是**有意的前向兼容** —— 将来若在头部扩字段
-        //   (多出的图层/新增元信息),老编辑器读新文件时降级成"忽略"而不是当场拒收。
-        //   故这里**不要**加 `reserved === 0` 或 `flags & 0xF0 === 0` 的校验:
-        //   实测 reserved = 0xAB、layer_flags = 0xFF 的头部今天都能正常解码,那是有意为之。
+        // 保留字段与 layer_flags 的高 4 位保持忽略，支持向前兼容
         r.u8();
-        // ★ 指令 D:先判「头部声明的解压后大小」,再碰 payload —— 解压是把攻击者给的
-        //   字节变成内存的**那一步**,判在它后面就等于没判(内存已经分配出去了)。
-        //   放在这里而不是放进更下面那段 body 长度比对里,正是因为这个顺序要求。
-        //   ★ 这条顺序本身有断言钉住:smoke.js 的「源码顺序」那组读本文件比位置
-        //     (闸门必须早于 inflateBytes(payload…) 的调用点)—— 挪到解压之后即变红。
+        // 解压前校验解压后大小上限，超过限制直接拒绝
         if (bodySize > MAX_BODY_SIZE) {
           throw new Error('decodeMap: 头部声明的 body_size ' + bodySize +
                           ' 字节超过 64MB 上限(' + MAX_BODY_SIZE + ' 字节),拒绝解压');
@@ -472,13 +423,7 @@ globalThis.Core = (function () {
         var next;
         if (compression === 0) next = Promise.resolve(payload);
         else if (compression === 1) {
-          // ★ 上界一并交给 inflateBytes:头里的 body_size 是**未经验证**的声明,只有
-          //   这一道作用在**实际输出**上。★ 上界传的是 bodySize 而**不是** MAX_BODY_SIZE
-          //   (指令 B1):合法文件的解压结果**恒等于** bodySize(下面那句长度比对就是它),
-          //   所以 bodySize 是**精确**上界、不会误拒任何合法文件;而 MAX_BODY_SIZE 只是
-          //   "任何合法文件都不可能超过"的松值 —— 拿松值当这道闸,"谎报 body_size + 真炸弹"
-          //   要靠**真解压出 64MB** 才被拒(拒是拒了,那 64MB 已经花掉了),换成 bodySize
-          //   后大约 4KB 的解压结果 + 一个 chunk 就能拒。安全边界不该比它需要的宽 16000 倍。
+          // 解压输出上限设为 bodySize，避免解压炸弹消耗过多内存
           next = inflateBytes(payload, bodySize);
         }
         else throw new Error('decodeMap: 未知 compression=' + compression);
@@ -555,9 +500,7 @@ globalThis.Core = (function () {
       var line = lines[i].trim();
       if (line === '') continue;
       if (line.charAt(0) === '#') {
-        // ★ 版本标记行不算注释,判据与上面那句**同一个** isV3MarkerLine(指令 B4)。
-        //   漏了这一句 `# cyrm-v3` 会被当成一条普通注释塞进 comments,于是"导入→导出"
-        //   会往用户的 meta 里塞进一行垃圾。
+        // 版本标记行不作为普通注释存入 comments
         if (isV3MarkerLine(line)) continue;
         metaText += line + '\n';
         continue;
@@ -805,8 +748,7 @@ globalThis.Core = (function () {
   function alphaOf(d)  { return (d >>> 9) & 7; }
   function isAir(d)    { return d === DESC_AIR; }
 
-  // 中性描述符 = 完全按原图,一点色都不改。
-  // ★ 三列的中性档不在同一行:alpha 的中性在档 7,其余在档 4。
+  // 中性描述符：完全按原图渲染，不应用调色。alpha 中性档为 7，其余通道为 4
   function neutralDesc(texture) {
     return packDesc(texture, HUE_NEUTRAL, BRI_NEUTRAL, SAT_NEUTRAL, ALPHA_NEUTRAL);
   }

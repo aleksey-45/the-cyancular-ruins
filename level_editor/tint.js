@@ -9,8 +9,8 @@ globalThis.Tint = (function () {
   var LEVELS = 8;
   var HUE_OFFSET_DEG = [-60, -45, -30, -15, 0, 15, 30, 45];      // = (k - 4) * 15
   var MUL = [0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3];             // = (k + 6) / 10
-  var ALPHA_NUM = [0, 1, 2, 3, 4, 5, 6, 7];                       // a' = a * k / 7
-  // ★ 中性档来自 Core,不写字面量 —— 这是"两边不许漂"的那一条。
+  var ALPHA_NUM = [0, 1, 2, 3, 4, 5, 6, 7];
+  // 中性档位常量来自 Core，保持单一数据源
   var NEUTRAL = {
     hue: Core.HUE_NEUTRAL, bri: Core.BRI_NEUTRAL,
     sat: Core.SAT_NEUTRAL, alpha: Core.ALPHA_NEUTRAL,
@@ -60,7 +60,7 @@ globalThis.Tint = (function () {
     return { r: rgb.r, g: rgb.g, b: rgb.b, a: a * alphaScaleOf(Core.alphaOf(desc)) };
   }
 
-  // 8 位通道的取整规则**只有这一处**:Math.round(clamp01(x) * 255)。
+  // 8 位颜色通道取整: Math.round(clamp01(x) * 255)
   function toByte(x) {
     var v = Math.round(clamp01(x) * 255);
     return v < 0 ? 0 : (v > 255 ? 255 : v);
@@ -71,8 +71,7 @@ globalThis.Tint = (function () {
   }
 
   // ── 贴图几何 ──
-  // structure.png 是 320×320、每块 32×32、每行 10 块(游戏侧一致:两行各 10 块 + 第三行两块水)。
-  // 象限由 core.js 的 subcellRender 给出(块内 8px 偏移),这里只负责"第 T 块在哪"。
+  // structure.png 规格为 320×320，每块 32×32，每行 10 块
   var BLOCK_PX = 32;
   var QUAD_PX = 32 / Core.SUB_PER_CELL;     // 8
   var TILE_PX = Core.SUB_PX;
@@ -94,15 +93,7 @@ globalThis.Tint = (function () {
     return { x: (i % cols) * BLOCK_PX, y: Math.floor(i / cols) * BLOCK_PX, w: BLOCK_PX, h: BLOCK_PX };
   }
 
-  // 纯像素:从**图集**(整张 structure.png 的 RGBA)里取纹理 T 的第 (qx,qy) 个 8px 象限,
-  // 按描述符 tint,再**最近邻**放大 2× 成 16×16。返回 Uint8ClampedArray(16*16*4)。
-  // ★ 放大必须是最近邻(不是插值)—— 与项目其余的 texture_filter=nearest 口径一致。
-  // ★★ 调用方契约(**这个函数会抛,别把它当纯函数用**):下面四种实参一律抛错 ——
-  //    ① `desc === 0`(**空气**):空气没有贴图。★ 空气是地图数据里**最常见**的那一格,
-  //       渲染循环若不先过滤 desc === 0,第一帧就抛、而且每帧都在同一处抛;
-  //    ② 纹理号**超出图集行/列**(如 320×320 的图集里只到第 100 块,101 起就抛);
-  //    ③ `texture` 实参与 `Core.texOf(desc)` **不一致**(见下);
-  //    ④ 象限坐标不是 0..SUB_PER_CELL-1 的整数(见 quadIndex)。
+  // 从图集中获取指定象限并按描述符着色，返回 Uint8ClampedArray(16*16*4)
   function buildTilePixels(atlas, atlasWidth, texture, qx, qy, desc) {
     if (Core.texOf(desc) === 0) {
       throw new Error('buildTilePixels: 空气格没有贴图(desc=0x' + (desc >>> 0).toString(16) + ')');
@@ -115,9 +106,7 @@ globalThis.Tint = (function () {
       throw new Error('buildTilePixels: 图集里没有纹理 ' + texture + ' 的象限 (' + qx + ',' + qy +
                       ') —— 图集是 ' + atlasWidth + '×' + rows);
     }
-    // ★ 实参 `texture` 必须**就是**描述符里那个:不一致时上面两条都拦不住(那块在坐标系里
-    //   是存在的),于是函数**一声不响地**画出另一块砖的像素 —— 屏幕上是一块颜色不对的砖,
-    //   而调用方以为自己传对了。这属于"编程错误"档,与 desc=0 同级,故当场抛。
+    // 校验传入 texture 与描述符中的纹理 ID 一致
     if (Core.texOf(desc) !== texture) {
       throw new Error('buildTilePixels: 纹理实参 ' + texture + ' 与描述符里的纹理 ' +
                       Core.texOf(desc) + ' 不一致(desc=0x' + (desc >>> 0).toString(16) + ')');
@@ -158,8 +147,7 @@ globalThis.Tint = (function () {
     opts = opts || {};
     var maxSize = opts.maxSize === undefined ? DEFAULT_MAX_TILES : opts.maxSize;
     var backend = opts.backend || DEFAULT_BACKEND;
-    // ★ Map 的**插入序就是 LRU 序**:命中时 delete + set 把条目提到末尾,
-    //   淘汰时取 keys().next().value(最老的那个)。
+    // 使用 Map 维护 LRU 缓存队列
     var tiles = new Map();
     var atlas = null, atlasWidth = 0;
     var hits = 0, misses = 0, evictions = 0;
@@ -171,8 +159,7 @@ globalThis.Tint = (function () {
                         (data && typeof data.length === 'number' ? '(length=' + data.length + ')' : ''));
       }
       var w = width | 0;
-      // 每像素 4 字节 ⇒ 宽度必须是 4 的倍数(否则"行"不是整数字节);
-      // 且总字节数必须是**整行**(宽度×4)的整数倍,否则宽度与数据对不上、rows 是分数。
+      // 每像素 4 字节，宽度必须是 4 的倍数且总字节数为整行整数倍
       if (w <= 0 || w % 4 !== 0) {
         throw new Error('setSource: 图集宽度必须是正的、4 的倍数(每像素 4 字节),实得 ' + width);
       }
@@ -184,22 +171,14 @@ globalThis.Tint = (function () {
       atlasWidth = w;
       tiles.clear();
     }
-    // 键与像素数学取的是**同一个**象限约定(quadIndex):越界坐标在这里就抛,
-    // 不允许"键折到 3、像素按负数取"那种两条约定并存的状态(见 quadIndex 的说明)。
+    // 生成瓦片缓存键名
     function tileKey(texture, qx, qy, desc) {
       return texture + '/' + quadIndex(qx, 'qx') + '/' + quadIndex(qy, 'qy') + '/' + (desc >>> 0);
     }
-    // ★★ 调用方契约(**这个函数会抛**):`desc === 0`(空气)与"纹理号超出图集行/列"都会抛,
-    //    越界象限坐标与纹理/描述符不一致同样抛 —— 全部由 buildTilePixels 抛出(见它的注释)。
-    //    ★ 空气是地图数据里最常见的一格:渲染循环必须先 `if (desc === 0) continue;`,
-    //      否则第一帧就抛、且每帧都在同一处抛。
+    // 获取缓存瓦片，未命中时调用 buildTilePixels 构建
     function get(texture, qx, qy, desc) {
       var k = tileKey(texture, qx, qy, desc);
-      // ★★ 命中判据必须是 `tiles.has(k)`,不能写成 `tiles.get(k) !== undefined`:
-      //    backend 若返回 `undefined`(或将来某个 backend 这么做),后者恒为假 ⇒ 那张图
-      //    **永不命中**,却已经占着槽位、计入 size、还能把活条目挤掉(实测
-      //    `{hits:0,misses:2,size:1}` 且 `has()` 为 true)。
-      //    "命中了没有"只有一条判据,get 与 has 必须走同一条。
+      // 命中判据基于 tiles.has(k)
       if (tiles.has(k)) {
         var hit = tiles.get(k);
         hits++;

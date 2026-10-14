@@ -25,10 +25,7 @@ func _collect_sh(dir_path: String, out: Array[String]) -> void:
 		name = d.get_next()
 	d.list_dir_end()
 
-# - .sh 不能走 _su.read:ScanUtil.read 的首行是 `ResourceLoader.exists(path)`,而 .sh
-#   不是 Godot 认得的资源  ->  始终为 false  ->  恒返回 ""(实测 RL_exists_sh=false / FA_exists_sh=true)。
-#   若用 _su.read,11 个 .sh 会全部落进 SKIP 分支  ->  扫描面看着扩了、其实一条没查。
-#   (同一个已知缺陷 `_load_allow` 已经踩过一次 —— 那里读的是 .txt,注释就在它上方。)
+# 读取 Shell 脚本内容。因 .sh 文件非引擎资源，需直接通过 FileAccess 读取
 func _read_sh(path: String) -> String:
 	if not FileAccess.file_exists(path):
 		return ""
@@ -62,9 +59,7 @@ func _code_only(src: String) -> String:
 
 func _load_allow() -> Dictionary:
 	var allow := {}
-	# - 不能用 _su.read():ScanUtil.read 首行是 `ResourceLoader.exists(path)`,而豁免文件是
-	#   .txt —— 不是已导入资源  ->  恒返回 ""  ->  豁免表恒空、豁免形同虚设(实测:放进去的
-	#   res://__l5_synthetic__.gd 照样报红)。这里直接用 FileAccess 读。
+	# 豁免文件为纯文本文件，直接通过 FileAccess 读取
 	if not FileAccess.file_exists(ALLOW_PATH):
 		# 豁免文件不存在 = 空豁免,不是错误
 		return allow
@@ -79,15 +74,7 @@ func _load_allow() -> Dictionary:
 	return allow
 
 func _exists_any(p: String) -> bool:
-	# `res://` 裸串与 `res://dir/` 这类是目录;ResourceLoader 只认资源。
-	# 用 DirAccess.open 而不是 dir_exists_absolute:后者对 res:// 前缀不保证成立。
-	# - 必须先查 FileAccess.file_exists:ResourceLoader.exists 只认已导入的资源,
-	#   而本仓有大量不算资源的普通文件被 GDScript 字符串引用 —— `maps/*.cyrm`(游戏用
-	#   FileAccess 读)、`tests/*.txt`,以及探针运行时 save_png 出来的 .png。只查
-	#   ResourceLoader/DirAccess 会把它们全判成"不存在"(实测 28 条测试误报),而把真文件
-	#   塞进豁免文件正是这条防御性校验最该避免的事。
-	# - 已知边界:Windows 文件系统不区分大小写,大小写写错的路径在这里会通过
-	#   (导出成 .pck 后是区分大小写的)。本防御性校验只回答"有没有",不回答"大小写对不对"。
+	# 目录或资源存在性校验：优先通过 FileAccess 验证普通文件，再通过 ResourceLoader 验证已导入资源，最后检查目录
 	if FileAccess.file_exists(p):
 		return true
 	if ResourceLoader.exists(p):

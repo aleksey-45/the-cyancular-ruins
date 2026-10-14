@@ -7,9 +7,7 @@ var bullet_scene: PackedScene = null
 var enemy_scene: PackedScene = null
 var _aborted: bool = false
 func _ready() -> void:
-	# * each segment is followed by an _aborted check: the in-segment `_finish(...)` +
-	#   `return` used to exit the WHOLE function; after the split it only exits that segment,
-	#   so without this guard the later segments would run with an uninitialized _fx.
+	# 每个阶段完成后检查 _aborted 状态，若已终止则提前退出
 	await _mount_feedback()
 	if _aborted:
 		return

@@ -49,7 +49,7 @@ func _initialize() -> void:
 	_check(src.is_attack_just_pressed(), "is_attack_just_pressed() 跟随 fire")
 	src.press_jump()
 	_check(src.is_action_just_pressed("up"), "press_jump() 后 just_pressed('up') 为真")
-	_check(not src.is_action_just_pressed("up"), "跳跃是**边沿**不是电平(第二次读为假)")
+	_check(not src.is_action_just_pressed("up"), "跳跃为单帧边沿触发（第二次读取为假）")
 
 	src.aim = Vector2.UP
 	src.axis = -1.0

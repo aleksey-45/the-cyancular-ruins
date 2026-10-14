@@ -1,18 +1,18 @@
-# 联机进程生命周期验证
+# 联机进程生命周期验证记录
 
-环境：Windows x64、Godot 4.7.1、官方 EasyTier 2.7.0。验证联机子进程所有权、CLI 等待、Job 终止和 Windows 发布。
+测试环境基于 64 位 Windows 10、Godot 4.7.1 与官方 EasyTier v2.7.0。重点验证联机子进程生命周期管理、Windows Job 作业对象资源回收机制以及发布包独立运行稳定性。
 
-## 设计与测试边界
+---
 
-[NetSession](../../core/net/net_session.gd) 持有一个启用 kill-on-close 的 Windows Job。[原生扩展](../../native/process_group/process_group.cpp) 在创建子进程时原子加入 Job，父客户端独占不继承的句柄。正常关闭会话显式关闭句柄，客户端被强制结束时由系统关闭句柄；两者都由 Job 终止服务端、EasyTier、CLI 及后代进程。组件重启可以单独停止一个进程。Job 终止不执行子进程的退出回调。
+## 一、 架构机制与验证边界
 
-[生命周期测试](../../tests/network/run_process_lifecycle.py) 通过 Windows 进程句柄直接检查进程退出，覆盖正常 quit、窗口关闭、离开后重新建房、场景切换、强制终止和启动期间终止。实际启动的进程包含服务端、官方 EasyTier、等待中的 CLI 夹具，以及通过 Godot 原生接口创建的后代 EasyTier。独立 EasyTier 在每项测试后必须仍运行。夹具还验证 Unicode、空参数、引号、尾部反斜杠、72,000 字节 UTF-8 输出和退出码 7。
+- **Windows Job 作业对象机制**：[NetSession](../../core/net/net_session.gd) 持有一个配置了 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` 的 Windows 作业对象。[原生扩展](../../native/process_group/process_group.cpp) 在创建子进程时原子性地将其加入该作业对象中，父进程客户端独占持有该句柄（禁止句柄继承）。
+- **生命周期安全回收**：当客户端正常离开对局时，显式关闭该句柄；若客户端被任务管理器强杀或意外崩溃，Windows 操作系统会自动回收作业对象句柄。在这两种情况下，操作系统均会自动强制终止所属的专用服务端、EasyTier 核心及 CLI 工具等全部后台子进程。
+- **生命周期自动化测试**：[生命周期测试](../../tests/network/run_process_lifecycle.py) 通过 Windows 进程句柄直接检测子进程的存活状态，覆盖游戏正常退出、关闭窗口、离开房间后重新创建、场景切换以及主进程被强制结束等多种边界情况。同时验证了命令行包含 Unicode 字符、空参数、引号转义、反斜杠及大体积 UTF-8 输出等兼容性测试。
 
-生命周期矩阵使用编辑器加载完整项目，Windows 导出程序执行独立目录启动与实际服务端对局。
+---
 
-客户端与服务端日志追加保存，EasyTier 临时配置按 RPC 端口命名；进程所有权由 Job 句柄管理。
-
-## 执行入口
+## 二、 自动化测试命令入口
 
 ```powershell
 python tests/network/run_process_lifecycle.py --godot $env:GODOT
@@ -22,20 +22,20 @@ python tests/network/run_easytier.py --godot $env:GODOT
 python tools/build_release.py
 ```
 
-精英掉落探针退出故障按失败计入，见 [已知缺陷](registered-debt.md)。
+---
 
-## 验证结果（2026-10-13）
+## 三、 验证结果汇总
 
-| 项目 | 结果 |
-|---|---|
-| 进程生命周期 | 连续两轮 6/6；所有子进程和后代退出，独立 EasyTier 保持运行 |
-| 网络探针 | 7/7 |
-| 单元与场景回归 | 60/61；仅已有精英掉落探针访问冲突，退出码 3221225477 |
-| 视觉回归 | 8/8 |
-| 全脚本加载 | 228/228 |
-| 官方 EasyTier | UDP 直连与强制本机中继均通过；256 KiB 基线及重连正常 |
-| 真实双人对战 | 含断线重连、750 ms 积压、250 ms 断流，通过 |
-| Windows 发布 | 完整构建、导出、独立目录启动与归档通过；实际包内服务端完成两局、重连及原房间返回 |
-| 命名、路径、UID、shell 语法 | 通过 |
+| 验证项目 | 测试结果 | 说明 |
+|---|---|---|
+| **子进程生命周期回收** | 连续两轮 6/6 全部通过 | 主客户端退出或终止后，所属所有后台子进程均被操作系统安全终止，未残留孤儿进程；外部独立的 EasyTier 进程不受影响正常运行 |
+| **网络协议与探针** | 7/7 全部通过 | 协议往返、时序调度与权威世界模拟正常 |
+| **单元与场景回归** | 60/61 通过 | 仅已登记的精英掉落探针在退出时存在底层访问冲突异常（详见 [已知问题](registered-debt.md)） |
+| **视觉效果回归** | 8/8 全部通过 | 界面渲染与图标对比完全一致 |
+| **全脚本语法与加载** | 228/228 全部通过 | 语法解析无报错，类名与 UID 映射正常 |
+| **官方 EasyTier 兼容性** | 验证通过 | UDP 直连与强制本机中继均通过测试；256 KiB 可靠基线传输与断线重连正常 |
+| **网络高压真实对局** | 验证通过 | 包含双向丢包、750ms 突发积压与 250ms 完全断流，客户端顺利恢复同步并完成对局 |
+| **Windows 发布包独立运行** | 验证通过 | 发布构建、独立目录解压启动、包内服务端实测两回合对战、Token 重连与无缝返回大厅全流程正常 |
+| **工程命名与路径规范** | 全部通过 | 目录小写、文件名 snake_case、文档引用路径有效性检查全部通过 |
 
-发布包为 The-Cyancular-Ruins.zip，内部目录为 The-Cyancular-Ruins-<时间戳>/，包含客户端、服务端、原生 DLL、THIRD_PARTY_NOTICES.txt 和 EasyTier 联机组件。本机使用 LLVM MinGW，CI 使用 MSVC；本机覆盖直连及强制中继。原始结果与 DLL SHA-256 见 [结果 JSON](process_lifecycle_results.json)。
+发布包命名为 `The-Cyancular-Ruins.zip`，解压后目录为 `The-Cyancular-Ruins-<时间戳>/`。实测原始数据及 DLL SHA-256 记录见 [结果数据文件](process_lifecycle_results.json)。

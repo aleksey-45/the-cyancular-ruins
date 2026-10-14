@@ -2,8 +2,7 @@
 // 从 data/tile_defs.json 重新生成 level_editor/tile_defs.js(编辑器打包副本)。
 // tile_defs.js 以 <script src> 方式加载(window.TILE_DEFS),file:// 下也可靠。
 // 用法:node level_editor/sync-tiles.js [--check]
-//   --check: 只校验不写盘。改了 data/tile_defs.json 忘跑本脚本 → 生成物**静默漂移**
-//            (编辑器里那份悄悄落后,不报错)。一致退出 0;漂移退出 1 并打印首个差异行。
+//   --check: 仅校验不写入。若与 data/tile_defs.json 不一致则退出码为 1。
 const fs = require('fs');
 const path = require('path');
 

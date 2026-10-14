@@ -48,12 +48,8 @@ func _initialize() -> void:
 				"含 " + str(pair[1]) + " 的 " + str(pair[2]))
 	_check(wsrc.contains("WeaponRegistry"),
 			"weapon_component.gd 的武器类型取自 WeaponRegistry(单一来源)")
-	# - 判定条件走 `code_only`(剥注释)而不是裸 `contains`:本仓爱留墓碑注释,而墓碑里很可能
-	#   提到被删标识符的名字 —— 直接字符串包含匹配 会测试误报,而测试误报的下场历来是"把断言改松"
-	#   (本仓明文禁忌)。与 `enemy_logic_smoke` ⑤b 同口径。
-	# - 用 `load()` 而不是静态引用 `ScanUtil`:`-s` 阶段静态引用测试库没有先例
-	#   (注册表那批登记过这条未验证项),`load()` 绕开它;取不到就退化成裸源码视图,
-	#   并在报告里说明(不静默弱化)。
+	# 使用 ScanUtil.code_only 过滤注释文本后匹配源码，避免注释中的旧标识符引起误报。
+	# 使用 load 动态加载 ScanUtil，加载失败时回退为原始源码视图。
 	var su: Variant = load("res://tests/lib/scan_util.gd")
 	var wcode: String = wsrc
 	if su != null and su.has_method("code_only"):

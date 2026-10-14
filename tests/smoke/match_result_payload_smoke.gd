@@ -25,7 +25,7 @@ func _initialize() -> void:
 		fails.append("1v1 我赢了应念「胜利!」,实得 %s" % duel["title"])
 	if int(duel["sections"][0]["rows"][0]["kills"]) != 7:
 		fails.append("1v1 榜首应是 7 杀")
-	# `rank` 是行契约的一部分(`_finish` 末尾填名次)—— 删掉那段循环,榜照画、只是名次恒 0
+	# rank 为名次字段，由 _finish 排序后填充
 	if int(duel["sections"][0]["rows"][0]["rank"]) != 1:
 		fails.append("★ 榜首 rank 应被填成 1(_finish 的名次循环),实得 %d"
 				% int(duel["sections"][0]["rows"][0]["rank"]))
@@ -57,9 +57,8 @@ func _initialize() -> void:
 			2: {"kills": 9, "deaths": 1, "assists": 0, "dealt": 450, "taken": 120, "kscore": 900, "acs": 450}},
 			"rounds_won": {1: 0, 2: 2}, "mvp": 2, "match_winner": 2 }, names, 1)
 	if int(duel_mvp["mvp"].get("section", -1)) != 0 or int(duel_mvp["mvp"].get("row", -1)) != 0:
-		fails.append(("★ 1v1 的 mvp 行号必须在**排完序之后**数:role 2(9 杀)应落到第 1 行"
-				+ " = {section:0, row:0},实得 %s —— `\"mvp\": {}`(整块退掉)与「排序前数」"
-				+ "两种实现都会落到这里") % [duel_mvp["mvp"]])
+		fails.append(("1v1 的 mvp 行号必须在排序之后计算: role 2(9 杀)应落到第 1 行"
+				+ " = {section:0, row:0}, 实得 %s") % [duel_mvp["mvp"]])
 
 	# ② 1v1 平局:match_winner == 0 必须念「平 局」,不许走 1v1 兜底保护念成 P 某人获胜
 	var draw: Dictionary = script.for_duel({ "stats": {
@@ -69,13 +68,7 @@ func _initialize() -> void:
 	if str(draw["title"]) != "平 局":
 		fails.append("★ 1v1 平局应念「平 局」,实得 %s" % draw["title"])
 
-	# ②b 注意： 1v1:某 role 没有 `stats` 条目 = 本场 0 杀,必须照样出行(不是跳过)。
-	#      `for_duel` 遍历的是写死的 `[1, 2]`,缺条目只可能是"整场 0 杀"——`stats` 是
-	#      `role -> 七字段`(`server/match_round.gd`),没写进字典就是没拿到人头。
-	#      - 写成 `if not stats.has(role): continue` 会在一局 5-0 时画出只有一行的榜:
-	#        输的那位从自己的结算页上消失(他正是要看到自己那一行的人),全程不报错。
-	#      - 这条与 ⑤(3v3 缺 `stats` 条目就该跳过)方向相反,两条都要在:
-	#        无脑统一成一版,总有一个模式错。
+	# 1v1 模式中，若某 role 缺少 stats 条目（0 杀），依然需要生成对应行并以 0 填充
 	var one_sided: Dictionary = script.for_duel({ "stats": {
 			1: {"kills": 5, "deaths": 0, "assists": 0, "dealt": 100, "taken": 0, "kscore": 500, "acs": 500}},
 			"rounds_won": {1: 2, 2: 0}, "match_winner": 1 }, names, 2)
@@ -99,19 +92,13 @@ func _initialize() -> void:
 			"match_winner": 2 }, names, 1)
 	if roy["columns"] != ["kills", "deaths", "dealt", "taken"]:
 		fails.append("大乱斗 columns 应为 [kills,deaths,dealt,taken],实得 %s" % [roy["columns"]])
-	# 注意事项：先判空:新夹具不再带 `scores`,而"适配器还没改读 `stats`"或"夹具漏了 `stats`"时
-	#    榜就是空的 —— 那时 `rows[0]` 越界,`_initialize()` 当场中断  ->  不 `quit()`
-	#     ->  进程永久阻塞挂起、连一行 verdict 都没有(`-s` 没有 `--quit-after` 兜底保护;-  阻塞挂起与
-	#    真失败在输出上不可分,都是"看不到 FAIL")。判空之后它变成一条正常的红。
+	# 判空保护：缺少 stats 时避免 rows[0] 越界导致测试异常终止
 	var rrows: Array = roy["sections"][0]["rows"]
 	if rrows.is_empty():
-		fails.append("★ 大乱斗榜为空(夹具缺 `stats` / 适配器还没改读 `stats`?)—— 不判空的话"
-				+ " `rows[0]` 会越界,整支冒烟会**挂住**而不是失败(本仓判据:挂住与失败不可分)")
+		fails.append("大乱斗结算数据为空（缺少 stats 条目）")
 	elif int(rrows[0]["kills"]) != 9:
 		fails.append("★ 大乱斗榜首应是 9 杀(降序排错)")
-	# ③c 注意： 大乱斗的「造成 / 承受」也必须各读各的键(与 ①c 相同处理逻辑理由,`for_royale` 一个函数
-	#   一个改动点,故两处各判一次):榜首 role 2 的 dealt/taken 刻意取不等值(400 / 100)——
-	#   两列实参对调、或两列都读同一个键时这里红,而列名/列数/排序/标题断言一个都不会红。
+	# 大乱斗造成与承受伤害字段校验：榜首 role 2 的 dealt 与 taken 需正确映射
 	if not rrows.is_empty():
 		if int(rrows[0]["dealt"]) != 400 or int(rrows[0]["taken"]) != 100:
 			fails.append(("★ 大乱斗榜首(role 2)应 dealt=400 / taken=100(各读各的键),"
@@ -119,9 +106,7 @@ func _initialize() -> void:
 					% [int(rrows[0]["dealt"]), int(rrows[0]["taken"])])
 	if str(roy["title"]) != "游戏结束":
 		fails.append("★ 大乱斗标题应是「游戏结束」,实得 %s" % roy["title"])
-	# ③d -  大乱斗的「击杀 / 阵亡」相同处理逻辑(与 ①d 同一条理由;`for_royale` 是第三个
-	#   `_row(...)` 调用点,三个模式各判一次才是"整族都严格校验")。榜首 role 2 的
-	#   kills/deaths 刻意取不等值(9 / 2),assists 恒 0(大乱斗拿不到助攻)。
+	# 大乱斗击杀与阵亡字段校验
 	if not rrows.is_empty():
 		var r_bad: Array[String] = []
 		if int(rrows[0]["kills"]) != 9 or int(rrows[0]["deaths"]) != 2 \
@@ -132,34 +117,25 @@ func _initialize() -> void:
 			fails.append(("★ 大乱斗:榜首那行必须各读各的键(kills/deaths/assists):%s"
 					+ " —— deaths↔assists 对调时这里红") % str(r_bad))
 
-	# ③b -  上一条的反向对照:同一份 `stats`,只把 `match_winner` / `my_role` 换成
-	#     "我赢"(两者相等),标题必须一模一样。
-	#     - 为什么单开一条:③ 那一个 fixture 里 `my_role(1) != match_winner(2)` ——
-	#       `"游戏结束" if match_winner != my_role else "胜利!"` 这类仍然依赖胜负的实现
-	#       在 ③ 下照样绿,只有本条的"赢家视角"能把它照红。
+	# 大乱斗标题校验：获胜视角依然显示「游戏结束」
 	var roy_win: Dictionary = script.for_royale({ "stats": {
 			1: {"kills": 3, "deaths": 5, "assists": 0, "dealt": 120, "taken": 300, "kscore": 3, "acs": 3},
 			2: {"kills": 9, "deaths": 2, "assists": 0, "dealt": 400, "taken": 100, "kscore": 9, "acs": 9},
 			3: {"kills": 0, "deaths": 4, "assists": 0, "dealt": 20, "taken": 200, "kscore": 0, "acs": 0}},
 			"match_winner": 2 }, names, 2)
 	if str(roy_win["title"]) != "游戏结束":
-		fails.append("★ 大乱斗:即便 `my_role` 就是 `match_winner`(榜首),标题也必须是"
-				+ "「游戏结束」而**不是**「胜利!」,实得 %s" % roy_win["title"])
-	# 平局那一档同样不例外(`match_winner == 0` 时也不许冒出「平 局」)
+		fails.append("大乱斗标题应为「游戏结束」，实得 %s" % roy_win["title"])
+	# 大乱斗平局情况校验
 	var roy_draw: Dictionary = script.for_royale({ "stats": {
 			1: {"kills": 3, "deaths": 5, "assists": 0, "dealt": 120, "taken": 300, "kscore": 3, "acs": 3},
 			2: {"kills": 9, "deaths": 2, "assists": 0, "dealt": 400, "taken": 100, "kscore": 9, "acs": 9},
 			3: {"kills": 0, "deaths": 4, "assists": 0, "dealt": 20, "taken": 200, "kscore": 0, "acs": 0}},
 			"match_winner": 0 }, names, 1)
 	if str(roy_draw["title"]) != "游戏结束":
-		fails.append("★ 大乱斗平局(`match_winner == 0`)也不许念「平 局」,实得 %s"
+		fails.append("大乱斗平局标题应为「游戏结束」，实得 %s"
 				% roy_draw["title"])
 
-	# ④ 3v3:两节、列含助攻/dealt/acs、mvp 指向 ACS 最高者
-	# - 2 队两条 stats:只有一条时"排序前数行号"与"排序后数行号"都得到 `row 0` ——
-	#   那条 mvp 断言会退化成无效操作(mvp 的行号必须落在真会因排序移动的那一行上)。
-	#   这里 role 5 在 `stats` 的迭代次序里排在 role 4 之后  ->  排序前它在第 2 行;
-	#   而它 ACS 400 全队最高  ->  排完序升到第 1 行。于是"行号 == 0"只对排完序再数成立。
+	# 3v3 队伍结算：按 ACS 降序排序后，MVP 指向排在首位的角色
 	var stats := {1: {"kills": 5, "deaths": 3, "assists": 2, "dealt": 400, "taken": 250, "kscore": 600, "acs": 200},
 			2: {"kills": 2, "deaths": 5, "assists": 1, "dealt": 150, "taken": 400, "kscore": 200, "acs": 66},
 			4: {"kills": 3, "deaths": 4, "assists": 0, "dealt": 300, "taken": 200, "kscore": 350, "acs": 100},
@@ -179,8 +155,7 @@ func _initialize() -> void:
 	if not t1rows.is_empty():
 		t_dealt = int(t1rows[0]["dealt"])
 	if t_dealt != 400:
-		fails.append(("★ 3v3 伤害列必须读到生产端的 `dealt` 键(role 1 应 400),实得 %d —— "
-				+ "读回旧键 `dmg` 时这里恒 0,而上面所有计数断言照样全绿") % t_dealt)
+		fails.append("3v3 伤害列必须读取 dealt 字段(role 1 应为 400), 实得 %d" % t_dealt)
 
 	var t_bad: Array[String] = []
 	var t_a0: Array = team["sections"][0]["rows"]
@@ -204,104 +179,78 @@ func _initialize() -> void:
 		fails.append(("★ 3v3:「击杀 / 阵亡 / 助攻」三列必须各读各的键(kills/deaths/assists):%s"
 				+ " —— deaths↔assists 对调时这里红,而 ④d 与所有计数断言照旧全绿") % str(t_bad))
 
-	# ④b -  3v3 平局:match_winner == 0 必须念「平 局」—— 不许走 `ui/pvp_hud.gd` 那种兜底保护
-	#     (`"P%d 获胜!" % …`) 把它念成「P 某人获胜」。这条今天可达:TeamHost.mark_disconnected
-	#     在"两队都走光"时就写 0,`ui/team_hud.gd` 也真的渲染「平 局」。
+	# ④b 3v3 平局：match_winner == 0 时标题显示「平 局」
 	var team_draw: Dictionary = script.for_team({ "stats": stats, "mvp": 5, "match_winner": 0 },
 			names, teams, 1)
 	if str(team_draw["title"]) != "平 局":
-		fails.append("★ 3v3 平局应念「平 局」,实得 %s" % team_draw["title"])
+		fails.append("3v3 平局应显示「平 局」, 实得 %s" % team_draw["title"])
 
-	# ④c -  `my_team == 0`(队伍表还没到)必须念「失败」,不许谎报胜利。
-	#     平局那一支优先于本分支 —— 由上面 ④b 严格校验(它传的就是 my_team == 1)。
+	# ④c my_team == 0 时默认显示「失败」
 	var team_no_team: Dictionary = script.for_team({ "stats": stats, "mvp": 5, "match_winner": 1 },
 			names, teams, 0)
 	if str(team_no_team["title"]) != "失败":
-		fails.append("★ my_team == 0(队伍表未到)应念「失败」,不许谎报胜利,实得 %s" % team_no_team["title"])
+		fails.append("my_team == 0 应显示「失败」, 实得 %s" % team_no_team["title"])
 
-	# ⑤ -  某 role 没有 stats 条目 -> 跳过该行,不伪造 0 数据
+	# ⑤ 某 role 没有 stats 条目时跳过该行，不伪造 0 数据
 	var partial: Dictionary = script.for_team({ "stats": {1: stats[1]}, "mvp": 1,
 			"match_winner": 1 }, names, teams, 1)
 	if int((partial["sections"][1]["rows"] as Array).size()) != 0:
-		fails.append("★ 没有 stats 条目的 role 不许硬造 0 行(2 队应 0 行)")
+		fails.append("没有 stats 条目的 role 不应生成空行")
 
-	# ⑥ 同一份输入连算两次,载荷必须逐字段相同。
-	# - 它不是"排序确定性"的防御性校验:一个全序比较器(含昵称那一级 tiebreak)的纯静态排序
-	#   天生确定,⑥ 无法覆盖检测"序排错了"(那是 ③ 的活)。它能抓的只有不纯 ——
-	#   比较器读了会变的外部状态、或实现里藏了随机/时间。留它是为了这条反向性质。
+	# ⑥ 纯函数确定性：相同输入两次调用生成结果完全一致
 	if str(script.for_team({ "stats": stats, "mvp": 5, "match_winner": 2 }, names, teams, 1)) \
 			!= str(team):
-		fails.append("★ 同一输入两次调用给出了不同的载荷(实现不纯,而非纯静态排序)")
+		fails.append("同一输入两次调用给出了不同的载荷")
 
-	# ⑦ -  载荷里没有 `stats` 键(老服务端 / 极端路径) ->  空榜、不崩。
-	#   - 本适配器不做回退读 `scores`/`deaths`:那会让同一件事有两个来源(重复定义),
-	#     而两端由同一份仓库/同一个 exe 一起更新 —— 加法的性质是"老接收端忽略未知键",
-	#     不是"新接收端兼容老服务端"。
-	# 注意事项：夹具带 `scores`(局内 HUD 那个数据面,形状 = `role -> 击杀数` 的 int)、
-	#    不带 `stats` —— 这正是"回退读 `scores`"那条实现会暴露异常的形状:原夹具两样都没有,
-	#    于是"整块不读"与"回退读 `scores`"给出同一个载荷,⑦ 的两个分支都拦不住它。
-	#    - 1v1 的行是写死 `[1, 2]` 的  ->  榜永远不为空,所以这里判的自变量是值
-	#      (回退实现会把 `scores` 的 5/3 画上「击杀」列),不是行数。
+	# ⑦ 容错处理：缺少 stats 字段时安全生成空榜或默认全 0 行，不回退读取局内 scores
 	var no_stats_duel: Dictionary = script.for_duel({ "scores": {1: 5, 2: 3}, "deaths": {1: 1, 2: 2},
 			"match_winner": 1 }, names, 1)
 	var nsd: Array = no_stats_duel["sections"][0]["rows"]
 	if nsd.size() != 2:
-		fails.append("★ 缺 `stats` 时 1v1 仍应出两行(0 值),实得 %d 行" % nsd.size())
+		fails.append("缺少 stats 时 1v1 仍应出两行全 0 数据, 实得 %d 行" % nsd.size())
 	else:
 		for ri in nsd.size():
 			var nr: Dictionary = nsd[ri]
 			if int(nr["kills"]) != 0 or int(nr["dealt"]) != 0 or int(nr["acs"]) != 0:
-				fails.append(("★ 缺 `stats` 时 1v1 的行必须**全是 0**(本适配器刻意**不回退**读 `scores`):"
-						+ "第 %d 行实得 kills=%d / dealt=%d / acs=%d —— 回退读 `scores` 时这里会读到真实的击杀数")
+				fails.append(("缺少 stats 时 1v1 行数据必须全为 0: 第 %d 行实得 kills=%d / dealt=%d / acs=%d")
 						% [ri + 1, int(nr["kills"]), int(nr["dealt"]), int(nr["acs"])])
-	# ⑦b -  大乱斗:同样只给 `scores`(没有 `stats`) ->  必须空榜。
-	#    `for_royale` 遍历的是 `stats` 的键  ->  回退读 `scores` 会凭空多出 N 行,而上面的
-	#    列名/列数/标题断言一个都不会红(它们只看非空那一路)。
+	# ⑦b 大乱斗缺少 stats 时输出空榜
 	var scores_only_roy: Dictionary = script.for_royale({ "scores": {1: 5, 2: 3}, "deaths": {1: 1, 2: 2},
 			"match_winner": 1 }, names, 1)
 	var sor: Array = scores_only_roy["sections"][0]["rows"]
 	if sor.size() != 0:
-		fails.append(("★ 只有 `scores`(无 `stats`)时大乱斗必须是空榜:回退读 `scores` 会画出 %d 行"
-				+ "(本适配器不做回退 —— `scores` 是「本局击杀」,不是结算页要的整场口径)")
-				% sor.size())
-	# ⑦c -  3v3 同理:两节都必须为空(同一处改动的第三个落点,一句话的代价)。
+		fails.append(("缺少 stats 时大乱斗必须为空榜, 实得 %d 行") % sor.size())
+	# ⑦c 3v3 缺少 stats 时两队数据均为空
 	var scores_only_team: Dictionary = script.for_team({ "scores": {1: 5, 4: 3}, "match_winner": 1 },
 			names, teams, 1)
 	var sot0: Array = scores_only_team["sections"][0]["rows"]
 	var sot1: Array = scores_only_team["sections"][1]["rows"]
 	if sot0.size() != 0 or sot1.size() != 0:
-		fails.append(("★ 只有 `scores`(无 `stats`)时 3v3 两节都必须为空,实得 A 队 %d 行 / B 队 %d 行"
-				+ " —— 回退读 `scores` 时这里红") % [sot0.size(), sot1.size()])
+		fails.append(("缺少 stats 时 3v3 两节都必须为空, 实得 A 队 %d 行 / B 队 %d 行")
+				% [sot0.size(), sot1.size()])
 
-	# ⑧ 注意： 每个列键都必须有标题(`ui/match_result.gd` 的 `COLUMN_TITLES`)。
-	#   表头走 `COLUMN_TITLES.get(col, col)` —— 漏一个键不报错,只是那一列的表头退化成
-	#   裸英文键名(屏上输出 `dealt`),而所有列数/计数/值断言照样全部断言通过。这正是
-	#   `60860fd`(`dmg` -> `dealt`)踩过的形状:改了列名却没同步标题表。
-	#   - 键集从三个常量推,不写死清单 —— 写死的话,以后给 `C_DUEL` 加一列而忘了同步
-	#     这里,这条防御性校验就失去防护校验作用(它守的正是"新增列必须有标题")。
-	#   - 常量一律走 `get_script_constant_map()`(取不存在的属性会抛错  ->  `-s` 下挂到 timeout)。
+	# ⑧ 校验所有列键在 ui/match_result.gd 的 COLUMN_TITLES 中均已配置中文标题
 	var rs = load("res://ui/screens/match_result.gd")
 	var scmap: Dictionary = script.get_script_constant_map()
 	if rs == null:
-		fails.append("★ 读不到 ui/match_result.gd(`COLUMN_TITLES` 覆盖断言无从成立)")
+		fails.append("无法加载 ui/match_result.gd 进行 COLUMN_TITLES 校验")
 	else:
 		var cmap: Dictionary = rs.get_script_constant_map()
 		if not cmap.has("COLUMN_TITLES"):
-			fails.append("★ ui/match_result.gd 里找不到 COLUMN_TITLES(改名了?本断言无从成立)")
+			fails.append("ui/match_result.gd 里找不到 COLUMN_TITLES")
 		else:
 			var titles: Dictionary = cmap["COLUMN_TITLES"]
 			var cols: Array = []
 			for cname in ["C_DUEL", "C_ROYALE", "C_TEAM"]:
 				if not scmap.has(cname):
-					fails.append("★ MatchResultPayload 里找不到 `%s`(列常量改名了?)" % cname)
+					fails.append("MatchResultPayload 里找不到 %s" % cname)
 					continue
 				for col in (scmap[cname] as Array):
 					if not cols.has(str(col)):
 						cols.append(str(col))
 			for col in cols:
 				if not titles.has(col):
-					fails.append(("★ 列 `%s` 在 COLUMN_TITLES 里没有标题 —— 表头会退化成裸键名"
-							+ "(`.get(col, col)` 兜底,不报错),而所有列数/计数断言照样全绿") % col)
+					fails.append("列 %s 在 COLUMN_TITLES 里没有对应标题" % col)
 
 	if fails.is_empty():
 		print("MATCH RESULT PAYLOAD: ALL-OK")

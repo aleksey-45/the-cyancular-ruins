@@ -132,7 +132,7 @@ func _scan_literal_assign(files: Array[String], bad: Array[String]) -> void:
 				bad.append("%s: 字号 %d(行首近处「%s」)" % [f, v, m.get_string(0).strip_edges()])
 
 
-# C) const 常量声明:形如 `const …FONT_SIZE… := 数字` / `= 数字`
+# C) const 常量声明扫描: 匹配 const ...FONT_SIZE... 声明语句
 func _scan_const_decl(files: Array[String], bad: Array[String]) -> void:
 	var needle := "FONT" + "_SIZE"
 	var re := RegEx.new()

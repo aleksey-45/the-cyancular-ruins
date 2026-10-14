@@ -1,11 +1,11 @@
 class_name GridPathfinder
 extends RefCounted
 
-# 环面网格几何与寻路系统：环面距离计算、就近副本锚定、瓦片坐标定位、地面站立判定、A* 寻路与视线遮挡检测。
-# 纯静态工具类，无内部会话状态，网格数据由调用方传入。
+# 环形空间几何与网格寻路工具类：包含环形距离计算、跨边界可视副本映射、瓦片坐标转换、地面站立检测、A* 寻路与视线遮挡检测。
+# 纯静态工具类，无内部状态，网格与尺寸参数由调用方传入。
 
-# 环面曼哈顿距离(格子级)。cols/rows 由调用方按实际地图传入,
-# 不依赖全局常量——地图文件变更后距离计算不会失真。
+# 计算网格坐标在环形地图上的曼哈顿距离（以网格单元为单位）。
+# cols 与 rows 参数由调用方根据实际地图尺寸传入，不依赖全局常量。
 static func toroidal_dist(a: Vector2i, b: Vector2i, cols: int, rows: int) -> int:
 	var dx := absi(a.x - b.x)
 	dx = mini(dx, cols - dx)
@@ -14,7 +14,7 @@ static func toroidal_dist(a: Vector2i, b: Vector2i, cols: int, rows: int) -> int
 	return dx + dy
 
 
-# 像素级环面最短向量:从 a 指向 b(跨接缝取最短)。
+# 计算环形空间内的像素级最短位移向量：从 a 指向 b（考虑跨边界的最短路径）。
 static func toroidal_delta_px(a: Vector2, b: Vector2, w: float, h: float) -> Vector2:
 	var dx := b.x - a.x
 	if absf(dx) > w * 0.5:
@@ -25,15 +25,14 @@ static func toroidal_delta_px(a: Vector2, b: Vector2, w: float, h: float) -> Vec
 	return Vector2(dx, dy)
 
 
-# 环面线性插值:沿 a→b 的最短向量按 alpha 取点,再取模回 [0,w)×[0,h)。
-# 供 PvP 副本位置插值用——相邻快照在环面上可能跨接缝,直接 lerp 会横穿整幅地图。
+# 环形空间线性插值：沿 a 到 b 的最短向量进行插值，并将结果约束在 [0, w) × [0, h) 范围内。
+# 用于多人对战实体位置平滑插值，避免跨边界时角色横穿整个地图。
 static func toroidal_lerp(a: Vector2, b: Vector2, alpha: float, w: float, h: float) -> Vector2:
 	return wrap_to_range(a + toroidal_delta_px(a, b, w, h) * alpha, w, h)
 
 
-# 把 pos 锚定到 anchor 最近的环面副本:返回的位置与 anchor 各轴差 ≤ 半地图。
-# 用于让敌人/子弹「跟着主角一起取模」——墙体在 level_0 按 3x3 铺贴,
-# 相机在接缝处能看到另一侧副本,实体若仍取模到 [0,MAP) 会渲染到远副本而消失。
+# 将 pos 映射到距离 anchor 最近的可视镜像副本位置，使各轴差值不超过半个地图跨度。
+# 场景瓦片按 3×3 铺贴，摄像机在接缝处能看到对侧画面；远端实体若直接取模会导致越界闪烁或消失。
 static func anchor_to_nearest(pos: Vector2, anchor: Vector2, w: float, h: float) -> Vector2:
 	var p := pos
 	if p.x - anchor.x > w * 0.5:
@@ -47,7 +46,7 @@ static func anchor_to_nearest(pos: Vector2, anchor: Vector2, w: float, h: float)
 	return p
 
 
-# 把点取模回 [0,w)×[0,h) 绝对区间(玩家锚点自身用;实体锚定玩家副本见 anchor_to_nearest)。
+# 将位置坐标规范化到 [0, w) × [0, h) 的世界逻辑区间内。
 static func wrap_to_range(pos: Vector2, w: float, h: float) -> Vector2:
 	var p := pos
 	if p.x >= w:

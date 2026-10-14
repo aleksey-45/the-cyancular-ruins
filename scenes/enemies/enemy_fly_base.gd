@@ -11,8 +11,8 @@ var _path: Array[Vector2i] = []
 var _path_index: int = 0
 var _path_target: Vector2i = Vector2i(-1, -1)  # 上次寻路目标格;未变且路径还在时跳过重寻(静态战斗砍搜索量)
 var _repath_timer: float = 0.0
-var _repath_phase: float = 0.0             # 随机错峰,避免 40 只鸟同帧 BFS
-var _escape_target: Vector2 = Vector2.INF  # 死区逃逸目标(寻路空路径时水平脱离悬挑)
+var _repath_phase: float = 0.0             # 随机微小相位差，分散寻路时机
+var _escape_target: Vector2 = Vector2.INF  # 避障脱困目标点（寻路无解时脱离狭窄死角）
 
 
 func _ready() -> void:
@@ -50,8 +50,7 @@ func _waypoint_world(cell: Vector2i) -> Vector2:
 func _follow_path(delta: float, fallback_target: Vector2 = Vector2.INF) -> void:
 	if _path.is_empty():
 		if fallback_target != Vector2.INF:
-			# 死区逃逸:寻路空路径时朝逃逸目标巡航(先下潜到可走格,窄檐则水平挪出悬挑),
-			# 别直线撞墙。目标带 y,鸟真正下飞,不再锁定约束当前高度。
+			# 避障脱困：寻路无解时朝脱困目标点飞行（先下潜绕出死角），避免撞墙卡死。
 			if _escape_target != Vector2.INF:
 				_fly_straight_to(_escape_target, delta)
 			else:
@@ -184,5 +183,5 @@ func _repath_to(cell: Vector2i) -> void:
 	_path = MazeGenerator.astar_path_nearest(_cell_of(global_position), cell,
 			EnemyParams.FlyBird.path_max_visit, _bird_can_pass, EnemyParams.FlyBird.search_radius_cells)
 	_path_index = 0
-	# 寻路失败(死区)→ 记逃逸目标,先水平挪出悬挑,下次重寻路即可爬升。
+	# 寻路未找到可行路径时计算脱困目标点，先水平或向下绕出障碍
 	_escape_target = _find_escape_column() if _path.is_empty() else Vector2.INF

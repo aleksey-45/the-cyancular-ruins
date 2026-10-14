@@ -43,16 +43,11 @@ func _ready() -> void:
 	var spawn := Vector2(2 * ts + ts * 0.5, 3 * ts + ts * 0.5)
 	A = _make_player(host, "TwinA", spawn)
 	B = _make_player(host, "TwinB", spawn)
-	# - 给两人一个非空且残弹非满的背包:否则 capture/restore 里的 `inv` 一节
-	#   在两个空背包之间比,恒等,等于没测。下方 _compare 的 `inv` 指纹才真正有测试有效性
-	#   (sabotage 会把 B 的背包清空,restore 必须把它从快照里重建回来)。
+	# 初始化双方背包为非空且非满弹状态，确保 capture_state 与 restore_state 的背包同步得到有效检验。
 	for p in [A, B]:
 		p.weapons.set_initial_inventory([1, 2, 4])
 	await get_tree().physics_frame
-	# - 必须等武器加入场景树再写残弹:`_equip_index` 用 `call_deferred("add_child")` 加入场景树,
-	#   而 `_ready` 会把 `mag_ammo` 重置为满  ->  加入场景树前写会被静默冲掉(实测 `in=false mag=4`
-	# -> 下一帧 `in=true mag=12`),"残弹非满"这个前提就没了。写完同步进背包条目 ——
-	#   `_inv_key` 比的是条目,不是实例(条目默认 `MAG_FULL`,不同步则指纹恒不动)。
+	# 等待武器节点加入场景树后再写入剩余弹药，避免被 _ready 初始化覆盖，并同步更新背包条目。
 	for p in [A, B]:
 		var w = p.weapons.current_weapon()
 		var waited := 0
@@ -63,8 +58,7 @@ func _ready() -> void:
 			_violation = "等待武器入树超时(120 帧,current_weapon=%s)" % str(w)
 			_fail()
 			return
-		# - `w == null` 必须报错而不是跳过:下面那句"残弹非满"是本冒烟 `inv` 指纹的唯一
-		#   测试有效性来源 —— 静默跳过等于冒烟退化成永远绿(与上面那条防御性校验同一类)。
+		# 校验武器实例有效性
 		if w == null:
 			_violation = "玩家 %s 没有武器(set_initial_inventory 没装上?)—— '残弹非满'前提不成立" % p.name
 			_fail()
@@ -111,12 +105,7 @@ func _build_plan() -> void:
 		var up := false
 		var down := false
 		var charge := false
-		# - 开火:半自动手枪每 7 tick 一发,只为与 RESTORE_EVERY(12) 交错,让"回滚恢复
-		#   期间开火"这个面被覆盖到。
-		# - `7 与 12 互质  ->  每 84 tick 必被走到一次` 这类推论不成立(别照它推):手枪
-		#   `fire_cooldown` = 0.3s 量化到 7-tick 输入网格上,有效开火周期 = 21 tick
-		#   (冷却中不重置冷却) ->  开火 tick ≡ 1 (mod 3),而 restore tick ≡ 0 (mod 3)
-		#    ->  永不同帧。C1 需要专门构造序列,见 `tests/probe/ammo_rollback_probe.tscn`。
+		# 开火输入：与回滚恢复周期交错触发，验证回滚过程中的开火输入处理
 		var atk := (i % 7 == 3)
 		# 长距离左右横扫:保证经过梯列(x5)与水池(x16..24),触发攀爬/游泳路径
 		var sw := i % 240
@@ -228,13 +217,7 @@ func _compare(a, b, _snap: Dictionary, restored: bool) -> void:
 		"swim": a.swim.in_water == b.swim.in_water,
 		"downed": a.combat.downed == b.combat.downed,
 		"hp": a.combat.hp == b.combat.hp,
-		# 武器:当前手持类型 + 背包指纹(类型序列 + 各把残弹)。
-		# - 比的是背包条目里的 mag(每条一个 inst),不是 `_weapon.mag_ammo`:前者是
-		#   "这个背包记着的"、进 `capture_state` 的 `inv`,两边同源可逐 tick 比;后者是
-		#   "手上这一把的",而且本冒烟抓不到它 —— 「restore 之后同帧输出的那一发会不会
-		#   被帧末的延迟写回抹掉」(C1)需要把那个序列构造出来才走得进去,靠"开火 tick 与
-		#   restore tick 交错"碰不到(理由见 _build_plan 那段注释)。C1 由
-		#   `tests/probe/ammo_rollback_probe.tscn` 专门覆盖,这里刻意不比手持实例的弹数。
+		# 武器校验：当前手持类型与背包条目状态（类型序列与弹药量）
 		"wslot": a.weapons.current_type_id() == b.weapons.current_type_id(),
 		"inv": _inv_key(a) == _inv_key(b),
 	}

@@ -31,11 +31,8 @@ func _run() -> void:
 	if mode == "play":
 		await _run_play_session(tree)
 		return
-	# 直接切到某个场景探针(不进菜单流转):模块名 = 去掉 ground/ 前缀的探针名。
-	# 存在的理由:导出 exe 被编译成 `disable_path_overrides=yes`,`<exe> res://x.tscn` 会被
-	# 引擎当场拒绝(实测 "compiled without support for path overrides")—— 想在发布产物
-	# 上跑探针,只能借主菜单这条既有的 `- autotest-*` 通道(它读 OS.get_cmdline_user_args,
-	# 不受 path override 限制,且 tests/ 已在 export_filter=all_resources 里)。
+	# 直接切换至指定场景探针（模块名 = 去掉 ground/ 或 sceneprobe/ 前缀的探针名）
+	# 在导出二进制中无法使用 res:// 前缀直接启动场景，通过主菜单参数通道执行场景探针测试。
 	if mode.begins_with("ground/") or mode.begins_with("sceneprobe/"):
 		var scene_path := "res://tests/probe/%s.tscn" % mode.split("/", true, 1)[1]
 		if not ResourceLoader.exists(scene_path):
@@ -172,11 +169,7 @@ func _run_beta_flow(tree: SceneTree) -> void:
 		print("AUTOTEST[beta]: 卡片没把筛选预选成大乱斗(entry_mode=%s)" % PvpSession.entry_mode)
 		tree.quit(1)
 		return
-	# 建房弹层启动即建、默认隐藏(基础结构框架里的 `%CreatePanel`;`_build_ui()` 只登记 + 收起 ——
-	# 见 `_set_create_visible` 上方那句)。-  时间参数滑条不是开弹层时才造的:它们由
-	# `_build_ui()` 里的 `_add_time_params(%BetaBlock)` 当场填(`%BetaBlock.visible` 按
-	# `PvpSession.beta_mode` 定)。这里先开一次不是为了把滑条建出来,而是让该测试阶段走玩家
-	# 那条路 —— 点开弹层,再数玩家能看到的那 9 行。
+	# 打开建房弹层，验证默认显示的 9 项时间配置滑条
 	(lobby as Node).call("_open_create_dialog")
 	await tree.create_timer(0.2).timeout
 	# 建房面板必须带 9 行时间参数(滑条),报到选项必须带 time 规则
@@ -217,13 +210,7 @@ func _walk(n: Node, pred: Callable) -> Array:
 	return out
 
 
-# ── switch 模式:两趟「进单机 -> 回主菜单」,把 safe_change_scene 的两条路径都走到 ──
-# 为什么要两趟:`Level0.safe_change_scene` 的收尾有两个动作,付账时机不同 ——
-#   - `remove_child(old)`(整棵旧世界递归从场景树中移除):每趟都付,第 1 趟也付;
-#   - `_retired.free()`(同步销毁上一整具世界):第 2 趟起才付(第 1 趟 _retired 还是空)。
-# 用户报的"有些时候才卡"正指向后者,而项目自己的 recon 把这条列为从未实测(见
-# .superpowers/sdd/l4-recon.md 的"第 2 次及以后退出")。本模式就是把它变成可测的。
-# 数字由 level_0.gd 的 `_perf_log` 打,需同带 `--perf-switch`(不带则只有流程、没有数字)。
+# switch 模式：两趟「进入单机关卡 -> 返回主菜单」，验证 safe_change_scene 场景释放与重建逻辑
 func _run_switch_roundtrips(tree: SceneTree) -> void:
 	for i in range(2):
 		_press_by_text(tree.current_scene, "单 人 模 式")
@@ -240,9 +227,7 @@ func _run_switch_roundtrips(tree: SceneTree) -> void:
 		_press_esc()
 		await tree.create_timer(0.4).timeout
 		_press_by_text(tree.current_scene, "回到主菜单")
-		# - 量用户看得见的东西:换场后 90 帧的帧间隔,而不是 safe_change_scene 内部
-		#   各步骤的耗时 —— 内部步骤加起来只有几十毫秒,而"卡不卡"取决于有没有一帧被拖长。
-		#   逐帧打点还顺带回答"分帧拆除器本身会不会把卡顿摊成一串小顿"(预算 3ms/帧)。
+		# 采样换场后 90 帧的帧间隔统计
 		var worst := 0.0
 		var total := 0.0
 		var worst_at := -1
@@ -267,11 +252,7 @@ func _run_switch_roundtrips(tree: SceneTree) -> void:
 		print("AUTOTEST[switch]: 第 %d 趟已回主菜单" % [i + 1])
 
 
-# ── play 模式:真的打一局再退 —— 这是用户的复现路径 ──
-# 为什么必须有它:`switch` 模式只做菜单往返,一枪没开。真实游玩后世界状态完全不同 ——
-# 场上有子弹(入 "bullet" 组)、有 explosion 动画节点、有 TileHitFx 粒子、有被炸碎并重建过
-# 碰撞分块的砖、有敌人尸体。退役那一刻要拆的东西比一具干净世界多得多。
-# 用户报的正是"玩好一局以后"才卡,所以量它的必须是一个打过的世界。
+# play 模式：在单人关卡中执行模拟射击与实体交互后再返回主菜单，验证复杂状态下的世界销毁与内存回收
 func _run_play_session(tree: SceneTree) -> void:
 	_press_by_text(tree.current_scene, "单 人 模 式")
 	await tree.create_timer(0.4).timeout
@@ -468,12 +449,9 @@ func _shot(tree: SceneTree, file: String) -> void:
 		print("AUTOTEST: 截图已存 user://" + file)
 
 
-# 存 root 视口 PNG;返回是否真的写了文件(调用方据此决定要不要报「已存」)。
+# 保存 root 视口为 PNG；返回是否成功写入文件
 func _save_root_png(tree: SceneTree, path: String) -> bool:
-	# headless(dummy 渲染后端)的 root 视口纹理是空壳:get_image() 会在引擎侧打
-	#   ERROR: Parameter "t" is null
-	# 污染 CI 的 `grep -ci error` 判读(该判定条件本要用来抓"场景报错"),故先行跳过。
-	# 该分支只在 headless 成立 -> 带窗口跑 GUI 的行为完全不受影响。
+	# headless 模式下无真实视口纹理，跳过截图保存，避免输出引擎空指针错误
 	if DisplayServer.get_name() == "headless":
 		print("AUTOTEST: headless(dummy 后端)无视口纹理,跳过截图 ", path)
 		return false

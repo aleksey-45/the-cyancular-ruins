@@ -27,7 +27,7 @@ const HIT_MULT: float = 1.75
 
 enum BeamStyle { FLASH = 0 }
 
-# ── 开火编排（接管 WeaponBase._spawn_projectiles）──
+# ── 激光开火处理（重写 WeaponBase._spawn_projectiles）──
 func _spawn_projectiles(action: Dictionary) -> void:
 	var origin: Vector2 = action["pos"]
 	var dir: Vector2 = action["dir"].normalized()

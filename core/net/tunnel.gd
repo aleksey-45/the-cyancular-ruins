@@ -1,15 +1,15 @@
 class_name Tunnel
 extends RefCounted
 
-# 远程联机隧道编排：基于 EasyTier 应用层网络协议栈，
-# 在对战双方之间建立虚拟子网，实现 UDP 数据包的应用层透明转发。
+# EasyTier P2P 网络隧道管理：基于 EasyTier 应用层协议栈，
+# 在对战双方之间建立虚拟网络，实现 UDP 数据包的应用层透明转发。
 #
 # 架构原理：
-# - 免驱动与免提权：采用应用层协议栈，无需安装系统级虚拟网卡驱动，不触发管理员提权。
-# - 服务端（房主）：EasyTier 自动建立应用层端口映射，将虚拟子网目标端口转发至本机服务端端口。
-# - 客户端（客机）：通过命令行接口添加出站转发规则，将本机动态分配端口映射至房主虚拟 IP 端口。
-#   客户端直接连接本地回环地址，底层虚拟网络拓扑完全透明。
-# - 端口同步与元数据协商：房间码决定虚拟网络名称与通信密钥；端口号通过主机名在对等节点间同步。
+# - 免驱动运行：采用应用层协议栈（--no-tun），无需安装虚拟网卡驱动或管理员权限。
+# - 服务端（房主）：EasyTier 自动映射端口，将虚拟网目标端口转发至本机服务端端口。
+# - 客户端（客机）：通过 CLI 工具添加出站转发规则，将本机动态分配端口映射至房主虚拟 IP 端口，
+#   客户端直接连接本地回环地址即可进行对局。
+# - 端口同步与房间凭据：房间码决定虚拟网络名称与通信密钥；端口号通过主机名在对等节点间同步。
 
 const Meta := preload("res://core/config/tunnel_meta.gd")
 
@@ -168,7 +168,7 @@ static func wait_ready() -> bool:
 	return false
 
 
-## 启动客机网络隧道并下发本地转发规则。
+## 启动客机网络隧道并配置本地转发规则。
 ## 成功返回包含 port 与 host_ip 的字典，失败返回空字典。
 static func start_client(code: String) -> Dictionary:
 	if not is_valid_room(code):
@@ -202,7 +202,7 @@ static func start_client(code: String) -> Dictionary:
 	var forwarded := await add_udp_forward(port, host_ip)
 	if pid != _pid: return {}
 	if not forwarded:
-		push_error("Tunnel: 下发转发失败(%s:%d)" % [host_ip, port])
+		push_error("Tunnel: 配置转发失败(%s:%d)" % [host_ip, port])
 		stop()
 		return {}
 	print("[tunnel] 客机就绪:房主 %s 端口 %d" % [host_ip, port])
@@ -214,7 +214,7 @@ static func guest_suffix() -> String:
 	return "%08x" % randi()
 
 
-## 下发 UDP 出站端口转发规则：将本机动态回环端口映射至目标虚拟 IP 与端口。
+## 配置 UDP 出站端口转发规则：将本机动态回环端口映射至目标虚拟 IP 与端口。
 static func add_udp_forward(port: int, host_ip: String) -> bool:
 	var pid := _pid
 	var bind_port := _pick_free_port()
