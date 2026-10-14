@@ -14,7 +14,7 @@
 - **`ui/factory/ui_factory.gd` 是 UI 的唯一工厂与唯一调色板**。颜色只在那里定义(`C_BG`/`C_SURFACE`/`C_ROW`/`C_FIELD`/`C_BTN_FILL(HI/DN)`/`C_BORDER(DIM)`/`C_ACCENT`/`C_DANGER`/`C_TEXT(DIM)`/`C_WARN`),各页面一律引用,**不要再写 `Color(...)` 字面量**。字号仍必须是 16 的倍数(见文件头两条硬约定)。
 - ★★ **菜单系视觉语汇(2026-10-03,方向 B「遗迹青铜」)**:`UiFactory` 新增 5 个**菜单专属** token —— `C_HEADER`(标题带底 / 按钮填充)/ `C_INNER`(面板**内**亮线,凿刻感的来源)/ `C_EDGE`(按钮描边)/ `C_GOLD`(琥珀:分区标题 / 主行动按钮)/ `C_TEXT_MUTE`(比 `C_TEXT_DIM` 更弱一档的禁用字) + 三个构造器 `menu_panel()`(**两层嵌套 PanelContainer**:外深线 + 内亮线;内容加进 `Body`,默认 padding **64/46**)/ `menu_button()` / `header_strip()`(标题带,内边距 **40/20**)。
   - **尺度档(2026-10-03 两轮放大,用户:"margin 和 padding 还是不够")**:`_btn_box` 内容边距 **40/20** ⇒ 32 号字按钮**最低高度 = 32 + 40 = 72**,绝对定位的调用方(`scenes/mp_lobby.gd` 是本仓唯一一处)必须自己把行高抬到 72,否则被 `custom_minimum_size` 顶高、压到下一行(且**不报错**);菜单各页 `PAGE_MARGIN` 统一 **76**。★ `_btn_box` 是**共用**的(`menu_button()` 与旧的 `style_button()` 都走它)⇒ 改它 = 同时放大那几屏的内边距,**有意接受**(内边距变大不坏任何断言)。
-  - ★★ **"共享 token 冻结、HUD 优先"(用户 2026-10-03 裁定)**:menu token **只给菜单系用**(主菜单 / 设置 / 信息 / 统一大厅 / Beta / 结算页 / 暂停菜单),**对局内 HUD 一个像素都不改**;`C_ACCENT` / `C_TEXT` / `C_TEXT_DIM` / `C_SURFACE` / `C_BORDER` / `C_PLATE` / `C_SLOT_*` / `C_TEAM_*` / `C_GRACE` / `C_MODE_*` **一个都不许改**(HUD 读它们;`C_SURFACE` / `C_BORDER` 还被对局内的重连横幅 `status_banner.gd` 的 `panel_box(false)` 读)。★ 设计 §3.9.1 的 token 表给 `C_ACCENT` / `C_TEXT_DIM` 开了另一个值,却又同时写着「HUD 一行不动」—— 那是**设计文档的内部矛盾**,**以 HUD 为准**。★ 冻结守卫在 `menu_style_probe`;色值统一写 hex 字符串(`Color("#RRGGBB")`,8bit 精确),浮点反算会与守卫里的 hex 期望值差 1/255 ⇒ 恒红,两侧必须同一写法。
+  - ★★ **"共享 token 冻结、HUD 优先"(用户 2026-10-03 裁定)**:menu token **只给菜单系用**(主菜单 / 设置 / 信息 / 统一大厅 / Beta / 结算页 / 暂停菜单),**对局内 HUD 一个像素都不改**;`C_ACCENT` / `C_TEXT` / `C_TEXT_DIM` / `C_SURFACE` / `C_BORDER` / `C_PLATE` / `C_SLOT_*` / `C_TEAM_*` / `C_GRACE` / `C_MODE_*` **一个都不许改**(HUD 读它们;`C_SURFACE` / `C_BORDER` 还被对局内的重连横幅 `status_banner.gd` 的 `panel_box(false)` 读)。★ 设计 §3.9.1 的 token 表给 `C_ACCENT` / `C_TEXT_DIM` 开了另一个值,却又同时写着「HUD 一行不动」—— 那是**设计文档的内部矛盾**,**以 HUD 为准**。★ 冻结守卫 `menu_style_probe`（已删·2026-10-09）**已不存在** ⇒ 色值冻结今天**零自动化守卫**，改 hex 前先人眼核对；色值统一写 hex 字符串(`Color("#RRGGBB")`,8bit 精确),浮点反算会与守卫里的 hex 期望值差 1/255 ⇒ 恒红,两侧必须同一写法。
 - **按钮 = 描边式**(`style_button(b, variant)`):暗填充 + 2px 亮描边、直角。标定目标是**描边对页面底 ≥3:1、对填充 ≥3:1** —— 改 `C_BORDER` 前先按这个量。`variant="quiet"` 是弱化项(退出)。其余控件各有工厂方法,新页面直接调:`panel_box()`(面板底,**不透明** —— 半透明会让下层菜单文字透上来重影)、`row_box()`/`style_row_button()`、`style_line_edit()`、`style_check()`(**自绘开关图标**:默认主题的 CheckButton 在「关」态没有可见轨道)、`style_slider()`。
 - **开关/勾选框行 = 定宽标签列 + 紧邻开关**(`HBoxContainer`,标签 `custom_minimum_size.x` 固定)。别把裸 `CheckButton` 直接塞进宽容器 —— Godot 会把它拉到容器全宽,开关被推到几百像素之外。
 - **字体**:拉丁走 `assets/fonts/less_perfect_dos_vga.ttf`(8×16 DOS 位图);**汉字走仓内 `assets/fonts/unifont-17.0.05.otf`**(GNU Unifont,SIL OFL 1.1)。两者都套 `PixelFont.shared()` 的「关抗锯齿/关微调/关子像素」。**为什么必须是 16 像素网格**:本项目字号只用 16 的倍数,只有设计像素能整除设备像素时边缘才是硬的;主流开源像素中文字体只做到 12px,在 16/32 下是 1.33x/2.67x 非整数缩放,笔画会粗细不均。换字体只改 `core/present/pixel_font.gd` 的 `CJK_FONT_PATH`。
@@ -57,3 +57,34 @@
   (`display_res_index` / `display_fullscreen`),由 `Settings.apply_display()` 应用(**headless 早退**);
   `resizable=true` ⇒ 也能自由拖窗口。★ 注意:`apply_display()` 在启动时按存档设窗口 ⇒ **`--resolution` 会被它顶掉**
   (取图/调试要指定尺寸得先改 `user://settings.cfg` 的 `display/res_index`)。
+
+### 对局内状态横幅（`ui/hud/status_banner.gd`）的几何与层位
+
+> **为什么单独一节**：这些是**实测出来的几何不变量**，原先以 40 行注释的形式压在
+> `status_banner.gd` 的一个 `const TOP_OFFSET` 上面（2026-10-13 按
+> [`comment-style.md`](comment-style.md) §5 搬到此处，代码里只留一行指针）。
+> ★ 数据出处：2026-09-28 / 2026-09-29 headless 实测（`get_global_rect()` 拿到的就是布局算出的矩形）。
+
+- **层位（layer 140）只住在 `ui/hud/status_banner.tscn` 里**，脚本不设 layer。理由：`.new()` 出来的
+  `CanvasLayer` 是**默认 layer 1**，会画在三个对局 HUD（130）与小地图（131）**底下**且**不报错**。
+  取 140 的推导：必须高于 130 / 131；必须低于暂停菜单（145）与结算页（150）—— 那两块是模态画面。
+- **纵向三带互不重叠**（这是 `TOP_OFFSET := 128.0` 唯一的理由）：
+  1v1 记分条占 `y ∈ [16, 68]`（**实测高 52**）；其下的 `GraceWrap`「对手掉线中」占 `y ∈ [72, 124]`
+  （高 52 = 标签 36 + 复用同一份 `Plate` 的上下内边距 8+8）；状态横幅占 `y ∈ [128, 204]`
+  （高 **实测 76** = 标签 36 + 上下各 20）。
+- **`Label` 的一行高 ≠ 字号**：`Label` 行高 = `max(字体在该字号的 get_height, 整形后的 ascent + descent)`，
+  **两半都随内容变**。实测同一份 `Plate`：纯拉丁那行（`PingWrap`，只有 `24ms`）是 **33** ⇒ 面板高 49；
+  含 CJK 的行被撑到 **36**（Unifont 的 CJK 字形框更高）⇒ 面板高 52。**同一张图里就差这 3px**：
+  别把 36 当成「本项目字体在 32 下的行高」去套纯拉丁面板。
+- **横向不是常量**：面板宽 = 文字宽 + 左右各 28px 内边距，居中时占 `x ∈ [960 - w/2, 960 + w/2]`，
+  由 `_center_panel()` 在**入树之后**按 `get_combined_minimum_size()` 现算（未入树时 `set_anchor`
+  拿到的 `parent_range` 是 0，四个偏移量会全塌成 0 —— 详见该函数上方注释）。
+- ⚠ **已登记、不修（2026-09-28 实测）**：大乱斗右上角排行榜底板左缘在 `x = 1184`，而最长那条状态文案
+  （「与服务器断线，正在重连…（剩余 60s）」）的面板宽**实测 568px** ⇒ 右端 `x = 1244`
+  ⇒ **横幅右侧侵入排行榜左缘 60px**。只有大乱斗看得见（1v1 / 3v3 没有排行榜）。
+  修法**不是**下挪 `TOP_OFFSET`（挪到板底 `y ≈ 499` 之下就落进屏幕中部、与中央播报抢位置），
+  而是缩文案 / 换单行小字 / 给大乱斗单独一个落点 —— 属另行评估。
+  `568` 这个数当时由**两条独立路径**对上（已删探针打出的矩形 + 按「汉字 32px、半角 16px」手算
+  `12×32 + 8×16 + 2×28`）。
+- ★ **守卫状态：这一段今天零自动化守卫**。`reconnect_status_probe.gd`（已删·2026-10-09）与
+  `hud_declarative_probe.gd`（已删·2026-10-09）都曾钉过它；现在改几何只能靠人眼看（跑一局大乱斗）。

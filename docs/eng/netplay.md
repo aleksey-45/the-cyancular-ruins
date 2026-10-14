@@ -85,7 +85,7 @@
 - **三张注册表仍然各管各的**(房号空间重叠是既有事实),★ 别为"看得见"去合并三张表,那正是「按 code 撞库会拆错房」那个老坑(判据只能是 `room is RoyaleRoom` / `room is TeamRoom`)。
 - **★ 守缺口照实登记**:本批**没有**真链路探针覆盖「线上投递的 `in_match` 行 + 真的拒绝」。那一半由后继回局计划的 `tests/probe/rejoin_probe.tscn` 相 c3 覆盖。
 - ★★ **本批的两个「假绿」陷阱**:① **`tools/room_sweep_lint` 的 `_check_*` 出错不会让它变红** —— GDScript 的脚本错误**不给 `_fail` 赋值**,只让**出错的那个函数当场结束**,调用方照常往下走 ⇒ **verdict 仍是 OK**,那一组断言被静默跳过。**已堵**:每个 `_check_*` 末行把**本函数名**记进 `_done`,`_finish()` 拿 `CHECK_NAMES` 对账,名单不全即红(另加一条反向:实跑条数 ≠ 名单长度也红)。② **`tests/probe/lobby_visibility_probe` 相④ 是「手工调」`_reclaim_finished_matches()` 的** —— 把 `_process` 里那次**接线**删掉,行为探针**照样 `ALL-OK`**,而生产里房永远不会被回收。**已堵**:`room_sweep_lint._check_reclaim_ladder` 的**源码级**接线断言 + 一条反向(回收不许绕道直接删注册表)。
-- **用户自跑的真协议回归**:`tests/smoke/pvp_room_smoke.sh`(建房→配对→`go_match`;**红了先看 `on_peer_left` 的 `if room.started: continue`**)与 `tools/room_sweep_lint.sh`。★ **只有前者碰 7777**;`room_sweep_lint.sh` 只是那段 `-s` 源码扫描的薄包装,**不碰任何端口**,agent 可直接跑。
+- **用户自跑的真协议回归**:`tests/smoke/pvp_room_smoke.sh`(建房→配对→`go_match`;**红了先看 `on_peer_left` 的 `if room.started: continue`**)。★★ **订正(2026-10-13)**:这里原先还写着一个 `tools/room_sweep_lint.sh` —— **那个包装脚本不存在**(`tools/` 下没有它)。规范检查器本体是 `tools/room_sweep_lint.gd`,跑法 `"$GODOT" --headless --path . -s res://tools/room_sweep_lint.gd`,**不碰任何端口**,agent 可直接跑。
 
 #### 回大厅后回局(阶段 2-B:凭据表 / 「列表里自己那间房」)
 
