@@ -31,7 +31,7 @@ present/  视听表现与特效：像素字体适配、音效播放、贴图边�
 - `GameLog` (`core/config/game_log.gd`)：接管日志输出，分流写入本地日志文件。
 - `GameParameters` (`core/config/game_parameters.gd`)：全局共享常量与世界边界尺寸。
 - `NetBus` (`core/net/net_bus.gd`)：基于 ENet 的网络通信核心接口。
-- `NetSession` (`core/net/net_session.gd`)：联机会话与 Windows Job 子进程生命周期管理。
+- `NetSession` (`core/net/net_session.gd`)：联机会话与子进程生命周期管理；Windows 使用 Job，macOS 使用生命期管道与进程组。
 - `Settings` (`core/config/settings.gd`)：用户本地配置管理，持久化存储于 `user://settings.cfg`。
 
 ## 数据配置文件关联

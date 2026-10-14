@@ -23,6 +23,7 @@ var validated := false
 var result_seen := false
 var fire_keys: Dictionary = {}
 var exported := false
+var shot_confirmed := false
 var last_suicide := 0.0
 var playback_metrics := {"seconds": 0.0, "no_next_seconds": 0.0, "extrapolation_seconds": 0.0,
 	"frozen_seconds": 0.0, "longest_freeze_seconds": 0.0, "repositions": 0, "max_samples": 0,
@@ -120,7 +121,8 @@ func on_event(_peer: int, kind: int, data: Variant) -> void:
 				NetBus.send_event(NetEvent.Kind.LIST, {"beta": true, "token": token})
 		NetEvent.Kind.ROOM:
 			if result_seen:
-				assert(data["code"] == code and data["token"] == token and not data["in_match"])
+				assert(data["code"] == code and data["token"] == token and not data["in_match"],
+						"MATCH CLIENT FAIL returning room: " + str(data))
 				NetBus.event_received.disconnect(on_event)
 				set_physics_process(false)
 				for i in 2:
@@ -180,7 +182,9 @@ func on_event(_peer: int, kind: int, data: Variant) -> void:
 				result_seen = true
 				await get_tree().process_frame
 				assert(game._result != null, "MATCH CLIENT FAIL missing result panel")
-				assert(game._result.visible and game._last_round_state["state"] == NetEvent.RoundState.MATCH_OVER and not fire_keys.is_empty())
+				assert(game._result.visible and game._last_round_state["state"] == NetEvent.RoundState.MATCH_OVER and not fire_keys.is_empty(),
+						"MATCH CLIENT FAIL result visible=%s state=%s fires=%d" % [
+						game._result.visible, game._last_round_state, fire_keys.size()])
 				game._result.leave_requested.emit()
 
 class BotInput:
@@ -238,6 +242,7 @@ func on_state(frame: Dictionary) -> void:
 	if game != null:
 		_before_playback = game._playback.render_tick
 	snapshots += 1
+	shot_confirmed = shot_confirmed or frame["own"]["state"]["shot_serial"] > 0
 	rewind_seen = rewind_seen or frame["world"]["players"].values().any(func(player: Dictionary) -> bool: return player["rewind"])
 	haste_seen = haste_seen or frame["world"]["players"].values().any(func(player: Dictionary) -> bool: return player["haste"])
 	if convergence_started >= 0 and elapsed - convergence_started > 1 and game != null \
@@ -374,15 +379,16 @@ func _physics_process(delta: float) -> void:
 			print("CLIENT TIMING t=%.1f tick=%d own_tick=%d clock=%.1f lead=%.1f ping=%d throttle=%d map=%d phase=%s" % [elapsed,
 				game._last_tick, game._own_tick, game._rollback._clock, game._rollback._lead, NetBus.ping_ms,
 				peer.get_statistic(ENetPacketPeer.PEER_PACKET_THROTTLE), game._map_revision, game._local.input_source.phase])
+	var battle_done := exported and elapsed > 3.8 and shot_confirmed and not fire_keys.is_empty()
 	if game._local.input_source is BotInput:
-		if exported and elapsed > 3.8:
+		if battle_done:
 			game._local.input_source.phase = "stopped"
 		game._local.input_source.ticks += 1
-	if exported and index == 1 and elapsed - last_suicide > 2.5 and elapsed > 3.8 \
+	if battle_done and index == 1 and elapsed - last_suicide > 2.5 \
 			and game._last_round_state["state"] == NetEvent.RoundState.PLAYING and not game._local.is_downed():
 		last_suicide = elapsed
 		NetBus.send_event(NetEvent.Kind.SUICIDE)
-	if exported and drop and not reconnected and elapsed > 6:
+	if battle_done and drop and not reconnected and elapsed > 6:
 		drop_connection()
 	if convergence_started >= 0 and elapsed - convergence_started > 3 and not validated:
 		var resumed := not drop or (snapshots - states_at_drop > 60 and game.phase == PvpMatchClient.Phase.ONLINE)

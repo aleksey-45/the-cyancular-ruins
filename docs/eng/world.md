@@ -22,6 +22,7 @@
   - `MapFormat`（[`core/sim/map_format.gd`](../../core/sim/map_format.gd)）：负责 v3 文本格式编解码、瓦片打包解包与出生点解析（`# player` 与 `# player2`）。
   - `MapFormatV4`（[`core/sim/map_format_v4.gd`](../../core/sim/map_format_v4.gd)）：负责 v4 二进制地图的流式解压、CRC32 完整性校验与 16px 子格数据构建。
   - `GridPathfinder`（[`core/sim/grid_pathfinder.gd`](../../core/sim/grid_pathfinder.gd)）：无状态几何与寻路工具类，提供环形距离计算、最短位移推导、地面检测、Bresenham 视线检测与 A* 寻路算法。
+- **场景初始化**：单人关卡在场景加载时铺设墙体并延迟构建碰撞；PvP 由基线应用统一完成墙体铺图与碰撞构建，再上报 READY。铺图逐个读取规范子格，计算材质与图集坐标后写入 3×3 环形副本。
 
 ---
 

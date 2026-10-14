@@ -70,6 +70,9 @@ node server_smoke.js      # 本地 HTTP 服务端接口测试
   - 从本地官方 EasyTier Windows 2.7.0 发布包中复制运行组件与许可证文件，若缺失 `relay.txt` 则自动生成公共中继节点列表。
 - **原生作业对象扩展构建 (`tools/build_process_group.py`)**：
   - 基于 godot-cpp（分支 `godot-4.5-stable`，commit `e83fd09`），通过 SCons 4.9.1 编译 Windows x64 DLL。默认使用 MSVC，亦支持 `--mingw` 参数或 `MINGW_PREFIX` 环境变量指定 LLVM MinGW 工具链。产物位于 `native/process_group/bin/`。
+  - macOS 使用 `--platform macos`，以 Xcode Clang 编译 arm64 + x86_64 通用动态库，部署目标为 macOS 12。
+- **macOS 发布 (`tools/build_macos.py`)**：
+  - 编译通用进程扩展，合并官方 EasyTier 两种架构，导出、签名并归档 `.app`。`tools/fetch_easytier.py --platform macos` 可单独安装通用 EasyTier。产物和双架构 CI 验证见[发布手册](../../RELEASE.md)。
 - **发布包归档 (`tools/archive_build.py`)**：
   - 打包生成 `The-Cyancular-Ruins.zip`，内部根目录格式为 `The-Cyancular-Ruins-YYYYMMDDHHMM/`（时间戳使用 UTC+8）。包含客户端、服务端、同级进程扩展 DLL 及统一开源声明 `THIRD_PARTY_NOTICES.txt`。
 - **自动化回归入口 (`tools/run_regression.py`)**：

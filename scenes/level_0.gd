@@ -201,16 +201,17 @@ func _ready() -> void:
 	var tile_set = _create_wall_tileset()
 	var wl: TileMapLayer = $WorldViewport/WallLayer
 	wl.tile_set = tile_set
-	_paint_maze(wl)
+	if not pvp_mode:
+		_paint_maze(wl)
 	Level0.water_layer = $WorldViewport/WaterLayer
 	Level0.water_surface_layer = $WorldViewport/WaterSurfaceLayer
 	Level0.water_layer.tile_set = _create_water_tileset()
 	_paint_water(grid)
 
 
-	_build_wall_collision.call_deferred(grid)
 	if pvp_mode:
-		return  # 世界已建;敌人/单玩家放置/后处理交给 PvP 场景
+		return  # PvP 基线完成墙体铺图和物理初始化。
+	_build_wall_collision.call_deferred(grid)
 	EnemySpawner.load_types()
 	var spawns := MazeGenerator.load_spawns()
 	_place_player(grid, spawns.get("player", Vector2i(-1, -1)))
@@ -255,18 +256,16 @@ func _paint_maze(layer: TileMapLayer) -> void:
 	var source_id = 0
 	var sc = MazeGenerator.current_subgrid[0].size()
 	var sr = MazeGenerator.current_subgrid.size()
-	for ty in range(-1, 2):
-		for tx in range(-1, 2):
-			var offset_x = tx * sc
-			var offset_y = ty * sr
-			for y in range(sr):
-				var row: Array = MazeGenerator.current_subgrid[y]
-				for x in range(sc):
-					var tex: int = row[x]
-					if tex == MazeGenerator.EMPTY or Water.is_liquid(tex):
-						continue
-					layer.set_cell(Vector2i(x + offset_x, y + offset_y), source_id,
-							Vector2i((y % 4) * 4 + (x % 4), tex - 1))
+	for y in range(sr):
+		var row: Array = MazeGenerator.current_subgrid[y]
+		for x in range(sc):
+			var tex: int = row[x]
+			if tex == MazeGenerator.EMPTY or Water.is_liquid(tex):
+				continue
+			var atlas := Vector2i((y % 4) * 4 + (x % 4), tex - 1)
+			for ty in range(-1, 2):
+				for tx in range(-1, 2):
+					layer.set_cell(Vector2i(x + tx * sc, y + ty * sr), source_id, atlas)
 
 
 # 水格铺图:水体格铺水体瓦片(纹理 21,水体专用 64px 图集的 atlas 行 0);水面格(上方非 liquid)只放 Sprite 亮线,不铺瓦片(避免双层半透明叠加变深)。

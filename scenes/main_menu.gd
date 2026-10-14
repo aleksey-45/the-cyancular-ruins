@@ -42,6 +42,9 @@ const SEG_MOVE_BIAS := 0.8
 const SEG_PATH_SEED := 20261003
 
 func _ready() -> void:
+	if OS.get_cmdline_user_args().has("--server"):
+		get_tree().change_scene_to_file.call_deferred("res://server/server_main.tscn")
+		return
 	# 发布构建自检：验证武器注册表配置有效加载
 	if OS.get_cmdline_user_args().has("--registry-report"):
 		var ids: Array[int] = WeaponRegistry.all_ids()

@@ -1,9 +1,9 @@
 """Exercise the supplied official EasyTier using production Tunnel and ENet, with direct and forced relay routes."""
-import argparse, json, os, socket, subprocess, time
+import argparse, json, os, socket, subprocess, sys, time
 from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
-CORE = ROOT / "easytier/easytier-core.exe"
-CLI = ROOT / "easytier/easytier-cli.exe"
+CORE = ROOT / "easytier" / ("easytier-core.exe" if os.name == "nt" else "easytier-core")
+CLI = ROOT / "easytier" / ("easytier-cli.exe" if os.name == "nt" else "easytier-cli")
 def port(kind=socket.SOCK_DGRAM):
     with socket.socket(socket.AF_INET, kind) as sock:
         sock.bind(("127.0.0.1",0))
@@ -22,7 +22,8 @@ def main():
         def launch(name, command, env):
             log = (folder / (name + ".log")).open("w", encoding="utf-8")
             streams.append(log)
-            proc = subprocess.Popen(command, cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT, creationflags=0x08000000)
+            proc = subprocess.Popen(command, cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT,
+                                    creationflags=0x08000000 if os.name == "nt" else 0)
             processes.append(proc)
             return proc
         try:
@@ -42,6 +43,10 @@ def main():
                     loc = folder / name / leaf
                     loc.mkdir(parents=True, exist_ok=True)
                     env[key] = str(loc)
+                if sys.platform == "darwin":
+                    profile = (folder / name / "profile").resolve()
+                    profile.mkdir(parents=True, exist_ok=True)
+                    env["HOME"] = str(profile)
                 output = folder / f"{name}.json"
                 output.unlink(missing_ok=True)
                 command = [args.godot, "--headless", "--path", str(ROOT),

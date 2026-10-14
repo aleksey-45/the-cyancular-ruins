@@ -32,6 +32,8 @@ git clone https://github.com/aleksey-45/the-cyancular-ruins.git
 python tools/build_release.py
 ```
 
+macOS 使用 `python tools/build_macos.py`，生成同时支持 M 系列与 Intel 的通用应用包。GitHub Actions 同时提供 Windows 和 macOS 产物，具体用法见[编译与发布手册](RELEASE.md)。
+
 ### 启动专用服务端
 
 ```bash

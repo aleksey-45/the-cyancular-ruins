@@ -55,4 +55,5 @@ native/process_group/.sconsign.dblite
 native/process_group/bin/*.a
 native/process_group/bin/*.lib
 native/process_group/bin/*.exp
+native/process_group/bin/*.dylib
 /process_group.windows.x86_64.dll

@@ -2,8 +2,11 @@ import os
 from SCons.Script import SConscript, Default
 
 env = SConscript(os.environ['GODOT_CPP_DIR'] + '/SConstruct')
-if env['use_mingw']:
+if env['platform'] == 'windows' and env['use_mingw']:
     env.Append(CXXFLAGS=['-include', 'cstdlib'])
-library = env.SharedLibrary('bin/process_group.windows.x86_64.dll', source=['process_group.cpp'])
+source = 'process_group_macos.cpp' if env['platform'] == 'macos' else 'process_group.cpp'
+suffix = '.dylib' if env['platform'] == 'macos' else '.dll'
+library = env.SharedLibrary('bin/process_group.' + env['platform'] + '.' + env['arch'] + suffix,
+                            source=[source], SHLIBPREFIX='')
 env.NoCache(library)
 Default(library)

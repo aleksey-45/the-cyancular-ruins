@@ -19,7 +19,7 @@ func _ready() -> void:
 		return
 	if mode == "descendant":
 		assert(Tunnel.available())
-		var pid := OS.create_process(Tunnel.core_exe(), _core_args())
+		var pid := NetSession.launch(Tunnel.core_exe(), _core_args()) if OS.has_feature("macos") else OS.create_process(Tunnel.core_exe(), _core_args())
 		assert(pid > 0)
 		_write({"descendant": pid})
 		return

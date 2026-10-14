@@ -77,8 +77,10 @@ func _ready() -> void:
 
 func _run() -> void:
 	var PP = load("res://core/config/player_params.gd")
-	var SS = load("res://scenes/player/squash_stretch.gd")
-	var frames: SpriteFrames = load("res://scenes/player/character_green.tres")
+	var SS = load("res://scenes/effects/squash_stretch.gd")
+	var actor := load("res://scenes/player/player.tscn").instantiate() as Node2D
+	var frames: SpriteFrames = actor.get_node("Visuals/AnimatedSprite2D").sprite_frames
+	actor.free()
 
 	var vp_size := get_viewport().get_visible_rect().size
 	var center := vp_size * 0.5
@@ -96,8 +98,12 @@ func _run() -> void:
 	var spr_stretch: AnimatedSprite2D = c_stretch[1]
 	var spr: AnimatedSprite2D = c_squash[1]
 
-	var s_stretch = SS.new(spr_stretch)
-	var s = SS.new(spr)
+	var s_stretch = SS.new()
+	s_stretch.setup(spr_stretch, SS.Profile.PLAYER)
+	_owned.append(s_stretch)
+	var s = SS.new()
+	s.setup(spr, SS.Profile.PLAYER)
+	_owned.append(s)
 
 	var base_pos := spr.global_position
 	var wr0: Rect2 = CollisionAabb.world_rect(_actors[2])

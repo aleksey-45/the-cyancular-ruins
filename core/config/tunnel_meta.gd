@@ -8,7 +8,7 @@ extends RefCounted
 # 许可正文、版权声明和官方源码链接收录于发布包根部的 THIRD_PARTY_NOTICES.txt。
 
 # ── 核心可执行文件与动态库 ──
-# 必须包含 easytier-core.exe、easytier-cli.exe 以及运行时依赖库 Packet.dll 与 wintun.dll。
+# Windows 组件包含 EXE 和依赖库，macOS 组件使用无后缀通用可执行文件。
 const ET_VERSION := "2.7.0"
 const CORE_EXE := "easytier-core.exe"
 const CLI_EXE := "easytier-cli.exe"
@@ -29,7 +29,7 @@ const VIP_CIDR := "10.126.126.0/24"
 const VIP_HOST := "10.126.126.1"
 
 # ── 初始中继与 NAT 穿透辅助节点 ──
-# 节点地址从游戏目录下的 relay.txt 文件读取，每行一个节点（支持 host:port 或 tcp:// / udp:// 格式）。
+# relay.txt 每行一个节点，支持 host:port 或 tcp:// / udp:// 格式。
 # 双方连接相同的中继节点以交换端点并尝试 P2P 直连，直连受限时由中继节点转发。
 const RELAY_FILE_NAME := "relay.txt"
 
@@ -45,3 +45,15 @@ const DEFAULT_RELAYS := [
 	"udp://us01.225284.xyz:11010",
 	"udp://dreamlife.indevs.in:11010",
 ]
+
+static func core_name() -> String:
+	return "easytier-core" if OS.has_feature("macos") else CORE_EXE
+
+static func cli_name() -> String:
+	return "easytier-cli" if OS.has_feature("macos") else CLI_EXE
+
+static func required_files() -> PackedStringArray:
+	var files := PackedStringArray([core_name(), cli_name()])
+	if OS.has_feature("windows"):
+		files.append_array(CORE_DLLS)
+	return files

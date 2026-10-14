@@ -1,13 +1,7 @@
 class_name AppPaths
 extends RefCounted
 
-# 游戏运行根目录与固定子目录路径管理。
-# 统一发布版可执行文件目录与开发态工程根目录的寻址规范：
-#   <游戏目录>/
-#     The Cyancular Ruins.exe        客户端
-#     Cyancular Ruins Server.exe     服务端
-#     easytier/                      EasyTier 内核与公共节点配置
-#     log/                           运行日志目录
+# macOS 的组件位于应用包内，可写文件位于用户数据目录。
 
 const EASYTIER_DIR := "easytier"   # EasyTier 相关文件目录名
 const LOG_DIR := "log"             # 日志目录名
@@ -23,9 +17,13 @@ static func base_dir() -> String:
 
 ## 获取 EasyTier 组件存放目录绝对路径。
 static func easytier_dir() -> String:
+	if OS.has_feature("macos") and OS.has_feature("template"):
+		return base_dir().get_base_dir().path_join("Helpers")
 	return base_dir().path_join(EASYTIER_DIR)
 
 
 ## 获取日志输出目录绝对路径。
 static func log_dir() -> String:
+	if OS.has_feature("macos"):
+		return OS.get_user_data_dir().path_join(LOG_DIR)
 	return base_dir().path_join(LOG_DIR)

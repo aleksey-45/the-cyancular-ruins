@@ -19,6 +19,7 @@ config/version="1.1.4"
 run/main_scene="res://scenes/main_menu.tscn"
 config/features=PackedStringArray("4.7", "Mobile")
 run/max_fps=60
+run/flush_stdout_on_print=true
 config/icon="uid://dccomu5fn6od5"
 run/main_scene.dedicated_server="res://server/server_main.tscn"
 
@@ -32,9 +33,8 @@ Settings="*res://core/config/settings.gd"
 
 [debug]
 
-; 引擎自带的文件日志关掉:它的落点只认 %APPDATA% 下的 user://(相对路径会让引擎启动就崩,
-; res:// 在发布版里只读),而客户端与服务端会同名互相覆盖。改为由 GameLog(见
-; core/config/game_log.gd)把引擎输出写进**游戏目录**的 log/ 下,客户端与服务端分开两份。
+; GameLog 按客户端和服务端分流写入 AppPaths.log_dir()。
+; Windows 使用游戏目录下的 log/，macOS 使用用户数据目录下的 log/。
 file_logging/enable_file_logging=false
 file_logging/enable_file_logging.pc=false
 "回到主菜单è¿ç§è¡¨è±¡åæ¨(2026-09-12çæºæµåºçå»æå´©æºå°±æ¯è¿ç§å¤å¢)ãfile_logging/enable_file_logging"=true
@@ -138,3 +138,4 @@ Q={
 [rendering]
 
 renderer/rendering_method="mobile"
+textures/vram_compression/import_etc2_astc=true
