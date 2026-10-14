@@ -39,3 +39,13 @@ python tools/build_release.py
 | **工程命名与路径规范** | 全部通过 | 目录小写、文件名 snake_case、文档引用路径有效性检查全部通过 |
 
 发布包命名为 `The-Cyancular-Ruins.zip`，解压后目录为 `The-Cyancular-Ruins-<时间戳>/`。实测原始数据及 DLL SHA-256 记录见 [结果数据文件](process_lifecycle_results.json)。
+
+## 四、 macOS 验证入口
+
+macOS 采用[生命期管道与进程组](../../native/process_group/process_group_macos.cpp)管理会话子进程。测试使用同一 Godot 生命周期探针，在正常 quit、窗口关闭、会话重建、场景切换、SIGKILL 以及启动期间 SIGKILL 后，逐个检查本次记录的 PID 已退出，并确认独立 EasyTier 仍运行。嵌套 Godot 通过 NetSession 创建自己的 EasyTier 会话。
+
+```bash
+python tests/network/run_macos.py --godot "$GODOT" --archive builds/macos/The-Cyancular-Ruins.zip
+```
+
+该命令同时校验包内 arm64 与 x86_64 架构、签名、权限、注册表、导出服务端、网络探针、真实对局及 EasyTier UDP 直连和中继。CI 在两种 CPU 的运行器上执行，结果以工作流与测试日志为准；本节列出验证流程。

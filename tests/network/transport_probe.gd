@@ -25,24 +25,42 @@ func run() -> void:
 		var codec := NetCodec.new()
 		var baseline := ProtocolFixture.baseline()
 		baseline["map"] = large
-		for entry in [[1, MultiplayerPeer.TRANSFER_MODE_UNRELIABLE, codec.encode_input(ProtocolFixture.input())],
+		var entries := [[1, MultiplayerPeer.TRANSFER_MODE_UNRELIABLE, codec.encode_input(ProtocolFixture.input())],
 				[2, MultiplayerPeer.TRANSFER_MODE_UNRELIABLE_ORDERED, codec.encode_state(ProtocolFixture.frame())],
-				[0, MultiplayerPeer.TRANSFER_MODE_RELIABLE, codec.encode_event(NetEvent.Kind.BASELINE, baseline)]]:
-			var packet: PackedByteArray = entry[2]
-			client.transfer_channel = entry[0]
-			client.transfer_mode = entry[1]
-			client.set_target_peer(1)
-			assert(client.put_packet(packet) == OK)
-			var received := false
-			deadline = Time.get_ticks_msec() + 5000
-			while not received and Time.get_ticks_msec() < deadline:
-				server.poll()
-				client.poll()
-				if server.get_available_packet_count() > 0:
-					assert(server.get_packet() == packet)
-					received = true
-				await get_tree().process_frame
-			assert(received)
+				[0, MultiplayerPeer.TRANSFER_MODE_RELIABLE, codec.encode_event(NetEvent.Kind.BASELINE, baseline)]]
+		var expected: Array = entries.map(func(entry: Array) -> PackedByteArray: return entry[2])
+		var received: Array = []
+		var sends := [0, 0, 0]
+		var next_send := 0
+		var started := Time.get_ticks_msec()
+		deadline = started + 15000
+		while received.size() < entries.size() and Time.get_ticks_msec() < deadline:
+			if Time.get_ticks_msec() >= next_send:
+				for entry in entries:
+					if received.has(entry[2]) or (entry[1] == MultiplayerPeer.TRANSFER_MODE_RELIABLE and next_send > 0):
+						continue
+					client.transfer_channel = entry[0]
+					client.transfer_mode = entry[1]
+					client.set_target_peer(1)
+					assert(client.put_packet(entry[2]) == OK)
+					sends[entries.find(entry)] += 1
+				next_send = Time.get_ticks_msec() + 100
+			server.poll()
+			client.poll()
+			while server.get_available_packet_count() > 0:
+				var packet := server.get_packet()
+				assert(expected.has(packet))
+				if not received.has(packet):
+					received.append(packet)
+			await get_tree().process_frame
+		var flows: Array = received.map(func(packet: PackedByteArray) -> int: return expected.find(packet))
+		print("TRANSPORT CYCLE %d elapsed_ms=%d flows=%s sends=%s throttle=%d" % [cycle,
+			Time.get_ticks_msec() - started, flows, sends,
+			client.get_peer(1).get_statistic(ENetPacketPeer.PEER_PACKET_THROTTLE)])
+		if received.size() != entries.size():
+			push_error("TRANSPORT PROBE FAIL missing flows: %s" % [entries.size() - received.size()])
+			get_tree().quit(1)
+			return
 		client.close()
 		server.close()
 		await get_tree().process_frame

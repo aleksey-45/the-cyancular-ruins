@@ -50,7 +50,7 @@ flowchart TD
 编写探针测试时，应尽可能通过真实的按键输入、物理碰撞或网络数据包驱动完整业务流程，避免直接手动修改下游属性而产生虚假的测试通过。
 
 ### 3. 避免端口占用与残留子进程
-网络测试必须使用动态分配的空闲端口。测试脚本仅清理自身启动的子进程，禁止根据进程名全局强杀系统其他进程。属于客户端的本地服务端、EasyTier 核心及 CLI 工具由 Windows Job 作业对象统一安全回收。
+网络测试必须使用动态分配的空闲端口。测试脚本仅清理自身启动的子进程，禁止根据进程名全局强杀系统其他进程。客户端通过 NetSession 持有本地服务端、EasyTier 核心及 CLI；Windows 使用 Job，macOS 使用生命期管道与进程组。
 
 ---
 
@@ -90,6 +90,8 @@ python tests/network/run_matches.py --godot $env:GODOT --count 2 --server '.test
 - **多进程端到端对战**：真实运行 `RoomSession`、`AuthorityWorld` 与 `PvpMatchClient`，覆盖基线同步、实体列表管理、回合流转、时间回溯机制、重连 Token 认证及结算面板展示。测试代理按照固定随机数种子模拟双向 RTT 延迟、抖动与丢包。
 - **高负载断流压力测试 (`--stall`)**：在真实对战中注入双向 750ms 积压后的突发释放以及 250ms 完全断流，验证输入队列不超过未来调度窗口限制、超时按键复位、预测回滚正确性及断流恢复后的最终收敛。
 - **进程生命周期回归 (`run_process_lifecycle.py`)**：覆盖客户端正常退出、窗口关闭、会话重建、场景切换及强制终止等各种场景，通过 Windows 进程句柄校验作业对象内所有子进程均能被安全回收。
+- **macOS 产物与生命周期 (`run_macos.py`)**：接收 `--godot` 和 `--archive`，验证通用包的两种架构、签名及可执行权限；执行导出启动、六种退出场景、网络探针、包内服务端对局及 EasyTier 直连/中继。CI 在 Apple Silicon 和 Intel 上分别测试同一归档。
+- **实际地图启动分析 (`startup_probe.tscn`)**：记录原生 CPU 架构、Godot 版本、地图尺寸、内存和场景创建、基线复位及首帧更新耗时，同时检查首帧更新是否替换碰撞节点。使用 `--headless --path . res://tests/network/startup_probe.tscn` 运行；追加 `--debug --ignore-error-breaks --profiling` 获取函数耗时与调用次数。macOS CI 分别保存普通计时和分析器日志。
 
 ### 分档波动网络与断供计量
 

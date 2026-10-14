@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Run the actual room, authority world and shared match client in separate Godot processes."""
-import argparse, json, os, socket, subprocess, time
+import argparse, json, os, socket, subprocess, sys, time
 from pathlib import Path
 from network_link import LagLink, PROFILES
 
@@ -62,13 +62,18 @@ def main():
             location = folder / name / leaf
             location.mkdir(parents=True, exist_ok=True)
             env[key] = str(location)
+        if sys.platform == "darwin":
+            profile = (folder / name / "profile").resolve()
+            profile.mkdir(parents=True, exist_ok=True)
+            env["HOME"] = str(profile)
         stream = (folder / (name + ".log")).open("w", encoding="utf-8")
         streams.append(stream)
         cmd = [args.godot, "--headless", "--path", str(ROOT), "--disable-crash-handler", scene, "--", *extra]
         if args.server and name == "server":
-            cmd = [str(args.server.resolve()), "--headless", "--", *extra]
+            cmd = [str(args.server.resolve()), "--headless", "--", "--server", *extra]
         if args.none: cmd.append("--none")
-        proc = subprocess.Popen(cmd, cwd=ROOT, env=env, stdout=stream, stderr=subprocess.STDOUT, creationflags=0x08000000)
+        proc = subprocess.Popen(cmd, cwd=ROOT, env=env, stdout=stream, stderr=subprocess.STDOUT,
+                                creationflags=0x08000000 if os.name == "nt" else 0)
         processes.append(proc)
         return proc
     try:

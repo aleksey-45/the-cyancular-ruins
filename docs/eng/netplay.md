@@ -22,12 +22,15 @@
 
 ---
 
-## 二、 进程管理与生命周期 (Windows Job)
+## 二、 进程管理与生命周期
 
-游戏客户端通过 [NetSession](../../core/net/net_session.gd) 持有一个 Windows Job 作业对象句柄。本地服务端、EasyTier 核心进程、CLI 工具及其派生的全部子进程均在创建时加入该作业对象（通过 [OwnedProcessGroup](../../native/process_group/process_group.cpp) 中的 `PROC_THREAD_ATTRIBUTE_JOB_LIST` 实现），并配置 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` 标志。
+Windows 客户端通过 [NetSession](../../core/net/net_session.gd) 持有一个 Windows Job 作业对象句柄。本地服务端、EasyTier 核心进程、CLI 工具及其派生的全部子进程均在创建时加入该作业对象（通过 [OwnedProcessGroup](../../native/process_group/process_group.cpp) 中的 `PROC_THREAD_ATTRIBUTE_JOB_LIST` 实现），并配置 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` 标志。
 
 - **安全退出保障**：作业对象句柄由客户端独占持有且禁止子进程继承。离开联机会话时调用 `NetSession.close()`，依次断开 ENet、关闭 Job 句柄并清空网络状态。无论是窗口正常关闭、崩溃退出还是被任务管理器强杀，Windows 操作系统都会自动回收作业对象句柄并强制终止所属的全部后台子进程，从根本上杜绝孤儿进程和端口残留。
-- **跨平台与兼容性**：扩展原生面向 64 位 Windows 10 及以上系统。接口依据 [Windows Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects) 实现。具体编译构建请参阅 [开发工具说明](tools.md)，实测验证记录见 [进程生命周期验证](process_lifecycle_validation.md)。
+- **Windows 兼容性**：扩展面向 64 位 Windows 10 及以上系统，接口依据 [Windows Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects) 实现。
+- **macOS 生命周期**：[macOS 扩展](../../native/process_group/process_group_macos.cpp) 使用 `posix_spawn` 将会话子进程加入独立进程组。守护子进程等待生命期管道 EOF，随后终止该进程组；客户端独占管道写端，写端禁止跨 exec 继承。关闭会话与客户端被强制结束都会关闭写端，触发同一退出流程。联机组件统一经 `NetSession.launch()` 启动，嵌套会话各自持有自己的管道与进程组。CLI 输出按帧非阻塞读取。
+
+macOS 发布版以同一 `.app` 的 `--headless -- --server` 入口运行本地服务端；EasyTier 位于应用包的 `Contents/Helpers/`，日志和中继列表位于用户数据目录。具体构建见[开发工具](tools.md)，测试入口见[进程生命周期验证](process_lifecycle_validation.md)。
 
 ---
 

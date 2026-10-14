@@ -16,7 +16,7 @@ static func _pick_free_port() -> int:
 	return port
 
 static func find_server_exe() -> String:
-	if OS.has_feature("editor"):
+	if OS.has_feature("editor") or OS.has_feature("macos"):
 		return OS.get_executable_path()
 	var path := OS.get_executable_path().get_base_dir().path_join(SERVER_EXE)
 	return path if FileAccess.file_exists(path) else ""
@@ -33,7 +33,12 @@ static func launch_and_connect() -> int:
 	var args := PackedStringArray()
 	if OS.has_feature("editor"):
 		args.append_array(["--headless", "--path", ProjectSettings.globalize_path("res://"), "res://server/server_main.tscn"])
-	args.append_array(["--", "--port", str(port)])
+	elif OS.has_feature("macos"):
+		args.append("--headless")
+	args.append("--")
+	if OS.has_feature("macos") and OS.has_feature("template"):
+		args.append("--server")
+	args.append_array(["--port", str(port)])
 	restarting = true
 	var generation := NetSession.generation
 	_owned_pid = NetSession.launch(exe, args)

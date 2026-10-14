@@ -5,3 +5,4 @@ reloadable = false
 
 [libraries]
 windows.x86_64 = "res://native/process_group/bin/process_group.windows.x86_64.dll"
+macos = "res://native/process_group/bin/process_group.macos.universal.dylib"

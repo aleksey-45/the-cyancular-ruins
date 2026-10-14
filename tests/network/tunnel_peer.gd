@@ -59,16 +59,18 @@ func run() -> void:
 			got_state = true)
 		NetBus.event_received.connect(func(_peer: int, kind: int, data: Variant) -> void:
 			assert(kind == NetEvent.Kind.BASELINE and data["map"] == large and data["frame"] == ProtocolFixture.frame())
-			got_event = true
-			NetBus.send_input(ProtocolFixture.input()))
+			got_event = true)
 		for cycle in 2:
 			got_event = false
 			got_state = false
 			NetBus.start_client("127.0.0.1", Tunnel.forward_port())
 			var deadline := Time.get_ticks_msec() + 15000
 			while (not got_event or not got_state) and Time.get_ticks_msec() < deadline:
+				if got_event and not got_state:
+					NetBus.send_input(ProtocolFixture.input())
 				await get_tree().process_frame
-			assert(got_event and got_state)
+			assert(got_event and got_state, "TUNNEL PEER FAIL cycle=%d connected=%s event=%s state=%s" % [
+					cycle, NetBus.can_send_to_server(), got_event, got_state])
 			NetBus.stop()
 			if cycle == 0:
 				assert(await Tunnel.refresh_forward())

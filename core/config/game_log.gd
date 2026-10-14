@@ -1,7 +1,7 @@
 extends Node
 
 # 日志持久化管理器（Autoload 单例）。
-# 客户端与服务端日志分别写入游戏目录的 log/ 路径下：
+# 客户端与服务端日志写入 AppPaths.log_dir()：
 #   log/client.log        客户端运行日志
 #   log/server.log        服务端运行日志
 #
@@ -60,8 +60,8 @@ static func install() -> void:
 	_sink = Sink.new()
 	_sink.on_line = _write
 	OS.add_logger(_sink)
-	# 专用服务端具有 dedicated_server 运行特性，据此区分输出到 server.log 还是 client.log
-	use_role(ROLE_SERVER if OS.has_feature("dedicated_server") else ROLE_CLIENT)
+	var server := OS.has_feature("dedicated_server") or OS.get_cmdline_user_args().has("--server")
+	use_role(ROLE_SERVER if server else ROLE_CLIENT)
 
 
 ## 切换当前进程日志角色（客户端或服务端）。

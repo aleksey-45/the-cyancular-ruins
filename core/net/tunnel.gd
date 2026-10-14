@@ -91,23 +91,18 @@ static func pick_host_peer(peers: Array) -> Dictionary:
 static func ensure_downloaded() -> bool:
 	if available():
 		return true
-	push_error("Tunnel: 缺少官方 EasyTier 组件(%s / %s / %s)，请运行 tools/fetch_easytier.py 安装到 %s"
-			% [Meta.CORE_EXE, Meta.CLI_EXE, Meta.CORE_DLLS[0], AppPaths.easytier_dir()])
+	push_error(missing_hint())
 	return false
 
 
 ## 检查核心程序、命令行工具与依赖动态链接库是否完整就绪。
 static func available() -> bool:
 	var dir := AppPaths.easytier_dir()
-	var c := dir.path_join(Meta.CORE_EXE)
-	var l := dir.path_join(Meta.CLI_EXE)
-	if not (FileAccess.file_exists(c) and FileAccess.file_exists(l)):
-		return false
-	for dll in Meta.CORE_DLLS:
-		if not FileAccess.file_exists(dir.path_join(dll)):
+	for name in Meta.required_files():
+		if not FileAccess.file_exists(dir.path_join(name)):
 			return false
-	_core_path = c
-	_cli_path = l
+	_core_path = dir.path_join(Meta.core_name())
+	_cli_path = dir.path_join(Meta.cli_name())
 	return true
 
 
@@ -117,8 +112,8 @@ static func core_exe() -> String:
 
 ## 返回组件缺失时的界面提示文案。
 static func missing_hint() -> String:
-	return "未找到 EasyTier 组件(%s / %s / %s)，请运行 tools/fetch_easytier.py 下载或将完整包放入 %s" % [
-			Meta.CORE_EXE, Meta.CLI_EXE, Meta.CORE_DLLS[0], AppPaths.easytier_dir()]
+	return "未找到 EasyTier 组件(%s)，请将运行组件放入 %s" % [
+			" / ".join(Meta.required_files()), AppPaths.easytier_dir()]
 
 static func cli_exe() -> String:
 	return _cli_path
@@ -352,6 +347,8 @@ static func parse_relay_lines(text: String) -> Array[String]:
 
 ## 返回公共节点列表配置文件路径。
 static func relay_file() -> String:
+	if OS.has_feature("macos") and OS.has_feature("template"):
+		return OS.get_user_data_dir().path_join(Meta.RELAY_FILE_NAME)
 	return AppPaths.easytier_dir().path_join(Meta.RELAY_FILE_NAME)
 
 
@@ -360,7 +357,7 @@ static func ensure_relay_file() -> void:
 	var path := relay_file()
 	if FileAccess.file_exists(path):
 		return
-	DirAccess.make_dir_recursive_absolute(AppPaths.easytier_dir())
+	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
 	var f := FileAccess.open(path, FileAccess.WRITE)
 	if f == null:
 		return
