@@ -1,7 +1,13 @@
 # 联机捡枪 / 切枪 / 副本持枪 三处失灵 —— 根因与修复(2026-09-17)
 
+> ⚠ **时间点文档（2026-09-17）**：其中"现状/入口/路径"一律**以源码为准**；测试面已在 2026-10-09 削减 90%。
+> 本文提到的 `ground_net_watcher.gd`（**已删·2026-10-09**） / `ground_action_probe` / `ground_client_probe` / `net_ground_probe` /
+> `royale_probe` 等探针**都已删·2026-10-09**（下面各自也标了）⇒ §3 的跑法与"全绿"读数**今天复现不了**，
+> 那些判据现在是**零守卫**。台账见 [`docs/superpowers/specs/2026-10-09-test-surface-cut-90-design.md`](superpowers/specs/2026-10-09-test-surface-cut-90-design.md)。
+
 **一句话**:用户报的三条(1v1 捡不起地上的枪、大乱斗捡起后切不动枪、对手丢枪后我方视角里他还举着)
-各有一个**可证的**根因,全部落地修复并加了红→绿守卫;附带修掉同域的换局幽灵枪,
+各有一个**可证的**根因,全部落地修复并加了红→绿守卫（**当时的守卫**；其中大部分已在 2026-10-09 删除,
+见上文横幅）；附带修掉同域的换局幽灵枪,
 以及"往正在断开的 peer 发定向包"这条 channel 0 噪音的来源类。
 
 分支 `cleanup/stage1-bugs-and-hygiene`。判据一律 grep `ALL-OK`。
@@ -48,11 +54,12 @@
 **修法**:`push_net_slot(next + 1)`(背包位置,与数字键同量纲)。
 
 > ⚠ **数字键那半没定位到缺陷**:InputMap(`1`-`4` = physical_keycode 49-52)齐、不在
-> `Settings.REMAPPABLE_ACTIONS` 里;真链路探针量的**客户端自己那份背包**(`ground_net_watcher.gd`
-> 读 `_local.weapons.inventory.held.size()`)是 `背包=2`,说明拾取后客户端确实拿到了第二把。
+> `Settings.REMAPPABLE_ACTIONS` 里;真链路探针量的**客户端自己那份背包**(`ground_net_watcher.gd` **已删·2026-10-09**
+> ⇒ 这条现在**零守卫**)读 `_local.weapons.inventory.held.size()`
+> 是 `背包=2`,说明拾取后客户端确实拿到了第二把。
 > 用户答"两种都切不动 / 没细看",本轮**不猜着改**数字键,交实机复验。
 > 若仍切不动,下一个测量点:今天只量了"背包件数",没量"切枪请求是否被权威采纳" —— 给
-> `ground_net_watcher` 加「按一次数字键 → 断言权威 `wslot` 跟着变、且下一帧没被 `sync_soft_state` 拉回」。
+> `ground_net_watcher`（**已删·2026-10-09**）加「按一次数字键 → 断言权威 `wslot` 跟着变、且下一帧没被 `sync_soft_state` 拉回」。
 
 ### 1.3 对手丢枪后我方视角里"还举着"
 
@@ -101,7 +108,8 @@
    **通道已清零**的状态下处理该请求并发它的应答 → 应答必然打这条错误。
    (用户实机 1v1 日志的顺序正是如此:ERROR → `玩家断开 peer=…`。)
 
-**实测与残留**:大厅/worker 的**定向发送已全部过判据**,但 `royale_probe` 跑多轮**仍有约 2/3 轮出现 1 条**,
+**实测与残留**:大厅/worker 的**定向发送已全部过判据**,但 `royale_probe`（**已删·2026-10-09** ⇒ 这条现在
+**零守卫**）跑多轮**仍有约 2/3 轮出现 1 条**,
 且逐轮归属不同(某轮在 `worker_7800.log`、某轮只在编排进程的 stdout、某轮完全不出现 ⇒ **是竞态**)。
 用"把 `is_peer_live` 恒返回 false"的实验曾观察到 0 条,但该现象在未改动的对照轮里也会时有时无
 (**这个对照本身就说明它不是稳定判据**,不能作为因果证据)。
@@ -126,28 +134,34 @@
 
 ## 3. 测试(都归到已有探针,不新开文件)
 
+★ **本节四条探针全部已删·2026-10-09** —— 下表与跑法都是**当时的形态**；那几条断言今天**零守卫**。
+
 | 探针 | 新增 |
 |---|---|
-| `ground_action_probe` | ⓪ 载荷位置契约(`pos + visual_offset` == 判定圆心;反证过:**旧代码 12/12 不符**);⑦ 换局 inst 单调 + 重铺后仍捡得动 |
-| `ground_client_probe` | ⑥ 切枪字段 = 背包位置(含"按消费端口径还原同一位置")、⑦ 副本认空手(还能重建) |
-| `net_ground_probe` | ④b 换局必须广播 removed+spawned、inst 不得重置、**客户端不得自己清空**(反向) |
-| | ④c 切枪字段两端同量纲(反向:不得再出现 `push_net_slot(...["type"])`) |
+| `ground_action_probe`（已删·2026-10-09） | ⓪ 载荷位置契约(`pos + visual_offset` == 判定圆心;反证过:**旧代码 12/12 不符**);⑦ 换局 inst 单调 + 重铺后仍捡得动 |
+| `ground_client_probe`（已删·2026-10-09） | ⑥ 切枪字段 = 背包位置(含"按消费端口径还原同一位置")、⑦ 副本认空手(还能重建) |
+| `net_ground_probe`（已删·2026-10-09） | ④b 换局必须广播 removed+spawned、inst 不得重置、**客户端不得自己清空**(反向) |
+| 同上 | ④c 切枪字段两端同量纲(反向:不得再出现 `push_net_slot(...["type"])`) |
 
-跑法(判据 grep `ALL-OK`):
+跑法(判据 grep `ALL-OK` —— ★ **下面六条里只有 `pvp_room_smoke` / `pvp_match_smoke` 还在**,
+路径也已从 `tests/*.sh` 移到 `tests/smoke/`;其余四条引用的探针**已删·2026-10-09**):
 
 ```bash
 G="D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe"
-"$G" --headless --path . --quit-after 3600 res://tests/ground_action_probe.tscn
-"$G" --headless --path . --quit-after 3600 res://tests/ground_client_probe.tscn
-"$G" --headless --path . --quit-after 3600 res://tests/net_ground_probe.tscn      # 源码级
-"$G" --headless --path . --quit-after 10800 res://tests/ground_net_probe.tscn -- --test-ground-teleport   # 真链路;先确认 7777 空闲
-bash tests/pvp_room_smoke.sh ; bash tests/pvp_match_smoke.sh
-"$G" --headless --path . --quit-after 10800 res://tests/royale_probe.tscn          # 全链路;先确认 7777 空闲
+# ↓ 四条探针命令均已删·2026-10-09,今天跑不起来,原文照录:
+# "$G" --headless --path . --quit-after 3600 res://tests/ground_action_probe.tscn        ← 探针已删·2026-10-09
+# "$G" --headless --path . --quit-after 3600 res://tests/ground_client_probe.tscn        ← 探针已删·2026-10-09
+# "$G" --headless --path . --quit-after 3600 res://tests/net_ground_probe.tscn           ← 探针已删·2026-10-09
+# "$G" --headless --path . --quit-after 10800 res://tests/ground_net_probe.tscn -- --test-ground-teleport   ← 探针已删·2026-10-09
+bash tests/smoke/pvp_room_smoke.sh ; bash tests/smoke/pvp_match_smoke.sh
+# "$G" --headless --path . --quit-after 10800 res://tests/royale_probe.tscn              ← 探针已删·2026-10-09
 ```
 
-本轮实测(2026-09-17,全绿):`ground_action_probe` / `ground_client_probe` / `net_ground_probe` /
-`ground_net_probe`(c1/c2 `丢=8 捡=9 轮=4`) / `royale_probe` / `pvp_room_smoke` / `pvp_match_smoke` /
-`kh_l4|l5|l6_probe` / `match_host_hygiene_probe` / `royale_disconnect_count_probe` / `grenade_player_hit_probe`。
+本轮实测(2026-09-17,全绿) —— **读数照录,但那一批探针多数已删·2026-10-09**:
+`ground_action_probe`(已删) / `ground_client_probe`(已删) / `net_ground_probe`(已删) /
+`ground_net_probe`(已删;c1/c2 `丢=8 捡=9 轮=4`) / `royale_probe`(已删) / `pvp_room_smoke` /
+`pvp_match_smoke` / `kh_l4|l5|l6_probe`(已删) / `match_host_hygiene_probe`(已删) /
+`royale_disconnect_count_probe`(已删) / `grenade_player_hit_probe`(已删)。
 
 ## 4. 实机验收(探针答不了的部分)
 

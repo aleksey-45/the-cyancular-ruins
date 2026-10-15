@@ -1,7 +1,18 @@
 # 大乱斗压力勘察报告（2026-09-12）
 
+> ⚠ **时间点文档（2026-09-12）**：其中"现状/入口/路径"一律**以源码为准**；测试面已在 2026-10-09 削减 90%。
+> 本文的 `文件:行号`（如 `scenes/royale_hud.gd:159-190`、`server/match_host.gd:11`）与探针名**都是那一天的快照**
+> —— 2026-10-02 的目录重组把 `server/` 拆成 `lobby/match/hosts/ai`，HUD 也搬进了 `ui/hud/`。旧名 → 今名：
+> `scenes/royale_hud.gd` → `ui/hud/royale_hud.gd`；`server/room_manager.gd` → `server/lobby/room_manager.gd`；
+> `server/match_host.gd` → `server/match/match_host.gd`；`ui/pause_menu.gd` → `ui/screens/pause_menu.gd`；
+> 文中的 `pvp_client` / `pvp_game` 客户端所指的脚本 → `scenes/pvp_match_client.gd`；`server/royale_host.gd` → `server/hosts/royale_host.gd`。
+> 而本文点名的 `tests/royale_hud_cost_probe.tscn` / `tests/royale_probe.tscn` / `tests/royale_bound_probe.gd` /
+> `tests/kh_l6_probe.gd` / `tests/match_host_hygiene_probe.tscn` / `tests/tile_destroy_probe.gd`
+> **都已删·2026-10-09** ⇒ §6 的"守卫"栏今天**全部是零守卫**（`tests/probe/royale_soak_probe.*` 本身还在）。
+> 台账：[`docs/superpowers/specs/2026-10-09-test-surface-cut-90-design.md`](superpowers/specs/2026-10-09-test-surface-cut-90-design.md)。
+
 > 需求：「再次测试大乱斗，勘察卡顿情况和所有局内行为会不会导致崩溃或大卡顿」
-> 工具：`tests/royale_soak_probe.tscn` + `tests/royale_soak_probe.sh`（本次新建）
+> 工具：`tests/probe/royale_soak_probe.tscn` + `tests/probe/royale_soak_probe.sh`（本次新建，**今天仍在**）
 > 结论摘要：**0 崩溃**；**发现一处每秒一次的 44~80ms 客户端帧毛刺**（不是崩溃级，但真机会看得见）；
 > **发现一处随人数平方增长的服务器上行带宽**（8 人约 29 Mbps，是本层最硬的扩展性墙）。
 > 附带若干条源码级发现，已按「崩溃 / 大卡顿 / 轻微」分级。
@@ -16,7 +27,7 @@
 
 ### 1.1 怎么压的
 
-`tests/royale_soak_probe.tscn` 自当大厅/裁判，拉起 N 个**跑真 `royale_game` 场景**的 headless 客户端
+`tests/probe/royale_soak_probe.tscn` 自当大厅/裁判，拉起 N 个**跑真 `royale_game` 场景**的 headless 客户端
 （不是只连上数快照的轻量客户端 —— 卡顿发生在建图/副本/HUD 那个世界里），全链路走真流程：
 
 ```
@@ -24,7 +35,7 @@ start_client(大厅) → lobby_name → royale_create/royale_join → go_match
   → 转连 worker → claim_role + player_options → match_start → royale_game
 ```
 
-每个客户端把本地玩家的 `input_source` 换成脚本机器人（`tests/soak_bot_input.gd`），
+每个客户端把本地玩家的 `input_source` 换成脚本机器人（`tests/harness/soak_bot_input.gd`，**仍在**），
 **并额外让它追着最近的对手打**（只按固定脚本走的话，开局散点相隔 15 格以上，整局零交战 ——
 首压实测 kill/hit/倒地四项全 0，等于"局内行为"一条没踩到）。
 
@@ -47,9 +58,9 @@ start_client(大厅) → lobby_name → royale_create/royale_join → go_match
 2. **worker 子进程的 stdout**：`OS.create_process` 拉起的 worker，其输出**没有**继承到我们的管道
    （6 客户端那次日志里 `grep -c "worker:"` = **0**）。故 **worker 侧的打印/报错是盲区**；
    worker 健康与否只能从客户端侧反推（快照连续性、是否跑到 MATCH_OVER）。
-3. **拆墙**：PvP 固定图 `maps/factory1v1.cyrm` 里可破坏砖（树叶/树干，纹理 15–20）几乎为零
+3. **拆墙**：PvP 固定图（当时 `maps/factory1v1.cyrm` —— **该文件已删**，现行 `maps/newfactory.cyrm`）里可破坏砖（树叶/树干，纹理 15–20）几乎为零
    （全图只匹配到 1 处），故 `tile_destroyed` / 可破坏碰撞块重建这条路径**本压测踩不到**
-   （另有 `tests/tile_destroy_probe.gd` 管）。
+   （另有 `tests/tile_destroy_probe.gd`（**已删·2026-10-09**）管）。
 4. **输入积压**：见 §3.3（代码级问题，本机压测**结构性量不到**）。
 5. **开局后换场**：客户端在 MATCH_OVER 当场写结果并退出（晚一步 `royale_game` 那条 6s 换场会把
    探针自己摘掉、读数全丢）→ **MATCH_OVER 之后的回主菜单路径不在覆盖内**。
@@ -134,7 +145,7 @@ c1 时间轴:4.3s 帧 45ms; 4.8s 帧 44ms; 5.3s 帧 50ms; 5.7s 帧 45ms; 5.8s �
 ⇒ **"每秒一次"这个周期只在一个样本里成立，不能当作本仓的性质来用。**
 下面 §2.5 的对照实验也建立在这同一批噪声数据上。
 
-**把相机挪近**：`tests/royale_hud_cost_probe.tscn` 单独量 `_on_round_state` 本身：
+**把相机挪近**：`tests/royale_hud_cost_probe.tscn`（**已删·2026-10-09** ⇒ 下面的读数今天**零守卫**）单独量 `_on_round_state` 本身：
 
 | 行数 | 中位 | p95 | 最坏 |
 |---|---|---|---|
@@ -210,7 +221,7 @@ ESC）也被验过 —— 后者是不同场景，仍只是代码走查结论。
 
 **✅ 已修**：改成**复用行、只改文字**（行数只在进/退场时才对不齐，那时才增删；
 `get_combined_minimum_size()` 也不再每秒调）。实测同步成本降到 **0.33 / 0.41 / 0.46 ms**
-（同一次测量，`tests/royale_hud_cost_probe.tscn`），并新增两条断言：行 Label 的 instance_id
+（同一次测量，`tests/royale_hud_cost_probe.tscn`（**已删·2026-10-09**）），并新增两条断言：行 Label 的 instance_id
 跨多次更新**不变**（重建就会变）+ 文字仍跟着数据走。反证：把"每次重建"改回去 → 探针报
 `id 序列**变了 = 又回到每秒重建**` 并 FAIL。
 
@@ -247,7 +258,7 @@ O(N²) 不是调参能解决的。
 ### 3.4 【既有缺陷，非本次引入 · ✅ 已修】`channel 0` 发包失败
 
 日志里稳定出现 `ERROR: Unable to send packet on channel 0, max channels: 0`
-（`enet_packet_peer.cpp:64`）。**已确认与本次改动无关**：用**既有的** `tests/royale_probe.tscn`
+（`enet_packet_peer.cpp:64`）。**已确认与本次改动无关**：用**既有的** `tests/royale_probe.tscn`（**已删·2026-10-09**）
 （不碰本次任何改动路径）跑一遍同样复现（1 次）。
 
 规模相关：**2 人 1 次 / 4 人 7 次 / 6 人 15 次**。
@@ -256,7 +267,7 @@ O(N²) 不是调参能解决的。
 **`get_peers()` 的滞后超过一帧** → 发给"刚断开"的 peer → 该包**丢失**。
 本次压测中这些丢包都落在"已在转连/已在离开"的客户端身上，**未观察到实际后果**；
 但同一条路径上也发 `go_match` —— 若被吞，那个客户端进不了 worker（worker 走降级开局/超时）。
-`tests/royale_bound_probe.gd` 是这个区的守卫。
+`tests/royale_bound_probe.gd`（**已删·2026-10-09** ⇒ 这个区今天**零守卫**）当时是这个区的守卫。
 
 **✅ 部分已修（另一半未定位，见 §6.1）**：根因比注释里写的更具体一层 —— `_flush_royale_state` 是
 `call_deferred` + **再等一帧**，而 `in_match` 守卫只加在**调用点**（`on_peer_left` 那层）：
@@ -283,7 +294,7 @@ O(N²) 不是调参能解决的。
 **没有**验这条"MATCH_OVER 之后 6 秒窗口内按 ESC"的场景 —— 要在那个窗口里按 ESC 才踩得到本节。
 
 **✅ 已修**：与 `pvp_client` 逐条对齐 —— MATCH_OVER 时当场 `queue_free()` 暂停菜单（退出只走定时器
-这一条路）+ lambda 里补 `if not is_inside_tree(): return`。守卫加在 `tests/kh_l6_probe.gd` 的
+这一条路）+ lambda 里补 `if not is_inside_tree(): return`。守卫加在 `tests/kh_l6_probe.gd`（**已删·2026-10-09** ⇒ 现在**零守卫**）的
 **第 9b 条不变量**（第 9 条是 `pvp_client` 上的同款断言，已存在；9b 是它漏掉的第三个对象）。
 反证：把这两处改回原样 → 9b 报两条具体错误并 FAIL。
 
@@ -298,13 +309,13 @@ O(N²) 不是调参能解决的。
 
 **✅ 已修**：`_adjudicate_bullets` 每帧顺手收集"本帧在场子弹 id"，帧末**整体替换** `_seen_bullets`
 （等价于剪掉已销毁条目，且比逐条 erase 少一次遍历）。守卫 = 新增
-`tests/match_host_hygiene_probe.tscn`：真建一个 `MatchHost`（role_peers 传空），压 60 轮
+`tests/match_host_hygiene_probe.tscn`（**已删·2026-10-09** ⇒ **零守卫**）：真建一个 `MatchHost`（role_peers 传空），压 60 轮
 生成/销毁子弹，断言条目数只跟**在场**数量走。反证：去掉剪枝 → 条目数累积到 63 并 FAIL。
 
 ### 3.7 【轻微 · ❌ 不修】开局 N-1 个副本在同一个快照回调里集中建
 
 `scenes/royale_game.gd:_on_snapshot` → `_ensure_replica`：首个含全部 role 的快照会在**一帧内**
-建 N-1 个 `PlayerReplica`，每个都要**全量实例化一次 `Player.tscn` 再 `free()`**
+建 N-1 个 `PlayerReplica`，每个都要**全量实例化一次 `scenes/player/player.tscn`（旧名 `Player.tscn` —— **该名今天不存在**）再 `free()`**
 （只为拿 `sprite_frames`；本次改动的幽灵体复用同一次实例化，未增加一次）。
 一次性开销，本次未单独测量（1 Hz 毛刺与它无关，时间轴对不上）。
 
@@ -348,7 +359,7 @@ O(N²) 不是调参能解决的。
 1. **把 §2.4 / §2.5 那条毛刺做完**：在一台**没有别的东西在跑**的机器上，把同一配置跑够 3 遍
    （先量清 run-to-run 离散度），再上单变量对照。本次三次同规模跑的 `max` 是 80 / 42 / 256 ms、
    `>100ms` 是 0 / 0 / 60 —— 本机的离散度就是这么回事，**先量噪声、再谈归因**。
-2. 开 1 个**真客户端**连同一局（`bash tests/royale_soak_probe.sh 4 100 150` 起大厅后手动进游戏）
+2. 开 1 个**真客户端**连同一局（`bash tests/probe/royale_soak_probe.sh 4 100 150` 起大厅后手动进游戏；**该脚本今天仍在**）
    → 真机才有画面成本，headless 那套数字不能外推。
 3. 若公网联机，重点看 §3.2：8 人局约 29 Mbps 上行 + 7.7 KB 分片不可靠包。
 
@@ -360,10 +371,10 @@ O(N²) 不是调参能解决的。
 
 | # | 文件 | 改了什么 | 守卫 | 反证（把修复去掉后） |
 |---|---|---|---|---|
-| §3.1 | `scenes/royale_hud.gd` | 排行榜**复用行**只改文字（不再每秒 `queue_free` + 重建 N 个 Label）；`get_combined_minimum_size()` 只在行数变化时调 | `tests/royale_hud_cost_probe.tscn`：行 Label 的 instance_id 跨多次更新**不变** + 文字仍跟数据走 | 把"每次重建"改回去 → 报 `id 序列**变了 = 又回到每秒重建**`，FAIL |
+| §3.1 | `ui/hud/royale_hud.gd`（当时写法 `scenes/royale_hud.gd`） | 排行榜**复用行**只改文字（不再每秒 `queue_free` + 重建 N 个 Label）；`get_combined_minimum_size()` 只在行数变化时调 | `tests/royale_hud_cost_probe.tscn`（**已删·2026-10-09** ⇒ **零守卫**）：行 Label 的 instance_id 跨多次更新**不变** + 文字仍跟数据走 | 把"每次重建"改回去 → 报 `id 序列**变了 = 又回到每秒重建**`，FAIL |
 | §3.4 | `server/room_manager.gd` | `_flush_royale_state` **真正发送前再判一次 `in_match`**（原守卫只在排队那层）；`royale_leave` 的同类广播补同款守卫 | 大乱斗压测里数 `Unable to send packet on channel 0` 的次数 | 2 人局 1 → **0** ✅；4 人局 7 → **3**（未归零）；残余**已排除大厅**、来源未定位 —— 见 §6.1 |
-| §3.5 | `scenes/royale_game.gd` | MATCH_OVER 时**当场销毁暂停菜单** + 定时器 lambda 补 `is_inside_tree()` 早退（与 `pvp_client` 逐条对齐） | `tests/kh_l6_probe.gd` **第 9b 条不变量**（第 9 条是 pvp_client 上的同款，早已存在） | 两处改回原样 → 9b 报两条具体错误，`KH L6 PROBE: FAIL` |
-| §3.6 | `server/match_host.gd` | `_adjudicate_bullets` 每帧收集在场子弹 id、帧末**整体替换** `_seen_bullets`（剪掉已销毁条目） | `tests/match_host_hygiene_probe.tscn`：60 轮生成/销毁后条目数仍 = 在场数 | 去掉剪枝 → 条目数累积到 **63**，FAIL |
+| §3.5 | `scenes/royale_game.gd` | MATCH_OVER 时**当场销毁暂停菜单** + 定时器 lambda 补 `is_inside_tree()` 早退（与 `pvp_client` 逐条对齐） | `tests/kh_l6_probe.gd`（**已删·2026-10-09** ⇒ **零守卫**）**第 9b 条不变量**（第 9 条是 pvp_client 上的同款，早已存在） | 两处改回原样 → 9b 报两条具体错误，`KH L6 PROBE: FAIL` |
+| §3.6 | `server/match_host.gd` | `_adjudicate_bullets` 每帧收集在场子弹 id、帧末**整体替换** `_seen_bullets`（剪掉已销毁条目） | `tests/match_host_hygiene_probe.tscn`（**已删·2026-10-09** ⇒ **零守卫**）：60 轮生成/销毁后条目数仍 = 在场数 | 去掉剪枝 → 条目数累积到 **63**，FAIL |
 
 **关于 §3.5 的附带发现**：`royale_game.gd` 那段**原有注释**已写着"玩家若在 6s 内经暂停菜单退出…"，
 说明当年作者意识到了这条路径，只是没跟 `pvp_client` 一起补完 —— 这也是为什么值得把它做成
@@ -397,8 +408,9 @@ worker/客户端，其 **stdout 不进本日志**（实测 `grep -c "SOAK\[c"` =
 
 ### 6.2 修完后的回归
 
-改动落在 `scenes/` 与 `server/`，故重跑了受影响的全部探针/冒烟：
-`replica_ghost_probe`、`grenade_player_hit_probe`、`royale_hud_cost_probe`、
-`match_host_hygiene_probe`、`grenade_smoke`、`enemy_logic_smoke`、`player_contract_smoke`、
-`preview_visibility_probe`、`kh_l5_probe`、`kh_l6_probe`、`pvp_reconcile_smoke`、
-`pvp_twin_smoke`、`pvp_match_smoke`、`pvp_room_smoke` —— 全绿。
+改动落在 `scenes/` 与 `server/`，故重跑了受影响的全部探针/冒烟（**读数照录；除最后两支外全部已删·2026-10-09，即今天的实测守卫只剩 `pvp_match_smoke` / `pvp_room_smoke`**）：
+`replica_ghost_probe`（已删）、`grenade_player_hit_probe`（已删）、`royale_hud_cost_probe`（已删）、
+`match_host_hygiene_probe`（已删）、`grenade_smoke`（已删）、`enemy_logic_smoke`（已删）、`player_contract_smoke`（已删）、
+`preview_visibility_probe`（已删）、`kh_l5_probe`（已删）、`kh_l6_probe`（已删）、`pvp_reconcile_smoke`（已删）、
+`pvp_twin_smoke`（已删）、`pvp_match_smoke`（**仍在**，今 `tests/smoke/pvp_match_smoke.sh`）、
+`pvp_room_smoke`（**仍在**，今 `tests/smoke/pvp_room_smoke.sh`） —— 全绿（**2026-09-12 的读数**）。

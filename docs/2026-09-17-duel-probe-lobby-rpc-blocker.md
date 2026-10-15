@@ -1,5 +1,10 @@
 # 1v1 探针卡点：大厅 RPC 全部到不了服务器（2026-09-17）
 
+> ⚠ **时间点文档（2026-09-17）**：其中"现状/入口/路径"一律**以源码为准**；测试面已在 2026-10-09 削减 90%。
+> 本文引用的 `tests/ground_net_probe.*` / `tests/ground_net_watcher.gd` / `tests/smoke/project_settings_smoke.gd`
+> **都已删**（标 `（已删·2026-10-09）`），§7 的命令今天**跑不起来**；大厅页 `royale_lobby.tscn` 也已退役。
+> 这一批删了什么、留了什么：[`docs/superpowers/specs/2026-10-09-test-surface-cut-90-design.md`](superpowers/specs/2026-10-09-test-surface-cut-90-design.md)。
+
 **一句话**：给 L1 探针加 1v1 覆盖时，**大乱斗侧一次跑绿、1v1 侧一条大厅 RPC 都到不了服务器**。
 症状已夹到最小（同一个客户端进程、同一个大厅，只换大厅页就复现/消失），但**成因未定**。
 本文只记录**已证实的读数**与**已排除的假设**，不含结论。
@@ -8,10 +13,10 @@
 
 ## 1. 已交付（可独立保留）
 
-`tests/ground_net_probe.gd` + `tests/ground_net_watcher.gd` 的模式/剧本参数化：
+`tests/ground_net_probe.gd` + `tests/ground_net_watcher.gd`（**两者均已删·2026-10-09**）的模式/剧本参数化：
 
 - `--mode=royale|duel`、`--scene=<剧本名>`；默认 `royale` / `L1` ⇒ **现有命令与判据逐字不变**。
-- `ground_net_watcher.MODES` 表是**唯一的**模式差异来源；差异只有 4 处（大厅场景 / 加入方式 /
+- `ground_net_watcher.MODES` 表（**已删·2026-10-09**）是**唯一的**模式差异来源；差异只有 4 处（大厅场景 / 加入方式 /
   对局场景名 / 要不要按「开始游戏」）。
 - 客户端大厅改为**走游戏自己的换场景栈**（`change_scene_to_file`），观察者挂 `root` 上、
   用 `get_tree().current_scene` 认大厅 —— 与导出形态（无裁判进程）同一条路。
@@ -22,6 +27,8 @@
   **★ 2026-10-04 恢复(订正上面那半句"配额至今仍是引擎默认 5")**:`b2f4134` 把 `[debug]` 的文件日志三键
   (`enable_file_logging` / `enable_file_logging.pc` / `max_log_files=64`)整块写回 `project.godot`,
   并配常驻守卫 `tests/smoke/project_settings_smoke.gd` ⇒ **配额现在是 64,不是 5**;
+  ★ **2026-10-15 订正**:那条守卫**已删(2026-10-09)** ⇒ 现在是**零守卫**(配额本身仍可在
+  `project.godot` 的 `[debug] file_logging/max_log_files=64` 上直接读到);
   于是本条"5 → 64"作为**交付**重新成立(键名按订正后的写法读)。取证见
   [审计报告 §1.2](eng/audit-2026-10-04-design-conventions.md)
   (★ 那份审计是当天的快照:它 §1.2 里那句"这条保障今天不存在"写于本次恢复**之前**,别当作现状)。
@@ -67,7 +74,7 @@ PROBE[c2]: 等大厅连接(_connected=false) → 认出大厅 → 反复刷新�
 | `--mode=royale` | 嵌入式 | ✅ 服务器收到 2 条 `lobby_name`，整局 ALL-OK |
 | `--mode=duel` | 嵌入式 | ❌ 服务器收到 **0** 条 |
 | `--mode=duel` | 真 `server_main.tscn` | ❌ 同样 |
-| `--mode=duel` + 临时把 `MODES["duel"]["lobby_scene"]` 换成 `royale_lobby.tscn` | 嵌入式 | ✅ **报错 0 行** |
+| `--mode=duel` + 临时把 `MODES["duel"]["lobby_scene"]` 换成 `royale_lobby.tscn`（该页**已退役**，今为 `scenes/mp_lobby.tscn`） | 嵌入式 | ✅ **报错 0 行** |
 
 ⇒ **客户端进程相同、服务器相同，只换大厅场景页就翻转。**
 
@@ -98,7 +105,7 @@ duel 下：SIMPLIFY 到了（所以有校验和报错）、RPC 包也发了（�
 
 ## 6. 绕过方案（不依赖成因，未验证）
 
-`tests/pvp_smoke_client.gd` 是**唯一跑通过的 1v1 客户端**，它的做法不同：
+`tests/harness/pvp_smoke_client.gd` 是**唯一跑通过的 1v1 客户端**（该文件**仍在**），它的做法不同：
 **在 `_ready` 里显式 `NetBus.start_client(...)`，不依赖大厅页的懒连接**。
 把探针客户端改成同款（观察者自己连、连上再驱动大厅页），可以绕开大厅页那条时序。
 
@@ -106,12 +113,13 @@ duel 下：SIMPLIFY 到了（所以有校验和报错）、RPC 包也发了（�
 
 ## 7. 跑法
 
+★ **本节两条命令今天都跑不起来** —— `tests/ground_net_probe.tscn` **已删·2026-10-09**
+（连同 `tests/manual/` 的全部非 headless 仪器）。下面保留原文只为记录当时的判据形态。
+
 ```bash
 G="D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe"
-# 大乱斗 L1(应 ALL-OK;跑前确认 7777 空闲)
-"$G" --headless --path . --quit-after 10800 res://tests/ground_net_probe.tscn \
-     -- --mode=royale --scene=L1 --test-ground-teleport
-# 1v1 L1(当前必然失败,见上)
-"$G" --headless --path . --quit-after 10800 res://tests/ground_net_probe.tscn \
-     -- --mode=duel --scene=L1 --test-ground-teleport
+# 大乱斗 L1(当时应 ALL-OK;跑前确认 7777 空闲)
+# "$G" --headless --path . --quit-after 10800 res://tests/ground_net_probe.tscn -- --mode=royale --scene=L1 --test-ground-teleport   ← 该探针已删·2026-10-09
+# 1v1 L1(当时必然失败,见上)
+# "$G" --headless --path . --quit-after 10800 res://tests/ground_net_probe.tscn -- --mode=duel --scene=L1 --test-ground-teleport     ← 该探针已删·2026-10-09
 ```

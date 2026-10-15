@@ -1,5 +1,11 @@
 # B 档:七条「登记边界」的修复归档(2026-09-28 ~ 09-29)
 
+> ⚠ **时间点文档（2026-09-28）**：其中"现状/入口/路径"一律**以源码为准**；测试面已在 2026-10-09 削减 90%。
+> 本文引用的 `tests/late_match_probe.tscn` / `tests/duel_spawn_timeout_smoke.gd` / `tests/ammo_rollback_probe` /
+> `tests/room_sweep_smoke` / `tests/brawl_rollback_probe` / `death_drop_probe` **都已删·2026-10-09**
+> ⇒ §2 的"新增/扩写的判据"与 §5 的"用户侧待办"今天**都跑不起来**，那些断言现在是**零守卫**。
+> 台账：[`docs/superpowers/specs/2026-10-09-test-surface-cut-90-design.md`](superpowers/specs/2026-10-09-test-surface-cut-90-design.md)。
+
 用户 2026-09-28 裁定:**开始修此前登记在 `CLAUDE.md` 里那批「已知边界 / 登记不修」**。
 本档是**B 档**(单点、行为面明确、能配判据的七条)的归档:做了什么、怎么证的、还留了什么。
 
@@ -34,7 +40,8 @@ E 档(`--ai-roles` 端到端)**不在本批**。
 * **反向对照**:凡"不该发生"的断言,都配一条"该发生"的对照(否则"整块删掉"也能过)。
 * **真链路**:`#10` 起真 worker(池外端口);`#10` 的大厅回归跑了**真大厅 45 秒**(`EXIT=124` + 自杀行 0)。
 
-新增/扩写的判据:`tests/late_match_probe.tscn`(32 条断言,含 `EXPECTED_CHECKS` 双向计数闸)、
+新增/扩写的判据(★ **下列四支均已删·2026-10-09**,今天**零守卫**;名字与条数是当时的形态):
+`tests/late_match_probe.tscn`(32 条断言,含 `EXPECTED_CHECKS` 双向计数闸)、
 `tests/duel_spawn_timeout_smoke.gd`、`tests/ammo_rollback_probe`(13 条)、`tests/room_sweep_smoke`(仍 9 项检查)。
 
 ## 3. ★★ 本批真正的产出:一条判据纪律
@@ -50,7 +57,7 @@ E 档(`--ai-roles` 端到端)**不在本批**。
 |---|---|
 | 「断言增量 +4」 | 有 4 个 `_check(` 调用点,但**一个在早退后永不执行** ⇒ 实际 +3 |
 | 报到梯的 smoke「验证了」 | 它起的是 worker,**结构上看不见大厅模式** ⇒ 大厅自杀那条它全绿 |
-| 「`!= PLAYING` 会让 PLAYING 也停记账,`death_drop_probe` 守住了」 | `!= PLAYING` 在 PLAYING 下**为假**;差集是 `{ROUND_OVER, COUNTDOWN}`,而那一格**没有守卫** |
+| 「`!= PLAYING` 会让 PLAYING 也停记账,`death_drop_probe`（**已删·2026-10-09**）守住了」 | `!= PLAYING` 在 PLAYING 下**为假**;差集是 `{ROUND_OVER, COUNTDOWN}`,而那一格**没有守卫** |
 | 相②「覆盖了未入树窗口」 | 只有负向半;删 `_mag_ready = true` 会让**已上线功能静默消失**而全仓不红 |
 | 守卫「对改名/重排/抽 helper 免疫」 | 实测**取首合取项** + 全文件 `contains` ⇒ 后两者是**假红** |
 | 审阅者建议的 `contains("1800")` | **恒真**(同文件另有 `TEAM_MATCH_ESTIMATE := 1800.0`) |
@@ -86,11 +93,11 @@ E 档(`--ai-roles` 端到端)**不在本批**。
 
 | 项 | 为什么没做 |
 |---|---|
-| `server/royale_host.gd` 的 `_cfg_match_time` **无服务端钳位** | 直读客户端 `player_options` ⇒ #11 的"可证上界"**条件于客户端行为**。加一行 `clampf(..., 0.0, CEILING)` 可结构性封住;超出本批文件范围。 |
-| 两处变异**未跑** | 落点不在实施者写入范围内(in-place 的 `!= PLAYING` 闸变异、`scenes/royale_lobby.gd` 的滑块变异);已用夹具/期望值变异替代并登记为**未测**。 |
+| `server/hosts/royale_host.gd`（当时写作 `server/royale_host.gd`）的 `_cfg_match_time` **无服务端钳位** | 直读客户端 `player_options` ⇒ #11 的"可证上界"**条件于客户端行为**。加一行 `clampf(..., 0.0, CEILING)` 可结构性封住;超出本批文件范围。 |
+| 两处变异**未跑** | 落点不在实施者写入范围内(in-place 的 `!= PLAYING` 闸变异、`scenes/royale_lobby.gd`（该页**已退役**,今为 `scenes/mp_lobby.gd`）的滑块变异);已用夹具/期望值变异替代并登记为**未测**。 |
 | 假想退化 `_match_winner`(`if players.size() < 2: return 0`) | 探针无法鉴别(已把它闭合到"幸存者独占**且有分**"一相,但那条退化写法仍未被直接否定)。 |
 | 「第二条失效前提」无守卫 | 删掉 `#8` 那半句依赖"同队早退还在"(有 (k4) 守卫)**且**"`same_team` 仍是等价比对"(**无守卫**)。 |
 | 3v3 外链无独立端到端覆盖 | `_on_peer_left → _enter_grace` 在 3v3 上只有共用行 + royale 变体的覆盖;3v3 唯一真链路探针 `team_match_probe` 是**既有 FAIL**。 |
 
-**用户侧待办**:`tests/brawl_rollback_probe` 需要 `--quit-after 30000`(仓库统一的 3600 对它不够,
+**用户侧待办**:`tests/brawl_rollback_probe`（**已删·2026-10-09**，故这条待办今天**已失效**）需要 `--quit-after 30000`(仓库统一的 3600 对它不够,
 而它的失败形状——无裁决行 + exit 0——与真失败**长得一样**)。

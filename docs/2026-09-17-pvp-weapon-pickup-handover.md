@@ -1,7 +1,14 @@
 # 交接：局内捡枪/丢枪（2026-09-16 ~ 09-17）
 
-**一句话**：联机拾取链路上**两个真 bug** 已定位、修复、提交并加了守卫；联机拾取此前
-**零自动化覆盖**，现在有三层探针且**能在导出 exe 上跑**；但用户报的**硬崩溃没有复现**。
+> ⚠ **时间点文档（2026-09-17）**：其中"现状/入口/路径"一律**以源码为准**；测试面已在 2026-10-09 削减 90%。
+> 本文的"三层探针"（`tests/ground_action_probe.tscn` / `tests/ground_client_probe.tscn` /
+> `tests/ground_net_probe.tscn` + `tests/ground_net_watcher.gd`）**都已删·2026-10-09** ⇒ §3 的跑法、
+> §4 的"验证过的"读数今天**都复现不了**，那些断言现在是**零守卫**；`_crashtest/` 与那份导出通道也已不在。
+> 台账：[`docs/superpowers/specs/2026-10-09-test-surface-cut-90-design.md`](superpowers/specs/2026-10-09-test-surface-cut-90-design.md)。
+
+**一句话**：联机拾取链路上**两个真 bug** 已定位、修复、提交并加了守卫（**当时的守卫**，多数已在
+2026-10-09 删除，见上文横幅）；联机拾取此前**零自动化覆盖**，当时有三层探针且**能在导出 exe 上跑**；
+但用户报的**硬崩溃没有复现**。
 
 ---
 
@@ -36,7 +43,7 @@ dbec56f test: 局内捡枪/丢枪探针(服务器侧 / 客户端侧 / 真链路)
 > **只要本地预测与权威逐位一致，客户端就永远不应用权威背包。**
 > 而 C2 的常态恰恰是"逐位一致"。
 
-实测（`ground_net_probe`，一局 90s）：`rollback_count()==0`、客户端背包恒空，
+实测（`ground_net_probe` **已删·2026-10-09** ⇒ 这条读数今天**零守卫**，一局 90s）：`rollback_count()==0`、客户端背包恒空，
 同一时刻服务器侧丢弃/拾取**全都成功**。表现就是"枪从地上没了、手上也没多、还开不了火"，
 且**一条报错都没有**。只在联机模式出现，因为单机没有快照下行 + C2 回滚。
 
@@ -56,24 +63,25 @@ dbec56f test: 局内捡枪/丢枪探针(服务器侧 / 客户端侧 / 真链路)
 
 ## 3. 探针怎么跑
 
-### 3.1 三条线
+### 3.1 三条线（★ **三条探针全部已删·2026-10-09** —— 下表是当时的形态，今天**零守卫**）
 
 | 探针 | 覆盖 | 判据 |
 |---|---|---|
-| `tests/ground_action_probe.tscn` | 服务器权威侧（无网络）：捡 / 替换 / 丢 / 自身冷却 / 40 轮连打 / 复活掉枪 | `GROUND ACTION PROBE: ALL-OK` |
-| `tests/ground_client_probe.tscn` | 客户端侧（无网络）：`weapon_removed` 删节点、权威背包变化后 restore、幽灵枪 | `GROUND CLIENT PROBE: ALL-OK` |
-| `tests/ground_net_probe.tscn` | **真链路**：真大厅 + 真 worker + N 个真 `royale_game` 客户端 | `PROBE: ALL-OK` |
+| `tests/ground_action_probe.tscn`（已删·2026-10-09） | 服务器权威侧（无网络）：捡 / 替换 / 丢 / 自身冷却 / 40 轮连打 / 复活掉枪 | `GROUND ACTION PROBE: ALL-OK` |
+| `tests/ground_client_probe.tscn`（已删·2026-10-09） | 客户端侧（无网络）：`weapon_removed` 删节点、权威背包变化后 restore、幽灵枪 | `GROUND CLIENT PROBE: ALL-OK` |
+| `tests/ground_net_probe.tscn`（已删·2026-10-09） | **真链路**：真大厅 + 真 worker + N 个真 `royale_game` 客户端 | `PROBE: ALL-OK` |
 
 ```bash
 G="D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe"
-"$G" --headless --path . --quit-after 3600 res://tests/ground_action_probe.tscn
-"$G" --headless --path . --quit-after 3600 res://tests/ground_client_probe.tscn
-"$G" --headless --path . --quit-after 10800 res://tests/ground_net_probe.tscn -- --test-ground-teleport   # 跑前确认 7777 空闲
+# ↓ 三条命令全部已删·2026-10-09,今天跑不起来,原文照录:
+# "$G" --headless --path . --quit-after 3600 res://tests/ground_action_probe.tscn          ← 探针已删·2026-10-09
+# "$G" --headless --path . --quit-after 3600 res://tests/ground_client_probe.tscn          ← 探针已删·2026-10-09
+# "$G" --headless --path . --quit-after 10800 res://tests/ground_net_probe.tscn -- --test-ground-teleport   ← 探针已删·2026-10-09(跑前确认 7777 空闲)
 ```
 
 ### 3.2 `--test-ground-teleport`（仅测试用，生产不可达）
 
-`ground_net_probe` **必须**带这个开关，否则机器人得自己走位 —— 实测那条路走不通：
+`ground_net_probe`（**已删·2026-10-09**）**当时必须**带这个开关，否则机器人得自己走位 —— 实测那条路走不通：
 只会"水平走 + 卡住跳"的机器人在**每进程随机选一份 `.cyrm`** 的地图上会永久卡死
 （`走到目标超时` 的距离越拉越大，直到全场武器被拉黑）。
 
@@ -91,6 +99,12 @@ G="D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.
 
 ### 3.3 在**导出 exe** 上跑（本轮新建的通道）
 
+★ **2026-10-15 订正：这条通道今天不存在。** ①`--autotest-ground/<场景名>` 已不在
+[`tests/harness/menu_autotest.gd`](../tests/harness/menu_autotest.gd) 的模式表里（现只有
+sp/mp/royale/team/set/level/ver/switch/play）；②2026-10-04 起导出预设的 `exclude_filter` 已含
+`tests/*` ⇒ **发布产物里连这条借道都没有了**（见 [`docs/eng/registered-debt.md`](eng/registered-debt.md) §七 第 3 条）。
+下面保留原文只为记录当时的绕法与它暴露的三个洞。
+
 导出用的裁剪模板编译时带了 `disable_path_overrides=yes`，所以
 `<exe> res://x.tscn` 会被引擎**当场拒绝**：
 
@@ -99,19 +113,20 @@ ERROR: Scene path was specified on the command line, but this Godot binary was c
        without support for path overrides. Aborting.
 ```
 
-绕法：借主菜单那条既有通道（`tests/menu_autotest.gd` 新增的 `--autotest-ground/<场景名>`，
-读 `OS.get_cmdline_user_args()`，且 `tests/` 已在 `export_filter="all_resources"` 里）。
+绕法：借主菜单那条既有通道（`tests/harness/menu_autotest.gd` 当时新增的 `--autotest-ground/<场景名>`，
+读 `OS.get_cmdline_user_args()`，且 `tests/` 当时还在 `export_filter="all_resources"` 里）。
 
-导出形态下**没有裁判进程**（`ground_net_probe.gd` 里的 orchestrator 分支），所以形状变了
+导出形态下**没有裁判进程**（`ground_net_probe.gd`（**已删·2026-10-09**）里的 orchestrator 分支），所以形状变了
 —— 服务端 exe 自己当大厅，客户端各自独立拉起：
 
 ```bash
-./_crashtest/CyancularServer.exe --log-file _crashtest/server.log -- --test-ground-teleport &
-./_crashtest/CyancularClient.exe --log-file _crashtest/c1.log -- --autotest-ground/ground_net_probe --role=c1 &
-./_crashtest/CyancularClient.exe --log-file _crashtest/c2.log -- --autotest-ground/ground_net_probe --role=c2 &
+# ↓ 三条命令今天都不可用(通道已不存在;ground_net_probe 探针也已删·2026-10-09),原文照录:
+# ./_crashtest/CyancularServer.exe --log-file _crashtest/server.log -- --test-ground-teleport &
+# ./_crashtest/CyancularClient.exe --log-file _crashtest/c1.log -- --autotest-ground/ground_net_probe --role=c1 &
+# ./_crashtest/CyancularClient.exe --log-file _crashtest/c2.log -- --autotest-ground/ground_net_probe --role=c2 &
 ```
 
-为此补了三处**只有导出形态才暴露**的洞（都改在 `ground_net_watcher.gd`）：
+为此补了三处**只有导出形态才暴露**的洞（都改在 `ground_net_watcher.gd`（**已删·2026-10-09**））：
 
 1. **房号交接**：`ground_net_probe_go.txt` 是裁判写的，导出形态没有裁判 → c2 改从大厅
    自己拉到的房间列表里挑第一个公开房加入（读 lobby 渲染出来的按钮文本）。
@@ -127,13 +142,13 @@ ERROR: Scene path was specified on the command line, but this Godot binary was c
 
 ## 4. 已验证 / 未验证
 
-**验证过的**（2026-09-17）：
+**验证过的**（2026-09-17）★ **下面三个判词所属的探针/冒烟今天多数已删·2026-10-09**（零守卫）：
 
 ```
-GROUND ACTION PROBE: ALL-OK
-GROUND CLIENT PROBE: ALL-OK
-SMOKE_TWIN OK: 640 ticks, max pos dev 0.1035 px, 0 字段发散
-SMOKE_RECONCILE OK: 640tick 内 rollback×1, ..., 事件后已收敛
+GROUND ACTION PROBE: ALL-OK     ← tests/ground_action_probe.tscn 已删·2026-10-09
+GROUND CLIENT PROBE: ALL-OK     ← tests/ground_client_probe.tscn 已删·2026-10-09
+SMOKE_TWIN OK: 640 ticks, max pos dev 0.1035 px, 0 字段发散        ← pvp_twin_smoke 已删·2026-10-09
+SMOKE_RECONCILE OK: 640tick 内 rollback×1, ..., 事件后已收敛        ← pvp_reconcile_smoke 已删·2026-10-09
 ```
 
 导出 exe（`custom_build` + Vulkan，真开窗）：
@@ -147,8 +162,8 @@ SMOKE_RECONCILE OK: 640tick 内 rollback×1, ..., 事件后已收敛
 - **崩溃没复现。** 见 §5。
 - 那份 crash-probe-plan §2 的场景矩阵（替换、闸门拒绝、抢枪、接缝附近、
   冻结期/倒地中/换局那一帧……）**绝大部分仍未跑**。本轮只交付了 L1（捡/丢/冷却）。
-- `ground_action_probe` / `ground_client_probe` 是在改动**之后**补跑的，不是 TDD 的红→绿；
-  真正红→绿的是 `pvp_reconcile_smoke`（新事件）与 `ground_client_probe` 的幽灵枪那条。
+- `ground_action_probe`（已删·2026-10-09） / `ground_client_probe`（已删·2026-10-09） 是在改动**之后**补跑的，不是 TDD 的红→绿；
+  真正红→绿的是 `pvp_reconcile_smoke`（已删·2026-10-09；新事件）与 `ground_client_probe` 的幽灵枪那条。
 
 ---
 
@@ -182,7 +197,7 @@ ERROR: Trying to call an RPC while no multiplayer peer is active.
   按什么键？是闪退到桌面还是卡死？有没有"对手已离开"之类的提示？
 - 把探针改成**走主菜单那条路**（`--autotest-royale` 已有雏形，`menu_autotest` 里按
   「大乱斗」按钮 → 大厅 → 建房/加入），补上差异 1。
-- 换图多跑（补差异 2）：`ground_net_probe` 多跑几轮，或临时钉一张图。
+- 换图多跑（补差异 2）：`ground_net_probe`（**已删·2026-10-09**）多跑几轮，或临时钉一张图。
 - 本仓有先例：**"只在导出 exe 上现形"** 的那一类（CLAUDE.md 记着 RID 泄漏 →
   渲染器析构段错误）。**量的必须是发布产物**，编辑器二进制的绿不算数。
 
