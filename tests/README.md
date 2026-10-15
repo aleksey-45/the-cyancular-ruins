@@ -4,7 +4,10 @@
 
 > ## ★★ 2026-10-09:本目录已按「测试经济学」削减到原来的 ~10%
 >
-> **默认批 111 支 → 12 支;删除 git 跟踪的 345 个文件;`tests/manual/` 整个删除。**
+> **默认批 111 支 → 14 支;删除 git 跟踪的 345 个文件;`tests/manual/` 整个删除。**
+> ★ **2026-10-13 订正**:本节原写"**12 支**"—— 实测(`bash tests/run_all.sh --list`)是
+> `enumerated 18 / excluded 4 / **running 14**`;删除文件数 **345** 已用
+> `git show --diff-filter=D --name-only 4ae7eed | wc -l` 复核(同一句在 `AGENTS.md` 里曾写 343,已一并订正)。
 > 判据(外部证据 + 本仓 D1–D9/K1–K5)、保留清单、逐目录删除清单、爆炸半径与**代价**
 > 全在台账:[`docs/superpowers/specs/2026-10-09-test-surface-cut-90-design.md`](../docs/superpowers/specs/2026-10-09-test-surface-cut-90-design.md)。
 >
@@ -15,13 +18,16 @@
 
 一个 stem 的 `.gd` / `.tscn` / `.sh` / `.log` 伴随文件同桶。
 
-- `smoke/`——**行为回归主入口**,4 支:三支 `-s`(`network_input_smoke` 输入包 /
-  `server_input_sanitize_smoke` 服务端输入收口 / `rpc_channel_contract_smoke` RPC 通道契约)
-  + 一支真链路客户端 `pvp_match_smoke`(`extends Node`,走同名 `.tscn`,要 `--role`)。
+- `smoke/`——**行为回归主入口**,5 支:四支 `-s`(`network_input_smoke` 输入包 /
+  `server_input_sanitize_smoke` 服务端输入收口 / `rpc_channel_contract_smoke` RPC 通道契约 /
+  `playout_clock_smoke` 参考时钟) + 一支真链路客户端 `pvp_match_smoke`(`extends Node`,走同名 `.tscn`,要 `--role`)。
+  ★ **2026-10-13 订正**:原写"4 支",漏了 `playout_clock_smoke`(它**是**带 `EXPECTED_CHECKS` 的支,见下文)。
   ★ **`smoke/*.sh` 现在只剩 2 支,都是真链路包装**(`pvp_match_smoke.sh` / `pvp_room_smoke.sh`);
   原来那 4 支"单进程 + tee"的包装(`bullet_tile_fx` / `move_feel` / `pvp_reconcile` / `pvp_twin`)
   连同它们的被测脚本一起删了。
-- `probe/`——单点诊断与真链路探针。现存 **12 支 `-s`/场景探针 + 3 支真链路 `.sh`**:
+- `probe/`——单点诊断与真链路探针。现存 **13 支**(9 支场景 `.tscn` + 4 支无同名 `.tscn` 的 `-s`),
+  其中 3 支(`rejoin` / `royale_soak` / `team_match`)是真链路、**不在默认批**(见 `EXCLUDED`)⇒ 默认批里 **10 支**;
+  另有 3 支真链路 `.sh` 包装(见下 `run_real.sh`)。★ **2026-10-13 订正**:原写"12 支 + 3 支",与实际枚举不符。
   - 承重面守卫:`tile_collision_probe`(命中/碰撞)· `wrap_probe`(环面几何)·
     `rollback_fidelity_probe`(回滚等价)· `resync_world_probe`(重同步)· `snapshot_size_probe`(快照/带宽)·
     `map_format_v4_probe`(cyrm v4 往返/CRC)· `map_catalog_probe`(目录/联机定图);
@@ -51,10 +57,13 @@
 | `bash tests/run_all.sh` | **headless 默认批**:自动枚举 `smoke/*.gd` + `probe/*.tscn` + `probe/*.gd`(无同名 `.tscn` 的) | `OK` / `OK+RC` / `FAIL` / `NO-VERDICT` / `TIMEOUT` / `KNOWN-RED` | `RUN_ALL OK(n runs / m gated-assertions)` / `RUN_ALL OK-WITH-KNOWN-RED(n runs, k registered)` / `RUN_ALL FAIL(r new-red + k registered)` | **不** | **不**(现在一支都不拉) |
 | `bash tests/run_real.sh` | **真链路批**:5 支多进程 `.sh` | 同上(除 `KNOWN-RED`) | `RUN_REAL OK(n entries)` / `RUN_REAL FAIL(...)` | **是**(3 支) | 是 |
 
-**当前枚举账(可复算)**:`smoke/*.gd` **4** + `probe/*.tscn` **8** + `probe/*.gd` 无同名 `.tscn` **4**
-= **枚举 16**;减 `EXCLUDED` **4** ⇒ **跑 12**。
+**当前枚举账(可复算)**:`smoke/*.gd` **5** + `probe/*.tscn` **9** + `probe/*.gd` 无同名 `.tscn` **4**
+= **枚举 18**;减 `EXCLUDED` **4** ⇒ **跑 14**。
 被排除的 4 支 = `smoke/pvp_match_smoke.gd` + `probe/{rejoin,royale_soak,team_match}_probe.tscn`
 (它们都还在枚举集里,所以**必须**留在 `EXCLUDED` —— 清掉规则会让承重安全检查 FATAL 或让它们悄悄占 7777)。
+★ **2026-10-13 订正**:原写"枚举 16 / 跑 12",`smoke` 与 `probe/.tscn` 各少算 1
+(`playout_clock_smoke` 与 `resync_world_probe.tscn`);现行账以 `bash tests/run_all.sh --list` 的
+`[enum]` 三行为准 —— **别手抄这份数字**,它会漂。
 
 ### `run_all.sh` —— 默认批
 
@@ -73,11 +82,18 @@
   某支声明了 `EXPECTED_CHECKS` 却没用于比较。逐条的"去掉什么才红"写在 [`run_all.sh`](run_all.sh) 文件头。
 - ★★ **单支 `OK` 只证明"没有失败输出",不证明"每条断言都跑过"**(权威:[`lib/probe_base.gd`](lib/probe_base.gd) 文件头)。
   表里 `GATE` 栏是 `-` 就表示"**这一支没有条数闸**"。
-  ★★ **2026-10-09 后的新边界(照实写)**:默认批现在带 `m gated-assertions = 0` ——
-  唯一带 `EXPECTED_CHECKS` 的 `settings_display_smoke` 被删了 ⇒ **这 10 支域守卫没有一支能自证
-  "断言都跑过了"**。抽查时按 [`docs/eng/tests.md`](../docs/eng/tests.md) 末节的"看 stderr 有没有
+  ★★ **2026-10-09 后的新边界(照实写)**:默认批带 `m gated-assertions = **16**` ——
+  **三支**有可用的 `EXPECTED_CHECKS` 闸(`playout_clock_smoke` 4 / `replica_smoothness_probe` 8 /
+  `snapshot_size_probe` 4),其余 **11 支没有条数闸** ⇒ 它们只能自证"没有失败输出",不能自证
+  "每条断言都跑过了"。抽查时按 [`docs/eng/tests.md`](../docs/eng/tests.md) 末节的"看 stderr 有没有
   `SCRIPT ERROR`"兜;要补闸请先读 [`test-economy.md`](../docs/eng/test-economy.md) §5.3 第 8 条的裁决
   (本仓**有意不逐支补闸** —— 那是 10 份新增,与削减方向相反)。
+  ★ **2026-10-13 订正**:原写"`m gated-assertions = 0`、唯一带 `EXPECTED_CHECKS` 的
+  `settings_display_smoke` 被删了、这 **10** 支没有一支能自证" —— 三处都不对:
+  `settings_display_smoke` 确实已删,但**另有 3 支在用 `EXPECTED_CHECKS`**(上面那三支),
+  `m` 是 **16** 不是 0,支数是 **14** 不是 10。
+  (复算法 = 照 `run_all.sh` 的 `gate_of()` 离线跑一遍:`EXPECTED_CHECKS := N` **且**同文件里出现
+  拿它比较的表达式才计入 —— 只声明不算闸,见 `run_all.sh:526-544`。)
 
 ### `run_real.sh` —— 真链路批
 
@@ -96,8 +112,9 @@
   ③ **R20 锁**(`run_all.sh` 运行期持 `tests/.run_all.lock`)+ 前后进程;④ **清单不许烂**
   (`tests/{smoke,probe}/*.sh` 每一支必须在 `ENTRIES` 或 `WRAPPERS` 里,且两边每条都要匹配到真实文件)。
 - ★ `team_match_probe.sh` 在 [`registered-debt.md`](../docs/eng/registered-debt.md) §一第 1 行**仍登记为不可信**:
-  根因已修(`9003dae`),但**修复后没有留下六人整跑的判决** ⇒ 它绿了**也不改变**"3v3 今天没有可信
-  端到端守卫"这句。
+  根因已修(`9003dae`);★ **2026-10-13 订正**:原写"修复后没有留下六人整跑的判决"—— 那次判决
+  **2026-10-08 补上了:手工单跑 ⇒ FAIL(8 条)**(见 [`debt/known-red.md`](../docs/eng/debt/known-red.md) 首行)
+  ⇒ 它绿了**也不改变**"3v3 今天没有可信端到端守卫"这句,但**理由从"没跑过"变成"它真红"**。
 
 ### ★★ 默认批绿 ≠ 真链路绿(两条链路覆盖**不相交**)
 
@@ -105,5 +122,6 @@
 输入包**的改动必须**两边都看**。
 
 ★ **2026-10-09 之后还有一条更要紧的**:默认批里**一支也不拉子进程、一支也不开端口**,
-而真链路批只有 5 支 —— ⇒ **本仓今天的自动化回归面合计只有这 17 支**;
+而真链路批只有 5 支 —— ⇒ **本仓今天的自动化回归面合计只有这 19 支**(默认批 14 + 真链路 5);
 玩法、手感、数值、AI 行为、视觉**全部只能靠人眼与试玩**。这不是意外,是那一批的**有意代价**。
+★ **2026-10-13 订正**:原写"17 支"(= 12 + 5),随默认批订正为 **14 + 5 = 19**。

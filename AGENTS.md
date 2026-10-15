@@ -5,7 +5,9 @@
 
 ## ★ 写测试的规矩 —— 该写冒烟、该写探针、还是**该不写**
 
-> **为什么这一节在最前面**:2026-10-09 一次削掉 90%(默认批 **111 支 → 14 支**,删 343 个文件)。
+> **为什么这一节在最前面**:2026-10-09 一次削掉 90%(默认批 **111 支 → 14 支**,删 345 个文件)。
+> ★ **2026-10-13 订正**:原文写"删 343 个文件" —— 实测 `git show --diff-filter=D --name-only 4ae7eed | wc -l`
+> = **345**;默认批 **14** 支(`bash tests/run_all.sh --list` 的 `[enum]` 行)。
 > 复盘结论不是"测试写得不好",而是 **"写得太多"** —— 本仓的默认答案应当是**不写**。
 > 判据与证据:[`docs/eng/test-economy.md`](docs/eng/test-economy.md);
 > 那一次的台账、保留清单与**代价**:[`docs/superpowers/specs/2026-10-09-test-surface-cut-90-design.md`](docs/superpowers/specs/2026-10-09-test-surface-cut-90-design.md)。
