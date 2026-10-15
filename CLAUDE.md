@@ -52,7 +52,7 @@ Godot 不在 PATH,用绝对路径。**4.7.1 标准编辑器**是当前主用版�
 | 移动/跳跃/冲刺/下蹲、姿态碰撞箱、输入注入、残弹与换弹 | [`docs/eng/player.md`](docs/eng/player.md) |
 | Level0 渲染管线、图集、后处理、补间形变 | [`docs/eng/render.md`](docs/eng/render.md) |
 | 调色板与 UiFactory、菜单语汇、HUD、小地图、大厅版式 | [`docs/eng/ui.md`](docs/eng/ui.md) |
-| 大厅/worker、匹配进图、房间与回合、回到大厅、重连、RPC 归属 | [`docs/eng/netplay.md`](docs/eng/netplay.md) |
+| 大厅/worker、匹配进图、房间与回合、回到大厅、重连、RPC 归属 | [`docs/eng/netplay.md`](docs/eng/netplay.md)（2026-10-13 拆:重连 → [`netplay-reconnect.md`](docs/eng/netplay-reconnect.md)、房间寿命与回局 → [`netplay-rooms.md`](docs/eng/netplay-rooms.md)、**RPC 通道号单一来源** → [`netplay-rpc-channels.md`](docs/eng/netplay-rpc-channels.md)） |
 | 快照管线(60Hz 全量编码、丢弃规则、输入队列的延迟累加、带宽实测与主流对照) | [`docs/eng/netcode-snapshots.md`](docs/eng/netcode-snapshots.md) |
 | 3v3、结算页、大乱斗及其已知差异 | [`docs/eng/modes.md`](docs/eng/modes.md) |
 | 探针怎么跑/怎么判、真链路纪律、守卫边界 | [`docs/eng/tests.md`](docs/eng/tests.md) |
