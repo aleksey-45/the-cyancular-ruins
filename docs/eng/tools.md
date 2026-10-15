@@ -9,7 +9,7 @@
 `level_editor/editor.html` + `level_editor/{core,tint,render,io,ui,worker}.js` 是独立浏览器地图编辑器(大图缩放/画笔/图层/辅码),与 Godot 引擎无关。**只通过 `level_editor/serve.bat` 以 HTTP 打开**(`file://` 刻意不支持),服务器是 `level_editor/editor_server.js`(node,只绑 `127.0.0.1:8777`)。旧的 `structure-editor.html` 已退休。
 
 - **格式**:`.cyrm` **v4 二进制**(明文 20 字节头 + deflate + CRC32),四图层、每格 4×4 个 16px 子格、每子格带辅码。**导入**仍认三种输入(v4 二进制 / 带 `# cyrm-v3` 标记的 v3 文本 / 旧字母格式),**导出只有二进制一种**;v3 → v4 的迁移是一次性的,所以打开 v3 文本的图首次 `Ctrl+S` 会弹一次确认。
-- ★★ **游戏侧今天还读不了 v4 —— 那个确认框点下去就是把一张好地图换成游戏打不开的一份。** `core/sim/map_format.gd` 只有"v3 文本 + 旧字母"两条解析分支。实测(把 `maps/demo.cyrm` 迁成 v4 再喂 `MapFormat`):`map_size` 得 `(3, 0)`、`load_map_file` 得 **0 行** —— 整张图变成空的。而**保存**的唯一出口是 `PUT /api/map`,写的正是**仓库里的 `maps/`**;编辑器**没有**浏览器下载/另存到别处的出口,而 `MazeGenerator._random_cyrm` 是**随机取 `maps/` 下任意 `*.cyrm`**,副本一样会进随机池。故迁移是**期 E** 与 `maps/*.cyrm` 一起做的事,在那之前**别在真图上点那个确认框**。
+- ★★ **游戏侧今天读得了 v4**（**2026-10-13 订正**：原文写"还读不了 v4 —— 别点那个确认框"，**与源码相反**，会让人不敢用现行格式）。`core/sim/map_format.gd` 的 `is_v4()` → `MapFormatV4.parse()` 是**现行唯一在跑**的路径；`maps/*.cyrm` 实盘都是 v4。编辑器保存的唯一出口 `PUT /api/map` 写的正是仓库里的 `maps/`，而 `MazeGenerator._random_cyrm` 随机取 `maps/` 下任意 `*.cyrm` ⇒ **迁到 v4 不再是危险操作**。★ 但"**两份格式实现**"这件事没变：`core.js` 是冻结层、与游戏侧 `map_format.gd` 逐字对应，两边改一处必须同步改另一处。
 - **砖形面板已删除**(2026-09-19 裁定):在"子格独立纹理"的模型下,"形状"退化成"这一笔盖哪几个子格",由画笔大小表达(整数大小画整格、`.25/.5/.75` 画子格)。
 - **纹理 22(水面)不在调色板里**:游戏侧它是按地形自动派生的,画了会与游戏不一致。
 - **改编辑器**:`core.js`(格式)/ `tint.js`(辅码像素数学)是**冻结层**,`render.js` / `ui.js` / `io.js` + `worker.js` 是可改层。`core.js` 的注释里写着与游戏侧 `map_format.gd` 逐字对应的几处;两边改一处必须同步改另一处。
