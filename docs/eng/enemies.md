@@ -20,3 +20,17 @@
 - `EnemyBlackBird`:绕背瞬移刺客(睡眠→随机游走→周期性判定玩家另一侧、距玩家 2~6 格(随机)的地板格落点(地板格 + LOS)→起飞上跳→落地播 disappear→白闪→传送→闪后空中播 appear→落地→带跳跃冲锋打 7 伤(穿透无敌帧)→大后跳(命中/未命中都)→回游走,玩家远离入睡);死亡白闪后销毁。数值在 `EnemyParams.BlackBird`。
 - **加新敌人** = 一个 .tscn + 在 **`data/enemies.json`** 的 `enemies` 数组加一条(`id`/`name`/`scene`/`color` 四个字段;`EnemySpawner.TYPES` 是它的运行时加载结果,**不手改**)。spawner 随机取"地板格"(EMPTY 且正下方 SOLID)布点。编辑器侧内嵌的敌人注册表由 `node level_editor/sync-enemies.js` 从 `data/enemies.json` 重新生成(改了 json 忘跑 → 内嵌那份**静默漂移**;`--check` 只校验不写盘,漂移退出 1 并点名首个差异行;该脚本带**键覆盖守卫**,json 里加了字段没抄进 map 会直接 FAIL)。★ 中文显示名那条链已整体删除(2026-09-17):`display_name` 字段 / `EnemySpawner.DISPLAY_NAMES` / `display_name_of()` / `CombatFeedback.notify_enemy_killed` 全没了(用户裁定单机不要击杀播报;PvP 播报走 `kill_event` 载荷自带名字)。
 
+---
+
+## 实测读数（2026-10-13 从**代码注释**搬出）
+
+> 原始台账（带原行号与出处）：[`2026-10-13-comment-diet-ledger.md`](../2026-10-13-comment-diet-ledger.md) §6。
+
+- **落水与落地的重叠率（`enemy_base.gd` 的 squash 过滤依据）**：敌人 `_in_water ∧ is_on_floor()`
+  实测 **239 / 1350 帧**（≈18%）。★ 直接过滤它会**吃掉 13 次真实的落水挤压**
+  （`max scale.x` 从 1.0000 掉到 **1.0861** 的差别）⇒ 当年的做法是**按状态细分**而不是一刀切。
+  ★ **玩家侧是 0**（池底上方只差 0.02~0.18px ⇒ 永不重叠）；原探针已删（2026-10-09），**从未重测**。
+- **飞行敌人的感知口径（`enemy_fly_base.gd`）**：LOS / BFS 缓存 **TTL ≈ 150 ms**（@60Hz）；
+  障碍**只收 ≈600px 内的实体** ⇒ 600px 之外的障碍**不参与避障判断**。
+  ★ 改这两个数要同时想"缓存命中率"与"远处撞墙"两件事 —— 它们是一对取舍。
+
