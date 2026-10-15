@@ -94,18 +94,31 @@ func _run_orchestrator() -> void:
 		get_tree().quit(1)
 		return
 	add_child(RoomManager.new())
+	# ★★ 清上一跑产物**必须看返回值**(2026-10-15,与另两支一致):残留的 `.result` 会被下面的
+	#   `r.begins_with("OK")` 当成本跑读数下判决,而且看不出是旧的。删不掉几乎只有一个原因:
+	#   上一跑的客户端进程还活着(它攥着文件)。
 	if FileAccess.file_exists(ROOM_FILE):
-		DirAccess.remove_absolute(ProjectSettings.globalize_path(ROOM_FILE))
+		if DirAccess.remove_absolute(ProjectSettings.globalize_path(ROOM_FILE)) != OK:
+			print("SOAK: 删不掉上一跑的房号文件 %s —— 残留会被当成本跑读数,故直接退出" % ROOM_FILE)
+			get_tree().quit(1)
+			return
 	for i in range(1, _clients + 1):
 		var p := "user://%s%s.result" % [RESULT_PREFIX, _result_tag(i)]
 		if FileAccess.file_exists(p):
-			DirAccess.remove_absolute(ProjectSettings.globalize_path(p))
+			if DirAccess.remove_absolute(ProjectSettings.globalize_path(p)) != OK:
+				print("SOAK: 删不掉上一跑的 %s —— 残留 .result 会被当成本跑读数,故直接退出" % p)
+				get_tree().quit(1)
+				return
 	var exe := OS.get_executable_path()
+	# ★★ 收住子进程 PID(2026-10-15):原先 `OS.create_process` 的返回值直接丢弃、全文件 `OS.kill`
+	#   0 处 ⇒ 收尾只能按端口杀,而客户端走**临时出站端口** ⇒ 一个卡住的客户端谁也杀不掉,
+	#   唯一的安全网是入口的 `timeout`。这里按 PID 兜底(与 team_match/rejoin 同款)。
+	var child_pids: Array[int] = []
 	for i in range(1, _clients + 1):
-		OS.create_process(exe, PackedStringArray(["--headless", "--path",
+		child_pids.append(OS.create_process(exe, PackedStringArray(["--headless", "--path",
 				ProjectSettings.globalize_path("res://"), "res://tests/probe/royale_soak_probe.tscn",
 				"--", "--role=c%d" % i, "--clients=%d" % _clients,
-				"--match=%d" % _match_secs, "--run=%.0f" % _run_secs]))
+				"--match=%d" % _match_secs, "--run=%.0f" % _run_secs])))
 	print("SOAK: 大厅就绪,%d 客户端已拉起(match=%ds run=%.0fs)" % [_clients, _match_secs, _run_secs])
 	var deadline := Time.get_ticks_msec() + int((_run_secs + 120.0) * 1000.0)
 	while Time.get_ticks_msec() < deadline:
@@ -130,6 +143,18 @@ func _run_orchestrator() -> void:
 			print("  c%d: %s" % [i, r])
 	print("SOAK: %s(%d/%d 客户端正常收尾)" % [
 			"ALL-OK" if bad == 0 else "有 %d 个客户端异常" % bad, _clients - bad, _clients])
+	# ★★ 终局状态**单独一行、可 grep**(2026-10-15):`ALL-OK` 的语义只是"没有客户端崩/挂",
+	#   它**不证明这一局跑完过** —— 观测窗到时(未等到 MATCH_OVER)同样算 OK。而
+	#   `docs/eng/netcode-snapshots.md` 拿 `SOAK: ALL-OK(4/4)` 当多人编解码的证据 ⇒ 引用方必须能分辨。
+	var terminal := 0
+	for i in range(1, _clients + 1):
+		if _read_result(i).contains("跑到 MATCH_OVER"):
+			terminal += 1
+	print("SOAK: 终局状态 —— %d/%d 端观察到 MATCH_OVER%s" % [terminal, _clients,
+			"" if terminal == _clients else "(观测窗到时:读数仍有效,但**不能**当「跑完一局」的证据)"])
+	for pid in child_pids:
+		if OS.is_process_running(pid):
+			OS.kill(pid)
 	get_tree().quit(0 if bad == 0 else 1)
 
 

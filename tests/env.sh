@@ -78,6 +78,24 @@ kill_port_range() {
 	done
 }
 
+# ── 按**命令行**杀本支自己的 Godot 客户端(2026-10-08 加,2026-10-15 提到这里共享)──
+# ★ 为什么必须另开一条:`kill_port` 只认固定端口(客户端用的是**临时出站端口**)、`kill_port_range`
+#   只扫 worker 池,而 `kill_procs "$PID"` 在 Git Bash 下**不可靠**(上面实测:MSYS 的 `$!` 不一定是
+#   Windows PID,taskkill 按它杀不掉)⇒ **早退路径**上客户端会活下来,而入口 `run_real.sh` 的
+#   "跑后 Godot 必须为 0"那条闸判 FAIL ⇒ **整批中止**(实测中止在第 1 支、第 2 支各一次)。
+# ★ 参数是**命令行匹配串**,必须用客户端的 `.tscn` 名(**不是** `.sh`):bash 自己那条命令行含 `.sh`
+#   路径,用 `.sh` 去匹会**把本脚本自己杀掉**。
+kill_clients_by_cmdline() {
+	local pat="${1:-}"
+	if [ -z "$pat" ]; then
+		echo "[env] kill_clients_by_cmdline 需要匹配串" >&2
+		return 1
+	fi
+	powershell.exe -NoProfile -Command \
+		"Get-CimInstance Win32_Process | Where-Object { \$_.Name -like '*Godot*' -and \$_.CommandLine -like '*${pat}*' } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force }" \
+		>/dev/null 2>&1 || true
+}
+
 # 7777 上有没有活着的大厅。
 # ★★ 判据**不能带 `LISTENING`**:ENet 走 **UDP**,而 UDP 行没有状态列
 #   (`UDP  0.0.0.0:7777   *:*   PID`)。2026-09-27 实测:7777 被 PID 28836 占着时,

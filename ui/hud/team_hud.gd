@@ -14,14 +14,6 @@ const ST_MATCH_OVER := 3
 @onready var _score_label: Label = $ScoreWrap/ScoreLabel
 @onready var _ping_label: Label = $PingWrap/PingLabel
 
-# 探针兼容访问口:广播节点已搬进 Broadcast 组件,下面两个转发保住既有读点 —— 零守卫(hud_declarative_probe / combat_hud_visual_probe 已删·2026-10-09)。
-var _big: Label:
-	get:
-		return _broadcast.big if _broadcast != null else null
-var _sub: Label:
-	get:
-		return _broadcast.sub if _broadcast != null else null
-
 var _my_team := 0   # 由外部(match_sync 到达后)写入:team_game 调 set_my_team()
 
 

@@ -72,7 +72,13 @@ static func from_dict(d: Dictionary) -> TimeRules:
 	r.kill_ratio = float(d.get("kill_ratio", DEF_KILL_RATIO))
 	r.block_gain = int(d.get("block_gain", DEF_BLOCK_GAIN))
 	r.damage_gain = int(d.get("damage_gain", DEF_DAMAGE_GAIN))
-	r.haste_mult = float(d.get("haste_mult", DEF_HASTE_MULT))
+	# ★★ 2026-10-15:服务器**不听**载荷里的 `haste_mult`。加速倍率是**用户裁定固定 ×3**、且**不进建房页**
+	#   (见 `DEF_HASTE_MULT` 的注释与 `scenes/lobby_page.gd` 的 `_trow` 清单 —— 那七行里没有 haste),
+	#   所以 3.0 以外的值只可能来自被改过的客户端。`from_dict()` 的唯一调用方就是服务器
+	#   (`server/match/match_host.gd`),故在这里钉死;`to_dict()`(客户端)仍照发,便于将来要放开时对账。
+	#   ★ **仍未闭合的另一半**:1v1 也能塞 `time`(门只在客户端 `scenes/mp_lobby.gd`),
+	#   那一半要服务器认识模式 ⇒ 得往 options 里加 `mode`(协议改动,登记在 debt/guard-strength-gaps.md §21)。
+	r.haste_mult = DEF_HASTE_MULT
 	r.clamp_self()
 	return r
 

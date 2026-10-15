@@ -31,9 +31,11 @@ if lobby_alive; then
 fi
 
 # ★ 起跑前清**本探针自己那一段**的孤儿 worker(`OS.create_process` 起的孙进程,不属于本脚本
-#   记下的 PID)。★ 区间只到 [29250, 29400):**绝不能**扫 [7800, 8300) —— 那是大厅的 worker 池,
+#   记下的 PID)。★ 区间 [29250, 29300):**绝不能**扫 [7800, 8300) —— 那是大厅的 worker 池,
 #   而本探针的既有承诺是"不碰 7800~8299"(那会端掉用户正在跑的对局),见文件头。
-kill_port_range "$PROBE_WORKER_PORT" 29400
+#   ★★ 2026-10-15 收窄:原先扫到 29400,而**池外另一支** `rejoin_probe.sh` 用 29300(大厅)/29350(worker)
+#   ⇒ 两支持续各有残留时会**互相误杀**。29150 起的那 150 个端口够本探针一个 worker 用(pick_port 唯一递增)。
+kill_port_range "$PROBE_WORKER_PORT" 29300
 
 echo "[team] 起探针(大厅端口 $PROBE_LOBBY_PORT,worker 起投 $PROBE_WORKER_PORT;整跑 3~6 分钟)"
 echo "[team] 若长时间无输出:看 user://team_match_probe_cN.godotlog(子进程 stdout 父进程看不到)"
@@ -47,7 +49,7 @@ kill_port "$PROBE_LOBBY_PORT"
 kill_port "$PROBE_WORKER_PORT"
 # ★ 只杀单个端口不够:worker 的端口是 `pick_port()` 发出来的那一个(同一跑里通常等于起投点,
 #   但不是同一个概念)。区间仍**不含** 7800~8299(见文件头的既有承诺)。
-kill_port_range "$PROBE_WORKER_PORT" 29400
+kill_port_range "$PROBE_WORKER_PORT" 29300   # ★ 见上:不含 rejoin 的 29300/29350
 
 echo
 if grep -q "TEAM MATCH PROBE: ALL-OK" "$LOG"; then

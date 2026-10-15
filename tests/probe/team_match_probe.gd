@@ -31,8 +31,13 @@ const FINAL_TIMEOUT := 800.0       # ★ 收工上限。必须 > (boot 三段的
                                    #   仍须 < 子进程安全网 CHILD_QUIT_AFTER(54000 帧 ≈ 900s)。
 # 等 6 份客户端结果文件的上限。★ 必须大于客户端自己的时间线(它们的相位全靠自己的时钟推),且逐项按 watcher 的常量求和算出来 —— 别凭印象写:这行漂过两次(一次把 RENDEZVOUS_MAX 记成 70,实际是 100;一次停在宽限期还是 30s 时的那份求和)。
 #   越时的表象是「只收到 N/6 份客户端结果」,读起来像产品故障,其实是探针自己的预算算错了。逐项:进局 ~5s + SETTLE 1.2 + RENDEZVOUS_MAX 100 + BRAWL_MAX 210 + 换局 SETTLE 1.2 + OBSERVE_MAX 110 + PEER_WAIT 120 ≈ 547.4s;
-#   进局那一档的硬上限是 ENTER_TIMEOUT 90s(不是 5s),最坏 ≈ 632.4s ⇒ 取 680 兜住两种走法。★ 680 < FINAL_TIMEOUT 780;一旦本值超过 780 就必须同步抬 FINAL_TIMEOUT,否则收工上限先到点(症状同样是「只收到 N/6 份结果」)。
+#   进局那一档的硬上限是 ENTER_TIMEOUT 90s(不是 5s),最坏 ≈ 632.4s ⇒ 取 680 兜住两种走法。★ 但要与收工上限对表时**走绝对轴**:本值从 `_start_t` 起算,而 `_start_t` 最晚能到 BOOT_TIMEOUT+60 = 105s ⇒ 本值能到的最晚时刻 = 105+680 = **785**,故 `FINAL_TIMEOUT` 取 800(取 780 会让收工上限先到点,症状同样是「只收到 N/6 份结果」)。
 const RESULT_WAIT := 680.0
+# ★★ 条数闸的**下界**(不是精确数)。为什么只能是下界:相③ 的断言条数随"抽到什么武器"**合法浮动**
+#   (抽到榴弹/激光那几档只进 `_notes`、不占断言账本,见 :419/:465),精确数只能等一次真跑后按实测钉。
+#   这一闸挡的是「跨端断言一条都没跑 / 大片静默跳过」——那几种情况的实得 ≤ 6(`--nospawn`、没有结果文件、
+#   或 `_assert_stage3()` 早退)。★ 与 `tests/lib/probe_base.gd` 文件头那条纪律同源。
+const MIN_CHECKS := 24
 
 var _role := "lobby"
 var _who := "c1"
@@ -49,6 +54,7 @@ var _hb := 30.0
 var _lobby_teams: Dictionary = {}   # 选边完毕那一刻大厅的队伍表(房在开局后被消费掉,不能再读)
 var _failures: Array[String] = []
 var _notes: Array[String] = []
+var _checks := 0                     # ★ 条数闸用:成功也要记账(见 `_finish` 的那道闸)
 var _dims_failed := false           # 地图尺寸读不到的 FAIL 只记一次(见 _grid_dims)
 var _done := false
 
@@ -225,6 +231,11 @@ func _finish(why: String) -> void:
 	_kill_children()
 	if why != "":
 		_check(false, why)
+	# ★★ 条数闸:上面「`_failures` 为空 ⇒ ALL-OK」只等于**没有失败输出**,不证明每条断言都跑过 ——
+	#   脚本错误只结束**出错的那个函数**、调用方继续 ⇒ 后面整段静默跳过、判词照打 ALL-OK。
+	#   (这一支是全仓 3v3 的唯一条真链路证据,所以它自己更要有这道闸。)
+	if _checks < MIN_CHECKS:
+		_check(false, "★ 只跑了 %d 条断言(< MIN_CHECKS=%d)—— 有断言被静默跳过?" % [_checks, MIN_CHECKS])
 	print("═══ 探针明细 ═══")
 	for n in _notes:
 		print("  · " + n)
@@ -362,8 +373,15 @@ func _assert_stage3() -> void:
 				% [teamfmt.size(), CLIENT_COUNT])
 
 	# ── 相① 收敛(C2)──
+	# ★ 一条判定类别 = 一条守卫:逐端一条会退化成 6 条;而**空表**(一端的 CONV 行都没解析出来)
+	#   会让整个循环**一次不跑** ⇒ 静默通过。⇒ 先判"六端都写了",再判"六端都对"。
+	_check(conv_ok.size() == CLIENT_COUNT, "相① 六端都写出了 CONV(收敛)读数(实得 %d)" % conv_ok.size())
+	var conv_bad := 0
 	for r in conv_ok:
-		_check(bool(conv_ok[r]), "相① role %d 本地玩家与权威快照收敛" % r)
+		if not bool(conv_ok[r]):
+			conv_bad += 1
+	_check(conv_ok.size() == CLIENT_COUNT and conv_bad == 0,
+			"相① 六端本地玩家与权威快照收敛(不符 %d 端)" % conv_bad)
 
 	# ── 相② 按队散点:队内最大距离 < 队间最小距离 ──
 	if r1.size() == CLIENT_COUNT:
@@ -515,7 +533,9 @@ func _assert_stage3() -> void:
 			bo_tags.append(i)
 			bo_max = maxi(bo_max, int(_tok(bkl, "n", "0")))
 		if ka >= 1:
-			_check(true, "相④ 真实交火击杀 %d 次(读数;这一栏**不是**「非空转」的证明 —— 见下一行的回退模式读数)" % ka)
+			# ★ 读数,不是断言:恒真的 `_check(true, …)` 是**恒绿空断言**(把"没验到"伪装成"验过了"),
+			#   而且它还会算进条数闸、稀释闸的语义。⇒ 只进 `_notes`。
+			_notes.append("相④ 真实交火击杀 %d 次(读数;这一栏**不是**「非空转」的证明 —— 见回退模式读数)" % ka)
 		var bo_txt := ("**无端报告启用回退模式(REC BACKOFF)**" if bo_tags.is_empty()
 				else "**回退模式(REC BACKOFF)被 %d 端启用(最大 n=%d),回合有一部分是它推的**"
 						% [bo_tags.size(), bo_max])
@@ -654,6 +674,21 @@ func _clean() -> bool:
 					print("PROBE: 删不掉上一跑的 %s(错误 %d)—— 多半是上一跑的进程还活着;"
 							% [p, err] + "残留文件会被当成本跑的读数下判决,故直接退出")
 					return false
+	# ★★ 还要清 **worker 自己的日志**:`_stage_collect` 判"3v3 worker 就绪"靠 grep 它
+	#   (`user://logs/worker_<port>.log`)—— 不清的话,在"新 worker 还没打开该文件"的启动窗口里
+	#   会读到**上一跑**那一行,把"30s 内没报就绪"这条能指路的提示压掉。只扫池外那一段端口。
+	var wdir := DirAccess.open("user://logs")
+	if wdir != null:
+		for fn in wdir.get_files():
+			if not fn.begins_with("worker_"):
+				continue
+			var wport := int(fn.trim_prefix("worker_").get_basename())
+			if wport < WORKER_PORT_OUT or wport >= WORKER_PORT_OUT + 150:
+				continue
+			var werr := DirAccess.remove_absolute(ProjectSettings.globalize_path("user://logs/" + fn))
+			if werr != OK:
+				print("PROBE: 删不掉上一跑的 worker 日志 %s(错误 %d)—— 残留会被当成本跑的就绪读数" % [fn, werr])
+				return false
 	return true
 
 
@@ -751,6 +786,7 @@ func gap_max(a: Array) -> float:
 
 
 func _check(ok: bool, msg: String) -> void:
+	_checks += 1
 	if ok:
 		print("  OK  %s" % msg)
 	else:

@@ -71,20 +71,3 @@ func advance(delta: float) -> void:
 	if absf(err) > DRIFT_SLACK:
 		corr = clampf((err - signf(err) * DRIFT_SLACK) * DRIFT_GAIN, -DRIFT_MAX, DRIFT_MAX)
 	render_tick += (1.0 + corr) * delta * TICKS_PER_SEC
-
-
-## 纠偏误差(正 = 我们落后参考)。读数用;判据不直接断它。
-func error_ticks() -> float:
-	return target_tick() - render_tick
-
-
-func offset_min_ms() -> float:
-	return _o_min
-
-
-func started() -> bool:
-	return _started
-
-
-func playout_ticks() -> int:
-	return _playout

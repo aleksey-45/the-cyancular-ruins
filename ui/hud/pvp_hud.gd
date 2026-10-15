@@ -15,14 +15,6 @@ const ST_MATCH_OVER := 3
 @onready var _grace_wrap: PanelContainer = $GraceWrap
 @onready var _grace_label: Label = $GraceWrap/GraceLabel
 
-# 探针兼容访问口:广播节点已搬进 Broadcast 组件,这两个转发保住既有读点(_big / _mask)。零守卫(combat_hud_visual_probe / minimap_circle_probe 已删·2026-10-09)。
-var _mask: ColorRect:
-	get:
-		return _broadcast.mask if _broadcast != null else null
-var _big: Label:
-	get:
-		return _broadcast.big if _broadcast != null else null
-
 # 「对手掉线中」(role(int) -> 剩余秒):★ 服务器只在状态转折点广播 grace,两次之间由本类自己走秒(与 Broadcast.tick 同一取舍);那份减法的唯一实现是 GraceWindow.tick_display(别在这里手写一份)。
 var _grace: Dictionary = {}
 

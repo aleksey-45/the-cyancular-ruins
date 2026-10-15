@@ -76,7 +76,3 @@ func prune(now_ms: int) -> int:
 			_by_token.erase(tk)
 			n += 1
 	return n
-
-
-func size() -> int:
-	return _by_token.size()

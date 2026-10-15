@@ -18,6 +18,9 @@ const REPLICA_COUNT := 5          # 3v3:自己以外 5 个角色(副本数是**�
 # ── 时间预算(逐条都有理由;改前先读相位注释)──
 const ENTER_TIMEOUT := 90.0      # 从挂页到"进 team_game 且拿到队伍表"的兜底
 const TEAMS_TIMEOUT := 25.0      # 进局后等 match_sync 应答
+const ROUND_STATE_TIMEOUT := 30.0 # ★ TEAMS 到手后还要等 round_state 进 1(开局广播);原来这一段是**无界**的
+                                  #   (唯一的安全网是子进程的 --quit-after)⇒ 卡住时症状变成"6 份结果文件都没有",
+                                  #   而不是一条点名的客户端失败。与 TEAMS_TIMEOUT 累加 ≈55s < ENTER_TIMEOUT 90。
 const SETTLE := 1.2              # PLAYING 后静置多久再采样(COUNTDOWN 期间输入冻结,人不会动)
 const POS_TOL := 100.0           # C2 收敛判据(px):快照滞后一 tick ≈ 11.7px,100 留足余量
 # 相③ 的「到位」判据。★ 子弹那一半与榴弹那一半不同:任务书对子弹只说「朝队友开一枪」,对榴弹才要求「贴脸」。把子弹也卡在 170px 会让整相挂在走位上(留存的 6 份判决日志里,甲一次都没进过 170px),
@@ -79,6 +82,7 @@ var _bot = null
 var _entered := false
 var _phase := PH_LOBBY
 var _phase_t := 0.0
+var _round_state_t := -1.0       # ★ 见 ROUND_STATE_TIMEOUT:从 TEAMS 到手那一刻起算(与 _phase_t 分开)
 var _t := 0.0
 var _role := 0
 var _team := 0
@@ -489,6 +493,7 @@ func _tick_enter() -> void:
 		if t is Dictionary and not (t as Dictionary).is_empty():
 			_teams = (t as Dictionary).duplicate()
 			_team = int(_teams.get(_role, 0))
+			_round_state_t = _phase_t    # ★ 起点:接下来等 round_state 的那一段单独计时
 			_rec("TEAMS role=%d team=%d map=%s" % [_role, _team, _teams_str()])
 			_log("队伍表:role=%d team=%d %s" % [_role, _team, _teams_str()])
 			# 相③ 角色指派(全端各自独立算出同一结果,不需要协调):
@@ -508,6 +513,11 @@ func _tick_enter() -> void:
 			_finish()
 			return
 	if _round_state != 1:
+		# ★★ 有界(见 ROUND_STATE_TIMEOUT):没有这条,本端会一直停在 PH_ENTER,而**探针那边看不见**
+		#   —— 症状退化成"某几端没有结果文件",整条 3v3 链路的失败信息就指不到"进局广播没来"。
+		if _round_state_t >= 0.0 and _phase_t - _round_state_t > ROUND_STATE_TIMEOUT:
+			_fail("TEAMS 到手后 %.0fs 没等到 round_state=1(进局广播没来)" % ROUND_STATE_TIMEOUT)
+			_finish()
 		return
 	_phase = PH_PLAY
 	_phase_t = 0.0

@@ -34,7 +34,10 @@ kill_port_range 7800 8300     # 没有活大厅 ⇒ 池里的是上一跑遗留�
 
 echo "[soak] 客户端=$CLIENTS 一局=${MATCH}s 观测窗=${RUN}s"
 cd "$PYDIR" || exit 1
-"$GODOT" --headless --path . res://tests/probe/royale_soak_probe.tscn \
+# ★★ 2026-10-15:补 `--quit-after 54000`(≈900s @60fps 的安全网)。兄弟支 rejoin/team 都有,
+#   本支原先**没有** ⇒ 探针卡住时谁也收不了它(客户端走临时端口,按端口杀够不着;
+#   探针那边的子进程 PID 兜底也是同日才补的)。安全网 > 探针自己的编排期限(RUN+120s)。
+"$GODOT" --headless --path . --quit-after 54000 res://tests/probe/royale_soak_probe.tscn \
     -- --clients="$CLIENTS" --match="$MATCH" --run="$RUN" 2>&1 | tee "$LOG"
 # ★★ 2026-10-15:必须取 PIPESTATUS[0](探针的退出码),`$?` 拿到的是 **tee** 的 —— 结构性恒 0,
 #   于是"探针崩了"这条读数被静默变成 0。兄弟支(rejoin/team)都用 PIPESTATUS,本支漏了。
@@ -47,8 +50,17 @@ kill_port 7777
 kill_port_range 7800 8300
 
 echo
+# ★★ 2026-10-15:PASS 仍以"没有客户端崩/挂"为判据(`SOAK: ALL-OK`),但**把终局状态打出来** ——
+#   `ALL-OK` 不证明这一局跑完过(观测窗到时也算 OK),而引用方会拿它当"跑完一局"的证据。
+#   终局状态由探针单独打一行 `SOAK: 终局状态 —— N/M 端观察到 MATCH_OVER`(可 grep)。
 if grep -q "SOAK: ALL-OK" "$LOG" && ! grep -qE "SCRIPT ERROR|无结果文件|Parse Error" "$LOG"; then
-  echo "[soak] PASS —— 读数见 $LOG"
+  _term=$(grep -o "SOAK: 终局状态.*" "$LOG" | tail -1)
+  if grep -q "端观察到 MATCH_OVER(" "$LOG"; then
+    echo "[soak] PASS(**未终局** —— 观测窗到时;读数有效,但不能当「跑完一局」的证据)"
+    echo "[soak] $_term"
+  else
+    echo "[soak] PASS(终局:每端都看到 MATCH_OVER)—— 读数见 $LOG"
+  fi
   exit 0
 fi
 echo "[soak] FAIL(退出码 $RC)—— 见 $LOG"

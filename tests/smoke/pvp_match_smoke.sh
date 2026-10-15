@@ -24,11 +24,8 @@ kill_port_range 7800 8300
 #   `run_real.sh` 的"跑后 Godot 必须为 0"那条闸会判 FAIL ⇒ **整批中止在第 1 支**。
 #   ★ 匹配串用 **`pvp_match_smoke.tscn`**(不是脚本名):bash 自己那条命令行含 `.sh` 路径,
 #     用 `.sh` 名字去匹会**把本脚本自己杀掉**;`.tscn` 只出现在客户端的命令行里(服务器是 `server_main.tscn`)。
-kill_my_clients() {
-	powershell.exe -NoProfile -Command \
-		"Get-CimInstance Win32_Process | Where-Object { \$_.Name -like '*Godot*' -and \$_.CommandLine -like '*pvp_match_smoke.tscn*' } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force }" \
-		>/dev/null 2>&1 || true
-}
+# ★ 2026-10-15:实现提到 `env.sh` 共享(另一支 `pvp_room_smoke.sh` 也要同一段);这里只留别名。
+kill_my_clients() { kill_clients_by_cmdline 'pvp_match_smoke.tscn'; }
 
 echo "== 启动服务器 =="
 "$GODOT" --headless --path . res://server/server_main.tscn > /tmp/pvp2_server.log 2>&1 &

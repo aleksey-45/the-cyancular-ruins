@@ -307,16 +307,25 @@
     | `royale_soak_probe.sh` 的 `RC=$?` | `\| tee` 之后拿到的是 **tee** 的退出码(结构性恒 0)⇒ "探针崩了"被静默变成 0 | 判据一律 grep 文本,退出码从来不是判据 ⇒ 没人发现(兄弟两支用 `PIPESTATUS`,本支漏了) |
     | 三支真链路脚本在 7777 有活大厅时的处置 | `pvp_match_smoke` / `pvp_room_smoke` **照跑**、`royale_soak_probe` **直接杀属主**;而服务器 `_ready` 本来就会 `kill_udp_port(7777)` ⇒ **会端掉用户正在进行的对局** | 批内由 `run_real.sh` 的闸一挡住 ⇒ 暴露面是**手动单跑**,而 `run_real.sh` 的收尾正好邀请手动单跑;脚本里那句"那时本脚本本来也 bind 不上"是**错的** |
 
-    ★★ **未修(登记,按值得修的程度排)**:
-    - **`team_match_probe` 没有条数闸,且有两条可空转的断言**:`_check(true, …)` 恒真;`for r in conv_ok:` 在六端都没写 CONV 行时**一次不跑也不记失败** ⇒ 3v3 **唯一**那支真链路的 `ALL-OK` 可以**什么都不验**。**与 §17/§18 同族(编辑器侧刚补完闸),而且它落在全仓最当眼的证据上。**
-    - `pvp_room_smoke.sh` 早退留活客户端(`taskkill //F //PID $!` 在 Git Bash 下**杀不掉**;客户端走**临时出站端口** ⇒ `kill_port*` 够不着)⇒ 入口"跑后 Godot 必须为 0"判 FAIL ⇒ **整批中止在第 2 支**。兄弟支 `pvp_match_smoke.sh:15-26` 已有 `kill_my_clients` 模板。
-    - `royale_soak_probe`:**(a)** 未等到 `MATCH_OVER` 也打 `SOAK: ALL-OK`(唯一痕迹是结果文件里的自由文本,没有判据 grep 它;而 [`netcode-snapshots.md`](../netcode-snapshots.md) 拿它当多人编解码证据);**(b)** 起探针**没有** `--quit-after`,且丢弃 `OS.create_process` 的 pid(全文件 `OS.kill` **0 处**)⇒ 卡住的客户端只有入口 `timeout` 一张网;**(c)** `DirAccess.remove_absolute` 的返回值被丢弃 ⇒ 残留 `.result` 会被当**本跑**读数(另两支为此**整段收工**)。
-    - 两支**池外区间重叠**:`team_match_probe.sh` 扫 `[29250,29400)`,**含** rejoin 的 29300(大厅)/29350(worker)⇒ 并发或残留时会互相误杀。
-    - `pvp_room_smoke.sh` 仍停在 §五.9 修前形态(固定 `sleep 3` + 轮询无存活判据 + 判词固定"建房客户端未拿到房间号")⇒ **判词指向错嫌疑人**。
-    - `team_match_watcher.gd` 的 `_tick_enter` 有一处**无界等待**(拿到 TEAMS 到 PLAYING 之间没有超时,唯一网是子进程的 `--quit-after`)⇒"求和覆盖了 watcher 时间线"不严格成立。
-    - **时间规则是客户端可写的规则通道**:门只在客户端(`PvpSession.beta_mode and 模式 != 1v1`),服务器**照单全收** ⇒ 改过的客户端能把 `haste_mult` 提到 10(钳制上限),或把时间经济塞进没勾 Beta 的 1v1。本仓明说不承担反作弊 ⇒ **登记,不修**(要修就服务器侧钉死 `DEF_HASTE_MULT` + 拒 1v1 的 `time`)。
-    - **零读者访问器**:`core/net/playout_clock.gd` 的 `error_ticks()` / `offset_min_ms()` / `started()` / `playout_ticks()`、`server/lobby/rejoin_registry.gd` 的 `size()`(读它的探针 2026-10-09 已删)⇒ 与 [`netplay.md`](../netplay.md) §6 同族。
-    - [`functional-boundaries.md`](functional-boundaries.md) 写 `soak_bot_input`"从没给它排过 attack",而源码里它自己在 `"shoot"` 相位按 attack(约 2/12 占空比)⇒ **文档与源码相反**,那半句要订正。
+    ★★ **同日第二批:上面那份"未修"清单里除一条外全部修掉了**(§21 记的是"修前状态",保留以便回溯):
+
+    | 已修(第二批) | 修法 |
+    |---|---|
+    | **`team_match_probe` 没有条数闸 + 恒真断言 + 可空转循环**(3v3 **唯一**真链路的 `ALL-OK` 可以什么都不验) | 加 `_checks` 计数 + `MIN_CHECKS := 24` 闸(★ 取**下界**:相③ 的条数随抽到的武器合法浮动,精确数要真跑后钉);`if ka >= 1: _check(true, …)`(读数伪装成断言)改 `_notes.append`;`for r in conv_ok:`(空表时**一次不跑**)改成"先判六端都写了 + 再判六端都对"两条 |
+    | `pvp_room_smoke.sh` 早退留活客户端 ⇒ **整批中止在第 2 支** | 共享助手提到 [`tests/env.sh`](../../../tests/env.sh) 的 `kill_clients_by_cmdline <客户端 .tscn 名>`(两支各留一行别名);本支**每条退出路径**都调 + 早退补 `kill_port_range` |
+    | `royale_soak_probe` 三缺 | **(a)** 探针多打一行可 grep 的 `SOAK: 终局状态 —— N/M 端观察到 MATCH_OVER`(`.sh` 也据此区分 `PASS(终局)` / `PASS(未终局)`);**(b)** `.sh` 补 `--quit-after 54000`,探针收住子进程 PID 并在收尾 `OS.kill`;**(c)** 两处 `remove_absolute` 判定返回值,失败即点名 + `quit(1)` |
+    | 两支池外区间重叠(team 扫 `[29250,29400)` 含 rejoin 的 29300/29350) | team 收窄到 `[29250,29300)` |
+    | `pvp_room_smoke.sh` 停在 §五.9 修前形态(固定 `sleep 3` + 无存活判据 + 判词指错嫌疑人) | 照兄弟支改成**有界轮询 + 存活判据 + 判词点名真嫌疑**(三处:`服务器就绪`/房间号/`match_start`) |
+    | `team_match_watcher.gd` 的 `_tick_enter` 无界等待 | 加 `ROUND_STATE_TIMEOUT := 30.0`(**从 TEAMS 到手那一刻单独计时**,不会因 match_sync 慢而假红;合计 < `ENTER_TIMEOUT 90`) |
+    | `_clean()` 不清 **worker 日志**(`user://logs/worker_<port>.log`)⇒ 启动窗口里能读到上一跑那行"就绪" | 一并清,删不掉即收工(只扫池外那一段端口) |
+    | **零读者访问器** | 删:`ui/hud/pvp_hud.gd` / `team_hud.gd` 的 4 个探针兼容转发(`_mask`/`_big`/`_sub`,**连内部都没用**)、`core/net/playout_clock.gd` 的 4 个、`server/lobby/rejoin_registry.gd` 的 `size()`(全仓零读者、无字符串式 `call()`) |
+    | **时间规则客户端可写**(半条) | `TimeRules.from_dict()` 把 `haste_mult` **钉死成 `DEF_HASTE_MULT`**(服务器不听载荷;`from_dict` 的唯一调用方就是服务器,而 haste **不进建房页** ⇒ 3.0 以外的值只可能来自被改过的客户端) |
+
+    ★ **仍开着的只剩一条**(需要**协议改动**,不在"顺手修"的射程内):
+    **1v1 也能塞 `time`** —— 那道门只在客户端(`scenes/mp_lobby.gd`:`PvpSession.beta_mode and 模式 != 1v1`),
+    而 worker 侧的 `options` **不带 `mode`** ⇒ 服务器无从判断"这一局该不该有颗粒经济"。
+    要闭合得往 `_build_options()` 里加 `mode` 字段并在 `match_host.gd` 侧忽略 1v1 的 `time`(改协议 = 档 3,要真链路批 + 逐任务评审)。
+    ★ 本仓明说不承担反作弊 ⇒ 这一条的定性是**协议完备性**,不是安全缺口。
 
     ★★★ **本批真正的模式发现 —— 「锚点/路径被搬家 ⇒ 守卫静默失效」,一天之内撞见三例**:
     ① `reconnect_smoke` 的 `_func_body` 锚在**已搬走的函数**里(按钮挪进 `.tscn`)⇒ 恒假、永远红(2026-10-04 登记,该支已删);

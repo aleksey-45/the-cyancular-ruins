@@ -107,5 +107,7 @@
   ① 静默 `return` 没建出枪；② `canonical_pos` 与画出来的位置分家。
 - **幻影空洞**：顺序必须是"**先还原 + 再应用 == 服务器的 grid**"（不上线任何新字节）；**反过来症状与
   "根本没还原"逐字相同**。`reset_destructibles()` 只重铺瓦片层 + 重建碰撞（**不碰**玩家/子弹/地面武器）。
-- **菜单守卫的"探针兼容访问口"现在是零读者**：`ui/hud/pvp_hud.gd` / `team_hud.gd` 里为已删探针留的转发
-  **已经没有读者**（清理候选，见 [`debt/unverifiable-boundaries.md`](debt/unverifiable-boundaries.md) 的兄弟条目）。
+- **菜单守卫的"探针兼容访问口"已清理**（2026-10-15）：`ui/hud/pvp_hud.gd` / `team_hud.gd` 里为已删探针
+  留的四个转发（`_mask` / `_big` / `_sub`）**全仓零读者**（连内部都不用）⇒ 删除；同族一并清掉
+  `core/net/playout_clock.gd` 的 `error_ticks()` / `offset_min_ms()` / `started()` / `playout_ticks()`
+  与 `server/lobby/rejoin_registry.gd` 的 `size()`（读它们的探针 2026-10-09 已删）。
