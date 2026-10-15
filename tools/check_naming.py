@@ -10,7 +10,7 @@
 #   python tools/check_naming.py -v         # 连"已接受的偏差"也列出来
 #   python tools/check_naming.py --report   # 只报告不失败(摸底用)
 #   python tools/check_naming.py --self-test # 检查器**自己**的自测(见 self_test():每条都答得出
-#                                            #   "去掉什么它才会红";现覆盖规则 A 与规则 E)
+#                                            #   "去掉什么它才会红";现覆盖规则 A、C、E)
 #                                            #   —— 退出码 0 = 自测通过
 #
 # 检查五条:
@@ -136,46 +136,77 @@ def check_class_names() -> None:
 def check_doc_paths() -> None:
     # ★ 2026-10-03:`CLAUDE.md` 拆成索引之后,正文住 `docs/eng/*.md`。**分域文档必须继续被本检查覆盖**
     #   —— 否则"文档引用的路径必须存在"这条会在拆分那一刻**静默失效**(最常见的那种假绿)。
-    seen: dict[str, str] = {}          # tok → 引用它的文档(报错要点名)
     for doc in DOC_FILES:
         full = os.path.join(PROJECT, doc)
         if not os.path.exists(full):
             _fail.append("C 文档不存在: %s(检查表写错了?)" % doc)
             continue
         text = open(full, encoding="utf-8", errors="replace").read()
-        # ★ 2026-10-13 补(同一次加固的第二半):**"引用一个已不存在的路径"不等于违规** ——
-        #   本仓大量文档在**记录"它已删"**(测试面削减台账、注销登记、迁移记录就是这么写的)。
-        #   所以按**行**判定:该行若已明说"没了/搬走了",就不再要求路径存在,交给人工判断。
-        #   没有这一半的话,加固会把 30 条**正确的历史记录**判成违规 ⇒ 逼人删掉有价值的信息
-        #   (这正是"守卫逼人变坏"的形态)。标记词表刻意窄:只收"明确表示不在了"的说法。
-        GONE = ("已删", "已移除", "已移走", "已移动", "已迁移", "已退休", "已退役",
-                "退役", "不存在", "封存", "被取代", "已作废")
-        for line in text.split("\n"):
-            if any(g in line for g in GONE):
+        for tok in doc_path_violations(text, doc):
+            _fail.append("C %s 引用了不存在的路径: %s" % (doc, tok))
+
+
+def doc_path_violations(text: str, doc: str) -> list[str]:
+    """规则 C 的**纯函数**形态:一段文档文本里"指向不存在路径"的引用(返回短标签,供报错点名)。
+
+    抽出来是为了让 `--self-test` 能喂**合成文本** —— 否则"这条规则能不能红"只能靠真去改仓库里的
+    文档(与规则 A 抽 `dir_name_violation()` 同款理由)。三处口径各自防一类假绿/假红:
+
+    - **行级豁免**:该行已明说"已删/已移走"就不再要求存在。本仓大量文档在**记录"它已删"**
+      (测试面削减台账、注销登记);没有这一半,加固会把这 30 条**正确的历史记录**判违规
+      (2026-10-13 实测),等于逼人删掉有价值的信息 —— 那正是"守卫逼人变坏"的形态。
+      词表刻意窄:只收"明确表示不在了"的说法。
+    - **反引号**:要求首段是真实存在的目录。★ 这一条**只挡得住"首段不是目录"的简写**
+      (`kh_l1/l3/l4_probe.tscn` —— 它意指 kh_l1_probe / kh_l3_probe / …);而 `tests/probe/kh_l1/l3/…`
+      这种**首段是真目录**的简写**仍会被判违规**,这是**有意**的:那种写法作为路径本就是歧义的,
+      该改写成明确的文件名(自测 ⑦-⑦/⑦-⑧ 把这两种形态都钉住了)。
+      `:NN` / `:NN-MM` 后缀先剥掉 —— 否则**缀一个行号就能让失效路径绕过检查**(2026-10-13 修的洞:
+      `tests/manual/brawl_rollback_probe.gd:55` 因字符类不含 `:` 而整条不匹配,该文件 2026-10-09 已删,
+      检查却一直绿)。
+    - **markdown 链接目标**(2026-10-13 加):**按所在文档的目录**解析相对路径。原实现只看反引号
+      ⇒ 相对链接写错(仓里已 404 过两次,见 `docs/eng/debt/functional-boundaries.md` §五.11)
+      没有任何机械守卫。
+    """
+    GONE = ("已删", "已移除", "已移走", "已移动", "已迁移", "已退休", "已退役",
+            "退役", "不存在", "封存", "被取代", "已作废")
+    bad: list[str] = []
+    seen: dict[str, bool] = {}          # 路径(或链接解析结果) → 是否不存在
+    doc_dir = os.path.dirname(doc)
+
+    def missing(rel: str) -> bool:
+        return not os.path.exists(os.path.join(PROJECT, rel.rstrip("/")))
+
+    for line in text.split("\n"):
+        if any(g in line for g in GONE):
+            continue
+        for tok in re.findall(r"`([A-Za-z0-9_./:-]+)`", line):
+            tok = re.sub(r":\d+(-\d+)?$", "", tok)      # 去掉 `:214` / `:214-215` 这类行号后缀
+            if ":" in tok or "/" not in tok or not tok.endswith(DOC_EXTS):
                 continue
-            # ① 反引号里的带扩展名文件路径。
-            #    ★ 要求**首段是真实存在的目录**,否则会吃到文档里的简写 —— 例如 docs/eng/tests.md 的
-            #      `kh_l1/l3/l4/l5_probe.tscn`(指 kh_l1_probe / kh_l3_probe / …),那不是路径。
-            #      代价:整段目录名都写错的那种(首段也不存在)① 会漏,由 ② 的裸目录检查兜。
-            #    ★ 2026-10-13 修(文档订正执行者实测报的洞):原正则的字符类**不含 `:`**,于是
-            #      `` `tests/manual/brawl_rollback_probe.gd:55` `` 这种**带行号的引用整条不匹配**
-            #      ⇒ 只要在末尾缀一个 `:55`,就能让一个**已不存在的路径**绕过本检查(实测:该文件已于
-            #      2026-10-09 删除,而检查一直绿)。现在允许 `:`,再把 `:NN` / `:NN-MM` 后缀剥掉后校验。
-            for tok in re.findall(r"`([A-Za-z0-9_./:-]+)`", line):
-                tok = re.sub(r":\d+(-\d+)?$", "", tok)      # 去掉 `:214` / `:214-215` 这类行号后缀
-                if ":" in tok or "/" not in tok or not tok.endswith(DOC_EXTS):
-                    continue
-                if tok.startswith(("http", "res://")):
-                    continue
-                head = tok.split("/", 1)[0]
-                if os.path.isdir(os.path.join(PROJECT, head)):
-                    seen.setdefault(tok, doc)
-        # ② 代码块里以 `dir/` 开头的裸目录名(README 的「目录」段就是这种写法)
-        for tok in re.findall(r"^\s*([a-z_]+/)\s", text, re.M):
-            seen.setdefault(tok, doc)
+            if tok.startswith(("http", "res://")):
+                continue
+            if not os.path.isdir(os.path.join(PROJECT, tok.split("/", 1)[0])):
+                continue        # 首段不是真目录 ⇒ 是简写,交给 ② 的裸目录检查兜
+            if tok not in seen:
+                seen[tok] = missing(tok)
+        for target in re.findall(r"\]\(([^)]+)\)", line):
+            t = target.strip().strip("<>").strip()
+            if t == "" or t.startswith(("http://", "https://", "mailto:", "#", "/", "res://")):
+                continue
+            t = t.split("#", 1)[0]
+            if t == "":
+                continue
+            rel = os.path.normpath(os.path.join(doc_dir, t)).replace("\\", "/")
+            if rel not in seen:
+                seen[rel] = missing(rel)
     for tok in sorted(seen):
-        if not os.path.exists(os.path.join(PROJECT, tok.rstrip("/"))):
-            _fail.append("C %s 引用了不存在的路径: %s" % (seen[tok], tok))
+        if seen[tok]:
+            bad.append(tok)
+    # ② 代码块里以 `dir/` 开头的裸目录名(README 的「目录」段就是这种写法)
+    for tok in re.findall(r"^\s*([a-z_]+/)\s", text, re.M):
+        if missing(tok):
+            bad.append(tok)
+    return bad
 
 
 def check_tscn() -> None:
@@ -407,6 +438,30 @@ def self_test() -> int:
     finally:
         shutil.rmtree(tmp_e, ignore_errors=True)
 
+    # ⑦ 规则 C(**纯函数**形态,2026-10-13 加):喂合成文本 —— 这是台账点名的欠账
+    #    (`docs/eng/debt/functional-boundaries.md` §五.12:"并配一条**能红**的自测")。
+    #    每条都答得出"去掉什么才会红"。
+    want(len(doc_path_violations("见 `tests/nope_xyz.gd`", "docs/eng/x.md")) == 1,
+         "⑦-① 不存在的反引号路径没被报出 —— 删掉 doc_path_violations() 的反引号分支才会绿")
+    want(len(doc_path_violations("见 `tests/nope_xyz.gd:55`", "docs/eng/x.md")) == 1,
+         "⑦-② 带 `:55` 行号后缀的失效路径没被报出 —— 去掉剥 `:NN` 的那行就会红(2026-10-13 修的洞)")
+    want(len(doc_path_violations("见 `core/sim/world_rewind.gd`", "docs/eng/x.md")) == 0,
+         "⑦-③ 真实存在的路径被误报")
+    want(len(doc_path_violations("[计划](../superpowers/plans/2026-10-04-tile-destruction-consistency.md)",
+                                 "docs/eng/x.md")) == 0,
+         "⑦-④ 正确的相对链接被误报 —— 链接目标按**所在目录**解析,别按仓库根")
+    want(len(doc_path_violations("[计划](superpowers/plans/2026-10-04-tile-destruction-consistency.md)",
+                                 "docs/eng/x.md")) == 1,
+         "⑦-⑤ 少一层的相对链接(真 404,仓里犯过两次)没被报出 —— 去掉链接分支才会绿")
+    want(len(doc_path_violations("`tests/manual/brawl_rollback_probe.gd`（已删·2026-10-09）",
+                                 "docs/eng/x.md")) == 0,
+         "⑦-⑥ 已明说'已删'的行仍被判违规 —— 没有行级豁免会把 30 条正确的历史记录判红,逼人删信息")
+    want(len(doc_path_violations("`kh_l1/l3/l4_probe.tscn`", "docs/eng/x.md")) == 0,
+         "⑦-⑦ 首段不是真目录的简写被误报 —— '首段是目录'这条启发式该挡住的正是这一形态")
+    want(len(doc_path_violations("`tests/probe/kh_l1/l3/l4_probe.tscn`", "docs/eng/x.md")) == 1,
+         "⑦-⑧ 首段是真目录的简写没被报出 —— ★ 这是**有意**判违规的(歧义路径该改写成明确文件名);"
+         "若哪天想放行它,必须先想清楚'歧义简写'与'真路径'怎么区分,别顺手把 ⑦-① 一起放行")
+
     if fails:
         print("— 自测失败 %d 条 —" % len(fails))
         for f in fails:
@@ -414,6 +469,7 @@ def self_test() -> int:
         print("\n命名检查自测 FAIL(检查器自身有洞;修的是 tools/check_naming.py 而不是别的)")
         return 1
     print("命名检查自测 OK(规则 A:顶层目录被产出 / 大写名会被报出 / SKIP_DIRS 与点开头目录照旧跳过;"
+          "规则 C:失效反引号路径、带 `:NN` 后缀的、少一层的相对链接都会被报出,而已删行与'首段非目录'的简写不报;"
           "规则 E:裸 LF 与非 ASCII 无 BOM 会被报出 / BOM+非 ASCII 与纯 ASCII+CRLF 不报 / .bat 不查编码)")
     return 0
 
