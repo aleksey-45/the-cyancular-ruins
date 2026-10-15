@@ -22,18 +22,23 @@ PYDIR="$ENV_DIR"   # 仓库根(env.sh 已算好并 cd 过去;保留别名以免�
 echo "[soak] 检查 7777 是否空闲…"
 # ★ 判据**不带 `LISTENING`**:ENet 走 UDP、UDP 行没有状态列 ⇒ 带它是**结构性恒假**
 #   (2026-09-27 实测),原先这一支的"已被占用 ⇒ 清理"**从未触发过**。理由见 env.sh 的 lobby_alive。
+# ★★ 2026-10-15:**改了处置** —— 从前是"占用 ⇒ 杀属主 + 扫池",那会**端掉用户正在进行的对局**
+#   (服务器 `_ready` 本来就 `kill_udp_port(7777)`,这里再杀一次只是让它更早)。按 AGENTS.md §1:
+#   为真则**跳过并问** ⇒ 现在拒跑(exit 2)。
 if lobby_alive; then
-  echo "[soak] 7777 已被占用 —— 先清理僵尸 Godot:"
-  kill_port 7777
-  kill_port_range 7800 8300     # 大厅既然是被我们杀的,它拉起的 worker 现在就是孤儿
-  sleep 1
+  echo "[gate1] REFUSED: 7777 上有活大厅(可能有人在打)—— 本支会先杀属主再 bind,故拒跑。"
+  echo "         先停掉那个大厅,或按 AGENTS.md §1 先问用户。"
+  exit 2
 fi
+kill_port_range 7800 8300     # 没有活大厅 ⇒ 池里的是上一跑遗留的孤儿 worker
 
 echo "[soak] 客户端=$CLIENTS 一局=${MATCH}s 观测窗=${RUN}s"
 cd "$PYDIR" || exit 1
 "$GODOT" --headless --path . res://tests/probe/royale_soak_probe.tscn \
     -- --clients="$CLIENTS" --match="$MATCH" --run="$RUN" 2>&1 | tee "$LOG"
-RC=$?
+# ★★ 2026-10-15:必须取 PIPESTATUS[0](探针的退出码),`$?` 拿到的是 **tee** 的 —— 结构性恒 0,
+#   于是"探针崩了"这条读数被静默变成 0。兄弟支(rejoin/team)都用 PIPESTATUS,本支漏了。
+RC=${PIPESTATUS[0]}
 
 echo "[soak] 清理残留 headless Godot / 端口"
 kill_port 7777

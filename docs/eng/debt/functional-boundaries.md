@@ -199,9 +199,8 @@
 6. **真链路里「注入 `attack=true` 的宿主」的唯一端到端载体是 PvP 机器人,而它未跑**(2026-10-04 登记;owner = 用户,六人真链路只由用户跑;Plan B Task 6 要求上纸)。
    - **载体(已核,不是照抄清单)**:`tests/harness/team_bot_input.gd`(`extends PlayerInput`,带 `attack` 字段与 `press_attack_edge()`)
      由 `tests/harness/team_match_watcher.gd` 的 `_pulse_attack()` 驱动,再经 `tests/probe/team_match_probe.sh` 起六人真链路 ——
-     这是**唯一**会在真链路里注入 `attack=true` 的宿主。★ 另两个脚本手柄**不注入开火**:`ground_bot_input.gd`（已删·2026-10-09）
-     的三个 `_attack_*_raw()` **恒 false**;`tests/harness/soak_bot_input.gd` 虽读自己的 `_held/_pressed/_released`,
-     但 `tests/probe/royale_soak_probe.gd` **从没给它排过** attack。
+     这是**唯一**会在真链路里注入 `attack=true` 的宿主。★★ **2026-10-15 订正(原文与源码相反)**:下面那句"另两个脚本手柄**不注入开火**"对 `soak_bot_input` **不成立** —— [`tests/harness/soak_bot_input.gd`](../../../tests/harness/soak_bot_input.gd) 的相位表 `ACTIONS` 里有 **3 处 `"shoot"`**,而 `"shoot"` 分支把 `_held["attack"] = true`(≈2/12 占空比)⇒ 它**自己就在按 attack**。原文只说对了"`royale_soak_probe.gd` 从没**显式赋值** `_bot.attack`"。⇒ soak **不是**"无开火"的对照手柄。
+     史料(保留):`ground_bot_input.gd`（已删·2026-10-09）的三个 `_attack_*_raw()` **恒 false**;`tests/harness/soak_bot_input.gd` 读自己的 `_held/_pressed/_released`。
    - **未跑的理由(★ 订正 brief 的一处口径)**:Task 6 brief 写的是"**占 7777**",而 `team_match_probe.sh` 的头注与变量写着**它自己不占 7777**
      (`PROBE_LOBBY_PORT=29200` / `PROBE_WORKER_PORT=29250`,并**绝不**扫 `[7800,8300)`;真正会 `kill_port 7777` 的是 `royale_soak_probe.sh`,
      而那条**不**注入 attack)。⇒ 正确的未跑理由是两条:① **六人真链路按 §一 归用户跑**(agent 不擅自认领);

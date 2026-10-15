@@ -13,7 +13,7 @@ extends Node
 # ═══ 前提 ═══ 请确认没有别的 Godot 占着 7777(本探针不占 7777,但别杀掉用户自己的服务端)。客户端子进程的 stdout 父进程看不到(Windows CreateProcess 不继承句柄)→ 每个子进程都带 --log-file;失败时本探针把每个客户端的引擎日志尾部一起打印出来。
 #   收尾按 PID 杀本进程拉起过的全部子进程(客户端是从临时端口连出去的,只按端口杀根本杀不到),worker 另按 UDP 端口补一刀(它才是真的 bind 端口那一侧)。
 # ═══ 时间预算 ═══ 相①~③ 约 40~90s;相④ 打到 9 杀是本探针最大的时间不确定项(上限 BRAWL_MAX=210s);相⑤ 的观察窗要等满 60s 宽限期(上限 OBSERVE_MAX=110s)。整跑量级 3~10 分钟;安全网 --quit-after 54000(60fps 下 = 900s;run/max_fps=60)。
-#   本进程自己的收工上限 FINAL_TIMEOUT=780s(> 等结果预算 RESULT_WAIT=680s;★ RESULT_WAIT 一旦超过 780 就必须同步抬 FINAL_TIMEOUT,否则收工上限会先于预算到点)。
+#   本进程自己的收工上限 FINAL_TIMEOUT(见下面常量区:它是按 **绝对** 轴算的 —— boot 三段上限 105s + RESULT_WAIT 680s + 余量,而不是"680 加一点")。
 
 const RESULT_PREFIX := "team_match_probe_"
 # ★ 端口纪律(与 reconnect_probe 的常量区同源):全仓对局 worker 的池 = WorkerLauncher.WORKER_PORT_BASE(7800)~ +SPAN(500)= 8300 开区间;本探针的大厅与 worker 都取池外(29xxx),同时远离 7777 与常见服务端口。
@@ -24,7 +24,11 @@ const POOL_HIGH := 8300
 const CLIENT_COUNT := 6
 const CHILD_QUIT_AFTER := "54000"  # 子进程兜底(60fps ≈ 900s);正常由本进程收尾/按 PID 杀
 const BOOT_TIMEOUT := 45.0         # 等"6 人进房并选边完毕"的上限
-const FINAL_TIMEOUT := 780.0       # 本进程的收工上限(整跑量级 4~10 分钟;预算见下)
+const FINAL_TIMEOUT := 800.0       # ★ 收工上限。必须 > (boot 三段的**绝对**上限 105s = BOOT_TIMEOUT+60) + RESULT_WAIT(680)
+                                   #   —— 两条预算**不同钟**:RESULT_WAIT 从 `_start_t` 算,而 `_start_t` 最晚能取到 105s;
+                                   #   原先取 780 < 785 ⇒ 最坏情况下这里先到点,判词退化成「超时(780s;阶段 3)」,
+                                   #   把「只收到 N/6 份结果」那条能指路的失败信息盖掉(2026-10-15 修)。
+                                   #   仍须 < 子进程安全网 CHILD_QUIT_AFTER(54000 帧 ≈ 900s)。
 # 等 6 份客户端结果文件的上限。★ 必须大于客户端自己的时间线(它们的相位全靠自己的时钟推),且逐项按 watcher 的常量求和算出来 —— 别凭印象写:这行漂过两次(一次把 RENDEZVOUS_MAX 记成 70,实际是 100;一次停在宽限期还是 30s 时的那份求和)。
 #   越时的表象是「只收到 N/6 份客户端结果」,读起来像产品故障,其实是探针自己的预算算错了。逐项:进局 ~5s + SETTLE 1.2 + RENDEZVOUS_MAX 100 + BRAWL_MAX 210 + 换局 SETTLE 1.2 + OBSERVE_MAX 110 + PEER_WAIT 120 ≈ 547.4s;
 #   进局那一档的硬上限是 ENTER_TIMEOUT 90s(不是 5s),最坏 ≈ 632.4s ⇒ 取 680 兜住两种走法。★ 680 < FINAL_TIMEOUT 780;一旦本值超过 780 就必须同步抬 FINAL_TIMEOUT,否则收工上限先到点(症状同样是「只收到 N/6 份结果」)。

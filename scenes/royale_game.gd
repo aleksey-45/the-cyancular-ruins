@@ -54,8 +54,7 @@ func _ready() -> void:
 	NetBus.local_bullet_spawn.connect(_on_bullet_spawn)
 	NetBus.local_beam_fired.connect(_on_beam_fired)   # 大乱斗非射手端激光视觉副本(与 pvp_client 同款)
 	NetBus.local_hit_event.connect(_on_hit_event)
-	NetBus.local_tile_destroyed.connect(_on_remote_tile_destroyed)
-	NetBusExt.local_sub_destroyed.connect(_on_remote_sub_destroyed)
+	_subscribe_tile_events()   # 拆砖的两条(格级 + 子格级)必须成对,见基类注释
 	NetBus.local_round_state.connect(_on_round_state)
 	NetBusExt.local_hit_confirm.connect(_on_hit_confirm)
 	NetBus.local_kill_event.connect(_on_kill_event)

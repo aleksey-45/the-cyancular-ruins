@@ -5,12 +5,17 @@ set -e
 # shellcheck source=../env.sh
 source "$(dirname "${BASH_SOURCE[0]}")/../env.sh"
 
-# ★ 起跑前清孤儿 worker(判据与理由见 env.sh 的 kill_port_range / lobby_alive):本支**实测**
-#   被上一支遗留的 worker 毒过 —— 症状是客户端永远收不到 match_start、内建超时永不触发、
-#   整支静默挂住、**一行裁决都不打**。有大厅在 7777 上就不动它(那时本脚本本来也 bind 不上)。
-if ! lobby_alive; then
-  kill_port_range 7800 8300
+# ★★ 2026-10-15:7777 上有**活大厅**就**拒跑**,不再"不动它然后照跑"。
+#   为什么:服务器 `_ready` 会先 `kill_udp_port(7777)` 再 bind,而它的名族守卫放行 Godot 进程
+#   ⇒ 本脚本一跑就会**端掉用户正在进行的对局**。原注释"那时本脚本本来也 bind 不上"是错的。
+#   与 AGENTS.md §1 的硬规则一致:任何占 7777 的步骤先查 lobby_alive,为真则**跳过并问**。
+if lobby_alive; then
+  echo "[gate1] REFUSED: 7777 上有活大厅(可能有人在打)—— 本支会先杀属主再 bind,故拒跑。"
+  echo "         先停掉那个大厅,或按 AGENTS.md §1 先问用户。"
+  exit 2
 fi
+# 没有活大厅 ⇒ 池里那些一定是上一支/崩掉那支遗留的孤儿 worker,清掉(理由见 env.sh 的 kill_port_range)。
+kill_port_range 7800 8300
 
 # ★★ 2026-10-08(新增):按**命令行**杀本支自己的 Godot 客户端。
 #   为什么必须另开一条:`kill_port` 只认固定端口(客户端用的是**临时出站端口**)、`kill_port_range`

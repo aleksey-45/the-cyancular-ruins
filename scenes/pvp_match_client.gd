@@ -338,6 +338,15 @@ func _all_replicas() -> Array:
 	return []
 
 
+# ★★ 拆砖的**两条订阅必须成对**,所以收在这一处给三个子类各调一次(原先三份手抄 ⇒ 1v1 那份漏了子格那条)。
+#   为什么两条都要:`local_tile_destroyed` 只由 `damage_tile`(格级/激光/测试钩子)触发,而**子弹与爆炸**
+#   走 `TileDefs.damage_sub` ⇒ 线上只发 `sub_destroyed`。只接格级那条 = 服务器已经拆了、客户端墙上
+#   **贴图与碰撞都还在**(幽灵墙):本地预测撞在服务器不存在的墙上 ⇒ 每帧分歧回滚(橡皮筋),视觉子弹也被挡下。
+func _subscribe_tile_events() -> void:
+	NetBus.local_tile_destroyed.connect(_on_remote_tile_destroyed)
+	NetBusExt.local_sub_destroyed.connect(_on_remote_sub_destroyed)
+
+
 func _on_remote_tile_destroyed(cell: Vector2i, silent: bool = false) -> void:
 	# cyrm v4:破坏按 16px 子格算 —— 一个 64px 格被拆 = 它的 16 个子格全灭(老实现走 damage_tile 格级强拆 ⇒ 子格渲染 / 碰撞不清,客户端留幽灵墙)。
 	for sy in 4:
@@ -356,7 +365,7 @@ func _on_remote_tile_destroyed(cell: Vector2i, silent: bool = false) -> void:
 
 
 # 单个 16px 子格被服务器摧毁:本地 HP / 渲染 / 碰撞一并清(Level0 的 on_sub_destroyed 链)。★ silent 语义与 tile 版相同(重连补态不播碎片)。
-func _on_remote_sub_destroyed(sub: Vector2i, silent: bool = true) -> void:
+func _on_remote_sub_destroyed(sub: Vector2i, silent: bool = false) -> void:
 	if _world == null:
 		TileDefs.damage_sub(sub, 999999, "explosion")
 		return

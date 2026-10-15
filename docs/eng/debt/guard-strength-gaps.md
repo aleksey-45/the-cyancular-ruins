@@ -293,3 +293,38 @@
      ⑥ 服务器的 skip 可以加一条"非 Windows 时**显式**把该相判为跳过并计入总条数闸"。
    - **owner**:编辑器侧([`level_editor/tests/editor/`](../../../level_editor/tests/editor)、[`level_editor/tests/server/`](../../../level_editor/tests/server)、
      [`level_editor/ui/`](../../../level_editor/ui));**最后复核**:2026-10-15。
+
+21. **联机侧复核(2026-10-15;三名只读审阅者,范围 = 5 支真链路 `.sh` + `server/`/`core/net/`/`scenes/` 的联机接线)**。
+
+    ★ **本批已修 6 条**(同一批提交;★ **未跑任何测试** ⇒ 只算"读起来对",不算"验过"),逐条附「为什么今天没有守卫会红」:
+
+    | 已修 | 缺陷 | 为什么红不了 |
+    |---|---|---|
+    | 1v1 客户端**从不订阅** `local_sub_destroyed` | 子弹/爆炸拆的**子格**在 1v1 里是**幽灵墙**(服务器已无,客户端贴图**与碰撞**都在)⇒ 本地预测撞在服务器不存在的墙上 = 每帧 C2 回滚;视觉子弹也被挡下 | 拆砖有两条路:`damage_tile`(格级,`--test-destroy-tile` 走它)与 `damage_sub`(子弹/爆炸);而线上**只有后者**发 `sub_destroyed`。探针结构上碰不到子格那条 ⇒ **零守卫** |
+    | RPC 通道契约守卫的 `TABLE_MD` | 2026-10-13 的文档拆分把通道表搬到了 `netplay-rpc-channels.md`,常量仍指 `netplay.md` ⇒ 解析出 0 行 ⇒ **唯一守通道号的那支红**(判词 `RPC CHANNEL CONTRACT FAILED`) | 它自己就是那条守卫;已知绿跑记录停在 2026-10-10(拆分**之前**)⇒ 不重跑看不见 |
+    | `_on_remote_sub_destroyed(sub, silent := true)` | 默认值与姊妹函数(**false**)相反,而信号只传 1 个实参 ⇒ **活的**子弹/爆炸拆砖**永不播碎片**(格级那一路却播 17 发:16 子格 + 整格) | 只影响观感 ⇒ 没有任何守卫会红 |
+    | `team_match_probe.FINAL_TIMEOUT=780` | 与 `RESULT_WAIT=680` **不同钟**(后者从 `_start_t` 算,而 `_start_t` 最晚取到 `BOOT_TIMEOUT+60=105`)⇒ 最坏 `105+680=785>780` ⇒ 收工上限先到点,判词退化成「超时(780s;阶段 3)」,**盖掉能指路的那条「只收到 N/6 份结果」** | "安全网耗尽与真失败同形"⇒ 只有最坏时序才现形 |
+    | `royale_soak_probe.sh` 的 `RC=$?` | `\| tee` 之后拿到的是 **tee** 的退出码(结构性恒 0)⇒ "探针崩了"被静默变成 0 | 判据一律 grep 文本,退出码从来不是判据 ⇒ 没人发现(兄弟两支用 `PIPESTATUS`,本支漏了) |
+    | 三支真链路脚本在 7777 有活大厅时的处置 | `pvp_match_smoke` / `pvp_room_smoke` **照跑**、`royale_soak_probe` **直接杀属主**;而服务器 `_ready` 本来就会 `kill_udp_port(7777)` ⇒ **会端掉用户正在进行的对局** | 批内由 `run_real.sh` 的闸一挡住 ⇒ 暴露面是**手动单跑**,而 `run_real.sh` 的收尾正好邀请手动单跑;脚本里那句"那时本脚本本来也 bind 不上"是**错的** |
+
+    ★★ **未修(登记,按值得修的程度排)**:
+    - **`team_match_probe` 没有条数闸,且有两条可空转的断言**:`_check(true, …)` 恒真;`for r in conv_ok:` 在六端都没写 CONV 行时**一次不跑也不记失败** ⇒ 3v3 **唯一**那支真链路的 `ALL-OK` 可以**什么都不验**。**与 §17/§18 同族(编辑器侧刚补完闸),而且它落在全仓最当眼的证据上。**
+    - `pvp_room_smoke.sh` 早退留活客户端(`taskkill //F //PID $!` 在 Git Bash 下**杀不掉**;客户端走**临时出站端口** ⇒ `kill_port*` 够不着)⇒ 入口"跑后 Godot 必须为 0"判 FAIL ⇒ **整批中止在第 2 支**。兄弟支 `pvp_match_smoke.sh:15-26` 已有 `kill_my_clients` 模板。
+    - `royale_soak_probe`:**(a)** 未等到 `MATCH_OVER` 也打 `SOAK: ALL-OK`(唯一痕迹是结果文件里的自由文本,没有判据 grep 它;而 [`netcode-snapshots.md`](../netcode-snapshots.md) 拿它当多人编解码证据);**(b)** 起探针**没有** `--quit-after`,且丢弃 `OS.create_process` 的 pid(全文件 `OS.kill` **0 处**)⇒ 卡住的客户端只有入口 `timeout` 一张网;**(c)** `DirAccess.remove_absolute` 的返回值被丢弃 ⇒ 残留 `.result` 会被当**本跑**读数(另两支为此**整段收工**)。
+    - 两支**池外区间重叠**:`team_match_probe.sh` 扫 `[29250,29400)`,**含** rejoin 的 29300(大厅)/29350(worker)⇒ 并发或残留时会互相误杀。
+    - `pvp_room_smoke.sh` 仍停在 §五.9 修前形态(固定 `sleep 3` + 轮询无存活判据 + 判词固定"建房客户端未拿到房间号")⇒ **判词指向错嫌疑人**。
+    - `team_match_watcher.gd` 的 `_tick_enter` 有一处**无界等待**(拿到 TEAMS 到 PLAYING 之间没有超时,唯一网是子进程的 `--quit-after`)⇒"求和覆盖了 watcher 时间线"不严格成立。
+    - **时间规则是客户端可写的规则通道**:门只在客户端(`PvpSession.beta_mode and 模式 != 1v1`),服务器**照单全收** ⇒ 改过的客户端能把 `haste_mult` 提到 10(钳制上限),或把时间经济塞进没勾 Beta 的 1v1。本仓明说不承担反作弊 ⇒ **登记,不修**(要修就服务器侧钉死 `DEF_HASTE_MULT` + 拒 1v1 的 `time`)。
+    - **零读者访问器**:`core/net/playout_clock.gd` 的 `error_ticks()` / `offset_min_ms()` / `started()` / `playout_ticks()`、`server/lobby/rejoin_registry.gd` 的 `size()`(读它的探针 2026-10-09 已删)⇒ 与 [`netplay.md`](../netplay.md) §6 同族。
+    - [`functional-boundaries.md`](functional-boundaries.md) 写 `soak_bot_input`"从没给它排过 attack",而源码里它自己在 `"shoot"` 相位按 attack(约 2/12 占空比)⇒ **文档与源码相反**,那半句要订正。
+
+    ★★★ **本批真正的模式发现 —— 「锚点/路径被搬家 ⇒ 守卫静默失效」,一天之内撞见三例**:
+    ① `reconnect_smoke` 的 `_func_body` 锚在**已搬走的函数**里(按钮挪进 `.tscn`)⇒ 恒假、永远红(2026-10-04 登记,该支已删);
+    ② `team_match_watcher` 靠**节点自身的 `visible`** 判"按钮亮了",而祖先面板隐藏**不算**(`is_visible_in_tree()` 才算)⇒ 第一帧误点后 `_started=true` **永久锁死**(2026-10-15 修);
+    ③ `rpc_channel_contract_smoke` 的 `TABLE_MD` 指着**已搬走的表**(2026-10-15 修)。
+    共同点:**锚点失效的方向恰好是"更容易满足"** ⇒ 它们要么照旧绿、要么红得**指向错嫌疑人**(三次分别被记成"产品没建房""等待预算算错""通道号写错了")。
+    ⇒ **搬迁检查表**(下次搬家照做):`grep` 旧路径 / 旧函数体 / 旧节点名,把**所有**靠文本或路径活着的东西列出来**一起**改;
+    判据能用**语义**的(`%UniqueName`、`is_visible_in_tree()`、`has_method()`)**就别**用"读某个字段/某段文本"的。
+
+    - **owner**:联机侧([`tests/harness/`](../../../tests/harness)、[`tests/probe/`](../../../tests/probe)、[`tests/smoke/`](../../../tests/smoke)、
+      [`server/`](../../../server)、[`core/net/`](../../../core/net)、[`scenes/`](../../../scenes));**最后复核**:2026-10-15。
