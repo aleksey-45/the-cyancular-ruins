@@ -4,12 +4,13 @@ const Core = globalThis.Core;
 
 // ---- v3 文本解析 ----
 (function () {
-  ok(Core.isV3Text('# cyrm-v3\n0000001F0031\n'), 'isV3Text: 有标记为真');
-  ok(!Core.isV3Text('# 普通地图\n11\n11\n'), 'isV3Text: 无标记为假');
-
-  // ★ 版本标记行必须用同一个谓词:无空格的 #cyrm-v3 曾被跳过却不被识别(网格掉进旧字母格式、静默错位),而 # cyrm-v3 (demo) 被识别却不被跳过(标记行污染 comments)。
-  ok(Core.isV3Text('#cyrm-v3\n0000001F0031\n'),
-     'B4 标记行:无空格的 #cyrm-v3 也算 v3(此前不算)');
+  // ★ 版本标记行必须用**同一个**谓词(识别与跳过同源):无空格的 `#cyrm-v3` 曾被跳过却不被识别
+  //   (网格掉进旧字母格式、静默错位),而 `# cyrm-v3 (demo)` 被识别却不被跳过(标记行污染 comments)。
+  tableEq('isV3Text:标记行谓词(识别与跳过同源)', [
+    ['有标记为真', Core.isV3Text('# cyrm-v3\n0000001F0031\n'), true],
+    ['无标记为假', Core.isV3Text('# 普通地图\n11\n11\n'), false],
+    ['无空格的 `#cyrm-v3` 也算(B4)', Core.isV3Text('#cyrm-v3\n0000001F0031\n'), true],
+  ]);
   var nospace = Core.parseV3Text('#cyrm-v3\n0011\n0011\n');
   eq(nospace.cellsW, 1, 'B4 标记行:无空格的 #cyrm-v3 → cellsW 1(不是旧格式折叠后的 2)');
   eq(nospace.cellsH, 2, 'B4 标记行:无空格的 #cyrm-v3 → cellsH 2(不是旧格式折叠后的 1)');
@@ -70,9 +71,11 @@ const Core = globalThis.Core;
          'A4 旧格式: 单行输入报错(此前抛裸 TypeError: 读 undefined 的 length)', '旧字母格式的宽高');
   throws(function () { Core.parseV3Text('# old\n1\n1\n'); },
          'A4 旧格式: 宽 1(奇数且 <2)报错', '旧字母格式的宽高');
-  eq(Core.parseV3Text('# old\n11\n11\n').cellsW, 1, 'A4 旧格式: 下界 2×2 仍可解析');
-  eq(Core.parseV3Text('# old\n1111\n1111\n').cellsW, 2, 'A4 旧格式: 宽 4(偶数)仍可解析');
-  eq(Core.parseV3Text('# old\n11\n11\n11\n11\n').cellsH, 2, 'A4 旧格式: 高 4(偶数)仍可解析');
+  tableEq('A4 旧字母格式:尺寸换算(2×2 下界 / 宽 4 / 高 4 仍可解析)', [
+    ['下界 2×2 → cellsW 1', Core.parseV3Text('# old\n11\n11\n').cellsW, 1],
+    ['宽 4(偶数)→ cellsW 2', Core.parseV3Text('# old\n1111\n1111\n').cellsW, 2],
+    ['高 4(偶数)→ cellsH 2', Core.parseV3Text('# old\n11\n11\n11\n11\n').cellsH, 2],
+  ]);
 
   // 非法输入必须抛错,不能静默截断成空气(parseInt("0A1") === 0 那类)。
   throws(function () { Core.parseV3Text('# cyrm-v3\n0A10\n'); },

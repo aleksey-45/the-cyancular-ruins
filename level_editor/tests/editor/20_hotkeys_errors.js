@@ -5,9 +5,7 @@ const Editor = globalThis.Editor;
 
 module.exports = (async function () {
 
-  // ── 热键表(规格 §4.8)──
-  // ★ 一条判定类别 = 一条守卫:24 条"一个键一条断言"是 D9(改一次表就要动 24 行,
-  //   而失败信息只告诉你某一个键坏了)。合并成**一次表比** —— 首个不匹配会被 JSON 差异点名。
+  // ── 热键表(规格 §4.8):一条判定类别 = 一条守卫(24 条"一个键一条断言"是 D9)
   const k = function (key, mod) { return { key: key, ctrl: !!mod, meta: false, shift: false }; };
   const KEYMAP = [
     ['b', false, 'tool:brush'], ['e', false, 'tool:eraser'], ['g', false, 'tool:bucket'],
@@ -28,14 +26,13 @@ module.exports = (async function () {
   eq(Editor.commandFor({ key: 'S', ctrl: true, shift: true }), 'save-as', 'Ctrl+Shift+S → 另存为');
 
   // Shift 约束(规格 §4.8):期望值按规格的字面取实现那一侧。
-  eq(Editor.constrainLine({ x: 0, y: 0 }, { x: 10, y: 2 }, true), { x: 10, y: 0 },
-     '★ Shift 直线:近水平 → 锁成水平');
-  eq(Editor.constrainLine({ x: 0, y: 0 }, { x: 2, y: 10 }, true), { x: 0, y: 10 },
-     '★ Shift 直线:近垂直 → 锁成垂直');
-  eq(Editor.constrainLine({ x: 0, y: 0 }, { x: 10, y: 8 }, true), { x: 10, y: 10 },
-     '★ Shift 直线:其余 → 锁成 45°(取两轴较大者,不是"不按 Shift"的 floor 结果)');
-  eq(Editor.constrainLine({ x: 0, y: 0 }, { x: -10, y: 8 }, true), { x: -10, y: 10 },
-     '★ 45° 也要带对方向(负方向不翻正)');
+  tableEq('Shift 直线:近轴锁轴、其余锁 45°(取两轴较大者),方向不翻正', [
+    ['近水平 → 锁成水平', Editor.constrainLine({ x: 0, y: 0 }, { x: 10, y: 2 }, true), { x: 10, y: 0 }],
+    ['近垂直 → 锁成垂直', Editor.constrainLine({ x: 0, y: 0 }, { x: 2, y: 10 }, true), { x: 0, y: 10 }],
+    ['其余 → 锁成 45°(不是"不按 Shift"的 floor 结果)', Editor.constrainLine({ x: 0, y: 0 }, { x: 10, y: 8 }, true), { x: 10, y: 10 }],
+    ['45° 也带对方向(负方向不翻正)', Editor.constrainLine({ x: 0, y: 0 }, { x: -10, y: 8 }, true), { x: -10, y: 10 }],
+  ]);
+  // ★ 与上表不同类(判的是**整数化**,不是方向),单独留。
   eq(Editor.constrainLine({ x: 0, y: 0 }, { x: 7.9, y: 0.6 }, false), { x: 7, y: 0 },
      '★★ 不按 Shift:只 floor(NaN/小数会让 Core.lineCells 死循环挂住)');
   eq(Editor.constrainSquare({ x: 0, y: 0 }, { x: 10, y: 3 }, true), { x: 10, y: 10 },

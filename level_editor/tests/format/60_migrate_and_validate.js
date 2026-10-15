@@ -5,11 +5,13 @@ const Core = globalThis.Core;
 module.exports = (async function () {
 // ---- 取角映射(§2.2 的规范定义,游戏侧 shader 必须与此一致)----
 (function () {
-  eq(Core.subcellRender(0, 0), { dst: [0, 0, 16, 16], src: [0, 0, 8, 8] }, 'subcellRender: 格内 (0,0)');
-  eq(Core.subcellRender(3, 0), { dst: [48, 0, 16, 16], src: [24, 0, 8, 8] }, 'subcellRender: 格内 (3,0)');
-  eq(Core.subcellRender(0, 3), { dst: [0, 48, 16, 16], src: [0, 24, 8, 8] }, 'subcellRender: 格内 (0,3)');
-  eq(Core.subcellRender(4, 4), { dst: [64, 64, 16, 16], src: [0, 0, 8, 8] }, 'subcellRender: 象限按 X%4 循环');
-  eq(Core.subcellRender(7, 5), { dst: [112, 80, 16, 16], src: [24, 8, 8, 8] }, 'subcellRender: 第二格右下');
+  tableEq('subcellRender:取角映射(§2.2 的规范定义,游戏侧 shader 必须与此一致)', [
+    ['格内 (0,0)', Core.subcellRender(0, 0), { dst: [0, 0, 16, 16], src: [0, 0, 8, 8] }],
+    ['格内 (3,0)', Core.subcellRender(3, 0), { dst: [48, 0, 16, 16], src: [24, 0, 8, 8] }],
+    ['格内 (0,3)', Core.subcellRender(0, 3), { dst: [0, 48, 16, 16], src: [0, 24, 8, 8] }],
+    ['象限按 X%4 循环', Core.subcellRender(4, 4), { dst: [64, 64, 16, 16], src: [0, 0, 8, 8] }],
+    ['第二格右下', Core.subcellRender(7, 5), { dst: [112, 80, 16, 16], src: [24, 8, 8, 8] }],
+  ]);
 
   // ★ 迁移正确性的全部依据:v3 的 32px 象限 ↔ v4 的 2×2 个 16px 子格,目标矩形与源矩形都必须精确铺满(尺寸相等 + 包围盒相等 ⇒ 不重不漏)。
   function v3QuadrantRender(cellX, cellY, qx, qy) {

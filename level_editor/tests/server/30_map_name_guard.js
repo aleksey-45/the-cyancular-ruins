@@ -36,12 +36,11 @@ const srv = require('../../editor_server.js');
         //   才抽不到它,备份不会混进随机地图池。
         // ★★ 这一组是双向断言:新后缀被接受 且 旧的拒绝面一条都不少 —— 这条守卫是"一个本地网页
         //   不许读写任意路径"的唯一边界,放宽成"任意后缀"或让基名能带 . 都等于把边界拆掉。
-    ok(srv.isValidMapName('demo.v3.bak') === true,
-       '★★★ 新后缀被接受:`demo.v3.bak`(= 地图名去 `.cyrm` + `.v3.bak`,编辑器的原文备份名)');
-    ok(srv.isValidMapName('factory1v1.v3.bak') === true,
-       '★ 真地图名 + 新后缀也接受(factory1v1.v3.bak)');
-    ok(srv.isValidMapName('x'.repeat(57) + '.v3.bak') === true,
-       '★ 新后缀下长度上界仍然生效:恰好 64 字符(57 + 7)接受');
+    tableEq('新后缀 `.v3.bak` 被接受(编辑器原文备份名的三条边界)', [
+      ['`demo.v3.bak`(地图名去 .cyrm + .v3.bak)', srv.isValidMapName('demo.v3.bak'), true],
+      ['真地图名 + 新后缀', srv.isValidMapName('factory1v1.v3.bak'), true],
+      ['长度上界仍生效:恰好 64 字符(57 + 7)', srv.isValidMapName('x'.repeat(57) + '.v3.bak'), true],
+    ]);
     const badBak = ['a.bak', 'a.v3bak', 'a.v3.bak.cyrm', 'a.cyrm.bak', 'v3.bak', '.v3.bak',
                     '..v3.bak', '../a.v3.bak', '..%2fa.v3.bak', '/a.v3.bak', 'a/b.v3.bak',
                     'a\\b.v3.bak', 'C:\\a.v3.bak', 'a.b.v3.bak', 'a b.v3.bak', 'a.v3.bak\n',

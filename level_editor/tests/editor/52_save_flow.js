@@ -16,12 +16,13 @@ module.exports = (async function () {
                    .exec(html);
   ok(!!regBlock,
      '★ editor.html 里有 ENEMY_REGISTRY 的标记块(自检夹具的唯一来源;找不到 = 后面两条是假绿)');
+  const iet = [];
   delete globalThis.ENEMY_REGISTRY;   // ★ 装夹具之前先断言它读不出任何东西(证明没有一份写死的清单)
-  eq(Editor.importEnemyTypes(), [],
-     '★★ 页面注册表缺席时 importEnemyTypes 返回 [](它不是写死的清单 —— 写死的那版这里会非空)');
+  iet.push(['页面注册表缺席时返回 [](它不是写死的清单)', JSON.stringify(Editor.importEnemyTypes()), '[]']);
   if (regBlock) new Function(regBlock[1])();   // 块体就是 `window.ENEMY_REGISTRY = [ … ];`
-  ok(Editor.importEnemyTypes().length > 0, '★ 敌人类型来自页面里的 ENEMY_REGISTRY(不是写死的清单)');
-  ok(Editor.importEnemyTypes().indexOf('fly_bird') >= 0, '注册表里有 fly_bird');
+  iet.push(['装好页面注册表之后非空(来自页面,不是写死)', Editor.importEnemyTypes().length > 0, true]);
+  iet.push(['注册表里有 fly_bird', Editor.importEnemyTypes().indexOf('fly_bird') >= 0, true]);
+  tableEq('敌人类型来自页面里的 ENEMY_REGISTRY', iet);
 
   // ── 出生点的位置语义 ──
   // ★★ 游戏侧 `map_format.gd` 按顺序读 player / player2 ⇒ "放 P2"必须写第 1 条(push 出 index 0 会被游戏读成 P1)。

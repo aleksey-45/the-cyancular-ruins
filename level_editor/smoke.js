@@ -16,7 +16,7 @@ setTimeout(function () {
   await require('./tests/format/40_golden_and_limits.js');
   await require('./tests/format/50_v3_text.js');
   await require('./tests/format/60_migrate_and_validate.js');
-  harness.finish('SMOKE OK', 308);
+  harness.finish('SMOKE OK', 290);
 })().catch(function (err) {
   console.error('FAIL: 未捕获异常(后面的断言一行都没跑):');
   console.error(err && err.stack ? err.stack : String(err));

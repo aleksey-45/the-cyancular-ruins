@@ -160,9 +160,11 @@ module.exports = (async function () {
   // 差量 → 格坐标列表(交给 renderer.editCells 作废)
   const mdk = Core.createMap('k', 2, 1);          // 8×4 子格:下标 0/5/6 落在 (0,0) 与 (1,0)
   const dk = Editor.paintCells(mdk, Core.LAYER_SCENE, [0, 5, 6], function () { return Core.neutralDesc(2); });
-  eq(Editor.diffCells(mdk, dk).length, 2, '★ diffCells:下标 0/5/6 → 2 个不同的格(0,0) 与 (1,0)');
-  eq(Editor.diffCells(mdk, dk)[0], { cx: 0, cy: 0 }, 'diffCells 的第一个是 (0,0)');
-  eq(Editor.diffCells(mdk, dk)[1], { cx: 1, cy: 0 }, 'diffCells 的第二个是 (1,0)');
+  tableEq('diffCells:下标 0/5/6 → 2 个不同的格,且按序给出', [
+    ['长度 = 2 个不同的格', Editor.diffCells(mdk, dk).length, 2],
+    ['第一个是 (0,0)', Editor.diffCells(mdk, dk)[0], { cx: 0, cy: 0 }],
+    ['第二个是 (1,0)', Editor.diffCells(mdk, dk)[1], { cx: 1, cy: 0 }],
+  ]);
 
   // ── 剪贴板 ──
   await (async function () {

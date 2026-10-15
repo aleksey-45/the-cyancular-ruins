@@ -5,11 +5,13 @@ const Tint = globalThis.Tint;
 
 // ==== 相位 ⑥ 贴图块定位与 16×16 小图 ====
 (function () {
-  eq(Tint.textureBlockRect(1, 320), { x: 0, y: 0, w: 32, h: 32 }, 'textureBlockRect: 第 1 块在左上');
-  eq(Tint.textureBlockRect(10, 320), { x: 288, y: 0, w: 32, h: 32 }, 'textureBlockRect: 第 10 块在第一行行尾');
-  eq(Tint.textureBlockRect(11, 320), { x: 0, y: 32, w: 32, h: 32 }, 'textureBlockRect: 第 11 块换行(每行 10 块)');
-  eq(Tint.textureBlockRect(21, 320), { x: 0, y: 64, w: 32, h: 32 }, 'textureBlockRect: 第 21 块(第三行首块 = 水)');
-  eq(Tint.textureBlockRect(22, 320), { x: 32, y: 64, w: 32, h: 32 }, 'textureBlockRect: 第 22 块(水面)');
+  tableEq('textureBlockRect:块定位(每行 10 块,行尾换行)', [
+    ['第 1 块在左上', Tint.textureBlockRect(1, 320), { x: 0, y: 0, w: 32, h: 32 }],
+    ['第 10 块在第一行行尾', Tint.textureBlockRect(10, 320), { x: 288, y: 0, w: 32, h: 32 }],
+    ['第 11 块换行', Tint.textureBlockRect(11, 320), { x: 0, y: 32, w: 32, h: 32 }],
+    ['第 21 块(第三行首块 = 水)', Tint.textureBlockRect(21, 320), { x: 0, y: 64, w: 32, h: 32 }],
+    ['第 22 块(水面)', Tint.textureBlockRect(22, 320), { x: 32, y: 64, w: 32, h: 32 }],
+  ]);
   let inside = true;
   for (let t = 1; t <= 22; t++) {
     const r = Tint.textureBlockRect(t, 320);
@@ -100,11 +102,12 @@ const Tint = globalThis.Tint;
   ok(a === cache.get(3, 2, 1, Core.neutralDesc(3)), '相同键第二次命中同一个对象');
   eq(made.length, 1, '命中不再造图');
   eq(cache.stats(), { hits: 1, misses: 1, evictions: 0, size: 1, maxSize: 3 }, 'stats 记账(hits/misses/evictions/size)');
-  ok(cache.has(3, 2, 1, Core.neutralDesc(3)), 'has: 命中');
-  ok(!cache.has(3, 2, 1, Core.packDesc(3, 5, 4, 4, 7)),
-     '★ 描述符不同 = 不同键(同一象限的不同辅码各存一份)');
-  ok(!cache.has(2, 2, 1, Core.neutralDesc(3)), '★ 纹理不同 = 不同键');
-  ok(!cache.has(3, 1, 1, Core.neutralDesc(3)), '★ 象限不同 = 不同键');
+  tableEq('cache.has:键 = (纹理, 象限, 辅码) 三者都参与', [
+    ['相同键命中', cache.has(3, 2, 1, Core.neutralDesc(3)), true],
+    ['描述符不同 = 不同键(同一象限的不同辅码各存一份)', cache.has(3, 2, 1, Core.packDesc(3, 5, 4, 4, 7)), false],
+    ['纹理不同 = 不同键', cache.has(2, 2, 1, Core.neutralDesc(3)), false],
+    ['象限不同 = 不同键', cache.has(3, 1, 1, Core.neutralDesc(3)), false],
+  ]);
 
   // LRU:maxSize 3,塞第 4 个 → 最久未用的那个被淘汰
   cache.clear();

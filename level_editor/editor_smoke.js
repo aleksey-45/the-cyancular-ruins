@@ -55,5 +55,5 @@ const PARTS = [
     console.error(err && err.stack ? err.stack : String(err));
     process.exit(1);
   }
-  harness.finish('EDITOR SMOKE OK', 534);
+  harness.finish('EDITOR SMOKE OK', 527);
 })();

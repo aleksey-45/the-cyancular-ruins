@@ -25,10 +25,15 @@ module.exports = (async function () {
 
   var r2 = new Core.ByteReader(enc);
   r2.u8();                       // kind
-  eq(r2.u16(), 3, '纹理层: 调色板 3 项');
-  eq(r2.u32(), 0, '纹理层: 调色板[0] 是空气');
-  eq(r2.u32(), brick, '纹理层: 调色板[1]');
-  eq(r2.u32(), moss, '纹理层: 调色板[2]');
+  // ★ 顺序读的字节流:先 push 保序,再一条表比(D9)。
+  {
+    const pal2 = [];
+    pal2.push(['调色板 3 项', r2.u16(), 3]);
+    pal2.push(['调色板[0] 是空气', r2.u32(), 0]);
+    pal2.push(['调色板[1]', r2.u32(), brick]);
+    pal2.push(['调色板[2]', r2.u32(), moss]);
+    tableEq('纹理层:调色板按顺序写/读', pal2);
+  }
   eq(r2.u8(), 1, '纹理层: 调色板 ≤256 项 → index_width = 1');
   eq(enc.length, 1 + 2 + 3 * 4 + 1 + n, '纹理层: 总长度 = 头 + 调色板 + 索引流');
 

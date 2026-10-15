@@ -194,41 +194,42 @@ const Render = globalThis.Render;
   // ==== 相位 ⑨ 选区拖动:纯读的偏移查询(B3 / 规格 §4.2)====
   (function () {
     const sel = { x: 4, y: 4, w: 4, h: 4 };
-    eq(Render.selectionSource(sel, 2, 0, 6, 5), { hit: true, X: 4, Y: 5 },
-       'selectionSource: 目标格 (6,5) 的内容来自源格 (4,5)(drag 只记 dx/dy,渲染时纯读)');
-    eq(Render.selectionSource(sel, 2, 0, 4, 4), { hit: false, X: 4, Y: 4 },
-       '★ selectionSource: 目标格**不在**偏移后的选区里 → hit:false(源区自己已被腾空)');
-    eq(Render.selectionSource(sel, -100, 0, 6, 5).hit, false, '★ 偏移可以很大,查询照样不越界');
-    eq(Render.selectionSource(sel, 0, 0, 5, 5), { hit: true, X: 5, Y: 5 }, 'dx=dy=0 时是恒等查询');
+    tableEq('selectionSource:目标格的内容来自偏移后的源格(不在偏移选区里 → hit:false)', [
+      ['目标格 (6,5) 来自源格 (4,5)', Render.selectionSource(sel, 2, 0, 6, 5), { hit: true, X: 4, Y: 5 }],
+      ['目标格不在偏移后的选区里(源区自己已被腾空)', Render.selectionSource(sel, 2, 0, 4, 4), { hit: false, X: 4, Y: 4 }],
+      ['偏移可以很大,查询照样不越界', Render.selectionSource(sel, -100, 0, 6, 5).hit, false],
+      ['dx=dy=0 时是恒等查询', Render.selectionSource(sel, 0, 0, 5, 5), { hit: true, X: 5, Y: 5 }],
+    ]);
     eq(Render.rectUnion({ x: 1, y: 1, w: 2, h: 2 }, { x: 4, y: 0, w: 1, h: 1 }), { x: 1, y: 0, w: 4, h: 3 },
        'rectUnion: 脏区合并(缩略图/离屏层按它重画)');
   })();
   (function () {
     // ② 的脏区簿记是纯逻辑:编辑 → 脏矩形;切层 → 只合成;平移 → 搬移 + 补边条。
+    // ★ 逐次观测之间有状态迁移 ⇒ 用 push 保序,再一条表比(D9)。
     const d = Render.createDirtySet();
-    eq(d.rect(), null, '新脏区集是空的');
+    const dr = [];
+    dr.push(['新脏区集是空的', d.rect(), null]);
     d.addCell(0, 3, 4);
-    eq(d.rect(), { x: 12, y: 16, w: 4, h: 4 }, 'addCell(0,3,4) → 子格矩形 (12,16,4,4)');
+    dr.push(['addCell(0,3,4) → 子格矩形 (12,16,4,4)', d.rect(), { x: 12, y: 16, w: 4, h: 4 }]);
     d.addCell(0, 5, 4);
-    eq(d.rect(), { x: 12, y: 16, w: 12, h: 4 }, '★ 两个格合并成一个包围盒(不是两次重画)');
+    dr.push(['两个格合并成一个包围盒(不是两次重画)', d.rect(), { x: 12, y: 16, w: 12, h: 4 }]);
     d.addCell(2, 0, 0);
-    // ★★ 期望值取 24:三个格 (0,3)/(0,5)/(2,0) 的子格并集是 x 0..24、y 0..20 —— 与上面两条
-    //   ((12,16,12,4) 已把 x 撑到 24)以及 rectUnion 的语义(两轴各取 min/max)一致;写成 w: 20
-    //   会与"addCell(0,5,4) 之后 w = 12"自相矛盾(12..24 并上 0..4 不可能只有 20 宽)。
-    eq(d.rect(), { x: 0, y: 0, w: 24, h: 20 }, '★ 跨层也并进同一个盒子(合成时才按层拆)');
+    // ★★ 期望值取 24:三个格 (0,3)/(0,5)/(2,0) 的子格并集是 x 0..24、y 0..20 —— 与上面那条
+    //   ((12,16,12,4) 已把 x 撑到 24)以及 rectUnion 的语义(两轴各取 min/max)一致。
+    dr.push(['跨层也并进同一个盒子(合成时才按层拆)', d.rect(), { x: 0, y: 0, w: 24, h: 20 }]);
     d.clear();
-    eq(d.rect(), null, 'clear 之后又空了');
+    dr.push(['clear 之后又空了', d.rect(), null]);
     d.addRect({ x: 1, y: 2, w: 3, h: 4 });
-    eq(d.rect(), { x: 1, y: 2, w: 3, h: 4 }, 'addRect: 直接给子格矩形');
+    dr.push(['addRect: 直接给子格矩形', d.rect(), { x: 1, y: 2, w: 3, h: 4 }]);
+    tableEq('脏区集:包围盒并集 / clear / addRect', dr);
 
     // 平移后的"补边条"几何:画布自拷贝之后只重画新露出来的那一条
-    eq(Render.panStrips(800, 600, 10, 0), [{ x: 790, y: 0, w: 10, h: 600 }],
-       '★ panStrips: 向右移 10px → 只有右边 10px 需要重画(整块搬移 + 补边条)');
-    eq(Render.panStrips(800, 600, 0, -10), [{ x: 0, y: 0, w: 800, h: 10 }],
-       '★ panStrips: 向上移 10px → 只有上边 10px');
-    eq(Render.panStrips(800, 600, 900, 0), [{ x: 0, y: 0, w: 800, h: 600 }],
-       '★ panStrips: 位移超过画布尺寸 → 整块重画(自拷贝已经没有意义)');
-    eq(Render.panStrips(800, 600, 0, 0), [], '位移为 0 → 没有要补的边条');
+    tableEq('panStrips:只重画新露出来的那一条(位移超画布 → 整块重画)', [
+      ['向右移 10px → 右边 10px', Render.panStrips(800, 600, 10, 0), [{ x: 790, y: 0, w: 10, h: 600 }]],
+      ['向上移 10px → 上边 10px', Render.panStrips(800, 600, 0, -10), [{ x: 0, y: 0, w: 800, h: 10 }]],
+      ['位移超过画布尺寸 → 整块重画(自拷贝没意义)', Render.panStrips(800, 600, 900, 0), [{ x: 0, y: 0, w: 800, h: 600 }]],
+      ['位移为 0 → 没有要补的边条', Render.panStrips(800, 600, 0, 0), []],
+    ]);
 
     // 以光标为锚的缩放:光标下的那一子格在缩放前后必须停在原地
     const v0 = { x: 100, y: 50, zoom: 8 };

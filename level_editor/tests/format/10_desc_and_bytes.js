@@ -6,9 +6,11 @@ const Core = globalThis.Core;
 // ---- descriptor 位域 ----
 ok(Core.SUB_PER_CELL === 4, 'SUB_PER_CELL === 4');
 ok(Core.DESC_AIR === 0, 'DESC_AIR === 0');
-eq(Core.packDesc(0, 0, 0, 0, 0), 0, 'packDesc: 纹理 0 恒为空气');
-eq(Core.packDesc(0, 7, 7, 7, 7), 0, 'packDesc: 空气忽略辅码');
-ok(Core.packDesc(1, 4, 4, 4, 7) !== 0, 'packDesc: 纹理 1 中性描述符非 0');
+tableEq('packDesc:纹理 0 恒为空气(忽略辅码),纹理 1 的中性描述符非 0', [
+  ['纹理 0 + 全 0 辅码 → 0', Core.packDesc(0, 0, 0, 0, 0), 0],
+  ['纹理 0 忽略辅码(仍 0)', Core.packDesc(0, 7, 7, 7, 7), 0],
+  ['纹理 1 的中性描述符 ≠ 0', Core.packDesc(1, 4, 4, 4, 7) !== 0, true],
+]);
 
 var d1 = Core.packDesc(5, 4, 3, 2, 7);
 eq(Core.texOf(d1), 5, 'descriptor: 纹理回读');
@@ -79,12 +81,14 @@ ok((function () {
   return true;
 })(), 'brushOffsets: 1..15 全部满足 lo+1+hi===尺寸 且 lo≤hi');
 
-eq(Core.lineCells(0, 0, 4, 0), [[0,0],[1,0],[2,0],[3,0],[4,0]], 'lineCells: 水平线');
-eq(Core.lineCells(2, 2, 2, 5), [[2,2],[2,3],[2,4],[2,5]], 'lineCells: 垂直线');
-eq(Core.lineCells(0, 0, 2, 2), [[0,0],[1,1],[2,2]], 'lineCells: 对角线');
-eq(Core.lineCells(4, 0, 0, 0), [[4,0],[3,0],[2,0],[1,0],[0,0]], 'lineCells: 反向水平');
-eq(Core.lineCells(1, 1, 1, 1), [[1,1]], 'lineCells: 单点');
-eq(Core.lineCells(0, 0, 4, 2), [[0,0],[1,0],[2,1],[3,1],[4,2]], 'lineCells: 缓坡 Bresenham 锚定');
+tableEq('lineCells:Bresenham 取点(各走向 + 单点)', [
+  ['水平线', Core.lineCells(0, 0, 4, 0), [[0,0],[1,0],[2,0],[3,0],[4,0]]],
+  ['垂直线', Core.lineCells(2, 2, 2, 5), [[2,2],[2,3],[2,4],[2,5]]],
+  ['对角线', Core.lineCells(0, 0, 2, 2), [[0,0],[1,1],[2,2]]],
+  ['反向水平(端点顺序保留)', Core.lineCells(4, 0, 0, 0), [[4,0],[3,0],[2,0],[1,0],[0,0]]],
+  ['单点', Core.lineCells(1, 1, 1, 1), [[1,1]]],
+  ['缓坡锚定(每步只动一轴)', Core.lineCells(0, 0, 4, 2), [[0,0],[1,0],[2,1],[3,1],[4,2]]],
+]);
 
 eq(Core.normRegion(3, 2, 1, 5), { x: 1, y: 2, w: 3, h: 4 }, 'normRegion: 反向角归一化');
 eq(Core.normRegion(1, 1, 1, 1), { x: 1, y: 1, w: 1, h: 1 }, 'normRegion: 单格');
