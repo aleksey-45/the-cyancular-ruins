@@ -22,16 +22,13 @@ var _strafe_target: Vector2 = Vector2.INF  # 开火后短距随机移动目标;I
 var _strafe_timer: float = 0.0             # 短距移动剩余时长
 
 # ── LOS/射击侧缓存:砍每帧重复视线扫描 ──
-# _shot_clear:同一对(鸟格,玩家格)在 TTL 物理帧内复用上次结果;拆/堵墙、格子移动最迟
-# ~150ms(@60Hz)反映。用物理帧数而非墙钟门控,headless 快进冒烟里也能按帧失效、行为确定。
-# (SHOOT 判定、进 SHOOT 门槛、低血冲锋前提共用同一缓存——端点相同,复用安全)
+# _shot_clear:同一对(鸟格,玩家格)在 TTL 物理帧内复用上次结果;拆/堵墙、格子移动最迟 ~150ms(@60Hz)反映。用物理帧数而非墙钟门控,headless 快进冒烟里也能按帧失效;SHOOT 判定、进 SHOOT 门槛、低血冲锋前提共用同一缓存(端点相同,复用安全)。
 const SHOT_CLEAR_TTL_FRAMES: int = 9
 var _shot_clear_ok := false
 var _shot_clear_at_frame := -100000
 var _shot_clear_from := Vector2i(-1, -1)
 var _shot_clear_to := Vector2i(-1, -1)
-# _shoot_side(斜上射击位所在侧,内部各做一次 LOS):玩家格/几何侧不变且未超 TTL 则复用,
-# 避免 _near_shoot_pos 每帧为每只追玩家的鸟白付 1~2 次 Bresenham。
+# _shoot_side(斜上射击位所在侧,内部各做一次 LOS):玩家格/几何侧不变且未超 TTL 则复用,避免 _near_shoot_pos 每帧为每只追玩家的鸟白付 1~2 次 Bresenham。
 var _side_cache := 1.0
 var _side_at_frame := -100000
 var _side_player_cell := Vector2i(-1, -1)
@@ -43,8 +40,7 @@ var _spawn_captured: bool = false   # 出生点是否已抓取(等 spawner 设�
 func _ready() -> void:
 	super._ready()
 	_anim = $AnimatedSprite2D
-	# 出生点不在此抓取:spawner 是 add_child 之后才设位置,_ready 里抓到的是 (0,0),
-	# 会害 _player_home_dist()/返程全错(鸟一醒就返程、不追玩家)。改在首帧物理补抓。
+	# 出生点不在此抓取:spawner 是 add_child 之后才设位置,_ready 里抓到的是 (0,0),会害 _player_home_dist()/返程全错;改在首帧物理补抓。
 	_max_hp = hp
 	wake_radius = EnemyParams.FlyBird.wake_radius
 	waterproof_max = 10
@@ -86,9 +82,7 @@ func _ai(delta: float) -> void:
 			_tick_return(delta, dist)
 
 
-# 每个状态一个 _tick_*,`_ai` 只留派发(阶段 5.3:原先是 124 行的单 match)。
-# ★ 各段里的 `return` **语义不变**:match 是 `_ai` 的最后一条语句,所以在 _tick_* 里 return
-#   等于原来在 _ai 里 return(都是"本帧到此为止")。
+# 每个状态一个 _tick_*,本函数只留派发;★ 各段里的 return 语义不变 —— 它在 _ai 的最后一条语句,在 _tick_* 里 return 等于原来在 _ai 里 return(都是本帧到此为止)。
 
 func _tick_sleep(delta: float, dist: float) -> void:
 	if _wake_timer > 0.0:
@@ -139,8 +133,7 @@ func _tick_fly(delta: float, dist: float) -> void:
 		# 目标是斜上射击位(玩家上方),让下方的鸟绕道爬升到能打的位置。
 		_repath_to(_shoot_cell())
 	# 空路径(BFS 无路/预算超限)时直线飞向射击位,不再原地返程发呆。
-	# 三元惰性求值:只在路径为空时才现算 _shoot_pos()(内含 Bresenham LOS),
-	# 路径还在时传 INF——否则每帧给每只追玩家的鸟白付 1~2 次全图视线扫描。
+	# 三元惰性求值:只在路径为空时才现算 _shoot_pos()(内含 Bresenham LOS),路径还在时传 INF —— 否则每帧给每只追玩家的鸟白付 1~2 次全图视线扫描。
 	_follow_path(delta, _shoot_pos() if _path.is_empty() else Vector2.INF)
 
 
@@ -196,9 +189,7 @@ func _tick_charge(delta: float) -> void:
 func _tick_return(delta: float, dist: float) -> void:
 	_anim.play("flying")
 	if _landing:
-		# 落地阶段:开重力直接下坠,计时到点即入睡,不再等地板接触。
-		# (FLOATING 模式下 is_on_floor 恒 false,靠碰撞法线判地面在个别
-		#  出生位/接缝处永远等不到,鸟会卡在 RETURN 不睡)
+		# 落地阶段:开重力直接下坠,计时到点即入睡,不再等地板接触(FLOATING 模式下 is_on_floor 恒 false,个别出生位/接缝处永远等不到,鸟会卡在 RETURN 不睡)。
 		_state_timer += delta
 		if _state_timer >= EnemyParams.FlyBird.landing_time:
 			_anim.play("fall_asleep")
@@ -365,8 +356,7 @@ func _fire_parabolic() -> void:
 			EnemyParams.FlyBird.bullet_damage, EnemyParams.FlyBird.bullet_gravity,
 			EnemyParams.FlyBird.bullet_size)
 	b.water_mult = WATER_DAMAGE_MULT
-	# 时间回溯重建用的场景路径(与 weapon_base 出弹处同款):不写这条 meta,回溯里
-	# `WorldRewind._apply_bullets` 建不出节点 → 敌方子弹在回溯期间**直接消失**(位置也不倒)。
+	# 时间回溯重建用的场景路径(与 weapon_base 出弹处同款):不写这条 meta,WorldRewind._apply_bullets 建不出节点 ⇒ 敌方子弹在回溯期间直接消失(位置也不倒)。
 	b.set_meta("scene_path", ENEMY_BULLET_SCENE.resource_path)
 	b.global_position = global_position
 	get_viewport().add_child(b)

@@ -1,13 +1,9 @@
 extends SceneTree
 
-# cyrm v4 编解码探针(-s 数据级)。2026-09-28 起地图就是 v4 二进制,这是格式层的回归守卫。
-# 覆盖:
-#   ① 真地图(已被转换成 v4)能被 load_map_file / load_spawns / map_size 正常消费,
-#      且出生点格为空、其下方为实心(语义自洽);
-#   ② 写读往返:serialize_v4 → parse_v4 → flatten 与原网格逐格一致(含形状掩码逐位一致);
-#   ③ **compression=1 读入**(编辑器浏览器端导出的是 deflate):内嵌一份 Python-zlib 造的
-#      标准 v4 夹具,永久守卫这条链路 —— 这正是规格书交接文档列的"第一件必做的事";
-#   ④ CRC 破坏检测:改 body 一个字节必须被拒。
+# cyrm v4 编解码探针(-s 数据级)。地图自 2026-09-28 起就是 v4 二进制,这是格式层的回归守卫。
+# 覆盖:① 真地图能被 load_map_file / load_spawns / map_size 正常消费,且出生点格为空、其下方为实心(语义自洽);
+#   ② 写读往返:serialize_v4 → parse_v4 → flatten 与原网格逐格一致(含形状掩码逐位);③ compression=1 读入(编辑器浏览器端导出的是 deflate)——
+#   内嵌一份 Python-zlib 造的标准 v4 夹具永久守卫这条链路(规格书交接文档列的「第一件必做的事」);④ CRC 破坏检测:改 body 一个字节必须被拒。
 # 用法:godot --headless --path . -s res://tests/probe/map_format_v4_probe.gd
 
 const DEMO := "res://maps/demo.cyrm"
@@ -55,11 +51,8 @@ func _test_real_maps() -> void:
 	_chk(MapFormat.is_v4(PVP), "newfactory.cyrm 应已是 v4 二进制")
 	var demo := MapFormat.load_map_file(DEMO)
 	var pvp := MapFormat.load_map_file(PVP)
-	# ★ 尺寸断言**只比两条独立读法**,不写死 125×75 —— "这张图恰好多大"是地图自己的事,
-	#   写死只会让换图/改图假红。两条读法是:
-	#     · `map_size()`   → v4 **头部**的 sub_cols/sub_rows(不解析 body)
-	#     · `load_map_file()` → **整图解析**(把 body 里的场景层展平成格)
-	#   两者对不上 = 头部与 body 不一致(真 bug);旧写法(两边各自写死数字)拦不住它。
+	# ★ 尺寸断言只比两条独立读法,不写死 125×75 ——「这张图恰好多大」是地图自己的事:map_size() 读 v4 头部的 sub_cols/sub_rows(不解析 body),
+	#   load_map_file() 走整图解析(把 body 里的场景层展平成格);两者对不上 = 头部与 body 不一致(真 bug),旧写法(两边各自写死数字)拦不住它。
 	_chk(MapFormat.map_size(DEMO) == _dims(demo),
 			"map_size(demo) 应与整图解析的维度一致(实为 %s vs %s)"
 			% [str(MapFormat.map_size(DEMO)), str(_dims(demo))])
@@ -70,9 +63,7 @@ func _test_real_maps() -> void:
 	var sp_pvp := MapFormat.load_spawns(PVP)
 	_chk(sp_demo.has("player") and not sp_demo.has("player2"), "demo 应只有 player 出生点")
 	_chk(sp_pvp.has("player") and sp_pvp.has("player2"), "factory 应有 player+player2")
-	# 出生点格必须为空 —— 顺带验证扁平化没把语义弄反。
-	# ★ 只查"格为空",不查"下方实心":newfactory 的 player 出生点下方**本来就是空气**
-	#   (原 v3 里就是,玩家出生在平台边缘),不是转换丢块。
+	# 出生点格必须为空(顺带验证扁平化没把语义弄反)。★ 只查「格为空」,不查「下方实心」:newfactory 的 player 出生点下方本来就是空气,不是转换丢块。
 	for pair in [[DEMO, sp_demo["player"]], [PVP, sp_pvp["player"]], [PVP, sp_pvp["player2"]]]:
 		var g: Array = MapFormat.load_map_file(pair[0])
 		var c: Vector2i = pair[1]

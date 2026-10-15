@@ -1,31 +1,12 @@
 extends Node
 
-# 3v3 真链路探针(`tests/probe/team_match_probe.*`)的**观察者**(客户端子进程用)。
-# 挂在 `get_tree().root` 上:换场(真 `mp_lobby` → 真 `team_game`)不会把它带走
-# → 它能在**换场之后**读真 `team_game` 实例的状态(与 royale_c2_watcher / reconnect_watcher 同款)。
-#
-# ★ 它做的四件事:
-#   ① 驱动**真大厅页**(`scenes/mp_lobby.tscn`,筛选到 3v3):建房 / 点房卡加入 / 选边 / 房主开局。
-#      —— 这就是"A 册/B 册那五条从没被真跑过"里的①:等待室渲染路径(`team_room_state`)。
-#   ② 换场后接管**真 `team_game`**:注入脚本手柄(`team_bot_input.gd`),按快照驱动走位/开火。
-#   ③ 按相位采样并做**客户端侧**断言(收敛 / 队友弹穿透 / 换边 / 掉线观察窗)。
-#   ④ 把带 `REC ` 前缀的结构化读数写进结果文件,交给裁判(探针进程)做跨端比对。
-#
-# ★ 为什么读数要写成行文本而不是"客户端自己判完就完事":跨端断言(6 端队伍表是否与大厅一致、
-#   队内/队间距离、换边是否对调、掉线后其余端还在收快照)**天然需要全部 6 端的数据在一处**,
-#   而 6 端是 6 个独立进程。裁判读结果文件就是那个"一处"(与 royale_c2_probe 的 `_read_result`
-#   同一手法;子进程 stdout 父进程看不到,见探针文件头)。
-#
+# 3v3 真链路探针(tests/probe/team_match_probe.*)的观察者(客户端子进程用)。挂在 get_tree().root 上:换场(真 mp_lobby → 真 team_game)不会把它带走 ⇒ 它能在换场之后读真 team_game 实例的状态。
+# ★ 它做的四件事:① 驱动真大厅页(scenes/mp_lobby.tscn,筛选到 3v3):建房 / 点房卡加入 / 选边 / 房主开局 —— 这就是「A 册/B 册那五条从没被真跑过」里的等待室渲染路径(team_room_state);
+#   ② 换场后接管真 team_game:注入脚本手柄(team_bot_input.gd),按快照驱动走位/开火;③ 按相位采样并做客户端侧断言(收敛 / 队友弹穿透 / 换边 / 掉线观察窗);④ 把带 REC 前缀的结构化读数写进结果文件,交给裁判(探针进程)做跨端比对。
+# ★ 为什么读数要写成行文本而不是「客户端自己判完就完事」:跨端断言(6 端队伍表是否与大厅一致、队内/队间距离、换边是否对调、掉线后其余端还在收快照)天然需要全部 6 端的数据在一处,而 6 端是 6 个独立进程 —— 裁判读结果文件就是那个「一处」。
 # ★ 相位编号是本文件自己的(相①..相⑤),与其它探针的编号无关。
-#
-# ═══ 相⑤ 的一处**照实偏离**(brief 写的是"排行榜里 6 号标「离开」")═══
-#   3v3 的 `TeamHost._broadcast_round_state` 载荷**没有** `left` / `alive` / `names` 三个键
-#   (它们只在大乱斗版里有),而 3v3 的 HUD(`ui/team_hud.gd`)是"按队记分条",**没有**排行榜 ——
-#   所以"排行榜标离开"在 3v3 里**没有对应物**。客户端真正可观测的等价信号有两条,本探针都取:
-#     ① `round_state` 恒为 PLAYING(服务器不终局、该队少人继续);
-#     ② 掉线者在**世界快照**里消失 → `team_game._on_snapshot_world` 把它的副本/头顶 ID 一起拆掉
-#        (`_replica_for(role) == null`)。这正是"该 role 已被移出对局"在客户端的**唯一**投影。
-#   两条都要等宽限期(60s)到点才成立 —— 观察窗按它定,见 OBSERVE_MAX。
+# ═══ 相⑤ 的一处照实偏离(任务书写的是「排行榜里 6 号标离开」)═══ 3v3 的 TeamHost._broadcast_round_state 载荷没有 left / alive / names 三个键(只在大乱斗版里有),而 3v3 的 HUD(ui/team_hud.gd)是按队记分条、没有排行榜 ⇒ 「排行榜标离开」在 3v3 里没有对应物。
+#   客户端真正可观测的等价信号有两条,本探针都取:① round_state 恒为 PLAYING(服务器不终局、该队少人继续);② 掉线者在世界快照里消失 → team_game._on_snapshot_world 把它的副本/头顶 ID 一起拆掉(_replica_for(role) == null)—— 这正是「该 role 已被移出对局」在客户端的唯一投影。两条都要等宽限期(60s)到点才成立 —— 观察窗按它定,见 OBSERVE_MAX。
 
 const BotHandle := preload("res://tests/harness/team_bot_input.gd")
 
@@ -39,11 +20,8 @@ const ENTER_TIMEOUT := 90.0      # 从挂页到"进 team_game 且拿到队伍表
 const TEAMS_TIMEOUT := 25.0      # 进局后等 match_sync 应答
 const SETTLE := 1.2              # PLAYING 后静置多久再采样(COUNTDOWN 期间输入冻结,人不会动)
 const POS_TOL := 100.0           # C2 收敛判据(px):快照滞后一 tick ≈ 11.7px,100 留足余量
-# 相③ 的"到位"判据。★ **子弹那一半与榴弹那一半不同**:brief 对子弹只说"朝队友开一枪",
-# 对榴弹才要求"贴脸"。把子弹也卡在 170px 会让整相挂在**走位**上(留存的 6 份判决日志里,
-# 甲一次都没进过 170px),
-# 而子弹的证据链(乙端数"从我身边 ≤45px 飞过的非自己子弹")在 400px 上照样成立 ——
-# 目标站着不动,子弹飞过去必然要掠过它。榴弹仍要 170px(爆炸半径 350px,170 稳在内圈附近)。
+# 相③ 的「到位」判据。★ 子弹那一半与榴弹那一半不同:任务书对子弹只说「朝队友开一枪」,对榴弹才要求「贴脸」。把子弹也卡在 170px 会让整相挂在走位上(留存的 6 份判决日志里,甲一次都没进过 170px),
+#   而子弹的证据链(乙端数「从我身边 ≤45px 飞过的非自己子弹」)在 400px 上照样成立 —— 目标站着不动,子弹飞过去必然要掠过它。榴弹仍要 170px(爆炸半径 350px,170 稳在内圈附近)。
 const CLOSE_PX := 400.0          # 甲进入这个距离且有视线即开火(子弹那半边)
 const GRENADE_PX := 170.0        # 榴弹那半边的"贴脸"判据
 const RENDEZVOUS_MAX := 100.0    # 相③ 走位 + 连射 + 榴弹的总窗口(平台跳跃图上走位很慢)
@@ -52,10 +30,8 @@ const NEAR_PX := 45.0            # (乙端)"子弹从我身边飞过"的判定�
 const BRAWL_MAX := 210.0         # 相④ 打到 9 杀的上限(脚本机器人互射)
 const FIGHT_PX := 520.0          # 混战:进入这个距离且视线通畅就开火
 const LEAVE_AT := 2.5            # 第 2 局 PLAYING 后多久按 ESC(相⑤)
-# 相⑤ 观察窗。★ 推导:必须盖住「宽限期(`GraceWindow.DEFAULT_SECONDS`)到点」这一刻 ——
-#   掉线者被移出对局发生在宽限到期时,而 `_expire_graces` 每秒才轮询一次(故实际落在 60~61s),
-#   本端还要从第 2 局 PLAYING 起算(`_tick_swap` 里 6 号按 ESC 与本端进窗**同一拍**)。
-#   取 110 = 60 + 50(旧值 60 = 30 + 30,同形:盖住宽限期后余下 ~50s 给负载与轮询粒度)。
+# 相⑤ 观察窗。★ 推导:必须盖住「宽限期(GraceWindow.DEFAULT_SECONDS)到点」这一刻 —— 掉线者被移出对局发生在宽限到期时,而 _expire_graces 每秒才轮询一次(故实际落在 60~61s),本端还要从第 2 局 PLAYING 起算。
+#   取 110 = 60 + 50(旧值 60 = 30 + 30,同形:盖住宽限期后余下 ~50s 给负载与轮询粒度)。★ 改 GraceWindow.DEFAULT_SECONDS 必须重算这里;它同时进 team_match_probe.RESULT_WAIT 的求和。
 #   ★ 改 `GraceWindow.DEFAULT_SECONDS` 必须重算这里;它同时进 `team_match_probe.RESULT_WAIT` 的求和。
 const OBSERVE_MAX := 110.0
 const PEER_WAIT := 120.0         # 等其它 5 端写结果的上限(本端最后一个走)
@@ -167,8 +143,7 @@ func _ready() -> void:
 	NetBus.local_snapshot_world.connect(_on_snap_world)
 	NetBus.local_round_state.connect(_on_round_state)
 	NetBus.local_kill_event.connect(_on_kill_event)
-	# match_sync 应答计数:换边后客户端**必须重拉一次**(A 册/B 册约定,见 team_game._on_round_state)
-	# —— 只数次数,内容比对在相④ 的出生点断言里。
+	# match_sync 应答计数:换边后客户端必须重拉一次(A 册/B 册约定,见 team_game._on_round_state)—— 只数次数,内容比对在相④ 的出生点断言里。
 	NetBus.local_match_sync.connect(func(_p: Dictionary) -> void: _msync += 1)
 	NetBusExt.local_team_rooms.connect(_on_team_rooms)
 	NetBusExt.local_team_room_state.connect(_on_room_state)
@@ -187,11 +162,8 @@ func _on_lobby_failed() -> void:
 	_finish()
 
 
-# 连上大厅:上报昵称 → **帧末**挂真大厅页。
-# ★ 页挂在**探针场景**下(不是本节点下):换场时 `change_scene_to_file` 会 free 掉探针场景,
-#   页随之消失 —— 这正是生产里的形状。留在树上的话,它的 `_tick_claim_timeout` 会在 claim 后
-#   25s 调 `_return_to_lobby` → `NetBus.stop()`,把正在进行的对局从客户端这边掐断
-#   (症状是"进局 25s 后掉线",且不报错)。
+# 连上大厅:上报昵称 → 帧末挂真大厅页。★ 页挂在探针场景下(不是本节点下):换场时 change_scene_to_file 会 free 掉探针场景,页随之消失 —— 这正是生产里的形状。
+#   留在树上的话,它的 _tick_claim_timeout 会在 claim 后 25s 调 _return_to_lobby → NetBus.stop(),把正在进行的对局从客户端这边掐断(症状是「进局 25s 后掉线」,且不报错)。
 func _on_lobby_connected() -> void:
 	NetBus.rpc_id(1, "lobby_name", "BOT%d" % idx)
 	_attach_lobby.call_deferred()
@@ -204,20 +176,12 @@ func _attach_lobby() -> void:
 	if cs == null:
 		return
 	lobby = load("res://scenes/mp_lobby.tscn").instantiate()
-	# ★★ `_with_lobby` 的快路判据是两个**字符串**相等(`_connected_addr == 地址框`),故只预置
-	#   已连**不够**:页的地址框初值取的就是 `PvpSession.server_address`,而它的生产默认是
-	#   **云服**(`core/net/pvp_session.gd` 初值 120.53.107.140)。不拨这一行,下面两个 set 白设 ——
-	#   一帧后页发现"已连地址(127.0.0.1)≠ 地址框(云服)"⇒ `NetBus.stop()` + 按**默认端口
-	#   7777** 去连公网生产服(还会在它上面真的建房),而本探针的大厅(池外端口)被晾着。
-	#   ★ 这个坑**静默**:日志里满是本端自己的「已连接服务器」,看着像连上了(实测的症状是
-	#   探针侧"一条 `玩家连入` 都没有 + 45s 后没有 3v3 房")。回归源 `fad4759`。
-	#   范本:`tests/harness/rejoin_watcher.gd::_on_node_added` / `tests/probe/royale_c2_probe.gd::_run_client`。
-	#   守卫:`_tick_lobby` 首段(连错地址当场点名)。
+	# ★★ _with_lobby 的快路判据是两个字符串相等(_connected_addr == 地址框),故只预置已连不够:页的地址框初值取的就是 PvpSession.server_address,而它的生产默认是云服(core/net/pvp_session.gd 初值)。
+	#   不拨这一行,下面两个 set 白设 —— 一帧后页发现「已连地址(127.0.0.1)≠ 地址框(云服)」⇒ NetBus.stop() + 按默认端口 7777 去连公网生产服(还会在它上面真的建房),而本探针的大厅(池外端口)被晾着。
+	#   ★ 这个坑静默:日志里满是本端自己的「已连接服务器」,看着像连上了(实测症状是探针侧「一条 玩家连入 都没有 + 45s 后没有 3v3 房」)。范本:tests/harness/rejoin_watcher.gd::_on_node_added / tests/probe/royale_c2_probe.gd::_run_client;守卫:_tick_lobby 首段(连错地址当场点名)。
 	PvpSession.server_address = LOBBY_ADDR
-	# ★ 本进程已经连上大厅(上面 start_client),而页的 `_ready` 会 deferred 跑一次
-	#   `_request_list` → `_with_lobby`:只有"已连同地址"那一支会复用现有连接,否则它会
-	#   `NetBus.stop()` 再按**默认端口 7777** 重连 —— 而本探针的大厅在池外端口(见探针文件头)。
-	#   故**先置位再入树**,让页走"已连"分支。
+	# ★ 本进程已经连上大厅(上面 start_client),而页的 _ready 会 deferred 跑一次 _request_list → _with_lobby:只有「已连同地址」那一支会复用现有连接,否则它会 NetBus.stop() 再按默认端口 7777 重连 —— 而本探针的大厅在池外端口。
+	#   故先置位再入树,让页走「已连」分支。
 	lobby.set("_connected", true)
 	lobby.set("_connected_addr", LOBBY_ADDR)
 	cs.add_child(lobby)
@@ -230,10 +194,7 @@ func _attach_lobby() -> void:
 func _physics_process(delta: float) -> void:
 	if _quitting:
 		return
-	# ★ 对局场景可能已经**退役**(MATCH_OVER 后客户端 6s 自动回主菜单 → `safe_change_scene`
-	#   把整具世界拆掉),而本观察者挂在 root 上、**照样在跑** —— 不判这一档就会每帧对已释放
-	#   实例取字段:`Invalid access to property or key 'global_position' on a base object of type
-	#   'previously freed'`(实测 run14)。退役即收工:把手上读数落盘、退出。
+	# ★ 对局场景可能已经退役(MATCH_OVER 后客户端 6s 自动回主菜单 → safe_change_scene 把整具世界拆掉),而本观察者挂在 root 上、照样在跑 —— 不判这一档就会每帧对已释放实例取字段(实测 run14 报 previously freed)。退役即收工:把手上读数落盘、退出。
 	if _local != null and not is_instance_valid(_local):
 		if not _done:
 			_fail("对局世界已退役(客户端已离开对局)——观察者停止采样")
@@ -284,9 +245,7 @@ func _heartbeat(delta: float) -> void:
 		return
 	var tgt := Vector2.INF
 	if _phase == PH_MEET:
-		# 甲的目标是乙、乙的目标是甲(**两个分支必须不同** —— 早先写成同一个表达式时,
-		# 乙的心跳一直在报"到自己"的距离(144px),读数看起来像"两边距离对不上",
-		# 排查时白绕了一圈)
+		# 甲的目标是乙、乙的目标是甲(两个分支必须不同 —— 早先写成同一个表达式时,乙的心跳一直在报「到自己」的距离,读数看起来像「两边距离对不上」,排查时白绕了一圈)。
 		tgt = _pos_of(_victim_role) if _shooter else _pos_of(_shooter_role)
 	elif _phase == PH_BRAWL:
 		tgt = _nearest_enemy()
@@ -302,14 +261,10 @@ func _heartbeat(delta: float) -> void:
 
 # ════════════════════ 大厅阶段 ════════════════════
 
-# ★★ 本函数**只读页的 UI 状态、只按真按钮**,而页自己的信号处理(`_on_room_state` 里建等待室)
-#   与我的处理**同帧竞争**:我只在 `_ready` 里连信号(比页早 → 我的处理器先跑),所以"读页的
-#   等待室控件"这件事**不能**放在信号处理器里 —— 实测:`team_room_state` 刚到那一帧
-#   `_wait_pick_a` 还是 null,当场 `_fail` 并**永久卡住**(选边永不发出 → 全流程停摆)。
-#   故:信号处理器只登记原始数据,页的 UI 状态一律在这里(下一帧起)轮询取用。
+# ★★ 本函数只读页的 UI 状态、只按真按钮,而页自己的信号处理(_on_room_state 里建等待室)与我的处理同帧竞争:我只在 _ready 里连信号(比页早 → 我的处理器先跑),所以「读页的等待室控件」不能放在信号处理器里。
+#   实测:team_room_state 刚到那一帧 _wait_pick_a 还是 null,当场 _fail 并永久卡住(选边永不发出 → 全流程停摆)。故:信号处理器只登记原始数据,页的 UI 状态一律在这里(下一帧起)轮询取用。
 func _tick_lobby() -> void:
-	# ★ 换场那一刻页已被 free,而本帧的相位还没切走(先 tick 后判 `_entered`)→ 必须挡掉
-	#   对已释放实例的访问,否则每跑都在换场那一帧抛一条 SCRIPT ERROR(实测)。
+	# ★ 换场那一刻页已被 free,而本帧的相位还没切走(先 tick 后判 _entered)→ 必须挡掉对已释放实例的访问,否则每跑都在换场那一帧抛一条 SCRIPT ERROR(实测)。
 	if lobby == null or not is_instance_valid(lobby):
 		return
 	if not _lobby_attached:
@@ -317,12 +272,8 @@ func _tick_lobby() -> void:
 			_fail("大厅页没挂上(%.0fs)" % ENTER_TIMEOUT)
 			_finish()
 		return
-	# ★★ 守卫(照 `royale_c2_watcher._stage_lobby`):本端连的必须是**本探针的大厅**,不能是云服。
-	#   入树后一帧,页 `_ready` 那次 deferred `_request_list` 已跑完:地址框的值被写回
-	#   `PvpSession.server_address`,而连错时 `_connected_addr` 也会跟着变成那个错地址。
-	#   (`_attach_lobby` 预置的 `_connected_addr` 是**我们自己**写的值,它单独证明不了什么 ——
-	#    真正会露馅的是 `PvpSession.server_address`。)当场点名,别让下一个人再从
-	#   "45s 后没有 3v3 房"逆推。★ 漏了 `_attach_lobby` 那行预置就是这个守卫拦的。
+	# ★★ 守卫(照 royale_c2_watcher._stage_lobby):本端连的必须是本探针的大厅,不能是云服。入树后一帧,页 _ready 那次 deferred _request_list 已跑完:地址框的值被写回 PvpSession.server_address,而连错时 _connected_addr 也会跟着变成那个错地址。
+	#   (_attach_lobby 预置的 _connected_addr 是我们自己写的值,它单独证明不了什么 —— 真正会露馅的是 PvpSession.server_address。)当场点名,别让下一个人再从「45s 后没有 3v3 房」逆推。★ 漏了 _attach_lobby 那行预置就是这个守卫拦的。
 	if PvpSession.server_address != LOBBY_ADDR or String(lobby.get("_connected_addr")) != LOBBY_ADDR:
 		_fail("本端连的是 %s,不是本探针大厅 %s —— 检查 _attach_lobby 里 PvpSession.server_address 的预置"
 				% [PvpSession.server_address, LOBBY_ADDR])
@@ -338,9 +289,7 @@ func _tick_lobby() -> void:
 		if not _created and _phase_t > 0.6:
 			_created = true
 			_log("点「创 建 房 间」")
-			# 统一大厅的弹层**启动即建、默认隐藏**(骨架里的 `%CreatePanel`;`_build_ui()` 只登记
-			# + 收起)⇒ 先开再按**不是**因为"它是 null"(T1 起没有 null 可判了),而是要让这次
-			# 「创建」走玩家那条链:`_create_mode` 只在 `_open_create_dialog` 里从当前筛选模式取。
+			# 统一大厅的弹层启动即建、默认隐藏(骨架里的 %CreatePanel;_build_ui() 只登记 + 收起)⇒ 先开再按不是因为「它是 null」(T1 起没有 null 可判了),而是要让这次「创建」走玩家那条链:_create_mode 只在 _open_create_dialog 里从当前筛选模式取。
 			lobby.call("_open_create_dialog")
 			lobby.call("_on_create_pressed")
 	else:
@@ -349,8 +298,7 @@ func _tick_lobby() -> void:
 
 
 # c2..c6:点公开列表里的房间行(真按钮回调)。
-# ★ 首份列表**必然**是空的(c2 挂页时 c1 还没建房),而 `team_list` 是**请求/响应**式
-#   —— 不重问就永远是空。故这里按 1.5s 周期点一次「刷新列表」(真按钮),直到进房。
+# ★ 首份列表必然是空的(c2 挂页时 c1 还没建房),而 team_list 是请求/响应式 —— 不重问就永远是空。故这里按 1.5s 周期点一次「刷新列表」(真按钮),直到进房。
 func _tick_lobby_join() -> void:
 	if _joined or lobby == null or not is_instance_valid(lobby):
 		return
@@ -394,8 +342,7 @@ func _on_team_rooms(rooms: Array) -> void:
 	_rooms = rooms
 
 
-# 等待室渲染(`team_room_state`)—— A 册自检里"从没收到过 team_room_state"的那条路径。
-# 本处理器**只登记**(理由见 `_tick_lobby` 上方那段);读页控件在 `_tick_pick`。
+# 等待室渲染(team_room_state)—— A 册自检里「从没收到过 team_room_state」的那条路径。本处理器只登记(理由见 _tick_lobby 上方那段);读页控件在 _tick_pick。
 func _on_room_state(state: Dictionary) -> void:
 	_room_states += 1
 	if _room_states == 1:
@@ -445,12 +392,8 @@ var _pick_logged := false
 var _pick_retry_t := 2.0
 var _kills_attr := 0
 var _kills_unattr := 0
-# ★ 相⑤ 补:K 键自杀的**端到端**(3v3 里 A 册收尾批才把 `suicide_request` 接上 worker,
-#   此前它在 3v3 是**静默丢弃**的)。第 3 号客户端在第 2 局 PLAYING 里按一次 K,
-#   观测「权威快照 downed=true → 2s 后 false」这条链(1 次击杀不足以改变局面)。
-# ★ 这个观测**必须跨相位跑**(PH_SWAP → PH_OBSERVE):早先写在 `_tick_swap` 里,而
-#   `_tick_swap` 在 PH_SWAP 结束(1.2s)后就不再被调 ⇒ 观测窗口只有 0.2s ⇒ **永远等不到复活**
-#   (实测 run9:六端 0 端报告走通,而 K 其实已经按下去了)。
+# ★ 相⑤ 补:K 键自杀的端到端(3v3 里收尾批才把 suicide_request 接上 worker,此前它在 3v3 是静默丢弃的)。第 3 号客户端在第 2 局 PLAYING 里按一次 K,观测「权威快照 downed=true → 2s 后 false」这条链。
+# ★ 这个观测必须跨相位跑(PH_SWAP → PH_OBSERVE):早先写在 _tick_swap 里,而 _tick_swap 在 PH_SWAP 结束(1.2s)后就不再被调 ⇒ 观测窗口只有 0.2s ⇒ 永远等不到复活(实测 run9:六端 0 端报告走通,而 K 其实已经按下去了)。
 func _tick_k2(delta: float) -> void:
 	if idx != 3 or _game == null or _phase < PH_SWAP:
 		return
@@ -518,9 +461,8 @@ func _try_enter_game() -> void:
 	_game = cs
 	_local = local
 	_role = PvpSession.role
-	# ★★ **序前提的运行时断言**:本观察者必须排在游戏场景**之前**(树序),否则它写的输入
-	#    会在玩家已处理完那一帧才落到手柄上 ⇒ 边沿全部丢失、服务器侧又不跳不开火,而**不报错**。
-	#    前提的来源:本节点由探针用 `root.add_child` 在换场**之前**挂上(树序在前)。
+	# ★★ 序前提的运行时断言:本观察者必须排在游戏场景之前(树序),否则它写的输入会在玩家已处理完那一帧才落到手柄上 ⇒ 边沿全部丢失、服务器侧又不跳不开火,而不报错。
+	#   前提的来源:本节点由探针用 root.add_child 在换场之前挂上(树序在前)。
 	if cs.get_index() < get_index():
 		_fail("观察者在树序里排在游戏场景**之后**(index %d vs %d)—— 输入边沿会整帧丢失"
 				% [get_index(), cs.get_index()])
@@ -891,16 +833,10 @@ func _tick_brawl_phase(delta: float) -> void:
 	_tick_brawl(delta)
 
 
-# ★★ **回退模式**(照实登记,报告里要写明占比):脚本机器人在**平台跳跃图**上无法可靠接近
-#    对手(**全部留存日志里 `killA=0`**:至今没有一次有归因击杀;真正的障碍看起来是
-#    "走位到达"而不是"开火" —— 但这一点本探针**没有**独立验证过,见报告 §7)。
-#    对局只在**先到 9 杀**时收局,所以"打不到人"= 相④ 的换边断言与相⑤ 全都跑不到。
-#    这里在"混战 90s 且最近 20s 一次击杀都没有"之后,让机器人**每 4s 按一次 K**(自杀脱困:
-#    `不分死因`给对方队 +1)把状态机推到 ROUND_OVER。它是**记录在案**的降级:
-#      · 每端写 `REC BACKOFF n=N`,裁判把它当成**读数**打出来(不隐藏);
-#      · "真实交火击杀"另有独立读数(`killA`/`killU`),报告照实分栏。
-#    这样相④ 的判据仍然是**非空转**的:它验的是**回合机 + 整队换边 + 换边重拉 match_sync**,
-#    那三样与"谁杀的"无关,坏了照样红。
+# ★★ 回退模式(照实登记,报告里要写明占比):脚本机器人在平台跳跃图上无法可靠接近对手(全部留存日志里 killA=0:至今没有一次有归因击杀;真正的障碍看起来是「走位到达」而不是「开火」,但这一点本探针没有独立验证过)。
+#   对局只在先到 9 杀时收局,所以「打不到人」= 相④ 的换边断言与相⑤ 全都跑不到 ⇒ 在「混战 90s 且最近 20s 一次击杀都没有」之后,让机器人每 4s 按一次 K(自杀脱困,不分死因给对方队 +1)把状态机推到 ROUND_OVER。
+#   它是记录在案的降级:每端写 REC BACKOFF n=N,裁判把它当读数打出来(不隐藏);「真实交火击杀」另有独立读数(killA/killU),报告照实分栏。
+#   这样相④ 的判据仍然是非空转的:它验的是回合机 + 整队换边 + 换边重拉 match_sync,那三样与「谁杀的」无关,坏了照样红。
 func _tick_backoff(delta: float) -> void:
 	if _backoff:
 		_backoff_t -= delta
@@ -1234,18 +1170,10 @@ func _local_bullet_count() -> int:
 
 
 # ════════ 机器人导航(相③ 走位 / 相④ 接近共用)════════
-# ★★ 为什么不是"朝目标 x 硬走"(既有骨架 `royale_soak_probe` 的形状),也不是仓内那套
-#    `GridPathfinder.astar_path_nearest`(敌人用的 4 邻域地板格图):**实测两种都到不了人**。
-#    读数(本轮实测,见报告 §导航):
-#      · 硬走:90s 内位移 ≈ 0(卡在同一格,`卡=90.0s`);
-#      · 4 邻域地板格 A*:整个地图的最大连通区只有 **77 格(4%)** —— 地板格是按环面
-#        4 邻接算的,而工厂图是**平台跳跃图**(台面之间隔空隙,靠跳跃跨),该图与"能走到的
-#        地方"根本不是一回事:规划出来的路径第一步往往就不可执行。
-#    故这里自建一张 **跳跃感知图**:节点 = 可站格(地板格 ∪ 通道格),边 = 玩家真能做出来的
-#    位移(走 / 落 / 跳(上 1~3 格、横 -6~6 格,竖直与水平通道都要净空)/ 爬梯)。
-#    Python 侧离线核对过同一套判据:全图 2095 个节点、最大连通区 **1792(85.5%)** ——
-#    (133,64)/(118,14)/(64,79) 等实测出生点都在主连通区里。
-# ★ 图**每局建一次**(实测 330ms,发生在开局 COUNTDOWN 里,不影响对局),不每帧重建。
+# ★★ 为什么不是「朝目标 x 硬走」(既有骨架 royale_soak_probe 的形状),也不是仓内那套 GridPathfinder.astar_path_nearest(敌人用的 4 邻域地板格图):实测两种都到不了人 ——
+#   硬走:90s 内位移 ≈ 0(卡在同一格);4 邻域地板格 A*:整个地图的最大连通区只有 77 格(4%),因为地板格按 4 邻接算,而工厂图是平台跳跃图(台面之间隔空隙、靠跳跃跨)⇒ 规划出来的路径第一步往往就不可执行。
+#   故这里自建一张跳跃感知图:节点 = 可站格(地板格 ∪ 通道格),边 = 玩家真能做出来的位移(走 / 落 / 跳(上 1~3 格、横 -6~6 格,竖直与水平通道都要净空)/ 爬梯);Python 侧离线核对过同一套判据:全图 2095 个节点、最大连通区 1792(85.5%),实测出生点都在主连通区里。
+# ★ 图每局建一次(实测 330ms,发生在开局 COUNTDOWN 里,不影响对局),不每帧重建。
 var _nav_adj: Dictionary = {}       # cell -> Array[Vector2i](邻居表)
 var _nav_built := false
 var _path: Array = []

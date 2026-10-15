@@ -1,21 +1,14 @@
 extends RefCounted
 
-# 激光光束几何追踪(纯静态、可 -s 冒烟、不引 autoload)。不是物理弹丸——
-# 开火瞬间沿方向逐格走 32px 子格(64px 格 → 2×2 形状掩码),遇墙翻对应轴反射,
-# 至多 max_bounces 次;第 (max_bounces+1) 次碰墙被吸收(停在该墙表面),或累计距离
-# ≥ max_len 在空中消失。折线点集 = 起始 + 每次反射墙面的拐点 + 终点。
-#
-# 判定语义与 CollisionBuilder.build_sub 完全一致(只认 type=wall 且形状位实心;
-# 通道/液体/气体无碰撞 → 光束穿过水/梯)。环面:固体判定 posmod 回规范副本,
-# 坐标保持在「射手所在副本」的连续系 → 跨接缝也连续。
-# 不声明 class_name:新 class 名需 --import 刷新全局缓存;此文件用 preload 引用即可。
+# 激光光束几何追踪(纯静态、可 -s 冒烟、不引 autoload):开火瞬间沿方向逐格走 32px 子格,遇墙翻对应轴反射,
+# 至多 max_bounces 次;第 (max_bounces+1) 次碰墙被吸收(停在该墙表面),或累计距离 >= max_len 在空中消失。
+# 判定语义与 CollisionBuilder.build_sub 完全一致(只认 type=wall 且形状位实心;通道/液体/气体无碰撞 ⇒ 光束穿过水/梯)。
+# 环面:固体判定 posmod 回规范副本,坐标保持在射手所在副本的连续系。不声明 class_name(用 preload 引用即可)。
 
 const SUB_TS: float = 32.0  # 子格边长(px)
 
-# origin: 枪口世界坐标;dir: 单位方向;max_len: 总射程(px);max_bounces: 反射次数上限。
-# 返回 {"points": PackedVector2Array 世界坐标折线(含起点/拐点/终点),
-#       "contacts": Array[Vector2i] 每次碰墙的 64px 格(规范坐标,可破坏砖扣血用),
-#       "hit_points": PackedVector2Array 与 contacts 平行的碰墙表面世界坐标(播粒子落点)}。
+# origin 枪口世界坐标 / dir 单位方向 / max_len 总射程 / max_bounces 上限;返回 points(折线含起点拐点终点)、
+# contacts(每次碰墙的 64px 规范格,可破坏砖扣血用)、hit_points(平行于 contacts 的表面点,播粒子落点)。
 static func trace(origin: Vector2, dir: Vector2, max_len: float, max_bounces: int) -> Dictionary:
 	var grid := MazeGenerator.current_grid
 	var pts := PackedVector2Array([origin])

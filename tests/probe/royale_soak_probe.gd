@@ -15,18 +15,10 @@ extends Node
 #   - round_state / kill_event / hit_event 计数、本地玩家倒地(复活)次数
 #   - 是否等到 MATCH_OVER
 #
-# ★ 边界(报告里必须照抄,别把数字说过头):
-#   1. headless 客户端**没有渲染** → 量到的是网络 + 模拟 + 场景树成本,**不含画面**。
-#      "渲染卡不卡" 本探针答不了,得开真客户端看。
-#   2. 大乱斗客户端上报的输入包**不带 seq**(royale_game.gd 的 pkt 无该字段),
-#      故快照里的 ack_seq 恒为 0 → 客户端无从推算 _pending_input 积压。
-#      输入积压是本机压测量不到的**代码级风险**,只在报告里给机制与触发条件。
-#   3. 崩溃判据 = 结果文件缺失 / 客户端进程消失,**不是** "没看见报错"。
-#   4. MATCH_OVER 之后 royale_game **结算页**那条出场路径(玩家自己点「返回主菜单」)不在本探针
-#      覆盖内 —— 客户端在 MATCH_OVER 当场写结果并退出,**本探针的观测窗就到这里**。
-#      ★ 2026-09-21 订正:原先这里写的是"否则那条 6s 自动回主菜单的换场会把探针自己摘掉" ——
-#        **自动退场已随结算页批次删除**(改成玩家自己退),headless 探针不会去点那个按钮 ⇒
-#        到 MATCH_OVER 收尾是**探针自己的选择**,不是被换场摘掉。
+# ★ 边界(报告里必须照抄,别把数字说过头):1. headless 客户端没有渲染 ⇒ 量到的是网络 + 模拟 + 场景树成本,不含画面(「渲染卡不卡」本探针答不了);
+#   2. 大乱斗客户端上报的输入包不带 seq(royale_game.gd 的 pkt 无该字段)⇒ 快照里的 ack_seq 恒为 0,客户端无从推算 _pending_input 积压,这项只在报告里给机制与触发条件;
+#   3. 崩溃判据 = 结果文件缺失 / 客户端进程消失,不是「没看见报错」;
+#   4. MATCH_OVER 之后结算页那条出场路径(玩家自己点「返回主菜单」)不在覆盖内 —— 客户端在 MATCH_OVER 当场写结果并退出,观测窗就到这里(自动退场已随结算页批次删除,不是被换场摘掉)。
 
 const BotInput := preload("res://tests/harness/soak_bot_input.gd")
 
@@ -167,13 +159,9 @@ func _run_client() -> void:
 		_mark("%.1fs 受击 %d 伤" % [_elapsed(), _d]))
 	NetBus.local_match_start.connect(_on_match_start)
 	NetBus.local_go_match.connect(_on_go_match)
-	# ★ 2026-09-12(批次 5 顺手修):这里原先接住 worker 推来的三条开局载荷、缓存进
-	#   `PvpSession.pending_*`。批次 3 把那条**推**路径整体换成了**进场拉取**(对局场景 `_ready`
-	#   末尾自己 `match_sync`),`pending_*` 四个字段连 `clear_pending_payloads()` 一起删了 ——
-	#   而本探针是漏改的那一个(`royale_probe` / `royale_bound_probe` 都改了),于是它**从批次 3
-	#   起就解析不过、根本跑不起来**(批次 3 的设计里还写着"用 royale_soak_probe 实测对照",
-	#   那句话从来没成立过)。本探针不需要自己拉:真 `royale_game` 场景会自己发 `match_sync`。
-	#   守卫:`tests/probe/match_sync_probe` 的反向断言(全仓不得再出现那些标识符)会拦住复活。
+	# ★ 这里原先接住 worker 推来的三条开局载荷、缓存进 PvpSession.pending_*;那条推路径已整体换成进场拉取(对局场景 _ready 末尾自己 match_sync),pending_* 四字段连带 clear_pending_payloads() 一起删了。
+	#   本探针不需要自己拉(真 royale_game 场景会自己发 match_sync);守卫:tests/probe/match_sync_probe 的反向断言(全仓不得再出现那些标识符)会拦住复活。
+	# 全流程兜底:连大厅→建房/加入→转连→claim→match_start 走不完就 FAIL 退出(否则挂死)。
 	# 全流程兜底:连大厅→建房/加入→转连→claim→match_start 走不完就 FAIL 退出(否则挂死)
 	get_tree().create_timer(60.0).timeout.connect(func() -> void:
 		if is_inside_tree() and not _match_running:

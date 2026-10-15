@@ -2,36 +2,32 @@ extends CharacterBody2D
 
 @export var animator : AnimatedSprite2D
 
-# --- 物理参数（推荐从全局读取） ---
 var gravity: float = GameParameters.gravity0
 var jump_velocity: float = PlayerParams.jump_velocity
 var charge_down_velocity: float = PlayerParams.charge_down_velocity
 var charge_velocity: float = PlayerParams.charge_velocity   # 冲刺速度
-var charge_duration: float = PlayerParams.charge_duration   # 冲刺持续时间（秒）
+var charge_duration: float = PlayerParams.charge_duration   # 冲刺持续时间(秒)
 var charge_air_gravity_mult: float = PlayerParams.charge_air_gravity_mult  # 空中冲刺重力倍率
 var move_speed: float = PlayerParams.move_speed
 var crouch_walk_speed: float = PlayerParams.crouch_walk_speed  # 蹲走水平速度
 
-# 水平加速/刹车/转身的指数缓动系数（越大越跟手）
+# 水平加速/刹车/转身的指数缓动系数(越大越跟手)
 var accel_ground: float = PlayerParams.accel_ground
 var accel_air: float = PlayerParams.accel_air
 var brake_ground: float = PlayerParams.brake_ground
 var brake_air: float = PlayerParams.brake_air
 
-# 跳跃手感：土狼时间 / 跳跃缓冲 / 可变高度
 var coyote_time: float = PlayerParams.coyote_time
 var jump_buffer_time: float = PlayerParams.jump_buffer_time
 var jump_cut_factor: float = PlayerParams.jump_cut_factor
 var coyote_timer: float = 0.0
 var jump_buffer_timer: float = 0.0
-var jump_cut_applied: bool = false   # 本次跳跃是否已截断（可变高度）
+var jump_cut_applied: bool = false   # 本次跳跃是否已截断(可变高度)
 
-# 状态标志
 var is_squat: bool = false
 var is_charge: bool = false
 var facing_direction: int = 1   # 1=右，-1=左
 
-# 冲刺计时
 var charge_timer: float = 0.0
 var _last_move_dir: int = 1            # 最近水平移动方向(1右/-1左)
 var _last_move_timer: float = 0.0      # 距上次水平移动的剩余窗口(>0 表示最近在走)
@@ -43,28 +39,25 @@ var _last_move_timer: float = 0.0      # 距上次水平移动的剩余窗口(>0
 @onready var combat: CombatComponent = $Combat
 @onready var swim: SwimComponent = $Swim
 
-# 补间形变(squash & stretch)。运行期创建,不是场景子节点 —— 与 _reload_ring 同款。
-# ★ 纯表现层:不进 capture_state()/restore_state(),不碰碰撞箱。
+# 补间形变(squash & stretch):运行期创建、不进 capture_state()/restore_state()、不碰碰撞箱。
 var squash: SquashStretch = null
-# move_and_slide() **之前**的 velocity.y。与帧首的 is_on_floor() 配对,供 squash 无状态推导落地。
-# ★ 不得进 capture_state(),不得被任何模拟逻辑读取 —— 只喂 squash(见 spec §5.1)。
+# ★ move_and_slide() 之前的 velocity.y,只喂 squash 的无状态落地推导;不得进 capture_state()、不得被模拟逻辑读。
 var _pre_move_vy: float = 0.0
 
-# 输入来源(行为不变重构):默认委托真实 Input;服务器注入 PacketInputSource 驱动远端玩家。
+# 输入来源:默认委托真实 Input;服务器注入 PacketInputSource 驱动远端玩家。
 var input_source: PlayerInput = LocalInputSource.new()
 
 func set_input_source(src: PlayerInput) -> void:
 	input_source = src
 
-# 瞄准覆盖:本地返回 ZERO → 武器用鼠标;服务器注入的网络输入返回瞄准方向。
+# 瞄准覆盖:本地返回 ZERO 时武器用鼠标;服务器注入的网络输入返回瞄准方向。
 func get_aim_dir_override() -> Vector2:
 	return input_source.get_aim_dir_override()
 
-# 输入源是否网络注入(PacketInputSource)。武器瞄准据此决定不读宿主机 OS 鼠标(见 weapon_base)。
+# 网络注入输入源:武器瞄准据此决定不读宿主机 OS 鼠标(见 weapon_base)。
 func input_is_network() -> bool:
 	return input_source != null and input_source.is_network_driven()
 
-# 攻击查询:weapon_base 经 has_method 守卫调用(本地委托真实 Input;服务器注入网络输入)。
 func is_attack_pressed() -> bool:
 	if _controls_locked:
 		return false
@@ -80,8 +73,7 @@ func is_attack_just_released() -> bool:
 		return false
 	return input_source.is_attack_just_released()
 
-# 当前瞄准方向(世界坐标系):委托当前武器的实际瞄准(本地=鼠标,服务器=注入方向)。
-# PvP 客户端每 tick 打包上报用。
+# 当前瞄准方向(世界坐标系):委托当前武器的实际瞄准(本地=鼠标,服务器=注入方向);PvP 客户端每 tick 打包上报用。
 func get_current_aim_dir() -> Vector2:
 	var w := weapons.current_weapon()
 	if w != null:
@@ -91,7 +83,6 @@ func get_current_aim_dir() -> Vector2:
 signal hp_changed(current: int, max: int)   # 转发自 CombatComponent,HUD 接口不变
 signal waterproof_changed(current: int, max: int)   # 防水值(氧气)变化,HUD 更新
 
-# 公开只读属性:HUD 直接读 hp/max_hp 建血条(hud.gd),数据在 combat,根暴露只读口。
 var hp: int:
 	get:
 		return combat.hp
@@ -99,14 +90,13 @@ var max_hp: int:
 	get:
 		return combat.max_hp
 
-# 防水值(氧气):完全浸水每 0.5s 掉 1,暴露空气每 0.3s 回 1;空后每秒扣血。
+# 防水值(氧气):没顶按 water_drain_interval 掉 1、暴露空气按 water_recover_interval 回 1;归零后每秒扣血。
 var waterproof: int = PlayerParams.player_waterproof_max
 var max_waterproof: int = PlayerParams.player_waterproof_max
 var _waterproof_timer: float = 0.0
 var _was_submerged: bool = false
 var _waterproof_drown_timer: float = 0.0
 
-# 姿态状态机（与 JumpBird 的枚举风格统一）。
 enum Pose { STAND, MOVE, FLY, CHARGE, SQUAT }
 const POSE_ANIM: Dictionary = {
 	Pose.STAND: "idle", Pose.MOVE: "move", Pose.FLY: "fly",
@@ -118,20 +108,15 @@ const POSE_NODE: Dictionary = {
 	Pose.SQUAT: "CollisionShape2D_squat",
 }
 
-# 姿态切换锁：进入某姿态后锁定一小段时间，防止 is_on_floor()/velocity
-# 抖动导致 move↔fly 等高频切换（走路抽搐）。
+# 姿态锁:进入某姿态后锁定一小段时间,防止 is_on_floor()/velocity 抖动导致 move↔fly 等高频切换(走路抽搐)。
 var state: Pose = Pose.STAND
 var state_lock_timer: float = 0.0
 const STATE_LOCK_TIME := 0.15   # 秒，切换后的最短停留时长
 
-# (原 const STOP_SNAP := 1.0 已提到 PlayerParams.stop_snap —— 移动手感数值的唯一去处,
-#  免得再被别处抄第二份。用点见下方两处 absf(velocity.x) 判定。)
 
-# 各姿态碰撞箱节点（场景里已按 POSE_NODE 命名），Pose -> CollisionPolygon2D
 var _coll_by_pose: Dictionary = {}
 
-# PvP COUNTDOWN/局间冻结:锁住本地玩家输入——武器开火查询 + 移动。
-# C2 预测路径(engine 自步进读真实输入):只锁开火不够——必须把输入源一并冻结,
+# PvP COUNTDOWN/局间冻结:锁住本地玩家输入(武器开火查询 + 移动),并把输入源一并冻结 ——
 # 否则本地预测在服务器权威冻结的倒计时里照常移动,PLAYING 起 ack 跳变 → 大 rollback。
 var _controls_locked := false
 func set_controls_locked(locked: bool) -> void:
@@ -142,62 +127,40 @@ func set_controls_locked(locked: bool) -> void:
 func _ready() -> void:
 	add_to_group("player")
 
-	# 转发 combat 的生命/倒地信号到根(外部只认根上的 hp_changed;倒地 → 取消瞄准)
 	combat.hp_changed.connect(func(cur: int, mx: int) -> void: hp_changed.emit(cur, mx))
 	combat.went_down.connect(func() -> void: weapons.cancel_aim())
 	hp_changed.emit(combat.hp, combat.max_hp)
 
-	# 缓存各姿态碰撞箱节点
 	for pose in Pose.values():
 		_coll_by_pose[pose] = get_node(POSE_NODE[pose])
 
-	# 单机开局**空手**:武器全部散落在地图上,由 `Level0._ready` 铺(见 scatter_weapons)。
-	# 联机由 MatchHost 调 set_initial_inventory 发随机一把(见联机计划)。
+	# 单机开局空手:武器全部散落在地图上,由 Level0._ready 铺;联机由 MatchHost 调 set_initial_inventory 发随机一把。
 	weapons.set_initial_inventory([])
-	# 换弹圆环:挂在**自己**身上(一个接入点覆盖单机/PvP/大乱斗)。
-	# ★ 反向缩放抵消玩家根的 scale(2.5),让环按世界单位画;位置每帧按朝向贴到"后侧"。
+	# 换弹圆环挂在玩家自己身上(一个接入点覆盖单机/PvP/大乱斗):反向缩放抵消玩家根的 scale,位置每帧按朝向贴到后侧。
 	_reload_ring = ReloadRing.new()
 	_reload_ring.scale = Vector2.ONE / scale.x
 	_reload_ring.visible = false
 	add_child(_reload_ring)
 	call_deferred("add_child", WaterFx.new())
-	# 补间形变:挂在**自己**身上(与 _reload_ring 同款的一个接入点覆盖单机/PvP/大乱斗)。
-	# animator 是 @export 引用,场景实例化时就已就位,`_ready` 里可用。
+	# 补间形变:挂在玩家自己身上(与 _reload_ring 同款的一个接入点覆盖单机/PvP/大乱斗);animator 是 @export 引用,场景实例化时就已就位。
 	squash = SquashStretch.new()
-	# ★ 顺序与另**两个**宿主统一:`add_child()` 之后才 `setup()`(三只敌鸟 / 对手副本都是这个序)。
-	#   两种序今天**等价** —— `SquashStretch` 没有 `_ready`,入树不触发任何按参数建出来的东西。
-	#   之所以仍然要统一:本仓对"配置与入树谁先"另有一条**相反**的规矩(`WeaponPickup.configure()`
-	#   必须**先于**`add_child()`,否则 `_ready` 会拿 @export 默认值先建一次,见 CLAUDE.md)——
-	#   同仓两种序并存时,加 `_ready` 的人无从判断该照哪一条。将来给本组件加 `_ready`(例如
-	#   自己建 animator)必须回头把这三处一起倒过来。
+	# ★ 先 add_child() 再 setup(),与另两个宿主(敌鸟/对手副本)统一。两种序今天等价 —— SquashStretch 没有 _ready,入树不触发按参数建出来的东西。
+	# ★ 本仓另有一条相反规矩:WeaponPickup.configure() 必须先于 add_child()。将来给本组件加 _ready 时,这三处要一起倒过来。
 	add_child(squash)
 	squash.setup(animator, SquashStretch.Profile.PLAYER)
 
 
 var _speed_mult := 1.0  # 时间场速度域倍率(加速;跨函数用,故设成员)
 
-# Beta 时间玩法(PvP):**服务器/本地预测**写入的加速倍率(1 = 常速)。
-# 单机不走这里(走 TimeField.player_speed_mult);PvP 的 TimeField.current 为 null,
-# 由 worker(权威)与本端(预测)按输入位 + 颗粒余额各自写入同一个字段。
-# ★★ 2026-10-05(closeout 批 Task 3 / T10):本字段现在也是**分发源** —— 上面那句 `tm` 是
-#   全仓**唯一**读它的地方,再由 `_push_haste_mult()` 推给三个消费点(游泳走调用参数、
-#   攀爬与当前武器走注入成员)。★ 服务端那一写(`match_host.gd:223`)与快照那一读
-#   (`match_snapshot.gd:30`)都打在**本字段**上,故那两处**一个字都不用改**。
-# ★ 不动的理由(照实):`player.gd:191` 这句读本来就是**类型化**的(本类自己有该成员);
-#   要消掉的是"别的组件隔着字符串名来摸它"。
+# Beta 时间玩法(PvP):服务器权威与本端预测各写一次的加速倍率(1 = 常速)。单机不走这里(走 TimeField.player_speed_mult)。
+# ★ 本字段也是唯一分发源:由 _push_haste_mult() 推给攀爬/武器/游泳三个消费点;match_host 的写与快照的读都打在本字段上。
 var pvp_haste_mult := 1.0
 var _ghost_t := 0.0     # 残影生成计时(加速时)
 var _ghost_flip := false  # 红/蓝交替
 
 
-# T10:**本帧倍率推给三个消费点**。为什么要有这个口(而不是让各组件自己来读):
-#   · 攀爬 / 武器两个宿主引用是**一次给入**的(`_ready` 的 `get_parent()` / `equip()`),
-#     而倍率每帧在变 ⇒ 只能每帧推;组件侧不再按字符串名反射本根(原先 `body.get("pvp_haste_mult")`)。
-#   · 游泳走 `swim.update` 的**调用参数**(每次调用都拿得到宿主,顺路给)。
-# ★ 调用点两处(都在 `_physics_process` 的正常态路径上,且都在 `climb.update` 之前):
-#   ① `weapons.tick` **之前** —— tick 里的轮询开火(`try_fire()`)要用**本帧**倍率出弹;
-#   ② 切枪之后 —— 本帧刚装上的那把也得拿到本帧倍率,否则下一帧输入阶段的开火会用旧值(默认 1)。
-# ★ 与报错口径一致:这三个消费点**只读注入值**,拿不到就是 1×(静默降级),不会去读全局/宿主。
+# 本帧倍率推给三个消费点:攀爬/武器的宿主引用是一次给入的、而倍率每帧在变 ⇒ 只能每帧推;游泳走 swim.update 的调用参数。
+# ★ 调用点两处(都在 _physics_process 正常态路径、都在 climb.update 之前):weapons.tick 之前(轮询开火吃本帧倍率)、切枪之后。消费点只读注入值,拿不到就是 1×(静默降级)。
 func _push_haste_mult(tm: float) -> void:
 	climb.haste_mult = tm
 	var cur_w := weapons.current_weapon()
@@ -206,27 +169,21 @@ func _push_haste_mult(tm: float) -> void:
 
 
 func _physics_process(delta: float) -> void:
-	# 时间场:回溯整帧冻结(位置由回放器摆);加速走**速度域**——move_and_slide() 用引擎
-	# 自己的 delta,缩放 delta 只会让重力和计时器变快(实测手感:只有坠落快、跳跃变低、
-	# 移速不变)。因此:tick 类 ×tm、水平速度目标 ×tm、重力/跳跃保持原样(跳跃高度不变)。
+	# 加速走速度域(move_and_slide 用引擎自己的 delta):tick 类与水平速度目标 ×tm,重力/跳跃保持原样 —— 缩放 delta 只会让坠落变快、跳跃变低、移速不变。
 	var tm := TimeField.player_speed_mult() if TimeField.current != null else pvp_haste_mult
 	_speed_mult = tm
 	if TimeField.current != null and TimeField.current.is_rewinding():
 		return
-	# squash 放在**最首行**(倒地早退之前):否则倒地后 animator.scale 会卡在最后一个
-	# 挤压值上(明显的视觉 bug)。参数成对读 —— is_on_floor() 是上一帧 move_and_slide 的
-	# 结果,_pre_move_vy 是那次 move_and_slide 之前缓存的 velocity.y(见 spec §2.4)。
+	# squash 必须在最首行(倒地早退之前):否则倒地后 animator.scale 会卡在最后一个挤压值上。参数成对读:is_on_floor() 是上一帧 move_and_slide 的结果,_pre_move_vy 是那次调用之前缓存的 velocity.y。
 	squash.tick(delta, _pre_move_vy, is_on_floor(), combat.is_downed())
 	if combat.is_downed():
-		# _tick_downed 不更新 _pre_move_vy:不归零的话,被击杀那一刻下坠速度会**陈旧地**留满整个
-		# 倒地窗口,并与复活首帧的地面态配对 → 一个满幅假挤压脉冲。
+		# 倒地不更新 _pre_move_vy:不归零的话,被击杀那一刻的下坠速度会陈旧地留满整个倒地窗口,并与复活首帧的地面态配对 → 一个满幅假挤压脉冲。
 		_pre_move_vy = 0.0
 		_tick_downed(delta)
 		return
 	_push_haste_mult(tm)   # ① 见该函数注释:必须在 weapons.tick 之前(tick 里的轮询开火吃它)
 	weapons.tick(delta * tm)   # 加速时开火/换弹节拍 ×tm(武器帧逻辑走物理 tick)
 
-	# 加速残影:红/蓝交替拖尾(用户要求"很明显")
 	if _speed_mult > 1.0:
 		_ghost_t -= delta
 		if _ghost_t <= 0.0:
@@ -239,34 +196,24 @@ func _physics_process(delta: float) -> void:
 
 	combat.update_iframe_blink(delta)
 
-	# 切枪走 input_source 轮询,两条**不同量纲**的路,别合并:
-	#   ① 本地交互(本地输入源):数字键 = 本端背包的**第 N 把**(1-based)→ 就地按位置切。
-	#      网络输入源这条恒 0(它的上行值不是位置)。
-	#   ② 权威切枪(网络输入源):上一包带的目标 **inst** → 按 inst 找到那一把再切。
-	#      本地输入源这条恒 0(它那次切枪已由 ① 当场成交)。
-	# ★ 为什么上行必须是 inst:位置的含义由**本端背包**决定,而拾取/丢弃是服务器裁决、
-	#   客户端不预测 —— 那 ≈1 RTT 的窗口里同一个下标在两端解出**不同的枪**(见 spec §4.1)。
+	# 切枪走 input_source 轮询,两条不同量纲的路别合并:本地输入源给背包第 N 把(1-based,就地切),网络输入源给权威目标 inst。
+	# ★ 上行必须是 inst:位置的含义由本端背包决定,而拾取/丢弃是服务器裁决、客户端不预测 —— 那 ≈1 RTT 的窗口里同一个下标在两端解出不同的枪。
 	var idx := input_source.get_switch_index_pressed()
 	if idx > 0:
 		weapons.equip_index(idx - 1)
 	var winst := input_source.consume_switch_inst()
 	if winst > 0:
 		weapons.equip_inst(winst)
-	# ② 切枪之后**再推一次**(见 `_push_haste_mult` 注释):本帧刚装上的那把也拿到本帧倍率,
-	#    否则下一帧输入阶段(`_unhandled_input` → `fire()`)会用它出生时的默认 1.0 出弹。
+	# ★ 切枪之后再推一次倍率(见 _push_haste_mult):本帧刚装上的那把也要拿到本帧倍率,否则下一帧输入阶段开火会用它出生时的默认 1.0 出弹。
 	_push_haste_mult(tm)
 
-	# R 换弹:同样走 input_source 轮询(2026-09-15 起 PvP 也换弹,见 weapon_base 换弹段注释)。
-	# ★ 必须是轮询,不能像原先那样在 _unhandled_input 里读原始 InputEvent —— **权威服务器
-	#   永远收不到**(它没有输入事件,只有注入包);输入包现在带 BIT_RELOAD 的按下边沿。
-	# 排在切枪之后:同帧切枪+换弹时,换的是新枪的弹。
-	# 倒地时不进来(上面的早退挡住)——与旧行为一致:倒地 R 是重载/复活,不是换弹。
+	# R 换弹同样走 input_source 轮询:必须轮询,不能读原始 InputEvent —— 权威服务器永远收不到(它没有输入事件,只有注入包)。
+	# 排在切枪之后:同帧切枪+换弹时换的是新枪的弹。倒地时不进来(上面的早退挡住)—— 倒地 R 是重载/复活。
 	if input_source.is_action_just_pressed("R"):
 		var reload_w := weapons.current_weapon()
 		if reload_w != null:
 			reload_w.start_reload()
 
-	# F 捡起 / Q 长按丢弃。同样走 input_source 轮询(见 _poll_pickup_drop 的注释)。
 	_poll_pickup_drop(delta)
 	_update_reload_ring()
 
@@ -274,18 +221,14 @@ func _physics_process(delta: float) -> void:
 
 	var horizontal_input = input_source.get_axis("left", "right")
 
-	# ---------- 水中(浮水/游泳)与攀爬 ----------
-	# 这两块是**数据源**:in_water / latched 决定后面每一块跑不跑,故留在编排函数里,
-	# 只把消费它们的逻辑分出去(见下方各 _tick_*)。
+	# 水中与攀爬是数据源:in_water / latched 决定后面每一块跑不跑,故留在编排函数里,只把消费它们的逻辑分出去。
 	var in_water := swim.update(self, delta, mult, input_source, tm)
 	_update_waterproof(delta)
 	var latched := false
 	if not in_water:
-		# ---------- 攀爬(梯子/锁链:攀附不受重力,按住上/下爬,锁链更快,下降更快) ----------
 		climb.update(mult, delta, is_squat, input_source)
 		latched = climb.is_latched()
 	else:
-		# 水中:清掉冲刺/下蹲残留,避免姿态锁死
 		is_charge = false
 		is_squat = false
 
@@ -295,25 +238,11 @@ func _physics_process(delta: float) -> void:
 	_tick_facing(delta, horizontal_input)
 	_tick_pose_and_collision(delta, in_water)
 
-	# ---------- 爆炸击退位移:单独 move_and_collide(带碰撞),不污染 velocity ----------
-	# (地面把向下击退吃掉后再减回去会把玩家弹起,改用独立位移结算)
+	# 爆炸击退位移单独走 move_and_collide(带碰撞),不污染 velocity —— 地面把向下击退吃掉后再减回去会把玩家弹起。
 	combat.apply_knock(delta)
 
-	# ---------- 执行移动 ----------
-	# ★ 必须在 move_and_slide() **之前**:落地那一帧它在调用后就被清零了。
-	# ★ 且必须**滤掉不是摔下来的下坠速度**(squash 的调用契约 = "地面真正吸收掉的坠落速度"):
-	#   它一并覆盖的两条路径**性质不同**,别当成同一个病(实测,见 tests/probe/squash_host_water_probe):
-	#   · 梯子下行(720)是**真违规**,且是**每帧**不是一帧 —— `_tick_crouch_and_dash` 攀附时首行
-	#     整体早退 ⇒ is_squat 冻结、攀附永不解除,k≈0.735 被钳到满幅 -10%(实测 scale = (1.1000, 0.9000))。
-	#   · 水中那条**不重叠**:Water.feet_offset 取碰撞箱底边 ⇒ 站在水下实心地面上时脚底探针
-	#     恒落在**支撑格自己**里、而支撑格是 wall 不是 liquid ⇒ in_water 恒假(实测
-	#     in_water∧on_floor 重叠 **0 帧**),"站池底永久 ~9% 挤压"并不存在。过滤它买到的是
-	#     **下沉窗口**那 30 帧的连续项 `_air`(320/700 × 0.30 ≈ 0.137 → **拉伸**;按组件的
-	#     `scale = (1−0.10v, 1+0.10v)` 读出来是 **scale = (0.9863, 1.0137)** —— 拉伸那一侧是
-	#     **y**(1.0137),x 是 0.9863;过滤后 1.0000)⇒ 这一条是**落实设计取舍**
-	#     ("游泳不该有自由落体那种弹感"),不是修 bug。
-	#     ★ 副本侧同口径的那一项已于 2026-09-20 补上(player_replica._in_water,客户端本地网格
-	#       查询,零协议字段);爬梯那一半仍是残留,见 spec §4.3。
+	# ★ 必须在 move_and_slide() 之前取值:落地那一帧它在调用后就被清零。且必须滤掉不是摔下来的下坠速度(squash 的契约 = 地面真正吸收掉的坠落速度)。
+	# ★ 水中/攀爬中置 0 是落实设计取舍(游泳不该有自由落体那种弹感),不是修 bug;梯子下行那条满幅假挤压仍是残留。实测读数与推导见 docs/eng/player.md。
 	_pre_move_vy = 0.0 if (in_water or latched) else velocity.y
 	move_and_slide()
 
@@ -321,25 +250,22 @@ func _physics_process(delta: float) -> void:
 	_wrap_position()
 
 
-# ---------- 垂直逻辑（土狼时间 / 跳跃缓冲 / 可变高度） ----------
 func _tick_vertical(delta: float, latched: bool, in_water: bool, mult: Vector2) -> void:
 	if latched or in_water:
 		return
 	if is_on_floor():
 		coyote_timer = coyote_time
 	else:
-		# 空中冲刺重力削减:冲刺那几帧重力×charge_air_gravity_mult(变平,可跨沟)。
+		# 空中冲刺那几帧重力 ×charge_air_gravity_mult(变平,可跨沟)。
 		var grav_mult := charge_air_gravity_mult if is_charge else 1.0
 		velocity.y += gravity * grav_mult * delta
 		coyote_timer = maxf(coyote_timer - delta, 0.0)
 
-	# 跳跃缓冲：落地前提前按跳，落地瞬间生效
 	if input_source.is_action_just_pressed("up"):
 		jump_buffer_timer = jump_buffer_time
 	else:
 		jump_buffer_timer = maxf(jump_buffer_timer - delta, 0.0)
 
-	# 触发跳跃：有缓冲输入且在地面或土狼窗口内
 	if jump_buffer_timer > 0.0 and (is_on_floor() or coyote_timer > 0.0) and not is_squat:
 		# 冲刺中按跳 = 打断冲刺转跳跃,保留当前水平速度作动量(下方 accel/air-brake 平滑接管)。
 		if is_charge:
@@ -351,28 +277,23 @@ func _tick_vertical(delta: float, latched: bool, in_water: bool, mult: Vector2) 
 		jump_cut_applied = false
 		squash.impulse(SquashStretch.Impulse.JUMP)
 
-	# 可变高度：上升中松开跳跃键，立即衰减上升速度（每次跳跃只截断一次）
 	if not jump_cut_applied and input_source.is_action_just_released("up") and velocity.y < 0.0:
 		velocity.y *= jump_cut_factor
 		jump_cut_applied = true
 
 
-# ---------- 下蹲 / 空中下冲 / 冲刺输入 ----------
 func _tick_crouch_and_dash(delta: float, latched: bool, in_water: bool) -> void:
 	if latched or in_water:
 		return
-	# 空中按 S 下冲(不在梯/链格上)。
 	if not is_on_floor() and input_source.is_action_just_pressed("down") \
 			and not climb.is_over_climb_tile():
 		velocity.y = charge_down_velocity
-	# 下蹲 = 在地面 且 按住 S,逐帧推导——不用 just_pressed/just_released 边沿。
-	# 旧实现 release 分支套在 if is_on_floor() 内:空中松开 S 不执行 → 落地仍蹲(卡蹲)。
+	# 下蹲逐帧推导,不用按下/松开边沿:旧实现把 release 分支套在 is_on_floor() 内,空中松开 S 不执行 ⇒ 落地仍蹲(卡蹲)。
 	var want_squat := is_on_floor() and input_source.is_action_pressed("down")
 	if want_squat and not is_squat:
 		is_charge = false   # 冲刺中按 S → 取消冲刺进蹲
 	is_squat = want_squat
 
-	# 冲刺输入
 	if not is_charge and not is_squat and input_source.is_action_just_pressed("charge"):
 		is_charge = true
 		charge_timer = charge_duration
@@ -382,7 +303,7 @@ func _tick_crouch_and_dash(delta: float, latched: bool, in_water: bool) -> void:
 			facing_direction = _last_move_dir
 
 
-# ---------- 水平速度计算(攀爬中不锁横移:爬/挂/空闲都可左右走,由 climb 只管垂直) ----------
+# 水平速度:攀爬中不锁横移(爬/挂/空闲都可左右走,由 climb 只管垂直)。
 func _tick_horizontal(delta: float, in_water: bool, horizontal_input: float, mult: Vector2) -> void:
 	if in_water:
 		return
@@ -391,9 +312,7 @@ func _tick_horizontal(delta: float, in_water: bool, horizontal_input: float, mul
 		charge_timer -= delta
 		if charge_timer <= 0:
 			is_charge = false
-			# 收尾交回下方 accel/air-brake 平滑减速,不做 1500→750 突变半刹。
 	else:
-		# 蹲走:蹲态目标换成 crouch_walk_speed(可小步左右移动);非蹲态走 move_speed。
 		var speed_target := (crouch_walk_speed if is_squat else move_speed) * _speed_mult
 		var target_velocity_x = horizontal_input * speed_target * mult.x
 		if horizontal_input != 0:
@@ -405,8 +324,7 @@ func _tick_horizontal(delta: float, in_water: bool, horizontal_input: float, mul
 			_brake_horizontal(delta)
 
 
-# ---------- 面朝方向 ----------
-# 移动输入非零时朝向跟随移动;零输入时保留(枪瞄准设置的)当前朝向
+# 移动输入非零时朝向跟随移动;零输入时保留(枪瞄准设置的)当前朝向。
 func _tick_facing(delta: float, horizontal_input: float) -> void:
 	if not is_charge and horizontal_input != 0:
 		facing_direction = 1 if horizontal_input > 0 else -1
@@ -416,13 +334,8 @@ func _tick_facing(delta: float, horizontal_input: float) -> void:
 		_last_move_timer = maxf(_last_move_timer - delta, 0.0)
 
 
-# ---------- 姿态切换 + 碰撞箱切换 ----------
-# 期望姿态由输入/接触状态决定;进入某姿态后锁定一小段时间,
-# 避免 is_on_floor()/velocity 抖动导致 move↔fly 高频切换(走路抽搐)。
-# 碰撞箱:每个姿态对应一个 CollisionPolygon2D(多边形可在编辑器里分别调整),
-# 运行时只启用当前姿态对应的碰撞箱。
+# 期望姿态由输入/接触状态决定;每个姿态对应一个 CollisionPolygon2D(多边形可在编辑器里分别调整),运行时只启用当前姿态对应的那个。
 func _tick_pose_and_collision(delta: float, in_water: bool) -> void:
-	# 动画翻转
 	animator.flip_h = facing_direction < 0
 
 	var desired: Pose = Pose.STAND
@@ -443,16 +356,13 @@ func _tick_pose_and_collision(delta: float, in_water: bool) -> void:
 		state = desired
 		state_lock_timer = STATE_LOCK_TIME
 
-	# 动画状态(跟随锁定后的姿态)
 	animator.play(POSE_ANIM[state])
 
 	for pose in _coll_by_pose:
 		_coll_by_pose[pose].disabled = pose != state
 
 
-# ---------- move_and_slide 之后的反应:冲刺撞墙 / 弹性瓦片 ----------
 func _tick_slide_reactions() -> void:
-	# 冲刺撞水平墙 → 立即结束(不再顶着墙冲满)
 	if is_charge:
 		for i in range(get_slide_collision_count()):
 			var col := get_slide_collision(i)
@@ -462,8 +372,7 @@ func _tick_slide_reactions() -> void:
 				velocity.x = 0.0
 				break
 
-	# 弹性瓦片(如树叶):弱反弹
-	# 空网格跳过(冒烟测试会清空 current_grid;真实游戏 Level0 总会赋值)
+	# 弹性瓦片(如树叶)弱反弹;空网格跳过(冒烟测试会清空 current_grid;真实游戏 Level0 总会赋值)。
 	if not MazeGenerator.current_grid.is_empty():
 		for i in range(get_slide_collision_count()):
 			var sc := get_slide_collision(i)
@@ -477,11 +386,8 @@ func _tick_slide_reactions() -> void:
 				break
 
 
-# 倒地(死亡态):**不取消物理** —— 重力/制动/击退照常,只是不吃输入、不结算战斗。
-# 与正常路径的差别只有三处:不读输入、不跑武器/攀爬/跳跃/冲刺/姿态切换、"无输入制动"那段
-# 是共用的(见 _brake_horizontal)。重力那段**刻意不与正常路径合并**:倒地的这份不乘
-# charge_air_gravity_mult、也不递减土狼时间 —— 今天都不可观测(倒地不能跳),
-# 但"不可观测"是要论证的,不如原样留着。
+# 倒地(死亡态)不取消物理:重力/制动/击退照常,只是不吃输入、不结算战斗。与正常路径的差别只有三处:不读输入、不跑武器/攀爬/跳跃/冲刺/姿态切换、制动那段共用。
+# ★ 重力那段刻意不与正常路径合并:这份不乘 charge_air_gravity_mult、也不递减土狼时间 —— 今天都不可观测(倒地不能跳),但不可观测是要论证的。
 func _tick_downed(delta: float) -> void:
 	if is_on_floor():
 		coyote_timer = coyote_time
@@ -493,8 +399,7 @@ func _tick_downed(delta: float) -> void:
 	_wrap_position()
 
 
-# 无水平输入时的制动 + 吸附。倒地路径与正常路径**逐句相同**,故收在这里(阶段 5.2)。
-# 指数缓动逼近不到 0,接近 0 时直接吸附,避免贴地滑行。
+# 无水平输入时的制动 + 吸附(倒地路径与正常路径逐句相同,故收在这里):指数缓动逼近不到 0,接近 0 时直接吸附,避免贴地滑行。
 func _brake_horizontal(delta: float) -> void:
 	if is_on_floor():
 		velocity.x = MathUtil.approach(velocity.x, 0.0, brake_ground, delta)
@@ -504,19 +409,17 @@ func _brake_horizontal(delta: float) -> void:
 		velocity.x = 0.0
 
 
-# 环面回卷:玩家只能在中间副本,离开时取模送回
+# 环面回卷:玩家只能在中间副本,离开时取模送回。
 func _wrap_position() -> void:
 	global_position = MazeGenerator.wrap_to_range(global_position,
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 
 
 func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, knockback: float = -1.0) -> void:
-	# 回溯中不受任何伤害(位置在被回放器搬运,接触判定可能在瞬移中误触发)。
-	# 单机:TimeField 的回溯态;PvP(Beta):服务器/本地预测各自置 "time_rewinding" meta。
+	# 回溯中不受任何伤害(位置正被回放器搬运,接触判定可能在瞬移中误触发):单机看 TimeField 的回溯态,联机看 time_rewinding meta。
 	if (TimeField.current != null and TimeField.current.is_rewinding()) or has_meta("time_rewinding"):
 		return
-	# 前后比对 hp:只有**真吃到伤害**才挤压。无敌帧挡下 / 已倒地时 combat.take_hit 不改 hp,
-	# 这条判据天然把它们排除 —— 比在 combat 里回调更省事(不动组件接口)。
+	# 前后比对 hp:只有真吃到伤害才挤压 —— 无敌帧挡下/已倒地时 combat.take_hit 不改 hp,天然把它们排除,比在 combat 里回调更省事。
 	var before := combat.hp
 	combat.take_hit(source_pos, damage, ignore_iframes, knockback)
 	if combat.hp < before:
@@ -534,20 +437,13 @@ func set_facing(v: int) -> void:
 func is_downed() -> bool:
 	return combat.is_downed()
 
-# 是否冲刺中(武器判断用):冲刺锁身体朝向(见 set_facing),但枪口应保持鼠标瞄准侧不跟随翻转。
+# 是否冲刺中(武器判断用):冲刺锁身体朝向,但枪口应保持鼠标瞄准侧不跟随翻转。
 func is_charging() -> bool:
 	return is_charge
 
-# 本物理步的滑动碰撞里有没有"非地形"的碰撞体(= 远端玩家身体所在的层)。
-# ★ 用途:C2 客户端预测把「是否正在贴身」喂给 PredictionRollback,让它只在贴身时放宽容差
-#   (见 docs/superpowers/specs/2026-09-22-contact-rollback-tolerance-design.md)。
-# ★ 判**层**不判组名/节点名:判 `player_replica` 组要在本文件写字面量,而 player_replica.gd 在
-#   `_ready` 里 preload 了 player.tscn ⇒ 两边互相引用成环;判 `TeamHost.TEAM_ENEMY_LAYER` 又会把
-#   `server/` 拖进核心玩家类。层判据零字符串耦合,且同时覆盖 1v1/大乱斗(层 2)与 3v3 敌方(层 16)。
-# ★ 地形恒为层 1 ⇒ `& ~1` 就是"非地形"。本地玩家的 mask 里除地形外只有对手幽灵体;
-#   3v3 队友的幽灵体在层 2、而本地 mask 不含 2 ⇒ 根本不产生滑动碰撞 ⇒ 队友不算接触(与"队友不互挡"一致)。
-# ★ 写成**函数**而不是每帧刷新的字段:本文件 move_and_slide() 有 3 个调用点
-#   (_physics_process / _tick_downed / restore_state),做字段必然漏刷一处,而漏了**不报错**。
+# 本物理步的滑动碰撞里有没有非地形碰撞体(= 远端玩家身体所在的层)。判层不判组名/节点名:判 player_replica 组要在本文件写字面量而与它互相引用成环,判 TEAM_ENEMY_LAYER 又会把 server/ 拖进核心玩家类。
+# ★ 地形恒为层 1 ⇒ 与 ~1 相与就是非地形;本地玩家的 mask 里除地形外只有对手幽灵体(3v3 队友在层 2、本地 mask 不含 2 ⇒ 队友不算接触)。
+# ★ 写成函数而不是每帧刷新的字段:本文件 move_and_slide() 有 3 个调用点,做字段必然漏刷一处,而漏了不报错。用途:C2 预测只在贴身时放宽容差。
 func touching_player() -> bool:
 	for i in range(get_slide_collision_count()):
 		var col := get_slide_collision(i)
@@ -572,10 +468,8 @@ func apply_authoritative_state(hp_val: int, waterproof_val: int, downed_val: boo
 	elif not downed_val and combat.is_downed():
 		combat.revive()
 
-# ── C2 预测:整态捕获/恢复(capture_state/restore_state)──
-# 覆盖决定「下一物理帧输出」的全部变量(player 本体 + climb/swim/combat + 当前武器)。
-# 服务器快照 = capture_state();客户端 rollback = restore_state(权威态) 后重放未确认输入。
-# 漏一个变量 → 重放与服务器分歧(孪生冒烟逐 tick 一比就现形)。字段键名尽量短,压缩协议体积。
+# C2 预测的整态捕获/恢复:覆盖决定下一物理帧输出的全部变量(player 本体 + climb/swim/combat + 当前武器)。
+# 服务器快照 = capture_state();客户端 rollback = restore_state(权威态) 后重放未确认输入。漏一个变量 → 重放与服务器分歧。字段键名尽量短,压缩协议体积。
 func capture_state() -> Dictionary:
 	var st: Dictionary = {
 		"pos": global_position,
@@ -602,18 +496,11 @@ func capture_state() -> Dictionary:
 		"down": combat.downed,
 		"knock": combat.knock_velocity,
 		"wslot": weapons._current_type,
-		# ★ 手持那一条的 **inst**(逐把唯一)。`wslot` 只有**类型 id**,同型号两把恒等 ——
-		#   光凭它,恢复端无法知道权威手持的是**哪一把**(会静默落回第 0 把:
-		#   残弹写错条目 / 丢弃丢错把 / 左下角武器框高亮错,用户 2026-09-23 报的即最后一条)。
-		#   ★ 与 mag/rld 同口径:进 capture/restore,**不进** `_close_enough` 的比对。
-		#   ★ 加法式键:老接收端忽略未知键,不协商。
+		# ★ winst = 手持那一条的逐把唯一 id:wslot 只有类型 id,同型号两把恒等,光凭它恢复端无法知道权威手持的是哪一把(会静默落回第 0 把:残弹写错条目/丢弃丢错把/武器框高亮错)。
+		# ★ 与 mag/rld 同口径:进 capture/restore,不进 _close_enough 的比对。加法式键:老接收端忽略未知键,不协商。
 		"winst": weapons.current_inst(),
 	}
-	# 背包整表(每条 {type, inst, mag})。★ 即便不做客户端预测也必须进整态:
-	#   restore_state 会 equip_type(wslot),若不先重建背包,重放时可能切到客户端背包里
-	#   **没有的类型** → `equip_type` 只 push_error、**不再凭空造枪**(§4.5,2026-09-25)。
-	# ★ 与 mag/rld 同口径:只进 capture/restore,**不进** `_close_enough` 的比对
-	#   (后者是显式白名单,只比 down/hp/pos/vel —— 只要不主动加进去就自动满足)。
+	# 背包整表(每条 {type, inst, mag})必须进整态:restore_state 会 equip_type(wslot),若不先重建背包,重放时可能切到客户端背包里没有的类型(equip_type 只 push_error、不再凭空造枪)。只进 capture/restore,不进比对。
 	st["inv"] = weapons.snapshot_inventory()
 	var w: WeaponBase = weapons._weapon
 	if w != null:
@@ -622,18 +509,13 @@ func capture_state() -> Dictionary:
 		st["fire_buf"] = w._fire_buffered
 		st["aim_f"] = w._aim_facing
 		st["aim_cf"] = w._current_aim_facing
-		# 换弹全模式开放(2026-09-15)后弹药/装填必须进整态,否则 rollback 重放**不确定**:
-		# 同一串输入在"记得残弹"与"忘了残弹"两种初态下会走出不同结果,重放就不是复现而是**新历史**。
-		# ★ 与 fire_cd 同口径:**只进 capture/restore,不进 `_close_enough` 的比对**。
-		#   `_reload_t` 是连续量,客户端预测与服务器权威天然差一个 tick —— 拿它比分歧会
-		#   每帧判"分歧"、每帧回滚(brawl_rollback_probe 量的正是这种频率灾难)。
+		# 弹药/装填必须进整态,否则 rollback 重放不确定:同一串输入在记得残弹与忘了残弹两种初态下会走出不同结果,重放就不是复现而是新历史。只进 capture/restore,不进比对(_reload_t 是连续量,比它会每帧判分歧、每帧回滚)。
 		st["mag"] = w.mag_ammo
 		st["rld"] = w._reloading
 		st["rld_t"] = w._reload_t
 	return st
 
 func restore_state(st: Dictionary) -> void:
-	# 纯移动/姿态变量直接写回
 	global_position = st.get("pos", global_position)
 	velocity = st.get("vel", velocity)
 	facing_direction = int(st.get("facing", facing_direction))
@@ -649,7 +531,6 @@ func restore_state(st: Dictionary) -> void:
 	_last_move_timer = float(st.get("lmv_t", _last_move_timer))
 	climb._latched = bool(st.get("clatch", climb._latched))
 	swim.in_water = bool(st.get("swim", swim.in_water))
-	# 血量/防水/倒地走权威采纳路径(处理倒地转体/复活副作用);hp 无变化时不重复 emit
 	var hp_v := int(st.get("hp", hp))
 	if hp_v != combat.hp:
 		combat.hp = clampi(hp_v, 0, combat.max_hp)
@@ -668,32 +549,22 @@ func restore_state(st: Dictionary) -> void:
 	_waterproof_timer = float(st.get("wp_t", _waterproof_timer))
 	_was_submerged = bool(st.get("wp_s", _was_submerged))
 	_waterproof_drown_timer = float(st.get("wp_d", _waterproof_drown_timer))
-	# 武器(背包/手持/弹药):与软同步共用同一段,见 _apply_weapon_state 的顺序说明
+	# 武器(背包/手持/弹药):与软同步共用同一段,见 _apply_weapon_state 的顺序说明。
 	_apply_weapon_state(st)
-	# 姿态碰撞箱按恢复的 state 启用 + 翻转同步(下帧 move_and_slide 用对的碰撞外形)
 	for pose in _coll_by_pose:
 		_coll_by_pose[pose].disabled = pose != state
 	animator.flip_h = facing_direction < 0
-	# CharacterBody2D 的 is_on_floor 是上次 move_and_slide 的内部结果、无法直接赋值;
-	# 恢复位置后做一次微位移 move_and_slide(向下 0.001px,可忽略)让它在恢复位置重判接触,
-	# 供恢复后第一个物理 tick 的逻辑读到正确的地面状态。
+	# CharacterBody2D 的 is_on_floor 是上次 move_and_slide 的内部结果、无法直接赋值 ⇒ 恢复位置后做一次向下 0.001px 的微位移 move_and_slide,让它在恢复位置重判接触。
 	var saved := velocity
 	velocity = Vector2(0.0, 0.001)
 	move_and_slide()
 	velocity = saved
 
 
-# ── 非预测字段的"软同步"(拾取/丢弃/复活/换局改的就是这些)──
-# ★ 与 restore_state 的分工:那个是"整态覆盖 + 让调用方重放未确认输入",用在**真分歧**上;
-#   这个**只补字段、不重放** —— 位置/速度是预测出来的,拿权威覆盖它们才是橡皮筋,
-#   而背包/残弹**不是预测出来的**,它们只由服务器裁决(客户端从不预测拾取/丢弃)。
-# ★ 由 PredictionRollback 在"预测被证实"那一支调用(每个 ack 一次,~60Hz),
-#   所以**先比指纹再动手**:restore_inventory 会 emit inventory_changed →
-#   ui/hud.gd 整体重建武器框,无脑调 = 每帧新建/销毁一堆 Control。
+# 非预测字段的软同步(拾取/丢弃/复活/换局改的就是这些):只补字段、不重放 —— 位置/速度是预测出来的,拿权威覆盖它们才是橡皮筋,而背包/残弹只由服务器裁决(客户端从不预测拾取/丢弃)。
+# ★ 由 PredictionRollback 在预测被证实那一支调用(每个 ack 一次,~60Hz),所以先比指纹再动手:restore_inventory 会 emit inventory_changed → ui/hud.gd 整体重建武器框,无脑调等于每帧新建/销毁一堆 Control。
 func sync_soft_state(st: Dictionary) -> void:
-	# ★ 指纹必须**连 `winst` 一起比**:同型号两把之间换手时 `wslot`(类型)与背包结构**都不变**,
-	#   只看那两样会把整条软同步**跳过** ⇒ 上面 `restore_inventory` 的 inst 解析根本没机会跑。
-	#   ★ 缺键时的默认值取"当前值" ⇒ 老载荷(无 `winst`)行为与改动前逐字相同。
+	# ★ 指纹必须连 winst 一起比:同型号两把之间换手时 wslot 与背包结构都不变,只看那两样会把整条软同步跳过。缺键时默认取当前值 ⇒ 老载荷(无 winst)行为与改动前逐字相同。
 	if int(st.get("wslot", weapons._current_type)) == weapons._current_type \
 			and int(st.get("winst", weapons.current_inst())) == weapons.current_inst() \
 			and _inv_structure_equal(st.get("inv", [])):
@@ -701,8 +572,7 @@ func sync_soft_state(st: Dictionary) -> void:
 	_apply_weapon_state(st)
 
 
-# 只比**结构**(type/inst 的有序对):mag 是连续量、本地每帧都在变,比它等于每帧都"不一致",
-# 守卫当场失效 —— 与"不该拿连续量判分歧"是同一条纪律(见 _close_enough 的字段白名单)。
+# 只比结构(type/inst 的有序对):mag 是连续量、本地每帧都在变,比它等于每帧都不一致,守卫当场失效。
 func _inv_structure_equal(want: Array) -> bool:
 	var held: Array = weapons.inventory.held
 	if held.size() != want.size():
@@ -716,24 +586,15 @@ func _inv_structure_equal(want: Array) -> bool:
 
 
 # 武器/弹药的权威字段回灌(restore_state 与 sync_soft_state 共用)。
-# ★ 顺序不可反:先读 wslot(此时 _current_type 还有值,可作默认),再 restore_inventory
-#   (它会把 _current_type 清 0),最后 equip_type。反过来的话——先 restore,wslot 的默认值
-#   就丢了;先 equip_type 再 restore,则 equip_type 是在**旧背包**上工作(切错枪/切不动)。
+# ★ 顺序不可反:先读 wslot(此时 _current_type 还有值,可作默认),再 restore_inventory(它会把 _current_type 清 0),最后 equip_type。反过来会丢默认值,或在旧背包上切枪。
 func _apply_weapon_state(st: Dictionary) -> void:
 	var wslot := int(st.get("wslot", weapons._current_type))
-	# ★ 把"手持的是哪一把"交给 restore_inventory 按 **inst** 解析(同型号两把只有它能区分);
-	#   下面那句按类型的 `equip_type` 只作**兜底**(老载荷无 `winst`、或权威那把不在表里时)。
+	# ★ 把手持的是哪一把交给 restore_inventory 按 inst 解析(同型号两把只有它能区分);下面那句 equip_type 只作兜底(老载荷无 winst、或权威那把不在表里时)。
 	var by_inst := weapons.restore_inventory(st.get("inv", []), int(st.get("winst", 0)))
 	if wslot > 0 and wslot != weapons._current_type:
-		# 手上**实例**的类型与权威不符(`_current_type` 由 `_equip_index`/`_unequip` 维护,
-		# 即活实例的类型)→ 必须重建。这是**已有**行为,别绕开。
-		# ★★ 但重建的**落点**要分两种,`by_inst` 就是那个判别器:
-		#   · 按 `winst` 解析成功 → 走 `equip_index(下标)`。**不能**用 `equip_type(wslot)` ——
-		#     后者按**类型**找第一个,同型号两把时会把刚解析对的下标**冲回第 0 把**
-		#     (本改动要修的正是这件事;实测把它写回去 ⇒ ground_client_probe ④b 当场红)。
-		#   · 按类型兜底(老载荷无 `winst`、或权威那把不在表里)→ 保**原样**走 `equip_type(wslot)`。
-		#     此时手里那个下标只代表"旧类型那把",拿它重建会把权威的 wslot 顶掉
-		#     (实测:④ 那条 `切到权威的 wslot` 会红)。
+		# 手上实例的类型与权威不符(_current_type 由 _equip_index/_unequip 维护)→ 必须重建。这是已有行为,别绕开;但重建的落点要分两种,by_inst 就是判别器:
+		# ★ 按 winst 解析成功 → 走 equip_index(下标):不能用 equip_type(wslot),后者按类型找第一个,同型号两把时会把刚解析对的下标冲回第 0 把。
+		# ★ 按类型兜底(老载荷无 winst、或权威那把不在表里)→ 保原样走 equip_type(wslot):此时手里那个下标只代表旧类型那把,拿它重建会把权威的 wslot 顶掉。
 		if by_inst and weapons._current_index >= 0:
 			weapons.equip_index(weapons._current_index)
 		else:
@@ -745,9 +606,8 @@ func _apply_weapon_state(st: Dictionary) -> void:
 		w._fire_buffered = bool(st.get("fire_buf", w._fire_buffered))
 		w._aim_facing = int(st.get("aim_f", w._aim_facing))
 		w._current_aim_facing = int(st.get("aim_cf", w._current_aim_facing))
-		# 弹药/装填随权威整态回灌(见 capture_state 里那段"为什么进整态、为什么不进比对")
-		# ★ 走 apply_mag:本帧刚重建过实例时 `_weapon` 还没入树,同步写会被 `_ready` 冲掉。
-		#   这是个**同步**调用(不再排 deferred)—— 回滚重放期间打出的每一发因此得以保留。
+		# 弹药/装填随权威整态回灌(理由见 capture_state)。
+		# ★ 必须走 WeaponComponent.apply_mag():本帧刚重建过实例时 _weapon 还没入树,直接写 mag_ammo 会被 _ready 用条目旧值盖掉;apply_mag 按 is_inside_tree() 分流,未入树写 pending_mag 由 _ready 消费(同步调用,不排 deferred)。
 		WeaponComponent.apply_mag(w, int(st.get("mag", w.mag_ammo)))
 		w._reloading = bool(st.get("rld", w._reloading))
 		w._reload_t = float(st.get("rld_t", w._reload_t))
@@ -763,13 +623,11 @@ func cancel_charge() -> void:
 	is_charge = false
 	charge_timer = 0.0
 
-# 防水值(氧气):没顶(中心低于水面线)每 water_drain_interval 掉 1,暴露空气回 1;空后每秒扣血。
 func _update_waterproof(delta: float) -> void:
 	var submerged := false
 	if swim.in_water:
 		var surface_y := Water.surface_y_at(global_position)
-		# 呼吸按「大部分没入」扣:参考线比中心低 water_breath_line_offset(≈胸口下沿),
-		# 水面到这条线就扣,要浮到水面低于它才回气(头能露出仍扣)。
+		# 呼吸按大部分没入扣:参考线比中心低 water_breath_line_offset(≈胸口下沿),水面到这条线就扣,要浮到水面低于它才回气(头能露出仍扣)。
 		var breath_point := global_position + Vector2(0.0, PlayerParams.water_breath_line_offset)
 		submerged = Water.submerged(breath_point, surface_y)
 	if submerged != _was_submerged:
@@ -796,8 +654,7 @@ func _set_waterproof(v: int) -> void:
 	waterproof_changed.emit(waterproof, max_waterproof)
 
 
-# 单人「倒地按 R 重启」(Level0.restart_single 调):满血满氧回出生点,清倒地/冲刺/跳跃
-# 残留,武器切回首个启用槽并把当前弹夹补满(不看装填状态,重启即满弹)。
+# 单人倒地按 R 重启(Level0.restart_single 调):满血满氧回出生点,清倒地/冲刺/跳跃残留。
 func restart_at(spawn_cell: Vector2i) -> void:
 	var ts: int = GameParameters.TILE_SIZE
 	global_position = Vector2(spawn_cell.x * ts + ts * 0.5, spawn_cell.y * ts + ts * 0.5)
@@ -819,35 +676,20 @@ func restart_at(spawn_cell: Vector2i) -> void:
 	_waterproof_timer = 0.0
 	_waterproof_drown_timer = 0.0
 	weapons.cancel_aim()
-	# ★ 2026-09-15(背包化):这里**不再**动背包。
-	#   原先那三行(reset_mag_state → equip_type(int(default_type())) → refill_current_weapon)是
-	#   "复活即回默认枪 + 满弹"的旧语义,而背包现在是**玩家资产**:单机的重开由
-	#   `Level0.restart_single` 统一重置(清空 + 重新散落),联机的复活另有规则
-	#   (除随机一把外全丢,见联机计划)。放进本函数会让两条路径互相打架 ——
-	#   本函数被单机与联机共用,而两种模式的武器规则不同。
+	# ★ 这里不再动背包:本函数被单机与联机共用,而两种模式的武器规则不同 —— 单机的重开由 Level0.restart_single 统一重置(清空 + 重新散落),联机的复活另有规则(除随机一把外全丢)。
 	weapons.reset_mag_state()   # 只把当前武器的残弹同步进背包条目(不再清任何表)
 	set_controls_locked(false)
 
 
-# ── 拾取 / 丢弃(2026-09-15,武器槽位计划)──
 var _reload_ring: ReloadRing = null   # 换弹圆环(角色后侧)
 var _drop_hold_t := 0.0     # Q 已按住多久
 var _drop_latched := false  # 本次长按是否已触发过(防按住不放连续丢)
 
 
-# F 捡起 / Q 长按丢弃。
-# ★ 两者都走 input_source 读口,不在 _unhandled_input 里读原始 InputEvent —— 权威服务器
-#   没有输入事件、只有注入包,读原始事件的话联机端永远收不到(与 R 换弹 2026-09-15
-#   从 _unhandled_input 迁走是同一个理由)。
+# F 捡起 / Q 长按丢弃都走 input_source 读口,不在 _unhandled_input 里读原始 InputEvent —— 权威服务器没有输入事件、只有注入包,读原始事件的话联机端永远收不到。
 func _poll_pickup_drop(delta: float) -> void:
-	# ★ Q 长按计时**两种模式都要跑**。联机时它也是"长按丢弃"这条规则的**唯一**执行点:
-	#   服务器只收得到一次"满了"的边沿,它自己没有计时器。早先这里写成 `if pvp_mode: return`,
-	#   结果是联机端**长按形同虚设**(当时阈值还是 2s —— 现为 `PlayerParams.weapon_drop_hold_time` = 0.6s;
-	#   ★ 2026-10-04 订正:原文写"2 秒"/"2s" 未注明那是旧值),而 LocalInputSource 的 drop 读口当时报的是"Q 按着",
-	#   于是碰一下 Q 就丢枪、按住不放会每 tick 丢一把)。
-	#
-	# 分支只差在"满了之后干什么":
-	#   单机 → 就地丢;联机 → 打一个一次性边沿,由 pack_record 上行给服务器裁决(不做客户端预测)。
+	# ★ Q 长按计时两种模式都要跑:联机时它也是长按丢弃这条规则的唯一执行点(服务器只收得到一次满了的边沿,它自己没有计时器)。
+	# 早先写成联机早退 ⇒ 长按形同虚设、碰一下 Q 就丢枪。分支只差满了之后干什么:单机就地丢,联机打一个一次性边沿由 pack_record 上行给服务器裁决(不做客户端预测)。
 	if input_source.is_action_pressed("Q"):
 		if not _drop_latched:
 			_drop_hold_t += delta
@@ -861,26 +703,20 @@ func _poll_pickup_drop(delta: float) -> void:
 		_drop_hold_t = 0.0
 		_drop_latched = false
 
-	# 拾取:F 本来就是按下边沿,联机只需上行(服务器裁决),单机就地执行。
-	# ★ 服务器侧(权威模拟)不在此裁决 —— 它走 `MatchGround._handle_ground_actions`;
-	#   本函数在服务器上靠 `_try_*` 的 `current_scene is Level0` 早退兜底。
+	# 拾取 F 本来就是按下边沿:单机就地执行,联机只上行(服务器侧走 MatchGround._handle_ground_actions 裁决;本函数在服务器上靠 current_scene is Level0 早退兜底)。
 	if input_source.is_pickup_pressed() and not Level0.pvp_mode:
 		_try_pickup()
 
 
-# 长按 Q 的进度 0..1(只读;HUD 的丢弃进度条用)。
-# ★ 没有反馈的长按是不可用的 —— 玩家会以为按键没生效。
-#   (阈值现为 PlayerParams.weapon_drop_hold_time = 0.6s;★ 2026-10-04 订正,原文写"两秒")
+# 长按 Q 的进度 0..1(只读;HUD 的丢弃进度条用):没有反馈的长按是不可用的 —— 玩家会以为按键没生效。
 func drop_hold_progress() -> float:
 	if _drop_latched:
 		return 1.0
 	return clampf(_drop_hold_t / PlayerParams.weapon_drop_hold_time, 0.0, 1.0)
 
 
-# 本玩家所属的 Level0(从自己往上走)。★ 不用 `get_tree().current_scene`:
-# 那是"当前场景根"这一**全局**状态,与"我在哪个世界"并不等价 —— PvP 里 current_scene 是
-# PvpGame/大乱斗场景(Level0 只是它子节点),服务器 worker 里干脆没有 Level0。
-# 往上走是本地的、精确的,也让探针能把世界挂成子节点来测(实测:current_scene 赋值不生效)。
+# 本玩家所属的 Level0(从自己往上走)。★ 不用 get_tree().current_scene:那是当前场景根这一全局状态,与我在哪个世界并不等价
+# (PvP 里 current_scene 是 PvpGame/大乱斗场景,Level0 只是它的子节点;服务器 worker 里干脆没有 Level0)。往上走是本地的、精确的。
 func host_level() -> Level0:
 	var n: Node = self
 	while n != null:
@@ -912,8 +748,7 @@ func _try_drop() -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	# 滚轮切枪(设置开启时):循环跳到下一个启用槽位;倒地时不切。
-	# PvP:滚轮不在输入包协议里,只本地切会被快照防脱同步切回旧槽位 → 走
-	# request_net_cycle(本地即时切 + 目标槽位打包进输入包由服务器权威同步)。
+	# PvP:滚轮不在输入包协议里,只本地切会被快照防脱同步切回旧槽位 ⇒ 走 request_net_cycle(本地即时切 + 目标槽位打包进输入包由服务器权威同步)。
 	if Settings.wheel_switch and not combat.is_downed() \
 			and event is InputEventMouseButton and event.pressed:
 		var dir := 0
@@ -928,24 +763,18 @@ func _unhandled_input(event: InputEvent) -> void:
 				weapons.cycle_index(dir)
 			return
 	if combat.is_downed():
-		# PvP 倒地不重载场景(服务器权威管复活/回合,阶段4);单人照旧。
+		# PvP 倒地不重载场景(服务器权威管复活/回合);单人照旧。
 		if not Level0.pvp_mode and event.is_action_pressed("R"):
-			# 单人重启:原地复位,不重建世界(重建会偶发原生段错误→重启后蓝屏/地图未加载)。
-			# 只在当前场景确为 Level0 时生效(主菜单/其它场景不误触发)。
+			# 单人重启:原地复位,不重建世界(重建会偶发原生段错误 → 重启后蓝屏/地图未加载);只在当前场景确为 Level0 时生效。
 			var lvl := get_tree().current_scene
 			if lvl is Level0:
-				# 推迟一帧:restart_single 会同步重建碰撞层(销毁全量 WallCollision/可破坏分块),
-				# 而此刻仍在 _unhandled_input 的派发栈内 —— 与本项目 safe_change_scene 要 await
-				# 一帧是同一个理由(level_0.gd 的注释记着"立刻摘树会触发 CanvasItem EXIT_TREE")。
+				# 推迟一帧:restart_single 会同步重建碰撞层(销毁全量 WallCollision/可破坏分块),而此刻仍在 _unhandled_input 的派发栈内 —— 与 safe_change_scene 要 await 一帧同理(立刻摘树会触发 CanvasItem EXIT_TREE)。
 				(lvl as Level0).restart_single.call_deferred()
 		return
-	# (R 换弹**已从这里迁走** —— 2026-09-15 起走 _physics_process 的 input_source 轮询,
-	#  见那里的注释:读原始 InputEvent 的话权威服务器永远收不到。倒地时 R 仍是重载/复活,见上。)
+	# R 换弹已从这里迁走(改走 _physics_process 的 input_source 轮询):读原始 InputEvent 的话权威服务器永远收不到。倒地时 R 仍是重载/复活。
 
 
-# 换弹圆环:角色**后侧**(背对朝向那一侧)显示,环心是带一位小数的倒计时。
-# ★ 挂在玩家本体上而不是 HUD:圆环要跟人走、且要压在角色附近的世界层里,
-#   一个接入点就覆盖所有模式(单机/PvP/大乱斗)。
+# 换弹圆环显示在角色后侧(背对朝向那一侧),环心是带一位小数的倒计时;挂在玩家本体而不是 HUD:圆环要跟人走、要压在角色附近的世界层里,一个接入点覆盖所有模式。
 func _update_reload_ring() -> void:
 	if _reload_ring == null or not is_instance_valid(_reload_ring):
 		return
@@ -969,79 +798,23 @@ func rewind_restore(d: Dictionary) -> void:
 	if d["v"] != null:
 		velocity = d["v"]
 	combat.knock_velocity = Vector2.ZERO
-	# ★ 必须发 hp_changed:HUD 血条只听信号(不是每帧轮询),直接改 combat.hp 不改的话
-	#   血条会停在旧值 —— 玩家看到的"血量没有回溯"就是这个(内部数值其实已还原)。
+	# ★ 必须发 hp_changed:HUD 血条只听信号(不是每帧轮询),直接改 combat.hp 的话血条会停在旧值 —— 玩家看到的血量没有回溯就是这个。
 	var hp_before := combat.hp
 	combat.hp = clampi(int(d["hp"]), 0, combat.max_hp)
 	if combat.hp != hp_before:
 		combat.hp_changed.emit(combat.hp, combat.max_hp)
 	facing_direction = int(d["facing"])
 	var downed_now := is_downed()
-	# 武器弹量回溯(用户要求):背包各格残弹 + 手持那件实弹;当前武器不同则切回
-	# ★ 类型化访问(2026-10-04,audit §2.5):这一段从前用**字符串反射**读写武器域
-	#  (`wc.get` / `wc.call` / `live2.set` 带字符串参数)。反射的代价是**改名只在运行期暴露**,
-	#   实测(Godot 4.7.1;改名变异原文见 rewind_weapon_probe.gd(已删·2026-10-09) 文件头):
-	#   · `get` 拼错 ⇒ **静默返回 null**,整段被 `if inv != null` 跳过,引擎一声不吭;
-	#   · `set` 拼错 ⇒ **静默不写**,同样一声不吭;
-	#   · `call` 拼错 ⇒ 会报一条错,但报的是"`call` 这个通用 API 失败",且**中止整个
-	#     `rewind_restore`**(连后面的手持实弹写回与倒地/复活处理一起跳过)。
-	#   ★ 说清买到的是什么:这**不是**"编译期就红" —— Godot 4.7.1 对 `class_name` 脚本类型上
-	#   的未知成员只当"不安全访问"(警告级;`project.godot` 也没把 `unsafe_*` 升成错误),
-	#   实测类型化写法拼错同样是**运行期** SCRIPT ERROR。买到的是:错**当场、点名成员、
-	#   带文件:行号**地炸,而不是静默把状态写歪。
-	#   同族的真事故:`core/sim/world_rewind.gd:98-103`(`_current_slot` 改名成 `_current_type`
-	#   之后 `get` 返回 null ⇒ 快照值静默恒为 0,不报错、不中断)。
-	#   ★★ 2026-10-04 实测订正**上面这句的后果**(原文只说"快照值静默恒为 0",说轻了;订正只作
-	#   追加、原句保留在上,与 `core/sim/world_rewind.gd:99-106` 那份同形):那一帧
-	#   `WorldRewind._snapshot_player()` 返回的是**空字典**(仪器原文 `snap.size()=0 keys=[]`)⇒
-	#   到了本函数,**第一个键**(`d["p"]`/`d["hp"]`…)就早退 ⇒ **位置/HP/武器全不还原**,
-	#   而不是"只有 `wslot` 变 0"。端到端实测:改回退役名 ⇒ `rewind_probe` 7 条红
-	#   (位置差 276px、HP 30≠50、HUD 血量通知未触发),引擎每帧照报 `Nonexistent 'int' constructor`
-	#   (同一跑 83 行)—— 只是**当时没有任何断言会红**。生产端的订正与守卫在
-	#   `core/sim/world_rewind.gd`(Plan B Task 3)与 rewind_weapon_probe.gd(已删·2026-10-09) 的 S7 段。
-	#   三样成员都在**已有 `class_name`** 的类上(`WeaponComponent` / `WeaponInventory` /
-	#   `WeaponBase`),且 `mag_ammo` 本来就是**公开字段**(`weapon_base.gd:102`;
-	#   `weapon_component.gd:287` 的 `apply_mag` 也直接写它)⇒ 反射纯属历史遗留,不是必需。
-	# ★ 行为逐字段不变这条**已被 2026-10-05 的 Task 2 取代**(原文:"边界 `mini(held.size(),
-	#   mags.size())` 与 `widx >= 0` / `wlive >= 0` 两处下标守卫**原样保留**")—— 边界与两条守卫
-	#   仍在,但**语句序**与**落弹的那个写法**都改了:见下面那一段 `2026-10-05 Task 2` 的说明。
-	# 行为 + 形状守卫:rewind_weapon_probe.gd(已删·2026-10-09)(S1-S6 + S8)。
-	#
-	# ★★ 2026-10-05(closeout 批 Task 2)修两处**实测的**回溯保真缺陷(改前就有、本次才修;
-	#   实测仪器 = `reflection-and-input-fallback` Task 1 报告 §发现A / §发现B):
-	#   ① **发现 A(切枪帧)**:`_equip_index` 会用 `call_deferred("add_child")` 入树,并把
-	#      **背包条目**的残弹塞进 `pending_mag`,而 `WeaponBase._ready()` 消费它 ⇒ 原来"先切枪、
-	#      再同步写 `live2.mag_ammo`"那一写在**未入树窗口**里是**无效写**:`_ready` 一跑就被
-	#      条目旧值覆盖。仪器原文(切枪那一帧 index=1 mag=9 → 入树后 mag=4)。
-	#      症状:生产路径每帧调一次本函数、下一帧补上;但**最后一次回溯正落在切枪帧**(玩家恰在
-	#      那一刻松开 Shift)时没有"下一帧" ⇒ 弹量停在条目旧值,直到下一次回溯。
-	#      修法 = 走 `WeaponComponent.apply_mag()`(它按 `is_inside_tree()` 分流:未入树写
-	#      `pending_mag` 由 `_ready` 消费)—— 与 `_apply_weapon_state`(`player.gd:726`)同一条
-	#      既有口径,不是新写法。
-	#   ② **发现 B(走掉那把)**:`_equip_index` 会把**走掉那把**的出膛实弹写回条目,而它排在
-	#      "条目写回循环"**之后** ⇒ 冲掉刚恢复的快照值。仪器原文:快照 `wmags=[11,1]` / `widx=1`
-	#      ⇒ 切枪后 `held[0].mag=3`。修法 = 把**切枪排在条目写回之前**(写回落在恢复之前,
-	#      随后被快照值覆盖)。
-	#   ③ 语义口径(**别改成"以条目为准"**):回溯 = **逐字段**回到快照记录的值 —— `wlive`(手持
-	#      实弹)与 `wmags`(各槽条目)**各自照抄快照**,二者在快照时就允许不同(条目只在切枪/丢弃
-	#      时同步,开火只扣 `mag_ammo`)⇒ 任何"从条目推导当前枪 / 从当前枪写回条目"的动作都不许
-	#      在恢复**之后**把已恢复的值改掉。去掉 ①/② 任一处的修法,`rewind_weapon_probe` 的
-	#      S8-A / S8-B 各自变红(变异日志:`task-2-mutation-log.txt`)。
-	#   ④ `wlive < 0`(快照没记手持实弹)且**确实切了枪**时,新实例总得有一个值:取**快照条目值**
-	#      (`held[widx]`,已在下面写回)—— 这是"改动前的同口径"(旧语句序里 `_equip_index` 就是从
-	#      恢复后的条目取的)。★ 该条目可能是 `MAG_FULL(-1)`(**满弹**哨兵,与 `wlive` 的 -1 语义
-	#      不同),那时折成 `mag_size`;不做这一步就会让新枪停在**恢复前**的条目值(修复轮 1 的 I-1,
-	#      见下面那段行内注释与 S8-D)。去掉这条分支,`S8-C` 变红(新枪停在恢复**前**的条目值);
-	#      去掉 MAG_FULL 折算,`S8-D` 变红。
-	#      ★ 与 S4 的不矛盾:S4 是"不切枪 + `wlive=-1`"⇒ 现场什么都不写(现场就是对的)。
-	#   ★ 覆盖上限:`rewind_weapon_probe` 的 S8 直调本函数、喂同形快照,**不覆盖**真回溯的帧选择
-	#     (那一条在 `rewind_probe.gd`);PvP 那一份(`MatchHost._apply_rw_frame`)行为侧无 headless
-	#     守卫 ⇒ 归真链路批 A(见 `.superpowers/sdd/.../task-2-report.md`)。
+	# 武器弹量回溯:背包各格残弹 + 手持那件实弹;当前武器不同则切回。
+	# ★ 类型化访问取代早先的字符串反射(get/call/set 带字符串):反射改名只在运行期暴露 —— get 拼错静默返回 null、整段被 if 跳过,set 拼错静默不写,call 拼错会中止整个 rewind_restore。
+	# ★ 买到的不是编译期就红(Godot 对 class_name 脚本类型上的未知成员只当警告级不安全访问),而是错当场、点名成员、带文件行号地炸,而不是静默把状态写歪。零守卫:rewind_weapon_probe 已删(2026-10-09)。
+	# ★ 语句序:切枪必须排在条目写回之前 —— _equip_index 会把走掉那把的出膛实弹写回条目,排在写回之后就会冲掉刚恢复的快照值。
+	# ★ 语义口径(别改成以条目为准):回溯 = 逐字段回到快照记录的值,wlive(手持实弹)与 wmags(各槽条目)在快照时就允许不同(条目只在切枪/丢弃时同步,开火只扣 mag_ammo)⇒ 任何从条目推导当前枪、或从当前枪写回条目的动作,都不许在恢复之后把已恢复的值改掉。
+	# ★ wlive < 0(快照没记手持实弹)且确实切了枪时,新实例取快照条目值 held[widx](旧语句序里 _equip_index 就是从恢复后的条目取的)。
 	var wc: WeaponComponent = weapons
 	if wc != null and d.has("wmags"):
 		var inv: WeaponInventory = wc.inventory
-		# ★ 切枪必须排在下面"条目写回"**之前**(发现 B):`_equip_index` 会把走掉那把的实弹写回条目,
-		#   排在写回之后就会冲掉刚恢复的快照值。
+		# ★ 切枪排在下面条目写回之前:排在之后,_equip_index 写回的实弹会冲掉刚恢复的快照值。
 		var want_idx := int(d.get("widx", -1))
 		var switched := want_idx >= 0 and want_idx != wc._current_index
 		if switched:
@@ -1056,26 +829,15 @@ func rewind_restore(d: Dictionary) -> void:
 			var want := int(d.get("wlive", -1))
 			if want < 0 and switched and inv != null and wc._current_index >= 0 \
 					and wc._current_index < inv.held.size():
-				# 见上面 ④:快照没记手持实弹而这次换了枪 ⇒ 用**快照条目值**(不是恢复前的旧值)。
+				# 见上:快照没记手持实弹而这次换了枪 ⇒ 用快照条目值,不是恢复前的旧值。
 				want = int(inv.held[wc._current_index]["mag"])
-				# ★★ 2026-10-05(修复轮 1,评审 I-1)**两个 `-1` 语义不同,别混**:
-				#   · `wlive == -1` = **哨兵**:快照没记手持实弹(见 ④);
-				#   · **条目** `mag == MAG_FULL(-1)` = **满弹**(`weapon_inventory.gd:38`)。
-				#   语句序换过来之后,`_equip_index` 读的是**恢复前**的条目 ⇒ 条目是满弹时它
-				#   **不设** `pending_mag`(由 `_ready` 用 `mag_size` 落满弹,这是"满弹"的既有口径);
-				#   而这里若不折算,`want` 会是 -1 ⇒ 被下面的 `want >= 0` 挡住 ⇒ **`apply_mag` 不调用**
-				#   ⇒ 新枪停在 `_equip_index` 从恢复前条目取的那个**有限旧值**(= 回溯值错,正是本任务
-				#   要消灭的症状)。折成 `live2.mag_size` 与"不设 pending_mag、`_ready` 用 mag_size"
-				#   **逐位同效**,把"满弹"这件事显式说完。
+				# ★ 两个 -1 语义不同:wlive 的 -1 = 哨兵(快照没记手持实弹);条目 mag 的 MAG_FULL(-1) = 满弹(weapon_inventory.gd)。
+				# 不折算的话 want 会是 -1、被下面的 want >= 0 挡住 ⇒ apply_mag 不调用 ⇒ 新枪停在 _equip_index 从恢复前条目取的有限旧值。折成 mag_size 与不设 pending_mag、_ready 用 mag_size 逐位同效。
 				if want == WeaponInventory.MAG_FULL:
 					want = live2.mag_size
 			if want >= 0:
-				# 见上面 ①:走 apply_mag —— 未入树窗口里写 `mag_ammo` 会被 `_ready` 覆盖。
-				# ★ 它顺带**钳位**到 `[0, mag_size]`(旧写法是裸写)。**范围内逐位等价(推理,非实测)**:
-				#   正常回溯的 `wlive` 取自同一把枪的 `mag_ammo`,而 `_ready` 自己就把它钳进
-				#   `[0, mag_size]` ⇒ 范围内值过 `clampi` 不变(读 `clampi` 即证);
-				#   越界那一档("快照之后那一槽换了型号")**没有任何断言**,见
-				#   rewind_weapon_probe.gd(已删·2026-10-09) 的覆盖上限与 `docs/eng/registered-debt.md` §六.13。
+				# 见上:走 apply_mag —— 未入树窗口里写 mag_ammo 会被 _ready 覆盖。
+				# ★ 它顺带钳位到 [0, mag_size];范围内逐位等价(正常回溯的 wlive 取自同一把枪,而 _ready 自己就钳过);越界那一档无任何断言,见 docs/eng/registered-debt.md §六.13。
 				WeaponComponent.apply_mag(live2, want)
 	if bool(d["downed"]) and not downed_now:
 		combat.set_downed_by_rewind(true)

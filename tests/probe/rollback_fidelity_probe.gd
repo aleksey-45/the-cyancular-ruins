@@ -1,25 +1,17 @@
 extends Node
 
-# C2 回放保真探针(场景模式:要真 Player,故 autoload 必须已实例化,不能用 -s 跑)。
-# 跑法:
-#   "$GODOT" --headless --path . res://tests/probe/rollback_fidelity_probe.tscn
-# 期望:末行 "ROLLBACK FIDELITY PROBE: ALL-OK"。判据 grep 该文本,不只看退出码。
-#
-# A 组 · 环面比较:`_close_enough` 原先比 pos 用裸 distance_to。环面上客户端与服务器在
-#   跨接缝那一帧可能相差**一整幅地图宽**(其实同一个物理点)→ 误判分歧、白跑一次回滚。
-# B 组 · 重放保真:回滚重放时对手身体没被倒回 → 重放与原始预测对不上 → 级联回滚。
-#   这两条是本批的全部内容,故断言都钉在这里。
+# C2 回放保真探针(场景模式:要真 Player,故 autoload 必须已实例化,不能用 -s 跑)。跑法:godot --headless --path . res://tests/probe/rollback_fidelity_probe.tscn。
+# 期望:末行 "ROLLBACK FIDELITY PROBE: ALL-OK"(判据 grep 该文本,不只看退出码)。
+# A 组 · 环面比较:_close_enough 原先比 pos 用裸 distance_to,而环面上客户端与服务器在跨接缝那一帧可能相差一整幅地图宽(其实同一个物理点)→ 误判分歧、白跑一次回滚。
+# B 组 · 重放保真:回滚重放时对手身体没被倒回 → 重放与原始预测对不上 → 级联回滚。这两条是本批的全部内容,故断言都钉在这里。
 
 const DT := 1.0 / 60.0
 const MARKER := "ROLLBACK FIDELITY PROBE: ALL-OK"
 
 var _failures: Array[String] = []
 
-# ★ 假绿防线(本仓被抓过四次的那一类,本探针初版就中过):
-#   Godot 的运行时错误只**中断当前函数**,调用它的 `_ready()` 会照常往下走 —— 于是
-#   「测试函数中途报错 → 一条 _check 都没跑到 → _failures 仍空 → 照样打印 ALL-OK 并 exit 0」。
-#   实测:改之前把 map_px 从 `_close_enough` 里删掉(必报错),红跑却印了 ALL-OK。
-#   故每个测试函数在**最后一行**给自己盖完成戳;缺戳 = 没跑完 = 红。
+# ★ 假绿防线(Godot 的运行时错误只中断当前函数,调用它的 _ready() 会照常往下走):「测试函数中途报错 → 一条 _check 都没跑到 → _failures 仍空 → 照样打印 ALL-OK 并 exit 0」。
+#   实测:把 map_px 从 _close_enough 里删掉(必报错),红跑却印了 ALL-OK。故每个测试函数在最后一行给自己盖完成戳;缺戳 = 没跑完 = 红。
 var _ran: Dictionary = {}
 
 func _check(ok: bool, msg: String) -> void:
@@ -35,7 +27,6 @@ func _fail(msg: String) -> void:
 	print("[fid]   ✗ %s" % msg)
 
 
-# 每个测试函数跑完后必须留下完成戳;缺了就说明它中途被中断了 —— 那种情况下面的 ✓/✗ 都不可信。
 func _require_ran(name: String) -> void:
 	if not _ran.has(name):
 		_fail("%s 没跑到最后一行(中途报错或被跳过)→ 本趟读数不可信" % name)
@@ -97,9 +88,8 @@ func _test_torus_compare() -> void:
 	_ran["torus"] = true   # ★ 完成戳必须在最后一行:中途报错就到不了这里(见顶部说明)
 
 
-# ── C 组:接触期容差(贴身时用 contact_pos_tol,非接触期保持 pos_tol)──
-# 手法与 A 组同款:直接摆 _captures + on_authoritative + reconcile,不依赖真实物理世界。
-# 造一个已跑到 20 帧的控制器 + 它绑的玩家,并把 seq14 那份 capture 的 pos 挪 10px 当"权威"。
+# ── C 组:接触期容差(贴身时用 contact_pos_tol,非接触期保持 pos_tol)── 手法与 A 组同款:直接摆 _captures + on_authoritative + reconcile,不依赖真实物理世界。
+# 造一个已跑到 20 帧的控制器 + 它绑的玩家,并把 seq14 那份 capture 的 pos 挪 10px 当「权威」。
 func _make_contact_fixture() -> Dictionary:
 	var p: Node2D = preload("res://scenes/player/player.tscn").instantiate()
 	add_child(p)
@@ -130,8 +120,7 @@ func _test_contact_tolerance() -> void:
 			"③ 非接触期 10px 偏差判为分歧(回滚 ×%d→×%d)" % [rb0, c1.rollback_count()])
 	(f1["player"] as Node).queue_free()
 
-	# ② 接触期:**同一份形状的载荷**、只把 in_contact 翻成 true ⇒ 必须**不**回滚
-	#    ★ 两份夹具各自独立(不复用控制器):①的回滚会重放并改写 capture,复用会让 ② 比到别的东西。
+	# ② 接触期:同一份形状的载荷、只把 in_contact 翻成 true ⇒ 必须不回滚。★ 两份夹具各自独立(不复用控制器):①的回滚会重放并改写 capture,复用会让 ② 比到别的东西。
 	var f2: Dictionary = _make_contact_fixture()
 	var c2: PredictionRollback = f2["ctrl"]
 	c2.in_contact = true
@@ -145,10 +134,8 @@ func _test_contact_tolerance() -> void:
 	_ran["contact_tol"] = true   # ★ 完成戳必须在最后一行:中途报错就到不了这里(见文件头说明)
 
 
-# ── 源码守卫 ──
-# `map_px` 不接线的话,环面修复在**真机上是惰性的** —— 而且**静默**:不报错、探针全绿、
-# 生产行为与修复前逐帧一致(实测过)。所以把"接线了"这件事本身变成断言。
-# 若日后改法换了入口(例如搬进 player.gd),请把这里改成认新入口,**别删掉这条断言**。
+# ── 源码守卫 ── map_px 不接线的话,环面修复在真机上是惰性的、而且静默:不报错、探针全绿、生产行为与修复前逐帧一致(实测过)。所以把「接线了」这件事本身变成断言。
+# ★ 若日后改法换了入口(例如搬进 player.gd),请把这里改成认新入口,别删掉这条断言。
 func _check_source_guard() -> void:
 	var txt := FileAccess.get_file_as_string("res://scenes/pvp_game.gd")
 	var found := false
@@ -158,13 +145,9 @@ func _check_source_guard() -> void:
 			break
 	_check(found, "pvp_client 给控制器设了 map_px(不设 = 环面修复惰性且静默)")
 
-	# ② 接触提示的接线(`in_contact` 必须在 note_post_step 之前写 —— 它是那一步的消费方)。
-	#    漏了这一行 = 静默退回 2px 容差:不报错、探针全绿、真机行为与改动前逐帧一致。
-	#    ★ 要拦下的变异:把 `_rollback.in_contact = …` 挪到 `note_post_step(...)` **之后** ——
-	#      接触提示永远用**上一帧**的碰撞信息(差一帧),静默且没有别的守卫看得见。
-	#    ★ 位置序**就是**契约,保留;但比较范围**收在同一帧块内**(包住该赋值的那一层顶层函数):
-	#      别处无关函数里新增/删掉一条 note_post_step 不该把这条带红(那是无关行数变动)。
-	#    ★ 日后若换了入口,请把这里改成认新入口,**别删掉这条断言**。
+	# ② 接触提示的接线(in_contact 必须在 note_post_step 之前写 —— 它是那一步的消费方)。漏了这一行 = 静默退回 2px 容差:不报错、探针全绿、真机行为与改动前逐帧一致。
+	#   ★ 要拦下的变异:把 `_rollback.in_contact = …` 挪到 note_post_step(...) 之后 —— 接触提示永远用上一帧的碰撞信息(差一帧),静默且没有别的守卫看得见。
+	#   ★ 位置序就是契约;但比较范围收在同一帧块内(包住该赋值的那一层顶层函数):别处无关函数里新增/删掉一条 note_post_step 不该把这条带红。
 	var txt2 := FileAccess.get_file_as_string("res://scenes/pvp_match_client.gd")
 	var lines := txt2.split("\n")
 	var hint_line := -1

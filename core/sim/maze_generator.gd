@@ -1,19 +1,14 @@
 class_name MazeGenerator
 extends RefCounted
 
-# 地图会话的入口:**选哪份地图 + 当前网格**这两件会话级状态住在这里,其余一律委托出去。
-#   · `.cyrm` 格式(格子值编解码 / 解析 / 序列化 / spawn 元数据)→ **MapFormat**(core/sim/map_format.gd)
-#   · 环面网格几何与寻路(环面距离 / 副本锚定 / 地板格 / A* / LOS)→ **GridPathfinder**(core/sim/grid_pathfinder.gd)
-# ★ 本文件保留全仓既有的 `MazeGenerator.xxx` 调用面(生产代码 ~57 个文件、上百处引用),
-#   所以下面是**逐条一行**的转发。别在这里再写实现 —— 新逻辑进上面两个类;
-#   新代码若明确只碰格式或只碰寻路,直接引 MapFormat / GridPathfinder,不必绕这里。
+# 地图会话的入口:只放"选哪份地图 + 当前网格/子格表"这两件会话级状态,其余逐条一行转发 ——
+# 格式(`.cyrm` 编解码/解析/序列化/spawn)→ `MapFormat`;环面几何与寻路 → `GridPathfinder`。
+# 保留 `MazeGenerator.xxx` 的调用面(生产 ~57 个文件引用)是**刻意**的:新逻辑进那两个类,别在这里写实现。
 
 const MAP_DIR: String = "res://maps"
 
-# ── 地图文件(.cyrm)──
-# 先随机取 exe 旁的 .cyrm(玩家/开发者外置自定义地图),否则随机取 res://maps/*.cyrm;
-# 同目录多份 .cyrm 随机读一份。选中的地图整个会话固定(缓存在 _picked_map),
-# 保证 map_size / load_map_file / parse_spawn_metadata 读的是同一份。
+# 先随机取 exe 旁的 .cyrm(外置自定义地图),否则随机取 `res://maps/*.cyrm`;选中后整个会话固定(缓存在
+# `_picked_map`),保证 map_size / load_map_file / parse_spawn_metadata 读的是同一份。`set_map_file` 覆盖它。
 static var _picked_map: String = ""
 static func map_file_path() -> String:
 	if _picked_map != "":
@@ -26,7 +21,6 @@ static func map_file_path() -> String:
 static func set_map_file(path: String) -> void:
 	_picked_map = path
 
-# 在 dir 目录下随机挑一个 .cyrm 地图;没有则返回 ""。
 static func _random_cyrm(dir: String) -> String:
 	var da := DirAccess.open(dir)
 	if da == null:
@@ -46,13 +40,12 @@ static func _random_cyrm(dir: String) -> String:
 # 当前关卡网格(level_0._ready 赋值;空网格时寻路一律视为无路)。
 static var current_grid: Array[Array] = []
 
-# 当前关卡的 **16px 子格纹理表**(cyrm v4,选项 A:逻辑读格级 current_grid,
-# 碰撞/破坏/渲染读这张子格表 —— 见 docs/2026-09-20-cyrm-v4-handover.md §3 选项 A)。
-# 由 WorldBuilder.load_grid 与 current_grid 一起装填;空 = 调用方自行从格级展开。
+# 当前关卡的 16px 子格纹理表(cyrm v4):逻辑读格级 `current_grid`,碰撞/破坏/渲染读这张表
+# (见 docs/2026-09-20-cyrm-v4-handover.md §3 选项 A);空 = 调用方自行从格级展开。
 static var current_subgrid: Array[Array] = []
 
 
-# ── 转发:格子值编解码(MapFormat)──
+# ── 转发:格子值编解码与文件读取(MapFormat)──
 const EMPTY: int = MapFormat.EMPTY
 const SOLID: int = MapFormat.SOLID  # pack(1, 15) = 纹理1 全砖
 
@@ -65,8 +58,6 @@ static func texture_of(v: int) -> int:
 static func shape_of(v: int) -> int:
 	return MapFormat.shape_of(v)
 
-
-# ── 转发:文件读取(MapFormat)──
 static func map_size() -> Vector2i:
 	return MapFormat.map_size(map_file_path())
 
@@ -80,7 +71,7 @@ static func load_spawns() -> Dictionary:
 	return MapFormat.load_spawns(map_file_path())
 
 
-# ── 转发:环面几何(GridPathfinder)──
+# ── 转发:环面几何 / 地板格 / 寻路(GridPathfinder)──
 static func toroidal_dist(a: Vector2i, b: Vector2i, cols: int, rows: int) -> int:
 	return GridPathfinder.toroidal_dist(a, b, cols, rows)
 
@@ -102,8 +93,6 @@ static func copy_grid(grid: Array) -> Array[Array]:
 static func cell_of(pos: Vector2, ts: int, cols: int, rows: int) -> Vector2i:
 	return GridPathfinder.cell_of(pos, ts, cols, rows)
 
-
-# ── 转发:地板格与寻路(GridPathfinder,网格取会话的 current_grid)──
 static func is_floor_cell(grid: Array, cell: Vector2i) -> bool:
 	return GridPathfinder.is_floor_cell(grid, cell)
 

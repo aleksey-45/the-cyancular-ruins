@@ -1,66 +1,22 @@
 extends Node
 
-# 3v3 团队模式的**六人真链路端到端探针**。场景模式(autoload 必须已实例化)。
-#
-# 跑法(用户侧):
-#   timeout 1800 bash tests/probe/team_match_probe.sh
-# 或直接:
-#   "$GODOT" --headless --path . --quit-after 54000 res://tests/probe/team_match_probe.tscn
-# 判据:**文本 `TEAM MATCH PROBE: ALL-OK`**(不看退出码 —— 探针挂住时 `--quit-after` 到期仍
-# exit 0 且一行 ALL-OK 都不打印,只看退出码会把"没跑完"读成"通过")。
-#
-# ═══ 五相(brief = `.superpowers/sdd/b-task-8-brief.md`;每相的存在理由见对应注释)═══
-#   相① 六人开局 —— 真大厅(池外端口)+ 6 个 headless 客户端各跑**真 mp_lobby 页**:
-#        建房 → 点公开列表加入 → **各自选边(3 A / 3 B)** → 房主点开始 → 6 端都进 `team_game`。
-#        断言:6 端都进对局;每端的 `match_sync.teams` 与大厅的 `team_of` **逐端一致**;
-#        每端本地玩家与权威快照收敛(相① 的 C2 面)。
-#        ★ 相① 同时覆盖"从没被真跑过"的 ①:等待室渲染路径(`team_room_state` 真正到达并被
-#          画出来 —— 每端都登记了 `room_states>0` 与名单行数)。
-#   相② 按队散点 —— 开局那一刻 6 个出生点两两分组:**队内最大距离 < 队间最小距离**
-#        (与 A 册 `team_host_probe` 的同一条判据,这里在真链路上再验一次)。
-#   相③ 子弹穿透队友(负)+ 爆炸满效(正)——
-#        甲(1 队最低 role)走到队友乙身边(≤170px 且视线通畅)连射:乙 hp **不变**;
-#        再换榴弹贴脸一投:乙 hp **下降**且被推飞。
-#        ★ 这一对**缺一不可**:只验"穿透"会让"伤害系统整个坏了"也全绿。
-#        ★ 另外从**乙端**独立取证:数"从我身边飞过(≤45px)的**非自己**子弹"——没有它,
-#          "乙 hp 不变"可以靠"子弹根本没飞到"骗过(墙挡住的假绿)。
-#   相④ **打到 9 杀**(回合机收局)→ ROUND_OVER → 第 2 局开局后各端出生点已对调(用**生产函数**
-#        `TeamHost.compute_swap_spawns` 算期望,再与实测比对)。★ 9 杀是**脚本机器人尽力交火 +
-#        回退模式(K 自杀脱困)**共同的结果:实测机器人在平台跳跃图上接近不了对手,9 杀多半由
-#        回退模式推动(逐端读数 `REC BACKOFF`,裁判照实打出来)—— 故这一相验的是**回合机 +
-#        整队换边 + 换边重拉 match_sync**(那三样与"谁杀的"无关),而不是"枪法"。
-#        断言各端 `scores` 的键是队号 1/2、`rounds_won` 六端一致。
-#   相⑤ 少人继续 —— 6 号客户端在 PLAYING 中途**按 ESC 离场**(唯一走 `safe_change_scene`
-#        的局内退出路径)→ 服务器**不**终局、其余 5 端仍持续收到快照(间隔 < 1s)、且掉线者
-#        已被移出对局(见 watcher 文件头对 brief 那句"排行榜标离开"的照实偏离)。
-#
-# ═══ 拓扑(自当大厅/裁判;全部子进程由本进程 `OS.create_process` 直接拉起)═══
-#   本进程 = 真大厅(`NetBus.start_server(LOBBY_PORT)` + `RoomManager`),**不占 7777**
-#   c1..c6 = 6 个 headless 客户端,各自跑真 `mp_lobby` → 真 `team_game`
-#   worker = 由**真** `RoomManager.team_start` 经 `WorkerLauncher.spawn_team_worker` 拉起
-#            (与生产逐字同一条路径,探针只是把它的起投端口拨到池外,见下方常量)
-#   ★ 端口纪律(与 reconnect_probe 同源):大厅与 worker **都落在真大厅的 worker 端口池
-#     (7800~8299)之外、且不占 7777** —— 本机常驻一个真大厅时,池内端口可能被它发给别人
-#     的对局,而本探针收尾会按端口杀 worker,会把别人那一局一起杀掉。
-#
-# ═══ 前提 ═══
-#   **请确认没有别的 Godot 占着 7777**(本探针不占 7777,但别杀掉用户自己的服务端)。
-#   客户端子进程的 stdout 父进程看不到(Windows `CreateProcess` 不继承句柄)→ 每个子进程
-#   都带 `--log-file`;失败时本探针把**每个客户端的引擎日志尾部**一起打印出来。
-#   收尾**按 PID 杀**本进程拉起过的**全部**子进程(客户端是从临时端口连出去的,只按端口杀
-#   根本杀不到),worker 另按 UDP 端口补一刀(它才是真的 bind 端口那一侧)。
-#
-# ═══ 时间预算 ═══
-#   相①~③ 约 40~90s;相④ 打到 9 杀是**脚本机器人尽力交火 + 回退模式**的结果,是本探针最大的时间
-#   不确定项(上限 `BRAWL_MAX`=210s);相⑤ 的观察窗要等满 60s 宽限期(上限 `OBSERVE_MAX`=110s)。
-#   整跑量级 3~10 分钟;安全网 `--quit-after 54000`(60fps 下 = 900s;`run/max_fps=60`);
-#   本进程自己的收工上限 `FINAL_TIMEOUT`=780s(> 等结果预算 `RESULT_WAIT`=680s;
-#   ★ `RESULT_WAIT` 一旦超过 780 就必须同步抬 `FINAL_TIMEOUT`,否则收工上限会先于预算到点)。
+# 3v3 团队模式的六人真链路端到端探针(场景模式,autoload 必须已实例化)。跑法:timeout 1800 bash tests/probe/team_match_probe.sh,或直接 godot --headless --path . --quit-after 54000 res://tests/probe/team_match_probe.tscn。
+# 判据:文本 TEAM MATCH PROBE: ALL-OK(不看退出码 —— 探针挂住时 --quit-after 到期仍 exit 0 且一行 ALL-OK 都不打印,只看退出码会把「没跑完」读成「通过」)。
+# ═══ 五相(每相的存在理由见对应注释)═══
+#   相① 六人开局 —— 真大厅(池外端口)+ 6 个 headless 客户端各跑真 mp_lobby 页:建房 → 点公开列表加入 → 各自选边(3 A / 3 B)→ 房主点开始 → 6 端都进 team_game。断言:6 端都进对局;每端的 match_sync.teams 与大厅的 team_of 逐端一致;每端本地玩家与权威快照收敛。★ 同时覆盖「从没被真跑过」的等待室渲染路径(team_room_state 真正到达并被画出来)。
+#   相② 按队散点 —— 开局那一刻 6 个出生点两两分组:队内最大距离 < 队间最小距离(与 A 册 team_host_probe 同一条判据,这里在真链路上再验一次)。
+#   相③ 子弹穿透队友(负)+ 爆炸满效(正)—— 甲(1 队最低 role)走到队友乙身边(≤170px 且视线通畅)连射:乙 hp 不变;再换榴弹贴脸一投:乙 hp 下降且被推飞。★ 这一对缺一不可:只验「穿透」会让「伤害系统整个坏了」也全绿。★ 另从乙端独立取证:数「从我身边飞过(≤45px)的非自己子弹」—— 没有它,「乙 hp 不变」可以靠「子弹根本没飞到」骗过。
+#   相④ 打到 9 杀(回合机收局)→ ROUND_OVER → 第 2 局开局后各端出生点已对调(用生产函数 TeamHost.compute_swap_spawns 算期望再与实测比对)。★ 9 杀多半由回退模式(K 自杀脱困)推动(逐端读数 REC BACKOFF,裁判照实打出来)⇒ 这一相验的是回合机 + 整队换边 + 换边重拉 match_sync,而不是「枪法」。断言各端 scores 的键是队号 1/2、rounds_won 六端一致。
+#   相⑤ 少人继续 —— 6 号客户端在 PLAYING 中途按 ESC 离场(唯一走 safe_change_scene 的局内退出路径)→ 服务器不终局、其余 5 端仍持续收到快照(间隔 < 1s)、且掉线者已被移出对局。
+# ═══ 拓扑(自当大厅/裁判;全部子进程由本进程 OS.create_process 直接拉起)═══ 本进程 = 真大厅(NetBus.start_server(LOBBY_PORT) + RoomManager),不占 7777;c1..c6 = 6 个 headless 客户端,各跑真 mp_lobby → 真 team_game;worker 由真 RoomManager.team_start 经 WorkerLauncher.spawn_team_worker 拉起(与生产逐字同一条路径,只把起投端口拨到池外)。
+#   ★ 端口纪律(与 reconnect_probe 同源):大厅与 worker 都落在真大厅的 worker 端口池(7800~8299)之外、且不占 7777 —— 本机常驻一个真大厅时,池内端口可能被它发给别人的对局,而本探针收尾会按端口杀 worker,会把别人那局一起杀掉。
+# ═══ 前提 ═══ 请确认没有别的 Godot 占着 7777(本探针不占 7777,但别杀掉用户自己的服务端)。客户端子进程的 stdout 父进程看不到(Windows CreateProcess 不继承句柄)→ 每个子进程都带 --log-file;失败时本探针把每个客户端的引擎日志尾部一起打印出来。
+#   收尾按 PID 杀本进程拉起过的全部子进程(客户端是从临时端口连出去的,只按端口杀根本杀不到),worker 另按 UDP 端口补一刀(它才是真的 bind 端口那一侧)。
+# ═══ 时间预算 ═══ 相①~③ 约 40~90s;相④ 打到 9 杀是本探针最大的时间不确定项(上限 BRAWL_MAX=210s);相⑤ 的观察窗要等满 60s 宽限期(上限 OBSERVE_MAX=110s)。整跑量级 3~10 分钟;安全网 --quit-after 54000(60fps 下 = 900s;run/max_fps=60)。
+#   本进程自己的收工上限 FINAL_TIMEOUT=780s(> 等结果预算 RESULT_WAIT=680s;★ RESULT_WAIT 一旦超过 780 就必须同步抬 FINAL_TIMEOUT,否则收工上限会先于预算到点)。
 
 const RESULT_PREFIX := "team_match_probe_"
-# ★ 端口纪律(与 reconnect_probe 的常量区同源,改这几个数之前先读文件头"端口纪律"):
-#   全仓对局 worker 的池 = `WorkerLauncher.WORKER_PORT_BASE`(7800)~ +SPAN(500)= 8300 开区间。
-#   本探针的大厅与 worker 都取池外(29xxx),同时远离 7777 与常见服务端口。
+# ★ 端口纪律(与 reconnect_probe 的常量区同源):全仓对局 worker 的池 = WorkerLauncher.WORKER_PORT_BASE(7800)~ +SPAN(500)= 8300 开区间;本探针的大厅与 worker 都取池外(29xxx),同时远离 7777 与常见服务端口。
 const LOBBY_PORT := 29200
 const WORKER_PORT_OUT := 29250     # `RoomManager` 的 `pick_port` 起投点(见 _run_orchestrator)
 const POOL_LOW := 7800
@@ -69,16 +25,9 @@ const CLIENT_COUNT := 6
 const CHILD_QUIT_AFTER := "54000"  # 子进程兜底(60fps ≈ 900s);正常由本进程收尾/按 PID 杀
 const BOOT_TIMEOUT := 45.0         # 等"6 人进房并选边完毕"的上限
 const FINAL_TIMEOUT := 780.0       # 本进程的收工上限(整跑量级 4~10 分钟;预算见下)
-# 等 6 份客户端结果文件的上限。★ 必须**大于**客户端自己的时间线(它们的相位全靠自己的时钟推),
-#   且**逐项按 watcher 的常量求和算出来** —— 别凭印象写:这行漂过两次,一次把 `RENDEZVOUS_MAX`
-#   记成了 70(实际是 **100**),一次停在宽限期还是 30s 时的那份求和(2026-09-21 宽限期 30 → 60,
-#   `OBSERVE_MAX` 60 → 110,整条求和随之 +50)。越时的表象是"只收到 N/6 份客户端结果",
-#   读起来像产品故障,其实是**探针自己的预算算错了**。逐项(各项都是 watcher 的常量):
-#     进局 ~5s + SETTLE 1.2 + RENDEZVOUS_MAX 100 + BRAWL_MAX 210 + 换局 SETTLE 1.2
-#     + OBSERVE_MAX 110 + PEER_WAIT 120 ≈ 547.4s;
-#     进局那一档的硬上限是 `ENTER_TIMEOUT` **90s**(不是 5s),最坏 ≈ 632.4s ⇒ 取 680 兜住两种走法。
-#   ★ 680 < `FINAL_TIMEOUT` 780(收工上限仍在预算之上);**一旦本值超过 780 就必须同步抬
-#     `FINAL_TIMEOUT`**,否则收工上限先到点 ⇒ 症状同样是"只收到 N/6 份结果"。
+# 等 6 份客户端结果文件的上限。★ 必须大于客户端自己的时间线(它们的相位全靠自己的时钟推),且逐项按 watcher 的常量求和算出来 —— 别凭印象写:这行漂过两次(一次把 RENDEZVOUS_MAX 记成 70,实际是 100;一次停在宽限期还是 30s 时的那份求和)。
+#   越时的表象是「只收到 N/6 份客户端结果」,读起来像产品故障,其实是探针自己的预算算错了。逐项:进局 ~5s + SETTLE 1.2 + RENDEZVOUS_MAX 100 + BRAWL_MAX 210 + 换局 SETTLE 1.2 + OBSERVE_MAX 110 + PEER_WAIT 120 ≈ 547.4s;
+#   进局那一档的硬上限是 ENTER_TIMEOUT 90s(不是 5s),最坏 ≈ 632.4s ⇒ 取 680 兜住两种走法。★ 680 < FINAL_TIMEOUT 780;一旦本值超过 780 就必须同步抬 FINAL_TIMEOUT,否则收工上限先到点(症状同样是「只收到 N/6 份结果」)。
 const RESULT_WAIT := 680.0
 
 var _role := "lobby"
@@ -126,15 +75,10 @@ func _run_orchestrator() -> void:
 		return
 	_rm = RoomManager.new()
 	add_child(_rm)
-	# ★★ 把 worker 的端口起投点拨到**池外**(见文件头"端口纪律")。
-	#   `WorkerLauncher` 的分配器是"唯一递增 + 占用集合"(`_next_port` 自 WORKER_PORT_BASE 起
-	#   递增到 BASE+SPAN 再回卷),本机上可能**同时**跑着用户自己的真大厅 —— 它会往池里发端口。
-	#   本探针收尾按 UDP 端口杀 worker(兜底层)时不看属主,撞上池内端口就有误杀别人对局的
-	#   危险。拨到池外即从根上避开(pick_port 会立刻回卷 `_next_port`,故这只影响**第一发**)。
+	# ★★ 把 worker 的端口起投点拨到池外(见文件头「端口纪律」)。WorkerLauncher 的分配器是「唯一递增 + 占用集合」(_next_port 自 WORKER_PORT_BASE 起递增到 BASE+SPAN 再回卷),本机上可能同时跑着用户自己的真大厅 —— 它会往池里发端口,而本探针收尾按 UDP 端口杀 worker 时不看属主,撞上池内端口就有误杀别人对局的危险。
+	#   拨到池外即从根上避开(pick_port 会立刻回卷 _next_port,故这只影响第一发)。
 	_rm.get("_launcher").set("_next_port", WORKER_PORT_OUT)
-	# ★ `_clean()` 失败(上一跑的进程还活着)时**必须整段收工**:只 push 一条然后继续拉起客户端
-	#   的话,6 个新客户端与那批残留进程会互相覆盖 `.result`,而且本进程退出后 `_kill_children()`
-	#   再也不跑 ⇒ 留下一堆**孤儿进程**攥着文件,把下一跑也逼进这一支(实测复现过)。
+	# ★ _clean() 失败(上一跑的进程还活着)时必须整段收工:只 push 一条然后继续拉起客户端的话,6 个新客户端与那批残留进程会互相覆盖 .result,而且本进程退出后 _kill_children() 再也不跑 ⇒ 留下一堆孤儿进程攥着文件,把下一跑也逼进这一支(实测复现过)。
 	if not _clean():
 		print("PROBE: 清理失败(多半是上一跑的进程还活着)—— 不拉起客户端,直接退出")
 		get_tree().quit(1)
@@ -220,13 +164,8 @@ func _stage_wait_full() -> void:
 	for r in tr.team_of:
 		by[int(tr.team_of[r])] = int(by.get(int(tr.team_of[r]), 0)) + 1
 	print("PROBE: 6 人已到齐并选边完毕 → 队号表 %s(每队 %s)" % [str(tr.team_of), str(by)])
-	# ★ 立刻**存档**:成员转连 worker 后会陆续断开大厅,`on_peer_left` 把它们从 `player_role`
-	#   摘掉,并连带把 `team_of` 里**已无人持有的 role 逐个 erase**(见 lobby_rooms.on_peer_left
-	#   的 3v3 那一段)—— 到收尾时再读 `_room()` 拿到的是**空队伍表**。
-	#   ★★ 2026-09-21 订正本条的**理由**(代码与结论都不变):原先写的是「房在开局那一刻就被对局
-	#   消费掉了(`teardown_room`)」—— 对局中的房现在**刻意不拆**(它要活到 worker 退出,否则
-	#   "看得见 / 回局"两件事都无从谈起),所以收尾时房**还在**,只是表已经空了。故"必须在这里
-	#   存档"照旧成立,变的只是原因。
+	# ★ 立刻存档:成员转连 worker 后会陆续断开大厅,on_peer_left 把它们从 player_role 摘掉,并连带把 team_of 里已无人持有的 role 逐个 erase(见 lobby_rooms.on_peer_left 的 3v3 那一段)—— 到收尾时再读 _room() 拿到的是空队伍表。
+	#   ★ 订正本条的**理由**(代码与结论都不变):原先写的是「房在开局那一刻就被对局消费掉了」—— 对局中的房现在刻意不拆(它要活到 worker 退出,否则「看得见 / 回局」都无从谈起),所以收尾时房还在,只是表已经空了。故「必须在这里存档」照旧成立,变的只是原因。
 	for r in tr.team_of:
 		_lobby_teams[int(r)] = int(tr.team_of[r])
 	_notes.append("大厅队伍表 %s" % str(tr.team_of))
@@ -273,12 +212,8 @@ func _finish(why: String) -> void:
 	if _done:
 		return
 	_done = true
-	# ★★ **没拉起过子进程 = 一条跨端断言都没跑**:相①~⑤ 的全部跨端断言都住在 `_assert_stage3()`
-	#   里,而它此前只在"`_child_pids` 非空"时才被调 ⇒ `--nospawn`(人工另起 6 个客户端排障用)
-	#   恒跳过全部跨端断言、`_failures` 为空 ⇒ 打出一行**全空的** `TEAM MATCH PROBE: ALL-OK`,
-	#   而此刻只跑过大厅那三个"房间存在吗"的阶段。那正是本册重点扫查的那一类
-	#   ("还在跑、还是绿的、但已经什么都不验了")—— 且出现在本册唯一的头条证据上。
-	#   故这一支**记失败**:`--nospawn` 是排障模式,不是可判通过的一跑。
+	# ★★ 没拉起过子进程 = 一条跨端断言都没跑:相①~⑤ 的全部跨端断言都住在 _assert_stage3() 里,而它此前只在「_child_pids 非空」时才被调 ⇒ --nospawn(人工另起 6 个客户端排障用)恒跳过全部跨端断言、_failures 为空 ⇒ 打出一行全空的 TEAM MATCH PROBE: ALL-OK,而此刻只跑过大厅那三个「房间存在吗」的阶段。
+	#   那正是本册重点扫查的那一类(「还在跑、还是绿的、但已经什么都不验了」)—— 且出现在本册唯一的头条证据上。故这一支记失败:--nospawn 是排障模式,不是可判通过的一跑。
 	if _child_pids.is_empty():
 		_check(false, "没有子进程 → 跨端断言一条都没跑(--nospawn 只用于人工排障;这一跑不判通过)")
 	else:
@@ -300,8 +235,7 @@ func _finish(why: String) -> void:
 
 
 func _assert_stage3() -> void:
-	# ★ 队伍表取**开工时存下的那份**:房在开局那一刻就被对局消费掉(teardown_room),
-	#   到收尾时 `_room()` 恒 null —— 早先在这里读它,结果是"收尾时读到空房 + 一条假 FAIL"。
+	# ★ 队伍表取开工时存下的那份(理由见上面那条:收尾时 _room() 里的 team_of 已经空了);早先在这里现读它,结果是「收尾时读到空房 + 一条假 FAIL」。
 	var lobby_teams := _lobby_teams
 	if lobby_teams.is_empty():
 		_check(false, "大厅队伍表是空的(选边那一刻没存到)")
@@ -349,8 +283,7 @@ func _assert_stage3() -> void:
 		var r2l := _rec_line(text, "R2POS")
 		if r2l != "":
 			r2[role] = _parse_cell(_tok(r2l, "cell", ""))
-			# 相④ 的另一半:**换边后客户端重拉了一次 match_sync**(进场那次之后必须再有 ——
-			# 换边后六端手里那份出生点是旧侧的,重拉那一拍就是把新一侧拿回来)
+			# 相④ 的另一半:换边后客户端重拉了一次 match_sync(进场那次之后必须再有 —— 换边后六端手里那份出生点是旧侧的,重拉那一拍就是把新一侧拿回来)。
 			msync_min = mini(msync_min, int(_tok(r2l, "msync", "0")))
 			msync_seen += 1
 		var k2l := _rec_line(text, "K2")
@@ -475,27 +408,18 @@ func _assert_stage3() -> void:
 		var near := int(near_counts.get(victim_role, 0))
 		var why := _tok(bl, "reason", "")
 		if why == "no_bullet_weapon" and wtype == 0:
-			# ★★ **空手是缺陷,不是抽签**:`wtype == 0` = 手上没有武器 —— 而这是**已登记的生产
-			#   失效**("服务器玩家必须有枪…不发的话服务器上玩家开不了火,PvP **静默哑火**")。
-			#   早先这一档与"抽到榴弹/激光"共用一条 `_check(true, …)`,于是空手会让相③ 打出一行
-			#   **OK** 而不是红 —— 真缺陷被读成"抽签结果"。故先判**武器前提**。
+			# ★★ 空手是缺陷,不是抽签:wtype == 0 = 手上没有武器 —— 而这是已登记的生产失效(服务器玩家必须有枪,不发的话服务器上玩家开不了火,PvP 静默哑火)。早先这一档与「抽到榴弹/激光」共用一条 _check(true, …),于是空手会让相③ 打出一行 OK 而不是红 —— 真缺陷被读成「抽签结果」。故先判武器前提。
 			_check(false, "相③ 甲(role %d)是**空手**(wtype=0)却进了连射子状态 —— 「服务器玩家必须有枪」这条生产前提没成立(空手 = PvP 静默哑火),不是抽签"
 					% shooter_role)
 		elif why == "no_bullet_weapon":
-			# 背包里没有出弹类武器(抽到榴弹/激光,且没有第二把)—— 断言在这里**无法成立**。
-			# ★ 只进 `_notes`,**不占断言账本**:一句恒真的 `_check(true, …)` 是"恒绿空断言",
-			#   而它还会把"这一相没验到"伪装成"这一相过了"。
+			# 背包里没有出弹类武器(抽到榴弹/激光,且没有第二把)—— 断言在这里无法成立。★ 只进 _notes,不占断言账本:一句恒真的 _check(true, …) 是「恒绿空断言」,而它还会把「这一相没验到」伪装成「这一相过了」。
 			_notes.append("相③ 子弹那一半**未覆盖**:甲手上是 %d 号(非出弹类)且无第二把武器 —— 枪种抽签" % wtype)
 		elif why == "bullet_switch_timeout":
-			# ★ **这一档必须保持红**(与榴弹那半边的口径对齐):背包里**有**出弹枪却 2s 没切过去
-			#   = 产品/协议异常(本仓有"滚轮切枪被权威 wslot 拉回"的前科),不是抽签。
+			# ★ 这一档必须保持红(与榴弹那半边口径对齐):背包里有出弹枪却 2s 没切过去 = 产品/协议异常(本仓有「滚轮切枪被权威 wslot 拉回」的前科),不是抽签。
 			_check(false, "相③ 背包里有出弹类武器却切不过去(bullet_switch_timeout)—— 不是抽签,是缺陷")
 		elif why == "rendezvous_timeout" or _tok(bl, "timeout", "0") == "1":
-			# ★ 这一相**没验到**,而不是"枪坏了" —— 判词只许写"未覆盖",否则读日志的人(评审也踩过)
-			#   会把它当成产品缺陷。★ **成因照实写"未验证"**:早先这里断言"不是开火/伤害链路的问题",
-			#   而那条因果**本探针从未验证过** —— `team_bot_input.gd` 自己写着"输入链丢边沿会产生
-			#   **恰好这个症状**且不报错",两者在读数上**分不开**。
-			# ★ 只进 `_notes`,不占断言账本(理由同上一条)。dist/los 是**真读数**(取自超时那一刻,
+			# ★ 这一相没验到,而不是「枪坏了」—— 判词只许写「未覆盖」,否则读日志的人(评审也踩过)会把它当成产品缺陷。★ 成因照实写「未验证」:早先这里断言「不是开火/伤害链路的问题」,而那条因果本探针从未验证过。
+			#   team_bot_input.gd 自己写着「输入链丢边沿会产生恰好这个症状且不报错」,两者在读数上分不开。★ 只进 _notes,不占断言账本(理由同上一条);dist/los 是真读数(取自超时那一刻)。
 			#   见 watcher 的 `_tick_meet_shooter`),不再是写死的 -1/0。
 			_notes.append(("相③ 子弹那一半**未覆盖**:甲未能在走位窗口内走到乙身边"
 					+ "(超时读数 dist=%s los=%s)★ **成因未验证** —— 「输入边沿丢失」症状与「走位没到位」相同"
@@ -641,9 +565,7 @@ func _assert_stage3() -> void:
 				continue
 			if _tok(ll, "gone", "").contains(str(esc_role)):
 				obs += 1
-			# ★ 观察窗内的快照间隔:六端一起看。**服务端停发**必然同时命中**所有**在线客户端;
-			#   只有**一个**客户端超时,那是**那个进程自己**卡了一下(本机同时跑 8 个 Godot),
-			#   而"服务器还在发"这一命题恰好由**其余端的读数**证明(它们的窗口与它同一段墙钟)。
+			# ★ 观察窗内的快照间隔:六端一起看。服务端停发必然同时命中所有在线客户端;只有一个客户端超时,那是那个进程自己卡了一下(本机同时跑 8 个 Godot),而「服务器还在发」这一命题恰好由其余端的读数证明(它们的窗口与它同一段墙钟)。
 			#   故:≥2 端超 1s ⇒ 红(服务器停了);恰好 1 端 ⇒ 记读数并说明;全 ≤1s ⇒ 绿。
 			obs_gaps.append([tag, float(_tok(ll, "obsmax", "0").replace("ms", ""))])
 		_check(obs == CLIENT_COUNT - 1,
@@ -652,12 +574,9 @@ func _assert_stage3() -> void:
 		var gap_txt := ""
 		for pair in obs_gaps:
 			gap_txt += "%s=%.0fms " % [pair[0], float(pair[1])]
-		# ★★ 判据是**每一端各自零容忍**(与观察者侧同一条:`_obs_max_gap > 1000` 即红)。
-		#   **不做"≥2 端才红"的容忍**:单端超 1s 有两种可能 ——
-		#     (甲) 该客户端进程自己卡了一下(本机同时跑 8 个 Godot);
-		#     (乙) **服务器对那一个 peer 的定向投递异常**(`snapshot_own` 是逐 peer 定向发的,
-		#          只卡一端恰恰是那条路的可疑症状)。
-		#   探针**分不清**这两者,故**保守判红**;要放宽得先有能区分它们的证据。
+		# ★★ 判据是每一端各自零容忍(与观察者侧同一条:_obs_max_gap > 1000 即红),不做「≥2 端才红」的容忍 ——
+		#   单端超 1s 有两种可能:(甲) 该客户端进程自己卡了一下(本机同时跑 8 个 Godot);(乙) 服务器对那一个 peer 的定向投递异常(snapshot_own 是逐 peer 定向发的,只卡一端恰恰是那条路的可疑症状)。
+		#   探针分不清这两者,故保守判红;要放宽得先有能区分它们的证据。
 		_check(obs_gaps.is_empty() or gap_max(obs_gaps) <= 1000.0,
 				"相⑤ ★ 观察窗内快照连续(被观察的 %d 端最大间隔: %s;单端超 1s 也判红 —— 可能是该客户端自身停顿,也可能是服务器对**该 peer** 的定向投递异常,探针无法区分)"
 				% [obs_gaps.size(), gap_txt])
@@ -666,9 +585,7 @@ func _assert_stage3() -> void:
 # ════════════════════ 子进程 / 文件 ════════════════════
 
 func _kill_children() -> void:
-	# ① **按 PID 杀全部子进程**(首选):六个客户端是从**临时端口**连出去的,不占 worker 端口,
-	#    只按端口杀根本杀不到它们 —— 留下的残留进程会敲下一跑、并攥着自己的 `--log-file`
-	#    让下一跑的清理静默失败(reconnect_probe 的 `_kill_children` 记过这两条后果)。
+	# ① 按 PID 杀全部子进程(首选):六个客户端是从临时端口连出去的,不占 worker 端口,只按端口杀根本杀不到它们 —— 留下的残留进程会敲下一跑、并攥着自己的 --log-file 让下一跑的清理静默失败(reconnect_probe 的 _kill_children 记过这两条后果)。
 	var killed := 0
 	for pid in _child_pids:
 		if pid > 0 and OS.is_process_running(pid):
@@ -729,9 +646,7 @@ func _clean() -> bool:
 					continue
 				var err := DirAccess.remove_absolute(ProjectSettings.globalize_path(p))
 				if err != OK:
-					# ★★ **当场退出,不能只警告**:`_results_ready()` 数的是"存在且以 OK/FAIL 开头"
-					#   的文件 —— 上一跑的残留会**被当成这一跑的结果**下判决(而且看不出是旧的)。
-					#   删不掉几乎只有一个原因:上一跑的客户端进程还活着(它攥着文件)。
+					# ★★ 当场退出,不能只警告:_results_ready() 数的是「存在且以 OK/FAIL 开头」的文件 —— 上一跑的残留会被当成这一跑的结果下判决(而且看不出是旧的)。删不掉几乎只有一个原因:上一跑的客户端进程还活着(它攥着文件)。
 					print("PROBE: 删不掉上一跑的 %s(错误 %d)—— 多半是上一跑的进程还活着;"
 							% [p, err] + "残留文件会被当成本跑的读数下判决,故直接退出")
 					return false

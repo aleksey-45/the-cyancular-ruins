@@ -1,24 +1,19 @@
 class_name MatchHost
 extends MatchRound
 
-# 对局权威(核心):生命周期、输入 FIFO 消费、每物理帧编排、出生点。
-#
-# ★ 2026-09-15(阶段 5.6)按域拆成一条继承链,本文件只剩**核心**;四个域在
-#   match_snapshot / match_combat / match_round / match_state 里,见基类注释。
-#   **C2 四条不变量仍在 `_physics_process` 与 `_on_input` 里,原样未动。**
+# 对局权威核心:生命周期、输入 FIFO 消费、每物理帧编排、出生点。四个域在 match_snapshot / match_combat /
+# match_round / match_state 里。★ C2 四条不变量仍在 _physics_process 与 _on_input 里,原样未动。
 
 const TIME_SYNC_INTERVAL := 0.1   # Beta:颗粒状态下发节律(10Hz;怀表数字平滑够了)
-# ★★ 2026-10-08(closeout 批 Task 4):**输入队列上限**住 `PacketInputSource.MAX_PENDING_INPUT`
-#   (那里也住 `push_pending`;★ 为什么不住本文件:`MatchHost` 引用 `NetBus` 自动加载 ⇒ `-s` 冒烟
-#   加载不了本脚本,而那条上限的判据要能用最便宜的方式跑)。服务端自述 ρ≈1,开局/换场有
-#   "1 秒内 0→8"的突刺;无界 ⇒ 积压不可恢复。8 = 单帧突刺的量级,正常速率永不触发。
+# ★★ 输入队列上限住 PacketInputSource.MAX_PENDING_INPUT(那里也住 push_pending):不住本文件是因为 MatchHost 引用
+# NetBus 自动加载 ⇒ -s 冒烟加载不了本脚本,而那条上限的判据要能用最便宜的方式跑。★ 服务端自述 ρ≈1、开局有「1 秒内 0→8」的突刺;无界 ⇒ 积压不可恢复。
 
 var _time_sync := 0.0
-# ── Beta 回溯(每 role 自身;他人不受影响)──
+
 const RW_SNAP_DT := 1.0 / 20.0     # 自身状态采样间隔(20Hz,与单机 WorldRewind 同款)
 var _rw_buf: Dictionary = {}       # role -> Array[帧快照](t 升序;只存**自己**的状态+自己的子弹)
 var _rw_cursor: Dictionary = {}    # role -> float(已倒退秒数)
-# _rw_on / _rw_trail 声明在根基类 MatchState(本文件不重复声明,GDScript 禁止成员遮蔽)
+# ★ _rw_on / _rw_trail 声明在根基类 MatchState,本文件不重复声明 —— GDScript 禁止成员遮蔽(子类重复声明基类成员是硬 Parse Error)。
 var _rw_snap_t: Dictionary = {}    # role -> float(采样节拍)
 var _rw_t0: Dictionary = {}        # role -> float(环缓零点;回放按 t-t0 寻帧)
 
@@ -31,8 +26,7 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 	for v in raw_disabled:
 		_disabled_weapons.append(int(v))
 	_ai_roles = ai_roles
-	# Beta 时间玩法(B21):房主 options 带 time 规则(建房页 9 项) ⇒ 建服务器权威颗粒经济。
-	# 普通局 options["time"] 为空 → time_economy 恒 null,一切结算/广播短路,行为零变化。
+# Beta 时间玩法(B21):房主 options 带 time 规则才建服务器权威颗粒经济。★ 普通局 time_economy 恒 null,一切结算/广播短路,行为零变化。
 	var time_dict: Dictionary = options.get("time", {})
 	if not time_dict.is_empty():
 		time_economy = TimeEconomy.new(TimeRules.from_dict(time_dict))
@@ -41,23 +35,21 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 		for r in ai_roles:
 			time_economy.add_role(int(r))
 	MazeGenerator.set_map_file(map_path)
-	# 建世界:碰撞 + 瓦片属性(不渲染)。服务器进程走场景模式,autoload/静态类已就绪。
+
 	grid = WorldBuilder.load_grid()
 	if grid.is_empty():
 		push_error("MatchHost: 地图加载失败")
 		return
 	_base_grid = MazeGenerator.copy_grid(grid)
 	TileDefs.on_destroyed = Callable(self, "_on_tile_destroyed")
-	# cyrm v4(B18):破坏已下沉 16px 子格 —— worker 必须连**子格**回调,否则客户端永远收不到
-	# 拆砖事件(幽灵墙:服务器碰撞已消、客户端还在渲染/预测碰撞)。格级 on_destroyed 保留,
-	# 供 _debug_destroy_tile / 复位那条 damage_tile 老路径。
+# cyrm v4(B18):破坏已下沉 16px 子格 —— worker 必须连子格回调(TileDefs.on_sub_destroyed),否则客户端永远收不到拆砖事件(幽灵墙:服务器碰撞已消、客户端还在渲染/预测碰撞)。
 	TileDefs.on_sub_destroyed = Callable(self, "_on_sub_destroyed")
 	TileDefs.init_hp(grid)
 	TileDefs.init_sub_hp(MazeGenerator.current_subgrid)
 	destructible_sub = WorldBuilder.build_sim(self, grid)
-	# PvP 权威对局:取消命中无敌帧(每发结算一次);双方玩家(层2)互相物理碰撞
+# PvP 权威对局:取消命中无敌帧(每发结算一次);双方玩家(层 2)互相物理碰撞。
 	CombatComponent.pvp_arena = true
-	# 生成两个玩家(player.tscn 完整物理模拟,注入 PacketInputSource)
+
 	peer_by_role = role_peers.duplicate()
 	for role in role_peers:
 		var p: Node2D = preload("res://scenes/player/player.tscn").instantiate()
@@ -67,15 +59,13 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 		p.collision_mask |= 2   # 与对方玩家(层2)物理碰撞;自身节点互不作用由 Godot 排除
 		players[role] = p
 		input_sources[role] = src
-		# 首局直接摆位(_respawn_player 依赖 combat/weapons,需玩家 _ready 后才能调,放到 _ready/_start_next_round)
+
 		var spawn := _spawn_cell(role)
 		var ts := GameParameters.TILE_SIZE
 		p.global_position = Vector2(spawn.x * ts + ts * 0.5, spawn.y * ts + ts * 0.5)
 		print("MatchHost: 角色 %d 出生点 %s" % [role, spawn])
-	# AI 补位(实验性):同一 player.tscn,输入源换 AiInputSource,由 AiNavigator 驱动;
-	# 快照/命中裁决/计分/复活全部按 players 迭代 → 客户端副本零改动。
-	# ★ 不入 input_sources(不走网络包);入 players 即自动获得快照/裁决/计分/复活覆盖。
-	# D13:代码就位,不接界面(客户端按钮已删)。
+# AI 补位(实验性):同一 player.tscn,输入源换 AiInputSource、由 AiNavigator 驱动;入 players 即自动获得快照/裁决/计分/复活覆盖
+# (不入 input_sources —— 它不走网络包)。★ 代码就位,但界面未接(客户端按钮已删)。
 	for ai_role in _ai_roles:
 		var role := int(ai_role)
 		var p: Node2D = preload("res://scenes/player/player.tscn").instantiate()
@@ -103,58 +93,42 @@ func _exit_tree() -> void:
 
 
 func _ready() -> void:
-	# 开局回合:玩家已在 _init 摆位,进 COUNTDOWN
+
 	_round_state = RoundState.COUNTDOWN
 	_round_timer = COUNTDOWN_TIME
-	# 禁用武器槽位:_init 时玩家 @onready 未就绪(不能碰 weapons),进树后应用
+# 禁用武器槽位:玩家 @onready 在 _init 时未就绪(碰不得 weapons),进树后才应用。
 	for role in players:
 		(players[role] as Node).weapons.set_enabled_types(_disabled_weapons)
-	# 地面武器:铺 12 把 + 每个玩家随机拿 1 把。
-	# ★ 必须排在 set_enabled_types **之后** —— 与单机 `_give_starting_weapon` 同款理由:
-	#   先给再禁的话,手上一旦是禁用武器会被判成空手。
-	# ★ 这同时是**服务器玩家有枪的唯一来源**:player.tscn 自身的 _ready 给的是空背包,
-	#   不发的话服务器上的玩家开不了火(PvP 直接哑火,且不会有任何报错)。
+# 地面武器:铺 12 把 + 每个玩家随机拿 1 把。★ 必须排在 set_enabled_types 之后 —— 先给再禁的话,手上一旦是禁用武器会被判成空手。
+# ★ 这同时是服务器玩家有枪的唯一来源(player.tscn 自身的 _ready 给的是空背包,不发就开不了火,且不会有任何报错)。
 	_setup_ground_weapons()
-	# 受击反馈:任意来源(子弹/鸟接触/鸟弹/爆炸)实际扣血 → combat.took_hit → 广播 hit_event
+
 	_wire_hit_feedback()
 	_broadcast_round_state()
 
 
-# 把每个玩家的 `combat.took_hit` 接到本宿主的 `_on_player_hit`。
-# ★ 接线走**裸方法名**(`Callable(self, "_on_player_hit")`)⇒ **虚分派**:子类覆写的那份才是
-#   被调到的那个(逐人伤害累计就挂在这条上 —— 2026-09-25 起它住在 `MatchCombat._on_player_hit`
-#   本体,`TeamHost` 那份覆写已随统计面上提一起删除)。
-# ★ 为什么抽成具名函数而不是留几行在 `_ready` 里:**手工摆位路径**(探针:role_peers 传空、
-#   玩家在 `_ready` 之后才 `_place` 进来)也要调**生产那一份**接线 —— 让探针自己再抄一遍
-#   `connect(...)` 的话,验的是抄件:哪天生产的接线断了/换了信号,探针照样绿(本仓明令禁止的
-#   "第二份真相";同 `TeamHost._apply_team_layers` 的抽法)。
-# ★ 幂等性:同一对 (信号, Callable) 重复 connect 会被 Godot 拒绝(不重复触发)。
-#   探针那条路径下 `_ready` 时 `players` 还是空的,故这里**恰好**接一次。
+# 把每个玩家的 combat.took_hit 接到本宿主的 _on_player_hit。★ 接线走裸方法名(Callable(self, "_on_player_hit"))⇒ 虚分派:
+# 子类覆写的那份才是被调到的那个。★ 抽成具名函数是为了让「手工摆位」路径(探针)也调生产那一份接线,而不是再抄一遍(第二份真相)。
+# ★ 幂等:同一对 (信号, Callable) 重复 connect 会被 Godot 拒绝。
 func _wire_hit_feedback() -> void:
 	for role in players:
 		var combat = (players[role] as Node).get("combat")
 		if combat != null and combat.has_signal("took_hit"):
 			combat.took_hit.connect(_on_player_hit.bind(role))
 
-# (原 `_broadcast_match_options` 已删 —— 生效选项改由对局场景**进场拉取**下发:
-#  那次"推"与 match_start 落在同一次客户端 poll,而那一刻新场景的订阅方还不存在 → 静默丢失
-#  (自检 B2:禁武器闸门没上)。现在 options 随 `NetBus.match_sync` 的应答一起给。
-#  消费者 `tests/probe/royale_probe` 的"未收到 match_options = FAIL"断言不变 —— 它现在验的是拉取路径。)
+# ★ 生效选项改由对局场景进场拉取下发(随 NetBus.match_sync 的应答):原先那次「推」与 match_start 落在同一次客户端 poll,而新场景的订阅方还不存在 ⇒ 静默丢失。
 
-# ── 网络统计读数(2026-09-22 诊断用,★ 默认关;`-- --netstat`)────────────────
-# 每 role 的**待消费输入队列长度**。
-# ★ 为什么必须有这一格:客户端侧量到的 `gap`(已发未确认)在两种成因下**读数一样** ——
-#   ① 服务端消费不过来,包真堆在 `_pending_input` 里;② 服务端消费得动,但包在路上
-#   (ENet 可靠通道在高 RTT 下的节流/窗口)。只有这一格能把它们分开:队列小 ⇒ 是②。
+
+# 每 role 的待消费输入队列长度。★ 这一格是分开两种成因的唯一手段:客户端量到的 gap(已发未确认)在「服务端消费不过来」
+# 与「包还在路上(ENet 可靠通道节流)」下读数一样 —— 队列小 ⇒ 是后者。
 var _netstat := false
 var _netstat_checked := false
 var _netstat_acc := 0.0
 var _netstat_trace := false     # 逐帧队列追踪(`--netstat-trace`,前 600 tick)
 var _netstat_trace_f := 0
 
-# 输入队列的**抖动包络**(每 role):最近"一 tick 到过几包"的**原始**深度(丢包之前),每 tick 衰减 1。
-# 上限由它推出(`PacketInputSource.adapted_cap`),**回复力就来自"衰减"这一步** ——
-# 没有它,队列长度就是 ρ=1 的随机游走,一被顶上去就永远停在那儿(见 §六.29 的实测)。
+# 输入队列的抖动包络(每 role):最近「一 tick 到过几包」的原始深度(丢包之前),每 tick 衰减 1。★ 上限由它推出
+# (PacketInputSource.adapted_cap),回复力就来自「衰减」这一步 —— 没有它,队列长度是 ρ=1 的随机游走,被顶上去就永远停在那儿。
 var _q_peak: Dictionary = {}
 var _q_drops: Dictionary = {}   # role -> 累计被丢弃的**陈旧**包数(诊断;丢包=服务器跳过一格输入)
 
@@ -164,9 +138,7 @@ func _netstat_tick(delta: float) -> void:
 		_netstat_checked = true
 		var ua := OS.get_cmdline_user_args()
 		_netstat = ua.has("--netstat")
-		# `--netstat-trace`:逐帧打(只在前 600 tick ≈ 10 秒),用于定位"那个固定偏置是哪一刻
-		# 被顶上去的"。★ 每秒一行的采样看不见 0.13 秒的爬升 —— 实测队列在开局 1 秒内从 0
-		# 跳到 8 然后就永远停在那儿(ρ=1,没有回复力),那一下只能逐帧看。
+# --netstat-trace:逐帧打(只在前 600 tick ≈ 10 秒)。★ 每秒一行的采样看不见 0.13 秒的爬升(实测队列在开局 1 秒内从 0 跳到 8 就停住),那一下只能逐帧看。
 		_netstat_trace = ua.has("--netstat-trace")
 	if not _netstat and not _netstat_trace:
 		return
@@ -194,9 +166,7 @@ func _netstat_tick(delta: float) -> void:
 			", ".join(parts), ", ".join(caps), ", ".join(drops)])
 
 
-## 清空某 role 的输入队列**并复位抖动包络**(掉线 / 重连重协商这种**纪元边界**用)。
-## ★ 两者必须一起清:只清队列 ⇒ 旧包络把上限继续顶在高位,新纪元开局就白带一层陈旧延迟。
-## ★ 收成一个函数而不是两处各写一遍 —— "清队列"与"清包络"是**同一件事的两半**,分头写就会漏一半。
+# ★ 清队列与复位抖动包络必须一起做:只清队列 ⇒ 旧包络把上限继续顶在高位,新纪元开局就白带一层陈旧延迟。
 func reset_input_queue(role: int) -> void:
 	_pending_input[role] = []
 	_q_peak.erase(role)
@@ -206,16 +176,9 @@ func reset_input_queue(role: int) -> void:
 func _on_input(caller: int, pkt: Dictionary) -> void:
 	for role in peer_by_role:
 		if peer_by_role[role] == caller:
-			# 缓冲本帧到达的包,按 seq 序 FIFO,每物理 tick 消费一个(见 _physics_process):
-			# 1 包/ tick → 服务器权威模拟与客户端"重放未确认输入"1:1 同序(C2 rollback 需要,
-			# 见 docs/pvp-c2-retrospective.md P1)。held/axis 由被消费的那包决定,边沿不丢。
-			# ★ 2026-10-08(Task 4):入队走 `push_pending()` —— **有界**,且丢包时**保住边沿**
-			#   (见该函数)。
-			# ★ 2026-10-09(§六.29):上限不再是写死的 8,而是**跟着实测抖动包络走**的抖动缓冲 ——
-			#   一 tick 到几包就允许留几包(+1 余量),包络每 tick 衰减 1 ⇒ 网络一安静,上限自己缩回去,
-			#   把堆着的**陈旧**包释放掉(丢的永远是最旧那包,边沿并入下一包,玩家的按键不丢)。
-			#   没有这一步,队列是 ρ=1 的零漂移随机游走:**被顶上去就永远停在那儿**
-			#   (实测:开局 1 秒内从 0 跳到 8 后不再回落,见 `--netstat-trace` 的注释)。
+# 缓冲本帧到达的包,按 seq 序 FIFO,每物理 tick 消费一个 ⇒ 服务器权威模拟与客户端「重放未确认输入」1:1 同序(C2 rollback 需要)。
+# ★ 入队走 push_pending():有界,且丢包时保住边沿。★ 上限跟着实测抖动包络走(一 tick 到几包就留几包 +1 余量,包络每 tick 衰减 1)
+# ⇒ 网络一安静上限自己缩回去,把堆着的陈旧包释放掉(丢的永远是最旧那包,边沿并入下一包)。没有这一步就是 ρ=1 的零漂移随机游走:顶上去就永远停在那儿。
 			if not _pending_input.has(role):
 				_pending_input[role] = []
 			var prev_peak := int(_q_peak.get(role, 0))
@@ -228,22 +191,18 @@ func _on_input(caller: int, pkt: Dictionary) -> void:
 
 
 func _physics_process(delta: float) -> void:
-	# 快照广播必须放在「消费本帧输入」之前——Player 是子节点,父先于子,本帧玩家要到
-	# MatchHost._physics_process 返回后才步进。若在消费后广播,状态还是"上一输入模拟完(S_{F-1})",
-	# 却已把 ack 指向刚消费的 C_F → ack 领先状态一拍 → 客户端拿自己的 ring[C_F](=S_C_F)
-	# 比 S_{F-1},移动中每次快照都误判分歧、画面被拉回(server-rendered 插值吸收故旧路径不暴露;
-	# C2 rollback 一比整态就现形)。放消费前:ack 仍指上 tick 消费的 C_{F-1},状态已是上一步进完的
-	# S_{F-1},配对一致(客户端期望 ack=C 配 S_C,见 pvp_reconcile_smoke 的建模)。
-	# 地面武器:先把落体的实际位置同步回表,后面的拾取判定(nearest_within)才用得上最新落点
+# ★★ 快照广播必须放在「消费本帧输入」之前:Player 是子节点(父先于子),本帧玩家要到本函数返回后才步进 —— 若在消费后广播,
+# 状态还是「上一输入模拟完(S_{F-1})」而 ack 已指向刚消费的 C_F ⇒ ack 领先状态一拍,客户端移动中每次快照都误判分歧、画面被拉回
+# (server-rendered 插值吸收,故旧路径不暴露;C2 rollback 一比整态就现形)。放消费前则 ack 与状态配对一致。
+
 	_sync_ground_positions()
-	# 仅测试用(`--test-ground-teleport`,见 MatchGround.test_ground_teleport):默认关。
+
 	_debug_keep_weapon_within_reach()
-	# 仅测试用(`--test-destroy-tile`,见 MatchState.test_destroy_cell):默认关。
+
 	_debug_destroy_tile(delta)
 	if time_economy != null:
 		_tick_beta_rewind(delta)   # Beta 回溯机(环缓/倒放/免伤/轨迹)
-	# Beta 时间玩法:加速态(在快照**前**定格 —— 快照的 haste 位读的就是这个倍率)。
-	# 裁决在服务器:按住 + 账户可耗才生效;只乘自己(别的角色/子弹/世界一概不动)。
+# 加速态必须在快照之前定格(快照的 haste 位读的就是这个倍率);★ 裁决在服务器:按住 + 账户可耗才生效,只乘自己。
 	if time_economy != null:
 		for role in input_sources:
 			var acc := time_economy.accounts.get(int(role)) as GrainAccount
@@ -261,24 +220,21 @@ func _physics_process(delta: float) -> void:
 	if _snapshot_accum >= SNAPSHOT_INTERVAL:
 		_snapshot_accum = 0.0
 		_broadcast_snapshot()
-	# Beta 时间玩法:账户回复 + 10Hz 显示镜像(怀表 HUD)。可靠通道:数值承诺,丢包会自愈。
+
 	if time_economy != null:
 		time_economy.tick(delta)
 		_time_sync -= delta
 		if _time_sync <= 0.0:
 			_time_sync = TIME_SYNC_INTERVAL
 			_rpc_all_ext("time_state", [time_economy.state_payload()])
-	# 应用输入(父先于子 → 玩家 _physics_process 读到的已是最新注入)。
-	# 每 tick 每 role 恰好消费一个 FIFO 包(最早的)→ 权威模拟与客户端重放 1:1 同序;
-	# 队列空 = 缺包,沿用上一包 held/轴(PacketInputSource.clear_edges 不清 held)。
-	# ack = 刚消费包的 seq(下一 tick 快照回带,客户端 rollback 锚点)。
+# 应用输入(父先于子 ⇒ 玩家 _physics_process 读到的已是最新注入)。★ 每 tick 每 role 恰好消费一个 FIFO 包(最早的)⇒ 与客户端
+# 重放 1:1 同序;队列空 = 缺包,沿用上一包 held/轴(clear_edges 不清 held)。★ ack = 刚消费包的 seq(下一 tick 快照回带,rollback 锚点)。
 	for role in input_sources:
 		var src: PacketInputSource = input_sources[role]
 		src.clear_edges()
 		if _pending_input.has(role):
 			var q: Array = _pending_input[role]
-			# COUNTDOWN(开局/换局 3 秒):双方禁止移动/开火——只清空缓冲不喂输入,
-			# 玩家站在出生点不动(权威冻结;客户端是服务器渲染,自然跟随)。
+# COUNTDOWN(开局/换局 3 秒):双方禁止移动/开火 —— 只清空缓冲不喂输入,玩家站在出生点不动。
 			if _round_state == RoundState.COUNTDOWN:
 				q.clear()
 				src.reset_state()   # 连 held/axis 一起清,防上一包方向让服务器玩家在冻结期漂移(C2 分歧源)
@@ -287,19 +243,18 @@ func _physics_process(delta: float) -> void:
 				var pkt: Dictionary = q.pop_front()
 				src.apply_packet(pkt)
 				_ack_seq[role] = int(pkt.get("seq", _ack_seq.get(role, 0)))
-				# 地面武器:拾取/丢弃的**边沿**。★ 必须紧跟 apply_packet —— 本轮开头
-				# 已经 clear_edges(),边沿就是这一包刚写进去的;晚一拍就被下一轮清掉了。
+# 地面武器拾取/丢弃的边沿:★ 必须紧跟 apply_packet —— 本轮开头已 clear_edges(),边沿就是这一包刚写进去的,晚一拍就被下一轮清掉。
 				_handle_ground_actions(role, src)
-	# 玩家/子弹的 _physics_process 由树自动跑(子节点)
-	# 子弹命中裁决 + 新子弹广播(玩家/子弹移动后)
+
+
 	_adjudicate_bullets()
-	# 即时光束武器(激光)权威开火上报:读各角色武器里待广播的光束,发给非射手端
+
 	_broadcast_pending_beams()
-	# 回合制:击杀倒地转换检测 + 状态机推进(倒计时/复活/回合结束/换边)
+
 	_match_round_tick(delta)
-	# 网络统计读数(诊断,默认关)
+
 	_netstat_tick(delta)
-	# 分帧重建可破坏碰撞块(爆炸拆墙)
+# 分帧重建可破坏碰撞块(爆炸拆墙):每帧最多 2 块,剩下的留到下一帧。
 	if not _dirty_chunks.is_empty():
 		var processed := 0
 		var chunks := _dirty_chunks.keys()
@@ -311,15 +266,9 @@ func _physics_process(delta: float) -> void:
 			CollisionBuilder.rebuild_chunk(destructible_sub, ch, self)
 			processed += 1
 
-# 仅测试用(`--test-destroy-tile`,见 MatchState.test_destroy_cell):对局开始 delay 秒后拆掉
-# 指定格,**只拆一次**。默认关(`test_destroy_cell == (-1,-1)` → 首行就 return),生产路径
-# 不带这个开关,行为与今天逐字一致。
-#
-# ★ 为什么走 `TileDefs.damage_tile` 而不是直接改 grid:那样才会经 `TileDefs.on_destroyed`
-#   → `MatchCombat._on_tile_destroyed` → `_rpc_all("tile_destroyed", …)`,也就是
-#   **与真爆炸完全同一条广播链**(重连探针的相⑦ 要验的正是这条链 + 客户端的补态)。
-# ★ 那条 print 是探针的"非空转"证据:worker 是**独立 OS 进程**(探针拿不到它的 `_host`),
-#   日志是唯一能读到它内部动作的通道;没有它,"客户端那格是空气"可以靠"那格本来就是空气"骗过。
+# ★ 仅测试用(--test-destroy-tile):对局开始 delay 秒后拆掉指定格、只拆一次;默认关,生产路径行为逐字一致。
+# ★ 必须走 TileDefs.damage_tile 而不是直接改 grid —— 那样才经 on_destroyed → _on_tile_destroyed → 广播,与真爆炸同一条链。
+# ★ 那句 print 是探针的「非空转」证据:worker 是独立 OS 进程(探针拿不到 _host),日志是唯一能读到它内部动作的通道。
 func _debug_destroy_tile(delta: float) -> void:
 	if MatchState.test_destroy_cell.x < 0:
 		return
@@ -331,11 +280,8 @@ func _debug_destroy_tile(delta: float) -> void:
 	print("worker: [test] 拆格 %s(相⑦ 用)" % str(cell))
 	TileDefs.damage_tile(cell, 999999, "explosion")
 
-# ══ Beta 回溯机(每 role 自身;他人不受影响)════════════════════════
-# 环缓只存**该 role 自己**的状态(位置/速度/HP/朝向/倒地/弹量)+ **它自己的子弹**
-# (pos/vel + rewind_state;不重建已消亡的弹 —— 已爆的榴弹不复活,已知边界)。
-# 回溯期间:输入源 frozen(状态由历史驱动)、take_hit 免伤(meta 闸)、
-# 自己的子弹随历史倒放且照常伤害他人(用户裁定)。
+# ══ Beta 回溯机(每 role 自身,他人不受影响)══ 环缓只存该 role 自己的状态(位置/速度/HP/朝向/倒地/弹量)+ 它自己的子弹,
+# 不重建已消亡的弹(已爆的榴弹不复活,已知边界)。★ 回溯期间:输入源 frozen、take_hit 免伤,自己的子弹随历史倒放且照常伤害他人(用户裁定)。
 
 func _tick_beta_rewind(delta: float) -> void:
 	var now := Time.get_ticks_msec() / 1000.0
@@ -346,7 +292,7 @@ func _tick_beta_rewind(delta: float) -> void:
 		var acc := time_economy.accounts.get(r) as GrainAccount
 		if p == null or src == null or acc == null:
 			continue
-		# 显式类型:time_economy 无类型字段链式取值推不出;且 p 的 is_downed() 返回 Variant
+
 		var want: bool = src.rewind_held() and acc.can_spend() and not p.is_downed()
 		var on := bool(_rw_on.get(r, false))
 		if want and not on:
@@ -364,7 +310,7 @@ func _tick_beta_rewind(delta: float) -> void:
 		if not on:
 			_record_rw_frame(r, p, now)
 			continue
-		# 回溯中:烧颗粒(rewind_burn/s);游标 3×→1× ramp;驱动自身与自己的子弹
+
 		acc.spend(delta, time_economy.rules.rewind_burn)
 		if acc.balance <= 0.0:
 			_finish_rw(r, p, src)
@@ -375,7 +321,7 @@ func _tick_beta_rewind(delta: float) -> void:
 		cur += delta * mult
 		_rw_cursor[r] = cur
 		_apply_rw_frame(r, p, cur)
-		# 轨迹:每 3 个物理帧一个点(他人残像;快照带下去,超过 10 个丢最旧)
+
 		if Engine.get_physics_frames() % 3 == 0:
 			var trail: Array = _rw_trail.get(r, [])
 			trail.append([p.global_position.x, p.global_position.y])
@@ -384,17 +330,9 @@ func _tick_beta_rewind(delta: float) -> void:
 			_rw_trail[r] = trail
 
 
-## 退出回溯(**两条退出路径共用**:主动松开 / 颗粒耗尽)。
-##
-## ★★ 2026-10-03 修 —— **录像带模型**:把"被复写的未来"从环缓上**裁掉**。
-##   原实现只做 `frozen=false` / 摘 meta / 清 trail,**不碰 `_rw_buf`** ⇒ 那些"已经被回溯抹掉"
-##   的帧还留在环缓里,而寻帧是 `target = buf.back().t - cursor`(从**当前末尾**往回数)——
-##   于是**下一次回溯会先把那段被抹掉的未来倒放一遍**(玩家看到的就是"回溯过的时间又出现了")。
-##   单机那条线早就修过(`world_rewind.gd` 的 `finish()`,KH 的 D3「两次回溯串带」),
-##   PvP 这份是后来写的、漏了这一步。两边的语义现在对齐。
-##
-## 保留语义与单机一致:裁完若一帧不剩,至少留 1 帧(倒到了磁带最老处 ⇒ 世界停在那帧上,
-## 磁带从它重新起算)。裁完把游标归零(下次从新末尾重新起算)。
+# 退出回溯(两条退出路径共用:主动松开 / 颗粒耗尽)。★★ 录像带模型:把「被复写的未来」从环缓上裁掉 —— 只做 frozen=false /
+# 摘 meta / 清 trail 而不碰 _rw_buf 的话,那些帧还留在环缓里,而寻帧是从当前末尾往回数(target = buf.back().t - cursor),
+# 于是下一次回溯会先把那段被抹掉的未来倒放一遍(玩家看到「回溯过的时间又出现了」)。★ 保留语义与单机一致:裁完若一帧不剩至少留 1 帧。
 func _finish_rw(r: int, p: Node2D, src: PacketInputSource) -> void:
 	src.frozen = false
 	p.remove_meta("time_rewinding")
@@ -404,7 +342,7 @@ func _finish_rw(r: int, p: Node2D, src: PacketInputSource) -> void:
 	if buf.is_empty():
 		_rw_cursor[r] = 0.0
 		return
-	# 出口时刻 = 当前末尾往回走了 cursor 秒。晚于它的一律是被复写的未来。
+
 	var exit_t := float(buf[buf.size() - 1]["t"]) - float(_rw_cursor.get(r, 0.0))
 	var kept := 0
 	for i in range(buf.size()):
@@ -418,7 +356,7 @@ func _finish_rw(r: int, p: Node2D, src: PacketInputSource) -> void:
 	_rw_cursor[r] = 0.0
 
 
-# 非回溯期:20Hz 采样自己的状态(超 rewind_buffer_seconds 裁剪)
+
 func _record_rw_frame(r: int, p: Node2D, now: float) -> void:
 	if now < float(_rw_snap_t.get(r, 0.0)):
 		return
@@ -433,21 +371,9 @@ func _record_rw_frame(r: int, p: Node2D, now: float) -> void:
 		"facing": int(p.get("facing_direction")),
 		"downed": p.is_downed(),
 	}
-	# ★★ 2026-10-05(Task 2)类型化:原来这四行隔着 `wc` / `inv` / `slot` 三个句柄做
-	#   **字符串反射**(`wc.get("_current_index")` / `inv.get("held")` / `slot.get("mag", 0)`),
-	#   同族的病与单机那一份逐字相同(见 `core/sim/world_rewind.gd:131-141` 的长注释):
-	#   成员名一改名 ⇒ `get` 静默返回 null ⇒ **快照值静默退化**,而没有任何断言会红。
-	#   拿到句柄之后每一层都能点访问(`WeaponComponent` / `WeaponInventory` / `WeaponBase`
-	#   三个类都已有 `class_name`)。★ 逐字行为差**共三处,逐条列全**(2026-10-05 修复轮 1,评审 M-6:
-	#   先前只列了第一处,读起来像完整枚举):
-	#     ① `slot.get("mag", 0)` → `slot["mag"]`:条目缺 `mag` 键时旧写法给 0、新写法当场报错;
-	#        而 `WeaponInventory.add/restore/pick_up` 三处写入口都必写 `mag`
-	#        (条目形状见 `core/sim/weapon_inventory.gd:40`)= 「缺键」不是正常态 ⇒ **无实际行为差**。
-	#     ② **去掉** `if held != null:` 这层守卫:`held` 的类型是 `Array[Dictionary]`(永不为 null)
-	#        ⇒ 恒真守卫,去掉后**无实际行为差**。
-	#     ③ **去掉** `wc.has_method("current_weapon")` 探测:`wc` 已收窄成 `WeaponComponent`,
-	#        该方法必然存在(`weapon_component.gd:461`)⇒ **无实际行为差**。
-	#   ★ 形状守卫:rewind_weapon_probe.gd(已删·2026-10-09) 的 S9(逐条钉住隔着句柄的反射为 0)。
+# ★★ 类型化:原来隔着 wc / inv / slot 三个句柄做字符串反射(成员名一改名,get 就静默返回 null ⇒ 快照值静默退化,而没有任何断言会红)。
+# ★ 逐字行为差共三处、逐条列全:① slot.get("mag", 0) → slot["mag"](条目缺键不是正常态 ⇒ 无实际行为差);② 去掉恒真的
+# if held != null(held 是 Array[Dictionary]);③ 去掉 has_method 探测(wc 已收窄成 WeaponComponent)。⚠ 零守卫:rewind_weapon_probe S9 已删(2026-10-09)。
 	var wc := p.get("weapons") as WeaponComponent
 	if wc != null:
 		d["widx"] = wc._current_index
@@ -478,7 +404,7 @@ func _record_rw_frame(r: int, p: Node2D, now: float) -> void:
 		buf.pop_front()
 
 
-# 回溯中:按游标找 ≤ 目标时刻的最近帧,写回自身 + 自己的子弹
+
 func _apply_rw_frame(r: int, p: Node2D, cursor: float) -> void:
 	var buf: Array = _rw_buf.get(r, [])
 	if buf.size() < 2:
@@ -492,11 +418,8 @@ func _apply_rw_frame(r: int, p: Node2D, cursor: float) -> void:
 			break
 	p.global_position = f["p"]
 	p.set("velocity", f["v"])
-	# ★ 战斗段(2026-10-05 Task 2):拿到 `combat` 句柄后点访问。原来三处 `combat.get("max_hp")`
-	#   / `combat.set("hp")` / `combat.call("emit_signal", "hp_changed", …)` 是隔着句柄的反射 ——
-	#   其中 `call("emit_signal", …)` 那处最阴:名字对不上时 `call` 当场报错并**中止整段**
-	#   (连后面的武器段一起跳过)。`hp_changed` 是 `CombatComponent` 自己声明的信号
-	#   (`scenes/player/combat_component.gd:12`)⇒ 直接 emit 是同一件事的类型化写法。
+# ★ 战斗段同样改成句柄点访问:原三处 combat.get/set/call 反射里最阴的是 call("emit_signal", …) —— 名字对不上时 call 当场
+# 报错并中止整段(连后面的武器段一起跳过)。hp_changed 是 CombatComponent 自己声明的信号,直接 emit 是同一件事的类型化写法。
 	var combat := p.get("combat") as CombatComponent
 	if combat != null:
 		var hp1 := clampi(int(f["hp"]), 0, combat.max_hp)
@@ -507,19 +430,10 @@ func _apply_rw_frame(r: int, p: Node2D, cursor: float) -> void:
 	var wc := p.get("weapons") as WeaponComponent
 	if wc != null and f.has("wmags"):
 		var inv: WeaponInventory = wc.inventory
-		# ★★ 2026-10-05(Task 2)与单机 `Player.rewind_restore` **同一处修法,逐字对齐**:
-		#   ① **发现 B**:切枪必须排在"条目写回"**之前** —— `_equip_index` 会把走掉那把的出膛实弹
-		#      写回条目,排在写回之后就会冲掉刚恢复的快照值(仪器:快照 `wmags=[11,1]`/`widx=1`
-		#      ⇒ 切枪后 `held[0].mag=3`)。
-		#   ② **发现 A**:手持实弹走 `WeaponComponent.apply_mag()`(未入树窗口写 `pending_mag`,
-		#      由 `WeaponBase._ready()` 消费)而不是直接写 `mag_ammo` —— 后者会被 `_ready` 用
-		#      **条目旧值**覆盖。
-		#   ③ `wlive < 0`(快照没记手持实弹)且确实切了枪 ⇒ 新实例取**快照条目值**(改动前同口径)。
-		#   ★ 语义口径:`wlive` 与 `wmags` **各自照抄快照**,不许"以条目为准"把 `wlive` 丢掉。
-		#   ★ 覆盖上限(照实):本函数**没有** headless 行为守卫(全仓 `grep '_apply_rw_frame'`
-		#     只命中生产自己)⇒ **写法**有源码形状守卫(探针 S9 的 9 条计数 + 反向令牌)、
-		#     **语句序**有 1 条**顺序**判据(S9 用 `find` 下标钉"`equip_index` 在条目写回之前",
-		#     2026-10-05 修复轮 1 评审 I-2 补);**行为侧**(值对不对)仍然零守卫 ⇒ 归**真链路批 A**。
+# ★★ 与单机 Player.rewind_restore 同一处修法、逐字对齐:① 切枪必须排在「条目写回」之前 —— _equip_index 会把走掉那把的出膛
+# 实弹写回条目,排在写回之后就会冲掉刚恢复的快照值;② 手持实弹走 WeaponComponent.apply_mag()(未入树窗口写 pending_mag,由
+# WeaponBase._ready 消费)而不是直接写 mag_ammo —— 后者会被 _ready 用条目旧值覆盖;③ wlive < 0 且确实切了枪 ⇒ 取快照条目值。
+# ★ 语义口径:wlive 与 wmags 各自照抄快照,不许「以条目为准」把 wlive 丢掉。⚠ 行为侧零守卫(写法/语句序有探针 S9,已删 2026-10-09)。
 		var want_idx := int(f.get("widx", -1))
 		var switched := want_idx >= 0 and want_idx != wc._current_index
 		if switched:
@@ -535,14 +449,12 @@ func _apply_rw_frame(r: int, p: Node2D, cursor: float) -> void:
 			if want < 0 and switched and inv != null and wc._current_index >= 0 \
 					and wc._current_index < inv.held.size():
 				want = int(inv.held[wc._current_index]["mag"])
-				# ★ 与单机 `player.gd` 逐字同款(修复轮 1 评审 I-1):`wlive` 的 -1 是**哨兵**
-				#   (没记),条目的 `MAG_FULL(-1)` 是**满弹** —— 两个 -1 语义不同。不折算就会让
-				#   新枪停在 `_equip_index` 从**恢复前**条目取的那个有限旧值。
+# ★ wlive 的 -1 是哨兵(没记),条目的 MAG_FULL(-1) 是满弹 —— 两个 -1 语义不同,不折算会让新枪停在 _equip_index 从恢复前条目取的有限旧值。
 				if want == WeaponInventory.MAG_FULL:
 					want = live.mag_size
 			if want >= 0:
 				WeaponComponent.apply_mag(live, want)
-	# 自己的子弹:活弹按序写回(位置/速度/引信)—— 照常伤害他人
+
 	var hist: Array = f.get("bullets", [])
 	if hist.is_empty():
 		return

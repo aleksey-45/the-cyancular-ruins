@@ -1,8 +1,7 @@
 extends Node
 
-# 设置中枢(autoload):持久化 + 音频总线 + 键位重映射生效。
-# 存储走 ConfigFile(user://settings.cfg);首次运行用 InputMap 现值当默认键位。
-# 读写 API 全部带类型;改值后调 save() 落盘。实验分支 KikuchiHeinr 新增。
+# 设置中枢(autoload):持久化 + 音频总线 + 键位重映射生效。存储走 ConfigFile(user://settings.cfg);
+# 首次运行用 InputMap 现值当默认键位;读写 API 全部带类型,改值后调 save() 落盘。
 
 const SAVE_PATH := "user://settings.cfg"
 
@@ -19,16 +18,12 @@ var sfx_volume: float = 1.0:
 		sfx_volume = clampf(v, 0.0, 1.0)
 		_apply_bus_volume("SFX", sfx_volume)
 
-# ── 通用 ──
-# 鼠标滚轮切枪。★ 2026-09-15 改默认 true:滚轮切枪本就已实现,但默认关着 = 该功能形同虚设
-# (用户要求"添加滚轮切武器"时它其实早就在,只是没人开)。已有存档里显式存过 false 的仍读 false。
+# ── 通用 ── 鼠标滚轮切枪。★ 默认 true:滚轮切枪本就已实现,但默认关着 = 该功能形同虚设;已有存档里显式存过 false 的仍读 false。
 var wheel_switch: bool = true
 
-# ── 单人开局选项存档(记住上次选择)──
 var sp_disabled_weapons: Array[int] = []   # 禁用的武器槽位(1-6;第 6 槽=激光枪)
 
-# 选图(2026-09-26):"" = 随机(= 上游行为:进图时从 res://maps 里现挑一份,会话内固定)。
-# 单人/联机各记一条;联机的三个模式(1v1/大乱斗/3v3)共用一条"上次选的图",省得每页各存一份。
+# 选图:"" = 随机(= 上游行为:进图时从 res://maps 里现挑一份,会话内固定)。单人/联机各记一条;联机三模式共用一条"上次选的图"。
 var sp_map_path: String = ""
 var mp_map_path: String = ""
 
@@ -42,10 +37,8 @@ var royale_match_min: float = 5.0       # 大乱斗一局限时(分钟,建房页
 var pvp_show_minimap: bool = true       # 小地图
 var pvp_minimap_show_enemy: bool = true # 小地图显示敌方位置
 
-# ── 显示(分辨率档 + 全屏)──
-# ★ 四档**全是 4:3** —— 与 project.godot 的 display/window/size/viewport_*(1920×1440)同比例,
-#   于是 `stretch/aspect="keep"` 下窗口任意大小时都是**等比缩放、无黑边**(非 4:3 档必有黑边)。
-# ★ 这张表是**单一来源**:设置页的下拉读它,`apply_display()` 按它开窗,别再各抄一份尺寸表。
+# ★ 四档全是 4:3 —— 与 project.godot 的 viewport(1920×1440)同比例 ⇒ stretch/aspect="keep" 下窗口任意大小时都是等比缩放、无黑边(非 4:3 档必有黑边)。
+# ★ 这张表是单一来源:设置页的下拉读它,apply_display() 按它开窗,别再各抄一份尺寸表。
 const DEFAULT_DISPLAY_RESOLUTION := Vector2i(1920, 1440)   # 基准 = project.godot 的 viewport 尺寸
 const DISPLAY_RESOLUTIONS: Array[Vector2i] = [
 	Vector2i(1280, 960),
@@ -54,13 +47,9 @@ const DISPLAY_RESOLUTIONS: Array[Vector2i] = [
 	Vector2i(2560, 1920),
 ]
 
-# 分辨率档下标。★ 越界回落写进 setter(与下面 `royale_match_min` 装载时那条 clamp 同一惯例):
-#   坏存档 / 手改 cfg / 将来删档位都会喂进非法值,直接拿去索引 DISPLAY_RESOLUTIONS 会越界。
-# ★ 默认值由 DEFAULT_DISPLAY_RESOLUTION **反查**而来,不另抄一个字面量下标 —— 抄下标 = 第二个
-#   真相源(档位顺序一改,默认档就静默漂走)。
-# ★★ 反查**必须写在 `_init()` 里,不能写成成员初始值**:GDScript 的成员初始值**不走 setter**
-#   (实测:把档表里的 1920×1440 改掉、`.find()` 得 -1,成员初始值会把 **-1** 原样漏进字段 ⇒
-#   窗口化时 `DISPLAY_RESOLUTIONS[-1]` 直接报错)。`_init()` 里的赋值是普通赋值 ⇒ 过 setter ⇒ 压回 0。
+# 分辨率档下标:越界回落写进 setter(坏存档 / 手改 cfg / 将来删档位都会喂进非法值,直接拿去索引会越界)。
+# ★ 默认值由 DEFAULT_DISPLAY_RESOLUTION 反查而来,不另抄一个字面量下标(抄下标 = 第二个真相源,档位顺序一改默认档就静默漂走)。
+# ★★ 反查必须写在 _init() 里,不能写成成员初始值 —— GDScript 的成员初始值不走 setter(实测 .find() 得 -1 会原样漏进字段 ⇒ 窗口化时 DISPLAY_RESOLUTIONS[-1] 直接报错)。
 var display_res_index: int = 0:
 	set(v):
 		display_res_index = clampi(v, 0, DISPLAY_RESOLUTIONS.size() - 1)
@@ -75,8 +64,7 @@ func _ready() -> void:
 	load_settings()
 	apply_display()   # 开窗即用存档里的档位(headless 下 apply_display 自己早退)
 
-# ── 音频总线 ──
-# SFX 总线挂在 Master 下;Music 预留给将来 BGM。音量统一 linear→db。
+# ── 音频总线 ── SFX 总线挂在 Master 下;Music 预留给将来 BGM。音量统一 linear→db。
 func _ensure_buses() -> void:
 	if AudioServer.get_bus_index("Music") == -1:
 		var at := AudioServer.bus_count
@@ -98,32 +86,16 @@ func _apply_bus_volume(bus_name: String, linear: float) -> void:
 	AudioServer.set_bus_volume_db(idx, linear_to_db(maxf(linear, 0.0001)))
 	AudioServer.set_bus_mute(idx, linear <= 0.001)
 
-# ── 显示:按可用区挑一档能放下的分辨率 ──
-# 给定**可用区**(`DisplayServer.screen_get_usable_rect()` 那种矩形的大小),返回**能放下的最大档**;
-# 四档**全放不下**时返回**最小档**(不是 0、不崩 —— 缩到最小档仍比"窗口被 OS 钳到屏幕外"好)。
-# ★ 为什么要有它(2026-10-04 用户裁定,而不是静态 `window_width_override`):基准逻辑空间是
-#   1920×1440,而**装不下它的屏**(如 1080p,高 1080 < 1440)上照存档档开窗会超出屏幕、被 OS
-#   钳位 ⇒ 玩家看到"既不全屏也不居中"。静态键无法自适应任意屏;"收进屏幕"只能在**运行时**量
-#   可用区 ⇒ 选择逻辑落在这里,开窗动作落在 `apply_display()`。
-# ★ **纯函数**:不读 `DisplayServer`、不写任何字段、无副作用 ⇒ headless 下也可**真红真绿**
-#   (冒烟 settings_display_smoke.gd(已删·2026-10-09) 相⑤ 直接喂可用区进来,不必开窗)。
-# ★ 逻辑空间**不动**(仍 1920×1440):窗口档只决定**窗口多大**,`stretch/aspect="keep"` 负责
-#   等比缩放 + 黑边 ⇒ `mp_lobby.tscn` 那 21 处绝对定位零改动。
-# ★ 不靠 `DISPLAY_RESOLUTIONS` 的**下标顺序**:"放得下的最大"与"最小"都按**面积**现算 ——
-#   档表重排会静默换成另一档,而**没有守卫盯着档表顺序**(冒烟的档表相只查非空 / 含基准 / 4:3),
-#   所以这里不把顺序当契约。
-# ★ 覆盖上限(与 `docs/eng/registered-debt.md` §五.13 同一条边界):本函数只保证**选出来的档**对;
-#   "真窗口真的变成这个尺寸 / 真的居中"非 headless 仍未实测(非 headless 会抢焦点)。
-#   ⚠ 另一条更细的:因为档表里**下标 0 恰好就是最小档**,"全放不下 ⇒ 最小档"这一支只能被
-#     "返回 0 / 返回可用区本身 / 返回最大档"这类变异证伪;把它写成"返回 `DISPLAY_RESOLUTIONS[0]`"
-#     在这一相上**咬不住**(两种写法给的值相同)⇒ 故这里按面积现算,不靠下标。
+# ── 显示:按可用区挑一档能放下的分辨率 ── 返回能放下的最大档;四档全放不下时返回最小档(不是 0、不崩 —— 缩到最小档仍比"窗口被 OS 钳到屏幕外"好)。
+# ★ 为什么要有它(用户裁定,而不是静态 window_width_override):基准逻辑空间 1920×1440,而装不下它的屏(如 1080p)上照存档档开窗会超出屏幕、被 OS 钳位
+#   ⇒ 玩家看到"既不全屏也不居中";静态键无法自适应任意屏,"收进屏幕"只能在运行时量可用区 ⇒ 选择逻辑落在这里,开窗动作落在 apply_display()。
+# ★ 纯函数:不读 DisplayServer、不写任何字段、无副作用 ⇒ headless 下也可真红真绿。★ 逻辑空间不动(仍 1920×1440),窗口档只决定窗口多大。
+# ★ 不靠 DISPLAY_RESOLUTIONS 的下标顺序:"放得下的最大"与"最小"都按面积现算。⚠ 覆盖上限:只保证选出来的档对,"真窗口真的变成这个尺寸/真的居中"非 headless 仍未实测(见 registered-debt §五.13)。
 func fit_resolution(available: Vector2i) -> Vector2i:
-	# 先求**最小档** —— 它同时是"四档全放不下"时的兜底答案(下一段一档都没放下 ⇒ `best` 保持它)。
 	var smallest := DISPLAY_RESOLUTIONS[0]
 	for r in DISPLAY_RESOLUTIONS:
 		if r.x * r.y < smallest.x * smallest.y:
 			smallest = r
-	# 再求**放得下的最大档**:放得下就按面积取最大的那一档,一档都放不下则原样兜底。
 	var best := smallest
 	var best_area := 0
 	for r in DISPLAY_RESOLUTIONS:
@@ -132,21 +104,11 @@ func fit_resolution(available: Vector2i) -> Vector2i:
 			best_area = r.x * r.y
 	return best
 
-# ── 显示:把内存里的档位落到真窗口 ──
-# 两个调用方:autoload `_ready()`(开窗即用存档档)、设置页(玩家改完即时生效)。
-# ★ headless 早退:无窗口后端(服务器 / `-s` 冒烟)上不该碰窗口 API —— 仓内既有惯例,
-#   先例 tests/harness/menu_autotest.gd:505(`DisplayServer.get_name() == "headless"`)。
-# ★ 本函数体内的注释**刻意不写** window_set_size / window_set_mode 这两个字面量:冒烟
-#   settings_display_smoke.gd(已删·2026-10-09) 的源码半边按"早退必须排在这两个调用之前"判,
-#   注释里先出现会把那条判红。
-# ★ 收进屏幕(2026-10-04 Task 5):存档档**放得下就照它**(用户"默认窗口保持当前数字"的裁定
-#   优先),放不下才改用 `fit_resolution()` 挑的"能放下的最大 4:3 档"。改完尺寸**必须按可用区
-#   重新居中** —— 实测过:不重居中时窗口会停在"按旧尺寸算出的位置"上,于是小屏上会偏到一边。
-# ★ 可用区取 `screen_get_usable_rect`(**不是** `screen_get_size`):任务栏占掉的那几十像素不算
-#   可用 —— 实测本机 `screen_get_size` 2560×1600 vs 可用 2560×1528。
-# ⚠ 覆盖上限:下面"存档档放得下就照它"那两行**内联在早退之后**,headless 下结构性走不到 ⇒
-#   它没有运行时守卫(冒烟相⑤ 只钉住了被它调用的 `fit_resolution()`,以及"默认档放得下时
-#   两条路给出的值相同")。要真覆盖得跑一次非 headless 并读窗口几何(见 §五.13 那条登记)。
+# ── 显示:把内存里的档位落到真窗口 ── 两个调用方:autoload _ready()(开窗即用存档档)与设置页(玩家改完即时生效)。
+# ★ headless 早退:无窗口后端(服务器 / -s 冒烟)上不该碰窗口 API。★ 收进屏幕:存档档放得下就照它(用户裁定优先),放不下才改用 fit_resolution()。
+# ★ 改完尺寸必须按可用区重新居中 —— 实测不重居中时窗口会停在"按旧尺寸算出的位置"、小屏上偏到一边。
+# ★ 可用区取 screen_get_usable_rect(不是 screen_get_size):任务栏占掉的像素不算可用(实测本机 2560×1600 vs 可用 2560×1528)。
+# ⚠ 覆盖上限:"存档档放得下就照它"那两行内联在早退之后,headless 结构性走不到 ⇒ 无运行时守卫(要真覆盖得跑一次非 headless 读窗口几何)。
 func apply_display() -> void:
 	if DisplayServer.get_name() == "headless":
 		return
@@ -162,14 +124,9 @@ func apply_display() -> void:
 	else:
 		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
 
-# ── 键位重映射 ──
-# 每动作支持**多个**键位(原作默认:up=W+空格、down=S+Shift),存取都保序完整往返。
-# ⚠ 与 set_binding 的组合语义:set_binding 是 erase 后只写一个事件的**单键写入** → 用户
-#   主动重绑某动作 = 把该动作改成单键(多键动作如 up = W + Space 会被静默压成单键)。
-#   这是本项目键位重绑的设计语义,不是缺陷。要显示一个动作的**全部**键位请用
-#   get_binding_names()(逐个遍历);save()/load_settings() 同样遍历全部事件,往返不丢键。
+# ── 键位重映射 ── 每动作支持多个键位(原作默认 up=W+空格、down=S+Shift),存取都保序完整往返。
+# ⚠ set_binding 是 erase 后只写一个事件的单键写入 ⇒ 主动重绑某动作 = 把该动作改成单键(多键动作会被静默压成单键);这是设计语义不是缺陷。
 
-# 显示用:一个动作的全部键位名,如 "W / Space"
 func get_binding_names(action: String) -> String:
 	var names: Array[String] = []
 	for ev in InputMap.action_get_events(action):
@@ -202,10 +159,7 @@ func _event_display_name(ev: InputEvent) -> String:
 			_: return "鼠标键 %d" % (ev as InputEventMouseButton).button_index
 	return "?"
 
-# ── 持久化 ──
-# ★ 两个函数的 `path` 参数**只为可测**:默认值 = 真存档路径 ⇒ 所有既有调用点行为完全不变;
-#   冒烟 settings_display_smoke.gd(已删·2026-10-09) 用临时路径验"档位真的落盘 / 真的读回",
-#   从而**不必去读写玩家真的 user://settings.cfg**(冒烟不该有"写坏玩家存档"的副作用)。
+# ── 持久化 ── ★ 两个函数的 path 参数只为可测:默认值 = 真存档路径 ⇒ 所有既有调用点行为完全不变(冒烟用临时路径,不必读写玩家真的 user://settings.cfg)。
 func save(path: String = SAVE_PATH) -> void:
 	var cf := ConfigFile.new()
 	cf.set_value("audio", "master_volume", master_volume)
@@ -259,13 +213,9 @@ func load_settings(path: String = SAVE_PATH) -> void:
 			DISPLAY_RESOLUTIONS.find(DEFAULT_DISPLAY_RESOLUTION)))
 	display_fullscreen = bool(cf.get_value("display", "fullscreen", false))
 	for action in REMAPPABLE_ACTIONS:
-		# ★ 默认值必须是**真的值**而不是 null:Godot 的 ConfigFile.get_value 把 null 当作
-		#   "调用方没给默认值",键不存在时直接报错(Couldn't find ... and no default was given)。
-		#   对老存档(在某个动作被加进 REMAPPABLE_ACTIONS 之前写的)来说那个键必然不存在 ——
-		#   于是**每加一个新可重绑动作,老玩家启动就刷一屏报错**。空数组语义完全相同
-		#   (下面的 is_empty() 分支会跳过),但不会报错。
-		# 2026-09-26 用户改令:加速(haste)默认改用**鼠标右键**。旧存档若只存了键盘绑定
-		# (Ctrl 时代)一律丢弃并回落到右键;若存的是鼠标绑定则保留(玩家在设置页重绑不受影响)。
+# ★ 默认值必须是真的值而不是 null:ConfigFile.get_value 把 null 当作"调用方没给默认值",键不存在时直接报错 —— 老存档里新动作的键必然不存在
+#   ⇒ 每加一个新可重绑动作,老玩家启动就刷一屏报错(空数组语义相同且不报错)。
+# 2026-09-26 用户改令:加速(haste)默认改用鼠标右键;旧存档只存了键盘绑定(Ctrl 时代)一律丢弃并回落右键,存鼠标绑定的保留。
 		var arr = cf.get_value("bindings", action, [])
 		if action == "haste":
 			var mouse_only: Array = []

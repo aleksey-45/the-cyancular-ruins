@@ -1,18 +1,11 @@
 extends Node
 
-# 菜单流转自动探针(挂 root,穿越 change_scene 存活):
-# 模拟 主菜单→(单人面板→开始探索 / 多人 / 设置) 的真实按钮点击流转,
-# 验证场景切换、渲染链与暂停层;带窗口运行时把玩家所见截图存到 user://。
+# 菜单流转自动探针(挂 root,穿越 change_scene 存活):模拟 主菜单→(单人面板→开始探索 / 多人 / 设置) 的真实按钮点击流转,验证场景切换、渲染链与暂停层;带窗口运行时把玩家所见截图存到 user://。
 # 由 main_menu._ready 在命令行含 --autotest-* 时挂载,平时零开销:
-#   -- --autotest-sp     主菜单→单机面板→开始探索→(Esc 暂停/恢复验证)→回主菜单→截图
-#   -- --autotest-mp     主菜单→「多 人 模 式」→统一大厅 mp_lobby→截图
-#   -- --autotest-royale 同 mp:联机入口已收成一颗按钮,三个模式都进统一大厅(只验到达)
-#   -- --autotest-team   同 mp:联机入口已收成一颗按钮,三个模式都进统一大厅(只验到达)
-#   -- --autotest-set    主菜单→设置页→截图
-#   -- --autotest-level  直接切 Level0(只验世界加载,不经过菜单流转)
-#   -- --autotest-ver    主菜单→信息页(**整页,会切场景**)→截图
-#   -- --autotest-switch 连做**两趟**「进单机 → 回主菜单」往返(量换场耗时;配合 --perf-switch)
-#   -- --autotest-play   进单机 → **打枪 + 打炮**(真的开火、引爆、拆砖)→ 回主菜单 → 退出游戏
+#   --autotest-sp 主菜单→单机面板→开始探索→(Esc 暂停/恢复验证)→回主菜单→截图;--autotest-mp 主菜单→「多 人 模 式」→统一大厅 mp_lobby→截图;
+#   --autotest-royale / --autotest-team 同 mp(联机入口已收成一颗按钮,三个模式都进统一大厅,只验到达);--autotest-set 主菜单→设置页→截图;
+#   --autotest-level 直接切 Level0(只验世界加载,不经过菜单流转);--autotest-ver 主菜单→信息页(整页,会切场景)→截图;
+#   --autotest-switch 连做两趟「进单机 → 回主菜单」往返(量换场耗时;配合 --perf-switch);--autotest-play 进单机 → 打枪 + 打炮(真的开火、引爆、拆砖)→ 回主菜单 → 退出游戏。
 
 var mode := ""   # sp / mp / royale / team / set / level / ver / switch / play(由 main_menu 经 cmdline 参数注入)
 
@@ -39,12 +32,8 @@ func _run() -> void:
 	if mode == "play":
 		await _run_play_session(tree)
 		return
-	# 直接切到某个**场景探针**(不进菜单流转):模块名 = 去掉 ground/ 前缀的探针名。
-	# 存在的理由:导出 exe 被编译成 `disable_path_overrides=yes`,`<exe> res://x.tscn` 会被
-	# 引擎当场拒绝(实测 "compiled without support for path overrides")—— 想在**发布产物**
-	# 上跑探针,只能借主菜单这条既有的 `-- --autotest-*` 通道(它读 OS.get_cmdline_user_args,
-	# 不受 path override 限制)。★ 2026-10-04 起 `exclude_filter` 已含 `tests/*` ⇒ 发布产物里
-	# 这条通道没有了(见 registered-debt.md §七 第 3 条),本探针只在工程目录内可用。
+	# 直接切到某个场景探针(不进菜单流转):模块名 = 去掉 ground/ 前缀的探针名。存在的理由:导出 exe 被编译成 disable_path_overrides=yes,`<exe> res://x.tscn` 会被引擎当场拒绝(实测 "compiled without support for path overrides")
+	#   ⇒ 想在发布产物上跑探针,只能借主菜单这条既有的 -- --autotest-* 通道(它读 OS.get_cmdline_user_args,不受 path override 限制)。★ 2026-10-04 起 exclude_filter 已含 tests/* ⇒ 发布产物里这条通道没有了(见 registered-debt.md §七 第 3 条),本探针只在工程目录内可用。
 	if mode.begins_with("ground/") or mode.begins_with("sceneprobe/"):
 		var scene_path := "res://tests/probe/%s.tscn" % mode.split("/", true, 1)[1]
 		if not ResourceLoader.exists(scene_path):
@@ -73,14 +62,8 @@ func _run() -> void:
 	var cur := tree.current_scene
 	print("AUTOTEST[%s]: 当前场景 = %s" % [mode, cur.scene_file_path if cur != null else "<null>"])
 	_dump_render_chain(tree, cur)
-	# ★ 硬断言:每个**会切场景**的模式都必须真的抵达目标场景。
-	# 少了这条,本探针会「假通过」:末尾唯一的硬断言是「回主菜单后 = main_menu.tscn」,
-	# 而"从没离开过主菜单"(菜单文案被改 → 找不到按钮 → 一次都没点到)正好满足它 ——
-	# mp/set 原先只 print 到达情况,文案一变就静默 DONE。
-	# sp 那句原本内联在此,现与 mp/set 共用同一个函数(同形,不抄三遍)。
-	# ★ ver 自 2026-10-03 起也是**整页、会切场景**(「版 本 信 息」弹层已删除):
-	#   原先"弹层不切场景 ⇒ 断言 scene 路径是同义反复"那条论证随之作废,故它与
-	#   sp/mp/set 同列 —— 留着旧论证就是留一条与代码相反的注释。
+	# ★ 硬断言:每个会切场景的模式都必须真的抵达目标场景。少了这条,本探针会「假通过」:末尾唯一的硬断言是「回主菜单后 = main_menu.tscn」,而「从没离开过主菜单」(菜单文案被改 → 找不到按钮 → 一次都没点到)正好满足它 —— mp/set 原先只 print 到达情况,文案一变就静默 DONE。
+	# ★ ver 自 2026-10-03 起也是整页、会切场景(「版 本 信 息」弹层已删除):原先「弹层不切场景 ⇒ 断言 scene 路径是同义反复」那条论证随之作废,故它与 sp/mp/set 同列。
 	var must_reach := {
 		"sp": "level_0.tscn",
 		"mp": "mp_lobby.tscn",
@@ -100,10 +83,8 @@ func _run() -> void:
 	tree.quit(0)
 
 
-# ── 选图控件(单机开局面板)──
-# 为什么必须在**场景级**验:数据层探针只能证明"目录/缩略图/校验函数对",证明不了
-# "面板上选中的值有没有真的走到建图"。少了这条,"摆了两张缩略图、进关还是随机图"这种
-# 假功能照样通过(末尾的场景断言只看"到了 level_0.tscn")。
+# ── 选图控件(单机开局面板)── 为什么必须在场景级验:数据层探针只能证明「目录/缩略图/校验函数对」,证明不了「面板上选中的值有没有真的走到建图」。
+# 少了这条,「摆了两张缩略图、进关还是随机图」这种假功能照样通过(末尾的场景断言只看「到了 level_0.tscn」)。
 func _verify_map_picker(tree: SceneTree) -> void:
 	var picker := _find_picker(tree.current_scene)
 	if picker == null:
@@ -191,11 +172,8 @@ func _run_beta_flow(tree: SceneTree) -> void:
 		print("AUTOTEST[beta]: 卡片没把筛选预选成大乱斗(entry_mode=%s)" % PvpSession.entry_mode)
 		tree.quit(1)
 		return
-	# 建房弹层**启动即建、默认隐藏**(骨架里的 `%CreatePanel`;`_build_ui()` 只登记 + 收起 ——
-	# 见 `_set_create_visible` 上方那句)。★ 时间参数滑条**不是**开弹层时才造的:它们由
-	# `_build_ui()` 里的 `_add_time_params(%BetaBlock)` 当场填(`%BetaBlock.visible` 按
-	# `PvpSession.beta_mode` 定)。这里先开一次**不是**为了把滑条建出来,而是让这一相走玩家
-	# 那条路 —— 点开弹层,再数玩家能看到的那 9 行。
+	# 建房弹层启动即建、默认隐藏(骨架里的 %CreatePanel;_build_ui() 只登记 + 收起)。★ 时间参数滑条不是开弹层时才造的:它们由 _build_ui() 里的 _add_time_params(%BetaBlock) 当场填(%BetaBlock.visible 按 PvpSession.beta_mode 定)。
+	#   这里先开一次不是为了把滑条建出来,而是让这一相走玩家那条路 —— 点开弹层,再数玩家能看到的那 9 行。
 	(lobby as Node).call("_open_create_dialog")
 	await tree.create_timer(0.2).timeout
 	# 建房面板必须带 9 行时间参数(滑条),报到选项必须带 time 规则
@@ -237,12 +215,8 @@ func _walk(n: Node, pred: Callable) -> Array:
 
 
 # ── switch 模式:两趟「进单机 → 回主菜单」,把 safe_change_scene 的两条路径都走到 ──
-# 为什么要两趟:`Level0.safe_change_scene` 的收尾有两个动作,付账时机不同 ——
-#   · `remove_child(old)`(整棵旧世界递归摘树):**每趟都付**,第 1 趟也付;
-#   · `_retired.free()`(同步销毁上一整具世界):**第 2 趟起才付**(第 1 趟 _retired 还是空)。
-# 用户报的"有些时候才卡"正指向后者,而项目自己的 recon 把这条列为**从未实测**(见
-# .superpowers/sdd/l4-recon.md 的"第 2 次及以后退出")。本模式就是把它变成可测的。
-# 数字由 level_0.gd 的 `_perf_log` 打,需同带 `-- --perf-switch`(不带则只有流程、没有数字)。
+# 为什么要两趟:Level0.safe_change_scene 的收尾有两个动作,付账时机不同 —— remove_child(old)(整棵旧世界递归摘树)每趟都付,第 1 趟也付;_retired.free()(同步销毁上一整具世界)第 2 趟起才付(第 1 趟 _retired 还是空)。
+# 用户报的「有些时候才卡」正指向后者,而项目自己的 recon 把这条列为从未实测((l4 recon 曾把这条列为从未实测)),本模式就是把它变成可测的。数字由 level_0.gd 的 _perf_log 打,需同带 -- --perf-switch(不带则只有流程、没有数字)。
 func _run_switch_roundtrips(tree: SceneTree) -> void:
 	for i in range(2):
 		_press_by_text(tree.current_scene, "单 人 模 式")
@@ -286,11 +260,8 @@ func _run_switch_roundtrips(tree: SceneTree) -> void:
 		print("AUTOTEST[switch]: 第 %d 趟已回主菜单" % [i + 1])
 
 
-# ── play 模式:真的打一局再退 —— 这是用户的复现路径 ──
-# 为什么必须有它:`switch` 模式只做菜单往返,**一枪没开**。真实游玩后世界状态完全不同 ——
-# 场上有子弹(入 "bullet" 组)、有 explosion 动画节点、有 TileHitFx 粒子、有被炸碎并重建过
-# 碰撞分块的砖、有敌人尸体。退役那一刻要拆的东西比一具干净世界多得多。
-# 用户报的正是"玩好一局以后"才卡,所以量它的必须是一个**打过**的世界。
+# ── play 模式:真的打一局再退 —— 这是用户的复现路径 ── 为什么必须有它:switch 模式只做菜单往返,一枪没开;而真实游玩后世界状态完全不同(场上有子弹、explosion 动画节点、TileHitFx 粒子、被炸碎并重建过碰撞分块的砖、敌人尸体)。
+# 退役那一刻要拆的东西比一具干净世界多得多。用户报的正是「玩好一局以后」才卡,所以量它的必须是一个打过的世界。
 func _run_play_session(tree: SceneTree) -> void:
 	_press_by_text(tree.current_scene, "单 人 模 式")
 	await tree.create_timer(0.4).timeout
@@ -311,10 +282,7 @@ func _run_play_session(tree: SceneTree) -> void:
 	for _i in range(6):
 		_fire_once(player)
 		await tree.create_timer(0.12).timeout
-	# 打炮:拿到第 5 槽(榴弹发射器)轰两发,等引信炸开 + 碎砖落定
-	# ★ 必须走**发放路径**(pick_up),不能走 equip_type —— 后者自 2026-09-25 起对
-	#   "背包里没有这个类型"是 push_error + 不加入(§4.5),照旧调它会**静默拿到手枪**
-	#   (打炮那段变成打手枪,榴弹自杀那一段直接不倒地),而那只是个 ERROR 日志。
+	# 打炮:拿到第 5 槽(榴弹发射器)轰两发,等引信炸开 + 碎砖落定。★ 必须走发放路径(pick_up),不能走 equip_type —— 后者自 2026-09-25 起对「背包里没有这个类型」是 push_error + 不加入(§4.5),照旧调它会静默拿到手枪(打炮变成打手枪),而那只是个 ERROR 日志。
 	player.weapons.pick_up(5, WeaponInventory.MAG_FULL)
 	await tree.create_timer(0.4).timeout
 	for _i in range(2):
@@ -323,9 +291,7 @@ func _run_play_session(tree: SceneTree) -> void:
 	await tree.create_timer(1.2).timeout
 	print("AUTOTEST[play]: 打枪打炮完毕(场上子弹 %d / 敌人 %d)" % [
 			tree.get_nodes_in_group("bullet").size(), tree.get_nodes_in_group("enemies").size()])
-	# ── 榴弹自杀:把注入瞄准压成"朝正下方",让榴弹在脚下炸开 ──
-	# 用 AiInputSource 而不是直接 take_hit:要的就是**真的走一遍**榴弹那条路
-	# (出膛→撞地→引信→AoE→玩家掉 50 血→倒地),它才会留下爆炸动画/碎砖/废墟。
+	# ── 榴弹自杀:把注入瞄准压成「朝正下方」,让榴弹在脚下炸开。用 AiInputSource 而不是直接 take_hit:要的就是真的走一遍榴弹那条路(出膛→撞地→引信→AoE→玩家掉血→倒地),它才会留下爆炸动画/碎砖/废墟。──
 	var prev_src = player.input_source
 	var suicide_src := AiInputSource.new()
 	suicide_src.aim = Vector2(0.0, 1.0)   # 正下方
@@ -360,10 +326,7 @@ func _run_play_session(tree: SceneTree) -> void:
 		await tree.create_timer(0.12).timeout
 	await tree.create_timer(0.5).timeout
 	print("AUTOTEST[play]: 复位后两枪已开,准备回主菜单")
-	# ★ `-- --perf-quit-ingame`:走到这里**直接在局内退**(等价于按窗口叉号)—— 这一条
-	#   和"回主菜单"是完全不同的成本:引擎同步销毁**整棵在树场景**(整具世界 +
-	#   2208×1728 的 SubViewport),而回主菜单那条是把世界退役挂起、不付这笔。
-	#   用户报的"玩好一局以后点退出/叉号卡"极可能就是这条,此前从没量过。
+	# ★ -- --perf-quit-ingame:走到这里直接在局内退(等价于按窗口叉号)—— 这一条和「回主菜单」是完全不同的成本:引擎同步销毁整棵在树场景(整具世界 + 2208×1728 的 SubViewport),而回主菜单那条是把世界退役挂起、不付这笔。用户报的「玩好一局以后点退出/叉号卡」极可能就是这条,此前从没量过。
 	if OS.get_cmdline_user_args().has("--perf-quit-ingame"):
 		print("AUTOTEST[play]: MARK-QUIT-INGAME %d ms" % Time.get_ticks_msec())
 		await tree.create_timer(0.3).timeout
@@ -401,9 +364,6 @@ func _fire_once(player: Node) -> void:
 	w.fire()
 
 
-# 量"用户看得见的东西":N 帧的**帧间隔**,不是 safe_change_scene 内部各步骤的耗时 ——
-# 内部步骤加起来几十毫秒,而"卡不卡"取决于有没有一帧被拖长。逐帧打点还顺带回答
-# "分帧拆除器会不会把一次卡顿摊成一串小顿"(预算 3ms/帧)。
 func _measure_frames(tree: SceneTree, tag: String, n: int) -> void:
 	var worst := 0.0
 	var total := 0.0
@@ -497,6 +457,7 @@ func _shot(tree: SceneTree, file: String) -> void:
 
 
 # 存 root 视口 PNG;返回是否真的写了文件(调用方据此决定要不要报「已存」)。
+#   ★ headless(dummy 渲染后端)的 root 视口纹理是空壳:get_image() 会在引擎侧打 ERROR: Parameter "t" is null,污染 CI 的 grep -ci error 判读(该判据本要用来抓「场景报错」),故先行跳过。该分支只在 headless 成立 → 带窗口跑 GUI 的行为完全不受影响。
 func _save_root_png(tree: SceneTree, path: String) -> bool:
 	# headless(dummy 渲染后端)的 root 视口纹理是空壳:get_image() 会在引擎侧打
 	#   ERROR: Parameter "t" is null

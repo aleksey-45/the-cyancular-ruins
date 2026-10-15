@@ -1,23 +1,11 @@
 extends SceneTree
-# RPC 通道契约自检(closeout 批 Task 5)。
-#
-# ★★ **这是代理判据,不是行为证据** —— 按 `docs/eng/test-economy.md` 的 **D6b**,这类文本对账必须标注:
-#   它读的是"**声明文本有没有按表写**",**不是**"分流真的生效了"。本文件头把上限写清楚,是为了让
-#   下一个人不会把它的 OK 读成"通道分流已验证"。
-#
-# **为什么只能是文本对账**:通道号**无法在运行期回读** —— 实测(2026-10-08)
-#   `GDScript.get_script_method_list()` 的元素键只有 `["name","args","default_args","flags","id","return"]`,
-#   **没有** `rpc_config`;而 `@rpc` 注解只吃**字面量**(不能引用 const)⇒ 声明与表天然是两份文本。
-#   要**行为级**证明"分流生效",得让两个 peer 分别占不同通道对打(今天**没有**这条路径 ⇒ 覆盖上限,
-#   登记在 `docs/eng/netplay.md` 的通道表一节)。
-#
-# **判据(两条,各自独立)**:
-#   ① `docs/eng/netplay.md` 的通道表 ↔ 产品声明**逐条同通道**(漏的、多的、通道不符的都红);
-#   ② 每条声明必须是**四参形态** `@rpc("<mode>", "call_remote", "<transfer_mode>", <通道>)`
-#      —— ★ 实测:只写三参并把 int 放第 3 位会被引擎拒(`argument 3 should be "String" but is "int"`)。
-# 作用域 = 产品声明 59 条(`net_bus.gd` 28 + `net_bus_ext.gd` 31);`tests/smoke/reconnect_smoke.gd`
-#   的 13 条是**测试桩自己的 RPC**,显式排除并把条数打印出来。
-# 通过 = `RPC CHANNEL CONTRACT OK` 退出 0。
+# RPC 通道契约自检。
+# ★★ 这是代理判据,不是行为证据(按 docs/eng/test-economy.md 的 D6b,这类文本对账必须标注):它读的是「声明文本有没有按表写」,不是「分流真的生效了」——本文件头把上限写清楚,是为了让下一个人不会把它的 OK 读成「通道分流已验证」。
+# ★ 为什么只能是文本对账:通道号无法在运行期回读 —— GDScript.get_script_method_list() 的元素键只有 ["name","args","default_args","flags","id","return"],没有 rpc_config;而 @rpc 注解只吃字面量(不能引用 const)⇒ 声明与表天然是两份文本。
+#   要行为级证明「分流生效」,得让两个 peer 分别占不同通道对打(今天没有这条路径 ⇒ 覆盖上限,登记在 docs/eng/netplay.md 的通道表一节)。
+# 判据(两条,各自独立):① docs/eng/netplay.md 的通道表 ↔ 产品声明逐条同通道(漏的、多的、通道不符的都红);② 每条声明必须是四参形态 @rpc("<mode>", "call_remote", "<transfer_mode>", <通道>)。
+#   ★ 实测:只写三参并把 int 放第 3 位会被引擎拒(argument 3 should be "String" but is "int")。
+# 作用域 = 产品声明 59 条(net_bus.gd 28 + net_bus_ext.gd 31);tests/smoke/reconnect_smoke.gd 的 13 条是测试桩自己的 RPC,显式排除并把条数打印出来。通过 = RPC CHANNEL CONTRACT OK 退出 0。
 
 const TABLE_MD := "res://docs/eng/netplay.md"
 const PRODUCT_FILES := ["res://core/net/net_bus.gd", "res://core/net/net_bus_ext.gd"]
@@ -42,9 +30,7 @@ func _parse_table() -> Dictionary:
 	for line in f.get_as_text().split("\n"):
 		if line.begins_with("| **") and line.contains(" | "):
 			var m := line.split("|")
-			# 现行表是 **5 列**:["", " **0**（默认） ", " 实际 ENet 道 ", " 语义 ", " 为什么 ", " `a` / `b` ", ""]
-			# ★ 所以「名列」取**最后一个非空字段**、通道号取**行首那个整数** —— 都别写死下标
-			#   (表列数变过一次,写死下标就会静默读错列;这里靠"空转守卫"兜底)。
+			# 现行表是 5 列 —— 所以「名列」取最后一个非空字段、通道号取行首那个整数,都别写死下标(表列数变过一次,写死下标就会静默读错列;这里靠「空转守卫」兜底)。
 			if m.size() < 4:
 				continue
 			var mt := RegEx.new()
@@ -70,8 +56,7 @@ func _parse_table() -> Dictionary:
 	return out
 
 
-# 解析产品文件里的声明 → **列表**(★ 用列表不用字典:本仓有**刻意的重名** `beam_fired`,
-# 见下方 ③;用字典会把它悄悄合并掉,那正是本仓栽过的那个坑)
+# 解析产品文件里的声明 → 列表(★ 用列表不用字典:本仓有刻意的重名 beam_fired,见下方 ③;用字典会把它悄悄合并掉,那正是本仓栽过的那个坑)。
 func _parse_declarations() -> Array:
 	var out: Array = []
 	for path in PRODUCT_FILES:
@@ -128,9 +113,7 @@ func _initialize() -> void:
 		if not seen.has(n2):
 			absent.append("%s(表 %d)" % [n2, int(table[n2])])
 	_chk(absent.is_empty(), "表里有、声明里没有(表过期或函数改名):%s" % str(absent))
-	# ③ ★ 重名必须是**已知的那一个**:`beam_fired` 在 NetBus 与 NetBusExt 各一份(遗留)。
-	#    这条断言的价值 = 让重名**可见并钉住**:新出现一个重名、或 beam_fired 被删掉一份,
-	#    都会红,逼人回来看注释里那段"重名 = 接收端挂错 = 静默 no-op"的裁定。
+	# ③ ★ 重名必须是已知的那一个:beam_fired 在 NetBus 与 NetBusExt 各一份(遗留)。这条断言的价值 = 让重名可见并钉住:新出现一个重名、或 beam_fired 被删掉一份,都会红,逼人回来看「重名 = 接收端挂错 = 静默 no-op」那条裁定。
 	_chk(dupes.has("beam_fired") and dupes.size() == 1,
 			"重名声明集合应恰好 = {beam_fired}(实得 %s)—— 见 netplay.md 通道表一节的说明" % str(dupes.keys()))
 

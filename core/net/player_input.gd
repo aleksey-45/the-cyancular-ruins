@@ -1,48 +1,22 @@
 class_name PlayerInput
 extends RefCounted
 
-# 玩家输入的**纯接口**(阶段 5.9 从旧名 `InputSource` 改名并拆出)。
-#
-# ★ 为什么改名 + 拆:此前本类叫 `InputSource`,却**同时**是"接口"和"本地实现" ——
-#   它的 `_*_raw()` 默认实现直接读真实 `Input`。于是"给玩家注入一个输入源"这句话,
-#   在这个类上到底是"用本地输入"还是"某种输入"是含混的;而真要用本地输入时,
-#   又只能 `LocalInputSource.new()` 拿这个"接口"的实例。
-#   现在:`PlayerInput` 只声明契约(三个实现见下),本地那份独立成 `LocalInputSource`。
-#
-# 三个实现:
-#   · `LocalInputSource`  —— 读真实 `Input`(单机与 PvP 本地玩家;C2 下由引擎自步进读)
-#   · `PacketInputSource` —— 消费网络输入包(权威服务器唯一消费方)
-#   · `AiInputSource`     —— AI 补位(AINavigator 每帧写字段)
-#   · 另有 `tests/harness/soak_bot_input.gd`(压力探针的脚本手柄,不在生产路径)
-#
-# ★ frozen 的归属(2026-09-14 修,本类保留):
-#   此前 frozen 短路写在公开读口里、而三个子类各自覆写了全部公开读口 →
-#   短路被子类整个绕过,`player.set_controls_locked(true)` 对它们是**静默空操作**。
-#   现在冻结收在本类的公开读口,子类只覆写不碰 frozen 的 `_*_raw()` 钩子 —— 契约无法绕过。
-#   历史代价(记下来别再犯):客户端 COUNTDOWN 冻结曾靠"客户端恰好用默认 InputSource"侥幸成立;
-#   服务器靠 MatchHost 另调 PacketInputSource.reset_state()、AI 靠自己查 RoundState 兜住。
-#   回归守卫:ai_input_source_smoke.gd(已删·2026-10-09) 的 9 条 `frozen:` 断言
-#   (打在**子类实例**上 —— 基类自己的实现无法证明子类听话)。
-#
-# frozen:PvP COUNTDOWN/局间冻结。置 true 后一切输入读口返回中性值(轴 0、无按键/边沿/切枪),
-# 玩家像服务器不喂输入那样静止 —— C2 本地预测下倒计时里不自走(服务器权威冻结,客户端预测
-# 必须同款冻结,否则预测移动、服务器不消费 → PLAYING 起 ack 跳变 → 大 rollback)。
-# ★ 冻结期**不调用**子类的 _*_raw():冻结不该改子类状态(边沿不被消费、切枪槽位不被取走)。
-# ★ 瞄准读口 get_aim_dir_override() 刻意**不**参与冻结:武器仍要按注入方向摆枪。
+# 玩家输入的纯接口:只声明契约;实现见 LocalInputSource / PacketInputSource / AiInputSource。frozen 短路收在本类公开读口、
+# 子类只覆写 _*_raw() ⇒ 冻结契约无法被绕过。frozen = PvP COUNTDOWN/局间冻结:置 true 后一切读口返回中性值
+# (C2 本地预测必须与服务器同款冻结,否则 PLAYING 起 ack 跳变 → 大 rollback);★ 冻结期不调用子类 _*_raw()。
 var frozen := false
 
-# 输入源种类。★ 用枚举而不是 `is_network_driven() == true/false` 那种二值判断:
-# 二值判断每加一种来源就要重新想"它算不算网络",而这里加一个枚举值即可。
+# 输入源种类:用枚举而不是 is_network_driven() 那种二值判断 —— 后者每加一种来源都要重新想"它算不算网络"。
 enum Kind { LOCAL, PACKET, AI }
 
 
-# 本实现的种类。子类**必须覆写**(基类给会报错的兜底,同仓内其它"必须覆写"桩)。
+# 本实现的种类。子类必须覆写(基类给会报错的兜底,同仓内其它"必须覆写"桩)。
 func source_kind() -> int:
 	push_error("PlayerInput: 子类必须覆写 source_kind()")
 	return -1
 
 
-# ── 公开读口:frozen 一律在此短路,子类**不得覆写这些**(覆写了就等于绕开冻结)──
+# ── 公开读口:frozen 一律在此短路,子类不得覆写这些(覆写了就等于绕开冻结)──
 
 func get_axis(neg: String, pos: String) -> float:
 	if frozen:
@@ -72,8 +46,7 @@ func get_switch_index_pressed() -> int:
 		return 0
 	return _switch_index_raw()
 
-# 拾取(F 按下边沿) / 丢弃(Q 长按满阈值后的那一次边沿)。
-# ★ 与其它读口同款:冻结一律在此短路,子类**不得覆写这两个**(覆写即绕开冻结)。
+# 拾取(F 按下边沿) / 丢弃(Q 长按满阈值后的那一次边沿):与其它读口同款,冻结一律在此短路,子类不得覆写这两个。
 func is_pickup_pressed() -> bool:
 	return not frozen and _pickup_pressed_raw()
 
@@ -81,12 +54,7 @@ func is_drop_pressed() -> bool:
 	return not frozen and _drop_pressed_raw()
 
 
-# 本帧上行包里的**权威切枪目标**(inst)。只有 `PacketInputSource` 覆写 `_switch_inst_raw()`
-# (它读包里的 winst);本地 / AI / 机器人输入源**一律不覆写** —— 它们那次切枪由
-# `get_switch_index_pressed()` 那条**本地路径**直接成交,不经网络。
-# ★ 与 `get_aim_dir_override()` 同款:**默认空操作**的可选钩子(不是"必须覆写"那族)。
-# ★ `frozen` 短路照旧收在公开读口 —— 冻结期一切输入读口返回中性值,这条不能例外
-#   (子类覆写的是 `_*_raw()`,绕不过冻结)。
+# 本帧上行包里的权威切枪目标(inst):只有 PacketInputSource 覆写它;与 get_aim_dir_override() 同款是"默认空操作"的可选钩子,frozen 短路照旧收在公开读口。
 func consume_switch_inst() -> int:
 	if frozen:
 		return 0
@@ -136,10 +104,7 @@ func _pickup_pressed_raw() -> bool:
 	push_error("PlayerInput: 子类必须覆写 _pickup_pressed_raw()")
 	return false
 
-# ── 可选钩子(与上面那族"必须覆写"的不同:默认是空操作)──
-# 「长按 Q 满阈值」这一次边沿由**本地实现**提供:计时在 player.gd 的物理帧里做
-# (只有那里有确定的 delta),做完了由 player 调 mark_drop_edge() 打标,
-# pack_record 下一次组包时取走。网络源直接读包里的位、AI 源不丢枪,故默认空操作即可。
+# 可选钩子(默认空操作):长按 Q 满阈值的那次边沿由本地实现提供 —— 计时在 player.gd 物理帧做(delta 确定),做完调 mark_drop_edge() 打标,pack_record 组包时取走。
 var _drop_edge := false
 
 func mark_drop_edge() -> void:
@@ -151,15 +116,10 @@ func _drop_pressed_raw() -> bool:
 	return false
 
 
-# 瞄准覆盖:本地返回 ZERO → 武器落回鼠标计算;网络驱动的玩家返回注入的瞄准方向。
-# ★ 不参与 frozen(见类头)。
+# 瞄准覆盖:本地返回 ZERO → 武器落回鼠标计算;网络驱动的玩家返回注入方向;★ 不参与 frozen。
 func get_aim_dir_override() -> Vector2:
 	return Vector2.ZERO
 
-# 该输入源是否网络注入。网络驱动玩家的武器瞄准**永不读 OS 鼠标**:
-# 注入方向为 ZERO 时用玩家朝向兜底(见 weapon_base._aim_world_dir)。
-# ★ 不参与 frozen。
-# ★ 保留本方法(而不是让调用方都改去比 source_kind):它是**语义**问句("要按网络玩家对待吗"),
-#   调用点有三处且都是这个语义;种类问句留给需要区分 LOCAL/PACKET/AI 的新调用方。
+# 是否网络注入:网络驱动玩家的瞄准永不读 OS 鼠标(方向 ZERO 时用玩家朝向兜底);保留本方法是因为它是语义问句"要按网络玩家对待吗",调用点三处都是这个语义。
 func is_network_driven() -> bool:
 	return source_kind() == Kind.PACKET

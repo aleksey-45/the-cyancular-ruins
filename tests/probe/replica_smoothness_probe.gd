@@ -1,24 +1,11 @@
 extends Node
 
-# tests/probe/replica_smoothness_probe.gd —— 「对手看起来卡/掉帧」的诊断 + 常驻守卫。
-#
-# 症状(用户 2026-09-21 原话):「位置一跳一跳,看起来敌方掉帧」。
-#
-# 机制:若副本位置**直接跟随快照到达**(渲染的就是最新包原值),对手的平滑度就等于网络的
-#   到达平滑度 —— 抖动下会出现"这一帧没包(零位移)/ 下一帧来两个(走两步)"。
-#
-# ★ 本探针只量**结果**(渲染位置每帧有没有动),不关心走的是哪套实现 ——
-#   故改前改后都能跑,且不会随实现被删而失效。
-#
-# ★★ 为什么跑三档抖动而不是一档:零位移占比**只取决于到达抖动**,不取决于实现。
-#   跑三档能把"灵敏度"一起打出来,而不是拿一个调出来的数当结论。
-#   JITTER_MS = 0 是下界(规律到达,任何实现都平滑);越大越像跨网络。
-#
-# 跑法:"$GODOT" --headless --path . --quit-after 3600 res://tests/probe/replica_smoothness_probe.tscn
-# 判据:输出文本里的 `REPLICA SMOOTHNESS PROBE: ALL-OK`(不看退出码)。
-#
-# 相 A:三档到达抖动下的零位移占比 / 单帧最大位移
-# 相 B:跨接缝不卡远副本(旧方案那条致命缺陷的守卫)
+# 「对手看起来卡/掉帧」的诊断 + 常驻守卫。症状(用户原话):「位置一跳一跳,看起来敌方掉帧」。
+# 机制:若副本位置直接跟随快照到达(渲染的就是最新包原值),对手的平滑度就等于网络的到达平滑度 —— 抖动下会出现「这一帧没包(零位移)/ 下一帧来两个(走两步)」。
+# ★ 本探针只量结果(渲染位置每帧有没有动),不关心走的是哪套实现 ⇒ 改前改后都能跑,且不会随实现被删而失效。
+# ★★ 为什么跑三档抖动而不是一档:零位移占比只取决于到达抖动,不取决于实现 —— 跑三档能把「灵敏度」一起打出来,而不是拿一个调出来的数当结论(JITTER_MS = 0 是下界)。
+# 跑法:"$GODOT" --headless --path . --quit-after 3600 res://tests/probe/replica_smoothness_probe.tscn;判据 = 输出文本里的 REPLICA SMOOTHNESS PROBE: ALL-OK(不看退出码)。
+# 相 A:三档到达抖动下的零位移占比 / 单帧最大位移;相 B:跨接缝不卡远副本(旧方案那条致命缺陷的守卫)。
 
 const REPLICA_SCENE := preload("res://scenes/player/player_replica.tscn")
 
@@ -26,8 +13,7 @@ const DT: float = 1.0 / 60.0            # 渲染帧(项目固定 60fps)
 const FRAMES := 300                     # 每档帧数(5 秒)
 const STEP_PX := 5.0                    # 每包前进的世界像素(60Hz × 5px = 300px/s,普通移速)
 const NOMINAL_GAP_MS := 1000.0 / 60.0   # 名义到达间隔 16.667ms(服务器恒定 60Hz)
-# 均匀抖动半径(ms)。到达间隔 = 名义间隔 + U(-J, +J) ⇒ 均值恒为 60Hz。
-# 8.0 是 `6e2ef6d` 引用的那档(它记的旧法读数 49.6% 零位移)。
+# 均匀抖动半径(ms)。到达间隔 = 名义间隔 + U(-J, +J) ⇒ 均值恒为 60Hz。8.0 是旧法(6e2ef6d)引用的那档,记的旧读数 49.6% 零位移。
 const JITTER_CASES := [0.0, 8.0, 16.0]
 const RNG_SEED := 20260922              # 固定种子:三次跑同一组到达序列,读数可比
 
@@ -38,17 +24,12 @@ const MAX_STEP_PX := 8.0                # 单帧最大位移上限(理想 5.0;�
 const CANON_X := 1000.0                 # 相 A 采样点:开阔处,只由快照驱动,与地形/物理无关
 const CANON_Y0 := 1000.0
 const SEAM_NEAR_PX := 200.0             # 相 B:渲染位置到锚点的**未回绕** |Δx| 上限
-# 相 C:幽灵体到"未经平滑的权威位置"的偏差上限。幽灵体吃的是原始值,故必须 ≈ 0;
-# 2.0 只是给浮点与"同帧刚体移动要等下一个物理步"留的余量,不是容许它滞后。
+# 相 C:幽灵体到「未经平滑的权威位置」的偏差上限。幽灵体吃的是原始值,故必须 ≈ 0;2.0 只是给浮点与「同帧刚体移动要等下一个物理步」留的余量,不是容许它滞后。
 const GHOST_ERR_MAX := 2.0
 
-# ── 相 D:大跳变阈值的**两侧**行为(2026-10-09 加)──
-# 阈值(`player_replica.SNAP_DIST`)是"超过就不追赶、直接落位"的分界。判据**两侧都要**,
-# 否则那个常数等于没被钉住:
-#   D1 阈值**以下** ⇒ 一帧**不许**贴平(必须还在追)—— 阈值调低到常态滞后量级时这里红;
-#   D2 阈值**以上** ⇒ 一帧**必须**落位 —— 去掉直落分支(或阈值调高到够不着)时这里红。
-# ★ 探针**不抄**那个常量的值(抄了就是第二份真相源),改用 `_script_const("SNAP_DIST")` 直读;
-#   读不到就响亮 FAIL。两侧各留 `SNAP_MARGIN` 的余量。
+# ── 相 D:大跳变阈值(player_replica.SNAP_DIST)的两侧行为 ── 阈值是「超过就不追赶、直接落位」的分界,判据两侧都要,否则那个常数等于没被钉住:
+#   D1 阈值以下 ⇒ 一帧不许贴平(必须还在追)—— 阈值调低到常态滞后量级时这里红;D2 阈值以上 ⇒ 一帧必须落位 —— 去掉直落分支(或阈值调高到够不着)时这里红。
+# ★ 探针不抄那个常量的值(抄了就是第二份真相源),改用 _script_const("SNAP_DIST") 直读;读不到就响亮 FAIL。两侧各留 SNAP_MARGIN 的余量。
 const SNAP_MARGIN := 20.0
 const EXPECTED_CHECKS := 8               # 相C×3 + 相A(1) + 相B(1) + 相D(2)
 
@@ -69,8 +50,7 @@ var _results: Array = []                # [{jitter, ratio, max_step}]
 var _phase := "A"
 var _seam_f := 0
 var _anchor := Vector2(CANON_X, CANON_Y0)
-# 相 C 的解耦守卫(每档抖动都采):幽灵体距"未经平滑的权威位置"的最大偏差。
-# 它必须 ≈ 0 —— 幽灵体要的是**最小陈旧**,跟平滑后的渲染位置是错的(理由见 player_replica)。
+# 相 C 的解耦守卫(每档抖动都采):幽灵体距「未经平滑的权威位置」的最大偏差必须 ≈ 0 —— 幽灵体要的是最小陈旧,跟平滑后的渲染位置是错的(理由见 player_replica)。
 var _ghost_err_max := 0.0
 var _render_err_max := 0.0              # 对照读数:渲染位置距同一目标的偏差(平滑 = 这个有值)
 
@@ -86,9 +66,8 @@ func _begin_case(jitter_ms: float) -> void:
 	if _rep != null and is_instance_valid(_rep):
 		_rep.queue_free()      # 它已 set_process(false),本探针不再驱动它
 	_rep = REPLICA_SCENE.instantiate()
-	# ★ 空载守卫(与 squash_replica_probe 同款):`player_replica.gd` 一旦解析不过,
-	#   tscn 的根会退化成裸 Node2D —— 场景照样加载、一行判据都不打印、退出码还是 0,
-	#   那正是 docs/eng/tests.md 记的"看着像功能坏了"的形态。这里把它变成一条响亮的 FAIL。
+	# ★ 空载守卫(与 squash_replica_probe 同款):player_replica.gd 一旦解析不过,tscn 的根会退化成裸 Node2D —— 场景照样加载、一行判据都不打印、退出码还是 0,
+	#   那正是 docs/eng/tests.md 记的「看着像功能坏了」的形态。这里把它变成一条响亮的 FAIL。
 	if not _rep.has_method("apply_snapshot"):
 		_fail("PlayerReplica 脚本没加载起来(解析错?根节点是 %s)" % _rep.get_class())
 		return
@@ -193,10 +172,8 @@ func _phase_a() -> void:
 
 
 func _finish_a() -> void:
-	# ★★ 2026-10-09 补:**三档抖动都要判**,不再只看 `ASSERT_CASE`。
-	#   原来只判 ±8ms ⇒ **±16ms 那档无论多糟都不会红** —— 实测旧追赶在 ±16 的单帧最大位移是
-	#   **8.242 px(已超 8.0 上限)而判词照绿**,这是"守卫能给的保证比它读起来少"的典型形态。
-	#   ★ 一条判定类别仍然只算**一条**断言(逐档循环,不是每档一条闸)。
+	# ★★ 三档抖动都要判,不再只看 ASSERT_CASE:原来只判 ±8ms ⇒ ±16ms 那档无论多糟都不会红 —— 实测旧追赶在 ±16 的单帧最大位移是 8.242 px(已超 8.0 上限)而判词照绿。
+	#   ★ 一条判定类别仍然只算一条断言(逐档循环,不是每档一条闸)。
 	for r in _results:
 		if float(r["ratio"]) > STILL_RATIO_MAX or float(r["max_step"]) > MAX_STEP_PX:
 			_fail("相A 抖动 ±%.0f ms 下零位移占比 %.4f / 最大位移 %.3f px(上限 %.4f / %.1f px;对手会看起来一跳一跳)"
@@ -210,11 +187,8 @@ func _finish_a() -> void:
 	print("[replica_smoothness] 相A 三档抖动全部合规(最大单帧位移 %.3f px 出现在 ±%.0f ms;上限 %.1f)"
 			% [float(worst["max_step"]), float(worst["jitter"]), MAX_STEP_PX])
 	_checks += 1
-	# 进相 B —— 复现旧方案那条**致命缺陷**:把副本**强行摆到一个"远副本"**上(与锚点相隔
-	# 整幅地图宽、但环面坐标相同),再看它能不能自己回到锚点所在的那一份。
-	# ★ 为什么必须"强行摆"而不是"把锚点放到地图另一头":环面距离是**对称**的 —— 锚到最近副本
-	#   与留在原地量出来**相同**,那种写法两边都会通过,是条空断言。缺陷只在"渲染位置与目标
-	#   相隔整幅地图"时现形。
+	# 进相 B —— 复现旧方案那条致命缺陷:把副本强行摆到一个「远副本」上(与锚点相隔整幅地图宽、但环面坐标相同),再看它能不能自己回到锚点所在的那一份。
+	# ★ 为什么必须「强行摆」:环面距离是对称的 —— 把锚点放到地图另一头时,「锚到最近副本」与「留在原地」量出来相同,那种写法两边都会通过,是条空断言。缺陷只在「渲染位置与目标相隔整幅地图」时现形。
 	var w := float(GameParameters.MAP_WIDTH)
 	_begin_case(0.0)
 	_rep.apply_snapshot(_snapshot_dict(_canon), _anchor, _tick)
@@ -232,8 +206,7 @@ func _phase_b() -> void:
 	_seam_f += 1
 	if _seam_f < 10:
 		return
-	# 判据用**未回绕**的绝对坐标:正确实现下渲染位置必须落回锚点那一份(CANON_X 附近);
-	# 若"卡在远副本"它会是 CANON_X + w,差整整一幅地图。这里刻意**不做环面包裹**。
+	# 判据用未回绕的绝对坐标:正确实现下渲染位置必须落回锚点那一份(CANON_X 附近);若「卡在远副本」它会是 CANON_X + w,差整整一幅地图。这里刻意不做环面包裹。
 	var dx := absf(_rep.global_position.x - CANON_X)
 	var tor := GridPathfinder.toroidal_delta_px(_canon, _rep.global_position,
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT).length()
@@ -248,7 +221,9 @@ func _phase_b() -> void:
 	_phase_d()
 
 
-# ── 相 D:大跳变阈值(两侧)──
+# ── 相 D:大跳变阈值(player_replica.SNAP_DIST)的两侧行为 ── 阈值是「超过就不追赶、直接落位」的分界,判据两侧都要,否则那个常数等于没被钉住:
+#   D1 阈值以下 ⇒ 一帧不许贴平(必须还在追)—— 阈值调低到常态滞后量级时这里红;D2 阈值以上 ⇒ 一帧必须落位 —— 去掉直落分支(或阈值调高到够不着)时这里红。
+# ★ 探针不抄那个常量的值(抄了就是第二份真相源),改用 _script_const("SNAP_DIST") 直读;读不到就响亮 FAIL。两侧各留 SNAP_MARGIN 的余量。
 func _script_const(name: String) -> float:
 	var m: Dictionary = (_rep.get_script() as GDScript).get_script_constant_map()
 	return float(m.get(name, 0.0))
@@ -262,10 +237,8 @@ func _phase_d() -> void:
 		_fail("player_replica.gd 里读不到 `SNAP_DIST` 常量 —— 阈值判据无处可依")
 		return
 
-	# ★★ 2026-10-09 起,**"大跳变"的判据是「相邻两个权威样本之间的间隔」**,不是"相对渲染位置的误差" ——
-	#   因为位置改走 playout 插值后,清历史(一帧落位)的触发点就在 `_push_history` 里那个样本间距离。
+	# ★★ 「大跳变」的判据是「相邻两个权威样本之间的间隔」,不是「相对渲染位置的误差」—— 位置改走 playout 插值后,清历史(一帧落位)的触发点就在 _push_history 里那个样本间距离。
 	#   (旧写法把渲染位置手动摆到远处再喂一个样本:样本间的实际间隔其实很小 ⇒ 判据测的不是它想测的东西。)
-	# D1:相邻样本差 = 阈值 − 余量 ⇒ 一帧之后**不许**硬跳到新样本(仍在放旧的那段)
 	var near_d := snap_d - SNAP_MARGIN
 	_rep.apply_snapshot(_snapshot_dict(Vector2(CANON_X, CANON_Y0)), _anchor, _tick)
 	_tick += 1
@@ -280,9 +253,8 @@ func _phase_d() -> void:
 				% [near_d, snap_d])
 		return
 
-	# D2:相邻样本差 = 阈值 + 余量 ⇒ **一帧必须落位**(回溯/重生是设计好的瞬移,不许插值横穿)
-	# ★ 必须**换一个干净起点**:D1 已经把最后一条样本推到 `CANON_X + near_d`,若接着喂
-	#   `CANON_X + far_d`,两者只差 40px(远小于阈值)⇒ 测的就不是"大跳变"了(实测栽过这一次)。
+	# D2:相邻样本差 = 阈值 + 余量 ⇒ 一帧必须落位(回溯/重生是设计好的瞬移,不许插值横穿)。
+	# ★ 必须换一个干净起点:D1 已经把最后一条样本推到 CANON_X + near_d,若接着喂 CANON_X + far_d,两者只差 40px(远小于阈值)⇒ 测的就不是「大跳变」了(实测栽过这一次)。
 	var far_d := snap_d + SNAP_MARGIN
 	_begin_case(0.0)
 	_rep._process(DT)
@@ -309,10 +281,8 @@ func _phase_d() -> void:
 	get_tree().quit(0)
 
 
-# ── 相 E:位置历史取样的**两侧边界**(2026-10-09,配 playout 插值)──
-# 夹逼插值只有三种情形,后两种**必须冻结**:`t` 在两条样本之间 ⇒ 线性;`t` 比最新还新
-# (缓冲被吃穿 = underrun)⇒ **冻结在最新**,**不外插**;`t` 比最老还老 ⇒ 冻结在最老,**不倒退**。
-# ★ 反例分别是:外插(对手会飞出去)与倒退(玩家看到对手**倒着走**)。
+# ── 相 E:位置历史取样的两侧边界(配 playout 插值)── 夹逼插值只有三种情形,后两种必须冻结:t 在两条样本之间 ⇒ 线性;t 比最新还新(缓冲被吃穿 = underrun)⇒ 冻结在最新、不外插;
+#   t 比最老还老 ⇒ 冻结在最老、不倒退。★ 反例分别是:外插(对手会飞出去)与倒退(玩家看到对手倒着走)。
 func _phase_e() -> void:
 	_begin_case(0.0)
 	_rep.place_history = [

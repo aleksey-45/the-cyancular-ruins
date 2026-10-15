@@ -141,8 +141,7 @@ func _physics_process(_delta: float) -> void:
 		NetBus.rpc_id(1, "send_input", pkt)
 	# 成功判定
 	if role == "create":
-		# 多打一会儿(到 ~480 帧)再退:帧>240 只够开火但不够 bullet 广播到 join 端,
-		# 提前 quit 会触发"中途断线拆房"→ join 永远等不到 bullet_spawn。
+		# 多打一会儿(到 ~480 帧)再退:帧>240 只够开火但不够 bullet 广播到 join 端,提前 quit 会触发「中途断线拆房」→ join 永远等不到 bullet_spawn。
 		if _got_snapshot and _got_round_state and _moved and _ack_sane and _full_state_ok and _frames > 480:
 			print("SMOKE_MATCH OK create: snapshot+round_state+moved+ack(seq)%d>=30+fullstate" % _max_ack)
 			get_tree().quit(0)

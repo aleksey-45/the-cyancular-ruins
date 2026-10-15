@@ -1,16 +1,13 @@
 class_name TimeRules
 extends RefCounted
 
-# PvP 时间玩法参数总表(2026-09-28,P2 线):**建房页可自定义**的全部数值 + 服务器侧钳制。
-#
-# ★ 与单机 `TimeParams` 的分工:
-#   · `TimeParams` 是**单机**用的 const 表 —— 单机行为逐位不变,本类不碰它;
-#   · `TimeRules` 是**每局可调**的实例数据:房主在 Beta 建房页改 → `player_options` 上报 →
-#     服务器 `clamp_self()` 后写进对局状态 → 随 `match_start` / `match_sync` 下发,全员同一份规则。
-# ★ 本类零 autoload / 零场景依赖:服务器与客户端共用,-s 探针可直接测。
-# ★ 客户端上报的数值**不可信** —— 一切以服务器 clamp 后的那份为准。
+# PvP 时间玩法参数总表:建房页可自定义的全部数值 + 服务器侧钳制。
+# ★ 与单机 TimeParams 的分工:那份是单机用的 const 表(单机行为逐位不变,本类不碰它);本类是每局可调的
+#   实例数据 —— 房主在 Beta 建房页改 → player_options 上报 → 服务器 clamp_self() 后写进对局状态 →
+#   随 match_start / match_sync 下发,全员同一份规则。
+# ★ 零 autoload / 零场景依赖(服务器与客户端共用,-s 可直接测);客户端上报的数值不可信,一切以服务器 clamp 后的那份为准。
 
-# ── 默认值(用户 2026-09-28 裁定原文)──
+# ── 默认值(用户裁定)──
 const DEF_INITIAL := 1000.0
 const DEF_CAP := 1800.0
 const DEF_REWIND_BURN := 150.0     # 回溯:颗粒/秒
@@ -45,7 +42,7 @@ var damage_gain := DEF_DAMAGE_GAIN
 var haste_mult := DEF_HASTE_MULT
 
 
-## 贷款上限:**= 短时额度**(用户 2026-09-28 裁定:启用贷款,但仅限短时限额,账户本身不透支)。
+## 贷款上限 = 短时额度(用户裁定:启用贷款,但仅限短时限额,账户本身不透支)。
 func loan_limit() -> float:
 	return window
 

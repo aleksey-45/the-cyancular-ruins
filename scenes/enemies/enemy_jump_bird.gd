@@ -13,17 +13,14 @@ var _sleep_anim_timer: float = 0.0  # 入睡动画剩余时间(播完定格 slee
 
 func _ready() -> void:
 	super._ready()
-	# 战斗数值(hp/击退/接触伤害)由场景 @export 提供,可在检查器直接改;
-	# 不再从 EnemyParams 覆盖(与武器场景同风格)。
+	# 战斗数值(hp/击退/接触伤害)由场景 @export 提供,检查器可直接改,不再从 EnemyParams 覆盖(与武器场景同风格)。
 	_anim = $AnimatedSprite2D
 	wake_radius = EnemyParams.JumpBird.wake_radius
 	_set_state(State.SLEEP)
 	_anim.play("sleeping")  # 睡觉是常态;入睡动画在靠近时触发
 	_align_contact_area()
 
-# 接触伤害范围与精灵身体对齐:鸟内容占格子 46x39,中心在格子中心下方 4.5px。
-# ContactArea 由 EnemyBase 代码创建(不在场景里),这里把形状节点下移对齐。
-# 身体碰撞箱由场景的 CollisionPolygon2D 配置,代码不碰。
+# 接触伤害范围与精灵身体对齐:鸟内容占格子 46x39、中心在格子中心下方 4.5px;ContactArea 由 EnemyBase 代码创建,这里把形状节点下移对齐(身体碰撞箱由场景配置,代码不碰)。
 func _align_contact_area() -> void:
 	var area := get_node_or_null("ContactArea") as Area2D
 	if area != null:
@@ -58,7 +55,7 @@ func _ai(delta: float) -> void:
 			_tick_back_hop()
 
 
-# 每个状态一个 _tick_*,`_ai` 只留派发(阶段 5.3:原先是 78 行的单 match)。
+# 每个状态一个 _tick_*,本函数只留派发。
 # 状态机各段的注释随各自函数走,改动某个状态时不必再在整段 match 里找它。
 
 func _tick_sleep(delta: float, dist: float) -> void:
@@ -155,9 +152,7 @@ func _is_asleep() -> bool:
 
 
 # 状态进入 → 形变事件。enum State { SLEEP, WAKE, CHASE, LUNGE_WINDUP, LUNGE_DASH, BACK_HOP }
-# ★ `_tick_chase` 里的小跳(enemy_jump_bird.gd:101-102)**刻意不挂钩** —— 它直接设 velocity、
-#   不经过 _set_state,状态虚钩接不到;不为它另加钩子(用户 2026-09-20 裁定)。那一下的
-#   hop_jump_velocity = -750 会让空中连续项直接给出拉伸,只是没有事件那一下"脆感"。
+# ★ _tick_chase 里的小跳刻意不挂钩:它直接设 velocity、不经过 _set_state,状态虚钩接不到,不为它另加钩子。那一下的 hop_jump_velocity = -750 会让空中连续项直接给出拉伸,只是没有事件那一下「脆感」。
 func _on_state_entered(s: int) -> void:
 	match s:
 		State.LUNGE_DASH:

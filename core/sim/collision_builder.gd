@@ -1,18 +1,9 @@
 class_name CollisionBuilder
 extends RefCounted
 
-# 碰撞层构建(独立于场景,便于 -s 探针直接调用;不引用 autoload GameParameters)。
-# 思路:
-# - 从 64px 格展开成 **16px 子格(每格 4×4,见下面 SUB_TS)**,只保留有实体碰撞的格。
-#   ★ 2026-10-04 订正:原文写"从 125×75 网格展开成 250×150 的 32px 子格(每 64px 格 → 2×2)",
-#   那是 cyrm v3 时代的旧口径。★ 这个过期口径**曾经咬到人**:`server/match/match_combat.gd`
-#   那时按 2×2 清子格 ⇒ 清到别处、真砖一格没清(见审计报告 §3);**已于 2026-10-04 修为 4×4**
-#   (`match_combat.gd:18-22` 按当前格展开 + 静默清 `sub_hp`)。留此一句只为说明"注释过期会复制过期算法"。
-# - 永久墙(不可破坏)建一个整图节点,贪心合并一次建好、之后不动。
-# - 可破坏层(树叶/树干)按「分块」存节点:块边长 = 地图边长开根号(√125≈11 → 取 12 格),
-#   瓦片被摧毁时只重建所在块,重建成本 O(块面积) 与整图无关。
-#   块间不做跨块合并 → 块边界矩形不再合并(形状数略增,但物理层可接受)。
-# - 每块矩形按 9 个环面副本偏移实例化(3×3 覆盖,玩家/子弹/敌人才能跨接缝),共享同一 shape。
+# 碰撞层构建(独立于场景,便于 -s 探针直接调用;不引用 autoload GameParameters)。从 64px 格展开成 16px 子格(每格 4×4),只保留有实体碰撞的格。
+# ★ 这是 cyrm v4 口径:旧注释写的"32px 子格 2×2"是 v3 时代的口径,而 match_combat 曾照它清子格 ⇒ 清到别处、真砖一格没清(已修为 4×4)。
+# 永久墙整图贪心合并、建一次不动;可破坏层按块存(块边长 = 地图边长开根号),摧毁时只重建所在块;每块按 9 个环面副本实例化,共享同一 shape。
 
 const SUB_TS: int = 16        # 16px 子格(cyrm v4:64px 格 → 4×4 子格;交接文档 §4.2)
 const TILE_TS: int = 64       # 64px 格边长(SUB_TS×4,不引 autoload GameParameters)
@@ -24,10 +15,8 @@ static func chunk_of(cell: Vector2i) -> Vector2i:
 	return Vector2i(cell.x / CHUNK_CELLS, cell.y / CHUNK_CELLS)
 
 
-# 从 **16px 子格纹理表**(MazeGenerator.current_subgrid)提取碰撞子格。
-# only_destructible=false 只收永久墙;true 只收可破坏。通道/液体/气体无实体碰撞(可走/可爬)。
-# ★ 子格表为空时(测试合成网格/旧路径)回落:把格级 2×2 形状掩码 ×2 展开成 4×4 ——
-#   几何与旧 32px 子格完全等价(每个 32px 象限 = 2×2 个同纹理 16px 子格)。
+# 从 16px 子格纹理表(MazeGenerator.current_subgrid)提取碰撞子格:only_destructible=false 只收永久墙,true 只收可破坏;通道/液体/气体无实体碰撞(可走/可爬)。
+# ★ 子格表为空时(测试合成网格/旧路径)回落:把格级 2×2 形状掩码 ×2 展开成 4×4 —— 几何与旧 32px 子格完全等价。
 static func build_sub(grid: Array[Array], only_destructible: bool) -> Array[Array]:
 	var sgrid: Array[Array] = MazeGenerator.current_subgrid
 	if sgrid.is_empty():
@@ -58,8 +47,7 @@ static func build_sub(grid: Array[Array], only_destructible: bool) -> Array[Arra
 	return sub
 
 
-# 对 sub 的 sub_rect 区域做一次贪心合并(先横向扩展、再纵向扩展、标记已访问)。
-# 只在该区域内扩展/标记 → 矩形不跨区域边界合并。返回每块 [RectangleShape2D, 中心副本位置]。
+# 对 sub 的 sub_rect 区域做一次贪心合并(先横向扩展、再纵向扩展、标记已访问);只在该区域内扩展/标记 ⇒ 矩形不跨区域边界。返回每块 [RectangleShape2D, 中心副本位置]。
 static func _greedy_region(sub: Array[Array], sub_rect: Rect2i, ts: int) -> Array:
 	var x0 := maxi(sub_rect.position.x, 0)
 	var y0 := maxi(sub_rect.position.y, 0)
@@ -77,11 +65,9 @@ static func _greedy_region(sub: Array[Array], sub_rect: Rect2i, ts: int) -> Arra
 		for x in range(x0, x1):
 			if sub[y][x] == MazeGenerator.EMPTY or used[y - y0][x - x0]:
 				continue
-			# 横向扩展整行连续墙段
 			var x2 := x
 			while x2 + 1 < x1 and sub[y][x2 + 1] != MazeGenerator.EMPTY and not used[y - y0][x2 + 1 - x0]:
 				x2 += 1
-			# 纵向扩展:要求下行整段都是未访问的墙
 			var y2 := y
 			while y2 + 1 < y1:
 				var can := true
@@ -92,7 +78,6 @@ static func _greedy_region(sub: Array[Array], sub_rect: Rect2i, ts: int) -> Arra
 				if not can:
 					break
 				y2 += 1
-			# 标记该矩形覆盖的格子已访问
 			for ry in range(y, y2 + 1):
 				for rx in range(x, x2 + 1):
 					used[ry - y0][rx - x0] = true
@@ -102,8 +87,7 @@ static func _greedy_region(sub: Array[Array], sub_rect: Rect2i, ts: int) -> Arra
 	return rects
 
 
-# 把 rects 实例化到 parent 下名为 node_name 的 StaticBody2D:每块矩形按 9 个环面副本
-# 偏移(tx*cols*ts, ty*rows*ts),9 副本共享同一 RectangleShape2D。返回总 shape 数。
+# 把 rects 实例化到 parent 下名为 node_name 的 StaticBody2D:每块矩形按 9 个环面副本偏移(tx*cols*ts, ty*rows*ts),9 副本共享同一 RectangleShape2D。返回总 shape 数。
 static func _instantiate(rects: Array, parent: Node, node_name: String, cols: int, rows: int, ts: int) -> int:
 	var existing := parent.get_node_or_null(node_name)
 	if existing != null:
@@ -158,11 +142,8 @@ static func _chunk_node_name(chunk: Vector2i) -> String:
 	return "DestructibleChunk_%d_%d" % [chunk.x, chunk.y]
 
 
-# 攀爬结构基座薄碰撞条(仅锁链顶/底;梯子顶端不加——薄条会挡住从下方爬上梯顶,
-# 梯顶"停留"由玩家攀附机制解决,见 player._update_climb)。
-# - 锁链顶端:纹理 12 → 顶边薄条(全宽 × LEDGE_THICKNESS)。
-# - 锁链底端:纹理 14 → 底边薄条。
-# 复用 _instantiate 做 9 环面副本偏移,节点名 "ClimbLedges"。返回 shape 数。
+# 攀爬结构基座薄碰撞条(仅锁链顶/底;梯子顶端不加 —— 薄条会挡住从下方爬上梯顶,梯顶"停留"由玩家攀附机制解决,见 player._update_climb)。
+# 锁链顶端(纹理 12)→ 顶边薄条;锁链底端(纹理 14)→ 底边薄条。复用 _instantiate 做 9 环面副本偏移,节点名 "ClimbLedges"。
 static func build_climb_ledges(grid: Array[Array], parent: Node) -> int:
 	var cols = grid[0].size()
 	var rows = grid.size()

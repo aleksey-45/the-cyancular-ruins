@@ -1,11 +1,9 @@
 class_name CombatComponent
 extends Node
 
-# 战斗子系统:生命/无敌帧/爆炸击退向量/倒地。hp_changed 由根转发给 HUD。
-# 由根 player.gd 驱动(take_hit 经根转发、apply_knock/update_iframe_blink 每物理帧)。
+# 战斗子系统:生命/无敌帧/爆炸击退向量/倒地;由根 player.gd 驱动(take_hit 经根转发、apply_knock/update_iframe_blink 每物理帧),hp_changed 由根转发给 HUD。
 
-# PvP 对局:取消命中无敌帧——每发子弹都要能结算(否则霰弹只算第一丸)。
-# 帧伤防范靠「每发弹丸命中即销毁、只结算一次」,由服务器裁决保证。
+# PvP 取消命中无敌帧(否则霰弹只算第一丸),帧伤防范靠「每发弹丸命中即销毁、只结算一次」由服务器裁决保证。
 static var pvp_arena := false
 
 
@@ -29,7 +27,6 @@ func _ready() -> void:
 func is_downed() -> bool:
 	return downed
 
-# 无敌帧递减 + 闪烁,每物理帧由根在移动逻辑前调用。
 func update_iframe_blink(delta: float) -> void:
 	iframes = maxf(iframes - delta, 0.0)
 	if iframes > 0.0:
@@ -38,8 +35,7 @@ func update_iframe_blink(delta: float) -> void:
 		body.modulate.a = 1.0
 
 func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, knockback: float = -1.0) -> void:
-	# ignore_iframes: 特殊攻击(如冲撞)穿透无敌帧,但命中后照常刷新 iframes。
-	# PvP:取消无敌帧阻挡(pvp_arena),但仍每发结算一次(命中即销毁由裁决保证)。
+	# ignore_iframes:特殊攻击(如冲撞)穿透无敌帧但照常刷新;PvP 取消无敌帧阻挡,仍每发只结算一次。
 	if downed or (not pvp_arena and iframes > 0.0 and not ignore_iframes):
 		return
 	# 冲刺被打断:否则下一帧 is_charge 分支会用冲刺速度覆盖本次击退
@@ -48,10 +44,7 @@ func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, kn
 	took_hit.emit(source_pos, damage)
 	Sfx.play("hurt")
 	iframes = PlayerParams.iframes_time
-	# 击退方向用环面最短向量,不用绝对相减:
-	# PvP 服务器权威下,命中源坐标(服务器子弹/爆心)锚在射手副本上,可能与该玩家 canonical
-	# 相差约整幅地图(跨接缝对枪)——绝对 (body - source) 会得出反向击退(受击被打向射手)。
-	# 最短位移保证"沿命中来向把玩家推离"(与命中判定/HitEvent 的 toroidal 距离一致)。
+	# ★ 击退方向必须用环面最短向量,不能绝对相减:服务器权威下命中源坐标(服务器子弹/爆心)锚在射手副本上,可能与本玩家 canonical 相差约整幅地图(跨接缝对枪),绝对相减会得出反向击退。
 	var away := (body.global_position - source_pos).normalized()
 	if GameParameters.MAP_WIDTH > 0.0 and GameParameters.MAP_HEIGHT > 0.0:
 		var short_vec := MazeGenerator.toroidal_delta_px(source_pos, body.global_position,
@@ -61,20 +54,16 @@ func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, kn
 	if away == Vector2.ZERO:
 		away = Vector2(-float(body.get_facing()), 0.0)
 	if knockback < 0.0:
-		# 常规命中:固定击退直接覆盖(原行为)
 		body.velocity.x = away.x * PlayerParams.player_hit_knockback
 		body.velocity.y = away.y * PlayerParams.player_hit_knockback - PlayerParams.player_hit_knockback_up
 	else:
-		# 爆炸:设独立击退向量(叠加,不覆盖移动),随帧指数衰减
 		knock_velocity = away * knockback
-	# 受击反馈(每次命中):画面微红一瞬间 + 小幅屏幕震动。
-	# 大伤害(>25% 最大血)原有的强震保持不变(下面 hit_ratio 分支)。
+	# 受击反馈:每次命中小红闪 + 小幅震动;大伤害(扣血 >25% 最大血)的强震见下面 hit_ratio 分支。
 	var tree := body.get_tree()
 	if tree != null:
 		var pp := tree.get_first_node_in_group("post_process")
 		if pp != null and pp.has_method("flash_hit"):
 			pp.flash_hit(clampf(float(damage) / float(max_hp) * 2.0, 0.5, 1.0))
-	# 大伤害反馈:一次扣血 >25% 最大血 → 相机震动(幅度随伤害比例增强)
 	var hit_ratio := float(damage) / float(max_hp)
 	var cam: Camera2D = body.get_viewport().get_camera_2d()
 	if cam != null and cam.has_method("shake"):
@@ -86,8 +75,7 @@ func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, kn
 	if hp <= 0:
 		_downed()
 
-# 爆炸击退位移:单独 move_and_collide(带碰撞),不污染 velocity。
-# (地面把向下击退吃掉后再减回去会把玩家弹起,改用独立位移结算)
+# 爆炸击退位移:单独 move_and_collide 结算,不污染 velocity —— 地面吃掉向下击退后再减回去会把玩家弹起。
 func apply_knock(delta: float) -> void:
 	body.move_and_collide(knock_velocity * delta)
 	knock_velocity *= exp(-PlayerParams.player_knock_decay_rate * delta)
@@ -97,8 +85,7 @@ func force_down() -> void:
 	if not downed:
 		_downed()
 
-## 回溯专用:把倒地态置为 v(不扣血/不发 went_down 的常规副作用,仅状态与动画)。
-## 供 Player.rewind_restore 使用——"倒回到倒地那一刻"要精确复原,而不是再触发一次死亡流程。
+## 回溯专用:把倒地态置为 v,不扣血、不发 went_down、不再触发死亡流程 —— 供 Player.rewind_restore 精确复原。
 func set_downed_by_rewind(v: bool) -> void:
 	if downed == v:
 		return

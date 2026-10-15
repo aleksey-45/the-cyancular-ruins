@@ -1,23 +1,11 @@
 extends Node
 
-# 快照体积/线格式探针(场景模式):把「一份快照到底多少字节、随人数怎么长」从估算变成实测,
-# 并**同时量两种线格式**(Dictionary 直发 → `SnapshotCodec` 手打包)。
-# 跑法:
-#   "$GODOT" --headless --path . res://tests/probe/snapshot_size_probe.tscn
-# 期望:末行 "SNAPSHOT SIZE PROBE: ALL-OK"。
-#
-# 存在理由:`docs/royale-soak-2026-09-12.md` §2.2 实测「每人每快照 ≈0.96 KB」,但那是**整包**读数。
-# 拆包(世界包 / 本人包)之后还需要知道"这 0.96 KB 里多少是 c2 权威整态、多少是渲染散字段",
-# 以及**换成手打包线格式后还剩多少**。本探针就量这个,并给 N=2..8 的折算表与分片折算。
-#
-# ★ 它同时是**线格式的字段表判据**(见末尾 ①②③):`SnapshotCodec` 的 schema 必须与
-#   `player.capture_state()` / `match_snapshot` 的字段表**逐键对齐** —— 少一个字段 ⇒
-#   那个字段在线上被静默丢掉(客户端拿不到权威值,表现为"某个效果偶发不生效")。
-#   ★ 这条判据的**道理**:本仓最大的病是"枚举会过期";编解码两侧共用一张表能防**顺序**漂移,
-#     但防不了"表没跟上 producer" ⇒ 这里用**真实 producer** 的输出对表。
-#
-# ⚠ 判据 grep 文本 "SNAPSHOT SIZE PROBE: ALL-OK"(不只看退出码),并带**条数闸**(见 `_checks`)。
-# ⚠ 本探针只量「载荷」,不含 ENet 分片头/RPC 方法名等固定开销(见末尾打印的备注)。
+# 快照体积/线格式探针(场景模式):把「一份快照到底多少字节、随人数怎么长」从估算变成实测,并同时量两种线格式(Dictionary 直发 → SnapshotCodec 手打包)。
+# 跑法:"$GODOT" --headless --path . res://tests/probe/snapshot_size_probe.tscn;期望末行 "SNAPSHOT SIZE PROBE: ALL-OK"。
+# 存在理由:docs/royale-soak-2026-09-12.md §2.2 实测「每人每快照 ≈0.96 KB」,但那是整包读数;拆包(世界包 / 本人包)之后还需要知道「这 0.96 KB 里多少是 c2 权威整态、多少是渲染散字段」,以及换成手打包线格式后还剩多少。本探针量这个,并给 N=2..8 的折算表与分片折算。
+# ★ 它同时是线格式的字段表判据(见末尾 ①②③):SnapshotCodec 的 schema 必须与 player.capture_state() / match_snapshot 的字段表逐键对齐 —— 少一个字段 ⇒ 那个字段在线上被静默丢掉(客户端拿不到权威值,表现为「某个效果偶发不生效」)。
+#   这条判据的道理:本仓最大的病是「枚举会过期」;编解码两侧共用一张表能防顺序漂移,但防不了「表没跟上 producer」⇒ 这里用真实 producer 的输出对表。
+# ⚠ 判据 grep 文本 "SNAPSHOT SIZE PROBE: ALL-OK"(不只看退出码),并带条数闸(见 _checks)。⚠ 只量「载荷」,不含 ENet 分片头/RPC 方法名等固定开销(见末尾打印的备注)。
 
 const MTU := 1400          # ENet 默认 MTU
 const FRAG_HEADER := 8     # 分片包每片大致头部开销(粗估,用于折算片数)
@@ -25,12 +13,9 @@ const SNAP_HZ := 60        # SNAPSHOT_INTERVAL = 1/60
 
 const EXPECTED_CHECKS := 4
 
-# ④ 用到的两个常量。
-# ★ 人数上限**不抄**一份:直接读产品侧的单一来源(`LobbyRooms.ROYALE_MAX_PLAYERS`)。
-# ★ `TRAIL_PHYSICAL_MAX` 是**生产者**的 trail 上限(match_host 的回溯录像每 3 帧一点、最多 10 点),
-#   它是个字面量、没有名字 ⇒ 只能在这里抄一份,注释点名来源;线上真正发多少由
-#   `SnapshotCodec.TRAIL_WIRE_MAX` 决定(那一个才是判据真正盯的东西)。
-# ★ `WORLD_PACKET_BUDGET` = ENet MTU。超了就被分片,而快照是 `unreliable` ⇒ **丢一片 = 整帧丢**。
+# ④ 用到的两个常量。★ 人数上限不抄一份:直接读产品侧的单一来源(LobbyRooms.ROYALE_MAX_PLAYERS)。
+# ★ TRAIL_PHYSICAL_MAX 是生产者的 trail 上限(match_host 的回溯录像每 3 帧一点、最多 10 点),它是个字面量、没有名字 ⇒ 只能在这里抄一份并点名来源;线上真正发多少由 SnapshotCodec.TRAIL_WIRE_MAX 决定(那一个才是判据真正盯的东西)。
+# ★ WORLD_PACKET_BUDGET = ENet MTU:超了就被分片,而快照是 unreliable ⇒ 丢一片 = 整帧丢。
 const WORLD_PACKET_BUDGET := 1400
 const TRAIL_PHYSICAL_MAX := 10
 
@@ -52,18 +37,13 @@ func _ready() -> void:
 	var ts: PackedScene = load("res://scenes/player/player.tscn")
 	_player = ts.instantiate()
 	add_child(_player)          # _ready 跑完再取 capture_state
-	# ★ 必须**显式装一把枪**:`capture_state()` 的武器块(8 个字段)**只有手持非空时才存在**
-	#   (`player.gd` 的 `if w != null`)—— 不装的话本探针量到的本人包少 14 B,而且那 8 个字段的
-	#   往返保真**一条都没验到**(实测:不装枪时 `present = 0/8`)。
-	#   ★ 先 `inventory.add` 再 `equip_type`:`equip_type` 只从**已有背包**里找,不会凭空加枪(§4.5)。
+	# ★ 必须显式装一把枪:capture_state() 的武器块(8 个字段)只有手持非空时才存在(player.gd 的 if w != null)—— 不装的话本探针量到的本人包少 14 B,而且那 8 个字段的往返保真一条都没验到(实测:不装枪时 present = 0/8)。
+	#   ★ 先 inventory.add 再 equip_type:equip_type 只从已有背包里找,不会凭空加枪。
 	_player.weapons.inventory.add(1, 30)
 	_player.weapons.equip_type(1)
 	await get_tree().physics_frame
-	# ★★ 让夹具的值**不是整数**(守卫灵敏度,2026-10-09 实测逼出来的):
-	#   "编解码把值写错位/写有损"这一类缺陷,在**静止夹具**上**看不见** —— 位置/速度全是 0 或整数时,
-	#   把 float32 载荷改成 0.5 步进(有损)**照样全绿**(变异实验实测)。
-	#   这里给一组"丑数",让 ③ 那条往返断言真的能对值说话。
-	#   ★ 只影响**值**,不影响**体积**(两边都是 float32)⇒ 探针的体积读数不受影响。
+	# ★★ 让夹具的值不是整数(守卫灵敏度,实测逼出来的):「编解码把值写错位/写有损」这一类缺陷在静止夹具上看不见 —— 位置/速度全是 0 或整数时,把 float32 载荷改成 0.5 步进(有损)照样全绿(变异实验实测)。
+	#   这里给一组「丑数」,让 ③ 那条往返断言真的能对值说话。★ 只影响值、不影响体积(两边都是 float32)⇒ 体积读数不受影响。
 	_player.global_position = Vector2(1234.567, -678.901)
 	_player.velocity = Vector2(-120.37, 0.4321)
 
@@ -87,8 +67,7 @@ func _ready() -> void:
 	print("[size] 本人包(ack + c2 整态)  旧(dict) = %d B  →  新(手打包) = %d B" % [sz_old_own, sz_new_own])
 	print("[size] c2 字段数 = %d, 世界字段数 = %d" % [c2.size(), entry.size()])
 
-	# ① 表必须**恰好**覆盖 `capture_state()` 的产出(少一个 = 该字段在线上被静默丢掉)
-	# ② 反向:核心表的键必须**都在** c2 里(多一个 = 表里有 producer 从不产出的死字段)
+	# ① 表必须恰好覆盖 capture_state() 的产出(少一个 = 该字段在线上被静默丢掉);② 反向:核心表的键必须都在 c2 里(多一个 = 表里有 producer 从不产出的死字段)。
 	var missing: Array[String] = []
 	var extra: Array[String] = []
 	var weapon_keys := _schema_keys(SnapshotCodec.WEAPON_SCHEMA)
@@ -102,8 +81,7 @@ func _ready() -> void:
 			missing.append(k)
 	_check(missing.is_empty() and extra.is_empty(),
 			"schema 与 capture_state() 逐键对齐(表外未覆盖 %s / 表内多余 %s)" % [str(missing), str(extra)])
-	# ② 武器块是**整体存在/整体缺席**的(`capture_state` 里 `w != null` 才加那 8 个字段):
-	#    半截存在 = 解码端按 flags 位读、读出来的字段对不上 → 必须红。
+	# ② 武器块是整体存在/整体缺席的(capture_state 里 w != null 才加那 8 个字段):半截存在 = 解码端按 flags 位读、读出来的字段对不上 → 必须红。
 	var present := 0
 	for k in weapon_keys:
 		if c2.has(k):
@@ -120,13 +98,9 @@ func _ready() -> void:
 	_check(rt_ok, "真实产出的往返逐字段一致(c2 %d/%d 键 · 世界 %d/%d 键 · ack=%s)" % [
 			d2.size(), c2.size(), we.size(), entry.size(), str(od.get("ack_seq"))])
 
-	# ④ **最坏情况的世界包必须装进一个 ENet 包**(2026-10-09 加,配 16 人上限)。
-	# ★ 为什么量的是**真的 encode_world 产出**、而不是 `7 + N * _schema_bytes(...)` 那种算术:
-	#   算术式是**镜像守卫** —— 发送侧到底截没截根本没进判据(改 `TRAIL_SEND_MAX` 它纹丝不动),
-	#   而且常量一变两边一起变。量真实产出,"忘了截断"与"表里加了字段"两种都会红。
-	# ★ 最坏 = 人数上限(`ROYALE_MAX_PLAYERS`=16)× 全员回溯(trail 取满,match_host 里是 10 点)。
-	# ★ 预算取 **1400 B = ENet MTU**:快照走 `unreliable`,超了就被分片,而分片是
-	#   `UNSEQUENCED|UNRELIABLE_FRAGMENT` ⇒ **丢一片 = 整帧丢**(见 docs/eng/netcode-snapshots.md §2.3)。
+	# ④ 最坏情况的世界包必须装进一个 ENet 包(配 16 人上限)。
+	# ★ 为什么量的是真的 encode_world 产出、而不是 7 + N * _schema_bytes(...) 那种算术:算术式是镜像守卫 —— 发送侧到底截没截根本没进判据(改 TRAIL_SEND_MAX 它纹丝不动),而且常量一变两边一起变;量真实产出,「忘了截断」与「表里加了字段」两种都会红。
+	# ★ 最坏 = 人数上限(ROYALE_MAX_PLAYERS=16)× 全员回溯(trail 取满,match_host 里是 10 点)。★ 预算取 1400 B = ENet MTU:快照走 unreliable,超了就被分片,而分片是 UNSEQUENCED|UNRELIABLE_FRAGMENT ⇒ 丢一片 = 整帧丢(见 docs/eng/netcode-snapshots.md §2.3)。
 	var cap: int = LobbyRooms.ROYALE_MAX_PLAYERS   # 单一来源:不在这里再抄一个 16
 	var worst_players := {}
 	for i in cap:
@@ -163,8 +137,7 @@ func _ready() -> void:
 		get_tree().quit(1)
 
 
-# 造 n 个回溯轨迹点(形状与 `match_host` 的 `_rw_trail` 一致:`[[x, y], …]`)。
-# ★ 值取"丑数"没有意义(量的是字节);这里只保证 n 个点都在。
+# 造 n 个回溯轨迹点(形状与 match_host 的 _rw_trail 一致:[[x, y], …])。★ 值取「丑数」没有意义(量的是字节);这里只保证 n 个点都在。
 func _trail_pts(n: int) -> Array:
 	var out: Array = []
 	for i in n:
@@ -176,8 +149,7 @@ func _trail_pts(n: int) -> Array:
 
 func _entry_world(trail: Array) -> Dictionary:
 	var p := _player
-	# 是否正在预瞄(heavy_aim 蓄力)。★ 服务端仍带此字段,但客户端刻意**不消费**
-	#   (用户裁定 2026-09-11:预瞄线只有使用者本人可见)。留着是日后换提示形式的接点。
+	# 是否正在预瞄(heavy_aim 蓄力)。★ 服务端仍带此字段,但客户端刻意不消费(用户裁定:预瞄线只有使用者本人可见);留着是日后换提示形式的接点。
 	var previewing := false
 	if p.weapons != null and p.weapons.current_weapon() != null:
 		previewing = p.weapons.current_weapon().is_previewing()
@@ -198,15 +170,9 @@ func _entry_world(trail: Array) -> Dictionary:
 	}
 
 
-# ★★ **`vel` 不是"可以去掉"的字段 —— 它现在是承重的,别照"瘦身版"去削包。**
-#   `player_replica` 的补间形变(squash & stretch)整条链都读它:空中连续项直接取 `vel.y`,
-#   落地推导还要"上一帧 `vel.y` 大 + 这一帧 `vel.y` ≈ 0"这一**对**值(见 `player_replica.gd`
-#   的 `_prev_vel_y` / `LAND_VEL_EPS`)。**把 vel 从载荷里去掉 ⇒ 对手的形变与落地效果
-#   一起静默失效**(空中项恒 0、落地项永不触发),不报错、也不会让本探针变红 ——
-#   本探针**只打印,不断言** vel 的去留(刻意的:它量的是体积,不是行为)。
-#   ⚠ 那条"唯一消费 vel 的是 `player.apply_server_snapshot`,该路径已随 C2 迁移删除"的旧理由
-#     在 closeout 批 Task 4 之后**已反转** —— 想削包先读 `player_replica.gd`,不要只读本文件。
-# ⇒ 本探针的"新格式"**带上 vel**(与源码同表),`vel` 自己占 8 B(2×float32)。
+# ★★ vel 不是「可以去掉」的字段 —— 它现在是承重的,别照「瘦身版」去削包。
+#   player_replica 的补间形变(squash & stretch)整条链都读它:空中连续项直接取 vel.y,落地推导还要「上一帧 vel.y 大 + 这一帧 vel.y ≈ 0」这一对值(见 player_replica.gd 的 _prev_vel_y / LAND_VEL_EPS)。
+#   把 vel 从载荷里去掉 ⇒ 对手的形变与落地效果一起静默失效(空中项恒 0、落地项永不触发),不报错、也不会让本探针变红 —— 本探针只打印、不断言 vel 的去留(它量的是体积,不是行为)。⚠ 那条「唯一消费 vel 的 player.apply_server_snapshot 已随 C2 删除」的旧理由已反转:想削包先读 player_replica.gd,不要只读本文件。
 
 
 # ── 折算 ──
@@ -216,8 +182,7 @@ func _kb(b: int) -> String:
 
 
 func _report(n: int, old_own: int, old_entry: int, new_own: int, new_entry: int) -> void:
-	# 两种格式都是**同一个拆包结构**(世界包一次广播 + 本人包逐 peer 定向):
-	#   服务器上行 = N × 本人包 + 1 × 世界包 ; 单端下行 = 本人包 + 世界包
+	# 两种格式都是同一个拆包结构(世界包一次广播 + 本人包逐 peer 定向):服务器上行 = N × 本人包 + 1 × 世界包;单端下行 = 本人包 + 世界包。
 	var old_world := n * old_entry
 	var new_world := 7 + n * new_entry
 	var old_up := float((n * old_own + old_world) * SNAP_HZ)
@@ -248,10 +213,8 @@ func _frags(payload: int) -> int:
 	return int(ceil(float(payload) / float(usable)))
 
 
-# ── 量化 / 增量的上限测算 ──
-# ★ 全部绑在 `SnapshotCodec` 的 schema 表上算,避免"另抄一份字段表"(那是本仓最贵的病)。
-# ★ 这些是**算术上限**,不是实测到的收益;真正落不落地由"值不值得 + 风险"决定,见
-#   [`docs/eng/netcode-snapshots.md`](../../docs/eng/netcode-snapshots.md) §5.1。
+# ── 量化 / 增量的上限测算 ── ★ 全部绑在 SnapshotCodec 的 schema 表上算,避免「另抄一份字段表」(那是本仓最贵的病)。
+# ★ 这些是算术上限,不是实测到的收益;真正落不落地由「值不值得 + 风险」决定,见 docs/eng/netcode-snapshots.md §5.1。
 
 func _t_bytes(t: String, trail_n: int) -> int:
 	match t:
@@ -302,8 +265,7 @@ func _report_headroom(trail_n: int, c2: Dictionary, entry: Dictionary) -> void:
 			w - w_pv - w_aim - w_tr])
 	print("[size] 本人包 %d B = 头 8 + 核心 %d + 武器 %d + 背包 %d" % [own, c2s, wpn, inv])
 
-	# ① 量化:只对**能安全量化**的量(渲染量)。pos 1/4px(9600px×4=38400<65536 ⇒ 2×u16)、
-	#    vel 1/16px/s(2×i16)、aim 1 字节角度(256 向 ≈1.4° 分辨率)。
+	# ① 量化:只对能安全量化的量(渲染量)。pos 1/4px(9600px×4=38400<65536 ⇒ 2×u16)、vel 1/16px/s(2×i16)、aim 1 字节角度(256 向 ≈1.4° 分辨率)。
 	var q_pos := 4
 	var q_vel := 4
 	var q_aim := 1
@@ -335,10 +297,8 @@ func _report_headroom(trail_n: int, c2: Dictionary, entry: Dictionary) -> void:
 			pv + _field_bytes(SnapshotCodec.WORLD_SCHEMA, "aim", trail_n), w])
 
 
-# 变更率读数(**合成输入、不含战斗**):增量的收益取决于"每 tick 有几个字段真的变了",
-# 这个数今天没有仪器测 ⇒ 先用真实物理步进 + 注入输入量一次,当作下界/参考。
-# ★ 诚实标注:这是**探针里跑出来的玩家**(无关卡、靠重力下落 + 注入按键),不是真对局;
-#   要定案得在真链路里读(见 netcode-snapshots.md §6)。
+# 变更率读数(合成输入、不含战斗):增量的收益取决于「每 tick 有几个字段真的变了」,这个数今天没有仪器测 ⇒ 先用真实物理步进 + 注入输入量一次,当作下界/参考。
+# ★ 诚实标注:这是探针里跑出来的玩家(无关卡、靠重力下落 + 注入按键),不是真对局;要定案得在真链路里读(见 netcode-snapshots.md §6)。
 func _report_change_rate() -> void:
 	var src := PacketInputSource.new()
 	_player.set_input_source(src)
