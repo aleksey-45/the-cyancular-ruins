@@ -42,144 +42,70 @@
 - PvP HUD:`ui/hud/pvp_hud.tscn`(`class_name PvpHud`,CanvasLayer layer=130 盖在 PostProcess 128 / 单机 HUD 129 之上)显示双方击杀/局胜/局号(**记分条在顶部正中**,用户指定)+ 中央状态。摆放位置由 `pvp_hud_layout_probe.tscn`（已删·2026-10-09） 钉住。复活视觉:`combat.revive()` 已补 `post_process.set_downed(false)`。
 - 测试:`tests/smoke/pvp_room_smoke.sh`(建房/加入/开局)/ `pvp_match_smoke.sh`(输入→模拟→快照→子弹广播 + round_state 广播 + ack_seq 推进 + 快照 c2 全态与散字段一致)/ `pvp_reconcile_smoke.sh`（已删·2026-10-09）(rollback 控制器 in-process 冒烟)/ `pvp_twin_smoke.sh`（已删·2026-10-09）(capture/restore 完整性)。
 
-#### 断线重连
+- ★ **`#### 断线重连` 已搬到 [`netplay-reconnect.md`](netplay-reconnect.md)**（2026-10-13 按 64KB 判据拆出；内容逐字未改）。
+- ★ **`#### 阶段 3:可见性 + 两个既有缺陷` 已搬到 [`netplay-reconnect.md`](netplay-reconnect.md)**（同上）。
+- ★ **`#### 对局中的房:寿命 / 回收判据 / 可见性与拒绝` 已搬到 [`netplay-rooms.md`](netplay-rooms.md)**（同上）。
+- ★ **`#### 回大厅后回局(阶段 2-B:凭据表 / 「列表里自己那间房」)` 已搬到 [`netplay-rooms.md`](netplay-rooms.md)**（同上）。
+- ★ **`### RPC 通道划分表(★ 单一来源)` 已搬到 [`netplay-rpc-channels.md`](netplay-rpc-channels.md)**（同上；**通道号以那份为准**）。
 
-**路径甲(阶段 1)**:与 worker 的连接闪断 → 客户端自己**连回同一个端口**、重新认领 role、**不切场景、不重建世界**。★ **路径乙(阶段 2-B)是另一条路**,见下节。★ **阶段 3** 见再下一节。
+---
 
-- **token 由大厅生成,不在 worker**:`NetBusExt` 的三条新 RPC(`session_token` / `report_token` / `reclaim_role`)+ `core/net/pvp_session.gd` 的 `token`/`worker_port`。★ **必须在 `go_match` 之前发** —— go_match 一到客户端就 `NetBus.stop()` 断大厅,之后再发就**静默丢失**。客户端 claim 之后经 `report_token` 报给 worker,worker **只归档不校验**;校验发生在宽限期里的 `reclaim_role`。★ **`go_match` / `claim_role` 的签名一律没动**:原 NetBus 与原版服务端逐字节一致是硬纪律(改 RPC 方法表 = 与它的所有 RPC 失联),故三条新 RPC 全在 `NetBusExt`;对原版 worker 本节点不存在 → 静默丢弃、优雅降级成"不能重连"。
-- **宽限期唯一入口 `GraceWindow.DEFAULT_SECONDS`**(`core/net/grace_window.gd`,当前 **60s**,纯逻辑、时间由调用方传入):掉线**不立刻移出**(大乱斗)/**不立刻退进程**(1v1),到点才走既有语义(`server_main._expire_graces` 每秒轮询)。1v1 那一支到点是"收场退进程" = **对手白拿这一段**。★ 它同时是客户端重试预算的上界(`pvp_match_client._on_reconnect_retry_tick` 读**同一个常量**)。★ **2026-09-21:30 → 60,三模式统一**(用户为「回大厅后回局」裁定)。**原先那句「别再把时长放大」已作废**。★ **改这个数要同时看三处**:① 客户端重试预算(自动跟随);② **三个 `*_PORT_REUSE_DELAY` 必须严格大于它**(守卫 `tests/smoke/grace_window_smoke`（已删·2026-10-09） ⑧);③ **按宽限期算出来的测试预算**(`reconnect_probe`（已删·2026-10-09） 的 `GRACE_MIN/MAX`+`FINAL_TIMEOUT`、`team_match_watcher.OBSERVE_MAX`、`team_match_probe` 的 `RESULT_WAIT`)—— 漏改第三处会让**真链路探针先耗尽安全网、不打印任何 verdict**,按本仓判据读成红。
-- **★ 掉线者的身体不销毁 → 服务端对局状态一条都不用恢复**:`server_main._on_peer_left` 只 `_claims.erase(role)` + `_enter_grace(role)`,**不碰 `players`**。分数/阵亡/血量/背包/位置/世界破坏/地面武器全在活着的节点与进程内存里。它同时是 1v1 能做重连的**前提**。
-- ★★ **`_enter_grace` 必须同时做两件事:`input_sources[role].reset_state()` 和 `_host._pending_input[role] = []`**。**只做前者不够**:掉线瞬间队列里可能还压着一条**已经到达**的包,而 `apply_packet()` 是**整体覆盖** ⇒ 那条包会在复位**之后**把 `_held` 原样写回,之后队列空了而 `clear_edges()` **不含 `_held`** ⇒ 掉线前按着的键被**重新武装并保持整个宽限期**。★ 这个 bug 真发生过,**前 7 个任务的单元式验证全都没照出来,是真链路探针抓的**(守卫 `reconnect_probe`（已删·2026-10-09） 相③)。`_on_reclaim` 的接受路径有同一行。
-- **worker 侧 `reclaim_role`(`server_main._on_reclaim`)三条拒绝条件一条都不能少**:①未开局 ②该 role **不在宽限期**里 ③token 不匹配 —— 任何一条不满足都**踢连接**(**不能让它静默留在局里收快照**)。接受后:重绑 `peer_by_role`、**把新 `PacketInputSource` 挂回那个还活着的玩家节点**(换表里的引用不够,玩家手里仍攥着旧源)、清 `_pending_input`、`_ack_seq[role]` 归 0,然后 `NetBus.reply(caller, "match_start", …)`(★ 走 `reply` 不走 `rpc_id`)。
-- ★ **客户端同名纪律:同一个 role 只许发一次 `reclaim_role`**(`scenes/pvp_match_client.gd:_try_reclaim`,本功能最易写错且症状最怪的一处)—— worker 接受第一次时就 `_grace.leave(role)` 了,同一条连接上再发一次必进拒绝条件② → **它踢连接**,表现是"刚重连上几秒又断",看着像网络抖动;且因为 token 是对的,查 token 查不出问题。★ **两条时间尺度别合并**:`RECONNECT_RETRY_MS`(2s)= 节拍,`RECONNECT_ATTEMPT_TIMEOUT_MS`(5s)= 一次握手自己的寿命 —— 合并会反复掐掉正在握手的尝试;而**只**看节拍不掐尝试时,ENet 自己的连接超时实测 **~31.8s** ⇒ 最坏卡在冻结世界 ~33s。
-- ★★ **重连成功必须重置本地 C2**:`_input_seq`/`_have_prev_seq`/`_prev_sent_seq` 清零 + **重建 `PredictionRollback` 并重新 bind + 设 `map_px`**(漏了**都不报错**:没 bind → `_p == null` 直接返回、C2 静默失效;没设 map_px → 跨接缝那一帧按裸距离比、白跑一次回滚)。★★ **重连后跨纪元的旧 ack 必须丢掉**(`_on_snapshot_own` 里 `ack > _input_seq` 即 return):握手落地到 `match_start` 到达之间客户端仍在用**断线前那个 seq 空间**发包,服务器下一 tick 消费到它就把 `_ack_seq[role]` 从 0 写回那个大数 → 那条快照落在**刚重建**的 rollback 上 → `_acked` 被抬到新纪元追不上的高度,之后所有真实 ack(1,2,3…)全丢,**断线前活了多久就哑多久**(症状:不报错、**回滚恒为 0**、`sync_soft_state` 不再被调)。★ **两侧的复位互为理由**(服务端归 0 是为了客户端的 `_acked`,客户端重置是为了服务端的 0),只改一侧会得到镜像的同一个洞;守卫 = 探针相① 的 `_acked ≤ _input_seq` 断言。
-- **触发点只有"服务器断开"一条,而对局场景此前没人订阅它**:`NetBus.local_server_message` 的消费者原先只有 `lobby_page`,所以服务器一断客户端**毫无反应**。本批在 `pvp_match_client._subscribe_reconnect()` 里接上它,顺带接 `NetBus.local_match_start`(★ 那一条在对局里**此前零订阅者** —— 唯一消费者是 `lobby_page._on_match_start`,而对局场景里它不在树上 → 静默 no-op,故"重连成功"的收尾**必须**在这里接)。菜单开着时收到的断开**先不动、但不是放弃**:账记 `_pending_disconnect`,关菜单时 `_recheck_disconnect()` 补。★ 按 ESC 回主菜单**不会**触发重连(`NetBus.stop()` 把 `multiplayer_peer` 置空,引擎在 `set_multiplayer_peer` 里先 `clear()`、状态当场复位 → CONNECTED→DISCONNECTED 那一跃**从未被观测到**)。
-- **三档端口归还延迟**(`server/lobby/worker_launcher.gd`:`WORKER_PORT_REUSE_DELAY` 1v1 = **120s** / `ROYALE_PORT_REUSE_DELAY` = 360s / `TEAM_PORT_REUSE_DELAY` = 360s)—— ★★ **它们今天都不再是"端口会不会被提前复用"的界**:房**活到 worker 退出**,而端口只在 `teardown_room` 里归还 ⇒ 归还是**从 worker 退出起算**的。于是"重连的客户端手里那个端口还在不在"由**凭据里的 `worker_pid`** 精确回答,与这三个常量取多少**无关**。★ **30 → 120 那段历史教训留档**(原 30s **等于**宽限期,而**相等同样不安全**),但那条不等式的**承重地位已被取代**,只剩 `tests/smoke/grace_window_smoke`（已删·2026-10-09） ⑧ 的一条 **belt**(三档必须**严格大于** `DEFAULT_SECONDS`)。
-- **★★ 阶段 2-A(2026-09-18):重连成功后**也**要拉一次 `match_sync`** —— 这是本节**最反直觉**的一处。路径甲**不切场景、不重建世界**,很容易认定"没什么要补的":但**世界在掉线那段时间里变过** —— 对面把墙拆了、地面上的枪被捡走/丢出/换局重铺。★ **不拉不报错**,只是世界悄悄不一致:客户端留着服务器已摧毁的墙 = **幻影墙**(撞上去 → 本地预测与服务端分歧 → 滚回滚),或者本地凭空多/少几把枪 = **幽灵枪**(看着在、按 F 无效)。
-  - ★★ **新的承重事实:补态这一次应答既不校正出生点、也不告警** —— 发送前置 `_resync_pull_pending`(由 `_on_resumed` 置位),被 `_on_match_sync` 首行读一次即清。★ **没有它,1v1 每局换边会让不一致必然发生** → 一条假告警 + 把玩家瞬移走。★ 这个局部量**读一次即清**,"再读一次来决定还原"会让还原被**静默跳过**。★ 大乱斗那一端走的是**同一个函数**,不存在"只补了 1v1"这种分叉。★ **本节引 `pvp_match_client` 一律用函数名/符号名、不写行号**。
-  - **`match_sync` 的数据面因此长出两块**:① **`destroyed`** = `MatchHost.destroyed_cells()` —— `grid` 与建局基线 `_base_grid` **不同**的那些格(顺序确定,因为载荷要能在两端逐字比对)。★ 判据刻意取"**与基线不同**"而**不是**"当前为空"(后者在将来出现"加砖/复原"类改动时会**静默漏报**)。★ **空数组连键都不带**;规模上限 **841** 条 `Vector2i`。★ 投递时机只有**一处**:`match_sync` 应答。② 客户端应用走 **`_on_remote_tile_destroyed(cell, true)` 的静默形态**(那些砖是**掉线期间**被拆的 —— 不静默就会逐格播碎片粒子)。★ 复用它而**不另写一套**:那套顺序全仓只有一份。
-  - **地面武器一律「先清后灌」**:★ **不清就直接 add,掉线期间已被服务器移除的那些会变成永久幽灵枪**。★ 进场那次本地本来就是空的,清一遍是 **no-op**,故不为两种情况分叉。
-  - ★ **「只删不还」那半个缺口也已闭合**:`destroyed` 只表达「与基线**不同**」的格 ⇒ 被服务器换局还原掉的格**永不进载荷**,客户端会留下**幻影洞**。**现在**:补态那一路**先 `reset_destructibles()` 再应用 `destroyed`**。★ **顺序不可换**;★ **只在补态那一路做**。★ **仍剩的边界**:服务器今天**只拆不加砖**;若将来出现"加砖"类改动,客户端应用侧只有"拆"那一半 → 会留下**幻影墙**,那个方向本来就未闭合。守卫:`tests/probe/resync_world_probe.tscn`(★ 还原那一条**另跨两维**(墙体瓦片层 + `_destructible_sub` 子格),只断 `current_grid` 时"只改 grid、不重铺瓦片也不重建碰撞"会**照样全绿**)。
-- 守卫:`reconnect_probe.tscn`（已删·2026-10-09） 是**真链路七相**端到端探针(自当裁判、三个端口**必须落在真大厅的 worker 端口池之外**;触发闪断用**直接调 `_game._begin_reconnect()`**):①正向(自动重连被接受,**身体 instance_id 不变**;另判 C2 锚点重新咬合 + 回滚次数不持续增长)②反向(错 token 被拒 + 踢连接)③身体冻结(掉线后该 role 的**快照 `pose` 离开 SQUAT** —— ★ 判据是**姿态**不是位移:撞墙/卡坑时 `global_position` 天然不变、能空转骗过)④超时移出⑤大乱斗相⑥启动等待态⑦**掉线窗口内世界变过**(含**反向断言**(被捡走那把在本地表里**必须没有**,专钉"先清后灌")+ **正向的规模断言**(本端表必须与补态载荷**同规模** —— 反向那条在 `after == []` 时会**一起空过**,那正是"一把枪都看不见却打印 ALL-OK"的假绿))。判据是**文本 `RECONNECT PROBE: ALL-OK`**。
-  - ★ 相⑦ 的唯一失败模式是"假绿",两处专门守卫:① 服务端侧拆格走测试开关 **`--test-destroy-tile <col>,<row>[,<delay>]`**(与真爆炸**同一条广播链**);② 断言里必须含 **worker 日志的 `[test] 拆格` 那一行**(少了它,若那格本来就是空气,主断言会假绿)。★ **延迟取 7.5s 不是 3.0**:建局到 PLAYING 差一个 `COUNTDOWN_TIME`(3s),`3.0` 恰好落在 actor **还在线**的那一刻 ⇒ 相⑦ 以"全绿"通过而**什么都没验**。**跑前先确认无真大厅**(收尾**按 PID 杀**本进程拉起过的全部子进程)。
+## 实测读数与不变量（2026-10-13 从**代码注释**搬出）
 
-#### 阶段 3:可见性 + 两个既有缺陷
+> **为什么在这里**：同日的注释瘦身把注释压到 ≤15%，**成套实测与不变量**按配方搬进域文档。
+> 原始台账（每条带原行号与出处）：[`2026-10-13-comment-diet-ledger.md`](../2026-10-13-comment-diet-ledger.md)
+> §2（server_main）/ §4（mp_lobby）/ §5（pvp_match_client）/ §7（server/**）。
+> ★ 这些是**读数与不变量**，不是规范：改联机面之前先在这里查依据。
 
-四处,三条互不重叠的链:
+### 1. 重连的时间尺度（本机实测，决定了重试预算）
 
-- **3.1 「掉线中」= `round_state` 长出 `grace` 字段**(`{role(int) -> 剩余秒(float)}`)。★ 它的**唯一出口是 `MatchState._send_round_state(data)`**(三个生产者 `MatchRound` / `RoyaleHost` / `TeamHost` 都调它)⇒ 生产目录里 `_rpc_all("round_state"` **除出口自身外零命中**(守卫 `tests/probe/grace_feed_probe`（已删·2026-10-09） 的 ④)。★ 那一处就是出口的**实现**,不是漏网的旁路,别照着"零命中"去把它删掉。读数的**持有者是 `server_main`**,它经 `_sync_grace_snapshot()` 把值**推进**宿主的 `grace_snapshot` 字段 —— **推**而不是"宿主去问",避免 back-reference。★ **空表不带该键**;三个客户端 + `match_result_payload` 都对缺键无感。★★ **1v1/3v3 不每秒广播 `round_state`** —— 三个客户端里有两处 `COUNTDOWN 且 round > 1` 的分支**不是幂等的**(`pvp_game` 会 `reset_destructibles()`、`team_game` 会重发 `match_sync`),每秒多播一次 = 倒计时 3 秒里那些活各干 3 遍。秒数由客户端**本地走秒**(`GraceWindow.tick_display`)。★ 3v3 **刻意不消费** `grace`,有反向断言钉住这个不对称是**有意**的。
-- **3.2 + 3.4 「重连中」= `ui/hud/status_banner.tscn`(CanvasLayer layer 140)**,由**基类** `PvpMatchClient` 在**已有的** `_subscribe_reconnect()` 里实例化 ⇒ 三个模式**零新调用点**。**五个**转折点驱动:`_begin_reconnect`(断开被察觉就亮)/ `_on_reconnect_retry_tick`(报剩余预算)/ `_on_resumed`(收)/ `_cancel_reconnect`(收)/ `_abort_reconnect`(收)。★ 权威口径在 `ui/hud/status_banner.gd` 的 `set_text` 上方;`reconnect_status_probe`（已删·2026-10-09） 的相④**不手抄**这份名单,而是从「给 `_reconnecting` 赋值的函数」**推导**出全集 —— 故漏一个转折点时它红的是**推导面**。★★ 层位 **140 只住在 `.tscn` 里** —— `.new()` 建出来是 CanvasLayer 默认的 layer 1,画在 HUD(130)/小地图(131)**底下**且**不报错**;守卫 `tests/probe/hud_declarative_probe`（已删·2026-10-09） 的 ⑧。
-- **3.3 `opponent_left` 不再是死路**:服务端调用点在 `server_main._notify_opponent_left()`,由 `_expire_graces` 的 **1v1 收场分支**在 `get_tree().quit(0)` **之前**调;只发给 `_claims` 里还在的人,走 `NetBus.reply`。★ 只在**收场**发、**不在 `_enter_grace` 发** —— 掉线时就宣告"对手已离开"会把阶段 1 的整条重连功能作废。★★ **两条时序都要收口**:通知先到 ⇒ 既有的 `_match_ended` 闸挡住重连循环启动;断开先到 ⇒ 只有 `_cancel_reconnect()` 能叫停已经在飞的那个循环。⇒ 不论谁先到,结局都是「2.5s 后回主菜单」,**不叠加一个 60 秒的重连循环**。
+- 尝试 @**0.15s** → `connection_failed` @**31.81s** → tick 在 ~**33.8s** 判超时（当年宽限期恰好 30s）。
+  ⇒ **ENet 自身的连接超时约 31.8s**，比 30s 宽限期还长 —— 宽限期到点前，客户端往往还在"连"。
+- 一次成功握手 ≈ **2~3 × RTT** ⇒ 5s 的 `RECONNECT_ATTEMPT_TIMEOUT_MS` 覆盖到 **~1.6s RTT**。
+- ★ **reclaim 只发一次** 的不变量：worker 接受第一次时 `_grace.leave(role)`，第二次必然不成立 ⇒ **踢连接**。
+  症状 = "刚重连上几秒又断"，而且 **token 是对的** ⇒ **查 token 查不出这个 bug**。
 
-#### 对局中的房:寿命 / 回收判据 / 可见性与拒绝
+### 2. `server_disconnected` 为什么不发（订正史，别按"常识"改）
 
-- **★ 对局中的房(`started` / `in_match`)寿命改到「worker 进程退出」**;回收由 **`RoomManager._reclaim_finished_matches`**(30s 梯,`MATCH_SWEEP_INTERVAL`)按 **worker 进程还在不在**判 —— 那是三种模式**唯一的精确界**(三模式的 worker 都在对局结束时自己退)。★★ **兜底仍是既有的 2h 超龄清扫**(`_sweep_stale_rooms`,连 worker 一起杀),**两条路径并存、不是二选一**。判据落在 `RoomManager._match_over(port, pid)` + `WorkerLauncher.pid_alive(pid)`。
-  - ★ **为什么不按宽限期收**:宽限期是 **worker 侧**状态,**大厅看不见**;照"开局后宽限期到点就收"做会把房在开打 60 秒后拆掉,而**一局打到中段掉线的玩家再也回不去**。故判据**刻意不读**宽限期。
-  - ★ **代价照实登记**:双方都在 `go_match` 后立刻消失时,那一个 worker 与那一个端口会白占到 **2h 兜底**为止(玩家侧有 12s 转连 / 25s claim 兜底,不会卡住)。
-  - ★★ **pid 复用是这套判据的已知边界**(照实登记,**不修**):`WorkerLauncher.pid_alive` 就是 `OS.is_process_running(pid)`,而 **pid 复用在本机实测过「几分钟内」就发生**。**误判方向是"多留"而非"错杀"**(降级成 2h 兜底,不会拆掉正在打的局),但实测的复用率让这条降级**是常态而不是罕见**。
-  - ★ **1v1 worker 的报到超时梯**:`server_main._process` 补了**第四支** —— worker 就绪后 30s 仍无人 `claim_role`(且 `_host == null`、未开局)即打印超时并 `quit(0)`。★★ **门必须是「正的 worker-only 标志」**(`var _worker := false`),**不得写成"以 worker-only 标志的否定为门"**:后者在**大厅里恒真**。★★ **新登记:`server_main._process` 的四支梯子必须门在「正的 worker 标志」上,因为"以 worker-only 标志的否定为门"对大厅恒真。** 实测:第四支梯一度写成三个否定的合取时,**大厅四项全成立** ⇒ `start_server.bat` 起的专用大厅**开机 30 秒后打印报到超时并 `quit(0)` 自杀**,7777 上的建房/配对/转连全部死掉。修法两层:**① 把大厅分支整体 `set_process(false)`**(把"非 worker 进程进梯"整类**结构性地**关掉)、**② 把门换成正的 `_worker`**。★ **为什么自动化照不到**:`duel_spawn_timeout_smoke`（已删·2026-10-09） 起的是**带 `--worker` 的 worker**,**结构上永远进不了大厅模式**。★★ **哪一条是承重的:③(`set_process(false)`)而不是 ①②** —— `_worker == false` 与 `_worker or …` 两种写法**都能过 ①②**,真正把"大厅进程进梯"**结构性地**关掉的是 ③。**别把 ①② 读成主保险**。
-- **★ 列表可见性与拒绝入房是同一件事的两半**:列表载荷各加 **`in_match` 键**(三模式同名同义、加法式扩展),列表构造抽成 **`LobbyRooms.room_list_payload()` / `royale_list_payload()` / `team_list_payload()` 纯函数** —— ★ 因为 `NetBus.reply` 在无对端时**静默跳过**,不抽成纯函数探针就**观测不到列表内容**。三模式拒绝文案统一成「**该房间的对局已进行中,无法加入**」;★ **`mp_lobby._on_server_message` 的自动刷新分支只认旧文案**,新文案落进 `else` **只显示不刷新** —— **改文案 = 静默改行为**,`room_sweep_lint` 有源码级断言钉住三条文案与三条守卫。
-  - ★ 拒绝那一半的探针用**非满房**造(用满房造会被「房间已满」喂绿,等于没验)。
-- **★ 房记录上多了两个字段**:① **`worker_pid`** —— spawn **成功之后**登记(四处),**`0` = 拉起中,一律判"没结束"**(位置不能挪到 spawn 之前)。② **`roster`** —— **开局那一刻**由 **`LobbyRooms.freeze_roster(room)`** 冻结的 `[{role, name}]`。★ **名单必须冻结**:成员转连后 `players` 会空、`_peer_names` 会被擦掉,读它们只会渲染出「玩家, 玩家」。列表行的**人数与名字都取自 `roster`**。
-- **`WorkerLauncher` 多了端口→pid 表**:`pid_of(port)`(未登记 / 已归还 ⇒ 0)与 `static pid_alive(pid)`(`pid <= 0` ⇒ false)。★ `release_now` **必须同时清 pid** —— 只清一半会让一个已经结束(甚至端口已被复用给别的局)的对局被判成"还在",房永不出现在回收名单里。
-- **三张注册表仍然各管各的**(房号空间重叠是既有事实),★ 别为"看得见"去合并三张表,那正是「按 code 撞库会拆错房」那个老坑(判据只能是 `room is RoyaleRoom` / `room is TeamRoom`)。
-- **★ 守缺口照实登记**:本批**没有**真链路探针覆盖「线上投递的 `in_match` 行 + 真的拒绝」。那一半由后继回局计划的 `tests/probe/rejoin_probe.tscn` 相 c3 覆盖。
-- ★★ **本批的两个「假绿」陷阱**:① **`tools/room_sweep_lint` 的 `_check_*` 出错不会让它变红** —— GDScript 的脚本错误**不给 `_fail` 赋值**,只让**出错的那个函数当场结束**,调用方照常往下走 ⇒ **verdict 仍是 OK**,那一组断言被静默跳过。**已堵**:每个 `_check_*` 末行把**本函数名**记进 `_done`,`_finish()` 拿 `CHECK_NAMES` 对账,名单不全即红(另加一条反向:实跑条数 ≠ 名单长度也红)。② **`tests/probe/lobby_visibility_probe`（已删·2026-10-09） 相④ 是「手工调」`_reclaim_finished_matches()` 的** —— 把 `_process` 里那次**接线**删掉,行为探针**照样 `ALL-OK`**,而生产里房永远不会被回收。**已堵**:`room_sweep_lint._check_reclaim_ladder` 的**源码级**接线断言 + 一条反向(回收不许绕道直接删注册表)。
-- **用户自跑的真协议回归**:`tests/smoke/pvp_room_smoke.sh`(建房→配对→`go_match`;**红了先看 `on_peer_left` 的 `if room.started: continue`**)。★★ **订正(2026-10-13)**:这里原先还写着一个 `tools/room_sweep_lint.sh` —— **那个包装脚本不存在**(`tools/` 下没有它)。规范检查器本体是 `tools/room_sweep_lint.gd`,跑法 `"$GODOT" --headless --path . -s res://tools/room_sweep_lint.gd`,**不碰任何端口**,agent 可直接跑。
+`NetBus.stop()` 会把 `multiplayer_peer` 置空 ⇒ 引擎的 `set_multiplayer_peer` 先 `clear()`、
+`last_connection_status` **当场复位** ⇒ CONNECTED→DISCONNECTED **从未被观测到** ⇒
+**`server_disconnected` 不会发**。`PauseMenu.go_menu()` 走直接 `NetBus.stop()`、**连 `toggled` 都不经过**
+⇒ 当年"ESC 会引发重连"这个说法**不存在**。（`ui/pvp_hud` 那侧的菜单守卫即由此改写。）
 
-#### 回大厅后回局(阶段 2-B:凭据表 / 「列表里自己那间房」)
+### 3. 共享收口与声明位置（两条都踩过）
 
-**路径乙**:在局内按 ESC 回主菜单之后,玩家凭一份**凭据**回到**原来那一局**。★ 它与阶段 1(路径甲)**不是同一条路**:路径甲是闪断后自己连回**同一个端口**、**不切场景**;这条路**会重建场景**。它成立的前提是**服务器那具身体从未销毁**。★ 本批**不新增任何场景/RPC 路径** —— 大厅的应答复用的是 `go_match`(**`NetBus` 的方法表一个字没动**)。
+- **共享基类收口的量化**（2026-09-14）：客户端与服务端有 **7 个函数、合计 58 行逐字相同**；
+  `_physics_process` 上挂着 **C2 心跳** ⇒ 它不是空跑。
+- **`_rw_on` / `_rw_trail` 必须声明在根基类**：子类里声明的符号**编译期解析不了**（类型收窄时的经典坑）。
 
-- **★ 入口不是按钮,是房间列表里「自己那间房」那一行**(用户裁定:「不能有回到对局按钮」「玩家必须自己找到对应的房间」—— **别再把它做成主菜单按钮**)。统一大厅的行渲染**与行被按下共用同一个判据** `PvpSession.can_rejoin_to(code, mode)`(★ **模式也要对** —— 三张注册表的房号空间共用);对局中的房那一行**对持凭据的本人可点、对别人照旧 `disabled`**。
-  - ★★ **问这两问的次序是承重的**:"是不是我的房 + 凭据还在"必须**先于**"`in_match` ⇒ disabled"被问到。写反 = **回局入口连点都点不到,而一行报错都没有**(表现只是"回到大厅后自己那间房是灰的")。★ 交换同一个布尔的左右操作数(`not mine and in_match`)不是次序反转(真值表逐行相同);真正会翻车的唯一写法是把它拆成前置守卫。★★ **Task 7 实测过这条次序反转的可见度:当时全部既有测试面一条都没红** —— 五个探针/冒烟 + 四个场景加载,逐条 `ALL-OK` / `EXIT=0`。**唯一咬得住这一档的是当时新加的相⑧**(`lobby_visibility_probe`（已删·2026-10-09）,现 `EXPECTED_CHECKS` = 38;含一条**独立的正向对照**"普通未满的房仍可点" —— 缺了它,把判据写成 `not mine` 一类会让**正常加入整个坏掉**而全绿)。
-  - `PvpSession` 的 `room_code` / `rejoin` 两个字段 + `can_rejoin()` / `can_rejoin_to(code, mode)` / `clear_rejoin()` / `note_room(code, mode)`;`room_mode`(凭据属于哪个模式)+ `entry_mode`(进大厅时的初始筛选,★ 与 `room_mode` 语义不同)。★ `enter_mode(m)` 与 `PvpSession.mode` **已整体删除**。★ `clear_rejoin()` 与 `reset()` **分开**(后者会把 `server_address` 也拨回云默认 = 把人踢到另一台机器)。
-  - ★★ **凭据必须活过"回主菜单 → 再进大厅页"那一拍,别再往 `reset()` 里加清凭据的行**(C1 的整条修复)。原稿曾让 `reset()` 一并清凭据,而**主菜单那颗「多 人 模 式」每按一次就调它一次** ⇒ 从对局按 ESC 回主菜单、再按「1 v 1」时凭据**正好在那一拍**被抹掉 ⇒ 自己那间"对局中"的房在列表里**恒为灰、点不动**(表现就是"回不去",一行报错都没有)。**凭据真正的死处只有四类,全部落在 `clear_rejoin()` 的调用点上**:① **换房号或换模式**(`note_room` 的两个参数)/ ② 大厅答"回不去了"(`_on_rejoin_denied`)/ ③ 回局 15s 无应答(`_tick_rejoin_timeout`)/ ④ 玩家进了**另一间**房(`note_room`)。守卫:`reconnect_smoke.gd`（已删·2026-10-09） §④(**反向**断言 `reset()` 不许碰凭据)。
-  - ★★ **凭据自带模式(2026-10-03 改)**:`PvpSession.room_mode` 记下「这份凭据属于哪个模式」,由 `note_room(code, mode)` 在**进房那一拍**写入;`can_rejoin_to(code, mode)` 房号与模式**都要对上**。★ 它取代了原先的 `mode` + `enter_mode(m)`(那套的写入点是**主菜单三个联机按钮**,而合一后没有那三个按钮了)。★ 判据仍然是**三张注册表共用同一个 4 位房号空间**:不判模式时,你在 1v1 攒下的 `room_code` 会让**同号的 3v3 房**看起来像「我的房」。★ **换了房号或换了模式才 `clear_rejoin()`;同房号同模式重进必须留着**。守卫:`reconnect_smoke`（已删·2026-10-09） + `lobby_visibility_probe`（已删·2026-10-09） 相⑦d。
-  - ★ **服务端那一半不是判据**:三条 join 守卫保持"对局中即拒绝"(有源码断言钉着),**刻意不含凭据分支** —— "是不是我的房 + 凭据还在"只存在于客户端渲染与 `try_rejoin_row`。
-- **回局路径 = 复用 `go_match`**:点行 → `LobbyPage.try_rejoin_row(code, in_match, mode)`(返回 true = 已走回局,调用方**不再**走普通加入)→ `rejoin_request(room_code, token)` → 大厅 `LobbyRooms.on_rejoin_request` 查凭据表 → `NetBus.reply(caller, "go_match", role, port)` → 客户端与首次进场**逐字同一条路**。★ 第二个入参 `in_match` 是**只有"我的房 **且** 对局中"才走回局** —— 只看凭据的话,**自己那间还没开局的等待中的房**也会走回局,而那种房在大厅侧没有凭据表条目 ⇒ 必收一句与眼前这间房无关的"凭据失效",**普通加入那一半还不发生**。
-  - **唯一分叉在认领那一步**:`_claim_role_worker` 看 `PvpSession.rejoin`,发 `reclaim_role` 而不是 `claim_role`。★ **走错那一条的失败是"静默"、不是"被踢"**:`server_main._begin_match` 在开局那一刻就 `NetBus.role_claimed.disconnect(_on_role_claimed)` ⇒ 迟到的 `claim_role` **根本没有收件人**,既不踢也不打印;可观察的后果是"**这个客户端再也回不来**"。
-  - ★★ **`_do_go_match` 里"只在真收到新 token 时才覆盖"那一行是承重的**:回局路上大厅**不重发** `session_token`(客户端手里那份**就是**凭据本身),无条件覆盖会把唯一能证明"我是原来那个人"的串抹成空 → `reclaim_role` 必被 worker 按"令牌不匹配"拒**并踢连接**,现场一个字都没有。真链路反证实测(删掉那行 → worker 打印 `令牌不匹配`)。
-  - 客户端三条兜底:`_request_rejoin` 发前判活(回局入口**刻意不走 `_with_lobby`**,那条路会 `NetBus.stop()` 重连一次,把刚拿到的列表连同自己那一行一起丢掉)/ 大厅 15s 无应答 / 大厅答"回不去了"(`_on_rejoin_denied`:清凭据 + **重拉列表**)。
-- **凭据表 `server/lobby/rejoin_registry.gd`(`RejoinRegistry`)**:token → `(code, role, worker_port, worker_pid, expires_at)`。★ 它**独立于房对象**(回局的查询要在大厅侧**活过拆除**);三个房类原先各有一份 `tokens` 字段**已随本批删除**。★ 纯逻辑、**不读时钟**(`now` 由调用方传)⇒ `-s` 可测。
-  - **判据是纯函数 `RejoinRegistry.decision(entry, code, worker_alive)`**:返回 `""` = 放行,否则是给玩家看的拒绝理由。★ 三种拒绝**顺序有意义**("凭据根本不存在"必须先于"房间号不符")。
-  - **`TOKEN_TTL_SECONDS`(1h)只是表的 GC 上界,"这一局还在不在"由 `worker_pid` 的活性回答**。★ 分工的理由:"一局打多久"三模式各不同、且**没有可读常量**,而"worker 退了吗"精确且与模式无关。★ TTL **不得短于宽限期**(跨文件不变量,`rejoin_registry_smoke`（已删·2026-10-09） ②b 钉住)。
-  - ★★ **作废该房凭据走 `rejoin.drop_port(worker_port)` —— 键是 worker 端口,不是房间号**:三张注册表的房号**共用同一个 4 位空间**,按 `room.code` 反查会**误伤同号的另一间房**(实测:按 code 作废一次清掉 **2** 份凭据、按端口只清 **1** 份 —— 而失效那间的玩家只是"回不去",**一行日志都没有**)。★ 端口**每间房独占** ⇒ 它是那张表上唯一可用的键。★ `drop_port` 对 `port <= 0` **一律什么都不清**。守卫 `rejoin_keying_probe.tscn`（已删·2026-10-09）:**两个方向都断**。
-  - **表的 GC 搭 30s 回收梯**(`RoomManager._reclaim_finished_matches` 首行 `lobby.rejoin.prune(...)`),**不另立定时器**。
-- ★ **私密房玩家的回局入口(2026-09-29 用户改判并已落地)**:**私密房只对本人列出**。★ **身份只能靠凭据、不能靠 peer**(玩家转连 worker 时大厅那条连接早就断了,`players` 也被摘干净)⇒ 判据是 **`RejoinRegistry.owns(token, code, now_ms)`**:这份凭据是不是**这一间房**的。★ 它**只看 TTL、不看 worker 活性**(列表只回答"要不要给你看那一行")。
-  - **改动面刻意收窄**:两份载荷与两个 handler 各多一个**带默认值**的 token 参数(**不传 = 与从前逐字相同**);`NetBusExt` 的 `royale_list` / `team_list` 各多一个 `token` 形参(★ 改的是 **NetBusExt** —— **原版 `NetBus` 的方法表一个字没动**);统一大厅请求列表时带上 `PvpSession.token`。**客户端行可点性无需改动**。守卫:`lobby_visibility_probe`（已删·2026-10-09） 相⑨(7 条,38 → **45**)+ `rejoin_registry_smoke`（已删·2026-10-09） 段⑦(5 条,7 → **8**)。★ 相⑨ 的**正向对照**(公开房对无凭据者照列)与 **3v3 同款**两条都不是客套。★ 照实登记:`owns` 里 `token.is_empty()` 那个早退**今天是一根保险带,不是承重件**。
-- **★★ 已知边界与守缺口(照实登记,别读成"已修好")**:
-  - **回局只在宽限期内真正成功**:宽限到期后 worker 会 `mark_disconnected` 或收场退进程,而届时大厅**仍可能放行**,客户端连过去会被 `_on_reclaim` 的判据②**踢连接**。
-  - **pid 复用**:与 §对局中的房 登记的是**同一条已知边界**(**别在两处各写一份**)。
-  - ★ **`_request_rejoin` 的判活守卫没有任何行为面证据**:它那条**假分支**只有"点那一行的那一刻大厅连接已经断了"才进得去,而那一刻它会**真的开一次大厅连接**(统一大厅默认还是云地址)⇒ 拿它做断言等于让探针去连**用户自己的服务端**,故**探针明令不碰**。登记为**环境缺口,不是探针缺口**。
-  - **引擎自己那条 `max channels: 0`**:回局那条路同样会踢连接,**已登记、不修**。
-  - **`ai_duel` 那条 spawn 路径不登记凭据**:`RoomManager.ai_duel` 既不发 `session_token` 也不调 `_grant_rejoin`,且**开局即把房从注册表摘除** ⇒ **AI 对战局没有回局入口**。照实登记,不修。
-- **守卫与判词**(判据一律是**文本**,不看退出码):`rejoin_registry_smoke.gd`（已删·2026-10-09）(`-s`)→ `REJOIN REGISTRY: ALL-OK`(段数对账 7/7)/ `rejoin_keying_probe.tscn`（已删·2026-10-09） → `KH REJOIN-KEY PROBE: ALL-OK` / `tests/probe/rejoin_probe.tscn`(+ `rejoin_watcher.gd` + `rejoin_probe.sh`)→ **`REJOIN PROBE: ALL-OK`** —— 真链路**三端**(c1 = actor 离场再回局、c2 = 见证端、c3 = 第三人看得见进不去),自当大厅与裁判(**池外端口 29300;worker 起投 29350**),★ **不占也不杀 7777**。
-  - ★★★ **c1 的两次进场都走生产入口**:`_enter_main_menu()` → **按主菜单上那颗「1 v 1」**。**曾经它绕过主菜单直接挂页**,而主菜单那一步**正是** C1 抹掉凭据的那一步 ⇒ 唯一会红的观测者刚好绕过了唯一会红的那一步。守卫是**反证**:把 `reset()` 清凭据那四行放回去 ⇒ 探针红。★ 两个**探针自身的**坑:① **`freed_node == null` 在 Godot 4.7 是 `true`** —— 判"页还在不在"只能用 `is_instance_valid()`;② **相 0 的推进条件只能是"真进了对局"**。★ **用户跑**(整跑约 60~110 秒;收尾**按 PID** 杀子进程)。
-  - 既有探针被本批**加相**:`lobby_visibility_probe`（已删·2026-10-09）(相⑤⑥⑦⑧⑨)/ `grace_window_smoke`（已删·2026-10-09）(⑧ 钉 `DEFAULT_SECONDS` + 三档延迟的 belt;⑨ **按宽限期算出来的跑批预算逐条钉住**。★ 落伍的症状不是"红一条断言",而是**探针自己先到点:一行裁决都不打印**,与真失败**长得一模一样**;这个坑**已烂过两次**)。
-  - ★ **跑法分工**:agent 可跑 = `--import`、全部 `-s` 冒烟、`lobby_visibility_probe.tscn`（已删·2026-10-09）、各页面 `--quit-after 120` 启动自检;**用户跑** = `rejoin_probe.sh`、`reconnect_probe.tscn`(池外端口,但耗时长且按 PID 杀子进程)、以及一切占 **7777** 的既有脚本。★ **加新断言时留意 `EXPECTED_CHECKS` 那类计数**。
+### 4. 层位与通道（碰撞层是协议的一部分）
 
+| 层 | 用途 |
+|---|---|
+| 1 | 地形 |
+| 2 | 玩家 |
+| 4 | 敌人 |
+| 8 | 掉落物 |
+| 16 | 队 B 身体层 |
 
-### RPC 通道划分表(★ 单一来源)
+★ **客户端子弹的 `collision_mask = 5`**（层 1 + 层 4）而对手是**层 2 的幽灵体** ⇒ 物理上**永不接触**；
+观感是"伤害算到了却像穿透"。判据与服务器裁决**同常量同公式**（`HIT_RADIUS` + 环面最短距离）。
+★ **`NetBusExt` 里有一个同名遗留的 `beam_fired`**：挂错节点 = 静默 no-op（对手的枪凭空消失/永不再现）。
+通道号的**唯一来源**见 [`netplay-rpc-channels.md`](netplay-rpc-channels.md)。
 
-> **为什么**:全仓 `@rpc` 原先**无一例指定通道** ⇒ 可靠流量全挤在一条道上:一次 `bullet_spawn` 的
-> **重传**会顶住它后面**所有**可靠事件(含 10Hz 状态镜像)。按**流量类别**分流后,"一次性可靠载荷"的重传
-> **不再堵住**"高频输入 / 状态镜像 / 会话序列"。
+### 5. 端口池与建局引导（单一来源）
 
-> ★★ **通道号怎么映到 ENet(读引擎源码得的,不是猜的)** —— `modules/enet/enet_multiplayer_peer.cpp::put_packet`:
-> ```cpp
-> int channel = SYSCH_RELIABLE;              // 0
-> switch (get_transfer_mode()) {
->     case TRANSFER_MODE_UNRELIABLE: channel = SYSCH_UNRELIABLE; break;  // 1
->     case TRANSFER_MODE_RELIABLE:   channel = SYSCH_RELIABLE;   break;  // 0
-> }
-> if (tr_channel > 0) { channel = SYSCH_MAX + tr_channel - 1; }        // = tr_channel + 1
-> ```
-> ⇒ **`transfer_channel = 0` 不是"第 0 条用户道",而是"系统默认"**:引擎自己就按可靠性分流
-> (**reliable → ENet 0 / unreliable → ENet 1**)。★ 所以 **unreliable 的快照本来就已经与可靠载荷隔离**,
-> **不要**给它 `transfer_channel = 1` —— 那会把它从系统 unreliable 道挪到用户道 ENet 2,是一次
-> **没有理由的行为改变**(本批差点这么写,已订正)。真正需要分流的是**可靠流量内部**。
+- **端口段单一来源 = `server/lobby/worker_launcher.gd`**：`WORKER_PORT_BASE = 7800`、`WORKER_PORT_SPAN = 500`
+  ⇒ 实际池 **[7800, 8300)**。★ 旧页面手写过 "7800~7999" —— **照它放行防火墙会漏掉半个池子**。
+- 三档端口归还延迟（`*_PORT_REUSE_DELAY`）**不再与宽限期绑定**：承重的是"worker 进程活着 ⇒ 房与它占的端口都还在"
+  （房活到 worker 退出）。历史教训：**30 → 120** 的那次调整不是让延迟承重，而是承认延迟测不准。
+- **建局引导已搬到 `server/match/match_bootstrap.gd`**，调用点在 `server/server_main.gd`。
 
-> ★★ **分道的判据(比"按类别分"更硬的一条)**:**凡是与「会话 / 回局生命周期」成序列的消息,一律留控制道。**
-> 因为跨通道**不保序** —— 例:`round_state` 必须排在 `match_start`/`go_match`(切场景)**之后**,而它是
-> **变更时发送**(非周期)⇒ 一旦被切场景那条超越,客户端在还没进对局场景时收到它 ⇒ 处理节点不存在 ⇒
-> **那次宣告永久丢失**(下一次要等下一次变更)。同理 `*_options`/`peer_hues`/`room_map` 是**大厅期**的会话消息。
-> ⇒ 只有**比赛期内的高频 FX / 生成事件**(子弹、光束、拆墙、命中、击杀、武器增删)才进 ENet 4。
+### 6. 几个"看起来该红却没红"的实测
 
-> **`@rpc` 的写法(2026-10-08 实测 + 官方文档)**:签名 `@rpc(mode, sync, transfer_mode, transfer_channel)`,
-> 四参**全写**:`@rpc("authority", "call_remote", "reliable", 3)`。实测两条:① 只写三参并把 int 放第 3 位
-> 会被引擎拒 —— `Parse Error: Invalid argument for annotation "@rpc": argument 3 should be "String" but is "int"`;
-> ② 四参形态解析通过。官方文档补充:**`mode`/`sync`/`transfer_mode` 三个字符串的顺序无关**(按集合匹配),
-> 而 **`transfer_channel` 必须是最末那个 int** ⇒ 中间项不能省。`sync` 写 `"call_remote"` 是**默认值**,
-> 语义不变(本表**只加通道**,不动 mode/transfer_mode)。
-
-> **★ 可观测性上限(照实)**:通道号**无法在运行期回读** —— `GDScript.get_script_method_list()` 的元素键只有
-> `["name","args","default_args","flags","id","return"]`,**没有** `rpc_config`。⇒ 唯一能自动化的判据是
-> **本表 ↔ 声明的文本对账**(代理判据,见 [`tests/smoke/rpc_channel_contract_smoke.gd`](../../tests/smoke/rpc_channel_contract_smoke.gd));
-> 要**行为级**证明"分流真的生效",需要两个 peer 分别占不同通道对打(今天**没有**这条路径,登记为覆盖上限)。
-
-> **作用域**:产品**声明 59 条**(`net_bus.gd` 28 + `net_bus_ext.gd` 31)。`reconnect_smoke.gd`（已删·2026-10-09） 的
-> **13** 条是测试桩自己的 RPC ⇒ **不在作用域内**。★ 裸 `grep -rn "@rpc("` 还会多出 `server/match/match_state.gd:219`
-> 那条**注释**与 `.superpowers/` 备份目录 ⇒ **别拿裸 grep 的行数当作用域**。
-
-> **通道容量**:`core/net/net_bus.gd` 的 `const ENet_CHANNELS := 4` 传给 `create_server/create_client`,而引擎会
-> 自己 `+ SYSCH_MAX(2)` ⇒ ENet 实际有 6 条道(0~5),`transfer_channel` 可用 1~4。本表最大用 3 ⇒ 落在 ENet 4 ✓。
-
-| `transfer_channel` | 实际 ENet 道 | 语义 | 为什么这样分 | 该通道上的 RPC(逐条点名) |
-|---|---|---|---|---|
-| **0**（默认） | reliable→**0** / unreliable→**1** | 关键握手 / 会话序列 / 生命周期宣告 **+ 全部快照** | ★ 走**系统默认**(reliable 0 / unreliable 1):快照**已经**与可靠载荷隔离,不需要用户通道;**且成序列的消息必须同一条道**(跨通道不保序) | `ai_duel` / `claim_role` / `create_room` / `go_match` / `join_room` / `list_rooms` / `lobby_name` / `match_options` / `match_start` / `match_sync` / `match_sync_data` / `opponent_left` / `peer_hues` / `peer_info` / `ping` / `player_options` / `pong` / `reclaim_role` / `rejoin_denied` / `rejoin_request` / `report_token` / `room_created` / `room_joined` / `room_list` / `room_map` / `round_state` / `royale_create` / `royale_join` / `royale_leave` / `royale_list` / `royale_rooms` / `royale_start` / `royale_start_ai` / `server_message` / `session_token` / `snapshot_own` / `snapshot_world` / `suicide_request` / `team_create` / `team_join` / `team_leave` / `team_list` / `team_pick` / `team_rooms` / `team_start` |
-| **1** | **2** | 60Hz 输入 | 60Hz 且单向高频;与一次性载荷分开后,一次重传不再顶住输入 | `send_input` |
-| **2** | **3** | 10Hz 状态镜像 | 10Hz 状态镜像;它们**后面的东西等不起**,而载荷相对小,单开一条道 | `royale_room_state` / `team_room_state` / `time_state` |
-| **3** | **4** | 比赛期内的一次性 FX / 生成事件 | 允许重传,但**别堵住别人** —— 这就是本表存在的理由;只放**比赛期内**的高频事件 | `beam_fired` / `beam_fired` / `bullet_spawn` / `hit_confirm` / `hit_event` / `kill_event` / `sub_destroyed` / `tile_destroyed` / `weapon_removed` / `weapon_spawned` |
-
-**合计 59 条**:`transfer_channel` 0 = 45 / 1 = 1 / 2 = 3 / 3 = 10。
-
-★ **表里 58 个方法名、声明 59 条** —— 差的那一条是**刻意的重名**:`beam_fired` 在 `net_bus.gd`(248)
-与 `net_bus_ext.gd`(41) **各声明一次**(`net_bus_ext.gd` 那份自己的注释写着"原版 NetBus 逐字节不动,
-新 RPC 进 NetBusExt" ⇒ ext 那份是**遗留**)。这件事**本仓栽过**:重名 = 接收端挂错节点 = **静默 no-op**,
-裁定见 [`scenes/pvp_match_client.gd`](../../scenes/pvp_match_client.gd)(**必须走 NetBus**,不是 NetBusExt)、
-[`scenes/pvp_game.gd`](../../scenes/pvp_game.gd)(发送端走 NetBus)、判据见
-`kh_l6_probe.gd`（已删·2026-10-09）(**同行**必须含 `NetBus.rpc_id(`)。
-⇒ **两份必须给同一通道**(今天都是 3),`rpc_channel_contract_smoke` 把"重名集合恰好 = {beam_fired}"
-**钉成一条断言** —— 新出现一个重名、或 beam_fired 被删掉一份,都会红。
-
+- **拾取插桩的两种成因分类**（判据:玩家 400px 内每 30 物理帧一行，`canon` / `render` 两栏是重点）：
+  ① 静默 `return` 没建出枪；② `canonical_pos` 与画出来的位置分家。
+- **幻影空洞**：顺序必须是"**先还原 + 再应用 == 服务器的 grid**"（不上线任何新字节）；**反过来症状与
+  "根本没还原"逐字相同**。`reset_destructibles()` 只重铺瓦片层 + 重建碰撞（**不碰**玩家/子弹/地面武器）。
+- **菜单守卫的"探针兼容访问口"现在是零读者**：`ui/hud/pvp_hud.gd` / `team_hud.gd` 里为已删探针留的转发
+  **已经没有读者**（清理候选，见 [`debt/unverifiable-boundaries.md`](debt/unverifiable-boundaries.md) 的兄弟条目）。
