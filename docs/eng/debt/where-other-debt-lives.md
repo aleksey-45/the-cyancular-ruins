@@ -11,4 +11,4 @@
 | 各域的「已知边界(登记不修)」 | 对应 [`docs/eng/`](.) 域文档正文里,以「★ 已知边界(登记)」开头(如 `weapons.md` 的容量分叉、`render.md` 的挤压副产物) |
 | 代码内契约与残留 | 源码注释里的「★ 已知」「★ 待修」 |
 | 逐任务评审判决与恢复地图 | `.superpowers/sdd/progress.md`(**gitignore**) |
-| 2026-10-04 全仓审计发现的 20 条(含 `[debug]` 键失效、发布包打进 tests、`ax` 无界等) | [`docs/eng/audit-2026-10-04-design-conventions.md`](../audit-2026-10-04-design-conventions.md) §7 的批次清单,等人工挑入本表 |
+| 2026-10-04 全仓审计发现的 20 条(含 `[debug]` 键失效、发布包打进 tests、`ax` 无界等) | [`docs/archive/audit-2026-10-04-design-conventions.md`](../../archive/audit-2026-10-04-design-conventions.md)（★ **已封存**·2026-10-13；只作查证、**不当规范**） §7 的批次清单,等人工挑入本表 |

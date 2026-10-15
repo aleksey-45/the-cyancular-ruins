@@ -76,9 +76,9 @@ Godot 不在 PATH,用绝对路径。**4.7.1 标准编辑器**是当前主用版�
 | playout 时钟与同步来源(NTP / RTP / Valve) | [`netcode-playout-clock-sync-sources.md`](docs/eng/netcode-playout-clock-sync-sources.md) |
 | 抖动缓冲实践(与 netfox 对照) | [`netcode-jitter-buffer-practice.md`](docs/eng/netcode-jitter-buffer-practice.md) |
 
-★ **一次性时间点报告 —— 不是现行规范**(只在回溯"当时为什么这么判"时读):[`conventions-review-2026-10.md`](docs/eng/conventions-review-2026-10.md)、[`audit-2026-10-04-design-conventions.md`](docs/eng/audit-2026-10-04-design-conventions.md)。
+★ **一次性时间点报告 —— 已封存,不是现行规范**(2026-10-13 从 `docs/eng/` 整体挪进 [`docs/archive/`](docs/archive),只在回溯"当时为什么这么判"时读):[`conventions-review-2026-10.md`](docs/archive/conventions-review-2026-10.md)、[`audit-2026-10-04-design-conventions.md`](docs/archive/audit-2026-10-04-design-conventions.md)。
 
-★ **上表是手抄的,会漂** —— **真相源 = `ls docs/eng/*.md`**(本行写时是 **25 份**)。
+★ **上表是手抄的,会漂** —— **真相源 = `ls docs/eng/*.md`**(本行写时是 **23 份**;那两份一次性报告已挪进 `docs/archive/`)。
 `tools/check_naming.py` 的**规则 C** 已改成 **glob 覆盖全部 `docs/eng/*.md`**(2026-10-13 之前是写死的 11 个名字 ⇒ 另外十几份的路径引用**从来没人守**;同日还堵掉了"缀一个 `:55` 就绕过检查"的洞)。
 ★ **既有红 / 待还的债**(不算守卫的探针、重复真相源候选)登记在 [`docs/eng/registered-debt.md`](docs/eng/registered-debt.md)。
 ★ **测试与守卫的判据纪律**在 [`docs/eng/tests.md`](docs/eng/tests.md);跑测试的分工见本文件 §常用命令 的约定。

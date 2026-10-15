@@ -30,7 +30,7 @@
   ★ **2026-10-15 订正**:那条守卫**已删(2026-10-09)** ⇒ 现在是**零守卫**(配额本身仍可在
   `project.godot` 的 `[debug] file_logging/max_log_files=64` 上直接读到);
   于是本条"5 → 64"作为**交付**重新成立(键名按订正后的写法读)。取证见
-  [审计报告 §1.2](eng/audit-2026-10-04-design-conventions.md)
+  [审计报告 §1.2](archive/audit-2026-10-04-design-conventions.md)（★ **已封存**·2026-10-13 ⇒ 只作查证、不当规范）
   (★ 那份审计是当天的快照:它 §1.2 里那句"这条保障今天不存在"写于本次恢复**之前**,别当作现状)。
 
 **回归**：`--mode=royale --scene=L1 --test-ground-teleport` 仍然 `PROBE: ALL-OK`

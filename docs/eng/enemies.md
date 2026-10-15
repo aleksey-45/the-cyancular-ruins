@@ -5,7 +5,7 @@
 > [`docs/superpowers/specs/2026-10-09-test-surface-cut-90-design.md`](../superpowers/specs/2026-10-09-test-surface-cut-90-design.md)。
 > ★ 读法:**不要**因为路径还在句子里就以为守卫还在 —— 标了就是没有了。
 
-> 从 [`CLAUDE.md`](../../CLAUDE.md) 拆出(2026-10-03,原文逐字未改)。★ **2026-10-04 已按源码订正 1 处过期事实**(黑鸟瞬移距离 2~4→2~6 格、冲锋伤害 6→7;行内已改,原文值见 [审计报告 §3](audit-2026-10-04-design-conventions.md))。返回索引:[`CLAUDE.md`](../../CLAUDE.md)。
+> 从 [`CLAUDE.md`](../../CLAUDE.md) 拆出(2026-10-03,原文逐字未改)。★ **2026-10-04 已按源码订正 1 处过期事实**(黑鸟瞬移距离 2~4→2~6 格、冲锋伤害 6→7;行内已改,原文值见 [审计报告 §3](../archive/audit-2026-10-04-design-conventions.md))。返回索引:[`CLAUDE.md`](../../CLAUDE.md)。
 > 本文件覆盖:敌人(scenes/enemies/)。
 > ★ 文档会过期 —— **任何冲突以源码为准**,读之前先 `grep` 复核。
 

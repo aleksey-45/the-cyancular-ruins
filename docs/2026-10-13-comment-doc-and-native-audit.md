@@ -314,8 +314,8 @@
 | 文件 | 行数 / 字节 | 判断 |
 |---|---|---|
 | `docs/eng/registered-debt.md` | **888 行 / 126,232 B** | ★★ **已越过同一根线**,且是"动手前先看它"的入口 ⇒ 按主题拆 `docs/eng/debt/`(既有红 / 重复真相源 / 各域登记 / 削减账 / 已销),本体只留索引 + §四 落点表 |
-| `docs/eng/conventions-review-2026-10.md` | 704 行 / 63,442 B ★ | 一次性时间点报告却住在规范目录 ⇒ 整体归档 `docs/archive/`(维度 = 时间) |
-| `docs/eng/audit-2026-10-04-design-conventions.md` | 554 行 / 58,289 B ★ | 同上;被 `world.md`/`render.md` 正向引用 ⇒ 归档时**保留锚点节** |
+| `docs/eng/conventions-review-2026-10.md` | 704 行 / 63,442 B ★ | 一次性时间点报告却住在规范目录 ⇒ **已于 2026-10-13 整体归档**到 `docs/archive/`（维度 = 时间）|
+| `docs/eng/audit-2026-10-04-design-conventions.md` | 554 行 / 58,289 B ★ | 同上 ⇒ 同日一并归档；被 `world.md`/`render.md`/`RELEASE.md` 正向引用 ⇒ **那些引用处已按档案纪律标"已封存"** |
 | `docs/eng/netcode-*.md`(8 份) | 合计 1,502 行 ★ | 其中 4 份标题自带"一手来源调研(增量)/细节" = 调研笔记而非域规范 ⇒ 可按主题合成 2 份(wire-format / clocks-and-interp) |
 | `docs/eng/tests.md` | 104 行 | 行数小但**结构已崩**:探针清单 87% 失效、另有自陈"已降级为历史记录"的段落 ⇒ **整段删**,判据面让给 `run_all.sh --list` 与 `tests/README.md` |
 

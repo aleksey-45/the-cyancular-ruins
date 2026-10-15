@@ -40,7 +40,7 @@ python tools/build_release.py                      # 写版本信息 → 客户�
 > ★★ **当前主线是 `0.5.0`**:单人肉鸽第一个版本按策划案定为 V0.5.0,之后**版本停在 0.5.0、每次构建用时间戳区分**
 > (形如 `RoF_v0.5.0_202610040204`)。★ **真相源只有一处**:`project.godot` 的 `application/config/version`;
 > 发布标识的前缀来自同文件的 `release_prefix`。**别再在文档里另抄一份版本号** —— 抄过的地方都过期过
-> (历次清理见 `docs/eng/audit-2026-10-04-design-conventions.md` §9)。
+> (历次清理见 `docs/archive/audit-2026-10-04-design-conventions.md` §9 —— ★ **已封存**(2026-10-13),只作查证、**不当规范**)。
 
 > 写 `v0.5.0` 会让导出预设的 `get_version` 报警告、并让导出失败 —— `v` 前缀由脚本在**展示与文件名**上加。
 > 导出前脚本会把 `RoF_v0.5.0` + 构建时间戳(`YYYYMMDDHHMM`)写进 `core/config/build_info.gd`,导出后**自动还原**成
