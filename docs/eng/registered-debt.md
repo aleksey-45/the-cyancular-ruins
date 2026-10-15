@@ -28,7 +28,7 @@
 | §三 | 三、怎么销一条 | [`how-to-close.md`](debt/how-to-close.md) | 10 |
 | §四 | 四、本文件**不收**的那些债住在哪(2026-10-04 加) | [`where-other-debt-lives.md`](debt/where-other-debt-lives.md) | 10 |
 | §五 | 五、守卫强度已知缺口(2026-10-04 加) | [`guard-strength-gaps.md`](debt/guard-strength-gaps.md) | 123 |
-| §六 | 六、功能性已知边界(2026-10-04 加) | [`functional-boundaries.md`](debt/functional-boundaries.md) | 467 |
+| §六 | 六、功能性已知边界(2026-10-04 加) | [`functional-boundaries.md`](debt/functional-boundaries.md)（57 KB）+ 续篇 [`unverifiable-boundaries.md`](debt/unverifiable-boundaries.md)（13 KB，2026-10-13 按 64KB 判据拆出） | 467 |
 | §七 | 七、已裁定不做(won't fix,2026-10-04 加) | [`wont-fix.md`](debt/wont-fix.md) | 202 |
 | §八 | 八、2026-10-09 测试面削减**新增/改口**的登记项 | [`test-cut-2026-10-09.md`](debt/test-cut-2026-10-09.md) | 20 |
 
