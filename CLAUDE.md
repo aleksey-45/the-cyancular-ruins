@@ -11,7 +11,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Godot 4.7(标准版,非 mono)做的 2D 横版(平台跳跃)射击 demo「The Cyancular Ruins」。1920×1440 视口、`rendering/mobile`。核心特色:
 
 - **环面世界**:地图左右/上下无缝回绕,敌人/子弹/镜头跨接缝连续。
-- 单关卡(Level0)从 ASCII 地图文件加载,无运行时随机生成(生成逻辑已注释)。
+- 单关卡(Level0)从 `maps/*.cyrm` 加载(现行 = **v4 二进制**,见 [`docs/eng/world.md`](docs/eng/world.md));**每次会话随机取一份地图文件**,不做运行时地形生成。
+  ★ **2026-10-13 订正**:原文写"从 **ASCII 地图文件**加载,无运行时随机生成(生成逻辑已注释)" —— 三处都不准:
+  ASCII 是 v1/v3 时代的**旧文本格式**(现行是 `CYRM\x04` 二进制);`MazeGenerator._random_cyrm()` 会
+  **随机选一份** `.cyrm`(那是选图,不是生成);旧的生成逻辑已拆进 `MapFormat` / `GridPathfinder`。
 
 ## 常用命令
 

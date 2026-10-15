@@ -3,7 +3,8 @@
 > 2D 横版(平台跳跃)射击 demo · Godot 4.7 · 环面(Torus)无缝世界 · 单人 + PvP
 
 A side-view 2D shooter-platformer demo built in Godot 4.7, with a seamless wrap-around
-(torus) world and both single-player and 1v1 networked play.
+(torus) world: single-player, plus networked play in **three modes (1v1 / 3v3 / battle royale)**.
+★ **2026-10-13 订正**:原文只写 "1v1 networked play" —— 3v3 与大乱斗早已落地。
 
 ---
 
@@ -33,6 +34,18 @@ A side-view 2D shooter-platformer demo built in Godot 4.7, with a seamless wrap-
 - 不同对局 = 不同 worker 进程 = **内存隔离**(拆墙/回合等状态不跨局互扰)。
 - 客户端默认服务器 IP:`120.53.107.140`(可在匹配界面改)。
 
+### 三种模式(权威都在**服务器侧宿主**,客户端只显示)
+
+| 模式 | 打法 | 胜负 | 局内死亡 |
+|---|---|---|---|
+| **1v1**(`server/match/match_host.gd`) | 回合制对抗 | 每局先到 **5 击杀**赢、**三局两胜**;局间换边 | 2s 后复活 |
+| **3v3**(`server/hosts/team_host.gd`) | 6 人两队各 3 | 每队先到 **9 击杀**赢一局、三局两胜;局间**整队**换边 | 2s 后复活 |
+| **大乱斗**(`server/hosts/royale_host.gd`) | N 人**限时**死斗、散点出生 | 倒计时归零 ⇒ **击杀最多者胜**(并列 = 0);剩 <2 人提前终局 | 2s 后复活(复活点动态避开敌人) |
+
+★ 计分口径:**1v1 / 3v3 不分死因**(任一玩家倒地 ⇒ 对方得分);**大乱斗按 `last_damager` 归因**、无源死亡不计分。
+★ 三个模式宿主共用 [`server/match/match_state.gd`](server/match/match_state.gd) 的基类;细节与"为什么"见 [`docs/eng/modes.md`](docs/eng/modes.md)。
+★ **2026-10-13 补**:本节此前**只讲 1v1**(全文 0 次提到 3v3 / 大乱斗),而两种模式早已落地。
+
 ### 跑服务端
 - **本地/局域网**:双击 `start_server.bat`(自动杀旧进程、启动大厅)。
 - **导出版**:双击 `Cyancular Ruins Server.exe`(大厅,带控制台;会自动拉起每局 worker)。
@@ -42,7 +55,7 @@ A side-view 2D shooter-platformer demo built in Godot 4.7, with a seamless wrap-
 1. 主菜单 →「多人」
 2. 服务器地址框填主机 IP(默认云 IP;局域网填主机局域网 IP)
 3. 「建房」开一局并把房间号告诉对手;或「刷新」看房间、手动填房间号点「加入」
-4. 对局开始:回合制——每局先到 **5 击杀**赢,三局两胜,局间换边
+4. 对局开始:**1v1 是回合制** —— 每局先到 **5 击杀**赢、**三局两胜**、局间换边;3v3 与大乱斗的差别见上面的「三种模式」表
 
 ---
 
