@@ -21,3 +21,65 @@ CharacterBody2D:指数缓动移动手感、土狼时间/跳跃缓冲/可变高�
 - **结构(轻量拆分)**:根 `player.gd` 只留移动/姿态/物理帧编排;攀爬、战斗、武器分别抽成 `ClimbComponent`/`CombatComponent`/`WeaponComponent`(scenes/player/player.tscn 子节点)。组件**不写自己的 `_physics_process`**,由根每帧显式按顺序调用(`climb.update → 移动 → combat.apply_knock → move_and_slide`)。根公开接口 `take_hit/get_facing/set_facing/is_downed/apply_recoil`、信号 `hp_changed`、只读 `hp/max_hp` 原样保留。契约守卫 `player_contract_smoke.gd`（已删·2026-10-09）(源码级)。
 - **输入可注入**:根读输入走 `core/net/player_input.gd` 的 `PlayerInput`(**纯接口**;本地那份是 `local_input_source.gd` 的 `LocalInputSource`,网络包那份是 `packet_input_source.gd` 的 `PacketInputSource`)。三种实现以 `source_kind()` 的枚举(`LOCAL`/`PACKET`/`AI`)自报家门。PvP 服务器注入包驱动远端玩家;瞄准有 `get_aim_dir_override()` 覆盖钩子。
 
+---
+
+## 实测读数与不变量（2026-10-13 从**代码注释**搬出）
+
+> 原始台账（带原行号与出处）：[`2026-10-13-comment-diet-ledger.md`](../2026-10-13-comment-diet-ledger.md) §3 / §7 / §11 / §12。
+> ★ 这里是**手感与保真的实测依据** —— 改移动/回溯/换弹前先在这里查"为什么是这个数"。
+
+### 1. squash 的两条路径：一条真违规，一条根本不存在
+
+- **梯子下行**：k ≈ **0.735** 被钳到满幅 **−10%**（`scale = (1.1000, 0.9000)`）—— 这是**真违规且每帧**
+  （爬梯本来就不该有落地挤压）。
+- **水中那条**：**不重叠**。`Water.feet_offset` 取的是碰撞箱底边 ⇒ 脚底探针**恒落在 wall 支撑格里**
+  ⇒ `in_water ∧ on_floor` 重叠 **0 帧** ⇒ 当年登记的"站池底永久 ~9% 挤压"**并不存在**。
+  **过滤它**买到的是另一种观感：下沉窗口的 `_air`（320/700 × 0.30 ≈ 0.137 ⇒ `scale = (0.9863, 1.0137)`）。
+- **副本侧的账**：同口径项已于 2026-09-20 补上（`player_replica._in_water`，走**本地网格查询**、**零协议字段**）；
+  ★ **爬梯那一半仍是残留**（spec §4.3）⇒ 本体与副本在爬梯时的形变仍可能不一致。
+
+### 2. 加速为什么走"速度域"而不是"缩放 delta"
+
+实测手感：**缩放 delta** 会让**坠落变快、跳跃变低、移速不变**（三个都变 ⇒ 手感崩）；
+**缩放速度域**（水平速度目标 × tm、重力/跳跃保持）才对。
+`_push_haste_mult` 有**三个消费点**（游泳走调用参数、攀爬/武器走注入成员）；
+服务端写点在 `server/match/match_host.gd`（`haste` 字段），快照读点在 `match_snapshot.gd`。
+
+### 3. 按名访问（反射）的三种失败形态 —— 都**不报错**
+
+| 写法 | 拼错时的行为 |
+|---|---|
+| `get("x")` | **静默返回 null** |
+| `set("x", v)` | **静默不写** |
+| `call("x")` | 报**通用错误**，并**中止整个 `rewind_restore`** |
+
+★ Godot 4.7.1 对 `class_name` 类型的未知成员只当**警告级** unsafe 访问（`project.godot` 没把
+`unsafe_*` 升成错误）⇒ 类型化买到的是"**当场点名成员带行号**"，**不是编译期红**。
+★ **同族真事故**（`core/sim/world_rewind.gd`）：`_current_slot` 改名 ⇒ 快照变空字典 ⇒ **第一个键就早退**
+⇒ 位置/HP/武器**全不还原**；改回退役名后 `rewind_probe` **7 条红**（位置差 **276px**、HP **30≠50**、
+HUD 血量通知未触发），同一跑引擎每帧报 `Nonexistent 'int' constructor`（**83 行**）。
+
+### 4. 回溯保真的两处缺陷（发现 A / B）与它们的覆盖上限
+
+- **发现 A**：切枪帧 `index=1 mag=9` ⇒ 入树后 `mag=4`。
+- **发现 B**：快照 `wmags=[11,1]` / `widx=1` ⇒ 切枪后 `held[0].mag=3`。
+- 覆盖它的 S8-A/B/C/D 四条变异各有对应关系（见 `docs/eng/debt/` 的登记）。
+  ★ **覆盖上限照实写**：S8 **直调本函数**、**不覆盖真回溯的帧选择**；PvP 那份 `MatchHost._apply_rw_frame`
+  的**行为侧没有 headless 守卫**（归"真链路批 A"，而批 A 结构上碰不到它）。
+- **`apply_mag` 顺带钳位 `[0, mag_size]`**：其中"范围内逐位等价"是**推理不是实测**；
+  越界档（"快照之后那槽换型号"）**没有任何断言**（债 §六.3）。
+
+### 5. 复活与换弹语义（和旧版不同，别按旧文档改）
+
+- **背包化前的旧语义**：`reset_mag_state → equip_type(default_type()) → refill_current_weapon`
+  ＝"**复活即回默认枪 + 满弹**"。
+- **今天**：单机重开由 `Level0.restart_single` **统一重置**；联机复活是"**除随机一把外全丢**"。
+- **联机长按丢弃曾形同虚设**：早先 `if pvp_mode: return` 直接返回（当时阈值 2s，现 **0.6s**）；
+  而 `LocalInputSource` 的 drop 读口当时报"Q 按着" ⇒ **碰一下 Q 就丢、按住每 tick 丢一把**。
+
+### 6. 两个"换场景"的坑（都会表现为崩溃或黑屏）
+
+- `host_level` 的实测：**探针里给 `current_scene` 赋值不生效**。
+- **重建世界会偶发原生段错误**（重启后蓝屏 / 地图未加载）。**推迟一帧**与 `safe_change_scene` **同因**：
+  立刻摘树会触发 CanvasItem 的 `EXIT_TREE`。
+
