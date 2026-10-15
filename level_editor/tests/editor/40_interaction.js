@@ -211,7 +211,7 @@ module.exports = (async function () {
     Editor.app.st.tool = 'select';
     sel = null;                                   // ← Esc 已经把选区清掉了
     Editor.app.st.selDrag = { from: { kind: 'sub', x: 22, y: 4 }, dx: 8, dy: 0 };
-    calls.length = 0; errs.length = 0;
+    calls.length = 0;
     Editor.app.canvas.onpointerup({ button: 0, clientX: 0, clientY: 0 });
     ok(errs.length === 0 && calls.indexOf('editCells') < 0 &&
        countNonZero(mE, Core.LAYER_SCENE) === nE,
@@ -226,7 +226,7 @@ module.exports = (async function () {
     Editor.app.st.tool = 'select';
     sel = { x: 4, y: 4, w: 4, h: 4 };
     Editor.app.st.selDrag = { from: { kind: 'sub', x: 4, y: 4 }, dx: 4, dy: 0 };   // ← 拖动在飞
-    calls.length = 0; selDragArgs.length = 0; errs.length = 0;
+    calls.length = 0; selDragArgs.length = 0;
     pressKey('Escape', { tagName: 'BODY' });
     ok(Editor.app.st.selDrag === null && sel === null &&
        selDragArgs.length === 1 && selDragArgs[0] === null,
@@ -234,7 +234,7 @@ module.exports = (async function () {
        '撤掉偏移(setSelDrag 的实参必须是 null;实得实参 ' + JSON.stringify(selDragArgs) +
        ' / 记录还在=' + !!Editor.app.st.selDrag + ' / 选区=' + JSON.stringify(sel) + ')。' +
        '★ 少了清记录这一半,"取消"与"别的什么把选区清掉了"就分不开');
-    calls.length = 0; errs.length = 0;
+    calls.length = 0;
     Editor.app.canvas.onpointerup({ button: 0, clientX: 0, clientY: 0 });
     ok(errs.length === 0 && calls.indexOf('editCells') < 0 &&
        countNonZero(mE2, Core.LAYER_SCENE) === nE2,
@@ -246,7 +246,7 @@ module.exports = (async function () {
     sel = { x: 4, y: 4, w: 4, h: 4 };
     Editor.app.st.selDrag = null;
     Editor.app.st.selStart = null; Editor.app.st.stroke = null; Editor.app.st.gradStart = null;
-    calls.length = 0; errs.length = 0;
+    calls.length = 0;
     Editor.app.canvas.onpointerup({ button: 0, clientX: 0, clientY: 0 });
     ok(errs.length === 0 && calls.indexOf('editCells') < 0 &&
        calls.indexOf('setSelection') < 0,
@@ -272,6 +272,8 @@ module.exports = (async function () {
        '★ (对照)普通差量走 editCells(不是"两条路都掉进 invalidateAll"也能过;实得 ' +
        JSON.stringify(calls) + ')');
 
+    // ★★ 这条总网**故意不清 errs**:清一次它就只盖清空点之后那几行(实测:清四次 ⇒ 只盖最后 25 行,
+    //    删掉替身一个方法也判 ok)。`calls` 每相清空是对的(那是逐相判据),errs 必须累计。
     eq(errs.length, 0,
        '★★ 整个相位里**一条错误都没进过 sink**:处理器全在 guard 里跑,替身少一个方法就会' +
        '变成一条被吞掉的异常(实得 ' + JSON.stringify(errs) + ')');

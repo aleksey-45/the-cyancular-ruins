@@ -233,3 +233,56 @@
      ⓒ "被前一条蕴含 / 夹具算术"那几条**保留但别计入覆盖**(它们改善诊断,不构成验证)。
    - **owner**:编辑器侧([`level_editor/tests/`](../../../level_editor/tests)、[`level_editor/render/`](../../../level_editor/render)、
      [`level_editor/worker.js`](../../../level_editor/worker.js));**最后复核**:2026-10-15。
+
+20. **编辑器 `tests/editor/` 5x–8x 与 `tests/server/` 的复核结果**(2026-10-15,与 §19 同批;两名审阅者共跑 45 条生产端变异,仓库外副本、零改动)。
+   - **先说正面结论(别重查)**:① **服务器侧没有假绿** —— 14 条生产端变异(Host 闸+端口、Origin、`Sec-Fetch-Site`、`realpath` 包含性、重试名单、退避封顶、临时文件清理、空体拒绝、静态遍历、名字正则……)**全部按预期红**;
+     ② 服务器测试**真的起 HTTP、真的读写磁盘**:全目录无 fs 打桩,一律 `mkdtemp` 真目录 + `startServer({port:0})` 真端口 + `http.request`,
+     连"`stat` 成功但 `open` 失败"都是用真 PowerShell `FileShare.None` 独占句柄造的(删掉 `stream.on('error')` ⇒ 整个 node 进程崩,正如注释预言);
+     ③ 编辑器侧这些**有牙齿**:`level_editor/tests/editor/60_draft_write_race.js` 的真缺陷形状断言、
+     `level_editor/tests/editor/52_save_flow.js` 的"保存失败徽标不许翻"、`level_editor/tests/editor/64_draft_guard.js` 的四条 `guard` 护栏、
+     `level_editor/tests/editor/54_save_backup_boot.js` 的"备份在前"三条、`level_editor/tests/editor/50_save_names_persist.js` 起的逐字节比对、
+     `level_editor/tests/editor/66_draft_crash_evict.js` 的记账断言。
+   - **本轮已修(附变异证据)**:① `level_editor/tests/editor/40_interaction.js` 的总网"整个相位一条错误都没进 sink" —— `errs` 曾被清空四次
+     ⇒ 只盖最后 25 行,删掉替身一个方法也判 ok。改成**只清 `calls`、`errs` 累计**(逐相断言仍然有效且更强);
+     变异(删替身的 `setSelDrag`)⇒ 8 条红,总网打出被吞的三条异常。
+     ② `level_editor/tests/editor/54_save_backup_boot.js` 的"工具条仍然接上了" —— `st.tool` 已被上游分片置成 `'line'`,点「直线」是**幂等**的
+     (原文打印 `line → line` 照样过)。改成先挪到 `'brush'` 再点;变异(删掉 `level_editor/ui/85_panels.js` 里 `#toolbar .tool` 的点击接线)⇒ 红在 `brush → brush`。
+     ③ 条数闸(§19 ⑤)同时也堵住了"整个分片空转"那条(变异:把 `level_editor/tests/editor/82_recheck_lib_space.js` 整相短路 ⇒ `只跑了 594 条断言(条数闸 604)`)。
+   - **仍空着的**:
+
+| 位置 | 判定 | 去掉什么才会红 / 证据 |
+|---|---|---|
+| `level_editor/tests/editor/60_draft_write_race.js` 的"与保存赛跑的那次落盘" | ★★★ **假绿**(夹具排程冒充被测守卫) | 删掉它声称钉住的 `level_editor/ui/75_draft_store.js` 里 `if (rev <= draftSavedRev) return null;` ⇒ **604/0 全绿**;加了打点的强化版更硬:生产**确实写了 `dirty:true`**,而断言报"干净"。根因是替身的 `setTimeout(…,0)` 事务排程让"保存"的那笔后落地,终态与 rev 守卫无关。**销法**:断言前先断言那次竞争写入真的发生,或让替身按创建顺序严格串行化 readwrite 事务(两选一都要重跑一遍本文件) |
+| `level_editor/tests/editor/40_interaction.js` 的"走了搬动+存回选区两条路" | 假绿(stale 累加器) | `calls` 自本相开头未清空,前几相早就压入过(变异:删掉"按在选区里"判定 ⇒ 上游那条红、这条绿) |
+| `level_editor/tests/editor/30_history_clipboard.js` 的 `before` 快照断言 | 假绿 | `applyEntry` 已把 `map.layers` 换成防御性拷贝 ⇒ 与快照脱钩(`snapshotMap` 改 alias 也全绿,同文件另一块才红) |
+| `level_editor/tests/editor/40_interaction.js` 的"与落笔那一侧逐格一致" | ★★ 自洽 oracle | 参照系 ≡ 被测物(`regionCells` 内部就是转调 `Render.inSel`)⇒ `inSel` 改非折算它照绿 |
+| `level_editor/tests/editor/40_interaction.js` 的"0 个就是框里画什么都没发生" | 弱守卫 | 与同文件"`regionCells` 会折算 clip"那条相反 ⇒ 把 `unwrap_sel` 变异掉,上游红它绿 |
+| `level_editor/tests/editor/42_boot_ui_state.js` 头注「走真序列 `readUiState → setAtlas → applyUiState`」 | 弱守卫 | 三步全是测试自己调的,`bootLoad` 一次没跑(把 `level_editor/ui/92_boot.js` 的 `readUiState` 挪到 `loadAtlas()` 之后 ⇒ 604/0 全绿) |
+| `level_editor/tests/editor/60_draft_write_race.js` 的 `t15.ms === DRAFT_DEBOUNCE_MS`、`level_editor/tests/editor/50_save_names_persist.js` 的 `DRAFT_DEBOUNCE_MS >= 500` | 弱守卫 | 期望值就是被测常量 ⇒ 改成 30000 仍绿 |
+| `level_editor/tests/editor/60_draft_write_race.js` 的 `savedAt >= before` | 弱守卫 | 文案说"前移",判据是 `>=` ⇒ `flushDraft` 变空转本条照绿 |
+| `level_editor/tests/editor/50_save_names_persist.js` 的"同名得到同一个备份名" | 弱守卫 | 同一表达式调两次比相等 ⇒ 只挡非确定性 |
+| `level_editor/tests/editor/54_save_backup_boot.js` 的 `v3BackupName(a) !== v3BackupName(b)` | 弱守卫(重复) | 与 `level_editor/tests/editor/50_save_names_persist.js` 的同源同事实(D4) |
+| `level_editor/tests/editor/54_save_backup_boot.js` 的两条 `indexOf(子串)` 确认框断言 | 弱守卫 | 查子串不查整句 |
+| `level_editor/tests/editor/66_draft_crash_evict.js` 的 `count >= 1` | 弱守卫 | `>=1`,问两次也过 |
+| `level_editor/tests/editor/66_draft_crash_evict.js` 的 getAll/cursor/keys 记账 | OK 但结构敏感 | **有牙齿**(删早退 / 换游标类型都红),登记为"代价形状"而非行为 |
+| `level_editor/tests/editor/62_draft_restore_boot.js` 的 `tg-grid.classList.contains('on') === false` | 假绿 | 夹具喂的 `grid:false` 正好等于替身默认态 ⇒"没碰 DOM"与"按回去了"同形 |
+| `level_editor/tests/editor/82_recheck_lib_space.js` 的"兜底文案里不出现备份名" | 假绿(**node 侧不可能红**) | 替身的 `textContent` 不像真 DOM 那样聚合子节点文本 ⇒ 删掉 `level_editor/ui/90_open.js` 的 `.filter(!isBackupName)` 本条照绿(列表里真有 2 行 `.v3.bak`)—— 真实浏览器里会红 |
+| `level_editor/tests/editor/54_save_backup_boot.js` 的 `desc-only` 整行隐藏 | 假绿 | 夹具把 `parentNode` 直连 `.desc-row` 替身,抹掉了唯一需要上溯的那层(真结构是 `div.desc-row > label > input`) |
+| `level_editor/tests/editor/72_wiring_compress_pan.js` 的"控件不在时按默认走" | 假绿 | 替身的 `getElementById` 永不返回 null ⇒ `DEFAULT_COMPRESS` 分支不可达 |
+| `level_editor/ui/75_draft_store.js` 的"恢复时写回 `app.name`" | 覆盖率缺口 | 删掉全绿 |
+| `level_editor/ui/80_ui_state.js` 对 `#dim-others` / `#brush-size` / `#tg-subgrid` / `#tg-torus` 的 DOM 写回 | 覆盖率缺口 | `grep` 全 `level_editor/tests/editor/` **零命中** |
+| `level_editor/ui/70_draft.js` 的 `if (!dirty) return` 早退 | 覆盖率缺口 | 删掉全绿 |
+| `level_editor/tests/editor/66_draft_crash_evict.js`(整片删掉) | 红的原因不对 | 不是条数闸报错,而是**挂到 120s 看门狗**、判词误指"lineCells 拿到非整数坐标" |
+| `level_editor/tests/editor/62_draft_restore_boot.js`(整片删掉) | 红的原因不对 | 3 条失败全落在 `level_editor/tests/editor/64_draft_guard.js` 里,文案与"少了一个分片"无关 |
+| `level_editor/tests/server/20_static_read_failure.js`、`level_editor/tests/server/50_write_gates.js` 的自跳过分支 | 弱守卫 | 自跳过打印 `--` 而**不计入断言**,也没有"skip==0"闸 ⇒ 非 Windows / 建不了链接的机器上整个相位静默消失而判词照绿(本机两条都真跑了) |
+| `level_editor/tests/harness.js` 的 `minChecks` 闸(§19 ⑤ 已加) | 残留弱点 | 判据是**全局总数 `>=` 手抄字面量** ⇒"一个分片死掉 + 别处新增等量断言"仍可全绿,且数字要人工随增删同步(§二 那条"重复真相源+守卫"的税) |
+| `level_editor/editor_smoke.js` 的 `PARTS` 清单 | 弱守卫 | 手抄,无"与目录对账"守卫(新加一个测试分片文件却忘了登记 ⇒ **静默不跑**,而条数闸只挡"变少"不挡"新文件没登记") |
+
+   - **怎么销**(按性价比):① 60 那条**假绿**优先(它挡的是"草稿被重新写脏 ⇒ 下次开机弹假恢复提示",已有两条备选修法);
+     ② `42` 的"真序列"可以**真调一次 `bootLoad`**(替身齐全的前提下)把三步变成生产驱动;
+     ③ 覆盖率缺口里 `dim-others` / `brush-size` / `tg-subgrid` / `tg-torus` 四条最便宜(补四行 DOM 断言);
+     ④ "自洽 oracle / stale 累加器 / 默认态同形"三类改判据(换参照系、先清累加器、先喂非默认值);
+     ⑤ 红的原因不对(整片删掉)可在入口给每个分片包一层"我跑完了"的记账;
+     ⑥ 服务器的 skip 可以加一条"非 Windows 时**显式**把该相判为跳过并计入总条数闸"。
+   - **owner**:编辑器侧([`level_editor/tests/editor/`](../../../level_editor/tests/editor)、[`level_editor/tests/server/`](../../../level_editor/tests/server)、
+     [`level_editor/ui/`](../../../level_editor/ui));**最后复核**:2026-10-15。

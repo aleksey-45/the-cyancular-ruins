@@ -127,6 +127,9 @@ module.exports = (async function () {
     ok(elOf14('palette').children.length > 0,
        '★★★ 打开失败之后调色板**仍然建出来了**(实得 ' + elOf14('palette').children.length +
        ' 个格子)—— 面板建在打开之后的话这里是 0');
+    // ★ 先把工具挪开再点:42_boot_ui_state.js 已经把 st.tool 置成 'line' 了,直接点「直线」是**幂等**的 ——
+    //   工具条根本没接线时这条会打印 "line → line" 而照样通过(实测)。挪开之后它才真的在判"点击生效"。
+    Editor.app.st.tool = 'brush';
     const toolBefore = Editor.app.st.tool;
     toolBtns14.forEach(function (b) { if (b.dataset.tool === 'line') b.click(); });
     eq(Editor.app.st.tool, 'line',
