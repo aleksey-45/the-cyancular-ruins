@@ -437,7 +437,13 @@ func _tick_start() -> void:
 	if lobby == null or not is_instance_valid(lobby):
 		return
 	var b = lobby.get("_wait_start")
-	if b == null or not (b as Button).visible:
+	# ★★ 判据必须是 `is_visible_in_tree()` 而**不是** `Button.visible`:`visible` 只管**节点自身**,
+	#    祖先隐藏不算 —— 而 `scenes/mp_lobby.tscn` 里只有父面板 `WaitPanel` 是 `visible = false`,
+	#    `WaitStartBtn` 自己不写 visible(默认 true)⇒ 大厅页刚挂上那一帧(`_wait_start` 已非 null 但
+	#    面板还没亮、房里 0 人)就会被判成"可以点",`pressed.emit()` 之后 `_started = true` **永久锁死**,
+	#    真到"两队各 3 人"时**再也不会点** ⇒ 探针 105s 后打 `房主没有点开始`(实测日志:t=0.2s 点开始,
+	#    t=0.6s 才建房)。`is_visible_in_tree()` 恰好等于"面板亮了 ∧ 我是房主 ∧ 3+3"。
+	if b == null or not (b as Button).is_visible_in_tree():
 		return
 	_started = true
 	_log("两队各 3 人 → 点「开 始 游 戏」(真按钮回调)")
