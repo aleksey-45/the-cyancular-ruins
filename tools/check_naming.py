@@ -41,13 +41,16 @@ PROJECT = os.path.dirname(TOOLS)
 #   2026-10-03 实测 5 条 A 类违规全来自这两个目录,与代码无关。
 SKIP_DIRS = {".godot", ".git", ".superpowers", ".claude", "builds", "backup",
              "releases", "_crashtest", "__pycache__", "docs", "assets"}
-# 文档路径检查的对象(仓库根的三份文档)
-# 文档路径检查的对象(仓库根的三份文档 + `CLAUDE.md` 拆出来的分域文档)
-DOC_FILES = ["README.md", "CLAUDE.md", "RELEASE.md"] + [
-    "docs/eng/%s.md" % n
-    for n in ("world", "enemies", "weapons", "player", "render", "ui",
-              "netplay", "modes", "tests", "tools", "registered-debt")
-]
+# 文档路径检查的对象(仓库根的三份文档 + `CLAUDE.md` 拆出来的**全部**分域文档)
+# ★ 2026-10-13 改:**从写死的 11 个名字改成 glob**。原表在拆分后只覆盖 11 份,而 `docs/eng/`
+#   当时已有 23 份 ⇒ 另外 12 份(含 `comment-style.md`、`netcode-*.md`)的路径**无人守**,
+#   而"文档引用的路径必须存在"这条规则的红/绿全靠它 —— 写死名字的表**每加一份文档就漏一份**。
+#   实测:`docs/eng/time.md` 新建当天对它的检查是**零**,同族欠账见 `docs/eng/debt/guard-strength-gaps.md` §五.12。
+DOC_FILES = ["README.md", "CLAUDE.md", "RELEASE.md"] + sorted(
+    "docs/eng/" + f
+    for f in os.listdir(os.path.join(PROJECT, "docs", "eng"))
+    if f.endswith(".md")
+)
 # 被文档引用时检查存在性的扩展名
 DOC_EXTS = (".gd", ".tscn", ".json", ".js", ".html", ".cyrm", ".cfg",
             ".shader", ".gdshader", ".bat", ".py", ".md", ".ttf", ".otf", ".png")
@@ -140,18 +143,33 @@ def check_doc_paths() -> None:
             _fail.append("C 文档不存在: %s(检查表写错了?)" % doc)
             continue
         text = open(full, encoding="utf-8", errors="replace").read()
-        # ① 反引号里的带扩展名文件路径。
-        #    ★ 要求**首段是真实存在的目录**,否则会吃到文档里的简写 —— 例如 docs/eng/tests.md 的
-        #      `kh_l1/l3/l4/l5_probe.tscn`(指 kh_l1_probe / kh_l3_probe / …),那不是路径。
-        #      代价:整段目录名都写错的那种(首段也不存在)① 会漏,由 ② 的裸目录检查兜。
-        for tok in re.findall(r"`([A-Za-z0-9_./-]+)`", text):
-            if "/" not in tok or not tok.endswith(DOC_EXTS):
+        # ★ 2026-10-13 补(同一次加固的第二半):**"引用一个已不存在的路径"不等于违规** ——
+        #   本仓大量文档在**记录"它已删"**(测试面削减台账、注销登记、迁移记录就是这么写的)。
+        #   所以按**行**判定:该行若已明说"没了/搬走了",就不再要求路径存在,交给人工判断。
+        #   没有这一半的话,加固会把 30 条**正确的历史记录**判成违规 ⇒ 逼人删掉有价值的信息
+        #   (这正是"守卫逼人变坏"的形态)。标记词表刻意窄:只收"明确表示不在了"的说法。
+        GONE = ("已删", "已移除", "已移走", "已移动", "已迁移", "已退休", "已退役",
+                "退役", "不存在", "封存", "被取代", "已作废")
+        for line in text.split("\n"):
+            if any(g in line for g in GONE):
                 continue
-            if tok.startswith(("http", "res://")):
-                continue
-            head = tok.split("/", 1)[0]
-            if os.path.isdir(os.path.join(PROJECT, head)):
-                seen.setdefault(tok, doc)
+            # ① 反引号里的带扩展名文件路径。
+            #    ★ 要求**首段是真实存在的目录**,否则会吃到文档里的简写 —— 例如 docs/eng/tests.md 的
+            #      `kh_l1/l3/l4/l5_probe.tscn`(指 kh_l1_probe / kh_l3_probe / …),那不是路径。
+            #      代价:整段目录名都写错的那种(首段也不存在)① 会漏,由 ② 的裸目录检查兜。
+            #    ★ 2026-10-13 修(文档订正执行者实测报的洞):原正则的字符类**不含 `:`**,于是
+            #      `` `tests/manual/brawl_rollback_probe.gd:55` `` 这种**带行号的引用整条不匹配**
+            #      ⇒ 只要在末尾缀一个 `:55`,就能让一个**已不存在的路径**绕过本检查(实测:该文件已于
+            #      2026-10-09 删除,而检查一直绿)。现在允许 `:`,再把 `:NN` / `:NN-MM` 后缀剥掉后校验。
+            for tok in re.findall(r"`([A-Za-z0-9_./:-]+)`", line):
+                tok = re.sub(r":\d+(-\d+)?$", "", tok)      # 去掉 `:214` / `:214-215` 这类行号后缀
+                if ":" in tok or "/" not in tok or not tok.endswith(DOC_EXTS):
+                    continue
+                if tok.startswith(("http", "res://")):
+                    continue
+                head = tok.split("/", 1)[0]
+                if os.path.isdir(os.path.join(PROJECT, head)):
+                    seen.setdefault(tok, doc)
         # ② 代码块里以 `dir/` 开头的裸目录名(README 的「目录」段就是这种写法)
         for tok in re.findall(r"^\s*([a-z_]+/)\s", text, re.M):
             seen.setdefault(tok, doc)
