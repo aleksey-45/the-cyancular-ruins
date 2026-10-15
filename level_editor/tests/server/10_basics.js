@@ -84,16 +84,17 @@ const srv = require('../../editor_server.js');
     fs.mkdirSync(path.join(rootDir, 'sub'), { recursive: true });
     fs.writeFileSync(path.join(tmpRoot, 'secret.txt'), secret, 'utf8');
 
-    eq(srv.staticFileFor(rootDir, '/', 'editor.html'), { status: 200, file: path.join(rootDir, 'editor.html') },
-       'staticFileFor: / → 索引页');
-    eq(srv.staticFileFor(rootDir, '/core.js', 'editor.html').status, 200, 'staticFileFor: 正常文件 → 200');
-    eq(srv.staticFileFor(rootDir, '/..%2f..%2fsecret.txt', 'editor.html').status, 403,
-       '★ staticFileFor: /..%2f..%2fsecret.txt → 403');
-    eq(srv.staticFileFor(rootDir, '/..%5c..%5csecret.txt', 'editor.html').status, 403,
-       '★ staticFileFor: 反斜杠编码 %5c 一样被挡');
-    eq(srv.staticFileFor(path.join(rootDir, 'sub'), '/..%2f..%2fsecret.txt', 'editor.html').status, 403,
-       '★ staticFileFor: 根目录是子目录时同样被挡(判据是"落在根里面",不是"有没有 ..")');
-    eq(srv.staticFileFor(rootDir, '/a%00b', 'editor.html').status, 400, 'staticFileFor: 空字节 → 400');
+    // ★ 一张表 = 一条守卫(D9):6 条"一个路径一条断言"收成一张(失败时点名是哪一行)。
+    tableEq('staticFileFor:穿越/畸形路径一律挡在根目录之外', [
+      ['/ → 索引页(200 + 给出 file)', srv.staticFileFor(rootDir, '/', 'editor.html'),
+       { status: 200, file: path.join(rootDir, 'editor.html') }],
+      ['正常文件 → 200', srv.staticFileFor(rootDir, '/core.js', 'editor.html').status, 200],
+      ['/..%2f..%2fsecret.txt → 403', srv.staticFileFor(rootDir, '/..%2f..%2fsecret.txt', 'editor.html').status, 403],
+      ['反斜杠编码 %5c 一样被挡 → 403', srv.staticFileFor(rootDir, '/..%5c..%5csecret.txt', 'editor.html').status, 403],
+      ['根目录是子目录时同样被挡(判据是"落在根里面",不是"有没有 ..") → 403',
+       srv.staticFileFor(path.join(rootDir, 'sub'), '/..%2f..%2fsecret.txt', 'editor.html').status, 403],
+      ['空字节 → 400', srv.staticFileFor(rootDir, '/a%00b', 'editor.html').status, 400],
+    ]);
 
     const travSrv = track(await srv.startServer({ rootDir: rootDir, mapsDir: path.join(tmpRoot, 'maps'), port: 0 }));
     const paths = ['/..%2fsecret.txt', '/..%2f..%2fsecret.txt', '/..%5csecret.txt', '/%2e%2e%2fsecret.txt',

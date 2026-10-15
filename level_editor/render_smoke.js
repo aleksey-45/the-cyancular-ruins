@@ -26,5 +26,5 @@ setTimeout(function () {
     console.error(err && err.stack ? err.stack : String(err));
     process.exit(1);
   }
-  harness.finish('RENDER SMOKE OK', 241);
+  harness.finish('RENDER SMOKE OK', 230);
 })();

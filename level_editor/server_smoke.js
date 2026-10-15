@@ -28,7 +28,7 @@ const harness = require('./tests/harness.js').start();
   } finally {
     await cleanup();
   }
-  harness.finish('SERVER SMOKE OK', 170);
+  harness.finish('SERVER SMOKE OK', 165);
 })().catch(async function (err) {
   console.error('FAIL: 未捕获异常(后面的断言一行都没跑):');
   console.error(err && err.stack ? err.stack : String(err));

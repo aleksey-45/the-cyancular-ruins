@@ -6,31 +6,26 @@ const Editor = globalThis.Editor;
 module.exports = (async function () {
 
   // ── 热键表(规格 §4.8)──
+  // ★ 一条判定类别 = 一条守卫:24 条"一个键一条断言"是 D9(改一次表就要动 24 行,
+  //   而失败信息只告诉你某一个键坏了)。合并成**一次表比** —— 首个不匹配会被 JSON 差异点名。
   const k = function (key, mod) { return { key: key, ctrl: !!mod, meta: false, shift: false }; };
-  eq(Editor.commandFor(k('b')), 'tool:brush', 'B → 画笔');
-  eq(Editor.commandFor(k('e')), 'tool:eraser', 'E → 橡皮');
-  eq(Editor.commandFor(k('g')), 'tool:bucket', 'G → 油漆桶');
-  eq(Editor.commandFor(k('m')), 'tool:select', 'M → 选框');
-  eq(Editor.commandFor(k('l')), 'tool:line', 'L → 直线');
-  eq(Editor.commandFor(k('i')), 'tool:picker', 'I → 吸管');
-  eq(Editor.commandFor(k('[')), 'brush-smaller', '[ → 画笔变小');
-  eq(Editor.commandFor(k(']')), 'brush-bigger', '] → 画笔变大');
-  eq(Editor.commandFor(k('2')), 'layer:2', '2 → 切到图层 2');
-  eq(Editor.commandFor(k('z', true)), 'undo', 'Ctrl+Z → 撤销');
+  const KEYMAP = [
+    ['b', false, 'tool:brush'], ['e', false, 'tool:eraser'], ['g', false, 'tool:bucket'],
+    ['m', false, 'tool:select'], ['l', false, 'tool:line'], ['i', false, 'tool:picker'],
+    ['[', false, 'brush-smaller'], [']', false, 'brush-bigger'], ['2', false, 'layer:2'],
+    ['z', true, 'undo'], ['y', true, 'redo'], ['c', true, 'copy'], ['x', true, 'cut'],
+    ['v', true, 'paste'], ['s', true, 'save'],
+    ['Delete', false, 'clear-selection'], ['Backspace', false, 'clear-selection'],
+    ['Escape', false, 'cancel-selection'],
+    ['ArrowLeft', false, 'pan:left'], ['ArrowDown', false, 'pan:down'],
+    ['F5', false, null], ['p', true, null],   // ★ 表外的键一律 null(不拦浏览器自己的快捷键)
+  ];
+  eq(KEYMAP.map(function (e) { return Editor.commandFor(k(e[0], e[1])); }),
+     KEYMAP.map(function (e) { return e[2]; }),
+     '热键表逐条与规格 §4.8 一致(' + KEYMAP.length + ' 条 + 表外键返回 null)');
+  // ★ 两处 Shift 变体单独留:它们的输入形状(带 shift 的 Ctrl 组合)与上表不同。
   eq(Editor.commandFor({ key: 'Z', ctrl: true, shift: true }), 'redo', 'Ctrl+Shift+Z → 重做');
-  eq(Editor.commandFor(k('y', true)), 'redo', 'Ctrl+Y → 重做');
-  eq(Editor.commandFor(k('c', true)), 'copy', 'Ctrl+C → 复制');
-  eq(Editor.commandFor(k('x', true)), 'cut', 'Ctrl+X → 剪切');
-  eq(Editor.commandFor(k('v', true)), 'paste', 'Ctrl+V → 粘贴');
-  eq(Editor.commandFor(k('s', true)), 'save', 'Ctrl+S → 保存');
   eq(Editor.commandFor({ key: 'S', ctrl: true, shift: true }), 'save-as', 'Ctrl+Shift+S → 另存为');
-  eq(Editor.commandFor(k('Delete')), 'clear-selection', 'Delete → 清空选区');
-  eq(Editor.commandFor(k('Backspace')), 'clear-selection', 'Backspace → 清空选区');
-  eq(Editor.commandFor(k('Escape')), 'cancel-selection', 'Esc → 取消选区');
-  eq(Editor.commandFor(k('ArrowLeft')), 'pan:left', '← → 向左平移');
-  eq(Editor.commandFor(k('ArrowDown')), 'pan:down', '↓ → 向下平移');
-  eq(Editor.commandFor(k('F5')), null, '★ 表外的键一律返回 null(不拦浏览器自己的快捷键)');
-  eq(Editor.commandFor({ key: 'p', ctrl: true }), null, '★ 表外的 Ctrl 组合也返回 null(打印留给浏览器)');
 
   // Shift 约束(规格 §4.8):期望值按规格的字面取实现那一侧。
   eq(Editor.constrainLine({ x: 0, y: 0 }, { x: 10, y: 2 }, true), { x: 10, y: 0 },

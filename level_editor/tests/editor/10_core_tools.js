@@ -8,10 +8,12 @@ const TILE_DEFS = globalThis.TILE_DEFS;
 module.exports = (async function () {
 
   // ── 相位 ① 名字与格式分派 ──
-  eq(Editor.nameFromFile('demo.cyrm'), 'demo', 'nameFromFile: 去掉 .cyrm 后缀');
-  eq(Editor.nameFromFile('factory1v1.CYRM'), 'factory1v1', 'nameFromFile: 大小写不敏感');
-  eq(Editor.nameFromFile('a.b.cyrm'), 'a.b', 'nameFromFile: 只去掉**结尾**那个后缀');
-  eq(Editor.nameFromFile(''), '', 'nameFromFile: 空串仍是空串');
+  tableEq('nameFromFile:只去掉**结尾**那个 .cyrm(大小写不敏感)', [
+    ['普通名', Editor.nameFromFile('demo.cyrm'), 'demo'],
+    ['大写后缀', Editor.nameFromFile('factory1v1.CYRM'), 'factory1v1'],
+    ['中间的点保留', Editor.nameFromFile('a.b.cyrm'), 'a.b'],
+    ['空串仍是空串', Editor.nameFromFile(''), ''],
+  ]);
 
   const src = Core.createMap('x', 3, 2);
   src.layers[Core.LAYER_SCENE].desc[0] = Core.neutralDesc(7);
@@ -24,10 +26,12 @@ module.exports = (async function () {
   eq(Core.sanitizeName(''), 'structure', '(对照)空名字才会回落成 structure');
   eq(out.map.layers[Core.LAYER_SCENE].desc[0], Core.neutralDesc(7), 'v4 内容读回来了');
 
-  eq(Editor.detectFormat(bytes), 'v4', 'detectFormat: 嗅 magic');
   const enc = new TextEncoder();
-  eq(Editor.detectFormat(enc.encode('# cyrm-v3\n001f001f\n')), 'v3', 'detectFormat: 带标记 = v3 文本');
-  eq(Editor.detectFormat(enc.encode('11\n11\n')), 'legacy', 'detectFormat: 无标记 = 旧字母格式');
+  tableEq('detectFormat:嗅 magic / v3 标记 / 旧字母格式', [
+    ['CYRM magic → v4 二进制', Editor.detectFormat(bytes), 'v4'],
+    ['带 `# cyrm-v3` 标记 → v3 文本', Editor.detectFormat(enc.encode('# cyrm-v3\n001f001f\n')), 'v3'],
+    ['无标记 → 旧字母格式', Editor.detectFormat(enc.encode('11\n11\n')), 'legacy'],
+  ]);
   const o3 = await Editor.mapFromBytes('old.cyrm', enc.encode('# cyrm-v3\n001f001f\n'));
   eq(o3.sourceFormat, 'v3', 'mapFromBytes: v3 文本走迁移路径');
   eq(o3.map.name, 'old', 'v3 路径同样用文件名补 map.name');
@@ -37,17 +41,23 @@ module.exports = (async function () {
   eq(o4.map.subCols, 4, 'legacy: 2×2 字符 → 1 格 = 4 子格');
 
   // ── 相位 ② 尺寸/纹理钳制(闸 1:用户输入一律钳制,不报错回滚)──
-  eq(Editor.createEmptyMap('x', 99999, 99999).subCols, 400 * SUB, '★★ createEmptyMap 走 clampMapSize:99999 → 400 格');
-  eq(Editor.createEmptyMap('x', 99999, 99999).subRows, 300 * SUB, '★ 同上,高 → 300 格');
-  eq(Editor.createEmptyMap('x', 0, -5).subCols, 4, 'createEmptyMap: 0/负数 → 至少 1 格');
-  eq(Editor.createEmptyMap('x', NaN, NaN).subCols, 125 * SUB, 'createEmptyMap: NaN → 默认 125×75');
-  eq(Editor.clampTexture(0, 100), 1, 'clampTexture: 0 → 1');
-  eq(Editor.clampTexture(999, 100), 100, '★ clampTexture: 超过图集容量 → 钳到容量(Tint 对越界会抛)');
-  eq(Editor.clampTexture(3, 100), 3, 'clampTexture: 正常值不动');
-  eq(Editor.clampTexture(NaN, 100), 1, 'clampTexture: NaN → 1');
-  eq(Editor.clampTexture(5, 0), 1, '★ clampTexture: 图集还没加载(cap 0)→ 1,绝不给 0(Tint 对 0 会抛)');
-  eq(Editor.clampTexture(5, -3), 1, '★★ 容量是负数(畸形图集)→ 1,不当"没信息"放宽');
-  eq(Editor.clampTexture(5, undefined), 1, '★ 容量缺省时问图集(Render.atlasCapacity()):node 里没装图集 ⇒ 容量 0 ⇒ 1');
+  tableEq('createEmptyMap 走 clampMapSize(闸 1:钳制而不是报错回滚)', [
+    ['99999 格 → 400(宽)', Editor.createEmptyMap('x', 99999, 99999).subCols, 400 * SUB],
+    ['99999 格 → 300(高)', Editor.createEmptyMap('x', 99999, 99999).subRows, 300 * SUB],
+    ['0/负数 → 至少 1 格', Editor.createEmptyMap('x', 0, -5).subCols, 4],
+    ['NaN → 默认 125×75', Editor.createEmptyMap('x', NaN, NaN).subCols, 125 * SUB],
+  ]);
+  // ★ 一条判定类别 = 一条守卫:7 条"一个数值一条断言"收成一张表 —— 失败时点名是哪一行。
+  //   `cap` 那条**不能**给 0:Tint 对纹理号 0 会抛(空气另有描述符),所以钳制的下界是 1。
+  tableEq('clampTexture:上界来自图集容量,下界恒为 1(绝不给 0)', [
+    ['0 → 1(纹理号 0 是空气,给了就抛)', Editor.clampTexture(0, 100), 1],
+    ['超过容量 → 钳到容量', Editor.clampTexture(999, 100), 100],
+    ['正常值不动', Editor.clampTexture(3, 100), 3],
+    ['NaN → 1', Editor.clampTexture(NaN, 100), 1],
+    ['图集还没加载(cap 0)→ 1,不放宽', Editor.clampTexture(5, 0), 1],
+    ['容量是负数(畸形图集)→ 1,不当"没有信息"放宽', Editor.clampTexture(5, -3), 1],
+    ['容量缺省时问图集(node 没装图集 ⇒ 容量 0 ⇒ 1)', Editor.clampTexture(5, undefined), 1],
+  ]);
 
   // ── 相位 ③ 调色板从 tile_defs 派生(纹理 22 不可点选)──
   const pal = Editor.texturePalette(TILE_DEFS);

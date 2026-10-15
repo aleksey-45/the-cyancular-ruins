@@ -24,13 +24,13 @@ module.exports = (async function () {
   el16('opt-compress').checked = true;
 
   // ════ ⑯a 镜像(热键 H/V 是自选的,规格 §4.8 的表里没有镜像键)════
-  eq(Editor.commandFor({ key: 'h' }), 'mirror:h', '★★ H → 水平镜像(规格 §4.4 的选框要有镜像)');
-  eq(Editor.commandFor({ key: 'H' }), 'mirror:h', '★ 大写 H 同样(判据一律小写化)');
-  eq(Editor.commandFor({ key: 'v' }), 'mirror:v', '★★ V → 垂直镜像');
-  eq(Editor.commandFor({ key: 'v', ctrl: true }), 'paste',
-     '★★ Ctrl+V 仍是粘贴 —— 带修饰键的分支在上面就 return 了,`v` 这一条与它不撞');
-  eq(Editor.commandFor({ key: 'h', ctrl: true }), null,
-     '★ Ctrl+H 表外 → null(不拦浏览器自己的快捷键)');
+  tableEq('镜像键 H/V,且与 Ctrl 修饰键的分支互不撞', [
+    ['H → 水平镜像(规格 §4.4 的选框要有镜像)', Editor.commandFor({ key: 'h' }), 'mirror:h'],
+    ['大写 H 同样(判据一律小写化)', Editor.commandFor({ key: 'H' }), 'mirror:h'],
+    ['V → 垂直镜像', Editor.commandFor({ key: 'v' }), 'mirror:v'],
+    ['Ctrl+V 仍是粘贴(带修饰键的分支先 return,与 `v` 这条不撞)', Editor.commandFor({ key: 'v', ctrl: true }), 'paste'],
+    ['Ctrl+H 表外 → null(不拦浏览器自己的快捷键)', Editor.commandFor({ key: 'h', ctrl: true }), null],
+  ]);
   // 一张 3×1 格的图:格 0/1/2 分别填 A/B/C(各 4 个子格宽、4 行高)
   const A16 = Core.neutralDesc(3), B16 = Core.neutralDesc(5), C16 = Core.neutralDesc(7);
   const mm16 = Core.createMap('m16', 3, 1);

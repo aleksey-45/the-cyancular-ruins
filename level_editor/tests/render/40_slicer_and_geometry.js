@@ -129,11 +129,12 @@ const Render = globalThis.Render;
   eq(Render.clampZoom(1e9), Render.MAX_ZOOM, 'clampZoom: 上限(用户输入钳制,不报错)');
   eq(Render.thumbScale(500, 300), 2, 'thumbScale: 默认 125×75 图 → 2px/子格');
   eq(Render.thumbScale(1600, 1200), 1, '★ thumbScale: 400×300 格(1600×1200 子格)降到 1px/子格(规格 §4.3 闸 1)');
-  eq(Render.fitZoom(500, 300, 1000, 600, 0), 2, 'fitZoom: 1000×600 视口 / 500×300 子格 → 2');
-  eq(Render.fitZoom(500, 300, 1000, 600, 50), Render.clampZoom(Math.min(900 / 500, 500 / 300)),
-     'fitZoom: 留白从两边扣,取两轴较小者');
-  eq(Render.fitZoom(1600, 1200, 100, 100, 0), Render.clampZoom(100 / 1600), '★ fitZoom 不返回 0(否则除法爆)');
-  ok(Render.fitZoom(1600, 1200, 100, 100, 0) >= Render.MIN_ZOOM, '★ fitZoom 结果被钳在下限之上');
+  tableEq('fitZoom:取两轴较小者、留白从两边扣、永不返回 0(否则除法爆)', [
+    ['1000×600 视口 / 500×300 子格 → 2', Render.fitZoom(500, 300, 1000, 600, 0), 2],
+    ['留白 50 从两边扣', Render.fitZoom(500, 300, 1000, 600, 50), Render.clampZoom(Math.min(900 / 500, 500 / 300))],
+    ['大图小视口 → 按比例(不是 0)', Render.fitZoom(1600, 1200, 100, 100, 0), Render.clampZoom(100 / 1600)],
+    ['结果被钳在 MIN_ZOOM 之上', Render.fitZoom(1600, 1200, 100, 100, 0) >= Render.MIN_ZOOM, true],
+  ]);
 
   // ==== 相位 ⑥ 可见区裁剪与环面 3×3 ====
   (function () {
@@ -144,23 +145,22 @@ const Render = globalThis.Render;
     eq(Render.visibleSubRange(v2, 800, 400, 500, 300), { x0: -50, y0: -10, x1: 150, y1: 90 },
        '★ visibleSubRange 返回**未折算**的坐标(折算由调用方按格做,3×3 副本要的就是它)');
 
-    eq(Render.torusOffsets({ x: 0, y: 0, zoom: 8 }, 800, 400, 500, 300), [[0, 0]],
-       'torusOffsets: 视图在正中 → 只需 1 份(不为接缝做无用功)');
-    eq(Render.torusOffsets({ x: -50, y: 0, zoom: 4 }, 800, 400, 500, 300), [[-500, 0], [0, 0]],
-       '★ torusOffsets: 视图越过左接缝 → 铺 [-500,0] 与 [0,0] 两份(A4:旧实现只铺 [0,1]、少一侧)');
-    eq(Render.torusOffsets({ x: -50, y: -60, zoom: 4 }, 800, 400, 500, 300).length, 4,
-       '★ 跨两个方向 = 4 份(3×3 里只保留与视口相交的那些)');
+    tableEq('torusOffsets:只铺与视口相交的那几份(A4:旧实现少铺一侧)', [
+      ['视图在正中 → 1 份(不为接缝做无用功)', Render.torusOffsets({ x: 0, y: 0, zoom: 8 }, 800, 400, 500, 300), [[0, 0]]],
+      ['越过左接缝 → [-500,0] 与 [0,0] 两份', Render.torusOffsets({ x: -50, y: 0, zoom: 4 }, 800, 400, 500, 300), [[-500, 0], [0, 0]]],
+      ['跨两个方向 → 4 份', Render.torusOffsets({ x: -50, y: -60, zoom: 4 }, 800, 400, 500, 300).length, 4],
+    ]);
   })();
 
   // ==== 相位 ⑦ 命中测试(副本上也能落笔 = A4 的另一半)====
   (function () {
     const view = { x: 0, y: 0, zoom: 8 };
-    eq(Render.hitTest(view, 800, 400, 500, 300), { X: 100, Y: 50 }, 'hitTest: 屏幕 → 子格坐标');
-    eq(Render.hitTest({ x: -1, y: -1, zoom: 8 }, 0, 0, 500, 300), { X: 499, Y: 299 },
-       '★ hitTest: 画在接缝另一侧的副本上 → 折回主网格坐标(旧实现副本不可落笔)');
-    eq(Render.hitTest(view, 5000 * 8, 0, 500, 300).X, 0, '★ hitTest: 远处也折回 [0, subCols)');
-    const back = Render.hitTest(view, -8, 0, 500, 300);
-    ok(back.X >= 0 && back.X < 500, 'hitTest: 负的屏幕坐标也落在 [0, subCols) 内');
+    tableEq('hitTest:屏幕 → 子格坐标,且一律折回主网格(副本上也能落笔 = A4 的另一半)', [
+      ['屏幕 → 子格坐标', Render.hitTest(view, 800, 400, 500, 300), { X: 100, Y: 50 }],
+      ['画在接缝另一侧的副本上 → 折回主网格', Render.hitTest({ x: -1, y: -1, zoom: 8 }, 0, 0, 500, 300), { X: 499, Y: 299 }],
+      ['远处也折回 [0, subCols)', Render.hitTest(view, 5000 * 8, 0, 500, 300).X, 0],
+      ['负的屏幕坐标也落在 [0, subCols) 内', (function () { const b = Render.hitTest(view, -8, 0, 500, 300); return b.X >= 0 && b.X < 500; })(), true],
+    ]);
   })();
 
   // ==== 相位 ⑧ 画笔几何(规格 §4.4 的吸附规则)====
@@ -174,14 +174,12 @@ const Render = globalThis.Render;
        [{ unit: 'sub', n: 1 }, { unit: 'sub', n: 2 }, { unit: 'sub', n: 3 }],
        'brushSpan: 小数画笔按子格量(0.25 / 0.5 / 0.75 → 1 / 2 / 3 子格)');
 
-    eq(Render.brushRegion({ kind: 'cell', x: 3, y: 4 }, 1), { unit: 'cell', x0: 3, y0: 4, x1: 3, y1: 4 },
-       'brushRegion: 1 格画笔画一格(整数大小只画整格,不落在子格上)');
-    eq(Render.brushRegion({ kind: 'cell', x: 3, y: 4 }, 3), { unit: 'cell', x0: 2, y0: 3, x1: 4, y1: 5 },
-       'brushRegion: 3×3 以光标为中心(lo = floor((n-1)/2)、hi = ceil((n-1)/2))');
-    eq(Render.brushRegion({ kind: 'sub', x: 5, y: 6 }, 1), { unit: 'sub', x0: 5, y0: 6, x1: 5, y1: 6 },
-       'brushRegion: 0.25 画笔盖一个子格');
-    eq(Render.brushRegion({ kind: 'sub', x: 5, y: 6 }, 3), { unit: 'sub', x0: 4, y0: 5, x1: 6, y1: 7 },
-       'brushRegion: 0.75 画笔盖 3×3 子格');
+    tableEq('brushRegion:以光标为中心(lo=floor((n-1)/2)、hi=ceil((n-1)/2)),格/子格两种单位不混', [
+      ['1 格画笔画一格(不落在子格上)', Render.brushRegion({ kind: 'cell', x: 3, y: 4 }, 1), { unit: 'cell', x0: 3, y0: 4, x1: 3, y1: 4 }],
+      ['3×3 以光标为中心', Render.brushRegion({ kind: 'cell', x: 3, y: 4 }, 3), { unit: 'cell', x0: 2, y0: 3, x1: 4, y1: 5 }],
+      ['0.25 画笔盖一个子格', Render.brushRegion({ kind: 'sub', x: 5, y: 6 }, 1), { unit: 'sub', x0: 5, y0: 6, x1: 5, y1: 6 }],
+      ['0.75 画笔盖 3×3 子格', Render.brushRegion({ kind: 'sub', x: 5, y: 6 }, 3), { unit: 'sub', x0: 4, y0: 5, x1: 6, y1: 7 }],
+    ]);
     // ★ 两种单位的坐标含义不同(格 vs 子格),混用会让画笔大小整体错 4 倍 ——
     //   调用方必须看 unit 再决定是"每格填 16 子格"还是"直接就是子格"。
     // ★★ 断言必须覆盖整个返回对象:只判 .kind 的话,两个分支只差一个标签也算过 ——

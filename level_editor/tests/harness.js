@@ -38,6 +38,22 @@ function errText(e) {
   if (msg === '' && e && e.cause && e.cause.message) msg = String(e.cause.message);
   return msg;
 }
+// ★★ D9 的收口工具:一张表 = **一条**守卫。逐值断言("一个键一条 / 一个数值一条")会让改一次表
+//    就要动 N 行,而纯数组比又会丢掉"哪一行错" —— 它两头都要:一条 assertion,失败时**点名首个**不匹配。
+//    行 = [标签, 实得, 期望];标签会被原样打进失败信息里(所以别写空标签)。
+function tableEq(msg, rows) {
+  for (let i = 0; i < rows.length; i++) {
+    const label = rows[i][0], got = rows[i][1], want = rows[i][2];
+    if (JSON.stringify(got) !== JSON.stringify(want)) {
+      fail++;
+      console.error('  FAIL - ' + msg + '(第 ' + (i + 1) + ' 行:' + label + ')\n        got: ' +
+        JSON.stringify(got) + '\n        exp: ' + JSON.stringify(want));
+      return;
+    }
+  }
+  pass++;
+  console.log('  ok  - ' + msg + '(' + rows.length + ' 行)');
+}
 function throws(fn, msg, expectSub) {
   let e = null;
   try { fn(); } catch (err) { e = err; }
@@ -63,6 +79,7 @@ function start() {
   pass = 0; fail = 0;
   globalThis.ok = ok;
   globalThis.eq = eq;
+  globalThis.tableEq = tableEq;
   globalThis.sameBytes = sameBytes;
   globalThis.errText = errText;
   globalThis.throws = throws;
@@ -93,4 +110,4 @@ function finish(verdict, minChecks) {
   process.exit(1);
 }
 
-module.exports = { start, counts, finish, ok, eq, sameBytes, errText, throws, rejects };
+module.exports = { start, counts, finish, ok, eq, tableEq, sameBytes, errText, throws, rejects };

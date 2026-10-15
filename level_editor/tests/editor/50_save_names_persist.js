@@ -5,38 +5,41 @@ const Core = globalThis.Core;
 const Editor = globalThis.Editor;
 
 eq(Editor.saveTargetName(false), null, 'saveTargetName(false): 未打开任何地图 → null(调用方提示先打开)');
-eq(Editor.needsV3Confirm('v4', false), false, '★★ v4 源:直接保存,不问(v4 → v4 是无损的)');
-eq(Editor.needsV3Confirm('v3', false), true,
-   '★★ v3 文本源:首次保存要确认(保存会把它转成 v4 二进制,不可逆 —— 规格 §3.6)');
-eq(Editor.needsV3Confirm('legacy', false), true, '★ 旧字母格式源:同样要确认');
-eq(Editor.needsV3Confirm('v3', true), false, '★ 已经确认过一次的会话不再问第二次');
-eq(Editor.needsV3Confirm(null, false), false, '没打开地图时不问');
+tableEq('needsV3Confirm:只有 v3/legacy 源的**首次**保存要确认', [
+  ['v4 源(无损,不问)', Editor.needsV3Confirm('v4', false), false],
+  ['v3 文本源首次(会转 v4 二进制,不可逆)', Editor.needsV3Confirm('v3', false), true],
+  ['旧字母格式源首次', Editor.needsV3Confirm('legacy', false), true],
+  ['已确认过的会话不再问', Editor.needsV3Confirm('v3', true), false],
+  ['没打开地图时不问', Editor.needsV3Confirm(null, false), false],
+]);
 
 // ── 备份的逐文件门 ──
 // ★ 为什么单独立这几条:确认框每会话一次是故意的(决定 ⑤),但备份不能跟着它一起变成每会话一次。
 const backed14 = new Set();
-eq(Editor.needsV3Backup('v3', 'a.cyrm', backed14), true,
-   '★★ 备份门:本会话还没备份过的 v3 文件 → 要备(哪怕确认框不会再问)');
+const nb = [];
+nb.push(['本会话还没备份过的 v3 文件 → 要备(哪怕确认框不再问)', Editor.needsV3Backup('v3', 'a.cyrm', backed14), true]);
 backed14.add('a.cyrm');
-eq(Editor.needsV3Backup('v3', 'a.cyrm', backed14), false,
-   '★★ 同一个文件已经备份过 → 不再备(重复保存不在 maps/ 里堆副本)');
-eq(Editor.needsV3Backup('v3', 'b.cyrm', backed14), true,
-   '★★★ **逐文件**:同一会话里另一个 v3 文件**照样要备**(上一轮两半共用会话级标记 ⇒ 这里会红)');
-eq(Editor.needsV3Backup('legacy', 'c.cyrm', backed14), true, '★ 旧字母格式源同样要备');
-eq(Editor.needsV3Backup('v4', 'd.cyrm', backed14), false, '★ v4 源:没有要转换的原文,不备');
-eq(Editor.needsV3Backup(null, 'e.cyrm', backed14), false, '没打开地图时不备');
-eq(Editor.needsV3Backup('v3', null, backed14), false, '还没有落过盘的新图(没有文件名)不备');
+nb.push(['同一文件已备过 → 不再备(不在 maps/ 里堆副本)', Editor.needsV3Backup('v3', 'a.cyrm', backed14), false]);
+nb.push(['★★★ 逐文件:同会话里**另一个** v3 文件照样要备(会话级标记的实现在这里红)',
+         Editor.needsV3Backup('v3', 'b.cyrm', backed14), true]);
+nb.push(['旧字母格式源同样要备', Editor.needsV3Backup('legacy', 'c.cyrm', backed14), true]);
+nb.push(['v4 源:没有要转换的原文,不备', Editor.needsV3Backup('v4', 'd.cyrm', backed14), false]);
+nb.push(['没打开地图时不备', Editor.needsV3Backup(null, 'e.cyrm', backed14), false]);
+nb.push(['还没落过盘的新图(没有文件名)不备', Editor.needsV3Backup('v3', null, backed14), false]);
+tableEq('备份门逐文件(确认框每会话一次是故意的,备份不能跟着它也是)', nb);
 
 // ── 备份名 = `<基名>_<8 位十六进制>.v3.bak`(结尾不是 .cyrm;用户裁定的名字)──
 // ★★ 起多了一段哈希,于是这几条从"名字长什么样"升级成"名字单射":
 //    金值钉住方案本身不漂,后面两组钉住"两个不同的文件名不许落到同一格"。
-eq(Editor.v3BackupName('demo.cyrm'), 'demo_c9869709.v3.bak',
-   '★★ 备份名 = `<基名>_<FNV-1a 32 位十六进制>.v3.bak`(金值;换哈希 / 换截断长度都会红)');
+// ★ 三个金值一次比(换哈希 / 换截断长度 / 换成"只去 .cyrm"都会在这里点名到具体那一行)。
+tableEq('v3BackupName 金值 = `<基名>_<FNV-1a 32 位十六进制>.v3.bak`', [
+  ['普通名', Editor.v3BackupName('demo.cyrm'), 'demo_c9869709.v3.bak'],
+  ['汉字被收掉(服务器只收 `[A-Za-z0-9_-]`,不然备份被 400 拒 ⇒ 保存卡死)', Editor.v3BackupName('图 1.cyrm'), '1_a67de2f9.v3.bak'],
+  ['收完一个字符不剩 → 兜底名 `map`', Editor.v3BackupName('.cyrm'), 'map_3744a8d0.v3.bak'],
+]);
+// ★ 与上表不同类(判的是**后缀**而不是名字的值),单独留。
 eq(Editor.v3BackupName('demo.cyrm').toLowerCase().endsWith('.cyrm'), false,
    '★★★ 备份名**不以 `.cyrm` 结尾** —— 游戏 `_random_cyrm` 的 `.ends_with(".cyrm")` 抽不到它');
-eq(Editor.v3BackupName('图 1.cyrm'), '1_a67de2f9.v3.bak',
-   '★ 服务器仍只收 `[A-Za-z0-9_-]` 的基名:汉字被收掉(不然备份被 400 拒 ⇒ 保存整个卡死)');
-eq(Editor.v3BackupName('.cyrm'), 'map_3744a8d0.v3.bak', '★ 收完一个字符都不剩 → 兜底名 `map`');
 ok(/^[A-Za-z0-9_-]+\.v3\.bak$/.test(Editor.v3BackupName('x'.repeat(80) + '.cyrm')) &&
    Editor.v3BackupName('x'.repeat(80) + '.cyrm').length <= 64,
    '★ 备份名的基名字符集合法、且不超过服务器的 MAX_MAP_NAME_LEN=64' +
@@ -69,19 +72,23 @@ ok(Editor.isBackupName('demo_c9869709.v3.bak') === true &&
 eq(Editor.freshName('my map!'), 'my_map.cyrm', '★ freshName 走 sanitizeName(服务器只收裸文件名)');
 
 // ── 持久化的纯逻辑(需要 DOM 的那半边由人眼验收)──
-eq(Editor.draftKey('demo.cyrm'), 'demo', '★ draftKey 由 sanitizeName 派生(不另铸一套 id)');
-eq(Editor.draftKey('my-map.cyrm'), 'my-map', 'draftKey: 连字符保留');
-eq(Editor.draftKey(''), 'structure', 'draftKey: 空名回落(与 Core.sanitizeName 同源)');
+tableEq('draftKey 由 sanitizeName 派生(不另铸一套 id)', [
+  ['普通名', Editor.draftKey('demo.cyrm'), 'demo'],
+  ['连字符保留', Editor.draftKey('my-map.cyrm'), 'my-map'],
+  ['空名回落(与 Core.sanitizeName 同源)', Editor.draftKey(''), 'structure'],
+]);
 eq(Editor.MAX_LIB, 60, 'MAX_LIB = 60(规格 §4.3 闸 1)');
 ok(Editor.DRAFT_DEBOUNCE_MS >= 500, '草稿落盘有防抖(不是每笔都写盘)');
 eq(Editor.DRAFT_DB, 'cyrm-editor', 'DRAFT_DB 名字固定(换名 = 老草稿全丢)');
 eq(Editor.UI_STATE_KEY, 'cyrm.ui.v1', 'UI_STATE_KEY 带版本号');
 
-eq(Editor.crashIsNewer({ savedAt: 200 }, { savedAt: 100 }), true, '★ 崩溃快照比主草稿新 → 提示恢复');
-eq(Editor.crashIsNewer({ savedAt: 100 }, { savedAt: 200 }), false, '主草稿更新 → 不提示');
-eq(Editor.crashIsNewer({ savedAt: 100 }, null), true, '没有主草稿 → 有崩溃快照就提示');
-eq(Editor.crashIsNewer(null, { savedAt: 1 }), false, '没有崩溃快照 → 不提示');
-eq(Editor.crashIsNewer(null, null), false, '两个都没有 → 不提示');
+tableEq('crashIsNewer:只有"崩溃快照比主草稿新"才提示恢复', [
+  ['崩溃(200) 比主草稿(100) 新 → 提示', Editor.crashIsNewer({ savedAt: 200 }, { savedAt: 100 }), true],
+  ['主草稿更新 → 不提示', Editor.crashIsNewer({ savedAt: 100 }, { savedAt: 200 }), false],
+  ['没有主草稿 → 有崩溃快照就提示', Editor.crashIsNewer({ savedAt: 100 }, null), true],
+  ['没有崩溃快照 → 不提示', Editor.crashIsNewer(null, { savedAt: 1 }), false],
+  ['两个都没有 → 不提示', Editor.crashIsNewer(null, null), false],
+]);
 // ★★ 问过、用户说"不要"的那一条不再问(不记的话一次偶发页面异常会把每一次打开都变成
 //    "上次异常退出" —— 那是个永久弹窗,直到用户碰巧 Ctrl+S 把草稿写新)。
 eq(Editor.crashIsNewer({ savedAt: 200, declined: true }, { savedAt: 100 }), false,

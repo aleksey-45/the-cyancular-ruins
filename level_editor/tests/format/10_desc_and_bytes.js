@@ -57,16 +57,20 @@ throws(function () { Core.createMap('bad', 1.5, 10); }, 'createMap: 非整数格
 throws(function () { Core.createMap('bad', 0, 10); }, 'createMap: 零宽报错', '格数必须是正整数');
 
 // ---- 从旧编辑器沿用、与格式无关的纯函数 ----
-eq(Core.sanitizeName('My Tower #1'), 'My_Tower_1', 'sanitizeName: 非法字符被清理');
-eq(Core.sanitizeName('   spaced   name  '), 'spaced_name', 'sanitizeName: 空格合并为下划线');
-eq(Core.sanitizeName('---'), 'structure', 'sanitizeName: 全非法回落默认名');
-eq(Core.sanitizeName(''), 'structure', 'sanitizeName: 空名回落');
-eq(Core.sanitizeName('塔楼 #1'), '塔楼_1', 'sanitizeName: 保留中文');
+tableEq('sanitizeName:非法字符清理 / 空格合并 / 全非法回落默认名', [
+  ['非法字符被清理', Core.sanitizeName('My Tower #1'), 'My_Tower_1'],
+  ['空格合并为下划线', Core.sanitizeName('   spaced   name  '), 'spaced_name'],
+  ['全非法回落默认名', Core.sanitizeName('---'), 'structure'],
+  ['空名回落', Core.sanitizeName(''), 'structure'],
+  ['保留中文', Core.sanitizeName('塔楼 #1'), '塔楼_1'],
+]);
 
-eq(Core.brushOffsets(1), { lo: 0, hi: 0 }, 'brushOffsets: 1 → 1×1');
-eq(Core.brushOffsets(2), { lo: 0, hi: 1 }, 'brushOffsets: 2 → 2×2(偏下右)');
-eq(Core.brushOffsets(3), { lo: 1, hi: 1 }, 'brushOffsets: 3 → 3×3');
-eq(Core.brushOffsets(4), { lo: 1, hi: 2 }, 'brushOffsets: 4 → 4×4(偏下右)');
+tableEq('brushOffsets:边长 → 居中偏移(偏下右)', [
+  ['1 → 1×1', Core.brushOffsets(1), { lo: 0, hi: 0 }],
+  ['2 → 2×2', Core.brushOffsets(2), { lo: 0, hi: 1 }],
+  ['3 → 3×3', Core.brushOffsets(3), { lo: 1, hi: 1 }],
+  ['4 → 4×4', Core.brushOffsets(4), { lo: 1, hi: 2 }],
+]);
 ok((function () {
   for (var s = 1; s <= 15; s++) {
     var o = Core.brushOffsets(s);
@@ -111,14 +115,18 @@ eq(Core.normRegion(1, 1, 1, 1), { x: 1, y: 1, w: 1, h: 1 }, 'normRegion: 单格'
 })();
 
 // ---- CRC32(IEEE,标准测试向量)----
-eq(Core.crc32(new Uint8Array(0)), 0, 'crc32: 空输入为 0');
-eq(Core.crc32(new TextEncoder().encode('123456789')), 0xCBF43926, 'crc32: 标准向量 123456789');
-eq(Core.crc32(new Uint8Array([0x00])), 0xD202EF8D, 'crc32: 单字节 0x00');
+tableEq('crc32:IEEE 标准测试向量', [
+  ['空输入为 0', Core.crc32(new Uint8Array(0)), 0],
+  ['标准向量 `123456789`', Core.crc32(new TextEncoder().encode('123456789')), 0xCBF43926],
+  ['单字节 0x00', Core.crc32(new Uint8Array([0x00])), 0xD202EF8D],
+]);
 
 // ---- 尺寸钳制(旧 clampMin 的第三参是"默认值"而不是上限,输 99999 直接卡死)----
 eq(Core.MAX_CELLS_W, 400, 'MAX_CELLS_W');
 eq(Core.MAX_CELLS_H, 300, 'MAX_CELLS_H');
-eq(Core.clampMapSize(125, 75), { w: 125, h: 75 }, 'clampMapSize: 正常值原样');
-eq(Core.clampMapSize(99999, 99999), { w: 400, h: 300 }, 'clampMapSize: 超上限被钳');
-eq(Core.clampMapSize(0, -5), { w: 1, h: 1 }, 'clampMapSize: 下限 1');
-eq(Core.clampMapSize(NaN, 'x'), { w: 125, h: 75 }, 'clampMapSize: 非数字回落默认');
+tableEq('clampMapSize:正常值原样 / 超上限钳 / 下限 1 / 非数字回落默认', [
+  ['正常值原样', Core.clampMapSize(125, 75), { w: 125, h: 75 }],
+  ['超上限被钳', Core.clampMapSize(99999, 99999), { w: 400, h: 300 }],
+  ['下限 1', Core.clampMapSize(0, -5), { w: 1, h: 1 }],
+  ['非数字回落默认', Core.clampMapSize(NaN, 'x'), { w: 125, h: 75 }],
+]);

@@ -24,27 +24,22 @@ module.exports = (async function () {
   eq(Core.parseMeta(Core.buildMeta(m3)).players.length, 3, 'parseMeta: 第 3 个出生点不丢');
 
   eq(Core.buildMeta(Core.createMap('t', 2, 2)), '', 'buildMeta: 什么都沒有时是空串');
-  eq(Core.parseMeta(''), { players: [], enemies: [], comments: [] }, 'parseMeta: 空串');
-
-  // 非法 spawn 行降级成注释,不丢信息也不崩
-  var bad = Core.parseMeta('# player abc 4\n# enemy\n');
-  eq(bad.players, [], 'parseMeta: 非法 player 不当出生点');
-  eq(bad.comments, ['player abc 4', 'enemy'], 'parseMeta: 非法 spawn 行降级为注释');
-
-  // 普通注释里出现 player 字样不该被误认(缺坐标)
-  eq(Core.parseMeta('# player 是主角\n').comments, ['player 是主角'], 'parseMeta: player 注释不被误认');
-
-  // CRLF 要能吃
-  eq(Core.parseMeta('# demo\r\n# player 1 2\r\n').players, [{ x: 1, y: 2 }], 'parseMeta: CRLF');
-
-  // ★ parseInt 的前缀截断必须走降级路径,不能把原文吃掉
-  eq(Core.parseMeta('# player 3.5 4\n').comments, ['player 3.5 4'], 'parseMeta: 小数坐标整行降级为注释');
-  eq(Core.parseMeta('# player 3.5 4\n').players, [], 'parseMeta: 小数坐标不产生出生点');
-  eq(Core.parseMeta('# player 7abc 4\n').comments, ['player 7abc 4'], 'parseMeta: 带后缀坐标整行降级');
-  eq(Core.parseMeta('# player 1e3 4\n').comments, ['player 1e3 4'], 'parseMeta: 科学计数法坐标整行降级');
-  eq(Core.parseMeta('# enemy fly_bird 3.5 4\n').comments, ['enemy fly_bird 3.5 4'], 'parseMeta: 敌人坐标同理');
-  eq(Core.parseMeta('# enemy fly_bird 20 12\n').enemies, [{ type: 'fly_bird', x: 20, y: 12 }], 'parseMeta: 正常敌人行不受影响');
-  eq(Core.parseMeta('# player -5 4\n').players, [{ x: -5, y: 4 }], 'parseMeta: 负号仍按整数接受(越界由 validateMap 管)');
+  // ★ 一张表 = 一条守卫(D9):12 条"一个输入一条断言"收成一张 —— 失败时点名是哪一行。
+  //   这张表钉的是**同一条规则**:非法/畸形 spawn 行一律整行降级为注释(前缀截断不许吃掉原文)。
+  tableEq('parseMeta:非法/畸形 spawn 行整行降级为注释,正常行不受影响', [
+    ['空串 → 三个空数组', Core.parseMeta(''), { players: [], enemies: [], comments: [] }],
+    ['缺坐标的 player 注释不被误认', Core.parseMeta('# player 是主角\n').comments, ['player 是主角']],
+    ['CRLF 也要能吃', Core.parseMeta('# demo\r\n# player 1 2\r\n').players, [{ x: 1, y: 2 }]],
+    ['非法 player → 不当出生点', Core.parseMeta('# player abc 4\n').players, []],
+    ['非法 spawn 行降级为注释(两行都留住)', Core.parseMeta('# player abc 4\n# enemy\n').comments, ['player abc 4', 'enemy']],
+    ['小数坐标整行降级(parseInt 的前缀截断不许吃掉原文)', Core.parseMeta('# player 3.5 4\n').comments, ['player 3.5 4']],
+    ['小数坐标不产生出生点', Core.parseMeta('# player 3.5 4\n').players, []],
+    ['带后缀坐标整行降级', Core.parseMeta('# player 7abc 4\n').comments, ['player 7abc 4']],
+    ['科学计数法坐标整行降级', Core.parseMeta('# player 1e3 4\n').comments, ['player 1e3 4']],
+    ['敌人坐标同理', Core.parseMeta('# enemy fly_bird 3.5 4\n').comments, ['enemy fly_bird 3.5 4']],
+    ['(对照)正常敌人行不受影响', Core.parseMeta('# enemy fly_bird 20 12\n').enemies, [{ type: 'fly_bird', x: 20, y: 12 }]],
+    ['负号仍按整数接受(越界由 validateMap 管)', Core.parseMeta('# player -5 4\n').players, [{ x: -5, y: 4 }]],
+  ]);
 
   // round-trip:buildMeta → parseMeta → buildMeta 稳定
   var t1 = Core.buildMeta(m);

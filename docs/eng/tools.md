@@ -96,6 +96,9 @@ node parts_check.js --ratio      # 注释额度(>100 非空行的 .js ≤15%)
 (`git log -1 --diff-filter=AM`),所以拆批**提交前后都能跑**;想比特定一版就 `--baseline <rev>`。
 `core/` 与 `ui/` 与基线**逐字符等价**(render/ 例外:它的拆分含闭包分解,判据是行为等价)。
 ★ 每个入口现在都是**瘦入口**:分片在 `tests/<套件>/` 下,断言助手在 [`level_editor/tests/harness.js`](../../level_editor/tests/harness.js)。
+★★ **一条判定类别 = 一条守卫**(D9):家族式断言(一个热键一条 / 一个数值一条 / 一条路径一条)一律用
+`harness.js` 的 **`tableEq(msg, rows)`** 收成**一条**表比 —— `rows` 是 `[标签, 实得, 期望]`,
+失败时它**点名首个不匹配的那一行**(纯数组比会丢掉这条诊断,所以别用)。加/删断言要同步改入口的条数闸。
 
 **浏览器侧(node 到不了的那半边)**:
 - 页面上点「**自检**」按钮 ⇒ 打印一行 `SELFTEST OK` 或 `SELFTEST FAIL: n 条`(两种打开方式都有);
