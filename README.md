@@ -72,9 +72,9 @@ python tools/build_release.py
 台账见 [`docs/superpowers/specs/2026-10-09-test-surface-cut-90-design.md`](docs/superpowers/specs/2026-10-09-test-surface-cut-90-design.md)):
 
 ```bash
-# 输入包/服务端收口(默认批的入口之一)
-Godot_console --headless --path . -s res://tests/smoke/network_input_smoke.gd
-# 整批(12 支;不碰 7777、不弹窗)
+# 输入包/服务端收口(默认批的入口之一)。引擎不在 PATH ⇒ 先取 $GODOT(tests/env.sh 是它的一处默认值)
+source tests/env.sh && "$GODOT" --headless --path . -s res://tests/smoke/network_input_smoke.gd
+# 整批(14 支;不碰 7777、不弹窗。`--list` 看清单 + 每条排除理由 + 已知红基线)
 bash tests/run_all.sh
 # PvP 链路(大厅→worker→建房→开局;占 7777,走真链路批)
 bash tests/smoke/pvp_room_smoke.sh
@@ -95,7 +95,7 @@ ui/       跨场景 UI(factory/ 工厂与唯一调色板、hud/ HUD、screens/ �
 tests/    -s 冒烟/探针(smoke/ · probe/ · harness/ · scripts/,分层见 tests/README.md)
 level_editor/  浏览器地图编辑器(editor.html + smoke.js + sync-*.js)
 maps/     .cyrm 文本地图
-data/     tile_defs.json / enemies.json(与编辑器共享的属性表与敌人注册表)
+data/     tile_defs.json / enemies.json / weapons.json(与编辑器共享的属性表、敌人注册表与武器注册表)
 assets/   字体(含中文像素字体 unifont)与纹理
 tools/    发布/控制台脚本(build_release.py、make_server_console.py)+ check_naming.py(命名规范检查)
 ```

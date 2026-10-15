@@ -88,7 +88,8 @@ python tools/build_release.py                      # 写版本信息 → 客户�
 ```bash
 python tools/archive_build.py                      # 归档根目录两个固定名 exe,时间戳取当前时间
 python tools/archive_build.py --stamp 202609062126 # 指定归档时间戳(追溯/对齐用)
-python tools/archive_build.py --file "Some.exe"    # 只归档指定文件
+# ★ 该脚本**只认 `--stamp` / `--version` 两个参数**(2026-10-13 订正:原文示例里的 `--file` 不存在,
+#   照抄会当场报错)。归档范围固定 = **根目录那两个固定名 exe**,不能单选文件。
 ```
 `build_release.py`(§1.2 一键打包)导出后已自动调用它,无需再手动归档。
 
@@ -119,7 +120,7 @@ git clone --depth 1 --branch 4.7.1-stable https://gitee.com/mirrors/godot.git E:
 - 它定义:
   - `disabled_build_options`:关闭的模块(3D、音频格式、网络、导航、XR、图片格式等)+ `disable_3d`。
   - `disabled_classes`:游戏没用到的类(音频播放器、粒子、AnimationPlayer、GUI 控件等)。
-- 游戏用到的类**全部保留**在 profile 之外(`CharacterBody2D`/`Area2D`/`TileMapLayer`/`Parallax2D`/`CanvasLayer`/`Control`/`ColorRect`/`Label`/`Tween`/`Timer`/`AtlasTexture`/`SpriteFrames` 等)。
+- 游戏用到的类**全部保留**在 profile 之外(`CharacterBody2D`/`Area2D`/`TileMapLayer`/`CanvasLayer`/`Control`/`ColorRect`/`Label`/`Tween`/`Timer`/`AtlasTexture`/`SpriteFrames` 等)。★ 2026-10-13 订正:原先这份清单里还写着 `Parallax2D`,但**全仓 0 处使用**(`grep -rn Parallax2D --include='*.gd' --include='*.tscn'` 无命中)⇒ 已删；**别照抄旧的类清单**，改 profile 前自己 grep 一遍。
   > `Label` 是击杀计数(HUD 文本)首次引入的 GUI 类——**每新增一个之前没用过的类,就要从 `disabled_classes` 移除它并重编模板**(见 3 排查表)。
   > **别加一个类就重编一次**:改 classes/模块列表 = 近全量重编 10~15 分钟(见 §2.4),把缺的类一次集齐再烘焙。
 
