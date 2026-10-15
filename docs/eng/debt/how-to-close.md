@@ -7,8 +7,8 @@
 
 1. 修好 → **同配置跑两次**(分清噪声与信号);
 2. 把这条从本文件**删掉**;
-3. 若它本来是"守卫",按 [`tests.md`](tests.md) 的要求补一句「它现在能给的最强保证是什么、测不到什么」。
+3. 若它本来是"守卫",按 [`tests.md`](../tests.md) 的要求补一句「它现在能给的最强保证是什么、测不到什么」。
 
-★ **销案记录的格式范本**(2026-10-04 补):[`docs/superpowers/plans/2026-09-29-unowned-debt-sweep.md`](../superpowers/plans/2026-09-29-unowned-debt-sweep.md)
+★ **销案记录的格式范本**(2026-10-04 补):[`docs/superpowers/plans/2026-09-29-unowned-debt-sweep.md`](../../superpowers/plans/2026-09-29-unowned-debt-sweep.md)
 的「本轮执行结果」那张表 —— 逐项写 **结果 + 提交 sha**,并含两段判决:`### ★ A4 是**伪欠账**(实读后推翻)` 与
 `### ★ C1 …**不再是欠账**`。**"推翻一条欠账"和"修掉一条欠账"都要留同样详细的记录**。

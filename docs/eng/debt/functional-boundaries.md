@@ -50,15 +50,20 @@
    - 证据一(既有):本文件 §五 第 1 条那条链接原先写成了从 `docs/eng/` 出发**少一层**的相对路径 ⇒ **长期 404**,
      直到 2026-10-04 才被手工扫描发现并修掉。
    - 证据二(本轮引入):`audit-2026-10-04-design-conventions.md` 里本轮加的两条"已修"块链接也犯了同样的错
-     (`](superpowers/…)` 从 `docs/eng/` 解析成 `docs/eng/superpowers/…`)⇒ 同样 404,同日修掉。
+     (相对路径写成 `superpowers/…`,从 `docs/eng/` 一解析就成了 `docs/eng/superpowers/…`)⇒ 同样 404,同日修掉。
+     ★ **2026-10-13 附注**:上面这句原先**把坏链接原样写成 markdown 链接**(方括号紧跟圆括号)⇒
+     规则 C 加"链接目标"检查后,它自己会变成一条违规 —— 记这么细的坑时,**别把坏写法写成可解析的链接**。
+   - ★★ **2026-10-13 已补**:规则 C 现在**也解析链接目标**(按所在文档目录),并配了能红的自测;
+     加上当天就抓到 1 处**活的 404**(`docs/eng/world.md` 少一层)与本文件拆到 `debt/` 后的
+     **78 处相对链接回归**(搬目录没跟着加 `../`)。
    ⇒ **它给的保证比读起来少**:文档改相对链接时**没有**任何机械化守卫;补法 = 让第四条也解析链接目标
    (右括号紧跟圆括号那种)并按所在目录核存在性(约多几行);★ 在那之前,改文档链接**必须手工核**。
 
 12. **`tools/check_naming.py` 的 `DOC_FILES` 白名单不含审计报告与它的逐条复核文档**(2026-10-04 加,与上一条同族:都是"文档侧的机械守卫比读起来少")。
    - **它给的保证**:只查**列进 `DOC_FILES`** 的文档 —— 当时那张表(旧 `check_naming.py:38-42`)是 `README.md` / `CLAUDE.md` / `RELEASE.md`
      + `docs/eng/` 的 **11** 份域文档。
-   - **它测不到什么(照实登记)**:[`audit-2026-10-04-design-conventions.md`](audit-2026-10-04-design-conventions.md) 与
-     [`conventions-review-2026-10.md`](conventions-review-2026-10.md) **都不在表里** —— 而它们正是"最该被检"的那类:
+   - **它测不到什么(照实登记)**:[`audit-2026-10-04-design-conventions.md`](../audit-2026-10-04-design-conventions.md) 与
+     [`conventions-review-2026-10.md`](../conventions-review-2026-10.md) **都不在表里** —— 而它们正是"最该被检"的那类:
      审计报告被仓库里 **12** 份入库文件引用(含 `world.md` / `enemies.md` / `registered-debt.md` / `RELEASE.md` 这些**活文档**,
      很多地方把它当规范/出处引),复核文档一建立就被计划引用 ⇒ 它们正文里的反引号路径**一条都不检**,写错不会红;
      连带"C 文档不存在"那条也**只对列进表的文件生效**(没列进去 = 连文件本身存不存在都不查)。
@@ -74,7 +79,7 @@
 
 13. **端口属主判不出来时,我们放弃清理并报错(不杀)⇒ 极端情况下双击开服会失败并打印提示**
     (`audit §2.1` 的护栏半边;owner 未认领;最后复核 2026-10-04 —— 改时用 dry-run 实测过三条分支 + 跑过 `kh_l5_probe`)。
-    - **落点**:[`start_server.bat`](../../start_server.bat) 的 `:reap_port_holder` 与"收口重查" + [`core/net/proc_util.gd`](../../core/net/proc_util.gd) 的 `kill_udp_port`。
+    - **落点**:[`start_server.bat`](../../../start_server.bat) 的 `:reap_port_holder` 与"收口重查" + [`core/net/proc_util.gd`](../../../core/net/proc_util.gd) 的 `kill_udp_port`。
       取向 = **证不出是"我们这一族"的,就不杀**;名族 = **前缀** `Godot*` / `Cyancular*` / `The Cyancular*`
       **+ 本 exe 自己的名字**(`.bat` 从 `%GODOT%` 取 base name、`proc_util.gd` 取 `OS.get_executable_path()`,
       ⇒ 发布版 exe 被**改名**后,只要旧实例与本次要拉起的是同一个名字,照样清得掉 = Review Focus 5 那条失败模式)。
@@ -84,7 +89,7 @@
     - **为什么这么取舍**:旧行为是**不管属主是谁一律强杀** ⇒ 端口被别人的程序占着时会**误杀别人的进程**(审计 §2.1)。
       代价不对称:**不杀**的代价只是"这次开服失败、用户手工处理";**误杀**的代价是端掉别人正在跑的东西。⇒ **宁可不杀,也不误杀。**
     - **动机仍在(已核)**:旧实例、旧 worker **就是我们这一族** ⇒ 照旧被杀,「占着 7777 ⇒ 新实例 bind 失败闪退」
-      那个坑([`proc_util.gd`](../../core/net/proc_util.gd):5-9)仍然堵着。★ 但**这一条今天没有自动化守卫**:
+      那个坑([`proc_util.gd`](../../../core/net/proc_util.gd):5-9)仍然堵着。★ 但**这一条今天没有自动化守卫**:
       `kh_l5_probe` 第 3 条只**读文本**钉"修正写法在位 + 坏写法零处",**测不到**护栏分支的运行时行为;
       本轮的分支证据是**一次性 dry-run**(未入库,回归时**不会自己红**)。
     - **覆盖上限(照实登记,别当强保证)**:
@@ -216,7 +221,7 @@
    - **已做**：① 不变量写进 `_tick_beta_rewind` 的代码注释（该函数第一段，点名"冻结与解冻必须是同一个对象"
      与 `player.set_controls_locked()` 那条写路）；
      ② **形状守卫：已删除**（原 `rewind_weapon_probe.gd`（已删·2026-10-09） 的 **S11**，10 条，**全是**读源码判形态）。
-     删因 = [`test-economy.md`](test-economy.md) 的 **D6**：那类断言测的是"**某人有没有写这段字**"、不是行为；
+     删因 = [`test-economy.md`](../test-economy.md) 的 **D6**：那类断言测的是"**某人有没有写这段字**"、不是行为；
      本批实测它**可被字符串诱饵喂绿**（塞一行 `var _decoy := "_local.input_source"` 即 ALL-OK），
      且三支照抄的副本**同一轮内就漂移**。⇒ **本节今天零守卫**（形状与行为都没有）；
      下面那些变异证据只能说明"当年那条形状守卫有牙"，**不再代表现在的覆盖**。
@@ -261,7 +266,7 @@
      更准的说法是"**把倍率注进来，别伸手读宿主**"；参数与成员只是两种载体。
      （★ 注意：这不等于"`climb.update` 不能被加参数" —— 它本身也是每帧被根调用的；
      差别只在**宿主引用何时给入**。原条目那句理由要按这个说法读。）
-   - **形状守卫：已删除**（原 `rewind_weapon_probe` 的 **S10 形状 12 条**，按 [`test-economy.md`](test-economy.md)
+   - **形状守卫：已删除**（原 `rewind_weapon_probe` 的 **S10 形状 12 条**，按 [`test-economy.md`](../test-economy.md)
      的 **D6** 删 —— 读源码判形态）。**行为守卫保留**：S10 的游泳/攀爬/出膛弹速三条比值 + 权威侧一条
      （用**与 `match_host.gd:223` 逐字同款**的写法改字段，看消费点是否跟着变）—— **共 9 条**。
    - **改口的那一半**（原第二处残留，原文写 `core/sim/world_rewind.gd:95`）：
@@ -358,7 +363,7 @@
 
 17. **本仓没有 CI,也没有"聚合回归入口"以外的机器判据**(2026-10-04 加;owner 未认领;最后复核 2026-10-04 `bash tests/run_all.sh` 实测)。
    - **症状(加这一条之前)**:判据靠**逐脚本自造文本行** + 靠人记得该跑哪些 ⇒ ① 没有任何东西保证"新加的探针会进批";② 没有一份便宜的"改了没有"的红/绿判据;**③ 真链路的三条纪律(7777 / 孤儿 worker / 池外不扫)全靠人记**。
-   - **现状(2026-10-04 起)**:[`tests/run_all.sh`](../../tests/run_all.sh)(headless 默认批,自动枚举 + 逐支判词 + **已知红基线** [`tests/known_red.txt`](../../tests/known_red.txt))与 [`tests/run_real.sh`](../../tests/run_real.sh)(真链路批,四道闸)已入库。★ **它已经是能被 CI 直接调用的形状**:`run_all.sh` 的退出码 = "有没有新红",判词行可以 grep。
+   - **现状(2026-10-04 起)**:[`tests/run_all.sh`](../../../tests/run_all.sh)(headless 默认批,自动枚举 + 逐支判词 + **已知红基线** [`tests/known_red.txt`](../../../tests/known_red.txt))与 [`tests/run_real.sh`](../../../tests/run_real.sh)(真链路批,四道闸)已入库。★ **它已经是能被 CI 直接调用的形状**:`run_all.sh` 的退出码 = "有没有新红",判词行可以 grep。
    - **为什么留着不补(为什么还没上 CI)**:上 CI 是**项目级决策**,至少要同时回答四件事 ——
      ① **Windows**:`.bat` 与 `core/net/proc_util.gd` 都有 Windows-only 分支(`taskkill` / `netstat -ano` / `ping -n`),Linux runner 跑不了;
      ② **两个 Godot 绝对路径**:`GODOT`(console 版,跑测试)与 `GODOT_EDITOR`(标准版,导出)是两个二进制且都要现装;
@@ -377,16 +382,16 @@
    - **翻案条件**:用户裁定"反射必须清零"时 ⇒ 先按上面四档分档(先做 (a)(b)(c)),再开 `=2`;★ 届时**必须**同时跑一次真链路批(退时 segfault 那类问题只在真链路里现形)。
 
 19. **`tests/scripts/convert_map.gd` 今天跑会**原地毁掉两张在库图****(owner 未认领;最后复核 2026-10-05,静态 + 头 6 字节实测;评审 I5 要求登记)。
-   - **症状**:两张在库图 `maps/demo.cyrm` / `maps/newfactory.cyrm` 的头 6 字节都是 `C Y R M 004 \0`(= **v4 二进制**,`od -c` 实测),而 [`tests/scripts/convert_map.gd`](../../tests/scripts/convert_map.gd):3,7,8,11 判版本靠 `# cyrm-v2` / `# cyrm-v3` **文本标记**;v4 二进制里**没有**这些标记 ⇒ 它落进"**v1 单字符 250×150**"那一支 ⇒ `w.store_string(...)`(:65)**原地覆盖写回**。
+   - **症状**:两张在库图 `maps/demo.cyrm` / `maps/newfactory.cyrm` 的头 6 字节都是 `C Y R M 004 \0`(= **v4 二进制**,`od -c` 实测),而 [`tests/scripts/convert_map.gd`](../../../tests/scripts/convert_map.gd):3,7,8,11 判版本靠 `# cyrm-v2` / `# cyrm-v3` **文本标记**;v4 二进制里**没有**这些标记 ⇒ 它落进"**v1 单字符 250×150**"那一支 ⇒ `w.store_string(...)`(:65)**原地覆盖写回**。
    - **为什么留着**:它是**一次性迁移工具**,历史使命(v1/v2/v3 → v3)已完成;留着是为了万一还要转旧格式。
    - **什么时候能销(任一)**:① 加一条"**认不出格式就拒写**"的 fail-closed 守卫(最小做法:`if not (has_v2_marker or has_v3_marker): print(...); return`);② 或按"v4 已是唯一在库格式"把它的用法彻底退役(移进 `docs/archive/` 或删掉)。
-   - ★ **今天怎么防**:聚合入口的 `OUT_OF_SCOPE` 明确挡住它(不进默认批),那条理由**指向本行** —— 见 [`tests/run_all.sh`](../../tests/run_all.sh) 的 `OUT_OF_SCOPE`。
+   - ★ **今天怎么防**:聚合入口的 `OUT_OF_SCOPE` 明确挡住它(不进默认批),那条理由**指向本行** —— 见 [`tests/run_all.sh`](../../../tests/run_all.sh) 的 `OUT_OF_SCOPE`。
 
 20. **`tests/scripts/seam_analyze.gd` 的输入图不在库里 ⇒ 跑它必 null 解引用**(owner 未认领;最后复核 2026-10-05,`ls` 实测;评审 I5 要求登记)。
-   - **症状**:它读 `res://tests/_seam_a_old.png` / `res://tests/_seam_b_fixed.png`,而这两张图**不存在**(由 `seam_screenshot.gd` 运行时 `save_png` 生成、不入库)⇒ `Image.load_from_file` 返回 `null`,紧接着 `a.get_height()` / `get_pixel()` **null 解引用**。★ 它**没有空载守卫** ⇒ 形状是"报错 + 半截输出",不是干净失败(空载守卫纪律见 [`tests.md`](tests.md))。
+   - **症状**:它读 `res://tests/_seam_a_old.png` / `res://tests/_seam_b_fixed.png`,而这两张图**不存在**(由 `seam_screenshot.gd` 运行时 `save_png` 生成、不入库)⇒ `Image.load_from_file` 返回 `null`,紧接着 `a.get_height()` / `get_pixel()` **null 解引用**。★ 它**没有空载守卫** ⇒ 形状是"报错 + 半截输出",不是干净失败(空载守卫纪律见 [`tests.md`](../tests.md))。
    - **为什么留着**:一次性接缝分析;两张图都不入库 ⇒ 它只在"刚跑过 `seam_screenshot.gd`"的那个窗口里有意义。
    - **什么时候能销(任一)**:① 加空载守卫(null ⇒ 点名 + `quit(1)`);② 或把它与 `seam_screenshot.gd` 合成一条"**先拍后比**"的脚本。
-   - **交叉引用**:这两张图已在 [`tests/path_integrity_allow.txt`](../../tests/path_integrity_allow.txt) 第 2-3 行带理由豁免 —— 即"它们不存在"这件事**在别处已经登记过一次**。
+   - **交叉引用**:这两张图已在 [`tests/path_integrity_allow.txt`](../../../tests/path_integrity_allow.txt) 第 2-3 行带理由豁免 —— 即"它们不存在"这件事**在别处已经登记过一次**。
 
 21. **`haste_probe` 不是"稳定绿":6 次里 1 次真红 —— 加速把跳跃高度改了(真缺陷,不是判据假红)**（2026-10-05 由 Task 6 的实现者自检时实测发现、控制器要求登记；owner 未认领）。
    - **症状（判词原文 + 退出码 + 样本量,一字不改）**:
@@ -397,13 +402,13 @@
      **6 次跑里 1 次**（Task 6 实现者的自检跑了 6 次）。★ 本行只按这一个样本量陈述:既**不写成"必现"**,也**不写成"偶发"以外的**判断。
    - **触发点（按源码）**:`haste_probe.gd`（已删·2026-10-09）:150-154 —— 普通相与加速相各取一次跳跃最高点(`_jump_apex`),`tol = maxf(8.0, h_norm * 0.10)`,超差即 `_fail`。⇒ 这是**真断言真的判了假**:重力/跳跃高度**不该**被时间场碰（`:14` 的注释与设计口径都这么写）。
    - **为什么说它是真缺陷、而不是判据/环境造成的假红（依据）**:这一条走的是 `_fail` + `rc=1` 的 **FAIL** 判词,而 Task 6 改的是**判词位置**口径("判词之后的良性尾行不再假红")—— **FAIL 判定与"判词位置"无关**,改前改后同判;那条断言也**不读**任何与判据有关的输出。⇒ **与 Task 6 的判据改动无因果**,也与本批（Task 2 的回溯武器域）无因果。
-   - ★★ **绝对不要把它写进 `tests/known_red.txt`**:按 [`tests/README.md`](../../tests/README.md):41 的纪律，"**加行不是『让检查变绿』的手段**"；而这一条是**真守卫抓到了真问题** —— 压进基线等于**把一条真守卫压盲**，以后它再也不报。要它**继续红着被人看见**。★ 本节（§六）而不是 §一 的理由：§一 收的是"**不是守卫、别拿它们的行为当证据**"的既有红，而这一条恰恰**是**一条有效守卫的**真红**。
+   - ★★ **绝对不要把它写进 `tests/known_red.txt`**:按 [`tests/README.md`](../../../tests/README.md):41 的纪律，"**加行不是『让检查变绿』的手段**"；而这一条是**真守卫抓到了真问题** —— 压进基线等于**把一条真守卫压盲**，以后它再也不报。要它**继续红着被人看见**。★ 本节（§六）而不是 §一 的理由：§一 收的是"**不是守卫、别拿它们的行为当证据**"的既有红，而这一条恰恰**是**一条有效守卫的**真红**。
    - **什么时候能销**:谁能**稳定**复现出那次 FAIL 并定位"**重力被 delta 缩放带跑**"的成因（时序/采样类 ⇒ 按 §一 的纪律**同配置跑两次**再下结论）,修好之后销账并附提交号。★ 在那之前,`haste_probe` 的判决要按"**可能真红**"读,不能按"稳定绿"读。
    - **交叉引用**:本批 Task 2 的报告（`.superpowers/sdd/2026-10-04-closeout-consolidated-batch/task-2-report.md` 与 `task-2-control-batch.txt`）里的措辞与本行一致:**`haste_probe` 那两次 `NO-VERDICT` 是判据面的假红（与本批无因果）**,而**本行这次是行为面的真红** —— 两件事别混。
 
 22. **`Water.surface_y_at()` 的向上扫描**没有迭代上限 ⇒ **该列全是液体时挂死主循环**（**产品侧**既有缺陷）
    (2026-10-05 由 closeout 批 Task 3 的实现者在写探针时**实测踩到**、逐任务评审 M-8 判为产品缺陷并要求登记；owner 未认领)。
-   - **位置与成因**：[`core/sim/water.gd`](../../core/sim/water.gd):36-43 —— `while true:` 里
+   - **位置与成因**：[`core/sim/water.gd`](../../../core/sim/water.gd):36-43 —— `while true:` 里
      `var above := posmod(y - 1, rows)`，只要**同一列**每一格都是液体（`posmod` 回绕会绕回来），
      `top` 回到起点后条件**仍然成立** ⇒ **永不退出**。★ 不是"整张图全水"才触发：**任何一列**全液即可。
      ★★ **机制已独立复核**（2026-10-05 修复轮 3 / 范围重审）：`water.gd:36-43` **没有** `top == 起点` 的检查、
@@ -412,12 +417,12 @@
      而**日志里一行错误都没有**；`top` 无从收敛，主循环不再迭代（`--quit-after` 也不会触发）。
    - **可达性（★ 2026-10-05 修复轮 3 / 评审 C-2 改写：残留风险是**扩大**，不是缩小）**：
      本缺陷**不止**在"合成世界"里能踩 —— 地图有**两个来源**，其中一个是**开发者外置地图**：
-     · `MazeGenerator.map_file_path()`（[`core/sim/maze_generator.gd`](../../core/sim/maze_generator.gd):18-22）
+     · `MazeGenerator.map_file_path()`（[`core/sim/maze_generator.gd`](../../../core/sim/maze_generator.gd):18-22）
        **先**扫 **exe 同目录**的 `.cyrm`，扫不到才回落 `res://maps`（该文件 `:13-17` 的注释自带说明）；
-     · `MapCatalog._dirs()`（[`core/sim/map_catalog.gd`](../../core/sim/map_catalog.gd):179-184）=
+     · `MapCatalog._dirs()`（[`core/sim/map_catalog.gd`](../../../core/sim/map_catalog.gd):179-184）=
        `[res://maps, exe 目录]`，并给非 `res://maps` 的条目标 `"external"`（`:71`）；
-     · 单人选择器把它写进 `Settings.sp_map_path`（[`core/config/settings.gd`](../../core/config/settings.gd):32/215/247），
-       再由 [`scenes/main_menu.gd`](../../scenes/main_menu.gd):183 交给 `set_map_file`（选择器在 `:426`/`:473`）。
+     · 单人选择器把它写进 `Settings.sp_map_path`（[`core/config/settings.gd`](../../../core/config/settings.gd):32/215/247），
+       再由 [`scenes/main_menu.gd`](../../../scenes/main_menu.gd):183 交给 `set_map_file`（选择器在 `:426`/`:473`）。
      ⇒ **那条路今天可达、发布版更可达**（发布版裁掉 `tests/`，但 exe 目录里的地图照旧被扫）。
      ★ 另一处旧措辞的订正：原先这里写"不覆盖**运行期生成**的图" —— `maze_generator.gd` 里**没有任何生成函数**
      （生成逻辑早已注释掉），那句话**指错了对象**；真正的第二个来源就是上面那条 exe 目录。
@@ -445,12 +450,12 @@
    - **被订正的那句话**：Task 3 的探针与报告里有 9 处把 T10/T11 的行为判据写成"**归真链路批 A**"。实测复核
      （评审 R43 + 实现者复核）：**批 A 结构上碰不到它们** ——
      ① `PvpSession.beta_mode` 的写点全仓只有三处，**没有一处落在自动化对局里**：
-     [`scenes/beta_menu.gd`](../../scenes/beta_menu.gd):131（在 `_enter_card`(`:128-135`) 内；**要人点 Beta 页**，**或**走 `main_menu.gd` 的
+     [`scenes/beta_menu.gd`](../../../scenes/beta_menu.gd):131（在 `_enter_card`(`:128-135`) 内；**要人点 Beta 页**，**或**走 `main_menu.gd` 的
      `-- --autotest-*` 钩子 —— 见下面②之前那半条）、`lobby_create_form_probe.gd`（已删·2026-10-09）（只建大厅面板，不建局）、
      以及——★★ **2026-10-05 修复轮 2（评审 Minor ⑧）补上的那个驱动者**——
-     [`tests/harness/menu_autotest.gd`](../../tests/harness/menu_autotest.gd) 的 `_run_beta_flow()`（**`func` 在 `:161`** —— 原写的 ":158 起"是它上方的注释行）：它经
-     [`scenes/main_menu.gd`](../../scenes/main_menu.gd):**151-158(注释)+159-174(代码)** 的 `-- --autotest-*` 钩子走**就是** `beta_menu.gd:131`
-     那条路，**headless 可达**；但今天它被 [`tests/run_all.sh`](../../tests/run_all.sh):142 的 `EXCLUDED` 挡在批外，
+     [`tests/harness/menu_autotest.gd`](../../../tests/harness/menu_autotest.gd) 的 `_run_beta_flow()`（**`func` 在 `:161`** —— 原写的 ":158 起"是它上方的注释行）：它经
+     [`scenes/main_menu.gd`](../../../scenes/main_menu.gd):**151-158(注释)+159-174(代码)** 的 `-- --autotest-*` 钩子走**就是** `beta_menu.gd:131`
+     那条路，**headless 可达**；但今天它被 [`tests/run_all.sh`](../../../tests/run_all.sh):142 的 `EXCLUDED` 挡在批外，
      **且没有任何脚本调用它** ⇒ "无自动化路径"的**结论仍成立**，只是口径要写成"**要人点 / 或走
      `main_menu.gd` 的 `--autotest-*` 钩子**"。★ 并且这条恰好说明**翻案条件①其实已有半成品** ——
      那条路**只差**"最后一步真建局 + 进对局"。
@@ -461,11 +466,11 @@
      grep -lE 'beta_mode|haste|rewind|TimeField|_time_' tests/smoke/*.sh tests/probe/*.sh   # 只认关键词 ⇒ 0 支
      grep -lE 'beta|haste|rewind|time' tests/smoke/*.sh tests/probe/*.sh                    # 反证 ⇒ 2 支(rejoin/team_match 的 timeout)
      ```
-     ③ 客户端那 7 处所在的三个函数全在同一道 `beta_mode` 闸后（[`scenes/pvp_match_client.gd`](../../scenes/pvp_match_client.gd) 的 `_tick_beta_time` 首行早退）；
-     ④ 服务端那一写同理：[`server/match/match_host.gd`](../../server/match/match_host.gd) 的那三段全在
+     ③ 客户端那 7 处所在的三个函数全在同一道 `beta_mode` 闸后（[`scenes/pvp_match_client.gd`](../../../scenes/pvp_match_client.gd) 的 `_tick_beta_time` 首行早退）；
+     ④ 服务端那一写同理：[`server/match/match_host.gd`](../../../server/match/match_host.gd) 的那三段全在
      `if time_economy != null:` 内，而 `time_economy` 只在 `options["time"]` 非空时建 ⇒ **普通真链路里
      `match_host.gd:223` 那一行连"写 1.0"都不发生**。
-   - **覆盖上限（照实；2026-10-08 按 [`test-economy.md`](test-economy.md) 的 D6 收紧）**：
+   - **覆盖上限（照实；2026-10-08 按 [`test-economy.md`](../test-economy.md) 的 D6 收紧）**：
      **T11 零守卫**（原 S11 那 10 条**全是形状**，已删）；**T10 只剩行为 9 条**（形状 12 条已删）。
      **行为**（真 PvP 局里按住加速键）没有任何自动化路径；服务端那一写"被执行到"的证明也**没有**（只有"静态链完整 + 该字段是活真相源"：
      S10 ④ 用与 `match_host.gd:223` **逐字同款**的写法改字段，三个消费点与根速度域都跟着变）。
@@ -480,4 +485,4 @@
    - **可推的后果**：同进程里只要进过一次单机，`TimeField.current != null` 就永久为真 ⇒ [`scenes/player/player.gd`](../../../scenes/player/player.gd):173 走 `TimeField.player_speed_mult()` 而**不读 `pvp_haste_mult`**（该分支另有 8 处读点：[`climb_component.gd`](../../../scenes/player/climb_component.gd):108、[`swim_component.gd`](../../../scenes/player/swim_component.gd):45、[`level_0.gd`](../../../scenes/level_0.gd):410、[`enemy_base.gd`](../../../scenes/enemies/enemy_base.gd):105、[`bullet_base.gd`](../../../scenes/weapons/bullet_base.gd):63、[`enemy_bullet.gd`](../../../scenes/enemies/enemy_bullet.gd):45、[`watch_hud.gd`](../../../ui/watch_hud.gd):129、[`time_symbol_hud.gd`](../../../ui/time_symbol_hud.gd):40）。★ 与 [`swim_component.gd`](../../../scenes/player/swim_component.gd):32 那条 2026-10-03 的修（"PvP 下这条原先恒 1"）是**同一族**：那条修的是"没有单机场时怎么办"，没有处理"单机场残留"。
    - **为什么只是"可推"**：① 生产路径里"回菜单"是否**真同进程**未核（`Level0.safe_change_scene` 只换场景，不重载进程 ⇒ 静态看成立）；② 真对局里的实际表现 headless 够不到。
    - **翻案条件**：① 在 `Level0` 退出（`_exit_tree`/`safe_change_scene` 之前）把 `TimeField.current` 置回 `null` —— 一行即可，但要确认**跨场景残留是否被别处依赖**；② 或把"读哪一份倍率"从"`current != null`"改成**显式模式参数**（PvP 由 `pvp_haste_mult` 决定，单机由 `TimeField` 决定），消灭这个隐式开关。
-   - 落点：口径与"未核"标注见 [`time.md`](../../time.md) §2 不变量 1 的例外与 §4.2。
+   - 落点：口径与"未核"标注见 [`time.md`](../time.md) §2 不变量 1 的例外与 §4.2。

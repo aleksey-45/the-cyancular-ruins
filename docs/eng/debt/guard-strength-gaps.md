@@ -5,17 +5,17 @@
 
 ## 五、守卫强度已知缺口(2026-10-04 加)
 
-**这些不是"红",是有守卫但保证比读起来少** —— 与 [tests.md](tests.md) 末节同一类,发现者都是审阅者不是实现者。
+**这些不是"红",是有守卫但保证比读起来少** —— 与 [tests.md](../tests.md) 末节同一类,发现者都是审阅者不是实现者。
 
 1. **`tests/probe/tile_collision_probe.gd` 用"跑完闩"(`_ran_to_end`)而不是计数闸。** 它只覆盖
-   **`_run()` 自身**出错(那时闩为假 ⇒ `_finish()` 打 FAIL);但按 [`tests/lib/probe_base.gd`](../../tests/lib/probe_base.gd)
+   **`_run()` 自身**出错(那时闩为假 ⇒ `_finish()` 打 FAIL);但按 [`tests/lib/probe_base.gd`](../../../tests/lib/probe_base.gd)
    文件头的权威表述,**helper 内部**出错只结束那个 helper、`_run()` 继续跑到底 ⇒ 闩为真 ⇒ 断言被静默跳过而
    verdict 照打 `ALL-OK`。**权威形式是 `_checks >= EXPECTED_CHECKS`**(本仓对新场景探针的要求)。
    补法:给该文件加 `_checks` 计数 + `EXPECTED_CHECKS` 下限(要逐个断言点计数,这是本条一直没做的原因)。
 2. **客户端 `Level0` 也注册了格级 `on_destroyed`**(`scenes/level_0.gd:246`,在 `pvp_mode` 早退**之前**),
-   它的"惰性"依赖"客户端不调 `damage_tile`"这个事实,而**这条事实没有守卫**:`tests/smoke/laser_weapon_smoke.gd:64-67`
+   它的"惰性"依赖"客户端不调 `damage_tile`"这个事实,而**这条事实没有守卫**:`tests/smoke/laser_weapon_smoke.gd`（已删·2026-10-09）`:64-67`
    只要求文件里**提到** `Level0.pvp_mode`(没绑到 `_damage_tiles` 那条闸);子弹那半有
-   `tests/smoke/bullet_tile_fx_smoke.gd:63-68` 兜住。★ 风险:那条闸哪天一回归,客户端会**本地**清掉 16 个 `sub_hp`
+   `tests/smoke/bullet_tile_fx_smoke.gd`（已删·2026-10-09）`:63-68` 兜住 —— ★ **这两支都已随 2026-10-09 的测试面削减删除 ⇒ 这一面今天零守卫**。★ 风险:那条闸哪天一回归,客户端会**本地**清掉 16 个 `sub_hp`
    ⇒ 与服务器分歧;本轮新增的接线把这条的爆炸半径放大了。
    ★ **结构性解法(终审 R1,已核安全)**:把 `scenes/level_0.gd:246` 那行注册**移到 `pvp_mode` 早退之后** ——
    `pvp_game.gd:38` / `team_game.gd:40` / `royale_game.gd:33` 都在**实例化 Level0 之前**就设好
@@ -91,10 +91,10 @@
       ② **导出模板的 release 半边** —— 本处跑的是 **debug 模板**(`GODOT`,console 版),
       `enable_file_logging.pc` 的实际行为只在 release 导出产物上才算数,而产物那一侧今天**没有**守卫。
       ★ 别拿 worker 的 `--log-file` 当证据:那是**引擎选项**、写的是 `worker_<port>.log`
-      ([`server/lobby/worker_launcher.gd`](../../server/lobby/worker_launcher.gd):94-104),与 `[debug]/file_logging/*` 这三键是**两条路**。
+      ([`server/lobby/worker_launcher.gd`](../../../server/lobby/worker_launcher.gd):94-104),与 `[debug]/file_logging/*` 这三键是**两条路**。
     - **为什么留着不补**:①要起进程、还依赖 `user://` 的宿主路径与可写性,形状超出"`-s` 冒烟"这一层;
       ②只能在**导出之后**量(要真导出一次),属产物级冒烟的活 —— 两条都不该塞进这条 `-s` 守卫。
-    - **什么时候能销**:有产物级冒烟通道时 —— 在 [`tools/build_release.py`](../../tools/build_release.py) 的产物冒烟里加一步:
+    - **什么时候能销**:有产物级冒烟通道时 —— 在 [`tools/build_release.py`](../../../tools/build_release.py) 的产物冒烟里加一步:
       起一次产物,再断言 `user://logs/` 里**新增**了本次会话的日志文件。
       ★ 注意它与 §七 第 3 条是**同一条通道问题**:发布产物上的守卫,得先把要跑的东西**随包发布**。
 

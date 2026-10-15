@@ -41,16 +41,27 @@ PROJECT = os.path.dirname(TOOLS)
 #   2026-10-03 实测 5 条 A 类违规全来自这两个目录,与代码无关。
 SKIP_DIRS = {".godot", ".git", ".superpowers", ".claude", "builds", "backup",
              "releases", "_crashtest", "__pycache__", "docs", "assets"}
-# 文档路径检查的对象(仓库根的三份文档 + `CLAUDE.md` 拆出来的**全部**分域文档)
-# ★ 2026-10-13 改:**从写死的 11 个名字改成 glob**。原表在拆分后只覆盖 11 份,而 `docs/eng/`
-#   当时已有 23 份 ⇒ 另外 12 份(含 `comment-style.md`、`netcode-*.md`)的路径**无人守**,
-#   而"文档引用的路径必须存在"这条规则的红/绿全靠它 —— 写死名字的表**每加一份文档就漏一份**。
-#   实测:`docs/eng/time.md` 新建当天对它的检查是**零**,同族欠账见 `docs/eng/debt/guard-strength-gaps.md` §五.12。
-DOC_FILES = ["README.md", "CLAUDE.md", "RELEASE.md"] + sorted(
-    "docs/eng/" + f
-    for f in os.listdir(os.path.join(PROJECT, "docs", "eng"))
-    if f.endswith(".md")
-)
+# 文档路径检查的对象 = 仓库根三份 + `docs/eng/`(含 `debt/`)+ `tests/*.md`
+# ★ 2026-10-13 改(两步):
+#   ① **从写死的 11 个名字改成 glob**。原表在 `CLAUDE.md` 拆分后只覆盖 11 份,而 `docs/eng/`
+#      当时已有 23 份 ⇒ 另外 12 份(含 `comment-style.md`、`netcode-*.md`)的路径**无人守**;
+#      写死名字的表**每加一份文档就漏一份**(实测:`docs/eng/time.md` 新建当天被检查的次数是**零**)。
+#   ② 再纳入 `docs/eng/debt/`(拆分出来的债账分节 —— 它是"动手前先看"的材料)与 `tests/*.md`。
+#      ★ 纳入 `debt/` 当天就抓到**78 处相对链接回归**:那些内容从 `docs/eng/` 搬到 `docs/eng/debt/`
+#      时,链接没跟着多一层 `../`(搬目录不搬链接 ⇒ 全 404,而此前没有任何检查会红)。
+# ★ **刻意不纳入**:`docs/*.md` 的日期交接文档、`docs/superpowers/**`、`docs/archive/**` ——
+#   它们按定义是**时间点/历史**文档,里面"刻意的旧路径"是**记录**而不是错误(且都带时效横幅)。
+#   **代价照实写**:这些文件里的路径**没有机械守卫**;要查只能手工扫。想彻底解决得按"时效横幅"分档
+#   (有横幅 ⇒ 只报"未标已删"的),那是下一步,别顺手把它们全纳入 —— 会把 200+ 条历史记录判红。
+def _md_in(rel_dir: str) -> list[str]:
+    d = os.path.join(PROJECT, rel_dir)
+    if not os.path.isdir(d):
+        return []
+    return sorted("%s/%s" % (rel_dir, f) for f in os.listdir(d) if f.endswith(".md"))
+
+
+DOC_FILES = (["README.md", "CLAUDE.md", "RELEASE.md"]
+             + _md_in("docs/eng") + _md_in("docs/eng/debt") + _md_in("tests"))
 # 被文档引用时检查存在性的扩展名
 DOC_EXTS = (".gd", ".tscn", ".json", ".js", ".html", ".cyrm", ".cfg",
             ".shader", ".gdshader", ".bat", ".py", ".md", ".ttf", ".otf", ".png")
