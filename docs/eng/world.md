@@ -1,5 +1,10 @@
 # 世界与地形(环面 / 地图格式 / 参数 / 砖块 / 水 / 碰撞层)
 
+> ★ **2026-10-09 测试面削减 90%**:本文件里凡标着 `（已删·2026-10-09）` 的守卫**都已不存在**。
+> 那一批删了什么、留了什么、代价是什么 —— 台账
+> [`docs/superpowers/specs/2026-10-09-test-surface-cut-90-design.md`](../superpowers/specs/2026-10-09-test-surface-cut-90-design.md)。
+> ★ 读法:**不要**因为路径还在句子里就以为守卫还在 —— 标了就是没有了。
+
 > 从 [`CLAUDE.md`](../../CLAUDE.md) 拆出(2026-10-03,原文逐字未改)。★ **2026-10-04 已按源码订正 2 处过期事实**(「游戏还读不了 v4」、`Level0.on_tile_destroyed` 这个不存在的函数名;行内以「★ 2026-10-04 订正」标注)。返回索引:[`CLAUDE.md`](../../CLAUDE.md)。
 > 本文件覆盖:环面世界与地图 · 参数体系(重要约定) · 砖块属性与破坏(data/tile_defs.json) · 水 · 碰撞层(按位)。
 > ★ 文档会过期 —— **任何冲突以源码为准**,读之前先 `grep` 复核。
@@ -11,8 +16,8 @@
   - **`MazeGenerator`(core/sim/maze_generator.gd)只留会话状态 + 转发** —— 会话状态就两件:选中的地图文件(`_picked_map`/`set_map_file`/`map_file_path`)与 `current_grid`(静态,由 Level0 赋值,空网格一律无路)。其余全是**一行转发**,保住全仓上百处 `MazeGenerator.xxx` 调用面。**别在这里加实现**:新格式逻辑进 `MapFormat`、新几何/寻路进 `GridPathfinder`。
   - **`MapFormat`(core/sim/map_format.gd)= `.cyrm` 格式**,**无会话状态**(路径/行由参数传入):格值 packed 编解码(`pack/texture_of/shape_of`、`EMPTY=0`、`SOLID=31` 纹理1 全砖)、`load_map_file(path)` / `map_size(path)` / `load_spawns(path)` / `parse_spawn_metadata(lines)`、`convert_old_grid` / `serialize_v3_grid`(单一转换源;旧 v2 字母版地图用 `tests/scripts/convert_map.gd` 转 v3)。v3 与旧格式都返回转换后 125×75;行宽不一致的抬头行会被跳过。
   - **`GridPathfinder`(core/sim/grid_pathfinder.gd)= 环面几何与寻路**,同样**无会话状态**(网格由 `grid` 参数传入):`toroidal_dist`(格级)、`toroidal_delta_px`(像素最短向量)、`anchor_to_nearest`(实体锚到玩家最近副本)、`wrap_to_range`(取模回中间副本)、`cell_of`、`is_floor_cell(_with_headroom)`、`astar_path_nearest` / `has_line_of_sight`(Bresenham);A* 的静态暂存缓冲与 `astar_calls` 计数住这里。
-  - 挡路判定走 `TileDefs.is_blocked`(非 0 且 type=wall)。探针取图类脚本(`climb_probe` / `perf_probe` 等)不钉图 → **每进程随机选一份 `.cyrm`,跨进程输出不可比**。
-    ★ **2026-10-04 订正**：`climb_probe` **已钉 `res://maps/demo.cyrm`**（`c5804f4`）—— 原先它每次随机抽一张图，实测同版本连跑 6 次得到 **3:3 两种互斥结论**，不能当基线。
+  - 挡路判定走 `TileDefs.is_blocked`(非 0 且 type=wall)。探针取图类脚本(`climb_probe`（已删·2026-10-09） / `perf_probe`（已删·2026-10-08） 等)不钉图 → **每进程随机选一份 `.cyrm`,跨进程输出不可比**。
+    ★ **2026-10-04 订正**：`climb_probe`（已删·2026-10-09）**当时已钉 `res://maps/demo.cyrm`**（`c5804f4`）—— 原先它每次随机抽一张图，实测同版本连跑 6 次得到 **3:3 两种互斥结论**，不能当基线。
 - **关键区分**:玩家每帧 `wrap_to_range`(只留中间副本);敌人/子弹用 `anchor_to_nearest`(锚定到玩家附近的副本)。墙体按 3×3 铺贴,相机跨接缝才能看到另一侧——实体若取模回 `[0,MAP)` 会在接缝处"消失"。
 
 ### 参数体系(重要约定)
@@ -36,7 +41,7 @@
 
 ### 水
 
-- **瓦片**:纹理 21 水 / 22 水面,`type=liquid`(无碰撞,`is_blocked`=false)。地图只画 21;水面(22)由 `Level0._paint_water` 自动派生(该格上方非 liquid → 水面层)。`WaterLayer`(水体)与 `WaterSurfaceLayer`(水面)两个 TileMapLayer;**水面起伏**由 `water_surface.gdshader` 做逐格正弦上下拉伸(锚底无缝、相位逐格错开),水体层不挂 shader。
+- **瓦片**:纹理 21 水 / 22 水面,`type=liquid`(无碰撞,`is_blocked`=false)。地图只画 21;水面(22)由 `Level0._paint_water` 自动派生(该格上方非 liquid → 水面层)。`WaterLayer`(水体)与 `WaterSurfaceLayer`(水面)两个 TileMapLayer;**水面起伏**由 `scenes/effects/water_surface_batch.gd`(合批静态网格 + 内联 canvas vertex shader)做逐格正弦上下拉伸(格底锚定、相位逐格错开),水体层不挂 shader。★ **订正**:原独立文件 `water_surface.gdshader` **已于 2026-08-26(`e38b3f0`)删除** ⇒ 现行为上述合批实现。
 - **`Water` 助手**(core/sim/water.gd,静态,不引 autoload,-s 可测):`is_in_water` / `surface_y_at`(所在列向上扫到最顶液体格的顶边) / `submerged`(中心低于水面线=没顶) / `feet_offset` / `water_mult`(爆炸×水格 decay) / `bullet_drag_factor`。约定:脚底(中心+半身)在水格 = 在水中。
 - **主角**(`scenes/player/swim_component.gd`):水中跳过攀爬/重力/跳跃/下蹲/冲刺;左右=水平游(×`player_swim_speed`),按上=上浮(`player_swim_up`)、不按=下沉(`player_swim_down`);不做水面悬停/浮力弹簧——出水由 `in_water` 判回 false 自动恢复普通物理。水下扣血未做。**呼吸(氧气)按「大部分没入」扣**:判定参考线比中心低 `PlayerParams.water_breath_line_offset`(10px,≈胸口下沿)——水面到胸口就开始扣,要浮到水面低于此线才回气(比原"中心没入"更早扣、更难回气)。
 - **敌人**(`EnemyBase._apply_water`):落水浮力回水面;水平朝 `_water_swim_dir()` 游(JumpBird/BlackBird 覆写为朝玩家,基类=漂着);**溺水**:没顶累计,`drown_delay`(5s)后每 `drown_interval`(1s)扣 `drown_damage`(5),浮在水面不算。FlyBird 寻路把水当障碍,但正下方是水仍可飞越。
@@ -47,5 +52,5 @@
 ### 碰撞层(按位)
 
 层1=地形、层2=玩家、层3=敌人、**层4=掉落物(值 8)**。玩家/玩家子弹 mask=5(1+3);敌人占层 3(值4)、mask 侦测玩家。**地面武器**(`WeaponPickup`)`layer=8`/`mask=9`(地形+其它掉落物):玩家与敌人的掩码都不含 4、子弹 mask=5 也不含 → 三者**天然不碰**,无需改它们的掩码。★ `match_host.gd` 与两端客户端给玩家补的 `|= 2` 是**玩家层**,与掉落物层无关,别顺手写成 `|= 2 | 8`。
-★ **2026-10-04 补:上面只列到层 4,而现网还有两层** —— `server/hosts/team_host.gd:31` `const TEAM_ENEMY_LAYER := 16`(**层 5 / 值 16**),3v3 里 2 队玩家互相占这一层(`scenes/team_game.gd:218/228` 注释「2 队玩家 layer = 16(`TeamHost.TEAM_ENEMY_LAYER`)」);另有 **层 6 / 值 32**,只被 `tests/manual/brawl_rollback_probe.gd:55` `const LAYER_AUTH := 32    # 层6` 当作大乱斗权威侧。★ `project.godot` 里**没有任何 `layer_names`** ⇒ 层义只活在散文与代码里,**加第 7 层时没有任何东西会提醒你来同步这一节**。
+★ **2026-10-04 补:上面只列到层 4,而现网还有两层** —— `server/hosts/team_host.gd:31` `const TEAM_ENEMY_LAYER := 16`(**层 5 / 值 16**),3v3 里 2 队玩家互相占这一层(`scenes/team_game.gd:218/228` 注释「2 队玩家 layer = 16(`TeamHost.TEAM_ENEMY_LAYER`)」);另有 **层 6 / 值 32**,只被 `tests/manual/brawl_rollback_probe.gd:55`（已删·2026-10-09;`tests/manual/` 整目录已删）的 `const LAYER_AUTH := 32    # 层6` 当作大乱斗权威侧 —— ★ 该探针删除后,**层 6 在本仓已无任何引用**(生产代码里 grep 不到值为 32 的碰撞层)。★ `project.godot` 里**没有任何 `layer_names`** ⇒ 层义只活在散文与代码里,**加第 7 层时没有任何东西会提醒你来同步这一节**。
 

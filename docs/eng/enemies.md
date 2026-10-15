@@ -1,5 +1,10 @@
 # 敌人
 
+> ★ **2026-10-09 测试面削减 90%**:本文件里凡标着 `（已删·2026-10-09）` 的守卫**都已不存在**。
+> 那一批删了什么、留了什么、代价是什么 —— 台账
+> [`docs/superpowers/specs/2026-10-09-test-surface-cut-90-design.md`](../superpowers/specs/2026-10-09-test-surface-cut-90-design.md)。
+> ★ 读法:**不要**因为路径还在句子里就以为守卫还在 —— 标了就是没有了。
+
 > 从 [`CLAUDE.md`](../../CLAUDE.md) 拆出(2026-10-03,原文逐字未改)。★ **2026-10-04 已按源码订正 1 处过期事实**(黑鸟瞬移距离 2~4→2~6 格、冲锋伤害 6→7;行内已改,原文值见 [审计报告 §3](audit-2026-10-04-design-conventions.md))。返回索引:[`CLAUDE.md`](../../CLAUDE.md)。
 > 本文件覆盖:敌人(scenes/enemies/)。
 > ★ 文档会过期 —— **任何冲突以源码为准**,读之前先 `grep` 复核。
@@ -8,7 +13,7 @@
 
 继承链 `EnemyBase → EnemyFlyBase → EnemyFlyBird`;JumpBird 直接继承 `EnemyBase`:
 
-- `EnemyBase`(CharacterBody2D):`hp/contact_damage/knockback_strength/knock_decay_rate` 导出参数;统一状态机 `state`(int,各子类自带 `enum State`);子类覆写 `_ai(delta)`/`_anim_update()`。**受击/死亡白闪统一在基类**:`_hit_flash_time`(0.1s)与 `_begin_death()`(死亡白闪 `shared.death_flash_time`=0.5s 后销毁)统一计时,渲染走 `_flash_update()`(默认 modulate 纯白;黑鸟因 silhouette shader 覆写 COLOR 而 modulate 失效,覆写本方法改走 shader 参数);`_set_facing()` 锁转向频率(两次翻转至少间隔 `shared.turn_min_interval`=0.5s,防来回抖)。**死亡物理与生前完全一致**——尸体继续走同一套 `_physics_process`(重力/摩擦/击退衰减/碰撞),只是 AI 不行动;尸体被后续命中只吃击退不吃伤(`hurt` 的 `is_dead` 分支走 `_apply_knock_only`)。每帧 `move_and_slide()` 后 `_wrap()`;接触伤害走 ContactArea + 环面距离兜底。入 `enemies` 组。★ **回溯保留的尸体是例外**(2026-10-03):`WorldRewind.hold_corpses` 期间死亡的怪在白闪结束后**隐藏待复活**,那一刻必须**同时摘掉碰撞层**(`collision_layer = 0`,复活时还原)——玩家 mask=5 里含敌人层,「看不见却仍挡人」就是用户报的**虚空碰撞箱**;飞鸟寻路也按「层为 0 即不算障碍」过滤同一个量。守卫 `tests/probe/rewind_phantom_probe`(★ `enemy_logic_smoke` 那条「JumpBird 死亡保留碰撞层」**只覆盖白闪那 0.5s**,覆盖不到隐藏期)。
+- `EnemyBase`(CharacterBody2D):`hp/contact_damage/knockback_strength/knock_decay_rate` 导出参数;统一状态机 `state`(int,各子类自带 `enum State`);子类覆写 `_ai(delta)`/`_anim_update()`。**受击/死亡白闪统一在基类**:`_hit_flash_time`(0.1s)与 `_begin_death()`(死亡白闪 `shared.death_flash_time`=0.5s 后销毁)统一计时,渲染走 `_flash_update()`(默认 modulate 纯白;黑鸟因 silhouette shader 覆写 COLOR 而 modulate 失效,覆写本方法改走 shader 参数);`_set_facing()` 锁转向频率(两次翻转至少间隔 `shared.turn_min_interval`=0.5s,防来回抖)。**死亡物理与生前完全一致**——尸体继续走同一套 `_physics_process`(重力/摩擦/击退衰减/碰撞),只是 AI 不行动;尸体被后续命中只吃击退不吃伤(`hurt` 的 `is_dead` 分支走 `_apply_knock_only`)。每帧 `move_and_slide()` 后 `_wrap()`;接触伤害走 ContactArea + 环面距离兜底。入 `enemies` 组。★ **回溯保留的尸体是例外**(2026-10-03):`WorldRewind.hold_corpses` 期间死亡的怪在白闪结束后**隐藏待复活**,那一刻必须**同时摘掉碰撞层**(`collision_layer = 0`,复活时还原)——玩家 mask=5 里含敌人层,「看不见却仍挡人」就是用户报的**虚空碰撞箱**;飞鸟寻路也按「层为 0 即不算障碍」过滤同一个量。守卫 `tests/probe/rewind_phantom_probe`（已删·2026-10-09）(★ `enemy_logic_smoke`（已删·2026-10-09）那条「JumpBird 死亡保留碰撞层」**只覆盖白闪那 0.5s**,覆盖不到隐藏期)⇒ **这一面今天零守卫**。
 - `EnemyFlyBase`:飞行寻路。A* 按**鸟自身飞行碰撞箱 + 场上实体碰撞箱**判可走(`_bird_can_pass`);空路径直线兜底;被悬挑墙压到(死区)时水平逃逸;站/飞碰撞箱切换(`_apply_flight_collision`)。寻路参数耦合 `EnemyParams.FlyBird`(当前唯一飞行敌人,接受该耦合)。
 - `EnemyFlyBird`:状态机 SLEEP/TAKE_OFF/FLY/SHOOT/CHARGE/RETURN。平抛投弹(玩家速度预测);HP<25% 单向切 CHARGE 冲撞(穿透无敌帧、撞后自毁);死亡白闪后销毁(物理与生前一致,保留碰撞);返程回家落地入睡。
 - `EnemyJumpBird`:近战跳跃怪(跳/后跳/扑击);死亡物理与生前一致、保留碰撞。
