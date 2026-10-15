@@ -210,7 +210,7 @@ Godot **4.7.1 标准版(非 mono)** 做的 2D 横版射击 demo「The Cyancular 
 
 | 想查什么 | 去哪 |
 |---|---|
-| 架构、参数体系、网络协议、敌人/武器/UI/渲染的**全部"为什么"** | [`CLAUDE.md`](CLAUDE.md) 是索引 → 按域读 [`docs/eng/`](docs/eng)。★ **别照抄任何手抄列表** —— 域文档的真相源是 `ls docs/eng/*.md`(写这一行时 25 份;`CLAUDE.md` 的表按"什么时候读"分组,含 `time.md` 与 `netcode-*` 系列),索引本身也会漂 |
+| 架构、参数体系、网络协议、敌人/武器/UI/渲染的**全部"为什么"** | [`CLAUDE.md`](CLAUDE.md) 是索引 → 按域读 [`docs/eng/`](docs/eng)。★ **别照抄任何手抄列表** —— 域文档的真相源是 `ls docs/eng/*.md`(写这一行时 31 份;`CLAUDE.md` 的表按"什么时候读"分组,含 `time.md` 与 `netcode-*` 系列),索引本身也会漂 |
 | 发布、裁剪模板、版本号、产物冒烟 | [`RELEASE.md`](RELEASE.md) |
 | 目录分层、操作、PvP 规则要点 | [`README.md`](README.md) |
 | 测试分层(bucket 划分)与跑法 | [`tests/README.md`](tests/README.md)、[`tests/env.sh`](tests/env.sh) 的注释 |

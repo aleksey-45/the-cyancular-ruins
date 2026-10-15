@@ -174,12 +174,59 @@ window.ENEMY_REGISTRY = [
 /*__ENEMY_REGISTRY_END__*/
 </script>
 
-<script src="core.js"></script>
+<script src="core/00_constants.js"></script>
+<script src="core/10_map.js"></script>
+<script src="core/20_bytes.js"></script>
+<script src="core/30_layers.js"></script>
+<script src="core/40_meta.js"></script>
+<script src="core/50_compress.js"></script>
+<script src="core/60_codec.js"></script>
+<script src="core/70_v3_text.js"></script>
+<script src="core/80_validate.js"></script>
+<script src="core/85_geometry.js"></script>
+<script src="core/90_desc.js"></script>
+<script src="core/99_exports.js"></script>
 <script src="tile_defs.js"></script>
 <script src="tint.js"></script>
-<script src="render.js"></script>
+<script src="render/00_head.js"></script>
+<script src="render/10_torus_layers.js"></script>
+<script src="render/20_atlas.js"></script>
+<script src="render/30_cell_cache.js"></script>
+<script src="render/40_slicer.js"></script>
+<script src="render/50_view.js"></script>
+<script src="render/60_brush.js"></script>
+<script src="render/65_selection.js"></script>
+<script src="render/70_layer_kind.js"></script>
+<script src="render/75_dirty.js"></script>
+<script src="render/80_mount_state.js"></script>
+<script src="render/82_install_errors.js"></script>
+<script src="render/84_install_thumbs.js"></script>
+<script src="render/86_install_layer_path.js"></script>
+<script src="render/88_install_draw.js"></script>
+<script src="render/90_install_drag.js"></script>
+<script src="render/92_install_edit.js"></script>
+<script src="render/94_mount.js"></script>
+<script src="render/99_exports.js"></script>
 <script src="io.js"></script>
-<script src="ui.js"></script>
+<script src="ui/00_head.js"></script>
+<script src="ui/10_util.js"></script>
+<script src="ui/20_tools.js"></script>
+<script src="ui/25_spawn.js"></script>
+<script src="ui/30_resize.js"></script>
+<script src="ui/40_keys_commands.js"></script>
+<script src="ui/45_history.js"></script>
+<script src="ui/50_save.js"></script>
+<script src="ui/55_interaction.js"></script>
+<script src="ui/60_brush_layer.js"></script>
+<script src="ui/65_save_current.js"></script>
+<script src="ui/70_draft.js"></script>
+<script src="ui/75_draft_store.js"></script>
+<script src="ui/80_ui_state.js"></script>
+<script src="ui/85_panels.js"></script>
+<script src="ui/90_open.js"></script>
+<script src="ui/92_boot.js"></script>
+<script src="ui/96_selftest.js"></script>
+<script src="ui/99_exports.js"></script>
 <script>
 'use strict';
 // 页面只做一件事:把 DOM 交给 ui.js。★ 页面里不写任何编辑器逻辑(第二份实现迟早漂)。

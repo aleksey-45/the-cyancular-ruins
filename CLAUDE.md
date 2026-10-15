@@ -56,7 +56,7 @@ Godot 不在 PATH,用绝对路径。**4.7.1 标准编辑器**是当前主用版�
 | 快照管线(60Hz 全量编码、丢弃规则、输入队列的延迟累加、带宽实测与主流对照) | [`docs/eng/netcode-snapshots.md`](docs/eng/netcode-snapshots.md) |
 | 3v3、结算页、大乱斗及其已知差异 | [`docs/eng/modes.md`](docs/eng/modes.md) |
 | 探针怎么跑/怎么判、真链路纪律、守卫边界 | [`docs/eng/tests.md`](docs/eng/tests.md) |
-| 浏览器地图编辑器、sync-*.js、导入/导出工具 | [`docs/eng/tools.md`](docs/eng/tools.md) |
+| 浏览器地图编辑器(怎么开、怎么打包成单文件)、sync-*.js、导入/导出工具 | [`docs/eng/tools.md`](docs/eng/tools.md);编辑器各层:[core](docs/eng/editor-core.md) / [ui](docs/eng/editor-ui.md) / [render](docs/eng/editor-render.md) / [io+worker](docs/eng/editor-io.md) / [server](docs/eng/editor-server.md) |
 | 时间玩法(回溯 / 加速 / 颗粒账户 / 怀表 / 世界重绕)、它的不变量与常量来源 | [`docs/eng/time.md`](docs/eng/time.md) |
 | 注释怎么写(含**注释额度**:>100 行的 `.gd` ≤15%)、守卫幻觉怎么标 | [`docs/eng/comment-style.md`](docs/eng/comment-style.md) |
 | 测试该不该写、写哪一档(桶划分与 D1~D9 不写清单) | [`docs/eng/test-economy.md`](docs/eng/test-economy.md) |
@@ -78,7 +78,7 @@ Godot 不在 PATH,用绝对路径。**4.7.1 标准编辑器**是当前主用版�
 
 ★ **一次性时间点报告 —— 已封存,不是现行规范**(2026-10-13 从 `docs/eng/` 整体挪进 [`docs/archive/`](docs/archive),只在回溯"当时为什么这么判"时读):[`conventions-review-2026-10.md`](docs/archive/conventions-review-2026-10.md)、[`audit-2026-10-04-design-conventions.md`](docs/archive/audit-2026-10-04-design-conventions.md)。
 
-★ **上表是手抄的,会漂** —— **真相源 = `ls docs/eng/*.md`**(本行写时是 **23 份**;那两份一次性报告已挪进 `docs/archive/`)。
+★ **上表是手抄的,会漂** —— **真相源 = `ls docs/eng/*.md`**(本行写时是 **31 份**;那两份一次性报告已挪进 `docs/archive/`;编辑器拆目录后新增 `editor-core/ui/render/io/server.md` 五份)。
 `tools/check_naming.py` 的**规则 C** 已改成 **glob 覆盖全部 `docs/eng/*.md`**(2026-10-13 之前是写死的 11 个名字 ⇒ 另外十几份的路径引用**从来没人守**;同日还堵掉了"缀一个 `:55` 就绕过检查"的洞)。
 ★ **既有红 / 待还的债**(不算守卫的探针、重复真相源候选)登记在 [`docs/eng/registered-debt.md`](docs/eng/registered-debt.md)。
 ★ **测试与守卫的判据纪律**在 [`docs/eng/tests.md`](docs/eng/tests.md);跑测试的分工见本文件 §常用命令 的约定。

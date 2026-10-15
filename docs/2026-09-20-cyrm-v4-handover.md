@@ -352,7 +352,7 @@ var bytes := FileAccess.get_file_as_bytes(path)
 
 ## 7. 编辑器侧已实现的公开 API(参考)
 
-`level_editor/core.js`(978 行,DOM-free,`node smoke.js` 343 条断言全绿)。游戏侧不需要引它,但**它定义了规范**,有疑问时以它为准:
+[`level_editor/core/`](../level_editor/core)(当时是单文件 `level_editor/core.js` 978 行;2026-10-15 拆成 12 片,入口片 [`core/99_exports.js`](../level_editor/core/99_exports.js),现行规格见 [`docs/eng/editor-core.md`](eng/editor-core.md))。游戏侧不需要引它,但**它定义了规范**,有疑问时以它为准:
 
 ```
 常量      SUB_PER_CELL=4  SUB_PX=16  CELL_PX=64  TEXTURE_MAX=4095
