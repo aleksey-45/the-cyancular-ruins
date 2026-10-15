@@ -6,8 +6,9 @@
 >
 > **默认批 111 支 → 14 支;删除 git 跟踪的 345 个文件;`tests/manual/` 整个删除。**
 > ★ **2026-10-13 订正**:本节原写"**12 支**"—— 实测(`bash tests/run_all.sh --list`)是
-> `enumerated 18 / excluded 4 / **running 14**`;删除文件数 **345** 已用
-> `git show --diff-filter=D --name-only 4ae7eed | wc -l` 复核(同一句在 `AGENTS.md` 里曾写 343,已一并订正)。
+> `enumerated 18 / excluded 4 / **running 14**`。两个文件数**都对、口径不同**:`345` = 那次删除数
+> (`git show --diff-filter=D --name-only 4ae7eed | wc -l`),**净数 343**(删后恢复了 2 个);
+> 批数后来变 14 是因为 **2026-10-10** 有两支回归/新增(见下文「条数闸」那条的追注)。
 > 判据(外部证据 + 本仓 D1–D9/K1–K5)、保留清单、逐目录删除清单、爆炸半径与**代价**
 > 全在台账:[`docs/superpowers/specs/2026-10-09-test-surface-cut-90-design.md`](../docs/superpowers/specs/2026-10-09-test-surface-cut-90-design.md)。
 >
@@ -88,10 +89,11 @@
   "每条断言都跑过了"。抽查时按 [`docs/eng/tests.md`](../docs/eng/tests.md) 末节的"看 stderr 有没有
   `SCRIPT ERROR`"兜;要补闸请先读 [`test-economy.md`](../docs/eng/test-economy.md) §5.3 第 8 条的裁决
   (本仓**有意不逐支补闸** —— 那是 10 份新增,与削减方向相反)。
-  ★ **2026-10-13 订正**:原写"`m gated-assertions = 0`、唯一带 `EXPECTED_CHECKS` 的
-  `settings_display_smoke` 被删了、这 **10** 支没有一支能自证" —— 三处都不对:
-  `settings_display_smoke` 确实已删,但**另有 3 支在用 `EXPECTED_CHECKS`**(上面那三支),
-  `m` 是 **16** 不是 0,支数是 **14** 不是 10。
+  ★ **2026-10-13 订正(原话是"削减当天"的读数,现在过期了)**:`m = 0` 与"这 10 支"对
+  **2026-10-09** 成立(那时唯一带闸的 `settings_display_smoke` 刚被删,切割台账 §10.2 记的就是这条新边界);
+  此后 **2026-10-10** 有两支回归/新增(`dcb8c57` 新增 `tests/smoke/playout_clock_smoke.gd`、
+  `db6e124` 把 `tests/probe/replica_smoothness_probe.tscn` 从历史取回)⇒ 默认批 **14 支**,
+  其中 **3 支带可用闸** ⇒ **`m = 16`**。
   (复算法 = 照 `run_all.sh` 的 `gate_of()` 离线跑一遍:`EXPECTED_CHECKS := N` **且**同文件里出现
   拿它比较的表达式才计入 —— 只声明不算闸,见 `run_all.sh:526-544`。)
 
