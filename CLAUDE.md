@@ -54,7 +54,29 @@ Godot 不在 PATH,用绝对路径。**4.7.1 标准编辑器**是当前主用版�
 | 3v3、结算页、大乱斗及其已知差异 | [`docs/eng/modes.md`](docs/eng/modes.md) |
 | 探针怎么跑/怎么判、真链路纪律、守卫边界 | [`docs/eng/tests.md`](docs/eng/tests.md) |
 | 浏览器地图编辑器、sync-*.js、导入/导出工具 | [`docs/eng/tools.md`](docs/eng/tools.md) |
+| 时间玩法(回溯 / 加速 / 颗粒账户 / 怀表 / 世界重绕)、它的不变量与常量来源 | [`docs/eng/time.md`](docs/eng/time.md) |
+| 注释怎么写(含**注释额度**:>100 行的 `.gd` ≤15%)、守卫幻觉怎么标 | [`docs/eng/comment-style.md`](docs/eng/comment-style.md) |
+| 测试该不该写、写哪一档(桶划分与 D1~D9 不写清单) | [`docs/eng/test-economy.md`](docs/eng/test-economy.md) |
+| 房间/端口生命周期约定(回收梯、超龄扫、端口池) | [`docs/eng/room-lifecycle-conventions.md`](docs/eng/room-lifecycle-conventions.md) |
+| **动手前必看**:既有红 / 待还的债 / 已裁定不做 | [`docs/eng/registered-debt.md`](docs/eng/registered-debt.md)(**分节索引**,正文在 [`docs/eng/debt/`](docs/eng/debt)) |
 
+**垂直专题:联机时序(`netcode-*.md` 系列 —— 快照 / 输入 / 时钟 / 抖动 / 带宽的研究与实测)**
+
+| 主题 | 文件 |
+|---|---|
+| 快照管线(60Hz 全量编码、丢弃规则、延迟累加)+ 带宽实测与主流对照 | [`netcode-snapshots.md`](docs/eng/netcode-snapshots.md) |
+| 输入上行链路(输入包 / 队列 / ack 与跨纪元) | [`netcode-input-uplink.md`](docs/eng/netcode-input-uplink.md) |
+| 客户端插值与输入细节 | [`netcode-client-interp-and-input-details.md`](docs/eng/netcode-client-interp-and-input-details.md) |
+| 增量与量化细节 | [`netcode-delta-and-quantization-details.md`](docs/eng/netcode-delta-and-quantization-details.md) |
+| 16 人局的读数 | [`netcode-at-16-players.md`](docs/eng/netcode-at-16-players.md) |
+| tick 率调研 | [`netcode-tick-rates-survey.md`](docs/eng/netcode-tick-rates-survey.md) |
+| playout 时钟与同步来源(NTP / RTP / Valve) | [`netcode-playout-clock-sync-sources.md`](docs/eng/netcode-playout-clock-sync-sources.md) |
+| 抖动缓冲实践(与 netfox 对照) | [`netcode-jitter-buffer-practice.md`](docs/eng/netcode-jitter-buffer-practice.md) |
+
+★ **一次性时间点报告 —— 不是现行规范**(只在回溯"当时为什么这么判"时读):[`conventions-review-2026-10.md`](docs/eng/conventions-review-2026-10.md)、[`audit-2026-10-04-design-conventions.md`](docs/eng/audit-2026-10-04-design-conventions.md)。
+
+★ **上表是手抄的,会漂** —— **真相源 = `ls docs/eng/*.md`**(本行写时是 **25 份**)。
+`tools/check_naming.py` 的**规则 C** 已改成 **glob 覆盖全部 `docs/eng/*.md`**(2026-10-13 之前是写死的 11 个名字 ⇒ 另外十几份的路径引用**从来没人守**;同日还堵掉了"缀一个 `:55` 就绕过检查"的洞)。
 ★ **既有红 / 待还的债**(不算守卫的探针、重复真相源候选)登记在 [`docs/eng/registered-debt.md`](docs/eng/registered-debt.md)。
 ★ **测试与守卫的判据纪律**在 [`docs/eng/tests.md`](docs/eng/tests.md);跑测试的分工见本文件 §常用命令 的约定。
 

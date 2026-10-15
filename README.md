@@ -62,7 +62,8 @@ A side-view 2D shooter-platformer demo built in Godot 4.7, with a seamless wrap-
 python tools/build_release.py
 ```
 
-产物在仓库根(`The Cyancular Ruins.exe` / `Cyancular Ruins Server.exe`),历史日期构建在 `builds/`。
+产物在仓库根(`The Cyancular Ruins.exe` / `Cyancular Ruins Server.exe`),历史构建归档在 **`builds/`**(按发布时间戳)
+与 **`releases/`**(累积式、带发布标识子目录;★ 2026-10-13 订正:本节此前只提 `builds/`,而两个根都存在且都不入库 ⇒ 找历史成品时**两个都要看**)。
 
 ---
 

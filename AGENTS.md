@@ -206,7 +206,7 @@ Godot **4.7.1 标准版(非 mono)** 做的 2D 横版射击 demo「The Cyancular 
 
 | 想查什么 | 去哪 |
 |---|---|
-| 架构、参数体系、网络协议、敌人/武器/UI/渲染的**全部"为什么"** | [`CLAUDE.md`](CLAUDE.md) 是索引 → 按域读 [`docs/eng/`](docs/eng)(world / enemies / weapons / player / render / ui / netplay / modes / tests / tools) |
+| 架构、参数体系、网络协议、敌人/武器/UI/渲染的**全部"为什么"** | [`CLAUDE.md`](CLAUDE.md) 是索引 → 按域读 [`docs/eng/`](docs/eng)。★ **别照抄任何手抄列表** —— 域文档的真相源是 `ls docs/eng/*.md`(写这一行时 25 份;`CLAUDE.md` 的表按"什么时候读"分组,含 `time.md` 与 `netcode-*` 系列),索引本身也会漂 |
 | 发布、裁剪模板、版本号、产物冒烟 | [`RELEASE.md`](RELEASE.md) |
 | 目录分层、操作、PvP 规则要点 | [`README.md`](README.md) |
 | 测试分层(bucket 划分)与跑法 | [`tests/README.md`](tests/README.md)、[`tests/env.sh`](tests/env.sh) 的注释 |
@@ -222,5 +222,7 @@ Godot **4.7.1 标准版(非 mono)** 做的 2D 横版射击 demo「The Cyancular 
 
 - **在做的那条线**:[`docs/superpowers/plans/2026-10-03-ui-to-tscn-and-theme.md`](docs/superpowers/plans/2026-10-03-ui-to-tscn-and-theme.md) —— 把菜单屏从"代码建 UI"搬进 `.tscn` + `Theme`。
   ★ **进度以 `git log` 为准,别照着计划里的勾选框判断**:截至 2026-10-03,Task 0/1/2/3/4 的成果**都已在提交里**(Theme 基座、字体资源化、设置页、信息页、Beta 页 + 结算页),而勾选框**还全是空的** —— 典型的"枚举会过期"。剩下的看计划的 Task 5/6(主菜单 + 统一大厅迁移、收尾删被接管的旧样式函数)。**动手前先 `git log` / `grep` 复核。**
-- **既有红 / 重复真相源**:清单是 [`docs/eng/registered-debt.md`](docs/eng/registered-debt.md)。★ **2026-10-04 校正**:"唯一清单"这个说法**只对那两类成立** —— 性能/视觉/文档类的债住在 [`handoff`](docs/superpowers/handoff-2026-10-03.md) §2.4 与各域文档的「已知边界(登记)」里,落点表见该文件 §四。三条探针标注为**"不算守卫"**(其中 `team_match_probe.sh` 的**根因已于 2026-09-28 由 `9003dae` 修掉,但修复后没有留下六人整跑的判决** ⇒ **3v3 真链路今天仍没有可信的端到端守卫**),外加两条"改生成式"的候选。**动手前先看它,别把红的当绿的。**
+- **既有红 / 重复真相源**:清单是 [`docs/eng/registered-debt.md`](docs/eng/registered-debt.md)(**分节索引**,正文在 [`docs/eng/debt/`](docs/eng/debt):§一既有红 / §二重复真相源 / §五守卫缺口 / §六功能边界 / §七 won't fix / §八削减登记)。★ **2026-10-04 校正**:"唯一清单"这个说法**只对那两类成立** —— 性能/视觉/文档类的债住在 [`handoff`](docs/superpowers/handoff-2026-10-03.md) §2.4 与各域文档的「已知边界(登记)」里,落点表见 `registered-debt.md` §四。
+- ★★ **2026-10-13 订正(两处转述已过期,别照抄本节的历史措辞)**:① 原文写 `team_match_probe.sh`"**修复后没有留下六人整跑的判决**" —— 那次判决**已于 2026-10-08 补上**(手工单跑 ⇒ **FAIL(8 条)**,根因与销案条件见 [`debt/known-red.md`](docs/eng/debt/known-red.md) 首行),所以"3v3 真链路今天仍没有可信的端到端守卫"这句**结论不变、理由变了**:不是因为没跑过,而是因为它**真红**。② 原文写"**三条**探针不算守卫 + **两条**候选" —— **这两个数字是手抄的、已经漂**:台账现有几行、各是什么,去 [`debt/known-red.md`](docs/eng/debt/known-red.md) 与 [`debt/duplicate-truth.md`](docs/eng/debt/duplicate-truth.md) 数,别信本节的计数。
+  **动手前先看它,别把红的当绿的。**
 - **其它登记项**(地形图常驻 61MB 显存、结算页"行底"、取景 150% 的像素完美取舍等)在 [handoff](docs/superpowers/handoff-2026-10-03.md) §2.4 —— **先查那里,别当新问题重查一遍**。

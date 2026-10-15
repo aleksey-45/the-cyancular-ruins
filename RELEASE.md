@@ -65,8 +65,10 @@ python tools/build_release.py                      # 写版本信息 → 客户�
 > **⚠️ 服务端 exe 导出一出来就是 GUI 子系统(双击后台静默、无控制台)**——`make_server_console.py` 这步**不能漏**。漏了 = 双击服务端没窗口、以为没起来(2026-09-06 已踩坑)。`build_release.py` 自动做 ①②③④,不会漏。
 
 > **发布归档命名习惯**:每次导出的成品按「**版本号 + 时间戳**」归档到 `builds/`,
-> 文件名 = `<原名> <版本号> <YYYYMMDDHHMM>.exe`(如 `The Cyancular Ruins v.1.1.4 202609121250.exe`、
-> `Cyancular Ruins Server v.1.1.4 202609121250.exe`);**根目录只保留两个固定名 exe**
+> 文件名 = `<原名> <版本号> <YYYYMMDDHHMM>.exe`。★ **2026-10-13 订正**:原文示例写的是
+> `The Cyancular Ruins v.1.1.4 202609121250.exe` —— **版本号段里那个点不存在**:
+> `tools/archive_build.py` 的 `release_version()` 返回 `"%s_v%s"`,现行形式 = `RoF_v0.5.0_202610040204`
+> (前缀 + `v` + 版本 + `_` + 时间戳,见 [`AGENTS.md`](AGENTS.md) §0)。**根目录只保留两个固定名 exe**
 > (`The Cyancular Ruins.exe` / `Cyancular Ruins Server.exe`,固定名=当前最新版,给 start_server.bat / 立即测试用)。
 > `builds/` 不入库(gitignore 已配)。`build_release.py` 每次导完自动归档一份带版本号+时间戳的副本;
 > 想用别的历史名可 `python tools/build_release.py --stamp 202609062126`,想临时用别的版本号可
