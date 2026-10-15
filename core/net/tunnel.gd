@@ -34,6 +34,7 @@ static var _forward_port := 0   # 本端本地转发端口（客机使用，0 �
 static var _code := ""          # 当前加入的 8 位房间码
 static var _core_path := ""     # 核心程序可执行文件路径
 static var _cli_path := ""      # 命令行工具可执行文件路径
+static var _log_dir := ""
 
 
 ## 生成随机 8 位房间码字符串。
@@ -144,7 +145,7 @@ static func start_host(port: int, code: String) -> bool:
 		return false
 	_pid = pid
 	_code = code
-	print("[tunnel] 房主隧道启动 pid=%d 端口 %d 房间码 %s(rpc %d)" % [pid, port, code, _rpc_port])
+	GameLog.record("tunnel_start", {"pid": pid, "role": _role, "port": port, "rpc": _rpc_port, "log_dir": _log_dir})
 	return true
 
 
@@ -158,8 +159,10 @@ static func wait_ready() -> bool:
 		var r := await _cli_async(PackedStringArray([
 			"--rpc-portal", "127.0.0.1:%d" % _rpc_port, "-o", "json", "peer"]))
 		if pid == _pid and int(r[0]) == 0 and not parse_peers_json(str(r[1])).is_empty():
+			GameLog.record("tunnel_ready", {"pid": pid, "rpc": _rpc_port})
 			return true
 		await _sleep(POLL_INTERVAL)
+	GameLog.record("tunnel_ready_failed", {"pid": pid, "running": NetSession.running(pid)}, true)
 	return false
 
 
@@ -185,7 +188,7 @@ static func start_client(code: String) -> Dictionary:
 		return {}
 	_pid = pid
 	_code = code
-	print("[tunnel] 客机隧道启动 pid=%d 房间码 %s(rpc %d)" % [pid, code, _rpc_port])
+	GameLog.record("tunnel_start", {"pid": pid, "role": _role, "rpc": _rpc_port, "log_dir": _log_dir})
 	var found := await _await_host_peer()
 	if pid != _pid: return {}
 	if found.is_empty():
@@ -200,7 +203,7 @@ static func start_client(code: String) -> Dictionary:
 		push_error("Tunnel: 配置转发失败(%s:%d)" % [host_ip, port])
 		stop()
 		return {}
-	print("[tunnel] 客机就绪:房主 %s 端口 %d" % [host_ip, port])
+	GameLog.record("tunnel_ready", {"pid": pid, "host": host_ip, "port": port, "forward_port": _forward_port})
 	return {"port": port, "host_ip": host_ip}
 
 
@@ -268,6 +271,7 @@ static func reset() -> void:
 	_forward_port = 0
 	_forward_host = ""
 	_forward_target = 0
+	_log_dir = ""
 
 
 ## 获取当前网络所属的房间码，未启动时返回空字符串。
@@ -386,8 +390,7 @@ static func no_relay_hint() -> String:
 	return "%s 里一个初始节点都没有 —— 别人远程进不来(每行一个地址,改完重进房间生效)" % relay_file()
 
 
-# 所有网络选项写入配置；只有 RPC 监听地址留在启动参数中。
-# 官方内核混用配置文件和网络命令行选项时，会把配置标成只读。
+# 网络选项写入 TOML；RPC 与文件日志由进程启动参数设置。
 static func _core_args(role: String, code: String, port: int) -> PackedStringArray:
 	var lines := PackedStringArray([
 		"hostname = " + JSON.stringify(Meta.HOST_PREFIX + str(port) if role == "host" else Meta.GUEST_PREFIX + guest_suffix()),
@@ -415,7 +418,28 @@ static func _core_args(role: String, code: String, port: int) -> PackedStringArr
 	var config := FileAccess.open(path, FileAccess.WRITE)
 	config.store_string("\n".join(lines) + "\n")
 	config.close()
-	return PackedStringArray(["--config-file", path, "--rpc-portal", "127.0.0.1:%d" % _rpc_port])
+	var args := PackedStringArray(["--config-file", path, "--rpc-portal", "127.0.0.1:%d" % _rpc_port])
+	args.append_array(file_log_args(role))
+	return args
+
+static func file_log_args(role: String) -> PackedStringArray:
+	_log_dir = GameLog.log_dir().path_join("easytier").path_join("%s-%s-%d" % [GameLog.session_id(), role, _rpc_port])
+	DirAccess.make_dir_recursive_absolute(_log_dir)
+	GameLog.record("tunnel_logging", {"directory": _log_dir, "level": "info", "version": Meta.ET_VERSION,
+			"rust_log": OS.get_environment("RUST_LOG")})
+	return PackedStringArray(["--file-log-level", "info", "--file-log-dir", _log_dir])
+
+## CLI 的延迟、丢包和路径是隧道链路统计，与游戏 ENet 的端到端统计分别记录。
+static func log_peers() -> void:
+	var pid := _pid
+	var result := await _cli_async(PackedStringArray([
+			"--rpc-portal", "127.0.0.1:%d" % _rpc_port, "-o", "json", "peer"]))
+	if pid != _pid:
+		return
+	if result[0] != 0:
+		GameLog.record("tunnel_peer_error", {"pid": pid, "error": result[0], "message": str(result[1]).left(500)})
+		return
+	GameLog.record("tunnel_peers", {"pid": pid, "peers": parse_peers_json(result[1])})
 
 
 # 动态分配一个本机空闲的 TCP 端口作为 RPC 门户监听端口。

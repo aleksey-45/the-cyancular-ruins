@@ -31,8 +31,14 @@ var _hit_history: Dictionary = {}
 var grace_snapshot: Dictionary = {}
 const ATTRIB_WINDOW := CombatFeedback.ATTRIB_WINDOW_MS
 const HIT_RADIUS := BulletBase.PLAYER_HIT_RADIUS
+var _log_at := Time.get_ticks_msec()
+var _log_tick := 0
+var _tick_max_us := 0
+var _queue_max: Dictionary = {}
+var _logged_round := ""
 
 func setup(mode: String, map_path: String, roles: Array, teams: Dictionary, options: Dictionary, ai_roles: Array) -> void:
+	var started := Time.get_ticks_msec()
 	_options = options
 	for type_id in options.get("disabled_weapons", []):
 		_disabled_weapons.append(type_id)
@@ -56,10 +62,10 @@ func setup(mode: String, map_path: String, roles: Array, teams: Dictionary, opti
 		var player: CharacterBody2D = preload("res://scenes/player/player.tscn").instantiate()
 		var src: PlayerInput = AiInputSource.new() if ai_roles.has(role) else PacketInputSource.new()
 		player.set_input_source(src)
-		player.set_physics_process(false)
 		player.role = role
 		player.authority_world = self
 		add_child(player)
+		player.set_physics_process(false)
 		player.collision_layer = 16 if teams.get(role, 0) == 2 else 2
 		player.collision_mask = 1 | (16 if teams.get(role, 0) == 1 else 2)
 		player.weapons.set_enabled_types(_disabled_weapons)
@@ -76,13 +82,19 @@ func setup(mode: String, map_path: String, roles: Array, teams: Dictionary, opti
 		if time_economy != null:
 			time_economy.add_role(role)
 	_setup_ground_weapons()
+	GameLog.record("match_start", {"mode": mode, "map": map_path, "roles": roles, "ai_roles": ai_roles,
+			"teams": teams, "beta": beta != null, "disabled_weapons": _disabled_weapons,
+			"duration_ms": Time.get_ticks_msec() - started})
 
 func _exit_tree() -> void:
+	_log_sample()
+	GameLog.record("world_exit", {"tick": _snap_tick, "round": _round_num})
 	TileDefs.on_destroyed = Callable()
 	TileDefs.on_sub_destroyed = Callable()
 	TileDefs.on_sub_damaged = Callable()
 
 func _physics_process(delta: float) -> void:
+	var started := Time.get_ticks_usec()
 	_snap_tick += 1
 	for pickup: WeaponPickup in pickups.values():
 		pickup.simulate_tick(delta)
@@ -90,6 +102,7 @@ func _physics_process(delta: float) -> void:
 		var player: CharacterBody2D = players[role]
 		player.set_controls_locked(_round_state != NetEvent.RoundState.PLAYING)
 		var src: PlayerInput = player.input_source
+		_queue_max[role] = maxi(_queue_max.get(role, 0), player.input_buffer.frames.size())
 		var record: Dictionary
 		if src is PacketInputSource:
 			record = player.input_buffer.take(_snap_tick)
@@ -127,11 +140,17 @@ func _physics_process(delta: float) -> void:
 	_dirty_chunks.clear()
 	if _snap_tick % 2 == 0:
 		state_ready.emit(world_state())
+	_tick_max_us = maxi(_tick_max_us, Time.get_ticks_usec() - started)
+	if Time.get_ticks_msec() - _log_at >= 1000:
+		_log_sample()
 
 func add_projectile(bullet: BulletBase) -> void:
 	add_child(bullet)
 	var id := bullet.entity_id
 	projectiles[id] = bullet
+	if bullet.explodes:
+		GameLog.record("explosive_spawn", {"tick": _snap_tick, "id": id, "type": bullet.type_id,
+				"position": bullet.position, "velocity": bullet.velocity_vec})
 	bullet.tree_exiting.connect(func() -> void: projectiles.erase(id))
 
 func accept_input(role: int, packet: Dictionary) -> void:
@@ -140,6 +159,7 @@ func accept_input(role: int, packet: Dictionary) -> void:
 func new_epoch(role: int) -> void:
 	var player: CharacterBody2D = players[role]
 	player.input_buffer.reset(player.input_buffer.epoch + 1)
+	GameLog.record("control_epoch", {"tick": _snap_tick, "role": role, "epoch": player.input_buffer.epoch})
 	if player.input_source is PacketInputSource:
 		player.input_source.reset_state()
 
@@ -159,6 +179,7 @@ func respawn(role: int, heal: bool = true, initial: bool = false) -> void:
 			beta.finish(role)
 		beta.frames.erase(role)
 	new_epoch(role)
+	GameLog.record("respawn", {"tick": _snap_tick, "role": role, "position": player.position, "hp": player.hp})
 
 func start_round() -> void:
 	if beta != null:
@@ -210,6 +231,8 @@ func _role_of(node: Node) -> int:
 	return node.role if node != null else 0
 
 func broadcast(kind: int, data: Variant, except_role: int = -1) -> void:
+	if kind in [NetEvent.Kind.FIRE, NetEvent.Kind.HIT, NetEvent.Kind.KILL, NetEvent.Kind.BEAM]:
+		GameLog.record("combat", {"tick": _snap_tick, "round": _round_num, "kind": NetEvent.Kind.keys()[kind], "payload": data})
 	event.emit(kind, data, except_role)
 
 func round_state() -> Dictionary:
@@ -225,6 +248,10 @@ func round_state() -> Dictionary:
 	return result
 
 func broadcast_round() -> void:
+	var key := JSON.stringify([_round_num, _round_state, _scores, _rounds_won])
+	if key != _logged_round:
+		_logged_round = key
+		GameLog.record("round_state", round_state())
 	broadcast(NetEvent.Kind.ROUND, round_state())
 
 func live_bullets() -> Array:
@@ -421,11 +448,14 @@ func _try_server_pickup(player: Node2D, role: int) -> void:
 	var dropped: int = player.weapons.pick_up(nearest.type_id, nearest.mag)
 	if dropped < 0:
 		return
+	GameLog.record("pickup", {"tick": _snap_tick, "role": role, "id": nearest.inst,
+			"type": nearest.type_id, "mag": nearest.mag, "replaced_type": dropped})
 	_remove_ground_weapon(nearest.inst)
 	if dropped > 0:
 		_drop_pickup(player, player.weapons.take_last_dropped(), role)
 
 func _drop_pickup(player: Node2D, item: Dictionary, role: int) -> void:
+	GameLog.record("drop", {"tick": _snap_tick, "role": role, "item": item})
 	_spawn_ground_weapon(item["type"], item["mag"],
 			player.position + PlayerParams.weapon_drop_offset * Vector2(player.facing_direction, 1),
 			Vector2(PlayerParams.weapon_drop_speed * player.facing_direction, -PlayerParams.weapon_drop_up), role)
@@ -500,3 +530,27 @@ func _adjudicate_bullets() -> void:
 func projectile_state(bullet: BulletBase) -> Dictionary:
 	return {"type_id": bullet.type_id, "input_seq": bullet.input_seq, "input_epoch": bullet.input_epoch,
 			"pos": bullet.position, "vel": bullet.velocity_vec}
+
+func _log_sample() -> void:
+	var actors := {}
+	for role in players:
+		var player: CharacterBody2D = players[role]
+		var buffer: InputBuffer = player.input_buffer
+		actors[role] = {"position": player.position, "velocity": player.velocity, "hp": player.hp,
+				"epoch": buffer.epoch, "ack": buffer.ack, "action_ack": buffer.action_ack,
+				"lead": buffer.lead, "missing_ticks": buffer._missing, "frames": buffer.frames.size(),
+				"last_input": buffer._last,
+				"actions": buffer.actions.size(), "queue_max": _queue_max.get(role, 0), "input_totals": buffer.diagnostics,
+				"ai": player.input_source is AiInputSource, "rewind": player.rewinding, "weapon": player.weapons.log_state()}
+	var now := Time.get_ticks_msec()
+	var bullets := {}
+	for bullet: BulletBase in live_bullets():
+		bullets[bullet.entity_id] = projectile_state(bullet)
+	GameLog.record("world_state", {"interval_ms": now - _log_at, "ticks": _snap_tick - _log_tick,
+			"tick_max_ms": _tick_max_us / 1000.0, "tick": _snap_tick, "round": _round_num,
+			"round_state": NetEvent.RoundState.keys()[_round_state], "map_revision": map_revision,
+			"players": actors, "projectiles": bullets, "pickups": pickups.size()})
+	_log_at = now
+	_log_tick = _snap_tick
+	_tick_max_us = 0
+	_queue_max.clear()

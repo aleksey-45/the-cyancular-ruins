@@ -13,6 +13,7 @@ var frames: Dictionary = {}
 var actions: Dictionary = {}
 var _last := neutral()
 var _missing := HOLD_TICKS
+var diagnostics := {"late_arrivals": 0, "held_ticks": 0, "neutral_ticks": 0, "expired_actions": 0}
 
 static func neutral() -> Dictionary:
 	return {"seq": 0, "epoch": 1, "target_tick": 0, "view_tick": 0, "ax": 0.0, "held": 0, "pressed": 0, "released": 0, "winst": 0, "aim": Vector2.RIGHT}
@@ -36,6 +37,8 @@ func push(packet: Dictionary, tick: int) -> void:
 		if record["epoch"] != epoch:
 			continue
 		if record["seq"] > timing_seq:
+			if record["target_tick"] <= tick:
+				diagnostics["late_arrivals"] += 1
 			timing_seq = record["seq"]
 			lead = record["target_tick"] - tick
 		if record["seq"] <= ack or record["target_tick"] > tick + FUTURE_TICKS:
@@ -56,6 +59,8 @@ func take(tick: int) -> Dictionary:
 				_last = next
 			frames.erase(at)
 	_missing = tick - _last["target_tick"]
+	if _missing > 0:
+		diagnostics["neutral_ticks" if _missing > HOLD_TICKS else "held_ticks"] += 1
 	var record := _last.duplicate()
 	if _missing > HOLD_TICKS:
 		record["ax"] = 0.0
@@ -74,6 +79,7 @@ func take(tick: int) -> Dictionary:
 		action_ack = seq
 		actions.erase(seq)
 		if tick - action["target_tick"] > ACTION_TICKS:
+			diagnostics["expired_actions"] += 1
 			continue
 		for key in ["seq", "pressed", "released", "winst", "aim", "view_tick"]:
 			record[key] = action[key]

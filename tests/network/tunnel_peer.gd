@@ -19,8 +19,10 @@ func run() -> void:
 	if external:
 		assert(Tunnel.available())
 		Tunnel._rpc_port = int(args[args.find("--rpc") + 1])
-		Tunnel._pid = NetSession.launch(Tunnel.core_exe(), PackedStringArray([
-				"--config-file", args[args.find("--core-config") + 1], "--rpc-portal", "127.0.0.1:%d" % Tunnel._rpc_port]))
+		var core_args := PackedStringArray([
+				"--config-file", args[args.find("--core-config") + 1], "--rpc-portal", "127.0.0.1:%d" % Tunnel._rpc_port])
+		core_args.append_array(Tunnel.file_log_args("host" if host else "guest"))
+		Tunnel._pid = NetSession.launch(Tunnel.core_exe(), core_args)
 		assert(Tunnel._pid > 0)
 		Tunnel._role = "host" if host else "guest"
 		Tunnel._code = "00001234"
@@ -78,10 +80,15 @@ func run() -> void:
 		var file := FileAccess.open(output + ".peers.json", FileAccess.WRITE)
 		file.store_string(peers[1])
 		file.close()
+		var log_deadline := Time.get_ticks_msec() + 12000
+		while not FileAccess.get_file_as_string(GameLog.log_file()).contains('"event":"tunnel_peers"') and Time.get_ticks_msec() < log_deadline:
+			await get_tree().create_timer(0.1).timeout
+		assert(FileAccess.get_file_as_string(GameLog.log_file()).contains('"event":"tunnel_peers"'))
 		print("TUNNEL PEER OK input, state, 256KiB baseline, reconnect, code=00001234")
 		get_tree().quit()
 
 func write_info() -> void:
 	var file := FileAccess.open(output, FileAccess.WRITE)
-	file.store_string(JSON.stringify({"core_pid": Tunnel._pid, "rpc": Tunnel._rpc_port}))
+	file.store_string(JSON.stringify({"core_pid": Tunnel._pid, "rpc": Tunnel._rpc_port,
+			"log_dir": Tunnel._log_dir, "game_log": GameLog.log_file()}))
 	file.close()

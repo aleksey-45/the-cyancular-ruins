@@ -33,12 +33,11 @@ Settings="*res://core/config/settings.gd"
 
 [debug]
 
-; GameLog 按客户端和服务端分流写入 AppPaths.log_dir()。
+; GameLog 按进程和运行时间分文件写入 AppPaths.log_dir()。
 ; Windows 使用游戏目录下的 log/，macOS 使用用户数据目录下的 log/。
 file_logging/enable_file_logging=false
 file_logging/enable_file_logging.pc=false
-"回到主菜单è¿ç§è¡¨è±¡åæ¨(2026-09-12çæºæµåºçå»æå´©æºå°±æ¯è¿ç§å¤å¢)ãfile_logging/enable_file_logging"=true
-"有些时候才崩çé®é¢æ¶,#æ¯å¤è·ä¸è½®æ¢éå°±å°ä¸ä»½ç°åº,èç°åºæ°æ°æ¯æç¼ºçä¸è¥¿ã#æå°64:åä»½æ¯KBéçº§,å ä¸äºå¤å°çfile_logging/max_log_files"=64
+settings/gdscript/always_track_call_stacks=true
 
 [display]
 

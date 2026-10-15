@@ -51,6 +51,7 @@ func _run() -> void:
 	var third_packet := server.encode_state(third)
 	assert(client.decode_state(ProtocolFixture.stream(third_packet)) == third)
 	assert(client.decode_state(ProtocolFixture.stream(first)).is_empty())
+	assert(client.diagnostics["serial_skips"] == 1 and client.diagnostics["stale"] == 1)
 	# 外部代码修改快照不能修改解码基线；省略表示沿用，空列表不会删除未变化拾取物。
 	server.decode_input(ProtocolFixture.stream(client.encode_input(input)))
 	var stable := third.duplicate(true)
@@ -79,6 +80,7 @@ func _run() -> void:
 	fourth["tick"] += 2
 	assert(client.decode_state(ProtocolFixture.stream(server.encode_state(fourth))).is_empty())
 	assert(client.state_ack == 0)
+	assert(client.diagnostics["missing_base"] == 1)
 	server.decode_input(ProtocolFixture.stream(client.encode_input(input)))
 	assert(client.decode_state(ProtocolFixture.stream(server.encode_state(fourth))) == fourth)
 	# 可靠基线改变控制阶段并重新建缓存；旧 STATE 不可污染新回合。

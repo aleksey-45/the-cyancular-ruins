@@ -360,6 +360,15 @@ func reset_mag_state() -> void:
 func current_weapon() -> WeaponBase:
 	return _weapon
 
+func log_state() -> Dictionary:
+	var equipped_type: int = inventory.held[_current_index]["type"] if current_inst() != 0 else 0
+	var live_type := _weapon.type_id if _weapon != null else 0
+	return {"inst": current_inst(), "type": _current_type, "inventory": inventory.held.duplicate(true),
+			"inventory_type": equipped_type, "live_type": live_type,
+			"consistent": equipped_type == _current_type and equipped_type == live_type,
+			"live_scene": _weapon.scene_file_path if _weapon != null else "",
+			"mag": _weapon.mag_ammo if _weapon != null else 0}
+
 
 func current_type_id() -> int:
 	return _current_type

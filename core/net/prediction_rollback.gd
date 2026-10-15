@@ -17,6 +17,7 @@ var _clock_correction_seq := 0
 var _discarded_through := 0
 var _input := InputBuffer.new()
 var _player: CharacterBody2D
+var diagnostics := {"reason": "", "replay_ticks": 0}
 
 func bind(player: CharacterBody2D) -> void:
 	_player = player
@@ -76,10 +77,12 @@ func advance(delta: float) -> void:
 
 func reconcile(own: Dictionary, tick: int, ping_ms: int) -> bool:
 	var changed: bool = own["epoch"] != epoch
+	diagnostics = {"reason": "epoch" if changed else "", "replay_ticks": 0}
 	if changed:
 		reset(own["epoch"], own["ack"], tick, ping_ms)
 	var desired := tick + ceilf(ping_ms * 0.06) + MARGIN
 	if absf(_clock - desired) > MAX_REPLAY:
+		diagnostics["reason"] = "clock"
 		_clock = desired
 		history.clear()
 		sent.clear()
@@ -88,6 +91,7 @@ func reconcile(own: Dictionary, tick: int, ping_ms: int) -> bool:
 	if own["timing_seq"] > _timing_seq and own["timing_seq"] > _clock_correction_seq:
 		_timing_seq = own["timing_seq"]
 		if absf(own["lead"] - MARGIN) > InputBuffer.ACTION_TICKS:
+			diagnostics["retime_ticks"] = int(MARGIN) - own["lead"]
 			var offset: int = int(MARGIN) - own["lead"]
 			_clock += offset
 			for record: Dictionary in history:
@@ -113,10 +117,12 @@ func reconcile(own: Dictionary, tick: int, ping_ms: int) -> bool:
 	_input.push({"frames": history, "actions": actions}, tick)
 	_sim_tick = tick
 	if own["ack"] < _discarded_through or int(_clock) - tick > MAX_REPLAY or own["rewind"]:
+		diagnostics["reason"] = "rewind" if own["rewind"] else "history" if own["ack"] < _discarded_through else "budget"
 		history.clear()
 		_sim_tick = int(_clock)
 	else:
 		while _sim_tick < int(_clock):
+			diagnostics["replay_ticks"] += 1
 			_sim_tick += 1
 			_player.begin_visual_step()
 			ActorStep.step(_player, _input.take(_sim_tick))

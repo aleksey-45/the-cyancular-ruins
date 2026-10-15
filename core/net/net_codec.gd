@@ -20,6 +20,8 @@ var serial := 0
 var latest := 0
 var history: Dictionary = {}
 var roles: Array = []
+var diagnostics := {"full": 0, "delta": 0, "stale": 0, "missing_base": 0, "serial_skips": 0}
+var _received_serial := 0
 
 func encode_input(packet: Dictionary) -> PackedByteArray:
 	var s := StreamPeerBuffer.new()
@@ -94,11 +96,17 @@ func _write_state(s: StreamPeerBuffer, frame: Dictionary) -> void:
 func decode_state(s: StreamPeerBuffer) -> Dictionary:
 	var number := s.get_u32()
 	var base_number := s.get_u32()
+	if _received_serial > 0 and number > _received_serial:
+		diagnostics["serial_skips"] += number - _received_serial - 1
+	_received_serial = maxi(_received_serial, number)
 	if number <= latest:
+		diagnostics["stale"] += 1
 		return {}
 	if base_number != 0 and not history.has(base_number):
+		diagnostics["missing_base"] += 1
 		state_ack = 0 # 下次 INPUT 请求独立全量快照。
 		return {}
+	diagnostics["full" if base_number == 0 else "delta"] += 1
 	var base: Dictionary = history.get(base_number, {})
 	var frame := {"tick": s.get_u32(), "map_revision": s.get_u32()}
 	if base_number == 0:

@@ -37,6 +37,8 @@ def main():
             time.sleep(1)
             def game(name, host=False):
                 env = os.environ.copy()
+                # 文件日志同时受 Rust 过滤器控制；夹具使用官方默认过滤条件。
+                env.pop("RUST_LOG", None)
                 for key in list(env):
                     if key.startswith("ET_"): env.pop(key)
                 for key, leaf in (("APPDATA","roaming"),("LOCALAPPDATA","local")):
@@ -50,7 +52,8 @@ def main():
                 output = folder / f"{name}.json"
                 output.unlink(missing_ok=True)
                 command = [args.godot, "--headless", "--path", str(ROOT),
-                    "res://tests/network/tunnel_peer.tscn", "--", "--port", str(game_port), "--output", str(output)]
+                    "res://tests/network/tunnel_peer.tscn", "--", "--port", str(game_port), "--output", str(output),
+                    "--game-log-dir", str((folder / name / "diagnostics").resolve())]
                 if host: command.append("--host")
                 if mode == "relay":
                     rpc = port(socket.SOCK_STREAM)
@@ -93,9 +96,19 @@ def main():
             peers = json.loads((folder / "guest.json.peers.json").read_text(encoding="utf-8"))
             host_peer = next(peer for peer in peers if peer["hostname"].startswith("cyr-host-"))
             assert (host_peer["cost"] == "p2p" and host_peer["tunnel_proto"] == "udp") if mode == "direct" else host_peer["cost"].startswith("relay("), host_peer
+            native_logs = []
+            for name in ("host", "guest"):
+                info = json.loads((folder / f"{name}.json").read_text(encoding="utf-8"))
+                files = [path for path in Path(info["log_dir"]).iterdir() if path.is_file() and path.stat().st_size > 0]
+                assert files, f"{name}: EasyTier file logging is empty"
+                assert any("INFO" in path.read_text(encoding="utf-8", errors="replace") for path in files), files
+                records = [json.loads(line) for line in Path(info["game_log"]).read_text(encoding="utf-8").splitlines()]
+                assert any(record["event"] == "tunnel_logging" for record in records), name
+                assert any(record["event"] == "tunnel_peers" for record in records), name
+                native_logs.extend(str(path) for path in files)
             (folder / "result.json").write_text(json.dumps({"mode": mode, "route": host_peer,
                 "input": True, "state": True, "reliable_bytes": 256 * 1024, "reconnect": True,
-                "room_code": "00001234"}, indent=2), encoding="utf-8")
+                "room_code": "00001234", "native_logs": native_logs}, indent=2), encoding="utf-8")
             print(f"EASYTIER {mode.upper()} OK",flush=True)
         finally:
             for proc in processes:

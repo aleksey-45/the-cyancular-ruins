@@ -71,6 +71,8 @@ def main():
         cmd = [args.godot, "--headless", "--path", str(ROOT), "--disable-crash-handler", scene, "--", *extra]
         if args.server and name == "server":
             cmd = [str(args.server.resolve()), "--headless", "--", "--server", *extra]
+        cmd += ["--game-log-dir", str((folder / name / "diagnostics").resolve())]
+        if name == "server" and not args.server: cmd.append("--server")
         if args.none: cmd.append("--none")
         proc = subprocess.Popen(cmd, cwd=ROOT, env=env, stdout=stream, stderr=subprocess.STDOUT,
                                 creationflags=0x08000000 if os.name == "nt" else 0)
@@ -127,6 +129,17 @@ def main():
         server_output = (folder / "server.log").read_text(encoding="utf-8")
         if ("SERVER READY" if args.server else "MATCH SERVER OK") not in server_output or runtime_error(server_output):
             failures.append("server")
+        logging = []
+        for index, process in enumerate(processes):
+            name = "server" if index == 0 else f"client{index - 1}"
+            paths = list((folder / name / "diagnostics").glob(f"*-{process.pid}.log"))
+            records = [json.loads(line) for path in paths for line in path.read_text(encoding="utf-8").splitlines()]
+            events = {record["event"] for record in records}
+            expected = {"session_start", "performance", "transport_sample", "world_state", "baseline_send", "player_ready"} if index == 0 else {
+                "session_start", "session_end", "performance", "transport_sample", "client_state", "baseline_ready"}
+            missing = sorted(expected - events)
+            if missing: failures.append(f"{name} logging: {missing}")
+            logging.append({"name": name, "files": [str(path) for path in paths], "records": len(records), "missing": missing})
         if args.stall and (not disturbed or any(link.stalled_packets == 0 or link.blackout_packets == 0 for link in links)):
             failures.append("stall fixture")
         report = {"count":args.count, "rtt":args.rtt, "jitter":args.jitter, "loss":args.loss,
@@ -137,6 +150,7 @@ def main():
                       transport="enet",
                       queue_ms=args.queue_ms, elapsed_seconds=time.monotonic()-started_at,
                       links=[link.report() for link in links])
+        report["logging"] = logging
         if any(link.error for link in links):
             failures.append("link emulator")
         report["playback"] = [json.loads(output.rsplit("PLAYBACK METRICS ", 1)[1].splitlines()[0])

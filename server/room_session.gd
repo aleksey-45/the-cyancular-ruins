@@ -79,6 +79,8 @@ func _on_event(peer: int, kind: int, data: Variant) -> void:
 			var role := role_of(peer)
 			if world != null and world.players.has(role) and data == world._round_num:
 				seats[role]["ready"] = true
+				GameLog.record("player_ready", {"role": role, "peer": peer, "round": data,
+						"baseline_ms": Time.get_ticks_msec() - seats[role].get("baseline_at", Time.get_ticks_msec())})
 		NetEvent.Kind.SUICIDE:
 			var role := role_of(peer)
 			if world != null and world._round_state == NetEvent.RoundState.PLAYING and world.players.has(role):
@@ -96,6 +98,7 @@ func _on_event(peer: int, kind: int, data: Variant) -> void:
 				remove_seat(role)
 
 func message(peer: int, value: String) -> void:
+	GameLog.record("room_message", {"peer": peer, "message": value})
 	NetBus.send_event(NetEvent.Kind.MESSAGE, value, peer)
 
 func role_of(peer: int) -> int:
@@ -117,6 +120,7 @@ func add_seat(peer: int) -> void:
 		team = 1 if seats.values().filter(func(seat: Dictionary) -> bool: return seat["team"] == 1).size() < 3 else 2
 	seats[role] = {"peer": peer, "token": Crypto.new().generate_random_bytes(16).hex_encode(),
 			"name": guest["name"], "hue": guest["hue"], "team": team, "deadline": 0.0, "ready": false}
+	GameLog.record("seat_join", {"role": role, "peer": peer, "team": team, "mode": mode})
 
 func room_data() -> Dictionary:
 	var roster: Array = []
@@ -195,7 +199,11 @@ func baseline_for(role: int) -> Dictionary:
 
 func send_baseline(role: int) -> void:
 	seats[role]["ready"] = false
-	NetBus.send_event(NetEvent.Kind.BASELINE, baseline_for(role), seats[role]["peer"])
+	seats[role]["baseline_at"] = Time.get_ticks_msec()
+	var payload := baseline_for(role)
+	GameLog.record("baseline_send", {"role": role, "peer": seats[role]["peer"], "tick": world._snap_tick,
+			"round": world._round_num, "map_revision": world.map_revision, "map_bytes": payload["map"].size()})
+	NetBus.send_event(NetEvent.Kind.BASELINE, payload, seats[role]["peer"])
 
 func _on_input(peer: int, packet: Dictionary) -> void:
 	var role := role_of(peer)
@@ -209,6 +217,7 @@ func _on_left(peer: int) -> void:
 		return
 	seats[role]["peer"] = 0
 	seats[role]["deadline"] = Time.get_ticks_msec() / 1000.0 + GRACE_SECONDS
+	GameLog.record("seat_disconnected", {"role": role, "peer": peer, "grace_seconds": GRACE_SECONDS}, true)
 	_returned.erase(role)
 	if world != null:
 		seats[role]["ready"] = false
@@ -225,6 +234,7 @@ func rejoin(peer: int, target_code: String, token: String) -> void:
 		if code == target_code and seats[role]["token"] == token:
 			seats[role]["peer"] = peer
 			seats[role]["deadline"] = 0.0
+			GameLog.record("seat_rejoin", {"role": role, "peer": peer})
 			if world != null:
 				world.new_epoch(role)
 				send_baseline(role)
@@ -233,6 +243,7 @@ func rejoin(peer: int, target_code: String, token: String) -> void:
 				broadcast_room()
 			return
 	NetBus.send_event(NetEvent.Kind.REJOIN_DENIED, "席位已过期", peer)
+	GameLog.record("rejoin_denied", {"peer": peer})
 
 func update_grace() -> void:
 	world.grace_snapshot.clear()
@@ -242,6 +253,7 @@ func update_grace() -> void:
 	world.broadcast_round.call_deferred()
 
 func remove_seat(role: int) -> void:
+	GameLog.record("seat_remove", {"role": role, "host": role == host_role})
 	if role == host_role:
 		_broadcast(NetEvent.Kind.ROOM_CLOSED, "房主已离开", role)
 		if world != null:
@@ -266,6 +278,7 @@ func online_count() -> int:
 	return seats.values().filter(func(seat: Dictionary) -> bool: return seat["peer"] != 0).size()
 
 func return_to_room() -> void:
+	GameLog.record("return_to_room")
 	remove_child(world)
 	world.queue_free()
 	world = null

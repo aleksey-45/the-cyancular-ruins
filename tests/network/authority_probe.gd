@@ -130,10 +130,36 @@ func _run() -> void:
 		assert(world._round_state == NetEvent.RoundState.MATCH_OVER and world.rules.winner == 1)
 		assert(world.round_state()["rounds_won"][1] == 2)
 		world.free()
+	await _check_actor_motion()
 	await _check_tick_dispatch()
 	await get_tree().process_frame
-	print("AUTHORITY PROBE OK six weapons, pickups, ammo, laser history, Beta scope, epochs, damage once, AI, round wins, silent replay")
+	print("AUTHORITY PROBE OK actor speed, six weapons, pickups, ammo, laser history, Beta scope, epochs, damage once, AI, round wins, silent replay")
 	get_tree().quit()
+
+func _check_actor_motion() -> void:
+	var world := AuthorityWorld.new()
+	add_child(world)
+	world.setup(PvpSession.MODE_ROYALE, "res://tests/network/arena.cyrm", [1], {}, {}, [2])
+	world.set_physics_process(false)
+	world._round_state = NetEvent.RoundState.PLAYING
+	for actor: CharacterBody2D in world.players.values():
+		assert(not actor.is_physics_processing())
+	var player: CharacterBody2D = world.players[1]
+	player.position = Vector2(1000, 300)
+	player.gravity = 0.0
+	player.collision_mask = 0
+	player.velocity = Vector2(player.move_speed, 0)
+	var start := player.position
+	for tick in 60:
+		var record := InputBuffer.neutral().merged({"seq": tick + 1, "target_tick": tick + 1, "ax": 1.0}, true)
+		world.accept_input(1, {"frames": [record], "actions": []})
+		world._physics_process(ActorStep.DT)
+		await get_tree().physics_frame
+	var distance := GridPathfinder.toroidal_delta_px(start, player.position,
+			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+	assert(distance.is_equal_approx(Vector2(player.move_speed, 0)))
+	print("ACTOR MOTION OK 60 ticks distance=", distance.x, " speed=", player.move_speed)
+	world.free()
 
 func _check_tick_dispatch() -> void:
 	var world := AuthorityWorld.new()

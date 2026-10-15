@@ -35,8 +35,17 @@ var _own_ack := 0
 var _menu_open := false
 var _retry_started := 0
 var _attempt_started := 0
+var _log_at := Time.get_ticks_msec()
+var _correction_log_at := 0
+var _log_counts: Dictionary = {}
+var _correction_max := 0.0
+var _replay_max := 0
+var _playback_capped := false
+var _log_own: Dictionary = {}
 
 func _ready() -> void:
+	var started := Time.get_ticks_msec()
+	GameLog.record("match_load", {"role": PvpSession.role, "mode": PvpSession.room_mode, "beta": PvpSession.beta_mode})
 	process_priority = 1 # 场景准备之后更新角色表现，摄像机最后跟随。
 	var baseline := PvpSession.baseline
 	var file := FileAccess.open("user://network_map.cyrm", FileAccess.WRITE)
@@ -91,8 +100,12 @@ func _ready() -> void:
 		apply_terrain(patch)
 	PvpSession.terrain_events.clear()
 	PvpSession.loading_match = false
+	GameLog.record("match_loaded", {"duration_ms": Time.get_ticks_msec() - started, "role": PvpSession.role})
 
 func apply_baseline(payload: Dictionary) -> void:
+	var started := Time.get_ticks_msec()
+	GameLog.record("baseline_begin", {"tick": payload["frame"]["tick"], "round": payload["round_state"]["round"],
+			"map_bytes": payload["map"].size(), "terrain_cells": payload["sub_hp"].size()})
 	phase = Phase.LOADING
 	_names = payload["names"]
 	_hues = payload["hues"]
@@ -112,6 +125,7 @@ func apply_baseline(payload: Dictionary) -> void:
 		_hud.set_my_team(_teams[PvpSession.role])
 	_clear_dynamics()
 	var frame: Dictionary = payload["frame"]
+	_log_own = frame["own"]
 	_local.restore_state(frame["own"]["state"])
 	_rollback.reset(frame["own"]["epoch"], frame["own"]["ack"], frame["tick"], NetBus.ping_ms)
 	_playback.reset()
@@ -128,8 +142,14 @@ func apply_baseline(payload: Dictionary) -> void:
 	_local.correct_visual(_local.global_position, true)
 	_refresh_input_lock()
 	NetBus.send_event(NetEvent.Kind.READY, payload["round_state"]["round"])
+	GameLog.record("baseline_ready", {"tick": frame["tick"], "epoch": frame["own"]["epoch"],
+			"map_revision": _map_revision, "duration_ms": Time.get_ticks_msec() - started,
+			"reconnect_ms": Time.get_ticks_msec() - _retry_started if _retry_started > 0 else 0})
+	_retry_started = 0
 
 func _on_event(_peer: int, kind: int, data: Variant) -> void:
+	if kind in [NetEvent.Kind.FIRE, NetEvent.Kind.HIT, NetEvent.Kind.KILL, NetEvent.Kind.REJOIN_DENIED, NetEvent.Kind.ROOM_CLOSED]:
+		GameLog.record("match_event", {"kind": NetEvent.Kind.keys()[kind], "tick": _last_tick, "payload": data})
 	match kind:
 		NetEvent.Kind.BASELINE: apply_baseline(data)
 		NetEvent.Kind.TERRAIN: apply_terrain(data)
@@ -179,16 +199,19 @@ func apply_terrain(patch: Dictionary) -> void:
 		_on_state(frame)
 
 func _on_state(frame: Dictionary) -> void:
+	_count_log("state_callbacks")
 	if phase != Phase.ONLINE or frame["tick"] <= _last_tick:
 		return
 	if frame["tick"] > _own_tick:
 		if _authority_state.is_empty() or frame["tick"] > _authority_state["tick"]:
 			_authority_state = frame
 	if frame["map_revision"] > _map_revision:
+		_count_log("terrain_wait_states")
 		if _future_state.is_empty() or frame["tick"] > _future_state["tick"]:
 			_future_state = frame
 		return
 	if frame["map_revision"] < _map_revision:
+		_count_log("old_terrain_states")
 		return
 	_last_tick = frame["tick"]
 	_playback.push(frame["tick"], frame["world"])
@@ -199,11 +222,27 @@ func _apply_pending_authority() -> void:
 		_authority_state = {}
 
 func _apply_authority(frame: Dictionary) -> void:
+	_log_own = frame["own"]
 	_own_tick = frame["tick"]
 	_local.rewinding = frame["own"]["rewind"]
 	_local.input_buffer.epoch = frame["own"]["epoch"]
 	var previous: Vector2 = _local.corrected_position()
+	var before: Vector2 = _local.global_position
 	var snap := _rollback.reconcile(frame["own"], frame["tick"], NetBus.ping_ms)
+	var error := GridPathfinder.toroidal_delta_px(before, _local.global_position,
+			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT).length()
+	_correction_max = maxf(_correction_max, error)
+	_replay_max = maxi(_replay_max, _rollback.diagnostics["replay_ticks"])
+	_count_log("reconciles")
+	if not _rollback.diagnostics["reason"].is_empty():
+		_count_log("reset_" + _rollback.diagnostics["reason"])
+	if _rollback.diagnostics.has("retime_ticks"):
+		_count_log("retimes")
+	if error >= 8.0 and Time.get_ticks_msec() - _correction_log_at >= 1000:
+		_correction_log_at = Time.get_ticks_msec()
+		GameLog.record("prediction_correction", {"role": PvpSession.role, "tick": frame["tick"], "error_px": error,
+				"before": before, "after": _local.global_position, "authority": frame["own"],
+				"prediction": _rollback.diagnostics, "weapon": _local.weapons.log_state()})
 	_local.correct_visual(previous, snap)
 	_make_label(PvpSession.role)
 	_latest_players = frame["world"]["players"]
@@ -245,6 +284,7 @@ func _sync_bullets(projectiles: Dictionary, own: bool) -> void:
 		if (shooter_role == PvpSession.role) != own:
 			continue
 		if not _bullets.has(id):
+			_count_log("projectiles_created")
 			var profile := WeaponRegistry.projectile_profile(data["type_id"])
 			var bullet: BulletBase = profile["scene"].instantiate()
 			bullet.entity_id = id
@@ -267,6 +307,10 @@ func _sync_bullets(projectiles: Dictionary, own: bool) -> void:
 			continue
 		var pending := own and bullet.input_epoch == _rollback.epoch and (bullet.input_seq > _own_ack or _rollback.actions.any(func(action: Dictionary) -> bool: return action["seq"] == bullet.input_seq))
 		if not pending:
+			_count_log("projectiles_removed")
+			if bullet.explodes:
+				GameLog.record("explosive_removed", {"id": id, "type": bullet.type_id, "own": own,
+						"tick": _own_tick if own else _last_tick, "position": bullet.position})
 			bullet.queue_free()
 			_bullets.erase(id)
 
@@ -300,12 +344,16 @@ func _physics_process(delta: float) -> void:
 	var src: PlayerInput = _local.input_source
 	_rollback.capture(src, _local.get_current_aim_dir(), int(_playback.render_tick),
 			_local.weapons.take_uplink_switch(src.get_switch_index_pressed()))
+	if not _rollback.actions.is_empty() and _rollback.actions[-1]["seq"] == _rollback.sequence:
+		GameLog.record("input_action", {"role": PvpSession.role, "action": _rollback.actions[-1]})
 	NetBus.send_input(_rollback.packet())
 	_rollback.advance(delta)
 	_local.present_tick(delta)
 	_post.set_downed(_local.is_downed())
 
 func _process(delta: float) -> void:
+	if Time.get_ticks_msec() - _log_at >= 1000:
+		_log_sample()
 	if phase != Phase.ONLINE:
 		return
 	var render_tick := _rollback._clock - _rollback._rate * (1.0 - Engine.get_physics_interpolation_fraction())
@@ -313,6 +361,10 @@ func _process(delta: float) -> void:
 	if _playback.frames.is_empty():
 		return
 	var world := _playback.advance(delta)
+	var capped: bool = _playback.render_tick >= _playback.frames[-1]["tick"] + SnapshotBuffer.MAX_EXTRAPOLATION
+	if capped != _playback_capped:
+		GameLog.record("playback_hold", {"held": capped, "latest_tick": _last_tick, "render_tick": _playback.render_tick})
+		_playback_capped = capped
 	for role in world["players"]:
 		if role != PvpSession.role:
 			_ensure_replica(role)
@@ -392,6 +444,8 @@ func _role_color(role: int) -> Color:
 	return UiFactory.C_TEAM_A if _teams.get(role, role) == 1 else UiFactory.C_TEAM_B
 
 func _on_round_state(data: Dictionary) -> void:
+	if data["state"] != _last_round_state["state"] or data.get("round", 1) != _last_round_state.get("round", 0):
+		GameLog.record("round_state", data)
 	var ended: bool = _last_round_state["state"] == NetEvent.RoundState.MATCH_OVER
 	_last_round_state = data
 	var hud_data := data.duplicate()
@@ -440,6 +494,7 @@ func _begin_reconnect() -> void:
 	if phase != Phase.ONLINE:
 		return
 	phase = Phase.RECONNECTING
+	GameLog.record("reconnect_begin", {"tick": _last_tick, "role": PvpSession.role}, true)
 	_refresh_input_lock()
 	_retry_started = Time.get_ticks_msec()
 	_retry_loop()
@@ -452,6 +507,7 @@ func _retry_loop() -> void:
 			await Tunnel.refresh_forward()
 			PvpSession.server_port = Tunnel.forward_port()
 		_attempt_started = Time.get_ticks_msec()
+		GameLog.record("reconnect_attempt", {"elapsed_ms": _attempt_started - _retry_started})
 		NetBus.start_client(PvpSession.server_address, PvpSession.server_port)
 		while phase == Phase.RECONNECTING and _attempt_started > 0 and Time.get_ticks_msec() - _attempt_started < 5000:
 			await get_tree().create_timer(0.1).timeout
@@ -460,6 +516,7 @@ func _retry_loop() -> void:
 	if phase == Phase.RECONNECTING:
 		phase = Phase.OFFLINE
 		_banner.set_text("重连超时")
+		GameLog.record("reconnect_timeout", {}, true)
 
 func _on_connected() -> void:
 	if phase == Phase.RECONNECTING:
@@ -469,12 +526,42 @@ func _on_connection_failed() -> void:
 	_attempt_started = 0
 
 func _exit_tree() -> void:
+	_log_sample()
+	GameLog.record("match_exit", {"tick": _last_tick, "phase": Phase.keys()[phase]})
 	phase = Phase.OFFLINE
 	NetBus.state_received.disconnect(_on_state)
 	NetBus.event_received.disconnect(_on_event)
 	multiplayer.server_disconnected.disconnect(_begin_reconnect)
 	multiplayer.connected_to_server.disconnect(_on_connected)
 	multiplayer.connection_failed.disconnect(_on_connection_failed)
+
+func _count_log(key: String) -> void:
+	_log_counts[key] = _log_counts.get(key, 0) + 1
+
+func _log_sample() -> void:
+	var now := Time.get_ticks_msec()
+	var latest: int = _playback.frames[-1]["tick"] if not _playback.frames.is_empty() else -1
+	var bullets := {}
+	for id in _bullets:
+		var bullet: BulletBase = _bullets[id]
+		bullets[id] = {"type": bullet.type_id, "position": bullet.position, "velocity": bullet.velocity_vec,
+				"physics": bullet.is_physics_processing(), "input_seq": bullet.input_seq, "epoch": bullet.input_epoch}
+	GameLog.record("client_state", {"interval_ms": now - _log_at, "role": PvpSession.role,
+			"phase": Phase.keys()[phase], "tick": _last_tick, "own_tick": _own_tick, "map_revision": _map_revision,
+			"future_revision": _future_state.get("map_revision", -1), "input_seq": _rollback.sequence,
+			"epoch": _rollback.epoch, "input_ack": _log_own.get("ack", 0), "action_ack": _log_own.get("action_ack", 0),
+			"history": _rollback.history.size(), "actions": _rollback.actions.size(),
+			"latest_input": _rollback.sent[-1] if not _rollback.sent.is_empty() else {},
+			"input_lead": _rollback._lead, "clock": _rollback._clock, "clock_rate": _rollback._rate,
+			"render_tick": _playback.render_tick, "buffer_frames": _playback.frames.size(),
+			"headroom_ticks": latest - _playback.render_tick, "extrapolation_capped": latest >= 0 and _playback.render_tick >= latest + SnapshotBuffer.MAX_EXTRAPOLATION,
+			"correction_max_px": _correction_max, "replay_max_ticks": _replay_max, "counts": _log_counts,
+			"position": _local.position, "velocity": _local.velocity, "hp": _local.hp,
+			"weapon": _local.weapons.log_state(), "projectiles": bullets, "pickups": _pickup_nodes.size()})
+	_log_at = now
+	_log_counts.clear()
+	_correction_max = 0.0
+	_replay_max = 0
 
 var _time_mirror: GrainAccount
 var _time_haste_mult := 3.0

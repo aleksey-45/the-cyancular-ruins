@@ -69,6 +69,7 @@ func _run() -> void:
 	assert(game._replicas[2].visible and game._bullets.has(REMOTE_ID) and game._pickup_nodes.has(12))
 	assert(game._id_labels[2].visible and game._hp_bars[2].visible and game._minimap_others().size() == 1)
 	var replica: Node2D = game._replicas[2]
+	_check_replica_shapes(replica)
 	var bullet: BulletBase = game._bullets[REMOTE_ID]
 	players = {2: _actor(Vector2(1200, 500))}
 	bullets = bullets.duplicate(true)
@@ -161,5 +162,16 @@ func _run() -> void:
 	assert(game._playback.frames.is_empty())
 	game.free()
 	await get_tree().process_frame
-	print("PLAYBACK LIFECYCLE PROBE OK birth/death ticks, latest ghost, own ACK before terrain, projectile epoch")
+	print("PLAYBACK LIFECYCLE PROBE OK collision shapes, birth/death ticks, latest ghost, own ACK before terrain, projectile epoch")
 	get_tree().quit()
+
+func _check_replica_shapes(replica: Node2D) -> void:
+	var player: CharacterBody2D = game._local
+	for pose in replica.POSE_SHAPE:
+		var actual: CollisionPolygon2D = player.get_node(replica.POSE_SHAPE[pose])
+		var ghost: CollisionPolygon2D = replica._ghost_shapes[pose]
+		assert(actual.polygon.size() == ghost.polygon.size())
+		for i in actual.polygon.size():
+			var expected := actual.to_global(actual.polygon[i]) - player.global_position
+			var observed: Vector2 = ghost.to_global(ghost.polygon[i]) - replica._ghost.global_position
+			assert(expected.is_equal_approx(observed))

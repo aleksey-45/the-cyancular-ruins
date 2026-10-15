@@ -92,6 +92,8 @@ python tests/network/run_matches.py --godot $env:GODOT --count 2 --server '.test
 - **进程生命周期回归 (`run_process_lifecycle.py`)**：覆盖客户端正常退出、窗口关闭、会话重建、场景切换及强制终止等各种场景，通过 Windows 进程句柄校验作业对象内所有子进程均能被安全回收。
 - **macOS 产物与生命周期 (`run_macos.py`)**：接收 `--godot` 和 `--archive`，验证通用包的两种架构、签名及可执行权限；执行导出启动、六种退出场景、网络探针、包内服务端对局及 EasyTier 直连/中继。CI 在 Apple Silicon 和 Intel 上分别测试同一归档。
 - **实际地图启动分析 (`startup_probe.tscn`)**：记录原生 CPU 架构、Godot 版本、地图尺寸、内存和场景创建、基线复位及首帧更新耗时，同时检查首帧更新是否替换碰撞节点。使用 `--headless --path . res://tests/network/startup_probe.tscn` 运行；追加 `--debug --ignore-error-breaks --profiling` 获取函数耗时与调用次数。macOS CI 分别保存普通计时和分析器日志。
+- **运行日志 (`game_log_probe.tscn`)**：验证结构化 JSON 行、多线程完整写入、中文与换行转义、引擎输出和警告接入、立即落盘以及每秒性能采样。`run_matches.py` 校验各进程的正式日志事件与正常退出标记；`run_easytier.py` 验证直连、中继时官方日志文件包含实际内容，测试目录内保留游戏诊断文件。
+- **角色物理一致性**：`authority_probe.tscn` 验证真人与 AI 均由权威世界调度，并检查持续移动 60 tick 的实际位移；`playback_lifecycle_probe.tscn` 逐姿态、逐顶点比较远端阻挡体与本地角色的世界空间碰撞轮廓。
 
 ### 分档波动网络与断供计量
 

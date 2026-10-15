@@ -22,6 +22,7 @@ static func find_server_exe() -> String:
 	return path if FileAccess.file_exists(path) else ""
 
 static func launch_and_connect() -> int:
+	var started := Time.get_ticks_msec()
 	stop_owned()
 	var exe := find_server_exe()
 	if exe.is_empty():
@@ -39,6 +40,7 @@ static func launch_and_connect() -> int:
 	if OS.has_feature("macos") and OS.has_feature("template"):
 		args.append("--server")
 	args.append_array(["--port", str(port)])
+	args.append_array(["--game-log-dir", GameLog.log_dir()])
 	restarting = true
 	var generation := NetSession.generation
 	_owned_pid = NetSession.launch(exe, args)
@@ -49,6 +51,7 @@ static func launch_and_connect() -> int:
 		return -1
 	restarting = false
 	if ready:
+		GameLog.record("local_server_ready", {"pid": _owned_pid, "port": port, "duration_ms": Time.get_ticks_msec() - started})
 		print("[LocalServer] SERVER READY pid=%d port=%d" % [_owned_pid, port])
 		return port
 	NetBus.stop()

@@ -29,7 +29,7 @@
 ## 二、 全局单例与配置体系
 
 ### 1. 全局 Autoload 单例（配置于 `project.godot`）
-1. `GameLog`（[`core/config/game_log.gd`](../../core/config/game_log.gd)）：接管引擎日志输出，分流持久化写入 `log/client.log` 或 `log/server.log`。
+1. `GameLog`（[`core/config/game_log.gd`](../../core/config/game_log.gd)）：接管引擎输出与结构化运行记录，每次运行写入独立的 `log/client-<时间>-<PID>.log` 或 `log/server-<时间>-<PID>.log`。字段与隧道日志见[运行日志](netplay.md#十运行日志)。
 2. `GameParameters`（[`core/config/game_parameters.gd`](../../core/config/game_parameters.gd)）：定义基础重力、瓦片尺寸（`TILE_SIZE = 64`）及世界像素边界。地图加载完成后调用 `refresh_map_size()` 动态刷新世界尺寸。
 3. `NetBus`（[`core/net/net_bus.gd`](../../core/net/net_bus.gd)）：基于 ENet 的核心网络通信接口，承载 INPUT、STATE、EVENT 三类数据报文传输，支持包级 Zstd 压缩。
 4. `NetSession`（[`core/net/net_session.gd`](../../core/net/net_session.gd)）：联机会话与 Windows Job 作业对象管理；统一启动、持有和回收联机相关的后台子进程。

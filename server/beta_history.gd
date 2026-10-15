@@ -17,6 +17,7 @@ func tick(delta: float) -> void:
 		if want and not cursors.has(role) and frames.has(role):
 			cursors[role] = 0.0
 			player.rewinding = true
+			GameLog.record("beta_rewind_begin", {"tick": world._snap_tick, "role": role, "history": frames[role].size()})
 		elif not want and cursors.has(role):
 			finish(role)
 		if cursors.has(role):
@@ -54,6 +55,7 @@ func tick(delta: float) -> void:
 				history.pop_front()
 
 func finish(role: int) -> void:
+	GameLog.record("beta_rewind_end", {"tick": world._snap_tick, "role": role, "seconds": cursors[role]})
 	var history: Array = frames[role]
 	var target: float = history[-1]["tick"] - cursors[role] * 60.0
 	while history.size() > 1 and history[-1]["tick"] > target:

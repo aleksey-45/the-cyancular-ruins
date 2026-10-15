@@ -267,6 +267,9 @@ func execute_actions(actions: Array) -> void:
 	for action: Dictionary in actions:
 		match action["kind"]:
 			"fire":
+				if authority_world == null:
+					GameLog.record("player_fire", {"role": role, "predicted": Level0.pvp_mode,
+							"type": weapons.current_type_id(), "inst": weapons.current_inst(), "action": action})
 				weapons.current_weapon().execute_shot(action)
 			"sound":
 				if authority_world == null:
@@ -293,6 +296,8 @@ func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, kn
 	var before := combat.hp
 	combat.take_hit(source_pos, damage, ignore_iframes, knockback)
 	if combat.hp < before and authority_world == null:
+		GameLog.record("player_damage", {"role": role, "damage": before - combat.hp,
+				"hp": combat.hp, "source": source_pos, "downed": combat.downed})
 		play_hit_feedback(before - combat.hp)
 
 func get_facing() -> int:

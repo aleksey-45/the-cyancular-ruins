@@ -36,6 +36,7 @@ var _film_t: float = 0.0          # 回溯底片化强度(get 平滑 ramp,≤200
 var _haste_t: float = 0.0         # 加速视效强度(ramp 100ms)
 # 时间状态高亮(B13):加色副本(见 scenes/effects/time_glow.gd),实体 → TimeGlow
 var _glows: Dictionary = {}
+var _log_at := Time.get_ticks_msec()
 
 
 static func safe_change_scene(tree: SceneTree, path: String) -> void:
@@ -181,6 +182,8 @@ func _unhandled_input(event: InputEvent) -> void:
 	$WorldViewport.push_input(event)
 
 func _ready() -> void:
+	var started := Time.get_ticks_msec()
+	GameLog.record("level_load", {"map": MazeGenerator.map_file_path(), "pvp": pvp_mode})
 	# 清屏背景色与地形图集统一保持一致
 	RenderingServer.set_default_clear_color(TerrainAtlas.SKY_COLOR)
 	CombatFeedback.spawn(self)
@@ -210,6 +213,7 @@ func _ready() -> void:
 
 
 	if pvp_mode:
+		GameLog.record("level_ready", {"duration_ms": Time.get_ticks_msec() - started, "pvp": true})
 		return  # PvP 基线完成墙体铺图和物理初始化。
 	_build_wall_collision.call_deferred(grid)
 	EnemySpawner.load_types()
@@ -237,6 +241,7 @@ func _ready() -> void:
 	_post_process = pp
 	call_deferred("add_child", pp)
 	_build_pause_menu()
+	GameLog.record("level_ready", {"duration_ms": Time.get_ticks_msec() - started, "pvp": false})
 
 
 # 瓦片图集由 TerrainAtlas 统一构建
@@ -310,6 +315,13 @@ func _paint_water(grid: Array[Array]) -> void:
 
 
 func _process(_delta: float) -> void:
+	if not pvp_mode and Time.get_ticks_msec() - _log_at >= 1000:
+		_log_at = Time.get_ticks_msec()
+		var player := $WorldViewport/Player
+		GameLog.record("singleplayer_state", {"position": player.position, "velocity": player.velocity,
+				"hp": player.hp, "downed": player.is_downed(), "weapon": player.weapons.log_state(),
+				"time_mode": time_field.mode if time_field != null else 0,
+				"projectiles": get_tree().get_nodes_in_group("bullet").size(), "terrain_chunks": _dirty_chunks.size()})
 	# 时间场驱动(单机;先于实体各自的物理帧让模式生效——实体在 _physics_process 里查询)
 	if time_field != null and not pvp_mode:
 		_drive_time(_delta, Input.is_action_pressed("rewind"), Input.is_action_pressed("haste"))
@@ -413,6 +425,7 @@ func _on_sub_destroyed(sub: Vector2i, pre_hp: int, _owner: Node = null) -> void:
 func reset_destructibles() -> void:
 	if _pristine_grid.is_empty():
 		return
+	var started := Time.get_ticks_msec()
 	var g := MazeGenerator.copy_grid(_pristine_grid)
 	MazeGenerator.current_grid = g
 	_grid_ref = g
@@ -424,13 +437,18 @@ func reset_destructibles() -> void:
 	var wl := Level0.wall_layer
 	if wl != null:
 		_paint_maze(wl)
+	GameLog.record("terrain_painted", {"duration_ms": Time.get_ticks_msec() - started})
+	started = Time.get_ticks_msec()
 	# 碰撞:可破坏分块 + 永久墙 + 攀爬条整体重建为基线
 	_destructible_sub = WorldBuilder.build_sim($WorldViewport, g)
+	GameLog.record("terrain_collision_ready", {"duration_ms": Time.get_ticks_msec() - started})
 
 
 func _build_wall_collision(grid: Array[Array]) -> void:
+	var started := Time.get_ticks_msec()
 	# 永久墙 + 可破坏分块 + 攀爬基座条,逻辑迁到 WorldBuilder.build_sim(服务器复用)
 	_destructible_sub = WorldBuilder.build_sim($WorldViewport, grid)
+	GameLog.record("terrain_collision_ready", {"duration_ms": Time.get_ticks_msec() - started})
 
 
 func restart_single() -> void:
@@ -698,7 +716,10 @@ func _drive_time(delta: float, want_rewind: bool, want_haste: bool) -> void:
 		Sfx.play("deny")
 	_prev_want_rewind = want_rewind
 	_prev_want_haste = want_haste
+	var previous_mode := time_field.mode
 	time_field.update(delta, want_rewind, want_haste)
+	if time_field.mode != previous_mode:
+		GameLog.record("time_mode", {"from": previous_mode, "to": time_field.mode})
 
 
 ## 世界回溯步进：录制与回放状态机，以及击败实体的暂时隐藏与恢复

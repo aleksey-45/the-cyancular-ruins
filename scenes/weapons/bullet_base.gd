@@ -241,6 +241,9 @@ func _start_fuse(duration: float) -> void:
 	_fuse_active = true
 
 func _explode() -> void:
+	GameLog.record("explosion", {"id": entity_id, "type": type_id, "position": global_position,
+			"damage": apply_damage, "visual": explosion_visual != null,
+			"shooter": entity_id >> 48})
 	if explosion_visual != null:
 		var fx: Node = explosion_visual.instantiate()
 		fx.global_position = global_position

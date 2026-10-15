@@ -78,7 +78,7 @@ peer.get_host().compress(ENetConnection.COMPRESS_ZSTD)
 - **时序调度**：服务端以 60Hz 执行物理世界模拟，以 30Hz 向客户端发送 STATE 快照。`InputBuffer` 按 `target_tick` 组织未来输入；若收到迟到输入，则顺延至下一 tick 执行。未来调度窗口最大为 32 tick；网络丢包时持续移动轴最多向后延续 6 tick，随后归零并保持瞄准方向。
 - **动作确认与时效性**：跳跃、切枪、换弹、拾取与丢弃等属于单次触发动作。未确认的动作会随后续 INPUT 报文持续冗余重发，超出目标时间 12 tick（200ms）后自动失效并由服务端清理。每个物理 tick 最多消费一条有效动作，实际生效仍受武器冷却、剩余弹药及角色状态限制。
 - **输入时钟平滑同步**：客户端根据 `STATE tick + RTT/2 + 2 tick 余量` 初始化输入时钟。服务端通过 STATE 报文回报最新收包的到达余量 `lead = target_tick - server_tick`。客户端通过小幅度动态调速（1.02 倍、1.00 倍、0.96 倍）平滑修正本地输入时钟，避免输入过快产生积压或过慢导致服务端饥饿。
-- **步进分离与表现更新**：`ActorStep` 使用统一碰撞体为双端执行物理推进。首次预测步进执行动作产生射击反馈；预测重放期间仅推进游戏状态，不重复触发音效、动画与开火。重放完成后由 `Player.present_tick` 统一更新表现。
+- **步进分离与表现更新**：服务端角色由 `AuthorityWorld` 每 tick 统一调用一次 `ActorStep`，角色自身的物理回调保持关闭。`ActorStep` 使用统一碰撞体为双端执行物理推进。首次预测步进执行动作产生射击反馈；预测重放期间仅推进游戏状态，不重复触发音效、动画与开火。重放完成后由 `Player.present_tick` 统一更新表现。
 
 ---
 
@@ -87,6 +87,7 @@ peer.get_host().compress(ENetConnection.COMPRESS_ZSTD)
 - **预测回滚流程**：收到新的权威 STATE 时，暂存待应用的最新状态。在下一物理帧重置至权威状态，利用 `InputBuffer` 中未确认的输入快速重放至当前本地输入时钟，随后采集新输入。历史输入最多保留 64 条，单次最大重放 32 tick；历史缺失或超预算时直接采用权威状态。
 - **视觉平滑校正**：角色物理节点始终位于实际预测位置。角色精灵与武器挂载于 `Visuals` 节点，网络校正产生的微小位置偏差在 50ms 内指数衰减平滑，消除网络抖动带来的画面跳跃感。开火起点 `shot_origin` 自动剔除该视觉偏移，保证弹道不受视觉平滑影响。
 - **远端实体插值播放**：远端角色、子弹、掉落物与血条共用 100ms 播放缓冲，沿环形最短路径平滑插值。缓冲样本上限为 32 份；当网络严重落后超过 12 tick 时自动重定位追赶，断流超过 100ms 时自动冻结，防止实体在未知状态下无限外推。
+- **远端角色碰撞**：阻挡体采用角色场景的缩放和各姿态碰撞多边形，位置跟随最新权威快照；视觉节点单独使用播放缓冲。
 
 调用流程图与队列设计详见 [架构参考文档](architecture_references.md)。
 
@@ -103,3 +104,45 @@ peer.get_host().compress(ENetConnection.COMPRESS_ZSTD)
 ## 九、 自动化测试验证
 
 相关测试入口与规范请参阅 [测试体系说明](tests.md)。网络压测与多进程对战实测数据记录请参阅 [网络验证记录](network_validation.md)。
+
+---
+
+## 十、运行日志
+
+日志默认开启。Windows 写入游戏目录下的 `log/`；macOS 写入 Godot 用户数据目录下的 `log/`。游戏目录不可写时回退到 `user://logs/`。每次运行生成 `client-<时间>-<PID>.log` 或 `server-<时间>-<PID>.log`，各文件独立保留。测试可通过 `-- --game-log-dir <绝对路径>` 指定目录。
+
+游戏日志采用 JSON Lines，每行一条记录。`time` 是带毫秒的 UTC 时间，`uptime_ms` 是进程单调时钟，`pid`、`role` 标识进程，`event`、`data` 表示事件与字段。普通记录每秒刷新，错误、警告和退出立即刷新；`session_start` 包含构建、Godot、系统、架构、渲染后端与实际日志路径，正常退出记录 `session_end`。
+
+`session_end` 表示该进程已执行退出回调。服务端或 EasyTier 被会话进程组终止时，结合宿主的 `session_close`、`process_stop` 记录判断退出流程。
+
+文件写入通过 Mutex 串行化，引擎工作线程的输出可与主线程同时记录。发布版开启 GDScript 调用栈跟踪，错误记录保留可用的脚本堆栈。
+
+| 记录 | 内容 |
+|---|---|
+| `performance` | 每秒实际帧间隔最大值、帧数、最近一帧处理与物理耗时、内存、场景、暂停状态 |
+| `level_load`、`level_ready`、`terrain_painted`、`terrain_collision_ready` | 地图、铺图和碰撞初始化耗时 |
+| `connect`、`listen`、`peer_*`、`server_*`、`transport_stop`、`send_error` | 连接生命周期、目标地址、端口和发送错误 |
+| `transport_sample` | 每秒各数据流的消息数和序列化字节数、RTT、RTT variance、ENet 节流值、可靠包丢失估计、STATE 间隔和解码统计 |
+| `client_state`、`prediction_correction` | 输入序号、ACK、epoch、历史与动作数量、到达余量、预测时钟、重放上限、校正幅度、地形版本、远端播放余量、角色与弹丸状态 |
+| `state_gap`、`playback_hold` | 超过 100ms 的 STATE 到达间隔、播放达到外推上限和恢复的时间点 |
+| `baseline_*`、`player_ready`、`reconnect_*`、`seat_*` | 基线收发、初始化耗时、READY、席位宽限与重连 |
+| `match_start`、`round_state`、`combat`、`respawn`、`pickup`、`drop`、`control_epoch` | 权威对局、回合、射击、伤害、击杀、拾取、丢弃与控制阶段变化 |
+| `input_action`、`player_fire`、`player_damage`、`singleplayer_state` | 单次输入动作、本地预测射击、角色受伤及每秒单人状态 |
+| `beta_rewind_*`、`time_mode` | Beta 回溯起止、单人时间模式切换 |
+| `explosive_spawn`、`explosive_removed`、`explosion` | 爆炸弹丸的 ID、位置、移除以及实际爆炸逻辑和特效是否执行 |
+| `world_state` | 每秒权威 tick 数、最大 tick 耗时、各玩家输入队列峰值、缺输入与动作过期累计计数、背包及实体状态 |
+| `engine`、`engine_error` | 引擎输出、错误类型、代码位置与脚本堆栈 |
+
+武器状态同时记录背包条目、当前实例、声明类型、实际武器节点类型、场景路径和弹药。弹丸以稳定实体 ID 关联客户端、服务端与射击序号。JSON 中的 Godot 向量使用字符串表示。
+
+`application` 字节数是压缩前的应用消息大小，发送计数包含失败的发送尝试；`send_errors` 另行计数。`codec` 统计从当前连接开始累计：`full`、`delta` 为成功解码次数，`missing_base` 为缺少增量基线，`stale` 为旧序号，`serial_skips` 为收到的 STATE 序号跳跃。序号跳跃可能包含 ENet 节流或有序丢弃。`reliable_loss_ratio` 是 ENet 可靠包估计，通常每 10 秒刷新；`loss_epoch_ms` 表示统计更新时间。具体语义见 [Godot ENetPacketPeer](https://docs.godotengine.org/en/stable/classes/class_enetpacketpeer.html)。
+
+`correction_max_px` 是重放后与原预测位置之间的环面最短距离，`replay_max_ticks` 是采样区间内单次最大重放量。`counts` 记录各类重置原因，`input_totals` 是角色生命期内的迟到、延续输入、归零输入及动作过期累计数。判读 STATE 间隔和播放停顿时，结合 `performance`、基线处理和服务端 tick 耗时对齐时间。
+
+客户端的 `input_ack` 与 `action_ack` 分别记录权威移动输入确认与单次动作确认。`counts.state_callbacks` 包含基线以及地形追赶时重新提交的状态，实际 STATE 消息数读取 `application.rx_state.messages`。
+
+EasyTier 启动参数固定包含 `--file-log-level info --file-log-dir <目录>`，目录为 `log/easytier/<游戏会话>-<host或guest>-<RPC端口>/`。文件由官方内核写入，采用官方默认轮转设置。游戏每 5 秒读取一次官方 CLI 的 peer 信息，写入 `tunnel_peers`，包含直连或中继路径、隧道协议、延迟、丢包估计和累计流量。隧道与 ENet 端到端统计分别记录。
+
+`RUST_LOG` 按官方规则覆盖日志过滤级别，其值记录在 `tunnel_logging`。需要完整 info 记录时，启动游戏前清除该变量或设置为 `info`。配置语义见 [EasyTier 官方日志说明](https://easytier.cn/en/guide/network/configurations.html)与 [v2.7.0 日志选项](https://github.com/EasyTier/EasyTier/blob/v2.7.0/easytier/src/core.rs)。
+
+复现联机问题后，保存双方客户端与实际房主服务端对应的日志文件，以及各自的 `easytier/` 子目录。`time` 用于跨设备初步对齐，精确关联使用 tick、epoch、输入序号和实体 ID。游戏结构化记录不写重连 token、邀请码或地图原始字节；EasyTier 原生日志包含网络地址和诊断信息，分享前检查内容。

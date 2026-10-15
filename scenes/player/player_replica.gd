@@ -77,10 +77,11 @@ func _ready() -> void:
 
 
 # 构建幽灵碰撞体：使用静态刚体作为子节点，使本地客户端预测能正确检测对手阻挡
-func _build_ghost_body(src: Node) -> void:
+func _build_ghost_body(src: Node2D) -> void:
 	_ghost = StaticBody2D.new()
 	_ghost.name = "GhostBody"
 	_ghost.top_level = true
+	_ghost.scale = src.scale
 	_ghost.collision_layer = 2
 	_ghost.collision_mask = 0
 	add_child(_ghost)
