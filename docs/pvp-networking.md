@@ -202,7 +202,7 @@ worker_port / worker_pid / created_at / roster / map`：大厅**只拉起 worker
 载荷 = `{ack_seq, q, c2}`,其中 `c2 = player.capture_state()` = **25 个标量 + 武器块 8 个(仅手持非空时)+ 整个背包表**
 (见 [`scenes/player/player.gd`](../scenes/player/player.gd) 的 `capture_state()`)。
 ⇒ 每帧给**同一个客户端**发两份关于**他自己**的东西:世界包里那份(客户端**刻意不消费**) + 本人包。
-体积账见 [`registered-debt.md`](eng/registered-debt.md) §六.28。
+体积账见 [`registered-debt.md`](eng/registered-debt.md) §七.28。
 
 ★★ **2026-10-09:上面两个 JSON 形状是"内存里的形状",不再是线上字节。**
 载荷由 [`core/net/snapshot_codec.gd`](../core/net/snapshot_codec.gd) 手打包成 `PackedByteArray`

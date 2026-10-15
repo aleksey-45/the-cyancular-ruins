@@ -55,7 +55,7 @@
 - **加速走速度域的手感实测**（原 `:209-211`/`:184-187`）：缩放 delta 只有坠落变快、跳跃变低、移速不变；`_push_haste_mult` 三个消费点（游泳走调用参数、攀爬/武器走注入成员），服务端写点 `match_host.gd:223`、快照读点 `match_snapshot.gd:30`。
 - **字符串反射的三种失败形态**（原 `:981-1004`）：`get` 拼错**静默返回 null**、`set` 拼错**静默不写**、`call` 拼错报通用错误并**中止整个 `rewind_restore`**；Godot 4.7.1 对 `class_name` 类型的未知成员只当**警告级** unsafe 访问（`project.godot` 未把 `unsafe_*` 升成错误）⇒ 类型化买到的是"当场点名成员带行号"，**不是**编译期红。同族真事故 `world_rewind.gd:98-103`（`_current_slot` 改名 ⇒ 快照空字典 ⇒ 第一个键就早退 ⇒ 位置/HP/武器全不还原；改回退役名 ⇒ `rewind_probe` 7 条红：位置差 276px、HP 30≠50、HUD 血量通知未触发；引擎每帧报 `Nonexistent 'int' constructor`，同一跑 83 行）→ `player.md` + `tests.md`（变异案例）。
 - **回溯保真两处缺陷的仪器原文**（原 `:1005-1039`）：发现 A（切枪帧 index=1 mag=9 → 入树后 mag=4）、发现 B（快照 `wmags=[11,1]`/`widx=1` ⇒ 切枪后 `held[0].mag=3`）；S8-A/B/C/D 四条变异各自变红的对应关系。**覆盖上限**：S8 直调本函数、**不覆盖真回溯的帧选择**，PvP 那份 `MatchHost._apply_rw_frame` 行为侧无 headless 守卫 ⇒ 归真链路批 A。
-- **`apply_mag` 顺带钳位 `[0, mag_size]`**：其中"范围内逐位等价"是**推理非实测**；越界档（"快照之后那槽换型号"）无任何断言（债 §六.13）。→ `registered-debt.md`
+- **`apply_mag` 顺带钳位 `[0, mag_size]`**：其中"范围内逐位等价"是**推理非实测**；越界档（"快照之后那槽换型号"）无任何断言（债 **§六.3** —— ★ 2026-10-13 订正：原写 `§六.13`，按内容核实那条是"武器子字典写回无守卫"，钳位这条在 §六.3 里）。→ `registered-debt.md`
 - **背包化前的旧语义**（原 `:822-827`）：`reset_mag_state → equip_type(default_type()) → refill_current_weapon` ＝"复活即回默认枪 + 满弹"；现今单机重开由 `Level0.restart_single` 统一重置，联机复活"除随机一把外全丢"。
 - **联机长按丢弃曾形同虚设**（原 `:843-850`）：早先 `if pvp_mode: return`，当时阈值 2s（现 0.6s）；`LocalInputSource` 的 drop 读口当时报"Q 按着" ⇒ 碰一下 Q 就丢、按住每 tick 丢一把。
 - **`host_level` 的实测**：探针里给 `current_scene` 赋值**不生效** → `tests.md`。

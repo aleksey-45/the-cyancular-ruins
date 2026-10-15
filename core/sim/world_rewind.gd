@@ -107,7 +107,7 @@ func _snapshot_player(player: Node) -> Dictionary:
 		push_error("WorldRewind: player.weapons 不是 WeaponComponent —— 武器段无法回溯;本帧返回已收集的部分")
 		return d
 # ★ 反射改真类型访问买到的不是编译期红:4.7.1 对 class_name 上的未知成员只按警告级 UNSAFE_* 处理,拼错同样是运行期报错。
-# ★ 本函数仍有 5 处按名访问玩家根(player.gd 无 class_name,类型化要动类结构,已登记 registered-debt §六.14);
+# ★ 本函数仍有 5 处按名访问玩家根(player.gd 无 class_name,类型化要动类结构,已登记 registered-debt §六.15 —— ★ 2026-10-13 订正:原写 §六.14,本节编号有历史重复,该条现为 §六.15);
 #   其中 has_method("is_downed") 一改名就静默把 downed 写成 false ⇒ 消费端静默跳过倒地/复活还原。零守卫(两支 rewind 探针已删·2026-10-09)。
 	d["wslot"] = wc._current_type
 	d["widx"] = wc._current_index

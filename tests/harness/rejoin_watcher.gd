@@ -56,7 +56,7 @@ var _room_code := ""
 var _row_seen := false            # c1:自己那间房那一行已经出现在列表里
 var _row_disabled := true         # c1:那一行的 `disabled`(新入口的断言:必须是 false)
 var _c3_row_disabled := true      # c3:同一行的 `disabled`(反向对照:必须是 true)
-var _c3_row_read := false        # ★ 2026-10-08(§六.27):**到底读没读到**那一行 —— 没读到不许空过
+var _c3_row_read := false        # ★ 2026-10-08(债 §七.27 —— ★ 2026-10-13 订正:原写 §六.27,该条真身在 §七):**到底读没读到**那一行 —— 没读到不许空过
 var _refresh_t := 0.0
 # c2 的观察读数(PLAYING 那一刻清零,窗口结束时统一判定)
 var _obs_started := false
