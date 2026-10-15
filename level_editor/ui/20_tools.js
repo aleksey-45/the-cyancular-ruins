@@ -86,7 +86,8 @@ function regionCells(map, region, clip) {
   return out;
 }
 // ★★ Core.lineCells 的坐标必须是整数:非整数或 NaN 会让它的 for(;;) 死循环、挂住整个
-//    标签页。所有调用点都在这里 floor;editor_smoke 相位 ⑪ 扫源码钉住"没有第二个调用点"。
+//    标签页。所有调用点都在这里 floor(★ 这条只剩行为侧一半:产物是整数;新加一个忘了 floor
+//    的调用点今天抓不到 —— 零守卫登记在 docs/eng/debt/guard-strength-gaps.md)。
 function strokePoints(from, to) {
   var pts = [];
   if (!to || (from.x === to.x && from.y === to.y)) { pts.push(from); return pts; }
@@ -115,8 +116,6 @@ function toSub(hit) {
 // ── Shift 约束(规格 §4.8:直线约束 / 选区等比)──
 // ★ 纯函数,而且是唯一一处做这个判断的地方:预览与落笔必须用同一个结果,否则预览画的是 A、
 //   松手落下去的是 B。★ 返回值一律 floor:产物会直接喂给 lineCells —— 非整数 = 死循环。
-//   (★ 本行刻意不写成带括号的调用形式:editor_smoke 相位 ⑪ 按"同一行出现调用就必须出现
-//     Math.floor"这条逐行规则扫源码,注释里那半截会被它当成一个调用点。)
 function constrainLine(a, b, shift) {
   var bx = Math.floor(b.x), by = Math.floor(b.y);
   if (!shift) return { x: bx, y: by };

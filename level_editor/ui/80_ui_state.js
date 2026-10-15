@@ -7,8 +7,8 @@ function applyUiState() {
   // ★ 缩放必须在地图打开之后恢复:setMap 自己会 fit();u.zoom === 0 是"没存过缩放"的哨兵。
   var cur = app.r.view().zoom;
   if (u.zoom > 0 && cur > 0 && Math.abs(u.zoom - cur) > 1e-6) {
-    // ★★ guard( 与那次调用必须同一行(editor_smoke 相位 ⑪ 的扫描口径就是按行看的)—— 拆成两行的话
-    //    它就是"没被收口的视图入口",而那正是"按了没反应"那条通道。
+    // ★★ 视图入口必须走 guard 收口(guard( 与那次调用写在一起,读的人一眼看得出收口点在哪)——
+    //    漏了它就是"按了没反应"那条通道。
     guard('恢复缩放', function () { return app.r.setZoomAt(app.canvas.width / 2, app.canvas.height / 2, u.zoom / cur); });
   }
   // ★★ 这一处必须走本文件的 setLayer(它内部再调 app.r.setLayer):直接调 app.r.setLayer 只换渲染层,

@@ -16,7 +16,7 @@ setTimeout(function () {
   await require('./tests/worker_io/20_concurrency_and_ping.js');
   await require('./tests/worker_io/30_error_paths.js');
   await require('./tests/worker_io/40_request_timeout.js');
-  harness.finish('WORKER IO SMOKE OK');
+  harness.finish('WORKER IO SMOKE OK', 68);
 })().catch(function (err) {
   console.error('FAIL: 未捕获异常(后面的断言一行都没跑):');
   console.error(err && err.stack ? err.stack : String(err));

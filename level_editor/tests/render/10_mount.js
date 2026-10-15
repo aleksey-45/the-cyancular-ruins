@@ -147,8 +147,11 @@ try {
          '★★ 非当前层压暗 60%(globalAlpha 0.4)');
       cv1.ctx.ops.length = 0;
       r1.setDimOthers(false);
-      ok(someOp(cv1.ctx, function (o) { return o.op === 'drawImage' && o.alpha === 1; }),
-         'setDimOthers(false) 之后不再压暗(同一层、同一个绘制点)');
+      // ★★ 判据取"**一条 0.4 都没有**",不是"存在一条 1":后者被 `LAYER_BG` 的压暗豁免恒真喂饱
+      //    —— 把 `setDimOthers` 整个掐掉都照样绿(实测)。另要求这一趟真画过东西,免得空转也算过。
+      ok(countOps(cv1.ctx, 'op', 'drawImage') > 0 &&
+         !someOp(cv1.ctx, function (o) { return o.op === 'drawImage' && o.alpha === 0.4; }),
+         'setDimOthers(false) 之后不再压暗(非当前层也不许出现 0.4;LAYER_BG 的豁免不算证据)');
       r1.setDimOthers(true);
       r1.setLayer(Core.LAYER_SCENE);
       cv1.ctx.ops.length = 0;

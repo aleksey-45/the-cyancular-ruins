@@ -7,9 +7,11 @@ const Tint = globalThis.Tint;
 ok(Tint.LEVELS === 8, 'LEVELS === 8(规格 §2.3 的八档)');
 eq(Tint.HUE_OFFSET_DEG, [-60, -45, -30, -15, 0, 15, 30, 45], 'hue 档位表(不对称:−60…+45)');
 eq(Tint.MUL, [0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3], '亮度/饱和度乘法档位表');
-eq(Tint.NEUTRAL, { hue: Core.HUE_NEUTRAL, bri: Core.BRI_NEUTRAL, sat: Core.SAT_NEUTRAL,
-                   alpha: Core.ALPHA_NEUTRAL },
-   '★ 中性档直接取自 Core(不自己抄一份)');
+// ★ 期望值**写死**(4/4/4/7),不从 `Core` 现读:两边同源的话,连"中性档整体挪到别的档"都测不出来
+//   (实测:把 tint.js 那四个 `Core.*` 换成字面量,同源那版全绿)。
+//   ★ 它**测不到**"究竟是读 Core 还是自己抄了一份字面量" —— 那只能读源码判形态,D6 不许。
+eq(Tint.NEUTRAL, { hue: 4, bri: 4, sat: 4, alpha: 7 },
+   '★ 中性档 = 色相/亮度/饱和在档 4、alpha 在档 7(期望值写死,不与被测代码同源)');
 ok(Tint.NEUTRAL.hue === 4 && Tint.NEUTRAL.alpha === 7,
    '★ 三列的中性档不在同一行:色相/亮度/饱和在档 4,alpha 在档 7');
 eq(Tint.hueOffsetOf(4), 0, 'hue 中性档 4 → 0°');

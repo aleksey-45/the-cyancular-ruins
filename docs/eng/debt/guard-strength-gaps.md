@@ -1,4 +1,4 @@
-# %s
+# 五、守卫强度已知缺口(2026-10-04 加)
 
 > **本文件从 [`registered-debt.md`](../registered-debt.md) 拆出**（2026-10-13，原文件 888 行 / 126KB 越过了 `CLAUDE.md:5` 那条 64KB 上下文线）。返回索引：[`registered-debt.md`](../registered-debt.md)。
 > ★ 文档会过期 —— **任何冲突以源码为准**，读之前先 `grep` 复核；`文件:行号` 与本仓自述一致地会漂。
@@ -139,3 +139,97 @@
    - **owner**:编辑器侧([`level_editor/core/60_codec.js`](../../../level_editor/core/60_codec.js));
      **最后复核**:2026-10-15;**指针**:该文件那道闸上方的注释与
      [`editor-core.md`](../editor-core.md) §12 都已标"零守卫(已删·2026-10-15)"。
+
+18. **编辑器那一整族"源码纪律"断言删除后的零守卫面**(2026-10-15,与 §17 同一批;本轮补齐登记)。
+   - **背景**:旧 `editor_smoke.js` 的**相位 ⑪**(外加 `worker_io_smoke.js` 相位⑦、`smoke.js` 的格式层源码顺序)
+     是一整族"**读源码文本判形态**"的断言(数调用点 / grep 某个 API / 按行比 `Math.floor`)。
+     拆目录那批把它们**整块删除**(理由正确,命中 [`test-economy.md`](../test-economy.md) 的 D6),
+     但当时只登记了 §17 那条 —— **其余全漏登**,而且 `docs/eng/editor-ui.md`(3 处)与
+     `level_editor/ui/{20_tools,30_resize,80_ui_state}.js`(4 处)**还留着指向它的注释**。
+     ★ 本轮已把这些**已不存在的守卫声明**全部订正;下面登记的是订正之后**真正空着的**那几格。
+   - **已经转成行为断言、不欠债的(列出来免得下次重查)**:`PUT` 显式 `Content-Type`
+     (`level_editor/tests/editor/20_hotkeys_errors.js` 记账 fetch 读请求头)、`createEmptyMap` 走 `clampMapSize`
+     与 `clampTexture` 容量缺省问图集(`level_editor/tests/editor/10_core_tools.js`)、`editor.html` 的脚本清单与顺序
+     (`parts_check.js` + `browser_check.js`)、`serve.bat` 的 EOL/编码(`tools/check_naming.py` 规则 E)、
+     `GET /core.js` 逐字节一致(`level_editor/tests/server/10_basics.js`,只是路径改成了 `level_editor/core/00_constants.js`)、
+     `.cyrm`/`.v3.bak` 的名字闸(`level_editor/tests/server/30_map_name_guard.js` 的行为矩阵)。
+   - **仍然零守卫的**(去掉括号里那件事今天都不会红):
+     ① `Core.lineCells` 的**每个**调用点都要先 `Math.floor`(**非整数 = `for(;;)` 死循环、挂住整个标签页**);
+     ② `Core.createMap` 只该有那两个调用点(**新开一个造图入口 = A8 复发**:输 99999 分配巨图卡死);
+     ③ `ui/`、`render/` 里不出现第二份 HSV 数学(**D4 重复真相源**,而 `Tint.*` 是硬依赖);
+     ④ `ui/`、`render/` 不直调 `Core.subcellRender`(直调必须先 `posmod`,漏了就是越界抛错);
+     ⑤ 上界不写死 `4095`(一律来自 `Render.atlasCapacity()`);
+     ⑥ 写出口 `PUT` **恰好一处**、视图入口**全部**经 `guard` 收口(**漏了 = "按了没反应"**)、
+        页面异常 / 未处理拒绝的监听**恰好两处**(多一处 = 同一次异常有两个写入者);
+     ⑦ `Render.mount` 的 `onError` 指到**同一个** sink、`setErrorSink` 在导出表里;
+     ⑧ `serve.bat` 的三件内容检查(`cd` 到脚本所在目录 / 用 node 起服务 / 结尾 `pause`)与
+        `structure-editor.html` 已退休。
+   - **本轮顺手补上的一条(原先属这一族)**:`#btn-selftest` / `#btn-fit` 的"id 打错 ⇒ 按钮**静默失效**"。
+     它没有登记成债,而是**改成了真行为断言**:`browser_check.js` 现在**真点一下**页面上的「自检」按钮
+     (不再直接调 `Editor.selfTest()`),判据取**状态栏**内容 —— 两条红路都实测过:
+     id 改错 ⇒ `MISSING:btn-selftest` 红;id 在、接线摘掉 ⇒ `CLICK 超时:状态栏 15 秒一直是空的` 红。
+     ★ 同一处还补了**条数闸**(`≥ EXPECTED_CHECKS = 17`,= `level_editor/ui/96_selftest.js` 里 `check(` 的条数)——
+     原先 `SELFTEST OK` 只证明"没有任何失败输出",把自检削掉一半也照绿。抬到 18 实测:红。
+   - **为什么删**:D6 —— 判据落在**文本**上而意图是**结构/语义**;一次纯注释改动就能把它弄红
+     (本轮还真的看到三处代码**为它让步**:`level_editor/ui/20_tools.js` 那条"刻意不写成带括号的调用形式"的注释、
+     `level_editor/ui/80_ui_state.js` 的"`guard(` 与调用必须同一行"、`level_editor/ui/30_resize.js` 的"这里不再写第二次 `createMap`" ——
+     都是为了让按行扫描通过而写的,守卫一删它们就成了化石)。
+   - **怎么销**(按性价比排):① **①号把陷阱本身消掉** —— 让 `Core.lineCells` 对非整数**当场抛**,
+     死循环变成响亮报错,那条扫描就再也不需要了(代价:动了与基线逐字符等价的 `core/`,要同步
+     §2 那条等价证据与 drops);② ③⑥ 这类"不许有第二处"可用**注入式替身计数**行为化(例如给
+     `createMap` 包一层记账);③ ⑤⑦ 这类"取值来源"只能接受空着,或改成行为(改 `atlasCapacity()`
+     返回值后看 `clampTexture` 是否跟着变);④ ⑧ 属**开发工具**的形态检查,可以接受空着。
+   - **owner**:编辑器侧([`level_editor/ui/`](../../../level_editor/ui)、[`level_editor/render/`](../../../level_editor/render)、
+     [`level_editor/core/85_geometry.js`](../../../level_editor/core/85_geometry.js));
+     **最后复核**:2026-10-15;**指针**:本轮订正过的三处文档/注释见
+     [`editor-ui.md`](../editor-ui.md) 的 `createMap` 上限、`guard` 收口、`lineCells` 整数三节。
+
+19. **编辑器新测试面(2026-10-15 拆目录那批)经**独立变异复核**后剩下的弱守卫**(2026-10-15,两名审阅者各跑一遍变异台;仓库外副本,零改动)。
+   - **背景**:这批新写的 1525 条断言里,主体质量是好的 —— **15 条最承重的断言逐条做生产端变异,全部按预期红、且红在预期的断言名上**(例:非对称象限 `1<<(sy*2+sx)` 转置、调色板上界 `>=`→`>`、并发按 id 配对、应答到达撤闹钟、跨接缝去烤)。
+     下面登记的是**复核后仍然存在的弱守卫与假绿**;最贵的 5 条已在同轮修掉并各自做过变异验证(见下"已修")。
+   - **已修(附变异证据)**:
+     ① ★★★ **大图背景层内容零覆盖** —— `40_golden_and_limits.js` 原先只比 1.92M 个子格里的**前 64 个**
+     (0.0033%),`decodeColorLayer` 改成"`i >= 1000` 之后全填 0"**全绿**(静默丢数据)。已改成**跨全长步进**
+     (步长 997,1926 个采样点)+ 两个端点;变异复跑 ⇒ 红在 `背景层 rgba[1994]`。
+     ② ★★★ **`validateMap` 的 warnings 侧只有正例** —— 把 4×4 实心谓词整段改成"永远实心"**全绿**。
+     已加"规规矩矩的图 `warnings` 必须为空"+「只填 3 行 / 1 行不算实心」两条;变异复跑 ⇒ 红 3 条。
+     ③ ★★ **`tint/10` 的中性档期望值与被测代码同源**(`from Core.*`)—— 中性档整体挪位也测不出。
+     已把期望值写死 `4/4/4/7`;变异(中性档 4→5)复跑 ⇒ 红。
+     ④ ★★ **`render/10_mount` 的 `setDimOthers(false)`** 判据是"存在一条 alpha===1",被 `LAYER_BG` 的压暗豁免
+     **恒真喂饱** —— 把 `setDimOthers` 整个掐掉全绿。已改成"一条 `0.4` 都不许有 + 这一趟真画过东西";
+     变异复跑 ⇒ 红在预期那条。
+     ⑤ ★★ **条数闸缺失** —— `harness.js` 的 `pass+fail===0` 只挡"全零";把**一整个分片**从入口的 require 里
+     注释掉 ⇒ 275 通过 / 0 失败、判词照打 `SMOKE OK`。已给 `finish()` 加第二参 `minChecks`,7 个入口各自带实测条数
+     (330→336 / 96 / 68 / 241 / 604 / 170 / 16);变异(注释掉一整个分片)复跑 ⇒ `只跑了 281 条断言(条数闸 336)`、rc=1。
+   - **仍空着的(每条都附"去掉什么才会红")**:
+
+| 位置 | 判定 | 去掉什么才会红 |
+|---|---|---|
+| `level_editor/tests/format/40_golden_and_limits.js` `MAX_BODY_SIZE > 20MB` / `4096 <= MAX_BODY_SIZE` | 假绿 | 被同分片 `=== 64MB` 蕴含,不可能单独红(实测:改成 21MB 只红那一条) |
+| `tests/format/40` 的 `bigN === 1920000`;`tests/format/20` 的 `probe.size > 256` | 假绿 | 各自被上一条(`1600`+`1200` / `=== 69615`)蕴含 |
+| `tests/format/20` 的 `eq(n, 320)`、`40` 的 `18` / `161` / `181` | 假绿(有意) | 纯夹具算术,对生产代码零覆盖 —— **有意保留**(支撑手推的 `161 = 18+24+28+24+65`),但别计入覆盖 |
+| `tests/format/60` 的 `>2 个出生点` | 弱守卫 | 没测"恰好 2 个不该报"(实测 `>2`→`>=2` 全绿) |
+| `tests/format/60` 的 `indexOf('出生点')` / `indexOf('空')` | 弱守卫 | 三条文案都含该词,分不出是哪条在响 ⇒ 建议比 `warnings` 集合或钉整句 |
+| `tests/format/20` 的 `≤256 项 → index_width=1` | 弱守卫 | 只喂了 3 项与 301 项,**256/257 分界无守卫**(实测 `<=256`→`<=255` 全绿) |
+| `tests/format/40` 的"只有背景层仍放行" | 弱守卫 | 只钉"别误拒";`level_editor/core/60_codec.js` 颜色层那半 `room/4` 无断言(实测改成 `room` 全绿) |
+| `tests/format/30` 的 `'incorrect data check'` | 弱守卫 | 判据是 **Node/V8 的措辞**,不是本仓契约(实测 `message` 为空、话在 `cause.message`) |
+| `tests/worker_io/10` 的 `'compression'` 子串 | 弱守卫 | 吞掉 worker 带回的错因、换一句含该词的话仍绿(同文件 `'magic'` / `'小于头部'` 两条是对的) |
+| `tests/worker_io/10` 的 `workerAvailable() === false` | 假绿 | 断言的是"node 没有全局 `Worker`",不是这个函数的实现(硬编码 `return false` 全绿) |
+| `level_editor/worker.js` 的 `errText` 的 `cause` 回退 | 弱守卫 | 它的正当性只在"直调 core"那条被证过,worker 路径上没有断言 |
+| `tests/tint/30` 的两条 `sameBytes(cache 像素, buildTilePixels(...))` | 弱守卫 | 两边是**同一生产函数同一实参** ⇒ 对该函数任何确定性变异都对称 |
+| `tests/format/20` 注释「解码路径不许用 `isAir` 判空气」 | 注释超范围 | `isAir` 在生产侧**零调用点**(只有定义 + 导出)⇒ 那个分支不存在 |
+| `level_editor/render/90_install_drag.js` 的 `live = !!s.selDrag && !!s.selection` | 弱守卫 | 注释自称"与 `dragSource` 早退逐字同源",但去掉 `&& !!s.selection` 全绿 |
+| `render/86_install_layer_path.js` 的 `buildCell` 空气短路 / `84_install_thumbs.js` 的 `paintThumbRect` 空气短路 | 无覆盖 | 删掉各自都全绿(生产侧跑了 23788 / 82715 次)—— 属**性能型**短路,正确性不变 |
+| `render/86_install_layer_path.js` 的"尺寸不符的离屏层不画" | 无覆盖 | 删掉全绿 |
+| `level_editor/tests/render/50_layer_canvas.js` 的 ⑪b2「同一格只有一条缓存条目」 | 弱守卫 | 它前面 `cells().clear()` 之后那次折算读已把该格建进表 ⇒ 这条 get 必然命中 |
+| `level_editor/tests/render/50_layer_canvas.js` 的 ⑪e「接缝另一侧由环面折算补上」 | 弱守卫 | 把 `torusList` 换成恒 `[[0,0]]` 照旧绿 —— 它实际钉的是副本那一笔的落点,不是折算 |
+| `level_editor/tests/render/10_mount.js` 的两条视图断言 | 弱守卫 | 只判坐标**范围**不判值(`(10,10)` 也过) |
+| `level_editor/tests/render/80_drag_layers.js` 的"旧的非折算口径"对照 | 对照不成立 | 与上一条同一个 `inSel` 分支,折算与非折算**同时** `hit:false` |
+| `level_editor/tests/render/40_slicer_and_geometry.js` 的两条 reject 断言 | 红的原因不对 | 去掉 `.then(step, reject)` 第二实参 ⇒ Node 崩在 unhandled rejection;去掉 `reject(err)` ⇒ 120s 超时 |
+
+   - **怎么销**:上表按性价比分三档 —— ⓐ 边界采样不足(256/257、2 个出生点、`room/4`)直接补样本,一条一两行;
+     ⓑ 子串太松(「出生点」/「空」/「compression」/`incorrect data check`)改成比集合或钉完整短语
+     (范本:`level_editor/tests/worker_io/40_request_timeout.js` 那条"取 `编解码请求超时` 整短语"的判据,自己解释了为什么不能用裸 `超时`);
+     ⓒ "被前一条蕴含 / 夹具算术"那几条**保留但别计入覆盖**(它们改善诊断,不构成验证)。
+   - **owner**:编辑器侧([`level_editor/tests/`](../../../level_editor/tests)、[`level_editor/render/`](../../../level_editor/render)、
+     [`level_editor/worker.js`](../../../level_editor/worker.js));**最后复核**:2026-10-15。

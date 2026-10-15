@@ -9,7 +9,7 @@
 //   node level_editor/browser_check.js                                   # 跑 dist 单文件版(file://)
 //   node level_editor/browser_check.js http://127.0.0.1:8777/            # 跑 serve.bat 起的那个
 //   CHROME=/path/to/chrome node level_editor/browser_check.js <url>      # 指浏览器
-// 判据:文本 `SELFTEST OK` + 退出码 0。
+// 判据:文本 `SELFTEST OK` + **条数闸**(≥ EXPECTED_CHECKS 条)+ 退出码 0(自检由真点按钮触发)。
 'use strict';
 
 const { spawn } = require('child_process');
@@ -95,11 +95,23 @@ function cleanup(code) {
 // 只等 document.readyState/Editor 会跑在 boot 的异步链前面,自检会报"草稿盘没开/没地图"这类假红。
 const READY_EXPR = 'document.readyState === "complete" && !!window.Editor && !!Editor.app && ' +
                    '!!Editor.app.r && document.querySelectorAll("#palette .sw").length > 0';
-const SELFTEST_EXPR =
-  '(function(){var logs=[];var o=console.log;console.log=function(){' +
-  'logs.push(Array.prototype.map.call(arguments,String).join(" "));};' +
-  'return window.Editor.selfTest().then(function(r){console.log=o;' +
-  'return r+"\\n"+logs.join("\\n");},function(e){console.log=o;return "SELFTEST THREW "+e;});})()';
+// ★★ 真**点一下**「自检」按钮,而不是直接调 Editor.selfTest():接线是 `if (btn) addEventListener(...)`,
+//    直接调会绕过"id 打错 / 漏接 ⇒ 按钮静默失效"那条路(`#btn-fit` 是同一个静默守卫,一并要求它存在)。
+//    判据取**状态栏**(成功写 SELFTEST…,失败由 guard 写错误)⇒"点了没反应"与"自检自己失败"都红。
+const CLICK_EXPR =
+  '(function(){' +
+  'var logs=[];var o=console.log;console.log=function(){logs.push(Array.prototype.map.call(arguments,String).join(" "));};' +
+  'function done(v){console.log=o;return String(v)+"\\n"+logs.join("\\n");}' +
+  'var a=document.getElementById("btn-selftest"),b=document.getElementById("btn-fit"),s=document.getElementById("status-msg");' +
+  'if(!a||!b||!s)return done("MISSING:"+(!a?"btn-selftest ":"")+(!b?"btn-fit ":"")+(!s?"status-msg":""));' +
+  's.textContent="";a.click();' +
+  'return new Promise(function(res){var n=0;var t=setInterval(function(){' +
+  'if(s.textContent!==""){clearInterval(t);res(done(s.textContent));}' +
+  'else if(++n>300){clearInterval(t);res(done("CLICK 超时:状态栏 15 秒一直是空的 —— 按钮没接线?"));}},50);});' +
+  '})()';
+// ★★ 条数闸:`SELFTEST OK` 只证明"没有任何失败输出",不证明每条检查都跑过。17 = ui/96_selftest.js
+//    里 `check(` 的调用条数 —— 加/删一条检查要同步改这里(改不动会假红,那正是它该做的事)。
+const EXPECTED_CHECKS = 17;
 
 (async function main() {
   const t = await send('Target.createTarget', { url: 'about:blank' });
@@ -125,11 +137,18 @@ const SELFTEST_EXPR =
     cleanup(1);
   }
   await sleep(1200);                       // 让 boot 尾部的崩溃/草稿检查也走完
-  const out = await send('Runtime.evaluate', { expression: SELFTEST_EXPR, awaitPromise: true, returnByValue: true }, sid);
+  const out = await send('Runtime.evaluate', { expression: CLICK_EXPR, awaitPromise: true, returnByValue: true }, sid);
   const text = out.result && out.result.value !== undefined ? String(out.result.value) : JSON.stringify(out);
   console.log(text);
-  console.log(text.indexOf('SELFTEST OK') >= 0 ? 'BROWSER CHECK OK(' + url + ')' : 'BROWSER CHECK FAIL(' + url + ')');
-  cleanup(text.indexOf('SELFTEST OK') >= 0 ? 0 : 1);
+  const m = /共 (\d+) 条检查/.exec(text);
+  const checks = m ? Number(m[1]) : 0;
+  const saidOk = text.indexOf('SELFTEST OK') >= 0;
+  if (saidOk && checks < EXPECTED_CHECKS) {
+    console.error('自检只报了 ' + checks + ' 条(条数闸 ' + EXPECTED_CHECKS + ') ⇒ SELFTEST OK 不算数');
+  }
+  const pass = saidOk && checks >= EXPECTED_CHECKS;
+  console.log(pass ? 'BROWSER CHECK OK(' + checks + ' 条 · ' + url + ')' : 'BROWSER CHECK FAIL(' + url + ')');
+  cleanup(pass ? 0 : 1);
 })().catch(function (e) {
   console.error('CDP 失败:' + (e && e.message ? e.message : e));
   cleanup(1);

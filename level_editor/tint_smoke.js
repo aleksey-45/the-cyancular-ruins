@@ -18,4 +18,4 @@ try {
   console.error(err && err.stack ? err.stack : String(err));
   process.exit(1);
 }
-harness.finish('TINT SMOKE OK');
+harness.finish('TINT SMOKE OK', 96);

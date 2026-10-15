@@ -72,12 +72,20 @@ function start() {
   return module.exports;
 }
 function counts() { return { pass, fail }; }
-function finish(verdict) {
+// ★★ 第二参 = **条数闸**(实测过的条数)。`pass+fail===0` 只挡"一条都没跑";**掉一整个分片照绿**
+//    (实测:把某一个分片从入口的 require 列表里注释掉 ⇒ 275 通过 / 0 失败,判词照打 OK)。
+//    判据取 `>=` 而不是 `==`:多出来的断言不该红,少了必须红。加/删断言要同步改入口里那个数。
+function finish(verdict, minChecks) {
   console.log('\n结果: ' + pass + ' 通过, ' + fail + ' 失败');
   // ★★ 0 条断言 = 假绿:判词只证明"没有任何失败输出",而分片根本没跑起来时也是这个输出
   //    (拆分期间真出现过:入口 require 了一堆工厂函数,断言一条没执行,却照打 SMOKE OK)。
   if (pass + fail === 0) {
     console.log('FAIL: 0 条断言 —— 判词不算数(分片是不是没跑起来?)');
+    process.exit(1);
+  }
+  if (minChecks && pass + fail < minChecks) {
+    console.log('FAIL: 只跑了 ' + (pass + fail) + ' 条断言(条数闸 ' + minChecks +
+                ') —— 有分片没跑?被注释掉了?');
     process.exit(1);
   }
   if (fail === 0) { console.log(verdict); process.exit(0); }

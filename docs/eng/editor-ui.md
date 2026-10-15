@@ -24,7 +24,10 @@ applySize → resizeMap → createEmptyMap → Core.clampMapSize
 ```
 
 - `Core.createMap` **不判** 400×300 上限（它只要求正整数）。所以第二个造图入口就等于审计 A8 原样复发：
-  输入 99999 分配巨图、标签页卡死。`editor_smoke` 相位 ⑪ 数着 `Core.createMap` 的调用点（恰好两处）。
+  输入 99999 分配巨图、标签页卡死。**行为守卫**：`createEmptyMap` / `resizeMap` 输 99999 都落回 400×300
+  （[`level_editor/tests/editor/10_core_tools.js`](../../level_editor/tests/editor/10_core_tools.js)）。
+  ★ **零守卫**（2026-10-15）：原先「数 `Core.createMap` 的调用点恰好两处」那条**结构**断言已按 D6 删除 ⇒
+  「有没有人新开一个造图入口」今天抓不到（登记见 [`debt/guard-strength-gaps.md`](debt/guard-strength-gaps.md)）。
 - 审计 A8 的原始形态：旧编辑器的 `clampMin` **第三参是「非数字时的默认值」**，根本没有上限 —— 名字看着像钳制，实际不是。
 - 「这一格没有给一个数」的判据必须与 `Core.clampMapSize` **同一把尺子**（`parseInt(v,10)` + `isFinite`）：
   `<input type="number">` 里删光或填垃圾读回来是**空串**，而 `clampMapSize('')` 回落到 `DEFAULT_CELLS_W/H = 125×75` ——
@@ -277,8 +280,9 @@ applySize → resizeMap → createEmptyMap → Core.clampMapSize
   故那些地方不是「第二处接住」，而是**唯一**该接住的地方。
   `openMap` 的失败是**常态**（点到陈旧/写错的名字 ⇒ 404），所以 `#lib-list` 的委托处理器同样必须包 `guard`。
 - ★ `Promise.resolve(guard(...))` 不是装饰：`guard` 在**同步**抛时返回 `null`，直接 `.then` 会炸成 `TypeError`。
-- ★ `guard(` 与那次调用**必须同一行**：`editor_smoke` 相位 ⑪ 的扫描口径就是按行看的 ——
-  拆成两行的话它就是「没被收口的视图入口」。
+- ★ 视图入口都要**经 `guard` 收口**，而且 `guard(...)` 就写在调用旁边（读的人一眼看得出收口点在哪）。
+  ★ **零守卫**（2026-10-15）：原先「扫源码按行钉住每个视图入口都收口」那条断言已按 D6 删除 ⇒
+  新加一个忘了收口的入口今天不会被抓住（登记见 [`debt/guard-strength-gaps.md`](debt/guard-strength-gaps.md)）。
 - ★ `onWin` 的理由：node 冒烟里 `window` 是 `globalThis`，而 `globalThis` **没有** `addEventListener`
   （Node 24 实测），裸 `window.addEventListener(...)` 会在 `bootLoad()` 的第一行就抛 ——
   那会让「打开失败也要有面板」那条路一起红，而根因与面板毫无关系。
@@ -327,10 +331,11 @@ applySize → resizeMap → createEmptyMap → Core.clampMapSize
   「先把每一格折算回主网格、再用**非折算**的 `inRect` 比大小」—— 于是一个**自己跨着接缝**的选区
   （如 96 宽的图上 `{x:93,w:6}` 盖住 93..95 与 0..2）只在 93..95 上落笔，0..2 那半边**画不进去、也不报错**。
 - ★★ **`Core.lineCells` 的坐标必须是整数**：非整数或 NaN 会让它的 `for(;;)` **死循环、挂住整个标签页**。
-  **所有**调用点都在 `strokePoints` / `constrainLine` / `constrainSquare` 里 `floor`；
-  `editor_smoke` 相位 ⑪ 会扫源码钉住「没有第二个没 floor 的调用点」。
-  ★ 因此 `constrainLine` 上面那行注释**刻意不写成**带括号的调用形式：相位 ⑪ 按「同一行出现调用就必须出现
-  `Math.floor`」这条**逐行**规则扫源码，注释里那半截会被它当成一个调用点。
+  **所有**调用点都在 `strokePoints` / `constrainLine` / `constrainSquare` 里 `floor`。
+  ★ **零守卫**（2026-10-15）：原先「扫源码钉住没有第二个没 floor 的调用点」那条断言已按 D6 删除；
+  行为侧只钉得住「`constrain*` 的产物是整数」（[`level_editor/tests/editor/20_hotkeys_errors.js`](../../level_editor/tests/editor/20_hotkeys_errors.js)），
+  **新加一个忘了 `floor` 的调用点抓不到**。销案条件（让 `lineCells` 对非整数当场抛，把陷阱本身消掉）
+  见 [`debt/guard-strength-gaps.md`](debt/guard-strength-gaps.md)。
 - ★★ **"只改辅码"这一支不能少**：空气仍是空气（不能凭空长出纹理），有纹理的保留**原纹理**、只换辅码。
   少了它，整片墙「变暗」的操作会把墙**换成画笔当前选的那个纹理**。
 - ★★ **`clampTexture` 的上界派生自图集**（列 × 行，换图集就变）：容量 < 1（图集还没加载 / 一块都放不下 /

@@ -100,14 +100,19 @@ node parts_check.js --ratio      # 注释额度(>100 非空行的 .js ≤15%)
 **浏览器侧(node 到不了的那半边)**:
 - 页面上点「**自检**」按钮 ⇒ 打印一行 `SELFTEST OK` 或 `SELFTEST FAIL: n 条`(两种打开方式都有);
   `?selftest` 查询参数也会在 boot 末尾自动跑一次(输出进 console)。
-- **自动化复跑(判据:文本 `SELFTEST OK` + 退出码 0)**:
+- **自动化复跑(判据:文本 `SELFTEST OK` **且**条数 ≥ 17 条 + 退出码 0)**:
   ```bash
   cd level_editor
   node browser_check.js                    # 跑 dist 单文件版(file://)
   node browser_check.js http://127.0.0.1:8777/   # 跑 serve.bat 起的那个(先起服务器)
   ```
   它用 CDP 直连本机 Chrome/Edge(不依赖 puppeteer;`CHROME=<路径>` 可指定浏览器),等 boot
-  真走完(调色板建出来 + 渲染器挂上)再调 `Editor.selfTest()`,把 17 条结论逐条打印出来。
+  真走完(调色板建出来 + 渲染器挂上)再**真点一下页面上的「自检」按钮**,把 17 条结论逐条打印出来。
+  ★★ **为什么点按钮而不是直接调 `Editor.selfTest()`**:按钮接线是 `if (btn) btn.addEventListener(...)`
+  ⇒ id 打错 / 漏接就是**静默失效**(点了没反应),直接调会绕过这条路。判据取**状态栏**(成功写
+  `SELFTEST OK · 共 N 条检查`,失败由 `guard` 写错误);`EXPECTED_CHECKS = 17` 就是那条**条数闸** ——
+  `SELFTEST OK` 本身只证明"没有任何失败输出",把自检削掉一半也照绿(改 `level_editor/ui/96_selftest.js` 里的
+  `check(` 条数时**必须同步改它**)。
   ★ 不要用 `chrome --dump-dom` 代替:它在 `load` 那一刻就导出 DOM,而 boot 的链(草稿盘 →
   图集 → 库 → 打开图)全在那之后;`--virtual-time-budget` 又会让 IndexedDB 的回调永远不来。 
 

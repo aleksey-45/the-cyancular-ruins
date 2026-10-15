@@ -138,6 +138,8 @@ await (async function () {
   good.players = [{ x: 1, y: 1 }];
   var v = Core.validateMap(good);
   eq(v.errors, [], 'validateMap: 正常图无 error');
+  // ★★ warnings 的**反面**:此前一条"不该有"的断言都没有 ⇒ 谓词改成"永远实心"也全绿(实测);规矩图必须一条 warning 都不给。
+  eq(v.warnings, [], 'validateMap: 一张规规矩矩的图不该有任何 warning(无条件报警的实现在这里红)');
 
   // 出生点落在实心格里
   var inWall = Core.createMap('bad', 8, 8);
@@ -150,6 +152,17 @@ await (async function () {
   // ★ 判据钉 实心 而不是 出生点:后者任何出生点相关的 warning 都满足,今天能过纯粹因为 (0,0) 恰好没越界。
   ok(Core.validateMap(inWall).warnings.some(function (s) { return s.indexOf('实心') >= 0; }),
      'validateMap: 出生点在实心格里给 warning');
+  // ★ 判据**两侧**都要钉:整格 4×4 全填才算实心 —— 只填 3 行 / 1 行都不许报(阈值放宽成"有子格就算"的实现在这里红)。
+  var solidWarned = function (rows) {
+    var m = Core.createMap('half', 8, 8);
+    for (var y = 0; y < rows; y++) {
+      for (var x = 0; x < 4; x++) m.layers[Core.LAYER_SCENE].desc[y * m.subCols + x] = Core.neutralDesc(1);
+    }
+    m.players = [{ x: 0, y: 0 }];
+    return Core.validateMap(m).warnings.some(function (s) { return s.indexOf('实心') >= 0; });
+  };
+  eq(solidWarned(3), false, 'validateMap: 只填 3 行子格不算实心(谓词两侧都钉)');
+  eq(solidWarned(1), false, 'validateMap: 只填 1 行子格不算实心(阈值放宽成"填 1 行就算"的实现在这里红)');
 
   // 一个出生点都没有
   var noSpawn = Core.createMap('n', 8, 8);

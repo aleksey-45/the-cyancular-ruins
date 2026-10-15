@@ -154,8 +154,22 @@ await (async function () {
   var bytes = await Core.encodeMap(big);
   var back = await Core.decodeMap(bytes);
 
-  eq(Array.prototype.slice.call(back.layers[Core.LAYER_SCENE].desc, 0, 64),
-     Array.prototype.slice.call(sc, 0, 64), '大图: 场景层前 64 格往返一致');
+  // ★★ 跨全长比对,不是"看前 64 个":1.92M 个子格里取前 64 个 = 0.0033%,等于没验大图 ——
+  //    「下标 ≥1000 之后整片填 0」这种**静默丢数据**能全绿(实测过)。步长 997 与 subCols(1600)、
+  //    与背景层图案周期(256)都互素,1926 个采样点铺满全长;另加两个端点(index 0 与末位)。
+  var n = big.subCols * big.subRows;
+  var srcBg = big.layers[Core.LAYER_BG].rgba;
+  var outSc = back.layers[Core.LAYER_SCENE].desc, outBg = back.layers[Core.LAYER_BG].rgba;
+  var bad = '';
+  for (i = 0; i < n && !bad; i += 997) {
+    if (outSc[i] !== sc[i]) bad = '场景层 desc[' + i + ']';
+    else if (outBg[i] !== srcBg[i]) bad = '背景层 rgba[' + i + ']';
+  }
+  ok(bad === '', '大图: 场景层 + 背景层**跨全长**(步长 997,共 ' + Math.ceil(n / 997) + ' 个采样点)往返一致' +
+     (bad ? '(首个不一致: ' + bad + ')' : ''));
+  eq(outSc[0], sc[0], '大图: 场景层首格往返一致');
+  eq(outSc[n - 1], sc[n - 1], '大图: 场景层末格往返一致');
+  eq(outBg[n - 1], srcBg[n - 1], '大图: 背景层末格往返一致');
 })();
 
 // ---- 指令 D:解压后 body 的硬上限(堵 deflate 炸弹)----

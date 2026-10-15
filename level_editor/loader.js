@@ -30,11 +30,6 @@ function moduleScripts(dir) {
   return scripts().filter(s => s.indexOf(dir + '/') === 0);
 }
 
-// 按序拼接后的源码(给"扫源码"式断言用)。
-function source(paths) {
-  return (paths || scripts()).map(p => fs.readFileSync(path.join(DIR, p), 'utf8')).join('\n');
-}
-
 // 逐片在**当前**全局作用域里执行(等价于浏览器一个个 <script>)。
 function run(paths) {
   for (const p of paths || scripts()) {
@@ -56,4 +51,4 @@ function loadModules(names) {
   run(want);
 }
 
-module.exports = { scripts, moduleScripts, source, run, loadModules };
+module.exports = { scripts, moduleScripts, run, loadModules };

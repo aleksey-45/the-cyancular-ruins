@@ -27,7 +27,7 @@ function resizeMap(map, w, h) {
   return { map: out, dropped: dropped, size: { w: cellsW, h: cellsH } };
 }
 // ★★ 尺寸闸只此一条路:applySize → resizeMap → createEmptyMap → Core.clampMapSize。这里不再
-//    写第二次 Core.createMap 这个调用(相位 ⑪ 数着那个调用点),第二个造图入口就是 A8 复发(输 99999 卡死)。
+//    写第二个 Core.createMap 调用 —— 第二个造图入口就是 A8 复发(输 99999 分配巨图卡死)。
 function resizeReportLines(dropped) {
   return (dropped || []).map(function (d) {
     return d.kind === 'enemy'

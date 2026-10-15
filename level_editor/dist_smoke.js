@@ -94,7 +94,7 @@ const Io = globalThis.Io;
   const miss = await fetch('/api/map?p=nope.cyrm');
   eq(miss.status, 404, '读不存在的名字 → 404(不伪造空文件)');
 
-  harness.finish('DIST SMOKE OK');
+  harness.finish('DIST SMOKE OK', 16);
 })().catch(function (e) {
   console.error('FAIL: 未捕获异常:');
   console.error(e && e.stack ? e.stack : String(e));

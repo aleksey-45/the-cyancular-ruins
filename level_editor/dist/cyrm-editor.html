@@ -2992,7 +2992,8 @@ function regionCells(map, region, clip) {
   return out;
 }
 // ★★ Core.lineCells 的坐标必须是整数:非整数或 NaN 会让它的 for(;;) 死循环、挂住整个
-//    标签页。所有调用点都在这里 floor;editor_smoke 相位 ⑪ 扫源码钉住"没有第二个调用点"。
+//    标签页。所有调用点都在这里 floor(★ 这条只剩行为侧一半:产物是整数;新加一个忘了 floor
+//    的调用点今天抓不到 —— 零守卫登记在 docs/eng/debt/guard-strength-gaps.md)。
 function strokePoints(from, to) {
   var pts = [];
   if (!to || (from.x === to.x && from.y === to.y)) { pts.push(from); return pts; }
@@ -3021,8 +3022,6 @@ function toSub(hit) {
 // ── Shift 约束(规格 §4.8:直线约束 / 选区等比)──
 // ★ 纯函数,而且是唯一一处做这个判断的地方:预览与落笔必须用同一个结果,否则预览画的是 A、
 //   松手落下去的是 B。★ 返回值一律 floor:产物会直接喂给 lineCells —— 非整数 = 死循环。
-//   (★ 本行刻意不写成带括号的调用形式:editor_smoke 相位 ⑪ 按"同一行出现调用就必须出现
-//     Math.floor"这条逐行规则扫源码,注释里那半截会被它当成一个调用点。)
 function constrainLine(a, b, shift) {
   var bx = Math.floor(b.x), by = Math.floor(b.y);
   if (!shift) return { x: bx, y: by };
@@ -3270,7 +3269,7 @@ function resizeMap(map, w, h) {
   return { map: out, dropped: dropped, size: { w: cellsW, h: cellsH } };
 }
 // ★★ 尺寸闸只此一条路:applySize → resizeMap → createEmptyMap → Core.clampMapSize。这里不再
-//    写第二次 Core.createMap 这个调用(相位 ⑪ 数着那个调用点),第二个造图入口就是 A8 复发(输 99999 卡死)。
+//    写第二个 Core.createMap 调用 —— 第二个造图入口就是 A8 复发(输 99999 分配巨图卡死)。
 function resizeReportLines(dropped) {
   return (dropped || []).map(function (d) {
     return d.kind === 'enemy'
@@ -4634,8 +4633,8 @@ function applyUiState() {
   // ★ 缩放必须在地图打开之后恢复:setMap 自己会 fit();u.zoom === 0 是"没存过缩放"的哨兵。
   var cur = app.r.view().zoom;
   if (u.zoom > 0 && cur > 0 && Math.abs(u.zoom - cur) > 1e-6) {
-    // ★★ guard( 与那次调用必须同一行(editor_smoke 相位 ⑪ 的扫描口径就是按行看的)—— 拆成两行的话
-    //    它就是"没被收口的视图入口",而那正是"按了没反应"那条通道。
+    // ★★ 视图入口必须走 guard 收口(guard( 与那次调用写在一起,读的人一眼看得出收口点在哪)——
+    //    漏了它就是"按了没反应"那条通道。
     guard('恢复缩放', function () { return app.r.setZoomAt(app.canvas.width / 2, app.canvas.height / 2, u.zoom / cur); });
   }
   // ★★ 这一处必须走本文件的 setLayer(它内部再调 app.r.setLayer):直接调 app.r.setLayer 只换渲染层,
