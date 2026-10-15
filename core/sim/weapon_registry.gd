@@ -26,7 +26,7 @@ static func projectile_profile(type_id: int) -> Dictionary:
 	if not _projectile_profiles.has(type_id):
 		var weapon: WeaponBase = load(scene_of(type_id)).instantiate()
 		_projectile_profiles[type_id] = {"scene": weapon.bullet_scene, "range": weapon.bullet_range,
-				"size": weapon.bullet_size, "color": weapon.bullet_color}
+				"size": weapon.bullet_size, "color": weapon.bullet_color, "gravity": weapon.bullet_gravity}
 		weapon.free()
 	return _projectile_profiles[type_id]
 

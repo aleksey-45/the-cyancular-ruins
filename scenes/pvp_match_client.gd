@@ -31,7 +31,6 @@ var _map_revision := 0
 var _future_state: Dictionary = {}
 var _authority_state: Dictionary = {}
 var _latest_players: Dictionary = {}
-var _own_ack := 0
 var _menu_open := false
 var _retry_started := 0
 var _attempt_started := 0
@@ -96,9 +95,9 @@ func _ready() -> void:
 	multiplayer.connected_to_server.connect(_on_connected)
 	multiplayer.connection_failed.connect(_on_connection_failed)
 	apply_baseline(baseline)
-	for patch: Dictionary in PvpSession.terrain_events:
-		apply_terrain(patch)
-	PvpSession.terrain_events.clear()
+	for message: Array in PvpSession.match_events:
+		_on_event(1, message[0], message[1])
+	PvpSession.match_events.clear()
 	PvpSession.loading_match = false
 	GameLog.record("match_loaded", {"duration_ms": Time.get_ticks_msec() - started, "role": PvpSession.role})
 
@@ -120,6 +119,7 @@ func apply_baseline(payload: Dictionary) -> void:
 		disabled.append(type_id)
 	_local.weapons.set_enabled_types(disabled)
 	_local.collision_layer = 16 if _teams.get(PvpSession.role, 0) == 2 else 2
+	_local.team = _teams.get(PvpSession.role, 0)
 	_local.collision_mask = 1 | (16 if _teams.get(PvpSession.role, 0) == 1 else 2)
 	if _hud is TeamHud:
 		_hud.set_my_team(_teams[PvpSession.role])
@@ -139,6 +139,10 @@ func apply_baseline(payload: Dictionary) -> void:
 	_banner.set_text("")
 	_on_state(frame)
 	_process(0.0)
+	for id in payload["projectiles"]:
+		var data: Dictionary = payload["projectiles"][id]
+		_restore_bullet(_create_bullet(id, data), data)
+		_bullets[id].set_physics_process(not frame["world"]["players"][id >> 48]["rewind"])
 	_local.correct_visual(_local.global_position, true)
 	_refresh_input_lock()
 	NetBus.send_event(NetEvent.Kind.READY, payload["round_state"]["round"])
@@ -155,6 +159,8 @@ func _on_event(_peer: int, kind: int, data: Variant) -> void:
 		NetEvent.Kind.TERRAIN: apply_terrain(data)
 		NetEvent.Kind.ROUND: _on_round_state(data)
 		NetEvent.Kind.BEAM: _on_beam_fired(data)
+		NetEvent.Kind.BULLET_SPAWN: _create_bullet(data["id"], data)
+		NetEvent.Kind.BULLET_REWIND: _on_bullet_rewind(data)
 		NetEvent.Kind.FIRE:
 			Sfx.play(data["sound"])
 			if _replicas.has(data["role"]):
@@ -246,7 +252,6 @@ func _apply_authority(frame: Dictionary) -> void:
 	_local.correct_visual(previous, snap)
 	_make_label(PvpSession.role)
 	_latest_players = frame["world"]["players"]
-	_own_ack = maxi(frame["own"]["ack"], frame["own"]["action_ack"])
 	for role in _latest_players:
 		if role != PvpSession.role:
 			_ensure_replica(role)
@@ -255,10 +260,6 @@ func _apply_authority(frame: Dictionary) -> void:
 	for role in _replicas:
 		if not _latest_players.has(role):
 			_replicas[role].set_ghost_layer(0)
-	for bullet: BulletBase in get_tree().get_nodes_in_group("bullet"):
-		if bullet.shooter == _local and not bullet.is_queued_for_deletion() and not _bullets.has(bullet.entity_id):
-			_register_bullet(bullet)
-	_sync_bullets(frame["world"]["projectiles"], true)
 	if PvpSession.beta_mode:
 		_on_time_state(frame["time"])
 
@@ -266,6 +267,7 @@ func _ensure_replica(role: int) -> void:
 	if _replicas.has(role):
 		return
 	var replica: Node2D = preload("res://scenes/player/player_replica.tscn").instantiate()
+	replica.team = _teams.get(role, 0)
 	_world.add_child(replica)
 	replica.process_priority = 2
 	_replicas[role] = replica
@@ -277,42 +279,71 @@ func _ensure_replica(role: int) -> void:
 		_world.add_child(bar)
 		_hp_bars[role] = bar
 
-func _sync_bullets(projectiles: Dictionary, own: bool) -> void:
-	for id in projectiles:
-		var data: Dictionary = projectiles[id]
-		var shooter_role: int = id >> 48
-		if (shooter_role == PvpSession.role) != own:
-			continue
-		if not _bullets.has(id):
-			_count_log("projectiles_created")
-			var profile := WeaponRegistry.projectile_profile(data["type_id"])
-			var bullet: BulletBase = profile["scene"].instantiate()
-			bullet.entity_id = id
-			bullet.type_id = data["type_id"]
-			bullet.setup(data["vel"].normalized(), data["vel"].length(), profile["range"], profile["size"], profile["color"], null)
-			bullet.apply_damage = false
-			bullet.position = data["pos"]
-			_world.add_child(bullet)
-			bullet.shooter = _local if shooter_role == PvpSession.role else _replicas.get(shooter_role)
-			_register_bullet(bullet)
-		_bullets[id].input_seq = data["input_seq"]
-		_bullets[id].input_epoch = data["input_epoch"]
-		_bullets[id].set_physics_process(false)
-		_bullets[id].velocity_vec = data["vel"]
-		_bullets[id].rotation = data["vel"].angle()
-		_bullets[id].position = GridPathfinder.anchor_to_nearest(data["pos"], _local.position, GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+func _create_bullet(id: int, data: Dictionary) -> BulletBase:
+	var role := id >> 48
+	if role != PvpSession.role:
+		_ensure_replica(role)
+	var profile := WeaponRegistry.projectile_profile(data["type_id"])
+	var bullet: BulletBase = profile["scene"].instantiate()
+	bullet.entity_id = id
+	bullet.type_id = data["type_id"]
+	bullet.setup(data["vel"].normalized(), data["vel"].length(), profile["range"], profile["size"], profile["color"], null)
+	bullet.gravity_factor = profile["gravity"]
+	bullet.apply_damage = false
+	bullet.position = GridPathfinder.anchor_to_nearest(data["pos"], _local.position,
+			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+	bullet.shooter = _local if role == PvpSession.role else _replicas[role]
+	bullet.adjudicated_pos = bullet.position
+	_world.add_child(bullet)
+	_register_bullet(bullet)
+	return bullet
+
+func _restore_bullet(bullet: BulletBase, data: Dictionary) -> void:
+	bullet.position = GridPathfinder.anchor_to_nearest(data["pos"], _local.position,
+			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+	bullet.velocity_vec = data["vel"]
+	bullet.rotation = bullet.velocity_vec.angle()
+	bullet.traveled = data["traveled"]
+	bullet._fuse_active = data["fuse_active"]
+	bullet._fuse_elapsed = data["fuse_elapsed"]
+	bullet._fuse_duration = data["fuse_duration"]
+	bullet.adjudicated_pos = bullet.position
+
+func _on_bullet_rewind(data: Dictionary) -> void:
+	_track_local_bullets()
 	for id in _bullets.keys():
-		var bullet: BulletBase = _bullets[id]
-		if (bullet.shooter == _local) != own or projectiles.has(id):
+		if id >> 48 == data["role"] and not data["projectiles"].has(id):
+			_bullets[id].queue_free()
+	for id in data["projectiles"]:
+		var state: Dictionary = data["projectiles"][id]
+		var bullet: BulletBase = _bullets[id] if _bullets.has(id) else _create_bullet(id, state)
+		_restore_bullet(bullet, state)
+		bullet.set_physics_process(not data["rewind"])
+
+func _track_local_bullets() -> void:
+	for bullet: BulletBase in get_tree().get_nodes_in_group("bullet"):
+		if bullet.shooter == _local and not bullet.is_queued_for_deletion() and not _bullets.has(bullet.entity_id):
+			_register_bullet(bullet)
+
+func _cull_bullet_contacts() -> void:
+	for bullet: BulletBase in _bullets.values():
+		if bullet.explodes or bullet.is_queued_for_deletion() or not bullet.is_physics_processing():
 			continue
-		var pending := own and bullet.input_epoch == _rollback.epoch and (bullet.input_seq > _own_ack or _rollback.actions.any(func(action: Dictionary) -> bool: return action["seq"] == bullet.input_seq))
-		if not pending:
-			_count_log("projectiles_removed")
-			if bullet.explodes:
-				GameLog.record("explosive_removed", {"id": id, "type": bullet.type_id, "own": own,
-						"tick": _own_tick if own else _last_tick, "position": bullet.position})
-			bullet.queue_free()
-			_bullets.erase(id)
+		var shooter_role := bullet.entity_id >> 48
+		var from := bullet.adjudicated_pos
+		var to := from + GridPathfinder.toroidal_delta_px(from, bullet.position,
+				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+		bullet.adjudicated_pos = bullet.position
+		for role in _latest_players:
+			if role == shooter_role or _latest_players[role]["downed"]:
+				continue
+			if _teams.get(shooter_role, 0) != 0 and _teams[shooter_role] == _teams.get(role, 0):
+				continue
+			var pos: Vector2 = _local.position if role == PvpSession.role else _replicas[role].position
+			var center := GridPathfinder.anchor_to_nearest(pos, from, GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+			if Geometry2D.get_closest_point_to_segment(center, from, to).distance_to(center) < BulletBase.PLAYER_HIT_RADIUS:
+				bullet.queue_free()
+				break
 
 func _sync_pickups(world: Dictionary) -> void:
 	for id in world["pickups"]:
@@ -331,8 +362,12 @@ func _sync_pickups(world: Dictionary) -> void:
 func _register_bullet(bullet: BulletBase) -> void:
 	var id := bullet.entity_id
 	_bullets[id] = bullet
+	_count_log("projectiles_created")
 	bullet.tree_exiting.connect(func() -> void:
 		if _bullets.get(id) == bullet:
+			_count_log("projectiles_removed")
+			if bullet.explodes:
+				GameLog.record("explosive_removed", {"id": id, "type": bullet.type_id, "position": bullet.position, "tick": _own_tick})
 			_bullets.erase(id))
 
 func _physics_process(delta: float) -> void:
@@ -348,6 +383,8 @@ func _physics_process(delta: float) -> void:
 		GameLog.record("input_action", {"role": PvpSession.role, "action": _rollback.actions[-1]})
 	NetBus.send_input(_rollback.packet())
 	_rollback.advance(delta)
+	_track_local_bullets()
+	_cull_bullet_contacts()
 	_local.present_tick(delta)
 	_post.set_downed(_local.is_downed())
 
@@ -392,7 +429,6 @@ func _process(delta: float) -> void:
 		if _hp_bars.has(role):
 			_hp_bars[role].ratio = float(world["players"][role]["hp"]) / PlayerParams.player_max_hp
 			_hp_bars[role].position = _replicas[role].position + Vector2(0, -108)
-	_sync_bullets(world["projectiles"], false)
 	_sync_pickups(world)
 	for id in world["pickups"]:
 		if _pickup_nodes.has(id):

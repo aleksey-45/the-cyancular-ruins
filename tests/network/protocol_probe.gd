@@ -26,6 +26,7 @@ func _run() -> void:
 	var decoded := client.decode_state(ProtocolFixture.stream(first))
 	compare(decoded, initial, "frame")
 	assert(decoded == initial)
+	assert(not decoded["world"].has("projectiles"))
 	assert(client.history[1]["own"]["state"]["rld_t"] == player.weapons.current_weapon()._reload_t)
 	# 输入保留不同目标时间、非连续动作，以及独立快照 ACK。
 	var frames: Array = []
@@ -38,14 +39,14 @@ func _run() -> void:
 	var input := {"frames": frames, "actions": [action]}
 	assert(server.decode_input(ProtocolFixture.stream(client.encode_input(input))) == input)
 	assert(server.state_ack == 1)
-	var id := (1 << 48) | (5 << 8)
+	var id := 1000000
 	var second := initial.duplicate(true)
 	second["tick"] = 102
-	second["world"]["projectiles"][id] = {"type_id": 1, "input_seq": 10, "input_epoch": 1, "pos": Vector2(1100, 500), "vel": Vector2(900, 0)}
+	second["world"]["pickups"][id] = {"type_id": 1, "mag": 10, "pos": Vector2(1100, 500), "vel": Vector2(900, 0)}
 	server.encode_state(second) # 故意丢包，未确认。
 	var third := second.duplicate(true)
 	third["tick"] = 104
-	third["world"]["projectiles"][id]["pos"].x += 30.0
+	third["world"]["pickups"][id]["pos"].x += 30.0
 	third["world"]["pickups"].erase(third["world"]["pickups"].keys()[0])
 	third["world"]["players"].erase(2)
 	var third_packet := server.encode_state(third)
@@ -65,7 +66,7 @@ func _run() -> void:
 	server.decode_input(ProtocolFixture.stream(client.encode_input(input)))
 	var fourth := stable.duplicate(true)
 	fourth["tick"] = 108
-	fourth["world"]["projectiles"].clear()
+	fourth["world"]["pickups"].clear()
 	fourth["own"]["epoch"] = 8
 	fourth["own"]["state"]["inv"][0]["mag"] = 1
 	assert(client.decode_state(ProtocolFixture.stream(server.encode_state(fourth))) == fourth)
@@ -85,6 +86,8 @@ func _run() -> void:
 	assert(client.decode_state(ProtocolFixture.stream(server.encode_state(fourth))) == fourth)
 	# 可靠基线改变控制阶段并重新建缓存；旧 STATE 不可污染新回合。
 	var baseline := ProtocolFixture.baseline()
+	baseline["projectiles"] = {(1 << 48) | 777: {"type_id": 1, "pos": Vector2(1000, 500), "vel": Vector2(60, 0),
+			"traveled": 43.25, "fuse_active": true, "fuse_elapsed": 0.123456789, "fuse_duration": 0.4}}
 	baseline["frame"] = fourth
 	var old_packet := server.encode_state(fourth)
 	assert(client.decode_event(NetEvent.Kind.BASELINE, ProtocolFixture.stream(server.encode_event(NetEvent.Kind.BASELINE, baseline))) == baseline)
@@ -108,6 +111,7 @@ func _run() -> void:
 			var profile := WeaponRegistry.projectile_profile(type_id)
 			assert(profile["scene"] == weapon.bullet_scene and profile["range"] == weapon.bullet_range)
 			assert(profile["size"] == weapon.bullet_size and profile["color"] == weapon.bullet_color)
+			assert(profile["gravity"] == weapon.bullet_gravity)
 		weapon.free()
 	for entry in [[NetEvent.Kind.HELLO, {"name": "玩家 α", "hue": 0.987654321}],
 			[NetEvent.Kind.CREATE, {"mode": PvpSession.MODE_TEAM, "options": {"is_public": false, "invite_code": "0123", "beta": true, "time": TimeRules.new().to_dict(), "disabled_weapons": [2, 4]}}],
@@ -118,12 +122,15 @@ func _run() -> void:
 			[NetEvent.Kind.ROUND, world.round_state()], [NetEvent.Kind.KILL, [2, 1]],
 			[NetEvent.Kind.HIT, {"shooter": 1, "victim": 2, "damage": 50, "pos": Vector2(1.5, 2.5)}],
 			[NetEvent.Kind.FIRE, {"role": 1, "shot": 9, "type_id": 4, "sound": "shotgun"}],
+			[NetEvent.Kind.BULLET_SPAWN, {"id": (1 << 48) | 777, "type_id": 1, "pos": Vector2(1000, 500), "vel": Vector2(60, 0)}],
+			[NetEvent.Kind.BULLET_REWIND, {"role": 1, "rewind": true, "projectiles": baseline["projectiles"]}],
 			[NetEvent.Kind.BEAM, {"shooter_role": 1, "pts": PackedVector2Array([Vector2.ONE, Vector2(2, 4)]), "origin": Vector2.ONE,
 			"canonical": Vector2(500, 500), "color": UiFactory.C_TEXT_DIM, "half_width": 3.25, "lifetime": 0.123456789, "style": 0}],
 			[NetEvent.Kind.MESSAGE, "消息 🌏"], [NetEvent.Kind.LEAVE, null], [NetEvent.Kind.SUICIDE, null],
 			[NetEvent.Kind.START, 3], [NetEvent.Kind.PICK_TEAM, 2], [NetEvent.Kind.READY, 10], [NetEvent.Kind.MAP, "res://maps/newfactory.cyrm"],
 			[NetEvent.Kind.REJOIN_DENIED, "过期"], [NetEvent.Kind.ROOM_CLOSED, "离开"]]:
 		var packet := server.encode_event(entry[0], entry[1])
+		if entry[0] == NetEvent.Kind.BULLET_SPAWN: assert(packet.size() == 26)
 		assert(client.decode_event(entry[0], ProtocolFixture.stream(packet)) == entry[1])
 	world.queue_free()
 	print("PROTOCOL PROBE OK precision, ACK baseline, loss, create/update/delete, expiry, epoch, events")

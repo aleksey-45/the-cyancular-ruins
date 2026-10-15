@@ -53,9 +53,9 @@ func _on_net_event(_peer: int, kind: int, data: Variant) -> void:
 			PvpSession.beta_mode = data["options"].get("beta", false)
 			PvpSession.loading_match = true
 			_enter_match_scene()
-		NetEvent.Kind.TERRAIN:
+		NetEvent.Kind.TERRAIN, NetEvent.Kind.BULLET_SPAWN, NetEvent.Kind.BULLET_REWIND:
 			if PvpSession.loading_match:
-				PvpSession.terrain_events.append(data)
+				PvpSession.match_events.append([kind, data])
 
 func _exit_tree() -> void:
 	NetBus.event_received.disconnect(_on_net_event)

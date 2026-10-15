@@ -85,10 +85,9 @@ func _write_state(s: StreamPeerBuffer, frame: Dictionary) -> void:
 	s.put_u32(frame["map_revision"])
 	if base.is_empty():
 		_put_roles(s, roles)
-	var old_world: Dictionary = base.get("world", {"players": {}, "projectiles": {}, "pickups": {}})
+	var old_world: Dictionary = base.get("world", {"players": {}, "pickups": {}})
 	_write_players(s, frame["world"]["players"], old_world["players"])
-	_write_entities(s, frame["world"]["projectiles"], old_world["projectiles"], true)
-	_write_entities(s, frame["world"]["pickups"], old_world["pickups"], false)
+	_write_pickups(s, frame["world"]["pickups"], old_world["pickups"])
 	_put_own(s, frame["own"], base.get("own", {}))
 	_put_time(s, frame["time"], base.get("time", {}))
 	_remember(serial, frame)
@@ -111,10 +110,9 @@ func decode_state(s: StreamPeerBuffer) -> Dictionary:
 	var frame := {"tick": s.get_u32(), "map_revision": s.get_u32()}
 	if base_number == 0:
 		roles = _get_roles(s)
-	var world: Dictionary = base.get("world", {"players": {}, "projectiles": {}, "pickups": {}}).duplicate(true)
+	var world: Dictionary = base.get("world", {"players": {}, "pickups": {}}).duplicate(true)
 	_read_players(s, world["players"])
-	_read_entities(s, world["projectiles"], true)
-	_read_entities(s, world["pickups"], false)
+	_read_pickups(s, world["pickups"])
 	frame["world"] = world
 	frame["own"] = _get_own(s, base.get("own", {}))
 	frame["time"] = _get_time(s, base.get("time", {}))
@@ -184,6 +182,7 @@ func encode_event(kind: int, data: Variant) -> PackedByteArray:
 				s.put_32(data["sub_hp"][cell])
 			_put_round(s, data["round_state"])
 			_write_state(s, data["frame"])
+			_put_projectiles(s, data["projectiles"])
 		NetEvent.Kind.TERRAIN:
 			s.put_u32(data["revision"])
 			_put_cell(s, data["sub"])
@@ -213,6 +212,13 @@ func encode_event(kind: int, data: Variant) -> PackedByteArray:
 			s.put_u32(data["shot"])
 			s.put_u8(data["type_id"])
 			_put_string(s, data["sound"])
+		NetEvent.Kind.BULLET_SPAWN:
+			s.put_u64(data["id"])
+			_put_projectile(s, data)
+		NetEvent.Kind.BULLET_REWIND:
+			s.put_u16(data["role"])
+			s.put_u8(int(data["rewind"]))
+			_put_projectiles(s, data["projectiles"])
 	return s.data_array
 
 func decode_event(kind: int, s: StreamPeerBuffer) -> Variant:
@@ -254,6 +260,7 @@ func decode_event(kind: int, s: StreamPeerBuffer) -> Variant:
 			data["sub_hp"] = hp
 			data["round_state"] = _get_round(s)
 			data["frame"] = decode_state(s)
+			data["projectiles"] = _get_projectiles(s)
 			return data
 		NetEvent.Kind.TERRAIN: return {"revision": s.get_u32(), "sub": _get_cell(s), "hp": s.get_32()}
 		NetEvent.Kind.ROUND: return _get_round(s)
@@ -266,6 +273,13 @@ func decode_event(kind: int, s: StreamPeerBuffer) -> Variant:
 			return {"shooter_role": role, "pts": points, "origin": points[0] if not points.is_empty() else Vector2.ZERO,
 					"canonical": _get_vec(s), "color": _get_color(s), "half_width": s.get_double(), "lifetime": s.get_double(), "style": s.get_u8()}
 		NetEvent.Kind.FIRE: return {"role": s.get_u16(), "shot": s.get_u32(), "type_id": s.get_u8(), "sound": _get_string(s)}
+		NetEvent.Kind.BULLET_SPAWN:
+			var id := s.get_u64()
+			return _get_projectile(s).merged({"id": id})
+		NetEvent.Kind.BULLET_REWIND:
+			var role := s.get_u16()
+			var rewind := bool(s.get_u8())
+			return {"role": role, "rewind": rewind, "projectiles": _get_projectiles(s)}
 	return null
 
 func _write_players(s: StreamPeerBuffer, current: Dictionary, base: Dictionary) -> void:
@@ -286,51 +300,69 @@ func _read_players(s: StreamPeerBuffer, players: Dictionary) -> void:
 		if not present[i]: players.erase(roles[i])
 		elif changed[i]: players[roles[i]] = _get_actor(s)
 
-func _write_entities(s: StreamPeerBuffer, current: Dictionary, base: Dictionary, bullets: bool) -> void:
+func _write_pickups(s: StreamPeerBuffer, current: Dictionary, base: Dictionary) -> void:
 	var removed := base.keys().filter(func(id: int) -> bool: return not current.has(id))
 	var changed := current.keys().filter(func(id: int) -> bool: return current[id] != base.get(id))
 	s.put_u16(removed.size())
 	for id in removed:
-		if bullets: s.put_u64(id)
-		else: s.put_u32(id)
+		s.put_u32(id)
 	s.put_u16(changed.size())
 	for id in changed:
-		if bullets: s.put_u64(id)
-		else: s.put_u32(id)
+		s.put_u32(id)
 		var data: Dictionary = current[id]
 		var old: Dictionary = base.get(id, {})
 		var mask := 0
 		if data["pos"] != old.get("pos"): mask |= 1
 		if data["vel"] != old.get("vel"): mask |= 2
-		if bullets:
-			if data["type_id"] != old.get("type_id") or data["input_seq"] != old.get("input_seq") or data["input_epoch"] != old.get("input_epoch"): mask |= 4
-		else:
-			if data["type_id"] != old.get("type_id") or data["mag"] != old.get("mag"): mask |= 4
+		if data["type_id"] != old.get("type_id") or data["mag"] != old.get("mag"): mask |= 4
 		s.put_u8(mask)
 		if mask & 1: _put_vec(s, data["pos"])
 		if mask & 2: _put_vec(s, data["vel"])
 		if mask & 4:
 			s.put_u8(data["type_id"])
-			if bullets:
-				s.put_u32(data["input_seq"])
-				s.put_u32(data["input_epoch"])
-			else: s.put_32(data["mag"])
+			s.put_32(data["mag"])
 
-func _read_entities(s: StreamPeerBuffer, entities: Dictionary, bullets: bool) -> void:
-	for i in s.get_u16(): entities.erase(s.get_u64() if bullets else s.get_u32())
+func _read_pickups(s: StreamPeerBuffer, entities: Dictionary) -> void:
+	for i in s.get_u16(): entities.erase(s.get_u32())
 	for i in s.get_u16():
-		var id := s.get_u64() if bullets else s.get_u32()
+		var id := s.get_u32()
 		var data: Dictionary = entities.get(id, {}).duplicate()
 		var mask := s.get_u8()
 		if mask & 1: data["pos"] = _get_vec(s)
 		if mask & 2: data["vel"] = _get_vec(s)
 		if mask & 4:
 			data["type_id"] = s.get_u8()
-			if bullets:
-				data["input_seq"] = s.get_u32()
-				data["input_epoch"] = s.get_u32()
-			else: data["mag"] = s.get_32()
+			data["mag"] = s.get_32()
 		entities[id] = data
+
+static func _put_projectile(s: StreamPeerBuffer, data: Dictionary) -> void:
+	s.put_u8(data["type_id"])
+	_put_vec(s, data["pos"])
+	_put_vec(s, data["vel"])
+
+static func _get_projectile(s: StreamPeerBuffer) -> Dictionary:
+	return {"type_id": s.get_u8(), "pos": _get_vec(s), "vel": _get_vec(s)}
+
+static func _put_projectiles(s: StreamPeerBuffer, projectiles: Dictionary) -> void:
+	s.put_u16(projectiles.size())
+	for id in projectiles:
+		s.put_u64(id)
+		var data: Dictionary = projectiles[id]
+		_put_projectile(s, data)
+		s.put_double(data["traveled"])
+		s.put_u8(int(data["fuse_active"]))
+		s.put_double(data["fuse_elapsed"])
+		s.put_double(data["fuse_duration"])
+
+static func _get_projectiles(s: StreamPeerBuffer) -> Dictionary:
+	var result := {}
+	for i in s.get_u16():
+		var id := s.get_u64()
+		var data := _get_projectile(s)
+		data.merge({"traveled": s.get_double(), "fuse_active": bool(s.get_u8()),
+				"fuse_elapsed": s.get_double(), "fuse_duration": s.get_double()})
+		result[id] = data
+	return result
 
 static func _put_actor(s: StreamPeerBuffer, data: Dictionary) -> void:
 	_put_vec(s, data["pos"])

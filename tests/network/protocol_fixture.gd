@@ -14,7 +14,7 @@ static func frame(tick: int = 60) -> Dictionary:
 			"facing": 1, "state": 1, "lmv_d": 0, "hp": 100, "winst": 0, "inv": []}
 	var actor := {"pos": state["pos"], "vel": state["vel"], "aim": Vector2.RIGHT, "facing": 1, "pose": 1, "type_id": 0,
 			"hp": 100, "waterproof": 100, "epoch": 1, "downed": false, "previewing": false, "haste": false, "rewind": false}
-	return {"tick": tick, "map_revision": 0, "world": {"players": {1: actor}, "projectiles": {}, "pickups": {}},
+	return {"tick": tick, "map_revision": 0, "world": {"players": {1: actor}, "pickups": {}},
 			"own": {"epoch": 1, "ack": 0, "action_ack": 0, "timing_seq": 0, "lead": 2, "rewind": false,
 			"input": InputBuffer.neutral(), "state": state}, "time": {}}
 
@@ -24,7 +24,7 @@ static func baseline() -> Dictionary:
 			"sub_hp": {Vector2i(4, 8): 7}, "round_state": {"state": NetEvent.RoundState.COUNTDOWN, "round": 1,
 			"timer": 3.0, "winner": 0, "match_winner": 0, "mvp": 1, "scores": {}, "rounds_won": {}, "deaths": {1: 0},
 			"left": [], "grace": {}, "alive": {1: true}, "stats": {1: {"kills": 0, "deaths": 0, "assists": 0,
-			"dealt": 0, "taken": 0, "kscore": 0, "acs": 0.0}}}, "frame": frame()}
+			"dealt": 0, "taken": 0, "kscore": 0, "acs": 0.0}}}, "frame": frame(), "projectiles": {}}
 
 static func stream(packet: PackedByteArray) -> StreamPeerBuffer:
 	var s := StreamPeerBuffer.new()

@@ -49,10 +49,10 @@ func _ready() -> void:
 
 	PvpSession.map_path = "res://maps/newfactory.cyrm"
 	PvpSession.loading_match = true
-	PvpSession.terrain_events.append({})
+	PvpSession.match_events.append([NetEvent.Kind.TERRAIN, {}])
 	PvpSession.reset()
 	_check(PvpSession.map_path == "", "PvpSession.reset() 未清 map_path(换局会漏上一局的地图)")
-	_check(not PvpSession.loading_match and PvpSession.terrain_events.is_empty(), "PvpSession.reset() 未清加载阶段和地形队列")
+	_check(not PvpSession.loading_match and PvpSession.match_events.is_empty(), "PvpSession.reset() 未清加载阶段和事件队列")
 
 	# 6) Sfx 程序合成流可生成(不依赖音频设备)
 	_check(Sfx._stream("kill") != null and Sfx._stream("hit") != null, "Sfx 音效流生成失败")

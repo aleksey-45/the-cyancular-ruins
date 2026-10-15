@@ -212,4 +212,4 @@ func _fail(msg: String) -> void:
 	get_tree().quit(1)
 
 func _world_frame(state: Dictionary) -> Dictionary:
-	return {"players": {1: state}, "projectiles": {}, "pickups": {}}
+	return {"players": {1: state}, "pickups": {}}

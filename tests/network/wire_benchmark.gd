@@ -18,7 +18,6 @@ var legacy := false
 var server_codecs: Array[NetCodec] = []
 var client_codecs: Array[NetCodec] = []
 var expected_states: Array[Dictionary] = []
-var profiles: Array = []
 var decoded_states := 0
 var missing_bases := 0
 
@@ -32,11 +31,6 @@ func run() -> void:
 	legacy = args.has("--legacy")
 	trace = FileAccess.open(args[args.find("--trace") + 1], FileAccess.READ).get_var()
 	if not legacy:
-		for type_id in WeaponRegistry.all_ids():
-			var weapon: WeaponBase = load(WeaponRegistry.scene_of(type_id)).instantiate()
-			if not weapon is LaserWeaponBase:
-				profiles.append(WeaponRegistry.projectile_profile(type_id).merged({"type_id": type_id}))
-			weapon.free()
 		for entry in trace["baselines"]: entry["payload"]["frame"] = compact_frame(entry["payload"]["frame"])
 		for entry in trace["messages"]:
 			if entry["flow"] == 1: entry["payload"] = compact_frame(entry["payload"])
@@ -212,19 +206,10 @@ func finish_phase(started: int) -> Dictionary:
 	print("WIRE END " + phase if not phase.is_empty() else "WIRE END battle")
 	return metrics
 
-# 只用于重放上一提交捕获的完整 Variant 记录，不属于生产协议。
+# 将性能夹具的完整实体记录转换为 STATE。
 func compact_frame(source: Dictionary) -> Dictionary:
 	var frame := source.duplicate(true)
 	frame["own"]["input"] = InputBuffer.neutral().merged(frame["own"]["input"], true)
-	for id in frame["world"]["projectiles"]:
-		var data: Dictionary = frame["world"]["projectiles"][id]
-		var type_id := 0
-		for profile in profiles:
-			if profile["scene"].resource_path == data["scene"] and profile["range"] == data["range"] \
-					and profile["size"] == data["size"] and profile["color"] == data["color"]:
-				type_id = profile["type_id"]
-				break
-		assert(type_id != 0)
-		frame["world"]["projectiles"][id] = {"type_id": type_id, "input_seq": data["input_seq"], "input_epoch": data["input_epoch"], "pos": data["pos"], "vel": data["vel"]}
+	frame["world"].erase("projectiles")
 	for data in frame["world"]["pickups"].values(): data.erase("inst")
 	return frame

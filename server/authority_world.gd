@@ -63,6 +63,7 @@ func setup(mode: String, map_path: String, roles: Array, teams: Dictionary, opti
 		var src: PlayerInput = AiInputSource.new() if ai_roles.has(role) else PacketInputSource.new()
 		player.set_input_source(src)
 		player.role = role
+		player.team = teams.get(role, 0)
 		player.authority_world = self
 		add_child(player)
 		player.set_physics_process(false)
@@ -148,6 +149,8 @@ func add_projectile(bullet: BulletBase) -> void:
 	add_child(bullet)
 	var id := bullet.entity_id
 	projectiles[id] = bullet
+	broadcast(NetEvent.Kind.BULLET_SPAWN, {"id": id, "type_id": bullet.type_id,
+			"pos": bullet.position, "vel": bullet.velocity_vec}, id >> 48)
 	if bullet.explodes:
 		GameLog.record("explosive_spawn", {"tick": _snap_tick, "id": id, "type": bullet.type_id,
 				"position": bullet.position, "velocity": bullet.velocity_vec})
@@ -266,14 +269,11 @@ func world_state() -> Dictionary:
 				"type_id": player.weapons.current_type_id(), "hp": player.hp, "waterproof": player.waterproof, "downed": player.is_downed(),
 				"aim": player.get_current_aim_dir(), "previewing": weapon.is_previewing() if weapon != null else false,
 				"haste": player.pvp_haste_mult > 1.0, "rewind": player.rewinding, "epoch": player.input_buffer.epoch}
-	var bullets := {}
-	for bullet: BulletBase in live_bullets():
-		bullets[bullet.entity_id] = projectile_state(bullet)
 	var drops := {}
 	for pickup: WeaponPickup in pickups.values():
 		drops[pickup.inst] = {"type_id": pickup.type_id, "mag": pickup.mag,
 				"pos": pickup.canonical_pos, "vel": pickup.velocity}
-	return {"players": actors, "projectiles": bullets, "pickups": drops}
+	return {"players": actors, "pickups": drops}
 
 func state_for(role: int, frame: Dictionary) -> Dictionary:
 	var player: CharacterBody2D = players[role]
@@ -528,8 +528,15 @@ func _adjudicate_bullets() -> void:
 				_on_bullet_hit(bullet, players[victim_role], victim_role)
 
 func projectile_state(bullet: BulletBase) -> Dictionary:
-	return {"type_id": bullet.type_id, "input_seq": bullet.input_seq, "input_epoch": bullet.input_epoch,
-			"pos": bullet.position, "vel": bullet.velocity_vec}
+	return {"type_id": bullet.type_id, "pos": bullet.position, "vel": bullet.velocity_vec,
+			"traveled": bullet.traveled, "fuse_active": bullet._fuse_active,
+			"fuse_elapsed": bullet._fuse_elapsed, "fuse_duration": bullet._fuse_duration}
+
+func projectile_states() -> Dictionary:
+	var result := {}
+	for bullet: BulletBase in live_bullets():
+		result[bullet.entity_id] = projectile_state(bullet)
+	return result
 
 func _log_sample() -> void:
 	var actors := {}

@@ -195,7 +195,8 @@ func baseline_for(role: int) -> Dictionary:
 			names[r] = "AI%d" % r
 	return {"code": code, "mode": mode, "role": role, "options": options, "names": names, "hues": hues,
 			"teams": world.rules.teams, "spawns": world.rules.spawns, "map": FileAccess.get_file_as_bytes(MazeGenerator.map_file_path()),
-			"sub_hp": world._terrain_hp.duplicate(), "round_state": world.round_state(), "frame": world.state_for(role, world.world_state())}
+			"sub_hp": world._terrain_hp.duplicate(), "round_state": world.round_state(),
+			"frame": world.state_for(role, world.world_state()), "projectiles": world.projectile_states()}
 
 func send_baseline(role: int) -> void:
 	seats[role]["ready"] = false

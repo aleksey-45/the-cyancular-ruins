@@ -50,11 +50,19 @@ func _run() -> void:
 	world.respawn(1)
 	a.position = Vector2(1000, 1000)
 	var bullet: BulletBase = preload("res://scenes/weapons/bullet.tscn").instantiate()
-	bullet.entity_id = 777
+	bullet.entity_id = (1 << 48) | 777
+	bullet.type_id = 1
 	bullet.shooter = a
 	bullet.authority_world = world
 	bullet.position = Vector2(1050, 1000)
+	var births: Array = []
+	world.event.connect(func(kind: int, data: Variant, except_role: int) -> void:
+		if kind == NetEvent.Kind.BULLET_SPAWN: births.append([data, except_role]))
+	var packet_before := NetCodec.new().encode_state(world.state_for(1, world.world_state()))
 	world.add_projectile(bullet)
+	var packet_after := NetCodec.new().encode_state(world.state_for(1, world.world_state()))
+	assert(packet_before == packet_after and births.size() == 1)
+	assert(births[0][0]["id"] == bullet.entity_id and births[0][1] == 1)
 	bullet.set_physics_process(false)
 	world._snap_tick = 30
 	world.beta.tick(ActorStep.DT)

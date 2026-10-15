@@ -42,7 +42,7 @@ func sample(tick: float) -> Dictionary:
 	var to: Dictionary = frames[1] if frames.size() > 1 else from
 	var weight := clampf((tick - from["tick"]) / maxf(1.0, to["tick"] - from["tick"]), 0.0, 1.0)
 	var result: Dictionary = from["world"].duplicate(true) if weight < 1.0 else to["world"].duplicate(true)
-	for group in ["players", "projectiles", "pickups"]:
+	for group in ["players", "pickups"]:
 		for id in result[group]:
 			var state: Dictionary = result[group][id]
 			if from["world"][group].has(id) and to["world"][group].has(id):

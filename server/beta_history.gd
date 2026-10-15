@@ -18,6 +18,7 @@ func tick(delta: float) -> void:
 			cursors[role] = 0.0
 			player.rewinding = true
 			GameLog.record("beta_rewind_begin", {"tick": world._snap_tick, "role": role, "history": frames[role].size()})
+			_sync_bullets(role, true)
 		elif not want and cursors.has(role):
 			finish(role)
 		if cursors.has(role):
@@ -41,6 +42,8 @@ func tick(delta: float) -> void:
 						bullet.velocity_vec = state["vel"]
 						bullet.apply_rewind_state(state["fuse"])
 						bullet.adjudicated_pos = bullet.position
+			if world._snap_tick % 3 == 0 and world.live_bullets().any(func(bullet: BulletBase) -> bool: return bullet.shooter == player):
+				_sync_bullets(role, true)
 			continue
 		if world._snap_tick % 3 == 0:
 			var bullets := {}
@@ -63,6 +66,14 @@ func finish(role: int) -> void:
 	cursors.erase(role)
 	world.players[role].rewinding = false
 	world.new_epoch(role)
+	_sync_bullets(role, false)
+
+func _sync_bullets(role: int, rewind: bool) -> void:
+	var bullets := {}
+	for bullet: BulletBase in world.live_bullets():
+		if bullet.shooter == world.players[role]:
+			bullets[bullet.entity_id] = world.projectile_state(bullet)
+	world.broadcast(NetEvent.Kind.BULLET_REWIND, {"role": role, "rewind": rewind, "projectiles": bullets})
 
 func reset() -> void:
 	for role in cursors.keys():

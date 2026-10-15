@@ -133,7 +133,7 @@ def main():
         for index, process in enumerate(processes):
             name = "server" if index == 0 else f"client{index - 1}"
             paths = list((folder / name / "diagnostics").glob(f"*-{process.pid}.log"))
-            records = [json.loads(line) for path in paths for line in path.read_text(encoding="utf-8").splitlines()]
+            records = [json.loads(line) for path in paths for line in path.read_text(encoding="utf-8").split("\n")[:-1]]
             events = {record["event"] for record in records}
             expected = {"session_start", "performance", "transport_sample", "world_state", "baseline_send", "player_ready"} if index == 0 else {
                 "session_start", "session_end", "performance", "transport_sample", "client_state", "baseline_ready"}

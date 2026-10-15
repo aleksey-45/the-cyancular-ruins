@@ -57,7 +57,9 @@ func _ready() -> void:
 	add_child(room)
 	NetBus.event_received.connect(func(peer: int, kind: int, data: Variant) -> void:
 		if kind == NetEvent.Kind.MESSAGE and data == "CHECK OK":
-			checked[room.role_of(peer)] = true)
+			checked[room.role_of(peer)] = true
+		elif kind == NetEvent.Kind.READY and trace_done:
+			NetBus.send_event(NetEvent.Kind.MESSAGE, "CHECK CONVERGENCE", peer))
 	NetBus.input_received.connect(func(peer: int, packet: Dictionary) -> void:
 		var role := room.role_of(peer)
 		for action: Dictionary in packet["actions"]:
@@ -225,6 +227,7 @@ func _physics_process(delta: float) -> void:
 # 固定参数仅写入测试记录，生产 STATE 不传这些字段。
 func legacy_world(world: AuthorityWorld) -> Dictionary:
 	var state := world.world_state()
+	state["projectiles"] = {}
 	for bullet: BulletBase in world.live_bullets():
 		state["projectiles"][bullet.entity_id] = {"id": bullet.entity_id, "input_seq": bullet.input_seq, "input_epoch": bullet.input_epoch,
 				"scene": bullet.scene_file_path, "shooter_role": bullet.shooter.role, "pos": bullet.position, "vel": bullet.velocity_vec,

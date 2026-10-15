@@ -3,6 +3,7 @@ extends CharacterBody2D
 var authority_world: Node
 var input_buffer := InputBuffer.new()
 var role := 0
+var team := 0
 var shot_serial := 0
 var input_seq := 0
 var view_tick := 0

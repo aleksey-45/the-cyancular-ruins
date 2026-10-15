@@ -192,6 +192,8 @@ func _check_player_contact() -> void:
 			if d < PLAYER_HIT_RADIUS:
 				if authority_world != null and authority_world.is_friendly(shooter, n):
 					continue
+				if not apply_damage and shooter != null and shooter.team != 0 and shooter.team == n.team:
+					continue
 				start_player_fuse()
 				return
 

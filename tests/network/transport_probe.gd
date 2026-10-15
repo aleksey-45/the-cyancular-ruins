@@ -25,6 +25,8 @@ func run() -> void:
 		var codec := NetCodec.new()
 		var baseline := ProtocolFixture.baseline()
 		baseline["map"] = large
+		baseline["projectiles"] = {(1 << 48) | 777: {"type_id": 5, "pos": Vector2(1000, 500), "vel": Vector2(600, 0),
+				"traveled": 120.0, "fuse_active": true, "fuse_elapsed": 0.35, "fuse_duration": 0.4}}
 		var entries := [[1, MultiplayerPeer.TRANSFER_MODE_UNRELIABLE, codec.encode_input(ProtocolFixture.input())],
 				[2, MultiplayerPeer.TRANSFER_MODE_UNRELIABLE_ORDERED, codec.encode_state(ProtocolFixture.frame())],
 				[0, MultiplayerPeer.TRANSFER_MODE_RELIABLE, codec.encode_event(NetEvent.Kind.BASELINE, baseline)]]

@@ -39,6 +39,7 @@ const HIT_FLASH_RATE := 20.0   # 受击闪白频率
 # 挤压拉伸补间形变组件
 var squash: SquashStretch = null
 var _vel: Vector2 = Vector2.ZERO
+var team := 0
 var _pose: int = 0
 var _prev_vel_y: float = 0.0
 
