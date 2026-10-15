@@ -1,4 +1,4 @@
-# %s
+# 一、既有红
 
 > **本文件从 [`registered-debt.md`](../registered-debt.md) 拆出**（2026-10-13，原文件 888 行 / 126KB 越过了 `CLAUDE.md:5` 那条 64KB 上下文线）。返回索引：[`registered-debt.md`](../registered-debt.md)。
 > ★ 文档会过期 —— **任何冲突以源码为准**，读之前先 `grep` 复核；`文件:行号` 与本仓自述一致地会漂。
