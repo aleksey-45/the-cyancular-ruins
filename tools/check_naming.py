@@ -66,6 +66,47 @@ DOC_FILES = (["README.md", "CLAUDE.md", "RELEASE.md"]
 DOC_EXTS = (".gd", ".tscn", ".json", ".js", ".html", ".cyrm", ".cfg",
             ".shader", ".gdshader", ".bat", ".py", ".md", ".ttf", ".otf", ".png")
 
+# 行号检查(`文件:NNN`)能识别的扩展名 —— 比 DOC_EXTS 宽一点:文档里也会引 `.js`/`.json` 的行号。
+LINE_EXTS = (".gd", ".tscn", ".sh", ".py", ".js", ".json", ".cfg", ".tres",
+             ".gdshader", ".cs", ".html")
+LINE_TOK = re.compile(r'(?<![\w./])([A-Za-z0-9_\-]+\.(?:gd|tscn|sh|py|js|json|cfg|tres|gdshader|cs|html)):(\d+)(?:-(\d+))?')
+_BASENAME_INDEX: dict[str, str] = {}
+
+
+def basename_index() -> dict[str, str]:
+    """文件名 → 仓库内**首个**同名的相对路径(惰性、只建一次)。
+
+    用途 = 行号检查:文档写 `player.gd:987-989` 时,需要找到那个文件才能判断行号是否越界。
+    ★ 同名多文件时取首个(`warn` 级别的不确定性):本仓目前没有"同名不同目录且都被这样引用"的情形;
+      真有的话,行号检查会漏判或误判 —— 所以它只报"**行号超出该文件长度**"这种**一定坏**的情况,
+      不做"行号指向的内容对不对"的判断(那需要读内容,不是机械判据)。
+    """
+    if _BASENAME_INDEX:
+        return _BASENAME_INDEX
+    for root, dirs, files in os.walk(PROJECT):
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS and not d.startswith(".")]
+        for f in files:
+            rel = os.path.relpath(os.path.join(root, f), PROJECT).replace("\\", "/")
+            _BASENAME_INDEX.setdefault(f, rel)
+    return _BASENAME_INDEX
+
+
+def _line_count(rel: str) -> int:
+    try:
+        with open(os.path.join(PROJECT, rel), encoding="utf-8", errors="replace") as fh:
+            return sum(1 for _ in fh)
+    except OSError:
+        return -1
+
+
+_HISTORICAL = ("一次性", "时间点", "不是现行规范", "已封存", "快照")
+
+
+def is_historical_doc(text: str) -> bool:
+    """该文档**自声明**为时间点/快照类 ⇒ 豁免"行号必须存在"检查(但豁免会被**打印出来**,不静默)。"""
+    head = text.split("\n## ", 1)[0]
+    return any(h in head for h in _HISTORICAL)
+
 # ── 已接受的偏差:每条都必须写明**为什么**与**何时销**。
 #    这张表只许变短。新增条目 = 承认又欠了一笔技术债,不是"让检查变绿"的手段。
 ACCEPTED_CLASS_FILES = {
@@ -153,6 +194,8 @@ def check_doc_paths() -> None:
             _fail.append("C 文档不存在: %s(检查表写错了?)" % doc)
             continue
         text = open(full, encoding="utf-8", errors="replace").read()
+        if is_historical_doc(text):
+            _notes.append("C 跳过行号检查(该文档自声明为时间点/快照): %s" % doc)
         for tok in doc_path_violations(text, doc):
             _fail.append("C %s 引用了不存在的路径: %s" % (doc, tok))
 
@@ -179,10 +222,11 @@ def doc_path_violations(text: str, doc: str) -> list[str]:
       没有任何机械守卫。
     """
     GONE = ("已删", "已移除", "已移走", "已移动", "已迁移", "已退休", "已退役",
-            "退役", "不存在", "封存", "被取代", "已作废")
+            "退役", "不存在", "封存", "被取代", "已作废", "过期")
     bad: list[str] = []
     seen: dict[str, bool] = {}          # 路径(或链接解析结果) → 是否不存在
     doc_dir = os.path.dirname(doc)
+    historical = is_historical_doc(text)
 
     def missing(rel: str) -> bool:
         return not os.path.exists(os.path.join(PROJECT, rel.rstrip("/")))
@@ -190,6 +234,22 @@ def doc_path_violations(text: str, doc: str) -> list[str]:
     for line in text.split("\n"):
         if any(g in line for g in GONE):
             continue
+        # ③ 行号越界(`文件:NNN` 而该文件没那么多行)—— 2026-10-13 加,见函数头注释。
+        #    ★ 自声明为"时间点/快照"的文档**豁免**(但要打印出来,不静默):它们的行号是对**当年那份**
+        #      文件的,改掉反而毁掉记录本身。只报"**一定坏**"的情况,不判"行号内容对不对"。
+        if not historical:
+            for m in LINE_TOK.finditer(line):
+                name, a, b = m.group(1), int(m.group(2)), m.group(3)
+                rel = basename_index().get(name)
+                if rel is None:
+                    continue                # 文件不在本仓(netfox / 别条线的工具) ⇒ 无从校验
+                n = _line_count(rel)
+                if n < 0:
+                    continue
+                if (int(b) if b else a) > n:
+                    key = "%s:%s(越界:该文件只有 %d 行)" % (name, m.group(2) + ("-" + b if b else ""), n)
+                    if key not in seen:
+                        seen[key] = True
         for tok in re.findall(r"`([A-Za-z0-9_./:-]+)`", line):
             tok = re.sub(r":\d+(-\d+)?$", "", tok)      # 去掉 `:214` / `:214-215` 这类行号后缀
             if ":" in tok or "/" not in tok or not tok.endswith(DOC_EXTS):
@@ -472,6 +532,17 @@ def self_test() -> int:
     want(len(doc_path_violations("`tests/probe/kh_l1/l3/l4_probe.tscn`", "docs/eng/x.md")) == 1,
          "⑦-⑧ 首段是真目录的简写没被报出 —— ★ 这是**有意**判违规的(歧义路径该改写成明确文件名);"
          "若哪天想放行它,必须先想清楚'歧义简写'与'真路径'怎么区分,别顺手把 ⑦-① 一起放行")
+    # ⑧ 行号越界(2026-10-13 加第三条判据):`文件:NNN` 而该文件没那么多行。
+    want(len(doc_path_violations("见 `player.gd:99999`", "docs/eng/x.md")) == 1,
+         "⑧-① 行号越界没被报出 —— 删掉规则 C 里 ③ 那一段就会绿")
+    want(len(doc_path_violations("见 `player.gd:1-2`", "docs/eng/x.md")) == 0,
+         "⑧-② 正常范围内的行号被误报")
+    want(len(doc_path_violations("外部的 `network-time.gd:9999`(不在本仓)", "docs/eng/x.md")) == 0,
+         "⑧-③ 本仓没有的文件被拿去查行号 —— 无从校验,应跳过")
+    want(len(doc_path_violations("# 某报告\n\n> 这是一次性**时间点**快照,不是现行规范。\n\n见 `player.gd:99999`",
+                                 "docs/eng/x.md")) == 0,
+         "⑧-④ 自声明为时间点/快照的文档没被豁免 —— 它的行号是对**当年那份**文件的,改掉反而毁记录;"
+         "豁免必须能红:去掉 is_historical_doc() 就会绿")
 
     if fails:
         print("— 自测失败 %d 条 —" % len(fails))
