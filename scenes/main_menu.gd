@@ -103,7 +103,7 @@ func _build_ui() -> void:
 # 六颗按钮的接线。★ 文案 / 尺寸 / 档位一个都没动,它们现在住在 .tscn 里(theme_type_variation 就是原来 menu_button 的第 4 个实参)。零守卫:按文案找按钮的 kh_l4_visual_probe 已删·2026-10-09。
 func _wire_menu() -> void:
 	%StartBtn.pressed.connect(_on_single_pressed)
-	# ★★ 联机入口只剩这一颗(三合一,统一大厅 mp_lobby):1v1 / 3v3 / 大乱斗都在那一个页面里按筛选区分。★ 它一律走 PvpSession.reset()(每次进页复位 role/spawn/map_path),不要在这里写任何清凭据的东西:回局凭据要活过「回主菜单」这一步(那正是路径乙的意义),模式归属由各大厅页记房号那一拍(note_room(code, mode))确定。往 reset() 里加回清凭据那四行、或在这里直接清凭据 = 玩家从对局回主菜单、再按这个入口进来时凭据被抹掉 ⇒ 自己那间「对局中」的房恒为灰、回不去(而一行报错都没有)。零守卫:reconnect_smoke 已删·2026-10-09。
+	# ★★ 联机入口只剩这一颗(三合一,统一大厅 mp_lobby):1v1 / 3v3 / 大乱斗都在那一个页面里按筛选区分。★ 它一律走 PvpSession.reset()(每次进页复位 role/spawn/map_path),不要在这里写任何清凭据的东西:回局凭据要活过「回主菜单」这一步(那正是路径乙的意义),模式归属由各大厅页记房号那一拍(note_room(code, mode))确定。往 reset() 里加回清凭据那四行、或在这里直接清凭据 = 玩家从对局回主菜单、再按这个入口进来时凭据被抹掉 ⇒ 自己那间「对局中」的房恒为灰、回不去(而一行报错都没有)。★ 源码级守卫 reconnect_smoke 已删(2026-10-09);**行为级那条在** tests/harness/rejoin_watcher.gd(真链路批,拿"自己那间对局中的房那一行必须可点"当 C1 的验收断言)。
 	%MultiBtn.pressed.connect(func() -> void:
 		Sfx.play("ui")
 		PvpSession.reset()   # 不碰回局凭据(见 pvp_session.gd 的 reset 注释)
