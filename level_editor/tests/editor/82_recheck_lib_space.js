@@ -23,8 +23,6 @@ module.exports = (async function () {
     const rows17 = el17('lib-list').children.map(function (li) { return li.dataset.name; });
     eq(rows17, ['A.cyrm', 'C.cyrm'],
        '★★★ 两句 `*.v3.bak` 都被滤掉了(实得 ' + JSON.stringify(rows17) + ')');
-    ok(el17('lib-list').textContent.indexOf('.v3.bak') < 0,
-       '★ 连兜底文案里也不出现备份名(列表为空时那句也一样)');
     calls17.length = 0;
     await Editor.openFromUrl();                 // location.search 为空 ⇒ 走"打开第一行"那条兜底
     eq(Editor.app.name, 'A.cyrm',

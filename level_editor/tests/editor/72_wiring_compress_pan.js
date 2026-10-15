@@ -21,7 +21,6 @@ module.exports = (async function () {
     // ════ ⑯c 压缩开关 ════
     ok(!!Editor.encodeForWrite && Editor.DEFAULT_COMPRESS === true,
        '★ 默认**勾上**(规格 §3.5:导出面板上的「压缩」默认勾上)');
-    eq(Editor.optCompress(), true, '★ 控件不在/没改过时按默认走');
     const seenOpts16 = [];
     const realEncode16 = globalThis.Io.encodeMap;
     globalThis.Io.encodeMap = function (map, o) {

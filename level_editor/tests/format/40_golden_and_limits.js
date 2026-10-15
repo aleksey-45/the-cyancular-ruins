@@ -119,7 +119,6 @@ await (async function () {
   eq(big.subCols, 1600, '上限尺寸: subCols = 400 格 × 4');
   eq(big.subRows, 1200, '上限尺寸: subRows = 300 格 × 4');
   var bigN = big.subCols * big.subRows;
-  eq(bigN, 1920000, '上限尺寸: 子格总数 = 1600×1200');
   big.layers[1].desc[12345] = Core.neutralDesc(7);          // 场景层:只点一格,其余空气
   big.layers[3].rgba[999] = 0x11223344;                    // 背景层:只点一格
   var enc = await Core.encodeMap(big, { compress: false });
@@ -197,8 +196,6 @@ await (async function () {
   var lie = new Uint8Array(head.length + bombPayload.length);
   lie.set(head, 0);
   lie.set(bombPayload, head.length);
-  ok(4096 <= Core.MAX_BODY_SIZE,
-     '谎报的 body_size 4096 确实能通过「声明侧」那道闸(否则本相验的不是这条)');
   await rejects(function () { return Core.decodeMap(lie); },
     'decodeMap: body_size 谎报成 4096 + 真炸弹,在 inflateBytes 的实际输出上界处被拒',
     'inflateBytes');
@@ -222,10 +219,7 @@ await (async function () {
   sameBytes(await Core.inflateBytes(tiny), [0x63, 0x79, 0x72, 0x6D],
     'inflateBytes: 不传 maxBytes 时仍解出全部内容(向后兼容)');
 
-  // 反向:这道闸不许误伤合法文件 —— 上限尺寸(400×300)的合法 body 最坏约 20MB,64MB 是它的 ≈3.3 倍。
-  // 把这层余量本身变成断言:有人把常量调小到会误拒合法大图时,这条给出的是直接错因(上限尺寸那块的往返断言也会红,但读起来只是"图读不回来了")。
-  ok(Core.MAX_BODY_SIZE > 20 * 1024 * 1024,
-     'MAX_BODY_SIZE: 大于上限尺寸合法文件的最坏 body(≈20MB),不会误拒');
+  // 反向:这道闸不许误伤合法文件 —— 上限尺寸(400×300)的合法 body 最坏约 20MB,64MB 是它的 ≈3.3 倍(常量本身由上面 `=== 64MB` 那条钉住)。
 })();
 
 })();

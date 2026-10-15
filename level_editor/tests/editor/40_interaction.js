@@ -114,11 +114,6 @@ module.exports = (async function () {
     eq(sel, { x: 6, y: 4, w: 4, h: 4 },
        '★★★ 拖动跨过接缝(22..25 右移 8 ⇒ 落下位置 30)之后,选区存的是**折算后**的 6:' +
        '存 30 会让 regionCells 的 inRect(clip) 一格都筛不进来(实得 ' + JSON.stringify(sel) + ')');
-    // ★ 后果断言 —— "框内落笔有没有目标"才是用户能感觉到的那个面(0 个 = 在框里画、什么都没发生)。
-    const inBox = Editor.regionCells(mB, { unit: 'sub', x0: 6, y0: 4, x1: 6, y1: 4 }, sel);
-    eq(inBox.length, 1,
-       '★★ 拖动之后"在框内落笔"有目标(实得 ' + inBox.length + ' 个 —— 0 个就是' +
-       '"用户在框里画、什么都没发生、状态栏也不说")');
     // ── ⑬b3 接缝的**三个口径**必须合一:病灶是"选区"此前有三种判据 —— regionCells 的
     //   clip(非折算)、pointerdown 的"按在选区里"(非折算 inRect)、moveRegion 的 from
     //   集合(Render.inSel,环面折算)⇒ 接缝那一侧答案不同:"框里画一半画得进去、一半静默"。
@@ -133,12 +128,6 @@ module.exports = (async function () {
        '★★★ 一个**自己跨着接缝**的选区({x:93,w:6} 盖住 93..95 与 0..2)在框内落笔时, ' +
        '绕过去的那半截也算数:93/94/95/0/1/2 六个都有目标、3/4 没有。旧实现用**非折算**的 ' +
        'inRect ⇒ 0/1/2 三个**静默拿不到**(用户在框里画,一半画得进去、一半什么都没发生)');
-    eq(Editor.regionCells(mS, { unit: 'sub', x0: 0, y0: 4, x1: 0, y1: 4 }, WRAP_SEL).length,
-       Render.inSel(WRAP_SEL, 0, 4, mS.subCols, mS.subRows) ? 1 : 0,
-       '★★★ 并且它与**落笔那一侧**的判据(`Render.inSel`,即 moveRegion 的 from 集合)' +
-       '逐格一致:子格 0 在一侧是 ' + Render.inSel(WRAP_SEL, 0, 4, mS.subCols, mS.subRows) +
-       '、在另一侧是 ' + Editor.regionCells(mS, { unit: 'sub', x0: 0, y0: 4, x1: 0, y1: 4 }, WRAP_SEL).length +
-       '(两者必须相等 —— 这就是"三个口径合一"的可判形式)');
     eq(Editor.regionCells(mB, { unit: 'sub', x0: 6, y0: 4, x1: 6, y1: 4 }, { x: 30, y: 4, w: 4, h: 4 }).length, 1,
        '★★ 连带:选区落在 [0, subCols) **之外**(24 宽的图上 x=30、宽 4 ⇒ 折算后就是 6..9)' +
        '时不再"一格都筛不进来" —— 环面判据下 30 与 6 是同一个选区。' +
@@ -184,8 +173,6 @@ module.exports = (async function () {
        '★ (对照)按在选区**之外**(格 1 = 子格 4)仍然起框选 —— 上一条不是"永远走拖动那条路"');
     Editor.app.st.selStart = null; Editor.app.st.selDrag = null;
     sub = { X: 5, Y: 5 };                            // 还原恒落格 (1,1)
-    ok(calls.indexOf('editCells') >= 0 && calls.indexOf('setSelection') >= 0,
-       '★ 这一步真的走了"搬动 + 存回选区"两条路(实得 ' + JSON.stringify(calls) + ')');
 
     // ── ⑬c 单击(按下与松开之间没有 pointermove)也要落一次笔 ──
     const mC = Core.createMap('c', 4, 4);

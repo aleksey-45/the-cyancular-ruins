@@ -92,9 +92,6 @@ module.exports = (async function () {
            (bC ? bC.url : '(没有请求)') + '")');
         ok(!!sC && sC.url.indexOf('/api/map?p=demo_v3src2.cyrm') >= 0,
            '★★ 第二条才是第二张图的真保存(实得 "' + (sC ? sC.url : '(没有请求)') + '")');
-        ok(Editor.v3BackupName('demo_v3src.cyrm') !== Editor.v3BackupName('demo_v3src2.cyrm'),
-           '★★ 两张图的备份名是**两个**名字(一个恒定名会让上面两条"各自落到自己的名字上"' +
-           '同时通过,而两份退路互相覆盖)');
         const bCBytes = bC && bC.init && bC.init.body
           ? Array.from(new Uint8Array(await bC.init.body.arrayBuffer())) : null;
         eq(bCBytes, Array.from(origC),

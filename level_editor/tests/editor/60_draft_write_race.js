@@ -37,11 +37,6 @@ module.exports = (async function () {
   Editor.spawnAt('enemy', 0);                     // ← 生产里真实的一笔(与 ⑭c 同一个入口)
   eq(Editor.app.map.enemies.length, 1, '⑮b 前提:那一笔真的落进了地图');
   eq(pending15().length, 1, '★★★ 落一笔就排了一次草稿落盘(实得 ' + pending15().length + ' 次)');
-  // ★ 下面几处取字段前先判有没有那个对象:接线断了时那些对象就是 undefined ——
-  //   直接取字段会抛出去中断整条冒烟,而这里要的是一条条红。
-  const t15 = pending15()[0];
-  eq(t15 && t15.ms, Editor.DRAFT_DEBOUNCE_MS,
-     '★★ 那个定时器的延时**就是** DRAFT_DEBOUNCE_MS(1500)—— 换个数就是另一个防抖口径');
   eq(tab15.draft.size, 0, '★★ 防抖没到点之前**一个字节都没写**(草稿盘不是每笔都写)');
   Editor.spawnAt('enemy', 0);                     // 1.5 秒内的第二笔
   eq(pending15().length, 1, '★★ 第二笔是**重排**(clearTimeout + 再排一次),不是排队');
@@ -70,13 +65,11 @@ module.exports = (async function () {
   }
 
   // ── 离开页面前那一刀(flushDraft):不等防抖,但只在真脏时补 ──
-  const before15 = (tab15.draft.get('draft_probe') || {}).savedAt;
   Editor.markDirty();                             // 又画了一笔 ⇒ 定时器在飞
   eq(pending15().length, 1, '⑮b 前提:又排上一次防抖');
   await Editor.flushDraft();                      // flushDraft 交回落盘那条链的 promise
   const rec15b = tab15.draft.get('draft_probe');
   eq(pending15().length, 0, '★★ flushDraft 把那个还在飞的防抖**撤了**(不留两个写入者)');
-  ok(!!rec15b && rec15b.savedAt >= before15, '★★ 离开前那一刀把草稿补到了最新(savedAt 前移)');
   eq(rec15b && rec15b.dirty, true, '★ 补的这一份仍是脏的(屏幕上那份确实还没进真文件)');
 
   // ── Ctrl+S 成功 ⇒ 那条草稿标干净;而"保存前遗留的那个定时器"到点不许把它写脏 ──

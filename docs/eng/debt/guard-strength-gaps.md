@@ -205,9 +205,9 @@
 
 | 位置 | 判定 | 去掉什么才会红 |
 |---|---|---|
-| `level_editor/tests/format/40_golden_and_limits.js` `MAX_BODY_SIZE > 20MB` / `4096 <= MAX_BODY_SIZE` | 假绿 | 被同分片 `=== 64MB` 蕴含,不可能单独红(实测:改成 21MB 只红那一条) |
-| `tests/format/40` 的 `bigN === 1920000`;`tests/format/20` 的 `probe.size > 256` | 假绿 | 各自被上一条(`1600`+`1200` / `=== 69615`)蕴含 |
-| `tests/format/20` 的 `eq(n, 320)`、`40` 的 `18` / `161` / `181` | 假绿(有意) | 纯夹具算术,对生产代码零覆盖 —— **有意保留**(支撑手推的 `161 = 18+24+28+24+65`),但别计入覆盖 |
+| `level_editor/tests/format/40_golden_and_limits.js` `MAX_BODY_SIZE > 20MB` / `4096 <= MAX_BODY_SIZE` | **已删·2026-10-15**(D1:被 `=== 64MB` 蕴含) | 被同分片 `=== 64MB` 蕴含,不可能单独红(实测:改成 21MB 只红那一条) |
+| `tests/format/40` 的 `bigN === 1920000`;`tests/format/20` 的 `probe.size > 256` | **已删·2026-10-15**(D1:被 `=== 69615` 蕴含) | 各自被上一条(`1600`+`1200` / `=== 69615`)蕴含 |
+| `tests/format/40` 的 `18` / `161` / `181` | 假绿(有意) | 纯夹具算术,对生产代码零覆盖 —— **有意保留**(支撑手推的 `161 = 18+24+28+24+65`),但别计入覆盖。★ 同族的 `eq(n, 320)` 已删(`20*16` 读一眼就能验,是纯算术) |
 | `tests/format/60` 的 `>2 个出生点` | 弱守卫 | 没测"恰好 2 个不该报"(实测 `>2`→`>=2` 全绿) |
 | `tests/format/60` 的 `indexOf('出生点')` / `indexOf('空')` | 弱守卫 | 三条文案都含该词,分不出是哪条在响 ⇒ 建议比 `warnings` 集合或钉整句 |
 | `tests/format/20` 的 `≤256 项 → index_width=1` | 弱守卫 | 只喂了 3 项与 301 项,**256/257 分界无守卫**(实测 `<=256`→`<=255` 全绿) |
@@ -253,22 +253,22 @@
 | 位置 | 判定 | 去掉什么才会红 / 证据 |
 |---|---|---|
 | `level_editor/tests/editor/60_draft_write_race.js` 的"与保存赛跑的那次落盘" | ★★★ **假绿**(夹具排程冒充被测守卫) | 删掉它声称钉住的 `level_editor/ui/75_draft_store.js` 里 `if (rev <= draftSavedRev) return null;` ⇒ **604/0 全绿**;加了打点的强化版更硬:生产**确实写了 `dirty:true`**,而断言报"干净"。根因是替身的 `setTimeout(…,0)` 事务排程让"保存"的那笔后落地,终态与 rev 守卫无关。**销法**:断言前先断言那次竞争写入真的发生,或让替身按创建顺序严格串行化 readwrite 事务(两选一都要重跑一遍本文件) |
-| `level_editor/tests/editor/40_interaction.js` 的"走了搬动+存回选区两条路" | 假绿(stale 累加器) | `calls` 自本相开头未清空,前几相早就压入过(变异:删掉"按在选区里"判定 ⇒ 上游那条红、这条绿) |
-| `level_editor/tests/editor/30_history_clipboard.js` 的 `before` 快照断言 | 假绿 | `applyEntry` 已把 `map.layers` 换成防御性拷贝 ⇒ 与快照脱钩(`snapshotMap` 改 alias 也全绿,同文件另一块才红) |
-| `level_editor/tests/editor/40_interaction.js` 的"与落笔那一侧逐格一致" | ★★ 自洽 oracle | 参照系 ≡ 被测物(`regionCells` 内部就是转调 `Render.inSel`)⇒ `inSel` 改非折算它照绿 |
-| `level_editor/tests/editor/40_interaction.js` 的"0 个就是框里画什么都没发生" | 弱守卫 | 与同文件"`regionCells` 会折算 clip"那条相反 ⇒ 把 `unwrap_sel` 变异掉,上游红它绿 |
+| `level_editor/tests/editor/40_interaction.js` 的"走了搬动+存回选区两条路" | **已删·2026-10-15** 假绿(stale 累加器) | `calls` 自本相开头未清空,前几相早就压入过(变异:删掉"按在选区里"判定 ⇒ 上游那条红、这条绿) |
+| `level_editor/tests/editor/30_history_clipboard.js` 的 `before` 快照断言 | **已删·2026-10-15** 假绿 | `applyEntry` 已把 `map.layers` 换成防御性拷贝 ⇒ 与快照脱钩(`snapshotMap` 改 alias 也全绿,同文件另一块才红) |
+| `level_editor/tests/editor/40_interaction.js` 的"与落笔那一侧逐格一致" | **已删·2026-10-15** ★★ 自洽 oracle | 参照系 ≡ 被测物(`regionCells` 内部就是转调 `Render.inSel`)⇒ `inSel` 改非折算它照绿 |
+| `level_editor/tests/editor/40_interaction.js` 的"0 个就是框里画什么都没发生" | **已删·2026-10-15** 弱守卫 | 与同文件"`regionCells` 会折算 clip"那条相反 ⇒ 把 `unwrap_sel` 变异掉,上游红它绿 |
 | `level_editor/tests/editor/42_boot_ui_state.js` 头注「走真序列 `readUiState → setAtlas → applyUiState`」 | 弱守卫 | 三步全是测试自己调的,`bootLoad` 一次没跑(把 `level_editor/ui/92_boot.js` 的 `readUiState` 挪到 `loadAtlas()` 之后 ⇒ 604/0 全绿) |
-| `level_editor/tests/editor/60_draft_write_race.js` 的 `t15.ms === DRAFT_DEBOUNCE_MS`、`level_editor/tests/editor/50_save_names_persist.js` 的 `DRAFT_DEBOUNCE_MS >= 500` | 弱守卫 | 期望值就是被测常量 ⇒ 改成 30000 仍绿 |
-| `level_editor/tests/editor/60_draft_write_race.js` 的 `savedAt >= before` | 弱守卫 | 文案说"前移",判据是 `>=` ⇒ `flushDraft` 变空转本条照绿 |
-| `level_editor/tests/editor/50_save_names_persist.js` 的"同名得到同一个备份名" | 弱守卫 | 同一表达式调两次比相等 ⇒ 只挡非确定性 |
-| `level_editor/tests/editor/54_save_backup_boot.js` 的 `v3BackupName(a) !== v3BackupName(b)` | 弱守卫(重复) | 与 `level_editor/tests/editor/50_save_names_persist.js` 的同源同事实(D4) |
+| `level_editor/tests/editor/60_draft_write_race.js` 的 `t15.ms === DRAFT_DEBOUNCE_MS` | **已删·2026-10-15** 弱守卫 | 期望值就是被测常量(改成 30000 仍绿)。★ 同相位的 `level_editor/tests/editor/50_save_names_persist.js` 的 `DRAFT_DEBOUNCE_MS >= 500` **留着** —— 它至少钉住"有防抖"这个量级 |
+| `level_editor/tests/editor/60_draft_write_race.js` 的 `savedAt >= before` | **已删·2026-10-15** 弱守卫 | 文案说"前移",判据是 `>=` ⇒ `flushDraft` 变空转本条照绿 |
+| `level_editor/tests/editor/50_save_names_persist.js` 的"同名得到同一个备份名" | **已删·2026-10-15** 弱守卫 | 同一表达式调两次比相等 ⇒ 只挡非确定性 |
+| `level_editor/tests/editor/54_save_backup_boot.js` 的 `v3BackupName(a) !== v3BackupName(b)` | **已删·2026-10-15** 弱守卫(重复) | 与 `level_editor/tests/editor/50_save_names_persist.js` 的同源同事实(D4) |
 | `level_editor/tests/editor/54_save_backup_boot.js` 的两条 `indexOf(子串)` 确认框断言 | 弱守卫 | 查子串不查整句 |
 | `level_editor/tests/editor/66_draft_crash_evict.js` 的 `count >= 1` | 弱守卫 | `>=1`,问两次也过 |
 | `level_editor/tests/editor/66_draft_crash_evict.js` 的 getAll/cursor/keys 记账 | OK 但结构敏感 | **有牙齿**(删早退 / 换游标类型都红),登记为"代价形状"而非行为 |
-| `level_editor/tests/editor/62_draft_restore_boot.js` 的 `tg-grid.classList.contains('on') === false` | 假绿 | 夹具喂的 `grid:false` 正好等于替身默认态 ⇒"没碰 DOM"与"按回去了"同形 |
-| `level_editor/tests/editor/82_recheck_lib_space.js` 的"兜底文案里不出现备份名" | 假绿(**node 侧不可能红**) | 替身的 `textContent` 不像真 DOM 那样聚合子节点文本 ⇒ 删掉 `level_editor/ui/90_open.js` 的 `.filter(!isBackupName)` 本条照绿(列表里真有 2 行 `.v3.bak`)—— 真实浏览器里会红 |
+| `level_editor/tests/editor/62_draft_restore_boot.js` 的 `tg-grid.classList.contains('on') === false` | **已删·2026-10-15** 假绿(⇒ `#tg-grid` 的 DOM 回写**零覆盖**) | 夹具喂的 `grid:false` 正好等于替身默认态 ⇒"没碰 DOM"与"按回去了"同形 |
+| `level_editor/tests/editor/82_recheck_lib_space.js` 的"兜底文案里不出现备份名" | **已删·2026-10-15** 假绿(node 侧不可能红) | 替身的 `textContent` 不像真 DOM 那样聚合子节点文本 ⇒ 删掉 `level_editor/ui/90_open.js` 的 `.filter(!isBackupName)` 本条照绿(列表里真有 2 行 `.v3.bak`)—— 真实浏览器里会红 |
 | `level_editor/tests/editor/54_save_backup_boot.js` 的 `desc-only` 整行隐藏 | 假绿 | 夹具把 `parentNode` 直连 `.desc-row` 替身,抹掉了唯一需要上溯的那层(真结构是 `div.desc-row > label > input`) |
-| `level_editor/tests/editor/72_wiring_compress_pan.js` 的"控件不在时按默认走" | 假绿 | 替身的 `getElementById` 永不返回 null ⇒ `DEFAULT_COMPRESS` 分支不可达 |
+| `level_editor/tests/editor/72_wiring_compress_pan.js` 的"控件不在时按默认走" | **已删·2026-10-15** 假绿(⇒ `DEFAULT_COMPRESS` 分支**零覆盖**) | 替身的 `getElementById` 永不返回 null ⇒ `DEFAULT_COMPRESS` 分支不可达 |
 | `level_editor/ui/75_draft_store.js` 的"恢复时写回 `app.name`" | 覆盖率缺口 | 删掉全绿 |
 | `level_editor/ui/80_ui_state.js` 对 `#dim-others` / `#brush-size` / `#tg-subgrid` / `#tg-torus` 的 DOM 写回 | 覆盖率缺口 | `grep` 全 `level_editor/tests/editor/` **零命中** |
 | `level_editor/ui/70_draft.js` 的 `if (!dirty) return` 早退 | 覆盖率缺口 | 删掉全绿 |
@@ -276,8 +276,15 @@
 | `level_editor/tests/editor/62_draft_restore_boot.js`(整片删掉) | 红的原因不对 | 3 条失败全落在 `level_editor/tests/editor/64_draft_guard.js` 里,文案与"少了一个分片"无关 |
 | `level_editor/tests/server/20_static_read_failure.js`、`level_editor/tests/server/50_write_gates.js` 的自跳过分支 | 弱守卫 | 自跳过打印 `--` 而**不计入断言**,也没有"skip==0"闸 ⇒ 非 Windows / 建不了链接的机器上整个相位静默消失而判词照绿(本机两条都真跑了) |
 | `level_editor/tests/harness.js` 的 `minChecks` 闸(§19 ⑤ 已加) | 残留弱点 | 判据是**全局总数 `>=` 手抄字面量** ⇒"一个分片死掉 + 别处新增等量断言"仍可全绿,且数字要人工随增删同步(§二 那条"重复真相源+守卫"的税) |
+| `level_editor/tests/editor/10_core_tools.js` 的两条 `lerpRGBA` 断言(黑白 t=0.5 / 同色 t=1) | **已删·2026-10-15** 假绿 | 代入的是**对称/退化特殊值**:`t=0.5` 与"同色"在 t↔1−t 反转下都不变 ⇒ `lerp_invert` 变异下仍绿(只有渐变端点那两条红) |
+| `level_editor/tests/editor/20_hotkeys_errors.js` 的 URL 子串断言 | 弱守卫 | 多拼参数也过、文件名不需转义 ⇒ `encodeURIComponent` 无覆盖 |
+| `level_editor/tests/editor/10_core_tools.js` 的 `eq(job.runChunk(4), {…})` | 脆性 | `eq` 走 `JSON.stringify` ⇒ **钉住键序**(只换 `level_editor/ui/20_tools.js` 的键序、行为零变化也会红) |
+| `level_editor/tests/editor/40_interaction.js` 把「跨接缝框选 = 整整一行」这个**已知缺陷**钉成期望 | 脆性(反向) | 谁修好谁红 ⇒ 建议移进 `known-red.md` 或改成容忍两种(缺陷本身登记在 `tools.md` §5 ①) |
+| `level_editor/tests/editor/30_history_clipboard.js` 的 `bytesOfEntry(whole) === 0` | 弱守卫 | 对"字节数"不敏感(有牙的是相邻两条) |
+| `level_editor/tests/editor/10_core_tools.js` / `level_editor/tests/editor/42_boot_ui_state.js` 依赖"此刻图集容量 0" | 脆性 | 说的是**套件全局状态**,不是行为 |
 | `level_editor/editor_smoke.js` 的 `PARTS` 清单 | 弱守卫 | 手抄,无"与目录对账"守卫(新加一个测试分片文件却忘了登记 ⇒ **静默不跑**,而条数闸只挡"变少"不挡"新文件没登记") |
 
+   - ★ **2026-10-15 销毁批次(18 条)**:标 `**已删·2026-10-15**` 的行 = 断言已按 D 组删掉 —— 被前一条蕴含(D1)、纯算术夹具、同源重复(D4)、**代入对称/退化特殊值**、**替身喂默认态/返回类型不可达**五类。删后 `smoke` **336 → 331**、`editor` **604 → 591**,条数闸同步更新(它正是被这次删除拦下来的);销毁前后各重跑一遍原变异,**六条承重变异(跨全长背景层 / 无条件实心 / `setDimOthers` / 工具条接线 / 替身少方法 / 中性档挪位)全部照红** ⇒ 删掉的是死重,不是牙齿。
    - **怎么销**(按性价比):① 60 那条**假绿**优先(它挡的是"草稿被重新写脏 ⇒ 下次开机弹假恢复提示",已有两条备选修法);
      ② `42` 的"真序列"可以**真调一次 `bootLoad`**(替身齐全的前提下)把三步变成生产驱动;
      ③ 覆盖率缺口里 `dim-others` / `brush-size` / `tg-subgrid` / `tg-torus` 四条最便宜(补四行 DOM 断言);

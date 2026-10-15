@@ -186,8 +186,6 @@ module.exports = (async function () {
   const mid = byIdx[3];
   ok(((mid >>> 8) & 255) > 100 && ((mid >>> 8) & 255) < 160,
      '★ 中点是插值出来的灰(实得 ' + ((mid >>> 8) & 255) + ',应在 100~160)');
-  eq(Editor.lerpRGBA(0x00000000, 0xFFFFFFFF, 0.5), 0x80808080, 'lerpRGBA: 半程插值(每通道独立四舍五入)');
-  eq(Editor.lerpRGBA(0x11223344, 0x11223344, 1), 0x11223344, 'lerpRGBA: t=1 → 终点色');
   throws(function () {
     Editor.createGradientJob(mg, { x: 0, y: 0 }, { x: 3, y: 0 }, 0, 0, { layer: Core.LAYER_SCENE });
   }, '★ 渐变用在纹理层 → 抛错(规格 §4.4:渐变**仅背景层**)', '背景层');

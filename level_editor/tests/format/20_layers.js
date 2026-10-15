@@ -66,12 +66,10 @@ await (async function () {
   var PROBE_N = 17 * 4095;                 // 覆盖下界测试用到的全部 (texture, block) 组合
   var probe = new Set();
   for (var q = 0; q < PROBE_N; q++) probe.add(distinctDesc(q));
-  eq(probe.size, PROBE_N, 'A2: distinctDesc 在 ' + PROBE_N + ' 个 i 上两两不同(构造前提自证)');
-  ok(probe.size > 256, 'A2: 描述符种类确实超过 256(否则走不到双字节索引)');
+  eq(probe.size, PROBE_N, 'A2: distinctDesc 在 ' + PROBE_N + ' 个 i 上两两不同(构造前提自证;69615 > 256 ⇒ 走得到双字节索引)');
 
   // ── ① 300 种描述符 → index_width 必须是 2,往返逐格一致,长度与手算公式相符 ──
-  var subCols = 20, subRows = 16, n = subCols * subRows;    // 320 个子格
-  eq(n, 320, 'A2: 样本子格数 320(放得下 300 种 + 空气,且余 20 格空气)');
+  var subCols = 20, subRows = 16, n = subCols * subRows;    // 320 个子格:放得下 300 种 + 空气,余 20 格
   var desc = new Uint32Array(n);
   for (var i = 0; i < 300; i++) desc[i] = distinctDesc(i);
   var encL = Core.encodeTexLayer(desc, subCols, subRows);

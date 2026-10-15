@@ -78,8 +78,6 @@ module.exports = (async function () {
   ok(calls15.indexOf('setLayer:3') >= 0, '★ setLayer 收到的是存下来的那一层(3=背景)');
   ok(calls15.indexOf('setGrid:false') >= 0 && calls15.indexOf('setTorus:false') >= 0,
      '★ 两个开关也按回去了(setGrid/setTorus 收到 false)');
-  eq(el15('tg-grid').classList.contains('on'), false,
-     '★★ DOM 与状态**一致**(开关显示关着 —— 否则"页面显示的"与"实际用的"是两回事)');
   // ★★★ 上面那条只证明"渲染层收到了 3"。**面板与图层行是另一回事**(它们由 ui 那一层的
   //     `setLayer` 管):只调 `app.r.setLayer` 的话,屏幕右侧仍摆着纹理调色板、`.cur` 仍钉在
   //     「场景」行上,而刷子已经画到背景层了 —— 用户看到的与正在发生的不是一回事,且不报错。

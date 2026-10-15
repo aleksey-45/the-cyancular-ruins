@@ -32,8 +32,6 @@ eq(Editor.needsV3Backup('v3', null, backed14), false, '还没有落过盘的新�
 //    金值钉住方案本身不漂,后面两组钉住"两个不同的文件名不许落到同一格"。
 eq(Editor.v3BackupName('demo.cyrm'), 'demo_c9869709.v3.bak',
    '★★ 备份名 = `<基名>_<FNV-1a 32 位十六进制>.v3.bak`(金值;换哈希 / 换截断长度都会红)');
-eq(Editor.v3BackupName('demo.cyrm'), Editor.v3BackupName('demo.cyrm'),
-   '★★ 同一个文件名**每次**得到同一个备份名(确定性:不然同一张图每次保存都另开一份退路)');
 eq(Editor.v3BackupName('demo.cyrm').toLowerCase().endsWith('.cyrm'), false,
    '★★★ 备份名**不以 `.cyrm` 结尾** —— 游戏 `_random_cyrm` 的 `.ends_with(".cyrm")` 抽不到它');
 eq(Editor.v3BackupName('图 1.cyrm'), '1_a67de2f9.v3.bak',

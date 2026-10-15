@@ -103,9 +103,7 @@ module.exports = (async function () {
   Editor.applyEntry(hz, zd.entry, -1);
   eq(hz.layers[Core.LAYER_SCENE].desc[0], Core.neutralDesc(4), '撤销改尺寸后内容回到 before');
   const zp = Editor.paintCells(hz, Core.LAYER_SCENE, [0], function () { return Core.neutralDesc(9); });
-  ok(zp !== null, '撤销之后落笔产出差量(下面两条才有意义)');
-  eq(zd.entry.before.layers[Core.LAYER_SCENE].desc[0], Core.neutralDesc(4),
-     '★★ 落笔**没写进历史条目的 before 快照**(alias 实现下这里会变成 9)');
+  ok(zp !== null, '撤销之后落笔产出差量(下面那条才有意义)');
   Editor.applyEntry(hz, zd.entry, -1);
   eq(hz.layers[Core.LAYER_SCENE].desc[0], Core.neutralDesc(4),
      '★★ 撤销改尺寸 → 落一笔 → 再撤销:地图回到**原始**状态,不是被污染的 before');
