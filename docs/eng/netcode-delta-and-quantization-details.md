@@ -262,4 +262,4 @@ Gaffer《Reliability and Congestion Avoidance over UDP》+《Snapshot Compressio
 | T1「世界 + 本人合包，每客户端每帧一条」 | ⚠️ 与 T3 **有隐藏冲突**（细节表 #15）⇒ **T1 动手前先定这一条**，否则 T3 会推翻 T1 的合包方式 |
 | T1 Interfaces「不变：…输入包」 | ⚠️ T3 会碰**输入包**（§2.6）⇒ **需订正** |
 | T2「量测含线上字节」 | ✅ 方向对；★ **补充**：还要读 `PEER_PACKET_THROTTLE`/`PEER_PACKET_LOSS`/`PEER_ROUND_TRIP_TIME`，否则分不清"网络丢的"与"ENet 主动丢的"（§6.2） |
-| T2「口径对齐 `tunnel_feel_report.py`」 | ⚠️ 那是**二手**（另一条线自研工具）⇒ 可作线索、**不作来源**；一手口径用 Gaffer §6.1（RTT 平滑 10%、1 s 未 ack 判丢、二值速率） |
+| T2「口径对齐 `tunnel_feel_report.py`」 | ⚠️ 那是**二手**（另一条线自研工具，**不在本仓**）⇒ 可作线索、**不作来源**；一手口径用 Gaffer §6.1（RTT 平滑 10%、1 s 未 ack 判丢、二值速率） |

@@ -119,7 +119,7 @@
 
 **只拿到片段 / 只有元数据**
 - Ramjee 1994（IEEE）：**摘要 + 元数据**（两份索引均确认 closed）
-- `netfox` 的 `.gd` 源码（`network-time.gd` / `network-time-synchronizer.gd` / `tick-interpolator.gd`）：**未读**（见下）
+- `netfox` 的 `.gd` 源码（`network-time.gd` / `network-time-synchronizer.gd` / `tick-interpolator.gd` —— **都在 netfox 插件里、不在本仓**，`grep` 找不到它们是正常的）：**未读**（见下）
 - `com.unity.netcode.gameobjects` 的 `.cs` 源码：**未读**（见下）
 
 **取不到（逐个原因）**

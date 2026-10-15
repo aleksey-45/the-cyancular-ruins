@@ -1,5 +1,16 @@
 # 设计与主流规范审计（2026-10-04）
 
+> ★★ **这是「某个时间点的一次性审计报告」,不是现行规范** —— 不要拿它当规范读。
+> 它当初服务的范围:**2026-10-04** 那一轮「有没有不符合主流规范、明显不合理的设计」的全仓审计,
+> 覆盖 6 个域(联机 / 世界几何 / 渲染表现 / UI / 玩家武器敌人 / 工程测试工具)。
+> 里面的**结论、行号、计数与"理由出处"都可能已被后续改动推翻或漂移** —— 它只是**历史记录**,
+> 引用前必须重新 `grep` 复核。★ **现行规范以源码与 [`docs/eng/`](.) 下的域文档为准**;
+> 本文件只在需要**回溯"当时为什么这么判"**时才读(逐条复核结论见
+> [`conventions-review-2026-10.md`](conventions-review-2026-10.md))。
+> ★ 正文里凡标着 `（已删·…）` 的守卫**都已不存在** —— **不要**因为路径还在句子里就以为守卫还在。
+> 2026-10-09 那一批删了什么、留了什么、代价是什么,台账
+> [`2026-10-09-test-surface-cut-90-design.md`](../superpowers/specs/2026-10-09-test-surface-cut-90-design.md)。
+
 > **这是什么**：一次针对「有没有不符合主流规范、明显不合理的设计」的全仓审计记录。覆盖 6 个域
 > （联机 / 世界几何 / 渲染表现 / UI / 玩家武器敌人 / 工程测试工具），由 6 个只读子代理分头读代码，
 > 逐条结论再由审计者**抽读原文复核**（复核中发现并纠正了子代理的两处判断，见 §6）。
@@ -21,7 +32,7 @@
 "为什么"（为什么不用引擎复制节点、为什么杀端口、为什么参数不从 autoload 取），而且**比主流更严**
 的地方不少 —— `net_bus.gd:105-121` 判活读 ENet peer 自己的 state 而非滞后的 `get_peers()`；
 `tests/probe/allscript_probe.gd:17-35` 有覆盖面下限（fail-closed 而非 fail-open）；
-`tests/smoke/menu_theme_mirror_smoke.gd` 的 Theme 镜像守卫读的是**生产产出**并带条数闸。
+`tests/smoke/menu_theme_mirror_smoke.gd`（已删·2026-10-09）的 Theme 镜像守卫读的是**生产产出**并带条数闸。
 
 真正的问题集中在三类：
 
@@ -48,7 +59,7 @@
 >   下一局"客户端有墙、服务器没有"⇒ **可穿墙**。已修(`server/match/match_round.gd`)。
 >
 > 守卫:`tests/probe/tile_collision_probe.gd` **相③b**(格级销毁无幽灵砖)+ **相④b**(回溯含格级 HP);
-> `tests/probe/destroyed_cells_probe.gd` 相③/相⑥(服务器拆砖 + 复位两套表)。逐轮裁决与偏离追认见
+> `tests/probe/destroyed_cells_probe.gd`（已删·2026-10-09）相③/相⑥(服务器拆砖 + 复位两套表)。逐轮裁决与偏离追认见
 > [`plans/2026-10-04-tile-destruction-consistency.md`](../superpowers/plans/2026-10-04-tile-destruction-consistency.md)。
 > ★ **仍未闭环**:真链路(占 7777)端到端未跑 ⇒ "真 PvP 局可达"目前只算**静态可达 + 单进程探针覆盖**。
 
@@ -100,7 +111,7 @@
 
 > ★ **2026-10-04 已修** —— 本节描述的是**修前**状态。`b2f4134` 已把 `[debug]` 三键按 `6b5f3fb` 的原样补回
 > （`file_logging/enable_file_logging` / `enable_file_logging.pc` / `max_log_files=64`），并配了常驻守卫
-> `tests/smoke/project_settings_smoke.gd`。★ 守卫的**承重断言是"读 `project.godot` 原文判三行逐字存在"** ——
+> `tests/smoke/project_settings_smoke.gd`（已删·2026-10-09）。★ 守卫的**承重断言是"读 `project.godot` 原文判三行逐字存在"** ——
 > 实现者拿空工程实测：`has_setting(...)` 对这三个**引擎内置**键**恒真**（连本仓从未写过的 `log_path` 也返回 true），
 > 而 `.pc` 的引擎默认值本就是 `true` ⇒ 只断言"存在/为真"**拦不住** `d6d2440` 那种"键名被乱码吞掉"的事故。
 > 覆盖上限：测不到"日志**真的**落到 `user://logs/`"，也测不到**导出模板的 release 半边**（见 [`registered-debt.md`](registered-debt.md) §五）。
@@ -230,7 +241,7 @@ window/stretch/mode="viewport"
 | 2.5 | **玩家域靠字符串反射读写**，静态检查全失效 | `scenes/player/player.gd:964` `wc.get("_current_index")`、`:965` `wc.call("equip_index", int(d["widx"]))`、`:968` `live2.set("mag_ammo", int(d["wlive"]))`；`scenes/player/swim_component.gd:31` `tm = float(parent.get("pvp_haste_mult"))` | 根因是根节点**没有 `class_name`**（`scenes/player/player.gd:1` `extends CharacterBody2D`）。同文件别处又是静态点号（`:712` `if by_inst and weapons._current_index >= 0:`），`WeaponComponent` 也确有真方法（`weapon_component.gd:220` `func equip_index`、`:461` `func current_weapon`）⇒ 反射纯属多余，重命名只会**静默失效** |
 | 2.6 | **"兜底读宿主真实输入"** 还有 4 处 | `scenes/weapons/weapon_base.gd:223/228/233`（`has_method` 不成立即 `return Input.is_action_*("attack")`）；`scenes/player/swim_component.gd:13-15` `# src=null(冒烟等直接调用)回落真实 Input` → `src = LocalInputSource.new()` | 同类坑本仓**已经踩过一次**并留下注释：`core/net/ai_input_source.gd:63-67` "AI 没有鼠标(服务器 headless),不覆写就会让它去读**宿主机的真实鼠标位置** —— 瞄准变成随服务器桌面而变的随机值"。瞄准修了，攻击/游泳这两处同形状的兜底没修 |
 | 2.7 | **菜单没有键盘/手柄焦点入口** | `grep grab_focus\|focus_neighbor` 生产代码 **0 命中**（只有 gitignore 的 `.superpowers/sdd/_gen/*` 里有）；唯一被处理的是返回：`scenes/settings_menu.gd:142` `if event.is_action_pressed("ui_cancel"):` | Godot 不自动点亮首个可聚焦控件 ⇒ 冷启动后 Tab/方向键/手柄一个按钮都到不了。而 `scenes/mp_lobby.gd:506/509` 专门改过 `focus_mode`，说明机制被用过、只是没喂初值 |
-| 2.8 | **零 i18n** | `tr("` 全仓 **0 命中**、`TranslationServer`/`tr_n(` **0 命中**、无 `.po/.csv/.translation`、`project.godot` 无 `internationalization` 段 —— 且项目文档**没有一处**把它写成有意取舍 ⇒ 标不了"有理由"。量级：子代理实测 `ui/`+`scenes/` 约 **328** 处中文串面（❓ 该计数我未复核） | 迁进 `.tscn` 后文案又多一种落点；且多条探针**按文案找控件**（`scenes/main_menu.gd:204` 自述 `kh_l4_visual_probe` 按文案找按钮）⇒ 改文案 = 改测试。真要 i18n，得先把探针判据换成 `unique_name_in_owner`/`meta` |
+| 2.8 | **零 i18n** | `tr("` 全仓 **0 命中**、`TranslationServer`/`tr_n(` **0 命中**、无 `.po/.csv/.translation`、`project.godot` 无 `internationalization` 段 —— 且项目文档**没有一处**把它写成有意取舍 ⇒ 标不了"有理由"。量级：子代理实测 `ui/`+`scenes/` 约 **328** 处中文串面（❓ 该计数我未复核） | 迁进 `.tscn` 后文案又多一种落点；且多条探针**按文案找控件**（`scenes/main_menu.gd:204` 自述 `kh_l4_visual_probe`（已删·2026-10-09）按文案找按钮）⇒ 改文案 = 改测试。真要 i18n，得先把探针判据换成 `unique_name_in_owner`/`meta` |
 | 2.9 | **无 CI、无聚合回归入口**；判据靠逐脚本自造文本行 | 无 `.github`；`tools/check_naming.py:9` 自称"检查,有违规 → exit 1(CI/本地都能用)"但没人调它。覆盖缺口：`EXPECTED_CHECKS` 只在 **18/152** 个测试脚本里（实测），`tests/lib/probe_base.gd:49-53` 自己写明盲区"**✓ 汇总行 + ALL-OK 并不蕴含'这一组跑过'**"，`tools/room_sweep_lint.gd:61` 有实例（"而 verdict **仍是 `SMOKE_ROOM_SWEEP OK`** —— 那一组断言被静默跳过"） | 主流用 GUT/gdUnit4 + CI 拿 JUnit XML 与退出码。★ 本仓**已有**退出码通道：`probe_base.gd:61-64` 真调 `quit(0/1)`，只是文档统一要求"判据取 grep 文本"⇒ 现成通道被浪费。另：`--quit-after` 值实测有 8 种（3600×46、600×6、54000、36000、14400、10800、7200、300），"统一 3600"只活在文档里；11 个 `.sh` **无一**自己 `timeout`（`team_match_probe.sh:4` 那条只是**注释**里教人怎么包） |
 | 2.10 | **守卫有盲区，恰好盖住唯一的违规** | `tools/check_naming.py:69-73` 在项目根 `if rel == ".": continue` ⇒ 规则 A（目录名一律小写）**从不检查顶层目录**。实测 `python tools/check_naming.py` 打 `命名检查 OK` 并 exit 0，而当时顶层就躺着大写的 `DevTools/`（且 `SKIP_DIRS:34` 未收录它；★ 2026-10-04：`DevTools/` 已 `git rm` 出库 —— **盲区本身仍未修**） | 正对上本仓自己的硬规则"**守卫能给的保证总是比它读起来少**"。修法：把 `continue` 改成跳过 `rel == "."` 这个**自身**而不是跳过它的子目录 |
 | 2.11 | **自订规则被自己违反，且没机制守** | `AGENTS.md:103` 要求 `.ps1` 纯 ASCII+CRLF，而 `tools/gamelog/capture_session.ps1` 有 **49 行非 ASCII**（靠 UTF-8 BOM 侥幸）；`start_server.bat:4` 那句自述已被 `b815c68` 改写（现文只说 CRLF 由 `.gitattributes` 钉住、**命令**保持 ASCII，不再自称 pure ASCII）；`.gitattributes` **现已钉 `*.bat text eol=crlf`** ⇒ 本行"从未被机制覆盖"**已不再成立**（存量索引 EOL 自己查 `git ls-files --eol '*.bat'`） | 规则只存在于文档；`.bat` 那条从未被机制覆盖。cmd.exe 对角/多行 `for` 块的 LF 容忍度是出了名的差 |
@@ -251,7 +262,7 @@ window/stretch/mode="viewport"
 >    `scenes/weapons/weapon_base.gd:211`（武器 `_ready`，即换枪时）与 `core/present/laser_visual.gd:38/42`
 >    （每次生成激光视觉）⇒ 它是"**每次调用重建** 16×16 双层 `set_pixel`"，**不属于"每帧白给"那一组**。
 >    真正的每帧项只有榴弹的组查询、`watch_hud` 的无脏标记、`enemy_bullet._wrap()` 的组人数查询。
-> 3. **"镜像守卫取的是生产值"这句是错的**：`tests/smoke/menu_theme_mirror_smoke.gd:189-190`
+> 3. **"镜像守卫取的是生产值"这句是错的**：`tests/smoke/menu_theme_mirror_smoke.gd`（已删·2026-10-09）`:189-190`
 >    `F.call("skin_menu_panel", outer, Vector2(64, 46))` 与 `:200` `F.call("header_strip", "标题", 32)`
 >    传的是**守卫自己写死的字面量**。它证明的只是"给定 padding 时 Theme 与生产皮逐值一致"，
 >    **不证明"生成器与生产同一个来源"**。⇒ 缺口在**入参**而非读取路径，而且**这条订正让原结论更强**：
@@ -271,7 +282,7 @@ window/stretch/mode="viewport"
   `body.content_margin_left = 64.0` / `..._top = 46.0`，生产侧唯一来源是
   `ui/factory/ui_factory.gd:305` `static func menu_panel(padding: Vector2 = Vector2(64, 46))`；
   而**镜像守卫**取生产值用的却是 `F.call("skin_menu_panel", outer, Vector2(64, 46))`
-  （`tests/smoke/menu_theme_mirror_smoke.gd:190/200`）⇒ 同一份派生逻辑"守卫里有、生成器里没有"。
+  （`tests/smoke/menu_theme_mirror_smoke.gd`（已删·2026-10-09）`:190/200`）⇒ 同一份派生逻辑"守卫里有、生成器里没有"。
   `registered-debt.md:28` 还把这条链记为**范本**（★ 2026-10-04 订正：原写 `:24`）。
 - **数值三处不符**（`✅`）：黑鸟瞬移真值 `core/config/enemy_params.gd:95-96` = **2~6 格**，
   注释 `scenes/enemies/enemy_black_bird.gd:249` 写 **3~8**（★ 2026-10-04 订正：原写 `:5`），
@@ -325,7 +336,7 @@ window/stretch/mode="viewport"
   —— v4 子格表已是 4×4（同文件 `:25` 的正确写法是 `Vector2i(sub.x / 4, sub.y / 4)`），修前清到了别处、
   真砖一格没清。★ 严重度**已在 §3 顶部订正块第 4 条改为高**（可达性**不**限于 `--test-destroy-tile`：
   真 PvP 局里服务器侧激光走格级 `damage_tile` 就能触发）；现已修为 `match_combat.gd:18-22` 的 4×4，
-  并有 `destroyed_cells_probe` 相③ 守卫。
+  并有 `destroyed_cells_probe`（已删·2026-10-09）相③ 守卫。
 - **`docs/eng/world.md:9` 与源码相反**（`✅`）：文档写"游戏侧读的只有 v3 文本与旧字母格式两种
   （编辑器**写**的是 v4 二进制，**游戏还读不了**）"，而 `core/sim/map_format.gd:89`
   `static func is_v4(path: String) -> bool: return MapFormatV4.is_v4_data(_read_bytes(path))`
@@ -424,7 +435,7 @@ window/stretch/mode="viewport"
 | 不承担反作弊（无 DTLS、join 无限速、令牌明文） | `lobby_rooms.gd:233`「**不防**恶意爆破(本设计不承担反作弊)」；`gdbuild:22` `module_mbedtls_enabled: false` 是裁剪换体积 |
 | cyrm v3 只读分支保留 | `docs/2026-09-20-cyrm-v4-handover.md:241` 明写作为**只读迁移入口**；现存两图均已是 v4 |
 | 环面上的浮点边界（`wrap_to_range` 单次加减、恰好半图不动） | 已实测正确；A*/LOS 调用点都先经 `cell_of`（posmod）规整 |
-| squash 8 个同名常量重复 | `core/config/player_params.gd:98-101` 自陈"两份的漂移是真隐患"，由 `squash_stretch_smoke` 逐名钉住 |
+| squash 8 个同名常量重复 | `core/config/player_params.gd:98-101` 自陈"两份的漂移是真隐患"，由 `squash_stretch_smoke`（已删·2026-10-09）逐名钉住 |
 | `rendering/mobile`（2D 游戏用移动渲染器） | 全仓零 3D 节点、不依赖屏幕纹理/后缓冲。★ 但**没有任何一处写"为什么"**，属"无理由的有意选择" |
 | 2208×1728 的 SubViewport 尺寸 | 像素精确（1920+2×144 / 1440+2×144），裁剪后逐像素恰 1 texel、不重采样；代价 +38% 填充写明 |
 | 地形图集常驻 61MB 显存 | 已登记（`handoff-2026-10-03.md:80`、`terrain_atlas.gd:19,163-165`），缓解=只缓存纹理不缓存 Image |

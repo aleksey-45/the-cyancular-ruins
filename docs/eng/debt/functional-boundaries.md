@@ -469,3 +469,10 @@
      `haste` 位）；或 ② 给**主菜单 Beta 页那条路**加一条真链路脚本（真人/机器人从 Beta 页开局，
      断言"按住加速键 ⇒ 三个消费点变快 + 对手端看到你的加速视效"）。★ **在那之前**，这三处的行为退化
      只能靠**人工在 Beta 页开一局**复现；`task-3-report.md` §7 的那几条是**人工复现步骤**，不是"批 A 会给出的覆盖"。
+
+24. **`TimeField.current` 是 `static` 且**从不置回 `null`** ⇒ 同进程「单机 → 回菜单 → PvP」会把单机时间场带进 PvP**（**2026-10-13 由文档执行者静态发现，未实跑**；owner 未认领）。
+   - **依据**：全仓对 `TimeField.current` 只有 **1 处赋值**（[`scenes/level_0.gd`](../../../scenes/level_0.gd):225，单机 `Level0._ready` 里 `TimeField.current = time_field`）、**0 处置 `null`**；而头注（[`core/sim/time_field.gd`](../../../core/sim/time_field.gd):17）写的是"`null` = 全域恒 1"，[`scenes/level_0.gd`](../../../scenes/level_0.gd):222 的注释也写"PvP 不建 ⇒ `TimeField.current` 为 null、倍率恒 1"。
+   - **可推的后果**：同进程里只要进过一次单机，`TimeField.current != null` 就永久为真 ⇒ [`scenes/player/player.gd`](../../../scenes/player/player.gd):173 走 `TimeField.player_speed_mult()` 而**不读 `pvp_haste_mult`**（该分支另有 8 处读点：[`climb_component.gd`](../../../scenes/player/climb_component.gd):108、[`swim_component.gd`](../../../scenes/player/swim_component.gd):45、[`level_0.gd`](../../../scenes/level_0.gd):410、[`enemy_base.gd`](../../../scenes/enemies/enemy_base.gd):105、[`bullet_base.gd`](../../../scenes/weapons/bullet_base.gd):63、[`enemy_bullet.gd`](../../../scenes/enemies/enemy_bullet.gd):45、[`watch_hud.gd`](../../../ui/watch_hud.gd):129、[`time_symbol_hud.gd`](../../../ui/time_symbol_hud.gd):40）。★ 与 [`swim_component.gd`](../../../scenes/player/swim_component.gd):32 那条 2026-10-03 的修（"PvP 下这条原先恒 1"）是**同一族**：那条修的是"没有单机场时怎么办"，没有处理"单机场残留"。
+   - **为什么只是"可推"**：① 生产路径里"回菜单"是否**真同进程**未核（`Level0.safe_change_scene` 只换场景，不重载进程 ⇒ 静态看成立）；② 真对局里的实际表现 headless 够不到。
+   - **翻案条件**：① 在 `Level0` 退出（`_exit_tree`/`safe_change_scene` 之前）把 `TimeField.current` 置回 `null` —— 一行即可，但要确认**跨场景残留是否被别处依赖**；② 或把"读哪一份倍率"从"`current != null`"改成**显式模式参数**（PvP 由 `pvp_haste_mult` 决定，单机由 `TimeField` 决定），消灭这个隐式开关。
+   - 落点：口径与"未核"标注见 [`time.md`](../../time.md) §2 不变量 1 的例外与 §4.2。
