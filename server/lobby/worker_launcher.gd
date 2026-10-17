@@ -22,6 +22,12 @@ var _worker_ports: Dictionary = {}   # 正在使用(未释放)的 worker 端口
 var _worker_pids: Dictionary = {}   # port(int) -> pid(int):回收要判"这一局还在不在"
 
 
+# 端口段文案的**单一来源**(提示串与面板都用它):手写死数字曾与真实池不符 ——
+# 照 `7800~7910` 放行防火墙会漏掉半个池子。
+static func port_span_text() -> String:
+	return "%d~%d" % [WORKER_PORT_BASE, WORKER_PORT_BASE + WORKER_PORT_SPAN - 1]
+
+
 # 立刻把端口还给池子(不等 worker 退出);调用方语义见 room_manager 的 TEARDOWN_* 三档。
 func release_now(port: int) -> void:
 	if port <= 0:

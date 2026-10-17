@@ -753,6 +753,21 @@ func _is_room_host(r: Variant, caller: int) -> bool:
 	return false
 
 
+# 服务端控制台(server/gui/)用:这间房的房主昵称。**只读**。
+# ★ 三张表的房主表示依然不同(1v1 = players[0],另两张 = host_peer ⇒ 再按 role 去冻结名单里查),
+#   所以这条查询只能住在本类 —— 别让面板自己拼,那会变成第二份「房主是谁」的判据。
+func host_name_of(room: Variant) -> String:
+	if room is RoyaleRoom or room is TeamRoom:
+		return _host_name_of(_room_host_role(room), room.roster)
+	if room is Room:
+		var r: Room = room
+		if not r.players.is_empty():
+			return str(_peer_names.get(r.players[0], "玩家"))
+		if not r.roster.is_empty():
+			return str((r.roster[0] as Dictionary).get("name", "玩家"))
+	return "玩家"
+
+
 # ── 回大厅后回局 ── 客户端在自己的大厅页上点自己那间房(对局中的房照常列在列表里,别人点它只会被「该房间的对局已进行中」拒掉)。
 # ★ 应答复用 go_match(方法表一个字不动)⇒ 客户端那条「连 worker → 认领 role → 进对局」的路与首次进场逐字同一条。
 # ★ 这里不判对局状态(「你还在宽限期吗」只有 worker 手里的 _grace 知道),只判两件事:凭据对不对得上、以及这一局的 worker 还在不在

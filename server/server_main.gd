@@ -5,6 +5,7 @@ extends Node2D
 #  --worker --team --port P --roles r,... --teams t,... = 3v3(满员才开、不降级,收不齐就超时退出释放端口,整队走光才终局)。
 # ★ 两种模式收人方向相反:大乱斗可按已到人数降级开局,3v3 两队人数必须相等 ⇒ --roles 与 --teams 同序等长(队号不从 role 号推);也不再传「人数 + role 上界」两个整数 —— 有人退出会留 role 空洞,从人数推导必然出错。
 
+var _room_manager: RoomManager = null   # 大厅侧:留引用给控制台面板读房间账本(以前是匿名 add_child)
 var _host: Node = null
 var _claims: Dictionary = {}   # role(int) -> peer_id(worker 视角)
 var _claim_names: Dictionary = {}   # role(int) -> 昵称(开局 peer_info 回传两端)
@@ -115,9 +116,14 @@ func _ready() -> void:
 		push_error("服务器: 监听失败 %d" % err)
 		get_tree().quit(1)
 		return
-	add_child(RoomManager.new())
+	_room_manager = RoomManager.new()
+	add_child(_room_manager)
 	print("服务器就绪,等待玩家……(大厅 7777;配对后自动拉起对局 worker)")
 	_print_local_ips()
+	# ★ 面板要显式排在 _print_local_ips() **之后**(它把 _lan_ip_text 填出来),但仍在本函数体内、
+	#   add_child(RoomManager) 之后、set_process(false) 之前 —— 中间没有早退(那把位置是承重的,
+	#   钉它的探针已删·2026-10-09 ⇒ 今天零守卫)。
+	_add_console_panel()
 	_fetch_public_ip()
 	# ★★ 大厅不跑 _process:报到梯与宽限轮询全是 worker 语义,让大厅也 tick 只是敞着一个口子 —— 实测栽过一次(专用大厅开机 30s 后 quit(0) 自杀,7777 上的建房/配对/转连全死)。
 	#   ★ 必须用 set_process(false),不能改成 process_mode(后者会沿继承关掉子节点的 _process,而大厅的全部实际工作都在 RoomManager 里);⚠ 这一行同时停掉了 _expire_graces 的唯一调用点 —— 将来大厅一旦自己有了 _grace 条目,那条轮询必须搬出 _process。
@@ -165,10 +171,25 @@ func _write_ip_file(text: String) -> void:
 		f.store_string(text)
 		f.close()
 
+# 服务端控制台面板:只在有真显示后端时挂载。★ --headless 下必须**一个节点都不建** ——
+# 产物冒烟(tools/build_release.py)与所有测试跑批都在 headless 下起服务端,实例化面板会让它们一起红。
+func _add_console_panel() -> void:
+	if DisplayServer.get_name() == "headless":
+		return
+	# ★ Settings.apply_display() 在非 headless 下会按**玩家存档**改窗口尺寸/全屏(core/config/settings.gd:113);
+	#   服务端窗口必须是固定小窗,故在这里显式覆盖回来。别去改 Settings —— 那是公共配置层。
+	get_window().size = Vector2i(1280, 960)
+	get_window().mode = Window.MODE_WINDOWED
+	# 不带静态类型:setup() 是面板自己的方法,标成 CanvasLayer 会在解析期报"无此函数"。
+	var panel = preload("res://server/gui/server_panel.tscn").instantiate()
+	add_child(panel)
+	panel.setup(_room_manager, _lan_ip_text)
+
+
 # worker 端口段文案;★ 单一来源 = WorkerLauncher 的 WORKER_PORT_BASE / WORKER_PORT_SPAN,勿在提示串里另写死数字(曾写 7800~7910 与实际池不符,照它放行防火墙会漏掉半个池子)。
 static func _worker_port_span_text() -> String:
-	return "%d~%d" % [WorkerLauncher.WORKER_PORT_BASE,
-			WorkerLauncher.WORKER_PORT_BASE + WorkerLauncher.WORKER_PORT_SPAN - 1]
+	# ★ 单一来源已搬到 WorkerLauncher.port_span_text()(面板也要用);这里只转发。
+	return WorkerLauncher.port_span_text()
 
 func _fetch_public_ip() -> void:
 	var http := HTTPRequest.new()
