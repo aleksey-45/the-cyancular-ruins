@@ -1,10 +1,10 @@
 class_name LobbySnapshot
 extends RefCounted
 
-# 服务端控制台的**适配层**:把大厅进程里的三张注册表读成 ServerStatus.build() 要的纯字典。
-# ★ 这里**只有字段搬运,没有判据** —— 判据(state / 人数口径 / 房龄)全在 server_status.gd;
+# 服务端控制台的适配层:把大厅进程里的三张注册表读成 ServerStatus.build() 要的纯字典。
+# ★ 这里只有字段搬运,没有判据 —— 判据(state / 人数口径 / 房龄)全在 server_status.gd;
 #   搬进来一份就是第二份真相。
-# ★ 本文件**不能被 -s 冒烟引用**:它引用 LobbyRooms,而 lobby_rooms.gd 引用 NetBus(spec §6.1)。
+# ★ 本文件不能被 -s 冒烟引用:它引用 LobbyRooms,而 lobby_rooms.gd 引用 NetBus(spec §6.1)。
 #   ⇒ 它零守卫,靠评审(已登记进 registered-debt)。判据逻辑务必留在 server_status.gd,别挪进来。
 
 

@@ -22,8 +22,7 @@ var _worker_ports: Dictionary = {}   # 正在使用(未释放)的 worker 端口
 var _worker_pids: Dictionary = {}   # port(int) -> pid(int):回收要判"这一局还在不在"
 
 
-# 端口段文案的**单一来源**(提示串与面板都用它):手写死数字曾与真实池不符 ——
-# 照 `7800~7910` 放行防火墙会漏掉半个池子。
+# 端口段文案的单一来源(提示串与面板都用它):手写死数字曾与真实池不符,照它放行防火墙会漏掉半个池子。
 static func port_span_text() -> String:
 	return "%d~%d" % [WORKER_PORT_BASE, WORKER_PORT_BASE + WORKER_PORT_SPAN - 1]
 
@@ -60,9 +59,7 @@ static func pid_alive(pid: int) -> bool:
 	return pid > 0 and OS.is_process_running(pid)
 
 
-# 端口池快照:三种占法必须可区分(已分配未 spawn / 已 spawn 活着 / 已 spawn 已退出)。纯函数 ⇒ -s 可测。
-# ★ 「活着」必须走 pid_alive,不要在这里另写一份 OS.is_process_running —— 那是第二份真相。
-# ★ 按端口升序:面板每 0.5s 刷一次,字典的无序输出会让端口列表在屏幕上跳。
+# 端口池快照:三种占法可区分。★ 活着必须走 pid_alive(别另写一份);按端口升序(面板 0.5s 刷新,无序会跳)。
 static func classify(ports: Array, pids: Dictionary) -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
 	for p in ports:
@@ -74,7 +71,6 @@ static func classify(ports: Array, pids: Dictionary) -> Array[Dictionary]:
 	return out
 
 
-# 服务端控制台面板用:端口池当前快照(语义见 classify)。
 func busy_ports() -> Array[Dictionary]:
 	return classify(_worker_ports.keys(), _worker_pids)
 

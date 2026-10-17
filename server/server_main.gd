@@ -120,9 +120,8 @@ func _ready() -> void:
 	add_child(_room_manager)
 	print("服务器就绪,等待玩家……(大厅 7777;配对后自动拉起对局 worker)")
 	_print_local_ips()
-	# ★ 面板要显式排在 _print_local_ips() **之后**(它把 _lan_ip_text 填出来),但仍在本函数体内、
-	#   add_child(RoomManager) 之后、set_process(false) 之前 —— 中间没有早退(那把位置是承重的,
-	#   钉它的探针已删·2026-10-09 ⇒ 今天零守卫)。
+	# ★ 面板排在 _print_local_ips() 之后(它填 _lan_ip_text),但仍在本函数体内、
+	#   add_child(RoomManager) 之后、set_process(false) 之前,中间无早退 —— 那把位置是承重的。
 	_add_console_panel()
 	_fetch_public_ip()
 	# ★★ 大厅不跑 _process:报到梯与宽限轮询全是 worker 语义,让大厅也 tick 只是敞着一个口子 —— 实测栽过一次(专用大厅开机 30s 后 quit(0) 自杀,7777 上的建房/配对/转连全死)。
@@ -171,12 +170,12 @@ func _write_ip_file(text: String) -> void:
 		f.store_string(text)
 		f.close()
 
-# 服务端控制台面板:只在有真显示后端时挂载。★ --headless 下必须**一个节点都不建** ——
+# 服务端控制台面板:只在有真显示后端时挂载。★ --headless 下必须一个节点都不建 ——
 # 产物冒烟(tools/build_release.py)与所有测试跑批都在 headless 下起服务端,实例化面板会让它们一起红。
 func _add_console_panel() -> void:
 	if DisplayServer.get_name() == "headless":
 		return
-	# ★ Settings.apply_display() 在非 headless 下会按**玩家存档**改窗口尺寸/全屏(core/config/settings.gd:113);
+	# ★ Settings.apply_display() 在非 headless 下会按玩家存档改窗口尺寸/全屏(core/config/settings.gd:113);
 	#   服务端窗口必须是固定小窗,故在这里显式覆盖回来。别去改 Settings —— 那是公共配置层。
 	get_window().size = Vector2i(1280, 960)
 	get_window().mode = Window.MODE_WINDOWED

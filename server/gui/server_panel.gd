@@ -70,7 +70,7 @@ var _roster_col: VBoxContainer = null
 var _roster_sig: Array = []     # 名单内容签名:没变就不重建(否则每 0.5s 丢掉滚动位置)
 var _selected_code := ""
 var _selected_kind := ""        # 与 code 一起用来精确定位房对象(三张表房号空间重叠)
-var _armed_code := ""           # 二次确认**武装时**的目标;执行时必须与当前选中完全相同
+var _armed_code := ""           # 二次确认武装时的目标;执行时必须与当前选中完全相同
 var _armed_kind := ""
 var _confirming := false
 var _confirm_left := 0.0
@@ -127,7 +127,7 @@ func _ready() -> void:
 
 func _build_header() -> Control:
 	var strip := UiFactory.header_strip("服 务 器 控 制 台")
-	# ★ header_strip 的**左内边距是刻意的 0**(菜单页里让金色标题与正文同列),搬到本页就顶格了。
+	# ★ header_strip 的左内边距是刻意的 0(菜单页里让金色标题与正文同列),搬到本页就顶格了。
 	#   这里只在本页把左右内边距覆盖成 PAD.x,与下面各面板的文字列对齐 —— 不动工厂。
 	var sb := (strip.get_theme_stylebox("panel") as StyleBoxFlat).duplicate() as StyleBoxFlat
 	sb.content_margin_left = PAD.x
@@ -159,7 +159,7 @@ func _build_overview() -> Control:
 	_overview = UiFactory.label("", 32, UiFactory.C_TEXT)
 	col.add_child(_overview)
 
-	# ★ 脚注 16 号:它是**脚注**(机器读数/一次性须知),不是表头也不是数据。
+	# ★ 脚注 16 号:它是脚注(机器读数/一次性须知),不是表头也不是数据。
 	#   判断依据是「读者要不要用它做决定」,不是大小好看。
 	_footnote = UiFactory.label("", 16, UiFactory.C_TEXT_MUTE)
 	col.add_child(_footnote)
@@ -258,7 +258,7 @@ func _build_rooms_block() -> PanelContainer:
 
 	var head := HBoxContainer.new()
 	head.add_theme_constant_override("separation", 16)
-	# ★ 分区标题要与**表格列文字**对齐:row_box 有 16px 左内边距 ⇒ 标题跟着缩 16(见 mock 的内缩审计)。
+	# ★ 分区标题要与表格列文字对齐:row_box 有 16px 左内边距 ⇒ 标题跟着缩 16(见 mock 的内缩审计)。
 	head.add_child(_inset_left(UiFactory.label("房 间", 32, UiFactory.C_GOLD), 16))
 	head.add_child(_spacer())
 	_rooms_meta = UiFactory.label("", 32, UiFactory.C_TEXT_DIM)
@@ -430,7 +430,7 @@ func _apply_row(cells: Array[Label], r: Dictionary) -> void:
 
 # ── 选中态 + 右列 ───────────────────────────────────────────────────────────
 
-# 每 0.5s 跟着快照走:选中的房还在就刷新右列,没了就**退回空态**。
+# 每 0.5s 跟着快照走:选中的房还在就刷新右列,没了就退回空态。
 # ★ 不退回第一行 —— 那会让人以为系统自动替他选了另一间房。
 func _sync_selection(rooms: Array[Dictionary]) -> void:
 	var found: Dictionary = {}
@@ -475,7 +475,7 @@ func _render_selected(r: Dictionary) -> void:
 
 func _render_roster(r: Dictionary) -> void:
 	var roster: Array = r["roster"]
-	# ★ online_known=false 表示这间房在打(成员已转连 worker)⇒ 名单是**开局冻结的快照**,
+	# ★ online_known=false 表示这间房在打(成员已转连 worker)⇒ 名单是开局冻结的快照,
 	#   面板不许声称谁在线。标题上直接写清楚。
 	var frozen := not bool(r["online_known"])
 	_roster_meta.text = ("局中快照 · %d 人" % roster.size()) if frozen else ("%d 人" % roster.size())
@@ -509,7 +509,7 @@ func _render_roster(r: Dictionary) -> void:
 func _select(code: String, kind: String) -> void:
 	if code == _selected_code and kind == _selected_kind:
 		return
-	# ★ 改选目标必须**撤销武装**:否则"武装 A → 改选 B → 再点"会关掉 B(C1)。
+	# ★ 改选目标必须撤销武装:否则"武装 A → 改选 B → 再点"会关掉 B(C1)。
 	_reset_confirm()
 	_selected_code = code
 	_selected_kind = kind
@@ -553,7 +553,7 @@ func _on_close_pressed() -> void:
 	if _selected_code.is_empty():
 		return
 	if not _confirming:
-		# ★ 武装时把**目标**一起记下来;执行时必须比对(C1:中途改选不能误关)。
+		# ★ 武装时把目标一起记下来;执行时必须比对(C1:中途改选不能误关)。
 		_confirming = true
 		_confirm_left = CONFIRM_SEC
 		_armed_code = _selected_code
@@ -574,12 +574,12 @@ func _reset_confirm() -> void:
 		_close_btn.add_theme_color_override("font_color", UiFactory.C_DANGER)
 
 
-# ★★ 执行时**重新解析**房对象,绝不拿快照里的对象直接操作:
+# ★★ 执行时重新解析房对象,绝不拿快照里的对象直接操作:
 #   快照是纯字典拷贝,而且从渲染到点击之间房完全可能已经没了(或被回收梯收掉)。
 #   解析不到 = no-op + 刷新 + 一句话,不报错也不关错房。
 # ★ 必须走 teardown_room 单一收口:端口归还/删注册表只许出现在它体内(tools/room_sweep_lint 钉着)。
 func _close_room() -> void:
-	# ★★ C1:武装的目标必须**仍是**当前选中的目标,否则一律不执行(判据 = ServerStatus.can_close)。
+	# ★★ C1:武装的目标必须仍是当前选中的目标,否则一律不执行(判据 = ServerStatus.can_close)。
 	#   武装后改选别行 ⇒ 这一次点击只是取消武装,不会关掉任何房。
 	if not ServerStatus.can_close(_armed_code, _armed_kind, _selected_code, _selected_kind):
 		_reset_confirm()
@@ -600,7 +600,7 @@ func _close_room() -> void:
 
 
 # ── 日志区 ──────────────────────────────────────────────────────────────────
-# ★ RichTextLabel 即便 scroll_active=true 也**不画滚动条**(设计期实测:只给一个"无从判断位置的死盒子")
+# ★ RichTextLabel 即便 scroll_active=true 也不画滚动条(设计期实测:只给一个"无从判断位置的死盒子")
 #   ⇒ 用 ScrollContainer(可见滚动条 + 滚轮)+ fit_content 的 RichTextLabel。
 
 func _build_log_block() -> Control:
@@ -639,7 +639,7 @@ func _build_log_block() -> Control:
 	_log_scroll.add_child(_log_rtl)
 	col.add_child(_log_scroll)
 
-	# ★★ EXPAND_FILL 必须设在**日志面板**上:设在内层 ScrollContainer 上时,面板最小高只有 90px
+	# ★★ EXPAND_FILL 必须设在日志面板上:设在内层 ScrollContainer 上时,面板最小高只有 90px
 	#   (AUTO 下 ScrollContainer 的 min 为 0,面板只拿到最小高)—— 设计期实测踩过。
 	panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	return panel
@@ -667,23 +667,23 @@ func _refresh_log(room: Dictionary) -> void:
 		_log_buf = ""
 		_log_rtl.text = ""
 		_log_follow = true
-	# ★ 跟随/暂停的判据:取 **append 之前** 的"是否在底部"。append 之后 max_value 会变,
+	# ★ 跟随/暂停的判据:取 append 之前 的"是否在底部"。append 之后 max_value 会变,
 	#   拿它判会把"我们刚 append 过"误读成"用户往上滚了"(I1,评审者实测复现)。
 	var was_at_bottom := _log_at_bottom()
 	if _log_follow and not was_at_bottom:
 		_log_follow = false
 	elif not _log_follow and was_at_bottom:
-		# I2:用户自己滚回了底部 ⇒ 恢复跟随(spec §8 要求:点标题**或**滚到底部)
+		# I2:用户自己滚回了底部 ⇒ 恢复跟随(spec §8 要求:点标题或滚到底部)
 		_log_follow = true
 	_append_log_delta()
 	if _log_follow:
-		# ★ 延到**下一帧**再滚:本帧的 max_value 还是 append 前的旧值,同帧设会被钳在旧底部
+		# ★ 延到下一帧再滚:本帧的 max_value 还是 append 前的旧值,同帧设会被钳在旧底部
 		#   ⇒ 下一帧判"不在底部"⇒ 跟随自己关掉(评审者实测:in-frame max=690 vs 下一帧 713)。
 		_scroll_bottom_pending = true
 	_update_log_meta()
 
 
-# 增量读:只消费到**最后一个换行**为止,把可能写了一半的行留给下一轮。
+# 增量读:只消费到最后一个换行为止,把可能写了一半的行留给下一轮。
 # 否则 UTF-8 会被截在多字节中间,屏幕上冒一个乱码字符。
 func _append_log_delta() -> void:
 	var f := FileAccess.open(_log_path, FileAccess.READ)
@@ -819,7 +819,7 @@ func _audit() -> void:
 
 
 func _audit_walk(n: Node, box: Rect2) -> void:
-	# ★ 隐藏节点没有布局(rect 退化),量出来是 L0 这种**假读数** ⇒ 直接跳过整棵子树。
+	# ★ 隐藏节点没有布局(rect 退化),量出来是 L0 这种假读数 ⇒ 直接跳过整棵子树。
 	if n is CanvasItem and not (n as CanvasItem).visible:
 		return
 	if n is PanelContainer:
@@ -836,7 +836,7 @@ func _audit_walk(n: Node, box: Rect2) -> void:
 
 
 func _text_of(c: Control) -> String:
-	# ★ 分支必须分开写:Button 用 `as Label` 会得到 null,再取 .text 就是运行时错误(实测踩过)。
+	# ★ 分支必须分开写:Button 用 as Label 会得到 null,再取 .text 就是运行时错误(实测踩过)。
 	if c is Label:
 		return (c as Label).text
 	if c is Button:

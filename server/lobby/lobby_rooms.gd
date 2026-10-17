@@ -753,7 +753,7 @@ func _is_room_host(r: Variant, caller: int) -> bool:
 	return false
 
 
-# 服务端控制台(server/gui/)用:这间房的房主昵称。**只读**,判据在 ServerStatus.host_of(可冒烟)。
+# 服务端控制台(server/gui/)用:这间房的房主昵称。只读,判据在 ServerStatus.host_of(可冒烟)。
 # ★ 三张表的房主表示不同(1v1 = players[0],另两张 = host_peer ⇒ 再按 role 查名单),
 #   所以查表这一步只能住在本类;但"该读哪一边"的判据必须是纯函数。
 func host_name_of(room: Variant) -> String:
@@ -769,7 +769,7 @@ func host_name_of(room: Variant) -> String:
 	return "玩家"
 
 
-# 服务端控制台用:按 (房号, 种类) **精确**取房对象;只读,找不到返回 null。
+# 服务端控制台用:按 (房号, 种类) 精确取房对象;只读,找不到返回 null。
 # ★ 三张表的房号空间重叠(都是 _generate_code() 的 4 位号)⇒ 只按 code 查会查到另一张表的同号房。
 # ★ 拆除仍必须走 teardown_room 单一收口 —— 本函数不改变任何状态。
 func room_for_panel(code: String, kind: String) -> Variant:
@@ -783,8 +783,8 @@ func room_for_panel(code: String, kind: String) -> Variant:
 	return null
 
 
-# 服务端控制台用:**名单侧**的展示数据(只读)。返回 [{role, name}]。判据在 ServerStatus.roster_of。
-# ★ 为什么不能直接读 `roster`:它**开局那一刻**才冻结 —— 等待中的房 roster 是空的
+# 服务端控制台用:名单侧的展示数据(只读)。返回 [{role, name}]。判据在 ServerStatus.roster_of。
+# ★ 不能直接读 roster:它开局那一刻才冻结 —— 等待中的房 roster 是空的
 #   (名字只在 players + _peer_names 里);局中的房 players 已空(成员转连 worker),只能读冻结快照。
 func display_roster_of(room: Variant) -> Array:
 	var in_match := false
