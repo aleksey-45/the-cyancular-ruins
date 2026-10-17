@@ -54,6 +54,25 @@ static func pid_alive(pid: int) -> bool:
 	return pid > 0 and OS.is_process_running(pid)
 
 
+# 端口池快照:三种占法必须可区分(已分配未 spawn / 已 spawn 活着 / 已 spawn 已退出)。纯函数 ⇒ -s 可测。
+# ★ 「活着」必须走 pid_alive,不要在这里另写一份 OS.is_process_running —— 那是第二份真相。
+# ★ 按端口升序:面板每 0.5s 刷一次,字典的无序输出会让端口列表在屏幕上跳。
+static func classify(ports: Array, pids: Dictionary) -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for p in ports:
+		var port := int(p)
+		var pid := int(pids.get(port, 0))
+		out.append({"port": port, "pid": pid, "alive": pid_alive(pid)})
+	out.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return int(a["port"]) < int(b["port"]))
+	return out
+
+
+# 服务端控制台面板用:端口池当前快照(语义见 classify)。
+func busy_ports() -> Array[Dictionary]:
+	return classify(_worker_ports.keys(), _worker_pids)
+
+
 # ── worker 的引擎日志落盘(两个 spawn 共用)── worker 是独立进程,stdout 父进程看不到(Windows CreateProcess
 # 不继承句柄)⇒ 它崩了/报错/提前退出,大厅这边一个字都收不到。⚠ --log-file 是引擎选项,必须排在 -- 之前(之后会被当用户参数吞掉)。
 func log_path(port: int) -> String:
