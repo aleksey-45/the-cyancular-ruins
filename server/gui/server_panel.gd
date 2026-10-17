@@ -34,6 +34,10 @@ const COL_WIDTHS := [104, 152, 88, 168, 104, 104, 0]
 
 const REFRESH_SEC := 0.5
 
+# 日志区(spec §8):正文 16(密度档),滚动条可见,增量 tail worker_<端口>.log。
+const LOG_FONT := preload("res://assets/fonts/menu_font.tres")
+const LOG_MAX_CHARS := 64 * 1024   # ≈ 2000 行;超了从头部截断(不做无限增长)
+
 # ★ 三态的颜色语义(spec §5.6):等待中退后、对局中金、worker 已退出红。
 const STATE_TEXT := {"waiting": "等待中", "in_match": "对局中", "stale": "worker 已退出"}
 
@@ -64,6 +68,15 @@ var _roster_meta: Label = null
 var _roster_col: VBoxContainer = null
 var _roster_sig: Array = []     # 名单内容签名:没变就不重建(否则每 0.5s 丢掉滚动位置)
 var _selected_code := ""
+
+# 日志区:跟随所选房间的 worker 日志。offset 增量读 + 跟随/暂停。
+var _log_meta: Label = null
+var _log_rtl: RichTextLabel = null
+var _log_scroll: ScrollContainer = null
+var _log_path := ""
+var _log_off := 0
+var _log_buf := ""
+var _log_follow := true
 
 
 # 面板唯一入口:由 server_main.gd 注入。★ 在 _ready 之后调用(add_child 已触发过 _ready)。
@@ -99,6 +112,7 @@ func _ready() -> void:
 	page.add_child(_build_header())
 	page.add_child(_build_overview())
 	page.add_child(_build_middle())
+	page.add_child(_build_log_block())
 	_audit_if_requested()
 
 
@@ -408,10 +422,12 @@ func _sync_selection(rooms: Array[Dictionary]) -> void:
 			_selected_code = ""
 			_show_right(false)
 			_apply_selection_styles()
+		_refresh_log({})
 		return
 	_show_right(true)
 	_render_selected(found)
 	_render_roster(found)
+	_refresh_log(found)
 
 
 func _render_selected(r: Dictionary) -> void:
@@ -498,6 +514,145 @@ func _row_sb(selected: bool) -> StyleBoxFlat:
 func _show_right(v: bool) -> void:
 	_sel_block.visible = v
 	_roster_block.visible = v
+
+
+# ── 日志区 ──────────────────────────────────────────────────────────────────
+# ★ RichTextLabel 即便 scroll_active=true 也**不画滚动条**(设计期实测:只给一个"无从判断位置的死盒子")
+#   ⇒ 用 ScrollContainer(可见滚动条 + 滚轮)+ fit_content 的 RichTextLabel。
+
+func _build_log_block() -> Control:
+	var panel := UiFactory.menu_panel(PAD)
+	var body := panel.get_node("Body") as PanelContainer
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 12)
+	body.add_child(col)
+
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 16)
+	head.add_child(UiFactory.label("日 志", 32, UiFactory.C_GOLD))
+	head.add_child(_spacer())
+	_log_meta = UiFactory.label("未选中房间", 32, UiFactory.C_TEXT_DIM)
+	# 点标题 = 回到底部(暂停跟随后的恢复口)
+	_log_meta.mouse_filter = Control.MOUSE_FILTER_STOP
+	_log_meta.gui_input.connect(_on_log_meta_input)
+	head.add_child(_log_meta)
+	col.add_child(head)
+
+	_log_scroll = ScrollContainer.new()
+	_log_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	# ★ AUTO:ScrollContainer 的 min_size.y 恒为 0(spec §2.2)⇒ 高度完全由下面的 EXPAND 决定。
+	_log_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	_log_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_style_vbar(_log_scroll.get_v_scroll_bar())
+
+	_log_rtl = RichTextLabel.new()
+	_log_rtl.bbcode_enabled = false
+	_log_rtl.fit_content = true          # 高度随内容 ⇒ 由 ScrollContainer 滚
+	_log_rtl.scroll_active = false
+	_log_rtl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_log_rtl.add_theme_font_override("normal_font", LOG_FONT)
+	_log_rtl.add_theme_font_size_override("normal_font_size", 16)
+	_log_rtl.add_theme_color_override("default_color", UiFactory.C_TEXT)
+	_log_scroll.add_child(_log_rtl)
+	col.add_child(_log_scroll)
+
+	# ★★ EXPAND_FILL 必须设在**日志面板**上:设在内层 ScrollContainer 上时,面板最小高只有 90px
+	#   (AUTO 下 ScrollContainer 的 min 为 0,面板只拿到最小高)—— 设计期实测踩过。
+	panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	return panel
+
+
+func _on_log_meta_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed \
+			and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+		_log_follow = true
+		_scroll_log_to_bottom()
+		_update_log_meta()
+
+
+# 跟随所选房间:没选中 / 没 worker 端口 ⇒ 空日志 + 「未选中房间」。
+func _refresh_log(room: Dictionary) -> void:
+	var port := int(room["worker_port"]) if not room.is_empty() else 0
+	if port <= 0 or _rm == null or _rm.lobby == null or _rm.lobby.launcher == null:
+		_clear_log()
+		return
+	var path := _rm.lobby.launcher.log_path(port)
+	if path != _log_path:
+		# 换房间/换 worker:重置 offset 与跟随状态
+		_log_path = path
+		_log_off = 0
+		_log_buf = ""
+		_log_rtl.text = ""
+		_log_follow = true
+	# ★ 用户手动上滚 ⇒ 暂停跟随。判据放在**读取之前**:上一次 append 之后我们已滚到底,
+	#   此刻若不在底部,只可能是用户刚刚往上滚了。
+	if _log_follow and not _log_at_bottom():
+		_log_follow = false
+	_append_log_delta()
+	if _log_follow:
+		_scroll_log_to_bottom()
+	_update_log_meta()
+
+
+# 增量读:只消费到**最后一个换行**为止,把可能写了一半的行留给下一轮。
+# 否则 UTF-8 会被截在多字节中间,屏幕上冒一个乱码字符。
+func _append_log_delta() -> void:
+	var f := FileAccess.open(_log_path, FileAccess.READ)
+	if f == null:
+		return
+	var total := f.get_length()
+	if _log_off > total:
+		_log_off = 0            # 文件被轮转/重建
+		_log_buf = ""
+		_log_rtl.text = ""
+	if total <= _log_off:
+		f.close()
+		return
+	f.seek(_log_off)
+	var chunk := f.get_buffer(total - _log_off)
+	f.close()
+	var nl := chunk.rfind(10)   # '\n'
+	if nl < 0:
+		return                  # 还没有完整的一行
+	var consumed := nl + 1
+	_log_off += consumed
+	var text := chunk.slice(0, consumed).get_string_from_utf8()
+	_log_buf += text
+	if _log_buf.length() > LOG_MAX_CHARS:
+		_log_buf = _log_buf.substr(_log_buf.length() - LOG_MAX_CHARS)
+		_log_rtl.text = _log_buf
+		_log_follow = true
+	else:
+		_log_rtl.append_text(text)
+
+
+func _clear_log() -> void:
+	if _log_path.is_empty() and _log_buf.is_empty():
+		_log_meta.text = "未选中房间"
+		return
+	_log_path = ""
+	_log_off = 0
+	_log_buf = ""
+	_log_rtl.text = ""
+	_log_follow = true
+	_update_log_meta()
+
+
+func _update_log_meta() -> void:
+	if _log_path.is_empty():
+		_log_meta.text = "未选中房间"
+		return
+	_log_meta.text = "%s ▾ · %s" % [_log_path.get_file(),
+			"自动跟随中" if _log_follow else "已暂停 · 点此回到底部"]
+
+
+func _log_at_bottom() -> bool:
+	var bar := _log_scroll.get_v_scroll_bar()
+	return _log_scroll.scroll_vertical >= int(bar.max_value - bar.page) - 2
+
+
+func _scroll_log_to_bottom() -> void:
+	_log_scroll.scroll_vertical = int(_log_scroll.get_v_scroll_bar().max_value)
 
 
 # ── 小件 ────────────────────────────────────────────────────────────────────
