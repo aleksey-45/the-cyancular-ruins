@@ -24,6 +24,10 @@ const ROW_H := 60
 const ROW_GAP := 8
 const ROOM_ROWS_MAX := 6
 const MAP_UNITS := 15
+# 名单:行高 / 可见行数上限 / 名字定宽单位(★ 与 docs/eng/ui.md:27 的口径一致:14 单位 @ 32 号)。
+const ROSTER_ROW_H := 44
+const ROSTER_ROWS_MAX := 5
+const ROSTER_UNITS := 14
 
 const COL_TITLES := ["房号", "模式", "人数", "状态", "端口", "房龄", "地图"]
 const COL_WIDTHS := [104, 152, 88, 168, 104, 104, 0]
@@ -43,8 +47,23 @@ var _footnote: Label = null
 var _rooms_meta: Label = null
 var _rows_col: VBoxContainer = null
 var _rows: Dictionary = {}      # code -> {panel: PanelContainer, cells: Array[Label]}
-var _codes: Array = []
+# ★ 初值必须与"空房集合"不同:否则首次刷新判定"集合没变"⇒ 跳过重建 ⇒ 空态那一行永远不建。
+#   (房号恒为 4 位数字,空串不可能是房号。)
+var _codes: Array = [""]
 var _empty_label: Label = null
+
+# 右列(所选房间 + 名单):选中哪间房就显示哪间的,没选中时两块一起隐藏。
+var _sel_block: PanelContainer = null
+var _roster_block: PanelContainer = null
+var _sel_code_lbl: Label = null
+var _sel_mode_lbl: Label = null
+var _sel_info_lbl: Label = null
+var _sel_host_lbl: Label = null
+var _close_btn: Button = null
+var _roster_meta: Label = null
+var _roster_col: VBoxContainer = null
+var _roster_sig: Array = []     # 名单内容签名:没变就不重建(否则每 0.5s 丢掉滚动位置)
+var _selected_code := ""
 
 
 # 面板唯一入口:由 server_main.gd 注入。★ 在 _ready 之后调用(add_child 已触发过 _ready)。
@@ -134,12 +153,78 @@ func _build_middle() -> Control:
 	var left := _build_rooms_block()
 	left.custom_minimum_size.x = LEFT_W
 	row.add_child(left)
-	var right := VBoxContainer.new()
-	right.name = "RightColumn"
-	right.add_theme_constant_override("separation", 16)
-	right.custom_minimum_size.x = RIGHT_W
-	row.add_child(right)
+	row.add_child(_build_right_column())
 	return row
+
+
+func _build_right_column() -> Control:
+	var col := VBoxContainer.new()
+	col.name = "RightColumn"
+	col.add_theme_constant_override("separation", 16)
+	col.custom_minimum_size.x = RIGHT_W
+	_sel_block = _build_selected_block()
+	col.add_child(_sel_block)
+	_roster_block = _build_roster_block()
+	col.add_child(_roster_block)
+	_show_right(false)
+	return col
+
+
+func _build_selected_block() -> PanelContainer:
+	var panel := UiFactory.menu_panel(PAD)
+	var body := panel.get_node("Body") as PanelContainer
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 12)
+	body.add_child(col)
+
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 24)
+	# 房号 48 = 全屏唯一的主角(spec §5.3)
+	_sel_code_lbl = UiFactory.label("", 48, UiFactory.C_WHITE)
+	_sel_mode_lbl = UiFactory.label("", 32, UiFactory.C_TEXT)
+	head.add_child(_sel_code_lbl)
+	head.add_child(_sel_mode_lbl)
+	col.add_child(head)
+
+	_sel_info_lbl = UiFactory.label("", 32, UiFactory.C_TEXT_DIM)
+	col.add_child(_sel_info_lbl)
+	_sel_host_lbl = UiFactory.label("", 32, UiFactory.C_TEXT_DIM)
+	col.add_child(_sel_host_lbl)
+
+	# 破坏性且低频的动作:尺寸降档(560x72 → 420x64),只给受害者颜色 C_DANGER。
+	_close_btn = UiFactory.menu_button("关 闭 房 间", 32, Vector2(420, 64), "quiet")
+	_close_btn.add_theme_color_override("font_color", UiFactory.C_DANGER)
+	_close_btn.add_theme_color_override("font_hover_color", UiFactory.C_DANGER)
+	col.add_child(_close_btn)
+	return panel
+
+
+func _build_roster_block() -> PanelContainer:
+	var panel := UiFactory.menu_panel(PAD)
+	var body := panel.get_node("Body") as PanelContainer
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 12)
+	body.add_child(col)
+
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", 16)
+	head.add_child(UiFactory.label("名 单", 32, UiFactory.C_GOLD))
+	head.add_child(_spacer())
+	_roster_meta = UiFactory.label("", 32, UiFactory.C_TEXT_DIM)
+	head.add_child(_roster_meta)
+	col.add_child(head)
+
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_MAXIMIZE_FIRST
+	scroll.custom_maximum_size.y = ROSTER_ROWS_MAX * ROSTER_ROW_H + (ROSTER_ROWS_MAX - 1) * ROW_GAP
+	_style_vbar(scroll.get_v_scroll_bar())
+	_roster_col = VBoxContainer.new()
+	_roster_col.add_theme_constant_override("separation", ROW_GAP)
+	_roster_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(_roster_col)
+	col.add_child(scroll)
+	return panel
 
 
 func _build_rooms_block() -> PanelContainer:
@@ -195,18 +280,26 @@ func _process(delta: float) -> void:
 	_refresh()
 
 
-func _refresh() -> void:
+# 取一次快照。★ 一次刷新只读一次:计数 / 房间 / 名单全从同一个 snap 出来 ——
+# 分两次读会被两次读之间的房间增删穿过,渲染出「(3 间) + 现在没有房间」这种自相矛盾的屏。
+func _snapshot() -> Dictionary:
+	if _rm == null or _rm.lobby == null:
+		return {}
 	var lobby := _rm.lobby
-	if lobby == null:
-		return
-	# ★ 一次刷新只读一次快照:分两次读会被两次读之间的房间增删穿过,渲染出自相矛盾的一屏。
 	var rooms := LobbySnapshot.collect(lobby)
 	var ports: Array[Dictionary] = []
 	if lobby.launcher != null:
 		ports = lobby.launcher.busy_ports()
-	var snap := ServerStatus.build(rooms, ports, Time.get_unix_time_from_system())
+	return ServerStatus.build(rooms, ports, Time.get_unix_time_from_system())
+
+
+func _refresh() -> void:
+	var snap := _snapshot()
+	if snap.is_empty():
+		return
 	_render_overview(snap["counts"])
 	_sync_rows(snap["rooms"])
+	_sync_selection(snap["rooms"])
 
 
 func _render_overview(counts: Dictionary) -> void:
@@ -262,9 +355,14 @@ func _rebuild_rows(rooms: Array[Dictionary]) -> void:
 			row.add_child(l)
 			cells.append(l)
 		panel.custom_minimum_size.y = ROW_H
+		# 点行 = 选中。★ 行是 PanelContainer(不是 Button):用 gui_input 收点击 ——
+		#   若为可点把 7 个 Label 塞进 Button 再手工排版,行会比现在脆得多。
+		panel.mouse_filter = Control.MOUSE_FILTER_STOP
+		panel.gui_input.connect(_on_row_input.bind(code))
 		_rows_col.add_child(panel)
 		_rows[code] = {"panel": panel, "cells": cells}
 		_apply_row(cells, r)
+	_apply_selection_styles()
 
 
 func _apply_row(cells: Array[Label], r: Dictionary) -> void:
@@ -293,6 +391,113 @@ func _apply_row(cells: Array[Label], r: Dictionary) -> void:
 	cells[5].add_theme_color_override("font_color", UiFactory.C_TEXT_DIM)
 	cells[6].text = UiFactory.fit_name(str(r["map"]), MAP_UNITS)
 	cells[6].add_theme_color_override("font_color", UiFactory.C_TEXT_DIM)
+
+
+# ── 选中态 + 右列 ───────────────────────────────────────────────────────────
+
+# 每 0.5s 跟着快照走:选中的房还在就刷新右列,没了就**退回空态**。
+# ★ 不退回第一行 —— 那会让人以为系统自动替他选了另一间房。
+func _sync_selection(rooms: Array[Dictionary]) -> void:
+	var found: Dictionary = {}
+	for r in rooms:
+		if str(r["code"]) == _selected_code:
+			found = r
+			break
+	if found.is_empty():
+		if not _selected_code.is_empty():
+			_selected_code = ""
+			_show_right(false)
+			_apply_selection_styles()
+		return
+	_show_right(true)
+	_render_selected(found)
+	_render_roster(found)
+
+
+func _render_selected(r: Dictionary) -> void:
+	_sel_code_lbl.text = str(r["code"])
+	var kind := str(r["kind"])
+	_sel_mode_lbl.text = str({"1v1": "1v1", "royale": "大乱斗", "team": "3v3"}.get(kind, kind))
+	_sel_mode_lbl.add_theme_color_override("font_color",
+			{"1v1": UiFactory.C_ACCENT, "royale": UiFactory.C_MODE_ROYALE,
+			"team": UiFactory.C_MODE_TEAM}.get(kind, UiFactory.C_TEXT))
+	var port := int(r["worker_port"])
+	var pid := int(r["worker_pid"])
+	if port <= 0:
+		_sel_info_lbl.text = "端口 — · 进程 —"
+	elif bool(r["worker_alive"]):
+		_sel_info_lbl.text = "端口 %d · 进程 %d 在" % [port, pid]
+	else:
+		_sel_info_lbl.text = "端口 %d · 进程 %d 已退出" % [port, pid]
+	_sel_host_lbl.text = "房主 %s" % str(r["host"])
+
+
+func _render_roster(r: Dictionary) -> void:
+	var roster: Array = r["roster"]
+	# ★ online_known=false 表示这间房在打(成员已转连 worker)⇒ 名单是**开局冻结的快照**,
+	#   面板不许声称谁在线。标题上直接写清楚。
+	var frozen := not bool(r["online_known"])
+	_roster_meta.text = ("局中快照 · %d 人" % roster.size()) if frozen else ("%d 人" % roster.size())
+
+	var sig: Array = [str(frozen)]
+	for e in roster:
+		sig.append("%d:%s" % [int(e["role"]), str(e["name"])])
+	if sig == _roster_sig:
+		return
+	_roster_sig = sig
+
+	for c in _roster_col.get_children():
+		_roster_col.remove_child(c)
+		c.queue_free()
+	if roster.is_empty():
+		_roster_col.add_child(UiFactory.label("（暂无名单）", 32, UiFactory.C_TEXT_MUTE))
+		return
+	for e in roster:
+		var panel := PanelContainer.new()
+		panel.add_theme_stylebox_override("panel", UiFactory.row_box())
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 0)
+		panel.add_child(row)
+		row.add_child(_cell(str(int(e["role"])), 56, 32, UiFactory.C_TEXT_DIM))
+		# ★ 名字按 ui.md:27 的口径定宽截断(14 单位 @ 32 号),不截会顶宽、不补会错列。
+		row.add_child(_cell(UiFactory.fit_name(str(e["name"]), ROSTER_UNITS), 0, 32, UiFactory.C_TEXT))
+		panel.custom_minimum_size.y = ROSTER_ROW_H
+		_roster_col.add_child(panel)
+
+
+func _select(code: String) -> void:
+	if code == _selected_code:
+		return
+	_selected_code = code
+	_apply_selection_styles()
+	var snap := _snapshot()
+	if not snap.is_empty():
+		_sync_selection(snap["rooms"])
+
+
+func _on_row_input(event: InputEvent, code: String) -> void:
+	if event is InputEventMouseButton and event.pressed \
+			and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+		_select(code)
+
+
+func _apply_selection_styles() -> void:
+	for code in _rows:
+		var panel: PanelContainer = _rows[code]["panel"]
+		panel.add_theme_stylebox_override("panel", _row_sb(code == _selected_code))
+
+
+func _row_sb(selected: bool) -> StyleBoxFlat:
+	var sb := UiFactory.row_box()
+	if selected:
+		sb.border_color = UiFactory.C_ACCENT
+		sb.set_border_width_all(2)
+	return sb
+
+
+func _show_right(v: bool) -> void:
+	_sel_block.visible = v
+	_roster_block.visible = v
 
 
 # ── 小件 ────────────────────────────────────────────────────────────────────
@@ -370,6 +575,9 @@ func _audit() -> void:
 
 
 func _audit_walk(n: Node, box: Rect2) -> void:
+	# ★ 隐藏节点没有布局(rect 退化),量出来是 L0 这种**假读数** ⇒ 直接跳过整棵子树。
+	if n is CanvasItem and not (n as CanvasItem).visible:
+		return
 	if n is PanelContainer:
 		box = (n as Control).get_global_rect()
 	if n is Label or n is Button or n is RichTextLabel or n is VScrollBar:
@@ -384,8 +592,11 @@ func _audit_walk(n: Node, box: Rect2) -> void:
 
 
 func _text_of(c: Control) -> String:
-	if c is Label or c is Button:
+	# ★ 分支必须分开写:Button 用 `as Label` 会得到 null,再取 .text 就是运行时错误(实测踩过)。
+	if c is Label:
 		return (c as Label).text
+	if c is Button:
+		return (c as Button).text
 	if c is RichTextLabel:
 		return (c as RichTextLabel).text.split("\n")[0]
 	if c is VScrollBar:

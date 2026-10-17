@@ -24,7 +24,7 @@ static func collect(lobby: LobbyRooms) -> Array[Dictionary]:
 			"worker_port": int(r.worker_port),
 			"worker_pid": int(r.worker_pid),
 			"created_at": float(r.created_at),
-			"roster": _roster_of(r.roster),
+			"roster": lobby.display_roster_of(r),
 		})
 	for code in lobby.royale_rooms:
 		var rr: LobbyRooms.RoyaleRoom = lobby.royale_rooms[code]
@@ -39,7 +39,7 @@ static func collect(lobby: LobbyRooms) -> Array[Dictionary]:
 			"worker_port": int(rr.worker_port),
 			"worker_pid": int(rr.worker_pid),
 			"created_at": float(rr.created_at),
-			"roster": _roster_of(rr.roster),
+			"roster": lobby.display_roster_of(rr),
 		})
 	for code in lobby.team_rooms:
 		var tr: LobbyRooms.TeamRoom = lobby.team_rooms[code]
@@ -54,18 +54,7 @@ static func collect(lobby: LobbyRooms) -> Array[Dictionary]:
 			"worker_port": int(tr.worker_port),
 			"worker_pid": int(tr.worker_pid),
 			"created_at": float(tr.created_at),
-			"roster": _roster_of(tr.roster),
+			"roster": lobby.display_roster_of(tr),
 		})
 	return out
 
-
-# 冻结名单是 [{role, name}];拷一份 —— 面板不该攥着大厅对象的引用(它会随开局被替换)。
-static func _roster_of(roster: Array) -> Array:
-	var out: Array = []
-	for e in roster:
-		if typeof(e) == TYPE_DICTIONARY:
-			out.append({
-				"role": int((e as Dictionary).get("role", 0)),
-				"name": str((e as Dictionary).get("name", "玩家")),
-			})
-	return out

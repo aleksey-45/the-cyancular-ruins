@@ -768,6 +768,40 @@ func host_name_of(room: Variant) -> String:
 	return "玩家"
 
 
+# 服务端控制台用:**名单侧**的展示数据(只读)。返回 [{role, name}]。
+# ★ 为什么不能直接读 `roster`:它是**开局那一刻**才冻结的 —— 等待中的房 roster 是空的
+#   (名字只在 players + _peer_names 里);而局中的房 players 已空(成员转连 worker),
+#   只能读冻结快照。两种状态各读一边,判据只能住在本类(面板自己拼就是第二份真相)。
+func display_roster_of(room: Variant) -> Array:
+	var out: Array = []
+	var in_match := false
+	var frozen: Array = []
+	if room is RoyaleRoom:
+		in_match = room.in_match
+		frozen = room.roster
+	elif room is TeamRoom:
+		in_match = room.in_match
+		frozen = room.roster
+	elif room is Room:
+		in_match = room.started
+		frozen = room.roster
+	else:
+		return out
+	if in_match:
+		for e in frozen:
+			if typeof(e) == TYPE_DICTIONARY:
+				out.append({"role": int((e as Dictionary).get("role", 0)),
+						"name": str((e as Dictionary).get("name", "玩家"))})
+		return out
+	# 等待中:人数与昵称来自当前连接
+	var players: Array = room.players
+	var roles: Dictionary = room.player_role
+	for pid in players:
+		out.append({"role": int(roles.get(pid, 0)),
+				"name": str(_peer_names.get(pid, "玩家"))})
+	return out
+
+
 # ── 回大厅后回局 ── 客户端在自己的大厅页上点自己那间房(对局中的房照常列在列表里,别人点它只会被「该房间的对局已进行中」拒掉)。
 # ★ 应答复用 go_match(方法表一个字不动)⇒ 客户端那条「连 worker → 认领 role → 进对局」的路与首次进场逐字同一条。
 # ★ 这里不判对局状态(「你还在宽限期吗」只有 worker 手里的 _grace 知道),只判两件事:凭据对不对得上、以及这一局的 worker 还在不在
