@@ -33,6 +33,8 @@ const COL_TITLES := ["房号", "模式", "人数", "状态", "端口", "房龄",
 const COL_WIDTHS := [104, 152, 88, 168, 104, 104, 0]
 
 const REFRESH_SEC := 0.5
+# 破坏性动作的二次确认窗口:超时自动回退(不弹 AcceptDialog —— 省一个控件的可用性风险)。
+const CONFIRM_SEC := 3.0
 
 # 日志区(spec §8):正文 16(密度档),滚动条可见,增量 tail worker_<端口>.log。
 const LOG_FONT := preload("res://assets/fonts/menu_font.tres")
@@ -68,6 +70,9 @@ var _roster_meta: Label = null
 var _roster_col: VBoxContainer = null
 var _roster_sig: Array = []     # 名单内容签名:没变就不重建(否则每 0.5s 丢掉滚动位置)
 var _selected_code := ""
+var _selected_kind := ""        # 与 code 一起用来精确定位房对象(三张表房号空间重叠)
+var _confirming := false
+var _confirm_left := 0.0
 
 # 日志区:跟随所选房间的 worker 日志。offset 增量读 + 跟随/暂停。
 var _log_meta: Label = null
@@ -209,6 +214,7 @@ func _build_selected_block() -> PanelContainer:
 	_close_btn = UiFactory.menu_button("关 闭 房 间", 32, Vector2(420, 64), "quiet")
 	_close_btn.add_theme_color_override("font_color", UiFactory.C_DANGER)
 	_close_btn.add_theme_color_override("font_hover_color", UiFactory.C_DANGER)
+	_close_btn.pressed.connect(_on_close_pressed)
 	col.add_child(_close_btn)
 	return panel
 
@@ -285,6 +291,11 @@ func _build_rooms_header() -> Control:
 # ── 刷新 ────────────────────────────────────────────────────────────────────
 
 func _process(delta: float) -> void:
+	# 二次确认倒计时:走每一帧(不跟 0.5s 刷新节流),超时自动回退。
+	if _confirming:
+		_confirm_left -= delta
+		if _confirm_left <= 0.0:
+			_reset_confirm()
 	if _rm == null:
 		return
 	_acc += delta
@@ -420,6 +431,8 @@ func _sync_selection(rooms: Array[Dictionary]) -> void:
 	if found.is_empty():
 		if not _selected_code.is_empty():
 			_selected_code = ""
+			_selected_kind = ""
+			_reset_confirm()
 			_show_right(false)
 			_apply_selection_styles()
 		_refresh_log({})
@@ -433,6 +446,7 @@ func _sync_selection(rooms: Array[Dictionary]) -> void:
 func _render_selected(r: Dictionary) -> void:
 	_sel_code_lbl.text = str(r["code"])
 	var kind := str(r["kind"])
+	_selected_kind = kind
 	_sel_mode_lbl.text = str({"1v1": "1v1", "royale": "大乱斗", "team": "3v3"}.get(kind, kind))
 	_sel_mode_lbl.add_theme_color_override("font_color",
 			{"1v1": UiFactory.C_ACCENT, "royale": UiFactory.C_MODE_ROYALE,
@@ -514,6 +528,46 @@ func _row_sb(selected: bool) -> StyleBoxFlat:
 func _show_right(v: bool) -> void:
 	_sel_block.visible = v
 	_roster_block.visible = v
+
+
+# ── 关闭房间(唯一的写操作) ─────────────────────────────────────────────────
+# 两步:第一次点变「确认关闭 X?」并起 3s 倒计时,第二次点才真执行。
+func _on_close_pressed() -> void:
+	if _selected_code.is_empty():
+		return
+	if not _confirming:
+		_confirming = true
+		_confirm_left = CONFIRM_SEC
+		_close_btn.text = "确认关闭 %s?" % _selected_code
+		_close_btn.add_theme_color_override("font_color", UiFactory.C_WHITE)
+		return
+	_close_room()
+
+
+func _reset_confirm() -> void:
+	_confirming = false
+	_confirm_left = 0.0
+	if _close_btn != null:
+		_close_btn.text = "关 闭 房 间"
+		_close_btn.add_theme_color_override("font_color", UiFactory.C_DANGER)
+
+
+# ★★ 执行时**重新解析**房对象,绝不拿快照里的对象直接操作:
+#   快照是纯字典拷贝,而且从渲染到点击之间房完全可能已经没了(或被回收梯收掉)。
+#   解析不到 = no-op + 刷新 + 一句话,不报错也不关错房。
+# ★ 必须走 teardown_room 单一收口:端口归还/删注册表只许出现在它体内(tools/room_sweep_lint 钉着)。
+func _close_room() -> void:
+	var code := _selected_code
+	var kind := _selected_kind
+	_reset_confirm()
+	if _rm == null or _rm.lobby == null:
+		return
+	var room = _rm.lobby.room_for_panel(code, kind)
+	if room == null:
+		_refresh()
+		return
+	_rm.lobby.teardown_room(room, LobbyRooms.TEARDOWN_KILL, "服主关闭了本房间", true)
+	_refresh()
 
 
 # ── 日志区 ──────────────────────────────────────────────────────────────────

@@ -21,7 +21,7 @@ const SKIP_DIRS := ["res://.godot", "res://builds", "res://releases", "res://gam
 # 复算两条(必须同时成立):`git ls-files '*.gd' | wc -l` 等于本常量;
 # `git ls-files --others --exclude-standard '*.gd'` = 0(工作树没有未跟踪脚本)。
 # 改这个常量是"覆盖变了得有人过目",不是"让闸变绿";历次取值见 git log。
-const EXPECTED_SCRIPTS := 163
+const EXPECTED_SCRIPTS := 167   # 2026-10-17: +4 = server/gui/{server_status,lobby_snapshot,server_panel}.gd + tests/smoke/server_status_smoke.gd(服务端控制台)
 
 var _fails: Array[String] = []
 var _total := 0

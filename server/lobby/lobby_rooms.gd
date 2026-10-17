@@ -768,6 +768,20 @@ func host_name_of(room: Variant) -> String:
 	return "玩家"
 
 
+# 服务端控制台用:按 (房号, 种类) **精确**取房对象;只读,找不到返回 null。
+# ★ 三张表的房号空间重叠(都是 _generate_code() 的 4 位号)⇒ 只按 code 查会查到另一张表的同号房。
+# ★ 拆除仍必须走 teardown_room 单一收口 —— 本函数不改变任何状态。
+func room_for_panel(code: String, kind: String) -> Variant:
+	match kind:
+		"1v1":
+			return rooms.get(code, null)
+		"royale":
+			return royale_rooms.get(code, null)
+		"team":
+			return team_rooms.get(code, null)
+	return null
+
+
 # 服务端控制台用:**名单侧**的展示数据(只读)。返回 [{role, name}]。
 # ★ 为什么不能直接读 `roster`:它是**开局那一刻**才冻结的 —— 等待中的房 roster 是空的
 #   (名字只在 players + _peer_names 里);而局中的房 players 已空(成员转连 worker),

@@ -337,3 +337,20 @@
 
     - **owner**:联机侧([`tests/harness/`](../../../tests/harness)、[`tests/probe/`](../../../tests/probe)、[`tests/smoke/`](../../../tests/smoke)、
       [`server/`](../../../server)、[`core/net/`](../../../core/net)、[`scenes/`](../../../scenes));**最后复核**:2026-10-15。
+
+19. **服务端控制台面板(`server/gui/`)整块零自动化守卫**(2026-10-17 新增)。五处只能靠人眼/评审:
+    ① **版式 / 配色 / 字号**零守卫(`AGENTS.md` §2 表末行:观感不写自动化守卫)——
+       判据是人眼 + `-- --panel-audit` 打出的逐控件内缩(它是**设计期仪器,不是守卫**);
+    ② **导出标记回退会让面板静默消失**:面板存在的前提是 `export_presets.cfg` 的 `custom_features="serverui"`
+       + `project.godot` 的 `run/main_scene.serverui`。任一被改回去 ⇒ 服务端 exe 又变回 headless、
+       面板不出现而**零报错**。硬造守卫必然是 D6(读配置文件文本判形态)⇒ 不写;
+    ③ **`server/gui/lobby_snapshot.gd`(适配层)零守卫**:它引用 `LobbyRooms`,后者引用 `NetBus`
+       ⇒ `-s` 冒烟里编译不过(实测 `Identifier not found: NetBus`)。对策:判据逻辑**全部**让给
+       `server/gui/server_status.gd`(有冒烟钉着),适配层只做字段搬运 ⇒ 靠评审;
+    ④ **`server/server_main.gd:118` 那一行的位置**零守卫:面板必须在 `_ready` 体内、
+       `add_child(RoomManager)` 之后、`set_process(false)` 之前,且中间没有早退 ——
+       钉它的 `duel_spawn_timeout_smoke` **已删·2026-10-09**;
+    ⑤ **1280×960 窗口下 1920×1440 逻辑空间是 2/3 非整数缩放**,像素边缘略不均 ——
+       与主菜单/大厅**同一个**已接受的取舍,不单独立项。
+    - 设计/规则依据:[`docs/superpowers/specs/2026-10-16-server-console-gui-design.md`](../../superpowers/specs/2026-10-16-server-console-gui-design.md) §9。
+    - **owner**:服务端侧([`server/gui/`](../../../server/gui)、[`server/server_main.gd`](../../../server/server_main.gd)、`export_presets.cfg`);**最后复核**:2026-10-17。
