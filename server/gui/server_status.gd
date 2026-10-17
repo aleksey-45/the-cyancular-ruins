@@ -77,3 +77,48 @@ static func _alive_of(ports: Array[Dictionary], port: int) -> bool:
 		if int(p.get("port", -1)) == port:
 			return bool(p.get("alive", false))
 	return false
+
+
+# ── 面板用的纯判据 ──────────────────────────────────────────────────────────
+# ★ 为什么住在这里:面板是 Node、还引用 NetBus,`-s` 冒烟碰不得;`-s` 下只有 autoload-free 的
+#   纯函数可测。故判据留在这儿,面板与 LobbyRooms 只做查表/转发(否则就是第二份真相)。
+
+# 房间行的键:**必须带 kind**。三张注册表的 4 位房号空间**只在各自表内唯一**,
+# 只按房号键时"1v1 的 4821"会覆盖"大乱斗的 4821":一行被写两次、另一行永远高亮不了,
+# 点任意一行都会选中先收集到的那间 ⇒ 关房时 (code,kind) 复核也会"通过"却关错局。
+static func row_key(kind: String, code: String) -> String:
+	return "%s/%s" % [kind, code]
+
+
+# 关房确认是否成立:武装时的目标必须**仍**是当前选中的目标。
+# ★ 从武装到执行之间用户可以改选别行 —— 不比对就是"武装 A、关掉 B"。
+static func can_close(armed_code: String, armed_kind: String,
+		sel_code: String, sel_kind: String) -> bool:
+	return armed_code != "" and armed_code == sel_code and armed_kind == sel_kind
+
+
+# 大乱斗 / 3v3 的房主昵称。★ 等待中的房 roster **还没冻结**(只在开局那一刻冻),
+# 只能从 host_peer + 昵称表取;局中 players 已空,只能读冻结名单里的 host_role。
+static func host_of(in_match: bool, host_peer: int, host_role: int, frozen: Array,
+		live_names: Dictionary) -> String:
+	if not in_match:
+		return str(live_names.get(host_peer, "玩家"))
+	for e in frozen:
+		if typeof(e) == TYPE_DICTIONARY and int((e as Dictionary).get("role", 0)) == host_role:
+			return str((e as Dictionary).get("name", "玩家"))
+	return "玩家"
+
+
+# 名单侧展示数据:等待中 = players + 昵称表(实时);局中 = 冻结快照(players 已空)。
+static func roster_of(in_match: bool, frozen: Array, players: Array, roles: Dictionary,
+		live_names: Dictionary) -> Array:
+	var out: Array = []
+	if in_match:
+		for e in frozen:
+			if typeof(e) == TYPE_DICTIONARY:
+				out.append({"role": int((e as Dictionary).get("role", 0)),
+						"name": str((e as Dictionary).get("name", "玩家"))})
+		return out
+	for pid in players:
+		out.append({"role": int(roles.get(pid, 0)), "name": str(live_names.get(pid, "玩家"))})
+	return out

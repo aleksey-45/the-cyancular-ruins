@@ -52,9 +52,8 @@ var _overview: Label = null
 var _footnote: Label = null
 var _rooms_meta: Label = null
 var _rows_col: VBoxContainer = null
-var _rows: Dictionary = {}      # code -> {panel: PanelContainer, cells: Array[Label]}
+var _rows: Dictionary = {}      # row_key(kind, code) -> {panel, cells, code, kind}
 # ★ 初值必须与"空房集合"不同:否则首次刷新判定"集合没变"⇒ 跳过重建 ⇒ 空态那一行永远不建。
-#   (房号恒为 4 位数字,空串不可能是房号。)
 var _codes: Array = [""]
 var _empty_label: Label = null
 
@@ -71,6 +70,8 @@ var _roster_col: VBoxContainer = null
 var _roster_sig: Array = []     # 名单内容签名:没变就不重建(否则每 0.5s 丢掉滚动位置)
 var _selected_code := ""
 var _selected_kind := ""        # 与 code 一起用来精确定位房对象(三张表房号空间重叠)
+var _armed_code := ""           # 二次确认**武装时**的目标;执行时必须与当前选中完全相同
+var _armed_kind := ""
 var _confirming := false
 var _confirm_left := 0.0
 
@@ -82,6 +83,7 @@ var _log_path := ""
 var _log_off := 0
 var _log_buf := ""
 var _log_follow := true
+var _scroll_bottom_pending := false   # 延到下一帧再滚到底(I1:同帧 max_value 还是旧值)
 
 
 # 面板唯一入口:由 server_main.gd 注入。★ 在 _ready 之后调用(add_child 已触发过 _ready)。
@@ -296,6 +298,11 @@ func _process(delta: float) -> void:
 		_confirm_left -= delta
 		if _confirm_left <= 0.0:
 			_reset_confirm()
+	# 日志跟随的"滚到底"必须晚一帧才生效(I1):append 当帧的 max_value 还没被布局更新,
+	# 同帧设 scroll_vertical 会被钳在旧底部,下一帧就判成"用户往上滚了"⇒ 跟随自己关掉。
+	if _scroll_bottom_pending:
+		_scroll_bottom_pending = false
+		_scroll_log_to_bottom()
 	if _rm == null:
 		return
 	_acc += delta
@@ -344,16 +351,16 @@ func _update_footnote() -> void:
 
 
 func _sync_rows(rooms: Array[Dictionary]) -> void:
-	var codes: Array = []
+	var keys: Array = []
 	for r in rooms:
-		codes.append(str(r["code"]))
+		keys.append(ServerStatus.row_key(str(r["kind"]), str(r["code"])))
 	_rooms_meta.text = "(%d 间)" % rooms.size()
-	if codes != _codes:
+	if keys != _codes:
 		_rebuild_rows(rooms)
-		_codes = codes
+		_codes = keys
 		return
 	for r in rooms:
-		_apply_row(_rows[str(r["code"])]["cells"], r)
+		_apply_row(_rows[ServerStatus.row_key(str(r["kind"]), str(r["code"]))]["cells"], r)
 
 
 func _rebuild_rows(rooms: Array[Dictionary]) -> void:
@@ -369,6 +376,8 @@ func _rebuild_rows(rooms: Array[Dictionary]) -> void:
 		return
 	for r in rooms:
 		var code := str(r["code"])
+		var kind := str(r["kind"])
+		var key := ServerStatus.row_key(kind, code)
 		var panel := PanelContainer.new()
 		panel.add_theme_stylebox_override("panel", UiFactory.row_box())
 		var row := HBoxContainer.new()
@@ -382,10 +391,11 @@ func _rebuild_rows(rooms: Array[Dictionary]) -> void:
 		panel.custom_minimum_size.y = ROW_H
 		# 点行 = 选中。★ 行是 PanelContainer(不是 Button):用 gui_input 收点击 ——
 		#   若为可点把 7 个 Label 塞进 Button 再手工排版,行会比现在脆得多。
+		# ★ 必须把 (code, kind) 一起绑上:三张表房号空间重叠,只绑房号会选中错表的那间。
 		panel.mouse_filter = Control.MOUSE_FILTER_STOP
-		panel.gui_input.connect(_on_row_input.bind(code))
+		panel.gui_input.connect(_on_row_input.bind(code, kind))
 		_rows_col.add_child(panel)
-		_rows[code] = {"panel": panel, "cells": cells}
+		_rows[key] = {"panel": panel, "cells": cells, "code": code, "kind": kind}
 		_apply_row(cells, r)
 	_apply_selection_styles()
 
@@ -424,8 +434,9 @@ func _apply_row(cells: Array[Label], r: Dictionary) -> void:
 # ★ 不退回第一行 —— 那会让人以为系统自动替他选了另一间房。
 func _sync_selection(rooms: Array[Dictionary]) -> void:
 	var found: Dictionary = {}
+	# ★ 必须同时比对 (code, kind):三张表房号空间重叠,只比房号会挂到另一张表的同号房。
 	for r in rooms:
-		if str(r["code"]) == _selected_code:
+		if str(r["code"]) == _selected_code and str(r["kind"]) == _selected_kind:
 			found = r
 			break
 	if found.is_empty():
@@ -495,26 +506,32 @@ func _render_roster(r: Dictionary) -> void:
 		_roster_col.add_child(panel)
 
 
-func _select(code: String) -> void:
-	if code == _selected_code:
+func _select(code: String, kind: String) -> void:
+	if code == _selected_code and kind == _selected_kind:
 		return
+	# ★ 改选目标必须**撤销武装**:否则"武装 A → 改选 B → 再点"会关掉 B(C1)。
+	_reset_confirm()
 	_selected_code = code
+	_selected_kind = kind
 	_apply_selection_styles()
 	var snap := _snapshot()
 	if not snap.is_empty():
 		_sync_selection(snap["rooms"])
 
 
-func _on_row_input(event: InputEvent, code: String) -> void:
+func _on_row_input(event: InputEvent, code: String, kind: String) -> void:
 	if event is InputEventMouseButton and event.pressed \
 			and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
-		_select(code)
+		_select(code, kind)
 
 
 func _apply_selection_styles() -> void:
-	for code in _rows:
-		var panel: PanelContainer = _rows[code]["panel"]
-		panel.add_theme_stylebox_override("panel", _row_sb(code == _selected_code))
+	for key in _rows:
+		var panel: PanelContainer = _rows[key]["panel"]
+		var row_code := str(_rows[key]["code"])
+		var row_kind := str(_rows[key]["kind"])
+		panel.add_theme_stylebox_override("panel",
+				_row_sb(row_code == _selected_code and row_kind == _selected_kind))
 
 
 func _row_sb(selected: bool) -> StyleBoxFlat:
@@ -536,8 +553,11 @@ func _on_close_pressed() -> void:
 	if _selected_code.is_empty():
 		return
 	if not _confirming:
+		# ★ 武装时把**目标**一起记下来;执行时必须比对(C1:中途改选不能误关)。
 		_confirming = true
 		_confirm_left = CONFIRM_SEC
+		_armed_code = _selected_code
+		_armed_kind = _selected_kind
 		_close_btn.text = "确认关闭 %s?" % _selected_code
 		_close_btn.add_theme_color_override("font_color", UiFactory.C_WHITE)
 		return
@@ -547,6 +567,8 @@ func _on_close_pressed() -> void:
 func _reset_confirm() -> void:
 	_confirming = false
 	_confirm_left = 0.0
+	_armed_code = ""
+	_armed_kind = ""
 	if _close_btn != null:
 		_close_btn.text = "关 闭 房 间"
 		_close_btn.add_theme_color_override("font_color", UiFactory.C_DANGER)
@@ -557,6 +579,11 @@ func _reset_confirm() -> void:
 #   解析不到 = no-op + 刷新 + 一句话,不报错也不关错房。
 # ★ 必须走 teardown_room 单一收口:端口归还/删注册表只许出现在它体内(tools/room_sweep_lint 钉着)。
 func _close_room() -> void:
+	# ★★ C1:武装的目标必须**仍是**当前选中的目标,否则一律不执行(判据 = ServerStatus.can_close)。
+	#   武装后改选别行 ⇒ 这一次点击只是取消武装,不会关掉任何房。
+	if not ServerStatus.can_close(_armed_code, _armed_kind, _selected_code, _selected_kind):
+		_reset_confirm()
+		return
 	var code := _selected_code
 	var kind := _selected_kind
 	_reset_confirm()
@@ -564,6 +591,8 @@ func _close_room() -> void:
 		return
 	var room = _rm.lobby.room_for_panel(code, kind)
 	if room == null:
+		# 从渲染到点击之间房已经没了:no-op + 刷新(计划里「提示一句」没有 UI 落点,
+		# 已按 Minor 登记为延后项 —— 行通常会在这次刷新里消失,看得到)。
 		_refresh()
 		return
 	_rm.lobby.teardown_room(room, LobbyRooms.TEARDOWN_KILL, "服主关闭了本房间", true)
@@ -638,13 +667,19 @@ func _refresh_log(room: Dictionary) -> void:
 		_log_buf = ""
 		_log_rtl.text = ""
 		_log_follow = true
-	# ★ 用户手动上滚 ⇒ 暂停跟随。判据放在**读取之前**:上一次 append 之后我们已滚到底,
-	#   此刻若不在底部,只可能是用户刚刚往上滚了。
-	if _log_follow and not _log_at_bottom():
+	# ★ 跟随/暂停的判据:取 **append 之前** 的"是否在底部"。append 之后 max_value 会变,
+	#   拿它判会把"我们刚 append 过"误读成"用户往上滚了"(I1,评审者实测复现)。
+	var was_at_bottom := _log_at_bottom()
+	if _log_follow and not was_at_bottom:
 		_log_follow = false
+	elif not _log_follow and was_at_bottom:
+		# I2:用户自己滚回了底部 ⇒ 恢复跟随(spec §8 要求:点标题**或**滚到底部)
+		_log_follow = true
 	_append_log_delta()
 	if _log_follow:
-		_scroll_log_to_bottom()
+		# ★ 延到**下一帧**再滚:本帧的 max_value 还是 append 前的旧值,同帧设会被钳在旧底部
+		#   ⇒ 下一帧判"不在底部"⇒ 跟随自己关掉(评审者实测:in-frame max=690 vs 下一帧 713)。
+		_scroll_bottom_pending = true
 	_update_log_meta()
 
 

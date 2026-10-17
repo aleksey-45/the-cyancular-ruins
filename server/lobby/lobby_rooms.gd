@@ -753,12 +753,13 @@ func _is_room_host(r: Variant, caller: int) -> bool:
 	return false
 
 
-# 服务端控制台(server/gui/)用:这间房的房主昵称。**只读**。
-# ★ 三张表的房主表示依然不同(1v1 = players[0],另两张 = host_peer ⇒ 再按 role 去冻结名单里查),
-#   所以这条查询只能住在本类 —— 别让面板自己拼,那会变成第二份「房主是谁」的判据。
+# 服务端控制台(server/gui/)用:这间房的房主昵称。**只读**,判据在 ServerStatus.host_of(可冒烟)。
+# ★ 三张表的房主表示不同(1v1 = players[0],另两张 = host_peer ⇒ 再按 role 查名单),
+#   所以查表这一步只能住在本类;但"该读哪一边"的判据必须是纯函数。
 func host_name_of(room: Variant) -> String:
 	if room is RoyaleRoom or room is TeamRoom:
-		return _host_name_of(_room_host_role(room), room.roster)
+		return ServerStatus.host_of(bool(room.in_match), int(room.host_peer),
+				_room_host_role(room), room.roster, _peer_names)
 	if room is Room:
 		var r: Room = room
 		if not r.players.is_empty():
@@ -782,38 +783,32 @@ func room_for_panel(code: String, kind: String) -> Variant:
 	return null
 
 
-# 服务端控制台用:**名单侧**的展示数据(只读)。返回 [{role, name}]。
-# ★ 为什么不能直接读 `roster`:它是**开局那一刻**才冻结的 —— 等待中的房 roster 是空的
-#   (名字只在 players + _peer_names 里);而局中的房 players 已空(成员转连 worker),
-#   只能读冻结快照。两种状态各读一边,判据只能住在本类(面板自己拼就是第二份真相)。
+# 服务端控制台用:**名单侧**的展示数据(只读)。返回 [{role, name}]。判据在 ServerStatus.roster_of。
+# ★ 为什么不能直接读 `roster`:它**开局那一刻**才冻结 —— 等待中的房 roster 是空的
+#   (名字只在 players + _peer_names 里);局中的房 players 已空(成员转连 worker),只能读冻结快照。
 func display_roster_of(room: Variant) -> Array:
-	var out: Array = []
 	var in_match := false
 	var frozen: Array = []
+	var players: Array = []
+	var roles: Dictionary = {}
 	if room is RoyaleRoom:
 		in_match = room.in_match
 		frozen = room.roster
+		players = room.players
+		roles = room.player_role
 	elif room is TeamRoom:
 		in_match = room.in_match
 		frozen = room.roster
+		players = room.players
+		roles = room.player_role
 	elif room is Room:
 		in_match = room.started
 		frozen = room.roster
+		players = room.players
+		roles = room.player_role
 	else:
-		return out
-	if in_match:
-		for e in frozen:
-			if typeof(e) == TYPE_DICTIONARY:
-				out.append({"role": int((e as Dictionary).get("role", 0)),
-						"name": str((e as Dictionary).get("name", "玩家"))})
-		return out
-	# 等待中:人数与昵称来自当前连接
-	var players: Array = room.players
-	var roles: Dictionary = room.player_role
-	for pid in players:
-		out.append({"role": int(roles.get(pid, 0)),
-				"name": str(_peer_names.get(pid, "玩家"))})
-	return out
+		return []
+	return ServerStatus.roster_of(in_match, frozen, players, roles, _peer_names)
 
 
 # ── 回大厅后回局 ── 客户端在自己的大厅页上点自己那间房(对局中的房照常列在列表里,别人点它只会被「该房间的对局已进行中」拒掉)。

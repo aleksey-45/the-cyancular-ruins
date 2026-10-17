@@ -6,6 +6,12 @@ extends SceneTree
 const WL := preload("res://server/lobby/worker_launcher.gd")
 const SS := preload("res://server/gui/server_status.gd")
 
+# ★ 条数闸(AGENTS.md §4「新守卫必须自带条数闸」):断言数对不上 ⇒ 红。
+#   没有它,一次脚本中途报错只让后面的断言静默跳过,而判词照打 OK。
+const EXPECTED_CHECKS := 34
+
+var _checks := 0
+
 
 func _initialize() -> void:
 	var fail := 0
@@ -77,15 +83,55 @@ func _initialize() -> void:
 	fail += _check("worker 已退出 ⇒ worker_alive = false", bool(r2["worker_alive"]) == false)
 	fail += _check("房龄 = now - created_at", is_equal_approx(float(r0["age_sec"]), 30.0))
 
+	# ⑥ I6:pid=0 的"已开局但 worker 还没拉起来"窗口必须仍是 in_match,不能闪成 stale
+	#    (判据同 room_manager._match_over:port<=0 或 pid<=0 = 还没起来)
+	var spawning := {"kind": "1v1", "code": "4444", "players": 0, "cap": 2, "in_match": true,
+			"host": "阿伟", "map": "demo.cyrm", "worker_port": 7823, "worker_pid": 0,
+			"created_at": now - 5.0, "roster": [{"role": 1, "name": "阿伟"}]}
+	var spawning_in: Array[Dictionary] = [spawning]
+	var out2: Dictionary = SS.build(spawning_in, WL.classify([7823], {}), now)
+	fail += _check("pid=0 拉起中 ⇒ state = in_match", str(out2["rooms"][0]["state"]) == "in_match")
+	fail += _check("pid=0 拉起中 ⇒ worker_alive = false", bool(out2["rooms"][0]["worker_alive"]) == false)
+
+	# ⑦ I4:行键必须带 kind —— 三张表的 4 位房号空间重叠,只按房号键会被后者覆盖前者
+	fail += _check("row_key 带 kind", SS.row_key("1v1", "4821") != SS.row_key("royale", "4821"))
+	fail += _check("row_key 稳定", SS.row_key("1v1", "4821") == SS.row_key("1v1", "4821"))
+
+	# ⑧ C1:关房确认必须绑定到**被武装的那一间**,不能"武装 A、关掉 B"
+	fail += _check("武装 A、选中 A ⇒ 可关", SS.can_close("4821", "1v1", "4821", "1v1") == true)
+	fail += _check("武装 A、选中 B ⇒ 不可关", SS.can_close("4821", "1v1", "3310", "1v1") == false)
+	fail += _check("同号异模式 ⇒ 不可关", SS.can_close("4821", "1v1", "4821", "royale") == false)
+
+	# ⑨ I3:等待中的大乱斗/3v3 房 roster 还没冻结 ⇒ 房主只能从 host_peer + 昵称表取
+	fail += _check("等待中的房主走昵称表", SS.host_of(false, 101, 1, [], {101: "阿伟"}) == "阿伟")
+	fail += _check("局中的房主走冻结名单", SS.host_of(true, 101, 1,
+			[{"role": 1, "name": "老王"}], {101: "阿伟"}) == "老王")
+	fail += _check("都查不到 ⇒ 玩家", SS.host_of(false, 999, 1, [], {}) == "玩家")
+
+	# ⑩ I9:名单判据(等待中读实时昵称 / 局中读冻结快照)也必须是纯函数、可被这里钉住
+	var live_roster: Array = SS.roster_of(false, [], [101, 102], {101: 1, 102: 2},
+			{101: "阿伟", 102: "玩家"})
+	fail += _check("等待中名单取实时昵称",
+			live_roster.size() == 2 and str(live_roster[0]["name"]) == "阿伟")
+	var frozen_roster: Array = SS.roster_of(true, [{"role": 1, "name": "老王"}], [], {}, {})
+	fail += _check("局中名单取冻结快照",
+			frozen_roster.size() == 1 and str(frozen_roster[0]["name"]) == "老王")
+
+	# ── 条数闸(I7):对不上就红,防"中途报错 ⇒ 后面静默跳过 ⇒ 判词照打 OK" ──
+	if _checks != EXPECTED_CHECKS:
+		fail += 1
+		printerr("  FAIL- 条数闸:_checks=%d 期望 %d" % [_checks, EXPECTED_CHECKS])
+
 	if fail == 0:
-		print("SERVER_STATUS_OK: classify 三种占法可区分 + build 判据(局中按 roster / stale / 房龄)")
+		print("SERVER_STATUS_OK(%d checks): classify 三种占法 + build 判据 + 行键/关房确认/房主/名单" % _checks)
 		quit(0)
 	else:
-		printerr("SERVER_STATUS_FAIL: %d 项断言失败" % fail)
+		printerr("SERVER_STATUS_FAIL: %d 项断言失败(共 %d)" % [fail, _checks])
 		quit(1)
 
 
 func _check(name: String, cond: bool) -> int:
+	_checks += 1
 	if cond:
 		print("  ok  - " + name)
 		return 0

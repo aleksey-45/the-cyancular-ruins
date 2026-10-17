@@ -99,8 +99,13 @@ A′ 的机制(`custom_features` 是预设字符串,导出时拼进 project sett
 三条必须处理的后果:
 
 1. **headless 早退**:`DisplayServer.get_name() == "headless"` 时**不实例化面板**。
-   ★ 这条不用新守卫 —— `tools/build_release.py:106-147` 的产物冒烟已经在 `--headless` 下断言服务端
-   必须打出「worker 就绪」且退出码 0;面板一旦在 headless 里出错就会被它抓住。
+   ★★ **2026-10-17 订正(评审实测)**:原文写"产物冒烟已经断言服务端必须打出「worker 就绪」⇒
+   面板一旦在 headless 里出错就会被它抓住" —— **这句是错的**。`tools/build_release.py` 的服务端产物冒烟
+   只跑 `["--worker","--port","7999"]`,而 worker 分支在 `_ready` 里就 `return` 了,**根本到不了**面板;
+   默认测试批也不起大厅(只有 `tests/run_real.sh` 的真链路起)。⇒ **这条早退今天没有任何行为级守卫**,
+   删掉它 `run_all` 与产物冒烟**照样绿**。已登记进 `docs/eng/debt/guard-strength-gaps.md` §五 第 19 条。
+   (没顺手补一条大厅冒烟:大厅分支忽略 `--port`、恒 bind 7777 且开机即 `kill_udp_port(7777)`,
+   在发布脚本里跑会端掉服主正在跑的大厅 —— 代价大于收益。)
 2. **`apply_display()` 绕开**:面板窗口在 `server_main.gd` 里显式设回(`window_set_size` +
    `WINDOW_MODE_WINDOWED`),并在注释里写清**为什么**(不改 `Settings`:那是公共配置层,不该知道导出细节)。
 3. **worker 子进程照旧 `--headless`**(`worker_launcher.gd:70-157`)⇒ 不会每局弹一个窗口。

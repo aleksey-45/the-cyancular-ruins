@@ -345,12 +345,25 @@
        + `project.godot` 的 `run/main_scene.serverui`。任一被改回去 ⇒ 服务端 exe 又变回 headless、
        面板不出现而**零报错**。硬造守卫必然是 D6(读配置文件文本判形态)⇒ 不写;
     ③ **`server/gui/lobby_snapshot.gd`(适配层)零守卫**:它引用 `LobbyRooms`,后者引用 `NetBus`
-       ⇒ `-s` 冒烟里编译不过(实测 `Identifier not found: NetBus`)。对策:判据逻辑**全部**让给
-       `server/gui/server_status.gd`(有冒烟钉着),适配层只做字段搬运 ⇒ 靠评审;
-    ④ **`server/server_main.gd:118` 那一行的位置**零守卫:面板必须在 `_ready` 体内、
+       ⇒ `-s` 冒烟里编译不过(实测 `Identifier not found: NetBus`)。对策:**判据**已全部搬进
+       `server/gui/server_status.gd` 的纯静态(`build` / `host_of` / `roster_of` / `row_key` / `can_close`,
+       全部被冒烟钉着),适配层只做字段搬运 ⇒ 靠评审。
+       ⚠ **仍有判断落在冒烟够不到的地方**:`LobbyRooms.host_name_of` 里 1v1 那支(players[0] vs roster[0])、
+       `display_roster_of` 的字段选择、`room_for_panel` 的 kind 分派 —— 这三处是查表不是判据,但**错了冒烟抓不到**
+       (评审曾在这里抓出「等待中的大乱斗房主恒为"玩家"」);
+    ④ **`server/server_main.gd` 的 headless 早退零行为级守卫**:`if DisplayServer.get_name() == "headless": return`
+       删掉后 `run_all` 与 `build_release.py` 的产物冒烟**照样绿** —— 服务端产物冒烟只跑 `--worker --port 7999`,
+       而 worker 分支在 `_ready` 里就 return 了,根本到不了面板;默认测试批也不起大厅。
+       ⚠ 没补大厅冒烟的原因:大厅分支**忽略 `--port`、恒 bind 7777** 且开机即 `kill_udp_port(7777)`,
+       在发布脚本里跑会端掉服主正在跑的大厅。要补得先给大厅分支加端口参数(改 bearing 面,不在本批);
+    ⑤ **`server/server_main.gd:118` 那一行的位置**零守卫:面板必须在 `_ready` 体内、
        `add_child(RoomManager)` 之后、`set_process(false)` 之前,且中间没有早退 ——
        钉它的 `duel_spawn_timeout_smoke` **已删·2026-10-09**;
-    ⑤ **1280×960 窗口下 1920×1440 逻辑空间是 2/3 非整数缩放**,像素边缘略不均 ——
+    ⑥ **1280×960 窗口下 1920×1440 逻辑空间是 2/3 非整数缩放**,像素边缘略不均 ——
        与主菜单/大厅**同一个**已接受的取舍,不单独立项。
+    ⑦ **面板的右列 / 日志 / 关房三条路径在自动化里只到"编译 + 评审"**:它们要真实房间才跑得到,
+       而唯一的真房间验证是人工双客户端端到端(计划 Task 6 Step 5)。评审在此抓出 4 个缺陷
+       (关房武装错目标 / 日志跟随自灭 / 等待中房主名错 / 行键只按房号)—— 全部已修并补了纯判据冒烟,
+       但**修完之后仍未经真房间跑过**。
     - 设计/规则依据:[`docs/superpowers/specs/2026-10-16-server-console-gui-design.md`](../../superpowers/specs/2026-10-16-server-console-gui-design.md) §9。
     - **owner**:服务端侧([`server/gui/`](../../../server/gui)、[`server/server_main.gd`](../../../server/server_main.gd)、`export_presets.cfg`);**最后复核**:2026-10-17。
