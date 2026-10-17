@@ -1,8 +1,13 @@
 # 服务端控制台(Server Console)设计
 
-> 2026-10-16 · 状态:**待复核** · 范围:给 headless 的 PvP 服务端 exe 加一个**进程内运维面板**。
+> 2026-10-16 · 状态:**已定稿(含同日订正,见下)** · 范围:给 headless 的 PvP 服务端 exe 加一个**进程内运维面板**。
 > 设计已经过逐段认可,并用**真 Theme + 真字体渲染真图**验收过(不是示意图)。
 > ★ 本文的**数字都是实测值**;与源码冲突以源码为准。
+>
+> **2026-10-16 订正(写实施计划时被实测推翻,不是设计变更)**:
+> ① `-s` 冒烟里 **autoload 标识符在编译期就解析不到** ⇒ 数据层必须 autoload-free、**不能引用 `LobbyRooms`**;
+> ② 大厅**拿不到局内在线 / 掉线宽限信息**(成员转连 worker 后 `players` 为空,grace 只在 worker 的
+>   `GraceWindow` 里)⇒「在线人数」与「掉线宽限中」两个 UI 状态**撤掉**,换成大厅能证明的量(见 §5.6 / §6.1)。
 
 ---
 
@@ -62,6 +67,7 @@ if (ProjectSettings::get_singleton()->has_custom_feature("dedicated_server")) {
 | `Settings.apply_display()` 只在 headless 早退 | `core/config/settings.gd:113` | **非 headless 下服务端窗口会按玩家存档改尺寸/全屏** —— 必须处理 |
 | 字号只有 16/32/48;颜色只许来自 `UiFactory` | `docs/eng/ui.md:14-20`、`ui_factory.gd:19` | 见 §5.3 |
 | 观感/版式不写自动化守卫 | `AGENTS.md` §2 表末行 | 见 §9 |
+| **`-s` 冒烟里 autoload 标识符不可解析** | 本轮实测:`Compile Error: Identifier not found: NetBus`(`lobby_rooms.gd:120`) | 数据层必须 autoload-free;**不能引用 `LobbyRooms`** ⇒ 见 §6.1 |
 
 ---
 
@@ -147,8 +153,10 @@ A′ 的机制(`custom_features` 是预设字符串,导出时拼进 project sett
 
 ### 5.2 主次(2026-10-16 按反馈重排)
 
-1. **概览条** —— 服务器健康 + 有多少人在玩,一行读全。★ 同一件事**只在这一处**说
+1. **概览条** —— 服务器健康一行读全。★ 同一件事**只在这一处**说
    (此前散在"房间标题的计数 / 端口池 / 底部状态行"三处,必然不同步)。
+   **可显示的量只有大厅能证明的**:房间数 / 待开局数 / 对局中数 / worker 在跑数 / 端口 x·500 / 已运行时长。
+   ★ **不显示「在线人数」** —— 成员转连 worker 后大厅的 `players` 是空的,硬给一个数字就是假数据(§6.1)。
 2. **房间表** —— 谁在玩、哪一局。
 3. **日志** —— **唯一 `EXPAND` 的块**,拿走全部纵向余量。
 4. **地址 / 动作降档** —— 本机地址从右列面板**降进概览条**(一次性信息);
@@ -173,8 +181,9 @@ A′ 的机制(`custom_features` 是预设字符串,导出时拼进 project sett
 | 分区标题 / 主行动 / 对局中 | `C_GOLD` |
 | 1v1 / 强调 | `C_ACCENT` |
 | 大乱斗 / 3v3 | `C_MODE_ROYALE` / `C_MODE_TEAM` |
-| **掉线宽限中** | **`C_GRACE`**(调色板里这个色的既定语义就是"掉线中") |
-| **进程已退出** | **`C_DANGER`**(★ **不许借 `C_WARN`** —— `ui.md:24` 规定它只表"弹夹见底") |
+| **掉线宽限中** | ~~`C_GRACE`~~ **撤掉**(大厅拿不到 grace,见 §6.1) |
+| **worker 已退出(待回收)** | **`C_DANGER`**(★ 不许借 `C_WARN` —— `ui.md:24` 规定它只表"弹夹见底") |
+| 名单里"局中无在线信息" | `C_TEXT_MUTE` |
 | 表头 / 次要读数 | `C_TEXT_DIM` |
 | 空态文案 | `C_TEXT_MUTE` |
 
@@ -186,14 +195,28 @@ A′ 的机制(`custom_features` 是预设字符串,导出时拼进 project sett
 ★ 曾经的错法:挤在"所选房间"的一行里,字号 16、每人只给 6 个半角单位(48px)——
 等于把"人"排成全屏最小的字。
 
-### 5.6 四个状态
+### 5.6 界面状态 + 房间状态(各三态)
 
-| 状态 | 行为 |
+**界面四相**:
+
+| 相 | 行为 |
 |---|---|
 | 主态 | 见上图 |
 | **房少**(4 间) | 表格自动收缩(实测 `MAXIMIZE_FIRST` 生效)、**不出现**滚动条 |
 | **空态** | 概览/右列/日志**一起**变 0(不能只清左列,否则一屏自相矛盾) |
 | **二次确认** | 按钮就地变「确认关闭 4821?」,3 秒无操作回退(**不用** `AcceptDialog`,省一个控件的可用性风险) |
+
+**房间行状态 —— 只有大厅能证明的三态**(「掉线宽限中」撤掉:grace 只在 worker 的 `GraceWindow` 里):
+
+| `state` | 判据 | 颜色 |
+|---|---|---|
+| `waiting` 等待中 | 未开局 | `C_TEXT_DIM` |
+| `in_match` 对局中 | 已开局 && worker 存活 | `C_GOLD` |
+| `stale` **worker 已退出** | 已开局 && `worker_pid > 0` && `!pid_alive`(≤30s 内被回收梯收掉) | `C_DANGER` |
+
+★ **名单的诚实边界**:`waiting` 房间的名单来自 `players` 表(**可信在线**);
+`in_match`/`stale` 房间只有**开局那一刻冻结的 `roster`**,在线状态在 worker 侧、本面板**不显示也不许猜**
+(数据层用 `online_known: false` 标出,UI 在名单标题里写「局中快照」)。
 
 ### 5.7 落点与实现细节
 
@@ -212,13 +235,50 @@ A′ 的机制(`custom_features` 是预设字符串,导出时拼进 project sett
 ## 6. 数据层(唯一可测的一层)
 
 照仓内先例做成**纯构造**(`room_list_payload()` 的注释明写"抽出来是为了可测:探针没有对端,
-`NetBus.reply` 会静默跳过 ⇒ 列表内容观测不到"):
+`NetBus.reply` 会静默跳过 ⇒ 列表内容观测不到")。但先有一条**实测出来的约束**:
 
-- 新增 `WorkerLauncher.busy_ports() -> Array[int]`(`_worker_ports` / `_worker_pids` 都是私有,今天只有
-  `pid_of(port)` 公开)。**要能区分三种占法**:已分配未 spawn / 已 spawn 活着 / 已 spawn 已退出。
-- 新增 `server/gui/server_status.gd`:纯静态 `build(lobby: LobbyRooms, launcher: WorkerLauncher) -> Dictionary`,
-  一屏读全:三张注册表(房号/模式/人数/`player_role`/`host_peer`/`in_match`/`worker_port`/`worker_pid` 存活/
-  房龄/`map`/`roster`)+ 端口池占用 + 版本/IP。
+### 6.1 硬约束:`-s` 冒烟里 autoload 不可引用(实测)
+
+`-s` 冒烟(autoload 尚未实例化)下,**autoload 标识符在编译期就解析不到** —— 实测
+`res://server/lobby/lobby_rooms.gd:120` 报 `Compile Error: Identifier not found: NetBus`,
+**整份脚本连内部类都构造不了**;而 `server/lobby/worker_launcher.gd` **是干净的**
+(实测 `-s` 下 `pick_port()` 正常、`WORKER_PORT_SPAN = 500`)。
+
+⇒ 数据层按「能不能被冒烟引用」切三块:
+
+| 文件 | 职责 | 冒烟? |
+|---|---|---|
+| `server/lobby/worker_launcher.gd`(**改**) | `static classify(ports: Array, pids: Dictionary) -> Array[Dictionary]` + 实例口 `busy_ports()` | **能**(autoload-free) |
+| `server/gui/server_status.gd`(**新**) | `static build(rooms: Array[Dictionary], ports: Array[Dictionary], now_unix: float) -> Dictionary` —— **只吃纯字典** | **能** |
+| `server/gui/lobby_snapshot.gd`(**新**) | 适配层:把 `LobbyRooms` 三张表 + `WorkerLauncher` 读成纯字典 | **不能**(引用 `LobbyRooms`);逻辑密度低 ⇒ 靠评审 |
+
+**`classify()` 的输入输出**(纯函数,三种占法必须可区分):
+
+```gdscript
+# ports: 已分配端口(Array[int]);pids: port -> pid(Dictionary,缺失/0 = 没 spawn 过)
+# 返回每项 {port:int, pid:int, alive:bool}
+#   已分配未 spawn  ⇒ pid=0,   alive=false
+#   已 spawn 且活着  ⇒ pid>0,   alive=true
+#   已 spawn 已退出  ⇒ pid>0,   alive=false
+static func classify(ports: Array, pids: Dictionary) -> Array[Dictionary]
+```
+
+**`build()` 的输入输出**:
+
+```gdscript
+# rooms 每项:{kind: "1v1"|"royale"|"team", code: String, players: int, cap: int,
+#            in_match: bool, host: String, map: String,
+#            worker_port: int, worker_pid: int, created_at: float,
+#            roster: Array[{"role": int, "name": String}]}
+# ports = classify() 的原样输出
+# 返回 {counts: {...}, rooms: Array[Dictionary], ports: Array[Dictionary]}
+#   counts: rooms / waiting / in_match / lobby_players / workers_alive / ports_used / ports_total
+#   rooms 每项 = 输入 + {state: "waiting"|"in_match"|"stale",
+#                        age_sec: float, worker_alive: bool, online_known: bool}
+#     ★ state 的判据见 §5.6;online_known = (state == "waiting")
+static func build(rooms: Array[Dictionary], ports: Array[Dictionary], now_unix: float) -> Dictionary
+```
+
 - ★ `server_main.gd:118` 的 `add_child(RoomManager.new())` **要留住引用**(今天没存)。
   那一行的**位置本身是承重的**(注释明写:必须在 `_ready` 体内、`add_child` 之后、与 `set_process(false)`
   之间没有早退),而钉它的 `duel_spawn_timeout_smoke` **已删·2026-10-09 ⇒ 今天零守卫** ⇒
@@ -269,13 +329,15 @@ A′ 的机制(`custom_features` 是预设字符串,导出时拼进 project sett
 
 | 层 | 守卫 | 理由 |
 |---|---|---|
-| 数据层 `server_status.gd` | **1 条 `-s` 冒烟** | 纯逻辑,能红:去掉"已分配未 spawn 的端口"它就红 —— 那正是**端口泄漏看不见**这个失败模式 |
+| 数据层 `WorkerLauncher.classify()` + `server_status.build()` | **1 条 `-s` 冒烟**(两函数一起测) | 纯逻辑,能红:① 去掉"已分配未 spawn 的端口"它红 —— 那正是**端口泄漏看不见**这个失败模式;② `state` 三态判据写反它红 |
 | headless 不实例化面板 | **已有**:`build_release.py:106-147` 产物冒烟 | 行为上可观测,零新代码 |
 | 面板版式/配色/字号 | **不写** | `AGENTS.md` §2 表末行 —— 观感不写自动化守卫 |
 | 导出标记被改回去 ⇒ 窗口静默消失 | **不写,改登记** | 只有人眼能观测;硬造一条必然是 **D6(读配置文件文本判形态)**,按 `AGENTS.md` 不许进 |
 
 **登记进 `docs/eng/registered-debt.md`**:① 面板版式零守卫;② 导出标记这条"零报错地跑错分支"只能靠人眼;
-③ 1280×960 下 2/3 非整数缩放;④ `server_main.gd:118` 那一行的位置零守卫。
+③ 1280×960 下 2/3 非整数缩放;④ `server_main.gd:118` 那一行的位置零守卫;
+⑤ **`lobby_snapshot.gd` 适配层零守卫**(它引用 `LobbyRooms` ⇒ `-s` 下不可引用,只能靠评审;
+判据逻辑全在 `server_status.build()` 里,适配层只做字段搬运)。
 
 **设计期仪器(不是守卫)**:**逐控件内缩审计** —— 把每个文字控件的全局矩形与它所在面板的矩形相减,
 四向距离一览。「有没有字顶格/出框」**人眼看降采样图判不准**:本轮实测把 `1214 ≤ 1288` 判反过一次,
@@ -298,6 +360,8 @@ A′ 的机制(`custom_features` 是预设字符串,导出时拼进 project sett
 ## 11. 明确不做
 
 - 对局内**比分/血量/回合**(在 worker 进程里,要新协议)。
+- **局内在线状态 / 掉线宽限倒计时** —— 同属 worker 侧(`GraceWindow`);面板只显示开局冻结的名单,
+  并在标题注明「局中快照」。**不许拿 `players` 空表倒推"0 人在线"**(那是假数据)。
 - 踢单个玩家、封禁、远程运维(要新端口,而 `TCPServer` 被裁着)。
 - 面板内「重启服务器」(进程内自杀无人拉起)。
 - 大厅自己的日志流(理由见 §8)。
