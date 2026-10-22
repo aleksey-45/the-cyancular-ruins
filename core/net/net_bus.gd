@@ -163,12 +163,35 @@ func match_sync() -> void:
 # 旧实现 8 人局上行 ≈29Mbps);两者互不连累:c2 丢只少一个回滚锚点,世界包丢只冻结一帧副本插值。
 # ★ 载荷是手打包的 PackedByteArray(SnapshotCodec 编解码),RPC 入口仍 emit 同形状 Dictionary ⇒ 消费方一行没动。
 #   实测 8 人局上行 587→72KB/s、世界包 N≤8 恒 1 片(详表见 docs/eng/netcode-snapshots.md §2);载荷无量化(float32 逐位相同)。
+# 诊断(--diag,默认关):快照到达间隔 >150ms 记一条。世界包是 unreliable,断流时副本只能冻结,
+# 恢复那一帧再跳 —— 这是用户报「卡顿后瞬移」里"他人瞬移"的直接证据(判据与读数见 docs/eng/tests.md)。
+var _diag_snap_us := 0
+var _diag_rx := 0        # 本秒收世界包数(--diag;与服务器 snapshot_tx 的 world_msgs 对账)
+var _diag_rx_at := 0     # 上一次汇总的世界包时间戳(usec)
+
 @rpc("authority", "call_remote", "unreliable", 0)
 func snapshot_world(payload: PackedByteArray) -> void:
 	var world := SnapshotCodec.decode_world(payload)
 	if world.is_empty():
 		_snapshot_decode_warned("world", payload)
 		return
+	var now := Time.get_ticks_usec()
+	if NetDiag.enabled():
+		# 1Hz 收包计数:和服务器 `snapshot_tx` 的 world_msgs 按同一秒对账 ⇒
+		# 「服务器没发(含 all_peers_sendable 整发跳过)」与「发了但这条链路没收到」从此可分。
+		_diag_rx += 1
+		if _diag_rx_at == 0:
+			_diag_rx_at = now
+		elif now - _diag_rx_at >= 1000000:
+			NetDiag.log_event("snap_rx", {"interval_ms": int((now - _diag_rx_at) / 1000), "world_msgs": _diag_rx})
+			_diag_rx_at = now
+			_diag_rx = 0
+		if _diag_snap_us > 0:
+			var gap_ms := int((now - _diag_snap_us) / 1000)
+			if gap_ms > 150:
+				NetDiag.log_event("snap_gap", {"gap_ms": gap_ms, "tick": int(world.get("tick", 0)),
+						"bytes": payload.size()}, true)
+	_diag_snap_us = now
 	local_snapshot_world.emit(world)
 
 @rpc("authority", "call_remote", "unreliable", 0)

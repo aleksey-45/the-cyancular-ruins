@@ -31,7 +31,7 @@ const GHOST_ERR_MAX := 2.0
 #   D1 阈值以下 ⇒ 一帧不许贴平(必须还在追)—— 阈值调低到常态滞后量级时这里红;D2 阈值以上 ⇒ 一帧必须落位 —— 去掉直落分支(或阈值调高到够不着)时这里红。
 # ★ 探针不抄那个常量的值(抄了就是第二份真相源),改用 _script_const("SNAP_DIST") 直读;读不到就响亮 FAIL。两侧各留 SNAP_MARGIN 的余量。
 const SNAP_MARGIN := 20.0
-const EXPECTED_CHECKS := 8               # 相C×3 + 相A(1) + 相B(1) + 相D(2)
+const EXPECTED_CHECKS := 9               # 相C×3 + 相A(1) + 相B(1) + 相D(2) + 相E(1) + 相F(1)
 
 var _checks := 0
 
@@ -302,6 +302,78 @@ func _phase_e() -> void:
 		return
 	print("[replica_smoothness] 相E 取样:中间线性 x=%.1f;underrun 冻结 %.1f(不外插);太老冻结 %.1f(不倒退)" % [
 			p_mid.x, p_new.x, p_old.x])
+	_phase_f()
+
+
+# ── 相 F:幽灵体碰撞轮廓与本体逐顶点一致(配"远端阻挡体沿用角色缩放")──
+# 为什么:幽灵体是 C2 预测侧唯一的「对手挡我」来源,它的 5 份姿态多边形是 **player.tscn 的现抄**
+# (player_replica._build_ghost_body),但抄的只有 polygon / position, **不抄 scale** ——
+# 它默认 1,靠「副本根与本体的根同为 2.5」才在世界上等价。三类改动会让它静默变形:
+#   ① 改 player.tscn 根的 scale;② 改某份姿态箱的 polygon/position;③ 给副本换场景/改根 scale。
+# 后果不是报错,而是预测侧被挡/穿人的位置与服务器差几十 px ⇒ 每帧分歧、每帧回滚(现场像"卡顿")。
+# ★ 判据用 PackedScene.get_state() 直读源场景,**不实例化 player.tscn**(避免触发它的 _ready 与对局副作用)。
+const SOURCE_PLAYER := "res://scenes/player/player.tscn"
+
+func _phase_f() -> void:
+	var ps := load(SOURCE_PLAYER) as PackedScene
+	if ps == null:
+		_fail("相F 读不到 %s" % SOURCE_PLAYER)
+		return
+	var st := ps.get_state()
+	var src_scale := Vector2.ONE
+	var src: Dictionary = {}   # 节点名 -> {polygon, position}
+	for i in st.get_node_count():
+		if i == 0:
+			src_scale = _scene_prop(st, i, "scale")
+			continue
+		if st.get_node_type(i) != "CollisionPolygon2D":
+			continue
+		var nm := String(st.get_node_name(i))
+		if not nm.begins_with("CollisionShape2D_"):
+			continue
+		src[nm] = {
+			"polygon": _scene_prop(st, i, "polygon"),
+			"position": _scene_prop(st, i, "position"),
+		}
+	var problems: Array[String] = []
+	if not (_rep.scale.is_equal_approx(src_scale)):
+		problems.append("副本根 scale=%s 与本体 %s 不等(幽灵体不抄 scale,只在两者相等时世界等价)"
+				% [_rep.scale, src_scale])
+	var pose_map: Dictionary = (_rep.get_script() as GDScript).get_script_constant_map().get("POSE_SHAPE", {})
+	if pose_map.size() != 5:
+		problems.append("POSE_SHAPE 应有 5 份姿态,实得 %d" % pose_map.size())
+	if (_rep._ghost_shapes as Dictionary).size() != pose_map.size():
+		problems.append("幽灵体姿态数 %d ≠ POSE_SHAPE %d(player.tscn 姿态箱改名会静默少一份)"
+				% [(_rep._ghost_shapes as Dictionary).size(), pose_map.size()])
+	for pose in pose_map:
+		var nm: String = pose_map[pose]
+		var g := (_rep._ghost_shapes.get(pose) as CollisionPolygon2D)
+		if not src.has(nm):
+			problems.append("本体缺姿态箱 %s" % nm)
+			continue
+		if g == null:
+			problems.append("幽灵体缺姿态 %d" % pose)
+			continue
+		if (src[nm]["polygon"] as PackedVector2Array) != g.polygon:
+			problems.append("姿态 %d 多边形与本体不一致(顶点数 本体 %d / 幽灵 %d)"
+					% [pose, (src[nm]["polygon"] as PackedVector2Array).size(), g.polygon.size()])
+			continue
+		if not (src[nm]["position"] as Vector2).is_equal_approx(g.position):
+			problems.append("姿态 %d 位置 %s ≠ 本体 %s" % [pose, g.position, src[nm]["position"]])
+	if not problems.is_empty():
+		_fail("相F 幽灵体碰撞轮廓与本体不一致 —— %s" % "; ".join(problems))
+		return
+	_checks += 1   # ★ 只在通过时计数:失败时若也计数,_phase_d 的 EXPECTED_CHECKS 闸会被骗过、判词会照打 ALL-OK
+	print("[replica_smoothness] 相F 幽灵体 %d 份姿态轮廓与本体逐顶点一致(副本 scale=%s)" % [
+			pose_map.size(), _rep.scale])
+
+
+# SceneState 的属性读口按**索引**而非名字(Godot 4.7:get_node_property_value(idx, prop_idx:int))⇒ 名字要先查回来。
+func _scene_prop(st: SceneState, node: int, prop: String) -> Variant:
+	for pi in st.get_node_property_count(node):
+		if String(st.get_node_property_name(node, pi)) == prop:
+			return st.get_node_property_value(node, pi)
+	return null
 
 
 func _fail(msg: String) -> void:

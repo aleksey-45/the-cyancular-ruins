@@ -190,11 +190,27 @@ func _try_server_pickup(p: Node2D, role: int) -> void:
 	var e: Dictionary = ground_weapons.nearest_within(
 			p.global_position, PlayerParams.weapon_pickup_radius, _live_self_drops(role))
 	if e.is_empty():
+		# 诊断(--diag,默认关):把「一次都没命中」拆成两种成因 —— 附近确实没枪(none),还是枪在但超出 64px 半径(range)。
+		# 这就是用户那张「看得见却捡不起来」的现场唯一能分开的解释;半径与距离同源(weapon_pickup_radius + 环面最短距离)。
+		if NetDiag.enabled():
+			var any: Dictionary = ground_weapons.nearest_within(p.global_position, 1e9, _live_self_drops(role))
+			if any.is_empty():
+				NetDiag.log_event("pickup_try", {"role": role, "result": "none"})
+			else:
+				var dist := GridPathfinder.toroidal_delta_px(any["pos"], p.global_position,
+						float(GameParameters.MAP_WIDTH), float(GameParameters.MAP_HEIGHT)).length()
+				NetDiag.log_event("pickup_try", {"role": role, "result": "range",
+						"dist": snappedf(dist, 0.1), "radius": PlayerParams.weapon_pickup_radius,
+						"type": int(any.get("type_id", 0))})
 		return
 	var inst := int(e["inst"])
 	var dropped: int = p.weapons.pick_up(int(e["type_id"]), int(e["mag"]))
 	if dropped < 0:
+		NetDiag.log_event("pickup_try", {"role": role, "result": "denied",
+				"type": int(e["type_id"]), "inst": inst})
 		return   # 被禁用闸门拒绝:地面那件留着(与单机同款哨兵,见 WeaponComponent.PICKUP_DENIED)
+	NetDiag.log_event("pickup_try", {"role": role, "result": "taken", "type": int(e["type_id"]),
+			"inst": inst, "replaced": dropped})
 	_remove_ground_weapon(inst)
 	_broadcast_weapon_removed(inst, role)
 	if dropped > 0:

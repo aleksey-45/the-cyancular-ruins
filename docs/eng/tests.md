@@ -152,3 +152,35 @@
   另有 `drop_room → drop_port` 的改名史，以及**三张注册表名互为子串**（只写裸 `rooms.erase(` 会点错名字）。
 - **`_shot_scene`（取图）**：`addr=` 的状态栏文案是**网络驱动**的 ⇒ 改前/改后各落一相（实测差一整行）；
   四条坏输入路径**必须当场退出**（别让它"继续跑到取图"）。
+
+---
+
+## 结构化诊断（`--diag`，2026-10-22 加）
+
+> 实现：`core/net/net_diag.gd`（`class_name NetDiag`，静态、无 autoload）。两种开启方式：
+> ① 客户端命令行 **写在 `--` 之后**（`godot ... res://scenes/pvp_game.tscn -- --diag`；写在前面会被 Godot 丢掉、静默失效）；
+> ② **`CYR_DIAG=1`（环境变量）** —— worker 是大厅 `OS.create_process` 拉起的子进程、命令行固定拼出且不带 `--diag`，
+> 所以「服务端 worker 也开」只能靠子进程继承环境（免改启动器）。真机复现症状时优先用 ②。
+
+- **它解决什么**：联机问题的现场只有玩家一句话（「卡一下然后瞬移」「看不见但挡路」「捡不起来」）。
+  `--netstat` / `--pickup-diag` 各自一套**人读**格式、各管一段；`--diag` 把关键事件写成**一行一个 JSON**
+  （`t` / `pid` / `role` / `event` / `data`）到 `user://logs/diag-<role>-<pid>-<时间戳>.jsonl`，
+  事后能把「客户端快照间隔 / 回滚 / 拆砖 / 拾取」与「服务端队列丢包 / 拾取裁决」按事件对齐。
+- **默认关 = 零成本**：`enabled()` 懒查一次 `OS.get_cmdline_user_args()`，关着时不开文件、不拼 JSON。
+  判据 = `tests/smoke/net_diag_smoke.gd`（`NET DIAG OK(8 条断言)`，已进 `run_all.sh` 默认批）。
+- **已埋的事件（改动调用点时须同步本节）**：
+  | 事件 | 落点 | 读它回答什么 |
+  |---|---|---|
+  | `session_start` | NetDiag 自己 | 版本 / 引擎 / OS / 文件路径（对齐多条日志用） |
+  | `snap_gap` | `core/net/net_bus.gd` 的 `snapshot_world` | 世界包断流 >150ms：**他人瞬移**的直接证据 |
+  | `snap_rx` / `snapshot_tx` | `net_bus.gd` / `server/match/match_snapshot.gd` | 两端按 1Hz 对账：`snap_rx.world_msgs`（本端收到）vs `snapshot_tx.world_msgs`+`world_skipped`（服务器发了/整发跳过）⇒ 分开「没发出 / 发了没收到」 |
+  | `rollback` | `core/net/prediction_rollback.gd` 的 `_handle_ack` | 本地被拉回：位置/速度误差、是否贴身、重放条数 |
+  | `queue` / `queue_drop` | `server/match/match_host.gd` | 服务器输入队列深度/上限/累计丢弃：**本地瞬移**的上游 |
+  | `pickup_try` | `server/match/match_ground.gd` | `none` / `range`(带距离与半径) / `denied` / `taken`：**捡不起来**四种成因 |
+  | `pickup_add` / `pickup_remove` / `pickup_skip` | `scenes/pvp_match_client.gd` | 客户端到底有没有建出那把枪、为什么早退 |
+  | `tile_cell` / `tile_sub` | `scenes/pvp_match_client.gd` | 拆砖事件是否到达、是否静默(补态) |
+  | `reconnect_begin` / `reconnect_resumed` | `scenes/pvp_match_client.gd` | 局内自动重连的时间窗（补态/幽灵墙只在这个窗里出现） |
+- **边界（照实写）**：① `t` 是**各进程自己的单调时钟**，跨进程只能按事件对齐、不能相减；
+  ② 只记事件、不采样逐帧状态（逐帧用 `--netstat-trace`）；③ 写盘失败只 `push_warning`、不影响对局；
+  ④ 诊断事件**不进任何断言**，别拿"日志里没有"当"没发生"（关闭时一行都没有）。
+

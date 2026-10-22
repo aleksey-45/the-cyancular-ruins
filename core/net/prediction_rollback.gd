@@ -106,6 +106,18 @@ func _handle_ack(ack: int, S: Dictionary) -> void:
 		_trim(ack)          # 预测被证实:确认丢弃 ≤ ack
 		return
 	# 真性分歧 → 权威锚定 + 重放未确认输入(错在哪补哪,非拉拢)
+	# 诊断(--diag,默认关):这一行就是「本地被拉回」的那一帧。位置/速度误差、是否贴身、重放条数分开记,
+	# 用来区分「服务器少模拟 tick」与「拆砖/传送这类外部事件」(判据见 docs/eng/tests.md)。
+	if NetDiag.enabled():
+		NetDiag.log_event("rollback", {
+			"ack": ack,
+			"pos_err": snappedf(_pos_dist(predicted.get("pos", Vector2.ZERO), S.get("pos", Vector2.ZERO)), 0.01),
+			"vel_err": snappedf(Vector2(predicted.get("vel", Vector2.ZERO)).distance_to(Vector2(S.get("vel", Vector2.ZERO))), 0.01),
+			"in_contact": in_contact,
+			"hp_before": int(predicted.get("hp", 0)),
+			"hp_after": int(S.get("hp", 0)),
+			"replay": _last_applied - ack,
+		}, true)
 	_rollbacks += 1
 	_p.restore_state(S)
 	for s in _seqs:

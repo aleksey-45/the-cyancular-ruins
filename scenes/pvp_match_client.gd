@@ -348,6 +348,7 @@ func _subscribe_tile_events() -> void:
 
 
 func _on_remote_tile_destroyed(cell: Vector2i, silent: bool = false) -> void:
+	NetDiag.log_event("tile_cell", {"cell": [cell.x, cell.y], "silent": silent})
 	# cyrm v4:破坏按 16px 子格算 —— 一个 64px 格被拆 = 它的 16 个子格全灭(老实现走 damage_tile 格级强拆 ⇒ 子格渲染 / 碰撞不清,客户端留幽灵墙)。
 	for sy in 4:
 		for sx in 4:
@@ -366,6 +367,7 @@ func _on_remote_tile_destroyed(cell: Vector2i, silent: bool = false) -> void:
 
 # 单个 16px 子格被服务器摧毁:本地 HP / 渲染 / 碰撞一并清(Level0 的 on_sub_destroyed 链)。★ silent 语义与 tile 版相同(重连补态不播碎片)。
 func _on_remote_sub_destroyed(sub: Vector2i, silent: bool = false) -> void:
+	NetDiag.log_event("tile_sub", {"sub": [sub.x, sub.y], "silent": silent, "has_world": _world != null})
 	if _world == null:
 		TileDefs.damage_sub(sub, 999999, "explosion")
 		return
@@ -688,9 +690,11 @@ func _spawn_pickup_node(data: Dictionary) -> void:
 				"有" if _world != null else "空", "有" if _local != null else "空",
 				"是" if _pickup_nodes.has(int(data.get("inst", 0))) else "否"])
 	if _world == null:
+		NetDiag.log_event("pickup_skip", {"reason": "no_world", "inst": int(data.get("inst", 0))})
 		return
 	var inst := int(data.get("inst", 0))
 	if inst <= 0 or _pickup_nodes.has(inst):
+		NetDiag.log_event("pickup_skip", {"reason": "dup" if _pickup_nodes.has(inst) else "bad_inst", "inst": inst})
 		return
 	var type_id := int(data.get("type_id", 1))
 	var node: WeaponPickup = PICKUP_SCENE.instantiate()
@@ -704,6 +708,9 @@ func _spawn_pickup_node(data: Dictionary) -> void:
 	ground_weapons.add({"inst": inst, "type_id": type_id, "mag": int(data.get("mag", 0)),
 			"pos": node.canonical_pos, "vel": data.get("vel", Vector2.ZERO)})
 	_pickup_nodes[inst] = node
+	NetDiag.log_event("pickup_add", {"inst": inst, "type": type_id,
+			"by_role": int(data.get("by_role", -1)),
+			"pos": [snappedf(node.canonical_pos.x, 0.01), snappedf(node.canonical_pos.y, 0.01)]})
 	if int(data.get("by_role", -1)) == int(PvpSession.role):
 		_self_drop_until[inst] = Time.get_ticks_msec() 				+ int(PlayerParams.weapon_pickup_self_delay * 1000.0)
 
@@ -720,6 +727,7 @@ func _clear_ground_weapons() -> void:
 
 
 func _remove_pickup_node(inst: int) -> void:
+	NetDiag.log_event("pickup_remove", {"inst": inst, "had_node": _pickup_nodes.has(inst)})
 	ground_weapons.remove(inst)
 	var n = _pickup_nodes.get(inst, null)
 	if n != null and is_instance_valid(n):
@@ -867,6 +875,8 @@ func _begin_reconnect() -> void:
 	_reconnecting = true
 	# ★ 断开一被侦测到就亮横幅,而不是等某次重试失败之后 —— 这正是"重连失败之前的可见反馈"。
 	_set_status("与服务器断线,正在重连…")
+	NetDiag.log_event("reconnect_begin", {"role": PvpSession.role, "port": PvpSession.worker_port,
+			"has_token": PvpSession.token != ""}, true)
 	print("[pvp] 连接断开,开始重连(role=%d port=%d)" % [PvpSession.role, PvpSession.worker_port])
 	_retry_connect.call_deferred()
 
@@ -957,6 +967,8 @@ func _on_match_start_event(_role: int, _spawn: Vector2i, _map_path: String) -> v
 # 重置本地 C2 状态(不重置会把断线前的记录当"未确认输入"重放)。
 func _on_resumed() -> void:
 	_reconnecting = false
+	NetDiag.log_event("reconnect_resumed", {"role": PvpSession.role,
+			"down_ms": Time.get_ticks_msec() - _reconnect_started_ms}, true)
 	_reconnect_started_ms = 0
 	_reclaim_sent = false
 	_attempt_started_ms = 0

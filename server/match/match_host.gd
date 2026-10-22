@@ -131,9 +131,11 @@ var _netstat_trace_f := 0
 # (PacketInputSource.adapted_cap),回复力就来自「衰减」这一步 —— 没有它,队列长度是 ρ=1 的随机游走,被顶上去就永远停在那儿。
 var _q_peak: Dictionary = {}
 var _q_drops: Dictionary = {}   # role -> 累计被丢弃的**陈旧**包数(诊断;丢包=服务器跳过一格输入)
+var _diag_acc := 0.0            # 结构化诊断(--diag)的 1Hz 采样累加;默认关时下面整段直接返回
 
 
 func _netstat_tick(delta: float) -> void:
+	_diag_tick(delta)
 	if not _netstat_checked:
 		_netstat_checked = true
 		var ua := OS.get_cmdline_user_args()
@@ -166,6 +168,26 @@ func _netstat_tick(delta: float) -> void:
 			", ".join(parts), ", ".join(caps), ", ".join(drops)])
 
 
+# 结构化诊断(--diag,默认关):1Hz 采样每 role 的队列深度 / 抖动上限 / 累计丢弃。
+# ★ 与 --netstat 同源但**不依赖它**:--netstat 是人读的一行,这里要的是可解析、可与客户端 snap_gap/rollback
+#   按事件对齐的时间轴。两处读数必须同源(_q_peak/_q_drops),别各算一份。默认关时首行即返回,零开销。
+func _diag_tick(delta: float) -> void:
+	if not NetDiag.enabled():
+		return
+	_diag_acc += delta
+	if _diag_acc < 1.0:
+		return
+	_diag_acc = 0.0
+	for role in _pending_input:
+		NetDiag.log_event("queue", {
+			"role": int(role),
+			"depth": (_pending_input[role] as Array).size(),
+			"cap": PacketInputSource.adapted_cap(int(_q_peak.get(role, 0))),
+			"peak": int(_q_peak.get(role, 0)),
+			"drops": int(_q_drops.get(role, 0)),
+		})
+
+
 # ★ 清队列与复位抖动包络必须一起做:只清队列 ⇒ 旧包络把上限继续顶在高位,新纪元开局就白带一层陈旧延迟。
 func reset_input_queue(role: int) -> void:
 	_pending_input[role] = []
@@ -186,6 +208,8 @@ func _on_input(caller: int, pkt: Dictionary) -> void:
 			var raw: int = PacketInputSource.push_pending(_pending_input[role] as Array, pkt, cap)
 			if raw > cap:
 				_q_drops[role] = int(_q_drops.get(role, 0)) + (raw - cap)
+				NetDiag.log_event("queue_drop", {"role": int(role), "raw": raw, "cap": cap,
+						"drops": int(_q_drops[role])})
 			_q_peak[role] = maxi(raw, prev_peak - 1)
 			return
 
