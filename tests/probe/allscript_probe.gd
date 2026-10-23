@@ -21,7 +21,7 @@ const SKIP_DIRS := ["res://.godot", "res://builds", "res://releases", "res://gam
 # 复算两条(必须同时成立):`git ls-files '*.gd' | wc -l` 等于本常量;
 # `git ls-files --others --exclude-standard '*.gd'` = 0(工作树没有未跟踪脚本)。
 # 改这个常量是"覆盖变了得有人过目",不是"让闸变绿";历次取值见 git log。
-const EXPECTED_SCRIPTS := 169   # 2026-10-22: +2 = core/net/net_diag.gd + tests/smoke/net_diag_smoke.gd(结构化诊断 --diag;两者本轮新增、尚未提交 ⇒ git 复算那两条要在提交后才成立)
+const EXPECTED_SCRIPTS := 173   # 2026-10-22: +4 = core/mp/{mode_defs,mode_options}.gd + tests/smoke/mode_{defs,options}_smoke.gd(三模式统一 A1/A5 单一来源)
 
 var _fails: Array[String] = []
 var _total := 0

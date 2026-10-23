@@ -1025,15 +1025,17 @@ func _lobby_action_allowed() -> bool:
 # ★ time(Beta 时间玩法规则)必须在这里 —— 它是权威那一份:worker 侧 MatchHost 读的正是 options.get("time"),而建房载荷里的 time 只存在房对象上、没有任何读者。漏了它 ⇒ Beta 局的时间经济静默为空(一切结算短路),而那不报错。
 # ★★ 1v1 必须排除 time:PvpSession.beta_mode 是会话级的,而统一大厅让 Beta 会话里的玩家能切到 1v1 建局;但 1v1 的 create_room(caller) 是冻结签名、载荷里没有任何 beta 标记 ⇒ 那个房没法按 beta 隔离 ⇒ 没勾 Beta 的普通玩家能加进来打上一局带时间经济的 1v1。
 func _player_options() -> Dictionary:
-	return {
+	# 键集由 ModeDefs.OPTION_KEYS 决定(2026-10-22 统一):3v3 不再上发禁用武器/回合回血 ——
+	# 界面藏了控件就不该让它生效(X5);大乱斗不再上发回合回血(它没有回合);1v1 不再上发 match_time(只有大乱斗读)。
+	return ModeOptions.build(_current_mode, {
 		"hue": Settings.pvp_color_hue,
 		"round_full_heal": Settings.pvp_round_full_heal,
 		"disabled_weapons": Settings.pvp_disabled_weapons,
 		"match_time": int(Settings.royale_match_min * 60.0),
 		"map": Settings.mp_map_path,
-		"time": time_rules.to_dict() if (PvpSession.beta_mode
-				and _current_mode != PvpSession.MODE_PVP) else {},
-	}
+		"time": time_rules.to_dict(),
+		"beta": PvpSession.beta_mode,
+	})
 
 
 func _go_match_status() -> String:
