@@ -370,8 +370,7 @@ func _reclaim_finished_matches() -> void:
 		var uptime := int(Time.get_unix_time_from_system() - float(room.created_at))
 		NetDiag.audit("match_end", {"room": room.code, "mode": room.mode,
 				"port": room.worker_port, "uptime_sec": uptime})
-		# ★ 拿不到子进程退出码(Godot 的 OS 没有这个 API)⇒ 只能记"worker 消失时的现场":存活时长 + 日志尾部。
-		#   它不区分正常结束与崩溃 —— 正常结束的尾部是收场行,崩溃的是错误原文,由读的人判。
+		# ★ 拿不到子进程退出码 ⇒ 记"worker 消失时的现场":存活时长 + 日志尾部;正常结束与崩溃都发,由读的人按尾部判。
 		NetDiag.audit("worker_lost", {"room": room.code, "mode": room.mode, "port": room.worker_port,
 				"pid": room.worker_pid, "alive_sec": uptime,
 				"tail": NetDiag.tail_lines(_launcher.log_path(room.worker_port), 3)})
