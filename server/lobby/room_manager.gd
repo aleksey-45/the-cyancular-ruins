@@ -343,7 +343,7 @@ func _sweep_stale_rooms() -> void:
 	for room in stale + stale_royale + stale_team:
 		lobby.teardown_room(room, LobbyRooms.TEARDOWN_KILL, "房间超时(>2h),已关闭", true)
 		print("%s %s 超时清理(存活 %.0f 秒)" % [
-				"大乱斗房" if room is LobbyRooms.RoyaleRoom else ("3v3 房" if room is LobbyRooms.TeamRoom else "房间"),
+				RoomTypes.kind_text(room),
 				room.code, now - room.created_at])
 
 # 对局结束即回收:in_match(1v1 是 started)的房不再在「客户端转连 worker」那一刻被拆,必须有替代回收路径,否则端口与列表位永久占用。
@@ -367,8 +367,7 @@ func _reclaim_finished_matches() -> void:
 		if tr.in_match and _match_over(tr.worker_port, tr.worker_pid):
 			done.append(tr)
 	for room in done:
-		var kind := "大乱斗房" if room is LobbyRooms.RoyaleRoom \
-				else ("3v3 房" if room is LobbyRooms.TeamRoom else "房间")
+		var kind := RoomTypes.kind_text(room)
 		print("[lobby] 对局结束,回收%s %s(端口 %d)" % [kind, room.code, room.worker_port])
 		lobby.teardown_room(room, LobbyRooms.TEARDOWN_DELAYED)
 

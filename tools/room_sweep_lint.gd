@@ -9,6 +9,7 @@ var _fail := ""
 #   故每个末尾把函数名记进 `_done`,`_finish()` 拿 CHECK_NAMES 对账。判据为什么成立:`_fail` 为空 ⟺ 没有正式断言失败 —— 提前 return 只可能来自那条 `if _fail != "": return`。
 const CHECK_NAMES := [
 	"_check", "_check_argv_contract", "_check_teardown_funnel",
+	"_check_registry_funnel",
 	"_check_team_startup_contract", "_check_team_spawn_guard",
 	"_check_worker_pid_tracking", "_check_join_refusal_guards", "_check_reclaim_ladder",
 	"_check_rejoin_spawn_wiring",
@@ -31,6 +32,7 @@ func _initialize() -> void:
 	_check(src)
 	_check_argv_contract()
 	_check_teardown_funnel()
+	_check_registry_funnel()
 	_check_team_startup_contract()
 	_check_team_spawn_guard()
 	_check_worker_pid_tracking()
@@ -94,14 +96,93 @@ func _check_teardown_funnel() -> void:
 			var t: String = line.strip_edges()
 			if t.is_empty() or t.begins_with("#"):
 				continue
-			# ★ 模式列表必须含当前的端口归还入口(`_launcher.release_now`)与三张注册表 + 凭据表作废(`rejoin.drop_port`):改名/搬家时同款改这里。
+			# ★ 模式列表必须含当前的端口归还入口(`launcher.release_now`)、三张只读视图 + 当前注册表的删除原语
+			# (`_registry.erase`,2026-10-22 三表合一后)与凭据表作废(`rejoin.drop_port`):改名/搬家时同款改这里。
 			#   三张表名互为子串(`team_rooms.erase(` 里含 `rooms.erase(`):只留裸那条判词会点错名字 —— 多留一条字符串是加宽判据面,不是放宽白名单。
-			for pat in ["_release_port_later(", "launcher.release_now(", "royale_rooms.erase(", "team_rooms.erase(", "rooms.erase(", "rejoin.drop_port("]:
+			for pat in ["_release_port_later(", "launcher.release_now(", "_registry.erase(",
+					"royale_rooms.erase(", "team_rooms.erase(", "rooms.erase(", "rejoin.drop_port("]:
 				if t.contains(pat):
 					if not allowed.has(f["name"]):
 						_fail = "lobby_rooms.%s 里出现 %s —— 拆除必须走 teardown_room 单一收口" % [f["name"], pat]
 						return
 	_done.append("_check_teardown_funnel")
+
+
+# ── 注册表:三表合一的落点、删除唯一原语、拆除按 mode 判定 ──
+# ★ 为什么单独钉(2026-10-22 Task 9):「注册表删除」从三张表搬进 RoomRegistry.erase,「端口延迟三档」从
+#   teardown_room 里的 `is` 二分改成读 room.mode。只钉 lobby_rooms 的调用点会让两条绕道失明:
+#   ① 在 registry 别处直接 `_tables[x].erase(...)`(旧的三条收口换成一条却没守住);
+#   ② teardown 回到按房型类 `is` 判定(三张表房号空间重叠 ⇒ 静默错拆)。
+func _check_registry_funnel() -> void:
+	if _fail != "":
+		return
+	var reg_src := ScanUtil.read("res://server/lobby/room_registry.gd")
+	if reg_src.is_empty():
+		_fail = "无法读取 room_registry.gd"
+		return
+	var reg_code := ScanUtil.code_only(reg_src)
+	for fn in ["func add(", "func erase(", "func of(", "func find(", "func next_code(",
+			"func freeze_roster(", "func list_payload(", "func port_return_delay("]:
+		if not reg_code.contains(fn):
+			_fail = "room_registry.gd 缺 %s(三表合一的公开口不齐)" % fn
+			return
+	# 表内删除只许出现在 erase() 里(与「拆除只许出现在 teardown_room」同一条纪律;peer_names 的增删不算注册表删除)。
+	var funcs: Array = []
+	var cur_name := ""
+	var cur_body := ""
+	for line in reg_src.split("\n"):
+		var st: String = line.strip_edges()
+		if st.begins_with("func "):
+			if not cur_name.is_empty():
+				funcs.append({"name": cur_name, "body": cur_body})
+			cur_name = st.substr(5, st.find("(") - 5)
+			cur_body = ""
+		else:
+			cur_body += line + "\n"
+	if not cur_name.is_empty():
+		funcs.append({"name": cur_name, "body": cur_body})
+	for f in funcs:
+		for line in (f["body"] as String).split("\n"):
+			var t: String = line.strip_edges()
+			if t.is_empty() or t.begins_with("#"):
+				continue
+			if t.contains("_tables") and t.contains(".erase(") and f["name"] != "erase":
+				_fail = "room_registry.%s 里出现表内 .erase( —— 注册表删除必须只走 erase() 单一原语" % f["name"]
+				return
+	# 端口归还延迟只许转发规则表:写第二份 120/360 就会与 WorkerLauncher 常量漂。
+	if not reg_code.contains("ModeRoomRules.port_return_seconds("):
+		_fail = "room_registry.port_return_delay 没转发 ModeRoomRules.port_return_seconds(第二份延迟数?)"
+		return
+	if reg_code.contains("120.0") or reg_code.contains("360.0"):
+		_fail = "room_registry.gd 的代码里出现 120.0/360.0 —— 端口归还延迟必须只引规则表(→ WorkerLauncher 常量)"
+		return
+	# 门面:三张表视图 = registry.of(mode);三个旧房型名 = 统一类的别名(外部标注不许悬空)。
+	var lob := ScanUtil.code_only(ScanUtil.read("res://server/lobby/lobby_rooms.gd"))
+	for pair in [["ModeDefs.MODE_PVP", "rooms"], ["ModeDefs.MODE_ROYALE", "royale_rooms"],
+			["ModeDefs.MODE_TEAM", "team_rooms"]]:
+		if not lob.contains("return _registry.of(%s)" % pair[0]):
+			_fail = "LobbyRooms.%s 不是 registry 的只读视图(外部读取点会踩到另一份表)" % pair[1]
+			return
+	for alias in ["const Room = RoomTypes.Room", "const RoyaleRoom = RoomTypes.Room",
+			"const TeamRoom = RoomTypes.Room"]:
+		if not lob.contains(alias):
+			_fail = "lobby_rooms.gd 缺 `%s` —— 外部标注 LobbyRooms.* 会悬空" % alias
+			return
+	# 拆除三态判定读 room.mode;注册表删除走 registry 单一原语。
+	var td := ScanUtil.func_body(lob, "teardown_room")
+	if td.is_empty():
+		_fail = "找不到 teardown_room"
+		return
+	if not td.contains("_registry.port_return_delay(room.mode)"):
+		_fail = "teardown_room 的端口延迟不是按 room.mode 取的(三态判定回到了 `is` 房型类?)"
+		return
+	if not td.contains("_registry.erase(room)"):
+		_fail = "teardown_room 的注册表删除没走 _registry.erase(room) 单一原语"
+		return
+	if td.contains(" is LobbyRooms.") or td.contains(" is RoomTypes.Room"):
+		_fail = "teardown_room 里又出现了按房型类的 `is` 判定(三态必须读 room.mode)"
+		return
+	_done.append("_check_registry_funnel")
 
 
 # role 协议必须是显式 role 集合(--roles):旧协议传「人数 + role 上界」两个整数,而 role 号由「最小空闲号」分配、退出后不重排 ⇒ 编号留空洞、推导必然出错。
@@ -464,7 +545,7 @@ func _check_join_refusal_guards() -> void:
 		return
 	var code := ScanUtil.code_only(ScanUtil.read("res://server/lobby/lobby_rooms.gd"))
 	var cases := [
-		["join_room", "if room.started:"],
+		["join_room", "if room.in_match:"],
 		["royale_join", "if rr.in_match:"],
 		["team_join", "if tr.in_match:"],
 	]
