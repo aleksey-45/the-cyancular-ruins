@@ -5,7 +5,7 @@ extends SceneTree
 const ND := preload("res://core/net/net_diag.gd")
 
 # ★ 条数闸:断言数对不上就红。没有它,一次脚本中途报错只让后面的断言静默跳过,判词照打 OK。
-const EXPECTED_CHECKS := 9
+const EXPECTED_CHECKS := 10
 
 var _checks := 0
 
@@ -50,6 +50,12 @@ func _initialize() -> void:
 	fail += _check("client 进程不再写",
 			FileAccess.get_file_as_string(tmp).strip_edges().split("\n").size() == 3)
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp))
+
+	# ★ 显式定角色:导出标记从 dedicated_server 换成 serverui 之后,role() 的推断把大厅当成了
+	#   client(dev/headless 也没参数)⇒ 服务端必须在启动时显式声明,审计才开得起来。
+	ND.set_role("server")
+	fail += _check("显式定角色后按 server 审计", ND.role() == "server" and ND.should_audit(ND.role()))
+	ND.set_role("")
 
 	if _checks != EXPECTED_CHECKS:
 		fail += 1

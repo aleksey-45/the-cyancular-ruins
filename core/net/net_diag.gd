@@ -55,6 +55,10 @@ static func role() -> String:
 	return _role
 
 
+static func set_role(r: String) -> void:
+	_role = r
+
+
 const OPS_KEEP := 60
 const OPS_WARN_BYTES := 8 * 1024 * 1024
 

@@ -31,6 +31,7 @@ var _match_started := false
 var _grace := GraceWindow.new()
 var _grace_check_timer := 0.0
 var _tokens: Dictionary = {}   # role(int) -> token(String),客户端经 report_token 报来
+var _stop_logged := false      # lobby_stop 只许写一条(_notification 与 _exit_tree 都会到)
 
 func _ready() -> void:
 	print("[server] 版本 %s  pid=%d" % [preload("res://core/config/build_info.gd").display(), OS.get_process_id()])
@@ -46,6 +47,7 @@ func _ready() -> void:
 	var is_worker := bool(ctx["worker"])
 	# ★ 解析完立刻落进实例标志(报到梯读它);位置紧跟校验、不进任何分支 —— 写进某条分支里迟早会漏掉另一种形态。
 	_worker = is_worker
+	NetDiag.set_role("server")   # 导出标记已换成 serverui ⇒ role() 推断不出服务端,必须显式声明
 	_royale = bool(ctx["royale"])
 	_team_mode = bool(ctx["team"])
 	_role_set.assign(ctx["roles"])
@@ -68,6 +70,8 @@ func _ready() -> void:
 	_room_manager = RoomManager.new()
 	add_child(_room_manager)
 	print("服务器就绪,等待玩家……(大厅 7777;配对后自动拉起对局 worker)")
+	NetDiag.audit("lobby_start", {"version": preload("res://core/config/build_info.gd").display(), "port": NetBus.DEFAULT_PORT})
+	get_tree().auto_accept_quit = false   # 关窗先走 _notification 优雅拆房,不许被直接杀掉
 	_print_local_ips()
 	# ★ 面板排在 _print_local_ips() 之后(它填 _lan_ip_text),但仍在本函数体内、
 	#   add_child(RoomManager) 之后、set_process(false) 之前,中间无早退 —— 那把位置是承重的。
@@ -530,3 +534,32 @@ func _on_peer_left(peer_id: int) -> void:
 		else:
 			print("worker: 角色报到后掉线,退出")
 			get_tree().quit(0)
+
+
+func _notification(what: int) -> void:
+	if what != NOTIFICATION_WM_CLOSE_REQUEST or _worker or _stop_logged:
+		return
+	_stop_lobby("close_request")
+	get_tree().quit()
+
+
+func _exit_tree() -> void:
+	if _worker or _stop_logged:
+		return
+	_stop_lobby("quit")
+
+
+# 关服收口:先按三张只读视图逐个拆房(worker 不留孤儿),再写唯一一条 lobby_stop。
+func _stop_lobby(reason: String) -> void:
+	if _stop_logged:
+		return
+	_stop_logged = true
+	var had := 0
+	if _room_manager != null and _room_manager.lobby != null:
+		var lobby := _room_manager.lobby
+		for table in [lobby.rooms, lobby.royale_rooms, lobby.team_rooms]:
+			var shot: Dictionary = (table as Dictionary).duplicate()
+			for code in shot:
+				had += 1
+				lobby.teardown_room(shot[code], LobbyRooms.TEARDOWN_KILL)
+	NetDiag.audit("lobby_stop", {"reason": reason, "rooms_left": had})

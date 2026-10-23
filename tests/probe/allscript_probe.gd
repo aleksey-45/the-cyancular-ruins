@@ -21,7 +21,7 @@ const SKIP_DIRS := ["res://.godot", "res://builds", "res://releases", "res://gam
 # 复算两条(必须同时成立):`git ls-files '*.gd' | wc -l` 等于本常量;
 # `git ls-files --others --exclude-standard '*.gd'` = 0(工作树没有未跟踪脚本)。
 # 改这个常量是"覆盖变了得有人过目",不是"让闸变绿";历次取值见 git log。
-const EXPECTED_SCRIPTS := 190   # 2026-10-22: 统一重构后稳定值(177 基线 + 13: clientsplit 3 + lobby 3 + mp_lobby 4 + server-split 3)
+const EXPECTED_SCRIPTS := 191   # 2026-10-21: +1 = tests/smoke/ops_log_smoke.gd(审计通道冒烟)
 
 var _fails: Array[String] = []
 var _total := 0
