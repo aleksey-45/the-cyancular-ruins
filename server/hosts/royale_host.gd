@@ -4,12 +4,11 @@ extends MatchHost
 # 大乱斗权威对局(N 人限时死斗):roles 1..N 散点出生,死亡 2s 复活,复活点动态选「离所有存活敌人 ≥ 若干格」的地板格。
 # ★ 限时 MATCH_TIME:倒计时归零 → MATCH_OVER,击杀最多者胜(并列 = 0)。★ 击杀归因靠受害者 meta(last_damager),无源死亡不计分。
 # ★ 排行榜数据经 round_state 下发(scores / names / timer / match_winner)。★ 中途掉线 = 移出对局(节点释放,排行榜标「离开」),
-# 剩余 < 2 人时终局。★ 出生点静态几何已搬到 core/sim/spawn_picker.gd,这里只留同名转发。
+# 剩余 < 2 人时终局。★ 出生点静态几何已搬到 core/sim/spawn_picker.gd;散点/复活选格的计算在 server/hosts/royale_spawn.gd
+# (RoyaleSpawn),这里只留生命周期、_round_spawns/_spawned_once 的状态与同名转发。
 
 const MATCH_TIME := 300.0        # 一局时长(秒)
 const HUD_SYNC_INTERVAL := 1.0   # 倒计时/比分周期广播
-const RESPAWN_CLEARANCE := 8     # 复活点与存活敌人的最小环面距离(格)
-const SPAWN_CLEARANCE := 15      # 开局散点两两最小距离(格)
 
 var _match_time := MATCH_TIME
 var _cfg_match_time := 0.0             # 房主自定义时长(秒;0=默认 MATCH_TIME)
@@ -54,96 +53,24 @@ static func start_on(role_peers: Dictionary, map_path: String, options: Dictiona
 
 
 
-static func _grid_dims() -> Vector2i:
-	return SpawnPicker.grid_dims()
-
-
-static func _tdist(a: Vector2i, b: Vector2i) -> int:
-	var d := _grid_dims()
-	return MazeGenerator.toroidal_dist(a, b, d.x, d.y)
-
-static func _floor_cells() -> Array:
-	return SpawnPicker.floor_cells()
-
-
-static func _floor_cells_has(c: Vector2i) -> bool:
-	return SpawnPicker.floor_cells_has(c)
-
-
-static func _region_sizes() -> Dictionary:
-	return SpawnPicker.region_sizes()
-
-
-static func _roomy_floor(c: Vector2i) -> bool:
-	return SpawnPicker.roomy_floor(c)
-
-
-static func _spawn_candidates() -> Array:
-	return SpawnPicker.spawn_candidates()
-
-
-
-static func _respawn_pools() -> Array:
-	return SpawnPicker.respawn_pools()
-
-
-# 开局散点:洗牌后贪心取两两环面距离 ≥ SPAWN_CLEARANCE 的 N 个格,不够就放宽(全量补齐)。★ roles 必须按实际键返回:缺员降级开局时 role 不连续(如剩 {1,3}),否则 spawns[role] 缺键抛错、对局卡死。
+# ── 散点 ── 实现(SPAWN_CLEARANCE / 候选层回退的逐条「为什么」)在 RoyaleSpawn.plan_spawns。
+# ★ 保留静态转发而不是让调用点直接引 RoyaleSpawn:start_on 与 _init 的调用面零 diff,搬运不牵连调用方。
 static func plan_spawns(roles: Array) -> Dictionary:
-	var n := roles.size()
-	var d := _grid_dims()
-# 散点几何已抽到 GridPathfinder.spread_cells(单机铺地面武器共用同一份实现)。★ 它内部有 shuffle() ⇒ 本函数的既有纪律不变:不得在广播之后再调一次。
-	var picked: Array = GridPathfinder.spread_cells(
-		_spawn_candidates().duplicate(), n, SPAWN_CLEARANCE, d.x, d.y)
-# 候选不够散点(极小图/密封图):回退任意地板格补足,免得塞 (-1,-1) 出生到墙角。★ 这层回退与候选层的优先级必须留在本函数里
-# (并成一个池子 = 取消优先级,会优先选到死角格)。★ 今天不可达:spread_cells 恒返回 min(n, 池大小),故可达 ⟺ 首档池 < 人数(两图池 122/59 对人数上限 8)。⚠ 零守卫:spawn_pool_smoke ⑦ 已删(2026-10-09)。
-	if picked.size() < n:
-		var rest: Array = _floor_cells().duplicate()
-		for c in picked:
-			rest.erase(c)
-		rest.shuffle()
-		for c in rest:
-			if picked.size() >= n:
-				break
-			picked.append(c)
-	var out := {}
-	for i in range(n):
-		out[int(roles[i])] = picked[i] if i < picked.size() else Vector2i(-1, -1)
-	return out
+	return RoyaleSpawn.plan_spawns(roles)
 
 
-# 出生点:首次 = 开局散点(权威是 _round_spawns);复活 = 优选开阔格中离所有存活敌人 ≥ RESPAWN_CLEARANCE 的随机格。★ 池子序列
-# 只读 SpawnPicker.respawn_pools():原第二档是全部地板格,干净池筛空时会把人的复活点放进孤立单格区。★ role_spawns 覆写不可省 ——
-# 基类走 _spawn_cell,而本类的 _spawn_cell 第二次起返回动态复活点且带 _spawned_once 副作用。
+# 出生点:首次 = 开局散点(权威是 _round_spawns);复活 = 优选开阔格中离所有存活敌人 ≥ RESPAWN_CLEARANCE 的随机格。
+# ★ role_spawns 覆写不可省 —— 基类走 _spawn_cell,而本类的 _spawn_cell 第二次起返回动态复活点且带 _spawned_once 副作用。
 func role_spawns() -> Dictionary:
 	return _round_spawns.duplicate()
 
 
+# ★ _spawned_once 的「首次」闩与 _round_spawns 的状态留在宿主;选格计算在 RoyaleSpawn.respawn_cell。
 func _spawn_cell(role: int) -> Vector2i:
 	if not _spawned_once.has(role):
 		_spawned_once[role] = true
 		return _round_spawns.get(role, Vector2i(-1, -1))
-	for pool: Array in _respawn_pools():
-		var cells := pool.duplicate()
-		cells.shuffle()
-		var far: Array = []
-		for c in cells:
-			var ok := true
-			for other in players:
-				if int(other) == role or _left.has(int(other)):
-					continue
-				var op: Node2D = players[other]
-				if op.is_downed():
-					continue
-				if _tdist(c,
-						Vector2i(int(op.global_position.x) / GameParameters.TILE_SIZE,
-								int(op.global_position.y) / GameParameters.TILE_SIZE)) < RESPAWN_CLEARANCE:
-					ok = false
-					break
-			if ok:
-				far.append(c)
-		if not far.is_empty():
-			return far[0]
-	return Vector2i(-1, -1)
+	return RoyaleSpawn.respawn_cell(role, players, _left)
 
 
 func _ready() -> void:
