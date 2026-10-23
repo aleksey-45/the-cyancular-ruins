@@ -8,7 +8,6 @@ var _last_snap_tick := 0
 var _replicas: Dictionary = {}         # role(int) -> PlayerReplica(自己以外的全部角色)
 # ★ _level0(世界/Level0)已上提到基类(子类 _ready 里赋值;重连补态那一路要用它还原可破坏砖)。
 var _hud: TeamHud = null
-var _pause_menu: PauseMenu = null   # ESC 菜单(MATCH_OVER 后销毁以失效,见 _on_round_state)
 
 var _teams: Dictionary = {}
 
@@ -298,33 +297,22 @@ func _unhandled_input(event: InputEvent) -> void:
 		NetBusExt.rpc_id(1, "suicide_request")
 
 
-# 回合状态(3v3):COUNTDOWN 且 round>1(新一轮)⇒ 服务器已 _reset_world_and_clear_dynamics()(还原砖 + 清子弹 + 重铺地面武器 + 各人背包重置),这里同刻清本地子弹并复位砖,两端从同一基线出发;并在同一处重拉一次 match_sync(换边,见下)。
-# MATCH_OVER ⇒ 弹结算页,玩家自己退;记分 / 胜负播报仍由 TeamHud 负责(它画的是对局中的小记分条,结算页是终局那一屏,两者不冲突)。
-func _on_round_state(data: Dictionary) -> void:
-	_last_round_state = data
-	var state := int(data.get("state", 0))
-	_round_locked = state == 0
-	if state == 0 and int(data.get("round", 1)) > 1:   # COUNTDOWN,新一轮
-		for b in get_tree().get_nodes_in_group("bullet"):
-			if is_instance_valid(b):
-				(b as Node).queue_free()
-		if _level0 != null and _level0.has_method("reset_destructibles"):
-			_level0.reset_destructibles()
-		# ★ 地面武器不要在这里清(与 1v1 逐字同款的理由):服务器换局是「先 _reset_ground_weapons(广播 removed×旧 + spawned×新)、再 _broadcast_round_state」,两条走同一条可靠通道、保序到达 ⇒ 本条到达时新一轮那批早已在本地建好,再清一次 = 第 2 局起客户端地面恒空。
-		# ★★ 重拉 match_sync:3v3 每局整队换边,而 TeamHost.role_spawns() 返回的是当下那一份,客户端只在进场/重连拉过一次 ⇒ 换边后六端手里那份是旧侧的。不补发 second path 进 round_state(那是给同一份数据开第二条投递路径),改在这里拉 —— 本来就站在「清子弹 + 还原砖」这一拍上,且顺带把 ground_weapons 与 destroyed 一并对齐。
-		if NetBus.can_send_to_server():
-			# ★ 先置位再发:这条应答是补态口径(不是进场建态)—— 换边后 spawns 是新一侧而 PvpSession.spawn 手里是旧一侧,两者必然不一致,照进场口径硬拉 = 每局边界刷一条假告警 + 一次多余瞬移。闸门与「重连补态」共用(_resync_pull_pending,读一次即清),不要新立一个标志。
-			_resync_pull_pending = true
-			NetBus.rpc_id(1, "match_sync")
-	elif state == 3:   # TeamHost.RoundState.MATCH_OVER(胜负已判:局胜或整队走光)
-		# ★★ 刻意没有 and not _match_ended 这道闸(与大乱斗不同,别照抄过来加对称):本模式的 MATCH_OVER 会有第二条载荷,而结算页必须跟着刷新 —— TeamHost._finish_match() 在战斗进行中直接把 PLAYING→MATCH_OVER,而倒地边沿检测在 match _round_state 之前且不看状态 ⇒ 终局之后再死人会再广播一条带新 stats/mvp 的终局载荷。
-		_match_ended = true
-		# ★ ESC 菜单随即失效、退出只走结算页这一条路(与另两个客户端同款):不销毁菜单的话玩家能在结算页上再弹一次暂停菜单,本页的 ESC(返回主菜单)与菜单的 ESC 会同时触发(见 ui/match_result.gd 类头那条硬依赖)。
-		if _pause_menu != null and is_instance_valid(_pause_menu):
-			_pause_menu.queue_free()
-			_pause_menu = null
-		_show_result()
-	_refresh_input_lock()   # 单一收口:三个维度任一成立即锁(见基类函数定义)
+# 回合状态的四态编排已收进基类 PvpMatchClient._on_round_state(2026-10-22):
+# 清子弹 / 复位砖 / 输入锁 / 结算页挂载与刷新都是公共段;3v3 只多一件"换边后重拉 match_sync"。
+# ★ MATCH_OVER 刻意**不**覆写"首次才消费"的闸(与大乱斗相反,别照抄):本模式终局之后还会再死人,
+#   第二条终局载荷必须刷新结算页(见 TeamHost._finish_match 的既有注释)。
+func _on_countdown_round() -> void:
+	super._on_countdown_round()
+	# ★★ 重拉 match_sync:3v3 每局整队换边,而 TeamHost.role_spawns() 返回的是当下那一份,
+	#   客户端只在进场/重连拉过一次 ⇒ 换边后六端手里那份是旧侧的。不补发 second path 进 round_state
+	#   (那是给同一份数据开第二条投递路径),改在这里拉 —— 本来就站在「清子弹 + 还原砖」这一拍上,
+	#   且顺带把 ground_weapons 与 destroyed 一并对齐。
+	if NetBus.can_send_to_server():
+		# ★ 先置位再发:这条应答是补态口径(不是进场建态)—— 换边后 spawns 是新一侧而 PvpSession.spawn
+		#   手里是旧一侧,两者必然不一致,照进场口径硬拉 = 每局边界刷一条假告警 + 一次多余瞬移。
+		#   闸门与「重连补态」共用(_resync_pull_pending,读一次即清),不要新立一个标志。
+		_resync_pull_pending = true
+		NetBus.rpc_id(1, "match_sync")
 
 
 # 结算页载荷的唯一来源。★ 只读状态、不碰节点树(适配器是纯函数);_last_round_state 是基类成员,本文件不再声明。

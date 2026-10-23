@@ -6,7 +6,6 @@ var _last_snap_tick := 0
 var _replicas: Dictionary = {}         # role(int) -> PlayerReplica(自己以外的全部角色)
 # ★ _level0(世界/Level0)已上提到基类(两个模式同名同义,子类不重复声明;重连补态那一路要在基类 _on_match_sync 里用它还原可破坏砖)。
 var _hud: RoyaleHud = null
-var _pause_menu: PauseMenu = null   # ESC 菜单(MATCH_OVER 后销毁以失效,见 _on_round_state)
 
 # ── C2 客户端预测(与 pvp_client 同一套)── 本地玩家由引擎自步进(读真实 Input,aim/手感 = 单机);本场景每物理帧在它步进前 note_post_step + reconcile,把服务器外部事件(复活瞬移/受击/击杀复位)收敛掉。
 
@@ -182,19 +181,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		NetBusExt.rpc_id(1, "suicide_request")
 
 
-func _on_round_state(data: Dictionary) -> void:
-	_last_round_state = data
-	var state := int(data.get("state", 0))
-	_round_locked = state == 0
-	if state == 3 and not _match_ended:   # MATCH_OVER → 弹结算页,玩家自己退
-		_match_ended = true
-		# 结算画面的输入锁由下面的 _refresh_input_lock() 统一给(经 _match_ended 那一维)。
-		# ★ ESC 菜单随即失效、退出只走结算页这一条路(与 pvp_client / team_game 同款):不销毁菜单的话玩家能在结算页上再弹一次暂停菜单,本页的 ESC(返回主菜单)与菜单的 ESC 会同时触发(见 ui/match_result.gd 类头那条硬依赖)。
-		if _pause_menu != null and is_instance_valid(_pause_menu):
-			_pause_menu.queue_free()
-			_pause_menu = null
-		_show_result()
-	_refresh_input_lock()   # 单一收口:三个维度任一成立即锁(见函数定义)
+# 回合状态的四态编排已收进基类 PvpMatchClient._on_round_state(2026-10-22)。
+# 大乱斗只覆写这一处差异:**第二条 MATCH_OVER 不再重复消费**(它把 _match_ended 当幂等闩,
+# 门内只做一次挂载;而 1v1/3v3 的第二条载荷必须刷新结算页,故基类默认是"每次都消费")。
+func _should_handle_match_over() -> bool:
+	return not _match_ended
 
 
 # 结算页载荷的唯一来源。★ 只读状态、不碰节点树(适配器是纯函数);_last_round_state 是基类成员,本文件不再声明。

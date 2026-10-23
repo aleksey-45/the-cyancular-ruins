@@ -9,7 +9,6 @@ var _last_snap_tick := 0
 var _remote_replica: Node2D = null
 # ★ _level0(世界/Level0)已上提到基类(两个模式同名同义,子类不重复声明):换局复位砖与重连补态复位砖共用同一个字段。
 var _hud: PvpHud = null
-var _pause_menu: PauseMenu = null   # ESC 菜单(打开时锁本地输入;MATCH_OVER 后销毁以失效)
 
 const ID_HEAD_OFFSET := Vector2(0.0, -78.0)   # 头顶文字位置(-100 略高,现往下压一点)
 const NAME_COLOR := Color(0.94, 0.95, 0.98, 1.0)
@@ -130,28 +129,8 @@ func _on_kill_event(killer: int, victim: int) -> void:
 
 # 服务器拆墙事件:客户端子弹是视觉副本不判伤害,用大伤害触发 damage_tile 走 Level0 拆墙渲染。
 
-# 回合状态:COUNTDOWN 且 round>1(新一轮)⇒ 服务器已还原可破坏砖 + 清子弹,这里同刻清本地子弹并复位砖,保证两端从同一基线出发;MATCH_OVER ⇒ 弹结算页,玩家自己退(记分/胜负仍由 PvpHud 负责)。
-func _on_round_state(data: Dictionary) -> void:
-	_last_round_state = data
-	var state := int(data.get("state", 0))
-	_round_locked = state == 0
-	_refresh_input_lock()   # 单一收口:菜单开着时不解锁(见 _refresh_input_lock)
-	if state == 0 and int(data.get("round", 1)) > 1:   # COUNTDOWN,新一轮
-		for b in get_tree().get_nodes_in_group("bullet"):
-			if is_instance_valid(b):
-				(b as Node).queue_free()
-		if _level0 != null and _level0.has_method("reset_destructibles"):
-			_level0.reset_destructibles()
-		# ★ 地面武器不要在这里清:服务器换局是「先 _reset_ground_weapons(广播 removed×旧 + spawned×新)、再 _broadcast_round_state」,两条走同一条可靠通道、保序到达 ⇒ 本条到达时新一轮那批早已在本地建好,再清一次会让第 2 局起客户端地面恒为空(服务器有 10 把、客户端一把都看不见)。零守卫(net_ground_probe 已删·2026-10-09)。
-	elif state == 3:   # MatchHost.RoundState.MATCH_OVER
-		_match_ended = true
-		# ESC 菜单随即失效:否则玩家可在结算页上再弹一次暂停菜单,而本页的 ESC(返回主菜单)与菜单的 ESC 会同时触发(见 ui/match_result.gd 类头那条硬依赖);直接销毁菜单 —— 退出只走结算页这一条路。
-		if _pause_menu != null and is_instance_valid(_pause_menu):
-			_pause_menu.queue_free()
-			_pause_menu = null
-		_menu_open = false
-		_refresh_input_lock()
-		_show_result()
+# 回合状态的四态编排已收进基类 PvpMatchClient._on_round_state(2026-10-22):
+# 1v1 不需要任何钩子 —— 默认行为就是「新一局清子弹 + 复位砖」+「每次 MATCH_OVER 都刷新结算页」。
 
 func _build_result_payload() -> Dictionary:
 	return MatchResultPayload.for_duel(_last_round_state, _names, PvpSession.role)

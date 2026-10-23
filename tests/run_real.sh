@@ -91,6 +91,7 @@ ENTRIES=(
 	"tests/smoke/pvp_room_smoke.sh|7777 + pool[7800,8300]|~40s|SMOKE PASS|pool"
 	"tests/probe/rejoin_probe.sh|lobby 29300 / worker 29350 (OUT of pool)|60~110s|REJOIN PROBE: ALL-OK|nopool"
 	"tests/probe/royale_soak_probe.sh|7777 + pool[7800,8300]|~150-200s|SOAK: ALL-OK|pool"
+	"tests/probe/royale_role_cap_probe.sh|7777 + pool[7800,8300]|~3-5min|ROLE CAP PROBE: ALL-OK(9/9)|pool"
 	"tests/probe/team_match_probe.sh|lobby 29200 / worker 29250 (OUT of pool)|3~10min|TEAM MATCH PROBE: ALL-OK|nopool"
 )
 

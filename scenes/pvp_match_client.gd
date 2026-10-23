@@ -30,6 +30,9 @@ var _netstat_steps := 0     # 两次打印之间的物理步数(=物理步/秒,�
 var _match_ended := false
 # 暂停菜单是否开着(PvP 下菜单不暂停树,靠它锁本地输入;见 _refresh_input_lock)。
 var _menu_open := false
+# ESC 暂停菜单(打开时锁本地输入;MATCH_OVER 后销毁以失效)。2026-10-22 从三个子类各一份收上来 ——
+# 回合状态模板要在基类里销毁它(ESC 双语义的硬依赖),基类拿不到子类声明的字段。
+var _pause_menu: PauseMenu = null
 var _result: MatchResult = null             # 结算页(挂载一次,由 _show_result 建)
 var _last_round_state: Dictionary = {}      # 最近一条 round_state(结算载荷的输入之一)
 
@@ -505,6 +508,59 @@ func _bullet_contact_target(b: BulletBase) -> Node2D:
 # 这颗视觉子弹能不能停在那个实体上。默认能(1v1 / 大乱斗:除了射手谁都能挡);3v3 覆写:与射手同队的排掉(规则:队友不互挡 + 子弹穿透队友)—— 不覆写的话队友副本会把自己的子弹吃掉(与服务器裁决相反,且不报错)。
 func _bullet_hits_entity(_b: BulletBase, _ent: Node2D) -> bool:
 	return true
+
+
+# ── 回合状态:三模式共用的四态编排(2026-10-22 从三个子类各一份收上来) ──
+# ★ 顺序是承重的,逐字保持旧实现:状态处理**前后各刷一次**输入锁(它是幂等的;这样 3v3 旧版末尾
+#   那一次也不丢,pvp 旧版开头那一次也不丢)。三个钩子之外的 if 一律不许加进来。
+# ★ 模式差异只通过钩子表达:
+#   · _should_handle_match_over():大乱斗忽略第二条 MATCH_OVER,1v1/3v3 要处理(第二条载荷要刷新结算页);
+#   · _on_countdown_round():三模式都复位砖,3v3 额外重拉 match_sync(换边);
+#   · _enter_match_over_state():置终局、销毁暂停菜单(ESC 双语义的硬依赖)、弹/刷结算页。
+func _on_round_state(data: Dictionary) -> void:
+	_last_round_state = data
+	var state := int(data.get("state", 0))
+	_round_locked = state == 0
+	_refresh_input_lock()
+	if state == 0 and int(data.get("round", 1)) > 1:
+		_clear_bullets_for_new_round()
+		_on_countdown_round()
+	elif state == 3 and _should_handle_match_over():
+		_enter_match_over_state(data)
+	_refresh_input_lock()
+
+
+# 新一局开始:清本地子弹(服务器同刻也清)。三模式相同,故不留钩子。
+func _clear_bullets_for_new_round() -> void:
+	for b in get_tree().get_nodes_in_group("bullet"):
+		if is_instance_valid(b):
+			(b as Node).queue_free()
+
+
+# 新一局 COUNTDOWN 的模式差异:默认只复位可破坏砖;3v3 覆写并在 super 之后重拉 match_sync。
+# ★ 地面武器**不要**在这里清:服务器换局是「先 _reset_ground_weapons(广播 removed×旧 + spawned×新)、
+#   再 _broadcast_round_state」,两条走同一条可靠通道、保序到达 ⇒ 本条到达时新一轮那批早已在本地建好,
+#   再清一次会让第 2 局起客户端地面恒空(服务器有 10 把、客户端一把都看不见)。
+func _on_countdown_round() -> void:
+	if _level0 != null and _level0.has_method("reset_destructibles"):
+		_level0.reset_destructibles()
+
+
+# 是否消费这一条 MATCH_OVER。默认 true(1v1/3v3:第二条载荷仍要刷新结算页);
+# 大乱斗覆写成"首次才消费"(它把 _match_ended 当幂等闩,门内只做一次挂载)。
+func _should_handle_match_over() -> bool:
+	return true
+
+
+# MATCH_OVER 的公共段:置终局 → 销毁暂停菜单(ESC 双语义的硬依赖)→ 弹/刷结算页。
+# ★ `_show_result()` 是"挂载一次、每次刷新";写成 `if _result != null: return` 就会让第二条载荷永远到不了屏幕。
+func _enter_match_over_state(_data: Dictionary) -> void:
+	_match_ended = true
+	if _pause_menu != null and is_instance_valid(_pause_menu):
+		_pause_menu.queue_free()
+		_pause_menu = null
+	_menu_open = false
+	_show_result()
 
 
 # 本地输入锁的单一口(三个维度:冻结期 / 菜单打开 / 结算后回菜单途中)。★ 合并时把大乱斗那版多出的 _match_ended 一并带进 1v1 —— 这是本步唯一的行为差异(1v1 在 MATCH_OVER 之后那几秒输入也被锁),与 _match_ended 的语义一致,属有意统一。

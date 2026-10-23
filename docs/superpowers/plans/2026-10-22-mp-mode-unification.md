@@ -22,6 +22,16 @@
 - 草稿/临时探针只放 `.superpowers/bughunt/tmp/`，不进 `tests/`。
 - 与另一条工作线冲突时**以本计划为准**（用户 2026-10-22 裁定）；提交前 `git status` 核对，不带走别人的 hunk。
 
+## 进度(2026-10-22)
+
+- ✅ **Task 1 / 2 / 3 / 4 / 5**(`ModeDefs` / `ModeContext` / `ModeRoomRules` / `ModeOptions` + lobby 接线 / 客户端 round_state 模板 + `_pause_menu` 收进基类)
+- ✅ 真链路回归(持锁串行,无残留):
+  - 1v1 `SMOKE PASS`;
+  - 3v3 `TEAM MATCH PROBE: 3 条失败` —— 与改前**同形**(仍全部在探针相③),换局 COUNTDOWN 与第二条 MATCH_OVER 路径已实际跑到;
+  - 大乱斗 9 人 `SOAK: ALL-OK(9/9 客户端正常收尾)` —— **X1 端到端**:worker 现在收 role 1..16。
+- ✅ 新增真链路守卫 `tests/probe/royale_role_cap_probe.sh`(9 人档,钉 role 上界),已登记进 `tests/run_real.sh` 的 `ENTRIES`。
+- ⏭ 待做:**Task 6/7**(结算页/拾取/拆砖拆件)、**Task 8/9**(大厅 B)、**Task 10/11**(`mp_lobby` 四面板、Host 拆件)、**Task 12**(守卫与全量真链路收档)。
+
 ## Review Focus
 
 1. **大厅端口归还/回收梯**（B 合并表最危险）：`teardown_room` 三态、`_release_port_later`（120s/360s）、`_reclaim_finished_matches` 必须逐条保持；错一处=端口永久占用。
