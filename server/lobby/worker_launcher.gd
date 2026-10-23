@@ -83,8 +83,56 @@ func log_path(port: int) -> String:
 	return dir.path_join("worker_%d.log" % port)
 
 
+# ── 每局归档(端口复用不许覆盖上一局崩溃现场)────────────────────────────────
+const WORKER_LOG_KEEP := 20
+
+
+static func archive_name(path: String, stamp: String) -> String:
+	return path.get_base_dir().path_join("%s_%s.log" % [path.get_file().get_basename(), stamp])
+
+
+static func prune_worker_logs(names: PackedStringArray, port: int, keep: int) -> PackedStringArray:
+	var prefix := "worker_%d_" % port
+	var hits: Array[String] = []
+	for n in names:
+		if n.begins_with(prefix) and n.ends_with(".log"):
+			hits.append(n)
+	hits.sort()
+	hits.reverse()
+	var out := PackedStringArray()
+	for i in mini(keep, hits.size()):
+		out.append(hits[i])
+	return out
+
+
+func _archive_log(port: int) -> void:
+	var live := log_path(port)
+	if not FileAccess.file_exists(live):
+		return
+	var stamp := Time.get_datetime_string_from_system().replace(":", "").replace("-", "").replace(" ", "_").substr(9)
+	DirAccess.rename_absolute(live, archive_name(live, stamp))
+	var dir := live.get_base_dir()
+	var names := PackedStringArray()
+	var d := DirAccess.open(dir)
+	if d == null:
+		return
+	d.list_dir_begin()
+	var f := d.get_next()
+	while f != "":
+		if not d.current_is_dir():
+			names.append(f)
+		f = d.get_next()
+	d.list_dir_end()
+	var keep := prune_worker_logs(names, port, WORKER_LOG_KEEP)
+	var prefix := "worker_%d_" % port
+	for n in names:
+		if n.begins_with(prefix) and n.ends_with(".log") and not keep.has(n):
+			DirAccess.remove_absolute(dir.path_join(n))
+
+
 # 拉起 headless worker(同一可执行文件 + --worker):editor / template_debug 要带 --path 与场景,导出 exe 靠 run/main_scene.serverui 的主场景覆盖(不再用 dedicated_server 标记 —— 那会让引擎强制空显示驱动);ai_roles 非空则透传 --ai-roles(这些 role 由服务端 AI 驱动,不等 claim)。
 func spawn_worker(port: int, ai_roles: Array = []) -> bool:
+	_archive_log(port)
 	var exe := OS.get_executable_path()
 	var args: PackedStringArray
 	if OS.has_feature("editor") or OS.has_feature("template_debug"):
@@ -112,6 +160,7 @@ func spawn_worker(port: int, ai_roles: Array = []) -> bool:
 
 # 拉起大乱斗 worker:roles = 本局全部参战 role(真人已分配号 + AI 补位号)。★ 不再传「人数 + role 上界」—— role 由「最小空闲号」分配、退出后不重排,编号会留空洞({1,3} 而 2 人),从人数推导必错;解析侧与 server_main.gd 的 argv 逐字对应,两边改一处必须同步改另一处。
 func spawn_royale_worker(port: int, roles: Array, ai_roles: Array = []) -> bool:
+	_archive_log(port)
 	var role_strs := []
 	for r in roles:
 		role_strs.append(str(int(r)))
@@ -152,6 +201,7 @@ func spawn_royale_worker(port: int, roles: Array, ai_roles: Array = []) -> bool:
 # 拉起 3v3 worker(--team --roles r,r,... --teams t,t,...):roles 与 teams 同序、等长,第 i 个 role 的队号就是 teams[i]。
 # ★ 队号必须显式传、不能从 role 号推(同上:编号留空洞);与 server_main.gd 的 argv 逐字对应,守卫 = tools/room_sweep_lint.gd 的双向断言。
 func spawn_team_worker(port: int, roles: Array, teams: Array) -> bool:
+	_archive_log(port)
 	if roles.size() != teams.size():
 		push_error("spawn_team_worker: roles 与 teams 长度不等(%d vs %d),拒绝拉起" % [roles.size(), teams.size()])
 		return false

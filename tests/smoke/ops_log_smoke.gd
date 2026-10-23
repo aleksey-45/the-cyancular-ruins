@@ -3,9 +3,10 @@ extends SceneTree
 # 用法:"$GODOT" --headless --path . -s res://tests/smoke/ops_log_smoke.gd(外层套 timeout)
 
 const ND := preload("res://core/net/net_diag.gd")
+const WL := preload("res://server/lobby/worker_launcher.gd")
 
 # ★ 条数闸:断言数对不上就红。没有它,一次脚本中途报错只让后面的断言静默跳过,判词照打 OK。
-const EXPECTED_CHECKS := 12
+const EXPECTED_CHECKS := 16
 
 var _checks := 0
 
@@ -68,6 +69,17 @@ func _initialize() -> void:
 	tf.close()
 	fail += _check("取最后 2 个非空行并压成一行", ND.tail_lines(tp, 2) == "beta ↵ gamma")
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(tp))
+
+	# ── worker 日志归档:端口复用不许覆盖上一局崩溃现场 ──
+	fail += _check("归档名插在扩展名前",
+			WL.archive_name("user://logs/worker_7800.log", "210433") == "user://logs/worker_7800_210433.log")
+	var wn := PackedStringArray(["worker_7800.log", "worker_7800_210431.log",
+			"worker_7800_210432.log", "worker_7801_210432.log"])
+	var keptw := WL.prune_worker_logs(wn, 7800, 2)
+	fail += _check("只留该端口最新 2 份归档",
+			keptw.size() == 2 and keptw.has("worker_7800_210432.log") and keptw.has("worker_7800_210431.log"))
+	fail += _check("不碰别的端口", not keptw.has("worker_7801_210432.log"))
+	fail += _check("不含未归档的活文件", not keptw.has("worker_7800.log"))
 
 	if _checks != EXPECTED_CHECKS:
 		fail += 1

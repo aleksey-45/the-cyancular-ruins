@@ -198,6 +198,9 @@ func _run_worker(port: int) -> void:
 				_human_role_count(), port, str(_role_set), str(_team_of_role)])
 	else:
 		print("worker 就绪,等待两名玩家……(port %d)" % port)
+	NetDiag.audit("match_boot", {"port": port,
+			"mode": ModeDefs.MODE_ROYALE if _royale else (ModeDefs.MODE_TEAM if _team_mode else ModeDefs.MODE_PVP),
+			"roles": str(_role_set), "teams": str(_team_of_role)})
 	_print_local_ips()
 
 func _human_role_count() -> int:
@@ -247,11 +250,14 @@ func _expire_graces(now_ms: int) -> void:
 			if is_instance_valid(_host):
 				_host.queue_free()
 			print("worker: 1v1 宽限期到,对手未归,对局结束")
+			NetDiag.audit("match_over", {"mode": ModeDefs.MODE_PVP, "reason": "grace_expired"})
 			get_tree().quit(0)
 	# 大乱斗/3v3:全员走光且宽限期已空(一个都没回来)→ 收场退出。★ 这是大乱斗/3v3 worker 唯一的正常退出口(丢了会让每局都留下僵尸进程永驻占端口)。
 	# ★ _match_started 不能省(本函数由 _process 每秒无条件调用,开机等玩家同样满足 _claims 空 + 宽限空 ⇒ 少了它 worker 一开机就判全员离开自杀);★ _team_mode 必须一起收进来(与上面那条 else 是两条判据)。
 	if (_royale or _team_mode) and _match_started and _claims.is_empty() and _grace.size() == 0:
 		print("worker: 全员离开,%s结束" % ("大乱斗" if _royale else "3v3"))
+		NetDiag.audit("match_over", {"mode": ModeDefs.MODE_ROYALE if _royale else ModeDefs.MODE_TEAM,
+				"reason": "all_left"})
 		get_tree().quit(0)
 
 
@@ -276,6 +282,7 @@ func _process(delta: float) -> void:
 		_understaffed_wait += delta
 		if _understaffed_wait > 30.0:
 			print("worker: 3v3 报到超时(%d/%d),退出释放端口" % [_claims.size(), _team_of_role.size()])
+			NetDiag.audit("abort", {"mode": ModeDefs.MODE_TEAM, "reason": "report_timeout"})
 			get_tree().quit(0)
 	elif _royale and not _match_started and _host == null and _claims.size() >= 2:
 		_claim_wait += delta
@@ -286,6 +293,7 @@ func _process(delta: float) -> void:
 		_understaffed_wait += delta
 		if _understaffed_wait > 10.0:
 			print("worker: 可用玩家 %d/2,超时退出释放端口" % _claims.size())
+			NetDiag.audit("abort", {"mode": ModeDefs.MODE_ROYALE, "reason": "understaffed_timeout"})
 			get_tree().quit(0)
 	# 1v1:一个 claim_role 都没到就干等没有意义(配对早已在大厅完成,报到应在秒级到达);这是三种模式里唯一原先没有报到梯的一支,少了它两个客户端都消失时 worker 永驻、端口白占到 2h 超龄兜底。
 	# ★ 30s 是承重的:客户端侧内建兜底是 12s 转连 / 25s claim ⇒ worker 必须晚于它们退,否则客户端还在重试、端口已经没了。判据也覆盖只到一个 claim(1v1 要 2 人齐才开)。
@@ -294,6 +302,7 @@ func _process(delta: float) -> void:
 		_understaffed_wait += delta
 		if _understaffed_wait > 30.0:
 			print("worker: 1v1 报到超时(%d/2),退出释放端口" % _claims.size())
+			NetDiag.audit("abort", {"mode": ModeDefs.MODE_PVP, "reason": "report_timeout"})
 			get_tree().quit(0)
 
 func _on_player_options(caller: int, opts: Dictionary) -> void:
