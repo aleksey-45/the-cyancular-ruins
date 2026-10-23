@@ -194,7 +194,11 @@
   导出标记从 `dedicated_server` 换成 `serverui` 之后，`role()` 的推断会把这个大厅当成 client（dev/headless 也没有参数），
   漏掉这一行 = **审计永远不写**（实现时踩过）。
 - **文件**：`user://logs/ops-<role>-<pid>-<时间戳>.jsonl`，与 diag 同形（`t` / `pid` / `role` / `event` / `data`），
-  **每条都 flush**（崩溃后必须还在）。开新文件前按名倒序保留最新 **60 份**；单文件超 **8 MB** 时 `push_warning` 一次。
+  **每条都 flush**（崩溃后必须还在）。保留策略的数值**只看常量**（`NetDiag.OPS_KEEP` / `OPS_WARN_BYTES`，别在这里抄数字）：
+  开新文件前按文件名里的**时间戳段**倒序保留最新 N 份；单文件超上限时 `push_warning` 一次。
+  ★ 排序键必须是时间戳而不是整个文件名——文件名里 pid 在时间戳**前面**，按整名排会让"高 pid 的旧文件"永远赢，
+  跨 pid 位宽时每次 prune 把新文件删光（评审抓出的 Critical；冒烟已钉混合 pid 位宽那一档）。
+  ⚠ 保留期是"局数"不是"月"：一个进程一个文件（1 大厅 + 每局 1 worker），所以 N 份 ≈ N-1 局。
 - **读它回答什么**：谁在何时建房 / 进房 / 离房 / 开局 / 关房 / 失联 —— 不带细节，细节归 `--diag`。
   事件清单与字段见 spec §4（改调用点时必须同步那份表）。
 - **关窗 = 优雅停止**：`server_main` 拦 `NOTIFICATION_WM_CLOSE_REQUEST` → 逐个 `teardown_room`（worker 不留孤儿）
@@ -202,7 +206,7 @@
 - **`worker_lost` 是"现场"不是"判定"**：Godot 4 拿不到子进程退出码（`OS.create_process` 只给 pid），
   所以记录的是 `alive_sec` + 该 worker 引擎日志的最后 3 行（`tail`）。正常结束与崩溃**都会**发，
   由读的人按尾部内容判断。
-- **每局日志归档**：开局前把 `worker_<端口>.log` 改名成 `worker_<端口>_<HHMMSS>.log`（同端口保留最新 20 份），
+- **每局日志归档**：开局前把 `worker_<端口>.log` 改名成 `worker_<端口>_<HHMMSS>.log`（同端口保留最新 `WorkerLauncher.WORKER_LOG_KEEP` 份），
   否则端口复用会**覆盖上一局的崩溃现场**。
 - **边界（同 diag）**：`t` 跨进程不可相减；写盘失败只 `push_warning`、不打业务；
   审计事件**不进断言**（关闭/失败时一行都没有 ⇒ "日志里没有" ≠ "没发生"）。

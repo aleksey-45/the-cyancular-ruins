@@ -20,6 +20,7 @@ const TEAM_PORT_REUSE_DELAY := 360.0
 var _next_port := WORKER_PORT_BASE
 var _worker_ports: Dictionary = {}   # 正在使用(未释放)的 worker 端口
 var _worker_pids: Dictionary = {}   # port(int) -> pid(int):回收要判"这一局还在不在"
+var _worker_started: Dictionary = {}   # port(int) -> unix 秒:worker 自己的存活时长(worker_lost.alive_sec 用它,不是房龄)
 
 
 # 端口段文案的单一来源(提示串与面板都用它):手写死数字曾与真实池不符,照它放行防火墙会漏掉半个池子。
@@ -57,6 +58,10 @@ func pid_of(port: int) -> int:
 # ★ pid <= 0 一律 false(「不在」):pid 登记在 OS.create_process 成功之后,而 started/in_match 在它之前 —— 那个窗口里判「活着」会让开局一瞬被自己的回收梯拆掉。
 static func pid_alive(pid: int) -> bool:
 	return pid > 0 and OS.is_process_running(pid)
+
+
+func started_at(port: int) -> float:
+	return float(_worker_started.get(port, 0.0))
 
 
 # 端口池快照:三种占法可区分。★ 活着必须走 pid_alive(别另写一份);按端口升序(面板 0.5s 刷新,无序会跳)。
@@ -151,6 +156,7 @@ func spawn_worker(port: int, ai_roles: Array = []) -> bool:
 	var pid := OS.create_process(exe, args)
 	if pid > 0:
 		_worker_pids[port] = pid
+		_worker_started[port] = Time.get_unix_time_from_system()
 	print("[lobby] spawn worker pid=%d port=%d editor=%s ai=%s 日志=%s" % [pid, port,
 			str(OS.has_feature("editor")), str(ai_roles), log_path(port)])
 	if pid <= 0:
@@ -191,6 +197,7 @@ func spawn_royale_worker(port: int, roles: Array, ai_roles: Array = []) -> bool:
 	var pid := OS.create_process(exe, args)
 	if pid > 0:
 		_worker_pids[port] = pid
+		_worker_started[port] = Time.get_unix_time_from_system()
 	print("[lobby] spawn royale worker pid=%d port=%d roles=%s ai=%s 日志=%s" % [pid, port,
 			str(roles), str(ai_roles), log_path(port)])
 	if pid <= 0:
@@ -233,6 +240,7 @@ func spawn_team_worker(port: int, roles: Array, teams: Array) -> bool:
 	var pid := OS.create_process(exe, args)
 	if pid > 0:
 		_worker_pids[port] = pid
+		_worker_started[port] = Time.get_unix_time_from_system()
 	print("[lobby] spawn team worker pid=%d port=%d roles=%s teams=%s 日志=%s" % [pid, port,
 			str(roles), str(teams), log_path(port)])
 	if pid <= 0:

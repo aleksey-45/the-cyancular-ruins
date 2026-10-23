@@ -44,14 +44,17 @@
 
 ## 3. 保留与体积(不做大小轮转,理由见下)
 
-- `ops` 文件**每次进程启动一个**;开新文件前把同目录 `ops-*.jsonl` 按文件名倒序保留**最新 60 份**,其余删除
-  (文件名带 `YYYYMMDD_HHMMSS` ⇒ 字典序即时间序,不需要读文件内容)。
+- `ops` 文件**每次进程启动一个**;开新文件前把同目录 `ops-*.jsonl` **按文件名里的时间戳段**倒序保留**最新
+  `OPS_KEEP`(60)份**,其余删除。★ 排序键**必须**是时间戳而不是整个文件名 —— 文件名里 pid 在时间戳**前面**,
+  按整名排序会让"高 pid 的旧文件"永远赢,跨 pid 位宽(重启 / 4→5 位)时每次 prune 都把新文件删光、
+  审计历史**静默冻结**(评审抓出的 Critical;`ops_files_to_keep` 已按 `rfind("-")` 之后那段排序,冒烟钉住混合 pid 位宽)。
 - **不做 2MB×10 轮转**:审计粒度是"事件级"而非"逐帧级"。估算:一局 = `room_created` + `player_join`×N +
-  `match_start` + `match_end` + `room_closed` ≈ 10 行 × ~200 B ≈ **2 KB/局**;每天 100 局 ≈ 200 KB/天 ⇒
-  长跑大厅单文件月级约 6 MB,配 60 份文件足够。★ 另加一条**可观测的上限**:单文件超过 **8 MB** 时
-  `push_warning` 一次(不静默)—— 超了就说明事件量级判断错了,该回来看这份设计。
+  `match_start` + `match_begin` + `match_end` + `room_closed` ≈ 10~15 行 × ~200 B ≈ **2~3 KB/局**。
+  ⚠ **保留期实际是"局数"而不是"月"**:一个进程一个文件(1 个大厅 + 每局 1 个 worker),60 份 ≈ **59 局**;
+  每天 20 局 ⇒ 约 **3 天**。要更长的窗口,调 `OPS_KEEP`(代价是磁盘)。
+  ★ 另加一条**可观测的上限**:单文件超过 `OPS_WARN_BYTES`(8 MB)时 `push_warning` 一次(不静默)。
 - worker 的**引擎日志**归档:`worker_<端口>.log` ⇒ 开局前重命名 `worker_<端口>_<HHMMSS>.log`,
-  同端口只保留最新 **20** 份(名字即时间序);判据与命名都是纯函数。
+  同端口只保留最新 `WORKER_LOG_KEEP`(20)份(时间戳在末尾且定宽 ⇒ 字典序即时间序);判据与命名都是纯函数。
 
 ## 4. 事件清单(审计通道)
 
@@ -60,19 +63,21 @@
 | 进程 | 事件 | 必带字段 |
 |---|---|---|
 | 大厅 | `lobby_start` | version, port |
-| 大厅 | `lobby_stop` | reason(`close_request`\|`quit`), rooms_left |
-| 大厅 | `room_created` | room, mode, peer, nick |
-| 大厅 | `room_closed` | room, mode, reason(`operator`\|`sweep_timeout`\|`match_end`\|`abort`), port, players, uptime_sec |
-| 大厅 | `player_join` | room, mode, peer, nick, players |
-| 大厅 | `player_leave` | room, mode, peer, players |
-| 大厅 | `host_transfer` | room, mode, from_peer, to_peer |
-| 大厅 | `match_start` | room, mode, port, players, ai |
-| 大厅 | `match_end` | room, mode, port, uptime_sec |
-| 大厅 | `worker_spawn_failed` | room, mode, port |
-| 大厅 | `worker_lost` | room, mode, port, pid, alive_sec, tail(**引擎日志最后 3 个非空行**) |
-| worker | `match_boot` | port, mode, roles, map |
-| worker | `match_over` | mode, reason |
-| worker | `abort` | reason(`understaffed_timeout`\|`report_timeout`) |
+| 大厅 | `lobby_stop` | reason(`close_request`\|`quit`), rooms_left(**关服时被拆掉的房数**,不是"还剩几间") |
+| 大厅 | `room_created` | room, mode, peer, nick, [cap, public, beta] |
+| 大厅 | `room_closed` | room, mode, reason(`operator`\|`sweep_timeout`\|`match_end`\|`empty`\|`left`\|`lobby_shutdown`\|`abort`\|`closed`\|`delayed`——后两个只是兜底), port, players, uptime_sec |
+| 大厅 | `player_join` | room, mode, peer, nick, players, [role, cap] |
+| 大厅 | `player_leave` | room, mode, peer, players, [explicit] —— **只记没开局的房**(退出按钮 / 掉线) |
+| 大厅 | `player_detach` | room, mode, peer —— **开局后**客户端 `NetBus.stop()` 转连 worker 的那次断开(不是"离开房间") |
+| 大厅 | `host_transfer` | room, mode, from_peer, to_peer, [explicit] |
+| 大厅 | `match_start` | room, mode, port, players, ai, [roles, teams] |
+| 大厅 | `match_end` | room, mode, port, uptime_sec(**worker 存活时长**,不是房龄) |
+| 大厅 | `worker_spawn_failed` | port(拉不起来时房对象可能已拆,不编造 room/mode) |
+| 大厅 | `worker_lost` | room, mode, port, pid, alive_sec(**worker 存活时长**), tail(**引擎日志最后 3 个非空行**) |
+| worker | `match_boot` | port, mode, roles, teams(★ **没有 map**:地图在 `_begin_match` 才解析,开机时还不存在) |
+| worker | `match_begin` | mode, map, players, ai(★ map 在这里;port 在同文件的 `match_boot` 行,不重复) |
+| worker | `match_over` | mode, reason(`all_left`\|`grace_expired`) |
+| worker | `abort` | mode, reason(`understaffed_timeout`\|`report_timeout`\|`claim_left`\|`bind_failed`) |
 
 ★ **拿不到退出码**(Godot 4 `OS` 没有子进程退出码 API:`OS.create_process` 只给 pid、`is_process_running` 只给存活)
 ⇒ `worker_lost` 用**存活时长 + 引擎日志尾部**代替;尾部里的错误原文才是崩溃原因。
@@ -84,8 +89,8 @@
 `server_main` 大厅分支 `_ready` 里 `get_tree().auto_accept_quit = false`;新增 `_notification` 处理
 `NOTIFICATION_WM_CLOSE_REQUEST`:
 
-1. 遍历 `RoomRegistry`(经 `LobbyRooms` 的门面视图)逐个 `teardown_room(room, TEARDOWN_KILL)`;
-2. `audit("lobby_stop", {"reason": "close_request", "rooms_left": 0})`;
+1. 遍历 `RoomRegistry`(经 `LobbyRooms` 的门面视图)逐个 `teardown_room(room, TEARDOWN_KILL, "", false, "lobby_shutdown")`;
+2. `audit("lobby_stop", {"reason": "close_request", "rooms_left": <第 1 步拆掉的房数>})`;
 3. `get_tree().quit()`。
 
 `--quit-after` 之类正常退出走 `_exit_tree` 兜底(用 `_stop_logged` 去重,不许写两条 `lobby_stop`)。

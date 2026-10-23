@@ -241,7 +241,7 @@ func team_start(caller: int) -> void:
 
 	_grant_rejoin(tr.code, port, granted)
 	NetDiag.audit("match_start", {"room": tr.code, "mode": ModeDefs.MODE_TEAM, "port": port,
-			"players": tr.players.size(), "roles": str(roles), "teams": str(teams)})
+			"players": tr.players.size(), "roles": str(roles), "teams": str(teams), "ai": 0})
 	await get_tree().create_timer(0.3).timeout
 	_send_go_match.call_deferred(tr, port)
 
@@ -367,12 +367,13 @@ func _reclaim_finished_matches() -> void:
 		if tr.in_match and _match_over(tr.worker_port, tr.worker_pid):
 			done.append(tr)
 	for room in done:
-		var uptime := int(Time.get_unix_time_from_system() - float(room.created_at))
+		var wstart := _launcher.started_at(room.worker_port)
+		var alive := int(Time.get_unix_time_from_system() - (wstart if wstart > 0.0 else float(room.created_at)))
 		NetDiag.audit("match_end", {"room": room.code, "mode": room.mode,
-				"port": room.worker_port, "uptime_sec": uptime})
+				"port": room.worker_port, "uptime_sec": alive})
 		# ★ 拿不到子进程退出码 ⇒ 记"worker 消失时的现场":存活时长 + 日志尾部;正常结束与崩溃都发,由读的人按尾部判。
 		NetDiag.audit("worker_lost", {"room": room.code, "mode": room.mode, "port": room.worker_port,
-				"pid": room.worker_pid, "alive_sec": uptime,
+				"pid": room.worker_pid, "alive_sec": alive,
 				"tail": NetDiag.tail_lines(_launcher.log_path(room.worker_port), 3)})
 		lobby.teardown_room(room, LobbyRooms.TEARDOWN_DELAYED, "", false, "match_end")
 

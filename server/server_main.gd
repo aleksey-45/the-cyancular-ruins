@@ -180,6 +180,7 @@ func _run_worker(port: int) -> void:
 	var err := NetBus.start_server(port)
 	if err != OK:
 		push_error("worker: 监听失败 %d (port %d)" % [err, port])
+		NetDiag.audit("abort", {"mode": _mode_id(), "reason": "bind_failed"})
 		get_tree().quit(1)
 		return
 	NetBus.role_claimed.connect(_on_role_claimed)
@@ -198,8 +199,7 @@ func _run_worker(port: int) -> void:
 				_human_role_count(), port, str(_role_set), str(_team_of_role)])
 	else:
 		print("worker 就绪,等待两名玩家……(port %d)" % port)
-	NetDiag.audit("match_boot", {"port": port,
-			"mode": ModeDefs.MODE_ROYALE if _royale else (ModeDefs.MODE_TEAM if _team_mode else ModeDefs.MODE_PVP),
+	NetDiag.audit("match_boot", {"port": port, "mode": _mode_id(),
 			"roles": str(_role_set), "teams": str(_team_of_role)})
 	_print_local_ips()
 
@@ -256,8 +256,7 @@ func _expire_graces(now_ms: int) -> void:
 	# ★ _match_started 不能省(本函数由 _process 每秒无条件调用,开机等玩家同样满足 _claims 空 + 宽限空 ⇒ 少了它 worker 一开机就判全员离开自杀);★ _team_mode 必须一起收进来(与上面那条 else 是两条判据)。
 	if (_royale or _team_mode) and _match_started and _claims.is_empty() and _grace.size() == 0:
 		print("worker: 全员离开,%s结束" % ("大乱斗" if _royale else "3v3"))
-		NetDiag.audit("match_over", {"mode": ModeDefs.MODE_ROYALE if _royale else ModeDefs.MODE_TEAM,
-				"reason": "all_left"})
+		NetDiag.audit("match_over", {"mode": _mode_id(), "reason": "all_left"})
 		get_tree().quit(0)
 
 
@@ -467,6 +466,8 @@ func _begin_match() -> void:
 	var match_map := MapCatalog.resolve_pvp_map(str(_claim_opts.get(1, {}).get("map", "")))
 	if match_map == "":
 		match_map = MatchBootstrap.PVP_MAP
+	NetDiag.audit("match_begin", {"mode": _mode_id(), "map": match_map,
+			"players": _claims.size(), "ai": _ai_roles.size()})
 	if _team_mode:
 		# 房主(role1)规则项随 claim 上报生效;TeamHost.start_on 负责按队散点出生 + 逐角色 match_start(★ 第 4 个实参是 teams = role→队号,不是 spawns)。
 		_host = TeamHost.start_on(_claims, match_map, _claim_opts.get(1, {}), _team_of_role)
@@ -542,6 +543,7 @@ func _on_peer_left(peer_id: int) -> void:
 				_claim_wait = 0.0
 		else:
 			print("worker: 角色报到后掉线,退出")
+			NetDiag.audit("abort", {"mode": ModeDefs.MODE_PVP, "reason": "claim_left"})
 			get_tree().quit(0)
 
 
@@ -570,5 +572,12 @@ func _stop_lobby(reason: String) -> void:
 			var shot: Dictionary = (table as Dictionary).duplicate()
 			for code in shot:
 				had += 1
-				lobby.teardown_room(shot[code], LobbyRooms.TEARDOWN_KILL)
+				lobby.teardown_room(shot[code], LobbyRooms.TEARDOWN_KILL, "", false, "lobby_shutdown")
 	NetDiag.audit("lobby_stop", {"reason": reason, "rooms_left": had})
+
+func _mode_id() -> String:
+	if _royale:
+		return ModeDefs.MODE_ROYALE
+	if _team_mode:
+		return ModeDefs.MODE_TEAM
+	return ModeDefs.MODE_PVP

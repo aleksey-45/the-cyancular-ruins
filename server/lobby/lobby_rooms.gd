@@ -205,14 +205,17 @@ func on_peer_left(peer_id: int) -> void:
 			var n_before := room.players.size()
 			room.players.erase(peer_id)
 			room.player_role.erase(peer_id)
-			NetDiag.audit("player_leave", {"room": str(code), "mode": mode, "peer": peer_id,
-					"players": n_before - 1})
+			if room.in_match:   # 开局后客户端 NetBus.stop() 转连 worker:不是"离开房间",单列 player_detach
+				NetDiag.audit("player_detach", {"room": str(code), "mode": mode, "peer": peer_id})
+			else:
+				NetDiag.audit("player_leave", {"room": str(code), "mode": mode, "peer": peer_id,
+						"players": n_before - 1})
 			if room.is_team():
 				_prune_team_of(room)
 			if room.in_match:
 				continue
 			if room.players.is_empty():
-				teardown_room(room)   # 延迟归还端口(worker 会自己退;见 WorkerLauncher 的三档 *_PORT_REUSE_DELAY)
+				teardown_room(room, LobbyRooms.TEARDOWN_DELAYED, "", false, "empty")   # 延迟归还端口(worker 会自己退)
 				continue
 			if room.is_duel():
 				continue   # 1v1 没有房主字段与等待室状态广播(旧实现的空分支,照留)
@@ -361,14 +364,18 @@ func royale_leave(caller: int) -> void:
 		return
 	rr.players.erase(caller)
 	rr.player_role.erase(caller)
+	NetDiag.audit("player_leave", {"room": rr.code, "mode": ModeDefs.MODE_ROYALE, "peer": caller,
+			"players": rr.players.size(), "explicit": true})
 	if rr.players.is_empty() and not rr.in_match:
 # 「退出房间」按钮不断开大厅 peer ⇒ on_peer_left 不会为它触发;房间随即从注册表摘除,而 sweep / on_peer_left 都只遍历注册表 ⇒
 # 之后再无任何路径能归还本房端口。故与其他拆除路径同法归还,并同样走大乱斗那条更长的复用延迟。★ 对局中不拆(否则「看得见」与「回局」都没了)。
-		teardown_room(rr)
+		teardown_room(rr, LobbyRooms.TEARDOWN_DELAYED, "", false, "left")
 	else:
 # ★ 房主转移那一行必须带 not rr.players.is_empty():对局中的房可能一个人都不在线(全体转连走了),而 rr.players[0] 在空数组上会越界报错。
 		if rr.host_peer == caller and not rr.players.is_empty():
 			rr.host_peer = rr.players[0]
+			NetDiag.audit("host_transfer", {"room": rr.code, "mode": ModeDefs.MODE_ROYALE,
+					"from_peer": caller, "to_peer": rr.host_peer, "explicit": true})
 
 		if not rr.in_match:
 			_broadcast_royale_state(rr)
@@ -520,15 +527,19 @@ func team_leave(caller: int) -> void:
 		return
 	tr.players.erase(caller)
 	tr.player_role.erase(caller)
+	NetDiag.audit("player_leave", {"room": tr.code, "mode": ModeDefs.MODE_TEAM, "peer": caller,
+			"players": tr.players.size(), "explicit": true})
 
 	_prune_team_of(tr)
 	if tr.players.is_empty() and not tr.in_match:
 # ★ 「退出房间」按钮不断开大厅 peer ⇒ on_peer_left 不会为它触发;房间随即摘除,而 sweep / on_peer_left 只遍历注册表 ⇒ 之后再无路径归还端口。
-		teardown_room(tr)
+		teardown_room(tr, LobbyRooms.TEARDOWN_DELAYED, "", false, "left")
 	else:
 
 		if tr.host_peer == caller and not tr.players.is_empty():
 			tr.host_peer = tr.players[0]
+			NetDiag.audit("host_transfer", {"room": tr.code, "mode": ModeDefs.MODE_TEAM,
+					"from_peer": caller, "to_peer": tr.host_peer, "explicit": true})
 		if not tr.in_match:
 			_broadcast_team_state(tr)
 

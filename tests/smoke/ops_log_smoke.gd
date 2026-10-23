@@ -6,7 +6,7 @@ const ND := preload("res://core/net/net_diag.gd")
 const WL := preload("res://server/lobby/worker_launcher.gd")
 
 # ★ 条数闸:断言数对不上就红。没有它,一次脚本中途报错只让后面的断言静默跳过,判词照打 OK。
-const EXPECTED_CHECKS := 16
+const EXPECTED_CHECKS := 18
 
 var _checks := 0
 
@@ -27,6 +27,19 @@ func _initialize() -> void:
 			and not kept.has("diag-server-1-a.jsonl"))
 	fail += _check("不足 keep 时全留",
 			ND.ops_files_to_keep(PackedStringArray(["ops-server-1-a.jsonl"]), 60).size() == 1)
+	# ★★ 排序键必须是**时间戳**而不是整个文件名:pid 在时间戳前面,跨 pid 位宽(重启/4→5 位)时
+	#    按整名排序会让"高 pid 的旧文件"永远赢 ⇒ 每次 prune 把新文件全删掉,历史静默冻结。
+	var mixed := PackedStringArray(["ops-server-999-20260101_000000.jsonl",
+			"ops-server-10000-20260102_000000.jsonl"])
+	var km := ND.ops_files_to_keep(mixed, 1)
+	fail += _check("按时间戳排序(pid 位宽不干扰)",
+			km.size() == 1 and km.has("ops-server-10000-20260102_000000.jsonl"))
+	var mixed3 := PackedStringArray(["ops-server-999-20260103_000000.jsonl",
+			"ops-server-10000-20260102_000000.jsonl", "ops-server-100-20260101_000000.jsonl"])
+	var km3 := ND.ops_files_to_keep(mixed3, 2)
+	fail += _check("跨位宽取最新两份",
+			km3.size() == 2 and km3.has("ops-server-999-20260103_000000.jsonl")
+			and km3.has("ops-server-10000-20260102_000000.jsonl"))
 
 	# ── audit() 端到端:注入测试路径 → 写 → 读回校验 ──
 	var tmp := "user://logs/_ops_smoke.jsonl"

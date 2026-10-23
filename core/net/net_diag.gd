@@ -76,8 +76,8 @@ static func ops_files_to_keep(names: PackedStringArray, keep: int) -> PackedStri
 	for n in names:
 		if n.begins_with("ops-") and n.ends_with(".jsonl"):
 			ops.append(n)
-	ops.sort()
-	ops.reverse()
+	ops.sort_custom(func(a: String, b: String) -> bool:
+		return a.substr(a.rfind("-") + 1) > b.substr(b.rfind("-") + 1))
 	var out := PackedStringArray()
 	for i in mini(keep, ops.size()):
 		out.append(ops[i])
