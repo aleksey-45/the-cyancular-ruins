@@ -5,7 +5,7 @@ extends SceneTree
 const ND := preload("res://core/net/net_diag.gd")
 
 # ★ 条数闸:断言数对不上就红。没有它,一次脚本中途报错只让后面的断言静默跳过,判词照打 OK。
-const EXPECTED_CHECKS := 10
+const EXPECTED_CHECKS := 12
 
 var _checks := 0
 
@@ -56,6 +56,18 @@ func _initialize() -> void:
 	ND.set_role("server")
 	fail += _check("显式定角色后按 server 审计", ND.role() == "server" and ND.should_audit(ND.role()))
 	ND.set_role("")
+
+	# ── tail_lines:worker_lost 的崩溃现场(最后 n 个非空行,单行返回) ──
+	fail += _check("文件不存在 → 空串", ND.tail_lines("user://logs/_no_such_file_zz.log", 3) == "")
+	var tp := "user://logs/_tail_smoke.log"
+	var tf := FileAccess.open(tp, FileAccess.WRITE)
+	tf.store_line("alpha")
+	tf.store_line("")
+	tf.store_line("beta")
+	tf.store_line("gamma  ")
+	tf.close()
+	fail += _check("取最后 2 个非空行并压成一行", ND.tail_lines(tp, 2) == "beta ↵ gamma")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(tp))
 
 	if _checks != EXPECTED_CHECKS:
 		fail += 1

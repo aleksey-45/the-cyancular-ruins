@@ -91,8 +91,8 @@ func royale_start(caller: int) -> void:
 
 	_grant_rejoin(rr.code, port, granted)
 
-	print("大乱斗房 %s 开局(%d 人,roles %s)→ worker 端口 %d" % [rr.code, rr.players.size(),
-			str(rr.player_role.values()), port])
+	NetDiag.audit("match_start", {"room": rr.code, "mode": ModeDefs.MODE_ROYALE, "port": port,
+			"players": rr.players.size(), "roles": str(rr.player_role.values()), "ai": 0})
 
 	await get_tree().create_timer(0.3).timeout
 	_send_go_match.call_deferred(rr, port)
@@ -142,8 +142,9 @@ func ai_duel(caller: int) -> void:
 		lobby.teardown_room(host_room, LobbyRooms.TEARDOWN_ABORT, "无法启动对局")
 		return
 # ★ 下一行把房间从 rooms 摘除后,再无任何路径能归还本端口 —— 不在此处释放就是永久占用(500 次后 pick_port 恒 -1,大厅彻底拉不起 worker)。
-	lobby.teardown_room(host_room)   # 对局消费掉房间(AI 不占第二人位);端口延迟归还
-	print("房间 %s → AI 对战开局(1 人 + AI)→ worker 端口 %d" % [host_room.code, port])
+	lobby.teardown_room(host_room, LobbyRooms.TEARDOWN_DELAYED, "", false, "match_end")   # 对局消费掉房间(AI 不占第二人位);端口延迟归还
+	NetDiag.audit("match_start", {"room": host_room.code, "mode": ModeDefs.MODE_PVP, "port": port,
+			"players": 1, "ai": 1})
 	await get_tree().create_timer(0.3).timeout
 	NetBus.reply(caller, "go_match", 1, port)
 
@@ -188,7 +189,8 @@ func royale_start_ai(caller: int) -> void:
 	rr.worker_pid = _launcher.pid_of(port)
 
 	_grant_rejoin(rr.code, port, granted)
-	print("大乱斗房 %s AI 补位开局(%d 真人 + %d AI)→ worker 端口 %d" % [rr.code, rr.players.size(), ai_count, port])
+	NetDiag.audit("match_start", {"room": rr.code, "mode": ModeDefs.MODE_ROYALE, "port": port,
+			"players": rr.players.size(), "ai": ai_count})
 	await get_tree().create_timer(0.3).timeout
 	_send_go_match.call_deferred(rr, port)
 
@@ -238,8 +240,8 @@ func team_start(caller: int) -> void:
 	tr.worker_pid = _launcher.pid_of(port)
 
 	_grant_rejoin(tr.code, port, granted)
-	print("3v3 房 %s 开局(roles %s / teams %s)→ worker 端口 %d" % [tr.code,
-			str(roles), str(teams), port])
+	NetDiag.audit("match_start", {"room": tr.code, "mode": ModeDefs.MODE_TEAM, "port": port,
+			"players": tr.players.size(), "roles": str(roles), "teams": str(teams)})
 	await get_tree().create_timer(0.3).timeout
 	_send_go_match.call_deferred(tr, port)
 
@@ -278,7 +280,8 @@ func _start_match(room: LobbyRooms.Room) -> void:
 	if not lobby.rooms.has(room.code):   # 0.3s 内已有玩家掉线触发关房 → 别再给幽灵房发 go_match
 		return
 	_send_go_match_1v1.call_deferred(room, port)
-	print("房间 %s 配对完成 → worker 端口 %d" % [room.code, port])
+	NetDiag.audit("match_start", {"room": room.code, "mode": ModeDefs.MODE_PVP, "port": port,
+			"players": room.players.size(), "ai": 0})
 
 
 
@@ -341,10 +344,7 @@ func _sweep_stale_rooms() -> void:
 			MAX_ROOM_AGE + SWEEP_INTERVAL + TEAM_MATCH_ESTIMATE])
 # 三张注册表共用同一条拆除(worker 已被杀 ⇒ 端口直接回收,不经 ROYALE/TEAM_PORT_REUSE_DELAY:那条延迟是给「没被杀、还在跑」的 worker 的)。
 	for room in stale + stale_royale + stale_team:
-		lobby.teardown_room(room, LobbyRooms.TEARDOWN_KILL, "房间超时(>2h),已关闭", true)
-		print("%s %s 超时清理(存活 %.0f 秒)" % [
-				RoomTypes.kind_text(room),
-				room.code, now - room.created_at])
+		lobby.teardown_room(room, LobbyRooms.TEARDOWN_KILL, "房间超时(>2h),已关闭", true, "sweep_timeout")
 
 # 对局结束即回收:in_match(1v1 是 started)的房不再在「客户端转连 worker」那一刻被拆,必须有替代回收路径,否则端口与列表位永久占用。
 # ★ 判据 = worker 进程还在不在(WorkerLauncher.pid_alive):三种模式的 worker 都在对局结束时自己退,这是精确答案;任何按「一局
@@ -367,9 +367,15 @@ func _reclaim_finished_matches() -> void:
 		if tr.in_match and _match_over(tr.worker_port, tr.worker_pid):
 			done.append(tr)
 	for room in done:
-		var kind := RoomTypes.kind_text(room)
-		print("[lobby] 对局结束,回收%s %s(端口 %d)" % [kind, room.code, room.worker_port])
-		lobby.teardown_room(room, LobbyRooms.TEARDOWN_DELAYED)
+		var uptime := int(Time.get_unix_time_from_system() - float(room.created_at))
+		NetDiag.audit("match_end", {"room": room.code, "mode": room.mode,
+				"port": room.worker_port, "uptime_sec": uptime})
+		# ★ 拿不到子进程退出码(Godot 的 OS 没有这个 API)⇒ 只能记"worker 消失时的现场":存活时长 + 日志尾部。
+		#   它不区分正常结束与崩溃 —— 正常结束的尾部是收场行,崩溃的是错误原文,由读的人判。
+		NetDiag.audit("worker_lost", {"room": room.code, "mode": room.mode, "port": room.worker_port,
+				"pid": room.worker_pid, "alive_sec": uptime,
+				"tail": NetDiag.tail_lines(_launcher.log_path(room.worker_port), 3)})
+		lobby.teardown_room(room, LobbyRooms.TEARDOWN_DELAYED, "", false, "match_end")
 
 
 # 这一局结束了吗(worker 进程已经不在)?★ port <= 0 或 pid <= 0 一律不算结束 —— 那两种取值都只出现在「拉起中」的窗口里

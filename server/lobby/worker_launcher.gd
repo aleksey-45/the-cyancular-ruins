@@ -105,6 +105,8 @@ func spawn_worker(port: int, ai_roles: Array = []) -> bool:
 		_worker_pids[port] = pid
 	print("[lobby] spawn worker pid=%d port=%d editor=%s ai=%s 日志=%s" % [pid, port,
 			str(OS.has_feature("editor")), str(ai_roles), log_path(port)])
+	if pid <= 0:
+		NetDiag.audit("worker_spawn_failed", {"port": port})
 	return pid > 0
 
 
@@ -142,6 +144,8 @@ func spawn_royale_worker(port: int, roles: Array, ai_roles: Array = []) -> bool:
 		_worker_pids[port] = pid
 	print("[lobby] spawn royale worker pid=%d port=%d roles=%s ai=%s 日志=%s" % [pid, port,
 			str(roles), str(ai_roles), log_path(port)])
+	if pid <= 0:
+		NetDiag.audit("worker_spawn_failed", {"port": port})
 	return pid > 0
 
 
@@ -181,6 +185,8 @@ func spawn_team_worker(port: int, roles: Array, teams: Array) -> bool:
 		_worker_pids[port] = pid
 	print("[lobby] spawn team worker pid=%d port=%d roles=%s teams=%s 日志=%s" % [pid, port,
 			str(roles), str(teams), log_path(port)])
+	if pid <= 0:
+		NetDiag.audit("worker_spawn_failed", {"port": port})
 	return pid > 0
 
 

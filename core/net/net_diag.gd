@@ -235,6 +235,20 @@ static func _prune_ops(dir_path: String) -> void:
 			DirAccess.remove_absolute(dir_path.path_join(n))
 
 
+static func tail_lines(path: String, n: int) -> String:
+	if not FileAccess.file_exists(path):
+		return ""
+	var all := FileAccess.get_file_as_string(path).split("\n")
+	var out: Array[String] = []
+	for i in range(all.size() - 1, -1, -1):
+		var s := str(all[i]).strip_edges()
+		if not s.is_empty():
+			out.push_front(s)
+			if out.size() >= n:
+				break
+	return " ↵ ".join(out)
+
+
 # ── 测试专用(生产路径不会调)──────────────────────────────────────────────
 # ★ 存在的理由:`--diag` 是**命令行开关**,而 `-s` 冒烟的 `OS.get_cmdline_user_args()` 里只有测试自己的参数
 # (`-s res://...`),没法在不改产品判定分支的前提下打开它。测试用这两个函数直接注入路径/开关。
