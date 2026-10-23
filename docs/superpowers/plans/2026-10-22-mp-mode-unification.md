@@ -26,9 +26,9 @@
 
 - ✅ **Task 1–11 全部完成**:`core/mp/` 四模块 / 客户端 round_state 模板 + 结算页·拾取·拆砖三组件 / 大厅 Room(mode)+RoomRegistry 门面 / `mp_lobby` 四面板 / 服务端散点与输入队列拆件。
 - ✅ 单进程全绿:allscript **190(0 失败)**、`mode_*`/`net_diag`/`room_registry` 共 6 支冒烟、`replica_smoothness`/`resync_world`/`tile_collision` 三支探针、`room_sweep_lint` **10 项**、`check_naming` OK。
-- ✅ 真链路回归(持锁串行):1v1 `SMOKE PASS`;3v3 `TEAM MATCH PROBE: 3 条失败`(与改前**同形**,全在探针相③);大乱斗 9 人 `SOAK: ALL-OK(9/9)` —— **X1 端到端已修**。
+- ✅ 真链路回归(持锁串行):1v1 三支 `SMOKE PASS`/`SMOKE PASS`/`REJOIN PROBE: ALL-OK(5)`;大乱斗 4 人 `SOAK: ALL-OK(4/4)`;9 人 `ROLE CAP PROBE: ALL-OK(9/9)`(**X1 端到端已修**);3v3 `TEAM MATCH PROBE: ALL-OK`(子弹穿透半边实际验到;榴弹半边因枪种抽签跳过,见 known-red 2026-10-23 补记)。
 - ✅ 新增真链路守卫 `tests/probe/royale_role_cap_probe.sh`(9 人档,钉 role 上界,已进 `run_real.sh` 的 `ENTRIES`)。
-- ⏭ **Task 12 收档**:全量真链路批(1v1 三支 + 大乱斗 4 人 + role-cap 9 人 + 3v3)与最终文档同步 —— 进行中。
+- ✅ **Task 12 收档完成**:全量真链路批与文档同步(落点/注释漂移/known-red 补记/allscript 条数闸 190)。
 
 ## Review Focus
 
