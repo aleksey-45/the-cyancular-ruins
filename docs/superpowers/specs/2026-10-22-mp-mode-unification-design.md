@@ -161,10 +161,13 @@ worker → _ctx 一次性算好 → 建 host(类型不变:MatchHost/RoyaleHost/T
 - **B 最高风险**:`teardown_room` 三态 + `_release_port_later`(120s/360s) + RoomManager 回收梯。对策:先写"端口归还/注册表删除只能出现在两处"的 lint 已存在(`room_sweep_lint`),B 改动后必须让它继续绿 + 真链路。
 - **共享工作树**:另一条工作线在 `server_main.gd` / `mp_lobby.gd` / 服务端面板上有未提交改动(2026-10-21 的 server 事件日志)。A3/A4 会碰 `server_main.gd` / `mp_lobby.gd` ⇒ **开工前需协调**:等那条线落盘,或本 spec 只做不冲突的 A1/A2/A5 先行。
 
-## 9. 待评审时拍板的问题
+## 9. 评审裁定(2026-10-22)
 
-1. **B 做不做**?(建议:先只做 A,拿真链路判决后再议)
-2. **A2 用"模板方法"还是"最小侵入备选"**?(后者保留三份 `_on_round_state`,只抽公共函数,工作量减半、行为面更窄)
-3. **A3 保留六个 RPC 名**?(建议保留 —— 改协议不在本轮)
-4. **A4 是否提到 A 的第一项做**?(它挡住 B/C,且能顺手把 X1 的 role 上界收口)
-5. **与另一条工作线(`server_main.gd` 未提交改动)的排期**:等它落盘,还是先做不冲突的 A1/A2/A5?
+1. **B 做**——用户裁定:按本 spec 执行 B(三张房间表合并 + 规则表化);与另一条工作线冲突时**以本线为准**(对面负责适配)。
+2. **A2 用"模板方法"**(而非最小侵入备选)。
+3. **A3 保留六个 RPC 名**(协议零变化)。
+4. **A4 放进 A 的第一批**(它挡住 B/C,并顺带把 X1 的 role 上界收口)。
+5. **追加要求:多拆 / 模块化** —— 三个巨型脚本(`pvp_match_client.gd` 66KB、`mp_lobby.gd` 60KB、`lobby_rooms.gd` 45KB)按职责拆小;落点见实施计划
+   [`docs/superpowers/plans/2026-10-22-mp-mode-unification.md`](../plans/2026-10-22-mp-mode-unification.md) 的 Task 6/7/10/11。
+
+> 实施计划已产出,见上路径。本 spec 到此定稿;后续实现偏差回写计划与 `docs/eng/modes.md` 的"实现落点"表述(语义不变)。
