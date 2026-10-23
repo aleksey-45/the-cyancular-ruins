@@ -4,7 +4,6 @@ extends Node2D
 # PvP 对局客户端的共享基类(1v1 pvp_client / 大乱斗 royale_game / 3v3 team_game 都 extends 它)。
 # ★ 判据是"剔掉注释后的代码是否逐字相同"(不是"看起来像"):凡两个模式语义相同的都上提到这里,子类只留真正的差异(1 个固定副本 vs N 个按 role 动态、HUD 类、退场是否锁 _match_ended、_ready)。要再上提一批,先按同样口径量一遍差异(剔注释后逐行 diff),别凭印象搬。
 
-const TileHitFx := preload("res://scenes/effects/tile_hit_fx.gd")
 const LaserVisual := preload("res://core/present/laser_visual.gd")   # 远端光束视觉副本(与本地激光同款)
 
 # ── 共享状态(两个模式同名同义;子类不要再声明一次)──
@@ -33,7 +32,6 @@ var _menu_open := false
 # ESC 暂停菜单(打开时锁本地输入;MATCH_OVER 后销毁以失效)。2026-10-22 从三个子类各一份收上来 ——
 # 回合状态模板要在基类里销毁它(ESC 双语义的硬依赖),基类拿不到子类声明的字段。
 var _pause_menu: PauseMenu = null
-var _result: MatchResult = null             # 结算页(挂载一次,由 _show_result 建)
 var _last_round_state: Dictionary = {}      # 最近一条 round_state(结算载荷的输入之一)
 
 # 玩家本体精灵(player.png)的主色(RGB)。★ 数值是实测的不是拍的:主色 #639BFF 占 12987 个不透明像素里的 10875(83.6%),次色 #5585D9 是它的暗调同色;复测办法 = 按 alpha>200 过滤 player.png 全部像素取众数。换 sprite 素材要重测这一行 —— 它错了不报错,只是队色整体偏色(整队一起偏,更容易漏)。★ 唯一源是 UiFactory.C_TEAM_A(队 1 token,同值),这里是别名不存字面量;零守卫:hue_tint_probe 的守卫 D(钉 C_TEAM_A == 本常量 == png 众数)已随该探针删除(2026-10-09)。
@@ -341,45 +339,32 @@ func _all_replicas() -> Array:
 	return []
 
 
+# ── 拆砖:实现落在组合件 scenes/mp_client/tile_sync.gd(2026-10-22 拆出;Task 7) ──
+# 本类只留这三个委托口(名字/签名逐字不变:三个子类 _ready 调 _subscribe_tile_events(),
+# _on_match_sync 与 tests/probe/resync_world_probe.gd 直接调 _on_remote_tile_destroyed(cell, true))。
+# ★ 组件懒建:基类没有 _ready(三个子类各有一个,在基类再加会被覆盖掉、静默失效)⇒ 第一次用到时
+#   new + bind;bind 只存引用、没有副作用,与"实例化时就建"在行为上不可分。
+var _tile_sync: TileSync = null
+
+
+func _ensure_tile_sync() -> TileSync:
+	if _tile_sync == null:
+		_tile_sync = TileSync.new()
+		_tile_sync.bind(self)
+	return _tile_sync
+
+
 # ★★ 拆砖的**两条订阅必须成对**,所以收在这一处给三个子类各调一次(原先三份手抄 ⇒ 1v1 那份漏了子格那条)。
-#   为什么两条都要:`local_tile_destroyed` 只由 `damage_tile`(格级/激光/测试钩子)触发,而**子弹与爆炸**
-#   走 `TileDefs.damage_sub` ⇒ 线上只发 `sub_destroyed`。只接格级那条 = 服务器已经拆了、客户端墙上
-#   **贴图与碰撞都还在**(幽灵墙):本地预测撞在服务器不存在的墙上 ⇒ 每帧分歧回滚(橡皮筋),视觉子弹也被挡下。
 func _subscribe_tile_events() -> void:
-	NetBus.local_tile_destroyed.connect(_on_remote_tile_destroyed)
-	NetBusExt.local_sub_destroyed.connect(_on_remote_sub_destroyed)
+	_ensure_tile_sync().subscribe()
 
 
 func _on_remote_tile_destroyed(cell: Vector2i, silent: bool = false) -> void:
-	NetDiag.log_event("tile_cell", {"cell": [cell.x, cell.y], "silent": silent})
-	# cyrm v4:破坏按 16px 子格算 —— 一个 64px 格被拆 = 它的 16 个子格全灭(老实现走 damage_tile 格级强拆 ⇒ 子格渲染 / 碰撞不清,客户端留幽灵墙)。
-	for sy in 4:
-		for sx in 4:
-			_on_remote_sub_destroyed(Vector2i(cell.x * 4 + sx, cell.y * 4 + sy), silent)
-	if silent or _world == null:
-		return
-	var tex := 0
-	var sgrid := MazeGenerator.current_subgrid
-	if not sgrid.is_empty() and cell.y * 4 < sgrid.size():
-		var srow: Array = sgrid[cell.y * 4]
-		if cell.x * 4 < srow.size():
-			tex = int(srow[cell.x * 4])
-	var ts := GameParameters.TILE_SIZE
-	TileHitFx.spawn(_world, Vector2(cell.x * ts + ts * 0.5, cell.y * ts + ts * 0.5), tex)
+	_ensure_tile_sync().on_cell(cell, silent)
 
 
-# 单个 16px 子格被服务器摧毁:本地 HP / 渲染 / 碰撞一并清(Level0 的 on_sub_destroyed 链)。★ silent 语义与 tile 版相同(重连补态不播碎片)。
 func _on_remote_sub_destroyed(sub: Vector2i, silent: bool = false) -> void:
-	NetDiag.log_event("tile_sub", {"sub": [sub.x, sub.y], "silent": silent, "has_world": _world != null})
-	if _world == null:
-		TileDefs.damage_sub(sub, 999999, "explosion")
-		return
-	TileDefs.damage_sub(sub, 999999, "explosion")
-	if silent:
-		return
-	var tex := TileDefs.sub_texture(sub)
-	# PvP 拆砖是服务器权威、客户端不本地拆 → 这里补播碎片粒子(只播视觉,不影响权威)。
-	TileHitFx.spawn(_world, Vector2(sub.x * 16.0 + 8.0, sub.y * 16.0 + 8.0), tex)
+	_ensure_tile_sync().on_sub(sub, silent)
 
 func _physics_process(delta: float) -> void:
 	_tick_beta_time(delta)   # Beta 时间玩法:加速预测 + 双侧视效(普通局自短路)
@@ -569,20 +554,24 @@ func _refresh_input_lock() -> void:
 		_local.set_controls_locked(_round_locked or _menu_open or _match_ended)
 
 
-# ── 结算页:挂载与离场三个模式共用,各自只覆写 _build_result_payload() ── ★★ 必须走场景实例化,不能用 MatchResult.new():layer = 150 只写在 ui/match_result.tscn 里(脚本不设 layer),用 .new() 会拿到 CanvasLayer 默认的 layer 1,结算页画在 HUD(130)/ 小地图(131)下面、压暗罩盖不住它们。零守卫:hud_declarative_probe 那条"出现 MatchResult.new( 即红"的扫盘断言已随该探针删除(2026-10-09)。
-const RESULT_SCENE := preload("res://ui/screens/match_result.tscn")
+# ── 结算页:挂载/刷新/离场接线落在组合件 scenes/mp_client/result_screen.gd(2026-10-22 拆出;Task 6) ──
+# 三个模式共用,各自只覆写 _build_result_payload();离场仍走本类的 _leave_to_main_menu(组件经 bind 的
+# leave_scene Callable 接 leave_requested ⇒ 组件不 import NetBus / Level0,也不知道"回主菜单"怎么回)。
+var _result_screen: ResultScreen = null
 
-# 结算页:玩家自己退(不再是 N 秒后自动回主菜单);三个模式共用,各自只覆写 _build_result_payload()。
-# ★★ 挂载一次、但每次都要刷新(if _result == null 只包住"建 + 连线")。写成 if _result != null: return 会把"挂载幂等"顺手变成"更新也只一次":第二条 MATCH_OVER 载荷永远到不了屏幕,而 MatchResult.show_result 的清场重建在生产里一次都不会跑 —— 当年那条探针却直接调它、照绿 —— 探针比产品更绿(该探针已删·2026-10-09)。★ 第二条载荷可达:1v1 —— server_main 每次 reclaim 成功后重播当前 round_state,掉线重连的客户端就会收到第二条 MATCH_OVER;3v3 —— team_host._finish_match() 在战斗中直接 PLAYING→MATCH_OVER,而倒地边沿检测在 match _round_state 之前且不看状态 ⇒ MATCH_OVER 之后再死人会再广播一条终局载荷。
+
+func _ensure_result_screen() -> ResultScreen:
+	if _result_screen == null:
+		_result_screen = ResultScreen.new()
+		_result_screen.bind(self, Callable(self, "_build_result_payload"),
+				Callable(self, "_leave_to_main_menu"))
+	return _result_screen
+
+
+# 结算页:玩家自己退(不再是 N 秒后自动回主菜单)。
+# ★★ 挂载一次、但每次都要刷新 —— 语义逐字保留在 ResultScreen.show():`if _result == null` 只包住"建 + 连线"。
 func _show_result() -> void:
-	if _result == null:
-		_result = RESULT_SCENE.instantiate()
-		add_child(_result)
-		_result.leave_requested.connect(_leave_to_main_menu)
-		# ★★ 挂载那一刻先用空载荷亮出来,再填真载荷 —— 顺序不可换,这是"MATCH_OVER 之后永远有出路"那条不变量的安全网。要防的故障形状是 show_result() 在它最后那句 visible = true 之前结束:那时结算页停在 _ready() 末尾那句 visible = false 上(看不见、ESC 也够不着、按钮点不到),而暂停菜单已被 MATCH_OVER 块销毁、K 键被 _match_ended 挡住 ⇒ 玩家卡死在对局里。可达形状:载荷里混进非字典的节 ⇒ _build_section 的参数类型转换当场失败。
-		# ★ 空载荷抛不出错("空载荷不崩"是本页硬要求,且它只做赋文案 + 清场建节 + visible = true 三件事)⇒ 可见、ESC 生效、按钮可用,三样退路当场到手;正常路径看不到这个空态(两句之间没有 await,布局与绘制都在帧末)。
-		_result.show_result({})
-	_result.show_result(_build_result_payload())
+	_ensure_result_screen().show()
 
 
 # 结算页 → 主菜单。★ 离开仍走 Level0.safe_change_scene —— 游戏世界含全量碰撞,裸 change_scene_to_file 会同步 memdelete → 偶发原生段错误。★ 防重入由 MatchResult 那次发信号 + safe_change_scene 的 _switching 双层兜住;这里只负责"在树上才切"。
@@ -700,158 +689,43 @@ func _on_match_sync(payload: Dictionary) -> void:
 			_on_remote_tile_destroyed(c, true)
 
 
-# ── 拾取诊断插桩(★ 默认关;开关 -- --pickup-diag,必须写在 -- 之后,写在前面会被 Godot 丢掉)── 用来回答「地上的枪看得见、走过去却没有 F 提示」:那种症状只有两种成因 —— ① 客户端压根没建出这把枪(_spawn_pickup_node 的早退是静默 return);② 建出来了但 canonical_pos(提示判据读的值)与画出来的位置不在一处。两者在画面上长得一模一样,只能靠数字分;判据是玩家 400px 内的枪每 30 物理帧打一行。
-var _pickup_diag := false
-var _pickup_diag_checked := false
-var _pickup_diag_frame := 0
+# ── 拾取(地面武器):实现落在组合件 scenes/mp_client/pickup_sync.gd(2026-10-22 拆出;Task 7)──
+# 本类只留五个委托口(名字/签名逐字不变):三个子类 _ready 调 _subscribe_ground_weapons();
+# _on_match_sync 调 _clear_ground_weapons() / _spawn_pickup_node();_physics_process 每帧调 _tick_ground_weapons()。
+# 节点表 / F 提示 / `[pkd]` 诊断行全部随组件走,文本逐字未改;宿主只提供 _world / _local。
+# ★ 组件懒建:基类没有 _ready(三个子类各有一个,在基类再加会被覆盖掉、静默失效)⇒ 第一次用到时
+#   new + bind;bind 只存引用、没有副作用,与"实例化时就建"在行为上不可分。
+var _pickup_sync: PickupSync = null
 
 
-func _pickup_diag_on() -> bool:
-	if not _pickup_diag_checked:
-		_pickup_diag_checked = true
-		_pickup_diag = OS.get_cmdline_user_args().has("--pickup-diag")
-	return _pickup_diag
-
-
-# ── 地面武器:服务器权威,本端只渲染 + 等事件(不做客户端预测)──
-var ground_weapons := GroundWeaponField.new()
-var _pickup_nodes: Dictionary = {}    # inst -> WeaponPickup
-var _self_drop_until: Dictionary = {} # inst -> 解禁时刻(ms):自己刚丢下的那把,
-                                      # 冷却期内不提示(与服务器 _live_self_drops 同口径;
-                                      # 不排的话刚丢下的枪会显示 F 却捡不起来)
-
-const PICKUP_SCENE := preload("res://scenes/weapons/weapon_pickup.tscn")
+func _ensure_pickup_sync() -> PickupSync:
+	if _pickup_sync == null:
+		_pickup_sync = PickupSync.new()
+		_pickup_sync.bind(self)
+	return _pickup_sync
 
 
 # 订阅服务器的两条地面武器事件。★ 必须走 NetBus,不是 NetBusExt —— 后者里有同名遗留的 beam_fired,挂错节点的表现是静默 no-op(对手的枪凭空消失 / 永不再现,且不报错)。两个子类各自 _ready 里调一次。
 func _subscribe_ground_weapons() -> void:
-	NetBus.local_weapon_spawned.connect(_on_weapon_spawned)
-	NetBus.local_weapon_removed.connect(_on_weapon_removed)
-
-
-func _on_weapon_spawned(data: Dictionary) -> void:
-	_spawn_pickup_node(data)
-
-
-func _on_weapon_removed(data: Dictionary) -> void:
-	_remove_pickup_node(int(data.get("inst", 0)))
+	_ensure_pickup_sync().subscribe()
 
 
 func _spawn_pickup_node(data: Dictionary) -> void:
-	# 诊断:早退是静默的 —— 先把"为什么没建"打出来。
-	if _pickup_diag_on():
-		print("[pkd] ← spawned inst=%s type=%s by_role=%s pos=%s vel=%s | world=%s local=%s 已有=%s" % [
-				str(data.get("inst", -1)), str(data.get("type_id", -1)), str(data.get("by_role", -1)),
-				str(data.get("pos", Vector2.ZERO)), str(data.get("vel", Vector2.ZERO)),
-				"有" if _world != null else "空", "有" if _local != null else "空",
-				"是" if _pickup_nodes.has(int(data.get("inst", 0))) else "否"])
-	if _world == null:
-		NetDiag.log_event("pickup_skip", {"reason": "no_world", "inst": int(data.get("inst", 0))})
-		return
-	var inst := int(data.get("inst", 0))
-	if inst <= 0 or _pickup_nodes.has(inst):
-		NetDiag.log_event("pickup_skip", {"reason": "dup" if _pickup_nodes.has(inst) else "bad_inst", "inst": inst})
-		return
-	var type_id := int(data.get("type_id", 1))
-	var node: WeaponPickup = PICKUP_SCENE.instantiate()
-	node.configure(type_id, inst, int(data.get("mag", 0)), data.get("vel", Vector2.ZERO))
-	_world.add_child(node)
-	# 权威位置与渲染位置分开(见 WeaponPickup 的字段注释):事件里的 pos 是 canonical。
-	node.canonical_pos = data.get("pos", Vector2.ZERO)
-	node.set_anchor((_local as Node2D).global_position if _local != null else Vector2.ZERO)
-	node.sync_render_from_canonical()
-	ground_weapons.map_size = Vector2(float(GameParameters.MAP_WIDTH), float(GameParameters.MAP_HEIGHT))
-	ground_weapons.add({"inst": inst, "type_id": type_id, "mag": int(data.get("mag", 0)),
-			"pos": node.canonical_pos, "vel": data.get("vel", Vector2.ZERO)})
-	_pickup_nodes[inst] = node
-	NetDiag.log_event("pickup_add", {"inst": inst, "type": type_id,
-			"by_role": int(data.get("by_role", -1)),
-			"pos": [snappedf(node.canonical_pos.x, 0.01), snappedf(node.canonical_pos.y, 0.01)]})
-	if int(data.get("by_role", -1)) == int(PvpSession.role):
-		_self_drop_until[inst] = Time.get_ticks_msec() 				+ int(PlayerParams.weapon_pickup_self_delay * 1000.0)
+	_ensure_pickup_sync().on_spawned(data)
 
 
 # 清空本端的地面武器表与全部拾取物节点(_on_match_sync 的"先清后灌"用)。★ 为什么必须先清:match_sync 的 ground_weapons 是全量,不清就直接 add,掉线期间已被服务器移除的那些会变成永久幽灵枪(看着在、按 F 无效);进场那次本地本来是空的,清一遍是 no-op。
 func _clear_ground_weapons() -> void:
-	for inst in _pickup_nodes:
-		var n = _pickup_nodes[inst]
-		if n != null and is_instance_valid(n):
-			n.queue_free()
-	_pickup_nodes.clear()
-	ground_weapons.clear()
-	_self_drop_until.clear()
+	_ensure_pickup_sync().clear()
 
 
 func _remove_pickup_node(inst: int) -> void:
-	NetDiag.log_event("pickup_remove", {"inst": inst, "had_node": _pickup_nodes.has(inst)})
-	ground_weapons.remove(inst)
-	var n = _pickup_nodes.get(inst, null)
-	if n != null and is_instance_valid(n):
-		n.queue_free()
-	_pickup_nodes.erase(inst)
-	_self_drop_until.erase(inst)
-	if _pickup_diag_on():
-		print("[pkd] ← removed inst=%d" % inst)
+	_ensure_pickup_sync().remove(inst)
 
 
 # 每帧:① 把锚点推给所有地面武器(接缝另一侧的枪要画在身边那一份上);② 把落体的实际位置同步回本地表(提示的"最近一把"要跟着落点走);③ 更新 F 提示。
 func _tick_ground_weapons() -> void:
-	if _local == null:
-		return
-	var lp: Vector2 = (_local as Node2D).global_position
-	for inst in _pickup_nodes:
-		var n = _pickup_nodes[inst]
-		if n == null or not is_instance_valid(n):
-			continue
-		var pk := n as WeaponPickup
-		pk.set_anchor(lp)
-		pk.sync_render_from_canonical()
-		var e: Dictionary = ground_weapons.get_entry(int(inst))
-		if not e.is_empty():
-			e["pos"] = pk.canonical_pos
-	_pickup_diag_frame += 1
-	_update_pickup_prompt(lp)
-
-
-# F 提示:贴到"按 F 会捡到的那一把"上方,每把能捡的各自一个。★ 与服务器 _try_server_pickup 用同一个 nearest_within + 同一个半径,否则会出现"提示了 A、服务器却捡了 B";★ "自己刚丢下"的冷却与服务器同源:weapon_spawned 带 by_role,本端据此写 _self_drop_until,冷却期内不给提示(与服务器 _live_self_drops 同口径)。
-func _update_pickup_prompt(lp: Vector2) -> void:
-	var self_drops := _live_self_drops()
-	var w := float(GameParameters.MAP_WIDTH)
-	var h := float(GameParameters.MAP_HEIGHT)
-	for inst in _pickup_nodes:
-		var n = _pickup_nodes.get(inst, null)
-		if n == null or not is_instance_valid(n):
-			continue
-		var pk := n as WeaponPickup
-		var can := false
-		if _local != null and not _live_self_drops().has(int(inst)) 				and _local.weapons.is_type_enabled(int(pk.type_id)):
-			var d := GridPathfinder.toroidal_delta_px(pk.canonical_pos, lp, w, h).length()
-			can = d <= PlayerParams.weapon_pickup_radius
-		pk.set_prompt_visible(can)
-		# 诊断:玩家附近的枪逐条打;can=否 时把三条闸门各是真是假分开打(合成一个 false 就看不出是哪一条挡的);canon 与 render 两栏是重点 —— 两者本应只差整数个地图宽 / 高。
-		if _pickup_diag_on() and _pickup_diag_frame % 30 == 0:
-			var dd := GridPathfinder.toroidal_delta_px(pk.canonical_pos, lp, w, h).length()
-			if dd <= 400.0:
-				print("[pkd]   inst=%d type=%d d=%.1f can=%s | 冷却=%s 启用=%s | canon=(%.0f,%.0f) render=(%.0f,%.0f) 玩家=(%.0f,%.0f) settled=%s" % [
-						int(inst), int(pk.type_id), dd, "是" if can else "否",
-						"是" if _live_self_drops().has(int(inst)) else "否",
-						"是" if _local.weapons.is_type_enabled(int(pk.type_id)) else "否",
-						pk.canonical_pos.x, pk.canonical_pos.y,
-						pk.global_position.x, pk.global_position.y, lp.x, lp.y,
-						"是" if pk._settled else "否"])
-
-
-func _live_self_drops() -> Array:
-	var out: Array = []
-	if _self_drop_until.is_empty():
-		return out
-	var now := Time.get_ticks_msec()
-	for inst in _self_drop_until.keys():
-		if int(_self_drop_until[inst]) > now:
-			out.append(inst)
-		else:
-			_self_drop_until.erase(inst)
-	return out
+	_ensure_pickup_sync().tick()
 
 
 # ── 断线重连(局内自动重连:与 worker 的连接闪断 → 自己连回去、重新认领 role、重置本地 C2 —— 不切场景、不重建世界)── ★ 触发点只有"服务器断开"一条(NetBus.local_server_message,由 multiplayer.server_disconnected 驱动);对局场景此前没人订阅它,所以服务器一断客户端毫无反应:快照停更、输入自停,玩家卡在一个静止的世界里只能按 ESC 自救。
