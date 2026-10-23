@@ -24,13 +24,11 @@
 
 ## 进度(2026-10-22)
 
-- ✅ **Task 1 / 2 / 3 / 4 / 5**(`ModeDefs` / `ModeContext` / `ModeRoomRules` / `ModeOptions` + lobby 接线 / 客户端 round_state 模板 + `_pause_menu` 收进基类)
-- ✅ 真链路回归(持锁串行,无残留):
-  - 1v1 `SMOKE PASS`;
-  - 3v3 `TEAM MATCH PROBE: 3 条失败` —— 与改前**同形**(仍全部在探针相③),换局 COUNTDOWN 与第二条 MATCH_OVER 路径已实际跑到;
-  - 大乱斗 9 人 `SOAK: ALL-OK(9/9 客户端正常收尾)` —— **X1 端到端**:worker 现在收 role 1..16。
-- ✅ 新增真链路守卫 `tests/probe/royale_role_cap_probe.sh`(9 人档,钉 role 上界),已登记进 `tests/run_real.sh` 的 `ENTRIES`。
-- ⏭ 待做:**Task 6/7**(结算页/拾取/拆砖拆件)、**Task 8/9**(大厅 B)、**Task 10/11**(`mp_lobby` 四面板、Host 拆件)、**Task 12**(守卫与全量真链路收档)。
+- ✅ **Task 1–11 全部完成**:`core/mp/` 四模块 / 客户端 round_state 模板 + 结算页·拾取·拆砖三组件 / 大厅 Room(mode)+RoomRegistry 门面 / `mp_lobby` 四面板 / 服务端散点与输入队列拆件。
+- ✅ 单进程全绿:allscript **190(0 失败)**、`mode_*`/`net_diag`/`room_registry` 共 6 支冒烟、`replica_smoothness`/`resync_world`/`tile_collision` 三支探针、`room_sweep_lint` **10 项**、`check_naming` OK。
+- ✅ 真链路回归(持锁串行):1v1 `SMOKE PASS`;3v3 `TEAM MATCH PROBE: 3 条失败`(与改前**同形**,全在探针相③);大乱斗 9 人 `SOAK: ALL-OK(9/9)` —— **X1 端到端已修**。
+- ✅ 新增真链路守卫 `tests/probe/royale_role_cap_probe.sh`(9 人档,钉 role 上界,已进 `run_real.sh` 的 `ENTRIES`)。
+- ⏭ **Task 12 收档**:全量真链路批(1v1 三支 + 大乱斗 4 人 + role-cap 9 人 + 3v3)与最终文档同步 —— 进行中。
 
 ## Review Focus
 

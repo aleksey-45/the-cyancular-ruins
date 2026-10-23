@@ -269,7 +269,7 @@ func _attach_page_in(cs: Node, action: Callable) -> void:
 
 func on_create() -> void:
 	# ★ mp_lobby 的建房弹层启动即建、默认隐藏(骨架里的 %CreatePanel;_build_ui() 只登记 + 收起)⇒ T1 起这里不再有 null 可判,直接调 _on_create_pressed 也能跑完。
-	#   仍要先开一次,是因为模式那一半:那次「从当前筛选模式取初值」只发生在 _open_create_dialog 里(筛选为空 ⇒ 落 MODE_PVP,即 1v1);此后 _create_mode 只还会被 _apply_create_form 改写,而那条路从三颗模式分段按钮可达 —— 本探针从不点它们。本探针要的正是「走玩家那条链」,而不是绕开它自己塞一个模式。
+	#   仍要先开一次,是因为模式那一半:那次「从当前筛选模式取初值」只发生在 _open_create_dialog 里(筛选为空 ⇒ 落 MODE_PVP,即 1v1);此后 _create_mode 只还会被 CreatePanel.apply(scenes/mp_lobby/create_panel.gd)改写,而那条路从三颗模式分段按钮可达 —— 本探针从不点它们。本探针要的正是「走玩家那条链」,而不是绕开它自己塞一个模式。
 	_page.call("_open_create_dialog")
 	_page.call("_on_create_pressed")
 

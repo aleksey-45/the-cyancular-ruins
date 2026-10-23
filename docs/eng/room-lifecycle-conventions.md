@@ -41,7 +41,7 @@
 
 ### A. 拆除必须走单一收口
 
-**A1** 端口归还、注册表删除、杀 worker，**只许**出现在 `LobbyRooms.teardown_room(...)` 体内。
+**A1** 端口归还、注册表删除、杀 worker，**只许**出现在 `LobbyRooms.teardown_room(...)` 体内。★ 2026-10-22 拆件后:注册表删除的**唯一原语**是 `RoomRegistry.erase(room)`,由 teardown_room 独占调用;`room_sweep_lint._check_registry_funnel` 同时钉"表内 `.erase(` 只许在 erase()"与"路由只经 teardown_room"。
 → *症状*：新加一条拆除路径时漏掉其中一步 ⇒ **静默端口泄漏**（房看着没了，worker 还占着端口）。
 → 为什么：这条失败模式在本层**补过三次**（`on_peer_left` 空房分支 / `royale_leave` / `ai_duel` 摘房前的手动释放）——
 没有单一收口时，每加一条路径就重新赌一次。

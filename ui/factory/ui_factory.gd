@@ -122,7 +122,7 @@ const BTN_BORDER_W := 2
 
 
 # 描边式按钮的底:暗填充 + 亮描边(直角)。★★ 这一处是共用的 —— menu_button() 与 style_button() 都走本函数,改内边距 = 同时放大那几屏(有意接受)。
-# ★ 内容边距 40/20(两轮放大 14/6 → 30/14 → 40/20)⇒ 按钮最小高度 = 字号 + 40:32 号字低于 72px 会被容器顶高,绝对定位的调用方(scenes/mp_lobby.gd)必须自己把行高抬到 72。
+# ★ 内容边距 40/20(两轮放大 14/6 → 30/14 → 40/20)⇒ 按钮最小高度 = 字号 + 40:32 号字低于 72px 会被容器顶高,绝对定位的调用方(scenes/mp_lobby/room_list.gd;2026-10-22 拆件前在 mp_lobby.gd)必须自己把行高抬到 72。
 static func _btn_box(fill: Color, border: Color) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = fill
@@ -234,7 +234,7 @@ static func header_strip(text: String, size: int = 32) -> PanelContainer:
 	sb.border_width_bottom = 1
 	sb.border_color = C_BORDER
 	# ★ 内边距 40/20;左内边距 40 → 0(用户:金色标题前面有空格、看上去没对齐)—— 盒子左边与正文同一列,右与上下不动。
-	# ★ 改这里必须同步 tools/gen_menu_theme.gd 并重跑(HeaderStrip 变体是它的镜像;⚠ menu_theme_mirror_smoke 已删·2026-10-09 ⇒ 零守卫);★ 另有一处刻意不跟:scenes/mp_lobby.gd 的 _card_header 保持 20/12(住在一张自带内边距的卡里),那是版式不是漂移。
+	# ★ 改这里必须同步 tools/gen_menu_theme.gd 并重跑(HeaderStrip 变体是它的镜像;⚠ menu_theme_mirror_smoke 已删·2026-10-09 ⇒ 零守卫);★ 另有一处刻意不跟:scenes/mp_lobby/room_list.gd 的 _card_header 保持 20/12(住在一张自带内边距的卡里),那是版式不是漂移。
 	sb.content_margin_left = 0.0
 	sb.content_margin_right = 40.0
 	sb.content_margin_top = 20.0

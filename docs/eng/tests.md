@@ -175,7 +175,7 @@
   | `snap_gap` | `core/net/net_bus.gd` 的 `snapshot_world` | 世界包断流 >150ms：**他人瞬移**的直接证据 |
   | `snap_rx` / `snapshot_tx` | `net_bus.gd` / `server/match/match_snapshot.gd` | 两端按 1Hz 对账：`snap_rx.world_msgs`（本端收到）vs `snapshot_tx.world_msgs`+`world_skipped`（服务器发了/整发跳过）⇒ 分开「没发出 / 发了没收到」 |
   | `rollback` | `core/net/prediction_rollback.gd` 的 `_handle_ack` | 本地被拉回：位置/速度误差、是否贴身、重放条数 |
-  | `queue` / `queue_drop` | `server/match/match_host.gd` | 服务器输入队列深度/上限/累计丢弃：**本地瞬移**的上游 |
+  | `queue` / `queue_drop` | `server/match/input_intake.gd`(调用点在 `match_host.gd`) | 服务器输入队列深度/上限/累计丢弃：**本地瞬移**的上游 |
   | `pickup_try` | `server/match/match_ground.gd` | `none` / `range`(带距离与半径) / `denied` / `taken`：**捡不起来**四种成因 |
   | `pickup_add` / `pickup_remove` / `pickup_skip` | `scenes/pvp_match_client.gd` | 客户端到底有没有建出那把枪、为什么早退 |
   | `tile_cell` / `tile_sub` | `scenes/pvp_match_client.gd` | 拆砖事件是否到达、是否静默(补态) |

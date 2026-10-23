@@ -34,7 +34,7 @@
     `map_format_v4_probe`(cyrm v4 往返/CRC)· `map_catalog_probe`(目录/联机定图);
   - **元闸两支**:`allscript_probe`(全仓 `.gd` 编译面计数,`EXPECTED_SCRIPTS`)·
     `path_integrity_probe`(代码 → 文件系统的路径存在性);
-  - 真链路三支:`rejoin_probe.sh` / `royale_soak_probe.sh` / `team_match_probe.sh`。
+  - 真链路四支:`rejoin_probe.sh` / `royale_soak_probe.sh` / `royale_role_cap_probe.sh` / `team_match_probe.sh`。
 - `harness/`——被 spawn 的辅助。现存 6 支,判据是"**谁在用**":
   `pvp_smoke_client`(← `pvp_room_smoke.sh`)· `rejoin_watcher`(← `rejoin_probe.gd`)·
   `soak_bot_input`(← `royale_soak_probe.gd`)· `team_match_watcher` + `team_bot_input`(← `team_match_probe.gd`)·
@@ -105,7 +105,8 @@
 | 2 | `smoke/pvp_room_smoke.sh` | 7777 + pool | ~40s | `SMOKE PASS` | 扫 `[7800,8300)` |
 | 3 | `probe/rejoin_probe.sh` | 29300 / 29350(**池外**) | 60~110s | `REJOIN PROBE: ALL-OK` | **不扫池** |
 | 4 | `probe/royale_soak_probe.sh` | 7777 + pool | ~150~200s | `SOAK: ALL-OK` | 扫 `[7800,8300)` |
-| 5 | `probe/team_match_probe.sh` | 29200 / 29250(**池外**) | 3~10min | `TEAM MATCH PROBE: ALL-OK` | **不扫池** |
+| 5 | `probe/royale_role_cap_probe.sh` | 7777 + pool | ~3~5min | `ROLE CAP PROBE: ALL-OK(9/9)` | 扫 `[7800,8300)`(由 soak 自己清) |
+| 6 | `probe/team_match_probe.sh` | 29200 / 29250(**池外**) | 3~10min | `TEAM MATCH PROBE: ALL-OK` | **不扫池** |
 
 - ★★ **`WRAPPERS` 现在是空的**(`WRAPPERS=()`)。原来那 4 支"单进程 + tee"的包装随被测脚本一起删了。
   ★ **别把空数组删掉**:闸四同时遍历 `ENTRIES` 与 `WRAPPERS`,数组不存在会在 `set -u` 下炸;

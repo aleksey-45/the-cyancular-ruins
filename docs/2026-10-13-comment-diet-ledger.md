@@ -67,7 +67,7 @@
 - **房卡宽的双来源**：代码 `_card_width()` 公式 vs `.tscn` 的 `CardGrid` `offset_left/right + h_separation` —— 改一个要改另一个，错位**不报错**。
 - 压暗罩 `Color(0,0,0,0.55)` 与 `ui/screens/match_result.gd` 的 `MASK_COLOR`、暂停菜单**逐字同值**（调色板纪律的已知例外）。
 - **多表加入的时序论证**（→ `docs/eng/netplay.md`）：1v1 `join_room` 成功**立即**回，royale/team 是 `call_deferred`+`await` ⇒ 正向一到就关闸会让 absent 漏出去、**花掉一次性刷新额度**（之后第一张真陈旧卡片被拒时反而不会自动刷新）。
-- **三模式"已在房间中"文案各自点名**；闸门只挡最后那一次 RPC，两颗入口按钮由 `_show_wait_room` 直接收起 —— **两半缺一不可**（→ netplay.md）。
+- **三模式"已在房间中"文案各自点名**；闸门只挡最后那一次 RPC，两颗入口按钮由 `WaitRoom.show`(scenes/mp_lobby/wait_room.gd;拆件前是 `_show_wait_room`)直接收起 —— **两半缺一不可**（→ netplay.md）。
 - **`time` 键的权威那一份在 `_player_options()`**（`match_host.gd` 读 `options.get("time")`），建房载荷里的 `time` **没有任何读者**；1v1 必须排除它的理由（`beta_mode` 会话级 + `create_room` 冻结签名 ⇒ 无法按 beta 隔离 ⇒ 没勾 Beta 的玩家能打进带时间经济的 1v1）。→ netplay.md
 - **端口段单一来源 = `WorkerLauncher` 常量**；旧页手写 "7800~7999" 而实际池是 **7800~8299**（照它放行防火墙会漏掉半个池子）。→ netplay.md
 - 限时上界 15 = `ROYALE_MATCH_TIME_CEILING` 上界链的**第三环**（`Settings.royale_match_min` 写入端）→ `docs/eng/modes.md`。

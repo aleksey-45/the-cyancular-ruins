@@ -52,7 +52,7 @@
 ### 碰撞层(按位)
 
 层1=地形、层2=玩家、层3=敌人、**层4=掉落物(值 8)**。玩家/玩家子弹 mask=5(1+3);敌人占层 3(值4)、mask 侦测玩家。**地面武器**(`WeaponPickup`)`layer=8`/`mask=9`(地形+其它掉落物):玩家与敌人的掩码都不含 4、子弹 mask=5 也不含 → 三者**天然不碰**,无需改它们的掩码。★ `match_host.gd` 与两端客户端给玩家补的 `|= 2` 是**玩家层**,与掉落物层无关,别顺手写成 `|= 2 | 8`。
-★ **2026-10-04 补:上面只列到层 4,而现网还有两层** —— `server/hosts/team_host.gd:31` `const TEAM_ENEMY_LAYER := 16`(**层 5 / 值 16**),3v3 里 2 队玩家互相占这一层(`scenes/team_game.gd:218/228` 注释「2 队玩家 layer = 16(`TeamHost.TEAM_ENEMY_LAYER`)」);另有 **层 6 / 值 32**,只被 `tests/manual/brawl_rollback_probe.gd:55`（已删·2026-10-09;`tests/manual/` 整目录已删）的 `const LAYER_AUTH := 32    # 层6` 当作大乱斗权威侧 —— ★ 该探针删除后,**层 6 在本仓已无任何引用**(生产代码里 grep 不到值为 32 的碰撞层)。★ `project.godot` 里**没有任何 `layer_names`** ⇒ 层义只活在散文与代码里,**加第 7 层时没有任何东西会提醒你来同步这一节**。
+★ **2026-10-04 补:上面只列到层 4,而现网还有两层** —— `server/hosts/team_spawn.gd:14` `const TEAM_ENEMY_LAYER := 16`(`TeamHost` 转出别名)(**层 5 / 值 16**),3v3 里 2 队玩家互相占这一层(`scenes/team_game.gd:218/228` 注释「2 队玩家 layer = 16(`TeamHost.TEAM_ENEMY_LAYER`)」);另有 **层 6 / 值 32**,只被 `tests/manual/brawl_rollback_probe.gd:55`（已删·2026-10-09;`tests/manual/` 整目录已删）的 `const LAYER_AUTH := 32    # 层6` 当作大乱斗权威侧 —— ★ 该探针删除后,**层 6 在本仓已无任何引用**(生产代码里 grep 不到值为 32 的碰撞层)。★ `project.godot` 里**没有任何 `layer_names`** ⇒ 层义只活在散文与代码里,**加第 7 层时没有任何东西会提醒你来同步这一节**。
 
 ---
 

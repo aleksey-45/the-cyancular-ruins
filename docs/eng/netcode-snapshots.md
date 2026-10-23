@@ -149,7 +149,7 @@ global_position += (target - current) * (1.0 - exp(-INTERP_RATE * delta))
 
 ### 2.4 输入队列的实测：**顶上去就永远停在那儿**（不是推理）
 
-[`match_host.gd`](../../server/match/match_host.gd) 的 `--netstat-trace` 注释里记着当初的实测结论：
+[`input_intake.gd`](../../server/match/input_intake.gd) 的 `--netstat-trace` 注释里记着当初的实测结论：
 
 > `--netstat-trace`：逐帧打（只在前 600 tick ≈ 10 秒）……**实测队列在开局 1 秒内从 0 跳到 8 然后就永远
 > 停在那儿（ρ=1，没有回复力）**，那一下只能逐帧看。
