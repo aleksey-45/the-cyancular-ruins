@@ -370,3 +370,15 @@
        但**修完之后仍未经真房间跑过**。
     - 设计/规则依据:[`docs/superpowers/specs/2026-10-16-server-console-gui-design.md`](../../superpowers/specs/2026-10-16-server-console-gui-design.md) §9。
     - **owner**:服务端侧([`server/gui/`](../../../server/gui)、[`server/server_main.gd`](../../../server/server_main.gd)、`export_presets.cfg`);**最后复核**:2026-10-17。
+
+22. **运维审计日志(`NetDiag.audit`)三条边界没有守卫**(2026-10-21 新增):
+    ① **事件在正确时机被调用**零守卫 —— 要真实房间/真对局才跑得到,现有验证 = 真链路 `pvp_room_smoke.sh`
+       (只覆盖 `room_created`/`player_join`/`player_leave`)与人工关房;`match_over`/`abort` 两条
+       **连真链路都触发不到**(worker 被 SIGKILL,不走正常收场分支)。
+    ② **保留/归档的真实磁盘行为**零守卫 —— 60 份 ops 与 20 份 worker 归档的删除动作要写盘,不进默认批;
+       纯判据(`ops_files_to_keep` / `prune_worker_logs`)已由 `tests/smoke/ops_log_smoke.gd` 钉住。
+    ③ **关窗优雅停止**零守卫 —— 要真的关一个窗口;实现期用 `PostMessage(WM_CLOSE)` 手工验过一次
+       (0 残留进程 + `lobby_stop` 恰好 1 条),但没有自动化。
+    ⚠ 另有一条**实现约束**靠评审而不是测试:`audit()` 的 IO 失败只 `push_warning`、不许打断建房/开局路径。
+    - 设计/规则依据:[`docs/superpowers/specs/2026-10-21-server-event-logging-design.md`](../../superpowers/specs/2026-10-21-server-event-logging-design.md) §6。
+    - **owner**:服务端侧([`core/net/net_diag.gd`](../../../core/net/net_diag.gd)、[`server/`](../../../server));**最后复核**:2026-10-21。

@@ -184,3 +184,25 @@
   ② 只记事件、不采样逐帧状态（逐帧用 `--netstat-trace`）；③ 写盘失败只 `push_warning`、不影响对局；
   ④ 诊断事件**不进任何断言**，别拿"日志里没有"当"没发生"（关闭时一行都没有）。
 
+
+### 运维审计通道（`ops`，2026-10-21 加）
+
+> 实现同样在 `core/net/net_diag.gd`：与 `--diag` **互不替代**的两条通道。设计权威见
+> [`docs/superpowers/specs/2026-10-21-server-event-logging-design.md`](../superpowers/specs/2026-10-21-server-event-logging-design.md)。
+
+- **开关**：**常开**，但只在**非 client 进程**（`should_audit(role())`）。★ 服务端启动即 `NetDiag.set_role("server")`：
+  导出标记从 `dedicated_server` 换成 `serverui` 之后，`role()` 的推断会把这个大厅当成 client（dev/headless 也没有参数），
+  漏掉这一行 = **审计永远不写**（实现时踩过）。
+- **文件**：`user://logs/ops-<role>-<pid>-<时间戳>.jsonl`，与 diag 同形（`t` / `pid` / `role` / `event` / `data`），
+  **每条都 flush**（崩溃后必须还在）。开新文件前按名倒序保留最新 **60 份**；单文件超 **8 MB** 时 `push_warning` 一次。
+- **读它回答什么**：谁在何时建房 / 进房 / 离房 / 开局 / 关房 / 失联 —— 不带细节，细节归 `--diag`。
+  事件清单与字段见 spec §4（改调用点时必须同步那份表）。
+- **关窗 = 优雅停止**：`server_main` 拦 `NOTIFICATION_WM_CLOSE_REQUEST` → 逐个 `teardown_room`（worker 不留孤儿）
+  → 写**唯一**一条 `lobby_stop`；`--quit-after` 等正常退出走 `_exit_tree` 兜底（`_stop_logged` 去重）。
+- **`worker_lost` 是"现场"不是"判定"**：Godot 4 拿不到子进程退出码（`OS.create_process` 只给 pid），
+  所以记录的是 `alive_sec` + 该 worker 引擎日志的最后 3 行（`tail`）。正常结束与崩溃**都会**发，
+  由读的人按尾部内容判断。
+- **每局日志归档**：开局前把 `worker_<端口>.log` 改名成 `worker_<端口>_<HHMMSS>.log`（同端口保留最新 20 份），
+  否则端口复用会**覆盖上一局的崩溃现场**。
+- **边界（同 diag）**：`t` 跨进程不可相减；写盘失败只 `push_warning`、不打业务；
+  审计事件**不进断言**（关闭/失败时一行都没有 ⇒ "日志里没有" ≠ "没发生"）。
