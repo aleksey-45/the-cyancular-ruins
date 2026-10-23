@@ -31,6 +31,13 @@ static var _mutex := Mutex.new()
 static var _count := 0
 static var _open_failed := false
 
+static var _ops_checked := false
+static var _ops_skipped := false
+static var _ops_failed := false
+static var _ops_warned := false
+static var _ops_path := ""
+static var _ops_file: FileAccess = null
+
 
 ## 是否开启(懒查一次;`--diag` 必须在 `--` 之后,或环境变量 `CYR_DIAG=1`)。
 static func enabled() -> bool:
@@ -152,6 +159,78 @@ static func _ensure_open() -> void:
 	_mutex.unlock()
 
 
+static func audit_path() -> String:
+	return _ops_path
+
+
+static func audit(event: String, data: Dictionary = {}) -> void:
+	if _ops_skipped or _ops_failed:
+		return
+	if not _ops_checked:
+		_ops_checked = true
+		_ops_skipped = not should_audit(role())
+		if _ops_skipped:
+			return
+	_ensure_audit_open()
+	if _ops_file == null:
+		return
+	var line := JSON.stringify({
+		"t": Time.get_ticks_msec(),
+		"pid": OS.get_process_id(),
+		"role": role(),
+		"event": event,
+		"data": data,
+	})
+	_mutex.lock()
+	_ops_file.store_line(line)
+	_ops_file.flush()
+	if not _ops_warned and _ops_file.get_length() > OPS_WARN_BYTES:
+		_ops_warned = true
+		push_warning("NetDiag: 审计文件超过 %d 字节(%s)" % [OPS_WARN_BYTES, _ops_path])
+	_mutex.unlock()
+
+
+static func _ensure_audit_open() -> void:
+	if _ops_file != null or _ops_failed or _ops_skipped or not _ops_checked:
+		return
+	_mutex.lock()
+	if _ops_file == null and not _ops_failed:
+		var dir := ProjectSettings.globalize_path(DIR_NAME)
+		DirAccess.make_dir_recursive_absolute(dir)
+		_prune_ops(dir)
+		var stamp := Time.get_datetime_string_from_system().replace(":", "").replace("-", "").replace(" ", "_")
+		var path := dir.path_join(ops_file_name(role(), OS.get_process_id(), stamp))
+		_ops_file = FileAccess.open(path, FileAccess.WRITE)
+		if _ops_file == null:
+			_ops_failed = true
+			push_warning("NetDiag: 无法创建 %s(审计不落盘)" % path)
+		else:
+			_ops_path = path
+			_ops_file.store_line(JSON.stringify({
+				"t": Time.get_ticks_msec(), "pid": OS.get_process_id(), "role": role(),
+				"event": "session_start", "data": {"log": path},
+			}))
+	_mutex.unlock()
+
+
+static func _prune_ops(dir_path: String) -> void:
+	var d := DirAccess.open(dir_path)
+	if d == null:
+		return
+	var names := PackedStringArray()
+	d.list_dir_begin()
+	var f := d.get_next()
+	while f != "":
+		if not d.current_is_dir():
+			names.append(f)
+		f = d.get_next()
+	d.list_dir_end()
+	var keep := ops_files_to_keep(names, OPS_KEEP)
+	for n in names:
+		if n.begins_with("ops-") and n.ends_with(".jsonl") and not keep.has(n):
+			DirAccess.remove_absolute(dir_path.path_join(n))
+
+
 # ── 测试专用(生产路径不会调)──────────────────────────────────────────────
 # ★ 存在的理由:`--diag` 是**命令行开关**,而 `-s` 冒烟的 `OS.get_cmdline_user_args()` 里只有测试自己的参数
 # (`-s res://...`),没法在不改产品判定分支的前提下打开它。测试用这两个函数直接注入路径/开关。
@@ -176,3 +255,33 @@ static func end_for_test() -> void:
 	_path = ""
 	_count = 0
 	_open_failed = false
+
+
+static func begin_audit_for_test(path: String) -> void:
+	_ops_checked = true
+	_ops_skipped = false
+	_ops_failed = false
+	_ops_warned = false
+	_ops_path = ""
+	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
+	_ops_file = FileAccess.open(path, FileAccess.WRITE)
+	if _ops_file == null:
+		_ops_failed = true
+		return
+	_ops_path = path
+	_ops_file.store_line(JSON.stringify({
+		"t": Time.get_ticks_msec(), "pid": OS.get_process_id(), "role": role(),
+		"event": "session_start", "data": {"test": true},
+	}))
+
+
+static func end_audit_for_test() -> void:
+	if _ops_file != null:
+		_ops_file.flush()
+		_ops_file.close()
+	_ops_file = null
+	_ops_path = ""
+	_ops_checked = false
+	_ops_skipped = false
+	_ops_failed = false
+	_ops_warned = false

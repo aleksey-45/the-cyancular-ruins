@@ -5,7 +5,7 @@ extends SceneTree
 const ND := preload("res://core/net/net_diag.gd")
 
 # ★ 条数闸:断言数对不上就红。没有它,一次脚本中途报错只让后面的断言静默跳过,判词照打 OK。
-const EXPECTED_CHECKS := 5
+const EXPECTED_CHECKS := 9
 
 var _checks := 0
 
@@ -26,6 +26,30 @@ func _initialize() -> void:
 			and not kept.has("diag-server-1-a.jsonl"))
 	fail += _check("不足 keep 时全留",
 			ND.ops_files_to_keep(PackedStringArray(["ops-server-1-a.jsonl"]), 60).size() == 1)
+
+	# ── audit() 端到端:注入测试路径 → 写 → 读回校验 ──
+	var tmp := "user://logs/_ops_smoke.jsonl"
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path("user://logs"))
+	ND.begin_audit_for_test(tmp)
+	ND.audit("unit_seeded", {"room": "4821", "n": 3})
+	ND.audit("unit_seeded", {"room": "4821", "n": 3})
+	var lines := FileAccess.get_file_as_string(tmp).strip_edges().split("\n")
+	var ok_line := false
+	if lines.size() >= 2:
+		var obj = JSON.parse_string(lines[1])
+		ok_line = typeof(obj) == TYPE_DICTIONARY and obj.has("t") and obj.has("pid") \
+				and obj.has("role") and str(obj.get("event", "")) == "unit_seeded" \
+				and int((obj.get("data", {}) as Dictionary).get("n", 0)) == 3
+	fail += _check("audit 写出带 t/pid/role/event/data 的 JSON 行", ok_line)
+	fail += _check("两次调用 + session_start = 三行", lines.size() == 3)
+	fail += _check("audit_path 指向注入路径", ND.audit_path() == tmp)
+	# ★ 冒烟进程的 role() 是 client(命令行里既没有 --worker 也没有 --server)⇒ end 之后必须不再写:
+	#   这条同时钉住"不许把审计开到玩家客户端"。
+	ND.end_audit_for_test()
+	ND.audit("after_end", {})
+	fail += _check("client 进程不再写",
+			FileAccess.get_file_as_string(tmp).strip_edges().split("\n").size() == 3)
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp))
 
 	if _checks != EXPECTED_CHECKS:
 		fail += 1
