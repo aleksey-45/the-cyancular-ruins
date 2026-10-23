@@ -155,7 +155,8 @@ func create_room(caller: int) -> void:
 	room.player_role[caller] = 1
 	room.created_at = Time.get_unix_time_from_system()
 	_registry.add(room)
-	print("房间 %s 创建(房主 peer=%d)" % [code, caller])
+	NetDiag.audit("room_created", {"room": code, "mode": ModeDefs.MODE_PVP, "peer": caller,
+			"nick": str(_peer_names.get(caller, "玩家"))})
 	NetBus.reply(caller, "room_created", code)
 
 func join_room(caller: int, code: String) -> void:
@@ -185,7 +186,8 @@ func join_room(caller: int, code: String) -> void:
 		return
 	room.players.append(caller)
 	room.player_role[caller] = 2
-	print("房间 %s 加入(peer=%d)" % [code, caller])
+	NetDiag.audit("player_join", {"room": code, "mode": ModeDefs.MODE_PVP, "peer": caller,
+			"nick": str(_peer_names.get(caller, "玩家")), "players": room.players.size()})
 	NetBus.reply(caller, "room_joined", 2)
 
 	pairing_ready.emit(room)
@@ -200,8 +202,11 @@ func on_peer_left(peer_id: int) -> void:
 			var room: RoomTypes.Room = _registry.of(mode)[code]
 			if not room.players.has(peer_id):
 				continue
+			var n_before := room.players.size()
 			room.players.erase(peer_id)
 			room.player_role.erase(peer_id)
+			NetDiag.audit("player_leave", {"room": str(code), "mode": mode, "peer": peer_id,
+					"players": n_before - 1})
 			if room.is_team():
 				_prune_team_of(room)
 			if room.in_match:
@@ -213,7 +218,8 @@ func on_peer_left(peer_id: int) -> void:
 				continue   # 1v1 没有房主字段与等待室状态广播(旧实现的空分支,照留)
 			if room.host_peer == peer_id:
 				room.host_peer = room.players[0]
-				print("%s %s 房主转移 → peer %d" % [RoomTypes.kind_text(room), code, room.host_peer])
+				NetDiag.audit("host_transfer", {"room": str(code), "mode": mode,
+						"from_peer": peer_id, "to_peer": room.host_peer})
 # ★ 已开局的房不广播等待室状态(成员正在转连 worker,发给它们必然踩 max channels: 0 且包丢)。这一条 if 现在永远为真
 # (in_match 已在上面 continue),但保留它:它是那件事的守卫,不是死代码 —— 删了会让后来者以为「开局后也可以广播」。
 			if not room.in_match:
@@ -303,8 +309,9 @@ func royale_create(caller: int, opts: Dictionary) -> void:
 	rr.beta = bool(opts.get("beta", false))
 	rr.time_rules = opts.get("time", {}) if rr.beta else {}
 	_registry.add(rr)
-	print("大乱斗房 %s 创建(房主 peer=%d,%s,上限 %d%s)" % [code, caller,
-			"公开" if rr.is_public else "私密", rr.max_players, ",Beta 时间玩法" if rr.beta else ""])
+	NetDiag.audit("room_created", {"room": code, "mode": ModeDefs.MODE_ROYALE, "peer": caller,
+			"nick": str(_peer_names.get(caller, "玩家")), "cap": rr.max_players,
+			"public": rr.is_public, "beta": rr.beta})
 	_broadcast_royale_state(rr)
 
 func royale_join(caller: int, code: String, invite: String, beta: bool) -> void:
@@ -343,8 +350,9 @@ func royale_join(caller: int, code: String, invite: String, beta: bool) -> void:
 		role += 1
 	rr.players.append(caller)
 	rr.player_role[caller] = role
-	print("大乱斗房 %s 加入(peer=%d,role=%d,%d/%d)" % [code, caller, role,
-			rr.players.size(), rr.max_players])
+	NetDiag.audit("player_join", {"room": code, "mode": ModeDefs.MODE_ROYALE, "peer": caller,
+			"nick": str(_peer_names.get(caller, "玩家")), "role": role,
+			"players": rr.players.size(), "cap": rr.max_players})
 	_broadcast_royale_state(rr)
 
 func royale_leave(caller: int) -> void:
@@ -444,8 +452,8 @@ func team_create(caller: int, opts: Dictionary) -> void:
 	if not tr.is_public and tr.invite_code.is_empty():
 		tr.invite_code = _registry.generate_code()
 	_registry.add(tr)
-	print("3v3 房 %s 创建(房主 peer=%d,%s%s)" % [code, caller, "公开" if tr.is_public else "私密",
-			",Beta 时间玩法" if tr.beta else ""])
+	NetDiag.audit("room_created", {"room": code, "mode": ModeDefs.MODE_TEAM, "peer": caller,
+			"nick": str(_peer_names.get(caller, "玩家")), "public": tr.is_public, "beta": tr.beta})
 	_broadcast_team_state(tr)
 
 
@@ -482,7 +490,9 @@ func team_join(caller: int, code: String, invite: String, beta: bool) -> void:
 	tr.players.append(caller)
 	tr.player_role[caller] = role
 # ★ 进房不自动分队:3v3 的规则是玩家自己选边(用户裁定)。未选边 = team_of 里没有该 role,等待室会把他列在「未选边」那一档。
-	print("3v3 房 %s 加入(peer=%d,role=%d,%d/%d)" % [code, caller, role, tr.players.size(), TEAM_ROLES])
+	NetDiag.audit("player_join", {"room": code, "mode": ModeDefs.MODE_TEAM, "peer": caller,
+			"nick": str(_peer_names.get(caller, "玩家")), "role": role,
+			"players": tr.players.size()})
 	_broadcast_team_state(tr)
 
 
@@ -660,7 +670,7 @@ const TEARDOWN_ABORT := 2     # 拉起失败:worker 根本没起来 → **立即
 #   RoomRegistry.port_return_delay → ModeRoomRules → WorkerLauncher.*_PORT_REUSE_DELAY。
 # ★ 别把 3v3 并回 120s:「短于或等于断线宽限期会让重连的客户端连到别的局」是 1v1 从 30 → 120 的老坑。
 func teardown_room(room, mode: int = TEARDOWN_DELAYED, msg: String = "",
-		disconnect_peers: bool = false) -> void:
+		disconnect_peers: bool = false, reason: String = "") -> void:
 # ★ 三态判定读 room.mode(is_duel/is_royale/is_team)。旧写法用 `room is RoyaleRoom` 二分 —— 三张表的房号空间重叠,
 # 按号码反查是「同一个号在三张表里各有一份」的静默错拆,故判定必须落在**这个房对象自己**的模式上。
 	var port: int = room.worker_port
@@ -679,12 +689,12 @@ func teardown_room(room, mode: int = TEARDOWN_DELAYED, msg: String = "",
 			if is_peer_online(peer_id):
 				NetBus.reply(peer_id, "server_message", msg)
 	_registry.erase(room)
-	var how := "将于延迟后回收"
-	if mode == TEARDOWN_KILL:
-		how = "已强杀并立即回收"
-	elif mode == TEARDOWN_ABORT:
-		how = "立即归还(worker 未起来)"
-	print("%s %s 拆除(端口 %d %s)" % [RoomTypes.kind_text(room), room.code, port, how])
+	var why := reason
+	if why.is_empty():
+		why = "closed" if mode == TEARDOWN_KILL else ("abort" if mode == TEARDOWN_ABORT else "delayed")
+	NetDiag.audit("room_closed", {"room": str(room.code), "mode": room.mode, "reason": why,
+			"port": port, "players": peers.size(),
+			"uptime_sec": int(Time.get_unix_time_from_system() - float(room.created_at))})
 # ★ 这一局的凭据随房一起作废(房都拆了,worker 要么已退要么马上被杀;留着凭据只会让回局把客户端送到一个已经不属于它的端口上,
 # 而且没有一行报错)。★★ 键是 worker 端口、不是 room.code:房号空间跨模式重叠,按 code 作废会误伤同号的另一间房。
 	var ntk := rejoin.drop_port(port)

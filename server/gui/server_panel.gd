@@ -626,7 +626,7 @@ func _close_room() -> void:
 		_set_hint("房间 %s 已不存在" % code)
 		_refresh()
 		return
-	_rm.lobby.teardown_room(room, LobbyRooms.TEARDOWN_KILL, "服主关闭了本房间", true)
+	_rm.lobby.teardown_room(room, LobbyRooms.TEARDOWN_KILL, "服主关闭了本房间", true, "operator")
 	_refresh()
 
 
