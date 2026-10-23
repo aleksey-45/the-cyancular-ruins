@@ -1,6 +1,6 @@
 extends CanvasLayer
 
-# 服务端控制台:大厅进程内的只读运维面板(唯一的写操作是「关闭房间」,见后续 task)。
+# 服务端控制台:大厅进程内的只读运维面板。唯一的写操作是「关闭房间」,且走 teardown_room 单一收口。
 # ★ 层号:本进程里没有别的 UI ⇒ 取一个即可;别照抄对局内 HUD 的 128~150(那是给地图上的 HUD 排的)。
 # ★ 数据只经两条路进来:ServerStatus.build(纯判据,-s 可测)+ LobbySnapshot.collect(适配层,零判据)。
 #   面板自己不判业务(人数口径 / state / 房龄都在 ServerStatus 里)—— 否则就是第二份真相。
@@ -34,14 +34,19 @@ const COL_WIDTHS := [104, 152, 88, 168, 104, 104, 0]
 
 const REFRESH_SEC := 0.5
 # 破坏性动作的二次确认窗口:超时自动回退(不弹 AcceptDialog —— 省一个控件的可用性风险)。
-const CONFIRM_SEC := 3.0
+const CONFIRM_SEC := 3.0      # 关闭房间的二次确认窗口
+const HINT_SEC := 4.0         # 一次性提示(「房间已不存在」这类)停留多久
 
 # 日志区(spec §8):正文 16(密度档),滚动条可见,增量 tail worker_<端口>.log。
 const LOG_FONT := preload("res://assets/fonts/menu_font.tres")
 const LOG_MAX_CHARS := 64 * 1024   # ≈ 2000 行;超了从头部截断(不做无限增长)
 
 # ★ 三态的颜色语义(spec §5.6):等待中退后、对局中金、worker 已退出红。
-const STATE_TEXT := {"waiting": "等待中", "in_match": "对局中", "stale": "worker 已退出"}
+const STATE_TEXT := {ServerStatus.STATE_WAITING: "等待中",
+		ServerStatus.STATE_IN_MATCH: "对局中", ServerStatus.STATE_STALE: "worker 已退出"}
+
+# 房种 → 显示名 / 颜色。★ 一处定义,行与「所选房间」都用它:分两处抄迟早漂(改一处漏另一处)。
+const KIND_TEXT := {"1v1": "1v1", "royale": "大乱斗", "team": "3v3"}
 
 var _rm: RoomManager = null
 var _lan_ip := ""
@@ -51,11 +56,11 @@ var _acc := 0.0
 var _overview: Label = null
 var _footnote: Label = null
 var _rooms_meta: Label = null
+var _hint_left := 0.0           # 一次性提示剩余秒数(见 _set_hint / HINT_SEC)
 var _rows_col: VBoxContainer = null
 var _rows: Dictionary = {}      # row_key(kind, code) -> {panel, cells, code, kind}
 # ★ 初值必须与"空房集合"不同:否则首次刷新判定"集合没变"⇒ 跳过重建 ⇒ 空态那一行永远不建。
 var _codes: Array = [""]
-var _empty_label: Label = null
 
 # 右列(所选房间 + 名单):选中哪间房就显示哪间的,没选中时两块一起隐藏。
 var _sel_block: PanelContainer = null
@@ -303,6 +308,11 @@ func _process(delta: float) -> void:
 	if _scroll_bottom_pending:
 		_scroll_bottom_pending = false
 		_scroll_log_to_bottom()
+	# 一次性提示的倒计时(房间已不存在这类结果):到点自己清掉,别留一行过期文字在屏上。
+	if _hint_left > 0.0:
+		_hint_left -= delta
+		if _hint_left <= 0.0 and _rooms_meta != null:
+			_rooms_meta.text = ""
 	if _rm == null:
 		return
 	_acc += delta
@@ -345,7 +355,11 @@ func _render_overview(counts: Dictionary) -> void:
 func _update_footnote() -> void:
 	if _footnote == null:
 		return
-	var ip := _lan_ip if not _lan_ip.is_empty() else "未检测到"
+	# ★ 只取第一个网卡:控制台打的是"把第一个填进去",而这里原先会把整串逗号列表塞进脚注
+	#   (多网卡的机器上那行读不出可用地址,还会顶破 1768 的横向预算)。
+	var ip := "未检测到"
+	if not _lan_ip.is_empty():
+		ip = _lan_ip.split(",")[0].strip_edges()
 	_footnote.text = "公网联机需转发 UDP %d 与 %s · 朋友在客户端「服务器地址」里填 %s" % [
 			NetBus.DEFAULT_PORT, WorkerLauncher.port_span_text(), ip]
 
@@ -354,7 +368,6 @@ func _sync_rows(rooms: Array[Dictionary]) -> void:
 	var keys: Array = []
 	for r in rooms:
 		keys.append(ServerStatus.row_key(str(r["kind"]), str(r["code"])))
-	_rooms_meta.text = "(%d 间)" % rooms.size()
 	if keys != _codes:
 		_rebuild_rows(rooms)
 		_codes = keys
@@ -368,11 +381,9 @@ func _rebuild_rows(rooms: Array[Dictionary]) -> void:
 		_rows_col.remove_child(c)
 		c.queue_free()
 	_rows.clear()
-	_empty_label = null
 	if rooms.is_empty():
 		# 空态:不能让表看起来"渲染失败"。★ 概览/右列也要一起变 0(由各自的刷新负责)。
-		_empty_label = UiFactory.label("现在没有房间。玩家建房后会出现在这里。", 32, UiFactory.C_TEXT_MUTE)
-		_rows_col.add_child(_empty_label)
+		_rows_col.add_child(UiFactory.label("现在没有房间。玩家建房后会出现在这里。", 32, UiFactory.C_TEXT_MUTE))
 		return
 	for r in rooms:
 		var code := str(r["code"])
@@ -406,10 +417,8 @@ func _apply_row(cells: Array[Label], r: Dictionary) -> void:
 	cells[0].add_theme_color_override("font_color", UiFactory.C_WHITE)
 
 	var kind := str(r["kind"])
-	cells[1].text = str({"1v1": "1v1", "royale": "大乱斗", "team": "3v3"}.get(kind, kind))
-	cells[1].add_theme_color_override("font_color",
-			{"1v1": UiFactory.C_ACCENT, "royale": UiFactory.C_MODE_ROYALE,
-			"team": UiFactory.C_MODE_TEAM}.get(kind, UiFactory.C_TEXT))
+	cells[1].text = str(KIND_TEXT.get(kind, kind))
+	cells[1].add_theme_color_override("font_color", _kind_color(kind))
 
 	cells[2].text = "%d / %d" % [int(r["players"]), int(r["cap"])]
 	cells[2].add_theme_color_override("font_color", UiFactory.C_TEXT)
@@ -458,18 +467,20 @@ func _render_selected(r: Dictionary) -> void:
 	_sel_code_lbl.text = str(r["code"])
 	var kind := str(r["kind"])
 	_selected_kind = kind
-	_sel_mode_lbl.text = str({"1v1": "1v1", "royale": "大乱斗", "team": "3v3"}.get(kind, kind))
-	_sel_mode_lbl.add_theme_color_override("font_color",
-			{"1v1": UiFactory.C_ACCENT, "royale": UiFactory.C_MODE_ROYALE,
-			"team": UiFactory.C_MODE_TEAM}.get(kind, UiFactory.C_TEXT))
+	_sel_mode_lbl.text = str(KIND_TEXT.get(kind, kind))
+	_sel_mode_lbl.add_theme_color_override("font_color", _kind_color(kind))
 	var port := int(r["worker_port"])
 	var pid := int(r["worker_pid"])
 	if port <= 0:
 		_sel_info_lbl.text = "端口 — · 进程 —"
+		_sel_info_lbl.add_theme_color_override("font_color", UiFactory.C_TEXT_DIM)
 	elif bool(r["worker_alive"]):
 		_sel_info_lbl.text = "端口 %d · 进程 %d 在" % [port, pid]
+		_sel_info_lbl.add_theme_color_override("font_color", UiFactory.C_TEXT_DIM)
 	else:
+		# ★ 与表里那一行的红字同色:异常必须在两个面上看起来一样,别让明细用暗色稀释它。
 		_sel_info_lbl.text = "端口 %d · 进程 %d 已退出" % [port, pid]
+		_sel_info_lbl.add_theme_color_override("font_color", UiFactory.C_DANGER)
 	_sel_host_lbl.text = "房主 %s" % str(r["host"])
 
 
@@ -542,6 +553,26 @@ func _row_sb(selected: bool) -> StyleBoxFlat:
 	return sb
 
 
+static func _kind_color(kind: String) -> Color:
+	match kind:
+		"1v1":
+			return UiFactory.C_ACCENT
+		"royale":
+			return UiFactory.C_MODE_ROYALE
+		"team":
+			return UiFactory.C_MODE_TEAM
+	return UiFactory.C_TEXT
+
+
+# 房间区标题右侧那一行:平时空着,只在关房失败这类"一次性结果"上写一句,几秒后自动消失。
+# ★ 复用它而不是新开一行:页面横向预算正好 1768(无余量),多一行文字随时会顶破。
+func _set_hint(text: String) -> void:
+	if _rooms_meta == null:
+		return
+	_rooms_meta.text = text
+	_hint_left = HINT_SEC
+
+
 func _show_right(v: bool) -> void:
 	_sel_block.visible = v
 	_roster_block.visible = v
@@ -591,8 +622,8 @@ func _close_room() -> void:
 		return
 	var room = _rm.lobby.room_for_panel(code, kind)
 	if room == null:
-		# 从渲染到点击之间房已经没了:no-op + 刷新(计划里「提示一句」没有 UI 落点,
-		# 已按 Minor 登记为延后项 —— 行通常会在这次刷新里消失,看得到)。
+		# 从渲染到点击之间房已经没了:no-op + 说一句(计划 Task 6 Step 1 要求)。
+		_set_hint("房间 %s 已不存在" % code)
 		_refresh()
 		return
 	_rm.lobby.teardown_room(room, LobbyRooms.TEARDOWN_KILL, "服主关闭了本房间", true)
@@ -653,11 +684,14 @@ func _on_log_meta_input(event: InputEvent) -> void:
 		_update_log_meta()
 
 
-# 跟随所选房间:没选中 / 没 worker 端口 ⇒ 空日志 + 「未选中房间」。
+# 跟随所选房间:没选中 ⇒ 「未选中房间」;选中了但还没开局 ⇒ 「尚未开局(无 worker 日志)」。
 func _refresh_log(room: Dictionary) -> void:
 	var port := int(room["worker_port"]) if not room.is_empty() else 0
 	if port <= 0 or _rm == null or _rm.lobby == null or _rm.lobby.launcher == null:
 		_clear_log()
+		# ★ 右列明明选着一间房,日志区却写"未选中房间"会自相矛盾 —— 分开说。
+		if not room.is_empty() and port <= 0:
+			_log_meta.text = "尚未开局(无 worker 日志)"
 		return
 	var path := _rm.lobby.launcher.log_path(port)
 	if path != _log_path:
@@ -708,11 +742,18 @@ func _append_log_delta() -> void:
 	var text := chunk.slice(0, consumed).get_string_from_utf8()
 	_log_buf += text
 	if _log_buf.length() > LOG_MAX_CHARS:
-		_log_buf = _log_buf.substr(_log_buf.length() - LOG_MAX_CHARS)
+		# 从头部截断,并切在行边界上(切在字符中间会让首行是半截);★ 不动跟随状态
+		# —— 用户显式暂停过就别替他恢复。
+		var over := _log_buf.length() - LOG_MAX_CHARS
+		var cut_nl := _log_buf.find("\n", over)
+		if cut_nl >= 0:
+			over = cut_nl + 1
+		_log_buf = _log_buf.substr(over)
 		_log_rtl.text = _log_buf
-		_log_follow = true
 	else:
-		_log_rtl.append_text(text)
+		# ★ 用 add_text 而不是 append_text:后者即使 bbcode_enabled=false 也会解析 BBCode,
+		#   日志里出现 [b] 这类片段会被吞掉或改样式(实测)。
+		_log_rtl.add_text(text)
 
 
 func _clear_log() -> void:

@@ -83,7 +83,7 @@ func log_path(port: int) -> String:
 	return dir.path_join("worker_%d.log" % port)
 
 
-# 拉起 headless worker(同一可执行文件 + --worker):editor / template_debug 要带 --path 与场景,导出 exe 靠 dedicated_server 主场景;ai_roles 非空则透传 --ai-roles(这些 role 由服务端 AI 驱动,不等 claim)。
+# 拉起 headless worker(同一可执行文件 + --worker):editor / template_debug 要带 --path 与场景,导出 exe 靠 run/main_scene.serverui 的主场景覆盖(不再用 dedicated_server 标记 —— 那会让引擎强制空显示驱动);ai_roles 非空则透传 --ai-roles(这些 role 由服务端 AI 驱动,不等 claim)。
 func spawn_worker(port: int, ai_roles: Array = []) -> bool:
 	var exe := OS.get_executable_path()
 	var args: PackedStringArray

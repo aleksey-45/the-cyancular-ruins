@@ -113,8 +113,11 @@ A′ 的机制(`custom_features` 是预设字符串,导出时拼进 project sett
    管理面会随 `The Cyancular Ruins.exe` 一起发出去。在 `export_presets.cfg:13`(preset.0)的
    `exclude_filter` 末尾追加 `server/gui/*`。
 
-窗口默认 **1280×960**(`Settings.DISPLAY_RESOLUTIONS` 里已有的 4:3 档),逻辑空间仍是 **1920×1440**
-(`stretch/mode=viewport`,1920→1280 是 2/3 非整数缩放 ⇒ 像素边缘略不均,与主菜单/大厅**同一个**已接受的取舍)。
+窗口尺寸与全屏 **一行都不覆盖**(2026-10-20 订正):`Settings.apply_display()` 已经按玩家的档位
+(`Settings.DISPLAY_RESOLUTIONS[display_res_index]` + `display_fullscreen`,单一真相源)开好窗并居中,
+默认档 **1920×1440 恰好等于逻辑视口** ⇒ **1:1 像素、无缩放**;屏幕放不下时它自己 `fit_resolution()` 退档
+(本机 1707×1019 实测退到 1280×960,与客户端窗口**逐像素相同**)。
+★ 原文写"窗口默认 1280×960,并把全屏按回窗口化" —— 那两处都是实现者手写的第二份真相,已废。
 
 ---
 
@@ -340,7 +343,9 @@ static func build(rooms: Array[Dictionary], ports: Array[Dictionary], now_unix: 
 | 导出标记被改回去 ⇒ 窗口静默消失 | **不写,改登记** | 只有人眼能观测;硬造一条必然是 **D6(读配置文件文本判形态)**,按 `AGENTS.md` 不许进 |
 
 **登记进 `docs/eng/registered-debt.md`**:① 面板版式零守卫;② 导出标记这条"零报错地跑错分支"只能靠人眼;
-③ 1280×960 下 2/3 非整数缩放;④ `server_main.gd:118` 那一行的位置零守卫;
+③ **窗口尺寸与帧率是隐式契约**(尺寸 = `Settings` 的玩家档位,默认 1920×1440 与逻辑视口 1:1;
+帧率 = `Engine.max_fps = 15`)—— 两者都**不该**写守卫(档位属玩家配置、帧率属 D3 的"会被反复调的数值"),
+故只落注释与欠账;④ `server_main.gd` 那一行的位置零守卫;
 ⑤ **`lobby_snapshot.gd` 适配层零守卫**(它引用 `LobbyRooms` ⇒ `-s` 下不可引用,只能靠评审;
 判据逻辑全在 `server_status.build()` 里,适配层只做字段搬运)。
 

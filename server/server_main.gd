@@ -142,10 +142,9 @@ func _write_ip_file(text: String) -> void:
 func _add_console_panel() -> void:
 	if DisplayServer.get_name() == "headless":
 		return
-	# ★ Settings.apply_display() 在非 headless 下会按玩家存档改窗口尺寸/全屏(core/config/settings.gd:113);
-	#   服务端窗口必须是固定小窗,故在这里显式覆盖回来。别去改 Settings —— 那是公共配置层。
-	get_window().size = Vector2i(1280, 960)
-	get_window().mode = Window.MODE_WINDOWED
+	# ★ 面板 2Hz 刷新,不需要 60fps:实测 60fps 稳态 17.4% 单核 → 15fps 7.2%(headless 1.0%);代价 = 大厅 RPC 最坏 +67ms(worker 是 headless 进程,不受影响)。
+	Engine.max_fps = 15
+	# ★ 尺寸/全屏都不在服务端写死:Settings.apply_display() 已按玩家档位开好窗(默认 1920×1440 = 逻辑视口,放不下时退档)⇒ 服务端窗口就是客户端窗口,一行都不覆盖;早先手写的 1280×960 是第二份真相。
 	# 不带静态类型:setup() 是面板自己的方法,标成 CanvasLayer 会在解析期报"无此函数"。
 	var panel = preload("res://server/gui/server_panel.tscn").instantiate()
 	add_child(panel)
@@ -154,7 +153,6 @@ func _add_console_panel() -> void:
 
 # worker 端口段文案;★ 单一来源 = WorkerLauncher 的 WORKER_PORT_BASE / WORKER_PORT_SPAN,勿在提示串里另写死数字(曾写 7800~7910 与实际池不符,照它放行防火墙会漏掉半个池子)。
 static func _worker_port_span_text() -> String:
-	# ★ 单一来源已搬到 WorkerLauncher.port_span_text()(面板也要用);这里只转发。
 	return WorkerLauncher.port_span_text()
 
 func _fetch_public_ip() -> void:
