@@ -35,77 +35,26 @@ var _tokens: Dictionary = {}   # role(int) -> token(String),客户端经 report_
 func _ready() -> void:
 	print("[server] 版本 %s  pid=%d" % [preload("res://core/config/build_info.gd").display(), OS.get_process_id()])
 	var args := OS.get_cmdline_user_args()
-	var is_worker := false
-	var port := NetBus.DEFAULT_PORT
-	for i in range(args.size()):
-		match args[i]:
-			"--worker":
-				is_worker = true
-			"--royale":
-				_royale = true
-			"--team":
-				_team_mode = true
-			"--teams":
-				# 队号集合(与 --roles 同序);越界值静默丢弃是有意的 —— 长度不等会在下面的校验里当场拒绝启动,而猜一个默认队号会把整局分成错的队且不报错。
-				if i + 1 < args.size():
-					for tok in str(args[i + 1]).split(","):
-						var t := int(tok.strip_edges())
-						if t >= 1 and t <= 2:
-							_team_teams_raw.append(t)
-			"--port":
-				if i + 1 < args.size():
-					port = int(args[i + 1])
-			"--roles":
-				if i + 1 < args.size():
-					for tok in str(args[i + 1]).split(","):
-						var r := int(tok.strip_edges())
-						if r >= 1 and r <= 8:
-							_role_set.append(r)
-			"--test-ground-teleport":
-				MatchGround.test_ground_teleport = true
-			"--test-destroy-tile":
-				# 仅测试用(见 MatchState.test_destroy_cell);★ 必须给个非零默认 3.0 —— 省掉时留 0.0,钩子会在第一帧就拆,对局开始 N 秒后的语义就没了。
-				if i + 1 < args.size():
-					var parts := str(args[i + 1]).split(",")
-					if parts.size() >= 2:
-						MatchState.test_destroy_cell = Vector2i(
-								int(parts[0].strip_edges()), int(parts[1].strip_edges()))
-					MatchState.test_destroy_after = 3.0
-					if parts.size() >= 3:
-						MatchState.test_destroy_after = float(parts[2].strip_edges())
-			"--ai-roles":
-				if i + 1 < args.size():
-					for tok in str(args[i + 1]).split(","):
-						var r := int(tok.strip_edges())
-						if r >= 1 and r <= 8:
-							_ai_roles.append(r)
-	# ★ 解析完立刻落进实例标志(报到梯读它);位置紧跟循环、不进任何分支 —— 写进某条分支里迟早会漏掉另一种形态。
+	# 解析与三条启动校验(模式互斥 / --roles 与 --teams 等长 / role 上界)收在 ModeContext(纯函数,`-s` 可测)。
+	# ★ role 上界从旧字面量 8 改为 ModeDefs.ROLE_MAX(16):大厅把上限提到 16 时只改了 UI/色板,worker 仍卡 8
+	#   ⇒ 16 人房第 9 人起被当串线踢(X1)。越界现在**拒绝启动**而不静默丢(静默丢正是 X1 活到今天的原因)。
+	var ctx := ModeContext.from_args(args, NetBus.DEFAULT_PORT)
+	if not bool(ctx["ok"]):
+		push_error("worker: 启动参数无效 —— %s" % str(ctx["error"]))
+		get_tree().quit(1)
+		return
+	var is_worker := bool(ctx["worker"])
+	# ★ 解析完立刻落进实例标志(报到梯读它);位置紧跟校验、不进任何分支 —— 写进某条分支里迟早会漏掉另一种形态。
 	_worker = is_worker
+	_royale = bool(ctx["royale"])
+	_team_mode = bool(ctx["team"])
+	_role_set.assign(ctx["roles"])
+	_ai_roles = ctx["ai_roles"]
+	_team_teams_raw.assign(ctx["teams"])
+	_team_of_role = ctx["team_of"]
+	var port := int(ctx["port"])
+	_apply_test_flags(args)
 	if is_worker:
-		# ★ 模式开关互斥(--royale 与 --team 同时为真就当场拒绝启动):三处判据的优先级此前并不一致,手敲两个开关会走 royale 那支开局,
-		#   而 _team_of_role 永不填充、_begin_match 却按 _team_mode 去建 TeamHost → 空 teams → spawns[role] 全员缺键。形态由 tools/room_sweep_lint.gd ⑦ 钉住。
-		if _royale and _team_mode:
-			push_error("worker: --royale 与 --team 不能同时为真(模式开关互斥),拒绝启动")
-			get_tree().quit(1)
-			return
-		if _royale:
-			if _role_set.is_empty():
-				# 大厅拉起时总会带 --roles;空集合只可能是手工命令行漏了 —— 不猜一个集合出来开局(猜错 = 静默踢真客户端)。
-				push_error("大乱斗 worker: 缺 --roles(本局参战 role 集合),拒绝启动")
-				get_tree().quit(1)
-				return
-		elif _team_mode:
-			# --roles 与 --teams 必须等长且非空(队号按同序配对);不等 = 拒绝启动 —— 猜一个默认队号会把整局分成错的队,而且不报错。
-			# ★ 这也保证了 teams 的键覆盖本局全部参战 role:TeamHost 的摆位表按 teams.keys() 出键,缺键会让那个 role 静默生在 (-1,-1)。
-			if _role_set.is_empty() or _role_set.size() != _team_teams_raw.size():
-				push_error("3v3 worker: --roles 与 --teams 必须等长且非空(%d vs %d),拒绝启动" % [
-						_role_set.size(), _team_teams_raw.size()])
-				get_tree().quit(1)
-				return
-			for idx in range(_role_set.size()):
-				_team_of_role[_role_set[idx]] = _team_teams_raw[idx]
-		elif _role_set.is_empty():
-			_role_set = [1, 2]   # 1v1 形态(手工调用兜底;大厅路径不带 --roles)
 		_run_worker(port)
 		return
 	# ── 大厅 ──
@@ -128,6 +77,24 @@ func _ready() -> void:
 	#   ★ 必须用 set_process(false),不能改成 process_mode(后者会沿继承关掉子节点的 _process,而大厅的全部实际工作都在 RoomManager 里);⚠ 这一行同时停掉了 _expire_graces 的唯一调用点 —— 将来大厅一旦自己有了 _grace 条目,那条轮询必须搬出 _process。
 	#   ★ ⚠ 位置守卫 duel_spawn_timeout_smoke 已删(2026-10-09)⇒ 今天零守卫:本行须在 _ready 体内、add_child(RoomManager.new()) 之后,且两者之间没有早退。
 	set_process(false)
+
+# 仅测试用开关:不属于"模式/角色"解析(它们改的是 MatchGround/MatchState 的静态钩子),故不进 ModeContext。
+# ★ 语义与旧版逐字一致;`--test-destroy-tile` 缺省 after=3.0 是承重的(留 0.0 会在第一帧就拆)。
+func _apply_test_flags(args: PackedStringArray) -> void:
+	for i in args.size():
+		match args[i]:
+			"--test-ground-teleport":
+				MatchGround.test_ground_teleport = true
+			"--test-destroy-tile":
+				if i + 1 < args.size():
+					var parts := str(args[i + 1]).split(",")
+					if parts.size() >= 2:
+						MatchState.test_destroy_cell = Vector2i(
+								int(parts[0].strip_edges()), int(parts[1].strip_edges()))
+					MatchState.test_destroy_after = 3.0
+					if parts.size() >= 3:
+						MatchState.test_destroy_after = float(parts[2].strip_edges())
+
 
 func _print_local_ips() -> void:
 	var ips: Array = []

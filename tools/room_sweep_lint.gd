@@ -107,8 +107,10 @@ func _check_teardown_funnel() -> void:
 # role 协议必须是显式 role 集合(--roles):旧协议传「人数 + role 上界」两个整数,而 role 号由「最小空闲号」分配、退出后不重排 ⇒ 编号留空洞、推导必然出错。
 # 判据是反向的:旧标识符一个都不许复活(大厅与 worker 两边只改一边,是这套 argv 契约的历史故障模式)。
 func _check_argv_contract() -> void:
-	# 生成端(worker_launcher.gd)与解析端(server_main.gd)两边清单都要在:只改一半 = 静默降级。
-	for f in ["res://server/server_main.gd", "res://server/lobby/worker_launcher.gd"]:
+	# 生成端(worker_launcher.gd)与解析端(2026-10-22 起搬到 core/mp/mode_context.gd)两边清单都要在:只改一半 = 静默降级。
+	# ★ 解析端不再住在 server_main.gd:那里只剩"取 ctx 字段 + 落实例标志",argv 字符串都搬进了纯函数模块。
+	for f in ["res://server/server_main.gd", "res://server/lobby/worker_launcher.gd",
+			"res://core/mp/mode_context.gd"]:
 		var txt := FileAccess.get_file_as_string(f)
 		if txt.is_empty():
 			_fail = "无法读取 %s" % f
@@ -124,7 +126,7 @@ func _check_argv_contract() -> void:
 					return
 	# 正向:集合协议必须在两边都在位(只改一边 = 拉起的 worker 收不到 role 集合,静默降级)。
 	# ★ 判据取剥注释视图(`ScanUtil.code_only`):注释里提旧协议名是有意的留档 —— 把真代码删掉、只在注释里留一句说明,不该喂绿这条。
-	for f in ["res://server/server_main.gd", "res://server/lobby/worker_launcher.gd"]:
+	for f in ["res://server/lobby/worker_launcher.gd", "res://core/mp/mode_context.gd"]:
 		var code2 := ScanUtil.code_only(ScanUtil.read(f))
 		if not code2.contains('"--roles"'):
 			_fail = "%s 未接 --roles(集合协议只接了一半?注:判据剥掉注释 —— 光在注释里提到不算)" % f
@@ -211,13 +213,22 @@ func _check_team_startup_contract() -> void:
 	if not code.contains("((_royale or _team_mode) and not _role_set.has(role))"):
 		_fail = "_on_role_claimed 的越界守卫只认 _royale(集合外的 role 能混进 3v3 局里开局)"
 		return
-	# ⑦ `--royale` 与 `--team` 同时为真必须当场拒绝启动(判据取守卫整块:被 `pass` 掉的空块不该全绿 —— 那是「看着像守卫、其实守不住」的形状)。
-	var excl := _block_of(ScanUtil.code_view(src), "if _royale and _team_mode:")
-	if excl.is_empty():
-		_fail = "server_main 未拒绝 --royale 与 --team 同时为真(模式开关互斥的守卫被删?)"
+	# ⑦ `--royale` 与 `--team` 同时为真必须当场拒绝启动。2026-10-22:守卫搬进 `ModeContext`(纯函数,
+	#    置 ok=false),真正的 `quit(1)` 在 server_main 的通用分支里 —— 两半都要在:
+	#    只留 ModeContext 不接退出 = 静默继续;只留退出没有守卫 = 永远不触发。
+	var ctx_src := ScanUtil.read("res://core/mp/mode_context.gd")
+	if ctx_src.is_empty():
+		_fail = "无法读取 mode_context.gd"
 		return
-	if not excl.contains("quit(1)"):
-		_fail = "--royale/--team 互斥守卫里没有 quit(1)(空块 = 守卫守不住,静默开成错的那一半)"
+	var excl := _block_of(ScanUtil.code_view(ctx_src), 'if bool(ctx["royale"]) and bool(ctx["team"]):')
+	if excl.is_empty():
+		_fail = "ModeContext 未拒绝 --royale 与 --team 同时为真(模式开关互斥的守卫被删?)"
+		return
+	if not excl.contains("_fail("):
+		_fail = "ModeContext 的互斥守卫里没有 _fail(...)(空块 = 守卫守不住,静默开成错的那一半)"
+		return
+	if not code.contains('if not bool(ctx["ok"]):'):
+		_fail = "server_main 未对 ModeContext.ok=false 做 quit(1)(互斥/越界都会被静默放行)"
 		return
 	_done.append("_check_team_startup_contract")
 
