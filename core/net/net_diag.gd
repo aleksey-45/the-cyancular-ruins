@@ -48,6 +48,31 @@ static func role() -> String:
 	return _role
 
 
+const OPS_KEEP := 60
+const OPS_WARN_BYTES := 8 * 1024 * 1024
+
+
+static func should_audit(role_name: String) -> bool:
+	return role_name != "client"
+
+
+static func ops_file_name(role_name: String, pid: int, stamp: String) -> String:
+	return "ops-%s-%d-%s.jsonl" % [role_name, pid, stamp]
+
+
+static func ops_files_to_keep(names: PackedStringArray, keep: int) -> PackedStringArray:
+	var ops: Array[String] = []
+	for n in names:
+		if n.begins_with("ops-") and n.ends_with(".jsonl"):
+			ops.append(n)
+	ops.sort()
+	ops.reverse()
+	var out := PackedStringArray()
+	for i in mini(keep, ops.size()):
+		out.append(ops[i])
+	return out
+
+
 ## 写一条事件。`data` 只放标量/数组/字典(向量请拆成 [x, y]);`urgent=true` 立即落盘(错误/断线这类必须活到崩溃之后的)。
 static func log_event(event: String, data: Dictionary = {}, urgent := false) -> void:
 	if not enabled():
