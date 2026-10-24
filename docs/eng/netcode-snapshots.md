@@ -53,17 +53,19 @@ NetBus.rpc_id(peer, "snapshot_own",
 
 ### 1.4 线格式与载荷
 
-- `core/net/net_codec.gd` 用一张 schema 表驱动手打包成 `PackedByteArray`。首字节 `PROTO_VERSION := 1`，第二字节种类（`KIND_WORLD` / `KIND_OWN`）。
-- 两端版本不一致 ⇒ 解码返回空字典、调用方不 emit，`net_bus.gd` 只报一次错。
+- `core/net/net_codec.gd` 用一张 schema 表 + 手打包成 `PackedByteArray`（快照 + 输入同模块）。首字节 `PROTO_VERSION := 2`，第二字节种类（`KIND_WORLD` / `KIND_OWN` / `KIND_INPUT`）。
+- ★ 2026-10-24 编码侧性能：解码仍表驱动（`_unpack` 逐字段守边界），**编码侧手写内联**（`out.encode_float(i, v)` + 下标写，一次性按 `_schema_bytes()` 预算容量、末尾 `resize(i)` 收尾）。实测 `encode_world`（N=16）**304 → 40~49 µs/包**（一次性量具 `.superpowers/net/encode_timing.gd`；同文件的剖面实测「只 resize」= 0.2 µs ⇒ 瓶颈是**逐字段 GDScript 调用**，不是分配）。代价：编码顺序/宽度与 schema 成了两份 —— 漂移由 `snapshot_size_probe` 的往返判据抓（解码按 schema 读，顺序/宽度错 = 值必不对）。**产出字节逐位不变**（51/102 B 与改前一致）。
+- 两端版本不一致 ⇒ 解码返回空字典、调用方不 emit，`net_bus.gd` / `net_bus` 的输入解码口各只报一次错。
 - 数值全是 float32 全量，**无量化**；字段全是绝对值，**无增量**。
 
 载荷口径（trail 2 点、装枪 + 1 件背包）：
 
 | 包 | 载荷 |
 |---|---|
-| 世界包头 | 7 B（版本 1 + 种类 1 + tick 4 + 人数 1） |
+| 世界包头 | 7 B（版本 1 B + 种类 1 B + tick 4 + 人数 1） |
 | 世界包每人条目 | 51 B（role 1 + 字段 50）；不在回溯时 35 B |
 | 本人包 | 102 B（头 8 + `c2` 73 + 武器 14 + 背包 7） |
+| 输入包 | **34 B**（头 2 + 记录 32；`held` 必须 u16，见 [`netcode-input-uplink.md`](netcode-input-uplink.md)） |
 
 按 30Hz 折算（服务器上行按扇出算：世界包每个 peer 一份）：
 
@@ -137,6 +139,7 @@ NetBus.rpc_id(peer, "snapshot_own",
 ## 6. 已知边界
 
 - `c2` 与渲染字段都是 float32 全量，量化与增量都没做。量化必须两端同口径（`c2` 是回滚锚点，只压上行会让每次重放都对不上）。
+- 上行的 `st` / `ct` 两个扩展字段（2026-10-24 随输入手打包埋入）**只落位、无消费者**：真链路只证明不回归，送达证据只有 `-s` 往返断言；真正的消费者是未来的增量批。
 - 没有丢包 / 抖动注入路径 ⇒ 队头阻塞、丢弃率、手感都没有真对局读数。
 - 探针量的是**载荷**字节，不含 ENet 分片头 / RPC 方法名 / IP·UDP 头。`royale_soak_probe` 的 KB/s 是解码后 `Dictionary` 的 `var_to_bytes`，不是线上字节，对线格式改动不可见。
 - `snapshot_size_probe` 的每秒折算列按 `SNAP_HZ := 60` 算，下行实际 30Hz ⇒ 只看它的单包字节，别引用每秒列。

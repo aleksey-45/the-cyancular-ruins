@@ -11,7 +11,7 @@ const MTU := 1400          # ENet 默认 MTU
 const FRAG_HEADER := 8     # 分片包每片大致头部开销(粗估,用于折算片数)
 const SNAP_HZ := 60        # SNAPSHOT_INTERVAL = 1/60
 
-const EXPECTED_CHECKS := 4
+const EXPECTED_CHECKS := 5
 
 # ④ 用到的两个常量。★ 人数上限不抄一份:直接读产品侧的单一来源(LobbyRooms.ROYALE_MAX_PLAYERS)。
 # ★ TRAIL_PHYSICAL_MAX 是生产者的 trail 上限(match_host 的回溯录像每 3 帧一点、最多 10 点),它是个字面量、没有名字 ⇒ 只能在这里抄一份并点名来源;线上真正发多少由 NetCodec.TRAIL_WIRE_MAX 决定(那一个才是判据真正盯的东西)。
@@ -105,10 +105,29 @@ func _ready() -> void:
 	var worst_players := {}
 	for i in cap:
 		worst_players[str(i + 1)] = _entry_world(_trail_pts(TRAIL_PHYSICAL_MAX))
-	var worst_bytes := NetCodec.encode_world({"tick": 0, "players": worst_players}).size()
+	var worst_packet := NetCodec.encode_world({"tick": 0, "players": worst_players})
+	var worst_bytes := worst_packet.size()
 	_check(worst_bytes <= WORLD_PACKET_BUDGET,
 			"最坏世界包(N=%d × trail %d 点)必须 ≤ %d B(实得 %d B = %d 片)" % [
 					cap, TRAIL_PHYSICAL_MAX, WORLD_PACKET_BUDGET, worst_bytes, _frags(worst_bytes)])
+	# ⑤ 2026-10-24 加(编码器改「预分配 + 下标写」后才有这条风险):最坏包必须能**逐字段解码回来**。
+	# ★ 去掉什么才红:把编码容量预算算小 ⇒ 写越界;注意最后那句 `out.resize(i)` 会把短掉的尾巴**补 0** ⇒ 包长对、能解码,
+	#   但末尾字段值是 0 —— 所以这里必须**逐字段比**,只比「能解码/人数对」抓不住(实测:容量少 8 B 时旧版 ⑤ 仍绿)。
+	# ★ 期望值里 trail 要按**线上截断后**的形态比(线上只留最近 TRAIL_WIRE_MAX 点)。
+	var worst_dec := NetCodec.decode_world(worst_packet)
+	var expected := worst_players.duplicate(true)
+	var last_pts := _trail_pts(TRAIL_PHYSICAL_MAX).slice(TRAIL_PHYSICAL_MAX - NetCodec.TRAIL_WIRE_MAX)
+	for role in expected:
+		(expected[role] as Dictionary)["trail"] = last_pts
+	var worst_ok := not worst_dec.is_empty()
+	if worst_ok:
+		var dp: Dictionary = worst_dec.get("players", {})
+		for role in expected:
+			if not _dict_same(expected[role], dp.get(role, {})):
+				worst_ok = false
+				break
+	_check(worst_ok and (worst_dec.get("players", {}) as Dictionary).size() == cap,
+			"最坏世界包必须能逐字段解码回来(N=%d;容量预算算错 = 写越界 + 尾部补 0 = 这里红)" % cap)
 	print("[size] 最坏世界包读数:N=%d × trail %d 点 ⇒ %d B(%d 片,预算 %d B)" % [
 			cap, TRAIL_PHYSICAL_MAX, worst_bytes, _frags(worst_bytes), WORLD_PACKET_BUDGET])
 

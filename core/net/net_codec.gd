@@ -1,14 +1,19 @@
 class_name NetCodec
 extends RefCounted
 
-# 快照线格式:把快照载荷从 Dictionary 换成手打包的 PackedByteArray。原先每个字段都要在线上带键名字符串(每帧重复)+ 4 字节类型标签 ——
+# 线格式:把载荷从 Dictionary 换成手打包的 PackedByteArray(快照 + 输入共用一套版本字节与 schema 表)。原先每个字段都要在线上带键名字符串(每帧重复)+ 4 字节类型标签 ——
 # 实测同一份 8 字段数据:dict(键)= 196 B vs 手打包 = 24 B ⇒ 键 + 类型标签才是大头,不是数值本身;换掉后 N=8 世界包 2.1 KB → 0.27 KB(不再分片)、本人包 588 B → ~114 B。
 # ── 本版不做量化(只换编码):只压发送侧会引入永久分歧(Gaffer《State Synchronization》)—— 两端都从量化后的状态起算,必须两端一起量化。本人包的 c2 是 C2 回滚锚点,
 # 只量化上行 ⇒ 客户端重放起算点与服务器不一致 ⇒ 每次都判分歧、每次回滚。故本版只去开销、不动数值:字段与今天逐位相同。
 # ── 变位数是无损的:Godot 非 double 构建里 encode_variant 已把 FLOAT 收成 32 位、Vector2 收成 2×float32 ⇒ float32 载荷与今天线上字节逐位一致,不是"看上去差不多"。
-# ── 用一张 schema 表驱动两侧:手写编解码最可能的缺陷是顺序/偏移漂移(加一个字段、两侧改漏一处 ⇒ 静默错位),两侧共表 ⇒ 顺序在构造上不可能分叉(探针 snapshot_size_probe 有"表必须覆盖真实字段"的判据)。
 # ── 版本字节:首字节 = PROTO_VERSION,两端不同版时大声失败(解码返回空字典、调用方不 emit),而不是按错位的偏移读出垃圾值。★ 载荷里每个字节位置都是协议:改字段顺序/类型/宽度 = 改协议,两端必须同版本。
-# ── 输入包(KIND_INPUT)也走这里:同一套版本字节 + schema 表 + _pack/_unpack。类名保留 NetCodec —— 它现在是**全项目**线格式编解码器(快照 + 输入)。
+# ── 输入包(KIND_INPUT)也走这里:同一套版本字节 + schema 表。类名保留 NetCodec —— 它现在是**全项目**线格式编解码器(快照 + 输入)。
+# ── ★★ 2026-10-24 编码侧性能:解码仍**表驱动**(`_unpack` 按 schema 读,不可信输入必须逐字段守边界),但**编码侧改成手写内联**
+#   (`out.encode_float(i,v)` / 直接下标写),不再每字段调一个静态函数、不再经 schema 的 `match`/`dict.get` 双重派发。实测(N=16):
+#   表驱动 ~304 µs/包 → 内联 ~47 µs/包(一次性量具 .superpowers/net/encode_profile.gd;同文件还量过「只 resize」= 0.2 µs ⇒ 瓶颈是每字段的
+#   GDScript 调用,不是分配)。★ 代价 = 编码侧的字段顺序/宽度与 schema **成了两份**:漂移由 `snapshot_size_probe` 的往返判据 ③ 抓
+#   (解码按 schema 读 ⇒ 顺序/宽度错 = 解出来的值必不对,立刻红),容量用 `_schema_bytes()` 预算(少算 ⇒ 越界/尺寸错,④ 最坏包抓)。
+#   ⇒ 改 schema 必须同步改三个 encode_*;不改就一定红,不会静默。
 
 const PROTO_VERSION := 2
 const KIND_WORLD := 1
@@ -33,7 +38,7 @@ const WORLD_SCHEMA: Array = [
 	["trail", T_TRAIL],
 ]
 
-# 本人包的核心整态 = player.capture_state() 的 25 个标量字段(inv 另走 T_INV,武器的 8 个字段另走 WEAPON_SCHEMA —— 后者可能不存在,靠 flags 位声明)。
+# 本人包的核心整态 = player.capture_state() 的 25 个标量字段(inv 另走 INV_SCHEMA,武器的 8 个字段另走 WEAPON_SCHEMA —— 后者可能不存在,靠 flags 位声明)。
 const C2_SCHEMA: Array = [
 	["pos", T_V2], ["vel", T_V2], ["facing", T_I8], ["state", T_U8],
 	["slock", T_F], ["coyote", T_F], ["jbuf", T_F], ["jcut", T_BOOL],
@@ -69,59 +74,243 @@ const TRAIL_MAX := 16
 # 16 人 × 物理上限(10 点)= 1847 B ⇒ 2 片,而快照是 unreliable 分片 ⇒ 丢一片 = 整帧丢。4 点 ⇒ 7 + 16×66 = 1063 B(留 24% 余量),残像只少最老的几个点。★ 判据在 tests/probe/snapshot_size_probe.gd ④(量的是本函数的真实产出),改这个数必须先跑它。
 const TRAIL_WIRE_MAX := 4
 
+# 编码容量预算(类加载时算一次,不每包遍历 schema):仍是 `_schema_bytes()` 派生 ⇒ 改 schema 自动跟上,不手抄数字。
+static var _W_ENTRY_BYTES := 1 + _schema_bytes(WORLD_SCHEMA)          # role 1 + 世界条目
+static var _OWN_BASE_BYTES := 8 + _schema_bytes(C2_SCHEMA) + _schema_bytes(WEAPON_SCHEMA) + 1   # 头 8 + c2 + 武器(可能缺席) + inv 计数
+static var _INV_ENTRY_BYTES := _schema_bytes(INV_SCHEMA)
+static var _INPUT_BYTES := 2 + _schema_bytes(INPUT_SCHEMA)
 
-# ── 编码 ──
+
+# ── 编码(2026-10-24:手写内联)── ★ 一次性按 `_schema_bytes()` 预算容量 `resize`,然后全部就地写(`encode_float`/`encode_u32`/下标),
+# 末尾 `resize(i)` 收尾。实测 304 → 47 µs/包(N=16);产出字节与旧实现**逐位不变**(判据:snapshot_size_probe 的尺寸 + 往返 + 最坏包)。
 
 ## 世界包:一次广播,含全部玩家的渲染字段。`{"tick": int, "players": {"role": {…13 字段}}}`。
+## ★ 字段顺序/宽度必须与 WORLD_SCHEMA 一致(解码按 schema 读;漂移由 snapshot_size_probe ③ 抓)。
 static func encode_world(world: Dictionary) -> PackedByteArray:
-	var out := PackedByteArray()
-	out.append(PROTO_VERSION)
-	out.append(KIND_WORLD)
-	_put_u32(out, int(world.get("tick", 0)))
 	var players: Dictionary = world.get("players", {})
-	_put_u8(out, mini(players.size(), 200))
+	var n: int = mini(players.size(), 200)
+	var out := PackedByteArray()
+	out.resize(7 + n * _W_ENTRY_BYTES)   # 头 2+tick4+人数1;每人 = role 1 + schema 定长
+	var i := 0
+	out[i] = PROTO_VERSION
+	i += 1
+	out[i] = KIND_WORLD
+	i += 1
+	out.encode_u32(i, int(world.get("tick", 0)))
+	i += 4
+	out[i] = n
+	i += 1
 	# ★ 依赖 GDScript 字典保持插入序(编码/解码同样保序,不需要额外排序)。
 	for key in players:
-		var entry: Dictionary = players[key]
-		_put_u8(out, int(entry.get("role", int(str(key)))))
-		_pack(out, WORLD_SCHEMA, entry)
+		var e: Dictionary = players[key]
+		out[i] = int(e.get("role", int(key))) & 0xFF
+		i += 1
+		var pos: Vector2 = e.get("pos", Vector2.ZERO)
+		out.encode_float(i, pos.x)
+		i += 4
+		out.encode_float(i, pos.y)
+		i += 4
+		var vel: Vector2 = e.get("vel", Vector2.ZERO)
+		out.encode_float(i, vel.x)
+		i += 4
+		out.encode_float(i, vel.y)
+		i += 4
+		out[i] = int(e.get("facing", 0)) & 0xFF
+		i += 1
+		out[i] = int(e.get("pose", 0)) & 0xFF
+		i += 1
+		out[i] = int(e.get("type_id", 0)) & 0xFF
+		i += 1
+		out[i] = int(e.get("hp", 0)) & 0xFF
+		i += 1
+		out[i] = int(e.get("waterproof", 0)) & 0xFF
+		i += 1
+		out[i] = 1 if bool(e.get("downed", false)) else 0
+		i += 1
+		var aim: Vector2 = e.get("aim", Vector2.ZERO)
+		out.encode_float(i, aim.x)
+		i += 4
+		out.encode_float(i, aim.y)
+		i += 4
+		out[i] = 1 if bool(e.get("previewing", false)) else 0
+		i += 1
+		out[i] = 1 if bool(e.get("haste", false)) else 0
+		i += 1
+		out[i] = 1 if bool(e.get("rewind", false)) else 0
+		i += 1
+		var trail: Array = e.get("trail", [])
+		var tn: int = mini(trail.size(), TRAIL_WIRE_MAX)
+		out[i] = tn
+		i += 1
+		for k in range(trail.size() - tn, trail.size()):
+			var p: Variant = trail[k]
+			if p is Vector2:
+				out.encode_float(i, (p as Vector2).x)
+				i += 4
+				out.encode_float(i, (p as Vector2).y)
+				i += 4
+			else:
+				var a: Array = p
+				out.encode_float(i, float(a[0]))
+				i += 4
+				out.encode_float(i, float(a[1]))
+				i += 4
+	out.resize(i)
 	return out
 
 
 ## 本人包:定向逐 peer。`{"ack_seq": int, "q": int, "c2": capture_state()}`。
+## ★ 字段顺序/宽度必须与 C2_SCHEMA / WEAPON_SCHEMA / INV_SCHEMA 一致(漂移由 snapshot_size_probe ③ 抓)。
 static func encode_own(own: Dictionary) -> PackedByteArray:
 	var c2: Dictionary = own.get("c2", {})
-	var out := PackedByteArray()
-	out.append(PROTO_VERSION)
-	out.append(KIND_OWN)
-	_put_u32(out, int(own.get("ack_seq", 0)))
-	# 服务器侧该 role 的待消费队列深度(判据用:见 docs/eng/netcode-snapshots.md §6)。
-	_put_u8(out, int(own.get("q", 0)))
-	var flags := 0
-	if c2.has("fire_cd"):
-		flags |= FLAG_WEAPON
-	_put_u8(out, flags)
-	_pack(out, C2_SCHEMA, c2)
-	if flags & FLAG_WEAPON != 0:
-		_pack(out, WEAPON_SCHEMA, c2)
 	var inv: Array = c2.get("inv", [])
-	_put_u8(out, mini(inv.size(), 200))
+	var n_inv: int = mini(inv.size(), 200)
+	var out := PackedByteArray()
+	# 容量按最坏算(武器块可能缺席):末尾 resize(i) 裁掉没用到的尾巴。
+	out.resize(_OWN_BASE_BYTES + n_inv * _INV_ENTRY_BYTES)
+	var i := 0
+	out[i] = PROTO_VERSION
+	i += 1
+	out[i] = KIND_OWN
+	i += 1
+	out.encode_u32(i, int(own.get("ack_seq", 0)))
+	i += 4
+	# 服务器侧该 role 的待消费队列深度(判据用:见 docs/eng/netcode-snapshots.md §6)。
+	out[i] = int(own.get("q", 0)) & 0xFF
+	i += 1
+	var flags := FLAG_WEAPON if c2.has("fire_cd") else 0
+	out[i] = flags
+	i += 1
+	var pos: Vector2 = c2.get("pos", Vector2.ZERO)
+	out.encode_float(i, pos.x)
+	i += 4
+	out.encode_float(i, pos.y)
+	i += 4
+	var vel: Vector2 = c2.get("vel", Vector2.ZERO)
+	out.encode_float(i, vel.x)
+	i += 4
+	out.encode_float(i, vel.y)
+	i += 4
+	out[i] = int(c2.get("facing", 0)) & 0xFF
+	i += 1
+	out[i] = int(c2.get("state", 0)) & 0xFF
+	i += 1
+	out.encode_float(i, float(c2.get("slock", 0.0)))
+	i += 4
+	out.encode_float(i, float(c2.get("coyote", 0.0)))
+	i += 4
+	out.encode_float(i, float(c2.get("jbuf", 0.0)))
+	i += 4
+	out[i] = 1 if bool(c2.get("jcut", false)) else 0
+	i += 1
+	out[i] = 1 if bool(c2.get("squat", false)) else 0
+	i += 1
+	out[i] = 1 if bool(c2.get("charge", false)) else 0
+	i += 1
+	out.encode_float(i, float(c2.get("ct", 0.0)))
+	i += 4
+	out[i] = int(c2.get("lmv_d", 0)) & 0xFF
+	i += 1
+	out.encode_float(i, float(c2.get("lmv_t", 0.0)))
+	i += 4
+	out[i] = int(c2.get("wp", 0)) & 0xFF
+	i += 1
+	out.encode_float(i, float(c2.get("wp_t", 0.0)))
+	i += 4
+	out[i] = 1 if bool(c2.get("wp_s", false)) else 0
+	i += 1
+	out.encode_float(i, float(c2.get("wp_d", 0.0)))
+	i += 4
+	out[i] = 1 if bool(c2.get("clatch", false)) else 0
+	i += 1
+	out[i] = 1 if bool(c2.get("swim", false)) else 0
+	i += 1
+	out[i] = int(c2.get("hp", 0)) & 0xFF
+	i += 1
+	out.encode_float(i, float(c2.get("ifr", 0.0)))
+	i += 4
+	out[i] = 1 if bool(c2.get("down", false)) else 0
+	i += 1
+	var knock: Vector2 = c2.get("knock", Vector2.ZERO)
+	out.encode_float(i, knock.x)
+	i += 4
+	out.encode_float(i, knock.y)
+	i += 4
+	out[i] = int(c2.get("wslot", 0)) & 0xFF
+	i += 1
+	out.encode_u32(i, int(c2.get("winst", 0)))
+	i += 4
+	if flags & FLAG_WEAPON != 0:
+		out.encode_float(i, float(c2.get("fire_cd", 0.0)))
+		i += 4
+		out[i] = 1 if bool(c2.get("aiming", false)) else 0
+		i += 1
+		out[i] = 1 if bool(c2.get("fire_buf", false)) else 0
+		i += 1
+		out[i] = int(c2.get("aim_f", 0)) & 0xFF
+		i += 1
+		out[i] = int(c2.get("aim_cf", 0)) & 0xFF
+		i += 1
+		out[i] = int(c2.get("mag", 0)) & 0xFF
+		i += 1
+		out[i] = 1 if bool(c2.get("rld", false)) else 0
+		i += 1
+		out.encode_float(i, float(c2.get("rld_t", 0.0)))
+		i += 4
+	out[i] = n_inv
+	i += 1
 	for e in inv:
-		_pack(out, INV_SCHEMA, e as Dictionary)
+		var w: Dictionary = e
+		out[i] = int(w.get("type", 0)) & 0xFF
+		i += 1
+		out.encode_u32(i, int(w.get("inst", 0)))
+		i += 4
+		out[i] = int(w.get("mag", 0)) & 0xFF
+		i += 1
+	out.resize(i)
 	return out
 
 
 ## 输入包:30Hz 一条记录。`{"seq","ax","held","pressed","released","winst","aim","st","ct"}`。
-## 头 2 B + 记录 32 B = **34 B**(改前:7 键 Dictionary = 164 B/包)。
+## 头 2 B + 记录 32 B = **34 B**(改前:7 键 Dictionary = 164 B/包)。★ 顺序/宽度必须与 INPUT_SCHEMA 一致。
 static func encode_input(pkt: Dictionary) -> PackedByteArray:
 	var out := PackedByteArray()
-	out.append(PROTO_VERSION)
-	out.append(KIND_INPUT)
-	_pack(out, INPUT_SCHEMA, pkt)
+	out.resize(_INPUT_BYTES)
+	var i := 0
+	out[i] = PROTO_VERSION
+	i += 1
+	out[i] = KIND_INPUT
+	i += 1
+	out.encode_u32(i, int(pkt.get("seq", 0)))
+	i += 4
+	out.encode_float(i, float(pkt.get("ax", 0.0)))
+	i += 4
+	var held := int(pkt.get("held", 0))
+	out[i] = held & 0xFF
+	i += 1
+	out[i] = (held >> 8) & 0xFF
+	i += 1
+	out[i] = int(pkt.get("pressed", 0)) & 0xFF
+	i += 1
+	out[i] = int(pkt.get("released", 0)) & 0xFF
+	i += 1
+	out.encode_u32(i, int(pkt.get("winst", 0)))
+	i += 4
+	var aim: Vector2 = pkt.get("aim", Vector2.ZERO)
+	out.encode_float(i, aim.x)
+	i += 4
+	out.encode_float(i, aim.y)
+	i += 4
+	out.encode_u32(i, int(pkt.get("st", 0)))
+	i += 4
+	out.encode_u32(i, int(pkt.get("ct", 0)))
+	i += 4
+	out.resize(i)
 	return out
 
 
 # ── 解码 ── 任一字段越界 ⇒ 返回 {}(调用方据此不 emit):宁可这一帧没有快照,也不要把错位的值喂进预测面。
+# ★ 解码保持**表驱动**(`_unpack`):解码侧是不可信输入,逐字段守边界;且 schema 是"字段集合"的单一来源(probe 的逐键对齐判据也读它)。
 
 static func decode_world(data: PackedByteArray) -> Dictionary:
 	if not _header_ok(data, KIND_WORLD):
@@ -171,32 +360,7 @@ static func decode_input(data: PackedByteArray) -> Dictionary:
 	return pkt
 
 
-# ── 表驱动打包/解包 ──
-
-static func _pack(out: PackedByteArray, schema: Array, d: Dictionary) -> void:
-	for f in schema:
-		var t: String = f[1]
-		var key: String = f[0]
-		match t:
-			T_F:
-				_put_f(out, float(d.get(key, 0.0)))
-			T_V2:
-				var v: Vector2 = d.get(key, Vector2.ZERO)
-				_put_f(out, v.x)
-				_put_f(out, v.y)
-			T_U8:
-				_put_u8(out, int(d.get(key, 0)))
-			T_I8:
-				_put_i8(out, int(d.get(key, 0)))
-			T_BOOL:
-				out.append(1 if bool(d.get(key, false)) else 0)
-			T_I32:
-				_put_i32(out, int(d.get(key, 0)))
-			T_U16:
-				_put_u16(out, int(d.get(key, 0)))
-			T_TRAIL:
-				_put_trail(out, d.get(key, []))
-
+# ── 表驱动解包(读侧;写侧见各 encode_*)──
 
 static func _unpack(r: Dictionary, schema: Array) -> Dictionary:
 	var d := {}
@@ -223,22 +387,6 @@ static func _unpack(r: Dictionary, schema: Array) -> Dictionary:
 	return d
 
 
-# 轨迹 = [[x, y], …](生产者:match_host._tick_beta_rewind,_rw_trail 按时间升序)。★ 线上只带最近 TRAIL_WIRE_MAX 个点(理由见该常量):取尾部(最新那段残像),多余的截断。
-static func _put_trail(out: PackedByteArray, trail: Variant) -> void:
-	var pts: Array = trail if trail is Array else []
-	var n: int = mini(pts.size(), TRAIL_WIRE_MAX)
-	_put_u8(out, n)
-	for i in range(pts.size() - n, pts.size()):
-		var p: Variant = pts[i]
-		if p is Vector2:
-			_put_f(out, p.x)
-			_put_f(out, p.y)
-		else:
-			var a: Array = p
-			_put_f(out, float(a[0]))
-			_put_f(out, float(a[1]))
-
-
 static func _rd_trail(r: Dictionary) -> Array:
 	var n := mini(_rd_u8(r), TRAIL_MAX)
 	var out: Array = []
@@ -247,38 +395,25 @@ static func _rd_trail(r: Dictionary) -> Array:
 	return out
 
 
-# ── 定长读写(小端)── ★ StreamPeerBuffer 可用,但本仓既有的手打包先例是 map_format_v4 的 append 写法,这里沿用同一套:无额外类依赖(裁剪模板里没有它),变长字段也好写。
-
-static func _put_u8(out: PackedByteArray, v: int) -> void:
-	out.append(clampi(v, 0, 255))
-
-
-static func _put_i8(out: PackedByteArray, v: int) -> void:
-	out.append(clampi(v, -128, 127) & 0xFF)
-
-
-static func _put_u16(out: PackedByteArray, v: int) -> void:
-	var u := clampi(v, 0, 65535)
-	out.append(u & 0xFF)
-	out.append((u >> 8) & 0xFF)
-
-
-static func _put_u32(out: PackedByteArray, v: int) -> void:
-	for i in 4:
-		out.append((v >> (i * 8)) & 0xFF)
+# 每条 schema 记录的线上字节数 —— 编码容量预算的**唯一来源**(改 schema 自动跟着变,不会另抄一份数字漂掉)。
+static func _schema_bytes(schema: Array) -> int:
+	var n := 0
+	for f in schema:
+		match f[1]:
+			T_F, T_I32:
+				n += 4
+			T_V2:
+				n += 8
+			T_U16:
+				n += 2
+			T_U8, T_I8, T_BOOL:
+				n += 1
+			T_TRAIL:
+				n += 1 + 8 * TRAIL_WIRE_MAX
+	return n
 
 
-static func _put_i32(out: PackedByteArray, v: int) -> void:
-	_put_u32(out, v)
-
-
-static func _put_f(out: PackedByteArray, v: float) -> void:
-	# ★ 4.7.1 的 PackedByteArray.encode_float() 返回 void(就地写),不是返回新数组(Godot 4.2 的语义)—— 先 resize 再写,然后整段接上去。
-	var tmp := PackedByteArray()
-	tmp.resize(4)
-	tmp.encode_float(0, v)
-	out.append_array(tmp)
-
+# ── 定长读(小端,游标 + 越界守卫)──
 
 static func _rd_u8(r: Dictionary) -> int:
 	var d: PackedByteArray = r["d"]
