@@ -14,6 +14,10 @@ static var restarting := false   # 重启进行中:客户端吞掉期间「服�
 
 
 static func find_server_exe() -> String:
+	# ★ Web:浏览器里没有"同目录 exe",也没有子进程 ⇒ 明确返回空(调用方的提示文案会显示"未找到…")。
+	# Web 版本身不暴露联机入口(见 main_menu),这里只是防止任何意外调用去碰 OS 文件系统。
+	if OS.has_feature("web"):
+		return ""
 	var p := OS.get_executable_path().get_base_dir().path_join(SERVER_EXE)
 	if FileAccess.file_exists(p):
 		return p
@@ -30,6 +34,9 @@ static func restart() -> String:
 	return msg
 
 static func _restart_impl() -> String:
+	# Web:浏览器不允许启动本地进程(taskkill/netstat/create_process 全不可用)。
+	if OS.has_feature("web"):
+		return "Web 版不支持本机服务器(浏览器里无法启动进程)"
 	var exe := find_server_exe()
 	if exe == "":
 		return "未找到 %s —— 请把它和客户端放在同一目录" % SERVER_EXE
@@ -72,6 +79,9 @@ static func _restart_impl() -> String:
 static var _lan_cache: Array = []
 
 static func lan_ip_candidates() -> Array:
+	# Web:没有网卡枚举/路由表;Web 版也不承载联机,返回空即可。
+	if OS.has_feature("web"):
+		return []
 	if not _lan_cache.is_empty():
 		return _lan_cache.duplicate()
 	var out: Array = []
@@ -193,6 +203,9 @@ static func _priv_score(ip: String) -> int:
 
 
 static func _pids_on_port(port: int) -> Array[int]:
+	# Web:没有 netstat / 进程概念。
+	if OS.has_feature("web"):
+		return []
 	var out: Array = []
 	var pids: Array[int] = []
 	OS.execute(SYS32 + "/netstat.exe", PackedStringArray(["-ano"]), out, false, false)

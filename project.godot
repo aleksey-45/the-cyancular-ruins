@@ -136,4 +136,6 @@ Q={
 [rendering]
 
 renderer/rendering_method="mobile"
+; Web 导出只支持 GL Compatibility(WebGL2)⇒ 按平台覆盖,不动桌面/移动端的 mobile 渲染。
+renderer/rendering_method.web="gl_compatibility"
 textures/vram_compression/import_etc2_astc=true

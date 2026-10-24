@@ -111,6 +111,9 @@ func fit_resolution(available: Vector2i) -> Vector2i:
 func apply_display() -> void:
 	if DisplayServer.get_name() == "headless":
 		return
+	# ★ Web:画布尺寸由浏览器/HTML 决定,没有"窗口/全屏/可用区"这套概念;碰这些 API 在 Web 上是空操作或报错。
+	if OS.has_feature("web"):
+		return
 	var usable := DisplayServer.screen_get_usable_rect(DisplayServer.window_get_current_screen())
 	var target := DISPLAY_RESOLUTIONS[display_res_index]
 	if target.x > usable.size.x or target.y > usable.size.y:

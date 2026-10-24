@@ -31,6 +31,8 @@ desktop.ini
 
 # 发布/备份产物(不入库;版本号见 builds 内文件名与 RELEASE.md)
 builds/
+# Web 导出暂存目录(tools/build_release.py 先导到这里,再由 archive_build.py 拷进 builds/<tag>/web/)
+web_build/
 # 累积式程序包档案(每次发布沉淀一份完整包,见 tools/archive_build.py)
 releases/
 backup/

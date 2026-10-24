@@ -29,6 +29,11 @@ const SP_PANEL_SCENE := preload("res://ui/screens/sp_launch_panel.tscn")
 # BG_CELL_PX = 32 是烘图分辨率:游戏里 64px 的一格烘成 32 图像像素(= 源砖分辨率,structure.png 一块砖就是 32×32)。整张 newfactory(150×100 格)= 4800×3200 ≈ 61MB。★★ 为什么不直接烘到屏幕的 96:那会得到 14400×9600 ≈ 553MB,主菜单背不动(Image + 上传 GPU 各一份);而像素完美要求的不是烘图分辨率等于屏幕分辨率,只要求「屏幕像素/格 ÷ 烘图像素/格 是整数」。
 const BG_MAP := "res://maps/newfactory.cyrm"
 const BG_CELL_PX := 32
+# ★★ Web 例外:Web 上烘图分辨率降到 16(2400×1600 ≈ 15MB)—— wasm 里烘 61MB 图要好几秒,且 4800 超过部分设备
+#    WebGL2 纹理上限(常见 4096);背景本来就被 shader 压暗+模糊,16px/格观感几乎无差。桌面/移动仍 32。
+static func bg_cell_px() -> int:
+	return 16 if OS.has_feature("web") else BG_CELL_PX
+
 const BG_VIEW_CELLS := 26.6667
 const BG_SHADER := "res://core/present/menu_fisheye.gdshader"
 const BG_BLUR_RADIUS_PX := 4.0
@@ -120,6 +125,11 @@ func _wire_menu() -> void:
 	%QuitBtn.pressed.connect(func() -> void:
 		Sfx.play("ui")
 		get_tree().quit())
+	# ★ Web 版只发客户端且浏览器没有 UDP/ENet ⇒ 联机(多人)与依赖它的 Beta 入口在这版是死路:
+	#   直接隐藏,别让玩家点进去卡在"大厅连不上"。单机 / 设置 / 信息 / 退出保持原样。
+	if OS.has_feature("web"):
+		%MultiBtn.visible = false
+		%BetaBtn.visible = false
 
 
 # ★★ 浮现序列 = MenuBox 子树里屏幕上从上到下的次序,由树的形状推出来(组展开成组员,分隔线 / 退出键按它们在列里的位置插进去)。旧实现是手写一张清单并要求「日后往列里插静态元素必须同步补进来」—— 现在这条要求消失了:插进 .tscn 就自动按位置参与动画。
@@ -140,16 +150,17 @@ func _build_background() -> void:
 	var sh: Shader = load(BG_SHADER)
 	if sh != null:
 		# 真实地形图:地图子格纹理 × TerrainAtlas 的图集(= Level0 生成 TileSet 的同一份)。★ 底色 = 对局那个清屏色(TerrainAtlas.SKY_COLOR),不是选图缩略图那层近黑 —— 用户口径是「背景颜色要和局内一致」;可读性靠 shader 的 dim 换。这里没有出生点标记要抹:烘的是地形本身。
-		var tex := TerrainAtlas.terrain_texture(BG_MAP, BG_CELL_PX, TerrainAtlas.SKY_COLOR)
+		var cell_px := bg_cell_px()
+		var tex := TerrainAtlas.terrain_texture(BG_MAP, cell_px, TerrainAtlas.SKY_COLOR)
 		var mat := ShaderMaterial.new()
 		mat.shader = sh
 		mat.set_shader_parameter("map_tex", tex)
 		mat.set_shader_parameter("map_size",
-				Vector2(tex.get_width(), tex.get_height()) / float(BG_CELL_PX))
-		# 取景(屏幕横向多少格)由常量显式给,不从纹理尺寸反推 —— 它与 BG_CELL_PX 是配套的一对,反推会让「再放大一点」变成只改一半。
+				Vector2(tex.get_width(), tex.get_height()) / float(cell_px))
+		# 取景(屏幕横向多少格)由常量显式给,不从纹理尺寸反推 —— 它与烘图分辨率是配套的一对,反推会让「再放大一点」变成只改一半。
 		mat.set_shader_parameter("view_w_cells", BG_VIEW_CELLS)
 		mat.set_shader_parameter("blur_radius", BG_BLUR_RADIUS_PX)
-		_bg_cells = Vector2(tex.get_width(), tex.get_height()) / float(BG_CELL_PX)
+		_bg_cells = Vector2(tex.get_width(), tex.get_height()) / float(cell_px)
 		_bg_mat = mat
 		bg.material = mat
 		_init_motion()

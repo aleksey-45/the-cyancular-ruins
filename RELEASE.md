@@ -18,8 +18,8 @@
 
 ### 1.2 重新导出(二选一)
 
-**图形界面**:项目 → 导出 → 选预设(`Windows Desktop` / `Dedicated Server` / `macOS` / `macOS Server`)→ 导出项目
-**命令行**(推荐,一条命令):`python tools/build_release.py` —— 写版本信息 → Windows 客户端/服务端 → 打回控制台 → 冒烟 → macOS 客户端/服务端 → 归档,一键全做。
+**图形界面**:项目 → 导出 → 选预设(`Windows Desktop` / `Dedicated Server` / `macOS` / `macOS Server` / `Web`)→ 导出项目
+**命令行**(推荐,一条命令):`python tools/build_release.py` —— 写版本信息 → Windows 客户端/服务端 → 打回控制台 → 冒烟 → macOS 客户端/服务端 → **Web 客户端(单机)** → 归档,一键全做。
 
 > **macOS 产物**:`The Cyancular Ruins (macOS).zip` / `Cyancular Ruins Server (macOS).zip`（zip 内含标准 `.app`；universal 架构，Intel + Apple Silicon 通吃；**未签名、未公证**）。mac 上是"解压 → 右键打开（或 `xattr -cr`）→ 双击"；服务端从终端跑：
 > ```bash
@@ -28,25 +28,39 @@
 > ```
 > ⚠️ Windows 主机**不能执行** mac 二进制 ⇒ `build_release.py` 对两个 mac zip 只做「结构 + 体积」校验，**没有运行冒烟**；"能跑"只能在 mac 上由人确认。
 
+> **Web 产物(仅客户端、单机)**:`Web` 预设导出一个目录(`web_build/` → 归档成 `builds/<发布标识>/web/`:index.html + .wasm/.pck/.js)。
+> - ⚠️ **Web 版没有联机**:浏览器不提供 UDP/ENet ⇒ 主菜单的「多人」「Beta」入口在 Web 下**被隐藏**(`main_menu.gd` 的 `OS.has_feature("web")` 分支)。想给 Web 做联机必须另做 WebSocket/中继,不是导出问题。
+> - 渲染:项目桌面/移动是 `mobile` 渲染器,Web 只支持 GL Compatibility ⇒ `project.godot` 里有按平台覆盖 `renderer/rendering_method.web="gl_compatibility"`(别删;删了 Web 导出会因不支持的渲染后端失败)。
+> - 导出预设里 **Thread Support = 关闭**(`variant/thread_support=false`):单线程 wasm,不需要服务器加 COOP/COEP 头。
+> - 必须用 **HTTP(S) 起一个静态服务**再访问(例如 `python -m http.server 8000 -d web_build` → `http://localhost:8000/`);直接双击 `index.html`(`file://`)不行。
+> - **上线部署**:静态服务器要开 **gzip/brotli**(wasm ≈39.5MB,压缩后传输约 10MB)+ `Cache-Control` 长缓存;`python -m http.server` 不压缩,只适合本地验证。首屏还会烘一张菜单背景图(Web 上已降到 16px/格 ≈15MB),慢机器上首进菜单要等几秒。
+> - `build_release.py` 对 Web 只做**文件结构校验**(index.html + 足够大的 .wasm),**不启动浏览器** ⇒ "浏览器里真能跑"要人开一次页面确认(单机流程:开始游戏 → 移动/射击 → HUD/后处理正常)。
+> - 已知差异:Web 版跑不了 `LocalServer`(taskkill/netstat/create_process 在浏览器里不存在;相关入口本就随联机一起隐藏);首次加载体积 = 全部资源(数十 MB),首次进入要等 wasm+资源下载。
+
 > **版本号从哪来**:唯一来源是 `project.godot` 的 `application/config/version`,**只能写数字+点**。发布标识 = **`RoF_v<版本>_<YYYYMMDDHHMM>`**,由 [`tools/build_release.py`](tools/build_release.py) + [`tools/archive_build.py`](tools/archive_build.py) 拼:前缀取自 `project.godot` 的 `application/config/release_prefix`,拼法收在 `archive_build.py` 的 `release_version()` / `release_label()`。主菜单 / 信息页版本行、服务端启动自报、归档目录名与文件名都用它;`v` 前缀由脚本在展示与文件名上加。★ **别在任何文档里另抄一份版本号。**
 > 导出前脚本把 `RoF_v<版本>` + 构建时间戳(`YYYYMMDDHHMM`)写进 [`core/config/build_info.gd`](core/config/build_info.gd),导出后**自动还原**成 dev 占位(工作区不脏);主菜单那行版本号读的就是它,服务端启动自报 `[server] 版本 … pid=…`。
 
-> **导出后自动冒烟**:脚本各跑一次两个 **Windows** 产物(客户端直接起;服务端走 `-- --worker --port 7999`,不碰 7777),出现 `SCRIPT ERROR` / `Parse Error` / `Failed to load script` 即中止发布。服务端还要**断言输出里有「worker 就绪」**(只"没报错"会漏掉"零错误地跑错分支")。★ `--worker` 这类开关**必须写在 `--` 之后**(`server_main.gd` 读 `OS.get_cmdline_user_args()`),写在前面会被 Godot 丢掉、静默起成大厅并在 7777 上 bind。mac 两个 zip 只做结构与体积校验（见上），**不执行**。
+> **导出后自动冒烟**:脚本各跑一次两个 **Windows** 产物(客户端直接起;服务端走 `-- --worker --port 7999`,不碰 7777),出现 `SCRIPT ERROR` / `Parse Error` / `Failed to load script` 即中止发布。服务端还要**断言输出里有「worker 就绪」**(只"没报错"会漏掉"零错误地跑错分支")。★ `--worker` 这类开关**必须写在 `--` 之后**(`server_main.gd` 读 `OS.get_cmdline_user_args()`),写在前面会被 Godot 丢掉、静默起成大厅并在 7777 上 bind。mac 两个 zip 只做结构与体积校验(见上),**不执行**;Web 只做文件结构校验,**不启动浏览器**。
 
-> 手动重导出按序做:① 导 Windows 客户端 → ② 导 Windows 服务端 → ③ 服务端打回 CONSOLE → ④ 导 macOS 客户端 → ⑤ 导 macOS Server → ⑥ 归档。
+> 手动重导出按序做:① 导 Windows 客户端 → ② 导 Windows 服务端 → ③ 服务端打回 CONSOLE → ④ 导 macOS 客户端 → ⑤ 导 macOS Server → ⑥ 导 Web 客户端 → ⑦ 归档。
 > ```bash
 > "D:\Program Files\Godot_v4.7.1-stable_win64\Godot_v4.7.1-stable_win64.exe" --headless --path . --export-release "Windows Desktop" "The Cyancular Ruins.exe"
 > "D:\Program Files\Godot_v4.7.1-stable_win64\Godot_v4.7.1-stable_win64.exe" --headless --path . --export-release "Dedicated Server" "Cyancular Ruins Server.exe"
 > python tools/make_server_console.py "Cyancular Ruins Server.exe"   # ③ 不能漏:否则双击服务端无控制台
 > "D:\Program Files\Godot_v4.7.1-stable_win64\Godot_v4.7.1-stable_win64.exe" --headless --path . --export-release "macOS" "The Cyancular Ruins (macOS).zip"
 > "D:\Program Files\Godot_v4.7.1-stable_win64\Godot_v4.7.1-stable_win64.exe" --headless --path . --export-release "macOS Server" "Cyancular Ruins Server (macOS).zip"
-> python tools/archive_build.py                                       # ⑥ 可选,按时间戳归档
+> "D:\Program Files\Godot_v4.7.1-stable_win64\Godot_v4.7.1-stable_win64.exe" --headless --path . --export-release "Web" "web_build/index.html"
+> python tools/archive_build.py                                       # ⑦ 可选,按时间戳归档
 > ```
-> ⚠️ 服务端 exe 一导出就是 GUI 子系统(双击后台静默、无控制台)—— `make_server_console.py` 这步不能漏(只对 Windows；mac 的 `.app` 从终端跑就有输出)。`build_release.py` 自动做 ①②③④⑤⑥。
+> ⚠️ 服务端 exe 一导出就是 GUI 子系统(双击后台静默、无控制台)—— `make_server_console.py` 这步不能漏(只对 Windows；mac 的 `.app` 从终端跑就有输出)。`build_release.py` 自动做 ①②③④⑤⑥⑦。
 > ★ **无显卡机器**(虚拟机 / 远程桌面 / Windows Server / 显卡驱动缺失):双击服务端仍会在视频驱动初始化处崩(`Unable to initialize video driver`;`-rendering-driver opengl` 通常也救不了)—— **用 `--headless` 启动**:`"Cyancular Ruins Server.exe" --headless`。PE 已打回 CONSOLE ⇒ 控制台窗口与日志照常,只是不初始化 Vulkan/OpenGL;大厅与自动拉起的 worker 功能不变(worker 本来就在代码里自动带 `--headless`)。`build_release.py` 的冒烟本身就是用 `--headless` 起服务端的。
 > ★ 发布归档**自带 `start_server.bat`**(`archive_build.py` 一并拷贝):把它和 exe 放同一目录双击即可自动以 `--headless` 启动 `Cyancular Ruins Server*.exe`(固定名或带版本+时间戳的归档名都认;目录里没有 `project.godot` 才按发布形态,仓库根仍跑开发态)。
 
-> **归档命名**:根目录只保留固定名产物(Windows 两个 exe + macOS 两个 zip,固定名 = 当前最新版,给 `start_server.bat` 与立即测试用);每次导出的成品按「发布标识」另存一份到 `builds/`,文件名 = `<原名> <发布标识>.<扩展名>`。`builds/` 不入库。
+> **归档命名与目录结构**(2026-10-24 用户裁定「以后 build 分成 win/mac/web」):根目录只保留固定名产物(Windows 两个 exe + macOS 两个 zip,固定名 = 当前最新版,给 `start_server.bat` 与立即测试用);每次导出的成品按「发布标识」另存到 `builds/<发布标识>/`,并按平台分子目录:
+> - `win/` = 客户端 exe + 服务端 exe + `start_server.bat`(文件名带 `<发布标识>`);
+> - `mac/` = 两个 macOS zip;
+> - `web/` = Web 客户端产物(`index.html` + `.wasm/.pck/.js`;仅单机)。
+> `builds/` 与 Web 暂存目录 `web_build/` 都不入库。
 
 > **macOS 常见坑**:① 双击提示"无法验证开发者"是**未签名/未公证**的预期现象 —— 右键「打开」，或 `xattr -cr "xxx.app"`;② 从 zip 解压后若提示"已损坏"，先 `xattr -cr` 再试（zip 经浏览器下载会带 quarantine 属性）;③ mac 客户端的「启动/重启本机服务器」按钮**不可用**（`LocalServer` 是 Windows 专有实现），本机开房要手动从终端起 `Cyancular Ruins Server.app`;④ mac 与 Windows 可以互连（同一套 ENet 协议/`PROTO_VERSION`），但**两端必须同一次导出的构建**。
 > **PvP 服务端 = 大厅 + 每局 worker**:大厅只监听 7777 做配对,每局配对完成自动拉起一个 headless worker 子进程、独占 UDP **7800 起**的端口(worker 结束后自行退出)。云 / 防火墙需放行 **7777 与 7800~8299 的 UDP**(端口池 = 7800 起 500 个)。

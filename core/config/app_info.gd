@@ -56,6 +56,10 @@ static func commit_log() -> Array:
 # (本函数**不走** FileAccess.get_as_text —— 那条链读的是原始字节。)
 # ★ 逐字从 `main_menu.gd` 搬来,别"顺手优化" —— 它踩过中文乱码那个坑。
 static func _git_text(args: Array) -> String:
+	# ★ Web:浏览器里没有子进程/git(OS.execute_with_pipe 在 Web 上不可用)⇒ 直接返回空,走"读不到就显示 dev"的兜底。
+	# 发布版本来就走 build_info.gd(导出时写入),不会落到这里;只有开发/手动导出才需要这条。
+	if OS.has_feature("web"):
+		return ""
 	var res: Variant = OS.execute_with_pipe("git", args, true)
 	if res is Dictionary and res.has("stdio"):
 		var f: FileAccess = res["stdio"]

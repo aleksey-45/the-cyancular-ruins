@@ -1,6 +1,8 @@
 # The Cyancular Ruins
 
 > 2D 横版(平台跳跃)射击 demo · Godot 4.7.1 · 环面(Torus)无缝世界 · 单人 + PvP(1v1 / 3v3 / 大乱斗)
+>
+> **发布平台**:Windows / macOS(客户端 + 服务端)、**Web(仅客户端、仅单机)**——浏览器没有 UDP/ENet ⇒ Web 版不提供联机(主菜单的「多人」「Beta」入口在 Web 下隐藏)。构建产物按平台归档到 `builds/<发布标识>/{win,mac,web}/`,详见 [`RELEASE.md`](RELEASE.md)。
 
 ## 运行与操作
 

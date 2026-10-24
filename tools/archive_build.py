@@ -4,15 +4,15 @@
 # ★★ 2026-09-29 起语义变了(用户裁定):builds/ **只留最新一份**,不再堆历史版本 ——
 #    每次归档先**整个清空** builds/,再建 `builds/The Cyancular Ruins <版本号> <时间戳>/`。
 #
-# 里面是一个**完整的发布目录**(文件平铺在同一层,这是硬要求):
-#   The Cyancular Ruins.exe        客户端(Windows)
-#   Cyancular Ruins Server.exe     服务端(Windows) —— 客户端点「建房」会拉起同目录的它,两者必须挨着
-#   The Cyancular Ruins (macOS).zip        客户端(macOS;zip 内含标准 .app)
-#   Cyancular Ruins Server (macOS).zip     服务端(macOS;zip 内含标准 .app)
-#   (EasyTier 四件套已随 noEztier 线移除)
+# 里面按平台分成三个子目录(2026-10-24 用户裁定「以后 build 分成 win/mac/web」):
+#   win/   The Cyancular Ruins.exe        客户端(Windows)
+#          Cyancular Ruins Server.exe     服务端(Windows) —— 客户端点「建房」会拉起同目录的它,两者必须挨着
+#          start_server.bat               双击 = `--headless` 启动同目录服务端(无显卡机器可用)
+#   mac/   The Cyancular Ruins (macOS).zip / Cyancular Ruins Server (macOS).zip
+#   web/    index.html + .wasm/.pck/.js    Web 客户端(仅单机;浏览器没有 UDP/ENet ⇒ 不带联机)
 #
-# ★ 为什么"一份"必须是一个**目录**而不是几个 exe:客户端找服务端与 EasyTier 都是**按自己的
-#   目录**找的(`LocalServer.find_server_exe()` / `Tunnel.available()` 的第一顺位),散着放等于没有。
+# ★ 为什么"一份"必须是一个**目录**而不是几个 exe:客户端找服务端是**按自己的目录**找的
+#   (`LocalServer.find_server_exe()`),所以 win/ 里客户端与服务端必须同层;web/ 则是独立产物目录。
 # ★ EasyTier 四件套是**可选**的第三方组件,但 2026-09-29 起**手填服务器地址那条路已删除**
 #   ⇒ 少了它这个游戏**没有任何联机方式**。缺哪个这里会点名(不静默)。
 #
@@ -54,6 +54,10 @@ def release_prefix() -> str:
 GAME_FILES = ["The Cyancular Ruins.exe", "Cyancular Ruins Server.exe"]
 # macOS 产物:可选 —— 在 Windows 上没导 mac(或 mac 导出失败)时归档照样能跑,只打 warning。
 MAC_FILES = ["The Cyancular Ruins (macOS).zip", "Cyancular Ruins Server (macOS).zip"]
+# 服务端启动器(双击 = --headless 启动同目录的 Cyancular Ruins Server*.exe)
+LAUNCHER = "start_server.bat"
+# Web 客户端暂存目录(tools/build_release.py 导出到这里;本脚本把它整体拷进 builds/<tag>/web/)
+WEB_DIR_NAME = "web_build"
 # noEztier 线:联机走大厅直连(公网服/LAN),包内不再携带 EasyTier。
 EASYTIER_DIRS = [PROJECT, os.path.join(PROJECT, "tools", "easytier")]
 
@@ -134,7 +138,14 @@ def main() -> None:
     wipe_builds()
     os.makedirs(out, exist_ok=True)
 
-    print("归档: %s(只留这一份;builds/ 已先清空)" % os.path.basename(out))
+    print("归档: %s(win/ mac/ web/;builds/ 已先清空)" % os.path.basename(out))
+    win_dir = os.path.join(out, "win")
+    mac_dir = os.path.join(out, "mac")
+    web_dir = os.path.join(out, "web")
+    os.makedirs(win_dir, exist_ok=True)
+    os.makedirs(mac_dir, exist_ok=True)
+    os.makedirs(web_dir, exist_ok=True)
+
     for f in GAME_FILES:
         # ★★ 2026-10-04(用户「build 里面的 exe 要加时间戳」):归档里那份**文件名带版本+时间戳**
         #   (`The Cyancular Ruins v.1.2.0 202610041530.exe`),而**仓库根**仍是两个固定名
@@ -142,17 +153,17 @@ def main() -> None:
         #   拷进目录的文件仍是固定名 ⇒ 打开 builds/ 分不清哪份是哪次。
         stem, ext = os.path.splitext(f)
         named = ("%s %s%s" % (stem, tag, ext)) if tag else f
-        shutil.copy2(os.path.join(PROJECT, f), os.path.join(out, named))
-        print("  ✓ %s" % named)
+        shutil.copy2(os.path.join(PROJECT, f), os.path.join(win_dir, named))
+        print("  ✓ win/%s" % named)
 
-    # ★ 服务端启动器一并进归档:双击它 = `--headless` 启动同目录那份服务端 exe(纯控制台、不依赖显卡;
-    #   它自己会按 "Cyancular Ruins Server*.exe" 通配找带版本号的归档名)。没有它,拿到 archive 的人只能手敲参数。
-    launcher = os.path.join(PROJECT, "start_server.bat")
+    # ★ 服务端启动器一并进归档(win/):双击它 = `--headless` 启动同目录那份服务端 exe(纯控制台、不依赖显卡;
+    #   它自己会按 "Cyancular Ruins Server*.exe" 通配找带版本号的归档名)。
+    launcher = os.path.join(PROJECT, LAUNCHER)
     if os.path.isfile(launcher):
-        shutil.copy2(launcher, os.path.join(out, "start_server.bat"))
-        print("  ✓ start_server.bat")
+        shutil.copy2(launcher, os.path.join(win_dir, LAUNCHER))
+        print("  ✓ win/%s" % LAUNCHER)
     else:
-        print("  ! 缺 start_server.bat(发布目录将没有启动器)")
+        print("  ! 缺 %s(win/ 将没有启动器)" % LAUNCHER)
 
     for f in MAC_FILES:
         src = os.path.join(PROJECT, f)
@@ -161,8 +172,17 @@ def main() -> None:
             continue
         stem, ext = os.path.splitext(f)
         named = ("%s %s%s" % (stem, tag, ext)) if tag else f
-        shutil.copy2(src, os.path.join(out, named))
-        print("  ✓ %s" % named)
+        shutil.copy2(src, os.path.join(mac_dir, named))
+        print("  ✓ mac/%s" % named)
+
+    web_src = os.path.join(PROJECT, WEB_DIR_NAME)
+    if os.path.isfile(os.path.join(web_src, "index.html")):
+        shutil.copytree(web_src, web_dir, dirs_exist_ok=True)
+        size = sum(os.path.getsize(os.path.join(web_dir, n)) for n in os.listdir(web_dir)
+                   if os.path.isfile(os.path.join(web_dir, n)))
+        print("  ✓ web/(%d 个文件, %.1f MB)" % (len(os.listdir(web_dir)), size / 1048576.0))
+    else:
+        print("  ! 缺 %s/index.html —— Web 客户端未导(归档里 web/ 为空)" % WEB_DIR_NAME)
 
     # ② 累积档案:同样的包再沉淀一份进 releases/(每次发布都留,按版本+时间戳命名;
     #    builds/ 那份仍然是"只留最新"。同名重跑覆盖,不重复堆积)

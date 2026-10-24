@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 # 一键发布:导 Windows 客户端/服务端 exe + 服务端打回 CONSOLE + 导 macOS 客户端/服务端 zip(内含 .app)
-# + 按时间戳归档到 builds/(历史版本留档,见 RELEASE.md §1.2,复用 tools/archive_build.py)。
+# + 导 **Web 客户端**(纯单机;浏览器没有 UDP/ENet,联机在 Web 上不成立) + 按时间戳归档到 builds/。
+# 归档目录按平台分开:`builds/<发布标识>/win/`、`mac/`、`web/`(见 tools/archive_build.py)。
 # ★ macOS 产物**不能**在本机执行(Win 跑不了 Mach-O)⇒ 只做 zip 结构/体积校验,不做运行冒烟 —— 别在输出里谎称"验过"。
+# ★ Web 产物只能靠浏览器验证,本脚本只校验文件齐全(结构校验),不启动浏览器。
 # 依赖 RELEASE.md 的自定义裁剪模板(4.7.1 标准编辑器)。改完游戏后跑一次即可。
 # 版本号取自 project.godot 的 `application/config/version`,与游戏内主菜单显示的**同源**。
 # 用法: python build_release.py   (可选 --stamp 202610041200 / --version 0.6.0 覆盖默认)
@@ -47,6 +49,11 @@ SERVER_OUT = os.path.join(PROJECT, "Cyancular Ruins Server.exe")
 # ★ Windows 主机不能执行 mac 二进制 ⇒ 这两个产物**不做运行冒烟**,只做结构/体积校验(见 verify_mac_zip)。
 MAC_CLIENT_OUT = os.path.join(PROJECT, "The Cyancular Ruins (macOS).zip")
 MAC_SERVER_OUT = os.path.join(PROJECT, "Cyancular Ruins Server (macOS).zip")
+# Web 客户端(单机):Godot 的 Web 导出产物是一个**目录**(index.html + .wasm + .pck + .js …),
+# 先导到仓库根的暂存目录(已 gitignore),再由 archive_build.py 拷进 builds/<tag>/web/。
+WEB_PRESET = "Web"
+WEB_OUT_DIR = os.path.join(PROJECT, "web_build")
+WEB_OUT_HTML = os.path.join(WEB_OUT_DIR, "index.html")
 BUILD_INFO = os.path.join(PROJECT, "core", "config", "build_info.gd")
 # 安全护栏:本脚本的临时写盘只针对 build_info.gd 这一个**仓库内固定文件**。
 # 写入一律用「chdir 到仓库根 + 纯字面量相对路径」,路径构造上杜绝越界
@@ -257,6 +264,27 @@ def verify_mac_zip(zip_path: str) -> None:
           % (app, size / 1048576.0))
 
 
+def verify_web_dir() -> None:
+    """Web 产物的结构校验:导出目录里必须有 index.html / .wasm / .pck,且不是空壳。
+
+    ★ 本机**不**启动浏览器 ⇒ 只能证明"文件齐了",不能证明"浏览器里跑得起来";后者要人真开一次页面。
+    ★ 4.7 的 Web 导出会把 pck 嵌进 wasm(取决于选项),所以 pck 允许缺失,但至少要有 index.html + 一个 >1MB 的 .wasm。
+    """
+    if not os.path.isdir(WEB_OUT_DIR):
+        sys.exit("Web 导出目录不存在: %s" % WEB_OUT_DIR)
+    names = os.listdir(WEB_OUT_DIR)
+    if "index.html" not in names:
+        sys.exit("Web 导出缺 index.html: %s" % WEB_OUT_DIR)
+    wasm = [n for n in names if n.endswith(".wasm")]
+    if not wasm:
+        sys.exit("Web 导出缺 .wasm: %s" % WEB_OUT_DIR)
+    big = max(os.path.getsize(os.path.join(WEB_OUT_DIR, n)) for n in wasm)
+    if big < 1024 * 1024:
+        sys.exit("Web 的 .wasm 只有 %d 字节 —— 导出像空壳: %s" % (big, WEB_OUT_DIR))
+    print("    OK(web: %s + %.1f MB wasm;仅结构校验 —— 未启动浏览器)"
+          % ("index.html", big / 1048576.0))
+
+
 def main() -> None:
     # 允许 --stamp <ts> / --version <v> 覆盖默认(时间戳取当前时间,版本号读 project.godot)
     stamp = datetime.datetime.now().strftime("%Y%m%d%H%M")
@@ -304,6 +332,12 @@ def main() -> None:
         verify_mac_zip(MAC_CLIENT_OUT)
         export("macOS Server", MAC_SERVER_OUT)
         verify_mac_zip(MAC_SERVER_OUT)
+        # Web 客户端(单机)。★ 先清暂存目录:Godot 的 Web 导出会往目录里增量写,旧文件残留会让"这次到底导了什么"说不清。
+        if os.path.isdir(WEB_OUT_DIR):
+            shutil.rmtree(WEB_OUT_DIR)
+        os.makedirs(WEB_OUT_DIR, exist_ok=True)
+        export(WEB_PRESET, WEB_OUT_HTML)
+        verify_web_dir()
     finally:
         # ★ 必须还原:发布信息是**导出期**的临时覆盖,不能留在工作区(否则 git status 恒脏、
         #   下次开发也会误显示发布版本号)
@@ -316,9 +350,13 @@ def main() -> None:
     print((r.stdout or "").strip() or (r.stderr or "").strip())
     if r.returncode != 0:
         sys.exit(r.stderr or "归档失败")
-    print("\n发布完成(%s):\n  %s\n  %s (控制台版;固定名=最新,带版本号+时间戳的历史版见 builds/)\n  %s\n  %s\n"
-          "  ★ mac 两个 zip = 内含标准 .app,未签名/未公证,且**未在本机执行过**(Windows 跑不了 mac 二进制)。"
-          % (release_label(version, stamp), CLIENT_OUT, SERVER_OUT, MAC_CLIENT_OUT, MAC_SERVER_OUT))
+    print("\n发布完成(%s):\n  builds/%s/win/   = %s + %s + start_server.bat\n  builds/%s/mac/   = %s + %s\n  builds/%s/web/   = index.html + .wasm/.pck(仅客户端、单机;Web 无 UDP/ENet ⇒ 不带联机)\n"
+          "  ★ mac 两个 zip = 内含标准 .app,未签名/未公证,且**未在本机执行过**(Windows 跑不了 mac 二进制)。\n"
+          "  ★ Web 只做了结构校验,未开浏览器;PvP 在 Web 上不可用(设计如此)。"
+          % (release_label(version, stamp),
+             release_label(version, stamp), CLIENT_OUT, SERVER_OUT,
+             release_label(version, stamp), MAC_CLIENT_OUT, MAC_SERVER_OUT,
+             release_label(version, stamp)))
 
 
 if __name__ == "__main__":
