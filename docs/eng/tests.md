@@ -93,7 +93,7 @@ bash tests/smoke/<名>.sh
 - **开关**:① 客户端命令行 `-- --diag` —— 必须写在 `--` 之后,写在前面会被 Godot 丢掉;② 环境变量 `CYR_DIAG=1`,worker 作为子进程继承(它的命令行固定拼出,不带 `--diag`)。
 - **文件**:`user://logs/diag-<role>-<pid>-<时间戳>.jsonl`,一行一个 JSON,字段 `t` / `pid` / `role` / `event` / `data`。
 - **默认关 = 零成本**:`enabled()` 懒查一次;关着时不开文件、不拼 JSON。
-- 判据:[`tests/smoke/net_diag_smoke.gd`](../../tests/smoke/net_diag_smoke.gd)(`NET DIAG OK(...)`)。
+- 判据:**零守卫**（原 `net_diag_smoke.gd` 已随 2026-10-24 默认批削减删除；缺口登记在 [`registered-debt.md`](registered-debt.md) §九）。
 
 | 事件 | 落点 | 读它回答什么 |
 |---|---|---|
@@ -121,5 +121,5 @@ bash tests/smoke/<名>.sh
 - **关窗 = 优雅停止**:`server_main` 拦 `NOTIFICATION_WM_CLOSE_REQUEST` → 逐个 `teardown_room` → 写**唯一**一条 `lobby_stop`;`--quit-after` 等正常退出走 `_exit_tree` 兜底(`_stop_logged` 去重)。
 - **`worker_lost` 是"现场"不是"判定"**:记录 `alive_sec` + 该 worker 引擎日志最后 3 行;正常结束与崩溃都发。
 - **每局日志归档**:开局前把 `worker_<端口>.log` 改名成 `worker_<端口>_<HHMMSS>.log`,同端口保留最新 `WorkerLauncher.WORKER_LOG_KEEP`(20)份。
-- 判据:[`tests/smoke/ops_log_smoke.gd`](../../tests/smoke/ops_log_smoke.gd)(`OPS_LOG_OK(...)`)。
+- 判据:**零守卫**（原 `ops_log_smoke.gd` 已随 2026-10-24 默认批削减删除；缺口登记在 [`registered-debt.md`](registered-debt.md) §九）。
 - **边界**:同 diag —— `t` 跨进程不可相减;写盘失败只 `push_warning`;审计事件不进断言。

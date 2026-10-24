@@ -44,7 +44,7 @@ python tools/build_release.py
 无单测框架;`tests/` 分三档:冒烟(`-s`)/ 场景探针(`.tscn`)/ 真链路(`.sh`)。清单、逐支判词与已知边界见 [`tests/README.md`](tests/README.md)。
 
 ```bash
-source tests/env.sh && "$GODOT" --headless --path . -s res://tests/smoke/network_input_smoke.gd  # 单支冒烟
+source tests/env.sh && "$GODOT" --headless --path . -s res://tests/smoke/net_wire_smoke.gd  # 单支冒烟
 bash tests/run_all.sh   # headless 默认批(不碰 7777、不弹窗;--list 看清单 / 排除理由 / 已知红基线)
 bash tests/run_real.sh  # 真链路批(大厅 → worker → 建房 → 开局;占 7777)
 ```

@@ -14,7 +14,7 @@ Godot 不在 PATH,用绝对路径。**两个二进制不能混用**:`GODOT`(cons
 
 ```bash
 # 冒烟测试(SceneTree 脚本;通过时打印该支自己的 OK 文本)
-"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/smoke/network_input_smoke.gd
+"D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . -s res://tests/smoke/net_wire_smoke.gd
 
 # headless 启动游戏 90 帧后退出(看脚本报错)
 "D:/Program Files/Godot_v4.7.1-stable_win64/Godot_v4.7.1-stable_win64_console.exe" --headless --path . --quit-after 90

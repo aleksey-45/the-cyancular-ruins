@@ -10,5 +10,3 @@ res://map	# 同上 —— ★ 注意它与**真实存在**的 res://maps 是两�
 res://backup	# 同上(备份目录,见 .gitignore)
 res://editor/_build	# 同上(编辑器构建产物)
 res://_crashtest	# 同上 —— ★ 2026-10-05 补:2026-10-03 把 `res://_crashtest` 加进 `allscript_probe` 的 SKIP_DIRS 时**漏了同步本表**(该目录本身已于 2026-10-04 整个删除)⇒ 这一条一直缺,直到 `path_integrity_probe` 第一次被聚合入口真正跑起来才暴露
-res://maps/newfactory.txt	# map_catalog_probe 的**负向断言**:断言"非 .cyrm 后缀应被拒" ⇒ 该文件本就不该存在
-res://maps/nope.cyrm	# 同上:断言"不存在的图应被拒"

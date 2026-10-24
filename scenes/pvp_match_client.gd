@@ -349,7 +349,7 @@ func _all_replicas() -> Array:
 
 # ── 拆砖:实现落在组合件 scenes/mp_client/tile_sync.gd(2026-10-22 拆出;Task 7) ──
 # 本类只留这三个委托口(名字/签名逐字不变:三个子类 _ready 调 _subscribe_tile_events(),
-# _on_match_sync 与 tests/probe/resync_world_probe.gd 直接调 _on_remote_tile_destroyed(cell, true))。
+# _on_match_sync 直接调 _on_remote_tile_destroyed(cell, true);原 resync_world_probe 也调它,该探针已于 2026-10-24 删除)。
 # ★ 组件懒建:基类没有 _ready(三个子类各有一个,在基类再加会被覆盖掉、静默失效)⇒ 第一次用到时
 #   new + bind;bind 只存引用、没有副作用,与"实例化时就建"在行为上不可分。
 var _tile_sync: TileSync = null

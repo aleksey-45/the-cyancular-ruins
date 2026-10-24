@@ -7,7 +7,7 @@ extends RefCounted
 #   · 3v3 曾把 1v1 的"禁用武器"照旧上发(界面藏了控件,设置却仍生效);
 #   · 16 人上限只改了大厅/UI,worker 的 `--roles` 解析仍卡 8;
 #   · 结算列在三处适配器里各维护一份键表。
-# 统一到"一张表"后,新增/修改模式只改这里;改错时的判据是 `tests/smoke/mode_defs_smoke.gd`。
+# 统一到"一张表"后,新增/修改模式只改这里;纯逻辑守卫(`mode_defs_smoke`)已于 2026-10-24 默认批削减删除 ⇒ 改错只能靠联机场景行为/试玩发现。
 #
 # ★ 三个 ID 必须与 `PvpSession.MODE_*` 逐字一致("pvp"/"royale"/"team")。本文件刻意**不 import**
 #   PvpSession(它是 autoload,`-s` 下加载会拿到空成员),一致性由冒烟 ① 钉住字面量。

@@ -3,7 +3,7 @@ extends RefCounted
 
 # 拆砖(瓦片破坏)组合件(2026-10-22 从 PvpMatchClient 拆出;Task 7):两条订阅 + 格级/子格级处理。
 # 形状是**组合**不是继承:宿主 PvpMatchClient 只剩 `_subscribe_tile_events()` /
-# `_on_remote_tile_destroyed()` / `_on_remote_sub_destroyed()` 三个委托口(resync_world_probe 直接调格级那个);
+# `_on_remote_tile_destroyed()` / `_on_remote_sub_destroyed()` 三个委托口(原 `resync_world_probe` 直接调格级那个,该探针已于 2026-10-24 删除);
 # 本类经 bind(client) 读宿主的 `_world`(与拆件前同一个字段、同一个对象)。
 # ★ `--diag` 的事件名 `tile_cell` / `tile_sub` 逐字未改(NetDiag 判据)。
 

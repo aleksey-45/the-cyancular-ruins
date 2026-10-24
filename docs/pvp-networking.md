@@ -233,11 +233,12 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 |---|---|
 | `tests/smoke/pvp_room_smoke.sh` | 建房 → 配对 → `go_match`(占 7777) |
 | `tests/smoke/pvp_match_smoke.sh` | 输入 → 模拟 → 快照 → 子弹广播 |
-| `tests/smoke/rpc_channel_contract_smoke.gd` | 通道表 ↔ `@rpc` 声明文本对账 |
-| `tests/smoke/room_registry_smoke.gd` / `mode_*_smoke.gd` | 注册表与模式表 |
+| `tests/smoke/net_wire_smoke.gd` | 线格式(三 kind 头/往返/坏包 + schema 对齐) |
+| `tests/smoke/input_queue_smoke.gd` | 输入队列(轴收口/有界/回复力/上限) |
 | `tests/probe/rejoin_probe.sh` | 回大厅后回局三端 |
-| `tests/probe/resync_world_probe.tscn` | 重连补态还原 |
 | `tests/probe/rollback_fidelity_probe.tscn` | C2 容差与接触提示接线 |
+
+★ 原 `rpc_channel_contract_smoke` / `room_registry_smoke` / `mode_*_smoke` / `resync_world_probe` 已随 2026-10-24 默认批激进削减删除（缺口见 [`eng/registered-debt.md`](eng/registered-debt.md) §九）。
 
 ## 14. 已知边界
 

@@ -1,6 +1,6 @@
 # 联机:RPC 通道划分表（★ 单一来源）
 
-通道号以本表为准;代码里的 `@rpc("any_peer", "call_remote", "reliable", N)` 与 `tests/smoke/rpc_channel_contract_smoke.gd` 都按本表对账。
+通道号以本表为准;代码里的 `@rpc("any_peer", "call_remote", "reliable", N)` 按本表对账。★ **原「通道表 ↔ 声明文本」对账守卫已随 2026-10-24 默认批激进削减删除** ⇒ 这张表今天**没有自动化守卫**,改通道号必须人眼对表(缺口登记在 [`registered-debt.md`](registered-debt.md) §九)。
 
 ## 映射
 `modules/enet/enet_multiplayer_peer.cpp::put_packet`:
@@ -36,5 +36,5 @@ if (tr_channel > 0) { channel = SYSCH_MAX + tr_channel - 1; }        // = tr_cha
 ## 声明与对账
 
 - `@rpc` 四参全写:`@rpc(mode, sync, transfer_mode, transfer_channel)`。三参并把 int 放第 3 位会被引擎拒(`argument 3 should be "String" but is "int"`);`mode` / `sync` / `transfer_mode` 三个字符串顺序无关,`transfer_channel` 必须是最末那个 int;`sync` 写 `"call_remote"` 是默认值。
-- 作用域:产品声明 **61** 条(`net_bus.gd` 28 + `net_bus_ext.gd` 33);`transfer_channel` 0/1/2/3 = 47/1/3/10。表里 60 个方法名,差的一条是 `beam_fired` 在 `net_bus.gd` 与 `net_bus_ext.gd` 各声明一次(两份都给通道 3)。通道号无法在运行期回读:`GDScript.get_script_method_list()` 不含 `rpc_config` ⇒ 唯一自动化判据是文本对账(`rpc_channel_contract_smoke`);「重名集合恰好 = {beam_fired}」也被它钉成一条断言。
+- 作用域:产品声明 **61** 条(`net_bus.gd` 28 + `net_bus_ext.gd` 33);`transfer_channel` 0/1/2/3 = 47/1/3/10。表里 60 个方法名,差的一条是 `beam_fired` 在 `net_bus.gd` 与 `net_bus_ext.gd` 各声明一次(两份都给通道 3)。通道号无法在运行期回读:`GDScript.get_script_method_list()` 不含 `rpc_config` ⇒ 过去的唯一自动化判据是文本对账(`rpc_channel_contract_smoke`,已删)⇒ **今天只能人工对表**;「重名集合恰好 = {beam_fired}」也没人钉了。
 - **接收端纪律**:`beam_fired` 必须走 `NetBus`(不是 `NetBusExt`);挂错节点 = 静默 no-op。

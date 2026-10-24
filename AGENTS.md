@@ -16,9 +16,9 @@ Godot **4.7.1 标准版(非 mono)** 做的 2D 横版射击 demo「The Cyancular 
 
 ```bash
 # 冒烟(`-s`,`extends SceneTree`)
-"$GODOT" --headless --path . -s res://tests/smoke/network_input_smoke.gd
+"$GODOT" --headless --path . -s res://tests/smoke/net_wire_smoke.gd
 # 场景探针(`extends Node`;`--quit-after` 单位是帧,统一给 3600 当安全网)
-"$GODOT" --headless --path . --quit-after 3600 res://tests/probe/tile_collision_probe.tscn
+"$GODOT" --headless --path . --quit-after 3600 res://tests/probe/snapshot_size_probe.tscn
 # 起 PvP 服务端(占 7777;终端开着 = 运行中)
 "$GODOT" --headless --path . res://server/server_main.tscn
 ```

@@ -225,7 +225,7 @@ load_known_red() {
 
 # 判词判据:
 #   · 边界类 = `[^A-Za-z0-9]`(**含 `_`**)—— 否则 `NET_INPUT_OK` 这种「下划线接 OK」的判词
-#     会被判成 NO-VERDICT(network_input_smoke 首跑实测就是这么假红的)。
+#     会被判成 NO-VERDICT(2026-10 某冒烟首跑实测就是这么假红的)。
 #   · FAIL 侧放宽到 `FAIL[A-Z]{0,4}` —— 覆盖仓库现网出现过的 FAIL / FAILED / FAILURES /
 #     `[FAIL]` / `FAIL(` 形状(`enemy_logic_smoke` 失败时打的是 `FAILURES: ...`,只认裸 FAIL 会漏)。
 #   · ★★ **OK 侧 = "判词三条件"(2026-10-05 三轮;评审 C2 + 重审 C2 残余 + Task 6 假红)**。

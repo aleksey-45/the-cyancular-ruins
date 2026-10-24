@@ -22,7 +22,7 @@
 
 - `destroyed` = `MatchHost.destroyed_cells()`:当前 `grid` 与建局基线 `_base_grid` 不同的格,顺序确定;空数组不带键。
 - 客户端补态路径先 `Level0.reset_destructibles()`,再逐格 `_on_remote_tile_destroyed(cell, true)`;顺序不可换,且只在补态路径做。
-- 地面武器「先清后灌」:`_clear_ground_weapons()` 后按 `ground_weapons` 建节点;进场那次本地为空,同一段代码无分支。`_resync_pull_pending` 读一次即清;补态应答不做出生点校正、不发告警。测试:`resync_world_probe.tscn`(还原墙体瓦片层 + `_destructible_sub` 子格两维)、`rollback_fidelity_probe.tscn`(C2 容差与接触提示接线)。
+- 地面武器「先清后灌」:`_clear_ground_weapons()` 后按 `ground_weapons` 建节点;进场那次本地为空,同一段代码无分支。`_resync_pull_pending` 读一次即清;补态应答不做出生点校正、不发告警。测试:`rollback_fidelity_probe.tscn`(C2 容差与接触提示接线)。★ 原补态还原守卫 `resync_world_probe.tscn`(墙体瓦片层 + `_destructible_sub` 子格两维)已随 2026-10-24 默认批激进削减删除 ⇒ **重连补态今天没有自动化守卫**(缺口登记在 [`registered-debt.md`](registered-debt.md) §九)。
 
 ## 状态与横幅
 

@@ -20,7 +20,7 @@
 
 位：`BIT_UP 1` / `BIT_DOWN 2` / `BIT_CHARGE 4` / `BIT_ATTACK 8` / `BIT_RELOAD 16` / `BIT_PICKUP 32` / `BIT_DROP 64` / `BIT_HASTE 128` / `BIT_REWIND 256`。加位 = 改协议，两端必须同版本。
 
-**线格式**（`NetCodec.KIND_INPUT`）：头 2 B（`PROTO_VERSION` + 种类）+ 记录 32 B = **34 B/包**。实测 34 B（`server_input_sanitize_smoke.gd` 的 `[readout]` 行）。
+**线格式**（`NetCodec.KIND_INPUT`）：头 2 B（`PROTO_VERSION` + 种类）+ 记录 32 B = **34 B/包**。实测 34 B（`net_wire_smoke.gd` 的 `[readout]` 行）。
 - `held` 必须 **u16** —— `BIT_REWIND = 256` 装不进 u8（按 u8 打会静默截成 159，表现为"加速/回溯按住没反应"）。
 - `pressed` / `released` 最大 127 / 31 ⇒ u8 够。
 - `st` / `ct` 各 4 B。★ 本批**只落位**：服务器存进 `MatchState._client_snap_tick` / `_client_tick` 并由 `--netstat` 打印，**没有消费者**；它们是未来增量批的基线来源 —— 但线格式只改这一次。

@@ -66,4 +66,4 @@
 
 ## 测试
 
-`pvp_room_smoke.sh`(建房 / 加入 / `go_match`,占 7777)、`pvp_match_smoke.sh`(输入 → 模拟 → 快照 → 子弹广播)、`rpc_channel_contract_smoke.gd`(通道文本对账)、`room_registry_smoke.gd` / `mode_*_smoke.gd`。房间寿命与回局见 [`netplay-rooms.md`](netplay-rooms.md),断线重连见 [`netplay-reconnect.md`](netplay-reconnect.md),快照管线见 [`netcode-snapshots.md`](netcode-snapshots.md)。
+`pvp_room_smoke.sh`（建房 / 加入 / `go_match`，占 7777）、`pvp_match_smoke.sh`（输入 → 模拟 → 快照 → 子弹广播）= 真链路；默认批里与联机相关的只有 `net_wire_smoke`（线格式）/ `input_queue_smoke`（输入队列，`-s`）。原 `rpc_channel_contract_smoke` / `room_registry_smoke` / `mode_*_smoke` 已随 2026-10-24 默认批激进削减删除（缺口见 [`registered-debt.md`](registered-debt.md) §九）。房间寿命与回局见 [`netplay-rooms.md`](netplay-rooms.md)，断线重连见 [`netplay-reconnect.md`](netplay-reconnect.md)，快照管线见 [`netcode-snapshots.md`](netcode-snapshots.md)。

@@ -16,7 +16,7 @@ const PVP_MAP := "res://maps/newfactory.cyrm"
 
 
 # ★ `far_spawn_from` / `FAR_CELLS` 已搬到 `core/sim/spawn_picker.gd`(2026-10-02 合并时)。
-#   理由不是"更整齐",而是**原来那条断言根本没在跑**:`map_catalog_probe` 是 `-s` 探针,
+#   理由不是"更整齐",而是**原来那条断言根本没在跑**:它写在 `-s` 探针里,
 #   而本文件静态引用了 autoload(`GameParameters` / `NetBus`)⇒ 在 `-s` 下**编译失败**,
 #   探针里 `load()` 到的是一个没有成员的 GDScript ⇒ `mb.far_spawn_from(...)` 抛
 #   "Nonexistent function" 而被**静默跳过**,verdict 照打 OK。
