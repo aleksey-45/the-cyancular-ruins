@@ -145,6 +145,15 @@ def main() -> None:
         shutil.copy2(os.path.join(PROJECT, f), os.path.join(out, named))
         print("  ✓ %s" % named)
 
+    # ★ 服务端启动器一并进归档:双击它 = `--headless` 启动同目录那份服务端 exe(纯控制台、不依赖显卡;
+    #   它自己会按 "Cyancular Ruins Server*.exe" 通配找带版本号的归档名)。没有它,拿到 archive 的人只能手敲参数。
+    launcher = os.path.join(PROJECT, "start_server.bat")
+    if os.path.isfile(launcher):
+        shutil.copy2(launcher, os.path.join(out, "start_server.bat"))
+        print("  ✓ start_server.bat")
+    else:
+        print("  ! 缺 start_server.bat(发布目录将没有启动器)")
+
     for f in MAC_FILES:
         src = os.path.join(PROJECT, f)
         if not os.path.isfile(src):

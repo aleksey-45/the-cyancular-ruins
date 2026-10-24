@@ -55,12 +55,33 @@ if %PH_TRIES% gtr 0 goto :wait_7777
 goto :port_blocked
 
 :launch_lobby
+rem ══ 发布形态:同目录有导出的服务端 exe ⇒ 直接以 --headless 启动它 ══
+rem    纯控制台,不初始化 Vulkan/OpenGL(虚拟机 / 远程桌面 / 无显卡驱动的机器也能跑);
+rem    worker 子进程本来就会自己带 --headless。exe 名可能是固定名或带版本+时间戳的归档名,所以用通配匹配。
+rem    ★ 判据:只有**没有 project.godot** 时才算发布目录 —— 仓库根目录也常有导出产物(build_release 会写固定名),
+rem      但开发态必须跑当前源码,不能被一份旧导出的 exe 抢了。
+set "RELEASE_EXE="
+if not exist project.godot if exist "Cyancular Ruins Server.exe" set "RELEASE_EXE=Cyancular Ruins Server.exe"
+if not exist project.godot if not defined RELEASE_EXE for %%f in ("Cyancular Ruins Server*.exe") do if not defined RELEASE_EXE set "RELEASE_EXE=%%~nxf"
+if defined RELEASE_EXE goto :launch_release
 echo ============================================
 echo   Starting PvP lobby on port 7777 (workers auto-spawn)...
 echo   Wait for "server ready" output below, then keep this window open.
 echo   Close this window = stop the lobby.
 echo ============================================
 "%GODOT%" --headless --path . res://server/server_main.tscn
+echo.
+echo Server exited. If "listen failed" appeared above, port 7777 is in use.
+pause
+exit /b 0
+
+:launch_release
+echo ============================================
+echo   Launching exported server (headless): %RELEASE_EXE%
+echo   Console only: no Vulkan/OpenGL needed (VM / RDP / no-GPU friendly).
+echo   Keep this window open = lobby running. Close it = stop the lobby.
+echo ============================================
+"%RELEASE_EXE%" --headless
 echo.
 echo Server exited. If "listen failed" appeared above, port 7777 is in use.
 pause
