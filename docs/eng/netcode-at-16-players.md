@@ -4,7 +4,7 @@
 
 ## 1. 带宽与分片预算
 
-载荷按 `core/net/snapshot_codec.gd` 的 schema 折算（trail 2 点、装枪 + 1 件背包、30Hz）：
+载荷按 `core/net/net_codec.gd` 的 schema 折算（trail 2 点、装枪 + 1 件背包、30Hz）：
 
 | 量 | 值 |
 |---|---|

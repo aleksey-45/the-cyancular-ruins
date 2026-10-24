@@ -28,12 +28,12 @@
 var world := {"tick": _snap_tick, "players": {}}
 # 每个 role 一条：pos / vel / facing / pose / type_id / hp / waterproof /
 #                  downed / aim / previewing / haste / rewind / trail
-NetBus.rpc("snapshot_world", SnapshotCodec.encode_world(world))
+NetBus.rpc("snapshot_world", NetCodec.encode_world(world))
 ```
 
 - 世界包含自己那一份；客户端**刻意不消费**（C2 下本地玩家自步进，权威整态走本人包）。
 - `previewing` 服务端带、客户端不消费（预瞄线只有本人可见）。
-- `trail` 是回溯轨迹点数组（每 3 帧一个点），线上最多 `SnapshotCodec.TRAIL_WIRE_MAX := 4` 点。
+- `trail` 是回溯轨迹点数组（每 3 帧一个点），线上最多 `NetCodec.TRAIL_WIRE_MAX := 4` 点。
 - 传输：`snapshot_world` 是 `unreliable`、`transfer_channel = 0`（ENet 道 1）。通道契约见 [`netplay-rpc-channels.md`](netplay-rpc-channels.md)。
 
 ### 1.3 本人包：逐 peer，`ack` + `q` + 权威整态
@@ -42,18 +42,18 @@ NetBus.rpc("snapshot_world", SnapshotCodec.encode_world(world))
 
 ```gdscript
 NetBus.rpc_id(peer, "snapshot_own",
-        SnapshotCodec.encode_own({"ack_seq": _ack_seq.get(role, 0), "q": q.size(), "c2": c2}))
+        NetCodec.encode_own({"ack_seq": _ack_seq.get(role, 0), "q": q.size(), "c2": c2}))
 ```
 
 - `ack_seq` = 该 role 已消费输入记录的 seq。
 - `q` = 该 role 已到达但未消费的输入**记录**数。
-- `c2` = `player.capture_state()`：**25 个标量 + 武器块 8 个（仅手持非空时）+ 整个背包表**。字段表在 `core/net/snapshot_codec.gd` 的 `C2_SCHEMA` / `WEAPON_SCHEMA` / `INV_SCHEMA`。
+- `c2` = `player.capture_state()`：**25 个标量 + 武器块 8 个（仅手持非空时）+ 整个背包表**。字段表在 `core/net/net_codec.gd` 的 `C2_SCHEMA` / `WEAPON_SCHEMA` / `INV_SCHEMA`。
 - `c2` 是 C2 回滚的锚点：客户端 `restore_state()` 后用未确认输入重放。
 - 传输：`snapshot_own` 是 `unreliable`、`transfer_channel = 0`（ENet 道 1）。
 
 ### 1.4 线格式与载荷
 
-- `core/net/snapshot_codec.gd` 用一张 schema 表驱动手打包成 `PackedByteArray`。首字节 `PROTO_VERSION := 1`，第二字节种类（`KIND_WORLD` / `KIND_OWN`）。
+- `core/net/net_codec.gd` 用一张 schema 表驱动手打包成 `PackedByteArray`。首字节 `PROTO_VERSION := 1`，第二字节种类（`KIND_WORLD` / `KIND_OWN`）。
 - 两端版本不一致 ⇒ 解码返回空字典、调用方不 emit，`net_bus.gd` 只报一次错。
 - 数值全是 float32 全量，**无量化**；字段全是绝对值，**无增量**。
 
@@ -80,7 +80,7 @@ NetBus.rpc_id(peer, "snapshot_own",
 - ENet MTU 预算 1400 B（`tests/probe/snapshot_size_probe.gd` 的 `WORLD_PACKET_BUDGET`）。`unreliable` = `UNSEQUENCED | UNRELIABLE_FRAGMENT` ⇒ 丢任意一片 = 整帧丢。
 - 世界包 = `7 + N × 51`：16 人（trail 2 点）823 B ⇒ 1 片；最坏（16 人各 4 点 trail）= `7 + 16 × 66 = 1063 B`，仍 1 片。
 - 本人包 102 B，不分片。
-- `SnapshotCodec.TRAIL_MAX := 16` 是解码侧硬顶（长度是不可信输入），与发送侧 `TRAIL_WIRE_MAX` 不是同一个数。
+- `NetCodec.TRAIL_MAX := 16` 是解码侧硬顶（长度是不可信输入），与发送侧 `TRAIL_WIRE_MAX` 不是同一个数。
 - 改世界字段或 `TRAIL_WIRE_MAX` 前先跑 `tests/probe/snapshot_size_probe.tscn`（判词 `SNAPSHOT SIZE PROBE: ALL-OK`，量真实产出并带条数闸）。
 
 ### 1.6 客户端消费与丢弃

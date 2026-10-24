@@ -44,7 +44,7 @@ main_menu.tscn
 |---|---|
 | `core/net/net_bus.gd` / `net_bus_ext.gd` | autoload,ENet 建连 / 断开,基础与扩展 RPC,信号转发 |
 | `core/net/pvp_session.gd` | 静态会话配置:role / spawn / map / 地址 / token / 回局凭据 |
-| `core/net/snapshot_codec.gd` / `prediction_rollback.gd` | 快照 `PackedByteArray` 编解码 / C2 权威锚定与未确认输入重放 |
+| `core/net/net_codec.gd` / `prediction_rollback.gd` | 快照 `PackedByteArray` 编解码 / C2 权威锚定与未确认输入重放 |
 | `core/net/grace_window.gd` | 掉线宽限期表与到点动作分派 |
 | `core/net/local_input_source.gd` / `packet_input_source.gd` | 本地输入源 / 网络输入源(服务器唯一消费方) |
 | `server/server_main.gd` | 入口:大厅分支 / worker 分支、认领、宽限、结算 |
@@ -127,7 +127,7 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 
 - 世界包:`{tick, players: {role: {pos, vel, facing, pose, type_id, hp, waterproof, downed, aim, previewing, …}}}`;`tick` 在 60Hz 物理 tick 域,每包 +2。
 - 本人包:`{ack_seq, q, c2}`;`q` = 已到达未消费的输入记录数,`c2 = player.capture_state()`。
-- 载荷由 `SnapshotCodec` 打包成 `PackedByteArray`;RPC 入口解码回同形状 `Dictionary`。
+- 载荷由 `NetCodec` 打包成 `PackedByteArray`;RPC 入口解码回同形状 `Dictionary`。
 
 ### 裁决与拆墙
 
@@ -204,7 +204,7 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 | `beam_fired` | worker → 客户端 | reliable | 光束报告 + `shooter_role` |
 | 房间 / 对局 | 双向 | reliable | `create_room` `join_room` `go_match` `session_token` `claim_role` `match_start` `match_sync` `match_sync_data` `round_state` … |
 
-世界包与本人包由 [`core/net/snapshot_codec.gd`](../core/net/snapshot_codec.gd) 打包;输入包仍是 `Dictionary`。完整通道归属见 [`eng/netplay-rpc-channels.md`](eng/netplay-rpc-channels.md)。
+世界包与本人包由 [`core/net/net_codec.gd`](../core/net/net_codec.gd) 打包;输入包仍是 `Dictionary`。完整通道归属见 [`eng/netplay-rpc-channels.md`](eng/netplay-rpc-channels.md)。
 
 ## 11. 环面纪律
 

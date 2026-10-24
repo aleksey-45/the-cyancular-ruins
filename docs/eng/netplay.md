@@ -45,7 +45,7 @@
 | `snapshot_world` | 30Hz,unreliable;`SNAPSHOT_HZ = 30`、`SNAPSHOT_STRIDE = 2` |
 | `snapshot_own` | 30Hz,unreliable,逐 peer;`{ack_seq, q, c2}` |
 | `send_input` | 30Hz,reliable;一条记录覆盖 2 个物理 tick(`PacketInputSource.TICKS_PER_RECORD`) |
-| 编解码 | `core/net/snapshot_codec.gd` 打包成 `PackedByteArray`,RPC 入口解回同形状 `Dictionary` |
+| 编解码 | `core/net/net_codec.gd` 打包成 `PackedByteArray`,RPC 入口解回同形状 `Dictionary` |
 
 ## 客户端
 

@@ -163,7 +163,7 @@ func match_sync() -> void:
 # ── 服务器 → 客户端(权威方 = peer1 可调);快照拆两条:世界包(全部玩家渲染字段,构造一次、广播一次 = O(N))
 # 与本人包(自己的 ack_seq + 权威整态 c2,定向发本人)。★ 世界包必须用 rpc() 广播,别退化回逐 rpc_id 循环(那是 O(N²),
 # 旧实现 8 人局上行 ≈29Mbps);两者互不连累:c2 丢只少一个回滚锚点,世界包丢只冻结一帧副本插值。
-# ★ 载荷是手打包的 PackedByteArray(SnapshotCodec 编解码),RPC 入口仍 emit 同形状 Dictionary ⇒ 消费方一行没动。
+# ★ 载荷是手打包的 PackedByteArray(NetCodec 编解码),RPC 入口仍 emit 同形状 Dictionary ⇒ 消费方一行没动。
 #   实测 8 人局上行 587→72KB/s、世界包 N≤8 恒 1 片(详表见 docs/eng/netcode-snapshots.md §2);载荷无量化(float32 逐位相同)。
 #   ★ 那个读数是 60Hz 发包口径(2026-10-09 实测);2026-10-23 起下行改 30Hz ⇒ 每秒字节按 ≈½ 折算(未复测,别把 72 当现状)。
 # 诊断(--diag,默认关):快照到达间隔 >150ms 记一条。世界包是 unreliable,断流时副本只能冻结,
@@ -174,7 +174,7 @@ var _diag_rx_at := 0     # 上一次汇总的世界包时间戳(usec)
 
 @rpc("authority", "call_remote", "unreliable", 0)
 func snapshot_world(payload: PackedByteArray) -> void:
-	var world := SnapshotCodec.decode_world(payload)
+	var world := NetCodec.decode_world(payload)
 	if world.is_empty():
 		_snapshot_decode_warned("world", payload)
 		return
@@ -199,7 +199,7 @@ func snapshot_world(payload: PackedByteArray) -> void:
 
 @rpc("authority", "call_remote", "unreliable", 0)
 func snapshot_own(payload: PackedByteArray) -> void:
-	var own := SnapshotCodec.decode_own(payload)
+	var own := NetCodec.decode_own(payload)
 	if own.is_empty():
 		_snapshot_decode_warned("own", payload)
 		return

@@ -1,9 +1,9 @@
 extends Node
 
-# 快照体积/线格式探针(场景模式):把「一份快照到底多少字节、随人数怎么长」从估算变成实测,并同时量两种线格式(Dictionary 直发 → SnapshotCodec 手打包)。
+# 快照体积/线格式探针(场景模式):把「一份快照到底多少字节、随人数怎么长」从估算变成实测,并同时量两种线格式(Dictionary 直发 → NetCodec 手打包)。
 # 跑法:"$GODOT" --headless --path . res://tests/probe/snapshot_size_probe.tscn;期望末行 "SNAPSHOT SIZE PROBE: ALL-OK"。
 # 存在理由:docs/royale-soak-2026-09-12.md §2.2 实测「每人每快照 ≈0.96 KB」,但那是整包读数;拆包(世界包 / 本人包)之后还需要知道「这 0.96 KB 里多少是 c2 权威整态、多少是渲染散字段」,以及换成手打包线格式后还剩多少。本探针量这个,并给 N=2..8 的折算表与分片折算。
-# ★ 它同时是线格式的字段表判据(见末尾 ①②③):SnapshotCodec 的 schema 必须与 player.capture_state() / match_snapshot 的字段表逐键对齐 —— 少一个字段 ⇒ 那个字段在线上被静默丢掉(客户端拿不到权威值,表现为「某个效果偶发不生效」)。
+# ★ 它同时是线格式的字段表判据(见末尾 ①②③):NetCodec 的 schema 必须与 player.capture_state() / match_snapshot 的字段表逐键对齐 —— 少一个字段 ⇒ 那个字段在线上被静默丢掉(客户端拿不到权威值,表现为「某个效果偶发不生效」)。
 #   这条判据的道理:本仓最大的病是「枚举会过期」;编解码两侧共用一张表能防顺序漂移,但防不了「表没跟上 producer」⇒ 这里用真实 producer 的输出对表。
 # ⚠ 判据 grep 文本 "SNAPSHOT SIZE PROBE: ALL-OK"(不只看退出码),并带条数闸(见 _checks)。⚠ 只量「载荷」,不含 ENet 分片头/RPC 方法名等固定开销(见末尾打印的备注)。
 
@@ -14,7 +14,7 @@ const SNAP_HZ := 60        # SNAPSHOT_INTERVAL = 1/60
 const EXPECTED_CHECKS := 4
 
 # ④ 用到的两个常量。★ 人数上限不抄一份:直接读产品侧的单一来源(LobbyRooms.ROYALE_MAX_PLAYERS)。
-# ★ TRAIL_PHYSICAL_MAX 是生产者的 trail 上限(match_host 的回溯录像每 3 帧一点、最多 10 点),它是个字面量、没有名字 ⇒ 只能在这里抄一份并点名来源;线上真正发多少由 SnapshotCodec.TRAIL_WIRE_MAX 决定(那一个才是判据真正盯的东西)。
+# ★ TRAIL_PHYSICAL_MAX 是生产者的 trail 上限(match_host 的回溯录像每 3 帧一点、最多 10 点),它是个字面量、没有名字 ⇒ 只能在这里抄一份并点名来源;线上真正发多少由 NetCodec.TRAIL_WIRE_MAX 决定(那一个才是判据真正盯的东西)。
 # ★ WORLD_PACKET_BUDGET = ENet MTU:超了就被分片,而快照是 unreliable ⇒ 丢一片 = 整帧丢。
 const WORLD_PACKET_BUDGET := 1400
 const TRAIL_PHYSICAL_MAX := 10
@@ -55,10 +55,10 @@ func _ready() -> void:
 
 	var sz_old_entry := var_to_bytes(entry).size()
 	var sz_old_own := var_to_bytes({"ack_seq": 12345, "c2": c2}).size()
-	var wb := SnapshotCodec.encode_world({"tick": 12345, "players": {"1": entry, "2": entry, "3": entry}})
-	var ob := SnapshotCodec.encode_own({"ack_seq": 12345, "q": 2, "c2": c2})
+	var wb := NetCodec.encode_world({"tick": 12345, "players": {"1": entry, "2": entry, "3": entry}})
+	var ob := NetCodec.encode_own({"ack_seq": 12345, "q": 2, "c2": c2})
 	var sz_new_entry := (wb.size() - 7) / 3        # 头 = 版本1 + 种类1 + tick4 + 人数1
-	var sz_new_entry_nt := SnapshotCodec.encode_world(
+	var sz_new_entry_nt := NetCodec.encode_world(
 			{"tick": 1, "players": {"1": entry_no_trail}}).size() - 7
 	var sz_new_own := ob.size()
 
@@ -70,8 +70,8 @@ func _ready() -> void:
 	# ① 表必须恰好覆盖 capture_state() 的产出(少一个 = 该字段在线上被静默丢掉);② 反向:核心表的键必须都在 c2 里(多一个 = 表里有 producer 从不产出的死字段)。
 	var missing: Array[String] = []
 	var extra: Array[String] = []
-	var weapon_keys := _schema_keys(SnapshotCodec.WEAPON_SCHEMA)
-	var known := _schema_keys(SnapshotCodec.C2_SCHEMA)
+	var weapon_keys := _schema_keys(NetCodec.WEAPON_SCHEMA)
+	var known := _schema_keys(NetCodec.C2_SCHEMA)
 	known.append("inv")
 	for k in known:
 		if not c2.has(k):
@@ -90,8 +90,8 @@ func _ready() -> void:
 			"武器块必须整体存在或整体缺席(实得 %d/%d)" % [present, weapon_keys.size()])
 
 	# ③ 往返保真:**用真实 producer 的输出**过一遍编解码,键集与值都必须回来
-	var od := SnapshotCodec.decode_own(ob)
-	var wd := SnapshotCodec.decode_world(wb)
+	var od := NetCodec.decode_own(ob)
+	var wd := NetCodec.decode_world(wb)
 	var d2: Dictionary = od.get("c2", {})
 	var we: Dictionary = (wd.get("players", {}) as Dictionary).get("1", {})
 	var rt_ok := _dict_same(c2, d2) and _dict_same(entry, we) and int(od.get("ack_seq", -1)) == 12345
@@ -105,7 +105,7 @@ func _ready() -> void:
 	var worst_players := {}
 	for i in cap:
 		worst_players[str(i + 1)] = _entry_world(_trail_pts(TRAIL_PHYSICAL_MAX))
-	var worst_bytes := SnapshotCodec.encode_world({"tick": 0, "players": worst_players}).size()
+	var worst_bytes := NetCodec.encode_world({"tick": 0, "players": worst_players}).size()
 	_check(worst_bytes <= WORLD_PACKET_BUDGET,
 			"最坏世界包(N=%d × trail %d 点)必须 ≤ %d B(实得 %d B = %d 片)" % [
 					cap, TRAIL_PHYSICAL_MAX, WORLD_PACKET_BUDGET, worst_bytes, _frags(worst_bytes)])
@@ -213,18 +213,18 @@ func _frags(payload: int) -> int:
 	return int(ceil(float(payload) / float(usable)))
 
 
-# ── 量化 / 增量的上限测算 ── ★ 全部绑在 SnapshotCodec 的 schema 表上算,避免「另抄一份字段表」(那是本仓最贵的病)。
+# ── 量化 / 增量的上限测算 ── ★ 全部绑在 NetCodec 的 schema 表上算,避免「另抄一份字段表」(那是本仓最贵的病)。
 # ★ 这些是算术上限,不是实测到的收益;真正落不落地由「值不值得 + 风险」决定,见 docs/eng/netcode-snapshots.md §5.1。
 
 func _t_bytes(t: String, trail_n: int) -> int:
 	match t:
-		SnapshotCodec.T_F:
+		NetCodec.T_F:
 			return 4
-		SnapshotCodec.T_V2:
+		NetCodec.T_V2:
 			return 8
-		SnapshotCodec.T_I32:
+		NetCodec.T_I32:
 			return 4
-		SnapshotCodec.T_TRAIL:
+		NetCodec.T_TRAIL:
 			return 1 + 8 * trail_n
 	return 1   # U8 / I8 / BOOL
 
@@ -249,19 +249,19 @@ func _mask_bytes(field_count: int) -> int:
 
 
 func _report_headroom(trail_n: int, c2: Dictionary, entry: Dictionary) -> void:
-	var w := _schema_bytes(SnapshotCodec.WORLD_SCHEMA, trail_n)
-	var c2s := _schema_bytes(SnapshotCodec.C2_SCHEMA, 0)
-	var wpn := _schema_bytes(SnapshotCodec.WEAPON_SCHEMA, 0)
+	var w := _schema_bytes(NetCodec.WORLD_SCHEMA, trail_n)
+	var c2s := _schema_bytes(NetCodec.C2_SCHEMA, 0)
+	var wpn := _schema_bytes(NetCodec.WEAPON_SCHEMA, 0)
 	var inv := 1 + 6 * (c2.get("inv", []) as Array).size()
 	var own := 8 + c2s + wpn + inv          # 8 = 版本+种类+ack+q+flags
 	print("[size] ── 上限测算(算术,不是已实现代码)──")
-	var w_pv := _field_bytes(SnapshotCodec.WORLD_SCHEMA, "pos", trail_n) \
-			+ _field_bytes(SnapshotCodec.WORLD_SCHEMA, "vel", trail_n)
-	var w_aim := _field_bytes(SnapshotCodec.WORLD_SCHEMA, "aim", trail_n)
-	var w_tr := _field_bytes(SnapshotCodec.WORLD_SCHEMA, "trail", trail_n)
+	var w_pv := _field_bytes(NetCodec.WORLD_SCHEMA, "pos", trail_n) \
+			+ _field_bytes(NetCodec.WORLD_SCHEMA, "vel", trail_n)
+	var w_aim := _field_bytes(NetCodec.WORLD_SCHEMA, "aim", trail_n)
+	var w_tr := _field_bytes(NetCodec.WORLD_SCHEMA, "trail", trail_n)
 	print("[size] 世界条目 %d B = pos %d + vel %d + aim %d + trail %d + 其余 %d(★ 线上另加 1 B 的 role)" % [
-			w, _field_bytes(SnapshotCodec.WORLD_SCHEMA, "pos", trail_n),
-			_field_bytes(SnapshotCodec.WORLD_SCHEMA, "vel", trail_n), w_aim, w_tr,
+			w, _field_bytes(NetCodec.WORLD_SCHEMA, "pos", trail_n),
+			_field_bytes(NetCodec.WORLD_SCHEMA, "vel", trail_n), w_aim, w_tr,
 			w - w_pv - w_aim - w_tr])
 	print("[size] 本人包 %d B = 头 8 + 核心 %d + 武器 %d + 背包 %d" % [own, c2s, wpn, inv])
 
@@ -269,22 +269,22 @@ func _report_headroom(trail_n: int, c2: Dictionary, entry: Dictionary) -> void:
 	var q_pos := 4
 	var q_vel := 4
 	var q_aim := 1
-	var w_q := w - (_field_bytes(SnapshotCodec.WORLD_SCHEMA, "pos", trail_n) - q_pos) \
-			- (_field_bytes(SnapshotCodec.WORLD_SCHEMA, "vel", trail_n) - q_vel) \
-			- (_field_bytes(SnapshotCodec.WORLD_SCHEMA, "aim", trail_n) - q_aim)
+	var w_q := w - (_field_bytes(NetCodec.WORLD_SCHEMA, "pos", trail_n) - q_pos) \
+			- (_field_bytes(NetCodec.WORLD_SCHEMA, "vel", trail_n) - q_vel) \
+			- (_field_bytes(NetCodec.WORLD_SCHEMA, "aim", trail_n) - q_aim)
 	print("[size] 量化(世界):pos→2×u16、vel→2×i16、aim→1B 角度 ⇒ %d→%d B(−%d%%)" % [
 			w, w_q, int(round(100.0 * (w - w_q) / float(w)))])
 	# c2 侧只能动 pos/vel/knock(渲染/物理连续量);其余是**回滚锚点**,单方面量化 ⇒ 每次对账都判分歧。
-	var c2_q := c2s - (_field_bytes(SnapshotCodec.C2_SCHEMA, "pos", 0) - q_pos) \
-			- (_field_bytes(SnapshotCodec.C2_SCHEMA, "vel", 0) - q_vel) \
-			- (_field_bytes(SnapshotCodec.C2_SCHEMA, "knock", 0) - q_pos)
+	var c2_q := c2s - (_field_bytes(NetCodec.C2_SCHEMA, "pos", 0) - q_pos) \
+			- (_field_bytes(NetCodec.C2_SCHEMA, "vel", 0) - q_vel) \
+			- (_field_bytes(NetCodec.C2_SCHEMA, "knock", 0) - q_pos)
 	print("[size] 量化(本人):只动 pos/vel/knock ⇒ %d→%d B(−%d%%),★ 且必须**两端一起量化**" % [
 			c2s + wpn + inv, c2_q + wpn + inv,
 			int(round(100.0 * (c2s + wpn + inv - c2_q - wpn - inv) / float(c2s + wpn + inv)))])
 
 	# ② 增量(变更位 = mask + 只发变了的字段;掩码 1 bit/字段)
-	var wm := _mask_bytes(SnapshotCodec.WORLD_SCHEMA.size())
-	var cm := _mask_bytes(SnapshotCodec.C2_SCHEMA.size() + SnapshotCodec.WEAPON_SCHEMA.size())
+	var wm := _mask_bytes(NetCodec.WORLD_SCHEMA.size())
+	var cm := _mask_bytes(NetCodec.C2_SCHEMA.size() + NetCodec.WEAPON_SCHEMA.size())
 	var pv := w_pv
 	print("[size] 增量(世界):掩码 %dB + 只发变了的字段 ⇒ 只 pos/vel 变 = %dB、pos/vel/aim 变 = %dB、全变 = %dB(退回绝对更好)" % [
 			wm, wm + pv, wm + pv + w_aim, wm + w])
@@ -294,7 +294,7 @@ func _report_headroom(trail_n: int, c2: Dictionary, entry: Dictionary) -> void:
 			cm + c_lean, int(round(100.0 * (own - cm - c_lean) / float(own)))])
 	print("[size] ★ 增量的大头在**本人包**:核心 %d B 里 pos/vel(16 B)每帧都变,其余大部分是慢变量;" % c2s)
 	print("[size]   而世界包的大头(pos/vel/aim = %d B / %d B)**每帧都变** ⇒ 增量在世界包上省不了多少,量化才是那边的手段。" % [
-			pv + _field_bytes(SnapshotCodec.WORLD_SCHEMA, "aim", trail_n), w])
+			pv + _field_bytes(NetCodec.WORLD_SCHEMA, "aim", trail_n), w])
 
 
 # 变更率读数(合成输入、不含战斗):增量的收益取决于「每 tick 有几个字段真的变了」,这个数今天没有仪器测 ⇒ 先用真实物理步进 + 注入输入量一次,当作下界/参考。

@@ -135,7 +135,7 @@
 | `scenes/effects/grain_crystal_fx.gd` | `SHARD_COUNT = 10`、`SCATTER_TIME = 0.28`、`ARRIVE_RATE = 16.0`、`MAX_FLY_SPEED = 4200.0`、`ABSORB_RADIUS = 16.0`、`ABSORB_TIMEOUT = 1.6`、`ABSORB_TAIL = 0.8` |
 | `scenes/pvp_match_client.gd` | 两个节拍计时器(自己 `0.03`、他人 `0.06`);`TIME_GLOW_SELF` / `TIME_GLOW_OTHER`;`_time_haste_mult` 默认 `3.0`(首包后被服务器下发值覆盖) |
 | `server/match/match_host.gd` | `TIME_SYNC_INTERVAL = 0.1`(10Hz 镜像)、`RW_SNAP_DT = 1/20`;轨迹每 3 物理帧一点,`_rw_trail` 上限 10 点(字面量) |
-| `core/net/snapshot_codec.gd` | `TRAIL_WIRE_MAX := 4`:线上只带最近 4 点(`_put_trail` 取尾部、多余截断) |
+| `core/net/net_codec.gd` | `TRAIL_WIRE_MAX := 4`:线上只带最近 4 点(`_put_trail` 取尾部、多余截断) |
 
 ## 4. 怀表口径
 

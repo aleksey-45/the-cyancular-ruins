@@ -54,7 +54,7 @@ func _broadcast_snapshot() -> void:
 	#    (`get_peers()` 滞后,正是 `NetBus.is_peer_live` 那段注释里说过的那件事)。
 	#    代价只有"那一帧不发世界包":它本来就是 unreliable,少一帧无后果。
 	if NetBus.all_peers_sendable():
-		var wbytes := SnapshotCodec.encode_world(world)
+		var wbytes := NetCodec.encode_world(world)
 		NetBus.rpc("snapshot_world", wbytes)
 		_tx_world += 1
 		_tx_world_bytes += wbytes.size()
@@ -80,7 +80,7 @@ func _broadcast_snapshot() -> void:
 		# ★ `q` = 本 role 此刻**已到达但还没被消费**的输入**记录**数(不是包数:30Hz 一包 2 条记录;判据用,见
 		#   docs/eng/netcode-snapshots.md §6:客户端拿它把"在路上"与"堆在服务器"分开)。
 		var q: Array = _pending_input.get(role, [])
-		var obytes := SnapshotCodec.encode_own({"ack_seq": _ack_seq.get(role, 0), "q": q.size(), "c2": c2})
+		var obytes := NetCodec.encode_own({"ack_seq": _ack_seq.get(role, 0), "q": q.size(), "c2": c2})
 		NetBus.rpc_id(peer_by_role[role], "snapshot_own", obytes)
 		_tx_own[role] = int(_tx_own.get(role, 0)) + 1
 		_tx_own_bytes[role] = int(_tx_own_bytes.get(role, 0)) + obytes.size()

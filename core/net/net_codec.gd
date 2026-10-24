@@ -1,4 +1,4 @@
-class_name SnapshotCodec
+class_name NetCodec
 extends RefCounted
 
 # 快照线格式:把快照载荷从 Dictionary 换成手打包的 PackedByteArray。原先每个字段都要在线上带键名字符串(每帧重复)+ 4 字节类型标签 ——
