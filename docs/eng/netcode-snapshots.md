@@ -64,7 +64,7 @@ NetBus.rpc_id(peer, "snapshot_own",
 | 包 | 载荷 |
 |---|---|
 | 世界包头 | 7 B（版本 1 B + 种类 1 B + tick 4 + 人数 1） |
-| 世界包每人条目 | **48 B**（role 1 + bool 标志 1 + 定长 29 + trail(1+16)）；不在回溯时 **33 B** |
+| 世界包每人条目 | **48 B**（role 1 + bool 标志 1 + 定长 29 + trail(1+16)）；不在回溯时 **32 B** |
 | 本人包 | **94 B**（头 8 + `c2` 67 + 武器 12 + 背包 7） |
 | 输入包 | **34 B**（头 2 + 记录 32；`held` 必须 u16，见 [`netcode-input-uplink.md`](netcode-input-uplink.md)） |
 
