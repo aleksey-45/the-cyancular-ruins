@@ -46,27 +46,16 @@ var _last_round_state: Dictionary = {}      # 最近一条 round_state(结算载
 const BODY_BASE_COLOR := UiFactory.C_TEAM_A   # #639BFF(本体主色 == 队 1 token)
 
 
-# 通用身体染色:只给角色本体 AnimatedSprite2D 上色(武器/预瞄线不染)。两条互斥的路:color_override 非透明 = modulate 比值;默认(大乱斗 / 3v3 的个人色相)= 色相旋转(player_p2_hue.gdshader,hue_deg 是旋转量,0 = 不改色,故可重复调用)。
-# ★ 队色为什么是"modulate 比值"而不是"直接乘队色":modulate 是乘,只能把身体压暗、改不了色相 —— 本体主色是蓝 #639BFF,蓝 × 队色 ≠ 队色,"一眼看出谁是队友"会落空(拿旧队色实测出来是一坨灰紫)。
-# ★ 改成 目标色 / 本体主色 这个比值就精确了:输出 = 主色像素 × 比值 = 恰好目标色本身(复测:队 1 得到 #639BFF 与 C_TEAM_A 逐字节相等)—— 比值法是结构性成立的,而 hue 旋转只是数值上逼近;队色因此与头顶 ID / 小地图点位同源同一个常量,不存在"身体是派生色、柱子上是原色"。
-# ★ 队 2 的比值有分量 > 1(g = 244/155 ≈ 1.574、r ≈ 1.293),这是有意的:modulate 收 >1 的值,实测在 rendering/mobile(Forward Mobile)下原样生效;队 1 的比值恰为 (1,1,1) ⇒ 队 1 的身体就是默认蓝。★ 另有一条硬理由:hue 旋转保持饱和度/亮度不变,而本体主色是 S61 V100 ⇒ 它表达不了 S50 这类目标色(队 2 的 #80F4FF 正是 H185 S50 V100)。
-func _apply_tint(body: Node, hue_deg: float, color_override: Color = Color(0, 0, 0, 0)) -> void:
+# 通用身体染色:只给角色本体 AnimatedSprite2D 上色(武器/预瞄线不染)。唯一机制 = modulate 比值(目标色 / 本体主色):
+# 输出 = 主色像素 × 比值 = 恰好目标色本身,且与头顶 ID / 小地图点位同源同一个常量;队 1 的比值恰为 (1,1,1) ⇒ 队 1 的身体就是默认蓝。
+# ★★ 颜色不再由玩家自选:1v1 固定 P1 蓝 / P2 青,3v3 用队色,大乱斗按 role 从 ROLE_COLORS 自动取 —— 故本函数只有 color_override 一条路。
+func _apply_tint(body: Node, color_override: Color) -> void:
 	var canvas := body as CanvasItem
 	if canvas == null:
 		return
-	# ① 队色(modulate 比值):精确染成 color_override 本身
-	if color_override.a > 0.0:
-		canvas.modulate = Color(color_override.r / BODY_BASE_COLOR.r,
-				color_override.g / BODY_BASE_COLOR.g,
-				color_override.b / BODY_BASE_COLOR.b)
-		return
-	# ② 色相旋转(1v1 / 大乱斗的既有效果);0 = 不改色
-	if is_zero_approx(hue_deg):
-		return
-	var mat := ShaderMaterial.new()
-	mat.shader = load("res://scenes/player/player_p2_hue.gdshader")
-	mat.set_shader_parameter("hue_shift", hue_deg)
-	canvas.material = mat
+	canvas.modulate = Color(color_override.r / BODY_BASE_COLOR.r,
+			color_override.g / BODY_BASE_COLOR.g,
+			color_override.b / BODY_BASE_COLOR.b)
 
 func _correct_local_spawn() -> void:
 	if _local == null or not _round_locked:
@@ -650,20 +639,20 @@ func _on_beam_fired(data: Dictionary) -> void:
 	LaserVisual.spawn_beam(_world, pts, half_width, color, lifetime, int(data.get("style", 0)))
 
 
-# ── 子类必须覆写的两口:昵称表 / 角色色相(形状随"对手 1 个 vs N 个"而定,故实现留在子类;在这里声明,否则基类调用未声明的函数 = 编译不过)──
+# ── 子类必须覆写的两口:昵称表 / 角色颜色(形状随"对手 1 个 vs N 个"而定,故实现留在子类;在这里声明,否则基类调用未声明的函数 = 编译不过)──
 func _apply_peer_names(_names: Dictionary) -> void:
 	push_error("PvpMatchClient: 子类必须覆写 _apply_peer_names")
 
 
-func _apply_peer_hues(_hues: Dictionary) -> void:
-	push_error("PvpMatchClient: 子类必须覆写 _apply_peer_hues")
+func _apply_role_colors() -> void:
+	push_error("PvpMatchClient: 子类必须覆写 _apply_role_colors")
 
 
-# ── 「每个角色的颜色」那一段的唯一分叉点(基类钩子):_on_match_sync 只调它一次,不再直接调 _apply_peer_hues。默认(1v1 / 大乱斗)消费载荷里的 hues;3v3 覆写消费 teams(队色)并刻意不调 _apply_peer_hues —— 6 个人里认不出队友这模式就没法玩,个人色相在 3v3 是无效输入。★ 签名收整个 payload 而不是只收 hues:3v3 要读同一份应答里的另一个键,只传 hues 会逼出一条"上游写、下游读"的暗通道。
-func _apply_peer_hues_or_team(payload: Dictionary) -> void:
-	var hues: Dictionary = payload.get("hues", {})
-	if not hues.is_empty():
-		_apply_peer_hues(hues)
+# ── 「每个角色的颜色」那一段的唯一分叉点(基类钩子):_on_match_sync 只调它一次。默认(1v1 / 大乱斗)走 `_apply_role_colors`
+# (两种模式都是固定色:1v1 = P1 蓝/P2 青,大乱斗 = 按 role 从 ROLE_COLORS 自动取色);3v3 覆写本钩子消费 teams(队色)。
+# ★ 颜色已无"玩家自选"这一路:大厅不再有改色控件,载荷里也没有 hues 键。
+func _apply_peer_hues_or_team(_payload: Dictionary) -> void:
+	_apply_role_colors()
 
 
 func _on_match_sync(payload: Dictionary) -> void:
@@ -673,7 +662,7 @@ func _on_match_sync(payload: Dictionary) -> void:
 	var names: Dictionary = payload.get("names", {})
 	if not names.is_empty():
 		_apply_peer_names(names)
-	# 颜色那一段走基类钩子(默认 = 个人色相;3v3 覆写成队色)。
+	# 颜色那一段走基类钩子(默认 = 按 role 固定/自动色;3v3 覆写成队色)。
 	_apply_peer_hues_or_team(payload)
 	var opts: Dictionary = payload.get("options", {})
 	if not opts.is_empty():

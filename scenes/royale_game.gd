@@ -10,7 +10,7 @@ var _hud: RoyaleHud = null
 # ── C2 客户端预测(与 pvp_client 同一套)── 本地玩家由引擎自步进(读真实 Input,aim/手感 = 单机);本场景每物理帧在它步进前 note_post_step + reconcile,把服务器外部事件(复活瞬移/受击/击杀复位)收敛掉。
 
 const ID_HEAD_OFFSET := Vector2(0.0, -78.0)
-# 角色色板(头顶 ID / 小地图点;本体染色仍走色相设置/peer_hues)。★ 取色处一律写 % ROLE_COLORS.size():16 色是为大乱斗 16 人上限准备的,色数少于人数就会有两人同色(头顶 ID 与地图点一起撞)。
+# 角色色板(头顶 ID / 小地图点 / 本体染色同一个来源)。★ 取色处一律走 role_color()(内部 % size()):16 色是为大乱斗 16 人上限准备的,色数少于人数就会有两人同色(头顶 ID 与地图点一起撞)。
 # ★ 生成口径(可复算):色相 22.5° 等分(360/16),S = 0.45 / V = 1.0 的 pastel;换色/加人时按这个口径重算,别手挑。
 const ROLE_COLORS: Array[Color] = [
 	Color(1.00, 0.55, 0.55), Color(1.00, 0.72, 0.55), Color(1.00, 0.89, 0.55), Color(0.94, 1.00, 0.55),
@@ -18,9 +18,15 @@ const ROLE_COLORS: Array[Color] = [
 	Color(0.55, 1.00, 1.00), Color(0.55, 0.83, 1.00), Color(0.55, 0.66, 1.00), Color(0.61, 0.55, 1.00),
 	Color(0.78, 0.55, 1.00), Color(0.94, 0.55, 1.00), Color(1.00, 0.55, 0.89), Color(1.00, 0.55, 0.72),
 ]
+
+
+# 该 role 的统一取色(头顶 ID / 小地图 / 本体染色都问它)。★ 大乱斗没有"自选颜色":按 role 自动分配,玩家改不了。
+static func role_color(role: int) -> Color:
+	return ROLE_COLORS[(role - 1) % ROLE_COLORS.size()]
+
+
 var _id_labels: Dictionary = {}    # role(int) -> WorldLabel(含自己)
 var _hp_bars: Dictionary = {}      # role(int) -> EnemyHpBar(仅他人,设置开启时)
-var _hues: Dictionary = {}         # role(int) -> 色相(peer_hues 下发)
 
 func _ready() -> void:
 	CombatComponent.pvp_arena = true
@@ -80,8 +86,8 @@ func _ready() -> void:
 		_refresh_input_lock()
 		_recheck_disconnect())   # 菜单开着时收到的"服务器断开"在这里补(见 PvpMatchClient._begin_reconnect)
 	add_child(_pause_menu)
-	_apply_tint(_local.get_node_or_null("AnimatedSprite2D"), Settings.pvp_color_hue)
-	# ★ 进场主动拉一次(昵称/色相/生效选项/出生点):本场景此刻已建好并订阅齐了才开口要,故不存在「推给一个正在切场景的客户端」那个竞态。★ 判活再发(全仓纪律,与 pvp_game 那处逐字同款):定向可靠包,连接可能已经不可用。
+	_apply_tint(_local.get_node_or_null("AnimatedSprite2D"), role_color(PvpSession.role))
+	# ★ 进场主动拉一次(昵称/生效选项/出生点):本场景此刻已建好并订阅齐了才开口要,故不存在「推给一个正在切场景的客户端」那个竞态。★ 判活再发(全仓纪律,与 pvp_game 那处逐字同款):定向可靠包,连接可能已经不可用。
 	if NetBus.can_send_to_server():
 		NetBus.rpc_id(1, "match_sync")
 	print("进入大乱斗:角色 %d 出生点 %s" % [PvpSession.role, PvpSession.spawn])
@@ -131,7 +137,7 @@ func _ensure_replica(role: int) -> void:
 	_world.add_child(replica)
 	_replicas[role] = replica
 	_ensure_id_label(role)
-	_apply_tint(replica.get_node_or_null("AnimatedSprite2D"), float(_hues.get(role, 0.0)))
+	_apply_tint(replica.get_node_or_null("AnimatedSprite2D"), role_color(role))
 	if Settings.pvp_show_enemy_hp:
 		var bar := EnemyHpBar.new()
 		_world.add_child(bar)
@@ -201,13 +207,13 @@ func _apply_peer_names(names: Dictionary) -> void:
 
 var _names: Dictionary = {}   # role(int) -> 昵称(peer_info 下发)
 
-# 应用函数(不是信号回调):唯一入口 = _on_match_sync(进场拉取);★ 不要连回 NetBusExt.local_peer_hues,同 _apply_peer_names 的告警。
-func _apply_peer_hues(hues: Dictionary) -> void:
-	_hues = hues
+# 应用函数(不是信号回调):唯一入口 = _on_match_sync(进场拉取)。★ 不要连回 NetBusExt.local_peer_hues —— 颜色已无推送路径。
+func _apply_role_colors() -> void:
 	for role in _replicas:
 		if is_instance_valid(_replicas[role]):
-			_apply_tint(_replicas[role].get_node_or_null("AnimatedSprite2D"),
-					float(_hues.get(role, 0.0)))
+			_apply_tint(_replicas[role].get_node_or_null("AnimatedSprite2D"), role_color(int(role)))
+	if _local != null:
+		_apply_tint(_local.get_node_or_null("AnimatedSprite2D"), role_color(PvpSession.role))
 
 func _ensure_id_label(role: int) -> void:
 	if _world == null or _id_labels.has(role):
@@ -221,7 +227,7 @@ func _refresh_names() -> void:
 		var nm := str(_names.get(role, "玩家%d" % role))
 		if role == PvpSession.role:
 			nm = str(_names.get(role, PvpSession.player_name))
-		var col: Color = ROLE_COLORS[(role - 1) % ROLE_COLORS.size()]
+		var col: Color = role_color(int(role))
 		(_id_labels[role] as Node2D).set_label(nm, col)
 
 
@@ -265,10 +271,10 @@ func _minimap_others() -> Array:
 	return arr
 
 
-# 他人点的颜色与头顶 ID 同源:都问 ROLE_COLORS[(role - 1) % ROLE_COLORS.size()]。
-# ★ 跟头顶 ID 而不是跟身体:身体颜色是各人自设的色相(可能撞色、到达比小地图建立晚),而色板建点即可用;小地图上认人靠的是对回头顶那个名字。惰性求值(Minimap 每帧调一次),与 team_game 同款理由。
+# 他人点的颜色与头顶 ID 同源:都问 role_color(role)。
+# ★ 跟头顶 ID 而不是身体 modulate:色板建点即可用;小地图上认人靠的是对回头顶那个名字。惰性求值(Minimap 每帧调一次),与 team_game 同款理由。
 func _minimap_colors() -> Array:
 	var arr: Array = []
 	for e in _minimap_entries():
-		arr.append(ROLE_COLORS[(int(e[0]) - 1) % ROLE_COLORS.size()])
+		arr.append(role_color(int(e[0])))
 	return arr

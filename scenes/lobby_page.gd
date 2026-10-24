@@ -401,10 +401,11 @@ func _beta_payload() -> Dictionary:
 
 
 # ── 建房/对战选项面板里的「选图」一节(三个联机页共用)── 房主选 ⇒ 存 Settings.mp_map_path ⇒ 报到时随 player_options 上报 ⇒ worker 开局定图。★ 存档里那张图被删 / 改名时归一化成「随机」:否则上报的坏路径只会让服务器静默回落默认图,玩家以为选的是别的图。
+# ★ 滚动区高度 260 → 470(2026-10-24):260 只够第一行,第二行卡片被截在创建/取消按钮上沿(视觉上是"图被切了一半")。
 func _add_map_picker(vb: VBoxContainer) -> void:
 	var picker := MapPicker.new()
 	vb.add_child(picker)
-	picker.setup(Settings.mp_map_path, 2, 260.0, "地　图(房主选;缩略图 = 开局地形简略图)")
+	picker.setup(Settings.mp_map_path, 2, 470.0, "地　图(房主选;缩略图 = 开局地形简略图)")
 	Settings.mp_map_path = picker.selected
 	picker.picked.connect(func(p: String) -> void:
 		Settings.mp_map_path = p

@@ -22,7 +22,6 @@ func register(root: Node) -> void:
 	page._wait_title = root.get_node("%WaitTitle") as Label
 	page._wait_body = root.get_node("%WaitBody") as VBoxContainer
 	page._wait_count = root.get_node("%WaitCount") as Label
-	page._wait_hue = root.get_node("%WaitHueRow") as Control
 	page._wait_pick_a = root.get_node("%WaitPickABtn") as Button
 	page._wait_pick_b = root.get_node("%WaitPickBBtn") as Button
 	page._wait_start = root.get_node("%WaitStartBtn") as Button
@@ -31,17 +30,6 @@ func register(root: Node) -> void:
 	page._wait_pick_b.pressed.connect(page._on_wait_pick.bind(2))
 	page._wait_start.pressed.connect(page._on_wait_start_pressed)
 	page._wait_leave.pressed.connect(page._on_wait_leave_pressed)
-
-	# 角色颜色行(仅 1v1 / 大乱斗可见;3v3 用队色 ⇒ show() 整行收起)。★ 它住等待室而不是创建弹层:创建弹层一进等待室就收起,放那儿等于房主建完房改不了、加入者全程没见过。
-	# ★★ 行本身是静态骨架(标签 + 滑条 + 预览色块),这里只灌值 + 接写回 —— 与设置页那两个音量滑条同款(值由脚本灌、信号由脚本接)。
-	var hue_slider: HSlider = root.get_node("%WaitHueSlider") as HSlider
-	var hue_chip: ColorRect = root.get_node("%WaitHueChip") as ColorRect
-	hue_slider.value = Settings.pvp_color_hue
-	hue_chip.color = UiFactory.hue_preview_color(Settings.pvp_color_hue)
-	hue_slider.value_changed.connect(func(v: float) -> void:
-		Settings.pvp_color_hue = v
-		Settings.save()
-		hue_chip.color = UiFactory.hue_preview_color(v))
 
 
 # 亮起 / 重填等待室。★ 清空重填而不是就地改几行:名单人数、分队、按钮显隐在三个模式下都不同,就地改必然漏一处 —— 而漏了不报错,只是上一个模式的行留在屏上(叠成两批名单)。
@@ -54,6 +42,7 @@ func show(state: Dictionary, mode: String) -> void:
 	page._create_btn.visible = false
 	page._join_btn.visible = false
 	page._rooms.hide_join_panel()
+	page._rooms.set_list_visible(false)   # 等位时收起房卡/筛选,避免在等待室底下露出列表
 	page._wait_title.text = _wait_title_text(state, mode)
 
 	# ★ 必须 remove_child 再 queue_free:只 queue_free 的话旧行要到帧末才没,同帧重填会两批名单叠着(与列表侧 redraw 同款纪律)。
@@ -74,8 +63,6 @@ func show(state: Dictionary, mode: String) -> void:
 		var n := maxi(plist.size(), int(state.get("count", 1)))
 		if n >= 2:
 			page._wait_count.text = "已就绪 2 / 2" + (" — 点「开始游戏」" if is_host else " — 等待房主开始…")
-			if not is_host:
-				page._wait_body.add_child(UiFactory.label("等待房主开始游戏…", 32, UiFactory.C_TEXT_DIM))
 		else:
 			page._wait_count.text = "等待对手… %d / 2" % n
 	elif mode == PvpSession.MODE_ROYALE:
@@ -86,8 +73,6 @@ func show(state: Dictionary, mode: String) -> void:
 		_fill_team_roster(state, plist, my_role, host_role)
 		page._wait_count.text = _team_count_text(state, plist)
 
-	# 角色颜色行:3v3 用队色、个人色相在本模式是无效输入 ⇒ 整行收起。
-	page._wait_hue.visible = not is_team
 	# 选边按钮(仅 3v3)。★ 自己那支的按钮置灰:既少一次无意义的上行,也让「已在该队时再点该队」那条幂等 wart(服务器回"该队已满"、状态不变)不可达。
 	var my_team := _team_of_role(state, my_role) if is_team else 0
 	page._wait_pick_a.visible = is_team and my_team != 1
@@ -108,6 +93,7 @@ func hide() -> void:
 	page._in_room = false
 	page._create_btn.visible = true
 	page._join_btn.visible = true
+	page._rooms.set_list_visible(true)
 
 
 # 标题:—— {模式名}房间 {code} ——。★ 邀请码只在私密时印:公开房的载荷里 invite_code 可能是空串、也可能带着房主随手填的值 —— 印出来会让玩家以为"这房要码"。

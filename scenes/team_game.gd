@@ -1,6 +1,6 @@
 extends PvpMatchClient
 # 3v3 团队对局客户端(第三个对局场景,与 pvp_game / royale_game 同基类):Level0(pvp_mode) 世界 + 本地玩家(C2 客户端预测) + 5 个远端副本(懒建) + 后处理 + 输入上报 + 快照消费 + TeamHud(记分条按队号,不是 role)。
-# 与另外两个客户端的差异只有三处:① 副本 5 个(结构与大乱斗逐字同款);② 队色覆盖个人色相 —— 本体染色(含自己那具)/ 头顶 ID / 小地图点位一律问 _team_color(role),peer_hues 在本模式是无效输入(基类钩子被覆写成只消费 teams,不是「染完再盖」);③ 队友不互挡的客户端一半(服务端那一半在 TeamHost._apply_team_layers)。★ ②③ 漏了的后果与「幽灵碰撞体缺失」同款:C2 每帧回滚。
+# 与另外两个客户端的差异只有三处:① 副本 5 个(结构与大乱斗逐字同款);② 队色覆盖个人色 —— 本体染色(含自己那具)/ 头顶 ID / 小地图点位一律问 _team_color(role)(颜色不可自选,3v3 固定队色);③ 队友不互挡的客户端一半(服务端那一半在 TeamHost._apply_team_layers)。★ ②③ 漏了的后果与「幽灵碰撞体缺失」同款:C2 每帧回滚。
 # ★ 队伍表只从 match_sync 进来(与昵称/色相/生效选项同一条投递路径)。不要从 roles 推导:role 号由大厅「最小空闲号」分配、有人退出后会留空洞(3 人房里中间那位退掉 ⇒ 房里是 {1,3})。
 
 
@@ -70,8 +70,8 @@ func _ready() -> void:
 		_refresh_input_lock()
 		_recheck_disconnect())   # 菜单开着时收到的"服务器断开"在这里补(见 PvpMatchClient._begin_reconnect)
 	add_child(_pause_menu)
-	# ★ 自己那具的染色不在这里做,等队伍表(见 _refresh_team_colors):3v3 下自己是队色,与「看别人」同一份来源(个人色相在本模式整体停用)。此前这里传的是 Settings.pvp_color_hue,默认值 0 = 不改色 ⇒ 身体恒为本体蓝(= 队 1 的颜色,青队玩家因此看见自己与队 1 同色)。
-	# ★ 别在这里补一句「表到达前先用 pvp_color_hue 兜一下」:那是给同一个语义开第二个来源,且会在倒计时里闪一次颜色;表真缺了则整局保持本体蓝,那条路已有 push_warning、不是静默。★ 进场主动拉一次(昵称/队伍/生效选项/出生点/地面武器/destroyed):本场景已建好并订阅齐了才开口要,故没有「推给一个正在切场景的客户端」那个竞态;★ 判活再发(全仓纪律)。
+	# ★ 自己那具的染色不在这里做,等队伍表(见 _refresh_team_colors):3v3 下自己是队色,与「看别人」同一份来源(颜色不可自选)。
+	# ★ 别在这里补一句「表到达前先用某个默认色兜一下」:那是给同一个语义开第二个来源,且会在倒计时里闪一次颜色;表真缺了则整局保持本体蓝,那条路已有 push_warning、不是静默。★ 进场主动拉一次(昵称/队伍/生效选项/出生点/地面武器/destroyed):本场景已建好并订阅齐了才开口要,故没有「推给一个正在切场景的客户端」那个竞态;★ 判活再发(全仓纪律)。
 	if NetBus.can_send_to_server():
 		NetBus.rpc_id(1, "match_sync")
 	print("进入 3v3:角色 %d 出生点 %s" % [PvpSession.role, PvpSession.spawn])
@@ -121,7 +121,7 @@ func _bullet_hits_entity(b: BulletBase, ent: Node2D) -> bool:
 	return _team_of_role(sr) != _team_of_role(er)
 
 
-# 队色统一收在这里:自己的染色、副本染色、头顶 ID、小地图点位都问它。★ 3v3 下个人色相不生效(peer_hues 被队色覆盖)—— 这是规则不是审美:6 个人里认不出队友,这个模式就没法玩;故 _apply_peer_hues_or_team 里不要再调 _apply_peer_hues。
+# 队色统一收在这里:自己的染色、副本染色、头顶 ID、小地图点位都问它。★ 3v3 下没有个人色(颜色不可自选);这是规则不是审美:6 个人里认不出队友,这个模式就没法玩。
 func _team_color(role: int) -> Color:
 	match _team_of_role(role):
 		1:
@@ -131,15 +131,15 @@ func _team_color(role: int) -> Color:
 	return Color(0.94, 0.95, 0.98, 1.0)   # 无队伍(理论上到不了)→ 中性亮白
 
 
-# 把队色刷到身体上。★ 机制收在 PvpMatchClient._apply_tint 的第三参(modulate 比值,不是直接乘队色 —— 那样蓝身体乘橙会变灰紫),这里的第三参就是「染成这个颜色」。
-# ★★ 自己那具与副本走逐字同一条路:队色的单一来源只有 _team_color(_team_of_role(role)) 一处(此前自己那具传的是 Settings.pvp_color_hue,于是青队玩家看见自己是蓝色);个人色相在 3v3 整体停用(大乱斗那侧不受影响)。
+# 把队色刷到身体上。★ 机制收在 PvpMatchClient._apply_tint(modulate 比值,不是直接乘队色 —— 那样蓝身体乘橙会变灰紫)。
+# ★★ 自己那具与副本走逐字同一条路:队色的单一来源只有 _team_color(_team_of_role(role)) 一处(颜色不可自选;3v3 固定蓝/青队色)。
 # ★ 队号 0(队伍表还没到)时不染自己:_team_color(0) 返回中性亮白,糊在自己身上比保持本体蓝更糟;表一个 RTT 就到。
 func _refresh_team_colors() -> void:
 	if _local != null and _team_of_role(PvpSession.role) != 0:
-		_apply_tint(_local.get_node_or_null("AnimatedSprite2D"), 0.0, _team_color(PvpSession.role))
+		_apply_tint(_local.get_node_or_null("AnimatedSprite2D"), _team_color(PvpSession.role))
 	for role in _replicas:
 		if is_instance_valid(_replicas[role]):
-			_apply_tint(_replicas[role].get_node_or_null("AnimatedSprite2D"), 0.0,
+			_apply_tint(_replicas[role].get_node_or_null("AnimatedSprite2D"),
 					_team_color(role))
 	_refresh_names()
 
@@ -248,7 +248,7 @@ func _ensure_replica(role: int) -> void:
 	_replicas[role] = replica
 	_ensure_id_label(role)
 	# ★ 队色与幽灵体层必须在这里也补一次:副本是懒建的,而队伍表早在 match_sync 就到了 —— _apply_teams() 那一刻 _replicas 还是空的,只在那时刷的话,晚建的副本会停在无人色(默认蓝)且幽灵体恒在层 2(= 队友也挡我)⇒ 每帧回滚,两处都不报错。
-	_apply_tint(replica.get_node_or_null("AnimatedSprite2D"), 0.0, _team_color(role))
+	_apply_tint(replica.get_node_or_null("AnimatedSprite2D"), _team_color(role))
 	if replica.has_method("set_ghost_layer"):
 		replica.set_ghost_layer(_ghost_layer_of(role))
 	if Settings.pvp_show_enemy_hp:

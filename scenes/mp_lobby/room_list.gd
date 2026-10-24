@@ -12,6 +12,8 @@ extends RefCounted
 const PAGE_MARGIN := 76.0
 const CARD_COLUMNS := 4
 const CARD_GAP := 24.0
+# 房卡高度:容纳「标题带 + 房号 48 + 副标题 32 + 缩略图/人数 120 + 名单 32×3 + …等 N 人」;★ 名单字号 16→32 后旧 440 会挤爆,改高度而不是把名单压回过小。
+const CARD_H := 520.0
 
 # 模式色(与对局无关的一套,只在菜单系用)。★ 3v3 刻意不用蓝 —— #639BFF 就是 UiFactory.C_TEAM_A(队 1 的队色),而队色在 3v3 里是有玩法语义的颜色("一眼看出谁是队友"),撞色会让大厅的「3v3」与对局的「队 1」混淆。
 # ★★ 模式色定义在 ui/factory/ui_factory.gd(调色板单一来源是硬约束:颜色只在那里定义,不要再写 Color(...) 字面量)。这里只引用不写字面量,否则同一套颜色会被定义两遍、静默漂移。
@@ -140,8 +142,8 @@ func _make_card(r: Dictionary) -> Button:
 
 	var btn := Button.new()
 	_style_card(btn)
-	btn.custom_minimum_size = Vector2(_card_width(), 440)
-	btn.size = Vector2(_card_width(), 440)
+	btn.custom_minimum_size = Vector2(_card_width(), CARD_H)
+	btn.size = Vector2(_card_width(), CARD_H)
 	btn.set_meta("code", code)
 	btn.set_meta("mode", mode)
 	btn.text = ""   # 内容全部自绘
@@ -296,11 +298,17 @@ func _card_subtitle(mode: String, r: Dictionary) -> String:
 
 
 # 地图缩略图。★ 复用 MapCatalog 那套(选图面板已经在用它现画):不要另写一份画法 —— 两份必然漂,而漂了不报错,只是两张图长得不一样。map 为空时退化成模式色占位,而不是留一个空洞。
+# ★ 框的皮不能用 UiFactory.panel_box():它有 28px 内容边距,会把 120×120 的缩略图/占位色块缩成中间一小块(视觉上像"图没加载完")。
 func _card_map_thumb(mode: String, map_path: String) -> Control:
 	var frame := PanelContainer.new()
 	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	frame.custom_minimum_size = Vector2(120, 120)
-	frame.add_theme_stylebox_override("panel", UiFactory.panel_box())
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = UiFactory.C_SURFACE
+	sb.border_color = UiFactory.C_BORDER
+	sb.set_border_width_all(1)
+	sb.set_corner_radius_all(0)
+	frame.add_theme_stylebox_override("panel", sb)
 	if map_path != "" and MapCatalog.is_valid_map(map_path):
 		var tex := TextureRect.new()
 		tex.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -317,6 +325,7 @@ func _card_map_thumb(mode: String, map_path: String) -> Control:
 
 
 # ★ 名字走 UiFactory.fit_name(名字, 14) 定宽截断(与结算页同款)—— 不截的话长昵称会把卡顶宽(卡宽是 4 列网格算出来的固定值,顶宽 = 整行错位);名单最多 3 行,超出显示 …等 N 人。
+# ★ 字号 16 → 32(2026-10-24):16 号在 1920 宽屏卡上小到读不清,与同卡 48/32 的房号/副标题差了两档。
 func _card_names(names_raw: Variant) -> Control:
 	var box := VBoxContainer.new()
 	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -326,7 +335,14 @@ func _card_names(names_raw: Variant) -> Control:
 		var is_host := i == 0
 		box.add_child(UiFactory.label("· %s%s" % [
 				UiFactory.fit_name(str(names[i]), 14), "(房主)" if is_host else ""],
-				16, UiFactory.C_TEXT_DIM))
+				32, UiFactory.C_TEXT_DIM))
 	if names.size() > shown:
-		box.add_child(UiFactory.label("…等 %d 人" % names.size(), 16, UiFactory.C_TEXT_DIM))
+		box.add_child(UiFactory.label("…等 %d 人" % names.size(), 32, UiFactory.C_TEXT_DIM))
 	return box
+
+
+# 进「等待室」时收起列表与筛选(2026-10-24):等待室是独立面板,底下再露着房卡/筛选既脏又会误点。与 wait_room.hide() 成对恢复。
+func set_list_visible(v: bool) -> void:
+	page._grid.visible = v
+	for b in _filter_btns.values():
+		(b as Button).visible = v

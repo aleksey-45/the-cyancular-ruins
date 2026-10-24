@@ -153,9 +153,8 @@ func _on_opponent_left() -> void:
 			return
 		Level0.safe_change_scene(tree, "res://scenes/main_menu.tscn"))
 
-# P2(role 2)的本体颜色 —— 1v1 里唯一的染色规则:自己控 P2 ⇒ 染本地玩家,自己控 P1 ⇒ 染对手副本(只染角色 AnimatedSprite2D,武器不染)。★ 口径:P1 恒蓝、P2 恒青,用的是 3v3 队 2 那个 token(UiFactory.C_TEAM_B),机制在 PvpMatchClient._apply_tint 第三参(modulate 比值 = 目标色 / 本体主色)。
-# ★ 不用色相旋转是数学上做不到(它保持 S/V,本体主色 S61 ⇒ 产不出目标色 S50);player_p2_hue.gdshader 没删,现在是个人色相那条路(大乱斗),本文件不引用。零守卫(hue_tint_probe 已删·2026-10-09)。
-
+# P2(role 2)的本体颜色 —— 1v1 里唯一的染色规则:自己控 P2 ⇒ 染本地玩家,自己控 P1 ⇒ 染对手副本(只染角色 AnimatedSprite2D,武器不染)。★ 口径:P1 恒蓝、P2 恒青,用的是 3v3 队 2 那个 token(UiFactory.C_TEAM_B),机制在 PvpMatchClient._apply_tint(modulate 比值 = 目标色 / 本体主色)。
+# ★ 颜色不可自选(2026-10-24 用户裁定):大厅不再有改色控件;1v1 固定蓝/青,3v3 固定队色,大乱斗按 role 自动取色。
 func _apply_p2_tint() -> void:
 	var body: Node = null
 	if PvpSession.role == 2 and _local != null:
@@ -164,12 +163,12 @@ func _apply_p2_tint() -> void:
 		body = _remote_replica.get_node_or_null("AnimatedSprite2D")
 	if body == null:
 		return
-	_apply_tint(body, 0.0, UiFactory.C_TEAM_B)
+	_apply_tint(body, UiFactory.C_TEAM_B)
 
-# ── 个人色相在 1v1 整体停用 ── 载荷照旧到达(match_sync 的 hues),但本模式不消费:这里只把「P2 = 青」那条固定规则重铺一次。
-# ★ 为什么停用:双方都用默认 Settings.pvp_color_hue = 0.0 时两个身体同为默认蓝,1v1 就没有「谁是谁」,而「分得出」是硬需求;该设置在大乱斗照旧消费(4~8 人靠颜色区分才有意义)。★ 唯一入口 = _on_match_sync,不要连回 NetBusExt.local_peer_hues(那条推送路径已不存在,连上去会让本载荷走两条路)。零守卫(hue_tint_probe 已删·2026-10-09)。
-func _apply_peer_hues(_hues: Dictionary) -> void:
-	_apply_p2_tint()   # 幂等:重铺 P2 那道固定染色(载荷内容一律忽略)
+# ── 1v1 颜色固定 ── 1v1 的染色只有「P2 = 青」这一条固定规则(P1 = 本体蓝即默认色);这里幂等重铺一次(重连补态也走同一入口)。
+# ★ 唯一入口 = _on_match_sync 的基类钩子;不要连回任何推送路径(颜色推送已随大厅改色控件一起删除)。
+func _apply_role_colors() -> void:
+	_apply_p2_tint()
 
 # 服务器下发的生效选项:同步禁用武器。★ 两端必须同表:本端 equip 对禁用槽会当场拒绝,而输入包里的切枪请求是无条件上行的 —— 服务器若无同一张表就会 equip 成功,两端槽位永久错位且静默;唯一入口 = _on_match_sync,不要连回 NetBusExt.local_match_options。
 

@@ -15,7 +15,7 @@ extends LobbyPage
 #     · options_form.gd —— 建房表单行显隐(_form_rows 那张表)与控件值读写
 #     · wait_room.gd    —— 等待室:选边 / 开始按钮 / 满员文案 / 房主判断 / 名单行
 #   ★ 节点路径(%NodeName)、信号、文案、_form_rows 键名一律逐字不变;_build_ui 的登记逻辑也仍在(只是分给各面板的 register)。
-#   ★★ 节点句柄里 _grid / _wait_panel / _wait_title / _wait_body / _wait_count / _wait_hue / _wait_start / _wait_pick_a / _wait_pick_b / _wait_leave
+#   ★★ 节点句柄里 _grid / _wait_panel / _wait_title / _wait_body / _wait_count / _wait_start / _wait_pick_a / _wait_pick_b / _wait_leave
 #     留在本页:测试(honest 口径,tests/harness/{rejoin,team_match}_watcher.gd)用 get("_grid") / get("_wait_body") 读它们 —— 搬走 = 探针静默拿到 null。
 
 var _mode := ""                    # 当前筛选:"" = 全部;否则 PvpSession.MODE_*
@@ -28,7 +28,6 @@ var _wait_panel: PanelContainer = null
 var _wait_title: Label = null             # 标题带里面那颗 Label(房间号写在它的 text 上)
 var _wait_body: VBoxContainer = null      # 名单/分队容器:每次重填前整批清空
 var _wait_count: Label = null
-var _wait_hue: Control = null             # 角色颜色行(1v1/大乱斗可见;3v3 用队色 ⇒ 收起)
 var _wait_start: Button = null
 var _wait_pick_a: Button = null
 var _wait_pick_b: Button = null
@@ -473,7 +472,6 @@ func _lobby_action_allowed() -> bool:
 #    ROYALE_MATCH_TIME_CEILING 上界链的第二环,tools/room_sweep_lint.gd 钉着它必须住在 scenes/mp_lobby.gd 的源码里(别搬走那一行)。
 func _player_options() -> Dictionary:
 	return _create_dialog.player_options(_current_mode, {
-		"hue": Settings.pvp_color_hue,
 		"round_full_heal": Settings.pvp_round_full_heal,
 		"disabled_weapons": Settings.pvp_disabled_weapons,
 		"match_time": int(Settings.royale_match_min * 60.0),

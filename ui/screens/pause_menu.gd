@@ -45,7 +45,7 @@ func _ready() -> void:
 
 	# 标题带:琥珀标题 + C_HEADER 底 + 只有下边一条线。★ 文案与字号 64 是逐字照搬的,零守卫
 	# (kh_l4_visual_probe 已删·2026-10-09):改文案/字号今天不会红。
-	vb.add_child(UiFactory.header_strip("—— 已暂停 ——" if not is_pvp else "—— 菜单 ——", 64))
+	vb.add_child(UiFactory.header_strip("—— 已暂停 ——" if not is_pvp else "—— 菜单 ——", 64, true))
 
 	var resume := UiFactory.menu_button("继 续 游 戏", 32, Vector2(480, 72), "gold")
 	resume.pressed.connect(close)

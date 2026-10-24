@@ -223,7 +223,10 @@ static func menu_button(text: String, size: int, min_size: Vector2 = Vector2(640
 
 
 # 标题带:C_HEADER 横条 + 只有下边一条 C_BORDER 线 + 金色标题;四边都画就变成又一个面板,与 menu_panel() 的凿刻压边打架。
-static func header_strip(text: String, size: int = 32) -> PanelContainer:
+# centered = 标题在带内居中(用于「暂停菜单 / 结算页分区」这种独立小面板;页首大标题仍走左对齐的默认档)。
+# ★ 默认档的左内边距 40 → 0(用户:金色标题前面有空格、看上去没对齐);centered 档左右对称 20,居中才不会被 0/40 的不对称边距推偏。
+# ★ 改这里必须同步 tools/gen_menu_theme.gd 并重跑(HeaderStrip 变体是它的镜像;⚠ menu_theme_mirror_smoke 已删·2026-10-09 ⇒ 零守卫);★ 另有一处刻意不跟:scenes/mp_lobby/room_list.gd 的 _card_header 保持 20/12(住在一张自带内边距的卡里),那是版式不是漂移。
+static func header_strip(text: String, size: int = 32, centered := false) -> PanelContainer:
 	var p := PanelContainer.new()
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = C_HEADER
@@ -233,14 +236,15 @@ static func header_strip(text: String, size: int = 32) -> PanelContainer:
 	sb.border_width_top = 0
 	sb.border_width_bottom = 1
 	sb.border_color = C_BORDER
-	# ★ 内边距 40/20;左内边距 40 → 0(用户:金色标题前面有空格、看上去没对齐)—— 盒子左边与正文同一列,右与上下不动。
-	# ★ 改这里必须同步 tools/gen_menu_theme.gd 并重跑(HeaderStrip 变体是它的镜像;⚠ menu_theme_mirror_smoke 已删·2026-10-09 ⇒ 零守卫);★ 另有一处刻意不跟:scenes/mp_lobby/room_list.gd 的 _card_header 保持 20/12(住在一张自带内边距的卡里),那是版式不是漂移。
-	sb.content_margin_left = 0.0
-	sb.content_margin_right = 40.0
+	sb.content_margin_left = 20.0 if centered else 0.0
+	sb.content_margin_right = 20.0 if centered else 40.0
 	sb.content_margin_top = 20.0
 	sb.content_margin_bottom = 20.0
 	p.add_theme_stylebox_override("panel", sb)
-	p.add_child(label(text, size, C_GOLD))
+	var l := label(text, size, C_GOLD)
+	if centered:
+		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	p.add_child(l)
 	return p
 
 
@@ -393,10 +397,6 @@ static func apply_font_recursive(root: Node) -> void:
 			(root as Control).add_theme_font_override("font", pf)
 	for n in root.get_children():
 		apply_font_recursive(n)
-
-
-static func hue_preview_color(hue_deg: float) -> Color:
-	return Color.from_hsv(fposmod(hue_deg, 360.0) / 360.0, 0.75, 1.0)
 
 
 # 绝对定位的输入框(挂在 parent 下);size 由调用方给:各页面原值不同(240×36 / 250×40),属各自版式,不为统一而改。

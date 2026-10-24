@@ -19,8 +19,8 @@
 - 分队碰撞层:队 B 身体层 = `TeamHost.TEAM_ENEMY_LAYER := 16`(不许写死);副本幽灵体 `mask` 恒 0,`layer` 按代表玩家的队;服务端 `TeamHost._apply_team_layers` 与客户端 `team_game._apply_team_collision` 逐值对齐。掩码必须保留地形(1)与敌人(4);未知队号客户端落层 2、服务端什么都不配;副本懒建,`_ensure_replica` 里要再刷一遍。
 - 平局:`match_winner == 0` 在 3v3 可达(两队都走光)。`ui/hud/team_hud.gd` 念「平 局」;`pvp_hud.gd` 的 1v1 兜底不能照抄到 3v3。
 - 输赢文案由 `set_my_team()` 驱动:`_apply_teams` 在队伍表到达后必须调 `_hud.set_my_team(_team_of_role(PvpSession.role))`;队号只能从队伍表读,不是 role。
-- 队色 = `modulate = 队色 / 本体主色`(`_apply_tint` 的 `color_override` 非透明时走);`BODY_BASE_COLOR = #639BFF`(`player.png` 的不透明众数色);队 1 的比值恰为 (1,1,1)(`C_TEAM_A` 就是它),队 2 有分量 > 1。换 sprite 素材要重测 `BODY_BASE_COLOR`。3v3 的 `hues` 是无效输入:`_apply_peer_hues_or_team` 覆写基类钩子、只消费载荷里的 `teams`,自己那具也走队色,`_apply_peer_hues` 不会被调用。
-- `player_p2_hue.gdshader` 的 `COLOR` 入参已含纹理:只覆写 `COLOR.rgb`,`COLOR.a` 不动;uniform 默认 `0.0`(不改色)。
+- 队色 = `modulate = 队色 / 本体主色`(`_apply_tint` 的 `color_override` 唯一参数);`BODY_BASE_COLOR = #639BFF`(`player.png` 的不透明众数色);队 1 的比值恰为 (1,1,1)(`C_TEAM_A` 就是它),队 2 有分量 > 1。换 sprite 素材要重测 `BODY_BASE_COLOR`。3v3 颜色不可自选(2026-10-24 起):`_apply_peer_hues_or_team` 覆写基类钩子、只消费载荷里的 `teams`;自己那具也走队色。
+- `player_p2_hue.gdshader` 已无代码引用(个人色相随大厅改色控件一起移除,文件暂留);`_apply_tint` 只剩 modulate 比值一条路。
 - 换边后客户端在**新一轮 COUNTDOWN** 重拉一次 `match_sync`,先置 `_resync_pull_pending = true` 再发;与重连补态共用同一个标志,不新立标志。
 - `TeamHost._on_bullet_hit` 覆写先 `CombatFeedback.attribute(victim, bullet.shooter)` 再 `super`;基类 `MatchCombat._on_bullet_hit` 也写同一笔(幂等)。基类那行是 1v1 的唯一子弹归因写端,不可删。
 - 逐人数据:离开者用 `MatchState.note_disconnect_round(role)`(`_enter_grace` 掉线那一刻记录);MATCH_OVER 之后倒地不进 `_stats`,ROUND_OVER 期间照旧入账。
@@ -51,7 +51,7 @@
 - `SpawnPicker` 的池是静态缓存(4 个 cache + 区域表):同一进程里换图重算必须先 `SpawnPicker.reset_cache()`。
 - 归因:`_on_bullet_hit` 先 `CombatFeedback.attribute(victim, bullet.shooter)` 再 `super`;`_attributed_killer` 读 meta,时效 `ATTRIB_WINDOW`(3s);无源死亡(溺水 / 坠落)不计分,自杀先清 meta。
 - `round_state`(大乱斗版)= `scores` / `deaths` / `names` / `alive` / `left` / `timer` / `match_winner`,昵称行覆盖真人 + 已离开者 + AI 补位。
-- 客户端 `scenes/royale_game.gd` / `.tscn`:Level0(`pvp_mode`)+ PostProcess + N-1 个 `PlayerReplica`(按快照 roles 动态建)+ `RoyaleHud` + Minimap + 血条 + 拖尾;本地玩家与 1v1 共用 C2 预测 + `PredictionRollback`;消费 `NetBus.local_*`(snapshot / bullet_spawn / beam_fired / hit_event / tile_destroyed / round_state / peer_info / kill_event)与 `NetBusExt.local_*`(match_options / peer_hues / hit_confirm)。
+- 客户端 `scenes/royale_game.gd` / `.tscn`:Level0(`pvp_mode`)+ PostProcess + N-1 个 `PlayerReplica`(按快照 roles 动态建)+ `RoyaleHud` + Minimap + 血条 + 拖尾;本地玩家与 1v1 共用 C2 预测 + `PredictionRollback`;消费 `NetBus.local_*`(snapshot / bullet_spawn / beam_fired / hit_event / tile_destroyed / round_state / peer_info / kill_event)与 `NetBusExt.local_*`(match_options / hit_confirm)。
 - 开局三载荷(昵称 / 角色色相 / 生效选项)走进场拉取:对局场景 `_ready` 末尾主动拉,不走推送。`MatchHost.role_spawns()` 是只读取法,`RoyaleHost` 必须覆写。
 - 人数上限 `LobbyRooms.ROYALE_MAX_PLAYERS = 16`;单端下行 ∝ N,服务器上行 ∝ N²。
 - 输入队列有上限:跟着抖动包络走、逐 tick 衰减,超了丢最旧那包并把 `pressed` / `released` / `winst` 边沿并入队首。读数入口是 `snapshot_own` 的 `q` 与服务端 `--netstat`。

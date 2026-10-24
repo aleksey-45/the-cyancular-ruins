@@ -27,9 +27,9 @@ const TEAM_COUNT := 2
 #   大乱斗不再上发 `round_full_heal`(它没有回合),1v1 不再上发 `match_time`(只有大乱斗读它)。
 #   `time`(Beta 时间规则)不在这张表里 —— 它是"beta 开启 且 非 1v1"的条件键,由 ModeOptions.build 追加。
 const OPTION_KEYS: Dictionary = {
-	MODE_PVP: ["hue", "round_full_heal", "disabled_weapons", "map"],
-	MODE_ROYALE: ["hue", "disabled_weapons", "match_time", "map"],
-	MODE_TEAM: ["hue", "map"],
+	MODE_PVP: ["round_full_heal", "disabled_weapons", "map"],
+	MODE_ROYALE: ["disabled_weapons", "match_time", "map"],
+	MODE_TEAM: ["map"],
 }
 
 # 结算页列集(`ui/screens/match_result_payload.gd` 的三个适配器读它)。

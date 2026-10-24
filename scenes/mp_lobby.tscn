@@ -980,9 +980,9 @@ anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
 offset_left = -779.0
-offset_top = -462.0
+offset_top = -450.0
 offset_right = 779.0
-offset_bottom = 462.0
+offset_bottom = 450.0
 grow_horizontal = 2
 grow_vertical = 2
 theme_type_variation = &"PanelCarved"
@@ -1181,24 +1181,24 @@ visible = false
 layout_mode = 2
 theme_override_constants/separation = 16
 
-[node name="VBoxContainer2" type="VBoxContainer" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2" unique_id=2043741537]
-layout_mode = 2
-size_flags_horizontal = 3
-theme_override_constants/separation = 28
-
-[node name="WeaponsBlock" type="VBoxContainer" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer2" unique_id=110836412]
+[node name="WeaponsBlock" type="VBoxContainer" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer1" unique_id=110836412]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_constants/separation = 16
 
-[node name="PanelContainer1" type="PanelContainer" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer2/WeaponsBlock" unique_id=1438275867]
+[node name="PanelContainer1" type="PanelContainer" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer1/WeaponsBlock" unique_id=1438275867]
 layout_mode = 2
 theme_type_variation = &"HeaderStrip"
 
-[node name="Label1" type="Label" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer2/WeaponsBlock/PanelContainer1" unique_id=652968451]
+[node name="Label1" type="Label" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer1/WeaponsBlock/PanelContainer1" unique_id=652968451]
 layout_mode = 2
 theme_type_variation = &"HeaderTitle"
 text = "禁用武器(房主生效,开局带进对局):"
+
+[node name="VBoxContainer2" type="VBoxContainer" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2" unique_id=2043741537]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 28
 
 [node name="MapBlock" type="VBoxContainer" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer2" unique_id=824934333]
 unique_name_in_owner = true
@@ -1232,10 +1232,10 @@ anchor_left = 0.5
 anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
-offset_left = -465.0
-offset_top = -290.5
-offset_right = 465.0
-offset_bottom = 290.5
+offset_left = 0.0
+offset_top = 0.0
+offset_right = 0.0
+offset_bottom = 0.0
 grow_horizontal = 2
 grow_vertical = 2
 theme_type_variation = &"PanelCarved"
@@ -1286,32 +1286,10 @@ layout_mode = 2
 theme_type_variation = &"BtnPrimary"
 text = "加入 B 队"
 
-[node name="WaitHueRow" type="HBoxContainer" parent="WaitPanel/Body/VBoxContainer1" unique_id=704546570]
-unique_name_in_owner = true
-layout_mode = 2
-theme_override_constants/separation = 12
-
-[node name="Label1" type="Label" parent="WaitPanel/Body/VBoxContainer1/WaitHueRow" unique_id=1337599008]
-layout_mode = 2
-theme_override_colors/font_color = Color(1, 1, 1, 1)
-theme_override_font_sizes/font_size = 32
-text = "自己角色颜色:"
-
-[node name="WaitHueSlider" type="HSlider" parent="WaitPanel/Body/VBoxContainer1/WaitHueRow" unique_id=797063207]
-unique_name_in_owner = true
-custom_minimum_size = Vector2(320, 30)
-layout_mode = 2
-max_value = 360.0
-step = 5.0
-
-[node name="WaitHueChip" type="ColorRect" parent="WaitPanel/Body/VBoxContainer1/WaitHueRow" unique_id=1451665341]
-unique_name_in_owner = true
-custom_minimum_size = Vector2(46, 30)
-layout_mode = 2
-
 [node name="WaitStartBtn" type="Button" parent="WaitPanel/Body/VBoxContainer1" unique_id=1002081208]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(440, 64)
+size_flags_horizontal = 3
 layout_mode = 2
 theme_type_variation = &"BtnGold"
 text = "开 始 游 戏"
@@ -1319,6 +1297,7 @@ text = "开 始 游 戏"
 [node name="WaitLeaveBtn" type="Button" parent="WaitPanel/Body/VBoxContainer1" unique_id=2110607890]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(440, 56)
+size_flags_horizontal = 3
 layout_mode = 2
 theme_type_variation = &"BtnQuiet"
 text = "退出房间"

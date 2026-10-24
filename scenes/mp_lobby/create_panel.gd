@@ -62,14 +62,16 @@ func is_open() -> bool:
 	return panel.visible
 
 
-# 按模式变形 —— 本弹层唯一的分支。★★ 置灰要迭代 mode_btns 的值:for m in dict 拿的是键(String)—— 写成 for b in mode_btns 会在每个键上取到 null,当场报错、函数在置灰那一行断掉。
+# 按模式变形 —— 本弹层唯一的分支。★★ 选中态用 toggle 的 pressed 态表达(骨架里三颗按钮是 toggle_mode + ButtonGroup):
+# 之前把当前模式 `disabled = true`,于是「平时白字、选中反而变灰」—— 2026-10-24 用户点名这批反直觉配色,改为按下态(按钮自己的模式色描边/字色)。
 # ★ 模式值同时记在页上(_create_mode):页的「确定」那条 RPC 分派读它(测试注释与页里都按这个名字认状态),本文件不另存一份。
 func apply(mode: String) -> void:
 	page._create_mode = mode
 	form.apply_rows(mode)
 	for m in mode_btns:
-		(mode_btns[m] as Button).disabled = false
-	(mode_btns[mode] as Button).disabled = true   # 当前模式置灰(与等待室的选边同款)
+		var b: Button = mode_btns[m]
+		b.disabled = false
+		b.button_pressed = m == mode
 
 
 # 按模式给三套 payload 的公共部分 + 各自的私有键。★ map 三个模式都上发:1v1 的 create_room 签名冻结、塞不进 payload,故地图一律走 room_map 那条独立的 RPC(建房成功后由本端补发);3v3 不带 disabled_weapons,那一项从 player_options 走,与建房载荷无关。

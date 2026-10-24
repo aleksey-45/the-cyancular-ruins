@@ -390,7 +390,6 @@ func _on_match_sync(caller: int) -> void:
 		return
 	var data := {
 		"names": _claim_names,
-		"hues": _claim_hues(),
 		"options": _claim_opts.get(1, {}),
 		"roles": _role_set,
 		"spawns": spawns,
@@ -486,12 +485,6 @@ func _begin_match() -> void:
 	elif _team_mode:
 		mode_note = "(3v3 %d 人,队伍 %s)" % [_claims.size(), str(_team_of_role)]
 	print("worker: 对局开始%s" % mode_note)
-
-func _claim_hues() -> Dictionary:
-	var hues := {}
-	for r in _claim_opts:
-		hues[r] = float(_claim_opts[r].get("hue", 0.0)) if typeof(_claim_opts[r]) == TYPE_DICTIONARY else 0.0
-	return hues
 
 func _on_peer_left(peer_id: int) -> void:
 	var is_participant := _claims.values().has(peer_id)

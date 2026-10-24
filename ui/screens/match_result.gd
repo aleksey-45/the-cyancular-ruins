@@ -77,7 +77,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _section_band(text: String, color: Color) -> PanelContainer:
-	var strip := UiFactory.header_strip(text, SIZE_BODY)
+	var strip := UiFactory.header_strip(text, SIZE_BODY, true)   # 分区标题居中:带本身就窄,左对齐会贴着边框
 	var l := strip.get_child(0) as Label
 	if l != null:
 		l.add_theme_color_override("font_color", color)

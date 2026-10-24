@@ -1,10 +1,9 @@
 extends Node
 
 # 实验分支扩展协议(autoload,与原版 NetBus 刻意分离):实测改动原 NetBus 的方法表(改签名/插新方法)会让与原版大厅的 RPC 全部失联。
-# ⇒ 原 NetBus 逐字节一致,实验新增 RPC 全放本节点;对原版 worker 本节点不存在 ⇒ 扩展 RPC 静默丢弃、优雅降级(选项/颜色不生效,对局照常)。
+# ⇒ 原 NetBus 逐字节一致,实验新增 RPC 全放本节点;对原版 worker 本节点不存在 ⇒ 扩展 RPC 静默丢弃、优雅降级(选项不生效,对局照常)。
 
 signal local_match_options(opts: Dictionary)      # worker → 客户端:生效对局选项(房主下发)
-signal local_peer_hues(hues: Dictionary)          # worker → 客户端:双方自选角色颜色 {role -> 色相}
 signal local_hit_confirm(shooter_role: int, victim_role: int)  # worker → 射手客户端:你的子弹命中了玩家
 signal player_options_received(caller: int, opts: Dictionary)  # worker:某客户端上报的本端选项
 
@@ -15,10 +14,6 @@ func player_options(opts: Dictionary) -> void:
 @rpc("authority", "call_remote", "reliable", 0)
 func match_options(opts: Dictionary) -> void:
 	local_match_options.emit(opts)
-
-@rpc("authority", "call_remote", "reliable", 0)
-func peer_hues(hues: Dictionary) -> void:
-	local_peer_hues.emit(hues)
 
 # worker → 射手客户端:只发给射手本人的命中反馈;仅弹直击发(爆炸 AoE 伤害方不明确,不发;击杀仍有 kill_event)。
 @rpc("authority", "call_remote", "reliable", 3)
