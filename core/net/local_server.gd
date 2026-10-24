@@ -46,10 +46,20 @@ static func _restart_impl() -> String:
 		return "服务器启动失败(创建进程失败)"
 	print("[LocalServer] 已启动 pid=%d %s" % [pid, exe])
 	# 轮询等端口就绪:实测专用服务器引擎冷启动 + bind 要 6~30 秒(磁盘/安全软件扫描),netstat 本身也吃时间 ⇒ 每秒探一次、最多约 45 秒。
+	var tried_headless := false
 	for _i in range(45):
 		await _sleep(1.0)
 		if not _pids_on_port(LOBBY_PORT).is_empty():
 			return "本机服务器已(重)启动;" + lan_ip_hint()
+		# ★ 无显卡机器(虚拟机 / 远程桌面 / Windows Server / 驱动缺失):服务端是普通 Godot 导出,非 headless 启动会在视频驱动
+		#   初始化处秒崩(实测报 Unable to initialize video driver)⇒ 进程 1 秒内就没了。自动改 `--headless` 再拉一次(服务端不需要渲染)。
+		if not tried_headless and not OS.is_process_running(pid):
+			tried_headless = true
+			print("[LocalServer] 服务端进程启动后立即退出(无显卡/RDP?),改用 --headless 重启")
+			pid = OS.create_process(exe, PackedStringArray(["--headless"]))
+			if pid <= 0:
+				return "服务器启动失败(创建进程失败);无显卡机器请手动 `%s --headless` 启动" % exe
+			print("[LocalServer] 已启动(--headless) pid=%d %s" % [pid, exe])
 	return "服务器进程已启动,但 %d 端口 45 秒未就绪(检查安全软件/防火墙,或稍后手动刷新列表);%s" % [LOBBY_PORT, lan_ip_hint()]
 
 

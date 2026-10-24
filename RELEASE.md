@@ -43,6 +43,7 @@
 > python tools/archive_build.py                                       # ⑥ 可选,按时间戳归档
 > ```
 > ⚠️ 服务端 exe 一导出就是 GUI 子系统(双击后台静默、无控制台)—— `make_server_console.py` 这步不能漏(只对 Windows；mac 的 `.app` 从终端跑就有输出)。`build_release.py` 自动做 ①②③④⑤⑥。
+> ★ **无显卡机器**(虚拟机 / 远程桌面 / Windows Server / 显卡驱动缺失):双击服务端仍会在视频驱动初始化处崩(`Unable to initialize video driver`;`-rendering-driver opengl` 通常也救不了)—— **用 `--headless` 启动**:`"Cyancular Ruins Server.exe" --headless`。PE 已打回 CONSOLE ⇒ 控制台窗口与日志照常,只是不初始化 Vulkan/OpenGL;大厅与自动拉起的 worker 功能不变(worker 本来就在代码里自动带 `--headless`)。`build_release.py` 的冒烟本身就是用 `--headless` 起服务端的。
 
 > **归档命名**:根目录只保留固定名产物(Windows 两个 exe + macOS 两个 zip,固定名 = 当前最新版,给 `start_server.bat` 与立即测试用);每次导出的成品按「发布标识」另存一份到 `builds/`,文件名 = `<原名> <发布标识>.<扩展名>`。`builds/` 不入库。
 
