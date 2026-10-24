@@ -1,18 +1,8 @@
 extends Node2D
 # PvP 远端玩家副本:视觉(复用 Player 的 SpriteFrames / 动画 + 各武器场景外观),由快照驱动。
 # ★ 它不是纯视觉:还带一个只参与碰撞的幽灵体(见 _build_ghost_body)—— C2 客户端预测只步进自己的玩家,若客户端世界里没有对手身体,「对手挡住我」这条信息在预测侧根本不存在 ⇒ 本地预测穿过去、服务器把你挡住 ⇒ 每帧分歧回滚(C2 的无限回滚循环)。★ 幽灵体只减小分歧不消除(副本位置比权威落后一点),验收按「回滚次数下降多少」量,别按「归零」验收。
-# ★★ 位置走 playout 缓冲插值:在固定 playout(PLAYOUT_TICKS)之后的时刻做夹逼插值,而不是朝最新目标指数追赶 —— 旧方案的平滑度 == 包的到达平滑度(到达抖动会原样透传到画面,即用户报的「位置一跳一跳」)。★ 但误差超过 SNAP_DIST 时一帧直落:回溯 / 重生 / 换边都是设计好的瞬移,交给追赶会被演成「弹射 / 倒退着滑过去」。★ 旧方案那条致命缺陷必须一直保留:渲染位置与目标相隔整幅地图时最短向量为 0 ⇒ 副本一旦漂到远副本就永远留在那儿(对手被渲染到屏幕外),解法是把目标点锚到本地玩家最近副本 —— 别顺手简化掉那两个 anchor_to_nearest。
-
-const INTERP_RATE := 12.0
-
-# 大跳变阈值:位置误差超过它 ⇒ 不追赶、直接落位。为什么需要这一档:有一类位置变化本来就不连续 —— 回溯(服务器把角色倒回自己录下的过去位置,一帧可退几百 px)、重生 / 换局换边(出生点可能在地图另一头)。把这种误差交给指数追赶:首帧速度 ≈ 18% × 误差 ⇒ 300px 的误差首帧就走 54px(十倍于移速)= 画面上「被弹射 / 倒退着滑过去」,而那是一次没发生过的位移;大跳变一帧落位,读的人理解成「瞬移」(它本来就是瞬移)。
-# ★ 阈值 128 px 的依据(全部取自本仓实测):常态追赶滞后 = v/k = 300/12 = 25 px,探针实测 ±0ms 22.6 / ±8ms 29.7 / ±16ms 37.2 px ⇒ 阈值必须远高于 37 px,否则常态抖动会被硬跳;丢包期恢复时的误差 ≈ 5 px/tick ⇒ 200ms 丢包才 60 px,那段仍该追赶;而回溯 / 重生是几百~几千 px ⇒ 128 px(= 8 格)落在 60 与「几百」之间,两侧各留约 2 倍余量。★ 判据在 tests/probe/replica_smoothness_probe.tscn 相 D(两侧都钉);动这个常数必须先跑它。
-const SNAP_DIST := 128.0
-
-# ── playout 缓冲插值的地基 ── 位置不再「朝最新目标追赶」,而是在固定 playout 之后的时刻做夹逼插值:PLAYOUT_TICKS = 故意落后服务器多少 tick(缓冲 = 3× 发送间隔,现取 4 tick ≈ 67ms,系数是扫档实测定的);place_history = 每个副本一份的位置历史环(元素 {tick:int, pos:Vector2},pos 是 canonical);_clock = 播放时钟(PlayoutClock),回答「此刻渲染服务器历史的哪一 tick」。
-# ★ 存 canonical、不存锚过的位置:锚要跟着本地玩家的副本空间走,存锚过的会在跨接缝时整段作废。★ 历史容量必须定长(不许 append 不裁剪):16 人 = 15 个副本 × 每帧插入。
-const PLAYOUT_TICKS := 4
-const HISTORY_MAX := 12
+# ★★ 位置**直接渲染最新快照**(2026-10-23 删除 playout 缓冲插值:下行 30Hz 后它只换来固定延迟,实测本机与直出无差别)。
+#   旧设计那条致命缺陷仍必须保留:渲染位置与目标相隔整幅地图时最短向量为 0 ⇒ 副本会永远留在远副本;解法是两个 anchor_to_nearest,别简化掉。
 
 const POSE_ANIM: Dictionary = {
 	0: "idle", 1: "move", 2: "fly", 3: "charge", 4: "squat",
@@ -50,10 +40,6 @@ var _weapon_type_int := 0            # 服务器权威槽位
 var _opponent_canonical := Vector2.ZERO
 var _local_anchor := Vector2.ZERO         # 本地玩家(相机)位置,每帧跟随
 var _have_data := false
-var _clock: PlayoutClock = null
-var place_history: Array = []
-# 首次定位是否已直落(见 _process)。★ 追赶不能用于开场第一帧:副本被创建在世界原点,直接开始追赶要十几帧才到位,而那十几帧里幽灵体停在错位置 ⇒ 本地预测与权威分歧 ⇒ 白回滚一次(实测:直落时 rb=0,追赶时 rb=1)。
-var _placed := false
 var _facing := 1
 # ★★ 瞄准侧(与 _facing 不是同一个量,枪口外观只认这一个)。_facing 来自快照的 facing 字段 = 服务器的走路朝向(player.gd 的移动代码排在 weapons.tick 之后,每帧覆盖 _auto_aim 写进去的瞄准侧);而枪口俯仰必须按瞄准侧折叠(clamp_pitch 先 dir.x * facing)。二者混用时,倒着走会让枪口折到反侧极限而上翘(用户报过「A 往回走的时候,在 B 眼里枪还会翘起来」)。
 # 本体那边由 _auto_aim 的 _aim_facing 承担同一职责,下面是它的逐字同款规则:鼠标有明确水平分量则跟随并记住,近垂直瞄(±0.1 以内)沿用上次明确侧,不随走路翻侧。
@@ -112,7 +98,6 @@ func _set_ghost_pose(pose: int) -> void:
 	for p in _ghost_shapes:
 		(_ghost_shapes[p] as CollisionPolygon2D).disabled = p != pose
 
-# ★ 第三个形参 _tick 现在参与计算:它进播放时钟与位置历史(playout 插值,见文件头);保留三参签名也是为了不改调用面 —— 三个生产调用点(pvp_game / royale_game / team_game)与一批探针都按三参调用,快照的 tick 也确实是副本的契约字段。
 
 ## canonical → 锚到本地玩家(相机)最近的那一份副本。
 func _anchor_of(canon: Vector2) -> Vector2:
@@ -120,54 +105,11 @@ func _anchor_of(canon: Vector2) -> Vector2:
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 
 
-## 在 t(服务器 tick 域,可为小数)处取样。夹逼线性插值;两侧都冻结:t 比最新样本还新(缓冲被吃穿,underrun)⇒ 冻结在最新、不外插(外插会让对手飞出去);t 比最老样本还老 ⇒ 冻结在最老、不倒退(倒退 = 玩家看到对手倒着走)。★★ 两端必须锚进同一个副本空间再插:b 锚到 pa(不是 _local_anchor)—— 各自锚到本地锚点时,若一个落在锚点 −MAP/2、另一个落在 +MAP/2,差量会变成整整一幅地图,插值就横穿全图;这与 _process 里「取样后再锚回可见副本」是同一件事的两半。
-func _sample_history(t: float) -> Vector2:
-	var n := place_history.size()
-	if n == 0:
-		return _opponent_canonical
-	var first: Dictionary = place_history[0]
-	var last: Dictionary = place_history[n - 1]
-	if t <= float(first["tick"]):
-		return _anchor_of(first["pos"])
-	if t >= float(last["tick"]):
-		return _anchor_of(last["pos"])
-	for i in range(n - 1):
-		var a: Dictionary = place_history[i]
-		var b: Dictionary = place_history[i + 1]
-		var ta := float(a["tick"])
-		var tb := float(b["tick"])
-		if t < ta or t > tb:
-			continue
-		var pa := _anchor_of(a["pos"])
-		var pb := MazeGenerator.anchor_to_nearest(b["pos"], pa,
-				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
-		if tb <= ta:
-			return pb
-		return pa.lerp(pb, (t - ta) / (tb - ta))
-	return _anchor_of(last["pos"])
-
-
-func _push_history(tick: int, canon: Vector2) -> void:
-	if not place_history.is_empty():
-		var last: Dictionary = place_history[place_history.size() - 1]
-		var jump := GridPathfinder.toroidal_delta_px(last["pos"], canon,
-				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT).length()
-		# ★ 判据用环面最短距离:对手跨接缝不是跳变(环面上是同一处),用直线距离会误判成跳变、把历史白白清掉。★ 这与 _process 里那句「别改成 toroidal 最短路径」不矛盾:那里是用最短路径去驱动渲染位置(会卡在远副本,是那条老账),这里是量两点之差,环面距离才是语义正确的那个。
-		if jump > SNAP_DIST:
-			place_history.clear()
-	place_history.append({"tick": tick, "pos": canon})
-	while place_history.size() > HISTORY_MAX:
-		place_history.pop_front()
-
-
+# ★ tick 保留只为不动调用面(三个生产调用点 + 一批探针按三参调用);playout 删除后它不参与渲染。
 func apply_snapshot(data: Dictionary, local_anchor: Vector2, tick: int) -> void:
 	_opponent_canonical = data["pos"]
 	_local_anchor = local_anchor
 	_have_data = true
-	if _clock == null:
-		_clock = PlayoutClock.new(PLAYOUT_TICKS)
-	_clock.on_snapshot(tick)
-	_push_history(tick, _opponent_canonical)
 	_vel = data.get("vel", Vector2.ZERO)
 	_facing = 1 if int(data.get("facing", 1)) >= 0 else -1
 	var aim: Vector2 = data.get("aim", Vector2.ZERO)
@@ -193,7 +135,6 @@ func apply_snapshot(data: Dictionary, local_anchor: Vector2, tick: int) -> void:
 	# ★ 幽灵体不随副本根节点的视觉转体而动。倒地分支给根节点设了 rotation = -90°,而幽灵体是它的子节点 ⇒ 碰撞箱跟着转 90°;但服务器侧 player.gd 的倒地分支不旋转,尸体停在最后姿态的箱子上 ⇒ 两端「倒地的对手还挡不挡路」不一致。这里把幽灵体的世界旋转压回 0(等于给子节点一个抵消父节点的局部旋转),只让身体精灵转体;大乱斗 2s 一复活,倒地是常态,这是持续分歧源。
 	if _ghost != null:
 		_ghost.global_rotation = 0.0
-	# 位置不在这里动:本类没有 delta,而指数追赶必须逐帧推进 —— 见 _process。
 
 func play_hit(_source_pos: Vector2) -> void:
 	_hit_flash_t = HIT_FLASH_TIME
@@ -227,20 +168,10 @@ func _in_water() -> bool:
 func _process(delta: float) -> void:
 	if _have_data:
 		_drive_weapon_visual()
-		if _clock != null:
-			_clock.advance(delta)
 		var target := MazeGenerator.anchor_to_nearest(_opponent_canonical, _local_anchor,
 				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
-		if not _placed:
-			global_position = target
-			_placed = true
-		else:
-			# 按播放时钟取样(夹逼线性插值,取代「朝最新目标指数追赶」):渲染的是 render_tick 那一刻的历史位置 —— 延迟是选出来的常量(PLAYOUT_TICKS = 4 tick ≈ 67ms),不再是低通滤波器涌现出来的 v/k。★ underrun(缓冲被吃穿)与「比最老还老」都在 _sample_history 里冻结。
-			global_position = _sample_history(_clock.render_tick)
-			# 渲染位置归到本地玩家(相机)最近副本,确保渲染在可见副本、不留在远副本。★★ 这一句与 _sample_history 里的「b 锚到 a」是同一件事的两半,别顺手简化。
-			global_position = MazeGenerator.anchor_to_nearest(global_position, _local_anchor,
-					GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
-		# ★★ 幽灵体不跟着平滑走:它跟的是未经平滑的原始权威位置 target —— 幽灵体的唯一职责是让「预测所依据的世界」与权威世界一致,它要的是最小陈旧,不是好看。指数追赶是低通滤波器(目标以 300px/s 移动时额外落后 v/INTERP_RATE ≈ 25px),那 25px 会直接变成「本地预测撞在一个位置不对的对手身上」⇒ 白白多出分歧。★ 这条还保证了一件更要紧的事:预测路径与改回指数追赶之前逐位相同,所以「画面变平滑」与「回滚面零回归」可以同时成立;★ target 与渲染位置用的是同一个 anchor_to_nearest,故两者仍在同一副本空间。
+		global_position = target   # 直接渲染最新快照:无插值缓冲 ⇒ 对手按发包节奏(30Hz)落位,单步 ≈ 10px
+		# ▲ 幽灵体跟随同一个 target(最新快照锚点):它要的是最小陈旧,不是好看 —— 别让它跟着渲染平滑走。
 		if _ghost != null:
 			_ghost.global_position = target
 	if _hit_flash_t > 0.0:

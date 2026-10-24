@@ -1,6 +1,6 @@
 extends Node
 
-# 【一次性工具 · 计划 docs/superpowers/plans/2026-10-03-ui-to-tscn-and-theme.md 的 Task 3-5 用】把「代码里建的菜单屏」导出成 .tscn 骨架。
+# 【一次性工具】把「代码里建的菜单屏」导出成 .tscn 骨架。
 # ★ 为什么是「导出」而不是手写:判据是外观不变,而手抄一棵几十节点的树(锚点/尺寸/容器参数/样式)几乎必然抄错一两处,且抄错不报错 —— 本工具让现有代码自己把树建出来。
 #   样式从 theme_override_* 转成 theme_type_variation 时逐值与 Theme 比对:只有「这个节点显式设的每一样都恰好等于某个变体的取值」才换,换不掉的原样留在 .tscn 里(诚实的兜底,外观也不变)。
 # 跑法:"$GODOT" --headless --path . --quit-after 600 res://tools/gen_menu_scene.tscn -- <屏名>;输出 res://tests/_gen/<屏名>.tscn(不带脚本,纯骨架)。屏名与要剥的动态子树见 SCREENS。

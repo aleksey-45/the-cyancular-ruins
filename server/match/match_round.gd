@@ -107,8 +107,10 @@ func _round_over(winner: int) -> void:
 	_round_timer = ROUND_OVER_TIME
 	_broadcast_round_state()
 
-# 换局复位:清场上子弹 + 把可破坏砖与子格 HP 还原为建局基线;客户端同刻也走同款复位(Level0.reset_destructibles)⇒ 两端始终从同一基线出发,旧子弹不跨局残留。
-
+# 换局复位(增量,2026-10-24):只还原「被拆过的 16px 子格」—— 整图 build_sim 实测 ~0.48s ⇒ 每局卡顿。
+# 与客户端 Level0.reset_destructibles() 同构:sub_hp / 可破坏碰撞子格 / 格级网格与 HP 逐格回基线,只 rebuild 脏块;
+# 永久墙与攀爬条从不变化 ⇒ 永不重建。★ 兜底:名单以 damaged_subs 为准,再并上「与 _base_grid 不同的 64px 格」的 16 个子格
+# (格级 destroy 路径只清子格 HP、不一定逐子格发回调;漏了它下一局就是「客户端有墙、服务器没有」)。
 func _reset_world_and_clear_dynamics() -> void:
 	for b in get_tree().get_nodes_in_group("bullet"):
 		if is_instance_valid(b):
@@ -118,15 +120,45 @@ func _reset_world_and_clear_dynamics() -> void:
 	_reset_ground_weapons()
 	if _base_grid.is_empty():
 		return
-	var g := MazeGenerator.copy_grid(_base_grid)
-	grid = g
-	MazeGenerator.current_grid = g
-	TileDefs.init_hp(g)
-# ★★ 子格 HP 表也必须回基线,且必须在 build_sim 之前(它就按 sub_hp 筛子格):少了这一行,下一局就是
-# 「客户端有墙、服务器没有」—— grid 回了实心、碰撞却不再为这些子格生成,玩家可穿墙。客户端对偶见
-# Level0.reset_destructibles()(它还原 current_subgrid + init_sub_hp 两套表)。
-	TileDefs.init_sub_hp(MazeGenerator.current_subgrid)
-	destructible_sub = WorldBuilder.build_sim(self, g)
+	var sgrid := MazeGenerator.current_subgrid
+	if sgrid.is_empty():
+		return
+	var sc: int = (sgrid[0] as Array).size()
+	var sr: int = sgrid.size()
+	# ① 收齐要还原的子格 + 就地回格级网格
+	var subs: Dictionary = damaged_subs.duplicate()
+	for cy in grid.size():
+		var row: Array = grid[cy]
+		var brow: Array = _base_grid[cy]
+		for cx in row.size():
+			if row[cx] == brow[cx]:
+				continue
+			row[cx] = brow[cx]
+			for sy in 4:
+				for sx in 4:
+					subs[Vector2i(cx * 4 + sx, cy * 4 + sy)] = true
+	# ② 逐子格还:sub_hp / 可破坏碰撞子格;顺带收脏块与涉及格
+	var chunks: Dictionary = {}
+	var cells: Dictionary = {}
+	for key in subs:
+		var sub: Vector2i = key
+		if sub.x < 0 or sub.y < 0 or sub.x >= sc or sub.y >= sr:
+			continue
+		var tex: int = int(sgrid[sub.y][sub.x])
+		TileDefs.restore_sub(sub, TileDefs.hp_of(tex) if tex != 0 else 0)
+		if not destructible_sub.is_empty():
+			destructible_sub[sub.y][sub.x] = CollisionBuilder.destructible_value(tex)
+		var cell := Vector2i(sub.x / 4, sub.y / 4)
+		chunks[CollisionBuilder.chunk_of(cell)] = true
+		cells[cell] = true
+	# ③ 格级 HP 回基线(网格已在 ① 就地回;与 TileDefs.init_hp 同口径)
+	for cell in cells:
+		TileDefs.set_hp_grid(cell, TileDefs.hp_of(MazeGenerator.texture_of(int(_base_grid[cell.y][cell.x]))))
+	# ④ 只重建脏块(不再整图 build_sim)
+	for ch in chunks:
+		CollisionBuilder.rebuild_chunk(destructible_sub, ch, self)
+	_dirty_chunks.clear()
+	damaged_subs.clear()
 
 
 func _start_next_round() -> void:

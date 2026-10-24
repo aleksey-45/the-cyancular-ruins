@@ -6,7 +6,7 @@ extends SceneTree
 # ★★ 覆盖面边界(本守卫能给的最强保证是什么、测不到什么):扫 SCAN_ROOTS(core/ scenes/ server/ ui/ tests/)下的 .gd/.tscn(走 ScanUtil.collect),
 #   外加 tests/ 下递归收的 .sh(自己用 DirAccess 收 —— 刻意不动共享脚手架 ScanUtil,它另有 5 个探针依赖它「只收 .gd/.tscn」的语义)。看不见的载体(已知边界,不是漏扫):project.godot 的 autoload/main_scene、start_server.bat、tools/*.py。
 # ★★ 拆串 / %-格式化 / 变量拼接本守卫结构性看不见:正则是 res://[A-Za-z0-9_./-]*,只取单个字符串字面量 ⇒ "res://ui/" + "pause_menu.gd" 被削成 res://ui/,而那是个仍然存在的目录 ⇒ 通过、不报红。
-#   ⇒ 每个搬迁 task 必须自己按形态扫一遍(现成命令见 docs/superpowers/plans/2026-10-02-directory-restructure.md 的 Task 4 Step 3b);★ 反向纪律:有些拆串是负向断言(断言某字符串不该出现),必须原样保留 —— 先判它是活引用还是负向断言,再决定动不动。
+#   ⇒ 每个搬迁 task 必须自己按形态扫一遍(按形态扫一遍.md 的 Task 4 Step 3b);★ 反向纪律:有些拆串是负向断言(断言某字符串不该出现),必须原样保留 —— 先判它是活引用还是负向断言,再决定动不动。
 #
 # ★★ 豁免条目是无条件的(命中即放行,不看这条路径今天还在不在)⇒ 豁免会活过自己的成因:改豁免表、或删被豁免路径的生产者时,必须一并复核「它当初为什么被豁免」。
 

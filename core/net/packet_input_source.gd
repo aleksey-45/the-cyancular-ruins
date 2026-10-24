@@ -2,8 +2,8 @@ class_name PacketInputSource
 extends PlayerInput
 
 # 网络注入输入(服务器权威模拟的唯一消费方):从输入包取轴/按键/边沿/切枪/瞄准。
-# held/axis/aim/weapon 新包到达即覆盖(紧跟客户端);边沿累积(|=)不覆盖 ⇒ 两包批量到达也不丢边沿(抓梯/跳跃/开火都靠边沿)。
-# 缺包时(无新包到达)held 保持上一包,边沿由 MatchHost 每帧末 clear_edges() 清空 ⇒ 沿用上一 tick 输入。
+# held/axis/aim/weapon 新记录到达即覆盖(紧跟客户端);边沿累积(|=)不覆盖 ⇒ 一次到多条记录也不丢边沿(抓梯/跳跃/开火都靠边沿)。
+# 缺包时(无新记录)held 保持上一条,边沿在记录消费后由 MatchHost 的 clear_edges() 清空 ⇒ 第二条 tick 沿用 held。
 
 const BIT_UP := 1
 const BIT_DOWN := 2
@@ -89,14 +89,19 @@ func source_kind() -> int:
 
 # ★★ 轴是归一体但协议上无界(ax=50 在服务端约等于 35000px/s,全图才 9600px):不可信入口收口为 非有限(NAN/±INF)→ 0,否则钳到 [-1,1]。
 # ★ 先判有限性再钳(不能假设 clampf 对 NaN 的行为);动机是协议健壮性、不是反作弊;合法输入(|ax| <= 1)逐位不变 ⇒ 不动手感。
-# ── 输入队列:自适应抖动缓冲上限。原先写死 MAX_PENDING_INPUT = 8,而它同时是上限又是稳态(生产 1 包/tick 与消费 1 包/tick 是两个独立时钟)
-# ⇒ 队列长度是带反射壁的零漂移随机游走,长期停在壁附近、没有任何回复力 ⇒ 那层 133ms 输入延迟是永久的(ack 永久落后)。
-# 现在上限跟着实测抖动包络走:peak = 最近一 tick 到过几包(丢包前的原始深度,每 tick 衰减 1)⇒ 上限 = peak + 1,钳在 [QUEUE_CAP_MIN, QUEUE_CAP_MAX];
-# 网络一安静缓冲就自己缩回去。★ 常量口径:QUEUE_CAP_MAX 即原硬顶(不改最坏情况);QUEUE_CAP_MIN >= 2(1 意味着"一 tick 到两包就丢",而抖动本身就会)。
-# ★ 代价照实说:每丢一包 = 服务器少模拟一个 tick ⇒ 客户端靠 C2 回滚纠正一次(有界)。详见 docs/eng/netcode-snapshots.md §4.2。
+# ── 输入队列:自适应抖动缓冲上限。原先写死 MAX_PENDING_INPUT = 8,而它同时是上限又是稳态(生产 1 条/2 tick 与消费 1 条/2 tick 是两个独立时钟)
+# ⇒ 队列长度是带反射壁的零漂移随机游走,长期停在壁附近、没有任何回复力 ⇒ 那层输入延迟是永久的(ack 永久落后)。
+# 现在上限跟着实测抖动包络走:peak = 最近一次轮询到过几条记录(丢之前的原始深度,每 tick 衰减 1)⇒ 上限 = peak + 1,钳在 [QUEUE_CAP_MIN, QUEUE_CAP_MAX];
+# 网络一安静缓冲就自己缩回去。★ 常量口径:QUEUE_CAP_MAX 即原硬顶(不改最坏情况);QUEUE_CAP_MIN >= 2(1 意味着"一对 tick 到两条就丢",而抖动本身就会)。
+# ★ 代价照实说:每丢一条记录 = 服务器少模拟 2 个 tick ⇒ 客户端靠 C2 回滚纠正一次(有界)。详见 docs/eng/netcode-snapshots.md §4.2。
 const QUEUE_CAP_MIN := 2
 const QUEUE_CAP_MAX := 8
 const QUEUE_CAP_MARGIN := 1
+
+# ── 一条输入记录覆盖几个物理 tick(协议约定,两端必须同版本)── 采样 30Hz / 物理 60Hz ⇒ 每条 2 tick。
+# 服务端每条消费一次、连跑 2 个物理步;客户端本地预测与 C2 重放也按同一分组走(两端输入流必须逐 tick 相同,否则永久分歧)。
+# ★ 别在客户端另抄一个数:采样/上行/C2 重放都读这一处。
+const TICKS_PER_RECORD := 2
 
 
 static func adapted_cap(peak: int) -> int:

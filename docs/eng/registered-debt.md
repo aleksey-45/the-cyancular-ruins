@@ -1,60 +1,19 @@
-# 登记欠账(既有红 / 待还的债)
+# 已知边界与已知红
 
-> ★ **2026-10-09 测试面削减 90%**:本文件里凡标着 `（已删·2026-10-09）` 的守卫**都已不存在**。
-> 那一批删了什么、留了什么、代价是什么 —— 台账
-> [`docs/superpowers/specs/2026-10-09-test-surface-cut-90-design.md`](../superpowers/specs/2026-10-09-test-surface-cut-90-design.md)。
-> ★ 读法三条,别读错:
-> 1. **不要**因为路径还在句子里就以为守卫还在 —— 标了就是没有了;
-> 2. 那些行的「**症状**」列仍是**历史事实**(缺陷真的发生过),但「**处置 / 去向**」列对已删行
->    **一律作废** —— 它写的是"把守卫修好 / 移走"的计划,而守卫已经不存在了;
-> 3. ⇒ 那些债**没有消失,只是变成"零守卫"**。本轮削减**不新增**任何守卫(逐条见 §八)。
+> 一行一项:**现象 + 规避 / 影响面**。销掉即删行。跑法与判据见 [`tests.md`](tests.md),取舍见 [`test-economy.md`](test-economy.md)。
 
-> 本文件是**这两类**欠账的清单:① 长期红的探针(**不算守卫**),② 重复真相源(该改生成式的地方)。
-> ★ **2026-10-04 校正口径**:此前 `AGENTS.md` 称本文件是"**唯一**清单",而实际只有这两类 ——
-> 性能/视觉/文档/工程类的债住别处,落点见 §四。**动手前先看本文件,再看 §四 那张表**。
-> 纪律:每条都写清 **owner / 最后复核 / 症状 / 为什么留着 / 什么时候能销**;销掉时**删行**
-> (历史在 git 里,不留"已修"注);**入库文档不得引用 `.superpowers/`**(那里 gitignore,别人 404,
-> 要用的上下文请摘抄进来)。
-> 相关:[`tests.md`](tests.md) §守卫边界 · [`AGENTS.md`](../../AGENTS.md) §2「反重复」· [`CLAUDE.md`](../../CLAUDE.md)
+## 已知红
 
-## 分节索引（2026-10-13 拆分：本体 126KB 越过 64KB 上下文线）
+- `tests/probe/team_match_probe.sh` —— 整跑判 `FAIL`,不可当 3v3 的端到端守卫;影响面 = 3v3 只能靠该支日志 + 人工试玩。
+- `tests/known_red.txt` 基线当前 **0 条** —— 任何红都算新红,`run_all.sh` 退出码非 0。
 
-★ **各节的正文已搬进 `docs/eng/debt/`**；原 `§一`~`§八` 的编号与标题**保持不变**，所以别处写的「`registered-debt.md` §五」仍然对得上（点下表进那一节）。
+## 已知边界
 
-| 节 | 本文件原先的标题 | 正文落点 | 行数 |
-|---|---|---|---|
-| §一 | 一、既有红 | [`known-red.md`](debt/known-red.md) | 24 |
-| §二 | 二、重复的真相源(该改成生成式) | [`duplicate-truth.md`](debt/duplicate-truth.md) | 13 |
-| §三 | 三、怎么销一条 | [`how-to-close.md`](debt/how-to-close.md) | 10 |
-| §四 | 四、本文件**不收**的那些债住在哪(2026-10-04 加) | [`where-other-debt-lives.md`](debt/where-other-debt-lives.md) | 10 |
-| §五 | 五、守卫强度已知缺口(2026-10-04 加) | [`guard-strength-gaps.md`](debt/guard-strength-gaps.md) | 123 |
-| §六 | 六、功能性已知边界(2026-10-04 加) | [`functional-boundaries.md`](debt/functional-boundaries.md)（57 KB）+ 续篇 [`unverifiable-boundaries.md`](debt/unverifiable-boundaries.md)（13 KB，2026-10-13 按 64KB 判据拆出） | 467 |
-| §七 | 七、已裁定不做(won't fix,2026-10-04 加) | [`wont-fix.md`](debt/wont-fix.md) | 202 |
-| §八 | 八、2026-10-09 测试面削减**新增/改口**的登记项 | [`test-cut-2026-10-09.md`](debt/test-cut-2026-10-09.md) | 20 |
-
-★ **为什么拆**:本仓的既有判据是「单文件超过 64KB 工作区指令预算就会被截断,后半本等于没写」(`CLAUDE.md:5` 的先例:182KB 的 `CLAUDE.md` 因此被拆出 `docs/eng/`)。
-
-## ★★ 编号已知问题（2026-10-13 实测 —— 引用前必读）
-
-**本套债单的条目编号是历史遗留的，§五/§六/§七 曾经共用过一套连续编号，拆分按 `##` 切开后编号就错位了。**
-实测（`grep -o '^[0-9]\+\. \*\*'`）：
-
-| 节 | 现状 |
-|---|---|
-| §五 `guard-strength-gaps.md` | 编号 **有跳号**（缺 9 / 11 / 12） |
-| §六 `functional-boundaries.md` | 编号 **有重复**：`11` / `12` / `13` **各出现两次**（两段不同内容） |
-| §七 `wont-fix.md` | 从 1 起，但中间混进一个 `24`（与 §六 的 24 不同内容） |
-
-⇒ **纪律：引用必须带"节的语义名 + 条目标题摘要"，别只写 `§六.12`** —— 那个号今天是**歧义的**。
-（例：`§六.12` 可能指"`DOC_FILES` 白名单不含审计报告"或"同族反射的残留"。）
-
-**已修的错节引用（2026-10-13，逐条按内容核实）**：
-- `docs/eng/netcode-snapshots.md` 的 `§六.28`/`§六.29`（快照编码 / 输入队列）⇒ 真身在 **§七**，已改为 `§七.28`/`§七.29`；
-- `docs/pvp-networking.md` 的 `§六.28` ⇒ 同上改 `§七.28`；
-- `tests/harness/rejoin_watcher.gd` 的 `§六.27`（c3 反向对照）⇒ 真身在 **§七**，已改 `§七.27`；
-- `core/sim/world_rewind.gd` 的 `§六.14`（"5 处按名访问玩家根"）⇒ 真身是 **§六.15**，已改。
-
-**待办（登记，未做）**：把 §五/§六/§七 各自**重编号为 1..N 唯一**，并更新全部引用。
-★ **为什么不是机械操作**：重复号意味着"旧号 → 新号"**不是单射** —— 必须逐条按**引用处的上下文**判断它指哪一条
-（例：`world_rewind.gd` 那条从文字能定到"5 处反射"，但 `test-economy.md` 的 `§六.7 与 §六.23` 就需要逐个核）。
-⇒ 做法：先建"旧号 + 节 + 标题摘要 → 新号"对照表，再改引用，最后把对照表留在本节。**在那之前，别用裸编号引用。**
+- [`tests/harness/menu_autotest.gd`](../../tests/harness/menu_autotest.gd) 被产品代码 [`scenes/main_menu.gd`](../../scenes/main_menu.gd) `load()`(菜单的 `-- --autotest-*` 钩子)—— 改名 / 删除 / 移动它,必须同批改产品代码,否则钩子失效。
+- [`tools/gen_menu_theme.gd`](../../tools/gen_menu_theme.gd) 手抄 `UiFactory.menu_panel()` 的 64/46,镜像守卫用同一对字面量 —— 改 `menu_panel()` 默认值**不会红**,生成物与守卫一起静默用旧值;改默认值必须两处同改。
+- 默认批多数支没有 `EXPECTED_CHECKS` 条数闸(`run_all.sh` 表里 `GATE` 栏为 `-`)—— 单支 `OK` 只证明"没有失败输出",不证明每条断言都跑过。
+- [`tests/run_all.sh`](../../tests/run_all.sh) 的承重安全检查只读整行注释以外的文本,看不见经 helper 间接开端口 / 拉子进程的形状 —— 新增这类支必须手工进 `EXCLUDED`。
+- [`tests/run_real.sh`](../../tests/run_real.sh) 的 R20 锁心跳只在**支间**刷新(`LOCK_STALE_SECS` = 600s)—— 单支预算调到 >600s 会把正在跑的批判成陈旧、锁失效。
+- [`tests/probe/path_integrity_probe.gd`](../../tests/probe/path_integrity_probe.gd) 在 Windows 上不区分大小写 —— 路径大小写写错会通过(导出成 `.pck` 后区分大小写);它只答"有没有",不答"大小写对不对"。
+- [`tests/probe/snapshot_size_probe.gd`](../../tests/probe/snapshot_size_probe.gd) 的世界包分片悬崖在 N≈27(7+27×51=1384 B < 1400 B MTU)—— 超 MTU 即 unreliable 分片,丢一片 = 整帧丢。
+- [`tests/probe/map_catalog_probe.gd`](../../tests/probe/map_catalog_probe.gd) 只走数据层 —— 选图 UI 版式与"点了真的进对图"由 `menu_autotest` 的 sp 分支负责。

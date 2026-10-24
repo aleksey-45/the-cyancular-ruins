@@ -8,7 +8,7 @@ extends Node
 var players: Dictionary = {}        # role(int) -> Player
 var input_sources: Dictionary = {}  # role -> PacketInputSource
 var peer_by_role: Dictionary = {}   # role -> peer_id
-var _pending_input: Dictionary = {} # role -> Array[输入包队列],按序消费不丢 just_pressed 边沿
+var _pending_input: Dictionary = {} # role -> Array[输入记录队列](30Hz 采样:一条记录管 2 个物理 tick),按序消费不丢 just_pressed 边沿
 var grid: Array = []
 var _base_grid: Array = []   # 建局原始(未破坏)网格深拷贝:每局复位重铺,防客户端/服务器砖状态漂移
 
@@ -63,14 +63,22 @@ func destroyed_cells() -> Array[Vector2i]:
 
 var destructible_sub: Array = []
 var _dirty_chunks: Dictionary = {}
-var _snapshot_accum := 0.0
-const SNAPSHOT_INTERVAL := 1.0 / 60.0   # 60Hz 快照(unreliable;服务器 60Hz 模拟,本地玩家靠快照渲染,30Hz 太卡)
+# 本局被摧毁过的 16px 子格(Vector2i → true):换局增量复位只还这些格(全量 build_sim 实测 ~0.48s ⇒ 每局卡顿)。
+var damaged_subs: Dictionary = {}
+var _snapshot_tick_phase := 0   # 物理 tick 相位:每 SNAPSHOT_STRIDE 个 tick 发一次(整数计数;用浮点累加在整除边界上会漂成 3 tick 一次)
+# ── 下行发包频率(2026-10-23 起 30Hz)── ★ 物理模拟仍是 60Hz:快照的 tick 用 60Hz 物理 tick 计,30Hz 发包 ⇒ 每包跨 2 tick(SNAPSHOT_STRIDE)。
+# 为什么 30Hz:下行载荷/发包次数减半(docs/eng/netcode-snapshots.md §5.2 那条「60→30Hz」选项);代价 = C2 对账频率减半、副本插值样本间隔翻倍(playout 的 tick 域不变,仍是 60Hz tick)。
+# ★ SNAPSHOT_STRIDE 由 SNAPSHOT_HZ 推导(= 60Hz物理 tick / SNAPSHOT_HZ,必须整除):客户端 playout 时钟与位置历史都按「60Hz 物理 tick」计,两处不一致会让副本时间轴快/慢一倍。
+# ★ 非整除的 HZ(如 40)会让 stride 被整除截断 ⇒ tick 时间轴与包率同时错;要改先选 60 的约数(30/20/15/12/10)。
+const SNAPSHOT_HZ := 30
+const SNAPSHOT_INTERVAL := 1.0 / SNAPSHOT_HZ
+const SNAPSHOT_STRIDE := 60 / SNAPSHOT_HZ   # = 60Hz 物理 tick / 30Hz 发包
 # ★ 命中判定半径的单一来源在 BulletBase.PLAYER_HIT_RADIUS:客户端那份视觉榴弹也按同一半径判「碰到玩家 → 短引信」,两处各写一个数就会漂。
 const HIT_RADIUS := BulletBase.PLAYER_HIT_RADIUS
 var _seen_bullets: Dictionary = {}  # bullet instance_id -> true(只广播一次);每帧按在场子弹剪枝(见 _adjudicate_bullets)
-var _snap_tick := 0   # 快照序号(客户端靠它丢弃乱序的旧快照)
-# C2 rollback:每物理 tick 恰好消费一个输入包(FIFO),ack 让客户端重放 seq > ack 的本地输入 —— 1:1 同序,无 tick 映射漂移。
-var _ack_seq: Dictionary = {}   # role(int) -> 已消费输入包 seq
+var _snap_tick := 0   # 快照的 tick 时间戳(60Hz 物理 tick 域,每包 +SNAPSHOT_STRIDE;客户端靠它丢弃乱序旧快照 + playout 插值)
+# C2 rollback:每 2 个物理 tick 恰好消费一条输入记录(FIFO;30Hz 采样),ack 让客户端重放 seq > ack 的本地输入 —— 1:1 同序,无 tick 映射漂移。
+var _ack_seq: Dictionary = {}   # role(int) -> 已消费输入记录的 seq
 
 
 var _options: Dictionary = {}

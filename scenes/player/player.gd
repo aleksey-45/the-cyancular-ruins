@@ -562,7 +562,7 @@ func restore_state(st: Dictionary) -> void:
 
 
 # 非预测字段的软同步(拾取/丢弃/复活/换局改的就是这些):只补字段、不重放 —— 位置/速度是预测出来的,拿权威覆盖它们才是橡皮筋,而背包/残弹只由服务器裁决(客户端从不预测拾取/丢弃)。
-# ★ 由 PredictionRollback 在预测被证实那一支调用(每个 ack 一次,~60Hz),所以先比指纹再动手:restore_inventory 会 emit inventory_changed → ui/hud.gd 整体重建武器框,无脑调等于每帧新建/销毁一堆 Control。
+# ★ 由 PredictionRollback 在预测被证实那一支调用(每个本人包一次,下行 30Hz),所以先比指纹再动手:restore_inventory 会 emit inventory_changed → ui/hud.gd 整体重建武器框,无脑调等于每帧新建/销毁一堆 Control。
 func sync_soft_state(st: Dictionary) -> void:
 	# ★ 指纹必须连 winst 一起比:同型号两把之间换手时 wslot 与背包结构都不变,只看那两样会把整条软同步跳过。缺键时默认取当前值 ⇒ 老载荷(无 winst)行为与改动前逐字相同。
 	if int(st.get("wslot", weapons._current_type)) == weapons._current_type \

@@ -158,6 +158,7 @@ func create_room(caller: int) -> void:
 	NetDiag.audit("room_created", {"room": code, "mode": ModeDefs.MODE_PVP, "peer": caller,
 			"nick": str(_peer_names.get(caller, "玩家"))})
 	NetBus.reply(caller, "room_created", code)
+	_flush_pvp_state.call_deferred(room)   # 1v1 等待室状态(2026-10-24:开局改由房主点开始)
 
 func join_room(caller: int, code: String) -> void:
 	var room: RoomTypes.Room = _registry.find(code, ModeDefs.MODE_PVP)
@@ -172,6 +173,10 @@ func join_room(caller: int, code: String) -> void:
 	if room.in_match:
 # 对局中(worker 已拉起):成员已转连对局,照列在列表里但进不去。★ 文案不能再说「房间已满」—— 房里可能只剩 1 人在线(对手掉线 /
 # 自己还没转连),那是假话;而且它会命中大厅页 mp_lobby 的自动刷新分支,而刷新对这个房毫无意义。三模式文案逐字统一。
+		NetBus.reply(caller, "server_message", "该房间的对局已进行中,无法加入")
+		return
+	if room.started:
+		# 开局瞬间(worker 已在拉、in_match 还没翻)的窗口:1v1 从 2026-10-24 起由房主触发,这个窗口可能被第三人撞上。
 		NetBus.reply(caller, "server_message", "该房间的对局已进行中,无法加入")
 		return
 	if room.players.size() >= 2:
@@ -190,7 +195,8 @@ func join_room(caller: int, code: String) -> void:
 			"nick": str(_peer_names.get(caller, "玩家")), "players": room.players.size()})
 	NetBus.reply(caller, "room_joined", 2)
 
-	pairing_ready.emit(room)
+	# ★ 2026-10-24:不再自动开局 —— 两人齐后广播等待室状态,由房主点「开始游戏」触发 pairing_ready。
+	_flush_pvp_state.call_deferred(room)
 
 # 掉线 / 退出:三种房型逐条同款(摘人 → 3v3 顺带清空出的队位 → 局中不拆 → 空房拆 → 房主转移 + 广播)。
 # ★★ 对局中(in_match)的房不拆:客户端转连 worker 时会全部断开大厅,拆了就再也不会出现在列表里 ——「看得见」与「回局」
@@ -218,7 +224,9 @@ func on_peer_left(peer_id: int) -> void:
 				teardown_room(room, LobbyRooms.TEARDOWN_DELAYED, "", false, "empty")   # 延迟归还端口(worker 会自己退)
 				continue
 			if room.is_duel():
-				continue   # 1v1 没有房主字段与等待室状态广播(旧实现的空分支,照留)
+				# 1v1(2026-10-24 起有等待室状态):房主 = players[0],退出后自动顺位;刷新两边等待室(对手离开 / 换房主)。
+				_flush_pvp_state.call_deferred(room)
+				continue
 			if room.host_peer == peer_id:
 				room.host_peer = room.players[0]
 				NetDiag.audit("host_transfer", {"room": str(code), "mode": mode,
@@ -241,6 +249,8 @@ func _broadcast_state(room: RoomTypes.Room) -> void:
 		_broadcast_royale_state(room)
 	elif room.is_team():
 		_broadcast_team_state(room)
+	elif room.is_duel():
+		_flush_pvp_state.call_deferred(room)
 
 
 # 房内全员广播实时状态(等待室 UI 刷新)。★ 延到帧末再发:调用点常在「刚有人断开」的路径上,此时其余成员的连接状态可能还没收敛。
@@ -278,6 +288,47 @@ func royale_room_of(caller: int) -> RoomTypes.Room:
 
 func _in_1v1_room(caller: int) -> bool:
 	return _registry.room_of_peer(ModeDefs.MODE_PVP, caller) != null
+
+
+func pvp_room_of(caller: int) -> RoomTypes.Room:
+	return _registry.room_of_peer(ModeDefs.MODE_PVP, caller)
+
+
+# 1v1 房主开局(2026-10-24:两人凑齐不再自动开,由房主点「开始游戏」)。门禁全在房间层:
+# 房主 = players[0](1v1 没有 host_peer 语义)、必须 2 人、未开局。通过后仍走 pairing_ready → RoomManager 拉 worker。
+func pvp_start(caller: int) -> void:
+	var room := pvp_room_of(caller)
+	if room == null:
+		return
+	if room.started or room.in_match:
+		return   # 已开局(重复请求防重入:不会双开 worker)
+	if room.players.is_empty() or room.players[0] != caller:
+		NetBus.reply(caller, "server_message", "只有房主能开始游戏")
+		return
+	if room.players.size() < 2:
+		NetBus.reply(caller, "server_message", "等待对手加入")
+		return
+	pairing_ready.emit(room)
+
+
+# 1v1 等待室状态:{code, players:[{role,name}], host_role, in_match} + 每人一份 your_role。
+# ★ 延帧再发、发送前再判开局:理由与 _flush_royale_state 逐字相同(断开信号未收敛会踩 max channels: 0 并丢包)。
+func _flush_pvp_state(room: RoomTypes.Room) -> void:
+	await get_tree().process_frame
+	if room.in_match or room.started:
+		return
+	var plist: Array = []
+	for peer_id in room.players:
+		plist.append({"role": room.player_role[peer_id], "name": _peer_names.get(peer_id, "玩家")})
+	var host_role := 0
+	if not room.players.is_empty():
+		host_role = int(room.player_role.get(room.players[0], 0))
+	var state := {"code": room.code, "players": plist, "host_role": host_role, "in_match": room.in_match}
+	for peer_id in room.players:
+		if is_peer_online(peer_id):
+			var mine := state.duplicate()
+			mine["your_role"] = room.player_role[peer_id]
+			NetBusExt.rpc_id(peer_id, "pvp_room_state", mine)
 
 func royale_create(caller: int, opts: Dictionary) -> void:
 	if _in_team_room(caller):

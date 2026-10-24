@@ -1,174 +1,68 @@
 # UI(调色板 / 菜单语汇 / HUD / 小地图 / 大厅版式)
 
-> ★ **2026-10-09 测试面削减 90%**:本文件里凡标着 `（已删·2026-10-09）` 的守卫**都已不存在**。
-> 那一批删了什么、留了什么、代价是什么 —— 台账
-> [`docs/superpowers/specs/2026-10-09-test-surface-cut-90-design.md`](../superpowers/specs/2026-10-09-test-surface-cut-90-design.md)。
-> ★ 读法:**不要**因为路径还在句子里就以为守卫还在 —— 标了就是没有了。
+> 与源码冲突时以源码为准,读前先 `grep` 复核。
 
-> 从 [`CLAUDE.md`](../../CLAUDE.md) 拆出(2026-10-03,**原文逐字未改**)。返回索引:[`CLAUDE.md`](../../CLAUDE.md)。
-> 本文件覆盖:UI(界面)。
-> ★ 文档会过期 —— **任何冲突以源码为准**,读之前先 `grep` 复核。
+## 调色板与 UiFactory
 
-### UI(界面)
+- `ui/factory/ui_factory.gd` 是 UI 的唯一工厂与唯一调色板;颜色只在那里定义,各页面一律引用,不写 `Color(...)` 字面量;色值统一写 hex(`Color("#RRGGBB")`)。
+- token:基础 `C_BG` / `C_SURFACE` / `C_ROW` / `C_FIELD` / `C_BTN_FILL(_HI/_DN)` / `C_BORDER(_DIM)` / `C_ACCENT` / `C_DANGER` / `C_TEXT(_DIM)` / `C_WHITE` / `C_WARN`;HUD `C_PLATE` / `C_SLOT_EMPTY` / `C_SLOT_FILLED` / `C_SLOT_ACTIVE` / `C_TEAM_A` / `C_TEAM_B` / `C_GRACE` / `C_MODE_TEAM` / `C_MODE_ROYALE`;菜单 `C_HEADER` / `C_INNER` / `C_EDGE` / `C_GOLD` / `C_TEXT_MUTE`。
+- 字号必须是 16 的倍数(16 / 32 / 48 / 128…),`style_control` 会 assert;`separation` / `custom_minimum_size` 这类布局度量不要求 16 对齐。
+- 字体:拉丁 `assets/fonts/less_perfect_dos_vga.ttf`(8×16 DOS 位图);汉字 `assets/fonts/unifont-17.0.05.otf`(Unifont,SIL OFL 1.1)。两者都套 `PixelFont.shared()`(关抗锯齿 / 微调 / 子像素);换字体只改 `core/present/pixel_font.gd` 的 `CJK_FONT_PATH`,并重算 `max_units` / `BOARD_W` / `NAME_UNITS`。
+- 菜单语汇:`menu_panel()`(两层嵌套 PanelContainer:外深线 + 内亮线,内容加进 `Body`,默认 padding 64/46)、`menu_button()`、`header_strip()`(内边距 右/上/下 40/20/20、左 0)。`_btn_box` 内容边距 40/20 ⇒ 32 号字按钮最低高度 72,绝对定位的调用方(`scenes/mp_lobby/room_list.gd`)必须自己把行高抬到 72;大厅页左右留白 `PAGE_MARGIN = 76`。
+- 菜单 token 只给菜单系(主菜单 / 设置 / 信息 / 统一大厅 / Beta / 结算页 / 暂停菜单)用;HUD 读的 `C_ACCENT` / `C_TEXT` / `C_TEXT_DIM` / `C_SURFACE` / `C_BORDER` / `C_PLATE` / `C_SLOT_*` / `C_TEAM_*` / `C_GRACE` / `C_MODE_*` 不许改。
+- 按钮 = 暗填充 + 2px 亮描边、直角(`style_button(b, variant)`,`variant="quiet"` 是弱化项);描边对页面底与对填充都 ≥ 3:1。其余工厂方法:`panel_box()`(**不透明**)、`row_box()` / `style_row_button()`、`style_line_edit()`、`style_check()`(自绘开关图标)、`style_slider()`。
+- 开关 / 勾选框行 = 定宽标签列 + 紧邻开关(`HBoxContainer`,标签 `custom_minimum_size.x` 固定);裸 `CheckButton` 塞进宽容器会被拉到全宽。
+- 生成物:改过 `UiFactory` 的菜单系样式后必须重跑 `tools/gen_menu_theme.gd` 重建 `ui/theme/menu_theme.tres`。
 
-- **`ui/factory/ui_factory.gd` 是 UI 的唯一工厂与唯一调色板**。颜色只在那里定义(`C_BG`/`C_SURFACE`/`C_ROW`/`C_FIELD`/`C_BTN_FILL(HI/DN)`/`C_BORDER(DIM)`/`C_ACCENT`/`C_DANGER`/`C_TEXT(DIM)`/`C_WARN`),各页面一律引用,**不要再写 `Color(...)` 字面量**。字号仍必须是 16 的倍数(见文件头两条硬约定)。
-- ★★ **菜单系视觉语汇(2026-10-03,方向 B「遗迹青铜」)**:`UiFactory` 新增 5 个**菜单专属** token —— `C_HEADER`(标题带底 / 按钮填充)/ `C_INNER`(面板**内**亮线,凿刻感的来源)/ `C_EDGE`(按钮描边)/ `C_GOLD`(琥珀:分区标题 / 主行动按钮)/ `C_TEXT_MUTE`(比 `C_TEXT_DIM` 更弱一档的禁用字) + 三个构造器 `menu_panel()`(**两层嵌套 PanelContainer**:外深线 + 内亮线;内容加进 `Body`,默认 padding **64/46**)/ `menu_button()` / `header_strip()`(标题带,内边距 **40/20**)。
-  - **尺度档(2026-10-03 两轮放大,用户:"margin 和 padding 还是不够")**:`_btn_box` 内容边距 **40/20** ⇒ 32 号字按钮**最低高度 = 32 + 40 = 72**,绝对定位的调用方(`scenes/mp_lobby.gd` 是本仓唯一一处)必须自己把行高抬到 72,否则被 `custom_minimum_size` 顶高、压到下一行(且**不报错**);菜单各页 `PAGE_MARGIN` 统一 **76**。★ `_btn_box` 是**共用**的(`menu_button()` 与旧的 `style_button()` 都走它)⇒ 改它 = 同时放大那几屏的内边距,**有意接受**(内边距变大不坏任何断言)。
-  - ★★ **"共享 token 冻结、HUD 优先"(用户 2026-10-03 裁定)**:menu token **只给菜单系用**(主菜单 / 设置 / 信息 / 统一大厅 / Beta / 结算页 / 暂停菜单),**对局内 HUD 一个像素都不改**;`C_ACCENT` / `C_TEXT` / `C_TEXT_DIM` / `C_SURFACE` / `C_BORDER` / `C_PLATE` / `C_SLOT_*` / `C_TEAM_*` / `C_GRACE` / `C_MODE_*` **一个都不许改**(HUD 读它们;`C_SURFACE` / `C_BORDER` 还被对局内的重连横幅 `status_banner.gd` 的 `panel_box(false)` 读)。★ 设计 §3.9.1 的 token 表给 `C_ACCENT` / `C_TEXT_DIM` 开了另一个值,却又同时写着「HUD 一行不动」—— 那是**设计文档的内部矛盾**,**以 HUD 为准**。★ 冻结守卫 `menu_style_probe`（已删·2026-10-09）**已不存在** ⇒ 色值冻结今天**零自动化守卫**，改 hex 前先人眼核对；色值统一写 hex 字符串(`Color("#RRGGBB")`,8bit 精确),浮点反算会与守卫里的 hex 期望值差 1/255 ⇒ 恒红,两侧必须同一写法。
-- **按钮 = 描边式**(`style_button(b, variant)`):暗填充 + 2px 亮描边、直角。标定目标是**描边对页面底 ≥3:1、对填充 ≥3:1** —— 改 `C_BORDER` 前先按这个量。`variant="quiet"` 是弱化项(退出)。其余控件各有工厂方法,新页面直接调:`panel_box()`(面板底,**不透明** —— 半透明会让下层菜单文字透上来重影)、`row_box()`/`style_row_button()`、`style_line_edit()`、`style_check()`(**自绘开关图标**:默认主题的 CheckButton 在「关」态没有可见轨道)、`style_slider()`。
-- **开关/勾选框行 = 定宽标签列 + 紧邻开关**(`HBoxContainer`,标签 `custom_minimum_size.x` 固定)。别把裸 `CheckButton` 直接塞进宽容器 —— Godot 会把它拉到容器全宽,开关被推到几百像素之外。
-- **字体**:拉丁走 `assets/fonts/less_perfect_dos_vga.ttf`(8×16 DOS 位图);**汉字走仓内 `assets/fonts/unifont-17.0.05.otf`**(GNU Unifont,SIL OFL 1.1)。两者都套 `PixelFont.shared()` 的「关抗锯齿/关微调/关子像素」。**为什么必须是 16 像素网格**:本项目字号只用 16 的倍数,只有设计像素能整除设备像素时边缘才是硬的;主流开源像素中文字体只做到 12px,在 16/32 下是 1.33x/2.67x 非整数缩放,笔画会粗细不均。换字体只改 `core/present/pixel_font.gd` 的 `CJK_FONT_PATH`。
-- **HUD 元素一律垫半透明深底板,数值的唯一源 = `UiFactory.C_PLATE`(黑 0.1)**。四个 `.gd` 落点是它的**别名/引用**:`ui/hud/hud.gd` / `ui/hud/weapon_slots.gd` / `ui/factory/world_label.gd` 的 `PLATE_COLOR`、`ui/hud/royale_hud.gd` 的 `_plate_box()`;两个 `.tscn`(`ui/hud/pvp_hud.tscn` / `ui/hud/team_hud.tscn` 的 `Plate`)的 `bg_color` **结构上引用不到 GDScript 的 const** ⇒ 保留字面量,**由 `ui_palette_single_source_smoke.gd`（已删·2026-10-09） 钉住与 `C_PLATE` 逐位相等**。⇒ 改底板色 = **调色板 + 两处 `.tscn`**(原还要同步守卫里的 `PLATE_LITERAL`;那支守卫已删·2026-10-09 ⇒ 今天漏改 `.tscn` **无人报错**);四个 `.gd` 落点**一个字都不用动**。
-  - ★ **例外一:大乱斗排行榜 `royale_hud._board_bg` 单独是 0.25** —— 用户点名把那张「pvp 玩家栏」排除在这轮下调之外(比别处都实);别看到"统一"就把那处一起改。
-  - ★ **例外二:右上角击杀计数器(青色 `000`)不垫底板**(2026-09-17 用户要求删,三个模式一起生效)。⚠ 去掉它**只能靠 `draw_center = false`** —— `StyleBoxFlat` 默认底色是**不透明灰 (0.6,0.6,0.6,1)**、`draw_center` 默认 true,只删 `bg_color` 那行等于把半透明黑板换成实心灰板(实测踩过)。氧条那组底板与条/空槽同一 tween 淡入淡出,满氧时整组不出现。
-  - ★ **各档 alpha 的对比度实测表（0 / 0.10 / 0.15 / 0.45 四档的 WCAG 读数）已从代码注释搬出** —— 落点 = [`docs/2026-10-13-comment-diet-ledger.md`](../2026-10-13-comment-diet-ledger.md) §1（2026-10-13 注释瘦身把 `ui_factory.gd` 的注释压到 ≤15%）。地图开阔区是浅灰蓝,**不垫底**时青色血条压上去只有 ≈1.9:1、金色残弹 ≈2.3:1。★ **全屏压暗罩不在此列**(`pvp_hud` 的 `Mask` / royale 的 `_mask` = 0.3、暂停菜单 0.55、敌人血条底 0.45)。★ **金色(`C_WARN`)只表「弹夹见底」**这一个语义 —— 满弹用中性色,装填进度条用强调青;丢弃进度条用 `C_DANGER`。
-- **武器槽位格子 = `ui/hud/weapon_slots.gd`(`class_name WeaponSlots`)**,左下角 4×2,三态配色在 `UiFactory`(`C_SLOT_EMPTY`/`C_SLOT_FILLED`/`C_SLOT_ACTIVE`)。★ 该控件**自包含**、可挂任意节点:生产里 `WeaponSlots.attach_to(...)` **只有一个调用点**(`ui/hud/hud.gd`),但它**一处顶三处** —— 单机/1v1/大乱斗的对局场景**都实例化 `level_0.tscn`**,而 `ui/hud/hud.gd` 就在那里面。**不靠继承关系** —— `PvpHud` 与 `RoyaleHud` 是并列的两个 `extends CanvasLayer`。★ **配色前先看底板**:格子的底是 `黑 0.1` 压在**地图开阔区的浅灰蓝**上(≈#6C8790,**浅底不是深底**)→ 浅底上"越暗越醒目",三态明度阶梯必须是 未占(贴近底板、后退)→ 已占(中)→ 手持(离底板最远、最跳);反过来配会出现"空格最抢眼、当前武器最不显眼"的倒挂。★ 空格**看得见但后退**,不能"看不见" —— 与底板同明度会让 4×2 的格阵形状读不出来、容量指示器等于失效。★ 取色判据在 `kh_l3_visual_probe`（已删·2026-10-09）,但**它默认的底是深色**,故只断言"每格是不是该有的颜色 + 三态两两可区分",**不断言"谁更醒目"**;该探针另存一张 `l3_slots_on_map`(**浅底**)供**人眼**验收。★ 三档都是**半透明**(用户:「格子透明度全部改到 0.5」),于是**画面上的像素 ≠ 常量本身** —— 取色断言必须先做那步合成(`_slot_screen_color`),否则恒红;探针底色收在 `PROBE_BG` 常量里。
-- **对局内 HUD(`ui/hud/pvp_hud.tscn` + `ui/hud/royale_hud.gd`)同样一律垫深底板** —— 它们**直接压在地图上**,不垫底时浅色小字读不出来。记分条用 `ScoreWrap`(PanelContainer)按内容撑开,不是把 Label 拉成一条 1240 宽的横条。
-- **大乱斗排行榜一行五段必须定宽**:昵称走 `UiFactory.fit_name(名字, 14)`(★ 权威实现在 `UiFactory`;`RoyaleHud._fit_name` 只剩一行委托),按**显示宽度**(汉字/全角算 2 个半角单位)**截断 + 补满**。不截,长昵称会把末段的「存活/复活中/离开」顶出面板;不补,短昵称的行与行的列是错开的。单位宽度的前提是「拉丁 8×16 位图(半角 8px)+ 汉字 16px 网格 Unifont」——**换字体要重算** `BOARD_W` / `NAME_UNITS`。
-- **`mp_lobby` 也有截图探针**:`-- --autotest-{mp,royale,team}` 三条现在都按主菜单那颗「多 人 模 式」进**同一个** `mp_lobby.tscn`(menu_autotest 的 mode 表 + `must_reach` 都指向它)。改大厅版式后跑它们读图。
-- **退场耗时**:`-- --autotest-switch` 连做**两趟**「进单机 → 回主菜单」,把 `safe_change_scene` 的两条路径都走到 —— 第 1 趟只付 `remove_child`,**第 2 趟才付**退役世界那笔。配 `-- --perf-switch` 出数字(`level_0.gd` 的 `_perf_log`)。实测(headless):同步 free 265~375ms → 分帧拆除 128~160ms;剩下一大截是 `remove_child`(每次退出都付,**尚未处理**)。`-- --perf-reap-sync` 可切回旧行为做 A/B(同一负载下交替跑才可比)。
-- **小地图(`ui/hud/minimap.gd` + `ui/hud/minimap_circle.gdshader`,2026-09-17 改成圆形)**:以玩家为中心的**圆形视野**,`CanvasLayer` layer 131;挂载点**只有三个** —— `scenes/pvp_game.gd`(1v1,走 `setup` 两参)、`scenes/royale_game.gd`、**`scenes/team_game.gd`**。**单机 `level_0` 没有小地图**。
-  - ★ **`setup_multi` 的四个参数自 2026-09-29 起全部必填**(原先两个颜色提供器带默认值):大乱斗的答案曾经是"没人给这些点上色",而那个状态与"写了新模式但忘了传"**长得一模一样**。真要恒 `ENEMY_COLOR` 就必须**显式**传空 `Callable()`。少传一个实参 = **Parse Error**,不再有静默默认值。生产侧只有**两个** `setup_multi` 调用点(`royale_game` / `team_game`);1v1 走**另一个函数** `setup`。
-  - ★ **"圆形范围"的唯一入口是 `RANGE_CELLS`(当前 50 格)**;与屏幕半径 `RADIUS_PX`(140px)分开算成 `PX_PER_CELL`,单独改 `RANGE_CELLS` 只换缩放、圆的大小不变。标定参照:**屏幕能看到 46×36 格**、**1v1 两出生点环面最短距离 34 格** —— 所以 50 是"雷达"语义,不是"屏幕缩略图"。地形想更清楚就调 `RADIUS_PX`。★ **环面是免费的**:地形贴图正是 cols×rows、四周无留白,采样器开 `repeat_enable` 就能让 uv 越过 1.0 绕到另一头,**不需要铺 3×3 副本**。★ 点位走 **`GridPathfinder.toroidal_delta_px(玩家, 目标, W, H)`**(注意 **a→b** 的参数顺序),超过 `RADIUS_PX` 就不显示。★ 开关是 `Settings.pvp_show_minimap`(是否挂载)与 `pvp_minimap_show_enemy`(**是否显示"他人点"** —— 3v3 下它把**队友点**一起关)。★ **两个提供器必须共用同一套过滤(`_minimap_entries()`),不只是"同序"**:`minimap.gd` 是**按下标**取色,各写一份 `for` 时"某个副本已 `queue_free`、尚未从 `_replicas` 摘掉"那个窗口会让两数组**错位一格**(= 队友点画成敌人色,**不报错、只误导人**);守卫 `team_room_smoke`（已删·2026-10-09） ⑨③(按**函数体**断言两处都只从该函数取数)。
-  - ★ 大乱斗的他人点走**头顶 ID 同源**的 `ROLE_COLORS[(role - 1) % size]`。**不跟身体**的理由:身体色相是各人自设的(`_hues`)、**可能撞色**、且**到达比小地图建立晚**;而"认得出谁是谁"靠的是能**对回头顶那个名字**。`royale_game` 因此长出自己的同款三函数(形状与 `team_game` 那三个逐字同款)。
-  - ★ **"我"那个点**:1v1/大乱斗恒用 `SELF_COLOR`(无描边);**3v3 走 `_team_color(PvpSession.role)`(与身体/头顶 ID 同源)+ 一圈白描边**(`RING_SELF_PX` = 4px)。★ 描边与颜色**正交**:同队同色时颜色本身分不出"我"与队友,去掉它就等于没修。★ 走 `setup_multi` 的**第四参** `self_color_provider: () -> Color`(必须**每帧求值**—— 队色由 `match_sync` 下发、比小地图建立晚)。★ 为什么非要有描边:队色 `#80F4FF` 与 `SELF_COLOR #99F2FF` 只差 Δ=(25,2,0),只换颜色会从"分不清自己与队友"变成"完全分不清哪个是自己"。`SELF_COLOR` **不删**。守卫:`minimap_circle_probe`（已删·2026-10-09） 相⑥(含**换色断言**钉"每帧求值")/ 相⑦(传空提供器 ⇒ `SELF_COLOR` + 描边不可见)。
-  - ★ **左右与下方留白不同**(`EDGE` 24 / `EDGE_BOTTOM` **72**):右下角是**延迟条**,而小地图 layer 131 画在 PvpHud(130) **之上** —— 换成 280×280 的圆就**盖住了延迟数字**(用户报)。已知脆弱点(未修):`_ready` 时 `current_grid` 为空会 `set_process(false)` 且**没有重建路径**,挂早了就静默失效。守卫:`minimap_circle_probe.tscn`（已删·2026-10-09）(**必须真实渲染**;含"圆不得压到延迟条矩形"的几何断言)。
-- **统一大厅 `mp_lobby` 是 `scenes/lobby_page.gd`(`class_name LobbyPage`)的唯一子类**(2026-10-03:三个旧大厅页 `matchmaking` / `royale_lobby` / `team_lobby` 已整体退役删除):「连大厅 → 列房间 → 配对了转连 worker」的状态机、共用的字段、禁用武器网格与色相行两个设置区块、回局路径、超时梯都在基类;子类只留版式与三模式分派。★ **模式差异一律收在 `mp_lobby._mode`(筛选)与 `_current_mode`(我所在那间房的模式)两个量上**,别再按「哪个页面」分叉 —— 那正是本次要消灭的重复。★ 两个设置区块**不**放 `ui_factory.gd` —— 它们读 `Settings`,而那个工厂至今零 autoload 依赖。
+## HUD
 
-- ★★ **三个联机模式合一(2026-10-03)**:主菜单只剩**一颗**「多 人 模 式」→ `scenes/mp_lobby.tscn`;页内按 `全部 / 1v1 / 3v3 / 大乱斗` 筛选房间,**建房时才选模式**(创建弹层按模式变形)。三个旧大厅页已删除。
-  - **列表不新增统一 RPC**:一页**并发调三次**现有列房 RPC(`list_rooms` / `royale_list` / `team_list`),前端合并打标。★ 代价照实登记:**刷新延迟由最慢那份决定**;三套注册表原样保留。
-  - **列表载荷加法式扩了 5 个键**:`is_public` / `host` / `map` / `match_time`(大乱斗)/ `team_counts`(3v3);另加一条 `NetBusExt.room_map`(房主上报地图,**仅供列表展示**)。★ **`map` 与真正定图的 `player_options.map` 是两个真值** —— 房主建房后改设置会让卡片与实际不一致(已知边界,不修)。
-  - **房卡的可点性次序是承重的**:先问「是不是我的房 + 凭据还在」(`can_rejoin_to(code, mode)`),**再**轮到「对局中 ⇒ 禁用」。写反 = 回局入口点不到而**一行报错都没有**。对局中的卡整体压暗 + **不接 handler 也不吃焦点**;持凭据的本人那间可点回局。
-  - **创建弹层**:1v1 **隐藏「公开/私密 + 邀请码」整行** —— `create_room(caller)` 是冻结签名、服务端永远建公开房,显示那一行是个**骗人的控件**。3v3 隐藏禁用武器行(那两个勾选框写的是 `Settings.pvp_disabled_weapons`,在 3v3 勾一下会**连带改掉另两个模式**)。
-  - **等待室**:一个面板按模式渲染三种形态(1v1 名单+退出 / 大乱斗 名单+开始+退出 / 3v3 两队+未选边+选边+开始+退出)。★ 进房时置 `_in_room` 并**收起「＋创建房间」「加入房间」两颗入口** —— 只加 `_lobby_action_allowed()` 那道闸门不够,因为 `_open_create_dialog` 是直接绑在按钮上的、压根不问闸门;不收入口的话压暗罩会落在等待室**底下**。
-  - ★ **1v1 不上报 `time`**:`PvpSession.beta_mode` 是会话级的,而 1v1 的房**无法被 beta 隔离**(`create_room` 冻结、载荷无 beta 标记)⇒ 上报会把时间经济带给一个没勾 Beta 的对手。
-  - 守卫:`tests/probe/lobby_{payload,row,visibility,create_form,wait_room}_probe` + `lobby_parse_smoke`（这些**全部已删·2026-10-09** ⇒ 这一面今天零守卫）;★ **模式→场景的映射在仓内没有自动守卫**(只有源码形状断言),靠用户跑的 `rejoin_probe.sh`。
+- 对局内 HUD 元素一律垫半透明深底板,源 = `UiFactory.C_PLATE`(黑 0.1)。四个 `.gd` 落点是别名 / 引用:`ui/hud/hud.gd`、`ui/hud/weapon_slots.gd`、`ui/factory/world_label.gd` 的 `PLATE_COLOR`,`ui/hud/royale_hud.gd` 的 `_plate_box()`。两个 `.tscn`(`pvp_hud.tscn` / `team_hud.tscn` 的 `Plate`)结构上引用不到 GDScript const,保留字面量,必须与 `C_PLATE` 逐位相等;改底板色 = 调色板 + 两处 `.tscn`。
+- 例外一:大乱斗排行榜 `royale_hud._board_bg` = 0.25。例外二:右上角击杀计数器(青色 `000`)不垫底板,三个模式一起生效。
+- 不垫底板只能靠 `draw_center = false`:`StyleBoxFlat` 默认底色是不透明灰 (0.6, 0.6, 0.6, 1),只删 `bg_color` 会变成实心灰板。氧条那组底板与条 / 空槽同一 tween 淡入淡出,满氧时整组不出现。
+- `C_WARN` 只表「弹夹见底」一个语义:满弹用中性色、装填进度用强调青、丢弃进度用 `C_DANGER`。
+- 武器槽位 `ui/hud/weapon_slots.gd`(`WeaponSlots`):左下角 4×2,三态 `C_SLOT_EMPTY` / `C_SLOT_FILLED` / `C_SLOT_ACTIVE`,三档 alpha 0.5;`WeaponSlots.attach_to(...)` 生产里只有 `ui/hud/hud.gd` 一个调用点(单机 / 1v1 / 大乱斗都实例化 `level_0.tscn`)。浅底上「越暗越醒目」:未占贴底板 → 已占中 → 手持最跳;空格必须看得见但后退。
+- 对局内 HUD(`pvp_hud.tscn` + `royale_hud.gd` + `team_hud.gd`)直接压在地图上,同样一律垫深底板;记分条用 `ScoreWrap`(PanelContainer)按内容撑开。
+- 大乱斗排行榜一行五段定宽:昵称走 `UiFactory.fit_name(名字, 14)`(按显示宽度截断 + 补满);单位宽度 = 半角 8px / 汉字 16px。
 
-- **主菜单背景 = 真实地形 + 鱼眼 + 虚焦 + 路径段运动**(`core/present/menu_fisheye.gdshader` + `scenes/main_menu.gd`):铺一张由 **`TerrainAtlas.bake_map_image()`** 烘出的**真实地形图**(与 `Level0` **同一份图集** ⇒ 砖是砖、水是水、树叶是树叶),**不是** `MapCatalog`(那是**每格平色的选图缩略图**,放大多少都是色块,"不是那个世界")。镜头是 shader 里的**逐像素鱼眼重映射**(`repeat_enable` 让采样越界**绕到地图另一头**,与环面世界观自洽);运动学(随机路径段 + 缓入缓出 + 0°↔120° **来回摆**的慢旋转)住在脚本、每帧喂 `view_center` / `rot_angle` 两个 uniform(GDShader 没有随机数 / 没有"段"的概念)。取景 `BG_VIEW_CELLS = 26.6667`(1920 宽 ⇒ **72 屏幕像素/格 = 玩家镜头 48px/格 的 150%**;★ 72 / 32 = **2.25× 非整数** ⇒ 砖缝粗细略有不均,整数档只有 133%/200%,改一个常量即可切)。★ 本 shader **只服务主菜单背景**,改它不碰任何一局游戏的一个像素。
-  - ★★ **`dim` 的语义是"压暗多少"(`col = mix(col, vec3(0.0), dim)`),不是乘数** —— `0` = 不压、`1` = 全黑。★ 它**曾经**写成 `col *= dim`(即 `dim` = 保留多少亮度),而**用户的心智模型一直是"黑色滤镜的浓度"** ⇒ 他每说一次"太黑,调小点"(0.36→0.25→0.20→0.15)实际都让画面**更暗**,这就是"为什么越调越黑"的根因。**改语义本身就是那次修复,别改回去。** 当前 `dim=0.50`(2026-10-03 用户:「又不够黑了,先改成 0.5」)/ `vignette=0.30`(边缘径向再压一层;★ 它**不跟 dim 绑定** —— 历史上有时一起动 `57e3985`、有时只动 dim `f704b77`,改之前先问)/ `desat=0.20` / `blur_radius=4.0` / `SEGMENT_SEC=48.0`。
-- **设置页「联机显示」一节 + 「信 息」整页(2026-10-03)**:`scenes/settings_menu.gd`(两栏:左栏 音量/通用/**联机显示**,右栏 按键映射)**搬回 4 个本机显示项** —— `pvp_show_trajectories` / `pvp_show_enemy_hp` / `pvp_show_minimap` / `pvp_minimap_show_enemy`。★ 这四个键**与读者一直都在**(`pvp_game` / `royale_game` / `team_game` / `bullet_base` / `minimap`),**只是界面没了**(原先只长在**被删的 1v1 大厅页**右侧面板上 ⇒ 键还在、改不了)。★ 它们**只写本机 `Settings`、不上报服务器**(与对局的「房主规则项」不是一回事)。「版本信息」从主菜单**弹层**改成**整页** `scenes/info_menu.tscn`(三块:版本 / 开发团队 / 致谢;名单**用户给定、逐字照抄**,`tests/probe/info_page_probe`（已删·2026-10-09） 钉住);版本号与提交历史抽到 **`core/config/app_info.gd`**(`class_name AppInfo`,纯静态、零 autoload;★ **不能**放进 `core/config/build_info.gd` —— 那个被 `tools/build_release.py` 导出前覆盖写、导出后还原)。
-- **显示设置(2026-10-04 加)** —— 基准 **1920×1440 是逻辑空间**(`project.godot` 的 `window/size/viewport_*`),
-  `window/stretch/aspect="keep"` 让**窗口尺寸 ≠ 基准**时逻辑空间**仍是** 1920×1440(等比缩放 + 黑边)
-  ⇒ `mp_lobby.tscn` 那 21 处绝对定位、`minimap.gd` 的 `1920.0 - …`、`main_menu.gd` 的 `BG_VIEW_CELLS` **一律不用改**。
-  ★ `window/stretch/mode` 经用户裁决**保持 `"viewport"`(硬边)**:实测 4.7.1 的整块画布 blit 走**最近邻**
-  (与 NEAREST 平均绝对差 0.00004 / 与 BILINEAR 0.01362)⇒ 非整数缩放是**丢/重复源像素**,**不是**发虚;
-  且默认窗口在 2560×1600 屏上**1:1 无缩放**。玩家在设置页「显示」组选 **4:3 四档**
-  (`Settings.DISPLAY_RESOLUTIONS`:1280×960 / 1600×1200 / 1920×1440 / 2560×1920)与**全屏开关**
-  (`display_res_index` / `display_fullscreen`),由 `Settings.apply_display()` 应用(**headless 早退**);
-  `resizable=true` ⇒ 也能自由拖窗口。★ 注意:`apply_display()` 在启动时按存档设窗口 ⇒ **`--resolution` 会被它顶掉**
-  (取图/调试要指定尺寸得先改 `user://settings.cfg` 的 `display/res_index`)。
+## 小地图
 
-### 对局内状态横幅（`ui/hud/status_banner.gd`）的几何与层位
+- `ui/hud/minimap.gd` + `ui/hud/minimap_circle.gdshader`:以玩家为中心的圆形视野,`CanvasLayer` layer 131;挂载点只有三个 —— `scenes/pvp_game.gd`(1v1)、`scenes/royale_game.gd`、`scenes/team_game.gd`。单机 `level_0` 没有小地图。
+- `setup_multi` 的四个参数全必填;要恒 `ENEMY_COLOR` 就显式传空 `Callable()`。生产调用点只有 `royale_game` / `team_game`;1v1 走另一个函数 `setup`。
+- `RANGE_CELLS = 50` 决定圆形范围,`RADIUS_PX = 140` 决定屏幕半径,`PX_PER_CELL = RADIUS_PX / RANGE_CELLS`(2.8);单独改 `RANGE_CELLS` 只换缩放、圆的大小不变。
+- 地形贴图 cols×rows、四周无留白,采样器开 `repeat_enable` ⇒ 环面免费,不铺 3×3 副本。点位走 `GridPathfinder.toroidal_delta_px(玩家, 目标, W, H)`(注意 a→b 的参数顺序),超过 `RADIUS_PX` 不显示。
+- 开关:`Settings.pvp_show_minimap`(是否挂载)、`pvp_minimap_show_enemy`(是否显示他人点;3v3 下连队友点一起关)。
+- 两个颜色提供器必须共用同一套过滤 `_minimap_entries()`:按下标取色,各写一份 `for` 会在副本 `queue_free` 窗口错位一格。
+- 大乱斗他人点走头顶 ID 同源的 `ROLE_COLORS[(role - 1) % size]`。「我」那个点:1v1 / 大乱斗用 `SELF_COLOR`(无描边);3v3 用队色 + 一圈白描边(`RING_SELF_PX = 4`);队色必须每帧求值(由 `match_sync` 下发,比小地图建立晚)。
+- 留白 `EDGE = 24` / `EDGE_BOTTOM = 72`:右下角是延迟条(`font_size` 32,矩形上沿 y = 1367、左沿 x = 1784),小地图 layer 131 画在 PvpHud(130)之上,不可盖住它。
+- `_ready` 时 `current_grid` 为空会 `set_process(false)`,没有重建路径。
 
-> **为什么单独一节**：这些是**实测出来的几何不变量**，原先以 40 行注释的形式压在
-> `status_banner.gd` 的一个 `const TOP_OFFSET` 上面（2026-10-13 按
-> [`comment-style.md`](comment-style.md) §5 搬到此处，代码里只留一行指针）。
-> ★ 数据出处：2026-09-28 / 2026-09-29 headless 实测（`get_global_rect()` 拿到的就是布局算出的矩形）。
+## 大厅与菜单
 
-- **层位（layer 140）只住在 `ui/hud/status_banner.tscn` 里**，脚本不设 layer。理由：`.new()` 出来的
-  `CanvasLayer` 是**默认 layer 1**，会画在三个对局 HUD（130）与小地图（131）**底下**且**不报错**。
-  取 140 的推导：必须高于 130 / 131；必须低于暂停菜单（145）与结算页（150）—— 那两块是模态画面。
-- **纵向三带互不重叠**（这是 `TOP_OFFSET := 128.0` 唯一的理由）：
-  1v1 记分条占 `y ∈ [16, 68]`（**实测高 52**）；其下的 `GraceWrap`「对手掉线中」占 `y ∈ [72, 124]`
-  （高 52 = 标签 36 + 复用同一份 `Plate` 的上下内边距 8+8）；状态横幅占 `y ∈ [128, 204]`
-  （高 **实测 76** = 标签 36 + 上下各 20）。
-- **`Label` 的一行高 ≠ 字号**：`Label` 行高 = `max(字体在该字号的 get_height, 整形后的 ascent + descent)`，
-  **两半都随内容变**。实测同一份 `Plate`：纯拉丁那行（`PingWrap`，只有 `24ms`）是 **33** ⇒ 面板高 49；
-  含 CJK 的行被撑到 **36**（Unifont 的 CJK 字形框更高）⇒ 面板高 52。**同一张图里就差这 3px**：
-  别把 36 当成「本项目字体在 32 下的行高」去套纯拉丁面板。
-- **横向不是常量**：面板宽 = 文字宽 + 左右各 28px 内边距，居中时占 `x ∈ [960 - w/2, 960 + w/2]`，
-  由 `_center_panel()` 在**入树之后**按 `get_combined_minimum_size()` 现算（未入树时 `set_anchor`
-  拿到的 `parent_range` 是 0，四个偏移量会全塌成 0 —— 详见该函数上方注释）。
-- ⚠ **已登记、不修（2026-09-28 实测）**：大乱斗右上角排行榜底板左缘在 `x = 1184`，而最长那条状态文案
-  （「与服务器断线，正在重连…（剩余 60s）」）的面板宽**实测 568px** ⇒ 右端 `x = 1244`
-  ⇒ **横幅右侧侵入排行榜左缘 60px**。只有大乱斗看得见（1v1 / 3v3 没有排行榜）。
-  修法**不是**下挪 `TOP_OFFSET`（挪到板底 `y ≈ 499` 之下就落进屏幕中部、与中央播报抢位置），
-  而是缩文案 / 换单行小字 / 给大乱斗单独一个落点 —— 属另行评估。
-  `568` 这个数当时由**两条独立路径**对上（已删探针打出的矩形 + 按「汉字 32px、半角 16px」手算
-  `12×32 + 8×16 + 2×28`）。
-- ★ **守卫状态：这一段今天零自动化守卫**。`reconnect_status_probe.gd`（已删·2026-10-09）与
-  `hud_declarative_probe.gd`（已删·2026-10-09）都曾钉过它；现在改几何只能靠人眼看（跑一局大乱斗）。
+- 主菜单只有一颗「多 人 模 式」→ `scenes/mp_lobby.tscn`。`LobbyPage`(`scenes/lobby_page.gd`)是统一大厅基类:`mp_lobby` 只留版式与三模式分派,「连大厅 → 列房间 → 配对了转连 worker」的状态机、字段、两个设置区块、回局路径、超时梯都在基类。
+- 模式差异收在 `_mode`(筛选)与 `_current_mode`(所在房)两个量上;页内按 `全部 / 1v1 / 3v3 / 大乱斗` 筛选,建房时才选模式。
+- 列表并发调三次现有列房入口(`on_list_rooms` / `royale_list` / `team_list`),前端合并打标;载荷扩 5 个键 `is_public` / `host` / `map` / `match_time`(大乱斗)/ `team_counts`(3v3),另有 `NetBusExt.room_map`(仅列表展示)。`map` 与 `player_options.map` 是两个真值。
+- 房卡可点性次序:先 `can_rejoin_to(code, mode)`,再「对局中 ⇒ 禁用」;对局中的卡整体压暗 + 不接 handler 也不吃焦点。
+- 创建弹层:1v1 隐藏「公开/私密 + 邀请码」整行(`create_room` 是冻结签名、服务端永远建公开房);3v3 隐藏禁用武器行(那两个勾选框写 `Settings.pvp_disabled_weapons`,会影响另两个模式)。
+- 等待室一个面板按模式渲染三种形态(1v1 名单+退出 / 大乱斗 名单+开始+退出 / 3v3 两队+未选边+选边+开始+退出);进房置 `_in_room` 并收起「＋创建房间」「加入房间」两颗入口。
+- 1v1 不上报 `time`:`PvpSession.beta_mode` 是会话级,而 1v1 房无法被 beta 隔离。
 
----
+## 主菜单背景
 
-## 实测读数与常量依据（2026-10-13 从**代码注释**搬出）
+- 背景 = `TerrainAtlas.bake_map_image()` 烘出的真实地形图(`BG_CELL_PX = 32`,与 `Level0` 同一份图集)+ `core/present/menu_fisheye.gdshader` 的逐像素鱼眼重映射(`repeat_enable` 让采样越界绕到地图另一头)。运动学在脚本里,每帧喂 `view_center` / `rot_angle`:随机路径段 + 缓入缓出 + 0°↔`SEG_TURN_DEG`(120°)来回摆。`SEGMENT_SEC = 48.0`。
+- 取景 `BG_VIEW_CELLS = 26.6667`(1920 宽 ⇒ 72 屏幕像素/格,玩家镜头是 48px/格);`blur_radius = BG_BLUR_RADIUS_PX`(4.0)。
+- shader 默认值:`fisheye = 0.85` / `dim = 0.60` / `vignette = 0.30` / `desat = 0.20` / `breathe_amp = 0.012` / `aberration = 0.020`。`dim` 的语义是「压暗多少」(`col = mix(col, vec3(0.0), dim)`),0 = 不压、1 = 全黑;脚本不覆盖它。
+- 本 shader 只服务主菜单背景,改它不碰任何一局游戏的一个像素。
 
-> **为什么在这里**：同日的注释瘦身把 UI 相关注释压到 ≤15%，**成套实测读数**按配方搬进本文档
-> （与上面「状态横幅」一节同款做法）。原始台账（每条带原行号与出处）：
-> [`2026-10-13-comment-diet-ledger.md`](../2026-10-13-comment-diet-ledger.md) §1 / §6 / §11 / §12。
-> ★ 这些是**读数**，不是规范：改常量前先在这里查依据。
+## 显示设置
 
-### 1. 底板透明度 `C_PLATE` 的四档取舍（WCAG 相对亮度；底色取地图开阔区 `#78969F`）
+- 基准 1920×1440 是逻辑空间;`window/stretch/aspect="keep"` + `mode="viewport"`(硬边)⇒ 窗口尺寸 ≠ 基准时逻辑空间仍是 1920×1440(等比缩放 + 黑边)。`mp_lobby.tscn` 的绝对定位、`minimap.gd` 的 `1920.0 - …`、`main_menu.gd` 的 `BG_VIEW_CELLS` 都不用改。
+- `Settings.DISPLAY_RESOLUTIONS` 四档:1280×960 / 1600×1200 / 1920×1440 / 2560×1920;`display_res_index` / `display_fullscreen` 由 `Settings.apply_display()` 应用(headless 早退);默认窗口在 2560×1600 屏上 1:1。
+- `apply_display()` 启动时按存档设窗口 ⇒ `--resolution` 会被它顶掉;要指定尺寸得先改 `user://settings.cfg` 的 `display/res_index`。
 
-| alpha | 底色亮度 L | 青血条 | 金残弹 | 白字 |
-|---|---|---|---|---|
-| 0（不垫） | 0.283 | 1.87:1 | 2.26:1 | 2.57:1 |
-| **0.10（现行）** | 0.225 | 2.27:1 | 2.74:1 | 3.11:1 |
-| 0.15（上一版） | 0.199 | 2.50:1 | 3.03:1 | 3.44:1 |
-| 0.45（更早那套） | 0.080 | 4.81:1 | 5.81:1 | 6.60:1 |
+## 对局内状态横幅(`ui/hud/status_banner.gd`)
 
-用户 2026-09-15 先定 0.15、同日下调 **0.1** —— 那是**看过实图**后的选择 ⇒ **别拿对比度理由调回去**。
-唯一例外：大乱斗排行榜 `royale_hud._board_bg` 单独 **0.25**（用户点名排除）。
-
-### 2. 几个颜色的读数（同一底色）
-
-- `C_GRACE`（掉线中）本色 `#B89EE6` ⇒ **1.65:1**；在排行榜的 `_board_bg`（黑 0.25）上 **2.24:1**，
-  而 `C_DANGER`（离开）1.59:1 ⇒ 这一档在排行榜上比既有两档**更显眼**，这是取该亮度的**全部理由**
-  （该亮度底上要凑 3:1 需文字亮度 ≥0.775 或 ≤0.042，连 `C_TEXT` 也只有 3.11:1）。
-- **队色（3v3）**：队 A `#639BFF` **1.39:1**（裸地图 1.15:1）；队 B **2.96:1**（裸地图 2.45:1）。
-  历史值：`#63FFF3` 3.11:1、`#73D9FF` 2.38:1、`#FF9E73` 1.89:1、`#8FC0FF` 2.03:1。
-  H185 S50 V100 量化回测 **185.20°**；两队互辨 **2.13:1 / 33.3°**（旧 2.24:1 / 43.1°）。
-  ★ P2 染色的数学依据：**色相旋转保持 S/V**，而本体主色 S61 ⇒ 产不出目标 S50；**比值法**输出恒等于目标 token
-  （这就是走 `modulate` 比值的原因）。旧实验图在 `.superpowers/sdd/`（不入库）是旧口径。
-- `C_WARN` 只占**一个**语义：「弹夹见底」。满弹用中性色、装填进度用强调青、丢弃进度用 `C_DANGER`。
-
-### 3. 武器槽位三态（`C_SLOT_EMPTY` / `C_SLOT_FILLED` / `C_SLOT_ACTIVE`）
-
-底板 = `黑色 0.1` 压在**浅底**（地图开阔区 ≈`#6C8790`）上 ⇒ **浅底上"越暗越醒目"**：三态明度阶梯必须是
-未占（贴近底板、后退）→ 已占（中）→ 手持（离底板最远）；**反过来配会出现"空格最抢眼、当前武器最不显眼"的倒挂**。
-初版把 EMPTY 配成≈底板明度 ⇒ 空格"看不见"、4×2 格阵形状读不出来、容量指示器等于失效。
-三档统一 **alpha 0.5**（用户：「格子透明度全部改到 0.5」）⇒ **屏幕像素 ≠ 常量**：取色断言必须先做合成
-（`_slot_screen_color`），否则恒红；探针底色收在 `PROBE_BG` 里。
-★ 取色判据曾由 `kh_l3_visual_probe` 提供（**已删·2026-10-09**）：它默认底是深色，只断言"每格是不是该有的颜色 +
-三态两两可区分"，**不断言"谁更醒目"** —— 后者只能人眼看浅底那张图。**今天零守卫**。
-
-### 4. Godot 默认主题的实测（为什么必须自绘）
-
-房间行与页面底 **1.01:1**；色相滑条轨道**整条不可见**；`LineEdit` 1.01:1 且**占位符与真输入同样亮**；
-`CheckButton` **开 = 浅灰药丸、关 = 小灰点且轨道不可见**。主题本体的坑（空 `CheckButton` 被基础类型
-`Button/styles/*` 撑成 (120,62)）与生成器口径见 [`tools.md`](tools.md) 与 `tools/gen_menu_theme.gd` 的注释。
-
-### 5. 版式与"凿刻感"的由来
-
-- **面板必须不透明**：半透明会让下层菜单文字透上来重影。双线（凿刻感）= **两层 `PanelContainer`**，
-  内层只画 `C_INNER`、不画底；`padding 48/34 → 64/46`。
-- `menu_style_probe`（**已删·2026-10-09**）的两条位置断言（内亮线内缩 1px / 内层宽度 < 外层 −2px）
-  与实测 `body.rect == (0,0,外层全尺寸)` 是那次迁移的判据 —— **今天零守卫**。
-- **定宽单位推导**：拉丁 `less_perfect_dos_vga` 8×16（半角 8px）+ 汉字 Unifont 16px 网格 ⇒ 32px 字号下
-  半角 16px、全角 32px ⇒「1 单位 = 半角字符宽」。**换字体要重算 `max_units`**。
-
-### 6. 对局内 HUD 的几处读数
-
-- `hud.gd`：击杀数深青 **1.93:1** ⇒ 改深底板 + 强调青 ≈**4.8:1**；防水条深蓝 ≈**1.0:1** ⇒ 浅蓝 ≈**3.8:1**。
-- `minimap.gd` 的 `EDGE_BOTTOM`：延迟条 `font_size` 32、矩形上沿 y=**1367** / 左沿 x=**1784**、
-  圆心 (1756, 1300−EDGE_BOTTOM)、半径 **140** ⇒ 需 >**70.17** ⇒ 取 **72**；`PX_PER_CELL` = 140/50 = **2.8**。
-- `royale_hud.gd`：每秒重建 N 个 Label 实测 **2.6 / 3.8 / 4.7 ms**（4/6/8 行）；9 字昵称 ≈**690px**，
-  而面板宽 480 ⇒ 已放宽到 **720**。
-- `match_result.gd` 的**居中 bug**：`custom_minimum_size.x = 1120` 而内容最小宽 **476** ⇒ 右长 **322px**、
-  3v3 的 B 队四列**不可见** —— 而当时**所有数值断言全绿**（"版式错、数据对"这类只有人眼能抓）。
-- `team_hud.gd`：层位 **130**（与 PvpHud / RoyaleHud 同层）；`TEAM_KILLS_TO_WIN = 9` 在 HUD 里是**字面量**
-  （引 `TeamHost` 会把 `MatchHost` 整条链拖进客户端）；`mwinner == 0` 是 3v3 的**新可达值**（两队走光 ⇒ 平局），
-  照抄 `pvp_hud` 的 1v1 兜底会念成「P2 获胜」—— 正确样板是 `royale_hud` 的 `mw == 0 → "平 局"`。
-- `pause_menu.gd`：层位 **145**（盖住 PvpHud 130 / HUD 129 / PostProcess 128）；压暗罩 `0.55`
-  与 `match_result.MASK_COLOR`、`mp_lobby` **逐字同值**（调色板纪律的已知例外）；`Sfx.play("ui")` 原先**只有关闭侧响**。
-
-### 7. 大厅版式与其它
-
-- `mp_lobby.gd`：房卡宽有**两个来源** —— 代码 `_card_width()` 公式 vs `.tscn` 的 `CardGrid`
-  `offset_left/right + h_separation`；**改一个要改另一个，错位不报错**。骨架迁移的判据是四状态
-  **逐像素差异 0 / 2,764,800**（骨架由 `tools/gen_menu_scene.gd` 生成）。名单行用
-  `UiFactory.fit_name(名字, 14)` 定宽截断，不截会顶宽（卡宽固定）⇒ 整行错位。标题带内边距
-  **16/8 → 28/14 → 20/12** 是**第二份字面量**（工厂那条不带右侧角标），两边手改同步。
-- `settings.gd`：本机 `screen_get_size` **2560×1600** vs 可用 **2560×1528**；1080p 屏装不下 1920×1440 基准。
-- `sfx.gd`：噪声 `lp` 1400 / 900 均 ≥ 1/0.3 ≈ 3.34 ⇒ **两段实为纯白噪声、参数等价**（要区分得先试听）。
-- `combat_feedback.gd`：同帧两次 `apply_aoe` 间隔 0ms ⇒"被敌人打中却扣自己分"实测 `self_damage` **+40 而非 +20**。
+- 层位 140 只写在 `ui/hud/status_banner.tscn` 里;必须高于 130(对局 HUD)与 131(小地图),低于 145(暂停菜单)与 150(结算页)。
+- 纵向三带互不重叠:1v1 记分条 `y ∈ [16, 68]`(高 52);其下 `GraceWrap` `y ∈ [72, 124]`(高 52);状态横幅 `y ∈ [128, 204]`(高 76 = 标签 36 + 上下各 20)⇒ `TOP_OFFSET := 128.0`。
+- `Label` 行高 = `max(字体在该字号的 get_height, ascent + descent)`,随内容变:纯拉丁行(`PingWrap` 的 `24ms`)33 ⇒ 面板 49;含 CJK 的行 36 ⇒ 面板 52。
+- 横向不固定:面板宽 = 文字宽 + 左右各 28px,居中占 `x ∈ [960 - w/2, 960 + w/2]`,由 `_center_panel()` 在入树后按 `get_combined_minimum_size()` 现算(未入树时偏移量会全塌成 0)。
+- 大乱斗排行榜底板左缘 `x = 1184`,最长状态文案面板宽 568px ⇒ 右端 1244,横幅右侧侵入排行榜 60px(只有大乱斗看得见)。不可下挪 `TOP_OFFSET`,否则落进屏幕中部。

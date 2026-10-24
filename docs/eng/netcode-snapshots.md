@@ -1,508 +1,144 @@
 # 联机快照：现状、实测、与主流做法的对照
 
-> **这份文档是什么**:把「联机模式怎么处理快照」这件事**读码 + 实测 + 对照业界**查清后落纸,供动手改之前先看一遍。
-> **怎么用**:要改快照/输入/回滚之前读 §1(现状)、§4(发现与处置)、§5(剩余取舍);要拿数字说话看 §2。
-> **真相源排序**(与 [`CLAUDE.md`](../../CLAUDE.md) 同):**源码 > 探针实测 > 本文档 > 其它文档**。
-> 本文档里的行号**只在写下的那一天成立**;引用前先 `grep` 复核。
->
-> ★ **配套**:债单 [`registered-debt.md`](registered-debt.md) **§七.28**(快照编码)与 **§七.29**(输入队列)
-> 是这两条债的**登记行**;**两条都已在 2026-10-09 落地**(见 §5),登记行因此收敛为指向本文档的入口。
->
-> ★★ **2026-10-09 状态**:§4.1(编码胖)与 §4.2(输入积压)**都已修**,判据与实测见 §2.4 / §5。
-> **没做**的只剩 §5.3(渲染插值,会改延迟手感 ⇒ 要仓主拍板)与 §5.2 里那条**量化**(有它的前置条件)。
+> 真相源：源码 > 探针实测 > 本文档。行号只在写下那天成立，引用前先 `grep` 复核。
+> 结构化诊断（`--diag` / `CYR_DIAG=1`）与运维审计口径见 [`tests.md`](tests.md)。
 
----
+## 1. 频率与载荷
 
-## 1. 现状（逐条带位置）
+### 1.1 下行 30Hz，tick 域仍是 60Hz
 
-### 1.1 频率：**60Hz**
+`server/match/match_state.gd`：
 
-`server/match/match_state.gd` 的 `SNAPSHOT_INTERVAL := 1.0 / 60.0`，由 `server/match/match_host.gd` 的
-`_snapshot_accum >= SNAPSHOT_INTERVAL` 触发。★ **文档原先写 30Hz（8 处）**，2026-10-08 已按源码订正
-（见 §7）；旁证：soak 实测的 `57.5 KB/s ÷ 0.96 KB = 60Hz`，**实测本身就证明是 60Hz**。
+| 常量 | 值 |
+|---|---|
+| `SNAPSHOT_HZ` | `30` |
+| `SNAPSHOT_INTERVAL` | `1.0 / SNAPSHOT_HZ` |
+| `SNAPSHOT_STRIDE` | `60 / SNAPSHOT_HZ` = `2` |
 
-### 1.2 世界包：**一次广播**，含全部玩家 **13 个字段**
+- 物理模拟 60Hz。快照 `tick` 是 60Hz 物理 tick 域的时间戳，每包 `+= SNAPSHOT_STRIDE`，一个包跨 2 个物理 tick。
+- 触发：`server/match/match_host.gd` 的整数相位 `_snapshot_tick_phase`，满 `SNAPSHOT_STRIDE` 广播一次（浮点累加在整除边界会漂成 3 tick 一次）。
+- `SNAPSHOT_HZ` 必须是 60 的约数（30/20/15/12/10）。不整除会让 stride 被截断，tick 轴与包率同时错。
+- 同一相位决定"本 tick 是否消费一条输入记录"（见 §3）。
 
-[`server/match/match_snapshot.gd`](../../server/match/match_snapshot.gd) `_broadcast_snapshot()`：
+### 1.2 世界包：一次广播，13 字段
+
+`server/match/match_snapshot.gd::_broadcast_snapshot()`：
 
 ```gdscript
 var world := {"tick": _snap_tick, "players": {}}
-for role in players:
-    world["players"][str(role)] = {
-        "pos", "vel", "facing", "pose", "type_id", "hp", "waterproof", "downed",
-        "aim", "previewing", "haste", "rewind", "trail"   # 共 13 个
-    }
-if NetBus.all_peers_sendable():
-    NetBus.rpc("snapshot_world", SnapshotCodec.encode_world(world))
+# 每个 role 一条：pos / vel / facing / pose / type_id / hp / waterproof /
+#                  downed / aim / previewing / haste / rewind / trail
+NetBus.rpc("snapshot_world", SnapshotCodec.encode_world(world))
 ```
 
-★ **`Dictionary` 只是"内存里的形状"，线上不是它**（2026-10-09 起）：`SnapshotCodec`
-（[`core/net/snapshot_codec.gd`](../../core/net/snapshot_codec.gd)）把手打包成 `PackedByteArray` 再发，
-解码在 [`net_bus.gd`](../../core/net/net_bus.gd) 的 RPC 入口做 ⇒ **三个游戏场景与全部钩子一行没动**，
-它们收到的仍是同形状的 `Dictionary`。量到的收益见 §2。
-★ **世界包里也含自己那份**，而客户端**刻意不消费**它（权威态走本人包，见 §1.4）。
-★ `trail`（回溯轨迹点，每 3 帧一个）是**数组**，每帧随包发。
-★ `previewing` 服务端**带**、客户端**刻意不消费**（用户 2026-09-11 裁定：预瞄线只有本人可见）。
+- 世界包含自己那一份；客户端**刻意不消费**（C2 下本地玩家自步进，权威整态走本人包）。
+- `previewing` 服务端带、客户端不消费（预瞄线只有本人可见）。
+- `trail` 是回溯轨迹点数组（每 3 帧一个点），线上最多 `SnapshotCodec.TRAIL_WIRE_MAX := 4` 点。
+- 传输：`snapshot_world` 是 `unreliable`、`transfer_channel = 0`（ENet 道 1）。通道契约见 [`netplay-rpc-channels.md`](netplay-rpc-channels.md)。
 
-### 1.3 本人包：**逐 peer、每帧每人一份**，`c2` = 权威整态
+### 1.3 本人包：逐 peer，`ack` + `q` + 权威整态
 
-同文件后半段：
+同一函数后半段，对每个 live peer 定向：
 
 ```gdscript
-for role in peer_by_role:
-    if not NetBus.is_peer_live(peer_by_role[role]): continue
-    var c2 := p.capture_state() if p.has_method("capture_state") else {}
-    # "q" = 服务器侧该 role **已到达但未消费**的输入包数（2026-10-09 加,判据用,见 §6）
-    NetBus.rpc_id(peer_by_role[role], "snapshot_own",
-            SnapshotCodec.encode_own({"ack_seq": _ack_seq.get(role, 0), "q": q.size(), "c2": c2}))
+NetBus.rpc_id(peer, "snapshot_own",
+        SnapshotCodec.encode_own({"ack_seq": _ack_seq.get(role, 0), "q": q.size(), "c2": c2}))
 ```
 
-[`scenes/player/player.gd`](../../scenes/player/player.gd) 的 `capture_state()` = **25 个标量 + 武器块 8 个
-（仅手持非空时）+ 整个背包表**（`pos/vel/facing/state/slock/coyote/jbuf/jcut/squat/charge/ct/lmv_d/lmv_t/wp/wp_t/wp_s/wp_d/clatch/swim/hp/ifr/down/knock/wslot/winst` + 武器 + 背包）。
-它是 **C2 回滚的锚点**（客户端拿它恢复权威态后重放未确认输入）。
+- `ack_seq` = 该 role 已消费输入记录的 seq。
+- `q` = 该 role 已到达但未消费的输入**记录**数。
+- `c2` = `player.capture_state()`：**25 个标量 + 武器块 8 个（仅手持非空时）+ 整个背包表**。字段表在 `core/net/snapshot_codec.gd` 的 `C2_SCHEMA` / `WEAPON_SCHEMA` / `INV_SCHEMA`。
+- `c2` 是 C2 回滚的锚点：客户端 `restore_state()` 后用未确认输入重放。
+- 传输：`snapshot_own` 是 `unreliable`、`transfer_channel = 0`（ENet 道 1）。
 
-★ **线格式只去开销、不动数值**：`SnapshotCodec` 用 float32 载荷，而 Godot 非 double 构建里
-`encode_variant` **本来就把 FLOAT 收成 32 位、`Vector2` 收成 2×float32**（实测 `float(1.5)` = 8 B、
-`Vector2` = 12 B）⇒ 与改动前的线上字节**逐位相同**，不是"差不多"。
+### 1.4 线格式与载荷
 
-### 1.4 客户端消费与**丢弃规则**
+- `core/net/snapshot_codec.gd` 用一张 schema 表驱动手打包成 `PackedByteArray`。首字节 `PROTO_VERSION := 1`，第二字节种类（`KIND_WORLD` / `KIND_OWN`）。
+- 两端版本不一致 ⇒ 解码返回空字典、调用方不 emit，`net_bus.gd` 只报一次错。
+- 数值全是 float32 全量，**无量化**；字段全是绝对值，**无增量**。
+
+载荷口径（trail 2 点、装枪 + 1 件背包）：
+
+| 包 | 载荷 |
+|---|---|
+| 世界包头 | 7 B（版本 1 + 种类 1 + tick 4 + 人数 1） |
+| 世界包每人条目 | 51 B（role 1 + 字段 50）；不在回溯时 35 B |
+| 本人包 | 102 B（头 8 + `c2` 73 + 武器 14 + 背包 7） |
+
+按 30Hz 折算（服务器上行按扇出算：世界包每个 peer 一份）：
+
+| N | 世界包/包 | 本人包合计 | 服务器上行 | 单端下行 |
+|---|---|---|---|---|
+| 2 | 109 B | 204 B | 12.4 KB/s | 6.2 KB/s |
+| 8 | 415 B | 816 B | 121.2 KB/s | 15.2 KB/s |
+| 16 | 823 B | 1632 B | 433.6 KB/s | 27.1 KB/s |
+
+★ `snapshot_size_probe` 的 N 表把世界包只计一份（不乘接收端数），读数比上面小 `(N-1) × 世界包`；引用它的"服务器上行"列时先换算。
+
+### 1.5 分片
+
+- ENet MTU 预算 1400 B（`tests/probe/snapshot_size_probe.gd` 的 `WORLD_PACKET_BUDGET`）。`unreliable` = `UNSEQUENCED | UNRELIABLE_FRAGMENT` ⇒ 丢任意一片 = 整帧丢。
+- 世界包 = `7 + N × 51`：16 人（trail 2 点）823 B ⇒ 1 片；最坏（16 人各 4 点 trail）= `7 + 16 × 66 = 1063 B`，仍 1 片。
+- 本人包 102 B，不分片。
+- `SnapshotCodec.TRAIL_MAX := 16` 是解码侧硬顶（长度是不可信输入），与发送侧 `TRAIL_WIRE_MAX` 不是同一个数。
+- 改世界字段或 `TRAIL_WIRE_MAX` 前先跑 `tests/probe/snapshot_size_probe.tscn`（判词 `SNAPSHOT SIZE PROBE: ALL-OK`，量真实产出并带条数闸）。
+
+### 1.6 客户端消费与丢弃
 
 | 包 | 处理 | 丢弃规则 |
 |---|---|---|
-| 世界包 | [`scenes/pvp_game.gd`](../../scenes/pvp_game.gd) `_on_snapshot_world` → 只喂**对手副本** | **`tick < _last_snap_tick` ⇒ 丢掉**（"新的赢"） |
-| 本人包 | [`scenes/pvp_match_client.gd`](../../scenes/pvp_match_client.gd) `_on_snapshot_own` → `_rollback.on_authoritative(ack, c2)` | ① 跨纪元：**`ack > _input_seq` ⇒ 丢**（重连后旧 seq 空间的残留）；② 同纪元旧包：由 [`core/net/prediction_rollback.gd`](../../core/net/prediction_rollback.gd) 的 **`if ack <= _acked: return`** 挡住 |
+| 世界包 | [`pvp_game.gd`](../../scenes/pvp_game.gd) `_on_snapshot_world` → 只喂**对手副本** | `tick < _last_snap_tick` ⇒ 丢（新的赢） |
+| 本人包 | [`pvp_match_client.gd`](../../scenes/pvp_match_client.gd) `_on_snapshot_own` → `_rollback.on_authoritative(ack, c2)` | ① `ack > _input_seq` ⇒ 丢（跨纪元残留）；② `ack <= _acked` 由 [`prediction_rollback.gd`](../../core/net/prediction_rollback.gd) 挡 |
 
-★ **两条丢弃规则本身都是对的**：Godot 的 `"unreliable"` = `MultiplayerPeer.TRANSFER_MODE_UNRELIABLE` =
-ENet **`UNSEQUENCED`**（**不保证顺序**，见引擎源码 `modules/enet/enet_multiplayer_peer.cpp::put_packet`），
-所以"新的赢"是唯一正确的做法；本人包没有 `tick` 也不致命，因为回滚端自己就是**单调**的。
-⇒ **"丢弃"不产生延迟累加**（这一条查过、可以放心）。
+`unreliable` 不保证顺序，"新的赢"是唯一正确的做法；两条丢弃都不产生延迟累加。
 
-### 1.5 对手副本：**朝最新目标点指数追赶**（没有插值缓冲）
+## 2. 远端副本：直接渲染最新快照
 
-[`scenes/player/player_replica.gd`](../../scenes/player/player_replica.gd) `_process`：
+- [`player_replica.gd`](../../scenes/player/player_replica.gd) `_process`：`global_position = target`，`target = MazeGenerator.anchor_to_nearest(_opponent_canonical, _local_anchor, MAP_WIDTH, MAP_HEIGHT)`。
+- 无位置历史、无插值缓冲、无外插、无 `PLAYOUT_TICKS` / `PlayoutClock`。副本按 30Hz 发包节奏落位，两包之间位置不变。
+- `apply_snapshot(data, local_anchor, tick)` 的 `tick` 不参与渲染，只为不动调用面保留。
+- 幽灵体（`_build_ghost_body`，`StaticBody2D`，层按队配）跟同一个 `target`：预测面要最小陈旧，不跟平滑。
+- 两个 `anchor_to_nearest` 是承重的：渲染位置与目标相隔整幅地图时最短向量为 0 ⇒ 副本会永远留在远副本。
+- `aim` / `pose` / `facing` 逐包瞬跳。`_aim` 是单位向量，若加插值必须 `slerp` 或 `lerp_angle`（直接 `lerp` 会穿原点）。
 
-```gdscript
-global_position += (target - current) * (1.0 - exp(-INTERP_RATE * delta))
-```
+## 3. 输入队列
 
-- 目标 = **最新**一次世界快照里的对手位置（锚到本地玩家最近副本空间）。
-- **没有位置历史、没有 playout 缓冲**：来一帧就跟一帧。丢包 ⇒ 目标停在旧值，一直追；来新包 ⇒ 目标跳过去。
-- 恒速运动时**永久滞后** `v / INTERP_RATE`（代码注释自己算过 ≈25px）。
-- ★ **幽灵体例外**：它跟**未经平滑的原始权威位置**（同文件注释），理由是"预测所依据的世界要最小陈旧"——
-  这一步是对的：把插值滞后**挡在预测面之外**，所以"画面变平滑"没有换来回滚面的分歧。
+`core/net/packet_input_source.gd` + `server/match/input_intake.gd`：
 
----
+- 上限：`cap = clamp(peak + QUEUE_CAP_MARGIN, QUEUE_CAP_MIN, QUEUE_CAP_MAX)`，即 `[2, 8]`。
+- `peak` = 最近一次轮询到的**原始**深度（丢之前），每 tick 衰减 1 ⇒ 网络安静时上限自己缩回。
+- 满上限时丢**最旧**一条，`pressed` / `released` / `winst` 边沿并入队首。
+- `push_pending()` 返回**丢之前**的深度（包络靠它学习）。
+- `reset_input_queue(role)` 队列与包络一起清（掉线 / 重连重开纪元）。
+- 服务端每 `SNAPSHOT_STRIDE` 个 tick 恰消费一条记录；队列空 ⇒ 沿用上一包的 held；`clear_edges()` 清边沿。
 
-## 2. 实测（三处：探针 / 真客户端 soak / 服务器自报）
-
-### 2.1 探针：`tests/probe/snapshot_size_probe.tscn`（量**载荷**字节，2026-10-09 重写）
-
-探针现在**同时量两种线格式**，并且用**真的装了枪**的玩家（`capture_state()` 的武器块只有手持非空时才存在；
-不装枪时量到的本人包会少 14 B、且那 8 个字段的往返保真一条都验不到）：
-
-```
-[size] 世界包条目(13 字段)  旧(dict) = 368 B  →  新(手打包) = 51 B
-[size]   ↳ 不在回溯时(空 trail)                        新 = 35 B
-[size] 本人包(ack + c2 整态)  旧(dict) = 884 B  →  新(手打包) = 102 B
-[size] c2 字段数 = 34, 世界字段数 = 13          ← 34 = 25 标量 + 8 武器 + inv
-[size]  N |        旧(dict):单帧  单端下行  服务器上行 |        新(codec):单帧  单端下行  服务器上行
-[size]   2 |    1.58KB   94.92KB   146.72KB |    0.21KB   12.36KB    18.34KB
-[size]   8 |    3.74KB  224.30KB   586.88KB |    0.50KB   30.29KB    72.13KB
-```
-
-- **世界包条目 368 → 51 B（−86%）**；不在回溯时 35 B。省下来的不是数值，是**键名字符串 + 每个变体的
-  4 字节类型标签**（实测：8 字段的 dict = 196 B、同数据的 `PackedByteArray` = 24 B）。
-- **本人包 884 → 102 B（−88%）**。
-- **N=8 服务器上行 586.88 → 72.13 KB/s（−88%，≈4.7 Mbps → 0.58 Mbps）**；单端下行 224.30 → 30.29 KB/s。
-
-### 2.2 三个基线（同一件事的三代，别混用）
-
-| 代 | 每人每帧载荷 | N=8 服务器上行 | 出处 |
-|---|---|---|---|
-| ① 拆包**前**（每个 peer 发全 N 人整态，逐 `rpc_id`） | ≈0.96 KB/人 | **≈3.6 MB/s（≈29 Mbps）** | soak 实测 2026-09-12（[`docs/royale-soak-2026-09-12.md`](../royale-soak-2026-09-12.md) §2.2） |
-| ② 拆包**后**（世界包广播 + 本人包定向，但仍 `Dictionary`） | 世界 368 B/人 + 本人 884 B | **≈587 KB/s（≈4.7 Mbps）** | 本探针 2026-10-09 |
-| ③ **手打包线格式**（`SnapshotCodec`，2026-10-09） | 世界 51 B/人 + 本人 102 B | **≈72 KB/s（≈0.58 Mbps）** | 本探针 2026-10-09 |
-
-★ **必须说清的两处演化**（否则数字会互相打架）：
-
-1. soak 当时把成因写成"同一份 N 人整态，**对每个 peer 各 `rpc_id` 一次**"；源码后来改成**一次 `NetBus.rpc()`
-   广播**（[`match_snapshot.gd`](../../server/match/match_snapshot.gd) 的注释："逐 `rpc_id` 循环会把 O(N²) 加回来"）
-   ⇒ **序列化次数不再是 O(N²)**，但**线上字节数仍是 O(N²)**（世界包载荷 ∝ N，而每个 peer 都要收一份）。
-   要再压只能靠增量/相关性，不是靠少调几次 `rpc`。
-2. [`net_bus.gd`](../../core/net/net_bus.gd) 里"拆包后估算 446 KB/s"这个数**偏乐观**：它用的是**没有武器块、
-   只有 10 个渲染字段**的旧口径（`588 B` / `272 B`）。按今天真实的 13 字段 + 武器块量，拆包后是 **587 KB/s**。
-   ⇒ 引用那个数之前先读本节。
-
-### 2.3 次生后果：**不可靠分片**（这一条已被 ③ 消掉）
-
-`unreliable` 在 ENet 给的 flag 是 **`UNSEQUENCED | UNRELIABLE_FRAGMENT`**
-（引擎源码 `modules/enet/enet_multiplayer_peer.cpp::put_packet`）⇒ **分片各自独立**：
-**丢任意一片 = 整帧丢**（不是丢一片只损失一部分）。
-
-```
-[size] N=8: 世界包 旧 2.88KB → 3 片 | 新 0.41KB → 1 片
-[size]  新世界包仍在 1 片内?N=2..8 → true
-```
-
-⇒ ② 时代 N≥5 时世界包 2~3 片、本人包另算；**③ 之后世界包在全部人数档都恒为 1 片**，
-"丢一片 = 整帧丢"这条风险对世界包**归零**（本人包本来就只有 102 B）。
-
-### 2.4 输入队列的实测：**顶上去就永远停在那儿**（不是推理）
-
-[`input_intake.gd`](../../server/match/input_intake.gd) 的 `--netstat-trace` 注释里记着当初的实测结论：
-
-> `--netstat-trace`：逐帧打（只在前 600 tick ≈ 10 秒）……**实测队列在开局 1 秒内从 0 跳到 8 然后就永远
-> 停在那儿（ρ=1，没有回复力）**，那一下只能逐帧看。
-
-⇒ §4.2 那条"没有回复力"**有实测背书**（2026-10-09 之前就量到了，只是没被当成要修的账）。
-`snapshot_own` 现在**带 `q`（服务器待消费队列深度）**，客户端侧因此可以把"在路上"与"堆在服务器"分开，
-见 §6。
-
----
-
-## 3. 与主流的对照
-
-| 维度 | 主流 | 本仓 | 判定 |
-|---|---|---|---|
-| 状态发送频率 | **10~30Hz + 客户端插值缓冲**（[Gaffer](https://www.gafferongames.com/post/snapshot_interpolation/)：缓冲 ≈ **3× 发送间隔**；Valve 默认 20 更新/s、插值 100ms） | **60Hz**，无缓冲 | **偏胖**：60Hz 只是"不靠插值、用高频掩盖抖动" |
-| 编码 | **绑定 + 量化 + 位打包**（[Gaffer](https://www.gafferongames.com/post/snapshot_compression/)：位置 96→50 bit、四元数 128→29 bit） | ✅ **2026-10-09 已去开销**：短 schema 表 + `PackedByteArray`（世界 368→51 B/人、本人 884→102 B/包） | 字节开销**已消**；**量化那半还没做**（§5.2 有它的前置条件） |
-| 增量 | **对"对方已 ack 的基线"做增量**（"未变 = 1 bit"），配 ack 驱动基线 | 每帧**全字段绝对值**；ack 只用于输入回滚 | **没做**（要双向 ack 系统；Gaffer 明说这一步"复杂"） |
-| 渲染插值 | **位置历史 + playout 延迟**，前后夹逼查找；丢包则**保持/插值** | **朝最新目标点指数追赶** | ★ Valve 原文点过这种方案**在包间隔不固定时更差** |
-| 客户端时钟 | 跟服务器时钟跑（"过去多少"是确定的） | 各自跑；世界包带 `tick`，本人包只有 `ack_seq` | 缺一环 |
-| 输入积压 | **不许留着**：抖动缓冲**有界**、超了**丢最旧**、并让它能**泄掉** | ✅ **2026-10-09 已补回复力**：上限跟着**实测抖动包络**走、每 tick 衰减 1（原为写死 8 ⇒ 实测顶上去就不回落，见 §2.4/§4.2） | 机制**已对齐**；`QUEUE_CAP_MIN/MAX` 的取值仍待真对局读数校准 |
-
-**来源**：
-[Bernier/Valve《Latency Compensating Methods…》(2003) 中译](https://www.cnblogs.com/sun-shadow/p/19715823) ·
-[Gaffer《Snapshot Interpolation》](https://www.gafferongames.com/post/snapshot_interpolation/) ·
-[Gaffer《Snapshot Compression》](https://www.gafferongames.com/post/snapshot_compression/) ·
-Overwatch 的 time dilation（**仅取到指针与二手摘要,未读原文正文**）：
-[Edgegap 摘要](https://edgegap.com/zh/blog/game-backend-deep-dive-overwatch-2016-netcode-architecture-rollback) ·
-[GDC 2025 论文](https://drops.dagstuhl.de/storage/00lipics/lipics-vol361-opodis2025/LIPIcs.OPODIS.2025/LIPIcs.OPODIS.2025.pdf) ·
-[Unity Netcode 时间同步](https://docs.unity3d.com/Packages/com.unity.netcode@7.1/manual/time-synchronization.html)。
-
----
-
-## 4. 三个发现
-
-### 4.1 编码胖：**不是"愚蠢的模式",是"最省事的编码 + 优化没做"**
-
-架构侧**是对的、而且和主流同族**：服务器权威 + **unreliable 状态与 reliable 事件/输入分道** +
-本地玩家**预测/回滚对账(C2)** + 乱序丢弃 + canonical 坐标（环面）。
-**胖的是编码**：把 60Hz 状态流交给通用 `Variant` 序列化 ⇒ 字符串键每包重复、无量化、无变更位、无增量基线。
-Gaffer 对**同类数据**做绑定+量化+增量能把裸 60Hz 全量压到 **~1%**（17.37 Mbit/s → 目标 256 kbit/s）。
-★ **仓库自己早就知道**：soak 文档 2026-09-12 就写了"每人每快照恒 0.96 KB、上行 ∝N²、8 人 29 Mbps"
-并判为"本层最硬的扩展性瓶颈"；探针连"瘦身版 176 B/人"都算好了。**量了、登记了、没做** —— 这才是这条债的真相。
-★★ **2026-10-09 已做**：把编码开销这一半消掉（**−88%**，`N=8` 服务器上行 587→72 KB/s，见 §2.1/§5.1）。
-**没做**的是同一族的另外两半：**量化**与**增量** —— 前者有"两端一起量化"的前置条件，后者要双向 ack。
-
-### 4.2 ★ 输入队列：**"每 tick 恰好消费一个"是没有回复力的**（**2026-10-09 已修**，见 §5.2）
-
-| 端 | 行为 |
-|---|---|
-| 生产 | [`pvp_match_client.gd`](../../scenes/pvp_match_client.gd)：**每个物理 tick 无条件发一个**（`_input_seq += 1` → `rpc_id(1, "send_input", pkt)`），**无节流、无"未确认上限"** |
-| 消费 | [`server/match/match_host.gd`](../../server/match/match_host.gd)：**每 tick 恰好 `pop_front()` 一个**（注释写明是为"C2 1:1 同序"） |
-
-- 客户端与服务器是**两个独立时钟**（相位不对齐、负载不同）⇒"某个服务器 tick 到了 2 个包"必然经常发生，
-  而消费端**永远不会补消费 2 个** ⇒ 队列长度是**没有回复力的有界随机游走**：`+1` 之后没有任何机制把它拉回 0。
-- ⇒ 积压**长期停在几 tick 上**（写死的上限 `MAX_PENDING_INPUT = 8` 只是把上界定在 **≈133ms**、**没有消除它**；
-  2026-10-09 改成"跟着实测抖动包络走 + 逐 tick 衰减"，见 §5.2）。
-- ⇒ `ack_seq` 长期落后 `_input_seq` ⇒ **客户端每帧重放窗口永久变长** ⇒ **输入延迟加上去不恢复** + 重放 CPU 上升。
-- ★ Valve 那篇里客户端"反复重放未确认命令"的窗口由 **RTT** 决定；我们是在 RTT 之上**再叠一层积压**。
-- ★★ **诚实标注**：这条**不是纯推理** —— `--netstat-trace` 的注释里记着实测（**开局 1 秒内 0→8，此后不回落到 0**，
-  见 §2.4）。**修法之后的效果还没有真对局读数**（要读 `q` / 累计丢弃 / ack 落后量；数据源已就位，见 §6）。
-
-### 4.3 渲染侧：朝最新目标追赶 ⇒ 丢包被转成**速度误差**
-
-指数追赶是一阶低通：恒速时永久滞后 `v/INTERP_RATE`；目标跳变时把"迟到/丢包"变成一帧内的速度尖峰。
-Valve 明确写过这种方案不如**位置历史插值**。★ 好的一面：**幽灵体跟原始权威值**，所以预测面没有被污染。
-★★ **2026-10-09 已处理一半**：加了**大跳变阈值**（[`player_replica.SNAP_DIST`](../../scenes/player/player_replica.gd) = **128px**）——
-误差超过它就**不追赶、一帧直落**。理由是"位置不连续"在本作里是**常态**（回溯 2026-09-29 加、大乱斗重生、换局换边
-都是设计好的瞬移），交给指数追赶会被演成弹射（300px 误差首帧 ≈3200px/s）。阈值取自本仓实测：
-常态滞后 **±0ms 22.6 / ±8ms 29.7 / ±16ms 37.2 px**、丢包 ≈5px/tick（200ms 才 60px）⇒ 128px 两侧各留 ≈2× 余量。
-**没做**的仍是正题（下一行）：**位置历史 + playout 缓冲插值**——它才能同时把"抖动"和"延迟"一起解决。
-
----
-
-## 5. 修法（分档 + 取舍）
-
-### 5.1 编码：**已去开销（2026-10-09）**，量化/增量**留给下一轮**
-
-**已做**（`core/net/snapshot_codec.gd` + 两处发送点 + `net_bus` 解码口）：
-
-| 动作 | 结果 | 判据 |
-|---|---|---|
-| 世界包与本人包改成**一张 schema 表驱动的 `PackedByteArray`** | 368→**51** B/人、884→**102** B/包 | `snapshot_size_probe` 的**真实产出往返逐键一致** + `schema 与 capture_state() 逐键对齐` |
-| 首字节**版本号** + 种类字节 | 两端版本不一致时**解码返回空、调用方不 emit**（`net_bus` 只报一次） | 拿坏 buffer 解一次即空（`ALL-OK` 里含该路径） |
-| 世界包从此**恒 1 片**（N≤8） | "丢一片 = 整帧丢"这条风险对世界包**归零** | 探针 MTU 折算 |
-| `snapshot_own` 加 `q`（队列深度） | §6 的判据有了数据源 | 本人包往返含 `q` |
-
-★★ **真链路证据（2026-10-09，档 3 要求）** —— 线格式改了协议,所以必须**真实两端对打**才算验过：
-
-| 真链路支 | 判词 | 覆盖到什么 |
-|---|---|---|
-| `tests/smoke/pvp_match_smoke.sh` | **`SMOKE PASS`** | 1v1：世界包广播 + 本人包定向**都真的过 ENet 被解码**（★ 这一支决定性 —— 它证明 `PackedByteArray` 走 RPC **能编能解**） |
-| `tests/probe/royale_soak_probe.sh` | **`SOAK: ALL-OK(4/4)`**（4 客户端 / 120s） | 多人 N 路编解码 |
-| `tests/probe/rejoin_probe.sh` | **`REJOIN PROBE: ALL-OK(5 条断言)`** | 重连：`snapshot_own` 新纪元 + `reset_input_queue()` 那条路径 |
-| `tests/smoke/pvp_room_smoke.sh` | **`SMOKE PASS`** | 房间→进图→快照链路 |
-| `tests/probe/team_match_probe.sh` | **没跑** | 3v3；它在本仓被登记为"**不算守卫**"（红/绿都不可信），且单支 3~10 分钟 |
-
-★ 这四支是**绕过 `run_real.sh` 的 gate3 单跑的**（那道的判据是**全机** Godot 进程数，当时被判据挡下）。
-为什么当时可以绕：本线端口 7777 / 7800-8300 / 29200-29350 **实测全空**、`lobby_alive=false`，
-而 `kill_port_range` 是**按端口属主 PID** 杀（不是按进程名）⇒ 物理上碰不到别的会话。
-★ 一处**必须说清不是新增**的噪声：soak 日志里有 3 行 `Unable to send packet on channel 0, max channels: 0` ——
-它在 `.superpowers/sdd/` 里多个**更早批次**的日志里都有（是"peer 处于队列已拆、API 还没忘掉"那个窗口的已知形态），
-**不是**这次线格式改动引入的。
-
-★ **为什么本版刻意不量化**（这是下一轮的前置条件，不是遗漏）：Gaffer《State Synchronization》里
-"**两端一起量化**"那一段说的是：状态同步下只压发送侧会引入**永久分歧**。本仓的 `c2` 是 **C2 回滚的锚点**，
-客户端会 `restore_state()` 后逐帧重放并与自己的预测态对账 ⇒ 只压上行 = **每次都对不上**。
-所以量化的正确形态是"**先让客户端也用同一套量化**"（Gaffer 的做法：每步前把双方整态都量化一遍），
-那是一处**会碰回滚面**的改动（档 3），要按档 3 走。
-
-### 5.1b 剩下的空间有多大（**2026-10-09 测算，绑在真实 schema 表上**）
-
-**先看字节都花在哪**（探针实测，真实玩家 + 枪 + 背包，trail 2 点）：
-
-```
-世界条目 50 B = pos 8 + vel 8 + aim 8 + trail 17 + 其余 9（线上另加 1 B 的 role）
-本人包 102 B = 头 8 + 核心 c2 73 + 武器 14 + 背包 7
-```
-
-★ **可量化的只有那 24 B 的连续量**（pos/vel/aim）：其余 33 B 是布尔/小整数/背包 —— **量化碰不到它们**。
-★ 而 N=8 时 **本人包占 49 KB/s、世界包只占 25 KB/s**（总 73 KB/s）⇒ **大头在本人包**，
-这与本文档早先"增量是世界包那一刀"的猜测**相反**。
-
-**变更率**（★ 探针里的**合成输入、无战斗**，30 tick；真对局读数今天没有仪器）：
-世界 **2.0 字段/tick**（峰 3/13）、本人 **4.1 字段/tick**（峰 8/34）—— 其余字段是慢变量。
-
-| 手段 | 世界包 | 本人包 | N=8 服务器上行 | 判定 |
-|---|---|---|---|---|
-| **量化**（world：pos→2×u16、vel→2×i16、aim→1B 角度） | 50→**35 B**（−30%） | 不动 | 72→**≈66 KB/s（−8%）** | 收益小：大头不在这里 |
-| **量化**（再加 `c2` 的 pos/vel/knock） | −30% | 94→82（−13%） | 72→**≈60 KB/s（−16%）** | ★ **必须两端一起量化** ⇒ 碰回滚面 |
-| **增量**（变更位 + 已 ack 的基线） | 51→**18 B** | 102→**≈30 B** | 72→**≈24 KB/s（−68%）** | ★ 唯一能治"每帧重复发"的手段；代价 = **双向 ack 系统** |
-| **发送频率 60→30Hz** | −50% | −50% | 72→**≈37 KB/s（−50%）** | 零协议复杂度；但改手感 + 回滚窗口翻倍 |
-| 世界包不发自己那份 | −1/N | — | 72→≈69 KB/s | 打破"一次广播"，要权衡 |
-
-★★ **结论（照实，与"继续优化"的直觉相反）**：把编码**开销**那一刀砍掉之后，剩下的每一条都是
-**几十 KB/s 级**的；而且**量化省的是精度、能碰的只有 24 B/人的连续量** —— 真正的大头是
-`snapshot_own` 里那些**每帧都在变**的字段，只有**增量**打得到，而增量要**双向 ack**（Gaffer 自评"复杂度显著"）。
-⇒ **建议：除非托管带宽真成了约束，到此为止。** 真要再动一刀，第一刀选**降发送频率**（−50%、零协议复杂度），
-但它改手感 ⇒ **要仓主拍板**（§5.3）。
-
-★ 想真定案增量，先补一条仪器：在真链路里读**真实字段变更率**（探针那条是合成输入、不含战斗）。
-
-| # | 还没做 | 依据 | 风险 |
-|---|---|---|---|
-| 1 | **量化**（位置/速度/瞄准按位打包；世界包可粗一些，`c2` 必须与客户端同口径） | 见上表：总量只 −8%~−16% | **中~高**：必须"两端一起量化"（见上） |
-| 2 | **变更位/增量**：只发变了的字段，配已 ack 的基线 | 见上表：**−68%**，是唯一治"重复"的手段 | **高**（双向 ack；或退而求其次用"关键帧 + 相对上一帧"但要容忍丢关键帧后的陈旧） |
-| 3 | **世界包不发自己那份** | 客户端**明确不消费** | 低（省 1/N）—— 但会打破"一次广播"，要权衡 |
-| 4 | **降发送频率 60→30Hz + 副本插值缓冲** | −50%，且是主流做法（Gaffer 10~30Hz + 缓冲 3×间隔） | **改手感** ⇒ 见 §5.3 |
-
-### 5.2 输入积压：**已补回复力（2026-10-09）**
-
-**已做**（`PacketInputSource.adapted_cap` / `push_pending` + `MatchHost._on_input`）：
-
-| 动作 | 说明 |
-|---|---|
-| 上限 `cap = clamp(peak + 1, 2, 8)`，`peak` = 最近"一 tick 到过几包"的**原始**深度 | 缓冲跟着**实测抖动包络**走 |
-| `peak` 每 tick 衰减 1 | ★ **这就是那个缺失的回复力**：网络一安静，上限自己缩回去，把堆着的陈旧包**释放**掉 |
-| 丢的永远是**最旧**那包，`pressed/released/winst` 边沿**并入队首** | 玩家的按键/换枪不因为丢包而丢 |
-| `push_pending` 返回**丢之前**的原始深度 | 包络靠它学习（返回丢后的深度 ⇒ 上限只降不升） |
-| `reset_input_queue(role)` | 队列与包络**一起清**（掉线/重连重开纪元时） |
-| `snapshot_own` 带 `q`；`--netstat` 打「队列/上限/累计丢弃」 | 现象**可观测**了 |
-
-★★ **一件必须照实说的事**：这套机制**换的是另一种代价**，不是免费的。每丢一包 = 服务器少模拟一 tick 的
-输入 ⇒ 客户端**靠 C2 回滚纠正一次**（单 tick 量级、有界）。原来的方案是"**零纠正、但永久 133ms 输入延迟**"；
-现在换成"**低延迟 + 偶发单 tick 小纠正**"—— 这是主流（回滚网码）的选择，但**手感结论必须真对局读**，
-而本仓今天没有"丢包/抖动注入"路径（见 §8）。
-
-**还没做**：`QUEUE_CAP_MIN/MAX` 的取值是**按 60Hz 与单帧突刺量级**定的，不是按真对局读数定的。
-要校准就得在真链路里读 `q` / 累计丢弃 / ack 落后量（数据源已就位，见 §6）。
-
-### 5.3 渲染插值（§4.3，**已做**）
-
-**已做（2026-10-09）**：
-1. **大跳变阈值**（回溯/重生/换边 ⇒ 一帧直落），判据在 `replica_smoothness_probe` 相 D（两侧都钉）。
-2. **playout 缓冲插值**（取代"朝最新目标指数追赶"）：客户端 `PlayoutClock`（**只在第一个包上初始化一次，
-   之后再不重置** —— 2026-09-22 那次退化的根因就是"每包重置 ⇒ 缓冲深度 0"）+ 每个副本一份位置历史环，
-   渲染时刻 `latest − PLAYOUT_TICKS`（**4 tick ≈ 67ms**），在夹住它的两个样本之间**线性插值**；
-   underrun / 太老都**冻结**（不外插、不倒退）；取值判据在相 E。
-   ★ 幽灵体继续跟**未经平滑的最新权威值**（预测面零回归，探针相C 实测 0.000 px）。
-3. **时钟纠偏**：±死区 1.5 tick + 比例纠偏（上限 10%）⇒ 单调不减，且**不被逐包跳变拖着走**。
-   ★ 死区是实测逼出来的：没有它时误差是"带弱回复力的随机游走"，±16ms 抖动下滞后卡在 42~55 px 且**与缓冲深度无关**。
-
-**读数（`replica_smoothness_probe`，playout = 4）**：
-
-| 抖动 | 零位移帧 | 单帧最大位移 | 渲染滞后 |
-|---|---|---|---|
-| ±0 ms | 2/300 | 5.000 px | **20.0 px**（旧追赶 22.6） |
-| ±8 ms | 2/300 | 5.500 px | **27.1 px**（旧 29.7） |
-| ±16 ms | 2/300 | 5.500 px | **44.3 px**（旧 37.2）★ **这一档更差** |
-
-★★ **照实说：这次没做到全胜。** 目标（延迟从"涌现的 `v/k`"变成"选出来的常量"）达成了、抖动档也更平滑，
-但 **±16 ms 抖动下滞后 44.3 px 反而比旧追赶的 37.2 px 差**（"吃了一部分缓冲又没吃穿"的中间态）。
-⇒ **这一档仍是未达预期的**，登记在 [`registered-debt.md`](registered-debt.md) §八;下一步是控制律调参
-（试过**非对称**纠偏：更差，③ 差 27 tick —— 原因:持续速率失配下"缓冲偏深"并不安全)或按真对局读 `--netstat`。
-
-**还没做**：**人眼过一遍**(取图探针已删,手法/观感只能人眼;见 §8.5)。
-
-★★ **控制律的下一步有一份一手来源调研**：[`netcode-playout-clock-sync-sources.md`](netcode-playout-clock-sync-sources.md)（2026-10-09）。
-它核实了三件要紧的事：① **游戏 netcode 文献在这个问题上空白**（Gaffer 没有时钟同步专文，slug 实测 404）⇒ 答案主要来自 **NTP（RFC 5905 §10 `clock_filter()`：从 8 样本窗里**挑最小 delay**）与 RTP（RFC 3550 §6.4.1/A.8：对到达偏差做**一阶平滑**）**；② **没有任何来源主张"时钟目标 = 最新收到的样本"**，而 Valve/Bernier 2003 明说"**向最新目标移动**的插值方案在包间隔不固定时**表现更差**"（★ 那条原文页被 Anubis 拦，引的是二手译本）；③ ★ **"按到达速率估计"没有一手原句支持** ⇒ 加"频率状态"只能挂本仓实测的持续速率失配，**不能**挂 RFC 5905（§11.3 的条件句反而指向我们今天这套纯 PLL 形态）。
-
-★★ **2026-10-09 晚：参考不再是「最新包」**（依据见上面那份来源调研）。做法：每个包给一个观测
-`o = local_ms − tick×16.667`，取最近 **8** 个观测的**最小值**当参考（NTP §10 形态；迟到的包只会给出更大的
-`o`、动不了参考）；再加**深度补偿** = 窗口展布的一半（`o_min` 是「最乐观」那条路径，光用它有效缓冲会**变浅**）。
-探针读数（名义 `PLAYOUT_TICKS = 5`）：±0 / ±8 / ±16 = **25.0 / 28.0 / 46.0 px**（旧追赶 22.6 / 29.7 / 37.2）
-⇒ **±8 更好、±0 与 ±16 更差**；零位移帧 ≤ 0.0100、单帧最大位移 ≤ 6.008（都在闸内）。
-★ 名义 **4** 时是 **20.0 / 23.0 / 41.0**（±0/±8 全面优于旧追赶），**但 ±8 单帧最大位移顶到 10.0 px**（上限 8.0）
-⇒ 取样被吃穿 ⇒ 判 FAIL，**所以取不到 4**。
-⇒ **结论（照实）**：把参考换成鲁棒估计**确实收紧了尾巴**（同一个仪器：p95 7.27→5.60 tick、max 12.07→10.61 @名义4），
-但**裁决要「渲染滞后 + 不许跳」两条一起看**，名义 5 上是**平手**。剩下的杠杆是深度补偿的标定（现折半、上限 4）
-或改成显式自适应深度 —— **仍未达标，见 §8.12**。
-
-★★★ **2026-10-09 深夜（**订正我当天早些时候的一个说法**）："把快照降到 30Hz 就能换到抖动余量"是错的。**
-一手来源（Gaffer《Snapshot Interpolation》§3，读全文）把缓冲**拆成两项**：
-**丢包项 = 3 × 发送间隔**（随间隔等比放大）＋ **抖动项 = 1~2 帧 @60fps ≈ 17~33ms 绝对**（**不**随间隔缩放）
-⇒ 10pps→350ms / 30pps→150ms / **60pps→85ms**。⇒ **降频要的是更大的绝对缓冲**（延迟更高），省的只是带宽；
-而**我们现在的 5 tick（83ms）恰好就是 Gaffer 对 60pps 的那份配方**。⇒ 我们的 ±16ms（峰峰 32ms）正压在他
-假设的抖动项**上沿** ⇒ 那一档偶发吃穿是**设计边缘**，不是时钟 bug。要更稳只有两条：**加深到 ~7 tick（120ms）**
-或**减少抖动源**（主动调速率）。★ **裁定(2026-10-09,仓主):操作点取 5 tick**，±16ms 那档的偶发吃穿**接受** —— 理由是它正坐在 Gaffer 抖动项（1~2 帧）的**上沿**:±16ms 的**峰峰是 32ms ≈ 1.9 个发送间隔**，而客户端只在**帧边界**观测到达（还多出至多 1 帧的表观抖动）。逐条一手核实（含哪些游戏真有 60/30Hz）见
-[`netcode-tick-rates-survey.md`](netcode-tick-rates-survey.md)。★ 同处另有一条历史：Quake 3 客户端的
-`CL_AdjustTimeDelta()` 原句是 *"approach, but not pass, the very latest snapshot"* ——
-**我们被换掉的那套旧实现（追最新目标）在 20 多年前的 Quake 3 里就是有名字的做法**。
-
-★★★ **再裁定（2026-10-09 深夜，仓主选 A 档）：操作点改为「名义 4 tick + 深度补偿系数 1.5」。**
-实测（探针）：±0 / ±8 / ±16 = **20.0 / 27.5 / 50.4 px**，零位移 ≤ 0.0167、**单帧最大位移 5.500 px**（闸 8.0）
-⇒ **±0 与 ±8 全面优于旧追赶**（22.6 / 29.7），±16 输 13px（旧追赶 37.2，**但旧追赶在那档的最差帧步长 8.242
-会被补严后的闸判红** —— 所以这不是「输给一个干净基线」）。
-★ 系数来历：扫 k = 0.5 / 1.0 / 1.5 ⇒ k=0.5 在 ±8ms 顶到 10.0px（FAIL）、k=1.5 三档全绿。
-★ 仓主接受这个「延迟换平滑」的取捨；**人眼/手感仍未过**。
-
----
-
-## 5.4 载荷口径的两条赌注:手打包 vs zstd 压缩(2026-10-13 实测)
-
-`origin/siri_v0.5.0` 那条独立线上,另一位作者用**另一条路**解决同一个问题(`cab0a78`):
-**把 rpc 合并成三条数据流 + 用 ENet 自带的 zstd 压缩流量**。同一份载荷下我做了对比
-(`.superpowers/net/zstd_vs_codec.gd`,单进程、`var_to_bytes` / `PackedByteArray.compress(ZSTD)` / `SnapshotCodec`,
-值取两组:**伪随机**(zstd 最坏)与**真实形状**(平滑推进、恒定速度、单位 aim、小整数/布尔、3 点 trail)):
-
-| N | 直发 dict | zstd(伪随机值) | zstd(真实形状值) | 手打包 codec |
-|---|---|---|---|---|
-| 2 | 812 / 876 B | 342 B(2.37×) | 299 B(2.93×) | **109 / 125 B**(7.0~7.45×) |
-| 8 | 3092 / 3348 B | 716 B(4.32×) | 424 B(7.90×) | 415 / 479 B(≈7×) |
-| 16 | 6132 / 6644 B | 1202 B(5.10×) | **588 B(11.30×)** | 823 / 951 B(≈7×) |
-
-- **手打包是定宽 ⇒ 比值恒定(≈7.0~7.45×),与值无关**;zstd 的比值**随 N 与冗余度上升**(2.4× → 11.3×)。
-- ⇒ **N ≤ 4 手打包更小**(zstd 的每包帧头开销在小载荷上吃掉收益);**N ≥ 8 两者接近,zstd 在真实数据上可能更小**。
-- ★ 两组是**包夹**真实情况:伪随机是 zstd 的下界,我编的"真实形状"里 16 个玩家的 vel/aim 完全相同 ⇒ 是 zstd 的**上界**。
-  真实比赛介于两者之间(9 个小字段跨玩家高度重复、pos/vel/aim 的 float 尾数高度不可压)。
-- ★★ 两条路的**本质是同一件事**:Dictionary 的**每值 4 B 类型标签**就是那块冗余 —— 我**静态**把它删掉,zstd **动态**把它压掉。
-  ⇒ 因此"手打包 + zstd"的边际收益很小;但 **zstd 用在别处(例如他那三条合并后的 rpc 数据流)是真收益**,我这边没有(我们仍是一条条 `@rpc`,每次都带方法名 + Variant 头)。
-- 成本:同一份载荷 `var_to_bytes` 2000 次 39.4ms → 加 zstd 60.9ms(**+55%**,≈N=16/60Hz 下约 3% 单核)。可接受。
-- **边界**:这是**载荷字节**口径(不含 ENet 的 zstd 帧头与 IP/UDP),单进程夹具;**他那边的真实数字要在他的线上跑**。
-
-
-## 6. 判据（2026-10-09：数据源已就位）
-
-★ 2026-10-08 时"没有一条判据能回答积压了几 tick"；现在**数据源三处齐了**：
+## 4. 判据与读数
 
 | 数据源 | 在哪 | 读数 |
 |---|---|---|
-| `snapshot_own.q` | 本人包字段（[`match_snapshot.gd`](../../server/match/match_snapshot.gd)） | 服务器侧该 role **已到达未消费**的包数 |
-| 客户端 `_input_seq - _ack_seq` | [`pvp_match_client.gd`](../../scenes/pvp_match_client.gd) `-- --netstat` | **未确认数**（= 在途 + 在队，含 RTT 那一层） |
-| 服务端 `--netstat` / `--netstat-trace` | [`match_host.gd`](../../server/match/match_host.gd) | 队列长度 · **抖动上限** · **累计丢弃**（逐帧或每秒） |
+| `snapshot_own.q` | 本人包 | 服务器侧已到达未消费的记录数 |
+| `_input_seq - _last_ack` | `pvp_match_client.gd` 的 `-- --netstat`（1Hz） | 未确认记录数（在途 + 在队） |
+| 服务端 `--netstat` / `--netstat-trace` | `input_intake.gd` | 队列长度 · 抖动上限 · 累计丢弃（1Hz / 前 600 tick 逐帧） |
+| `--diag` / `CYR_DIAG=1` | `NetDiag` | `snap_gap`（>150ms）、`snap_rx`、`snapshot_tx`、`queue`、`queue_drop` |
 
-**要读出的形状**（动手校准前先读这个）：
+- 正常形状：队列贴近 `QUEUE_CAP_MIN`，上限在衰减，累计丢弃只在突发后跳一次。
+- 坏形状：上限一路顶到 8 不回，或累计丢弃几乎每 tick 都涨。
+- 判据一律 grep 判词文本 + 条数闸，不看退出码。
 
-- **修好后的预期**：队列长期贴近 `QUEUE_CAP_MIN`，**抖动上限在衰减**，累计丢弃**只在突发后小幅跳一次**；
-- **坏形状**：上限一路顶到 8 不回、或累计丢弃**几乎每 tick 都涨**（那说明 `QUEUE_CAP_MIN` 定得比真实抖动还低 ⇒ 要上调）。
+## 5. 与主流做法的对照
 
-★ 判据照样遵守本仓纪律：**grep 判词文本**、**计数闸**、能回答"去掉什么它才会红"。
-
----
-
-## 7. 顺手订正的文档漂移
-
-| 位置 | 原写 | 实际（源码） |
+| 维度 | 本仓 | 主流 |
 |---|---|---|
-| [`docs/pvp-networking.md`](../pvp-networking.md)（**8 处**，订正于 2026-10-08） | 快照 **30Hz** | **60Hz**（`SNAPSHOT_INTERVAL = 1/60`）★ 旁证：soak 的 57.5 KB/s ÷ 0.96 KB = 60Hz |
-| 同上（字段表） | **8 个**字段 | **13 个**（多 `aim/previewing/haste/rewind/trail`） |
-| 同上（发送方式） | "用 `rpc_id` **逐 peer** 发送" | 世界包 = **一次 `rpc()` 广播**；逐 peer 的是**本人包** |
-| 同上 | **完全没提** `snapshot_own` | 逐 peer、每帧每人一份、`c2` = 25 标量 + 武器块 8 + 整背包 |
-| [`net_bus.gd`](../../core/net/net_bus.gd) 的"拆包后 ≈446 KB/s"（**2026-10-09**） | 446 KB/s | **587 KB/s** —— 旧口径用的是"无武器块 + 10 个渲染字段"，见 §2.2 |
+| 状态发送频率 | 30Hz，无插值缓冲 | 10~30Hz + 客户端插值缓冲 |
+| 编码 | schema 表手打包 | 绑定 + 量化 + 位打包 |
+| 增量 | 全字段绝对值 | 对已 ack 的基线增量 |
+| 客户端时钟 | 不跟服务器时钟，`tick` 只用于丢弃旧快照 | 播放时钟跟服务器时钟 |
 
-⇒ 已按源码订正。★ 这也解释了为什么这条债被低估了很久:**读文档的人会以为流比实际轻一半**。
+## 6. 已知边界
 
----
-
-## 8. 未验证 / 边界（照实）
-
-1. **修法之后的输入延迟/丢弃率没有真对局读数**（机制在 `-s` 里验了,`q`/累计丢弃的数据源也接上了,
-   但**没有跑过丢包/抖动注入**；今天的真链路批是"干净网络"）。
-2. **"分流到不同 channel 后有没有新的乱序症状"只在真链路里验过一轮**（`royale_soak` 2/2 `ALL-OK(4/4)`），
-   没有做过**丢包/抖动注入**下的对照（今天没有这条路径）。
-3. **没有做过带宽计量**（探针量的是**载荷字节**，不含 ENet 分片头 / RPC 方法名 / IP·UDP 头）；
-   所以"587→72 KB/s"是**载荷口径**，真实网卡字节数会高一些（每包约 28 B IP·UDP + ENet 头）。
-   ★★ **2026-10-09 补一条更要紧的**：仓库里**没有一条真链路仪器在测线上字节** ——
-   `royale_soak_probe` 的"快照 KB/s"是 `var_to_bytes(**解码后**的 Dictionary)`，
-   量的是**内存形状**、不是线上字节 ⇒ 它对 codec 这类"只改编码不改内容"的改动**完全看不见**
-   （实测：加 codec 前后它的读数不变，而它自己在 4 客户端报 84.4 KB/s = 1.35 KB/帧，与线上的 211 B/帧无关）。
-   ⇒ 线上一旦出问题（例如某天真去量化/增量），**必须靠 `snapshot_size_probe` 的载荷读数**，
-   别拿 soak 的 KB/s 当带宽证据。**翻案条件**：给真链路补一条"发送侧累计 wire 字节"的读数。
-4. **Overwatch 的 time dilation 未读原文**（只有二手摘要与指针）——若真要采用，先读一手来源。
-5. **没有取图探针了**（2026-10-09 测试面削减 90% 时删掉了全部非 headless 取图探针）⇒
-   线格式/量化这类改动的"看上去对不对"只能靠**人眼对局**；§5.3 那条因此更没有自动判据。
-6. **量化（§5.1 表 1）的前提没做**：`c2` 现在仍是 float32 全量；要量化就得**两端一起量化**（见 §5.1 的说明）。
-
-
----
-
-## 9. 订正（2026-10-13，一手调研后）
-
-1. **§3 写的"没做拥塞控制"只对应用层成立**：**ENet 自带 throttle，会主动丢我们的 `unreliable` 包**（RTT 波动驱动：interval 5000ms、accel/decel 2、上限 32）。
-   ⇒ 真链路上"包丢了"有两个来源，读数必须分开（`PEER_PACKET_THROTTLE` / `PEER_PACKET_LOSS` / `PEER_ROUND_TRIP_TIME`）。
-   一手：ENet `peer.c` + Godot 4.7 `class_enetpacketpeer.rst`（均读全文）。
-2. **§5.4 的 zstd 结论有了官方口径**：Godot 4.7 `class_enetconnection.rst` 明说 `COMPRESS_ZSTD` 在 **< 4 KB** 上**不划算**（我们世界包约 0.4~1.2 KB）
-   ⇒ 与 §5.4 的实测（小包更肥）一致；**别**为了省维护成本全面上 zstd。
-3. **带宽上限**：我们用 `create_host()` 没传带宽（默认 0 = 不限）⇒ 对照 Q3 的 `sv_maxRate`/`client->rate`，**这一侧没有任何速率上限**。
-4. **ENet 自己的序号是 u16**（60Hz 下 **18 分 12 秒**回绕）—— 自建应用层序号时**别**照抄我们 u32 的结论（u32 @60Hz = 2.27 年）。
-
----
-
-## 补录：从注释搬出的实测（2026-10-13）
-
-> 原始台账：[`2026-10-13-comment-diet-ledger.md`](../2026-10-13-comment-diet-ledger.md) §11。
-> ★ 这些是**上面各节的原始读数**（当时写在代码注释里，瘦身时搬来）。
-
-### A. 上行链路的实测链（`core/net/net_bus.gd` 的注释就是这条链）
-
-单人条目 **948 B**（其中 c2 部分 **664 B = 70%**）⇒ 8 人局上行约 **29 Mbps**。
-按三步优化后的读数依次是 **446 → 587 → 最终 72 KB/s**（同一口径下的不同阶段，不是四个并存的口径）。
-★ 条目本身的瘦身：**368 → 51 B**、**884 → 102 B**（两处都是"条目"级）。
-★ **世界包在 N ≤ 8 时恒 1 片**（1400B MTU 下的分片悬崖在 N≈27，见 [`tests.md`](tests.md) 里
-`snapshot_size_probe` 那条）。
-
-### B. 变体编码的单值开销（选型依据）
-
-| 类型 | 单值开销 |
-|---|---|
-| `float` | **8 B** |
-| `Vector2` | **12 B** |
-| `String("pos")`（键名） | **12 B** |
-| `bool` | **8 B** |
-| 8 字段 `dict` vs 同数据手打包 | **196 B vs 24 B** |
-
-整包效果：世界包 **2.1 KB → 0.27 KB**；本人包 **588 B → ~114 B**。
-★ **trail 的取舍**：16 人 × 10 点 = **1847 B ⇒ 2 片**；砍到 4 点 = **1063 B**（余量 **24%**）——
-这是"轨迹点数"这个旋钮的**唯一量化依据**。
-
-### C. 容差扫描（`PredictionRollback._close_enough` 的测量台）
-
-- **位置容差 1px**：触发回滚 **221 / 195 / 159** 次（N = 2 / 4 / 8）；**2px**：**9 / 85 / 13**。
-- **接触期偏差**：中位 **1.6**、p95 **25~30**。
-- **接触容差 8px**：N2 **5** / N4 **8** / N8 **5**；**16 / 32** 则**跨轮抖动**（N=4 约 8~21、N=8 约 4~15）
-  且**没有系统性更低** ⇒ 加大容差不是"更安全"。
-- **判据上界**：中位 ≤3 / p95 ≤35 —— 三档（N=2/4/8）全绿。
-- ★ 该测量台（`brawl_rollback_probe`）**已随 2026-10-09 削减删除** ⇒ 这些数字**今天无法复测**，
-  要动 `_close_enough` 之前先读 [`debt/known-red.md`](debt/known-red.md) 那行登记的销案条件。
+- `c2` 与渲染字段都是 float32 全量，量化与增量都没做。量化必须两端同口径（`c2` 是回滚锚点，只压上行会让每次重放都对不上）。
+- 没有丢包 / 抖动注入路径 ⇒ 队头阻塞、丢弃率、手感都没有真对局读数。
+- 探针量的是**载荷**字节，不含 ENet 分片头 / RPC 方法名 / IP·UDP 头。`royale_soak_probe` 的 KB/s 是解码后 `Dictionary` 的 `var_to_bytes`，不是线上字节，对线格式改动不可见。
+- `snapshot_size_probe` 的每秒折算列按 `SNAP_HZ := 60` 算，下行实际 30Hz ⇒ 只看它的单包字节，别引用每秒列。
+- 应用层没有拥塞控制；ENet 自带 throttle 会主动丢 `unreliable` 包（见 [`netcode-delta-and-quantization-details.md`](netcode-delta-and-quantization-details.md)）。
+- 人数上限 `ROYALE_MAX_PLAYERS := 16`（`server/lobby/lobby_rooms.gd`）。

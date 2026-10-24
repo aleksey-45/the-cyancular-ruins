@@ -14,6 +14,9 @@ static var _pristine_subgrid: Array[Array] = []   # cyrm v4:子格纹理表基�
 static var _destructible_sub: Array[Array] = []
 # 本帧被摧毁砖所在的分块(Vector2i → true);_process 里逐块重建后清空。
 static var _dirty_chunks: Dictionary = {}
+# 本局被摧毁过的 16px 子格(Vector2i → true):换局增量复位只还这些格子(全量重铺实测 ~1.4s ⇒ 每局大卡)。
+# ★ 只增不减、复位时清空;回溯复原也留在集合里(复位到基线是无害的重复还原)。
+static var _damaged_subs: Dictionary = {}
 
 # PvP 模式:只建世界(地图/瓦片/碰撞/水),玩家/敌人/相机/后处理由 PvP 场景负责。
 static var pvp_mode: bool = false
@@ -201,6 +204,7 @@ func _ready() -> void:
 	TileDefs.init_hp(grid)
 	TileDefs.init_sub_hp(MazeGenerator.current_subgrid)
 	_pristine_subgrid = MazeGenerator.copy_grid(MazeGenerator.current_subgrid)
+	_damaged_subs.clear()
 
 	var tile_set = _create_wall_tileset()
 	var wl: TileMapLayer = $WorldViewport/WallLayer
@@ -407,6 +411,7 @@ func _on_tile_destroyed(cell: Vector2i) -> void:
 
 func _on_sub_destroyed(sub: Vector2i, pre_hp: int, _owner: Node = null) -> void:
 	# cyrm v4 子格破坏:清一个 16px 渲染格(9 环面副本)+ 记回溯账本 + 重建所在碰撞块。
+	_damaged_subs[sub] = true
 	if _tile_ledger != null and TimeField.current != null and not TimeField.current.is_rewinding() and wall_layer != null:
 		_tile_pending.append({"sub": sub, "hp": pre_hp})
 	if wall_layer != null:
@@ -420,24 +425,56 @@ func _on_sub_destroyed(sub: Vector2i, pre_hp: int, _owner: Node = null) -> void:
 		_dirty_chunks[CollisionBuilder.chunk_of(Vector2i(sub.x / 4, sub.y / 4))] = true
 
 
-# PvP 换局复位:把可破坏砖/碰撞/瓦片全量还原成建图时的原始状态(当前网格重置为基线深拷贝)。服务器每局开赛也做同样复位,双方从同一基线出发 ⇒ 不存在「客户端多拆/少拆」的幽灵墙。CollisionBuilder 的 build 幂等(同名节点先 free 再建),可安全整体重建。
-# ★ 订正留档:「服务器同样复位」这句原先与源码不符 —— 服务器那份(MatchRound._reset_world_and_clear_dynamics)漏了 TileDefs.init_sub_hp,只还了格级 HP 表 ⇒ 下一局「客户端有墙、服务器没有」(可穿墙);现已补上,两边还的都是两套表。
+# PvP 换局复位(增量,2026-10-24):只还原「被拆过的 16px 子格」—— 全量重铺 9 环面副本实测 ~0.86s、整层碰撞重建 ~0.48s
+# ⇒ 每局打完卡 ~1.4s。现在按 `_damaged_subs`(再并上与基线不同的 64px 格的 16 个子格做兜底)逐格还:
+# sub_hp / 可破坏碰撞子格 / 瓦片(9 副本)/ 格级网格与 HP,最后只 rebuild 脏块。永久墙/攀爬条从不变 ⇒ 永不重建。
+# ★ 两端同一语义:服务器 MatchRound._reset_world_and_clear_dynamics() 做同一套增量复位。
 func reset_destructibles() -> void:
-	if _pristine_grid.is_empty():
+	if _pristine_grid.is_empty() or _pristine_subgrid.is_empty():
 		return
-	var g := MazeGenerator.copy_grid(_pristine_grid)
-	MazeGenerator.current_grid = g
-	_grid_ref = g
-	TileDefs.init_hp(g)
-	# cyrm v4:子格表/子格 HP 一并回基线
-	MazeGenerator.current_subgrid = MazeGenerator.copy_grid(_pristine_subgrid)
-	TileDefs.init_sub_hp(MazeGenerator.current_subgrid)
-	# 瓦片层整层重铺(清掉 -1 残留,恢复被拆砖的贴图)
+	var sc: int = (_pristine_subgrid[0] as Array).size()
+	var sr: int = _pristine_subgrid.size()
+	# ① 收齐要还原的子格:已知被摧毁的 + 与基线不同的格(把那格 16 个子格一并纳入,防漏记)
+	var subs: Dictionary = _damaged_subs.duplicate()
+	var grid := MazeGenerator.current_grid
+	for cy in grid.size():
+		var row: Array = grid[cy]
+		var prow: Array = _pristine_grid[cy]
+		for cx in row.size():
+			if row[cx] == prow[cx]:
+				continue
+			row[cx] = prow[cx]
+			for sy in 4:
+				for sx in 4:
+					subs[Vector2i(cx * 4 + sx, cy * 4 + sy)] = true
+	# ② 逐子格还:子格 HP / 可破坏碰撞子格 / 瓦片(9 环面副本);顺带收脏块与涉及格
 	var wl := Level0.wall_layer
-	if wl != null:
-		_paint_maze(wl)
-	# 碰撞:可破坏分块 + 永久墙 + 攀爬条整体重建为基线
-	_destructible_sub = WorldBuilder.build_sim($WorldViewport, g)
+	var chunks: Dictionary = {}
+	var cells: Dictionary = {}
+	for key in subs:
+		var sub: Vector2i = key
+		if sub.x < 0 or sub.y < 0 or sub.x >= sc or sub.y >= sr:
+			continue
+		var tex: int = int(_pristine_subgrid[sub.y][sub.x])
+		TileDefs.restore_sub(sub, TileDefs.hp_of(tex) if tex != 0 else 0)
+		if not _destructible_sub.is_empty():
+			_destructible_sub[sub.y][sub.x] = CollisionBuilder.destructible_value(tex)
+		if wl != null and tex != 0:
+			var atlas := Vector2i((sub.y % 4) * 4 + (sub.x % 4), tex - 1)
+			for ty in range(-1, 2):
+				for tx in range(-1, 2):
+					wl.set_cell(Vector2i(sub.x + tx * sc, sub.y + ty * sr), 0, atlas)
+		var cell := Vector2i(sub.x / 4, sub.y / 4)
+		chunks[CollisionBuilder.chunk_of(cell)] = true
+		cells[cell] = true
+	# ③ 格级 HP 回基线(网格已在 ① 就地回;纹理基线取 pristine 格值,与 TileDefs.init_hp 同口径)
+	for cell in cells:
+		TileDefs.set_hp_grid(cell, TileDefs.hp_of(MazeGenerator.texture_of(int(_pristine_grid[cell.y][cell.x]))))
+	# ④ 只重建脏块(不再整图 build_sim:永久墙 / 攀爬条不参与可破坏层复位)
+	for ch in chunks:
+		CollisionBuilder.rebuild_chunk(_destructible_sub, ch, $WorldViewport)
+	_dirty_chunks.clear()
+	_damaged_subs.clear()
 
 
 func _build_wall_collision(grid: Array[Array]) -> void:

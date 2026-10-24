@@ -7,8 +7,8 @@ extends RefCounted
 # ★ 上限的判据住 PacketInputSource(adapted_cap / push_pending):不住这里也不住 MatchHost,因为那条判据要能用最便宜的
 # `-s` 冒烟跑 —— MatchHost 引用 NetBus 自动加载 ⇒ 冒烟加载不了它。★ 服务端自述 ρ≈1、开局有「1 秒内 0→8」的突刺;无界 ⇒ 积压不可恢复。
 
-var _q_peak: Dictionary = {}   # role -> 最近「一 tick 到过几包」的原始深度(丢包之前),每 tick 衰减 1
-var _q_drops: Dictionary = {}  # role -> 累计被丢弃的**陈旧**包数(诊断;丢包=服务器跳过一格输入)
+var _q_peak: Dictionary = {}   # role -> 最近「一次轮询到过几条输入记录」的原始深度(丢记录之前),每 tick 衰减 1
+var _q_drops: Dictionary = {}  # role -> 累计被丢弃的**陈旧**记录数(诊断;丢一条=服务器跳过一格输入)
 var _diag_acc := 0.0           # 结构化诊断(--diag)的 1Hz 采样累加;默认关时下面整段直接返回
 
 var _netstat := false
@@ -25,9 +25,10 @@ func reset(pending: Dictionary, role: int) -> void:
 	_q_drops.erase(role)
 
 
-# 缓冲本帧到达的包,按 seq 序 FIFO,每物理 tick 消费一个 ⇒ 服务器权威模拟与客户端「重放未确认输入」1:1 同序(C2 rollback 需要)。
-# ★ 入队走 push_pending():有界,且丢包时保住边沿。★ 上限跟着实测抖动包络走(一 tick 到几包就留几包 +1 余量,包络每 tick 衰减 1)
-# ⇒ 网络一安静上限自己缩回去,把堆着的陈旧包释放掉(丢的永远是最旧那包,边沿并入下一包)。没有这一步就是 ρ=1 的零漂移随机游走:顶上去就永远停在那儿。
+# 缓冲本帧到达的记录,按 seq 序 FIFO,每 2 个物理 tick 消费一条(30Hz 采样)⇒ 服务器权威模拟与客户端「重放未确认输入」1:1 同序(C2 rollback 需要)。
+# ★ 每次到达只有一条记录(TICKS_PER_RECORD 个 tick 的输入);包络按**记录**学(与消费单位一致,不按包)。
+# ★ 入队走 push_pending():有界,且丢记录时保住边沿。★ 上限跟着实测抖动包络走(一 tick 到几条就留几条 +1 余量,包络每 tick 衰减 1)
+# ⇒ 网络一安静上限自己缩回去,把堆着的陈旧记录释放掉(丢的永远是最旧那条,边沿并入下一条)。没有这一步就是 ρ=1 的零漂移随机游走:顶上去就永远停在那儿。
 func intake(pending: Dictionary, role: int, pkt: Dictionary) -> void:
 	if not pending.has(role):
 		pending[role] = []
@@ -73,7 +74,7 @@ func tick(pending: Dictionary, delta: float, round_state: int) -> void:
 		parts.append("%d=%d" % [role, (pending[role] as Array).size()])
 		caps.append("%d=%d" % [role, PacketInputSource.adapted_cap(int(_q_peak.get(role, 0)))])
 		drops.append("%d=%d" % [role, int(_q_drops.get(role, 0))])
-	print("[netstat-srv] 待消费队列(包) %s | 抖动上限 %s | 累计丢弃 %s" % [
+	print("[netstat-srv] 待消费队列(条记录) %s | 抖动上限 %s | 累计丢弃 %s" % [
 			", ".join(parts), ", ".join(caps), ", ".join(drops)])
 
 

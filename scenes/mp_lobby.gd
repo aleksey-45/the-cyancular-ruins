@@ -80,6 +80,7 @@ func _ready() -> void:
 	NetBusExt.local_royale_room_state.connect(_on_room_state_royale)
 	NetBusExt.local_team_rooms.connect(_on_team_rooms)
 	NetBusExt.local_team_room_state.connect(_on_room_state_team)
+	NetBusExt.local_pvp_room_state.connect(_on_pvp_room_state)
 
 	_finish_lobby_ready()
 
@@ -201,7 +202,8 @@ func _on_room_created(code: String) -> void:
 	# 补发地图:1v1 的 create_room 签名冻结,塞不进 payload。★ 这里无条件下发 —— 走到本 handler 的就是建房者,也就是房主。
 	NetBusExt.rpc_id(1, "room_map", code, Settings.mp_map_path)
 	_status.text = "房间号 %s —— 等对手加入(可叫对方刷新列表点进来)" % code
-	_wait.show(_wait.pvp_wait_state(code, 1), PvpSession.MODE_PVP)
+	# 先摆一个本侧占位(房主 = 自己 / 1 人);服务器 pvp_room_state 一到就用真名单刷新。
+	_wait.show(_wait.pvp_wait_state(code, 1, 1, 1), PvpSession.MODE_PVP)
 
 
 # 服务端答"加进去了"。★ 房号从 _join_pending 取(room_joined 载荷只有 role)—— 这里同时是唯一记 1v1 加入房号的地方:
@@ -219,7 +221,16 @@ func _on_room_joined(role: int) -> void:
 	_claim_multi_reply()
 	_status.text = "已加入,等待开战……"
 	if not code.is_empty():
-		_wait.show(_wait.pvp_wait_state(code, role), PvpSession.MODE_PVP)
+		# 占位:加入者不知道谁是房主(服务器按 peer 下发 your_role/host_role)⇒ host_role 填 0,真状态下一帧到。
+		_wait.show(_wait.pvp_wait_state(code, role, 0, 2), PvpSession.MODE_PVP)
+
+
+# 1v1 等待室实时状态(2026-10-24:开局改由房主点「开始游戏」)。载荷 = {code, players, host_role, your_role, in_match}。
+# ★ 与 _on_room_state_royale 同款:房号/模式都以服务器载荷为准;1v1 没有地图补发(房主建房时已发过 room_map)。
+func _on_pvp_room_state(state: Dictionary) -> void:
+	_current_mode = PvpSession.MODE_PVP
+	PvpSession.note_room(str(state.get("code", "")), _current_mode)
+	_wait.show(state, PvpSession.MODE_PVP)
 
 
 func _on_room_state_royale(state: Dictionary) -> void:
@@ -380,7 +391,9 @@ func _on_wait_pick(team: int) -> void:
 
 func _on_wait_start_pressed() -> void:
 	_status.text = "开局中…"
-	if _wait_mode == PvpSession.MODE_ROYALE:
+	if _wait_mode == PvpSession.MODE_PVP:
+		NetBusExt.rpc_id(1, "pvp_start")   # 1v1(2026-10-24):两人齐后由房主触发
+	elif _wait_mode == PvpSession.MODE_ROYALE:
 		NetBusExt.rpc_id(1, "royale_start")
 	elif _wait_mode == PvpSession.MODE_TEAM:
 		NetBusExt.rpc_id(1, "team_start")

@@ -1,96 +1,62 @@
 # 编辑器 io 门面与 tint 像素缓存（`level_editor/io.js` / `level_editor/tint.js`）
 
-> 本文件接收从 `level_editor/io.js` 与 `level_editor/tint.js` 注释里**搬出来**的推导与实测读数
-> （按 [`comment-style.md`](comment-style.md) §8：注释超额时，过程与实测进域文档，原处只留一行指针）。
-> ★ 文档会过期 —— **任何冲突以源码为准**，读之前先 `grep` 复核。返回索引：[`CLAUDE.md`](../../CLAUDE.md)。
-> 格式核心层（`level_editor/core/`）的推导另见 [`editor-core.md`](editor-core.md)。
+> 本文件记 `level_editor/io.js` 与 `level_editor/tint.js` 的契约与常量。★ 冲突以源码为准，读前先 `grep` 复核。
+> 返回索引：[`CLAUDE.md`](../../CLAUDE.md)。格式核心层见 [`editor-core.md`](editor-core.md)。
 
-## 1. io.js：每请求超时（为什么必须有、为什么是 30 秒）
+## 1. io.js：每请求 30 秒超时
 
-- `worker.onerror` 只覆盖「worker 自己**报了错**」这一条死法。worker 被**杀掉或挂住**而不发 `onerror` 时，
-  `await Io.encodeMap(…)` **永远不 settle** —— 症状是「Ctrl+S 之后再无反应、控制台干净」。
-  闸 4 也看不见它：闸 4 拦的是**抛**，而一个悬挂的 promise 连异常都没有。
-- ⇒ 超时是把「悬挂」变成「一次响亮的失败」的唯一手段。30 秒的量级依据：编码一张 125×75 的地图真算力是**毫秒级**，
-  30 秒只可能意味着「对面没了」；它同时远长于浏览器的任何正常抖动，故不会在负载重的机器上假红。
-- 超时回调**不自己拒那一条请求**，而是走收口 `failAll` —— 于是「标死 + 拒光在飞 + 回收 worker」这三件事
-  与 `terminate()` / `onerror` 两条死法**逐字同一份代码**。
-- 「标死」这一半是**必须的**：只拒掉当前这一条而不标死的话，下一次调用会**静默**再起一个 worker，
-  于是「每 30 秒一次失败」无限循环下去，而没有任何信号说这条链已经坏了。
-- 测试对照：`level_editor/worker_io_smoke.js` 的相位 ⑫ 用**注入时钟**跑这条路径（不真等 30 秒）。
+- `worker.onerror` 只覆盖「worker 自己报了错」这一条死法；worker 被杀或挂住时 `await Io.encodeMap(…)`
+  **永远不 settle**（一个悬挂的 promise 连异常都没有）。30 秒的量级：编码一张 125×75 的地图是毫秒级。
+- 超时回调**不自己拒那一条请求**，而是走收口 `failAll`，于是「标死 + 拒光在飞 + 回收 worker」
+  与 `terminate()` / `onerror` 两条死法同一份代码。
+- 「标死」是必须的：只拒当前这一条的话，下一次调用会**静默**再起一个 worker，无限循环。
+- 守卫：`level_editor/worker_io_smoke.js` 相位 ⑫ 用注入时钟跑这条路径。
 
-## 2. io.js：三条死法共用的收口，与两处承重顺序
+## 2. io.js：三条死法共用的收口
 
-- 三条死法 = `terminate()` / `worker.onerror` / 请求超时。它们**只走** `failAll` 一个收口：
+- 三条死法 = `terminate()` / `worker.onerror` / 请求超时，它们**只走** `failAll` 一个收口：
   标死 + 拒光在飞（连定时器一起撤）+ 清表 + 回收 worker。
-- ★ 顺序是承重的：**先标死、先拒光、先清表，回收放最后**。`worker.terminate()` 万一抛，
-  在飞的 promise 也已经拿到失败了；反过来这一抛会把它们全留下，而调用方只看到一个异常
-  （「谁都没被拒」这件事没有任何信号）。
-- ★ 「dead 只认第一个错因」由 `failAll` 里的 `if (dead === null)` 保证；这条守卫**只写在这一处**，
-  别处再走一次收口也不会覆盖先前的死因。
-- 回收时**先置空引用再 terminate**：`terminate()` 若抛，也不留下一个「看着还活着」的 worker。
-- `terminate()` 之后不可能再有应答回来（worker 已死），故在飞请求必须当场拒掉：留着就是永不 settle 的 promise，
-  调用方以为「停掉它就不再有后台活动」却一直挂在 `await` 上。
+- ★ 顺序是承重的：**先标死、先拒光、先清表，回收放最后**（`worker.terminate()` 万一抛，promise 已拿到失败）。
+- ★ 「dead 只认第一个错因」由 `failAll` 里的 `if (dead === null)` 保证，这条守卫只写在 `failAll` 一处。
+- 回收时**先置空引用再 terminate**；`terminate()` 之后在飞请求必须当场拒掉（留着就是永不 settle 的 promise）。
 
-## 3. io.js：闹钟（定时器）的撤销与 postMessage 抛错
+## 3. io.js：定时器的撤销与 postMessage 抛错
 
-- 契约：`opts.timer` 一旦给了，`setTimeout` 与 `clearTimeout` **必须成对**给 —— 只给前者，应答到达时无法撤销，
-  于是**每一次成功的请求**都会在 30 秒后触发一次超时收口，把整条链打死。
-- 两条撤闹钟的路缺一不可：**答复到达**（漏了则每次成功请求都打死链）与**发出失败**（漏了则一次 `DataCloneError`
-  之后 30 秒，一条本来没事的链被误杀）。
-- `postMessage` 会抛（浏览器里不可结构化克隆的 map 就是 `DataCloneError`）。这一档**只清自己那条**：
-  单条消息发不出去不等于整条链坏了，codec **不标死**。表里那条不删的话，resolver 被永久攥着、
-  `pendingCount()` 再也回不到 0，而调用方只看到一次失败 —— 「表里悄悄漏了一条」这种账目错没人会去查。
-- `onerror` **无条件覆盖**，不能写成 `if (typeof worker.onerror !== 'function')`：工厂若返回一个自带 `onerror`
-  的 worker，那种写法就**不订阅**本 codec 的失败处理 —— 于是 worker 崩溃后所有在飞请求永久悬挂，
-  而代码看上去「已经处理了 onerror」。
-- 表里查不到的应答（`pending.get(id)` 为空）**直接丢**：它只可能来自 `terminate()` 之前发出去的那一批；
-  不丢就是「上一次的迟到结果写进这一次的 promise」。
-- 本文件**没有** `errText()`：错误文本在 worker 里就由 `level_editor/worker.js` 的 `reply(errText(e))` 格式化好，
-  经 `{ok:false, error}` 原样带回 —— 同一条归一化规则存在两份时，改了一份的另一份不会有任何信号。
+- 契约：`opts.timer` 一旦给了，`setTimeout` 与 `clearTimeout` **必须成对**给，否则每一次成功的请求
+  都会在 30 秒后触发一次超时收口、把整条链打死。
+- 两条撤闹钟的路缺一不可：**答复到达**与**发出失败**（`DataCloneError`）。
+- `postMessage` 会抛：这一档**只清自己那条**，codec 不标死；表里那条不删则 resolver 被永久攥着。
+- `onerror` **无条件覆盖**，不可写成 `if (typeof worker.onerror !== 'function')`。
+- 表里查不到的应答（`pending.get(id)` 为空）**直接丢**。
+- 本文件**没有** `errText()`：错误文本在 `level_editor/worker.js` 里由 `reply(errText(e))` 格式化好，
+  经 `{ok:false, error}` 原样带回。
 
-## 4. tint.js：象限约定的回归（实测）
+## 4. tint.js：象限与命中判据
 
-- 旧实现有**两条平行的约定**：缓存的键用 `qx & 3`（负数被位运算折到 3），而像素数学用 `qx % Core.SUB_PER_CELL`
-  （负数保持负）。实测后果比「键不好看」重得多：
-  `get(1,-1,0,desc)` 会**先造出一张错图、并存进象限 3 的键**，随后 `get(1,3,0,desc)` **直接命中那张错图**
-  —— 两次调用返回**同一个对象**。
-- 今天所有调用方都只循环 0..3，但「从坐标算象限」的调用方（环面回绕 / 拖拽选区）出现负坐标很正常
-  ⇒ `quadIndex` 把越界坐标**当场抛掉**，回绕由调用方自己先做（别猜）。
+- `quadIndex` 把越界坐标**当场抛掉**；环面回绕由调用方自己先做。
+- 命中判据必须是 `tiles.has(k)`，**不可**写成 `tiles.get(k) !== undefined`（backend 返回 `undefined` 时
+  后者恒假：那张图永不命中，却已占着槽位、计入 size、还能挤掉活条目）。
 
-## 5. tint.js：缓存命中判据的回归（实测）
-
-- 命中判据必须是 `tiles.has(k)`，不能写成 `tiles.get(k) !== undefined`：backend 若返回 `undefined`
-  （或将来某个 backend 这么做），后者恒为假 ⇒ 那张图**永不命中**，却已经占着槽位、计入 size、
-  还能把活条目挤掉。实测形态：`{hits:0, misses:2, size:1}` 且 `has()` 为 true。
-  「命中了没有」只有一条判据，`get` 与 `has` 必须走同一条。
-
-## 6. tint.js：与游戏 shader 逐像素一致的像素数学
+## 5. tint.js：与游戏 shader 逐像素一致的像素数学
 
 | 量 | 规定 | 中性档 |
 |---|---|---|
-| 色彩空间 | **HSV**，不是 HSL（同一个 `(r,g,b)` 上两者给出不同的饱和度与亮度） | —— |
+| 色彩空间 | **HSV**，不是 HSL | —— |
 | 色相 | `h' = fposmod(h + (H-4)*15, 360)`，八档**不对称**（−60°…+45°） | 4 |
 | 亮度 / 饱和度 | **乘法**，乘数 `(k+6)/10`（MUL 表 0.6…1.3） | 4（×1.0，恒等元） |
 | alpha | `a' = a * (A/7)` | **7**（不是 4） |
 
-- ★ 别把乘法写成 `(k-4)*0.1`：那既不是乘数、也不是正确的增量（它是「加法」那一支的形状）——
-  在「乘法 vs 加法」正是判别性要求的地方，写错一支等于把结论说反。
-- 档位的中性行、象限数、位域取值**全部取自 `globalThis.Core`**（单一真相源）：抄一份就意味着两处会漂，
-  而漂了的表现是「编辑器里调好的颜色进游戏就变样」（不报错，只在玩的时候看出来）。
-- 8 位通道的取整规则只有一处：`round(clamp01(x) * 255)`。规范定义 `tintRGBA` 浮点进浮点出，
-  8 位取整（`tintBytes` / `buildTilePixels`）只是它的落地实现。
-- 放大必须是**最近邻**（与项目其余 `texture_filter=nearest` 的口径一致）：插值会糊。
+- 档位的中性行、象限数、位域取值**全部取自 `globalThis.Core`**（单一真相源）。
+- 8 位通道的取整规则只有一处：`round(clamp01(x) * 255)`；规范定义 `tintRGBA` 浮点进浮点出。
+- 放大必须是**最近邻**（与项目其余 `texture_filter=nearest` 一致）。
 - 地图集：`structure.png` 是 320×320、每块 32×32；`textureBlockRect` 从传入的图集宽度算列数，不写死。
-- 缓存上限 `DEFAULT_MAX_TILES = 8192`：8192 × 16×16×4 字节 = 正好 8MB（规格 §4.3 闸 1）。
+- 缓存上限 `DEFAULT_MAX_TILES = 8192`（8192 × 16×16×4 字节 = 8MB）。
 
-## 7. tint.js：抛错是「编程错误」的哨兵
+## 6. tint.js：抛错是「编程错误」的哨兵
 
-- 会抛的入口：`buildTilePixels`（空气格 `desc === 0`、纹理号超出图集行/列、纹理实参与 `Core.texOf(desc)` 不一致、
-  象限坐标不是 `0..SUB_PER_CELL-1` 的整数）、`quadIndex`（越界象限）、`textureBlockRect`（纹理号或图集宽度非法）、
-  `setSource`（参数形状不对）。渲染循环必须先过滤 `desc === 0`，否则第一帧就抛、且每帧都在同一处抛。
-- ★ 最容易踩的是 `setSource`：把 `ImageData` **对象**（而不是它的 `.data`）传进来时，`atlas.length` 是 `undefined`
-  ⇒ `rows = NaN` ⇒ 那条边界比较（`> NaN`）恒为 false ⇒ **一路产出全透明小图且不报错**。
-  形状守卫只做在**参数形状**上；像素数学里的抛错仍旧是哨兵，别动它。
-- 缓存画布是**注入**的（`opts.backend`）：node 里没有 `document`，把「画出来的像素」交给 backend 之后，
-  键 / 淘汰 / 失效逻辑在 node 里可以完整断言。换图（`setSource`）**必须整片失效** ——
-  资源换了就是换了，没有「部分还新鲜」这回事（旧编辑器的纯色兜底永不失效 ⇒ 地图一直是色块，且「有时好有时坏」）。
+- 会抛的入口：`buildTilePixels`（空气格 `desc === 0`、纹理号超出图集行/列、纹理实参与 `Core.texOf(desc)`
+  不一致、象限坐标不是 `0..SUB_PER_CELL-1` 的整数）、`quadIndex`（越界象限）、`textureBlockRect`
+  （纹理号或图集宽度非法）、`setSource`（参数形状不对）。渲染循环必须先过滤 `desc === 0`。
+- ★ `setSource`：传 `ImageData` **对象**（而不是它的 `.data`）时 `atlas.length` 是 `undefined` ⇒
+  `rows = NaN` ⇒ 边界比较恒为 false ⇒ 一路产出全透明小图且不报错。形状守卫只做在参数形状上。
+- 缓存画布是**注入**的（`opts.backend`）；换图（`setSource`）**必须整片失效**。

@@ -69,7 +69,15 @@ func show(state: Dictionary, mode: String) -> void:
 	var is_team := mode == PvpSession.MODE_TEAM
 
 	if is_pvp:
-		page._wait_count.text = "等待对手… 1 / 2"
+		# 1v1(2026-10-24):两人齐后由房主点「开始游戏」;名单/房主都由服务器 pvp_room_state 下发(首帧用本侧占位的 count)。
+		_fill_flat_roster(plist, my_role, host_role)
+		var n := maxi(plist.size(), int(state.get("count", 1)))
+		if n >= 2:
+			page._wait_count.text = "已就绪 2 / 2" + (" — 点「开始游戏」" if is_host else " — 等待房主开始…")
+			if not is_host:
+				page._wait_body.add_child(UiFactory.label("等待房主开始游戏…", 32, UiFactory.C_TEXT_DIM))
+		else:
+			page._wait_count.text = "等待对手… %d / 2" % n
 	elif mode == PvpSession.MODE_ROYALE:
 		_fill_flat_roster(plist, my_role, host_role)
 		page._wait_count.text = "%d / %d 人(至少 2 人可开局)" % [
@@ -84,9 +92,9 @@ func show(state: Dictionary, mode: String) -> void:
 	var my_team := _team_of_role(state, my_role) if is_team else 0
 	page._wait_pick_a.visible = is_team and my_team != 1
 	page._wait_pick_b.visible = is_team and my_team != 2
-	# 「开始游戏」:1v1 没有这颗按钮(两人凑齐自动开局);3v3 还要求两队各满。
+	# 「开始游戏」:1v1 从 2026-10-24 起也有这颗按钮(两人齐后由房主点);3v3 还要求两队各满。
 	if is_pvp:
-		page._wait_start.visible = false
+		page._wait_start.visible = is_host and maxi(plist.size(), int(state.get("count", 1))) >= 2
 	elif mode == PvpSession.MODE_ROYALE:
 		page._wait_start.visible = is_host
 	else:
@@ -188,12 +196,14 @@ func _team_count_text(state: Dictionary, plist: Array) -> String:
 			int(state.get("team_size", LobbyRooms.TEAM_SIZE))]
 
 
-# 1v1 的等待室载荷:1v1 没有 room_state 这条下行载荷(room_created 只给房号、room_joined 只给 role),故在本侧拼一份最小形状,与大乱斗 / 3v3 共用同一个 show() —— 而不是给 1v1 单开一条渲染路径。
-func pvp_wait_state(code: String, role: int) -> Dictionary:
+# 1v1 创建/加入瞬间的本侧占位(服务器 pvp_room_state 下一帧就会用真名单覆盖)。
+# count:已知人数(房主建房 = 1,加入成功 = 2);host_role:房主 role(加入者此刻还不知道 ⇒ 传 0,不能填自己)。
+func pvp_wait_state(code: String, role: int, host_role: int, count: int) -> Dictionary:
 	return {
 		"code": code,
 		"is_public": true,   # 1v1 没有私密房这条路径
-		"players": [],       # 1v1 不画名单(设计 §3.5:`等待对手… 1 / 2`)
+		"players": [],       # 真名单由 pvp_room_state 下发;占位只给人数
 		"your_role": role,
-		"host_role": role,
+		"host_role": host_role,
+		"count": count,
 	}

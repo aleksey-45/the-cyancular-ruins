@@ -65,7 +65,8 @@ A_PID=$!
 CODE=""
 _deadline=$(( $(date +%s) + ROOM_WAIT ))
 while [ "$(date +%s)" -lt "$_deadline" ]; do
-  CODE=$(grep -oP '房间 \K[0-9]+' /tmp/pvp2_server.log 2>/dev/null | head -1 || true)
+  # ★ 2026-10-21 起房间号不再打印人类行,改从**审计 JSON**(`room_created`)取 —— 那是"谁在何时建房"的单一事实源。
+CODE=$(grep '"event":"room_created"' /tmp/pvp2_server.log 2>/dev/null | grep -oP '"room":"\K[0-9]+' | head -1 || true)
   if [ -n "$CODE" ]; then break; fi
   if ! kill -0 "$A_PID" 2>/dev/null; then
     echo "SMOKE FAIL: 建房客户端提前退出(没走到 create_room)"

@@ -114,7 +114,7 @@ func _on_snapshot_world(world: Dictionary) -> void:
 			if _hp_bar != null:
 				_hp_bar.ratio = float(opp.get("hp", PlayerParams.player_max_hp)) 						/ float(PlayerParams.player_max_hp)
 
-# 本人包:只有自己需要的 ack_seq + 权威整态 c2,C2 下喂 rollback 控制器;拆包的好处是它与世界包互不连累 —— c2 丢只少一个回滚锚点(下一个快照补上),世界包丢只让副本插值冻结一帧。
+# 本人包:只有自己需要的 ack_seq + 权威整态 c2,C2 下喂 rollback 控制器;拆包的好处是它与世界包互不连累 —— c2 丢只少一个回滚锚点(下一个快照补上),世界包丢只让副本插值冻结一个快照间隔(下行 30Hz ⇒ 33ms)。
 
 
 # 服务器权威开火(激光):原始 pts 在射手 canonical 系(可能隔整幅地图跨接缝),逐点锚到射手副本当前渲染位置再整条画(滞后约 1 tick 无碍);只画对手那发 —— 自己那发已由本地预测自画,再收服务器版会双光束。

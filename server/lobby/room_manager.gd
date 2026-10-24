@@ -39,6 +39,7 @@ func _enter_tree() -> void:
 	NetBusExt.royale_start_ai_requested.connect(royale_start_ai)
 
 	NetBusExt.team_start_requested.connect(team_start)
+	NetBusExt.pvp_start_requested.connect(pvp_start)   # 1v1 房主开局(2026-10-24:不再两人自动开)
 
 	NetBusExt.room_map_requested.connect(lobby.on_room_map)
 
@@ -48,9 +49,15 @@ func _exit_tree() -> void:
 	NetBusExt.ai_duel_requested.disconnect(ai_duel)
 	NetBusExt.royale_start_ai_requested.disconnect(royale_start_ai)
 	NetBusExt.team_start_requested.disconnect(team_start)
+	NetBusExt.pvp_start_requested.disconnect(pvp_start)
 
 	NetBusExt.room_map_requested.disconnect(lobby.on_room_map)
 
+
+
+# 1v1 房主开局:门禁全在房间层(LobbyRooms.pvp_start:房主 = players[0] / 必须 2 人 / 未开局),这里只转发。
+func pvp_start(caller: int) -> void:
+	lobby.pvp_start(caller)
 
 
 func royale_start(caller: int) -> void:

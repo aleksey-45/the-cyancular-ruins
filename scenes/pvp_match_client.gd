@@ -14,11 +14,16 @@ var _round_locked := false      # COUNTDOWN 冻结态(别把倒计时里提前�
 var _ping_acc := 0.0
 # C2 客户端预测:见 core/prediction_rollback.gd 与 docs/pvp-c2-retrospective.md。
 var _rollback = null            # PredictionRollback
-var _input_seq := 0             # 本地每物理帧单调的输入序号(服务器 1/tick 消费并回带 ack)
+var _input_seq := 0             # 本地每 2 个物理 tick 单调的输入序号(30Hz 采样;服务器每 2 tick 消费一条记录并回带 ack)
 var _have_prev_seq := false
 var _prev_sent_seq := 0
+# 30Hz 输入锁存:本地预测与上行包共用同一份采样(见 SampledInput;一条记录覆盖 TICKS_PER_RECORD=2 个物理 tick)。
+var _sampled_input: SampledInput = null
+var _input_pair_phase := 0      # 0 = 本 tick 是这对 tick 的起点(采样 / 上行 / 记 C2 锚点)
 # ── 网络统计读数(★ 默认关;开关 -- --netstat,必须写在 -- 之后,写在前面会被 Godot 丢掉、静默失效)──
-# 一次打一行四个量:gap = _input_seq − 最后收到的 ack(本端已发、服务器没确认的包数,×16.67ms 就是端到端滞后);ping = NetBus.ping_ms(EWMA 平滑的纯网络 RTT);积压 = gap×16.67 − ping(扣掉网络之后还剩多少是服务器没来得及消费的 —— 这就是判「每 tick 只消费 1 包」成不成立的量:稳定贴 0 = 无罪,一路涨 = 实锤);回滚 = rollback_count() 的每秒增量(恒为 0 也可能是哑火,见 on_authoritative 的 ack 闸)。
+# 一次打一行四个量:gap = _input_seq − 最后收到的 ack(本端已发、服务器没确认的输入**记录**数;每条记录 = TICKS_PER_RECORD 个物理 tick,
+# 故端到端滞后 ≈ gap×33.3ms);ping = NetBus.ping_ms(EWMA 平滑的纯网络 RTT);积压 = gap×33.3 − ping(扣掉网络之后还剩多少是服务器没来得及消费的);
+# 回滚 = rollback_count() 的每秒增量(恒为 0 也可能是哑火,见 on_authoritative 的 ack 闸)。★ ack 只在 30Hz 本人包回带 ⇒ gap 有 0~1 条(0~33ms)量化偏置,判趋势不看绝对值。
 var _netstat := false
 var _netstat_checked := false
 var _netstat_acc := 0.0
@@ -366,42 +371,185 @@ func _on_remote_tile_destroyed(cell: Vector2i, silent: bool = false) -> void:
 func _on_remote_sub_destroyed(sub: Vector2i, silent: bool = false) -> void:
 	_ensure_tile_sync().on_sub(sub, silent)
 
+# ── 30Hz 输入锁存(本地预测与上行共用)────────────────────────────────────────────
+# 上行降到 30Hz 后,本地预测若仍按 60Hz 读真 Input,服务器只看到一半 tick 的输入 ⇒ 两端模拟永久分歧。
+# 故本地玩家也吃"一条记录管 2 个物理 tick"的锁存输入:第一个 tick 露边沿,第二个 tick 只保留 held/轴。
+# ★ 边沿必须逐 tick 读着累积:Godot 的 just_pressed 只在一帧为真,落在第二个 tick 上会被吞掉。
+class SampledInput extends PlayerInput:
+	const HELD_ACTIONS := ["up", "down", "charge", "attack", "R", "Q", "haste", "rewind"]
+	const EDGE_ACTIONS := ["up", "down", "charge", "attack", "R"]
+	var inner: PlayerInput
+	var _edge_live := false
+	var _ax := 0.0
+	var _ax_ud := 0.0
+	var _held: Dictionary = {}
+	var _pressed: Dictionary = {}
+	var _released: Dictionary = {}
+	var _acc_pressed: Dictionary = {}
+	var _acc_released: Dictionary = {}
+	var _pickup := false
+	var _acc_pickup := false
+	var _switch := 0
+
+	func _init(src: PlayerInput) -> void:
+		inner = src
+		for a in HELD_ACTIONS:
+			_held[a] = false
+		for a in EDGE_ACTIONS:
+			_pressed[a] = false
+			_released[a] = false
+			_acc_pressed[a] = false
+			_acc_released[a] = false
+
+	func source_kind() -> int:
+		return inner.source_kind()
+
+	func get_aim_dir_override() -> Vector2:
+		return inner.get_aim_dir_override()
+
+	# 每物理 tick、玩家步进前调一次。sample_now = 本 tick 是这对 tick 的起点。
+	func tick(sample_now: bool) -> void:
+		if frozen:
+			_zero_state()
+			return
+		for a in EDGE_ACTIONS:
+			if inner.is_action_just_pressed(a):
+				_acc_pressed[a] = true
+			if inner.is_action_just_released(a):
+				_acc_released[a] = true
+		if inner.is_pickup_pressed():
+			_acc_pickup = true
+		var sw := inner.get_switch_index_pressed()
+		if sw > 0:
+			_switch = sw
+		if not sample_now:
+			_edge_live = false
+			return
+		_ax = inner.get_axis("left", "right")
+		_ax_ud = inner.get_axis("up", "down")
+		for a in HELD_ACTIONS:
+			_held[a] = inner.is_action_pressed(a)
+		for a in EDGE_ACTIONS:
+			_pressed[a] = _acc_pressed[a]
+			_released[a] = _acc_released[a]
+			_acc_pressed[a] = false
+			_acc_released[a] = false
+		_pickup = _acc_pickup
+		_acc_pickup = false
+		_edge_live = true
+
+	func reset() -> void:
+		_zero_state()
+
+	func _zero_state() -> void:
+		_edge_live = false
+		_ax = 0.0
+		_ax_ud = 0.0
+		_switch = 0
+		_pickup = false
+		_acc_pickup = false
+		for a in HELD_ACTIONS:
+			_held[a] = false
+		for a in EDGE_ACTIONS:
+			_pressed[a] = false
+			_released[a] = false
+			_acc_pressed[a] = false
+			_acc_released[a] = false
+
+	func _axis_raw(neg: String, pos: String) -> float:
+		if neg == "left" and pos == "right":
+			return _ax
+		if neg == "up" and pos == "down":
+			return _ax_ud
+		return inner.get_axis(neg, pos)
+
+	func _action_pressed_raw(action: String) -> bool:
+		return bool(_held.get(action, false))
+
+	func _action_just_pressed_raw(action: String) -> bool:
+		return _edge_live and bool(_pressed.get(action, false))
+
+	func _action_just_released_raw(action: String) -> bool:
+		return _edge_live and bool(_released.get(action, false))
+
+	func _attack_pressed_raw() -> bool:
+		return bool(_held.get("attack", false))
+
+	func _attack_just_pressed_raw() -> bool:
+		return _edge_live and bool(_pressed.get("attack", false))
+
+	func _attack_just_released_raw() -> bool:
+		return _edge_live and bool(_released.get("attack", false))
+
+	func _switch_index_raw() -> int:
+		return _switch if _edge_live else 0
+
+	func _pickup_pressed_raw() -> bool:
+		return _edge_live and _pickup
+
+	func _drop_pressed_raw() -> bool:
+		if not _edge_live:
+			return false
+		var v := _drop_edge
+		_drop_edge = false
+		return v
+
+
 func _physics_process(delta: float) -> void:
 	_tick_beta_time(delta)   # Beta 时间玩法:加速预测 + 双侧视效(普通局自短路)
 	if _local == null:
 		return
+	_ensure_sampled_input()
 	_ping_acc += delta
 	if _ping_acc >= 0.5:
 		_ping_acc = 0.0
 		if NetBus.can_send_to_server():
 			NetBus.send_ping()
-	# C2:玩家由引擎自步进(读真实 Input)。这里在它本帧步进前先把上一 seq 的预测整态入 ring,再 reconcile 到期权威(分歧 → restore + 重放重对齐)。★ 顺序不能反:先记预测态,reconcile 才比得上 ring[C]。
-	if _rollback != null:
-		if _have_prev_seq:
-			# 贴身提示:只在接触期放宽容差(见 core/prediction_rollback.gd 的 contact_pos_tol)。★ 必须在 reconcile() 之前 —— 它是消费方;漏了这一行 = 静默退回 2px 容差,故 rollback_fidelity_probe 有一条源码守卫钉住它的位置与唯一性。
-			_rollback.in_contact = _local.touching_player()
-			_rollback.note_post_step(_prev_sent_seq, _local.capture_state())
-			_rollback.reconcile()
-	var src: PlayerInput = _local.input_source
-	# 位打包收在 PacketInputSource.pack_record(协议编码端的唯一来源;解码端本来就只有一份)。
-	var aim: Vector2 = _local.get_current_aim_dir()
-	_input_seq += 1
-	var pkt := PacketInputSource.pack_record(src, _input_seq, aim)
-	# 滚轮 / 数字键切枪:本地解析成目标那把的 inst 再随输入包上行。★ 位置不能过网 —— 两端 held 的顺序可能不同(拾取 / 丢弃只由服务器裁决),同一下标会解出不同的枪。
-	var switch_inst: int = _local.weapons.take_uplink_switch(src.get_switch_index_pressed())
-	if switch_inst > 0:
-		pkt["winst"] = switch_inst
-	# ★ 只有真发得出去时才发:离场的三条路(ESC / MATCH_OVER / 对手离开)都会先 NetBus.stop(),而本场景到帧末才被换掉 —— 中间这一两帧 rpc_id 会打引擎错误(no multiplayer peer is active),包本来也发不出去。预测与记账照常走完(seq 照增),只是不上行。
-	if NetBus.can_send_to_server():
-		NetBus.rpc_id(1, "send_input", pkt)
-	_prev_sent_seq = _input_seq
-	_have_prev_seq = true
-	if _rollback != null:
-		_rollback.note_input(_input_seq, pkt)
+	# 30Hz 采样/C2:只有「输入对」的起点才记预测整态 + reconcile + 采样上行;第二个 tick 沿用同一份锁存输入(边沿已关)。
+	# ★ 顺序不能反:先记预测态(上一对跑完的整态),reconcile 才比得上 ring[C];采样必须在玩家步进前。
+	var pair_start := _input_pair_phase == 0
+	_input_pair_phase = (_input_pair_phase + 1) % PacketInputSource.TICKS_PER_RECORD
+	_sampled_input.tick(pair_start)
+	if pair_start:
+		if _rollback != null:
+			if _have_prev_seq:
+				# 贴身提示:只在接触期放宽容差(见 core/prediction_rollback.gd 的 contact_pos_tol)。★ 必须在 reconcile() 之前 —— 它是消费方;漏了这一行 = 静默退回 2px 容差,故 rollback_fidelity_probe 有一条源码守卫钉住它的位置与唯一性。
+				_rollback.in_contact = _local.touching_player()
+				_rollback.note_post_step(_prev_sent_seq, _local.capture_state())
+				_rollback.reconcile()
+		var src: PlayerInput = _sampled_input
+		# 位打包收在 PacketInputSource.pack_record(协议编码端的唯一来源;解码端本来就只有一份)。
+		var aim: Vector2 = _local.get_current_aim_dir()
+		_input_seq += 1
+		var pkt := PacketInputSource.pack_record(src, _input_seq, aim)
+		# 滚轮 / 数字键切枪:本地解析成目标那把的 inst 再随输入包上行。★ 位置不能过网 —— 两端 held 的顺序可能不同(拾取 / 丢弃只由服务器裁决),同一下标会解出不同的枪。
+		var switch_inst: int = _local.weapons.take_uplink_switch(src.get_switch_index_pressed())
+		if switch_inst > 0:
+			pkt["winst"] = switch_inst
+		# ★ 只有真发得出去时才发:离场的三条路(ESC / MATCH_OVER / 对手离开)都会先 NetBus.stop(),而本场景到帧末才被换掉 —— 中间这一两帧 rpc_id 会打引擎错误(no multiplayer peer is active),包本来也发不出去。预测与记账照常走完(seq 照增),只是不上行;重连会重建 C2 状态。
+		if NetBus.can_send_to_server():
+			NetBus.rpc_id(1, "send_input", pkt)
+		_prev_sent_seq = _input_seq
+		_have_prev_seq = true
+		if _rollback != null:
+			_rollback.note_input(_input_seq, pkt)
 	# 地面武器:锚点 + 落点同步 + F 提示(纯本地表现,不参与预测)。
 	_tick_ground_weapons()
 	_cull_bullet_contacts()
 	_netstat_tick(delta)
+
+
+# 把本地玩家输入源换成 30Hz 锁存源(只换一次)。★ 必须复制 frozen:子类 _ready 里 _refresh_input_lock() 已把真实输入源冻上,
+# 换源会丢掉冻结 ⇒ COUNTDOWN 里本地预测还能动、PLAYING 起大回滚。
+func _ensure_sampled_input() -> void:
+	if _sampled_input != null:
+		return
+	var real: PlayerInput = _local.input_source
+	_sampled_input = SampledInput.new(real)
+	_sampled_input.frozen = real.frozen
+	_local.set_input_source(_sampled_input)
+	if _rollback != null:
+		_rollback.ticks_per_record = PacketInputSource.TICKS_PER_RECORD
 
 
 # 网络统计读数:开关走 OS.get_cmdline_user_args() 且懒查一次(本类没有 _ready —— 三个子类各有一个,在基类再加会被覆盖掉、静默失效)。
@@ -418,7 +566,7 @@ func _netstat_tick(delta: float) -> void:
 		return
 	_netstat_acc = 0.0
 	var gap := _input_seq - _last_ack
-	var lag_ms := float(gap) * 1000.0 / 60.0
+	var lag_ms := float(gap) * (1000.0 / 60.0) * float(PacketInputSource.TICKS_PER_RECORD)
 	var ping := NetBus.ping_ms
 	var rb := 0
 	if _rollback != null:
@@ -907,10 +1055,14 @@ func _on_resumed() -> void:
 	_input_seq = 0
 	_have_prev_seq = false
 	_prev_sent_seq = -1
+	_input_pair_phase = 0
+	if _sampled_input != null:
+		_sampled_input.reset()   # 断线前攒的边沿/锁存属于旧 seq 空间,重连后从干净状态重新采样
 	# ★ 新实例必须重新 bind + 设 map_px,照抄两个子类 _ready 里那三行。漏了都不报错:没 bind → _handle_ack 里 _p == null 直接 _trim 返回,分歧永不修复(静默失去 C2);没设 map_px → 跨接缝那一帧按裸距离比,白跑一次回滚。
 	_rollback = PredictionRollback.new()
 	_rollback.bind(_local)
 	_rollback.map_px = Vector2(GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+	_rollback.ticks_per_record = PacketInputSource.TICKS_PER_RECORD
 	# ★ 路径甲(局内自动重连)原来不需要 match_sync —— 场景没重建、本地世界还在;现在需要了:世界在掉线那 GraceWindow.DEFAULT_SECONDS 秒里变过。这一拉把两类丢掉的可靠事件一次补回:destroyed(被拆的墙,不补 → 幻影墙 → 预测分歧)、ground_weapons(掉落 / 被捡走的枪,不补 → 幽灵枪 / 看不见的枪)。
 	# ★ 顺序:上面已经把 C2 重置完了(新 rollback / _input_seq=0),再拉。★ 别把这一行删掉:它不在"进场建态"那条老路上,漏了不报错,只是世界悄悄不一致。
 	if NetBus.can_send_to_server():

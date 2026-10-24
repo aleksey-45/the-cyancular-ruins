@@ -1,212 +1,125 @@
 # 测试与守卫
 
-> ★ **2026-10-09 测试面削减 90%**:本文件里凡标着 `（已删·2026-10-09）` 的守卫**都已不存在**。
-> 那一批删了什么、留了什么、代价是什么 —— 台账
-> [`docs/superpowers/specs/2026-10-09-test-surface-cut-90-design.md`](../superpowers/specs/2026-10-09-test-surface-cut-90-design.md)。
-> ★ 读法:**不要**因为路径还在句子里就以为守卫还在 —— 标了就是没有了。
+> 判据一律 **grep 文本**(`SMOKE OK` / `ALL-OK` / `RUN_ALL ...`);**退出码不是判据**。
+> 现行清单只有两个自动来源:`bash tests/run_all.sh --list` 与 [`tests/README.md`](../../tests/README.md) —— 别抄任何枚举,它会漂。冲突以源码为准。
 
-> 从 [`CLAUDE.md`](../../CLAUDE.md) 拆出(2026-10-03,**原文逐字未改**)。返回索引:[`CLAUDE.md`](../../CLAUDE.md)。
-> 本文件覆盖:测试 · ★★ 守卫/期望能给的保证总是比它读起来少。
-> ★ 文档会过期 —— **任何冲突以源码为准**,读之前先 `grep` 复核。
+## 桶划分
 
-### 测试
+判据是「跑它要什么资源」,不是「测多少代码」。
 
-> ★★ **2026-10-05 加:聚合入口(默认批 / 真链路批)** —— 下面那些"逐支手跑"的描述是**机制**说明;
-> **"这一趟该跑哪些、判词是什么、哪些明知是红的"以 [`tests/run_all.sh`](../../tests/run_all.sh) 为准**。
-> - `bash tests/run_all.sh` = **headless 默认批**:**自动枚举** `tests/smoke/*.gd` + `tests/probe/*.tscn`
->   + `tests/probe/*.gd`(没有同名 `.tscn` 的那些,按 `-s` 跑);**不碰 7777、不弹窗**。
->   逐支判词分 `OK` / `OK+RC`(判词肯定但 `rc != 0` ⇒ **不算红**,单列)/ `FAIL` / `NO-VERDICT` / `TIMEOUT`
->   (后两类**归红**:判词缺失或被外壳掐掉 = 守卫自己瞎了);全批判词
->   `RUN_ALL OK(n runs / m gated-assertions)` · `RUN_ALL OK-WITH-KNOWN-RED(n runs, k registered)` ·
->   `RUN_ALL FAIL(r new-red + k registered)`;**有新红才非 0**。
-> - **已知红基线 = [`tests/known_red.txt`](../../tests/known_red.txt)**:每行 `路径 类别 理由`,理由**必填**;
->   修好就**删行**(过期条目也会红)。它存在的理由是 [`tests/probe/allscript_probe.gd`](../../tests/probe/allscript_probe.gd) 里那句
->   "一条\*\*永远红\*\*的闸等于没有闸"。
-> - `bash tests/run_real.sh` = **真链路批**(5 支多进程 `.sh`;四道闸:活大厅 / 认领 / **R20 锁**+前后进程 / 清单不许烂)。
->   ★ **默认批绿 ≠ 真链路绿**:两条链路覆盖**不相交**的东西;改到联机 / 协议 / 回滚 / 输入包的改动**必须两边都看**。
-> - `bash tests/run_all.sh --list` 打印**跑哪些 + 排除哪些 + 每条理由 + 已知红基线**;
->   `--classify-check` 跑**分类器自检**(**24 例**:分项 `OK` / `[OK]` 标签 / 中文说明行都顶不掉 `NO-VERDICT`、CRLF、退出噪声、rc 分层、**良性尾行(`notes:`)放行**……)。
->   ★ "判词肯定" = **三条件同时成立**(形状 + **位置 = 判词之后不许再出现"判定形状"的行** + 非分项标记);
->   判词之后的行分三类:**引擎噪声 ⇒ 永不推翻**;**判定形状(判词/失败/分项标记 / **本仓自己的失败·中止词汇**)⇒ 推翻**;
->   **其它良性尾行(`notes: …` 这种)⇒ 放行**(2026-10-05 Task 6 改;旧口径"判词必须是最后一条非引擎噪声行"
->   会把 `haste_probe` 的 `  notes:` 尾行随机判成 `NO-VERDICT`)。
->   ★ **判准(2026-10-05 修复轮 1;评审 I-1)**:*凡在表达"本支的断言/检查有失败、或没有跑完"的行,都是判定形状* ——
->   它挡的是判词之后再来一句 `3 条失败` / `assertion failed` / `0 checks ran` / `run aborted`(初版只查分项标记
->   ⇒ 这类尾行会落 `OK` / **`OK+RC` = 不算红**);`跳过`/`skipped` **有意不收**(要放行的那一行
->   `  notes: …:对比跳过` 说的是"某一项没测")。权威表述在 `run_all.sh` 文件头。
-> - 日志:`tests/.run_all_logs/{smoke,probe}/*.log`(每支全文)+ `summary.log`(判词原文);
->   ★ 它们**跨跑次混装**(同一路径会被下一趟覆盖)⇒ 读到的**不一定是这一趟的**。
+| 桶 | 资源边界 | 形态 | 跑法 |
+|---|---|---|---|
+| **冒烟** | 单进程;被测代码与测试同进程;不碰网络 / 磁盘 / 真场景实例;**autoload 未实例化** | `tests/smoke/*.gd`(`extends SceneTree`) | `-s` |
+| **场景探针** | 单机、真场景树:真实例化 `.tscn`,走 `_ready` / 信号 / 资源加载 / 渲染 | `tests/probe/*.tscn` | `--quit-after 3600` |
+| **真链路** | 跨进程 + 真端口 + 真协议:起大厅 / worker / 客户端子进程 | `tests/{smoke,probe}/*.sh` | `bash tests/run_real.sh` |
 
-**源码级探针的共享脚手架 = `tests/lib/`**:`scan_util.gd`(`class_name ScanUtil`,纯静态:读文件/走目录/剥注释视图/括号与实参切分/取函数体,**无 Node 依赖**)与 `probe_base.gd`(`class_name ProbeBase extends Node`:断言账本 `_failures` + `_check`/`_summary`/`_finish` + 一层转发到 ScanUtil 的扫描词汇)。★ **加新源码级探针时别再从别处抄扫描函数**:`extends ProbeBase` 并覆写 `probe_id()` 即可(末行 `KH <id> PROBE: ALL-OK` 由它拼)。⚠ **2026-10-13 订正**:原文说"`kh_l{1,3,4,5,6}_probe` 全部在用它"、"`tests/lib/` 本身会被 `kh_l4`/`kh_l5` 的字号规范扫描覆盖" —— **那些探针都已删·2026-10-09**,这两句今天都不成立(字号纪律改为**人工守**,见 `docs/eng/comment-style.md` §7)。
+- 永远选能证明它的**最小**一档。桶选大了更慢、更脆、更难定位。
+- 手感 / 观感 / 配色 / 版式**不是守卫缺口**:这类没有自动化判据,只能人眼与试玩。
 
-无单测框架。`tests/*.gd` 是 `extends SceneTree` 的冒烟/诊断脚本,用 `-s` 跑。★ **两种跑法,按脚本首行区分**:`extends SceneTree` → `-s res://tests/<名>.gd`(autoload 不存在);`extends Node` → `--quit-after <帧数> res://tests/<名>.tscn`(`--quit-after` 的单位是**帧**不是秒;它是安全网 —— 脚本解析失败时场景根没脚本、一行不打印且不退出)。**判据必须是 grep 文本 `ALL-OK`**(退出码从来不是判据)。⚠ **2026-10-13 订正**:原文点名"以 `enemy_logic_smoke.gd` 为主"与 `kh_l{1,3,4,5}_probe.tscn` —— **这些都已删·2026-10-09**;**现行清单不在本文里**(见下一条)。
+## 单支跑法
 
-- ★★ **"grep 到 ALL-OK"只证明「没有任何断言失败」,不证明「每条断言都跑过」**(**完整表述与三层实测在 `tests/lib/probe_base.gd` 的文件头,那里是这条纪律的权威落点**):脚本错误只让**出错的那个函数当场结束、调用方继续** ⇒ 后面那些断言被**静默跳过**,而 verdict **照打 `ALL-OK`**;更尖的一层是 `ProbeBase._summary` 在**没有新增失败**时打 ✓,所以**整组一条都没跑**时那个 ✓ 汇总行**也会打**。★ **退出码从来不是判据**(出错时照样 exit 0)。★ 两个新场景探针用 `_checks >= EXPECTED_CHECKS` 堵同一件事。
-- ★ **`-s` 冒烟必须写空载守卫**:`_initialize()` 里一旦抛错就走不到 `quit()`,进程**永久挂起**(不是干净失败,是超时)—— `load()` 之后立刻 `if X == null: print(...); quit(1); return`,且跑新冒烟**一律套 `timeout`**。★ 同理,查"某常量在不在"用 `get_script_constant_map()` 而不是直接取属性(取不存在的属性会抛错 → 挂起)。
-- ★ **场景探针的 `--quit-after` 是安全网,给足(统一 3600 帧)** —— 探针跑完会自己 `quit()`,这个值**只在探针挂住时**才用得上,放宽**不花任何代价**;给少了会在机器负载重时**先耗尽**,表现为"一行 ALL-OK 都没有"、看着像功能坏了。★ 但**别拿"批量里红、单跑绿"断定就是超时** —— 安全网耗尽与探针真失败在输出上**长得一样**,要先按真失败查一遍。
-- **探针清单不写在这里(它会过期)** —— 2026-10-09 的测试面削减把默认批从 111 支砍到 14 支,本文原先逐个列出了 61 个探针名,**其中 53 个今天已不存在**。现行清单只有两个**自动**来源,别再从任何文档里抄枚举:
-  - `bash tests/run_all.sh --list` —— **自动枚举**默认批 + **每条排除理由** + 已知红基线(唯一不会漂的清单);
-  - [`tests/README.md`](../../tests/README.md) —— 分桶(冒烟 / 场景探针 / 真链路)与跑法。
-  ★ 那一批删了什么、留下什么、代价是什么:[`docs/superpowers/specs/2026-10-09-test-surface-cut-90-design.md`](../superpowers/specs/2026-10-09-test-surface-cut-90-design.md)。
-  ★ 仍然成立的**分类口径**:`-s` 冒烟(纯逻辑、autoload 不存在)/ `.tscn` 场景探针(真场景树、`--quit-after` 当安全网)/ `.sh` 真链路(跨进程 + 真端口;纪律见下面两条)。
-  ★ 想确认"某支探针还在不在":`git ls-files 'tests/**'` 与 `run_all.sh --list` 是真相源 —— **别信文档里的枚举**(本条就是被删掉的那份枚举的墓碑)。
-- **★ 真链路跑批的两条纪律**:
-  - ★★ **两支真链路测试之间必须确认 `tasklist | grep -i godot` 为空。** worker 由大厅 `OS.create_process` 拉起,是**孙进程** —— 不在任何脚本记下的 PID 里;而下一支新大厅的端口分配集合是**进程内内存** ⇒ **再次选中同一端口** ⇒ 新 worker 报 `监听失败 20` ⇒ 客户端连到的是**上一支的僵尸 worker** ⇒ 整支**挂到外层 timeout、一行裁决都不打**(与真失败**长得一样**)。★ 前台 `timeout` 掐掉某支脚本时,它收尾那段**不会跑** ⇒ 必留孤儿 ⇒ **下一支**被毒。守卫 = `tests/env.sh` 的 **`kill_port_range LO HI`**。★★ `rejoin_probe` / `team_match_probe` **绝不能**扫 `[7800,8300)`(那会端掉用户正在跑的对局)。
-  - ★ **`lobby_alive` 原先那版判据是结构性恒假(已修)**:`netstat … grep -E "[:.]7777[[:space:]].*LISTENING"` —— 而 **ENet 走 UDP、UDP 行没有状态列** ⇒ `.*LISTENING` **永不命中**。现收在 `tests/env.sh` 的 `lobby_alive()`。
-- **⚠ 既有红(已登记)** —— ★ **2026-10-04 收敛**:清单是 [`registered-debt.md`](registered-debt.md) §一(正文 = [`debt/known-red.md`](debt/known-red.md),带 **owner / 最后复核 / 销掉条件**),此处不再复述症状,只留索引。★ **2026-10-13 订正**:原文写"**唯一**清单"—— 这句**只对既有红 + 重复真相源这两类成立**(性能/视觉/文档类的债住在 [`handoff-2026-10-03.md`](../superpowers/handoff-2026-10-03.md) §2.4 与各域文档的「已知边界(登记)」里;落点表见 `registered-debt.md` §四)。这与 `AGENTS.md` 的同处订正一致 —— **最旧的那处没跟着改,是本次补上的**。
-  - ❌ `tests/probe/team_match_probe.sh` —— **根因已于 2026-09-28 由 `9003dae` 修掉**(客户端被拨到生产云服 `120.53.107.140`);★ **2026-10-13 订正**:原文写"**修复后没有留下六人整跑的判决**" —— 那次判决**已于 2026-10-08 补上**:手工单跑 ⇒ **FAIL(8 条)**(见 [`debt/known-red.md`](debt/known-red.md) 首行)。⇒ 结论不变(**今天仍不可当作 3v3 的端到端守卫**),但**理由从"没跑过"变成"它真红"**。跑法与销案条件见 `registered-debt.md` §一第 1 行。
-  - ⚠ `ground_net_probe.tscn`（已删·2026-10-09） —— 既有抖动(机器人走位在**随机图**上卡死)。见 §一第 2 行。
-  - `brawl_rollback_probe.tscn`（已删·2026-10-09） —— 原登记为"读 N≥4 时本身在抖、变异下仍有一格假绿";2026-10-08 按 [`test-economy.md`](test-economy.md) 的 **D5 移出默认批**(它是容差常数的**测量台**、不是守卫,故**移而不删**)。见 §一第 3 行。
-  - ★ **原注"未证假设与下一步见报告 §4.1b"是死指针**:那份报告在不入库的 `.superpowers/`,且 `§4.1b` 不在 [`docs/2026-09-17-duel-probe-lobby-rpc-blocker.md`](../../docs/2026-09-17-duel-probe-lobby-rpc-blocker.md) 的章节编号里。**已改指**该文档 §5「仍未解释的一处矛盾(下一个人的入口)」。
-- **★ B 档「登记边界」批(2026-09-28)的判据 + 回归清单** —— ★★ **2026-10-05 降级为历史记录**:
-  下面那份清单是**那一批**手维护的(而"能生成就别再抄一份"是本仓明文纪律)⇒
-  **它不是现行批口径**;现行口径 = `bash tests/run_all.sh`(默认批)+ `bash tests/run_real.sh`(真链路批)。
-  留着的价值是把**每一条的判据与覆盖上限**记在正文里(下面那些"覆盖上限(登记,不补相)"仍然有效)。
-  ★ **2026-10-13 补注**:下面清单里的探针**多数已删·2026-10-09** —— 别照它去跑;**不会随文件消失的是判据、覆盖上限与那几条真链路纪律**,那些才是留它的理由。
-  (判据一律是**文本**,不看退出码):
-  - **`late_match_probe.tscn`（已删·2026-10-09）**(`timeout 180 … --quit-after 3600`)→ 文本 `LATE MATCH PROBE: ALL-OK`。钉四项:① `_left_round` 分母的**读取端**;② MATCH_OVER 之后倒地**不**进 `_stats`(**含一条 ROUND_OVER 相**);③ `note_disconnect_round` 的**写入端**(经**真** `_enter_grace`);④ 大乱斗 `_match_winner` 的并列候选集(配 ⑤ 与 ⑤b;★ **⑤ 是必需的**反向对照)。★★ **覆盖上限(登记,不补相)**:④ 是**唯一**走到"只身幸存"的相 ⇒ 一个假想的退化实现能**全过**。★★ **另一处照实未钉**:MATCH_OVER 侧 ③ 的掉落与 ④ 的 `_reset_survivor` **没有断言**。
-  - **`duel_spawn_timeout_smoke.gd`（已删·2026-10-09）**(`-s`,**真拉起一个独立 worker 进程**)→ 文本 `DUEL SPAWN TIMEOUT SMOKE: ALL-OK`。★ 三条纪律(与 `team_spawn_smoke` 同款):端口固定 **29015**(必须在真大厅 worker 端口池之外)/ **跑前先删日志**(否则上一次的"报到超时"行会把本跑**喂绿**)/ 断言要 `就绪` **与** `报到超时` **两条**行都在(少了前者,一个"开机即崩"的 worker 也会让后者失败,失败原因完全指错方向)。★ 它另有一层**源码级 belt**,判的是**语义不变量**(口径见该文件头),故标志改名 / 合取项重排 / 抽成一层 helper 都**不会**假绿。★ 三条已知上限 + "**承重的是 ③ 而不是 ①②**"见 §对局中的房。**别当它是证明** —— 真正的证明是那次**人工跑满 45 秒的真大厅**。
-  - **★ 本批回归清单**:`ammo_rollback_probe` / `late_match_probe` / `death_drop_probe` / `team_host_probe` / `room_sweep_lint` / `kh_l5_probe` / `rpc_liveness_probe` / `duel_spawn_timeout_smoke` / `royale_disconnect_count_probe`,加 **一次真大厅跑满 45 秒**。★ `brawl_rollback_probe` **本批不跑**;**真要跑得给 `--quit-after 30000`** —— 仓库统一的 **3600 对它不够**,而它的失败形状是"**无裁决行 + exit 0**"。
-  - **★ 真大厅那一步的判据与护栏**(唯一会占 **7777** 的回归步):**`lobby_alive` 为真时必须跳过**(大厅的 `_ready` 会 `kill_udp_port(7777)`)。为假时跑 `timeout 45 … server_main.tscn`:**正确** = **EXIT=124** 且输出里**没有**「报到超时」行;**有病** = 自己 ~30s 退出(**EXIT=0**)且打了那一行。★★ **两者都要看**:只看退出码会被管道骗(`| tail` 报的是 `tail` 的退出码、**恒 0**);只看文本则分不出"被掐掉"与"提前退出" —— 本仓纪律是**判据一律 grep 文本**,要取退出码就**别接管道**。
-- **★ `.uid` 入库口径**:本仓**跟踪** `*.gd.uid`、`.gitignore` 未屏蔽;而 **`*.tscn.uid` 零跟踪** ⇒ **新建 `.gd` 要跟它的 `.uid`,新建 `.tscn` 不用**。★ 成因:实现者都按名 `git add <具体文件>`,会**漏掉姐妹文件** ⇒ **给 `git add` 命令时,新建 `.gd` 的场合要显式带上 `.uid`**。
+`extends SceneTree` ⇒ `-s`;`extends Node` ⇒ `--quit-after <帧数>` 加 `.tscn`。引擎路径来自 [`tests/env.sh`](../../tests/env.sh) 的 `$GODOT`。
 
-#### ★★ 守卫/期望能给的保证总是比它读起来少
+```bash
+"$GODOT" --headless --path . -s res://tests/smoke/<名>.gd
+"$GODOT" --headless --path . --quit-after 3600 res://tests/probe/<名>.tscn
+bash tests/smoke/<名>.sh
+```
 
-共性:① 判据落在**文本/计数**上而意图是**语义/行为**;② 覆盖声明**写在注释里、没人验**;③ 发现它们的**几乎全是审阅者,不是实现者**。典型形态:
+- `--quit-after` 的单位是**帧**,统一给 **3600**。它是安全网:探针跑完会自己 `quit()`,给少了会在负载重时先耗尽。
+- 判据是 grep 到判词;**不要**接管道取 `rc`(`| tail` 报的是 `tail` 的退出码)。
 
-- ★★ **peer 给出的最准成因表述**:**「探针把夹具的写入当成了被测行为的一部分,于是被测的那一半从来没被验过。」** ⇒ 通用检查法:**逐条问"这一相里,有多少输入是我自己喂的、有多少是从生产来的"** —— 喂进去的那部分,无论多像,都**不构成对该路径的验证**。
-- ★★ **「过期的注释会被改对,而"职责被张冠李戴"会让下一个删它的人以为自己论证过了。」**
-- ★★ **算术教训**:**「把条件写成 `== A`」与「写成 `!= B`」的差集是 `B \ A`,不是"`A` 之外的全部"。** ⇒ 说"某个变体会被 X 守住"之前,先把它在**每个状态下的真值**列出来。
-- ★ **加新守卫时逐条照做**:每条新守卫都要在**它自己的注释里**回答"**它能给的最强保证是什么、它测不到什么**";凡写"某变异会被 X 守住",**先把该变异在每个状态下的真值列出来**;凡写死一个**可数**的期望值,**写清它是怎么数出来的**。
+## 默认批:`bash tests/run_all.sh`
 
-## ★ 2026-10-04 追加：变异判据要含"**红的原因对不对**"
+- **自动枚举**三个 glob:`tests/smoke/*.gd` + `tests/probe/*.tscn` + `tests/probe/*.gd`(无同名 `.tscn` 的按 `-s` 跑)。清单不写死;落选走 `EXCLUDED` 显式清单 + 每条理由,规则匹配不到文件即红。
+- 不碰 7777、不拉子进程、不弹窗。默认批里出现开端口 / 拉子进程的支 = 红。
+- 选项:`--list`(跑哪些 + 排除哪些 + 每条理由 + 已知红基线)· `--only <子串>` · `--classify-check`(分类器自检)。
+- 逐支判词:`OK`(判词肯定且 `rc == 0`)· `OK+RC`(判词肯定但 `rc != 0`,**不算红**,单列)· `FAIL` · `NO-VERDICT` · `TIMEOUT`。后两类**归红**。
+- 全批判词(**纯 ASCII**):
+  - `RUN_ALL OK(n runs / m gated-assertions)`
+  - `RUN_ALL OK-WITH-KNOWN-RED(n runs, k registered)`
+  - `RUN_ALL FAIL(r new-red + k registered)`
+- 退出码:有新红 ⇒ 非 0;只有已登记红 ⇒ 0。
+- `m` = 带条数闸的那些支的闸值之和,**不是**全批断言总数。
+- **`GATE` 栏** = 该支 `_checks` 条数闸的值;`-` 表示这一支**没有闸**。声明了 `EXPECTED_CHECKS` 却没拿它比较 ⇒ 栏内 `-(declared,unused:N)`,不计入 `m`。
+- 说明行(`[env]` / `[enum]` / `[baseline]` / `[known-red]` / `[new-red]` / `[ok+rc]` 与 `--list` 的排除理由)不过 ASCII 过滤,原样含中文。
+- 日志:`tests/.run_all_logs/` 下每支全文 + `summary.log`;跨跑次混装,同一路径会被下一趟覆盖。
+- 入口自己会红的九种情形:glob 空转 / 过期排除项 / `probe/*.gd` 既没跑也没排除 / 默认批出现开端口或拉子进程的支 / 新红 / 基线条目过期 / 基线路径不在候选面 / 基线文件写错 / 声明了 `EXPECTED_CHECKS` 却没用于比较。
 
-窗口批 Task 5 实跑踩到一次：跑变异 B 时**忘了先还原变异 A** ⇒ 那次"B 的跑"其实是 **A+B 叠加**生效。
-只看到"红了"就收工，会把结论记成"B 咬住了这条断言"，而真相是 A 咬的。
+## 条数闸 `EXPECTED_CHECKS`
 
-**规矩**：① 每个变异**前**先确认已复原上一个（`grep` 变异标记 / `git diff` 应为空）；② 红的时候**核对的不是"红了"，而是"红的理由"** —— 按**预期的断言名**核（例"⑤a 必红、⑤b 应绿"两条都要对上）；③ 报告里记"红在哪条断言"，不记"红了"。
+- 单支 `OK` 只证明「没有任何断言失败」,**不证明每条断言都跑过**:脚本错误只结束出错的那个函数、调用方继续,verdict 照打 `ALL-OK`;`ProbeBase._summary` 在整组一条都没跑时也会打 ✓。权威表述在 [`tests/lib/probe_base.gd`](../../tests/lib/probe_base.gd) 文件头。
+- **新写的场景探针必须带闸**:同文件 `const EXPECTED_CHECKS := N`,并在收尾拿它比较(`_checks >= EXPECTED_CHECKS` 或 `!=`)。只声明不比较 = 没有闸。
+- 存量不追补。
 
-## ★ 2026-10-04 追加：`-s` 探针**可以**驱动全局输入 —— "headless 下全局 Input 恒假"只在没人按键时成立
+## 已知红基线:`tests/known_red.txt`
 
-同一批任务里连着踩了同一条**错误前提**：设计守卫时以为"headless 里读全局 `Input` 与返回 `false` 不可分，
-所以行为断言对这类分支**天生无牙**"。
+- 每行 `路径 类别 理由`。路径必须与枚举出来的那一支**逐字相同**;类别 ∈ `OK+RC` / `FAIL` / `NO-VERDICT` / `TIMEOUT` / `*`;理由**必填**;`#` 开头是注释;**空行 = 违规**。
+- 基线内的红 = `KNOWN-RED`:不进新红计数,但**永远**印出文件名与条数;全批判词转 `OK-WITH-KNOWN-RED`、退出码 0。
+- 不在基线里的红 ⇒ `RUN_ALL FAIL`、退出码非 0。
+- **修好就删行**:条目"这趟跑到了却没红" = 过期 ⇒ 也红。路径不在候选面、同一路径出现两次 ⇒ 也红。
+- 基线当前 **0 条**。
 
-**实测不成立**：`Input.action_press(...)` / `Input.action_release(...)` 在 `-s`（无 autoload、无渲染）里**照样有效** ——
-仓内已有 **6** 支这么用：`tests/manual/climb_probe.gd:28/47`、`haste_probe.gd`（已删·2026-10-09）、
-`haste_probe_input.gd`（已删·2026-10-09）、`level0_weapon_scatter_probe.gd`（已删·2026-10-09）、
-`net_lag_client.gd`（已删·2026-10-09）、`reconnect_watcher.gd`（已删·2026-10-09）。
+## 跑批纪律
 
-**规矩**：判断"某条兜底/分支能不能被**行为**断言咬住"时，**别**拿"headless 全局输入恒假"当理由 ——
-要么 ① **主动按一下**（`Input.action_press`）把它驱动起来；要么 ② 老实承认"这条只能靠**源码**守卫"，
-**并证明那条源码守卫会红**。★ 两个方向的教训本批都吃到了：`weapon_base` 三处确实只能靠源码守卫（兜底只决定返回哪个布尔），
-而 `swim_component` / `climb_component` 两处**行为**就能咬住（旧兜底会写 `parent.velocity.y` / 走完状态机）。
+- `-s` 冒烟必须写空载守卫:`load()` 之后立刻 `if X == null: print(...); quit(1); return`;否则 `_initialize()` 一抛错就走不到 `quit()`,进程**永久挂起**。跑新冒烟套外层 `timeout`。
+- 查"某常量在不在"用 `get_script_constant_map()`,不要直接取属性 —— 取不存在的属性会抛错 → 挂起。
+- 别拿"批量里红、单跑绿"断定是超时:安全网耗尽与探针真失败在输出上长得一样,先按真失败查。
+- 占 7777 的步骤先查 `lobby_alive` —— 大厅 `_ready` 会 `kill_udp_port(7777)`,会端掉用户正在跑的对局。
+- 两支真链路测试之间 `tasklist | grep -i godot` 必须为空:worker 是**孙进程**,孤儿会占住端口、毒害下一支。
+- 池外 `rejoin_probe.sh`(29300/29350)与 `team_match_probe.sh`(29200/29250)**一律不扫** `[7800,8300)`;其余支扫之前必须先过 `lobby_alive`。
 
----
+## 真链路批:`bash tests/run_real.sh`
 
-## 测试基建的实测读数（2026-10-13 从**代码注释**搬出）
+- 用法:`bash tests/run_real.sh`(打印清单 / 端口 / 耗时估计后交互确认)· `--yes`(无确认,仍过全部闸)· `--list` · `--only <子串>`。
+- 清单 = [`tests/run_real.sh`](../../tests/run_real.sh) 的 `ENTRIES`(`path|端口|耗时估计|判词|回收范围`);同目录里不进批的 `.sh` 走 `WRAPPERS`。
+- 四道闸:① `lobby_alive` 为真 ⇒ 拒;② 无 `--yes` 且 stdin 非交互 ⇒ 拒;③ **R20 锁**(`tests/.run_all.lock`:pid 活 **且** 心跳在 `LOCK_STALE_SECS` = 600s 内才算活锁)+ 跑前跑后 `tasklist` 无 Godot;④ **清单不许烂**(`tests/{smoke,probe}/*.sh` 每支必须在 `ENTRIES` 或 `WRAPPERS` 里,两边每条都要匹配到真实文件)。
+- 心跳只在**支间**刷新 ⇒ 单支预算调到 >600s 会把正在跑的批判成陈旧、锁失效。
+- 全批判词 `RUN_REAL OK(n entries)` / `RUN_REAL FAIL(...)`,纯 ASCII;判词原文与各支日志在 `tests/.run_real_logs/`。
+- **默认批绿 ≠ 真链路绿**:两条链路覆盖不相交。改联机权威 / 协议 / 回滚 / 输入包,两边都要看。
+- `team_match_probe.sh` 整跑仍判 `FAIL`,不可当 3v3 的端到端守卫(见 [`registered-debt.md`](registered-debt.md))。
 
-> 原始台账（带原行号与出处）：[`2026-10-13-comment-diet-ledger.md`](../2026-10-13-comment-diet-ledger.md) §10 / §12。
-> ★ 这一节回答的是"**写/改测试时踩过的坑**"，不是探针清单（清单见 `run_all.sh --list` 与 `tests/README.md`）。
+## 守卫能给的保证总是比它读起来少
 
-### 1. 预算与超时：几乎每次"假失败"都出在这里
+- 逐条问"这一相里有多少输入是我自己喂的、有多少来自生产" —— 喂进去的那部分不构成对该路径的验证。
+- 加新守卫时在它自己的注释里写清:「它能给的最强保证是什么」「它测不到什么」。
+- 凡写"某变异会被 X 守住",先把该变异在**每个状态下的真值**列出来;凡写死一个可数的期望值,写清它是怎么数出来的。
+- 变异判据要含"**红的原因对不对**":每个变异前确认已复原上一个;红时按**预期的断言名**核,报告记"红在哪条断言",不记"红了"。
 
-- **`RESULT_WAIT` 必须逐项求和**（`team_match_probe`）：各项相加 **547.4s**、最坏 **632.4s** ⇒ 取 **680**。
-  ★ 教训：**预算算错看起来像产品故障**（判词是"没收到载荷"，实际是探针自己先到点）。
-- **`rejoin_probe` 的 `--quit-after 600s`** 也是量级推导（实测整跑 60~100s）。
-  ★ ★ **按端口兜底杀 `LOBBY_PORT` = 自杀**：实测退出码 **255**、明细全丢 ⇒ 收尾要**按 PID** 杀子进程。
-- **安全网耗尽与真失败在输出上长得一样**（"一行裁决都没有"）⇒ 别拿"批量里红、单跑绿"断定就是超时。
+## 结构化诊断(`--diag`)
 
-### 2. 判据本身的"假绿"（这几条最值钱）
+实现:[`core/net/net_diag.gd`](../../core/net/net_diag.gd)(`class_name NetDiag`,静态、无 autoload)。
 
-- **`replica_smoothness_probe`**：旧法读数 **49.6% 零位移**（判词照绿）；±16ms 档单帧 **8.242px**
-  已超 8.0 上限，**而判词仍绿** ⇒ 阈值与判词口径必须一起看。
-- **`snapshot_size_probe`**：基线 **0.96KB/人/快照**（整包）；**1400B MTU 的分片悬崖在 N≈27**；
-  `vel` 是**承重字段**（削掉会静默毁形变）。★ 这类"体积优化"必须有这条探针盯着。
-- **`path_integrity_probe`**：只查 `RL`/`DirAccess` 会造 **28 条假红**；而 **Windows 不区分大小写**
-  ⇒ "大小写写错"这类**会通过**（两个方向都错）。
-- **`menu_autotest`**：导出产物被编译成 `disable_path_overrides=yes`，2026-10-04 起 `exclude_filter` 含
-  `tests/*` ⇒ **该通道在发布产物里根本不存在**（"发布会跑它"是错觉）。
-- **`team_bot_input`**：三个带参钩子曾是**恒 false 的桩** ⇒ 服务器侧**从不跳/不开火**（相③ `near` 恒 0）。
-  ★ 机器人测试的"看起来在动"必须能追到**真的输入**。
+- **开关**:① 客户端命令行 `-- --diag` —— 必须写在 `--` 之后,写在前面会被 Godot 丢掉;② 环境变量 `CYR_DIAG=1`,worker 作为子进程继承(它的命令行固定拼出,不带 `--diag`)。
+- **文件**:`user://logs/diag-<role>-<pid>-<时间戳>.jsonl`,一行一个 JSON,字段 `t` / `pid` / `role` / `event` / `data`。
+- **默认关 = 零成本**:`enabled()` 懒查一次;关着时不开文件、不拼 JSON。
+- 判据:[`tests/smoke/net_diag_smoke.gd`](../../tests/smoke/net_diag_smoke.gd)(`NET DIAG OK(...)`)。
 
-### 3. 真链路六人局的实测（导航/回退）
+| 事件 | 落点 | 读它回答什么 |
+|---|---|---|
+| `session_start` | `net_diag.gd` 自己 | 版本 / 引擎 / OS / 文件路径 |
+| `snap_gap` | [`core/net/net_bus.gd`](../../core/net/net_bus.gd) 的 `snapshot_world` | 世界包断流 >150ms |
+| `snap_rx` / `snapshot_tx` | `net_bus.gd` / [`server/match/match_snapshot.gd`](../../server/match/match_snapshot.gd) | 按 1Hz 对账「没发出」与「发了没收到」 |
+| `rollback` | [`core/net/prediction_rollback.gd`](../../core/net/prediction_rollback.gd) 的 `_handle_ack` | 位置 / 速度误差、是否贴身、重放条数 |
+| `queue` / `queue_drop` | [`server/match/input_intake.gd`](../../server/match/input_intake.gd) | 服务器输入队列深度 / 上限 / 累计丢弃 |
+| `pickup_try` | [`server/match/match_ground.gd`](../../server/match/match_ground.gd) | `none` / `range` / `denied` / `taken` 四种成因 |
+| `pickup_add` / `pickup_remove` / `pickup_skip` | [`scenes/mp_client/pickup_sync.gd`](../../scenes/mp_client/pickup_sync.gd) | 客户端是否建出那把枪、早退原因 |
+| `tile_cell` / `tile_sub` | [`scenes/mp_client/tile_sync.gd`](../../scenes/mp_client/tile_sync.gd) | 拆砖事件是否到达、是否静默补态 |
+| `reconnect_begin` / `reconnect_resumed` | [`scenes/pvp_match_client.gd`](../../scenes/pvp_match_client.gd) | 局内自动重连的时间窗 |
 
-- **导航三方案实测**（`team_match_watcher`）：硬走 90s **0 位移**；4 邻域图最大连通区 **77 格（4%）**；
-  自建跳跃图 **1792 / 2095（85.5%）**，**建图 330ms**。⇒ 机器人导航要"自带图"，别指望现成的 4 邻域。
-- **回退模式**（留存日志 `killA = 0`，即无归因击杀）+ `REC BACKOFF` 读数分栏 —— 判读时要分清"没打中"
-  与"打中了但没归因"。
-- **`rejoin_watcher` 与任务书的 7 条偏离**都要读（它是**真链路观察者**，不是理想模型）；
-  ★ **C1 = 主菜单 `PvpSession.reset()` 会抹掉回局凭据** ⇒ 观察者**必须走生产入口**（按那颗「1 v 1」），
-  否则"唯一会红的观测者刚好绕过了唯一会红的那一步"（这一条踩过，见 `netplay-rooms.md`）。
+- **边界**:① `t` 是各进程自己的单调时钟,跨进程只能按事件对齐、不能相减;② 只记事件、不采样逐帧状态;③ 写盘失败只 `push_warning`、不影响对局;④ 诊断事件**不进任何断言**,「日志里没有」≠「没发生」(关闭时一行都没有)。
 
-### 4. 生成器类工具的固定动作（改它们之前必读）
+## 运维审计通道(`ops`)
 
-- **`gen_menu_scene`（`.tscn` 骨架生成）**：改名必须**同改后代节点的 `parent=` 路径**；
-  `ext_resource` 的 id **每次生成都变**（别把 id 写进断言）；落地后要做"中性化"清单；
-  覆盖上限三条（超出就会静默覆盖别人的改动）。
-- **`gen_menu_theme`**：`fix_alpha_border = true` 的逐像素差 **100 像素**；
-  **Button 类链会把空 `CheckButton` 从 (40,22) 撑到 (120,62)**（先设基础类型 Button 的经典坑）；
-  Filter 五态用**内联 SubResource**。
-- **`room_sweep_lint`**：上界链**三环**（settings 钳位 `[1,30]` → `× 60.0` 秒换算 → 滑块 `max_value`）；
-  ★ 它的判据口径是"**取片段 / 比数值，宁可响亮假红不可静默失明**"。
-  另有 `drop_room → drop_port` 的改名史，以及**三张注册表名互为子串**（只写裸 `rooms.erase(` 会点错名字）。
-- **`_shot_scene`（取图）**：`addr=` 的状态栏文案是**网络驱动**的 ⇒ 改前/改后各落一相（实测差一整行）；
-  四条坏输入路径**必须当场退出**（别让它"继续跑到取图"）。
+实现同样在 `net_diag.gd`,与 `--diag` 互不替代。
 
----
-
-## 结构化诊断（`--diag`，2026-10-22 加）
-
-> 实现：`core/net/net_diag.gd`（`class_name NetDiag`，静态、无 autoload）。两种开启方式：
-> ① 客户端命令行 **写在 `--` 之后**（`godot ... res://scenes/pvp_game.tscn -- --diag`；写在前面会被 Godot 丢掉、静默失效）；
-> ② **`CYR_DIAG=1`（环境变量）** —— worker 是大厅 `OS.create_process` 拉起的子进程、命令行固定拼出且不带 `--diag`，
-> 所以「服务端 worker 也开」只能靠子进程继承环境（免改启动器）。真机复现症状时优先用 ②。
-
-- **它解决什么**：联机问题的现场只有玩家一句话（「卡一下然后瞬移」「看不见但挡路」「捡不起来」）。
-  `--netstat` / `--pickup-diag` 各自一套**人读**格式、各管一段；`--diag` 把关键事件写成**一行一个 JSON**
-  （`t` / `pid` / `role` / `event` / `data`）到 `user://logs/diag-<role>-<pid>-<时间戳>.jsonl`，
-  事后能把「客户端快照间隔 / 回滚 / 拆砖 / 拾取」与「服务端队列丢包 / 拾取裁决」按事件对齐。
-- **默认关 = 零成本**：`enabled()` 懒查一次 `OS.get_cmdline_user_args()`，关着时不开文件、不拼 JSON。
-  判据 = `tests/smoke/net_diag_smoke.gd`（`NET DIAG OK(8 条断言)`，已进 `run_all.sh` 默认批）。
-- **已埋的事件（改动调用点时须同步本节）**：
-  | 事件 | 落点 | 读它回答什么 |
-  |---|---|---|
-  | `session_start` | NetDiag 自己 | 版本 / 引擎 / OS / 文件路径（对齐多条日志用） |
-  | `snap_gap` | `core/net/net_bus.gd` 的 `snapshot_world` | 世界包断流 >150ms：**他人瞬移**的直接证据 |
-  | `snap_rx` / `snapshot_tx` | `net_bus.gd` / `server/match/match_snapshot.gd` | 两端按 1Hz 对账：`snap_rx.world_msgs`（本端收到）vs `snapshot_tx.world_msgs`+`world_skipped`（服务器发了/整发跳过）⇒ 分开「没发出 / 发了没收到」 |
-  | `rollback` | `core/net/prediction_rollback.gd` 的 `_handle_ack` | 本地被拉回：位置/速度误差、是否贴身、重放条数 |
-  | `queue` / `queue_drop` | `server/match/input_intake.gd`(调用点在 `match_host.gd`) | 服务器输入队列深度/上限/累计丢弃：**本地瞬移**的上游 |
-  | `pickup_try` | `server/match/match_ground.gd` | `none` / `range`(带距离与半径) / `denied` / `taken`：**捡不起来**四种成因 |
-  | `pickup_add` / `pickup_remove` / `pickup_skip` | `scenes/pvp_match_client.gd` | 客户端到底有没有建出那把枪、为什么早退 |
-  | `tile_cell` / `tile_sub` | `scenes/pvp_match_client.gd` | 拆砖事件是否到达、是否静默(补态) |
-  | `reconnect_begin` / `reconnect_resumed` | `scenes/pvp_match_client.gd` | 局内自动重连的时间窗（补态/幽灵墙只在这个窗里出现） |
-- **边界（照实写）**：① `t` 是**各进程自己的单调时钟**，跨进程只能按事件对齐、不能相减；
-  ② 只记事件、不采样逐帧状态（逐帧用 `--netstat-trace`）；③ 写盘失败只 `push_warning`、不影响对局；
-  ④ 诊断事件**不进任何断言**，别拿"日志里没有"当"没发生"（关闭时一行都没有）。
-
-
-### 运维审计通道（`ops`，2026-10-21 加）
-
-> 实现同样在 `core/net/net_diag.gd`：与 `--diag` **互不替代**的两条通道。设计权威见
-> [`docs/superpowers/specs/2026-10-21-server-event-logging-design.md`](../superpowers/specs/2026-10-21-server-event-logging-design.md)。
-
-- **开关**：**常开**，但只在**非 client 进程**（`should_audit(role())`）。★ 服务端启动即 `NetDiag.set_role("server")`：
-  导出标记从 `dedicated_server` 换成 `serverui` 之后，`role()` 的推断会把这个大厅当成 client（dev/headless 也没有参数），
-  漏掉这一行 = **审计永远不写**（实现时踩过）。
-- **文件**：`user://logs/ops-<role>-<pid>-<时间戳>.jsonl`，与 diag 同形（`t` / `pid` / `role` / `event` / `data`），
-  **每条都 flush**（崩溃后必须还在）。保留策略的数值**只看常量**（`NetDiag.OPS_KEEP` / `OPS_WARN_BYTES`，别在这里抄数字）：
-  开新文件前按文件名里的**时间戳段**倒序保留最新 N 份；单文件超上限时 `push_warning` 一次。
-  ★ 排序键必须是时间戳而不是整个文件名——文件名里 pid 在时间戳**前面**，按整名排会让"高 pid 的旧文件"永远赢，
-  跨 pid 位宽时每次 prune 把新文件删光（评审抓出的 Critical；冒烟已钉混合 pid 位宽那一档）。
-  ⚠ 保留期是"局数"不是"月"：一个进程一个文件（1 大厅 + 每局 1 worker），所以 N 份 ≈ N-1 局。
-- **读它回答什么**：谁在何时建房 / 进房 / 离房 / 开局 / 关房 / 失联 —— 不带细节，细节归 `--diag`。
-  事件清单与字段见 spec §4（改调用点时必须同步那份表）。
-- **关窗 = 优雅停止**：`server_main` 拦 `NOTIFICATION_WM_CLOSE_REQUEST` → 逐个 `teardown_room`（worker 不留孤儿）
-  → 写**唯一**一条 `lobby_stop`；`--quit-after` 等正常退出走 `_exit_tree` 兜底（`_stop_logged` 去重）。
-- **`worker_lost` 是"现场"不是"判定"**：Godot 4 拿不到子进程退出码（`OS.create_process` 只给 pid），
-  所以记录的是 `alive_sec` + 该 worker 引擎日志的最后 3 行（`tail`）。正常结束与崩溃**都会**发，
-  由读的人按尾部内容判断。
-- **每局日志归档**：开局前把 `worker_<端口>.log` 改名成 `worker_<端口>_<HHMMSS>.log`（同端口保留最新 `WorkerLauncher.WORKER_LOG_KEEP` 份），
-  否则端口复用会**覆盖上一局的崩溃现场**。
-- **边界（同 diag）**：`t` 跨进程不可相减；写盘失败只 `push_warning`、不打业务；
-  审计事件**不进断言**（关闭/失败时一行都没有 ⇒ "日志里没有" ≠ "没发生"）。
+- **开关**:**常开**,但只在**非 client 进程**(`should_audit(role())`)。服务端启动即 `NetDiag.set_role("server")` —— 漏这一行,`role()` 会把大厅推断成 client,审计永远不写。
+- **文件**:`user://logs/ops-<role>-<pid>-<时间戳>.jsonl`,与 diag 同形;每条都 `flush`。
+- **保留策略**:数值只看常量 `NetDiag.OPS_KEEP`(60 份)与 `OPS_WARN_BYTES`(8 MiB)。开新文件前按文件名里的**时间戳段**倒序保留最新 N 份;单文件超上限 `push_warning` 一次。
+- 一个进程一个文件(1 大厅 + 每局 1 worker)⇒ N 份 ≈ N-1 局。
+- **事件**:`lobby_start` / `lobby_stop` · `room_created` / `room_closed` · `player_join` / `player_leave` / `player_detach` / `host_transfer` · `match_start` / `match_begin` / `match_end` / `match_over` · `abort` · `worker_spawn_failed` / `worker_lost`。细节归 `--diag`。
+- **关窗 = 优雅停止**:`server_main` 拦 `NOTIFICATION_WM_CLOSE_REQUEST` → 逐个 `teardown_room` → 写**唯一**一条 `lobby_stop`;`--quit-after` 等正常退出走 `_exit_tree` 兜底(`_stop_logged` 去重)。
+- **`worker_lost` 是"现场"不是"判定"**:记录 `alive_sec` + 该 worker 引擎日志最后 3 行;正常结束与崩溃都发。
+- **每局日志归档**:开局前把 `worker_<端口>.log` 改名成 `worker_<端口>_<HHMMSS>.log`,同端口保留最新 `WorkerLauncher.WORKER_LOG_KEEP`(20)份。
+- 判据:[`tests/smoke/ops_log_smoke.gd`](../../tests/smoke/ops_log_smoke.gd)(`OPS_LOG_OK(...)`)。
+- **边界**:同 diag —— `t` 跨进程不可相减;写盘失败只 `push_warning`;审计事件不进断言。

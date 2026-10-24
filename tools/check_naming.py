@@ -46,10 +46,10 @@ SKIP_DIRS = {".godot", ".git", ".superpowers", ".claude", "builds", "backup",
 #   ① **从写死的 11 个名字改成 glob**。原表在 `CLAUDE.md` 拆分后只覆盖 11 份,而 `docs/eng/`
 #      当时已有 23 份 ⇒ 另外 12 份(含 `comment-style.md`、`netcode-*.md`)的路径**无人守**;
 #      写死名字的表**每加一份文档就漏一份**(实测:`docs/eng/time.md` 新建当天被检查的次数是**零**)。
-#   ② 再纳入 `docs/eng/debt/`(拆分出来的债账分节 —— 它是"动手前先看"的材料)与 `tests/*.md`。
-#      ★ 纳入 `debt/` 当天就抓到**78 处相对链接回归**:那些内容从 `docs/eng/` 搬到 `docs/eng/debt/`
+#   ② 再纳入 `tests/*.md`。
+#      ★ 纳入当天就抓到**78 处相对链接回归**:那些内容从 `docs/eng/` 搬走时
 #      时,链接没跟着多一层 `../`(搬目录不搬链接 ⇒ 全 404,而此前没有任何检查会红)。
-# ★ **刻意不纳入**:`docs/*.md` 的日期交接文档、`docs/superpowers/**`、`docs/archive/**` ——
+# ★ **刻意不纳入**:`docs/` 顶层文档与任何归档目录 ——
 #   它们按定义是**时间点/历史**文档,里面"刻意的旧路径"是**记录**而不是错误(且都带时效横幅)。
 #   **代价照实写**:这些文件里的路径**没有机械守卫**;要查只能手工扫。想彻底解决得按"时效横幅"分档
 #   (有横幅 ⇒ 只报"未标已删"的),那是下一步,别顺手把它们全纳入 —— 会把 200+ 条历史记录判红。
@@ -218,7 +218,7 @@ def doc_path_violations(text: str, doc: str) -> list[str]:
       `tests/manual/brawl_rollback_probe.gd:55` 因字符类不含 `:` 而整条不匹配,该文件 2026-10-09 已删,
       检查却一直绿)。
     - **markdown 链接目标**(2026-10-13 加):**按所在文档的目录**解析相对路径。原实现只看反引号
-      ⇒ 相对链接写错(仓里已 404 过两次,见 `docs/eng/debt/functional-boundaries.md` §五.11)
+      ⇒ 相对链接写错(仓里已 404 过两次)
       没有任何机械守卫。
     """
     GONE = ("已删", "已移除", "已移走", "已移动", "已迁移", "已退休", "已退役",
@@ -510,7 +510,7 @@ def self_test() -> int:
         shutil.rmtree(tmp_e, ignore_errors=True)
 
     # ⑦ 规则 C(**纯函数**形态,2026-10-13 加):喂合成文本 —— 这是台账点名的欠账
-    #    (`docs/eng/debt/functional-boundaries.md` §五.12:"并配一条**能红**的自测")。
+    #    (纪律:"并配一条**能红**的自测")。
     #    每条都答得出"去掉什么才会红"。
     want(len(doc_path_violations("见 `tests/nope_xyz.gd`", "docs/eng/x.md")) == 1,
          "⑦-① 不存在的反引号路径没被报出 —— 删掉 doc_path_violations() 的反引号分支才会绿")
@@ -518,10 +518,10 @@ def self_test() -> int:
          "⑦-② 带 `:55` 行号后缀的失效路径没被报出 —— 去掉剥 `:NN` 的那行就会红(2026-10-13 修的洞)")
     want(len(doc_path_violations("见 `core/sim/world_rewind.gd`", "docs/eng/x.md")) == 0,
          "⑦-③ 真实存在的路径被误报")
-    want(len(doc_path_violations("[计划](../superpowers/plans/2026-10-04-tile-destruction-consistency.md)",
+    want(len(doc_path_violations("[计划](../eng/tests.md)",
                                  "docs/eng/x.md")) == 0,
          "⑦-④ 正确的相对链接被误报 —— 链接目标按**所在目录**解析,别按仓库根")
-    want(len(doc_path_violations("[计划](superpowers/plans/2026-10-04-tile-destruction-consistency.md)",
+    want(len(doc_path_violations("[计划](eng/tests.md)",
                                  "docs/eng/x.md")) == 1,
          "⑦-⑤ 少一层的相对链接(真 404,仓里犯过两次)没被报出 —— 去掉链接分支才会绿")
     want(len(doc_path_violations("`tests/manual/brawl_rollback_probe.gd`（已删·2026-10-09）",

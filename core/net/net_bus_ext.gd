@@ -106,6 +106,20 @@ func time_state(payload: Dictionary) -> void:
 func royale_room_state(state: Dictionary) -> void:
 	local_royale_room_state.emit(state)
 
+# ── 1v1 等待室(2026-10-24:1v1 从「两人凑齐自动开局」改成「房主点『开始游戏』」)──
+# ★ 通道 0(与会话/生命周期成序列的消息同一条道):room_state 必须排在 room_created / room_joined 之后到达。
+signal local_pvp_room_state(state: Dictionary)
+
+@rpc("authority", "call_remote", "reliable", 0)
+func pvp_room_state(state: Dictionary) -> void:
+	local_pvp_room_state.emit(state)
+
+signal pvp_start_requested(caller: int)
+
+@rpc("any_peer", "call_remote", "reliable", 0)
+func pvp_start() -> void:
+	pvp_start_requested.emit(multiplayer.get_remote_sender_id())
+
 # ── 3v3 团队大厅(与 1v1 / 大乱斗三套协议并存;RPC 名不同互不干扰)。★ 命名纪律:一律带 team_ 前缀(既避开 NetBus 方法表,也避开 royale_* 同名 = 挂错节点 = 静默 no-op)。
 # ★ 选边(team_pick)是 3v3 独有的上行:队伍不由服务器推导(role 号有空洞),玩家自己点。
 

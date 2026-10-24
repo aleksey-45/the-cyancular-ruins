@@ -1,7 +1,7 @@
 class_name MatchSnapshot
 extends MatchGround
 
-# 60Hz 快照广播域(阶段 5.6 拆自 server/match_host.gd)。
+# 30Hz 快照广播域(阶段 5.6 拆自 server/match_host.gd)。★ tick 域仍是 60Hz 物理 tick(每包 +SNAPSHOT_STRIDE),发包 30Hz。
 
 # ── 结构化诊断(--diag,默认关):快照**发出侧**计数 ──
 # 客户端 `snap_gap`(net_bus)只能证明"没收到";这里补"服务器到底发没发、给谁发了多少、
@@ -15,7 +15,8 @@ var _tx_own: Dictionary = {}        # role -> 包数
 var _tx_own_bytes: Dictionary = {}  # role -> 字节数
 
 func _broadcast_snapshot() -> void:
-	_snap_tick += 1
+	# tick 是「60Hz 物理 tick 时间轴」上的时间戳,不是包序号:30Hz 发包时每包跨 2 tick(客户端 playout/历史环按它插值)。
+	_snap_tick += SNAPSHOT_STRIDE
 	# ① **世界包**:全部玩家的渲染字段(副本位置/姿态/朝向/武器/血条用)。构造一次、广播一次。
 	var world := {"tick": _snap_tick, "players": {}}
 	for role in players:
@@ -63,7 +64,7 @@ func _broadcast_snapshot() -> void:
 		_tx_world_skip += 1
 	# ② **本人包**:各自的 ack + 权威整态 c2 —— 只有本人需要(客户端 rollback 拿它锚定/重放)。
 	# 逐 peer 定向(体积小,不构成 O(N²))。仍判 live peer:避免给正在断开的客户端发 ——
-	# ★ 这是全项目**最频繁**的一处定向发送(60Hz × 每个 role),所以判据必须不滞后:用
+	# ★ 这是全项目**最频繁**的一处定向发送(30Hz × 每个 role),所以判据必须不滞后:用
 	#   `NetBus.is_peer_live`(读 ENet peer 自己的 state),不是 `get_peers()`。
 	#   (本条走 unreliable → 通道 1,报出来会是 "channel **1**" 那一版;用户看到的那条
 	#    "channel 0" 只可能来自 **reliable** 的定向包,见 NetBus.is_peer_live 的注释。)
@@ -76,7 +77,7 @@ func _broadcast_snapshot() -> void:
 		var c2 := {}
 		if p.has_method("capture_state"):
 			c2 = p.capture_state()
-		# ★ `q` = 本 role 此刻**已到达但还没被消费**的输入包数(判据用,见
+		# ★ `q` = 本 role 此刻**已到达但还没被消费**的输入**记录**数(不是包数:30Hz 一包 2 条记录;判据用,见
 		#   docs/eng/netcode-snapshots.md §6:客户端拿它把"在路上"与"堆在服务器"分开)。
 		var q: Array = _pending_input.get(role, [])
 		var obytes := SnapshotCodec.encode_own({"ack_seq": _ack_seq.get(role, 0), "q": q.size(), "c2": c2})

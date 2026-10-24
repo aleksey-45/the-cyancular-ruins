@@ -102,7 +102,7 @@ ENTRIES=(
 # ★★ 2026-10-09(测试面削减 90%):本表 **4 条 → 0 条**。原来那 4 支
 #   (`bullet_tile_fx` / `move_feel` / `pvp_reconcile` / `pvp_twin`)连同它们的 `.gd` / `.tscn`
 #   一起被删了,所以既没有"不跑的包装",也没有"跑的理由"。台账:
-#   `docs/superpowers/specs/2026-10-09-test-surface-cut-90-design.md`。
+#   `tests/README.md`。
 #   **别把本数组删掉**:闸四同时遍历 `ENTRIES` 与 `WRAPPERS`,数组不存在会让 `set -u` 下的
 #   展开报错;留着空数组 = "现在一支包装都没有"这件事**看得见**。
 WRAPPERS=()

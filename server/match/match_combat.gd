@@ -12,6 +12,7 @@ func _on_tile_destroyed(cell: Vector2i) -> void:
 		for sy in range(4):
 			for sx in range(4):
 				destructible_sub[cell.y * 4 + sy][cell.x * 4 + sx] = MazeGenerator.EMPTY
+				damaged_subs[Vector2i(cell.x * 4 + sx, cell.y * 4 + sy)] = true
 		_dirty_chunks[CollisionBuilder.chunk_of(cell)] = true
 
 	_rpc_all("tile_destroyed", [cell])
@@ -19,6 +20,7 @@ func _on_tile_destroyed(cell: Vector2i) -> void:
 
 # 16px 子格被摧毁:清持久子格 + 标记分块重建 + 广播;owner(射手节点)映射成 role,Beta 时间玩法在这里结算拆砖得颗粒。
 func _on_sub_destroyed(sub: Vector2i, _pre_hp: int, owner: Node) -> void:
+	damaged_subs[sub] = true
 	if not destructible_sub.is_empty() 			and sub.y >= 0 and sub.y < destructible_sub.size() 			and sub.x >= 0 and sub.x < (destructible_sub[0] as Array).size():
 		destructible_sub[sub.y][sub.x] = MazeGenerator.EMPTY
 		_dirty_chunks[CollisionBuilder.chunk_of(Vector2i(sub.x / 4, sub.y / 4))] = true

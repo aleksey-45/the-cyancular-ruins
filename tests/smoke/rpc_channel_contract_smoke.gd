@@ -5,13 +5,13 @@ extends SceneTree
 #   要行为级证明「分流生效」,得让两个 peer 分别占不同通道对打(今天没有这条路径 ⇒ 覆盖上限,登记在 docs/eng/netplay.md 的通道表一节)。
 # 判据(两条,各自独立):① docs/eng/netplay-rpc-channels.md 的通道表 ↔ 产品声明逐条同通道(漏的、多的、通道不符的都红);② 每条声明必须是四参形态 @rpc("<mode>", "call_remote", "<transfer_mode>", <通道>)。
 #   ★ 实测:只写三参并把 int 放第 3 位会被引擎拒(argument 3 should be "String" but is "int")。
-# 作用域 = 产品声明 59 条(net_bus.gd 28 + net_bus_ext.gd 31);测试桩自己的 RPC 不在作用域内(原先唯一那支 reconnect_smoke 已删·2026-10-09)。通过 = RPC CHANNEL CONTRACT OK 退出 0。
+# 作用域 = 产品声明 61 条(net_bus.gd 28 + net_bus_ext.gd 33);测试桩自己的 RPC 不在作用域内(原先唯一那支 reconnect_smoke 已删·2026-10-09)。通过 = RPC CHANNEL CONTRACT OK 退出 0。
 # ★★ 2026-10-15:通道表在 2026-10-13 那次文档拆分里搬到了 netplay-rpc-channels.md,而这里仍指着 netplay.md
 #    ⇒ 解析出 0 行、判词红(pt 已修)。**搬家时靠路径活的东西要一起搬** —— 同族见 team_match_watcher 的可见性判据。
 
 const TABLE_MD := "res://docs/eng/netplay-rpc-channels.md"
 const PRODUCT_FILES := ["res://core/net/net_bus.gd", "res://core/net/net_bus_ext.gd"]
-const SCOPE_DECLARATIONS := 59   # ★ 会变的枚举:对不上就红,逼人回来核(见 --list / 报告)
+const SCOPE_DECLARATIONS := 61   # ★ 会变的枚举:对不上就红,逼人回来核(见 --list / 报告)
 
 var _fails: Array[String] = []
 var _checks := 0

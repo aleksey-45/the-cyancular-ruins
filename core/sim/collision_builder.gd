@@ -15,6 +15,18 @@ static func chunk_of(cell: Vector2i) -> Vector2i:
 	return Vector2i(cell.x / CHUNK_CELLS, cell.y / CHUNK_CELLS)
 
 
+# 单个 16px 子格纹理 → 可破坏层碰撞值(EMPTY / SOLID)。★ build_sub 与「增量换局复位」共用这一条判据,别抄第二份:
+# 判据 = 墙类型 + 可被子弹/爆炸破坏(与 build_sim 建局时的可破坏分块完全同源)。
+static func destructible_value(tex: int) -> int:
+	if tex == 0:
+		return MazeGenerator.EMPTY
+	if TileDefs.type_id_of(tex) != TileDefs.TYPE_WALL:
+		return MazeGenerator.EMPTY
+	if not (TileDefs.bullet_destroyable(tex) or TileDefs.explosion_destroyable(tex)):
+		return MazeGenerator.EMPTY
+	return MazeGenerator.SOLID
+
+
 # 从 16px 子格纹理表(MazeGenerator.current_subgrid)提取碰撞子格:only_destructible=false 只收永久墙,true 只收可破坏;通道/液体/气体无实体碰撞(可走/可爬)。
 # ★ 子格表为空时(测试合成网格/旧路径)回落:把格级 2×2 形状掩码 ×2 展开成 4×4 —— 几何与旧 32px 子格完全等价。
 static func build_sub(grid: Array[Array], only_destructible: bool) -> Array[Array]:
@@ -40,7 +52,7 @@ static func build_sub(grid: Array[Array], only_destructible: bool) -> Array[Arra
 				continue
 			if TileDefs.type_id_of(tex) != TileDefs.TYPE_WALL:
 				continue  # 通道/液体/气体无实体碰撞(可走/可爬)
-			var destr: bool = TileDefs.bullet_destroyable(tex) or TileDefs.explosion_destroyable(tex)
+			var destr: bool = destructible_value(tex) != MazeGenerator.EMPTY
 			if destr != only_destructible:
 				continue
 			sub[y][x] = MazeGenerator.SOLID

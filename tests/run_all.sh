@@ -121,7 +121,7 @@ declare -A BUDGET_OVERRIDE=(
 #   `docs/eng/test-economy.md`(D2 仪器不是守卫 / D5 只证明别的东西 / K1-K5 什么才值得留)。
 # ★★ 2026-10-09(测试面削减 90%):本表 **9 条 → 4 条** —— 删掉了 5 条指向**已删文件**的规则
 #   (`ground_net_probe` / `reconnect_probe` / `royale_bound_probe` / `royale_c2_probe` / `royale_probe`)。
-#   台账:`docs/superpowers/specs/2026-10-09-test-surface-cut-90-design.md`。
+#   现行清单见 `tests/README.md`。
 #   ★ 留下的这 4 条**必须留**:那 4 支仍在枚举集里(`smoke/*.gd` 或 `probe/*.tscn`),
 #     清掉规则 ⇒ 承重安全检查(`DANGER_RE`)立刻 FATAL,或它们悄悄进批**占 7777**。
 EXCLUDED=(

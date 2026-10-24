@@ -23,6 +23,7 @@ var _sent_seq := 0
 var _max_ack := -1
 var _ack_sane := false     # create:ack 已推进到 ≥30
 var _full_state_ok := false  # create:快照 c2 整态携带且 pos 与散字段一致
+var _start_sent := false   # create:1v1 开局改由房主点「开始游戏」(2026-10-24),本探针代按一次
 
 func _ready() -> void:
 	var args := OS.get_cmdline_user_args()
@@ -44,6 +45,7 @@ func _ready() -> void:
 	NetBus.local_snapshot_own.connect(_on_snapshot_own)
 	NetBus.local_bullet_spawn.connect(func(_d: Dictionary) -> void: _got_bullet_spawn = true)
 	NetBus.local_round_state.connect(func(_d: Dictionary) -> void: _got_round_state = true)
+	NetBusExt.local_pvp_room_state.connect(_on_pvp_room_state)
 	multiplayer.connected_to_server.connect(_on_connected, CONNECT_ONE_SHOT)
 	multiplayer.connection_failed.connect(func() -> void:
 		printerr("SMOKE_MATCH FAIL: 连接失败")
@@ -62,6 +64,17 @@ func _on_connected() -> void:
 		_:
 			printerr("SMOKE_MATCH FAIL: 非法 role %s" % role)
 			get_tree().quit(1)
+
+# 1v1 从 2026-10-24 起由房主点「开始游戏」:create 端看到 2/2 且自己是房主就代按一次(join 端不动)。
+func _on_pvp_room_state(state: Dictionary) -> void:
+	if role == "create" and not _start_sent:
+		print("SMOKE_ROOM_CODE=%s" % str(state.get("code", "")))   # 编排脚本(ps1/sh)从这里取房间号
+	if role != "create" or _start_sent:
+		return
+	var players: Array = state.get("players", [])
+	if players.size() >= 2 and int(state.get("your_role", 0)) == int(state.get("host_role", -1)):
+		_start_sent = true
+		NetBusExt.rpc_id(1, "pvp_start")
 
 func _on_snapshot_world(world: Dictionary) -> void:
 	_got_snapshot = true

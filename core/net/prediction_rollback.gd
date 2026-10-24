@@ -6,6 +6,8 @@ extends RefCounted
 
 const KEEP := 256           # ring 保留窗口
 const PHYS_DT := 1.0 / 60.0 # 回滚重放一律按固定物理步(确定性)
+# 每条输入记录覆盖几个物理步:默认 1(纯逻辑件/探针的旧语义);PvP 客户端置 2(30Hz 采样,一条记录管 2 个 tick)。
+var ticks_per_record := 1
 
 var _p = null               # 被预测 Player(动态)
 var _scratch: PacketInputSource = PacketInputSource.new()   # 步进/重放喂入源
@@ -79,7 +81,8 @@ func reconcile() -> void:
 		var pk: Array = _pending.pop_front()
 		_handle_ack(int(pk[0]), pk[1])
 
-# 用记录步进一次:临时把玩家输入源换成 scratch(喂入该记录),步进后换回 —— 被预测玩家平时读真实 Input(真机手感不变),重放才切历史输入。
+# 用记录步进一次:临时把玩家输入源换成 scratch(喂入该记录),步进后换回 —— 被预测玩家平时读锁存输入(真机手感不变),重放才切历史输入。
+# ★ 一条记录按 ticks_per_record 连跑(默认 1):30Hz 采样时是「第一步行边沿、第二步只用 held」——与服务器同一分组。
 func _step(record: Dictionary) -> void:
 	if _p == null:
 		return
@@ -87,7 +90,10 @@ func _step(record: Dictionary) -> void:
 	_p.set_input_source(_scratch)
 	_scratch.clear_edges()
 	_scratch.apply_packet(record)
-	_p._physics_process(PHYS_DT)
+	for i in maxi(1, ticks_per_record):
+		if i > 0:
+			_scratch.clear_edges()   # 第二 tick 起只保留 held(边沿只在该记录第一个 tick 生效)
+		_p._physics_process(PHYS_DT)
 	_p.set_input_source(prev)
 
 func _handle_ack(ack: int, S: Dictionary) -> void:
