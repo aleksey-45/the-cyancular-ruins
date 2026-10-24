@@ -686,7 +686,7 @@ theme_override_colors/caret_color = Color(0.349, 0.851, 0.902, 1)
 theme_override_font_sizes/font_size = 32
 theme_override_styles/normal = SubResource("StyleBoxFlat_tc2qv")
 theme_override_styles/focus = SubResource("StyleBoxFlat_m646j")
-placeholder_text = "服务器地址"
+placeholder_text = "服务端 IP(局域网填对方 IP)"
 
 [node name="RefreshBtn" type="Button" parent="." unique_id=1195779952]
 unique_name_in_owner = true

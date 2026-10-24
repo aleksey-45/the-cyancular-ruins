@@ -101,34 +101,21 @@ func _apply_test_flags(args: PackedStringArray) -> void:
 
 
 func _print_local_ips() -> void:
-	var ips: Array = []
-	for a in IP.get_local_addresses():
-		var s := str(a)
-		if ":" in s or s.begins_with("127.") or s.begins_with("169.254."):
-			continue   # 跳过 IPv6/回环/链路本地
-		ips.append(s)
+	# ★ 候选排序收在 LocalServer.lan_ip_candidates():默认路由网卡优先(排除 WSL/Hyper-V/Docker 等虚拟网卡)。
+	# 2026-10-24 实测教训:旧实现按私有网段排序,把 192.168.227.1(WSL/Hyper-V)排在真实网卡前,朋友照"第一个"填必然连不上。
+	var ips: Array = LocalServer.lan_ip_candidates()
 	if ips.is_empty():
 		print("本机 IP: 未检测到(网络未连接?)")
 		return
-	ips.sort_custom(func(a: String, b: String) -> bool: return _priv_score(a) > _priv_score(b))
-	_lan_ip_text = ", ".join(ips)
-	print("本机局域网 IP: " + _lan_ip_text + "(把第一个填进「服务器地址」,端口 7777)")
-	_write_ip_file("本机局域网 IP: %s
-(朋友在「1v1→服务器地址」里填第一个;端口 7777)
-" % _lan_ip_text)
-
-func _priv_score(ip: String) -> int:
-	if ip.begins_with("192.168."):
-		return 3
-	if ip.begins_with("10."):
-		return 2
-	if ip.begins_with("172."):
-		var parts := ip.split(".")
-		if parts.size() > 1:
-			var o2 := int(parts[1])
-			if o2 >= 16 and o2 <= 31:
-				return 2
-	return 1
+	_lan_ip_text = str(ips[0])
+	var others := ""
+	if ips.size() > 1:
+		others = "(其它候选: " + ", ".join(ips.slice(1)) + ",第一候选不通就换)"
+	print("本机局域网 IP: %s%s —— 朋友在「服务器地址」里填这个" % [_lan_ip_text, others])
+	print("局域网联机: 防火墙需放行 UDP 7777 与 %s;两端必须同一版本客户端/服务端" % _worker_port_span_text())
+	_write_ip_file("本机局域网 IP: %s%s
+(朋友在「1v1→服务器地址」里填它;防火墙放行 UDP 7777 与 %s;两端同一版本)
+" % [_lan_ip_text, others, _worker_port_span_text()])
 
 func _write_ip_file(text: String) -> void:
 	var dir := OS.get_executable_path().get_base_dir()

@@ -32,6 +32,7 @@ var pvp_show_trajectories: bool = true  # 显示敌方武器(子弹)轨迹
 var pvp_round_full_heal: bool = false   # 每回合开始回满血(服务器生效项,房主值优先)
 var pvp_show_enemy_hp: bool = true      # 显示敌方头顶血条
 var pvp_disabled_weapons: Array[int] = []  # 禁用武器(服务器生效项,房主值优先)
+var last_server_address: String = ""    # 上次连接的大厅地址(局域网联机免每次重输;空 = 没连过)
 var royale_match_min: float = 5.0       # 大乱斗一局限时(分钟,建房页可调,随房主报到生效)
 var pvp_show_minimap: bool = true       # 小地图
 var pvp_minimap_show_enemy: bool = true # 小地图显示敌方位置
@@ -171,6 +172,7 @@ func save(path: String = SAVE_PATH) -> void:
 	cf.set_value("pvp", "round_full_heal", pvp_round_full_heal)
 	cf.set_value("pvp", "show_enemy_hp", pvp_show_enemy_hp)
 	cf.set_value("pvp", "disabled_weapons", pvp_disabled_weapons)
+	cf.set_value("pvp", "server_address", last_server_address)
 	cf.set_value("royale", "match_min", royale_match_min)
 	cf.set_value("pvp", "show_minimap", pvp_show_minimap)
 	cf.set_value("pvp", "minimap_show_enemy", pvp_minimap_show_enemy)
@@ -202,6 +204,7 @@ func load_settings(path: String = SAVE_PATH) -> void:
 	pvp_round_full_heal = bool(cf.get_value("pvp", "round_full_heal", false))
 	pvp_show_enemy_hp = bool(cf.get_value("pvp", "show_enemy_hp", true))
 	pvp_disabled_weapons.assign(cf.get_value("pvp", "disabled_weapons", []))
+	last_server_address = str(cf.get_value("pvp", "server_address", ""))
 	royale_match_min = clampf(float(cf.get_value("royale", "match_min", 5.0)), 1.0, 30.0)
 	pvp_show_minimap = bool(cf.get_value("pvp", "show_minimap", true))
 	pvp_minimap_show_enemy = bool(cf.get_value("pvp", "minimap_show_enemy", true))

@@ -40,7 +40,12 @@ func _finish_lobby_ready() -> void:
 	multiplayer.connection_failed.connect(_on_lobby_connect_failed)
 	NetBusExt.local_rejoin_denied.connect(_on_rejoin_denied)
 	UiFactory.apply_font_recursive(self)
-	_request_list.call_deferred("正在连接服务器获取房间列表…")
+	# ★ 地址为空时**不自动连**:否则本机没服务端/还没填同学 IP 时会先弹一条"连接服务器失败",把"还没输入"误报成"连不上"。
+	# 地址有值(记忆地址/上次成功)时才自动拉列表。局域网玩家先填服务端那台电脑的局域网 IP,再点「刷新列表」。
+	if _addr_edit.text.strip_edges().is_empty():
+		_status.text = "先填服务器地址再点「刷新列表」——本机起服务端填 127.0.0.1,连同学填对方的局域网 IP"
+	else:
+		_request_list.call_deferred("正在连接服务器获取房间列表…")
 
 
 # ── 设置区块(子类建房用)── 读写 Settings,故留在本类而不是 ui/ui_factory.gd(那个工厂零 autoload 依赖)。
@@ -95,7 +100,11 @@ func _on_lobby_connect_failed() -> void:
 	_lobby_start_ms = 0
 	_connected = false
 	_pending_action = Callable()
-	_status.text = "连接服务器失败,请检查地址"
+	var addr := _addr_edit.text.strip_edges()
+	if addr.is_empty():
+		_status.text = "连接服务器失败——请填服务端地址(本机起服填 127.0.0.1;局域网填对方局域网 IP)"
+	else:
+		_status.text = "连接服务器失败(%s)——局域网请填服务端电脑的局域网 IP,并放行 UDP 7777" % addr
 
 
 func _with_lobby(action: Callable) -> void:
@@ -106,6 +115,10 @@ func _with_lobby(action: Callable) -> void:
 		addr = _lobby_fallback_addr()
 		_addr_edit.text = addr
 	PvpSession.server_address = addr
+	# 记住上次连的地址:局域网联机下次打开大厅直接预填(只在变了才写盘,避免每次刷新都写配置)。
+	if Settings.last_server_address != addr:
+		Settings.last_server_address = addr
+		Settings.save()
 	# ★★ NetBus.can_send_to_server() 不是可选项:_connected 是本端自己的记账(只在连上 / 连接失败 / 主动重连时翻),不随对端断开更新 —— 服务器掉线或踢人之后它仍是 true,于是「已连上」这条快路会把请求发往一个 ENet 已拆掉的 peer,也就是那条 Unable to send packet on channel 0(而它是周期性的:刷新列表 / 加入 / 建房都走这里)。
 	# 加了这一判,断线后的第一次点击就落到下面的重连路径:动作存进 _pending_action,连上大厅之后自动补发 ⇒ 既不报错,也顺手修好「服务器断了、界面看着还连着」这个状态。
 	if _connected and _connected_addr == addr and NetBus.can_send_to_server():

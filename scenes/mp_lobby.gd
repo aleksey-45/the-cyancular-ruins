@@ -99,13 +99,18 @@ func _build_ui() -> void:
 		PvpSession.player_name = t.strip_edges() if not t.strip_edges().is_empty() else "Anon"
 		_push_lobby_name())
 	_addr_edit = %AddrEdit
-	_addr_edit.text = PvpSession.server_address
+	# 预填顺序:本次会话连过的地址 → 上次成功的地址(局域网联机免每次重输)→ 空(占位提示告诉玩家填什么)。
+	# ★ 不再硬编码任何公网 IP:默认值写死会让"本机/局域网"这两个最常见的用法每次都被带到一个连不上的地址。
+	_addr_edit.text = PvpSession.server_address if not PvpSession.server_address.is_empty() \
+			else Settings.last_server_address
 	%RefreshBtn.pressed.connect(_on_refresh_pressed)
 	%LocalServerBtn.pressed.connect(_on_local_server_pressed)
 	%LocalServerBtn.tooltip_text = "关闭旧的本机大厅,重新拉起同目录的 Cyancular Ruins Server.exe,并自动连 127.0.0.1 刷新列表"
 	# 右上那条 IP 提示:右对齐靠锚点 + GROW_DIRECTION_BEGIN(已在骨架里定死 —— 写死宽度会让它向右长、被屏幕右缘裁掉);文案随本机 LAN IP 变,故每次建页重灌。
 	_ip_label = %IpLabel
-	_ip_label.text = LocalServer.lan_ip_hint()
+	# 局域网 IP 提示:同机服务端已写好 local_ip.txt 时毫秒级;没有时先显示"检测中",下一帧再算(避免开大厅时同步查路由表卡一下)。
+	_ip_label.text = "本机局域网 IP: 检测中…"
+	_apply_lan_hint.call_deferred()
 
 	_create_btn = %CreateBtn
 	_create_btn.pressed.connect(_open_create_dialog)
@@ -144,6 +149,12 @@ func _on_refresh_pressed() -> void:
 
 func _on_local_server_ready() -> void:
 	_auto_refreshed = false
+
+
+# LAN IP 提示的延迟填值(见 _build_ui 里 call_deferred 那段):取到后写标签;页面已释放就跳过。
+func _apply_lan_hint() -> void:
+	if is_instance_valid(_ip_label):
+		_ip_label.text = LocalServer.lan_ip_hint()
 
 
 
@@ -447,7 +458,10 @@ func _process(_delta: float) -> void:
 
 
 func _lobby_fallback_addr() -> String:
-	return PvpSession.server_address
+	# 地址框留空时的兜底:本次会话上一次的地址,再不行按「本机起服务端」处理(127.0.0.1)。
+	# 连同学的服务器必须自己填对方局域网 IP —— 留空点刷新时下面 8 秒超时会明确提示地址不通/版本不一致。
+	var a := PvpSession.server_address.strip_edges()
+	return a if not a.is_empty() else "127.0.0.1"
 
 
 # 已在房间中(先退出房间再操作):_with_lobby 在 _in_room 时拒绝一切操作(列房 / 建房 / 加入)—— 不清房间态,玩家就再也刷不出列表、建不了房(两个旧页同款)。
@@ -491,10 +505,10 @@ func _on_worker_connect_failed() -> void:
 
 
 func _worker_timeout_msg() -> String:
-	# ★ 大乱斗 / 3v3 都是自建服(要自己放行 worker 端口段)⇒ 把端口段印出来是真信息;1v1 走云服,那句提示对它没有意义。端口段引 WorkerLauncher 的常量,不手写数字(旧页手写过 "7800~7999" 而实际池是 7800~8299 —— 照它放行防火墙会漏掉半个池子)。
-	if _current_mode == PvpSession.MODE_ROYALE or _current_mode == PvpSession.MODE_TEAM:
-		return "对局服务器无响应——请确认对局端口(%s UDP)已放行;已返回大厅并刷新" % _worker_port_span()
-	return "对局服务器无响应(房间可能已失效)——已返回大厅并刷新,请换一个房间"
+	# ★ 三种模式的 worker 都跑在服务端那台电脑上(RoomManager._start_match → spawn_worker)⇒ 局域网联机同样要放行 worker 端口段。
+	# 旧文案说「1v1 走云服」是错的 —— 只放行 7777 的话:大厅能进、房间能建,但点开始后对局连不上,看起来就像"1v1 连不上"。
+	# 端口段引 WorkerLauncher 的常量,不手写数字(旧页手写过 7800~7999,与实际池不符)。
+	return "对局服务器无响应——请确认对局端口(%s UDP)已放行、两端为同一版本;已返回大厅并刷新" % _worker_port_span()
 
 
 func _worker_port_span() -> String:
