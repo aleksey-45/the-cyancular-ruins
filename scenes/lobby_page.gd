@@ -167,6 +167,7 @@ func _on_session_token(token: String) -> void:
 
 
 # go_match 在大厅 peer 的 poll() 调用栈内作为 RPC 到达;此处若立刻 NetBus.stop(),正在 poll 的 peer 引用被清零、在自己的调用栈内被 free ⇒ 偶发原生段错误(实测「对手连入配对完成的一瞬间」闪退)。故把整个切换推迟到帧末执行。
+# ★ 帧末还不够:**再等一帧**才真正 stop()。go_match / session_token 是大厅对这台客户端的最后两条定向包,同帧就把连接拆掉会让服务端那一拍的发送落到已拆的 ENet peer 上(引擎报 `Unable to send packet on channel 0, max channels: 0`);多等一帧是让它们落地,代价只有 16ms 进对局。
 func _on_go_match(role: int, port: int) -> void:
 	_pending_go_role = role
 	_pending_go_port = port
@@ -230,6 +231,9 @@ func _tick_rejoin_timeout() -> bool:
 
 
 func _do_go_match() -> void:
+	if _pending_go_role < 0:
+		return
+	await get_tree().process_frame   # 见 _on_go_match 上方:让大厅最后两条定向包先落地,再断连接
 	if _pending_go_role < 0:
 		return
 	var role := _pending_go_role

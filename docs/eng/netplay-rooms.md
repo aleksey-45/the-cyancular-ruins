@@ -41,7 +41,7 @@
 - 回局只在宽限期内真正成功:宽限到期后 worker 会 `mark_disconnected` 或收场退进程,大厅仍可能放行,客户端被 `_on_reclaim` 的判据②踢连接。
 - pid 复用:`pid_alive` 即 `OS.is_process_running`,误判方向是「多留」而非「错杀」,降级成超龄清扫兜底。
 - `_request_rejoin` 的判活假分支只在点行那一刻大厅连接已断时进入,而那一刻会真开一次大厅连接 ⇒ 探针不碰,登记为环境缺口。
-- 引擎自身的 `max channels: 0` 报错:回局路径同样会踢连接,已登记、不修。
+- 引擎自身的 `max channels: 0` 报错:回局路径同样会踢连接。★ 客户端侧已缓解(收到 `go_match` 后帧末再等一帧才 `NetBus.stop()`,见 `scenes/lobby_page.gd::_do_go_match`);引擎侧「判活→同帧被拆→send」窗口关不掉,偶发残余不追。
 - `ai_duel` 不发 `session_token`、不调 `_grant_rejoin`,开局即摘房 ⇒ AI 对战局没有回局入口。
 
 ## 测试

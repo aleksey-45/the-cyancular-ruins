@@ -246,4 +246,4 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 - 子弹散射:客户端视觉子弹的散射角本地掷定,与服务器权威子弹不同;命中由服务器裁决。本地玩家子弹是视觉副本:`weapon_base.fire()` 里 `b.apply_damage = not Level0.pvp_mode`。
 - 并发上限由端口池决定:每局一个 worker,端口池 500 个;端口耗尽时 `pick_port()` 返回 -1。
 - 回局只在宽限期内真正成功;宽限到期后 worker 会移出或收场,客户端被 `_on_reclaim` 踢连接。pid 复用:`pid_alive` 即 `OS.is_process_running`,误判方向是「多留」,降级成超龄清扫兜底。
-- 引擎自身偶发 `max channels: 0` 报错:连接被踢的同拍定向发送,已登记、不修。3v3 队友不在本地 `collision_mask` 里 ⇒ 队友永不判接触,与「队友不互挡」一致。
+- 引擎自身偶发 `max channels: 0` 报错:连接被踢的同拍定向发送。★ 2026-10-24 客户端侧已缓解 —— 收到 `go_match` 后在帧末**再等一帧**才 `NetBus.stop()`(`lobby_page._do_go_match`),让大厅最后两条定向包先落地。引擎侧的「判活通过→同帧被拆→send」窗口在 GDScript 里没有原子性,关不掉 ⇒ 剩下的偶发仍按「已登记、不追」处理,它只丢一条「注定要被断的连接上的最后一条包」,不影响对局。3v3 队友不在本地 `collision_mask` 里 ⇒ 队友永不判接触,与「队友不互挡」一致。

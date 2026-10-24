@@ -1,10 +1,9 @@
 extends Node2D
 # PvP 远端玩家副本:视觉(Player 的 SpriteFrames / 动画 + 各武器外观),由快照驱动。★ 它不是纯视觉:还带一个只参与碰撞的
 # 幽灵体(见 _build_ghost_body)—— C2 客户端预测只步进自己的玩家,客户端世界里没有对手身体 ⇒「对手挡住我」在预测侧不存在
-# ⇒ 每帧分歧回滚(幽灵体只减小分歧不消除)。★ 观感两条不变量:位置走 playout 插值、渲染层带排在世界结构层之前,理由与实测见 docs/eng/render.md。
+# ⇒ 每帧分歧回滚(幽灵体只减小分歧不消除)。★ 观感不变量:位置与外观态都按 playout 取样、渲染层带排在世界结构层之前(见 docs/eng/render.md)。
 
-# 大跳变阈值:相邻两条权威快照的间隔超过它 ⇒ 清历史、一帧落位(回溯 / 重生 / 换边本来就是瞬移,插值会演成「滑过去」)。
-# ★ 128px 两侧余量的依据:常态相邻包位置差 ≈ 10px、丢包 200ms ≈ 60px、瞬移是几百~几千 px(实测见 docs/eng/render.md)。
+# 大跳变阈值:相邻两条权威快照的环面距离超过它 ⇒ 清历史、一帧落位(回溯 / 重生 / 换边本来就是瞬移,插值会演成「滑过去」;128px 的依据见 docs/eng/render.md)。
 const SNAP_DIST := 128.0
 
 # 播放时钟(= core/net/playout_clock.gd)。★ 用 preload 取常量而不是全局类名:少一次编辑器扫描依赖。
@@ -59,6 +58,8 @@ var _facing := 1
 # ★★ 瞄准侧(与 _facing 不是同一个量,枪口外观只认这一个)。_facing 来自快照的 facing 字段 = 服务器的走路朝向(player.gd 的移动代码排在 weapons.tick 之后,每帧覆盖 _auto_aim 写进去的瞄准侧);而枪口俯仰必须按瞄准侧折叠(clamp_pitch 先 dir.x * facing)。二者混用时,倒着走会让枪口折到反侧极限而上翘(用户报过「A 往回走的时候,在 B 眼里枪还会翘起来」)。
 # 本体那边由 _auto_aim 的 _aim_facing 承担同一职责,下面是它的逐字同款规则:鼠标有明确水平分量则跟随并记住,近垂直瞄(±0.1 以内)沿用上次明确侧,不随走路翻侧。
 var _aim_facing := 1
+# 包域的上一次瞄准侧(只由快照更新、用于折下一条快照的外观态);_aim_facing 反而是「按 playout 取样后正在显示的那一侧」。
+var _pkt_aim_facing := 1
 var _aim := Vector2(1.0, 0.0)
 var _previewing := false   # 对手是否正在预瞄(heavy 蓄力)。快照仍带该字段,但**不再驱动任何外观**
 var _downed := false
@@ -165,15 +166,15 @@ func _sample_history(t: float) -> Vector2:
 	return _anchor_of(last["pos"])
 
 
-# 记一条位置历史;相邻样本的环面距离超过 SNAP_DIST ⇒ 设计好的瞬移 ⇒ 清历史让它一帧落位(判据必须用环面最短距离,跨接缝不是跳变)。
-func _push_history(tick: int, canon: Vector2) -> void:
+# 记一条历史(位置 + 外观态);相邻样本的环面距离超过 SNAP_DIST ⇒ 设计好的瞬移 ⇒ 清历史让它一帧落位(判据必须用环面最短距离,跨接缝不是跳变)。
+func _push_history(tick: int, canon: Vector2, st: Dictionary) -> void:
 	if not place_history.is_empty():
 		var last: Dictionary = place_history[place_history.size() - 1]
 		var jump := GridPathfinder.toroidal_delta_px(last["pos"], canon,
 				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT).length()
 		if jump > SNAP_DIST:
 			place_history.clear()
-	place_history.append({"tick": tick, "pos": canon})
+	place_history.append({"tick": tick, "pos": canon, "st": st})
 	while place_history.size() > HISTORY_MAX:
 		place_history.pop_front()
 
@@ -186,32 +187,69 @@ func apply_snapshot(data: Dictionary, local_anchor: Vector2, tick: int) -> void:
 	if _clock == null:
 		_clock = PlayoutClock.new(PLAYOUT_TICKS)
 	_clock.on_snapshot(tick)
-	_push_history(tick, _opponent_canonical)
-	_vel = data.get("vel", Vector2.ZERO)
-	_facing = 1 if int(data.get("facing", 1)) >= 0 else -1
-	var aim: Vector2 = data.get("aim", Vector2.ZERO)
-	_aim = aim if aim != Vector2.ZERO else Vector2(float(_facing), 0.0)
-	if absf(_aim.x) > 0.1:
-		_aim_facing = 1 if _aim.x > 0.0 else -1
-	animator.flip_h = _facing < 0
-	# 武器:槽位变了才重建(玩家每次换枪服务器快照带新槽位)。★ type_id == 0(空手)必须与「换了一把」同等对待 —— 那是服务器侧玩家把最后一把丢出去的那一刻;原先写成 type_id > 0 and ..., 空手这一档被整个忽略 ⇒ 副本一直举着那把已经不存在的枪(_swap_weapon(0) 本来就是写好的空手路径,原先只是进不去)。
-	var type_id := int(data.get("type_id", 0))
-	if type_id != _weapon_type_int:
-		_swap_weapon(type_id)
+	var st := _state_from(data)
+	_push_history(tick, _opponent_canonical, st)
 	_previewing = bool(data.get("previewing", false))
-	_downed = bool(data.get("downed", false))
+	# ★★ 离散外观态不在这里落地:它随位置一起按 playout 延迟渲染(见 _apply_visual_state),否则动画 / 朝向 / 枪口比身体
+	# 早一拍多 —— 对手看起来会「滑步」(已经停下,腿还在走)。★ 唯一例外是幽灵碰撞体:它吃**最新**快照的最省陈旧。
+	if not bool(st["downed"]):
+		_set_ghost_pose(int(st["pose"]))   # 倒地不切形状,与服务器一致(尸体停在最后姿态的箱子上)
+	# ★ 幽灵体不随副本根节点的视觉转体而动(倒地转体只作用于身体精灵;服务器侧 player.gd 的倒地分支不旋转)。
+	if _ghost != null:
+		_ghost.global_rotation = 0.0
+
+
+## 从一条快照折出「外观态」(离散 + 连续),存进历史环,渲染时按 playout 取样。★ aim_facing 是包域链式状态:有明确水平分量才更新,近垂直瞄沿用上次。
+func _state_from(data: Dictionary) -> Dictionary:
+	var facing := 1 if int(data.get("facing", 1)) >= 0 else -1
+	var aim: Vector2 = data.get("aim", Vector2.ZERO)
+	var aim_v: Vector2 = aim if aim != Vector2.ZERO else Vector2(float(facing), 0.0)
+	if absf(aim_v.x) > 0.1:
+		_pkt_aim_facing = 1 if aim_v.x > 0.0 else -1
+	return {
+		"pose": clampi(int(data["pose"]), 0, POSE_SHAPE.size() - 1),
+		"facing": facing,
+		"aim": aim_v,
+		"aim_facing": _pkt_aim_facing,
+		"downed": bool(data.get("downed", false)),
+		"type_id": int(data.get("type_id", 0)),
+		"vel": data.get("vel", Vector2.ZERO),
+	}
+
+
+## 取「渲染时刻该显示的那条外观态」:历史环里 tick <= render_tick 的最后一条(没有则最新)。首帧直接取最新。
+func _sampled_state() -> Dictionary:
+	if place_history.is_empty():
+		return {}
+	var idx := place_history.size() - 1
+	if _placed and _clock != null:
+		var t: float = _clock.render_tick
+		for i in place_history.size():
+			if float(place_history[i]["tick"]) <= t:
+				idx = i
+			else:
+				break
+	return place_history[idx]["st"]
+
+
+## 把一条外观态刷到画面上。★ 必须幂等(每帧都调):同姿态的 animator.play 不会重启动画,换枪由 _weapon_type_int 挡重复重建。
+func _apply_visual_state(st: Dictionary) -> void:
+	_pose = int(st["pose"])
+	_facing = int(st["facing"])
+	_aim = st["aim"]
+	_aim_facing = int(st["aim_facing"])
+	_downed = bool(st["downed"])
+	_vel = st["vel"]
+	animator.flip_h = _facing < 0
 	if _downed:
 		animator.stop()
 		rotation = -PI / 2.0 * float(_facing)   # 倒地转体(与 player._downed 一致)
 	else:
 		rotation = 0.0
-		var pose: int = clampi(int(data["pose"]), 0, POSE_SHAPE.size() - 1)
-		_pose = pose
-		animator.play(POSE_ANIM.get(pose, "idle"))
-		_set_ghost_pose(pose)
-	# ★ 幽灵体不随副本根节点的视觉转体而动。倒地分支给根节点设了 rotation = -90°,而幽灵体是它的子节点 ⇒ 碰撞箱跟着转 90°;但服务器侧 player.gd 的倒地分支不旋转,尸体停在最后姿态的箱子上 ⇒ 两端「倒地的对手还挡不挡路」不一致。这里把幽灵体的世界旋转压回 0(等于给子节点一个抵消父节点的局部旋转),只让身体精灵转体;大乱斗 2s 一复活,倒地是常态,这是持续分歧源。
-	if _ghost != null:
-		_ghost.global_rotation = 0.0
+		animator.play(POSE_ANIM.get(_pose, "idle"))
+	var type_id := int(st["type_id"])
+	if type_id != _weapon_type_int:
+		_swap_weapon(type_id)
 
 func play_hit(_source_pos: Vector2) -> void:
 	_hit_flash_t = HIT_FLASH_TIME
@@ -244,9 +282,13 @@ func _in_water() -> bool:
 
 func _process(delta: float) -> void:
 	if _have_data:
-		_drive_weapon_visual()
 		if _clock != null:
 			_clock.advance(delta)
+		# 外观态与位置用同一个渲染时刻:离散态(姿态/朝向/瞄准/倒地/武器)不再逐包瞬跳,否则动画比身体早一拍多 = 滑步。
+		var st := _sampled_state()
+		if not st.is_empty():
+			_apply_visual_state(st)
+		_drive_weapon_visual()
 		var target := MazeGenerator.anchor_to_nearest(_opponent_canonical, _local_anchor,
 				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 		if not _placed:

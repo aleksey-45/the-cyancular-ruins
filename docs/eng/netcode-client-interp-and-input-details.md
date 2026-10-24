@@ -10,10 +10,10 @@
 - 取样两侧冻结：比最新还新（underrun）冻在最新、**不外插**；比最老还老冻在最老、不倒退。跨接缝的那一对样本必须**先锚进同一个副本空间再 lerp**，否则差量是一整幅地图。
 - 相邻样本的环面距离 > `SNAP_DIST`（128 px）⇒ 清历史、一帧落位（回溯 / 重生 / 换边本来就是瞬移）。
 - 幽灵体 `_ghost` 不跟插值：它跟**未经平滑**的 `target`（预测面要最小陈旧）；`_ghost.global_rotation = 0.0` 抵消倒地转体。
-- `aim` / `pose` / `facing` 逐包瞬跳：`_aim`、`_aim_facing`、`animator.flip_h`、`animator.play(POSE_ANIM[...])`。
+- **外观态也按同一个渲染时刻取样**：`pose` / `facing` / `aim` / `aim_facing` / `downed` / `type_id` / `vel` 与位置一起进历史环，渲染时取「`tick <= render_tick` 的最后一条」刷到画面上。★ 别退回「逐包瞬跳」：那会让动画 / 朝向 / 枪口比身体早一拍多 —— 对手停下后腿还在走（滑步）。
+- 幽灵碰撞体是唯一吃**最新**快照的东西：姿态箱按最新 `pose` 切、位置跟最新锚点 —— 预测面要最小陈旧（观感面才要平滑）。
+- `aim` / `pose` / `facing` 的取值规则不变（`aim` 是单位向量，若要插值必须 `slerp` / `lerp_angle`）；离散态本身不插值，只延迟。
 - 丢弃：`pvp_game.gd` 里 `tick < _last_snap_tick` ⇒ 丢。
-- `_aim` 是单位向量：若要插值必须 `slerp` 或 `lerp_angle`，直接 `lerp` 会在跨 ±x 时穿过原点。
-- 离散状态（`pose` / `facing` / `type_id` / `downed`）不插值，按包切换。
 
 ## 2. 输入上行
 
