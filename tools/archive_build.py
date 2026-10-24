@@ -4,13 +4,12 @@
 # ★★ 2026-09-29 起语义变了(用户裁定):builds/ **只留最新一份**,不再堆历史版本 ——
 #    每次归档先**整个清空** builds/,再建 `builds/The Cyancular Ruins <版本号> <时间戳>/`。
 #
-# 里面是一个**完整的发布目录**(六个文件平铺在同一层,这是硬要求):
-#   The Cyancular Ruins.exe        客户端
-#   Cyancular Ruins Server.exe     服务端 —— 客户端点「建房」会拉起同目录的它,两者必须挨着
-#   easytier-core.exe              隧道本体
-#   easytier-cli.exe               隧道查询/下发转发
-#   Packet.dll                     ★ core **静态导入**它,少了它进程根本起不来
-#   wintun.dll
+# 里面是一个**完整的发布目录**(文件平铺在同一层,这是硬要求):
+#   The Cyancular Ruins.exe        客户端(Windows)
+#   Cyancular Ruins Server.exe     服务端(Windows) —— 客户端点「建房」会拉起同目录的它,两者必须挨着
+#   The Cyancular Ruins (macOS).zip        客户端(macOS;zip 内含标准 .app)
+#   Cyancular Ruins Server (macOS).zip     服务端(macOS;zip 内含标准 .app)
+#   (EasyTier 四件套已随 noEztier 线移除)
 #
 # ★ 为什么"一份"必须是一个**目录**而不是几个 exe:客户端找服务端与 EasyTier 都是**按自己的
 #   目录**找的(`LocalServer.find_server_exe()` / `Tunnel.available()` 的第一顺位),散着放等于没有。
@@ -53,6 +52,8 @@ def release_prefix() -> str:
     return (m.group(1).strip() if m else "") or RELEASE_PREFIX_FALLBACK
 
 GAME_FILES = ["The Cyancular Ruins.exe", "Cyancular Ruins Server.exe"]
+# macOS 产物:可选 —— 在 Windows 上没导 mac(或 mac 导出失败)时归档照样能跑,只打 warning。
+MAC_FILES = ["The Cyancular Ruins (macOS).zip", "Cyancular Ruins Server (macOS).zip"]
 # noEztier 线:联机走大厅直连(公网服/LAN),包内不再携带 EasyTier。
 EASYTIER_DIRS = [PROJECT, os.path.join(PROJECT, "tools", "easytier")]
 
@@ -142,6 +143,16 @@ def main() -> None:
         stem, ext = os.path.splitext(f)
         named = ("%s %s%s" % (stem, tag, ext)) if tag else f
         shutil.copy2(os.path.join(PROJECT, f), os.path.join(out, named))
+        print("  ✓ %s" % named)
+
+    for f in MAC_FILES:
+        src = os.path.join(PROJECT, f)
+        if not os.path.isfile(src):
+            print("  ! 缺 %s(本次未导 mac,或 mac 导出失败;归档跳过它)" % f)
+            continue
+        stem, ext = os.path.splitext(f)
+        named = ("%s %s%s" % (stem, tag, ext)) if tag else f
+        shutil.copy2(src, os.path.join(out, named))
         print("  ✓ %s" % named)
 
     # ② 累积档案:同样的包再沉淀一份进 releases/(每次发布都留,按版本+时间戳命名;

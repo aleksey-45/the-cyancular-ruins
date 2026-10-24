@@ -25,6 +25,9 @@ desktop.ini
 
 # 构建产物与杂项
 *.exe
+# macOS 导出产物(根目录固定名 = 最新;mac 上解压 zip 得到 .app)
+/The Cyancular Ruins (macOS).zip
+/Cyancular Ruins Server (macOS).zip
 
 # 发布/备份产物(不入库;版本号见 builds 内文件名与 RELEASE.md)
 builds/

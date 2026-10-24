@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-# 一键发布:导客户端 exe + 导服务端 exe + 把服务端打回 CONSOLE 子系统(双击即控制台窗口+服务器日志)
+# 一键发布:导 Windows 客户端/服务端 exe + 服务端打回 CONSOLE + 导 macOS 客户端/服务端 zip(内含 .app)
 # + 按时间戳归档到 builds/(历史版本留档,见 RELEASE.md §1.2,复用 tools/archive_build.py)。
+# ★ macOS 产物**不能**在本机执行(Win 跑不了 Mach-O)⇒ 只做 zip 结构/体积校验,不做运行冒烟 —— 别在输出里谎称"验过"。
 # 依赖 RELEASE.md 的自定义裁剪模板(4.7.1 标准编辑器)。改完游戏后跑一次即可。
 # 版本号取自 project.godot 的 `application/config/version`,与游戏内主菜单显示的**同源**。
 # 用法: python build_release.py   (可选 --stamp 202610041200 / --version 0.6.0 覆盖默认)
@@ -42,6 +43,10 @@ EDITOR = os.environ.get("GODOT_EDITOR") or \
     r"D:\Program Files\Godot_v4.7.1-stable_win64\Godot_v4.7.1-stable_win64.exe"
 CLIENT_OUT = os.path.join(PROJECT, "The Cyancular Ruins.exe")
 SERVER_OUT = os.path.join(PROJECT, "Cyancular Ruins Server.exe")
+# macOS 也走同一套发布:导出成 zip(内含标准 .app;Godot 的 mac 导出只在 zip 里保留可执行位/符号链接的语义)。
+# ★ Windows 主机不能执行 mac 二进制 ⇒ 这两个产物**不做运行冒烟**,只做结构/体积校验(见 verify_mac_zip)。
+MAC_CLIENT_OUT = os.path.join(PROJECT, "The Cyancular Ruins (macOS).zip")
+MAC_SERVER_OUT = os.path.join(PROJECT, "Cyancular Ruins Server (macOS).zip")
 BUILD_INFO = os.path.join(PROJECT, "core", "config", "build_info.gd")
 # 安全护栏:本脚本的临时写盘只针对 build_info.gd 这一个**仓库内固定文件**。
 # 写入一律用「chdir 到仓库根 + 纯字面量相对路径」,路径构造上杜绝越界
@@ -218,6 +223,40 @@ def export(preset: str, out: str) -> None:
     print("    OK")
 
 
+def verify_mac_zip(zip_path: str) -> None:
+    """mac 产物的"没有运行证据"的校验:文件在、体积像样、zip 完好、里面有 <某个>.app/Contents/Info.plist + MacOS/ 入口。
+
+    ★ 为什么只到这个程度:Windows 主机跑不了 mac 二进制,任何"launch 一下"都是假冒烟。
+      真正确认它能跑只能在 mac 上做 —— 这一点写进输出与 RELEASE.md,不假装验过。
+    ★ app 名由 Godot 按工程名生成(client/server 两个 zip 里都叫 `The Cyancular Ruins.app`),
+      所以这里只做"存在一个结构完整的 .app",不绑定预设名。
+    """
+    import zipfile
+    if not os.path.isfile(zip_path):
+        sys.exit("找不到 mac 产物 %s —— 导出可能失败" % os.path.basename(zip_path))
+    size = os.path.getsize(zip_path)
+    if size < 20 * 1024 * 1024:
+        sys.exit("mac 产物 %s 只有 %.1f MB,不像完整导出" % (os.path.basename(zip_path), size / 1048576.0))
+    try:
+        with zipfile.ZipFile(zip_path) as z:
+            names = z.namelist()
+            bad = z.testzip()
+    except zipfile.BadZipFile as e:
+        sys.exit("mac 产物不是合法 zip:%s (%s)" % (zip_path, e))
+    if bad:
+        sys.exit("mac zip 内文件损坏:%s" % bad)
+    apps = sorted({n.split(".app/Contents/Info.plist")[0] + ".app" for n in names
+                   if n.endswith(".app/Contents/Info.plist")})
+    if not apps:
+        sys.exit("mac 产物里找不到 *.app/Contents/Info.plist:%s" % zip_path)
+    app = apps[0]
+    has_bin = any(n.startswith(app + "/Contents/MacOS/") and not n.endswith("/") for n in names)
+    if not has_bin:
+        sys.exit("mac 产物 %s 缺 %s/Contents/MacOS/* 可执行入口" % (zip_path, app))
+    print("    OK(zip 结构:%s + %.1f MB;未执行 —— Windows 主机跑不了 mac 二进制)"
+          % (app, size / 1048576.0))
+
+
 def main() -> None:
     # 允许 --stamp <ts> / --version <v> 覆盖默认(时间戳取当前时间,版本号读 project.godot)
     stamp = datetime.datetime.now().strftime("%Y%m%d%H%M")
@@ -255,6 +294,16 @@ def main() -> None:
         check_weapon_registry(smoke_check(CLIENT_OUT, ["--registry-report"],
                                           expect="[registry] weapons="))
         smoke_check(SERVER_OUT, ["--worker", "--port", "7999"], expect="worker 就绪")
+        # macOS:客户端 + 服务端(serverui 特征 ⇒ server_main)。不能在本机执行 ⇒ 只做结构/体积校验。
+        # ★ 必须先删旧 zip:Godot 的 mac 导出**复用已存在的 zip 会静默产出空包**(实测 22 B 的 EOCD-only zip,
+        #   导出仍报 OK)⇒ 先删再导 + verify_mac_zip 兜底。Windows exe 覆盖写没有这个问题。
+        for stale in (MAC_CLIENT_OUT, MAC_SERVER_OUT):
+            if os.path.exists(stale):
+                os.remove(stale)
+        export("macOS", MAC_CLIENT_OUT)
+        verify_mac_zip(MAC_CLIENT_OUT)
+        export("macOS Server", MAC_SERVER_OUT)
+        verify_mac_zip(MAC_SERVER_OUT)
     finally:
         # ★ 必须还原:发布信息是**导出期**的临时覆盖,不能留在工作区(否则 git status 恒脏、
         #   下次开发也会误显示发布版本号)
@@ -267,8 +316,9 @@ def main() -> None:
     print((r.stdout or "").strip() or (r.stderr or "").strip())
     if r.returncode != 0:
         sys.exit(r.stderr or "归档失败")
-    print("\n发布完成(%s):\n  %s\n  %s (控制台版;固定名=最新,带版本号+时间戳的历史版见 builds/)"
-          % (release_label(version, stamp), CLIENT_OUT, SERVER_OUT))
+    print("\n发布完成(%s):\n  %s\n  %s (控制台版;固定名=最新,带版本号+时间戳的历史版见 builds/)\n  %s\n  %s\n"
+          "  ★ mac 两个 zip = 内含标准 .app,未签名/未公证,且**未在本机执行过**(Windows 跑不了 mac 二进制)。"
+          % (release_label(version, stamp), CLIENT_OUT, SERVER_OUT, MAC_CLIENT_OUT, MAC_SERVER_OUT))
 
 
 if __name__ == "__main__":
