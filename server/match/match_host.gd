@@ -124,7 +124,7 @@ var _intake := InputIntake.new()
 
 
 func _netstat_tick(delta: float) -> void:
-	_intake.tick(_pending_input, delta, _round_state)
+	_intake.tick(_pending_input, delta, _round_state, _client_snap_tick, _client_tick)
 
 
 # ★ 清队列与复位抖动包络必须一起做:只清队列 ⇒ 旧包络把上限继续顶在高位,新纪元开局就白带一层陈旧延迟。
@@ -136,6 +136,9 @@ func _on_input(caller: int, pkt: Dictionary) -> void:
 	for role in peer_by_role:
 		if peer_by_role[role] == caller:
 # 缓冲本帧到达的记录,按 seq 序 FIFO(30Hz 采样:每 SNAPSHOT_STRIDE 个物理 tick 消费一条,每条连跑 2 步)。
+# ★ st/ct 只落位不消费(增量批才用):它们不是队列的一部分,后到的覆盖先到的 —— 丢记录不影响它们,因为它们本来就只代表"最近一次"。
+			_client_snap_tick[int(role)] = int(pkt.get("st", 0))
+			_client_tick[int(role)] = int(pkt.get("ct", 0))
 			_intake.intake(_pending_input, int(role), pkt)
 			return
 

@@ -197,14 +197,14 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 
 | 包 | 方向 | 频率 / 模式 | 字段 |
 |---|---|---|---|
-| 输入包 | 客户端 → worker | 30Hz / reliable | `seq` `ax` `held` `pressed` `released` `winst` `aim` |
+| 输入包 | 客户端 → worker | 30Hz / reliable | 手打包 **34 B**：`seq` `ax` `held`(u16) `pressed` `released` `winst` `aim` `st` `ct`（`NetCodec.KIND_INPUT`） |
 | `snapshot_world` / `snapshot_own` | worker → 客户端 | 30Hz / unreliable | 世界包 `tick` + `players{…}`;本人包(逐 peer)`{ack_seq, q, c2}` |
 | `bullet_spawn` | worker → 客户端 | reliable | `scene shooter_role pos vel speed range size color gravity hit_damage …` |
 | `hit_event` | worker → 客户端 | reliable | `victim_role damage source_pos` |
 | `beam_fired` | worker → 客户端 | reliable | 光束报告 + `shooter_role` |
 | 房间 / 对局 | 双向 | reliable | `create_room` `join_room` `go_match` `session_token` `claim_role` `match_start` `match_sync` `match_sync_data` `round_state` … |
 
-世界包与本人包由 [`core/net/net_codec.gd`](../core/net/net_codec.gd) 打包;输入包仍是 `Dictionary`。完整通道归属见 [`eng/netplay-rpc-channels.md`](eng/netplay-rpc-channels.md)。
+世界包与本人包由 [`core/net/net_codec.gd`](../core/net/net_codec.gd) 打包;输入包同样走这份编解码器(`KIND_INPUT`,34 B/包、改前是 7 键 `Dictionary`)。完整通道归属见 [`eng/netplay-rpc-channels.md`](eng/netplay-rpc-channels.md)。
 
 ## 11. 环面纪律
 

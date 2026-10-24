@@ -8,10 +8,12 @@ extends RefCounted
 # ── 变位数是无损的:Godot 非 double 构建里 encode_variant 已把 FLOAT 收成 32 位、Vector2 收成 2×float32 ⇒ float32 载荷与今天线上字节逐位一致,不是"看上去差不多"。
 # ── 用一张 schema 表驱动两侧:手写编解码最可能的缺陷是顺序/偏移漂移(加一个字段、两侧改漏一处 ⇒ 静默错位),两侧共表 ⇒ 顺序在构造上不可能分叉(探针 snapshot_size_probe 有"表必须覆盖真实字段"的判据)。
 # ── 版本字节:首字节 = PROTO_VERSION,两端不同版时大声失败(解码返回空字典、调用方不 emit),而不是按错位的偏移读出垃圾值。★ 载荷里每个字节位置都是协议:改字段顺序/类型/宽度 = 改协议,两端必须同版本。
+# ── 输入包(KIND_INPUT)也走这里:同一套版本字节 + schema 表 + _pack/_unpack。类名保留 NetCodec —— 它现在是**全项目**线格式编解码器(快照 + 输入)。
 
-const PROTO_VERSION := 1
+const PROTO_VERSION := 2
 const KIND_WORLD := 1
 const KIND_OWN := 2
+const KIND_INPUT := 3
 
 # ── 类型字母 ──
 const T_F := "f"      # float32,4 B(见文件头:与旧线上字节一致)
@@ -20,6 +22,7 @@ const T_U8 := "b"     # 0..255
 const T_I8 := "c"     # -128..127(朝向这类 ±1 量)
 const T_BOOL := "B"   # 1 B
 const T_I32 := "i"    # 32 位有符号(inst / seq / tick)
+const T_U16 := "h"    # 0..65535(输入 held 位掩码:BIT_REWIND = 256 装不进 u8)
 const T_TRAIL := "trail"
 
 # 世界包每人一份(13 字段,顺序 = 线上顺序)。范围按产品常量钳:hp ≤ 50、waterproof ≤ 10、pose ≤ 4。
@@ -49,6 +52,13 @@ const WEAPON_SCHEMA: Array = [
 
 # 背包每一条(type/inst/mag —— 与 `weapon_inventory.snapshot()` 同源)。
 const INV_SCHEMA: Array = [["type", T_U8], ["inst", T_I32], ["mag", T_U8]]
+
+# 输入上行记录(30Hz 一包一条;发送侧唯一来源 = PacketInputSource.pack_record)。★ held 是位掩码:BIT_HASTE = 128、BIT_REWIND = 256 ⇒ 必须 u16(u8 会截断成 159)。
+# st = 本端**最近成功解码**的服务器快照 tick;ct = 本帧客户端物理帧号。这两个字段本批只落位(增量批才有消费者),但线格式只改这一次。
+const INPUT_SCHEMA: Array = [
+	["seq", T_I32], ["ax", T_F], ["held", T_U16], ["pressed", T_U8], ["released", T_U8],
+	["winst", T_I32], ["aim", T_V2], ["st", T_I32], ["ct", T_I32],
+]
 
 const FLAG_WEAPON := 1
 
@@ -101,6 +111,16 @@ static func encode_own(own: Dictionary) -> PackedByteArray:
 	return out
 
 
+## 输入包:30Hz 一条记录。`{"seq","ax","held","pressed","released","winst","aim","st","ct"}`。
+## 头 2 B + 记录 32 B = **34 B**(改前:7 键 Dictionary = 164 B/包)。
+static func encode_input(pkt: Dictionary) -> PackedByteArray:
+	var out := PackedByteArray()
+	out.append(PROTO_VERSION)
+	out.append(KIND_INPUT)
+	_pack(out, INPUT_SCHEMA, pkt)
+	return out
+
+
 # ── 解码 ── 任一字段越界 ⇒ 返回 {}(调用方据此不 emit):宁可这一帧没有快照,也不要把错位的值喂进预测面。
 
 static func decode_world(data: PackedByteArray) -> Dictionary:
@@ -141,6 +161,16 @@ static func decode_own(data: PackedByteArray) -> Dictionary:
 	return {"ack_seq": ack, "q": depth, "c2": c2}
 
 
+static func decode_input(data: PackedByteArray) -> Dictionary:
+	if not _header_ok(data, KIND_INPUT):
+		return {}
+	var r := {"d": data, "o": 2, "bad": false}
+	var pkt := _unpack(r, INPUT_SCHEMA)
+	if bool(r["bad"]) or int(r["o"]) != data.size():
+		return {}
+	return pkt
+
+
 # ── 表驱动打包/解包 ──
 
 static func _pack(out: PackedByteArray, schema: Array, d: Dictionary) -> void:
@@ -162,6 +192,8 @@ static func _pack(out: PackedByteArray, schema: Array, d: Dictionary) -> void:
 				out.append(1 if bool(d.get(key, false)) else 0)
 			T_I32:
 				_put_i32(out, int(d.get(key, 0)))
+			T_U16:
+				_put_u16(out, int(d.get(key, 0)))
 			T_TRAIL:
 				_put_trail(out, d.get(key, []))
 
@@ -184,6 +216,8 @@ static func _unpack(r: Dictionary, schema: Array) -> Dictionary:
 				d[key] = _rd_u8(r) != 0
 			T_I32:
 				d[key] = _rd_i32(r)
+			T_U16:
+				d[key] = _rd_u16(r)
 			T_TRAIL:
 				d[key] = _rd_trail(r)
 	return d
@@ -223,6 +257,12 @@ static func _put_i8(out: PackedByteArray, v: int) -> void:
 	out.append(clampi(v, -128, 127) & 0xFF)
 
 
+static func _put_u16(out: PackedByteArray, v: int) -> void:
+	var u := clampi(v, 0, 65535)
+	out.append(u & 0xFF)
+	out.append((u >> 8) & 0xFF)
+
+
 static func _put_u32(out: PackedByteArray, v: int) -> void:
 	for i in 4:
 		out.append((v >> (i * 8)) & 0xFF)
@@ -253,6 +293,12 @@ static func _rd_u8(r: Dictionary) -> int:
 static func _rd_i8(r: Dictionary) -> int:
 	var v := _rd_u8(r)
 	return v - 256 if v >= 128 else v
+
+
+static func _rd_u16(r: Dictionary) -> int:
+	var lo := _rd_u8(r)
+	var hi := _rd_u8(r)
+	return lo | (hi << 8)
 
 
 static func _rd_u32(r: Dictionary) -> int:

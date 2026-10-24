@@ -4,7 +4,7 @@ extends PvpMatchClient
 
 # ── C2 客户端预测 ── 本地玩家跑全量本地 sim 预测 + PredictionRollback 权威锚定重放;引擎照常自步进(读真实 Input,aim/手感 = 单机),本客户端每帧在玩家步进前 reconcile,并把每 tick 的预测整态/输入记录喂给控制器。
 # ★ 原 LOCAL_PREDICTION_ENABLED 开关与 server_rendered 保底分支已整体删除 —— 全项目只剩这一条联机链路,大乱斗客户端走同一套。
-var _last_snap_tick := 0
+# _last_snap_tick 已上提到基类 PvpMatchClient(输入包的 st 字段读它;2026-10-24)。
 
 var _remote_replica: Node2D = null
 # ★ _level0(世界/Level0)已上提到基类(两个模式同名同义,子类不重复声明):换局复位砖与重连补态复位砖共用同一个字段。

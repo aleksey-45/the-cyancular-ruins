@@ -21,8 +21,11 @@ const BIT_REWIND := 256
 
 
 # ── 编码端:组一个输入包(协议发送侧的唯一来源)── ★ 必须收在这里:这段位打包原先在两个客户端各手抄一份,而解码端只有一份;
-# 编码端分叉不报错(某键在一个模式里永远没反应)。★ seq/aim 由调用方给(来自场景);★ 读 src 走公开读口 ⇒ 自动遵守 frozen(冻结期组出全中性包)。
-static func pack_record(src: PlayerInput, seq: int, aim: Vector2) -> Dictionary:
+# 编码端分叉不报错(某键在一个模式里永远没反应)。★ seq/aim/st/ct 由调用方给(来自场景);★ 读 src 走公开读口 ⇒ 自动遵守 frozen(冻结期组出全中性包)。
+# ★ st/ct 带默认值 0:老调用点(-s 冒烟/探针手工组包)不用改;只有真客户端(PvpMatchClient)传真实值。
+#   st = 本端**最近成功解码**的服务器快照 tick(增量批的基线来源);ct = 本帧客户端物理帧号。本批只落位,无消费者。
+static func pack_record(src: PlayerInput, seq: int, aim: Vector2, snap_tick: int = 0,
+		client_tick: int = 0) -> Dictionary:
 	var held := 0
 	var pressed := 0
 	var released := 0
@@ -74,6 +77,9 @@ static func pack_record(src: PlayerInput, seq: int, aim: Vector2) -> Dictionary:
 # (0 = 本包没有切枪请求,与旧键 0 语义逐字相同),解析由组包处补上。
 		"winst": 0,
 		"aim": aim,
+		# 两个只落位的扩展字段(见本函数头注释):本批无消费者,但线格式只改这一次 ⇒ 现在就进 schema。
+		"st": snap_tick,
+		"ct": client_tick,
 	}
 
 var _axis := 0.0

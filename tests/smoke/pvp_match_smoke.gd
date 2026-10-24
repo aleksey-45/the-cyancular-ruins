@@ -150,8 +150,11 @@ func _physics_process(_delta: float) -> void:
 			"released": released,
 			"winst": 0,
 			"aim": Vector2(1, 0),
+			# 两个只落位的扩展字段(本批无消费者);冒烟手工组包,给 0 即可。
+			"st": 0,
+			"ct": 0,
 		}
-		NetBus.rpc_id(1, "send_input", pkt)
+		NetBus.rpc_id(1, "send_input", NetCodec.encode_input(pkt))
 	# 成功判定
 	if role == "create":
 		# 多打一会儿(到 ~480 帧)再退:帧>240 只够开火但不够 bullet 广播到 join 端,提前 quit 会触发「中途断线拆房」→ join 永远等不到 bullet_spawn。

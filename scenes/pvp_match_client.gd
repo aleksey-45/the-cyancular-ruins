@@ -20,6 +20,9 @@ var _prev_sent_seq := 0
 # 30Hz 输入锁存:本地预测与上行包共用同一份采样(见 SampledInput;一条记录覆盖 TICKS_PER_RECORD=2 个物理 tick)。
 var _sampled_input: SampledInput = null
 var _input_pair_phase := 0      # 0 = 本 tick 是这对 tick 的起点(采样 / 上行 / 记 C2 锚点)
+# 本端**最近成功解码**的服务器世界快照 tick(三个模式的 _on_snapshot_world 各自维护;2026-10-24 从三个子类上提到基类 — 输入包要带 st)。
+# ★ 语义是"最近**成功解码**"、不是"最后收到"(解码失败的包不算 —— 增量批会拿它当基线,算错 = 静默错位)。
+var _last_snap_tick := 0
 # ── 网络统计读数(★ 默认关;开关 -- --netstat,必须写在 -- 之后,写在前面会被 Godot 丢掉、静默失效)──
 # 一次打一行四个量:gap = _input_seq − 最后收到的 ack(本端已发、服务器没确认的输入**记录**数;每条记录 = TICKS_PER_RECORD 个物理 tick,
 # 故端到端滞后 ≈ gap×33.3ms);ping = NetBus.ping_ms(EWMA 平滑的纯网络 RTT);积压 = gap×33.3 − ping(扣掉网络之后还剩多少是服务器没来得及消费的);
@@ -519,16 +522,18 @@ func _physics_process(delta: float) -> void:
 				_rollback.reconcile()
 		var src: PlayerInput = _sampled_input
 		# 位打包收在 PacketInputSource.pack_record(协议编码端的唯一来源;解码端本来就只有一份)。
+		# st = 最近成功解码的服务器快照 tick(增量批的基线来源);ct = 本帧客户端物理帧号。本批只落位、无消费者。
 		var aim: Vector2 = _local.get_current_aim_dir()
 		_input_seq += 1
-		var pkt := PacketInputSource.pack_record(src, _input_seq, aim)
+		var pkt := PacketInputSource.pack_record(src, _input_seq, aim, _last_snap_tick,
+				Engine.get_physics_frames())
 		# 滚轮 / 数字键切枪:本地解析成目标那把的 inst 再随输入包上行。★ 位置不能过网 —— 两端 held 的顺序可能不同(拾取 / 丢弃只由服务器裁决),同一下标会解出不同的枪。
 		var switch_inst: int = _local.weapons.take_uplink_switch(src.get_switch_index_pressed())
 		if switch_inst > 0:
 			pkt["winst"] = switch_inst
 		# ★ 只有真发得出去时才发:离场的三条路(ESC / MATCH_OVER / 对手离开)都会先 NetBus.stop(),而本场景到帧末才被换掉 —— 中间这一两帧 rpc_id 会打引擎错误(no multiplayer peer is active),包本来也发不出去。预测与记账照常走完(seq 照增),只是不上行;重连会重建 C2 状态。
 		if NetBus.can_send_to_server():
-			NetBus.rpc_id(1, "send_input", pkt)
+			NetBus.rpc_id(1, "send_input", NetCodec.encode_input(pkt))   # 34 B/包(改前 7 键 Dictionary = 164 B)
 		_prev_sent_seq = _input_seq
 		_have_prev_seq = true
 		if _rollback != null:

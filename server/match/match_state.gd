@@ -79,6 +79,9 @@ var _seen_bullets: Dictionary = {}  # bullet instance_id -> true(只广播一次
 var _snap_tick := 0   # 快照的 tick 时间戳(60Hz 物理 tick 域,每包 +SNAPSHOT_STRIDE;客户端靠它丢弃乱序旧快照 + playout 插值)
 # C2 rollback:每 2 个物理 tick 恰好消费一条输入记录(FIFO;30Hz 采样),ack 让客户端重放 seq > ack 的本地输入 —— 1:1 同序,无 tick 映射漂移。
 var _ack_seq: Dictionary = {}   # role(int) -> 已消费输入记录的 seq
+# ★ 上行只落位的两个扩展字段(本批无消费者;2026-10-24 随输入手打包一次改完线格式,增量批才用;见 NetCodec.INPUT_SCHEMA 的 st/ct)。
+var _client_snap_tick: Dictionary = {}   # role(int) -> 该 role 最近**成功解码**的服务器快照 tick(st)
+var _client_tick: Dictionary = {}        # role(int) -> 该 role 最近一包里的客户端物理帧号(ct)
 
 
 var _options: Dictionary = {}

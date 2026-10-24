@@ -76,11 +76,65 @@ func _initialize() -> void:
 	_chk(q5.size() == 2 and released == 7,
 			"上限收到 2 时积压必须被释放(队内 %d,丢前 %d;堆在队里 = 延迟不恢复)" % [q5.size(), released])
 
+	# ── 输入包线格式(NetCodec.KIND_INPUT):三条,各自的红线写在注释里 ──
+	# ① schema 与生产者逐键对齐:去掉什么才红 = 给 pack_record 加字段不登记 / INPUT_SCHEMA 写错键(本仓最贵的病:字段在线上被静默丢掉)
+	var src := PacketInputSource.new()   # PlayerInput extends RefCounted ⇒ -s 里可 new
+	var pkt := PacketInputSource.pack_record(src, 7, Vector2(0.6, -0.8), 1234, 5678)
+	var schema_keys: Array = []
+	for f in NetCodec.INPUT_SCHEMA:
+		schema_keys.append(f[0])
+	var missing: Array = []
+	var extra: Array = []
+	for k in schema_keys:
+		if not pkt.has(k):
+			missing.append(k)
+	for k in pkt:
+		if not schema_keys.has(k):
+			extra.append(k)
+	_chk(missing.is_empty() and extra.is_empty(),
+			"INPUT_SCHEMA 与 pack_record() 逐键对齐(表外未覆盖 %s / 表内多余 %s)" % [str(missing), str(extra)])
+	# ② 真实产出往返 + 位宽:去掉什么才红 = held 用 u8(415 截断成 159)/ st、ct 漏进 schema(白丢 4 B 字段)/ 编解码任一侧写错位
+	var full := PacketInputSource.pack_record(src, 123456, Vector2(0.6, -0.8), 987654321, 12345678)
+	full["held"] = PacketInputSource.BIT_UP | PacketInputSource.BIT_DOWN | PacketInputSource.BIT_CHARGE \
+			| PacketInputSource.BIT_ATTACK | PacketInputSource.BIT_RELOAD \
+			| PacketInputSource.BIT_HASTE | PacketInputSource.BIT_REWIND      # 415(含 BIT_REWIND=256 ⇒ u8 必截断)
+	var back := NetCodec.decode_input(NetCodec.encode_input(full))
+	var rt_ok := not back.is_empty()
+	for k in full:
+		if not back.has(k):
+			rt_ok = false
+			continue
+		var a: Variant = full[k]
+		var b: Variant = back[k]
+		if a is Vector2:
+			if not (a as Vector2).is_equal_approx(b):
+				rt_ok = false
+		elif a is float:
+			if not is_equal_approx(float(a), float(b)):
+				rt_ok = false
+		elif a != b:
+			rt_ok = false
+	_chk(rt_ok and int(back.get("held", 0)) == 415 and int(back.get("st", -1)) == 987654321
+			and int(back.get("ct", -1)) == 12345678,
+			"真实产出往返逐键一致(held 必须 = 415 —— u8 会截成 159;st/ct 必须原样回来)")
+	# ③ 坏包必须返回空:去掉什么才红 = 删版本/长度守卫 ⇒ 错位值被喂进服务器模拟(静默分歧,不报错)
+	var fine: PackedByteArray = NetCodec.encode_input(pkt)
+	print("[readout] 输入包编码后 %d B/包(改前 7 键 Dictionary ≈164 B,30Hz ⇒ 1.0 KB/s/客户端)" % fine.size())
+	var good: PackedByteArray = fine
+	var flipped: PackedByteArray = good.duplicate()
+	flipped[0] = (int(flipped[0]) + 1) & 0xFF
+	var truncated: PackedByteArray = good.duplicate()
+	truncated.resize(good.size() - 5)
+	var world_bytes := NetCodec.encode_world({"tick": 1, "players": {}})
+	_chk(NetCodec.decode_input(flipped).is_empty() and NetCodec.decode_input(truncated).is_empty()
+			and NetCodec.decode_input(world_bytes).is_empty(),
+			"坏包一律解码为空(翻版本字节 / 截断 5 B / 拿世界包冒充输入包 ⇒ 三条都要 {})")
+
 	# 判词:计数闸 —— 条数不符也红(防断言被静默跳过)。
-	if _checks != 21:
-		_fails.append("★ 实跑 %d 条断言,与 EXPECTED=21 对不上(要么有断言被静默跳过,要么新增没登记)" % _checks)
+	if _checks != 24:
+		_fails.append("★ 实跑 %d 条断言,与 EXPECTED=24 对不上(要么有断言被静默跳过,要么新增没登记)" % _checks)
 	if _fails.is_empty():
-		print("SERVER INPUT SANITIZE OK(%d 条断言:轴钳位 11 + 队列有界与边沿 6 + 抖动缓冲 4)" % _checks)
+		print("SERVER INPUT SANITIZE OK(%d 条断言:轴钳位 11 + 队列有界与边沿 6 + 抖动缓冲 4 + 输入线格式 3)" % _checks)
 		quit(0)
 	else:
 		for f in _fails:

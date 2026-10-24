@@ -44,8 +44,8 @@
 | 物理 tick | 60Hz |
 | `snapshot_world` | 30Hz,unreliable;`SNAPSHOT_HZ = 30`、`SNAPSHOT_STRIDE = 2` |
 | `snapshot_own` | 30Hz,unreliable,逐 peer;`{ack_seq, q, c2}` |
-| `send_input` | 30Hz,reliable;一条记录覆盖 2 个物理 tick(`PacketInputSource.TICKS_PER_RECORD`) |
-| 编解码 | `core/net/net_codec.gd` 打包成 `PackedByteArray`,RPC 入口解回同形状 `Dictionary` |
+| `send_input` | 30Hz,reliable,**手打包 34 B/包**;一条记录覆盖 2 个物理 tick(`PacketInputSource.TICKS_PER_RECORD`);含只落位的 `st`/`ct`(最近成功解码的快照 tick / 客户端物理帧号,增量批才消费) |
+| 编解码 | `core/net/net_codec.gd` 打包成 `PackedByteArray`(快照 + 输入同模块),RPC 入口解回同形状 `Dictionary` |
 
 ## 客户端
 

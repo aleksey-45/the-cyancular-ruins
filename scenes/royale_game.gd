@@ -2,7 +2,7 @@ extends PvpMatchClient
 # 大乱斗对局客户端(RoyaleServer 分支):Level0(pvp_mode) 世界 + 本地玩家(服务器渲染) + N-1 个远端副本 + 后处理 + 输入上报 + 快照消费 + RoyaleHud(左上角击杀排行榜);对手数量不定,按快照 roles 动态建副本。
 
 
-var _last_snap_tick := 0
+# _last_snap_tick 已上提到基类 PvpMatchClient(输入包的 st 字段读它;2026-10-24)。
 var _replicas: Dictionary = {}         # role(int) -> PlayerReplica(自己以外的全部角色)
 # ★ _level0(世界/Level0)已上提到基类(两个模式同名同义,子类不重复声明;重连补态那一路要在基类 _on_match_sync 里用它还原可破坏砖)。
 var _hud: RoyaleHud = null

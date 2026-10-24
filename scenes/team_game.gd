@@ -4,7 +4,7 @@ extends PvpMatchClient
 # ★ 队伍表只从 match_sync 进来(与昵称/色相/生效选项同一条投递路径)。不要从 roles 推导:role 号由大厅「最小空闲号」分配、有人退出后会留空洞(3 人房里中间那位退掉 ⇒ 房里是 {1,3})。
 
 
-var _last_snap_tick := 0
+# _last_snap_tick 已上提到基类 PvpMatchClient(输入包的 st 字段读它;2026-10-24)。
 var _replicas: Dictionary = {}         # role(int) -> PlayerReplica(自己以外的全部角色)
 # ★ _level0(世界/Level0)已上提到基类(子类 _ready 里赋值;重连补态那一路要用它还原可破坏砖)。
 var _hud: TeamHud = null

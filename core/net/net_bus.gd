@@ -144,9 +144,14 @@ func lobby_name(name: String) -> void:
 	lobby_name_set.emit(multiplayer.get_remote_sender_id(), name)
 
 # ★ 输入上行:30Hz 一包、每包一条记录(采样也 30Hz:一条记录 = 2 个物理 tick 的输入,客户端本地预测吃同一份锁存输入)。
+# 载荷是手打包的 PackedByteArray(NetCodec.encode_input:头 2 B + 记录 32 B = 34 B;改前是 7 键 Dictionary = 164 B/包)。
 # 可靠通道保序 + seq 单调 = 服务端与客户端重放同序(C2 回滚「1 seq = 2 tick」的前提)。
 @rpc("any_peer", "call_remote", "reliable", 1)
-func send_input(pkt: Dictionary) -> void:
+func send_input(payload: PackedByteArray) -> void:
+	var pkt := NetCodec.decode_input(payload)
+	if pkt.is_empty():
+		_input_decode_warned(payload)
+		return
 	input_received.emit(multiplayer.get_remote_sender_id(), pkt)
 
 # 客户端→worker:报到角色+昵称(role 大厅已发);worker 据此建 role→peer 映射,两人到齐后回传双方昵称(peer_info)。
@@ -215,6 +220,17 @@ func _snapshot_decode_warned(which: String, payload: PackedByteArray) -> void:
 	var ver := payload[0] if payload.size() > 0 else -1
 	push_error("快照解码失败(%s 包,长度 %d,首字节 %d):两端线格式版本不一致?" % [
 			which, payload.size(), ver])
+
+# 输入解码失败只在第一次大声报(同族:两端版本不一致是**一次性条件**,而输入包 30Hz 不间断)。★ 静默丢弃 = 该玩家整局"动不了",
+# 且服务器侧不报任何错 —— 现场只看到卡住。宁可每次启动响一声,也不要把错位的值喂进权威模拟。
+var _input_warned := false
+
+func _input_decode_warned(payload: PackedByteArray) -> void:
+	if _input_warned:
+		return
+	_input_warned = true
+	var ver := payload[0] if payload.size() > 0 else -1
+	push_error("输入包解码失败(长度 %d,首字节 %d):两端线格式版本不一致?" % [payload.size(), ver])
 
 @rpc("authority", "call_remote", "reliable", 3)
 func bullet_spawn(data: Dictionary) -> void:
