@@ -159,7 +159,7 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 ### 快照消费
 
 - `snapshot_world`:丢弃 `tick` 回退的旧包;自己那份刻意不消费;对手部分交 `PlayerReplica.apply_snapshot()`。
-- `snapshot_own`:丢弃 `ack_seq > _input_seq` 的跨纪元残留;其余喂 `PredictionRollback`。
+- `snapshot_own`:丢弃 `ack_seq > _input_seq` 的跨纪元残留;其余喂 `PredictionRollback`。★ 本人包由服务端在"消费并步进完本 tick"之后帧末发(S1),`ack/c2` 是最新同拍态;世界包里自己那份因此比本人包旧 1 tick(客户端不消费它)。
 - 容差:`pos_tol = 2.0`;接触期 `contact_pos_tol = 8.0`。`in_contact` 由 `Player.touching_player()` 在 `note_post_step()` / `reconcile()` 之前写入,不进 `capture_state()`、不上行。
 - 分歧处理:预测被证实不动;真性分歧才 `restore(权威态)` 并按序重放 `(ack, last_applied]` 的本地输入。
 

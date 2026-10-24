@@ -49,6 +49,7 @@ NetBus.rpc_id(peer, "snapshot_own",
 - `q` = 该 role 已到达但未消费的输入**记录**数。
 - `c2` = `player.capture_state()`：**25 个标量 + 武器块 8 个（仅手持非空时）+ 整个背包表**。字段表在 `core/net/net_codec.gd` 的 `C2_SCHEMA` / `WEAPON_SCHEMA` / `INV_SCHEMA`。
 - `c2` 是 C2 回滚的锚点：客户端 `restore_state()` 后用未确认输入重放。
+- ★ **S1（2026-10-24）发送时机**：本人包不在世界包广播里发，而是 MatchHost 在**消费完本 tick 输入后 call_deferred**、由 `send_own_snapshots()` 在帧末（Player 子节点步进完之后）发。⇒ `ack` 与 `c2` 是同一 tick 的最新权威态（旧实现落后一拍且要等下一次 30Hz 广播）；代价是**世界包里自己那份比本人包旧 1 tick**（客户端本来就不消费世界包的自己那份）。
 - 传输：`snapshot_own` 是 `unreliable`、`transfer_channel = 0`（ENet 道 1）。
 
 ### 1.4 线格式与载荷
@@ -140,7 +141,7 @@ NetBus.rpc_id(peer, "snapshot_own",
 ## 6. 已知边界
 
 - `c2` 与渲染字段都是 float32 全量，量化与增量都没做。量化必须两端同口径（`c2` 是回滚锚点，只压上行会让每次重放都对不上）。
-- ★ 2026-10-24 **U1 上行去锁存**：输入记录 = 1 tick（60Hz 采样），30Hz 包内装两条（流水线），服务器每 tick 消费一条 ⇒ 本地手感不再有 30Hz 锁存延迟；但**下行与 ack 仍 30Hz**，"输入→服务器确认"的端到端延迟仍受 30Hz 快照/ack 限制（见 `netcode-input-uplink.md` §5）。
+- ★ 2026-10-24 **U1 上行去锁存**：输入记录 = 1 tick（60Hz 采样），30Hz 包内装两条（流水线），服务器每 tick 消费一条 ⇒ 本地手感不再有 30Hz 锁存延迟。**S1** 把本人包挪到"消费并步进完当帧"发（③ 固定回带已消）；客户端 U1 起本来就每 tick 对账（④ 已消）。**剩下的**只是 30Hz 发包/广播节拍的量化（`--netstat` 的 `gap` 仍有 1~2 条 ×16.7ms 的偏置），不是"等一拍广播"。见 `netcode-input-uplink.md` §5。
 - 上行的 `st` / `ct` 两个扩展字段（2026-10-24 随输入手打包埋入）**只落位、无消费者**：真链路只证明不回归，送达证据只有 `-s` 往返断言；真正的消费者是未来的增量批。
 - 没有丢包 / 抖动注入路径 ⇒ 队头阻塞、丢弃率、手感都没有真对局读数。
 - 探针量的是**载荷**字节，不含 ENet 分片头 / RPC 方法名 / IP·UDP 头。`royale_soak_probe` 的 KB/s 是解码后 `Dictionary` 的 `var_to_bytes`，不是线上字节，对线格式改动不可见。

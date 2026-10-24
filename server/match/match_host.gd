@@ -121,6 +121,8 @@ func _wire_hit_feedback() -> void:
 # 输入队列(入队 / 有界丢包 / 抖动包络 / 1Hz 诊断)整段已在 server/match/input_intake.gd;本文件只留「谁调、调在流程哪一步」。
 # ★ 队列本体 _pending_input 仍住 MatchState(match_snapshot 要按 role 读深度),故每次调用传的是同一个字典引用。
 var _intake := InputIntake.new()
+# ★ S1:本人包(ack + c2)改到玩家步进之后发。本标志防"同一帧多次 physics 追赶"时重复调度。
+var _own_flush_pending := false
 
 
 func _netstat_tick(delta: float) -> void:
@@ -172,10 +174,12 @@ func _physics_process(delta: float) -> void:
 			p.pvp_haste_mult = time_economy.rules.haste_mult if on else 1.0
 	# 下行 30Hz:每 SNAPSHOT_STRIDE 个物理 tick 广播一次(整数相位,见 MatchState._snapshot_tick_phase)。
 	# ★ U1 后消费节奏与广播相位**解耦**:服务器每物理 tick 消费一条记录(一条 = 1 tick);广播仍 30Hz。
-	#   广播必须仍在"消费本帧输入"之前(见上一条注释的配对理由)。
+	# ★ S1(2026-10-24):本 tick 只广播**世界包**;本人包(ack+c2)在玩家步进之后帧末发(见下方 _flush_own_snapshots)。
 	_snapshot_tick_phase += 1
+	var snapshot_tick := false
 	if _snapshot_tick_phase >= SNAPSHOT_STRIDE:
 		_snapshot_tick_phase = 0
+		snapshot_tick = true
 		_broadcast_snapshot()
 
 	if time_economy != null:
@@ -185,7 +189,7 @@ func _physics_process(delta: float) -> void:
 			_time_sync = TIME_SYNC_INTERVAL
 			_rpc_all_ext("time_state", [time_economy.state_payload()])
 # 应用输入(父先于子 ⇒ 玩家 _physics_process 读到的已是最新注入)。★ U1:每物理 tick 消费一条 FIFO 记录(一条 = 1 tick),
-# 队列空 = 缺包(沿用 held/轴)。★ ack = 刚消费记录的 seq(下一次广播回带,rollback 锚点)。
+# 队列空 = 缺包(沿用 held/轴)。★ ack = 刚消费记录的 seq(本帧末随本人包回带,rollback 锚点;见 _flush_own_snapshots)。
 	for role in input_sources:
 		var src: PacketInputSource = input_sources[role]
 		src.clear_edges()
@@ -203,6 +207,12 @@ func _physics_process(delta: float) -> void:
 # 地面武器拾取/丢弃的边沿:★ 必须紧跟 apply_packet —— 本轮开头已 clear_edges(),边沿就是这一包刚写进去的,晚一拍就被下一轮清掉。
 				_handle_ground_actions(role, src)
 
+	# ★ S1:本人包推迟到本帧末(玩家子节点步进完之后)再发 —— 那时 c2 才是"本 tick 输入已生效"的权威态,
+	#   ack 也是本 tick 刚消费的 seq;比"等下一次 30Hz 广播"少一拍(均值 ~16.7ms)。
+	#   ★ 依赖 Godot 的 call_deferred 在帧末(所有 _physics_process 之后)执行。
+	if snapshot_tick:
+		_own_flush_pending = true
+		call_deferred("_flush_own_snapshots")
 
 	_adjudicate_bullets()
 
@@ -222,6 +232,19 @@ func _physics_process(delta: float) -> void:
 				continue
 			CollisionBuilder.rebuild_chunk(destructible_sub, ch, self)
 			processed += 1
+
+
+# ★ S1:本人包发送点。由 `_physics_process` 在消费完本 tick 输入后 call_deferred 进来 ——
+#   此刻所有 Player 子节点已经步进完,c2/ack 是同一 tick 的权威态(详见 match_snapshot.send_own_snapshots 的头注)。
+# ★ 别改成在 `_physics_process` 里直接发:那时子节点还没步进,c2 会退回落后一拍。
+func _flush_own_snapshots() -> void:
+	if not _own_flush_pending:
+		return
+	_own_flush_pending = false
+	if not is_inside_tree():
+		return
+	send_own_snapshots()
+
 
 # ★ 仅测试用(--test-destroy-tile):对局开始 delay 秒后拆掉指定格、只拆一次;默认关,生产路径行为逐字一致。
 # ★ 必须走 TileDefs.damage_tile 而不是直接改 grid —— 那样才经 on_destroyed → _on_tile_destroyed → 广播,与真爆炸同一条链。

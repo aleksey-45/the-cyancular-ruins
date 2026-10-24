@@ -90,8 +90,9 @@ func _on_snapshot_world(world: Dictionary) -> void:
 
 
 # 本人包:只有自己需要的 ack_seq + 权威整态 c2。
-# ★ 拆包后这条断言反而**更强**了:原先 c2 与散字段 pos 在同一个字典里,比的是"同一份数据的两个副本";
-#   现在 c2 走本人包、pos 走世界包 —— 比的是**两条独立报文是否一致**,那才是真正要保证的事。
+# ★ S1(2026-10-24):本人包在玩家步进之后发(c2 = 第 T tick 状态),世界包仍在步进前发(自己那份 pos = T-1)⇒
+#   移动中两者天然差 1~2 tick 位移。断言从"<0.5px 同拍"放宽为"静止时仍 <0.5px;移动时 ≤ 一 tick 位移 + 8px 余量",
+#   仍然能抓"c2 丢了 / 位置完全对不上 / 解码错位"这类真错。
 func _on_snapshot_own(own: Dictionary) -> void:
 	var ack: int = int(own.get("ack_seq", -1))
 	if ack > _max_ack:
@@ -101,7 +102,9 @@ func _on_snapshot_own(own: Dictionary) -> void:
 	var c2: Dictionary = own.get("c2", {})
 	if not c2.is_empty() and c2.has("pos") and _world_pos != Vector2.INF:
 		var c2pos: Vector2 = c2["pos"]
-		if c2pos.distance_to(_world_pos) < 0.5:
+		var vel: Vector2 = c2.get("vel", Vector2.ZERO)
+		var tol: float = 0.5 if vel.length() < 1.0 else 8.0 + vel.length() / 30.0
+		if c2pos.distance_to(_world_pos) <= tol:
 			_full_state_ok = true
 
 func _on_go_match(role_assign: int, port: int) -> void:

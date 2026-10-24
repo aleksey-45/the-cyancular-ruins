@@ -16,6 +16,8 @@ var _tx_own_bytes: Dictionary = {}  # role -> 字节数
 
 func _broadcast_snapshot() -> void:
 	# tick 是「60Hz 物理 tick 时间轴」上的时间戳,不是包序号:30Hz 发包时每包跨 2 tick(客户端 playout/历史环按它插值)。
+	# ★ S1(2026-10-24):本函数**只发世界包**。本人包(ack + c2)改到 `send_own_snapshots()`,由 MatchHost 在玩家步进之后
+	#   用 call_deferred 调 —— 这样 c2 与 ack 是"本 tick 消费并步进完"的同一份态,不再等下一次 30Hz 广播。
 	_snap_tick += SNAPSHOT_STRIDE
 	# ① **世界包**:全部玩家的渲染字段(副本位置/姿态/朝向/武器/血条用)。构造一次、广播一次。
 	var world := {"tick": _snap_tick, "players": {}}
@@ -62,12 +64,18 @@ func _broadcast_snapshot() -> void:
 		# 整发跳过:一个 peer 处于拆链路窗口 ⇒ 这一帧**所有端**都没世界包。客户端侧的 snap_gap
 		# 分不出这一种与"发了没收到";这里的计数就是用来把它分出来的。
 		_tx_world_skip += 1
-	# ② **本人包**:各自的 ack + 权威整态 c2 —— 只有本人需要(客户端 rollback 拿它锚定/重放)。
-	# 逐 peer 定向(体积小,不构成 O(N²))。仍判 live peer:避免给正在断开的客户端发 ——
-	# ★ 这是全项目**最频繁**的一处定向发送(30Hz × 每个 role),所以判据必须不滞后:用
-	#   `NetBus.is_peer_live`(读 ENet peer 自己的 state),不是 `get_peers()`。
-	#   (本条走 unreliable → 通道 1,报出来会是 "channel **1**" 那一版;用户看到的那条
-	#    "channel 0" 只可能来自 **reliable** 的定向包,见 NetBus.is_peer_live 的注释。)
+
+
+# ── 本人包(2026-10-24 S1):**只能在玩家步进之后调用** ──
+# 各自的 ack + 权威整态 c2 —— 只有本人需要(客户端 rollback 拿它锚定/重放)。逐 peer 定向(体积小,不构成 O(N²))。
+# ★ 调用时机由 MatchHost 的 `_flush_own_snapshots()`(call_deferred)保证:此刻 Player 子节点已步进完 ⇒
+#   c2 是"本 tick 消费的输入已经生效"的权威态,`_ack_seq` 也是本 tick 刚消费的 seq ⇒ 状态与 ack 同拍且都是最新。
+#   ★ 别把它挪回 `_broadcast_snapshot()`:那会退回"状态/ack 都落后一拍 + 等下一次广播"的旧时序(S1 就是为了消掉它)。
+# ★ 仍判 live peer:避免给正在断开的客户端发 —— 这是全项目**最频繁**的一处定向发送(30Hz × 每个 role),
+#   所以判据必须不滞后:用 `NetBus.is_peer_live`(读 ENet peer 自己的 state),不是 `get_peers()`。
+#   (本条走 unreliable → 通道 1,报出来会是 "channel **1**" 那一版;用户看到的那条 "channel 0" 只可能来自
+#   **reliable** 的定向包,见 NetBus.is_peer_live 的注释。)
+func send_own_snapshots() -> void:
 	for role in peer_by_role:
 		if not NetBus.is_peer_live(peer_by_role[role]):
 			continue
