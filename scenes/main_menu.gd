@@ -92,6 +92,12 @@ func _enter_level0() -> void:
 	GameParameters.refresh_map_size()
 	Level0.pvp_mode = false            # 复位 PvP 标志,避免上次 PvP 残留
 	CombatComponent.pvp_arena = false  # 回单机恢复命中无敌帧
+	# ★ Web:Level0 的建图被拆成多帧(见 level_0._web_build_world),先亮遮罩并让出一帧让它真画出来;
+	#   桌面建图在一帧内完成、遮罩只会闪一下 ⇒ 只在 Web 上走这条路。
+	if OS.has_feature("web"):
+		LoadingScreen.show_loading("正在构建世界…")
+		await get_tree().process_frame
+		await get_tree().process_frame
 	get_tree().change_scene_to_file("res://scenes/level_0.tscn")
 
 

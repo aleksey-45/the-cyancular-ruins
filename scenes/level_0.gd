@@ -209,14 +209,26 @@ func _ready() -> void:
 	var tile_set = _create_wall_tileset()
 	var wl: TileMapLayer = $WorldViewport/WallLayer
 	wl.tile_set = tile_set
-	_paint_maze(wl)
+	# ★ Web:建图(9 份环面瓦片 + 9 份水面 + 整层碰撞)在 wasm 里要好几秒 ⇒ 先铺中心副本让画面有内容,
+	#   其余交给 _web_build_world() 逐帧补完(期间树暂停 + 载入遮罩)。桌面路径逐字不变。
+	var web_progressive := OS.has_feature("web") and not pvp_mode
+	if web_progressive:
+		_paint_maze_copies(wl, [Vector2i.ZERO])
+	else:
+		_paint_maze(wl)
 	Level0.water_layer = $WorldViewport/WaterLayer
 	Level0.water_surface_layer = $WorldViewport/WaterSurfaceLayer
 	Level0.water_layer.tile_set = _create_water_tileset()
-	_paint_water(grid)
+	if web_progressive:
+		_paint_water_copies(grid, [Vector2i.ZERO])
+	else:
+		_paint_water(grid)
 
-
-	_build_wall_collision.call_deferred(grid)
+	if web_progressive:
+		get_tree().paused = true   # 玩家/敌人已生成但物理不跑,等碰撞建完再解
+		_web_build_world.call_deferred(grid)
+	else:
+		_build_wall_collision.call_deferred(grid)
 	if pvp_mode:
 		return  # 世界已建;敌人/单玩家放置/后处理交给 PvP 场景
 	EnemySpawner.load_types()
@@ -239,6 +251,8 @@ func _ready() -> void:
 	# 单机初始武器:每种 2 把、共 12 把,随机散落全图;玩家开局空手(见 player.gd)。★ deferred:scatter_weapons 要读 MazeGenerator.current_grid,延迟到帧末避半初始化状态。
 	scatter_weapons.call_deferred(_default_weapon_types())
 
+	# ★ 后处理不能省:世界全部渲染在 WorldViewport(SubViewport)里,由 PostProcess 负责把它呈现到屏幕 ——
+	#   之前试过 Web 跳过 PostProcess,结果只剩天空+HUD(世界根本没呈现)。Web 的降级走"少开特效"那类改法,别整节点删。
 	var pp := PostProcess.new()
 	pp.world_viewport = $WorldViewport
 	_post_process = pp
@@ -259,27 +273,45 @@ func _create_water_tileset() -> TileSet:
 	return TerrainAtlas.make_water_tileset(ts)
 
 
+# 环面 9 份副本的偏移(渲染铺图 / 水面 / 碰撞共用)。
+func _ring_copies() -> Array:
+	var out: Array = []
+	for ty in range(-1, 2):
+		for tx in range(-1, 2):
+			out.append(Vector2i(tx, ty))
+	return out
+
+
 func _paint_maze(layer: TileMapLayer) -> void:
+	_paint_maze_copies(layer, _ring_copies())
+
+
+# 只铺指定环面副本(Web 分帧建图用;桌面走 _paint_maze 一次铺 9 份)。
+func _paint_maze_copies(layer: TileMapLayer, copies: Array) -> void:
 	# cyrm v4:铺 16px 子格(MazeGenerator.current_subgrid;纹理 0 = 空气跳过,液体由 _paint_water 分层铺)。瓦片坐标 = (象限 qy*4+qx, 纹理-1)。
 	var source_id = 0
 	var sc = MazeGenerator.current_subgrid[0].size()
 	var sr = MazeGenerator.current_subgrid.size()
-	for ty in range(-1, 2):
-		for tx in range(-1, 2):
-			var offset_x = tx * sc
-			var offset_y = ty * sr
-			for y in range(sr):
-				var row: Array = MazeGenerator.current_subgrid[y]
-				for x in range(sc):
-					var tex: int = row[x]
-					if tex == MazeGenerator.EMPTY or Water.is_liquid(tex):
-						continue
-					layer.set_cell(Vector2i(x + offset_x, y + offset_y), source_id,
-							Vector2i((y % 4) * 4 + (x % 4), tex - 1))
+	for c: Vector2i in copies:
+		var offset_x = c.x * sc
+		var offset_y = c.y * sr
+		for y in range(sr):
+			var row: Array = MazeGenerator.current_subgrid[y]
+			for x in range(sc):
+				var tex: int = row[x]
+				if tex == MazeGenerator.EMPTY or Water.is_liquid(tex):
+					continue
+				layer.set_cell(Vector2i(x + offset_x, y + offset_y), source_id,
+						Vector2i((y % 4) * 4 + (x % 4), tex - 1))
 
 
 # 水格铺图:水体格铺水体瓦片(纹理 21,水体专用 64px 图集的 atlas 行 0);水面格(上方非 liquid)只放 Sprite 亮线,不铺瓦片(避免双层半透明叠加变深)。
 func _paint_water(grid: Array[Array]) -> void:
+	_paint_water_copies(grid, _ring_copies())
+
+
+# 只铺指定环面副本的水面(Web 分帧建图用;桌面 _paint_water 一次铺 9 份 ⇒ 仍是一个合批)。
+func _paint_water_copies(grid: Array[Array], copies: Array) -> void:
 	const BODY_ROW := 0   # 水体专用图集只有一行(纹理 21)
 	var ts := GameParameters.TILE_SIZE
 	var cols := grid[0].size()
@@ -287,35 +319,85 @@ func _paint_water(grid: Array[Array]) -> void:
 	var wl: TileMapLayer = Level0.water_layer
 	var surf: Node2D = Level0.water_surface_layer
 	var surface_cells: Array = []
-	for ty in range(-1, 2):
-		for tx in range(-1, 2):
-			var ox := tx * cols
-			var oy := ty * rows
-			for y in range(rows):
-				var row: Array = grid[y]
-				for x in range(cols):
-					var v: int = row[x]
-					if v == MazeGenerator.EMPTY:
-						continue
-					if not Water.is_liquid(MazeGenerator.texture_of(v)):
-						continue
-					var above: int = grid[posmod(y - 1, rows)][x]
-					var is_surface := above == 0 or not Water.is_liquid(MazeGenerator.texture_of(above))
-					if is_surface:
-						surface_cells.append({
-							"pos": Vector2((x + ox) * ts + ts * 0.5, (y + oy) * ts + ts),
-							"phase": (x + ox) * 1.7 + (y + oy) * 2.3,
-						})
-					else:
-						wl.set_cell(Vector2i(x + ox, y + oy), 0,
-							Vector2i(MazeGenerator.shape_of(v), BODY_ROW))
-
+	for c: Vector2i in copies:
+		var ox := c.x * cols
+		var oy := c.y * rows
+		for y in range(rows):
+			var row: Array = grid[y]
+			for x in range(cols):
+				var v: int = row[x]
+				if v == MazeGenerator.EMPTY:
+					continue
+				if not Water.is_liquid(MazeGenerator.texture_of(v)):
+					continue
+				var above: int = grid[posmod(y - 1, rows)][x]
+				var is_surface := above == 0 or not Water.is_liquid(MazeGenerator.texture_of(above))
+				if is_surface:
+					surface_cells.append({
+						"pos": Vector2((x + ox) * ts + ts * 0.5, (y + oy) * ts + ts),
+						"phase": (x + ox) * 1.7 + (y + oy) * 2.3,
+					})
+				else:
+					wl.set_cell(Vector2i(x + ox, y + oy), 0,
+						Vector2i(MazeGenerator.shape_of(v), BODY_ROW))
 
 	# 合批:一个 canvas item 画所有水面格(替代 N 个 Sprite,省 draw call,画面不变)
 	if not surface_cells.is_empty():
 		var batch := WaterSurfaceBatch.new()
 		batch.setup(surface_cells, Level0.surface_texture, ts)
 		surf.call_deferred("add_child", batch)
+
+
+# Web-only:把中心副本之外的 8 份环面瓦片 / 水面、以及整层碰撞分帧建完(期间树是暂停的,玩家/敌人不跑物理),
+# 每步更新载入遮罩;完成后解暂停、隐藏遮罩。★ 与桌面路径(一次 _paint_maze + build_sim)语义等价:
+# 同样 9 份副本、同样的 WallCollision / DestructibleChunk_* / ClimbLedges 节点与 _destructible_sub。
+func _web_build_world(grid: Array[Array]) -> void:
+	var wl: TileMapLayer = $WorldViewport/WallLayer
+	var copies := _ring_copies()
+	var done := 0
+	# ① 瓦片:中心已在 _ready 铺过,剩 8 份逐帧
+	for c: Vector2i in copies:
+		if c == Vector2i.ZERO:
+			continue
+		_paint_maze_copies(wl, [c])
+		done += 1
+		LoadingScreen.set_progress(0.35 * float(done) / 8.0, "铺瓦片 %d/9" % (done + 1))
+		await get_tree().process_frame
+	# ② 水面:同样剩 8 份
+	var water_done := 0
+	for c: Vector2i in copies:
+		if c == Vector2i.ZERO:
+			continue
+		_paint_water_copies(grid, [c])
+		water_done += 1
+		LoadingScreen.set_progress(0.35 + 0.15 * float(water_done) / 8.0, "水面 %d/9" % (water_done + 1))
+		await get_tree().process_frame
+	# ③ 碰撞:永久墙(整图贪心,单步) → 可破坏层(逐块分帧) → 攀爬基座条
+	LoadingScreen.set_progress(0.55, "碰撞:永久墙")
+	var perm := CollisionBuilder.build_sub(grid, false)
+	CollisionBuilder.build_permanent(perm, $WorldViewport, "WallCollision")
+	await get_tree().process_frame
+	LoadingScreen.set_progress(0.65, "碰撞:可破坏层")
+	var sub := CollisionBuilder.build_sub(grid, true)
+	var cw := ceili(sub[0].size() / float(CollisionBuilder.CHUNK_CELLS * 4))
+	var ch := ceili(sub.size() / float(CollisionBuilder.CHUNK_CELLS * 4))
+	var total := cw * ch
+	var n := 0
+	for chy in ch:
+		for chx in cw:
+			CollisionBuilder.rebuild_chunk(sub, Vector2i(chx, chy), $WorldViewport)
+			n += 1
+			if n % 4 == 0 or n == total:
+				LoadingScreen.set_progress(0.65 + 0.33 * float(n) / float(maxi(total, 1)),
+						"碰撞块 %d/%d" % [n, total])
+				await get_tree().process_frame
+	CollisionBuilder.build_climb_ledges(grid, $WorldViewport)
+	_destructible_sub = sub
+	LoadingScreen.set_progress(1.0, "完成")
+	await get_tree().process_frame
+	get_tree().paused = false
+	await get_tree().process_frame
+	LoadingScreen.hide_loading()
 
 
 func _process(_delta: float) -> void:

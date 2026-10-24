@@ -35,6 +35,9 @@
 > - 必须用 **HTTP(S) 起一个静态服务**再访问(例如 `python -m http.server 8000 -d web_build` → `http://localhost:8000/`);直接双击 `index.html`(`file://`)不行。
 > - **上线部署**:静态服务器要开 **gzip/brotli**(wasm ≈39.5MB,压缩后传输约 10MB)+ `Cache-Control` 长缓存;`python -m http.server` 不压缩,只适合本地验证。首屏还会烘一张菜单背景图(Web 上已降到 16px/格 ≈15MB),慢机器上首进菜单要等几秒。
 > - `build_release.py` 对 Web 只做**文件结构校验**(index.html + 足够大的 .wasm),**不启动浏览器** ⇒ "浏览器里真能跑"要人开一次页面确认(单机流程:开始游戏 → 移动/射击 → HUD/后处理正常)。
+> - **进关不再黑屏**:Level0 的 9 份环面瓦片 / 水面 / 整层碰撞在 Web 上**分帧构建**(期间 `get_tree().paused` 冻结玩家物理,`LoadingScreen` 遮罩显示"载入中 + 阶段/百分比");桌面路径仍是一帧内建完、遮罩不亮。
+> - **后处理必须保留**:世界渲染在 `WorldViewport`(SubViewport)里,由 `PostProcess` 负责呈现到屏幕 —— 整节点删掉会只剩天空+HUD。Web 若要降性能,应针对具体效果降级,别删这个节点。
+> - 实测(2026-10-24,桌面 Chromium):主菜单 → 单机 → 载入遮罩(分帧进度)→ 关卡正常渲染可玩;帧率/发热需在目标机自测。
 > - 已知差异:Web 版跑不了 `LocalServer`(taskkill/netstat/create_process 在浏览器里不存在;相关入口本就随联机一起隐藏);首次加载体积 = 全部资源(数十 MB),首次进入要等 wasm+资源下载。
 
 > **版本号从哪来**:唯一来源是 `project.godot` 的 `application/config/version`,**只能写数字+点**。发布标识 = **`RoF_v<版本>_<YYYYMMDDHHMM>`**,由 [`tools/build_release.py`](tools/build_release.py) + [`tools/archive_build.py`](tools/archive_build.py) 拼:前缀取自 `project.godot` 的 `application/config/release_prefix`,拼法收在 `archive_build.py` 的 `release_version()` / `release_label()`。主菜单 / 信息页版本行、服务端启动自报、归档目录名与文件名都用它;`v` 前缀由脚本在展示与文件名上加。★ **别在任何文档里另抄一份版本号。**
