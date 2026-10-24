@@ -151,10 +151,10 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 
 ### 输入上报
 
-- 每 2 个物理 tick 为一个「输入对」:起点 `note_post_step()` + `reconcile()` + `PacketInputSource.pack_record()` + `NetBus.rpc_id(1, "send_input", pkt)`;第二个 tick 沿用同一份锁存输入。
-- 包字段:`seq`(单调)、`ax`、`held`、`pressed`、`released`、`winst`(切枪目标 inst,可选)、`aim`。
+- **每物理 tick**：`note_post_step()`(上一 tick 的预测整态) + `reconcile()` + `PacketInputSource.pack_record()`(一条 = 1 tick) + C2 `note_input`；**每 2 个 tick** 把 `[上一 tick, 本 tick]` 两条记录 `pack_pair()` 后 `NetBus.rpc_id(1, "send_input", pkt)`（流水线,30Hz 发包）。
+- 包字段:`seq`(包级=高 tick,低 tick=seq-1)、`held0/1`、`ax0/1`、`pressed0/1`、`released0/1`、`winst0/1`、`aim`、`st`、`ct`。
 - 位常量 `PacketInputSource.BIT_*`:up=1 / down=2 / charge=4 / attack=8 / reload=16 / pickup=32 / drop=64 / haste=128 / rewind=256。
-- 本地预测与上行共用同一份 30Hz 采样(`_sampled_input`)。
+- 本地预测**不锁存**(60Hz 真输入),C2 重放 1 步/记录;客户端与服务器逐 tick 同序。
 
 ### 快照消费
 
@@ -197,14 +197,14 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 
 | 包 | 方向 | 频率 / 模式 | 字段 |
 |---|---|---|---|
-| 输入包 | 客户端 → worker | 30Hz / reliable | 手打包 **34 B**：`seq` `ax` `held`(u16) `pressed` `released` `winst` `aim` `st` `ct`（`NetCodec.KIND_INPUT`） |
+| 输入包 | 客户端 → worker | 30Hz / reliable | 手打包 **46 B**：两条 tick 记录 `seq` `held0/1` `ax0/1` `pressed0/1` `released0/1` `winst0/1` + `aim` `st` `ct`（`NetCodec.KIND_INPUT`） |
 | `snapshot_world` / `snapshot_own` | worker → 客户端 | 30Hz / unreliable | 世界包 `tick` + `players{…}`;本人包(逐 peer)`{ack_seq, q, c2}` |
 | `bullet_spawn` | worker → 客户端 | reliable | `scene shooter_role pos vel speed range size color gravity hit_damage …` |
 | `hit_event` | worker → 客户端 | reliable | `victim_role damage source_pos` |
 | `beam_fired` | worker → 客户端 | reliable | 光束报告 + `shooter_role` |
 | 房间 / 对局 | 双向 | reliable | `create_room` `join_room` `go_match` `session_token` `claim_role` `match_start` `match_sync` `match_sync_data` `round_state` … |
 
-世界包与本人包由 [`core/net/net_codec.gd`](../core/net/net_codec.gd) 打包;输入包同样走这份编解码器(`KIND_INPUT`,34 B/包、改前是 7 键 `Dictionary`)。完整通道归属见 [`eng/netplay-rpc-channels.md`](eng/netplay-rpc-channels.md)。
+世界包与本人包由 [`core/net/net_codec.gd`](../core/net/net_codec.gd) 打包;输入包同样走这份编解码器(`KIND_INPUT`,46 B/包 = 两条 tick 记录;改前是 34 B 单条锁存记录 / 更早是 7 键 `Dictionary`)。完整通道归属见 [`eng/netplay-rpc-channels.md`](eng/netplay-rpc-channels.md)。
 
 ## 11. 环面纪律
 
@@ -218,9 +218,9 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 
 ```
 客户端                          worker                          对手客户端
-每物理帧(30Hz 采样):
+每物理帧(60Hz 采样，30Hz 发包 —— 一包两条 tick 记录):
   本地模拟自己(C2) + 打包输入 ── reliable ──→  InputIntake FIFO
-                            ↓ 每 2 tick 取一条
+                            ↓ 每 tick 取一条
                             全体 Player._physics_process 权威模拟;子弹 / 光束裁决,拆墙
                             30Hz snapshot_world ── unreliable ──→ 对手副本直出最新包
                             30Hz snapshot_own   ── unreliable ──→ PredictionRollback(分歧才 restore+重放)

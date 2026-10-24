@@ -15,7 +15,7 @@
 
 ## 2. 输入上行
 
-`PacketInputSource.pack_record()` 产出 7 字段 `Dictionary`：
+`PacketInputSource.pack_record()` 产出**单 tick 记录**（9 字段）；`pack_pair()` 把它与上一 tick 的记录装成 30Hz 线上包（`INPUT_BATCH_TICKS = 2`，46 B/包）。
 
 | 字段 | 含义 |
 |---|---|
@@ -24,20 +24,21 @@
 | `held` | 按住位掩码 |
 | `pressed` / `released` | 边沿位掩码 |
 | `winst` | 切枪目标 inst；0 = 本包无请求 |
-| `aim` | 世界坐标瞄准方向 |
+| `aim` | 世界坐标瞄准方向（30Hz 取样，两条记录共用） |
+| `st` / `ct` | 只落位的扩展字段（见 `netcode-input-uplink.md`） |
 
 位定义：`BIT_UP 1` / `BIT_DOWN 2` / `BIT_CHARGE 4` / `BIT_ATTACK 8` / `BIT_RELOAD 16` / `BIT_PICKUP 32` / `BIT_DROP 64` / `BIT_HASTE 128` / `BIT_REWIND 256`。加位 = 改协议，两端必须同版本。
 
-- 频率：采样 30Hz、发包 30Hz，一包一条记录；`TICKS_PER_RECORD := 2`（一条记录覆盖 2 个物理 tick）。客户端本地预测与 C2 重放读同一份锁存输入。边沿在 60Hz 每 tick 累积，到配对起点才锁存进记录。
+- 频率：**采样 60Hz**（一条记录 = 1 tick，`TICKS_PER_RECORD := 1`）；**发包 30Hz**，一包装两条 tick 记录（`INPUT_BATCH_TICKS := 2`，流水线：本包 = 上一 tick + 本 tick）。客户端本地预测与 C2 重放**不锁存**，逐 tick 1:1。
 - 通道：`send_input` 是 `reliable`、用户通道 1（ENet 道 2）。
 - `pressed` / `released` 是边沿语义，靠 reliable 的保序 + 重传保证不丢。
 
 ## 3. 服务端消费
 
-- 每 `SNAPSHOT_STRIDE`（= 2）个物理 tick 恰 `pop_front()` 一条；`ack_seq = pkt.seq`；第二个 tick 沿用 held。
+- **每物理 tick 恰 `pop_front()` 一条**（一包到两条）；`ack_seq = pkt.seq`（逐 tick 前进）；广播仍 30Hz。
 - 队列空 ⇒ 沿用上一条记录的 `held` / `axis` / `aim`；`clear_edges()` 在每个 tick 末清 `pressed` / `released` / `winst`。
 - 饥饿期不记账：没有"猜了哪一帧"的记录，也不专门回滚；分歧只在收到权威 `c2` 时由 C2 纠正。
-- 上限与丢弃（`PacketInputSource`）：`cap = clamp(peak + 1, 2, 8)`；`peak` 每 tick 衰减 1；丢最旧一条并把边沿并入队首；`reset_input_queue()` 连包络一起清。
+- 上限与丢弃（`PacketInputSource`，单位 = 条 tick 记录）：`cap = clamp(peak + 2, 4, 16)`；`peak` 每 tick 衰减 1；丢最旧一条并把边沿并入队首；`reset_input_queue()` 连包络一起清。
 
 ## 4. ack 与时钟
 

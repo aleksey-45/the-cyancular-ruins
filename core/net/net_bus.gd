@@ -13,7 +13,7 @@ signal room_join_requested(caller: int, code: String)
 signal room_list_requested(caller: int)
 signal lobby_name_set(caller: int, name: String)   # 客户端连上大厅时报昵称(房间列表显示)
 signal peer_left(peer_id: int)
-signal input_received(caller: int, pkt: Dictionary)   # 30Hz 一条输入记录(每条覆盖 PacketInputSource.TICKS_PER_RECORD 个物理 tick)
+signal input_received(caller: int, pkt: Dictionary)   # 30Hz 一包(内含 2 条 tick 记录;U1 后一条记录 = 1 个物理 tick)
 signal role_claimed(caller: int, role: int, player_name: String)
 signal local_snapshot_world(world: Dictionary)   # 全部玩家的渲染字段(副本/血条用)
 signal local_snapshot_own(own: Dictionary)       # 只有本人需要的 ack_seq + 权威整态 c2
@@ -143,9 +143,9 @@ func list_rooms() -> void:
 func lobby_name(name: String) -> void:
 	lobby_name_set.emit(multiplayer.get_remote_sender_id(), name)
 
-# ★ 输入上行:30Hz 一包、每包一条记录(采样也 30Hz:一条记录 = 2 个物理 tick 的输入,客户端本地预测吃同一份锁存输入)。
-# 载荷是手打包的 PackedByteArray(NetCodec.encode_input:头 2 B + 记录 32 B = 34 B;改前是 7 键 Dictionary = 164 B/包)。
-# 可靠通道保序 + seq 单调 = 服务端与客户端重放同序(C2 回滚「1 seq = 2 tick」的前提)。
+# ★ 输入上行:30Hz 一包,**内含连续两个物理 tick 的记录**(U1:客户端 60Hz 真输入、不锁存;服务器每 tick 消费一条)。
+# 载荷是手打包的 PackedByteArray(NetCodec.encode_input:头 2 B + 记录 44 B = 46 B;改前 30Hz 单条锁存记录 = 34 B)。
+# 可靠通道保序 + seq 单调(包级 seq = 高 tick 记录,低 tick = seq-1)= 服务端与客户端重放同序(C2 回滚「1 seq = 1 tick」的前提)。
 @rpc("any_peer", "call_remote", "reliable", 1)
 func send_input(payload: PackedByteArray) -> void:
 	var pkt := NetCodec.decode_input(payload)

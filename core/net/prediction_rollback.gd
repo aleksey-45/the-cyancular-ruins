@@ -4,9 +4,10 @@ extends RefCounted
 # 收到权威(ack=C, 整态 S):ring[C] ≈ S → 预测被证实,trim <= C;ring[C] != S → 真性分歧(服务器外部事件:命中/传送/换边/墙/漂移),
 # restore(S) 后按序重放 (C, last_applied] 的本地输入 —— 「重放 = 错在哪补哪」,绝不做橡皮筋位置拉拢。
 
-const KEEP := 256           # ring 保留窗口
+const KEEP := 256           # ring 保留窗口(条记录;U1 后一条 = 1 tick ⇒ 4.3 秒)
 const PHYS_DT := 1.0 / 60.0 # 回滚重放一律按固定物理步(确定性)
-# 每条输入记录覆盖几个物理步:默认 1(纯逻辑件/探针的旧语义);PvP 客户端置 2(30Hz 采样,一条记录管 2 个 tick)。
+# 每条输入记录覆盖几个物理步:**1**(U1:一条记录 = 1 tick,60Hz 真输入,服务器每 tick 消费一条)。
+# 保留这个 var 是因为纯逻辑探针/旧语义仍可显式设 2;PvP 客户端不再改它。
 var ticks_per_record := 1
 
 var _p = null               # 被预测 Player(动态)
@@ -81,8 +82,8 @@ func reconcile() -> void:
 		var pk: Array = _pending.pop_front()
 		_handle_ack(int(pk[0]), pk[1])
 
-# 用记录步进一次:临时把玩家输入源换成 scratch(喂入该记录),步进后换回 —— 被预测玩家平时读锁存输入(真机手感不变),重放才切历史输入。
-# ★ 一条记录按 ticks_per_record 连跑(默认 1):30Hz 采样时是「第一步行边沿、第二步只用 held」——与服务器同一分组。
+# 用记录步进一次:临时把玩家输入源换成 scratch(喂入该记录),步进后换回 —— 被预测玩家平时读真实输入(真机手感不变),重放才切历史输入。
+# ★ 一条记录按 ticks_per_record 连跑(U1 下 = 1 步):与服务器逐 tick 同序。
 func _step(record: Dictionary) -> void:
 	if _p == null:
 		return

@@ -3,7 +3,7 @@ extends SceneTree
 #   ① 三个 encode_* 各自写死版本/种类字节 ⇒ 版本号会漂(两份真相) ⇒ 断言①(三 kind 首字节同为 PROTO_VERSION、第二字节互异且正确)。
 #   ② 解码守卫写松(不查版本/长度) ⇒ 错位值喂进权威模拟 = 静默分歧 ⇒ 断言②(三 kind 坏包一律空)。
 #   ③ 编码侧手写内联、解码侧按 schema 表读 ⇒ 字段顺序/宽度/位打包漂移 ⇒ 断言③(三 kind 往返;含 held u16=415、混合 bool、st/ct 非零)。
-#   ④ schema 与生产者脱钩(pack_record 加字段不登记) ⇒ 该字段线上被静默丢掉 ⇒ 断言④(INPUT_SCHEMA ↔ pack_record 逐键对齐)。
+#   ④ schema 与生产者脱钩(pack_pair 加字段不登记) ⇒ 该字段线上被静默丢掉 ⇒ 断言④(INPUT_SCHEMA ↔ pack_pair 逐键对齐)。
 # ★ 与 snapshot_size_probe 的分工:那边量**体积/最坏包/容量**(场景探针,要真 Player);这里量**协议正确性**(纯逻辑 `-s`)。
 # 跑法:"$GODOT" --headless --path . -s res://tests/smoke/net_wire_smoke.gd;通过 = NET WIRE OK(n 条断言)。
 
@@ -41,21 +41,27 @@ func _initialize() -> void:
 			and NetCodec.decode_input(wb).is_empty() and NetCodec.decode_input(ob).is_empty()
 	_chk(bad, "三 kind 坏包必须一律解码为空(翻版本 / 截断 1 B / 串种)")
 
-	# ③ 三 kind 往返逐字段一致(去掉什么才红:字段顺序/宽度/位打包错位、丢字段)
+	# ③ 三 kind 往返逐字段一致(去掉什么才红:字段顺序/宽度/位打包错位、丢字段;输入还要逐 tick 拆包正确)
 	var wd := NetCodec.decode_world(wb)
 	var od := NetCodec.decode_own(ob)
 	var id := NetCodec.decode_input(ib)
+	var recs := PacketInputSource.unpack_pair(id)
 	var rt := int(wd.get("tick", -1)) == int(world["tick"]) \
 			and _dict_same(world["players"], wd.get("players", {})) \
 			and int(od.get("ack_seq", -1)) == int(own["ack_seq"]) \
 			and int(od.get("q", -1)) == int(own["q"]) \
 			and _dict_same(own["c2"], od.get("c2", {})) \
 			and _dict_same(inp, id) \
-			and int(id.get("held", 0)) == 415 and int(id.get("st", -1)) == 987654321 \
-			and int(id.get("ct", -1)) == 12345678
-	_chk(rt, "三 kind 往返逐字段一致(世界含混合 bool;本人整态;输入 held=415 / st、ct 非零)")
+			and recs.size() == 2 \
+			and int(recs[0].get("seq", 0)) == int(inp["seq"]) - 1 \
+			and int(recs[1].get("seq", 0)) == int(inp["seq"]) \
+			and int(recs[0].get("ct", 0)) == int(inp["ct"]) - 1 \
+			and int(recs[1].get("ct", 0)) == int(inp["ct"]) \
+			and int(recs[0].get("held", 0)) == 415 and int(recs[1].get("held", 0)) == 257 \
+			and int(recs[0].get("st", -1)) == 987654321 and int(recs[1].get("st", -1)) == 987654321
+	_chk(rt, "三 kind 往返逐字段一致(世界含混合 bool;本人整态;输入两 tick 记录 + 拆包 seq/ct 连续)")
 
-	# ④ schema↔生产者逐键对齐(去掉什么才红:给 pack_record 加字段不登记 ⇒ 线上静默丢字段)
+	# ④ schema↔生产者逐键对齐(去掉什么才红:给 pack_pair 加字段不登记 ⇒ 线上静默丢字段)
 	var schema_keys := _schema_keys(NetCodec.INPUT_SCHEMA)
 	var missing: Array = []
 	var extra: Array = []
@@ -66,10 +72,10 @@ func _initialize() -> void:
 		if not schema_keys.has(k):
 			extra.append(k)
 	_chk(missing.is_empty() and extra.is_empty(),
-			"INPUT_SCHEMA 与 pack_record() 逐键对齐(表外未覆盖 %s / 表内多余 %s)" % [str(missing), str(extra)])
+			"INPUT_SCHEMA 与 pack_pair() 逐键对齐(表外未覆盖 %s / 表内多余 %s)" % [str(missing), str(extra)])
 
 	# 读数(不是断言):协议尺寸
-	print("[readout] 输入 %d B/包;世界 2 人共 %d B;本人包 %d B" % [
+	print("[readout] 输入 %d B/包(内含 2 条 tick 记录);世界 2 人共 %d B;本人包 %d B" % [
 			ib.size(), wb.size(), ob.size()])
 
 	# 判词:计数闸(条数不符也红 —— 防断言被静默跳过)
@@ -124,13 +130,23 @@ func _fixture_own() -> Dictionary:
 
 
 func _fixture_input() -> Dictionary:
-	var pkt := PacketInputSource.pack_record(PacketInputSource.new(), 123456,
-			Vector2(0.6, -0.8), 987654321, 12345678)
-	# held 打满(含 BIT_REWIND = 256 ⇒ 必须 u16;u8 会截成 159)
-	pkt["held"] = PacketInputSource.BIT_UP | PacketInputSource.BIT_DOWN | PacketInputSource.BIT_CHARGE \
+	# 两条 tick 记录(值故意不同:held/ax/pressed/released/winst 全错开 ⇒ held0↔held1、ax0↔ax1 之类的错位必红)。
+	var src := PacketInputSource.new()
+	var lo := PacketInputSource.pack_record(src, 123455, Vector2(0.6, -0.8))
+	lo["held"] = PacketInputSource.BIT_UP | PacketInputSource.BIT_DOWN | PacketInputSource.BIT_CHARGE \
 			| PacketInputSource.BIT_ATTACK | PacketInputSource.BIT_RELOAD \
-			| PacketInputSource.BIT_HASTE | PacketInputSource.BIT_REWIND
-	return pkt
+			| PacketInputSource.BIT_HASTE | PacketInputSource.BIT_REWIND   # 415:含 BIT_REWIND=256 ⇒ 必须 u16
+	lo["ax"] = -0.5
+	lo["pressed"] = 3
+	lo["released"] = 1
+	lo["winst"] = 77
+	var hi := PacketInputSource.pack_record(src, 123456, Vector2(0.6, -0.8))
+	hi["held"] = PacketInputSource.BIT_UP | PacketInputSource.BIT_REWIND   # 257
+	hi["ax"] = 0.5
+	hi["pressed"] = 8
+	hi["released"] = 0
+	hi["winst"] = 0
+	return PacketInputSource.pack_pair(lo, hi, Vector2(0.6, -0.8), 987654321, 12345678)
 
 
 func _flip(buf: PackedByteArray) -> PackedByteArray:

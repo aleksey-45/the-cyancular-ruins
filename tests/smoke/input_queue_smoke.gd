@@ -46,19 +46,20 @@ func _initialize() -> void:
 	_chk(bounded and edges,
 			"有界:灌 200 后 ≤ 上限且返回值是丢前深度(实得 %d/%d);边沿:被丢包的 pressed/winst 必须活到队首" % [q.size(), raw])
 
-	# ③ 回复力(去掉什么才红:退回写死 cap 8 ⇒ 积压永远不释放)
+	# ③ 回复力(去掉什么才红:退回写死 cap 8 ⇒ 积压永远不释放)。U1 后队列单位 = 1 tick 记录,MIN=4。
 	var q3: Array = []
 	for i in 6:
 		PacketInputSource.push_pending(q3, _pkt(i), 8)
-	var released := PacketInputSource.push_pending(q3, _pkt(6), 2)
-	_chk(q3.size() == 2 and released == 7,
-			"回复力:上限收到 2 时 7 条积压必须一次释放到 2(队内 %d,丢前 %d)" % [q3.size(), released])
+	var released := PacketInputSource.push_pending(q3, _pkt(6), 4)
+	_chk(q3.size() == 4 and released == 7,
+			"回复力:上限收到 4 时 7 条积压必须一次释放到 4(队内 %d,丢前 %d)" % [q3.size(), released])
 
-	# ④ 上限钳位(去掉什么才红:删下界 ⇒ cap=1 一 tick 到两包就丢;删上界 ⇒ 突刺把上限顶到无界)
+	# ④ 上限钳位(去掉什么才红:删下界 ⇒ cap=1 一 tick 到两条就丢;删上界 ⇒ 突刺把上限顶到无界)
+	# U1 后:MIN=4 / MAX=16 / MARGIN=2(一条记录 = 1 tick,翻倍以保住同样的时间缓冲)。
 	_chk(PacketInputSource.adapted_cap(0) == PacketInputSource.QUEUE_CAP_MIN
-			and PacketInputSource.adapted_cap(3) == 4
+			and PacketInputSource.adapted_cap(3) == 5
 			and PacketInputSource.adapted_cap(99) == PacketInputSource.QUEUE_CAP_MAX,
-			"上限钳位:0→%d、3→4、99→%d(包络+1 且夹在 [MIN,MAX])" % [
+			"上限钳位:0→%d、3→5、99→%d(包络+MARGIN 且夹在 [MIN,MAX])" % [
 					PacketInputSource.adapted_cap(0), PacketInputSource.adapted_cap(99)])
 
 	# 判词:计数闸(条数不符也红 —— 防断言被静默跳过)

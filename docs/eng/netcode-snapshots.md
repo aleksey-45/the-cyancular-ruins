@@ -53,7 +53,7 @@ NetBus.rpc_id(peer, "snapshot_own",
 
 ### 1.4 线格式与载荷
 
-- `core/net/net_codec.gd` 用一张 schema 表 + 手打包成 `PackedByteArray`（快照 + 输入同模块）。首字节 `PROTO_VERSION := 3`，第二字节种类（`KIND_WORLD` / `KIND_OWN` / `KIND_INPUT`）。
+- `core/net/net_codec.gd` 用一张 schema 表 + 手打包成 `PackedByteArray`（快照 + 输入同模块）。首字节 `PROTO_VERSION := 4`，第二字节种类（`KIND_WORLD` / `KIND_OWN` / `KIND_INPUT`）。
 - ★ 2026-10-24 bool 打包：bool 按**记录**打包成 1 B 标志字节（`T_BOOLS`；世界 4 个 / `c2` 7 个 / 武器块 3 个）。**不是跨字段位流** —— 收益等价（世界条目 51→48 B、本人包 102→94 B）但不需要 bit 游标与 padding 校验，解码也不会因尾部 padding 判据制造误红/误绿；代价是组内对齐浪费 ≤7 bit。小整数位宽 / 真位流留给后续（要先登记每字段值域）。
 - ★ 2026-10-24 编码侧性能：解码仍表驱动（`_unpack` 逐字段守边界），**编码侧手写内联**（`out.encode_float(i, v)` + 下标写，一次性按 `_schema_bytes()` 预算容量、末尾 `resize(i)` 收尾）。实测 `encode_world`（N=16）**304 → 40~49 µs/包**（一次性量具 `.superpowers/net/encode_timing.gd`；同文件的剖面实测「只 resize」= 0.2 µs ⇒ 瓶颈是**逐字段 GDScript 调用**，不是分配）。代价：编码顺序/宽度与 schema 成了两份 —— 漂移由 `snapshot_size_probe` 的往返判据抓（解码按 schema 读，顺序/宽度错 = 值必不对）。★ 这一版**只改 CPU、不改字节**（bool 打包是同一批的另一条，字节变化见上一条）。
 - 两端版本不一致 ⇒ 解码返回空字典、调用方不 emit，`net_bus.gd` / `net_bus` 的输入解码口各只报一次错。
@@ -66,7 +66,7 @@ NetBus.rpc_id(peer, "snapshot_own",
 | 世界包头 | 7 B（版本 1 B + 种类 1 B + tick 4 + 人数 1） |
 | 世界包每人条目 | **48 B**（role 1 + bool 标志 1 + 定长 29 + trail(1+16)）；不在回溯时 **32 B** |
 | 本人包 | **94 B**（头 8 + `c2` 67 + 武器 12 + 背包 7） |
-| 输入包 | **34 B**（头 2 + 记录 32；`held` 必须 u16，见 [`netcode-input-uplink.md`](netcode-input-uplink.md)） |
+| 输入包 | **46 B**（头 2 + 记录 44 = **两条连续 tick 记录**；`held` 必须 u16，见 [`netcode-input-uplink.md`](netcode-input-uplink.md)） |
 
 按 30Hz 折算（服务器上行按扇出算：世界包每个 peer 一份）：
 
@@ -108,12 +108,12 @@ NetBus.rpc_id(peer, "snapshot_own",
 
 `core/net/packet_input_source.gd` + `server/match/input_intake.gd`：
 
-- 上限：`cap = clamp(peak + QUEUE_CAP_MARGIN, QUEUE_CAP_MIN, QUEUE_CAP_MAX)`，即 `[2, 8]`。
+- 上限：`cap = clamp(peak + QUEUE_CAP_MARGIN, QUEUE_CAP_MIN, QUEUE_CAP_MAX)`，即 `[4, 16]`（单位 = 条 tick 记录；U1 后一条 = 1 tick，数值翻倍以保住 [66,266] ms 时间缓冲）。
 - `peak` = 最近一次轮询到的**原始**深度（丢之前），每 tick 衰减 1 ⇒ 网络安静时上限自己缩回。
 - 满上限时丢**最旧**一条，`pressed` / `released` / `winst` 边沿并入队首。
 - `push_pending()` 返回**丢之前**的深度（包络靠它学习）。
 - `reset_input_queue(role)` 队列与包络一起清（掉线 / 重连重开纪元）。
-- 服务端每 `SNAPSHOT_STRIDE` 个 tick 恰消费一条记录；队列空 ⇒ 沿用上一包的 held；`clear_edges()` 清边沿。
+- 服务端**每物理 tick 恰消费一条记录**（U1；一包到两条）；队列空 ⇒ 沿用上一包的 held；`clear_edges()` 清边沿。
 
 ## 4. 判据与读数
 
@@ -124,8 +124,8 @@ NetBus.rpc_id(peer, "snapshot_own",
 | 服务端 `--netstat` / `--netstat-trace` | `input_intake.gd` | 队列长度 · 抖动上限 · 累计丢弃（1Hz / 前 600 tick 逐帧） |
 | `--diag` / `CYR_DIAG=1` | `NetDiag` | `snap_gap`（>150ms）、`snap_rx`、`snapshot_tx`、`queue`、`queue_drop` |
 
-- 正常形状：队列贴近 `QUEUE_CAP_MIN`，上限在衰减，累计丢弃只在突发后跳一次。
-- 坏形状：上限一路顶到 8 不回，或累计丢弃几乎每 tick 都涨。
+- 正常形状：队列贴近 `QUEUE_CAP_MIN`（= 4 条 = ~67ms），上限在衰减，累计丢弃只在突发后跳一次。
+- 坏形状：上限一路顶到 16 不回，或累计丢弃几乎每 tick 都涨。
 - 判据一律 grep 判词文本 + 条数闸，不看退出码。
 
 ## 5. 与主流做法的对照
@@ -140,6 +140,7 @@ NetBus.rpc_id(peer, "snapshot_own",
 ## 6. 已知边界
 
 - `c2` 与渲染字段都是 float32 全量，量化与增量都没做。量化必须两端同口径（`c2` 是回滚锚点，只压上行会让每次重放都对不上）。
+- ★ 2026-10-24 **U1 上行去锁存**：输入记录 = 1 tick（60Hz 采样），30Hz 包内装两条（流水线），服务器每 tick 消费一条 ⇒ 本地手感不再有 30Hz 锁存延迟；但**下行与 ack 仍 30Hz**，"输入→服务器确认"的端到端延迟仍受 30Hz 快照/ack 限制（见 `netcode-input-uplink.md` §5）。
 - 上行的 `st` / `ct` 两个扩展字段（2026-10-24 随输入手打包埋入）**只落位、无消费者**：真链路只证明不回归，送达证据只有 `-s` 往返断言；真正的消费者是未来的增量批。
 - 没有丢包 / 抖动注入路径 ⇒ 队头阻塞、丢弃率、手感都没有真对局读数。
 - 探针量的是**载荷**字节，不含 ENet 分片头 / RPC 方法名 / IP·UDP 头。`royale_soak_probe` 的 KB/s 是解码后 `Dictionary` 的 `var_to_bytes`，不是线上字节，对线格式改动不可见。

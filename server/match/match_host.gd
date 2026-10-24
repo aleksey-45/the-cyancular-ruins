@@ -135,11 +135,12 @@ func reset_input_queue(role: int) -> void:
 func _on_input(caller: int, pkt: Dictionary) -> void:
 	for role in peer_by_role:
 		if peer_by_role[role] == caller:
-# 缓冲本帧到达的记录,按 seq 序 FIFO(30Hz 采样:每 SNAPSHOT_STRIDE 个物理 tick 消费一条,每条连跑 2 步)。
+# U1:一包两条 tick 记录(30Hz 包)⇒ 拆成连续两条入队(低 tick seq = 高 tick - 1)。
 # ★ st/ct 只落位不消费(增量批才用):它们不是队列的一部分,后到的覆盖先到的 —— 丢记录不影响它们,因为它们本来就只代表"最近一次"。
 			_client_snap_tick[int(role)] = int(pkt.get("st", 0))
 			_client_tick[int(role)] = int(pkt.get("ct", 0))
-			_intake.intake(_pending_input, int(role), pkt)
+			for rec in PacketInputSource.unpack_pair(pkt):
+				_intake.intake(_pending_input, int(role), rec)
 			return
 
 
@@ -170,14 +171,12 @@ func _physics_process(delta: float) -> void:
 					on = false   # 账户当帧烧空(余额/锁定不足)→ 立即回落,与单机同款
 			p.pvp_haste_mult = time_economy.rules.haste_mult if on else 1.0
 	# 下行 30Hz:每 SNAPSHOT_STRIDE 个物理 tick 广播一次(整数相位,见 MatchState._snapshot_tick_phase)。
-	# ★ 同一个相位也决定「本 tick 是否消费一条输入记录」:输入 30Hz 采样 ⇒ 一条记录管 2 个 tick,
-	#   在配对起点消费(广播之后),第二个 tick 只靠 held —— 与客户端本地预测/C2 重放是同一分组。
+	# ★ U1 后消费节奏与广播相位**解耦**:服务器每物理 tick 消费一条记录(一条 = 1 tick);广播仍 30Hz。
+	#   广播必须仍在"消费本帧输入"之前(见上一条注释的配对理由)。
 	_snapshot_tick_phase += 1
-	var apply_input := false
 	if _snapshot_tick_phase >= SNAPSHOT_STRIDE:
 		_snapshot_tick_phase = 0
 		_broadcast_snapshot()
-		apply_input = true
 
 	if time_economy != null:
 		time_economy.tick(delta)
@@ -185,8 +184,8 @@ func _physics_process(delta: float) -> void:
 		if _time_sync <= 0.0:
 			_time_sync = TIME_SYNC_INTERVAL
 			_rpc_all_ext("time_state", [time_economy.state_payload()])
-# 应用输入(父先于子 ⇒ 玩家 _physics_process 读到的已是最新注入)。★ 每 SNAPSHOT_STRIDE 个 tick 消费一条 FIFO 记录(30Hz 采样),
-# 第二个 tick 沿用 held/轴(clear_edges 不清 held);队列空 = 缺包。★ ack = 刚消费记录的 seq(下一次快照回带,rollback 锚点)。
+# 应用输入(父先于子 ⇒ 玩家 _physics_process 读到的已是最新注入)。★ U1:每物理 tick 消费一条 FIFO 记录(一条 = 1 tick),
+# 队列空 = 缺包(沿用 held/轴)。★ ack = 刚消费记录的 seq(下一次广播回带,rollback 锚点)。
 	for role in input_sources:
 		var src: PacketInputSource = input_sources[role]
 		src.clear_edges()
@@ -197,7 +196,7 @@ func _physics_process(delta: float) -> void:
 				q.clear()
 				src.reset_state()   # 连 held/axis 一起清,防上一包方向让服务器玩家在冻结期漂移(C2 分歧源)
 				continue
-			if apply_input and not q.is_empty():
+			if not q.is_empty():
 				var pkt: Dictionary = q.pop_front()
 				src.apply_packet(pkt)
 				_ack_seq[role] = int(pkt.get("seq", _ack_seq.get(role, 0)))

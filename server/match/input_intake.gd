@@ -25,9 +25,10 @@ func reset(pending: Dictionary, role: int) -> void:
 	_q_drops.erase(role)
 
 
-# 缓冲本帧到达的记录,按 seq 序 FIFO,每 2 个物理 tick 消费一条(30Hz 采样)⇒ 服务器权威模拟与客户端「重放未确认输入」1:1 同序(C2 rollback 需要)。
-# ★ 每次到达只有一条记录(TICKS_PER_RECORD 个 tick 的输入);包络按**记录**学(与消费单位一致,不按包)。
-# ★ 入队走 push_pending():有界,且丢记录时保住边沿。★ 上限跟着实测抖动包络走(一 tick 到几条就留几条 +1 余量,包络每 tick 衰减 1)
+# 缓冲本帧到达的记录,按 seq 序 FIFO,**每物理 tick 消费一条**(U1:一条记录 = 1 个 tick;30Hz 包一次到两条)⇒ 服务器权威模拟
+# 与客户端「重放未确认输入」1:1 同序(C2 rollback 需要)。
+# ★ 包络按**记录**学(与消费单位一致,不按包)。
+# ★ 入队走 push_pending():有界,且丢记录时保住边沿。★ 上限跟着实测抖动包络走(一 tick 到几条就留几条 +2 余量,包络每 tick 衰减 1)
 # ⇒ 网络一安静上限自己缩回去,把堆着的陈旧记录释放掉(丢的永远是最旧那条,边沿并入下一条)。没有这一步就是 ρ=1 的零漂移随机游走:顶上去就永远停在那儿。
 func intake(pending: Dictionary, role: int, pkt: Dictionary) -> void:
 	if not pending.has(role):

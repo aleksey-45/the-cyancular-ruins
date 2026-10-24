@@ -15,7 +15,7 @@ extends RefCounted
 #   (解码按 schema 读 ⇒ 顺序/宽度错 = 解出来的值必不对,立刻红),容量用 `_schema_bytes()` 预算(少算 ⇒ 越界/尺寸错,④ 最坏包抓)。
 #   ⇒ 改 schema 必须同步改三个 encode_*;不改就一定红,不会静默。
 
-const PROTO_VERSION := 3
+const PROTO_VERSION := 4
 const KIND_WORLD := 1
 const KIND_OWN := 2
 const KIND_INPUT := 3
@@ -63,11 +63,20 @@ const WEAPON_SCHEMA: Array = [
 # 背包每一条(type/inst/mag —— 与 `weapon_inventory.snapshot()` 同源)。
 const INV_SCHEMA: Array = [["type", T_U8], ["inst", T_I32], ["mag", T_U8]]
 
-# 输入上行记录(30Hz 一包一条;发送侧唯一来源 = PacketInputSource.pack_record)。★ held 是位掩码:BIT_HASTE = 128、BIT_REWIND = 256 ⇒ 必须 u16(u8 会截断成 159)。
-# st = 本端**最近成功解码**的服务器快照 tick;ct = 本帧客户端物理帧号。这两个字段本批只落位(增量批才有消费者),但线格式只改这一次。
+# 输入上行包(30Hz 一包,**内含连续两个物理 tick 的记录**;发送侧唯一来源 = PacketInputSource.pack_pair)。
+# ★ 为什么是两条记录:本地预测按 60Hz 真输入跑(不锁存),服务器必须逐 tick 复现同一输入序列 ⇒ 一条记录 = 1 个 tick。
+#   30Hz 包只负责装两 tick(共用 aim/st/ct 与包络),所以比"每 tick 一包"省一半包头/共享字段。
+# ★ held 是位掩码:BIT_HASTE = 128、BIT_REWIND = 256 ⇒ 必须 u16(u8 会截断成 159)。
+# ★ 低 tick 记录 = 上一包之后的那一 tick(流水线);seq(包级)= 高 tick 记录的 seq,低记录 seq = seq-1。
+# st = 本端**最近成功解码**的服务器快照 tick;ct = 高 tick 的客户端物理帧号(低记录 ct = ct-1)。只落位,增量批才有消费者。
 const INPUT_SCHEMA: Array = [
-	["seq", T_I32], ["ax", T_F], ["held", T_U16], ["pressed", T_U8], ["released", T_U8],
-	["winst", T_I32], ["aim", T_V2], ["st", T_I32], ["ct", T_I32],
+	["seq", T_I32],
+	["held0", T_U16], ["held1", T_U16],
+	["ax0", T_F], ["ax1", T_F],
+	["pressed0", T_U8], ["pressed1", T_U8],
+	["released0", T_U8], ["released1", T_U8],
+	["winst0", T_I32], ["winst1", T_I32],
+	["aim", T_V2], ["st", T_I32], ["ct", T_I32],
 ]
 
 const FLAG_WEAPON := 1
@@ -268,8 +277,10 @@ static func encode_own(own: Dictionary) -> PackedByteArray:
 	return out
 
 
-## 输入包:30Hz 一条记录。`{"seq","ax","held","pressed","released","winst","aim","st","ct"}`。
-## 头 2 B + 记录 32 B = **34 B**(改前:7 键 Dictionary = 164 B/包)。★ 顺序/宽度必须与 INPUT_SCHEMA 一致。
+## 输入包:30Hz 一包,内含连续两个物理 tick 的记录(高 tick 的 seq = 包级 seq,低 tick = seq-1)。
+## `{"seq","held0","held1","ax0","ax1","pressed0","pressed1","released0","released1","winst0","winst1","aim","st","ct"}`
+## 头 2 B + 记录 44 B = **46 B**(改前:30Hz 单条锁存记录 = 34 B;7 键 Dictionary 时代 = 164 B/包)。
+## ★ 顺序/宽度必须与 INPUT_SCHEMA 一致(漂移由 net_wire_smoke 的往返抓)。
 static func encode_input(pkt: Dictionary) -> PackedByteArray:
 	var out := PackedByteArray()
 	out.resize(_INPUT_BYTES)
@@ -280,18 +291,31 @@ static func encode_input(pkt: Dictionary) -> PackedByteArray:
 	i += 1
 	out.encode_u32(i, int(pkt.get("seq", 0)))
 	i += 4
-	out.encode_float(i, float(pkt.get("ax", 0.0)))
+	var h0 := int(pkt.get("held0", 0))
+	out[i] = h0 & 0xFF
+	i += 1
+	out[i] = (h0 >> 8) & 0xFF
+	i += 1
+	var h1 := int(pkt.get("held1", 0))
+	out[i] = h1 & 0xFF
+	i += 1
+	out[i] = (h1 >> 8) & 0xFF
+	i += 1
+	out.encode_float(i, float(pkt.get("ax0", 0.0)))
 	i += 4
-	var held := int(pkt.get("held", 0))
-	out[i] = held & 0xFF
+	out.encode_float(i, float(pkt.get("ax1", 0.0)))
+	i += 4
+	out[i] = int(pkt.get("pressed0", 0)) & 0xFF
 	i += 1
-	out[i] = (held >> 8) & 0xFF
+	out[i] = int(pkt.get("pressed1", 0)) & 0xFF
 	i += 1
-	out[i] = int(pkt.get("pressed", 0)) & 0xFF
+	out[i] = int(pkt.get("released0", 0)) & 0xFF
 	i += 1
-	out[i] = int(pkt.get("released", 0)) & 0xFF
+	out[i] = int(pkt.get("released1", 0)) & 0xFF
 	i += 1
-	out.encode_u32(i, int(pkt.get("winst", 0)))
+	out.encode_u32(i, int(pkt.get("winst0", 0)))
+	i += 4
+	out.encode_u32(i, int(pkt.get("winst1", 0)))
 	i += 4
 	var aim: Vector2 = pkt.get("aim", Vector2.ZERO)
 	out.encode_float(i, aim.x)

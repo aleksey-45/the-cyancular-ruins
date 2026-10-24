@@ -3,7 +3,9 @@ extends PlayerInput
 
 # 网络注入输入(服务器权威模拟的唯一消费方):从输入包取轴/按键/边沿/切枪/瞄准。
 # held/axis/aim/weapon 新记录到达即覆盖(紧跟客户端);边沿累积(|=)不覆盖 ⇒ 一次到多条记录也不丢边沿(抓梯/跳跃/开火都靠边沿)。
-# 缺包时(无新记录)held 保持上一条,边沿在记录消费后由 MatchHost 的 clear_edges() 清空 ⇒ 第二条 tick 沿用 held。
+# 缺包时(无新记录)held 保持上一条,边沿在记录消费后由 MatchHost 的 clear_edges() 清空。
+# ★ 2026-10-24 U1:一条记录 = **1 个物理 tick**(客户端不锁存、60Hz 真输入);30Hz 包内装连续两条记录(见 pack_pair)。
+#   服务端**每 tick 消费一条**;客户端本地预测 / C2 重放同样逐 tick 1:1(两端输入序列逐 tick 相同)。
 
 const BIT_UP := 1
 const BIT_DOWN := 2
@@ -89,25 +91,61 @@ var _switch_inst := 0      # 上行包里的权威切枪目标(**inst**);>0 = �
 var _pressed := 0          # 累积的 just_pressed 边沿(玩家读取,MatchHost 每帧末清除)
 var _released := 0         # 累积的 just_released 边沿
 
+
+# ── 编解码端:30Hz 包内装"上一 tick + 本 tick"两条记录(流水线)──
+# ★ 为什么是流水线而不是等两个 tick 都发生再发:包必须在**本 tick** 就发出去,否则服务器生效晚 16.7ms(U2 方案,已否决)。
+#   第 0 tick 记录先发;它的"下一条"(第 1 tick)由**下一包**补发 ⇒ 服务器收到的输入序列仍是逐 tick 连续的。
+# ★ seq 语义:包级 seq = **高 tick** 记录的 seq(低 tick = seq-1);两记录共用 aim(30Hz 取样)/st/ct。
+static func pack_pair(lo_rec: Dictionary, hi_rec: Dictionary, aim: Vector2, snap_tick: int = 0,
+		client_tick: int = 0) -> Dictionary:
+	return {
+		"seq": int(hi_rec.get("seq", 0)),
+		"held0": int(lo_rec.get("held", 0)), "held1": int(hi_rec.get("held", 0)),
+		"ax0": float(lo_rec.get("ax", 0.0)), "ax1": float(hi_rec.get("ax", 0.0)),
+		"pressed0": int(lo_rec.get("pressed", 0)), "pressed1": int(hi_rec.get("pressed", 0)),
+		"released0": int(lo_rec.get("released", 0)), "released1": int(hi_rec.get("released", 0)),
+		"winst0": int(lo_rec.get("winst", 0)), "winst1": int(hi_rec.get("winst", 0)),
+		"aim": aim, "st": snap_tick, "ct": client_tick,
+	}
+
+
+# 服务端拆包:还原成两条"逐 tick 记录"(键集与 pack_record 一致,供队列/apply_packet 直接用)。
+static func unpack_pair(pkt: Dictionary) -> Array:
+	var hi_seq := int(pkt.get("seq", 0))
+	var aim: Vector2 = pkt.get("aim", Vector2.ZERO)
+	var st := int(pkt.get("st", 0))
+	var ct := int(pkt.get("ct", 0))
+	var lo := {"seq": hi_seq - 1, "ax": float(pkt.get("ax0", 0.0)),
+			"held": int(pkt.get("held0", 0)), "pressed": int(pkt.get("pressed0", 0)),
+			"released": int(pkt.get("released0", 0)), "winst": int(pkt.get("winst0", 0)),
+			"aim": aim, "st": st, "ct": ct - 1}
+	var hi := {"seq": hi_seq, "ax": float(pkt.get("ax1", 0.0)),
+			"held": int(pkt.get("held1", 0)), "pressed": int(pkt.get("pressed1", 0)),
+			"released": int(pkt.get("released1", 0)), "winst": int(pkt.get("winst1", 0)),
+			"aim": aim, "st": st, "ct": ct}
+	return [lo, hi]
+
 func source_kind() -> int:
 	return Kind.PACKET
 
 
 # ★★ 轴是归一体但协议上无界(ax=50 在服务端约等于 35000px/s,全图才 9600px):不可信入口收口为 非有限(NAN/±INF)→ 0,否则钳到 [-1,1]。
 # ★ 先判有限性再钳(不能假设 clampf 对 NaN 的行为);动机是协议健壮性、不是反作弊;合法输入(|ax| <= 1)逐位不变 ⇒ 不动手感。
-# ── 输入队列:自适应抖动缓冲上限。原先写死 MAX_PENDING_INPUT = 8,而它同时是上限又是稳态(生产 1 条/2 tick 与消费 1 条/2 tick 是两个独立时钟)
-# ⇒ 队列长度是带反射壁的零漂移随机游走,长期停在壁附近、没有任何回复力 ⇒ 那层输入延迟是永久的(ack 永久落后)。
-# 现在上限跟着实测抖动包络走:peak = 最近一次轮询到过几条记录(丢之前的原始深度,每 tick 衰减 1)⇒ 上限 = peak + 1,钳在 [QUEUE_CAP_MIN, QUEUE_CAP_MAX];
-# 网络一安静缓冲就自己缩回去。★ 常量口径:QUEUE_CAP_MAX 即原硬顶(不改最坏情况);QUEUE_CAP_MIN >= 2(1 意味着"一对 tick 到两条就丢",而抖动本身就会)。
-# ★ 代价照实说:每丢一条记录 = 服务器少模拟 2 个 tick ⇒ 客户端靠 C2 回滚纠正一次(有界)。详见 docs/eng/netcode-snapshots.md §4.2。
-const QUEUE_CAP_MIN := 2
-const QUEUE_CAP_MAX := 8
-const QUEUE_CAP_MARGIN := 1
+# ── 输入队列:自适应抖动缓冲上限。队列单位 = **一条 tick 记录**(不是包;一包进两条)。
+# 原先写死 MAX_PENDING_INPUT = 8,而它同时是上限又是稳态(生产与消费是两个独立时钟)⇒ 队列长度是带反射壁的零漂移随机游走,
+# 长期停在壁附近、没有任何回复力 ⇒ 那层输入延迟是永久的(ack 永久落后)。
+# 现在上限跟着实测抖动包络走:peak = 最近一次轮询到过几条记录(丢之前的原始深度,每 tick 衰减 1)⇒ 上限 = peak + MARGIN,钳在 [MIN,MAX];
+# 网络一安静缓冲就自己缩回去。★ 常量口径:U1 后一条记录 = 1 tick(原先 = 2 tick)⇒ 为保住同样的**时间**缓冲,MIN/MAX/MARGIN 都翻倍:
+#   [4,16] 条 = [66,266] ms(原先 [2,8] 条 × 2 tick 同值)。★ 代价照实说:每丢一条记录 = 服务器少模拟 1 个 tick ⇒ 客户端靠 C2 回滚纠正一次(有界)。
+const QUEUE_CAP_MIN := 4
+const QUEUE_CAP_MAX := 16
+const QUEUE_CAP_MARGIN := 2
 
-# ── 一条输入记录覆盖几个物理 tick(协议约定,两端必须同版本)── 采样 30Hz / 物理 60Hz ⇒ 每条 2 tick。
-# 服务端每条消费一次、连跑 2 个物理步;客户端本地预测与 C2 重放也按同一分组走(两端输入流必须逐 tick 相同,否则永久分歧)。
-# ★ 别在客户端另抄一个数:采样/上行/C2 重放都读这一处。
-const TICKS_PER_RECORD := 2
+# ── 协议常量(两端必须同版本)──
+# 一条上行记录 = 1 个物理 tick(U1:客户端 60Hz 真输入、不锁存;服务器每 tick 消费一条;C2 重放也是 1 步/记录)。
+const TICKS_PER_RECORD := 1
+# 30Hz 发包节拍 = 每 2 个物理 tick 发一包,包内装两条记录(流水线:上一 tick + 本 tick)。
+const INPUT_BATCH_TICKS := 2
 
 
 static func adapted_cap(peak: int) -> int:
