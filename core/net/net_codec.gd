@@ -15,7 +15,7 @@ extends RefCounted
 #   (解码按 schema 读 ⇒ 顺序/宽度错 = 解出来的值必不对,立刻红),容量用 `_schema_bytes()` 预算(少算 ⇒ 越界/尺寸错,④ 最坏包抓)。
 #   ⇒ 改 schema 必须同步改三个 encode_*;不改就一定红,不会静默。
 
-const PROTO_VERSION := 2
+const PROTO_VERSION := 3
 const KIND_WORLD := 1
 const KIND_OWN := 2
 const KIND_INPUT := 3
@@ -25,34 +25,39 @@ const T_F := "f"      # float32,4 B(见文件头:与旧线上字节一致)
 const T_V2 := "v2"    # 向量 = 2×float32,8 B
 const T_U8 := "b"     # 0..255
 const T_I8 := "c"     # -128..127(朝向这类 ±1 量)
-const T_BOOL := "B"   # 1 B
+# T_BOOLS:按记录把一组 bool 打包成 **1 B 标志字节**(bit0..bitN;第三元素 = 子字段名数组)。
+# ★ 为什么不是跨字段位流:两者收益等价(世界条目 51→48 B、本人包 102→94 B),但标志字节不需要 bit 游标与 padding 校验,
+#   解码也不会因为"尾部 padding 判据"制造误红/误绿;代价只是组内对齐浪费 ≤7 bit。
+const T_BOOLS := "flag"
 const T_I32 := "i"    # 32 位有符号(inst / seq / tick)
 const T_U16 := "h"    # 0..65535(输入 held 位掩码:BIT_REWIND = 256 装不进 u8)
 const T_TRAIL := "trail"
 
 # 世界包每人一份(13 字段,顺序 = 线上顺序)。范围按产品常量钳:hp ≤ 50、waterproof ≤ 10、pose ≤ 4。
+# ★ bool 组在前:线上 = role(1)+flag(1)+pos8+vel8+facing1+pose1+type_id1+hp1+waterproof1+aim8+trail(1+8n)
+#   ⇒ trail 2 点 = **48 B**(改前 51 B);不在回溯 = 32 B。
 const WORLD_SCHEMA: Array = [
+	["_flags", T_BOOLS, ["downed", "previewing", "haste", "rewind"]],
 	["pos", T_V2], ["vel", T_V2], ["facing", T_I8], ["pose", T_U8],
-	["type_id", T_U8], ["hp", T_U8], ["waterproof", T_U8], ["downed", T_BOOL],
-	["aim", T_V2], ["previewing", T_BOOL], ["haste", T_BOOL], ["rewind", T_BOOL],
-	["trail", T_TRAIL],
+	["type_id", T_U8], ["hp", T_U8], ["waterproof", T_U8],
+	["aim", T_V2], ["trail", T_TRAIL],
 ]
 
-# 本人包的核心整态 = player.capture_state() 的 25 个标量字段(inv 另走 INV_SCHEMA,武器的 8 个字段另走 WEAPON_SCHEMA —— 后者可能不存在,靠 flags 位声明)。
+# 本人包的核心整态 = player.capture_state() 的 25 个标量字段(inv 另走 INV_SCHEMA,武器块另走 WEAPON_SCHEMA —— 后者可能不存在,靠 flags 位声明)。
+# ★ c2 的 7 个 bool 打包成首字节标志 ⇒ 核心 67 B(改前 73 B)。
 const C2_SCHEMA: Array = [
+	["_flags", T_BOOLS, ["jcut", "squat", "charge", "wp_s", "clatch", "swim", "down"]],
 	["pos", T_V2], ["vel", T_V2], ["facing", T_I8], ["state", T_U8],
-	["slock", T_F], ["coyote", T_F], ["jbuf", T_F], ["jcut", T_BOOL],
-	["squat", T_BOOL], ["charge", T_BOOL], ["ct", T_F], ["lmv_d", T_I8],
-	["lmv_t", T_F], ["wp", T_U8], ["wp_t", T_F], ["wp_s", T_BOOL],
-	["wp_d", T_F], ["clatch", T_BOOL], ["swim", T_BOOL], ["hp", T_U8],
-	["ifr", T_F], ["down", T_BOOL], ["knock", T_V2], ["wslot", T_U8],
+	["slock", T_F], ["coyote", T_F], ["jbuf", T_F],
+	["ct", T_F], ["lmv_d", T_I8], ["lmv_t", T_F], ["wp", T_U8], ["wp_t", T_F],
+	["wp_d", T_F], ["hp", T_U8], ["ifr", T_F], ["knock", T_V2], ["wslot", T_U8],
 	["winst", T_I32],
 ]
 
-# 当前武器的 8 个字段(仅 `capture_state()` 里 `w != null` 时存在)。
+# 当前武器的字段(仅 `capture_state()` 里 `w != null` 时存在)。★ 3 个 bool 打包成首字节标志 ⇒ 12 B(改前 14 B)。
 const WEAPON_SCHEMA: Array = [
-	["fire_cd", T_F], ["aiming", T_BOOL], ["fire_buf", T_BOOL], ["aim_f", T_I8],
-	["aim_cf", T_I8], ["mag", T_U8], ["rld", T_BOOL], ["rld_t", T_F],
+	["_flags", T_BOOLS, ["aiming", "fire_buf", "rld"]],
+	["fire_cd", T_F], ["aim_f", T_I8], ["aim_cf", T_I8], ["mag", T_U8], ["rld_t", T_F],
 ]
 
 # 背包每一条(type/inst/mag —— 与 `weapon_inventory.snapshot()` 同源)。
@@ -105,6 +110,12 @@ static func encode_world(world: Dictionary) -> PackedByteArray:
 		var e: Dictionary = players[key]
 		out[i] = int(e.get("role", int(key))) & 0xFF
 		i += 1
+		# bool 组(bit0 downed / bit1 previewing / bit2 haste / bit3 rewind)—— 见 WORLD_SCHEMA 的 T_BOOLS。
+		out[i] = (1 if bool(e.get("downed", false)) else 0) \
+				| (2 if bool(e.get("previewing", false)) else 0) \
+				| (4 if bool(e.get("haste", false)) else 0) \
+				| (8 if bool(e.get("rewind", false)) else 0)
+		i += 1
 		var pos: Vector2 = e.get("pos", Vector2.ZERO)
 		out.encode_float(i, pos.x)
 		i += 4
@@ -125,19 +136,11 @@ static func encode_world(world: Dictionary) -> PackedByteArray:
 		i += 1
 		out[i] = int(e.get("waterproof", 0)) & 0xFF
 		i += 1
-		out[i] = 1 if bool(e.get("downed", false)) else 0
-		i += 1
 		var aim: Vector2 = e.get("aim", Vector2.ZERO)
 		out.encode_float(i, aim.x)
 		i += 4
 		out.encode_float(i, aim.y)
 		i += 4
-		out[i] = 1 if bool(e.get("previewing", false)) else 0
-		i += 1
-		out[i] = 1 if bool(e.get("haste", false)) else 0
-		i += 1
-		out[i] = 1 if bool(e.get("rewind", false)) else 0
-		i += 1
 		var trail: Array = e.get("trail", [])
 		var tn: int = mini(trail.size(), TRAIL_WIRE_MAX)
 		out[i] = tn
@@ -181,6 +184,15 @@ static func encode_own(own: Dictionary) -> PackedByteArray:
 	var flags := FLAG_WEAPON if c2.has("fire_cd") else 0
 	out[i] = flags
 	i += 1
+	# c2 的 bool 组(bit0 jcut / 1 squat / 2 charge / 3 wp_s / 4 clatch / 5 swim / 6 down)。
+	out[i] = (1 if bool(c2.get("jcut", false)) else 0) \
+			| (2 if bool(c2.get("squat", false)) else 0) \
+			| (4 if bool(c2.get("charge", false)) else 0) \
+			| (8 if bool(c2.get("wp_s", false)) else 0) \
+			| (16 if bool(c2.get("clatch", false)) else 0) \
+			| (32 if bool(c2.get("swim", false)) else 0) \
+			| (64 if bool(c2.get("down", false)) else 0)
+	i += 1
 	var pos: Vector2 = c2.get("pos", Vector2.ZERO)
 	out.encode_float(i, pos.x)
 	i += 4
@@ -201,12 +213,6 @@ static func encode_own(own: Dictionary) -> PackedByteArray:
 	i += 4
 	out.encode_float(i, float(c2.get("jbuf", 0.0)))
 	i += 4
-	out[i] = 1 if bool(c2.get("jcut", false)) else 0
-	i += 1
-	out[i] = 1 if bool(c2.get("squat", false)) else 0
-	i += 1
-	out[i] = 1 if bool(c2.get("charge", false)) else 0
-	i += 1
 	out.encode_float(i, float(c2.get("ct", 0.0)))
 	i += 4
 	out[i] = int(c2.get("lmv_d", 0)) & 0xFF
@@ -217,20 +223,12 @@ static func encode_own(own: Dictionary) -> PackedByteArray:
 	i += 1
 	out.encode_float(i, float(c2.get("wp_t", 0.0)))
 	i += 4
-	out[i] = 1 if bool(c2.get("wp_s", false)) else 0
-	i += 1
 	out.encode_float(i, float(c2.get("wp_d", 0.0)))
 	i += 4
-	out[i] = 1 if bool(c2.get("clatch", false)) else 0
-	i += 1
-	out[i] = 1 if bool(c2.get("swim", false)) else 0
-	i += 1
 	out[i] = int(c2.get("hp", 0)) & 0xFF
 	i += 1
 	out.encode_float(i, float(c2.get("ifr", 0.0)))
 	i += 4
-	out[i] = 1 if bool(c2.get("down", false)) else 0
-	i += 1
 	var knock: Vector2 = c2.get("knock", Vector2.ZERO)
 	out.encode_float(i, knock.x)
 	i += 4
@@ -241,19 +239,18 @@ static func encode_own(own: Dictionary) -> PackedByteArray:
 	out.encode_u32(i, int(c2.get("winst", 0)))
 	i += 4
 	if flags & FLAG_WEAPON != 0:
+		# 武器块 bool 组(bit0 aiming / bit1 fire_buf / bit2 rld),后面是其余字段。
+		out[i] = (1 if bool(c2.get("aiming", false)) else 0) \
+				| (2 if bool(c2.get("fire_buf", false)) else 0) \
+				| (4 if bool(c2.get("rld", false)) else 0)
+		i += 1
 		out.encode_float(i, float(c2.get("fire_cd", 0.0)))
 		i += 4
-		out[i] = 1 if bool(c2.get("aiming", false)) else 0
-		i += 1
-		out[i] = 1 if bool(c2.get("fire_buf", false)) else 0
-		i += 1
 		out[i] = int(c2.get("aim_f", 0)) & 0xFF
 		i += 1
 		out[i] = int(c2.get("aim_cf", 0)) & 0xFF
 		i += 1
 		out[i] = int(c2.get("mag", 0)) & 0xFF
-		i += 1
-		out[i] = 1 if bool(c2.get("rld", false)) else 0
 		i += 1
 		out.encode_float(i, float(c2.get("rld_t", 0.0)))
 		i += 4
@@ -376,8 +373,12 @@ static func _unpack(r: Dictionary, schema: Array) -> Dictionary:
 				d[key] = _rd_u8(r)
 			T_I8:
 				d[key] = _rd_i8(r)
-			T_BOOL:
-				d[key] = _rd_u8(r) != 0
+			T_BOOLS:
+				# 一组 bool 共用一个标志字节(bit0..bitN;子字段名在 schema 第三元素)。
+				var fb := _rd_u8(r)
+				var subs: Array = f[2]
+				for bi in subs.size():
+					d[subs[bi]] = (fb & (1 << bi)) != 0
 			T_I32:
 				d[key] = _rd_i32(r)
 			T_U16:
@@ -406,7 +407,9 @@ static func _schema_bytes(schema: Array) -> int:
 				n += 8
 			T_U16:
 				n += 2
-			T_U8, T_I8, T_BOOL:
+			T_BOOLS:
+				n += 1
+			T_U8, T_I8:
 				n += 1
 			T_TRAIL:
 				n += 1 + 8 * TRAIL_WIRE_MAX

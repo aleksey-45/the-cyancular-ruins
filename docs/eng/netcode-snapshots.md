@@ -53,8 +53,9 @@ NetBus.rpc_id(peer, "snapshot_own",
 
 ### 1.4 线格式与载荷
 
-- `core/net/net_codec.gd` 用一张 schema 表 + 手打包成 `PackedByteArray`（快照 + 输入同模块）。首字节 `PROTO_VERSION := 2`，第二字节种类（`KIND_WORLD` / `KIND_OWN` / `KIND_INPUT`）。
-- ★ 2026-10-24 编码侧性能：解码仍表驱动（`_unpack` 逐字段守边界），**编码侧手写内联**（`out.encode_float(i, v)` + 下标写，一次性按 `_schema_bytes()` 预算容量、末尾 `resize(i)` 收尾）。实测 `encode_world`（N=16）**304 → 40~49 µs/包**（一次性量具 `.superpowers/net/encode_timing.gd`；同文件的剖面实测「只 resize」= 0.2 µs ⇒ 瓶颈是**逐字段 GDScript 调用**，不是分配）。代价：编码顺序/宽度与 schema 成了两份 —— 漂移由 `snapshot_size_probe` 的往返判据抓（解码按 schema 读，顺序/宽度错 = 值必不对）。**产出字节逐位不变**（51/102 B 与改前一致）。
+- `core/net/net_codec.gd` 用一张 schema 表 + 手打包成 `PackedByteArray`（快照 + 输入同模块）。首字节 `PROTO_VERSION := 3`，第二字节种类（`KIND_WORLD` / `KIND_OWN` / `KIND_INPUT`）。
+- ★ 2026-10-24 bool 打包：bool 按**记录**打包成 1 B 标志字节（`T_BOOLS`；世界 4 个 / `c2` 7 个 / 武器块 3 个）。**不是跨字段位流** —— 收益等价（世界条目 51→48 B、本人包 102→94 B）但不需要 bit 游标与 padding 校验，解码也不会因尾部 padding 判据制造误红/误绿；代价是组内对齐浪费 ≤7 bit。小整数位宽 / 真位流留给后续（要先登记每字段值域）。
+- ★ 2026-10-24 编码侧性能：解码仍表驱动（`_unpack` 逐字段守边界），**编码侧手写内联**（`out.encode_float(i, v)` + 下标写，一次性按 `_schema_bytes()` 预算容量、末尾 `resize(i)` 收尾）。实测 `encode_world`（N=16）**304 → 40~49 µs/包**（一次性量具 `.superpowers/net/encode_timing.gd`；同文件的剖面实测「只 resize」= 0.2 µs ⇒ 瓶颈是**逐字段 GDScript 调用**，不是分配）。代价：编码顺序/宽度与 schema 成了两份 —— 漂移由 `snapshot_size_probe` 的往返判据抓（解码按 schema 读，顺序/宽度错 = 值必不对）。★ 这一版**只改 CPU、不改字节**（bool 打包是同一批的另一条，字节变化见上一条）。
 - 两端版本不一致 ⇒ 解码返回空字典、调用方不 emit，`net_bus.gd` / `net_bus` 的输入解码口各只报一次错。
 - 数值全是 float32 全量，**无量化**；字段全是绝对值，**无增量**。
 
@@ -63,25 +64,25 @@ NetBus.rpc_id(peer, "snapshot_own",
 | 包 | 载荷 |
 |---|---|
 | 世界包头 | 7 B（版本 1 B + 种类 1 B + tick 4 + 人数 1） |
-| 世界包每人条目 | 51 B（role 1 + 字段 50）；不在回溯时 35 B |
-| 本人包 | 102 B（头 8 + `c2` 73 + 武器 14 + 背包 7） |
+| 世界包每人条目 | **48 B**（role 1 + bool 标志 1 + 定长 29 + trail(1+16)）；不在回溯时 **33 B** |
+| 本人包 | **94 B**（头 8 + `c2` 67 + 武器 12 + 背包 7） |
 | 输入包 | **34 B**（头 2 + 记录 32；`held` 必须 u16，见 [`netcode-input-uplink.md`](netcode-input-uplink.md)） |
 
 按 30Hz 折算（服务器上行按扇出算：世界包每个 peer 一份）：
 
 | N | 世界包/包 | 本人包合计 | 服务器上行 | 单端下行 |
 |---|---|---|---|---|
-| 2 | 109 B | 204 B | 12.4 KB/s | 6.2 KB/s |
-| 8 | 415 B | 816 B | 121.2 KB/s | 15.2 KB/s |
-| 16 | 823 B | 1632 B | 433.6 KB/s | 27.1 KB/s |
+| 2 | 103 B | 188 B | 11.5 KB/s | 5.8 KB/s |
+| 8 | 391 B | 752 B | 113.7 KB/s | 14.2 KB/s |
+| 16 | 775 B | 1504 B | 407.3 KB/s | 25.5 KB/s |
 
 ★ `snapshot_size_probe` 的 N 表把世界包只计一份（不乘接收端数），读数比上面小 `(N-1) × 世界包`；引用它的"服务器上行"列时先换算。
 
 ### 1.5 分片
 
 - ENet MTU 预算 1400 B（`tests/probe/snapshot_size_probe.gd` 的 `WORLD_PACKET_BUDGET`）。`unreliable` = `UNSEQUENCED | UNRELIABLE_FRAGMENT` ⇒ 丢任意一片 = 整帧丢。
-- 世界包 = `7 + N × 51`：16 人（trail 2 点）823 B ⇒ 1 片；最坏（16 人各 4 点 trail）= `7 + 16 × 66 = 1063 B`，仍 1 片。
-- 本人包 102 B，不分片。
+- 世界包 = `7 + N × 48`：16 人（trail 2 点）**775 B** ⇒ 1 片；最坏（16 人各 4 点 trail）= `7 + 16 × 64 = **1031 B**`，仍 1 片。
+- 本人包 **94 B**，不分片。
 - `NetCodec.TRAIL_MAX := 16` 是解码侧硬顶（长度是不可信输入），与发送侧 `TRAIL_WIRE_MAX` 不是同一个数。
 - 改世界字段或 `TRAIL_WIRE_MAX` 前先跑 `tests/probe/snapshot_size_probe.tscn`（判词 `SNAPSHOT SIZE PROBE: ALL-OK`，量真实产出并带条数闸）。
 

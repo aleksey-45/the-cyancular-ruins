@@ -22,6 +22,7 @@ const TRAIL_PHYSICAL_MAX := 10
 var _failures: Array[String] = []
 var _checks := 0
 var _player: Node = null
+var _entry_seq := 0   # _entry_world() 的调用序号:给 bool 组喂混合值(见该函数注释)
 
 
 func _check(ok: bool, msg: String) -> void:
@@ -52,6 +53,13 @@ func _ready() -> void:
 	var entry := _entry_world(trail_pts)
 	var entry_no_trail := _entry_world([])
 	var c2: Dictionary = _player.capture_state()
+	# ★★ bool 组必须喂**混合值**(2026-10-24 加):全 false 的夹具下,标志字节的位映射写错也照样"往返一致"(实测 M4 变异抓不住)。
+	for bk in ["jcut", "squat", "charge", "wp_s", "clatch", "swim", "down"]:
+		if c2.has(bk):
+			c2[bk] = true
+	for wk in ["aiming", "fire_buf", "rld"]:
+		if c2.has(wk):
+			c2[wk] = true
 
 	var sz_old_entry := var_to_bytes(entry).size()
 	var sz_old_own := var_to_bytes({"ack_seq": 12345, "c2": c2}).size()
@@ -168,6 +176,9 @@ func _trail_pts(n: int) -> Array:
 
 func _entry_world(trail: Array) -> Dictionary:
 	var p := _player
+	# ★ bool 组喂混合值(见 _ready 里 c2 那段注释):每个 fixture 的 4 个 bool 各不相同 ⇒ 标志字节的位序/位映射写错必红。
+	_entry_seq += 1
+	var s := _entry_seq
 	# 是否正在预瞄(heavy_aim 蓄力)。★ 服务端仍带此字段,但客户端刻意不消费(用户裁定:预瞄线只有使用者本人可见);留着是日后换提示形式的接点。
 	var previewing := false
 	if p.weapons != null and p.weapons.current_weapon() != null:
@@ -180,11 +191,11 @@ func _entry_world(trail: Array) -> Dictionary:
 		"type_id": p.weapons.current_type_id(),
 		"hp": p.hp,
 		"waterproof": p.waterproof,
-		"downed": p.is_downed(),
+		"downed": s % 2 == 0,
 		"aim": p.get_current_aim_dir(),
-		"previewing": previewing,
-		"haste": p.pvp_haste_mult > 1.0,
-		"rewind": false,
+		"previewing": previewing or s % 3 == 0,
+		"haste": s % 4 < 2,
+		"rewind": s % 5 == 0,
 		"trail": trail.duplicate(),
 	}
 
@@ -245,7 +256,7 @@ func _t_bytes(t: String, trail_n: int) -> int:
 			return 4
 		NetCodec.T_TRAIL:
 			return 1 + 8 * trail_n
-	return 1   # U8 / I8 / BOOL
+	return 1   # U8 / I8 / T_BOOLS(整组仍占 1 B)
 
 
 func _schema_bytes(schema: Array, trail_n: int) -> int:
@@ -367,7 +378,12 @@ func _count_changed(a: Dictionary, b: Dictionary) -> int:
 func _schema_keys(schema: Array) -> Array:
 	var out: Array = []
 	for f in schema:
-		out.append(f[0])
+		# T_BOOLS 组(1 B 标志字节)的**逻辑字段**在第三元素里;组名(`_flags`)本身不是线上字段名。
+		if f.size() > 2:
+			for sub in f[2]:
+				out.append(sub)
+		else:
+			out.append(f[0])
 	return out
 
 
