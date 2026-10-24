@@ -6,9 +6,9 @@ extends RefCounted
 # 症状是自己那间房恒灰、自建服玩家被踢回云;详见 docs/eng/netplay.md)。can_rejoin_to 是列表渲染与
 # 行按下共用的唯一判据,房号与模式都要对上。
 
-# ★ 默认留空(不再硬编码某个公网 IP):由大厅页从「上次连过的地址」预填,空则回落到 127.0.0.1(本机起服务端)。
-# 局域网联机必须由玩家填服务端那台电脑的局域网 IP——服务端窗口会打印(默认路由网卡优先,排除虚拟网卡)。
-static var server_address: String = ""
+# ★ 默认连本项目自己的服务器(用户 2026-10-24 明确要求硬编码);局域网联机由玩家在大厅把地址改成服务端那台电脑的局域网 IP
+# (服务端窗口会打印"朋友在服务器地址里填这个",已按默认路由网卡优先、排除虚拟网卡)。
+static var server_address: String = "120.53.107.140"
 static var role: int = 1
 static var player_name: String = "Anon"
 static var map_path: String = ""

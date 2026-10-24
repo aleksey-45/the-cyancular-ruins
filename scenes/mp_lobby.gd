@@ -99,10 +99,8 @@ func _build_ui() -> void:
 		PvpSession.player_name = t.strip_edges() if not t.strip_edges().is_empty() else "Anon"
 		_push_lobby_name())
 	_addr_edit = %AddrEdit
-	# 预填顺序:本次会话连过的地址 → 上次成功的地址(局域网联机免每次重输)→ 空(占位提示告诉玩家填什么)。
-	# ★ 不再硬编码任何公网 IP:默认值写死会让"本机/局域网"这两个最常见的用法每次都被带到一个连不上的地址。
-	_addr_edit.text = PvpSession.server_address if not PvpSession.server_address.is_empty() \
-			else Settings.last_server_address
+	# 默认地址 = 项目自己的服务器(用户裁定硬编码 120.53.107.140);局域网联机时玩家手动改成服务端那台电脑的局域网 IP。
+	_addr_edit.text = PvpSession.server_address
 	%RefreshBtn.pressed.connect(_on_refresh_pressed)
 	%LocalServerBtn.pressed.connect(_on_local_server_pressed)
 	%LocalServerBtn.tooltip_text = "关闭旧的本机大厅,重新拉起同目录的 Cyancular Ruins Server.exe,并自动连 127.0.0.1 刷新列表"
@@ -458,10 +456,7 @@ func _process(_delta: float) -> void:
 
 
 func _lobby_fallback_addr() -> String:
-	# 地址框留空时的兜底:本次会话上一次的地址,再不行按「本机起服务端」处理(127.0.0.1)。
-	# 连同学的服务器必须自己填对方局域网 IP —— 留空点刷新时下面 8 秒超时会明确提示地址不通/版本不一致。
-	var a := PvpSession.server_address.strip_edges()
-	return a if not a.is_empty() else "127.0.0.1"
+	return PvpSession.server_address
 
 
 # 已在房间中(先退出房间再操作):_with_lobby 在 _in_room 时拒绝一切操作(列房 / 建房 / 加入)—— 不清房间态,玩家就再也刷不出列表、建不了房(两个旧页同款)。
