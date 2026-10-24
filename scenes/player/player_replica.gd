@@ -1,8 +1,19 @@
 extends Node2D
-# PvP 远端玩家副本:视觉(复用 Player 的 SpriteFrames / 动画 + 各武器场景外观),由快照驱动。
-# ★ 它不是纯视觉:还带一个只参与碰撞的幽灵体(见 _build_ghost_body)—— C2 客户端预测只步进自己的玩家,若客户端世界里没有对手身体,「对手挡住我」这条信息在预测侧根本不存在 ⇒ 本地预测穿过去、服务器把你挡住 ⇒ 每帧分歧回滚(C2 的无限回滚循环)。★ 幽灵体只减小分歧不消除(副本位置比权威落后一点),验收按「回滚次数下降多少」量,别按「归零」验收。
-# ★★ 位置**直接渲染最新快照**(2026-10-23 删除 playout 缓冲插值:下行 30Hz 后它只换来固定延迟,实测本机与直出无差别)。
-#   旧设计那条致命缺陷仍必须保留:渲染位置与目标相隔整幅地图时最短向量为 0 ⇒ 副本会永远留在远副本;解法是两个 anchor_to_nearest,别简化掉。
+# PvP 远端玩家副本:视觉(Player 的 SpriteFrames / 动画 + 各武器外观),由快照驱动。★ 它不是纯视觉:还带一个只参与碰撞的
+# 幽灵体(见 _build_ghost_body)—— C2 客户端预测只步进自己的玩家,客户端世界里没有对手身体 ⇒「对手挡住我」在预测侧不存在
+# ⇒ 每帧分歧回滚(幽灵体只减小分歧不消除)。★ 观感两条不变量:位置走 playout 插值、渲染层带排在世界结构层之前,理由与实测见 docs/eng/render.md。
+
+# 大跳变阈值:相邻两条权威快照的间隔超过它 ⇒ 清历史、一帧落位(回溯 / 重生 / 换边本来就是瞬移,插值会演成「滑过去」)。
+# ★ 128px 两侧余量的依据:常态相邻包位置差 ≈ 10px、丢包 200ms ≈ 60px、瞬移是几百~几千 px(实测见 docs/eng/render.md)。
+const SNAP_DIST := 128.0
+
+# 播放时钟(= core/net/playout_clock.gd)。★ 用 preload 取常量而不是全局类名:少一次编辑器扫描依赖。
+const PlayoutClock := preload("res://core/net/playout_clock.gd")
+
+# ── playout 缓冲插值 ── PLAYOUT_TICKS = 故意落后多少 tick:下行 30Hz(间隔 2 tick)⇒ 4 tick = 2 个间隔 ≈ 67ms 缓冲(1 个间隔
+# 是夹逼插值的最低要求,第 2 个吸收抖动);改大 = 更抗抖但更迟,改 0 = 直出。place_history 存 canonical 且定长裁剪。
+const PLAYOUT_TICKS := 4
+const HISTORY_MAX := 12
 
 const POSE_ANIM: Dictionary = {
 	0: "idle", 1: "move", 2: "fly", 3: "charge", 4: "squat",
@@ -40,6 +51,10 @@ var _weapon_type_int := 0            # 服务器权威槽位
 var _opponent_canonical := Vector2.ZERO
 var _local_anchor := Vector2.ZERO         # 本地玩家(相机)位置,每帧跟随
 var _have_data := false
+var _clock: PlayoutClock = null
+var place_history: Array = []
+# 首帧是否已直落:第一帧历史里还没有样本,走插值会从原点滑过去;幽灵体也必须立刻落到权威位置,否则白分歧一次。
+var _placed := false
 var _facing := 1
 # ★★ 瞄准侧(与 _facing 不是同一个量,枪口外观只认这一个)。_facing 来自快照的 facing 字段 = 服务器的走路朝向(player.gd 的移动代码排在 weapons.tick 之后,每帧覆盖 _auto_aim 写进去的瞄准侧);而枪口俯仰必须按瞄准侧折叠(clamp_pitch 先 dir.x * facing)。二者混用时,倒着走会让枪口折到反侧极限而上翘(用户报过「A 往回走的时候,在 B 眼里枪还会翘起来」)。
 # 本体那边由 _auto_aim 的 _aim_facing 承担同一职责,下面是它的逐字同款规则:鼠标有明确水平分量则跟随并记住,近垂直瞄(±0.1 以内)沿用上次明确侧,不随走路翻侧。
@@ -66,6 +81,23 @@ func _ready() -> void:
 	squash = SquashStretch.new()
 	squash.setup(animator, SquashStretch.Profile.PLAYER)
 	add_child(squash)
+	_reorder_before_structures.call_deferred()
+
+
+# 渲染层带:插到世界注册的结构层之前,与本体同一条层带(理由见文件头)。★ 用 Level0.wall_layer 而不是节点名字面量;
+# 只在自己与该层同一个父节点时动手(探针里副本可能挂在别处),取不到就什么都不做(少一层遮挡好过崩)。
+func _reorder_before_structures() -> void:
+	if not is_inside_tree():
+		return
+	var host := get_parent()
+	if host == null:
+		return
+	var structures: Node = Level0.wall_layer
+	if structures == null or not is_instance_valid(structures):
+		return
+	if structures.get_parent() != host or get_index() < structures.get_index():
+		return
+	host.move_child(self, structures.get_index())
 
 # 幽灵碰撞体:StaticBody2D(layer 2 = 玩家层,与 player.tscn 一致;mask 0 = 它不需要感知任何东西,只被本地玩家的 move_and_slide 撞到)挂 5 份姿态多边形,形状从 player.tscn 现抄。用 StaticBody2D 而不是 CharacterBody2D:副本自身不由物理驱动,CharacterBody2D 会引入它自己的物理步进与 move_and_slide 竞争;作为副本子节点 ⇒ 位置 / 朝向 / 环面回绕全自动跟随。
 func _build_ghost_body(src: Node) -> void:
@@ -105,11 +137,56 @@ func _anchor_of(canon: Vector2) -> Vector2:
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 
 
-# ★ tick 保留只为不动调用面(三个生产调用点 + 一批探针按三参调用);playout 删除后它不参与渲染。
+## 在 t(服务器 tick 域,可为小数)处取样:夹逼线性插值,两侧都冻结(比最新还新 = underrun 不外插,比最老还老 = 不倒退)。
+## ★★ 两端必须锚进同一个副本空间再插(b 锚到 pa,不是 _local_anchor),否则跨接缝时差量是一整幅地图、插值横穿全图。
+func _sample_history(t: float) -> Vector2:
+	var n := place_history.size()
+	if n == 0:
+		return _opponent_canonical
+	var first: Dictionary = place_history[0]
+	var last: Dictionary = place_history[n - 1]
+	if t <= float(first["tick"]):
+		return _anchor_of(first["pos"])
+	if t >= float(last["tick"]):
+		return _anchor_of(last["pos"])
+	for i in range(n - 1):
+		var a: Dictionary = place_history[i]
+		var b: Dictionary = place_history[i + 1]
+		var ta := float(a["tick"])
+		var tb := float(b["tick"])
+		if t < ta or t > tb:
+			continue
+		var pa := _anchor_of(a["pos"])
+		var pb := MazeGenerator.anchor_to_nearest(b["pos"], pa,
+				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+		if tb <= ta:
+			return pb
+		return pa.lerp(pb, (t - ta) / (tb - ta))
+	return _anchor_of(last["pos"])
+
+
+# 记一条位置历史;相邻样本的环面距离超过 SNAP_DIST ⇒ 设计好的瞬移 ⇒ 清历史让它一帧落位(判据必须用环面最短距离,跨接缝不是跳变)。
+func _push_history(tick: int, canon: Vector2) -> void:
+	if not place_history.is_empty():
+		var last: Dictionary = place_history[place_history.size() - 1]
+		var jump := GridPathfinder.toroidal_delta_px(last["pos"], canon,
+				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT).length()
+		if jump > SNAP_DIST:
+			place_history.clear()
+	place_history.append({"tick": tick, "pos": canon})
+	while place_history.size() > HISTORY_MAX:
+		place_history.pop_front()
+
+
+# ★ tick 参与计算(播放时钟 + 位置历史,见文件头),三参签名是三个生产调用点与探针的既定调用面,别改成两参。
 func apply_snapshot(data: Dictionary, local_anchor: Vector2, tick: int) -> void:
 	_opponent_canonical = data["pos"]
 	_local_anchor = local_anchor
 	_have_data = true
+	if _clock == null:
+		_clock = PlayoutClock.new(PLAYOUT_TICKS)
+	_clock.on_snapshot(tick)
+	_push_history(tick, _opponent_canonical)
 	_vel = data.get("vel", Vector2.ZERO)
 	_facing = 1 if int(data.get("facing", 1)) >= 0 else -1
 	var aim: Vector2 = data.get("aim", Vector2.ZERO)
@@ -168,10 +245,20 @@ func _in_water() -> bool:
 func _process(delta: float) -> void:
 	if _have_data:
 		_drive_weapon_visual()
+		if _clock != null:
+			_clock.advance(delta)
 		var target := MazeGenerator.anchor_to_nearest(_opponent_canonical, _local_anchor,
 				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
-		global_position = target   # 直接渲染最新快照:无插值缓冲 ⇒ 对手按发包节奏(30Hz)落位,单步 ≈ 10px
-		# ▲ 幽灵体跟随同一个 target(最新快照锚点):它要的是最小陈旧,不是好看 —— 别让它跟着渲染平滑走。
+		if not _placed:
+			global_position = target
+			_placed = true
+		else:
+			# 按播放时钟取样(夹逼插值):延迟是选出来的常量,不是低通滤波器涌现出来的;取样后再锚回可见副本。
+			global_position = _sample_history(_clock.render_tick)
+			global_position = MazeGenerator.anchor_to_nearest(global_position, _local_anchor,
+					GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+		# ★★ 幽灵体不跟插值:它跟未经平滑的原始权威位置 target —— 幽灵体要的是最小陈旧(让预测所依据的世界与权威一致),
+		# 不是好看;跟插值 = 再晚 67ms,直接变成「本地预测撞在一个位置不对的对手身上」⇒ 多分歧、多回滚。
 		if _ghost != null:
 			_ghost.global_position = target
 	if _hit_flash_t > 0.0:

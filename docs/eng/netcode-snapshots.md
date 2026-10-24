@@ -96,12 +96,14 @@ NetBus.rpc_id(peer, "snapshot_own",
 
 `unreliable` 不保证顺序，"新的赢"是唯一正确的做法；两条丢弃都不产生延迟累加。
 
-## 2. 远端副本：直接渲染最新快照
+## 2. 远端副本：playout 缓冲插值
 
-- [`player_replica.gd`](../../scenes/player/player_replica.gd) `_process`：`global_position = target`，`target = MazeGenerator.anchor_to_nearest(_opponent_canonical, _local_anchor, MAP_WIDTH, MAP_HEIGHT)`。
-- 无位置历史、无插值缓冲、无外插、无 `PLAYOUT_TICKS` / `PlayoutClock`。副本按 30Hz 发包节奏落位，两包之间位置不变。
-- `apply_snapshot(data, local_anchor, tick)` 的 `tick` 不参与渲染，只为不动调用面保留。
-- 幽灵体（`_build_ghost_body`，`StaticBody2D`，层按队配）跟同一个 `target`：预测面要最小陈旧，不跟平滑。
+- [`player_replica.gd`](../../scenes/player/player_replica.gd) `apply_snapshot` 把快照位置塞进定长历史环并喂播放时钟；`_process` 在「最新 − `PLAYOUT_TICKS`」那一刻对两条相邻快照夹逼插值。
+- `PLAYOUT_TICKS = 4`（60Hz tick 域）；下行 30Hz ⇒ 2 个发包间隔 ≈ **67ms 缓冲**，也是「画面比权威晚多少」的旋钮。
+- 无外插：取样比最新还新（underrun）冻在最新；比最老还老冻在最老。跨接缝那一对样本先锚进同一副本空间再 lerp。
+- `SNAP_DIST = 128 px`：相邻样本的环面距离超它 ⇒ 清历史、一帧落位（回溯 / 重生 / 换边）。
+- [`player_replica.gd`](../../scenes/player/player_replica.gd) 的 `_clock` 是 `core/net/playout_clock.gd`（窗口最小延迟选样的本地播放时钟，不与服务器做时钟同步、不做速率纠偏以外的动作）。
+- 幽灵体（`_build_ghost_body`，`StaticBody2D`，层按队配）**不跟插值**：跟未经平滑的 `target`，预测面要最小陈旧。
 - 两个 `anchor_to_nearest` 是承重的：渲染位置与目标相隔整幅地图时最短向量为 0 ⇒ 副本会永远留在远副本。
 - `aim` / `pose` / `facing` 逐包瞬跳。`_aim` 是单位向量，若加插值必须 `slerp` 或 `lerp_angle`（直接 `lerp` 会穿原点）。
 
@@ -133,10 +135,10 @@ NetBus.rpc_id(peer, "snapshot_own",
 
 | 维度 | 本仓 | 主流 |
 |---|---|---|
-| 状态发送频率 | 30Hz，无插值缓冲 | 10~30Hz + 客户端插值缓冲 |
+| 状态发送频率 | 30Hz + 客户端 playout 插值（`PLAYOUT_TICKS = 4` ≈ 67ms 缓冲） | 10~30Hz + 客户端插值缓冲 |
 | 编码 | schema 表手打包 | 绑定 + 量化 + 位打包 |
 | 增量 | 全字段绝对值 | 对已 ack 的基线增量 |
-| 客户端时钟 | 不跟服务器时钟，`tick` 只用于丢弃旧快照 | 播放时钟跟服务器时钟 |
+| 客户端时钟 | 本地播放时钟（窗口最小延迟选样），不与服务器做显式时钟同步 | 播放时钟跟服务器时钟 |
 
 ## 6. 已知边界
 

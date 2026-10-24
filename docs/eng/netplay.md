@@ -50,7 +50,7 @@
 ## 客户端
 
 - 流程 `main_menu` → `mp_lobby` → `pvp_game`(`pvp_mode = true`)。本地玩家 = C2:`PredictionRollback`(`core/net/prediction_rollback.gd`);预测被证实不动,真性分歧才 `restore(权威态)` 并按序重放未确认输入。容差 `pos_tol = 2.0`,接触期 `contact_pos_tol = 8.0`。
-- 远端对手 = `PlayerReplica`:直接渲染最新快照(无 playout / 插值缓冲);目标与幽灵体都经 `anchor_to_nearest` 锚到本地玩家最近副本;快照 `type_id = 0` = 空手。副本幽灵碰撞体 `StaticBody2D`(layer 2 / mask 0),本地玩家补 `collision_mask |= 2`;对手预瞄线不可见(快照 `previewing` 客户端不消费)。
+- 远端对手 = `PlayerReplica`:位置走 **playout 缓冲插值**(`PLAYOUT_TICKS = 4` ≈ 67ms 缓冲,取样后再 `anchor_to_nearest` 锚回本地玩家最近副本);幽灵碰撞体**不跟插值**,直出最新快照锚点;快照 `type_id = 0` = 空手。副本幽灵碰撞体 `StaticBody2D`(layer 2 / mask 0,3v3 按队配),本地玩家补 `collision_mask |= 2`;渲染层带排在世界的墙体/梯子/建筑层之前(与本体同带)。对手预瞄线不可见(快照 `previewing` 客户端不消费)。
 - 离开对局的路径(ESC / MATCH_OVER / 对手离开)都走 `Level0.safe_change_scene`;世界由 `WorldReaper` 分帧拆除。
 
 ## 协议与发送纪律

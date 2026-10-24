@@ -1,14 +1,16 @@
 # 副本插值与输入上行的细节：一手来源调研（增量）
 
-> 现行实现没有插值缓冲：远端玩家副本直接渲染最新快照。相关文件：`scenes/player/player_replica.gd`、`core/net/packet_input_source.gd`、`server/match/match_host.gd`。
+> 现行实现：远端玩家副本走 **playout 缓冲插值**（渲染「最新快照 − `PLAYOUT_TICKS`」那一刻的夹逼插值位置）；幽灵碰撞体仍直出最新快照。相关文件：`scenes/player/player_replica.gd`、`core/net/playout_clock.gd`、`core/net/packet_input_source.gd`、`server/match/match_host.gd`。
 
-## 1. 副本：直出最新快照
+## 1. 副本：playout 缓冲插值
 
-- `_process`：`global_position = target`，`target = MazeGenerator.anchor_to_nearest(_opponent_canonical, _local_anchor, MAP_WIDTH, MAP_HEIGHT)`。
-- 无位置历史环、无 `PLAYOUT_TICKS`、无 `PlayoutClock`、无外插、无大跳变阈值（`SNAP_DIST` 不存在）。
-- `apply_snapshot(data, local_anchor, tick)` 的第三个参数不参与渲染。
+- `_process`：`_clock.advance(delta)` ⇒ `global_position = _sample_history(_clock.render_tick)`，再把取样点 `anchor_to_nearest(...)` 回本地玩家最近的副本。
+- 位置历史环 `place_history`（元素 `{tick, pos}`，pos 是 canonical，定长 `HISTORY_MAX = 12`）；`PLAYOUT_TICKS = 4` —— 60Hz tick 域、下行 30Hz ⇒ **2 个发包间隔 ≈ 67ms 缓冲**。
+- `apply_snapshot(data, local_anchor, tick)` 的第三参参与计算：喂 `PlayoutClock.on_snapshot(tick)` 与 `_push_history(tick, pos)`。
+- 取样两侧冻结：比最新还新（underrun）冻在最新、**不外插**；比最老还老冻在最老、不倒退。跨接缝的那一对样本必须**先锚进同一个副本空间再 lerp**，否则差量是一整幅地图。
+- 相邻样本的环面距离 > `SNAP_DIST`（128 px）⇒ 清历史、一帧落位（回溯 / 重生 / 换边本来就是瞬移）。
+- 幽灵体 `_ghost` 不跟插值：它跟**未经平滑**的 `target`（预测面要最小陈旧）；`_ghost.global_rotation = 0.0` 抵消倒地转体。
 - `aim` / `pose` / `facing` 逐包瞬跳：`_aim`、`_aim_facing`、`animator.flip_h`、`animator.play(POSE_ANIM[...])`。
-- 幽灵体 `_ghost` 跟同一个 `target`；`_ghost.global_rotation = 0.0` 抵消倒地转体。
 - 丢弃：`pvp_game.gd` 里 `tick < _last_snap_tick` ⇒ 丢。
 - `_aim` 是单位向量：若要插值必须 `slerp` 或 `lerp_angle`，直接 `lerp` 会在跨 ±x 时穿过原点。
 - 离散状态（`pose` / `facing` / `type_id` / `downed`）不插值，按包切换。

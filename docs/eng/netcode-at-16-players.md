@@ -25,15 +25,16 @@
 - 伤害全走服务器模拟的实体子弹：`server/match/match_combat.gd::_adjudicate_bullets()` 用 `MazeGenerator.toroidal_delta_px(...)` 与 `HIT_RADIUS`（= `BulletBase.PLAYER_HIT_RADIUS` = **40.0**）判命中。
 - `beam_fired` 只 `_rpc_all` 广播视觉，不裁决伤害；没有 hitscan 路径。
 - 没有回退命中盒、没有 lag compensation、没有按射手视图时刻回退。
-- 客户端看到的对手位置是最近一个快照的权威值（副本无插值）⇒ 射手必须自行提前量；300px/s 的横向目标在 40px 判定半径下足以打空。
+- 客户端看到的对手位置是插值后的历史位置（比权威晚约 67ms，`PLAYOUT_TICKS = 4`）⇒ 射手除了提前量还要把这段显示延迟算进去；300px/s 的横向目标在 40px 判定半径下足以打空。
 
-## 3. 远端副本：直接渲染最新快照
+## 3. 远端副本：playout 缓冲插值
 
-- `player_replica.gd::_process`：`global_position = target`，`target` 锚到本地玩家最近的环面副本；无位置历史、无插值、无 playout。
-- 大跳变（回溯 / 重生 / 换边）与正常位移走同一条路径：一帧直落，没有阈值、没有平滑。
-- 幽灵体跟同一个 `target`（预测面最小陈旧）。
+- `player_replica.gd`：快照位置进定长历史环（`HISTORY_MAX = 12`），`_process` 在播放时钟的 `render_tick` 处夹逼插值，再把取样点锚到本地玩家最近的环面副本。
+- `PLAYOUT_TICKS = 4`（60Hz tick 域）；下行 30Hz ⇒ 2 个发包间隔 ≈ **67ms 缓冲**，也是画面相对权威的滞后量。
+- 大跳变（回溯 / 重生 / 换边，`SNAP_DIST = 128 px`）清历史一帧落位；正常位移走插值。
+- 幽灵体跟**未经平滑**的最新快照锚点（预测面最小陈旧）。
 - 两个 `anchor_to_nearest` 是承重的：渲染位置与目标相隔整幅地图时最短向量为 0。
-- 位移量级：30Hz 下两包之间副本静止，单步位移 = 对手速度 × 33ms（走速量级 ≈10px）。
+- 16 人下每个客户端各跑 15 份历史环 + 15 个播放时钟；都是定长、无分配热点。
 
 ## 4. 边界
 
