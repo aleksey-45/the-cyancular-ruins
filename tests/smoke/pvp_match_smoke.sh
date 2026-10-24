@@ -61,12 +61,14 @@ echo "== 客户端 A 建房(后台,移动+开火) =="
 "$GODOT" --headless --path . res://tests/smoke/pvp_match_smoke.tscn -- --role create > /tmp/pvp2_a.log 2>&1 &
 A_PID=$!
 
-# 从服务器日志取房间号(有界轮询,见上面的理由)
+# 从**建房客户端**日志取房间号(有界轮询,见上面的理由)。
+# ★ 2026-10-24 修:原写法 grep `/tmp/pvp2_server.log` 里的 `"event":"room_created"` —— 但 `NetDiag.audit()` 只写
+#   `user://logs/ops-*.jsonl`、**从不进 stdout** ⇒ 那条 grep 永远为空 ⇒ 真链路批 30s 后假红(实测:房间其实已建成,
+#   客户端也收到了 `SMOKE_ROOM_CODE=9744`)。改为从建房客户端日志取 —— 那是"本端拿到了哪个房号"的直接证据。
 CODE=""
 _deadline=$(( $(date +%s) + ROOM_WAIT ))
 while [ "$(date +%s)" -lt "$_deadline" ]; do
-  # ★ 2026-10-21 起房间号不再打印人类行,改从**审计 JSON**(`room_created`)取 —— 那是"谁在何时建房"的单一事实源。
-CODE=$(grep '"event":"room_created"' /tmp/pvp2_server.log 2>/dev/null | grep -oP '"room":"\K[0-9]+' | head -1 || true)
+CODE=$(grep -oP 'SMOKE_ROOM_CODE=\K[0-9]+' /tmp/pvp2_a.log 2>/dev/null | head -1 || true)
   if [ -n "$CODE" ]; then break; fi
   if ! kill -0 "$A_PID" 2>/dev/null; then
     echo "SMOKE FAIL: 建房客户端提前退出(没走到 create_room)"
