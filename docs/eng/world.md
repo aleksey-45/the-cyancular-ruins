@@ -39,7 +39,7 @@
 - 加载 `TileDefs.load_defs()`(`level_0._ready`);挡路 = `TileDefs.is_blocked`(非 0 且 type=wall),寻路 / LOS / 碰撞共用;只有 type=wall 产生碰撞。
 - 破坏:`TileDefs.damage_tile(cell, dmg, "bullet"/"explosion")` → hp≤0 变空气(改 `MazeGenerator.current_grid` + 格级回调 `TileDefs.on_destroyed` + 持久可破坏子格);子格按 16px(64px 格 → 4×4)计,清完标记所在分块下帧重建,`Level0.MAX_REBUILD_PER_FRAME = 2`。格级 `on_destroyed` 单机在 `scenes/level_0.gd` → `TileDefs.destroy_cell`,服务器在 `server/match/match_host.gd` → `MatchCombat._on_tile_destroyed`。碰撞真相源是 `sub_hp`(`CollisionBuilder.build_sub` 按 `sub_alive` 筛),不是 `destructible_sub`;每局复位必须同时还原 `init_hp` 与 `init_sub_hp`。
 - 最小破坏单位(`BulletBase.tile_break_unit`,单位 = 格):`>=1` 走格级 `damage_tile`(一次清整格 16 个子格),`<1` 走子格 `damage_sub`。**榴弹 = 0.25(= 1 个 16px 子格),其余所有子弹 = 1.0(= 整 64px 格)**;爆炸用同一参数(`Explosion.apply_aoe(..., tile_unit_cells)`,整格侧对爆区内每个 64px 格**去重**后按该格最近子格的衰减值扣一次)。两本账边界:子格路径把整格 16 个子格打空时同步把格级 `hp_grid[cell]=0`(与格级路径在"格子已消失"上对齐);但**混打时两本账仍独立累计**(先子格磨、再格级打 ⇒ 格级扣的是自己的 8/30,不是剩余子格合计)——已登记 [`registered-debt.md`](registered-debt.md) §十四。
-- 攀爬:玩家中心(或脚底)在通道格「刚按上」攀附(不受重力),上爬 × `tile.climb_speed`(梯 1.6 / 锁链 2.0),下降 × `tile.climb_descent_speed`(梯 2.0);锁链无下降倍率 ⇒ 按下自由落体。松开挂住不坠落;到顶 = 脚底进入梯子上方一格,再按上 = 跳离;进入靠「刚按下上」而非按住;攀附空闲可水平走离。仅锁链顶/底基座有薄碰撞条(`CollisionBuilder.build_climb_ledges`,全宽 64×6px,梯顶不加)。上爬与梯子下行再 × `PlayerParams.climb_vertical_mult`(1.2)。身在梯/链格上不能空中下冲。
+- 攀爬:玩家中心(或脚底)在通道格「刚按上」攀附(不受重力),上爬/梯子下行速度用 `PlayerParams.climb_*` 绝对值(梯 上850/下800、锁链 上800 px/s;2026-10-28 起不再乘瓦片倍率);锁链无下降倍率 ⇒ 按下自由落体。松开挂住不坠落;到顶 = 脚底进入梯子上方一格,再按上 = 跳离;进入靠「刚按下上」而非按住;攀附空闲可水平走离。仅锁链顶/底基座有薄碰撞条(`CollisionBuilder.build_climb_ledges`,全宽 64×6px,梯顶不加)。身在梯/链格上不能空中下冲。
 
 ## 水
 

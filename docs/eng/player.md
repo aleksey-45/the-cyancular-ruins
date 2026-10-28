@@ -20,12 +20,11 @@
 | `coyote_time` / `jump_buffer_time` | 0.1 / 0.12 |
 | `jump_cut_factor` | 0.5 |
 | `crouch_walk_speed` | 245.0 |
-| `charge_velocity` / `charge_duration` | 2850.0 / 0.24（冲刺距离 684px = 原 −10%） |
+| `charge_distance` / `charge_velocity` / `charge_duration` | 640.0 / 3000.0 / 0.21333（2026-10-28 用户指定） |
 | `charge_dir_window` | 0.3 |
 | `charge_down_velocity` | 2000.0 |
 | `charge_air_gravity_mult` | 0.35 |
-| `climb_speed` | 360.0（2026-10-28 +20%；× 瓦片倍率 梯 1.6 / 链 2.0 × `climb_vertical_mult` 1.2） |
-| `climb_vertical_mult` | 1.2 |
+| `climb_ladder_up_speed` / `climb_ladder_down_speed` / `climb_chain_up_speed` | 850.0 / 800.0 / 800.0（绝对值，2026-10-28 用户指定；时间场倍率照乘） |
 | `player_max_hp` / `iframes_time` | 50 / 0.25 |
 | `player_hit_knockback` / `player_hit_knockback_up` | 400.0 / 200.0 |
 | `player_knock_decay_rate` | 10.0 |
@@ -33,8 +32,8 @@
 | `squash_amount` | 0.06 |
 
 - 移动走指数缓动;跳跃有土狼时间、跳跃缓冲与可变高度(上升中松键,向上速度 × `jump_cut_factor`)。
-- 冲刺沿用最近移动方向(`charge_dir_window`),`charge_velocity` 2850、`charge_duration` 0.24s(距离 684px,比原 760px −10%;速度 ×1.5);空中冲刺重力 × `charge_air_gravity_mult`。
-- 攀爬:`climb_speed` 360(2026-10-28 +20%)⇒ 梯上 360×1.6×1.2=691、链上 360×2.0×1.2=864、梯下 864 px/s(锁链下行仍是自由落体)。
+- 冲刺沿用最近移动方向(`charge_dir_window`):`charge_velocity` 3000、`charge_duration` = 640/3000 ≈ 0.2133s ⇒ **距离 640px**;空中冲刺重力 × `charge_air_gravity_mult`。
+- 攀爬(绝对值,2026-10-28):梯子 上 **850** / 下 **800**、锁链 上 **800** px/s;锁链下行仍是自由落体(解除攀附交重力)。不再乘瓦片倍率/`climb_vertical_mult`,只乘时间场倍率。
 - 下蹲:在地面且按住 S 才蹲(逐帧判定,非边沿触发);蹲态可蹲走;空中按 S = 下冲。
 - 姿态碰撞箱:Pose → CollisionPolygon2D(共 5 个),运行时只启用当前姿态的箱子。
 - 水中:判定只在 `Water.sample_body`(见 [`world.md`](world.md) 的「水」);入水 / 出水用 `GameParameters.water_enter_depth`=8px / `water_exit_depth`=-2px **滞回**;呼吸按 `head_under`(头低于水面线)扣氧。`SwimComponent.sample` 是本帧水状态的唯一来源,根不再自己查水面。

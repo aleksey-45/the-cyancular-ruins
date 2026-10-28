@@ -33,7 +33,7 @@ func is_over_climb_tile() -> bool:
 	return TileDefs.climb_speed(MazeGenerator.texture_of(fv)) > 0.0 or TileDefs.climb_speed(MazeGenerator.texture_of(cv)) > 0.0
 
 # 攀爬判定与攀附状态机:中心(或脚底)在通道格按上主动攀附(不受重力);到顶 = 脚底进入梯子上方一格才停,再按上 = 跳离梯子。
-# 上爬按瓦片 climb_speed 倍(梯 1.6/锁链 2.0),下降按 climb_descent_speed(梯 2.0;锁链 0 ⇒ 解除攀附交重力),整体再 × PlayerParams.climb_vertical_mult(1.2);松开挂住。
+# 速度(2026-10-28 用户指定绝对值,不再乘瓦片倍率/上行倍率):梯子 上 850 / 下 800,锁链 上 800;锁链下行 = 自由落体(解除攀附交重力)。时间场倍率照乘。
 func update(mult: Vector2, delta: float, is_squat: bool,
 		src: PlayerInput = null) -> bool:
 	# ★ src 一律由调用方注入:本地玩家 = 自己的 input_source,服务器 = 注入的网络源;缺了就点名报错 + 按「这一帧没在攀爬」安全返回,绝不静默改读全局输入总线(headless 服务器会读到宿主机桌面按键),也不写 velocity。
@@ -53,10 +53,13 @@ func update(mult: Vector2, delta: float, is_squat: bool,
 	var center_cell := MazeGenerator.cell_of(body.global_position, GameParameters.TILE_SIZE, cols, rows)
 	var fv: int = grid[foot_cell.y][foot_cell.x]
 	var cv: int = grid[center_cell.y][center_cell.x]
-	# 爬速取脚底/中心所在梯子的倍率较大者:基地时脚踩地中心在梯里、到顶时中心出梯脚还在梯里
-	var cs: float = maxf(TileDefs.climb_speed(MazeGenerator.texture_of(fv)), TileDefs.climb_speed(MazeGenerator.texture_of(cv)))
-	var foot_in_channel := fv != 0 and TileDefs.climb_speed(MazeGenerator.texture_of(fv)) > 0.0
-	var center_in_channel := cv != 0 and TileDefs.climb_speed(MazeGenerator.texture_of(cv)) > 0.0
+	# 梯/链区分:梯子有下行倍率(climb_descent_speed>0),锁链为 0(下行=自由落体,见下方分支)。
+	var foot_tex := MazeGenerator.texture_of(fv)
+	var center_tex := MazeGenerator.texture_of(cv)
+	var on_ladder := (fv != 0 and TileDefs.climb_descent_speed(foot_tex) > 0.0) \
+			or (cv != 0 and TileDefs.climb_descent_speed(center_tex) > 0.0)
+	var foot_in_channel := fv != 0 and TileDefs.climb_speed(foot_tex) > 0.0
+	var center_in_channel := cv != 0 and TileDefs.climb_speed(center_tex) > 0.0
 	var climb_input := src.get_axis("up", "down")
 	# 进入攀附:中心或脚底在通道格且刚按下上(主动抓,不是按住 —— 跳离梯子后按着上也抓不回);退出:中心与脚底都不在通道格,且脚底不在梯顶。
 	if not _latched and (center_in_channel or foot_in_channel) and src.is_action_just_pressed("up"):
@@ -67,9 +70,10 @@ func update(mult: Vector2, delta: float, is_squat: bool,
 		return false
 	if climb_input < 0.0:
 		if foot_in_channel or not _foot_at_ladder_top(foot_cell):
-			# 脚底还没跨过梯顶 ⇒ 上爬:climb_speed × 瓦片倍率 × 上行倍率 × 时间场倍率(加速时爬梯/爬链与陆上/水中同源)。
-			var spd := PlayerParams.climb_speed * cs * PlayerParams.climb_vertical_mult * mult.y * _time_mult()
-			body.velocity.y = climb_input * spd
+			# 脚底还没跨过梯顶 ⇒ 上爬:梯/链各自绝对速度 × 时间场倍率(加速时爬梯/爬链与陆上/水中同源)。
+			var up_speed: float = PlayerParams.climb_ladder_up_speed if on_ladder \
+					else PlayerParams.climb_chain_up_speed
+			body.velocity.y = climb_input * up_speed * mult.y * _time_mult()
 			return true
 		if src.is_action_just_pressed("up"):
 			_latched = false
@@ -84,7 +88,8 @@ func update(mult: Vector2, delta: float, is_squat: bool,
 			# 锁链(无下降倍率)= 自由落体:解除攀附交给重力,落下不再抓回
 			_latched = false
 			return false
-		body.velocity.y = climb_input * PlayerParams.climb_speed * dcs * PlayerParams.climb_vertical_mult * mult.y * _time_mult()
+		# 梯子下行:用户指定绝对值 800(不再乘瓦片倍率),时间场倍率照乘
+		body.velocity.y = climb_input * PlayerParams.climb_ladder_down_speed * mult.y * _time_mult()
 		return true   # 攀爬不锁横移,左右由根处理
 	body.velocity.y = 0.0  # 挂住:不受重力,原地停留
 	return false
