@@ -104,6 +104,18 @@ func _ready() -> void:
 
 	_wire_hit_feedback()
 	_broadcast_round_state()
+	add_to_group("authority_explosion_sink")   # BulletBase._explode 用组回调上报权威爆炸位置(子弹不引 autoload)
+
+
+# 权威爆炸表现同步:子弹通过组回调找到本节点(不靠 autoload —— `-s` 冒烟会 parse 失败)。
+# 服务器在权威位置广播;客户端收掉自己那颗视觉榴弹、改画在权威位置(位置一致、无"双爆")。
+func on_authority_explosion(pos: Vector2, shooter: Node, visual: PackedScene) -> void:
+	var role := _role_of(shooter)
+	var path := ""
+	if visual != null:
+		path = visual.resource_path
+	var canonical := MazeGenerator.wrap_to_range(pos, GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+	_rpc_all_ext("explosion", [canonical, role, path])
 
 
 # 把每个玩家的 combat.took_hit 接到本宿主的 _on_player_hit。★ 接线走裸方法名(Callable(self, "_on_player_hit"))⇒ 虚分派:

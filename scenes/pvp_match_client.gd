@@ -76,6 +76,46 @@ func _on_hit_confirm(shooter_role: int, victim_role: int) -> void:
 	else:
 		CombatFeedback.hit_marker()
 
+func _enter_tree() -> void:
+	# 权威爆炸表现同步(服务器在哪炸的,画面就在哪炸)。三个子类各有自己的 _ready,故接线放 _enter_tree。
+	NetBusExt.local_explosion.connect(_on_network_explosion)
+
+
+# 服务器权威爆炸:先收掉本端那颗视觉榴弹(避免它稍后在别处再炸一次),再在权威位置补画爆炸。
+# 自己那发若本地视觉榴弹已消失(已自炸过)⇒ 不再补播 —— 专治"双爆"。
+func _on_network_explosion(pos: Vector2, shooter_role: int, visual_path: String) -> void:
+	if _world == null or _local == null:
+		return
+	var p := MazeGenerator.anchor_to_nearest(pos, _local.global_position,
+			float(GameParameters.MAP_WIDTH), float(GameParameters.MAP_HEIGHT))
+	var shooter := _replica_for(shooter_role)
+	var want: Node = shooter if shooter != null else (_local if shooter_role == PvpSession.role else null)
+	var best: BulletBase = null
+	var best_d := INF
+	for n in get_tree().get_nodes_in_group("bullet"):
+		var b := n as BulletBase
+		if b == null or not b.explodes or b.apply_damage or b.shooter != want:
+			continue
+		var d := b.global_position.distance_to(p)
+		if d < best_d:
+			best_d = d
+			best = b
+	if best != null:
+		best.queue_free()
+	elif shooter_role == PvpSession.role:
+		return   # 本机视觉榴弹已自炸过:再补一次就是"双爆"
+	if visual_path == "":
+		return
+	var scene: PackedScene = load(visual_path)
+	if scene == null:
+		return
+	var fx: Node2D = scene.instantiate() as Node2D
+	if fx == null:
+		return
+	_world.add_child(fx)
+	fx.global_position = p
+
+
 func _apply_match_options(opts: Dictionary) -> void:
 	var disabled: Array[int] = []
 	for v in opts.get("disabled_weapons", []):

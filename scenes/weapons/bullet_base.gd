@@ -354,6 +354,11 @@ func _start_fuse(duration: float) -> void:
 	_fuse_active = true
 
 func _explode() -> void:
+	# 权威侧广播爆炸位置(组回调;子弹内不引 autoload —— `-s` 冒烟会 parse 失败)。单机没有这个组 ⇒ 空操作。
+	if apply_damage:
+		var sink := get_tree().get_first_node_in_group("authority_explosion_sink")
+		if sink != null and sink.has_method("on_authority_explosion"):
+			sink.on_authority_explosion(global_position, shooter, explosion_visual)
 	if explosion_visual != null:
 		var fx: Node = explosion_visual.instantiate()
 		fx.global_position = global_position
