@@ -418,9 +418,15 @@ func _wrap_position() -> void:
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 
 
-func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, knockback: float = -1.0) -> void:
+func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, knockback: float = -1.0,
+		feedback_only: bool = false) -> void:
 	# 回溯中不受任何伤害(位置正被回放器搬运,接触判定可能在瞬移中误触发):单机看 TimeField 的回溯态,联机看 time_rewinding meta。
 	if (TimeField.current != null and TimeField.current.is_rewinding()) or has_meta("time_rewinding"):
+		return
+	# feedback_only:只播反馈 + 挤压,不扣血/不击退/不 emit(供 C2 事件兜底;理由见 combat_component.take_hit)。
+	if feedback_only:
+		combat.take_hit(source_pos, damage, ignore_iframes, knockback, true)
+		squash.impulse(SquashStretch.Impulse.HURT)
 		return
 	# 前后比对 hp:只有真吃到伤害才挤压 —— 无敌帧挡下/已倒地时 combat.take_hit 不改 hp,天然把它们排除,比在 combat 里回调更省事。
 	var before := combat.hp

@@ -37,6 +37,10 @@ func _ready() -> void:
 	_require_ran("torus")
 	_test_contact_tolerance()
 	_require_ran("contact_tol")
+	await _test_event_alignment()
+	_require_ran("event_align")
+	_test_feedback_only()
+	_require_ran("feedback_only")
 	_check_source_guard()
 	if _failures.is_empty():
 		print(MARKER)
@@ -180,3 +184,149 @@ func _check_source_guard() -> void:
 	_check(note_line >= 0,
 			"接触提示的赋值排在**同一帧块内**的 note_post_step 之前(hint@%d, note@%d;顺序反了 = 静默退回 2px 容差)"
 			% [hint_line, note_line])
+
+
+# ── D 组:服务器外部事件(受击)按"事件真正发生的输入 seq"注入 ──
+# 与 C 组同款手法:真 Player + 控制器 + 手动喂 30 条固定输入。核心判据是"注入后的轨迹 == 当时就打"的黄金轨迹:
+# 只断言"没报错"是不够的,注入顺序错(先 apply 后 restore / 不重放 / 丢第一次事件)都会让轨迹偏掉但仍返回 true。
+func _make_event_fixture(x_off: float) -> Dictionary:
+	var p: Node2D = preload("res://scenes/player/player.tscn").instantiate()
+	add_child(p)
+	# ★ 必须在物理帧里手动步进才能让 move_and_slide 真的移动(帧外调用位移恒 0)⇒ 关掉引擎自动步进,只手动步。
+	p.set_physics_process(false)
+	var start := Vector2(GameParameters.MAP_WIDTH * 0.5 + x_off, GameParameters.MAP_HEIGHT * 0.5)
+	p.global_position = start
+	var c := PredictionRollback.new()
+	c.bind(p)
+	c.map_px = Vector2(float(GameParameters.MAP_WIDTH), float(GameParameters.MAP_HEIGHT))
+	var recs: Array = []
+	for i in range(30):
+		recs.append({"seq": i + 1, "ax": 1.0, "held": 0, "pressed": 0, "released": 0,
+				"winst": 0, "aim": Vector2(1.0, 0.0)})
+	return {"ctrl": c, "player": p, "start": start, "recs": recs,
+			"hp": int((p.capture_state() as Dictionary).get("hp", 0))}
+
+
+func _hit_once(p: Node2D) -> void:
+	p.call("take_hit", p.global_position, 10, true)
+
+
+# ★ 轨迹类断言必须在物理帧里步进:Godot 4 的 move_and_slide() 在物理帧外调用时位移恒 0(实测),
+#   那样"没有 restore / 没有重放"的变异就不可见(所有位置都停在出生点)。等 physics_frame 再手动步。
+func _phys_advance(c: PredictionRollback, rec: Dictionary) -> void:
+	await get_tree().physics_frame
+	c.advance(rec)
+
+
+func _test_event_alignment() -> void:
+	# ① 环内注入:20 < last_applied(30),> _acked(0) ⇒ 必须成功,且**不算回滚**
+	var f1: Dictionary = _make_event_fixture(0.0)
+	var c1: PredictionRollback = f1["ctrl"]
+	var p1: Node2D = f1["player"]
+	for r in f1["recs"]:
+		await _phys_advance(c1, r)
+	var hp1: int = int(f1["hp"])
+	# ★ GDScript 的 lambda 按值捕获外层局部变量 ⇒ 计数用 Array 盒子(引用类型),否则回调里的 += 只改副本。
+	var applied := [0]
+	var ok = c1.apply_external_event(20, func() -> void:
+		applied[0] += 1
+		_hit_once(p1))
+	_check(ok == PredictionRollback.EventApply.APPLIED and applied[0] == 1,
+			"⑤ 环内事件按历史 seq 注入成功(ok=%s,事件调用 %d 次)" % [str(ok), applied[0]])
+	_check(c1.rollback_count() == 0, "⑥ 事件对齐不计入回滚计数(回滚 ×%d)" % c1.rollback_count())
+	_check(int((p1.capture_state() as Dictionary).get("hp", 0)) == hp1 - 10,
+			"⑦ 注入后 hp 恰扣一次(期望 %d,实得 %d)" % [hp1 - 10, int((p1.capture_state() as Dictionary).get("hp", 0))])
+
+	# ② 黄金对照:同一串输入「第 20 步之后直接打」→ 轨迹必须与注入结果一致
+	var f2: Dictionary = _make_event_fixture(400.0)
+	var c2: PredictionRollback = f2["ctrl"]
+	var p2: Node2D = f2["player"]
+	for i in range(20):
+		await _phys_advance(c2, (f2["recs"] as Array)[i])
+	_hit_once(p2)
+	for i in range(20, 30):
+		await _phys_advance(c2, (f2["recs"] as Array)[i])
+	var cap1: Dictionary = c1._captures[30]
+	var cap2: Dictionary = c2._captures[30]
+	var d1: Vector2 = (cap1["pos"] as Vector2) - (f1["start"] as Vector2)
+	var d2: Vector2 = (cap2["pos"] as Vector2) - (f2["start"] as Vector2)
+	var dv: float = (cap1["vel"] as Vector2).distance_to(cap2["vel"])
+	_check(d1.distance_to(d2) < 0.01 and dv < 0.01,
+			"⑧ 注入轨迹 == 黄金轨迹(位移差 %.4f px / 速度差 %.4f)" % [d1.distance_to(d2), dv])
+	_check(int(cap1.get("hp", 0)) == int(cap2.get("hp", 0)),
+			"⑨ 黄金对照 hp 一致(%d vs %d)" % [int(cap1.get("hp", 0)), int(cap2.get("hp", 0))])
+
+	# ③ 越界拒绝:未来 seq / 已 ack 的 seq —— 都不许调用事件,也不许改整态
+	#   ★ 顺序:先做「已 ack」再看「注入后 reconcile」—— 推到 ack=30 会把 _captures[25] trim 掉,之后就没法摆权威态了。
+	#   ★ 用无类型变量接返回值 + typeof 断言:拒绝路径若被删,越界访问只打断 apply_external_event 本身、调用方照常往下跑,
+	#     返回值会是 null —— 用 `not null` 判会假绿(实测:删两条拒绝后本支曾打 ALL-OK)。
+	var calls := [0]
+	var ok_future = c1.apply_external_event(31, func() -> void: calls[0] += 1)
+	c1.on_authoritative(25, (c1._captures[25] as Dictionary).duplicate(true))
+	c1.reconcile()
+	var hp_before := int((p1.capture_state() as Dictionary).get("hp", 0))
+	var ok_acked = c1.apply_external_event(25, func() -> void: calls[0] += 1)
+	_check(typeof(ok_future) == TYPE_INT and ok_future == PredictionRollback.EventApply.REJECTED
+			and typeof(ok_acked) == TYPE_INT and ok_acked == PredictionRollback.EventApply.REJECTED
+			and calls[0] == 0
+			and int((p1.capture_state() as Dictionary).get("hp", 0)) == hp_before,
+			"⑪ 环外/已 ack 事件拒绝注入且不改整态(future=%s acked=%s 调用 %d 次)" % [str(ok_future), str(ok_acked), calls[0]])
+
+	# ④ 注入刷新后的捕获与"注入→重放"自洽:紧接一次同值权威 ack 不该再回滚
+	var rb0 := c1.rollback_count()
+	c1.on_authoritative(30, (c1._captures[30] as Dictionary).duplicate(true))
+	c1.reconcile()
+	_check(c1.rollback_count() == rb0, "⑩ 注入后紧接 reconcile 不再回滚(回滚 ×%d→×%d)" % [rb0, c1.rollback_count()])
+
+	# ⑤ 同一 seq 两次事件:第二次必须基于刷新后的捕获叠上去(丢第一次 = 少扣一次)
+	var f3: Dictionary = _make_event_fixture(800.0)
+	var c3: PredictionRollback = f3["ctrl"]
+	var p3: Node2D = f3["player"]
+	for r in f3["recs"]:
+		await _phys_advance(c3, r)
+	var hp3: int = int(f3["hp"])
+	c3.apply_external_event(20, func() -> void: _hit_once(p3))
+	c3.apply_external_event(20, func() -> void: _hit_once(p3))
+	_check(int((p3.capture_state() as Dictionary).get("hp", 0)) == hp3 - 20,
+			"⑫ 同 seq 两次受击各扣一次(期望 %d,实得 %d)" % [hp3 - 20, int((p3.capture_state() as Dictionary).get("hp", 0))])
+
+	# ⑥ 乱序拒绝:先 20 再 19 ⇒ 拒绝(否则 19 的重放会丢掉 20 那一发的效果)
+	var f4: Dictionary = _make_event_fixture(1200.0)
+	var c4: PredictionRollback = f4["ctrl"]
+	var p4: Node2D = f4["player"]
+	for r in f4["recs"]:
+		await _phys_advance(c4, r)
+	c4.apply_external_event(20, func() -> void: _hit_once(p4))
+	var applied4 := [0]
+	var ok_late = c4.apply_external_event(19, func() -> void: applied4[0] += 1)
+	_check(ok_late == PredictionRollback.EventApply.REJECTED and applied4[0] == 0,
+			"⑬ 乱序(seq 回退)事件拒绝注入(返回 %s)" % str(ok_late))
+
+	_ran["event_align"] = true   # ★ 完成戳必须在最后一行:中途报错就到不了这里(见文件头说明)
+
+
+# ── E 组:受击反馈-only ── 事件不能安全注入时(环外/已 ack),客户端只许播白闪/震屏/音效/挤压,
+# 绝不能再扣血/给击退/设无敌帧 —— 权威 c2 里可能已经包含这一发,二次应用会把 hp 打多,下一个 ack 再回滚。
+func _test_feedback_only() -> void:
+	var p: Node2D = preload("res://scenes/player/player.tscn").instantiate()
+	add_child(p)
+	p.global_position = Vector2(GameParameters.MAP_WIDTH * 0.5, GameParameters.MAP_HEIGHT * 0.5)
+	var n := [0]
+	p.combat.took_hit.connect(func(_sp: Vector2, _d: int) -> void: n[0] += 1)
+	var st0: Dictionary = p.capture_state()
+	var hp0: int = int(st0["hp"])
+	var vel0: Vector2 = st0["vel"]
+	var ifr0: float = float(st0["ifr"])
+
+	p.call("take_hit", p.global_position, 10, false, -1.0, true)
+	var st1: Dictionary = p.capture_state()
+	_check(int(st1["hp"]) == hp0 and (st1["vel"] as Vector2).is_equal_approx(vel0)
+			and is_equal_approx(float(st1["ifr"]), ifr0) and n[0] == 0,
+			"⑭ 反馈-only 不动 hp/速度/无敌帧,也不 emit took_hit")
+
+	p.call("take_hit", p.global_position, 10)
+	var st2: Dictionary = p.capture_state()
+	_check(int(st2["hp"]) == hp0 - 10 and n[0] == 1,
+			"⑮ 正常受击仍扣血并 emit took_hit(证明 ⑭ 不是恒真断言)")
+
+	_ran["feedback_only"] = true

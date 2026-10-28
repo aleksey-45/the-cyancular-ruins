@@ -20,6 +20,8 @@ var _last_applied := 0
 var _acked := 0
 var _pending: Array = []       # [[ack, state], ...] 待 reconcile
 var _rollbacks := 0
+var _last_event_seq := 0       # 已按历史注入过的最大事件 seq(乱序事件拒绝用)
+var _event_aligns := 0         # 事件对齐次数(诊断量;不计入 _rollbacks)
 
 # 环面地图尺寸(像素)。ZERO = 不做环面处理(退回裸距离比较);刻意不引 autoload,由接入方显式设,-s 下也能空跑。
 var map_px: Vector2 = Vector2.ZERO
@@ -78,6 +80,39 @@ func on_authoritative(ack: int, state: Dictionary) -> void:
 	if ack <= _acked:
 		return
 	_pending.append([ack, state])
+
+# 外部事件注入的返回码。★ APPLIED 必须是 0:GDScript 运行期错误只会打断"出错的那个函数"并按返回类型给默认值,
+# 拒绝路径若被写坏(越界访问)会返回默认值 —— 让它落在 APPLIED 上,探针的"必须 REJECTED"断言才会红,而不是静默假绿。
+enum EventApply { APPLIED, REJECTED }
+
+# 把一次**服务器外部事件**(受击)按它真正发生的输入 seq 注入预测历史:恢复 _captures[seq] → apply() → 重放 (seq, last_applied]。
+# 语义:服务器在"用记录 S 步进完玩家之后"裁决命中,而 _captures[S] 恰好是同一时刻的整态 ⇒ 在这个点上执行 take_hit 再重放,
+# 得到的轨迹与服务器同源,不必等下一个 ack 再 restore(否则本地击退曲线会被权威态截断一次)。
+# 返回 REJECTED = 不能安全注入(来自未来 / 已 ack / 环里没有该 seq / 乱序),调用方必须走自己的兜底(只播反馈,不二次扣血)。
+# ★ 事件必须按 seq 递增到达(reliable 保序);seq 回退说明假设被破坏 —— 拒绝比"重放时静默丢掉上一发"安全。
+# ★ 本 API 不碰 _rollbacks:事件对齐不是"预测被证伪",计入会把回滚读数污染掉。
+func apply_external_event(seq: int, apply: Callable) -> int:
+	if _p == null:
+		return EventApply.REJECTED
+	if seq > _last_applied or seq <= _acked:
+		return EventApply.REJECTED
+	if not _captures.has(seq):
+		return EventApply.REJECTED
+	if seq < _last_event_seq:
+		return EventApply.REJECTED
+	_p.restore_state(_captures[seq])
+	apply.call()
+	_captures[seq] = _p.capture_state()
+	for s in _seqs:
+		if s > seq and s <= _last_applied:
+			var rec: Dictionary = _inputs.get(s, {})
+			if rec.is_empty():
+				continue
+			_step(rec)
+			_captures[s] = _p.capture_state()
+	_last_event_seq = seq
+	_event_aligns += 1
+	return EventApply.APPLIED
 
 func reconcile() -> void:
 	while not _pending.is_empty():

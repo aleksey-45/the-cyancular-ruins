@@ -34,15 +34,21 @@ func update_iframe_blink(delta: float) -> void:
 	else:
 		body.modulate.a = 1.0
 
-func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, knockback: float = -1.0) -> void:
+func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, knockback: float = -1.0,
+		feedback_only: bool = false) -> void:
 	# ignore_iframes:特殊攻击(如冲撞)穿透无敌帧但照常刷新;PvP 取消无敌帧阻挡,仍每发只结算一次。
 	if downed or (not pvp_arena and iframes > 0.0 and not ignore_iframes):
+		return
+	# feedback_only:只播受击反馈,不碰 hp / 击退 / 无敌帧 / took_hit —— 供"权威 c2 可能已包含这一发"的客户端兜底路径用
+	# (二次扣血会让下一个 ack 再判一次分歧)。判据见 docs/eng/netcode-snapshots.md §2.2。
+	if feedback_only:
+		play_hit_feedback(source_pos, damage)
 		return
 	# 冲刺被打断:否则下一帧 is_charge 分支会用冲刺速度覆盖本次击退
 	body.cancel_charge()
 	hp -= damage
 	took_hit.emit(source_pos, damage)
-	Sfx.play("hurt")
+	play_hit_feedback(source_pos, damage)
 	iframes = PlayerParams.iframes_time
 	# ★ 击退方向必须用环面最短向量,不能绝对相减:服务器权威下命中源坐标(服务器子弹/爆心)锚在射手副本上,可能与本玩家 canonical 相差约整幅地图(跨接缝对枪),绝对相减会得出反向击退。
 	var away := (body.global_position - source_pos).normalized()
@@ -58,7 +64,15 @@ func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, kn
 		body.velocity.y = away.y * PlayerParams.player_hit_knockback - PlayerParams.player_hit_knockback_up
 	else:
 		knock_velocity = away * knockback
-	# 受击反馈:每次命中小红闪 + 小幅震动;大伤害(扣血 >25% 最大血)的强震见下面 hit_ratio 分支。
+	hp_changed.emit(hp, max_hp)
+	if hp <= 0:
+		_downed()
+
+
+# 受击的**纯表现**部分(音效 + 小红闪 + 震屏)。take_hit 与 feedback_only 两条路径共用 ⇒ 正常受击的观感逐字不变。
+func play_hit_feedback(_source_pos: Vector2, damage: int) -> void:
+	Sfx.play("hurt")
+	# 受击反馈:每次命中小红闪 + 小幅震动;大伤害(扣血 >25% 最大血)的强震。
 	var tree := body.get_tree()
 	if tree != null:
 		var pp := tree.get_first_node_in_group("post_process")
@@ -71,9 +85,6 @@ func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, kn
 			cam.shake(PlayerParams.hit_cam_shake * (hit_ratio / 0.25), PlayerParams.hit_cam_shake_time)
 		else:
 			cam.shake(6.0, 0.15)   # 小伤害也给一点震感
-	hp_changed.emit(hp, max_hp)
-	if hp <= 0:
-		_downed()
 
 # 爆炸击退位移:单独 move_and_collide 结算,不污染 velocity —— 地面吃掉向下击退后再减回去会把玩家弹起。
 func apply_knock(delta: float) -> void:
