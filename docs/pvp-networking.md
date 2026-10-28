@@ -201,7 +201,7 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 | 输入包 | 客户端 → worker | 30Hz / reliable | 手打包 **42 B**（P1 定点化前 46 B）：两条 tick 记录 `seq` `held0/1` `ax0/1` `pressed0/1` `released0/1` `winst0/1` + `aim`(1e-4 定点 2×i16) `st` `ct`（`NetCodec.KIND_INPUT`） |
 | `snapshot_world` / `snapshot_own` | worker → 客户端 | 30Hz · unreliable | 世界包全量(`tick`/`players`);本人包全量(差分(逐 peer,`{ack_seq, q, c2}` 合并后形状不变) |
 | `bullet_spawn` | worker → 客户端 | reliable | `scene shooter_role pos vel speed range size color gravity hit_damage …` |
-| `hit_event` | worker → 客户端 | reliable | `victim_role damage source_pos` |
+| `hit_event` | worker → 客户端 | reliable | `victim_role damage source_pos seq`（`seq` = 受击方已消费输入记录的 seq，客户端按它回放受击时刻） |
 | `beam_fired` | worker → 客户端 | reliable | 光束报告 + `shooter_role` |
 | 房间 / 对局 | 双向 | reliable | `create_room` `join_room` `go_match` `session_token` `claim_role` `match_start` `match_sync` `match_sync_data` `round_state` … |
 

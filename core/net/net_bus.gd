@@ -21,7 +21,7 @@ signal local_bullet_spawn(data: Dictionary)
 signal local_beam_fired(data: Dictionary)   # 即时光束武器(激光)权威开火:对手端据此画光束视觉副本
 signal local_go_match(role: int, port: int)   # 大厅配对完:客户端去连对局 worker(role/port 由此给)
 signal local_peer_info(names: Dictionary)     # worker 开局:双方昵称 {role(int) -> name}(头上显示)
-signal local_hit_event(victim_role: int, damage: int, source_pos: Vector2)
+signal local_hit_event(victim_role: int, damage: int, source_pos: Vector2, seq: int)
 signal local_tile_destroyed(cell: Vector2i)
 signal local_round_state(data: Dictionary)
 signal local_kill_event(killer: int, victim: int)
@@ -282,8 +282,8 @@ func match_sync_data(payload: Dictionary) -> void:
 	local_match_sync.emit(payload)
 
 @rpc("authority", "call_remote", "reliable", 3)
-func hit_event(victim_role: int, damage: int, source_pos: Vector2) -> void:
-	local_hit_event.emit(victim_role, damage, source_pos)
+func hit_event(victim_role: int, damage: int, source_pos: Vector2, seq: int) -> void:
+	local_hit_event.emit(victim_role, damage, source_pos, seq)
 
 @rpc("authority", "call_remote", "reliable", 3)
 func tile_destroyed(cell: Vector2i) -> void:

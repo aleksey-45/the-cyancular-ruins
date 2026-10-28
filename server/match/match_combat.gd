@@ -273,10 +273,13 @@ func _on_player_hit(source_pos: Vector2, damage: int, role: int) -> void:
 		var rw_attacker := _attributed_role_within(stat_victim, ATTRIB_WINDOW)
 		if rw_attacker != 0 and rw_attacker != int(role) and not same_team(rw_attacker, int(role)):
 			time_economy.award_damage(rw_attacker, int(role), damage)
+	# 受击事件的时间锚点 = 受击方**已消费输入记录的 seq**(与快照 ack 同一 seq 空间;客户端按它取 _captures 回放)。
+	# ★ 不能用 _srv_tick:服务器输入饥饿(队列空、沿用上一条 held)时 _ack_seq 不前进,而 _srv_tick 每 tick +1,两者会漂。
+	var hit_seq := int(_ack_seq.get(int(role), 0))
 	for r in peer_by_role:
 
 		if NetBus.is_peer_live(peer_by_role[r]):
-			NetBus.rpc_id(peer_by_role[r], "hit_event", role, damage, source_pos)
+			NetBus.rpc_id(peer_by_role[r], "hit_event", role, damage, source_pos, hit_seq)
 
 
 

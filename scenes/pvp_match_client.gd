@@ -690,10 +690,11 @@ func _replica_for(_role: int) -> Node2D:
 	return null   # 基类无副本;两个子类各自实现
 
 
-func _on_hit_event(victim_role: int, damage: int, source_pos: Vector2) -> void:
+func _on_hit_event(victim_role: int, damage: int, source_pos: Vector2, seq: int) -> void:
 	if _local == null:
 		return
 	if victim_role == PvpSession.role:
+		# seq = 受击方已消费输入记录的 seq（服务器命中时刻的锚点；Task 4 起用于事件时刻对齐）。
 		_local.take_hit(source_pos, damage, false, -1.0)
 		return
 	var r := _replica_for(victim_role)

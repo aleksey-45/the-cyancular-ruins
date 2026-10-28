@@ -179,9 +179,9 @@ func _run_client() -> void:
 	NetBus.local_kill_event.connect(func(_k: int, _v: int) -> void:
 		_kills += 1
 		_mark("%.1fs 击杀播报" % _elapsed()))
-	NetBus.local_hit_event.connect(func(_r: int, _d: int, _p: Vector2) -> void:
+	NetBus.local_hit_event.connect(func(_r: int, _d: int, _p: Vector2, _seq: int) -> void:
 		_hits += 1
-		_mark("%.1fs 受击 %d 伤" % [_elapsed(), _d]))
+		_mark("%.1fs 受击 %d 伤 seq=%d" % [_elapsed(), _d, _seq]))
 	NetBus.local_match_start.connect(_on_match_start)
 	NetBus.local_go_match.connect(_on_go_match)
 	# ★ 这里原先接住 worker 推来的三条开局载荷、缓存进 PvpSession.pending_*;那条推路径已整体换成进场拉取(对局场景 _ready 末尾自己 match_sync),pending_* 四字段连带 clear_pending_payloads() 一起删了。
