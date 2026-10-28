@@ -110,6 +110,49 @@ max_value = 1.0
 step = 0.05
 value = 0.7
 
+[node name="DisplayHeader" type="PanelContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1"]
+layout_mode = 2
+theme_type_variation = &"HeaderStrip"
+
+[node name="Title" type="Label" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1/DisplayHeader"]
+layout_mode = 2
+theme_type_variation = &"HeaderTitle"
+text = "显示"
+
+[node name="ResolutionRow" type="HBoxContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1"]
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="Title" type="Label" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1/ResolutionRow"]
+custom_minimum_size = Vector2(384, 0)
+layout_mode = 2
+theme_type_variation = &"Body"
+text = "窗口分辨率"
+vertical_alignment = 1
+
+[node name="ResolutionOption" type="OptionButton" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1/ResolutionRow"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_type_variation = &"BtnLegacyQuiet"
+tooltip_text = "窗口会按屏幕可用区域等比例缩小；游戏视野不变。"
+
+[node name="FullscreenRow" type="HBoxContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1"]
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="Title" type="Label" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1/FullscreenRow"]
+custom_minimum_size = Vector2(384, 0)
+layout_mode = 2
+theme_type_variation = &"Body"
+text = "全屏"
+vertical_alignment = 1
+
+[node name="FullscreenCheck" type="CheckButton" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1/FullscreenRow"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 0
+
 [node name="PanelContainer2" type="PanelContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1" unique_id=927921410]
 layout_mode = 2
 theme_type_variation = &"HeaderStrip"
@@ -143,7 +186,7 @@ theme_type_variation = &"HeaderStrip"
 [node name="Label1" type="Label" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1/PanelContainer3" unique_id=589992333]
 layout_mode = 2
 theme_type_variation = &"HeaderTitle"
-text = "联机显示"
+text = "战斗显示"
 
 [node name="HBoxContainer4" type="HBoxContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1" unique_id=760198556]
 layout_mode = 2
@@ -153,7 +196,7 @@ theme_override_constants/separation = 16
 custom_minimum_size = Vector2(384, 0)
 layout_mode = 2
 theme_type_variation = &"Body"
-text = "显示子弹尾迹(所有子弹)"
+text = "显示武器弹丸尾迹"
 vertical_alignment = 1
 
 [node name="TrajCheck" type="CheckButton" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1/HBoxContainer4" unique_id=1198323508]
@@ -170,7 +213,7 @@ theme_override_constants/separation = 16
 custom_minimum_size = Vector2(384, 0)
 layout_mode = 2
 theme_type_variation = &"Body"
-text = "显示敌方血量条"
+text = "显示其他玩家血量条"
 vertical_alignment = 1
 
 [node name="EnemyHpCheck" type="CheckButton" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1/HBoxContainer5" unique_id=80675034]
@@ -204,7 +247,7 @@ theme_override_constants/separation = 16
 custom_minimum_size = Vector2(384, 0)
 layout_mode = 2
 theme_type_variation = &"Body"
-text = "小地图显示敌方位置"
+text = "小地图显示其他玩家"
 vertical_alignment = 1
 
 [node name="MinimapEnemyCheck" type="CheckButton" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1/HBoxContainer7" unique_id=876565614]

@@ -19,10 +19,9 @@ globalThis.Io = (function () {
 
   function defaultFactory() {
     if (typeof Worker === 'undefined') {
-      throw new Error('Io: 本环境没有 Worker —— 编辑器只通过 HTTP 打开(规格 §4.9),' +
-                      'file:// 下没有 Worker。请用 serve.bat 起服务器再打开页面。');
+      throw new Error('Io: 浏览器不支持 Web Worker，请使用支持 Worker 的浏览器。');
     }
-    return new Worker('worker.js');
+    return new Worker(globalThis.CYRM_OFFLINE ? globalThis.CYRM_OFFLINE.workerUrl : 'worker.js');
   }
 
   // 单个编解码通道：管理 Worker 实例与在途请求映射

@@ -14,6 +14,9 @@ globalThis.Editor = (function () {
   };
 
   function $(id) { return document.getElementById(id); }
+  function mapRequest(url, options) {
+    return globalThis.CYRM_OFFLINE ? globalThis.CYRM_OFFLINE.request(url, options) : fetch(url, options);
+  }
   function nowMs() {
     return (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
   }
@@ -1316,7 +1319,7 @@ globalThis.Editor = (function () {
     if (needsV3Confirm(app.sourceFormat, v3Confirmed)) {
       var okGo = window.confirm(
         '原文件是 v3 文本,保存会把它转成 v4 二进制(不可逆)。\n' +
-        '游戏现在读不了 v4 —— 在期 E 把 map_format.gd 迁移过去之前,这个文件在游戏里会失效。\n' +
+        '当前游戏支持 v4；旧版编辑器可能无法再打开转换后的文件。\n' +
         (backupName ? ('保存前会先把原文备份到 ' + backupName + '。\n') : '') +
         '(本次会话不再询问)');
       if (!okGo) { status('已取消保存(磁盘上那份没有被碰过)'); return Promise.resolve(); }
@@ -2205,14 +2208,14 @@ globalThis.Editor = (function () {
         resolve({ width: img.width, height: img.height });
       };
       img.onerror = function () { reject(new Error('structure.png 加载失败')); };
-      img.src = 'structure.png';
+      img.src = globalThis.CYRM_OFFLINE ? globalThis.CYRM_OFFLINE.atlasUrl : 'structure.png';
     });
   }
 
   // ── 打开地图(拉字节 → 迁移/解码 → 挂到渲染器)──
   function openMap(name) {
     status('打开 ' + name + ' …');
-    return fetch('/api/map?p=' + encodeURIComponent(name))
+    return mapRequest('/api/map?p=' + encodeURIComponent(name))
       .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
       .then(function (buf) {
         // 字节先落在局部量里:解码成功之后才认领成 app.raw(见下一条注释)。
@@ -2245,7 +2248,7 @@ globalThis.Editor = (function () {
   }
 
   function putMapBytes(name, bytes) {
-    return fetch('/api/map?p=' + encodeURIComponent(name), {
+    return mapRequest('/api/map?p=' + encodeURIComponent(name), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: new Blob([bytes]),
@@ -2274,7 +2277,7 @@ globalThis.Editor = (function () {
 
   // ── 库列表 ──
   function refreshLibrary() {
-    return fetch('/api/maps').then(function (r) {
+    return mapRequest('/api/maps').then(function (r) {
       if (!r.ok) throw new Error('HTTP ' + r.status);
       return r.json();
     }).then(function (data) {
@@ -2282,7 +2285,7 @@ globalThis.Editor = (function () {
       if (!ul) return;
       ul.innerHTML = '';
       var rows = (data.maps || []).filter(function (mm) { return !isBackupName(mm.name); });
-      if (!rows.length) { ul.textContent = 'maps/ 下没有 .cyrm'; return; }
+      if (!rows.length) { ul.textContent = globalThis.CYRM_OFFLINE ? '打开地图文件或选择地图目录' : 'maps/ 下没有 .cyrm'; return; }
       rows.forEach(function (mm) {
         var li = document.createElement('li');
         li.className = 'lib-row';
@@ -2311,7 +2314,7 @@ globalThis.Editor = (function () {
     // 闸 3 没有降级路径 ⇒ 缺 Worker 时的唯一正确行为是把话说清楚(而不是静默退回主线程)
     if (!Io.workerAvailable()) {
       var b = $('boot-error');
-      if (b) { b.hidden = false; b.textContent = '本环境没有 Web Worker —— 请用 serve.bat 起服务器后打开 http://127.0.0.1:8777/(file:// 下没有 Worker)。'; }
+      if (b) { b.hidden = false; b.textContent = '浏览器不支持 Web Worker，请换用支持 Worker 的浏览器。源码版请通过 serve.bat 打开；离线版请打开 cyrm-editor.html。'; }
       return;
     }
     // onError 指到 ui 的 sink:渲染侧那条观察者(resize/fit/setView/… 的拒绝)与

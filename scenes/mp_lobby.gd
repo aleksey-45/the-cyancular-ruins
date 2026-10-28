@@ -4,7 +4,6 @@ extends LobbyPage
 # 界面自上而下包含顶栏（玩家昵称）、模式筛选与操作按钮、房间卡片网格以及底部状态栏。
 # 服务端各模式房间注册表通过并发查询在前端合并汇总显示。
 
-# ── 房卡网格布局参数 ──
 const PAGE_MARGIN := 76.0
 const CARD_COLUMNS := 4
 const CARD_GAP := 24.0
@@ -17,7 +16,6 @@ var _join_panel: PanelContainer = null
 var _join_code_edit: LineEdit = null
 var _join_invite_edit: LineEdit = null
 
-# ── 创建房间弹窗相关状态 ──
 var _create_panel: PanelContainer = null
 var _create_mask: ColorRect = null
 var _form_rows := {}
@@ -29,7 +27,6 @@ var _max_slider: HSlider = null
 var _time_slider: HSlider = null
 var _weapon_checks: Array[CheckButton] = []
 
-# ── 等待室面板相关状态 ──
 var _wait_panel: PanelContainer = null
 var _wait_title: Label = null
 var _wait_body: VBoxContainer = null
@@ -61,7 +58,6 @@ func _ready() -> void:
 		_set_filter(PvpSession.entry_mode)
 
 
-# ── 界面初始化与事件绑定 ──
 func _build_ui() -> void:
 	# 顶栏昵称输入框
 	var name_le: LineEdit = %NameEdit
@@ -252,7 +248,6 @@ func _redraw_cards() -> void:
 	_status.text = "共 %d 个房间(显示 %d 个;未满优先,对局中的照列)" % [total, shown]
 
 
-# ── 房卡组件构造 ──
 const MODE_COLOR := {
 	PvpSession.MODE_PVP: UiFactory.C_ACCENT,
 	PvpSession.MODE_TEAM: UiFactory.C_MODE_TEAM,
@@ -589,6 +584,7 @@ func _show_wait_room(state: Dictionary, mode: String) -> void:
 	if is_pvp:
 		_fill_flat_roster(plist, my_role, host_role)
 		_wait_count.text = "%d / 2 人" % plist.size()
+		_wait_count.text += "（由房主开始）" if plist.size() == 2 else "（等待对手加入）"
 	elif mode == PvpSession.MODE_ROYALE:
 		_fill_flat_roster(plist, my_role, host_role)
 		_wait_count.text = "%d / %d 人(至少 2 人可开局)" % [

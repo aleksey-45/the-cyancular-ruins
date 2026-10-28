@@ -7,7 +7,7 @@ extends Control
 
 const ACTION_NAMES := {
 	"left": "左移", "right": "右移", "up": "跳跃/上爬", "down": "下蹲/下落",
-	"charge": "冲刺", "attack": "开火", "R": "重开(单机)",
+	"charge": "冲刺", "attack": "开火", "R": "换弹/重开",
 	"F": "拾取", "Q": "丢弃(长按)",
 	# 按键动作映射表
 	"rewind": "时间回溯", "haste": "时间加速",
@@ -31,10 +31,24 @@ var _bind_buttons: Dictionary = {}   # action -> Button
 @onready var _minimap: CheckButton = %MinimapCheck
 @onready var _minimap_enemy: CheckButton = %MinimapEnemyCheck
 @onready var _bind_grid: GridContainer = %BindGrid
+@onready var _resolution: OptionButton = %ResolutionOption
+@onready var _fullscreen: CheckButton = %FullscreenCheck
 
 
 func _ready() -> void:
-	# ── 音量设置 ──（滑条调节不播放音效，
+	for resolution in Settings.DISPLAY_RESOLUTIONS:
+		_resolution.add_item("%d × %d" % [resolution.x, resolution.y])
+	_resolution.select(Settings.DISPLAY_RESOLUTIONS.find(Settings.display_resolution))
+	_resolution.disabled = Settings.display_fullscreen
+	_resolution.item_selected.connect(func(index: int) -> void:
+		Settings.display_resolution = Settings.DISPLAY_RESOLUTIONS[index]
+		Settings.apply_display()
+		Settings.save())
+	_check(_fullscreen, Settings.display_fullscreen, func(on: bool) -> void:
+		Settings.display_fullscreen = on
+		_resolution.disabled = on
+		Settings.apply_display()
+		Settings.save())
 	#   与键位按钮那一档不同 —— 切勿随意给滑条补一个点击音)
 	_slider(_master, Settings.master_volume, func(v: float) -> void:
 		Settings.master_volume = v
@@ -43,7 +57,6 @@ func _ready() -> void:
 		Settings.sfx_volume = v
 		Settings.save())
 
-	# ── 通用 / 联机显示 ──
 	# 先设置初始值再连接信号，避免初始化触发额外反馈
 	_check(_wheel, Settings.wheel_switch, func(on: bool) -> void:
 		Settings.wheel_switch = on
@@ -63,7 +76,6 @@ func _ready() -> void:
 
 	_fill_bind_grid()
 
-	# ── 底部动作 ──
 	# 恢复默认设置确认
 	%ResetBtn.pressed.connect(func() -> void:
 		Sfx.play("ui")   # 点击音由各 handler 自己出(UiFactory.button 不代挂,防同帧双响)
@@ -85,7 +97,6 @@ func _check(cb: CheckButton, on: bool, on_toggle: Callable) -> void:
 		on_toggle.call(v))
 
 
-# ── 键位映射表 ──
 func _fill_bind_grid() -> void:
 	for action in Settings.REMAPPABLE_ACTIONS:
 		var name_l := Label.new()
@@ -102,6 +113,8 @@ func _fill_bind_grid() -> void:
 		bind_btn.theme_type_variation = &"BtnLegacy"
 		bind_btn.custom_minimum_size = Vector2(BIND_BTN_W, ROW_H)
 		bind_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		if action == "R":
+			bind_btn.tooltip_text = "存活时换弹；单人模式倒地后重开关卡。"
 		bind_btn.pressed.connect(func() -> void: _begin_capture(action, bind_btn))
 		_bind_grid.add_child(bind_btn)
 		_bind_buttons[action] = bind_btn
@@ -126,7 +139,6 @@ func _unhandled_input(event: InputEvent) -> void:
 			_go_back()
 
 
-# ── 键位捕获 ──
 func _begin_capture(action: String, btn: Button) -> void:
 	Sfx.play("ui")
 	_cancel_capture()
