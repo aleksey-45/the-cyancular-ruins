@@ -1,14 +1,10 @@
 class_name MazeGenerator
 extends RefCounted
 
-# 地图与网格管理：负责选定地图路径与维护当前网格全局状态，具体格式与几何寻路分别委托给：
-#   - MapFormat (core/sim/map_format.gd)：.cyrm 格式解析、序列化与出生点元数据；
-#   - GridPathfinder (core/sim/grid_pathfinder.gd)：环面距离计算、地面检测与寻路。
-# 本类保留既有兼容接口供外部调用，具体实现委托至对应专门类。
+# 地图选择与查询入口；运行时数据由 NativeTerrain 持有。
 
 const MAP_DIR: String = "res://maps"
 
-# ── 地图文件(.cyrm)──
 # 优先读取可执行文件同级目录的 .cyrm 自定义地图，若无则从 res://maps/ 随机选取。
 # 选中的地图在会话内保持，保证各处查询一致。
 static var _picked_map: String = ""
@@ -40,13 +36,11 @@ static func _random_cyrm(dir: String) -> String:
 		return ""
 	return maps[randi() % maps.size()]
 
-# 当前关卡网格(level_0._ready 赋值;空网格时寻路一律视为无路)。
-static var current_grid: Array[Array] = []
-
-# 当前关卡的 16px 子格纹理表（cyrm v4 格式：逻辑层读取 64px current_grid，物理与渲染层读取此子格表）。
-# 由 WorldBuilder.load_grid 与 current_grid 一起装填;空 = 调用方自行从格级展开。
-static var current_subgrid: Array[Array] = []
-
+# 快照只读。装载新地图使用 TileDefs.load_terrain()。
+static var current_grid: Array[Array]:
+	get: return TileDefs.terrain.get_grid_snapshot()
+static var current_subgrid: Array[Array]:
+	get: return TileDefs.terrain.get_subgrid_snapshot()
 
 # 转发至 MapFormat：瓦片网格编解码
 const EMPTY: int = MapFormat.EMPTY
@@ -99,7 +93,6 @@ static func cell_of(pos: Vector2, ts: int, cols: int, rows: int) -> Vector2i:
 	return GridPathfinder.cell_of(pos, ts, cols, rows)
 
 
-# ── 转发:地板格与寻路(GridPathfinder,网格取会话的 current_grid)──
 static func is_floor_cell(grid: Array, cell: Vector2i) -> bool:
 	return GridPathfinder.is_floor_cell(grid, cell)
 
@@ -111,4 +104,4 @@ static func astar_path_nearest(from_cell: Vector2i, to_cell: Vector2i, max_visit
 	return GridPathfinder.astar_path_nearest(current_grid, from_cell, to_cell, max_visit, passable_pred, max_search_dist)
 
 static func has_line_of_sight(from_cell: Vector2i, to_cell: Vector2i) -> bool:
-	return GridPathfinder.has_line_of_sight(current_grid, from_cell, to_cell)
+	return TileDefs.terrain.line_of_sight_cells(from_cell, to_cell)

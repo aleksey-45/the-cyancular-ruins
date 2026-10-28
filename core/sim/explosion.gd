@@ -2,10 +2,10 @@ class_name Explosion
 extends RefCounted
 
 # 爆炸 AoE 判定:分段衰减 + 遮挡检测 + 友伤。纯静态,冒烟测试可直接调用。
-const INNER_FRACTION: float = 0.4  # 内圈半径比例,内圈内满伤
+const INNER_FRACTION: float = TileDefs.BLAST_INNER_FRACTION  # 内圈半径比例,内圈内满伤
 const BLOCKED_FRACTION: float = 0.75  # 墙后(LOS 遮挡)伤害/击退保留比例
 
-static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knockback: float, shooter: Node = null) -> void:
+static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knockback: float, shooter: Node = null, impact_id: int = 0) -> void:
 	var tree := _tree()
 	var grid := MazeGenerator.current_grid
 	var has_grid := not grid.is_empty()
@@ -18,7 +18,7 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 		# 遮挡(墙后)= 部分掩体;内圈免疫遮挡(见 cover_multiplier 注释)
 		var blocked := has_grid and not _has_los(center, e as Node2D, grid)
 		var cover := cover_multiplier(d, radius, blocked)
-		var wmult := Water.water_mult((e as Node2D).global_position, grid)  # 目标在水里:×水格 decay
+		var wmult := Water.water_mult((e as Node2D).global_position)  # 目标在水里:×水格 decay
 		var dmg := _falloff(d, radius, max_damage) * cover * wmult
 		if dmg <= 0:
 			continue
@@ -33,23 +33,19 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 		if not (p is Node2D):
 			continue
 		var pp := p as Node2D
-		if first_player == null:
+		if first_player == null and pp.authority_world == null:
 			first_player = pp
 			_cam_shake(center, radius, pp)
 		if not pp.has_method("take_hit"):
 			continue
 		if pp.has_method("is_downed") and pp.is_downed():
 			continue
-		var d := _dist(center, pp.global_position)
-		if d <= radius:
-			# 同敌人:内圈免疫遮挡衰减
-			var blocked := has_grid and not _has_los(center, pp, grid)
-			var mult := cover_multiplier(d, radius, blocked)
-			mult *= Water.water_mult(pp.global_position, grid)  # 目标在水里:×0.25
-			var amount := int(_falloff(d, radius, max_damage) * mult)
-			var knock := _falloff(d, radius, max_knockback) * mult
+		var effect := player_effect(center, radius, max_damage, max_knockback, pp)
+		if not effect.is_empty():
+			var amount: int = effect["damage"]
+			var knock: float = effect["knock"]
 			if pp.authority_world != null:
-				pp.authority_world.damage(shooter.role if shooter != null else 0, pp.role, center, amount, true, knock)
+				pp.authority_world.damage(shooter.role if shooter != null else 0, pp.role, center, amount, true, knock, impact_id, 2)
 			else:
 				if shooter == pp:
 					CombatFeedback.note_self_hit(pp)
@@ -59,41 +55,25 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 	if has_grid:
 		_damage_tiles(center, radius, max_damage, shooter)
 
-# 扫描爆炸范围内的可破坏瓦片（纯几何查询，不修改世界状态）。
-# 返回 [{cell: Vector2i, pos: Vector2(格中心), tex: int, d: float(到爆心的环面距离)}]。
-# 供权威端伤害结算与表现层碎屑粒子生成共用。
-static func destructible_subs(center: Vector2, radius: float) -> Array:
-	# 爆炸按 16px 子格精度扫描并结算伤害，产生平滑的圆形弹坑。
-	# 返回 [{sub: Vector2i, pos: Vector2(子格中心), tex: int, d: float(到爆心的环面距离)}]。
-	var out: Array = []
-	var sgrid := MazeGenerator.current_subgrid
-	if sgrid.is_empty():
-		return out
-	var sc: int = sgrid[0].size()
-	var sr: int = sgrid.size()
-	var csub := Vector2i(posmod(int(center.x) / 16, sc), posmod(int(center.y) / 16, sr))
-	var reach := ceili(radius / 16.0) + 1
-	for dy in range(-reach, reach + 1):
-		for dx in range(-reach, reach + 1):
-			var sx := posmod(csub.x + dx, sc)
-			var sy := posmod(csub.y + dy, sr)
-			var tex: int = sgrid[sy][sx]
-			if tex == 0 or not TileDefs.explosion_destroyable(tex):
-				continue
-			var pos := Vector2(sx * 16.0 + 8.0, sy * 16.0 + 8.0)
-			var d := _dist(center, pos)
-			if d > radius:
-				continue
-			out.append({"sub": Vector2i(sx, sy), "pos": pos, "tex": tex, "d": d})
-	return out
+static func player_effect(center: Vector2, radius: float, damage: int, knockback: float, player: Node2D) -> Dictionary:
+	var d := _dist(center, player.global_position)
+	if d > radius:
+		return {}
+	var grid := MazeGenerator.current_grid
+	var blocked := not grid.is_empty() and not _has_los(center, player, grid)
+	var mult := cover_multiplier(d, radius, blocked) * Water.water_mult(player.global_position)
+	return {"damage": int(_falloff(d, radius, damage) * mult), "knock": _falloff(d, radius, knockback) * mult}
+
+# 扫描爆炸范围内存活的可破坏子格，供伤害结算与碎屑发射点共用。
+static func destructible_subs(center: Vector2, radius: float, include_destroyed: bool = false) -> Array:
+	return TileDefs.terrain.destructible_subs(center, radius, include_destroyed)
 
 
 static func _damage_tiles(center: Vector2, radius: float, max_damage: int, owner: Node = null) -> void:
-	for e in destructible_subs(center, radius):
-		var dmg := int(_falloff(float(e["d"]), radius, max_damage) * TileDefs.explosion_decay())
-		if dmg <= 0:
-			continue
-		TileDefs.damage_sub(e["sub"], dmg, "explosion", owner)
+	TileDefs.terrain.damage_blast(center, radius, max_damage, TileDefs.owner_role(owner))
+
+static func sub_damage(entry: Dictionary, radius: float, max_damage: int) -> int:
+	return int(_falloff(float(entry["d"]), radius, max_damage) * TileDefs.explosion_decay())
 
 
 # 静态函数取场景树:全局 get_tree() 在 static 上下文不可用,走主循环。

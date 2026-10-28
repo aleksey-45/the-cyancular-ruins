@@ -19,7 +19,7 @@ static var entry_mode := ""
 static var baseline: Dictionary = {}
 static var room: Dictionary = {}
 static var loading_match := false
-static var terrain_events: Array = []
+static var match_events: Array = []
 
 static func can_rejoin() -> bool:
 	return not token.is_empty() and not room_code.is_empty()
@@ -44,4 +44,4 @@ static func reset() -> void:
 	entry_mode = ""
 	baseline.clear()
 	loading_match = false
-	terrain_events.clear()
+	match_events.clear()

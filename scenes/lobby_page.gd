@@ -7,7 +7,6 @@ extends Control
 const LocalServer := preload("res://core/net/local_server.gd")
 const Tunnel := preload("res://core/net/tunnel.gd")
 
-# ── 共享状态 ──
 var _status: Label
 var _room_code := ""
 var _code_edit: LineEdit = null
@@ -21,8 +20,9 @@ var _rejoin_sent_ms := 0
 # 初始化大厅通用信号接线与字体设置
 func _finish_lobby_ready() -> void:
 	NetBus.event_received.connect(_on_net_event)
-	multiplayer.connected_to_server.connect(_on_lobby_connected)
-	multiplayer.connection_failed.connect(_on_lobby_connect_failed)
+	NetBus.connected_to_server.connect(_on_lobby_connected)
+	NetBus.connection_failed.connect(_on_lobby_connect_failed)
+	NetBus.protocol_error.connect(_on_protocol_error)
 	UiFactory.apply_font_recursive(self)
 	if NetBus.can_send_to_server():
 		_connected = true
@@ -53,14 +53,22 @@ func _on_net_event(_peer: int, kind: int, data: Variant) -> void:
 			PvpSession.beta_mode = data["options"].get("beta", false)
 			PvpSession.loading_match = true
 			_enter_match_scene()
-		NetEvent.Kind.TERRAIN:
+		NetEvent.Kind.TERRAIN, NetEvent.Kind.BULLET_SPAWN, NetEvent.Kind.BULLET_REWIND, NetEvent.Kind.EXPLOSION, NetEvent.Kind.BULLET_FUSE, \
+		NetEvent.Kind.BULLET_END, NetEvent.Kind.HIT, NetEvent.Kind.BEAM, NetEvent.Kind.TIME_REWARD:
 			if PvpSession.loading_match:
-				PvpSession.terrain_events.append(data)
+				PvpSession.match_events.append([kind, data])
 
 func _exit_tree() -> void:
 	NetBus.event_received.disconnect(_on_net_event)
-	multiplayer.connected_to_server.disconnect(_on_lobby_connected)
-	multiplayer.connection_failed.disconnect(_on_lobby_connect_failed)
+	NetBus.connected_to_server.disconnect(_on_lobby_connected)
+	NetBus.connection_failed.disconnect(_on_lobby_connect_failed)
+	NetBus.protocol_error.disconnect(_on_protocol_error)
+
+func _on_protocol_error(message: String) -> void:
+	_lobby_start_ms = 0
+	_connected = false
+	_pending_action = Callable()
+	_status.text = message
 
 func _on_room(_state: Dictionary) -> void:
 	pass
@@ -150,7 +158,6 @@ func _on_server_message(t: String) -> void:
 	_status.text = t
 
 
-# ── 进入对局会话 ──
 
 
 
@@ -225,7 +232,7 @@ func _ensure_own_server() -> bool:
 	PvpSession.server_address = "127.0.0.1"
 	var port: int = await LocalServer.launch_and_connect()
 	if port <= 0:
-		_status.text = "启动本机服务器失败(检查 Cyancular Ruins Server.exe 与端口)"
+		_status.text = "启动本机服务器失败，请检查日志"
 		return false
 	PvpSession.server_port = port
 	_connected = true
@@ -260,7 +267,7 @@ func _join_with_code(code: String, action: Callable) -> void:
 		_connected = false
 		_status.text = "正在切换到房间 %s 所在的网络…" % code
 	else:
-		_status.text = "正在加入房间 %s 的网络,打洞中…" % code
+		_status.text = "正在连接房间 %s 的网络…" % code
 	var got: Dictionary = await Tunnel.start_client(code)
 	if got.is_empty():
 		_status.text = ("找不到房间 %s —— 可能是:房主已关房、码敲错了、"
@@ -273,7 +280,6 @@ func _join_with_code(code: String, action: Callable) -> void:
 	_with_lobby(action)
 
 
-# ── 房间码界面显示 ──
 func _update_code_label() -> void:
 	if _code_edit == null:
 		return
@@ -297,7 +303,6 @@ func _set_room_entered_status(code: String, is_host: bool) -> void:
 			else ("房间 %s 已创建;%s" % [code, no_relay])
 
 
-# ── 子类虚函数 ──
 
 func _send_list_request() -> void:
 	push_error("LobbyPage: 子类必须覆写 _send_list_request()")
@@ -308,7 +313,6 @@ func _player_options() -> Dictionary:
 	return {}
 
 
-# ── Beta 模式时间规则参数配置 ──
 var time_rules := TimeRules.new()
 
 
@@ -363,7 +367,6 @@ func _beta_payload() -> Dictionary:
 	return {"beta": true, "time": time_rules.to_dict()}
 
 
-# ── 地图选择器配置 ──
 func _add_map_picker(vb: VBoxContainer) -> void:
 	var picker := MapPicker.new()
 	vb.add_child(picker)
@@ -382,7 +385,6 @@ func _enter_match_scene() -> void:
 	push_error("LobbyPage: 子类必须覆写 _enter_match_scene()")
 
 
-# ── 子类可选钩子 ──
 
 func _lobby_action_allowed() -> bool:
 	return true

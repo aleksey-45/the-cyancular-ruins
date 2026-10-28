@@ -8,13 +8,12 @@ extends WeaponBase
 # - _apply_beam_damage(pts, contacts, hit_points)：伤害与地形破坏结算
 # - _spawn_beam_visual(pts) / _beam_style()：视觉光束渲染风格
 #
-# 多人对战模式下，客户端仅渲染光束视觉，伤害结算由服务端权威执行并广播。
+# 多人对战的已知光束参与客户端击退预测，伤害由服务端结算。
 
 const BeamTrace := preload("res://core/sim/beam_trace.gd")
 const TileHitFx := preload("res://scenes/effects/tile_hit_fx.gd")
 const LaserVisual := preload("res://core/present/laser_visual.gd")
 
-# ── 光束参数 ──
 # 判定宽度半径（像素）
 @export var beam_half_width: float = 18.0
 # 光束视觉残留时长（秒）
@@ -27,7 +26,6 @@ const HIT_MULT: float = 1.75
 
 enum BeamStyle { FLASH = 0 }
 
-# ── 激光开火处理（重写 WeaponBase._spawn_projectiles）──
 func _spawn_projectiles(action: Dictionary) -> void:
 	var origin: Vector2 = action["pos"]
 	var dir: Vector2 = action["dir"].normalized()
@@ -70,7 +68,6 @@ func _apply_beam_damage(pts: PackedVector2Array, contacts: Array, hit_points: Pa
 	_damage_path_targets(pts)
 	_damage_tiles(contacts, hit_points)
 
-# ── 网络上报 ──
 var pending_beam_report: Dictionary = {}
 
 func _report_beam_fired(pts: PackedVector2Array) -> void:
@@ -116,26 +113,24 @@ func _damage_path_targets(pts: PackedVector2Array) -> void:
 	var w := GameParameters.MAP_WIDTH
 	var h := GameParameters.MAP_HEIGHT
 	var corridor := beam_half_width * HIT_MULT
-	var hit := {}
-	for i in range(pts.size() - 1):
-		var a := pts[i]
-		var b := pts[i + 1]
-		for tg in targets:
-			var t: Node = tg[0]
-			if hit.has(t):
-				continue
-			var is_enemy: bool = tg[1]
-			var n := t as Node2D
-			var body := _body_rect(n, a, w, h)
-			var c := body.get_center()
-			var near := _segment_rect_hit(a, b, body.grow(corridor))
-			if near.x == INF:
-				continue
-			hit[t] = true
-			if is_enemy:
-				_apply_to_enemy(t, c, near)
-			else:
-				_apply_to_player(t, c, near)
+	for tg in targets:
+		var target: Node2D = tg[0]
+		var rect := _body_rect(target, pts[0], w, h)
+		var near := path_contact(pts, rect, corridor)
+		if near.x == INF: continue
+		if tg[1]:
+			_apply_to_enemy(target, rect.get_center(), near)
+		else:
+			_apply_to_player(target, rect.get_center(), near)
+
+static func path_contact(points: PackedVector2Array, rect: Rect2, corridor: float) -> Vector2:
+	for i in range(points.size() - 1):
+		var center := GridPathfinder.anchor_to_nearest(rect.get_center(), points[i],
+				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+		var anchored := Rect2(center - rect.size * 0.5, rect.size)
+		var near := _segment_rect_hit(points[i], points[i + 1], anchored.grow(corridor))
+		if near.x != INF: return near
+	return Vector2(INF, 0.0)
 
 # 获取目标在环面世界中的 AABB 包围盒（锚定至距起点最近的副本位置）
 func _body_rect(n: Node2D, near_to: Vector2, w: float, h: float) -> Rect2:
@@ -185,7 +180,8 @@ func _apply_to_enemy(t: Node, pos: Vector2, near: Vector2) -> void:
 
 func _apply_to_player(target: Node, _pos: Vector2, hit: Vector2) -> void:
 	if player.authority_world != null:
-		player.authority_world.damage(player.role, target.role, hit, damage, false, impact)
+		player.authority_world.damage(player.role, target.role, hit, damage, false, impact,
+				(player.role << 48) | (player.shot_serial << 8), 1)
 	else:
 		CombatFeedback.attribute_hit(target, player)
 		target.take_hit(hit, damage, false, impact)

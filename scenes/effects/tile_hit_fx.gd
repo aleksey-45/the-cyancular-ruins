@@ -13,20 +13,41 @@ static func _texture() -> Texture2D:
 	return _tex
 
 
-# 在 parent 节点（通常为世界 Viewport）的指定全局坐标 at 播放受击碎屑特效。
-# 根据 texture_id 映射碎屑色相（如树叶绿色、树干棕色等）。
-static func spawn(parent: Node, at: Vector2, texture_id: int) -> void:
-	if parent == null:
-		return
-	var color := Color(0.6, 0.6, 0.6)
+static func _color(texture_id: int) -> Color:
 	if texture_id >= 15 and texture_id <= 18:
-		color = Color(0.413, 0.701, 0.57, 1.0)     # 树叶碎片
-	elif texture_id >= 19 and texture_id <= 20:
-		color = Color(0.301, 0.398, 0.43, 1.0)   # 树干碎片
+		return Color(0.413, 0.701, 0.57, 1.0)
+	if texture_id >= 19 and texture_id <= 20:
+		return Color(0.301, 0.398, 0.43, 1.0)
+	return Color(0.6, 0.6, 0.6)
+
+static func spawn(parent: Node, at: Vector2, texture_id: int) -> void:
+	var p := _particles(at, 10)
+	p.color = _color(texture_id)
+	parent.add_child(p)
+	p.finished.connect(p.queue_free)
+
+static func spawn_explosion(parent: Node, center: Vector2, radius: float) -> void:
+	var cells := Explosion.destructible_subs(center, radius)
+	if cells.is_empty():
+		return
+	var points := PackedVector2Array()
+	var colors := PackedColorArray()
+	for cell: Dictionary in cells:
+		points.append(MazeGenerator.toroidal_delta_px(center, cell["pos"],
+				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT))
+		colors.append(_color(cell["tex"]))
+	var p := _particles(center, cells.size() * 10)
+	p.emission_shape = CPUParticles2D.EMISSION_SHAPE_POINTS
+	p.emission_points = points
+	p.emission_colors = colors
+	parent.add_child(p)
+	p.finished.connect(p.queue_free)
+
+static func _particles(at: Vector2, amount: int) -> CPUParticles2D:
 	var p := CPUParticles2D.new()
 	p.texture = _texture()
 	p.position = at
-	p.amount = 10
+	p.amount = amount
 	p.lifetime = 0.4
 	p.one_shot = true
 	p.explosiveness = 1.0
@@ -37,8 +58,4 @@ static func spawn(parent: Node, at: Vector2, texture_id: int) -> void:
 	p.initial_velocity_max = 120.0
 	p.scale_amount_min = 1.0
 	p.scale_amount_max = 2.0
-	p.color = color
-	parent.add_child(p)
-	var tree := parent.get_tree()
-	if tree != null:
-		tree.create_timer(p.lifetime + 0.1).timeout.connect(p.queue_free)
+	return p

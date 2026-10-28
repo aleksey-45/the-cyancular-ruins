@@ -63,9 +63,10 @@ func tick(world: Node, delta: float) -> void:
 		var player: Node2D = world.players[role]
 		if not player.is_downed() or world._round_state != NetEvent.RoundState.PLAYING:
 			continue
-		if player.respawn_left > 0:
+		if player.respawn_tick > 0:
 			continue
-		player.respawn_left = 2.0
+		player.respawn_tick = world._snap_tick + 120
+		GameLog.record("respawn_scheduled", {"tick": world._snap_tick, "role": role, "respawn_tick": player.respawn_tick})
 		world._drop_all_but_one(player, role)
 		var killer: int = world.killer_for(player)
 		var scorer := killer
@@ -94,10 +95,8 @@ func tick(world: Node, delta: float) -> void:
 		NetEvent.RoundState.PLAYING:
 			for role in world.players:
 				var player: Node2D = world.players[role]
-				if player.respawn_left > 0:
-					player.respawn_left -= delta
-					if player.respawn_left <= 0:
-						world.respawn(role)
+				if player.respawn_tick > 0 and world._snap_tick >= player.respawn_tick:
+					world.respawn(role)
 			if mode == PvpSession.MODE_ROYALE:
 				match_time -= delta
 				hud_time -= delta

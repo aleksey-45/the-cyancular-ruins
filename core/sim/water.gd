@@ -13,35 +13,10 @@ static func is_liquid(texture: int) -> bool:
 
 
 static func is_in_water(pos: Vector2) -> bool:
-	var grid := MazeGenerator.current_grid
-	if grid.is_empty():
-		return false
-	var c := MazeGenerator.cell_of(pos, TILE_TS, grid[0].size(), grid.size())
-	var v: int = grid[c.y][c.x]
-	return v != 0 and is_liquid(MazeGenerator.texture_of(v))
+	return TileDefs.terrain.water(pos)
 
-
-# 沿所在列向上扫描连续水体网格，返回水面顶边的 Y 坐标（像素单位）；若目标点不在水中则返回原始坐标 pos.y。
 static func surface_y_at(pos: Vector2) -> float:
-	var grid := MazeGenerator.current_grid
-	if grid.is_empty():
-		return pos.y
-	var cols := grid[0].size()
-	var rows := grid.size()
-	var c := MazeGenerator.cell_of(pos, TILE_TS, cols, rows)
-	if not is_in_water(pos):
-		return pos.y
-	var top := c.y
-	var y := c.y
-	while true:
-		var above := posmod(y - 1, rows)
-		var v: int = grid[above][c.x]
-		if v != 0 and is_liquid(MazeGenerator.texture_of(v)):
-			top = above
-			y = above
-		else:
-			break
-	return float(top * TILE_TS)
+	return TileDefs.terrain.water_surface(pos)
 
 
 # 完全浸水（完全没入水中）判定：当身体中心低于水面高度时判定为完全浸水（正常漂浮时中心接近水面线，不计为完全没入水中）。
@@ -50,17 +25,8 @@ static func submerged(center: Vector2, surface_y: float) -> bool:
 
 
 # 计算水体环境下的爆炸衰减：若目标处于水体中，爆炸伤害与击退按水格的 explosion_decay（0.25）保留，否则为 1.0。
-static func water_mult(pos: Vector2, grid: Array[Array]) -> float:
-	if grid.is_empty():
-		return 1.0
-	var c := MazeGenerator.cell_of(pos, TILE_TS, grid[0].size(), grid.size())
-	var v: int = grid[c.y][c.x]
-	if v == 0:
-		return 1.0
-	var tex: int = MazeGenerator.texture_of(v)
-	if is_liquid(tex):
-		return TileDefs.explosion_decay_of(tex)
-	return 1.0
+static func water_mult(pos: Vector2) -> float:
+	return TileDefs.terrain.water_multiplier(pos)
 
 
 # 子弹水中速度阻力系数(纯函数,-s 可测):在水里返回 exp(-drag·Δt),否则 1.0。

@@ -1,44 +1,23 @@
 class_name LocalServer
 extends RefCounted
 
-const SERVER_EXE := "Cyancular Ruins Server.exe"
 const PROBE_TIMEOUT := 10.0
 static var restarting := false
 static var _owned_pid := 0
 
-# 向系统要一个 UDP 端口，关闭探测 socket 后交给实际服务端。
-static func _pick_free_port() -> int:
-	var probe := PacketPeerUDP.new()
-	if probe.bind(0, "127.0.0.1") != OK:
-		return 0
-	var port := probe.get_local_port()
-	probe.close()
-	return port
-
-static func find_server_exe() -> String:
-	if OS.has_feature("editor") or OS.has_feature("macos"):
-		return OS.get_executable_path()
-	var path := OS.get_executable_path().get_base_dir().path_join(SERVER_EXE)
-	return path if FileAccess.file_exists(path) else ""
-
 static func launch_and_connect() -> int:
+	var started := Time.get_ticks_msec()
 	stop_owned()
-	var exe := find_server_exe()
-	if exe.is_empty():
-		push_error("请把 %s 和客户端放在同一目录" % SERVER_EXE)
-		return -1
-	var port := _pick_free_port()
+	var exe := OS.get_executable_path()
+	var port := NetBus.pick_free_port()
 	if port == 0:
 		return -1
-	var args := PackedStringArray()
+	var args := PackedStringArray(["--headless"])
 	if OS.has_feature("editor"):
-		args.append_array(["--headless", "--path", ProjectSettings.globalize_path("res://"), "res://server/server_main.tscn"])
-	elif OS.has_feature("macos"):
-		args.append("--headless")
-	args.append("--")
-	if OS.has_feature("macos") and OS.has_feature("template"):
-		args.append("--server")
+		args.append_array(["--path", ProjectSettings.globalize_path("res://"), "res://server/server_main.tscn"])
+	args.append_array(["--", "--server"])
 	args.append_array(["--port", str(port)])
+	args.append_array(["--game-log-dir", GameLog.log_dir()])
 	restarting = true
 	var generation := NetSession.generation
 	_owned_pid = NetSession.launch(exe, args)
@@ -49,6 +28,7 @@ static func launch_and_connect() -> int:
 		return -1
 	restarting = false
 	if ready:
+		GameLog.record("local_server_ready", {"pid": _owned_pid, "port": port, "duration_ms": Time.get_ticks_msec() - started})
 		print("[LocalServer] SERVER READY pid=%d port=%d" % [_owned_pid, port])
 		return port
 	NetBus.stop()

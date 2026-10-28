@@ -3,7 +3,7 @@ extends RefCounted
 
 # 世界时空回溯系统：定频快照环形缓冲区与状态回放器，负责关键实体状态的定频记录与倒流回放。
 #
-# 架构设计：与 TileLedger 场景瓦片破坏账本协同工作，本模块负责实体状态回溯：
+# 架构设计：与 NativeTerrain 的地形历史协同工作，本模块负责实体状态回溯：
 #   - record()：常态下以定频（TimeParams.SNAP_HZ）记录关键实体状态（玩家、普通敌人、子弹）。
 #   - step()：回溯激活时沿时间轴逆序回放，一次性还原实体的物理状态与子弹位置。
 #   - 精英敌人豁免：精英单位不受回溯影响，保持自主行为。
@@ -17,7 +17,7 @@ var _frames: Array = []            # [{t, player:{...}, enemies:[...], bullets:[
 var _t := 0.0                      # 世界已录制时间(秒)
 var _acc := 0.0
 var _cursor := 0.0
-var _replay_bullets: Array = []    # 回放用子弹节点(与当前应用帧的 bullets 下标对应)
+var _replay_bullets: Dictionary = {}  # 历史 ID -> 回放对象，避免按下标串用不同弹丸
 var _parent: Node = null           # 回放子弹的挂载父节点(通常 WorldViewport)
 
 
@@ -25,7 +25,6 @@ func _init(parent: Node = null) -> void:
 	_parent = parent
 
 
-# ── 录制(正常流逝)────────────────────────────────────────────
 
 func record(delta: float, player: Node, enemies: Array, bullets: Array) -> void:
 	if player == null or not is_instance_valid(player):
@@ -51,55 +50,24 @@ func record(delta: float, player: Node, enemies: Array, bullets: Array) -> void:
 	for b in bullets:
 		if not is_instance_valid(b):
 			continue
-		var sh = b.get("shooter")
-		# 引信/射程状态(爆炸弹"还剩多久炸")。不进快照 → 回溯重建的榴弹退回未点燃 →
-		# 在错误时刻爆炸 + 松手贴脸起爆(见 BulletBase.rewind_state 的注释)。
-		var fuse_state: Dictionary = b.call("rewind_state") if b.has_method("rewind_state") else {}
+		var bullet: BulletBase = b
+		var sh := bullet.shooter
 		pb.append({
-			"sp": str(b.get_meta("scene_path", "")),
-			"p": (b as Node2D).global_position,
-			"v": b.get("velocity_vec"),
+			# 重建后继续携带原历史 ID，二次录制与回溯仍对应同一颗弹丸。
+			"id": int(bullet.get_meta("rewind_id", bullet.get_instance_id())),
+			"sp": str(bullet.get_meta("scene_path", "")),
 			"from_player": sh != null and sh is Node and (sh as Node).is_in_group("player"),
-			"dmg": int(b.get("hit_damage")),
-			"impact": float(b.get("hit_impact")),
-			"fuse": fuse_state,
+			"state": bullet.rewind_state(),
 		})
 	_frames.append({
 		"t": _t,
-		"player": _snapshot_player(player),
+		"player": player.capture_state(true),
 		"enemies": pe,
 		"bullets": pb,
 	})
 	var cutoff := _t - TimeParams.SNAP_SECONDS
 	while _frames.size() > 1 and float(_frames[0]["t"]) < cutoff:
 		_frames.pop_front()
-
-
-func _snapshot_player(player: Node) -> Dictionary:
-	var d := {
-		"p": (player as Node2D).global_position,
-		"v": player.get("velocity"),
-		"hp": int(player.get("hp")),
-		"facing": int(player.get("facing_direction")),
-		"downed": player.has_method("is_downed") and player.is_downed(),
-		"wslot": 0, "widx": -1, "wmags": [], "wlive": -1,
-	}
-	var wc = player.get("weapons")
-	if wc == null:
-		return d
-	# 记录武器类型编号与槽位索引，保持武器状态快照与恢复逻辑的字段一致性
-	d["wslot"] = int(wc.get("_current_type"))
-	d["widx"] = int(wc.get("_current_index"))
-	var inv = wc.get("inventory")
-	if inv != null:
-		var mags: Array = []
-		for e in inv.get("held"):
-			mags.append(int(e.get("mag")))
-		d["wmags"] = mags
-	var live = wc.call("current_weapon") if wc.has_method("current_weapon") else null
-	if live != null and is_instance_valid(live):
-		d["wlive"] = int(live.get("mag_ammo"))
-	return d
 
 
 func begin() -> void:
@@ -164,45 +132,38 @@ func _apply(f: Dictionary, player: Node) -> void:
 	_apply_bullets(f["bullets"], player)
 
 
-## 子弹:按快照帧重建(不足则实例化,多余则隐藏)。回放期间子弹由本函数摆位,
-## 实体侧靠 TimeField 冻结;退出回溯后它们恢复为活弹继续飞。
+## 单人以目标帧决定对象集合；创建/回收在管理器处理，状态恢复复用弹丸公共接口。
 func _apply_bullets(list: Array, player: Node) -> void:
-	while _replay_bullets.size() < list.size():
-		var meta: Dictionary = list[_replay_bullets.size()]
-		var sp := str(meta["sp"])
-		var nb: Node = null
-		if sp != "" and ResourceLoader.exists(sp):
-			nb = (load(sp) as PackedScene).instantiate()
-			if _parent != null and is_instance_valid(_parent):
-				_parent.add_child(nb)
-			elif player != null and is_instance_valid(player):
-				player.get_parent().add_child(nb)
-			(nb as Node2D).global_position = meta["p"]
-			nb.set("velocity_vec", meta["v"])
-			if bool(meta["from_player"]):
-				nb.set("shooter", player)
-			nb.set("apply_damage", true)
-			nb.set("hit_damage", int(meta.get("dmg", 0)))
-			nb.set("hit_impact", float(meta.get("impact", 0.0)))
-			if nb.has_method("apply_rewind_state"):
-				nb.call("apply_rewind_state", meta.get("fuse", {}))
-			# 重建子弹时必须保留 scene_path 元数据，确保后续二次回溯时能够正确实例化
-			nb.set_meta("scene_path", sp)
-		_replay_bullets.append(nb)
-	for i in list.size():
-		var nb2 = _replay_bullets[i]
-		if is_instance_valid(nb2):
-			(nb2 as Node2D).global_position = list[i]["p"]
-			# 逐帧恢复子弹引信倒计时，使回退过程中的引信时间同步回流
-			if nb2.has_method("apply_rewind_state"):
-				nb2.call("apply_rewind_state", list[i].get("fuse", {}))
-			(nb2 as Node2D).visible = true
-	for i in range(list.size(), _replay_bullets.size()):
-		if is_instance_valid(_replay_bullets[i]):
-			(_replay_bullets[i] as Node2D).visible = false
+	var wanted := {}
+	for meta: Dictionary in list:
+		var id: int = meta["id"]
+		wanted[id] = true
+		var bullet: BulletBase = _replay_bullets.get(id)
+		if not is_instance_valid(bullet) or bullet.is_queued_for_deletion():
+			var sp := str(meta["sp"])
+			var host: Node = _parent
+			if not is_instance_valid(host) and is_instance_valid(player):
+				host = player.get_parent()
+			if not is_instance_valid(host) or sp.is_empty() or not ResourceLoader.exists(sp):
+				continue
+			bullet = (load(sp) as PackedScene).instantiate()
+			bullet.shooter = player if meta["from_player"] else null
+			bullet.apply_damage = true
+			bullet.set_meta("scene_path", sp)
+			bullet.set_meta("rewind_id", id)
+			bullet.apply_rewind_state(meta["state"])
+			host.add_child(bullet)
+			_replay_bullets[id] = bullet
+		else:
+			bullet.apply_rewind_state(meta["state"])
+	for id in _replay_bullets.keys():
+		if not wanted.has(id):
+			var bullet: BulletBase = _replay_bullets[id]
+			if is_instance_valid(bullet):
+				bullet.queue_free()
+			_replay_bullets.erase(id)
 
 
-# ── 查询/维护 ───────────────────────────────────────────────
 
 ## 当前回放目标时间(秒):瓦片账本按同一时间轴取区间还原。
 func current_target() -> float:
@@ -211,7 +172,7 @@ func current_target() -> float:
 
 ## 回放中的子弹节点(回溯期 Level0 用它们对精英做二次伤害判定)。
 func replay_bullets() -> Array:
-	return _replay_bullets
+	return _replay_bullets.values()
 
 
 func frame_count() -> int:

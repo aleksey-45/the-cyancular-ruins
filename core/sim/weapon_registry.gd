@@ -24,12 +24,22 @@ static var _projectile_profiles: Dictionary = {}
 
 static func projectile_profile(type_id: int) -> Dictionary:
 	if not _projectile_profiles.has(type_id):
-		var weapon: WeaponBase = load(scene_of(type_id)).instantiate()
+		var weapon = load(scene_of(type_id)).instantiate()
+		var projectile = weapon.bullet_scene.instantiate()
 		_projectile_profiles[type_id] = {"scene": weapon.bullet_scene, "range": weapon.bullet_range,
-				"size": weapon.bullet_size, "color": weapon.bullet_color}
+				"size": weapon.bullet_size, "color": weapon.bullet_color, "gravity": weapon.bullet_gravity,
+				"impact": weapon.impact, "damage": weapon.damage,
+				"explosion_visual": projectile.explosion_visual, "explosion_radius": projectile.explosion_radius,
+				"explosion_knockback": projectile.explosion_knockback, "explosion_damage": projectile.explosion_damage}
+		projectile.free()
 		weapon.free()
 	return _projectile_profiles[type_id]
 
+
+# 原生战斗核使用同一份场景参数；初始化时一次读取，热循环不实例化场景或回调脚本。
+static func native_profiles() -> Dictionary:
+	for type_id: int in all_ids(): projectile_profile(type_id)
+	return _projectile_profiles
 
 # 懒加载：首次查询时自动读取配置文件
 static func _ensure_loaded() -> void:

@@ -1,15 +1,11 @@
 class_name TileDefs
 extends RefCounted
 
-# 砖块属性表(data/tile_defs.json 单一来源)。level_0._ready 调用 load_defs() 后使用。
-# 未加载时默认"非 0 即墙"(旧行为),保证早期调用/冒烟测试兼容。
-#
-# 性能优化：热点判定（is_blocked、type、elastic、liquid、destroyable 等）在物理寻路中频繁调用，
-# 在 load_defs 后将属性预压缩至按纹理索引的定长数组，实现 O(1) 零内存分配查询。
-# 数组在 load_defs 时重建；若未显式加载，亦填充默认初始值以保证安全。
+# 从 tile_defs.json 加载材质配置；运行时地形交给 NativeTerrain。
 
 const PATH: String = "res://data/tile_defs.json"
 const MAX_TEXTURE: int = 22
+const BLAST_INNER_FRACTION: float = 0.4
 
 static var _defs: Dictionary = {}
 static var _loaded := false
@@ -21,7 +17,6 @@ const TYPE_LIQUID: int = 2
 const TYPE_GAS: int = 3
 const _TYPE_NAMES: Array = ["wall", "passage", "liquid", "gas"]
 
-# ── 预计算属性表(索引 = 纹理 0..MAX_TEXTURE)──
 static var _type: PackedByteArray = PackedByteArray()          # 类型 id
 static var _hp: PackedInt32Array = PackedInt32Array()
 static var _bullet_destroyable: PackedByteArray = PackedByteArray()
@@ -31,6 +26,18 @@ static var _climb_speed: PackedFloat32Array = PackedFloat32Array()
 static var _climb_descent: PackedFloat32Array = PackedFloat32Array()
 static var _decay: PackedFloat32Array = PackedFloat32Array()   # 逐格爆炸衰减(缺省回落全局)
 static var _tables_built := false
+# 运行时状态和计算只属于原生地形；这里加载配置并保留脚本查询入口。
+static var terrain := NativeTerrain.new()
+
+static func load_terrain(grid: Array, subgrid: Array) -> void:
+	load_defs()
+	var next := NativeTerrain.new()
+	next.configure(grid, subgrid, _defs, {"tile_size": CollisionBuilder.TILE_TS,
+			"sub_size": CollisionBuilder.SUB_TS, "chunk_cells": CollisionBuilder.CHUNK_CELLS,
+			"cache_states": CollisionBuilder.CHUNK_CACHE_STATES, "solid_code": MazeGenerator.SOLID,
+			"wall_type": TYPE_WALL, "liquid_type": TYPE_LIQUID,
+			"ledge_thickness": CollisionBuilder.LEDGE_THICKNESS, "blast_inner": BLAST_INNER_FRACTION})
+	terrain = next
 
 # 未加载配置时的默认兜底逻辑：
 # 任意纹理类型默认为 wall、生命值为 1、各类开关为 false、爬行速度为 0、衰减回退至全局 0.75。
@@ -175,156 +182,41 @@ static func is_blocked(v: int) -> bool:
 	return type_id_of(MazeGenerator.texture_of(v)) == TYPE_WALL
 
 
-# ── 运行时破坏(与 MazeGenerator.current_grid 同尺寸的当前 HP 表)──
-static var hp_grid: Array[Array] = []
-# 瓦片被破坏(变空气)后的回调,由 level_0 注册(清瓦片层 + 重建碰撞)。
-# 用 Callable 而不是硬引用 Level0,避免场景脚本依赖 autoload 导致 -s 测试编译失败。
-static var on_destroyed: Callable = Callable()
+# 下列属性都是显式快照或标量查询，不是另一份可写运行时状态。
+static var sub_hp: PackedInt32Array:
+	get: return terrain.get_hp_snapshot()
+static var sub_cols: int:
+	get: return terrain.get_sub_columns()
+static var sub_rows: int:
+	get: return terrain.get_sub_rows()
+static var collision_revision: int:
+	get: return terrain.get_collision_revision()
+static var hp_grid: Array[Array]:
+	get: return terrain.get_tile_hp_snapshot()
 
-static func init_hp(grid: Array) -> void:
-	hp_grid = []
-	for row in grid:
-		var r: Array[int] = []
-		for v in row:
-			r.append(hp_of(MazeGenerator.texture_of(v)))
-		hp_grid.append(r)
-
-
-# ── cyrm v4 子格破坏(选项 A:破坏按 16px 子格算,格级 current_grid 在整格死光时才清零)──
-# sub_hp 下标 = sub_y * sub_cols + sub_x;0 = 空气或已摧毁。纹理永远读
-# MazeGenerator.current_subgrid(它不变,摧毁改的是 hp)。
-static var sub_hp: PackedInt32Array = PackedInt32Array()
-static var collision_revision := 0
-static var on_sub_damaged: Callable = Callable()
-static var sub_cols: int = 0
-static var sub_rows: int = 0
-# 子格被摧毁的回调,由 level_0(渲染/账本/碰撞)与服务端权威宿主(广播/颗粒结算)分别注册。
-# 参数 (sub: Vector2i, pre_hp: int, owner: Node) —— pre_hp 供回溯账本记"改前值";
-# owner = 造成破坏的射手节点(子弹的 shooter / 爆炸的 shooter;单人模式由 Level0 忽略,
-# 服务端对局宿主侧用它映射 role 结算"破坏瓦片得颗粒")。
-static var on_sub_destroyed: Callable = Callable()
-
-
-static func init_sub_hp(sgrid: Array) -> void:
-	collision_revision += 1
-	sub_cols = 0
-	sub_rows = 0
-	sub_hp = PackedInt32Array()
-	if sgrid.is_empty():
-		return
-	sub_rows = sgrid.size()
-	sub_cols = (sgrid[0] as Array).size()
-	sub_hp.resize(sub_cols * sub_rows)
-	for y in sub_rows:
-		var row: Array = sgrid[y]
-		for x in sub_cols:
-			var tex := int(row[x])
-			sub_hp[y * sub_cols + x] = hp_of(tex) if tex != 0 else 0
-
+static func capture_terrain_cell(cell: Vector2i) -> Dictionary:
+	return terrain.capture_cell(cell)
 
 static func sub_of(pos: Vector2) -> Vector2i:
-	return Vector2i(posmod(int(pos.x) / 16, sub_cols), posmod(int(pos.y) / 16, sub_rows))
-
+	return terrain.sub_of(pos)
 
 static func sub_texture(sub: Vector2i) -> int:
-	var sgrid := MazeGenerator.current_subgrid
-	if sgrid.is_empty() or sub.y < 0 or sub.y >= sgrid.size():
-		return 0
-	var row: Array = sgrid[sub.y]
-	if sub.x < 0 or sub.x >= row.size():
-		return 0
-	return int(row[sub.x])
-
+	return terrain.sub_texture(sub)
 
 static func sub_alive(sub: Vector2i) -> bool:
-	return sub_hp[sub.y * sub_cols + sub.x] > 0
+	return terrain.sub_alive(sub)
 
+static func owner_role(owner: Node) -> int:
+	return owner.role if owner is NativeActorBody else 0
 
-## 对单个 16px 子格扣除生命值。source 为 "bullet"/"explosion",按对应可破坏开关判定。
-## 扣到 ≤0 → 该子格死亡(回调 level_0 清渲染/记账本/重建碰撞块);所属 64px 格的全部
-## 子格死光时,把格级 current_grid 该格清零(让 20 个格级逻辑调用方看到它消失)。
 static func damage_sub(sub: Vector2i, amount: int, source: String, owner: Node = null) -> bool:
-	if sub_cols == 0 or sub.x < 0 or sub.y < 0 or sub.x >= sub_cols or sub.y >= sub_rows:
-		return false
-	var tex := sub_texture(sub)
-	if tex == 0 or sub_hp[sub.y * sub_cols + sub.x] <= 0:
-		return false
-	if source == "bullet":
-		if not bullet_destroyable(tex):
-			return false
-	else:
-		if not explosion_destroyable(tex):
-			return false
-	return apply_sub_hp(sub, maxi(sub_hp[sub.y * sub_cols + sub.x] - amount, 0), owner)
+	return terrain.damage_sub(sub, amount, int(source != "bullet"), owner_role(owner))
 
-
-## 应用已经结算的 HP；网络同步无需再次检查武器的可破坏规则。
 static func apply_sub_hp(sub: Vector2i, hp: int, owner: Node = null) -> bool:
-	var idx := sub.y * sub_cols + sub.x
-	var pre_hp := sub_hp[idx]
-	if pre_hp == hp:
-		return false
-	sub_hp[idx] = hp
-	if on_sub_damaged.is_valid():
-		on_sub_damaged.call(sub, sub_hp[idx])
-	if sub_hp[idx] <= 0:
-		collision_revision += 1
-		# 所属 64px 格全部子格死光 → 格级网格清零(选项 A:逻辑层只看格)
-		var grid := MazeGenerator.current_grid
-		if not grid.is_empty():
-			var cell := Vector2i(sub.x / 4, sub.y / 4)
-			var alive := false
-			for sy in 4:
-				for sx in 4:
-					var sx2 := cell.x * 4 + sx
-					var sy2 := cell.y * 4 + sy
-					if sx2 < sub_cols and sy2 < sub_rows and sub_hp[sy2 * sub_cols + sx2] > 0:
-						alive = true
-						break
-				if alive:
-					break
-			if not alive and grid[cell.y][cell.x] != 0:
-				grid[cell.y][cell.x] = 0
-		if on_sub_destroyed.is_valid():
-			on_sub_destroyed.call(sub, pre_hp, owner)
-		return true
-	return false
+	return terrain.apply_hp(sub, hp, owner_role(owner))
 
-
-## 回溯还原:把子格 HP 写回(渲染/碰撞由 level_0 的还原路径做)。
 static func restore_sub(sub: Vector2i, hp: int) -> void:
-	if sub_cols == 0 or sub.x < 0 or sub.y < 0 or sub.x >= sub_cols or sub.y >= sub_rows:
-		return
-	if (sub_hp[sub.y * sub_cols + sub.x] > 0) != (hp > 0):
-		collision_revision += 1
-	sub_hp[sub.y * sub_cols + sub.x] = hp
+	terrain.restore_hp(sub, hp)
 
-
-# 对某格瓦片扣除生命值。source 为 "bullet"/"explosion",按对应可破坏开关判定。
-# 扣到 ≤0 → 变空气(改 current_grid + 回调 Level0 刷新渲染/碰撞),返回是否破坏。
-static func damage_tile(cell: Vector2i, amount: int, source: String) -> bool:
-	var grid := MazeGenerator.current_grid
-	if grid.is_empty():
-		return false
-	if cell.y < 0 or cell.y >= grid.size() or cell.x < 0 or cell.x >= grid[cell.y].size():
-		return false
-	var v: int = grid[cell.y][cell.x]
-	if v == 0:
-		return false
-	var tex: int = MazeGenerator.texture_of(v)
-	if source == "bullet":
-		if not bullet_destroyable(tex):
-			return false
-	else:
-		if not explosion_destroyable(tex):
-			return false
-	if hp_grid.is_empty():
-		init_hp(grid)
-	hp_grid[cell.y][cell.x] -= amount
-	if hp_grid[cell.y][cell.x] <= 0:
-		grid[cell.y][cell.x] = 0
-		hp_grid[cell.y][cell.x] = 0
-		if on_destroyed.is_valid():
-			on_destroyed.call(cell)
-		return true
-	return false
+static func damage_tile(cell: Vector2i, amount: int, source: String, owner: Node = null) -> bool:
+	return terrain.damage_tile(cell, amount, int(source != "bullet"), owner_role(owner))

@@ -1,6 +1,5 @@
 class_name WeaponBase
-extends Node2D
-var type_id := 0
+extends NativeWeaponBody
 
 enum Tier { LIGHT, MEDIUM, HEAVY }
 enum PenaltyMode { NONE, WHILE_FIRING, WHILE_AIM_OR_COOLDOWN }
@@ -10,115 +9,24 @@ const RECOIL_TIME: float = 0.06  # 枪口后坐复位时长（秒）
 # 预瞄射线检测碰撞半径（像素）
 const PREVIEW_COLLISION_RADIUS: float = 4.0
 
-# ── 武器参数 ──
-# 武器重量级别（轻型/中型/重型），用于背包占用与分类
-@export var tier: Tier = Tier.LIGHT
-# 武器显示名称
+# 数值模拟字段由原生基类保存；武器场景继续覆盖同名导出属性。
 @export var weapon_name: String = "weapon"
-
-# ── 开火机制 ──
-# 是否为全自动（按住持续射击；false 为半自动，单次点击单发射击）
-@export var full_auto: bool = false
-# 射击间隔冷却时间（秒）
-@export var fire_cooldown: float = 0.2
-# 是否为蓄力/预瞄重武器（按住显示瞄准轨迹，松开时发射）
-@export var heavy_aim: bool = false
-
-# ── 子弹参数 ──
-# 子弹飞行初速度（像素/秒）
-@export var bullet_speed: float = 900.0
-# 子弹最大飞行射程（像素）
-@export var bullet_range: float = 600.0
-# 子弹缩放倍率（缩放精灵与碰撞体）
-@export var bullet_size: float = 1.0
-# 子弹着色调色（Color.WHITE 为默认材质原色）
 @export var bullet_color: Color = Color.WHITE
-
-# ── 霰弹与散射 ──
-# 单次射击发射的弹丸数量
-@export var pellet_count: int = 1
-# 散射半角（度）：每颗弹丸在瞄准方向两侧的随机偏移角度
-@export var spread_deg: float = 0.0
-
-# ── 伤害与击退 ──
-# 命中造成的生命值伤害
-@export var damage: int = 1
-# 命中造成的击退力度
-@export var impact: float = 60.0
-
-# 同屏存活弹丸数量上限（0 为不限制）
-@export var max_live_projectiles: int = 0
-
-# ── 后坐力与镜头 ──
-# 开火时推退角色的后坐力度（下蹲时不触发）
-@export var recoil_push: float = 0.0
-# 枪口上跳位移幅度（像素）
 @export var recoil_kick: float = 4.0
-# 开火触发镜头抖动幅度
 @export var cam_shake: float = 2.0
-# 镜头抖动持续时长（秒）
 @export var cam_shake_time: float = 0.1
-
-# ── 移速惩罚 ──
-# 惩罚生效期间的水平移速倍率（1.0 为不惩罚）
-@export var move_penalty: float = 1.0
-# 惩罚生效期间的跳跃初速度倍率（1.0 为不惩罚）
-@export var jump_penalty: float = 1.0
-# 惩罚生效模式：NONE 不生效 / WHILE_FIRING 开火冷却期间 / WHILE_AIM_OR_COOLDOWN 瞄准或冷却期间
-@export var penalty_mode: PenaltyMode = PenaltyMode.NONE
-
-# ── 激光瞄准 ──
-# 预瞄激光射线长度（像素）
 @export var laser_length: float = 600.0
-# 激光射线颜色
 @export var laser_color: Color = Color(1.0, 0.2, 0.2, 0.6)
-
-# ── 瞄准限制 ──
-# 武器最大仰角与俯角限制（度）
-@export var pitch_clamp_deg: float = 45.0
-
-# ── 弹道与抛物线 ──
-# 重力加速度影响倍率（0 为直线弹道）
-@export var bullet_gravity: float = 0.0
-# 是否显示抛物线弹道预瞄（true 为抛物线弧线，false 为直线激光）
 @export var preview_arc: bool = false
-# 预瞄抛物线采样时长（秒）
 @export var preview_time: float = 0.5
-
-# ── 换弹与弹夹 ──
-@export var mag_size: int = 12        # 弹夹容量
-@export var reload_time: float = 1.2  # 换弹全程耗时（秒）
-var mag_ammo: int = 0                 # 弹夹内残弹
-# 待生效残弹哨兵值（-2 表示尚未设置）
 const MAG_UNSET := -2
-var pending_mag: int = MAG_UNSET
-# 弹药状态是否已初始化完成
-var _mag_ready := false
-var _reloading := false
-var _reload_t := 0.0
-var _reload_pose := false             # 换弹下压姿势生效中
-
-# 换弹动画参数
-const RELOAD_TILT := 0.9                    # 枪口下压最大弧度
-const RELOAD_OFFSET := Vector2(-3.0, 7.0)   # 精灵同步下沉偏移量
-
-func is_reloading() -> bool:
-	return _reloading
-
-# 换弹进度 0 到 1（未换弹时返回 -1.0，供 HUD 进度条使用）
-func reload_progress() -> float:
-	return (1.0 - _reload_t / maxf(reload_time, 0.01)) if _reloading else -1.0
+var _reload_pose := false
+const RELOAD_TILT := 0.9
+const RELOAD_OFFSET := Vector2(-3.0, 7.0)
 
 func start_reload() -> void:
-	if not _mag_ready:
-		return
-	if _reloading or mag_ammo >= mag_size:
-		return
-	_reloading = true
-	_reload_t = reload_time
-	_play_sfx("reload")
+	native_start_reload()
 
-# 换弹姿态：每帧在 _recoil_recover 之后调用（换弹压枪优先级高于后坐复位）
 func _update_reload_pose() -> void:
 	if sprite == null:
 		return
@@ -137,31 +45,42 @@ func _update_reload_pose() -> void:
 @onready var sprite: Sprite2D = $Sprite2D
 @onready var muzzle: Marker2D = $Muzzle
 
-var player: Node2D
-var fire_cd_timer: float = 0.0
 
 var _recoil_timer: float = 0.0
 var _base_sprite_pos: Vector2 = Vector2.ZERO
-var _aiming: bool = false
-var _fire_buffered: bool = false
-var _aim_facing: int = 1          # 上次记录的有效水平瞄准朝向
-var _current_aim_facing: int = 1  # 本帧实际生效的水平瞄准朝向
+var _initial_transform := Transform2D.IDENTITY
+var _initial_sprite_transform := Transform2D.IDENTITY
+var _needs_presentation_reset := false
 var _laser: Line2D = null
 var _explosion_marker: Sprite2D = null
 
 # 俯仰角限制：根据角色水平朝向折叠计算，并限制在指定角度范围内
 static func clamp_pitch(dir: Vector2, facing: int, limit_deg: float = 45.0) -> float:
-	var local := Vector2(dir.x * float(facing), dir.y)
-	var limit := deg_to_rad(limit_deg)
-	return clampf(local.angle(), -limit, limit)
+	return NativeWeaponBody.native_clamp_pitch(dir, facing, limit_deg)
 
 func _ready() -> void:
-	mag_ammo = mag_size
-	if pending_mag != MAG_UNSET:
-		mag_ammo = clampi(pending_mag, 0, mag_size)
-		pending_mag = MAG_UNSET
-	_mag_ready = true
+	_initial_transform = transform
+	_initial_sprite_transform = sprite.transform
+	native_bind_muzzle(muzzle)
+	native_initialize_magazine()
 	_base_sprite_pos = sprite.position
+
+func reset_simulation(mag: int) -> void:
+	_needs_presentation_reset = true
+	transform = _initial_transform
+	native_reset_simulation(mag, WeaponInventory.MAG_FULL)
+
+func reset_presentation() -> void:
+	_needs_presentation_reset = false
+	sprite.transform = _initial_sprite_transform
+	_recoil_timer = 0.0
+	_reload_pose = false
+	if _laser != null: _laser.visible = false
+	if _explosion_marker != null: _explosion_marker.visible = false
+
+# 瞄准辅助只在表现阶段按需创建，模拟与回滚切枪无需初始化显示资源。
+func _ensure_aim_visuals() -> void:
+	if _laser != null: return
 	_laser = Line2D.new()
 	_laser.width = 1.0
 	_laser.default_color = laser_color
@@ -174,77 +93,37 @@ func _ready() -> void:
 	add_child(_explosion_marker)
 
 func equip(p: Node2D, inherit_cooldown: float = 0.0) -> void:
-	player = p
+	native_bind_owner(p, p is Player and p.authority_world != null)
 	# 继承前一把武器的剩余冷却时间，防止通过快速切枪跳过后摇
 	fire_cd_timer = maxf(inherit_cooldown, 0.0)
 	_fire_buffered = false
 	cancel_aim()
 
 # 武器物理逻辑由所属角色的物理帧循环显式驱动，确保回滚模拟的确定性
+# 正常推进和重放由原生角色直接调用同一武器核；此入口兼容独立武器调用。
 func tick(delta: float) -> void:
-	if player.is_downed():
-		return
-	fire_cd_timer = maxf(fire_cd_timer - delta, 0.0)
-	# 换弹倒计时
-	if _reloading:
-		_reload_t -= delta
-		if _reload_t <= 0.0:
-			_reloading = false
-			mag_ammo = mag_size
-			_play_sfx("switch")
-	_auto_aim()
-	if _fire_buffered and fire_cd_timer == 0.0:
-		_fire_buffered = false
-		fire()
-	if heavy_aim:
-		if player.is_attack_just_pressed():
-			_aiming = true
-		if player.is_attack_just_released():
-			_aiming = false
-			try_fire()
-		if not player.is_attack_pressed() and not player.is_attack_just_pressed():
-			_aiming = false
-	elif full_auto:
-		if player.is_attack_pressed() or player.is_attack_just_pressed():
-			try_fire()
-	else:
-		if player.is_attack_just_pressed():
-			try_fire()
+	_sync_native_input()
+	native_tick_weapon(delta)
+
+func _sync_native_input() -> void:
+	if player is NativeActorBody and not player.stepping:
+		player.input_epoch = player.input_buffer.epoch
+		native_external_input(player.is_attack_pressed(), player.is_attack_just_pressed(),
+				player.is_attack_just_released(), _aim_world_dir())
 
 func try_fire() -> void:
-	if fire_cd_timer > 0.0:
-		if fire_cooldown > 0.5 and fire_cd_timer <= fire_cooldown * 0.2:
-			_fire_buffered = true
-		return
-	fire()
+	_sync_native_input()
+	native_try_fire()
 
 func fire() -> void:
-	if player.is_downed():
-		return
-	if _reloading:
-		return
-	if mag_ammo <= 0:
-		if _mag_ready:
-			start_reload()
-		return
-	fire_cd_timer = fire_cooldown
-	if max_live_projectiles > 0 and _live_projectiles() >= max_live_projectiles:
-		return
-	_auto_aim()
-	var base_dir := _clamped_aim_dir()
-	var serial: int = player.shot_serial + 1
-	player.shot_serial = serial
-	player.step_actions.append({"kind": "fire", "dir": base_dir, "serial": serial,
-			"pos": player.shot_origin(muzzle), "input_seq": player.input_seq, "input_epoch": player.input_buffer.epoch})
-	mag_ammo = maxi(mag_ammo - 1, 0)
-	if mag_ammo == 0:
-		start_reload()
-	player.apply_recoil(recoil_push)
+	_sync_native_input()
+	native_fire()
 
 func execute_shot(action: Dictionary) -> void:
 	_spawn_projectiles(action)
 	if player.authority_world != null:
 		return
+	if _needs_presentation_reset: reset_presentation()
 	Sfx.play(shot_sound())
 	play_recoil()
 	var cam := get_viewport().get_camera_2d()
@@ -265,26 +144,19 @@ func apply_hit(target: Node, dir: Vector2) -> void:
 
 # 发射弹丸
 func _spawn_projectiles(action: Dictionary) -> void:
-	var spread := deg_to_rad(spread_deg)
-	var serial: int = action["serial"]
-	var role: int = player.role
-	var rng := RandomNumberGenerator.new()
-	rng.seed = hash("%d:%d" % [role, serial])
-	for i in range(pellet_count):
+	for spec: Dictionary in projectile_specs(action):
 		var b: BulletBase = bullet_scene.instantiate()
-		var hm: float = player.pvp_haste_mult
-		var ang: float = action["dir"].angle() + rng.randf_range(-spread, spread)
-		b.setup(Vector2.from_angle(ang), bullet_speed * hm, bullet_range, bullet_size, bullet_color, self)
+		b.setup(spec["vel"].normalized(), spec["vel"].length(), bullet_range, bullet_size, bullet_color, self)
 		b.shooter = player
 		b.authority_world = player.authority_world
-		b.entity_id = (role << 48) | (serial << 8) | i
+		b.entity_id = spec["id"]
 		b.type_id = type_id
 		b.input_seq = action["input_seq"]
 		b.input_epoch = action["input_epoch"]
 		b.gravity_factor = bullet_gravity
 		b.hit_damage = damage
 		b.hit_impact = impact
-		b.global_position = action["pos"]
+		b.global_position = spec["pos"]
 		b.adjudicated_pos = b.global_position
 		b.adjudicated = true
 		b.apply_damage = not Level0.pvp_mode
@@ -295,8 +167,16 @@ func _spawn_projectiles(action: Dictionary) -> void:
 		else:
 			get_viewport().add_child(b)
 
-# 统计本武器当前存活的弹丸数
+
 func _live_projectiles() -> int:
+	if player.weapons.projectile_count.is_valid():
+		return player.weapons.projectile_count.call(type_id)
+	if player.authority_world != null:
+		var count := 0
+		for bullet: BulletBase in player.authority_world.live_bullets():
+			if bullet.shooter == player and bullet.type_id == type_id and not bullet.finished:
+				count += 1
+		return count
 	if not is_inside_tree():
 		return 0
 	var n := 0
@@ -305,67 +185,35 @@ func _live_projectiles() -> int:
 			n += 1
 	return n
 
-func cancel_aim() -> void:
-	_aiming = false
 
-# 当前是否处于蓄力/预瞄状态
-func is_previewing() -> bool:
-	return _aiming
-
-# 多人模式下根据权威数据驱动远端副本武器外观（仅显示朝向与枪口角度）
 func drive_remote_visual(aim_dir: Vector2, facing: int) -> void:
-	if _laser == null or muzzle == null:
+	if muzzle == null:
 		return
 	if aim_dir == Vector2.ZERO:
 		aim_dir = Vector2(float(facing), 0.0)
 	_aim_facing = facing
 	_current_aim_facing = facing
-	rotation = clamp_pitch(aim_dir, facing, pitch_clamp_deg) * float(facing)
-	scale.x = float(facing)
+	_apply_aim_pose(clamp_pitch(aim_dir, facing, pitch_clamp_deg) * float(facing), facing)
 	_aiming = false
 	_update_laser()
 
-func get_movement_multiplier() -> Vector2:
-	var active := false
-	match penalty_mode:
-		PenaltyMode.NONE:
-			active = false
-		PenaltyMode.WHILE_FIRING:
-			active = fire_cd_timer > 0.0
-		PenaltyMode.WHILE_AIM_OR_COOLDOWN:
-			active = _aiming or fire_cd_timer > 0.0
-	if not active:
-		return Vector2.ONE
-	return Vector2(move_penalty, jump_penalty)
 
-# 获取钳制后的出弹单位方向向量
 func _clamped_aim_dir() -> Vector2:
-	var facing := _current_aim_facing
-	var pitch := clamp_pitch(_aim_world_dir(), facing, pitch_clamp_deg)
-	var local := Vector2.from_angle(pitch)
-	return Vector2(local.x * float(facing), local.y)
+	_sync_native_input()
+	return native_clamped_aim()
 
-func _auto_aim() -> void:
-	var dir := _aim_world_dir()
-	var facing := _aim_facing
-	if absf(dir.x) > 0.1:
-		facing = 1 if dir.x > 0.0 else -1
-		_aim_facing = facing
-	if absf(dir.x) > 0.1:
-		player.set_facing(facing)
-		if not player.is_charging():
-			facing = get_facing()
-	_current_aim_facing = facing
-	rotation = clamp_pitch(dir, facing, pitch_clamp_deg) * float(facing)
-	scale.x = float(facing)
+static func aim_facing_hint(dir: Vector2) -> int:
+	return NativeWeaponBody.native_aim_facing_hint(dir)
 
 func _update_laser() -> void:
-	if _laser == null or muzzle == null:
+	if muzzle == null:
 		return
-	_laser.visible = _aiming
 	if not _aiming:
+		if _laser != null: _laser.visible = false
 		_update_explosion_marker(false)
 		return
+	_ensure_aim_visuals()
+	_laser.visible = true
 	if preview_arc:
 		_laser.points = _sample_arc_points()
 		_update_explosion_marker(true)

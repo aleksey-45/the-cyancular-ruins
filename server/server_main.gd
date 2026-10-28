@@ -1,6 +1,7 @@
 extends Node
 
 func _ready() -> void:
+	GameLog.use_role("server")
 	var args := OS.get_cmdline_user_args()
 	var port := NetBus.DEFAULT_PORT
 	if args.has("--port"):

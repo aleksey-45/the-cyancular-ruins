@@ -10,4 +10,4 @@ extends RefCounted
 # 转向时平滑穿过零点，比线性 move_toward 具有更自然的运动手感。
 # 作为全局通用计算方法，供角色移动、敌人 AI 与游泳组件统一调用。
 static func approach(current: float, target: float, rate: float, delta: float) -> float:
-	return lerp(current, target, 1.0 - exp(-rate * delta))
+	return lerpf(current, target, 1.0 - exp(-rate * delta))

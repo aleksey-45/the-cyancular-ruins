@@ -48,8 +48,7 @@ static func world_rect(n: Node2D) -> Rect2:
 			if shape == null:
 				continue
 			if shape is RectangleShape2D:
-				var size := (shape as RectangleShape2D).size * cs.global_scale
-				r = Rect2(cs.global_position - size * 0.5, size)
+				r = cs.global_transform * shape.get_rect()
 			elif shape is CircleShape2D:
 				var rad := (shape as CircleShape2D).radius * maxf(cs.global_scale.x, cs.global_scale.y)
 				r = Rect2(cs.global_position - Vector2(rad, rad), Vector2(rad, rad) * 2.0)

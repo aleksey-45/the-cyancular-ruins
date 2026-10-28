@@ -2,7 +2,7 @@
 
 [ext_resource type="Script" path="res://scenes/weapons/laser_beam.gd" id="1_beam"]
 
-[node name="LaserBeam" type="Node2D"]
+[node name="LaserBeam" type="NativeWeaponBody"]
 script = ExtResource("1_beam")
 
 [node name="Glow" type="Line2D" parent="."]

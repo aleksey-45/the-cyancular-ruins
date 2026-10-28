@@ -10,20 +10,30 @@ static var pvp_arena := false
 
 
 signal went_down   # 倒地瞬间触发，根节点接收后调用 weapons.cancel_aim 取消瞄准
-signal took_hit(source_pos: Vector2, damage: int)  # 受到有效伤害（服务端 AuthorityWorld 接收后广播受击反馈）
+signal took_hit(source_pos: Vector2, damage: int)
 
-var max_hp: int = PlayerParams.player_max_hp
-var hp: int = PlayerParams.player_max_hp
-var iframes: float = 0.0
-var downed: bool = false
-var knock_velocity: Vector2 = Vector2.ZERO  # 爆炸专属击退向量（独立于常规移动速度，按指数衰减）
+var max_hp: int:
+	get: return (get_parent() as NativeActorBody).sim_max_hp
+	set(value): (get_parent() as NativeActorBody).sim_max_hp = value
+var hp: int:
+	get: return (get_parent() as NativeActorBody).sim_hp
+	set(value): (get_parent() as NativeActorBody).sim_hp = value
+var iframes: float:
+	get: return (get_parent() as NativeActorBody).sim_iframes
+	set(value): (get_parent() as NativeActorBody).sim_iframes = value
+var downed: bool:
+	get: return (get_parent() as NativeActorBody).sim_downed
+	set(value): (get_parent() as NativeActorBody).sim_downed = value
+var knock_velocity: Vector2:
+	get: return (get_parent() as NativeActorBody).motion_knock_velocity
+	set(value): (get_parent() as NativeActorBody).motion_knock_velocity = value
 
-var body: CharacterBody2D
+var body: Player
 
 const IFRAME_BLINK_RATE := 20.0   # 受击无敌帧闪烁频率（每秒明暗切换次数）
 
 func _ready() -> void:
-	body = get_parent() as CharacterBody2D
+	body = get_parent() as Player
 
 func is_downed() -> bool:
 	return downed
@@ -40,38 +50,16 @@ func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, kn
 	# PvP 模式取消无敌帧阻挡（pvp_arena），但仍保证每颗弹丸独立结算单次伤害
 	if downed or (not pvp_arena and iframes > 0.0 and not ignore_iframes):
 		return
-	body.cancel_charge()
-	hp -= damage
+	simulate_hit(source_pos, damage, knockback)
 	took_hit.emit(source_pos, damage)
-	iframes = PlayerParams.iframes_time
-	# 击退方向采用环面最短位移向量计算，而非简单绝对坐标相减：
-	# 在环面循环地图与多人网络同步下，跨越接缝对射时命中源坐标与受击玩家可能相距近整张地图宽度，
-	# 简单的 (body - source) 坐标相减会导致反向击退异常。
-	# 使用环面最短位移向量（toroidal_delta_px）能够准确沿子弹来向将玩家向外推离。
-	var away := (body.global_position - source_pos).normalized()
-	if GameParameters.MAP_WIDTH > 0.0 and GameParameters.MAP_HEIGHT > 0.0:
-		var short_vec := MazeGenerator.toroidal_delta_px(source_pos, body.global_position,
-				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
-		if not short_vec.is_zero_approx():
-			away = short_vec.normalized()
-	if away == Vector2.ZERO:
-		away = Vector2(-float(body.get_facing()), 0.0)
-	if knockback < 0.0:
-		# 常规受击：施加固定击退初速度
-		body.velocity.x = away.x * PlayerParams.player_hit_knockback
-		body.velocity.y = away.y * PlayerParams.player_hit_knockback - PlayerParams.player_hit_knockback_up
-	else:
-		# 爆炸受击：设置独立击退向量，按指数衰减结算
-		knock_velocity = away * knockback
-	if hp <= 0:
-		_downed()
 
-# 爆炸击退位移结算：通过独立的碰撞移动结算，避免击退速度污染角色常规移动速度
-func apply_knock(delta: float) -> void:
-	body.move_and_collide(knock_velocity * delta)
-	knock_velocity *= exp(-PlayerParams.player_knock_decay_rate * delta)
+# 权威模拟与预测共用受击状态更新；事件和音画由外层处理。
+func simulate_hit(source_pos: Vector2, damage: int, knockback: float) -> void:
+	if body.native_simulate_hit(source_pos, damage, knockback): went_down.emit()
 
-# 服务端权威倒地设置（多人模式使用）
+func apply_impulse(source_pos: Vector2, knockback: float) -> void:
+	body.native_apply_impulse(source_pos, knockback)
+
 func force_down() -> void:
 	if not downed:
 		_downed()
@@ -82,6 +70,8 @@ func set_downed_by_rewind(v: bool) -> void:
 		return
 	downed = v
 	body.rotation = -PI / 2.0 * float(body.get_facing()) if v else 0.0
+	body._grounded = false
+	body.apply_collision_pose()
 	if v:
 		went_down.emit()
 
@@ -92,9 +82,8 @@ func revive() -> void:
 	downed = false
 	hp = max_hp
 	body.rotation = 0.0
+	body._grounded = false
+	body.apply_collision_pose()
 
 func _downed() -> void:
-	downed = true
-	# 旋转碰撞体属于物理状态；动画由 Player.present_tick 更新。
-	body.rotation = -PI / 2.0 * float(body.get_facing())
-	went_down.emit()
+	if body.native_force_down(): went_down.emit()

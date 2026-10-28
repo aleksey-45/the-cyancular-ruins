@@ -6,16 +6,16 @@ extends PlayerInput
 #
 # InputBuffer 每 tick 提供一条记录；缺包延续和边沿去重由队列完成。
 
-const BIT_UP := 1
-const BIT_DOWN := 2
-const BIT_CHARGE := 4
-const BIT_ATTACK := 8
+const BIT_UP := ActorInput.BIT_UP
+const BIT_DOWN := ActorInput.BIT_DOWN
+const BIT_CHARGE := ActorInput.BIT_CHARGE
+const BIT_ATTACK := ActorInput.BIT_ATTACK
 # 动作按键位掩码定义（对应输入数据包中的 held / pressed / released 字段）
-const BIT_RELOAD := 16   # 换弹（按键 R）
-const BIT_PICKUP := 32   # 拾取地面武器（按键 F，单帧边沿）
-const BIT_DROP := 64     # 丢弃手持武器（按键 Q，长按达成触发边沿）
-const BIT_HASTE := 128   # 时间加速（持续按住）
-const BIT_REWIND := 256  # 时空回溯（持续按住）
+const BIT_RELOAD := ActorInput.BIT_RELOAD   # 换弹（按键 R）
+const BIT_PICKUP := ActorInput.BIT_PICKUP   # 拾取地面武器（按键 F，单帧边沿）
+const BIT_DROP := ActorInput.BIT_DROP     # 丢弃手持武器（按键 Q，长按达成触发边沿）
+const BIT_HASTE := ActorInput.BIT_HASTE   # 时间加速（持续按住）
+const BIT_REWIND := ActorInput.BIT_REWIND  # 时空回溯（持续按住）
 
 
 # 将本地输入打包为网络传输格式。

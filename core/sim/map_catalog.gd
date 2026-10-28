@@ -32,6 +32,7 @@ const PALETTE := {
 static var _img_cache: Dictionary = {}     # "path|cell_px" → Image
 static var _tex_cache: Dictionary = {}     # "path|cell_px" → ImageTexture
 static var _list_cache: Array = []
+static var _map_cache: Dictionary = {}
 static var _random_img: Image = null
 
 
@@ -39,15 +40,17 @@ static func clear_cache() -> void:
 	_img_cache.clear()
 	_tex_cache.clear()
 	_list_cache.clear()
+	_map_cache.clear()
 	_random_img = null
 
 
-# ── 目录 ───────────────────────────────────────────────────────────
 
 ## 全部可用地图列表。每项格式：
 ##   {path: String, name: String, size: Vector2i, pvp: bool, external: bool}
 ## pvp 为 true 表示地图同时包含 player 与 player2 出生点
 static func list_maps(refresh := false) -> Array[Dictionary]:
+	if refresh:
+		clear_cache()
 	var out: Array[Dictionary] = []
 	if not refresh and not _list_cache.is_empty():
 		out.assign(_list_cache)
@@ -58,13 +61,15 @@ static func list_maps(refresh := false) -> Array[Dictionary]:
 			if seen.has(path):
 				continue
 			seen[path] = true
-			if not is_valid_map(path):
+			var info := _map_info(path)
+			var grid: Array = info["grid"]
+			if grid.is_empty():
 				continue
-			var sp := MapFormat.load_spawns(path)
+			var sp: Dictionary = info["spawns"]
 			out.append({
 				"path": path,
 				"name": display_name(path),
-				"size": MapFormat.map_size(path),
+				"size": Vector2i(grid[0].size(), grid.size()),
 				"pvp": sp.has("player") and sp.has("player2"),
 				"external": not path.begins_with(MazeGenerator.MAP_DIR + "/"),
 			})
@@ -78,7 +83,7 @@ static func list_maps(refresh := false) -> Array[Dictionary]:
 static func display_name(path: String) -> String:
 	if FileAccess.file_exists(path):
 		# 从元数据注释文本解析自定义名称，避免直接按行读取二进制地图头出现乱码
-		for l in MapFormat.load_meta_lines(path):
+		for l in _map_info(path)["meta_lines"]:
 			var s := String(l).strip_edges()
 			if not s.begins_with("#"):
 				break                    # 注释块结束 → 不再往下找
@@ -118,7 +123,6 @@ static func resolve_pvp_map(requested: String) -> String:
 	return requested
 
 
-# ── 简略图(纯 Image;UI 侧自己 create_from_image)──────────────────
 
 ## 开局地形简略图:每格 cell_px 像素,空气=背景,墙体按纹理配色(半砖压暗),
 ## 出生点画成亮色块(绿=P1 / 蓝=P2)。
@@ -126,7 +130,8 @@ static func build_image(path: String, cell_px: int = CELL_PX) -> Image:
 	var key := "%s|%d" % [path, cell_px]
 	if _img_cache.has(key):
 		return _img_cache[key]
-	var grid := MapFormat.load_map_file(path)
+	var info := _map_info(path)
+	var grid: Array = info["grid"]
 	var img: Image
 	if grid.is_empty():
 		img = Image.create(1, 1, false, Image.FORMAT_RGBA8)
@@ -143,7 +148,7 @@ static func build_image(path: String, cell_px: int = CELL_PX) -> Image:
 				if v == 0:
 					continue
 				_fill(img, c, r, cell_px, _color_of(v))
-		_mark_spawn(img, path, cell_px, rows, cols)
+		_mark_spawn(img, info["spawns"], cell_px, rows, cols)
 	_img_cache[key] = img
 	return img
 
@@ -169,7 +174,6 @@ static func random_texture() -> ImageTexture:
 	return ImageTexture.create_from_image(_random_img)
 
 
-# ── 内部 ───────────────────────────────────────────────────────────
 
 static func _dirs() -> Array[String]:
 	var out: Array[String] = [MazeGenerator.MAP_DIR]
@@ -212,8 +216,7 @@ static func _fill(img: Image, c: int, r: int, cell_px: int, col: Color) -> void:
 			img.set_pixel(x0 + dx, y0 + dy, col)
 
 
-static func _mark_spawn(img: Image, path: String, cell_px: int, rows: int, cols: int) -> void:
-	var sp := MapFormat.load_spawns(path)
+static func _mark_spawn(img: Image, sp: Dictionary, cell_px: int, rows: int, cols: int) -> void:
 	for key in ["player", "player2"]:
 		if not sp.has(key):
 			continue
@@ -222,3 +225,8 @@ static func _mark_spawn(img: Image, path: String, cell_px: int, rows: int, cols:
 			continue
 		var col := SPAWN_P1 if key == "player" else SPAWN_P2
 		_fill(img, posmod(cell.x, cols), posmod(cell.y, rows), cell_px, col)
+
+static func _map_info(path: String) -> Dictionary:
+	if not _map_cache.has(path):
+		_map_cache[path] = MapFormat.load_map_info(path)
+	return _map_cache[path]

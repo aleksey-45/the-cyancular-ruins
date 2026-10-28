@@ -1,24 +1,18 @@
 class_name Level0
 extends Node2D
 
-# 运行时破坏支持:瓦片被破坏(变空气)后,由 TileDefs.damage_tile 回调刷新瓦片层 + 重建碰撞。
+# 地形由 NativeTerrain 统一维护；场景负责装载、时间轴和表现提交。
 static var wall_layer: TileMapLayer = null
 static var water_layer: TileMapLayer = null
 static var surface_texture: Texture2D = null
 static var water_surface_layer: Node2D = null
-static var _grid_ref: Array[Array] = []
-# 建图时的原始(未破坏)网格深拷贝:每局复位用它重铺瓦片/碰撞(不被运行时 damage_tile 污染)。
-static var _pristine_grid: Array[Array] = []
-static var _pristine_subgrid: Array[Array] = []   # cyrm v4:子格纹理表基线(复位/回溯用)
-# 持久化可破坏层 32px 子格(250×150):摧毁时只清该格 2×2,下帧只重建所在分块。
-static var _destructible_sub: Array[Array] = []
-# 本帧被摧毁砖所在的分块(Vector2i → true);_process 里逐块重建后清空。
-static var _dirty_chunks: Dictionary = {}
+var terrain: NativeTerrain
+var _grid_ref: Array[Array]:
+	get: return terrain.get_grid_snapshot() if terrain != null else []
 
 # PvP 模式:只建世界(地图/瓦片/碰撞/水),玩家/敌人/相机/后处理由 PvP 场景负责。
 static var pvp_mode: bool = false
 
-# ── 安全场景切换：将游戏世界移出场景树并分帧销毁 ──
 # 避免一次性同步销毁大量物理与渲染节点引发卡顿或崩溃。
 # 场景切换过渡中标志：防止同帧或相近帧重复进入切换逻辑。
 static var _switching: bool = false
@@ -29,13 +23,12 @@ static var time_field: TimeField = null
 var _rewind: WorldRewind = null   # 世界快照/回放(单机;PvP 不建)
 var _prev_time_mode: int = 0      # 上一帧时间场模式(判回溯进入/退出)
 var _post_process: PostProcess = null
-var _tile_ledger: TileLedger = null      # 玩家破坏瓦片账本(瓦片回溯)
-var _tile_pending: Array = []            # 本帧待入账的格(帧末合并)
 var _tile_cursor: float = -1.0
 var _film_t: float = 0.0          # 回溯底片化强度(get 平滑 ramp,≤200ms)
 var _haste_t: float = 0.0         # 加速视效强度(ramp 100ms)
 # 时间状态高亮(B13):加色副本(见 scenes/effects/time_glow.gd),实体 → TimeGlow
 var _glows: Dictionary = {}
+var _log_at := Time.get_ticks_msec()
 
 
 static func safe_change_scene(tree: SceneTree, path: String) -> void:
@@ -73,7 +66,6 @@ static func safe_change_scene(tree: SceneTree, path: String) -> void:
 	_perf_log("总计", t0)
 	_switching = false   # 场景切换完成，允许后续换场
 
-# ── 旧场景节点异步分帧释放器 ──
 # 将大场景节点的同步销毁平摊到多个帧中，并在显示菜单期间后台逐步回收。
 # 销毁顺序采用逆前序遍历，确保子节点优先于父节点被释放。
 # 每物理帧执行受时间预算限制，避免瞬时卡顿。
@@ -167,7 +159,6 @@ static func _collect_preorder(n: Node, out: Array[Node]) -> void:
 	for c in n.get_children():
 		_collect_preorder(c, out)
 
-# ── 场景切换耗时打点（诊断模式）──
 static func _perf_log(label: String, t0: int) -> int:
 	var now := Time.get_ticks_usec()
 	if OS.get_cmdline_user_args().has("--perf-switch"):
@@ -181,6 +172,8 @@ func _unhandled_input(event: InputEvent) -> void:
 	$WorldViewport.push_input(event)
 
 func _ready() -> void:
+	var started := Time.get_ticks_msec()
+	GameLog.record("level_load", {"map": MazeGenerator.map_file_path(), "pvp": pvp_mode})
 	# 清屏背景色与地形图集统一保持一致
 	RenderingServer.set_default_clear_color(TerrainAtlas.SKY_COLOR)
 	CombatFeedback.spawn(self)
@@ -189,14 +182,9 @@ func _ready() -> void:
 	if grid.is_empty():
 		push_error("Level0: 地图加载失败，跳过建图")
 		return
-	_grid_ref = grid
-	_pristine_grid = MazeGenerator.copy_grid(grid)
-	_pristine_subgrid = []   # _ready 里随 current_subgrid 一起存基线
+	terrain = TileDefs.terrain
+	terrain.set_collision_profiling(FrameTrace.enabled)
 	Level0.wall_layer = $WorldViewport/WallLayer
-	TileDefs.on_sub_destroyed = Callable(self, "_on_sub_destroyed")
-	TileDefs.init_hp(grid)
-	TileDefs.init_sub_hp(MazeGenerator.current_subgrid)
-	_pristine_subgrid = MazeGenerator.copy_grid(MazeGenerator.current_subgrid)
 
 	var tile_set = _create_wall_tileset()
 	var wl: TileMapLayer = $WorldViewport/WallLayer
@@ -210,6 +198,7 @@ func _ready() -> void:
 
 
 	if pvp_mode:
+		GameLog.record("level_ready", {"duration_ms": Time.get_ticks_msec() - started, "pvp": true})
 		return  # PvP 基线完成墙体铺图和物理初始化。
 	_build_wall_collision.call_deferred(grid)
 	EnemySpawner.load_types()
@@ -221,7 +210,7 @@ func _ready() -> void:
 	time_field = TimeField.new(grain_account)
 	TimeField.current = time_field
 	_rewind = WorldRewind.new($WorldViewport)
-	_tile_ledger = TileLedger.new()
+	terrain.set_rewind_enabled(true)
 	# 透支锁定:怀表红闪提示(表针锁定期间两键都取不出颗粒)
 	grain_account.loan_locked.connect(func() -> void:
 		var w = get_tree().get_first_node_in_group("watch_hud")
@@ -237,6 +226,11 @@ func _ready() -> void:
 	_post_process = pp
 	call_deferred("add_child", pp)
 	_build_pause_menu()
+	GameLog.record("level_ready", {"duration_ms": Time.get_ticks_msec() - started, "pvp": false})
+
+
+func _exit_tree() -> void:
+	if terrain != null: terrain.set_rewind_enabled(false)
 
 
 # 瓦片图集由 TerrainAtlas 统一构建
@@ -310,24 +304,21 @@ func _paint_water(grid: Array[Array]) -> void:
 
 
 func _process(_delta: float) -> void:
+	flush_terrain_visuals()
+	if not pvp_mode and Time.get_ticks_msec() - _log_at >= 1000:
+		_log_at = Time.get_ticks_msec()
+		var player := $WorldViewport/Player
+		GameLog.record("singleplayer_state", {"position": player.position, "velocity": player.velocity,
+				"hp": player.hp, "downed": player.is_downed(), "weapon": player.weapons.log_state(),
+				"time_mode": time_field.mode if time_field != null else 0,
+				"projectiles": get_tree().get_nodes_in_group("bullet").size(), "terrain_chunks": terrain.dirty_count()})
 	# 时间场驱动(单机;先于实体各自的物理帧让模式生效——实体在 _physics_process 里查询)
 	if time_field != null and not pvp_mode:
 		_drive_time(_delta, Input.is_action_pressed("rewind"), Input.is_action_pressed("haste"))
 		_tick_rewind(_delta)
 		_tick_time_visuals(_delta)
 	_update_pickup_prompt()
-	if not _dirty_chunks.is_empty():
-		# 分帧重建:每帧最多重建 2 块,爆炸同时毁多块时摊到多帧,避免 CPU 尖峰
-		const MAX_REBUILD_PER_FRAME := 2
-		var processed := 0
-		var chunks := _dirty_chunks.keys()
-		_dirty_chunks.clear()
-		for ch in chunks:
-			if processed >= MAX_REBUILD_PER_FRAME:
-				_dirty_chunks[ch] = true  # 放回下帧继续
-				continue
-			CollisionBuilder.rebuild_chunk(_destructible_sub, ch, $WorldViewport)
-			processed += 1
+	if not pvp_mode: flush_terrain_collision()
 
 
 # 瓦片被破坏(变空气):清掉 3×3 环面副本对应格 + 持久子格该格 2×2,标记所在块下帧重建。
@@ -365,81 +356,37 @@ func _rewind_elite_hits() -> void:
 			e.call("hurt", dmg, dir, float(b.get("hit_impact")))
 
 
-func _restore_sub(e: Dictionary) -> void:
-	# 回溯还原一个 16px 子格:HP 写回 + 重铺贴图 + 碰撞子格复位 + 账本时间轴照旧。
-	# 所属 64px 格若已因"全子格死光"被清零,这里一并从基线恢复(格级逻辑重新看到它)。
-	if _grid_ref.is_empty() or wall_layer == null or MazeGenerator.current_subgrid.is_empty():
-		return
-	var sub: Vector2i = e["sub"]
-	var hp := int(e["hp"])
-	var sc: int = MazeGenerator.current_subgrid[0].size()
-	var sr: int = MazeGenerator.current_subgrid.size()
-	if sub.x < 0 or sub.y < 0 or sub.x >= sc or sub.y >= sr:
-		return
-	TileDefs.restore_sub(sub, hp)
-	var tex := int(MazeGenerator.current_subgrid[sub.y][sub.x])
-	var cell := Vector2i(sub.x / 4, sub.y / 4)
-	if tex == 0:
-		return
-	for ty in range(-1, 2):
-		for tx in range(-1, 2):
-			wall_layer.set_cell(Vector2i(sub.x + tx * sc, sub.y + ty * sr), 0,
-					Vector2i((sub.y % 4) * 4 + (sub.x % 4), tex - 1))
-	if not _destructible_sub.is_empty():
-		_destructible_sub[sub.y][sub.x] = MazeGenerator.SOLID
-		_dirty_chunks[CollisionBuilder.chunk_of(cell)] = true
-	if _grid_ref[cell.y][cell.x] == 0 and not _pristine_grid.is_empty():
-		_grid_ref[cell.y][cell.x] = _pristine_grid[cell.y][cell.x]
+func _flush_terrain_history() -> void:
+	if terrain != null and _rewind != null:
+		terrain.seal_rewind(_rewind.recorded_seconds())
+
+func flush_terrain_visuals() -> void:
+	if terrain != null: terrain.flush_visuals(Level0.wall_layer)
 
 
-func _on_sub_destroyed(sub: Vector2i, pre_hp: int, _owner: Node = null) -> void:
-	# cyrm v4 子格破坏：清理 16px 渲染瓦片、记录回溯账本并重建局部碰撞体
-	if _tile_ledger != null and TimeField.current != null and not TimeField.current.is_rewinding() and wall_layer != null:
-		_tile_pending.append({"sub": sub, "hp": pre_hp})
-	if wall_layer != null:
-		var sc: int = MazeGenerator.current_subgrid[0].size()
-		var sr: int = MazeGenerator.current_subgrid.size()
-		for ty in range(-1, 2):
-			for tx in range(-1, 2):
-				wall_layer.set_cell(Vector2i(sub.x + tx * sc, sub.y + ty * sr), -1)
-	if not _destructible_sub.is_empty():
-		_destructible_sub[sub.y][sub.x] = MazeGenerator.EMPTY
-		_dirty_chunks[CollisionBuilder.chunk_of(Vector2i(sub.x / 4, sub.y / 4))] = true
-
-
-# PvP 换局复位:把可破坏砖/碰撞/瓦片全量还原成建图时的原始状态(当前网格重置为基线深拷贝)。
-# 服务器每局开赛也做同样复位,双方从同一基线出发 → 不存在"客户端多拆/少拆"的幽灵墙。
-# CollisionBuilder 的 build 幂等(同名节点先 free 再建),可安全整体重建。
 func reset_destructibles() -> void:
-	if _pristine_grid.is_empty():
-		return
-	var g := MazeGenerator.copy_grid(_pristine_grid)
-	MazeGenerator.current_grid = g
-	_grid_ref = g
-	TileDefs.init_hp(g)
-	# cyrm v4:子格表/子格 HP 一并回基线
-	MazeGenerator.current_subgrid = MazeGenerator.copy_grid(_pristine_subgrid)
-	TileDefs.init_sub_hp(MazeGenerator.current_subgrid)
-	# 瓦片层整层重铺(清掉 -1 残留,恢复被破坏瓦片的贴图)
-	var wl := Level0.wall_layer
-	if wl != null:
-		_paint_maze(wl)
-	# 碰撞:可破坏分块 + 永久墙 + 攀爬条整体重建为基线
-	_destructible_sub = WorldBuilder.build_sim($WorldViewport, g)
+	if terrain == null or terrain.empty(): return
+	var started := Time.get_ticks_msec()
+	terrain.reset()
+	if Level0.wall_layer != null: _paint_maze(Level0.wall_layer)
+	terrain.attach($WorldViewport)
+	GameLog.record("terrain_collision_ready", {"duration_ms": Time.get_ticks_msec() - started})
 
-
-func _build_wall_collision(grid: Array[Array]) -> void:
-	# 永久墙 + 可破坏分块 + 攀爬基座条,逻辑迁到 WorldBuilder.build_sim(服务器复用)
-	_destructible_sub = WorldBuilder.build_sim($WorldViewport, grid)
+func _build_wall_collision(_grid: Array[Array]) -> void:
+	var started := Time.get_ticks_msec()
+	terrain.attach($WorldViewport)
+	GameLog.record("terrain_collision_ready", {"duration_ms": Time.get_ticks_msec() - started})
 
 
 func restart_single() -> void:
-	if _pristine_grid.is_empty() or _grid_ref.is_empty():
+	if terrain == null or terrain.empty():
 		return
 	var player: CharacterBody2D = $WorldViewport/Player
 	# 瓦片/碰撞整层还原为建图基线;顺手清掉本帧的破坏瓦片重建队列(基线已是最新)
-	_dirty_chunks.clear()
 	reset_destructibles()
+	# 重开是新时间线，旧地图的 HP 和实体历史不能带入新开局。
+	_rewind = WorldRewind.new($WorldViewport)
+	_tile_cursor = -1.0
 	# 清场上动态物:子弹 + 敌人(尸体/坠落物一起清,避免与重刷的敌人并排残留)
 	for b in get_tree().get_nodes_in_group("bullet"):
 		if is_instance_valid(b):
@@ -490,7 +437,6 @@ func _build_pause_menu() -> void:
 	add_child(PauseMenu.new(false))   # 隐藏待命,自行处理 ui_cancel
 
 
-# ── 地面武器系统 ──
 var ground_weapons := GroundWeaponField.new()
 var _next_pickup_inst: int = 1
 var _pickup_nodes: Dictionary = {}      # inst -> WeaponPickup
@@ -612,7 +558,6 @@ func _live_self_drops() -> Array:
 	return out
 
 
-# ── 地面武器拾取提示 ──
 # 凡满足拾取条件的武器均显示按键交互提示
 ## 时间玩法视效驱动:底片化 ramp ≤200ms、加速压暗 ramp 100ms、透支深度直传
 func _tick_time_visuals(delta: float) -> void:
@@ -698,7 +643,10 @@ func _drive_time(delta: float, want_rewind: bool, want_haste: bool) -> void:
 		Sfx.play("deny")
 	_prev_want_rewind = want_rewind
 	_prev_want_haste = want_haste
+	var previous_mode := time_field.mode
 	time_field.update(delta, want_rewind, want_haste)
+	if time_field.mode != previous_mode:
+		GameLog.record("time_mode", {"from": previous_mode, "to": time_field.mode})
 
 
 ## 世界回溯步进：录制与回放状态机，以及击败实体的暂时隐藏与恢复
@@ -708,12 +656,13 @@ func _tick_rewind(delta: float) -> void:
 	var pl := get_node_or_null("WorldViewport/Player")
 	var rewinding: bool = time_field != null and time_field.is_rewinding()
 	if rewinding and not _rewind.was_rewinding:
+		# 最后一个物理帧可能刚扣过 HP，先入账再进入回放。
+		_flush_terrain_history()
 		_rewind.begin()
 		_tile_cursor = _rewind.recorded_seconds()   # 瓦片还原高水位=进入回溯时刻
 	elif not rewinding and _rewind.was_rewinding:
 		var exit_t: float = _rewind.finish()
-		if _tile_ledger != null:
-			_tile_ledger.prune_after(exit_t)   # 瓦片账本与磁带同裁:被复写时段的破坏瓦片条目一并消失
+		terrain.truncate_rewind(exit_t)
 	_rewind.was_rewinding = rewinding
 	_prev_time_mode = time_field.mode if time_field != null else 0
 	if rewinding:
@@ -722,11 +671,9 @@ func _tick_rewind(delta: float) -> void:
 		# 倒飞子弹穿过不受回溯影响的精英敌人时正常结算二次伤害
 		_rewind_elite_hits()
 		# 瓦片还原:跨过 target 的破坏按 t 降序写回(最新破坏先还,最早的值最后落地)
-		if _tile_ledger != null and _tile_cursor >= 0.0:
+		if _tile_cursor >= 0.0:
 			var target := _rewind.current_target()
-			for e in _tile_ledger.take_range(target, _tile_cursor):
-				for c in e["cells"]:
-					_restore_sub(c)
+			terrain.rewind_between(target, _tile_cursor)
 			_tile_cursor = target
 	else:
 		WorldRewind.hold_corpses = true
@@ -734,11 +681,8 @@ func _tick_rewind(delta: float) -> void:
 				get_tree().get_nodes_in_group("bullet"))
 		WorldRewind.expire_corpses(get_tree())
 		# 瓦片账本:帧末入账本帧拆掉的格;并裁剪超出回溯窗口的旧条目
-		if _tile_ledger != null:
-			if not _tile_pending.is_empty():
-				_tile_ledger.record(_rewind.recorded_seconds(), _tile_pending)
-				_tile_pending = []
-			_tile_ledger.prune(_rewind.recorded_seconds() - TimeParams.SNAP_SECONDS)
+		_flush_terrain_history()
+		terrain.prune_rewind(_rewind.recorded_seconds() - TimeParams.SNAP_SECONDS)
 
 
 func _update_pickup_prompt() -> void:
@@ -769,8 +713,11 @@ func _update_pickup_prompt() -> void:
 						pk.canonical_pos, pl.global_position, w, h).length()
 				can = d <= PlayerParams.weapon_pickup_radius
 		pk.set_prompt_visible(can)
-# 基线应用后立即完成碰撞更新，再让客户端恢复输入。
+# 网络物理步进前按块完成本批地形碰撞更新。
 func flush_terrain_collision() -> void:
-	for chunk in _dirty_chunks:
-		CollisionBuilder.rebuild_chunk(_destructible_sub, chunk, $WorldViewport)
-	_dirty_chunks.clear()
+	if terrain == null: return
+	terrain.flush_collisions()
+	if FrameTrace.enabled:
+		var profile := terrain.take_collision_profile()
+		FrameTrace.count(&"terrain_collision_us", profile[0])
+		FrameTrace.count(&"terrain_chunks", profile[1])

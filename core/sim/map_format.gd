@@ -61,7 +61,6 @@ static func _tile_char_to_value(ch: String) -> int:
 			push_warning("MapFormat: 非法瓦片字符 \"%s\"，按 0 处理" % ch)
 			return EMPTY
 
-# ── 读文件 ──
 # 读整个 .cyrm 的行(含注释与空行)。调用方先自行 FileAccess.file_exists 并报错
 # (三个调用方的"文件不存在"返回值各不相同,故存在性检查留在各自函数里)。
 static func read_lines(path: String) -> Array:
@@ -139,7 +138,6 @@ static func load_meta_lines(path: String) -> Array:
 		return v["meta_lines"]
 	return read_lines(path)
 
-# ── 地图格式定义 ──
 # v3 文本格式：首行包含 # cyrm-v3 标识，每格 4 字符 [3 位纹理编号][1 位 16 进制形状掩码]。
 # v1 早期格式：单字符网格，加载时自动降采样转换。
 const V3_MARKER: String = "# cyrm-v3"
@@ -265,25 +263,33 @@ static func map_size(path: String) -> Vector2i:
 
 
 static func load_map_file(path: String) -> Array[Array]:
+	return load_map_info(path)["grid"]
+
+## 一次读取网格、注释与出生点，供地图目录和缩略图共用。
+static func load_map_info(path: String) -> Dictionary:
+	var empty := {"grid": [], "meta_lines": [], "spawns": {}}
 	if not FileAccess.file_exists(path):
 		push_error("MapFormat: 找不到地图文件 %s" % path)
-		return []
+		return empty
 	# v4 二进制(现行格式):场景层扁平化成游戏网格
-	if is_v4(path):
-		var v := MapFormatV4.parse(_read_bytes(path))
+	var bytes := _read_bytes(path)
+	if MapFormatV4.is_v4_data(bytes):
+		var v := MapFormatV4.parse(bytes)
 		if not bool(v.get("ok", false)):
 			push_error("MapFormat: v4 解析失败 %s(%s)" % [path, str(v.get("error", "?"))])
-			return []
-		return MapFormatV4.flatten_scene(v["scene"], int(v["sub_cols"]), int(v["sub_rows"]))
+			return empty
+		var meta: Array = Array(v["meta_lines"])
+		return {"grid": MapFormatV4.flatten_scene(v["scene"], int(v["sub_cols"]), int(v["sub_rows"])),
+				"meta_lines": meta, "spawns": parse_spawn_metadata(meta)}
 	# v3 / 旧文本格式(只读兼容:老图、编辑器旧导出)
 	var lines := read_lines(path)
 	if has_v3_marker(lines):
-		return parse_v3_grid(lines)
+		return {"grid": parse_v3_grid(lines), "meta_lines": lines, "spawns": parse_spawn_metadata(lines)}
 	var grid := parse_old_grid(lines)
 	if grid.is_empty():
 		push_error("MapFormat: 地图文件 %s 无有效行" % path)
-		return []
-	return convert_old_grid(grid)
+		return empty
+	return {"grid": convert_old_grid(grid), "meta_lines": lines, "spawns": _old_spawns(lines)}
 
 
 # 解析地图文件的 spawn 元数据行(坐标=格,空格分隔)。
@@ -346,9 +352,12 @@ static func load_spawns(path: String) -> Dictionary:
 			return {}
 		return parse_spawn_metadata(v["meta_lines"])
 	var lines := read_lines(path)
-	var result := parse_spawn_metadata(lines)
 	if has_v3_marker(lines):
-		return result
+		return parse_spawn_metadata(lines)
+	return _old_spawns(lines)
+
+static func _old_spawns(lines: Array) -> Dictionary:
+	var result := parse_spawn_metadata(lines)
 	# 旧格式:网格 2×2 → 1,spawn 坐标同步 ÷2。
 	if result.has("player"):
 		result["player"] = Vector2i(result["player"].x / 2, result["player"].y / 2)

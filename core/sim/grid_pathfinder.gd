@@ -61,7 +61,7 @@ static func wrap_to_range(pos: Vector2, w: float, h: float) -> Vector2:
 
 
 # 深拷贝网格(每行复制 int),用于保存"未破坏"基线 / 每局复位。返回强类型 Array[Array],
-# 以便赋回 MazeGenerator.current_grid / Level0._grid_ref 等强类型成员(普通 Array 赋给强类型会运行时报错)。
+# 以便赋回 地图装载输入 等强类型成员(普通 Array 赋给强类型会运行时报错)。
 static func copy_grid(grid: Array) -> Array[Array]:
 	var out: Array[Array] = []
 	for row in grid:
@@ -78,7 +78,6 @@ static func cell_of(pos: Vector2, ts: int, cols: int, rows: int) -> Vector2i:
 	return Vector2i(posmod(c.x, cols), posmod(c.y, rows))
 
 
-# ── 地面站立判定 ──
 # 判定标准：当前格为空气且正下方（y+1，环面回绕）为实心瓦片，确保实体具有稳固托底表面。
 # 坐标内部自动通过 posmod 进行环面归一化。
 static func is_floor_cell(grid: Array, cell: Vector2i) -> bool:
@@ -251,52 +250,6 @@ static func _rebuild_path_flat(start_idx: int, goal_idx: int, cols: int, rows: i
 		path.push_front(Vector2i(idx % cols, idx / cols))
 		idx = _prev[idx]
 	return path
-
-
-# 环面网格 LOS:整数 Bresenham 沿直线采样两格之间的格子,途中任一 SOLID 即阻断。
-# 不能用「每步双轴各进一」的斜对角走法——|dx|≠|dy| 时会越过目标行/列、采样到线外的格子。
-static func has_line_of_sight(grid: Array[Array], from_cell: Vector2i, to_cell: Vector2i) -> bool:
-	if grid.is_empty():
-		return false
-	var rows := grid.size()
-	var cols := grid[0].size()
-	var d := _toroidal_step(from_cell, to_cell, cols, rows)
-	if d == Vector2i.ZERO:
-		return true
-	var x := from_cell.x
-	var y := from_cell.y
-	var sx := 1 if d.x > 0 else -1
-	var sy := 1 if d.y > 0 else -1
-	var dx := absi(d.x)
-	var dy := absi(d.y)
-	var err := dx - dy
-	while true:
-		if TileDefs.is_blocked(grid[y][x]):
-			return false
-		if x == to_cell.x and y == to_cell.y:
-			break
-		var e2 := 2 * err
-		if e2 > -dy:
-			err -= dy
-			x = posmod(x + sx, cols)
-		if e2 < dx:
-			err += dx
-			y = posmod(y + sy, rows)
-	return true
-
-
-static func _toroidal_step(a: Vector2i, b: Vector2i, cols: int, rows: int) -> Vector2i:
-	var dx := b.x - a.x
-	if dx > cols / 2:
-		dx -= cols
-	elif dx < -cols / 2:
-		dx += cols
-	var dy := b.y - a.y
-	if dy > rows / 2:
-		dy -= rows
-	elif dy < -rows / 2:
-		dy += rows
-	return Vector2i(dx, dy)
 
 
 # 从候选瓦片集合中贪心选取 count 个互相保持最大间距的点集（基于环面距离）。

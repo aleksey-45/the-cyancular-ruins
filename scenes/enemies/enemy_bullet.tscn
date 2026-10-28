@@ -6,7 +6,7 @@
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_8bitv"]
 size = Vector2(10, 10)
 
-[node name="EnemyBullet" type="CharacterBody2D" unique_id=23499240]
+[node name="EnemyBullet" type="NativeBulletBody" unique_id=23499240]
 collision_layer = 0
 collision_mask = 3
 motion_mode = 1
