@@ -353,6 +353,9 @@ func _on_match_sync(caller: int) -> void:
 				str(NetBus.role_claimed.is_connected(_on_role_claimed))])
 	if role == 0:
 		return
+	# 客户端场景已就绪(它 _ready 才发 match_sync)⇒ 通知对局宿主:开局倒计时的就绪闸可以放行。
+	if _host != null and _host.has_method("mark_client_ready"):
+		_host.mark_client_ready(role)
 	var spawns := {}
 	# 地面武器必须随这条拉取一并给,不走 weapon_spawned 推送:推送会撞上客户端正在帧末切场景 → 订阅方还不存在 → 静默丢失那类事故。
 	var ground: Array = []

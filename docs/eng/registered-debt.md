@@ -173,3 +173,11 @@
 **修 2：爆炸给已摧毁子格重复播粒子**。`current_subgrid` 的纹理在摧毁后**不变**（摧毁只写 `sub_hp`），而 `Explosion.destructible_subs()` 只查纹理 ⇒ 爆炸会把已经被打碎的树叶/砖再算一遍：既重复播碎片，又重复 `TileHitFx.mark_hit` 去重。新增 `TileDefs.sub_hp_at()` 只读口，`destructible_subs` 跳过 `sub_hp<=0`（`sub_hp` 未初始化时保持旧行为，纯逻辑 -s 不受影响）。守卫：`tile_break_unit_smoke` 10→11 条（"已摧毁子格不进爆炸可破坏集"）。
 
 **待查（未修）**：开局 3s 倒计时问题（用户报"有问题"，现象待确认）。已知实现链：服务器只在 COUNTDOWN 起点广播一次 `round_state(timer=3.0)`，客户端 `Broadcast.tick(delta)` 本地走秒、`countdown_finished` 收尾；`_round_timer` 在 `_match_round_tick` 每 tick 递减。此路径本轮未改过，需要先定位现象（不显示/数字错/能行动/时长错/卡住）再动。
+
+## 二十、开局 3s 倒计时数字不对/跳秒（2026-10-28，档 3）
+
+**根因**：对局宿主在两客户端 claim 完就建局并**立刻**广播 ound_state(COUNTDOWN, timer=3.0)，而那一刻客户端还在切场景、PvpHud.local_round_state 尚无订阅方 ⇒ 这条 COUNTDOWN 被静默丢掉。之后服务器已经开始走 3s 时钟，客户端只能在 PLAYING 转变时收到一条状态 ⇒ 倒计时要么不显示、要么从中段开始（数字不对/跳秒）。
+
+**修法（服务器侧就绪闸 + 补发，协议零改动）**：MatchRound 新增 mark_client_ready(role) / _countdown_can_start(delta)——COUNTDOWN 的时钟**等所有网络 peer 都发过 match_sync（客户端场景 _ready 才发）后才开始**（AI 补位不等；上限 COUNTDOWN_HOLD_MAX=2.0s 兜底，超时照常开局）。就绪闸放行那一 tick 再**补发一次** ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时钟同拍。server_main._on_match_sync 里调 mark_client_ready；MatchHost._ready / _start_next_round 复位就绪闸与补发标志。
+
+**边界（如实登记）**：① 只覆盖 1v1（MatchRound._match_round_tick）；RoyaleHost / TeamHost 整段覆写了 _match_round_tick，不走这道闸 —— 大乱斗本来就有 HUD_SYNC_INTERVAL 周期重播可兜底，3v3 的 COUNTDOWN 仍按旧时序（若同样症状再现，需在各自覆写里加同样的就绪闸）；② 只修"起点丢失"，不改变本地走秒精度（Broadcast.tick(delta)，与服务器时钟的长期漂移仍靠下一次状态广播校正）；③ 真链路 smoke 只验证收到 round_state + 能行动，**倒计时数字观感只能人眼**；④ 协议/字节不变，PROTO_VERSION 不动。

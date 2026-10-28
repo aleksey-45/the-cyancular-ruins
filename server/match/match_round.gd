@@ -3,6 +3,35 @@ extends MatchCombat
 
 # 回合状态机 + 复活 + 每局世界复位域;round_state / kill 广播也在这里(它们是回合事件,不是逐帧快照)。
 
+# 开局 3s 倒计时必须等客户端**场景建好**再开始:服务器建局时客户端还在切场景,
+# 那一刻广播的 COUNTDOWN 会丢在"场景未就绪"窗口里(用户实见:倒计时数字不对/跳秒)。
+# 判据 = 该 role 已发 match_sync(客户端场景 _ready 里发);上限 COUNTDOWN_HOLD_MAX 秒,超时照常开局。
+const COUNTDOWN_HOLD_MAX := 2.0
+var _countdown_hold := COUNTDOWN_HOLD_MAX
+var _client_ready: Dictionary = {}       # role(int) -> true:该客户端场景已就绪
+# 开局那次 COUNTDOWN 广播落在"客户端还在切场景"的窗口里会被丢掉(信号无订阅方)⇒ 就绪后**补发一次**,
+# 让 HUD 从 3 起走、且与服务器时钟同拍;之后每局换局时复位。
+var _countdown_bcast_done := false
+
+
+func mark_client_ready(role: int) -> void:
+	_client_ready[int(role)] = true
+
+
+func _countdown_can_start(delta: float) -> bool:
+	var waiting := false
+	for role in players:
+		if not peer_by_role.has(int(role)):
+			continue   # AI 补位没有客户端场景,不等它
+		if not bool(_client_ready.get(int(role), false)):
+			waiting = true
+			break
+	if not waiting:
+		return true
+	_countdown_hold = maxf(_countdown_hold - delta, 0.0)
+	return _countdown_hold <= 0.0
+
+
 func _match_round_tick(delta: float) -> void:
 	for role in players:
 # ★ MATCH_OVER 之后不再产生任何记账:没有这道闸,终局后残留的爆炸致死会让 deaths 再 +1、尸体再掉一次
@@ -35,6 +64,11 @@ func _match_round_tick(delta: float) -> void:
 			_reset_survivor(scorer)
 	match _round_state:
 		RoundState.COUNTDOWN:
+			if not _countdown_can_start(delta):
+				return   # 客户端场景还没建好:时钟先不走,免得倒计时数字从中间开始
+			if not _countdown_bcast_done:
+				_countdown_bcast_done = true
+				_broadcast_round_state()   # 就绪后补发 COUNTDOWN(timer=3),HUD 从 3 起走、与服务器同拍
 			_round_timer -= delta
 			if _round_timer <= 0.0:
 				_round_state = RoundState.PLAYING
@@ -179,10 +213,12 @@ func _start_next_round() -> void:
 		_respawn_player(role)
 	_round_state = RoundState.COUNTDOWN
 	_round_timer = COUNTDOWN_TIME
+	_countdown_hold = COUNTDOWN_HOLD_MAX
+	_countdown_bcast_done = false   # 就绪闸打开时再补发一次(见 COUNTDOWN 分支)
 	_broadcast_round_state()
 
 
-func _broadcast_round_state() -> void:
+func round_state_payload() -> Dictionary:
 	var data := {
 		"state": _round_state,
 		"round": _round_num,
@@ -201,7 +237,11 @@ func _broadcast_round_state() -> void:
 	var table := stats_payload()
 	if not table.is_empty():
 		data["stats"] = table
-	_send_round_state(data)
+	return data
+
+
+func _broadcast_round_state() -> void:
+	_send_round_state(round_state_payload())
 
 
 func _match_winner() -> int:
