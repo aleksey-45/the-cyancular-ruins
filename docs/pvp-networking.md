@@ -126,7 +126,8 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 ### 快照
 
 - 世界包(P1.5 起线格式 = FULL / 滚动关键帧 DELTA,`PROTO_VERSION = 6`):FULL 每人全字段;DELTA 每人 `mask`(bit 序 = `WORLD_SCHEMA` 序,`0xFFFF` = keyframe)+ 变化字段值。`tick` 在 60Hz 物理 tick 域、每包 +2;DELTA 另带 `base_tick`。
-- 本人包:FULL / DELTA 两种(逐 peer 定向,30Hz;全量每 role 每 60 tick 错峰一次) —— DELTA 带 `base_tick + mask`(位序 = `C2_SCHEMA` → `WEAPON_SCHEMA` → `inv`)。载荷 `{ack_seq, q, c2}`(合并后)与增量前同形状;`q` = 已到达未消费的输入记录数,`c2 = player.capture_state()`。
+- 本人包:FULL / DELTA 两种(逐 peer 定向,30Hz;全量每 role 每 60 tick 错峰一次)
+  - 乱序缓冲:DELTA 链断时客户端按 `NetCodec.chain_state` 三态处理(迟到丢/缺口缓冲补链/超限才 FULL)。 —— DELTA 带 `base_tick + mask`(位序 = `C2_SCHEMA` → `WEAPON_SCHEMA` → `inv`)。载荷 `{ack_seq, q, c2}`(合并后)与增量前同形状;`q` = 已到达未消费的输入记录数,`c2 = player.capture_state()`。
 - 载荷由 `NetCodec` 打包成 `PackedByteArray`;**合并/乱序/基准断的判定在 `NetBus` 解码边界**,RPC 入口 emit 回同形状 `Dictionary`(下游零改动)。基准断了 ⇒ 输入 `held` 的 `BIT_NEED_FULL = 512` 位请求服务器补 FULL。
 
 ### 裁决与拆墙

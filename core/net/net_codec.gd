@@ -712,6 +712,20 @@ static func decode_world(data: PackedByteArray) -> Dictionary:
 
 
 # 客户端合并:DELTA 需要上一份已应用状态(FULL 则直接替换)。基准不连续返回 {}(调用方发"要全量"位)。
+# 增量链状态(客户端解码边界用):base_tick 相对"已应用 tick"的关系。
+# ★ 为什么要分三态:unreliable 通道会乱序。旧实现把"乱序先到的后一包"也当成断链(丢包)并请求 FULL,
+#   等于每次乱序都付一个 RTT 级冻结;这里把乱序(GAP,可缓冲等前序包补链)与真旧包(STALE,静默丢)分开。
+const CHAIN_OK := 0       # base == applied:可直接应用
+const CHAIN_STALE := -1   # base < applied:迟到旧包(状态已更新,丢)
+const CHAIN_GAP := 1      # base > applied:缺前序包(进缓冲,等补链)
+
+
+static func chain_state(base_tick: int, applied_tick: int) -> int:
+	if base_tick == applied_tick:
+		return CHAIN_OK
+	return CHAIN_STALE if base_tick < applied_tick else CHAIN_GAP
+
+
 static func apply_world(pkt: Dictionary, prev: Dictionary) -> Dictionary:
 	if pkt.is_empty():
 		return {}

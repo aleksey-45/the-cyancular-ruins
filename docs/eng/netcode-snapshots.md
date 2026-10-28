@@ -90,7 +90,8 @@ NetBus.rpc_id(peer, "snapshot_own",
   **mask bit i ↔ `WORLD_SCHEMA[i]`**（单一来源；T_BOOLS / trail 各算 1 位），`mask = 0xFFFF` = 该玩家是 **keyframe**（全字段绝对值）。整员省略 = 本包无变化，客户端沿用上次合并值。
 - **滚动关键帧**：`k = max(1, ceil(N × SNAPSHOT_STRIDE / WORLD_KF_PERIOD))`（`world_keyframe_quota`；N=16 ⇒ k=1），每包把 k 个玩家整份刷新、游标轮转 ⇒ 每人在 ≤`WORLD_KF_PERIOD`(60) tick 内被绝对刷新一次。**没有"每 60 tick 整包 FULL"**：那会在 60 tick 边界造出 16×FULL 的尖峰；滚动关键帧让包尺寸平滑（见 `snapshot_size_probe` ⑧的峰值/均值断言）。
 - **FULL 触发**：① 任一客户端置 `BIT_NEED_FULL`（见下）；② 回合态变化（换局/复活重置）；③ 名单变化（有人离开/加入）；④ 首个世界包。FULL 之后基准重置。
-- **本人包**（`KIND_OWN`）：**30Hz（与广播同拍，v0.5.1 同口径）**；省带宽靠差分。FULL 每人每 `OWN_FULL_PERIOD`(60) tick 一次，**相位错峰**：`phase = floor(idx × (60/2) / N) × 2` tick（`own_full_phase`；N=16 ⇒ 0,2,…,仍互异），其余 DELTA；DELTA 覆盖 `capture_state()` 全部字段（**位序 = `C2_SCHEMA` 条目序 → `WEAPON_SCHEMA` → 末尾 `inv`**，见 `_own_unit_at`）——错一位 = C2 预测漂移。武器块存在性变化强制 FULL（差分表达不了"字段消失"）。
+- **本人包**（`KIND_OWN`）：**30Hz（与广播同拍，v0.5.1 同口径）**；省带宽靠差分。
+- **乱序/丢包**（P1.5 后补）：DELTA 依赖 `base_tick` 链；客户端分三态 —— 迟到旧包静默丢、缺前序包进 pending 等补链（乱序零冻结）、pending 超限才请求 FULL。见 `NetBus._world_feed/_own_feed` 与 `NetCodec.chain_state`。FULL 每人每 `OWN_FULL_PERIOD`(60) tick 一次，**相位错峰**：`phase = floor(idx × (60/2) / N) × 2` tick（`own_full_phase`；N=16 ⇒ 0,2,…,仍互异），其余 DELTA；DELTA 覆盖 `capture_state()` 全部字段（**位序 = `C2_SCHEMA` 条目序 → `WEAPON_SCHEMA` → 末尾 `inv`**，见 `_own_unit_at`）——错一位 = C2 预测漂移。武器块存在性变化强制 FULL（差分表达不了"字段消失"）。
 - **修复路径**：客户端 `net_bus.gd` 在**解码边界**合并（FULL 替换 / DELTA 覆盖），下游仍收完整 `{tick, players}` / `{ack_seq, q, c2}`（三模式客户端、探针、watcher 零改动）。`base_tick` 不连续（丢包/重连/乱序）⇒ 置 `BIT_NEED_FULL`（输入 `held` 的 512 位，走 reliable 输入通道）⇒ 服务器下一世界包发 FULL 给所有人 / 该 role 下一本人包发 FULL。本人包另有 60 tick 全量兜底；世界包**只有**上述请求路径（滚动关键帧只保证每人 ≤60 tick 的绝对刷新，整包基准仍必须连续）。
 
 ### 1.5 分片
