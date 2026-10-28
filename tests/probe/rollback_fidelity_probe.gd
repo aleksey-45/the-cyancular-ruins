@@ -185,6 +185,49 @@ func _check_source_guard() -> void:
 			"接触提示的赋值排在**同一帧块内**的 note_post_step 之前(hint@%d, note@%d;顺序反了 = 静默退回 2px 容差)"
 			% [hint_line, note_line])
 
+	# ③ 受击事件时刻对齐的接线(2026-10-28):本人分支必须走 _apply_local_hit_event;
+	#    该函数必须**恰好一处** apply_external_event + **一处** feedback-only 兜底(take_hit 第 5 参 true)。
+	#    ★ 删掉注入不报错、不崩,只是静默退回"事件到达即扣血"的旧行为(对枪期回滚变多)⇒ 只能靠源码守卫。
+	var lines3 := FileAccess.get_file_as_string("res://scenes/pvp_match_client.gd").split("\n")
+	var ev_block := _func_block(lines3, "func _on_hit_event(")
+	var apply_block := _func_block(lines3, "func _apply_local_hit_event(")
+	var hit_calls := 0
+	for i in range(ev_block[0] + 1, ev_block[1]):
+		if lines3[i].strip_edges().begins_with("#"):
+			continue
+		if lines3[i].contains("_apply_local_hit_event("):
+			hit_calls += 1
+	_check(ev_block[0] >= 0 and hit_calls == 1,
+			"受击本人分支只许有**一处** _apply_local_hit_event(实得 %d 处;0 = 静默退回旧行为)" % hit_calls)
+
+	var inject_calls := 0
+	var fallback := 0
+	for i in range(apply_block[0] + 1, apply_block[1]):
+		var line3 := lines3[i]
+		if line3.strip_edges().begins_with("#"):
+			continue
+		if line3.contains("apply_external_event("):
+			inject_calls += 1
+		if line3.contains("_local.take_hit(") and line3.contains(", true)"):
+			fallback += 1
+	_check(apply_block[0] >= 0 and inject_calls == 1,
+			"事件对齐只许有**一处** apply_external_event(实得 %d 处;0 = 注入没接上)" % inject_calls)
+	_check(fallback == 1,
+			"兜底路径必须存在且只播反馈(take_hit 第 5 参 = true;实得 %d 处)" % fallback)
+
+
+# 返回 [函数头行, 块尾行) ;找不到返回 [-1, -1]。块尾 = 下一个列 0 的 `func `。
+func _func_block(lines: Array, header_prefix: String) -> Array:
+	for i in range(lines.size()):
+		if String(lines[i]).begins_with(header_prefix):
+			var end := lines.size()
+			for j in range(i + 1, lines.size()):
+				if String(lines[j]).begins_with("func "):
+					end = j
+					break
+			return [i, end]
+	return [-1, -1]
+
 
 # ── D 组:服务器外部事件(受击)按"事件真正发生的输入 seq"注入 ──
 # 与 C 组同款手法:真 Player + 控制器 + 手动喂 30 条固定输入。核心判据是"注入后的轨迹 == 当时就打"的黄金轨迹:

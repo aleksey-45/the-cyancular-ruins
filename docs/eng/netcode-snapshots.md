@@ -130,6 +130,14 @@ NetBus.rpc_id(peer, "snapshot_own",
 - 历史环 `core/sim/hit_lag_history.gd`：每 tick 存 `role → {p: canonical 位置, r: 相对受击面的 Rect2}`，容量 24 tick（400ms），超限丢最老；无该 tick/该 role 时回退现时受击面。
 - **不动的部分**：移动预测继续吃最新态（幽灵体不接插值、位置照旧）；爆炸 AoE **不回放**（现时位置，见 registered-debt §十五）。协议字节零改动。
 
+### 2.2 受击事件时刻对齐（2026-10-28）
+
+- **锚点**：`hit_event` 携带 `seq` = **受击方已消费输入记录的 seq**（服务器广播前读 `_ack_seq[victim]`），与快照 `ack`、客户端 `_captures` 同一 seq 空间。★ 不用 `_srv_tick`：服务器输入饥饿（队列空、沿用上一条 held）时 `_ack_seq` 不前进而 `_srv_tick` 每 tick +1，两者会漂。
+- **客户端**：`PvpMatchClient._apply_local_hit_event` 调 `PredictionRollback.apply_external_event(seq, take_hit)`：恢复 `_captures[seq]` → 执行 `take_hit` → 重放 `(seq, last_applied]`（与 `_handle_ack` 同一条 `_step` 路径）⇒ 本地击退曲线与服务器同源，不必等下一个 ack 再 restore。该注入**不计入** `_rollbacks`（不是"预测被证伪"）。
+- **兜底**：`seq` 不可注入（来自未来 / 已 ack / 环外 / 乱序）⇒ 只播反馈 `take_hit(..., feedback_only=true)`（白闪 / 震屏 / 音效 / 挤压），**不**扣血 / 不击退 / 不设无敌帧：权威 c2 可能已包含这一发，二次应用会在下一个 ack 再判一次分歧。
+- **边界**（照实）：① `_captures` 环 256 tick（4.3s），超出只能走兜底；② 服务器饥饿时 seq 指向上一条记录，注入差 1 tick（方向偏保守）；③ 落水窒息是客户端已预测的伤害，`hit_event` 仍会二次应用（见 [`registered-debt.md`](registered-debt.md) §二十三）；④ 事件按 seq 递增到达是契约（reliable 保序），seq 回退一律拒绝。
+- **守卫**：[`tests/probe/rollback_fidelity_probe.tscn`](../../tests/probe/rollback_fidelity_probe.tscn) 的 D 组（注入 / 黄金轨迹 / 越界 / 同 seq 双发 / 乱序）与 E 组（反馈-only），外加三条源码守卫（本人分支 → `_apply_local_hit_event`、注入唯一、兜底第 5 参 true）。
+
 ## 3. 输入队列
 
 `core/net/packet_input_source.gd` + `server/match/input_intake.gd`：

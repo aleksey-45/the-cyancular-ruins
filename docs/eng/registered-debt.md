@@ -204,3 +204,16 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 **守卫**：新增 `tests/smoke/prediction_contact_smoke.gd`（7 条：AABB 间隙几何 / 滞后封顶 / 容差下限·线性·封顶 / 贴身边界）；`rollback_fidelity_probe` 的接线守卫改认 `_update_contact_state()`（原注释已要求"换入口就改这里"）；`allscript_probe.EXPECTED_SCRIPTS` 188→190（新增 2 个 `.gd`）。变异：`BASE_CONTACT_TOL 8→4` ⇒ 该支 `FAILED: 2 处`。
 **验证**：`RUN_ALL OK(13 runs / 88 gated-assertions)`；真链路 `pvp_match_smoke SMOKE PASS`、`royale_soak SOAK: ALL-OK(4/4)`。
 **边界**：① 外推只压"匀速"误差，急停/反向时幽灵体可能过冲到 35px（动态容差兜，但观感上仍可能有一两帧推挤感）；② 可见副本仍是 playout 50ms 延迟——"看到的位置"和"挡住你的身体"的时差没变；③ 容差上限 48px 是"不掩盖真分歧"的取舍，不是精确校准；④ 全是客户端量，服务器权威碰撞/伤害逻辑没动；⑤ 真实手感只能真链路 + 人眼（回滚计数可用 `--netstat` 观察）。
+
+
+## 二十三、受击事件时刻对齐的边界（2026-10-28，档 3）
+
+**改了什么**：`hit_event` 增加 `seq`（= 受击方已消费输入记录，与快照 ack 同空间）；客户端 `PredictionRollback.apply_external_event(seq, apply)` 把它恢复 `_captures[seq]` → 应用 → 重放 `(seq, last_applied]`；`take_hit(..., feedback_only)` 给不可注入路径只播反馈。文件：`server/match/match_combat.gd`、`core/net/net_bus.gd`、`core/net/prediction_rollback.gd`、`scenes/pvp_match_client.gd`、`scenes/player/combat_component.gd`、`scenes/player/player.gd`。
+**守卫**：`rollback_fidelity_probe` D 组（⑤–⑬：注入 / 黄金轨迹 / 越界 / 同 seq 双发 / 乱序 / 注入后 reconcile）+ E 组（⑭⑮：反馈-only）+ 三条源码守卫（本人分支 → `_apply_local_hit_event`、注入唯一、兜底第 5 参 true）。五处变异各自红在指定断言：删 restore→⑧、删重放→⑧/⑨、删两条越界拒绝→⑪、删乱序拒绝→⑬、不刷新捕获→⑫；删 `feedback_only` 早退→⑭。
+**边界（照实）**：
+1. **没有自动化真链路命中守卫**：命中不可确定性构造（`pvp_match_smoke` 两端出生点相距远）⇒ 改 `hit_event` 参数只靠人眼与日志。兜底理由是"参数不符会当场报错"，不是静默形态。
+2. **服务器输入饥饿**（队列空、沿用上一条 held）时 `_ack_seq` 不前进，事件 `seq` 会指向上一条记录 ⇒ 注入差 1 tick，方向偏保守（照实写的近似）。
+3. **落水窒息**伤害是客户端已预测的伤害，`hit_event` 仍会二次应用 ⇒ 每次窒息扣血多触发一次回滚；未修（需 PvP 水图 + 真链路证实后再另立小修）。
+4. **`_captures` 环 256 tick（4.3s）**：ping / reliable 重传导致事件超出环时走兜底 ⇒ 该次受击没有本地击退（只有白闪 / 震屏 / 音效）。
+5. **事件必须按 seq 递增到达**（reliable 保序）；seq 回退一律拒绝并兜底，不会静默丢事件。
+

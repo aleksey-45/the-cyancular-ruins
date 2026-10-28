@@ -694,12 +694,22 @@ func _on_hit_event(victim_role: int, damage: int, source_pos: Vector2, seq: int)
 	if _local == null:
 		return
 	if victim_role == PvpSession.role:
-		# seq = 受击方已消费输入记录的 seq（服务器命中时刻的锚点；Task 4 起用于事件时刻对齐）。
-		_local.take_hit(source_pos, damage, false, -1.0)
+		_apply_local_hit_event(source_pos, damage, seq)
 		return
 	var r := _replica_for(victim_role)
 	if r != null and r.has_method("play_hit"):
 		r.play_hit(source_pos)
+
+
+# 本地受击:优先按服务器命中时刻的 seq 注入预测历史(restore 到该 tick → take_hit → 重放),让本地击退曲线与权威同源;
+# seq 不能安全注入(环外 / 已 ack / 乱序)时只播反馈 —— 权威 c2 可能已包含这一发,再完整 take_hit 会二次扣血、下个 ack 再回滚。
+# ★ 守卫在 tests/probe/rollback_fidelity_probe.gd 的源码检查里:删掉注入会静默退回旧行为(不报错,只是回滚变多)。
+func _apply_local_hit_event(source_pos: Vector2, damage: int, seq: int) -> void:
+	if _rollback != null and _rollback.apply_external_event(seq, func() -> void:
+			_local.take_hit(source_pos, damage, false, -1.0)) \
+			== PredictionRollback.EventApply.APPLIED:
+		return
+	_local.take_hit(source_pos, damage, false, -1.0, true)
 
 
 # 服务器权威开火(即时光束武器):对手端据此画光束视觉副本(不开物理子弹)。原始 pts 在射手 canonical 系(可能隔整幅地图跨接缝)⇒ 逐点锚到射手副本当前渲染位置(副本位置已由 player_replica 每帧归到本地玩家最近副本);光束整条路径 ≤ bullet_range 远小于半图 ⇒ 逐点 anchor_to_nearest 会把整条折线搬到可见副本、跨接缝连续。★ 只画对手那发:自己那发已由本地预测自画,再收服务器版会双光束。

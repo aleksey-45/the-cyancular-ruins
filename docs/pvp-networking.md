@@ -165,7 +165,7 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 
 ### 事件消费
 
-- `bullet_spawn`:生成视觉子弹副本,`apply_damage = false`,摆到 canonical 位置;`hit_event`:本地玩家被命中 → `take_hit` 即时白闪 / 击退,血量以快照为权威。
+- `bullet_spawn`:生成视觉子弹副本,`apply_damage = false`,摆到 canonical 位置;`hit_event`:带受击方已消费输入 `seq` —— 本人分支交给 `_apply_local_hit_event`,能按服务器命中时刻注入预测历史时 restore+重放(本地击退与权威同源),否则只播白闪/震屏/挤压、不扣血(权威 c2 可能已含这一发);对手端只播闪烁。
 - `tile_destroyed` / `sub_destroyed`:同步拆砖渲染与碰撞;`round_state`:四态编排在基类,1v1 新一局清子弹 + 复位砖,`MATCH_OVER` 刷新结算页。
 - `opponent_left`:置 `_match_ended`、停重连、2.5s 后回主菜单。
 
