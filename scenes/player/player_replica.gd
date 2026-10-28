@@ -10,6 +10,7 @@ const SNAP_DIST := 128.0
 const PlayoutClock := preload("res://core/net/playout_clock.gd")
 const LagComp := preload("res://core/net/lag_comp.gd")
 const HitShape := preload("res://core/sim/hit_shape.gd")   # 受击判定几何唯一入口(cull 用)
+const PredictionContact := preload("res://core/net/prediction_contact.gd")   # 幽灵体外推的滞后/接触判据(纯函数)
 
 # ── playout 缓冲插值 ── 延迟量 = LagComp.PLAYOUT_TICKS(60Hz tick 域,3 tick ≈ 50ms):1 个发包间隔是夹逼插值下限,
 # 第 2 个吸收抖动;改大更抗抖但对手更迟。★ 服务器命中回放与这里共用同一常量(时间域解耦),别在副本里另写一个数。
@@ -46,6 +47,7 @@ var _weapon_slot_node: Node2D        # 武器挂点(运行时加,排在 Animated
 var _weapon: Node2D = null           # 当前武器场景实例(惰性:未 equip,仅外观)
 var _weapon_type_int := 0            # 服务器权威槽位
 var _opponent_canonical := Vector2.ZERO
+var _snap_vel := Vector2.ZERO   # 最新快照的权威速度(幽灵体外推用;不是渲染用的 _vel)
 var _local_anchor := Vector2.ZERO         # 本地玩家(相机)位置,每帧跟随
 var _have_data := false
 var _clock: PlayoutClock = null
@@ -128,6 +130,18 @@ func _set_ghost_pose(pose: int) -> void:
 	for p in _ghost_shapes:
 		(_ghost_shapes[p] as CollisionPolygon2D).disabled = p != pose
 
+## 预测接触用:幽灵体的世界受击面(位置=外推后的"现在",形状=最新姿态)。
+func ghost_rect() -> Rect2:
+	if _ghost == null or not is_instance_valid(_ghost):
+		return Rect2(global_position - Vector2(18.0, 18.0), Vector2(36.0, 36.0))
+	return HitShape.hurt_rect_of(_ghost)
+
+
+## 预测接触用:幽灵体所用的权威速度(最新快照)。调用方算相对速度。
+func ghost_velocity() -> Vector2:
+	return _snap_vel
+
+
 ## 客户端 cull 用的受击面:尺寸/中心偏移取幽灵体(最新姿态+最新权威位置),位置取渲染位置(插值)。
 ## 两个量分开取的理由:形状要与服务器裁决同源,位置要与玩家眼睛看到的同源;这是已知 67ms 时差的观测点。
 func hurt_rect_rendered() -> Rect2:
@@ -191,6 +205,7 @@ func _push_history(tick: int, canon: Vector2, st: Dictionary) -> void:
 # ★ tick 参与计算(播放时钟 + 位置历史,见文件头),三参签名是三个生产调用点与探针的既定调用面,别改成两参。
 func apply_snapshot(data: Dictionary, local_anchor: Vector2, tick: int) -> void:
 	_opponent_canonical = data["pos"]
+	_snap_vel = data.get("vel", Vector2.ZERO)
 	_local_anchor = local_anchor
 	_have_data = true
 	if _clock == null:
@@ -310,10 +325,15 @@ func _process(delta: float) -> void:
 			global_position = _sample_history(_clock.render_tick)
 			global_position = MazeGenerator.anchor_to_nearest(global_position, _local_anchor,
 					GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
-		# ★★ 幽灵体不跟插值:它跟未经平滑的原始权威位置 target —— 幽灵体要的是最小陈旧(让预测所依据的世界与权威一致),
-		# 不是好看;跟插值 = 再晚 67ms,直接变成「本地预测撞在一个位置不对的对手身上」⇒ 多分歧、多回滚。
+		# ★★ 幽灵体不跟渲染插值,但也**不能**直接吃最新快照(那样滞后 = 单程 + 0~33ms 发包间隔;跑速 700 时
+		#   23~46px,贴身时正好和身位同量级 ⇒ 预测碰撞与服务器不一致 ⇒ 每 30Hz 验证点回滚)。
+		#   这里把最新快照按权威速度外推到"现在"(滞后期 = 单程 + 半包间隔,RTT 由 NetBus.ping_ms 给):
+		#   匀速期误差 ≈ 0;急停/变向最坏 ≈ vel×horizon(700×0.05=35px),由客户端贴身容差动态兜底。
 		if _ghost != null:
-			_ghost.global_position = target
+			var horizon := PredictionContact.ghost_horizon_s(NetBus.ping_ms)
+			var ghost_pos := _opponent_canonical + _snap_vel * horizon
+			_ghost.global_position = MazeGenerator.anchor_to_nearest(ghost_pos, _local_anchor,
+					GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 	if _hit_flash_t > 0.0:
 		_hit_flash_t = maxf(_hit_flash_t - delta, 0.0)
 		var on := int(_hit_flash_t * HIT_FLASH_RATE) % 2 == 0

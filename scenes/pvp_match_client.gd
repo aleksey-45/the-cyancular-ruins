@@ -15,6 +15,8 @@ var _round_locked := false      # COUNTDOWN 冻结态(别把倒计时里提前�
 var _ping_acc := 0.0
 # C2 客户端预测:见 core/prediction_rollback.gd 与 docs/pvp-c2-retrospective.md。
 var _rollback = null            # PredictionRollback
+const PredictionContact := preload("res://core/net/prediction_contact.gd")   # 贴身判据/动态容差(纯函数)
+const ReplicaScript := preload("res://scenes/player/player_replica.gd")      # 要它的 GROUP 常量(副本没 class_name)
 var _input_seq := 0             # 本地每 tick 单调的输入序号(60Hz 真输入;服务器每 tick 消费一条记录并回带 ack)
 var _have_prev_seq := false
 var _prev_sent_seq := 0
@@ -417,8 +419,11 @@ func _physics_process(delta: float) -> void:
 	# U1:本地预测**不锁存** —— 每物理 tick 现读真输入,60Hz 与服务器逐 tick 同序。
 	# ★ 顺序不能反:先记上一 tick 的预测整态(玩家还没步进),reconcile 才比得上 ring[C];采样本 tick 输入后玩家才步进。
 	if _have_prev_seq and _rollback != null:
-		# 贴身提示:只在接触期放宽容差(见 core/prediction_rollback.gd 的 contact_pos_tol)。★ 必须在 reconcile() 之前 —— 它是消费方;漏了这一行 = 静默退回 2px 容差,故 rollback_fidelity_probe 有一条源码守卫钉住它的位置与唯一性。
-		_rollback.in_contact = _local.touching_player()
+		# 贴身提示:只在接触期放宽容差(见 core/prediction_rollback.gd 的 contact_pos_tol)。★ 必须在 reconcile() 之前 —— 它是消费方。
+		# ★ 2026-10-28 起判据不只靠 touching_player():幽灵体滞后会让你追人时预测穿过去、本帧根本没撞上 ⇒ 旧写法判不到
+		#   贴身、按 2px 容差挨回滚。`_update_contact_state()` 用"预测身位到幽灵 AABB 的间隙"兜住这种贴身,并按相对速度
+		#   动态抬高 contact_pos_tol(上限 48px)。touching_player() 仍是它内部的兜底分支。
+		_rollback.in_contact = _update_contact_state()
 		_rollback.note_post_step(_prev_sent_seq, _local.capture_state())
 		_rollback.reconcile()
 	var send_now := _input_batch_phase == 0
@@ -565,6 +570,35 @@ func _bullet_hits_entity(_b: BulletBase, _ent: Node2D) -> bool:
 #   · _should_handle_match_over():大乱斗忽略第二条 MATCH_OVER,1v1/3v3 要处理(第二条载荷要刷新结算页);
 #   · _on_countdown_round():三模式都复位砖,3v3 额外重拉 match_sync(换边);
 #   · _enter_match_over_state():置终局、销毁暂停菜单(ESC 双语义的硬依赖)、弹/刷结算页。
+# 贴身判据 + 动态容差(2026-10-28)。返回"是否贴身",调用处写成 `_rollback.in_contact = _update_contact_state()`。
+# 旧实现只看 `touching_player()`(客户端本帧真的撞上幽灵体):幽灵体滞后会让你追人时预测穿过去 ⇒ 判不到贴身 ⇒
+# 仍按 2px 容差、每 30Hz 验证点回滚。这里改用"预测身位到幽灵 AABB 的间隙"进贴身区,并按相对速度抬高容差
+# (容差 = 8 + 相对速度×滞后,封顶 48px);touching_player() 保留为兜底(确实撞上的那一帧)。
+func _update_contact_state() -> bool:
+	if _rollback == null or _local == null:
+		return false
+	var lr: Rect2 = _local.hurt_rect()
+	var w := float(GameParameters.MAP_WIDTH)
+	var h := float(GameParameters.MAP_HEIGHT)
+	var best_gap := INF
+	var rel_speed := 0.0
+	for n in get_tree().get_nodes_in_group(ReplicaScript.GROUP):
+		var rep := n as Node2D
+		if rep == null or not is_instance_valid(rep) or not rep.has_method("ghost_rect"):
+			continue
+		var gr: Rect2 = rep.ghost_rect()
+		var center := MazeGenerator.anchor_to_nearest(gr.get_center(), _local.global_position, w, h)
+		gr = Rect2(center - gr.size * 0.5, gr.size)
+		var gap := PredictionContact.rect_gap(lr, gr)
+		if gap < best_gap:
+			best_gap = gap
+			var gv: Vector2 = rep.ghost_velocity() if rep.has_method("ghost_velocity") else Vector2.ZERO
+			rel_speed = (_local.velocity - gv).length()
+	var horizon := PredictionContact.ghost_horizon_s(NetBus.ping_ms)
+	_rollback.contact_pos_tol = PredictionContact.contact_tol(rel_speed, horizon)
+	return _local.touching_player() or PredictionContact.is_contact(best_gap)
+
+
 func _on_round_state(data: Dictionary) -> void:
 	_last_round_state = data
 	var state := int(data.get("state", 0))

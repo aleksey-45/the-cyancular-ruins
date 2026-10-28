@@ -146,7 +146,9 @@ func _check_source_guard() -> void:
 	_check(found, "pvp_client 给控制器设了 map_px(不设 = 环面修复惰性且静默)")
 
 	# ② 接触提示的接线(in_contact 必须在 note_post_step 之前写 —— 它是那一步的消费方)。漏了这一行 = 静默退回 2px 容差:不报错、探针全绿、真机行为与改动前逐帧一致。
-	#   ★ 要拦下的变异:把 `_rollback.in_contact = …` 挪到 note_post_step(...) 之后 —— 接触提示永远用上一帧的碰撞信息(差一帧),静默且没有别的守卫看得见。
+	#   ★ 要拦下的变异:把赋值挪到 note_post_step(...) 之后 —— 接触提示永远用上一帧的信息(差一帧),静默且没有别的守卫看得见。
+	#   ★ 2026-10-28 入口改成 `_update_contact_state()`(距离判贴身 + 动态容差),touching_player() 降级成函数内兜底;
+	#     本守卫跟着认新入口(原注释已要求"换了入口就改这里,别删断言")。
 	#   ★ 位置序就是契约;但比较范围收在同一帧块内(包住该赋值的那一层顶层函数):别处无关函数里新增/删掉一条 note_post_step 不该把这条带红。
 	var txt2 := FileAccess.get_file_as_string("res://scenes/pvp_match_client.gd")
 	var lines := txt2.split("\n")
@@ -156,7 +158,7 @@ func _check_source_guard() -> void:
 		var line := lines[i]
 		if line.strip_edges().begins_with("#"):
 			continue
-		if line.contains("_rollback.in_contact =") and line.contains("touching_player()"):
+		if line.contains("_rollback.in_contact = _update_contact_state()"):
 			hint_count += 1
 			hint_line = i
 	_check(hint_count == 1,

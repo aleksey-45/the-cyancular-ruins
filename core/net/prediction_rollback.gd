@@ -33,6 +33,8 @@ var pos_tol: float = DEFAULT_POS_TOL
 # ★ 这是扫描结论、不是随手可调的旋钮:要动它得重跑 CONTACT 族扫描并复核三条读数(偏差不恶化 / 8 与 16/32 频率同档 / 软接触只占体宽 1/10)。零守卫(brawl_rollback_probe 已删·2026-10-09)。
 const DEFAULT_CONTACT_POS_TOL := 8.0
 var contact_pos_tol: float = DEFAULT_CONTACT_POS_TOL
+# ★ 2026-10-28:客户端在贴身区按"相对速度 × 幽灵滞后"动态覆盖它(8~48px,见 core/net/prediction_contact.gd);
+#   本常量现在只是下限/默认值,别再以为它恒是 8。
 
 # 接入方每物理步写一次:本帧是否正在贴身(Player.touching_player())。★ 默认 false = 改动前的行为;它不进 capture_state/restore_state、不上行(纯客户端本地量)。
 var in_contact: bool = false

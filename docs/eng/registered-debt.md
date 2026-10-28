@@ -192,3 +192,15 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 
 **回退 2：命中 X 搬回屏幕中心**。`BulletBase._spawn_hit_fx()` 恢复 `CombatFeedback.hit_marker()`（屏幕中心 X）；`HitFeedbackFx` 只保留**伤害数字**（`spawn_damage`，世界系），不再画目标身上的 X；`PvpMatchClient._on_hit_confirm()` 恢复只调 `CombatFeedback.hit_marker()`。理由：X 的位置是既有用户口径，未经要求不得搬动（此前 P0-3 的"X 画在目标身上"被仓主否决）。
 **边界**：增量编解码 `encode_world(..., full=false)` / `apply_world` / `own_full_phase` 仍保留并由 `net_wire_smoke`/`snapshot_size_probe` 覆盖（能力测试，不代表生产路径）；`PROTO_VERSION` 仍 6（线格式未变，只是生产只发 FULL）。命中伤害数字仍为纯表现、零守卫。
+
+
+## 二十二、贴身回滚：幽灵体外推到"现在" + 动态贴身容差（2026-10-28，档 3）
+
+**现象**：联机贴得越近越卡顿/回滚（追人时尤其）。
+**根因**（两条叠加）：① 客户端预测撞的是幽灵体，旧实现幽灵体位置 = **最近一条权威快照**（滞后 ≈ 单程 + 0~33ms 发包间隔；700px/s ⇒ 23~46px，相向时翻倍），而服务器用自己此刻的位置裁决 ⇒ 一进接触区，"这一步撞不撞"两边就掷硬币；② 旧实现用本帧碰撞结果 `touching_player()` 判"是否贴身"，追人时幽灵滞后会让客户端预测**穿过去**、本帧根本没撞上 ⇒ 判不到贴身、仍走 2px 容差 ⇒ 每 30Hz 验证点回滚一次。固定 8px 贴身容差 < 23~46px 滞后，兜不住。
+**修法**（纯客户端，协议/服务器零改动）：
+1. `PlayerReplica` 记最新快照的权威 `vel`；`_process` 里幽灵体位置 = 快照 `pos + vel × horizon`（`PredictionContact.ghost_horizon_s(ping_ms)` = RTT/2 + 半个 30Hz 间隔，封顶 `MAX_LAG_S=0.05s`），锚回本地玩家最近副本。匀速期误差≈0，急停/变向最坏 ≈ 700×0.05=35px。
+2. `PvpMatchClient._update_contact_state()`：遍历 `player_replica` 组，用本地 `hurt_rect()` 与外推后幽灵 `ghost_rect()` 的 **AABB 间隙**（环面锚定后）判贴身（`CONTACT_GAP=12px`），并令 `contact_pos_tol = clamp(8 + 相对速度 × horizon, 8, 48)`；`touching_player()` 保留为兜底。赋值位置仍在 `note_post_step` 之前（探针源码守卫已改为认新入口）。
+**守卫**：新增 `tests/smoke/prediction_contact_smoke.gd`（7 条：AABB 间隙几何 / 滞后封顶 / 容差下限·线性·封顶 / 贴身边界）；`rollback_fidelity_probe` 的接线守卫改认 `_update_contact_state()`（原注释已要求"换入口就改这里"）；`allscript_probe.EXPECTED_SCRIPTS` 188→190（新增 2 个 `.gd`）。变异：`BASE_CONTACT_TOL 8→4` ⇒ 该支 `FAILED: 2 处`。
+**验证**：`RUN_ALL OK(13 runs / 88 gated-assertions)`；真链路 `pvp_match_smoke SMOKE PASS`、`royale_soak SOAK: ALL-OK(4/4)`。
+**边界**：① 外推只压"匀速"误差，急停/反向时幽灵体可能过冲到 35px（动态容差兜，但观感上仍可能有一两帧推挤感）；② 可见副本仍是 playout 50ms 延迟——"看到的位置"和"挡住你的身体"的时差没变；③ 容差上限 48px 是"不掩盖真分歧"的取舍，不是精确校准；④ 全是客户端量，服务器权威碰撞/伤害逻辑没动；⑤ 真实手感只能真链路 + 人眼（回滚计数可用 `--netstat` 观察）。
