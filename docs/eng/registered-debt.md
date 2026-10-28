@@ -152,7 +152,7 @@
 
 **与任务书的偏差（两处，均按 Lead 补充/现状）**：① 任务书"世界 FULL 每 60 tick 一次"改为**滚动关键帧**（每包 k 人绝对刷新）——整包 FULL 会在 60 tick 边界造尖峰，滚动关键帧更平滑；FULL 只在请求/换局/名单变化时发。② 任务是"本人包降频到 30Hz"——S1(2026-10-24) 起本人包**本来**就是 30Hz，本轮实际新增的是差分 + 60 tick 错峰全量。
 
-**字节/带宽（N=16、世界 30Hz / 本人 60Hz、典型帧；代码算式，由 Lead 实测复核）**：世界包 FULL 536 B → 稳态 keyframe 帧 **152 B**（28%）；本人包 FULL 99 B / 差分典型 36 B @60Hz（每 role 1 次全量/秒，差分 59 次/秒，≈2.22 KB/s）；服务器上行 ≈294.8 → **≈107 KB/s**；单端下行 ≈5.5 KB/s。
+**字节/带宽（N=16、30Hz、典型帧；代码算式，由 Lead 实测复核）**：世界包 FULL 536 B → 稳态 keyframe 帧 **152 B**（28%）；本人包 FULL 99 B / 差分典型 36 B @30Hz（每 role 1 次全量/秒，差分 29 次/秒，≈1.14 KB/s）；服务器上行 ≈294.8 → **≈89 KB/s**；单端下行 ≈5.5 KB/s。
 
 **容差 / 位序（承重面）**：世界 DELTA mask bit i = `WORLD_SCHEMA[i]`（`mask=0xFFFF`=keyframe）；本人包 mask 位序 = `C2_SCHEMA` → `WEAPON_SCHEMA` → `inv`（`_own_unit_at` 派生，改 schema 自动跟着变）。判等：世界按量化后整数（pos/vel 定点、aim 字节、bool 逐位）；本人包 float 字段 **1e-4 容差** ⇒ 被省略的字段客户端最多陈旧 1e-4（C2 对账 pos 容差 2px / vel 20，不受影响）。去“定点舍入/位序/宽度”任一错 ⇒ `net_wire_smoke` ⑤⑥ 必红。
 
@@ -168,7 +168,7 @@
 
 ## 十九、快照变卡与爆炸重复粒子（2026-10-28，档 3）
 
-**修 1：本人包 30Hz → 60Hz 回退**。P1.5 把本人包从每 tick 降到每 `SNAPSHOT_STRIDE` tick（30Hz），C2 回滚的权威锚点间距随之翻倍：移动中每 33ms 才校正一次 ⇒ 本地角色手感发涩/微跳（用户实测报"快照变卡"）。省带宽的承诺由**差分**兑现（全量 94 B → 典型差分 36 B），不能靠降频；已恢复 `_flush_own_snapshots` 每物理 tick 发，全量仍按 role 每 60 tick 错峰。带宽读数同步：本人包 ≈2.22 KB/s/role，N=16 服务器上行 ≈107 KB/s（仍远低于 P1.5 前 295 KB/s）。
+**修 1：本人包频率（结论：保持 30Hz，禁止回退 60Hz）**。P1.5 把本人包降到 30Hz 后用户报"快照变卡"；我先按"C2 锚点间距翻倍"解释并临时改成 60Hz，**仓主裁定 v0.5.1 就是 30Hz 且不卡** ⇒ 已恢复 30Hz（`match_host` 保留 `if snapshot_tick` 闸，并在注释里钉死"禁止 60Hz"）。真正的卡顿根因改判为**世界包增量链**：v0.5.1 每包自包含，丢/迟到一包只损失该帧；P1.5 的 DELTA 依赖 `base_tick` 链，链断后客户端只能等 `BIT_NEED_FULL` → 服务器 FULL，等于每个丢包换来一次 RTT 级冻结。已用确定性模拟（90 包 FULL + 滚动关键帧 DELTA，服务端编码→客户端 `apply_world` 合并，逐字段比对）证明**无丢包时合并值与权威一致**，故"插值/合并算错"排除；下一步修法是让 DELTA 对单包丢失容忍（基线取上一包之前的更早基准 + 客户端允许差一档，或对最近变化做重复补丁），待实现。P1.5 把本人包从每 tick 降到每 `SNAPSHOT_STRIDE` tick（30Hz），C2 回滚的权威锚点间距随之翻倍：移动中每 33ms 才校正一次 ⇒ 本地角色手感发涩/微跳（用户实测报"快照变卡"）。省带宽的承诺由**差分**兑现（全量 94 B → 典型差分 36 B），不能靠降频；已恢复 `_flush_own_snapshots` 每物理 tick 发，全量仍按 role 每 60 tick 错峰。带宽读数同步：本人包 ≈2.22 KB/s/role，N=16 服务器上行 ≈89 KB/s（仍远低于 P1.5 前 295 KB/s）。
 
 **修 2：爆炸给已摧毁子格重复播粒子**。`current_subgrid` 的纹理在摧毁后**不变**（摧毁只写 `sub_hp`），而 `Explosion.destructible_subs()` 只查纹理 ⇒ 爆炸会把已经被打碎的树叶/砖再算一遍：既重复播碎片，又重复 `TileHitFx.mark_hit` 去重。新增 `TileDefs.sub_hp_at()` 只读口，`destructible_subs` 跳过 `sub_hp<=0`（`sub_hp` 未初始化时保持旧行为，纯逻辑 -s 不受影响）。守卫：`tile_break_unit_smoke` 10→11 条（"已摧毁子格不进爆炸可破坏集"）。
 
@@ -176,8 +176,10 @@
 
 ## 二十、开局 3s 倒计时数字不对/跳秒（2026-10-28，档 3）
 
-**根因**：对局宿主在两客户端 claim 完就建局并**立刻**广播 ound_state(COUNTDOWN, timer=3.0)，而那一刻客户端还在切场景、PvpHud.local_round_state 尚无订阅方 ⇒ 这条 COUNTDOWN 被静默丢掉。之后服务器已经开始走 3s 时钟，客户端只能在 PLAYING 转变时收到一条状态 ⇒ 倒计时要么不显示、要么从中段开始（数字不对/跳秒）。
+**根因**：对局宿主在两客户端 claim 完就建局并**立刻**广播 
+ound_state(COUNTDOWN, timer=3.0)，而那一刻客户端还在切场景、PvpHud.local_round_state 尚无订阅方 ⇒ 这条 COUNTDOWN 被静默丢掉。之后服务器已经开始走 3s 时钟，客户端只能在 PLAYING 转变时收到一条状态 ⇒ 倒计时要么不显示、要么从中段开始（数字不对/跳秒）。
 
-**修法（服务器侧就绪闸 + 补发，协议零改动）**：MatchRound 新增 mark_client_ready(role) / _countdown_can_start(delta)——COUNTDOWN 的时钟**等所有网络 peer 都发过 match_sync（客户端场景 _ready 才发）后才开始**（AI 补位不等；上限 COUNTDOWN_HOLD_MAX=2.0s 兜底，超时照常开局）。就绪闸放行那一 tick 再**补发一次** ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时钟同拍。server_main._on_match_sync 里调 mark_client_ready；MatchHost._ready / _start_next_round 复位就绪闸与补发标志。
+**修法（服务器侧就绪闸 + 补发，协议零改动）**：MatchRound 新增 mark_client_ready(role) / _countdown_can_start(delta)——COUNTDOWN 的时钟**等所有网络 peer 都发过 match_sync（客户端场景 _ready 才发）后才开始**（AI 补位不等；上限 COUNTDOWN_HOLD_MAX=2.0s 兜底，超时照常开局）。就绪闸放行那一 tick 再**补发一次** 
+ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时钟同拍。server_main._on_match_sync 里调 mark_client_ready；MatchHost._ready / _start_next_round 复位就绪闸与补发标志。
 
 **边界（如实登记）**：① 只覆盖 1v1（MatchRound._match_round_tick）；RoyaleHost / TeamHost 整段覆写了 _match_round_tick，不走这道闸 —— 大乱斗本来就有 HUD_SYNC_INTERVAL 周期重播可兜底，3v3 的 COUNTDOWN 仍按旧时序（若同样症状再现，需在各自覆写里加同样的就绪闸）；② 只修"起点丢失"，不改变本地走秒精度（Broadcast.tick(delta)，与服务器时钟的长期漂移仍靠下一次状态广播校正）；③ 真链路 smoke 只验证收到 round_state + 能行动，**倒计时数字观感只能人眼**；④ 协议/字节不变，PROTO_VERSION 不动。
