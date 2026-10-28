@@ -64,7 +64,8 @@ func _ready() -> void:
 	# HUD(记分条按队号)+ Esc 菜单。★ 必须声明式实例化场景,不能 TeamHud.new() —— 那个建出来的 CanvasLayer 没有子节点,HUD 的 @onready 全是 null、_ready 解引用必崩(零守卫:hud_declarative_probe 已删·2026-10-09)。
 	_hud = preload("res://ui/hud/team_hud.tscn").instantiate() as TeamHud
 	add_child(_hud)
-	_pause_menu = PauseMenu.new(true)
+	_pause_menu = preload("res://ui/screens/pause_menu.tscn").instantiate() as PauseMenu
+	_pause_menu.is_pvp = true
 	_pause_menu.toggled.connect(func(open: bool) -> void:
 		_menu_open = open
 		_refresh_input_lock()

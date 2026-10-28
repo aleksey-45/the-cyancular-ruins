@@ -79,7 +79,8 @@ func _ready() -> void:
 	# P2 本体固定为青(UiFactory.C_TEAM_B),只染角色 AnimatedSprite2D 本体,武器/预瞄不染。
 	_apply_p2_tint()
 	# Esc 暂停菜单:PvP 不暂停树 ⇒ 对手实时;回主菜单先 NetBus.stop() 断连(worker 检测任一方断线即拆局)。开关/退出由 PauseMenu 自理,但本地输入锁必须宿主接线 —— 不锁就是「菜单开着还能边跑边开枪」。
-	_pause_menu = PauseMenu.new(true)
+	_pause_menu = preload("res://ui/screens/pause_menu.tscn").instantiate() as PauseMenu
+	_pause_menu.is_pvp = true
 	_pause_menu.toggled.connect(func(open: bool) -> void:
 		_menu_open = open
 		_refresh_input_lock()

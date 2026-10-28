@@ -1,0 +1,65 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://ui/screens/pause_menu.gd" id="1_pm"]
+[ext_resource type="Theme" path="res://ui/theme/menu_theme.tres" id="2_theme"]
+[ext_resource type="PackedScene" path="res://ui/components/header_strip_panel.tscn" id="3_hsp"]
+
+[node name="PauseMenu" type="CanvasLayer"]
+layer = 145
+process_mode = 3
+script = ExtResource("1_pm")
+
+[node name="Root" type="Control" parent="."]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme = ExtResource("2_theme")
+visible = false
+
+[node name="Dim" type="ColorRect" parent="Root"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0, 0, 0, 0.55)
+
+[node name="Center" type="CenterContainer" parent="Root"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Panel" type="PanelContainer" parent="Root/Center"]
+layout_mode = 2
+theme_type_variation = &"PanelCarved"
+
+[node name="Body" type="PanelContainer" parent="Root/Center/Panel"]
+layout_mode = 2
+theme_type_variation = &"PanelCarvedBodyInset72"
+
+[node name="VBox" type="VBoxContainer" parent="Root/Center/Panel/Body"]
+layout_mode = 2
+theme_override_constants/separation = 28
+
+[node name="Header" parent="Root/Center/Panel/Body/VBox" instance=ExtResource("3_hsp")]
+title_size = 64
+centered = true
+
+[node name="Resume" type="Button" parent="Root/Center/Panel/Body/VBox"]
+custom_minimum_size = Vector2(480, 72)
+layout_mode = 2
+theme_type_variation = &"BtnGold"
+text = "继 续 游 戏"
+
+[node name="Back" type="Button" parent="Root/Center/Panel/Body/VBox"]
+custom_minimum_size = Vector2(480, 72)
+layout_mode = 2
+theme_type_variation = &"BtnQuiet"
+text = "回 到 主 菜 单"

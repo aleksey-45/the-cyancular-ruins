@@ -79,7 +79,8 @@ func _ready() -> void:
 	_hud = preload("res://ui/hud/royale_hud.tscn").instantiate() as RoyaleHud
 	add_child(_hud)
 	_setup_beta_time_hud()   # Beta 时间玩法:怀表镜像(普通局内部自短路)
-	_pause_menu = PauseMenu.new(true)
+	_pause_menu = preload("res://ui/screens/pause_menu.tscn").instantiate() as PauseMenu
+	_pause_menu.is_pvp = true
 	# 本地输入锁必须宿主接线:PvP 不暂停树,不锁就是「菜单开着还能边跑边开枪」(这条曾被 set_server_rendered 掩盖,接 C2 后不补就是真的能)。
 	_pause_menu.toggled.connect(func(open: bool) -> void:
 		_menu_open = open

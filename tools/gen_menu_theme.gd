@@ -159,16 +159,12 @@ func _panel_variants(t: Theme, F: GDScript, C: Dictionary) -> void:
 	t.set_stylebox("panel", "PanelCarved", outer)
 
 	t.set_type_variation("PanelCarvedBody", "PanelContainer")
-	var body := StyleBoxFlat.new()
-	body.bg_color = _c(C, "C_TRANSPARENT")
-	body.border_color = _c(C, "C_INNER")
-	body.set_border_width_all(1)
-	body.set_corner_radius_all(0)
-	body.content_margin_left = 64.0
-	body.content_margin_right = 64.0
-	body.content_margin_top = 46.0
-	body.content_margin_bottom = 46.0
-	t.set_stylebox("panel", "PanelCarvedBody", body)
+	t.set_stylebox("panel", "PanelCarvedBody", _carved_body(C, Vector2(64, 46)))
+
+	# P1/2026-10-27:暂停菜单与广播的标题面板用 menu_panel(Vector2(72,44)) 的非默认内边距 ——
+	# .tscn 表达不了 padding 参数,故单独落一个变体(值抄自那两个调用点,别再手抄第三份)。
+	t.set_type_variation("PanelCarvedBodyInset72", "PanelContainer")
+	t.set_stylebox("panel", "PanelCarvedBodyInset72", _carved_body(C, Vector2(72, 44)))
 
 	# 标题带:header_strip() 的形状(只有下边一条线)。
 	t.set_type_variation("HeaderStrip", "PanelContainer")
@@ -203,6 +199,20 @@ func _panel_variants(t: Theme, F: GDScript, C: Dictionary) -> void:
 	t.set_color("font_hover_color", "RowButton", _c(C, "C_ACCENT"))
 	t.set_color("font_pressed_color", "RowButton", _c(C, "C_ACCENT"))
 	t.set_color("font_focus_color", "RowButton", _c(C, "C_TEXT"))
+
+
+# 凿刻面板内层(透明底 + 1px C_INNER 线 + 指定内边距);外层与内层的边线错位规则见文件头。
+func _carved_body(C: Dictionary, pad: Vector2) -> StyleBoxFlat:
+	var body := StyleBoxFlat.new()
+	body.bg_color = _c(C, "C_TRANSPARENT")
+	body.border_color = _c(C, "C_INNER")
+	body.set_border_width_all(1)
+	body.set_corner_radius_all(0)
+	body.content_margin_left = pad.x
+	body.content_margin_right = pad.x
+	body.content_margin_top = pad.y
+	body.content_margin_bottom = pad.y
+	return body
 
 
 # ── 输入框 / 开关 / 滑条 ──
