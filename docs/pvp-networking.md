@@ -111,7 +111,7 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 ### 每物理帧时序
 
 1. 同步地面武器位置、Beta 时间玩法(`time_economy`)与加速态。
-2. 快照相位:每 `SNAPSHOT_STRIDE = 2` 个 tick 广播一次 `snapshot_world` + 逐 peer `snapshot_own`(30Hz)。
+2. 快照相位:每 `SNAPSHOT_STRIDE = 2` 个 tick 广播一次 `snapshot_world` + 逐 peer `snapshot_own`(30Hz);**世界包是滚动关键帧 DELTA**(每人 ≤60 tick 被绝对刷新一次,FULL 只在请求/换局/名单变化时发),**本人包 30Hz 差分**(每 role 每 60 tick 错峰一次全量)。详见 `eng/netcode-snapshots.md` §1.4.1。
 3. 消费输入:每 2 个 tick 从 FIFO 取一条记录;`clear_edges()`,`apply_packet()`,更新 `_ack_seq[role]`。COUNTDOWN 期间清空队列并 `reset_state()`。
 4. 玩家与子弹的 `_physics_process` 由场景树步进(父先于子,读到的是本帧注入)。
 5. `_adjudicate_bullets()`、`_broadcast_pending_beams()`、`_match_round_tick()`、队列诊断。
@@ -121,13 +121,13 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 
 - 队列在 `InputIntake`(`server/match/input_intake.gd`),`held` / `axis` / `aim` 覆盖取最新,`pressed` / `released` 边沿按位累积。
 - 缺包时沿用上一包 `held`;边沿只活一帧。
-- 一条输入记录覆盖 `PacketInputSource.TICKS_PER_RECORD = 2` 个物理 tick。
+- 输入记录 = **1 个物理 tick**(`PacketInputSource.TICKS_PER_RECORD = 1`;U1 起 30Hz 包内装两条连续记录)。
 
 ### 快照
 
-- 世界包:`{tick, players: {role: {pos, vel, facing, pose, type_id, hp, waterproof, downed, aim, previewing, …}}}`;`tick` 在 60Hz 物理 tick 域,每包 +2。
-- 本人包:`{ack_seq, q, c2}`;`q` = 已到达未消费的输入记录数,`c2 = player.capture_state()`。
-- 载荷由 `NetCodec` 打包成 `PackedByteArray`;RPC 入口解码回同形状 `Dictionary`。
+- 世界包(P1.5 起线格式 = FULL / 滚动关键帧 DELTA,`PROTO_VERSION = 6`):FULL 每人全字段;DELTA 每人 `mask`(bit 序 = `WORLD_SCHEMA` 序,`0xFFFF` = keyframe)+ 变化字段值。`tick` 在 60Hz 物理 tick 域、每包 +2;DELTA 另带 `base_tick`。
+- 本人包:FULL / DELTA 两种(逐 peer 定向,30Hz;全量每 role 每 60 tick 错峰一次) —— DELTA 带 `base_tick + mask`(位序 = `C2_SCHEMA` → `WEAPON_SCHEMA` → `inv`)。载荷 `{ack_seq, q, c2}`(合并后)与增量前同形状;`q` = 已到达未消费的输入记录数,`c2 = player.capture_state()`。
+- 载荷由 `NetCodec` 打包成 `PackedByteArray`;**合并/乱序/基准断的判定在 `NetBus` 解码边界**,RPC 入口 emit 回同形状 `Dictionary`(下游零改动)。基准断了 ⇒ 输入 `held` 的 `BIT_NEED_FULL = 512` 位请求服务器补 FULL。
 
 ### 裁决与拆墙
 
@@ -153,13 +153,13 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 
 - **每物理 tick**：`note_post_step()`(上一 tick 的预测整态) + `reconcile()` + `PacketInputSource.pack_record()`(一条 = 1 tick) + C2 `note_input`；**每 2 个 tick** 把 `[上一 tick, 本 tick]` 两条记录 `pack_pair()` 后 `NetBus.rpc_id(1, "send_input", pkt)`（流水线,30Hz 发包）。
 - 包字段:`seq`(包级=高 tick,低 tick=seq-1)、`held0/1`、`ax0/1`、`pressed0/1`、`released0/1`、`winst0/1`、`aim`、`st`、`ct`。
-- 位常量 `PacketInputSource.BIT_*`:up=1 / down=2 / charge=4 / attack=8 / reload=16 / pickup=32 / drop=64 / haste=128 / rewind=256。
+- 位常量 `PacketInputSource.BIT_*`:up=1 / down=2 / charge=4 / attack=8 / reload=16 / pickup=32 / drop=64 / haste=128 / rewind=256 / **need_full=512**(P1.5:增量基准断了,请求服务器补 FULL;不是玩家动作)。
 - 本地预测**不锁存**(60Hz 真输入),C2 重放 1 步/记录;客户端与服务器逐 tick 同序。
 
 ### 快照消费
 
-- `snapshot_world`:丢弃 `tick` 回退的旧包;自己那份刻意不消费;对手部分交 `PlayerReplica.apply_snapshot()`。
-- `snapshot_own`:丢弃 `ack_seq > _input_seq` 的跨纪元残留;其余喂 `PredictionRollback`。★ 本人包由服务端在"消费并步进完本 tick"之后帧末发(S1),`ack/c2` 是最新同拍态;世界包里自己那份因此比本人包旧 1 tick(客户端不消费它)。
+- `snapshot_world`:NetBus 先把 DELTA 合并成完整状态(**丢弃 `tick` 回退的旧包**;`base_tick` 不连续 ⇒ 请求 FULL 且不 emit);自己那份刻意不消费;对手部分交 `PlayerReplica.apply_snapshot()`。
+- `snapshot_own`:NetBus 先合并 DELTA(**丢弃旧 tick / 基准断请求 FULL**);`ack_seq > _input_seq` 的跨纪元残留再丢;其余喂 `PredictionRollback`。★ 本人包由服务端在"消费并步进完本 tick"之后帧末发(S1),`ack/c2` 是最新同拍态;世界包里自己那份因此比本人包旧 1 tick(客户端不消费它)。
 - 容差:`pos_tol = 2.0`;接触期 `contact_pos_tol = 8.0`。`in_contact` 由 `Player.touching_player()` 在 `note_post_step()` / `reconcile()` 之前写入,不进 `capture_state()`、不上行。
 - 分歧处理:预测被证实不动;真性分歧才 `restore(权威态)` 并按序重放 `(ack, last_applied]` 的本地输入。
 
@@ -174,7 +174,7 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 `Node2D` + `AnimatedSprite2D`,不做物理。
 
 - `apply_snapshot(data, local_anchor, tick)`:存 canonical 目标,更新朝向 / 姿态 / 倒地 / 武器槽 / 受击闪烁。`type_id = 0` = 空手,与换枪同等重建。
-- 位置走 playout 缓冲插值:固定 `PLAYOUT_TICKS = 3`(60Hz tick 域、下行 30Hz ⇒ 2 个发包间隔 ≈ 50ms 缓冲)之后的那一刻,对两条相邻快照夹逼插值;取样点再 `anchor_to_nearest` 回本地玩家最近副本。两端冻结(不外插、不倒退);相邻样本环面距离 > `SNAP_DIST = 128 px` ⇒ 清历史一帧落位(回溯 / 重生 / 换边)。
+- 位置走 playout 缓冲插值:固定 `PLAYOUT_TICKS = 3`(60Hz tick 域、下行 30Hz ⇒ 1.5 个发包间隔 ≈ 50ms 缓冲)之后的那一刻,对两条相邻快照夹逼插值;取样点再 `anchor_to_nearest` 回本地玩家最近副本。两端冻结(不外插、不倒退);相邻样本环面距离 > `SNAP_DIST = 128 px` ⇒ 清历史一帧落位(回溯 / 重生 / 换边)。
 - 渲染层带:副本在 `_ready` 里把自己挪到世界结构层(`Level0.wall_layer`:墙体 / 梯子 / 建筑)之前 —— 本体在 `level_0.tscn` 里就排在那层之前,副本运行时 `add_child` 到世界末尾会盖住那些结构(现象:只有别人的角色压在地形上)。
 - 幽灵碰撞体:`StaticBody2D`,`collision_layer = 2` / `collision_mask = 0`;五份 `CollisionPolygon2D` 按 `pose` 切换,`downed` 时不切;节点进 `player_replica` 组。★ 幽灵体**不跟插值**:跟未经平滑的最新快照锚点(预测面要最小陈旧)。
 - 姿态映射 `POSE_ANIM`:`0 idle / 1 move / 2 fly / 3 charge / 4 squat`;倒地停动画并转体,幽灵体世界旋转压回 0。
@@ -198,14 +198,14 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 
 | 包 | 方向 | 频率 / 模式 | 字段 |
 |---|---|---|---|
-| 输入包 | 客户端 → worker | 30Hz / reliable | 手打包 **46 B**：两条 tick 记录 `seq` `held0/1` `ax0/1` `pressed0/1` `released0/1` `winst0/1` + `aim` `st` `ct`（`NetCodec.KIND_INPUT`） |
-| `snapshot_world` / `snapshot_own` | worker → 客户端 | 30Hz / unreliable | 世界包 `tick` + `players{…}`;本人包(逐 peer)`{ack_seq, q, c2}` |
+| 输入包 | 客户端 → worker | 30Hz / reliable | 手打包 **42 B**（P1 定点化前 46 B）：两条 tick 记录 `seq` `held0/1` `ax0/1` `pressed0/1` `released0/1` `winst0/1` + `aim`(1e-4 定点 2×i16) `st` `ct`（`NetCodec.KIND_INPUT`） |
+| `snapshot_world` / `snapshot_own` | worker → 客户端 | 30Hz / unreliable | 世界包 FULL/滚动关键帧 DELTA(`tick`/`base_tick`/`players`);本人包 FULL/差分(逐 peer,`{ack_seq, q, c2}` 合并后形状不变) |
 | `bullet_spawn` | worker → 客户端 | reliable | `scene shooter_role pos vel speed range size color gravity hit_damage …` |
 | `hit_event` | worker → 客户端 | reliable | `victim_role damage source_pos` |
 | `beam_fired` | worker → 客户端 | reliable | 光束报告 + `shooter_role` |
 | 房间 / 对局 | 双向 | reliable | `create_room` `join_room` `go_match` `session_token` `claim_role` `match_start` `match_sync` `match_sync_data` `round_state` … |
 
-世界包与本人包由 [`core/net/net_codec.gd`](../core/net/net_codec.gd) 打包;输入包同样走这份编解码器(`KIND_INPUT`,46 B/包 = 两条 tick 记录;改前是 34 B 单条锁存记录 / 更早是 7 键 `Dictionary`)。完整通道归属见 [`eng/netplay-rpc-channels.md`](eng/netplay-rpc-channels.md)。
+世界包与本人包由 [`core/net/net_codec.gd`](../core/net/net_codec.gd) 打包;输入包同样走这份编解码器(`KIND_INPUT`,42 B/包 = 两条 tick 记录;P1 定点化前 46 B,更早是 34 B 单条锁存记录 / 7 键 `Dictionary`)。完整通道归属见 [`eng/netplay-rpc-channels.md`](eng/netplay-rpc-channels.md)。
 
 ## 11. 环面纪律
 
@@ -223,8 +223,8 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
   本地模拟自己(C2) + 打包输入 ── reliable ──→  InputIntake FIFO
                             ↓ 每 tick 取一条
                             全体 Player._physics_process 权威模拟;子弹 / 光束裁决,拆墙
-                            30Hz snapshot_world ── unreliable ──→ 对手副本直出最新包
-                            30Hz snapshot_own   ── unreliable ──→ PredictionRollback(分歧才 restore+重放)
+                            30Hz snapshot_world ── unreliable ──→ 合并 DELTA → 对手副本(完整状态)
+                            30Hz snapshot_own   ── unreliable ──→ 合并 DELTA → PredictionRollback(分歧才 restore+重放)
                             新子弹 / 命中 / 拆砖 ── reliable ──→ 视觉反馈
 ```
 

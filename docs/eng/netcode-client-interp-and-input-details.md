@@ -23,7 +23,7 @@
 
 ## 2. 输入上行
 
-`PacketInputSource.pack_record()` 产出**单 tick 记录**（9 字段）；`pack_pair()` 把它与上一 tick 的记录装成 30Hz 线上包（`INPUT_BATCH_TICKS = 2`，46 B/包）。
+`PacketInputSource.pack_record()` 产出**单 tick 记录**（9 字段）；`pack_pair()` 把它与上一 tick 的记录装成 30Hz 线上包（`INPUT_BATCH_TICKS = 2`，**42 B/包**；P1 aim 定点化前 46 B）。`need_full=true` 时 `held` 带上 `BIT_NEED_FULL=512`（增量基准断，请求服务器补 FULL）。
 
 | 字段 | 含义 |
 |---|---|

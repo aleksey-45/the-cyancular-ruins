@@ -72,6 +72,7 @@ func start_client(addr: String, port: int = DEFAULT_PORT) -> Error:
 func stop() -> void:
 	multiplayer.multiplayer_peer = null
 	is_server_mode = false
+	reset_snapshot_state()
 
 
 # ── 发包前的存活判据:不用 multiplayer.get_peers()(它随 API 信号更新,比 ENet 真实状态晚,断开握手期间可达秒级)。
@@ -177,12 +178,46 @@ var _diag_snap_us := 0
 var _diag_rx := 0        # 本秒收世界包数(--diag;与服务器 snapshot_tx 的 world_msgs 对账)
 var _diag_rx_at := 0     # 上一次汇总的世界包时间戳(usec)
 
+# ── 增量/差分合并态(P1.5,PROTO_VERSION 6)──
+# ★ 合并放在**解码边界**(NetBus):下游(三模式客户端 / 探针 / watcher)仍收到与增量前同形状的完整
+#   `{tick, players}` / `{ack_seq, q, c2}` ⇒ 消费方零改动,协议知识不外泄。
+var _world_state: Dictionary = {}   # 合并后的完整世界状态 {"tick": int, "players": {role_str: 全字段}}
+var _own_state: Dictionary = {}     # 合并后的完整 c2
+var _own_tick := -1                 # _own_state 对应的服务器本人包 tick(delta 基准)
+var _need_full_world := false        # 基准断了 → 下一条输入包置 BIT_NEED_FULL
+var _need_full_own := false
+
+
+# 是否有基准断了、需要请求服务器补 FULL(输入打包处读)。
+func snapshot_need_full() -> bool:
+	return _need_full_world or _need_full_own
+
+
+# 重连/换局:合并基准作废(不清会拿上一纪元的 tick 去比,永远不连续)。
+func reset_snapshot_state() -> void:
+	_world_state = {}
+	_own_state = {}
+	_own_tick = -1
+	_need_full_world = false
+	_need_full_own = false
+
+
 @rpc("authority", "call_remote", "unreliable", 0)
 func snapshot_world(payload: PackedByteArray) -> void:
-	var world := NetCodec.decode_world(payload)
-	if world.is_empty():
+	var pkt := NetCodec.decode_world(payload)
+	if pkt.is_empty():
 		_snapshot_decode_warned("world", payload)
 		return
+	var tick := int(pkt.get("tick", 0))
+	if tick <= int(_world_state.get("tick", -1)):
+		return   # 乱序/重复旧包(unreliable 通道:新的赢;合并前必须挡,否则旧 DELTA 会覆盖新状态)
+	# ★ DELTA 需要上一份完整状态:基准对不上(丢包/重连)⇒ 丢弃并请求 FULL;FULL 直接替换。
+	var merged := NetCodec.apply_world(pkt, _world_state)
+	if merged.is_empty():
+		_need_full_world = true
+		return
+	_world_state = merged
+	_need_full_world = false
 	var now := Time.get_ticks_usec()
 	if NetDiag.enabled():
 		# 1Hz 收包计数:和服务器 `snapshot_tx` 的 world_msgs 按同一秒对账 ⇒
@@ -197,18 +232,41 @@ func snapshot_world(payload: PackedByteArray) -> void:
 		if _diag_snap_us > 0:
 			var gap_ms := int((now - _diag_snap_us) / 1000)
 			if gap_ms > 150:
-				NetDiag.log_event("snap_gap", {"gap_ms": gap_ms, "tick": int(world.get("tick", 0)),
+				NetDiag.log_event("snap_gap", {"gap_ms": gap_ms, "tick": tick,
 						"bytes": payload.size()}, true)
 	_diag_snap_us = now
-	local_snapshot_world.emit(world)
+	local_snapshot_world.emit({"tick": tick, "players": _world_state["players"]})
+
 
 @rpc("authority", "call_remote", "unreliable", 0)
 func snapshot_own(payload: PackedByteArray) -> void:
-	var own := NetCodec.decode_own(payload)
-	if own.is_empty():
+	var pkt := NetCodec.decode_own(payload)
+	if pkt.is_empty():
 		_snapshot_decode_warned("own", payload)
 		return
-	local_snapshot_own.emit(own)
+	var tick := int(pkt.get("tick", 0))
+	if bool(pkt.get("full", false)):
+		if _own_tick >= 0 and tick <= _own_tick:
+			return   # 旧包
+		_own_state = (pkt.get("c2", {}) as Dictionary)
+		_own_tick = tick
+		_need_full_own = false
+	else:
+		var base_tick := int(pkt.get("base_tick", -1))
+		if _own_tick < 0 or base_tick > _own_tick:
+			_need_full_own = true   # 基准断了(丢包/重连)⇒ 请求 FULL
+			return
+		if base_tick < _own_tick:
+			return   # 乱序/迟到
+		var merged := NetCodec.apply_own(pkt, _own_state)
+		if merged.is_empty():
+			_need_full_own = true
+			return
+		_own_state = merged
+		_own_tick = tick
+	# ★ 下游仍收完整 c2(与增量前同形状):rollback 锚点/软同步零改动。
+	local_snapshot_own.emit({"ack_seq": int(pkt.get("ack_seq", 0)), "q": int(pkt.get("q", 0)),
+			"c2": _own_state})
 
 # 快照解码失败只在第一次大声报(版本不一致是一次性条件,而本函数每个快照包(~30Hz)被调);静默丢弃会让客户端表现为对手不动/自己一直回拉。
 var _snap_warned := false

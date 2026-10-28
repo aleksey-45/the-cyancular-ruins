@@ -20,17 +20,20 @@ const BIT_DROP := 64
 const BIT_HASTE := 128
 # ★ Beta 时间玩法:回溯按住位(held 段)。服务器据此进入该 role 的自身回溯态。
 const BIT_REWIND := 256
+const BIT_NEED_FULL := 512   # P1.5:增量/差分基准断了 → 请求服务器补 FULL(held 保留位;加位 = 改协议)
 
 
 # ── 编码端:组一个输入包(协议发送侧的唯一来源)── ★ 必须收在这里:这段位打包原先在两个客户端各手抄一份,而解码端只有一份;
 # 编码端分叉不报错(某键在一个模式里永远没反应)。★ seq/aim/st/ct 由调用方给(来自场景);★ 读 src 走公开读口 ⇒ 自动遵守 frozen(冻结期组出全中性包)。
 # ★ st/ct 带默认值 0:老调用点(-s 冒烟/探针手工组包)不用改;只有真客户端(PvpMatchClient)传真实值。
-#   st = 本端**最近成功解码**的服务器快照 tick(增量批的基线来源);ct = 本帧客户端物理帧号。本批只落位,无消费者。
+#   st = 本端最近成功解码的服务器世界快照 tick(命中回放时间基准 + 增量基线);ct = 本帧客户端物理帧号(仍只落位)。need_full 见 BIT_NEED_FULL。
 static func pack_record(src: PlayerInput, seq: int, aim: Vector2, snap_tick: int = 0,
-		client_tick: int = 0) -> Dictionary:
+		client_tick: int = 0, need_full: bool = false) -> Dictionary:
 	var held := 0
 	var pressed := 0
 	var released := 0
+	if need_full:
+		held |= BIT_NEED_FULL
 	if src.is_action_pressed("up"):
 		held |= BIT_UP
 	if src.is_action_pressed("down"):

@@ -42,9 +42,9 @@
 | 项 | 值 |
 |---|---|
 | 物理 tick | 60Hz |
-| `snapshot_world` | 30Hz,unreliable;`SNAPSHOT_HZ = 30`、`SNAPSHOT_STRIDE = 2` |
-| `snapshot_own` | 30Hz,unreliable,逐 peer;`{ack_seq, q, c2}` |
-| `send_input` | 30Hz,reliable,**手打包 46 B/包**;包内两条连续 tick 记录(`PacketInputSource.INPUT_BATCH_TICKS=2`,一条记录 = 1 tick);含只落位的 `st`/`ct`(最近成功解码的快照 tick / 客户端物理帧号,增量批才消费) |
+| `snapshot_world` | 30Hz,unreliable;`SNAPSHOT_HZ = 30`、`SNAPSHOT_STRIDE = 2`;P1.5 起 = 滚动关键帧 DELTA(FULL 只在请求/换局/名单变化时发) |
+| `snapshot_own` | 30Hz,unreliable,逐 peer;`{ack_seq, q, c2}`(P1.5 起 FULL/差分两态,合并后形状不变;全量每 role 每 60 tick 错峰) |
+| `send_input` | 30Hz,reliable,**手打包 42 B/包**(P1 定点化前 46 B);包内两条连续 tick 记录(`PacketInputSource.INPUT_BATCH_TICKS=2`,一条记录 = 1 tick);`st` = 最近成功解码的快照 tick(命中回放时间基准),`ct` = 客户端物理帧号(仍只落位);`held` 的 `BIT_NEED_FULL=512` 用于请服务器补 FULL(增量修复) |
 | 编解码 | `core/net/net_codec.gd` 打包成 `PackedByteArray`(快照 + 输入同模块),RPC 入口解回同形状 `Dictionary` |
 
 ## 客户端

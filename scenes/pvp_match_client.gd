@@ -22,8 +22,8 @@ var _prev_sent_seq := 0
 # U1:30Hz 发包节拍 = 每 2 个 tick 发一包,包内 [上一 tick, 本 tick] 两条记录。本地预测**不锁存**(每 tick 现读真输入)。
 var _input_batch_phase := 1     # 1 = 本 tick 先攒、下一 tick 发包(首包即从 tick0+tick1 开始,不需要伪造 seq0)
 var _prev_tick_rec: Dictionary = {}   # 流水线里"上一 tick 的记录",下一包作为低 tick 记录发出去
-# 本端**最近成功解码**的服务器世界快照 tick(三个模式的 _on_snapshot_world 各自维护;2026-10-24 从三个子类上提到基类 — 输入包要带 st)。
-# ★ 语义是"最近**成功解码**"、不是"最后收到"(解码失败的包不算 —— 增量批会拿它当基线,算错 = 静默错位)。
+# 本端**最近成功解码并应用**的服务器世界快照 tick(2026-10-24 从子类上提到基类 — 输入包要带 st;P1.5 起合并判定在 NetBus)。
+# ★ 解码失败/基准断了被丢弃的包不算(st 与增量基线都读它;三个模式的 _on_snapshot_world 仍按"每包完整"处理)。
 var _last_snap_tick := 0
 # ── 网络统计读数(★ 默认关;开关 -- --netstat,必须写在 -- 之后,写在前面会被 Godot 丢掉、静默失效)──
 # 一次打一行四个量:gap = _input_seq − 最后收到的 ack(本端已发、服务器没确认的输入**记录**数;U1 后一条记录 = 1 个物理 tick,
@@ -135,6 +135,7 @@ func _on_snapshot_own(own: Dictionary) -> void:
 	var c2: Dictionary = own.get("c2", {})
 	if not c2.is_empty():
 		_rollback.on_authoritative(ack, c2)
+
 
 # silent=true 用于"重连后补破坏态":那些砖是掉线期间被拆的,不是刚被拆的 —— 逐格播碎片会变成一屏不该有的粒子(且几十格同时炸)。
 # ── Beta 时间玩法:怀表 HUD(显示镜像;数值权威在服务器,10Hz 下发)── SP 的 WatchHud 直读静态 Level0.grain_account ⇒ PvP 侧就往这个静态挂一份镜像账户,服务器 time_state 到一帧写字段一次,怀表自己在 _process 里滚动/重绘。★ 只在 PvpSession.beta_mode 挂(单机那份由 Level0._ready 建)。
@@ -432,10 +433,11 @@ func _physics_process(delta: float) -> void:
 	_input_seq += 1
 	var src: PlayerInput = _local.input_source
 	# 位打包收在 PacketInputSource.pack_record(协议编码端的唯一来源;解码端本来就只有一份)。
-	# st = 最近成功解码的服务器快照 tick(增量批的基线来源);ct = 本帧客户端物理帧号。本批只落位、无消费者。
 	var aim: Vector2 = _local.get_current_aim_dir()
+	# st = 最近成功解码并应用的世界快照 tick(命中回放时间基准 + 增量基线);ct = 本帧客户端物理帧号(只落位)。
+	var need_full := NetBus.snapshot_need_full()   # 增量基准断了 → 输入包带 BIT_NEED_FULL 请求 FULL
 	var rec := PacketInputSource.pack_record(src, _input_seq, aim, _last_snap_tick,
-			Engine.get_physics_frames())
+			Engine.get_physics_frames(), need_full)
 	# 滚轮 / 数字键切枪:本地解析成目标那把的 inst 再随输入包上行。★ 位置不能过网 —— 两端 held 的顺序可能不同(拾取 / 丢弃只由服务器裁决),同一下标会解出不同的枪。
 	var switch_inst: int = _local.weapons.take_uplink_switch(src.get_switch_index_pressed())
 	if switch_inst > 0:
@@ -982,6 +984,8 @@ func _on_resumed() -> void:
 	_rollback.bind(_local)
 	_rollback.map_px = Vector2(GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 	_rollback.ticks_per_record = PacketInputSource.TICKS_PER_RECORD
+	NetBus.reset_snapshot_state()   # P1.5:增量合并基准作废(重连可能连到已跑过一段时间的 worker)
+	_last_snap_tick = 0
 	# ★ 路径甲(局内自动重连)原来不需要 match_sync —— 场景没重建、本地世界还在;现在需要了:世界在掉线那 GraceWindow.DEFAULT_SECONDS 秒里变过。这一拉把两类丢掉的可靠事件一次补回:destroyed(被拆的墙,不补 → 幻影墙 → 预测分歧)、ground_weapons(掉落 / 被捡走的枪,不补 → 幽灵枪 / 看不见的枪)。
 	# ★ 顺序:上面已经把 C2 重置完了(新 rollback / _input_seq=0),再拉。★ 别把这一行删掉:它不在"进场建态"那条老路上,漏了不报错,只是世界悄悄不一致。
 	if NetBus.can_send_to_server():

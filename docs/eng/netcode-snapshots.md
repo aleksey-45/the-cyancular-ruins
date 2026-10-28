@@ -54,48 +54,61 @@ NetBus.rpc_id(peer, "snapshot_own",
 
 ### 1.4 线格式与载荷
 
-- `core/net/net_codec.gd` 用一张 schema 表 + 手打包成 `PackedByteArray`（快照 + 输入同模块）。首字节 `PROTO_VERSION := 5`（P1 定点化起；4→5 两端必须同版），第二字节种类（`KIND_WORLD` / `KIND_OWN` / `KIND_INPUT`）。
+- `core/net/net_codec.gd` 用一张 schema 表 + 手打包成 `PackedByteArray`（快照 + 输入同模块）。首字节 `PROTO_VERSION := 6`（P1.5 增量/差分起；**5→6 两端必须同版**），第二字节种类（`KIND_WORLD` / `KIND_OWN` / `KIND_INPUT`）。
 - ★ 2026-10-24 bool 打包：bool 按**记录**打包成 1 B 标志字节（`T_BOOLS`；世界 4 个 / `c2` 7 个 / 武器块 3 个）。**不是跨字段位流** —— 收益等价（世界条目当时 51→48 B、本人包 102→94 B）但不需要 bit 游标与 padding 校验，解码也不会因尾部 padding 判据制造误红/误绿；代价是组内对齐浪费 ≤7 bit。小整数位宽 / 真位流留给后续（要先登记每字段值域）。
 - ★ 2026-10-26 **P1 字段定点化**（`PROTO_VERSION 4→5`）：世界包 `pos` / `vel` → 2×i16（**0.5px** / 0.5px·s⁻¹ 步长；i16 只有 ±32767，0.1px 步长装不下 9600px 地图）、`aim` → u8 角度（256 向）；输入包 `aim` → 2×i16（1e-4 定点，解码后 normalize）。★ `c2` / 本人包**不动** —— 它是 C2 回滚锚点，单方面量化会让每次重放判分歧；世界包字段都是渲染量，量化是两端同版一起换。误差与方案见 [`netcode-delta-and-quantization-details.md`](netcode-delta-and-quantization-details.md) §6。
-- ★ 2026-10-24 编码侧性能：解码仍表驱动（`_unpack` 逐字段守边界），**编码侧手写内联**（`out.encode_float(i, v)` + 下标写，一次性按 `_schema_bytes()` 预算容量、末尾 `resize(i)` 收尾）。实测 `encode_world`（N=16）**304 → 40~49 µs/包**（一次性量具 `.superpowers/net/encode_timing.gd`；同文件的剖面实测「只 resize」= 0.2 µs ⇒ 瓶颈是**逐字段 GDScript 调用**，不是分配）。代价：编码顺序/宽度与 schema 成了两份 —— 漂移由 `snapshot_size_probe` 的往返判据抓（解码按 schema 读，顺序/宽度错 = 值必不对）。★ 这一批**只改 CPU、不改字节**；P1 定点化之后的字节见下表。
-- 两端版本不一致 ⇒ 解码返回空字典、调用方不 emit，`net_bus.gd` / `net_bus` 的输入解码口各只报一次错。
-- P1 之后：世界包 `pos` / `vel` / `aim` 是定点；`c2` 与 `trail` 仍是 float32 全量。字段仍是绝对值，**无增量**（增量属 task-12）。
+- ★ 2026-10-26 **P1.5 增量/差分**（`PROTO_VERSION 5→6`）：世界包改为**滚动关键帧 + 逐玩家字段掩码**（DELTA），FULL 只在请求/换局/名单变化时发；本人包 30Hz 差分 + 每 role 每 60 tick 错峰全量。协议细节见 §1.4.1，量化/差分边界见 `netcode-delta-and-quantization-details.md` §7。
+- ★ 2026-10-24 编码侧性能：解码仍表驱动（`_unpack` 逐字段守边界），**编码侧手写内联**（`out.encode_float(i, v)` + 下标写，一次性按 `_schema_bytes()` 预算容量、末尾 `resize(i)` 收尾）。实测 `encode_world`（N=16）**304 → 40~49 µs/包**（一次性量具 `.superpowers/net/encode_timing.gd`；同文件的剖面实测「只 resize」= 0.2 µs ⇒ 瓶颈是**逐字段 GDScript 调用**，不是分配）。代价：编码顺序/宽度与 schema 成了两份 —— 漂移由 `snapshot_size_probe` 的往返判据抓（解码按 schema 读，顺序/宽度错 = 值必不对）。★ 差分路径（`_enc_value` / `_write_unit_value` / `_read_unit_into`）是**表驱动**的（要按 mask 跳字段，无法内联）；FULL 仍走内联路径。
+- 两端版本不一致 ⇒ 解码返回空字典、调用方不 emit，`net_bus.gd` 的输入解码口只报一次错。
+- P1.5 之后：世界包 `pos`/`vel`/`aim` 定点、`trail` float32；`c2` 仍 float32 全量。
 
 载荷口径（trail 2 点、装枪 + 1 件背包）：
 
 | 包 | 载荷 |
 |---|---|
-| 世界包头 | 7 B（版本 1 B + 种类 1 B + tick 4 + 人数 1） |
-| 世界包每人条目 | **33 B**（role 1 + bool 标志 1 + 定长 15 + trail(1+16)）；不在回溯时 **17 B**（P1 前 48 / 32 B） |
-| 本人包 | **94 B**（头 8 + `c2` 67 + 武器 12 + 背包 7） |
+| 世界包 FULL 头 | 8 B（版本 1 + 种类 1 + flags 1 + tick 4 + 人数 1） |
+| 世界包每人条目（FULL） | **33 B**（role 1 + bool 标志 1 + 定长 15 + trail(1+16)）；不在回溯时 **17 B** |
+| 世界包 DELTA 头 | 12 B（FULL 头 + base_tick 4；`tick` 仍在） |
+| 世界包每人条目（DELTA） | 3 B（role 1 + mask 2）+ 仅变化字段值（典型「只 pos 变」= 7 B/人）；keyframe 条目 = 3 + 32 = **35 B**（全字段） |
+| 本人包 FULL | **99 B**（头 13：版本/种类/flags/tick/ack/q/武器标志 + `c2` 67 + 武器 12 + 背包 7） |
+| 本人包 DELTA | 20 B（头 12 + base_tick 4 + mask 4）+ 仅变化字段值（典型「pos+vel 变」= 16 B ⇒ **36 B**；静止帧 20 B） |
 | 输入包 | **42 B**（头 2 + 记录 40 = **两条连续 tick 记录**；`held` 必须 u16，见 [`netcode-input-uplink.md`](netcode-input-uplink.md)）。P1 前 46 B |
 
-按 30Hz 折算（服务器上行按扇出算：世界包每个 peer 一份）：
+按 30Hz 折算（服务器上行按扇出算：世界包每个 peer 一份；本人包按"全量 1 次/秒 + 差分 29 次/秒、典型差分 36 B"折算）：
 
-| N | 世界包/包 | 本人包合计 | 服务器上行 | 单端下行 |
+| N | 世界包/包（稳态 keyframe 帧） | 本人包/秒/role | 服务器上行 | 单端下行 |
 |---|---|---|---|---|
-| 2 | 73 B | 188 B | 9.8 KB/s | 4.9 KB/s |
-| 8 | 271 B | 752 B | 85.5 KB/s | 10.7 KB/s |
-| 16 | 535 B | 1504 B | 294.8 KB/s | 18.4 KB/s |
+| 2 | 54 B | ≈1.14 KB/s | ≈5.4 KB/s | ≈2.7 KB/s |
+| 8 | 96 B | ≈1.14 KB/s | ≈31.4 KB/s | ≈3.9 KB/s |
+| 16 | 152 B | ≈1.14 KB/s | ≈89.1 KB/s | ≈5.5 KB/s |
 
-★ `snapshot_size_probe` 的 N 表把世界包只计一份（不乘接收端数），读数比上面小 `(N-1) × 世界包`；引用它的"服务器上行"列时先换算。
+★ 对比：N=16 时 FULL 世界包 536 B ⇒ 稳态 keyframe 帧只有其 28%（增量前的 P1 读数 535 B/包、上行 294.8 KB/s）。★ `snapshot_size_probe` 的 N 表把世界包只计一份（不乘接收端数），引用它的"服务器上行"列时先换算。
+
+### 1.4.1 增量/差分协议（P1.5）
+
+- **世界包**（`KIND_WORLD`）：`flags` bit0 = FULL。FULL 每人定长全字段；DELTA 每人 `role(1) + mask(u16) + 置位字段的值`，
+  **mask bit i ↔ `WORLD_SCHEMA[i]`**（单一来源；T_BOOLS / trail 各算 1 位），`mask = 0xFFFF` = 该玩家是 **keyframe**（全字段绝对值）。整员省略 = 本包无变化，客户端沿用上次合并值。
+- **滚动关键帧**：`k = max(1, ceil(N × SNAPSHOT_STRIDE / WORLD_KF_PERIOD))`（`world_keyframe_quota`；N=16 ⇒ k=1），每包把 k 个玩家整份刷新、游标轮转 ⇒ 每人在 ≤`WORLD_KF_PERIOD`(60) tick 内被绝对刷新一次。**没有"每 60 tick 整包 FULL"**：那会在 60 tick 边界造出 16×FULL 的尖峰；滚动关键帧让包尺寸平滑（见 `snapshot_size_probe` ⑧的峰值/均值断言）。
+- **FULL 触发**：① 任一客户端置 `BIT_NEED_FULL`（见下）；② 回合态变化（换局/复活重置）；③ 名单变化（有人离开/加入）；④ 首个世界包。FULL 之后基准重置。
+- **本人包**（`KIND_OWN`）：30Hz（与广播同拍）。FULL 每人每 `OWN_FULL_PERIOD`(60) tick 一次，**相位错峰**：`phase = floor(idx × (60/2) / N) × 2` tick（`own_full_phase`；N=16 ⇒ 0,2,…,仍互异），其余 DELTA；DELTA 覆盖 `capture_state()` 全部字段（**位序 = `C2_SCHEMA` 条目序 → `WEAPON_SCHEMA` → 末尾 `inv`**，见 `_own_unit_at`）——错一位 = C2 预测漂移。武器块存在性变化强制 FULL（差分表达不了"字段消失"）。
+- **修复路径**：客户端 `net_bus.gd` 在**解码边界**合并（FULL 替换 / DELTA 覆盖），下游仍收完整 `{tick, players}` / `{ack_seq, q, c2}`（三模式客户端、探针、watcher 零改动）。`base_tick` 不连续（丢包/重连/乱序）⇒ 置 `BIT_NEED_FULL`（输入 `held` 的 512 位，走 reliable 输入通道）⇒ 服务器下一世界包发 FULL 给所有人 / 该 role 下一本人包发 FULL。本人包另有 60 tick 全量兜底；世界包**只有**上述请求路径（滚动关键帧只保证每人 ≤60 tick 的绝对刷新，整包基准仍必须连续）。
 
 ### 1.5 分片
 
 - ENet MTU 预算 1400 B（`tests/probe/snapshot_size_probe.gd` 的 `WORLD_PACKET_BUDGET`）。`unreliable` = `UNSEQUENCED | UNRELIABLE_FRAGMENT` ⇒ 丢任意一片 = 整帧丢。
-- 世界包 = `7 + N × 33`（P1 后、trail 2 点）：16 人 **535 B** ⇒ 1 片；最坏（16 人各 4 点 trail）= `7 + 16 × 49 = **791 B**`，仍 1 片（P1 前 1031 B）。
-- 本人包 **94 B**，不分片。
+- 世界包 FULL = `8 + N × 33`（P1 后、trail 2 点）：16 人 **536 B**；稳态 keyframe 帧 = `12 + 35 + (N-1) × 7`（N=16 ⇒ **152 B**）；最坏（FULL、16 人各 4 点 trail）= `8 + 16 × 49 = **792 B**`，都恒 1 片（P1 前 FULL 1031 B）。
+- 本人包 FULL **99 B**、差分典型 **36 B**，不分片。
 - `NetCodec.TRAIL_MAX := 16` 是解码侧硬顶（长度是不可信输入），与发送侧 `TRAIL_WIRE_MAX` 不是同一个数。
-- 改世界字段或 `TRAIL_WIRE_MAX` 前先跑 `tests/probe/snapshot_size_probe.tscn`（判词 `SNAPSHOT SIZE PROBE: ALL-OK`，量真实产出并带条数闸）。
+- 改世界字段 / `TRAIL_WIRE_MAX` / 差分位序前先跑 `tests/probe/snapshot_size_probe.tscn`（判词 `SNAPSHOT SIZE PROBE: ALL-OK`，量真实产出并带条数闸）。
 
 ### 1.6 客户端消费与丢弃
 
 | 包 | 处理 | 丢弃规则 |
 |---|---|---|
-| 世界包 | [`pvp_game.gd`](../../scenes/pvp_game.gd) `_on_snapshot_world` → 只喂**对手副本** | `tick < _last_snap_tick` ⇒ 丢（新的赢） |
-| 本人包 | [`pvp_match_client.gd`](../../scenes/pvp_match_client.gd) `_on_snapshot_own` → `_rollback.on_authoritative(ack, c2)` | ① `ack > _input_seq` ⇒ 丢（跨纪元残留）；② `ack <= _acked` 由 [`prediction_rollback.gd`](../../core/net/prediction_rollback.gd) 挡 |
+| 世界包 | `net_bus.snapshot_world` **合并成完整 `{tick, players}`** 后 emit → 三模式 `_on_snapshot_world` 只喂对手副本（形状与增量前一致） | `tick <= 已应用 tick` ⇒ 丢（新的赢）；DELTA `base_tick ≠ 已应用 tick` ⇒ 请求 FULL 且**不 emit** |
+| 本人包 | `net_bus.snapshot_own` 合并成完整 `c2` 后 emit → [`pvp_match_client.gd`](../../scenes/pvp_match_client.gd) `_on_snapshot_own` → `_rollback.on_authoritative(ack, c2)` | ① `ack > _input_seq` ⇒ 丢（跨纪元残留）；② `ack <= _acked` 由 [`prediction_rollback.gd`](../../core/net/prediction_rollback.gd) 挡；③ DELTA 基准断 ⇒ 请求 FULL |
 
-`unreliable` 不保证顺序，"新的赢"是唯一正确的做法；两条丢弃都不产生延迟累加。
+`unreliable` 不保证顺序，"新的赢"是唯一正确的做法；丢弃不产生延迟累加。重连时 `NetBus.reset_snapshot_state()` 作废合并基准。
 
 ## 2. 远端副本：playout 缓冲插值
 
@@ -145,14 +158,20 @@ NetBus.rpc_id(peer, "snapshot_own",
 | 维度 | 本仓 | 主流 |
 |---|---|---|
 | 状态发送频率 | 30Hz + 客户端 playout 插值（`PLAYOUT_TICKS = 3` ≈ 50ms 缓冲）+ 服务器按射手观看时刻回放命中 | 10~30Hz + 客户端插值缓冲 |
-| 编码 | schema 表手打包（P1 起世界 `pos`/`vel`/`aim` 与输入 `aim` 定点化） | 绑定 + 量化 + 位打包 |
-| 增量 | 全字段绝对值（增量属 task-12） | 对已 ack 的基线增量 |
+| 编码 | schema 表手打包（P1 世界 `pos`/`vel`/`aim` 与输入 `aim` 定点化；P1.5 世界/本人包差分） | 绑定 + 量化 + 位打包 |
+| 增量 | **滚动关键帧 + 逐玩家字段掩码**（世界包）、**本人包 30Hz 差分 + 60 tick 错峰全量**（P1.5） | 对已 ack 的基线增量 |
 | 客户端时钟 | 本地播放时钟（窗口最小延迟选样），不与服务器做显式时钟同步 | 播放时钟跟服务器时钟 |
 
 ## 6. 已知边界
 
 - `c2`（本人包，C2 回滚锚点）仍是 float32 全量；世界包的 `trail` 也仍是 float32。渲染字段只剩 `trail` 未量化 —— 它是变长数组、重复度低，量化收益 <1 B/点。量化必须两端同口径（`c2` 只压上行会让每次重放都对不上）。
 - ★ 2026-10-26 **P1 定点化**：世界包 `pos`/`vel` 用 **0.5px** 步长（不是 0.1px —— i16 的 ±32767 装不下 9600px×10），量化误差 ≤0.25px/0.25px·s⁻¹；`aim` u8 角度误差 ≤π/256≈0.70°；输入 `aim` 1e-4 定点。位宽/误差详情与风险见 [`netcode-delta-and-quantization-details.md`](netcode-delta-and-quantization-details.md) §6。
+- ★ 2026-10-26 **P1.5 增量/差分边界**（详表见 `registered-debt.md` §十八）：
+  - 世界包 DELTA 走 unreliable：丢 1 包 ⇒ 客户端 `base_tick` 断 ⇒ 丢包 + 请求 `BIT_NEED_FULL` ⇒ 服务器下一 30Hz 广播发 FULL（**RTT + ≤33ms**，不是等周期）。没有周期性整包 FULL；滚动关键帧只兜"每个玩家 ≤60 tick 被绝对刷新"。
+  - 本人包 DELTA 丢：下一包基准断 ⇒ 请求 FULL；即使请求路径失效也有 **60 tick（1s）全量兜底**。
+  - `BIT_NEED_FULL = 512`（输入 `held` 保留位，reliable 通道）：位重复发送无害，FULL 到达后清除。**不要把世界包挪到 reliable**（队头阻塞会让整局滞后）。
+  - 差分判等：世界按量化后整数（pos/vel 定点整数、aim 角度字节、bool 逐位）；本人包 float 字段用 **1e-4 容差**（被省略的字段客户端最多陈旧 1e-4，远小于 C2 对账的 pos 2px / vel 20 容差）。武器块存在性变化强制 FULL。
+  - 相位：本人包 FULL 相位 = `floor(idx×30/N)×2` tick，N≤30 时互不重合（N>30 才可能重合，仍 ≤1s 周期）。
 - ★ 2026-10-24 **U1 上行去锁存**：输入记录 = 1 tick（60Hz 采样），30Hz 包内装两条（流水线），服务器每 tick 消费一条 ⇒ 本地手感不再有 30Hz 锁存延迟。**S1** 把本人包挪到"消费并步进完当帧"发（③ 固定回带已消）；客户端 U1 起本来就每 tick 对账（④ 已消）。**剩下的**只是 30Hz 发包/广播节拍的量化（`--netstat` 的 `gap` 仍有 1~2 条 ×16.7ms 的偏置），不是"等一拍广播"。见 `netcode-input-uplink.md` §5。
 - 上行 `st` / `ct`：`ct`（客户端物理帧号）仍**无消费者**；`st` 自 2026-10-26 起是**命中回放的时间基准**（`match_combat._replay_hurt_rect`），不再是"只落位"。
 - 没有丢包 / 抖动注入路径 ⇒ 队头阻塞、丢弃率、手感都没有真对局读数。

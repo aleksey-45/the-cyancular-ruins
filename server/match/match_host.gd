@@ -150,9 +150,12 @@ func _on_input(caller: int, pkt: Dictionary) -> void:
 	for role in peer_by_role:
 		if peer_by_role[role] == caller:
 # U1:一包两条 tick 记录(30Hz 包)⇒ 拆成连续两条入队(低 tick seq = 高 tick - 1)。
-# ★ st/ct 只落位不消费(增量批才用):它们不是队列的一部分,后到的覆盖先到的 —— 丢记录不影响它们,因为它们本来就只代表"最近一次"。
+# ★ st/ct:不是队列的一部分,后到的覆盖先到的 —— 它们只代表"最近一次"。st 是命中回放时间基准 + 增量基线;ct 仍只落位。
 			_client_snap_tick[int(role)] = int(pkt.get("st", 0))
 			_client_tick[int(role)] = int(pkt.get("ct", 0))
+			if ((int(pkt.get("held0", 0)) | int(pkt.get("held1", 0))) & PacketInputSource.BIT_NEED_FULL) != 0:   # P1.5:客户端基准断了 → 下一发补 FULL
+				_need_full_world = true
+				_need_full_own[int(role)] = true
 			for rec in PacketInputSource.unpack_pair(pkt):
 				_intake.intake(_pending_input, int(role), rec)
 			return

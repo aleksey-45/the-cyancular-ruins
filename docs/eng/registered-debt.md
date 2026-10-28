@@ -16,7 +16,7 @@
 - [`tests/run_all.sh`](../../tests/run_all.sh) 的承重安全检查只读整行注释以外的文本,看不见经 helper 间接开端口 / 拉子进程的形状 —— 新增这类支必须手工进 `EXCLUDED`。
 - [`tests/run_real.sh`](../../tests/run_real.sh) 的 R20 锁心跳只在**支间**刷新(`LOCK_STALE_SECS` = 600s)—— 单支预算调到 >600s 会把正在跑的批判成陈旧、锁失效。
 - [`tests/probe/path_integrity_probe.gd`](../../tests/probe/path_integrity_probe.gd) 在 Windows 上不区分大小写 —— 路径大小写写错会通过(导出成 `.pck` 后区分大小写);它只答"有没有",不答"大小写对不对"。
-- [`tests/probe/snapshot_size_probe.gd`](../../tests/probe/snapshot_size_probe.gd) 的世界包分片悬崖在 N≈29（`7+29×48=1399 B < 1400 B MTU`）—— 超 MTU 即 unreliable 分片，丢一片 = 整帧丢。
+- [`tests/probe/snapshot_size_probe.gd`](../../tests/probe/snapshot_size_probe.gd) 的世界包分片悬崖（FULL 最坏 trail 4 点，`8 + N×49`）：N≈28 时 1380 B < 1400 B MTU —— 超 MTU 即 unreliable 分片，丢一片 = 整帧丢。稳态 keyframe 帧远小于此。
 
 ## 九、2026-10-24 默认批激进削减（20 → 6）—— **删了什么 = 欠了什么**
 
@@ -143,5 +143,24 @@
 - aim 零向量：世界 aim 零向量 → angle 0 → RIGHT（`atan2(0,0)=0`，语义上"无瞄准"回落朝向）；输入 aim 零向量解码显式回 `Vector2.RIGHT`；定点容差断言要求解码长度 ≈1 ⇒ 漏 normalize 必红。
 - 角度回绕：编码 `round(atan2/TAU*256) & 0xFF`（π→128，−π 与 π 同向），解码 `byte/256*TAU ∈ [0,2π)`，无 0/2π 接缝跳变。
 - 部署：`PROTO_VERSION` 变了 ⇒ **两端必须同包发布**；旧客户端被解码拒绝（大声失败，不是静默错位）。
-- 未做：`c2` 量化（必须两端一起做）、`trail` 量化（<1 B/点收益）、真位流打包；`docs/eng/netcode-at-16-players.md` / `pvp-networking.md` / `render.md` 里的旧字节/带宽读数未同步（不在本批 write scope，已知会过期）。
+- 未做：`c2` 量化（必须两端一起做）、`trail` 量化（<1 B/点收益）、真位流打包；`docs/eng/netcode-at-16-players.md` / `pvp-networking.md` / `render.md` 里的旧字节/带宽读数已随 task-12 同步（P1.5 段）。
 - 零自动化守卫：0.25px 位置阶梯与 0.70° 枪口的实际观感只能人眼；字节读数由两支守卫的 readout 打印，"是否值得"由人眼/真链路定。
+
+## 十八、2026-10-26 P1.5 增量/差分（滚动关键帧 + 本人包差分，PROTO_VERSION 5→6）
+
+**改了什么**：`core/net/net_codec.gd` 新增 `FULL/DELTA` 两态世界包与本人包、差分字段机制（`_enc_value` / `_write_unit_value` / `_read_unit_into` / `_delta_mask` / `_deep_equal`）、`apply_world` / `apply_own` 合并函数、周期常量 `OWN_FULL_PERIOD / WORLD_KF_PERIOD` 与 `own_full_phase` / `world_keyframe_quota`；`PROTO_VERSION 5→6`。`match_snapshot.gd` 改为：世界包滚动关键帧（每包 k 人全字段、游标轮转）+ FULL 只在请求/换局/名单变化时发；本人包 30Hz 差分 + 每 role 每 60 tick 错峰全量；本人包状态按 role 保留。`match_host._on_input` 识别 `BIT_NEED_FULL=512`。`net_bus.gd` 在**解码边界**合并（下游仍收完整 `{tick, players}` / `{ack_seq, q, c2}`，三模式客户端/探针/watcher 零改动），并暴露 `snapshot_need_full()` / `reset_snapshot_state()`；`pvp_match_client` 输入包带请求位、重连时重置基准。守卫：`net_wire_smoke` 5→**7**（⑤ 本人包差分、⑥ 世界包 keyframe/差分）；`snapshot_size_probe` 5→**9**（⑥⑦⑧ 尺寸/峰值、⑨ 相位错峰）。
+
+**与任务书的偏差（两处，均按 Lead 补充/现状）**：① 任务书"世界 FULL 每 60 tick 一次"改为**滚动关键帧**（每包 k 人绝对刷新）——整包 FULL 会在 60 tick 边界造尖峰，滚动关键帧更平滑；FULL 只在请求/换局/名单变化时发。② 任务是"本人包降频到 30Hz"——S1(2026-10-24) 起本人包**本来**就是 30Hz，本轮实际新增的是差分 + 60 tick 错峰全量。
+
+**字节/带宽（N=16、30Hz、典型帧；代码算式，由 Lead 实测复核）**：世界包 FULL 536 B → 稳态 keyframe 帧 **152 B**（28%）；本人包 FULL 99 B / 差分典型 36 B（每 role 1 次全量/秒，≈1.14 KB/s）；服务器上行 ≈294.8 → **≈89 KB/s**；单端下行 ≈5.5 KB/s。
+
+**容差 / 位序（承重面）**：世界 DELTA mask bit i = `WORLD_SCHEMA[i]`（`mask=0xFFFF`=keyframe）；本人包 mask 位序 = `C2_SCHEMA` → `WEAPON_SCHEMA` → `inv`（`_own_unit_at` 派生，改 schema 自动跟着变）。判等：世界按量化后整数（pos/vel 定点、aim 字节、bool 逐位）；本人包 float 字段 **1e-4 容差** ⇒ 被省略的字段客户端最多陈旧 1e-4（C2 对账 pos 容差 2px / vel 20，不受影响）。去“定点舍入/位序/宽度”任一错 ⇒ `net_wire_smoke` ⑤⑥ 必红。
+
+**边界（照实）**：
+- **世界包丢包最坏**：DELTA 走 unreliable，丢 1 包 ⇒ 客户端基准断 ⇒ 请求 `BIT_NEED_FULL`（reliable 输入）⇒ 服务器下一 30Hz 广播发 FULL（RTT + ≤33ms）。**没有周期 FULL**；滚动关键帧只保证"每个玩家 ≤60 tick 被绝对刷新"，整包基准仍必须连续（否则只能 FULL 修复）。⚠ 不要把世界包挪到 reliable（队头阻塞会让整局滞后）。
+- **本人包丢包**：下一包基准断 ⇒ 请求 FULL；即使请求失效也有 60 tick（1s）全量兜底。请求位重复发送无害，FULL 到达后清。
+- **相位重合**：本人包全量相位 `floor(idx×30/N)×2` tick，N≤30 互不重合；N>30 会有重合（仍 ≤1s 周期），当前上限 16。
+- **基准边界**：客户端 `_world_state` 是"上一份**应用**的包"；服务端在 `all_peers_sendable()` 失败整发跳过时**不推进基准**（否则下一 DELTA 的 base 指向客户端从未收到的包）。
+- **快照消费侧零改动**依赖 NetBus emit 完整形状：任何绕过 NetBus 直接解 `snapshot_world/own` 的新消费者必须自己做 DELTA 合并（登记在此）。
+- **真链路未跑**：丢包/重连下的修复路径（请求位 → FULL）只有 `-s` 纯逻辑与源码论证，需真链路 + 人眼。
+- 世界包 FULL 的 792 B 最坏值仍恒 1 片；`snapshot_size_probe` ⑧ 断言"16 人 keyframe 峰值 ≤2×均值"防的正是"改回整包 FULL 周期"这类回退。

@@ -103,7 +103,7 @@ func _on_snapshot_world(world: Dictionary) -> void:
 	var tier := int(world.get("tick", 0))
 	if tier < _last_snap_tick:
 		return
-	_last_snap_tick = tier
+	_last_snap_tick = tier   # P1.5:DELTA 已在 NetBus 解码边界合并成完整 players(形状与增量前一致)
 	var players_snap: Dictionary = world["players"]
 	# ★ 自己那一份刻意不消费:C2 下本地玩家自步进,权威整态走本人包(见 _on_snapshot_own);把世界包里自己那份写进玩家 = 每帧把权威位置强写进正在预测的玩家 = 橡皮筋。
 	var opp_role := 3 - PvpSession.role

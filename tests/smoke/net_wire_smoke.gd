@@ -5,10 +5,12 @@ extends SceneTree
 #   ③ 编码侧手写内联、解码侧按 schema 表读 ⇒ 字段顺序/宽度/位打包漂移 ⇒ 断言③(三 kind 往返;含 held u16=415、混合 bool、st/ct 非零;
 #      P1 定点字段用容差比:pos/vel ≤0.25、aim 点积 ≥0.9999 且长度≈1)。
 #   ④ schema 与生产者脱钩(pack_pair 加字段不登记) ⇒ 该字段线上被静默丢掉 ⇒ 断言④(INPUT_SCHEMA ↔ pack_pair 逐键对齐)。
+#   ⑤ 本人包增量/差分:全量 vs"从基准差分 + apply_own 合并"必须得到同一份 c2;位序 = C2_SCHEMA 序(错位 ⇒ patch 键/值不对)。
+#   ⑥ 世界包滚动关键帧/差分:keyframe(全字段)+ 变化玩家(只变化字段)合并后 == 同一状态 FULL 解码;位序 = WORLD_SCHEMA 序。
 # ★ 与 snapshot_size_probe 的分工:那边量**体积/最坏包/容量**(场景探针,要真 Player);这里量**协议正确性**(纯逻辑 `-s`)。
 # 跑法:"$GODOT" --headless --path . -s res://tests/smoke/net_wire_smoke.gd;通过 = NET WIRE OK(n 条断言)。
 
-const EXPECTED_CHECKS := 5
+const EXPECTED_CHECKS := 7
 
 var _fails: Array[String] = []
 var _checks := 0
@@ -83,6 +85,39 @@ func _initialize() -> void:
 	var neg_rt := NetCodec.decode_world(NetCodec.encode_world(neg_world))
 	_chk(int((((neg_rt.get("players", {}) as Dictionary).get(first_role, {}) as Dictionary).get("hp", -1))) == 0,
 			"负 hp 编码钳到 0(不回绕 251 → 倒地血条不会变满)")
+
+	# ⑥ 本人包差分(全量/差分两条路):同一状态的全量编码与"从基准差分 + apply_own 合并"必须解出同一份 c2。
+	# ★ 位序错位必红:只改 pos(C2_SCHEMA 第 2 项 = bit1)时 patch 必须恰好只有 pos;合并结果与全量解码逐键一致。
+	var base_c2: Dictionary = (own["c2"] as Dictionary).duplicate(true)
+	var full_base := NetCodec.decode_own(NetCodec.encode_own({"ack_seq": 7, "q": 0, "c2": base_c2, "tick": 100}))
+	var cur_c2: Dictionary = base_c2.duplicate(true)
+	cur_c2["pos"] = Vector2(2000.5, 300.25)
+	var delta_own := NetCodec.decode_own(NetCodec.encode_own(
+			{"ack_seq": 8, "q": 1, "c2": cur_c2, "tick": 102}, false, {"tick": 100, "c2": base_c2}))
+	var merged_c2 := NetCodec.apply_own(delta_own, full_base.get("c2", {}))
+	var full_cur := NetCodec.decode_own(NetCodec.encode_own({"ack_seq": 8, "q": 1, "c2": cur_c2, "tick": 102}))
+	var patch: Dictionary = delta_own.get("c2", {})
+	_chk(not bool(delta_own.get("full", true)) and int(delta_own.get("base_tick", -1)) == 100
+			and patch.size() == 1 and patch.has("pos")
+			and _dict_same(merged_c2, full_cur.get("c2", {})),
+			"本人包差分:只带 pos(位序 = C2_SCHEMA 序)、base_tick=100、合并后 == 全量解码")
+
+	# ⑦ 世界包滚动关键帧/差分:keyframe(role 2 全字段)+ 变化玩家(role 1 只 pos)合并后 == 同一状态 FULL 解码。
+	# ★ 位序错位必红:patch["1"] 必须只有 pos、patch["2"] 必须 13 个字段;合并结果按世界容差比。
+	var cur_w: Dictionary = _fixture_world()
+	var prev_w: Dictionary = (cur_w as Dictionary).duplicate(true)
+	prev_w["tick"] = int(cur_w["tick"]) - 2
+	((prev_w["players"] as Dictionary)["1"] as Dictionary)["pos"] = Vector2(100.0, 100.0)
+	var dec_full_w := NetCodec.decode_world(NetCodec.encode_world(cur_w))
+	var dec_delta_w := NetCodec.decode_world(NetCodec.encode_world(cur_w, false, prev_w, [2]))
+	var merged_w := NetCodec.apply_world(dec_delta_w, prev_w)
+	var patch_w: Dictionary = dec_delta_w.get("players", {})
+	_chk(not bool(dec_delta_w.get("full", true)) and int(dec_delta_w.get("base_tick", -1)) == int(prev_w["tick"])
+			and patch_w.has("1") and (patch_w["1"] as Dictionary).size() == 1
+			and (patch_w["1"] as Dictionary).has("pos")
+			and patch_w.has("2") and (patch_w["2"] as Dictionary).size() == 13
+			and _world_same(merged_w.get("players", {}), dec_full_w.get("players", {})),
+			"世界包 keyframe/差分:role1 只 pos、role2 全字段(keyframe);合并后 == FULL 解码")
 
 	# 读数(不是断言):协议尺寸
 	print("[readout] 输入 %d B/包(内含 2 条 tick 记录);世界 2 人共 %d B;本人包 %d B" % [

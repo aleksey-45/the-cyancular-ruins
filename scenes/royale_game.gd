@@ -104,7 +104,7 @@ func _on_snapshot_world(snap: Dictionary) -> void:
 	var snap_tick := int(snap.get("tick", 0))
 	if snap_tick < _last_snap_tick:
 		return
-	_last_snap_tick = snap_tick
+	_last_snap_tick = snap_tick   # P1.5:DELTA 已在 NetBus 解码边界合并成完整 players
 	var players_snap: Dictionary = snap["players"]
 	for role_str in players_snap:
 		var role := int(role_str)

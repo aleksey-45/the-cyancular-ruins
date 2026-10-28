@@ -6,12 +6,15 @@ extends Node
 # ★ 它同时是线格式的字段表判据(见末尾 ①②③):NetCodec 的 schema 必须与 player.capture_state() / match_snapshot 的字段表逐键对齐 —— 少一个字段 ⇒ 那个字段在线上被静默丢掉(客户端拿不到权威值,表现为「某个效果偶发不生效」)。
 #   这条判据的道理:本仓最大的病是「枚举会过期」;编解码两侧共用一张表能防顺序漂移,但防不了「表没跟上 producer」⇒ 这里用真实 producer 的输出对表。
 # ⚠ 判据 grep 文本 "SNAPSHOT SIZE PROBE: ALL-OK"(不只看退出码),并带条数闸(见 _checks)。⚠ 只量「载荷」,不含 ENet 分片头/RPC 方法名等固定开销(见末尾打印的备注)。
+# ★ P1.5 起新增 ⑥~⑨(增量/差分):⑥ 本人包 FULL vs 典型帧差分 ≤60%;⑦ 16 人世界包 keyframe 帧均值 ≤ FULL 40%;
+#   ⑧ keyframe 轮转的每包尺寸峰值 ≤2×均值(验证"不是每 60 tick 一次整包 FULL 尖峰");⑨ 本人包 FULL 相位错峰(纯算式)。
+#   去掉什么才红:把差分退化成全量(尺寸变大)、改成整包 FULL 周期尖峰(⑧)、相位全挤同一 tick(⑨)。
 
 const MTU := 1400          # ENet 默认 MTU
 const FRAG_HEADER := 8     # 分片包每片大致头部开销(粗估,用于折算片数)
 const SNAP_HZ := 60        # SNAPSHOT_INTERVAL = 1/60
 
-const EXPECTED_CHECKS := 5
+const EXPECTED_CHECKS := 9
 
 # ④ 用到的两个常量。★ 人数上限不抄一份:直接读产品侧的单一来源(LobbyRooms.ROYALE_MAX_PLAYERS)。
 # ★ TRAIL_PHYSICAL_MAX 是生产者的 trail 上限(match_host 的回溯录像每 3 帧一点、最多 10 点),它是个字面量、没有名字 ⇒ 只能在这里抄一份并点名来源;线上真正发多少由 NetCodec.TRAIL_WIRE_MAX 决定(那一个才是判据真正盯的东西)。
@@ -65,9 +68,9 @@ func _ready() -> void:
 	var sz_old_own := var_to_bytes({"ack_seq": 12345, "c2": c2}).size()
 	var wb := NetCodec.encode_world({"tick": 12345, "players": {"1": entry, "2": entry, "3": entry}})
 	var ob := NetCodec.encode_own({"ack_seq": 12345, "q": 2, "c2": c2})
-	var sz_new_entry := (wb.size() - 7) / 3        # 头 = 版本1 + 种类1 + tick4 + 人数1
+	var sz_new_entry := (wb.size() - 8) / 3        # 头 = 版本1 + 种类1 + flags1 + tick4 + 人数1(P1.5 起多 1 B flags)
 	var sz_new_entry_nt := NetCodec.encode_world(
-			{"tick": 1, "players": {"1": entry_no_trail}}).size() - 7
+			{"tick": 1, "players": {"1": entry_no_trail}}).size() - 8
 	var sz_new_own := ob.size()
 
 	print("[size] 世界包条目(13 字段)  旧(dict) = %d B  →  新(手打包) = %d B" % [sz_old_entry, sz_new_entry])
@@ -107,7 +110,7 @@ func _ready() -> void:
 			d2.size(), c2.size(), we.size(), entry.size(), str(od.get("ack_seq"))])
 
 	# ④ 最坏情况的世界包必须装进一个 ENet 包(配 16 人上限)。
-	# ★ 为什么量的是真的 encode_world 产出、而不是 7 + N * _schema_bytes(...) 那种算术:算术式是镜像守卫 —— 发送侧到底截没截根本没进判据(改 TRAIL_SEND_MAX 它纹丝不动),而且常量一变两边一起变;量真实产出,「忘了截断」与「表里加了字段」两种都会红。
+	# ★ 为什么量的是真的 encode_world 产出、而不是 8 + N * _schema_bytes(...) 那种算术:算术式是镜像守卫 —— 发送侧到底截没截根本没进判据(改 TRAIL_SEND_MAX 它纹丝不动),而且常量一变两边一起变;量真实产出,「忘了截断」与「表里加了字段」两种都会红。
 	# ★ 最坏 = 人数上限(ROYALE_MAX_PLAYERS=16)× 全员回溯(trail 取满,match_host 里是 10 点)。★ 预算取 1400 B = ENet MTU:快照走 unreliable,超了就被分片,而分片是 UNSEQUENCED|UNRELIABLE_FRAGMENT ⇒ 丢一片 = 整帧丢(见 docs/eng/netcode-snapshots.md §2.3)。
 	var cap: int = LobbyRooms.ROYALE_MAX_PLAYERS   # 单一来源:不在这里再抄一个 16
 	var worst_players := {}
@@ -138,6 +141,63 @@ func _ready() -> void:
 			"最坏世界包必须能逐字段解码回来(N=%d;容量预算算错 = 写越界 + 尾部补 0 = 这里红)" % cap)
 	print("[size] 最坏世界包读数:N=%d × trail %d 点 ⇒ %d B(%d 片,预算 %d B)" % [
 			cap, TRAIL_PHYSICAL_MAX, worst_bytes, _frags(worst_bytes), WORLD_PACKET_BUDGET])
+
+	# ⑥ 本人包 FULL vs 典型帧差分(P1.5):典型帧 = 只有 pos/vel 变(移动中的玩家)⇒ 差分必须显著小于全量。
+	var own_full_bytes := NetCodec.encode_own({"ack_seq": 100, "q": 0, "c2": c2, "tick": 600}).size()
+	var c2_next: Dictionary = c2.duplicate(true)
+	c2_next["pos"] = (c2.get("pos", Vector2.ZERO) as Vector2) + Vector2(11.7, 0.0)
+	c2_next["vel"] = Vector2(700.0, 0.0)
+	var own_delta_bytes := NetCodec.encode_own(
+			{"ack_seq": 101, "q": 0, "c2": c2_next, "tick": 602}, false, {"tick": 600, "c2": c2}).size()
+	_check(own_delta_bytes <= int(own_full_bytes * 0.6),
+			"本人包典型帧差分 ≤ 全量 60%%(全量 %d B / 差分 %d B)" % [own_full_bytes, own_delta_bytes])
+
+	# ⑦ 世界包滚动关键帧典型帧(FULL 的 33 B/人 → 每包 1 个 keyframe + 其余只 pos 变化)≤ FULL 的 40%。
+	var st_players := {}
+	for i in cap:
+		st_players[str(i + 1)] = _entry_world(trail_pts)
+	var prev_players: Dictionary = st_players.duplicate(true)
+	for role in prev_players:
+		(prev_players[role] as Dictionary)["pos"] = (prev_players[role]["pos"] as Vector2) + Vector2(-2.0, 0.0)
+	var world_full_bytes := NetCodec.encode_world({"tick": 600, "players": st_players}).size()
+	var kf_sizes: Array = []
+	for p in cap:
+		var kf_role := (p % cap) + 1   # role 是 int(keyframes.has(int(role)) 才认;别传字符串
+		kf_sizes.append(NetCodec.encode_world(
+				{"tick": 602 + p * 2, "players": st_players}, false,
+				{"tick": 600 + p * 2, "players": prev_players}, [kf_role]).size())
+	var kf_max := 0
+	var kf_min := 1 << 30
+	var kf_sum := 0
+	for s in kf_sizes:
+		var v := int(s)
+		kf_max = maxi(kf_max, v)
+		kf_min = mini(kf_min, v)
+		kf_sum += v
+	var kf_mean := float(kf_sum) / float(kf_sizes.size())
+	_check(int(kf_mean) <= int(world_full_bytes * 0.40),
+			"16 人 keyframe 帧均值 ≤ FULL 40%%(FULL %d B / 均值 %.1f B = %d%%)" % [
+					world_full_bytes, kf_mean, int(round(100.0 * kf_mean / float(world_full_bytes)))])
+	# ⑧ 16 人局包尺寸方差要小:滚动关键帧轮转(每包 k=1)下峰值 ≤ 2×均值 —— 若改成"整包 FULL 每 60 tick"这里会出现尖峰。
+	_check(kf_max <= int(kf_mean * 2.0),
+			"16 人 keyframe 包峰值 ≤ 2×均值(峰值 %d B / 均值 %.1f B / 最小 %d B)" % [kf_max, kf_mean, kf_min])
+
+	# ⑨ 本人包 FULL 相位错峰(纯算式):N=2..16 的相位互不相同、落在 60 tick 内的偶数 tick ⇒ 同一 tick 不会全员同时全量。
+	# ★ 去掉什么才红:把 own_full_phase 改成恒 0(全挤同一 tick)或不再对齐发送网格(奇数相位 ⇒ 永不触发)。
+	var phases_ok := true
+	for n in [2, 3, 4, 8, 16]:
+		var seen: Dictionary = {}
+		for i in n:
+			var ph := NetCodec.own_full_phase(i, n, 2)
+			if ph < 0 or ph >= NetCodec.OWN_FULL_PERIOD or ph % 2 != 0:
+				phases_ok = false
+			seen[ph] = true
+		if seen.size() != n:
+			phases_ok = false
+	_check(phases_ok, "本人包 FULL 相位错峰:N=2..16 相位互异且落在 60 tick 内的偶数 tick")
+
+	print("[size] P1.5 增量/差分读数:本人包 FULL %d B / 典型帧差分 %d B;世界包 FULL(N=%d) %d B / keyframe 帧 %d~%d B(均值 %.1f B)" % [
+			own_full_bytes, own_delta_bytes, cap, world_full_bytes, kf_min, kf_max, kf_mean])
 
 	print("[size] ── N 折算(单帧载荷 / 每秒单端下行 / 服务器每秒上行)──")
 	print("[size]  N |        旧(dict):单帧  单端下行  服务器上行 |        新(codec):单帧  单端下行  服务器上行")
@@ -214,7 +274,7 @@ func _kb(b: int) -> String:
 func _report(n: int, old_own: int, old_entry: int, new_own: int, new_entry: int) -> void:
 	# 两种格式都是同一个拆包结构(世界包一次广播 + 本人包逐 peer 定向):服务器上行 = N × 本人包 + 1 × 世界包;单端下行 = 本人包 + 世界包。
 	var old_world := n * old_entry
-	var new_world := 7 + n * new_entry
+	var new_world := 8 + n * new_entry
 	var old_up := float((n * old_own + old_world) * SNAP_HZ)
 	var old_down := float((old_own + old_world) * SNAP_HZ)
 	var new_up := float((n * new_own + new_world) * SNAP_HZ)
@@ -228,11 +288,11 @@ func _report_mtu(old_entry: int, new_entry: int) -> void:
 	print("[size] ── 超 MTU 折算(ENet MTU=%d;超过即**不可靠分片**包,丢一片=整帧丢)──" % MTU)
 	for n in [2, 5, 8]:
 		var old_world: int = n * old_entry
-		var new_world: int = 7 + n * new_entry
+		var new_world: int = 8 + n * new_entry
 		print("[size]  N=%d: 世界包 旧 %s → %d 片 | 新 %s → %d 片" % [
 				n, _kb(old_world), _frags(old_world), _kb(new_world), _frags(new_world)])
 	for n in [2, 3, 4, 6, 8]:
-		var new_world: int = 7 + n * new_entry
+		var new_world: int = 8 + n * new_entry
 		print("[size]  新世界包仍在 1 片内?N=%d → %s" % [n, str(_frags(new_world) == 1)])
 
 
@@ -289,7 +349,7 @@ func _report_headroom(trail_n: int, c2: Dictionary, entry: Dictionary) -> void:
 	var c2s := _schema_bytes(NetCodec.C2_SCHEMA, 0)
 	var wpn := _schema_bytes(NetCodec.WEAPON_SCHEMA, 0)
 	var inv := 1 + 6 * (c2.get("inv", []) as Array).size()
-	var own := 8 + c2s + wpn + inv          # 8 = 版本+种类+ack+q+flags
+	var own := 13 + c2s + wpn + inv          # 13 = 版本+种类+flags+tick+ack+q + 武器标志
 	print("[size] ── 上限测算(算术;世界侧 P1 已落地、本人侧未落地)──")
 	var w_pv := _field_bytes(NetCodec.WORLD_SCHEMA, "pos", trail_n) \
 			+ _field_bytes(NetCodec.WORLD_SCHEMA, "vel", trail_n)
@@ -299,7 +359,7 @@ func _report_headroom(trail_n: int, c2: Dictionary, entry: Dictionary) -> void:
 			w, _field_bytes(NetCodec.WORLD_SCHEMA, "pos", trail_n),
 			_field_bytes(NetCodec.WORLD_SCHEMA, "vel", trail_n), w_aim, w_tr,
 			w - w_pv - w_aim - w_tr])
-	print("[size] 本人包 %d B = 头 8 + 核心 %d + 武器 %d + 背包 %d" % [own, c2s, wpn, inv])
+	print("[size] 本人包 %d B = 头 13 + 核心 %d + 武器 %d + 背包 %d" % [own, c2s, wpn, inv])
 
 	# ① 世界侧 P1 定点化已落地(2026-10-26):pos/vel→2×i16(0.5 步长)、aim→u8 角度。这里只回算相对 v4 的节省。
 	var saved := (8 - _field_bytes(NetCodec.WORLD_SCHEMA, "pos", trail_n)) \
