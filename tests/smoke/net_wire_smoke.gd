@@ -2,7 +2,8 @@ extends SceneTree
 # 线格式守卫(NetCodec,三 kind:world / own / input)。存在理由逐条对应真实缺陷:
 #   ① 三个 encode_* 各自写死版本/种类字节 ⇒ 版本号会漂(两份真相) ⇒ 断言①(三 kind 首字节同为 PROTO_VERSION、第二字节互异且正确)。
 #   ② 解码守卫写松(不查版本/长度) ⇒ 错位值喂进权威模拟 = 静默分歧 ⇒ 断言②(三 kind 坏包一律空)。
-#   ③ 编码侧手写内联、解码侧按 schema 表读 ⇒ 字段顺序/宽度/位打包漂移 ⇒ 断言③(三 kind 往返;含 held u16=415、混合 bool、st/ct 非零)。
+#   ③ 编码侧手写内联、解码侧按 schema 表读 ⇒ 字段顺序/宽度/位打包漂移 ⇒ 断言③(三 kind 往返;含 held u16=415、混合 bool、st/ct 非零;
+#      P1 定点字段用容差比:pos/vel ≤0.25、aim 点积 ≥0.9999 且长度≈1)。
 #   ④ schema 与生产者脱钩(pack_pair 加字段不登记) ⇒ 该字段线上被静默丢掉 ⇒ 断言④(INPUT_SCHEMA ↔ pack_pair 逐键对齐)。
 # ★ 与 snapshot_size_probe 的分工:那边量**体积/最坏包/容量**(场景探针,要真 Player);这里量**协议正确性**(纯逻辑 `-s`)。
 # 跑法:"$GODOT" --headless --path . -s res://tests/smoke/net_wire_smoke.gd;通过 = NET WIRE OK(n 条断言)。
@@ -47,11 +48,11 @@ func _initialize() -> void:
 	var id := NetCodec.decode_input(ib)
 	var recs := PacketInputSource.unpack_pair(id)
 	var rt := int(wd.get("tick", -1)) == int(world["tick"]) \
-			and _dict_same(world["players"], wd.get("players", {})) \
+			and _world_same(world["players"], wd.get("players", {})) \
 			and int(od.get("ack_seq", -1)) == int(own["ack_seq"]) \
 			and int(od.get("q", -1)) == int(own["q"]) \
 			and _dict_same(own["c2"], od.get("c2", {})) \
-			and _dict_same(inp, id) \
+			and _input_same(inp, id) \
 			and recs.size() == 2 \
 			and int(recs[0].get("seq", 0)) == int(inp["seq"]) - 1 \
 			and int(recs[1].get("seq", 0)) == int(inp["seq"]) \
@@ -192,6 +193,55 @@ func _dict_same(a: Variant, b: Variant) -> bool:
 		return false
 	for k in da:
 		if not db.has(k) or not _same(da[k], db[k]):
+			return false
+	return true
+
+
+# ── P1 定点字段的容差比对(世界:pos/vel 0.5 步长、aim u8 角度;输入:aim 1e-4 定点)──
+# ★ 必须比"解码后的语义值":世界 aim 只存方向 ⇒ 用单位向量点积 + 长度≈1 证明 decode 做了 normalize(漏 normalize 时长度≠1 必红)。
+func _world_same(a: Variant, b: Variant) -> bool:
+	if not (a is Dictionary) or not (b is Dictionary):
+		return false
+	var da: Dictionary = a
+	var db: Dictionary = b
+	if da.size() != db.size():
+		return false
+	for k in da:
+		if not db.has(k):
+			return false
+		if not _world_field_same(String(k), da[k], db[k]):
+			return false
+	return true
+
+
+func _world_field_same(k: String, a: Variant, b: Variant) -> bool:
+	if k == "pos" or k == "vel":
+		var va: Vector2 = a
+		var vb: Vector2 = b
+		return absf(va.x - vb.x) <= 0.2501 and absf(va.y - vb.y) <= 0.2501
+	if k == "aim":
+		var pa: Vector2 = a
+		var pb: Vector2 = b
+		var ua := pa.normalized() if not pa.is_zero_approx() else Vector2.RIGHT
+		return absf(pb.length() - 1.0) <= 0.001 and ua.dot(pb) >= 0.9999
+	if a is Dictionary and b is Dictionary:
+		return _world_same(a, b)   # 递归:players 字典的元素是单条 player 条目
+	return _same(a, b)
+
+
+func _input_same(a: Dictionary, b: Dictionary) -> bool:
+	if a.size() != b.size():
+		return false
+	for k in a:
+		if not b.has(k):
+			return false
+		if k == "aim":
+			var pa: Vector2 = a[k]
+			var pb: Vector2 = b[k]
+			var ua := pa.normalized() if not pa.is_zero_approx() else Vector2.RIGHT
+			if absf(pb.length() - 1.0) > 0.001 or ua.dot(pb) < 0.9999:
+				return false
+		elif not _same(a[k], b[k]):
 			return false
 	return true
 

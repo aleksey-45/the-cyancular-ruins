@@ -54,35 +54,36 @@ NetBus.rpc_id(peer, "snapshot_own",
 
 ### 1.4 线格式与载荷
 
-- `core/net/net_codec.gd` 用一张 schema 表 + 手打包成 `PackedByteArray`（快照 + 输入同模块）。首字节 `PROTO_VERSION := 4`，第二字节种类（`KIND_WORLD` / `KIND_OWN` / `KIND_INPUT`）。
-- ★ 2026-10-24 bool 打包：bool 按**记录**打包成 1 B 标志字节（`T_BOOLS`；世界 4 个 / `c2` 7 个 / 武器块 3 个）。**不是跨字段位流** —— 收益等价（世界条目 51→48 B、本人包 102→94 B）但不需要 bit 游标与 padding 校验，解码也不会因尾部 padding 判据制造误红/误绿；代价是组内对齐浪费 ≤7 bit。小整数位宽 / 真位流留给后续（要先登记每字段值域）。
-- ★ 2026-10-24 编码侧性能：解码仍表驱动（`_unpack` 逐字段守边界），**编码侧手写内联**（`out.encode_float(i, v)` + 下标写，一次性按 `_schema_bytes()` 预算容量、末尾 `resize(i)` 收尾）。实测 `encode_world`（N=16）**304 → 40~49 µs/包**（一次性量具 `.superpowers/net/encode_timing.gd`；同文件的剖面实测「只 resize」= 0.2 µs ⇒ 瓶颈是**逐字段 GDScript 调用**，不是分配）。代价：编码顺序/宽度与 schema 成了两份 —— 漂移由 `snapshot_size_probe` 的往返判据抓（解码按 schema 读，顺序/宽度错 = 值必不对）。★ 这一版**只改 CPU、不改字节**（bool 打包是同一批的另一条，字节变化见上一条）。
+- `core/net/net_codec.gd` 用一张 schema 表 + 手打包成 `PackedByteArray`（快照 + 输入同模块）。首字节 `PROTO_VERSION := 5`（P1 定点化起；4→5 两端必须同版），第二字节种类（`KIND_WORLD` / `KIND_OWN` / `KIND_INPUT`）。
+- ★ 2026-10-24 bool 打包：bool 按**记录**打包成 1 B 标志字节（`T_BOOLS`；世界 4 个 / `c2` 7 个 / 武器块 3 个）。**不是跨字段位流** —— 收益等价（世界条目当时 51→48 B、本人包 102→94 B）但不需要 bit 游标与 padding 校验，解码也不会因尾部 padding 判据制造误红/误绿；代价是组内对齐浪费 ≤7 bit。小整数位宽 / 真位流留给后续（要先登记每字段值域）。
+- ★ 2026-10-26 **P1 字段定点化**（`PROTO_VERSION 4→5`）：世界包 `pos` / `vel` → 2×i16（**0.5px** / 0.5px·s⁻¹ 步长；i16 只有 ±32767，0.1px 步长装不下 9600px 地图）、`aim` → u8 角度（256 向）；输入包 `aim` → 2×i16（1e-4 定点，解码后 normalize）。★ `c2` / 本人包**不动** —— 它是 C2 回滚锚点，单方面量化会让每次重放判分歧；世界包字段都是渲染量，量化是两端同版一起换。误差与方案见 [`netcode-delta-and-quantization-details.md`](netcode-delta-and-quantization-details.md) §6。
+- ★ 2026-10-24 编码侧性能：解码仍表驱动（`_unpack` 逐字段守边界），**编码侧手写内联**（`out.encode_float(i, v)` + 下标写，一次性按 `_schema_bytes()` 预算容量、末尾 `resize(i)` 收尾）。实测 `encode_world`（N=16）**304 → 40~49 µs/包**（一次性量具 `.superpowers/net/encode_timing.gd`；同文件的剖面实测「只 resize」= 0.2 µs ⇒ 瓶颈是**逐字段 GDScript 调用**，不是分配）。代价：编码顺序/宽度与 schema 成了两份 —— 漂移由 `snapshot_size_probe` 的往返判据抓（解码按 schema 读，顺序/宽度错 = 值必不对）。★ 这一批**只改 CPU、不改字节**；P1 定点化之后的字节见下表。
 - 两端版本不一致 ⇒ 解码返回空字典、调用方不 emit，`net_bus.gd` / `net_bus` 的输入解码口各只报一次错。
-- 数值全是 float32 全量，**无量化**；字段全是绝对值，**无增量**。
+- P1 之后：世界包 `pos` / `vel` / `aim` 是定点；`c2` 与 `trail` 仍是 float32 全量。字段仍是绝对值，**无增量**（增量属 task-12）。
 
 载荷口径（trail 2 点、装枪 + 1 件背包）：
 
 | 包 | 载荷 |
 |---|---|
 | 世界包头 | 7 B（版本 1 B + 种类 1 B + tick 4 + 人数 1） |
-| 世界包每人条目 | **48 B**（role 1 + bool 标志 1 + 定长 29 + trail(1+16)）；不在回溯时 **32 B** |
+| 世界包每人条目 | **33 B**（role 1 + bool 标志 1 + 定长 15 + trail(1+16)）；不在回溯时 **17 B**（P1 前 48 / 32 B） |
 | 本人包 | **94 B**（头 8 + `c2` 67 + 武器 12 + 背包 7） |
-| 输入包 | **46 B**（头 2 + 记录 44 = **两条连续 tick 记录**；`held` 必须 u16，见 [`netcode-input-uplink.md`](netcode-input-uplink.md)） |
+| 输入包 | **42 B**（头 2 + 记录 40 = **两条连续 tick 记录**；`held` 必须 u16，见 [`netcode-input-uplink.md`](netcode-input-uplink.md)）。P1 前 46 B |
 
 按 30Hz 折算（服务器上行按扇出算：世界包每个 peer 一份）：
 
 | N | 世界包/包 | 本人包合计 | 服务器上行 | 单端下行 |
 |---|---|---|---|---|
-| 2 | 103 B | 188 B | 11.5 KB/s | 5.8 KB/s |
-| 8 | 391 B | 752 B | 113.7 KB/s | 14.2 KB/s |
-| 16 | 775 B | 1504 B | 407.3 KB/s | 25.5 KB/s |
+| 2 | 73 B | 188 B | 9.8 KB/s | 4.9 KB/s |
+| 8 | 271 B | 752 B | 85.5 KB/s | 10.7 KB/s |
+| 16 | 535 B | 1504 B | 294.8 KB/s | 18.4 KB/s |
 
 ★ `snapshot_size_probe` 的 N 表把世界包只计一份（不乘接收端数），读数比上面小 `(N-1) × 世界包`；引用它的"服务器上行"列时先换算。
 
 ### 1.5 分片
 
 - ENet MTU 预算 1400 B（`tests/probe/snapshot_size_probe.gd` 的 `WORLD_PACKET_BUDGET`）。`unreliable` = `UNSEQUENCED | UNRELIABLE_FRAGMENT` ⇒ 丢任意一片 = 整帧丢。
-- 世界包 = `7 + N × 48`：16 人（trail 2 点）**775 B** ⇒ 1 片；最坏（16 人各 4 点 trail）= `7 + 16 × 64 = **1031 B**`，仍 1 片。
+- 世界包 = `7 + N × 33`（P1 后、trail 2 点）：16 人 **535 B** ⇒ 1 片；最坏（16 人各 4 点 trail）= `7 + 16 × 49 = **791 B**`，仍 1 片（P1 前 1031 B）。
 - 本人包 **94 B**，不分片。
 - `NetCodec.TRAIL_MAX := 16` 是解码侧硬顶（长度是不可信输入），与发送侧 `TRAIL_WIRE_MAX` 不是同一个数。
 - 改世界字段或 `TRAIL_WIRE_MAX` 前先跑 `tests/probe/snapshot_size_probe.tscn`（判词 `SNAPSHOT SIZE PROBE: ALL-OK`，量真实产出并带条数闸）。
@@ -144,13 +145,14 @@ NetBus.rpc_id(peer, "snapshot_own",
 | 维度 | 本仓 | 主流 |
 |---|---|---|
 | 状态发送频率 | 30Hz + 客户端 playout 插值（`PLAYOUT_TICKS = 3` ≈ 50ms 缓冲）+ 服务器按射手观看时刻回放命中 | 10~30Hz + 客户端插值缓冲 |
-| 编码 | schema 表手打包 | 绑定 + 量化 + 位打包 |
-| 增量 | 全字段绝对值 | 对已 ack 的基线增量 |
+| 编码 | schema 表手打包（P1 起世界 `pos`/`vel`/`aim` 与输入 `aim` 定点化） | 绑定 + 量化 + 位打包 |
+| 增量 | 全字段绝对值（增量属 task-12） | 对已 ack 的基线增量 |
 | 客户端时钟 | 本地播放时钟（窗口最小延迟选样），不与服务器做显式时钟同步 | 播放时钟跟服务器时钟 |
 
 ## 6. 已知边界
 
-- `c2` 与渲染字段都是 float32 全量，量化与增量都没做。量化必须两端同口径（`c2` 是回滚锚点，只压上行会让每次重放都对不上）。
+- `c2`（本人包，C2 回滚锚点）仍是 float32 全量；世界包的 `trail` 也仍是 float32。渲染字段只剩 `trail` 未量化 —— 它是变长数组、重复度低，量化收益 <1 B/点。量化必须两端同口径（`c2` 只压上行会让每次重放都对不上）。
+- ★ 2026-10-26 **P1 定点化**：世界包 `pos`/`vel` 用 **0.5px** 步长（不是 0.1px —— i16 的 ±32767 装不下 9600px×10），量化误差 ≤0.25px/0.25px·s⁻¹；`aim` u8 角度误差 ≤π/256≈0.70°；输入 `aim` 1e-4 定点。位宽/误差详情与风险见 [`netcode-delta-and-quantization-details.md`](netcode-delta-and-quantization-details.md) §6。
 - ★ 2026-10-24 **U1 上行去锁存**：输入记录 = 1 tick（60Hz 采样），30Hz 包内装两条（流水线），服务器每 tick 消费一条 ⇒ 本地手感不再有 30Hz 锁存延迟。**S1** 把本人包挪到"消费并步进完当帧"发（③ 固定回带已消）；客户端 U1 起本来就每 tick 对账（④ 已消）。**剩下的**只是 30Hz 发包/广播节拍的量化（`--netstat` 的 `gap` 仍有 1~2 条 ×16.7ms 的偏置），不是"等一拍广播"。见 `netcode-input-uplink.md` §5。
 - 上行 `st` / `ct`：`ct`（客户端物理帧号）仍**无消费者**；`st` 自 2026-10-26 起是**命中回放的时间基准**（`match_combat._replay_hurt_rect`），不再是"只落位"。
 - 没有丢包 / 抖动注入路径 ⇒ 队头阻塞、丢弃率、手感都没有真对局读数。

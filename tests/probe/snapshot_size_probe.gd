@@ -102,8 +102,8 @@ func _ready() -> void:
 	var wd := NetCodec.decode_world(wb)
 	var d2: Dictionary = od.get("c2", {})
 	var we: Dictionary = (wd.get("players", {}) as Dictionary).get("1", {})
-	var rt_ok := _dict_same(c2, d2) and _dict_same(entry, we) and int(od.get("ack_seq", -1)) == 12345
-	_check(rt_ok, "真实产出的往返逐字段一致(c2 %d/%d 键 · 世界 %d/%d 键 · ack=%s)" % [
+	var rt_ok := _dict_same(c2, d2) and _world_same(entry, we) and int(od.get("ack_seq", -1)) == 12345
+	_check(rt_ok, "真实产出的往返逐字段一致(定点字段用容差:pos/vel ≤0.25、aim 点积 ≥0.9999;c2 %d/%d 键 · 世界 %d/%d 键 · ack=%s)" % [
 			d2.size(), c2.size(), we.size(), entry.size(), str(od.get("ack_seq"))])
 
 	# ④ 最坏情况的世界包必须装进一个 ENet 包(配 16 人上限)。
@@ -131,7 +131,7 @@ func _ready() -> void:
 	if worst_ok:
 		var dp: Dictionary = worst_dec.get("players", {})
 		for role in expected:
-			if not _dict_same(expected[role], dp.get(role, {})):
+			if not _world_same(expected[role], dp.get(role, {})):
 				worst_ok = false
 				break
 	_check(worst_ok and (worst_dec.get("players", {}) as Dictionary).size() == cap,
@@ -254,6 +254,12 @@ func _t_bytes(t: String, trail_n: int) -> int:
 			return 8
 		NetCodec.T_I32:
 			return 4
+		NetCodec.T_QV2:
+			return 4      # P1:2×int16 定点(0.5 步长)
+		NetCodec.T_QAIM:
+			return 1      # P1:u8 角度
+		NetCodec.T_FAIM:
+			return 4      # P1:2×int16(1e-4)
 		NetCodec.T_TRAIL:
 			return 1 + 8 * trail_n
 	return 1   # U8 / I8 / T_BOOLS(整组仍占 1 B)
@@ -284,7 +290,7 @@ func _report_headroom(trail_n: int, c2: Dictionary, entry: Dictionary) -> void:
 	var wpn := _schema_bytes(NetCodec.WEAPON_SCHEMA, 0)
 	var inv := 1 + 6 * (c2.get("inv", []) as Array).size()
 	var own := 8 + c2s + wpn + inv          # 8 = 版本+种类+ack+q+flags
-	print("[size] ── 上限测算(算术,不是已实现代码)──")
+	print("[size] ── 上限测算(算术;世界侧 P1 已落地、本人侧未落地)──")
 	var w_pv := _field_bytes(NetCodec.WORLD_SCHEMA, "pos", trail_n) \
 			+ _field_bytes(NetCodec.WORLD_SCHEMA, "vel", trail_n)
 	var w_aim := _field_bytes(NetCodec.WORLD_SCHEMA, "aim", trail_n)
@@ -295,20 +301,18 @@ func _report_headroom(trail_n: int, c2: Dictionary, entry: Dictionary) -> void:
 			w - w_pv - w_aim - w_tr])
 	print("[size] 本人包 %d B = 头 8 + 核心 %d + 武器 %d + 背包 %d" % [own, c2s, wpn, inv])
 
-	# ① 量化:只对能安全量化的量(渲染量)。pos 1/4px(9600px×4=38400<65536 ⇒ 2×u16)、vel 1/16px/s(2×i16)、aim 1 字节角度(256 向 ≈1.4° 分辨率)。
-	var q_pos := 4
-	var q_vel := 4
-	var q_aim := 1
-	var w_q := w - (_field_bytes(NetCodec.WORLD_SCHEMA, "pos", trail_n) - q_pos) \
-			- (_field_bytes(NetCodec.WORLD_SCHEMA, "vel", trail_n) - q_vel) \
-			- (_field_bytes(NetCodec.WORLD_SCHEMA, "aim", trail_n) - q_aim)
-	print("[size] 量化(世界):pos→2×u16、vel→2×i16、aim→1B 角度 ⇒ %d→%d B(−%d%%)" % [
-			w, w_q, int(round(100.0 * (w - w_q) / float(w)))])
-	# c2 侧只能动 pos/vel/knock(渲染/物理连续量);其余是**回滚锚点**,单方面量化 ⇒ 每次对账都判分歧。
-	var c2_q := c2s - (_field_bytes(NetCodec.C2_SCHEMA, "pos", 0) - q_pos) \
-			- (_field_bytes(NetCodec.C2_SCHEMA, "vel", 0) - q_vel) \
-			- (_field_bytes(NetCodec.C2_SCHEMA, "knock", 0) - q_pos)
-	print("[size] 量化(本人):只动 pos/vel/knock ⇒ %d→%d B(−%d%%),★ 且必须**两端一起量化**" % [
+	# ① 世界侧 P1 定点化已落地(2026-10-26):pos/vel→2×i16(0.5 步长)、aim→u8 角度。这里只回算相对 v4 的节省。
+	var saved := (8 - _field_bytes(NetCodec.WORLD_SCHEMA, "pos", trail_n)) \
+			+ (8 - _field_bytes(NetCodec.WORLD_SCHEMA, "vel", trail_n)) \
+			+ (8 - _field_bytes(NetCodec.WORLD_SCHEMA, "aim", trail_n))
+	print("[size] 量化(世界,**已落地**):pos %d B / vel %d B / aim %d B ⇒ 每条比 v4 省 %d B(方案与误差见 netcode-delta-and-quantization-details.md §6)" % [
+			_field_bytes(NetCodec.WORLD_SCHEMA, "pos", trail_n),
+			_field_bytes(NetCodec.WORLD_SCHEMA, "vel", trail_n), w_aim, saved])
+	# c2 侧未量化(它是 C2 回滚锚点,单方面量化 ⇒ 每次对账都判分歧);下面只是"若两端一起量化"的上限测算,本批不落地。
+	var c2_q := c2s - (_field_bytes(NetCodec.C2_SCHEMA, "pos", 0) - 4) \
+			- (_field_bytes(NetCodec.C2_SCHEMA, "vel", 0) - 4) \
+			- (_field_bytes(NetCodec.C2_SCHEMA, "knock", 0) - 4)
+	print("[size] 量化(本人,**未落地**):只动 pos/vel/knock ⇒ %d→%d B(−%d%%),★ 且必须**两端一起量化**" % [
 			c2s + wpn + inv, c2_q + wpn + inv,
 			int(round(100.0 * (c2s + wpn + inv - c2_q - wpn - inv) / float(c2s + wpn + inv)))])
 
@@ -389,6 +393,31 @@ func _schema_keys(schema: Array) -> Array:
 
 # 逐键比:float 只求**近似相等**(GDScript 的 float 是 double,上线收成 float32 后展回来会差
 # ~1e-7;这是**今天线上本来就有的**损失,不是本次改动引入的),其余类型求精确相等。
+# ★ 世界条目走 _world_same:pos/vel 有 0.5px 定点步长(误差 ≤0.25)、aim 是 u8 角度(比点积);不能再用 float 容差。
+func _world_same(a: Dictionary, b: Dictionary) -> bool:
+	if a.size() != b.size():
+		return false
+	for k in a:
+		if not b.has(k):
+			return false
+		if not _world_field_same(String(k), a[k], b[k]):
+			return false
+	return true
+
+
+func _world_field_same(k: String, a: Variant, b: Variant) -> bool:
+	if k == "pos" or k == "vel":
+		var va: Vector2 = a
+		var vb: Vector2 = b
+		return absf(va.x - vb.x) <= 0.2501 and absf(va.y - vb.y) <= 0.2501
+	if k == "aim":
+		var pa: Vector2 = a
+		var pb: Vector2 = b
+		var ua := pa.normalized() if not pa.is_zero_approx() else Vector2.RIGHT
+		return absf(pb.length() - 1.0) <= 0.001 and ua.dot(pb) >= 0.9999
+	return _same(a, b)
+
+
 func _dict_same(a: Dictionary, b: Dictionary) -> bool:
 	if a.size() != b.size():
 		return false

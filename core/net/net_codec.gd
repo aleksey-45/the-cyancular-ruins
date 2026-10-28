@@ -3,9 +3,9 @@ extends RefCounted
 
 # 线格式:把载荷从 Dictionary 换成手打包的 PackedByteArray(快照 + 输入共用一套版本字节与 schema 表)。原先每个字段都要在线上带键名字符串(每帧重复)+ 4 字节类型标签 ——
 # 实测同一份 8 字段数据:dict(键)= 196 B vs 手打包 = 24 B ⇒ 键 + 类型标签才是大头,不是数值本身;换掉后 N=8 世界包 2.1 KB → 0.27 KB(不再分片)、本人包 588 B → ~114 B。
-# ── 本版不做量化(只换编码):只压发送侧会引入永久分歧(Gaffer《State Synchronization》)—— 两端都从量化后的状态起算,必须两端一起量化。本人包的 c2 是 C2 回滚锚点,
-# 只量化上行 ⇒ 客户端重放起算点与服务器不一致 ⇒ 每次都判分歧、每次回滚。故本版只去开销、不动数值:字段与今天逐位相同。
-# ── 变位数是无损的:Godot 非 double 构建里 encode_variant 已把 FLOAT 收成 32 位、Vector2 收成 2×float32 ⇒ float32 载荷与今天线上字节逐位一致,不是"看上去差不多"。
+# ── 2026-10-26 P1(PROTO_VERSION 4→5)字段定点化:上行 aim → 2×i16(1e-4 定点),下行 pos/vel → 2×i16(0.5px 步长)、aim → u8 角度。
+#   量化必须两端**同版一起换**(版本字节守门);本人包 c2 仍是 float32 全量 —— 它是 C2 回滚锚点,单方面量化 ⇒ 每次重放都判分歧。★ 定点常量/误差见 Q_* 与文档 §6。
+# ── 非量化字段(如 trail)仍是 float32:Godot 非 double 构建里 encode_float 就是 32 位 ⇒ 与旧线上字节逐位一致,不是"看上去差不多"。
 # ── 版本字节:首字节 = PROTO_VERSION,两端不同版时大声失败(解码返回空字典、调用方不 emit),而不是按错位的偏移读出垃圾值。★ 载荷里每个字节位置都是协议:改字段顺序/类型/宽度 = 改协议,两端必须同版本。
 # ── 输入包(KIND_INPUT)也走这里:同一套版本字节 + schema 表。类名保留 NetCodec —— 它现在是**全项目**线格式编解码器(快照 + 输入)。
 # ── ★★ 2026-10-24 编码侧性能:解码仍**表驱动**(`_unpack` 按 schema 读,不可信输入必须逐字段守边界),但**编码侧改成手写内联**
@@ -15,7 +15,7 @@ extends RefCounted
 #   (解码按 schema 读 ⇒ 顺序/宽度错 = 解出来的值必不对,立刻红),容量用 `_schema_bytes()` 预算(少算 ⇒ 越界/尺寸错,④ 最坏包抓)。
 #   ⇒ 改 schema 必须同步改三个 encode_*;不改就一定红,不会静默。
 
-const PROTO_VERSION := 4
+const PROTO_VERSION := 5
 const KIND_WORLD := 1
 const KIND_OWN := 2
 const KIND_INPUT := 3
@@ -32,15 +32,27 @@ const T_BOOLS := "flag"
 const T_I32 := "i"    # 32 位有符号(inst / seq / tick)
 const T_U16 := "h"    # 0..65535(输入 held 位掩码:BIT_REWIND = 256 装不进 u8)
 const T_TRAIL := "trail"
+# P1 定点类型(尺寸进 _schema_bytes,编解码见 encode_world / encode_input / _unpack)。
+const T_QV2 := "qv2"    # 定点向量:2×int16,步长 0.5 px(世界 pos/vel,4 B)
+const T_QAIM := "qaim"  # 瞄准方向角:u8(0..255 → 0..2π,世界 aim,1 B)
+const T_FAIM := "faim"  # 单位向量定点:2×int16(/10000,输入 aim,4 B)
+
+# ── 定点量化常量(单一来源;真相源 = docs/eng/netcode-delta-and-quantization-details.md §6)──
+# ★ 位置/速度的步长不是 0.1px:i16 只有 ±32767,而最宽地图 9600px ×10 = 96000 装不下 ⇒ 取 0.5px(9600×2 = 19200,留 2.4× 余量到 16383px)。
+#   两者共用同一步长:速度的视觉敏感度远低于位置,0.25px/s 的误差不可见。
+const Q_SCALE := 2.0          # 世界 pos/vel:1 单位 = 0.5 px(0.5 px/s);量化误差 ≤0.25
+const Q_VEL_CLAMP := 6000.0   # 速度钳 ±6000 px/s(×2 = ±12000,仍在 i16 内;超界钳位不 wrap)
+const Q_AIM_STEPS := 256.0    # 世界 aim:u8 角度(方向误差 ≤π/256 ≈0.70°)
+const AIM_FP := 10000.0       # 输入 aim:单位向量的 1e-4 定点(误差 ≤1e-4,解码后 normalize)
 
 # 世界包每人一份(13 字段,顺序 = 线上顺序)。范围按产品常量钳:hp ≤ 50、waterproof ≤ 10、pose ≤ 4。
-# ★ bool 组在前:线上 = role(1)+flag(1)+pos8+vel8+facing1+pose1+type_id1+hp1+waterproof1+aim8+trail(1+8n)
-#   ⇒ trail 2 点 = **48 B**(改前 51 B);不在回溯 = 32 B。
+# ★ P1 定点化后线上 = role(1)+flag(1)+pos4+vel4+facing1+pose1+type_id1+hp1+waterproof1+aim1+trail(1+8n)
+#   ⇒ trail 2 点 = **33 B**(P1 前 48 B)、不在回溯 = 17 B(前 32 B)。pos/vel = i16 定点(Q_SCALE)、aim = u8 角度。
 const WORLD_SCHEMA: Array = [
 	["_flags", T_BOOLS, ["downed", "previewing", "haste", "rewind"]],
-	["pos", T_V2], ["vel", T_V2], ["facing", T_I8], ["pose", T_U8],
+	["pos", T_QV2], ["vel", T_QV2], ["facing", T_I8], ["pose", T_U8],
 	["type_id", T_U8], ["hp", T_U8], ["waterproof", T_U8],
-	["aim", T_V2], ["trail", T_TRAIL],
+	["aim", T_QAIM], ["trail", T_TRAIL],
 ]
 
 # 本人包的核心整态 = player.capture_state() 的 25 个标量字段(inv 另走 INV_SCHEMA,武器块另走 WEAPON_SCHEMA —— 后者可能不存在,靠 flags 位声明)。
@@ -68,7 +80,8 @@ const INV_SCHEMA: Array = [["type", T_U8], ["inst", T_I32], ["mag", T_U8]]
 #   30Hz 包只负责装两 tick(共用 aim/st/ct 与包络),所以比"每 tick 一包"省一半包头/共享字段。
 # ★ held 是位掩码:BIT_HASTE = 128、BIT_REWIND = 256 ⇒ 必须 u16(u8 会截断成 159)。
 # ★ 低 tick 记录 = 上一包之后的那一 tick(流水线);seq(包级)= 高 tick 记录的 seq,低记录 seq = seq-1。
-# st = 本端**最近成功解码**的服务器快照 tick;ct = 高 tick 的客户端物理帧号(低记录 ct = ct-1)。只落位,增量批才有消费者。
+# st = 本端**最近成功解码**的服务器快照 tick(命中回放的时间基准,见 match_combat._replay_hurt_rect);ct = 高 tick 的客户端物理帧号(低记录 ct = ct-1;仍只落位)。
+# aim = 世界坐标瞄准方向,单位向量 1e-4 定点(2×i16);两条记录共用。
 const INPUT_SCHEMA: Array = [
 	["seq", T_I32],
 	["held0", T_U16], ["held1", T_U16],
@@ -76,7 +89,7 @@ const INPUT_SCHEMA: Array = [
 	["pressed0", T_U8], ["pressed1", T_U8],
 	["released0", T_U8], ["released1", T_U8],
 	["winst0", T_I32], ["winst1", T_I32],
-	["aim", T_V2], ["st", T_I32], ["ct", T_I32],
+	["aim", T_FAIM], ["st", T_I32], ["ct", T_I32],
 ]
 
 const FLAG_WEAPON := 1
@@ -85,7 +98,8 @@ const FLAG_WEAPON := 1
 const TRAIL_MAX := 16
 
 # 线上最多带几个回溯点(取最近的;多余的截断、不报错):世界包必须装进一个 ENet 包,而 trail 是这个包里唯一的变长字段 ——
-# 16 人 × 物理上限(10 点)= 1847 B ⇒ 2 片,而快照是 unreliable 分片 ⇒ 丢一片 = 整帧丢。4 点 ⇒ 7 + 16×66 = 1063 B(留 24% 余量),残像只少最老的几个点。★ 判据在 tests/probe/snapshot_size_probe.gd ④(量的是本函数的真实产出),改这个数必须先跑它。
+# 16 人 × 物理上限(10 点)= 7 + 16×97 = 1559 B ⇒ 2 片,而快照是 unreliable 分片 ⇒ 丢一片 = 整帧丢。
+# 4 点 ⇒ 7 + 16×49 = 791 B(P1 前 1031 B;留 43% 余量),残像只少最老的几个点。★ 判据在 tests/probe/snapshot_size_probe.gd ④,改这个数必须先跑它。
 const TRAIL_WIRE_MAX := 4
 
 # 编码容量预算(类加载时算一次,不每包遍历 schema):仍是 `_schema_bytes()` 派生 ⇒ 改 schema 自动跟上,不手抄数字。
@@ -95,10 +109,10 @@ static var _INV_ENTRY_BYTES := _schema_bytes(INV_SCHEMA)
 static var _INPUT_BYTES := 2 + _schema_bytes(INPUT_SCHEMA)
 
 
-# ── 编码(2026-10-24:手写内联)── ★ 一次性按 `_schema_bytes()` 预算容量 `resize`,然后全部就地写(`encode_float`/`encode_u32`/下标),
-# 末尾 `resize(i)` 收尾。实测 304 → 47 µs/包(N=16);产出字节与旧实现**逐位不变**(判据:snapshot_size_probe 的尺寸 + 往返 + 最坏包)。
+# ── 编码(2026-10-24:手写内联)── ★ 一次性按 `_schema_bytes()` 预算容量 `resize`,然后全部就地写(`encode_s16`/`encode_float`/`encode_u32`/下标),
+# 末尾 `resize(i)` 收尾。实测 304 → 47 µs/包(N=16)。★ P1 起定点字段不再与 v4 逐位一致 ⇒ 判据是 snapshot_size_probe 的尺寸 + 往返容差 + 最坏包。
 
-## 世界包:一次广播,含全部玩家的渲染字段。`{"tick": int, "players": {"role": {…13 字段}}}`。
+## 世界包:一次广播,含全部玩家的渲染字段。`{"tick": int, "players": {"role": {…13 字段}}}`。pos/vel/aim 走定点(常量见 Q_*)。
 ## ★ 字段顺序/宽度必须与 WORLD_SCHEMA 一致(解码按 schema 读;漂移由 snapshot_size_probe ③ 抓)。
 static func encode_world(world: Dictionary) -> PackedByteArray:
 	var players: Dictionary = world.get("players", {})
@@ -126,15 +140,23 @@ static func encode_world(world: Dictionary) -> PackedByteArray:
 				| (8 if bool(e.get("rewind", false)) else 0)
 		i += 1
 		var pos: Vector2 = e.get("pos", Vector2.ZERO)
-		out.encode_float(i, pos.x)
-		i += 4
-		out.encode_float(i, pos.y)
-		i += 4
+		var qx := clampi(roundi(pos.x * Q_SCALE), -32768, 32767)
+		out[i] = qx & 0xFF
+		out[i + 1] = (qx >> 8) & 0xFF
+		i += 2
+		var qy := clampi(roundi(pos.y * Q_SCALE), -32768, 32767)
+		out[i] = qy & 0xFF
+		out[i + 1] = (qy >> 8) & 0xFF
+		i += 2
 		var vel: Vector2 = e.get("vel", Vector2.ZERO)
-		out.encode_float(i, vel.x)
-		i += 4
-		out.encode_float(i, vel.y)
-		i += 4
+		var vx := clampi(roundi(clampf(vel.x, -Q_VEL_CLAMP, Q_VEL_CLAMP) * Q_SCALE), -32768, 32767)
+		out[i] = vx & 0xFF
+		out[i + 1] = (vx >> 8) & 0xFF
+		i += 2
+		var vy := clampi(roundi(clampf(vel.y, -Q_VEL_CLAMP, Q_VEL_CLAMP) * Q_SCALE), -32768, 32767)
+		out[i] = vy & 0xFF
+		out[i + 1] = (vy >> 8) & 0xFF
+		i += 2
 		out[i] = int(e.get("facing", 0)) & 0xFF
 		i += 1
 		out[i] = int(e.get("pose", 0)) & 0xFF
@@ -146,11 +168,10 @@ static func encode_world(world: Dictionary) -> PackedByteArray:
 		i += 1
 		out[i] = int(e.get("waterproof", 0)) & 0xFF
 		i += 1
+		# aim 是方向 ⇒ 只存角度(u8):零向量按 RIGHT(atan2(0,0)=0)处理,语义上"无瞄准"本来就会回落到朝向。
 		var aim: Vector2 = e.get("aim", Vector2.ZERO)
-		out.encode_float(i, aim.x)
-		i += 4
-		out.encode_float(i, aim.y)
-		i += 4
+		out[i] = int(roundf(atan2(aim.y, aim.x) / TAU * Q_AIM_STEPS)) & 0xFF
+		i += 1
 		var trail: Array = e.get("trail", [])
 		var tn: int = mini(trail.size(), TRAIL_WIRE_MAX)
 		out[i] = tn
@@ -281,8 +302,8 @@ static func encode_own(own: Dictionary) -> PackedByteArray:
 
 ## 输入包:30Hz 一包,内含连续两个物理 tick 的记录(高 tick 的 seq = 包级 seq,低 tick = seq-1)。
 ## `{"seq","held0","held1","ax0","ax1","pressed0","pressed1","released0","released1","winst0","winst1","aim","st","ct"}`
-## 头 2 B + 记录 44 B = **46 B**(改前:30Hz 单条锁存记录 = 34 B;7 键 Dictionary 时代 = 164 B/包)。
-## ★ 顺序/宽度必须与 INPUT_SCHEMA 一致(漂移由 net_wire_smoke 的往返抓)。
+## 头 2 B + 记录 40 B = **42 B**(P1 前 46 B;30Hz 单条锁存记录时代 34 B;7 键 Dictionary 时代 164 B/包)。
+## ★ aim = 单位向量 1e-4 定点(2×i16);顺序/宽度必须与 INPUT_SCHEMA 一致(漂移由 net_wire_smoke 的往返抓)。
 static func encode_input(pkt: Dictionary) -> PackedByteArray:
 	var out := PackedByteArray()
 	out.resize(_INPUT_BYTES)
@@ -320,10 +341,15 @@ static func encode_input(pkt: Dictionary) -> PackedByteArray:
 	out.encode_u32(i, int(pkt.get("winst1", 0)))
 	i += 4
 	var aim: Vector2 = pkt.get("aim", Vector2.ZERO)
-	out.encode_float(i, aim.x)
-	i += 4
-	out.encode_float(i, aim.y)
-	i += 4
+	var alim := int(AIM_FP)
+	var qax := clampi(roundi(aim.x * AIM_FP), -alim, alim)
+	out[i] = qax & 0xFF
+	out[i + 1] = (qax >> 8) & 0xFF
+	i += 2
+	var qay := clampi(roundi(aim.y * AIM_FP), -alim, alim)
+	out[i] = qay & 0xFF
+	out[i + 1] = (qay >> 8) & 0xFF
+	i += 2
 	out.encode_u32(i, int(pkt.get("st", 0)))
 	i += 4
 	out.encode_u32(i, int(pkt.get("ct", 0)))
@@ -395,6 +421,14 @@ static func _unpack(r: Dictionary, schema: Array) -> Dictionary:
 				d[key] = _rd_f(r)
 			T_V2:
 				d[key] = Vector2(_rd_f(r), _rd_f(r))
+			T_QV2:
+				d[key] = Vector2(_rd_i16(r) / Q_SCALE, _rd_i16(r) / Q_SCALE)
+			T_QAIM:
+				var ang := float(_rd_u8(r)) / Q_AIM_STEPS * TAU
+				d[key] = Vector2(cos(ang), sin(ang))
+			T_FAIM:
+				var fv := Vector2(_rd_i16(r) / AIM_FP, _rd_i16(r) / AIM_FP)
+				d[key] = fv.normalized() if not fv.is_zero_approx() else Vector2.RIGHT
 			T_U8:
 				d[key] = _rd_u8(r)
 			T_I8:
@@ -431,11 +465,13 @@ static func _schema_bytes(schema: Array) -> int:
 				n += 4
 			T_V2:
 				n += 8
+			T_QV2, T_FAIM:
+				n += 4
 			T_U16:
 				n += 2
 			T_BOOLS:
 				n += 1
-			T_U8, T_I8:
+			T_QAIM, T_U8, T_I8:
 				n += 1
 			T_TRAIL:
 				n += 1 + 8 * TRAIL_WIRE_MAX
@@ -463,6 +499,11 @@ static func _rd_u16(r: Dictionary) -> int:
 	var lo := _rd_u8(r)
 	var hi := _rd_u8(r)
 	return lo | (hi << 8)
+
+
+static func _rd_i16(r: Dictionary) -> int:
+	var v := _rd_u16(r)
+	return v - 65536 if v >= 32768 else v
 
 
 static func _rd_u32(r: Dictionary) -> int:

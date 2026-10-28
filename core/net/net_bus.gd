@@ -144,7 +144,7 @@ func lobby_name(name: String) -> void:
 	lobby_name_set.emit(multiplayer.get_remote_sender_id(), name)
 
 # ★ 输入上行:30Hz 一包,**内含连续两个物理 tick 的记录**(U1:客户端 60Hz 真输入、不锁存;服务器每 tick 消费一条)。
-# 载荷是手打包的 PackedByteArray(NetCodec.encode_input:头 2 B + 记录 44 B = 46 B;改前 30Hz 单条锁存记录 = 34 B)。
+# 载荷是手打包的 PackedByteArray(NetCodec.encode_input:头 2 B + 记录 40 B = 42 B,P1 定点化前 46 B;更早 30Hz 单条锁存记录 = 34 B)。
 # 可靠通道保序 + seq 单调(包级 seq = 高 tick 记录,低 tick = seq-1)= 服务端与客户端重放同序(C2 回滚「1 seq = 1 tick」的前提)。
 @rpc("any_peer", "call_remote", "reliable", 1)
 func send_input(payload: PackedByteArray) -> void:
