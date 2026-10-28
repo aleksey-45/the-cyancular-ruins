@@ -183,3 +183,12 @@ ound_state(COUNTDOWN, timer=3.0)，而那一刻客户端还在切场景、PvpHud
 ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时钟同拍。server_main._on_match_sync 里调 mark_client_ready；MatchHost._ready / _start_next_round 复位就绪闸与补发标志。
 
 **边界（如实登记）**：① 只覆盖 1v1（MatchRound._match_round_tick）；RoyaleHost / TeamHost 整段覆写了 _match_round_tick，不走这道闸 —— 大乱斗本来就有 HUD_SYNC_INTERVAL 周期重播可兜底，3v3 的 COUNTDOWN 仍按旧时序（若同样症状再现，需在各自覆写里加同样的就绪闸）；② 只修"起点丢失"，不改变本地走秒精度（Broadcast.tick(delta)，与服务器时钟的长期漂移仍靠下一次状态广播校正）；③ 真链路 smoke 只验证收到 round_state + 能行动，**倒计时数字观感只能人眼**；④ 协议/字节不变，PROTO_VERSION 不动。
+
+
+## 二十一、放弃增量快照 + 命中 X 搬回屏幕中心（2026-10-28，档 3）
+
+**回退 1：放弃世界/本人包增量（P1.5 整体下线，保留编解码能力）**。`MatchSnapshot._broadcast_snapshot()` 恢复 `NetCodec.encode_world(state)` 全量、`send_own_snapshots()` 恢复 `encode_own(..., true)`；`NetBus.snapshot_world/_own` 恢复"解码即发"（`_last_world_tick/_last_own_tick` 去重，不再有 `base_tick` 链、pending 缓冲、need_full 请求位；`snapshot_need_full()` 恒 false）。`BIT_NEED_FULL` 位保留但不再置位。世界包尺寸回到 **N=16 约 536 B/包**（30Hz），本人包 **99 B/包**（30Hz，含 P1.5 引入的 `tick` 字段 4 B）；N=16 服务器上行回到 **≈305 KB/s**（放弃增量换稳定性）。`net_wire_smoke` 7 条（链三态断言随代码移除），默认批 **12 支 / 81 条**。
+**为什么**：用户实测 v0.5.1（全量）不卡、P1.5（增量）对手显示一顿一顿；DELTA 链在 unreliable 乱序/丢包下即使加乱序缓冲，真丢包仍需 FULL，本质是拿稳定性换带宽，裁定不要。
+
+**回退 2：命中 X 搬回屏幕中心**。`BulletBase._spawn_hit_fx()` 恢复 `CombatFeedback.hit_marker()`（屏幕中心 X）；`HitFeedbackFx` 只保留**伤害数字**（`spawn_damage`，世界系），不再画目标身上的 X；`PvpMatchClient._on_hit_confirm()` 恢复只调 `CombatFeedback.hit_marker()`。理由：X 的位置是既有用户口径，未经要求不得搬动（此前 P0-3 的"X 画在目标身上"被仓主否决）。
+**边界**：增量编解码 `encode_world(..., full=false)` / `apply_world` / `own_full_phase` 仍保留并由 `net_wire_smoke`/`snapshot_size_probe` 覆盖（能力测试，不代表生产路径）；`PROTO_VERSION` 仍 6（线格式未变，只是生产只发 FULL）。命中伤害数字仍为纯表现、零守卫。

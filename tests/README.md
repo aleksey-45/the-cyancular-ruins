@@ -18,7 +18,7 @@
 >
 > **2026-10-27 再追加 1 支**（服务器命中回放历史）：`lag_history_smoke`(8) ⇒ **默认批 = 12 支 / 74 条闸断言**（`RUN_ALL OK(12 runs / 74 gated-assertions)`）；`hit_shape_smoke` 13→14、`bullet_sweep_probe` 4→6。
 >
-> **2026-10-28 协议压缩两批 + 后续**：`net_wire_smoke` 5→7→8（增本人包差分/世界关键帧/增量链三态）、`snapshot_size_probe` 5→9、`tile_break_unit_smoke` 10→11 ⇒ **默认批 = 12 支 / 82 条闸断言**（`RUN_ALL OK(12 runs / 82 gated-assertions)`）。
+> **2026-10-28 协议压缩两批 + 后续**：`net_wire_smoke` 5→7（增量已放弃，链三态断言随代码移除）、`snapshot_size_probe` 5→9、`tile_break_unit_smoke` 10→11 ⇒ **默认批 = 12 支 / 81 条闸断言**（`RUN_ALL OK(12 runs / 81 gated-assertions)`）。
 > ★ **删了什么 = 欠了什么**：删除清单、覆盖缺口与翻案条件登记在 [`docs/eng/registered-debt.md`](../docs/eng/registered-debt.md) §九。
 > ★ 仓规未变：**一条判定类别 = 一条守卫**、**新守卫必须自带条数闸**、**先答三问再写**（[`docs/eng/test-economy.md`](../docs/eng/test-economy.md)）。
 

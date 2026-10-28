@@ -10,7 +10,7 @@ extends SceneTree
 # ★ 与 snapshot_size_probe 的分工:那边量**体积/最坏包/容量**(场景探针,要真 Player);这里量**协议正确性**(纯逻辑 `-s`)。
 # 跑法:"$GODOT" --headless --path . -s res://tests/smoke/net_wire_smoke.gd;通过 = NET WIRE OK(n 条断言)。
 
-const EXPECTED_CHECKS := 8
+const EXPECTED_CHECKS := 7
 
 var _fails: Array[String] = []
 var _checks := 0
@@ -118,13 +118,6 @@ func _initialize() -> void:
 			and patch_w.has("2") and (patch_w["2"] as Dictionary).size() == 13
 			and _world_same(merged_w.get("players", {}), dec_full_w.get("players", {})),
 			"世界包 keyframe/差分:role1 只 pos、role2 全字段(keyframe);合并后 == FULL 解码")
-
-	# ⑤ 增量链三态:乱序(后一包先到)必须判 GAP 进缓冲、迟到旧包判 STALE 静默丢 —— 只有真丢包才请求 FULL。
-	#   去掉什么才红:chain_state 退化成 `base != applied` 的布尔(乱序会被当成断链,每次乱序付一个 RTT 级冻结)。
-	_chk(NetCodec.chain_state(10, 10) == NetCodec.CHAIN_OK
-			and NetCodec.chain_state(8, 10) == NetCodec.CHAIN_STALE
-			and NetCodec.chain_state(12, 10) == NetCodec.CHAIN_GAP,
-			"增量链三态:base==applied OK / base<applied STALE / base>applied GAP")
 
 	# 读数(不是断言):协议尺寸
 	print("[readout] 输入 %d B/包(内含 2 条 tick 记录);世界 2 人共 %d B;本人包 %d B" % [

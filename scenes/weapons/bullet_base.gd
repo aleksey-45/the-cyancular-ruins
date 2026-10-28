@@ -180,12 +180,13 @@ func _on_hurt_target(from: Vector2, to: Vector2, hit: Dictionary) -> void:
 	queue_free()
 
 
-# 世界系命中反馈:画在被打中的目标身上(X + 伤害数字),玩家能看出"哪一下打到了哪个敌人"。
-# ★ 只有本端有 CombatFeedback 实例(客户端对局)才建节点:headless 服务器不建 UI 节点。
+# 命中反馈:命中 X 回到**屏幕中心**(CombatFeedback.hit_marker,用户裁定 —— 别再把 X 搬到目标上);
+# 伤害数字仍画在目标身上(信息在目标处,X 不搬)。★ headless 服务器没有 CombatFeedback 实例 ⇒ 不建 UI 节点。
 func _spawn_hit_fx(target: Node) -> void:
+	CombatFeedback.hit_marker()
 	if CombatFeedback.current == null or not (target is Node2D):
 		return
-	HitFeedbackFx.spawn_hit(get_viewport(), _fx_pos((target as Node2D).global_position), hit_damage)
+	HitFeedbackFx.spawn_damage(get_viewport(), _fx_pos((target as Node2D).global_position), hit_damage)
 
 
 # 撞到地形:保留旧语义 —— 爆炸弹反弹并起撞墙引信;其余弹拆可破坏砖后消失。

@@ -111,7 +111,7 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 ### 每物理帧时序
 
 1. 同步地面武器位置、Beta 时间玩法(`time_economy`)与加速态。
-2. 快照相位:每 `SNAPSHOT_STRIDE = 2` 个 tick 广播一次 `snapshot_world` + 逐 peer `snapshot_own`(30Hz);**世界包是滚动关键帧 DELTA**(每人 ≤60 tick 被绝对刷新一次,FULL 只在请求/换局/名单变化时发),**本人包 30Hz 差分**(每 role 每 60 tick 错峰一次全量)。详见 `eng/netcode-snapshots.md` §1.4.1。
+2. 快照相位:每 `SNAPSHOT_STRIDE = 2` 个 tick 广播一次 `snapshot_world` + 逐 peer `snapshot_own`(30Hz);**世界包每包全量**(增量已在 2026-10-28 放弃:DELTA 链在乱序/丢包下会 RTT 级冻结),**本人包 30Hz 差分**(每 role 每 60 tick 错峰一次全量)。详见 `eng/netcode-snapshots.md` §1.4.1。
 3. 消费输入:每 2 个 tick 从 FIFO 取一条记录;`clear_edges()`,`apply_packet()`,更新 `_ack_seq[role]`。COUNTDOWN 期间清空队列并 `reset_state()`。
 4. 玩家与子弹的 `_physics_process` 由场景树步进(父先于子,读到的是本帧注入)。
 5. `_adjudicate_bullets()`、`_broadcast_pending_beams()`、`_match_round_tick()`、队列诊断。
@@ -125,9 +125,8 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 
 ### 快照
 
-- 世界包(P1.5 起线格式 = FULL / 滚动关键帧 DELTA,`PROTO_VERSION = 6`):FULL 每人全字段;DELTA 每人 `mask`(bit 序 = `WORLD_SCHEMA` 序,`0xFFFF` = keyframe)+ 变化字段值。`tick` 在 60Hz 物理 tick 域、每包 +2;DELTA 另带 `base_tick`。
-- 本人包:FULL / DELTA 两种(逐 peer 定向,30Hz;全量每 role 每 60 tick 错峰一次)
-  - 乱序缓冲:DELTA 链断时客户端按 `NetCodec.chain_state` 三态处理(迟到丢/缺口缓冲补链/超限才 FULL)。 —— DELTA 带 `base_tick + mask`(位序 = `C2_SCHEMA` → `WEAPON_SCHEMA` → `inv`)。载荷 `{ack_seq, q, c2}`(合并后)与增量前同形状;`q` = 已到达未消费的输入记录数,`c2 = player.capture_state()`。
+- 世界包(线格式 `PROTO_VERSION = 6`,**生产只发 FULL**):每人全字段;DELTA 编解码能力保留给探针,生产不发(增量已放弃)+ 变化字段值。`tick` 在 60Hz 物理 tick 域、每包 +2;DELTA 另带 `base_tick`。
+- 本人包:每包全量(逐 peer 定向,30Hz;每包带 `ack_seq`/`q`/`c2`/`tick`);DELTA 编解码能力保留,生产不发。载荷 `{ack_seq, q, c2}`(合并后)与增量前同形状;`q` = 已到达未消费的输入记录数,`c2 = player.capture_state()`。
 - 载荷由 `NetCodec` 打包成 `PackedByteArray`;**合并/乱序/基准断的判定在 `NetBus` 解码边界**,RPC 入口 emit 回同形状 `Dictionary`(下游零改动)。基准断了 ⇒ 输入 `held` 的 `BIT_NEED_FULL = 512` 位请求服务器补 FULL。
 
 ### 裁决与拆墙
@@ -159,8 +158,8 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 
 ### 快照消费
 
-- `snapshot_world`:NetBus 先把 DELTA 合并成完整状态(**丢弃 `tick` 回退的旧包**;`base_tick` 不连续 ⇒ 请求 FULL 且不 emit);自己那份刻意不消费;对手部分交 `PlayerReplica.apply_snapshot()`。
-- `snapshot_own`:NetBus 先合并 DELTA(**丢弃旧 tick / 基准断请求 FULL**);`ack_seq > _input_seq` 的跨纪元残留再丢;其余喂 `PredictionRollback`。★ 本人包由服务端在"消费并步进完本 tick"之后帧末发(S1),`ack/c2` 是最新同拍态;世界包里自己那份因此比本人包旧 1 tick(客户端不消费它)。
+- `snapshot_world`:NetBus 解码即 emit(全量,丢弃 `tick` 回退的旧包;增量已放弃,无 base_tick/FULL 请求);自己那份刻意不消费;对手部分交 `PlayerReplica.apply_snapshot()`。
+- `snapshot_own`:NetBus 解码即 emit(全量,丢弃旧 tick);`ack_seq > _input_seq` 的跨纪元残留再丢;其余喂 `PredictionRollback`。★ 本人包由服务端在"消费并步进完本 tick"之后帧末发(S1),`ack/c2` 是最新同拍态;世界包里自己那份因此比本人包旧 1 tick(客户端不消费它)。
 - 容差:`pos_tol = 2.0`;接触期 `contact_pos_tol = 8.0`。`in_contact` 由 `Player.touching_player()` 在 `note_post_step()` / `reconcile()` 之前写入,不进 `capture_state()`、不上行。
 - 分歧处理:预测被证实不动;真性分歧才 `restore(权威态)` 并按序重放 `(ack, last_applied]` 的本地输入。
 
@@ -200,7 +199,7 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 | 包 | 方向 | 频率 / 模式 | 字段 |
 |---|---|---|---|
 | 输入包 | 客户端 → worker | 30Hz / reliable | 手打包 **42 B**（P1 定点化前 46 B）：两条 tick 记录 `seq` `held0/1` `ax0/1` `pressed0/1` `released0/1` `winst0/1` + `aim`(1e-4 定点 2×i16) `st` `ct`（`NetCodec.KIND_INPUT`） |
-| `snapshot_world` / `snapshot_own` | worker → 客户端 | 30Hz · unreliable | 世界包 FULL/滚动关键帧 DELTA(`tick`/`base_tick`/`players`);本人包 FULL/差分(逐 peer,`{ack_seq, q, c2}` 合并后形状不变) |
+| `snapshot_world` / `snapshot_own` | worker → 客户端 | 30Hz · unreliable | 世界包全量(`tick`/`players`);本人包全量(差分(逐 peer,`{ack_seq, q, c2}` 合并后形状不变) |
 | `bullet_spawn` | worker → 客户端 | reliable | `scene shooter_role pos vel speed range size color gravity hit_damage …` |
 | `hit_event` | worker → 客户端 | reliable | `victim_role damage source_pos` |
 | `beam_fired` | worker → 客户端 | reliable | 光束报告 + `shooter_role` |
@@ -224,8 +223,8 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
   本地模拟自己(C2) + 打包输入 ── reliable ──→  InputIntake FIFO
                             ↓ 每 tick 取一条
                             全体 Player._physics_process 权威模拟;子弹 / 光束裁决,拆墙
-                            30Hz snapshot_world ── unreliable ──→ 合并 DELTA → 对手副本(完整状态)
-                            30Hz snapshot_own   ── unreliable ──→ 合并 DELTA → PredictionRollback(分歧才 restore+重放)
+                            30Hz snapshot_world ── unreliable ──→ 全量状态 → 对手副本
+                            30Hz snapshot_own   ── unreliable ──→ 全量 c2 → PredictionRollback(分歧才 restore+重放)
                             新子弹 / 命中 / 拆砖 ── reliable ──→ 视觉反馈
 ```
 

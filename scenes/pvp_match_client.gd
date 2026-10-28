@@ -6,7 +6,6 @@ extends Node2D
 
 const LaserVisual := preload("res://core/present/laser_visual.gd")   # 远端光束视觉副本(与本地激光同款)
 const HitShape := preload("res://core/sim/hit_shape.gd")   # 受击判定几何唯一入口(客户端 cull)
-const HitFeedbackFx := preload("res://scenes/effects/hit_feedback_fx.gd")   # 世界系命中反馈(画在对手身上)
 
 # ── 共享状态(两个模式同名同义;子类不要再声明一次)──
 var _local: Node2D = null
@@ -67,14 +66,8 @@ func _correct_local_spawn() -> void:
 			PvpSession.spawn.y * ts + ts / 2.0)
 
 func _on_hit_confirm(shooter_role: int, victim_role: int) -> void:
-	if shooter_role != PvpSession.role:
-		return
-	# 命中确认画在对手身上(世界系 X),而不是屏幕中心:玩家要能分辨"打中的是哪一个"。
-	var r := _replica_for(victim_role)
-	if r != null and is_instance_valid(r) and _world != null:
-		HitFeedbackFx.spawn_hit(_world, (r as Node2D).global_position)
-	else:
-		CombatFeedback.hit_marker()
+	if shooter_role == PvpSession.role:
+		CombatFeedback.hit_marker()   # 命中 X 固定画屏幕中心(用户裁定;别搬到目标/对手身上)
 
 func _enter_tree() -> void:
 	# 权威爆炸表现同步(服务器在哪炸的,画面就在哪炸)。三个子类各有自己的 _ready,故接线放 _enter_tree。
