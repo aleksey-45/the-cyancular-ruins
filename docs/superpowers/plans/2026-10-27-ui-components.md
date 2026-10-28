@@ -6,6 +6,8 @@
 > ★ **执行方式**：本计划按仓库档位执行（Phase 0/1/3/4/5 = 档 1 纯表现；Phase 2 = 档 2 单子系统），**不逐任务评审**，最后整体评审 + 全量复核。若用户改选 subagent-driven，则每任务加一次独立 review。
 > ★ **开工前置（硬）**：并行会话的未提交工作先由本会话替其提交（见 §0 Prereq）；然后 `git status` 必须只剩本计划自己的改动。共用工作树纪律：**逐个文件 `git add`、逐 hunk 认领**，绝不 `git add -A`。
 
+> **进度（2026-10-27）**：Phase 0 ✅ `0848ac92`（HeaderStripPanel 组件 + 15 条 tscn + 4 处代码调用，14 屏逐像素 diff=0）；Phase 1 ✅ `afabe8bc`（暂停菜单场景化，2 屏 diff=0 + autotest-sp/mp 通过 + 行为复核 18/18）。Phase 2（HUD）起待做。
+
 **Goal:** 把「运行时用 `.gd` 现建 UI」收成 `.tscn` 场景 + 薄脚本 + Theme 变体，让版式在编辑器可改且有单一来源；行为与外观不变（菜单系逐像素不变；HUD 同夹具截图 + 关键读数等价）。
 
 **Architecture:** 新建 `ui/components/` 放跨屏部件；整屏/弹层进 `ui/screens/`，HUD 专用进 `ui/hud/`。`.tscn` 承载结构与版式，脚本只绑数据/信号/切 theme variation；HUD 底板/武器框/文字档等新增为 `tools/gen_menu_theme.gd` 生成的 Theme 变体（颜色全部来自 `UiFactory.C_*`）。UiFactory 收缩为「调色板 + token + 动态样式」，Phase 5 删掉零调用的构造器。
