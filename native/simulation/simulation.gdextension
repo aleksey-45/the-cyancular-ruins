@@ -1,0 +1,8 @@
+[configuration]
+entry_symbol = "simulation_init"
+compatibility_minimum = "4.5"
+reloadable = false
+
+[libraries]
+windows.x86_64 = "res://native/simulation/bin/simulation.windows.x86_64.dll"
+macos = "res://native/simulation/bin/simulation.macos.universal.dylib"

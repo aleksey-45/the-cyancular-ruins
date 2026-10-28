@@ -1,0 +1,1 @@
+{"enabled_classes": ["RefCounted", "OS", "CharacterBody2D", "CollisionShape2D", "KinematicCollision2D", "Geometry2D", "StaticBody2D", "RectangleShape2D", "RandomNumberGenerator", "SceneTree", "TileMapLayer"]}

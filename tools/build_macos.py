@@ -24,6 +24,8 @@ def main():
     parser.add_argument('--version', default=read_project_version())
     args = parser.parse_args()
     run(sys.executable, ROOT / 'tools/build_process_group.py', '--platform', 'macos')
+    run(sys.executable, ROOT / 'tools/build_gns.py', '--platform', 'macos')
+    run(sys.executable, ROOT / 'tools/build_simulation.py', '--platform', 'macos')
     run(sys.executable, ROOT / 'tools/fetch_easytier.py', '--platform', 'macos')
     builds = ROOT / 'builds/macos'
     builds.mkdir(parents=True, exist_ok=True)
@@ -44,8 +46,10 @@ def main():
             shutil.copy2(ROOT / 'easytier' / name, target)
             run('lipo', target, '-verify_arch', 'arm64', 'x86_64')
             run('codesign', '--force', '--sign', '-', '--timestamp=none', target)
-        extension = next(app.rglob('process_group.macos.universal.dylib'))
-        run('lipo', extension, '-verify_arch', 'arm64', 'x86_64')
+        for name in ('process_group', 'gns', 'simulation'):
+            extension = next(app.rglob(name + '.macos.universal.dylib'))
+            run('lipo', extension, '-verify_arch', 'arm64', 'x86_64')
+            run('codesign', '--force', '--sign', '-', '--timestamp=none', extension)
         run('codesign', '--force', '--sign', '-', '--timestamp=none', '--options', 'runtime',
             '--entitlements', ROOT / 'tools/macos_entitlements.plist', app)
         run('codesign', '--verify', '--deep', '--strict', app)

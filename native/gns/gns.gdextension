@@ -1,0 +1,8 @@
+[configuration]
+entry_symbol = "gns_init"
+compatibility_minimum = "4.5"
+reloadable = false
+
+[libraries]
+windows.x86_64 = "res://native/gns/bin/gns.windows.x86_64.dll"
+macos = "res://native/gns/bin/gns.macos.universal.dylib"

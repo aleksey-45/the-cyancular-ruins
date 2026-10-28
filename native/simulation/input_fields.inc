@@ -1,0 +1,10 @@
+// Shared native input fields; protocol flags remain defined by ActorInput.
+INPUT_FIELD(double, raw_axis, 0)
+INPUT_FIELD(int64_t, raw_held, 0)
+INPUT_FIELD(double, axis, 0)
+INPUT_FIELD(double, vertical_axis, 0)
+INPUT_FIELD(int64_t, held, 0)
+INPUT_FIELD(int64_t, pressed, 0)
+INPUT_FIELD(int64_t, released, 0)
+INPUT_FIELD(int64_t, weapon_inst, 0)
+INPUT_FIELD(Vector2, aim, Vector2())

@@ -174,6 +174,9 @@ public:
 	}
 
 	void stop_all() {
+		// Another forked watcher can retain this pipe's writer. Explicit shutdown
+		// kills our group before waiting; EOF remains the owner-death fallback.
+		if (watcher) kill(-watcher, SIGKILL);
 		if (lifetime >= 0) { close(lifetime); lifetime = -1; }
 		if (watcher) { wait_child(watcher, nullptr); watcher = 0; }
 		while (!children.empty()) {

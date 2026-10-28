@@ -57,3 +57,8 @@ native/process_group/bin/*.lib
 native/process_group/bin/*.exp
 native/process_group/bin/*.dylib
 /process_group.windows.x86_64.dll
+native/gns/bin/
+/gns.windows.x86_64.dll
+native/simulation/bin/
+/simulation.windows.x86_64.dll
+level_editor/dist/

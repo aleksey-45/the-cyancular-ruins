@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# 一键发布构建脚本：导出客户端程序与服务端程序，配置服务端控制台子系统并执行归档。
+# 一键发布构建脚本：编译原生扩展，导出统一游戏程序并执行归档。
 # 构建过程依赖 project.godot 中配置的统一版本号。
 # 用法: python build_release.py (可选 --stamp <时间戳> / --version <版本号>)
 import json
@@ -25,7 +25,6 @@ PROJECT = os.path.dirname(TOOLS)
 EDITOR = os.environ.get("GODOT_EDITOR") or \
     r"D:\Program Files\Godot_v4.7.1-stable_win64\Godot_v4.7.1-stable_win64.exe"
 CLIENT_OUT = os.path.join(PROJECT, "The Cyancular Ruins.exe")
-SERVER_OUT = os.path.join(PROJECT, "Cyancular Ruins Server.exe")
 BUILD_INFO = os.path.join(PROJECT, "core", "config", "build_info.gd")
 # 限制构建脚本仅修改版本信息配置文件
 os.chdir(PROJECT)
@@ -73,7 +72,8 @@ def smoke_check(exe: str, extra: list, expect: str = "") -> str:
     try:
         run_exe = os.path.join(tmp, os.path.basename(exe))
         shutil.copy2(exe, run_exe)
-        shutil.copy2(Path(exe).parent / "process_group.windows.x86_64.dll", tmp)
+        for name in ("process_group.windows.x86_64.dll", "gns.windows.x86_64.dll", "simulation.windows.x86_64.dll"):
+            shutil.copy2(Path(exe).parent / name, tmp)
         cmd = [run_exe, "--headless", "--quit-after", "120"]
         if extra:
             cmd += ["--", *extra]
@@ -168,18 +168,17 @@ def main() -> None:
         sys.exit("读取 project.godot 版本号失败")
 
     subprocess.run([sys.executable, os.path.join(TOOLS, "build_process_group.py")], check=True)
+    subprocess.run([sys.executable, os.path.join(TOOLS, "build_gns.py")], check=True)
+    subprocess.run([sys.executable, os.path.join(TOOLS, "build_simulation.py")], check=True)
+    subprocess.run([EDITOR, "--headless", "--editor", "--path", PROJECT, "--import"], check=True)
 
     original = stamp_build_info(release_version(version), stamp)
     try:
         export("Windows Desktop", CLIENT_OUT)
-        export("Dedicated Server", SERVER_OUT)
-        r = subprocess.run([sys.executable, os.path.join(TOOLS, "make_server_console.py"), SERVER_OUT],
-                           capture_output=True, text=True, encoding="utf-8", errors="replace")
-        print((r.stdout or "").strip() or (r.stderr or "").strip())
         smoke_check(CLIENT_OUT, [])
         check_weapon_registry(smoke_check(CLIENT_OUT, ["--registry-report"],
                                           expect="[registry] weapons="))
-        smoke_check(SERVER_OUT, ["--port", "0"], expect="SERVER READY")
+        smoke_check(CLIENT_OUT, ["--server", "--port", "0"], expect="SERVER READY")
     finally:
         _write_text_lf(_BUILD_INFO_REL, original)
 
@@ -189,8 +188,7 @@ def main() -> None:
     print((r.stdout or "").strip() or (r.stderr or "").strip())
     if r.returncode != 0:
         sys.exit(r.stderr or "归档失败")
-    print("\n发布完成(%s):\n  %s\n  %s"
-          % (package_name(stamp), CLIENT_OUT, SERVER_OUT))
+    print("\n发布完成(%s):\n  %s" % (package_name(stamp), CLIENT_OUT))
 
 
 if __name__ == "__main__":

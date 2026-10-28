@@ -4,10 +4,10 @@
 # 规范约定：
 # 每次执行归档时清空 builds 目录并生成包含最新构建标识的产物子目录。
 #
-# 发布目录包含客户端、服务端、Job 扩展与 easytier/ 隧道组件：
-#   The Cyancular Ruins.exe        客户端主程序
-#   Cyancular Ruins Server.exe     专用服务端程序（客户端建房时直接从同目录拉起）
+# 发布目录包含游戏程序、原生扩展与 easytier/ 隧道组件：
+#   The Cyancular Ruins.exe        客户端与无头服务端共用程序
 #   process_group.windows.x86_64.dll  Windows Job 原生扩展
+#   gns.windows.x86_64.dll          GNS 网络传输原生扩展
 #   THIRD_PARTY_NOTICES.txt         第三方组件许可与版权声明
 #   easytier/easytier-core.exe     网络隧道核心进程
 #   easytier/easytier-cli.exe      网络隧道命令行交互工具
@@ -48,8 +48,8 @@ def release_prefix() -> str:
         return RELEASE_PREFIX_FALLBACK
     return (m.group(1).strip() if m else "") or RELEASE_PREFIX_FALLBACK
 
-GAME_FILES = ["The Cyancular Ruins.exe", "Cyancular Ruins Server.exe",
-              "process_group.windows.x86_64.dll", "THIRD_PARTY_NOTICES.txt"]
+GAME_FILES = ["The Cyancular Ruins.exe",
+              "process_group.windows.x86_64.dll", "gns.windows.x86_64.dll", "simulation.windows.x86_64.dll", "THIRD_PARTY_NOTICES.txt"]
 EASYTIER_FILES = ["easytier-core.exe", "easytier-cli.exe", "Packet.dll",
                  "wintun.dll", "WinDivert64.sys"]
 EASYTIER_SRC_DIR = os.path.join(PROJECT, "easytier")
