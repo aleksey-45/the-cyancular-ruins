@@ -1,9 +1,7 @@
 class_name UiFactory
 extends RefCounted
 
-# 全局 UI 控件工厂：
-# 统一管理菜单与 HUD 的主题样式、字体规格、基础控件构建与全局调色板。
-# 字号统一遵循 16 的整数倍规格以保障像素字体渲染清晰锐利。
+# 统一主题与控件构造；字号为 16 的整数倍。
 
 # 获取全局共享像素字体
 static func pixel_font() -> FontFile:
@@ -46,7 +44,6 @@ static func fit_name(s: String, max_units: int) -> String:
 	return out
 
 
-# ── 全局统一调色板 ──
 
 const C_BG          := Color(0.039, 0.059, 0.094)   # 页面底色 #0A0F18
 const C_SURFACE     := Color(0.071, 0.086, 0.118)   # 面板底色 #12161E
@@ -87,8 +84,7 @@ const C_TEAM_A := Color(99.0 / 255.0, 155.0 / 255.0, 1.0)     # A 队基础蓝
 const C_TEAM_B := Color(128.0 / 255.0, 244.0 / 255.0, 1.0)    # B 队青色
 
 
-# 网络延迟 Ping 阈值颜色映射
-# 统一供各模式 HUD 界面调用，保持网络质量视觉指示一致。
+# 各模式共用的延迟指示色。
 static func ping_color(ms: int) -> Color:
 	if ms < 60:
 		return Color(0.45, 0.9, 0.45)      # 绿色：延迟良好（<60ms）
@@ -99,14 +95,7 @@ static func ping_color(ms: int) -> Color:
 	return Color(1.0, 0.3, 0.3)            # 红色：网络卡顿（>=150ms）
 
 
-# 武器槽位格子的三态显示色彩：未占淡灰、已占淡青、手持深青。
-#
-# 底板采用 HUD 黑色半透明材质，叠在地图开阔区的浅灰蓝背景（#78969F）上。
-# 在浅色底板上，明度越低越突出，因此三态明度阶梯配置为：
-# 未占据（贴近底板明度，视觉后退）-> 已占据（中等明度）-> 手持选中（深色高反差，最醒目）。
-# 核心约束保证三态两两可清晰区分，且手持选中格与底板明度差最大。
-# 自动化测试会对各状态颜色值及对比度进行校验。
-# 三档颜色统一采用 0.5 不透明度，确保半透明透光感一致。
+# 槽位颜色：空位、已有武器、当前手持。
 const C_SLOT_EMPTY  := Color(0.510, 0.600, 0.624, 0.5)   # 未占据：淡灰，贴近底板明度
 const C_SLOT_FILLED := Color(0.360, 0.620, 0.920, 0.5)   # 已占据：偏蓝的淡青色
 const C_SLOT_ACTIVE := Color(0.090, 0.300, 0.680, 0.5)   # 手持当前武器：深蓝色，对比最醒目
@@ -115,12 +104,7 @@ const C_SLOT_ACTIVE := Color(0.090, 0.300, 0.680, 0.5)   # 手持当前武器：
 const BTN_BORDER_W := 2
 
 
-# 描边式按钮样式：暗色填充搭配亮色直角描边。
-# 在像素风格界面中，明亮描边具有良好的边缘界定效果，且能自然融入暗色背景。
-#
-# 基础按钮样式由 menu_button 与 style_button 共用。
-# 按钮默认内容边距设置为水平 40 像素、垂直 20 像素，按钮最小高度为字号加 40 像素。
-# 绝对定位布局的界面容器需注意行高设置，避免相邻控件产生布局错位。
+# 描边按钮样式；最小高度需要容纳内容边距。
 static func _btn_box(fill: Color, border: Color) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = fill
@@ -149,21 +133,14 @@ static func panel_box(border: bool = true) -> StyleBoxFlat:
 	return sb
 
 
-# 菜单面板容器：创建双层边框的内凹浮雕质感面板（外层深色边缘，内层高亮边缘）。
-#
-# 该函数独立于基础 panel_box，以便在保持 HUD 现有样式的前提下，专门服务于菜单层。
-# 底层使用两层嵌套的 PanelContainer 实现双色边框。子节点内容需添加至内部的 Body 容器中：
-#   var p := UiFactory.menu_panel()
-#   (p.get_node("Body") as Container).add_child(vbox)
+# 双层边框面板；内容添加到 Body 容器。
 static func menu_panel(padding: Vector2 = Vector2(64, 46)) -> PanelContainer:
 	var outer := PanelContainer.new()
 	skin_menu_panel(outer, padding)
 	return outer
 
 
-# 为既有的 PanelContainer 赋予菜单双层边框样式，并将原有子节点转移至新建的 Body 容器内。
-# 功能逻辑与 menu_panel 保持一致，用于支持预设在场景文件中的面板结构动态套用主题。
-# 本方法具有幂等性，检测到已存在 Body 容器时会直接返回，避免重复嵌套。
+# 为现有面板套用样式；已有 Body 时不重复嵌套。
 static func skin_menu_panel(outer: PanelContainer, padding: Vector2) -> void:
 	if outer.get_node_or_null("Body") != null:
 		return
@@ -195,11 +172,7 @@ static func skin_menu_panel(outer: PanelContainer, padding: Vector2) -> void:
 	outer.add_child(body)
 
 
-# 菜单专用按钮：提供多种视觉变体。
-# - primary：常规主按钮
-# - quiet：次要按钮（如退出或取消），色彩适度弱化
-# - gold：关键推荐动作（如开始游戏或创建房间），采用金色描边与文字
-# - accent：主行动按钮，采用青色强调描边
+# 菜单按钮变体。
 static func menu_button(text: String, size: int, min_size: Vector2 = Vector2(640, 88),
 		variant: String = "primary") -> Button:
 	var b := Button.new()
@@ -232,8 +205,7 @@ static func menu_button(text: String, size: int, min_size: Vector2 = Vector2(640
 	return b
 
 
-# 标题条：深色背景横条，仅在底部带有单像素分界线，内置金色标题文本。
-# 仅绘制底部分界线可避免界面形成过多封闭方框，与菜单面板的结构层次相契合。
+# 仅带底部分界线的标题条。
 static func header_strip(text: String, size: int = 32) -> PanelContainer:
 	var p := PanelContainer.new()
 	var sb := StyleBoxFlat.new()

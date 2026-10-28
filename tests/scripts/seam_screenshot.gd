@@ -4,8 +4,6 @@ extends SceneTree
 # 对比两种处理模式：
 #   A（未启用锚定）：缺失玩家组锚点时回退至绝对坐标取模，敌人保留在左侧（100），处于视口范围外；
 #   B（启用就近锚定）：通过 GridPathfinder.anchor_to_nearest 锚定至相对玩家最近的环面副本位置（2500），视口内正常可见。
-# 运行方式（需启用图形渲染，非无头模式）：
-#   "$GODOT" --path . -s res://tests/scripts/seam_screenshot.gd
 
 func _initialize() -> void:
 	var autoload := root.get_node("GameParameters")
@@ -45,7 +43,6 @@ func _initialize() -> void:
 	cam.make_current()          # 挂载至场景树后激活为主摄像机
 	cam.global_position = Vector2(W - 100, 200)
 
-	# ── 测试阶段 A：移除锚点，验证回退至绝对取模坐标（视口外） ──
 	anchor.remove_from_group("player")
 	await process_frame
 	await process_frame
@@ -53,7 +50,6 @@ func _initialize() -> void:
 	img_a.save_png("res://tests/_seam_a_old.png")
 	print("A: 无锚点,敌人位置=", e.global_position, " → 应屏外消失")
 
-	# ── 测试阶段 B：恢复锚点，验证实体平滑锚定至最近渲染副本（视口内可见） ──
 	anchor.add_to_group("player")
 	await process_frame
 	await process_frame

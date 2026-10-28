@@ -2,8 +2,6 @@ extends SceneTree
 
 # 武器背包逻辑状态机冒烟测试：
 # 验证背包容量负荷计算、多武器槽位切换、拾取/丢弃以及同类型武器区分。
-# 运行方式：
-#   "$GODOT" --headless --path . -s res://tests/smoke/weapon_inventory_smoke.gd
 
 var _fail := 0
 
@@ -28,7 +26,6 @@ func _initialize() -> void:
 	# 假 tier 表:1/2 = 轻(2格),3/4 = 中(3格),5/6 = 重(4格)
 	var tiers := {1: 0, 2: 0, 3: 1, 4: 1, 5: 2, 6: 2}
 
-	# ── 容量与把数上限是两条独立门控前置校验 ──
 	var inv = WI.new(tiers)
 	_check(inv.used_cell_count() == 0, "空背包占 0 格")
 	_check(inv.can_hold(5), "空背包放得下重武器")
@@ -117,14 +114,12 @@ func _initialize() -> void:
 	else:
 		_check(false, "容量与武器数量配置测试被跳过（字段未就绪）")
 
-	# ── 紧凑排布 ──
 	var inv3 = WI.new(tiers)
 	inv3.add(1, 5)          # 轻 2
 	inv3.add(5, 5)          # 重 4
 	_check(inv3.cell_start(0) == 0, "第 0 把起始格 = 0")
 	_check(inv3.cell_start(1) == 2, "第 1 把起始格 = 2(实际 %d)" % inv3.cell_start(1))
 
-	# ── 允许重复:两把同类型各有各的 inst 与残弹 ──
 	var inv4 = WI.new(tiers)
 	var a: int = inv4.add(1, 11)
 	var b: int = inv4.add(1, 3)
@@ -133,7 +128,6 @@ func _initialize() -> void:
 	_check(inv4.index_of_inst(b) == 1, "index_of_inst 找得到第二把")
 	_check(inv4.first_index_of_type(1) == 0, "first_index_of_type 返回第一把")
 
-	# ── 删中间条目:后面的索引与残弹不错位 ──
 	var inv5 = WI.new(tiers)
 	inv5.add(1, 11)         # idx 0
 	inv5.add(3, 22)         # idx 1
@@ -145,7 +139,6 @@ func _initialize() -> void:
 		"删中间条目后其余残弹不串位")
 	_check(inv5.cell_start(1) == 2, "删后第 1 把起始格重算 = 2(实际 %d)" % inv5.cell_start(1))
 
-	# ── 快照 / 恢复 ──
 	var snap: Array = inv5.snapshot()
 	_check(snap.size() == 2, "snapshot 出 2 条")
 	var inv6 = WI.new(tiers)
@@ -159,7 +152,6 @@ func _initialize() -> void:
 	_check(inv6.index_of_inst(c) == 2 and c > int(inv5.held[1]["inst"]),
 		"restore 后新加的 inst 不与已有条目冲突")
 
-	# ── clear ──
 	inv6.clear()
 	_check(inv6.held.is_empty() and inv6.used_cell_count() == 0, "clear 清空持有表")
 

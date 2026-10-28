@@ -13,17 +13,14 @@ var _sleep_anim_timer: float = 0.0  # 入睡动画剩余时间(播完定格 slee
 
 func _ready() -> void:
 	super._ready()
-	# 战斗数值(hp/击退/接触伤害)由场景 @export 提供,可在检查器直接改;
-	# 不再从 EnemyParams 覆盖(与武器场景同风格)。
+	# 战斗参数来自场景。
 	_anim = $AnimatedSprite2D
 	wake_radius = EnemyParams.JumpBird.wake_radius
 	_set_state(State.SLEEP)
 	_anim.play("sleeping")  # 睡觉是常态;入睡动画在靠近时触发
 	_align_contact_area()
 
-# 接触伤害范围与精灵身体对齐:鸟内容占格子 46x39,中心在格子中心下方 4.5px。
-# ContactArea 由 EnemyBase 代码创建(不在场景里),这里把形状节点下移对齐。
-# 身体碰撞箱由场景的 CollisionPolygon2D 配置,代码不碰。
+# 接触区对齐精灵；身体碰撞箱由场景配置。
 func _align_contact_area() -> void:
 	var area := get_node_or_null("ContactArea") as Area2D
 	if area != null:
@@ -58,8 +55,7 @@ func _ai(delta: float) -> void:
 			_tick_back_hop()
 
 
-# 状态机帧逻辑更新，各状态逻辑分派至独立方法处理
-# 状态机各段的注释随各自函数走,改动某个状态时不必再在整段 match 里找它。
+# 按状态分派。
 
 func _tick_sleep(delta: float, dist: float) -> void:
 	# 入睡动画(一次性)优先:播完定格 sleeping
@@ -148,15 +144,12 @@ func _water_swim_dir() -> Vector2:
 	return toroidal_dir_to_player()
 
 
-# 睡眠态判定(基类 _is_far_sleeping 用)。-  显式写出来而不是靠"SLEEP 恰好是枚举第一个":
-# 加新敌人时照抄本方法 —— 详见 EnemyBase._is_asleep 的注释。
+# 显式声明睡眠态，不依赖枚举次序。
 func _is_asleep() -> bool:
 	return state == State.SLEEP
 
 
-# 状态进入 → 形变事件。enum State { SLEEP, WAKE, CHASE, LUNGE_WINDUP, LUNGE_DASH, BACK_HOP }
-# 追踪状态小跳直接调整速度，不经过 _set_state 状态流转。
-#   hop_jump_velocity = -750 会让空中连续项直接给出拉伸,只是没有事件那一下"脆感"。
+# 追踪中的小跳不经过状态切换。
 func _on_state_entered(s: int) -> void:
 	match s:
 		State.LUNGE_DASH:

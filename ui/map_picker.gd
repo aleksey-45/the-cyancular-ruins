@@ -71,7 +71,6 @@ func select_path(path: String, from_click := true) -> void:
 		picked.emit(path)
 
 
-# ── 内部方法 ──
 
 func _add_card(path: String, title: String, sub: String, tex: Texture2D) -> void:
 	var card := PanelContainer.new()

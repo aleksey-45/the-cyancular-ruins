@@ -10,13 +10,16 @@
 
 ### 1. 运行与服务启动
 - **启动脚本**：运行 `level_editor/serve.bat`。
-- **后台服务**：通过 `level_editor/editor_server.js`（Node.js）启动轻量本地 HTTP 服务（监听 `127.0.0.1:8777`）。出于浏览器安全策略限制，不支持直接通过 `file://` 协议打开。
+- **源码版服务**：通过 `level_editor/editor_server.js`（Node.js）启动轻量本地 HTTP 服务（监听 `127.0.0.1:8777`）。源码入口 `editor.html` 需通过 HTTP 打开。
+- **离线单文件版**：运行 `node level_editor/build_dist.js`，生成 `level_editor/dist/cyrm-editor.html`，可直接打开。图集、脚本和真实 Worker 的源码均内嵌，不依赖本地服务器；编解码仍在独立线程执行。
+- **离线文件读写**：支持 File System Access 的浏览器可选择地图目录后直接保存；其他环境通过「打开文件」和浏览器下载读写。未选择目录时必须完成浏览器下载才能把导出的文件保存到磁盘。选择目录的权限由浏览器管理。
 - **前端模块划分**：
   - `editor.html`：编辑器主页面。
   - `core.js`：核心数据结构与 `.cyrm` 格式编解码逻辑。
   - `tint.js`：子格染色与调色板计算。
   - `render.js` / `ui.js` / `io.js`：画布视口渲染、工具栏交互及文件读写。
-  - `worker.js`：负责大地图渲染与数据导出的 Web Worker 线程。
+  - `worker.js`：负责地图编解码与压缩的 Web Worker 线程；画布渲染仍由 `render.js` 分帧执行。
+  - `standalone_files.js`：离线文件适配器；源码版继续使用既有 HTTP 文件接口，不覆盖浏览器的 fetch/Worker。
 
 ### 2. `.cyrm` 地图格式规范
 - **v4 二进制格式**：
@@ -50,11 +53,13 @@ cd level_editor
 node smoke.js             # 核心格式编解码测试
 node tint_smoke.js        # 辅码染色与调色板单元测试
 node worker_io_smoke.js   # Web Worker 线程测试
+node standalone_smoke.js  # 离线读写与打包后的独立线程检查
 node render_smoke.js      # 画布渲染管线测试
 node server_smoke.js      # 本地 HTTP 服务端接口测试
 ```
 
 - **前端界面自检**：在编辑器页面顶部点击「自检」按钮，会在浏览器控制台执行组件断言并输出 `SELFTEST OK`。
+- **工程规范检查**：`python tools/check_naming.py` 自动发现根目录与 `docs/eng/` 文档，校验 Markdown 文件链接及行号、目录与类名、场景名和 PS1/BAT 换行。`--self-test` 检查校验器本身；`.test_logs` 等运行目录继续排除。
 
 ---
 
@@ -62,18 +67,24 @@ node server_smoke.js      # 本地 HTTP 服务端接口测试
 
 - **发布导出脚本 (`tools/build_release.py`)**：
   - 读取 `project.godot` 中的版本号，写入 `core/config/build_info.gd`。
-  - 构建 Windows Job 原生扩展，调用 Godot 执行 release 导出。
+  - 各构建一次 Windows Job、GNS 与场景模拟原生扩展，导入资源后调用 Godot 导出统一游戏程序；CI 不再提前重复调用这些步骤。
   - 自动执行产物冒烟测试，测试通过后将构建占位符还原。
 - **命名规范检查 (`tools/check_naming.py`)**：
   - 检查工程目录小写规范、`class_name` 与文件名对齐、文档引用的文件路径有效性以及 `.tscn` 命名规范。
 - **网络隧道组件获取 (`tools/fetch_easytier.py`)**：
-  - 从本地官方 EasyTier Windows 2.7.0 发布包中复制运行组件与许可证文件，若缺失 `relay.txt` 则自动生成公共中继节点列表。
+  - 默认从官方最新 nightly 的发布元数据选择 Windows 或 macOS 资产，日志记录提交与下载地址，不固定版本或比对校验和。Windows 支持显式 `--source` 从本地官方包复制组件。若缺失 `relay.txt` 则自动生成公共中继节点列表。
 - **原生作业对象扩展构建 (`tools/build_process_group.py`)**：
   - 基于 godot-cpp（分支 `godot-4.5-stable`，commit `e83fd09`），通过 SCons 4.9.1 编译 Windows x64 DLL。默认使用 MSVC，亦支持 `--mingw` 参数或 `MINGW_PREFIX` 环境变量指定 LLVM MinGW 工具链。产物位于 `native/process_group/bin/`。
   - macOS 使用 `--platform macos`，以 Xcode Clang 编译 arm64 + x86_64 通用动态库，部署目标为 macOS 12。
 - **macOS 发布 (`tools/build_macos.py`)**：
-  - 编译通用进程扩展，合并官方 EasyTier 两种架构，导出、签名并归档 `.app`。`tools/fetch_easytier.py --platform macos` 可单独安装通用 EasyTier。产物和双架构 CI 验证见[发布手册](../../RELEASE.md)。
+  - 编译通用进程、GNS 与场景模拟扩展，合并官方 EasyTier 两种架构，导出、签名并归档 `.app`。`tools/fetch_easytier.py --platform macos` 可单独安装通用 EasyTier。产物和双架构 CI 验证见[发布手册](../../RELEASE.md)。
+- **GNS 扩展构建 (`tools/build_gns.py`)**：
+  - 使用 CMake 3.31.6 与 Ninja 1.11.1.4，固定 GNS v1.6.1、Protobuf v21.12 与 godot-cpp 4.5 的源码提交。依赖缓存位于 `.test_logs/native/`，运行库静态链接进扩展。
+  - Windows 使用 MSVC 或 `MINGW_PREFIX` 指定的 LLVM MinGW，密码库采用系统 BCrypt。macOS 使用 `--platform macos`，静态链接 OpenSSL 3.5.9，分别编译 arm64 与 x86_64 后合成通用动态库。产物位于 `native/gns/bin/`。
 - **发布包归档 (`tools/archive_build.py`)**：
-  - 打包生成 `The-Cyancular-Ruins.zip`，内部根目录格式为 `The-Cyancular-Ruins-YYYYMMDDHHMM/`（时间戳使用 UTC+8）。包含客户端、服务端、同级进程扩展 DLL 及统一开源声明 `THIRD_PARTY_NOTICES.txt`。
+  - 打包生成 `The-Cyancular-Ruins.zip`，内部根目录格式为 `The-Cyancular-Ruins-YYYYMMDDHHMM/`（时间戳使用 UTC+8）。包含统一游戏 EXE、同级进程、GNS 与场景模拟扩展 DLL 及开源声明 `THIRD_PARTY_NOTICES.txt`。
+- **场景模拟扩展构建 (`tools/build_simulation.py`)**：
+  - 使用同一份固定 godot-cpp SDK，以 CMake/Ninja 编译 Release C++17 原生类；Windows 支持 MSVC 或 LLVM MinGW，macOS 合并 arm64 与 x86_64。产物位于 `native/simulation/bin/`。
+  - 热点循环直接读取原生成员并调用 Godot 物理 API；GDScript 在边界传递配置、输入与结果。当前完成范围与剩余迁移见[实施说明](native_scene_simulation.md)。
 - **自动化回归入口 (`tools/run_regression.py`)**：
   - 分类运行单元逻辑测试、视觉渲染测试与网络多进程对战测试；每项测试运行于独立临时用户目录，收集日志并校验进程退出码与成功标记。

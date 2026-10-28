@@ -53,20 +53,26 @@ func _cli() -> void:
 	cli_result = await NetSession.execute(OS.get_executable_path(), _child_args("hang", output + ".cli"))
 	cli_finished = true
 
+func _capture_arguments() -> void:
+	var values := PackedStringArray(["", "空 格", "a\"b", "尾部\\", "\\\"混合"])
+	var args := _child_args("echo", output + ".echo")
+	args.append("--echo")
+	args.append_array(values)
+	var capture: Array = await NetSession.execute(OS.get_executable_path(), args)
+	assert(capture[0] == 7 and capture[1].contains("ARGUMENT_CAPTURE " + JSON.stringify(values)))
+	assert(capture[1].contains("管道内容".repeat(6000)))
+
 func _run() -> void:
-	if mode != "startup":
-		var values := PackedStringArray(["", "空 格", "a\"b", "尾部\\", "\\\"混合"])
-		var args := _child_args("echo", output + ".echo")
-		args.append("--echo")
-		args.append_array(values)
-		var capture: Array = await NetSession.execute(OS.get_executable_path(), args)
-		assert(capture[0] == 7 and capture[1].contains("ARGUMENT_CAPTURE " + JSON.stringify(values)))
-		assert(capture[1].contains("管道内容".repeat(6000)))
+	if mode not in ["startup", "leave"]:
+		await _capture_arguments()
 	_boot.call_deferred()
 	await get_tree().process_frame
 	assert(Tunnel.available())
 	Tunnel._pid = NetSession.launch(Tunnel.core_exe(), _core_args())
 	assert(Tunnel._pid > 0)
+	# 离房场景让 CLI 进程组后创建，覆盖守护进程继承寿命管道的顺序。
+	if mode == "leave":
+		await _capture_arguments()
 	if mode != "startup":
 		while not NetBus.can_send_to_server(): await get_tree().process_frame
 		var child := NetSession.launch(OS.get_executable_path(), _child_args("descendant", output + ".child"))
@@ -90,8 +96,13 @@ func _run() -> void:
 		return
 	if mode == "leave":
 		NetSession.close()
-		await get_tree().process_frame
-		assert(cli_finished and cli_result[0] == -1)
+		var deadline := Time.get_ticks_msec() + 2000
+		while not cli_finished and Time.get_ticks_msec() < deadline:
+			await get_tree().process_frame
+		if not cli_finished or cli_result.is_empty() or cli_result[0] != -1:
+			push_error("CLI 取消失败: finished=%s result=%s" % [cli_finished, cli_result])
+			get_tree().quit(1)
+			return
 		assert(await LocalServer.launch_and_connect() > 0)
 		NetSession.close()
 		print("PROCESS SESSION REOPEN OK")

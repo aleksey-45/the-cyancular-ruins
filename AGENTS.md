@@ -4,6 +4,8 @@
 > 本规范索引与子系统技术细节以 [`CLAUDE.md`](CLAUDE.md) 与 [`docs/eng/`](docs/eng/) 目录为准。本文档用于提供快速上手指引、系统架构说明、开发测试规范与工作流指引。
 > **代码权威准则**：若文档与源码不一致，一律以**最新源码实现与自动化测试断言**为准。
 
+> **术语约定**：中文文档、代码注释和提交说明统一使用“校正”和“卡顿”。涉及帧间隔、tick 或处理阶段耗时的卡顿统计，应保留具体阈值与统计口径；英文日志字段、事件名和文件路径保持接口原名。
+
 ---
 
 ## 零、 工程概览
@@ -22,12 +24,14 @@
 若未将 Godot 目录加入系统环境变量，需使用绝对路径调用。控制台运行环境与标准导出环境分别通过环境变量 `GODOT` 与 `GODOT_EDITOR` 配置。未设置时自动回退至脚本内预设路径。
 
 ### 1. 自动化测试
+首次运行前，安装 `scons==4.9.1 cmake==3.31.6 ninja==1.11.1.4`，依次执行 `python tools/build_process_group.py`、`python tools/build_gns.py` 与 `python tools/build_simulation.py`，再用 Godot `--headless --editor --path . --import` 导入工程。macOS 构建脚本使用 `--platform macos`。角色与弹丸场景使用原生基类，缺失模拟扩展时不能正常加载。
+
 ```bash
 # 运行纯逻辑冒烟测试（SceneTree 脚本，验证通过时打印 SMOKE OK 并返回 0）
-"$GODOT" --headless --path . -s res://tests/smoke/enemy_logic_smoke.gd
+"$GODOT" --headless --path . -s res://tests/smoke/network_input_smoke.gd
 
 # 运行场景级自动化探针测试（加载完整场景，设置超时保护帧数，自动运行断言）
-"$GODOT" --headless --path . --quit-after 3600 res://tests/probe/haste_probe.tscn
+"$GODOT" --headless --path . --quit-after 3600 res://tests/probe/native_terrain_probe.tscn
 
 # 运行网络联机集成测试
 python tests/network/run_matches.py --godot "$GODOT" --count 2 --drop
@@ -61,7 +65,7 @@ python tools/check_naming.py
 |---|---|---|
 | **一级（表现层）** | 文案修改、颜色常量调整、布局边距微调、纯视觉效果参数。 | 运行相关 UI 探针自动化测试；视觉改动需进行渲染效果比对。 |
 | **二级（单子系统）** | 敌人行为状态机、武器数值调整、界面数据流、单人模式玩法逻辑（不改动网络协议与存档结构）。 | 纯逻辑冒烟测试；关联场景探针自动化测试；核心断言验证。 |
-| **三级（核心架构）** | 网络同步协议、输入数据包格式、预测回滚管线、地图二进制存储、碰撞物理与伤害结算判定。 | 全量自动化测试回归；网络集成联调验证；多场景集成测试。 |
+| **三级（核心架构）** | 网络同步协议、输入数据包格式、预测回滚管线、地图二进制存储、碰撞物理与伤害结算判定。 | 默认核心回归与关联行为测试；涉及联网时运行一次真实对局。仅在新修改或失败需要时补测。 |
 
 ### 2. 核心架构约束
 - **配置驱动与统一数据源**：武器数据统一由 `data/weapons.json` 配置，敌人属性统一由 `data/enemies.json` 配置，瓦片定义统一由 `data/tile_defs.json` 配置。严禁在业务逻辑中硬编码类型与常量映射。
@@ -90,8 +94,8 @@ python tools/check_naming.py
 - **状态回溯缓冲区 (`WorldRewind`)**：
   - 以 20Hz 定频记录玩家状态（位置、速度、朝向、生命值、倒地状态、手持武器及弹药量）、敌人状态及子弹参数。
   - 实体状态保留机制：在回溯时间窗口内被击败的敌人暂时隐藏其物理与渲染实体；当回溯至击败时刻前时恢复存活状态。
-- **瓦片破坏历史栈 (`TileLedger`)**：
-  - 记录场景瓦片被破坏前的原始图层数据；触发回溯时按后进先出（LIFO）逆序还原网格数据、碰撞体及渲染图集。
+- **地形历史 (`NativeTerrain`)**：
+  - 原生核心记录格级与子格 HP 改前值，按时间区间逆序恢复；场景提交记录时间和最终画面。
 - **表现层与特效**：
   - `WatchHud`：怀表 HUD 界面，双指针指示总额与短期透支状态，配备平滑插值数字动画与透支报警反馈。
   - `TimeGlow`：采用叠加混合模式的高亮贴图图层，提供冷白蓝与金黄色高亮，避免与常规受击闪白发生冲突。
@@ -104,7 +108,7 @@ python tools/check_naming.py
   - **cyrm v4 二进制格式**：支持 Deflate 压缩与 CRC32 校验，分设前景、场景、后景与背景 4 个图层；宏观格细分为 4×4 的 16px 子格，支持子格独立纹理与辅码着色。
 - **16px 子格物理破坏与碰撞**：
   - 地形网格维持 64px 宏观逻辑单元，但物理碰撞体与瓦片生命值细化至 16px 子格分辨率。
-  - `TileDefs` 维护每个子格的生命值数据（`sub_hp`）；子格被击碎后动态重建局部碰撞体。只有当 64px 大格内的全部 16 个子格均被完全摧毁时，才将上层网格标记为空白。
+  - `NativeTerrain` 独占网格、材质与 HP；单人、权威和预测共用伤害与碰撞算法。`TileDefs` 只负责配置与脚本适配。子格被击碎后更新局部碰撞体。只有当 64px 大格内的全部 16 个子格均被完全摧毁时，才将上层网格标记为空白。
   - 爆炸伤害扫描与弹道碰撞采用 16px 半径判定，产生平滑的弹坑与破坏效果。
 - **地图目录与选择器**：
   - `MapCatalog`：自动扫描内部与外部地图，生成地形预览缩略图，校验多人出生点配置。
@@ -129,22 +133,18 @@ python tools/check_naming.py
 - **客户端预测与回滚**：
   - 本地玩家输入即时生效，保障平台跳跃与射击操作零延迟手感。
   - 客户端以 60Hz 上报带目标服务器 tick 的最新 4 条持续输入及未确认动作，移动与动作分别确认；服务端以 60Hz 模拟、30Hz 发送相对已确认基线的二进制 STATE 与到达余量反馈，客户端重建完整状态后预测和播放。
-  - 每次收到新权威状态时，重置为权威状态并按模拟 tick 重放未确认输入；未来调度、动作过期与丢包延续由共享 `InputBuffer` 处理。
-  - 所有远端实体使用共同的 100 ms 播放缓冲；本地校正视觉偏移在 50 ms 内衰减平滑。
+  - 收到新权威状态时，比较同 tick 的本地角色、弹丸、本地账户和地形，再复核本地有效命令与实际交互查询。远端只读运动代理按需缓存受地形约束的运动轨迹，容量覆盖本地 32 tick 恢复窗口，显示外推上限独立；不执行远端完整玩法，输入提示不触发本地重放。实际依赖变化时只重放本地失效后缀。历史不足或控制阶段改变时恢复权威锚点，详见 `docs/eng/local_prediction_design.md`。
+  - 远端角色与掉落物使用共同的 100 ms 播放缓冲；弹丸在出生初态同步后本地模拟；本地校正视觉偏移在 50 ms 内衰减平滑。
 - **断线重连与增量同步**：
   - 玩家网络闪断时，服务端保留其局内物理实体与背包数据，并启动 60 秒宽限期倒计时。
   - 客户端重连成功后，接收完整基线并完成碰撞初始化后报告 READY，再恢复 STATE 同步。
 
 ---
 
-## 四、 核心测试清单
+## 四、 测试与注释
 
-每次核心系统调整后，需执行对应的自动化测试套件进行回归验证：
+默认运行 `python tools/run_regression.py --godot "$GODOT" --scenes` 的 9 项核心检查。`--all` 运行保留的行为测试；`--kind network` 运行网络探针。真实对局使用 `tests/network/run_matches.py`，无需反复运行不同人数和网络参数组合。
 
-| 测试领域 | 关键测试用例 | 验证重点 |
-|---|---|---|
-| **时间机制** | `tests/smoke/grain_account_smoke.gd`<br>`tests/smoke/time_field_smoke.gd`<br>`tests/probe/haste_probe.tscn`<br>`tests/probe/rewind_probe.tscn`<br>`tests/probe/elite_drop_probe.tscn` | 颗粒账户状态流转、时间场倍率计算、时间加速移速与残影、时空回溯位置与敌人复活、精英掉落吸收。 |
-| **地图与子格** | `tests/probe/subcell_probe.gd`<br>`tests/probe/map_catalog_probe.gd`<br>`tests/probe/map_format_v4_probe.gd` | 16px 子格破坏判定、宏观大格状态转换、cyrm v4 编解码与校验、地图目录扫描与缩略图生成。 |
-| **武器与战斗** | `tests/smoke/weapon_inventory_smoke.gd`<br>`tests/smoke/enemy_logic_smoke.gd`<br>`tests/probe/weapon_pickup_probe.gd`<br>`tests/probe/ammo_rollback_probe.gd` | 背包容量双重限制、武器注册表数据校验、地面武器拾取丢弃、弹药回滚校正。 |
-| **网络与同步** | `tests/network/transport_probe.gd`<br>`tests/network/authority_probe.gd`<br>`tests/network/run_matches.py`<br>`tests/network/run_easytier.py` | 服务端房间管理、预测回滚收敛性、断线重连握手与世界同步、网络隧道连通性。 |
-| **界面与规范** | `tests/smoke/ui_palette_single_source_smoke.gd`<br>`tests/probe/menu_weapon_grid_probe.gd`<br>`python tools/check_naming.py` | 全局调色板统一配置、菜单武器列表渲染、命名规范与文档路径有效性。 |
+测试验证可观察行为；不为可逆的小改动添加测试，不按源码写法、UI 文案或实现字段维护重复断言。删除范围与覆盖限制见 [测试精简记录](docs/eng/test_cleanup_20261028.md)。
+
+注释解释必要约束、边界和不直观的原因，省略代码复述、任务编号、历史争论和大段运行说明。成套实验结果放入工程文档；修改注释时保持代码语句不变。

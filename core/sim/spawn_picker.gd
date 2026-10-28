@@ -1,15 +1,12 @@
 class_name SpawnPicker
 extends RefCounted
 
-# 出生与复活点静态几何候选池。
-# 负责在地图中筛选平整地面、开阔连通区域作为玩家出生和复活候选位置，避免出生在狭小封闭死角中。
-# 提供全局静态方法，不依赖 autoload 单例，便于独立运行测试。
+# 出生与复活点候选池。
 
 const OPEN_AREA_MIN: int = 20    # 开阔连通区最小规模（瓦片格数），低于此阈值被视为封闭小隔间
 const PREFER_MIN: int = 8        # 优选格数量门限，低于此数量时自动回退至次级候选策略
 
-# 小地图自适应门槛：
-# 当地图整体连通区域较小时，动态将门槛调整为最大连通区乘以该比例，保留相对最开阔的区域。
+# 小地图按最大连通区比例降低门槛。
 const ADAPTIVE_RATIO: float = 0.5
 
 static var _floor_cell_cache: Array = []   # 地表格缓存
@@ -49,13 +46,7 @@ static func floor_cells() -> Array:
 	return _floor_cell_cache
 
 
-# 出生与复活候选格筛选：
-# 避免玩家出生在密闭死角或狭窄夹层中。优选格需同时满足：
-# 1. 头顶留有至少 2 格净空（满足起跳与站立高度）；
-# 2. 左右两侧留空（横向宽度至少 3 格，避免两侧贴墙）；
-# 3. 所在同层可走连通区域规模达到阈值 area_threshold()，自动淘汰封闭死角。
-#
-# 连通区域判据基于四邻接步进，作为纯平地行走可达性的下界估计。
+# 优选格要求头顶两格、左右净空，并处于足够大的四邻接连通区。
 static func region_sizes() -> Dictionary:
 	if not _region_cache.is_empty():
 		return _region_cache
@@ -119,9 +110,7 @@ static func max_region_size() -> int:
 	return mx
 
 
-# 计算开阔区域的门槛规模：
-# 当最大连通区达到标准门槛时采用绝对值 OPEN_AREA_MIN；
-# 当小地图最大连通区不足时，按比例自适应下调，避免候选池彻底退化。
+# 连通区不足标准门槛时按比例放宽。
 static func area_threshold() -> int:
 	var mx := max_region_size()
 	if mx >= OPEN_AREA_MIN:
@@ -129,10 +118,7 @@ static func area_threshold() -> int:
 	return maxi(ceili(float(mx) * ADAPTIVE_RATIO), 1)
 
 
-# 获取出生点候选格列表：
-# 优先返回同时满足开阔净空与连通规模的优选格；
-# 数量不足时放宽净空限制，返回达到连通规模的地表格；
-# 再次不足时回退至常规地表格。
+# 依次放宽净空、连通规模，最后回退至普通地表。
 static func spawn_candidates() -> Array:
 	if not _prefer_cache.is_empty():
 		return _prefer_cache
@@ -155,8 +141,7 @@ static func spawn_candidates() -> Array:
 	return _prefer_cache
 
 
-# 次级保底复活候选池：
-# 筛选连通区域规模大于等于自适应阈值的地表格。
+# 保留满足连通规模的地表格。
 static func respawn_fallback() -> Array:
 	if not _fallback_cache.is_empty():
 		return _fallback_cache
@@ -168,8 +153,7 @@ static func respawn_fallback() -> Array:
 	return _fallback_cache
 
 
-# 最低保底复活候选池：
-# 遍历地表格并排除连通规模为 1 的绝对孤立单格。
+# 最低门槛仍排除孤立单格。
 static func respawn_last_resort() -> Array:
 	if not _last_resort_cache.is_empty():
 		return _last_resort_cache
@@ -180,16 +164,12 @@ static func respawn_last_resort() -> Array:
 	return _last_resort_cache
 
 
-# 获取复活点候选池分级序列：
-# 依次包含优选池、次级保底池与最低保底池。
-# 各调用端统一按此优先级逐级放宽判定条件，防止直接回退至全量地表导致死角出生。
+# 调用方按候选池顺序放宽。
 static func respawn_pools() -> Array:
 	return [spawn_candidates(), respawn_fallback(), respawn_last_resort()]
 
 
-# 获取指定中心点环面半径范围内的候选格。
-# 适用于团队模式按小队聚集散布出生点。
-# 若指定范围内无候选格，则返回完整优选池副本。
+# 范围内没有候选时返回完整优选池。
 static func cells_within(center: Vector2i, radius: int) -> Array:
 	var out: Array = []
 	if center.x < 0 or center.y < 0:

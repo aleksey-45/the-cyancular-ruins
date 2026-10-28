@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tests/network/bullet_rewind_order_probe.gd" id="1"]
+
+[node name="BulletRewindOrderProbe" type="Node"]
+script = ExtResource("1")

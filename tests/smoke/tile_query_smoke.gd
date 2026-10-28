@@ -2,8 +2,6 @@ extends SceneTree
 
 # 场景瓦片碰撞与障碍物探测逻辑冒烟测试：
 # 验证 TileQuery 在 64px 网格与 16px 子格上的瓦片阻挡查询算法一致性。
-# 运行方式：
-#   "$GODOT" --headless --path . -s res://tests/smoke/tile_query_smoke.gd
 
 const TS := 64   # = GameParameters.TILE_SIZE;-s 脚本自身不能引 autoload,故写字面量
 
@@ -20,7 +18,7 @@ func _initialize() -> void:
 	for y in range(6):
 		g[y][0] = MazeGenerator.pack(1, 15)          # 实心砖(第 0 列)
 	g[5][5] = MazeGenerator.pack(21, 15)             # 水
-	MazeGenerator.current_grid = g
+	TileDefs.load_terrain(g, [])
 
 	var W := 6.0 * TS
 	var H := 6.0 * TS
@@ -50,7 +48,7 @@ func _initialize() -> void:
 			"solid_or_liquid 将水体判定为有效阻挡，返回 true")
 
 	# ⑥ 空网格：全部返回 false（无阻挡判定）
-	MazeGenerator.current_grid = []
+	TileDefs.load_terrain([], [])
 	_check(not TileQuery.rect_overlaps_solid(_rect(0, 0, TS * 3), TS),
 			"空网格 → false(调用方自备方向:飞鸟要的是不可走,故它必须保留自己的 is_empty 早退)")
 	_check(not TileQuery.rect_overlaps_solid_or_liquid(_rect(0, 0, TS * 3), TS),

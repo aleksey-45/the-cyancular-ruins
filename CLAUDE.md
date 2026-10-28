@@ -25,10 +25,10 @@
 
 ```bash
 # 1. 运行纯逻辑冒烟测试（SceneTree 脚本，测试通过输出 SMOKE OK 且退出码为 0）
-godot --headless --path . -s res://tests/smoke/enemy_logic_smoke.gd
+godot --headless --path . -s res://tests/smoke/network_input_smoke.gd
 
 # 2. 运行场景级探针测试（通过 --quit-after 设置最大帧数超时保护，自动执行断言）
-godot --headless --path . --quit-after 3600 res://tests/probe/haste_probe.tscn
+godot --headless --path . --quit-after 3600 res://tests/probe/native_terrain_probe.tscn
 
 # 3. 启动无头专用服务端（默认单进程单端口模式，监听 7777 端口）
 godot --headless --path . res://server/server_main.tscn
@@ -51,6 +51,8 @@ godot --headless --path . --export-release "Windows Desktop" "The Cyancular Ruin
 
 ---
 
+默认测试、按需行为回归与一次真实对局的说明见 [测试入口](docs/eng/tests.md)。地形状态和计算归属见 [原生地形迁移](docs/eng/native_terrain_migration.md)。
+
 ## 三、 架构文档索引
 
 各子系统的详细实现方案与接口定义请查阅 [`docs/eng/`](docs/eng/) 目录下的文档：
@@ -60,7 +62,10 @@ godot --headless --path . --export-release "Windows Desktop" "The Cyancular Ruin
 | **世界与地图** | [`docs/eng/world.md`](docs/eng/world.md) | 环形空间几何、`.cyrm` 地图格式（v3 文本与 v4 二进制）、16px 子格破坏与碰撞更新、`TileDefs` 属性表、水体环境与物理碰撞层。 |
 | **敌人系统** | [`docs/eng/enemies.md`](docs/eng/enemies.md) | 敌人继承层次、行为状态机、飞行 A* 寻路与避障、受击与死亡闪烁、`data/enemies.json` 数据配置。 |
 | **武器与背包** | [`docs/eng/weapons.md`](docs/eng/weapons.md) | 武器基类 `WeaponBase`、即时光束 `LaserWeaponBase`、投射物弹道与爆炸判定、背包容量双重限制（8格容量与4把上限）、地面武器拾取与丢弃、`data/weapons.json` 注册表。 |
-| **玩家控制** | [`docs/eng/player.md`](docs/eng/player.md) | 角色平滑移动、土狼时间与跳跃缓冲、姿态碰撞多边形切换、组件化拆分（攀爬/战斗/武器/游泳）、输入源抽象接口、弹药预测同步。 |
+| **玩家控制** | [`docs/eng/player.md`](docs/eng/player.md) | 角色平滑移动、土狼时间与跳跃缓冲、站立与蹲伏矩形、组件化拆分（攀爬/战斗/武器/游泳）、输入源抽象接口、弹药预测同步。 |
+| **原生模拟** | [`docs/eng/native_scene_simulation.md`](docs/eng/native_scene_simulation.md)、[`docs/eng/native_combat_simulation.md`](docs/eng/native_combat_simulation.md) | 保留 Godot 场景的原生运动、武器、预测战斗与批量历史捕获；迁移边界、固定数据对照及实战成本。 |
+| **广播与日志性能** | [`docs/eng/server_fanout_optimization.md`](docs/eng/server_fanout_optimization.md) | 公共事件编码/压缩复用、输入提示区块复用、后台日志编码及固定负载对照。 |
+| **代理与历史存储性能** | [`docs/eng/proxy_state_storage_optimization.md`](docs/eng/proxy_state_storage_optimization.md) | 连续原生运动样本、STATE 内部不可变记录共享、历史低频元数据按需生成与固定数据比较。 |
 | **渲染管线** | [`docs/eng/render.md`](docs/eng/render.md) | `SubViewport` 独立渲染视口、地形图集生成器 `TerrainAtlas`、屏幕后处理 Shader、角色与敌人基于补间的挤压拉伸形变。 |
 | **UI 系统** | [`docs/eng/ui.md`](docs/eng/ui.md) | 界面样式工厂 `UiFactory`、像素字体规范、战斗 HUD、武器槽位、圆形雷达小地图、多人联机大厅。 |
 | **网络联机** | [`docs/eng/netplay.md`](docs/eng/netplay.md) | 单进程单端口会话架构（`RoomSession` 与 `AuthorityWorld`）、EasyTier 免驱动应用层 P2P 网络隧道、全链路动态端口分配、客户端预测与回滚、断线重连宽限期。 |
@@ -88,7 +93,7 @@ godot --headless --path . --export-release "Windows Desktop" "The Cyancular Ruin
 ### 3. 网络与状态同步规范
 - **服务端权威原则**：伤害结算、子弹生成与销毁、拾取判定以及胜负判定均由服务端权威执行；客户端仅负责本地操作预测与视觉模拟表现。
 - **输入序列与确认机制**：客户端按控制阶段（epoch）与递增序号（seq）发送输入包，服务端每物理帧消费一条，通过 ACK 确认已执行的输入并清理过期指令。客户端收到权威状态后重置并重放未确认输入，历史缺失或超预算时直接采用权威状态；预测重放期间不重复执行表现层动作。
-- **单进程单端口会话**：大厅与对战运行于同一个 ENet 端口上，开局时直接将 `AuthorityWorld` 节点挂载至服务端场景树，客户端无需断开或重连。
+- **单进程单端口会话**：大厅与对战运行于同一个 GNS UDP 端口上，开局时直接将 `AuthorityWorld` 节点挂载至服务端场景树，客户端无需断开或重连。
 
 ### 4. 自动化测试与提交流程
 - **测试通过判定**：自动化测试必须同时满足输出成功文本（如 `SMOKE OK` 或 `ALL-OK`）、退出码为 0 且无脚本报错（SCRIPT ERROR）。

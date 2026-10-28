@@ -6,7 +6,6 @@ extends RefCounted
 
 const FONT_PATH := "res://assets/fonts/less_perfect_dos_vga.ttf"
 
-# ── 中文回退字体链 ──
 # 主字体为拉丁字符点阵字体，中文字符通过回退字体链展示。
 # 项目字号规范采用 16 的倍数，选用基于 16 像素网格的 GNU Unifont 作为主力 CJK 回退字体，
 # 并统一关闭抗锯齿与微调，确保汉字与英文字符均对齐到设备像素。

@@ -52,17 +52,18 @@ if ($ExeOverride -ne "") {
     $fallbackNote = "QuickTest: headless 90 帧自动验证运行"
 } elseif ($Target -eq "server") {
     $label = "server"
-    $latest = Get-ChildItem -Path $repo -Filter "Cyancular Ruins Server*.exe" -File -ErrorAction SilentlyContinue |
+    $latest = Get-ChildItem -Path $repo -Filter "The Cyancular Ruins*.exe" -File -ErrorAction SilentlyContinue |
         Sort-Object LastWriteTime -Descending | Select-Object -First 1
     if ($latest -ne $null) {
         $exe = $latest.FullName
+        $argList = "--headless -- --server"
     } elseif (Test-Path $godot) {
         $exe = $godot
         $argList = "--headless --path `"$repo`" res://server/server_main.tscn"
         $fallbackNote = "未找到服务器 exe,已回退为用 Godot 运行工程内服务端"
     }
 } else {
-    $latest = Get-ChildItem -Path $repo -Filter "The Cyancular Ruins_*.exe" -File -ErrorAction SilentlyContinue |
+    $latest = Get-ChildItem -Path $repo -Filter "The Cyancular Ruins*.exe" -File -ErrorAction SilentlyContinue |
         Sort-Object LastWriteTime -Descending | Select-Object -First 1
     if ($latest -ne $null) {
         $exe = $latest.FullName
@@ -88,6 +89,8 @@ Write-Host " 启动: $exe $argList"
 Write-Host " (关闭游戏窗口后,自动生成中文报告 report.txt)" 
 Write-Host "==============================================" 
 
+$sessionWindowStyle = if ($Target -eq "server" -or $QuickTest) { "Hidden" } else { "Normal" }
+
 # ── run ---------------- - 
 $start = Get-Date
 $sw = [System.Diagnostics.Stopwatch]::StartNew()
@@ -97,11 +100,11 @@ try {
     if ($argList -ne "") {
         $p = Start-Process -FilePath $exe -ArgumentList $argList `
             -RedirectStandardOutput $outLog -RedirectStandardError $errLog `
-            -WorkingDirectory $repo -PassThru
+            -WorkingDirectory $repo -PassThru -WindowStyle $sessionWindowStyle
     } else {
         $p = Start-Process -FilePath $exe `
             -RedirectStandardOutput $outLog -RedirectStandardError $errLog `
-            -WorkingDirectory $repo -PassThru
+            -WorkingDirectory $repo -PassThru -WindowStyle $sessionWindowStyle
     }
     if ($p -ne $null) {
         $null = $p.Handle   # 先取句柄:否则 WaitForExit 后 ExitCode 为 null(PS 已知行为)
@@ -168,7 +171,7 @@ function Add-Issues([string]$file, [string]$tagName) {
             $why = "需要开发者结合上下文判断"
             if ($ln -match "SCRIPT ERROR|Parse Error") {
                 $cat = "脚本错误"; $why = "游戏逻辑代码(GDScript)运行出错:多为空引用/逻辑/语法问题"
-            } elseif ($ln -match "ENet|enet|socket|channel|Network|peer") {
+            } elseif ($ln -match "GNS|socket|lane|Network|peer") {
                 $cat = "网络错误"; $why = "联网通讯报错:检查端口/防火墙,单机游玩可忽略"
             } elseif ($ln -match "Vulkan|D3D|RenderingDevice|OpenGL|driver") {
                 $cat = "渲染相关"; $why = "显卡/渲染层报错:偶发一两条可忽略,频繁出现需更新显卡驱动"

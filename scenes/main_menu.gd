@@ -13,7 +13,6 @@ var _sp_panel: PanelContainer = null
 @onready var _ver: Label = %Version
 @onready var _menu_box: VBoxContainer = %MenuBox
 
-# ── 背景镜头运动状态 ──
 var _bg_mat: ShaderMaterial = null
 var _bg_cells := Vector2(150.0, 100.0)
 var _rng := RandomNumberGenerator.new()
@@ -24,7 +23,6 @@ var _seg_index := 0
 
 const SP_PANEL_SCENE := preload("res://ui/screens/sp_launch_panel.tscn")
 
-# ── 背景漫游参数 ──
 # 使用真实地形纹理与鱼眼着色器进行缓速漂移与微幅旋转，不生成任何动态实体
 const BG_MAP := "res://maps/newfactory.cyrm"
 const BG_CELL_PX := 32
@@ -32,7 +30,6 @@ const BG_VIEW_CELLS := 26.6667
 const BG_SHADER := "res://core/present/menu_fisheye.gdshader"
 const BG_BLUR_RADIUS_PX := 4.0
 
-# ── 镜头运动轨迹参数 ──
 const SEG_MIN_FRAC := 0.20
 const SEG_MAX_FRAC := 0.80
 const SEGMENT_SEC := 48.0
@@ -86,7 +83,6 @@ func _enter_level0() -> void:
 	get_tree().change_scene_to_file("res://scenes/level_0.tscn")
 
 
-# ── 界面初始化 ──
 func _build_ui() -> void:
 	_build_background()
 	_ver.text = AppInfo.version_string()
@@ -222,7 +218,6 @@ func _on_single_pressed() -> void:
 	_ui_layer.add_child(_sp_panel)
 
 
-# ── 单人开局设置面板 ──
 const SP_PANEL_PADDING := Vector2(64, 46)
 const SP_BLOCK_GAP := 28
 const SP_CHECK_GAP := 20

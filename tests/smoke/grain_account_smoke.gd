@@ -3,8 +3,6 @@ extends SceneTree
 # 时间颗粒账户状态机冒烟测试：
 # 验证 GrainAccount 纯逻辑状态机：初始额度、消耗扣除、自动恢复速率、
 # 透支惩罚深度计算、强制锁定与偿还解锁，以及 PvP 自定义参数支持。
-# 运行方式：
-#   "$GODOT" --headless --path . -s res://tests/smoke/grain_account_smoke.gd
 
 var _fails: Array[String] = []
 

@@ -3,8 +3,6 @@ extends Node
 # 主菜单流转与场景切换自动化探针：
 # 模拟用户在主菜单中的导航点击流程，验证进入单人模式、多人大厅、设置页、
 # 信息页及关卡加载的完整链路。
-# 运行方式：
-#   "$GODOT" --headless --path . -- --autotest-sp
 
 var mode := ""   # sp / mp / royale / team / set / level / ver / switch / play(由 main_menu 经 cmdline 参数注入)
 
@@ -78,7 +76,6 @@ func _run() -> void:
 	tree.quit(0)
 
 
-# ── 选图控件(单机开局面板)──
 # 为什么必须在场景级验:数据层探针只能证明"目录/缩略图/校验函数对",证明不了
 # "面板上选中的值有没有真的走到建图"。少了这条,"摆了两张缩略图、进关还是随机图"这种
 # 假功能照样通过(末尾的场景断言只看"到了 level_0.tscn")。
@@ -133,7 +130,6 @@ func _find_picker(n: Node) -> MapPicker:
 	return null
 
 
-# ── beta 模式:主菜单 -> Beta 页(两张卡) -> 错乱大乱斗卡 -> beta 态统一大厅 mp_lobby(时间参数面板)──
 # - 为什么场景级:独立房间池的客户端侧一半(beta 标的创建/过滤/上报)都长在大厅页里,
 #   不真开一次页,「beta 态建面板 + 9 行参数 + player_options 带 time」这些全是纸面推断。
 func _run_beta_flow(tree: SceneTree) -> void:
@@ -281,7 +277,6 @@ func _run_play_session(tree: SceneTree) -> void:
 	await tree.create_timer(1.2).timeout
 	print("AUTOTEST[play]: 打枪打炮完毕(场上子弹 %d / 敌人 %d)" % [
 			tree.get_nodes_in_group("bullet").size(), tree.get_nodes_in_group("enemies").size()])
-	# ── 榴弹自杀:把注入瞄准压成"朝正下方",让榴弹在脚下炸开 ──
 	# 用 AiInputSource 而不是直接 take_hit:要的就是真的走一遍榴弹那条路
 	# (出膛 -> 撞地 -> 引信 -> AoE -> 玩家掉 50 血 -> 倒地),它才会留下爆炸动画/碎砖/废墟。
 	var prev_src = player.input_source
@@ -298,7 +293,6 @@ func _run_play_session(tree: SceneTree) -> void:
 	await tree.create_timer(0.6).timeout
 	print("AUTOTEST[play]: 榴弹自杀 → 倒地=%s(hp=%d)" % [str(player.is_downed()), player.hp])
 	player.set_input_source(prev_src)
-	# ── 倒地按 R:单机原地复位(restart_single = 还原砖/碰撞 + 清弹 + 重刷敌人)──
 	# 这条路径本身就重建过整层碰撞,是"玩好一局"里状态最重的一步。
 	_press_key("R")
 	await tree.create_timer(2.0).timeout
@@ -310,7 +304,6 @@ func _run_play_session(tree: SceneTree) -> void:
 	print("AUTOTEST[play]: 按 R 复位后 倒地=%s,敌 %d,场上子弹 %d" % [
 			str(player.is_downed()), tree.get_nodes_in_group("enemies").size(),
 			tree.get_nodes_in_group("bullet").size()])
-	# ── 再开两枪(用户指定的最后一段操作)──
 	player.weapons.equip_type(1)
 	await tree.create_timer(0.4).timeout
 	for _i in range(2):

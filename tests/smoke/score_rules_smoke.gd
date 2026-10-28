@@ -2,8 +2,6 @@ extends SceneTree
 
 # 对局得分与排名计算规则冒烟测试：
 # 验证纯逻辑层面的击杀得分、团队计分规则、自伤/队友伤害过滤以及 MVP 计算逻辑。
-# 运行方式：
-#   source tests/env.sh && "$GODOT" --headless --path . -s res://tests/smoke/score_rules_smoke.gd
 
 func _initialize() -> void:
 	var script = load("res://core/sim/score_rules.gd")

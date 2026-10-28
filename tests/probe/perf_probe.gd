@@ -4,7 +4,6 @@ extends SceneTree
 #  1) 可破坏层:旧 9× 全图贪心基线 vs 分块构建(计数/覆盖率/单块重建/200 次摧毁)
 #  2) N 只飞鸟:障碍收集 + A* + 死区逃逸耗时
 #  3) 全场景每帧物理基准(真实 CollisionBuilder 建的永久墙 + 可破坏块 + N 只鸟)
-# 用法:godot --headless --path . -s res://tests/probe/perf_probe.gd
 
 
 # hoisted from locals when __initialize was split (first assignment kept in place).
@@ -144,8 +143,7 @@ func _make_player_stub() -> CharacterBody2D:
 
 func _setup_world() -> void:
 	TileDefs.load_defs()
-	grid = MazeGenerator.load_map_file()
-	MazeGenerator.current_grid = grid
+	grid = WorldBuilder.load_grid()
 	if grid.is_empty():
 		printerr("no map")
 		quit(1)
@@ -157,68 +155,29 @@ func _setup_world() -> void:
 	root.add_child(host)
 
 func _phase_destructible() -> void:
-
-	# ── 1) 可破坏层:基线 / 分块构建 / 覆盖率 / 单块重建 / 200 次摧毁 ──
-	var sub: Array[Array] = CollisionBuilder.build_sub(grid, true)
+	var sub: Array[Array] = TileDefs.terrain.get_collision_snapshot(true)
 	var baseline := _greedy_count(sub)
-	print("[perf] 旧 9× 全图贪心: %d shapes(9 副本合计)" % baseline)
-	var total := CollisionBuilder.build_destructible_chunks(sub, host)
-	print("[perf] 分块构建: %d shapes(块内不跨块合并,%s)" % [total, "≥旧" if total >= baseline else "BUG"])
-	var ok := _verify_coverage(host, sub)
-	print("[perf] 覆盖率(中心副本并集 == 实心子格): %s" % ("通过" if ok else "失败!"))
-	var wall_total := CollisionBuilder.build_permanent(
-			CollisionBuilder.build_sub(grid, false), host, "WallCollision")
-
-	# 单块重建计时(取一个含可破坏砖的块)
-	var probe_chunk := Vector2i.ZERO
-	var found := false
-	for y in range(sub.size()):
-		for x in range(sub[0].size()):
-			if sub[y][x] != MazeGenerator.EMPTY:
-				probe_chunk = CollisionBuilder.chunk_of(Vector2i(x / 2, y / 2))
-				found = true
-				break
-		if found:
-			break
-	var n_rep := 50
-	var t_r0 := Time.get_ticks_usec()
-	var last_count := 0
-	for i in range(n_rep):
-		last_count = CollisionBuilder.rebuild_chunk(sub, probe_chunk, host)
-	var t_r1 := Time.get_ticks_usec()
-	print("[perf] 单块重建均值: %.3f ms(%d 次, %d shapes)" % [(t_r1 - t_r0) / 1000.0 / n_rep, n_rep, last_count])
-
-	# 模拟连续摧毁 200 格:网格副本与子格同步清空,只重建所在块;每 50 格验覆盖率
-	var grid2: Array[Array] = []
-	for row in grid:
-		grid2.append(row.duplicate())
+	TileDefs.terrain.attach(host)
+	var total := 0
+	for child in host.get_children():
+		if String(child.name).begins_with("DestructibleChunk_"): total += child.get_child_count()
+	assert(_verify_coverage(host, sub), "native chunk shapes must cover exactly the live destructible cells")
+	print("[perf] 原生分块 %d shapes，全图贪心基线 %d" % [total, baseline])
 	var cells: Array[Vector2i] = []
-	for y in range(grid.size()):
-		for x in range(grid[y].size()):
+	for y in grid.size():
+		for x in grid[y].size():
 			var tex: int = MazeGenerator.texture_of(grid[y][x])
-			if tex != 0 and (TileDefs.bullet_destroyable(tex) or TileDefs.explosion_destroyable(tex)):
-				cells.append(Vector2i(x, y))
-	var t_d0 := Time.get_ticks_usec()
-	var cover_fail := 0
-	var destroy_total := 0
+			if tex != 0 and TileDefs.explosion_destroyable(tex): cells.append(Vector2i(x, y))
+	var started := Time.get_ticks_usec()
 	for k in range(200):
-		var cell := cells[(k * 37) % cells.size()]
-		grid2[cell.y][cell.x] = 0
-		for qy in range(2):
-			for qx in range(2):
-				sub[cell.y * 2 + qy][cell.x * 2 + qx] = MazeGenerator.EMPTY
-		CollisionBuilder.rebuild_chunk(sub, CollisionBuilder.chunk_of(cell), host)
+		TileDefs.damage_tile(cells[(k * 37) % cells.size()], 9999, "explosion")
+		TileDefs.terrain.flush_collisions()
 		if k % 50 == 0:
-			if not _verify_coverage(host, sub):
-				cover_fail += 1
-		destroy_total += 1
-	var t_d1 := Time.get_ticks_usec()
-	print("[perf] 200 次摧毁重建总计: %.0f ms(均值 %.2f ms/次), 覆盖率失败 %d 次" % [
-		(t_d1 - t_d0) / 1000.0, (t_d1 - t_d0) / 1000.0 / destroy_total, cover_fail])
+			assert(_verify_coverage(host, TileDefs.terrain.get_collision_snapshot(true)))
+	print("[perf] 200 次原生摧毁及形状提交 %.3f ms" % [(Time.get_ticks_usec() - started) / 1000.0])
 
 func _phase_climb_ledges() -> void:
 
-	# ── 1b) 攀爬基座薄碰撞条(仅锁链顶/底;梯顶不加——会挡从下方爬升) ──
 	var c_count := 0
 	var e_count := 0
 	for y in range(grid.size()):
@@ -229,7 +188,7 @@ func _phase_climb_ledges() -> void:
 			elif tex == 14:
 				e_count += 1
 	var expect_ledges: int = (c_count + e_count) * 9
-	var ledges := CollisionBuilder.build_climb_ledges(grid, host)
+	var ledges := host.get_node("ClimbLedges").get_child_count()
 	print("[perf] 攀爬基座: 链顶%d + 链底%d = %d(×9=%d), ClimbLedges %d shapes, %s" % [
 		c_count, e_count, c_count + e_count,
 		expect_ledges, ledges, "一致" if ledges == expect_ledges else "不一致!"])
@@ -247,7 +206,6 @@ func _phase_climb_ledges() -> void:
 
 func _phase_flybird_pathing() -> void:
 
-	# ── 2) 飞鸟寻路 ──
 	fly_scene = load("res://scenes/enemies/enemy_fly_bird.tscn")
 	player = Node2D.new()
 	player.name = "StubPlayer"
@@ -301,12 +259,10 @@ func _phase_flybird_pathing() -> void:
 
 func _phase_frame_bench() -> void:
 
-	# ── 3) 全场景每帧物理基准(真实 CollisionBuilder 碰撞)──
 	host2 = Node2D.new()
 	host2.name = "PerfHost2"
 	root.add_child(host2)
-	CollisionBuilder.build_permanent(CollisionBuilder.build_sub(grid, false), host2, "WallCollision")
-	CollisionBuilder.build_destructible_chunks(CollisionBuilder.build_sub(grid, true), host2)
+	TileDefs.terrain.attach(host2)
 
 	for count in [0, 20, 40]:
 		for old in get_nodes_in_group("enemies"):

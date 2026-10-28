@@ -49,7 +49,6 @@ func _finish() -> void:
 		get_tree().quit(1)
 
 
-# ── 静态代码扫描接口转发（底层实现在 ScanUtil）──
 func _read(path: String) -> String:
 	return ScanUtil.read(path)
 

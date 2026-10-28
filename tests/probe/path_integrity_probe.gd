@@ -119,7 +119,6 @@ func _initialize() -> void:
 		# .sh 走 FileAccess(见 _read_sh 的注释);.gd/.tscn 仍走 ScanUtil.read。
 		var src: String = _read_sh(f) if f.ends_with(".sh") else _su.read(f)
 		if src.is_empty():
-			# - 不许静默跳过。tests/lib/scan_util.gd 的文件头明写:「调用方必须自己判空
 			#   并报红 —— 静默返回 "" 是这类探针最典型的扫描失效（未读取到源文件）方式」。ScanUtil.read 既在"文件不存在"
 			#   时返回 ""、也在"打不开 / 内容为空"时返回 ""。
 			#   今天不该发生(collect/_collect_sh 只返真实存在的文件),但真发生时必须看得见,

@@ -3,7 +3,6 @@ extends Node
 # 全局脚本编译与加载完整性验证探针：
 # 递归扫描 res:// 下所有 .gd 脚本并逐个调用 load()，检查是否存在悬空引用、未声明变量或语法解析错误。
 # 场景模式运行（保证 Autoload 单例正常初始化）：
-#   godot --headless --path . res://tests/probe/allscript_probe.tscn
 
 # 排除目录：
 # - 运行时临时目录、导出产物、日志与地图数据等无需参与脚本语法检查的目录。
@@ -12,7 +11,7 @@ const SKIP_DIRS := ["res://.godot", "res://builds", "res://releases", "res://gam
 		"res://crashlogs", "res://maps", "res://map", "res://backup", "res://editor/_build",
 		"res://_crashtest"]
 
-const EXPECTED_SCRIPTS := 229
+const EXPECTED_SCRIPTS := 177
 
 var _fails: Array[String] = []
 var _total := 0

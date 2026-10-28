@@ -1,7 +1,7 @@
 """Network stalls require a complete combat window with healthy application frames."""
 from copy import deepcopy
 import unittest
-from run_matrix import summarize_network
+from network_link import summarize_network
 
 
 def measured_case():

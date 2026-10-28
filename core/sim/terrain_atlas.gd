@@ -1,10 +1,7 @@
 class_name TerrainAtlas
 extends RefCounted
 
-# 地形渲染图集生成器与地图地形图像烘焙工具。
-# 负责将 structure.png 源贴图解析为 16 列 x 22 行的子格图集，
-# 并为关卡与菜单背景提供一致的地形像素渲染支持。
-# 纯静态工具类，零 Autoload 依赖。
+# 地形图集与菜单地形图烘焙。
 
 # 世界天空气氛底色（空气瓦片底色），供关卡清屏色与菜单背景渲染共用。
 const SKY_COLOR: Color = Color("b0e5f6")
@@ -31,7 +28,6 @@ static func clear_cache() -> void:
 	_tex_cache.clear()
 
 
-# ── 源砖表 ─────────────────────────────────────────────────────────
 
 static func source_image() -> Image:
 	if _src_cache == null:
@@ -49,7 +45,6 @@ static func source_rect(idx: int) -> Rect2i:
 	return Rect2i((idx % SRC_COLS) * SRC_TILE, (idx / SRC_COLS) * SRC_TILE, SRC_TILE, SRC_TILE)
 
 
-# ── 墙体图集(16px 象限制)──────────────────────────────────────────
 
 # 16 列（4x4 象限）x 22 行（纹理）图集：每块源砖的每个 8x8 象限最近邻放大为 16x16。
 static func build_atlas_image() -> Image:
@@ -85,7 +80,6 @@ static func make_wall_tileset() -> TileSet:
 	return tile_set
 
 
-# ── 水体图集(64px 整格,shape 掩码)────────────────────────────────
 
 # 水体层那块源砖放大到 ts×ts——水面合批 shader 的采样源,也是水体图集的源图。
 static func water_brick_image(ts: int) -> Image:
@@ -123,12 +117,8 @@ static func make_water_tileset(ts: int) -> TileSet:
 	return tile_set
 
 
-# ── 地图地形图烘焙（主菜单背景等场景）──
 
-# 将 .cyrm 地图烘焙为完整的地形 Image：
-# 1. 地形数据基于 16px 子格表与标准图集像素，与关卡实际渲染保持一致；
-# 2. 结合 air 底色预先合成半透明与镂空像素，避免产生黑色边缘；
-# 3. 大图尺寸较大，调用方使用后按需释放。
+# 以关卡子格图集烘焙地图，并预合成空气底色。
 static func bake_map_image(path: String, cell_px: int, air: Color) -> Image:
 	var sp: int = maxi(1, cell_px / SUB_PER_CELL)      # 每个子格占几像素
 	# 图集先与空气色合成(得到一张不透明的全图集),再整体缩到 sp/象限 —— 只做一次
@@ -162,8 +152,7 @@ static func bake_map_image(path: String, cell_px: int, air: Color) -> Image:
 	return out
 
 
-# 地形图的纹理版(会话级缓存)。主菜单每进一次都要同一张图 —— 缓存纹理而不是 Image,
-# 只付一份显存;烘一次的 Image 在建成纹理后即被释放。
+# 缓存纹理；建成后释放临时 Image。
 static func terrain_texture(path: String, cell_px: int, air: Color) -> ImageTexture:
 	var key := "%s|%d|%s" % [path, cell_px, str(air)]
 	if _tex_cache.has(key):

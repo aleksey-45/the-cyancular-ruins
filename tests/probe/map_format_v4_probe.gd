@@ -40,7 +40,6 @@ func _dims(grid: Array) -> Vector2i:
 	return Vector2i((grid[0] as Array).size(), grid.size())
 
 
-# ── ① 真实地图文件测试 ──
 func _test_real_maps() -> void:
 	_chk(MapFormat.is_v4(DEMO), "demo.cyrm 应已是 v4 二进制")
 	_chk(MapFormat.is_v4(PVP), "newfactory.cyrm 应已是 v4 二进制")
@@ -67,7 +66,6 @@ func _test_real_maps() -> void:
 		_chk(v == 0, "%s 出生点格应为空(实为 %d)" % [str(pair[0]), v])
 
 
-# ── ② 写读往返(含形状掩码逐位)──
 func _test_roundtrip() -> void:
 	for path in [DEMO, PVP]:
 		var grid := MapFormat.load_map_file(path)
@@ -87,7 +85,6 @@ func _test_roundtrip() -> void:
 		_chk(str(sp_a) == str(sp_b), "%s 往返 spawn 一致" % path)
 
 
-# ── ③ compression=1 读入(编辑器导出路径)──
 func _test_compressed_fixture() -> void:
 	var v := MapFormatV4.parse(FIXTURE)
 	_chk(bool(v.get("ok", false)), "压缩夹具应能解开(实为:%s)" % str(v.get("error", "?")))
@@ -100,7 +97,6 @@ func _test_compressed_fixture() -> void:
 	_chk(sp.get("player", Vector2i(-1, -1)) == Vector2i(2, 2), "夹具出生点应 (2,2)")
 
 
-# ── ④ CRC 破坏检测 ──
 func _test_crc_tamper() -> void:
 	var bad := FIXTURE.duplicate()
 	bad[40] = bad[40] ^ 0xFF   # body 中段翻一个字节

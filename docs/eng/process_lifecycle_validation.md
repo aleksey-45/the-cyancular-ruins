@@ -18,7 +18,7 @@
 python tests/network/run_process_lifecycle.py --godot $env:GODOT
 python tools/run_regression.py --godot $env:GODOT --scenes --kind unit --jobs 2
 python tools/run_regression.py --godot $env:GODOT --scenes --kind network
-python tests/network/run_easytier.py --godot $env:GODOT
+python tests/network/run_matches.py --godot $env:GODOT --tunnel relay --local-relay --drop --no-trace
 python tools/build_release.py
 ```
 
@@ -43,6 +43,10 @@ python tools/build_release.py
 ## 四、 macOS 验证入口
 
 macOS 采用[生命期管道与进程组](../../native/process_group/process_group_macos.cpp)管理会话子进程。测试使用同一 Godot 生命周期探针，在正常 quit、窗口关闭、会话重建、场景切换、SIGKILL 以及启动期间 SIGKILL 后，逐个检查本次记录的 PID 已退出，并确认独立 EasyTier 仍运行。嵌套 Godot 通过 NetSession 创建自己的 EasyTier 会话。
+
+离房用例先创建会话进程组，再创建 CLI 进程组，覆盖后者守护进程继承前者寿命管道写端的顺序。显式关闭应主动终止本组，不能等待所有写端副本关闭后才结束；其他进程组仍须存活。CLI 取消由工作线程异步完成，用例按实际完成条件等待，最多 2 秒；单次 `process_frame` 不能保证线程已完成。取消失败时立即以非零状态退出并报告结果。
+
+2026-10-28 的 macOS arm64 与 Intel CI 均在双客户端对局结束后卡于房主关闭会话。将生产代码的守护、关闭及回收方法提取至 Linux/POSIX 独立复现后，旧实现触发 2 秒超时；修复后两种创建顺序分别在 0.178 ms 与 0.158 ms 内完成关闭，另一进程组与独立子进程均继续存活。本次修正 CLI 取消等待条件后，Windows 同一生命周期入口 6/6 通过；macOS 集成结果由后续 CI 验证。
 
 ```bash
 python tests/network/run_macos.py --godot "$GODOT" --archive builds/macos/The-Cyancular-Ruins.zip

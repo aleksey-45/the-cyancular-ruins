@@ -21,7 +21,6 @@ signal loan_depth_changed(depth: float)
 signal loan_locked
 signal loan_unlocked
 
-# ── 参数配置（单人模式使用 TimeParams 默认值；多人对战可通过参数自定义）──
 var initial := TimeParams.GRAIN_INITIAL
 var cap := TimeParams.GRAIN_CAP
 var window := TimeParams.SHORT_WINDOW

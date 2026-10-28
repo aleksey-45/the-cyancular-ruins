@@ -21,10 +21,7 @@ var _hover_side: float = 1.0
 var _strafe_target: Vector2 = Vector2.INF  # 开火后短距随机移动目标;INF=未在移动
 var _strafe_timer: float = 0.0             # 短距移动剩余时长
 
-# ── LOS/射击侧缓存:砍每帧重复视线扫描 ──
-# _shot_clear:同一对(鸟格,玩家格)在 TTL 物理帧内复用上次结果;拆/堵墙、格子移动最迟
-# ~150ms(@60Hz)反映。用物理帧数而非墙钟门控,headless 快进冒烟里也能按帧失效、行为确定。
-# (SHOOT 判定、进 SHOOT 门槛、低血冲锋前提共用同一缓存——端点相同,复用安全)
+# 视线按端点和物理帧 TTL 缓存；拆墙最多延迟一个 TTL 反映。
 const SHOT_CLEAR_TTL_FRAMES: int = 9
 var _shot_clear_ok := false
 var _shot_clear_at_frame := -100000
@@ -43,8 +40,7 @@ var _spawn_captured: bool = false   # 出生点是否已抓取(等 spawner 设�
 func _ready() -> void:
 	super._ready()
 	_anim = $AnimatedSprite2D
-	# 出生点不在此抓取:spawner 是 add_child 之后才设位置,_ready 里抓到的是 (0,0),
-	# 会害 _player_home_dist()/返程全错(鸟一醒就返程、不追玩家)。改在首帧物理补抓。
+	# spawner 在 add_child 后才设置位置，出生点延至首帧记录。
 	_max_hp = hp
 	wake_radius = EnemyParams.FlyBird.wake_radius
 	waterproof_max = 10
@@ -135,9 +131,7 @@ func _tick_fly(delta: float, dist: float) -> void:
 		_repath_timer = EnemyParams.FlyBird.repath_interval + _repath_phase
 		# 目标是斜上射击位(玩家上方),让下方的鸟绕道爬升到能打的位置。
 		_repath_to(_shoot_cell())
-	# 空路径(BFS 无路/预算超限)时直线飞向射击位,不再原地返程发呆。
-	# 三元惰性求值:只在路径为空时才现算 _shoot_pos()(内含 Bresenham LOS),
-	# 路径还在时传 INF——否则每帧给每只追玩家的鸟白付 1~2 次全图视线扫描。
+	# 空路径才计算直飞目标，避免重复视线查询。
 	_follow_path(delta, _shoot_pos() if _path.is_empty() else Vector2.INF)
 
 
@@ -192,9 +186,7 @@ func _tick_charge(delta: float) -> void:
 func _tick_return(delta: float, dist: float) -> void:
 	_anim.play("flying")
 	if _landing:
-		# 落地阶段:开重力直接下坠,计时到点即入睡,不再等地板接触。
-		# (FLOATING 模式下 is_on_floor 恒 false,靠碰撞法线判地面在个别
-		#  出生位/接缝处永远等不到,鸟会卡在 RETURN 不睡)
+		# FLOATING 模式不提供地面状态，返程落地阶段以计时结束。
 		_state_timer += delta
 		if _state_timer >= EnemyParams.FlyBird.landing_time:
 			_anim.play("fall_asleep")
@@ -228,7 +220,6 @@ func _on_death() -> void:
 	use_gravity = true
 
 
-# ── 射击 ──
 
 # 斜上射击位(与 SHOOT 锚点同一逻辑):玩家侧向 + 上方,鸟不穿越玩家头顶。
 # 世界坐标与格坐标共用同一侧,保证寻路目标可到、直线保底处理同向。
@@ -383,7 +374,6 @@ func _bullet_v0() -> float:
 			EnemyParams.FlyBird.bullet_max_speed) * signf(dx)
 
 
-# ── 冲撞 ──
 
 func _update_charge_intent_if_needed() -> void:
 	# 血量跌穿 25% 单向切冲撞意图(HP 只减不增)。
@@ -439,7 +429,6 @@ func _apply_charge_impact(p: Node) -> void:
 	_smash_player(p, EnemyParams.FlyBird.charge_impact, EnemyParams.FlyBird.charge_impact_up)
 
 
-# ── 返程与入睡 ──
 
 func _start_return() -> void:
 	_set_state(State.RETURN)
@@ -490,8 +479,7 @@ func _update_facing() -> void:
 			_set_facing(vx < 0.0)
 
 
-# 睡眠态判定(基类 _is_far_sleeping 用)。-  显式写出来而不是靠"SLEEP 恰好是枚举第一个":
-# 加新敌人时照抄本方法 —— 详见 EnemyBase._is_asleep 的注释。
+# 显式声明睡眠态，不依赖枚举次序。
 func _is_asleep() -> bool:
 	return state == State.SLEEP
 

@@ -8,7 +8,6 @@ class shared:
 	const hit_flash: float = 0.1        # 受击白闪时长(秒)
 	const death_flash_time: float = 0.5  # 死亡白闪时长(秒),闪完销毁(全敌人统一)
 	const turn_min_interval: float = 0.5  # 敌人最小转向间隔(秒),防止来回抖
-	# ── 水 ──
 	const bird_swim_speed: float = 260.0   # 落水鸟朝玩家游的速度
 	const bird_buoyancy_k: float = 6.0     # 浮力弹簧刚度(回水面)
 	const bird_max_float: float = 260.0    # 上浮最大速度

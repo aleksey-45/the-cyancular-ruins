@@ -58,7 +58,6 @@ static func _stream(kind: String) -> AudioStreamWAV:
 	return w
 
 
-# ── 音效定义:每 kind 一段逐样本合成 ──
 static func _build(kind: String) -> PackedFloat32Array:
 	match kind:
 		"shoot":        return _sweep_square(900.0, 240.0, 0.09, 0.5, 0.10)

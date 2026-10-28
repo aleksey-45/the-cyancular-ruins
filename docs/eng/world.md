@@ -20,6 +20,7 @@
 - **核心模块职责**：
   - `MazeGenerator`（[`core/sim/maze_generator.gd`](../../core/sim/maze_generator.gd)）：管理当前选中的地图文件路径（优先读取与游戏可执行文件同级的外部 `.cyrm` 文件，若不存在则读取 `maps/` 目录下的内置地图），维护全局静态网格数据 `current_grid`。
   - `MapFormat`（[`core/sim/map_format.gd`](../../core/sim/map_format.gd)）：负责 v3 文本格式编解码、瓦片打包解包与出生点解析（`# player` 与 `# player2`）。
+  - `MapCatalog` 通过 `MapFormat.load_map_info()` 一次读取网格、注释和出生点；目录、名称与缩略图共用解析结果。`clear_cache()` 和刷新目录会清理该缓存。
   - `MapFormatV4`（[`core/sim/map_format_v4.gd`](../../core/sim/map_format_v4.gd)）：负责 v4 二进制地图的流式解压、CRC32 完整性校验与 16px 子格数据构建。
   - `GridPathfinder`（[`core/sim/grid_pathfinder.gd`](../../core/sim/grid_pathfinder.gd)）：无状态几何与寻路工具类，提供环形距离计算、最短位移推导、地面检测、Bresenham 视线检测与 A* 寻路算法。
 - **场景初始化**：单人关卡在场景加载时铺设墙体并延迟构建碰撞；PvP 由基线应用统一完成墙体铺图与碰撞构建，再上报 READY。铺图逐个读取规范子格，计算材质与图集坐标后写入 3×3 环形副本。
@@ -29,9 +30,9 @@
 ## 二、 全局单例与配置体系
 
 ### 1. 全局 Autoload 单例（配置于 `project.godot`）
-1. `GameLog`（[`core/config/game_log.gd`](../../core/config/game_log.gd)）：接管引擎日志输出，分流持久化写入 `log/client.log` 或 `log/server.log`。
+1. `GameLog`（[`core/config/game_log.gd`](../../core/config/game_log.gd)）：接管引擎输出与结构化运行记录，每次运行写入独立的 `log/client-<时间>-<PID>.log` 或 `log/server-<时间>-<PID>.log`。字段与隧道日志见[运行日志](netplay.md#十运行日志)。
 2. `GameParameters`（[`core/config/game_parameters.gd`](../../core/config/game_parameters.gd)）：定义基础重力、瓦片尺寸（`TILE_SIZE = 64`）及世界像素边界。地图加载完成后调用 `refresh_map_size()` 动态刷新世界尺寸。
-3. `NetBus`（[`core/net/net_bus.gd`](../../core/net/net_bus.gd)）：基于 ENet 的核心网络通信接口，承载 INPUT、STATE、EVENT 三类数据报文传输，支持包级 Zstd 压缩。
+3. `NetBus`（[`core/net/net_bus.gd`](../../core/net/net_bus.gd)）：基于 GNS 的核心网络通信接口，承载 INPUT、STATE、EVENT 三类数据报文传输，支持消息级 Zstd 压缩。
 4. `NetSession`（[`core/net/net_session.gd`](../../core/net/net_session.gd)）：联机会话与 Windows Job 作业对象管理；统一启动、持有和回收联机相关的后台子进程。
 5. `Settings`（[`core/config/settings.gd`](../../core/config/settings.gd)）：玩家本地设置管理，持久化保存于 `user://settings.cfg`。
 
@@ -52,14 +53,20 @@
   - `21-22`：水体与水面（液体，无碰撞阻挡）。
 
 ### 2. 16px 子格破坏与碰撞体动态重建
-- **子格生命值管理**：运行时由 `TileDefs` 维护每个 16px 子格的当前生命值（`sub_hp`），支持单点受损（`damage_sub`）与回溯恢复（`restore_sub`）。
+- **状态归属**：`NativeTerrain` 持有宏观网格、材质、格级与子格 HP；`TileDefs` 只加载配置并提供脚本适配。导出的网格只读，HP 数组为隔离快照。
 - **宏观大格与子格关系**：当 64px 大格内的某个 16px 子格被破坏时，局部更新该子格的碰撞体；**只有当 64px 大格内的全部 16 个子格均被完全摧毁后，上层网格才会被置为空气**。
-- **碰撞体生成 (`CollisionBuilder`)**：
+- **碰撞体生成 (`NativeTerrain`)**：
   - 静态墙体采用贪心矩形合并算法生成碰撞盒，按 3×3 环形平铺实例化（共享碰撞形状）。
   - 可破坏层按区块划分节点管理，局部瓦片受损时仅局部重建受影响区块的碰撞体，减少不必要的全图更新开销。
 - **攀爬机制**：
   - 玩家角色中心或脚底进入梯子或铁链单元格时，按“上”键主动抓取并进入攀爬状态（不受重力影响），上下移动速度按瓦片配置缩放。
   - 到达梯子顶端且脚底离开梯子后，按“上”键可跃离梯子。铁链顶底设有承托碰撞板。攀爬状态下禁止触发空中下冲。
+
+### 3. 单人地形 HP 回溯
+- `NativeTerrain` 在首次写入时捕获每个改动宏观格的改前值：网格、格级 HP、子格 HP。`Level0` 只负责提交记录时间；未受损格不复制，残血变化也入账。
+- 原生历史二分定位回溯区间，再按写入逆序恢复；相同时间戳保持后写先还。松手裁掉已改写的未来，重开关卡清空历史。
+- 恢复时使用记录中的实际残血，不根据纹理猜测满血。数据恢复不触发伤害、记账或收益回调；仅子格存亡改变时更新贴图和碰撞脏块，纯 HP 恢复不重建碰撞。
+- 单人场景启用时间历史；多人使用同一原生状态和伤害算法，另外保存预测差分与权威基线。Beta 回溯范围仍是自身角色和存活的自身弹丸。详见[迁移记录](native_terrain_migration.md)。
 
 ---
 
@@ -80,9 +87,11 @@
 | 图层 | 二进制位 | 用途说明 | 交互规则与机制 |
 |---|---|---|---|
 | **Layer 1** | `1` | 地形碰撞层 | 永久墙体与可破坏结构层。 |
-| **Layer 2** | `2` | 玩家角色 | 本地玩家角色及远端玩家物理刚体。 |
+| **Layer 2** | `2` | 玩家角色 | 本地玩家、普通对手及队伍 1 的角色阻挡体。 |
 | **Layer 3** | `4` | 敌人实体 | 普通敌人与精英敌人。 |
 | **Layer 4** | `8` | 地面武器掉落物 | 地面武器拾取实体（`WeaponPickup`）。 |
+| **Layer 5** | `16` | 队伍 2 | 队伍 2 的角色阻挡体。 |
+| **Layer 6** | `32` | 预测角色锚点 | 客户端对手碰撞体推进时检测的本地角色形状。 |
 
 - **子弹碰撞掩码**：常规子弹设置 `collision_mask = 5`（检测 Layer 1 地形与 Layer 3 敌人）。
 - **掉落物碰撞与拾取机制**：地面武器设置 `collision_layer = 8`，`collision_mask = 9`（仅与地形及其他掉落物发生物理碰撞）。玩家与子弹的掩码均不包含 Layer 4，因此不会阻挡玩家移动，玩家拾取武器完全通过 Area2D 触发区域检测实现。

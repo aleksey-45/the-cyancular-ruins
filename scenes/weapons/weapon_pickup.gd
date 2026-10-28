@@ -163,7 +163,6 @@ func age() -> float:
 	return _age
 
 
-# ── 拾取提示 ──
 var _prompt: PickupPrompt = null
 
 

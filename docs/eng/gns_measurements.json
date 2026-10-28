@@ -1,0 +1,1649 @@
+{
+  "date": "2026-10-22",
+  "engine": "Godot 4.7.1 Windows x64",
+  "gns_version": "v1.6.1",
+  "gns_commit": "d534c19aa760df3fb75fd20db13ba1932b8a5463",
+  "working_tree_base": "9fc890aa7912c5aa2f7a9f7fc254c3c574e82ae3",
+  "send_rate_bytes_s_per_connection": 65536,
+  "compression": "Godot Zstd per message before encryption",
+  "native_sha256": "8e81ff896428bb3d4664f901f49afe88ebe56fba2d6f2dae5670e07374ed6a5b",
+  "source_sha256": {
+    "native/gns/gns.cpp": "aca22111b827acfeafbab5e0bf0a2e6ffe86d2f86cef8694f540fe541ff0ca4a",
+    "core/net/net_bus.gd": "4197f1195cbcebb9036f35ce38a3de25320af396b002cc93e95951e34f23c6c6",
+    "core/net/local_server.gd": "4900a235bed7ab945d076f50bec7e30ae2c57de158ac26efa31eb5631d72465c",
+    "tests/network/run_matches.py": "4f7826a73d890bb548c55b6d73ba78c673a8007d24f99ac036fb31f9442e6a0c",
+    "tests/network/match_input.gd": "6c691271d2b067176625a5b039fe6e3ee0e20decff750e83cfd972918beac85a"
+  },
+  "profiles": {
+    "50ms": {
+      "label": "≤0.1% / ≤50 ms",
+      "rtt_ms": [
+        10,
+        50
+      ],
+      "loss": [
+        0.0002,
+        0.001
+      ]
+    },
+    "100ms": {
+      "label": "≤0.5% / ≤100 ms",
+      "rtt_ms": [
+        40,
+        100
+      ],
+      "loss": [
+        0.001,
+        0.005
+      ]
+    },
+    "200ms": {
+      "label": "≤1% / ≤200 ms",
+      "rtt_ms": [
+        80,
+        200
+      ],
+      "loss": [
+        0.002,
+        0.01
+      ]
+    },
+    "300ms": {
+      "label": "≤2% / ≤300 ms",
+      "rtt_ms": [
+        120,
+        300
+      ],
+      "loss": [
+        0.005,
+        0.02
+      ]
+    },
+    "500ms": {
+      "label": "≤5% / ≤500 ms",
+      "rtt_ms": [
+        200,
+        500
+      ],
+      "loss": [
+        0.01,
+        0.05
+      ]
+    },
+    "over500ms": {
+      "label": "≥5% / ≥500 ms",
+      "rtt_ms": [
+        500,
+        1000
+      ],
+      "loss": [
+        0.05,
+        0.15
+      ]
+    }
+  },
+  "network_method": "Whole client window excluded for client/server frame >50 ms, rebaseline, disconnect, incomplete measurement or failed run. Playback hold wall time / eligible observed wall time.",
+  "runs": [
+    {
+      "count": 8,
+      "profile": "50ms",
+      "seed": 1000,
+      "bandwidth_kbps": 0,
+      "failures": [],
+      "stop_reason": "completed",
+      "elapsed_seconds": 43.64100000000326,
+      "network": {
+        "valid_clients": 0,
+        "expected_clients": 8,
+        "excluded": [
+          {
+            "index": 0,
+            "reasons": [
+              "server_long_frame",
+              "client_long_frame"
+            ]
+          },
+          {
+            "index": 1,
+            "reasons": [
+              "server_long_frame",
+              "client_long_frame"
+            ]
+          },
+          {
+            "index": 2,
+            "reasons": [
+              "server_long_frame",
+              "client_long_frame"
+            ]
+          },
+          {
+            "index": 3,
+            "reasons": [
+              "server_long_frame",
+              "client_long_frame"
+            ]
+          },
+          {
+            "index": 4,
+            "reasons": [
+              "server_long_frame",
+              "client_long_frame"
+            ]
+          },
+          {
+            "index": 5,
+            "reasons": [
+              "server_long_frame"
+            ]
+          },
+          {
+            "index": 6,
+            "reasons": [
+              "server_long_frame"
+            ]
+          },
+          {
+            "index": 7,
+            "reasons": [
+              "server_long_frame",
+              "client_long_frame"
+            ]
+          }
+        ],
+        "observed_seconds": 0,
+        "stall_seconds": 0,
+        "stall_fraction": null,
+        "longest_stall_seconds": null,
+        "server_max_frame_ms": 55.6719303131104,
+        "client_max_frame_ms": [
+          51.4838695526123,
+          72.8888511657715,
+          55.31907081604,
+          60.2560043334961,
+          55.1979541778564,
+          48.8979816436768,
+          36.7591381072998,
+          56.4239025115967
+        ],
+        "input_missing_fraction": null,
+        "state_gap_ms": null,
+        "ping_ms": null
+      },
+      "sender_offered_ipv4_kbps": {
+        "server_upload": {
+          "packets": 5232,
+          "ipv4_bytes": 1181976,
+          "mean_kbps": 787.984,
+          "peak_1s_kbps": 1336.296,
+          "peak_100ms_kbps": 4847.36
+        },
+        "server_download": {
+          "packets": 5763,
+          "ipv4_bytes": 908145,
+          "mean_kbps": 605.43,
+          "peak_1s_kbps": 637.864,
+          "peak_100ms_kbps": 779.76
+        }
+      },
+      "result": ".test_logs/network/gns_tiers/8_50ms_1000_0kbps/result.json"
+    },
+    {
+      "count": 8,
+      "profile": "100ms",
+      "seed": 1000,
+      "bandwidth_kbps": 0,
+      "failures": [],
+      "stop_reason": "completed",
+      "elapsed_seconds": 43.671999999991385,
+      "network": {
+        "valid_clients": 8,
+        "expected_clients": 8,
+        "excluded": [],
+        "observed_seconds": 96.0,
+        "stall_seconds": 0.0,
+        "stall_fraction": 0.0,
+        "longest_stall_seconds": 0.0,
+        "server_max_frame_ms": 25.3360271453857,
+        "client_max_frame_ms": [
+          21.4641094207764,
+          21.2860107421875,
+          20.6749439239502,
+          20.6649303436279,
+          22.1519470214844,
+          21.6929912567139,
+          23.594856262207,
+          21.4428901672363
+        ],
+        "input_missing_fraction": 0.009027777777777777,
+        "state_gap_ms": {
+          "mean": 33.48933883480259,
+          "p50": 33.3230495452881,
+          "p95": 48.1698513031006,
+          "p99": 50.137996673584,
+          "max": 166.653871536255
+        },
+        "ping_ms": {
+          "mean": 67.98076923076923,
+          "p50": 68,
+          "p95": 97,
+          "p99": 99,
+          "max": 99
+        }
+      },
+      "sender_offered_ipv4_kbps": {
+        "server_upload": {
+          "packets": 6159,
+          "ipv4_bytes": 1228738,
+          "mean_kbps": 819.1586666666666,
+          "peak_1s_kbps": 1422.336,
+          "peak_100ms_kbps": 2177.84
+        },
+        "server_download": {
+          "packets": 5763,
+          "ipv4_bytes": 919357,
+          "mean_kbps": 612.9046666666666,
+          "peak_1s_kbps": 647.12,
+          "peak_100ms_kbps": 731.6
+        }
+      },
+      "result": ".test_logs/network/gns_tiers/8_100ms_1000_0kbps/result.json"
+    },
+    {
+      "count": 8,
+      "profile": "200ms",
+      "seed": 1000,
+      "bandwidth_kbps": 0,
+      "failures": [],
+      "stop_reason": "completed",
+      "elapsed_seconds": 43.719000000011874,
+      "network": {
+        "valid_clients": 8,
+        "expected_clients": 8,
+        "excluded": [],
+        "observed_seconds": 96.0,
+        "stall_seconds": 0.2145771980285642,
+        "stall_fraction": 0.0022351791461308773,
+        "longest_stall_seconds": 0.132889986038208,
+        "server_max_frame_ms": 22.7460861206055,
+        "client_max_frame_ms": [
+          20.8940505981445,
+          20.4439163208008,
+          21.9449996948242,
+          21.5599536895752,
+          20.2491283416748,
+          21.0978984832764,
+          21.2209224700928,
+          21.1179256439209
+        ],
+        "input_missing_fraction": 0.015256588072122053,
+        "state_gap_ms": {
+          "mean": 33.606398473964646,
+          "p50": 33.3271026611328,
+          "p95": 47.9609966278076,
+          "p99": 50.1229763031006,
+          "max": 333.268880844116
+        },
+        "ping_ms": {
+          "mean": 137.32692307692307,
+          "p50": 140,
+          "p95": 197,
+          "p99": 197,
+          "max": 198
+        }
+      },
+      "sender_offered_ipv4_kbps": {
+        "server_upload": {
+          "packets": 5576,
+          "ipv4_bytes": 1199107,
+          "mean_kbps": 799.4046666666666,
+          "peak_1s_kbps": 1298.872,
+          "peak_100ms_kbps": 1803.92
+        },
+        "server_download": {
+          "packets": 5765,
+          "ipv4_bytes": 929098,
+          "mean_kbps": 619.3986666666666,
+          "peak_1s_kbps": 672.488,
+          "peak_100ms_kbps": 779.6
+        }
+      },
+      "result": ".test_logs/network/gns_tiers/8_200ms_1000_0kbps/result.json"
+    },
+    {
+      "count": 8,
+      "profile": "300ms",
+      "seed": 1000,
+      "bandwidth_kbps": 0,
+      "failures": [],
+      "stop_reason": "completed",
+      "elapsed_seconds": 43.687000000005355,
+      "network": {
+        "valid_clients": 8,
+        "expected_clients": 8,
+        "excluded": [],
+        "observed_seconds": 96.0,
+        "stall_seconds": 0.3868641853332512,
+        "stall_fraction": 0.004029835263888033,
+        "longest_stall_seconds": 0.116441965103149,
+        "server_max_frame_ms": 24.0778923034668,
+        "client_max_frame_ms": [
+          22.2780704498291,
+          20.7109451293945,
+          22.4959850311279,
+          22.2909450531006,
+          23.3049392700195,
+          21.2938785552979,
+          22.8888988494873,
+          22.413969039917
+        ],
+        "input_missing_fraction": 0.07197496522948539,
+        "state_gap_ms": {
+          "mean": 33.85810992048957,
+          "p50": 33.3240032196045,
+          "p95": 47.9378700256348,
+          "p99": 50.178050994873,
+          "max": 350.008964538574
+        },
+        "ping_ms": {
+          "mean": 207.04807692307693,
+          "p50": 209,
+          "p95": 295,
+          "p99": 297,
+          "max": 297
+        }
+      },
+      "sender_offered_ipv4_kbps": {
+        "server_upload": {
+          "packets": 5558,
+          "ipv4_bytes": 1231381,
+          "mean_kbps": 820.9206666666666,
+          "peak_1s_kbps": 1320.344,
+          "peak_100ms_kbps": 1583.68
+        },
+        "server_download": {
+          "packets": 5768,
+          "ipv4_bytes": 949825,
+          "mean_kbps": 633.2166666666666,
+          "peak_1s_kbps": 694.928,
+          "peak_100ms_kbps": 813.2
+        }
+      },
+      "result": ".test_logs/network/gns_tiers/8_300ms_1000_0kbps/result.json"
+    },
+    {
+      "count": 8,
+      "profile": "500ms",
+      "seed": 1000,
+      "bandwidth_kbps": 0,
+      "failures": [],
+      "stop_reason": "completed",
+      "elapsed_seconds": 43.719000000011874,
+      "network": {
+        "valid_clients": 3,
+        "expected_clients": 8,
+        "excluded": [
+          {
+            "index": 0,
+            "reasons": [
+              "client_long_frame"
+            ]
+          },
+          {
+            "index": 1,
+            "reasons": [
+              "client_long_frame"
+            ]
+          },
+          {
+            "index": 3,
+            "reasons": [
+              "client_long_frame"
+            ]
+          },
+          {
+            "index": 6,
+            "reasons": [
+              "client_long_frame"
+            ]
+          },
+          {
+            "index": 7,
+            "reasons": [
+              "client_long_frame"
+            ]
+          }
+        ],
+        "observed_seconds": 36.0,
+        "stall_seconds": 1.673210144042969,
+        "stall_fraction": 0.046478059556749135,
+        "longest_stall_seconds": 0.31517505645752,
+        "server_max_frame_ms": 47.4960803985596,
+        "client_max_frame_ms": [
+          97.3749160766602,
+          100.077867507935,
+          28.1050205230713,
+          94.0170288085938,
+          46.2641716003418,
+          33.5781574249268,
+          105.180978775024,
+          64.094066619873
+        ],
+        "input_missing_fraction": null,
+        "state_gap_ms": {
+          "mean": 34.37093665316644,
+          "p50": 33.318042755127,
+          "p95": 49.8380661010742,
+          "p99": 66.8549537658691,
+          "max": 216.539859771729
+        },
+        "ping_ms": {
+          "mean": 349.20512820512823,
+          "p50": 353,
+          "p95": 488,
+          "p99": 494,
+          "max": 496
+        }
+      },
+      "sender_offered_ipv4_kbps": {
+        "server_upload": {
+          "packets": 5714,
+          "ipv4_bytes": 1385478,
+          "mean_kbps": 923.652,
+          "peak_1s_kbps": 1815.464,
+          "peak_100ms_kbps": 6065.12
+        },
+        "server_download": {
+          "packets": 5786,
+          "ipv4_bytes": 976902,
+          "mean_kbps": 651.268,
+          "peak_1s_kbps": 746.992,
+          "peak_100ms_kbps": 884.08
+        }
+      },
+      "result": ".test_logs/network/gns_tiers/8_500ms_1000_0kbps/result.json"
+    },
+    {
+      "count": 8,
+      "profile": "over500ms",
+      "seed": 1000,
+      "bandwidth_kbps": 0,
+      "failures": [],
+      "stop_reason": "completed",
+      "elapsed_seconds": 43.65600000001723,
+      "network": {
+        "valid_clients": 1,
+        "expected_clients": 8,
+        "excluded": [
+          {
+            "index": 0,
+            "reasons": [
+              "client_long_frame"
+            ]
+          },
+          {
+            "index": 1,
+            "reasons": [
+              "client_long_frame"
+            ]
+          },
+          {
+            "index": 2,
+            "reasons": [
+              "client_long_frame"
+            ]
+          },
+          {
+            "index": 3,
+            "reasons": [
+              "client_long_frame"
+            ]
+          },
+          {
+            "index": 4,
+            "reasons": [
+              "client_long_frame"
+            ]
+          },
+          {
+            "index": 6,
+            "reasons": [
+              "client_long_frame"
+            ]
+          },
+          {
+            "index": 7,
+            "reasons": [
+              "client_long_frame"
+            ]
+          }
+        ],
+        "observed_seconds": 12.0,
+        "stall_seconds": 2.40428733825684,
+        "stall_fraction": 0.20035727818807,
+        "longest_stall_seconds": 1.13442206382751,
+        "server_max_frame_ms": 22.7420330047607,
+        "client_max_frame_ms": [
+          55.3350448608398,
+          63.3580684661865,
+          53.8411140441895,
+          54.4121265411377,
+          53.8530349731445,
+          24.0330696105957,
+          50.9519577026367,
+          59.1549873352051
+        ],
+        "input_missing_fraction": null,
+        "state_gap_ms": {
+          "mean": 35.66850296088627,
+          "p50": 33.3321094512939,
+          "p95": 50.0128269195557,
+          "p99": 92.7729606628418,
+          "max": 226.184129714966
+        },
+        "ping_ms": {
+          "mean": 777.3076923076923,
+          "p50": 825,
+          "p95": 950,
+          "p99": 950,
+          "max": 994
+        }
+      },
+      "sender_offered_ipv4_kbps": {
+        "server_upload": {
+          "packets": 3750,
+          "ipv4_bytes": 920622,
+          "mean_kbps": 613.748,
+          "peak_1s_kbps": 855.152,
+          "peak_100ms_kbps": 1595.28
+        },
+        "server_download": {
+          "packets": 5782,
+          "ipv4_bytes": 1017822,
+          "mean_kbps": 678.548,
+          "peak_1s_kbps": 791.344,
+          "peak_100ms_kbps": 913.84
+        }
+      },
+      "result": ".test_logs/network/gns_tiers/8_over500ms_1000_0kbps/result.json"
+    },
+    {
+      "count": 8,
+      "profile": "50ms",
+      "seed": 1000,
+      "bandwidth_kbps": 0,
+      "failures": [],
+      "stop_reason": "completed",
+      "elapsed_seconds": 44.155999999988126,
+      "network": {
+        "valid_clients": 8,
+        "expected_clients": 8,
+        "excluded": [],
+        "observed_seconds": 96.0,
+        "stall_seconds": 0.0,
+        "stall_fraction": 0.0,
+        "longest_stall_seconds": 0.0,
+        "server_max_frame_ms": 30.8799743652344,
+        "client_max_frame_ms": [
+          29.3099880218506,
+          27.8592109680176,
+          28.555154800415,
+          26.0059833526611,
+          28.01513671875,
+          27.2090435028076,
+          28.5420417785645,
+          27.9240608215332
+        ],
+        "input_missing_fraction": 0.0074549237170596395,
+        "state_gap_ms": {
+          "mean": 33.31190773270679,
+          "p50": 33.3230495452881,
+          "p95": 48.42209815979,
+          "p99": 50.1518249511719,
+          "max": 65.1249885559082
+        },
+        "ping_ms": {
+          "mean": 28.14423076923077,
+          "p50": 28,
+          "p95": 48,
+          "p99": 48,
+          "max": 49
+        }
+      },
+      "sender_offered_ipv4_kbps": {
+        "server_upload": {
+          "packets": 6101,
+          "ipv4_bytes": 1186108,
+          "mean_kbps": 790.7386666666666,
+          "peak_1s_kbps": 1511.616,
+          "peak_100ms_kbps": 2727.04
+        },
+        "server_download": {
+          "packets": 5767,
+          "ipv4_bytes": 899746,
+          "mean_kbps": 599.8306666666666,
+          "peak_1s_kbps": 641.6,
+          "peak_100ms_kbps": 729.04
+        }
+      },
+      "result": ".test_logs/network/gns_50ms_repeat/8_50ms_1000_0kbps/result.json"
+    }
+  ],
+  "matches": [
+    {
+      "source": ".test_logs/network/gns_two/result.json",
+      "mode": "royale",
+      "count": 2,
+      "rtt": 0,
+      "jitter": 0,
+      "loss": 0,
+      "transport": "gns",
+      "compression": "zstd",
+      "drop": true,
+      "failures": [],
+      "stop_reason": "completed",
+      "elapsed_seconds": 29.719000000011874,
+      "max_convergence_error": 0.0,
+      "corrections": [
+        {
+          "index": 0,
+          "corrections_8px": 15,
+          "corrections_32px": 1,
+          "corrections_128px": 0,
+          "max_correction_px": 1442.88952636719,
+          "max_replay_ticks": 3
+        },
+        {
+          "index": 1,
+          "corrections_8px": 15,
+          "corrections_32px": 1,
+          "corrections_128px": 0,
+          "max_correction_px": 343.066650390625,
+          "max_replay_ticks": 4
+        }
+      ]
+    },
+    {
+      "source": ".test_logs/network/gns_six/result.json",
+      "mode": "royale",
+      "count": 6,
+      "rtt": 80,
+      "jitter": 15,
+      "loss": 0.05,
+      "transport": "gns",
+      "compression": "zstd",
+      "drop": true,
+      "failures": [],
+      "stop_reason": "completed",
+      "elapsed_seconds": 31.203000000008615,
+      "max_convergence_error": 0.0,
+      "corrections": [
+        {
+          "index": 0,
+          "corrections_8px": 18,
+          "corrections_32px": 10,
+          "corrections_128px": 1,
+          "max_correction_px": 1523.28002929688,
+          "max_replay_ticks": 9
+        },
+        {
+          "index": 1,
+          "corrections_8px": 18,
+          "corrections_32px": 6,
+          "corrections_128px": 1,
+          "max_correction_px": 779.797668457031,
+          "max_replay_ticks": 9
+        },
+        {
+          "index": 2,
+          "corrections_8px": 16,
+          "corrections_32px": 4,
+          "corrections_128px": 1,
+          "max_correction_px": 639.834350585938,
+          "max_replay_ticks": 8
+        },
+        {
+          "index": 3,
+          "corrections_8px": 21,
+          "corrections_32px": 6,
+          "corrections_128px": 1,
+          "max_correction_px": 1606.35180664063,
+          "max_replay_ticks": 9
+        },
+        {
+          "index": 4,
+          "corrections_8px": 18,
+          "corrections_32px": 6,
+          "corrections_128px": 1,
+          "max_correction_px": 746.527404785156,
+          "max_replay_ticks": 9
+        },
+        {
+          "index": 5,
+          "corrections_8px": 24,
+          "corrections_32px": 10,
+          "corrections_128px": 1,
+          "max_correction_px": 654.435302734375,
+          "max_replay_ticks": 11
+        }
+      ]
+    },
+    {
+      "source": ".test_logs/network/gns_eight/result.json",
+      "mode": "royale",
+      "count": 8,
+      "rtt": 150,
+      "jitter": 25,
+      "loss": 0.05,
+      "transport": "gns",
+      "compression": "zstd",
+      "drop": true,
+      "failures": [],
+      "stop_reason": "completed",
+      "elapsed_seconds": 32.421999999991385,
+      "max_convergence_error": 0.0,
+      "corrections": [
+        {
+          "index": 0,
+          "corrections_8px": 20,
+          "corrections_32px": 6,
+          "corrections_128px": 0,
+          "max_correction_px": 1508.73583984375,
+          "max_replay_ticks": 14
+        },
+        {
+          "index": 1,
+          "corrections_8px": 27,
+          "corrections_32px": 13,
+          "corrections_128px": 1,
+          "max_correction_px": 157.369384765625,
+          "max_replay_ticks": 13
+        },
+        {
+          "index": 2,
+          "corrections_8px": 19,
+          "corrections_32px": 10,
+          "corrections_128px": 2,
+          "max_correction_px": 761.878051757813,
+          "max_replay_ticks": 14
+        },
+        {
+          "index": 3,
+          "corrections_8px": 23,
+          "corrections_32px": 10,
+          "corrections_128px": 3,
+          "max_correction_px": 903.9697265625,
+          "max_replay_ticks": 15
+        },
+        {
+          "index": 4,
+          "corrections_8px": 26,
+          "corrections_32px": 11,
+          "corrections_128px": 2,
+          "max_correction_px": 1374.64416503906,
+          "max_replay_ticks": 14
+        },
+        {
+          "index": 5,
+          "corrections_8px": 21,
+          "corrections_32px": 9,
+          "corrections_128px": 0,
+          "max_correction_px": 1315.03845214844,
+          "max_replay_ticks": 14
+        },
+        {
+          "index": 6,
+          "corrections_8px": 20,
+          "corrections_32px": 8,
+          "corrections_128px": 1,
+          "max_correction_px": 1613.92993164063,
+          "max_replay_ticks": 14
+        },
+        {
+          "index": 7,
+          "corrections_8px": 36,
+          "corrections_32px": 28,
+          "corrections_128px": 11,
+          "max_correction_px": 696.425231933594,
+          "max_replay_ticks": 14
+        }
+      ]
+    },
+    {
+      "source": ".test_logs/network/gns_exported/result.json",
+      "mode": "royale",
+      "count": 2,
+      "rtt": 0,
+      "jitter": 0,
+      "loss": 0,
+      "transport": "gns",
+      "compression": "zstd",
+      "drop": true,
+      "failures": [],
+      "stop_reason": "completed",
+      "elapsed_seconds": 30.01600000000326,
+      "max_convergence_error": 0.0,
+      "corrections": [
+        {
+          "index": 0,
+          "corrections_8px": 2,
+          "corrections_32px": 1,
+          "corrections_128px": 0,
+          "max_correction_px": 104.999877929688,
+          "max_replay_ticks": 4
+        },
+        {
+          "index": 1,
+          "corrections_8px": 2,
+          "corrections_32px": 1,
+          "corrections_128px": 0,
+          "max_correction_px": 210.0,
+          "max_replay_ticks": 2
+        }
+      ]
+    },
+    {
+      "source": ".test_logs/network/gns_direct/result.json",
+      "mode": "royale",
+      "count": 2,
+      "rtt": 0,
+      "jitter": 0,
+      "loss": 0,
+      "transport": "gns",
+      "compression": "zstd",
+      "drop": true,
+      "failures": [],
+      "stop_reason": "completed",
+      "elapsed_seconds": 31.0,
+      "max_convergence_error": 0.0,
+      "corrections": [
+        {
+          "index": 0,
+          "corrections_8px": 15,
+          "corrections_32px": 2,
+          "corrections_128px": 0,
+          "max_correction_px": 892.651550292969,
+          "max_replay_ticks": 4
+        },
+        {
+          "index": 1,
+          "corrections_8px": 14,
+          "corrections_32px": 3,
+          "corrections_128px": 0,
+          "max_correction_px": 1343.96374511719,
+          "max_replay_ticks": 4
+        }
+      ]
+    },
+    {
+      "source": ".test_logs/network/gns_public_relay/result.json",
+      "mode": "royale",
+      "count": 8,
+      "rtt": 0,
+      "jitter": 0,
+      "loss": 0,
+      "transport": "gns",
+      "compression": "zstd",
+      "drop": true,
+      "failures": [],
+      "stop_reason": "completed",
+      "elapsed_seconds": 32.64100000000326,
+      "max_convergence_error": 0.0,
+      "corrections": [
+        {
+          "index": 0,
+          "corrections_8px": 21,
+          "corrections_32px": 7,
+          "corrections_128px": 4,
+          "max_correction_px": 1158.65490722656,
+          "max_replay_ticks": 8
+        },
+        {
+          "index": 1,
+          "corrections_8px": 16,
+          "corrections_32px": 5,
+          "corrections_128px": 1,
+          "max_correction_px": 1302.42321777344,
+          "max_replay_ticks": 8
+        },
+        {
+          "index": 2,
+          "corrections_8px": 18,
+          "corrections_32px": 4,
+          "corrections_128px": 1,
+          "max_correction_px": 733.397583007813,
+          "max_replay_ticks": 9
+        },
+        {
+          "index": 3,
+          "corrections_8px": 14,
+          "corrections_32px": 4,
+          "corrections_128px": 1,
+          "max_correction_px": 1279.5498046875,
+          "max_replay_ticks": 9
+        },
+        {
+          "index": 4,
+          "corrections_8px": 26,
+          "corrections_32px": 10,
+          "corrections_128px": 3,
+          "max_correction_px": 1338.90551757813,
+          "max_replay_ticks": 9
+        },
+        {
+          "index": 5,
+          "corrections_8px": 13,
+          "corrections_32px": 4,
+          "corrections_128px": 0,
+          "max_correction_px": 929.396423339844,
+          "max_replay_ticks": 10
+        },
+        {
+          "index": 6,
+          "corrections_8px": 20,
+          "corrections_32px": 8,
+          "corrections_128px": 1,
+          "max_correction_px": 960.682250976563,
+          "max_replay_ticks": 8
+        },
+        {
+          "index": 7,
+          "corrections_8px": 17,
+          "corrections_32px": 6,
+          "corrections_128px": 1,
+          "max_correction_px": 1379.42260742188,
+          "max_replay_ticks": 8
+        }
+      ]
+    },
+    {
+      "source": ".test_logs/network/gns_team/result.json",
+      "mode": "team",
+      "count": 6,
+      "rtt": 80,
+      "jitter": 15,
+      "loss": 0.05,
+      "transport": "gns",
+      "compression": "zstd",
+      "drop": true,
+      "failures": [
+        "client0",
+        "client1",
+        "client2",
+        "client3",
+        "client4",
+        "client5",
+        "server",
+        "client0 logging: ['session_end']",
+        "client1 logging: ['session_end']",
+        "client2 logging: ['session_end']",
+        "client3 logging: ['session_end']",
+        "client4 logging: ['session_end']",
+        "client5 logging: ['session_end']"
+      ],
+      "stop_reason": "timeout",
+      "elapsed_seconds": 91.90599999998813,
+      "max_convergence_error": null,
+      "corrections": [
+        {
+          "index": 0,
+          "corrections_8px": 39,
+          "corrections_32px": 9,
+          "corrections_128px": 4,
+          "max_correction_px": 1300.06115722656,
+          "max_replay_ticks": 9
+        },
+        {
+          "index": 1,
+          "corrections_8px": 43,
+          "corrections_32px": 10,
+          "corrections_128px": 1,
+          "max_correction_px": 151.357177734375,
+          "max_replay_ticks": 9
+        },
+        {
+          "index": 2,
+          "corrections_8px": 41,
+          "corrections_32px": 5,
+          "corrections_128px": 1,
+          "max_correction_px": 664.118774414063,
+          "max_replay_ticks": 9
+        },
+        {
+          "index": 3,
+          "corrections_8px": 37,
+          "corrections_32px": 12,
+          "corrections_128px": 4,
+          "max_correction_px": 1432.33642578125,
+          "max_replay_ticks": 9
+        },
+        {
+          "index": 4,
+          "corrections_8px": 43,
+          "corrections_32px": 14,
+          "corrections_128px": 3,
+          "max_correction_px": 769.749633789063,
+          "max_replay_ticks": 9
+        },
+        {
+          "index": 5,
+          "corrections_8px": 32,
+          "corrections_32px": 9,
+          "corrections_128px": 4,
+          "max_correction_px": 476.45361328125,
+          "max_replay_ticks": 9
+        }
+      ]
+    }
+  ],
+  "regression": {
+    "unit": [
+      {
+        "test": "ai_input_source_smoke",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "app_info_smoke",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "beam_trace_smoke",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "bullet_tile_fx_smoke",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "enemy_logic_smoke",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "grace_window_smoke",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "grain_account_smoke",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "grenade_smoke",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "ground_weapon_field_smoke",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "laser_weapon_smoke",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "match_result_payload_smoke",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "menu_theme_mirror_smoke",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "move_feel_smoke",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "network_input_smoke",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "player_contract_smoke",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "pvp_twin_smoke",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "score_rules_smoke",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "settings_actions_smoke",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "sprite_bounds_smoke",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "squash_stretch_smoke",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "tile_query_smoke",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "time_economy_smoke",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "time_field_smoke",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "time_rules_smoke",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "ui_palette_single_source_smoke",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "unstick_smoke",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "weapon_inventory_smoke",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "allscript_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "ammo_rollback_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "elite_drop_probe",
+        "ok": false,
+        "exit": 3221225477
+      },
+      {
+        "test": "explosion_falloff_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "feedback_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "game_log_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "grain_crystal_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "info_page_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "kh_l1_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "kh_l4_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "level0_weapon_scatter_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "lobby_row_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "map_catalog_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "map_format_v4_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "menu_style_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "menu_weapon_grid_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "path_integrity_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "preview_visibility_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "pvp_hud_layout_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "replica_smoothness_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "rewind_elite_damage_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "rewind_fuse_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "rewind_phantom_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "rewind_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "settings_display_section_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "settings_esc_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "squash_host_enemy_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "squash_host_water_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "subcell_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "tile_collision_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "tile_rewind_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "watch_hud_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "water_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "weapon_pickup_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "wrap_probe",
+        "ok": true,
+        "exit": 0
+      }
+    ],
+    "network": [
+      {
+        "test": "authority_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "input_playback_smoke",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "local_server_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "playback_lifecycle_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "protocol_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "transport_probe",
+        "ok": true,
+        "exit": 0
+      }
+    ],
+    "visual": [
+      {
+        "test": "combat_hud_visual_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "hue_tint_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "kh_l3_visual_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "kh_l4_visual_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "kh_visual_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "match_result_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "minimap_circle_probe",
+        "ok": true,
+        "exit": 0
+      },
+      {
+        "test": "squash_stretch_probe",
+        "ok": true,
+        "exit": 0
+      }
+    ]
+  },
+  "process_lifecycle": [
+    {
+      "mode": "normal",
+      "exit": 0,
+      "children": [
+        "child",
+        "cli",
+        "descendant",
+        "easytier",
+        "server"
+      ],
+      "all_children_exited": true,
+      "unrelated_survived": true
+    },
+    {
+      "mode": "window",
+      "exit": 0,
+      "children": [
+        "child",
+        "cli",
+        "descendant",
+        "easytier",
+        "server"
+      ],
+      "all_children_exited": true,
+      "unrelated_survived": true
+    },
+    {
+      "mode": "leave",
+      "exit": 0,
+      "children": [
+        "child",
+        "cli",
+        "descendant",
+        "easytier",
+        "server"
+      ],
+      "all_children_exited": true,
+      "unrelated_survived": true
+    },
+    {
+      "mode": "transition",
+      "exit": 0,
+      "children": [
+        "child",
+        "descendant",
+        "easytier",
+        "server"
+      ],
+      "all_children_exited": true,
+      "unrelated_survived": true
+    },
+    {
+      "mode": "forced",
+      "exit": 1,
+      "children": [
+        "child",
+        "cli",
+        "descendant",
+        "easytier",
+        "server"
+      ],
+      "all_children_exited": true,
+      "unrelated_survived": true
+    },
+    {
+      "mode": "startup",
+      "exit": 1,
+      "children": [
+        "easytier",
+        "server"
+      ],
+      "all_children_exited": true,
+      "unrelated_survived": true
+    }
+  ],
+  "compression_comparison": [
+    {
+      "compression": "zstd",
+      "failures": [],
+      "network": {
+        "valid_clients": 8,
+        "expected_clients": 8,
+        "excluded": [],
+        "observed_seconds": 96.0,
+        "stall_seconds": 0.0,
+        "stall_fraction": 0.0,
+        "longest_stall_seconds": 0.0,
+        "server_max_frame_ms": 31.2838554382324,
+        "client_max_frame_ms": [
+          20.8349227905273,
+          22.7420330047607,
+          22.1431255340576,
+          23.6430168151855,
+          21.914005279541,
+          21.2550163269043,
+          21.9168663024902,
+          23.4689712524414
+        ],
+        "input_missing_fraction": 0.007638888888888889,
+        "state_gap_ms": {
+          "mean": 33.372693296175214,
+          "p50": 33.3201885223389,
+          "p95": 48.3269691467285,
+          "p99": 50.2738952636719,
+          "max": 133.610963821411
+        },
+        "ping_ms": {
+          "mean": 28.721153846153847,
+          "p50": 29,
+          "p95": 48,
+          "p99": 49,
+          "max": 49
+        }
+      },
+      "baseline_phase": {
+        "udp_payload_bytes": 6389,
+        "packets": 24,
+        "seconds": 0.16100001335144043
+      },
+      "combat_phase": {
+        "udp_payload_bytes": 1713699,
+        "packets": 11259,
+        "seconds": 12.0
+      },
+      "server_max_frame_ms": 31.69
+    },
+    {
+      "compression": "raw",
+      "failures": [],
+      "network": {
+        "valid_clients": 0,
+        "expected_clients": 8,
+        "excluded": [
+          {
+            "index": 0,
+            "reasons": [
+              "server_long_frame",
+              "client_long_frame"
+            ]
+          },
+          {
+            "index": 1,
+            "reasons": [
+              "server_long_frame",
+              "client_long_frame"
+            ]
+          },
+          {
+            "index": 2,
+            "reasons": [
+              "server_long_frame",
+              "client_long_frame"
+            ]
+          },
+          {
+            "index": 3,
+            "reasons": [
+              "server_long_frame",
+              "client_long_frame"
+            ]
+          },
+          {
+            "index": 4,
+            "reasons": [
+              "server_long_frame"
+            ]
+          },
+          {
+            "index": 5,
+            "reasons": [
+              "server_long_frame",
+              "client_long_frame"
+            ]
+          },
+          {
+            "index": 6,
+            "reasons": [
+              "server_long_frame",
+              "client_long_frame"
+            ]
+          },
+          {
+            "index": 7,
+            "reasons": [
+              "server_long_frame",
+              "client_long_frame"
+            ]
+          }
+        ],
+        "observed_seconds": 0,
+        "stall_seconds": 0,
+        "stall_fraction": null,
+        "longest_stall_seconds": null,
+        "server_max_frame_ms": 62.9780292510986,
+        "client_max_frame_ms": [
+          50.0240325927734,
+          67.9259300231934,
+          53.6870956420898,
+          80.1348686218262,
+          44.6059703826904,
+          68.4049129486084,
+          50.4429340362549,
+          56.5600395202637
+        ],
+        "input_missing_fraction": null,
+        "state_gap_ms": null,
+        "ping_ms": null
+      },
+      "baseline_phase": {
+        "udp_payload_bytes": 59960,
+        "packets": 80,
+        "seconds": 0.25999999046325684
+      },
+      "combat_phase": {
+        "udp_payload_bytes": 1944638,
+        "packets": 10856,
+        "seconds": 12.0
+      },
+      "server_max_frame_ms": 65.264
+    }
+  ]
+}

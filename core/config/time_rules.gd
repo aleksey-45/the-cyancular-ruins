@@ -10,7 +10,6 @@ extends RefCounted
 # - 本类无外部场景与 Autoload 依赖，客户端与服务端通用。
 # - 客户端上报的数值不可信，统一以服务端校验后的数值为准。
 
-# ── 默认数值 ──
 const DEF_INITIAL := 1000.0
 const DEF_CAP := 1800.0
 const DEF_REWIND_BURN := 150.0     # 回溯消耗速率：颗粒/秒
@@ -22,7 +21,6 @@ const DEF_BLOCK_GAIN := 10         # 每摧毁一个 16px 子格获取颗粒数
 const DEF_DAMAGE_GAIN := 4         # 每造成 1 点伤害获取颗粒数（仅对敌方有效）
 const DEF_HASTE_MULT := 3.0        # 加速倍率（固定 3.0 倍）
 
-# ── 钳制范围（服务端防越界与建房滑条共用）──
 const R_INITIAL := Vector2(0.0, 5000.0)
 const R_CAP := Vector2(100.0, 9999.0)
 const R_BURN := Vector2(10.0, 500.0)

@@ -1,6 +1,12 @@
 class_name ProtocolFixture
 extends RefCounted
 
+static func actor_motion() -> Dictionary:
+	return {"floor": false, "jcut": false, "squat": false, "charge": false, "clatch": false, "swim": false,
+			"haste_mult": 1.0, "slock": 100.0, "coyote": 0.0, "jbuf": 0.0, "ct": 0.0,
+			"lmv_d": 1, "lmv_t": 0.0, "axis": 0.0, "held": 0, "move_mult": Vector2.ONE, "respawn_tick": 0,
+			"input_ack": 0, "action_ack": 0, "input_age": 0, "rewind_path": []}
+
 static func input() -> Dictionary:
 	var record := InputBuffer.neutral()
 	for key in ["pressed", "released", "winst"]: record.erase(key)
@@ -11,10 +17,14 @@ static func frame(tick: int = 60) -> Dictionary:
 			"floor": true, "jcut": false, "squat": false, "charge": false, "wp_s": false, "clatch": false, "swim": false, "down": false,
 			"haste_mult": 1.0, "slock": 0.0, "coyote": 0.0, "jbuf": 0.0, "ct": 0.0, "lmv_t": 0.0,
 			"wp": 100, "wp_t": 0.0, "wp_d": 0.0, "ifr": 0.0, "shot_serial": 0,
-			"facing": 1, "state": 1, "lmv_d": 0, "hp": 100, "winst": 0, "inv": []}
-	var actor := {"pos": state["pos"], "vel": state["vel"], "aim": Vector2.RIGHT, "facing": 1, "pose": 1, "type_id": 0,
+			"facing": 1, "state": 1, "lmv_d": 0, "hp": 100, "winst": 0, "inv": [], "locked": false}
+	var actor := {"pos": state["pos"], "vel": state["vel"], "knock": state["knock"], "aim": Vector2.RIGHT, "facing": 1, "pose": 1, "type_id": 0,
 			"hp": 100, "waterproof": 100, "epoch": 1, "downed": false, "previewing": false, "haste": false, "rewind": false}
-	return {"tick": tick, "map_revision": 0, "world": {"players": {1: actor}, "projectiles": {}, "pickups": {}},
+	actor.merge(actor_motion())
+	actor["driver"] = {"shot_serial": 0, "wp_t": 0.0, "wp_s": false, "wp_d": 0.0,
+			"ifr": 0.0, "locked": false, "winst": 0, "inv": []}
+	actor["input"] = InputBuffer.neutral()
+	return {"tick": tick, "map_revision": 0, "world": {"players": {1: actor}, "pickups": {}, "projectiles": {}},
 			"own": {"epoch": 1, "ack": 0, "action_ack": 0, "timing_seq": 0, "lead": 2, "rewind": false,
 			"input": InputBuffer.neutral(), "state": state}, "time": {}}
 
@@ -24,7 +34,7 @@ static func baseline() -> Dictionary:
 			"sub_hp": {Vector2i(4, 8): 7}, "round_state": {"state": NetEvent.RoundState.COUNTDOWN, "round": 1,
 			"timer": 3.0, "winner": 0, "match_winner": 0, "mvp": 1, "scores": {}, "rounds_won": {}, "deaths": {1: 0},
 			"left": [], "grace": {}, "alive": {1: true}, "stats": {1: {"kills": 0, "deaths": 0, "assists": 0,
-			"dealt": 0, "taken": 0, "kscore": 0, "acs": 0.0}}}, "frame": frame()}
+			"dealt": 0, "taken": 0, "kscore": 0, "acs": 0.0}}}, "frame": frame(), "projectiles": {}}
 
 static func stream(packet: PackedByteArray) -> StreamPeerBuffer:
 	var s := StreamPeerBuffer.new()

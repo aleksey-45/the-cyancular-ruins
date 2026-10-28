@@ -7,8 +7,7 @@ signal died
 # 物理基础(子类可覆写:扑击时关闭重力)
 var use_gravity: bool = true
 
-# 战斗数值(可在检查器调,场景值优先)
-# 血量
+# 战斗参数以场景配置为准。
 @export var hp: int = 3
 # 接触玩家伤害
 @export var contact_damage: int = 1
@@ -54,7 +53,6 @@ var squash: SquashStretch = null
 # 执行 move_and_slide 前记录的垂直速度，用于落地形变判定
 var _pre_move_vy: float = 0.0
 
-# ── 行为钩子(子类覆写)──
 func _ai(_delta: float) -> void:
 	pass
 
@@ -120,9 +118,7 @@ func _physics_process(delta: float) -> void:
 	_turn_cooldown = maxf(_turn_cooldown - delta, 0.0)
 	if use_gravity and not is_on_floor():
 		velocity.y += GameParameters.gravity0 * delta
-	# 地面摩擦:落地且非冲刺(use_gravity=true)时,水平速度平滑衰减,
-	# 避免跳跃/冲刺/击飞的残留速度让敌人在地面滑行。
-	# 放在 _ai 之前,这样 _ai 里新设的跳跃/冲刺初速不受当帧摩擦影响。
+	# 摩擦先于 AI，避免削弱本帧刚设定的跳跃和冲刺速度。
 	if use_gravity and is_on_floor():
 		velocity.x *= GROUND_FRICTION
 		if absf(velocity.x) < STOP_EPSILON:
@@ -155,12 +151,10 @@ func _physics_process(delta: float) -> void:
 			return
 	_flash_update()
 	if is_dead:
-		# 尸体:基础速度也按击退速率指数衰减,滑行逐渐停住(不匀速滑到底);
-		# 下落也随之变慢到"终端速度",更接近失去意识的尸体。
+	# 尸体速度继续衰减。
 		velocity *= exp(-knock_decay_rate * delta)
 	_apply_water(delta)
-	# 爆炸击退位移:单独 move_and_collide(带碰撞),不污染 velocity
-	# (地面吸收向下击退冲量后再减回去会把身体弹起);主移动 move_and_slide 最后跑,地面状态以它为准。
+	# 击退独立碰撞，避免落地冲量污染移动速度；主移动最后更新地面状态。
 	move_and_collide(knock_velocity * delta)
 	knock_velocity *= exp(-knock_decay_rate * delta)
 	# 记录移动前的垂直速度供落地形变计算
@@ -180,9 +174,7 @@ func hurt(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, set_velo
 	if hp <= 0:
 		_begin_death()
 
-# 受击通用逻辑:扣除生命值、击退、白闪。子类覆写 hurt() 时也应调用本方法,避免逻辑分叉。
-# knock_strength <= 0 时回落敌人自身 knockback_strength(旧两参调用行为不变)。
-# set_velocity=true(爆炸):设独立击退向量 knock_velocity(封顶),不覆盖移动速度;false(枪击):叠加到原速度。
+# 枪击叠加速度；爆炸设置独立击退向量。
 func _apply_hit(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, set_velocity: bool = false) -> void:
 	hp -= damage
 	var ks := knockback_strength if knock_strength <= 0.0 else knock_strength
@@ -255,9 +247,7 @@ func _apply_water(delta: float) -> void:
 		if _drown_tick <= 0.0:
 			_drown_tick = EnemyParams.shared.drown_interval
 			hurt(EnemyParams.shared.drown_damage, Vector2.ZERO)
-# 死亡白闪统一入口:置死亡状态、发信号、起白闪计时(渲染由 _flash_update 统一处理,
-# 到期在基类 _physics_process 销毁)。子类可在调用后追加专属处理(JumpBird 播 dead、
-# FlyBird 清冲撞速度)。
+# 统一死亡状态、信号和白闪计时；附加动作由 _on_death 处理。
 func _begin_death() -> void:
 	if is_dead:
 		return
@@ -271,10 +261,7 @@ func _begin_death() -> void:
 	_on_death()
 
 
-# 死亡瞬间的附加动作虚钩(基类空实现)。子类在此追加专属处理:JumpBird 播 dead 动画、
-# FlyBird 清冲撞速度并开重力 —— 这样各子类不必再整份覆写 hurt(),四份 hurt 的分叉点
-# 只在「死亡那一刻做什么」,正该由虚钩承载。
-# 调用点在 _death_timer 赋值之后:白闪计时已成立,子类里改 velocity/use_gravity 不影响它。
+# 死亡计时建立后执行子类动作。
 func _on_death() -> void:
 	pass
 
@@ -307,7 +294,6 @@ func _set_facing(facing_left: bool) -> void:
 	_anim.flip_h = facing_left
 
 
-# ── 共享工具(子类通用)──
 
 func _set_state(s: int) -> void:
 	state = s
@@ -327,8 +313,7 @@ func _anim_duration(name: String) -> float:
 	return float(spf.get_frame_count(name)) / spf.get_animation_speed(name)
 
 
-# 玩家组引用(单机 1 人 / PvP 服务器 2 人通用)。物理帧内按帧缓存一次、帧内复用;
-# 非物理上下文(如测试直调内部方法)每次现查,避免用过期的缓存位置。
+# 玩家列表仅在同一物理帧内缓存。
 func _players_frame() -> Array:
 	if Engine.is_in_physics_frame():
 		var fid := Engine.get_physics_frames()
@@ -422,10 +407,7 @@ func _wrap() -> void:
 		global_position = MazeGenerator.wrap_to_range(global_position,
 				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 		return
-	# 环面渲染回绕:把自己锚定到离玩家最近的副本(跟着主角一起取模)。
-	# 墙体按 3x3 铺贴,相机在接缝处能看到另一侧的墙副本;若敌人仍取模到
-	# [0,MAP),接缝附近就渲染到远副本而「消失」。每次按玩家当前位置重算,
-	# 玩家跨接缝时敌人相对位置连续,不会像之前相机方案那样累计漂移。
+# 映射到离玩家最近的环面副本，保持接缝处显示连续。
 	var p := _nearest_player() as Node2D
 	if p == null:
 		# 无玩家(场景切换/加载中)时退回绝对取模,防止敌人无限漂移

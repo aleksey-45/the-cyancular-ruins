@@ -3,11 +3,9 @@ extends Node
 # 全局共享参数：供玩家、敌人与子弹等实体共享的物理常数、世界网格规格与敌人生成参数。
 # 玩家独立参数已移至 PlayerParams（包含移动、跳跃、冲刺、相机与战斗相关参数）。
 
-# ── 基础物理参数（全局共享）──
 const gravity0: float = 1600.0
 const TILE_SIZE: int = 64
 
-# ── 水体物理与表现参数 ──
 const water_sway_amp: float = 2.0        # 水面起伏振幅（像素，用于顶部网格形变拉伸）
 const water_sway_speed: float = 1.6      # 水面晃动角速度（rad/s）
 const water_bullet_drag: float = 2.0     # 子弹在水中的指数阻力衰减系数（exp(-drag·Δt)）

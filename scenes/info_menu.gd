@@ -4,7 +4,6 @@ extends Control
 # 静态界面结构定义在 info_menu.tscn 中，本脚本负责动态文本装配与信号绑定。
 #   这是计划接受的代价("编辑器里看不到动态行")。
 #
-# - 名单与致谢内容保持严格一致，tests/probe/info_page_probe 测试会对其进行核对校验。
 
 # 制作团队与特别鸣谢名单
 const DEV_TEAM := ["RoFtaCD", "KikuchiH", "Lord Nahiz Waugh", "siri2048",

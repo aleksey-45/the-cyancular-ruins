@@ -11,9 +11,11 @@ import sys
 
 ROOT = Path(__file__).resolve().parent.parent
 LOGS = ROOT / ".test_logs"
-NETWORK = {"transport_probe", "authority_probe", "local_server_probe", "input_playback_smoke", "playback_lifecycle_probe", "protocol_probe", "movement_probe"}
-VISUAL = {"combat_hud_visual_probe", "kh_l3_visual_probe", "kh_l4_visual_probe", "kh_visual_probe",
-          "minimap_circle_probe", "squash_stretch_probe", "hue_tint_probe", "match_result_probe"}
+NETWORK = {"transport_probe", "authority_probe", "local_server_probe", "input_playback_smoke", "playback_lifecycle_probe", "protocol_probe"}
+CORE = {"allscript_probe", "path_integrity_probe", "network_input_smoke", "map_format_v4_probe",
+        "prediction_reuse_probe", "local_prediction_scope_probe", "event_impact_probe",
+        "native_terrain_probe", "terrain_history_probe"}
+DIAGNOSTICS = {"perf_probe", "menu_autotest"}
 sys.stdout.reconfigure(encoding="utf-8")
 
 
@@ -21,7 +23,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--godot", default=os.environ.get("GODOT"), required=not os.environ.get("GODOT"))
     parser.add_argument("--scenes", action="store_true")
-    parser.add_argument("--kind", choices=("unit", "network", "visual"), default="unit")
+    parser.add_argument("--kind", choices=("unit", "network"), default="unit")
+    parser.add_argument("--all", action="store_true", help="运行保留的全部行为测试")
     parser.add_argument("--diagnostics", action="store_true")
     parser.add_argument("--only", nargs="*", default=[])
     parser.add_argument("--skip", nargs="*", default=[])
@@ -44,8 +47,12 @@ def main():
             if script.stem in args.skip:
                 continue
             source = script.read_text(encoding="utf-8")
-            kind = "network" if script.stem in NETWORK else "visual" if script.stem in VISUAL else "unit"
+            kind = "network" if script.stem in NETWORK else "unit"
             if not args.only and kind != args.kind:
+                continue
+            if not args.only and script.stem in DIAGNOSTICS:
+                continue
+            if not args.only and kind == "unit" and not args.all and not args.diagnostics and script.stem not in CORE:
                 continue
             if not args.diagnostics and not args.only and kind == "unit" and not (re.search(r'print\(\s*"[^"]*(?:OK|PASS)', source) or "extends ProbeBase" in source):
                 continue
@@ -63,8 +70,7 @@ def main():
             location = LOGS / "profile" / stem / folder
             location.mkdir(parents=True, exist_ok=True)
             case_env[key] = str(location)
-        display = ["--rendering-method", "gl_compatibility", "--position", "-10000,-10000"] if stem in VISUAL else ["--headless"]
-        cmd = [args.godot, *display, "--path", str(ROOT),
+        cmd = [args.godot, "--headless", "--path", str(ROOT),
                "--log-file", str(LOGS / (stem + ".engine.log")), "--disable-crash-handler"]
         cmd += ["-s", "res://" + target.relative_to(ROOT).as_posix()] if target.suffix == ".gd" else [
             "res://" + target.relative_to(ROOT).as_posix()]

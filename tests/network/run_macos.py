@@ -109,17 +109,20 @@ def main():
         app = next(Path(temporary).glob('The-Cyancular-Ruins-*/*.app'))
         manifest = plistlib.loads((app / 'Contents/Info.plist').read_bytes())
         executable = app / 'Contents/MacOS' / manifest['CFBundleExecutable']
-        extension = next(app.rglob('process_group.macos.universal.dylib'))
+        extensions = {name: next(app.rglob(name + '.macos.universal.dylib'))
+                      for name in ('process_group', 'gns', 'simulation')}
         helpers = app / 'Contents/Helpers'
         assert {binary.name for binary in helpers.iterdir()} == {'easytier-core', 'easytier-cli'}
-        for binary in (executable, extension, helpers / 'easytier-core', helpers / 'easytier-cli'):
+        for binary in (executable, *extensions.values(), helpers / 'easytier-core', helpers / 'easytier-cli'):
             run('lipo', binary, '-verify_arch', 'arm64', 'x86_64')
-            if binary != extension: assert os.access(binary, os.X_OK), binary
+            if binary not in extensions.values(): assert os.access(binary, os.X_OK), binary
         run('codesign', '--verify', '--deep', '--strict', app)
         check_weapon_registry(smoke(executable, ['--', '--registry-report'], '[registry] weapons='))
         smoke(executable, ['--', '--server', '--port', '0'], 'SERVER READY')
-        (ROOT / 'native/process_group/bin').mkdir(parents=True, exist_ok=True)
-        shutil.copy2(extension, ROOT / 'native/process_group/bin' / extension.name)
+        for name, extension in extensions.items():
+            target = ROOT / 'native' / name / 'bin'
+            target.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(extension, target / extension.name)
         (ROOT / 'easytier').mkdir(exist_ok=True)
         for binary in helpers.iterdir(): shutil.copy2(binary, ROOT / 'easytier' / binary.name)
         run(args.godot, '--headless', '--editor', '--path', ROOT, '--import')
@@ -129,7 +132,10 @@ def main():
         print((ROOT / '.test_logs/transport_probe.output.log').read_text(encoding='utf-8'), flush=True)
         run(sys.executable, ROOT / 'tests/network/run_matches.py', '--godot', args.godot,
             '--count', '2', '--server', executable, '--drop')
-        run(sys.executable, ROOT / 'tests/network/run_easytier.py', '--godot', args.godot)
+        run(sys.executable, ROOT / 'tests/network/run_matches.py', '--godot', args.godot,
+            '--tunnel', 'direct', '--drop', '--no-trace')
+        run(sys.executable, ROOT / 'tests/network/run_matches.py', '--godot', args.godot,
+            '--tunnel', 'relay', '--local-relay', '--drop', '--no-trace')
         run('codesign', '--verify', '--deep', '--strict', app)
     print('MACOS PACKAGE AND LIFECYCLE ALL OK', flush=True)
 

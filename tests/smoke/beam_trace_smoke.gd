@@ -2,8 +2,6 @@ extends SceneTree
 
 # 射线与光束判定逻辑冒烟测试：
 # 验证 BeamTrace 射线与网格碰撞交点计算的准确性。
-# 运行方式：
-#   "$GODOT" --headless --path . -s res://tests/smoke/beam_trace_smoke.gd
 
 const BeamTrace := preload("res://core/sim/beam_trace.gd")
 
@@ -18,18 +16,16 @@ func _check(cond: bool, name: String) -> void:
 
 func _init() -> void:
 	TileDefs.load_defs()
-	# ── 无墙:射程到界空停 ──
-	MazeGenerator.current_grid = _make_grid(20, 6)
+	TileDefs.load_terrain(_make_grid(20, 6), [])
 	var r1 := BeamTrace.trace(Vector2(150, 150), Vector2.RIGHT, 500.0, 2)
 	var p1: PackedVector2Array = r1["points"]
 	_check(p1.size() == 2, "无墙 2 点(起+止)")
 	_check(absf(p1[1].x - 650.0) < 0.01 and absf(p1[1].y - 150.0) < 0.01, "无墙止于射程末端")
 
-	# ── 单墙反射:竖墙 col1(像素 x 64..128),从右往左打 -> 撞墙反弹后飞向空旷 ──
 	var grid := _make_grid(20, 6)
 	for y in range(6):
 		grid[y][1] = MazeGenerator.SOLID
-	MazeGenerator.current_grid = grid
+	TileDefs.load_terrain(grid, [])
 	var r2 := BeamTrace.trace(Vector2(150, 150), Vector2.LEFT, 1000.0, 2)
 	var p2: PackedVector2Array = r2["points"]
 	var c2: Array = r2["contacts"]
@@ -38,10 +34,9 @@ func _init() -> void:
 	_check(p2[2].x > 128.0, "反射后继续向右(离开墙面)")
 	_check(c2.size() == 1 and c2[0] == Vector2i(1, 2), "接触格 = 墙格 (1,2)")
 
-	# ── 双墙夹道:col1+col3(夹 col2),反弹一次打回,第 3 次碰墙被吸收停住 ──
 	for y in range(6):
 		grid[y][3] = MazeGenerator.SOLID  # col3(x 192..256)
-	MazeGenerator.current_grid = grid
+	TileDefs.load_terrain(grid, [])
 	# 从 col2(x128..192)中间往左打:碰 col1(128)反 -> 碰 col3(192)反 -> 再碰 col1(128)吸收
 	var r3 := BeamTrace.trace(Vector2(150, 150), Vector2.LEFT, 10000.0, 2)
 	var p3: PackedVector2Array = r3["points"]
@@ -54,7 +49,7 @@ func _init() -> void:
 	_check(h3.size() == c3.size(), "hit_points 与 contacts 平行")
 	_check(h3[0] == Vector2(128, 150) and h3[1] == Vector2(192, 150), "hit_points 为墙面落点")
 
-	MazeGenerator.current_grid = _make_grid(20, 6)
+	TileDefs.load_terrain(_make_grid(20, 6), [])
 	if _failures.is_empty():
 		print("SMOKE OK")
 		quit(0)

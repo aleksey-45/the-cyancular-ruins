@@ -2,8 +2,6 @@ extends SceneTree
 
 # PvP 时间规则配置与校验冒烟测试：
 # 验证参数合法区间校验、客户端上报参数钳制、网络序列化及与 GrainAccount 的参数映射。
-# 运行方式：
-#   "$GODOT" --headless --path . -s res://tests/smoke/time_rules_smoke.gd
 
 var _fails: Array[String] = []
 

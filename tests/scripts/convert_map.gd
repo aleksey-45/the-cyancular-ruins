@@ -5,8 +5,6 @@ extends SceneTree
 #   - 旧版 v2（包含 # cyrm-v2 标记）：每格 2 字符 [纹理字符][形状十六进制]，坐标已对齐游戏逻辑网格，保留出生点坐标；
 #   - 旧版 v1（无版本标记）：250×150 原始网格，执行 2×2 合并转换，出生点坐标除以 2。
 #   - 若已是 v3 格式则自动跳过。
-# 运行方式：
-#   "$GODOT" --headless --path . -s res://tests/scripts/convert_map.gd [地图路径; 默认 res://maps/demo.cyrm]
 
 const OLD_V2_MARKER := "# cyrm-v2"
 const TEX_CHARS := "0123456789ABCDEFGHIJKLM"   # 字符索引映射对应纹理 ID（0-22），兼容旧版字母表示法

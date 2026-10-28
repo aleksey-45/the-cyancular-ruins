@@ -3,8 +3,6 @@ extends SceneTree
 # 地图格式转换工具：将 maps/ 目录下的所有旧版（v1/v2/v3）文本地图转换为 v4 二进制格式（.cyrm）并原地覆盖。
 # 写入前执行往返一致性校验：序列化后立即重新解析并展平网格，必须与原始网格及出生点元数据完全一致；若校验失败则中止写入，防止地图损坏。
 # 若文件已具备 v4 格式标识（文件头魔数 CYRM）则自动跳过。
-# 运行方式：
-#   "$GODOT" --headless --path . -s res://tests/scripts/convert_map_v4.gd
 
 func _initialize() -> void:
 	var dir := "res://maps"
@@ -42,7 +40,6 @@ func _initialize() -> void:
 			if s.begins_with("#") and not s.begins_with("# cyrm-v3") and not s.begins_with("# cyrm-v2"):
 				meta.append(s)
 		var blob := MapFormatV4.serialize(grid, meta)
-		# ── 往返一致性校验（验证解析正确性）──
 		var v := MapFormatV4.parse(blob)
 		if not bool(v.get("ok", false)):
 			print("CONVERT V4: FAIL(自证解析失败:%s) %s" % [str(v.get("error")), path])

@@ -13,6 +13,7 @@ present/  视听表现与特效：像素字体适配、音效播放、贴图边�
 
 - `sim/`（物理模拟与空间几何）
   - 维护 16px 子格地形破坏、射线检测、环形世界寻路与碰撞判定。
+  - `actor_collider` 为服务端与客户端提供站立、蹲伏矩形阻挡，按模拟顺序映射到最近环面位置。
   - 包含地图格式编解码（`map_format`、`map_format_v4`）、时间控制系统（`time_field`、`grain_account`、`world_rewind`、`tile_ledger`）等玩法核心算法。
 - `net/`（网络同步与联机）
   - 负责网络数据传输（`net_bus`、`net_codec`）、输入缓冲与调度（`input_buffer`）、客户端预测回滚（`prediction_rollback`）与远端快照播放（`snapshot_buffer`）。
@@ -30,7 +31,7 @@ present/  视听表现与特效：像素字体适配、音效播放、贴图边�
 
 - `GameLog` (`core/config/game_log.gd`)：接管日志输出，分流写入本地日志文件。
 - `GameParameters` (`core/config/game_parameters.gd`)：全局共享常量与世界边界尺寸。
-- `NetBus` (`core/net/net_bus.gd`)：基于 ENet 的网络通信核心接口。
+- `NetBus` (`core/net/net_bus.gd`)：基于 GNS 的网络通信核心接口。
 - `NetSession` (`core/net/net_session.gd`)：联机会话与子进程生命周期管理；Windows 使用 Job，macOS 使用生命期管道与进程组。
 - `Settings` (`core/config/settings.gd`)：用户本地配置管理，持久化存储于 `user://settings.cfg`。
 

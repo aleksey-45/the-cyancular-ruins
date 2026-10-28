@@ -73,9 +73,19 @@ func _check_queue() -> void:
 	new_control["epoch"] = 2
 	queue.push({"frames": [new_control], "actions": []}, 6000)
 	assert(queue.take(6001)["seq"] == 1 and queue.lead == 1)
+	# 还原远端输入历史时，迟到的动作从服务端收包后首 tick 执行。
+	queue.reset(1)
+	jump = _record(1, 103)
+	jump["pressed"] = PacketInputSource.BIT_UP
+	queue.push({"frames": [jump], "actions": [jump]}, 105)
+	queue.push({"frames": [jump], "actions": [jump]}, 106)
+	assert(queue.take(104)["pressed"] == 0 and queue.take(105)["pressed"] == 0)
+	assert(queue.take(106)["pressed"] == PacketInputSource.BIT_UP,
+			"redundant delivery must preserve the first available action tick")
+	assert(queue.take(107)["pressed"] == 0 and jump["target_tick"] == 103)
 
 func _world(pos: Vector2) -> Dictionary:
-	return {"players": {1: {"pos": pos, "vel": Vector2(100, 0), "epoch": 1}}, "projectiles": {}, "pickups": {}}
+	return {"players": {1: {"pos": pos, "vel": Vector2(100, 0), "epoch": 1}}, "pickups": {}}
 
 func _check_playback() -> void:
 	var buffer := SnapshotBuffer.new()
@@ -111,13 +121,13 @@ func _check_playback() -> void:
 	assert(buffer.render_tick >= 103.96 and buffer.render_tick <= 104.02)
 	# 复活不跨 epoch 插值，实体集合也到右端 tick 才转换。
 	var alive := _world(Vector2(100, 10))
-	alive["projectiles"][7] = {"pos": Vector2(100, 10), "vel": Vector2.ZERO}
+	alive["pickups"][7] = {"pos": Vector2(100, 10), "vel": Vector2.ZERO}
 	var respawn := _world(Vector2(200, 10))
 	respawn["players"][1]["epoch"] = 2
 	buffer.reset()
 	buffer.push(200, alive)
 	buffer.push(202, respawn)
 	assert(buffer.sample(201)["players"][1]["pos"].x == 100.0)
-	assert(buffer.sample(201)["projectiles"].has(7))
+	assert(buffer.sample(201)["pickups"].has(7))
 	assert(buffer.sample(202)["players"][1]["pos"].x == 200.0)
-	assert(buffer.sample(202)["projectiles"].is_empty())
+	assert(buffer.sample(202)["pickups"].is_empty())

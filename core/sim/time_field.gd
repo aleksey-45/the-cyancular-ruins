@@ -62,7 +62,6 @@ func is_hasting() -> bool:
 	return mode == Mode.HASTE
 
 
-# ── 纯静态倍率查询(实体脚本调用;current 为 null 时恒 1)────────────
 
 static func player_delta(d: float) -> float:
 	var f := current
@@ -118,7 +117,6 @@ static func world_delta(d: float) -> float:
 	return d
 
 
-# ── 速度域倍率(正确做法:move_and_slide 用引擎 delta,缩放 delta 不改变位移;
 #    "快/慢"必须落在速度上;delta 缩放只用于计时器/动画/AI 节拍)────────────
 
 static func player_speed_mult() -> float:
