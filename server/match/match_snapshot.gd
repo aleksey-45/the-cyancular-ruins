@@ -124,4 +124,4 @@ func _snapshot_tx_diag() -> void:
 	_tx_own.clear()
 	_tx_own_bytes.clear()
 
-# 子弹裁决:遍历 bullet 组。新子弹广播给非射手客户端;命中判定 = 与对手玩家的 toroidal 距离 < HIT_RADIUS。
+# 子弹裁决:遍历 bullet 组。新子弹广播给非射手客户端;命中判定 = 子弹上一位置→当前位置线段 vs 玩家受击面(core/sim/hit_shape.gd)。

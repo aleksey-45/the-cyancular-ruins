@@ -6,7 +6,7 @@ extends Node
 
 const SKIP_DIRS := ["res://.godot", "res://builds", "res://releases", "res://gamelogs",
 		"res://crashlogs", "res://maps", "res://map", "res://backup", "res://editor/_build",
-		"res://_crashtest"]
+		"res://_crashtest", "res://docs"]
 # ★ 为什么要收 `res://_crashtest`(与 `tools/check_naming.py` 里同名的根同因):它是 gitignore 的
 #   现场草稿,存着编译不过的旧 `.gd` 备份;不收它本探针"改前就红",而一条永远红的闸等于没有闸。
 #   ⚠ 它与 `tests/path_integrity_allow.txt` 是两份手工同步的真相源(登记:registered-debt R25)——
@@ -21,7 +21,9 @@ const SKIP_DIRS := ["res://.godot", "res://builds", "res://releases", "res://gam
 # 复算两条(必须同时成立):`git ls-files '*.gd' | wc -l` 等于本常量;
 # `git ls-files --others --exclude-standard '*.gd'` = 0(工作树没有未跟踪脚本)。
 # 改这个常量是"覆盖变了得有人过目",不是"让闸变绿";历次取值见 git log。
-const EXPECTED_SCRIPTS := 176   # 2026-10-24: 175 + core/ui/loading_screen.gd(Web 建图分帧的跨场景载入遮罩;autoload)
+# ★ 2026-10-26:`res://docs` 进 SKIP_DIRS —— docs/ 是文档目录,出现 `.gd` 只可能是临时审计驱动
+#   (如 `docs/audit/*/_drivers/`),不属于编译面/导出面;不收它时这些草稿会让条数闸随机变红。
+const EXPECTED_SCRIPTS := 183   # 2026-10-26: 176 + hit_shape.gd + water_sample.gd + 5 支新守卫(net_tile_fx/hit_shape/water_model/tile_break_unit/bullet_sweep)
 
 var _fails: Array[String] = []
 var _total := 0

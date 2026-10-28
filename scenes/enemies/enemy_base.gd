@@ -1,6 +1,8 @@
 class_name EnemyBase
 extends CharacterBody2D
 
+const HitShape := preload("res://core/sim/hit_shape.gd")   # 受击判定几何唯一入口(不做 class_name:新全局类名要等编辑器重扫缓存)
+
 # 进入死亡状态时发射一次(用于击杀计数等 UI;撞人自毁同算,见 FlyBird._die_self)。
 signal died
 
@@ -175,6 +177,13 @@ func hurt(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, set_velo
 	if hp <= 0:
 		_begin_death()
 
+## 受击面:活动碰撞箱的世界 AABB(飞鸟站/飞箱随姿态切换),伤害判定统一经 core/sim/hit_shape.gd 查它。
+func hurt_rect() -> Rect2:
+	return HitShape.hurt_rect_of(self)
+
+func is_hurtable() -> bool:
+	return collision_layer != 0
+
 # 受击通用逻辑:扣血、击退、白闪(子类覆写 hurt() 时也应调用本方法,避免逻辑分叉)。knock_strength <= 0 时回落敌人自身 knockback_strength;set_velocity=true(爆炸)设独立击退向量 knock_velocity、不覆盖移动速度,false(枪击)叠加到原速度。
 func _apply_hit(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, set_velocity: bool = false) -> void:
 	hp -= damage
@@ -216,22 +225,19 @@ func _is_far_sleeping() -> bool:
 	return toroidal_dist_to_player() > wake_radius
 
 
-# 落水浮力:弹簧把身体中心拉回水面线(半没入);水平朝 _water_swim_dir 游;没顶累计溺水。
+# 落水浮力:弹簧把中心拉回水面线(已归一最近环面副本,跨接缝也朝"上"浮);水平朝 _water_swim_dir 游。
 func _apply_water(delta: float) -> void:
-	var feet := Vector2(global_position.x, global_position.y + Water.feet_offset(self))
-	_in_water = Water.is_in_water(feet)
-	var submerged := false
+	var water := Water.sample_body(self, _in_water)
+	_in_water = water.in_water
 	if _in_water:
-		var surface_y := Water.surface_y_at(global_position)
-		submerged = Water.submerged(global_position, surface_y)
-		var target_vy := clampf((surface_y - global_position.y) * EnemyParams.shared.bird_buoyancy_k,
+		var target_vy := clampf((water.surface_y - global_position.y) * EnemyParams.shared.bird_buoyancy_k,
 			-EnemyParams.shared.bird_max_float, EnemyParams.shared.bird_max_sink)
 		velocity.y = MathUtil.approach(velocity.y, target_vy, EnemyParams.shared.bird_water_damp, delta)
 		var dir := _water_swim_dir()
 		velocity.x = MathUtil.approach(velocity.x, dir.x * EnemyParams.shared.bird_swim_speed,
 			EnemyParams.shared.bird_water_damp, delta)
 	# 防水值(氧气):没顶掉,暴露空气回;空后每秒扣血。
-	if submerged:
+	if water.head_under:
 		_waterproof_recover_timer = 0.0
 		_waterproof_drain_timer += delta
 		if _waterproof_drain_timer >= GameParameters.water_drain_interval:

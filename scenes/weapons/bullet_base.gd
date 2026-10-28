@@ -3,10 +3,9 @@ extends CharacterBody2D
 
 const BOUNCE_DAMPING: float = 0.6  # 撞墙反弹速度保留比例
 const TileHitFx := preload("res://scenes/effects/tile_hit_fx.gd")
+const HitShape := preload("res://core/sim/hit_shape.gd")   # 受击判定几何唯一入口
 
-# 子弹/爆炸弹对玩家的命中判定半径(px,玩家缩放 2.5 的碰撞箱量级)。★ 单一来源:服务器权威侧(server/match_host.gd 的 HIT_RADIUS 直接引用它)与客户端视觉副本的榴弹短引信判定共用,两处各写一个数迟早会漂。
-const PLAYER_HIT_RADIUS: float = 40.0
-# 判定候选所在的组:player = 玩家实体(服务器上全部玩家,客户端上只有本地玩家);player_replica = 客户端上的对手视觉副本(它不入 player 组,理由见 player_replica.GROUP)。
+# 榴弹「碰到玩家 → 短引信」的候选组:player = 玩家实体;player_replica = 客户端上的对手视觉副本(它不入 player 组,理由见 player_replica.GROUP)。
 const CONTACT_GROUPS: Array[String] = ["player", "player_replica"]
 
 # 子弹只管理物理属性(开火时由武器设置)。不含伤害:命中敌人回调 source.apply_hit。
@@ -19,6 +18,9 @@ var has_aoe: bool = false
 var bullet_color: Color = Color.WHITE  # 纹理本底;武器如需染色再设
 var max_range: float = 0.0
 var traveled: float = 0.0
+# 上一物理帧开始时的位置:扫掠判定线段的起点。★ 服务器裁决与客户端 cull 都读它 ⇒ 本帧位移必须与上一帧首尾相接;
+# 环面 wrap 后本字段与 global_position 同处一个副本空间(见 _physics_process 末尾)。
+var prev_pos: Vector2 = Vector2.ZERO
 var source: Node = null
 var shooter: Node = null  # 射手玩家(击杀归因用):本地=武器持有者;服务器=权威模拟里的玩家
 var hit_damage: int = 0    # 命中伤害(武器 fire 注入;切枪后 source 失效时兜底直接结算)
@@ -33,6 +35,8 @@ var apply_damage: bool = true  # 客户端视觉副本设 false:只出特效/轨
 @export var explosion_damage: int = 35
 @export var explosion_knockback: float = 900.0
 @export var explosion_visual: PackedScene = null
+# 最小破坏单位(单位 = 格):>=1 按整 64px 格扣格级账;0.25 = 1 个 16px 子格。<1 时按子格扣(榴弹 0.25 才有意义)。
+@export var tile_break_unit: float = 1.0
 
 var _fuse_active: bool = false   # 首次碰撞(撞墙/命中敌人)后才开始计时
 var _fuse_elapsed: float = 0.0
@@ -49,6 +53,7 @@ func setup(dir: Vector2, spd: float, rng: float, siz: float, col: Color, src: No
 	scale = Vector2(size, size)  # 放大倍数作用于整颗子弹(贴图+碰撞体)
 
 func _ready() -> void:
+	prev_pos = global_position
 	# 子弹贴图与碰撞体由场景(bullet.tscn)配置,这里只把武器 bullet_color 作 tint,不再动态生成方块。
 	var sp := get_node_or_null("Sprite2D") as Sprite2D
 	if sp != null:
@@ -62,6 +67,7 @@ func _physics_process(delta: float) -> void:
 	delta = TimeField.bullet_delta(delta, self)   # 时间场:回溯冻结/加速(我方弹随玩家)
 	if TimeField.current != null and TimeField.current.is_rewinding():
 		return   # 回溯中子弹不自步进(位置由回放器摆;引信/水阻/射程都不结算)
+	prev_pos = global_position
 	if gravity_factor > 0.0:
 		velocity_vec.y += GameParameters.gravity0 * gravity_factor * delta
 		if not velocity_vec.is_zero_approx():
@@ -78,40 +84,22 @@ func _physics_process(delta: float) -> void:
 	_apply_water_drag(delta)
 	var step := velocity_vec * delta
 	traveled += step.length()
+	var from := global_position
 	var col := move_and_collide(step)
-	if col:
-		var hit := col.get_collider()
-		if explodes:
-			if hit != null and hit.is_in_group("enemies"):
-				_direct_hit(hit)
-				_start_fuse(hit_fuse_time)
-			else:
-				_start_fuse(fuse_time)
-			var normal := col.get_normal()
-			var reflected := velocity_vec.bounce(normal)
-			velocity_vec = reflected * BOUNCE_DAMPING
-			if not velocity_vec.is_zero_approx():
-				rotation = velocity_vec.angle()
-			return
-		# 命中敌人:优先走 source(武器)的 apply_hit;切枪后旧武器已 free 时用子弹自带 damage/impact 兜底;视觉副本(apply_damage=false)不裁决伤害,直接消失。
-		if apply_damage and hit.is_in_group("enemies") and is_instance_valid(source) and source.has_method("apply_hit"):
-			# 命中标记(屏幕中心 X)。敌人侧不写归因 —— 那个 meta 的唯一读者(单机击杀播报)已删,玩家侧归因在 MatchHost/RoyaleHost 那条路上。
-			CombatFeedback.hit_marker()
-			source.apply_hit(hit, velocity_vec)
-			Sfx.play("hit")
-			queue_free()
-		elif apply_damage and hit.is_in_group("enemies"):
-			CombatFeedback.hit_marker()
-			hit.hurt(hit_damage, velocity_vec, hit_impact)
-			Sfx.play("hit")
-			queue_free()
-		else:
-			# 撞墙:可破坏(树叶/树干)⇒ 播受击碎片 + 权威侧扣血;不可破坏墙 ⇒ 子弹消失;延迟销毁确保破坏回调跑完。
-			# ★ PvP 视觉副本(apply_damage=false)也走这里,只播碎片(即时命中反馈),绝不自拆本地瓦片 —— 拆墙渲染只由服务器 tile_destroyed 事件驱动(幽灵墙纪律)。
-			_damage_tile_at(col.get_position(), col.get_normal())
-			set_physics_process(false)
-			velocity_vec = Vector2.ZERO
-			get_tree().create_timer(0.05).timeout.connect(queue_free)
+	var to := global_position
+	var t_wall := 1.0
+	if col != null:
+		to = from + col.get_travel()
+		var lens := step.length()
+		t_wall = (col.get_travel().length() / lens) if lens > 0.0 else 0.0
+	# 受击判定只认 hurt_rect 线段扫掠:物理碰撞箱已不承担受击职责(bullet.tscn mask=1 只撞地形)。
+	# ★ 顺序:受击面先于地形 —— 同一段上取更早的那个;地形更早则伤害不结算(墙后打不到人)。
+	var hurt := first_hurt_on_segment(from, to, ["enemies"])
+	if not hurt.is_empty() and float(hurt["t"]) <= t_wall:
+		_on_hurt_target(from, to, hurt)
+		return
+	if col != null:
+		_on_terrain_collision(col)
 		return
 	if traveled >= max_range:
 		if explodes:
@@ -119,6 +107,81 @@ func _physics_process(delta: float) -> void:
 		queue_free()
 		return
 	_wrap()
+	# 环面 wrap 会把 global_position 整幅平移;扫掠起点要跟着平移,否则下一帧/裁决读到的线段横穿整图。
+	prev_pos = from + (global_position - to)
+
+
+# 线段扫掠:groups 内最早被穿过的受击面(t 最小;起点在框内 = 0)。exclude = 射手(自己不打自己)。
+# ★ 玩家实体的伤害不在这里结算:PvP 的权威单一来源是 MatchHost._adjudicate_bullets(客户端是 _cull_bullet_contacts);
+#   这里再扫 player 组会让同一发子弹在服务器上被裁决两次。
+func first_hurt_on_segment(from: Vector2, to: Vector2, groups: Array, exclude: Node = null) -> Dictionary:
+	var best: Dictionary = {}
+	var w := float(GameParameters.MAP_WIDTH)
+	var h := float(GameParameters.MAP_HEIGHT)
+	for group in groups:
+		for n in get_tree().get_nodes_in_group(group):
+			if n == exclude or not (n is Node2D) or not HitShape.hurtable(n):
+				continue
+			var t := HitShape.segment_hits_rect(from, to, hurt_rect_for(n as Node2D), w, h)
+			if t >= 0.0 and (best.is_empty() or t < float(best["t"])):
+				best = {"node": n, "t": t}
+	return best
+
+
+# 目标的受击面:优先目标自己的 hurt_rect(玩家/敌人)或 hurt_rect_rendered(对手副本),都没有才按活动碰撞箱兜底。
+func hurt_rect_for(n: Node2D) -> Rect2:
+	if n == null:
+		return Rect2()
+	if n.has_method("hurt_rect_rendered"):
+		return n.hurt_rect_rendered()
+	if n.has_method("hurt_rect"):
+		return n.hurt_rect()
+	return HitShape.hurt_rect_of(n)
+
+
+# 扫掠命中受伤目标:普通弹结算伤害并自毁;爆炸弹直伤 + 起短引信 + 按命中面法向反弹(与旧物理反弹同语义)。
+func _on_hurt_target(from: Vector2, to: Vector2, hit: Dictionary) -> void:
+	var target: Node = hit["node"]
+	global_position = from + (to - from) * float(hit["t"])
+	if explodes:
+		_direct_hit(target)
+		_start_fuse(hit_fuse_time)
+		var normal := from - hurt_rect_for(target as Node2D).get_center()
+		if normal.is_zero_approx():
+			normal = -velocity_vec
+		velocity_vec = velocity_vec.bounce(normal.normalized()) * BOUNCE_DAMPING
+		if not velocity_vec.is_zero_approx():
+			rotation = velocity_vec.angle()
+		return
+	# 命中敌人:优先走 source(武器)的 apply_hit;切枪后旧武器已 free 时用子弹自带 damage/impact 兜底;视觉副本(apply_damage=false)不裁决伤害,直接消失。
+	if apply_damage and is_instance_valid(source) and source.has_method("apply_hit"):
+		# 命中标记(屏幕中心 X)。敌人侧不写归因 —— 那个 meta 的唯一读者(单机击杀播报)已删,玩家侧归因在 MatchHost/RoyaleHost 那条路上。
+		CombatFeedback.hit_marker()
+		source.apply_hit(target, velocity_vec)
+		Sfx.play("hit")
+	elif apply_damage and target.has_method("hurt"):
+		CombatFeedback.hit_marker()
+		target.hurt(hit_damage, velocity_vec, hit_impact)
+		Sfx.play("hit")
+	queue_free()
+
+
+# 撞到地形:保留旧语义 —— 爆炸弹反弹并起撞墙引信;其余弹拆可破坏砖后消失。
+func _on_terrain_collision(col: KinematicCollision2D) -> void:
+	if explodes:
+		_start_fuse(fuse_time)
+		var normal := col.get_normal()
+		var reflected := velocity_vec.bounce(normal)
+		velocity_vec = reflected * BOUNCE_DAMPING
+		if not velocity_vec.is_zero_approx():
+			rotation = velocity_vec.angle()
+		return
+	# 撞墙:可破坏(树叶/树干)⇒ 播受击碎片 + 权威侧扣血;不可破坏墙 ⇒ 子弹消失;延迟销毁确保破坏回调跑完。
+	# ★ PvP 视觉副本(apply_damage=false)也走这里,只播碎片(即时命中反馈),绝不自拆本地瓦片 —— 拆墙渲染只由服务器 tile_destroyed 事件驱动(幽灵墙纪律)。
+	_damage_tile_at(col.get_position(), col.get_normal())
+	set_physics_process(false)
+	velocity_vec = Vector2.ZERO
+	get_tree().create_timer(0.05).timeout.connect(queue_free)
 
 # 子弹在水里受速度方向阻力:velocity_vec *= exp(-drag·Δt)(纯系数在 Water.bullet_drag_factor)。
 func _apply_water_drag(delta: float) -> void:
@@ -139,18 +202,20 @@ func _wrap() -> void:
 	global_position = MazeGenerator.anchor_to_nearest(global_position, p.global_position,
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 
-# 撞墙处理:命中可子弹破坏的格(树叶/树干)⇒ 播受击碎片(所有端同款即时反馈);damage_tile 扣血只在权威侧执行,视觉副本只播碎片、绝不拆本地 grid。
+# 撞墙处理:命中可子弹破坏的格(树叶/树干)⇒ 播受击碎片(所有端同款即时反馈);扣血只在权威侧执行,视觉副本只播碎片、绝不拆本地 grid。
+# ★ 破坏粒度由 tile_break_unit 决定:整格(其余枪)走格级 damage_tile,1/4 格(榴弹)走子格 damage_sub —— 这正是"一格一个单位"的用户裁定。
 func _damage_tile_at(pos: Vector2, normal: Vector2) -> void:
-	# cyrm v4:破坏按 16px 子格算(命中点落在哪个子格就打哪个子格);子格表为空时(测试合成网格)回落旧格级路径。
-	if MazeGenerator.current_subgrid.is_empty():
-		var grid0 := MazeGenerator.current_grid
-		if grid0.is_empty():
+	var grid := MazeGenerator.current_grid
+	if grid.is_empty():
+		return
+	if _tile_break_is_cell() or MazeGenerator.current_subgrid.is_empty():
+		var cell := _tile_cell_at(pos, normal)
+		var tex := _cell_texture(cell)
+		if tex == 0 or not TileDefs.bullet_destroyable(tex):
 			return
-		var ts0: int = GameParameters.TILE_SIZE
-		var cell0 := MazeGenerator.cell_of(pos - normal * (ts0 * 0.5), ts0, grid0[0].size(), grid0.size())
-		var v0: int = grid0[cell0.y][cell0.x]
-		if v0 != 0 and TileDefs.bullet_destroyable(MazeGenerator.texture_of(v0)) and apply_damage:
-			TileDefs.damage_tile(cell0, hit_damage, "bullet")
+		_spawn_tile_hit(pos, tex)
+		if apply_damage:
+			TileDefs.damage_tile(cell, hit_damage, "bullet")
 		return
 	var cols: int = MazeGenerator.current_subgrid[0].size()
 	var rows: int = MazeGenerator.current_subgrid.size()
@@ -160,10 +225,35 @@ func _damage_tile_at(pos: Vector2, normal: Vector2) -> void:
 		var sub := Vector2i(posmod(int(p.x) / 16, cols), posmod(int(p.y) / 16, rows))
 		var tex: int = MazeGenerator.current_subgrid[sub.y][sub.x]
 		if tex != 0 and TileDefs.bullet_destroyable(tex):
-			TileHitFx.spawn(get_viewport(), pos, tex)   # 纯反馈:命中可破坏砖就播
+			_spawn_tile_hit(pos, tex)
 			if apply_damage:
 				TileDefs.damage_sub(sub, hit_damage, "bullet", shooter)
-		return
+			return
+
+
+func _tile_break_is_cell() -> bool:
+	return tile_break_unit >= 1.0
+
+
+# 命中点沿法线推入墙内半格,定位 64px 格(与旧"子格表为空"分支同口径)。
+func _tile_cell_at(pos: Vector2, normal: Vector2) -> Vector2i:
+	var grid := MazeGenerator.current_grid
+	var ts: int = GameParameters.TILE_SIZE
+	return MazeGenerator.cell_of(pos - normal * (ts * 0.5), ts, grid[0].size(), grid.size())
+
+
+func _cell_texture(cell: Vector2i) -> int:
+	var grid := MazeGenerator.current_grid
+	if cell.y < 0 or cell.y >= grid.size() or cell.x < 0 or cell.x >= grid[cell.y].size():
+		return 0
+	return MazeGenerator.texture_of(int(grid[cell.y][cell.x]))
+
+
+# 受击碎片只在命中点播一次(所有端同款);mark_hit 供服务器随后的拆砖事件去重(task-6 的粒子层)。
+func _spawn_tile_hit(pos: Vector2, tex: int) -> void:
+	var at := _fx_pos(pos)
+	TileHitFx.spawn(get_viewport(), at, tex)
+	TileHitFx.mark_hit(at)
 
 
 func _direct_hit(hit: Node) -> void:
@@ -178,18 +268,19 @@ func _direct_hit(hit: Node) -> void:
 # 命中标记对所有端都调:headless 服务器进程无 CombatFeedback 实例 ⇒ hit_marker 是空操作,无副作用。
 
 # 爆炸弹「碰到玩家」判定(引信时机的单一来源):候选 = CONTACT_GROUPS 里的玩家实体与对手副本,排除 shooter(否则自己的榴弹一出膛就在自己身上起短引信)。
-# ★ 命中只起短引信、不改轨迹(不反弹):轨迹两端一致,视觉副本不会因反弹法线取自各端不同位置而发散;直接伤不在这里结算,那是 MatchHost._adjudicate_grenade 的事(同一半径、同一候选集,两边结论不会不同)。
+# ★ 判据 = 爆弹点是否落在目标受击面内(与子弹/激光同一套 hurt_rect);命中只起短引信、不改轨迹,直接伤由 MatchHost._adjudicate_grenade 结算。
 func _check_player_contact() -> void:
 	var tree := get_tree()
 	if tree == null:
 		return
+	var w := float(GameParameters.MAP_WIDTH)
+	var h := float(GameParameters.MAP_HEIGHT)
 	for group in CONTACT_GROUPS:
 		for n in tree.get_nodes_in_group(group):
-			if n == shooter or not (n is Node2D):
+			if n == shooter or not (n is Node2D) or not HitShape.hurtable(n):
 				continue
-			var d := MazeGenerator.toroidal_delta_px(global_position, (n as Node2D).global_position,
-					GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT).length()
-			if d < PLAYER_HIT_RADIUS:
+			var rect := hurt_rect_for(n as Node2D)
+			if HitShape.distance_px_to_rect_at(global_position, rect, global_position, w, h) <= 0.0:
 				start_player_fuse()
 				return
 
@@ -246,8 +337,28 @@ func _explode() -> void:
 		fx.global_position = global_position
 		get_viewport().add_child(fx)
 	# 被炸到的可破坏砖逐格播受击碎片,所有端都播(与 _damage_tile_at 同口径);扫的是与权威结算同一个 Explosion.destructible_subs,两端粒子落在同一批格上。
+	# ★ Explosion 返回的 pos 是 canonical:表现层必须先锚到本地玩家附近的环面副本,否则接缝附近炸出的碎片会画到另一份副本/屏幕外。
 	for e in Explosion.destructible_subs(global_position, explosion_radius):
-		var tile_pos: Vector2 = e["pos"]
-		TileHitFx.spawn(get_viewport(), tile_pos, int(e["tex"]))
+		var at := _fx_pos(e["pos"])
+		TileHitFx.spawn(get_viewport(), at, int(e["tex"]))
+		# 爆炸本端已播命中碎片 ⇒ 服务器随后的逐子格破坏事件去重(否则一次爆炸的双份粒子成倍)。
+		TileHitFx.mark_hit(at)
 	if apply_damage:
-		Explosion.apply_aoe(global_position, explosion_radius, explosion_damage, explosion_knockback, shooter)
+		Explosion.apply_aoe(global_position, explosion_radius, explosion_damage, explosion_knockback, shooter, tile_break_unit)
+
+
+# 表现层锚点:离本地玩家最近的那份环面副本(与 _wrap 同一套选择规则)。
+# 服务器(headless)上碎片不可见,这里仍照常返回 → 已登记为已知边界,不在此处特判。
+func _fx_anchor() -> Node2D:
+	var p := get_tree().get_first_node_in_group("player") as Node2D
+	if shooter != null and is_instance_valid(shooter) and shooter is Node2D and shooter.is_in_group("player"):
+		p = shooter as Node2D
+	return p
+
+
+func _fx_pos(at: Vector2) -> Vector2:
+	var p := _fx_anchor()
+	if p == null:
+		return at
+	return MazeGenerator.anchor_to_nearest(at, p.global_position,
+			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)

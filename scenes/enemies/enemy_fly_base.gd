@@ -1,6 +1,9 @@
 class_name EnemyFlyBase
 extends EnemyBase
 
+# ★ 不要再声明 `const HitShape := preload(...)`:EnemyBase 已有同名 const,子类重复声明在 GDScript 4 是
+#   硬 Parse Error("The member already exists in parent class")—— 直接用继承来的即可。
+
 # 飞行敌人基类:网格寻路 + 避障 + 直线兜底 + 站/飞碰撞箱切换,供能飞的敌人复用。
 # ★ 寻路方法直接引用 EnemyParams.FlyBird 的参数(hover_altitude / fly_speed / path_max_visit / repath_interval);当前只有 FlyBird 一种飞行敌人,接受该耦合,新增飞行敌人时改成虚 getter。
 
@@ -150,13 +153,9 @@ func _collect_obstacles() -> void:
 			_obstacle_boxes.append(_collision_rect_of(e))
 
 
-# 求一个节点的世界碰撞 AABB:几何取自 CollisionAabb,只并激活的碰撞体(disabled 跳过,否则飞行鸟的站立箱、玩家未用姿态会撑大障碍箱);返回前把中心锚到本鸟坐标的环面副本,与 BFS 候选格同帧。
+# 求一个节点的世界碰撞 AABB:几何走 hit_shape 的同一入口(只并激活中的碰撞体,否则飞行鸟的站立箱、玩家未用姿态会撑大障碍箱);返回前把中心锚到本鸟坐标的环面副本,与 BFS 候选格同帧。
 func _collision_rect_of(n: Node2D) -> Rect2:
-	var rect: Rect2
-	if CollisionAabb.has_any(n):
-		rect = CollisionAabb.world_rect(n)
-	else:
-		rect = Rect2(n.global_position - Vector2(20, 20), Vector2(40, 40))
+	var rect := HitShape.rect_of(n)
 	var center := rect.get_center()
 	var anchored := MazeGenerator.anchor_to_nearest(center, global_position,
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)

@@ -1,5 +1,7 @@
 extends CharacterBody2D
 
+const HitShape := preload("res://core/sim/hit_shape.gd")   # 受击判定几何唯一入口(不做 class_name:新全局类名要等编辑器重扫缓存)
+
 @export var animator : AnimatedSprite2D
 
 var gravity: float = GameParameters.gravity0
@@ -91,6 +93,7 @@ var max_hp: int:
 		return combat.max_hp
 
 # 防水值(氧气):没顶按 water_drain_interval 掉 1、暴露空气按 water_recover_interval 回 1;归零后每秒扣血。
+const WaterSample := preload("res://core/sim/water_sample.gd")   # 水判定数据类型;本文件不自己查水面
 var waterproof: int = PlayerParams.player_waterproof_max
 var max_waterproof: int = PlayerParams.player_waterproof_max
 var _waterproof_timer: float = 0.0
@@ -223,7 +226,7 @@ func _physics_process(delta: float) -> void:
 
 	# 水中与攀爬是数据源:in_water / latched 决定后面每一块跑不跑,故留在编排函数里,只把消费它们的逻辑分出去。
 	var in_water := swim.update(self, delta, mult, input_source, tm)
-	_update_waterproof(delta)
+	_update_waterproof(delta, swim.sample)
 	var latched := false
 	if not in_water:
 		climb.update(mult, delta, is_squat, input_source)
@@ -425,6 +428,11 @@ func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, kn
 	if combat.hp < before:
 		squash.impulse(SquashStretch.Impulse.HURT)
 
+## 受击面(= 逻辑 hurtbox):当前姿态碰撞箱的世界 AABB,所有伤害来源经 core/sim/hit_shape.gd 查它。
+## ★ 物理碰撞箱只负责移动;别再拿碰撞层/碰撞体本身当命中判据(那是旧口径,PvP 曾用 40px 圆)。
+func hurt_rect() -> Rect2:
+	return HitShape.hurt_rect_of(self)
+
 func get_facing() -> int:
 	return facing_direction
 
@@ -623,16 +631,12 @@ func cancel_charge() -> void:
 	is_charge = false
 	charge_timer = 0.0
 
-func _update_waterproof(delta: float) -> void:
-	var submerged := false
-	if swim.in_water:
-		var surface_y := Water.surface_y_at(global_position)
-		# 呼吸按大部分没入扣:参考线比中心低 water_breath_line_offset(≈胸口下沿),水面到这条线就扣,要浮到水面低于它才回气(头能露出仍扣)。
-		var breath_point := global_position + Vector2(0.0, PlayerParams.water_breath_line_offset)
-		submerged = Water.submerged(breath_point, surface_y)
+# 呼吸口径:头低于水面线(head_under)才扣氧 —— 采样点与水面线都由 Water.sample_body 定,玩家与敌人同一条线。
+func _update_waterproof(delta: float, water: WaterSample) -> void:
+	var submerged := water != null and water.head_under
 	if submerged != _was_submerged:
 		_was_submerged = submerged
-		_waterproof_timer = 0.0  # 状态切换重置:入水满 0.5s 才扣第一次
+		_waterproof_timer = 0.0  # 状态切换重置:自切换起累计满一个间隔才结算第一下
 	if submerged:
 		_waterproof_timer += delta
 		if _waterproof_timer >= GameParameters.water_drain_interval:

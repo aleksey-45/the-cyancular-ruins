@@ -22,10 +22,10 @@
 
 ## 2. 命中补偿：现状 = 没有
 
-- 伤害全走服务器模拟的实体子弹：`server/match/match_combat.gd::_adjudicate_bullets()` 用 `MazeGenerator.toroidal_delta_px(...)` 与 `HIT_RADIUS`（= `BulletBase.PLAYER_HIT_RADIUS` = **40.0**）判命中。
+- 伤害全走服务器模拟的实体子弹：`server/match/match_combat.gd::_adjudicate_bullets()` 用子弹上一位置→当前位置的线段与玩家受击面（`Player.hurt_rect()`，经 `core/sim/hit_shape.gd`）判命中。
 - `beam_fired` 只 `_rpc_all` 广播视觉，不裁决伤害；没有 hitscan 路径。
 - 没有回退命中盒、没有 lag compensation、没有按射手视图时刻回退。
-- 客户端看到的对手位置是插值后的历史位置（比权威晚约 67ms，`PLAYOUT_TICKS = 4`）⇒ 射手除了提前量还要把这段显示延迟算进去；300px/s 的横向目标在 40px 判定半径下足以打空。
+- 客户端看到的对手位置是插值后的历史位置（比权威晚约 67ms，`PLAYOUT_TICKS = 4`）⇒ 射手除了提前量还要把这段显示延迟算进去；300px/s 的横向目标在 67ms 内位移约 20px，足以让"看着中/服务器不中"分家。
 
 ## 3. 远端副本：playout 缓冲插值
 

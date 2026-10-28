@@ -21,18 +21,16 @@ func _process(delta: float) -> void:
 	var parent := get_parent() as CharacterBody2D
 	if parent == null:
 		return
-	var grid := MazeGenerator.current_grid
-	if grid.is_empty():
+	if MazeGenerator.current_grid.is_empty():
 		return
-	var off := Water.feet_offset(parent)
-	var feet := Vector2(parent.global_position.x, parent.global_position.y + off)
-	if not Water.is_in_water(feet):
+	# fx 不维护滞回状态:每次现查(was_in_water=false),只看"此刻是否按在水里处理"
+	var water := Water.sample_body(parent, false)
+	if not water.in_water:
 		return
 	if parent.velocity.length() < GameParameters.water_fx_move_threshold:
 		return  # 静止漂着不喷
-	var surface_y := Water.surface_y_at(parent.global_position)
-	# 按「中心相对水面线」分模式:中心贴水面(半没入/浮着)→ 溅水花;中心没入深 → 上浮气泡
-	var depth := parent.global_position.y - surface_y
+	# 按脚底在水面线下的深度分模式:贴水面 → 溅水花;没入深 → 上浮气泡
+	var depth := water.feet_depth
 	_next_emit -= delta
 	if _next_emit > 0.0:
 		return
@@ -41,10 +39,10 @@ func _process(delta: float) -> void:
 		return
 	if depth <= GameParameters.water_fx_splash_band:
 		_next_emit = GameParameters.water_fx_splash_interval
-		_spawn(host, Vector2(parent.global_position.x, surface_y), true)
+		_spawn(host, Vector2(parent.global_position.x, water.surface_y), true)
 	else:
 		_next_emit = GameParameters.water_fx_bubble_interval
-		_spawn(host, Vector2(parent.global_position.x, parent.global_position.y + off), false)
+		_spawn(host, Vector2(parent.global_position.x, water.feet_y), false)
 
 
 func _spawn(host: Node, at: Vector2, splash: bool) -> void:

@@ -132,7 +132,7 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 ### 裁决与拆墙
 
 - `_adjudicate_bullets`:遍历 `bullet` 组,`_seen_bullets` 防重;新子弹广播 `bullet_spawn` 给非射手端。
-- 命中 = 与非射手玩家的 `toroidal_delta_px` 距离 < `HIT_RADIUS`(`BulletBase.PLAYER_HIT_RADIUS = 40.0`);命中后 `take_hit` + 广播 `hit_event` + `queue_free()`。
+- 命中 = 子弹上一位置→当前位置的线段与玩家受击面(`Player.hurt_rect()`,= 当前姿态箱 AABB)相交(`core/sim/hit_shape.gd`);命中后 `take_hit` + 广播 `hit_event` + `queue_free()`。
 - 榴弹在 `_adjudicate_grenade`:只结算一次直接命中,不销毁子弹,引信照常爆炸。
 - 即时光束:`_broadcast_pending_beams()` 轮询 `collect_pending_beam_report()`,经 `beam_fired` 广播给非射手端。
 - 拆墙:`_on_tile_destroyed` 清 `sub_hp` 与 `destructible_sub` 子格、标 `_dirty_chunks`、广播 `tile_destroyed`;16px 子格拆毁走 `_on_sub_destroyed` + `sub_destroyed`。

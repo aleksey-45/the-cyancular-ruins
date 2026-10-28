@@ -1,6 +1,8 @@
 class_name MatchCombat
 extends MatchSnapshot
 
+const HitShape := preload("res://core/sim/hit_shape.gd")   # 受击判定几何唯一入口
+
 # 子弹 / 爆炸 / 光束的裁决与广播域;拆墙广播也在这里(它同属「命中/破坏」这条线)。
 
 func _on_tile_destroyed(cell: Vector2i) -> void:
@@ -38,7 +40,7 @@ func _adjudicate_bullets() -> void:
 	for b in get_tree().get_nodes_in_group("bullet"):
 		if not is_instance_valid(b):
 			continue
-		var bullet := b as CharacterBody2D
+		var bullet := b as BulletBase
 
 		var bid: int = bullet.get_instance_id()
 		live[bid] = true
@@ -52,7 +54,7 @@ func _adjudicate_bullets() -> void:
 		if bullet.explodes:
 			_adjudicate_grenade(bullet)
 			continue
-# 命中裁决:对非射手玩家算 toroidal 距离(射手 role 只在循环外查一次)。★ 队友穿透用 continue 而不是 break —— 队友不挡弹道,后面若有敌人照样打得到。
+# 命中裁决:子弹上一位置→当前位置的线段 vs 玩家受击面(与客户端 cull / 单机子弹同一套 hit_shape)。★ 队友穿透用 continue 而不是 break —— 队友不挡弹道,后面若有敌人照样打得到。
 		var shooter_role := _role_of(bullet.shooter)
 		for role in players:
 			var p: Node2D = players[role]
@@ -60,22 +62,29 @@ func _adjudicate_bullets() -> void:
 				continue
 			if same_team(shooter_role, int(role)):
 				continue
-			var d := MazeGenerator.toroidal_delta_px(bullet.global_position, p.global_position,
-					GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT).length()
-			if d < HIT_RADIUS:
+			if _segment_hits_player(bullet, p):
 				_on_bullet_hit(bullet, p, role)
 				break
 # 剪枝用替换而不是逐条 erase:两者都是 O(子弹数),替换少一次遍历。
 	_seen_bullets = live
 
-# 爆炸弹对玩家的权威判定:只结算一次「直接命中」,不销毁子弹 —— 碰撞掩码不含玩家层、命中全靠这里的半径,
-# 而销毁会把引信一起吞掉(爆炸永不触发)。引信由 bullet_base._check_player_contact 两端同源起,这里只补权威伤害 + 射手端反馈。
 
-func _adjudicate_grenade(bullet: CharacterBody2D) -> void:
+# 线段扫掠判命中:受击面来源唯一(Player.hurt_rect → HitShape),不再用中心点距离。
+func _segment_hits_player(bullet: BulletBase, p: Node2D) -> bool:
+	if not HitShape.hurtable(p):
+		return false
+	var rect: Rect2 = p.hurt_rect() if p.has_method("hurt_rect") else HitShape.hurt_rect_of(p)
+	return HitShape.segment_hits_rect(bullet.prev_pos, bullet.global_position, rect,
+			float(GameParameters.MAP_WIDTH), float(GameParameters.MAP_HEIGHT)) >= 0.0
+
+# 爆炸弹对玩家的权威判定:只结算一次「直接命中」,不销毁子弹 —— 物理掩码已不含玩家,命中全靠这里的线段扫掠;
+# 销毁会把引信一起吞掉(爆炸永不触发)。引信由 bullet_base._check_player_contact 两端同源起,这里只补权威伤害 + 射手端反馈。
+
+func _adjudicate_grenade(bullet: BulletBase) -> void:
 	if bullet.shooter == null:
 		return   # 敌方爆炸弹(理论上只有敌方弹药):同普通弹的 shooter == null 分支,不补刀
 	if bullet.has_meta("grenade_direct_hit"):
-		return   # 40px 判定圈会被榴弹连续穿过好几帧,只结算第一次
+		return   # 榴弹会在判定框内连续穿行好几帧,只结算第一次
 	for role in players:
 		var p: Node2D = players[role]
 		if p == bullet.shooter:
@@ -84,14 +93,12 @@ func _adjudicate_grenade(bullet: CharacterBody2D) -> void:
 # (伤害 + 击退都照吃;爆炸走 Explosion.apply_aoe,那条路径按现状不动)。
 		if same_team(_role_of(bullet.shooter), int(role)):
 			continue
-		var d := MazeGenerator.toroidal_delta_px(bullet.global_position, p.global_position,
-				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT).length()
-		if d < HIT_RADIUS:
+		if _segment_hits_player(bullet, p):
 			_grenade_direct_hit(bullet, p)
 			break
 
 
-func _grenade_direct_hit(bullet: CharacterBody2D, victim: Node2D) -> void:
+func _grenade_direct_hit(bullet: BulletBase, victim: Node2D) -> void:
 	bullet.set_meta("grenade_direct_hit", true)
 # ★ 归因先于伤害(全仓纪律):一击致死时倒地边沿同帧读 last_damager,大乱斗靠它计击杀分。
 	CombatFeedback.attribute(victim, bullet.shooter)

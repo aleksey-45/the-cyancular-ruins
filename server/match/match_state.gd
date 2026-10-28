@@ -73,8 +73,6 @@ var _snapshot_tick_phase := 0   # 物理 tick 相位:每 SNAPSHOT_STRIDE 个 tic
 const SNAPSHOT_HZ := 30
 const SNAPSHOT_INTERVAL := 1.0 / SNAPSHOT_HZ
 const SNAPSHOT_STRIDE := 60 / SNAPSHOT_HZ   # = 60Hz 物理 tick / 30Hz 发包
-# ★ 命中判定半径的单一来源在 BulletBase.PLAYER_HIT_RADIUS:客户端那份视觉榴弹也按同一半径判「碰到玩家 → 短引信」,两处各写一个数就会漂。
-const HIT_RADIUS := BulletBase.PLAYER_HIT_RADIUS
 var _seen_bullets: Dictionary = {}  # bullet instance_id -> true(只广播一次);每帧按在场子弹剪枝(见 _adjudicate_bullets)
 var _snap_tick := 0   # 快照的 tick 时间戳(60Hz 物理 tick 域,每包 +SNAPSHOT_STRIDE;客户端靠它丢弃乱序旧快照 + playout 插值)
 # C2 rollback:每 2 个物理 tick 恰好消费一条输入记录(FIFO;30Hz 采样),ack 让客户端重放 seq > ack 的本地输入 —— 1:1 同序,无 tick 映射漂移。

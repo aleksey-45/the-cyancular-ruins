@@ -99,7 +99,7 @@ func _foot_at_ladder_top(foot_cell: Vector2i) -> bool:
 	return below != 0 and TileDefs.climb_speed(MazeGenerator.texture_of(below)) > 0.0
 
 func _climb_foot_offset() -> float:
-	return 57.0
+	return Water.feet_offset(body)   # 与水中判定同源(姿态箱换启停会自动失效重算),别再写死 57
 
 
 # 时间场倍率(加速 ×2,正常 1;回溯整帧由根早退接管,故 0 一律当 1)。判据与根 player.gd 同源:有世界时间场就走它,否则读根每帧推入的 haste_mult(PvP 的 worker 与本端预测各写同一字段)。

@@ -15,7 +15,9 @@ const water_fx_move_threshold: float = 40.0   # 实体移动速度低于此值�
 const water_fx_splash_band: float = 20.0     # 脚底距水面线 ≤ 此值算溅水花
 const water_fx_splash_interval: float = 0.15
 const water_fx_bubble_interval: float = 0.12
-const water_drain_interval: float = 1.0    # 完全浸水时防水值每 1s 掉 1
+const water_enter_depth: float = 8.0         # 入水:脚底低于水面线 ≥ 此值(px)才进"在水中"(Water.sample_body 的滞回)
+const water_exit_depth: float = -2.0         # 出水:脚底高于水面线 ≥ 2px 才退"在水中";两值之间保持上一帧结论
+const water_drain_interval: float = 1.0    # 没顶(head_under)时防水值每 1s 掉 1
 const water_recover_interval: float = 0.3  # 暴露空气时每 0.3s 回 1
 const water_drown_damage_interval: float = 1.5  # 防水值空后扣血间隔(秒)
 

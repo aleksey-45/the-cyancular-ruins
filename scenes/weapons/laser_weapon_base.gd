@@ -2,11 +2,11 @@ class_name LaserWeaponBase
 extends WeaponBase
 
 # 即时光束类武器基类(现:激光枪激光,第 6 槽):不走物理子弹,开火瞬间用几何追踪算出一束,一次性结算。
-# 三个可覆写缝:缝1 光束几何 _emit_beam(origin, dir)(默认直线 hitscan:第一面墙即吸收,否则到 bullet_range);缝2 命中结算 _apply_beam_damage(pts, contacts, hit_points)(默认逐段扫路径上的敌人/玩家 + 磨可破坏砖);缝3 视觉风格 _spawn_beam_visual(pts) 与 _beam_style()(默认单发瞬光)。
-# 新激光武器 = 一个 extends LaserWeaponBase 的薄子类 + 场景调参,按需覆写缝;开火编排/视觉/伤害/磨砖/PvP 权威门控与上报全部由基类提供。
-# PvP:客户端视觉副本只播光束不裁决(_authoritative=false),服务器权威开火照常结算并把本发权威光束记进 pending_beam_report → MatchHost 每帧轮询广播给非射手客户端;单机无 host 读上报,只留字段无害。
+# 三个可覆写缝:缝1 光束几何 _emit_beam(默认直线 hitscan);缝2 命中结算 _apply_beam_damage(默认逐段扫敌人/玩家 + 磨可破坏砖);缝3 视觉 _spawn_beam_visual / _beam_style。新激光武器 = 薄子类 + 场景调参。
+# PvP:客户端视觉副本只播光束不裁决;服务器权威开火结算后把本发记进 pending_beam_report,MatchHost 每帧轮询广播给非射手客户端。
 
 const BeamTrace := preload("res://core/sim/beam_trace.gd")
+const HitShape := preload("res://core/sim/hit_shape.gd")   # 受击判定几何唯一入口
 const TileHitFx := preload("res://scenes/effects/tile_hit_fx.gd")
 const LaserVisual := preload("res://core/present/laser_visual.gd")
 
@@ -17,8 +17,7 @@ const LaserVisual := preload("res://core/present/laser_visual.gd")
 # 对可破坏砖单次扣血量(树叶/树干用 explosion 语义,不穿墙只磨)。
 @export var tile_chip: int = 8
 
-# 命中判据(每段):折线线段与目标实际身体 AABB(由启用中的碰撞多边形算出,含 2.5x 缩放,见 _body_rect)外扩 beam_half_width×HIT_MULT 后相交即中 —— 激光线穿过身体任一部分都算,不再要求中心点贴线。
-# ★ 早前这条判据并不生效:CollisionAabb 认不出多边形时身体框一直是原点周围 36×36 的兜底值,修好后判定才第一次落在身体上。
+# 命中判据(每段):折线线段与目标受击面(hurt_rect,含 2.5x 缩放的活动碰撞箱)外扩 beam_half_width×HIT_MULT 后相交即中。★ 早前 CollisionAabb 认不出多边形、身体框恒为 36×36 兜底,修好后判定才第一次落在身体上。
 const HIT_MULT: float = 1.75
 
 enum BeamStyle { FLASH = 0 }   # 预留视觉风格;目前只有"单发瞬光"
@@ -48,8 +47,7 @@ func _spawn_projectiles(base_dir: Vector2) -> void:
 func _authoritative() -> bool:
 	return not Level0.pvp_mode
 
-# ── 缝1:光束几何(子类覆写)。默认 = 直线 hitscan(max_bounces=0:第一面墙即吸收/到射程)──
-# 返回 BeamTrace.trace 同构的三键(points / contacts / hit_points);穿透激光 = 返回穿墙直折线、contacts 置空(不磨砖);扇面/多束 = 返回多段折线并连带覆写 _apply_beam_damage。
+# ── 缝1:光束几何(子类覆写)。默认 = 直线 hitscan(max_bounces=0:第一面墙即吸收/到射程);返回 BeamTrace.trace 同构的 points / contacts / hit_points。
 func _emit_beam(origin: Vector2, dir: Vector2) -> Dictionary:
 	return BeamTrace.trace(origin, dir, bullet_range, 0)
 
@@ -74,7 +72,6 @@ var pending_beam_report: Dictionary = {}
 func _report_beam_fired(pts: PackedVector2Array) -> void:
 	pending_beam_report = _make_beam_report(pts)
 
-# 可覆写:视觉风格子类往上报 dict 加专属字段,PvP 远端据此渲染。
 func _make_beam_report(pts: PackedVector2Array) -> Dictionary:
 	return {
 		"pts": pts,   # 射手副本连续系原始折线(长度 ≤ bullet_range,远小于半图,跨接缝安全)
@@ -134,42 +131,14 @@ func _damage_path_targets(pts: PackedVector2Array) -> void:
 			else:
 				_apply_to_player(t, c, near)
 
-# 目标身体在世界系的方框(px),中心已锚到 near_to 最近的环面副本;几何取自 CollisionAabb(只并启用中的碰撞体,兼容玩家/飞鸟的多姿态碰撞箱),无碰撞体时兜底 18px 半身、以节点原点为中心。
-# ★ 必须用带 position 的整框 —— 身体框中心不在节点原点(跳鸟偏低约 8px、黑影偏低约 5px),只取 size 再以原点为中心会让整框错位。
+# 目标受击面在世界系的方框(px),中心已锚到 near_to 最近的环面副本;几何走 hit_shape 同一入口(只并启用中的箱,兼容玩家/飞鸟多姿态箱)。★ 必须用带 position 的整框:身体框中心不在节点原点。
 func _body_rect(n: Node2D, near_to: Vector2, w: float, h: float) -> Rect2:
-	var r := Rect2(n.global_position - Vector2(18, 18), Vector2(36, 36))
-	if CollisionAabb.has_any(n):
-		r = CollisionAabb.world_rect(n)
-	var c := MazeGenerator.anchor_to_nearest(r.get_center(), near_to, w, h)
-	return Rect2(c - r.size * 0.5, r.size)
+	var r: Rect2 = n.hurt_rect() if n.has_method("hurt_rect") else HitShape.hurt_rect_of(n)
+	return HitShape.rect_at(r, near_to, w, h)
 
-# 线段与矩形是否相交;命中返回线段上最近点(击退源),未命中返回 (INF,0)。实现:矩形逐轴裁剪线段参数区间(Liang-Barsky)。
+# 线段与矩形是否相交;命中返回线段上最近点(击退源),未命中返回 (INF,0)。实现已收进 HitShape(Liang-Barsky 单一来源)。
 static func _segment_rect_hit(a: Vector2, b: Vector2, rect: Rect2) -> Vector2:
-	var d := b - a
-	var t0 := 0.0
-	var t1 := 1.0
-	var pmin := rect.position
-	var pmax := rect.position + rect.size
-	for axis in range(2):
-		var p := a[axis]
-		var dd := d[axis]
-		var lo := pmin[axis]
-		var hi := pmax[axis]
-		if absf(dd) < 1e-9:
-			if p < lo or p > hi:
-				return Vector2(INF, 0.0)
-		else:
-			var ta := (lo - p) / dd
-			var tb := (hi - p) / dd
-			if ta > tb:
-				var tmp := ta
-				ta = tb
-				tb = tmp
-			t0 = maxf(t0, ta)
-			t1 = minf(t1, tb)
-			if t0 > t1:
-				return Vector2(INF, 0.0)
-	return a + d * t0
+	return HitShape.segment_entry_point(a, b, rect)
 
 func _apply_to_enemy(t: Node, pos: Vector2, near: Vector2) -> void:
 	if not t.has_method("hurt"):
@@ -218,6 +187,8 @@ func _spawn_tile_fx(contacts: Array, hit_points: PackedVector2Array) -> void:
 	for t in _tile_contacts(contacts, hit_points):
 		var pos: Vector2 = t["pos"]
 		TileHitFx.spawn(get_viewport(), pos, int(t["tex"]))
+		# 本端已播命中碎片 ⇒ 服务器随后的拆砖事件去重(致死那一发不再叠一簇)。
+		TileHitFx.mark_hit(pos)
 
 # 对碰墙触点里的可破坏砖扣血(树叶/树干,explosion 语义不穿墙):只磨不破,砖血扣到 0 变空气由 damage_tile 回调 Level0 处理,下一发射击自然穿过;同一格单发只扣一次(扫描跑两遍:一遍播粒子一遍扣血,触点只有几个)。
 func _damage_tiles(contacts: Array, hit_points: PackedVector2Array) -> void:

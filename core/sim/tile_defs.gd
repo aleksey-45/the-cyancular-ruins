@@ -276,6 +276,10 @@ static func damage_sub(sub: Vector2i, amount: int, source: String, owner: Node =
 					break
 			if not alive and grid[cell.y][cell.x] != 0:
 				grid[cell.y][cell.x] = 0
+				# 两本账在"格子已消失"这点上对齐:格级 hp_grid 必须同步归 0,否则回溯复原按 hp_grid_at>0 认为
+				# 这格还有折减后的血量、把子格级路径清空的格当成"磨过但没死"(只清 grid 不碰 hp_grid 正是旧的缺口)。
+				if not hp_grid.is_empty() and cell.y < hp_grid.size() and cell.x < hp_grid[cell.y].size():
+					hp_grid[cell.y][cell.x] = 0
 		if on_sub_destroyed.is_valid():
 			on_sub_destroyed.call(sub, pre_hp, owner)
 		return true

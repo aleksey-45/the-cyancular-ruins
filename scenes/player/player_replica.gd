@@ -8,6 +8,7 @@ const SNAP_DIST := 128.0
 
 # 播放时钟(= core/net/playout_clock.gd)。★ 用 preload 取常量而不是全局类名:少一次编辑器扫描依赖。
 const PlayoutClock := preload("res://core/net/playout_clock.gd")
+const HitShape := preload("res://core/sim/hit_shape.gd")   # 受击判定几何唯一入口(cull 用)
 
 # ── playout 缓冲插值 ── PLAYOUT_TICKS = 故意落后多少 tick:下行 30Hz(间隔 2 tick)⇒ 4 tick = 2 个间隔 ≈ 67ms 缓冲(1 个间隔
 # 是夹逼插值的最低要求,第 2 个吸收抖动);改大 = 更抗抖但更迟,改 0 = 直出。place_history 存 canonical 且定长裁剪。
@@ -21,9 +22,6 @@ const POSE_ANIM: Dictionary = {
 const POSE_FLY := 2
 
 const LAND_VEL_EPS := 1.0
-
-# 脚底探针偏移(世界 px):水中查询要与本体同口径 —— 本体走 Water.is_in_water(脚底),脚底 = 原点 + Water.feet_offset(自己);取值在 _ready 里一次性问幽灵体。★ 为什么一次性问幽灵体而不是写死一个数:幽灵体的 5 份姿态多边形是从 player.tscn 现抄的、根同样是 scale 2.5 ⇒ to_global 出来的底边与本体逐像素相同(实测 stand = 57.0),写死数会随 player.tscn 的碰撞箱改动静默漂。★ 为什么是常量而不是逐帧按姿态重算:本体那边实际也是常量(Water.feet_offset 的缓存签名只数 CollisionShape2D 子节点,而玩家 5 份姿态箱全是 CollisionPolygon2D ⇒ 签名恒为 0、缓存永不失效)。★ 与本体那 1px 的差(如实登记):本体首帧调用时 5 个姿态箱全是启用态 ⇒ 它缓存的是 5 箱合并底边 = 58.0,副本这里是幽灵体当时启用的 stand 那一份 = 57.0;刻意不去逐像素对齐它 —— 那等于把本体的缓存口径抄进第二个地方,而那份缓存哪天被修成「跟着姿态走」时,抄来的 58 会朝反方向漂 1px;57 才是 feet_offset 的语义值(启用中的碰撞箱底边)。
-var _water_feet_off: float = 24.0   # 24 = Water.feet_offset 的兜底值(幽灵体取不到时同款)
 
 const POSE_SHAPE: Dictionary = {
 	0: "CollisionShape2D_stand", 1: "CollisionShape2D_move", 2: "CollisionShape2D_fly",
@@ -75,7 +73,6 @@ func _ready() -> void:
 	animator.sprite_frames = tmp.get_node("AnimatedSprite2D").sprite_frames
 	_build_ghost_body(tmp)
 	tmp.free()
-	_water_feet_off = Water.feet_offset(_ghost) if _ghost != null else 24.0
 	_weapon_slot_node = Node2D.new()
 	_weapon_slot_node.name = "WeaponSlot"
 	add_child(_weapon_slot_node)
@@ -130,6 +127,15 @@ func set_ghost_layer(n: int) -> void:
 func _set_ghost_pose(pose: int) -> void:
 	for p in _ghost_shapes:
 		(_ghost_shapes[p] as CollisionPolygon2D).disabled = p != pose
+
+## 客户端 cull 用的受击面:尺寸/中心偏移取幽灵体(最新姿态+最新权威位置),位置取渲染位置(插值)。
+## 两个量分开取的理由:形状要与服务器裁决同源,位置要与玩家眼睛看到的同源;这是已知 67ms 时差的观测点。
+func hurt_rect_rendered() -> Rect2:
+	if _ghost == null or not is_instance_valid(_ghost):
+		return Rect2(global_position - Vector2(18.0, 18.0), Vector2(36.0, 36.0))
+	var r := HitShape.hurt_rect_of(_ghost)
+	var off := r.get_center() - _ghost.global_position
+	return Rect2(global_position + off - r.size * 0.5, r.size)
 
 
 ## canonical → 锚到本地玩家(相机)最近的那一份副本。
@@ -274,10 +280,12 @@ func _drive_weapon_visual() -> void:
 		return
 	_weapon.drive_remote_visual(_aim, _aim_facing)
 
-# 对手此刻是否在水中(脚底探针,与本体同口径 —— 本体在 swim_component.update 里同样取 Water.is_in_water(脚底))。★ 这一格不需要协议字段:本体的 in_water 本身就是纯位置网格查询(读 MazeGenerator.current_grid,而 PvP 客户端也建同一张图),故副本在客户端跑同一查询即可:零载荷字段、零 RPC、零服务器改动。★ 位置用渲染用的 global_position(已锚到最近副本、可能不在 [0,MAP))是安全的:Water.is_in_water → GridPathfinder.cell_of 两端都 posmod,而 MAP_WIDTH/HEIGHT 由 GameParameters.refresh_map_size() 按「格数 × TILE_SIZE」算出 ⇒ 恒为 64 的整数倍 ⇒ 整幅平移一个副本后落回同一格(实测:锚到非 canonical 副本与 canonical 查询同值)。
+# 对手此刻是否在水中(脚底探针,与本体同口径 —— 本体同样按活动碰撞箱的脚底采样;偏移走 Water.feet_offset,幽灵体换姿态会自动失效重算)。★ 这一格不需要协议字段:本体的 in_water 本身就是纯位置网格查询(读 MazeGenerator.current_grid,而 PvP 客户端也建同一张图),故副本在客户端跑同一查询即可:零载荷字段、零 RPC、零服务器改动。★ 位置用渲染用的 global_position(已锚到最近副本、可能不在 [0,MAP))是安全的:Water.is_in_water → GridPathfinder.cell_of 两端都 posmod,而 MAP_WIDTH/HEIGHT 由 GameParameters.refresh_map_size() 按「格数 × TILE_SIZE」算出 ⇒ 恒为 64 的整数倍 ⇒ 整幅平移一个副本后落回同一格(实测:锚到非 canonical 副本与 canonical 查询同值)。
 func _in_water() -> bool:
+	if _ghost == null or not is_instance_valid(_ghost):
+		return false
 	var gp := global_position
-	return Water.is_in_water(Vector2(gp.x, gp.y + _water_feet_off))
+	return Water.is_in_water(Vector2(gp.x, gp.y + Water.feet_offset(_ghost)))
 
 
 func _process(delta: float) -> void:

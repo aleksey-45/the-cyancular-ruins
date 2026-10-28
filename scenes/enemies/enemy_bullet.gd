@@ -2,7 +2,7 @@ class_name EnemyBullet
 extends BulletBase
 
 # 敌方投弹:由发射者给定初速向量与重力倍率,重力抛物线飞行,命中玩家造成 damage。
-# 场景 collision_mask=3(层1地形+层2玩家),不含层3 → 不撞自己/其他敌人。
+# 场景 collision_mask=1(只撞地形):打玩家走 hurt_rect 线段扫掠(见 _physics_process),不再靠物理碰撞层。
 var damage: int = 2
 var water_mult: float = 1.0  # FlyBird 子弹独有:攻击水里的玩家伤害 ×1.5
 
@@ -44,26 +44,43 @@ func _physics_process(delta: float) -> void:
 	delta = TimeField.bullet_delta(delta, self)
 	if TimeField.current != null and TimeField.current.is_rewinding():
 		return
+	prev_pos = global_position
 	velocity_vec.y += GameParameters.gravity0 * gravity_factor * delta
 	rotation = velocity_vec.angle()
 	_apply_water_drag(delta)
 	var step := velocity_vec * delta
 	traveled += step.length()
+	var from := global_position
 	var col := move_and_collide(step)
-	if col:
-		var hit := col.get_collider()
+	var to := global_position
+	var t_wall := 1.0
+	if col != null:
+		to = from + col.get_travel()
+		var lens := step.length()
+		t_wall = (col.get_travel().length() / lens) if lens > 0.0 else 0.0
+	var hit := first_hurt_on_segment(from, to, ["player"])
+	if not hit.is_empty() and float(hit["t"]) <= t_wall:
+		global_position = from + (to - from) * float(hit["t"])
 		# 视觉副本(apply_damage=false):只飞,碰到目标直接消失,不裁决伤害(伤害服务器裁决)。
-		if apply_damage and hit != null and hit.is_in_group("player") and hit.has_method("take_hit"):
-			var dmg: int = damage
-			if water_mult > 1.0 and Water.is_in_water((hit as Node2D).global_position):
-				dmg = roundi(damage * water_mult)
-			hit.take_hit(global_position, dmg)
+		if apply_damage:
+			var victim := hit["node"] as Node
+			var victim2 := victim as Node2D
+			if victim != null and victim.has_method("take_hit"):
+				var dmg: int = damage
+				if water_mult > 1.0 and victim2 != null and Water.sample_body(victim2, false).in_water:
+					dmg = roundi(damage * water_mult)
+				victim.take_hit(global_position, dmg)
+		queue_free()
+		return
+	if col != null:
 		queue_free()
 		return
 	if traveled >= max_range:
 		queue_free()
 		return
 	_wrap()
+	# 环面 wrap 会把 global_position 整幅平移;扫掠起点跟着平移,下一帧的线段才不横穿整图。
+	prev_pos = from + (global_position - to)
 
 # 服务器权威世界有 2 玩家且敌方子弹无射手 → 位置存 canonical(别锚到某个玩家副本漂走);
 # 单机/客户端(=1 玩家)回落 BulletBase:锚本地玩家副本渲染,接缝不消失。

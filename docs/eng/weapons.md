@@ -20,10 +20,11 @@
 
 **子弹**:
 
-- 玩家 `BulletBase`:伤害由 WeaponBase 注入(`hit_damage` / `hit_impact`)。爆炸弹(`explodes = true`)撞墙/命中一律反弹(衰减 0.6),`fuse_time`(撞墙)/ `hit_fuse_time`(命中敌人)引信,命中敌人另加 10 直接伤,超射程兜底爆炸。
-- PvP 命中玩家:`_check_player_contact` 按 `PLAYER_HIT_RADIUS = 40`(单一来源,`MatchHost.HIT_RADIUS` 引用它)对 `player` + `player_replica` 组(排除射手)判接触,只起短引信、不改轨迹;权威直接伤由 `MatchHost._adjudicate_grenade` 结算(5 伤 + 归因 + `notify_direct_hit` X 标记),不销毁子弹。首次碰撞决定引信时长、不刷新。
-- AoE 在 `core/sim/explosion.gd`:`Explosion.apply_aoe` 内圈 40% 满伤 + 二次方衰减,LOS 墙后保留 75%(纯函数 `cover_multiplier`,内圈免疫遮挡),友伤,击退独立径向,穿透无敌帧。不变量:伤害随距离不增。
-- 客户端视觉子弹:`PvpMatchClient._cull_bullet_contacts()` 对 `apply_damage == false` 且非榴弹的子弹,按 `PLAYER_HIT_RADIUS` + 同一套环面最短距离判接触,命中即 `queue_free()`;榴弹跳过(引信/反弹由 `_check_player_contact` 管)。子弹的 `shooter` 来自 `bullet_spawn` 的 `shooter_role`。3v3 队友穿透由 `_bullet_hits_entity(b, ent)` 覆写保证。碰撞层:子弹 mask = 5(地形 + 敌人),榴弹不含玩家 ⇒ 友伤只来自爆炸。
+- 玩家 `BulletBase`:伤害由 WeaponBase 注入(`hit_damage` / `hit_impact`)。命中判定不走物理碰撞:每物理帧用"上一位置→当前位置"线段扫掠 `enemies` 组的 `hurt_rect()`,物理 mask = 1 只撞地形(见 `core/sim/hit_shape.gd`)。爆炸弹(`explodes = true`)撞墙/命中一律反弹(衰减 0.6),`fuse_time`(撞墙)/ `hit_fuse_time`(命中敌人)引信,命中敌人另加 5 直接伤(`grenade_bullet.tscn` 覆盖;基类默认 10),超射程兜底爆炸。
+- 最小破坏单位 `BulletBase.tile_break_unit`(单位 = 格,默认 1.0):`>=1` 打砖走格级 `TileDefs.damage_tile`(整 64px 格一次),`<1` 走子格 `damage_sub`;**榴弹 `grenade_bullet.tscn` = 0.25(= 1 个 16px 子格),其余枪不覆盖 = 1.0**;爆炸经 `Explosion.apply_aoe(..., tile_unit_cells)` 传同一参数(整格侧按 64px 格去重)。
+- PvP 命中玩家:服务器 `MatchHost._adjudicate_bullets` / `_adjudicate_grenade` 用同一套"线段 vs `Player.hurt_rect()`"(`core/sim/hit_shape.gd`);`_check_player_contact` 只管榴弹引信时机(爆弹点是否落在受击面内)。直接伤仍由 `_adjudicate_grenade` 结算(5 伤 + 归因 + `notify_direct_hit` X 标记),不销毁子弹。旧 `PLAYER_HIT_RADIUS = 40` 圆已删除。
+- AoE 在 `core/sim/explosion.gd`:`Explosion.apply_aoe` 内圈 40% 满伤 + 二次方衰减,LOS 墙后保留 75%(纯函数 `cover_multiplier`,内圈免疫遮挡),友伤,击退独立径向,穿透无敌帧。判定距离 = 爆心到目标 `hurt_rect()` 的距离(不是中心点)。不变量:伤害随距离不增。
+- 客户端视觉子弹:`PvpMatchClient._cull_bullet_contacts()` 对 `apply_damage == false` 且非榴弹的子弹,用同一套 hit_shape 线段扫掠对手副本的 `hurt_rect_rendered()`,命中即 `queue_free()`;榴弹跳过(引信/反弹由 `_check_player_contact` 管)。子弹的 `shooter` 来自 `bullet_spawn` 的 `shooter_role`。3v3 队友穿透由 `_bullet_hits_entity(b, ent)` 覆写保证。
 
 ## 武器背包与地面拾取
 

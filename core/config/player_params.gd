@@ -30,8 +30,6 @@ const player_swim_down: float = 320.0     # 下沉速度
 const player_swim_accel: float = 6.0      # 水中水平缓动系数
 const player_waterproof_max: int = 10        # 防水值(氧气)上限
 const player_waterproof_damage: int = 5      # 防水值空后每秒扣血
-# 呼吸扣减触发线:参考线在胸口下沿 ⇒ 约 2/3 没入(头能露出)就开始扣,浮到低于此线才回气;越大=越早扣、要浮得越高才回气。
-const water_breath_line_offset: float = 10.0
 
 const cam_lookahead_x: float = 100.0   # 满速时的水平前瞻像素
 const cam_lookahead_y: float = 80.0    # 满速上升/下落时的垂直前瞻像素

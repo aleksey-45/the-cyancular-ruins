@@ -4,15 +4,27 @@ extends RefCounted
 # 爆炸 AoE 判定:分段衰减 + 遮挡检测 + 友伤。纯静态,冒烟测试可直接调用。
 const INNER_FRACTION: float = 0.4  # 内圈半径比例,内圈内满伤
 const BLOCKED_FRACTION: float = 0.75  # 墙后(LOS 遮挡)伤害/击退保留比例
+const HitShape := preload("res://core/sim/hit_shape.gd")   # 受击判定几何唯一入口
+# ★ 不引 autoload(`-s` 冒烟会预加载本文件,autoload 标识符在那一刻不存在):
+#   地图像素尺寸从 current_grid 现算(与 GameParameters.MAP_* 同口径 —— 都是"格数 × 64")。
+const TILE_TS: int = 64
 
-static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knockback: float, shooter: Node = null) -> void:
+
+# 当前地图像素尺寸;网格未建时为 ZERO(调用方退化为不环面回绕的点距)。
+static func _map_px() -> Vector2:
+	var grid := MazeGenerator.current_grid
+	if grid.is_empty():
+		return Vector2.ZERO
+	return Vector2(grid[0].size() * TILE_TS, grid.size() * TILE_TS)
+
+static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knockback: float, shooter: Node = null, tile_unit_cells: float = 1.0) -> void:
 	var tree := _tree()
 	var grid := MazeGenerator.current_grid
 	var has_grid := not grid.is_empty()
 	for e in tree.get_nodes_in_group("enemies"):
 		if not (e is Node2D):
 			continue
-		var d := _dist(center, (e as Node2D).global_position)
+		var d := _hurt_dist(center, e as Node2D)
 		if d > radius:
 			continue
 		# 遮挡(墙后)= 部分掩体;内圈免疫遮挡(见 cover_multiplier 注释)
@@ -40,7 +52,7 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 			continue
 		if pp.has_method("is_downed") and pp.is_downed():
 			continue
-		var d := _dist(center, pp.global_position)
+		var d := _hurt_dist(center, pp)
 		if d <= radius:
 			# 同敌人:内圈免疫遮挡衰减
 			var blocked := has_grid and not _has_los(center, pp, grid)
@@ -54,13 +66,13 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 			# 击退随距离衰减传入玩家(独立击退向量结算);ignore_iframes=true 穿透无敌帧
 			pp.take_hit(center, int(_falloff(d, radius, max_damage) * mult), true,
 					_falloff(d, radius, max_knockback) * mult)
-	# 可破坏瓦片(树叶/树干):按 tile_defs 爆炸衰减(75%)扣血,破坏后变空气
+	# 可破坏瓦片(树叶/树干):按 tile_defs 爆炸衰减(75%)扣血,粒度由调用方的最小破坏单位决定(榴弹 = 1/4 格)
 	if has_grid:
-		_damage_tiles(center, radius, max_damage, shooter)
+		damage_tiles(center, radius, max_damage, shooter, tile_unit_cells)
 
 # 爆区内的可破坏瓦片扫描(纯几何查询、不改状态):权威侧扣血与表现层碎片共用同一份扫描 ⇒ 两端同源。
 static func destructible_subs(center: Vector2, radius: float) -> Array:
-# cyrm v4:爆炸按 16px 子格扫描/扣血(炸出圆洞而非整格消失);返回 [{sub,pos,tex,d}],与 _damage_tiles / bullet_base._explode 共用。
+# cyrm v4:爆炸按 16px 子格扫描;返回 [{sub,pos,tex,d}],与 damage_tiles / bullet_base._explode 共用(整格单位在分派里再按格去重)。
 	var out: Array = []
 	var sgrid := MazeGenerator.current_subgrid
 	if sgrid.is_empty():
@@ -84,12 +96,37 @@ static func destructible_subs(center: Vector2, radius: float) -> Array:
 	return out
 
 
-static func _damage_tiles(center: Vector2, radius: float, max_damage: int, owner: Node = null) -> void:
+# 可破坏瓦片的扣血分派(纯静态、不碰 SceneTree ⇒ -s 冒烟可直接调)。
+# unit>=1:爆区内每个 64px 格去重后扣一次格级账(伤害取该格里最近子格的衰减值);unit<1:保持逐 16px 子格(现状)。
+static func damage_tiles(center: Vector2, radius: float, max_damage: int, owner: Node = null, tile_unit_cells: float = 1.0) -> void:
+	if tile_unit_cells >= 1.0:
+		_damage_tiles_per_cell(center, radius, max_damage)
+	else:
+		_damage_tiles_per_sub(center, radius, max_damage, owner)
+
+
+static func _damage_tiles_per_sub(center: Vector2, radius: float, max_damage: int, owner: Node = null) -> void:
 	for e in destructible_subs(center, radius):
 		var dmg := int(_falloff(float(e["d"]), radius, max_damage) * TileDefs.explosion_decay())
 		if dmg <= 0:
 			continue
 		TileDefs.damage_sub(e["sub"], dmg, "explosion", owner)
+
+
+# 整格单位:同一格会被多个子格扫到 ⇒ 必须去重,否则一爆扣 N 次(表现上等同"多打了 N 发")。
+static func _damage_tiles_per_cell(center: Vector2, radius: float, max_damage: int) -> void:
+	var nearest: Dictionary = {}   # cell(Vector2i) -> 该格最近子格的爆心距离
+	for e in destructible_subs(center, radius):
+		var sub: Vector2i = e["sub"]
+		var cell := Vector2i(int(sub.x) / 4, int(sub.y) / 4)
+		var d := float(e["d"])
+		if not nearest.has(cell) or d < float(nearest[cell]):
+			nearest[cell] = d
+	for cell in nearest:
+		var dmg := int(_falloff(float(nearest[cell]), radius, max_damage) * TileDefs.explosion_decay())
+		if dmg <= 0:
+			continue
+		TileDefs.damage_tile(cell, dmg, "explosion")
 
 
 # 静态函数取场景树:全局 get_tree() 在 static 上下文不可用,走主循环。
@@ -123,18 +160,30 @@ static func make_circle_texture(size: int) -> ImageTexture:
 	return ImageTexture.create_from_image(img)
 
 static func _dist(center: Vector2, target: Vector2) -> float:
-	return MazeGenerator.toroidal_delta_px(center, target,
-			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT).length()
+	var map := _map_px()
+	if map == Vector2.ZERO:
+		return center.distance_to(target)
+	return MazeGenerator.toroidal_delta_px(center, target, map.x, map.y).length()
+
+
+# 目标受击面到爆心的距离:按 hurt_rect 的体积算(旧实现拿节点原点当点 ⇒ 半径边缘"身体重叠但零伤害")。
+# ★ 这是平衡变化:等效爆半径按半身变大,手感需人眼验收(已登记 docs/eng/registered-debt.md)。
+static func _hurt_dist(center: Vector2, n: Node2D) -> float:
+	var rect: Rect2 = n.hurt_rect() if n.has_method("hurt_rect") else HitShape.hurt_rect_of(n)
+	var map := _map_px()
+	if map == Vector2.ZERO:
+		return HitShape.distance_px_to_rect(center, rect)
+	return HitShape.distance_px_to_rect_at(center, rect, center, map.x, map.y)
 
 static func _outward_dir(center: Vector2, target: Vector2) -> Vector2:
-	var delta := MazeGenerator.toroidal_delta_px(center, target,
-			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+	var map := _map_px()
+	var delta := MazeGenerator.toroidal_delta_px(center, target, map.x, map.y) if map != Vector2.ZERO \
+			else target - center
 	return delta.normalized() if not delta.is_zero_approx() else Vector2.RIGHT
 
 static func _has_los(center: Vector2, target: Node2D, grid: Array[Array]) -> bool:
-	var ts: int = GameParameters.TILE_SIZE
-	var center_cell := MazeGenerator.cell_of(center, ts, grid[0].size(), grid.size())
-	var target_cell := MazeGenerator.cell_of(target.global_position, ts, grid[0].size(), grid.size())
+	var center_cell := MazeGenerator.cell_of(center, TILE_TS, grid[0].size(), grid.size())
+	var target_cell := MazeGenerator.cell_of(target.global_position, TILE_TS, grid[0].size(), grid.size())
 	return MazeGenerator.has_line_of_sight(center_cell, target_cell)
 
 # 平缓衰减:内圈满值,二次方(1-t²)渐变到 0——比 smoothstep 平缓,中远距离保留更多伤害/击退

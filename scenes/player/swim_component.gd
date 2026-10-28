@@ -1,11 +1,15 @@
 class_name SwimComponent
 extends Node
 
-# 主角水中物理:水中按上上浮、不按下沉;出水(脚底离开水格)由 in_water 判回 false,
+# 主角水中物理:水中按上上浮、不按下沉;出水由 Water.sample_body 的滞回判回 false,
 # 根直接切回普通物理(重力)。不做水面检测/悬停。根每帧显式调用 update(),
 # 返回是否在水中(据此跳过普通垂直/跳跃/下蹲/冲刺逻辑)。不写 _physics_process。
 
+const WaterSample := preload("res://core/sim/water_sample.gd")
+
 var in_water: bool = false
+# 本帧水判定(唯一来源):根读它做呼吸/形变,别在根里再查一次水面(旧实现因此把呼吸线换成"中心+10px")。
+var sample: WaterSample = null
 
 
 func update(parent: CharacterBody2D, delta: float, move_mult: Vector2 = Vector2.ONE,
@@ -15,15 +19,15 @@ func update(parent: CharacterBody2D, delta: float, move_mult: Vector2 = Vector2.
 	#   在权威服务器 / 回放 / 预测下那是错的来源(headless 服务器读到的是**宿主机桌面**的按键
 	#   状态)。现在:src **一律由调用方注入**(本地玩家 = 自己的 input_source,服务器 = 注入的
 	#   网络源),缺了就**点名报错** + 按「不在水中」安全返回,绝不静默改读全局输入。
-	#   ★ in_water 一并归 false,是为保住正常路径同款的不变式「返回 true ⇔ 在 水中」——
+	#   ★ in_water/sample 一并归空,是为保住正常路径同款的不变式「返回 true ⇔ 在 水中」——
 	#     否则读 `swim.in_water` 的副本/渲染会看到与根逻辑矛盾的残值。
 	if src == null:
 		push_error("SwimComponent.update: 缺 src(注入输入源)—— 本组件只读注入进来的输入,禁止读全局输入;本帧按「不在水中」安全返回(调用方应传 player.input_source)")
 		in_water = false
+		sample = null
 		return false
-	var grid := MazeGenerator.current_grid
-	var feet := Vector2(parent.global_position.x, parent.global_position.y + Water.feet_offset(parent))
-	in_water = not grid.is_empty() and Water.is_in_water(feet)
+	sample = Water.sample_body(parent, in_water)
+	in_water = sample.in_water
 	if not in_water:
 		return false
 	var horiz := src.get_axis("left", "right")

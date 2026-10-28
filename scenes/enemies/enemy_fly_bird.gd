@@ -341,9 +341,10 @@ func _shot_clear() -> bool:
 
 
 # 攻击水里玩家的伤害:自爆冲击/子弹对水中玩家 ×1.5(FlyBird 独有)。
+# ★ 用 Water.sample_body 按身体与同一套入水阈值判,别再拿玩家中心点当"在水里"。
 func _water_boosted_damage(base: int) -> int:
 	var p := _nearest_player() as Node2D
-	if p != null and Water.is_in_water(p.global_position):
+	if p != null and Water.sample_body(p, false).in_water:
 		return roundi(base * WATER_DAMAGE_MULT)
 	return base
 

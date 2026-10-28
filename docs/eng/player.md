@@ -35,6 +35,7 @@
 - 冲刺沿用最近移动方向(`charge_dir_window`),`charge_duration` 0.4s;空中冲刺重力 × `charge_air_gravity_mult`。
 - 下蹲:在地面且按住 S 才蹲(逐帧判定,非边沿触发);蹲态可蹲走;空中按 S = 下冲。
 - 姿态碰撞箱:Pose → CollisionPolygon2D(共 5 个),运行时只启用当前姿态的箱子。
+- 水中:判定只在 `Water.sample_body`(见 [`world.md`](world.md) 的「水」);入水 / 出水用 `GameParameters.water_enter_depth`=8px / `water_exit_depth`=-2px **滞回**;呼吸按 `head_under`(头低于水面线)扣氧。`SwimComponent.sample` 是本帧水状态的唯一来源,根不再自己查水面。
 - 受击:iframes / 击退 / 倒地;爆炸击退是独立 `knock_velocity` 向量。倒地不取消物理(仍受重力/击退),只是不吃输入。单机倒地后按 R 调 `Level0.restart_single()`:原地复位,不是场景重载 —— 可破坏砖 / 瓦片 / 碰撞整层还原为建图基线 + 清子弹/敌人后重刷 + 玩家满血满氧回出生点。PvP / 大乱斗不走这条。
 
 ## 残弹与换弹

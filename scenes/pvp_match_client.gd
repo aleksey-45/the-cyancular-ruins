@@ -5,6 +5,7 @@ extends Node2D
 # ★ 判据是"剔掉注释后的代码是否逐字相同"(不是"看起来像"):凡两个模式语义相同的都上提到这里,子类只留真正的差异(1 个固定副本 vs N 个按 role 动态、HUD 类、退场是否锁 _match_ended、_ready)。要再上提一批,先按同样口径量一遍差异(剔注释后逐行 diff),别凭印象搬。
 
 const LaserVisual := preload("res://core/present/laser_visual.gd")   # 远端光束视觉副本(与本地激光同款)
+const HitShape := preload("res://core/sim/hit_shape.gd")   # 受击判定几何唯一入口(客户端 cull)
 
 # ── 共享状态(两个模式同名同义;子类不要再声明一次)──
 var _local: Node2D = null
@@ -471,8 +472,8 @@ func _on_bullet_spawn(data: Dictionary) -> void:
 	# 尾迹不在此挂:BulletBase._ready 统一接线,副本弹与本地弹同一处。
 
 
-# ── 本地视觉子弹撞到"该打的人" → 立刻消失(否则画面看起来还是像穿透)── 客户端那颗子弹的 collision_mask = 5(地形 1 + 敌人层 4),而对手在客户端只是一具层 2 的幽灵体 ⇒ 物理上永远撞不到,子弹从对手身上穿过去;而服务器早已按半径裁决、扣血、销毁了它那两颗。
-# ★ 判据用与服务器裁决同一个常量(BulletBase.PLAYER_HIT_RADIUS = MatchHost.HIT_RADIUS 引用的那一个)+ 同一套环面最短距离 ⇒ "子弹停在哪"与"服务器判在哪"是同一个公式,不是凑出来的相似值。★ 只收本地视觉副本(apply_damage == false);榴弹(explodes)不走这条 —— 它的引信 / 反弹由 _check_player_contact 管,在这里收掉会把爆炸一起吞掉。
+# ── 本地视觉子弹撞到"该打的人" → 立刻消失(否则画面看起来还是像穿透)──
+# 子弹 mask=1 只撞地形、对手在客户端只是幽灵体 ⇒ 物理上撞不到;服务器按"线段 vs 受击面"裁决,客户端 cull 必须用同一套 HitShape + 同一段位移。★ 榴弹不走这条(引信/反弹由 _check_player_contact 管)。
 func _cull_bullet_contacts() -> void:
 	for n in get_tree().get_nodes_in_group("bullet"):
 		var b := n as BulletBase
@@ -482,7 +483,8 @@ func _cull_bullet_contacts() -> void:
 			b.queue_free()   # 立刻:queue_free 在本帧绘制之前生效,不会多亮一帧
 
 
-# 这颗视觉子弹此刻有没有贴上"该打的人";候选 = BulletBase.CONTACT_GROUPS(player / player_replica),排掉射手本人 —— 与 _check_player_contact 同一候选集,再叠一层队别过滤(3v3 队友穿透)。
+# 这颗视觉子弹的上一帧位移有没有穿过"该打的人";候选 = BulletBase.CONTACT_GROUPS(player / player_replica),排掉射手本人,
+# 再叠一层队别过滤(3v3 队友穿透)。
 func _bullet_contact_target(b: BulletBase) -> Node2D:
 	var w := float(GameParameters.MAP_WIDTH)
 	var h := float(GameParameters.MAP_HEIGHT)
@@ -492,11 +494,21 @@ func _bullet_contact_target(b: BulletBase) -> Node2D:
 				continue
 			if not _bullet_hits_entity(b, n as Node2D):
 				continue
-			var d := GridPathfinder.toroidal_delta_px(b.global_position,
-					(n as Node2D).global_position, w, h).length()
-			if d < BulletBase.PLAYER_HIT_RADIUS:
+			if not HitShape.hurtable(n):
+				continue
+			if HitShape.segment_hits_rect(b.prev_pos, b.global_position,
+					_bullet_hurt_rect(n as Node2D), w, h) >= 0.0:
 				return n as Node2D
 	return null
+
+
+# 目标受击面:对手副本用 hurt_rect_rendered(尺寸取幽灵体、位置取渲染位置),实体用自己的 hurt_rect。
+func _bullet_hurt_rect(n: Node2D) -> Rect2:
+	if n.has_method("hurt_rect_rendered"):
+		return n.hurt_rect_rendered()
+	if n.has_method("hurt_rect"):
+		return n.hurt_rect()
+	return HitShape.hurt_rect_of(n)
 
 
 # 这颗视觉子弹能不能停在那个实体上。默认能(1v1 / 大乱斗:除了射手谁都能挡);3v3 覆写:与射手同队的排掉(规则:队友不互挡 + 子弹穿透队友)—— 不覆写的话队友副本会把自己的子弹吃掉(与服务器裁决相反,且不报错)。
