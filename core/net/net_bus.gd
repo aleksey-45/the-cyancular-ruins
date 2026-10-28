@@ -127,8 +127,8 @@ func broadcast_input_hints(hints: Dictionary, targets: Dictionary) -> void:
 		FrameTrace.count(&"input_hint_records", hints.size())
 		FrameTrace.count(&"input_hint_targets", targets.size())
 
-func send_state(peer: int, frame: Dictionary, shared: Variant = null) -> void:
-	_send(peer, Flow.STATE, _codec(peer).encode_state(frame, shared))
+func send_state(peer: int, frame: Dictionary, batch: NetCodec.StateBatch) -> void:
+	_send(peer, Flow.STATE, _codec(peer).encode_state(frame, batch))
 
 func send_event(kind: int, data: Variant = null, peer: int = 1) -> void:
 	var started := Time.get_ticks_usec() if FrameTrace.enabled else 0

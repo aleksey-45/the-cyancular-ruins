@@ -175,10 +175,12 @@ func start_match(ai_count: int = 0) -> void:
 	send_baselines()
 
 func _send_state(frame: Dictionary, targets: Array) -> void:
-	var shared := {}
+	var batch: NetCodec.StateBatch
 	for role in seats:
 		if targets.has(role) and seats[role]["peer"] != 0 and seats[role]["ready"]:
-			NetBus.send_state(seats[role]["peer"], world.state_for(role, frame), shared)
+			var state := world.state_for(role, frame, batch.time if batch != null else null)
+			if batch == null: batch = NetCodec.StateBatch.new(state)
+			NetBus.send_state(seats[role]["peer"], state, batch)
 
 func _broadcast(kind: int, data: Variant, except_role: int) -> void:
 	var peers := PackedInt32Array()

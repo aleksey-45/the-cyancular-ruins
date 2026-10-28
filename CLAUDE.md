@@ -65,6 +65,7 @@ godot --headless --path . --export-release "Windows Desktop" "The Cyancular Ruin
 | **玩家控制** | [`docs/eng/player.md`](docs/eng/player.md) | 角色平滑移动、土狼时间与跳跃缓冲、站立与蹲伏矩形、组件化拆分（攀爬/战斗/武器/游泳）、输入源抽象接口、弹药预测同步。 |
 | **原生模拟** | [`docs/eng/native_scene_simulation.md`](docs/eng/native_scene_simulation.md)、[`docs/eng/native_combat_simulation.md`](docs/eng/native_combat_simulation.md) | 保留 Godot 场景的原生运动、武器、预测战斗与批量历史捕获；迁移边界、固定数据对照及实战成本。 |
 | **广播与日志性能** | [`docs/eng/server_fanout_optimization.md`](docs/eng/server_fanout_optimization.md) | 公共事件编码/压缩复用、输入提示区块复用、后台日志编码及固定负载对照。 |
+| **STATE 编码性能** | [`docs/eng/state_encode_performance_review.md`](docs/eng/state_encode_performance_review.md) | 八人编码计时口径、重复差分开销、弹丸字段策略、行业资料与优化边界。 |
 | **代理与历史存储性能** | [`docs/eng/proxy_state_storage_optimization.md`](docs/eng/proxy_state_storage_optimization.md) | 连续原生运动样本、STATE 内部不可变记录共享、历史低频元数据按需生成与固定数据比较。 |
 | **渲染管线** | [`docs/eng/render.md`](docs/eng/render.md) | `SubViewport` 独立渲染视口、地形图集生成器 `TerrainAtlas`、屏幕后处理 Shader、角色与敌人基于补间的挤压拉伸形变。 |
 | **UI 系统** | [`docs/eng/ui.md`](docs/eng/ui.md) | 界面样式工厂 `UiFactory`、像素字体规范、战斗 HUD、武器槽位、圆形雷达小地图、多人联机大厅。 |

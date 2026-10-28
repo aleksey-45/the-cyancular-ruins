@@ -395,7 +395,7 @@ func _flush_time_rewards() -> void:
 				"phase": key.y, "role": key.z, "amount": _pending_time_rewards[key]})
 	_pending_time_rewards.clear()
 
-func state_for(role: int, frame: Dictionary) -> Dictionary:
+func state_for(role: int, frame: Dictionary, accounts: Variant = null) -> Dictionary:
 	var player: CharacterBody2D = players[role]
 	var state: Dictionary = player.capture_state()
 	state["locked"] = _round_state != NetEvent.RoundState.PLAYING
@@ -404,7 +404,7 @@ func state_for(role: int, frame: Dictionary) -> Dictionary:
 			"action_ack": player.input_buffer.action_ack, "timing_seq": player.input_buffer.timing_seq,
 			"lead": player.input_buffer.lead, "input": InputBuffer.neutral().merged(player.input_buffer._last, true),
 			"state": state, "rewind": player.rewinding},
-			"time": time_economy.state_payload() if time_economy != null else {}}
+			"time": accounts if accounts != null else (time_economy.state_payload() if time_economy != null else {})}
 
 func _on_terrain_changed() -> void:
 	var blocks := terrain.take_rewards()

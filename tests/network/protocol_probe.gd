@@ -6,7 +6,7 @@ func _ready() -> void:
 func _run() -> void:
 	_check_sparse_updates()
 	_check_decode_ownership()
-	_check_shared_broadcast()
+	_check_state_batch()
 	_check_input_hint_fanout()
 	_check_receive_batch()
 	seed(123456)
@@ -266,46 +266,47 @@ func _check_decode_ownership() -> void:
 	assert(first == original, "new delta packets must not mutate an earlier decoded output")
 	print("DECODE OWNERSHIP OK unchanged sharing, nested caller mutation and baseline isolation")
 
-func _check_shared_broadcast() -> void:
-	var plain: Array[NetCodec] = []
-	var cached: Array[NetCodec] = []
-	var receivers: Array[NetCodec] = []
-	for peer in 8:
-		plain.append(NetCodec.new())
-		cached.append(NetCodec.new())
-		receivers.append(NetCodec.new())
-	var shared := {}
-	for step in 4:
-		var frame := ProtocolFixture.frame(60 + step * 2)
-		frame["world"]["players"][1]["pos"] += Vector2(step * 10, 0)
-		frame["time"][1] = {"b": 100.0 - step, "w": 0.5, "l": 0.0,
-				"k": false, "cap": 1000, "win": 10.0, "m": 3.0}
-		for peer in 8:
-			# 同一广播中混合全量、不同 ACK 和逐连接 own，字节必须与独立编码相同。
-			var ack := 0 if peer % 2 == 0 else step
+func _check_state_batch() -> void:
+	var plain := [NetCodec.new(), NetCodec.new()]
+	var cached := [NetCodec.new(), NetCodec.new()]
+	var receivers := [NetCodec.new(), NetCodec.new()]
+	var frame := ProtocolFixture.frame()
+	frame["time"] = {1: {"b": 100.0, "w": 0.0, "l": 0.0, "win": 8.0, "m": 1.0, "cap": 100, "k": false}}
+	frame["world"]["projectiles"][100] = {"type_id": 1, "pos": Vector2(200, 100), "vel": Vector2(600, 0),
+			"traveled": 0.0, "fuse_active": false, "fuse_elapsed": 0.0, "fuse_duration": 0.0, "direct_hit": false}
+	var driver: Dictionary = frame["world"]["players"][1]["driver"]
+	driver.merge({"winst": 17, "aiming": false, "fire_buf": false, "rld": false,
+			"fire_cd": 0.0, "rld_t": 0.0, "aim_f": 1, "aim_cf": 1, "mag": 8}, true)
+	for step in 3:
+		frame["tick"] += 2
+		if step == 1:
+			# 公共角色仅嵌套武器字段变化；第二个接收者仍使用全量，验证混合 ACK。
+			frame["own"]["state"]["hp"] = -1
+			frame["world"]["players"][1]["driver"]["fire_cd"] = 0.25
+			frame["world"]["projectiles"][100].merge({"pos": Vector2(220, 100), "traveled": 20.0,
+					"fuse_active": true, "fuse_elapsed": 0.125, "fuse_duration": 0.4}, true)
+		if step == 2:
+			frame["world"]["projectiles"].clear()
+			frame["time"].clear()
+		var expected := frame.duplicate(true)
+		var batch := NetCodec.StateBatch.new(frame)
+		frame["world"]["players"].clear()
+		frame["tick"] += 1000
+		frame["map_revision"] += 1
+		if not frame["time"].is_empty(): frame["time"][1]["b"] = -1.0
+		for peer in 2:
+			var ack: int = receivers[peer].state_ack if peer == 0 or step == 2 else 0
 			plain[peer].state_ack = ack
 			cached[peer].state_ack = ack
 			frame["own"]["ack"] = peer * 10 + step
-			var expected := plain[peer].encode_state(frame)
-			var packet := cached[peer].encode_state(frame, shared)
-			assert(packet == expected)
-			assert(receivers[peer].decode_state(ProtocolFixture.stream(packet)) == frame)
-		assert(shared["deltas"].size() <= 2, "equal world baselines share encoded blocks")
-		frame["world"]["players"][1]["pos"] = Vector2.ZERO
+			expected["own"]["ack"] = frame["own"]["ack"]
+			var packet: PackedByteArray = cached[peer].encode_state(frame, batch)
+			assert(packet == plain[peer].encode_state(expected), "owned broadcast matches standalone encoding")
+			assert(receivers[peer].decode_state(ProtocolFixture.stream(packet)) == expected,
+					"published state survives caller mutation, projectile updates and deletion")
 		frame["own"]["state"]["hp"] = -1
-		for peer in 8:
-			assert(cached[peer].history[step + 1]["world"]["players"][1]["pos"] != Vector2.ZERO
-					and cached[peer].history[step + 1]["own"]["state"]["hp"] == 100,
-					"caller mutation cannot alter cached history")
-	# 即便调用方在相同 tick 修改世界，缓存也必须失效，原历史仍保持不变。
-	var reference := NetCodec.new()
-	var encoding := NetCodec.new()
-	var changed := ProtocolFixture.frame(99)
-	assert(reference.encode_state(changed) == encoding.encode_state(changed, shared))
-	changed["world"]["players"][1]["pos"] = Vector2.ZERO
-	assert(reference.encode_state(changed) == encoding.encode_state(changed, shared))
-	assert(encoding.history[1]["world"]["players"][1]["pos"] != Vector2.ZERO)
-	print("SHARED STATE ENCODING OK per-peer ACK, exact bytes and caller isolation")
+		frame = expected.duplicate(true)
+	print("STATE BATCH OK publication ownership, mixed ACK, nested weapon and projectile lifecycle")
 
 func _check_input_hint_fanout() -> void:
 	var codec := NetCodec.new()
@@ -330,14 +331,14 @@ func _check_input_hint_fanout() -> void:
 		assert(codec.decode_input_hints(ProtocolFixture.stream(packet)) == expected,
 				"every recipient retains all other roles, epochs, available ticks and actions")
 		# 对照原有字节布局，避免改变协议版本或 delta 的包内基线。
-		var legacy := StreamPeerBuffer.new()
-		legacy.put_u8(NetCodec.INPUT)
-		legacy.put_u8(expected.size())
+		var reference := StreamPeerBuffer.new()
+		reference.put_u8(NetCodec.INPUT)
+		reference.put_u8(expected.size())
 		for role in expected:
-			legacy.put_u8(role)
-			legacy.put_u32(expected[role]["tick"])
-			codec._write_input(legacy, expected[role]["packet"], true)
-		assert(packet == legacy.data_array)
+			reference.put_u8(role)
+			reference.put_u32(expected[role]["tick"])
+			codec._write_input(reference, expected[role]["packet"], true)
+		assert(packet == reference.data_array)
 	assert(NetCodec.pack_input_hints({}) == PackedByteArray([NetCodec.INPUT, 0]))
 	print("INPUT HINT FANOUT OK eight roles, exact bytes, exclusion and independent packets")
 
