@@ -1,11 +1,11 @@
 # 副本插值与输入上行的细节：一手来源调研（增量）
 
-> 现行实现：远端玩家副本走 **playout 缓冲插值**（渲染「最新快照 − `PLAYOUT_TICKS`」那一刻的夹逼插值位置）；幽灵碰撞体仍直出最新快照。相关文件：`scenes/player/player_replica.gd`、`core/net/playout_clock.gd`、`core/net/packet_input_source.gd`、`server/match/match_host.gd`。
+> 现行实现：远端玩家副本走 **playout 缓冲插值**（渲染「最新快照 − `PLAYOUT_TICKS`」那一刻的夹逼插值位置）；幽灵碰撞体仍直出最新快照。服务器命中裁决按**射手观看时刻**回放受击面（见 §1.1）。相关文件：`scenes/player/player_replica.gd`、`core/net/playout_clock.gd`、`core/net/lag_comp.gd`、`core/sim/hit_lag_history.gd`、`core/net/packet_input_source.gd`、`server/match/match_combat.gd`、`server/match/match_host.gd`。
 
 ## 1. 副本：playout 缓冲插值
 
 - `_process`：`_clock.advance(delta)` ⇒ `global_position = _sample_history(_clock.render_tick)`，再把取样点 `anchor_to_nearest(...)` 回本地玩家最近的副本。
-- 位置历史环 `place_history`（元素 `{tick, pos}`，pos 是 canonical，定长 `HISTORY_MAX = 12`）；`PLAYOUT_TICKS = 4` —— 60Hz tick 域、下行 30Hz ⇒ **2 个发包间隔 ≈ 67ms 缓冲**。
+- 位置历史环 `place_history`（元素 `{tick, pos, st}`，pos 是 canonical，定长 `HISTORY_MAX = 12`）；`PLAYOUT_TICKS = 3`（单一来源 `core/net/lag_comp.gd`）—— 60Hz tick 域、下行 30Hz ⇒ **1.5 个发包间隔 ≈ 50ms 缓冲**。
 - `apply_snapshot(data, local_anchor, tick)` 的第三参参与计算：喂 `PlayoutClock.on_snapshot(tick)` 与 `_push_history(tick, pos)`。
 - 取样两侧冻结：比最新还新（underrun）冻在最新、**不外插**；比最老还老冻在最老、不倒退。跨接缝的那一对样本必须**先锚进同一个副本空间再 lerp**，否则差量是一整幅地图。
 - 相邻样本的环面距离 > `SNAP_DIST`（128 px）⇒ 清历史、一帧落位（回溯 / 重生 / 换边本来就是瞬移）。
@@ -14,6 +14,12 @@
 - 幽灵碰撞体是唯一吃**最新**快照的东西：姿态箱按最新 `pose` 切、位置跟最新锚点 —— 预测面要最小陈旧（观感面才要平滑）。
 - `aim` / `pose` / `facing` 的取值规则不变（`aim` 是单位向量，若要插值必须 `slerp` / `lerp_angle`）；离散态本身不插值，只延迟。
 - 丢弃：`pvp_game.gd` 里 `tick < _last_snap_tick` ⇒ 丢。
+
+### 1.1 服务器命中回放（时间域解耦）
+
+- 客户端把「最近解码的快照 tick」放进输入包的 `st`；服务器据此算 `want = clamp(st − PLAYOUT_TICKS, _srv_tick − MAX_REWIND_TICKS, _srv_tick)`，用 `HitLagHistory.rect_for(victim, want)` 取**射手当时看到的**对手受击面，再走 `HitShape` 线段扫掠（含子弹体积 grow）。
+- 服务器 tick 与快照 tick 同域：`MatchHost` 每物理 tick `_srv_tick += 1`，广播时 `_snap_tick = _srv_tick`（相位仍每 2 tick，序列不变）。
+- **只有裁决回放**：渲染（副本插值）与移动预测（幽灵体）都仍吃最新/playout 各自原有口径；爆炸 AoE 不回放（现时位置）。协议零改动。
 
 ## 2. 输入上行
 

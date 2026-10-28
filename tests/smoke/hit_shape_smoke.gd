@@ -4,7 +4,7 @@ extends SceneTree
 # 最强保证:HitShape 的扫掠/环面整幅锚定/受击面取活动箱/点到框距离/最早命中/可受击过滤按设计工作;测不到几何数值与手感。
 # 跑法:"$GODOT" --headless --path . -s res://tests/smoke/hit_shape_smoke.gd;通过 = 结尾打 HIT SHAPE OK(n 条断言)。
 
-const EXPECTED_CHECKS := 13
+const EXPECTED_CHECKS := 14
 const HitShape := preload("res://core/sim/hit_shape.gd")
 
 var _fails: Array[String] = []
@@ -90,6 +90,13 @@ func _initialize() -> void:
 	var pt_in := HitShape.segment_hits_rect(Vector2(30, 0), Vector2(30, 0), box)
 	var pt_out := HitShape.segment_hits_rect(Vector2(0, 0), Vector2(0, 0), box)
 	_chk(_eq(pt_in, 0.0) and pt_out < 0.0, "退化线段(点):框内 t=0 / 框外 -1")
+
+	# ⑭ grow(子弹体积):中心线离框上边 2px ⇒ 不 grow miss;grow(6,3) 把上边扩到 -1 后命中(x 入点 20 ⇒ t=0.2)
+	var grown_box := Rect2(26, 2, 20, 20)
+	var miss_no_grow := HitShape.segment_hits_rect(Vector2(0, 0), Vector2(100, 0), grown_box)
+	var hit_grow := HitShape.segment_hits_rect(Vector2(0, 0), Vector2(100, 0), grown_box, 0.0, 0.0,
+			Vector2(6, 3))
+	_chk(miss_no_grow < 0.0 and _eq(hit_grow, 0.2), "grow:擦边 2px 不 grow miss / grow(6,3) 命中 t=0.2")
 
 	_finish()
 

@@ -63,8 +63,8 @@ class FlyBird:
 	const bullet_range: float = 2000.0    # 投弹射程
 	const bullet_gravity: float = 0.85     # 投弹重力倍率
 	const bullet_size: float = 1.2        # 投弹放大倍数(贴图+碰撞体)
-	const bullet_min_speed: float = 250.0 # 平抛初速下限
-	const bullet_max_speed: float = 1600.0 # 平抛初速上限
+	const bullet_min_speed: float = 312.5 # 平抛初速下限(2026-10-26 全弹速 +25% 同步)
+	const bullet_max_speed: float = 2000.0 # 平抛初速上限(2026-10-26 全弹速 +25% 同步)
 	const bullet_min_drop: float = 30.0   # 落点落差下限
 	const charge_hp_fraction: float = 0.25 # 冲撞血量阈值(HP<25%)
 	const charge_range: float = 1300.0    # 冲撞触发距离(且需 LOS)

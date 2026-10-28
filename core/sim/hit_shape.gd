@@ -40,9 +40,12 @@ static func rect_at(rect: Rect2, anchor: Vector2, w: float, h: float) -> Rect2:
 		off.y = h * roundf((anchor.y - c.y) / h)
 	return Rect2(rect.position + off, rect.size)
 
-## 线段 vs 矩形(Liang-Barsky)。命中返回 t∈[0,1](起点在框内=0,贴边/相切算中);未中返回 -1。
-static func segment_hits_rect(a: Vector2, b: Vector2, rect: Rect2, torus_w: float = 0.0, torus_h: float = 0.0) -> float:
+## 线段 vs 矩形(Liang-Barsky)。命中返回 t∈[0,1](起点在框内=0,贴边/相切算中);未中返回 -1。grow = 子弹体积外扩(世界轴半展)。
+static func segment_hits_rect(a: Vector2, b: Vector2, rect: Rect2, torus_w: float = 0.0, torus_h: float = 0.0,
+		grow: Vector2 = Vector2.ZERO) -> float:
 	var r := rect_at(rect, a, torus_w, torus_h)
+	if not grow.is_zero_approx():
+		r = Rect2(r.position - grow, r.size + grow * 2.0)
 	var d := b - a
 	var t0 := 0.0
 	var t1 := 1.0

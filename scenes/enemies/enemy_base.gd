@@ -182,7 +182,7 @@ func hurt_rect() -> Rect2:
 	return HitShape.hurt_rect_of(self)
 
 func is_hurtable() -> bool:
-	return collision_layer != 0
+	return not is_dead and collision_layer != 0
 
 # 受击通用逻辑:扣血、击退、白闪(子类覆写 hurt() 时也应调用本方法,避免逻辑分叉)。knock_strength <= 0 时回落敌人自身 knockback_strength;set_velocity=true(爆炸)设独立击退向量 knock_velocity、不覆盖移动速度,false(枪击)叠加到原速度。
 func _apply_hit(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, set_velocity: bool = false) -> void:

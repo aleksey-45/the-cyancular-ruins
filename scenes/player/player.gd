@@ -433,6 +433,10 @@ func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, kn
 func hurt_rect() -> Rect2:
 	return HitShape.hurt_rect_of(self)
 
+## 能否被打中:倒地 = 本轮不再受击(旧实现靠 take_hit 早退,子弹仍会被吞掉)。
+func is_hurtable() -> bool:
+	return not is_downed()
+
 func get_facing() -> int:
 	return facing_direction
 

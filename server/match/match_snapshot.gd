@@ -16,9 +16,9 @@ var _tx_own_bytes: Dictionary = {}  # role -> 字节数
 
 func _broadcast_snapshot() -> void:
 	# tick 是「60Hz 物理 tick 时间轴」上的时间戳,不是包序号:30Hz 发包时每包跨 2 tick(客户端 playout/历史环按它插值)。
-	# ★ S1(2026-10-24):本函数**只发世界包**。本人包(ack + c2)改到 `send_own_snapshots()`,由 MatchHost 在玩家步进之后
-	#   用 call_deferred 调 —— 这样 c2 与 ack 是"本 tick 消费并步进完"的同一份态,不再等下一次 30Hz 广播。
-	_snap_tick += SNAPSHOT_STRIDE
+	# ★ S1(2026-10-24):本函数**只发世界包**;本人包(ack+c2)由 MatchHost 在玩家步进之后 call_deferred 调,不再等 30Hz 广播。
+	# ★ 时间域对齐:直接取 _srv_tick(广播相位仍每 2 tick,数值序列不变)⇒ 客户端输入包的 st 与服务器 tick 同刻度。
+	_snap_tick = _srv_tick
 	# ① **世界包**:全部玩家的渲染字段(副本位置/姿态/朝向/武器/血条用)。构造一次、广播一次。
 	var world := {"tick": _snap_tick, "players": {}}
 	for role in players:

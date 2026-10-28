@@ -174,7 +174,7 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 `Node2D` + `AnimatedSprite2D`,不做物理。
 
 - `apply_snapshot(data, local_anchor, tick)`:存 canonical 目标,更新朝向 / 姿态 / 倒地 / 武器槽 / 受击闪烁。`type_id = 0` = 空手,与换枪同等重建。
-- 位置走 playout 缓冲插值:固定 `PLAYOUT_TICKS = 4`(60Hz tick 域、下行 30Hz ⇒ 2 个发包间隔 ≈ 67ms 缓冲)之后的那一刻,对两条相邻快照夹逼插值;取样点再 `anchor_to_nearest` 回本地玩家最近副本。两端冻结(不外插、不倒退);相邻样本环面距离 > `SNAP_DIST = 128 px` ⇒ 清历史一帧落位(回溯 / 重生 / 换边)。
+- 位置走 playout 缓冲插值:固定 `PLAYOUT_TICKS = 3`(60Hz tick 域、下行 30Hz ⇒ 2 个发包间隔 ≈ 50ms 缓冲)之后的那一刻,对两条相邻快照夹逼插值;取样点再 `anchor_to_nearest` 回本地玩家最近副本。两端冻结(不外插、不倒退);相邻样本环面距离 > `SNAP_DIST = 128 px` ⇒ 清历史一帧落位(回溯 / 重生 / 换边)。
 - 渲染层带:副本在 `_ready` 里把自己挪到世界结构层(`Level0.wall_layer`:墙体 / 梯子 / 建筑)之前 —— 本体在 `level_0.tscn` 里就排在那层之前,副本运行时 `add_child` 到世界末尾会盖住那些结构(现象:只有别人的角色压在地形上)。
 - 幽灵碰撞体:`StaticBody2D`,`collision_layer = 2` / `collision_mask = 0`;五份 `CollisionPolygon2D` 按 `pose` 切换,`downed` 时不切;节点进 `player_replica` 组。★ 幽灵体**不跟插值**:跟未经平滑的最新快照锚点(预测面要最小陈旧)。
 - 姿态映射 `POSE_ANIM`:`0 idle / 1 move / 2 fly / 3 charge / 4 squat`;倒地停动画并转体,幽灵体世界旋转压回 0。

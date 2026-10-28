@@ -24,6 +24,8 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 	for e in tree.get_nodes_in_group("enemies"):
 		if not (e is Node2D):
 			continue
+		if not HitShape.hurtable(e):
+			continue   # 死亡白闪中的尸体 / 回溯隐藏尸体不再吃 AoE:与子弹同口径
 		var d := _hurt_dist(center, e as Node2D)
 		if d > radius:
 			continue

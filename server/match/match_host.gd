@@ -151,6 +151,9 @@ func _physics_process(delta: float) -> void:
 # 状态还是「上一输入模拟完(S_{F-1})」而 ack 已指向刚消费的 C_F ⇒ ack 领先状态一拍,客户端移动中每次快照都误判分歧、画面被拉回
 # (server-rendered 插值吸收,故旧路径不暴露;C2 rollback 一比整态就现形)。放消费前则 ack 与状态配对一致。
 
+	# 服务器物理 tick 计数:与快照 tick、命中回放共用同一 60Hz 时间轴 ⇒ 必须在广播/裁决之前 +1。
+	_srv_tick += 1
+
 	_sync_ground_positions()
 
 	_debug_keep_weapon_within_reach()

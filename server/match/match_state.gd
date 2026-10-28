@@ -5,6 +5,8 @@ extends Node
 # 共同祖先里。链:RoyaleHost → MatchHost(生命周期/输入/物理编排) → MatchRound(回合机) → MatchCombat(裁决) → MatchSnapshot(快照)
 # → MatchState(本文件) → Node。★ 中间层不得定义 _init/_ready/_enter_tree/_exit_tree/_physics_process:RoyaleHost 的 _init 契约是「先 plan_spawns 再 super._init」,插钩子会打断它。
 
+const HitLagHistory := preload("res://core/sim/hit_lag_history.gd")   # 命中回放历史环(纯逻辑)
+
 var players: Dictionary = {}        # role(int) -> Player
 var input_sources: Dictionary = {}  # role -> PacketInputSource
 var peer_by_role: Dictionary = {}   # role -> peer_id
@@ -74,10 +76,12 @@ const SNAPSHOT_HZ := 30
 const SNAPSHOT_INTERVAL := 1.0 / SNAPSHOT_HZ
 const SNAPSHOT_STRIDE := 60 / SNAPSHOT_HZ   # = 60Hz 物理 tick / 30Hz 发包
 var _seen_bullets: Dictionary = {}  # bullet instance_id -> true(只广播一次);每帧按在场子弹剪枝(见 _adjudicate_bullets)
-var _snap_tick := 0   # 快照的 tick 时间戳(60Hz 物理 tick 域,每包 +SNAPSHOT_STRIDE;客户端靠它丢弃乱序旧快照 + playout 插值)
+var _snap_tick := 0   # 快照 tick(60Hz 物理 tick 域;= _srv_tick,客户端靠它丢乱序旧快照 + playout 插值)
+var _srv_tick := 0    # 服务器物理 tick 计数(MatchHost 每物理 tick 起始 +1;快照 tick 与命中回放共用这条时间轴)
+var _lag_hist := HitLagHistory.new()   # 命中回放受击面历史(每 tick 推;24 tick ≈ 400ms)
 # C2 rollback:每 2 个物理 tick 恰好消费一条输入记录(FIFO;30Hz 采样),ack 让客户端重放 seq > ack 的本地输入 —— 1:1 同序,无 tick 映射漂移。
 var _ack_seq: Dictionary = {}   # role(int) -> 已消费输入记录的 seq
-# ★ 上行只落位的两个扩展字段(本批无消费者;2026-10-24 随输入手打包一次改完线格式,增量批才用;见 NetCodec.INPUT_SCHEMA 的 st/ct)。
+# ★ 上行扩展字段:st 是命中回放的时间基准(2026-10-26 起有消费者);ct(客户端物理帧号)仍只落位。
 var _client_snap_tick: Dictionary = {}   # role(int) -> 该 role 最近**成功解码**的服务器快照 tick(st)
 var _client_tick: Dictionary = {}        # role(int) -> 该 role 最近一包里的客户端物理帧号(ct)
 

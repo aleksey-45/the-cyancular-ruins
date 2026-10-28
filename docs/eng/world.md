@@ -53,6 +53,7 @@
 - 层 1 = 地形 / 层 2 = 玩家 / 层 3 = 敌人(值 4) / 层 4 = 掉落物(值 8,`WeaponPickup` layer 8 / mask 9) / 层 5 = 3v3 队 B(`TeamSpawn.TEAM_ENEMY_LAYER`,值 16)。
 
 - **碰撞层只管移动**:玩家 / 地面上敌人各自占位并互相挡路;玩家子弹与敌弹的 mask = **1(只撞地形)** —— 受击判定不再由物理碰撞承担,而是走 `core/sim/hit_shape.gd` 的"上一位置→当前位置线段 vs 受击面"扫掠。
-- **受击面(hurtbox)与移动碰撞箱分离**:每个可受伤实体提供 `hurt_rect()`(玩家 = 当前姿态箱世界 AABB,敌人 = 活动碰撞箱 AABB,飞鸟按站/飞箱),客户端对手副本另提供 `hurt_rect_rendered()`(尺寸取幽灵体、位置取渲染位置)。子弹 / 敌弹 / 激光 / 爆炸 / 服务器裁决 / 客户端 cull 全部经 hit_shape 查同一套矩形;`collision_layer = 0` 的实体(回溯保留的隐藏尸体)不可受击。
+- **受击面(hurtbox)与移动碰撞箱分离**:每个可受伤实体提供 `hurt_rect()`(玩家 = 当前姿态箱世界 AABB,敌人 = 活动碰撞箱 AABB,飞鸟按站/飞箱),客户端对手副本另提供 `hurt_rect_rendered()`(尺寸取幽灵体、位置取渲染位置)。子弹 / 敌弹 / 激光 / 爆炸 / 服务器裁决 / 客户端 cull 全部经 hit_shape 查同一套矩形;`collision_layer = 0` 或 `is_hurtable() == false`(死亡白闪的尸体 / 倒地玩家)不可受击。
+- **命中裁决的时间域**:PvP 服务器结算命中时不用现时受击面,而是按**射手观看时刻**回放 `core/sim/hit_lag_history.gd` 的受击面历史(`st − LagComp.PLAYOUT_TICKS`,见 `core/net/lag_comp.gd`);移动预测 / 幽灵体仍吃最新态,AoE 不回放(边界见 [`registered-debt.md`](registered-debt.md) §十五)。
 - 地面武器 layer = 8 / mask = 9(地形 + 其它掉落物):玩家与敌人的掩码都不含 4,子弹 mask 也不含 ⇒ 三者天然不碰。
 - `match_host.gd` 与两端客户端给玩家补的 `|= 2` 是**玩家层**,与掉落物层无关,别写成 `|= 2 | 8`。层 6 / 值 32 与层 7 / 值 64 无生产代码引用;`project.godot` 没有 `layer_names`,层义只活在代码里,加新层时没有任何自动提醒。

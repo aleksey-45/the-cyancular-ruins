@@ -6,6 +6,7 @@ extends Node2D
 
 const LaserVisual := preload("res://core/present/laser_visual.gd")   # 远端光束视觉副本(与本地激光同款)
 const HitShape := preload("res://core/sim/hit_shape.gd")   # 受击判定几何唯一入口(客户端 cull)
+const HitFeedbackFx := preload("res://scenes/effects/hit_feedback_fx.gd")   # 世界系命中反馈(画在对手身上)
 
 # ── 共享状态(两个模式同名同义;子类不要再声明一次)──
 var _local: Node2D = null
@@ -65,8 +66,14 @@ func _correct_local_spawn() -> void:
 	_local.global_position = Vector2(PvpSession.spawn.x * ts + ts / 2.0,
 			PvpSession.spawn.y * ts + ts / 2.0)
 
-func _on_hit_confirm(shooter_role: int, _victim_role: int) -> void:
-	if shooter_role == PvpSession.role:
+func _on_hit_confirm(shooter_role: int, victim_role: int) -> void:
+	if shooter_role != PvpSession.role:
+		return
+	# 命中确认画在对手身上(世界系 X),而不是屏幕中心:玩家要能分辨"打中的是哪一个"。
+	var r := _replica_for(victim_role)
+	if r != null and is_instance_valid(r) and _world != null:
+		HitFeedbackFx.spawn_hit(_world, (r as Node2D).global_position)
+	else:
 		CombatFeedback.hit_marker()
 
 func _apply_match_options(opts: Dictionary) -> void:
@@ -497,7 +504,7 @@ func _bullet_contact_target(b: BulletBase) -> Node2D:
 			if not HitShape.hurtable(n):
 				continue
 			if HitShape.segment_hits_rect(b.prev_pos, b.global_position,
-					_bullet_hurt_rect(n as Node2D), w, h) >= 0.0:
+					_bullet_hurt_rect(n as Node2D), w, h, b.hit_grow()) >= 0.0:
 				return n as Node2D
 	return null
 

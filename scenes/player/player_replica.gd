@@ -6,13 +6,13 @@ extends Node2D
 # 大跳变阈值:相邻两条权威快照的环面距离超过它 ⇒ 清历史、一帧落位(回溯 / 重生 / 换边本来就是瞬移,插值会演成「滑过去」;128px 的依据见 docs/eng/render.md)。
 const SNAP_DIST := 128.0
 
-# 播放时钟(= core/net/playout_clock.gd)。★ 用 preload 取常量而不是全局类名:少一次编辑器扫描依赖。
+# 播放时钟(= core/net/playout_clock.gd)+ 时间域常量(= core/net/lag_comp.gd)。★ 用 preload 取常量而不是全局类名:少一次编辑器扫描依赖。
 const PlayoutClock := preload("res://core/net/playout_clock.gd")
+const LagComp := preload("res://core/net/lag_comp.gd")
 const HitShape := preload("res://core/sim/hit_shape.gd")   # 受击判定几何唯一入口(cull 用)
 
-# ── playout 缓冲插值 ── PLAYOUT_TICKS = 故意落后多少 tick:下行 30Hz(间隔 2 tick)⇒ 4 tick = 2 个间隔 ≈ 67ms 缓冲(1 个间隔
-# 是夹逼插值的最低要求,第 2 个吸收抖动);改大 = 更抗抖但更迟,改 0 = 直出。place_history 存 canonical 且定长裁剪。
-const PLAYOUT_TICKS := 4
+# ── playout 缓冲插值 ── 延迟量 = LagComp.PLAYOUT_TICKS(60Hz tick 域,3 tick ≈ 50ms):1 个发包间隔是夹逼插值下限,
+# 第 2 个吸收抖动;改大更抗抖但对手更迟。★ 服务器命中回放与这里共用同一常量(时间域解耦),别在副本里另写一个数。
 const HISTORY_MAX := 12
 
 const POSE_ANIM: Dictionary = {
@@ -137,6 +137,9 @@ func hurt_rect_rendered() -> Rect2:
 	var off := r.get_center() - _ghost.global_position
 	return Rect2(global_position + off - r.size * 0.5, r.size)
 
+func is_hurtable() -> bool:
+	return not _downed
+
 
 ## canonical → 锚到本地玩家(相机)最近的那一份副本。
 func _anchor_of(canon: Vector2) -> Vector2:
@@ -191,7 +194,7 @@ func apply_snapshot(data: Dictionary, local_anchor: Vector2, tick: int) -> void:
 	_local_anchor = local_anchor
 	_have_data = true
 	if _clock == null:
-		_clock = PlayoutClock.new(PLAYOUT_TICKS)
+		_clock = PlayoutClock.new(LagComp.PLAYOUT_TICKS)
 	_clock.on_snapshot(tick)
 	var st := _state_from(data)
 	_push_history(tick, _opponent_canonical, st)

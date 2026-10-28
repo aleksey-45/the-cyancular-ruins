@@ -106,3 +106,17 @@
 - 混打两本账仍独立：先子格磨掉半格（`sub_hp` 降、`hp_grid` 不动），再用整格单位命中时扣的是格级自己的 8/30，两者不互相抵扣；"格子已消失"的对齐只在整格清空那一刻发生。
 - 颗粒（时间玩法）：格级销毁走 `damage_tile(cell, dmg, "explosion")`（无 owner 参数）⇒ `_on_sub_destroyed` 的 0 颗粒路径不变，整格拆砖在 Beta 时间玩法里仍 **0 颗粒**（旧行为，未改）。
 - 真链路未跑：网络事件类型变化（tile_destroyed vs sub_destroyed）只有 `-s` 冒烟证据，需真链路批 + 人眼确认客户端两种事件都正常。
+
+## 十五、2026-10-26 时间域解耦（服务器命中回放）+ 命中手感 P0 —— 边界与代价
+
+**改了什么**：① 新增 `core/net/lag_comp.gd`（`PLAYOUT_TICKS=3`、`MAX_REWIND_TICKS=8`，客户端渲染与服务器回放共用）；`PLAYOUT_TICKS` 4→3 ⇒ 画面滞后 67ms→**≈50ms**（§十一 的 67ms 数值从此是历史值；§十三 的"只统一几何、不统一时间"也由此翻案——裁决侧已统一到射手观看时刻）。② 服务器 tick 域对齐：`MatchHost` 每物理 tick `_srv_tick += 1`，`_snap_tick = _srv_tick`（相位仍每 2 tick，tick 序列不变）⇒ 客户端输入包的 `st` 与服务器 tick 同刻度。③ 新增 `core/sim/hit_lag_history.gd`（24 tick ≈ 400ms 环形、每 tick 存 `role → {位置, 相对受击面}`）；`MatchCombat._adjudicate_bullets` 每 tick 推、`_segment_hits_player` 按 `want = clamp(st − PLAYOUT_TICKS, srv−MAX_REWIND, srv)` 回放受击面（普通弹与榴弹直击同一路径；非网络射手/AI 与无历史时回退现时）。④ P0-1 子弹体积：`HitShape.segment_hits_rect` 加 `grow`，`BulletBase.hit_grow()` 把碰撞矩形按速度角投影成世界 AABB 半展，单机/服务器/客户端 cull 三处同传。⑤ P0-3 反馈与可受击：世界系 `HitFeedbackFx`（目标身上的 X + 伤害数字，替代屏幕中心 X），`is_hurtable()` 统一为"敌人未死 / 玩家未倒地 / 副本未倒地"，爆炸敌人循环同过滤。守卫：`lag_history_smoke`（8 条）、`hit_shape_smoke` 13→14、`bullet_sweep_probe` 4→6。
+
+**不动的部分（有意）**：移动预测 / 幽灵碰撞体仍吃最新权威态（时间域解耦只作用于裁决）；协议/c2/快照 schema 零改动（`st` 只是从"落位"变成"有消费者"）；爆炸 AoE **不回放**（现时位置，见下边界）。
+
+**已知边界（照实）**：
+- **回放深度不是精确的"射手观看时刻"**：`want = st − PLAYOUT_TICKS` 用的是"最近解码的快照 tick − 名义延迟"；实际单程延迟未知（没有 ping 的 RTT 半程估计进公式）⇒ 深度补偿（`playout_clock` 的 0~4 tick）会让真实渲染时刻比 `want` 再晚 0~4 tick，方向上是"服务器比射手看到的更晚回放"，可能偏保守 0~50ms。
+- **AoE 不回放**：爆炸走 `Explosion.apply_aoe`，目标位置取现时；与子弹/激光直击的时间基准不一致（登记为有意：AoE 是区域伤害，回放半径会额外放大）。
+- **历史 24 tick / 回放上限 8 tick**：`st` 过旧（断线重连、客户端卡顿 >400ms）时历史取不到 → 回退现时受击面（行为退回 P0 前）；`MAX_REWIND_TICKS=8` 防止异常 `st` 把回放拉穿。
+- **无受击面历史插值**：`rect_for` 只取"最近的已记录 tick"（向下取整，无两帧插值）⇒ 回放位置有最多 1 tick（16.7ms）量化误差；姿态切换（站/蹲/飞箱尺寸变化）也按 tick 粒度跳变。
+- **零自动化守卫**：回放链路的正确性（`st` 送达、`_srv_tick` 与快照 tick 同相位、回放命中率）只有 `-s` 纯逻辑（`lag_history_smoke`）+ 源码阅读；真链路 `pvp_match_smoke.sh` / `royale_soak_probe.sh` 需跑批 + 人眼，命中率与"看着中"是否改善只能实机试玩。
+- P0-3 的伤害数字是本地表现：客户端只画自己收到的命中确认/命中反馈，数值取自 `hit_damage`（切枪后 source 失效时即子弹自带值），可能与服务器最终结算（武器真值）差一档；不参与任何判定。

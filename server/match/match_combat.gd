@@ -2,6 +2,7 @@ class_name MatchCombat
 extends MatchSnapshot
 
 const HitShape := preload("res://core/sim/hit_shape.gd")   # 受击判定几何唯一入口
+const LagComp := preload("res://core/net/lag_comp.gd")     # playout / 回放深度常量(与客户端副本同源)
 
 # 子弹 / 爆炸 / 光束的裁决与广播域;拆墙广播也在这里(它同属「命中/破坏」这条线)。
 
@@ -35,6 +36,8 @@ func _on_sub_destroyed(sub: Vector2i, _pre_hp: int, owner: Node) -> void:
 
 
 func _adjudicate_bullets() -> void:
+	# 命中回放采样必须在本帧裁决之前推(含当前 tick):裁决读的就是"射手观看时刻"那一帧的受击面。
+	_push_lag_frame()
 # 帧末用「本帧在场」的集合替换 _seen_bullets,顺带剪掉已消失的条目。★ 必须剪:大乱斗不换局、永不调 _reset_world_and_clear_dynamics,不剪就整局只增不减。
 	var live: Dictionary = {}
 	for b in get_tree().get_nodes_in_group("bullet"):
@@ -70,12 +73,46 @@ func _adjudicate_bullets() -> void:
 
 
 # 线段扫掠判命中:受击面来源唯一(Player.hurt_rect → HitShape),不再用中心点距离。
+# ★★ 时间域解耦:读**射手观看时刻**的受击面(历史回放),否则"看着中/服务器不中";移动预测仍吃最新态,只影响裁决。
 func _segment_hits_player(bullet: BulletBase, p: Node2D) -> bool:
 	if not HitShape.hurtable(p):
 		return false
-	var rect: Rect2 = p.hurt_rect() if p.has_method("hurt_rect") else HitShape.hurt_rect_of(p)
-	return HitShape.segment_hits_rect(bullet.prev_pos, bullet.global_position, rect,
-			float(GameParameters.MAP_WIDTH), float(GameParameters.MAP_HEIGHT)) >= 0.0
+	var rect := _replay_hurt_rect(bullet, p)
+	var w := float(GameParameters.MAP_WIDTH)
+	var h := float(GameParameters.MAP_HEIGHT)
+	return HitShape.segment_hits_rect(bullet.prev_pos, bullet.global_position, rect, w, h,
+			bullet.hit_grow()) >= 0.0
+
+
+# 射手观看时刻的受击面:st − PLAYOUT_TICKS(夹在 srv−MAX_REWIND..srv);无有效 st(非网络射手/尚未收到快照)或
+# 无历史(开局/刚重连)时回退现时受击面 —— AI 补位没有"观看时刻",按现时裁决。
+func _replay_hurt_rect(bullet: BulletBase, p: Node2D) -> Rect2:
+	var fallback: Rect2 = p.hurt_rect() if p.has_method("hurt_rect") else HitShape.hurt_rect_of(p)
+	var shooter_role := _role_of(bullet.shooter)
+	var victim_role := _role_of(p)
+	if shooter_role == 0 or victim_role == 0 or not peer_by_role.has(shooter_role):
+		return fallback
+	var st := int(_client_snap_tick.get(shooter_role, 0))
+	if st <= 0:
+		return fallback
+	var want := clampi(st - LagComp.PLAYOUT_TICKS, _srv_tick - LagComp.MAX_REWIND_TICKS, _srv_tick)
+	var rect := _lag_hist.rect_for(victim_role, want)
+	return rect if rect.size != Vector2.ZERO else fallback
+
+
+# 每物理 tick 把全员「位置 + 相对受击面」记进历史环;只记判定几何(不记姿态/朝向),内存 = 24 tick × 人数。
+func _push_lag_frame() -> void:
+	var entries: Dictionary = {}
+	for role in players:
+		var p: Node2D = players[role]
+		if p == null or not is_instance_valid(p) or not p.has_method("hurt_rect"):
+			continue
+		var rect: Rect2 = p.hurt_rect()
+		entries[int(role)] = {
+			"p": p.global_position,
+			"r": Rect2(rect.position - p.global_position, rect.size),
+		}
+	_lag_hist.push(_srv_tick, entries)
 
 # 爆炸弹对玩家的权威判定:只结算一次「直接命中」,不销毁子弹 —— 物理掩码已不含玩家,命中全靠这里的线段扫掠;
 # 销毁会把引信一起吞掉(爆炸永不触发)。引信由 bullet_base._check_player_contact 两端同源起,这里只补权威伤害 + 射手端反馈。

@@ -99,13 +99,21 @@ NetBus.rpc_id(peer, "snapshot_own",
 ## 2. 远端副本：playout 缓冲插值
 
 - [`player_replica.gd`](../../scenes/player/player_replica.gd) `apply_snapshot` 把快照位置塞进定长历史环并喂播放时钟；`_process` 在「最新 − `PLAYOUT_TICKS`」那一刻对两条相邻快照夹逼插值。
-- `PLAYOUT_TICKS = 4`（60Hz tick 域）；下行 30Hz ⇒ 2 个发包间隔 ≈ **67ms 缓冲**，也是「画面比权威晚多少」的旋钮。
+- `PLAYOUT_TICKS = 3`（60Hz tick 域；单一来源 `core/net/lag_comp.gd`）；下行 30Hz ⇒ **1.5 个发包间隔 ≈ 50ms 缓冲**，也是「画面比权威晚多少」的旋钮。
 - 无外插：取样比最新还新（underrun）冻在最新；比最老还老冻在最老。跨接缝那一对样本先锚进同一副本空间再 lerp。
 - `SNAP_DIST = 128 px`：相邻样本的环面距离超它 ⇒ 清历史、一帧落位（回溯 / 重生 / 换边）。
 - [`player_replica.gd`](../../scenes/player/player_replica.gd) 的 `_clock` 是 `core/net/playout_clock.gd`（窗口最小延迟选样的本地播放时钟，不与服务器做时钟同步、不做速率纠偏以外的动作）。
 - 幽灵体（`_build_ghost_body`，`StaticBody2D`，层按队配）**不跟插值**：跟未经平滑的 `target`，预测面要最小陈旧。
 - 两个 `anchor_to_nearest` 是承重的：渲染位置与目标相隔整幅地图时最短向量为 0 ⇒ 副本会永远留在远副本。
 - `aim` / `pose` / `facing` 逐包瞬跳。`_aim` 是单位向量，若加插值必须 `slerp` 或 `lerp_angle`（直接 `lerp` 会穿原点）。
+
+### 2.1 时间域解耦：服务器命中回放（2026-10-26）
+
+- 同一个 `PLAYOUT_TICKS` 用在两处：客户端**渲染**远端副本时的延迟，和服务器**裁决命中**时的回放深度（`core/net/lag_comp.gd` 单一来源）。
+- 服务器 tick 域对齐：`MatchHost._physics_process` 每 tick 起始 `_srv_tick += 1`；`_broadcast_snapshot` 里 `_snap_tick = _srv_tick`（广播相位仍每 2 tick ⇒ tick 数值序列不变）。客户端输入包里的 `st` 从此与服务器 tick **同一刻度**。
+- 裁决路径（`server/match/match_combat.gd`）：`st = _client_snap_tick[shooter]`（射手最近解码的快照 tick）⇒ `want = clamp(st - PLAYOUT_TICKS, _srv_tick - MAX_REWIND_TICKS, _srv_tick)` ⇒ 用 `HitLagHistory.rect_for(victim, want)` 取**射手观看时刻**的对手受击面，再走 `HitShape` 线段扫掠（含子弹体积 grow）。榴弹直击同一路径。
+- 历史环 `core/sim/hit_lag_history.gd`：每 tick 存 `role → {p: canonical 位置, r: 相对受击面的 Rect2}`，容量 24 tick（400ms），超限丢最老；无该 tick/该 role 时回退现时受击面。
+- **不动的部分**：移动预测继续吃最新态（幽灵体不接插值、位置照旧）；爆炸 AoE **不回放**（现时位置，见 registered-debt §十五）。协议字节零改动。
 
 ## 3. 输入队列
 
@@ -135,7 +143,7 @@ NetBus.rpc_id(peer, "snapshot_own",
 
 | 维度 | 本仓 | 主流 |
 |---|---|---|
-| 状态发送频率 | 30Hz + 客户端 playout 插值（`PLAYOUT_TICKS = 4` ≈ 67ms 缓冲） | 10~30Hz + 客户端插值缓冲 |
+| 状态发送频率 | 30Hz + 客户端 playout 插值（`PLAYOUT_TICKS = 3` ≈ 50ms 缓冲）+ 服务器按射手观看时刻回放命中 | 10~30Hz + 客户端插值缓冲 |
 | 编码 | schema 表手打包 | 绑定 + 量化 + 位打包 |
 | 增量 | 全字段绝对值 | 对已 ack 的基线增量 |
 | 客户端时钟 | 本地播放时钟（窗口最小延迟选样），不与服务器做显式时钟同步 | 播放时钟跟服务器时钟 |
@@ -144,7 +152,7 @@ NetBus.rpc_id(peer, "snapshot_own",
 
 - `c2` 与渲染字段都是 float32 全量，量化与增量都没做。量化必须两端同口径（`c2` 是回滚锚点，只压上行会让每次重放都对不上）。
 - ★ 2026-10-24 **U1 上行去锁存**：输入记录 = 1 tick（60Hz 采样），30Hz 包内装两条（流水线），服务器每 tick 消费一条 ⇒ 本地手感不再有 30Hz 锁存延迟。**S1** 把本人包挪到"消费并步进完当帧"发（③ 固定回带已消）；客户端 U1 起本来就每 tick 对账（④ 已消）。**剩下的**只是 30Hz 发包/广播节拍的量化（`--netstat` 的 `gap` 仍有 1~2 条 ×16.7ms 的偏置），不是"等一拍广播"。见 `netcode-input-uplink.md` §5。
-- 上行的 `st` / `ct` 两个扩展字段（2026-10-24 随输入手打包埋入）**只落位、无消费者**：真链路只证明不回归，送达证据只有 `-s` 往返断言；真正的消费者是未来的增量批。
+- 上行 `st` / `ct`：`ct`（客户端物理帧号）仍**无消费者**；`st` 自 2026-10-26 起是**命中回放的时间基准**（`match_combat._replay_hurt_rect`），不再是"只落位"。
 - 没有丢包 / 抖动注入路径 ⇒ 队头阻塞、丢弃率、手感都没有真对局读数。
 - 探针量的是**载荷**字节，不含 ENet 分片头 / RPC 方法名 / IP·UDP 头。`royale_soak_probe` 的 KB/s 是解码后 `Dictionary` 的 `var_to_bytes`，不是线上字节，对线格式改动不可见。
 - `snapshot_size_probe` 的每秒折算列按 `SNAP_HZ := 60` 算，下行实际 30Hz ⇒ 只看它的单包字节，别引用每秒列。

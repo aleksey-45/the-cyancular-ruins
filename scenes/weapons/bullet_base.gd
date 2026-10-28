@@ -4,6 +4,7 @@ extends CharacterBody2D
 const BOUNCE_DAMPING: float = 0.6  # 撞墙反弹速度保留比例
 const TileHitFx := preload("res://scenes/effects/tile_hit_fx.gd")
 const HitShape := preload("res://core/sim/hit_shape.gd")   # 受击判定几何唯一入口
+const HitFeedbackFx := preload("res://scenes/effects/hit_feedback_fx.gd")   # 世界系命中反馈(X + 伤害数字)
 
 # 榴弹「碰到玩家 → 短引信」的候选组:player = 玩家实体;player_replica = 客户端上的对手视觉副本(它不入 player 组,理由见 player_replica.GROUP)。
 const CONTACT_GROUPS: Array[String] = ["player", "player_replica"]
@@ -118,14 +119,28 @@ func first_hurt_on_segment(from: Vector2, to: Vector2, groups: Array, exclude: N
 	var best: Dictionary = {}
 	var w := float(GameParameters.MAP_WIDTH)
 	var h := float(GameParameters.MAP_HEIGHT)
+	var grow := hit_grow()
 	for group in groups:
 		for n in get_tree().get_nodes_in_group(group):
 			if n == exclude or not (n is Node2D) or not HitShape.hurtable(n):
 				continue
-			var t := HitShape.segment_hits_rect(from, to, hurt_rect_for(n as Node2D), w, h)
+			var t := HitShape.segment_hits_rect(from, to, hurt_rect_for(n as Node2D), w, h, grow)
 			if t >= 0.0 and (best.is_empty() or t < float(best["t"])):
 				best = {"node": n, "t": t}
 	return best
+
+
+# 子弹体积补回命中:把本弹碰撞矩形的世界 AABB 半展当作受击面外扩量(grow)。
+# ★ 矩形随节点旋转 ⇒ 必须用速度角投影到世界轴;直接取 shape.size 会在斜射时只外扩一半。
+func hit_grow() -> Vector2:
+	var cs := get_node_or_null("CollisionShape2D") as CollisionShape2D
+	if cs == null or cs.shape == null or not (cs.shape is RectangleShape2D):
+		return Vector2.ZERO
+	var half: Vector2 = (cs.shape as RectangleShape2D).size * (0.5 * size)
+	var ang := velocity_vec.angle() if not velocity_vec.is_zero_approx() else rotation
+	var c := absf(cos(ang))
+	var s := absf(sin(ang))
+	return Vector2(half.x * c + half.y * s, half.x * s + half.y * c)
 
 
 # 目标的受击面:优先目标自己的 hurt_rect(玩家/敌人)或 hurt_rect_rendered(对手副本),都没有才按活动碰撞箱兜底。
@@ -155,15 +170,22 @@ func _on_hurt_target(from: Vector2, to: Vector2, hit: Dictionary) -> void:
 		return
 	# 命中敌人:优先走 source(武器)的 apply_hit;切枪后旧武器已 free 时用子弹自带 damage/impact 兜底;视觉副本(apply_damage=false)不裁决伤害,直接消失。
 	if apply_damage and is_instance_valid(source) and source.has_method("apply_hit"):
-		# 命中标记(屏幕中心 X)。敌人侧不写归因 —— 那个 meta 的唯一读者(单机击杀播报)已删,玩家侧归因在 MatchHost/RoyaleHost 那条路上。
-		CombatFeedback.hit_marker()
+		_spawn_hit_fx(target)
 		source.apply_hit(target, velocity_vec)
 		Sfx.play("hit")
 	elif apply_damage and target.has_method("hurt"):
-		CombatFeedback.hit_marker()
+		_spawn_hit_fx(target)
 		target.hurt(hit_damage, velocity_vec, hit_impact)
 		Sfx.play("hit")
 	queue_free()
+
+
+# 世界系命中反馈:画在被打中的目标身上(X + 伤害数字),玩家能看出"哪一下打到了哪个敌人"。
+# ★ 只有本端有 CombatFeedback 实例(客户端对局)才建节点:headless 服务器不建 UI 节点。
+func _spawn_hit_fx(target: Node) -> void:
+	if CombatFeedback.current == null or not (target is Node2D):
+		return
+	HitFeedbackFx.spawn_hit(get_viewport(), _fx_pos((target as Node2D).global_position), hit_damage)
 
 
 # 撞到地形:保留旧语义 —— 爆炸弹反弹并起撞墙引信;其余弹拆可破坏砖后消失。

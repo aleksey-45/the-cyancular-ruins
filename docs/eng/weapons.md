@@ -9,7 +9,8 @@
 - 术语:`type_id` = 武器类型 id(整数 1–N,与键位、背包位置无关);`inst` = 逐把唯一,进输入包与 `capture_state`;`index` = 背包位置(0-based,只在本地用于按键解析 / HUD 行号)。`slot` 只保留在三处:`Player.weapon_slot` 挂点、容量格 UI(`WeaponSlots` / `C_SLOT_*`)、`capture_state()` 的 `wslot` 键。
 - 上行传解析结果:输入包带 `"winst"` = 目标那把的 `inst`。客户端本地解析(数字键按 `index`、滚轮按相对位置)出 `inst`;服务器 `equip_inst(inst)`,`index_of_inst` 找不到就静默不动。下行世界包的枪型字段是 `type_id`。改这个键 = 改协议,两端必须同一 build。
 - `equip_type` 对「背包里没有这个类型」`push_error` 且不加入。发放走 `pick_up(type_id, MAG_FULL)` 或 `set_initial_inventory([...])`。
-- 现有武器:手枪 / 步枪 / m82a1(重狙,heavy_aim)/ s686(霰弹 8 丸 ±3°、射程 1100)/ 榴弹发射器(重型)/ 激光枪(中型即时光束)。
+- 现有武器:手枪 / 步枪 / m82a1(重狙,heavy_aim)/ s686(霰弹 8 丸 ±3°、射程 1400)/ 榴弹发射器(重型)/ 激光枪(中型即时光束)。
+- 弹速(2026-10-26 P1 命中手感,全量 +25%):手枪 1750 / 步枪 2000 / m82a1 3750 / s686 1375 / 榴弹 1375(px/s);敌弹平抛初速上下限同步 ×1.25(250/1600 → 312.5/2000)。激光是 hitscan,`bullet_speed` 不参与弹道;S686 射程同步 1100→1400(原射程小于可见半宽)。
 
 **即时光束(`LaserWeaponBase extends WeaponBase`)**:
 
