@@ -19,8 +19,8 @@ const jump_cut_factor: float = 0.5  # 上升中松键时向上速度的衰减比
 const crouch_walk_speed: float = 245.0   # 蹲走水平速度(≈0.35×move_speed)
 
 const charge_down_velocity: float = 2000.0
-const charge_velocity: float = 1900.0   # 冲刺速度(1500→1900)
-const charge_duration: float = 0.4    # 0.6→0.4(600px,保留长距离但可跳/墙打断)
+const charge_velocity: float = 2850.0   # 冲刺速度(2026-10-28 ×1.5:1900→2850)
+const charge_duration: float = 0.24     # 冲刺时长 = 距离 −10%(760→684px)/ 速度 ×1.5 ⇒ 0.4×0.6(可跳/墙打断仍有效)
 const charge_air_gravity_mult: float = 0.35   # 空中冲刺重力倍率(<1=变平)
 const charge_dir_window: float = 0.3  # 冲刺方向沿用最近移动方向的窗口(秒)
 
@@ -40,7 +40,7 @@ const cam_deadzone: float = 8.0        # 死区像素(小于此值镜头不动)
 # 相机缩放(<1 = 视野更大;0.75 = 4→3 整数下采样,像素缩放最干净、无滚动抖动)
 const cam_zoom: float = 0.75
 
-const climb_speed: float = 300.0   # 攀爬基准速度(上爬 × tile_defs climb_speed:梯 1.6/锁链 2.0)
+const climb_speed: float = 360.0   # 攀爬基准速度(2026-10-28 +20%:300→360;上爬 × tile_defs climb_speed:梯 1.6/锁链 2.0 ⇒ 梯上 691/链上 864/梯下 864 px/s)
 # 上行/梯子下行整体倍率:上爬(梯&锁链)与梯子下行都 ×1.2;锁链下行=自由落体不受影响。
 const climb_vertical_mult: float = 1.2
 const elastic_bounce: float = 150.0  # 弹性瓦片(树叶)弱反弹冲量
