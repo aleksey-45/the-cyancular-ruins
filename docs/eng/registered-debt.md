@@ -152,7 +152,7 @@
 
 **与任务书的偏差（两处，均按 Lead 补充/现状）**：① 任务书"世界 FULL 每 60 tick 一次"改为**滚动关键帧**（每包 k 人绝对刷新）——整包 FULL 会在 60 tick 边界造尖峰，滚动关键帧更平滑；FULL 只在请求/换局/名单变化时发。② 任务是"本人包降频到 30Hz"——S1(2026-10-24) 起本人包**本来**就是 30Hz，本轮实际新增的是差分 + 60 tick 错峰全量。
 
-**字节/带宽（N=16、30Hz、典型帧；代码算式，由 Lead 实测复核）**：世界包 FULL 536 B → 稳态 keyframe 帧 **152 B**（28%）；本人包 FULL 99 B / 差分典型 36 B（每 role 1 次全量/秒，≈1.14 KB/s）；服务器上行 ≈294.8 → **≈89 KB/s**；单端下行 ≈5.5 KB/s。
+**字节/带宽（N=16、世界 30Hz / 本人 60Hz、典型帧；代码算式，由 Lead 实测复核）**：世界包 FULL 536 B → 稳态 keyframe 帧 **152 B**（28%）；本人包 FULL 99 B / 差分典型 36 B @60Hz（每 role 1 次全量/秒，差分 59 次/秒，≈2.22 KB/s）；服务器上行 ≈294.8 → **≈107 KB/s**；单端下行 ≈5.5 KB/s。
 
 **容差 / 位序（承重面）**：世界 DELTA mask bit i = `WORLD_SCHEMA[i]`（`mask=0xFFFF`=keyframe）；本人包 mask 位序 = `C2_SCHEMA` → `WEAPON_SCHEMA` → `inv`（`_own_unit_at` 派生，改 schema 自动跟着变）。判等：世界按量化后整数（pos/vel 定点、aim 字节、bool 逐位）；本人包 float 字段 **1e-4 容差** ⇒ 被省略的字段客户端最多陈旧 1e-4（C2 对账 pos 容差 2px / vel 20，不受影响）。去“定点舍入/位序/宽度”任一错 ⇒ `net_wire_smoke` ⑤⑥ 必红。
 
@@ -164,3 +164,12 @@
 - **快照消费侧零改动**依赖 NetBus emit 完整形状：任何绕过 NetBus 直接解 `snapshot_world/own` 的新消费者必须自己做 DELTA 合并（登记在此）。
 - **真链路未跑**：丢包/重连下的修复路径（请求位 → FULL）只有 `-s` 纯逻辑与源码论证，需真链路 + 人眼。
 - 世界包 FULL 的 792 B 最坏值仍恒 1 片；`snapshot_size_probe` ⑧ 断言"16 人 keyframe 峰值 ≤2×均值"防的正是"改回整包 FULL 周期"这类回退。
+
+
+## 十九、快照变卡与爆炸重复粒子（2026-10-28，档 3）
+
+**修 1：本人包 30Hz → 60Hz 回退**。P1.5 把本人包从每 tick 降到每 `SNAPSHOT_STRIDE` tick（30Hz），C2 回滚的权威锚点间距随之翻倍：移动中每 33ms 才校正一次 ⇒ 本地角色手感发涩/微跳（用户实测报"快照变卡"）。省带宽的承诺由**差分**兑现（全量 94 B → 典型差分 36 B），不能靠降频；已恢复 `_flush_own_snapshots` 每物理 tick 发，全量仍按 role 每 60 tick 错峰。带宽读数同步：本人包 ≈2.22 KB/s/role，N=16 服务器上行 ≈107 KB/s（仍远低于 P1.5 前 295 KB/s）。
+
+**修 2：爆炸给已摧毁子格重复播粒子**。`current_subgrid` 的纹理在摧毁后**不变**（摧毁只写 `sub_hp`），而 `Explosion.destructible_subs()` 只查纹理 ⇒ 爆炸会把已经被打碎的树叶/砖再算一遍：既重复播碎片，又重复 `TileHitFx.mark_hit` 去重。新增 `TileDefs.sub_hp_at()` 只读口，`destructible_subs` 跳过 `sub_hp<=0`（`sub_hp` 未初始化时保持旧行为，纯逻辑 -s 不受影响）。守卫：`tile_break_unit_smoke` 10→11 条（"已摧毁子格不进爆炸可破坏集"）。
+
+**待查（未修）**：开局 3s 倒计时问题（用户报"有问题"，现象待确认）。已知实现链：服务器只在 COUNTDOWN 起点广播一次 `round_state(timer=3.0)`，客户端 `Broadcast.tick(delta)` 本地走秒、`countdown_finished` 收尾；`_round_timer` 在 `_match_round_tick` 每 tick 递减。此路径本轮未改过，需要先定位现象（不显示/数字错/能行动/时长错/卡住）再动。

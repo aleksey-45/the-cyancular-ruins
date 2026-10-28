@@ -6,7 +6,7 @@ extends SceneTree
 # 测不到什么:实际拆砖手感/粒子观感(人眼)、真地图 cyrm v4 子格数据、网络事件链路(真链路批)。
 # 跑法:"$GODOT" --headless --path . -s res://tests/smoke/tile_break_unit_smoke.gd;通过 = 结尾打 TILE BREAK UNIT OK(n 条断言)。
 
-const EXPECTED_CHECKS := 10
+const EXPECTED_CHECKS := 11
 const CELLS := 16          # 16×16 格 = 1024×1024 px(半径 350 内不会有环面重复副本)
 const LEAF := 15           # 树叶:hp 8,子弹/爆炸都可破坏
 const CENTER := Vector2(504, 504)   # 一个子格中心,距四周都 > radius,扫掠结果可预测
@@ -74,11 +74,25 @@ func _initialize() -> void:
 
 	# ⑧ 爆炸整格分派:每个 64px 格去重后只扣一次(格级账),子格全清
 	_reset_world()
-	var covered_cells := _unique_cells(Explosion.destructible_subs(CENTER, 100.0))
+	var subs_before := Explosion.destructible_subs(CENTER, 100.0)
+	var covered_cells := _unique_cells(subs_before)
 	Explosion.damage_tiles(CENTER, 100.0, 1000, null, 1.0)
 	_chk(_destroyed_cells.size() == covered_cells.size() and covered_cells.size() > 1
-			and covered_cells.size() < Explosion.destructible_subs(CENTER, 100.0).size(),
+			and covered_cells.size() < subs_before.size(),
 			"爆炸整格:按格去重(格数 %d < 子格数),每格只扣一次" % [_destroyed_cells.size()])
+
+	# ⑪ 已摧毁子格不再计入"爆炸可破坏集"(subgrid 纹理摧毁后不变,必须查 sub_hp):
+	#   否则爆炸会给已经被打碎的树叶再播一遍碎片(用户实见)。去掉什么才红:destructible_subs 只查 tex。
+	_reset_world()
+	var before2 := Explosion.destructible_subs(CENTER, 60.0)
+	Explosion.damage_tiles(CENTER, 60.0, 1000, null, 0.25)
+	var after2 := Explosion.destructible_subs(CENTER, 60.0)
+	var all_alive := true
+	for e in after2:
+		if TileDefs.sub_hp_at(e["sub"]) <= 0:
+			all_alive = false
+	_chk(before2.size() > after2.size() and all_alive,
+			"已摧毁子格不进爆炸可破坏集(炸过的树叶不再出第二遍碎片)")
 
 	# ⑨ 爆炸子格分派(unit<1):只动 sub_hp,格级账不碰、无格级销毁
 	_reset_world()

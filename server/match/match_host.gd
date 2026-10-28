@@ -228,9 +228,11 @@ func _physics_process(delta: float) -> void:
 	# ★ S1:本人包推迟到本帧末(玩家子节点步进完之后)再发 —— 那时 c2 才是"本 tick 输入已生效"的权威态,
 	#   ack 也是本 tick 刚消费的 seq;比"等下一次 30Hz 广播"少一拍(均值 ~16.7ms)。
 	#   ★ 依赖 Godot 的 call_deferred 在帧末(所有 _physics_process 之后)执行。
-	if snapshot_tick:
-		_own_flush_pending = true
-		call_deferred("_flush_own_snapshots")
+	# ★★ 本人包必须**每物理 tick**发(60Hz):C2 回滚的权威锚点间距 = 本人包间隔,
+	#   降到 30Hz 后移动中每 33ms 才校正一次 ⇒ 手感发涩/微跳(P1.5 曾按"降频省带宽"改成 30Hz,实测变卡后回退)。
+	#   省带宽靠**差分**(全量 94B → 典型差分 ~36B),不靠降频;全量仍按 role 每 60 tick 错峰一次。
+	_own_flush_pending = true
+	call_deferred("_flush_own_snapshots")
 
 	_adjudicate_bullets()
 

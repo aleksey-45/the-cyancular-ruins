@@ -90,6 +90,12 @@ static func destructible_subs(center: Vector2, radius: float) -> Array:
 			var tex: int = sgrid[sy][sx]
 			if tex == 0 or not TileDefs.explosion_destroyable(tex):
 				continue
+			# ★ 已打碎的子格必须跳过:current_subgrid 的纹理在摧毁后**不变**(摧毁只写 sub_hp)⇒
+			#   只查 tex 会让爆炸给"已经被破坏的树叶"再播一遍碎片/再走一遍去重(用户实见)。
+			#   sub_hp 未初始化(纯逻辑 -s / 建格前)时保持旧行为,不把整片爆区误判成空。
+			if TileDefs.sub_cols > 0 and not TileDefs.sub_hp.is_empty() \
+					and TileDefs.sub_hp_at(Vector2i(sx, sy)) <= 0:
+				continue
 			var pos := Vector2(sx * 16.0 + 8.0, sy * 16.0 + 8.0)
 			var d := _dist(center, pos)
 			if d > radius:

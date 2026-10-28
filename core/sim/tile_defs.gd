@@ -243,6 +243,17 @@ static func sub_alive(sub: Vector2i) -> bool:
 
 
 # 对单个 16px 子格扣血(source = bullet/explosion):扣到 <= 0 即死亡(回调 level_0 清渲染/记账本/重建碰撞块);所属 64px 格全部子格死光时把格级 current_grid 清零。
+# 子格 HP 的只读口(0 = 空气/已摧毁)。★ 纹理不会因为摧毁而变 0(摧毁只写 sub_hp),所以
+#   "这块砖还在不在"只能问这里 —— 拿 current_subgrid 的 tex 判存活会把已打碎的树叶当成活砖。
+static func sub_hp_at(sub: Vector2i) -> int:
+	if sub_cols == 0 or sub.x < 0 or sub.y < 0 or sub.x >= sub_cols or sub.y >= sub_rows:
+		return 0
+	var idx := sub.y * sub_cols + sub.x
+	if idx < 0 or idx >= sub_hp.size():
+		return 0
+	return int(sub_hp[idx])
+
+
 static func damage_sub(sub: Vector2i, amount: int, source: String, owner: Node = null) -> bool:
 	if sub_cols == 0 or sub.x < 0 or sub.y < 0 or sub.x >= sub_cols or sub.y >= sub_rows:
 		return false
