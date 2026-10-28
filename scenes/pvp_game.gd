@@ -113,6 +113,8 @@ func _on_snapshot_world(world: Dictionary) -> void:
 			_remote_replica.apply_snapshot(opp, _local.global_position, tier)
 			if _hp_bar != null:
 				_hp_bar.ratio = float(opp.get("hp", PlayerParams.player_max_hp)) 						/ float(PlayerParams.player_max_hp)
+				# 倒地尸体不显示血条(线上 hp 已钳到 0,见 NetCodec;否则会读成"还活着")。
+				_hp_bar.visible = not bool(opp.get("downed", false))
 
 # 本人包:只有自己需要的 ack_seq + 权威整态 c2,C2 下喂 rollback 控制器;拆包的好处是它与世界包互不连累 —— c2 丢只少一个回滚锚点(下一个快照补上),世界包丢只让副本插值冻结一个快照间隔(下行 30Hz ⇒ 33ms)。
 

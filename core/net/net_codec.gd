@@ -141,7 +141,8 @@ static func encode_world(world: Dictionary) -> PackedByteArray:
 		i += 1
 		out[i] = int(e.get("type_id", 0)) & 0xFF
 		i += 1
-		out[i] = int(e.get("hp", 0)) & 0xFF
+		# ★ hp 必须钳到 [0,255]:倒地瞬间 hp 可为负(如 -5),& 0xFF 会回绕成 251 ⇒ 血条被钳成满(真实 bug)。
+		out[i] = clampi(int(e.get("hp", 0)), 0, 255)
 		i += 1
 		out[i] = int(e.get("waterproof", 0)) & 0xFF
 		i += 1
@@ -234,7 +235,8 @@ static func encode_own(own: Dictionary) -> PackedByteArray:
 	i += 4
 	out.encode_float(i, float(c2.get("wp_d", 0.0)))
 	i += 4
-	out[i] = int(c2.get("hp", 0)) & 0xFF
+	# 同 world.hp:倒地后 hp 可能为负,& 0xFF 会回绕 ⇒ c2 重放/血条读到 251。钳到 0。
+	out[i] = clampi(int(c2.get("hp", 0)), 0, 255)
 	i += 1
 	out.encode_float(i, float(c2.get("ifr", 0.0)))
 	i += 4

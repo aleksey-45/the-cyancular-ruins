@@ -7,7 +7,7 @@ extends SceneTree
 # ★ 与 snapshot_size_probe 的分工:那边量**体积/最坏包/容量**(场景探针,要真 Player);这里量**协议正确性**(纯逻辑 `-s`)。
 # 跑法:"$GODOT" --headless --path . -s res://tests/smoke/net_wire_smoke.gd;通过 = NET WIRE OK(n 条断言)。
 
-const EXPECTED_CHECKS := 4
+const EXPECTED_CHECKS := 5
 
 var _fails: Array[String] = []
 var _checks := 0
@@ -73,6 +73,15 @@ func _initialize() -> void:
 			extra.append(k)
 	_chk(missing.is_empty() and extra.is_empty(),
 			"INPUT_SCHEMA 与 pack_pair() 逐键对齐(表外未覆盖 %s / 表内多余 %s)" % [str(missing), str(extra)])
+
+	# ⑤ 负 hp(倒地瞬间的合法中间态)必须钳成 0:直接 & 0xFF 会回绕成 251 ⇒ 客户端血条 251/50 被钳成满
+	#   (真实 bug:敌方玩家倒地后血条变满)。去掉什么才红:把 clamp 改回 & 0xFF。
+	var neg_world: Dictionary = (world as Dictionary).duplicate(true)
+	var first_role: String = str((neg_world["players"] as Dictionary).keys()[0])
+	(neg_world["players"][first_role] as Dictionary)["hp"] = -5
+	var neg_rt := NetCodec.decode_world(NetCodec.encode_world(neg_world))
+	_chk(int((((neg_rt.get("players", {}) as Dictionary).get(first_role, {}) as Dictionary).get("hp", -1))) == 0,
+			"负 hp 编码钳到 0(不回绕 251 → 倒地血条不会变满)")
 
 	# 读数(不是断言):协议尺寸
 	print("[readout] 输入 %d B/包(内含 2 条 tick 记录);世界 2 人共 %d B;本人包 %d B" % [

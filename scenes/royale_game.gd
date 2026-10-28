@@ -120,6 +120,8 @@ func _on_snapshot_world(snap: Dictionary) -> void:
 				if _hp_bars.has(role):
 					_hp_bars[role].ratio = float(data.get("hp", PlayerParams.player_max_hp)) \
 							/ float(PlayerParams.player_max_hp)
+					# 倒地尸体不显示血条(同上:线上 hp 已钳到 0)。
+					(_hp_bars[role] as Node2D).visible = not bool(data.get("downed", false))
 		# ★ 自己那一份刻意不消费:C2 下本地玩家由引擎自步进,权威整态走本人包(见 _on_snapshot_own);把世界包里自己那份写进玩家 = 每帧把权威位置强写进正在预测的玩家 = 橡皮筋,别顺手补回来。
 		# 清理已离开玩家(掉线者从快照消失):副本/头顶 ID/血条一并移除。
 	for role_str in _replicas.keys():
