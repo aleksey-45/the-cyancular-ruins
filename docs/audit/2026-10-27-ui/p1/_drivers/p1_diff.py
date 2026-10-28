@@ -15,6 +15,12 @@ def load(d, n):
     return np.asarray(Image.open(os.path.join(d, n)).convert("RGB")).astype(int)
 
 
+# 已知不稳定区(逐镜头):主菜单左下角版本号含 git 提交数,并行会话一提交就变 —— 与版式无关。
+MASKS = {
+    "main_sp_panel.png": [(0, 1380, 260, 1440)],
+}
+
+
 def main():
     if len(sys.argv) != 3:
         print("USAGE: python p1_diff.py <before_dir> <after_dir>")
@@ -39,6 +45,8 @@ def main():
             bad.append(n)
             continue
         diff = np.abs(a - b)
+        for (x0, y0, x1, y1) in MASKS.get(n, []):
+            diff[y0:y1, x0:x1] = 0
         changed = int((diff.sum(axis=2) > 30).sum())
         total += changed
         if changed:

@@ -10,6 +10,8 @@ extends VBoxContainer
 
 signal picked(path: String)
 
+const HEADER_STRIP_PANEL := preload("res://ui/components/header_strip_panel.tscn")
+
 const CARD_W := 244.0
 const THUMB_H := 132.0
 
@@ -28,7 +30,9 @@ func setup(initial: String = "", columns := 2, max_h := 320.0,
 	# 标题 = 同款标题带(与各页面 / 面板里的区块标题同一个味道)。
 	# ★ 原先是一条裸的 `C_ACCENT` Label ⇒ 三处用到它的面板(单人开局/1v1/大乱斗/3v3 建房)
 	#   里,别的区块标题都是金色标题带、只有它是青色裸字,一屏里两套标题风格。
-	add_child(UiFactory.header_strip(title, 32))
+	var h := HEADER_STRIP_PANEL.instantiate() as HeaderStripPanel
+	h.apply(title, 32, false)
+	add_child(h)
 
 	var scroll := ScrollContainer.new()
 	scroll.custom_minimum_size = Vector2(0, max_h)

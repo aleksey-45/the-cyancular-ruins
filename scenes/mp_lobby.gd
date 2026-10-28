@@ -25,7 +25,7 @@ var _join_btn: Button = null
 
 # 等待室的面板句柄(行为在 wait_room.gd;句柄留本页,理由见文件头)。
 var _wait_panel: PanelContainer = null
-var _wait_title: Label = null             # 标题带里面那颗 Label(房间号写在它的 text 上)
+var _wait_title: HeaderStripPanel = null  # 标题带组件(房间号写在它的 title 上)
 var _wait_body: VBoxContainer = null      # 名单/分队容器:每次重填前整批清空
 var _wait_count: Label = null
 var _wait_start: Button = null

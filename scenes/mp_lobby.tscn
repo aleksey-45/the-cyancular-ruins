@@ -1,7 +1,9 @@
-[gd_scene load_steps=58 format=3]
+[gd_scene load_steps=59 format=3]
 
 [ext_resource type="Theme" path="res://ui/theme/menu_theme.tres" id="1_xj1ww"]
 [ext_resource type="Script" uid="uid://bgulbpan3miyr" path="res://scenes/mp_lobby.gd" id="1_lobby"]
+[ext_resource type="PackedScene" path="res://ui/components/header_strip_panel.tscn" id="9_hsp"]
+
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_xsicv"]
 content_margin_left = 16.0
@@ -912,15 +914,9 @@ custom_minimum_size = Vector2(640, 0)
 layout_mode = 2
 theme_override_constants/separation = 16
 
-[node name="PanelContainer1" type="PanelContainer" parent="JoinPanel/Body/VBoxContainer1" unique_id=1227314776]
-layout_mode = 2
-theme_type_variation = &"HeaderStrip"
-
-[node name="Label1" type="Label" parent="JoinPanel/Body/VBoxContainer1/PanelContainer1" unique_id=1664810523]
-layout_mode = 2
-theme_type_variation = &"HeaderTitle"
-text = "加入房间"
-horizontal_alignment = 1
+[node name="Header" parent="JoinPanel/Body/VBoxContainer1" instance=ExtResource("9_hsp")]
+title = "加入房间"
+centered = true
 
 [node name="JoinCodeEdit" type="LineEdit" parent="JoinPanel/Body/VBoxContainer1" unique_id=838499619]
 unique_name_in_owner = true
@@ -1000,17 +996,11 @@ theme_override_constants/separation = 32
 layout_mode = 2
 theme_override_constants/separation = 16
 
-[node name="PanelContainer1" type="PanelContainer" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer1" unique_id=695460052]
-layout_mode = 2
+[node name="Header" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer1" instance=ExtResource("9_hsp")]
+title = "创 建 房 间"
+title_size = 48
+centered = true
 size_flags_horizontal = 3
-theme_type_variation = &"HeaderStrip"
-
-[node name="Label1" type="Label" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer1/PanelContainer1" unique_id=623289327]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.8784314, 0.6627451, 0.30980393, 1)
-theme_override_font_sizes/font_size = 48
-text = "创 建 房 间"
-horizontal_alignment = 1
 
 [node name="CreateCloseBtn" type="Button" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer1" unique_id=1011064369]
 unique_name_in_owner = true
@@ -1188,14 +1178,8 @@ unique_name_in_owner = true
 layout_mode = 2
 theme_override_constants/separation = 16
 
-[node name="PanelContainer1" type="PanelContainer" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer1/WeaponsBlock" unique_id=1438275867]
-layout_mode = 2
-theme_type_variation = &"HeaderStrip"
-
-[node name="Label1" type="Label" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer1/WeaponsBlock/PanelContainer1" unique_id=652968451]
-layout_mode = 2
-theme_type_variation = &"HeaderTitle"
-text = "禁用武器(房主生效,开局带进对局):"
+[node name="Header" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer1/WeaponsBlock" instance=ExtResource("9_hsp")]
+title = "禁用武器(房主生效,开局带进对局):"
 
 [node name="VBoxContainer2" type="VBoxContainer" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2" unique_id=2043741537]
 layout_mode = 2
@@ -1251,15 +1235,9 @@ custom_minimum_size = Vector2(800, 0)
 layout_mode = 2
 theme_override_constants/separation = 20
 
-[node name="PanelContainer1" type="PanelContainer" parent="WaitPanel/Body/VBoxContainer1" unique_id=205186339]
-layout_mode = 2
-theme_type_variation = &"HeaderStrip"
-
-[node name="WaitTitle" type="Label" parent="WaitPanel/Body/VBoxContainer1/PanelContainer1" unique_id=327804430]
+[node name="WaitTitle" parent="WaitPanel/Body/VBoxContainer1" instance=ExtResource("9_hsp")]
+centered = true
 unique_name_in_owner = true
-layout_mode = 2
-theme_type_variation = &"HeaderTitle"
-horizontal_alignment = 1
 
 [node name="WaitBody" type="VBoxContainer" parent="WaitPanel/Body/VBoxContainer1" unique_id=213424249]
 unique_name_in_owner = true

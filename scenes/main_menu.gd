@@ -22,6 +22,7 @@ var _seg_to := Vector2.ZERO              # 当前段终点(格坐标)
 var _seg_index := 0                      # 段序号(奇偶决定角度是 0→120 还是 120→0)
 
 const SP_PANEL_SCENE := preload("res://ui/screens/sp_launch_panel.tscn")
+const HEADER_STRIP_PANEL := preload("res://ui/components/header_strip_panel.tscn")
 
 # ── 背景:真实地形(与游戏同一份图集)+ 鱼眼漂移(没有任何实体)── 背景必须是真实地形:砖是 structure.png 的砖、水是水、树叶是树叶,像「透过一扇窗看进那个世界」。旧实现走 MapCatalog.build_image(),而那套的语义是选图面板的示意缩略图(每格一个平色块)⇒ 放大多少都是色块;现在改走 TerrainAtlas.bake_map_image() —— 同一个 TerrainAtlas 给 Level0 生成 TileSet、也在这里把地图烘成 Image ⇒ 背景与游戏是同一套像素。
 # ── 取景/缩放 ── 一句话:一格 = 72 屏幕像素 = 玩家视角(48px/格)的 150%,屏幕约 27 格宽。BG_VIEW_CELLS = 26.6667 ⇒ 1920 / 26.67 = 72 屏幕像素/格(对局参照:64px × PlayerParams.cam_zoom 0.75 = 48px/格、约 40 格宽 ⇒ 这里是它的 1.5 倍)。
@@ -242,7 +243,8 @@ func _on_single_pressed() -> void:
 		_sp_panel.visible = not _sp_panel.visible
 		return
 	_sp_panel = _fill_sp_panel(SP_PANEL_SCENE.instantiate() as PanelContainer)
-	_ui_layer.add_child(_sp_panel)
+	# ★ 必须挂 UIRoot(UIRoot 才是主题宿主;CanvasLayer 会切断 Theme 传播链 —— 见文件头第 8 行)。
+	get_node("%UIRoot").add_child(_sp_panel)
 
 
 # ★ 皮 = UiFactory.skin_menu_panel()(外深线 + 内亮线,方向 B 的凿刻感)。必须先套皮再取 Body —— 内容只有加进 Body 才吃得到面板内边距(加在外层等于 padding 失效、内容直接顶到外线上,画面上只表现为「挤」,不报错)。层级与其余两屏(创建房间弹层 / 设置页)同一套:标题 = 同款标题带、主行动 = 琥珀(gold)、次要动作 = quiet、面板 = 同款凿刻边。
@@ -253,6 +255,12 @@ const SP_CHECK_GAP := 20
 const SP_BUTTON_GAP := 28
 const SP_PANEL_MIN_W := 560.0
 
+func _header(title_text: String, size: int, centered: bool) -> HeaderStripPanel:
+	var h := HEADER_STRIP_PANEL.instantiate() as HeaderStripPanel
+	h.apply(title_text, size, centered)
+	return h
+
+
 func _fill_sp_panel(panel: PanelContainer) -> PanelContainer:
 	UiFactory.skin_menu_panel(panel, SP_PANEL_PADDING)
 	var body := panel.get_node("Body") as Container
@@ -262,13 +270,13 @@ func _fill_sp_panel(panel: PanelContainer) -> PanelContainer:
 	body.add_child(vb)
 
 	# 页首/弹层标题居中(2026-10-27 规则);下面那条「禁用武器」是表单内分区标题,保持左对齐。
-	vb.add_child(UiFactory.header_strip("—— 单人开局 ——", 48, true))
+	vb.add_child(_header("—— 单人开局 ——", 48, true))
 
 	var picker := MapPicker.new()
 	vb.add_child(picker)
 	picker.setup(Settings.sp_map_path, 2, 300.0)
 
-	vb.add_child(UiFactory.header_strip("禁用武器(勾选 = 本局不可用)", 32))
+	vb.add_child(_header("禁用武器(勾选 = 本局不可用)", 32, false))
 
 	var checks: Array[CheckButton] = []
 	var check_list := VBoxContainer.new()

@@ -1,8 +1,10 @@
-[gd_scene load_steps=3 format=3]
+[gd_scene load_steps=4 format=3]
 
 [ext_resource type="Script" uid="uid://d3bu156toikph" path="res://scenes/beta_menu.gd" id="1_beta"]
 
 [ext_resource type="Theme" path="res://ui/theme/menu_theme.tres" id="1_ffkj8"]
+[ext_resource type="PackedScene" path="res://ui/components/header_strip_panel.tscn" id="9_hsp"]
+
 
 [node name="BetaMenu" type="Control" unique_id=734392632]
 layout_mode = 3
@@ -34,16 +36,10 @@ theme_override_constants/margin_bottom = 76
 layout_mode = 2
 theme_override_constants/separation = 28
 
-[node name="PanelContainer1" type="PanelContainer" parent="MarginContainer1/VBoxContainer1" unique_id=91482252]
-layout_mode = 2
-theme_type_variation = &"HeaderStrip"
-
-[node name="Label1" type="Label" parent="MarginContainer1/VBoxContainer1/PanelContainer1" unique_id=1922847989]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.8784314, 0.6627451, 0.30980393, 1)
-theme_override_font_sizes/font_size = 48
-text = "—— Beta ——"
-horizontal_alignment = 1
+[node name="Header" parent="MarginContainer1/VBoxContainer1" instance=ExtResource("9_hsp")]
+title = "—— Beta ——"
+title_size = 48
+centered = true
 
 [node name="Label1" type="Label" parent="MarginContainer1/VBoxContainer1" unique_id=1944720946]
 layout_mode = 2

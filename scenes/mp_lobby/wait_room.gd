@@ -19,7 +19,7 @@ func setup(p: MpLobby) -> void:
 func register(root: Node) -> void:
 	page._wait_panel = root.get_node("%WaitPanel") as PanelContainer
 	page._wait_panel.visible = false
-	page._wait_title = root.get_node("%WaitTitle") as Label
+	page._wait_title = root.get_node("%WaitTitle") as HeaderStripPanel
 	page._wait_body = root.get_node("%WaitBody") as VBoxContainer
 	page._wait_count = root.get_node("%WaitCount") as Label
 	page._wait_pick_a = root.get_node("%WaitPickABtn") as Button
@@ -43,7 +43,7 @@ func show(state: Dictionary, mode: String) -> void:
 	page._join_btn.visible = false
 	page._rooms.hide_join_panel()
 	page._rooms.set_list_visible(false)   # 等位时收起房卡/筛选,避免在等待室底下露出列表
-	page._wait_title.text = _wait_title_text(state, mode)
+	page._wait_title.title = _wait_title_text(state, mode)
 
 	# ★ 必须 remove_child 再 queue_free:只 queue_free 的话旧行要到帧末才没,同帧重填会两批名单叠着(与列表侧 redraw 同款纪律)。
 	for c in page._wait_body.get_children():

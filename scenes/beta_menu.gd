@@ -4,6 +4,8 @@ extends Control
 # ★ 页面框架在 beta_menu.tscn 里(见 tools/gen_menu_scene.gd);卡片本身仍由代码建 —— 图标是运行时生成的贴图,进不了 .tscn,卡内边距 28/24 也是 Theme 表达不了的那一档,代价是编辑器里那一行是空的。
 # ★ beta 态传给大厅页的顺序:先 PvpSession.reset()(它会把 beta_mode 清成 false),再置 beta_mode = true,然后切场景;预选筛选走 entry_mode(不是凭据的 room_mode),大厅页 _ready 末尾按它调 _set_filter。
 
+const HEADER_STRIP_PANEL := preload("res://ui/components/header_strip_panel.tscn")
+
 const CARDS := [
 	{
 		"mode": PvpSession.MODE_ROYALE,
@@ -79,7 +81,9 @@ func _make_card(c: Dictionary) -> Control:
 	icon_box.add_child(tag)
 
 	# 卡片标题居中:卡内的 tag / 简介 / 版本行本来就居中(见上下的 horizontal_alignment),标题带没理由单独左对齐。
-	vb.add_child(UiFactory.header_strip(str(c["name"]), 32, true))
+	var h := HEADER_STRIP_PANEL.instantiate() as HeaderStripPanel
+	h.apply(str(c["name"]), 32, true)
+	vb.add_child(h)
 
 	var desc := UiFactory.label(str(c["desc"]), 16, UiFactory.C_TEXT_DIM)
 	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
