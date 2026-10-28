@@ -31,7 +31,7 @@ theme_override_constants/margin_bottom = 76
 
 [node name="VBoxContainer1" type="VBoxContainer" parent="MarginContainer1" unique_id=1517104013]
 layout_mode = 2
-theme_override_constants/separation = 24
+theme_override_constants/separation = 16
 
 [node name="PanelContainer1" type="PanelContainer" parent="MarginContainer1/VBoxContainer1" unique_id=2097841753]
 layout_mode = 2
@@ -42,6 +42,7 @@ layout_mode = 2
 theme_override_colors/font_color = Color(0.8784314, 0.6627451, 0.30980393, 1)
 theme_override_font_sizes/font_size = 48
 text = "—— 设 置 ——"
+horizontal_alignment = 1
 
 [node name="HBoxContainer1" type="HBoxContainer" parent="MarginContainer1/VBoxContainer1" unique_id=70617914]
 layout_mode = 2
@@ -59,7 +60,7 @@ theme_type_variation = &"PanelCarvedBody"
 
 [node name="VBoxContainer1" type="VBoxContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1" unique_id=2113680005]
 layout_mode = 2
-theme_override_constants/separation = 28
+theme_override_constants/separation = 24
 
 [node name="PanelContainer1" type="PanelContainer" parent="MarginContainer1/VBoxContainer1/HBoxContainer1/PanelContainer1/PanelContainer1/VBoxContainer1" unique_id=603883531]
 layout_mode = 2
@@ -282,7 +283,7 @@ text = "按键映射(点击后按新键;Esc 取消)"
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_constants/h_separation = 24
-theme_override_constants/v_separation = 14
+theme_override_constants/v_separation = 8
 columns = 2
 
 [node name="HBoxContainer2" type="HBoxContainer" parent="MarginContainer1/VBoxContainer1" unique_id=2115634731]

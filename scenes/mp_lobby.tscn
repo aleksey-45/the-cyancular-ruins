@@ -4,8 +4,8 @@
 [ext_resource type="Script" uid="uid://bgulbpan3miyr" path="res://scenes/mp_lobby.gd" id="1_lobby"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_xsicv"]
-content_margin_left = 10.0
-content_margin_right = 10.0
+content_margin_left = 16.0
+content_margin_right = 16.0
 bg_color = Color(0.106, 0.118, 0.141, 1)
 border_width_left = 2
 border_width_top = 2
@@ -14,8 +14,8 @@ border_width_bottom = 2
 border_color = Color(0.25, 0.31, 0.4, 1)
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_7uuf6"]
-content_margin_left = 10.0
-content_margin_right = 10.0
+content_margin_left = 16.0
+content_margin_right = 16.0
 bg_color = Color(0.106, 0.118, 0.141, 1)
 border_width_left = 2
 border_width_top = 2
@@ -24,8 +24,8 @@ border_width_bottom = 2
 border_color = Color(0.349, 0.851, 0.902, 1)
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_tc2qv"]
-content_margin_left = 10.0
-content_margin_right = 10.0
+content_margin_left = 16.0
+content_margin_right = 16.0
 bg_color = Color(0.106, 0.118, 0.141, 1)
 border_width_left = 2
 border_width_top = 2
@@ -34,8 +34,8 @@ border_width_bottom = 2
 border_color = Color(0.25, 0.31, 0.4, 1)
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_m646j"]
-content_margin_left = 10.0
-content_margin_right = 10.0
+content_margin_left = 16.0
+content_margin_right = 16.0
 bg_color = Color(0.106, 0.118, 0.141, 1)
 border_width_left = 2
 border_width_top = 2
@@ -346,8 +346,8 @@ border_width_bottom = 1
 border_color = Color(0.11764706, 0.15686275, 0.1882353, 1)
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_cvxo2"]
-content_margin_left = 10.0
-content_margin_right = 10.0
+content_margin_left = 16.0
+content_margin_right = 16.0
 bg_color = Color(0.106, 0.118, 0.141, 1)
 border_width_left = 2
 border_width_top = 2
@@ -356,8 +356,8 @@ border_width_bottom = 2
 border_color = Color(0.25, 0.31, 0.4, 1)
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_54yg2"]
-content_margin_left = 10.0
-content_margin_right = 10.0
+content_margin_left = 16.0
+content_margin_right = 16.0
 bg_color = Color(0.106, 0.118, 0.141, 1)
 border_width_left = 2
 border_width_top = 2
@@ -366,8 +366,8 @@ border_width_bottom = 2
 border_color = Color(0.349, 0.851, 0.902, 1)
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_dyf0w"]
-content_margin_left = 10.0
-content_margin_right = 10.0
+content_margin_left = 16.0
+content_margin_right = 16.0
 bg_color = Color(0.106, 0.118, 0.141, 1)
 border_width_left = 2
 border_width_top = 2
@@ -376,8 +376,8 @@ border_width_bottom = 2
 border_color = Color(0.25, 0.31, 0.4, 1)
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_xncon"]
-content_margin_left = 10.0
-content_margin_right = 10.0
+content_margin_left = 16.0
+content_margin_right = 16.0
 bg_color = Color(0.106, 0.118, 0.141, 1)
 border_width_left = 2
 border_width_top = 2
@@ -604,8 +604,8 @@ border_width_bottom = 2
 border_color = Color(0.349, 0.851, 0.902, 1)
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_tkcv8"]
-content_margin_left = 10.0
-content_margin_right = 10.0
+content_margin_left = 16.0
+content_margin_right = 16.0
 bg_color = Color(0.106, 0.118, 0.141, 1)
 border_width_left = 2
 border_width_top = 2
@@ -614,8 +614,8 @@ border_width_bottom = 2
 border_color = Color(0.25, 0.31, 0.4, 1)
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_36ry5"]
-content_margin_left = 10.0
-content_margin_right = 10.0
+content_margin_left = 16.0
+content_margin_right = 16.0
 bg_color = Color(0.106, 0.118, 0.141, 1)
 border_width_left = 2
 border_width_top = 2
@@ -920,6 +920,7 @@ theme_type_variation = &"HeaderStrip"
 layout_mode = 2
 theme_type_variation = &"HeaderTitle"
 text = "加入房间"
+horizontal_alignment = 1
 
 [node name="JoinCodeEdit" type="LineEdit" parent="JoinPanel/Body/VBoxContainer1" unique_id=838499619]
 unique_name_in_owner = true
@@ -1009,6 +1010,7 @@ layout_mode = 2
 theme_override_colors/font_color = Color(0.8784314, 0.6627451, 0.30980393, 1)
 theme_override_font_sizes/font_size = 48
 text = "创 建 房 间"
+horizontal_alignment = 1
 
 [node name="CreateCloseBtn" type="Button" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer1" unique_id=1011064369]
 unique_name_in_owner = true
@@ -1257,6 +1259,7 @@ theme_type_variation = &"HeaderStrip"
 unique_name_in_owner = true
 layout_mode = 2
 theme_type_variation = &"HeaderTitle"
+horizontal_alignment = 1
 
 [node name="WaitBody" type="VBoxContainer" parent="WaitPanel/Body/VBoxContainer1" unique_id=213424249]
 unique_name_in_owner = true

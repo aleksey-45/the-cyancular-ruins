@@ -180,9 +180,10 @@ func _panel_variants(t: Theme, F: GDScript, C: Dictionary) -> void:
 	hs.border_width_top = 0
 	hs.border_width_bottom = 1
 	hs.border_color = _c(C, "C_BORDER")
-	# ★ 与 UiFactory.header_strip() 逐值一致(那边把左内边距 40 → 0):改一处必须改两处 —— 原守卫 `menu_theme_mirror_smoke` 已删·2026-10-09,零守卫。
-	hs.content_margin_left = 0.0
-	hs.content_margin_right = 40.0
+	# ★ 与 UiFactory.header_strip() 逐值一致:左右对称 HEADER_INSET=24、上下 HEADER_PAD_Y=20(2026-10-27 用户裁定:汉字不许顶格;旧档是左 0 / 右 40)。
+	#   改一处必须改两处 —— 原守卫 `menu_theme_mirror_smoke` 已删·2026-10-09,零守卫;改完还要同步 15 条 .tscn 的 HeaderStrip 和 Label.horizontal_alignment。
+	hs.content_margin_left = 24.0
+	hs.content_margin_right = 24.0
 	hs.content_margin_top = 20.0
 	hs.content_margin_bottom = 20.0
 	t.set_stylebox("panel", "HeaderStrip", hs)
@@ -207,13 +208,14 @@ func _panel_variants(t: Theme, F: GDScript, C: Dictionary) -> void:
 # ── 输入框 / 开关 / 滑条 ──
 func _other_controls(t: Theme, F: GDScript, C: Dictionary) -> void:
 	# LineEdit:style_line_edit() 的两态 + 三个颜色。字号 16(与它的既有调用点一致)。
+	# ★ 左右内边距 10 → 16(2026-10-27):32 号字下 10px 只剩一个字的呼吸位,汉字贴框;.tscn 里手写的 LineEdit SubResource 必须同步(见 grep content_margin_left = 16.0)。
 	var le := StyleBoxFlat.new()
 	le.bg_color = _c(C, "C_FIELD")
 	le.border_color = _c(C, "C_BORDER_DIM")
 	le.set_border_width_all(2)
 	le.set_corner_radius_all(0)
-	le.content_margin_left = 10.0
-	le.content_margin_right = 10.0
+	le.content_margin_left = 16.0
+	le.content_margin_right = 16.0
 	t.set_stylebox("normal", "LineEdit", le)
 	var lef := le.duplicate() as StyleBoxFlat
 	lef.border_color = _c(C, "C_ACCENT")

@@ -261,7 +261,8 @@ func _fill_sp_panel(panel: PanelContainer) -> PanelContainer:
 	vb.add_theme_constant_override("separation", SP_BLOCK_GAP)
 	body.add_child(vb)
 
-	vb.add_child(UiFactory.header_strip("—— 单人开局 ——", 48))
+	# 页首/弹层标题居中(2026-10-27 规则);下面那条「禁用武器」是表单内分区标题,保持左对齐。
+	vb.add_child(UiFactory.header_strip("—— 单人开局 ——", 48, true))
 
 	var picker := MapPicker.new()
 	vb.add_child(picker)

@@ -43,6 +43,7 @@ layout_mode = 2
 theme_override_colors/font_color = Color(0.8784314, 0.6627451, 0.30980393, 1)
 theme_override_font_sizes/font_size = 48
 text = "—— Beta ——"
+horizontal_alignment = 1
 
 [node name="Label1" type="Label" parent="MarginContainer1/VBoxContainer1" unique_id=1944720946]
 layout_mode = 2

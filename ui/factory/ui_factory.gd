@@ -222,10 +222,19 @@ static func menu_button(text: String, size: int, min_size: Vector2 = Vector2(640
 	return b
 
 
+# ── 标题带(HeaderStrip)的版式规则(2026-10-27 用户裁定,别再单点改)──
+# 左右内边距一律对称 HEADER_INSET(24);上下 HEADER_PAD_Y(20)。
+# ★ 旧档是「左 0 / 右 40」——那会让汉字贴住带左缘(用户点名「很多汉字顶格了」),居中档还要靠非对称边距硬凑。
+# centered=true  = 页首标题 / 弹层标题 / 暂停菜单 / 结算页分区 / 卡片标题:文字在带内居中;
+# centered=false = 表单内分区标题(音量 / 地图 / 禁用武器 …):左对齐,吃同一份对称内边距。
+# ★ 改这里必须同步 tools/gen_menu_theme.gd(HeaderStrip 变体是它的镜像;⚠ menu_theme_mirror_smoke 已删·2026-10-09 ⇒ 零守卫)
+#   与 15 条 .tscn 里的 HeaderStrip + Label.horizontal_alignment。
+# ★ 唯一刻意不跟的一处:scenes/mp_lobby/room_list.gd 的 _card_header 左右 0(卡头住在自带内边距的卡里,要和卡体左缘对齐),那是版式不是漂移。
+const HEADER_INSET := 24.0
+const HEADER_PAD_Y := 20.0
+
+
 # 标题带:C_HEADER 横条 + 只有下边一条 C_BORDER 线 + 金色标题;四边都画就变成又一个面板,与 menu_panel() 的凿刻压边打架。
-# centered = 标题在带内居中(用于「暂停菜单 / 结算页分区」这种独立小面板;页首大标题仍走左对齐的默认档)。
-# ★ 默认档的左内边距 40 → 0(用户:金色标题前面有空格、看上去没对齐);centered 档左右对称 20,居中才不会被 0/40 的不对称边距推偏。
-# ★ 改这里必须同步 tools/gen_menu_theme.gd 并重跑(HeaderStrip 变体是它的镜像;⚠ menu_theme_mirror_smoke 已删·2026-10-09 ⇒ 零守卫);★ 另有一处刻意不跟:scenes/mp_lobby/room_list.gd 的 _card_header 保持 20/12(住在一张自带内边距的卡里),那是版式不是漂移。
 static func header_strip(text: String, size: int = 32, centered := false) -> PanelContainer:
 	var p := PanelContainer.new()
 	var sb := StyleBoxFlat.new()
@@ -236,10 +245,10 @@ static func header_strip(text: String, size: int = 32, centered := false) -> Pan
 	sb.border_width_top = 0
 	sb.border_width_bottom = 1
 	sb.border_color = C_BORDER
-	sb.content_margin_left = 20.0 if centered else 0.0
-	sb.content_margin_right = 20.0 if centered else 40.0
-	sb.content_margin_top = 20.0
-	sb.content_margin_bottom = 20.0
+	sb.content_margin_left = HEADER_INSET
+	sb.content_margin_right = HEADER_INSET
+	sb.content_margin_top = HEADER_PAD_Y
+	sb.content_margin_bottom = HEADER_PAD_Y
 	p.add_theme_stylebox_override("panel", sb)
 	var l := label(text, size, C_GOLD)
 	if centered:

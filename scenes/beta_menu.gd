@@ -78,7 +78,8 @@ func _make_card(c: Dictionary) -> Control:
 	tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	icon_box.add_child(tag)
 
-	vb.add_child(UiFactory.header_strip(str(c["name"]), 32))
+	# 卡片标题居中:卡内的 tag / 简介 / 版本行本来就居中(见上下的 horizontal_alignment),标题带没理由单独左对齐。
+	vb.add_child(UiFactory.header_strip(str(c["name"]), 32, true))
 
 	var desc := UiFactory.label(str(c["desc"]), 16, UiFactory.C_TEXT_DIM)
 	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART

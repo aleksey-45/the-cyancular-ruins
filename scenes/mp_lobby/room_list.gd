@@ -212,9 +212,11 @@ func _card_header(mode: String, r: Dictionary) -> Control:
 	sb.border_width_top = 0
 	sb.border_width_bottom = 1
 	sb.border_color = UiFactory.C_BORDER
-	# 与 UiFactory.header_strip 同一轮放大(12/6 → 20/12)。★ 这里是第二份字面量(工厂那条标题带不带右侧角标,故没走工厂)—— 两边要同步手改。
-	sb.content_margin_left = 20.0
-	sb.content_margin_right = 20.0
+	# ★ 左右内边距 0(2026-10-27):卡头住在卡体里,卡体内容左缘 = 卡 + 26(frame)+1(边框);卡头带也落在那条线上,
+	#   所以卡头左右 0 才能让「模式名」与下面的「房号 / 地图 / 名单」左缘对齐(旧档 20 → 多缩进 22px,同卡内两条文字错开)。
+	#   上下 12 是卡的版式(比工厂的 20 窄);★ 这两处刻意与 UiFactory.header_strip() 不同 —— 不是漂移。
+	sb.content_margin_left = 0.0
+	sb.content_margin_right = 0.0
 	sb.content_margin_top = 12.0
 	sb.content_margin_bottom = 12.0
 	strip.add_theme_stylebox_override("panel", sb)
