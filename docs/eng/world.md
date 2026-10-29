@@ -14,15 +14,14 @@
 
 ### 2. 地图数据格式与加载机制
 - **地图格式支持**：
-  - **cyrm v3 文本格式**：以 `# cyrm-v3` 为文件头标识。标准地图网格规格为 125×75（每个宏观大格 64px，对应 8000×4800 像素世界空间）。每格由 4 个字符编码：`[3位纹理编号][1位16进制形状掩码]`（纹理 `000` 表示空气，`001`-`022` 对应各材质；形状掩码 `0`-`F` 对应 2×2 的 32px 子格填充状态）。
   - **cyrm v4 二进制格式**：由关卡编辑器导出，通过 `core/sim/map_format_v4.gd` 解析。包含 20 字节未压缩文件头（包含 Magic `"CYRM"`、版本号 4、Deflate 压缩标识、解压后长度、CRC32 校验码、行列数及图层标志位）。支持前景、场景（包含物理碰撞）、后景与背景 4 个图层。每个 64px 大格细分为 4×4 的 16px 子格，支持独立的材质与辅码染色。
-  - **v2 单字符格式**：旧版单字符地图在加载时由 `MapFormat.convert_old_grid()` 自动向下兼容转换。
+  - 游戏、Web 编辑器与内置地图统一使用 v4。
 - **核心模块职责**：
-  - `MazeGenerator`（[`core/sim/maze_generator.gd`](../../core/sim/maze_generator.gd)）：管理当前选中的地图文件路径（优先读取与游戏可执行文件同级的外部 `.cyrm` 文件，若不存在则读取 `maps/` 目录下的内置地图），维护全局静态网格数据 `current_grid`。
-  - `MapFormat`（[`core/sim/map_format.gd`](../../core/sim/map_format.gd)）：负责 v3 文本格式编解码、瓦片打包解包与出生点解析（`# player` 与 `# player2`）。
+  - `MazeGenerator`（[`core/sim/maze_generator.gd`](../../core/sim/maze_generator.gd)）：管理当前选中的地图文件路径（优先读取与游戏可执行文件同级的外部 `.cyrm` 文件，若不存在则读取 `maps/` 目录下的内置地图），保留本次装载解析的出生点元数据 `current_spawns`，不转发地形或几何查询。
+  - `MapFormat`（[`core/sim/map_format.gd`](../../core/sim/map_format.gd)）：负责 v4 装载、粗网格打包解包与出生点解析（`# player` 与 `# player2`）；`WorldBuilder` 一次解析得到粗网格、子格和出生点，尺寸预读只访问 20 字节文件头。
   - `MapCatalog` 通过 `MapFormat.load_map_info()` 一次读取网格、注释和出生点；目录、名称与缩略图共用解析结果。`clear_cache()` 和刷新目录会清理该缓存。
   - `MapFormatV4`（[`core/sim/map_format_v4.gd`](../../core/sim/map_format_v4.gd)）：负责 v4 二进制地图的流式解压、CRC32 完整性校验与 16px 子格数据构建。
-  - `GridPathfinder`（[`core/sim/grid_pathfinder.gd`](../../core/sim/grid_pathfinder.gd)）：无状态几何与寻路工具类，提供环形距离计算、最短位移推导、地面检测、Bresenham 视线检测与 A* 寻路算法。
+  - `GridPathfinder`（[`core/sim/grid_pathfinder.gd`](../../core/sim/grid_pathfinder.gd)）：无状态几何与寻路工具类，提供环形距离计算、最短位移推导、地面检测与 A* 寻路算法；视线和单格查询直接访问 `NativeTerrain`。
 - **场景初始化**：单人关卡在场景加载时铺设墙体并延迟构建碰撞；PvP 由基线应用统一完成墙体铺图与碰撞构建，再上报 READY。铺图逐个读取规范子格，计算材质与图集坐标后写入 3×3 环形副本。
 
 ---
@@ -30,11 +29,10 @@
 ## 二、 全局单例与配置体系
 
 ### 1. 全局 Autoload 单例（配置于 `project.godot`）
-1. `GameLog`（[`core/config/game_log.gd`](../../core/config/game_log.gd)）：接管引擎输出与结构化运行记录，每次运行写入独立的 `log/client-<时间>-<PID>.log` 或 `log/server-<时间>-<PID>.log`。字段与隧道日志见[运行日志](netplay.md#十运行日志)。
-2. `GameParameters`（[`core/config/game_parameters.gd`](../../core/config/game_parameters.gd)）：定义基础重力、瓦片尺寸（`TILE_SIZE = 64`）及世界像素边界。地图加载完成后调用 `refresh_map_size()` 动态刷新世界尺寸。
-3. `NetBus`（[`core/net/net_bus.gd`](../../core/net/net_bus.gd)）：基于 GNS 的核心网络通信接口，承载 INPUT、STATE、EVENT 三类数据报文传输，支持消息级 Zstd 压缩。
-4. `NetSession`（[`core/net/net_session.gd`](../../core/net/net_session.gd)）：联机会话与 Windows Job 作业对象管理；统一启动、持有和回收联机相关的后台子进程。
-5. `Settings`（[`core/config/settings.gd`](../../core/config/settings.gd)）：玩家本地设置管理，持久化保存于 `user://settings.cfg`。
+1. `GameParameters`（[`core/config/game_parameters.gd`](../../core/config/game_parameters.gd)）：定义基础重力、瓦片尺寸（`TILE_SIZE = 64`）及世界像素边界。地图加载完成后调用 `refresh_map_size()` 动态刷新世界尺寸。
+2. `NetBus`（[`core/net/net_bus.gd`](../../core/net/net_bus.gd)）：基于 GNS 的核心网络通信接口，承载 INPUT、STATE、EVENT 三类数据报文传输，支持消息级 Zstd 压缩。
+3. `NetSession`（[`core/net/net_session.gd`](../../core/net/net_session.gd)）：联机会话与 Windows Job 作业对象管理；统一启动、持有和回收联机相关的后台子进程。
+4. `Settings`（[`core/config/settings.gd`](../../core/config/settings.gd)）：玩家本地设置管理，持久化保存于 `user://settings.cfg`。
 
 ### 2. 静态配置类
 - 角色与敌人的基础移动和战斗数值集中由静态配置类管理：`PlayerParams`（[`core/config/player_params.gd`](../../core/config/player_params.gd)）与 `EnemyParams`（[`core/config/enemy_params.gd`](../../core/config/enemy_params.gd)）。
@@ -53,7 +51,7 @@
   - `21-22`：水体与水面（液体，无碰撞阻挡）。
 
 ### 2. 16px 子格破坏与碰撞体动态重建
-- **状态归属**：`NativeTerrain` 持有宏观网格、材质、格级与子格 HP；`TileDefs` 只加载配置并提供脚本适配。导出的网格只读，HP 数组为隔离快照。
+- **状态归属**：`NativeTerrain` 持有宏观网格、材质、格级与子格 HP；`TileDefs` 只加载配置并提供脚本适配。网格快照只读并按版本缓存，子格快照复用原生只读视图；单格、尺寸与空图判断直接查询原生地形，不为查询维护另一份可修改状态。
 - **宏观大格与子格关系**：当 64px 大格内的某个 16px 子格被破坏时，局部更新该子格的碰撞体；**只有当 64px 大格内的全部 16 个子格均被完全摧毁后，上层网格才会被置为空气**。
 - **碰撞体生成 (`NativeTerrain`)**：
   - 静态墙体采用贪心矩形合并算法生成碰撞盒，按 3×3 环形平铺实例化（共享碰撞形状）。
@@ -66,7 +64,7 @@
 - `NativeTerrain` 在首次写入时捕获每个改动宏观格的改前值：网格、格级 HP、子格 HP。`Level0` 只负责提交记录时间；未受损格不复制，残血变化也入账。
 - 原生历史二分定位回溯区间，再按写入逆序恢复；相同时间戳保持后写先还。松手裁掉已改写的未来，重开关卡清空历史。
 - 恢复时使用记录中的实际残血，不根据纹理猜测满血。数据恢复不触发伤害、记账或收益回调；仅子格存亡改变时更新贴图和碰撞脏块，纯 HP 恢复不重建碰撞。
-- 单人场景启用时间历史；多人使用同一原生状态和伤害算法，另外保存预测差分与权威基线。Beta 回溯范围仍是自身角色和存活的自身弹丸。详见[迁移记录](native_terrain_migration.md)。
+- 单人场景启用时间历史；多人使用同一原生状态和伤害算法，另外保存预测差分与权威基线。Beta 回溯范围仍是自身角色和存活的自身弹丸。详见[原生地形](native_terrain.md)。
 
 ---
 

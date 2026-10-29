@@ -194,7 +194,7 @@ globalThis.Render = (function () {
     return bytes > THUMB_MAX_BYTES ? 1 : THUMB_PX;
   }
 
-  // ── 可见区裁剪(B8:网格线/spawn 标记/边框不做裁剪 = 每次重画整张图)──
+  // ── 可见区裁剪 ──
   // 返回的是未折算的坐标(3×3 副本要的正是它):调用方按格自己 wrapIdx。
   function visibleSubRange(view, viewW, viewH, subCols, subRows) {
     var x0 = Math.floor(view.x), y0 = Math.floor(view.y);
@@ -360,7 +360,7 @@ globalThis.Render = (function () {
     function defaultErrorSink(text, err) {
       // 走页面已经在用的那条通道:ui.js 的 status()(= 状态栏 #status-msg)。
       //   运行时查找,不在模块顶层引 ui.js —— 依赖顺序是 core → tint → render → io → ui,
-      //   加载期 ui.js 还不存在(顶层引 = node 冒烟当场炸)。
+      //   加载期 ui.js 还不存在，需在报错时查找。
       var shown = false;
       try {
         var E = globalThis.Editor;
@@ -716,7 +716,7 @@ globalThis.Render = (function () {
     // 网格线:格线恒画,子格线只在 zoom ≥ 4 时画。规格 C15 只要求"有子格开关 + 子格级
     //   命中",没有规定阈值 ⇒ 这个 4 是本文件自己的选择(取 4 的理由:4 px/子格
     //   时一个子格还有 4 个屏幕像素、线还分得开;再稀就只是给画面加噪点),不是规格里的数字。
-    // 只画可见区(B8:不裁剪 = 每次重画整张图的线)
+    // 只绘制可见区网格线。
     function drawGrid(W, H) {
       var r = visibleSubRange(s.view, W, H, s.map.subCols, s.map.subRows);
       var z = s.view.zoom;
@@ -752,7 +752,7 @@ globalThis.Render = (function () {
       ctx.stroke();
     }
 
-    // spawn 标记 + 选区框。字体/对齐设一次(B8:每标记重设 font 是排版最贵的一项)。
+    // spawn 标记与选区框共用字体和对齐设置。
     function drawOverlay(W, H) {
       if (!s.map) return;
       ctx.save();
@@ -822,7 +822,7 @@ globalThis.Render = (function () {
       stat2.cellsSize = cellCache ? cellCache.stats().size : 0;
     }
 
-    // 尺寸变化:只有一个机制(B7:ResizeObserver 与 window.resize 同时挂 = 每次 resize 建两遍)
+    // ResizeObserver 统一触发尺寸重建。
     function resize() {
       var wrap = canvas.parentElement;
       var w = Math.max(1, wrap ? wrap.clientWidth : canvas.width);
@@ -850,8 +850,7 @@ globalThis.Render = (function () {
       render();
     }
 
-    // ── 选区拖动:只记偏移(B3)。渲染时对选区内的格做偏移查询(纯读),
-    //    松手才提交一次 moveRegion —— 老实现每次 pointermove 都深拷贝三份全图(B3)。
+    // 拖动时只保存预览偏移，松手后由 moveRegion 提交地图变化。
     function setSelDrag(sel, dx, dy) {
       s.selDrag = sel ? { sel: sel, dx: dx, dy: dy } : null;
       markDragDirty();                                // 见下:偏移一变就去烤
@@ -1140,8 +1139,6 @@ globalThis.Render = (function () {
       invalidateCells: invalidateCells, invalidateAll: invalidateAll,
       editCells: editCells, panBy: panBy, setZoomAt: setZoomAt, buildLayers: buildLayers,
       cells: function () { return cellCache; },
-      // 报错通道是可换的(评审发现 1 的接口增补):默认写页面状态栏(= ui.js 的
-      //   status() 那条通道),页面/探针可以换掉它做断言或接自己的日志。传非函数则回落默认。
       thumbCanvas: function (L) { return thumbs[L]; },
       thumbPx: function () { return thumbPx; },
       screenToSub: screenToSub, subToScreen: subToScreen,

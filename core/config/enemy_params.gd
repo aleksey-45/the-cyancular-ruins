@@ -72,7 +72,7 @@ class FlyBird:
 	const shoot_recoil: float = 500.0      # 开火后座力(鸟沿发射反方向被推)
 	const repath_interval: float = 0.75    # 重寻路间隔(秒)
 	const arrival_radius: float = 50.0    # 到路径格/回家判定
-	const landing_time: float = 0.4       # 到家落地后多久直接入睡(不再等地板接触)
+	const landing_time: float = 0.4       # 返程落地计时结束后入睡(秒)
 	const path_max_visit: int = 600       # 寻路(A*)展开格数上限(32×32 最小单位下已调小)
 	const search_radius_cells: int = 45  # A* 搜索半径(格):限定鸟的寻路范围,不搜太远
 	const escape_search_range: int = 90   # 避障脱困时向左右搜索的格数上限

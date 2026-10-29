@@ -2,7 +2,7 @@
 
 本文档介绍玩家角色的运动学控制、姿态碰撞管理、组件化架构、输入源抽象及弹药预测同步机制。
 
-2026-10-27 起，高频运动与武器推进由 `NativeActorBody : CharacterBody2D` 和 `NativeWeaponBody : Node2D` 执行，`Player` 脚本与组件提供场景、背包和表现接口；当前边界见[场景内原生模拟](native_scene_simulation.md)与[战斗/历史迁移](native_combat_simulation.md)。
+高频运动与武器推进由 `NativeActorBody : CharacterBody2D` 和 `NativeWeaponBody : Node2D` 执行，`Player` 脚本与组件提供场景、背包和表现接口；当前边界见[场景内原生模拟](native_scene_simulation.md)与[原生战斗与历史](native_combat_simulation.md)。
 
 ---
 
@@ -15,7 +15,7 @@
 - **碰撞移动**：`ActorStep` 在边界准备输入、武器倍率和共享地图上下文，调用 `NativeActorBody`。原生运动核将普通速度与击退速度相加，按 X、Y 轴依次移动。地形通过 Godot `move_and_collide` 查询，角色之间计算矩形阻挡；碰撞轴同时裁掉普通速度和击退速度。接地状态随移动结果保存到快照。
 - **联机角色阻挡**：`ActorCollider` 是关联角色与碰撞层的 `RefCounted` 数据对象，缓存姿态和变换基底对应的矩形。每次移动先读取其他角色的当前位置，将边界映射到最近的环面副本；X、Y 两轴共用这份边界列表。按阵营筛选阻挡对象，倒地矩形随朝向旋转。
 - **步进中的几何准备**：一次 `move_by` 只读取一次活动形状、局部变换、形状矩形和查询 RID；每轴重新读取实际全局变换，保持先 X 后 Y 的计算顺序。数据不跨角色阶段或 tick 复用，蹲伏、倒地、回滚恢复仍选择当时的形状。矩形裁剪预先提取本角色不变的边界，避免在每个对手上重复计算。
-- **地形查询缓存**：保留完整键比较、地形版本失效和最多 256 条的原有策略；FIFO 使用键的环形队列，淘汰时不再复制全部字典键。此处缓存原生地形行程与接触结果，角色阻挡不进入该缓存。
+- **地形查询缓存**：按完整查询键比较、地形版本失效，最多保留 256 条；FIFO 使用键的环形队列。此处缓存原生地形行程与接触结果，角色阻挡不进入该缓存。
 
 ### 2. 下蹲与下冲
 - **下蹲姿态**：在地面且按住下蹲键（默认 S）时进入下蹲姿态，支持蹲伏移动；空中松开按键落地后不会误触发下蹲锁定。
@@ -42,10 +42,8 @@ Player (NativeActorBody，继承 CharacterBody2D；物理根节点)
  ├─ Visuals (角色与武器的视觉表现偏移节点)
  │   ├─ AnimatedSprite2D
  │   └─ WeaponSlot
- ├─ ClimbComponent (原生攀爬状态的兼容接口)
  ├─ CombatComponent (原生受击/击退入口与复活、表现适配)
- ├─ WeaponComponent (背包武器管理与原生武器装配)
- └─ SwimComponent (原生水体状态的兼容接口)
+ └─ WeaponComponent (背包武器管理与原生武器装配)
 ```
 
 - **物理与表现分离**：
@@ -66,7 +64,7 @@ Player (NativeActorBody，继承 CharacterBody2D；物理根节点)
   - 生命值、倒地状态、击退速度与无敌帧保存在原生角色中，`CombatComponent` 的属性转发到同一份状态；受击、冲量与倒地核由原生执行，组件保留无敌/回溯入口适配及复活等管理。
   - `simulate_hit` 为权威模拟与已知攻击预测提供同一个状态更新入口；预测倒地后停止动作并切换碰撞，权威恢复和重放可以撤销该分支。战绩、掉落和复活仍由服务端执行。
   - `Player.play_hit_feedback` 为单人受击与联机 HIT 事件提供音效、精灵缩放挤压、全屏暗角与镜头震颤。重放历史输入时不重复触发死亡或受击音画表现。
-- **对外接口规范**：对外统一暴露 `take_hit()`、`is_downed()`、`apply_recoil()` 等方法及 `hp_changed` 信号，接口契约由测试用例 已移除的 player_contract_smoke 验证。
+- **对外接口规范**：对外统一暴露 `take_hit()`、`is_downed()`、`apply_recoil()` 等方法及 `hp_changed` 信号。
 
 ---
 
@@ -90,7 +88,7 @@ Player (NativeActorBody，继承 CharacterBody2D；物理根节点)
 
 ## 四、 弹药权威状态与预测回滚同步
 
-单人 `WorldRewind` 与多人 `BetaHistory` 都记录 `Player.capture_state()` 格式。武器部分统一由 `_apply_weapon_state()` 恢复，包括完整背包 `inv`、手持实例 `winst`、实际弹量 `mag`、换弹状态/进度及开火冷却。单人旧的 `widx/wmags/wlive` 格式与专用武器恢复循环已删除；单人记录时复用只读历史背包，后续修改不能覆盖旧快照。
+单人 `WorldRewind` 与多人 `BetaHistory` 都记录 `Player.capture_state()` 格式。武器部分统一由 `_apply_weapon_state()` 恢复，包括完整背包 `inv`、手持实例 `winst`、实际弹量 `mag`、换弹状态/进度及开火冷却。单人记录时复用只读历史背包，后续修改不能覆盖旧快照。
 
 单人 `rewind_restore()` 与多人 `restore_state()` 保留各自的运动和生命处理入口，武器恢复调用同一个函数。恢复自身背包不代表回溯地面掉落物；多人个人回溯的世界范围保持原规则。
 

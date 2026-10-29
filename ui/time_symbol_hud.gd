@@ -1,7 +1,7 @@
 class_name TimeSymbolHud
 extends Control
 
-# 屏幕中心时间状态指示图标（阶段一）：回溯模式下显示浅色闪烁「◁ ◁」图标，加速模式下显示紫色「▶ ▶」图标。
+# 屏幕中心时间状态指示图标：回溯模式下显示浅色闪烁「◁ ◁」图标，加速模式下显示紫色「▶ ▶」图标。
 # 挂载于 HUD 节点，根据 TimeField.current 的当前模式动态显示呼吸动画，常规状态下自动隐藏。数据源来自单人模式下的 TimeField.current。
 
 const SYMBOL_FONT := 64

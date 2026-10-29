@@ -39,16 +39,14 @@ macOS 使用 `python tools/build_macos.py`，生成同时支持 M 系列与 Inte
 "The Cyancular Ruins.exe" --headless -- --server --port 7777
 ```
 
-### 自动化测试
+### 工程检查
 
 ```bash
-godot --headless --path . -s res://tests/smoke/grain_account_smoke.gd
-godot --headless --path . -s res://tests/smoke/time_field_smoke.gd
-godot --headless --path . -s res://tests/probe/subcell_probe.gd
-python tools/run_regression.py --godot godot --scenes --kind network
-python tests/network/run_matches.py --godot godot --count 2 --drop --stall
-godot --headless --path . -s res://tests/smoke/enemy_logic_smoke.gd
+python tools/check_naming.py
+godot --headless --editor --path . --import
 ```
+
+关键行为测试见 [验证说明](docs/eng/tests.md)，固定容量统计和运行参数见 [低开销性能观测](docs/eng/low_overhead_performance.md)。
 
 ---
 

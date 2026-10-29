@@ -1,9 +1,7 @@
 class_name WaterSurfaceBatch
 extends Node2D
 
-# 水面单格伸缩合批(静态网格 + GPU 波):所有水面格在一个 Mesh2D 里,setup 期提交一次几何,
-# 波动画走 canvas vertex shader(TIME 驱动,格底锚定、顶边按相位伸缩)。不再每帧用 GDScript
-# 遍历整张 3×3 世界的水面格 sin+draw → CPU 每帧 ≈ 0,视觉与逐格 draw_texture_rect 一致。
+# 水面格共用静态 Mesh2D；shader 以 TIME 和顶点相位伸缩顶边，底边固定。
 # cells 元素:{"pos": Vector2(格底中心), "phase": float}。
 
 const SHADER_CODE := """

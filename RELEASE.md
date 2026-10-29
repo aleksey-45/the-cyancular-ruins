@@ -1,6 +1,6 @@
 # 构建与发布指南
 
-发布压缩包名称为 **The-Cyancular-Ruins.zip**，内部目录为 **The-Cyancular-Ruins-YYYYMMDDHHMM/**（时间戳使用 UTC+8）。版本号读取自 `project.godot` 中的 `application/config/version`，供游戏界面与日志展示。
+发布压缩包名称为 **The-Cyancular-Ruins.zip**，内部目录为 **The-Cyancular-Ruins-YYYYMMDDHHMM/**（时间戳使用 UTC+8）。版本号读取自 `project.godot` 中的 `application/config/version`，供游戏界面展示。
 
 ## 一、 一键构建
 
@@ -16,13 +16,12 @@ python tools/build_release.py
 `build_release.py` 支持 `--version` 与 `--stamp` 参数，默认读取工程版本并自动生成当前时间戳。构建步骤如下：
 
 1. 编译 Windows Job、GNS 与场景模拟原生扩展。
-2. 导入项目资源；工作流不再单独重复编译原生扩展或导入资源。
+2. 导入项目资源。原生编译和导入统一由构建脚本执行。
 3. 将版本号与时间戳写入 `core/config/build_info.gd`。
 4. 导出 Windows Desktop 统一程序，客户端与 `--headless -- --server` 服务端共用。
-5. 在独立临时目录中进行冒烟验证：验证客户端启动、武器注册表完整性以及服务端 `--port 0` 的就绪状态（SERVER READY）。
-6. 还原 `core/config/build_info.gd`，将构建目录归档并生成发布 ZIP 压缩包。
+5. 还原 `core/config/build_info.gd`，将构建目录归档并生成发布 ZIP 压缩包。
 
-构建冒烟测试要求退出码为 0、输出预期成功标记，且控制台无脚本与解析报错。自定义游戏启动参数请统一置于 `--` 之后传递。
+构建脚本负责产物；CI 在每个平台构建后运行一次[关键行为检查](docs/eng/tests.md)。自定义游戏启动参数请统一置于 `--` 之后传递。
 
 `fetch_easytier.py` 默认读取官方 `nightly` 发布的最新资产，不固定版本，也不比对校验和；构建日志记录发布提交和实际下载地址。Windows 可显式使用 `--source <本地官方包目录>` 代替下载。
 
@@ -71,17 +70,17 @@ python tools/build_macos.py
 "The Cyancular Ruins.app/Contents/MacOS/The Cyancular Ruins" --headless -- --server --port 7777
 ```
 
-macOS 日志位于 `~/Library/Application Support/Godot/app_userdata/The Cyancular Ruins/log/`，发布版 `relay.txt` 位于同一用户数据目录。开发态中继列表位于工程 `easytier/relay.txt`。
+macOS 发布版 `relay.txt` 位于 `~/Library/Application Support/Godot/app_userdata/The Cyancular Ruins/`。开发态中继列表位于工程 `easytier/relay.txt`。
 
 当前使用 ad-hoc 签名，未进行 Apple 公证。从网络下载后，首次运行按 macOS「系统设置 → 隐私与安全性 → 仍要打开」允许应用。
 
 ## 四、 GitHub Actions 持续集成
 
-代码推送到 `siri_v*` 分支或在 GitHub Actions 页面手动触发 [Build game](.github/workflows/build.yml) 工作流即可自动执行打包。`Build Windows` 与 `Build macOS` 分别生成两个平台的发布包，均使用官方 EasyTier 最新 nightly。Windows 使用 Godot 4.7.1 与 MSVC，原生编译和资源导入统一由 `build_release.py` 各调用一次，随后执行导出冒烟测试。
+代码推送到 `siri_v*` 分支或在 GitHub Actions 页面手动触发 [Build game](.github/workflows/build.yml) 工作流即可自动执行打包。`Build Windows` 与 `Build macOS` 分别生成两个平台的发布包，均使用官方 EasyTier 最新 nightly。Windows 使用 Godot 4.7.1 与 MSVC，原生编译和资源导入统一由 `build_release.py` 各调用一次。
 
 Windows 产物名为 `The-Cyancular-Ruins-Windows`，可在对应运行记录的 Artifacts 区域下载 `The-Cyancular-Ruins-Windows.zip`。
 
-macOS 产物名为 `The-Cyancular-Ruins-macOS`，包含保留可执行权限的 `The-Cyancular-Ruins.zip`；下载后解开外层 artifact，再解开该 ZIP。CI 在 `macos-15` 构建一次通用包，然后在 `macos-15`（Apple Silicon）和 `macos-15-intel` 上测试同一产物：双架构及签名校验、武器注册表、无头服务端、进程生命周期、网络探针、导出服务端对局，以及官方 EasyTier UDP 直连与中继。测试失败日志显示在对应任务的控制台。
+macOS 产物名为 `The-Cyancular-Ruins-macOS`，包含保留可执行权限的 `The-Cyancular-Ruins.zip`；下载后解开外层 artifact，再解开该 ZIP。CI 在 `macos-15` 构建通用包，并运行关键行为检查。
 
 ## 五、 自定义导出模板编译
 

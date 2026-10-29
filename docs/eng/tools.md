@@ -25,8 +25,7 @@
 - **v4 二进制格式**：
   - 包含 20 字节二进制文件头、Deflate 数据压缩与 CRC32 完整性校验。
   - 逻辑层维持 64px 大网格，视觉与碰撞层细化为 16px 子格（每大格对应 4×4 个子格），每个子格支持独立染色。
-- **v3 文本格式**：每格 4 字符标记（纹理 ID + 形状掩码），首行包含 `# cyrm-v3` 声明。
-- **引擎端兼容**：游戏引擎层（`core/sim/map_format.gd` 与 `core/sim/map_format_v4.gd`）全面支持 v4 二进制与 v3 文本解析。
+- **统一格式**：游戏和 Web 编辑器只读取 v4。
 
 ---
 
@@ -44,22 +43,9 @@
 
 ---
 
-## 三、 编辑器测试套件
+## 三、 开发检查
 
-在 `level_editor/` 目录下提供针对前端与服务端逻辑的自动化测试：
-
-```bash
-cd level_editor
-node smoke.js             # 核心格式编解码测试
-node tint_smoke.js        # 辅码染色与调色板单元测试
-node worker_io_smoke.js   # Web Worker 线程测试
-node standalone_smoke.js  # 离线读写与打包后的独立线程检查
-node render_smoke.js      # 画布渲染管线测试
-node server_smoke.js      # 本地 HTTP 服务端接口测试
-```
-
-- **前端界面自检**：在编辑器页面顶部点击「自检」按钮，会在浏览器控制台执行组件断言并输出 `SELFTEST OK`。
-- **工程规范检查**：`python tools/check_naming.py` 自动发现根目录与 `docs/eng/` 文档，校验 Markdown 文件链接及行号、目录与类名、场景名和 PS1/BAT 换行。`--self-test` 检查校验器本身；`.test_logs` 等运行目录继续排除。
+地图契约变更运行 `node tests/editor_case.js`，界面修改验证对应实际操作。`python tools/check_naming.py` 检查目录、类名、场景名、文档链接和脚本编码。
 
 ---
 
@@ -67,8 +53,8 @@ node server_smoke.js      # 本地 HTTP 服务端接口测试
 
 - **发布导出脚本 (`tools/build_release.py`)**：
   - 读取 `project.godot` 中的版本号，写入 `core/config/build_info.gd`。
-  - 各构建一次 Windows Job、GNS 与场景模拟原生扩展，导入资源后调用 Godot 导出统一游戏程序；CI 不再提前重复调用这些步骤。
-  - 自动执行产物冒烟测试，测试通过后将构建占位符还原。
+  - 各构建一次 Windows Job、GNS 与场景模拟原生扩展，导入资源后调用 Godot 导出统一游戏程序；CI 统一调用构建入口。
+  - 导出打包结束后还原构建占位符；CI 随后单独运行一次关键行为检查。
 - **命名规范检查 (`tools/check_naming.py`)**：
   - 检查工程目录小写规范、`class_name` 与文件名对齐、文档引用的文件路径有效性以及 `.tscn` 命名规范。
 - **网络隧道组件获取 (`tools/fetch_easytier.py`)**：
@@ -85,6 +71,4 @@ node server_smoke.js      # 本地 HTTP 服务端接口测试
   - 打包生成 `The-Cyancular-Ruins.zip`，内部根目录格式为 `The-Cyancular-Ruins-YYYYMMDDHHMM/`（时间戳使用 UTC+8）。包含统一游戏 EXE、同级进程、GNS 与场景模拟扩展 DLL 及开源声明 `THIRD_PARTY_NOTICES.txt`。
 - **场景模拟扩展构建 (`tools/build_simulation.py`)**：
   - 使用同一份固定 godot-cpp SDK，以 CMake/Ninja 编译 Release C++17 原生类；Windows 支持 MSVC 或 LLVM MinGW，macOS 合并 arm64 与 x86_64。产物位于 `native/simulation/bin/`。
-  - 热点循环直接读取原生成员并调用 Godot 物理 API；GDScript 在边界传递配置、输入与结果。当前完成范围与剩余迁移见[实施说明](native_scene_simulation.md)。
-- **自动化回归入口 (`tools/run_regression.py`)**：
-  - 分类运行单元逻辑测试、视觉渲染测试与网络多进程对战测试；每项测试运行于独立临时用户目录，收集日志并校验进程退出码与成功标记。
+  - 热点循环直接读取原生成员并调用 Godot 物理 API；GDScript 在边界传递配置、输入与结果。职责与调用边界见[原生模拟](native_scene_simulation.md)。

@@ -1,169 +1,27 @@
-# 服务端 STATE 编码性能调研
+# STATE 编码资料与采用方案
 
-整理日期：2026-10-29。下文的基线实现与问题分析均指 `e6048bd`；本轮实施情况单列，避免把建议写成已经验证的收益。
+## 资料与可参考部分
 
-## 结论
-
-当前编码存在三类可以从源码确认的重复工作：同一广播逐连接核对公共世界、同一数据由区块到记录再到字段反复判断变化、持续运动弹丸先判断整条记录是否变化再计算字段差分。应先减少这些工作，并把公共准备集中到连接循环之外。
-
-差分仍有价值，但应按数据性质选择。持续变化的运动字段可直接发送当前值；低频字段保留变化判断；实体创建、删除和每连接 ACK 基线仍需维护。当前协议的差分是省略未变字段，不是对运动预测结果编码残差。
-
-八人累计编码均值 3.08 ms、部分 tick 达到 9～10.5 ms，足以值得优化。现有数据尚未划分子阶段，不能断言哪项占主要成本，也不能预报优化后的毫秒数。
-
-## 已有测量与计时边界
-
-以下数据由用户在另一处运行的八人测试提供，尚无对应原始调用栈用于分摊子阶段成本。
-
-| 指标 | 用户提供的数据 |
-|---|---:|
-| STATE 基础发送频率 | 30 Hz |
-| 实测发射频率 | 31.34 次/秒 |
-| 一轮接收者编码累计均值 | 3.08 ms / 3,080 us |
-| 单 peer 均值估算 | 约 0.40 ms / 401 us |
-| 秒窗编码均值的 P95 | 4.83 ms |
-| 部分卡顿 tick 的累计编码时间 | 9～10.5 ms |
-
-4.83 ms 不是逐次调用的 P95。若按每轮发射累计计时，3.08 ms × 31.34 约为每秒 96.5 ms 的累计编码墙钟区间，不能直接解释为线程 CPU 利用率。在执行发送的 60 Hz tick 中，3.08 ms 占 16.667 ms 预算约 18.5%；10.5 ms 约占 63%。
-
-`AuthorityWorld._physics_process()` 在偶数 tick 向全部角色发送，奇数 tick 也会向 `_impact_roles` 发额外状态。因此实际发射超过 30 次/秒符合现有路径；额外发射的目标可能少于八人，逐连接均值应使用实际调用数。
-
-当前调用顺序为 `world_state → state_for → NetCodec.encode_state → NetBus._send → GnsEndpoint.send/encode`。
-
-- `encode_state()` 内包括公共缓存校验、差分、字段写入、历史保存和淘汰。
-- `state_for()` 的角色捕获与时间账户构造发生在进入编码函数之前。
-- Zstd 在原生传输的 `encode()` 中，发生在 `NetCodec.encode_state()` 返回之后。
-- `FrameTrace.server_state` 包含生成、编码和发送整个阶段，不能与单独编码函数耗时混用。
-
-## 基线实现已经采用的优化
-
-编码已使用固定二进制字段表、变化位图和已确认快照差分。同一轮广播中，公共世界仅深复制一次，公共区块按基线复用；每连接的序号、ACK、own 独立。向多个接收者发送相同 EVENT 时，也已共享编码与压缩。
-
-向量已通过 `_put_vec()` 写入两个 float32。本次没有理由再次把这些现有优化当成待实现方案。
-
-## 基线实现中可以确认的重复工作
-
-### 1. 缓存命中前仍遍历当前世界
-
-`NetCodec._shared_delta()` 每次接收者调用都比较 `shared.world` 与 `frame.world`，以及 `shared.time` 与 `frame.time`。缓存保存的是深复制结果，因此之后的同内容输入与它不是同一字典实例。
-
-[Godot 4.7.1 的 Dictionary 实现](https://github.com/godotengine/godot/blob/4.7.1-stable/core/variant/dictionary.cpp)先检查实例同一性和大小，然后逐项比较嵌套值。当前深复制后的公共世界校验需要走内容比较；命中缓存并不等于省去公共世界的扫描。缓存命中后的 `base_world` 比较则可能共享同一实例，不能一概算作完整遍历。
-
-改进方向是显式发布一个编码器拥有的不可变网络快照，在进入连接编码前准备一次。每个 peer 引用同一个快照标识，避免再次核对整个当前世界。批次拥有已发布的数据，后续修改原始字典不会改变该批次；下一次发布应创建新批次。仅改用 tick 或字典 hash 不足以保证正确性。
-
-### 2. 不同基线仍会重复扫描、编码同一组当前值
-
-公共缓存按基线 tick、地图版本与角色表区分。设本轮实际接收者数为 N、不同公共基线数为 U，公共差分最多仍执行 U 轮。八个接收者都处于不同基线时，八个角色最多被检查 64 遍。
-
-`_write_players()` 先比较整个角色记录，随后 `_put_delta()` 扫描 37 个顶层字段；变化的 driver、input、武器和路径还会继续处理嵌套数据。拾取物、弹丸和账户也分别生成 keys/filter 数组并比较记录。
-
-同一基线内还存在分层重复：当前公共世界的缓存校验 → 当前区块与基线区块比较 → 当前实体与基线实体比较 → 字段比较。`current[role]` 是角色分支，`current[id]` 是拾取物、弹丸等分支；它们各自重复经历整块、整记录和字段判断。driver/input 的整字段比较后又进入嵌套字段差分，也有同类重叠。不同值会使字典比较提前返回，上层相等也会跳过下层，所以不能称每次必定完整扫描四遍或推算固定四倍收益。
-
-同一对当前快照与基线应只计算一次叶字段变化，保留字段掩码、嵌套掩码及变化项索引；实体是否变化由这些结果和创建标记决定，区块是否变化由实体变化、删除和全量规则决定。写包复用这些结果，不再通过父级字典相等比较重新证明。计划应采用紧凑掩码/索引或原生记录，避免为每个字段再分配一套嵌套 Dictionary。全量快照、实体创建/删除和武器实例切换仍需单独处理。
-
-应把两种工作拆开：当前字段的网络表示尽量每次发布只准备一次；依赖接收者基线的变化位图仍分别生成。嵌套差分的掩码依赖基线，不能把完整嵌套增量当成对所有连接通用的字节块。相同基线继续共享完整公共增量，不同基线也能共享当前值的准备结果。
-
-### 3. 逐字段 GDScript 调用和小块写入
-
-`_put_delta()` 在 GDScript 中两次遍历字段表，按字符串取值、判断 Variant 类型并调用 `StreamPeerBuffer.put_*()`；每个区块和每份包还会创建流对象、组装字节数组。
-
-[Godot 的 StreamPeer 实现](https://github.com/godotengine/godot/blob/4.7.1-stable/core/io/stream_peer.cpp)显示，小值写入会经过 `put_data()`，更新位置并复制字节，追加时还要调整逻辑长度。缓冲区可能复用容量，`data_array` 也不能一概算作完整字节复制；仍然存在大量脚本方法调用和小块写入。
-
-适合迁移为原生批量编码：一次把当前状态整理成固定字段、连续布局的网络快照，C++ 处理掩码和字节写入，批量预留缓冲区。仅把每个 `put_u8()` 换成一个自定义原生方法，仍会保留跨语言调用次数；仅把原有字符串 Dictionary 循环搬进 C++，也会保留重复查找和公共扫描。
-
-### 4. 历史保存仍有逐连接复制和临时数组
-
-`_remember()` 已共享公共世界，但仍为每个连接深复制 own。历史达到 64 项后，`_store_history()` 通过 `history.keys()[0]` 创建键数组再淘汰旧项。
-
-own 可在创建独立、只读的当前记录时一次取得所有权，编码与历史共用该记录；必须保留调用者后续修改不能污染旧基线的保证。64 槽环形索引可消除每次构造全部键的开销，槽位仍验证完整序号。这是可缩减的工作，尚无数据证明它占主要的毫秒成本。
-
-### 5. 回溯轨迹可能放大峰值
-
-Beta 中，正在回溯的角色会附带最多 `MAX_REPLAY` 步的阻挡路径。路径变化时 `Field.PATH` 写出整个路径；不同基线会重复访问结点并写入同一份当前轨迹。
-
-这适合在快照发布时先准备当前路径的字节表示，再由各基线决定是否附带。该路径只有回溯期间存在，不能据此断言用户报告的 9～10.5 ms 正是它造成；需要对应 tick 的路径结点数、弹丸数及不同基线数。
-
-## 弹丸应怎样编码
-
-[`NativeBulletBody::advance_physics()`](../../native/simulation/bullet_body.cpp) 推进位置、路程和激活中的引信计时，并在重力、水阻力和碰撞影响下更新速度。持续运动时，整条弹丸记录几乎必然与基线不同；先比较整条记录的收益很小。冻结、回溯或停止时仍可能保持不变，不能把“每个字段每 tick 都变化”当成协议前提。
-
-| 数据 | 建议 | 理由 |
-|---|---|---|
-| `pos`、`traveled` | 发送当前值时直接置变化位，跳过与各 peer 基线比较 | 持续运动时几乎必变；相同值重复写入也可被现有解码器正确处理 |
-| `vel`、`fuse_elapsed` | 先保留单次字段判断，后续按运动模式或发布版本复用 | 匀速弹丸的速度、未激活的引信可能长期不变；一律发送会增加流量 |
-| `type_id`、`fuse_active`、`fuse_duration`、`direct_hit` | 保留低频差分，适合记录发布版本 | 不应为省几个比较而逐次重发全部字段 |
-| 创建与删除 | 相对于每连接已确认的实体集合处理 | 某个客户端可能没收到出生事件或之前的 STATE |
-| 首次出现、基线过期与重连 | 写完整记录或独立全量快照 | 不能依赖接收端尚未拥有的数据 |
-
-这可以沿用现有字段位图，不必立即修改协议。强制发送的字段即使与基线相等，也只会得到更大的合法增量；冻结弹丸会有少量额外流量，需与省去的比较成本一并衡量。
-
-当前 `_put_delta()` 对变化字段写完整值，没有计算 `current - base`，也没有预测弹道后再编码残差。因此，“移动中的数值也可以压缩”不能证明现有逐字段相等比较有效。[Unity 的预测差分](https://docs.unity3d.com/Packages/com.unity.netcode@1.10/manual/optimization/manage-serialization-costs.html)会用三个已确认基线预测当前值，再编码残差，适合计时器和线性运动，同时增加编码和解码成本。这是另一项带宽与 CPU 的取舍。
-
-## 资料中的对应设计
-
-| 一手资料 | 明确提到的设计及本项目可采用部分 |
+| 资料 | 可参考部分及边界 |
 |---|---|
-| Riot：[VALORANT's 128-Tick Servers](https://www.riotgames.com/en/news/valorants-128-tick-servers)，Replication 部分 | 逐客户端轮询、比较复制变量会造成缓存不友好的 CPU 开销；部分低频变化改用事件推送。这里采用变更通知/版本记录，继续保留权威快照及重连恢复。报告中的 RPC 收益不能当成本项目收益。 |
-| Epic：[Components of Iris](https://dev.epicgames.com/documentation/en-us/unreal-engine/components-of-iris-in-unreal-engine)，Pre-Send / Send Update | 共享准备阶段复制变化状态，发送阶段只访问复制系统拥有的数据。对应一次拥有网络快照、连接循环内不反复读取和验证 gameplay 字典。 |
-| Unity：[GhostSendSystemData.ForcePreSerialize](https://docs.unity3d.com/Packages/com.unity.netcode@1.10/api/Unity.NetCode.GhostSendSystemData.html#Unity_NetCode_GhostSendSystemData_ForcePreSerialize) | 部分序列化从每连接一次变成所有连接一次；简单或罕发对象也可能变慢。该强制开关是调试工具；应选择适合预序列化的数据，而非照搬开关。 |
-| Unity：[Manage serialization costs](https://docs.unity3d.com/Packages/com.unity.netcode@1.10/manual/optimization/manage-serialization-costs.html) | 无实际变化的数据也可能因写权限而触发比较及序列化；三基线预测差分有额外 CPU 成本。当前协议已是每连接单基线，不能再宣称通过切换单基线获得优化。 |
-| id Software：[Quake III MSG_WriteDeltaEntity](https://github.com/id-Software/Quake-III-Arena/blob/master/code/qcommon/msg.c) | 使用固定结构和字段偏移，在原生层比较并编码；它也有字段扫描。对应紧凑布局和原生热循环，不意味着差分比较会自动消失。 |
+| Riot：[VALORANT Server Performance](https://playvalorant.com/en-us/news/dev/how-we-got-to-the-best-performing-valorant-servers-since-launch/) | 属性比较重复执行会随连接数放大，先检查数据准备和比较次数 |
+| Epic：[Fortnite Improvements](https://www.unrealengine.com/tech-blog/unreal-engine-improvements-for-fortnite-battle-royale)、[Iris Introduction](https://dev.epicgames.com/documentation/unreal-engine/introduction-to-iris-in-unreal-engine)、[Iris Components](https://dev.epicgames.com/documentation/en-us/unreal-engine/components-of-iris-in-unreal-engine) | 捕获归编码器所有的状态、共享公共准备，再按连接筛选和编码 |
+| Unity Netcode 1.10：[Manage Serialization Costs](https://docs.unity3d.com/Packages/com.unity.netcode@1.10/manual/optimization/manage-serialization-costs.html)、[ForcePreSerialize](https://docs.unity3d.com/Packages/com.unity.netcode@1.10/api/Unity.NetCode.GhostSendSystemData.html#Unity_NetCode_GhostSendSystemData_ForcePreSerialize) | 多连接共享序列化准备；预计算是否划算仍取决于实体与接收者数量 |
+| Quake III：[msg.c](https://github.com/id-Software/Quake-III-Arena/blob/master/code/qcommon/msg.c) | 单层字段变化位图与数值编码，避免为了差分重复比较整个对象 |
+| Godot 4.7.1：[dictionary.cpp](https://github.com/godotengine/godot/blob/4.7.1-stable/core/variant/dictionary.cpp)、[stream_peer.cpp](https://github.com/godotengine/godot/blob/4.7.1-stable/core/io/stream_peer.cpp) | 嵌套 Variant 比较和细粒度写入有实际工作，边界复制须按所有权分析；不能仅凭调用次数断言每次都重分配 |
 
-低频状态可以使用对象/字段版本。在快照发布时与上一份网络表示比较一次，并记录最近变化的版本；每连接相对于它已确认的基线选择变化字段。变化信息必须覆盖从该 ACK 基线到当前快照的整个区间。只清空“本 tick dirty”会漏掉丢包期间的变化；创建、删除与基线过期也仍需处理。
+## 可参考的判断
 
-## 建议的改造顺序
+公共数据只捕获、隔离和准备一次，私有状态按 peer 处理。差分比较按字段完成，避免区块、实体、记录、字段四层完整比较。持续变化字段可以直接编码；低频属性与生命周期仍有差分价值。
 
-1. 建立拥有数据的只读 STATE 批次，明确公共快照身份；同一广播的时间账户只构造一次。后者是编码函数以外的附加节省。
-2. 从叶字段产生变化掩码，自下而上决定记录和区块是否发送；删除区块和记录的重复相等判断。弹丸运动字段采用上述策略，保留低频字段差分。
-3. 用有界索引管理 history 淘汰，减少临时 keys/filter 数组。own 仍需明确的只读所有权，不能直接删掉保护历史的复制。
-4. 在以上结构明确后，再评估固定布局、字段预编码与原生批量写入；低频字段可采用发布版本。迁移应一次处理一批数据，避免每字段跨语言调用。
+接收者 ACK 不同，公共状态相同也不能无条件复用整包差分。内部共享只读记录与对外隔离是不同要求；为历史完整性保留的边界复制不能一并删除。
 
-不宜直接强制所有客户端使用同一基线：丢包与额外 STATE 会让 ACK 分化，某个客户端未必拥有其他客户端的基线。最终 STATE 包含各自的序号和 own，现有 EVENT 的整包编码/压缩广播不能直接用于它。量化、改变发送频率、改成多基线预测差分和并行编码应另行评估；本轮先减少现有编码路径的工作量。
+## 当前采用
 
-## 代码定位
+- 一批广播持有独立公共 world/time，own 按 peer 捕获；公共差分按共同基线身份和角色表复用。
+- 每个连接保留独立序列号、ACK 与基线。公共状态无需逐 peer 完整比较。
+- 字段只比较一次；弹丸位置和行程直接写，低频字段差分，创建/移除显式编码。
+- 内部共享未变化记录，返回快照与历史隔离，防止调用方修改污染基线。
+- 公共事件一次编码和压缩，再提交多个连接。
 
-| 位置 | 作用 |
-|---|---|
-| [`server/room_session.gd`](../../server/room_session.gd) 的 `_send_state()` | 一轮广播的边界，适合准备公共数据 |
-| [`server/authority_world.gd`](../../server/authority_world.gd) 的 `state_for()` | 构造逐连接 own，并重复生成公共时间账户 |
-| [`core/net/net_codec.gd`](../../core/net/net_codec.gd) 的 `_shared_delta()` | 公共缓存校验、区块比较和按基线复用 |
-| 同文件 `_write_players()`、`_write_pickups()`、`_write_projectile_delta()`、`_put_time()` | 记录层比较和临时集合 |
-| 同文件 `_put_delta()`、`_put_driver()`、`_put_own()` | 叶字段写入及嵌套重复判断 |
-| 同文件 `_remember()`、`_store_history()` | 快照所有权、历史保存与淘汰 |
-
-## 本轮实施
-
-| 改动 | 最终行为 |
-|---|---|
-| 显式广播批次 | `RoomSession` 为本轮创建 `NetCodec.StateBatch`，编码直接读取批次拥有的 tick、地图版本、世界和账户。后续 peer 不再比较当前公共字典；账户也只捕获一次。单独编码和 BASELINE 创建同一种批次，不再接受可变 Dictionary 缓存。 |
-| 公共基线身份 | 所有编码历史均附带独立的进程内快照身份，以身份和角色表复用增量。删除无身份基线的内容核对、tick/版本缓存键回退及 `base_world/base_time` 缓存副本。身份不进入网络包，也不持有整个批次及其缓存。 |
-| 自下而上的变化判断 | 字段边比较边写入，回填字段掩码，再由结果决定记录和区块是否发送。driver/input 根据嵌套字段结果决定变化，取消父级 Dictionary 比较。未变的候选记录回退写入位置，区块和 STATE 出口裁掉尾部空间。 |
-| 弹丸运动字段 | 所有当前弹丸直接发送 `pos` 和 `traveled`；其余字段各判断一次。移除弹丸整记录比较，创建、删除与全量恢复继续遵循连接 ACK。 |
-| 临时集合与历史淘汰 | 删除列表直接写入并回填数量；角色位图使用整数掩码；不再为差分创建 keys/filter 集合。64 项历史以有界环形序号索引淘汰，按完整序号读取仍走原 Dictionary。 |
-
-字段精度、包结构和协议版本保持不变。由于强制发送弹丸位置与路程，部分原本可省略的字段现在会出现，仍按现有字段位图解释。own 仍深复制，防止调用方污染历史。
-
-公共深复制原先已经每广播一次，广播路径将它移到 `StateBatch` 构造中，发生在 `encode_state()` 之外；单独编码在函数内创建批次。后续比较应累计批次准备与全部连接编码，不能把计时边界外移产生的函数耗时下降当成总成本下降。掩码回填也新增少量 seek/write 调用，实际净收益尚未测量。
-
-本轮落实的是减少重复工作的部分。固定原生布局、批量 C++ 编码、跨不同基线的字段预编码、低频发布版本和 own 所有权转移仍是后续候选，尚未实现或证明收益。
-
-功能验证不启用 `--frame-trace`，不运行对局压测，不生成新的编码性能结论。
-
-## 下一次定位所需的少量计数
-
-以每轮发送累计的批次准备、公共差分、own 编码和 history 为计时边界，压缩/发送单列；公共内容校验已删除，无须继续记录该阶段。同步记录实际 peer 数、不同公共基线数 U、缓存命中、全量回退、角色/弹丸/拾取物数量及回溯结点数。
-
-这些计数足以判断普通 3.08 ms 与 9～10.5 ms 峰值的区别。代码阅读证明上述重复工作存在，尚不能给出各项占比或承诺迁移后的具体毫秒数。后续性能对照应复用同一组快照和 ACK 序列，再做一次真实对局检查。
-
-`FrameTrace` 仅在显式传入 `--frame-trace` 时安装。开启时会在主线程构造 span/event/context 与队列项，后台仍承担 JSON 编码和写盘；`observer_us` 只覆盖部分记录函数内部，不能代表全部观测开销，也不能从帧间隔直接减掉它来得到真实游戏成本。本轮不以详细 trace 的耗时推断编码收益。未来测量应先采用关闭 trace 的基线与少量累计计数，并将诊断记录的影响另行核实。
-
-## 本轮功能验证
-
-| 验证 | 结果 |
-|---|---|
-| 默认核心回归 | 9/9 通过 |
-| `protocol_probe` | 通过；覆盖字段精度、输入、不同 ACK、丢包、创建/更新/删除、基线过期、快照隔离及事件 |
-| 广播批次用例 | 通过；与独立编码字节一致，覆盖发布后原始角色集合/tick/地图版本/账户修改、own 历史隔离、同基线与不同基线、仅嵌套武器字段变化、弹丸引信更新和删除 |
-| 两客户端本机功能对局 | 通过；12 秒对战，自然结算、同房间返回大厅及关卡清理正常，两个客户端退出码均为 0 |
-| 命名/文档路径与差异格式 | 通过 |
-
-功能对局使用 `--count 2 --battle-seconds 12 --no-trace`，未设置 `--frame-trace`、`--frame-trace-packets` 或预测性能记录。兼容代码清理后的结果保存在 `.test_logs/state_encode_cleanup_functional_20261029/result.json`。本轮没有运行压力测试，也没有以这局数据作性能对照。
+没有实现预测数值残差的三基线压缩或大型兴趣管理。协议见[联机系统](netplay.md)，单 peer 与整批指标的统计口径见[性能观测](low_overhead_performance.md)。

@@ -1,7 +1,7 @@
 class_name AfterImage
 extends Node2D
 
-# 时间加速移动残影特效（阶段一）：截取主角当前动画帧纹理生成半透明副本，红/蓝双色交替生成并在 0.26s 内淡出销毁。
+# 时间加速移动残影：截取主角当前动画帧纹理生成半透明副本，红/蓝双色交替生成并在 0.26s 内淡出销毁。
 # 加速效果作用于水平速度域，残影组件在表现层强化高速移动与时间加速的视觉冲击感。
 
 static func spawn(host: Node, animator: AnimatedSprite2D, tint: Color) -> void:

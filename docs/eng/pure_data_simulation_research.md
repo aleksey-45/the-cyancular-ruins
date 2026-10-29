@@ -1,94 +1,35 @@
-# 纯数据模拟、重放与表现分离调研
+# 高频模拟状态与场景边界
 
-2026-10-27。本文是资料调研与架构建议，尚未实现新的模拟层，也未产生新的性能测量。
+## 资料与可参考部分
 
-## 判断
-
-将可恢复的玩法状态集中到独立模拟层，使用同一套步进执行正常推进和历史重放，再由表现层读取结果，是成熟方案。Photon Quantum 提供了直接对应的商业框架；Backroll/GGPO 开发指南明确建议独立游戏状态与渲染；DDNet 的公开实现也将角色核心、预测世界与显示区分开。
-
-对本项目，建议以 C++ 原生数据持有角色、弹丸、地形变化、历史与交互依赖，Godot 场景负责显示、音频、UI 和编辑。分离的判断依据是状态归属和依赖方向，不是脚本语言，也不是是否隐藏了节点。
-
-## 资料与证据边界
-
-| 一手资料 | 实际设计或建议 | 能用于本项目的部分 |
-|---|---|---|
-| [Quantum View Framework](https://doc.photonengine.com/quantum/v3/video-tutorials/view-framework) | Quantum 运行模拟；Unity 的 Entity View 显示模拟实体，并处理插值、校正平滑、池化和视听逻辑 | 模拟实体与场景节点分别管理生命周期，显示不拥有玩法状态 |
-| [Quantum DSL](https://doc.photonengine.com/quantum/v3/manual/quantum-ecs/dsl) | 组件与运行时状态生成为结构体；集合属于可回滚内存；实体引用使用索引与版本，避免跨历史帧保留原始指针 | 明确可恢复状态、稳定身份、不可变配置和历史内存的边界 |
-| [Quantum Events & Callbacks](https://doc.photonengine.com/quantum/v3/manual/quantum-ecs/game-events) | 表现事件不修改游戏状态；连续视觉可读取状态；全部模拟完成后派发表现事件；按事件数据、ID 和 tick 去重，提供预测事件的确认、取消 | 连续状态与一次性事件分别输出，重放不直接调用音画函数 |
-| [Backroll 开发指南](https://github.com/provencher/Backroll/blob/master/Documentation/DevelopmentGuide.md#best-practices-and-troubleshooting) | 建议把游戏状态集中在一个 C 结构中；固定时间步长；更新与渲染分开；重放产生的音效与效果延后处理 | 正常推进和重放共用步进，保存逻辑状态，显示独立消费 |
-| [DDNet 角色核心](https://github.com/ddnet/ddnet/blob/master/src/game/gamecore.h)、[预测世界](https://github.com/ddnet/ddnet/blob/master/src/game/client/prediction/gameworld.h) | 角色核心提供 Tick/Move 与网络状态读写；预测世界提供 CopyWorld，预测事件具有 ID/tick 和处理标记 | 运动核心、可复制预测世界、表现事件身份分离。其对象仍含指针、集合，不能据此称全部状态都是可直接 memcpy 的 POD |
-| [NetherRealm：8 Frames in 16ms](https://media.gdcvault.com/gdc2018/presentations/Stallone_Michael_8FramesIn16ms.pdf) | 第 18～21 页介绍可变状态保存、批量恢复、延迟销毁、音效与粒子身份复用；第 33～35 页介绍跳过无关模拟的效果、查询和重复系统更新 | 削减重复工作、复用对象、将表现系统移出重放；原生语言本身不保证重放廉价 |
-| [Factorio FFF-302](https://factorio.com/blog/post/fff-302) | 区分 Game State 与较小的 Latency State，先应用确认输入与本地预测，再根据两者绘制 | 渲染读取逻辑结果。其输入同步和预测范围与本项目不同，不能照搬为八人整体回滚 |
-| [Riot：Determinism Implementation](https://www.riotgames.com/en/news/determinism-league-legends-implementation)、[Unified Clock](https://www.riotgames.com/en/news/determinism-league-legends-unified-clock) | 聚焦玩法相关状态的确定性，隔离非确定性输入，统一玩法时间来源 | 以 tick 和显式命令驱动模拟，记录随机状态；文章不能证明 LoL 使用 Quantum 式的内存布局 |
-| [Godot：Optimization using Servers](https://docs.godotengine.org/en/stable/tutorials/performance/using_servers.html) | 场景层可绕过，直接以 RID 使用物理、渲染等服务；节点封装有额外成本 | 无节点的物理适配层可作为过渡，但不等于已经有完全独立于 Godot 的物理内核 |
-
-以上资料支持状态与表现分离，不要求本项目改成确定性输入同步，也不证明分离后会获得某个固定倍数的加速。
-
-## 建议的数据边界
-
-| 归属 | 内容 |
+| 资料 | 可参考部分 |
 |---|---|
-| 不可变规则与地图 | 从现有统一配置加载的数值、枪口局部偏移、碰撞形状定义、原始地图、材质与水体定义 |
-| 可恢复模拟状态 | tick/epoch、实体身份与存活状态、运动和姿态、控制锁、武器与弹药、引信、HP/击退、本地账户、地形 HP 变化、随机状态、命令游标 |
-| 可恢复或可重建的模拟辅助数据 | 交互查询记录、代理运动缓存、空间索引、碰撞几何、地形版本。能够改变结果的隐藏状态必须纳入恢复；纯加速缓存可以失效重建 |
-| 调度与输入适配 | 收包解码、确认覆盖判断、输入采集、将鼠标/摄像机坐标转为明确的瞄准命令、接纳批次与目标 tick |
-| 表现 | 场景节点、动画、平滑偏移、音频播放进度、粒子、UI、镜头震动、视觉对象池 |
+| Godot：[CPU Optimization](https://docs.godotengine.org/en/stable/tutorials/performance/cpu_optimization.html)、[Data Preferences](https://docs.godotengine.org/en/stable/tutorials/best_practices/data_preferences.html) | 对象访问、容器、动态调用和数据布局的成本，应按实际热点选择数据表示 |
+| Godot：[Using Servers](https://docs.godotengine.org/en/stable/tutorials/performance/using_servers.html)、[Thread-safe APIs](https://docs.godotengine.org/en/stable/tutorials/performance/thread_safe_apis.html) | 绕过节点可减少管理成本，但 RID 和资源生命周期需自行负责；活动场景树不能任意跨线程访问 |
+| Backroll：[Development Guide](https://github.com/provencher/Backroll/blob/master/Documentation/DevelopmentGuide.md) | 固定步进、明确可保存状态、纯模拟重放和表现副作用隔离；连续结构有利于恢复 |
+| NetherRealm：[8 Frames in 16ms](https://media.gdcvault.com/gdc2018/presentations/Stallone_Michael_8FramesIn16ms.pdf)、Ubisoft：[For Honor](https://media.gdcvault.com/gdc2019/presentations/Henry_Jennifer_BackToTheFuture.pdf) | 限制重放工作、检查点布局、生命周期和模拟前后阶段 |
+| Photon Quantum：[DSL](https://doc.photonengine.com/quantum/v3/manual/quantum-ecs/dsl)、[View Framework](https://doc.photonengine.com/quantum/v3/video-tutorials/view-framework)、[Game Events](https://doc.photonengine.com/quantum/v3/manual/quantum-ecs/game-events) | 模拟数据、只读显示和事件分别组织，避免显示回写模拟 |
+| Factorio：[FFF-302](https://factorio.com/blog/post/fff-302) | GameState 与 LatencyState 分工，预测范围按即时交互需求选择 |
+| Factorio：[FFF-271](https://www.factorio.com/blog/post/fff-271)、[FFF-209](https://www.factorio.com/blog/post/fff-209) | 高频数据集中迭代，公共参数准备与简单对象的数据缩减；独立系统的并行条件不能套用于相互阻挡的角色 |
+| DDNet：[gamecore.h](https://github.com/ddnet/ddnet/blob/master/src/game/gamecore.h)、Quake III：[bg_pmove.c](https://github.com/id-Software/Quake-III-Arena/blob/master/code/game/bg_pmove.c) | 用结构化输入和明确状态共享移动规则，避免双端各维护一份玩法 |
+| Epic：[TNetworkPredictionBuffer](https://dev.epicgames.com/documentation/unreal-engine/API/Plugins/NetworkPrediction/TNetworkPredictionBuffer)、[TNetSimOutput](https://dev.epicgames.com/documentation/unreal-engine/API/Plugins/NetworkPrediction/TNetSimOutput) | 有界历史、同步状态与低频辅助数据分开保存 |
+| SnapNet：[Rollback Architecture](https://snapnet.dev/blog/netcode-architectures-part-2-rollback/)、Quantum：[3.1 SDK Notes](https://doc.photonengine.com/quantum/v3/getting-started/preview-3-1/sdk-download) | 估算快照/恢复成本和写时复制的适用范围；引擎级 CoW 不是零成本通用替代 |
 
-角色运动、武器与弹丸通过实体 ID 关联。模拟内部不保存用于访问表现的 Node、Object 或 Callable。含 STL 容器的状态使用明确的复制、序列化或分页策略，不能对整个对象无条件 memcpy。
+## 可参考的判断
 
-当前的本地预测域继续适用：服务端模拟完整权威世界；客户端完整预测本地角色，远端只提供有界运动与交互信息。共享规则核不代表两端必须模拟同样多的实体。
+完全脱离场景是一种选择，代价是自行管理对象身份、层级、资源和调度。只分离高频模拟状态同样可以建立清晰边界：保留场景和 Godot 物理，把热循环需要的状态与规则放在原生类型中。C++ 减少解释、反射和边界转换，但不会自动消除算法、分配或物理查询成本。
 
-## 执行接口与顺序
+### 引擎调用与数据成本
 
-```text
-输入与权威更新 -> 本轮接纳批次 -> 状态比较与依赖审核
-                                  |
-                                  v
-                       恢复一次 + 按需重放 + 正常推进
-                                  |
-                                  v
-                     最终显示状态 + 有身份的表现事件
-                                  |
-                                  v
-                      Godot 表现节点每显示帧消费
-```
+| 资料 | 可参考部分 |
+|---|---|
+| Godot：[CharacterBody2D](https://docs.godotengine.org/en/stable/classes/class_characterbody2d.html)、[PhysicsBody2D](https://docs.godotengine.org/en/stable/classes/class_physicsbody2d.html)、[PhysicsServer2D](https://docs.godotengine.org/en/stable/classes/class_physicsserver2d.html) | CharacterBody2D 提供运动和查询接口，角色玩法仍由调用方定义；保留节点不妨碍原生调用物理 API |
+| Godot：[位姿实现](https://github.com/godotengine/godot/blob/4.6-stable/modules/godot_physics_2d/godot_body_2d.cpp)、[同帧运动学查询问题 #76256](https://github.com/godotengine/godot/issues/76256) | 手动多 tick 查询须核对物理空间实际采用的变换，不能只写场景变换就假定查询同步；源码和问题有版本适用范围 |
+| Godot：[Core Types](https://docs.godotengine.org/en/stable/engine_details/architecture/core_types.html)、[C++ Core Types](https://docs.godotengine.org/en/stable/tutorials/scripting/cpp/core_types.html)、[Static Typing](https://docs.godotengine.org/en/stable/tutorials/scripting/gdscript/static_typing.html) | 分清 Variant、引用容器、打包数组与准确类型调用，避免无依据地认为每份引用都是深复制 |
+| Godot：[SceneTree](https://docs.godotengine.org/en/stable/classes/class_scenetree.html)、[CanvasItem](https://docs.godotengine.org/en/stable/classes/class_canvasitem.html)、[Collision Shapes](https://docs.godotengine.org/en/stable/tutorials/physics/collision_shapes_2d.html) | 回调、变换传播、可见性和形状管理属于引擎成本；移入 C++ 后这些职责仍存在 |
 
-正常推进与重放使用同一个 Step(state, commands, rules, collision_backend)。回滚管理器负责恢复和循环调用，不能另建一份简化的重放玩法逻辑。
+## 当前采用
 
-本帧接纳的 STATE 与事件先比较覆盖关系、实际结果与依赖，再合并最早失效 tick。重放期间不返回 GDScript 逐字段读取或写回角色、武器、弹丸状态；结果在批次结束后导出。后到消息进入下一批，不提前修改本批正在使用的模拟状态。
+原生角色、武器、弹丸、预测战斗、代理、历史和地形。原生热循环直接访问明确类型，输入及快照在边界转换；低频历史元数据变化时生成。Godot 保留节点生命周期、资源和物理空间，脚本管理会话、装配和表现，模拟在主线程执行。
 
-碰撞、伤害、弹丸结束、地形破坏仍按逻辑 tick 和既有阶段顺序生效。仅最终绘制与音画播放延后；会影响下一步结果的地形几何不能等显示阶段才更新。
-
-## 表现事件
-
-持续视觉直接读取最终状态和相邻显示样本，例如角色位置、姿态、手持武器、HP。一次性效果输出自包含事件，例如开火、命中、爆炸与拾取反馈。
-
-事件身份可由 epoch、逻辑 tick、实体 ID、事件类型与序号组成。不要把轻微变化的位置直接作为唯一身份，否则同一攻击重放后位置变化可能再次播放。位置等表现数据作为可更新载荷。
-
-重放完成后将新旧事件集合比较：保留已播放的同一事件、提交新事件、取消或更新仍可调整的错误预测效果。不可逆的短音效采用明确的预测播放或确认播放策略；重要结果提示可等待权威确认。确认不应再次播放同一事件。
-
-表现事件处理器只管理音画与 UI；需要改变玩法的操作作为下一轮显式命令进入模拟，不在表现回调中直接改模拟状态。
-
-## 物理后端的两种边界
-
-### 数据模拟 + Godot 物理服务
-
-模拟状态由 C++ 持有，物理适配器管理独立的 body/shape RID，通过 PhysicsServer2D 完成必要查询，不创建完整 Player 或武器显示场景。这可以完全分离模拟与表现，但仍依赖 Godot 的引擎服务和运行时。
-
-RID 不进入可移植的历史状态。恢复时按稳定实体身份同步适配器中的形状、姿态、碰撞层、几何版本与其他查询依赖。表现节点不拥有或推进这套碰撞对象。不能同时绕过节点修改其 RID、又让原节点继续管理同一个对象；Godot 文档也不建议这样混合管理。
-
-直接改用 body_test_motion 还需保留现有 move_and_collide 在碰撞恢复、safe margin、实际行程调整和变换提交上的语义。仅保存位置与速度，不能自动证明后端完整恢复或重放等价。
-
-### 数据模拟 + 自有或独立碰撞后端
-
-碰撞查询直接使用模拟层的栅格、形状与空间索引，运行时不依赖 Godot 场景或物理服务，才是更强意义上的独立模拟库。Quantum 展示的是配套数学与物理库的一体化方案。
-
-本项目已有子格地形、角色矩形阻挡和连续弹丸接触，适合评估专用后端；但需覆盖初始重叠恢复、边缘接触、姿态切换、弹性材质、水体、环面和弹丸反弹等现有语义。不能把简单 AABB 检查当成现有 Godot 查询的等价替换。
-
-## 本项目取舍与收益验证
-
-建议采用独立原生模拟状态和单向表现输出，将物理放在明确的适配边界。第一阶段保持现有碰撞语义，完成数据归属迁移与同数据对照；独立栅格后端作为单独的算法改动评估。无需为八名玩家先建设通用 ECS、DSL 或新的任务调度器。
-
-现有隔离原型的收益与限制见[地形原生验证](native_replay_validation.md)、[代理、弹丸和历史原生验证](native_hot_replay_validation.md)。这些混合实现仍访问脚本对象，不能作为完整纯数据方案的性能结论。
-
-后续验证应沿用现有 tick 546～550 的固定数据，分别记录恢复、每 tick 模拟、历史保存、跨边界导出与表现提交；在计时外比较中间状态、交互结果和碰撞形状。完成后才判断节省多少时间。本文没有运行这项验证。
+没有实现独立物理引擎、全游戏 ECS、通用内存页 CoW 或后台场景模拟。当前职责见[场景内原生模拟](native_scene_simulation.md)和[原生战斗](native_combat_simulation.md)。
