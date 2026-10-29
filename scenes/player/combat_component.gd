@@ -41,6 +41,7 @@ func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, kn
 		return
 	# feedback_only:只播受击反馈,不碰 hp / 击退 / 无敌帧 / took_hit —— 供"权威 c2 可能已包含这一发"的客户端兜底路径用
 	# (二次扣血会让下一个 ack 再判一次分歧)。判据见 docs/eng/netcode-snapshots.md §2.2。
+	# ★ 只有 PvP 客户端用它(那里 pvp_arena=true)⇒ 它前面的 iframes 门在 PvP 下是惰性的;非 PvP 调用方要先确认门别把反馈挡掉。
 	if feedback_only:
 		play_hit_feedback(source_pos, damage)
 		return

@@ -218,6 +218,7 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 5. **事件必须按 seq 递增到达**（reliable 保序）；seq 回退一律拒绝并兜底，不会静默丢事件。
 6. **注入只能在物理帧做**：网络回调在 idle 帧，帧外 `move_and_slide()` 按**渲染帧 delta** 缩放（实测同一速度跨 idle 帧位移 0.01~2px 不等；首帧前才是 0）⇒ 事件先入队 `_pending_hit_events`、下一个物理帧开头注入 ⇒ 受击反馈（白闪/音效/击退）最多晚 1 帧（≈16.7ms）。重连重建 C2 时队列清空。
 7. **注释额度**：本批新增注释让 `core/net/prediction_rollback.gd` / `server/match/match_combat.gd` 的整行注释占比超过 `comment-style.md` §8 的 15%（前者基线已 16.4%，后者 14.9%→15.6%）—— 未删，因为删掉的是"为什么/边界"；此处登记为已知超限，翻案 = 后续批把这两处解释性注释收敛成行内短注。
+8. **新断言只有完成戳、没有逐条计数闸**（沿用 `rollback_fidelity_probe` 既有约定）：删掉单条 `_check` 不会红，只有整组中途报错（缺 `_require_ran` 戳）才红。`ALL-OK` 只证明"没有失败输出"，不证明每条断言都跑过 —— 权威表述见 `tests/lib/probe_base.gd` 文件头。
 
 
 
