@@ -12,8 +12,6 @@ var lead := 2
 var frames: Dictionary = {}
 var actions: Dictionary = {}
 var _last := neutral()
-var _missing := HOLD_TICKS
-var diagnostics := {"late_arrivals": 0, "held_ticks": 0, "neutral_ticks": 0, "expired_actions": 0}
 
 static func neutral() -> Dictionary:
 	return {"seq": 0, "epoch": 1, "target_tick": 0, "view_tick": 0, "ax": 0.0, "held": 0, "pressed": 0, "released": 0, "winst": 0, "aim": Vector2.RIGHT}
@@ -27,7 +25,6 @@ func reset(new_epoch: int) -> void:
 	frames.clear()
 	actions.clear()
 	_last = neutral()
-	_missing = HOLD_TICKS
 
 func seed(record: Dictionary, known_tick: int = -1) -> void:
 	_last = _expire_frame(record, known_tick) if known_tick >= 0 else record
@@ -54,30 +51,27 @@ func restore_cursor(cursor: Array) -> void:
 	_last = neutral().merged({"epoch": cursor[0], "seq": cursor[3], "target_tick": cursor[4],
 			"view_tick": cursor[5], "ax": cursor[6], "held": cursor[7], "aim": cursor[8]}, true)
 
-func push(packet: Dictionary, tick: int, scheduled: bool = false) -> void:
+func push(packet: Dictionary, tick: int) -> void:
 	for record: Dictionary in packet["frames"]:
 		if record["epoch"] != epoch:
 			continue
 		if record["seq"] > timing_seq:
-			if record["target_tick"] <= tick:
-				diagnostics["late_arrivals"] += 1
 			timing_seq = record["seq"]
 			lead = record["target_tick"] - tick
 		if record["seq"] <= ack or record["target_tick"] > tick + FUTURE_TICKS:
 			continue
-		var at: int = record["available_tick"] if scheduled else maxi(record["target_tick"], tick + 1)
+		var at: int = maxi(record["target_tick"], tick + 1)
 		if at > tick + FUTURE_TICKS: continue
 		if not frames.has(at) or record["seq"] > frames[at]["seq"]:
-			# 提示包含服务端首次可用 tick；已知在到达时过期的按键不能参与未来猜测。
-			frames[at] = _expire_frame(record, at) if scheduled else record
+			frames[at] = record
 	for action: Dictionary in packet["actions"]:
 		if action["epoch"] == epoch and action["seq"] > action_ack and action["target_tick"] <= tick + FUTURE_TICKS:
-			var available: int = action["available_tick"] if scheduled else maxi(action["target_tick"], tick + 1)
+			var available: int = maxi(action["target_tick"], tick + 1)
 			if available > tick + FUTURE_TICKS: continue
 			if not actions.has(action["seq"]) or available < actions[action["seq"]]["available_tick"]:
 				actions[action["seq"]] = action.merged({"available_tick": available})
 
-func take(tick: int, predict: bool = false) -> Dictionary:
+func take(tick: int) -> Dictionary:
 	for at in frames.keys():
 		if at <= tick:
 			var next: Dictionary = frames[at]
@@ -85,11 +79,8 @@ func take(tick: int, predict: bool = false) -> Dictionary:
 				ack = next["seq"]
 				_last = next
 			frames.erase(at)
-	_missing = tick - _last["target_tick"]
-	# 未知未来可延续最后有效输入；seed/push 已清除权威锚点或收包时明确过期的按键。
-	var expired := not predict and _missing > HOLD_TICKS
-	if _missing > 0:
-		diagnostics["neutral_ticks" if expired else "held_ticks"] += 1
+	# seed 已清除权威锚点处过期的按键；模拟中仅保留 HOLD_TICKS 的持续输入。
+	var expired: bool = tick - _last["target_tick"] > HOLD_TICKS
 	var record := _last.duplicate()
 	if expired:
 		record["ax"] = 0.0
@@ -108,7 +99,6 @@ func take(tick: int, predict: bool = false) -> Dictionary:
 		action_ack = seq
 		actions.erase(seq)
 		if tick - action["target_tick"] > ACTION_TICKS:
-			diagnostics["expired_actions"] += 1
 			continue
 		for key in ["seq", "pressed", "released", "winst", "aim", "view_tick"]:
 			record[key] = action[key]

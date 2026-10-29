@@ -36,7 +36,6 @@ class GnsEndpoint : public RefCounted {
         int send_offset = 0;
         int event_size = 0;
         int64_t event_queued = 0;
-        int64_t replaced[2] = {};
         bool connected = false;
     };
     static inline int instances = 0;
@@ -49,10 +48,8 @@ class GnsEndpoint : public RefCounted {
     std::map<HSteamNetConnection, int> peers;
     Array events;
     std::deque<SteamNetworkingMessage_t *> incoming;
-    int64_t poll_messages = 0, poll_wire_bytes = 0, poll_decoded_bytes = 0;
-    int64_t poll_budget_hits = 0, poll_max_us = 0, receive_age_max_us = 0;
+    int64_t poll_decoded_bytes = 0;
     bool server = false;
-    bool compression = true;
     int next_peer = 2;
     int port = 0;
 
@@ -140,8 +137,8 @@ class GnsEndpoint : public RefCounted {
     }
 
     PackedByteArray encode(const PackedByteArray &bytes) {
-        PackedByteArray body = compression ? bytes.compress(FileAccess::COMPRESSION_ZSTD) : bytes;
-        bool compressed = compression && body.size() < bytes.size();
+        PackedByteArray body = bytes.compress(FileAccess::COMPRESSION_ZSTD);
+        bool compressed = body.size() < bytes.size();
         if (!compressed) body = bytes;
         PackedByteArray wire;
         wire.resize(body.size() + 4);
@@ -153,7 +150,6 @@ class GnsEndpoint : public RefCounted {
     int enqueue(int peer, Connection &connection, int flow, const PackedByteArray &wire) {
         if (flow != EVENT) {
             if (wire.size() > MAX_REALTIME) return ERR_INVALID_PARAMETER;
-            if (!connection.latest[flow].is_empty()) ++connection.replaced[flow];
             connection.latest[flow] = wire;
         } else {
             connection.reliable.push_back(wire);
@@ -179,7 +175,6 @@ class GnsEndpoint : public RefCounted {
     void receive(SteamNetworkingMessage_t *message) {
         int64_t received_us = Time::get_singleton()->get_ticks_usec() -
             (SteamNetworkingUtils()->GetLocalTimestamp() - message->m_usecTimeReceived);
-        receive_age_max_us = std::max(receive_age_max_us, int64_t(Time::get_singleton()->get_ticks_usec()) - received_us);
         int peer = peers.at(message->m_conn);
         PackedByteArray bytes;
         bytes.resize(message->m_cbSize);
@@ -263,13 +258,11 @@ protected:
         ClassDB::bind_method(D_METHOD("send", "peer", "flow", "bytes"), &GnsEndpoint::send);
         ClassDB::bind_method(D_METHOD("send_many", "peers", "flow", "bytes"), &GnsEndpoint::send_many);
         ClassDB::bind_method(D_METHOD("poll", "max_messages"), &GnsEndpoint::poll, DEFVAL(MAX_POLL_MESSAGES));
-        ClassDB::bind_method(D_METHOD("take_poll_statistics"), &GnsEndpoint::take_poll_statistics);
         ClassDB::bind_method(D_METHOD("disconnect_peer", "peer", "reason"), &GnsEndpoint::disconnect_peer);
         ClassDB::bind_method(D_METHOD("close"), &GnsEndpoint::close);
         ClassDB::bind_method(D_METHOD("get_port"), &GnsEndpoint::get_port);
         ClassDB::bind_method(D_METHOD("is_connected"), &GnsEndpoint::is_connected);
-        ClassDB::bind_method(D_METHOD("statistics"), &GnsEndpoint::statistics);
-        ClassDB::bind_method(D_METHOD("set_compression", "enabled"), &GnsEndpoint::set_compression);
+        ClassDB::bind_method(D_METHOD("get_ping"), &GnsEndpoint::get_ping);
     }
 
 public:
@@ -358,7 +351,6 @@ public:
             // Yield only between complete messages. Prefetched messages keep their references.
             if (processed && (wire_bytes >= MAX_POLL_BYTES || poll_decoded_bytes - decoded_before >= MAX_POLL_BYTES ||
                 int64_t(Time::get_singleton()->get_ticks_usec()) - started >= MAX_POLL_USEC)) {
-                ++poll_budget_hits;
                 break;
             }
             if (incoming.empty()) {
@@ -374,26 +366,9 @@ public:
             message->Release();
             ++processed;
         }
-        if (limit && processed == limit) ++poll_budget_hits;
-        poll_messages += processed;
-        poll_wire_bytes += wire_bytes;
         flush_latest();
-        poll_max_us = std::max(poll_max_us, int64_t(Time::get_singleton()->get_ticks_usec()) - started);
         Array result = events;
         events = Array();
-        return result;
-    }
-
-    Dictionary take_poll_statistics() {
-        Dictionary result;
-        result["messages"] = poll_messages;
-        result["wire_bytes"] = poll_wire_bytes;
-        result["decoded_bytes"] = poll_decoded_bytes;
-        result["budget_hits"] = poll_budget_hits;
-        result["buffered_messages"] = int64_t(incoming.size());
-        result["max_poll_ms"] = poll_max_us / 1000.0;
-        result["queue_age_max_ms"] = receive_age_max_us / 1000.0;
-        poll_messages = poll_wire_bytes = poll_decoded_bytes = poll_budget_hits = poll_max_us = receive_age_max_us = 0;
         return result;
     }
 
@@ -433,42 +408,12 @@ public:
 
     int get_port() const { return port; }
     bool is_connected() const { return connections.count(1) && connections.at(1).connected; }
-    void set_compression(bool enabled) { compression = enabled; }
-    Array statistics() const {
-        Array result;
-        for (auto &[peer, connection] : connections) {
-            if (!connection.connected) continue;
-            SteamNetConnectionRealTimeStatus_t status = {};
-            SteamNetConnectionRealTimeLaneStatus_t lanes[3] = {};
-            SteamNetworkingSockets()->GetConnectionRealTimeStatus(connection.handle, &status, 0, nullptr);
-            if (status.m_eState != k_ESteamNetworkingConnectionState_Connected) continue;
-            SteamNetworkingSockets()->GetConnectionRealTimeStatus(connection.handle, nullptr, 3, lanes);
-            Dictionary row;
-            row["peer"] = peer;
-            row["rtt_ms"] = status.m_nPing;
-            row["send_rate_bytes_s"] = status.m_nSendRateBytesPerSecond;
-            row["tx_bytes_s"] = status.m_flOutBytesPerSec;
-            row["rx_bytes_s"] = status.m_flInBytesPerSec;
-            row["tx_packets_s"] = status.m_flOutPacketsPerSec;
-            row["rx_packets_s"] = status.m_flInPacketsPerSec;
-            row["quality_local"] = status.m_flConnectionQualityLocal;
-            row["quality_remote"] = status.m_flConnectionQualityRemote;
-            Array queues;
-            for (int i = 0; i < 3; ++i) {
-                Dictionary queue;
-                queue["pending_unreliable"] = lanes[i].m_cbPendingUnreliable;
-                queue["pending_reliable"] = lanes[i].m_cbPendingReliable;
-                queue["unacked_reliable"] = lanes[i].m_cbSentUnackedReliable;
-                queue["queue_us"] = lanes[i].m_usecQueueTime;
-                queues.push_back(queue);
-            }
-            row["lanes"] = queues;
-            row["replaced_input"] = connection.replaced[INPUT];
-            row["replaced_state"] = connection.replaced[STATE];
-            row["pending_event_bytes"] = connection.event_queued;
-            result.push_back(row);
-        }
-        return result;
+    int get_ping() const {
+        const auto found = connections.find(1);
+        if (found == connections.end() || !found->second.connected) return -1;
+        SteamNetConnectionRealTimeStatus_t status = {};
+        SteamNetworkingSockets()->GetConnectionRealTimeStatus(found->second.handle, &status, 0, nullptr);
+        return status.m_eState == k_ESteamNetworkingConnectionState_Connected ? status.m_nPing : -1;
     }
 };
 

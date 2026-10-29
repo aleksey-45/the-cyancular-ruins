@@ -46,7 +46,7 @@ func setup_multi(local_provider: Callable, others_provider: Callable,
 
 func _ready() -> void:
 	layer = 131
-	var grid := MazeGenerator.current_grid
+	var grid := TileDefs.terrain.get_grid_snapshot()
 	if grid.is_empty():
 		set_process(false)
 		return
@@ -58,9 +58,9 @@ func _ready() -> void:
 	for y in range(rows):
 		for x in range(cols):
 			var v: int = grid[y][x]
-			if v == MazeGenerator.EMPTY:
+			if v == MapFormat.EMPTY:
 				img.set_pixel(x, y, Color(0.05, 0.09, 0.13, 0.55))
-			elif Water.is_liquid(MazeGenerator.texture_of(v)):
+			elif Water.is_liquid(MapFormat.texture_of(v)):
 				img.set_pixel(x, y, Color(0.15, 0.38, 0.85, 0.85))
 			else:
 				img.set_pixel(x, y, Color(0.62, 0.68, 0.75, 0.95))
@@ -115,7 +115,7 @@ func _process(_delta: float) -> void:
 		for d in _other_dots:
 			d.visible = false
 		return
-	var canonical := MazeGenerator.wrap_to_range(p, w, h)
+	var canonical := GridPathfinder.wrap_to_range(p, w, h)
 	_mat.set_shader_parameter("center_cell", canonical / float(GameParameters.TILE_SIZE))
 
 	# 本地角色标记固定居中显示

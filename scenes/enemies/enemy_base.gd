@@ -37,7 +37,6 @@ var _turn_cooldown: float = 0.0  # 转向冷却:两次翻转朝向至少间隔 t
 var _players_frame_cache: Array = []
 var _players_frame_id: int = -1
 var wake_radius: float = 1000.0  # 远处睡眠优化:距玩家超此值且落地静止 → 跳过物理
-var network_canonical: bool = false  # PvP 服务器权威:敌人位置存 canonical [0,MAP)(_wrap 取模);单机/客户端 false=锚玩家副本渲染
 var _in_water: bool = false
 var _waterproof: int = 6                 # 防水值(氧气),完全没入水中每 0.5s 掉 1
 var waterproof_max: int = 6              # 上限:black/jump 6,fly 10
@@ -131,7 +130,7 @@ func _physics_process(delta: float) -> void:
 		# contact_damage<=0 时跳过:零伤也会触发玩家 take_hit 消耗 iframe 并击退。
 		if contact_damage > 0 and (_player_overlapping or toroidal_dist_to_player() <= CONTACT_RADIUS):
 			var p := _contact_victim()
-			if p != null and p.has_method("take_hit"):
+			if p != null:
 				p.take_hit(global_position, contact_damage)
 	# 受击/死亡白闪统一:计时 + 渲染(子类可覆写 _flash_update 换渲染方式,如黑鸟 silhouette)
 	if _hit_flash_time > 0.0:
@@ -266,17 +265,12 @@ func _on_death() -> void:
 	pass
 
 
-func _smash_player(p: Node, impact: float, impact_up: float) -> void:
-	var p2 := p as Node2D
-	if p2 == null:
-		return
-	var away := (p2.global_position - global_position).normalized()
+func _smash_player(p: Node2D, impact: float, impact_up: float) -> void:
+	var away := (p.global_position - global_position).normalized()
 	if away == Vector2.ZERO:
-		away = Vector2.LEFT
-		if p2.has_method("get_facing"):
-			away.x = -float(p2.get_facing())
-	p2.velocity = away * impact
-	p2.velocity.y -= impact_up
+		away = Vector2(-float(p.get_facing()), 0.0)
+	p.velocity = away * impact
+	p.velocity.y -= impact_up
 
 
 # 白闪渲染:受击/死亡任一激活即纯白,否则恢复。默认走 modulate;黑鸟因 silhouette
@@ -367,21 +361,15 @@ func _player_velocity() -> Vector2:
 
 
 func _cell_of(pos: Vector2) -> Vector2i:
-	var grid := MazeGenerator.current_grid
-	if grid.is_empty():
-		return Vector2i.ZERO
-	return MazeGenerator.cell_of(pos, GameParameters.TILE_SIZE, grid[0].size(), grid.size())
+	return TileDefs.terrain.cell(pos)
 
 
 func _cell_is_solid(cell: Vector2i) -> bool:
-	var grid := MazeGenerator.current_grid
-	if grid.is_empty():
-		return false
-	return TileDefs.is_blocked(grid[cell.y][cell.x])
+	return TileDefs.is_blocked(TileDefs.terrain.value(cell))
 
 
 func _toroidal_dist_to(pos: Vector2) -> float:
-	return MazeGenerator.toroidal_delta_px(global_position, pos,
+	return GridPathfinder.toroidal_delta_px(global_position, pos,
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT).length()
 
 
@@ -398,23 +386,18 @@ func toroidal_delta_to_player() -> Vector2:
 	var p := _nearest_player()
 	if p == null:
 		return Vector2.INF
-	return MazeGenerator.toroidal_delta_px(global_position, (p as Node2D).global_position,
+	return GridPathfinder.toroidal_delta_px(global_position, (p as Node2D).global_position,
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 
 func _wrap() -> void:
-	# PvP 服务器权威:位置存 canonical [0,MAP),不做玩家副本锚定(副本归各端渲染)。
-	if network_canonical:
-		global_position = MazeGenerator.wrap_to_range(global_position,
-				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
-		return
-# 映射到离玩家最近的环面副本，保持接缝处显示连续。
+	# 映射到离玩家最近的环面副本，保持接缝处显示连续。
 	var p := _nearest_player() as Node2D
 	if p == null:
 		# 无玩家(场景切换/加载中)时退回绝对取模,防止敌人无限漂移
-		global_position = MazeGenerator.wrap_to_range(global_position,
+		global_position = GridPathfinder.wrap_to_range(global_position,
 				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 		return
-	global_position = MazeGenerator.anchor_to_nearest(global_position, p.global_position,
+	global_position = GridPathfinder.anchor_to_nearest(global_position, p.global_position,
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 
 # 回溯状态恢复（WorldRewind 调用）：将敌人重置为快照帧的状态（包含存活与复活处理）

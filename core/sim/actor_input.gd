@@ -1,7 +1,7 @@
 class_name ActorInput
 extends NativeActorInput
 
-# 一次共享步进的值输入；本地、AI 和网络输入都先打包，再在这里统一应用控制锁。
+# 一次共享步进的值输入；本地和网络输入都先打包，再在这里统一应用控制锁。
 # 持续输入原值供权威快照延续使用，模拟只读取已处理控制锁的字段。
 const BIT_UP := 1
 const BIT_DOWN := 2

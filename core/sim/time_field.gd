@@ -5,7 +5,7 @@ extends RefCounted
 # 统一封装集中查询接口，实体脚本仅需调用 delta = TimeField.xxx_delta(delta, self)。
 #
 # 设计要点：
-#   - current 仅在单人关卡 Level0 中实例化；多人对战、菜单及测试探针中为 null，所有时间倍率恒为 1.0。
+#   - current 仅在单人关卡 Level0 中实例化；未使用时间场的模式中为 null，所有时间倍率恒为 1.0。
 #   - HASTE（时间加速）：玩家与精英按 HASTE_PLAYER 倍率步进，普通敌人与敌方子弹按 HASTE_WORLD 倍率步进，
 #     通过分层缩放形成相对流速差，不修改全局 Engine.time_scale，确保底层物理手感稳定。
 #   - REWIND（时空回溯）：普通敌人、子弹与玩家步进倍率为 0（进入冻结，由回放器接管位置）；精英敌人不受回溯影响，照常行动。
@@ -18,7 +18,6 @@ static var current: TimeField = null   # 单机世界场实例;null = 全域恒 
 var mode: int = Mode.NONE
 var account: GrainAccount = null
 var rewind_time: float = 0.0
-
 
 func _init(acc: GrainAccount) -> void:
 	account = acc
@@ -49,31 +48,14 @@ func update(delta: float, want_rewind: bool, want_haste: bool) -> void:
 		rewind_time = 0.0
 	mode = want
 
-
 func loan_depth() -> float:
 	return account.loan_depth() if account != null else 0.0
-
 
 func is_rewinding() -> bool:
 	return mode == Mode.REWIND
 
-
 func is_hasting() -> bool:
 	return mode == Mode.HASTE
-
-
-
-static func player_delta(d: float) -> float:
-	var f := current
-	if f == null:
-		return d
-	match f.mode:
-		Mode.REWIND:
-			return 0.0
-		Mode.HASTE:
-			return d * TimeParams.HASTE_PLAYER
-	return d
-
 
 static func enemy_delta(d: float, node: Node) -> float:
 	var f := current
@@ -89,8 +71,7 @@ static func enemy_delta(d: float, node: Node) -> float:
 		mult *= 1.0 + TimeParams.LOAN_ENEMY_SPEED_BONUS * f.loan_depth()
 	return d * mult
 
-
-static func bullet_delta(d: float, bullet: Node) -> float:
+static func bullet_delta(d: float, bullet: NativeBulletBody) -> float:
 	var f := current
 	if f == null:
 		return d
@@ -98,10 +79,8 @@ static func bullet_delta(d: float, bullet: Node) -> float:
 		return 0.0
 	if f.mode != Mode.HASTE:
 		return d
-	var from_player := false
-	if bullet != null:
-		var s = bullet.get("shooter")
-		from_player = s != null and s is Node and (s as Node).is_in_group("player")
+	var shooter := bullet.shooter
+	var from_player := is_instance_valid(shooter) and shooter.is_in_group("player")
 	return d * (TimeParams.HASTE_PLAYER if from_player else TimeParams.HASTE_WORLD)
 
 
@@ -128,7 +107,6 @@ static func player_speed_mult() -> float:
 	if f.mode == Mode.HASTE:
 		return TimeParams.HASTE_PLAYER
 	return 1.0
-
 
 static func enemy_speed_mult(node: Node) -> float:
 	var f := current

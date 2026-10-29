@@ -43,9 +43,7 @@ void NativeCombatKernel::_bind_methods() {
     ClassDB::bind_method(D_METHOD("take_notifications"), &NativeCombatKernel::take_notifications);
     ClassDB::bind_method(D_METHOD("step_beams", "tick", "role", "players", "geometry"), &NativeCombatKernel::step_beams);
     ClassDB::bind_method(D_METHOD("snapshot_projectiles"), &NativeCombatKernel::snapshot_projectiles);
-    ClassDB::bind_method(D_METHOD("apply_impact", "id", "tick", "source", "target", "position", "force", "damage"), &NativeCombatKernel::apply_impact);
     ClassDB::bind_method(D_METHOD("confirmed_result_at", "id", "tick", "source", "role"), &NativeCombatKernel::confirmed_result_at);
-    ClassDB::bind_method(D_METHOD("finish_contact", "bullet", "tick"), &NativeCombatKernel::finish_contact);
     ClassDB::bind_method(D_METHOD("proxy_queries_match", "tick", "proxies", "actors", "map_size"), &NativeCombatKernel::proxy_queries_match);
     ClassDB::bind_method(D_METHOD("catch_up_remote", "id", "history", "through", "delta", "map_size"), &NativeCombatKernel::catch_up_remote);
 }
@@ -54,7 +52,7 @@ void NativeCombatKernel::configure(NativeActorBody *player, const Dictionary &so
     local_id = player ? uint64_t(player->get_instance_id()) : 0;
     projectiles = sources["projectiles"]; blasts = sources["blasts"]; beams = sources["beams"]; hits = sources["hits"]; ended = sources["ended"];
     outcomes = sources["outcomes"]; proxy_queries = sources["proxy_queries"]; owner_modes = sources["owner_modes"];
-    logged = sources["logged"]; hitboxes = sources["hitboxes"];
+    hitboxes = sources["hitboxes"];
     keep = rules["keep"]; radius = rules["contact_radius"]; inner_fraction = rules["inner_fraction"];
     blocked_fraction = rules["blocked_fraction"]; beam_hit_mult = rules["beam_hit_mult"]; target_window = rules["target_window"];
     step_delta = rules["dt"];
@@ -123,14 +121,6 @@ void NativeCombatKernel::apply_hit(int64_t id, int source, NativeActorBody *targ
     value["pos"] = position; value["hp"] = target->sim_hp; value["facing"] = target->facing_direction;
     value["knock"] = target->motion_knock_velocity; value["velocity_unchanged"] = previous_velocity == target->get_velocity();
     remember_outcome(Array::make("hit", id, source, target->role), value);
-    const Array key = Array::make(id, tick, target->role, source);
-    if (!logged.has(key)) {
-        logged[key] = true;
-        Dictionary log; log["id"] = id; log["tick"] = tick; log["source"] = source; log["role"] = target->role;
-        log["knock"] = target->motion_knock_velocity; log["position"] = target->get_position();
-        log["hp"] = target->sim_hp; log["downed"] = target->sim_downed; log["confirmed"] = !confirmed.is_empty();
-        notifications.push_back(Array::make("impact_prediction", log));
-    }
 }
 bool NativeCombatKernel::apply_confirmed_hits(int64_t id, int source, int64_t role) {
     bool applied = false;
@@ -165,10 +155,6 @@ void NativeCombatKernel::finish_direct(NativeBulletBody *bullet) {
     if (bullet->explodes) bullet->start_player_fuse();
     else bullet->finished = true;
 }
-void NativeCombatKernel::finish_contact(NativeBulletBody *bullet, int64_t at) { tick = at; if (bullet) finish_direct(bullet); }
-void NativeCombatKernel::apply_impact(int64_t id, int64_t at, int source, NativeActorBody *target, Vector2 position, double force, int damage) {
-    tick = at; apply_hit(id, source, target, position, force, damage);
-}
 void NativeCombatKernel::step_blast(int64_t id) {
     const bool exists = blasts.has(id) && int64_t(Dictionary(blasts[id])["tick"]) == tick;
     if (exists) {
@@ -197,11 +183,6 @@ void NativeCombatKernel::step_blast(int64_t id) {
                     return maximum * (1 - fraction * fraction);
                 };
                 apply_hit(id, 2, target, center, falloff(profile.knock) * mult, int(falloff(profile.blast_damage) * mult));
-                if (first_prediction) {
-                    Dictionary log; log["id"] = id; log["tick"] = tick; log["role"] = target->role;
-                    log["position"] = target->get_position(); log["knock"] = target->motion_knock_velocity;
-                    notifications.push_back(Array::make("explosion_prediction", log));
-                }
             }
         }
     }
@@ -211,15 +192,10 @@ void NativeCombatKernel::step_blast(int64_t id) {
     remember_outcome(Array::make("blast", id), blast.duplicate());
     const auto profile = profiles.find(int64_t(blast["type_id"]));
     ERR_FAIL_COND(profile == profiles.end());
-    const int changed = geometry->predict_blast(id, blast["type_id"], blast["pos"], blast["tick"],
+    geometry->predict_blast(id, blast["type_id"], blast["pos"], blast["tick"],
         profile->second.radius, profile->second.blast_damage);
     // Subsequent projectiles query the terrain produced by this attack.
     geometry->flush_collisions();
-    if (first_prediction) {
-        Dictionary data; data["id"] = id; data["tick"] = blast["tick"];
-        data["map_revision"] = geometry->get_revision(); data["cells"] = changed;
-        notifications.push_back(Array::make("terrain_prediction", data));
-    }
 }
 void NativeCombatKernel::step(int64_t at, const Array &targets,
         const Ref<NativeTerrain> &world, bool first) {

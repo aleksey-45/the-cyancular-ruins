@@ -79,7 +79,7 @@ function serveStatic(res, resolved, headOnly) {
   });
 }
 
-const MAP_NAME_RE = /^[A-Za-z0-9_\-]+(?:\.cyrm|\.v3\.bak)$/;
+const MAP_NAME_RE = /^[A-Za-z0-9_\-]+\.cyrm$/;
 // 地图文件名最大长度限制（防御性限制，正常文件名长度一般小于 37）
 const MAX_MAP_NAME_LEN = 64;
 

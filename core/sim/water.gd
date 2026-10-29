@@ -1,8 +1,7 @@
 class_name Water
 extends RefCounted
 
-# 水体判定模块：提供水中状态检测、水面高度计算与完全浸水判定。纯静态工具类，不依赖 Autoload（支持命令行独立测试 -s）。
-# 依赖 MazeGenerator.current_grid（由 Level0 初始化赋值）与网格规格 TILE_TS。
+# 水体判定模块：提供水中状态检测、水面高度计算与完全浸水判定。纯静态工具类，不依赖 Autoload。
 # 判定约定：角色脚底进入水体网格即判定处于水中；浮力机制将身体中心拉至水面高度（呈半没入浮动状态）。
 
 const TILE_TS: int = 64

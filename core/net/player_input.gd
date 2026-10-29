@@ -1,7 +1,7 @@
 class_name PlayerInput
 extends RefCounted
 
-# 为 LocalInputSource、PacketInputSource 与 AiInputSource 提供通用输入契约。
+# 为 LocalInputSource 与 PacketInputSource 提供通用输入契约。
 # 输入冻结管理：
 # 基类的公开查询接口负责统一处理 frozen 冻结状态。
 # 冻结期间（如对局开始倒计时或结算停顿），所有公开移动、攻击、切枪及交互查询直接返回中性默认值。
@@ -11,7 +11,7 @@ extends RefCounted
 var frozen := false
 
 # 输入源类别枚举
-enum Kind { LOCAL, PACKET, AI }
+enum Kind { LOCAL, PACKET }
 
 
 # 返回当前输入源具体类别，子类必须覆写此方法。
@@ -59,7 +59,7 @@ func is_drop_pressed() -> bool:
 
 
 # 消费网络输入包中的目标武器实例 ID（winst）。
-# 仅网络输入源解析其实例 ID；本地与 AI 玩家则通过本地槽位直接切换。
+# 网络输入源使用实例 ID；本地输入通过槽位切换。
 func consume_switch_inst() -> int:
 	if frozen:
 		return 0

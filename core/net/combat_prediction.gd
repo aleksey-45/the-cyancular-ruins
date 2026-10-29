@@ -8,7 +8,6 @@ var projectiles: Dictionary = {}
 var beams: Dictionary = {}
 var hits: Dictionary = {}
 var ended: Dictionary = {}
-var _logged: Dictionary = {}
 var _player: CharacterBody2D
 var tick := 0:
 	set(value):
@@ -35,7 +34,7 @@ func _ensure_native() -> void:
 	if _native_bound: return
 	_native.configure(_player, {"projectiles": projectiles, "blasts": blasts, "beams": beams,
 			"hits": hits, "ended": ended, "outcomes": _outcomes, "proxy_queries": _proxy_queries,
-			"owner_modes": _owner_modes, "logged": _logged, "hitboxes": hitboxes},
+			"owner_modes": _owner_modes, "hitboxes": hitboxes},
 			WeaponRegistry.native_profiles(), {"keep": KEEP, "dt": ActorStep.DT,
 			"contact_radius": BulletBase.PLAYER_HIT_RADIUS, "inner_fraction": Explosion.INNER_FRACTION,
 			"blocked_fraction": Explosion.BLOCKED_FRACTION, "beam_hit_mult": LaserWeaponBase.HIT_MULT,
@@ -44,9 +43,7 @@ func _ensure_native() -> void:
 
 func _publish_native_events() -> void:
 	for event: Array in _native.take_notifications():
-		if event[0] == "detonated": detonated.emit(event[1])
-		else: GameLog.record(event[0], event[1])
-
+		detonated.emit(event[1])
 
 func bind(player: CharacterBody2D) -> void:
 	_player = player
@@ -310,48 +307,20 @@ func _has_local_hit(id: int) -> bool:
 		if _outcomes[at].has(["hit", id, 0, _player.role]): return true
 	return false
 
-func prepare(tick: int, authoritative: Variant = null) -> void:
-	TileDefs.terrain.reset_prediction(tick)
+func prepare(at_tick: int, states: Dictionary) -> void:
+	TileDefs.terrain.reset_prediction(at_tick)
 	_outcomes.clear()
 	_proxy_queries.clear()
 	_owner_modes.clear()
 	for id in beams.keys():
-		if beams[id]["tick"] <= tick or not beams[id]["confirmed"]:
+		if beams[id]["tick"] <= at_tick or not beams[id]["confirmed"]:
 			beams.erase(id)
-	if authoritative != null:
-		for id in blasts.keys():
-			if not blasts[id].get("confirmed", false): blasts.erase(id)
-		_prepare_authoritative(tick, authoritative)
-		acknowledge(tick)
-		return
-	for id in projectiles.keys():
-		var entry: NativeProjectileEntry = projectiles[id]
-		var bullet: BulletBase = entry["bullet"]
-		if ended.has(id) and ended[id] <= tick:
-			bullet.free()
-			projectiles.erase(id)
-			continue
-		if not entry["confirmed"] and entry["tick"] >= tick:
-			bullet.free()
-			projectiles.erase(id)
-			continue
-		bullet.restore_motion(entry["state"])
-		entry["active"] = true
-		_restore_direct_hit(bullet, entry["tick"])
-		while entry["tick"] < tick and not bullet.finished:
-			bullet.simulate_tick(ActorStep.DT)
-			entry["tick"] += 1
-			_restore_direct_hit(bullet, entry["tick"])
-		if bullet.finished:
-			bullet.free()
-			projectiles.erase(id)
-		else:
-			entry["state"] = bullet.motion_state()
-			entry["sim_tick"] = entry["tick"]
-			entry["moved_tick"] = -1
-	acknowledge(tick)
+	for id in blasts.keys():
+		if not blasts[id]["confirmed"]: blasts.erase(id)
+	_prepare_authoritative(at_tick, states)
+	acknowledge(at_tick)
 
-# STATE 提供同 tick 弹丸锚点；不再用当前地形把出生初态逐帧追赶到锚点。
+# STATE 提供同 tick 的完整弹丸锚点，直接用于恢复。
 func _prepare_authoritative(at_tick: int, states: Dictionary) -> void:
 	for id in states:
 		if not projectiles.has(id) or projectiles[id]["bullet"].type_id != states[id]["type_id"]:
@@ -371,43 +340,11 @@ func _prepare_authoritative(at_tick: int, states: Dictionary) -> void:
 			entry["bullet"].free()
 			projectiles.erase(id)
 
-func _restore_direct_hit(bullet: BulletBase, tick: int) -> void:
-	if not bullet.explodes or bullet.direct_hit: return
-	for hit: Dictionary in hits.get(bullet.entity_id, []):
-		if hit["source"] == 0 and hit["tick"] <= tick:
-			bullet.direct_hit = true
-			if not bullet._fuse_active:
-				bullet.start_player_fuse()
-				bullet._fuse_elapsed = (tick - hit["tick"]) * ActorStep.DT
-
 func step_beams(tick: int, shooter_role: int, players: Array) -> bool:
 	self.tick = tick
 	if beams.is_empty() and hits.is_empty(): return false
 	_ensure_native()
 	return _native.step_beams(tick, shooter_role, players, TileDefs.terrain)
-
-func plan(data: Dictionary) -> void:
-	for id in data["projectiles"]:
-		_plan(id, data["projectiles"][id], data["tick"])
-		if projectiles.has(id):
-			var entry: NativeProjectileEntry = projectiles[id]
-			seed_projectile(id, data["projectiles"][id], data["tick"], entry["bullet"].shooter)
-			_reset_projectile(entry, data["projectiles"][id], data["tick"])
-
-func _plan(id: int, state: Dictionary, at_tick: int) -> void:
-	if blasts.has(id) and blasts[id]["confirmed"]:
-		return
-	var started := Time.get_ticks_usec()
-	var bullet = _make_bullet(id, state, null)
-	bullet._fuse_active = true
-	var tick := at_tick
-	while not bullet.finished:
-		tick += 1
-		bullet.simulate_tick(ActorStep.DT)
-	blasts[id] = {"id": id, "type_id": state["type_id"], "pos": bullet.position, "tick": tick, "confirmed": false}
-	bullet.free()
-	GameLog.record("explosion_plan", blasts[id].merged({"source_tick": at_tick,
-			"duration_ms": (Time.get_ticks_usec() - started) / 1000.0}))
 
 func confirm(data: Dictionary) -> Vector2i:
 	var previous: Dictionary = blasts.get(data["id"], {})
@@ -449,8 +386,6 @@ func acknowledge(tick: int) -> void:
 			projectiles.erase(id)
 		hits[id] = hits[id].filter(func(hit: Dictionary) -> bool: return hit["tick"] > tick)
 		if hits[id].is_empty(): hits.erase(id)
-	for key in _logged.keys():
-		if key[1] <= tick: _logged.erase(key)
 	for id in blasts.keys():
 		if blasts[id]["tick"] <= tick: blasts.erase(id)
 	for at in _outcomes.keys():
@@ -463,16 +398,9 @@ func step(tick: int, players: Array, first_prediction: bool) -> void:
 	_native.step(tick, players, TileDefs.terrain, first_prediction)
 	_publish_native_events()
 
-
-
 func begin_tick(at_tick: int) -> void:
 	_proxy_queries[at_tick] = []
 	_owner_modes[at_tick] = {}
-
-func _contact(bullet: BulletBase, players: Array, radius: float = BulletBase.PLAYER_HIT_RADIUS, point_only: bool = false) -> Node2D:
-	return bullet.native_contact_query(players, _player, radius, point_only,
-			Vector2(GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT),
-			_proxy_queries.get_or_add(tick, []))
 
 # 只重查远端几何，固定本地当时的候选结果；包括原先没有接触的路径。
 func proxy_queries_match(at_tick: int, proxies: Array) -> bool:
@@ -480,19 +408,9 @@ func proxy_queries_match(at_tick: int, proxies: Array) -> bool:
 	return _native.proxy_queries_match(at_tick, proxies, actors,
 			Vector2(GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT))
 
-
-func _apply_hit(id: int, tick: int, source: int, player: Node2D, pos: Vector2, force: float, damage: int = 0) -> void:
-	_ensure_native()
-	_native.apply_impact(id, tick, source, player, pos, force, damage)
-	_publish_native_events()
-
 func _confirmed_hit(id: int, tick: int, source: int, role: int) -> Dictionary:
 	_ensure_native()
 	return _native.confirmed_result_at(id, tick, source, role)
-
-func _finish_direct(bullet: BulletBase, at_tick: int) -> void:
-	_ensure_native()
-	_native.finish_contact(bullet, at_tick)
 
 func clear() -> void:
 	_native.take_notifications()
@@ -505,7 +423,6 @@ func clear() -> void:
 	beams.clear()
 	hits.clear()
 	ended.clear()
-	_logged.clear()
 	blasts.clear()
 	rewards.clear()
 	reward_changes.clear()

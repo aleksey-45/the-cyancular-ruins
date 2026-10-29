@@ -8,9 +8,7 @@ extends SceneTree
 #
 # 运行方式：
 #   godot --headless --path . -s res://tools/gen_menu_theme.gd
-# 首次生成图标后需执行资源导入并运行回归校验：
-#   godot --headless --path . -s res://tests/smoke/ui_palette_single_source_smoke.gd
-#   godot --headless --path . --quit-after 3600 res://tests/probe/menu_style_probe.tscn
+# 首次生成图标后需执行 Godot 资源导入。
 
 const OUT_THEME := "res://ui/theme/menu_theme.tres"
 const OUT_SWITCH_OFF := "res://ui/theme/switch_off.png"
@@ -98,15 +96,14 @@ func _label_variants(t: Theme, C: Dictionary) -> void:
 
 
 # 按钮样式变体
-# 分别提供主要操作、次要操作、金色高亮及强调色变体，并兼容既有通用按钮样式
+# 主要操作、次要操作、高亮与键位绑定按钮。
 # 注意：不设置 Button 基础类型样式，避免 CheckButton 等衍生控件错误继承按钮内边距与边框
 func _button_variants(t: Theme, F: GDScript, C: Dictionary) -> void:
 	_menu_btn(t, F, C, "BtnPrimary", _c(C, "C_EDGE"), _c(C, "C_TEXT"))
 	_menu_btn(t, F, C, "BtnQuiet", _c(C, "C_BORDER_DIM"), _c(C, "C_TEXT_DIM"))
 	_menu_btn(t, F, C, "BtnGold", _c(C, "C_GOLD"), _c(C, "C_GOLD"))
 	_menu_btn(t, F, C, "BtnAccent", _c(C, "C_ACCENT"), _c(C, "C_TEXT"))
-	_legacy_btn(t, F, C, "BtnLegacy", false)
-	_legacy_btn(t, F, C, "BtnLegacyQuiet", true)
+	_binding_btn(t, F, C)
 
 
 func _menu_btn(t: Theme, F: GDScript, C: Dictionary, name: String, edge: Color, fg: Color) -> void:
@@ -125,16 +122,17 @@ func _menu_btn(t: Theme, F: GDScript, C: Dictionary, name: String, edge: Color, 
 	t.set_color("font_disabled_color", name, _c(C, "C_TEXT_MUTE"))
 
 
-func _legacy_btn(t: Theme, F: GDScript, C: Dictionary, name: String, dim: bool) -> void:
+func _binding_btn(t: Theme, F: GDScript, C: Dictionary) -> void:
+	var name := "BtnBinding"
 	t.set_type_variation(name, "Button")
 	t.set_font_size("font_size", name, 32)
-	var base := _c(C, "C_BORDER_DIM") if dim else _c(C, "C_BORDER")
+	var base := _c(C, "C_BORDER")
 	t.set_stylebox("normal", name, F.call("_btn_box", _c(C, "C_BTN_FILL"), base))
 	t.set_stylebox("hover", name, F.call("_btn_box", _c(C, "C_BTN_FILL_HI"), _c(C, "C_ACCENT")))
 	t.set_stylebox("pressed", name, F.call("_btn_box", _c(C, "C_BTN_FILL_DN"), _c(C, "C_ACCENT")))
 	t.set_stylebox("focus", name, F.call("_btn_box", _c(C, "C_BTN_FILL"), _c(C, "C_ACCENT")))
 	t.set_stylebox("disabled", name, F.call("_btn_box", _c(C, "C_BTN_FILL"), _c(C, "C_BORDER_DIM")))
-	var fg := _c(C, "C_TEXT_DIM") if dim else _c(C, "C_TEXT")
+	var fg := _c(C, "C_TEXT")
 	t.set_color("font_color", name, fg)
 	t.set_color("font_hover_color", name, _c(C, "C_ACCENT"))
 	t.set_color("font_focus_color", name, fg)
@@ -266,4 +264,3 @@ func _export_switch_icons(F: GDScript) -> void:
 		var err := img.save_png(paths[i])
 		if err != OK:
 			_fails.append("保存 %s 失败，返回码 %d" % [paths[i], err])
-

@@ -24,9 +24,6 @@ var _reload_pose := false
 const RELOAD_TILT := 0.9
 const RELOAD_OFFSET := Vector2(-3.0, 7.0)
 
-func start_reload() -> void:
-	native_start_reload()
-
 func _update_reload_pose() -> void:
 	if sprite == null:
 		return
@@ -99,25 +96,12 @@ func equip(p: Node2D, inherit_cooldown: float = 0.0) -> void:
 	_fire_buffered = false
 	cancel_aim()
 
-# 武器物理逻辑由所属角色的物理帧循环显式驱动，确保回滚模拟的确定性
-# 正常推进和重放由原生角色直接调用同一武器核；此入口兼容独立武器调用。
-func tick(delta: float) -> void:
-	_sync_native_input()
-	native_tick_weapon(delta)
-
+# 绘制瞄准预览时读取当前输入；模拟步进使用原生角色已准备的输入。
 func _sync_native_input() -> void:
 	if player is NativeActorBody and not player.stepping:
 		player.input_epoch = player.input_buffer.epoch
 		native_external_input(player.is_attack_pressed(), player.is_attack_just_pressed(),
 				player.is_attack_just_released(), _aim_world_dir())
-
-func try_fire() -> void:
-	_sync_native_input()
-	native_try_fire()
-
-func fire() -> void:
-	_sync_native_input()
-	native_fire()
 
 func execute_shot(action: Dictionary) -> void:
 	_spawn_projectiles(action)
@@ -127,7 +111,7 @@ func execute_shot(action: Dictionary) -> void:
 	Sfx.play(shot_sound())
 	play_recoil()
 	var cam := get_viewport().get_camera_2d()
-	if cam != null and cam.has_method("shake"):
+	if cam != null:
 		cam.shake(cam_shake, cam_shake_time)
 
 func shot_sound() -> String:
@@ -139,8 +123,7 @@ func play_recoil() -> void:
 
 # 命中目标伤害结算
 func apply_hit(target: Node, dir: Vector2) -> void:
-	if target != null and target.has_method("hurt"):
-		target.hurt(damage, dir, impact)
+	target.hurt(damage, dir, impact)
 
 # 发射弹丸
 func _spawn_projectiles(action: Dictionary) -> void:
@@ -167,25 +150,6 @@ func _spawn_projectiles(action: Dictionary) -> void:
 		else:
 			get_viewport().add_child(b)
 
-
-func _live_projectiles() -> int:
-	if player.weapons.projectile_count.is_valid():
-		return player.weapons.projectile_count.call(type_id)
-	if player.authority_world != null:
-		var count := 0
-		for bullet: BulletBase in player.authority_world.live_bullets():
-			if bullet.shooter == player and bullet.type_id == type_id and not bullet.finished:
-				count += 1
-		return count
-	if not is_inside_tree():
-		return 0
-	var n := 0
-	for b in get_tree().get_nodes_in_group("bullet"):
-		if is_instance_valid(b) and b.source == self:
-			n += 1
-	return n
-
-
 func drive_remote_visual(aim_dir: Vector2, facing: int) -> void:
 	if muzzle == null:
 		return
@@ -196,7 +160,6 @@ func drive_remote_visual(aim_dir: Vector2, facing: int) -> void:
 	_apply_aim_pose(clamp_pitch(aim_dir, facing, pitch_clamp_deg) * float(facing), facing)
 	_aiming = false
 	_update_laser()
-
 
 func _clamped_aim_dir() -> Vector2:
 	_sync_native_input()
@@ -289,9 +252,7 @@ func _aim_world_dir() -> Vector2:
 		return Vector2(float(get_facing()), 0.0)
 	var win_size := win.get_visible_rect().size
 	var mouse := win.get_mouse_position()
-	var cam_center: Vector2 = cam.global_position
-	if cam.has_method("get_base_global_position"):
-		cam_center = cam.get_base_global_position()
+	var cam_center: Vector2 = cam.get_base_global_position()
 	var world_mouse := cam_center + (mouse - win_size * 0.5) / cam.zoom
 	var origin := player.global_position
 	var dir := world_mouse - origin

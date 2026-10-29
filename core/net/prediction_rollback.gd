@@ -33,17 +33,11 @@ var _reuse_cursors: Dictionary = {}
 var _reuse_commands: Dictionary = {}
 var _reuse_tick := -1
 var _reuse_economy: Dictionary = {}
-var effect_counts: Dictionary = {}
-var last_effect_review: Dictionary = {}
-var reuse_counts: Dictionary = {}
-var reuse_detail: Dictionary = {}
-var reuse_totals := {"full": 0, "prefix": 0, "saved_ticks": 0, "prefix_saved_ticks": 0, "replayed_ticks": 0}
 var terrain_revision := 0
 var terrain: NativeTerrain
 var time_economy: TimeEconomy
 var combat_prediction := preload("res://core/net/combat_prediction.gd").new()
-var diagnostics := {"reason": "", "replay_ticks": 0}
-var profile_steps := OS.get_cmdline_user_args().has("--prediction-profile") or OS.get_cmdline_user_args().has("--frame-trace")
+var replay_ticks := 0
 
 func bind(player: Player, replicas: Dictionary = {}, collision_anchor: ActorCollider = null) -> void:
 	_player = player
@@ -54,15 +48,7 @@ func bind(player: Player, replicas: Dictionary = {}, collision_anchor: ActorColl
 	_replicas = replicas
 	_collision_anchor = collision_anchor
 	_native_history.bind_sources(_states, combat_prediction.projectiles, _hitboxes, KEEP)
-	_bind_history_remotes()
-
-func _bind_history_remotes() -> void:
-	var records: Array = []
-	var roles := _replicas.keys()
-	roles.sort()
-	for role in roles:
-		records.append([role, _replicas[role]._forecast, _replicas[role]._ghost, _replicas[role]._respawn_tick])
-	_native_history.configure_remotes(records)
+	_prepare_colliders()
 
 func reset(new_epoch: int, ack: int, tick: int, ping_ms: int) -> void:
 	epoch = new_epoch
@@ -142,85 +128,67 @@ func reusable_tick(frame: Dictionary, invalid_from: int = 0) -> int:
 	accept_proxies(frame)
 	var tick: int = frame["tick"]
 	var own: Dictionary = frame["own"]
-	if not _states.has(tick): return reject_reuse("missing_anchor")
-	if own["epoch"] != epoch: return reject_reuse("epoch")
-	if own["rewind"]: return reject_reuse("own_rewind")
+	if not _states.has(tick): return _reject_reuse()
+	if own["epoch"] != epoch: return _reject_reuse()
+	if own["rewind"]: return _reject_reuse()
 	if _clock < tick or int(_clock) - tick > MAX_REPLAY or own["ack"] < _discarded_through:
-		return reject_reuse("clock_or_history")
+		return _reject_reuse()
 	var saved: Dictionary = _states[tick]
 	if terrain != null:
 		var error := terrain.difference(tick, saved["terrain"], frame["map_revision"])
-		if not error.is_empty(): return reject_reuse(error)
+		if not error.is_empty(): return _reject_reuse()
 	elif saved["revision"] != frame["map_revision"]:
-		return reject_reuse("map_revision")
-	var field := Player.prediction_difference(saved["players"].get(_player.role, []), own["state"])
-	if not field.is_empty(): return reject_reuse("own_state", _player.role, field)
-	# 弹道仍使用保守锚点检查；远端玩家的 HP、武器、账户不再成为本地锚点条件。
-	if saved["projectiles"] != frame["world"].get("projectiles", {}): return reject_reuse("projectiles")
+		return _reject_reuse()
+	var field := Player.prediction_difference(saved["players"][_player.role], own["state"])
+	if not field.is_empty(): return _reject_reuse()
+	# 本地锚点包含弹道；远端 HP、武器和账户不属于本地预测域。
+	if saved["projectiles"] != frame["world"]["projectiles"]: return _reject_reuse()
 	var economy_tick := 0
 	var accounts := {}
 	if frame["time"].has(_player.role): accounts[_player.role] = frame["time"][_player.role]
 	if saved["time"] != accounts:
-		if time_economy == null or not accounts.has(_player.role): return reject_reuse("accounts")
-		if accounts[_player.role]["m"] != time_economy.rules.haste_mult: return reject_reuse("account_rules")
+		if time_economy == null or not accounts.has(_player.role): return _reject_reuse()
+		if accounts[_player.role]["m"] != time_economy.rules.haste_mult: return _reject_reuse()
 		_reuse_economy = PredictionEconomy.review(time_economy, _states, _commands,
 				combat_prediction.rewards, tick, _sim_tick, [_player.role], accounts)
-		_reuse_economy["source"] = "state"
 		economy_tick = _reuse_economy["invalid_from"]
 	var buffer := InputBuffer.new()
 	buffer.restore_authority(own["epoch"], own["ack"], own["action_ack"], own["input"], tick)
 	buffer.push({"frames": history, "actions": actions}, tick)
 	_reuse_buffers[_player.role] = buffer
-	_reuse_cursors[tick] = {_player.role: _cursor(buffer)}
+	_reuse_cursors[tick] = {_player.role: buffer.capture_cursor()}
 	_reuse_tick = tick
-	var stop := "full"
 	for at in range(tick + 1, _sim_tick + 1):
 		if invalid_from > tick and at >= invalid_from:
-			stop = "event"
 			break
 		if economy_tick > tick and at >= economy_tick:
-			stop = "economy"
 			break
 		if not _commands.has(at) or not _states.has(at):
-			stop = "missing_suffix"
 			break
 		var command := buffer.take(at)
-		if not _same_command(command, _commands[at]["inputs"].get(_player.role, {}),
+		if not _same_command(command, _commands[at]["inputs"][_player.role],
 				_commands[at]["beams"].has(_player.role), _commands[at]["shots"].has(_player.role)):
-			stop = "command"
 			break
 		_sample_proxies(at, true)
-		if not ActorCollider.queries_match(_commands[at].get("actor_queries", []), _player):
-			stop = "blocking"
+		if not ActorCollider.queries_match(_commands[at]["actor_queries"], _player):
 			break
 		_sample_proxies(at)
 		if not combat_prediction.proxy_queries_match(at, _remote_players()):
-			stop = "projectile_contact"
 			break
-		_reuse_cursors[at] = {_player.role: _cursor(buffer)}
+		_reuse_cursors[at] = {_player.role: buffer.capture_cursor()}
 		_reuse_commands[at] = {_player.role: command}
 		_reuse_tick = at
 	_sample_proxies(_sim_tick)
 	if _reuse_tick < _sim_tick and not can_replay_from(_reuse_tick + 1, tick):
-		return reject_reuse("suffix_" + stop)
-	reuse_detail = {"reason": stop, "through_tick": _reuse_tick}
-	var key := "full" if _reuse_tick == _sim_tick else "prefix_" + stop
-	reuse_counts[key] = reuse_counts.get(key, 0) + 1
+		return _reject_reuse()
 	return _reuse_tick
 
-func can_reuse(frame: Dictionary) -> bool:
-	return reusable_tick(frame) == _sim_tick
-
-func reject_reuse(reason: String, role: int = 0, field: String = "") -> int:
+func _reject_reuse() -> int:
 	_reuse_tick = -1
 	_reuse_economy.clear()
-	var key := reason + ("." + field if not field.is_empty() else "")
-	reuse_counts[key] = reuse_counts.get(key, 0) + 1
-	reuse_detail = {"reason": reason, "role": role, "field": field}
 	return -1
 
 static func _same_command(a: Dictionary, b: Dictionary, beam: bool, shot: bool) -> bool:
-	if b.is_empty(): return false
 	for key in ["epoch", "ax", "held", "pressed", "released", "winst"]:
 		if a[key] != b[key]: return false
 	if a["aim"] != b["aim"] and (shot or a["aim"] == Vector2.ZERO or b["aim"] == Vector2.ZERO
@@ -244,14 +212,6 @@ func _commit_reuse(partial: bool) -> void:
 	_reuse_buffers.clear()
 	_reuse_cursors.clear()
 	_reuse_commands.clear()
-
-func checkpoint_state(tick: int) -> Dictionary:
-	var result: Dictionary = _states[tick].duplicate()
-	var players := {}
-	for role in result["players"]:
-		players[role] = Player.expand_prediction_state(result["players"][role])
-	result["players"] = players
-	return result
 
 func confirm_projectile(id: int, state: Dictionary, at_tick: int, owner: Node2D) -> bool:
 	var predicted: Dictionary = _states.get(at_tick, {}).get("projectiles", {}).get(id, {})
@@ -290,7 +250,6 @@ func review_projectile_spawn(id: int, changed: Vector2i, new_identity: bool) -> 
 
 # 收包只更新奖励账本；整批收齐后检查实际依赖，不能把新 serial 当成行为变化。
 func review_rewards() -> int:
-	last_effect_review = {}
 	if combat_prediction.reward_changes.is_empty(): return 0
 	var changes := combat_prediction.reward_changes.duplicate()
 	combat_prediction.reward_changes.clear()
@@ -306,11 +265,9 @@ func review_rewards() -> int:
 			first = mini(first, reward["tick"])
 			if not roles.has(reward["role"]): roles.append(reward["role"])
 	if roles.is_empty():
-		effect_counts["reward_unconsumed"] = effect_counts.get("reward_unconsumed", 0) + 1
 		return 0
 	var plan := PredictionEconomy.review(time_economy, _states, _commands,
 			combat_prediction.rewards, first - 1, _sim_tick, roles)
-	plan["source"] = "reward"
 	_commit_economy(plan, plan["through"])
 	return plan["invalid_from"]
 
@@ -344,13 +301,6 @@ func _commit_economy(plan: Dictionary, through: int) -> void:
 			trace["rewards"].append_array(plan["rewards"][at])
 	if through == _sim_tick and plan["states"].has(through):
 		for role in roles: time_economy.restore_account(role, plan["states"][through][role])
-	last_effect_review = {"source": plan["source"], "reason": plan["reason"],
-			"invalid_from": plan["invalid_from"], "through_tick": through, "role": plan["role"]}
-	var key: String = plan["source"] + "_" + plan["reason"]
-	effect_counts[key] = effect_counts.get(key, 0) + 1
-
-static func _cursor(buffer: InputBuffer) -> Array:
-	return buffer.capture_cursor()
 
 func can_replay_from(dirty_tick: int, anchor_tick: int = -1) -> bool:
 	var at := dirty_tick - 1
@@ -372,17 +322,14 @@ func replay_from(dirty_tick: int) -> void:
 	var at := dirty_tick - 1
 	var saved: Dictionary = _states[at]
 	var previous := _player.global_position
-	var started := Time.get_ticks_usec()
 	if terrain != null: terrain.restore_checkpoint(at)
 	_player.restore_state(Player.expand_prediction_state(saved["players"][_player.role]))
 	_input.restore_cursor(saved["cursors"][_player.role])
 	_input.push(packet().merged({"frames": history}, true), at)
 	if time_economy != null:
 		for role in saved["time"]: time_economy.restore_account(role, saved["time"][role])
-	var restored := Time.get_ticks_usec()
 	_prepare_colliders()
 	combat_prediction.restore_checkpoint(at, saved["projectiles"])
-	var prepared := Time.get_ticks_usec()
 	for tick in _states.keys():
 		if tick > at: _states.erase(tick)
 	for tick in _commands.keys():
@@ -390,26 +337,22 @@ func replay_from(dirty_tick: int) -> void:
 	for tick in _hitboxes.keys():
 		if tick > at: _hitboxes.erase(tick)
 	_sim_tick = at
-	diagnostics = {"reason": "", "replay_ticks": 0, "checkpoint_tick": at,
-			"reused_ticks": at - _authority_tick}
+	replay_ticks = 0
 	while _sim_tick < int(_clock):
 		_sim_tick += 1
-		diagnostics["replay_ticks"] += 1
+		replay_ticks += 1
 		_step(_input.take(_sim_tick), true)
 	_player.rebase_visual_step(previous)
-	var finished := Time.get_ticks_usec()
-	diagnostics.merge({"restore_ms": (restored - started) / 1000.0,
-			"combat_ms": (prepared - restored) / 1000.0, "replay_ms": (finished - prepared) / 1000.0})
 
-func reconcile(own: Dictionary, tick: int, ping_ms: int, reuse: bool = false, projectiles: Variant = null) -> bool:
+func reconcile(own: Dictionary, tick: int, ping_ms: int, reuse: bool, projectiles: Dictionary) -> bool:
 	_authority_tick = tick
 	var changed: bool = own["epoch"] != epoch
-	diagnostics = {"reason": "epoch" if changed else "", "replay_ticks": 0}
+	replay_ticks = 0
 	if changed:
 		reset(own["epoch"], own["ack"], tick, ping_ms)
 	var desired := tick + minf(ceilf(ping_ms * 0.06) + MARGIN, MAX_REPLAY)
-	if _clock < tick or int(_clock) - tick > MAX_REPLAY:
-		diagnostics["reason"] = "clock"
+	var clock_reset := _clock < tick or int(_clock) - tick > MAX_REPLAY
+	if clock_reset:
 		_clock = desired
 		history.clear()
 		sent.clear()
@@ -424,28 +367,19 @@ func reconcile(own: Dictionary, tick: int, ping_ms: int, reuse: bool = false, pr
 	sent = sent.filter(func(record: Dictionary) -> bool: return record["seq"] > own["ack"])
 	actions = actions.filter(func(action: Dictionary) -> bool:
 		return action["seq"] > own["action_ack"] and tick - action["target_tick"] <= InputBuffer.ACTION_TICKS)
-	if reuse and not changed and diagnostics["reason"].is_empty() and not own["rewind"]:
+	if reuse and not changed and not clock_reset and not own["rewind"]:
 		var through := _reuse_tick
 		var partial := through < _sim_tick
 		_commit_reuse(partial)
 		if partial: replay_from(through + 1)
 		if terrain != null: terrain.acknowledge(tick)
 		combat_prediction.acknowledge(tick)
-		diagnostics["reused_ticks"] = maxi(through - tick, 0)
-		diagnostics["reuse"] = reuse_detail
-		reuse_totals["prefix" if partial else "full"] += 1
-		reuse_totals["saved_ticks"] += diagnostics["reused_ticks"]
-		if partial: reuse_totals["prefix_saved_ticks"] += diagnostics["reused_ticks"]
-		reuse_totals["replayed_ticks"] += diagnostics["replay_ticks"]
 		_discarded_through = 0
 		return false
 	var previous := _player.global_position
-	var started := Time.get_ticks_usec()
 	_player.restore_state(own["state"])
-	var restored := Time.get_ticks_usec()
 	_prepare_colliders()
 	combat_prediction.prepare(tick, projectiles)
-	var prepared := Time.get_ticks_usec()
 	_input.restore_authority(epoch, own["ack"], own["action_ack"], own["input"], tick)
 	_input.push({"frames": history, "actions": actions}, tick)
 	_sim_tick = tick
@@ -455,18 +389,14 @@ func reconcile(own: Dictionary, tick: int, ping_ms: int, reuse: bool = false, pr
 		if at >= tick: _hitboxes.erase(at)
 	_remember_state()
 	if own["ack"] < _discarded_through or own["rewind"]:
-		diagnostics["reason"] = "rewind" if own["rewind"] else "history"
 		history.clear()
 		_sim_tick = int(_clock)
 	else:
 		while _sim_tick < int(_clock):
-			diagnostics["replay_ticks"] += 1
+			replay_ticks += 1
 			_sim_tick += 1
 			_step(_input.take(_sim_tick), true)
 	_player.rebase_visual_step(previous)
-	var finished := Time.get_ticks_usec()
-	diagnostics.merge({"restore_ms": (restored - started) / 1000.0,
-			"combat_ms": (prepared - restored) / 1000.0, "replay_ms": (finished - prepared) / 1000.0})
 	_discarded_through = 0
 	return changed or own["rewind"]
 
@@ -514,7 +444,6 @@ func _local_time_state() -> Dictionary:
 	return {_player.role: time_economy.account_payload(_player.role)}
 
 func _step(record: Dictionary, replay: bool = false) -> Array:
-	var started := Time.get_ticks_usec() if profile_steps else 0
 	var commands := {_player.role: record}
 	var beams := {}
 	var shots := {}
@@ -525,16 +454,12 @@ func _step(record: Dictionary, replay: bool = false) -> Array:
 	_players = _remote_players()
 	_players.append(_player)
 	var result: Array = []
-	var actor_us := 0
 	for role in _actor_roles:
 		trace["haste"][role] = [true, 1.0]
 		if role == _player.role:
-			var actor_started := Time.get_ticks_usec() if profile_steps else 0
 			var locked := _player._controls_locked
 			if time_economy != null: time_economy.step_haste(_player, record, ActorStep.DT)
 			result = ActorStep.step(_player, record)
-			if profile_steps: actor_us = Time.get_ticks_usec() - actor_started
-			if FrameTrace.enabled: FrameTrace.span(&"local_actor", actor_started, actor_started + actor_us)
 			trace["haste"][role] = [locked, _player.pvp_haste_mult]
 			if result.any(func(action: Dictionary) -> bool: return action["kind"] == "fire"): shots[role] = true
 			combat_prediction.shot_actions(_player, result, _sim_tick)
@@ -548,40 +473,18 @@ func _step(record: Dictionary, replay: bool = false) -> Array:
 	_players = _remote_players()
 	_players.append(_player)
 	_native_history.capture_hitboxes(_sim_tick, _players)
-	var combat_started := Time.get_ticks_usec() if profile_steps else 0
 	combat_prediction.step(_sim_tick, _players, not replay)
-	var projectiles_finished := Time.get_ticks_usec() if FrameTrace.enabled else 0
 	trace["rewards"].append_array(combat_prediction.step_rewards(_sim_tick, 0))
 	trace["rewards"].append_array(combat_prediction.step_rewards(_sim_tick, -1))
-	var terrain_started := Time.get_ticks_usec() if FrameTrace.enabled else 0
 	tick_finished.emit()
-	if FrameTrace.enabled:
-		FrameTrace.span(&"combat_simulation", combat_started, projectiles_finished)
-		FrameTrace.span(&"terrain_collision_commit", terrain_started, Time.get_ticks_usec())
 	_commands[_sim_tick] = {"inputs": commands, "beams": beams, "shots": shots, "economy": trace,
 			"actor_queries": _player.actor_queries.duplicate()}
 	_commands.erase(_sim_tick - KEEP)
-	var remember_started := Time.get_ticks_usec() if profile_steps else 0
 	_remember_state()
-	if profile_steps:
-		var finished := Time.get_ticks_usec()
-		var costs: Dictionary = diagnostics.get_or_add("step_profile", {"ticks": 0, "actors_us": 0,
-				"attacks_us": 0, "projectiles_us": 0, "remember_us": 0, "total_us": 0})
-		costs["ticks"] += 1
-		costs["actors_us"] += actor_us
-		costs["attacks_us"] += combat_started - started - actor_us
-		costs["projectiles_us"] += remember_started - combat_started
-		costs["remember_us"] += finished - remember_started
-		costs["total_us"] += finished - started
-		if FrameTrace.enabled:
-			FrameTrace.span(&"prediction_step", started, finished)
-			FrameTrace.span(&"projectile_step", combat_started, remember_started)
-			FrameTrace.span(&"remember_state", remember_started, finished)
-			FrameTrace.count(&"replay_ticks" if replay else &"forward_ticks")
 	return result
 
 func _remember_state() -> void:
 	_native_history.remember(_sim_tick, _player, _player.weapons.current_inst(),
-			_player.weapons.snapshot_inventory(true), _cursor(_input), _local_time_state(),
+			_player.weapons.snapshot_inventory(true), _input.capture_cursor(), _local_time_state(),
 			terrain_revision, CollisionBuilder.geometry_revision, terrain.generation if terrain != null else 0)
 	if terrain != null: terrain.prune_before(_sim_tick - KEEP)

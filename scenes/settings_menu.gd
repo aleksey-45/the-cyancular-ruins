@@ -110,7 +110,7 @@ func _fill_bind_grid() -> void:
 		# 键位按钮是网格单元(不是主菜单按钮列)。-  高度 40 会被按钮内边距顶到 72,
 
 		var bind_btn := Button.new()
-		bind_btn.theme_type_variation = &"BtnLegacy"
+		bind_btn.theme_type_variation = &"BtnBinding"
 		bind_btn.custom_minimum_size = Vector2(BIND_BTN_W, ROW_H)
 		bind_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		if action == "R":

@@ -33,7 +33,7 @@ static func spawn_explosion(parent: Node, center: Vector2, radius: float) -> voi
 	var points := PackedVector2Array()
 	var colors := PackedColorArray()
 	for cell: Dictionary in cells:
-		points.append(MazeGenerator.toroidal_delta_px(center, cell["pos"],
+		points.append(GridPathfinder.toroidal_delta_px(center, cell["pos"],
 				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT))
 		colors.append(_color(cell["tex"]))
 	var p := _particles(center, cells.size() * 10)

@@ -10,7 +10,7 @@ globalThis.Editor = (function () {
 
   var app = {
     r: null, canvas: null, map: null, name: null,
-    raw: null, sourceFormat: null, tileDefs: null,
+    raw: null, tileDefs: null,
   };
 
   function $(id) { return document.getElementById(id); }
@@ -29,18 +29,9 @@ globalThis.Editor = (function () {
 
   function status(msg) { var el = $('status-msg'); if (el) el.textContent = String(msg); }
 
-  var errorSinkFn = null;
-  function setErrorSink(fn) { errorSinkFn = (typeof fn === 'function') ? fn : null; }
   function reportError(text, err) {
-    var custom = errorSinkFn;
-    try {
-      if (custom) custom(String(text), err);
-      else status(text);
-    } catch (e) {
-      // 报错通道自己坏了也不许把异常扔回调用方(那就成了第二处"看得见才怪")。
-      if (typeof console !== 'undefined') console.error(text, e);
-    }
-    if (!custom && typeof console !== 'undefined') console.error(text, err);
+    status(text);
+    if (typeof console !== 'undefined') console.error(text, err);
   }
 
   // 面板与渲染里抛出的异常必须可见:症状"按了没反应"最难查,而静默捕获更糟。
@@ -62,24 +53,11 @@ globalThis.Editor = (function () {
   function nameFromFile(fileName) {
     return String(fileName == null ? '' : fileName).replace(/\.cyrm$/i, '');
   }
-  function detectFormat(bytes) {
-    var b = (bytes && bytes.length !== undefined) ? bytes : null;
-    if (b && b.length >= 4 && b[0] === 0x43 && b[1] === 0x59 && b[2] === 0x52 && b[3] === 0x4D) return 'v4';
-    var text = new TextDecoder('utf-8', { fatal: false }).decode(b ? b.subarray(0, 4096) : new Uint8Array(0));
-    return Core.isV3Text(text) ? 'v3' : 'legacy';
-  }
   function mapFromBytes(fileName, bytes) {
-    var fmt = detectFormat(bytes);
-    if (fmt === 'v4') {
-      return Io.decodeMap(bytes).then(function (map) {
-        map.name = nameFromFile(fileName);          // 见 nameFromFile 的说明
-        return { map: map, sourceFormat: 'v4' };
-      });
-    }
-    var text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
-    var map = Core.migrateV3(Core.parseV3Text(text));
-    map.name = nameFromFile(fileName);
-    return Promise.resolve({ map: map, sourceFormat: fmt });
+    return Io.decodeMap(bytes).then(function (map) {
+      map.name = nameFromFile(fileName);
+      return { map: map };
+    });
   }
 
   var TOOLS = ['brush', 'rect', 'bucket', 'eraser', 'line', 'select', 'picker', 'gradient'];
@@ -427,13 +405,7 @@ globalThis.Editor = (function () {
         : ('出生点落在图外 (' + d.x + ',' + d.y + '),已移除');
     });
   }
-  // ── 改尺寸面板(规格 A10;这是 resizeMap / wholeDiff / applyEntry 的 whole 分支
-  //    在生产里的唯一入口)──
-  // 尺寸闸只此一条路:applySize → resizeMap → createEmptyMap → Core.clampMapSize。
-  //    这里不再写一次 Core.createMap 调用 —— 相位 ⑪ 数着那个调用点(恰好两处),而且
-  //    第二个造图入口就是 A8 原样复发(输 99999 分配巨图卡死)。
-  // 输入框回显只在这一个函数里写:它是"DOM 与状态一致"那条纪律的尺寸版 ——
-  //    输了 99999 而框里仍写着 99999、图却已经是 400×300,是同一类"看到的与发生的是两回事"。
+  // 尺寸统一经 resizeMap 钳制，输入框回显实际地图尺寸。
   function sizeInputsSync() {
     if (!app.map) return;
     var w = $('size-w'), h = $('size-h');
@@ -457,9 +429,7 @@ globalThis.Editor = (function () {
     if (!app.map) { status('先打开一张地图'); return null; }
     var wEl = $('size-w'), hEl = $('size-h');
     var curW = Core.cellsWOf(app.map), curH = Core.cellsHOf(app.map);
-    // 闸 1:用户输入一律钳制,不报错回滚(NaN / 0 / 99999 都落到合法区间)
-    // 但"没给数"与"给了个数"是两回事(Minor 6):没给的那一项按当前尺寸走,
-    //    不是按 clampMapSize 的默认 125/75(那是造新图的语义)。见 sizeInputNum。
+    // 未输入有效数字的维度保留当前尺寸，其余值钳制到合法范围。
     var wNum = sizeInputNum(wEl), hNum = sizeInputNum(hEl);
     var c = Core.clampMapSize(wNum === null ? curW : wNum, hNum === null ? curH : hNum);
     var ig = [];
@@ -1038,8 +1008,7 @@ globalThis.Editor = (function () {
         if (app.st.panning) {
           var dxp = ev.clientX - app.st.panning.x, dyp = ev.clientY - app.st.panning.y;
           app.st.panning.x = ev.clientX; app.st.panning.y = ev.clientY;
-          // 视图入口返回分帧重建派生出来的 promise:交回给 guard 收口(相位 ⑪ 的
-          //   逐行规则同源 —— 漏了就是"按了没反应"只在控制台留一行)。
+          // 将异步重建交给 guard 处理拒绝。
           return Promise.resolve(app.r.panBy(dxp, dyp));
         }
         var hit = hitOf(ev);
@@ -1253,78 +1222,13 @@ globalThis.Editor = (function () {
     statusLine();
   }
 
-  var v3Confirmed = false;
-  function needsV3Confirm(srcFmt, confirmed) {
-    if (!srcFmt) return false;
-    return (srcFmt === 'v3' || srcFmt === 'legacy') && !confirmed;
-  }
-  var v3BackedUp = new Set();
-  function needsV3Backup(srcFmt, fileName, backed) {
-    // fileName 为空 = 这张图还没落过盘(新建后直接 Ctrl+S)⇒ 磁盘上没有"原文"可备,
-    //   本来也不会写备份(下面还要看 app.raw)。在这里挡一道,免得往表里塞一个空键。
-    if (!srcFmt || !fileName) return false;
-    if (!(srcFmt === 'v3' || srcFmt === 'legacy')) return false;
-    return !backed.has(fileName);
-  }
   function freshName(base) { return Core.sanitizeName(base) + '.cyrm'; }
-  var V3_BACKUP_SUFFIX = '.v3.bak';
-  var V3_BACKUP_STEM_MAX = 24;
-  function fnv1a32(str) {
-    var h = 0x811c9dc5;
-    for (var i = 0; i < str.length; i++) {
-      h = h ^ str.charCodeAt(i);
-      // Math.imul 才是 32 位乘法:h * 16777619 在双精度里溢出,低位不可靠。
-      h = Math.imul(h, 0x01000193) >>> 0;
-    }
-    return h >>> 0;
-  }
-  function v3BackupName(name) {
-    var full = String(name == null ? '' : name);
-    // 自己按服务器的字符集收干净:种子名可能来自 freshName(它走
-    //   Core.sanitizeName,放行汉字),而汉字不在服务器的 [A-Za-z0-9_\-] 里 ——
-    //   不过滤的话备份会被 400 拒掉,而"备份写不进去就不写盘"会把保存整个卡死。
-    //   顺带把基名里的 . 也收掉:改写后的服务器校验仍然只许基名是 [A-Za-z0-9_-]
-    //     (放行的只有一个后缀),留着 . 一样会被 400。
-    var base = full.replace(/\.cyrm$/i, '').replace(/[^A-Za-z0-9_-]/g, '');
-    if (!base) base = 'map';
-    var hex = fnv1a32(full).toString(16);
-    while (hex.length < 8) hex = '0' + hex;
-    return base.slice(0, V3_BACKUP_STEM_MAX) + '_' + hex + V3_BACKUP_SUFFIX;
-  }
-  // 这个名字是不是一份原文备份(Minor 2):备份不是地图 —— 它的内容是这张图
-  //    原文(v3 文本)的最后一手退路,把它当保存目标就地覆盖 = 退路换成 v4 且名字漂成
-  //    <名>v3bak.v3.bak(不报错)。库列表与 saveCurrent 两处都拿它当判据。
-  function isBackupName(name) {
-    var s = String(name == null ? '' : name);
-    if (s.length <= V3_BACKUP_SUFFIX.length) return false;
-    return s.slice(-V3_BACKUP_SUFFIX.length).toLowerCase() === V3_BACKUP_SUFFIX;
-  }
   function saveTargetName(asNew) {
     if (!app.map) return null;
     return asNew ? freshName((app.map.name || 'map') + '_copy') : app.name;
   }
   function saveCurrent(asNew) {
     if (!app.map) { status('先打开一张地图'); return Promise.resolve(); }
-    if (!asNew && isBackupName(app.name)) {
-      status('这是一份原文备份(' + app.name + '),不是地图 —— 不能就地覆盖它。请用「另存为」另起一个名字');
-      return Promise.resolve();
-    }
-    var backupName = null, backupBytes = null, backupKey = null;
-    if (needsV3Backup(app.sourceFormat, app.name, v3BackedUp)) {
-      backupBytes = app.raw || null;                 // 磁盘上那份的原文(打开时留下的)
-      backupName = backupBytes ? v3BackupName(app.name) : null;
-      // 记账的键取此刻的名字(下面 app.name = name 会把它改掉,那时再读就不是同一个文件了)。
-      backupKey = backupName ? app.name : null;
-    }
-    if (needsV3Confirm(app.sourceFormat, v3Confirmed)) {
-      var okGo = window.confirm(
-        '原文件是 v3 文本,保存会把它转成 v4 二进制(不可逆)。\n' +
-        '当前游戏支持 v4；旧版编辑器可能无法再打开转换后的文件。\n' +
-        (backupName ? ('保存前会先把原文备份到 ' + backupName + '。\n') : '') +
-        '(本次会话不再询问)');
-      if (!okGo) { status('已取消保存(磁盘上那份没有被碰过)'); return Promise.resolve(); }
-      v3Confirmed = true;
-    }
     var name = saveTargetName(asNew);
     if (!name) return Promise.resolve();
     status('保存 ' + name + ' …');
@@ -1336,22 +1240,11 @@ globalThis.Editor = (function () {
     //    (不设头 = 浏览器给 Blob 的默认类型 ⇒ 服务器 415 ⇒ "点了保存、磁盘上那份没变",
     //    而且不报错回滚)。这里再拼一份 fetch 就是第二个出口,迟早只改一处。
     return encodeForWrite(app.map).then(function (bytes) {
-      var pre = backupName
-        ? putMapBytes(backupName, backupBytes).then(function () {
-            // 记账只能在备份真的落盘之后:写失败时保存整个中止、sourceFormat 仍是 v3
-            //    ⇒ 用户重试那一次必须再写一遍备份。提前记账会让重试跳过备份、直接把 v4
-            //    写下去 —— 那正是这份备份要防的事(相当于备份从来没存在过)。
-            v3BackedUp.add(backupKey);
-          }, function (e) {
-            throw new Error('原文备份写不进去(' + backupName + '):' + msgOf(e) +
-                            ' —— 没有动磁盘上那一份');
-          })
-        : Promise.resolve();
-      return pre.then(function () { return putMapBytes(name, bytes); })
+      return putMapBytes(name, bytes)
                 .then(function (out) {
         app.name = name;
         app.raw = bytes;
-        app.sourceFormat = 'v4';
+
         dirty = false;                 // 只有真的写成功了才清(见 dirty 那段的纪律)
         // 草稿盘那条也标干净(同一个"真的成功了"):它与磁盘上那份现在同源,
         //   下次打开不该再问一次 —— 与上面那行同一条纪律、同一处。
@@ -1369,9 +1262,7 @@ globalThis.Editor = (function () {
         //   「保存失败」,而保存其实成功了(徽标已经翻成已保存,两句话又打起来)。
         return Promise.resolve(guard('库列表刷新', function () { return refreshLibrary(); }))
                .then(function () {
-                 // 备份名报出来:用户得知道退路在哪(它在库列表里也看得见)。
-                 status('已保存 ' + out.name + '(' + out.size + ' 字节)' +
-                        (backupName ? ',原文备份 ' + backupName : ''));
+                 status('已保存 ' + out.name + '(' + out.size + ' 字节)');
                });
       });
     }).catch(function (e) {
@@ -1529,12 +1420,7 @@ globalThis.Editor = (function () {
       try { req = indexedDB.open(DRAFT_DB, DRAFT_DB_VERSION); } catch (e) { resolve(null); return; }
       req.onupgradeneeded = function () {
         var db = req.result;
-        // 两条路都要把索引建出来:全新库那条是 createObjectStore 之后建,而已经在用的库
-        //    升上来时 store 已经在了(而且里面还有老记录)—— 那时要经升级事务拿到它、补建索引。
-        //    只建一条路的话,老库升上来之后那两条查询读不到任何东西(索引不存在 ⇒ 游标
-        //    永远 null),而症状是"崩溃快照永远不提示 / 清理永远不生效" —— 一个字都不报。
-        //    老记录不需要迁移:索引是 IDB 自己按 keyPath 从现有记录里抽建的(稀疏索引),
-        //      它们的 savedAt 本来就有(三处写入点都写)。
+        // 新建和已有对象仓库都必须具有 savedAt 索引，供恢复查询和过期清理使用。
         var st = db.objectStoreNames.contains(DRAFT_STORE)
           ? req.transaction.objectStore(DRAFT_STORE)
           : db.createObjectStore(DRAFT_STORE, { keyPath: 'key' });
@@ -1635,10 +1521,7 @@ globalThis.Editor = (function () {
     draftRev++;
     scheduleDraftSave();
   }
-  // 防抖:最后一笔之后 DRAFT_DEBOUNCE_MS 才落盘(每笔都写盘 = 每笔都过一次编码 worker)
-  // return:把落盘那条链交回去。定时器回调的返回值本来没人接,交回去是为了让
-  //   "防抖到点之后到底写成了没有"可以被 await(否则只能靠数拍数猜 —— 那会变成
-  //   "看机器忙不忙",editor_smoke 相位 ⑮b 的上一版就是那样红的)。
+  // 最后一笔之后延迟 DRAFT_DEBOUNCE_MS 保存，避免每笔都调用编码 worker。
   function scheduleDraftSave() {
     if (!app.map || !app.db) return;             // 草稿盘不可用:连定时器都不排
     if (draftTimer) clearTimeout(draftTimer);
@@ -1671,7 +1554,7 @@ globalThis.Editor = (function () {
     // 进编码之前取:内容的来源,以及这份内容属于谁
     var mapAtEntry = app.map;
     var key = currentDraftKey();
-    var name = app.name, name2 = app.map.name, fmt = app.sourceFormat;
+    var name = app.name, name2 = app.map.name;
     return encodeForWrite(mapAtEntry).then(function (bytes) {
       // 编码期间可能已经有了一次 Ctrl+S:它把这一版(或更新的一版)写进了真文件,
       //    并把草稿标干净 —— 这时再写回一份 dirty 的草稿,下次打开就会弹一次假的
@@ -1685,13 +1568,13 @@ globalThis.Editor = (function () {
       //    "刚打开、一笔没画"的那张图连一条脏记录都不会留下 ⇒ 也不会在下一次开机弹提示)。
       if (app.map !== mapAtEntry) return null;
       var rec = { key: key, name: name, name2: name2, bytes: bytes,
-                  sourceFormat: fmt, savedAt: Date.now(), dirty: true };
+                  savedAt: Date.now(), dirty: true };
       return idbPut(app.db, DRAFT_STORE, rec).then(function () {
         draftSavedRev = rev;             // 能走到这里 ⇒ 上面那道判据刚过,故这一定是推进
         lastAutoSaveAt = rec.savedAt;
       });
     }).then(function () {
-      renderSaveState();               // 状态栏那一格由草稿盘接管(handoff 2)
+      renderSaveState();
       return pruneDrafts();
     }).catch(function (e) {
       status('草稿盘写入失败:' + msgOf(e) + '(作品仍在,请尽快 Ctrl+S 写盘)');
@@ -1767,7 +1650,7 @@ globalThis.Editor = (function () {
       if (!yes) { status('草稿仍在草稿盘里(屏幕上的图没被动过)'); return false; }
       return Io.decodeMap(rec.bytes).then(function (map) {
         map.name = rec.name2 || map.name || '';
-        app.map = map; app.sourceFormat = 'v4';
+        app.map = map;
         if (rec.name) app.name = rec.name;
         dirty = true;                       // 屏幕上这份 ≠ 磁盘上那份 ⇒ 必须说「未保存」
         guard('草稿恢复', function () { return app.r.setMap(map); });
@@ -1792,10 +1675,7 @@ globalThis.Editor = (function () {
     //   u.zoom === 0 是"没存过缩放"的哨兵 ⇒ 保持 setMap 的 fit。
     var cur = app.r.view().zoom;
     if (u.zoom > 0 && cur > 0 && Math.abs(u.zoom - cur) > 1e-6) {
-      // guard 收口:视图入口返回的是分帧重建派生出来的 promise,抛在任务回调里
-      //   是一次拒绝,同步 try/catch 接不住(见 guard 的说明)。
-      // guard( 与那次调用必须同一行(editor_smoke 相位 ⑪ 的扫描口径就是按行看的)
-      //   —— 拆成两行的话它就是"没被收口的视图入口",而那正是"按了没反应"那条通道。
+      // 分帧重建的错误以 Promise 拒绝返回，由 guard 处理。
       guard('恢复缩放', function () { return app.r.setZoomAt(app.canvas.width / 2, app.canvas.height / 2, u.zoom / cur); });
     }
     setLayer(u.layer);
@@ -1803,11 +1683,7 @@ globalThis.Editor = (function () {
     app.r.setTorus(u.torus); app.r.setDimOthers(u.dimOthers);
     app.st.tool = u.tool;
     app.st.brushSize = u.brushSize;
-    // 与上面那条 setLayer 是同一个模式、同一个理由:状态改了就必须把 DOM 也搬过去。
-    //    app.st.tool 只是状态,工具条那一排按钮的高亮(#toolbar .tool 上的 on)
-    //    由 selectToolButton() 画 —— 少了这一句,重载之后高亮钉在 editor.html 写死的画笔上,
-    //    而实际生效的是存下来的那个工具(比如「直线」)。用户看到的与正在发生的又是两回事,
-    //    而且一个字都不报(与 setLayer 那条同属"DOM 必须与状态一致")。
+    // 恢复工具状态后同步按钮高亮。
     selectToolButton();
     if (u.selectedTexture > 0) {
       app.st.desc = Core.packDesc(clampTexture(u.selectedTexture, Render.atlasCapacity()),
@@ -1920,7 +1796,7 @@ globalThis.Editor = (function () {
       }
       return Io.decodeMap(crash.bytes).then(function (map) {
         map.name = crash.name2 || '';
-        app.map = map; app.name = crash.name; app.sourceFormat = 'v4';
+        app.map = map; app.name = crash.name;
         dirty = true;                  // 屏幕上这份 ≠ 磁盘上那份(不回血:该 Ctrl+S 了)
         guard('崩溃恢复', function () { return app.r.setMap(map); });
         refreshStatus(); statusLine();
@@ -2078,7 +1954,7 @@ globalThis.Editor = (function () {
       if (!name) return;
       var m = createEmptyMap(name, 125, 75);       // 尺寸只经这一个闸
       app.map = m; app.name = freshName(name);
-      app.sourceFormat = 'v4';
+
       undoHistory = createHistory({});
       markDirty();
       guard('新建地图', function () { return app.r.setMap(m); });
@@ -2091,7 +1967,7 @@ globalThis.Editor = (function () {
       copy.name = (app.map.name || 'map') + '_copy';
       app.map = copy;
       app.name = freshName(copy.name);
-      app.sourceFormat = 'v4';
+
       undoHistory = createHistory({});
       markDirty();                    // 同上:副本也只活在内存里(还没写盘)
       guard('复制地图', function () { return app.r.setMap(copy); });   // 同上:分帧重建的 promise
@@ -2212,7 +2088,7 @@ globalThis.Editor = (function () {
     });
   }
 
-  // ── 打开地图(拉字节 → 迁移/解码 → 挂到渲染器)──
+  // ── 打开地图(拉字节 → 解码 → 挂到渲染器)──
   function openMap(name) {
     status('打开 ' + name + ' …');
     return mapRequest('/api/map?p=' + encodeURIComponent(name))
@@ -2227,7 +2103,7 @@ globalThis.Editor = (function () {
       .then(function (got) {
         var out = got.out;
         app.raw = got.bytes;
-        app.map = out.map; app.name = name; app.sourceFormat = out.sourceFormat;
+        app.map = out.map; app.name = name;
         dirty = false;                 // 打开 = 屏幕上这份与磁盘上那份同源(见 dirty 那段)
         // 同一个纪律的另两笔账也要一起归位,漏了哪一笔都是"不报错但看得见":
         //   ① draftSavedRev 推到当前 rev —— 上一张图留下的那个还在飞的防抖定时器到点
@@ -2242,7 +2118,7 @@ globalThis.Editor = (function () {
         lastAutoSaveAt = 0;
         return Promise.resolve(app.r.setMap(app.map)).then(function () {
           refreshStatus();
-          status('已打开 ' + name + '(' + out.sourceFormat + ')');
+          status('已打开 ' + name);
         });
       });
   }
@@ -2284,7 +2160,7 @@ globalThis.Editor = (function () {
       var ul = $('lib-list');
       if (!ul) return;
       ul.innerHTML = '';
-      var rows = (data.maps || []).filter(function (mm) { return !isBackupName(mm.name); });
+      var rows = (data.maps || []);
       if (!rows.length) { ul.textContent = globalThis.CYRM_OFFLINE ? '打开地图文件或选择地图目录' : 'maps/ 下没有 .cyrm'; return; }
       rows.forEach(function (mm) {
         var li = document.createElement('li');
@@ -2323,10 +2199,6 @@ globalThis.Editor = (function () {
     installInteraction();
     var ro = new ResizeObserver(function () { guard('resize', function () { return app.r.resize(); }); });
     ro.observe(app.canvas.parentElement);
-    var selftestBtn = $('btn-selftest');
-    if (selftestBtn) {
-      selftestBtn.addEventListener('click', runSelfTest);
-    }
     var fitBtn = $('btn-fit');
     if (fitBtn) fitBtn.addEventListener('click', function () { guard('fit', function () { return app.r.fit(); }); });
 
@@ -2357,180 +2229,13 @@ globalThis.Editor = (function () {
       applyUiState();
       installUiStateSave();
       return null;
-    }).then(function () {
-      if (new URLSearchParams(location.search).has('selftest')) return runSelfTest();
-      return null;
     }).catch(function (e) {
       status('启动失败:' + msgOf(e));
     });
   }
 
-  function runSelfTest() {
-    return guard('自检', function () {
-      return selfTest().then(function (line) { status(line); return line; });
-    });
-  }
-
-  function probeLocalStorage() {
-    try {
-      var k = 'cyrm.selftest', v = String(nowMs());
-      localStorage.setItem(k, v);
-      var same = localStorage.getItem(k) === v;
-      localStorage.removeItem(k);
-      return same;
-    } catch (e) { return false; }
-  }
-  // IndexedDB:真开一次库(只看 typeof 是查不出"被策略拦/隐私模式"的)。
-  //   超时也必须收口:open 被拦时可能一个回调都不来,那时自检那一行永远不出现,
-  //     看着像按钮坏了 —— 所以 2 秒没有回调就判失败并把原因写出来。
-  function probeIndexedDb() {
-    return new Promise(function (resolve) {
-      var done = false;
-      var finish = function (okv, why) {
-        if (done) return;
-        done = true;
-        resolve({ ok: okv, why: why || '' });
-      };
-      if (typeof indexedDB === 'undefined' || !indexedDB) { finish(false, '本环境没有 indexedDB'); return; }
-      var timer = setTimeout(function () { finish(false, '2 秒内没有任何回调(被拦?)'); }, 2000);
-      var req;
-      try { req = indexedDB.open('cyrm.selftest', 1); }
-      catch (e) { clearTimeout(timer); finish(false, msgOf(e)); return; }
-      req.onupgradeneeded = function () { /* 建库,不需要任何表 */ };
-      req.onerror = function () { clearTimeout(timer); finish(false, 'open 失败'); };
-      req.onblocked = function () { clearTimeout(timer); finish(false, 'open 被阻塞'); };
-      req.onsuccess = function () {
-        clearTimeout(timer);
-        var db = req.result;
-        try { db.close(); } catch (e) { /* 关不上不影响判据 */ }
-        // 顺手删掉自检建的库:不在用户机器上留垃圾(删不掉同样不影响判据)。
-        try { indexedDB.deleteDatabase('cyrm.selftest'); } catch (e) { /* 同上 */ }
-        finish(true, '');
-      };
-    });
-  }
-
-  function selfTest() {
-    var lines = [];
-    var fails = 0;
-    var check = function (name, cond, extra) {
-      if (cond) { lines.push('  ok  - ' + name); }
-      else { fails++; lines.push('  FAIL - ' + name + (extra ? '(' + extra + ')' : '')); }
-    };
-    return Promise.resolve().then(function () {
-      check('Worker 可用', Io.workerAvailable());
-      check('图集已加载', Render.atlasInfo() !== null,
-            Render.atlasInfo() ? '' : 'structure.png 没加载成功');
-      check('图集容量 > 0', Render.atlasCapacity() > 0, '实得 ' + Render.atlasCapacity());
-      check('工具内核就绪(8 个工具)', TOOLS.length === 8 && typeof applyTool === 'function');
-      try {
-        var tm = createEmptyMap('selftest-tools', 2, 1);
-        var td = applyTool({ map: tm, layer: Core.LAYER_SCENE, desc: Core.neutralDesc(1),
-                             rgba: 0xFF00FFFF, brushSize: 1, selection: null, descOnly: false },
-                           'brush', { kind: 'cell', x: 0, y: 0 }, null);
-        check('落笔产出差量(整格 16 个子格)', !!td && td.idx.length === 16,
-              td ? ('实得 ' + td.idx.length) : '没有产出差量');
-      } catch (eTool) { check('落笔产出差量(整格 16 个子格)', false, msgOf(eTool)); }
-      var savedSinkST = errorSinkFn;
-      var sinkGot = null;
-      setErrorSink(function (t) { sinkGot = t; });
-      guard('自检', function () { throw new Error('自检用的假错'); });
-      setErrorSink(savedSinkST);
-      check('guard 的失败上报到 sink(可见)', !!sinkGot && sinkGot.indexOf('自检用的假错') >= 0,
-            sinkGot || '没有上报 —— 那就成了"按了没反应"');
-      check('地图已打开', app.map !== null);
-      check('画布有尺寸', app.canvas.width > 1 && app.canvas.height > 1,
-            app.canvas.width + '×' + app.canvas.height);
-      check('localStorage 可读写', probeLocalStorage());
-      if (app.map) {
-        // 真正的性质是"map.name 等于文件名去掉后缀"(v4 body 里没有 name 字段)
-        check('map.name 来自文件名', app.map.name === nameFromFile(app.name),
-              'name=' + app.map.name + ' / 文件 ' + app.name);
-        check('缩略图已建', app.r.stats().thumbsBuilt > 0);
-      }
-      return probeIndexedDb().then(function (idb) {
-        check('IndexedDB 可打开', idb.ok, idb.why);
-        // 与上一条不是同一件事:上面那条开的是自检自己那个临时库(证明"能开"),
-        //   这一条说的是草稿盘这个库有没有真开出来 —— 它打不开时编辑器照常能用,
-        //   只是自动存那一层静默缺席,所以必须有一条能一行看到的读数。
-        check('草稿盘已打开(app.db)', app.db !== null && app.db !== undefined,
-              app.db ? '' : '草稿盘打不开:自动存不会发生,只能靠 Ctrl+S');
-        return Io.ping().then(function (p) {
-          check('Worker ping 有应答', p && p.pong === true);
-          // 端到端:真浏览器里的 Worker + CompressionStream 往返一次
-          var m = Core.createMap('selftest', 4, 3);
-          for (var i = 0; i < m.layers[Core.LAYER_SCENE].desc.length; i++) {
-            m.layers[Core.LAYER_SCENE].desc[i] = Core.neutralDesc(1);
-          }
-          return Io.encodeMap(m).then(function (bytes) {
-            check('浏览器里 encodeMap 产出 "CYRM"', bytes[0] === 0x43 && bytes[1] === 0x59);
-            check('压缩路径(compression=1)', bytes[5] === 1);
-            return Io.decodeMap(bytes).then(function (back) {
-              var a = back.layers[Core.LAYER_SCENE].desc;
-              var same = a.length === m.layers[Core.LAYER_SCENE].desc.length;
-              for (var k = 0; same && k < a.length; k++) if (a[k] !== m.layers[Core.LAYER_SCENE].desc[k]) same = false;
-              check('经 Worker 往返逐格一致', same);
-            });
-          });
-        });
-      });
-    }).then(function () {
-      var head = fails === 0 ? 'SELFTEST OK' : ('SELFTEST FAIL: ' + fails + ' 条');
-      if (typeof console !== 'undefined') console.log(head + '\n' + lines.join('\n'));
-      return head + ' · 共 ' + lines.length + ' 条检查';
-    });
-  }
-
   return {
-    boot: boot, bootLoad: bootLoad, guard: guard, status: status, msgOf: msgOf,
-    setErrorSink: setErrorSink, reportError: reportError,
-    nameFromFile: nameFromFile, detectFormat: detectFormat, mapFromBytes: mapFromBytes,
-    openMap: openMap, openFromUrl: openFromUrl, refreshLibrary: refreshLibrary,
-    putMapBytes: putMapBytes,
-    selfTest: selfTest, refreshStatus: refreshStatus,
-    app: app,
-
-    TOOLS: TOOLS, TOOL_LABELS: TOOL_LABELS, DERIVED_TEXTURES: DERIVED_TEXTURES,
-    createEmptyMap: createEmptyMap, resizeMap: resizeMap, resizeReportLines: resizeReportLines,
-    applySize: applySize, sizeInputsSync: sizeInputsSync, adoptMapInto: adoptMapInto,
-    optCompress: optCompress, encodeForWrite: encodeForWrite, DEFAULT_COMPRESS: DEFAULT_COMPRESS,
-    texturePalette: texturePalette, clampTexture: clampTexture, validateLines: validateLines,
-    paintCells: paintCells, valueFor: valueFor, regionCells: regionCells, inRect: inRect,
-    idxOf: idxOf, strokePoints: strokePoints, lineTargets: lineTargets, toSub: toSub,
-    constrainLine: constrainLine, constrainSquare: constrainSquare,
-    applyTool: applyTool, pickAt: pickAt,
-    createBucketJob: createBucketJob, createGradientJob: createGradientJob, lerpRGBA: lerpRGBA,
-    snapshotSpawns: snapshotSpawns, spawnDiff: spawnDiff, spawnIndexAt: spawnIndexAt,
-    addSpawn: addSpawn, removeSpawn: removeSpawn, clearSpawns: clearSpawns,
-    commandFor: commandFor, hasSelection: hasSelection, isTypingTarget: isTypingTarget,
-    MAX_UNDO: MAX_UNDO, MAX_UNDO_BYTES: MAX_UNDO_BYTES, bytesOfEntry: bytesOfEntry,
-    createHistory: createHistory, snapshotMap: snapshotMap, bytesOfSnapshot: bytesOfSnapshot,
-    wholeDiff: wholeDiff, applyEntry: applyEntry, diffCells: diffCells, cellCountOf: cellCountOf,
-    copyRegion: copyRegion, clipSize: clipSize, pasteRegion: pasteRegion,
-    moveRegion: moveRegion, mirrorRegion: mirrorRegion, mirrorSelection: mirrorSelection,
-    installInteraction: installInteraction, runJob: runJob, statusLine: statusLine,
-    pushAndShow: pushAndShow, doUndo: doUndo, doRedo: doRedo, hitOf: hitOf,
-    brushSteps: function () { return BRUSH_STEPS.slice(); }, setBrush: setBrush, setLayer: setLayer,
-
-    buildPanels: buildPanels, syncPanelForLayer: syncPanelForLayer,
-    saveCurrent: saveCurrent, saveTargetName: saveTargetName,
-    needsV3Confirm: needsV3Confirm, needsV3Backup: needsV3Backup,
-    v3BackupName: v3BackupName, isBackupName: isBackupName, freshName: freshName,
-    runSelfTest: runSelfTest, dropStaleSelection: dropStaleSelection,
-    importEnemyTypes: importEnemyTypes, exportReport: exportReport, showExportReport: showExportReport,
-    spawnAt: spawnAt,
-
-    DRAFT_DB: DRAFT_DB, DRAFT_STORE: DRAFT_STORE, CRASH_STORE: CRASH_STORE,
-    UI_STATE_KEY: UI_STATE_KEY, MAX_LIB: MAX_LIB, DRAFT_DEBOUNCE_MS: DRAFT_DEBOUNCE_MS,
-    draftKey: draftKey, crashIsNewer: crashIsNewer, evictPlan: evictPlan,
-    uiStateDefaults: uiStateDefaults, readUiState: readUiState, writeUiState: writeUiState,
-    openDraftStore: openDraftStore, saveDraft: saveDraft, loadDraft: loadDraft,
-    installCrashFence: installCrashFence, checkCrashSlot: checkCrashSlot,
-    applyUiState: applyUiState, persistUi: persistUi, installUiStateSave: installUiStateSave,
-    // 下面四个是"接线"那一半的可驱动面:handoff 3 要的是真实调用点(落笔 → 防抖
-    //   落盘;启动 → 询问恢复),而它们只在浏览器里跑得到 —— node 侧靠 export 出来的
-    //   这四个入口 + 一个假 IndexedDB 把同一条链真跑一遍(见 editor_smoke 相位 ⑮b)。
-    markDirty: markDirty, scheduleDraftSave: scheduleDraftSave, flushDraft: flushDraft,
-    markDraftSaved: markDraftSaved, offerDraft: offerDraft,
+    boot: boot, status: status, app: app,
+    openMap: openMap, refreshLibrary: refreshLibrary,
   };
 })();

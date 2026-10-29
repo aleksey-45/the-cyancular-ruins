@@ -37,7 +37,6 @@ var _counting := false
 var _countdown := 0.0
 var _punch := 0.0
 
-
 func _ready() -> void:
 	PixelFont.shared()
 
@@ -98,11 +97,6 @@ func start_countdown(seconds: float, sub_text: String) -> void:
 	sub.text = sub_text
 	_set_big_text(str(maxi(ceili(_countdown), 1)))
 
-
-func stop_countdown() -> void:
-	_counting = false
-
-
 func is_counting() -> bool:
 	return _counting
 
@@ -139,4 +133,3 @@ func _apply_punch() -> void:
 		return
 	_panel.pivot_offset = _panel.size * 0.5
 	_panel.scale = Vector2.ONE * (1.0 + PUNCH_SCALE * _punch)
-

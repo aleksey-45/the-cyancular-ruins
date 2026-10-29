@@ -1,12 +1,11 @@
 class_name MapFormatV4
 extends RefCounted
 
-# .cyrm v4 二进制地图格式编解码模块。
+# .cyrm v4 二进制地图读取。
 # 包含 20 字节明文文件头、Deflate 解压缩、CRC32 校验以及四图层二进制数据解析。
 # 游戏侧核心消费场景层数据：支持通过 flatten_scene 将 4x4 子格降采样为游戏主网格，
 # 或直接输出 16px 子格表供物理破坏与精细渲染系统使用。
 
-const MAGIC := "CYRM"
 const HEADER_SIZE := 20
 const SUB_PER_CELL := 4   # 一格 64px = 4×4 个 16px 子格
 
@@ -56,10 +55,7 @@ static func parse(data: PackedByteArray) -> Dictionary:
 		body = body.decompress(int(h["body_size"]), FileAccess.COMPRESSION_DEFLATE)
 		if body.size() != int(h["body_size"]):
 			return {"ok": false, "error": "解压失败或大小不符(%d != %d)" % [body.size(), int(h["body_size"])]}
-	elif int(h["compression"]) == 0:
-		if body.size() != int(h["body_size"]):
-			return {"ok": false, "error": "裸 body 大小不符(%d != %d)" % [body.size(), int(h["body_size"])]}
-	else:
+	elif int(h["compression"]) != 0:
 		return {"ok": false, "error": "未知压缩类型 %d" % int(h["compression"])}
 	if crc32(body) != int(h["crc32"]):
 		return {"ok": false, "error": "CRC32 校验失败(文件损坏)"}
@@ -90,8 +86,12 @@ static func parse(data: PackedByteArray) -> Dictionary:
 		var kind := body[off]
 		off += 1
 		if kind == 1:
+			if off + 2 > body.size():
+				return {"ok": false, "error": "调色板长度截断(bit%d)" % bit}
 			var pc := body.decode_u16(off)
 			off += 2
+			if pc == 0 or off + pc * 4 + 1 > body.size():
+				return {"ok": false, "error": "调色板非法或截断(bit%d)" % bit}
 			var palette := PackedInt32Array()
 			palette.resize(pc)
 			for i in pc:
@@ -99,17 +99,21 @@ static func parse(data: PackedByteArray) -> Dictionary:
 				off += 4
 			var iw := body[off]
 			off += 1
-			if off + n * iw > body.size():
+			if iw not in [1, 2] or (iw == 1 and pc > 256) or off + n * iw > body.size():
 				return {"ok": false, "error": "索引流截断(bit%d)" % bit}
 			if bit == 1:
 				var descs := PackedInt32Array()
 				descs.resize(n)
 				for i in n:
 					var idx := body[off + i] if iw == 1 else body.decode_u16(off + i * 2)
-					descs[i] = palette[idx] if idx < pc else 0
+					if idx >= pc:
+						return {"ok": false, "error": "调色板索引越界(bit%d)" % bit}
+					descs[i] = palette[idx]
 				out["scene"] = descs
 			off += n * iw
 		elif kind == 2:
+			if off + n * 4 > body.size():
+				return {"ok": false, "error": "RGBA 层截断(bit%d)" % bit}
 			off += n * 4   # 背景层:整块 RGBA,游戏侧暂不消费
 		else:
 			return {"ok": false, "error": "未知层类型 %d" % kind}
@@ -117,7 +121,7 @@ static func parse(data: PackedByteArray) -> Dictionary:
 
 
 ## 将场景层描述符解包为 16px 子格纹理表（Array[Array]，下标 [y][x] 为纹理 ID，0 为空气）。
-## 用于装填 MazeGenerator.current_subgrid 供精细碰撞与破坏系统读取。
+## 装载时交给 NativeTerrain，供碰撞、破坏和渲染读取。
 static func scene_to_subgrid(scene: PackedInt32Array, sc: int, sr: int) -> Array[Array]:
 	var out: Array[Array] = []
 	for y in sr:
@@ -166,103 +170,6 @@ static func flatten_scene(scene: PackedInt32Array, sub_cols: int, sub_rows: int)
 					best_n = nn
 			grid[r][c] = MapFormat.pack(best, shape)
 	return grid
-
-
-## 单层游戏网格序列化为 v4 二进制数据（只写场景层，子格辅码取中性值）。
-## meta_lines 包含原始保留的注释与出生点配置行。
-static func serialize(grid: Array, meta_lines: Array) -> PackedByteArray:
-	var rows := grid.size()
-	var cols: int = (grid[0] as Array).size() if rows > 0 else 0
-	var sub_cols := cols * SUB_PER_CELL
-	var sub_rows := rows * SUB_PER_CELL
-	var meta_bytes := join_meta(meta_lines).to_utf8_buffer()
-
-	# 调色板:索引 0 恒为空气(§3.3)
-	var used := {}
-	for r in rows:
-		var line: Array = grid[r]
-		for c in mini(cols, line.size()):
-			var t := MapFormat.texture_of(int(line[c]))
-			if t != 0:
-				used[t] = true
-	var textures: Array = used.keys()
-	textures.sort()
-	var palette := PackedInt32Array()
-	palette.append(0)
-	for t in textures:
-		palette.append(neutral_descriptor(int(t)))
-	var index_of := {}
-	for i in palette.size():
-		index_of[(palette[i] >> 12) & 0xFFF] = i
-
-	# 索引流:shape 位 (qy*2+qx) → 该象限 4 子格全填(§3.6 展开规则的逆)
-	var idx := PackedByteArray()
-	idx.resize(sub_cols * sub_rows)   # 全 0 = 空气
-	for r in rows:
-		var line: Array = grid[r]
-		for c in mini(cols, line.size()):
-			var v := int(line[c])
-			var t := MapFormat.texture_of(v)
-			var sh := MapFormat.shape_of(v)
-			if t == 0:
-				continue
-			var pi := int(index_of.get(t, 0))
-			for qy in 2:
-				for qx in 2:
-					if sh & (1 << (qy * 2 + qx)) == 0:
-						continue
-					for sy in 2:
-						for sx in 2:
-							idx[(r * SUB_PER_CELL + qy * 2 + sy) * sub_cols + (c * SUB_PER_CELL + qx * 2 + sx)] = pi
-
-	var body := PackedByteArray()
-	write_u16(body, meta_bytes.size())
-	body.append_array(meta_bytes)
-	body.append(1)                       # kind = 纹理层
-	write_u16(body, palette.size())
-	for d in palette:
-		write_u32(body, d)
-	body.append(1)                       # index_width = 1(纹理 ≤ 22 + 空气,调色板恒 ≤ 256)
-	body.append_array(idx)
-
-	var payload := body
-	var out := PackedByteArray()
-	out.append_array(MAGIC.to_ascii_buffer())
-	out.append(4)                        # version
-	out.append(0)                        # compression = 0（未压缩）
-	write_u32(out, body.size())          # 解压后大小
-	write_u32(out, crc32(body))
-	write_u16(out, sub_cols)
-	write_u16(out, sub_rows)
-	out.append(0b0010)                   # layer_flags: 场景层
-	out.append(0)                        # reserved
-	out.append_array(payload)
-	return out
-
-
-static func join_meta(meta_lines: Array) -> String:
-	var s := ""
-	for l in meta_lines:
-		s += String(l) + "\n"
-	return s
-
-
-## 中性描述符 (hue 4, brightness 4, saturation 4, alpha 7) —— §2.3:"完全按原图,不改一点"。
-## 注意 alpha 的中性是档 7(原色),hue/brightness/saturation 的中性是档 4,刻意不同。
-static func neutral_descriptor(texture: int) -> int:
-	return (texture << 12) | (7 << 9) | (4 << 6) | (4 << 3) | 4
-
-
-static func write_u16(out: PackedByteArray, v: int) -> void:
-	out.append(v & 0xFF)
-	out.append((v >> 8) & 0xFF)
-
-
-static func write_u32(out: PackedByteArray, v: int) -> void:
-	out.append(v & 0xFF)
-	out.append((v >> 8) & 0xFF)
-	out.append((v >> 16) & 0xFF)
-	out.append((v >> 24) & 0xFF)
 
 
 # CRC32 校验（IEEE 802.3 标准，多项式 0xEDB88320）：静态表驱动加速。

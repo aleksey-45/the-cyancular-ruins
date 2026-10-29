@@ -51,23 +51,6 @@ static func attribute(victim: Node, attacker: Node) -> void:
 		return
 	victim.set_meta("last_damager", attacker)
 	victim.set_meta("last_damager_time", Time.get_ticks_msec())
-	victim.remove_meta("last_self_hit_time")
-
-
-## 记录爆炸等造成的自伤标记时间戳
-static func note_self_hit(victim: Node) -> void:
-	if victim == null or not is_instance_valid(victim):
-		return
-	victim.set_meta("last_self_hit_time", Time.get_ticks_msec())
-
-
-## 检查实体近期窗口内是否存在自伤判定
-static func is_fresh_self_hit(victim: Node, window_ms: int) -> bool:
-	if victim == null or not is_instance_valid(victim):
-		return false
-	if not victim.has_meta("last_self_hit_time"):
-		return false
-	return Time.get_ticks_msec() - int(victim.get_meta("last_self_hit_time")) <= window_ms
 
 
 ## 统一执行伤害归因并播放命中反馈动效
@@ -86,7 +69,6 @@ var _kill_age := -1.0
 @onready var _kill_label: RichTextLabel = $Root/KillLabel
 @onready var _streak_label: Label = $Root/StreakLabel
 
-
 func _ready() -> void:
 	layer = LAYER
 	current = self
@@ -103,18 +85,15 @@ func _ready() -> void:
 	_skull.visible = false
 	$Root/SkullSlot.add_child(_skull)
 
-
 func _exit_tree() -> void:
 	if current == self:
 		current = null
-
 
 func _show_hit() -> void:
 	_hit_age = 0.0
 	_marker.t = 0.0
 	_marker.visible = true
 	_marker.queue_redraw()
-
 
 func _show_kill(who: String) -> void:
 	var now := Time.get_ticks_msec()
@@ -128,7 +107,6 @@ func _show_kill(who: String) -> void:
 	_streak_label.text = "x%d" % _streak
 	_kill_age = 0.0
 	Sfx.play("kill")
-
 
 func _process(delta: float) -> void:
 	if _hit_age >= 0.0:
@@ -210,4 +188,3 @@ class KillSkull extends Control:
 					draw_rect(r, BONE)
 				else:
 					draw_rect(r, DARK)
-

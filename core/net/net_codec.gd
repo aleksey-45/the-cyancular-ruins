@@ -7,7 +7,7 @@ const STATE := 1
 const EVENT := 2
 const KEEP := 64
 const WIRE_MAGIC := 199
-const PROTOCOL_VERSION := 3
+const PROTOCOL_VERSION := 4
 const MODES := [PvpSession.MODE_PVP, PvpSession.MODE_TEAM, PvpSession.MODE_ROYALE]
 enum Field { U8, I8, U16, I32, U32, F64, VEC, BOOL, INVENTORY, DRIVER, RECORD, PATH }
 const INPUT_FIELDS := [["target_tick", Field.I32], ["view_tick", Field.I32], ["ax", Field.F64], ["held", Field.U16], ["aim", Field.VEC]]
@@ -58,8 +58,6 @@ var serial := 0
 var latest := 0
 var history: Dictionary = {}
 var roles: Array = []
-var diagnostics := {"full": 0, "delta": 0, "stale": 0, "missing_base": 0, "serial_skips": 0}
-var _received_serial := 0
 var _history_order: Array[int] = []
 var _history_cursor := 0
 
@@ -85,34 +83,7 @@ func encode_input(packet: Dictionary) -> PackedByteArray:
 	_write_input(s, packet)
 	return s.data_array
 
-func encode_input_hints(hints: Dictionary) -> PackedByteArray:
-	var encoded := {}
-	for role in hints:
-		encoded[role] = encode_input_hint(role, hints[role])
-	return pack_input_hints(encoded)
-
-# 角色记录内部的增量只依赖本条记录；接收者只影响整包排除哪个角色。
-func encode_input_hint(role: int, hint: Dictionary) -> PackedByteArray:
-	var s := StreamPeerBuffer.new()
-	s.put_u8(role)
-	s.put_u32(hint["tick"])
-	_write_input(s, hint["packet"], true)
-	return s.data_array
-
-static func pack_input_hints(encoded: Dictionary, except_role: int = 0) -> PackedByteArray:
-	var bytes := PackedByteArray([INPUT, encoded.size() - int(encoded.has(except_role))])
-	for role in encoded:
-		if role != except_role: bytes.append_array(encoded[role])
-	return bytes
-
-func decode_input_hints(s: StreamPeerBuffer) -> Dictionary:
-	var hints := {}
-	for i in s.get_u8():
-		var role := s.get_u8()
-		hints[role] = {"tick": s.get_u32(), "packet": read_input(s, true)}
-	return hints
-
-func _write_input(s: StreamPeerBuffer, packet: Dictionary, scheduled: bool = false) -> void:
+func _write_input(s: StreamPeerBuffer, packet: Dictionary) -> void:
 	var frames: Array = packet["frames"]
 	var actions: Array = packet["actions"]
 	var epoch: int = frames[0]["epoch"] if not frames.is_empty() else (actions[0]["epoch"] if not actions.is_empty() else 1)
@@ -122,13 +93,11 @@ func _write_input(s: StreamPeerBuffer, packet: Dictionary, scheduled: bool = fal
 	for frame: Dictionary in frames:
 		s.put_u32(frame["seq"])
 		_put_delta(s, frame, previous, INPUT_FIELDS)
-		if scheduled: _put_available_tick(s, frame)
 		previous = frame
 	s.put_u8(actions.size())
 	for action: Dictionary in actions:
 		s.put_u32(action["seq"])
 		_put_input_time(s, action)
-		if scheduled: _put_available_tick(s, action)
 		s.put_u16(action["pressed"])
 		s.put_u16(action["released"])
 		s.put_u32(action["winst"])
@@ -137,9 +106,9 @@ func _write_input(s: StreamPeerBuffer, packet: Dictionary, scheduled: bool = fal
 func decode_input(s: StreamPeerBuffer) -> Dictionary:
 	var ack := s.get_u32()
 	state_ack = 0 if ack == 0 else maxi(state_ack, ack)
-	return read_input(s)
+	return _read_input(s)
 
-func read_input(s: StreamPeerBuffer, scheduled: bool = false) -> Dictionary:
+func _read_input(s: StreamPeerBuffer) -> Dictionary:
 	var epoch := s.get_u32()
 	var count := s.get_u8()
 	var frames: Array = []
@@ -148,28 +117,17 @@ func read_input(s: StreamPeerBuffer, scheduled: bool = false) -> Dictionary:
 		var seq := s.get_u32()
 		var frame := _get_delta(s, previous, INPUT_FIELDS)
 		frame.merge({"seq": seq, "epoch": epoch})
-		if scheduled: _get_available_tick(s, frame)
 		frames.append(frame)
 		previous = frame
 	var actions: Array = []
 	for i in s.get_u8():
 		var action := {"seq": s.get_u32(), "epoch": epoch}
 		action.merge(_get_input_time(s))
-		if scheduled: _get_available_tick(s, action)
 		action.merge({"pressed": s.get_u16(), "released": s.get_u16(), "winst": s.get_u32(), "aim": _get_vec(s)})
 		actions.append(action)
 	return {"frames": frames, "actions": actions}
 
-static func _put_available_tick(s: StreamPeerBuffer, record: Dictionary) -> void:
-	var delayed: bool = record["available_tick"] != record["target_tick"]
-	s.put_u8(int(delayed))
-	if delayed: s.put_u32(record["available_tick"])
-
-static func _get_available_tick(s: StreamPeerBuffer, record: Dictionary) -> void:
-	record["available_tick"] = s.get_u32() if s.get_u8() != 0 else record["target_tick"]
-
-func encode_state(frame: Dictionary, batch: StateBatch = null) -> PackedByteArray:
-	if batch == null: batch = StateBatch.new(frame)
+func encode_state(frame: Dictionary, batch: StateBatch) -> PackedByteArray:
 	if roles.is_empty():
 		roles = batch.world["players"].keys()
 		roles.sort()
@@ -232,17 +190,11 @@ func _shared_delta(base: Dictionary, batch: StateBatch) -> Dictionary:
 func decode_state(s: StreamPeerBuffer) -> Dictionary:
 	var number := s.get_u32()
 	var base_number := s.get_u32()
-	if _received_serial > 0 and number > _received_serial:
-		diagnostics["serial_skips"] += number - _received_serial - 1
-	_received_serial = maxi(_received_serial, number)
 	if number <= latest:
-		diagnostics["stale"] += 1
 		return {}
 	if base_number != 0 and not history.has(base_number):
-		diagnostics["missing_base"] += 1
 		state_ack = 0 # 下次 INPUT 请求独立全量快照。
 		return {}
-	diagnostics["full" if base_number == 0 else "delta"] += 1
 	var base: Dictionary = history.get(base_number, {})
 	var frame := {"tick": s.get_u32(), "map_revision": s.get_u32()}
 	if base_number == 0:
@@ -307,7 +259,7 @@ func encode_event(kind: int, data: Variant) -> PackedByteArray:
 		NetEvent.Kind.REJOIN:
 			s.put_u32(int(data["code"]))
 			_put_token(s, data["token"])
-		NetEvent.Kind.PICK_TEAM, NetEvent.Kind.START, NetEvent.Kind.READY:
+		NetEvent.Kind.PICK_TEAM, NetEvent.Kind.READY:
 			s.put_u32(data)
 		NetEvent.Kind.MAP, NetEvent.Kind.MESSAGE, NetEvent.Kind.REJOIN_DENIED, NetEvent.Kind.ROOM_CLOSED:
 			_put_string(s, data)
@@ -421,7 +373,7 @@ func decode_event(kind: int, s: StreamPeerBuffer) -> Variant:
 		NetEvent.Kind.JOIN: return {"code": "%08d" % s.get_u32(), "invite": _get_string(s), "beta": bool(s.get_u8())}
 		NetEvent.Kind.LIST: return {"token": _get_token(s), "beta": bool(s.get_u8())}
 		NetEvent.Kind.REJOIN: return {"code": "%08d" % s.get_u32(), "token": _get_token(s)}
-		NetEvent.Kind.PICK_TEAM, NetEvent.Kind.START, NetEvent.Kind.READY: return s.get_u32()
+		NetEvent.Kind.PICK_TEAM, NetEvent.Kind.READY: return s.get_u32()
 		NetEvent.Kind.MAP, NetEvent.Kind.MESSAGE, NetEvent.Kind.REJOIN_DENIED, NetEvent.Kind.ROOM_CLOSED: return _get_string(s)
 		NetEvent.Kind.ROOM:
 			var room := _get_room(s)

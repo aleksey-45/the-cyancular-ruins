@@ -11,14 +11,6 @@ extends CanvasLayer
 @onready var _grace_wrap: PanelContainer = $GraceWrap
 @onready var _grace_label: Label = $GraceWrap/GraceLabel
 
-# 探针测试兼容属性：转发访问中央广播的遮罩与主标签
-var _mask: ColorRect:
-	get:
-		return _broadcast.mask if _broadcast != null else null
-var _big: Label:
-	get:
-		return _broadcast.big if _broadcast != null else null
-
 # 对手掉线宽限期倒计时字典：角色编号 -> 剩余秒数
 var _grace: Dictionary = {}
 
@@ -56,10 +48,10 @@ func _on_round_state(data: Dictionary) -> void:
 	# 服务端下发宽限期状态更新并刷新界面
 	_grace = data["grace"].duplicate()
 	_refresh_grace()
-	var state: int = data.get("state", NetEvent.RoundState.PLAYING)
-	var round: int = data.get("round", 1)
-	var scores: Dictionary = data.get("scores", {})
-	var rounds_won: Dictionary = data.get("rounds_won", {})
+	var state: int = data["state"]
+	var round: int = data["round"]
+	var scores: Dictionary = data["scores"]
+	var rounds_won: Dictionary = data["rounds_won"]
 	var s1: int = int(scores.get(1, 0))
 	var s2: int = int(scores.get(2, 0))
 	var w1: int = int(rounds_won.get(1, 0))
@@ -70,18 +62,18 @@ func _on_round_state(data: Dictionary) -> void:
 	match state:
 		NetEvent.RoundState.COUNTDOWN:
 			var sub := "对战开始" if round <= 1 else "第 %d 局" % round
-			_broadcast.start_countdown(float(data.get("timer", 3.0)), sub)
+			_broadcast.start_countdown(float(data["timer"]), sub)
 		NetEvent.RoundState.PLAYING:
 			_broadcast.set_broadcast(false, "", "")
 		NetEvent.RoundState.ROUND_OVER:
-			var winner: int = int(data.get("winner", 0))
+			var winner: int = int(data["winner"])
 			if winner != 0:
 				_broadcast.set_broadcast(true, "本局胜利!" if winner == me else "本局落败",
 						"局胜 %d - %d" % [w1, w2])
 			else:
 				_broadcast.set_broadcast(true, "P%d 赢得本局!" % (1 if w1 > w2 else 2), "局胜 %d - %d" % [w1, w2])
 		NetEvent.RoundState.MATCH_OVER:
-			var mwinner: int = int(data.get("match_winner", 0))
+			var mwinner: int = int(data["match_winner"])
 			if mwinner == me:
 				_broadcast.set_broadcast(true, "胜利!", "你赢得了整场对战")
 			elif mwinner != 0:

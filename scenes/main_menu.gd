@@ -3,8 +3,6 @@ extends Control
 # 单人模式支持弹出配置面板（选择地图与禁用武器）；多人入口进入统一联机大厅。
 # 控件风格与尺寸规范统一遵循 UiFactory。
 
-const PROBE_NODE_NAME := "MenuAutotestProbe"
-
 var _sp_panel: PanelContainer = null
 
 @onready var _ui_layer: CanvasLayer = %UILayer
@@ -42,11 +40,6 @@ func _ready() -> void:
 	if OS.get_cmdline_user_args().has("--server"):
 		get_tree().change_scene_to_file.call_deferred("res://server/server_main.tscn")
 		return
-	# 发布构建自检：验证武器注册表配置有效加载
-	if OS.get_cmdline_user_args().has("--registry-report"):
-		var ids: Array[int] = WeaponRegistry.all_ids()
-		print("[registry] weapons=%d ids=%s" % [ids.size(), str(ids)])
-
 	# 重置对局相关全局状态
 	Level0.pvp_mode = false
 	CombatComponent.pvp_arena = false
@@ -54,24 +47,6 @@ func _ready() -> void:
 	RunOptions.disabled_weapons = Settings.sp_disabled_weapons.duplicate()
 
 	_build_ui()
-
-	# 自动化测试探针挂载
-	for arg in OS.get_cmdline_user_args():
-		if not arg.begins_with("--autotest-"):
-			continue
-		if get_tree().root.has_node(NodePath(PROBE_NODE_NAME)):
-			break
-		if not ResourceLoader.exists("res://tests/smoke/menu_autotest.gd"):
-			break
-		var probe_script := load("res://tests/smoke/menu_autotest.gd")
-		if probe_script == null:
-			break
-		var probe := Node.new()
-		probe.name = PROBE_NODE_NAME
-		probe.set_script(probe_script)
-		probe.set("mode", arg.trim_prefix("--autotest-"))
-		get_tree().root.add_child.call_deferred(probe)
-		break
 
 
 # 启动单人模式并加载主关卡场景

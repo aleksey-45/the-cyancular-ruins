@@ -19,7 +19,6 @@ var source: Node = null
 
 @export var explosion_visual: PackedScene = null
 
-
 func _init() -> void:
 	configure_bullet({
 		"entity_id": 0,
@@ -98,7 +97,7 @@ func simulate_tick(delta: float) -> void:
 		var hit := col.get_collider()
 		if apply_damage and hit.is_in_group("enemies"):
 			CombatFeedback.hit_marker()
-			if is_instance_valid(source) and source.has_method("apply_hit"):
+			if is_instance_valid(source):
 				source.apply_hit(hit, impact_velocity)
 			else:
 				hit.hurt(hit_damage, impact_velocity, hit_impact)
@@ -135,22 +134,21 @@ func _apply_water_drag(delta: float) -> void:
 	if factor < 1.0:
 		velocity_vec *= factor
 
-
 func _wrap() -> void:
 	# 逻辑弹丸不读取场景树里第一个玩家的当前时间线；视觉副本仍按最近副本显示。
 	if authority_world != null or prediction_only:
-		global_position = MazeGenerator.wrap_to_range(global_position,
+		global_position = GridPathfinder.wrap_to_range(global_position,
 				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 		return
 	# 环面世界坐标对齐：锚定至距射手或本地玩家最近的副本位置
 	var p := get_tree().get_first_node_in_group("player") as Node2D
-	if shooter != null and is_instance_valid(shooter) and shooter is Node2D and shooter.is_in_group("player"):
+	if is_instance_valid(shooter) and shooter.is_in_group("player"):
 		p = shooter as Node2D
 	if p == null:
-		global_position = MazeGenerator.wrap_to_range(global_position,
+		global_position = GridPathfinder.wrap_to_range(global_position,
 				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 		return
-	global_position = MazeGenerator.anchor_to_nearest(global_position, p.global_position,
+	global_position = GridPathfinder.anchor_to_nearest(global_position, p.global_position,
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 
 # 撞击地形处理：对可破坏瓦片扣除耐久并生成受击碎屑
@@ -161,15 +159,13 @@ func _damage_tile_at(pos: Vector2, normal: Vector2) -> void:
 	if tex != 0 and authority_world == null:
 		TileHitFx.spawn(get_viewport(), pos, tex)
 
-
 func _direct_hit(hit: Node, incoming: Vector2 = Vector2.ZERO) -> void:
 	if not apply_damage:
 		return
-	if hit.has_method("hurt"):
-		var direction := incoming if incoming != Vector2.ZERO else velocity_vec
-		var dir := direction.normalized() if not direction.is_zero_approx() else Vector2.RIGHT
-		CombatFeedback.hit_marker()
-		hit.hurt(direct_hit_damage, dir)
+	var direction := incoming if incoming != Vector2.ZERO else velocity_vec
+	var dir := direction.normalized() if not direction.is_zero_approx() else Vector2.RIGHT
+	CombatFeedback.hit_marker()
+	hit.hurt(direct_hit_damage, dir)
 
 
 # 检测爆炸弹与玩家的接触，触发短延时引信
@@ -179,23 +175,17 @@ func _check_player_contact() -> void:
 			start_player_fuse()
 		return
 	var tree := get_tree()
-	if tree == null:
-		return
 	for group in CONTACT_GROUPS:
-		for n in tree.get_nodes_in_group(group):
-			if n == shooter or not (n is Node2D):
+		for n: Node2D in tree.get_nodes_in_group(group):
+			if n == shooter:
 				continue
-			var d := MazeGenerator.toroidal_delta_px(global_position, (n as Node2D).global_position,
+			var d := GridPathfinder.toroidal_delta_px(global_position, (n as Node2D).global_position,
 					GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT).length()
 			if d < PLAYER_HIT_RADIUS:
-				if authority_world != null and authority_world.is_friendly(shooter, n):
-					continue
 				if not apply_damage and shooter != null and shooter.team != 0 and shooter.team == n.team:
 					continue
 				start_player_fuse()
 				return
-
-# 启动命中玩家的短延时引信
 
 func rewind_state() -> Dictionary:
 	# 运动/引信沿用联机快照；补齐单人重建实例所需的开火参数。
@@ -206,8 +196,6 @@ func rewind_state() -> Dictionary:
 
 # 应用时间回溯状态快照
 func apply_rewind_state(d: Dictionary) -> void:
-	if d.is_empty():
-		return
 	type_id = d["type_id"]
 	max_range = d["max_range"]
 	gravity_factor = d["gravity_factor"]
@@ -223,22 +211,16 @@ func apply_rewind_state(d: Dictionary) -> void:
 	restore_motion(d)
 
 
-# 启动引信倒计时
-
 func _explode() -> void:
 	exploded = true
 	if not apply_damage:
 		return
-	var started := Time.get_ticks_usec()
 	if authority_world == null:
 		present_explosion(get_viewport(), global_position, explosion_visual, explosion_radius)
 	Explosion.apply_aoe(global_position, explosion_radius, explosion_damage, explosion_knockback, shooter, entity_id)
 	if authority_world != null:
 		authority_world.broadcast(NetEvent.Kind.EXPLOSION, {"id": entity_id, "type_id": type_id,
 				"pos": global_position, "tick": authority_world._snap_tick})
-	GameLog.record("explosion", {"id": entity_id, "type": type_id, "position": global_position,
-			"damage": apply_damage, "visual": authority_world == null and explosion_visual != null,
-			"shooter": entity_id >> 48, "duration_ms": (Time.get_ticks_usec() - started) / 1000.0})
 
 static func present_explosion(viewport: Viewport, pos: Vector2, visual: PackedScene, radius: float) -> void:
 	if visual != null:

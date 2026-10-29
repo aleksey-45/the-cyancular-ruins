@@ -184,66 +184,6 @@ border_width_right = 2
 border_width_bottom = 2
 border_color = Color(0.349, 0.851, 0.902, 1)
 
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_o8pqj"]
-content_margin_left = 40.0
-content_margin_top = 20.0
-content_margin_right = 40.0
-content_margin_bottom = 20.0
-bg_color = Color(0.106, 0.125, 0.157, 1)
-border_width_left = 2
-border_width_top = 2
-border_width_right = 2
-border_width_bottom = 2
-border_color = Color(0.25, 0.31, 0.4, 1)
-
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_7gq14"]
-content_margin_left = 40.0
-content_margin_top = 20.0
-content_margin_right = 40.0
-content_margin_bottom = 20.0
-bg_color = Color(0.106, 0.125, 0.157, 1)
-border_width_left = 2
-border_width_top = 2
-border_width_right = 2
-border_width_bottom = 2
-border_color = Color(0.349, 0.851, 0.902, 1)
-
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_21w33"]
-content_margin_left = 40.0
-content_margin_top = 20.0
-content_margin_right = 40.0
-content_margin_bottom = 20.0
-bg_color = Color(0.137, 0.165, 0.204, 1)
-border_width_left = 2
-border_width_top = 2
-border_width_right = 2
-border_width_bottom = 2
-border_color = Color(0.349, 0.851, 0.902, 1)
-
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_nxsbg"]
-content_margin_left = 40.0
-content_margin_top = 20.0
-content_margin_right = 40.0
-content_margin_bottom = 20.0
-bg_color = Color(0.106, 0.125, 0.157, 1)
-border_width_left = 2
-border_width_top = 2
-border_width_right = 2
-border_width_bottom = 2
-border_color = Color(0.25, 0.31, 0.4, 1)
-
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_qvl5m"]
-content_margin_left = 40.0
-content_margin_top = 20.0
-content_margin_right = 40.0
-content_margin_bottom = 20.0
-bg_color = Color(0.063, 0.075, 0.098, 1)
-border_width_left = 2
-border_width_top = 2
-border_width_right = 2
-border_width_bottom = 2
-border_color = Color(0.349, 0.851, 0.902, 1)
-
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_17qiq"]
 content_margin_left = 40.0
 content_margin_top = 20.0
@@ -550,30 +490,18 @@ BtnGold/styles/focus = SubResource("StyleBoxFlat_hmo5o")
 BtnGold/styles/hover = SubResource("StyleBoxFlat_05700")
 BtnGold/styles/normal = SubResource("StyleBoxFlat_xg8ig")
 BtnGold/styles/pressed = SubResource("StyleBoxFlat_hju0m")
-BtnLegacy/base_type = &"Button"
-BtnLegacy/colors/font_color = Color(0.878, 0.914, 0.949, 1)
-BtnLegacy/colors/font_disabled_color = Color(0.51, 0.573, 0.639, 1)
-BtnLegacy/colors/font_focus_color = Color(0.878, 0.914, 0.949, 1)
-BtnLegacy/colors/font_hover_color = Color(0.349, 0.851, 0.902, 1)
-BtnLegacy/colors/font_pressed_color = Color(0.349, 0.851, 0.902, 1)
-BtnLegacy/font_sizes/font_size = 32
-BtnLegacy/styles/disabled = SubResource("StyleBoxFlat_jsvpm")
-BtnLegacy/styles/focus = SubResource("StyleBoxFlat_dvhqa")
-BtnLegacy/styles/hover = SubResource("StyleBoxFlat_01ely")
-BtnLegacy/styles/normal = SubResource("StyleBoxFlat_eelbv")
-BtnLegacy/styles/pressed = SubResource("StyleBoxFlat_tt51d")
-BtnLegacyQuiet/base_type = &"Button"
-BtnLegacyQuiet/colors/font_color = Color(0.51, 0.573, 0.639, 1)
-BtnLegacyQuiet/colors/font_disabled_color = Color(0.51, 0.573, 0.639, 1)
-BtnLegacyQuiet/colors/font_focus_color = Color(0.51, 0.573, 0.639, 1)
-BtnLegacyQuiet/colors/font_hover_color = Color(0.349, 0.851, 0.902, 1)
-BtnLegacyQuiet/colors/font_pressed_color = Color(0.349, 0.851, 0.902, 1)
-BtnLegacyQuiet/font_sizes/font_size = 32
-BtnLegacyQuiet/styles/disabled = SubResource("StyleBoxFlat_o8pqj")
-BtnLegacyQuiet/styles/focus = SubResource("StyleBoxFlat_7gq14")
-BtnLegacyQuiet/styles/hover = SubResource("StyleBoxFlat_21w33")
-BtnLegacyQuiet/styles/normal = SubResource("StyleBoxFlat_nxsbg")
-BtnLegacyQuiet/styles/pressed = SubResource("StyleBoxFlat_qvl5m")
+BtnBinding/base_type = &"Button"
+BtnBinding/colors/font_color = Color(0.878, 0.914, 0.949, 1)
+BtnBinding/colors/font_disabled_color = Color(0.51, 0.573, 0.639, 1)
+BtnBinding/colors/font_focus_color = Color(0.878, 0.914, 0.949, 1)
+BtnBinding/colors/font_hover_color = Color(0.349, 0.851, 0.902, 1)
+BtnBinding/colors/font_pressed_color = Color(0.349, 0.851, 0.902, 1)
+BtnBinding/font_sizes/font_size = 32
+BtnBinding/styles/disabled = SubResource("StyleBoxFlat_jsvpm")
+BtnBinding/styles/focus = SubResource("StyleBoxFlat_dvhqa")
+BtnBinding/styles/hover = SubResource("StyleBoxFlat_01ely")
+BtnBinding/styles/normal = SubResource("StyleBoxFlat_eelbv")
+BtnBinding/styles/pressed = SubResource("StyleBoxFlat_tt51d")
 BtnPrimary/base_type = &"Button"
 BtnPrimary/colors/font_color = Color(0.878, 0.914, 0.949, 1)
 BtnPrimary/colors/font_disabled_color = Color(0.42352942, 0.47058824, 0.52156866, 1)

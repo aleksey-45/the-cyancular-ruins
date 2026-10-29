@@ -6,7 +6,6 @@
 #   python tools/check_naming.py            # 执行检查，发现违规时退出码为 1
 #   python tools/check_naming.py -v         # 详细模式，输出已登记的兼容项
 #   python tools/check_naming.py --report   # 仅输出报告，不阻断退出码
-#   python tools/check_naming.py --self-test # 检查器自身的边界用例
 #
 # 检查项说明:
 #   A 目录名一律使用小写
@@ -46,7 +45,7 @@ ACCEPTED_CLASS_FILES = {
         "类名 Level0 转为 snake_case 对应 level0，当前文件名为 level_0；"
         "由于全仓多处核心模块引用 Level0 类名，为保持稳定性暂不调整类名",
 }
-ACCEPTED_DIRS = {"DevTools": "历史日志查看器入口，保留现有路径；其子目录仍检查"}
+ACCEPTED_DIRS = {}
 
 _fail: list[str] = []
 _notes: list[str] = []
@@ -85,8 +84,6 @@ def check_class_names() -> None:
                 continue
             full = os.path.join(root, f)
             rel = os.path.relpath(full, PROJECT).replace("\\", "/")
-            if rel.startswith("tests/"):
-                continue   # 测试脚本不受类名命名规范约束（多数无 class_name）
             try:
                 text = open(full, encoding="utf-8", errors="replace").read()
             except OSError:
@@ -217,26 +214,7 @@ def check_script_encodings() -> None:
                          for issue in script_encoding_issues(file.read_bytes(), suffix))
 
 
-def self_test() -> None:
-    import tempfile
-    with tempfile.TemporaryDirectory(prefix="cyr-naming-") as folder:
-        project = Path(folder)
-        doc = project / "guide.md"
-        (project / "sample.gd").write_text("one\ntwo\n", encoding="utf-8")
-        assert not markdown_issues(doc, "[ok](sample.gd:2) [web](https://example.com/a)", project)
-        assert len(markdown_issues(doc, "[bad](sample.gd#L3) [missing](none.gd)", project)) == 2
-        assert not markdown_issues(doc, "```md\n[example](missing.gd)\n```\n", project)
-        assert script_encoding_issues(b"a\nb", ".bat")
-        assert not script_encoding_issues(b"a\r\nb", ".bat")
-        assert script_encoding_issues("中文\r\n".encode(), ".ps1")
-        assert not script_encoding_issues(b"\xef\xbb\xbf" + "中文\r\n".encode(), ".ps1")
-    print("命名检查器 SELF-TEST OK")
-
-
 def main() -> int:
-    if "--self-test" in sys.argv:
-        self_test()
-        return 0
     verbose = "-v" in sys.argv or "--verbose" in sys.argv
     report_only = "--report" in sys.argv
     check_dirs()

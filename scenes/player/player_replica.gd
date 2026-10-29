@@ -58,8 +58,6 @@ var _proxy_layer := 0
 var proxy_age := 0
 var proxy_stale := false
 var proxy_sample_tick := 0
-var motion_steps := 0
-var motion_cache_hits := 0
 var _local_anchor := Vector2.ZERO        # 本地玩家位置锚点
 var _have_data := false
 var _facing := 1                         # 移动朝向
@@ -71,7 +69,6 @@ var _hit_flash_t := 0.0                  # 受击闪白倒计时
 
 # 幽灵碰撞体（仅参与阻挡碰撞，不执行逻辑）
 var _ghost: ActorCollider = null
-
 
 func _ready() -> void:
 	add_to_group(GROUP)
@@ -103,7 +100,6 @@ func _ready() -> void:
 	add_child(squash)
 	_align_draw_order.call_deferred()
 
-
 func _align_draw_order() -> void:
 	var terrain := Level0.wall_layer
 	if is_instance_valid(terrain) and terrain.get_parent() == get_parent():
@@ -128,7 +124,7 @@ func apply_snapshot(data: Dictionary, local_anchor: Vector2, tick: int) -> void:
 	var motion := data.duplicate()
 	motion.erase("driver")
 	motion.erase("input")
-	motion["locked"] = data.get("driver", {}).get("locked", false)
+	motion["locked"] = data["driver"]["locked"]
 	# 宿主已校验消息新鲜度；显式恢复较早锚点也用于重连和离线回放。
 	if not _motion_frames.is_empty() and tick < _motion_frames[-1]["tick"]: _motion_frames.clear()
 	if not _motion_frames.is_empty() and _motion_frames[-1]["tick"] == tick:
@@ -141,21 +137,8 @@ func apply_snapshot(data: Dictionary, local_anchor: Vector2, tick: int) -> void:
 	_have_data = true
 	anchor_collision(local_anchor, tick)
 
-func simulation_state(data: Dictionary) -> Dictionary:
-	var result := data.merged(data["driver"], true)
-	result.merge({"state": data["pose"], "wp": data["waterproof"], "down": data["downed"]}, true)
-	return result
-
-func receive_input(_tick: int, _packet: Dictionary) -> bool:
-	# 提示不是权威结果；远端提示到达不再使本地历史失效或积累重放窗口。
-	return false
-
-func begin_prediction_tick(tick: int) -> void:
-	anchor_collision(_local_anchor, tick)
-
 func anchor_collision(anchor: Vector2, tick: int) -> void:
 	if _motion_frames.is_empty(): return
-	var started := Time.get_ticks_usec() if FrameTrace.enabled else 0
 	var frame: Dictionary = _motion_frames[0]
 	# 通常采样最新锚点，从尾部查找避免每次遍历整个保留窗口。
 	for index in range(_motion_frames.size() - 1, -1, -1):
@@ -170,7 +153,6 @@ func anchor_collision(anchor: Vector2, tick: int) -> void:
 	var motion := _motion_sample(frame, ahead)
 	if not data["rewind"] and motion == _collision_motion and ahead == _collision_index and is_same(data, _collision_data) and proxy_stale == _collision_stale:
 		_finish_anchor(anchor, tick)
-		if FrameTrace.enabled: FrameTrace.span(&"proxy_sample", started, Time.get_ticks_usec())
 		return
 	# 一次原生调用批量恢复运动、碰撞姿态和只读权威属性。
 	motion.apply(_forecast, ahead, proxy_stale and not data["rewind"])
@@ -201,7 +183,6 @@ func anchor_collision(anchor: Vector2, tick: int) -> void:
 	_collision_data = data
 	_collision_stale = proxy_stale
 	_finish_anchor(anchor, tick)
-	if FrameTrace.enabled: FrameTrace.span(&"proxy_sample", started, Time.get_ticks_usec())
 
 func _finish_anchor(anchor: Vector2, tick: int) -> void:
 	# 同一运动样本仍要更新复活边界和没有显式 view_tick 的查询元数据。
@@ -222,27 +203,18 @@ func _motion_sample(frame: Dictionary, ahead: int) -> NativeMotionTrack:
 			motion.initialize(data, MOTION_HORIZON, initial)
 			frame["motion"] = motion
 			frame["bounds"] = initial
-			if FrameTrace.enabled:
-				FrameTrace.count(&"proxy_motion_initializations" if first else &"proxy_geometry_invalidations")
-		elif FrameTrace.enabled: FrameTrace.count(&"proxy_geometry_keeps")
 		frame["geometry"] = CollisionBuilder.geometry_revision
 	var motion: NativeMotionTrack = frame["motion"]
 	if ahead < motion.size():
-		motion_cache_hits += 1
 		return motion
 	_collision_motion = null
 	# 样本是连续的原生结构；运动核和逐 tick 扫掠范围保持一致。
 	var geometry := TileDefs.terrain
 	var tm := TimeField.player_speed_mult() if TimeField.current != null else float(data["haste_mult"])
-	var generated := motion.extend(_forecast, ahead, ActorStep.DT, tm, Level0.pvp_mode,
+	motion.extend(_forecast, ahead, ActorStep.DT, tm, Level0.pvp_mode,
 			geometry, GameParameters.TILE_SIZE * 2.0)
 	frame["bounds"] = motion.get_bounds()
-	motion_steps += generated
-	if FrameTrace.enabled: FrameTrace.count(&"proxy_motion_steps", generated)
 	return motion
-
-func step_rewind(tick: int) -> void:
-	anchor_collision(_local_anchor, tick)
 
 func _apply_visual(data: Dictionary) -> void:
 	_vel = data["vel"]
@@ -298,7 +270,6 @@ func _drive_weapon_visual() -> void:
 func _in_water() -> bool:
 	var gp := global_position
 	return Water.is_in_water(Vector2(gp.x, gp.y + _water_feet_off))
-
 
 func render_snapshot(data: Dictionary, anchor: Vector2) -> void:
 	_local_anchor = anchor

@@ -399,7 +399,7 @@ func _card_body(r: Dictionary) -> Control:
 	mid.add_child(meta)
 	box.add_child(mid)
 
-	box.add_child(_card_names(r.get("names", [])))
+	box.add_child(_card_names(r["names"]))
 	return box
 
 
@@ -434,10 +434,9 @@ func _card_map_thumb(mode: String, map_path: String) -> Control:
 	return frame
 
 
-func _card_names(names_raw: Variant) -> Control:
+func _card_names(names: Array) -> Control:
 	var box := VBoxContainer.new()
 	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var names: Array = names_raw if names_raw is Array else []
 	var shown := mini(names.size(), 3)
 	for i in shown:
 		var is_host := i == 0
@@ -618,7 +617,7 @@ func _on_wait_pick(team: int) -> void:
 	NetBus.send_event(NetEvent.Kind.PICK_TEAM, team)
 
 func _on_wait_start_pressed() -> void:
-	NetBus.send_event(NetEvent.Kind.START, 0)
+	NetBus.send_event(NetEvent.Kind.START)
 
 func _on_wait_leave_pressed() -> void:
 	_return_to_lobby("已退出房间")
@@ -633,23 +632,17 @@ func _wait_title_text(state: Dictionary, mode: String) -> String:
 
 func _fill_flat_roster(plist: Array, my_role: int, host_role: int) -> void:
 	var shown := 0
-	for p in plist:
-		if typeof(p) != TYPE_DICTIONARY:
-			continue
+	for p: Dictionary in plist:
 		shown += 1
 		_wait_body.add_child(_roster_row(shown, p, my_role, host_role))
 
 
 func _fill_team_roster(state: Dictionary, plist: Array, my_role: int, host_role: int) -> void:
 	var buckets := {0: [], 1: [], 2: []}
-	for p in plist:
-		if typeof(p) != TYPE_DICTIONARY:
-			continue
-		var t := int(p.get("team", 0))
-		if not buckets.has(t):
-			t = 0
+	for p: Dictionary in plist:
+		var t := int(p["team"])
 		(buckets[t] as Array).append(p)
-	var team_size := int(state.get("team_size", 3))
+	var team_size: int = state["team_size"]
 	var shown := 0
 	for t in [1, 2]:
 		var tag := "A 队" if t == 1 else "B 队"
@@ -666,8 +659,8 @@ func _fill_team_roster(state: Dictionary, plist: Array, my_role: int, host_role:
 
 
 func _roster_row(n: int, p: Dictionary, my_role: int, host_role: int) -> Label:
-	var role := int(p.get("role", 0))
-	var l := UiFactory.label("%d. %s%s%s" % [n, str(p.get("name", "玩家")),
+	var role: int = p["role"]
+	var l := UiFactory.label("%d. %s%s%s" % [n, p["name"],
 			"(我)" if role == my_role else "",
 			"(房主)" if role == host_role else ""],
 			32, UiFactory.C_ACCENT if role == my_role else UiFactory.C_TEXT)
@@ -676,18 +669,16 @@ func _roster_row(n: int, p: Dictionary, my_role: int, host_role: int) -> Label:
 
 
 func _team_of_role(state: Dictionary, role: int) -> int:
-	for p in state.get("players", []):
-		if typeof(p) == TYPE_DICTIONARY and int(p.get("role", 0)) == role:
-			return int(p.get("team", 0))
+	for p: Dictionary in state["players"]:
+		if p["role"] == role:
+			return int(p["team"])
 	return 0
 
 
 func _both_teams_full(state: Dictionary, size: int) -> bool:
 	var counts := {1: 0, 2: 0}
-	for p in state.get("players", []):
-		if typeof(p) != TYPE_DICTIONARY:
-			continue
-		var t := int(p.get("team", 0))
+	for p: Dictionary in state["players"]:
+		var t := int(p["team"])
 		if counts.has(t):
 			counts[t] += 1
 	return counts[1] == size and counts[2] == size
@@ -695,12 +686,12 @@ func _both_teams_full(state: Dictionary, size: int) -> bool:
 
 func _team_count_text(state: Dictionary, plist: Array) -> String:
 	var picked := 0
-	for p in plist:
-		if typeof(p) == TYPE_DICTIONARY and int(p.get("team", 0)) != 0:
+	for p: Dictionary in plist:
+		if p["team"] != 0:
 			picked += 1
 	return "%d / %d 人(已选边 %d 人;两队各 %d 人才可开局)" % [
 			plist.size(), 6, picked,
-			int(state.get("team_size", 3))]
+			state["team_size"]]
 
 
 

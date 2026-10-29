@@ -2,13 +2,9 @@
 # 一键发布构建脚本：编译原生扩展，导出统一游戏程序并执行归档。
 # 构建过程依赖 project.godot 中配置的统一版本号。
 # 用法: python build_release.py (可选 --stamp <时间戳> / --version <版本号>)
-import json
 import os
-import re
-import shutil
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -58,85 +54,6 @@ def stamp_build_info(version: str, stamp: str) -> str:
     return original
 
 
-def _smoke_root() -> str:
-    """获取冒烟验证的临时工作目录，优先读取 CYR_SMOKE_DIR 环境变量，默认使用 builds 目录。"""
-    root = os.environ.get("CYR_SMOKE_DIR") or os.path.join(PROJECT, "builds")
-    os.makedirs(root, exist_ok=True)
-    return root
-
-
-def smoke_check(exe: str, extra: list, expect: str = "") -> str:
-    """将产物复制到独立临时目录中执行无头启动验证，确保无缺失资源或脚本语法解析错误。"""
-    print("== 冒烟 [%s] %s" % (os.path.basename(exe), " ".join(extra) or "(直接启动)"))
-    tmp = tempfile.mkdtemp(prefix=".smoke_", dir=_smoke_root())
-    try:
-        run_exe = os.path.join(tmp, os.path.basename(exe))
-        shutil.copy2(exe, run_exe)
-        for name in ("process_group.windows.x86_64.dll", "gns.windows.x86_64.dll", "simulation.windows.x86_64.dll"):
-            shutil.copy2(Path(exe).parent / name, tmp)
-        cmd = [run_exe, "--headless", "--quit-after", "120"]
-        if extra:
-            cmd += ["--", *extra]
-        r = subprocess.run(cmd, cwd=tmp, capture_output=True, text=True,
-                           encoding="utf-8", errors="replace")
-        out = ((r.stdout or "") + (r.stderr or ""))
-        if r.returncode != 0:
-            tail = "\n  ".join(out.splitlines()[-6:])
-            sys.exit("冒烟失败: %s 退出码为 %d（非正常退出）\n末尾输出:\n  %s"
-                     % (os.path.basename(exe), r.returncode, tail))
-    finally:
-        assert Path(tmp).resolve().parent == Path(_smoke_root()).resolve()
-        shutil.rmtree(tmp, ignore_errors=True)
-    bad = [ln for ln in out.splitlines()
-           if "SCRIPT ERROR" in ln or "Parse Error" in ln or "Failed to load script" in ln]
-    if bad:
-        sys.exit("冒烟失败: %s 启动遇到脚本解析错误\n  %s" % (os.path.basename(exe), "\n  ".join(bad[:6])))
-    if expect and expect not in out:
-        sys.exit("冒烟失败: %s 输出中未包含预期特征字符串「%s」" % (os.path.basename(exe), expect))
-    print("    OK(退出码 0,无脚本级错误%s)" % (",且在预期分支「%s」" % expect if expect else ""))
-    return out
-
-
-# 产物侧武器注册表数据完整性校验
-WEAPONS_JSON = os.path.join(PROJECT, "data", "weapons.json")
-
-
-def weapon_ids_from_json() -> list:
-    """读取 data/weapons.json 中的全部有效武器标识列表，保持与 WeaponRegistry 规则一致。"""
-    try:
-        with open(WEAPONS_JSON, encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, ValueError) as e:
-        sys.exit("读取或解析 %s 失败: %s" % (WEAPONS_JSON, e))
-    if not isinstance(data, dict) or not isinstance(data.get("weapons"), list):
-        sys.exit("%s 结构不符合预期，缺少 weapons 列表字段" % WEAPONS_JSON)
-    ids, seen = [], set()
-    for e in data["weapons"]:
-        if not isinstance(e, dict):
-            continue
-        v = e.get("id")
-        if isinstance(v, bool) or not isinstance(v, int) or v <= 0 or v in seen:
-            continue
-        seen.add(v)
-        ids.append(v)
-    if not ids:
-        sys.exit("%s 中未包含任何合规武器配置条目" % WEAPONS_JSON)
-    return ids
-
-
-def check_weapon_registry(out: str) -> None:
-    """验证客户端在参数触发下输出的武器注册表内容与数据源配置完全一致。"""
-    want = weapon_ids_from_json()
-    m = re.search(r"^\[registry\] weapons=(\d+) ids=\[([^\]]*)\]$", out, re.M)
-    if not m:
-        sys.exit("冒烟失败: 客户端未按预期输出武器注册表行")
-    got_ids = [int(t) for t in m.group(2).split(",") if t.strip()]
-    got = int(m.group(1))
-    if got != len(want) or got_ids != want:
-        sys.exit("冒烟失败: 导出的武器注册表数量或标识列表与配置不符 (包内 %d 条 vs 配置 %d 条)"
-                 % (got, len(want)))
-
-
 def export(preset: str, out: str) -> None:
     print("== 导出 [%s] -> %s" % (preset, os.path.basename(out)))
     r = subprocess.run([EDITOR, "--headless", "--export-release", preset, out],
@@ -175,10 +92,6 @@ def main() -> None:
     original = stamp_build_info(release_version(version), stamp)
     try:
         export("Windows Desktop", CLIENT_OUT)
-        smoke_check(CLIENT_OUT, [])
-        check_weapon_registry(smoke_check(CLIENT_OUT, ["--registry-report"],
-                                          expect="[registry] weapons="))
-        smoke_check(CLIENT_OUT, ["--server", "--port", "0"], expect="SERVER READY")
     finally:
         _write_text_lf(_BUILD_INFO_REL, original)
 

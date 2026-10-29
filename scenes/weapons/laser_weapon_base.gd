@@ -95,16 +95,13 @@ func collect_pending_beam_report() -> Dictionary:
 # 检测折线路径上的目标并结算伤害
 func _damage_path_targets(pts: PackedVector2Array) -> void:
 	var targets: Array = []
-	for t in get_tree().get_nodes_in_group("enemies"):
-		if t is Node2D:
-			targets.append([t, true])
+	for target: EnemyBase in get_tree().get_nodes_in_group("enemies"):
+		targets.append([target, true])
 	var host: Node = player.authority_world
-	for p in get_tree().get_nodes_in_group("player"):
-		if not (p is Node2D):
-			continue
+	for p: Player in get_tree().get_nodes_in_group("player"):
 		if p == player:
 			continue
-		if p.has_method("is_downed") and p.is_downed():
+		if p.is_downed():
 			continue
 		if host != null and host.is_friendly(player, p):
 			continue
@@ -139,7 +136,7 @@ func _body_rect(n: Node2D, near_to: Vector2, w: float, h: float) -> Rect2:
 		r = CollisionAabb.world_rect(n)
 	if n.is_in_group("player") and player.authority_world != null:
 		r = player.authority_world.target_rect_at(n, player)
-	var c := MazeGenerator.anchor_to_nearest(r.get_center(), near_to, w, h)
+	var c := GridPathfinder.anchor_to_nearest(r.get_center(), near_to, w, h)
 	return Rect2(c - r.size * 0.5, r.size)
 
 # 线段与矩形相交检测（Liang-Barsky 算法），返回线段上的交点或最近点
@@ -172,8 +169,6 @@ static func _segment_rect_hit(a: Vector2, b: Vector2, rect: Rect2) -> Vector2:
 	return a + d * t0
 
 func _apply_to_enemy(t: Node, pos: Vector2, near: Vector2) -> void:
-	if not t.has_method("hurt"):
-		return
 	CombatFeedback.hit_marker()
 	var dir := (pos - near).normalized() if pos.distance_to(near) > 1.0 else Vector2.RIGHT
 	t.hurt(damage, dir, impact)
@@ -189,18 +184,19 @@ func _apply_to_player(target: Node, _pos: Vector2, hit: Vector2) -> void:
 # 收集折线触点中的可破坏瓦片列表
 func _tile_contacts(contacts: Array, hit_points: PackedVector2Array) -> Array:
 	var out: Array = []
-	var grid := MazeGenerator.current_grid
-	if grid.is_empty():
+	var terrain := TileDefs.terrain
+	if terrain.empty():
 		return out
+	var dims := Vector2i(terrain.size() / GameParameters.TILE_SIZE)
 	var done := {}
 	for idx in range(contacts.size()):
 		var cell: Vector2i = contacts[idx]
 		if done.has(cell):
 			continue
 		done[cell] = true
-		if cell.y < 0 or cell.y >= grid.size() or cell.x < 0 or cell.x >= grid[cell.y].size():
+		if cell.y < 0 or cell.y >= dims.y or cell.x < 0 or cell.x >= dims.x:
 			continue
-		var tex: int = MazeGenerator.texture_of(grid[cell.y][cell.x])
+		var tex: int = MapFormat.texture_of(terrain.value(cell))
 		if not TileDefs.explosion_destroyable(tex):
 			continue
 		out.append({"cell": cell, "tex": tex,
@@ -215,6 +211,6 @@ func _spawn_tile_fx(contacts: Array, hit_points: PackedVector2Array) -> void:
 
 # 对触点瓦片结算破坏伤害
 func _damage_tiles(contacts: Array, hit_points: PackedVector2Array) -> void:
-	_spawn_tile_fx(contacts, hit_points)
-	for t in _tile_contacts(contacts, hit_points):
-		TileDefs.damage_tile(t["cell"], tile_chip, "explosion")
+	for tile in _tile_contacts(contacts, hit_points):
+		TileHitFx.spawn(get_viewport(), tile["pos"], int(tile["tex"]))
+		TileDefs.damage_tile(tile["cell"], tile_chip)

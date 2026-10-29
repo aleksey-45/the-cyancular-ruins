@@ -15,9 +15,6 @@ const ABSORB_TAIL := 0.8            # 吸收后再留一点尾巴让其余碎片
 const SHARD_COLOR := Color8(18, 18, 22)        # 结晶外观颜色
 const CORE_COLOR := Color8(70, 70, 78)         # 黑结晶上的冷灰亮芯(保留体积感)
 
-static var last_absorb_kind: String = ""   # 诊断:"fly"=真飞到怀表 | "timeout"=保底处理路径(不应成为常态)
-static var last_absorb_t: float = 0.0      # 诊断:吸收发生在阶段二开始后多久(秒)
-
 var amount: int = TimeParams.ELITE_GRAIN_DROP
 var _shards: Array = []             # [{p, v, size}]
 var _t := 0.0
@@ -64,12 +61,10 @@ func _process(delta: float) -> void:
 			if (s["p"] as Vector2).length() > 8.0:
 				all_done = false
 			if not _absorbed and _segment_hits(prev, now, target, ABSORB_RADIUS):
-				last_absorb_kind = "fly"
 				_absorb()
 		if all_done or _t >= SCATTER_TIME + ABSORB_TIMEOUT \
 				or (_absorbed and _t >= SCATTER_TIME + ABSORB_TAIL):
 			if not _absorbed:
-				last_absorb_kind = "fly" if all_done else "timeout"
 				_absorb()   # 超时保底吸收结算
 			queue_free()
 	queue_redraw()
@@ -103,14 +98,11 @@ func _absorb() -> void:
 	if _absorbed:
 		return
 	_absorbed = true
-	last_absorb_t = _t
 	if Level0.grain_account != null:
 		Level0.grain_account.deposit(amount)
-	var tree := get_tree()
-	if tree != null:
-		var watch = tree.get_first_node_in_group("watch_hud")
-		if watch != null and watch.has_method("tremble"):
-			watch.tremble()
+	var watch := get_tree().get_first_node_in_group("watch_hud")
+	if watch != null:
+		watch.tremble()
 
 
 func _draw() -> void:

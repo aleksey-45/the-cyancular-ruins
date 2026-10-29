@@ -76,9 +76,6 @@ class NativeTerrain : public RefCounted {
     std::map<int, int> base, authority, network_changes, modified;
     std::map<int64_t, TickChanges> prediction;
     std::map<int64_t, BlastKernel> blast_kernels;
-    int64_t kernel_builds = 0;
-    bool profile_collisions = false;
-    int64_t collision_us = 0, collision_chunks = 0;
     std::map<int, CellState> rewind_pending;
     std::deque<RewindEntry> rewind_entries;
     std::map<int64_t, int> rewards;
@@ -171,10 +168,7 @@ class NativeTerrain : public RefCounted {
     Dictionary take_rewards();
     void attach(Node *parent);
     int flush_collisions();
-    void set_collision_profiling(bool enabled) { profile_collisions = enabled; }
-    PackedInt64Array take_collision_profile();
     void flush_visuals(TileMapLayer *layer);
-    int dirty_count() const { return int(dirty.size()); }
     void invalidate_chunk(Vector2i chunk);
     void invalidate_all();
     bool affects_since(int64_t revision, Rect2 bounds) const;
@@ -187,16 +181,11 @@ class NativeTerrain : public RefCounted {
     void acknowledge(int64_t tick);
     void prune_before(int64_t tick);
     void reset_prediction(int64_t tick);
-    Dictionary pending_cells() const;
-    Dictionary prediction_cells_at(int64_t tick) const;
-    Dictionary history_stats() const;
     void set_rewind_enabled(bool enabled) { rewind_enabled = enabled; }
     void seal_rewind(double time);
     void rewind_between(double target, double cursor);
     void prune_rewind(double cutoff);
     void truncate_rewind(double time);
-    int rewind_count() const;
-    int pending_rewind_count() const { return int(rewind_pending.size()); }
 };
 
 void register_native_terrain();

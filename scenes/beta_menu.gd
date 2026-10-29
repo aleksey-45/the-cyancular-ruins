@@ -101,7 +101,7 @@ func _ignore_mouse_recursive(node: Node) -> void:
 		_ignore_mouse_recursive(ch)
 
 
-## 进入某张卡的模式(点击与 autotest 共用同一入口;CARDS[i] 传整张卡的字典)。
+## 进入所选卡片的模式。
 func _enter_card(c: Dictionary) -> void:
 	Sfx.play("ui")
 	PvpSession.reset()

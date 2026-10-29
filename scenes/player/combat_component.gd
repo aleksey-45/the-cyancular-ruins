@@ -57,9 +57,6 @@ func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, kn
 func simulate_hit(source_pos: Vector2, damage: int, knockback: float) -> void:
 	if body.native_simulate_hit(source_pos, damage, knockback): went_down.emit()
 
-func apply_impulse(source_pos: Vector2, knockback: float) -> void:
-	body.native_apply_impulse(source_pos, knockback)
-
 func force_down() -> void:
 	if not downed:
 		_downed()
@@ -74,7 +71,6 @@ func set_downed_by_rewind(v: bool) -> void:
 	body.apply_collision_pose()
 	if v:
 		went_down.emit()
-
 
 func revive() -> void:
 	if not downed:

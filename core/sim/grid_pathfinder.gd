@@ -1,7 +1,7 @@
 class_name GridPathfinder
 extends RefCounted
 
-# 环形空间几何与网格寻路工具类：包含环形距离计算、跨边界可视副本映射、瓦片坐标转换、地面站立检测、A* 寻路与视线遮挡检测。
+# 环形空间几何、地面检测与 A* 寻路。
 # 纯静态工具类，无内部状态，网格与尺寸参数由调用方传入。
 
 # 计算网格坐标在环形地图上的曼哈顿距离（以网格单元为单位）。
@@ -23,12 +23,6 @@ static func toroidal_delta_px(a: Vector2, b: Vector2, w: float, h: float) -> Vec
 	if absf(dy) > h * 0.5:
 		dy = -signf(dy) * (h - absf(dy))
 	return Vector2(dx, dy)
-
-
-# 环形空间线性插值：沿 a 到 b 的最短向量进行插值，并将结果约束在 [0, w) × [0, h) 范围内。
-# 用于多人对战实体位置平滑插值，避免跨边界时角色横穿整个地图。
-static func toroidal_lerp(a: Vector2, b: Vector2, alpha: float, w: float, h: float) -> Vector2:
-	return wrap_to_range(a + toroidal_delta_px(a, b, w, h) * alpha, w, h)
 
 
 # 将 pos 映射到距离 anchor 最近的可视镜像副本位置，使各轴差值不超过半个地图跨度。
@@ -58,18 +52,6 @@ static func wrap_to_range(pos: Vector2, w: float, h: float) -> Vector2:
 	elif p.y < 0.0:
 		p.y += h
 	return p
-
-
-# 深拷贝网格(每行复制 int),用于保存"未破坏"基线 / 每局复位。返回强类型 Array[Array],
-# 以便赋回 地图装载输入 等强类型成员(普通 Array 赋给强类型会运行时报错)。
-static func copy_grid(grid: Array) -> Array[Array]:
-	var out: Array[Array] = []
-	for row in grid:
-		var r: Array = []
-		for v in row:
-			r.append(v)
-		out.append(r)
-	return out
 
 
 # 像素坐标 → 环面格子坐标(取模回 [0,cols)×[0,rows))。
@@ -104,11 +86,9 @@ static var _g_cost: PackedInt32Array = PackedInt32Array()
 static var _prev: PackedInt32Array = PackedInt32Array()
 static var _heap_f: PackedInt32Array = PackedInt32Array()
 static var _heap_c: PackedInt32Array = PackedInt32Array()
-static var astar_calls: int = 0  # A* 调用计数(冒烟测试验证路径缓存命中用)
 
 static func astar_path_nearest(grid: Array[Array], from_cell: Vector2i, to_cell: Vector2i, max_visit: int = 4000,
 		passable_pred: Callable = Callable(), max_search_dist: int = -1) -> Array[Vector2i]:
-	astar_calls += 1
 	if grid.is_empty():
 		return []
 	var rows := grid.size()

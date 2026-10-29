@@ -21,8 +21,7 @@ func _process(delta: float) -> void:
 	var parent := get_parent() as CharacterBody2D
 	if parent == null:
 		return
-	var grid := MazeGenerator.current_grid
-	if grid.is_empty():
+	if TileDefs.terrain.empty():
 		return
 	var off := Water.feet_offset(parent)
 	var feet := Vector2(parent.global_position.x, parent.global_position.y + off)

@@ -1142,7 +1142,6 @@ globalThis.Render = (function () {
       cells: function () { return cellCache; },
       // 报错通道是可换的(评审发现 1 的接口增补):默认写页面状态栏(= ui.js 的
       //   status() 那条通道),页面/探针可以换掉它做断言或接自己的日志。传非函数则回落默认。
-      setErrorSink: function (fn) { errorSink = (typeof fn === 'function') ? fn : defaultErrorSink; },
       thumbCanvas: function (L) { return thumbs[L]; },
       thumbPx: function () { return thumbPx; },
       screenToSub: screenToSub, subToScreen: subToScreen,

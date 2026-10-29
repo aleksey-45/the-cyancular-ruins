@@ -10,14 +10,6 @@ extends CanvasLayer
 @onready var _score_label: Label = $ScoreWrap/ScoreLabel
 @onready var _ping_label: Label = $PingWrap/PingLabel
 
-# 探针测试兼容属性：转发访问中央广播的主副标签
-var _big: Label:
-	get:
-		return _broadcast.big if _broadcast != null else null
-var _sub: Label:
-	get:
-		return _broadcast.sub if _broadcast != null else null
-
 var _my_team := 0   # 本地玩家所属队伍编号，由对局初始化时注入
 
 
@@ -46,10 +38,10 @@ func _on_ping(ms: int) -> void:
 
 
 func _on_round_state(data: Dictionary) -> void:
-	var state: int = data.get("state", NetEvent.RoundState.PLAYING)
-	var round: int = data.get("round", 1)
-	var scores: Dictionary = data.get("scores", {})
-	var rounds_won: Dictionary = data.get("rounds_won", {})
+	var state: int = data["state"]
+	var round: int = data["round"]
+	var scores: Dictionary = data["scores"]
+	var rounds_won: Dictionary = data["rounds_won"]
 	var s1: int = int(scores.get(1, 0))
 	var s2: int = int(scores.get(2, 0))
 	var w1: int = int(rounds_won.get(1, 0))
@@ -60,11 +52,11 @@ func _on_round_state(data: Dictionary) -> void:
 	match state:
 		NetEvent.RoundState.COUNTDOWN:
 			var sub := "对战开始" if round <= 1 else "第 %d 局" % round
-			_broadcast.start_countdown(float(data.get("timer", 3.0)), sub)
+			_broadcast.start_countdown(float(data["timer"]), sub)
 		NetEvent.RoundState.PLAYING:
 			_broadcast.set_broadcast(false, "", "")
 		NetEvent.RoundState.ROUND_OVER:
-			var winner: int = int(data.get("winner", 0))
+			var winner: int = int(data["winner"])
 			if winner != 0:
 				var mine := winner == _my_team
 				# 胜利条件为单局达到目标击杀数
@@ -73,7 +65,7 @@ func _on_round_state(data: Dictionary) -> void:
 			else:
 				_broadcast.set_broadcast(true, "本局结束", "局胜 %d - %d" % [w1, w2])
 		NetEvent.RoundState.MATCH_OVER:
-			var mwinner: int = int(data.get("match_winner", 0))
+			var mwinner: int = int(data["match_winner"])
 			# 当队伍全员离场时整场判为平局
 			if mwinner == _my_team and _my_team != 0:
 				_broadcast.set_broadcast(true, "胜利!", "你们赢下了整场对战")
@@ -81,4 +73,3 @@ func _on_round_state(data: Dictionary) -> void:
 				_broadcast.set_broadcast(true, "失败", "再接再厉…")
 			else:
 				_broadcast.set_broadcast(true, "平 局", "双方都离开了对局…")
-

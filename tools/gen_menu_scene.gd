@@ -6,7 +6,7 @@ extends Node
 #
 # 运行方式:
 #   godot --headless --path . --quit-after 600 res://tools/gen_menu_scene.tscn -- <屏名>
-# 输出路径默认为 res://tests/_gen/<屏名>.tscn
+# 输出路径默认为 res://.superpowers/sdd/_gen/<屏名>.tscn
 # 支持通过 --full 参数导出包含动态子节点的完整场景结构用于像素比对。
 
 const THEME_PATH := "res://ui/theme/menu_theme.tres"
@@ -15,7 +15,7 @@ const OUT_DIR := "res://.superpowers/sdd/_gen"
 # 控件类型与候选变体映射表（按匹配优先级排序）
 const VARIANTS := {
 	"Label": ["H1", "Body", "Small", "Dim", "HeaderTitle", "Label"],
-	"Button": ["BtnAccent", "BtnGold", "BtnQuiet", "BtnLegacy", "BtnLegacyQuiet", "RowButton",
+	"Button": ["BtnAccent", "BtnGold", "BtnQuiet", "BtnBinding", "RowButton",
 			"BtnPrimary"],
 	"PanelContainer": ["PanelCarvedBody", "PanelCarved", "HeaderStrip", "RowPanel",
 			"PanelContainer"],
@@ -291,11 +291,6 @@ func _strip_beta_cards(root: Node) -> Node:
 		return n is HBoxContainer and n.get_child_count() > 0 and n.get_child(0) is PanelContainer)
 
 
-# 结算界面结果网格
-func _strip_result_grid(root: Node) -> Node:
-	return _find(root, func(n: Node) -> bool: return n is GridContainer)
-
-
 # 多人大厅房间列表网格
 func _strip_lobby_dynamic(root: Node) -> Node:
 	var box := _unique(root, func(n: Node) -> bool:
@@ -408,4 +403,3 @@ func _set_owner(n: Node, owner: Node) -> void:
 	for c in n.get_children():
 		c.owner = owner
 		_set_owner(c, owner)
-

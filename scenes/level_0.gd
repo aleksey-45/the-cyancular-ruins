@@ -26,45 +26,24 @@ var _post_process: PostProcess = null
 var _tile_cursor: float = -1.0
 var _film_t: float = 0.0          # 回溯底片化强度(get 平滑 ramp,≤200ms)
 var _haste_t: float = 0.0         # 加速视效强度(ramp 100ms)
-# 时间状态高亮(B13):加色副本(见 scenes/effects/time_glow.gd),实体 → TimeGlow
+# 时间状态高亮使用实体的 TimeGlow 加色副本。
 var _glows: Dictionary = {}
-var _log_at := Time.get_ticks_msec()
-
 
 static func safe_change_scene(tree: SceneTree, path: String) -> void:
 	if _switching:
-		return   # 已有正在进行的场景切换：忽略并发请求
+		return
 	_switching = true
-	# 等待当前帧处理完毕后再操作场景树：调用方可能处于旧场景信号的回调栈中，
-	# 立刻从场景树移除会触发 CanvasItem EXIT_TREE 状态错误。
+	# 信号回调尚未退出时，旧场景必须留在树中。
 	await tree.process_frame
-	var t0 := Time.get_ticks_usec()
-	var t := t0
 	var old: Node = tree.current_scene
 	var next: Node = load(path).instantiate()
-	t = _perf_log("load+instantiate", t)
-	tree.root.add_child(next)      # 先添加新场景至场景树（旧场景仍在树上，静态引用有效）
-	t = _perf_log("add_child(next)", t)
-	tree.current_scene = next      # 切换当前主场景指针
+	tree.root.add_child(next)
+	tree.current_scene = next
 	if old != null and old != next:
-		if OS.get_cmdline_user_args().has("--perf-teardown-detail"):
-			# 诊断模式：统计各子树卸载耗时
-			_teardown_detail(tree, old)
-			_perf_log("总计", t0)
-			_switching = false
-			return
 		tree.root.remove_child(old)
-		t = _perf_log("remove_child(old)", t)
 		old.visible = false
-		# 移出场景树后交给异步分帧释放器逐帧回收，避免大量节点同时释放引起单帧卡顿
-		if OS.get_cmdline_user_args().has("--perf-reap-sync"):
-			old.free()
-			t = _perf_log("free() 同步(对照)", t)
-		else:
-			start_reap(tree, old)
-			t = _perf_log("start_reap(旧世界)", t)
-	_perf_log("总计", t0)
-	_switching = false   # 场景切换完成，允许后续换场
+		start_reap(tree, old)
+	_switching = false
 
 # 将大场景节点的同步销毁平摊到多个帧中，并在显示菜单期间后台逐步回收。
 # 销毁顺序采用逆前序遍历，确保子节点优先于父节点被释放。
@@ -72,10 +51,6 @@ static func safe_change_scene(tree: SceneTree, path: String) -> void:
 const REAP_BUDGET_US := 3000      # 每帧销毁耗时预算（微秒）
 static var _reap_queue: Array[Node] = []
 static var _reaper_driver: Node = null
-# 性能诊断统计
-static var _reap_nodes := 0
-static var _reap_frames := 0
-static var _reap_us := 0
 
 class _Reaper extends Node:
 	func _ready() -> void:
@@ -91,16 +66,12 @@ class _Reaper extends Node:
 		if Level0._reaper_driver == self:
 			Level0._reaper_driver = null
 
-# 将待释放的旧场景节点加入分帧释放队列；若上一个场景尚未完全释放，则就地同步释放剩余节点。
+# 将旧场景追加到分帧释放队列，复用仍存活的回收驱动。
 static func start_reap(tree: SceneTree, world: Node) -> void:
 	if world == null or not is_instance_valid(world):
 		return
 	# 队列追加未完成的拆除任务
-	var t0 := Time.get_ticks_usec()
 	_collect_preorder(world, _reap_queue)
-	_reap_nodes = _reap_queue.size()
-	_reap_frames = 0
-	_reap_us = Time.get_ticks_usec() - t0
 	# 驱动者还活着就复用(它与拆除队列都是全局的,不需要第二个);已排队待删的另起一个 ——
 	# 不能只判 != null:它可能刚判空、正等帧末销毁,复用会让新队列没人拆。
 	if _reaper_driver == null or not is_instance_valid(_reaper_driver) \
@@ -116,54 +87,12 @@ static func reap_step() -> bool:
 		var n: Node = _reap_queue.pop_back()
 		if is_instance_valid(n):
 			n.free()
-	_reap_frames += 1
-	if _reap_queue.is_empty():
-		if OS.get_cmdline_user_args().has("--perf-switch"):
-			print("[perf-switch] reap 完成              %d 节点 / %d 帧 / 收集 %.2f ms" % [
-					_reap_nodes, _reap_frames, float(_reap_us) / 1000.0])
-		return true
-	return false
-
-# 就地拆完剩余(下一次换场接手时保底处理)。
-static func finish_reap() -> void:
-	for n in _reap_queue:
-		if is_instance_valid(n):
-			n.free()
-	_reap_queue.clear()
-
-# 诊断模式：按子树统计卸载耗时
-static func _teardown_detail(tree: SceneTree, old: Node) -> void:
-	var total := Time.get_ticks_usec()
-	var kids := old.get_children()
-	print("[perf-switch] 旧世界 %d 个顶层子节点(逐个 free 计时):" % kids.size())
-	for c in kids:
-		# 提前读取节点名称与类型
-		#   use-after-free(实测:整行 print 直接不出现,只留下表头)。
-		var nm := str(c.name)
-		var cls := c.get_class()
-		var s := Time.get_ticks_usec()
-		c.free()
-		var e := Time.get_ticks_usec()
-		print("[perf-switch]   %-22s %-14s %8.2f ms" % [nm, cls, float(e - s) / 1000.0])
-	var s2 := Time.get_ticks_usec()
-	if old.is_inside_tree():
-		tree.root.remove_child(old)
-	old.free()
-	var husk := float(Time.get_ticks_usec() - s2) / 1000.0
-	print("[perf-switch]   空壳 remove+free               %8.2f ms;整具合计 %.2f ms" % [
-			husk, float(Time.get_ticks_usec() - total) / 1000.0])
-
+	return _reap_queue.is_empty()
 
 static func _collect_preorder(n: Node, out: Array[Node]) -> void:
 	out.append(n)
 	for c in n.get_children():
 		_collect_preorder(c, out)
-
-static func _perf_log(label: String, t0: int) -> int:
-	var now := Time.get_ticks_usec()
-	if OS.get_cmdline_user_args().has("--perf-switch"):
-		print("[perf-switch] %-20s %8.2f ms" % [label, float(now - t0) / 1000.0])
-	return now
 
 # 根 Window 的输入事件不会自动路由进 SubViewport（WorldViewport），
 # 所以 SubViewport 内节点（玩家/枪）的 _unhandled_input 收不到。
@@ -172,8 +101,6 @@ func _unhandled_input(event: InputEvent) -> void:
 	$WorldViewport.push_input(event)
 
 func _ready() -> void:
-	var started := Time.get_ticks_msec()
-	GameLog.record("level_load", {"map": MazeGenerator.map_file_path(), "pvp": pvp_mode})
 	# 清屏背景色与地形图集统一保持一致
 	RenderingServer.set_default_clear_color(TerrainAtlas.SKY_COLOR)
 	CombatFeedback.spawn(self)
@@ -183,7 +110,6 @@ func _ready() -> void:
 		push_error("Level0: 地图加载失败，跳过建图")
 		return
 	terrain = TileDefs.terrain
-	terrain.set_collision_profiling(FrameTrace.enabled)
 	Level0.wall_layer = $WorldViewport/WallLayer
 
 	var tile_set = _create_wall_tileset()
@@ -198,14 +124,13 @@ func _ready() -> void:
 
 
 	if pvp_mode:
-		GameLog.record("level_ready", {"duration_ms": Time.get_ticks_msec() - started, "pvp": true})
 		return  # PvP 基线完成墙体铺图和物理初始化。
 	_build_wall_collision.call_deferred(grid)
 	EnemySpawner.load_types()
-	var spawns := MazeGenerator.load_spawns()
+	var spawns := MazeGenerator.current_spawns
 	_place_player(grid, spawns.get("player", Vector2i(-1, -1)))
 	$WorldViewport/Player.weapons.set_enabled_types(RunOptions.disabled_weapons)   # 开局选项:禁用武器槽生效
-	# 怀表时间系统(第一阶段):单机建账户与世界时间场(PvP 不建 → TimeField.current 为 null,倍率恒 1)
+	# 单人模式创建颗粒账户和时间场；PvP 的 TimeField.current 为 null，环境倍率为 1。
 	grain_account = GrainAccount.new()
 	time_field = TimeField.new(grain_account)
 	TimeField.current = time_field
@@ -214,7 +139,7 @@ func _ready() -> void:
 	# 透支锁定:怀表红闪提示(表针锁定期间两键都取不出颗粒)
 	grain_account.loan_locked.connect(func() -> void:
 		var w = get_tree().get_first_node_in_group("watch_hud")
-		if w != null and w.has_method("flash_locked"):
+		if w != null:
 			w.flash_locked())
 	_give_starting_weapon($WorldViewport/Player)
 	$EnemySpawner.spawn_all.call_deferred(spawns)
@@ -226,8 +151,6 @@ func _ready() -> void:
 	_post_process = pp
 	call_deferred("add_child", pp)
 	_build_pause_menu()
-	GameLog.record("level_ready", {"duration_ms": Time.get_ticks_msec() - started, "pvp": false})
-
 
 func _exit_tree() -> void:
 	if terrain != null: terrain.set_rewind_enabled(false)
@@ -237,24 +160,24 @@ func _exit_tree() -> void:
 func _create_wall_tileset() -> TileSet:
 	return TerrainAtlas.make_wall_tileset()
 
-
 func _create_water_tileset() -> TileSet:
 	var ts := GameParameters.TILE_SIZE
 	# 水面合批 shader 的采样源(= 水体纹理放大到 ts×ts)
 	Level0.surface_texture = ImageTexture.create_from_image(TerrainAtlas.water_brick_image(ts))
 	return TerrainAtlas.make_water_tileset(ts)
 
-
 func _paint_maze(layer: TileMapLayer) -> void:
 	# cyrm v4：绘制 16px 子格图层（跳过空气与液体瓦片）
 	var source_id = 0
-	var sc = MazeGenerator.current_subgrid[0].size()
-	var sr = MazeGenerator.current_subgrid.size()
+	var subgrid := terrain.get_subgrid_snapshot()
+	if subgrid.is_empty(): return
+	var sc: int = subgrid[0].size()
+	var sr := subgrid.size()
 	for y in range(sr):
-		var row: Array = MazeGenerator.current_subgrid[y]
+		var row: Array = subgrid[y]
 		for x in range(sc):
 			var tex: int = row[x]
-			if tex == MazeGenerator.EMPTY or Water.is_liquid(tex):
+			if tex == MapFormat.EMPTY or Water.is_liquid(tex):
 				continue
 			var atlas := Vector2i((y % 4) * 4 + (x % 4), tex - 1)
 			for ty in range(-1, 2):
@@ -279,12 +202,12 @@ func _paint_water(grid: Array[Array]) -> void:
 				var row: Array = grid[y]
 				for x in range(cols):
 					var v: int = row[x]
-					if v == MazeGenerator.EMPTY:
+					if v == MapFormat.EMPTY:
 						continue
-					if not Water.is_liquid(MazeGenerator.texture_of(v)):
+					if not Water.is_liquid(MapFormat.texture_of(v)):
 						continue
 					var above: int = grid[posmod(y - 1, rows)][x]
-					var is_surface := above == 0 or not Water.is_liquid(MazeGenerator.texture_of(above))
+					var is_surface := above == 0 or not Water.is_liquid(MapFormat.texture_of(above))
 					if is_surface:
 						# 收集水面格,合批成一个 canvas item(替代 N 个 Sprite,省 draw call,画面不变)
 						surface_cells.append({
@@ -293,7 +216,7 @@ func _paint_water(grid: Array[Array]) -> void:
 						})
 					else:
 						wl.set_cell(Vector2i(x + ox, y + oy), 0,
-							Vector2i(MazeGenerator.shape_of(v), BODY_ROW))
+							Vector2i(MapFormat.shape_of(v), BODY_ROW))
 
 
 	# 合批:一个 canvas item 画所有水面格(替代 N 个 Sprite,省 draw call,画面不变)
@@ -302,16 +225,8 @@ func _paint_water(grid: Array[Array]) -> void:
 		batch.setup(surface_cells, Level0.surface_texture, ts)
 		surf.call_deferred("add_child", batch)
 
-
 func _process(_delta: float) -> void:
 	flush_terrain_visuals()
-	if not pvp_mode and Time.get_ticks_msec() - _log_at >= 1000:
-		_log_at = Time.get_ticks_msec()
-		var player := $WorldViewport/Player
-		GameLog.record("singleplayer_state", {"position": player.position, "velocity": player.velocity,
-				"hp": player.hp, "downed": player.is_downed(), "weapon": player.weapons.log_state(),
-				"time_mode": time_field.mode if time_field != null else 0,
-				"projectiles": get_tree().get_nodes_in_group("bullet").size(), "terrain_chunks": terrain.dirty_count()})
 	# 时间场驱动(单机;先于实体各自的物理帧让模式生效——实体在 _physics_process 里查询)
 	if time_field != null and not pvp_mode:
 		_drive_time(_delta, Input.is_action_pressed("rewind"), Input.is_action_pressed("haste"))
@@ -343,7 +258,7 @@ func _rewind_elite_hits() -> void:
 		var bp: Vector2 = (b as Node2D).global_position
 		for e in elites:
 			var ep: Vector2 = (e as Node2D).global_position
-			var d := MazeGenerator.toroidal_delta_px(bp, ep,
+			var d := GridPathfinder.toroidal_delta_px(bp, ep,
 					GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 			if d.length() > 42.0:
 				continue
@@ -355,7 +270,6 @@ func _rewind_elite_hits() -> void:
 			var dir := d.normalized() if not d.is_zero_approx() else Vector2.RIGHT
 			e.call("hurt", dmg, dir, float(b.get("hit_impact")))
 
-
 func _flush_terrain_history() -> void:
 	if terrain != null and _rewind != null:
 		terrain.seal_rewind(_rewind.recorded_seconds())
@@ -363,20 +277,14 @@ func _flush_terrain_history() -> void:
 func flush_terrain_visuals() -> void:
 	if terrain != null: terrain.flush_visuals(Level0.wall_layer)
 
-
 func reset_destructibles() -> void:
 	if terrain == null or terrain.empty(): return
-	var started := Time.get_ticks_msec()
 	terrain.reset()
 	if Level0.wall_layer != null: _paint_maze(Level0.wall_layer)
 	terrain.attach($WorldViewport)
-	GameLog.record("terrain_collision_ready", {"duration_ms": Time.get_ticks_msec() - started})
 
 func _build_wall_collision(_grid: Array[Array]) -> void:
-	var started := Time.get_ticks_msec()
 	terrain.attach($WorldViewport)
-	GameLog.record("terrain_collision_ready", {"duration_ms": Time.get_ticks_msec() - started})
-
 
 func restart_single() -> void:
 	if terrain == null or terrain.empty():
@@ -395,7 +303,7 @@ func restart_single() -> void:
 		if is_instance_valid(e):
 			(e as Node).queue_free()
 	# 玩家满血满氧回出生点,姿态/武器复位
-	var spawns := MazeGenerator.load_spawns()
+	var spawns := MazeGenerator.current_spawns
 	var spawn_cell: Vector2i = spawns.get("player", Vector2i(-1, -1))
 	if spawn_cell.x < 0:
 		spawn_cell = Vector2i(_grid_ref[0].size() / 2, _grid_ref.size() / 2)
@@ -408,7 +316,6 @@ func restart_single() -> void:
 	_give_starting_weapon(player)
 	scatter_weapons.call_deferred(_default_weapon_types())
 
-
 func _place_player(_grid: Array[Array], spawn_cell: Vector2i) -> void:
 	var player: CharacterBody2D = $WorldViewport/Player
 	var ts: int = GameParameters.TILE_SIZE
@@ -419,7 +326,7 @@ func _place_player(_grid: Array[Array], spawn_cell: Vector2i) -> void:
 		# 地图无 # player:固定用左上第一个空格(地图唯一来源)
 		for y in range(_grid.size()):
 			for x in range(_grid[y].size()):
-				if _grid[y][x] == MazeGenerator.EMPTY:
+				if _grid[y][x] == MapFormat.EMPTY:
 					pos = Vector2i(x, y)
 					break
 			if pos.x >= 0:
@@ -486,7 +393,6 @@ func spawn_pickup(type_id: int, mag: int, pos: Vector2, vel: Vector2,
 		_self_drop_until[inst] = Time.get_ticks_msec() + int(PlayerParams.weapon_pickup_self_delay * 1000.0)
 	return node
 
-
 func remove_pickup(inst: int) -> void:
 	ground_weapons.remove(inst)
 	_self_drop_until.erase(inst)
@@ -494,7 +400,6 @@ func remove_pickup(inst: int) -> void:
 	if n != null and is_instance_valid(n):
 		n.queue_free()
 	_pickup_nodes.erase(inst)
-
 
 func clear_pickups() -> void:
 	for n in _pickup_nodes.values():
@@ -508,12 +413,12 @@ func clear_pickups() -> void:
 # 把 types 里每种武器铺到全图开阔地板格上(尽量互相远离)。
 func scatter_weapons(types: Array) -> void:
 	clear_pickups()
-	if MazeGenerator.current_grid.is_empty():
+	if terrain.empty():
 		return
 	ground_weapons.map_size = Vector2(float(GameParameters.MAP_WIDTH), float(GameParameters.MAP_HEIGHT))
 	var cols := int(ground_weapons.map_size.x / float(GameParameters.TILE_SIZE))
 	var rows := int(ground_weapons.map_size.y / float(GameParameters.TILE_SIZE))
-	var cells: Array = $EnemySpawner.open_floor_cells(MazeGenerator.current_grid)
+	var cells: Array = $EnemySpawner.open_floor_cells(TileDefs.terrain.get_grid_snapshot())
 	var want := types.size()
 	var picked: Array = GridPathfinder.spread_cells(cells, want, 10, cols, rows)
 	# 与 EnemySpawner 的 "spawned N enemies from map" 相同机制:布点数量要能一眼核对
@@ -620,20 +525,18 @@ func _sync_time_glows() -> void:
 		else:
 			g.set_color(spec[0])
 
-
 func _near_player(n: Node2D) -> bool:
 	var pl := get_node_or_null("WorldViewport/Player") as Node2D
 	if pl == null:
 		return false
-	var d := MazeGenerator.toroidal_delta_px(n.global_position, pl.global_position,
+	var d := GridPathfinder.toroidal_delta_px(n.global_position, pl.global_position,
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 	return d.length() <= GLOW_RADIUS
 
 
-## 时间场按键驱动接口（用于探针测试直接调用；常规流程由 _process 传递输入状态）
+## 时间场按键驱动接口。
 var _prev_want_rewind := false
 var _prev_want_haste := false
-
 
 func _drive_time(delta: float, want_rewind: bool, want_haste: bool) -> void:
 	# 锁定或余额耗尽时按下技能按键给出拒绝音效反馈
@@ -643,12 +546,7 @@ func _drive_time(delta: float, want_rewind: bool, want_haste: bool) -> void:
 		Sfx.play("deny")
 	_prev_want_rewind = want_rewind
 	_prev_want_haste = want_haste
-	var previous_mode := time_field.mode
 	time_field.update(delta, want_rewind, want_haste)
-	if time_field.mode != previous_mode:
-		GameLog.record("time_mode", {"from": previous_mode, "to": time_field.mode})
-
-
 ## 世界回溯步进：录制与回放状态机，以及击败实体的暂时隐藏与恢复
 func _tick_rewind(delta: float) -> void:
 	if _rewind == null:
@@ -684,7 +582,6 @@ func _tick_rewind(delta: float) -> void:
 		_flush_terrain_history()
 		terrain.prune_rewind(_rewind.recorded_seconds() - TimeParams.SNAP_SECONDS)
 
-
 func _update_pickup_prompt() -> void:
 	var pl := $WorldViewport.get_node_or_null("Player") as Node2D
 	# 地面武器拾取判定与渲染坐标映射到距离本地玩家最近的可视副本
@@ -717,7 +614,3 @@ func _update_pickup_prompt() -> void:
 func flush_terrain_collision() -> void:
 	if terrain == null: return
 	terrain.flush_collisions()
-	if FrameTrace.enabled:
-		var profile := terrain.take_collision_profile()
-		FrameTrace.count(&"terrain_collision_us", profile[0])
-		FrameTrace.count(&"terrain_chunks", profile[1])

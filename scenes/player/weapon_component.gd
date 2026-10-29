@@ -26,13 +26,11 @@ var _presented_generation := -1
 # 切枪跳过房间或单人配置禁用的武器。
 var enabled_types: Array = []
 
-
 func _init() -> void:
 	# 在 _init 中构建背包对象，确保无场景树上下文时也能正常实例化与调用
 	inventory = WeaponInventory.new(WeaponRegistry.tiers_map())
 	# 默认启用注册表中的所有武器类型
 	enabled_types = WeaponRegistry.all_ids()
-
 
 func _ready() -> void:
 	body = get_parent() as Player
@@ -58,7 +56,6 @@ func _release_weapon() -> void:
 	if _weapon != null and is_instance_valid(_weapon) and not _pool_enabled:
 		_weapon.queue_free()
 
-
 func set_enabled_types(disabled: Array[int]) -> void:
 	enabled_types = WeaponRegistry.all_ids().filter(func(t: int) -> bool: return not disabled.has(t))
 	if enabled_types.is_empty():
@@ -73,10 +70,8 @@ func set_enabled_types(disabled: Array[int]) -> void:
 		else:
 			_unequip()
 
-
 func is_type_enabled(type_id: int) -> bool:
 	return enabled_types.has(type_id)
-
 
 func _first_enabled_index() -> int:
 	for i in inventory.held.size():
@@ -144,7 +139,6 @@ func request_net_cycle(dir: int) -> void:
 func push_switch_inst(inst: int) -> void:
 	_switch_inst = inst
 
-
 func consume_switch_inst() -> int:
 	var v := _switch_inst
 	_switch_inst = 0
@@ -196,10 +190,6 @@ func equip_inst(inst: int) -> void:
 
 
 # 按背包槽位索引切换装备
-func equip_index(i: int) -> void:
-	_equip_index(i)
-
-
 func _equip_index(index: int) -> void:
 	if index < 0 or index >= inventory.held.size():
 		return
@@ -255,16 +245,6 @@ func _unequip() -> void:
 # 同步写入武器弹药量：
 # - 若武器已在场景树中，直接写入 mag_ammo；
 # - 若武器尚未加入场景树，写入 pending_mag 等待 _ready 阶段应用。
-static func apply_mag(w: WeaponBase, mag: int) -> void:
-	if w == null or not is_instance_valid(w):
-		return
-	if w.is_inside_tree():
-		w.mag_ammo = clampi(mag, 0, w.mag_size)
-	else:
-		w.pending_mag = clampi(mag, 0, w.mag_size)
-
-
-
 # 记录最近一次被替换掉落的武器信息 {type, mag}
 var _last_dropped: Dictionary = {}
 
@@ -297,7 +277,6 @@ func pick_up(type_id: int, mag: int) -> int:
 	_weapon.fire_cd_timer = cooldown
 	_last_dropped = {"type": dropped, "mag": dropped_mag}
 	return dropped
-
 
 func take_last_dropped() -> Dictionary:
 	var d := _last_dropped
@@ -359,7 +338,6 @@ func snapshot_inventory(shared: bool = false) -> Array:
 		return _history_inventory
 	return inventory.snapshot()
 
-
 func restore_inventory(entries: Array, equipped_inst: int) -> void:
 	var type_id := 0
 	for entry: Dictionary in entries:
@@ -402,19 +380,8 @@ func _flush_current_mag() -> void:
 func reset_mag_state() -> void:
 	_flush_current_mag()
 
-
 func current_weapon() -> WeaponBase:
 	return _weapon
-
-func log_state() -> Dictionary:
-	var equipped_type: int = inventory.held[_current_index]["type"] if current_inst() != 0 else 0
-	var live_type := _weapon.type_id if _weapon != null else 0
-	return {"inst": current_inst(), "type": _current_type, "inventory": inventory.held.duplicate(true),
-			"inventory_type": equipped_type, "live_type": live_type,
-			"consistent": equipped_type == _current_type and equipped_type == live_type,
-			"live_scene": _weapon.scene_file_path if _weapon != null else "",
-			"mag": _weapon.mag_ammo if _weapon != null else 0}
-
 
 func current_type_id() -> int:
 	return _current_type
@@ -424,7 +391,6 @@ func current_type_id() -> int:
 func current_inst() -> int:
 	return inst_at_index(_current_index)
 
-
 func movement_multiplier() -> Vector2:
 	if _weapon == null:
 		return Vector2.ONE
@@ -432,18 +398,12 @@ func movement_multiplier() -> Vector2:
 
 
 # 武器物理逻辑（冷却、预瞄、后坐力）每物理帧由 Player 显式驱动，确保回滚模拟确定性
-func tick(delta: float) -> void:
-	if _weapon != null:
-		_weapon.tick(delta)
-
-
 func apply_recoil(push: float, is_squat: bool, is_latched: bool) -> void:
 	if is_squat:
 		return
 	if is_latched:
 		push *= PlayerParams.climb_recoil_mult  # 攀爬状态下后坐力衰减为 10%
 	body.velocity.x -= body.facing_direction * push
-
 
 func cancel_aim() -> void:
 	if _weapon != null:

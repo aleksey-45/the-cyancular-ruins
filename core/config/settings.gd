@@ -181,27 +181,7 @@ func load_settings() -> void:
 	pvp_show_minimap = bool(cf.get_value("pvp", "show_minimap", true))
 	pvp_minimap_show_enemy = bool(cf.get_value("pvp", "minimap_show_enemy", true))
 	for action in REMAPPABLE_ACTIONS:
-		# 键不存在时默认返回空数组，避免旧配置因缺少字段产生警告
-		# 加速动作默认使用鼠标右键
 		var arr = cf.get_value("bindings", action, [])
-		if action == "haste":
-			var mouse_only: Array = []
-			if arr is Array:
-				for item in arr:
-					if item is Dictionary and item.has("m"):
-						mouse_only.append(item)
-			if mouse_only.is_empty():
-				InputMap.action_erase_events(action)
-				InputMap.action_add_event(action, _make_mouse(MOUSE_BUTTON_RIGHT))
-			arr = mouse_only
-		# 键位迁移：下蹲动作如果绑定了 Shift 则予以清除，避免与时空回溯操作产生冲突
-		if action == "down" and arr is Array:
-			var cleaned: Array = []
-			for item in arr:
-				if item is Dictionary and int(item.get("k", 0)) == KEY_SHIFT:
-					continue
-				cleaned.append(item)
-			arr = cleaned
 		if arr is Array and not (arr as Array).is_empty():
 			InputMap.action_erase_events(action)
 			for item in arr:

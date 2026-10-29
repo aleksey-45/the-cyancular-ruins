@@ -43,7 +43,7 @@ func _waypoint_world(cell: Vector2i) -> Vector2:
 	var ts := GameParameters.TILE_SIZE
 	var p := Vector2(cell.x * ts + ts / 2.0, cell.y * ts + ts / 2.0)
 	p.y -= EnemyParams.FlyBird.hover_altitude
-	return MazeGenerator.anchor_to_nearest(p, _player_pos(),
+	return GridPathfinder.anchor_to_nearest(p, _player_pos(),
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 
 
@@ -72,7 +72,7 @@ func _follow_path(delta: float, fallback_target: Vector2 = Vector2.INF) -> void:
 # BFS 无路/预算超限时的直线保底处理:向目标点直线飞行(鸟飞越低墙,直线基本可行)。
 func _fly_straight_to(target: Vector2, delta: float) -> void:
 	var spd := EnemyParams.FlyBird.fly_speed
-	var to_target := MazeGenerator.toroidal_delta_px(global_position, target,
+	var to_target := GridPathfinder.toroidal_delta_px(global_position, target,
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 	if to_target.length() <= spd * delta:
 		global_position = target
@@ -82,7 +82,7 @@ func _fly_straight_to(target: Vector2, delta: float) -> void:
 
 
 func _find_escape_column() -> Vector2:
-	var grid := MazeGenerator.current_grid
+	var grid: Array[Array] = TileDefs.terrain.get_grid_snapshot()
 	if grid.is_empty():
 		return global_position
 	var cols := grid[0].size()
@@ -109,10 +109,8 @@ func _find_escape_column() -> Vector2:
 # 敌人,已收集进 _obstacle_boxes)当矩形判重叠 → 不可走。这样 BFS 只规划鸟挤得过、
 # 且不穿场上有实体的路。
 func _bird_can_pass(cell: Vector2i) -> bool:
-	var grid := MazeGenerator.current_grid
-	if grid.is_empty():
-		return false   # 空网格视为不可通行
-	                   #   故这条提前返回不能删(TileQuery 在空网格返回 false = "没压到东西")。
+	if TileDefs.terrain.empty():
+		return false
 	var ts := GameParameters.TILE_SIZE
 	# 鸟原心 = 格中心 − hover_altitude(悬停上移);箱体世界范围 = 原心 + AABB。
 	var ox := cell.x * ts + ts * 0.5
@@ -124,7 +122,7 @@ func _bird_can_pass(cell: Vector2i) -> bool:
 	if _obstacle_boxes.size() > 0:
 		# 箱体锚到本鸟坐标的环面副本(与 _collect_obstacles 同帧),否则地图接缝处
 		# wrapped 格坐标与鸟/障碍的 anchored 坐标差一个整图,Rect2 永不相交。
-		var bird_center := MazeGenerator.anchor_to_nearest(Vector2(ox, oy), global_position,
+		var bird_center := GridPathfinder.anchor_to_nearest(Vector2(ox, oy), global_position,
 				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 		var bird_rect := Rect2(bird_center + _fly_box_min, _fly_box_max - _fly_box_min)
 		for r in _obstacle_boxes:
@@ -160,7 +158,7 @@ func _collision_rect_of(n: Node2D) -> Rect2:
 	else:
 		rect = Rect2(n.global_position - Vector2(20, 20), Vector2(40, 40))
 	var center := rect.get_center()
-	var anchored := MazeGenerator.anchor_to_nearest(center, global_position,
+	var anchored := GridPathfinder.anchor_to_nearest(center, global_position,
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 	return Rect2(anchored - rect.size * 0.5, rect.size)
 
@@ -173,14 +171,12 @@ func _repath_to(cell: Vector2i) -> void:
 	# 按鸟自身碰撞箱能否通过 + 场上实体碰撞箱是否挡路判定可走性(见 _bird_can_pass)。
 	# 目标格不可达(墙/挤不进/预算超限)时 astar_path_nearest 返回最近可达格的路径,
 	# 避免空路径后直线硬冲卡墙。A* 启发式直扑目标,空旷区展开节点远少于 BFS。
-	# 缓存:目标格没变、上次路径还没走完 → 跳过昂贵的 A*。玩家静止时射击位/回家路
-	# 不变,鸟群不再每 0.5s 反复搜索;路径走完或目标格变化才重寻(障碍碰撞由
-	# move_and_slide 保底处理,不会穿墙)。
+	# 目标格变化或路径耗尽时重新寻路，移动碰撞由 move_and_slide 处理。
 	if cell == _path_target and not _path.is_empty():
 		return
 	_path_target = cell
 	_collect_obstacles()
-	_path = MazeGenerator.astar_path_nearest(_cell_of(global_position), cell,
+	_path = GridPathfinder.astar_path_nearest(TileDefs.terrain.get_grid_snapshot(), _cell_of(global_position), cell,
 			EnemyParams.FlyBird.path_max_visit, _bird_can_pass, EnemyParams.FlyBird.search_radius_cells)
 	_path_index = 0
 	# 寻路未找到可行路径时计算脱困目标点，先水平或向下绕出障碍

@@ -10,11 +10,8 @@ var guests: Dictionary = {}
 var host_role := 1
 var world: AuthorityWorld
 var _returned: Dictionary = {}
-var _input_hints: Dictionary = {}
-var _hints_changed := false
 
 func _ready() -> void:
-	process_physics_priority = -900
 	NetBus.event_received.connect(_on_event)
 	NetBus.input_received.connect(_on_input)
 	NetBus.peer_left.connect(_on_left)
@@ -65,13 +62,14 @@ func _on_event(peer: int, kind: int, data: Variant) -> void:
 					broadcast_room()
 		NetEvent.Kind.START:
 			if role_of(peer) == host_role and world == null:
-				var ai := int(data)
-				if mode == PvpSession.MODE_PVP and (ai != 0 or online_count() != max_players()):
+				if mode == PvpSession.MODE_PVP and online_count() != max_players():
 					message(peer, "1v1 需要两名在线玩家")
 				elif mode == PvpSession.MODE_TEAM and not team_ready():
 					message(peer, "两队各需 3 人")
-				elif seats.size() + ai >= 2:
-					start_match(ai)
+				elif online_count() < 2:
+					message(peer, "至少需要两名在线玩家")
+				else:
+					start_match()
 		NetEvent.Kind.MAP:
 			if role_of(peer) == host_role and world == null:
 				options["map"] = data
@@ -82,8 +80,6 @@ func _on_event(peer: int, kind: int, data: Variant) -> void:
 			var role := role_of(peer)
 			if world != null and world.players.has(role) and data == world._round_num:
 				seats[role]["ready"] = true
-				GameLog.record("player_ready", {"role": role, "peer": peer, "round": data,
-						"baseline_ms": Time.get_ticks_msec() - seats[role].get("baseline_at", Time.get_ticks_msec())})
 		NetEvent.Kind.SUICIDE:
 			var role := role_of(peer)
 			if world != null and world._round_state == NetEvent.RoundState.PLAYING and world.players.has(role):
@@ -101,7 +97,6 @@ func _on_event(peer: int, kind: int, data: Variant) -> void:
 				remove_seat(role)
 
 func message(peer: int, value: String) -> void:
-	GameLog.record("room_message", {"peer": peer, "message": value})
 	NetBus.send_event(NetEvent.Kind.MESSAGE, value, peer)
 
 func role_of(peer: int) -> int:
@@ -123,7 +118,6 @@ func add_seat(peer: int) -> void:
 		team = 1 if seats.values().filter(func(seat: Dictionary) -> bool: return seat["team"] == 1).size() < 3 else 2
 	seats[role] = {"peer": peer, "token": Crypto.new().generate_random_bytes(16).hex_encode(),
 			"name": guest["name"], "hue": guest["hue"], "team": team, "deadline": 0.0, "ready": false}
-	GameLog.record("seat_join", {"role": role, "peer": peer, "team": team, "mode": mode})
 
 func room_data() -> Dictionary:
 	var roster: Array = []
@@ -151,24 +145,19 @@ func broadcast_room() -> void:
 			NetBus.send_event(NetEvent.Kind.ROOM, payload, seats[role]["peer"])
 
 func team_ready() -> bool:
-	return seats.size() == 6 and seats.values().filter(func(seat: Dictionary) -> bool: return seat["team"] == 1).size() == 3
+	return online_count() == 6 and seats.values().filter(func(seat: Dictionary) -> bool: return seat["team"] == 1).size() == 3
 
-func start_match(ai_count: int = 0) -> void:
-	_input_hints.clear()
-	_hints_changed = false
+func start_match() -> void:
 	var roles: Array = []
 	var teams := {}
-	var ai_roles: Array = []
 	for role in seats:
 		if seats[role]["peer"] != 0:
 			roles.append(role)
 			if mode == PvpSession.MODE_TEAM:
 				teams[role] = seats[role]["team"]
-	for i in ai_count:
-		ai_roles.append(int(seats.keys().max()) + 1 + i)
 	world = AuthorityWorld.new()
 	add_child(world)
-	world.setup(mode, options.get("map", "res://maps/newfactory.cyrm"), roles, teams, options, ai_roles)
+	world.setup(mode, options.get("map", "res://maps/newfactory.cyrm"), roles, teams, options)
 	world.state_ready.connect(_send_state)
 	world.event.connect(_broadcast)
 	world.baseline_needed.connect(send_baselines)
@@ -200,9 +189,6 @@ func baseline_for(role: int) -> Dictionary:
 	for r in seats:
 		names[r] = seats[r]["name"]
 		hues[r] = seats[r]["hue"]
-	for r in world.players:
-		if not names.has(r):
-			names[r] = "AI%d" % r
 	return {"code": code, "mode": mode, "role": role, "options": options, "names": names, "hues": hues,
 			"teams": world.rules.teams, "spawns": world.rules.spawns, "map": FileAccess.get_file_as_bytes(MazeGenerator.map_file_path()),
 			"sub_hp": world.terrain.get_modified(), "round_state": world.round_state(),
@@ -210,66 +196,21 @@ func baseline_for(role: int) -> Dictionary:
 
 func send_baseline(role: int) -> void:
 	seats[role]["ready"] = false
-	seats[role]["baseline_at"] = Time.get_ticks_msec()
 	var payload := baseline_for(role)
-	GameLog.record("baseline_send", {"role": role, "peer": seats[role]["peer"], "tick": world._snap_tick,
-			"round": world._round_num, "map_revision": world.map_revision, "map_bytes": payload["map"].size()})
 	NetBus.send_event(NetEvent.Kind.BASELINE, payload, seats[role]["peer"])
 
 func _on_input(peer: int, packet: Dictionary) -> void:
 	var role := role_of(peer)
 	if world != null and role != 0 and seats[role]["ready"]:
 		world.accept_input(role, packet)
-		_remember_input(role, packet)
-
-func _remember_input(role: int, packet: Dictionary) -> void:
-	var epoch: int = world.players[role].input_buffer.epoch
-	var previous: Dictionary = _input_hints.get(role, {}).get("packet", {"frames": [], "actions": []})
-	var kept := {"frames": [], "actions": []}
-	for kind in kept:
-		var known := {}
-		for record: Dictionary in previous[kind]:
-			if record["epoch"] == epoch:
-				known[record["seq"]] = record
-		for record: Dictionary in packet[kind]:
-			if record["epoch"] != epoch or record["target_tick"] > world._snap_tick + InputBuffer.FUTURE_TICKS:
-				continue
-			if not known.has(record["seq"]):
-				known[record["seq"]] = record.merged({"available_tick": maxi(record["target_tick"], world._snap_tick + 1)})
-		var seqs := known.keys()
-		seqs.sort()
-		for seq in seqs:
-			var record: Dictionary = known[seq]
-			if kind == "frames" and seqs[-1] - seq >= InputBuffer.REDUNDANCY:
-				continue
-			if kind == "actions" and world._snap_tick - record["target_tick"] > InputBuffer.ACTION_TICKS:
-				continue
-			kept[kind].append(record)
-	_input_hints[role] = {"tick": world._snap_tick, "packet": kept}
-	_hints_changed = true
-
-func _physics_process(_delta: float) -> void:
-	if not _hints_changed:
-		return
-	var started := Time.get_ticks_usec() if FrameTrace.enabled else 0
-	# INPUT 通道只保留最新整包；每包必须包含所有角色的有界冗余，不能只包含本帧变化的角色。
-	var targets := {}
-	for role in seats:
-		if seats[role]["ready"] and seats[role]["peer"] != 0:
-			targets[role] = seats[role]["peer"]
-	NetBus.broadcast_input_hints(_input_hints, targets)
-	_hints_changed = false
-	if FrameTrace.enabled: FrameTrace.span(&"server_input_hints", started, Time.get_ticks_usec())
 
 func _on_left(peer: int) -> void:
 	guests.erase(peer)
 	var role := role_of(peer)
-	_input_hints.erase(role)
 	if not seats.has(role):
 		return
 	seats[role]["peer"] = 0
 	seats[role]["deadline"] = Time.get_ticks_msec() / 1000.0 + GRACE_SECONDS
-	GameLog.record("seat_disconnected", {"role": role, "peer": peer, "grace_seconds": GRACE_SECONDS}, true)
 	_returned.erase(role)
 	if world != null:
 		seats[role]["ready"] = false
@@ -286,7 +227,6 @@ func rejoin(peer: int, target_code: String, token: String) -> void:
 		if code == target_code and seats[role]["token"] == token:
 			seats[role]["peer"] = peer
 			seats[role]["deadline"] = 0.0
-			GameLog.record("seat_rejoin", {"role": role, "peer": peer})
 			if world != null:
 				world.new_epoch(role)
 				send_baseline(role)
@@ -295,7 +235,6 @@ func rejoin(peer: int, target_code: String, token: String) -> void:
 				broadcast_room()
 			return
 	NetBus.send_event(NetEvent.Kind.REJOIN_DENIED, "席位已过期", peer)
-	GameLog.record("rejoin_denied", {"peer": peer})
 
 func update_grace() -> void:
 	world.grace_snapshot.clear()
@@ -305,8 +244,6 @@ func update_grace() -> void:
 	world.broadcast_round.call_deferred()
 
 func remove_seat(role: int) -> void:
-	_input_hints.erase(role)
-	GameLog.record("seat_remove", {"role": role, "host": role == host_role})
 	if role == host_role:
 		_broadcast(NetEvent.Kind.ROOM_CLOSED, "房主已离开", role)
 		if world != null:
@@ -331,7 +268,6 @@ func online_count() -> int:
 	return seats.values().filter(func(seat: Dictionary) -> bool: return seat["peer"] != 0).size()
 
 func return_to_room() -> void:
-	GameLog.record("return_to_room")
 	remove_child(world)
 	world.queue_free()
 	world = null

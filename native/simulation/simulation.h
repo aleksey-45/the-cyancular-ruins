@@ -18,8 +18,7 @@
 
 namespace godot {
 
-// The property bindings are compatibility adapters. Simulation accesses members
-// directly; it never asks a GDScript instance for a named property or method.
+// Bindings expose scene state to scripts. Simulation accesses members directly.
 class NativeActorInput : public RefCounted {
     GDCLASS(NativeActorInput, RefCounted)
 protected:
@@ -152,12 +151,7 @@ public:
     void native_apply_impulse(Vector2 source, double force);
     bool native_simulate_hit(Vector2 source, int damage, double force);
     bool native_force_down();
-    Vector2 native_move_by(Vector2 motion, int64_t revision);
-    void native_move_actor(double delta, int64_t revision);
-    TypedArray<Rect2> native_obstacles(int mask) const;
-    bool native_overlaps(Rect2 bounds);
     bool native_queries_match(const Array &queries) const;
-    static double clip_motion(Rect2 bounds, int axis, double distance, const Array &obstacles);
     void apply_collision_pose();
     int collision_stance() const { return int(is_squat && !sim_downed); }
     Rect2 collision_rect() const;

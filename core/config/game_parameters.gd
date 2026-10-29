@@ -28,6 +28,6 @@ func _ready() -> void:
 # PvP 服务端与单人模式切换地图后必须调用此方法更新：
 # 避免不同尺寸地图（如 125×75 与 150×100）导致环面回绕与寻路边界错位产生错误的物理阻挡。
 func refresh_map_size() -> void:
-	var cells := MazeGenerator.map_size()
+	var cells := MapFormat.map_size(MazeGenerator.map_file_path())
 	MAP_WIDTH = cells.x * TILE_SIZE
 	MAP_HEIGHT = cells.y * TILE_SIZE

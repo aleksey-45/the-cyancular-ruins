@@ -115,7 +115,6 @@ func _on_lobby_connected() -> void:
 	else:
 		_request_list("已连接,正在获取房间列表…")
 
-
 func _on_lobby_connect_failed() -> void:
 	_lobby_start_ms = 0
 	_connected = false
@@ -151,17 +150,10 @@ func _request_list(msg: String) -> void:
 		_status.text = msg
 		_send_list_request())
 
-
 func _on_server_message(t: String) -> void:
 	if LocalServer.restarting:
 		return
 	_status.text = t
-
-
-
-
-
-
 
 func try_rejoin_row(code: String, in_match: bool, mode: String) -> bool:
 	if not PvpSession.can_rejoin_to(code, mode):
@@ -170,7 +162,6 @@ func try_rejoin_row(code: String, in_match: bool, mode: String) -> bool:
 		return false
 	_request_rejoin()
 	return true
-
 
 func _request_rejoin() -> void:
 	if not PvpSession.can_rejoin():
@@ -202,11 +193,6 @@ func _tick_rejoin_timeout() -> bool:
 		return true
 	return false
 
-
-
-
-
-
 func _return_to_lobby(msg: String) -> void:
 	NetBus.send_event(NetEvent.Kind.LEAVE)
 	PvpSession.room.clear()
@@ -224,7 +210,6 @@ func _tick_lobby_connect_timeout() -> void:
 
 
 # 角色认领超时检测
-
 
 func _ensure_own_server() -> bool:
 	NetSession.close()
@@ -279,7 +264,6 @@ func _join_with_code(code: String, action: Callable) -> void:
 	_status.text = "已找到房主(%s),正在加入…" % str(got.get("host_ip", ""))
 	_with_lobby(action)
 
-
 func _update_code_label() -> void:
 	if _code_edit == null:
 		return
@@ -302,11 +286,8 @@ func _set_room_entered_status(code: String, is_host: bool) -> void:
 	_status.text = ("房间 %s 已创建 —— 把房间号报给对手" % code) if no_relay.is_empty() \
 			else ("房间 %s 已创建;%s" % [code, no_relay])
 
-
-
 func _send_list_request() -> void:
 	push_error("LobbyPage: 子类必须覆写 _send_list_request()")
-
 
 func _player_options() -> Dictionary:
 	push_error("LobbyPage: 子类必须覆写 _player_options()")
@@ -314,7 +295,6 @@ func _player_options() -> Dictionary:
 
 
 var time_rules := TimeRules.new()
-
 
 func _add_time_params(vb: VBoxContainer) -> void:
 	if not PvpSession.beta_mode:
@@ -329,7 +309,6 @@ func _add_time_params(vb: VBoxContainer) -> void:
 	_trow(vb, "击杀获取 %", 50.0, "kill_ratio", Vector2(0.0, 100.0), 5.0, true)
 	_trow(vb, "拆砖获取/子格", 10.0, "block_gain", TimeRules.R_BLOCK, 1.0, false)
 	_trow(vb, "伤害获取/点", 4.0, "damage_gain", TimeRules.R_DAMAGE, 1.0, false)
-
 
 func _trow(vb: VBoxContainer, text: String, initial: float, field: String,
 		rng: Vector2, step: float, as_percent: bool) -> void:
@@ -355,17 +334,14 @@ func _trow(vb: VBoxContainer, text: String, initial: float, field: String,
 		val.text = _fmt_param(v, as_percent))
 	vb.add_child(row)
 
-
 static func _fmt_param(v: float, as_percent: bool) -> String:
 	return ("%d%%" % int(round(v))) if as_percent else str(int(round(v)))
-
 
 func _beta_payload() -> Dictionary:
 	if not PvpSession.beta_mode:
 		return {}
 	time_rules.clamp_self()
 	return {"beta": true, "time": time_rules.to_dict()}
-
 
 func _add_map_picker(vb: VBoxContainer) -> void:
 	var picker := MapPicker.new()
@@ -376,29 +352,14 @@ func _add_map_picker(vb: VBoxContainer) -> void:
 		Settings.mp_map_path = p
 		Settings.save())
 
-
-
-
-
-
 func _enter_match_scene() -> void:
 	push_error("LobbyPage: 子类必须覆写 _enter_match_scene()")
-
-
 
 func _lobby_action_allowed() -> bool:
 	return true
 
-
 func _on_lobby_reconnect() -> void:
 	pass
 
-
-
-
 func _on_return_to_lobby() -> void:
-	pass
-
-
-func _on_local_server_ready() -> void:
 	pass

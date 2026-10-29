@@ -158,11 +158,6 @@ func _unstick_up() -> bool:
 	return true
 
 
-# 掉落时长（秒），用于丢弃后的防快速误拾取冷却判定
-func age() -> float:
-	return _age
-
-
 var _prompt: PickupPrompt = null
 
 

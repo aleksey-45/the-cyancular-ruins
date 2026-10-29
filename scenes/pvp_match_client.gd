@@ -12,7 +12,6 @@ var _world: SubViewport
 var _level0: Level0
 var _replicas: Dictionary = {}
 var _collision_anchor: ActorCollider
-var _remote_inputs: Dictionary = {}
 var _bullets: Dictionary = {}
 var _bullet_rewind_visuals: Dictionary = {}
 var _bullet_rewind_events: Dictionary = {}
@@ -43,23 +42,13 @@ var _pending_replay_last_tick := 0
 var _authority_process_frame := -1
 var _accepting_authority := false
 var _deferred_authority: Array[Dictionary] = []
-var _authority_applications := 0
 var _latest_players: Dictionary = {}
 var _menu_open := false
 var _retry_started := 0
 var _attempt_started := 0
-var _log_at := Time.get_ticks_msec()
-var _correction_log_at := 0
-var _log_counts: Dictionary = {}
-var _correction_max := 0.0
-var _replay_max := 0
-var _playback_capped := false
-var _log_own: Dictionary = {}
 var _terrain: NativeTerrain
 
 func _ready() -> void:
-	var started := Time.get_ticks_msec()
-	GameLog.record("match_load", {"role": PvpSession.role, "mode": PvpSession.room_mode, "beta": PvpSession.beta_mode})
 	process_priority = 1 # 场景准备之后更新角色表现，摄像机最后跟随。
 	var baseline := PvpSession.baseline
 	var file := FileAccess.open("user://network_map.cyrm", FileAccess.WRITE)
@@ -82,7 +71,7 @@ func _ready() -> void:
 	_collision_anchor = ActorCollider.new(_local, 32)
 	_rollback.bind(_local, _replicas, _collision_anchor)
 	_bind_prediction_terrain()
-	_rollback.combat_prediction.detonated.connect(_present_explosion.bind(true))
+	_rollback.combat_prediction.detonated.connect(_present_explosion)
 	_rollback.tick_finished.connect(_level0.flush_terrain_collision)
 	_playback.map_px = Vector2(GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 	_post = PostProcess.new()
@@ -109,7 +98,6 @@ func _ready() -> void:
 				_minimap_others, _minimap_colors, _minimap_self_color)
 		add_child(minimap)
 	NetBus.state_received.connect(_on_state)
-	NetBus.remote_input_received.connect(_on_remote_input)
 	NetBus.event_received.connect(_on_event)
 	NetBus.server_disconnected.connect(_begin_reconnect)
 	NetBus.connected_to_server.connect(_on_connected)
@@ -120,13 +108,9 @@ func _ready() -> void:
 		_on_event(1, message[0], message[1])
 	PvpSession.match_events.clear()
 	PvpSession.loading_match = false
-	GameLog.record("match_loaded", {"duration_ms": Time.get_ticks_msec() - started, "role": PvpSession.role})
 
 func apply_baseline(payload: Dictionary) -> void:
 	_restore_predicted_terrain(-1, false)
-	var started := Time.get_ticks_msec()
-	GameLog.record("baseline_begin", {"tick": payload["frame"]["tick"], "round": payload["round_state"]["round"],
-			"map_bytes": payload["map"].size(), "terrain_cells": payload["sub_hp"].size()})
 	phase = Phase.LOADING
 	_names = payload["names"]
 	_hues = payload["hues"]
@@ -148,7 +132,6 @@ func apply_baseline(payload: Dictionary) -> void:
 		_hud.set_my_team(_teams[PvpSession.role])
 	_clear_dynamics()
 	var frame: Dictionary = payload["frame"]
-	_log_own = frame["own"]
 	_local.restore_state(frame["own"]["state"])
 	_rollback.reset(frame["own"]["epoch"], frame["own"]["ack"], frame["tick"], NetBus.ping_ms)
 	_playback.reset()
@@ -174,9 +157,6 @@ func apply_baseline(payload: Dictionary) -> void:
 	_local.correct_visual(_local.global_position, true)
 	_refresh_input_lock()
 	NetBus.send_event(NetEvent.Kind.READY, payload["round_state"]["round"])
-	GameLog.record("baseline_ready", {"tick": frame["tick"], "epoch": frame["own"]["epoch"],
-			"map_revision": _map_revision, "duration_ms": Time.get_ticks_msec() - started,
-			"reconnect_ms": Time.get_ticks_msec() - _retry_started if _retry_started > 0 else 0})
 	_retry_started = 0
 
 func _on_event(_peer: int, kind: int, data: Variant) -> void:
@@ -187,15 +167,13 @@ func _on_event(_peer: int, kind: int, data: Variant) -> void:
 			and _authority_batch_closed():
 		_deferred_authority.append({"peer": _peer, "kind": kind, "data": data})
 		return
-	if kind in [NetEvent.Kind.FIRE, NetEvent.Kind.HIT, NetEvent.Kind.KILL, NetEvent.Kind.EXPLOSION, NetEvent.Kind.TIME_REWARD, NetEvent.Kind.REJOIN_DENIED, NetEvent.Kind.ROOM_CLOSED]:
-		GameLog.record("match_event", {"kind": NetEvent.Kind.keys()[kind], "tick": _last_tick, "payload": data})
 	match kind:
 		NetEvent.Kind.BASELINE: apply_baseline(data)
 		NetEvent.Kind.TERRAIN: apply_terrain(data)
 		NetEvent.Kind.ROUND: _on_round_state(data)
 		NetEvent.Kind.BEAM:
 			var span := _rollback.combat_prediction.receive_beam(data)
-			_accept_confirmation("beam", span)
+			_accept_confirmation(span)
 			_on_beam_fired(data)
 		NetEvent.Kind.BULLET_SPAWN:
 			if not _bullets.has(data["id"]): _create_bullet(data["id"], data)
@@ -205,13 +183,11 @@ func _on_event(_peer: int, kind: int, data: Variant) -> void:
 			# STATE 已覆盖出生时，只补身份元数据；不能把快照锚点误当成较晚的预测出生。
 			if data["tick"] > _own_tick:
 				changed = _rollback.review_projectile_spawn(data["id"], changed, new_identity)
-				_count_log("projectile_spawn_kept" if changed == Vector2i.ZERO else "projectile_spawn_changed")
 				if changed != Vector2i.ZERO: _request_event_replay(changed.x, changed.y)
 		NetEvent.Kind.BULLET_REWIND: _on_bullet_rewind(data)
 		NetEvent.Kind.BULLET_END:
 			var span := _rollback.combat_prediction.end_projectiles(data)
 			var contacted := span != Vector2i.ZERO
-			_count_log("projectile_end_contacts" if contacted else "projectile_end_updates")
 			if contacted:
 				_request_event_replay(span.x, span.y)
 			for id in data["ids"]:
@@ -233,7 +209,7 @@ func _on_event(_peer: int, kind: int, data: Variant) -> void:
 				_replicas[data["role"]].play_fire(data["type_id"])
 		NetEvent.Kind.HIT:
 			var span := _rollback.combat_prediction.confirm_hit(data)
-			_accept_confirmation("hit", span)
+			_accept_confirmation(span)
 			if data["shooter"] == PvpSession.role:
 				CombatFeedback.hit_marker()
 			if data["damage"] > 0:
@@ -284,16 +260,13 @@ func _on_state(frame: Dictionary) -> void:
 	if _authority_batch_closed():
 		_deferred_authority.append({"frame": frame})
 		return
-	_count_log("state_callbacks")
 	if phase != Phase.ONLINE or frame["tick"] <= _last_tick:
 		return
 	if frame["map_revision"] > _map_revision:
-		_count_log("terrain_wait_states")
 		if _future_state.is_empty() or frame["tick"] > _future_state["tick"]:
 			_future_state = frame
 		return
 	if frame["map_revision"] < _map_revision:
-		_count_log("old_terrain_states")
 		return
 	if frame["tick"] > _own_tick:
 		if _authority_state.is_empty() or frame["tick"] > _authority_state["tick"]:
@@ -301,18 +274,11 @@ func _on_state(frame: Dictionary) -> void:
 	_last_tick = frame["tick"]
 	_playback.push(frame["tick"], frame["world"])
 
-func _on_remote_input(role: int, tick: int, packet: Dictionary) -> void:
-	if phase == Phase.ONLINE and _replicas.has(role):
-		_count_log("remote_inputs")
-		_remote_inputs[role] = {"tick": tick, "packet": packet}
-		_replicas[role].receive_input(tick, packet)
-
 func _request_event_replay(tick: int, through: int = 0) -> void:
 	var last := maxi(tick, through)
 	if last > _own_tick: _queue_replay(maxi(tick, _own_tick + 1), "event", last)
 
-func _accept_confirmation(kind: String, span: Vector2i) -> void:
-	_count_log(kind + "_confirmation_" + ("kept" if span == Vector2i.ZERO else "changed"))
+func _accept_confirmation(span: Vector2i) -> void:
 	if span != Vector2i.ZERO: _request_event_replay(span.x, span.y)
 
 func _queue_replay(tick: int, reason: String, through: int = 0) -> void:
@@ -347,8 +313,6 @@ func _apply_pending_authority() -> void:
 	_accepting_authority = false
 
 func _apply_authority(frame: Dictionary, trigger: String = "state") -> void:
-	var trace_started := Time.get_ticks_usec() if FrameTrace.enabled else 0
-	var previous_map_revision: int = _prediction_frame.get("map_revision", _map_revision)
 	_bind_prediction_terrain()
 	# 新加入的代理也必须参与原先空查询的复核。
 	for role in frame["world"]["players"]:
@@ -366,12 +330,6 @@ func _apply_authority(frame: Dictionary, trigger: String = "state") -> void:
 	_pending_replay = ""
 	_pending_replay_tick = 0
 	_pending_replay_last_tick = 0
-	if trigger != "state":
-		_count_log(trigger + "_replays")
-	var previous_own := _log_own
-	var previous_players := _latest_players
-	var previous_tick := _own_tick
-	_log_own = frame["own"]
 	_own_tick = frame["tick"]
 	_local.rewinding = frame["own"]["rewind"]
 	_local.input_buffer.epoch = frame["own"]["epoch"]
@@ -389,74 +347,16 @@ func _apply_authority(frame: Dictionary, trigger: String = "state") -> void:
 			if role != PvpSession.role or (not reuse and not checkpoint):
 				_rollback.time_economy.restore_account(role, frame["time"][role])
 	var previous: Vector2 = _local.corrected_position()
-	var before: Vector2 = _local.global_position
-	var before_velocity: Vector2 = _local.velocity
-	var before_knock: Vector2 = _local.combat.knock_velocity
-	var before_hp: int = _local.hp
-	var before_down: bool = _local.is_downed()
-	var before_visual_step := GridPathfinder.toroidal_delta_px(_local._visual_from, before,
-			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
-	var predicted_tick := _rollback._sim_tick
-	var pending_inputs := _rollback.history
-	var pending_actions := _rollback.actions
 	_rollback.terrain_revision = _map_revision
 	# 显示先恢复锚点，后续预测中的爆炸回调才能最终结束弹丸。
 	_sync_bullet_rewind_state(frame)
 	var snap := false
 	if checkpoint:
 		_rollback.replay_from(dirty_tick)
-		_count_log("checkpoint_replays")
 	else:
-		snap = _rollback.reconcile(frame["own"], frame["tick"], NetBus.ping_ms, reuse, frame["world"].get("projectiles"))
-	_authority_applications += 1
-	_rollback.diagnostics["scope"] = "local"
-	_rollback.diagnostics["proxy_count"] = _replicas.size()
-	_rollback.diagnostics["dirty_tick"] = dirty_tick
-	_rollback.diagnostics["effect_review"] = _rollback.last_effect_review
-	if trigger == "state": _rollback.diagnostics["reuse"] = _rollback.reuse_detail
-	if reuse:
-		_count_log("prefix_reuses" if _rollback.diagnostics["replay_ticks"] > 0 else "history_reuses")
-	var error := GridPathfinder.toroidal_delta_px(before, _local.global_position,
-			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT).length()
-	_correction_max = maxf(_correction_max, error)
-	_replay_max = maxi(_replay_max, _rollback.diagnostics["replay_ticks"])
-	_count_log("reconciles")
-	if before_down and not _local.is_downed() and not snap:
-		_count_log("predicted_death_rejected")
-	if _rollback.diagnostics["reason"] not in ["epoch", "rewind"]:
-		_count_log("correction_checks")
-		for threshold in [8, 32, 128]:
-			if error >= threshold:
-				_count_log("corrections_%dpx" % threshold)
-	if not _rollback.diagnostics["reason"].is_empty():
-		_count_log("reset_" + _rollback.diagnostics["reason"])
-	if not reuse or _rollback.diagnostics["replay_ticks"] > 0: _local.correct_visual(previous, snap)
-	if error >= 32.0 or (error >= 8.0 and Time.get_ticks_msec() - _correction_log_at >= 1000):
-		_correction_log_at = Time.get_ticks_msec()
-		var detail := {"role": PvpSession.role, "tick": frame["tick"], "trigger": trigger, "error_px": error,
-				"before": before, "after": _local.global_position, "authority": frame["own"],
-				"before_velocity": before_velocity, "before_knock": before_knock,
-				"before_hp": before_hp, "after_hp": _local.hp,
-				"before_down": before_down, "after_down": _local.is_downed(),
-				"visual_step_before": before_visual_step,
-				"visual_step_after": GridPathfinder.toroidal_delta_px(_local._visual_from, _local.position,
-						GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT),
-				"predicted_tick": predicted_tick, "ping_ms": NetBus.ping_ms,
-				"prediction": _rollback.diagnostics, "smoothing_ms": _local._visual_left * 1000.0,
-				"map_revision": _map_revision, "before_map_revision": previous_map_revision,
-				"weapon": _local.weapons.log_state()}
-		if error >= 32.0:
-			detail.merge({"previous_tick": previous_tick, "previous_authority": previous_own,
-					"previous_players": previous_players, "players": _latest_players,
-					"inputs": pending_inputs, "actions": pending_actions, "remote_inputs": _remote_inputs})
-		GameLog.record("prediction_correction", detail)
+		snap = _rollback.reconcile(frame["own"], frame["tick"], NetBus.ping_ms, reuse, frame["world"]["projectiles"])
+	if not reuse or _rollback.replay_ticks > 0: _local.correct_visual(previous, snap)
 	_make_label(PvpSession.role)
-	if FrameTrace.enabled:
-		FrameTrace.span(&"authority_apply", trace_started, Time.get_ticks_usec())
-		FrameTrace.count(&"authority_applies")
-		FrameTrace.event(&"authority", {"tick": frame["tick"], "trigger": trigger,
-				"dirty_tick": dirty_tick, "replay_ticks": _rollback.diagnostics["replay_ticks"],
-				"reason": _rollback.diagnostics["reason"], "reuse": _rollback.reuse_detail.duplicate(), "error_px": error})
 
 func _ensure_replica(role: int) -> void:
 	if _replicas.has(role):
@@ -511,11 +411,10 @@ func _seed_projectile(id: int, data: Dictionary, tick: int) -> Vector2i:
 
 func _on_explosion(data: Dictionary) -> void:
 	var span := _rollback.combat_prediction.confirm(data)
-	_accept_confirmation("explosion", span)
+	_accept_confirmation(span)
 	_present_explosion(data)
-	GameLog.record("explosion_confirmed", data)
 
-func _present_explosion(data: Dictionary, predicted: bool = false) -> void:
+func _present_explosion(data: Dictionary) -> void:
 	if _explosions_shown.has(data["id"]):
 		return
 	_explosions_shown[data["id"]] = true
@@ -525,9 +424,6 @@ func _present_explosion(data: Dictionary, predicted: bool = false) -> void:
 	var pos := GridPathfinder.anchor_to_nearest(data["pos"], _local.position,
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 	BulletBase.present_explosion(_world, pos, profile["explosion_visual"], profile["explosion_radius"])
-	GameLog.record("explosion", {"id": data["id"], "type": data["type_id"], "position": data["pos"],
-			"damage": false, "visual": profile["explosion_visual"] != null,
-			"shooter": data["id"] >> 48, "server_tick": data["tick"], "predicted": predicted})
 
 func _on_bullet_rewind(data: Dictionary) -> void:
 	# 事件 tick 是弹丸恢复锚点，实际变化发生在下一 tick；相等时尚未被 STATE 覆盖。
@@ -541,7 +437,6 @@ func _on_bullet_rewind(data: Dictionary) -> void:
 			var owner: Node2D = _local if data["role"] == PvpSession.role else _replicas[data["role"]]._forecast
 			_rollback.combat_prediction.checkpoint_projectile(id, data["projectiles"][id], data["tick"], owner)
 		_bullet_rewind_visuals[data["role"]] = {"tick": data["tick"] + 1, "rewind": data["rewind"]}
-		_count_log("rewind_confirmation_kept")
 		return
 	_rollback.combat_prediction.cancel_role(data["role"])
 	_sync_bullet_rewind_visuals(data["role"], data["tick"] + 1, data["rewind"], data["projectiles"])
@@ -558,7 +453,7 @@ func _sync_bullet_rewind_state(frame: Dictionary) -> void:
 		if frame["tick"] < previous.get("tick", -1): continue
 		var rewind: bool = players[role]["rewind"]
 		if rewind or previous.get("rewind", false):
-			_sync_bullet_rewind_visuals(role, frame["tick"], rewind, frame["world"].get("projectiles", {}))
+			_sync_bullet_rewind_visuals(role, frame["tick"], rewind, frame["world"]["projectiles"])
 		else:
 			_bullet_rewind_visuals[role] = {"tick": frame["tick"], "rewind": false}
 	for role in _bullet_rewind_visuals.keys():
@@ -626,12 +521,8 @@ func _sync_pickups(world: Dictionary) -> void:
 func _register_bullet(bullet: BulletBase) -> void:
 	var id := bullet.entity_id
 	_bullets[id] = bullet
-	_count_log("projectiles_created")
 	bullet.tree_exiting.connect(func() -> void:
 		if _bullets.get(id) == bullet:
-			_count_log("projectiles_removed")
-			if bullet.explodes:
-				GameLog.record("explosive_removed", {"id": id, "type": bullet.type_id, "position": bullet.position, "tick": _own_tick})
 			_bullets.erase(id))
 
 func _authority_batch_closed() -> bool:
@@ -652,41 +543,19 @@ func _physics_process(delta: float) -> void:
 	if phase != Phase.ONLINE:
 		_local.begin_visual_step()
 		return
-	var started := Time.get_ticks_usec()
-	var applications_before := _authority_applications
 	_apply_frame_authority()
-	var restored := Time.get_ticks_usec()
 	_local._poll_pickup_drop(delta)
 	var src: PlayerInput = _local.input_source
 	_rollback.capture(src, _local.get_current_aim_dir(), int(_playback.render_tick),
 			_local.weapons.take_uplink_switch(src.get_switch_index_pressed()))
-	if not _rollback.actions.is_empty() and _rollback.actions[-1]["seq"] == _rollback.sequence:
-		GameLog.record("input_action", {"role": PvpSession.role, "action": _rollback.actions[-1]})
 	NetBus.send_input(_rollback.packet())
 	_rollback.advance(delta)
-	var advanced := Time.get_ticks_usec()
-	var finished := Time.get_ticks_usec()
-	if FrameTrace.enabled:
-		FrameTrace.span(&"physics_authority", started, restored)
-		FrameTrace.span(&"prediction_advance", restored, advanced)
-	if finished - started > 1000000.0 * ActorStep.DT:
-		GameLog.record("client_slow_tick", {"tick": _rollback._sim_tick,
-				"authority_tick": _own_tick, "rollback": _rollback.diagnostics if _authority_applications > applications_before else {"replay_ticks": 0},
-				"authority_ms": (restored - started) / 1000.0,
-				"prediction_ms": (advanced - restored) / 1000.0,
-				"presentation_ms": (finished - advanced) / 1000.0, "projectiles": _bullets.size()})
 
 func _process(delta: float) -> void:
-	var started := Time.get_ticks_usec()
-	if Time.get_ticks_msec() - _log_at >= 1000:
-		_log_sample()
 	if phase != Phase.ONLINE:
 		return
 	# 和物理回调共用接纳点，不能在表现前再次重放同一窗口。
-	var authority_started := Time.get_ticks_usec()
-	var applications_before := _authority_applications
 	_apply_frame_authority()
-	var authority_finished := Time.get_ticks_usec()
 	_level0.flush_terrain_visuals()
 	_track_local_bullets()
 	_cull_bullet_contacts()
@@ -695,13 +564,8 @@ func _process(delta: float) -> void:
 	var render_tick := _rollback._clock - _rollback._rate * (1.0 - Engine.get_physics_interpolation_fraction())
 	_local.present_prediction(delta, render_tick - _rollback._sim_tick)
 	if _playback.frames.is_empty():
-		if FrameTrace.enabled: FrameTrace.span(&"client_present", authority_finished, Time.get_ticks_usec())
 		return
 	var world := _playback.advance(delta)
-	var capped: bool = _playback.render_tick >= _playback.frames[-1]["tick"] + SnapshotBuffer.MAX_EXTRAPOLATION
-	if capped != _playback_capped:
-		GameLog.record("playback_hold", {"held": capped, "latest_tick": _last_tick, "render_tick": _playback.render_tick})
-		_playback_capped = capped
 	for role in world["players"]:
 		if role != PvpSession.role:
 			_ensure_replica(role)
@@ -741,33 +605,13 @@ func _process(delta: float) -> void:
 	for role in _id_labels:
 		var point: Vector2 = _local.visuals.global_position if role == PvpSession.role else _replicas[role].global_position
 		_id_labels[role].position = point + Vector2(0, -78)
-	var elapsed := Time.get_ticks_usec() - started
-	if FrameTrace.enabled:
-		FrameTrace.span(&"idle_authority", authority_started, authority_finished)
-		FrameTrace.span(&"client_present", authority_finished, started + elapsed)
-		var age := 0
-		var stale := 0
-		for replica in _replicas.values():
-			age = maxi(age, replica.proxy_age)
-			stale += int(replica.proxy_stale)
-		FrameTrace.context(&"client", {"role": PvpSession.role, "own_tick": _own_tick,
-				"sim_tick": _rollback._sim_tick, "clock": _rollback._clock, "input_seq": _rollback.sequence,
-				"input_ack": _log_own.get("ack", 0), "action_ack": _log_own.get("action_ack", 0),
-				"projectiles": _bullets.size(), "map_revision": _map_revision,
-				"proxy_max_age": age, "proxy_stale": stale})
-	if elapsed > 1000000.0 * ActorStep.DT:
-		GameLog.record("client_slow_present", {"duration_ms": elapsed / 1000.0,
-				"authority_ms": (authority_finished - authority_started) / 1000.0,
-				"rollback": _rollback.diagnostics if _authority_applications > applications_before else {"replay_ticks": 0},
-				"presentation_ms": (Time.get_ticks_usec() - authority_finished) / 1000.0,
-				"tick": _rollback._sim_tick, "players": _replicas.size(), "projectiles": _bullets.size()})
 
 func _make_label(role: int) -> void:
 	if not _id_labels.has(role):
 		var label := preload("res://ui/factory/world_label.gd").new()
 		_world.add_child(label)
 		_id_labels[role] = label
-	_id_labels[role].set_label(_names.get(role, "AI%d" % role), _role_color(role))
+	_id_labels[role].set_label(_names.get(role, "玩家%d" % role), _role_color(role))
 
 func _tint(body: CanvasItem, role: int) -> void:
 	if PvpSession.room_mode != PvpSession.MODE_ROYALE:
@@ -800,8 +644,6 @@ func _role_color(role: int) -> Color:
 	return UiFactory.C_TEAM_A if _teams.get(role, role) == 1 else UiFactory.C_TEAM_B
 
 func _on_round_state(data: Dictionary) -> void:
-	if data["state"] != _last_round_state["state"] or data.get("round", 1) != _last_round_state.get("round", 0):
-		GameLog.record("round_state", data)
 	var ended: bool = _last_round_state["state"] == NetEvent.RoundState.MATCH_OVER
 	_last_round_state = data
 	var hud_data := data.duplicate()
@@ -840,7 +682,6 @@ func _clear_dynamics() -> void:
 	_pending_replay_last_tick = 0
 	_authority_process_frame = -1
 	_deferred_authority.clear()
-	_remote_inputs.clear()
 	_rollback.combat_prediction.clear()
 	_bullet_rewind_visuals.clear()
 	_bullet_rewind_events.clear()
@@ -861,7 +702,6 @@ func _begin_reconnect() -> void:
 	if phase != Phase.ONLINE:
 		return
 	phase = Phase.RECONNECTING
-	GameLog.record("reconnect_begin", {"tick": _last_tick, "role": PvpSession.role}, true)
 	_refresh_input_lock()
 	_retry_started = Time.get_ticks_msec()
 	_retry_loop()
@@ -874,7 +714,6 @@ func _retry_loop() -> void:
 			await Tunnel.refresh_forward()
 			PvpSession.server_port = Tunnel.forward_port()
 		_attempt_started = Time.get_ticks_msec()
-		GameLog.record("reconnect_attempt", {"elapsed_ms": _attempt_started - _retry_started})
 		NetBus.start_client(PvpSession.server_address, PvpSession.server_port)
 		while phase == Phase.RECONNECTING and Time.get_ticks_msec() - _retry_started < 60000:
 			if not NetBus.can_send_to_server() and (_attempt_started == 0 or Time.get_ticks_msec() - _attempt_started >= 5000):
@@ -886,7 +725,6 @@ func _retry_loop() -> void:
 		phase = Phase.OFFLINE
 		NetBus.stop()
 		_banner.set_text("重连超时")
-		GameLog.record("reconnect_timeout", {}, true)
 
 func _on_connected() -> void:
 	if phase == Phase.RECONNECTING:
@@ -901,54 +739,13 @@ func _on_protocol_error(message: String) -> void:
 	_banner.set_text(message)
 
 func _exit_tree() -> void:
-	_log_sample()
-	GameLog.record("match_exit", {"tick": _last_tick, "phase": Phase.keys()[phase]})
 	phase = Phase.OFFLINE
 	NetBus.state_received.disconnect(_on_state)
-	NetBus.remote_input_received.disconnect(_on_remote_input)
 	NetBus.event_received.disconnect(_on_event)
 	NetBus.server_disconnected.disconnect(_begin_reconnect)
 	NetBus.connected_to_server.disconnect(_on_connected)
 	NetBus.connection_failed.disconnect(_on_connection_failed)
 	NetBus.protocol_error.disconnect(_on_protocol_error)
-
-func _count_log(key: String) -> void:
-	_log_counts[key] = _log_counts.get(key, 0) + 1
-
-func _log_sample() -> void:
-	var now := Time.get_ticks_msec()
-	var motion_cache := {"hits": _local.terrain_motion_hits, "misses": _local.terrain_motion_misses,
-			"entries": _local.terrain_motion_cache.size()}
-	for replica: Node2D in _replicas.values():
-		motion_cache["hits"] += replica._forecast.terrain_motion_hits
-		motion_cache["misses"] += replica._forecast.terrain_motion_misses
-		motion_cache["entries"] += replica._forecast.terrain_motion_cache.size()
-	var latest: int = _playback.frames[-1]["tick"] if not _playback.frames.is_empty() else -1
-	var bullets := {}
-	for id in _bullets:
-		var bullet: BulletBase = _bullets[id]
-		bullets[id] = {"type": bullet.type_id, "position": bullet.position, "velocity": bullet.velocity_vec,
-				"physics": bullet.is_physics_processing(), "input_seq": bullet.input_seq, "epoch": bullet.input_epoch}
-	GameLog.record("client_state", {"interval_ms": now - _log_at, "role": PvpSession.role,
-			"phase": Phase.keys()[phase], "tick": _last_tick, "own_tick": _own_tick, "map_revision": _map_revision,
-			"future_revision": _future_state.get("map_revision", -1), "input_seq": _rollback.sequence,
-			"epoch": _rollback.epoch, "input_ack": _log_own.get("ack", 0), "action_ack": _log_own.get("action_ack", 0),
-			"history": _rollback.history.size(), "actions": _rollback.actions.size(), "motion_cache": motion_cache,
-			"reuse_counts": _rollback.reuse_counts, "reuse_totals": _rollback.reuse_totals,
-			"effect_checks": _rollback.effect_counts,
-			"latest_input": _rollback.sent[-1] if not _rollback.sent.is_empty() else {},
-			"input_lead": _rollback._lead, "clock": _rollback._clock, "clock_rate": _rollback._rate,
-			"render_tick": _playback.render_tick, "buffer_frames": _playback.frames.size(),
-			"headroom_ticks": latest - _playback.render_tick, "extrapolation_capped": latest >= 0 and _playback.render_tick >= latest + SnapshotBuffer.MAX_EXTRAPOLATION,
-			"correction_max_px": _correction_max, "replay_max_ticks": _replay_max, "counts": _log_counts,
-			"position": _local.position, "velocity": _local.velocity, "hp": _local.hp,
-			"weapon": _local.weapons.log_state(), "projectiles": bullets, "pickups": _pickup_nodes.size()})
-	_log_at = now
-	_log_counts.clear()
-	_rollback.reuse_counts.clear()
-	_rollback.effect_counts.clear()
-	_correction_max = 0.0
-	_replay_max = 0
 
 var _time_mirror: GrainAccount
 var _time_glows: Dictionary = {}
@@ -984,10 +781,6 @@ func _setup_beta_time_hud() -> void:
 	add_child(_time_symbol)
 	_time_glows[PvpSession.role] = TimeGlow.attach(_local, Level0.GLOW_PLAYER)
 	_time_glows[PvpSession.role].visible = false
-
-func _on_time_state(payload: Dictionary) -> void:
-	for role in payload:
-		_rollback.time_economy.restore_account(role, payload[role])
 
 func _tick_beta_time(delta: float, world: Dictionary) -> void:
 	if not PvpSession.beta_mode:

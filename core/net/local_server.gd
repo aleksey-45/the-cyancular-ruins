@@ -6,7 +6,6 @@ static var restarting := false
 static var _owned_pid := 0
 
 static func launch_and_connect() -> int:
-	var started := Time.get_ticks_msec()
 	stop_owned()
 	var exe := OS.get_executable_path()
 	var port := NetBus.pick_free_port()
@@ -17,7 +16,6 @@ static func launch_and_connect() -> int:
 		args.append_array(["--path", ProjectSettings.globalize_path("res://"), "res://server/server_main.tscn"])
 	args.append_array(["--", "--server"])
 	args.append_array(["--port", str(port)])
-	args.append_array(["--game-log-dir", GameLog.log_dir()])
 	restarting = true
 	var generation := NetSession.generation
 	_owned_pid = NetSession.launch(exe, args)
@@ -28,7 +26,6 @@ static func launch_and_connect() -> int:
 		return -1
 	restarting = false
 	if ready:
-		GameLog.record("local_server_ready", {"pid": _owned_pid, "port": port, "duration_ms": Time.get_ticks_msec() - started})
 		print("[LocalServer] SERVER READY pid=%d port=%d" % [_owned_pid, port])
 		return port
 	NetBus.stop()
@@ -46,9 +43,6 @@ static func _probe(pid: int, port: int) -> bool:
 			return true
 		await tree.create_timer(0.05).timeout
 	return false
-
-static func is_owned_running() -> bool:
-	return _owned_pid > 0 and NetSession.running(_owned_pid)
 
 static func stop_owned() -> void:
 	if _owned_pid > 0:

@@ -29,10 +29,8 @@ func rewind_state() -> Dictionary:
 
 func apply_rewind_state(d: Dictionary) -> void:
 	super(d)
-	if d.is_empty():
-		return
-	damage = int(d.get("emd", damage))
-	water_mult = float(d.get("ewm", water_mult))
+	damage = d["emd"]
+	water_mult = d["ewm"]
 
 
 func _physics_process(delta: float) -> void:
@@ -49,7 +47,7 @@ func _physics_process(delta: float) -> void:
 	if col:
 		var hit := col.get_collider()
 		# 客户端视觉副本仅做飞行与消失表现，伤害由服务端权威判定
-		if apply_damage and hit != null and hit.is_in_group("player") and hit.has_method("take_hit"):
+		if apply_damage and hit != null and hit.is_in_group("player"):
 			var dmg: int = damage
 			if water_mult > 1.0 and Water.is_in_water((hit as Node2D).global_position):
 				dmg = roundi(damage * water_mult)
@@ -64,7 +62,7 @@ func _physics_process(delta: float) -> void:
 # 多人对战服务端将子弹坐标约束在地图区间内，单人模式与客户端映射至最近可视副本
 func _wrap() -> void:
 	if get_tree().get_nodes_in_group("player").size() >= 2:
-		global_position = MazeGenerator.wrap_to_range(global_position,
+		global_position = GridPathfinder.wrap_to_range(global_position,
 				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 		return
 	super._wrap()

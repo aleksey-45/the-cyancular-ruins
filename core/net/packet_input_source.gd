@@ -106,12 +106,6 @@ func rewind_held() -> bool:
 	return (_held & BIT_REWIND) != 0
 
 
-# 清除当前物理帧已消费的边沿与切枪请求。持续状态保留以供缺包时沿用。
-func clear_edges() -> void:
-	_pressed = 0
-	_released = 0
-	_switch_inst = 0
-
 # 全量重置输入状态（对局倒计时或暂停时调用，避免持续输入导致角色滑移）。
 func reset_state() -> void:
 	_axis = 0.0
@@ -160,7 +154,6 @@ func _attack_just_released_raw() -> bool:
 # 网络输入源通过实例 ID 切枪，位置索引恒返回 0。
 func _switch_index_raw() -> int:
 	return 0
-
 
 func _switch_inst_raw() -> int:
 	return _switch_inst

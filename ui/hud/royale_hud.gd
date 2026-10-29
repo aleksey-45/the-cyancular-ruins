@@ -26,11 +26,6 @@ const NAME_UNITS := 14
 @onready var _ping_label: Label = $PingWrap/PingLabel
 @onready var _hint_wrap: PanelContainer = $HintWrap
 
-# 探针测试兼容属性：转发访问中央广播的主标签
-var _big: Label:
-	get:
-		return _broadcast.big if _broadcast != null else null
-
 var _rows: Array[Label] = []
 var _last_row_count := -1
 var _state := NetEvent.RoundState.COUNTDOWN
@@ -95,16 +90,16 @@ func _on_ping(ms: int) -> void:
 	_ping_label.add_theme_color_override("font_color", UiFactory.ping_color(ms))
 
 func _on_round_state(data: Dictionary) -> void:
-	var state := int(data.get("state", NetEvent.RoundState.PLAYING))
+	var state := int(data["state"])
 	_state = state
-	var names: Dictionary = data.get("names", {})
-	var alive: Dictionary = data.get("alive", {})
-	var left: Array = data.get("left", [])
-	var deaths: Dictionary = data.get("deaths", {})
-	var scores: Dictionary = data.get("scores", {})
-	_grace = data.get("grace", {})
+	var names: Dictionary = data["names"]
+	var alive: Dictionary = data["alive"]
+	var left: Array = data["left"]
+	var deaths: Dictionary = data["deaths"]
+	var scores: Dictionary = data["scores"]
+	_grace = data["grace"]
 	var rows := _refresh_board(names, scores, deaths, alive, left, _grace, state)
-	_refresh_broadcast(state, data, names, rows, alive)
+	_refresh_broadcast(state, data, names, rows)
 
 
 # 刷新排行榜数据与显示行，优先复用已有标签以避免每秒频繁重建的内存开销
@@ -154,28 +149,26 @@ func _refresh_board(names: Dictionary, scores: Dictionary, deaths: Dictionary,
 
 
 # 刷新中央广播提示内容
-func _refresh_broadcast(state: int, data: Dictionary, names: Dictionary, rows: Array,
-		alive: Dictionary) -> void:
+func _refresh_broadcast(state: int, data: Dictionary, names: Dictionary, rows: Array) -> void:
 	match state:
 		NetEvent.RoundState.COUNTDOWN:
 			_timer_label.text = "准备…"
-			_broadcast.start_countdown(float(data.get("timer", 3.0)), "大乱斗开始")
+			_broadcast.start_countdown(float(data["timer"]), "大乱斗开始")
 		NetEvent.RoundState.PLAYING:
 			_broadcast.set_broadcast(false, "", "")
-			var remain := float(data.get("timer", 300.0))
+			var remain := float(data["timer"])
 			_timer_label.set_meta("remain", remain)
 			_timer_label.text = "剩余时间  %d:%02d" % [int(remain) / 60, int(remain) % 60]
 		NetEvent.RoundState.MATCH_OVER:
 			_timer_label.text = "对局结束"
-			var mw := int(data.get("match_winner", 0))
+			var mw := int(data["match_winner"])
 			if mw == 0:
 				_broadcast.set_broadcast(true, "平 局", "杀敌数不相上下")
-			elif rows.size() > 0 and mw != 0:
-				var wname := str(names.get(str(mw), names.get(mw, "P%d" % mw)))
+			elif not rows.is_empty():
+				var wname := str(names.get(mw, "P%d" % mw))
 				if wname == _my_name:
 					_broadcast.set_broadcast(true, "胜 利 !", "你是大乱斗之王")
 				else:
 					_broadcast.set_broadcast(true, "失 败", "%s 赢得了大乱斗" % wname)
 		_:
 			pass
-

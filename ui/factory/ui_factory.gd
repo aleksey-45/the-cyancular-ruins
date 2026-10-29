@@ -10,12 +10,10 @@ static func pixel_font() -> FontFile:
 
 # 为目标控件统一配置像素字体与字号
 static func style_control(c: Control, size: int) -> void:
-	assert(size % 16 == 0, "字号必须是 16 的倍数以保持像素对齐; 传入值为 %d" % size)
 	c.add_theme_font_size_override("font_size", size)
 	var pf: FontFile = pixel_font()
 	if pf != null:
 		c.add_theme_font_override("font", pf)
-
 
 static func label(text: String, size: int, color: Color = C_WHITE) -> Label:
 	var l := Label.new()
@@ -237,7 +235,6 @@ static func row_box() -> StyleBoxFlat:
 	sb.content_margin_bottom = 8.0
 	return sb
 
-
 static func _row_sb(fill: Color, border: Color) -> StyleBoxFlat:
 	var sb := row_box()
 	sb.bg_color = fill
@@ -247,18 +244,6 @@ static func _row_sb(fill: Color, border: Color) -> StyleBoxFlat:
 
 
 # 列表项整行交互按钮：常态无边框融入行底，悬停与按下时显示强调边框。
-static func style_row_button(b: Button) -> void:
-	b.add_theme_stylebox_override("normal", _row_sb(C_ROW, C_ROW))
-	b.add_theme_stylebox_override("hover", _row_sb(C_BTN_FILL_HI, C_ACCENT))
-	b.add_theme_stylebox_override("pressed", _row_sb(C_BTN_FILL_DN, C_ACCENT))
-	b.add_theme_stylebox_override("focus", _row_sb(C_ROW, C_ROW))
-	b.add_theme_stylebox_override("disabled", _row_sb(C_ROW, C_ROW))
-	b.add_theme_color_override("font_color", C_TEXT)
-	b.add_theme_color_override("font_hover_color", C_ACCENT)
-	b.add_theme_color_override("font_pressed_color", C_ACCENT)
-	b.add_theme_color_override("font_focus_color", C_TEXT)
-
-
 # 滑动条样式配置：配置清晰可见的实心滑轨，已填充部分使用强调色高亮。
 static func style_slider(s: Slider) -> void:
 	var track := StyleBoxFlat.new()
@@ -269,24 +254,6 @@ static func style_slider(s: Slider) -> void:
 	s.add_theme_stylebox_override("slider", track)
 	s.add_theme_stylebox_override("grabber_area", _row_sb(C_ACCENT, C_ACCENT))
 	s.add_theme_stylebox_override("grabber_area_highlight", _row_sb(C_ACCENT, C_ACCENT))
-
-
-# 输入框样式配置：统一配置背景底色、边框与占位符文本颜色。
-static func style_line_edit(le: LineEdit) -> void:
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = C_FIELD
-	sb.border_color = C_BORDER_DIM
-	sb.set_border_width_all(2)
-	sb.set_corner_radius_all(0)
-	sb.content_margin_left = 10.0
-	sb.content_margin_right = 10.0
-	le.add_theme_stylebox_override("normal", sb)
-	var focus := sb.duplicate() as StyleBoxFlat
-	focus.border_color = C_ACCENT
-	le.add_theme_stylebox_override("focus", focus)
-	le.add_theme_color_override("font_color", C_TEXT)
-	le.add_theme_color_override("font_placeholder_color", C_TEXT_DIM)
-	le.add_theme_color_override("caret_color", C_ACCENT)
 
 
 # 通用按钮样式配置：统一设置常态、悬停、按下与禁用状态的背景及文字颜色。
@@ -329,7 +296,6 @@ static func _capsule(img: Image, x0: int, y0: int, x1: int, y1: int, r: float, c
 			var dy := fy - cy
 			if dx * dx + dy * dy <= r * r:
 				img.set_pixel(x, y, col)
-
 
 static func _make_switch(on: bool) -> ImageTexture:
 	var img := Image.create(SWITCH_W, SWITCH_H, false, Image.FORMAT_RGBA8)
@@ -388,17 +354,3 @@ static func apply_font_recursive(root: Node) -> void:
 # 色相角度（0-360 度）转换为角色预览色彩
 static func hue_preview_color(hue_deg: float) -> Color:
 	return Color.from_hsv(fposmod(hue_deg, 360.0) / 360.0, 0.75, 1.0)
-
-
-# 在指定父节点下创建绝对定位单行文本输入框
-static func line_edit(parent: Node, pos: Vector2, size: Vector2, placeholder: String,
-		initial: String) -> LineEdit:
-	var le := LineEdit.new()
-	le.position = pos
-	le.size = size
-	le.placeholder_text = placeholder
-	le.text = initial
-	style_control(le, 16)
-	style_line_edit(le)
-	parent.add_child(le)
-	return le

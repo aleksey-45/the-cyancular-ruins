@@ -22,11 +22,11 @@ func setup(p_mode: String, roster: Array, p_teams: Dictionary, options: Dictiona
 		for i in roster.size():
 			spawns[roster[i]] = points[i]
 	else:
-		var points := MazeGenerator.load_spawns()
+		var points := MazeGenerator.current_spawns
 		var a: Vector2i = points["player"]
 		var b: Vector2i = points.get("player2", Vector2i(-1, -1))
 		if b.x < 0:
-			b = SpawnPicker.far_spawn_from(a, MazeGenerator.current_grid)
+			b = SpawnPicker.far_spawn_from(a, TileDefs.terrain.get_grid_snapshot())
 		spawns = {1: a, 2: b}
 		swapped = {1: b, 2: a}
 
@@ -48,7 +48,7 @@ func spawn_for(world: Node, role: int, initial: bool = false) -> Vector2i:
 				var player: Node2D = world.players[other]
 				if other == role or same_team(role, other) or player.is_downed():
 					continue
-				distance = mini(distance, MazeGenerator.toroidal_dist(cell, Vector2i(player.position / GameParameters.TILE_SIZE), dims.x, dims.y))
+				distance = mini(distance, GridPathfinder.toroidal_dist(cell, Vector2i(player.position / GameParameters.TILE_SIZE), dims.x, dims.y))
 			if distance > best_distance:
 				best = cell
 				best_distance = distance
@@ -66,7 +66,6 @@ func tick(world: Node, delta: float) -> void:
 		if player.respawn_tick > 0:
 			continue
 		player.respawn_tick = world._snap_tick + 120
-		GameLog.record("respawn_scheduled", {"tick": world._snap_tick, "role": role, "respawn_tick": player.respawn_tick})
 		world._drop_all_but_one(player, role)
 		var killer: int = world.killer_for(player)
 		var scorer := killer
@@ -156,9 +155,9 @@ func left(world: Node, _role: int) -> void:
 		finish(world)
 
 static func plan_team_spawns(teams: Dictionary) -> Dictionary:
-	var points := MazeGenerator.load_spawns()
+	var points := MazeGenerator.current_spawns
 	var first: Vector2i = points["player"]
-	var bases := [first, SpawnPicker.far_spawn_from(first, MazeGenerator.current_grid)]
+	var bases := [first, SpawnPicker.far_spawn_from(first, TileDefs.terrain.get_grid_snapshot())]
 	var dims := SpawnPicker.grid_dims()
 	var result := {}
 	for team in [1, 2]:

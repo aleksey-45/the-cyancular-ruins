@@ -2,7 +2,6 @@ class_name ActorStep
 extends RefCounted
 const DT := 1.0 / 60.0
 
-
 static func step(actor: Player, record: Dictionary, delta: float = DT) -> Array:
 	actor.actor_queries.clear()
 	actor.step_input.prepare(record, actor._controls_locked)
@@ -15,7 +14,7 @@ static func step(actor: Player, record: Dictionary, delta: float = DT) -> Array:
 	actor.stepping = false
 	return actor.step_actions.duplicate()
 
-
+# 运动、武器和碰撞由原生角色执行。
 static func simulate(actor: Player, delta: float) -> void:
 	if actor.rewinding:
 		return
@@ -33,17 +32,3 @@ static func simulate(actor: Player, delta: float) -> void:
 	var tm: float = TimeField.player_speed_mult() if TimeField.current != null else actor.pvp_haste_mult
 	var geometry := TileDefs.terrain
 	actor.native_step_actor(delta, tm, Level0.pvp_mode, geometry)
-
-# 运动状态、游泳、攀爬和碰撞循环全部在原生基类执行；不回调脚本读取成员。
-static func simulate_motion(actor: Player, delta: float, mult: Vector2, motion_only: bool = false) -> void:
-	if actor.rewinding: return
-	var tm: float = TimeField.player_speed_mult() if TimeField.current != null else actor.pvp_haste_mult
-	var geometry := TileDefs.terrain
-	actor.native_simulate_motion(delta, mult, tm, motion_only, Level0.pvp_mode,
-			geometry)
-
-static func move_by(actor: Player, motion: Vector2) -> Vector2:
-	return actor.native_move_by(motion, CollisionBuilder.geometry_revision)
-
-static func _move(actor: Player, delta: float) -> void:
-	actor.native_move_actor(delta, CollisionBuilder.geometry_revision)

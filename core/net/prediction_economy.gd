@@ -6,37 +6,37 @@ extends RefCounted
 static func review(economy: TimeEconomy, states: Dictionary, commands: Dictionary, rewards: Dictionary,
 		anchor: int, through: int, roles: Array, replacement: Dictionary = {}) -> Dictionary:
 	var plan := {"roles": roles, "states": {}, "rewards": {}, "through": anchor,
-			"invalid_from": 0, "reason": "kept", "role": 0}
+			"invalid_from": 0}
 	if roles.is_empty():
 		plan["through"] = through
 		return plan
-	if not states.has(anchor): return _stop(plan, anchor + 1, "history")
+	if not states.has(anchor): return _stop(plan, anchor + 1)
 	var old := TimeEconomy.new(economy.rules, roles)
 	var fresh := TimeEconomy.new(economy.rules, roles)
 	for role in roles:
-		if not states[anchor]["time"].has(role): return _stop(plan, anchor + 1, "account_history", role)
+		if not states[anchor]["time"].has(role): return _stop(plan, anchor + 1)
 		old.restore_account(role, states[anchor]["time"][role])
 		fresh.restore_account(role, replacement.get(role, states[anchor]["time"][role]))
 	plan["states"][anchor] = fresh.state_payload()
 	var incoming := _calendar(rewards.values(), fresh.accounts)
 	for at in range(anchor + 1, through + 1):
-		if not states.has(at) or not commands.has(at): return _stop(plan, at, "history")
+		if not states.has(at) or not commands.has(at): return _stop(plan, at)
 		var trace: Dictionary = commands[at].get("economy", {})
-		if not trace.get("valid", false): return _stop(plan, at, "economy_history")
+		if not trace.get("valid", false): return _stop(plan, at)
 		for key: Vector2i in incoming:
 			if key.x == at and key.y > 0 and not trace["haste"].has(key.y):
-				return _stop(plan, at, "phase_history")
+				return _stop(plan, at)
 		var previous := _calendar(trace["rewards"], old.accounts)
 		var applied: Array = []
 		for role in trace["haste"]:
 			if old.accounts.has(role):
 				var input: Dictionary = commands[at]["inputs"].get(role, {})
-				if input.is_empty(): return _stop(plan, at, "input_history", role)
+				if input.is_empty(): return _stop(plan, at)
 				var read: Array = trace["haste"][role]
 				var old_mult := old.step_account_haste(role, input, read[0], ActorStep.DT)
 				var new_mult := fresh.step_account_haste(role, input, read[0], ActorStep.DT)
-				if old_mult != read[1]: return _stop(plan, at, "haste_history", role)
-				if new_mult != old_mult: return _stop(plan, at, "haste", role)
+				if old_mult != read[1]: return _stop(plan, at)
+				if new_mult != old_mult: return _stop(plan, at)
 			_deposit(old, previous, at, role)
 			applied.append_array(_deposit(fresh, incoming, at, role))
 		for role in trace["rewind"]:
@@ -45,7 +45,7 @@ static func review(economy: TimeEconomy, states: Dictionary, commands: Dictionar
 			var before: GrainAccount = old.accounts[role]
 			var after: GrainAccount = fresh.accounts[role]
 			if (read[0] or read[1]) and before.can_spend() != after.can_spend():
-				return _stop(plan, at, "rewind", role)
+				return _stop(plan, at)
 			if read[1]:
 				before.spend(ActorStep.DT, economy.rules.rewind_burn)
 				after.spend(ActorStep.DT, economy.rules.rewind_burn)
@@ -57,7 +57,7 @@ static func review(economy: TimeEconomy, states: Dictionary, commands: Dictionar
 		var expected := old.state_payload()
 		for role in roles:
 			if expected[role] != states[at]["time"].get(role, {}):
-				return _stop(plan, at, "account_history", role)
+				return _stop(plan, at)
 		plan["states"][at] = fresh.state_payload()
 		plan["rewards"][at] = applied
 		plan["through"] = at
@@ -77,8 +77,6 @@ static func _deposit(economy: TimeEconomy, calendar: Dictionary, at: int, phase:
 	for event: Dictionary in events: economy.accounts[event["role"]].deposit(event["amount"])
 	return events
 
-static func _stop(plan: Dictionary, at: int, reason: String, role: int = 0) -> Dictionary:
+static func _stop(plan: Dictionary, at: int) -> Dictionary:
 	plan["invalid_from"] = at
-	plan["reason"] = reason
-	plan["role"] = role
 	return plan

@@ -15,11 +15,8 @@ const Meta := preload("res://core/config/tunnel_meta.gd")
 
 # 房间码规格：固定 8 位十进制数字，允许前导零
 const ROOM_DIGITS := 8
-const ROOM_MAX := 99999999
 # 客机等待房主在虚拟网络中就绪的超时时限（秒）
 const CLIENT_WAIT := 60.0
-# 房主等待本机 RPC 门户就绪的超时时限（秒）
-const HOST_WAIT := 20.0
 # CLI 轮询间隔（秒）
 const POLL_INTERVAL := 1.0
 # 端口转发规则添加重试次数
@@ -34,12 +31,6 @@ static var _forward_port := 0   # 本端本地转发端口（客机使用，0 �
 static var _code := ""          # 当前加入的 8 位房间码
 static var _core_path := ""     # 核心程序可执行文件路径
 static var _cli_path := ""      # 命令行工具可执行文件路径
-static var _log_dir := ""
-
-
-## 生成随机 8 位房间码字符串。
-static func generate_room() -> String:
-	return "%08d" % randi_range(0, ROOM_MAX)
 
 
 ## 校验房间码格式是否为合法的 8 位纯数字字符串。
@@ -51,14 +42,6 @@ static func is_valid_room(s: String) -> bool:
 		if c < "0" or c > "9":
 			return false
 	return true
-
-
-## 根据房间码生成虚拟网络凭据字典（包含网络名称与通信密钥）。
-static func room_credentials(code: String) -> Dictionary:
-	return {
-		"network_name": Meta.NET_PREFIX + code,
-		"network_secret": code,
-	}
 
 
 ## 从主机名中解析房主的服务端端口号，非房主条目或无效格式返回 -1。
@@ -88,8 +71,7 @@ static func pick_host_peer(peers: Array) -> Dictionary:
 		return {"ipv4": ip, "hostname": hn, "port": port}
 	return {}
 
-
-static func ensure_downloaded() -> bool:
+static func _require_components() -> bool:
 	if available():
 		return true
 	push_error(missing_hint())
@@ -106,30 +88,17 @@ static func available() -> bool:
 	_cli_path = dir.path_join(Meta.cli_name())
 	return true
 
-
-static func core_exe() -> String:
-	return _core_path
-
-
 ## 返回组件缺失时的界面提示文案。
 static func missing_hint() -> String:
 	return "未找到 EasyTier 组件(%s)，请将运行组件放入 %s" % [
 			" / ".join(Meta.required_files()), AppPaths.easytier_dir()]
-
-static func cli_exe() -> String:
-	return _cli_path
-
-
-static func rpc_port() -> int:
-	return _rpc_port
-
 
 ## 启动房主网络隧道进程，将游戏服务端端口暴露于虚拟网络中。
 static func start_host(port: int, code: String) -> bool:
 	if port <= 0 or not is_valid_room(code):
 		push_error("Tunnel: 房主参数不合法(port=%d code=%s)" % [port, code])
 		return false
-	if not ensure_downloaded():
+	if not _require_components():
 		return false
 	stop()
 	_rpc_port = _pick_rpc_port()
@@ -145,25 +114,7 @@ static func start_host(port: int, code: String) -> bool:
 		return false
 	_pid = pid
 	_code = code
-	GameLog.record("tunnel_start", {"pid": pid, "role": _role, "port": port, "rpc": _rpc_port, "log_dir": _log_dir})
 	return true
-
-
-## 等待房主本地 RPC 门户响应就绪。
-static func wait_ready() -> bool:
-	if _pid <= 0:
-		return false
-	var pid := _pid
-	var deadline := Time.get_ticks_msec() + int(HOST_WAIT * 1000.0)
-	while pid == _pid and NetSession.running(pid) and Time.get_ticks_msec() < deadline:
-		var r := await _cli_async(PackedStringArray([
-			"--rpc-portal", "127.0.0.1:%d" % _rpc_port, "-o", "json", "peer"]))
-		if pid == _pid and int(r[0]) == 0 and not parse_peers_json(str(r[1])).is_empty():
-			GameLog.record("tunnel_ready", {"pid": pid, "rpc": _rpc_port})
-			return true
-		await _sleep(POLL_INTERVAL)
-	GameLog.record("tunnel_ready_failed", {"pid": pid, "running": NetSession.running(pid)}, true)
-	return false
 
 
 ## 启动客机网络隧道并配置本地转发规则。
@@ -172,7 +123,7 @@ static func start_client(code: String) -> Dictionary:
 	if not is_valid_room(code):
 		push_error("Tunnel: 房间码不合法(%s)" % code)
 		return {}
-	if not ensure_downloaded():
+	if not _require_components():
 		return {}
 	stop()
 	_rpc_port = _pick_rpc_port()
@@ -188,7 +139,6 @@ static func start_client(code: String) -> Dictionary:
 		return {}
 	_pid = pid
 	_code = code
-	GameLog.record("tunnel_start", {"pid": pid, "role": _role, "rpc": _rpc_port, "log_dir": _log_dir})
 	var found := await _await_host_peer()
 	if pid != _pid: return {}
 	if found.is_empty():
@@ -203,7 +153,6 @@ static func start_client(code: String) -> Dictionary:
 		push_error("Tunnel: 配置转发失败(%s:%d)" % [host_ip, port])
 		stop()
 		return {}
-	GameLog.record("tunnel_ready", {"pid": pid, "host": host_ip, "port": port, "forward_port": _forward_port})
 	return {"port": port, "host_ip": host_ip}
 
 
@@ -261,7 +210,6 @@ static func reset() -> void:
 	_forward_port = 0
 	_forward_host = ""
 	_forward_target = 0
-	_log_dir = ""
 
 
 ## 获取当前网络所属的房间码，未启动时返回空字符串。
@@ -272,7 +220,6 @@ static func current_code() -> String:
 ## 检查当前隧道是否已连入指定房间码对应的虚拟网络中。
 static func on_network(code: String) -> bool:
 	return code != "" and _code == code and is_running()
-
 
 static func is_running() -> bool:
 	return _pid > 0 and NetSession.running(_pid)
@@ -308,7 +255,6 @@ static func parse_peers_json(text: String) -> Array:
 ## CLI 和内核共用进程所有权，退出会话时一起回收。
 static func _cli_async(args: PackedStringArray) -> Array:
 	return await NetSession.execute(_cli_path, args)
-
 
 static func _sleep(sec: float) -> void:
 	var tree := Engine.get_main_loop() as SceneTree
@@ -409,28 +355,7 @@ static func _core_args(role: String, code: String, port: int) -> PackedStringArr
 	config.store_string("\n".join(lines) + "\n")
 	config.close()
 	var args := PackedStringArray(["--config-file", path, "--rpc-portal", "127.0.0.1:%d" % _rpc_port])
-	args.append_array(file_log_args(role))
 	return args
-
-static func file_log_args(role: String) -> PackedStringArray:
-	_log_dir = GameLog.log_dir().path_join("easytier").path_join("%s-%s-%d" % [GameLog.session_id(), role, _rpc_port])
-	DirAccess.make_dir_recursive_absolute(_log_dir)
-	GameLog.record("tunnel_logging", {"directory": _log_dir, "level": "info", "release": Meta.ET_RELEASE,
-			"rust_log": OS.get_environment("RUST_LOG")})
-	return PackedStringArray(["--file-log-level", "info", "--file-log-dir", _log_dir])
-
-## CLI 的延迟、丢包和路径是隧道链路统计，与游戏 GNS 的端到端统计分别记录。
-static func log_peers() -> void:
-	var pid := _pid
-	var result := await _cli_async(PackedStringArray([
-			"--rpc-portal", "127.0.0.1:%d" % _rpc_port, "-o", "json", "peer"]))
-	if pid != _pid:
-		return
-	if result[0] != 0:
-		GameLog.record("tunnel_peer_error", {"pid": pid, "error": result[0], "message": str(result[1]).left(500)})
-		return
-	GameLog.record("tunnel_peers", {"pid": pid, "peers": parse_peers_json(result[1])})
-
 
 # 动态分配一个本机空闲的 TCP 端口作为 RPC 门户监听端口。
 static func _pick_rpc_port() -> int:

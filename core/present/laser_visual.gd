@@ -13,21 +13,18 @@ const BEAM_SCENE := preload("res://scenes/weapons/laser_beam.tscn")
 # 折线光束(FLASH 风格)。style 预留视觉风格分支(现仅 0;未来 SUSTAINED 等在此加)。
 static func spawn_beam(parent: Node, points: PackedVector2Array, half_width: float,
 		color: Color, lifetime: float, _style: int = 0) -> void:
-	if parent == null or points.size() < 2:
+	if points.size() < 2:
 		return
-	var beam := BEAM_SCENE.instantiate()  # untyped:laser_beam.gd 无 class_name,动态访问属性
+	var beam := BEAM_SCENE.instantiate()
 	parent.add_child(beam)
 	beam.global_position = Vector2.ZERO
 	beam.lifetime = lifetime
-	if beam.has_method("setup"):
-		beam.setup(points, half_width, color)
+	beam.setup(points, half_width, color)
 
 # 开火时枪口"发射光源"圆球:配色/存续与激光光束相同机制 —— 外层光晕用 color(仿激光 Glow,
 # alpha=0.30)、内芯近白(仿激光 Core),挂满 lifetime、末尾与光束同步淡出。
 # 尺寸随光束粗细缩放(细光束时也给个下限保证可见)。挂 parent(世界系,不随枪 2.5x 缩放)。
 static func spawn_muzzle_orb(parent: Node, at: Vector2, color: Color, half_width: float, lifetime: float) -> void:
-	if parent == null:
-		return
 	var holder := Node2D.new()
 	holder.global_position = at
 	# 内芯半径（像素）约等于光束核心半径；下限 5 保证光束较细时枪口光球依然清晰可辨

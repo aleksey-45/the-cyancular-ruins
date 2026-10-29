@@ -35,7 +35,6 @@ static var _list_cache: Array = []
 static var _map_cache: Dictionary = {}
 static var _random_img: Image = null
 
-
 static func clear_cache() -> void:
 	_img_cache.clear()
 	_tex_cache.clear()
@@ -94,35 +93,12 @@ static func display_name(path: String) -> String:
 			return t
 	return path.get_file().get_basename()
 
-
 static func is_valid_map(path: String) -> bool:
 	if path == "" or not path.to_lower().ends_with(".cyrm"):
 		return false
 	if not FileAccess.file_exists(path):
 		return false
-	return not MapFormat.load_map_file(path).is_empty()
-
-
-static func has_pvp_spawn(path: String) -> bool:
-	var sp := MapFormat.load_spawns(path)
-	return sp.has("player") and sp.has("player2")
-
-
-## 服务端校验客户端上报的多人对战地图路径：仅允许加载 res://maps/*.cyrm 内部地图。
-## 若路径为空、非 .cyrm 文件、包含路径遍历字符、文件不存在或无第二出生点，返回空字符串回退至默认地图。
-static func resolve_pvp_map(requested: String) -> String:
-	var pref := MazeGenerator.MAP_DIR + "/"
-	if requested == "" or not requested.begins_with(pref):
-		return ""
-	if requested.contains("..") or not requested.to_lower().ends_with(".cyrm"):
-		return ""
-	if not FileAccess.file_exists(requested):
-		return ""
-	if not has_pvp_spawn(requested):
-		return ""
-	return requested
-
-
+	return not MapFormat.load_map_info(path)["grid"].is_empty()
 
 ## 开局地形简略图:每格 cell_px 像素,空气=背景,墙体按纹理配色(半砖压暗),
 ## 出生点画成亮色块(绿=P1 / 蓝=P2)。
@@ -152,7 +128,6 @@ static func build_image(path: String, cell_px: int = CELL_PX) -> Image:
 	_img_cache[key] = img
 	return img
 
-
 static func texture(path: String, cell_px: int = CELL_PX) -> ImageTexture:
 	var key := "%s|%d" % [path, cell_px]
 	if _tex_cache.has(key):
@@ -173,15 +148,12 @@ static func random_texture() -> ImageTexture:
 				_random_img.set_pixel(x, y, Color(0.16, 0.20, 0.28) if on else Color(0.10, 0.13, 0.19))
 	return ImageTexture.create_from_image(_random_img)
 
-
-
 static func _dirs() -> Array[String]:
 	var out: Array[String] = [MazeGenerator.MAP_DIR]
 	var ext := OS.get_executable_path().get_base_dir()
 	if ext != "" and ext != MazeGenerator.MAP_DIR:
 		out.append(ext)
 	return out
-
 
 static func _scan(dir: String) -> Array[String]:
 	var out: Array[String] = []
@@ -198,7 +170,6 @@ static func _scan(dir: String) -> Array[String]:
 	out.sort()
 	return out
 
-
 static func _color_of(v: int) -> Color:
 	var tex := MapFormat.texture_of(v)
 	var col: Color = PALETTE.get(tex, Color(0.6, 0.6, 0.62))
@@ -207,14 +178,12 @@ static func _color_of(v: int) -> Color:
 		col = col.lerp(BG, 0.45)
 	return col
 
-
 static func _fill(img: Image, c: int, r: int, cell_px: int, col: Color) -> void:
 	var x0 := c * cell_px
 	var y0 := r * cell_px
 	for dy in cell_px:
 		for dx in cell_px:
 			img.set_pixel(x0 + dx, y0 + dy, col)
-
 
 static func _mark_spawn(img: Image, sp: Dictionary, cell_px: int, rows: int, cols: int) -> void:
 	for key in ["player", "player2"]:

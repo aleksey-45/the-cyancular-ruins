@@ -49,10 +49,13 @@ func sample(tick: float) -> Dictionary:
 	var from: Dictionary = frames[0]
 	var to: Dictionary = frames[1] if frames.size() > 1 else from
 	var weight := clampf((tick - from["tick"]) / maxf(1.0, to["tick"] - from["tick"]), 0.0, 1.0)
-	var result: Dictionary = from["world"].duplicate(true) if weight < 1.0 else to["world"].duplicate(true)
+	var source: Dictionary = from["world"] if weight < 1.0 else to["world"]
+	var result := {"players": {}, "pickups": {}}
 	for group in ["players", "pickups"]:
-		for id in result[group]:
-			var state: Dictionary = result[group][id]
+		for id in source[group]:
+			# 只改位置与速度；嵌套表现数据保持只读，不递归复制。
+			var state: Dictionary = source[group][id].duplicate()
+			result[group][id] = state
 			if from["world"][group].has(id) and to["world"][group].has(id):
 				var a: Dictionary = from["world"][group][id]
 				var b: Dictionary = to["world"][group][id]

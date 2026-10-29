@@ -246,7 +246,7 @@ func _shoot_side_compute() -> float:
 				-EnemyParams.FlyBird.hover_offset_y)
 		if _cell_is_solid(_cell_of(pos)):
 			continue
-		if MazeGenerator.has_line_of_sight(_cell_of(pos), _cell_of(p)):
+		if TileDefs.terrain.line_of_sight_cells(_cell_of(pos), _cell_of(p)):
 			return side
 	return geo
 
@@ -332,7 +332,7 @@ func _shot_clear() -> bool:
 		_shot_clear_from = from
 		_shot_clear_to = to
 		_shot_clear_at_frame = now
-		_shot_clear_ok = MazeGenerator.has_line_of_sight(from, to)
+		_shot_clear_ok = TileDefs.terrain.line_of_sight_cells(from, to)
 	return _shot_clear_ok
 
 
@@ -404,7 +404,7 @@ func _on_charge_impact() -> void:
 		return
 	for i in range(get_slide_collision_count()):
 		var collider := get_slide_collision(i).get_collider()
-		if collider != null and collider.is_in_group("player") and collider.has_method("take_hit"):
+		if collider != null and collider.is_in_group("player"):
 			# 冲撞穿透无敌帧,命中必受到伤害(自杀攻击的威慑)
 			collider.take_hit(global_position, _water_boosted_damage(EnemyParams.FlyBird.charge_damage), true)
 			_apply_charge_impact(collider)
@@ -417,7 +417,7 @@ func _on_charge_hit_player() -> void:
 	if is_dead:
 		return
 	var p := _nearest_player()
-	if p != null and p.has_method("take_hit"):
+	if p != null:
 		# 冲撞穿透无敌帧,命中必受到伤害(自杀攻击的威慑)
 		p.take_hit(global_position, _water_boosted_damage(EnemyParams.FlyBird.charge_damage), true)
 		_apply_charge_impact(p)
@@ -455,7 +455,7 @@ func _start_landing() -> void:
 
 
 func _player_home_dist() -> float:
-	return MazeGenerator.toroidal_delta_px(_player_pos(), _spawn_pos,
+	return GridPathfinder.toroidal_delta_px(_player_pos(), _spawn_pos,
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT).length()
 
 

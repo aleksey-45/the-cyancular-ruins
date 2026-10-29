@@ -34,7 +34,6 @@ var _initialized := false
 var _tremble_t := 0.0              # 吸收结晶颤抖计时
 var _lock_flash_t := 0.0           # 透支锁定闪烁计时
 
-
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_to_group("watch_hud")
@@ -49,7 +48,6 @@ func _ready() -> void:
 	if acc != null:
 		_disp = acc.balance
 	visible = acc != null
-
 
 func _mk_label(size: int, color: Color, pos: Vector2) -> Label:
 	var l := Label.new()
@@ -100,7 +98,6 @@ static func build_dial_texture() -> ImageTexture:
 				img.set_pixel(px, py, COLOR_TICK)
 	return ImageTexture.create_from_image(img)
 
-
 func _process(delta: float) -> void:
 	var acc := Level0.grain_account
 	visible = acc != null
@@ -140,7 +137,6 @@ func _process(delta: float) -> void:
 	_lock_flash_t = maxf(_lock_flash_t - delta, 0.0)
 	queue_redraw()
 
-
 func _draw() -> void:
 	var acc := Level0.grain_account
 	if acc == null or _dial_tex == null:
@@ -176,7 +172,3 @@ func flash_locked() -> void:
 
 
 # 吸收结晶颗粒存入账户并触发颤抖动画
-func absorb(amount: int) -> void:
-	if Level0.grain_account != null:
-		Level0.grain_account.deposit(amount)
-	tremble()

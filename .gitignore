@@ -26,9 +26,6 @@ local_ip.txt
 
 __pycache__/
 
-DevTools/*
-!DevTools/gamelog/
-gamelogs/
 .zcode/
 .mimosa/
 
@@ -39,9 +36,6 @@ _crashtest/
 easytier/
 
 
-tests/probe/feel_out/
-
-tests/multiplayer/
 .test_logs/
 
 log/

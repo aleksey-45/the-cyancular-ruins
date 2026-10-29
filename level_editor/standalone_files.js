@@ -8,7 +8,7 @@ globalThis.StandaloneFiles = (function () {
 
     function validName(name) {
       return name && name !== '.' && name !== '..' &&
-        !/[\\/:*?"<>|\x00-\x1f]/.test(name) && /\.(cyrm|v3\.bak)$/i.test(name);
+        !/[\\/:*?"<>|\x00-\x1f]/.test(name) && /\.cyrm$/i.test(name);
     }
 
     async function list() {

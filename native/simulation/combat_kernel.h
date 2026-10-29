@@ -12,7 +12,7 @@ class NativeCombatKernel : public RefCounted {
     GDCLASS(NativeCombatKernel, RefCounted)
     struct Profile { double impact = 0, radius = 0, knock = 0; int damage = 0, blast_damage = 0; };
     std::unordered_map<int64_t, Profile> profiles;
-    Dictionary projectiles, blasts, beams, hits, ended, outcomes, proxy_queries, owner_modes, logged, hitboxes;
+    Dictionary projectiles, blasts, beams, hits, ended, outcomes, proxy_queries, owner_modes, hitboxes;
     uint64_t local_id = 0;
     int keep = 0, target_window = 0;
     double radius = 0, inner_fraction = 0, blocked_fraction = 0, beam_hit_mult = 0, step_delta = 0;
@@ -42,9 +42,7 @@ public:
     Array take_notifications();
     bool step_beams(int64_t at, int64_t role, const Array &targets, const Ref<NativeTerrain> &world);
     Dictionary snapshot_projectiles() const { return snapshot_projectiles_native(projectiles); }
-    void apply_impact(int64_t id, int64_t at, int source, NativeActorBody *target, Vector2 position, double force, int damage);
     Dictionary confirmed_result_at(int64_t id, int64_t at, int source, int64_t role) const;
-    void finish_contact(NativeBulletBody *bullet, int64_t at);
     bool proxy_queries_match(int64_t at, const Array &proxies, const Dictionary &actors, Vector2 map_size) const;
     Dictionary catch_up_remote(int64_t id, const Dictionary &history, int64_t through, double delta, Vector2 map_size);
 };

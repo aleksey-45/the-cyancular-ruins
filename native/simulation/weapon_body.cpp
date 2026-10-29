@@ -24,10 +24,6 @@ void NativeWeaponBody::_bind_methods() {
     ClassDB::bind_method(D_METHOD("native_initialize_magazine"), &NativeWeaponBody::initialize_magazine);
     ClassDB::bind_method(D_METHOD("native_reset_simulation", "mag", "full"), &NativeWeaponBody::reset_simulation_state);
     ClassDB::bind_method(D_METHOD("native_restore_driver_state", "state"), &NativeWeaponBody::restore_driver_state);
-    ClassDB::bind_method(D_METHOD("native_tick_weapon", "delta"), &NativeWeaponBody::tick_weapon);
-    ClassDB::bind_method(D_METHOD("native_try_fire"), &NativeWeaponBody::try_fire);
-    ClassDB::bind_method(D_METHOD("native_fire"), &NativeWeaponBody::fire);
-    ClassDB::bind_method(D_METHOD("native_start_reload"), &NativeWeaponBody::start_reload);
     ClassDB::bind_method(D_METHOD("cancel_aim"), &NativeWeaponBody::cancel_aim);
     ClassDB::bind_method(D_METHOD("is_previewing"), &NativeWeaponBody::is_previewing);
     ClassDB::bind_method(D_METHOD("is_reloading"), &NativeWeaponBody::is_reloading);

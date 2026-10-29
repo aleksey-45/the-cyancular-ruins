@@ -5,8 +5,6 @@ extends Node2D
 # 叠加混合不依赖 HDR 管线，且能与常规受击白闪着色解耦共存。
 # 作为视觉节点的子节点挂载，自动继承父节点的坐标变换、旋转、形变与可见性。
 
-static var total_created := 0   # 累计创建计数，供测试探针检测避免每帧频繁销毁与重建的抖动
-
 var color := Color.WHITE
 var src: Node2D = null
 
@@ -50,7 +48,6 @@ static func attach(target: Node2D, c: Color, passes: int = 1) -> TimeGlow:
 		return null
 	vis.add_child(g)
 	g._sync()
-	total_created += 1
 	return g
 
 
@@ -73,24 +70,9 @@ static func find_visual(target: Node) -> Node2D:
 	return null
 
 
-## 探针用:取 target 身上已挂的高亮(没有则 null)。
-static func on(target: Node) -> TimeGlow:
-	var vis := find_visual(target)
-	if vis == null:
-		return null
-	for c in vis.get_children():
-		if c is TimeGlow:
-			return c
-	return null
-
-
 func set_color(c: Color) -> void:
 	color = c
 	_sync()
-
-
-func passes() -> int:
-	return maxi(_ov_anim.size() + _ov_spr.size(), 0)
 
 
 func _process(_delta: float) -> void:

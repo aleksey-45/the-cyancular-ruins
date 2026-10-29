@@ -4,7 +4,7 @@ extends RefCounted
 # 武器注册表：统一由 res://data/weapons.json 驱动。
 #
 # 特性说明：
-# - 纯静态工具类，无 Autoload 依赖，可在无头命令行模式（-s）下直接测试。
+# - 纯静态工具类，无 Autoload 依赖。
 # - 元数据查询不加载场景；客户端首次查询弹丸表现参数时加载并缓存对应武器场景配置。
 # - 仅负责武器基础元数据（id、name、tier、scene 路径），具体战斗数值在各武器场景的 @export 中配置。
 # - all_ids() 返回顺序严格保持与 JSON 数组中定义的顺序一致。
@@ -141,11 +141,3 @@ static func tiers_map() -> Dictionary:
 	for e in _entries:
 		out[int(e["id"])] = int(TIER_NAMES[str(e["tier"])])
 	return out
-
-
-## 重新从磁盘加载武器配置（主要用于测试热重载）
-static func reload() -> void:
-	_projectile_profiles.clear()
-	_loaded = false
-	_entries = []
-	_ensure_loaded()

@@ -1,6 +1,5 @@
 #include "terrain.h"
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <godot_cpp/classes/collision_shape2d.hpp>
 #include <godot_cpp/classes/static_body2d.hpp>
@@ -82,10 +81,7 @@ void NativeTerrain::_bind_methods() {
     BIND0(take_rewards);
     BIND(attach, "parent");
     BIND0(flush_collisions);
-    BIND(set_collision_profiling, "enabled");
-    BIND0(take_collision_profile);
     BIND(flush_visuals, "layer");
-    BIND0(dirty_count);
     BIND(invalidate_chunk, "chunk");
     BIND0(invalidate_all);
     BIND(affects_since, "revision", "bounds");
@@ -99,16 +95,11 @@ void NativeTerrain::_bind_methods() {
     BIND(acknowledge, "tick");
     BIND(prune_before, "tick");
     BIND(reset_prediction, "tick");
-    BIND0(pending_cells);
-    BIND(prediction_cells_at, "tick");
-    BIND0(history_stats);
     BIND(set_rewind_enabled, "enabled");
     BIND(seal_rewind, "time");
     BIND(rewind_between, "target", "cursor");
     BIND(prune_rewind, "cutoff");
     BIND(truncate_rewind, "time");
-    BIND0(rewind_count);
-    BIND0(pending_rewind_count);
     ADD_PROPERTY(PropertyInfo(Variant::INT, "revision"), "set_revision", "get_revision");
     ADD_PROPERTY(PropertyInfo(Variant::INT, "generation"), "", "get_generation");
     ADD_PROPERTY(PropertyInfo(Variant::BOOL, "needs_state"), "", "get_needs_state");
@@ -176,24 +167,19 @@ void NativeTerrain::configure(const Array &macro, const Array &subgrid, const Di
             tile_hp[i] = material(texture(grid[i])).hp;
         }
     }
-    sub_rows = subgrid.is_empty() ? rows * per_tile : subgrid.size();
-    sub_columns = subgrid.is_empty() ? columns * per_tile : Array(subgrid[0]).size();
+    sub_rows = subgrid.size();
+    ERR_FAIL_COND(sub_rows == 0 || sub_rows != rows * per_tile);
+    sub_columns = Array(subgrid[0]).size();
+    ERR_FAIL_COND(sub_columns != columns * per_tile);
     textures.resize(size_t(sub_rows) * sub_columns);
     hp.resize(textures.size());
     TypedArray<Array> texture_rows;
     for (int y = 0; y < sub_rows; ++y) {
         Array snapshot_row;
-        const Array row = subgrid.is_empty() ? Array() : Array(subgrid[y]);
+        const Array row = subgrid[y];
+        ERR_FAIL_COND(row.size() != sub_columns);
         for (int x = 0; x < sub_columns; ++x) {
-            int tex = 0;
-            if (!subgrid.is_empty())
-                tex = row[x];
-            else if (y / per_tile < rows && x / per_tile < columns) {
-                const int packed = grid[(y / per_tile) * columns + x / per_tile];
-                const int quadrant = (y % per_tile) / (per_tile / 2) * 2 + (x % per_tile) / (per_tile / 2);
-                if (packed & (1 << quadrant))
-                    tex = texture(packed);
-            }
+            const int tex = row[x];
             const int i = y * sub_columns + x;
             textures[i] = tex;
             hp[i] = tex ? material(tex).hp : 0;
@@ -211,8 +197,6 @@ void NativeTerrain::configure(const Array &macro, const Array &subgrid, const Di
     authority.clear();
     prediction.clear();
     blast_kernels.clear();
-    kernel_builds = 0;
-    collision_us = collision_chunks = 0;
     network_changes.clear();
     modified.clear();
     rewards.clear();
@@ -871,8 +855,6 @@ int NativeTerrain::flush_collisions() {
     Node *parent = Object::cast_to<Node>(ObjectDB::get_instance(parent_id));
     if (!parent || empty())
         return 0;
-    const auto started =
-        profile_collisions ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point();
     if (permanent_dirty)
         rebuild_permanent(parent);
     if (ledges_dirty)
@@ -881,19 +863,7 @@ int NativeTerrain::flush_collisions() {
     for (const auto &entry : dirty)
         rebuild(entry.first, parent, entry.second);
     dirty.clear();
-    if (profile_collisions) {
-        collision_chunks += count;
-        collision_us +=
-            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - started).count();
-    }
     return count;
-}
-PackedInt64Array NativeTerrain::take_collision_profile() {
-    PackedInt64Array result;
-    result.push_back(collision_us);
-    result.push_back(collision_chunks);
-    collision_us = collision_chunks = 0;
-    return result;
 }
 void NativeTerrain::flush_visuals(TileMapLayer *layer) {
     if (!layer)
@@ -946,7 +916,6 @@ int NativeTerrain::predict_blast(int64_t id, int type, Vector2 center, int64_t t
         kernel.radius = radius;
         kernel.damage = damage;
         kernel.cells = blast_cells(center, radius, damage, true);
-        ++kernel_builds;
     }
     kernel.tick = tick;
     TickChanges &changes = prediction[tick];
@@ -1074,29 +1043,6 @@ void NativeTerrain::reset_prediction(int64_t tick) {
     ++generation;
     needs_state = false;
 }
-Dictionary NativeTerrain::pending_cells() const {
-    Dictionary out;
-    for (const auto &entry : authority)
-        if (hp[entry.first] != entry.second)
-            out[sub_position(entry.first)] = entry.second;
-    return out;
-}
-Dictionary NativeTerrain::prediction_cells_at(int64_t tick) const {
-    Dictionary out;
-    for (const auto &entry : values_at(tick))
-        out[sub_position(entry.first)] = entry.second;
-    return out;
-}
-Dictionary NativeTerrain::history_stats() const {
-    Dictionary out;
-    out["prediction_ticks"] = int64_t(prediction.size());
-    out["kernels"] = int64_t(blast_kernels.size());
-    out["kernel_builds"] = kernel_builds;
-    out["rewind_cells"] = rewind_count();
-    out["pending_rewind_cells"] = pending_rewind_count();
-    out["rewind_enabled"] = rewind_enabled;
-    return out;
-}
 void NativeTerrain::seal_rewind(double time) {
     if (rewind_pending.empty())
         return;
@@ -1127,12 +1073,6 @@ void NativeTerrain::truncate_rewind(double time) {
     while (!rewind_entries.empty() && rewind_entries.back().time > time)
         rewind_entries.pop_back();
     rewind_pending.clear();
-}
-int NativeTerrain::rewind_count() const {
-    int count = 0;
-    for (const RewindEntry &entry : rewind_entries)
-        count += entry.cells.size();
-    return count;
 }
 
 void godot::register_native_terrain() {

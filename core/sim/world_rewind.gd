@@ -18,45 +18,37 @@ var _t := 0.0                      # 世界已录制时间(秒)
 var _acc := 0.0
 var _cursor := 0.0
 var _replay_bullets: Dictionary = {}  # 历史 ID -> 回放对象，避免按下标串用不同弹丸
-var _parent: Node = null           # 回放子弹的挂载父节点(通常 WorldViewport)
+var _parent: Node                 # 回放子弹的挂载父节点(通常 WorldViewport)
 
-
-func _init(parent: Node = null) -> void:
+func _init(parent: Node) -> void:
 	_parent = parent
 
-
-
-func record(delta: float, player: Node, enemies: Array, bullets: Array) -> void:
-	if player == null or not is_instance_valid(player):
-		return
+func record(delta: float, player: Player, enemies: Array, bullets: Array) -> void:
 	_t += delta
 	_acc += delta
 	if _acc < 1.0 / float(TimeParams.SNAP_HZ):
 		return
 	_acc = 0.0
 	var pe: Array = []
-	for e in enemies:
-		if not is_instance_valid(e) or e.has_meta("elite"):
+	for e: EnemyBase in enemies:
+		if e.has_meta("elite"):
 			continue
 		pe.append({
 			"n": e,
-			"p": (e as Node2D).global_position,
-			"v": e.get("velocity"),
-			"hp": int(e.get("hp")),
-			"dead": bool(e.get("is_dead")),
-			"vis": (e as Node2D).visible,
+			"p": e.global_position,
+			"v": e.velocity,
+			"hp": e.hp,
+			"dead": e.is_dead,
+			"vis": e.visible,
 		})
 	var pb: Array = []
-	for b in bullets:
-		if not is_instance_valid(b):
-			continue
-		var bullet: BulletBase = b
+	for bullet: BulletBase in bullets:
 		var sh := bullet.shooter
 		pb.append({
 			# 重建后继续携带原历史 ID，二次录制与回溯仍对应同一颗弹丸。
 			"id": int(bullet.get_meta("rewind_id", bullet.get_instance_id())),
-			"sp": str(bullet.get_meta("scene_path", "")),
-			"from_player": sh != null and sh is Node and (sh as Node).is_in_group("player"),
+			"sp": bullet.get_meta("scene_path"),
+			"from_player": is_instance_valid(sh) and sh.is_in_group("player"),
 			"state": bullet.rewind_state(),
 		})
 	_frames.append({
@@ -69,15 +61,11 @@ func record(delta: float, player: Node, enemies: Array, bullets: Array) -> void:
 	while _frames.size() > 1 and float(_frames[0]["t"]) < cutoff:
 		_frames.pop_front()
 
-
 func begin() -> void:
 	_cursor = 0.0
 	_replay_bullets.clear()
-	var tree := Engine.get_main_loop() as SceneTree
-	if tree != null:
-		for b in tree.get_nodes_in_group("bullet"):
-			if is_instance_valid(b):
-				(b as Node).queue_free()
+	for bullet: BulletBase in _parent.get_tree().get_nodes_in_group("bullet"):
+		bullet.queue_free()
 
 
 ## 退出时空回溯：裁剪回溯出口之后的时间轴数据，保持时间线连续一致。
@@ -99,8 +87,7 @@ func finish() -> float:
 	_replay_bullets.clear()
 	return _t
 
-
-func step(delta: float, player: Node) -> void:
+func step(delta: float, player: Player) -> void:
 	if _frames.size() < 2:
 		return
 	_cursor += delta * _mult()
@@ -113,27 +100,24 @@ func _mult() -> float:
 	var k := clampf(_cursor / maxf(TimeParams.REWIND_RAMP_TIME, 0.001), 0.0, 1.0)
 	return lerpf(TimeParams.REWIND_START_MULT, 1.0, k)
 
-
 func _frame_at(target: float) -> Dictionary:
 	for i in range(_frames.size() - 1, -1, -1):
 		if float(_frames[i]["t"]) <= target:
 			return _frames[i]
 	return _frames[0]
 
-
-func _apply(f: Dictionary, player: Node) -> void:
-	if f.is_empty():
-		return
-	if is_instance_valid(player) and player.has_method("rewind_restore"):
+func _apply(f: Dictionary, player: Player) -> void:
+	if is_instance_valid(player):
 		player.rewind_restore(f["player"])
 	for d in f["enemies"]:
-		if is_instance_valid(d["n"]) and (d["n"] as Node).has_method("rewind_restore"):
-			(d["n"] as Node).rewind_restore(d)
+		if is_instance_valid(d["n"]):
+			var enemy: EnemyBase = d["n"]
+			enemy.rewind_restore(d)
 	_apply_bullets(f["bullets"], player)
 
 
 ## 单人以目标帧决定对象集合；创建/回收在管理器处理，状态恢复复用弹丸公共接口。
-func _apply_bullets(list: Array, player: Node) -> void:
+func _apply_bullets(list: Array, player: Player) -> void:
 	var wanted := {}
 	for meta: Dictionary in list:
 		var id: int = meta["id"]
@@ -141,18 +125,13 @@ func _apply_bullets(list: Array, player: Node) -> void:
 		var bullet: BulletBase = _replay_bullets.get(id)
 		if not is_instance_valid(bullet) or bullet.is_queued_for_deletion():
 			var sp := str(meta["sp"])
-			var host: Node = _parent
-			if not is_instance_valid(host) and is_instance_valid(player):
-				host = player.get_parent()
-			if not is_instance_valid(host) or sp.is_empty() or not ResourceLoader.exists(sp):
-				continue
 			bullet = (load(sp) as PackedScene).instantiate()
 			bullet.shooter = player if meta["from_player"] else null
 			bullet.apply_damage = true
 			bullet.set_meta("scene_path", sp)
 			bullet.set_meta("rewind_id", id)
 			bullet.apply_rewind_state(meta["state"])
-			host.add_child(bullet)
+			_parent.add_child(bullet)
 			_replay_bullets[id] = bullet
 		else:
 			bullet.apply_rewind_state(meta["state"])
@@ -174,11 +153,6 @@ func current_target() -> float:
 func replay_bullets() -> Array:
 	return _replay_bullets.values()
 
-
-func frame_count() -> int:
-	return _frames.size()
-
-
 func recorded_seconds() -> float:
 	return _t
 
@@ -186,12 +160,10 @@ func recorded_seconds() -> float:
 ## 尸体过期清理:录制中被保留(隐藏)的尸体,死亡时间超出缓冲窗口 → 真正释放。
 ## Level0 每帧调;用 meta "rw_death_ms" 记的死亡时刻判定。
 static func expire_corpses(tree: SceneTree) -> void:
-	if tree == null:
-		return
 	var now := Time.get_ticks_msec()
 	var life_ms := int(TimeParams.SNAP_SECONDS * 1000.0)
-	for e in tree.get_nodes_in_group("enemies"):
-		if not is_instance_valid(e) or not (e as Node).has_meta("rw_death_ms"):
+	for enemy: EnemyBase in tree.get_nodes_in_group("enemies"):
+		if not enemy.has_meta("rw_death_ms"):
 			continue
-		if now - int((e as Node).get_meta("rw_death_ms")) > life_ms:
-			(e as Node).queue_free()
+		if now - int(enemy.get_meta("rw_death_ms")) > life_ms:
+			enemy.queue_free()

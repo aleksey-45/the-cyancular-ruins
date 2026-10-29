@@ -63,7 +63,6 @@ void NativeActorBody::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_terrain_motion_cache"), &NativeActorBody::get_terrain_motion_cache);
     ADD_PROPERTY(PropertyInfo(Variant::DICTIONARY, "terrain_motion_cache", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NONE), "", "get_terrain_motion_cache");
     ClassDB::bind_method(D_METHOD("configure_motion", "values"), &NativeActorBody::configure_motion);
-    ClassDB::bind_method(D_METHOD("native_simulate_motion", "delta", "mult", "time_mult", "motion_only", "pvp", "terrain"), &NativeActorBody::native_simulate_motion);
     ClassDB::bind_method(D_METHOD("native_step_actor", "delta", "time_mult", "pvp", "terrain"), &NativeActorBody::native_step_actor);
     ClassDB::bind_method(D_METHOD("set_simulation_weapon", "value"), &NativeActorBody::set_simulation_weapon);
     ClassDB::bind_method(D_METHOD("get_simulation_weapon"), &NativeActorBody::get_simulation_weapon);
@@ -76,12 +75,7 @@ void NativeActorBody::_bind_methods() {
     ClassDB::bind_method(D_METHOD("native_apply_impulse", "source", "force"), &NativeActorBody::native_apply_impulse);
     ClassDB::bind_method(D_METHOD("native_simulate_hit", "source", "damage", "force"), &NativeActorBody::native_simulate_hit);
     ClassDB::bind_method(D_METHOD("native_force_down"), &NativeActorBody::native_force_down);
-    ClassDB::bind_method(D_METHOD("native_move_by", "motion", "revision"), &NativeActorBody::native_move_by);
-    ClassDB::bind_method(D_METHOD("native_move_actor", "delta", "revision"), &NativeActorBody::native_move_actor);
-    ClassDB::bind_method(D_METHOD("native_obstacles", "mask"), &NativeActorBody::native_obstacles);
-    ClassDB::bind_method(D_METHOD("native_overlaps", "bounds"), &NativeActorBody::native_overlaps);
     ClassDB::bind_method(D_METHOD("native_queries_match", "queries"), &NativeActorBody::native_queries_match);
-    ClassDB::bind_static_method("NativeActorBody", D_METHOD("clip_motion", "bounds", "axis", "distance", "obstacles"), &NativeActorBody::clip_motion);
     ClassDB::bind_method(D_METHOD("apply_collision_pose"), &NativeActorBody::apply_collision_pose);
     ClassDB::bind_method(D_METHOD("collision_stance"), &NativeActorBody::collision_stance);
     ClassDB::bind_method(D_METHOD("collision_rect"), &NativeActorBody::collision_rect);
@@ -93,7 +87,6 @@ void NativeActorBody::_bind_methods() {
     ClassDB::bind_method(D_METHOD("restore_motion_state", "state", "pose"), &NativeActorBody::restore_motion_state);
     ClassDB::bind_method(D_METHOD("native_apply_authoritative_state", "hp", "waterproof", "downed"), &NativeActorBody::native_apply_authoritative_state);
     ClassDB::bind_method(D_METHOD("capture_prediction_prefix", "weapon_instance", "inventory"), &NativeActorBody::capture_prediction_prefix);
-    ClassDB::bind_method(D_METHOD("capture_prediction_state_native", "weapon_instance", "inventory"), &NativeActorBody::capture_prediction_state_native);
     ClassDB::bind_method(D_METHOD("capture_state_native", "weapon_instance", "inventory"), &NativeActorBody::capture_state_native);
     ClassDB::bind_method(D_METHOD("write_driver_state_native", "state", "weapon_instance", "inventory"), &NativeActorBody::write_driver_state_native);
     ClassDB::bind_method(D_METHOD("restore_logic_state", "state"), &NativeActorBody::restore_logic_state);
@@ -133,18 +126,6 @@ std::vector<Rect2> NativeActorBody::obstacles(uint32_t mask, Vector2 anchor) con
     }
     return result;
 }
-TypedArray<Rect2> NativeActorBody::native_obstacles(int mask) const {
-    TypedArray<Rect2> result;
-    for (const Rect2 &rect : obstacles(mask, get_global_position())) result.push_back(rect);
-    return result;
-}
-double NativeActorBody::clip_motion(Rect2 bounds, int axis, double distance, const Array &values) {
-    ERR_FAIL_COND_V(axis < 0 || axis > 1, distance);
-    std::vector<Rect2> rects;
-    rects.reserve(values.size());
-    for (int i = 0; i < values.size(); ++i) rects.push_back(values[i]);
-    return clip_bounds(bounds, axis, distance, rects);
-}
 double NativeActorBody::query_motion(Rect2 bounds, int axis, double distance, const std::vector<Rect2> &values) {
     const double result = clip_bounds(bounds, axis, distance, values);
     if (track_actor_queries) actor_queries.push_back(Array::make(axis, bounds, distance, result, get_collision_mask(), get_global_position()));
@@ -158,7 +139,6 @@ bool NativeActorBody::query_overlap(Rect2 bounds) {
     if (track_actor_queries) actor_queries.push_back(Array::make(-1, bounds, 0.0, result, get_collision_mask(), get_global_position()));
     return result;
 }
-bool NativeActorBody::native_overlaps(Rect2 bounds) { return query_overlap(bounds); }
 bool NativeActorBody::native_queries_match(const Array &queries) const {
     for (int i = 0; i < queries.size(); ++i) {
         const Array query = queries[i];
@@ -185,12 +165,10 @@ Ref<KinematicCollision2D> NativeActorBody::terrain_motion(Vector2 travel, Transf
     const uint64_t hash = key.hash();
     const auto found = cache_index.find(hash);
     if (found != cache_index.end() && motion_cache[found->second].key == key) {
-        ++terrain_motion_hits;
         const auto &entry = motion_cache[found->second];
         set_global_transform(entry.destination);
         return entry.contact;
     }
-    ++terrain_motion_misses;
     const Ref<KinematicCollision2D> hit = move_and_collide(travel, false, get_safe_margin());
     size_t index;
     if (found != cache_index.end()) index = found->second;
@@ -208,16 +186,6 @@ Ref<KinematicCollision2D> NativeActorBody::terrain_motion(Vector2 travel, Transf
     return hit;
 }
 
-Vector2 NativeActorBody::native_move_by(Vector2 motion, int64_t revision) {
-    geometry_revision = revision;
-    return move_by_internal(motion);
-}
-void NativeActorBody::native_move_actor(double delta, int64_t revision) {
-    geometry_revision = revision;
-    native_velocity = get_velocity();
-    move_actor(delta);
-    set_velocity(native_velocity);
-}
 Vector2 NativeActorBody::move_by_internal(Vector2 motion) {
     ERR_FAIL_COND_V(hulls.size() < 2, Vector2());
     const auto rects = obstacles(get_collision_mask(), get_global_position());
@@ -578,7 +546,7 @@ Dictionary NativeActorBody::capture_state_native(int64_t instance, const Array &
 }
 void NativeActorBody::restore_logic_state(const Dictionary &st) {
     restore_motion_state(st, st["state"]);
-    _controls_locked = st.get("locked", _controls_locked);
+    _controls_locked = st["locked"];
     shot_serial = st["shot_serial"];
     native_apply_authoritative_state(st["hp"], st["wp"], st["down"]);
     sim_iframes = st["ifr"]; _waterproof_timer = st["wp_t"];

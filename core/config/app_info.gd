@@ -9,14 +9,11 @@ extends RefCounted
 # 获取版本号字符串：
 # 1. 导出发布版读取 build_info.gd 中的构建元数据；
 # 2. 本地开发版回退读取 Git 分支与提交序号；
-# 3. 传入 --nover 启动参数时固定返回 "dev" 以满足自动化测试断言。
 static var _version_cache := ""
 static var _log_cache: Array = []
 
 
 static func version_string() -> String:
-	if "--nover" in OS.get_cmdline_user_args():
-		return "dev"
 	if _version_cache != "":
 		return _version_cache
 	var bi := preload("res://core/config/build_info.gd")

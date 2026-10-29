@@ -41,7 +41,7 @@ var _ammo_label: Label = null
 var _slots: WeaponSlots = null
 var _weapon_box: VBoxContainer = null  # 左下角持有武器列表容器
 var _drop_bar: ColorRect = null        # 长按丢弃进度条
-var _player: Node = null
+@onready var _player: Player = $"../WorldViewport/Player"
 var _ammo_low := false                 # 低弹药警告状态
 
 const WEAPON_ICON_W := 96.0
@@ -58,22 +58,16 @@ func _ready() -> void:
 	add_child(watch)
 	# 时间模式中心标志组件
 	add_child(TimeSymbolHud.new())
-	var spawner := get_parent().get_node_or_null("EnemySpawner")
-	if spawner != null and spawner.has_signal("enemy_spawned"):
-		spawner.enemy_spawned.connect(_on_enemy_spawned)
-	var p := get_tree().get_first_node_in_group("player")
-	if p != null and p.has_signal("hp_changed"):
-		_build_segments(p.max_hp)
-		p.hp_changed.connect(_on_hp)
-		_on_hp(p.hp, p.max_hp)
-		if p.has_signal("waterproof_changed"):
-			_build_waterproof(p.max_waterproof)
-			p.waterproof_changed.connect(_on_waterproof)
-			_on_waterproof(p.waterproof, p.max_waterproof)
-		if "weapons" in p:
-			_player = p
-			_build_weapon_display(p)
-			_build_weapon_slots(p)
+	var spawner: EnemySpawner = $"../EnemySpawner"
+	spawner.enemy_spawned.connect(_on_enemy_spawned)
+	_build_segments(_player.max_hp)
+	_player.hp_changed.connect(_on_hp)
+	_on_hp(_player.hp, _player.max_hp)
+	_build_waterproof(_player.max_waterproof)
+	_player.waterproof_changed.connect(_on_waterproof)
+	_on_waterproof(_player.waterproof, _player.max_waterproof)
+	_build_weapon_display(_player)
+	_build_weapon_slots(_player)
 
 
 
@@ -82,16 +76,16 @@ func _process(_delta: float) -> void:
 	if _ammo_label == null:
 		return
 	var w: WeaponBase = null
-	if _player != null and is_instance_valid(_player) and "weapons" in _player:
+	if is_instance_valid(_player):
 		w = _player.weapons.current_weapon()
 	var show := w != null
 	_ammo_label.visible = show
-	var prog := w.reload_progress() if (show and w != null) else -1.0
+	var prog := w.reload_progress() if show else -1.0
 
 	# 刷新丢弃按键长按进度条
 	if _drop_bar != null:
 		var dp := 0.0
-		if prog < 0.0 and show and _player != null and _player.has_method("drop_hold_progress"):
+		if prog < 0.0 and show:
 			dp = _player.drop_hold_progress()
 		var dropping := dp > 0.0
 		_drop_bar.visible = dropping
@@ -110,7 +104,7 @@ func _process(_delta: float) -> void:
 
 
 # 构建左下角武器栏
-func _build_weapon_display(p: Node) -> void:
+func _build_weapon_display(p: Player) -> void:
 	var wrap := PanelContainer.new()
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = PLATE_COLOR
@@ -152,8 +146,6 @@ func _build_weapon_display(p: Node) -> void:
 
 # 刷新左下角武器列表项
 func _refresh_weapon_boxes() -> void:
-	if _weapon_box == null or _player == null or _player.weapons == null:
-		return
 	for c in _weapon_box.get_children():
 		if c == _drop_bar:
 			continue
@@ -229,7 +221,7 @@ var _weapon_wrap: PanelContainer = null
 const WEAPON_SLOTS_GAP := 8.0
 
 
-func _build_weapon_slots(p: Node) -> void:
+func _build_weapon_slots(p: Player) -> void:
 	_slots = WeaponSlots.attach_to(self, p.weapons)
 	_place_weapon_slots()
 	_place_weapon_slots.call_deferred()
@@ -237,7 +229,7 @@ func _build_weapon_slots(p: Node) -> void:
 
 # 将容量网格对齐至武器面板上方
 func _place_weapon_slots() -> void:
-	if _slots == null or _weapon_wrap == null or not is_instance_valid(_weapon_wrap):
+	if _slots == null or not is_instance_valid(_weapon_wrap):
 		return
 	_slots.anchor_left = 0.0
 	_slots.anchor_right = 0.0
@@ -361,9 +353,8 @@ func _build_kill_label() -> void:
 	UiFactory.style_control(_kill_label, KILL_FONT_SIZE)
 	call_deferred("add_child", wrap)
 
-func _on_enemy_spawned(enemy: Node) -> void:
-	if enemy.has_signal("died"):
-		enemy.died.connect(_on_enemy_died)
+func _on_enemy_spawned(enemy: EnemyBase) -> void:
+	enemy.died.connect(_on_enemy_died)
 
 func _on_enemy_died() -> void:
 	_kills += 1

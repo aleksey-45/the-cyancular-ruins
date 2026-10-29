@@ -25,15 +25,14 @@ static func reset_cache() -> void:
 
 
 static func grid_dims() -> Vector2i:
-	var grid := MazeGenerator.current_grid
-	return Vector2i((grid[0] as Array).size(), grid.size())   # (cols, rows)
+	return Vector2i(TileDefs.terrain.size() / GameParameters.TILE_SIZE)
 
 
 # 扫描地图收集所有平整地表格（自身为空、下方为阻挡且头顶留有站立空间）。
 static func floor_cells() -> Array:
 	if not _floor_cell_cache.is_empty():
 		return _floor_cell_cache
-	var grid := MazeGenerator.current_grid
+	var grid := TileDefs.terrain.get_grid_snapshot()
 	if grid.is_empty():
 		return []
 	var rows := grid.size()
@@ -41,7 +40,7 @@ static func floor_cells() -> Array:
 	for y in range(rows):
 		for x in range(cols):
 			var c := Vector2i(x, y)
-			if MazeGenerator.is_floor_cell_with_headroom(grid, c):
+			if GridPathfinder.is_floor_cell_with_headroom(grid, c):
 				_floor_cell_cache.append(c)
 	return _floor_cell_cache
 
@@ -50,7 +49,7 @@ static func floor_cells() -> Array:
 static func region_sizes() -> Dictionary:
 	if not _region_cache.is_empty():
 		return _region_cache
-	var grid := MazeGenerator.current_grid
+	var grid := TileDefs.terrain.get_grid_snapshot()
 	if grid.is_empty():
 		return {}
 	var rows := grid.size()
@@ -81,24 +80,20 @@ static func region_sizes() -> Dictionary:
 
 # 判定指定瓦片是否为有效平整地表格。
 static func floor_cells_has(c: Vector2i) -> bool:
-	return MazeGenerator.is_floor_cell_with_headroom(MazeGenerator.current_grid, c)
+	var terrain := TileDefs.terrain
+	return not terrain.empty() and terrain.value(c) == MapFormat.EMPTY \
+			and terrain.value(c + Vector2i.UP) == MapFormat.EMPTY \
+			and TileDefs.is_blocked(terrain.value(c + Vector2i.DOWN))
 
 
 # 判定指定地表格是否具备开阔净空（头顶留空至少 2 格，左右至少 1 格）。
 static func roomy_floor(c: Vector2i) -> bool:
 	if not floor_cells_has(c):
 		return false
-	var grid := MazeGenerator.current_grid
-	var rows := grid.size()
-	var cols := (grid[0] as Array).size()
-	# 头顶两格净空
-	if grid[posmod(c.y - 1, rows)][c.x] != MazeGenerator.EMPTY \
-			or grid[posmod(c.y - 2, rows)][c.x] != MazeGenerator.EMPTY:
-		return false
-	# 左右邻格空：出生处至少 3 格宽
-	if grid[c.y][posmod(c.x - 1, cols)] != MazeGenerator.EMPTY \
-			or grid[c.y][posmod(c.x + 1, cols)] != MazeGenerator.EMPTY:
-		return false
+	var terrain := TileDefs.terrain
+	for offset in [Vector2i(0, -2), Vector2i.LEFT, Vector2i.RIGHT]:
+		if terrain.value(c + offset) != MapFormat.EMPTY:
+			return false
 	return true
 
 
@@ -202,7 +197,7 @@ static func far_spawn_from(anchor: Vector2i, grid: Array) -> Vector2i:
 				continue
 			if not TileDefs.is_blocked(int(grid[(r + 1) % rows][c])):
 				continue
-			var d := MazeGenerator.toroidal_dist(anchor, Vector2i(c, r), cols, rows)
+			var d := GridPathfinder.toroidal_dist(anchor, Vector2i(c, r), cols, rows)
 			if d >= FAR_CELLS:
 				return Vector2i(c, r)
 			if d > best_d:
