@@ -160,11 +160,11 @@ var _speed_mult := 1.0  # 时间场速度域倍率(加速;跨函数用,故设成
 var pvp_haste_mult := 1.0
 var _ghost_t := 0.0     # 残影生成计时(加速时)
 var _ghost_flip := false  # 红/蓝交替
-# 冲刺残影:渲染帧里发射(不在物理 tick —— 回滚重放不会重复生成);很弱,只做"速度可读"的提示。
+# 冲刺残影:渲染帧里发射(不在物理 tick —— 回滚重放不会重复生成);2026-10-29 用户要求增强。
 var _dash_ghost_t := 0.0
-const DASH_GHOST_INTERVAL := 0.035
-const DASH_GHOST_DURATION := 0.13
-const DASH_GHOST_TINT := Color(0.72, 0.88, 1.0, 0.16)
+const DASH_GHOST_INTERVAL := 0.02
+const DASH_GHOST_DURATION := 0.20
+const DASH_GHOST_TINT := Color(0.78, 0.92, 1.0, 0.30)
 
 
 # 本帧倍率推给三个消费点:攀爬/武器的宿主引用是一次给入的、而倍率每帧在变 ⇒ 只能每帧推;游泳走 swim.update 的调用参数。

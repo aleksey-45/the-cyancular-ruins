@@ -5,6 +5,10 @@ extends Node2D
 
 # 大跳变阈值:相邻两条权威快照的环面距离超过它 ⇒ 清历史、一帧落位(回溯 / 重生 / 换边本来就是瞬移,插值会演成「滑过去」;128px 的依据见 docs/eng/render.md)。
 const SNAP_DIST := 128.0
+# 欠载外插上限(2026-10-29):render_tick 超过最新快照时,用最新速度最多补 2 tick(≈33ms)、总位移 ≤60px,
+# 超出即冻结 —— 原来的「一律冻结」在一个 30Hz 包迟到时就停 33ms,肉眼就是一次卡顿。
+const UNDERRUN_EXTRAP_TICKS := 2.0
+const UNDERRUN_EXTRAP_MAX_PX := 60.0
 
 # 播放时钟(= core/net/playout_clock.gd)+ 时间域常量(= core/net/lag_comp.gd)。★ 用 preload 取常量而不是全局类名:少一次编辑器扫描依赖。
 const PlayoutClock := preload("res://core/net/playout_clock.gd")
@@ -23,9 +27,9 @@ const POSE_ANIM: Dictionary = {
 const POSE_FLY := 2
 const POSE_CHARGE := 3
 # 冲刺残影(与 player.gd 的常量同值:两个宿主都走 AfterImage.spawn,强度只在这两处调)。
-const DASH_GHOST_INTERVAL := 0.035
-const DASH_GHOST_DURATION := 0.13
-const DASH_GHOST_TINT := Color(0.72, 0.88, 1.0, 0.16)
+const DASH_GHOST_INTERVAL := 0.02
+const DASH_GHOST_DURATION := 0.20
+const DASH_GHOST_TINT := Color(0.78, 0.92, 1.0, 0.30)
 
 const LAND_VEL_EPS := 1.0
 
@@ -167,7 +171,7 @@ func _anchor_of(canon: Vector2) -> Vector2:
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 
 
-## 在 t(服务器 tick 域,可为小数)处取样:夹逼线性插值,两侧都冻结(比最新还新 = underrun 不外插,比最老还老 = 不倒退)。
+## 在 t(服务器 tick 域,可为小数)处取样:三次 Hermite(位置用两条快照的权威速度做切线)+ 两端夹逼。
 ## ★★ 两端必须锚进同一个副本空间再插(b 锚到 pa,不是 _local_anchor),否则跨接缝时差量是一整幅地图、插值横穿全图。
 func _sample_history(t: float) -> Vector2:
 	var n := place_history.size()
@@ -178,7 +182,7 @@ func _sample_history(t: float) -> Vector2:
 	if t <= float(first["tick"]):
 		return _anchor_of(first["pos"])
 	if t >= float(last["tick"]):
-		return _anchor_of(last["pos"])
+		return _extrapolate_underrun(last, t)
 	for i in range(n - 1):
 		var a: Dictionary = place_history[i]
 		var b: Dictionary = place_history[i + 1]
@@ -191,8 +195,34 @@ func _sample_history(t: float) -> Vector2:
 				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 		if tb <= ta:
 			return pb
-		return pa.lerp(pb, (t - ta) / (tb - ta))
+		var u := (t - ta) / (tb - ta)
+		# 切线 = 权威速度(px/s)× 本段时长(s);端点速度与位置同源,拐弯/起跳/落地不再折线。
+		var seg_s := (tb - ta) / 60.0
+		var m0: Vector2 = (a["st"] as Dictionary).get("vel", Vector2.ZERO) * seg_s
+		var m1: Vector2 = (b["st"] as Dictionary).get("vel", Vector2.ZERO) * seg_s
+		return _hermite(pa, pb, m0, m1, u)
 	return _anchor_of(last["pos"])
+
+
+## 欠载外插:render_tick 超过最新快照时不再原地冻结(丢一个 30Hz 包就停 33ms = 明显卡顿),
+## 用最新速度最多补 UNDERRUN_EXTRAP_TICKS 个 tick、且总位移封顶,停下/变向时不会飞出去。
+func _extrapolate_underrun(last: Dictionary, t: float) -> Vector2:
+	var pc := _anchor_of(last["pos"])
+	var extra := minf(t - float(last["tick"]), UNDERRUN_EXTRAP_TICKS)
+	if extra <= 0.0:
+		return pc
+	var v: Vector2 = (last["st"] as Dictionary).get("vel", Vector2.ZERO)
+	var d := v * (extra / 60.0)
+	if d.length() > UNDERRUN_EXTRAP_MAX_PX:
+		d = d.normalized() * UNDERRUN_EXTRAP_MAX_PX
+	return pc + d
+
+
+static func _hermite(p0: Vector2, p1: Vector2, m0: Vector2, m1: Vector2, u: float) -> Vector2:
+	var u2 := u * u
+	var u3 := u2 * u
+	return p0 * (2.0 * u3 - 3.0 * u2 + 1.0) + m0 * (u3 - 2.0 * u2 + u) \
+			+ p1 * (-2.0 * u3 + 3.0 * u2) + m1 * (u3 - u2)
 
 
 # 记一条历史(位置 + 外观态);相邻样本的环面距离超过 SNAP_DIST ⇒ 设计好的瞬移 ⇒ 清历史让它一帧落位(判据必须用环面最短距离,跨接缝不是跳变)。
@@ -253,13 +283,46 @@ func _sampled_state() -> Dictionary:
 		return {}
 	var idx := place_history.size() - 1
 	if _placed and _clock != null:
-		var t: float = _clock.render_tick
-		for i in place_history.size():
-			if float(place_history[i]["tick"]) <= t:
-				idx = i
-			else:
-				break
+		idx = _state_index(_clock.render_tick)
 	return place_history[idx]["st"]
+
+
+func _state_index(t: float) -> int:
+	var idx := place_history.size() - 1
+	for i in place_history.size():
+		if float(place_history[i]["tick"]) <= t:
+			idx = i
+		else:
+			break
+	return idx
+
+
+## 连续外观量(aim / vel)在相邻两条历史之间插值;离散量(pose / facing / downed / type_id)仍取整条。
+## ★ 只插连续量:瞄准方向 30Hz 阶跃时枪口/手臂每 33ms 跳一次 = 用户看到的"对手有点卡";位置与枪口现在都连续。
+func _sampled_state_blended() -> Dictionary:
+	var st := _sampled_state()
+	if st.is_empty() or not _placed or _clock == null or place_history.size() < 2:
+		return st
+	var t: float = _clock.render_tick
+	var idx := _state_index(t)
+	if idx < 0 or idx >= place_history.size() - 1:
+		return st   # 欠载(没有下一条可插)或最早一条:外观态保持最后一条
+	var a: Dictionary = place_history[idx]
+	var b: Dictionary = place_history[idx + 1]
+	var ta := float(a["tick"])
+	var tb := float(b["tick"])
+	if tb <= ta:
+		return st
+	var f := clampf((t - ta) / (tb - ta), 0.0, 1.0)
+	var out := st.duplicate()
+	var sa: Dictionary = a["st"]
+	var sb: Dictionary = b["st"]
+	var aim_a: Vector2 = sa.get("aim", Vector2.RIGHT)
+	var aim_b: Vector2 = sb.get("aim", Vector2.RIGHT)
+	if aim_a.length_squared() > 0.0 and aim_b.length_squared() > 0.0:
+		out["aim"] = aim_a.slerp(aim_b, f)
+	out["vel"] = (sa.get("vel", Vector2.ZERO) as Vector2).lerp(sb.get("vel", Vector2.ZERO), f)
+	return out
 
 
 ## 把一条外观态刷到画面上。★ 必须幂等(每帧都调):同姿态的 animator.play 不会重启动画,换枪由 _weapon_type_int 挡重复重建。

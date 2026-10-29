@@ -27,15 +27,15 @@
 - 副本:数据从快照的 `vel` / `pose` 本地推导;`on_floor = (not _downed) and _pose != POSE_FLY and absf(_vel.y) < LAND_VEL_EPS`;水项用客户端本地网格查询 `_in_water()`,不是协议字段;不做受击挤压;`tick` 放副本的 `_process`。
 - 已知表现副产物:缩放绕精灵中心,挤压时画出的底边上抬 ~4~5px、拉伸下沉 ~3.5px。`animator.offset` 必须保持 `Vector2.ZERO`。
 - `_impulse` 有两个写入口,各自钳一次 `[-1,1]`:`impulse()` 的加法,以及 `tick()` 里 `_impulse -= _land_gain * k` 之后紧跟的 `clampf`。
-- 残影 `scenes/effects/after_image.gd`(`AfterImage`):复制 `AnimatedSprite2D` 当前帧贴图成一张 `Node2D + Sprite2D`,淡出后自毁。两个消费点:加速残影(`player.gd`,红/蓝交替,物理 tick 发射)、冲刺残影(`player.gd` / `player_replica.gd`,淡蓝白 alpha 0.16、0.13s、0.035s 间隔,**渲染帧发射**,服务器/无相机路径跳过)。纯表现,不进 `capture_state()` / 快照。
+- 残影 `scenes/effects/after_image.gd`(`AfterImage`):复制 `AnimatedSprite2D` 当前帧贴图成一张 `Node2D + Sprite2D`,淡出后自毁。两个消费点:加速残影(`player.gd`,红/蓝交替,物理 tick 发射)、冲刺残影(`player.gd` / `player_replica.gd`,淡蓝白 alpha 0.30、0.20s、0.02s 间隔,**渲染帧发射**,服务器/无相机路径跳过)。纯表现,不进 `capture_state()` / 快照。
 
 ## 远端玩家副本的表现层(`scenes/player/player_replica.gd`)
 
 - **渲染层带**:`level_0.tscn` 的子节点顺序是 `Camera2D → Player → WallLayer → WaterLayer(z 4) → WaterSurfaceLayer(z 5)`。所以本体被墙体 / 梯子 / 建筑(都铺在 `WallLayer`)盖住,却又被水层压住;而远端副本是运行时 `add_child` 到世界末尾的 ⇒ 默认盖住墙体 / 梯子 / 建筑(现状 = 只有别人的角色压在地形上)。副本在 `_ready` 里用 `Level0.wall_layer` 把自己挪到那一层之前(`_reorder_before_structures`),与本体同一条层带。★ 只动绘制顺序,不碰碰撞与位置。
-- **位置插值**:下行 30Hz ⇒ 直出最新快照就是「一格一格跳」(单步 = 移速 × 33ms,走速 ≈10px,到达抖动还直接透传)。改成 playout 缓冲插值:渲染「最新快照 − `PLAYOUT_TICKS`」那一刻的两样本夹逼插值,`PLAYOUT_TICKS = 3`(60Hz tick 域)= 1.5 个发包间隔 ≈ **50ms**。这个延迟是选出来的常量(不是低通滤波器的涌现滞后);改大更抗抖动但对手更迟,改 0 = 退回直出。
-- **两端冻结**:取样比最新还新(underrun)冻在最新、不外插(外插会让对手飞出去);比最老还老冻在最老、不倒退。跨接缝的那一对样本先锚进同一个副本空间再 lerp。
+- **位置插值**:下行 30Hz ⇒ 直出最新快照就是「一格一格跳」(单步 = 移速 × 33ms,走速 ≈10px)。改成 playout 缓冲插值:渲染「最新快照 − `PLAYOUT_TICKS`」那一刻的两样本夹逼插值,`PLAYOUT_TICKS = 3`(60Hz tick 域)= 1.5 个发包间隔 ≈ **50ms**。样本之间用三次 Hermite(切线 = 快照里的权威速度 × 本段时长)⇒ 起跳 / 下落 / 急停转弯不再折线;这个延迟是选出来的常量(不是低通滤波器的涌现滞后)。
+- **两端**:比最老还老冻在最老、不倒退;比最新还新(underrun)时不再一律冻结,用最新权威速度**最多补 2 tick(≈33ms)、总位移 ≤60px**,超出即冻结(丢一个 30Hz 包就停 33ms = 肉眼一次卡顿,所以加了这个有界外插)。跨接缝的那一对样本先锚进同一个副本空间再插。
 - **大跳变**:相邻两条权威样本的环面距离 > `SNAP_DIST = 128 px` ⇒ 清位置历史、一帧落位。依据:常态相邻包位置差 ≈ 10px(300px/s × 33ms)、丢包 200ms 也只有 ≈60px,而回溯 / 重生 / 换边是几百~几千 px ⇒ 128 落在两者之间,两侧各留约 2 倍余量。
-- **外观态与位置同一条时间线**:`pose` / `facing` / `aim` / `downed` / `type_id` / `vel` 与位置一起进历史环,渲染时按同一个 `render_tick` 取样。★ 这条不是可选项:外观态逐包瞬跳时,动画/枪口比身体早一拍多,对手停下后腿还在走(用户报的「滑」)。
+- **外观态与位置同一条时间线**:`pose` / `facing` / `aim` / `downed` / `type_id` / `vel` 与位置一起进历史环,渲染时按同一个 `render_tick` 取样。连续量(`aim` 方向向量、`vel`)在相邻两条历史之间插值(`slerp` / `lerp`),离散量(`pose` / `facing` / `downed` / `type_id`)仍取整条。★ 这条不是可选项:外观态逐包瞬跳时,动画/枪口比身体早一拍多,对手停下后腿还在走(用户报的「滑」);只延迟不插 `aim` 时,枪口每 33ms 跳一次(用户报的「对手有点卡」)。
 - **幽灵碰撞体不跟插值**:它跟未经平滑的最新快照锚点(预测面要最小陈旧;姿态箱也按最新 `pose` 切)。代价:看得见的对手比「挡你的对手」晚 ≤ 50ms —— 有意的交换,别把幽灵体也接上插值。
 - ⚠ **零守卫**:以上都是观感项,按仓主裁定不写自动守卫(见 [`tests.md`](tests.md) 的「不写清单」),只能人眼验收;改动时盯「对手横向跑动是否连续、是否被梯子 / 墙盖住」。
 
