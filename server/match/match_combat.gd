@@ -243,7 +243,11 @@ func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, _victim_role: int) 
 
 # 玩家受击反馈:实际扣血后广播 hit_event;客户端按 victim_role 分支(自己 → 白闪/击退,对手 → 闪烁)。bind(role) 的参数追加在信号参数之后。
 
-func _on_player_hit(source_pos: Vector2, damage: int, role: int) -> void:
+func _on_player_hit(source_pos: Vector2, damage: int, cause: String, role: int) -> void:
+# ★ 客户端已本地预测的伤害(落水窒息,cause="water")不回声:两端跑同一份 _tick_underwater,再广播 hit_event 会让客户端二次应用。
+#   这也顺带排除"无攻击者"的来源进 dealt/taken 统计(窒息本来就没有 attacker)。判据与单一来源见 player.gd 的溺水调用。
+	if cause == "water":
+		return
 # ★ 一个钩子覆盖全部伤害来源(子弹/榴弹直击/爆炸 AoE/激光):共同点是「归因写入都先于 take_hit」,于是 took_hit 这一刻读 meta 就是攻击者。
 	var stat_victim: Node2D = players.get(int(role))
 	var stat_self := stat_victim != null and is_instance_valid(stat_victim) \

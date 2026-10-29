@@ -9,7 +9,7 @@ static var pvp_arena := false
 
 signal hp_changed(current: int, max: int)
 signal went_down   # 倒地瞬间触发,根连到 weapons.cancel_aim(保持旧 _downed 里的取消瞄准)
-signal took_hit(source_pos: Vector2, damage: int)  # 实际造成一次伤害(服务器 MatchHost 接它广播受击反馈)
+signal took_hit(source_pos: Vector2, damage: int, cause: String)  # 实际造成一次伤害(服务器 MatchHost 接它广播受击反馈;cause="water" = 客户端已预测的窒息伤害)
 
 var max_hp: int = PlayerParams.player_max_hp
 var hp: int = PlayerParams.player_max_hp
@@ -35,7 +35,7 @@ func update_iframe_blink(delta: float) -> void:
 		body.modulate.a = 1.0
 
 func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, knockback: float = -1.0,
-		feedback_only: bool = false) -> void:
+		feedback_only: bool = false, cause: String = "") -> void:
 	# ignore_iframes:特殊攻击(如冲撞)穿透无敌帧但照常刷新;PvP 取消无敌帧阻挡,仍每发只结算一次。
 	if downed or (not pvp_arena and iframes > 0.0 and not ignore_iframes):
 		return
@@ -48,7 +48,7 @@ func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, kn
 	# 冲刺被打断:否则下一帧 is_charge 分支会用冲刺速度覆盖本次击退
 	body.cancel_charge()
 	hp -= damage
-	took_hit.emit(source_pos, damage)
+	took_hit.emit(source_pos, damage, cause)
 	play_hit_feedback(source_pos, damage)
 	iframes = PlayerParams.iframes_time
 	# ★ 击退方向必须用环面最短向量,不能绝对相减:服务器权威下命中源坐标(服务器子弹/爆心)锚在射手副本上,可能与本玩家 canonical 相差约整幅地图(跨接缝对枪),绝对相减会得出反向击退。

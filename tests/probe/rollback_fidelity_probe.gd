@@ -279,6 +279,28 @@ func _check_source_guard() -> void:
 	_check(rec_block[0] >= 0 and rec_writes == 1,
 			"_record_stepped_seq 必须写一次 _stepped_seq(实得 %d 处)" % rec_writes)
 
+	# ⑤ 落水窒息不回显(2026-10-29):服务端必须跳过 cause=="water" 的 hit_event,客户端溺水调用必须带 cause ——
+	#    漏任一处 = 客户端二次扣血(每次窒息多一次回滚)。删掉不报错,只能靠源码守卫。
+	var lines6 := FileAccess.get_file_as_string("res://server/match/match_combat.gd").split("\n")
+	var hit_fn := _func_block(lines6, "func _on_player_hit(")
+	var water_skip := 0
+	for i in range(hit_fn[0] + 1, hit_fn[1]):
+		if lines6[i].strip_edges().begins_with("#"):
+			continue
+		if lines6[i].contains("cause == \"water\""):
+			water_skip += 1
+	_check(hit_fn[0] >= 0 and water_skip == 1,
+			"服务端必须跳过 cause=water 的 hit_event(实得 %d 处;0 = 溺水伤害双计)" % water_skip)
+
+	var water_calls := 0
+	for line7 in FileAccess.get_file_as_string("res://scenes/player/player.gd").split("\n"):
+		if line7.strip_edges().begins_with("#"):
+			continue
+		if line7.contains("take_hit(global_position, PlayerParams.player_waterproof_damage") and line7.contains("\"water\""):
+			water_calls += 1
+	_check(water_calls == 1,
+			"溺水 take_hit 必须带 cause=\"water\"(实得 %d 处;0 = 服务端不会跳过回声)" % water_calls)
+
 
 # 返回 [函数头行, 块尾行) ;找不到返回 [-1, -1]。块尾 = 下一个列 0 的 `func `。
 func _func_block(lines: Array, header_prefix: String) -> Array:
@@ -448,7 +470,10 @@ func _test_feedback_only() -> void:
 	add_child(p)
 	p.global_position = Vector2(GameParameters.MAP_WIDTH * 0.5, GameParameters.MAP_HEIGHT * 0.5)
 	var n := [0]
-	p.combat.took_hit.connect(func(_sp: Vector2, _d: int) -> void: n[0] += 1)
+	var cause := [""]
+	p.combat.took_hit.connect(func(_sp: Vector2, _d: int, c: String) -> void:
+		n[0] += 1
+		cause[0] = c)
 	var st0: Dictionary = p.capture_state()
 	var hp0: int = int(st0["hp"])
 	var vel0: Vector2 = st0["vel"]
@@ -464,5 +489,11 @@ func _test_feedback_only() -> void:
 	var st2: Dictionary = p.capture_state()
 	_check(int(st2["hp"]) == hp0 - 10 and n[0] == 1,
 			"⑮ 正常受击仍扣血并 emit took_hit(证明 ⑭ 不是恒真断言)")
+
+	# ⑯ 伤害来源透传:落水窒息必须带 cause="water"(服务器据此不回声),普通伤害必须为空(证明断言不是恒真)。
+	p.call("take_hit", p.global_position, 10, false, -1.0, false, "water")
+	_check(cause[0] == "water", "⑲ 溺水伤害的 took_hit 带 cause=water(实得 %s)" % cause[0])
+	p.call("take_hit", p.global_position, 10)
+	_check(cause[0] == "", "⑳ 普通伤害 cause 为空(实得 %s;证明 ⑲ 不是恒真)" % cause[0])
 
 	_ran["feedback_only"] = true

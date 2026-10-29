@@ -419,18 +419,18 @@ func _wrap_position() -> void:
 
 
 func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, knockback: float = -1.0,
-		feedback_only: bool = false) -> void:
+		feedback_only: bool = false, cause: String = "") -> void:
 	# 回溯中不受任何伤害(位置正被回放器搬运,接触判定可能在瞬移中误触发):单机看 TimeField 的回溯态,联机看 time_rewinding meta。
 	if (TimeField.current != null and TimeField.current.is_rewinding()) or has_meta("time_rewinding"):
 		return
 	# feedback_only:只播反馈 + 挤压,不扣血/不击退/不 emit(供 C2 事件兜底;理由见 combat_component.take_hit)。
 	if feedback_only:
-		combat.take_hit(source_pos, damage, ignore_iframes, knockback, true)
+		combat.take_hit(source_pos, damage, ignore_iframes, knockback, true, cause)
 		squash.impulse(SquashStretch.Impulse.HURT)
 		return
 	# 前后比对 hp:只有真吃到伤害才挤压 —— 无敌帧挡下/已倒地时 combat.take_hit 不改 hp,天然把它们排除,比在 combat 里回调更省事。
 	var before := combat.hp
-	combat.take_hit(source_pos, damage, ignore_iframes, knockback)
+	combat.take_hit(source_pos, damage, ignore_iframes, knockback, false, cause)
 	if combat.hp < before:
 		squash.impulse(SquashStretch.Impulse.HURT)
 
@@ -661,7 +661,9 @@ func _update_waterproof(delta: float, water: WaterSample) -> void:
 		_waterproof_drown_timer += delta
 		if _waterproof_drown_timer >= GameParameters.water_drown_damage_interval:
 			_waterproof_drown_timer = 0.0
-			take_hit(global_position, PlayerParams.player_waterproof_damage, true)
+			# ★ cause="water":这是**客户端已本地预测**的伤害(两端跑同一份 _tick_underwater)。服务器必须据此不广播 hit_event,
+			#   否则客户端会二次应用(多扣一次血 → 下个 ack 再回滚)。服务端跳过见 match_combat._on_player_hit。
+			take_hit(global_position, PlayerParams.player_waterproof_damage, true, -1.0, false, "water")
 
 func _set_waterproof(v: int) -> void:
 	waterproof = clampi(v, 0, max_waterproof)
