@@ -160,6 +160,11 @@ var _speed_mult := 1.0  # 时间场速度域倍率(加速;跨函数用,故设成
 var pvp_haste_mult := 1.0
 var _ghost_t := 0.0     # 残影生成计时(加速时)
 var _ghost_flip := false  # 红/蓝交替
+# 冲刺残影:渲染帧里发射(不在物理 tick —— 回滚重放不会重复生成);很弱,只做"速度可读"的提示。
+var _dash_ghost_t := 0.0
+const DASH_GHOST_INTERVAL := 0.035
+const DASH_GHOST_DURATION := 0.13
+const DASH_GHOST_TINT := Color(0.72, 0.88, 1.0, 0.16)
 
 
 # 本帧倍率推给三个消费点:攀爬/武器的宿主引用是一次给入的、而倍率每帧在变 ⇒ 只能每帧推;游泳走 swim.update 的调用参数。
@@ -169,6 +174,20 @@ func _push_haste_mult(tm: float) -> void:
 	var cur_w := weapons.current_weapon()
 	if cur_w != null:
 		cur_w.haste_mult = tm
+
+
+func _process(delta: float) -> void:
+	# 冲刺残影(纯表现):只在渲染帧发射 ⇒ C2 回滚重放不会把同一段冲刺再生成一遍;
+	# 服务器/无相机路径直接跳过(看不见的节点不花)。强度/间隔见 DASH_GHOST_* 常量。
+	if not is_charge or animator == null or not is_inside_tree():
+		_dash_ghost_t = 0.0
+		return
+	if get_viewport().get_camera_2d() == null:
+		return
+	_dash_ghost_t -= delta
+	if _dash_ghost_t <= 0.0:
+		_dash_ghost_t = DASH_GHOST_INTERVAL
+		AfterImage.spawn(get_parent(), animator, DASH_GHOST_TINT, DASH_GHOST_DURATION, -1)
 
 
 func _physics_process(delta: float) -> void:

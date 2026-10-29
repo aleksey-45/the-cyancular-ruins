@@ -27,6 +27,7 @@
 - 副本:数据从快照的 `vel` / `pose` 本地推导;`on_floor = (not _downed) and _pose != POSE_FLY and absf(_vel.y) < LAND_VEL_EPS`;水项用客户端本地网格查询 `_in_water()`,不是协议字段;不做受击挤压;`tick` 放副本的 `_process`。
 - 已知表现副产物:缩放绕精灵中心,挤压时画出的底边上抬 ~4~5px、拉伸下沉 ~3.5px。`animator.offset` 必须保持 `Vector2.ZERO`。
 - `_impulse` 有两个写入口,各自钳一次 `[-1,1]`:`impulse()` 的加法,以及 `tick()` 里 `_impulse -= _land_gain * k` 之后紧跟的 `clampf`。
+- 残影 `scenes/effects/after_image.gd`(`AfterImage`):复制 `AnimatedSprite2D` 当前帧贴图成一张 `Node2D + Sprite2D`,淡出后自毁。两个消费点:加速残影(`player.gd`,红/蓝交替,物理 tick 发射)、冲刺残影(`player.gd` / `player_replica.gd`,淡蓝白 alpha 0.16、0.13s、0.035s 间隔,**渲染帧发射**,服务器/无相机路径跳过)。纯表现,不进 `capture_state()` / 快照。
 
 ## 远端玩家副本的表现层(`scenes/player/player_replica.gd`)
 

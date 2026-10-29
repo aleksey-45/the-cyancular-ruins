@@ -42,6 +42,10 @@ var apply_damage: bool = true  # 客户端视觉副本设 false:只出特效/轨
 var _fuse_active: bool = false   # 首次碰撞(撞墙/命中敌人)后才开始计时
 var _fuse_elapsed: float = 0.0
 var _fuse_duration: float = 0.0  # 本次引信时长(撞墙=fuse_time,命中敌人=hit_fuse_time)
+# 判定点整体后移帧数(2026-10-29 用户指定 2~4 帧,取 3):爆炸当帧只播火光/碎片/震屏,
+# 再过 3 个物理帧才做一次 apply_aoe 结算。子弹在窗口里保持存活但不可见、不移动;期间被清掉则放弃这次结算。
+const EXPLOSION_SETTLE_FRAMES := 3
+var _settle_frames: int = 0
 
 func setup(dir: Vector2, spd: float, rng: float, siz: float, col: Color, src: Node) -> void:
 	velocity_vec = dir.normalized() * spd
@@ -68,6 +72,12 @@ func _physics_process(delta: float) -> void:
 	delta = TimeField.bullet_delta(delta, self)   # 时间场:回溯冻结/加速(我方弹随玩家)
 	if TimeField.current != null and TimeField.current.is_rewinding():
 		return   # 回溯中子弹不自步进(位置由回放器摆;引信/水阻/射程都不结算)
+	if _settle_frames > 0:
+		# 爆炸后的判定窗口:不移动、不再触发引信;倒计时到 0 时一次性结算并销毁。
+		_settle_frames -= 1
+		if _settle_frames == 0:
+			_settle_explosion()
+		return
 	prev_pos = global_position
 	if gravity_factor > 0.0:
 		velocity_vec.y += GameParameters.gravity0 * gravity_factor * delta
@@ -80,7 +90,8 @@ func _physics_process(delta: float) -> void:
 		_fuse_elapsed += delta
 		if _fuse_elapsed >= _fuse_duration:
 			_explode()
-			queue_free()
+			if _settle_frames == 0:
+				queue_free()
 			return
 	_apply_water_drag(delta)
 	var step := velocity_vec * delta
@@ -105,7 +116,8 @@ func _physics_process(delta: float) -> void:
 	if traveled >= max_range:
 		if explodes:
 			_explode()
-		queue_free()
+		if _settle_frames == 0:
+			queue_free()
 		return
 	_wrap()
 	# 环面 wrap 会把 global_position 整幅平移;扫掠起点要跟着平移,否则下一帧/裁决读到的线段横穿整图。
@@ -355,6 +367,11 @@ func _start_fuse(duration: float) -> void:
 	_fuse_active = true
 
 func _explode() -> void:
+	# 判定点后移(用户指定 3 帧):权威/单机路径先只排结算,火光/碎片/震屏照旧当帧播;
+	# 子弹本体隐藏并留在树上数 3 个物理帧(_settle_explosion 结算后销毁)。视觉副本没有结算 ⇒ 照旧当帧销毁。
+	if apply_damage:
+		_settle_frames = EXPLOSION_SETTLE_FRAMES
+		visible = false
 	# 权威侧广播爆炸位置(组回调;子弹内不引 autoload —— `-s` 冒烟会 parse 失败)。单机没有这个组 ⇒ 空操作。
 	if apply_damage:
 		var sink := get_tree().get_first_node_in_group("authority_explosion_sink")
@@ -371,11 +388,16 @@ func _explode() -> void:
 		TileHitFx.spawn(get_viewport(), at, int(e["tex"]))
 		# 爆炸本端已播命中碎片 ⇒ 服务器随后的逐子格破坏事件去重(否则一次爆炸的双份粒子成倍)。
 		TileHitFx.mark_hit(at)
-	if apply_damage:
-		Explosion.apply_aoe(global_position, explosion_radius, explosion_damage, explosion_knockback, shooter, tile_break_unit)
-	else:
+	if not apply_damage:
 		# 视觉副本(PvP 客户端):apply_aoe 被 gate 掉 ⇒ 爆炸震屏在这里单独补,否则联机里旁边爆炸完全没有震感。
 		Explosion.client_cam_shake(global_position, explosion_radius)
+
+
+# 判定窗口结束:一次且仅一次 apply_aoe(位置/半径/伤害/击退都取爆炸当帧的值;子弹在这 3 帧里被清掉则不会走到这里)。
+func _settle_explosion() -> void:
+	var s: Node = shooter if is_instance_valid(shooter) else null
+	Explosion.apply_aoe(global_position, explosion_radius, explosion_damage, explosion_knockback, s, tile_break_unit)
+	queue_free()
 
 
 # 表现层锚点:离本地玩家最近的那份环面副本(与 _wrap 同一套选择规则)。

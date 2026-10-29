@@ -19,9 +19,9 @@ const jump_cut_factor: float = 0.5  # 上升中松键时向上速度的衰减比
 const crouch_walk_speed: float = 245.0   # 蹲走水平速度(≈0.35×move_speed)
 
 const charge_down_velocity: float = 2000.0
-const charge_distance: float = 640.0    # 冲刺总距离(px;2026-10-28 用户指定)
+const charge_distance: float = 384.0    # 冲刺总距离(px;2026-10-29 用户改为原 640 的 60%)
 const charge_velocity: float = 3000.0   # 冲刺速度(2026-10-28 用户指定)
-const charge_duration: float = 640.0 / 3000.0   # = charge_distance / charge_velocity ≈ 0.2133s(可跳/墙打断仍有效)
+const charge_duration: float = charge_distance / charge_velocity   # = charge_distance / charge_velocity ≈ 0.128s(可跳/墙打断仍有效)
 const charge_air_gravity_mult: float = 0.35   # 空中冲刺重力倍率(<1=变平)
 const charge_dir_window: float = 0.3  # 冲刺方向沿用最近移动方向的窗口(秒)
 

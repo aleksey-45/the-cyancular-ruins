@@ -20,7 +20,7 @@
 | `coyote_time` / `jump_buffer_time` | 0.1 / 0.12 |
 | `jump_cut_factor` | 0.5 |
 | `crouch_walk_speed` | 245.0 |
-| `charge_distance` / `charge_velocity` / `charge_duration` | 640.0 / 3000.0 / 0.21333（2026-10-28 用户指定） |
+| `charge_distance` / `charge_velocity` / `charge_duration` | 384.0 / 3000.0 / 0.128（2026-10-29 用户把距离改为原 640 的 60%） |
 | `charge_dir_window` | 0.3 |
 | `charge_down_velocity` | 2000.0 |
 | `charge_air_gravity_mult` | 0.35 |
@@ -32,7 +32,7 @@
 | `squash_amount` | 0.06 |
 
 - 移动走指数缓动;跳跃有土狼时间、跳跃缓冲与可变高度(上升中松键,向上速度 × `jump_cut_factor`)。
-- 冲刺沿用最近移动方向(`charge_dir_window`):`charge_velocity` 3000、`charge_duration` = 640/3000 ≈ 0.2133s ⇒ **距离 640px**;空中冲刺重力 × `charge_air_gravity_mult`。
+- 冲刺沿用最近移动方向(`charge_dir_window`):`charge_velocity` 3000、`charge_duration` = 384/3000 ≈ 0.128s ⇒ **距离 384px**(2026-10-29 由 640 改为 60%);空中冲刺重力 × `charge_air_gravity_mult`。冲刺时渲染帧发射很弱的残影(`AfterImage`,见 [render.md](render.md)),纯表现。
 - 攀爬(绝对值,2026-10-28):梯子 上 **850** / 下 **800**、锁链 上 **800** px/s;锁链下行仍是自由落体(解除攀附交重力)。不再乘瓦片倍率/`climb_vertical_mult`,只乘时间场倍率。
 - 下蹲:在地面且按住 S 才蹲(逐帧判定,非边沿触发);蹲态可蹲走;空中按 S = 下冲。
 - 姿态碰撞箱:Pose → CollisionPolygon2D(共 5 个),运行时只启用当前姿态的箱子。

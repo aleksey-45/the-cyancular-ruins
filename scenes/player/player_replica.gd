@@ -21,6 +21,11 @@ const POSE_ANIM: Dictionary = {
 }  # 与 player.gd Pose 枚举值一致
 
 const POSE_FLY := 2
+const POSE_CHARGE := 3
+# 冲刺残影(与 player.gd 的常量同值:两个宿主都走 AfterImage.spawn,强度只在这两处调)。
+const DASH_GHOST_INTERVAL := 0.035
+const DASH_GHOST_DURATION := 0.13
+const DASH_GHOST_TINT := Color(0.72, 0.88, 1.0, 0.16)
 
 const LAND_VEL_EPS := 1.0
 
@@ -40,6 +45,7 @@ const HIT_FLASH_RATE := 20.0
 var squash: SquashStretch = null
 var _vel: Vector2 = Vector2.ZERO
 var _pose: int = 0
+var _dash_ghost_t := 0.0   # 冲刺残影发射计时(渲染帧,与本体同一套 AfterImage/强度)
 # 上一帧的 vel.y。组件靠「上次在下落 + 现在已经落地」这一对值推导落地冲击,单看当前的 _vel.y 推不出来 —— 服务器在落地那一帧就把它清零了;与本体「_pre_move_vy 配帧首 is_on_floor()」是同款配对。
 var _prev_vel_y: float = 0.0
 
@@ -353,3 +359,18 @@ func _process(delta: float) -> void:
 		vel_y = 0.0
 	squash.tick(delta, vel_y, on_floor, _downed)
 	_prev_vel_y = _vel.y
+	_tick_dash_ghost(delta)
+
+
+# 冲刺残影(对手/队友的冲刺也要可见):渲染帧发射,强度与本体共享同一套常量(很弱的淡蓝白)。
+# 副本不参与回滚 ⇒ 这里没有"重放重复生成"的问题;无相机路径(服务器)直接跳过。
+func _tick_dash_ghost(delta: float) -> void:
+	if _pose != POSE_CHARGE or _downed or not is_inside_tree():
+		_dash_ghost_t = 0.0
+		return
+	if get_viewport().get_camera_2d() == null:
+		return
+	_dash_ghost_t -= delta
+	if _dash_ghost_t <= 0.0:
+		_dash_ghost_t = DASH_GHOST_INTERVAL
+		AfterImage.spawn(get_parent(), animator, DASH_GHOST_TINT, DASH_GHOST_DURATION, -1)
