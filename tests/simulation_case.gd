@@ -1,5 +1,18 @@
 extends "res://tests/case.gd"
 
+class BetaWorld extends Node:
+	var players := {}
+	var bullets: Array = []
+	var time_economy := TimeEconomy.new(TimeRules.new())
+	var _round_state := NetEvent.RoundState.PLAYING
+	var _snap_tick := 0
+	var epoch_changes := 0
+	var events: Array = []
+	func live_bullets() -> Array: return bullets
+	func new_epoch(_role: int) -> void: epoch_changes += 1
+	func projectile_state(bullet: BulletBase) -> Dictionary: return bullet.motion_state()
+	func broadcast(kind: int, data: Variant) -> void: events.append([kind, data])
+
 func run(tree: SceneTree) -> void:
 	var parent := world(tree)
 	var actor := player(parent)
@@ -26,6 +39,7 @@ func run(tree: SceneTree) -> void:
 	_replay(actor)
 	_confirmed_lifecycle(actor, initial)
 	_world_rewind(parent, actor)
+	_beta_history(parent, actor)
 
 func _world_rewind(parent: Node, actor: Player) -> void:
 	var scene := preload("res://scenes/enemies/enemy_bullet.tscn")
@@ -124,3 +138,36 @@ func _confirmed_lifecycle(actor: Player, initial: Dictionary) -> void:
 	expect(not combat.beams.has(id) and combat.beams.has(id + 1), "ACK prunes covered beams while keeping future confirmations")
 	combat.clear()
 	actor.restore_state(initial)
+
+func _beta_history(parent: Node, actor: Player) -> void:
+	var other := player(parent, 2)
+	var world := BetaWorld.new()
+	parent.add_child(world)
+	world.players = {actor.role: actor, other.role: other}
+	for owner: Player in [actor, other]:
+		world.time_economy.add_role(owner.role)
+		owner.input_source.apply_packet(InputBuffer.neutral())
+		var profile := WeaponRegistry.projectile_profile(WeaponRegistry.all_ids()[0])
+		var bullet: BulletBase = profile["scene"].instantiate()
+		bullet.shooter = owner
+		bullet.entity_id = owner.role << 48
+		parent.add_child(bullet)
+		bullet.set_physics_process(false)
+		world.bullets.append(bullet)
+	var history := BetaHistory.new(world)
+	for tick in [3, 6, 9]:
+		world._snap_tick = tick
+		actor.position.x = tick * 10.0
+		world.bullets[0].position.x = tick * 12.0
+		world.bullets[1].position.x = tick * 15.0
+		history.tick(ActorStep.DT)
+	expect(history.frames[actor.role][1]["bullets"].keys() == [actor.role << 48], "Beta history records only the shooter's projectiles")
+	actor.shot_serial = 123
+	actor.input_source.apply_packet(InputBuffer.neutral().merged({"held": ActorInput.BIT_REWIND}, true))
+	world._snap_tick = 10
+	history.tick(0.025 / TimeParams.REWIND_START_MULT)
+	expect(actor.position.x == 60.0 and actor.shot_serial == 123, "Beta rewind chooses the preceding sample and preserves attack identity")
+	expect(world.bullets[0].position.x == 72.0 and world.bullets[1].position.x == 135.0, "Beta rewind restores owned bullets without changing another player")
+	history.finish(actor.role)
+	expect(history.frames[actor.role].size() == 2 and world.epoch_changes == 1, "ending Beta rewind trims the future and changes control epoch once")
+	expect(world.events.back()[1]["projectiles"].keys() == [actor.role << 48], "Beta rewind broadcast contains the shooter's current projectiles")
