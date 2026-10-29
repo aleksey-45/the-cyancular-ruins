@@ -130,6 +130,8 @@ EXCLUDED=(
 	"tests/probe/royale_soak_probe.tscn|B 真链路(压力):起大厅 + N 个真 royale_game 客户端;其 .sh 会 kill_port 7777"
 	"tests/probe/team_match_probe.tscn|B 真链路:六人;自当大厅(池外 29200)+ 拉子进程"
 	"tests/smoke/pvp_match_smoke.gd|B 真链路客户端:要 --role、且要 7777 上有大厅;由 tests/smoke/pvp_match_smoke.sh 编排"
+	# ── B 绑端口(单进程 loopback,不占 7777 / 不拉子进程,但「冒烟不碰网络」按端口论)──
+	"tests/smoke/wire_conn_smoke.gd|B 绑 127.0.0.1:0 临时端口:Wire 传输层连通冒烟(单进程双实例 loopback);不占 7777 与 worker 池,由 agent/人工按需跑"
 )
 
 # ── 不在本入口 glob 直径内、但要**显式交代**的候选(`pattern|理由`)────────────────

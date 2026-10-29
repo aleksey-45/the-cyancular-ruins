@@ -21,7 +21,7 @@ const SKIP_DIRS := ["res://.godot", "res://builds", "res://releases", "res://gam
 # 复算两条(必须同时成立):`git ls-files '*.gd' | wc -l` 等于本常量;
 # `git ls-files --others --exclude-standard '*.gd'` = 0(工作树没有未跟踪脚本)。
 # 改这个常量是"覆盖变了得有人过目",不是"让闸变绿";历次取值见 git log。
-const EXPECTED_SCRIPTS := 175   # 2026-10-24: 174 + 恢复 core/net/playout_clock.gd(副本 playout 插值被撤回那天连它一起删了;补回后条数 +1)。★ 改常量 = 覆盖变了得有人过目,不是让闸变绿
+const EXPECTED_SCRIPTS := 178   # 2026-10-29: 175 + 网码 v5 首批三文件(core/net/wire.gd · core/net/wire_kind.gd · tests/smoke/wire_conn_smoke.gd)。★ 改常量 = 覆盖变了得有人过目,不是让闸变绿
 
 var _fails: Array[String] = []
 var _total := 0
