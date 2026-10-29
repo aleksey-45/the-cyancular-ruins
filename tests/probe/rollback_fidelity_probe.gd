@@ -33,6 +33,7 @@ func _require_ran(name: String) -> void:
 
 
 func _ready() -> void:
+	CombatComponent.pvp_arena = true   # 生产 PvP 的真实口径(否则无敌帧会挡住 ⑫ 的二次受击)
 	_test_torus_compare()
 	_require_ran("torus")
 	_test_contact_tolerance()
@@ -185,20 +186,44 @@ func _check_source_guard() -> void:
 			"接触提示的赋值排在**同一帧块内**的 note_post_step 之前(hint@%d, note@%d;顺序反了 = 静默退回 2px 容差)"
 			% [hint_line, note_line])
 
-	# ③ 受击事件时刻对齐的接线(2026-10-28):本人分支必须走 _apply_local_hit_event;
-	#    该函数必须**恰好一处** apply_external_event + **一处** feedback-only 兜底(take_hit 第 5 参 true)。
+	# ③ 受击事件时刻对齐的接线(2026-10-28):网络回调只入队,由物理帧开头的 _drain_hit_events 注入
+	#    (帧外 move_and_slide 位移恒 0,所以注入不能在网络回调里做);_apply_local_hit_event 必须**恰好一处**
+	#    apply_external_event + **一处** feedback-only 兜底(take_hit 第 5 参 true)。
 	#    ★ 删掉注入不报错、不崩,只是静默退回"事件到达即扣血"的旧行为(对枪期回滚变多)⇒ 只能靠源码守卫。
 	var lines3 := FileAccess.get_file_as_string("res://scenes/pvp_match_client.gd").split("\n")
 	var ev_block := _func_block(lines3, "func _on_hit_event(")
+	var drain_block := _func_block(lines3, "func _drain_hit_events(")
 	var apply_block := _func_block(lines3, "func _apply_local_hit_event(")
-	var hit_calls := 0
+	var queued := 0
+	var direct_hit := 0
 	for i in range(ev_block[0] + 1, ev_block[1]):
 		if lines3[i].strip_edges().begins_with("#"):
 			continue
+		if lines3[i].contains("_pending_hit_events.append("):
+			queued += 1
 		if lines3[i].contains("_apply_local_hit_event("):
-			hit_calls += 1
-	_check(ev_block[0] >= 0 and hit_calls == 1,
-			"受击本人分支只许有**一处** _apply_local_hit_event(实得 %d 处;0 = 静默退回旧行为)" % hit_calls)
+			direct_hit += 1
+	_check(ev_block[0] >= 0 and queued == 1 and direct_hit == 0,
+			"受击回调只许入队一次(pending=%d,直接注入=%d;直接注入 = 在 idle 帧重放,move_and_slide 按渲染帧 delta 缩放)" % [queued, direct_hit])
+
+	var drained := 0
+	for i in range(drain_block[0] + 1, drain_block[1]):
+		if lines3[i].strip_edges().begins_with("#"):
+			continue
+		if lines3[i].contains("_apply_local_hit_event("):
+			drained += 1
+	_check(drain_block[0] >= 0 and drained == 1,
+			"物理帧开头只许有一处 _drain_hit_events → _apply_local_hit_event(实得 %d 处;0 = 队列没人消费)" % drained)
+
+	var phys_block := _func_block(lines3, "func _physics_process(")
+	var drain_calls := 0
+	for i in range(phys_block[0] + 1, phys_block[1]):
+		if lines3[i].strip_edges().begins_with("#"):
+			continue
+		if lines3[i].contains("_drain_hit_events()"):
+			drain_calls += 1
+	_check(phys_block[0] >= 0 and drain_calls == 1,
+			"_physics_process 必须消费一次 _drain_hit_events()(实得 %d 处;0 = 受击事件永远不生效)" % drain_calls)
 
 	var inject_calls := 0
 	var fallback := 0
@@ -214,6 +239,45 @@ func _check_source_guard() -> void:
 			"事件对齐只许有**一处** apply_external_event(实得 %d 处;0 = 注入没接上)" % inject_calls)
 	_check(fallback == 1,
 			"兜底路径必须存在且只播反馈(take_hit 第 5 参 = true;实得 %d 处)" % fallback)
+
+	# ④ 服务器锚点(2026-10-28 评审 C2):命中裁决发生在玩家子节点本帧步进之前(父先于子)⇒ 必须用 _stepped_seq(上一条完成步进),
+	#    不能用当帧 _ack_seq(晚一步 ⇒ 注入后仍回滚)。删/改这两处都不报错,只是"对齐"变成"晚一 tick 的对齐"。
+	var lines4 := FileAccess.get_file_as_string("res://server/match/match_combat.gd").split("\n")
+	var hit_block := _func_block(lines4, "func _on_player_hit(")
+	var stepped_uses := 0
+	var ack_uses := 0
+	var srv_tick_uses := 0
+	for i in range(hit_block[0] + 1, hit_block[1]):
+		if lines4[i].strip_edges().begins_with("#"):
+			continue
+		if lines4[i].contains("_stepped_seq"):
+			stepped_uses += 1
+		if lines4[i].contains("_ack_seq.get("):
+			ack_uses += 1
+		if lines4[i].contains("_srv_tick"):
+			srv_tick_uses += 1
+	_check(hit_block[0] >= 0 and stepped_uses == 1 and ack_uses == 1 and srv_tick_uses == 0,
+			"受击锚点用 _stepped_seq(实得 %d 处;ack 仅作首帧兜底 %d 处;srv_tick %d 处 —— 0/1/0 才对)" % [stepped_uses, ack_uses, srv_tick_uses])
+
+	var lines5 := FileAccess.get_file_as_string("res://server/match/match_host.gd").split("\n")
+	var host_block := _func_block(lines5, "func _physics_process(")
+	var sched := 0
+	for i in range(host_block[0] + 1, host_block[1]):
+		if lines5[i].strip_edges().begins_with("#"):
+			continue
+		if lines5[i].contains("call_deferred(\"_record_stepped_seq\")"):
+			sched += 1
+	_check(host_block[0] >= 0 and sched == 1,
+			"MatchHost 每 tick 排一次帧末 _record_stepped_seq(实得 %d 处;0 = 锚点永远不前进)" % sched)
+	var rec_block := _func_block(lines5, "func _record_stepped_seq(")
+	var rec_writes := 0
+	for i in range(rec_block[0] + 1, rec_block[1]):
+		if lines5[i].strip_edges().begins_with("#"):
+			continue
+		if lines5[i].contains("_stepped_seq["):
+			rec_writes += 1
+	_check(rec_block[0] >= 0 and rec_writes == 1,
+			"_record_stepped_seq 必须写一次 _stepped_seq(实得 %d 处)" % rec_writes)
 
 
 # 返回 [函数头行, 块尾行) ;找不到返回 [-1, -1]。块尾 = 下一个列 0 的 `func `。
@@ -235,7 +299,7 @@ func _func_block(lines: Array, header_prefix: String) -> Array:
 func _make_event_fixture(x_off: float) -> Dictionary:
 	var p: Node2D = preload("res://scenes/player/player.tscn").instantiate()
 	add_child(p)
-	# ★ 必须在物理帧里手动步进才能让 move_and_slide 真的移动(帧外调用位移恒 0)⇒ 关掉引擎自动步进,只手动步。
+	# ★ 必须在物理帧里手动步进才能拿到与服务器同口径的 move_and_slide(帧外按渲染帧 delta 缩放),故关引擎自动步进、只手动步。
 	p.set_physics_process(false)
 	var start := Vector2(GameParameters.MAP_WIDTH * 0.5 + x_off, GameParameters.MAP_HEIGHT * 0.5)
 	p.global_position = start
@@ -254,15 +318,16 @@ func _hit_once(p: Node2D) -> void:
 	p.call("take_hit", p.global_position, 10, true)
 
 
-# ★ 轨迹类断言必须在物理帧里步进:Godot 4 的 move_and_slide() 在物理帧外调用时位移恒 0(实测),
-#   那样"没有 restore / 没有重放"的变异就不可见(所有位置都停在出生点)。等 physics_frame 再手动步。
+# ★ 轨迹类断言必须在物理帧里步进:Godot 4 的 move_and_slide() 在物理帧外按**渲染帧 delta** 缩放(实测:同一速度在
+#   idle 帧的位移随帧间隔在 0.01~2px 之间变;首帧前才是 0)⇒ 帧外重放的轨迹随帧率变、不可作为黄金对照。等 physics_frame 再手动步。
 func _phys_advance(c: PredictionRollback, rec: Dictionary) -> void:
 	await get_tree().physics_frame
 	c.advance(rec)
 
 
 func _test_event_alignment() -> void:
-	# ① 环内注入:20 < last_applied(30),> _acked(0) ⇒ 必须成功,且**不算回滚**
+	# ① 环内注入:19 < last_applied(30),> _acked(0) ⇒ 必须成功,且**不算回滚**
+	#    ★ 锚点 = 服务器**上一条已完成步进的 seq**:裁决在玩家子节点本帧步进之前(父先于子)⇒ 被击中的是第 19 步之后的状态。
 	var f1: Dictionary = _make_event_fixture(0.0)
 	var c1: PredictionRollback = f1["ctrl"]
 	var p1: Node2D = f1["player"]
@@ -271,7 +336,7 @@ func _test_event_alignment() -> void:
 	var hp1: int = int(f1["hp"])
 	# ★ GDScript 的 lambda 按值捕获外层局部变量 ⇒ 计数用 Array 盒子(引用类型),否则回调里的 += 只改副本。
 	var applied := [0]
-	var ok = c1.apply_external_event(20, func() -> void:
+	var ok = c1.apply_external_event(19, func() -> void:
 		applied[0] += 1
 		_hit_once(p1))
 	_check(ok == PredictionRollback.EventApply.APPLIED and applied[0] == 1,
@@ -280,14 +345,14 @@ func _test_event_alignment() -> void:
 	_check(int((p1.capture_state() as Dictionary).get("hp", 0)) == hp1 - 10,
 			"⑦ 注入后 hp 恰扣一次(期望 %d,实得 %d)" % [hp1 - 10, int((p1.capture_state() as Dictionary).get("hp", 0))])
 
-	# ② 黄金对照:同一串输入「第 20 步之后直接打」→ 轨迹必须与注入结果一致
+	# ② 黄金对照:**真实服务器顺序**:第 19 步之后挨打,再走第 20 步起(先挨打、再按本帧输入步进)
 	var f2: Dictionary = _make_event_fixture(400.0)
 	var c2: PredictionRollback = f2["ctrl"]
 	var p2: Node2D = f2["player"]
-	for i in range(20):
+	for i in range(19):
 		await _phys_advance(c2, (f2["recs"] as Array)[i])
 	_hit_once(p2)
-	for i in range(20, 30):
+	for i in range(19, 30):
 		await _phys_advance(c2, (f2["recs"] as Array)[i])
 	var cap1: Dictionary = c1._captures[30]
 	var cap2: Dictionary = c2._captures[30]
@@ -315,11 +380,15 @@ func _test_event_alignment() -> void:
 			and int((p1.capture_state() as Dictionary).get("hp", 0)) == hp_before,
 			"⑪ 环外/已 ack 事件拒绝注入且不改整态(future=%s acked=%s 调用 %d 次)" % [str(ok_future), str(ok_acked), calls[0]])
 
-	# ④ 注入刷新后的捕获与"注入→重放"自洽:紧接一次同值权威 ack 不该再回滚
+	# ④ 注入刷新后的捕获必须与**独立黄金夹具**自洽(不是拿自己的 capture 回喂自己 —— 那恒真):
+	#    用 c2 的黄金整态平移到 c1 的出生点当权威 ack,注入轨迹若偏了,这次 reconcile 会判分歧 → 回滚。
+	var authority: Dictionary = (cap2 as Dictionary).duplicate(true)
+	authority["pos"] = (authority["pos"] as Vector2) + ((f1["start"] as Vector2) - (f2["start"] as Vector2))
 	var rb0 := c1.rollback_count()
-	c1.on_authoritative(30, (c1._captures[30] as Dictionary).duplicate(true))
+	c1.on_authoritative(30, authority)
 	c1.reconcile()
-	_check(c1.rollback_count() == rb0, "⑩ 注入后紧接 reconcile 不再回滚(回滚 ×%d→×%d)" % [rb0, c1.rollback_count()])
+	_check(c1.rollback_count() == rb0 and int((p1.capture_state() as Dictionary).get("hp", 0)) == hp1 - 10,
+			"⑩ 注入后 reconcile 对上黄金权威不回滚(回滚 ×%d→×%d)" % [rb0, c1.rollback_count()])
 
 	# ⑤ 同一 seq 两次事件:第二次必须基于刷新后的捕获叠上去(丢第一次 = 少扣一次)
 	var f3: Dictionary = _make_event_fixture(800.0)
@@ -328,22 +397,46 @@ func _test_event_alignment() -> void:
 	for r in f3["recs"]:
 		await _phys_advance(c3, r)
 	var hp3: int = int(f3["hp"])
-	c3.apply_external_event(20, func() -> void: _hit_once(p3))
-	c3.apply_external_event(20, func() -> void: _hit_once(p3))
+	c3.apply_external_event(19, func() -> void: _hit_once(p3))
+	c3.apply_external_event(19, func() -> void: _hit_once(p3))
 	_check(int((p3.capture_state() as Dictionary).get("hp", 0)) == hp3 - 20,
 			"⑫ 同 seq 两次受击各扣一次(期望 %d,实得 %d)" % [hp3 - 20, int((p3.capture_state() as Dictionary).get("hp", 0))])
 
-	# ⑥ 乱序拒绝:先 20 再 19 ⇒ 拒绝(否则 19 的重放会丢掉 20 那一发的效果)
+	# ⑥ 乱序拒绝:先 19 再 18 ⇒ 拒绝(否则 18 的重放会丢掉 19 那一发的效果)
 	var f4: Dictionary = _make_event_fixture(1200.0)
 	var c4: PredictionRollback = f4["ctrl"]
 	var p4: Node2D = f4["player"]
 	for r in f4["recs"]:
 		await _phys_advance(c4, r)
-	c4.apply_external_event(20, func() -> void: _hit_once(p4))
+	c4.apply_external_event(19, func() -> void: _hit_once(p4))
 	var applied4 := [0]
-	var ok_late = c4.apply_external_event(19, func() -> void: applied4[0] += 1)
+	var ok_late = c4.apply_external_event(18, func() -> void: applied4[0] += 1)
 	_check(ok_late == PredictionRollback.EventApply.REJECTED and applied4[0] == 0,
 			"⑬ 乱序(seq 回退)事件拒绝注入(返回 %s)" % str(ok_late))
+
+	# ⑦ 注入过的事件必须在**之后的回滚重放**里复现:迟到的旧 ack 把状态恢复到注入前,重放跨过事件 seq 时要重新应用它。
+	#    (删掉 _replay_steps_after 里的 _apply_events_at 后本组必红)
+	var f5: Dictionary = _make_event_fixture(1600.0)
+	var c5: PredictionRollback = f5["ctrl"]
+	var p5: Node2D = f5["player"]
+	for r in f5["recs"]:
+		await _phys_advance(c5, r)
+	var hp5: int = int(f5["hp"])
+	c5.apply_external_event(25, func() -> void: _hit_once(p5))
+	var auth20: Dictionary = (c5._captures[20] as Dictionary).duplicate(true)
+	auth20["pos"] = (auth20["pos"] as Vector2) + Vector2(20.0, 0.0)   # 强制造一次真分歧 → 走 restore+重放
+	c5.on_authoritative(20, auth20)
+	c5.reconcile()
+	_check(c5.rollback_count() == 1 and int((p5.capture_state() as Dictionary).get("hp", 0)) == hp5 - 10,
+			"⑰ 迟到旧 ack 的回滚重放会重新应用注入事件(hp 期望 %d,实得 %d)" % [hp5 - 10, int((p5.capture_state() as Dictionary).get("hp", 0))])
+	_check(int((c5._captures[30] as Dictionary).get("hp", 0)) == hp5 - 10,
+			"⑱ 重放后的捕获链也带回事件(hp 期望 %d,实得 %d)" % [hp5 - 10, int((c5._captures[30] as Dictionary).get("hp", 0))])
+
+	# ⑧ 诊断计数(给 --netstat / 真链路 soak 用):c1 只成功 1 次;future + acked 两次拒绝,原因分解必须是 ack=1 future=1。
+	_check(c1.event_aligns() == 1 and c1.event_rejects() == 2
+			and c1.event_reject_breakdown() == "ack=1 future=1 missing=0 order=0",
+			"⑯ 事件计数 applied=%d rejected=%d [%s](期望 1/2 且 ack=1 future=1)" % [
+			c1.event_aligns(), c1.event_rejects(), c1.event_reject_breakdown()])
 
 	_ran["event_align"] = true   # ★ 完成戳必须在最后一行:中途报错就到不了这里(见文件头说明)
 

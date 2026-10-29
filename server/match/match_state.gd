@@ -81,6 +81,11 @@ var _srv_tick := 0    # 服务器物理 tick 计数(MatchHost 每物理 tick 起
 var _lag_hist := HitLagHistory.new()   # 命中回放受击面历史(每 tick 推;24 tick ≈ 400ms)
 # C2 rollback:每 2 个物理 tick 恰好消费一条输入记录(FIFO;30Hz 采样),ack 让客户端重放 seq > ack 的本地输入 —— 1:1 同序,无 tick 映射漂移。
 var _ack_seq: Dictionary = {}   # role(int) -> 已消费输入记录的 seq
+# role(int) -> 上一次**完成步进**时的已消费 seq。★ 受击事件的时间锚点:命中裁决在 MatchHost._physics_process 回调里跑,
+# 而玩家是**子节点**、本帧步进在父回调返回之后(父先于子)⇒ 被击中的是 ack−1 那一步之后的状态。这个值由 MatchHost 在
+# 帧末 call_deferred 记录(那时子节点已步进),下一帧裁决读到它。传当帧 ack 会让注入晚一步(实测差 3.03px / 43px·s⁻¹ ⇒ 仍回滚)。
+var _stepped_seq: Dictionary = {}
+var _stepped_seq_pending := false   # 本帧已排队一次帧末记录(每 tick 一次就够)
 # ★ 上行扩展字段:st 是命中回放的时间基准(2026-10-26 起有消费者);ct(客户端物理帧号)仍只落位。
 var _client_snap_tick: Dictionary = {}   # role(int) -> 该 role 最近**成功解码**的服务器快照 tick(st)
 var _client_tick: Dictionary = {}        # role(int) -> 该 role 最近一包里的客户端物理帧号(ct)

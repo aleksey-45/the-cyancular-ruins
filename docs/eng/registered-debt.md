@@ -208,12 +208,16 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 
 ## 二十三、受击事件时刻对齐的边界（2026-10-28，档 3）
 
-**改了什么**：`hit_event` 增加 `seq`（= 受击方已消费输入记录，与快照 ack 同空间）；客户端 `PredictionRollback.apply_external_event(seq, apply)` 把它恢复 `_captures[seq]` → 应用 → 重放 `(seq, last_applied]`；`take_hit(..., feedback_only)` 给不可注入路径只播反馈。文件：`server/match/match_combat.gd`、`core/net/net_bus.gd`、`core/net/prediction_rollback.gd`、`scenes/pvp_match_client.gd`、`scenes/player/combat_component.gd`、`scenes/player/player.gd`。
-**守卫**：`rollback_fidelity_probe` D 组（⑤–⑬：注入 / 黄金轨迹 / 越界 / 同 seq 双发 / 乱序 / 注入后 reconcile）+ E 组（⑭⑮：反馈-only）+ 三条源码守卫（本人分支 → `_apply_local_hit_event`、注入唯一、兜底第 5 参 true）。五处变异各自红在指定断言：删 restore→⑧、删重放→⑧/⑨、删两条越界拒绝→⑪、删乱序拒绝→⑬、不刷新捕获→⑫；删 `feedback_only` 早退→⑭。
+**改了什么**：`hit_event` 增加 `seq`（= 受击方**上一条完成步进**的输入记录，`MatchState._stepped_seq`；裁决在玩家子节点步进之前 ⇒ 不是当帧 ack）；客户端 `PredictionRollback.apply_external_event(seq, apply)` 恢复 `_captures[seq]` → 应用 → 重放 `(seq, last_applied]`，并把事件存进 `_events[seq]` 供之后任何回滚重放重新应用；`take_hit(..., feedback_only)` 给不可注入路径只播反馈；网络回调只入队、物理帧开头注入。文件：`server/match/match_state.gd`、`server/match/match_host.gd`、`server/match/match_combat.gd`、`server/server_main.gd`、`core/net/net_bus.gd`、`core/net/prediction_rollback.gd`、`scenes/pvp_match_client.gd`、`scenes/player/combat_component.gd`、`scenes/player/player.gd`。
+**守卫**：`rollback_fidelity_probe` D 组（⑤–⑪、⑯–⑱：注入 / **真实服务器顺序**的黄金轨迹 / 越界 / 同 seq 双发 / 乱序 / 注入后 reconcile 对独立黄金权威 / 迟到旧 ack 重放带回事件 / 计数）+ E 组（⑭⑮：反馈-only）+ 源码守卫 8 条（客户端 5：入队 / 物理帧消费 / `_physics_process` 接线 / 注入唯一 / 兜底第 5 参；服务器 3：`_stepped_seq` 锚点、帧末记录调度、记录写入）。变异各自红在指定断言：删 restore→⑧/⑩、删重放步进→⑧/⑩、删越界拒绝→⑪/⑯、删乱序拒绝→⑬、不刷新捕获→⑫、重放不重新应用事件→⑰/⑱、锚点改回 `_ack_seq`→服务器守卫、删帧末记录→服务器守卫；删 `feedback_only` 早退→⑭。
 **边界（照实）**：
-1. **没有自动化真链路命中守卫**：命中不可确定性构造（`pvp_match_smoke` 两端出生点相距远）⇒ 改 `hit_event` 参数只靠人眼与日志。兜底理由是"参数不符会当场报错"，不是静默形态。
-2. **服务器输入饥饿**（队列空、沿用上一条 held）时 `_ack_seq` 不前进，事件 `seq` 会指向上一条记录 ⇒ 注入差 1 tick，方向偏保守（照实写的近似）。
+1. **没有自动化真链路命中守卫**：命中不可确定性构造（`pvp_match_smoke` 两端出生点相距远）⇒ 改 `hit_event` 参数只靠人眼与日志。兜底理由是"参数不符会当场报错"，不是静默形态。真链路读数靠 `royale_soak` 透传 `--netstat` 看 `事件对齐/拒绝` 计数。
+2. **服务器输入饥饿**（队列空、沿用上一条 held）k tick 时，玩家状态比 `_stepped_seq` **前进 k 步** ⇒ 注入点早 k 步（近似，方向不保证；steady state 才精确）。
 3. **落水窒息**伤害是客户端已预测的伤害，`hit_event` 仍会二次应用 ⇒ 每次窒息扣血多触发一次回滚；未修（需 PvP 水图 + 真链路证实后再另立小修）。
 4. **`_captures` 环 256 tick（4.3s）**：ping / reliable 重传导致事件超出环时走兜底 ⇒ 该次受击没有本地击退（只有白闪 / 震屏 / 音效）。
 5. **事件必须按 seq 递增到达**（reliable 保序）；seq 回退一律拒绝并兜底，不会静默丢事件。
+6. **注入只能在物理帧做**：网络回调在 idle 帧，帧外 `move_and_slide()` 按**渲染帧 delta** 缩放（实测同一速度跨 idle 帧位移 0.01~2px 不等；首帧前才是 0）⇒ 事件先入队 `_pending_hit_events`、下一个物理帧开头注入 ⇒ 受击反馈（白闪/音效/击退）最多晚 1 帧（≈16.7ms）。重连重建 C2 时队列清空。
+7. **注释额度**：本批新增注释让 `core/net/prediction_rollback.gd` / `server/match/match_combat.gd` 的整行注释占比超过 `comment-style.md` §8 的 15%（前者基线已 16.4%，后者 14.9%→15.6%）—— 未删，因为删掉的是"为什么/边界"；此处登记为已知超限，翻案 = 后续批把这两处解释性注释收敛成行内短注。
+
+
 

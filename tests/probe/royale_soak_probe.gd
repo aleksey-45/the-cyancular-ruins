@@ -67,6 +67,7 @@ var _esc_done := false            # 本端是否已执行「按 ESC 离场」
 # 卡顿/事件的时间轴(只记 >33ms 的帧与关键事件,上限各 40 条):报告里要对"哪一帧卡了、
 # 当时场上发生了什么"——只给一个 max 值没法归因,而"四端同时卡在同一点"这类线索全靠它。
 var _marks: Array = []
+var _netstat_children := false   # --netstat 透传给子客户端(真链路读数:回滚 / 事件对齐计数)
 
 
 func _ready() -> void:
@@ -79,6 +80,8 @@ func _ready() -> void:
 			_match_secs = maxi(int(a.trim_prefix("--match=")), 20)
 		elif a.begins_with("--run="):
 			_run_secs = float(a.trim_prefix("--run="))
+		elif a == "--netstat":
+			_netstat_children = true   # 透传给子客户端:1Hz 打 --netstat 行(回滚/事件对齐计数,供真链路读数)
 	_idx = int(_role.trim_prefix("c")) if _role.begins_with("c") else 1
 	if _role == "lobby":
 		_run_orchestrator()
@@ -114,11 +117,16 @@ func _run_orchestrator() -> void:
 	#   0 处 ⇒ 收尾只能按端口杀,而客户端走**临时出站端口** ⇒ 一个卡住的客户端谁也杀不掉,
 	#   唯一的安全网是入口的 `timeout`。这里按 PID 兜底(与 team_match/rejoin 同款)。
 	var child_pids: Array[int] = []
+	var child_extra := PackedStringArray()
+	if _netstat_children:
+		child_extra.append("--netstat")
 	for i in range(1, _clients + 1):
-		child_pids.append(OS.create_process(exe, PackedStringArray(["--headless", "--path",
+		var child_args := PackedStringArray(["--headless", "--path",
 				ProjectSettings.globalize_path("res://"), "res://tests/probe/royale_soak_probe.tscn",
 				"--", "--role=c%d" % i, "--clients=%d" % _clients,
-				"--match=%d" % _match_secs, "--run=%.0f" % _run_secs])))
+				"--match=%d" % _match_secs, "--run=%.0f" % _run_secs])
+		child_args.append_array(child_extra)
+		child_pids.append(OS.create_process(exe, child_args))
 	print("SOAK: 大厅就绪,%d 客户端已拉起(match=%ds run=%.0fs)" % [_clients, _match_secs, _run_secs])
 	var deadline := Time.get_ticks_msec() + int((_run_secs + 120.0) * 1000.0)
 	while Time.get_ticks_msec() < deadline:
@@ -462,6 +470,18 @@ func _finish(ok: bool, why: String) -> void:
 				_snap_worst_ms, _pct(_snap_gaps, 0.95)])
 		lines.append("  事件:round_state %d,kill_event %d,hit_event %d,倒地(复活)%d 次,别人离场播报 %d 次" % [
 				_round_states, _kills, _hits, _deaths, _saw_left])
+		# C2 读数(2026-10-28 受击事件对齐):回滚 / 事件对齐 / 拒绝次数 —— 真链路里唯一能证明"注入真的生效了"的读数。
+		var rb := 0
+		var ea := 0
+		var er := 0
+		var rollback_obj = _game.get("_rollback") if _game != null else null
+		if rollback_obj != null:
+			rb = int(rollback_obj.call("rollback_count"))
+			ea = int(rollback_obj.call("event_aligns"))
+			er = int(rollback_obj.call("event_rejects"))
+			lines.append("  C2:回滚=%d 事件对齐=%d 拒绝=%d(%s)" % [rb, ea, er, str(rollback_obj.call("event_reject_breakdown"))])
+		else:
+			lines.append("  C2:回滚=%d 事件对齐=%d 拒绝=%d" % [rb, ea, er])
 		if not _marks.is_empty():
 			lines.append("  时间轴:%s" % "; ".join(_marks))
 	var text := "\n".join(lines)

@@ -230,6 +230,10 @@ func _physics_process(delta: float) -> void:
 	#   ★ 依赖 Godot 的 call_deferred 在帧末(所有 _physics_process 之后)执行。
 	# ★ 本人包维持 30Hz(v0.5.1 同口径,实测不卡):**禁止**改成每 tick 60Hz —— 省带宽靠差分/全量错峰,
 	#   频率不是本次卡顿的成因(去翻世界包增量/插值那条链,别在这里回退)。
+	# 受击事件锚点:帧末(子节点步进之后)记录"上一次完成步进时的已消费 seq",下一帧裁决用它(见 MatchState._stepped_seq)。
+	if not _stepped_seq_pending:
+		_stepped_seq_pending = true
+		call_deferred("_record_stepped_seq")
 	if snapshot_tick:
 		_own_flush_pending = true
 		call_deferred("_flush_own_snapshots")
@@ -264,6 +268,15 @@ func _flush_own_snapshots() -> void:
 	if not is_inside_tree():
 		return
 	send_own_snapshots()
+
+
+# 帧末记录每个 role "上一次完成步进时的已消费 seq"(受击事件锚点;call_deferred 保证跑在 Player 子节点步进之后)。
+func _record_stepped_seq() -> void:
+	_stepped_seq_pending = false
+	if not is_inside_tree():
+		return
+	for role in input_sources:
+		_stepped_seq[int(role)] = int(_ack_seq.get(int(role), 0))
 
 
 # ★ 仅测试用(--test-destroy-tile):对局开始 delay 秒后拆掉指定格、只拆一次;默认关,生产路径行为逐字一致。

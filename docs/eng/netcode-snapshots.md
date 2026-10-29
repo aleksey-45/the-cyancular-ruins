@@ -132,11 +132,14 @@ NetBus.rpc_id(peer, "snapshot_own",
 
 ### 2.2 受击事件时刻对齐（2026-10-28）
 
-- **锚点**：`hit_event` 携带 `seq` = **受击方已消费输入记录的 seq**（服务器广播前读 `_ack_seq[victim]`），与快照 `ack`、客户端 `_captures` 同一 seq 空间。★ 不用 `_srv_tick`：服务器输入饥饿（队列空、沿用上一条 held）时 `_ack_seq` 不前进而 `_srv_tick` 每 tick +1，两者会漂。
-- **客户端**：`PvpMatchClient._apply_local_hit_event` 调 `PredictionRollback.apply_external_event(seq, take_hit)`：恢复 `_captures[seq]` → 执行 `take_hit` → 重放 `(seq, last_applied]`（与 `_handle_ack` 同一条 `_step` 路径）⇒ 本地击退曲线与服务器同源，不必等下一个 ack 再 restore。该注入**不计入** `_rollbacks`（不是"预测被证伪"）。
-- **兜底**：`seq` 不可注入（来自未来 / 已 ack / 环外 / 乱序）⇒ 只播反馈 `take_hit(..., feedback_only=true)`（白闪 / 震屏 / 音效 / 挤压），**不**扣血 / 不击退 / 不设无敌帧：权威 c2 可能已包含这一发，二次应用会在下一个 ack 再判一次分歧。
-- **边界**（照实）：① `_captures` 环 256 tick（4.3s），超出只能走兜底；② 服务器饥饿时 seq 指向上一条记录，注入差 1 tick（方向偏保守）；③ 落水窒息是客户端已预测的伤害，`hit_event` 仍会二次应用（见 [`registered-debt.md`](registered-debt.md) §二十三）；④ 事件按 seq 递增到达是契约（reliable 保序），seq 回退一律拒绝。
-- **守卫**：[`tests/probe/rollback_fidelity_probe.tscn`](../../tests/probe/rollback_fidelity_probe.tscn) 的 D 组（注入 / 黄金轨迹 / 越界 / 同 seq 双发 / 乱序）与 E 组（反馈-only），外加三条源码守卫（本人分支 → `_apply_local_hit_event`、注入唯一、兜底第 5 参 true）。
+- **锚点**：`hit_event` 携带 `seq` = **受击方上一条已完成步进的输入记录 seq**（`MatchState._stepped_seq`，帧末 `call_deferred("_record_stepped_seq")` 记录；首帧无记录时退回 `max(ack−1, 0)`）。★ 不是当帧 `_ack_seq`：命中裁决在 `MatchHost._physics_process` 回调里跑，而 `Player` 是**子节点**、本帧步进在父回调返回之后（父先于子）⇒ 被击中的是 ack−1 那一步之后的状态；传当帧 ack 会让注入晚一步（评审实测差 3.03px / 43.4px·s⁻¹ ⇒ 超 `_close_enough`、仍回滚）。★ 也不用 `_srv_tick`：输入饥饿时它与 ack 脱钩。
+- **客户端**：`PvpMatchClient._apply_local_hit_event` 调 `PredictionRollback.apply_external_event(seq, take_hit)`：恢复 `_captures[seq]` → 执行 `take_hit` → 重放 `(seq, last_applied]`（与 `_handle_ack` 共用 `_replay_steps_after`）⇒ 本地击退曲线与服务器同源，不必等下一个 ack 再 restore。该注入**不计入** `_rollbacks`（不是"预测被证伪"）。
+- **事件重放**：注入的 callable 存进 `_events[seq]`，之后任何一次回滚重放跨过该 seq 时会重新应用（否则迟到旧 ack 的 restore 会把这一发抹掉）。同 seq 多发的第二发只应用"新来的那一发"（`_captures[seq]` 已含该 seq 更早事件的效果，避免重复扣血）。
+- **物理帧注入**：网络回调跑在 idle 帧，而注入的重放内部是 `move_and_slide()` —— 物理帧外它按**渲染帧 delta** 缩放（实测同一速度跨 idle 帧位移 0.01~2px 不等；首帧前才是 0）⇒ 帧外重放随帧率变、会算错轨迹。故回调只把事件压进 `_pending_hit_events`，由下一个物理帧开头的 `_drain_hit_events()` 注入（排在 `note_post_step` 之前）。代价：受击反馈最多晚 1 帧（≈16.7ms）。重连重建 C2 时队列一起清空（旧 seq 空间作废）。
+- **兜底**：`seq` 不可注入（来自未来 / 已 ack / 环外 / 乱序 / callable 失效）⇒ 只播反馈 `take_hit(..., feedback_only=true)`（白闪 / 震屏 / 音效 / 挤压），**不**扣血 / 不击退 / 不设无敌帧：权威 c2 可能已包含这一发，二次应用会在下一个 ack 再判一次分歧。
+- **读数**：`-- --netstat` 打印 `事件对齐=累计(+N/s) 拒绝=累计(+N/s)`（`rollback_count()` 之外的独立计数）；`royale_soak` 的每端结果行打 `C2:回滚=… 事件对齐=… 拒绝=…(ack/future/missing/order 分解)` —— 真链路里唯一能证明"注入真的生效了 vs 一直走兜底"的读数。
+- **边界**（照实）：① `_captures` 环 256 tick（4.3s），超出只能走兜底；② 服务器饥饿 k tick 时玩家状态比 `_stepped_seq` 前进 k 步（held 输入），注入会**早** k 步（不是保守方向，只是近似）；③ 落水窒息是客户端已预测的伤害，`hit_event` 仍会二次应用（见 [`registered-debt.md`](registered-debt.md) §二十三）；④ 事件按 seq 递增到达是契约（reliable 保序），seq 回退一律拒绝。
+- **守卫**：[`tests/probe/rollback_fidelity_probe.tscn`](../../tests/probe/rollback_fidelity_probe.tscn) 的 D 组（注入 / **真实服务器顺序**的黄金轨迹 / 越界 / 同 seq 双发 / 乱序 / 注入后 reconcile 对独立黄金权威 / 迟到旧 ack 重放带回事件 / 计数）与 E 组（反馈-only），外加源码守卫：客户端 5 条（入队 / 物理帧消费 / 物理帧接线 / 注入唯一 / 兜底第 5 参）+ 服务器 3 条（`_stepped_seq` 锚点 / 帧末记录调度 / 记录写入）。
 
 ## 3. 输入队列
 

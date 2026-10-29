@@ -22,6 +22,12 @@ var _pending: Array = []       # [[ack, state], ...] 待 reconcile
 var _rollbacks := 0
 var _last_event_seq := 0       # 已按历史注入过的最大事件 seq(乱序事件拒绝用)
 var _event_aligns := 0         # 事件对齐次数(诊断量;不计入 _rollbacks)
+var _event_rejects := 0        # 事件拒绝次数(诊断量;兜底路径频率)
+var _rej_ack := 0              # 拒绝原因:已被权威 ack 覆盖(seq <= _acked)
+var _rej_future := 0           # 拒绝原因:来自未来(seq > _last_applied)
+var _rej_missing := 0          # 拒绝原因:环里没有该 seq
+var _rej_order := 0            # 拒绝原因:乱序 / callable 失效
+var _events: Dictionary = {}   # seq(int) -> Array[Callable] 已注入的外部事件(重放/回滚时按 seq 重放,见 _apply_events_at)
 
 # 环面地图尺寸(像素)。ZERO = 不做环面处理(退回裸距离比较);刻意不引 autoload,由接入方显式设,-s 下也能空跑。
 var map_px: Vector2 = Vector2.ZERO
@@ -50,6 +56,19 @@ func last_applied() -> int:
 func rollback_count() -> int:
 	return _rollbacks
 
+
+func event_aligns() -> int:
+	return _event_aligns
+
+
+func event_rejects() -> int:
+	return _event_rejects
+
+
+## 拒绝原因分解(真链路读数用):ack=已被权威覆盖 / future=来自未来 / missing=环外 / order=乱序或失效。
+func event_reject_breakdown() -> String:
+	return "ack=%d future=%d missing=%d order=%d" % [_rej_ack, _rej_future, _rej_missing, _rej_order]
+
 func advance(record: Dictionary) -> void:
 	reconcile()
 	if _p == null:
@@ -64,6 +83,7 @@ func advance(record: Dictionary) -> void:
 		var old: int = _seqs.pop_front()
 		_inputs.erase(old)
 		_captures.erase(old)
+		_events.erase(old)
 
 func note_post_step(seq: int, capture: Dictionary) -> void:
 	_last_applied = maxi(_last_applied, seq)
@@ -72,6 +92,7 @@ func note_post_step(seq: int, capture: Dictionary) -> void:
 	while _seqs.size() > KEEP:
 		var old: int = _seqs.pop_front()
 		_captures.erase(old)
+		_events.erase(old)
 
 func note_input(seq: int, record: Dictionary) -> void:
 	_inputs[seq] = record
@@ -85,34 +106,63 @@ func on_authoritative(ack: int, state: Dictionary) -> void:
 # 拒绝路径若被写坏(越界访问)会返回默认值 —— 让它落在 APPLIED 上,探针的"必须 REJECTED"断言才会红,而不是静默假绿。
 enum EventApply { APPLIED, REJECTED }
 
-# 把一次**服务器外部事件**(受击)按它真正发生的输入 seq 注入预测历史:恢复 _captures[seq] → apply() → 重放 (seq, last_applied]。
-# 语义:服务器在"用记录 S 步进完玩家之后"裁决命中,而 _captures[S] 恰好是同一时刻的整态 ⇒ 在这个点上执行 take_hit 再重放,
-# 得到的轨迹与服务器同源,不必等下一个 ack 再 restore(否则本地击退曲线会被权威态截断一次)。
-# 返回 REJECTED = 不能安全注入(来自未来 / 已 ack / 环里没有该 seq / 乱序),调用方必须走自己的兜底(只播反馈,不二次扣血)。
-# ★ 事件必须按 seq 递增到达(reliable 保序);seq 回退说明假设被破坏 —— 拒绝比"重放时静默丢掉上一发"安全。
-# ★ 本 API 不碰 _rollbacks:事件对齐不是"预测被证伪",计入会把回滚读数污染掉。
+# 把一次服务器外部事件(受击)注入预测历史:恢复 _captures[seq] → apply() → 重放 (seq, last_applied]。
+# 锚点 = 服务器**上一条已完成步进**的 seq(裁决在子节点步进之前,见 MatchState._stepped_seq 的注释);
+# 注入记进 _events,后续任何一次回滚重放都会在对应 seq 重新应用它(I3:否则迟到旧 ack 会把它抹掉)。
+# 返回 REJECTED = 不能安全注入(未来 / 已 ack / 环里没有 / 乱序 / callable 失效),调用方必须走兜底(只播反馈)。
+# ★ 事件按 seq 递增到达(reliable 保序);seq 回退拒绝。★ 本 API 不碰 _rollbacks(事件对齐不是"预测被证伪")。
 func apply_external_event(seq: int, apply: Callable) -> int:
-	if _p == null:
+	if _p == null or not apply.is_valid():
+		_event_rejects += 1
+		_rej_order += 1
 		return EventApply.REJECTED
-	if seq > _last_applied or seq <= _acked:
+	if seq > _last_applied:
+		_event_rejects += 1
+		_rej_future += 1
+		return EventApply.REJECTED
+	if seq <= _acked:
+		_event_rejects += 1
+		_rej_ack += 1
 		return EventApply.REJECTED
 	if not _captures.has(seq):
+		_event_rejects += 1
+		_rej_missing += 1
 		return EventApply.REJECTED
 	if seq < _last_event_seq:
+		_event_rejects += 1
+		_rej_order += 1
 		return EventApply.REJECTED
+	if not _events.has(seq):
+		_events[seq] = []
+	(_events[seq] as Array).append(apply)
+	# ★ 只应用"这一发新事件":_captures[seq] 里已经含该 seq 上更早事件的效果(同 tick 多发),再全量重放会重复扣。
 	_p.restore_state(_captures[seq])
 	apply.call()
 	_captures[seq] = _p.capture_state()
+	_replay_steps_after(seq)
+	_last_event_seq = seq
+	_event_aligns += 1
+	return EventApply.APPLIED
+
+
+# 重放 anchor 之后的每一步;每步之后按 seq 重放该 seq 上注入过的事件(与注入时的顺序一致:步进完再挨打)。
+func _replay_steps_after(anchor: int) -> void:
 	for s in _seqs:
-		if s > seq and s <= _last_applied:
+		if s > anchor and s <= _last_applied:
 			var rec: Dictionary = _inputs.get(s, {})
 			if rec.is_empty():
 				continue
 			_step(rec)
+			_apply_events_at(s)
 			_captures[s] = _p.capture_state()
-	_last_event_seq = seq
-	_event_aligns += 1
-	return EventApply.APPLIED
+
+
+func _apply_events_at(seq: int) -> void:
+	var evs: Array = _events.get(seq, [])
+	for ev in evs:
+		var cb: Callable = ev
+		if cb.is_valid():
+			cb.call()
 
 func reconcile() -> void:
 	while not _pending.is_empty():
@@ -164,13 +214,8 @@ func _handle_ack(ack: int, S: Dictionary) -> void:
 		}, true)
 	_rollbacks += 1
 	_p.restore_state(S)
-	for s in _seqs:
-		if s > ack and s <= _last_applied:
-			var rec: Dictionary = _inputs.get(s, {})
-			if rec.is_empty():
-				continue
-			_step(rec)
-			_captures[s] = _p.capture_state()   # 刷新为重放后的真实整态
+	_apply_events_at(ack)      # 权威 S 是注入前锚点的状态时(ack == 事件 seq),先把该 seq 的事件补上,否则重放会把它抹掉
+	_replay_steps_after(ack)
 	_trim(ack)
 
 func _trim(below: int) -> void:
@@ -178,6 +223,7 @@ func _trim(below: int) -> void:
 		var s: int = _seqs.pop_front()
 		_inputs.erase(s)
 		_captures.erase(s)
+		_events.erase(s)
 
 # 两整态是否"预测被证实":只比影响判定的关键量,避免过度回滚;超出 = 服务器外部事件或漂移 → 走 rollback。
 func _close_enough(a: Dictionary, b: Dictionary) -> bool:

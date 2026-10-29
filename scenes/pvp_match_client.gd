@@ -15,6 +15,9 @@ var _round_locked := false      # COUNTDOWN 冻结态(别把倒计时里提前�
 var _ping_acc := 0.0
 # C2 客户端预测:见 core/prediction_rollback.gd 与 docs/pvp-c2-retrospective.md。
 var _rollback = null            # PredictionRollback
+# 受击事件队列:网络回调跑在 idle 帧,而注入要重放(内部 move_and_slide)—— 物理帧外 move_and_slide 位移恒 0(实测),
+# 故回调只入队,统一在下一个物理帧开头注入(反馈最多晚 1 帧 ≈16.7ms)。
+var _pending_hit_events: Array = []   # [[source_pos: Vector2, damage: int, seq: int], ...]
 const PredictionContact := preload("res://core/net/prediction_contact.gd")   # 贴身判据/动态容差(纯函数)
 const ReplicaScript := preload("res://scenes/player/player_replica.gd")      # 要它的 GROUP 常量(副本没 class_name)
 var _input_seq := 0             # 本地每 tick 单调的输入序号(60Hz 真输入;服务器每 tick 消费一条记录并回带 ack)
@@ -34,6 +37,8 @@ var _netstat := false
 var _netstat_checked := false
 var _netstat_acc := 0.0
 var _netstat_prev_rb := 0
+var _netstat_prev_ea := 0    # 事件对齐累计(上一次打印时的值,算 +N/s)
+var _netstat_prev_er := 0    # 事件拒绝累计
 var _last_ack := 0
 var _netstat_steps := 0     # 两次打印之间的物理步数(=物理步/秒,因为本函数每物理步调一次)
 # MATCH_OVER 之后回菜单途中:忽略对手断线播报,也让输入锁把它算作一维(见 _refresh_input_lock)。
@@ -411,6 +416,9 @@ func _physics_process(delta: float) -> void:
 	_tick_beta_time(delta)   # Beta 时间玩法:加速预测 + 双侧视效(普通局自短路)
 	if _local == null:
 		return
+	# 受击事件必须在物理帧里注入(见 _pending_hit_events 的注释):排在 note_post_step 之前,
+	# 这样被注入刷新后的当前态就是本帧该记录的"上一 tick 整态"。
+	_drain_hit_events()
 	_ping_acc += delta
 	if _ping_acc >= 0.5:
 		_ping_acc = 0.0
@@ -478,16 +486,23 @@ func _netstat_tick(delta: float) -> void:
 	var lag_ms := float(gap) * (1000.0 / 60.0) * float(PacketInputSource.TICKS_PER_RECORD)
 	var ping := NetBus.ping_ms
 	var rb := 0
+	var ea := 0
+	var er := 0
 	if _rollback != null:
 		rb = int(_rollback.rollback_count())
+		ea = int(_rollback.event_aligns())
+		er = int(_rollback.event_rejects())
 	var where := Vector2.ZERO
 	if _local != null and is_instance_valid(_local):
 		where = (_local as Node2D).global_position
-	print("[netstat] seq=%d ack=%d gap=%d(滞后 %.0fms) | ping=%dms | 扣网后积压≈%.0fms | 回滚累计=%d (+%d/s) | pos=(%.0f,%.0f) | 物理步/秒=%d 渲染fps=%d"
+	print("[netstat] seq=%d ack=%d gap=%d(滞后 %.0fms) | ping=%dms | 扣网后积压≈%.0fms | 回滚累计=%d (+%d/s) | 事件对齐=%d(+%d/s) 拒绝=%d(+%d/s) | pos=(%.0f,%.0f) | 物理步/秒=%d 渲染fps=%d"
 			% [_input_seq, _last_ack, gap, lag_ms, ping, lag_ms - float(ping), rb, rb - _netstat_prev_rb,
+			ea, ea - _netstat_prev_ea, er, er - _netstat_prev_er,
 			where.x, where.y, _netstat_steps, Engine.get_frames_per_second()])
 	_netstat_steps = 0
 	_netstat_prev_rb = rb
+	_netstat_prev_ea = ea
+	_netstat_prev_er = er
 
 
 func _on_bullet_spawn(data: Dictionary) -> void:
@@ -694,11 +709,21 @@ func _on_hit_event(victim_role: int, damage: int, source_pos: Vector2, seq: int)
 	if _local == null:
 		return
 	if victim_role == PvpSession.role:
-		_apply_local_hit_event(source_pos, damage, seq)
+		# 网络回调在 idle 帧:只入队,由 _drain_hit_events() 在下一个物理帧开头注入(帧外 move_and_slide 位移恒 0)。
+		_pending_hit_events.append([source_pos, damage, seq])
 		return
 	var r := _replica_for(victim_role)
 	if r != null and r.has_method("play_hit"):
 		r.play_hit(source_pos)
+
+
+func _drain_hit_events() -> void:
+	if _pending_hit_events.is_empty():
+		return
+	var events: Array = _pending_hit_events
+	_pending_hit_events = []
+	for ev in events:
+		_apply_local_hit_event(ev[0], int(ev[1]), int(ev[2]))
 
 
 # 本地受击:优先按服务器命中时刻的 seq 注入预测历史(restore 到该 tick → take_hit → 重放),让本地击退曲线与权威同源;
@@ -1017,6 +1042,7 @@ func _on_resumed() -> void:
 	_prev_sent_seq = -1
 	_input_batch_phase = 1     # 与初始一致:重连后第一包从 tick0+tick1 开始
 	_prev_tick_rec = {}        # 旧 seq 空间的流水线记录作废(否则会把断线前的输入当低 tick 发给服务器)
+	_pending_hit_events.clear()   # 旧 seq 空间的受击事件作废(新 rollback 的 _last_applied=0,注入不进去)
 	# ★ 新实例必须重新 bind + 设 map_px,照抄两个子类 _ready 里那三行。漏了都不报错:没 bind → _handle_ack 里 _p == null 直接 _trim 返回,分歧永不修复(静默失去 C2);没设 map_px → 跨接缝那一帧按裸距离比,白跑一次回滚。
 	_rollback = PredictionRollback.new()
 	_rollback.bind(_local)

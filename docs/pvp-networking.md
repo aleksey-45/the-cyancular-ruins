@@ -165,7 +165,7 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 
 ### 事件消费
 
-- `bullet_spawn`:生成视觉子弹副本,`apply_damage = false`,摆到 canonical 位置;`hit_event`:带受击方已消费输入 `seq` —— 本人分支交给 `_apply_local_hit_event`,能按服务器命中时刻注入预测历史时 restore+重放(本地击退与权威同源),否则只播白闪/震屏/挤压、不扣血(权威 c2 可能已含这一发);对手端只播闪烁。
+- `bullet_spawn`:生成视觉子弹副本,`apply_damage = false`,摆到 canonical 位置;`hit_event`:带受击方**上一条完成步进**的输入 `seq` —— 本人分支交给 `_apply_local_hit_event`,能按服务器命中时刻注入预测历史时 restore+重放(本地击退与权威同源),否则只播白闪/震屏/挤压、不扣血(权威 c2 可能已含这一发);对手端只播闪烁。
 - `tile_destroyed` / `sub_destroyed`:同步拆砖渲染与碰撞;`round_state`:四态编排在基类,1v1 新一局清子弹 + 复位砖,`MATCH_OVER` 刷新结算页。
 - `opponent_left`:置 `_match_ended`、停重连、2.5s 后回主菜单。
 
@@ -201,7 +201,7 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 | 输入包 | 客户端 → worker | 30Hz / reliable | 手打包 **42 B**（P1 定点化前 46 B）：两条 tick 记录 `seq` `held0/1` `ax0/1` `pressed0/1` `released0/1` `winst0/1` + `aim`(1e-4 定点 2×i16) `st` `ct`（`NetCodec.KIND_INPUT`） |
 | `snapshot_world` / `snapshot_own` | worker → 客户端 | 30Hz · unreliable | 世界包全量(`tick`/`players`);本人包全量(差分(逐 peer,`{ack_seq, q, c2}` 合并后形状不变) |
 | `bullet_spawn` | worker → 客户端 | reliable | `scene shooter_role pos vel speed range size color gravity hit_damage …` |
-| `hit_event` | worker → 客户端 | reliable | `victim_role damage source_pos seq`（`seq` = 受击方已消费输入记录的 seq，客户端按它回放受击时刻） |
+| `hit_event` | worker → 客户端 | reliable | `victim_role damage source_pos seq`（`seq` = 受击方**上一条完成步进**的输入记录 seq（≈ack−1；裁决在玩家子节点步进之前），客户端按它回放受击时刻） |
 | `beam_fired` | worker → 客户端 | reliable | 光束报告 + `shooter_role` |
 | 房间 / 对局 | 双向 | reliable | `create_room` `join_room` `go_match` `session_token` `claim_role` `match_start` `match_sync` `match_sync_data` `round_state` … |
 

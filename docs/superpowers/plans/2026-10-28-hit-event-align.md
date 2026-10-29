@@ -26,15 +26,16 @@
 | 事实 | 位置 |
 |---|---|
 | 服务器每 tick 消费一条输入记录后才步进玩家；`_ack_seq[role]` = 刚消费的 seq | `server/match/match_host.gd` `_physics_process`（消费循环） |
-| 命中裁决在玩家步进**之后**（`_adjudicate_bullets`）；受击广播经 `_on_player_hit` | `server/match/match_host.gd` / `server/match/match_combat.gd` |
+| 命中裁决在**本帧消费完输入、但玩家子节点步进之前**（`_adjudicate_bullets` 跑在宿主回调里；父先于子）⇒ 受击作用于 ack−1 那一步之后的状态 | `server/match/match_host.gd` / `server/match/match_combat.gd` |
 | 当前 `hit_event` 三参：`(victim_role, damage, source_pos)`，**不带时刻** | `core/net/net_bus.gd` `hit_event` RPC + `local_hit_event` signal |
 | 客户端收到就 `_local.take_hit(...)`（事件到达时刻），服务器是在命中 tick 应用的 | `scenes/pvp_match_client.gd::_on_hit_event` |
 | `_close_enough` 只比 `down` / `hp` / `pos`(2px；贴身 8–48px) / `vel`(<20)；击退速度是几百 px/s ⇒ **必然判分歧** | `core/net/prediction_rollback.gd::_close_enough` |
 | 回滚 = `restore_state(权威态)` + 重放 `(ack, last_applied]` 未确认输入（U1 后 0–2 条） | `core/net/prediction_rollback.gd::_handle_ack` |
 | 客户端每个 tick 都存 `_captures[seq] = capture_state()` 与 `_inputs[seq]`；`KEEP = 256`（4.27s） | 同上 `note_post_step` / `note_input` |
-| 事件锚点必须用**受击方已消费的 seq**，不能用 `_srv_tick`：两者在服务器输入饥饿（队列空、沿用 held）时会漂，`_srv_tick` 每 tick +1 而 `_ack_seq` 只在真消费时前进 | `server/match/match_host.gd` 消费循环 |
+| 事件锚点必须用**受击方上一条完成步进的 seq**（`_stepped_seq`，≈ack−1），不能用当帧 `_ack_seq`（晚一步）也不能用 `_srv_tick`（饥饿时与 ack 脱钩） | `server/match/match_state.gd` + `match_host.gd::_record_stepped_seq` |
+| 网络回调跑在 idle 帧；物理帧外 `move_and_slide()` 按**渲染帧 delta** 缩放（实测 0.01~2px/帧不等，首帧前才是 0）⇒ 注入不能在回调里重放 | 评审实测（2026-10-28） |
 
-**为什么能对齐：** 服务器在"用输入记录 S 步进完玩家之后"才裁决命中；客户端 `_captures[S]` 恰好是"用记录 S 步进完之后"的整态。只要客户端把玩家恢复成 `_captures[S]`、在该点上执行 `take_hit`、再重放 S 之后的输入，得到的轨迹就与服务器同源。确定性由现有 C2 重放机制保证（武器 tick 已固定到物理 tick 上，见 `scenes/weapons/weapon_base.gd` 的 `_physics_process` 驱动注释）。
+**为什么能对齐：** 服务器裁决命中时，玩家状态是"用记录 S（= ack−1）步进完"的整态；客户端 `_captures[S]` 恰好是同一时刻的整态。客户端恢复 `_captures[S]`、在该点上执行 `take_hit`、再重放 S 之后的输入，得到的轨迹就与服务器同源（★ 2026-10-28 评审更正：原稿写成"步进完之后才裁决"，方向反了）。确定性由现有 C2 重放机制保证（武器 tick 已固定到物理 tick 上，见 `scenes/weapons/weapon_base.gd` 的 `_physics_process` 驱动注释）。
 
 **为什么回退路径不能调 `take_hit`：** 权威 c2 可能已经把这一发的 hp/击退包含进去了（事件晚于 c2 到达）。此时再完整 `take_hit` 会**双计**，下一 ack 又要 restore。所以兜底只播反馈，不动任何可被 `_close_enough` 比较的字段。
 
@@ -43,7 +44,7 @@
 ## 1. 已拍板 / 关键设计决定
 
 1. **范围** = 受击/击退的"事件时刻对齐" + 兜底反馈。**不含** beta（回溯/加速）、传输层冗余、拆砖事件对齐（见 §2）。
-2. **事件锚点 = 受击方已消费的输入 seq**（`_ack_seq[victim]`），不是服务器 tick，也不是"当前快照 tick"。理由见 §0 最后一行。
+2. **事件锚点 = 受击方上一条完成步进的输入 seq**（`_stepped_seq[role]`，≈`_ack_seq−1`），不是当帧 ack、不是服务器 tick、也不是"当前快照 tick"。★ 2026-10-28 评审更正：初稿写的是 `_ack_seq[victim]`，实测晚一步（差 3.03px / 43.4px·s⁻¹，仍回滚）。理由见 §0。
 3. **不可注入即只播反馈**：`seq > _last_applied` / `seq <= _acked` / `_captures` 里没有该 seq / 乱序（`seq < 上次已对齐事件的 seq`）⇒ 客户端不扣血、不给击退、不设无敌帧，只播白闪 / 震屏 / 音效 / 挤压，其余交给权威 c2。
 4. **不改通道号、不改传输模式**：`hit_event` 仍在用户通道 3、reliable；**不升 `PROTO_VERSION`**（该常量只管 `NetCodec` 线格式；RPC 参数属于 Godot 序列化，两端同源构建，参数不符会当场报错）。
 5. **本批不新建 `.gd` 文件**（测试全部加进既有 `rollback_fidelity_probe`）⇒ `allscript_probe.EXPECTED_SCRIPTS` 不变（当前 190）。

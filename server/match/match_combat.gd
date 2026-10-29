@@ -273,9 +273,11 @@ func _on_player_hit(source_pos: Vector2, damage: int, role: int) -> void:
 		var rw_attacker := _attributed_role_within(stat_victim, ATTRIB_WINDOW)
 		if rw_attacker != 0 and rw_attacker != int(role) and not same_team(rw_attacker, int(role)):
 			time_economy.award_damage(rw_attacker, int(role), damage)
-	# 受击事件的时间锚点 = 受击方**已消费输入记录的 seq**(与快照 ack 同一 seq 空间;客户端按它取 _captures 回放)。
-	# ★ 不能用 _srv_tick:服务器输入饥饿(队列空、沿用上一条 held)时 _ack_seq 不前进,而 _srv_tick 每 tick +1,两者会漂。
-	var hit_seq := int(_ack_seq.get(int(role), 0))
+	# 受击事件的时间锚点 = **上一次完成步进时的已消费 seq**(MatchState._stepped_seq,帧末 deferred 记录)。
+	# ★ 裁决发生在玩家子节点本帧步进之前(父先于子)⇒ 被击中的是上一步之后的状态;传当帧 ack 会让注入晚一步。
+	# ★ 不能用 _srv_tick:输入饥饿(队列空、沿用上一条 held)时 ack 与实际步进脱钩,而 _srv_tick 每 tick +1。
+	var fallback := maxi(int(_ack_seq.get(int(role), 0)) - 1, 0)
+	var hit_seq := int(_stepped_seq.get(int(role), fallback))
 	for r in peer_by_role:
 
 		if NetBus.is_peer_live(peer_by_role[r]):

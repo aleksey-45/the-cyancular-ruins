@@ -326,6 +326,7 @@ func _on_reclaim(caller: int, role: int, token: String) -> void:
 	_host.input_sources[role] = src
 	_host.reset_input_queue(role)
 	_host._ack_seq[role] = 0      # C2 锚点重协商:客户端 rollback ring 已失(见 spec §3.4)
+	_host._stepped_seq[role] = 0  # 受击事件锚点同源重置(否则旧纪元 seq 会让新纪元的注入晚/早一步)
 	_grace.leave(role)
 	# 回一条 match_start 让客户端重进对局场景(载荷与首次开局同源);★ 走 NetBus.reply 而不是 rpc_id —— 它是答复 caller 的收口,内部先判活。
 	#   这个窗口可达:客户端发完 reclaim_role 是等这条应答,被踢/链路断时下一拍会 _retry_connect() → NetBus.stop(),那个 stop 与本次应答可能挤在同一次 poll,ENet 当场把通道数清零 ⇒ 不判活必打 max channels: 0。
