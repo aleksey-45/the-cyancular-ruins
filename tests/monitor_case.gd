@@ -1,0 +1,30 @@
+extends "res://tests/case.gd"
+
+
+func run(_tree: SceneTree) -> void:
+	NativePerformanceStats.set_enabled(true)
+	NativePerformanceStats.reset()
+	var bytes := NativePerformanceStats.storage_bytes()
+	for value in [100, 250, 16668]: NativePerformanceStats.observe(NativePerformanceStats.SERVER_TICK, value)
+	NativePerformanceStats.replayed(2)
+	NativePerformanceStats.replayed(3)
+	NativePerformanceStats.physics_tick()
+	NativePerformanceStats.physics_tick()
+	NativePerformanceStats.frame_boundary()
+	NativePerformanceStats.publish()
+	expect(NativePerformanceStats.read(NativePerformanceStats.SERVER_TICK, NativePerformanceStats.SAMPLES) == 3, "all ticks contribute to one-second statistics")
+	expect(NativePerformanceStats.read(NativePerformanceStats.SERVER_TICK, NativePerformanceStats.TOTAL) == 17018, "microsecond totals preserve units")
+	expect(NativePerformanceStats.read(NativePerformanceStats.SERVER_TICK, NativePerformanceStats.MAXIMUM) == 16668 and NativePerformanceStats.read(NativePerformanceStats.SERVER_TICK, NativePerformanceStats.OVER_BUDGET) == 1, "maximum and threshold count retain short spikes")
+	expect(NativePerformanceStats.read(NativePerformanceStats.REPLAY_TICKS, NativePerformanceStats.TOTAL) == 5 and NativePerformanceStats.read(NativePerformanceStats.PHYSICS_TICKS, NativePerformanceStats.MAXIMUM) == 2, "one displayed-frame interval accumulates all replay and physics ticks")
+	var report := NativePerformanceStats.snapshot(true)
+	var histogram: PackedInt64Array = report["metrics"]["server_tick"]["histogram"]
+	expect(histogram[0] == 1 and histogram[1] == 1 and histogram[8] == 1, "histogram uses inclusive upper bounds")
+	NativePerformanceStats.publish()
+	expect(NativePerformanceStats.read(NativePerformanceStats.SERVER_TICK, NativePerformanceStats.SAMPLES) == 0, "publishing expires the previous window")
+	expect(NativePerformanceStats.snapshot(true)["metrics"]["server_tick"]["samples"] == 3, "session totals survive window rotation")
+	NativePerformanceStats.set_enabled(false)
+	var started := NativePerformanceStats.begin()
+	NativePerformanceStats.observe(NativePerformanceStats.SERVER_TICK, 1)
+	NativePerformanceStats.end(NativePerformanceStats.SERVER_TICK, started)
+	expect(started == 0 and NativePerformanceStats.snapshot(true)["metrics"]["server_tick"]["samples"] == 0, "disabled instrumentation records no samples")
+	expect(NativePerformanceStats.storage_bytes() == bytes and bytes <= 16 * 1024, "aggregates have fixed storage independent of sample count")

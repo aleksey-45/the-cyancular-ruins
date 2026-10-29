@@ -57,6 +57,10 @@ jobs:
             exit $LASTEXITCODE
           }
 
+      - name: Check core behavior
+        shell: pwsh
+        run: python tools/run_checks.py --godot "$env:GODOT4"
+
       - name: Upload game package
         uses: actions/upload-artifact@v4
         with:
@@ -89,6 +93,9 @@ jobs:
         run: |
           python -m pip install scons==4.9.1 cmake==3.31.6 ninja==1.11.1.4
           python tools/build_macos.py
+
+      - name: Check core behavior
+        run: python tools/run_checks.py --godot "$GODOT4"
 
       - uses: actions/upload-artifact@v4
         with:
