@@ -15,10 +15,22 @@ extends RefCounted
 #   (解码按 schema 读 ⇒ 顺序/宽度错 = 解出来的值必不对,立刻红),容量用 `_schema_bytes()` 预算(少算 ⇒ 越界/尺寸错,④ 最坏包抓)。
 #   ⇒ 改 schema 必须同步改三个 encode_*;不改就一定红,不会静默。
 
-const PROTO_VERSION := 4
+const PROTO_VERSION := 5
 const KIND_WORLD := 1
 const KIND_OWN := 2
 const KIND_INPUT := 3
+
+# ── 世界包两形态(v5):字节 2 = mode ─────────────────────────────────────────
+# FULL  0:与 v4 布局同,仅多 mode 字节(头 2+1+tick4+人数1 = 8 B)。全量条目。
+# DELTA 1:[tick u32][base u32][n_changed u8][n_gone u8] + 变更条目 + 消失名单。
+#   变更条目 = [role u8][mask u16 LE] + mask 置位的字段(按 WORLD_SCHEMA 顺序,bit i ↔ schema[i];
+#   新实体 = mask 全 1)。消失 = [role u8]×n_gone。
+#   ★ 基线纪律:base 必须是「客户端已成功解码过」的 tick(上行 st);客户端只有 base ≤ 自己
+#   已应用 tick 才能套用(覆盖语义收敛,见 wire.gd 的 _asm_* 注释),否则整包丢弃等全量兜底。
+const WORLD_FULL := 0
+const WORLD_DELTA := 1
+# 周期全量兜底间隔(包数):delta 链路丢包/基线过期后最坏这么多包恢复全量。30Hz 下 15 包 = 0.5s。
+const DELTA_FULL_EVERY := 15
 
 # ── 类型字母 ──
 const T_F := "f"      # float32,4 B(见文件头:与旧线上字节一致)
@@ -98,17 +110,19 @@ static var _INPUT_BYTES := 2 + _schema_bytes(INPUT_SCHEMA)
 # ── 编码(2026-10-24:手写内联)── ★ 一次性按 `_schema_bytes()` 预算容量 `resize`,然后全部就地写(`encode_float`/`encode_u32`/下标),
 # 末尾 `resize(i)` 收尾。实测 304 → 47 µs/包(N=16);产出字节与旧实现**逐位不变**(判据:snapshot_size_probe 的尺寸 + 往返 + 最坏包)。
 
-## 世界包:一次广播,含全部玩家的渲染字段。`{"tick": int, "players": {"role": {…13 字段}}}`。
+## 世界包(FULL):含(经兴趣管理过滤后的)玩家渲染字段全量。`{"tick": int, "players": {"role": {…}}}`。
 ## ★ 字段顺序/宽度必须与 WORLD_SCHEMA 一致(解码按 schema 读;漂移由 snapshot_size_probe ③ 抓)。
 static func encode_world(world: Dictionary) -> PackedByteArray:
 	var players: Dictionary = world.get("players", {})
 	var n: int = mini(players.size(), 200)
 	var out := PackedByteArray()
-	out.resize(7 + n * _W_ENTRY_BYTES)   # 头 2+tick4+人数1;每人 = role 1 + schema 定长
+	out.resize(8 + n * _W_ENTRY_BYTES)   # 头 2+mode1+tick4+人数1;每人 = role 1 + schema 定长
 	var i := 0
 	out[i] = PROTO_VERSION
 	i += 1
 	out[i] = KIND_WORLD
+	i += 1
+	out[i] = WORLD_FULL
 	i += 1
 	out.encode_u32(i, int(world.get("tick", 0)))
 	i += 4
@@ -169,6 +183,126 @@ static func encode_world(world: Dictionary) -> PackedByteArray:
 				i += 4
 	out.resize(i)
 	return out
+
+
+## 世界包(DELTA):对 base(= 客户端已解码的那一 tick 的**同口径视图**)求差。
+## 返回空数组 = 差不出/基线不可用,调用方回落 FULL。mask 全 1 = 新实体(AOI 进入/刚连上)。
+static func encode_world_delta(now: Dictionary, base: Dictionary) -> PackedByteArray:
+	var base_players: Dictionary = base.get("players", {})
+	var now_players: Dictionary = now.get("players", {})
+	if base_players.is_empty() and not now_players.is_empty():
+		return PackedByteArray()   # 无基线 ⇒ 全量
+	var full_mask := (1 << WORLD_SCHEMA.size()) - 1
+	var masks: Dictionary = {}
+	for key in now_players:
+		var e: Dictionary = now_players[key]
+		var b: Dictionary = base_players.get(key, {})
+		if b.is_empty():
+			masks[key] = full_mask
+		else:
+			var m := 0
+			for fi in WORLD_SCHEMA.size():
+				var f: Array = WORLD_SCHEMA[fi]
+				if not _field_eq(f, e.get(f[0]), b.get(f[0])):
+					m |= 1 << fi
+			masks[key] = m
+	var gone: Array = []
+	for key in base_players:
+		if not now_players.has(key):
+			gone.append(int(key))
+	# 变更体先攒进 body(mask/变长字段拿不准容量),头定长 13 B 最后写死再拼 —— 两段式避免
+	# 「按最坏容量 resize 过的数组上 append_array 接到尾巴再被截短」那种错位。
+	var body := PackedByteArray()
+	var n_changed := 0
+	for key in now_players:
+		var m: int = masks[key]
+		if m == 0:
+			continue   # 没变也没消失的实体不上线(tick 仍在头里 ⇒ 客户端播放时钟照常前进)
+		n_changed += 1
+		body.append(int(key) & 0xFF)
+		body.append(m & 0xFF)
+		body.append((m >> 8) & 0xFF)
+		var e: Dictionary = now_players[key]
+		for fi in WORLD_SCHEMA.size():
+			if m & (1 << fi) == 0:
+				continue
+			_pack_field(body, WORLD_SCHEMA[fi], e)
+	for r in gone:
+		body.append(r & 0xFF)
+	var out := PackedByteArray()
+	out.resize(13)
+	out[0] = PROTO_VERSION
+	out[1] = KIND_WORLD
+	out[2] = WORLD_DELTA
+	out.encode_u32(3, int(now.get("tick", 0)))
+	out.encode_u32(7, int(base.get("tick", 0)))
+	out[11] = n_changed
+	out[12] = gone.size()
+	out.append_array(body)
+	return out
+
+
+## 单字段按 schema 打包(mask 置位的那些;bool 组整组一个字节,trail = 计数 + 点)。
+static func _pack_field(out: PackedByteArray, f: Array, e: Dictionary) -> void:
+	match f[1]:
+		T_BOOLS:
+			var fb := 0
+			var subs: Array = f[2]
+			for bi in subs.size():
+				fb |= (1 << bi) if bool(e.get(subs[bi], false)) else 0
+			out.append(fb)
+		T_V2:
+			var v: Vector2 = e.get(f[0], Vector2.ZERO)
+			out.append_array(_f2b(v))
+		T_U8, T_I8:
+			out.append(int(e.get(f[0], 0)) & 0xFF)
+		T_TRAIL:
+			var t: Array = e.get(f[0], [])
+			var tn := mini(t.size(), TRAIL_WIRE_MAX)
+			out.append(tn)
+			for k in range(t.size() - tn, t.size()):
+				var p: Variant = t[k]
+				if p is Vector2:
+					out.append_array(_f2b(p as Vector2))
+				else:
+					var a: Array = p
+					out.append_array(_f2b(Vector2(float(a[0]), float(a[1]))))
+
+
+static func _f2b(v: Vector2) -> PackedByteArray:
+	var b := PackedByteArray()
+	b.resize(8)
+	b.encode_float(0, v.x)
+	b.encode_float(4, v.y)
+	return b
+
+
+## 线值等价比较:delta 的"变没变"必须按**线上能表达出的值**比(64 位相等 ⇒ 32 位线值必等 ⇒
+## 漏不掉真变化;反之偶尔多发一个本就相等的字段,无害)。trail 两种元素形态(Vector2/[x,y])归一后比。
+static func _field_eq(f: Array, a: Variant, b: Variant) -> bool:
+	match f[1]:
+		T_V2:
+			return a is Vector2 and b is Vector2 and (a as Vector2) == (b as Vector2)
+		T_TRAIL:
+			var ta: Array = a if a is Array else []
+			var tb: Array = b if b is Array else []
+			if ta.size() != tb.size():
+				return false
+			for k in ta.size():
+				var pa := _pt(ta[k])
+				var pb := _pt(tb[k])
+				if pa != pb:
+					return false
+			return true
+		_:
+			return a == b
+
+
+static func _pt(v: Variant) -> Vector2:
+	if v is Vector2:
+		return v
+	var a: Array = v
+	return Vector2(float(a[0]), float(a[1]))
 
 
 ## 本人包:定向逐 peer。`{"ack_seq": int, "q": int, "c2": capture_state()}`。
@@ -333,10 +467,16 @@ static func encode_input(pkt: Dictionary) -> PackedByteArray:
 # ── 解码 ── 任一字段越界 ⇒ 返回 {}(调用方据此不 emit):宁可这一帧没有快照,也不要把错位的值喂进预测面。
 # ★ 解码保持**表驱动**(`_unpack`):解码侧是不可信输入,逐字段守边界;且 schema 是"字段集合"的单一来源(probe 的逐键对齐判据也读它)。
 
-static func decode_world(data: PackedByteArray) -> Dictionary:
+## base = 客户端已应用的整态 {"tick", "players"}(不传 = 无基线 ⇒ DELTA 一律解为空丢弃)。
+## DELTA 只有 base["tick"] ≥ 包内 base_tick 时才套用(覆盖语义:同一基线的多次差分,最新一份
+## 覆盖出精确的当前整态;base 落后于自己已应用的 tick 也安全,见 wire.gd 的 _asm 注释)。
+static func decode_world(data: PackedByteArray, base: Dictionary = {}) -> Dictionary:
 	if not _header_ok(data, KIND_WORLD):
 		return {}
-	var r := {"d": data, "o": 2, "bad": false}
+	var mode := data[2] if data.size() > 2 else -1
+	var r := {"d": data, "o": 3, "bad": false}
+	if mode == WORLD_DELTA:
+		return _decode_world_delta(r, data, base)
 	var tick := _rd_u32(r)
 	var n := _rd_u8(r)
 	var players := {}
@@ -344,6 +484,50 @@ static func decode_world(data: PackedByteArray) -> Dictionary:
 		var role := _rd_u8(r)
 		# ★ 不再往条目里塞 role:它就是 players 的键(消费方一律 players.get(str(role))),塞进去会让解码结果比原 dict 多一个键 ⇒ "往返逐键一致"那条判据就废了(实测抓到过一次)。
 		players[str(role)] = _unpack(r, WORLD_SCHEMA)
+	if bool(r["bad"]) or int(r["o"]) != data.size():
+		return {}
+	return {"tick": tick, "players": players}
+
+
+static func _decode_world_delta(r: Dictionary, data: PackedByteArray, base: Dictionary) -> Dictionary:
+	var tick := _rd_u32(r)
+	var base_tick := _rd_u32(r)
+	var n_changed := _rd_u8(r)
+	var n_gone := _rd_u8(r)
+	# 基线两拒:没有基线 / 基线比客户端已应用的还新(乱序或错位)⇒ 整包丢弃,等周期全量兜底。
+	if base.is_empty() or int(base.get("tick", 0)) < base_tick:
+		return {}
+	var players: Dictionary = (base.get("players", {}) as Dictionary).duplicate(true)
+	for i in n_changed:
+		var role := _rd_u8(r)
+		var m := _rd_u16(r)
+		var entry: Dictionary = players.get(str(role), {})
+		for fi in WORLD_SCHEMA.size():
+			if m & (1 << fi) == 0:
+				continue
+			var f: Array = WORLD_SCHEMA[fi]
+			match f[1]:
+				T_BOOLS:
+					var fb := _rd_u8(r)
+					var subs: Array = f[2]
+					for bi in subs.size():
+						entry[subs[bi]] = (fb & (1 << bi)) != 0
+				T_V2:
+					entry[f[0]] = Vector2(_rd_f(r), _rd_f(r))
+				T_U8:
+					entry[f[0]] = _rd_u8(r)
+				T_I8:
+					entry[f[0]] = _rd_i8(r)
+				T_TRAIL:
+					var tn := mini(_rd_u8(r), TRAIL_MAX)
+					var t: Array = []
+					for k in tn:
+						t.append([_rd_f(r), _rd_f(r)])
+					entry[f[0]] = t
+		players[str(role)] = entry
+	for i in n_gone:
+		var g := _rd_u8(r)
+		players.erase(str(g))
 	if bool(r["bad"]) or int(r["o"]) != data.size():
 		return {}
 	return {"tick": tick, "players": players}

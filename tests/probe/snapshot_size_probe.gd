@@ -214,7 +214,7 @@ func _kb(b: int) -> String:
 func _report(n: int, old_own: int, old_entry: int, new_own: int, new_entry: int) -> void:
 	# 两种格式都是同一个拆包结构(世界包一次广播 + 本人包逐 peer 定向):服务器上行 = N × 本人包 + 1 × 世界包;单端下行 = 本人包 + 世界包。
 	var old_world := n * old_entry
-	var new_world := 7 + n * new_entry
+	var new_world := 8 + n * new_entry
 	var old_up := float((n * old_own + old_world) * SNAP_HZ)
 	var old_down := float((old_own + old_world) * SNAP_HZ)
 	var new_up := float((n * new_own + new_world) * SNAP_HZ)
@@ -228,11 +228,11 @@ func _report_mtu(old_entry: int, new_entry: int) -> void:
 	print("[size] ── 超 MTU 折算(ENet MTU=%d;超过即**不可靠分片**包,丢一片=整帧丢)──" % MTU)
 	for n in [2, 5, 8]:
 		var old_world: int = n * old_entry
-		var new_world: int = 7 + n * new_entry
+		var new_world: int = 8 + n * new_entry
 		print("[size]  N=%d: 世界包 旧 %s → %d 片 | 新 %s → %d 片" % [
 				n, _kb(old_world), _frags(old_world), _kb(new_world), _frags(new_world)])
 	for n in [2, 3, 4, 6, 8]:
-		var new_world: int = 7 + n * new_entry
+		var new_world: int = 8 + n * new_entry
 		print("[size]  新世界包仍在 1 片内?N=%d → %s" % [n, str(_frags(new_world) == 1)])
 
 

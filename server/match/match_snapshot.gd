@@ -11,8 +11,19 @@ var _tx_at := 0
 var _tx_world := 0
 var _tx_world_skip := 0
 var _tx_world_bytes := 0
+var _tx_world_full := 0             # FULL 包数(delta 链路的兜底与基线重建;--diag 读)
+var _tx_world_delta := 0            # DELTA 包数
 var _tx_own: Dictionary = {}        # role -> 包数
 var _tx_own_bytes: Dictionary = {}  # role -> 字节数
+
+# ── v5 世界包治理:delta 基线环 + 兴趣管理 ────────────────────────────────────
+# 带宽账(N=16, factory 9600×6400):v4 全量广播 O(N²) 上行 ≈407 KB/s;v5 = 逐 peer
+# (字段级 delta × AOI 过滤)。★ AOI 半径 ≥ 全武器最远射程(榴弹 2500px)+ 幽灵体余量:
+# 再小会出现「看不见的对手在服务端挡住你 ⇒ 本地预测被无形之手推开」的橡皮筋。
+const AOI_RADIUS_PX := 2600.0
+const RING_TICKS := 64             # 基线环窗口(30Hz 下 ≈2s ≫ 一个 RTT 内的包数)
+var _world_ring := {}              # tick -> world(全量未过滤;差分时按 viewer 位置重建过滤视图)
+var _full_countdown := {}          # role -> 距下次强制 FULL 的包数(丢基线后的恢复梯)
 
 func _broadcast_snapshot() -> void:
 	# tick 是「60Hz 物理 tick 时间轴」上的时间戳,不是包序号:30Hz 发包时每包跨 2 tick(客户端 playout/历史环按它插值)。
@@ -46,15 +57,74 @@ func _broadcast_snapshot() -> void:
 			"rewind": bool(_rw_on.get(int(role), false)),
 			"trail": (_rw_trail.get(int(role), []) as Array).duplicate(),
 		}
-	# ★ 一次 broadcast:Wire 内部**逐 live peer** 发送、拆链路窗口里的死 peer 单独跳过
-	#    (v4 的整体闸 all_peers_sendable 是「一个坏 peer ⇒ 这一帧全员没世界包」,v5 起按 peer 个体裁剪;
-	#    unreliable 少一帧无后果)。skip 计数保留:客户端 snap_gap 分不出「没发」与「发了没收到」,
-	#    这个计数就是用来把它分出来的。
-	var wbytes := NetCodec.encode_world(world)
-	var sent := Wire.broadcast(WireKind.SNAPSHOT_WORLD, [wbytes])
+	# ── v5:逐 peer 组帧(FULL / DELTA × AOI 视图),取代 v4 的「组一次、全员广播」──
+	# 基线 = 该 role 上行 st 指到的环内那一拍;差分口径 = 双方都按「viewer 在各自那一拍的位置」
+	# 过滤后的视图(进/出 AOI = 新实体/消失名单,由 diff 自然表达)。基线不在环内 / 周期兜底 /
+	# delta 不比 FULL 小 ⇒ 发 FULL。skip 计数保留:客户端 snap_gap 分不出「没发」与「发了没收到」。
+	_world_ring[int(world["tick"])] = world
+	while _world_ring.size() > RING_TICKS:
+		_world_ring.erase(_world_ring.keys().min())
+	var sent := 0
+	for role in peer_by_role:
+		var pid: int = peer_by_role[role]
+		if not Wire.is_peer_live(pid):
+			continue
+		var view_now := _view_for(world, int(role))
+		var fbytes := NetCodec.encode_world(view_now)
+		var bytes_out := fbytes
+		var cd: int = int(_full_countdown.get(int(role), 0)) - 1
+		var base_tick := int(_client_snap_tick.get(int(role), 0))
+		var base_world: Dictionary = _world_ring.get(base_tick, {})
+		if cd <= 0 or base_world.is_empty():
+			cd = NetCodec.DELTA_FULL_EVERY
+			_tx_world_full += 1
+		else:
+			var dbytes := NetCodec.encode_world_delta(view_now, _view_for(base_world, int(role)))
+			if dbytes.is_empty() or dbytes.size() >= fbytes.size():
+				# 回落 FULL 但**不重置**兜底梯:它仍是一次成功的基线重建。
+				_tx_world_full += 1
+			else:
+				bytes_out = dbytes
+				_tx_world_delta += 1
+		_full_countdown[int(role)] = cd
+		if Wire.send_to(pid, WireKind.SNAPSHOT_WORLD, [bytes_out]):
+			sent += 1
+			_tx_world_bytes += bytes_out.size()
 	_tx_world += sent
-	_tx_world_bytes += wbytes.size() * sent
 	_tx_world_skip += Wire.peer_ids().size() - sent
+
+
+# viewer 的过滤视图:自己恒在;他人按环面距离 ≤ AOI_RADIUS_PX;近期交手双方互免
+# (3s 归因窗口内的 attacker/victim 对 —— 刚打过的对手哪怕出 AOI 也保持可见)。
+func _view_for(world: Dictionary, viewer_role: int) -> Dictionary:
+	var players: Dictionary = world.get("players", {})
+	var me: Dictionary = players.get(str(viewer_role), {})
+	if me.is_empty():
+		return {"tick": int(world.get("tick", 0)), "players": players.duplicate(true)}
+	var mine_pos: Vector2 = me.get("pos", Vector2.ZERO)
+	var out := {}
+	for key in players:
+		var role := int(key)
+		if role == viewer_role:
+			out[key] = players[key]
+			continue
+		var e: Dictionary = players[key]
+		var d := MazeGenerator.toroidal_delta_px(mine_pos, e.get("pos", Vector2.ZERO),
+				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT).length()
+		if d <= AOI_RADIUS_PX or _interacted_recently(viewer_role, role):
+			out[key] = e
+	return {"tick": int(world.get("tick", 0)), "players": out}
+
+
+# 3s 归因窗口内的交手对(双向):读 _assist_times(victim -> {attacker: 时间})。
+func _interacted_recently(a: int, b: int) -> bool:
+	var now_ms := Time.get_ticks_msec()
+	for pair in [[a, b], [b, a]]:
+		var table: Dictionary = _assist_times.get(int(pair[0]), {})
+		var t: Variant = table.get(int(pair[1]))
+		if t != null and now_ms - int(t) <= ATTRIB_WINDOW:
+			return true
+	return false
 
 
 # ── 本人包(2026-10-24 S1):**只能在玩家步进之后调用** ──

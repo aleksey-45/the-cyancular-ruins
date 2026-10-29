@@ -104,6 +104,12 @@ var _generation := 0                 # 每次 stop()/start_*() +1:丢弃属于�
 var bad_frames := 0                  # 版本不符 / 长度不足 / 未知 kind
 var dropped_sends := 0               # 判活失败 / peer.send 报错而丢弃的定向帧
 var unknown_kinds := 0
+var delta_drops := 0                 # DELTA 基线不在手而丢弃的世界包(丢包后的正常恢复窗口,等全量兜底)
+
+# 客户端世界整态装配基线(delta 的套用底):_asm_tick = 最近一次成功解码的世界包 tick。
+# 每包把 st = _asm_tick 上行,服务端按它选 delta 基线 ⇒ 基线永远是「本端确实拿到过」的那一拍。
+var _asm_tick := 0
+var _asm_players := {}
 
 
 func start_server(port: int = DEFAULT_PORT) -> Error:
@@ -151,6 +157,8 @@ func _teardown() -> void:
 	_server_peer = null
 	is_server_mode = false
 	_client_connected = false
+	_asm_tick = 0
+	_asm_players = {}
 
 
 # ── 判活与账本 ────────────────────────────────────────────────────────────────
@@ -387,10 +395,18 @@ func _on_frame(caller: int, channel: int, payload: PackedByteArray) -> void:
 		input_received.emit(caller, pkt)
 		return
 	if bin == "world":
-		var world := NetCodec.decode_world(body)
+		# delta 装配:FULL 直接换整态;DELTA 套在已应用整态上(覆盖语义 —— 同一基线的多份差分,
+		# 最新一份覆盖出精确当前态)。DELTA 解空 = 基线不在手(丢包后的正常恢复窗口)⇒ 静默计数、
+		# 等周期全量兜底,副本冻结一帧;只有 FULL 解空才是版本/坏包,大声报一次。
+		var world := NetCodec.decode_world(body, {"tick": _asm_tick, "players": _asm_players})
 		if world.is_empty():
-			_snapshot_decode_warned("world", body)
+			if body.size() > 2 and body[2] == NetCodec.WORLD_DELTA:
+				delta_drops += 1
+			else:
+				_snapshot_decode_warned("world", body)
 			return
+		_asm_tick = int(world["tick"])
+		_asm_players = world["players"]
 		_diag_world_rx(world, body)
 		local_snapshot_world.emit(world)
 		return

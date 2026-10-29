@@ -7,7 +7,7 @@ extends SceneTree
 # ★ 与 snapshot_size_probe 的分工:那边量**体积/最坏包/容量**(场景探针,要真 Player);这里量**协议正确性**(纯逻辑 `-s`)。
 # 跑法:"$GODOT" --headless --path . -s res://tests/smoke/net_wire_smoke.gd;通过 = NET WIRE OK(n 条断言)。
 
-const EXPECTED_CHECKS := 4
+const EXPECTED_CHECKS := 7
 
 var _fails: Array[String] = []
 var _checks := 0
@@ -74,9 +74,41 @@ func _initialize() -> void:
 	_chk(missing.is_empty() and extra.is_empty(),
 			"INPUT_SCHEMA 与 pack_pair() 逐键对齐(表外未覆盖 %s / 表内多余 %s)" % [str(missing), str(extra)])
 
+	# ⑤ 世界包 delta 往返(v5):改一字段 + 换人 + 加人,套在基线上解出的整态必须与
+	#    「对 now 直接 FULL 编解码」逐字段一致(去掉什么才红:mask 位↔schema 错位/两段式组帧
+	#    错位/新实体全 1 掩码漏字段 —— 任何一处都会让往返结果多缺字段)。
+	var base := _fixture_world()
+	var now := _fixture_world()
+	(now["players"]["1"] as Dictionary)["pos"] = Vector2(4321.0, -876.5)
+	(now["players"]["1"] as Dictionary)["hp"] = 3
+	now["players"].erase("2")
+	var e3 := (now["players"]["1"] as Dictionary).duplicate(true)
+	e3["pos"] = Vector2(99.0, 88.0)
+	now["players"]["3"] = e3
+	var db := NetCodec.encode_world_delta(now, base)
+	var via_delta := NetCodec.decode_world(db, NetCodec.decode_world(NetCodec.encode_world(base)))
+	var via_full := NetCodec.decode_world(NetCodec.encode_world(now))
+	_chk(_dict_same(via_delta.get("players", {}), via_full.get("players", {}))
+			and int(via_delta.get("tick", -1)) == int(via_full.get("tick", -1)),
+			"世界包 delta 往返与 FULL 直解逐字段一致(含改字段/消失/新实体)")
+
+	# ⑥ delta 基线三拒:无基线 / 基线超前(包内 base_tick 比本端已应用的还新)⇒ 一律空。
+	var raw_full := NetCodec.decode_world(NetCodec.encode_world(base))
+	_chk(NetCodec.decode_world(db).is_empty() and NetCodec.decode_world(db, {"tick": 1, "players": {}}).is_empty(),
+			"delta 无基线/基线超前一律解空(等全量兜底)")
+
+	# ⑦ delta 的经济性:一处字段变更的 delta 必须显著小于同视图的 FULL(带宽治理的合同;
+	#     去掉什么才红:mask 退化成全 1(比如 _field_eq 恒 false)⇒ delta ≥ full)。
+	var small := _fixture_world()
+	(small["players"]["1"] as Dictionary)["pos"] = Vector2(7.0, 8.0)
+	var dsb := NetCodec.encode_world_delta(small, base)
+	_chk(dsb.size() < NetCodec.encode_world(small).size() and db.size() < wb.size(),
+			"小改动 delta 显著小于 FULL(delta=%d B vs full=%d B;2 人改/换/增 delta=%d B vs full=%d B)" % [
+					dsb.size(), NetCodec.encode_world(small).size(), db.size(), wb.size()])
+
 	# 读数(不是断言):协议尺寸
-	print("[readout] 输入 %d B/包(内含 2 条 tick 记录);世界 2 人共 %d B;本人包 %d B" % [
-			ib.size(), wb.size(), ob.size()])
+	print("[readout] 输入 %d B/包(内含 2 条 tick 记录);世界 2 人 FULL %d B;本人包 %d B;2 人小改 delta %d B" % [
+			ib.size(), wb.size(), ob.size(), dsb.size()])
 
 	# 判词:计数闸(条数不符也红 —— 防断言被静默跳过)
 	if _checks != EXPECTED_CHECKS:
