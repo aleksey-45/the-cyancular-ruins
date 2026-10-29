@@ -32,10 +32,22 @@ ENV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ENV_DIR" || exit 1
 
 # ── Windows 下 bash `kill` 杀不死 headless Godot(会留僵尸占 7777),改用 taskkill 强杀 ──
+# ★ 2026-10-29(macOS 分支):本仓开始在 macOS 上跑真链路;清理/判活函数按「有没有 taskkill」
+#   分平台 —— Windows 走原 taskkill/netstat/powershell,macOS 走 kill/lsof/pkill。判据语义不变。
+if command -v taskkill >/dev/null 2>&1; then
+	_IS_MACOS=0
+else
+	_IS_MACOS=1
+fi
+
 kill_procs() {
 	for p in "$@"; do
 		[ -n "$p" ] || continue
-		taskkill //F //PID "$p" >/dev/null 2>&1 || true
+		if [ "$_IS_MACOS" = "1" ]; then
+			kill -9 "$p" >/dev/null 2>&1 || true
+		else
+			taskkill //F //PID "$p" >/dev/null 2>&1 || true
+		fi
 	done
 }
 
@@ -44,11 +56,19 @@ kill_procs() {
 kill_port() {
 	local port="${1:-7777}"
 	local pids
-	pids=$(netstat -ano 2>/dev/null | grep -E "[:.]${port}[[:space:]]" | awk '{print $NF}' | sort -u)
+	if [ "$_IS_MACOS" = "1" ]; then
+		pids=$(lsof -nP -iUDP:"$port" -t 2>/dev/null | sort -u)
+	else
+		pids=$(netstat -ano 2>/dev/null | grep -E "[:.]${port}[[:space:]]" | awk '{print $NF}' | sort -u)
+	fi
 	for p in $pids; do
 		[ "$p" = "0" ] && continue
 		echo "  kill 端口 $port 属主 PID=$p"
-		taskkill //F //PID "$p" >/dev/null 2>&1 || true
+		if [ "$_IS_MACOS" = "1" ]; then
+			kill -9 "$p" >/dev/null 2>&1 || true
+		else
+			taskkill //F //PID "$p" >/dev/null 2>&1 || true
+		fi
 	done
 }
 
@@ -67,14 +87,24 @@ kill_port() {
 kill_port_range() {
 	local lo="${1:-7800}" hi="${2:-8300}"
 	local pids
-	pids=$(netstat -ano 2>/dev/null | awk -v lo="$lo" -v hi="$hi" '
-		$1 == "UDP" { n = split($2, a, ":"); p = a[n] + 0
-			if (p >= lo && p < hi) print $NF }' | sort -u)
+	if [ "$_IS_MACOS" = "1" ]; then
+		pids=$(lsof -nP -iUDP 2>/dev/null | awk -v lo="$lo" -v hi="$hi" '
+			NR > 1 { n = split($9, a, ":"); p = a[n] + 0
+				if (p >= lo && p < hi) print $2 }' | sort -u)
+	else
+		pids=$(netstat -ano 2>/dev/null | awk -v lo="$lo" -v hi="$hi" '
+			$1 == "UDP" { n = split($2, a, ":"); p = a[n] + 0
+				if (p >= lo && p < hi) print $NF }' | sort -u)
+	fi
 	for p in $pids; do
 		[ -n "$p" ] || continue
 		[ "$p" = "0" ] && continue
 		echo "  kill 孤儿(端口 $lo-$((hi - 1)) 占用)PID=$p"
-		taskkill //F //PID "$p" >/dev/null 2>&1 || true
+		if [ "$_IS_MACOS" = "1" ]; then
+			kill -9 "$p" >/dev/null 2>&1 || true
+		else
+			taskkill //F //PID "$p" >/dev/null 2>&1 || true
+		fi
 	done
 }
 
@@ -91,9 +121,13 @@ kill_clients_by_cmdline() {
 		echo "[env] kill_clients_by_cmdline 需要匹配串" >&2
 		return 1
 	fi
-	powershell.exe -NoProfile -Command \
-		"Get-CimInstance Win32_Process | Where-Object { \$_.Name -like '*Godot*' -and \$_.CommandLine -like '*${pat}*' } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force }" \
-		>/dev/null 2>&1 || true
+	if [ "$_IS_MACOS" = "1" ]; then
+		pkill -9 -f "Godot.*${pat}" >/dev/null 2>&1 || true
+	else
+		powershell.exe -NoProfile -Command \
+			"Get-CimInstance Win32_Process | Where-Object { \$_.Name -like '*Godot*' -and \$_.CommandLine -like '*${pat}*' } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force }" \
+			>/dev/null 2>&1 || true
+	fi
 }
 
 # 7777 上有没有活着的大厅。
@@ -103,5 +137,9 @@ kill_clients_by_cmdline() {
 #   本仓三支脚本(`royale_soak_probe` / `rejoin_probe` / `team_match_probe`)原先都用的那版
 #   ⇒ 它们的"7777 已被占用"提示与连带清理**从未触发过**(登记见 docs/eng/tests.md)。
 lobby_alive() {
-	netstat -ano 2>/dev/null | grep -qE "[:.]7777[[:space:]]"
+	if [ "$_IS_MACOS" = "1" ]; then
+		lsof -nP -iUDP:7777 -t 2>/dev/null | grep -q .
+	else
+		netstat -ano 2>/dev/null | grep -qE "[:.]7777[[:space:]]"
+	fi
 }

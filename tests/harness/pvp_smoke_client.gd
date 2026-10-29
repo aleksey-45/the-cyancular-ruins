@@ -25,6 +25,10 @@ func _ready() -> void:
 		print("SMOKE_CLIENT OK: 加入成功 role=%d" % r))
 	Wire.local_match_start.connect(_on_match_start)
 	Wire.local_go_match.connect(_on_go_match)
+	# 1v1 开局要房主点「开始游戏」(9378f5b0 起不再两人凑齐自动开):建房端扮演房主,
+	# 等待室状态里两人齐了就发一次 PVP_START —— 产线同一入口(mp_lobby 房主按钮)。
+	if role == "create":
+		Wire.local_pvp_room_state.connect(_on_pvp_room_state)
 	Wire.connected_to_server.connect(_on_connected, CONNECT_ONE_SHOT)
 	Wire.connection_failed.connect(func() -> void:
 		printerr("SMOKE_CLIENT FAIL: 连接大厅失败")
@@ -56,6 +60,15 @@ func _on_go_match(role_assign: int, port: int) -> void:
 	if err != OK:
 		printerr("SMOKE_CLIENT FAIL: start_client(worker) %d" % err)
 		get_tree().quit(1)
+
+var _start_sent := false
+
+func _on_pvp_room_state(state: Dictionary) -> void:
+	if _start_sent or (state.get("players", []) as Array).size() < 2:
+		return
+	_start_sent = true
+	print("SMOKE_CLIENT OK: 两人齐,房主点开始")
+	Wire.send(WireKind.PVP_START, [])
 
 func _claim_worker(role_assign: int) -> void:
 	print("SMOKE_CLIENT OK: claim role=%d" % role_assign)

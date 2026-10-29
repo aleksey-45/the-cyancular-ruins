@@ -392,7 +392,7 @@ func _on_wait_pick(team: int) -> void:
 func _on_wait_start_pressed() -> void:
 	_status.text = "开局中…"
 	if _wait_mode == PvpSession.MODE_PVP:
-		Wire.rpc_id(1, "pvp_start")   # 1v1(2026-10-24):两人齐后由房主触发
+		Wire.send(WireKind.PVP_START, [])   # 1v1(2026-10-24):两人齐后由房主触发
 	elif _wait_mode == PvpSession.MODE_ROYALE:
 		Wire.send(WireKind.ROYALE_START, [])
 	elif _wait_mode == PvpSession.MODE_TEAM:

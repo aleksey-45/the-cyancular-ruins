@@ -75,7 +75,7 @@ func _on_pvp_room_state(state: Dictionary) -> void:
 	var players: Array = state.get("players", [])
 	if players.size() >= 2 and int(state.get("your_role", 0)) == int(state.get("host_role", -1)):
 		_start_sent = true
-		Wire.rpc_id(1, "pvp_start")
+		Wire.send(WireKind.PVP_START, [])
 
 func _on_snapshot_world(world: Dictionary) -> void:
 	_got_snapshot = true

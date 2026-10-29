@@ -108,25 +108,34 @@ var unknown_kinds := 0
 
 func start_server(port: int = DEFAULT_PORT) -> Error:
 	_teardown()
-	_host = ENetConnection.new()
+	var host := ENetConnection.new()
 	# max_peers 给 32(>16 人上限,重连时新旧 peer 短暂并存也够);带宽不限 = 与 v4 同口径。
-	var err := _host.create_host_bound("*", port, 32, WireKind.CHANNELS, 0, 0)
-	if err == OK:
-		is_server_mode = true
-	return err
+	var err := host.create_host_bound("*", port, 32, WireKind.CHANNELS, 0, 0)
+	if err != OK:
+		# ★ 绑不上(端口被占)就得把手松开:留一个「非活动」连接会让 _process 每帧 service 报错。
+		host.destroy()
+		return err
+	_host = host
+	is_server_mode = true
+	return OK
 
 
 func start_client(addr: String, port: int = DEFAULT_PORT) -> Error:
 	_teardown()
-	_host = ENetConnection.new()
-	var err := _host.create_host(1, WireKind.CHANNELS, 0, 0)
+	var host := ENetConnection.new()
+	var err := host.create_host(1, WireKind.CHANNELS, 0, 0)
 	if err != OK:
+		host.destroy()
 		return err
+	_host = host
 	is_server_mode = false
 	# 连接结果异步:成功/失败都在 _process 的 EVENT_CONNECT / EVENT_DISCONNECT 里落到
 	# local_server_message(「连接失败」/「服务器断开」),与 v4 的 MultiplayerAPI 映射同词。
-	_server_peer = _host.connect_to_host(addr, port, WireKind.CHANNELS, CONNECT_MAGIC)
-	return OK if _server_peer != null else ERR_CANT_CONNECT
+	_server_peer = host.connect_to_host(addr, port, WireKind.CHANNELS, CONNECT_MAGIC)
+	if _server_peer == null:
+		_teardown()
+		return ERR_CANT_CONNECT
+	return OK
 
 
 func stop() -> void:

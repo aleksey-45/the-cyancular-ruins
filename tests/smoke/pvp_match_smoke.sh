@@ -68,7 +68,7 @@ A_PID=$!
 CODE=""
 _deadline=$(( $(date +%s) + ROOM_WAIT ))
 while [ "$(date +%s)" -lt "$_deadline" ]; do
-CODE=$(grep -oP 'SMOKE_ROOM_CODE=\K[0-9]+' /tmp/pvp2_a.log 2>/dev/null | head -1 || true)
+CODE=$(sed -n 's/.*SMOKE_ROOM_CODE=\([0-9][0-9]*\).*/\1/p' /tmp/pvp2_a.log 2>/dev/null | head -1 || true)
   if [ -n "$CODE" ]; then break; fi
   if ! kill -0 "$A_PID" 2>/dev/null; then
     echo "SMOKE FAIL: 建房客户端提前退出(没走到 create_room)"
