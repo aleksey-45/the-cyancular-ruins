@@ -4,7 +4,7 @@
 
 ## 渲染管线(`scenes/level_0.tscn`)
 
-- 根节点把未处理输入手动转发进 `WorldViewport`(SubViewport);世界(墙体 / 玩家 / 敌人)渲染进 SubViewport,`PostProcess`(`post_process.gd`)做像素缩放裁切 + 倒地暗角。
+- 根节点把未处理输入手动转发进 `WorldViewport`(SubViewport);世界(墙体 / 玩家 / 敌人)渲染进 SubViewport,`PostProcess`(`post_process.gd`)做像素缩放裁切 + 倒地暗角 + 残血边缘暗角(低于 35% 起、10% 满;**只在屏幕边缘**,中心保持干净,纯客户端、不挡 HUD)。
 - 相机 `core/present/camera_2d.gd` 在 `_process` 里直贴目标位置(加 `cam_y_bias`),另有 `shake()`:无前瞻、无死区、无平滑。`PlayerParams.cam_lookahead_x` / `cam_lookahead_y` / `cam_deadzone` 全仓无人读,别按它们改行为。
 
 - 图集构造 `core/sim/terrain_atlas.gd`(`TerrainAtlas`):源砖 → 图集 → TileSet;`Level0._create_wall_tileset()` / `_create_water_tileset()` 只剩转发。

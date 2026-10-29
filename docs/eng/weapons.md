@@ -6,6 +6,7 @@
 
 - `WeaponBase`(Node2D):数值全是 `@export`(fire_cooldown、bullet_speed / range / size / color、pellet_count / spread、damage / impact、recoil_push / kick、cam_shake、move / jump_penalty、heavy_aim 激光、pitch_clamp_deg)。`fire()` 按 `pellet_count` 从 `bullet_scene`(默认 `bullet.tscn`)出弹并注入 `bullet_gravity`;`apply_hit()` 调敌人 `hurt()`;heavy_aim 按住预瞄、松开发射;`preview_arc = true` 时预瞄画抛物线弧线 + 末端爆点标记。
 - 弹道方向与走路朝向解耦:`fire()` 开火瞬间先 `_auto_aim()`(由鼠标推导瞄准侧,近垂直瞄沿用上次明确侧)再出弹;所有开火路径都取本帧鼠标方向,不读 `get_facing()`。
+- 精灵 pose 的唯一入口 = `_apply_sprite_pose()`(合成顺序:换弹压枪 > 开火后坐 > 走路 bob)。走路 bob **不跑自己的计时器**:相位取宿主 `AnimatedSprite2D` 的 `frame + frame_progress`(仅 `move` 动画;蹲/冲/飞是单帧姿态、没有帧进度 ⇒ 自然不抖),幅度随水平速度淡入。只写 `Sprite2D` 的 position/rotation ⇒ 枪口 `Muzzle` 与出弹点零影响;对手/队友副本的枪同样由 `drive_remote_visual(aim, facing, animator, |vel.x|)` 驱动。
 - 术语:`type_id` = 武器类型 id(整数 1–N,与键位、背包位置无关);`inst` = 逐把唯一,进输入包与 `capture_state`;`index` = 背包位置(0-based,只在本地用于按键解析 / HUD 行号)。`slot` 只保留在三处:`Player.weapon_slot` 挂点、容量格 UI(`WeaponSlots` / `C_SLOT_*`)、`capture_state()` 的 `wslot` 键。
 - 上行传解析结果:输入包带 `"winst"` = 目标那把的 `inst`。客户端本地解析(数字键按 `index`、滚轮按相对位置)出 `inst`;服务器 `equip_inst(inst)`,`index_of_inst` 找不到就静默不动。下行世界包的枪型字段是 `type_id`。改这个键 = 改协议,两端必须同一 build。
 - `equip_type` 对「背包里没有这个类型」`push_error` 且不加入。发放走 `pick_up(type_id, MAG_FULL)` 或 `set_initial_inventory([...])`。

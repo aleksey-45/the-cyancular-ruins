@@ -9,6 +9,9 @@ uniform vec2 crop_scale = vec2(1.0);
 uniform float desat : hint_range(0.0, 1.0) = 0.0;
 // 受击红闪:0=无,1=纯红罩。由 PostProcess.flash_hit() 置峰后每帧衰减。
 uniform float hit_red : hint_range(0.0, 1.0) = 0.0;
+// 残血红屏:0=无(血量高于阈值),1=最低血。只在**屏幕边缘**压暗+去饱和+暗红,中心保持干净(不挡索敌/准星)。
+uniform float low_hp : hint_range(0.0, 1.0) = 0.0;
+uniform float low_hp_pulse = 0.0;   // 心跳相位(弧度),PostProcess 里按血量加速
 // ── 个人钟·第一阶段(时间玩法)三个全屏效果 ──
 uniform float rewind_film : hint_range(0.0, 1.0) = 0.0;   // 回溯底片化覆盖度(0→1:由内而外铺满)
 uniform float loan_depth : hint_range(0.0, 1.0) = 0.0;    // 贷款深度:变亮 + 红蓝色差
@@ -67,5 +70,16 @@ void fragment() {
 		float cb = texture(screen_tex, uv - vec2(off, 0.0)).b;
 		COLOR.rgb = mix(COLOR.rgb, vec3(cr, base.g, cb), 0.9);
 		COLOR.rgb += vec3(0.10, 0.095, 0.12) * loan_depth;
+	}
+	// ── 残血红屏:边缘压暗 + 去饱和 + 暗红,中心(edge=0)完全不动 ──
+	// 不是纯红罩:保留边缘明暗关系(纯色覆盖会把地形细节糊成一片),强度封顶 0.55,心跳只做 ±20% 呼吸。
+	if (low_hp > 0.0) {
+		float edge_r = clamp(distance(SCREEN_UV, vec2(0.5)) / 0.78, 0.0, 1.0);
+		float edge = smoothstep(0.42, 0.95, edge_r);
+		float pulse = 0.80 + 0.20 * sin(low_hp_pulse);
+		float amt = low_hp * edge * pulse;
+		float g = dot(COLOR.rgb, vec3(0.299, 0.587, 0.114));
+		vec3 danger = vec3(g * 0.55 + 0.10, g * 0.06, g * 0.06);
+		COLOR.rgb = mix(COLOR.rgb, danger, amt * 0.55);
 	}
 }

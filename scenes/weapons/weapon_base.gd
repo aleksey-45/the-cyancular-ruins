@@ -7,6 +7,12 @@ enum PenaltyMode { NONE, WHILE_FIRING, WHILE_AIM_OR_COOLDOWN }
 @export var bullet_scene: PackedScene = preload("res://scenes/weapons/bullet.tscn")
 const RECOIL_TIME: float = 0.06  # 枪口后坐复位时长(秒),旧 recoil_time 内联
 const PREVIEW_COLLISION_RADIUS: float = 4.0
+# ── 走路 bob(纯表现)── 相位**取宿主模型的走路动画帧**(move 的 frame+frame_progress),不是自己的计时器;
+#    单帧姿态(蹲/冲刺/飞行)没有帧进度 ⇒ 自然不抖,不为它们加代码。幅度随水平速度线性淡入。
+const WALK_BOB_Y: float = 0.55             # local px(玩家根 2.5× 缩放 ⇒ 屏幕 ≈1.4px)
+const WALK_BOB_X: float = 0.22
+const WALK_BOB_ROT_DEG: float = 0.5
+const WALK_BOB_REF_SPEED: float = 700.0    # px/s:达到此速度时满幅
 
 # ── 武器参数 ──(tier 仅作信息/分组用,不参与行为判定)
 @export var tier: Tier = Tier.LIGHT
@@ -75,7 +81,8 @@ var pending_mag: int = MAG_UNSET
 var _mag_ready := false
 var _reloading := false
 var _reload_t := 0.0
-var _reload_pose := false             # 换弹姿态生效中(结束/切枪后复位精灵)
+var _walk_bob := Vector2.ZERO          # 走路 bob(纯表现;相位取宿主模型的 move 帧)
+var _walk_bob_rot := 0.0
 
 # 换弹动画:进度 0→1 期间枪口下压再回位(sin 包络),中段带机械微抖;作用于精灵局部坐标,与根节点的瞄准旋转/镜像互不干扰。
 const RELOAD_TILT := 0.9                    # 枪口下压最大弧度(≈51°)
@@ -97,21 +104,53 @@ func start_reload() -> void:
 	_reload_t = reload_time
 	Sfx.play("reload")
 
-func _update_reload_pose() -> void:
-	# 重建窗口:call_deferred(add_child) 入树前 @onready sprite 仍是 null。★ 这里「跳过」是安全的,与 mag_ammo 走 pending_mag 提前落盘不同 —— 那是权威态、会被 _ready() 重置;姿势只是纯表现,下一帧随 _reloading 再算一遍即可。
+# 把「换弹 > 后坐 > 走路 bob」合成为精灵 pose —— **唯一**写 sprite.position/rotation 的地方(以后加表现只改这里)。
+# 换弹姿态压过其他(与旧实现同优先);bob 始终叠加:走路/换弹/后坐同时发生时只有它是连续的。
+func _apply_sprite_pose() -> void:
 	if sprite == null:
-		return   # 未入树(重建窗口):`@onready` 尚未解析,姿势下一帧补算
+		return   # 未入树(重建窗口):@onready 尚未解析,姿势下一帧补算
+	var pos := _base_sprite_pos
+	var rot := 0.0
 	if _reloading:
-		_reload_pose = true
 		var p := clampf(1.0 - _reload_t / maxf(reload_time, 0.01), 0.0, 1.0)
 		var k := sin(p * PI)          # 0→1→0:前段压下,末段回位
 		var jiggle := sin(p * 34.0) * 1.2 * k   # 中段机械微抖(频率固定,幅度随包络)
-		sprite.rotation = RELOAD_TILT * k
-		sprite.position = _base_sprite_pos + RELOAD_OFFSET * k + Vector2(jiggle, 0.0)
-	elif _reload_pose:
-		_reload_pose = false
-		sprite.rotation = 0.0
-		sprite.position = _base_sprite_pos
+		rot = RELOAD_TILT * k
+		pos += RELOAD_OFFSET * k + Vector2(jiggle, 0.0)
+	elif _recoil_timer > 0.0:
+		pos -= Vector2(1.0, 0.0) * recoil_kick * (_recoil_timer / RECOIL_TIME)
+	sprite.position = pos + _walk_bob
+	sprite.rotation = rot + _walk_bob_rot
+
+# ★ 走路 bob 的相位取自**宿主模型的走路动画帧**(move 的 frame + frame_progress),不是独立计时器:
+#   模型换一帧 = 枪跟着换一次;单帧姿态(蹲/冲刺/飞行)没有帧进度 ⇒ 自然不抖,不为它们加代码。
+#   幅度按水平速度淡入(停下即回中);一个 move 循环(8 帧)≈ 两步 ⇒ 纵向两次起伏。
+func _sample_walk_bob(anim: AnimatedSprite2D, speed_x: float) -> void:
+	_walk_bob = Vector2.ZERO
+	_walk_bob_rot = 0.0
+	if anim == null or anim.sprite_frames == null or anim.animation != &"move":
+		return
+	var n := anim.sprite_frames.get_frame_count(&"move")
+	if n <= 0:
+		return
+	var ratio := clampf(absf(speed_x) / WALK_BOB_REF_SPEED, 0.0, 1.0)
+	if ratio <= 0.0:
+		return
+	var prog := (float(anim.frame) + anim.frame_progress) / float(n)   # 0..1 = 一个 move 循环
+	var step := prog * TAU * 2.0
+	_walk_bob = Vector2(cos(prog * TAU) * WALK_BOB_X, sin(step) * WALK_BOB_Y) * ratio
+	_walk_bob_rot = sin(step) * deg_to_rad(WALK_BOB_ROT_DEG) * ratio
+
+func _host_walk_anim() -> AnimatedSprite2D:
+	if player == null:
+		return null
+	return player.get("animator") as AnimatedSprite2D
+
+func _host_speed_x() -> float:
+	if player == null:
+		return 0.0
+	var v = player.get("velocity")
+	return absf((v as Vector2).x) if v is Vector2 else 0.0
 
 @onready var sprite: Sprite2D = $Sprite2D
 @onready var muzzle: Marker2D = $Muzzle
@@ -226,7 +265,9 @@ func tick(delta: float) -> void:
 		if _attack_just_pressed():
 			try_fire()
 	_recoil_recover(delta)
-	_update_reload_pose()   # 换弹压枪优先级高于后坐复位:必须排在 _recoil_recover 之后
+	# 走路 bob 的相位取宿主模型帧(不是计时器);换弹/后坐/bob 的合成只在 _apply_sprite_pose 一处。
+	_sample_walk_bob(_host_walk_anim(), _host_speed_x())
+	_apply_sprite_pose()
 
 func try_fire() -> void:
 	if fire_cd_timer > 0.0:
@@ -261,7 +302,7 @@ func fire() -> void:
 	if player != null and player.has_method("apply_recoil"):
 		player.apply_recoil(recoil_push)
 	_recoil_timer = RECOIL_TIME
-	sprite.position = _base_sprite_pos - Vector2(1.0, 0.0) * recoil_kick
+	_apply_sprite_pose()   # 立即反映后坐(不等下一 tick);bob 用上一 tick 的采样
 	var cam: Camera2D = get_viewport().get_camera_2d()
 	if cam != null and cam.has_method("shake"):
 		cam.shake(cam_shake, cam_shake_time)
@@ -313,7 +354,8 @@ func is_previewing() -> bool:
 
 # PvP:服务器权威方向驱动副本武器外观(远端对手枪):只画朝向 + 枪口旋转,不读鼠标、不开火。副本武器不 equip(player==null)、_process 早退,由 player_replica 每帧调用本方法替代(复刻 _auto_aim 的镜像/旋转,俯仰随枪 clamp)。
 # ★ 预瞄线不对副本画:预瞄红线只有使用者本人可见,对手看不到你在蓄力重狙/榴弹。故本方法不收 show_preview 参数,并显式把 _aiming 压回 false(让「副本永不预瞄」成为写下来的意图);服务端快照仍带 previewing 字段,此处刻意不消费 —— 日后要改回「看得见」从这里接。
-func drive_remote_visual(aim_dir: Vector2, facing: int) -> void:
+func drive_remote_visual(aim_dir: Vector2, facing: int,
+		walk_anim: AnimatedSprite2D = null, walk_speed_x: float = 0.0) -> void:
 	if _laser == null or muzzle == null:
 		return   # _ready 的 call_deferred 尚未建好(换枪当帧),下帧再驱动
 	if aim_dir == Vector2.ZERO:
@@ -324,6 +366,9 @@ func drive_remote_visual(aim_dir: Vector2, facing: int) -> void:
 	scale.x = float(facing)
 	_aiming = false
 	_update_laser()
+	# 副本的枪也要跟走路 bob(相位同样取副本自己的模型帧;额度与本地玩家同源)。
+	_sample_walk_bob(walk_anim, walk_speed_x)
+	_apply_sprite_pose()
 
 func get_movement_multiplier() -> Vector2:
 	var active := false
@@ -420,11 +465,8 @@ func _update_explosion_marker(show: bool) -> void:
 		_explosion_marker.position = _laser.points[_laser.points.size() - 1]
 
 func _recoil_recover(delta: float) -> void:
-	if _recoil_timer > 0.0:
-		_recoil_timer = maxf(_recoil_timer - delta, 0.0)
-		sprite.position = _base_sprite_pos - Vector2(1.0, 0.0) * recoil_kick * (_recoil_timer / RECOIL_TIME)
-		if _recoil_timer == 0.0:
-			sprite.position = _base_sprite_pos
+	# 只推进计时器;精灵 pose 由 tick() 末尾的 _apply_sprite_pose() 统一写(与 bob/换弹合成一处)。
+	_recoil_timer = maxf(_recoil_timer - delta, 0.0)
 
 func get_current_aim_dir() -> Vector2:
 	return _aim_world_dir()

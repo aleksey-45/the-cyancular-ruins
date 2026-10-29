@@ -296,7 +296,7 @@ func _swap_weapon(type_id: int) -> void:
 func _drive_weapon_visual() -> void:
 	if _weapon == null or not _weapon.has_method("drive_remote_visual"):
 		return
-	_weapon.drive_remote_visual(_aim, _aim_facing)
+	_weapon.drive_remote_visual(_aim, _aim_facing, animator, absf(_vel.x))
 
 # 对手此刻是否在水中(脚底探针,与本体同口径 —— 本体同样按活动碰撞箱的脚底采样;偏移走 Water.feet_offset,幽灵体换姿态会自动失效重算)。★ 这一格不需要协议字段:本体的 in_water 本身就是纯位置网格查询(读 MazeGenerator.current_grid,而 PvP 客户端也建同一张图),故副本在客户端跑同一查询即可:零载荷字段、零 RPC、零服务器改动。★ 位置用渲染用的 global_position(已锚到最近副本、可能不在 [0,MAP))是安全的:Water.is_in_water → GridPathfinder.cell_of 两端都 posmod,而 MAP_WIDTH/HEIGHT 由 GameParameters.refresh_map_size() 按「格数 × TILE_SIZE」算出 ⇒ 恒为 64 的整数倍 ⇒ 整幅平移一个副本后落回同一格(实测:锚到非 canonical 副本与 canonical 查询同值)。
 func _in_water() -> bool:

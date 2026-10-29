@@ -11,6 +11,15 @@ var _hit_red: float = 0.0   # 受击红闪当前强度(每帧衰减,见 flash_hi
 var _film: float = 0.0             # 回溯底片化强度(Level0 每帧推)
 var _loan: float = 0.0
 var _haste: float = 0.0
+# 残血红屏(纯客户端表现):低于 LOW_HP_START 开始,到 LOW_HP_FULL 满强度;只画屏幕边缘。
+const LOW_HP_START := 0.35
+const LOW_HP_FULL := 0.10
+const LOW_HP_RATE := 0.55           # 每秒过渡量(受伤进得比回血快,见 _tick_low_hp)
+const LOW_HP_BPM_LOW := 72.0        # 低血心跳起拍
+const LOW_HP_BPM_HIGH := 110.0      # 最低血心跳
+var _low_hp: float = 0.0
+var _low_hp_pulse: float = 0.0
+var _low_hp_player: Node = null
 
 # 窗口尺寸 / 世界视口尺寸:把窗口映射到世界视口的中心裁剪区。
 # 枪的瞄准换算(weapon_base)与 shader 采样都用它,收敛到单一来源,改一处不偏。
@@ -89,3 +98,26 @@ func _process(delta: float) -> void:
 		_hit_red = maxf(_hit_red - delta * 4.0, 0.0)   # 衰减放慢:微红可感知地停留 ~0.25s
 		if _mat != null:
 			_mat.set_shader_parameter("hit_red", _hit_red)
+	_tick_low_hp(delta)
+
+
+# 残血红屏驱动:从 `player` 组取本地玩家(单机/PvP 都是这一个入口),按 hp/max_hp 映射到 0..1。
+# ★ 纯表现:不接信号、不需要服务器字段,也不碰 HUD;倒地时淡出(倒地有既有的灰化)。
+func _tick_low_hp(delta: float) -> void:
+	if _mat == null:
+		return
+	if _low_hp_player == null or not is_instance_valid(_low_hp_player):
+		_low_hp_player = get_tree().get_first_node_in_group("player")
+	var target := 0.0
+	if _low_hp_player != null and is_instance_valid(_low_hp_player) \
+			and _low_hp_player.has_method("is_downed") and not _low_hp_player.is_downed():
+		var mx := float(_low_hp_player.get("max_hp"))
+		if mx > 0.0:
+			var ratio := clampf(float(_low_hp_player.get("hp")) / mx, 0.0, 1.0)
+			target = clampf((LOW_HP_START - ratio) / (LOW_HP_START - LOW_HP_FULL), 0.0, 1.0)
+	# 受伤方向快、恢复方向慢:避免 c2 校正 / 治疗 / 复活时闪跳。
+	var rate := LOW_HP_RATE * (1.6 if target > _low_hp else 0.7)
+	_low_hp = move_toward(_low_hp, target, delta * rate)
+	_low_hp_pulse += delta * lerpf(LOW_HP_BPM_LOW, LOW_HP_BPM_HIGH, _low_hp) / 60.0 * TAU
+	_mat.set_shader_parameter("low_hp", _low_hp)
+	_mat.set_shader_parameter("low_hp_pulse", _low_hp_pulse)
