@@ -1,6 +1,6 @@
 #include "prediction_history.h"
 #include "performance_stats.h"
-#include "combat_kernel.h"
+#include "projectile_snapshot.h"
 #include <godot_cpp/core/object.hpp>
 
 using namespace godot;
@@ -79,7 +79,9 @@ void NativePredictionHistory::remember(int64_t tick, NativeActorBody *player, in
     cursors[player->role] = cursor;
     saved["players"] = players; saved["cursors"] = cursors; saved["remote"] = remote_modes;
     saved["layers"] = remote_layers; saved["contacts"] = contacts; saved["geometry"] = geometry;
-    saved["projectiles"] = snapshot_projectiles_native(projectiles); saved["revision"] = revision;
+    const Ref<NativeProjectileSnapshot> snapshot = NativeProjectileSnapshot::capture(projectiles, projectile_capacity);
+    projectile_capacity = snapshot->size();
+    saved["projectiles"] = snapshot; saved["revision"] = revision;
     saved["time"] = time; saved["terrain"] = terrain; saved["rewinding"] = player->rewinding;
     frames[tick] = saved;
     frames.erase(tick - keep);

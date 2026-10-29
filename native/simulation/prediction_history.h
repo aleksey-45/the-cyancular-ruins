@@ -15,6 +15,7 @@ class NativePredictionHistory : public RefCounted {
     Dictionary remote_modes, remote_layers;
     std::vector<Remote> remotes;
     bool metadata_valid = false;
+    size_t projectile_capacity = 0;
     int keep = 0;
 protected:
     static void _bind_methods();

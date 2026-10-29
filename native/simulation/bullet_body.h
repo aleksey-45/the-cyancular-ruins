@@ -2,6 +2,16 @@
 #include "simulation.h"
 
 namespace godot {
+struct ProjectileMotionState {
+    int64_t type = 0;
+    Vector2 position, velocity;
+    double traveled = 0, fuse_elapsed = 0, fuse_duration = 0;
+    bool fuse_active = false, direct_hit = false;
+    static ProjectileMotionState from_dictionary(const Dictionary &state);
+    Dictionary to_dictionary() const;
+    bool matches(const Dictionary &state) const;
+};
+
 class NativeBulletBody : public CharacterBody2D {
     GDCLASS(NativeBulletBody, CharacterBody2D)
     Ref<NativeTerrain> geometry;
@@ -30,6 +40,8 @@ public:
     Ref<KinematicCollision2D> get_native_impact() const { return impact; }
     Dictionary motion_state() const;
     void restore_motion(const Dictionary &state);
+    ProjectileMotionState capture_motion() const;
+    void restore_motion_state(const ProjectileMotionState &state);
     void start_player_fuse();
     void start_fuse(double duration);
     NativeActorBody *native_player_contact(const Array &players, double radius, bool point_only,

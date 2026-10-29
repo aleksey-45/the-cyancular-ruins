@@ -5,8 +5,6 @@
 #include <vector>
 
 namespace godot {
-Dictionary snapshot_projectiles_native(const Dictionary &entries);
-
 // Attacks read and update terrain synchronously, without script callbacks.
 class NativeCombatKernel : public RefCounted {
     GDCLASS(NativeCombatKernel, RefCounted)
@@ -21,7 +19,8 @@ class NativeCombatKernel : public RefCounted {
     Ref<NativeTerrain> geometry;
     bool first_prediction = false;
     NativeActorBody *local() const;
-    std::vector<int64_t> attack_ids(const Dictionary &entries, int source, int64_t role = 0) const;
+    std::vector<int64_t> attack_ids(const Dictionary &entries, int source, int64_t role = 0,
+        const std::vector<int64_t> *candidates = nullptr) const;
     Dictionary confirmed_hit(int64_t id, int source, int64_t role) const;
     bool apply_confirmed_hits(int64_t id, int source, int64_t role = 0);
     void apply_hit(int64_t id, int source, NativeActorBody *target, Vector2 position, double force, int damage = 0);
@@ -29,7 +28,7 @@ class NativeCombatKernel : public RefCounted {
     void finish_direct(NativeBulletBody *bullet);
     NativeActorBody *contact(NativeBulletBody *bullet, bool point_only = false);
     void step_blast(int64_t id);
-    void step_contacts();
+    void step_contacts(const std::vector<int64_t> &candidates);
     static void simulate_projectile(NativeBulletBody *bullet, double delta);
     static void reset_projectile(NativeProjectileEntry *entry, const Dictionary &state, int64_t at);
     static Vector2 path_contact(const PackedVector2Array &points, Rect2 rect, double corridor, Vector2 map_size);
@@ -41,7 +40,6 @@ public:
     void step(int64_t at, const Array &targets, const Ref<NativeTerrain> &world, bool first);
     Array take_notifications();
     bool step_beams(int64_t at, int64_t role, const Array &targets, const Ref<NativeTerrain> &world);
-    Dictionary snapshot_projectiles() const { return snapshot_projectiles_native(projectiles); }
     Dictionary confirmed_result_at(int64_t id, int64_t at, int source, int64_t role) const;
     bool proxy_queries_match(int64_t at, const Array &proxies, const Dictionary &actors, Vector2 map_size) const;
     Dictionary catch_up_remote(int64_t id, const Dictionary &history, int64_t through, double delta, Vector2 map_size);

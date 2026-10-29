@@ -31,5 +31,12 @@ func _run() -> void:
 		for failure in suite.failures: printerr("FAIL %s: %s" % [group, failure])
 		failures += suite.failures.size()
 		print("CHECK %s %s" % [group, "PASS" if suite.failures.is_empty() else "FAIL"])
+	await get_tree().process_frame
+	for child in get_tree().root.get_children():
+		if is_instance_valid(child) and child is AudioStreamPlayer:
+			if child.playing: await child.finished
+			if is_instance_valid(child): child.queue_free()
+	await get_tree().process_frame
+	Sfx._cache.clear()
 	print("CHECKS COMPLETE failures=%d" % failures)
 	get_tree().quit(0 if failures == 0 else 1)

@@ -4,7 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
-#include <set>
+#include <iterator>
 
 using namespace godot;
 namespace {
@@ -25,25 +25,24 @@ Dictionary ensure_dictionary(Dictionary &dict, int64_t key) {
     if (!dict.has(key)) dict[key] = Dictionary();
     return dict[key];
 }
+void sort_ids(std::vector<int64_t> &ids) {
+    std::sort(ids.begin(), ids.end());
+    ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
 }
-
-Dictionary godot::snapshot_projectiles_native(const Dictionary &entries) {
-    Dictionary result;
-    const Array ids = entries.keys();
-    for (int i = 0; i < ids.size(); ++i) {
-        NativeProjectileEntry *entry = entry_of(entries[ids[i]]);
-        NativeBulletBody *bullet = entry ? entry->get_bullet() : nullptr;
-        if (bullet && entry->active && !bullet->finished) result[ids[i]] = bullet->motion_state();
-    }
+std::vector<int64_t> merge_ids(const std::vector<int64_t> &a, const std::vector<int64_t> &b) {
+    std::vector<int64_t> result;
+    result.reserve(a.size() + b.size());
+    std::set_union(a.begin(), a.end(), b.begin(), b.end(), std::back_inserter(result));
     return result;
 }
+}
+
 void NativeCombatKernel::_bind_methods() {
     ClassDB::bind_method(D_METHOD("configure", "player", "sources", "profiles", "rules"), &NativeCombatKernel::configure);
     ClassDB::bind_method(D_METHOD("bind_hitboxes", "value"), &NativeCombatKernel::bind_hitboxes);
     ClassDB::bind_method(D_METHOD("step", "tick", "players", "geometry", "first_prediction"), &NativeCombatKernel::step);
     ClassDB::bind_method(D_METHOD("take_notifications"), &NativeCombatKernel::take_notifications);
     ClassDB::bind_method(D_METHOD("step_beams", "tick", "role", "players", "geometry"), &NativeCombatKernel::step_beams);
-    ClassDB::bind_method(D_METHOD("snapshot_projectiles"), &NativeCombatKernel::snapshot_projectiles);
     ClassDB::bind_method(D_METHOD("confirmed_result_at", "id", "tick", "source", "role"), &NativeCombatKernel::confirmed_result_at);
     ClassDB::bind_method(D_METHOD("proxy_queries_match", "tick", "proxies", "actors", "map_size"), &NativeCombatKernel::proxy_queries_match);
     ClassDB::bind_method(D_METHOD("catch_up_remote", "id", "history", "through", "delta", "map_size"), &NativeCombatKernel::catch_up_remote);
@@ -68,30 +67,41 @@ void NativeCombatKernel::configure(NativeActorBody *player, const Dictionary &so
 NativeActorBody *NativeCombatKernel::local() const {
     return local_id ? Object::cast_to<NativeActorBody>(ObjectDB::get_instance(local_id)) : nullptr;
 }
-std::vector<int64_t> NativeCombatKernel::attack_ids(const Dictionary &entries, int source, int64_t role) const {
-    std::set<int64_t> included;
-    const Array ids = entries.keys();
-    for (int i = 0; i < ids.size(); ++i) {
-        const int64_t id = ids[i];
-        if (role && id >> 48 != role) continue;
+std::vector<int64_t> NativeCombatKernel::attack_ids(const Dictionary &entries, int source, int64_t role,
+        const std::vector<int64_t> *candidates) const {
+    std::vector<int64_t> included;
+    const auto consider = [&](int64_t id) {
+        if ((role && id >> 48 != role) || !entries.has(id)) return;
         if (source != 1) {
             const NativeProjectileEntry *entry = entry_of(entries[id]);
-            const NativeBulletBody *bullet = entry ? entry->get_bullet() : nullptr;
-            if (!entry || ((!entry->active || !bullet || bullet->finished) && entry->birth_tick != tick)) continue;
-        } else if (int64_t(Dictionary(entries[id])["tick"]) != tick) continue;
-        included.insert(id);
+            if (!entry || (!entry->active && entry->birth_tick != tick)) return;
+            const NativeBulletBody *bullet = entry->get_bullet();
+            if ((!bullet || bullet->finished) && entry->birth_tick != tick) return;
+        } else if (int64_t(Dictionary(entries[id])["tick"]) != tick) return;
+        included.push_back(id);
+    };
+    if (candidates) {
+        included.reserve(candidates->size());
+        for (int64_t id : *candidates) consider(id);
+    } else {
+        const Array ids = entries.keys();
+        included.reserve(ids.size());
+        for (int i = 0; i < ids.size(); ++i) consider(ids[i]);
+        sort_ids(included);
     }
+    std::vector<int64_t> confirmed;
     const Array hit_ids = hits.keys();
     for (int i = 0; i < hit_ids.size(); ++i) {
         const int64_t id = hit_ids[i];
-        if (included.count(id)) continue;
+        if (std::binary_search(included.begin(), included.end(), id)) continue;
         const Array records = hits[id];
         for (int h = 0; h < records.size(); ++h) {
             const Dictionary hit = records[h];
-            if (int64_t(hit["tick"]) == tick && int(hit["source"]) == source && (!role || int64_t(hit["shooter"]) == role)) { included.insert(id); break; }
+            if (int64_t(hit["tick"]) == tick && int(hit["source"]) == source && (!role || int64_t(hit["shooter"]) == role)) { confirmed.push_back(id); break; }
         }
     }
-    return {included.begin(), included.end()};
+    sort_ids(confirmed);
+    return merge_ids(included, confirmed);
 }
 Dictionary NativeCombatKernel::confirmed_hit(int64_t id, int source, int64_t role) const {
     return confirmed_result_at(id, tick, source, role);
@@ -207,9 +217,11 @@ void NativeCombatKernel::step(int64_t at, const Array &targets,
     for (int i = 0; i < recorded.size(); ++i) if (int64_t(recorded[i]) < tick - keep) outcomes.erase(recorded[i]);
     proxy_queries.erase(tick - keep); owner_modes.erase(tick - keep);
     const auto ids = attack_ids(projectiles, 2);
-    std::set<int64_t> ordered(ids.begin(), ids.end());
+    std::vector<int64_t> current_blasts;
     const Array blast_ids = blasts.keys();
-    for (int i = 0; i < blast_ids.size(); ++i) if (int64_t(Dictionary(blasts[blast_ids[i]])["tick"]) == tick) ordered.insert(blast_ids[i]);
+    for (int i = 0; i < blast_ids.size(); ++i) if (int64_t(Dictionary(blasts[blast_ids[i]])["tick"]) == tick) current_blasts.push_back(blast_ids[i]);
+    sort_ids(current_blasts);
+    const auto ordered = merge_ids(ids, current_blasts);
     if (!local()) return;
     for (const int64_t id : ordered) {
         if (!projectiles.has(id)) {
@@ -246,10 +258,11 @@ void NativeCombatKernel::step(int64_t at, const Array &targets,
         }
         step_blast(id);
     }
-    step_contacts();
+    step_contacts(ids);
 }
-void NativeCombatKernel::step_contacts() {
-    for (int64_t id : attack_ids(projectiles, 0)) {
+void NativeCombatKernel::step_contacts(const std::vector<int64_t> &candidates) {
+    // The advance phase only changes lifecycle flags; recheck them before contact.
+    for (int64_t id : attack_ids(projectiles, 0, 0, &candidates)) {
         const bool confirmed = apply_confirmed_hits(id, 0);
         if (!projectiles.has(id)) continue;
         NativeProjectileEntry *entry = entry_of(projectiles[id]);

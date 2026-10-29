@@ -98,20 +98,39 @@ int NativeBulletBody::advance_physics(double delta, bool canonical) {
     return MOVED;
 }
 Dictionary NativeBulletBody::motion_state() const {
+    return capture_motion().to_dictionary();
+}
+ProjectileMotionState NativeBulletBody::capture_motion() const {
+    return {type_id, get_position(), velocity_vec, traveled, _fuse_elapsed, _fuse_duration, _fuse_active, direct_hit};
+}
+ProjectileMotionState ProjectileMotionState::from_dictionary(const Dictionary &st) {
+    return {st["type_id"], st["pos"], st["vel"], st["traveled"], st["fuse_elapsed"],
+        st["fuse_duration"], st["fuse_active"], st["direct_hit"]};
+}
+bool ProjectileMotionState::matches(const Dictionary &st) const {
+    const ProjectileMotionState other = from_dictionary(st);
+    return type == other.type && position == other.position && velocity == other.velocity && traveled == other.traveled &&
+        fuse_elapsed == other.fuse_elapsed && fuse_duration == other.fuse_duration &&
+        fuse_active == other.fuse_active && direct_hit == other.direct_hit;
+}
+Dictionary ProjectileMotionState::to_dictionary() const {
     Dictionary result;
-    result["type_id"] = type_id; result["pos"] = get_position(); result["vel"] = velocity_vec;
-    result["traveled"] = traveled; result["fuse_active"] = _fuse_active;
-    result["fuse_elapsed"] = _fuse_elapsed; result["fuse_duration"] = _fuse_duration;
+    result["type_id"] = type; result["pos"] = position; result["vel"] = velocity;
+    result["traveled"] = traveled; result["fuse_active"] = fuse_active;
+    result["fuse_elapsed"] = fuse_elapsed; result["fuse_duration"] = fuse_duration;
     result["direct_hit"] = direct_hit;
     return result;
 }
 void NativeBulletBody::restore_motion(const Dictionary &st) {
-    set_position(st["pos"]); velocity_vec = st["vel"];
+    restore_motion_state(ProjectileMotionState::from_dictionary(st));
+}
+void NativeBulletBody::restore_motion_state(const ProjectileMotionState &st) {
+    set_position(st.position); velocity_vec = st.velocity;
     if (!velocity_vec.is_zero_approx()) set_rotation(velocity_vec.angle());
-    traveled = st["traveled"]; _fuse_active = st["fuse_active"];
-    _fuse_elapsed = st["fuse_elapsed"]; _fuse_duration = st["fuse_duration"];
+    traveled = st.traveled; _fuse_active = st.fuse_active;
+    _fuse_elapsed = st.fuse_elapsed; _fuse_duration = st.fuse_duration;
     adjudicated_pos = get_position(); adjudicated = true;
-    finished = false; exploded = false; direct_hit = st["direct_hit"]; fuse_started = false;
+    finished = false; exploded = false; direct_hit = st.direct_hit; fuse_started = false;
     if (is_inside_tree()) force_update_transform();
 }
 static Vector2 toroidal_to(Vector2 from, Vector2 to, Vector2 size) {

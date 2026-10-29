@@ -5,6 +5,7 @@
 #include "combat_kernel.h"
 #include "prediction_history.h"
 #include "projectile_entry.h"
+#include "projectile_snapshot.h"
 #include "performance_stats.h"
 #include <godot_cpp/core/object.hpp>
 #include <godot_cpp/classes/shape2d.hpp>
@@ -108,6 +109,7 @@ static void initialize_simulation(ModuleInitializationLevel level) {
     ClassDB::register_class<NativeActorCollider>();
     register_native_bullet();
     register_native_projectile_entry();
+    register_native_projectile_snapshot();
     register_native_weapon();
     register_native_combat();
     register_native_history();

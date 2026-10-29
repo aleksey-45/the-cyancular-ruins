@@ -142,7 +142,7 @@ func reusable_tick(frame: Dictionary, invalid_from: int = 0) -> int:
 	var field := Player.prediction_difference(saved["players"][_player.role], own["state"])
 	if not field.is_empty(): return _reject_reuse()
 	# 本地锚点包含弹道；远端 HP、武器和账户不属于本地预测域。
-	if saved["projectiles"] != frame["world"]["projectiles"]: return _reject_reuse()
+	if not saved["projectiles"].matches(frame["world"]["projectiles"]): return _reject_reuse()
 	var economy_tick := 0
 	var accounts := {}
 	if frame["time"].has(_player.role): accounts[_player.role] = frame["time"][_player.role]
@@ -214,9 +214,9 @@ func _commit_reuse(partial: bool) -> void:
 	_reuse_commands.clear()
 
 func confirm_projectile(id: int, state: Dictionary, at_tick: int, owner: Node2D) -> bool:
-	var predicted: Dictionary = _states.get(at_tick, {}).get("projectiles", {}).get(id, {})
+	var same: bool = _states.has(at_tick) and _states[at_tick]["projectiles"].state_matches(id, state)
 	var changed := combat_prediction.checkpoint_projectile(id, state, at_tick, owner)
-	return changed and not CombatPrediction._same_projectile_state(predicted, state)
+	return changed and not same
 
 # 新的远端普通弹丸可以单独追赶；不撤销本地角色、账户或其他爆炸。
 # 只有历史完整、扫掠范围的地形未改变且没有本地接触时才提交结果。
@@ -244,7 +244,7 @@ func review_projectile_spawn(id: int, changed: Vector2i, new_identity: bool) -> 
 	if plan.is_empty(): return changed
 	for at in plan["states"]:
 		var state: Dictionary = plan["states"][at]
-		if not state.is_empty(): _states[at]["projectiles"][id] = state
+		if not state.is_empty(): _states[at]["projectiles"].insert_state(id, state)
 	combat_prediction.commit_catch_up(id, plan)
 	return Vector2i.ZERO
 
@@ -275,13 +275,9 @@ func bullet_rewind_matches(data: Dictionary) -> bool:
 	var at: int = data["tick"]
 	var role: int = data["role"]
 	if not _states.has(at): return false
-	var saved := {}
-	for id in _states[at]["projectiles"]:
-		if id >> 48 == role: saved[id] = _states[at]["projectiles"][id]
-	if saved.size() != data["projectiles"].size(): return false
-	for id in saved:
-		if not data["projectiles"].has(id) or not combat_prediction.projectiles.has(id) \
-				or not CombatPrediction._same_projectile_state(saved[id], data["projectiles"][id]): return false
+	if not _states[at]["projectiles"].matches(data["projectiles"], role): return false
+	for id in data["projectiles"]:
+		if not combat_prediction.projectiles.has(id): return false
 	var actor: Player = _player if role == _player.role else _replicas[role]._forecast if _replicas.has(role) else null
 	if actor == null or actor.rewinding != data["rewind"]: return false
 	for tick in range(at + 1, _sim_tick + 1):

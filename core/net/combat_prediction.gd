@@ -169,19 +169,10 @@ func shot_actions(player: CharacterBody2D, actions: Array, tick: int) -> void:
 func _reset_projectile(entry: NativeProjectileEntry, state: Dictionary, at_tick: int) -> void:
 	entry.reset_at(state, at_tick)
 
-func snapshot_projectiles() -> Dictionary:
-	_ensure_native()
-	return _native.snapshot_projectiles()
+func can_restore_checkpoint(at_tick: int, states: NativeProjectileSnapshot) -> bool:
+	return states.can_restore(projectiles, at_tick)
 
-func can_restore_checkpoint(at_tick: int, states: Dictionary) -> bool:
-	for id in states:
-		if not projectiles.has(id): return false
-		var entry: NativeProjectileEntry = projectiles[id]
-		if entry["bullet"].type_id != states[id]["type_id"]: return false
-		if entry["confirmed"] and entry["birth_tick"] > at_tick: return false
-	return true
-
-func restore_checkpoint(at_tick: int, states: Dictionary) -> void:
+func restore_checkpoint(at_tick: int, states: NativeProjectileSnapshot) -> void:
 	# 保留新收到的权威事件；只撤销失效后缀产生的推测结果。
 	for at in _outcomes.keys():
 		if at > at_tick: _outcomes.erase(at)
@@ -193,13 +184,7 @@ func restore_checkpoint(at_tick: int, states: Dictionary) -> void:
 		if not beams[id].get("confirmed", false) and beams[id]["tick"] > at_tick: beams.erase(id)
 	for id in blasts.keys():
 		if not blasts[id].get("confirmed", false) and blasts[id]["tick"] > at_tick: blasts.erase(id)
-	for id in projectiles:
-		var entry: NativeProjectileEntry = projectiles[id]
-		if states.has(id):
-			_reset_projectile(entry, states[id], at_tick)
-		else:
-			entry["active"] = false
-			entry["bullet"].finished = true
+	states.restore(projectiles, at_tick)
 	self.tick = at_tick
 
 func receive_reward(data: Dictionary) -> bool:
@@ -388,6 +373,8 @@ func acknowledge(tick: int) -> void:
 		if hits[id].is_empty(): hits.erase(id)
 	for id in blasts.keys():
 		if blasts[id]["tick"] <= tick: blasts.erase(id)
+	for id in beams.keys():
+		if beams[id]["tick"] <= tick: beams.erase(id)
 	for at in _outcomes.keys():
 		if at <= tick: _outcomes.erase(at)
 

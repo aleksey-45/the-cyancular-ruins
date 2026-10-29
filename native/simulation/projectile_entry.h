@@ -12,11 +12,12 @@ protected:
 public:
     int64_t origin_tick = 0, birth_tick = 0, tick = 0, sim_tick = 0, moved_tick = -1, retired_tick = -1;
     bool confirmed = false, active = false;
-    Dictionary state, origin_state, checkpoints;
+    Dictionary origin_state, checkpoints;
     void set_bullet(NativeBulletBody *value);
     NativeBulletBody *get_bullet() const;
     void initialize(NativeBulletBody *body, const Dictionary &initial, int64_t at, bool known);
     void reset_at(const Dictionary &initial, int64_t at);
+    void restore_at(const ProjectileMotionState &initial, int64_t at);
 #define ENTRY_ACCESS(type, name) \
     void native_set_##name(type value) { name = value; } \
     type native_get_##name() const { return name; }
@@ -28,7 +29,6 @@ public:
     ENTRY_ACCESS(int64_t, retired_tick)
     ENTRY_ACCESS(bool, confirmed)
     ENTRY_ACCESS(bool, active)
-    ENTRY_ACCESS(Dictionary, state)
     ENTRY_ACCESS(Dictionary, origin_state)
     ENTRY_ACCESS(Dictionary, checkpoints)
 #undef ENTRY_ACCESS
