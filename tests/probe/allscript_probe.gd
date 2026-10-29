@@ -21,7 +21,7 @@ const SKIP_DIRS := ["res://.godot", "res://builds", "res://releases", "res://gam
 # 复算两条(必须同时成立):`git ls-files '*.gd' | wc -l` 等于本常量;
 # `git ls-files --others --exclude-standard '*.gd'` = 0(工作树没有未跟踪脚本)。
 # 改这个常量是"覆盖变了得有人过目",不是"让闸变绿";历次取值见 git log。
-const EXPECTED_SCRIPTS := 176   # 2026-10-29: 178 - 删 net_bus.gd/net_bus_ext.gd(v5 传输层 Wire 取代)。★ 改常量 = 覆盖变了得有人过目,不是让闸变绿
+const EXPECTED_SCRIPTS := 178   # 2026-10-29: 176 + core/net/lag_comp.gd + tests/smoke/lag_comp_smoke.gd(命中补偿)。★ 改常量 = 覆盖变了得有人过目,不是让闸变绿
 
 var _fails: Array[String] = []
 var _total := 0

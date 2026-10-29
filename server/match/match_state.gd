@@ -117,6 +117,34 @@ var _leave_round: Dictionary = {}
 var _assist_times: Dictionary = {}
 # role -> true(已移出对局)。★ 必须住底座(_roster / mvp_role 都要读);子类重复声明基类成员是硬 Parse Error,故 RoyaleHost / TeamHost 那两行必须一起删。
 var _left: Dictionary = {}
+
+# ── v5 命中补偿(favor-the-shooter):受害者位置回溯环(纯逻辑在 core/net/lag_comp.gd)──
+var _pos_ring: Dictionary = {}     # role -> LagComp 环
+var _sim_tick := 0                 # 60Hz 物理 tick 计数(回溯环的时间轴;与 30Hz 的 _snap_tick 分开)
+
+
+func record_pos_ring() -> void:
+	_sim_tick += 1
+	for role in players:
+		var p: Node2D = players[role]
+		if p != null:
+			LagComp.record(_pos_ring, int(role), p.global_position, _sim_tick)
+
+
+func rewound_pos(role: int, ticks_back: int) -> Vector2:
+	var p: Node2D = players.get(int(role))
+	return LagComp.rewound(_pos_ring, int(role), _sim_tick, ticks_back,
+			p.global_position if p != null else Vector2.ZERO)
+
+
+# Wire 用 /root 查节点而不是裸标识符:-s 冒烟(无 autoload)也要能编译本文件;查不到 = 0 回溯。
+func shooter_delay_ticks(shooter_role: int) -> int:
+	if not peer_by_role.has(int(shooter_role)):
+		return 0
+	var wire: Node = (Engine.get_main_loop() as SceneTree).root.get_node_or_null("Wire")
+	if wire == null:
+		return 0
+	return LagComp.delay_ticks(wire.rtt_ms(int(peer_by_role[int(shooter_role)])), true)
 # ── 断线宽限期读数 ── {role -> 剩余秒},由 worker 进程的 server_main 写入(它是宽限期表的持有者),三个 round_state 生产者
 # 只负责并进载荷。★ 用「推」而不是让宿主反向持有引用(避免 back-reference);★ 每实例字段、不是 static;空 = 没人掉线(载荷里连 grace 键都不带)。
 var grace_snapshot: Dictionary = {}

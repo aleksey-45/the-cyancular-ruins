@@ -53,14 +53,17 @@ func _adjudicate_bullets() -> void:
 			_adjudicate_grenade(bullet)
 			continue
 # 命中裁决:对非射手玩家算 toroidal 距离(射手 role 只在循环外查一次)。★ 队友穿透用 continue 而不是 break —— 队友不挡弹道,后面若有敌人照样打得到。
+# ★ v5 命中补偿:测距用的是**受害者按射手感知滞后回放的位置**(favor-the-shooter,见 MatchState 的环注)。
 		var shooter_role := _role_of(bullet.shooter)
+		var delay := shooter_delay_ticks(shooter_role)
 		for role in players:
 			var p: Node2D = players[role]
 			if p == bullet.shooter:
 				continue
 			if same_team(shooter_role, int(role)):
 				continue
-			var d := MazeGenerator.toroidal_delta_px(bullet.global_position, p.global_position,
+			var vpos := rewound_pos(int(role), delay)
+			var d := MazeGenerator.toroidal_delta_px(bullet.global_position, vpos,
 					GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT).length()
 			if d < HIT_RADIUS:
 				_on_bullet_hit(bullet, p, role)
@@ -84,7 +87,8 @@ func _adjudicate_grenade(bullet: CharacterBody2D) -> void:
 # (伤害 + 击退都照吃;爆炸走 Explosion.apply_aoe,那条路径按现状不动)。
 		if same_team(_role_of(bullet.shooter), int(role)):
 			continue
-		var d := MazeGenerator.toroidal_delta_px(bullet.global_position, p.global_position,
+		var vpos := rewound_pos(int(role), shooter_delay_ticks(_role_of(bullet.shooter)))
+		var d := MazeGenerator.toroidal_delta_px(bullet.global_position, vpos,
 				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT).length()
 		if d < HIT_RADIUS:
 			_grenade_direct_hit(bullet, p)

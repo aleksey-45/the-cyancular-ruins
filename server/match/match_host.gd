@@ -208,11 +208,12 @@ func _physics_process(delta: float) -> void:
 				_handle_ground_actions(role, src)
 
 	# ★ S1:本人包推迟到本帧末(玩家子节点步进完之后)再发 —— 那时 c2 才是"本 tick 输入已生效"的权威态,
-	#   ack 也是本 tick 刚消费的 seq;比"等下一次 30Hz 广播"少一拍(均值 ~16.7ms)。
+	#   ack 也是本 tick 刚消费的 seq。★ v5(P3)起**每个物理 tick 都发**(60Hz,登记债「ack 只在
+	#   30Hz 本人包回带 ⇒ 输入→确认均值 ~25ms」的正解):ack 延迟均值 ~25ms → ~8ms,成本
+	#   ≈ +2.8 KB/s/客户端(94 B × 30);世界包维持 30Hz(delta 链路不受影响)。
 	#   ★ 依赖 Godot 的 call_deferred 在帧末(所有 _physics_process 之后)执行。
-	if snapshot_tick:
-		_own_flush_pending = true
-		call_deferred("_flush_own_snapshots")
+	_own_flush_pending = true
+	call_deferred("_flush_own_snapshots")
 
 	_adjudicate_bullets()
 
@@ -243,6 +244,7 @@ func _flush_own_snapshots() -> void:
 	_own_flush_pending = false
 	if not is_inside_tree():
 		return
+	record_pos_ring()   # 命中补偿的位置环:每物理 tick 一拍,玩家步进完之后记录(帧末)
 	send_own_snapshots()
 
 
