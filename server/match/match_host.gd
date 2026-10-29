@@ -85,10 +85,10 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 
 
 func _enter_tree() -> void:
-	NetBus.input_received.connect(_on_input)
+	Wire.input_received.connect(_on_input)
 
 func _exit_tree() -> void:
-	NetBus.input_received.disconnect(_on_input)
+	Wire.input_received.disconnect(_on_input)
 
 
 func _ready() -> void:
@@ -115,7 +115,7 @@ func _wire_hit_feedback() -> void:
 		if combat != null and combat.has_signal("took_hit"):
 			combat.took_hit.connect(_on_player_hit.bind(role))
 
-# ★ 生效选项改由对局场景进场拉取下发(随 NetBus.match_sync 的应答):原先那次「推」与 match_start 落在同一次客户端 poll,而新场景的订阅方还不存在 ⇒ 静默丢失。
+# ★ 生效选项改由对局场景进场拉取下发(随 Wire.match_sync 的应答):原先那次「推」与 match_start 落在同一次客户端 poll,而新场景的订阅方还不存在 ⇒ 静默丢失。
 
 
 # 输入队列(入队 / 有界丢包 / 抖动包络 / 1Hz 诊断)整段已在 server/match/input_intake.gd;本文件只留「谁调、调在流程哪一步」。
@@ -187,7 +187,7 @@ func _physics_process(delta: float) -> void:
 		_time_sync -= delta
 		if _time_sync <= 0.0:
 			_time_sync = TIME_SYNC_INTERVAL
-			_rpc_all_ext("time_state", [time_economy.state_payload()])
+			_rpc_all_ext(WireKind.TIME_STATE, [time_economy.state_payload()])
 # 应用输入(父先于子 ⇒ 玩家 _physics_process 读到的已是最新注入)。★ U1:每物理 tick 消费一条 FIFO 记录(一条 = 1 tick),
 # 队列空 = 缺包(沿用 held/轴)。★ ack = 刚消费记录的 seq(本帧末随本人包回带,rollback 锚点;见 _flush_own_snapshots)。
 	for role in input_sources:

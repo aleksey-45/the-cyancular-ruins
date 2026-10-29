@@ -13,7 +13,7 @@ extends RefCounted
 # 返回字典(全部键恒存在):
 #   ok:bool / error:String / worker:bool / royale:bool / team:bool / port:int
 #   roles:Array[int] / ai_roles:Array[int] / teams:Array[int] / team_of:Dictionary(role -> 队号)
-# ★ `default_port` 由调用方给(`server_main` 传 `NetBus.DEFAULT_PORT`)—— 本文件不引 autoload。
+# ★ `default_port` 由调用方给(`server_main` 传 `Wire.DEFAULT_PORT`)—— 本文件不引 autoload。
 
 const FLAG_WORKER := "--worker"
 const FLAG_ROYALE := "--royale"

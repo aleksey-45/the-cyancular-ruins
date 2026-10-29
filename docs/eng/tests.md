@@ -98,8 +98,8 @@ bash tests/smoke/<名>.sh
 | 事件 | 落点 | 读它回答什么 |
 |---|---|---|
 | `session_start` | `net_diag.gd` 自己 | 版本 / 引擎 / OS / 文件路径 |
-| `snap_gap` | [`core/net/net_bus.gd`](../../core/net/net_bus.gd) 的 `snapshot_world` | 世界包断流 >150ms |
-| `snap_rx` / `snapshot_tx` | `net_bus.gd` / [`server/match/match_snapshot.gd`](../../server/match/match_snapshot.gd) | 按 1Hz 对账「没发出」与「发了没收到」 |
+| `snap_gap` | [`core/net/wire.gd`](../../core/net/wire.gd) 的 SNAPSHOT_WORLD 接收侧 | 世界包断流 >150ms |
+| `snap_rx` / `snapshot_tx` | `core/net/wire.gd` / [`server/match/match_snapshot.gd`](../../server/match/match_snapshot.gd) | 按 1Hz 对账「没发出」与「发了没收到」 |
 | `rollback` | [`core/net/prediction_rollback.gd`](../../core/net/prediction_rollback.gd) 的 `_handle_ack` | 位置 / 速度误差、是否贴身、重放条数 |
 | `queue` / `queue_drop` | [`server/match/input_intake.gd`](../../server/match/input_intake.gd) | 服务器输入队列深度 / 上限 / 累计丢弃 |
 | `pickup_try` | [`server/match/match_ground.gd`](../../server/match/match_ground.gd) | `none` / `range` / `denied` / `taken` 四种成因 |

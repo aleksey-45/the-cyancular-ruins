@@ -216,7 +216,7 @@ func _match_winner() -> int:
 
 # ── 广播样板 ── 原先「遍历有 peer 的 role 逐个 rpc_id」这两行在 5 处各写一遍,漏一处不报错(事件静默不发);
 # 收在这里,差异用参数表达。except_role 排除射手(其客户端已本地预测画过,再收会重复);live_only 默认判活:
-# 往「正在断开」的 peer 发定向包必然报错且包会丢(判据 NetBus.is_peer_live);另恒跳过有 peer 却不在 players 里的 role。
+# 往「正在断开」的 peer 发定向包必然报错且包会丢(判据 Wire.is_peer_live);另恒跳过有 peer 却不在 players 里的 role。
 
 func _broadcast_kill(killer: int, victim: int) -> void:
-	_rpc_all("kill_event", [killer, victim])
+	_rpc_all(WireKind.KILL_EVENT, [killer, victim])

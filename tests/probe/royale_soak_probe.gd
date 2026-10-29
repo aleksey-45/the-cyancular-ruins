@@ -88,7 +88,7 @@ func _ready() -> void:
 
 # ══ 裁判:起大厅 + 拉起 N 个客户端 + 收结果 ══
 func _run_orchestrator() -> void:
-	var err := NetBus.start_server()
+	var err := Wire.start_server()
 	if err != OK:
 		print("SOAK: 大厅监听失败 err=%d(7777 被占?先清僵尸 Godot)" % err)
 		get_tree().quit(1)
@@ -174,16 +174,16 @@ func _read_result(i: int) -> String:
 func _run_client() -> void:
 	Engine.max_fps = 60     # 与真客户端同节奏;不设就变成"跑多快算多快",帧间隔读数失去意义
 	_flow_us = Time.get_ticks_msec()
-	NetBus.local_snapshot_world.connect(_on_snapshot_world)   # 快照拆两条后:世界包(数条数够用)
-	NetBus.local_round_state.connect(_on_round_state)
-	NetBus.local_kill_event.connect(func(_k: int, _v: int) -> void:
+	Wire.local_snapshot_world.connect(_on_snapshot_world)   # 快照拆两条后:世界包(数条数够用)
+	Wire.local_round_state.connect(_on_round_state)
+	Wire.local_kill_event.connect(func(_k: int, _v: int) -> void:
 		_kills += 1
 		_mark("%.1fs 击杀播报" % _elapsed()))
-	NetBus.local_hit_event.connect(func(_r: int, _d: int, _p: Vector2) -> void:
+	Wire.local_hit_event.connect(func(_r: int, _d: int, _p: Vector2) -> void:
 		_hits += 1
 		_mark("%.1fs 受击 %d 伤" % [_elapsed(), _d]))
-	NetBus.local_match_start.connect(_on_match_start)
-	NetBus.local_go_match.connect(_on_go_match)
+	Wire.local_match_start.connect(_on_match_start)
+	Wire.local_go_match.connect(_on_go_match)
 	# ★ 这里原先接住 worker 推来的三条开局载荷、缓存进 PvpSession.pending_*;那条推路径已整体换成进场拉取(对局场景 _ready 末尾自己 match_sync),pending_* 四字段连带 clear_pending_payloads() 一起删了。
 	#   本探针不需要自己拉(真 royale_game 场景会自己发 match_sync);守卫:tests/probe/match_sync_probe 的反向断言(全仓不得再出现那些标识符)会拦住复活。
 	# 全流程兜底:连大厅→建房/加入→转连→claim→match_start 走不完就 FAIL 退出(否则挂死)。
@@ -191,12 +191,12 @@ func _run_client() -> void:
 	get_tree().create_timer(60.0).timeout.connect(func() -> void:
 		if is_inside_tree() and not _match_running:
 			_finish(false, "60s 内没进对局(流程卡住)"))
-	multiplayer.connected_to_server.connect(func() -> void:
-		NetBus.rpc_id(1, "lobby_name", "BOT%d" % _idx)
+	Wire.connected_to_server.connect(func() -> void:
+		Wire.send(WireKind.LOBBY_NAME, ["BOT%d" % _idx])
 		_after_lobby_connected(), CONNECT_ONE_SHOT)
-	multiplayer.connection_failed.connect(func() -> void:
+	Wire.connection_failed.connect(func() -> void:
 		_finish(false, "连大厅失败"), CONNECT_ONE_SHOT)
-	var e := NetBus.start_client(ADDR)
+	var e := Wire.start_client(ADDR)
 	if e != OK:
 		_finish(false, "start_client 失败 %d" % e)
 
@@ -204,7 +204,7 @@ func _run_client() -> void:
 func _after_lobby_connected() -> void:
 	if _idx == 1:
 		# 房主:建房(私密 + 邀请码,房号写中间文件给其余人读)→ 满员后 royale_start
-		NetBusExt.local_royale_room_state.connect(func(state: Dictionary) -> void:
+		Wire.local_royale_room_state.connect(func(state: Dictionary) -> void:
 			var code := str(state.get("code", ""))
 			if code != "" and not FileAccess.file_exists(ROOM_FILE):
 				var rf := FileAccess.open(ROOM_FILE, FileAccess.WRITE)
@@ -213,11 +213,11 @@ func _after_lobby_connected() -> void:
 			var n: int = (state.get("players", []) as Array).size()
 			if n >= _clients and not _match_running:
 				print("SOAK[c1]: 房内 %d 人 → 开局" % n)
-				NetBusExt.rpc_id(1, "royale_start"))
-		NetBusExt.rpc_id(1, "royale_create", {
+				Wire.send(WireKind.ROYALE_START, []))
+		Wire.send(WireKind.ROYALE_CREATE, [{
 			"is_public": false, "invite_code": INVITE, "max_players": _clients,
 			"round_full_heal": false, "disabled_weapons": [],
-		})
+		}])
 	else:
 		# 其余:等 c1 把房号写出来再加入
 		_wait_room_code.call_deferred()
@@ -238,7 +238,7 @@ func _wait_room_code() -> void:
 		return
 	# ★ 第 3 参 beta:建房 opts 里没有 "beta": true(见 _after_lobby_connected 的 royale_create)
 	#   ⇒ 普通房,传 false。签名 (code, invite, beta) 三参,少传即 RPC 失败、服务端不回应。
-	NetBusExt.rpc_id(1, "royale_join", code, INVITE, false)
+	Wire.send(WireKind.ROYALE_JOIN, [code, INVITE, false])
 
 
 # go_match 在大厅 peer 的 poll 调用栈内到达 → 转连必须推到帧末(与 mp_lobby 同款)
@@ -248,18 +248,18 @@ func _on_go_match(role: int, port: int) -> void:
 
 
 func _do_go_match(role: int, port: int) -> void:
-	multiplayer.connected_to_server.connect(func() -> void:
-		NetBus.rpc_id(1, "claim_role", role, "BOT%d" % _idx)
-		NetBusExt.rpc_id(1, "player_options", {
+	Wire.connected_to_server.connect(func() -> void:
+		Wire.send(WireKind.CLAIM_ROLE, [role, "BOT%d" % _idx])
+		Wire.send(WireKind.PLAYER_OPTIONS, [{
 			"hue": float((_idx - 1) * 40),
 			"round_full_heal": false,
 			"disabled_weapons": [],
 			"match_time": _match_secs,
-		}), CONNECT_ONE_SHOT)
-	multiplayer.connection_failed.connect(func() -> void:
+		}]), CONNECT_ONE_SHOT)
+	Wire.connection_failed.connect(func() -> void:
 		_finish(false, "连 worker 失败"), CONNECT_ONE_SHOT)
-	NetBus.stop()
-	var e := NetBus.start_client(ADDR, port)
+	Wire.stop()
+	var e := Wire.start_client(ADDR, port)
 	if e != OK:
 		_finish(false, "start_client(worker) 失败 %d" % e)
 
@@ -348,7 +348,7 @@ func _physics_process(_delta: float) -> void:
 	var el := float(Time.get_ticks_msec() - _start_us) / 1000.0
 	while not _suicide_at.is_empty() and el >= float(_suicide_at[0]):
 		_suicide_at.pop_front()
-		NetBusExt.rpc_id(1, "suicide_request")
+		Wire.send(WireKind.SUICIDE_REQUEST, [])
 	# 局内按 ESC 回主菜单(只让最后一个客户端做):见 _esc_leave
 	if _idx == _clients and not _esc_done and el >= float(_match_secs) * 0.45:
 		_esc_leave()

@@ -20,8 +20,8 @@ var _grace: Dictionary = {}
 
 func _ready() -> void:
 	PixelFont.shared()   # 一次:共享字体关抗锯齿/微调/子像素,本场景所有像素 Label 全局锐利
-	NetBus.local_round_state.connect(_on_round_state)
-	NetBus.ping_updated.connect(_on_ping)
+	Wire.local_round_state.connect(_on_round_state)
+	Wire.ping_updated.connect(_on_ping)
 	# 颜色只从调色板取(本次新增的第四种语义色,见 UiFactory.C_GRACE 那段的对比度实测)
 	_grace_label.add_theme_color_override("font_color", UiFactory.C_GRACE)
 	_broadcast.set_broadcast(true, "对战开始", "第 1 局")

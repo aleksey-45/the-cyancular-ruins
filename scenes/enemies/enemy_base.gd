@@ -254,7 +254,7 @@ func _begin_death() -> void:
 		return
 	is_dead = true
 	died.emit()
-	# 单机击杀播报已删(这里原先调 CombatFeedback.notify_enemy_killed,那是它唯一的触发点);PvP 的播报走 NetBus.kill_event,不经过本函数。
+	# 单机击杀播报已删(这里原先调 CombatFeedback.notify_enemy_killed,那是它唯一的触发点);PvP 的播报走 Wire.kill_event,不经过本函数。
 	_death_timer = EnemyParams.shared.death_flash_time
 	# 录制期保留尸体:不 queue_free,白闪结束后隐藏待复活(精英除外 —— 杀了就是杀了)。
 	if WorldRewind.hold_corpses and not has_meta("elite"):

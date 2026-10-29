@@ -53,10 +53,10 @@ static func start_on(role_peers: Dictionary, map_path: String, options: Dictiona
 	var spawns := plan_team_spawns(teams)
 	for role in role_peers:
 
-		if not NetBus.is_peer_live(role_peers[role]):
+		if not Wire.is_peer_live(role_peers[role]):
 			continue
-		NetBus.rpc_id(role_peers[role], "match_start", role, spawns[role], map_path)
-		NetBus.rpc_id(role_peers[role], "server_message", "3v3 开始")
+		Wire.send_to(role_peers[role], WireKind.MATCH_START, [role, spawns[role], map_path])
+		Wire.send_to(role_peers[role], WireKind.SERVER_MESSAGE, ["3v3 开始"])
 
 	return TeamHost.new(map_path, role_peers, options, [], spawns, teams)
 
@@ -302,7 +302,7 @@ func _finish_match() -> void:
 	print("TeamHost: 对局结束(整队走光),胜者队 %d" % _match_winner())
 
 
-# ── 自杀脱困(K 键:客户端 → NetBusExt.suicide_request → server_main._on_suicide_request)── 异常卡死时主动放弃生命,先清归因 ⇒
+# ── 自杀脱困(K 键:客户端 → Wire.suicide_request → server_main._on_suicide_request)── 异常卡死时主动放弃生命,先清归因 ⇒
 # 自杀不计入任何人击杀(3v3 下落进无归因档:对方队 +1、无人被计击杀)。★ 必须留在子类;server_main 原先只认 _royale ⇒ 3v3 的 K 键被静默丢掉。
 func request_suicide_role(role: int) -> void:
 	if _round_state != RoundState.PLAYING:

@@ -8,7 +8,7 @@ extends Node
 #   相③ 子弹穿透队友(负)+ 爆炸满效(正)—— 甲(1 队最低 role)走到队友乙身边(≤170px 且视线通畅)连射:乙 hp 不变;再换榴弹贴脸一投:乙 hp 下降且被推飞。★ 这一对缺一不可:只验「穿透」会让「伤害系统整个坏了」也全绿。★ 另从乙端独立取证:数「从我身边飞过(≤45px)的非自己子弹」—— 没有它,「乙 hp 不变」可以靠「子弹根本没飞到」骗过。
 #   相④ 打到 9 杀(回合机收局)→ ROUND_OVER → 第 2 局开局后各端出生点已对调(用生产函数 TeamHost.compute_swap_spawns 算期望再与实测比对)。★ 9 杀多半由回退模式(K 自杀脱困)推动(逐端读数 REC BACKOFF,裁判照实打出来)⇒ 这一相验的是回合机 + 整队换边 + 换边重拉 match_sync,而不是「枪法」。断言各端 scores 的键是队号 1/2、rounds_won 六端一致。
 #   相⑤ 少人继续 —— 6 号客户端在 PLAYING 中途按 ESC 离场(唯一走 safe_change_scene 的局内退出路径)→ 服务器不终局、其余 5 端仍持续收到快照(间隔 < 1s)、且掉线者已被移出对局。
-# ═══ 拓扑(自当大厅/裁判;全部子进程由本进程 OS.create_process 直接拉起)═══ 本进程 = 真大厅(NetBus.start_server(LOBBY_PORT) + RoomManager),不占 7777;c1..c6 = 6 个 headless 客户端,各跑真 mp_lobby → 真 team_game;worker 由真 RoomManager.team_start 经 WorkerLauncher.spawn_team_worker 拉起(与生产逐字同一条路径,只把起投端口拨到池外)。
+# ═══ 拓扑(自当大厅/裁判;全部子进程由本进程 OS.create_process 直接拉起)═══ 本进程 = 真大厅(Wire.start_server(LOBBY_PORT) + RoomManager),不占 7777;c1..c6 = 6 个 headless 客户端,各跑真 mp_lobby → 真 team_game;worker 由真 RoomManager.team_start 经 WorkerLauncher.spawn_team_worker 拉起(与生产逐字同一条路径,只把起投端口拨到池外)。
 #   ★ 端口纪律(与 reconnect_probe 同源):大厅与 worker 都落在真大厅的 worker 端口池(7800~8299)之外、且不占 7777 —— 本机常驻一个真大厅时,池内端口可能被它发给别人的对局,而本探针收尾会按端口杀 worker,会把别人那局一起杀掉。
 # ═══ 前提 ═══ 请确认没有别的 Godot 占着 7777(本探针不占 7777,但别杀掉用户自己的服务端)。客户端子进程的 stdout 父进程看不到(Windows CreateProcess 不继承句柄)→ 每个子进程都带 --log-file;失败时本探针把每个客户端的引擎日志尾部一起打印出来。
 #   收尾按 PID 杀本进程拉起过的全部子进程(客户端是从临时端口连出去的,只按端口杀根本杀不到),worker 另按 UDP 端口补一刀(它才是真的 bind 端口那一侧)。
@@ -77,7 +77,7 @@ func _ready() -> void:
 # ════════════════════ 裁判(大厅)════════════════════
 
 func _run_orchestrator() -> void:
-	var err := NetBus.start_server(LOBBY_PORT)
+	var err := Wire.start_server(LOBBY_PORT)
 	if err != OK:
 		print("PROBE: 大厅监听失败 err=%d(端口 %d 被占?本探针**不占 7777**,该端口是本探针自己的)"
 				% [err, LOBBY_PORT])

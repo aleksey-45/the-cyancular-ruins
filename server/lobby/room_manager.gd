@@ -34,24 +34,24 @@ func _enter_tree() -> void:
 	lobby.pairing_ready.connect(_start_match)
 	add_child(lobby)
 
-	NetBusExt.royale_start_requested.connect(royale_start)
-	NetBusExt.ai_duel_requested.connect(ai_duel)
-	NetBusExt.royale_start_ai_requested.connect(royale_start_ai)
+	Wire.royale_start_requested.connect(royale_start)
+	Wire.ai_duel_requested.connect(ai_duel)
+	Wire.royale_start_ai_requested.connect(royale_start_ai)
 
-	NetBusExt.team_start_requested.connect(team_start)
-	NetBusExt.pvp_start_requested.connect(pvp_start)   # 1v1 房主开局(2026-10-24:不再两人自动开)
+	Wire.team_start_requested.connect(team_start)
+	Wire.pvp_start_requested.connect(pvp_start)   # 1v1 房主开局(2026-10-24:不再两人自动开)
 
-	NetBusExt.room_map_requested.connect(lobby.on_room_map)
+	Wire.room_map_requested.connect(lobby.on_room_map)
 
 
 func _exit_tree() -> void:
-	NetBusExt.royale_start_requested.disconnect(royale_start)
-	NetBusExt.ai_duel_requested.disconnect(ai_duel)
-	NetBusExt.royale_start_ai_requested.disconnect(royale_start_ai)
-	NetBusExt.team_start_requested.disconnect(team_start)
-	NetBusExt.pvp_start_requested.disconnect(pvp_start)
+	Wire.royale_start_requested.disconnect(royale_start)
+	Wire.ai_duel_requested.disconnect(ai_duel)
+	Wire.royale_start_ai_requested.disconnect(royale_start_ai)
+	Wire.team_start_requested.disconnect(team_start)
+	Wire.pvp_start_requested.disconnect(pvp_start)
 
-	NetBusExt.room_map_requested.disconnect(lobby.on_room_map)
+	Wire.room_map_requested.disconnect(lobby.on_room_map)
 
 
 
@@ -65,28 +65,28 @@ func royale_start(caller: int) -> void:
 	if rr == null:
 		return
 	if rr.host_peer != caller:
-		NetBus.reply(caller, "server_message", "只有房主能开始游戏")
+		Wire.send_to(caller, WireKind.SERVER_MESSAGE, ["只有房主能开始游戏"])
 		return
 	if rr.in_match:
 		return   # 已开局(重复请求防重入:不会双开 worker)
 	if rr.players.size() < LobbyRooms.ROYALE_MIN_PLAYERS:
-		NetBus.reply(caller, "server_message", "至少 %d 人才能开始" % LobbyRooms.ROYALE_MIN_PLAYERS)
+		Wire.send_to(caller, WireKind.SERVER_MESSAGE, ["至少 %d 人才能开始" % LobbyRooms.ROYALE_MIN_PLAYERS])
 		return
 	var port := _launcher.pick_port()
 	if port < 0:
-		NetBus.reply(caller, "server_message", "无法分配对局端口")
+		Wire.send_to(caller, WireKind.SERVER_MESSAGE, ["无法分配对局端口"])
 		return
 	rr.worker_port = port
 	rr.in_match = true
 # ★ 开局那一刻把名单冻进房记录:成员转连 worker 后会陆续断开大厅,靠 players / _peer_names 渲染的列表会退化(见 LobbyRooms.freeze_roster)。
 	lobby.freeze_roster(rr)
-# ★ token 必须在 go_match 之前发到客户端:go_match 一到客户端就 NetBus.stop() 断大厅,之后再发就静默丢失;登记进回局表则要等 spawn 成功(要 pid)。
+# ★ token 必须在 go_match 之前发到客户端:go_match 一到客户端就 Wire.stop() 断大厅,之后再发就静默丢失;登记进回局表则要等 spawn 成功(要 pid)。
 	var granted: Array = []   # [[role, token], …]
 	for pid in rr.players:
 		var tk := LobbyRooms.new_token()
 		granted.append([int(rr.player_role[pid]), tk])
 		if lobby.is_peer_online(pid):
-			NetBusExt.rpc_id(pid, "session_token", tk)
+			Wire.send_to(pid, WireKind.SESSION_TOKEN, [tk])
 	if not _launcher.spawn_royale_worker(port, rr.player_role.values()):
 		rr.in_match = false
 # ★ 拉起失败必须走拆除单一收口:直接 release_now 会把房间留在注册表里、且带着已归还的 worker_port ⇒ 后续清扫按那个陈旧
@@ -120,7 +120,7 @@ func _send_go_match(rr, port: int) -> void:
 	await get_tree().process_frame   # 同 _flush_royale_state:等断开信号落定再判在线
 	for peer_id in rr.players:
 		if lobby.is_peer_online(peer_id):
-			NetBus.reply(peer_id, "go_match", rr.player_role[peer_id], port)
+			Wire.send_to(peer_id, WireKind.GO_MATCH, [rr.player_role[peer_id], port])
 
 
 
@@ -133,7 +133,7 @@ func ai_duel(caller: int) -> void:
 			host_room = room
 			break
 	if host_room == null:
-		NetBus.reply(caller, "server_message", "只有建房(房主)才能开 AI 对战")
+		Wire.send_to(caller, WireKind.SERVER_MESSAGE, ["只有建房(房主)才能开 AI 对战"])
 		return
 # ★ 「已开局即拒绝」守卫是刻意补上的(其余 handler 都有):一个已配对开局的 1v1 房在 go_match 之后、被摘除之前的窗口里
 # 收到 AI 对战请求,会再拉一个 worker 并覆盖 worker_port,而本房紧接着被摘除 ⇒ 首个端口从此无人归还。
@@ -141,7 +141,7 @@ func ai_duel(caller: int) -> void:
 		return   # 已开局:拒绝(防双开 worker 覆盖 worker_port)
 	var port := _launcher.pick_port()
 	if port < 0:
-		NetBus.reply(caller, "server_message", "无法分配对局端口")
+		Wire.send_to(caller, WireKind.SERVER_MESSAGE, ["无法分配对局端口"])
 		return
 	host_room.worker_port = port
 	if not _launcher.spawn_worker(port, [2]):
@@ -153,7 +153,7 @@ func ai_duel(caller: int) -> void:
 	NetDiag.audit("match_start", {"room": host_room.code, "mode": ModeDefs.MODE_PVP, "port": port,
 			"players": 1, "ai": 1})
 	await get_tree().create_timer(0.3).timeout
-	NetBus.reply(caller, "go_match", 1, port)
+	Wire.send_to(caller, WireKind.GO_MATCH, [1, port])
 
 # 大乱斗:房主 AI 补位开局 → 现有真人 + AI 补到 max_players
 func royale_start_ai(caller: int) -> void:
@@ -161,17 +161,17 @@ func royale_start_ai(caller: int) -> void:
 	if rr == null:
 		return
 	if rr.host_peer != caller:
-		NetBus.reply(caller, "server_message", "只有房主能开始游戏")
+		Wire.send_to(caller, WireKind.SERVER_MESSAGE, ["只有房主能开始游戏"])
 		return
 	if rr.in_match:
 		return
 	var ai_count := rr.max_players - rr.players.size()
 	if ai_count <= 0:
-		NetBus.reply(caller, "server_message", "房间已满,无需 AI 补位")
+		Wire.send_to(caller, WireKind.SERVER_MESSAGE, ["房间已满,无需 AI 补位"])
 		return
 	var port := _launcher.pick_port()
 	if port < 0:
-		NetBus.reply(caller, "server_message", "无法分配对局端口")
+		Wire.send_to(caller, WireKind.SERVER_MESSAGE, ["无法分配对局端口"])
 		return
 	rr.worker_port = port
 	rr.in_match = true
@@ -185,7 +185,7 @@ func royale_start_ai(caller: int) -> void:
 		var tk := LobbyRooms.new_token()
 		granted.append([int(rr.player_role[pid]), tk])
 		if lobby.is_peer_online(pid):
-			NetBusExt.rpc_id(pid, "session_token", tk)
+			Wire.send_to(pid, WireKind.SESSION_TOKEN, [tk])
 # 参战集合 = 房里真人的已分配号 + AI 补位号(真人号可能带空洞,故不能写成 1..max_players)。
 	if not _launcher.spawn_royale_worker(port, rr.player_role.values() + ai_roles, ai_roles):
 		rr.in_match = false
@@ -210,16 +210,16 @@ func team_start(caller: int) -> void:
 	if tr == null:
 		return
 	if tr.host_peer != caller:
-		NetBus.reply(caller, "server_message", "只有房主能开始游戏")
+		Wire.send_to(caller, WireKind.SERVER_MESSAGE, ["只有房主能开始游戏"])
 		return
 	if tr.in_match:
 		return   # 已开局(重复请求防重入:不会双开 worker)
 	if not lobby.team_room_ready(tr):
-		NetBus.reply(caller, "server_message", "两队各 3 人才能开始")
+		Wire.send_to(caller, WireKind.SERVER_MESSAGE, ["两队各 3 人才能开始"])
 		return
 	var port := _launcher.pick_port()
 	if port < 0:
-		NetBus.reply(caller, "server_message", "无法分配对局端口")
+		Wire.send_to(caller, WireKind.SERVER_MESSAGE, ["无法分配对局端口"])
 		return
 	tr.worker_port = port
 	tr.in_match = true
@@ -231,7 +231,7 @@ func team_start(caller: int) -> void:
 		var tk := LobbyRooms.new_token()
 		granted.append([int(tr.player_role[pid]), tk])
 		if lobby.is_peer_online(pid):
-			NetBusExt.rpc_id(pid, "session_token", tk)
+			Wire.send_to(pid, WireKind.SESSION_TOKEN, [tk])
 # ★ roles 与 teams 同序:roles 按号升序取,teams 跟着同一顺序取队号。★ team_of 缺该 role 时取 0 ⇒ spawn_team_worker 的取值校验当场拒绝并走拆除,不会拉起一个必然 quit 的子进程。
 	var roles: Array = tr.player_role.values()
 	roles.sort()
@@ -263,7 +263,7 @@ func _start_match(room: LobbyRooms.Room) -> void:
 	if port < 0:
 
 		room.worker_port = 0
-		NetBus.reply(room.players[0], "server_message", "无法分配对局端口")
+		Wire.send_to(room.players[0], WireKind.SERVER_MESSAGE, ["无法分配对局端口"])
 		lobby.teardown_room(room, LobbyRooms.TEARDOWN_ABORT, "配对失败,房间已关闭——请重新建房/加入")
 		return
 	room.worker_port = port
@@ -273,9 +273,9 @@ func _start_match(room: LobbyRooms.Room) -> void:
 		var tk := LobbyRooms.new_token()
 		granted.append([int(room.player_role[pid]), tk])
 		if lobby.is_peer_online(pid):
-			NetBusExt.rpc_id(pid, "session_token", tk)
+			Wire.send_to(pid, WireKind.SESSION_TOKEN, [tk])
 	if not _launcher.spawn_worker(port):
-		NetBus.reply(room.players[0], "server_message", "无法启动对局")
+		Wire.send_to(room.players[0], WireKind.SERVER_MESSAGE, ["无法启动对局"])
 		lobby.teardown_room(room, LobbyRooms.TEARDOWN_ABORT, "配对失败,房间已关闭——请重新建房/加入")
 		return
 
@@ -298,7 +298,7 @@ func _send_go_match_1v1(room: LobbyRooms.Room, port: int) -> void:
 		return
 	for peer_id in room.players:
 		if lobby.is_peer_online(peer_id):
-			NetBus.reply(peer_id, "go_match", room.player_role[peer_id], port)
+			Wire.send_to(peer_id, WireKind.GO_MATCH, [room.player_role[peer_id], port])
 
 
 func _process(delta: float) -> void:

@@ -131,36 +131,27 @@ static var test_destroy_cell := Vector2i(-1, -1)
 static var test_destroy_after := 0.0     # 秒;从对局开始(_ready)起算
 
 
-func _rpc_all(method: String, args: Array = [], except_role: int = -1,
+# v5:kind 是 int(WireKind.*);发送/判活收在 Wire.send_to 一个调用内。_rpc_all_ext 保留独立名字
+# 只是免动调用点 —— v4 它存在的理由(原方法表冻结、扩展 RPC 只能挂另一节点)已随方法表一起废止。
+func _rpc_all(kind: int, args: Array = [], except_role: int = -1,
 		live_only: bool = true) -> void:
 	for role in peer_by_role:
 		if role == except_role or not players.has(role):
 			continue
 		var peer: int = peer_by_role[role]
-# ★ 判活走 NetBus.is_peer_live(读 ENet peer 自己的 state),不是 get_peers():后者晚于真实状态,挡不住「往已拆掉的 peer 发定向包」→ 那句 channel 0 错误。
-		if live_only and not NetBus.is_peer_live(peer):
+		if live_only and not Wire.is_peer_live(peer):
 			continue
+		Wire.send_to(peer, kind, args)
 
-		NetBus.callv("rpc_id", [peer, method] + args)
-
-# Beta 时间玩法的广播走 NetBusExt(NetBus 纪律:原方法表不动)。★★ time_state / sub_destroyed 声明在 NetBusExt:发在 NetBus 上会让 Godot 查不到 RPC 配置表而直接 return —— 它们从未发出、且每次都打一条错误;⇒ 这两个 RPC 首次真正生效,需要一次真链路复核。
-func _rpc_all_ext(method: String, args: Array = [], except_role: int = -1,
+func _rpc_all_ext(kind: int, args: Array = [], except_role: int = -1,
 		live_only: bool = true) -> void:
-	for role in peer_by_role:
-		if role == except_role or not players.has(role):
-			continue
-		var peer: int = peer_by_role[role]
-
-		if live_only and not NetBus.is_peer_live(peer):
-			continue
-
-		NetBusExt.callv("rpc_id", [peer, method] + args)
+	_rpc_all(kind, args, except_role, live_only)
 
 
 # round_state 的唯一出口:三个生产者拼完 data 后都必须调它,宽限期读数只在这里并进去一次。★ 不并进 _rpc_all(会让每条事件白背一个 grace),也不让三个生产者各写一句(三份必然漂,而「其中一个忘了」不报错)。⚠ 零守卫:grace_feed_probe ④ 已删(2026-10-09)。
 func _send_round_state(data: Dictionary) -> void:
 	GraceWindow.merge_into(data, grace_snapshot)
-	_rpc_all("round_state", [data])
+	_rpc_all(WireKind.ROUND_STATE, [data])
 
 
 

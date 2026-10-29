@@ -39,7 +39,7 @@ func _ready() -> void:
 	# 解析与三条启动校验(模式互斥 / --roles 与 --teams 等长 / role 上界)收在 ModeContext(纯函数,`-s` 可测)。
 	# ★ role 上界从旧字面量 8 改为 ModeDefs.ROLE_MAX(16):大厅把上限提到 16 时只改了 UI/色板,worker 仍卡 8
 	#   ⇒ 16 人房第 9 人起被当串线踢(X1)。越界现在**拒绝启动**而不静默丢(静默丢正是 X1 活到今天的原因)。
-	var ctx := ModeContext.from_args(args, NetBus.DEFAULT_PORT)
+	var ctx := ModeContext.from_args(args, Wire.DEFAULT_PORT)
 	if not bool(ctx["ok"]):
 		push_error("worker: 启动参数无效 —— %s" % str(ctx["error"]))
 		get_tree().quit(1)
@@ -61,8 +61,8 @@ func _ready() -> void:
 		return
 	# ── 大厅 ──
 	# 先杀掉还占着 7777 的旧服务端(上次没关干净会 bind 失败→闪退),再监听。
-	ProcUtil.kill_udp_port(NetBus.DEFAULT_PORT)
-	var err := NetBus.start_server()
+	ProcUtil.kill_udp_port(Wire.DEFAULT_PORT)
+	var err := Wire.start_server()
 	if err != OK:
 		push_error("服务器: 监听失败 %d" % err)
 		get_tree().quit(1)
@@ -70,7 +70,7 @@ func _ready() -> void:
 	_room_manager = RoomManager.new()
 	add_child(_room_manager)
 	print("服务器就绪,等待玩家……(大厅 7777;配对后自动拉起对局 worker)")
-	NetDiag.audit("lobby_start", {"version": preload("res://core/config/build_info.gd").display(), "port": NetBus.DEFAULT_PORT})
+	NetDiag.audit("lobby_start", {"version": preload("res://core/config/build_info.gd").display(), "port": Wire.DEFAULT_PORT})
 	get_tree().auto_accept_quit = false   # 关窗先走 _notification 优雅拆房,不许被直接杀掉
 	_print_local_ips()
 	# ★ 面板排在 _print_local_ips() 之后(它填 _lan_ip_text),但仍在本函数体内、
@@ -177,19 +177,19 @@ func _fetch_public_ip() -> void:
 
 
 func _run_worker(port: int) -> void:
-	var err := NetBus.start_server(port)
+	var err := Wire.start_server(port)
 	if err != OK:
 		push_error("worker: 监听失败 %d (port %d)" % [err, port])
 		NetDiag.audit("abort", {"mode": _mode_id(), "reason": "bind_failed"})
 		get_tree().quit(1)
 		return
-	NetBus.role_claimed.connect(_on_role_claimed)
-	NetBusExt.player_options_received.connect(_on_player_options)
-	NetBus.peer_left.connect(_on_peer_left)
-	NetBusExt.suicide_requested.connect(_on_suicide_request)
-	NetBus.match_sync_received.connect(_on_match_sync)
-	NetBusExt.token_reported.connect(_on_token_reported)
-	NetBusExt.reclaim_requested.connect(_on_reclaim)
+	Wire.role_claimed.connect(_on_role_claimed)
+	Wire.player_options_received.connect(_on_player_options)
+	Wire.peer_left.connect(_on_peer_left)
+	Wire.suicide_requested.connect(_on_suicide_request)
+	Wire.match_sync_received.connect(_on_match_sync)
+	Wire.token_reported.connect(_on_token_reported)
+	Wire.reclaim_requested.connect(_on_reclaim)
 	if _royale:
 		print("大乱斗 worker 就绪,等待 %d 名玩家……(port %d,role 集合 %s)" % [
 				_human_role_count(), port, str(_role_set)])
@@ -260,12 +260,12 @@ func _expire_graces(now_ms: int) -> void:
 		get_tree().quit(0)
 
 
-# 1v1 收场之前通知还连着的人(对手不会回来了)。★★ 为什么必须有:NetBus.opponent_left 全仓此前零调用点,而客户端「对手已离开 → 2.5s 回主菜单」一直挂在它上面。
-#   不发的话幸存者只看到 server_disconnected、启动重连、耗尽 60s 预算才回主菜单(在已死的静止世界里干等一分钟)。★ 只在 1v1 收场这一处发(宽限期是给对手回来用的窗口);发送走 NetBus.reply(体内首行判活;钉这条的 rpc_liveness_probe 已删 2026-10-09 ⇒ 零守卫)。
+# 1v1 收场之前通知还连着的人(对手不会回来了)。★★ 为什么必须有:Wire.opponent_left 全仓此前零调用点,而客户端「对手已离开 → 2.5s 回主菜单」一直挂在它上面。
+#   不发的话幸存者只看到 server_disconnected、启动重连、耗尽 60s 预算才回主菜单(在已死的静止世界里干等一分钟)。★ 只在 1v1 收场这一处发(宽限期是给对手回来用的窗口);发送走 Wire.reply(体内首行判活;钉这条的 rpc_liveness_probe 已删 2026-10-09 ⇒ 零守卫)。
 func _notify_opponent_left() -> void:
 	for role in _claims:
 		var peer := int(_claims[role])
-		if NetBus.reply(peer, "opponent_left"):
+		if Wire.send_to(peer, WireKind.OPPONENT_LEFT, []):
 			print("worker: 1v1 收场前通知在线玩家(opponent_left,role=%d peer=%d)" % [int(role), peer])
 
 
@@ -328,7 +328,7 @@ func _on_reclaim(caller: int, role: int, token: String) -> void:
 		why = "令牌不匹配"
 	if why != "":
 		print("worker: 拒绝 reclaim(role=%d,peer=%d):%s" % [role, caller, why])
-		multiplayer.multiplayer_peer.disconnect_peer(caller)
+		Wire.kick(caller)
 		return
 	_claims[role] = caller
 	_host.peer_by_role[role] = caller
@@ -340,11 +340,11 @@ func _on_reclaim(caller: int, role: int, token: String) -> void:
 	_host.reset_input_queue(role)
 	_host._ack_seq[role] = 0      # C2 锚点重协商:客户端 rollback ring 已失(见 spec §3.4)
 	_grace.leave(role)
-	# 回一条 match_start 让客户端重进对局场景(载荷与首次开局同源);★ 走 NetBus.reply 而不是 rpc_id —— 它是答复 caller 的收口,内部先判活。
-	#   这个窗口可达:客户端发完 reclaim_role 是等这条应答,被踢/链路断时下一拍会 _retry_connect() → NetBus.stop(),那个 stop 与本次应答可能挤在同一次 poll,ENet 当场把通道数清零 ⇒ 不判活必打 max channels: 0。
+	# 回一条 match_start 让客户端重进对局场景(载荷与首次开局同源);★ 走 Wire.reply 而不是 rpc_id —— 它是答复 caller 的收口,内部先判活。
+	#   这个窗口可达:客户端发完 reclaim_role 是等这条应答,被踢/链路断时下一拍会 _retry_connect() → Wire.stop(),那个 stop 与本次应答可能挤在同一次 poll,ENet 当场把通道数清零 ⇒ 不判活必打 max channels: 0。
 	var sp: Vector2i = _host.role_spawns().get(role, Vector2i(-1, -1)) \
 			if _host.has_method("role_spawns") else Vector2i(-1, -1)
-	NetBus.reply(caller, "match_start", role, sp, MazeGenerator.map_file_path())
+	Wire.send_to(caller, WireKind.MATCH_START, [role, sp, MazeGenerator.map_file_path()])
 	if _host.has_method("_broadcast_round_state"):
 		# ★★ 读数必须跟着上面那行 _grace.leave(role) 一起变:不刷新的话这一发载荷恰好把这个刚回来的人继续列成「掉线中」;而 1v1/3v3 的 round_state 只在状态跃迁时才发 ⇒ 错值会一直挂到下一次击杀/换局。
 		_sync_grace_snapshot()
@@ -362,8 +362,8 @@ func _on_match_sync(caller: int) -> void:
 	if OS.get_cmdline_user_args().has("--matchsync-diag"):
 		print("[matchsync-diag] 收到 match_sync: caller=%d role=%d _claims.has(caller)=%s _claims 键=%s 值=%s is_peer_live(caller)=%s role_claimed 已连=%s" % [
 				caller, role, str(_claims.has(caller)), str(_claims.keys()), str(_claims.values()),
-				str(NetBus.is_peer_live(caller)),
-				str(NetBus.role_claimed.is_connected(_on_role_claimed))])
+				str(Wire.is_peer_live(caller)),
+				str(Wire.role_claimed.is_connected(_on_role_claimed))])
 	if role == 0:
 		return
 	var spawns := {}
@@ -385,8 +385,8 @@ func _on_match_sync(caller: int) -> void:
 	var teams: Dictionary = {}
 	if _host != null and _host.has_method("team_map"):
 		teams = _host.team_map()
-	# ★ 判活再回:客户端一进对局场景就发 match_sync,进场景 → 请求 → 退出可能挤在同一两帧里,往 ENet 已拆掉的 peer 发就是 max channels: 0(判据见 NetBus.is_peer_live)。
-	if not NetBus.is_peer_live(caller):
+	# ★ 判活再回:客户端一进对局场景就发 match_sync,进场景 → 请求 → 退出可能挤在同一两帧里,往 ENet 已拆掉的 peer 发就是 max channels: 0(判据见 Wire.is_peer_live)。
+	if not Wire.is_peer_live(caller):
 		return
 	var data := {
 		"names": _claim_names,
@@ -400,10 +400,10 @@ func _on_match_sync(caller: int) -> void:
 		data["destroyed"] = destroyed
 	if not teams.is_empty():
 		data["teams"] = teams
-	var _rpc_err := NetBus.rpc_id(caller, "match_sync_data", data)
+	var _rpc_err := Wire.send_to(caller, WireKind.MATCH_SYNC_DATA, [data])
 	if OS.get_cmdline_user_args().has("--matchsync-diag"):
 		print("[matchsync-diag] 已发 match_sync_data → caller=%d data 键=%s rpc_id 返回=%d 在线 peers=%s" % [
-				caller, str(data.keys()), _rpc_err, str(multiplayer.get_peers())])
+				caller, str(data.keys()), _rpc_err, str(Wire.peer_ids())])
 
 
 # 自杀脱困(大乱斗 / 3v3):caller → role → 宿主(存活/对局中校验在那边)。
@@ -423,7 +423,7 @@ func _on_role_claimed(caller: int, role: int, player_name: String) -> void:
 			or ((_royale or _team_mode) and not _role_set.has(role)) \
 			or (_claims.has(role) and _claims[role] != caller):
 		print("worker: 拒绝串线连接 peer=%d(role=%d)" % [caller, role])
-		multiplayer.multiplayer_peer.disconnect_peer(caller)
+		Wire.kick(caller)
 		return
 	if _claims.has(role):
 		return
@@ -460,8 +460,8 @@ func _begin_match() -> void:
 				% [_claims.size(), _team_of_role.size()])
 		return
 	_match_started = true
-	if NetBus.role_claimed.is_connected(_on_role_claimed):
-		NetBus.role_claimed.disconnect(_on_role_claimed)
+	if Wire.role_claimed.is_connected(_on_role_claimed):
+		Wire.role_claimed.disconnect(_on_role_claimed)
 	# 房主选的地图(随 player_options 上报)客户端路径不可信 → 过 MapCatalog 校验(只认仓内 res://maps/*.cyrm、拒绝 ..、必须有双出生点),不合规一律回落默认 PvP 图。
 	var match_map := MapCatalog.resolve_pvp_map(str(_claim_opts.get(1, {}).get("map", "")))
 	if match_map == "":

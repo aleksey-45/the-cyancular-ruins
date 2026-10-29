@@ -7,7 +7,7 @@ extends LobbyPage
 # ★★ 静态骨架在 scenes/mp_lobby.tscn 里:版式(页面留白 / 各行坐标 / 控件尺寸 / 间距 / 固定文案)一律去编辑器里拖,别回来加坐标常量。
 #
 # ★★ 2026-10-22 Task 10 拆件(纯搬移,行为零变化):本页只留四件事 ——
-#   ① 编排(_build_ui 按语义名把骨架接给四块面板) ② RPC 发送(NetBusExt.rpc_id(...) 的名字与参数逐字未动)
+#   ① 编排(_build_ui 按语义名把骨架接给四块面板) ② RPC 发送(Wire.rpc_id(...) 的名字与参数逐字未动)
 #   ③ 模式切换状态(_mode / _create_mode / _wait_mode / _current_mode) ④ 信号转发(NetBus / NetBusExt 的入口 handler)。
 #   四块面板在 scenes/mp_lobby/ 下:
 #     · room_list.gd    —— 房间列表 / 刷新归并 / 加入弹层 / 房卡绘制
@@ -73,14 +73,14 @@ func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_build_ui()
 
-	NetBus.local_room_list.connect(_on_room_list)
-	NetBus.local_room_created.connect(_on_room_created)
-	NetBus.local_room_joined.connect(_on_room_joined)
-	NetBusExt.local_royale_rooms.connect(_on_royale_rooms)
-	NetBusExt.local_royale_room_state.connect(_on_room_state_royale)
-	NetBusExt.local_team_rooms.connect(_on_team_rooms)
-	NetBusExt.local_team_room_state.connect(_on_room_state_team)
-	NetBusExt.local_pvp_room_state.connect(_on_pvp_room_state)
+	Wire.local_room_list.connect(_on_room_list)
+	Wire.local_room_created.connect(_on_room_created)
+	Wire.local_room_joined.connect(_on_room_joined)
+	Wire.local_royale_rooms.connect(_on_royale_rooms)
+	Wire.local_royale_room_state.connect(_on_room_state_royale)
+	Wire.local_team_rooms.connect(_on_team_rooms)
+	Wire.local_team_room_state.connect(_on_room_state_team)
+	Wire.local_pvp_room_state.connect(_on_pvp_room_state)
 
 	_finish_lobby_ready()
 
@@ -133,7 +133,7 @@ func _build_ui() -> void:
 
 
 func _on_back_pressed() -> void:
-	NetBus.stop()
+	Wire.stop()
 	get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
 
 
@@ -187,9 +187,9 @@ func _on_team_rooms(rooms: Array) -> void:
 func _send_list_request() -> void:
 	_rooms.reset_got()
 	_rooms.clear_rooms()
-	NetBus.rpc_id(1, "list_rooms")
-	NetBusExt.rpc_id(1, "royale_list", PvpSession.token)
-	NetBusExt.rpc_id(1, "team_list", PvpSession.token)
+	Wire.send(WireKind.LIST_ROOMS, [])
+	Wire.send(WireKind.ROYALE_LIST, [PvpSession.token])
+	Wire.send(WireKind.TEAM_LIST, [PvpSession.token])
 
 
 
@@ -200,7 +200,7 @@ func _on_room_created(code: String) -> void:
 	_sent_ms = 0
 	_claim_multi_reply()
 	# 补发地图:1v1 的 create_room 签名冻结,塞不进 payload。★ 这里无条件下发 —— 走到本 handler 的就是建房者,也就是房主。
-	NetBusExt.rpc_id(1, "room_map", code, Settings.mp_map_path)
+	Wire.send(WireKind.ROOM_MAP, [code, Settings.mp_map_path])
 	_status.text = "房间号 %s —— 等对手加入(可叫对方刷新列表点进来)" % code
 	# 先摆一个本侧占位(房主 = 自己 / 1 人);服务器 pvp_room_state 一到就用真名单刷新。
 	_wait.show(_wait.pvp_wait_state(code, 1, 1, 1), PvpSession.MODE_PVP)
@@ -244,7 +244,7 @@ func _on_room_state_royale(state: Dictionary) -> void:
 	# ★ 判据用服务器下发的 host_role / your_role 两条(它们按 peer 单独下发,不是按昵称反查 —— 两人同名时会命中先出现的那个,本仓踩过)。
 	var code := str(state.get("code", ""))
 	if int(state.get("host_role", 0)) == int(state.get("your_role", 0)):
-		NetBusExt.rpc_id(1, "room_map", code, Settings.mp_map_path)
+		Wire.send(WireKind.ROOM_MAP, [code, Settings.mp_map_path])
 	_status.text = "已进入大乱斗房间 %s,等待开局…" % code
 	_wait.show(state, PvpSession.MODE_ROYALE)
 
@@ -258,7 +258,7 @@ func _on_room_state_team(state: Dictionary) -> void:
 	_claim_multi_reply()
 	var code := str(state.get("code", ""))
 	if int(state.get("host_role", 0)) == int(state.get("your_role", 0)):
-		NetBusExt.rpc_id(1, "room_map", code, Settings.mp_map_path)
+		Wire.send(WireKind.ROOM_MAP, [code, Settings.mp_map_path])
 	_status.text = "已进入 3v3 房间 %s,等待选边/开局…" % code
 	_wait.show(state, PvpSession.MODE_TEAM)
 
@@ -280,7 +280,7 @@ func _on_server_message(t: String) -> void:
 		# 服务端已明确应答 ⇒ 那间房与我无关,别留给下一次的成功信号。
 		_join_pending = ""
 		if not _auto_refreshed:
-			# ★ 推迟到帧末:server_message 在大厅 peer 的 poll 调用栈内到达,栈内立刻 NetBus.stop()(重连)会把正在 poll 的 peer 提前 free → 原生段错误。
+			# ★ 推迟到帧末:server_message 在大厅 peer 的 poll 调用栈内到达,栈内立刻 Wire.stop()(重连)会把正在 poll 的 peer 提前 free → 原生段错误。
 			_auto_refreshed = true
 			_request_list.call_deferred("%s → 已自动刷新列表" % t)
 		else:
@@ -340,15 +340,15 @@ func _join_code(code: String, mode: String, invite: String = "") -> void:
 		_multi_left = 3 if _probe_multi_join else 0
 		_status.text = "加入房间 %s,等待配对…" % code
 		if mode == PvpSession.MODE_ROYALE:
-			NetBusExt.rpc_id(1, "royale_join", code, invite, PvpSession.beta_mode)
+			Wire.send(WireKind.ROYALE_JOIN, [code, invite, PvpSession.beta_mode])
 		elif mode == PvpSession.MODE_TEAM:
-			NetBusExt.rpc_id(1, "team_join", code, invite, PvpSession.beta_mode)
+			Wire.send(WireKind.TEAM_JOIN, [code, invite, PvpSession.beta_mode])
 		elif mode == PvpSession.MODE_PVP:
-			NetBus.rpc_id(1, "join_room", code)
+			Wire.send(WireKind.JOIN_ROOM, [code])
 		else:
-			NetBus.rpc_id(1, "join_room", code)
-			NetBusExt.rpc_id(1, "royale_join", code, invite, PvpSession.beta_mode)
-			NetBusExt.rpc_id(1, "team_join", code, invite, PvpSession.beta_mode))
+			Wire.send(WireKind.JOIN_ROOM, [code])
+			Wire.send(WireKind.ROYALE_JOIN, [code, invite, PvpSession.beta_mode])
+			Wire.send(WireKind.TEAM_JOIN, [code, invite, PvpSession.beta_mode]))
 
 
 # 点「＋ 创建房间」只显示弹层。★ 每次打开都重刷模式相关行显隐(create_panel.open → apply),不挪进 _ready —— 面板建好之后玩家仍可能改筛选模式,那时这条链必须再跑一次。
@@ -367,11 +367,11 @@ func _on_create_pressed() -> void:
 		var payload := _create_dialog.build_payload(mode)
 		payload.merge(_beta_payload())   # Beta 态追加 {"beta":true,"time":{…}};普通态空合入
 		if mode == PvpSession.MODE_ROYALE:
-			NetBusExt.rpc_id(1, "royale_create", payload)
+			Wire.send(WireKind.ROYALE_CREATE, [payload])
 		elif mode == PvpSession.MODE_TEAM:
-			NetBusExt.rpc_id(1, "team_create", payload)
+			Wire.send(WireKind.TEAM_CREATE, [payload])
 		else:
-			NetBus.rpc_id(1, "create_room")
+			Wire.send(WireKind.CREATE_ROOM, [])
 		_status.text = "建房中…(拿到房间号后可叫对方刷新列表点进来)")
 
 
@@ -386,28 +386,28 @@ func _unhandled_input(ev: InputEvent) -> void:
 
 # 选边(仅 3v3)。★ 按 team 号上行,服务端"先拦后分"。
 func _on_wait_pick(team: int) -> void:
-	NetBusExt.rpc_id(1, "team_pick", team)
+	Wire.send(WireKind.TEAM_PICK, [team])
 
 
 func _on_wait_start_pressed() -> void:
 	_status.text = "开局中…"
 	if _wait_mode == PvpSession.MODE_PVP:
-		NetBusExt.rpc_id(1, "pvp_start")   # 1v1(2026-10-24):两人齐后由房主触发
+		Wire.rpc_id(1, "pvp_start")   # 1v1(2026-10-24):两人齐后由房主触发
 	elif _wait_mode == PvpSession.MODE_ROYALE:
-		NetBusExt.rpc_id(1, "royale_start")
+		Wire.send(WireKind.ROYALE_START, [])
 	elif _wait_mode == PvpSession.MODE_TEAM:
-		NetBusExt.rpc_id(1, "team_start")
+		Wire.send(WireKind.TEAM_START, [])
 
 
-# 「退出房间」。★ 三个模式不同款(照两个旧页逐字对齐):1v1 没有 leave RPC —— 断开即触发大厅 on_peer_left 清房,基类 _return_to_lobby 正好是那条收口(NetBus.stop() + 重连 + 刷新列表)。
+# 「退出房间」。★ 三个模式不同款(照两个旧页逐字对齐):1v1 没有 leave RPC —— 断开即触发大厅 on_peer_left 清房,基类 _return_to_lobby 正好是那条收口(Wire.stop() + 重连 + 刷新列表)。
 # ★ 大乱斗 / 3v3 有 leave RPC,且不能断大厅 peer:断开会走 on_peer_left 那条另一条路径去关房,同一件事就有两个实现 ⇒ 只发 leave,然后走共用的页面清理(_on_return_to_lobby)+ 重拉列表 —— 不重连,大厅 peer 还在。
 func _on_wait_leave_pressed() -> void:
 	if _wait_mode == PvpSession.MODE_ROYALE:
-		NetBusExt.rpc_id(1, "royale_leave")
+		Wire.send(WireKind.ROYALE_LEAVE, [])
 		_on_return_to_lobby()
 		_request_list.call_deferred("已退出房间")
 	elif _wait_mode == PvpSession.MODE_TEAM:
-		NetBusExt.rpc_id(1, "team_leave")
+		Wire.send(WireKind.TEAM_LEAVE, [])
 		_on_return_to_lobby()
 		_request_list.call_deferred("已退出房间")
 	else:
@@ -416,7 +416,7 @@ func _on_wait_leave_pressed() -> void:
 
 
 # ★★ 判据必须是本页的 _current_mode(我当前所在那间房的模式),不是 PvpSession.room_mode —— 后者是凭据的模式,它在"建了房但 note_room 还没跑到"那一档上是空串。两个量语义不同,不要合并成一个字段。
-# ★ 两页刻意不同的那条纪律现在按 _current_mode 分派:1v1 直切;大乱斗 / 3v3 必须 call_deferred —— 它们的 match_start 在 NetBus.poll 调用栈内到达,栈内切场景会在这个栈里 free 大厅 / 重建大物理世界 → 偶发原生段错误(曾实测)。
+# ★ 两页刻意不同的那条纪律现在按 _current_mode 分派:1v1 直切;大乱斗 / 3v3 必须 call_deferred —— 它们的 match_start 在 Wire.poll 调用栈内到达,栈内切场景会在这个栈里 free 大厅 / 重建大物理世界 → 偶发原生段错误(曾实测)。
 # ★★ else 那一支刻意什么都不做、只 push_error,不默认切任何一个场景:本函数有三条进入路径(建房 / 加入 / 回局),任何一条漏记 _current_mode 都会落到这里 —— 切一个默认场景是静默的错值(玩家进了错的对局场景,只是看起来怪),而"留在原地 + 一条红"是响的。
 func _enter_match_scene() -> void:
 	if _current_mode == PvpSession.MODE_PVP:

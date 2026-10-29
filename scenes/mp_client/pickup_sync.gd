@@ -37,8 +37,8 @@ func _pickup_diag_on() -> bool:
 
 # 订阅服务器的两条地面武器事件。★ 必须走 NetBus,不是 NetBusExt —— 后者里有同名遗留的 beam_fired,挂错节点的表现是静默 no-op(对手的枪凭空消失 / 永不再现,且不报错)。两个子类各自 _ready 里经宿主调一次。
 func subscribe() -> void:
-	NetBus.local_weapon_spawned.connect(on_spawned)
-	NetBus.local_weapon_removed.connect(on_removed)
+	Wire.local_weapon_spawned.connect(on_spawned)
+	Wire.local_weapon_removed.connect(on_removed)
 
 
 func on_spawned(data: Dictionary) -> void:

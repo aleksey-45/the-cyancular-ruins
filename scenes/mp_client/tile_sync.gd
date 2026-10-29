@@ -21,8 +21,8 @@ func bind(client: Node) -> void:
 #   走 `TileDefs.damage_sub` ⇒ 线上只发 `sub_destroyed`。只接格级那条 = 服务器已经拆了、客户端墙上
 #   **贴图与碰撞都还在**(幽灵墙):本地预测撞在服务器不存在的墙上 ⇒ 每帧分歧回滚(橡皮筋),视觉子弹也被挡下。
 func subscribe() -> void:
-	NetBus.local_tile_destroyed.connect(on_cell)
-	NetBusExt.local_sub_destroyed.connect(on_sub)
+	Wire.local_tile_destroyed.connect(on_cell)
+	Wire.local_sub_destroyed.connect(on_sub)
 
 
 func on_cell(cell: Vector2i, silent: bool = false) -> void:

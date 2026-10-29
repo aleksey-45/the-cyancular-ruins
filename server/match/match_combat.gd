@@ -15,7 +15,7 @@ func _on_tile_destroyed(cell: Vector2i) -> void:
 				damaged_subs[Vector2i(cell.x * 4 + sx, cell.y * 4 + sy)] = true
 		_dirty_chunks[CollisionBuilder.chunk_of(cell)] = true
 
-	_rpc_all("tile_destroyed", [cell])
+	_rpc_all(WireKind.TILE_DESTROYED, [cell])
 
 
 # 16px 子格被摧毁:清持久子格 + 标记分块重建 + 广播;owner(射手节点)映射成 role,Beta 时间玩法在这里结算拆砖得颗粒。
@@ -24,7 +24,7 @@ func _on_sub_destroyed(sub: Vector2i, _pre_hp: int, owner: Node) -> void:
 	if not destructible_sub.is_empty() 			and sub.y >= 0 and sub.y < destructible_sub.size() 			and sub.x >= 0 and sub.x < (destructible_sub[0] as Array).size():
 		destructible_sub[sub.y][sub.x] = MazeGenerator.EMPTY
 		_dirty_chunks[CollisionBuilder.chunk_of(Vector2i(sub.x / 4, sub.y / 4))] = true
-	_rpc_all_ext("sub_destroyed", [sub])
+	_rpc_all_ext(WireKind.SUB_DESTROYED, [sub])
 	if time_economy != null:
 		var role := _role_of_node(owner)
 		if role != 0:
@@ -137,7 +137,7 @@ func _broadcast_bullet_spawn(bullet: CharacterBody2D) -> void:
 	if bullet.explosion_visual != null:
 		data["visual"] = bullet.explosion_visual.resource_path
 
-	_rpc_all("bullet_spawn", [data], shooter_role)
+	_rpc_all(WireKind.BULLET_SPAWN, [data], shooter_role)
 
 # 光束权威开火上报:每物理帧轮询各角色当前武器。★ 时序与子弹同款 —— MatchHost 父先于子,这里读到的是上一
 # 物理帧记下的上报(光束 0.25s 存续,晚 1 tick 无感);COUNTDOWN 不喂输入 ⇒ 无上报,天然冻结。
@@ -160,7 +160,7 @@ func _broadcast_pending_beams() -> void:
 func _broadcast_beam_fired(shooter_role: int, rep: Dictionary) -> void:
 	rep["shooter_role"] = shooter_role
 
-	_rpc_all("beam_fired", [rep], shooter_role)
+	_rpc_all(WireKind.BEAM_FIRED, [rep], shooter_role)
 
 # 光束直击:服务器结算后把 X 标记(hit_confirm)发给射手本人 —— 与子弹同链路;爆炸 AoE 不发(伤害方不明确)。
 
@@ -174,9 +174,9 @@ func notify_direct_hit(shooter: Node, victim: Node) -> void:
 			victim_role = int(role)
 	if shooter_role < 0 or victim_role < 0 or shooter_role == victim_role:
 		return
-# ★ 判活走 NetBus.is_peer_live(读 ENet peer 自己的 state),不是 get_peers():后者滞后,挡不住往已拆掉的 peer 发定向包(那条 channel 0 错误)。
-	if peer_by_role.has(shooter_role) and NetBus.is_peer_live(peer_by_role[shooter_role]):
-		NetBusExt.rpc_id(peer_by_role[shooter_role], "hit_confirm", shooter_role, victim_role)
+# ★ 判活走 Wire.is_peer_live(读 ENet peer 自己的 state),不是 get_peers():后者滞后,挡不住往已拆掉的 peer 发定向包(那条 channel 0 错误)。
+	if peer_by_role.has(shooter_role) and Wire.is_peer_live(peer_by_role[shooter_role]):
+		Wire.send_to(peer_by_role[shooter_role], WireKind.HIT_CONFIRM, [shooter_role, victim_role])
 
 
 func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, _victim_role: int) -> void:
@@ -193,8 +193,8 @@ func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, _victim_role: int) 
 			shooter_role = int(r)
 			break
 	if shooter_role != 0 and peer_by_role.has(shooter_role) \
-			and NetBus.is_peer_live(peer_by_role[shooter_role]):
-		NetBusExt.rpc_id(peer_by_role[shooter_role], "hit_confirm", shooter_role, _victim_role)
+			and Wire.is_peer_live(peer_by_role[shooter_role]):
+		Wire.send_to(peer_by_role[shooter_role], WireKind.HIT_CONFIRM, [shooter_role, _victim_role])
 	bullet.queue_free()
 
 # 玩家受击反馈:实际扣血后广播 hit_event;客户端按 victim_role 分支(自己 → 白闪/击退,对手 → 闪烁)。bind(role) 的参数追加在信号参数之后。
@@ -231,8 +231,8 @@ func _on_player_hit(source_pos: Vector2, damage: int, role: int) -> void:
 			time_economy.award_damage(rw_attacker, int(role), damage)
 	for r in peer_by_role:
 
-		if NetBus.is_peer_live(peer_by_role[r]):
-			NetBus.rpc_id(peer_by_role[r], "hit_event", role, damage, source_pos)
+		if Wire.is_peer_live(peer_by_role[r]):
+			Wire.send_to(peer_by_role[r], WireKind.HIT_EVENT, [role, damage, source_pos])
 
 
 

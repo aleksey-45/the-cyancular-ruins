@@ -60,6 +60,7 @@ const ROOM_MAP := 24          # 房主上报本房地图(列表缩略图;定图�
 const REPORT_TOKEN := 25      # worker:报到回局令牌
 const RECLAIM_ROLE := 26      # worker:宽限期内重新认领 role
 const REJOIN_REQUEST := 27    # 大厅:回大厅后回局
+const PVP_START := 28         # 1v1 房主点「开始游戏」(2026-10-24 起不再两人凑齐自动开)
 
 # ── 服务器 → 客户端 ───────────────────────────────────────────────────────────
 const SNAPSHOT_WORLD := 32    # 世界包(binary;CH_STATE)
@@ -124,6 +125,7 @@ const TABLE := {
 	REPORT_TOKEN: {"dir": DIR_C2S, "ch": CH_SESSION, "sig": "token_reported"},
 	RECLAIM_ROLE: {"dir": DIR_C2S, "ch": CH_SESSION, "sig": "reclaim_requested"},
 	REJOIN_REQUEST: {"dir": DIR_C2S, "ch": CH_SESSION, "sig": "rejoin_requested"},
+	PVP_START: {"dir": DIR_C2S, "ch": CH_SESSION, "sig": "pvp_start_requested"},
 
 	SNAPSHOT_WORLD: {"dir": DIR_S2C, "ch": CH_STATE, "sig": "local_snapshot_world", "bin": "world"},
 	SNAPSHOT_OWN: {"dir": DIR_S2C, "ch": CH_STATE, "sig": "local_snapshot_own", "bin": "own"},

@@ -48,16 +48,16 @@ func _ready() -> void:
 	call_deferred("add_child", pp)
 	# 血条(他人,设置开启时;具体 role 的实例随副本在快照里懒建)。
 	# 快照拆两条:① 世界包 = 全部玩家的渲染字段(副本/HUD 取它);② 本人包 = 自己的 ack_seq + c2(只有本人需要,C2 rollback 拿它锚定/重放)。
-	NetBus.local_snapshot_world.connect(_on_snapshot_world)
-	NetBus.local_snapshot_own.connect(_on_snapshot_own)
-	NetBus.local_bullet_spawn.connect(_on_bullet_spawn)
-	NetBus.local_beam_fired.connect(_on_beam_fired)   # 大乱斗非射手端激光视觉副本(与 pvp_client 同款)
-	NetBus.local_hit_event.connect(_on_hit_event)
+	Wire.local_snapshot_world.connect(_on_snapshot_world)
+	Wire.local_snapshot_own.connect(_on_snapshot_own)
+	Wire.local_bullet_spawn.connect(_on_bullet_spawn)
+	Wire.local_beam_fired.connect(_on_beam_fired)   # 大乱斗非射手端激光视觉副本(与 pvp_client 同款)
+	Wire.local_hit_event.connect(_on_hit_event)
 	_subscribe_tile_events()   # 拆砖的两条(格级 + 子格级)必须成对,见基类注释
-	NetBus.local_round_state.connect(_on_round_state)
-	NetBusExt.local_hit_confirm.connect(_on_hit_confirm)
-	NetBus.local_kill_event.connect(_on_kill_event)
-	NetBus.local_match_sync.connect(_on_match_sync)   # 进场拉取的应答(取代旧的推送+大厅缓存交接)
+	Wire.local_round_state.connect(_on_round_state)
+	Wire.local_hit_confirm.connect(_on_hit_confirm)
+	Wire.local_kill_event.connect(_on_kill_event)
+	Wire.local_match_sync.connect(_on_match_sync)   # 进场拉取的应答(取代旧的推送+大厅缓存交接)
 	_subscribe_ground_weapons()   # 地面武器事件(开局那批走 match_sync,见 _on_match_sync)
 	_subscribe_reconnect()        # 断线重连:服务器断开检测 + reclaim 成功后那条 match_start
 	if Settings.pvp_show_minimap:
@@ -82,8 +82,8 @@ func _ready() -> void:
 	add_child(_pause_menu)
 	_apply_tint(_local.get_node_or_null("AnimatedSprite2D"), Settings.pvp_color_hue)
 	# ★ 进场主动拉一次(昵称/色相/生效选项/出生点):本场景此刻已建好并订阅齐了才开口要,故不存在「推给一个正在切场景的客户端」那个竞态。★ 判活再发(全仓纪律,与 pvp_game 那处逐字同款):定向可靠包,连接可能已经不可用。
-	if NetBus.can_send_to_server():
-		NetBus.rpc_id(1, "match_sync")
+	if Wire.can_send_to_server():
+		Wire.send(WireKind.MATCH_SYNC, [])
 	print("进入大乱斗:角色 %d 出生点 %s" % [PvpSession.role, PvpSession.spawn])
 
 
@@ -158,7 +158,7 @@ func _remove_replica(role: int) -> void:
 	_refresh_names()
 
 
-# 服务器权威开火(激光):逐点锚到射手副本当前渲染位置再整条画(与 pvp_client._on_beam_fired 的唯一差别:大乱斗按 shooter_role 取锚点)。★ 必须走 NetBus(不是 NetBusExt):发送端 match_host 用的是 NetBus.rpc_id,收在 NetBusExt 上会静默 no-op。
+# 服务器权威开火(激光):逐点锚到射手副本当前渲染位置再整条画(与 pvp_client._on_beam_fired 的唯一差别:大乱斗按 shooter_role 取锚点)。★ 必须走 NetBus(不是 NetBusExt):发送端 match_host 用的是 Wire.rpc_id,收在 NetBusExt 上会静默 no-op。
 
 
 
@@ -174,11 +174,11 @@ func _unhandled_input(event: InputEvent) -> void:
 	if _match_ended or _local == null:
 		return
 	# ★ 判活再发(全仓纪律):按 K 的那一刻连接可能已经不可用,而这是定向可靠包 ⇒ 不判就是那条 channel 0 错误。
-	if not NetBus.can_send_to_server():
+	if not Wire.can_send_to_server():
 		return
 	if event is InputEventKey and event.pressed and not event.echo \
 			and event.physical_keycode == KEY_K:
-		NetBusExt.rpc_id(1, "suicide_request")
+		Wire.send(WireKind.SUICIDE_REQUEST, [])
 
 
 # 回合状态的四态编排已收进基类 PvpMatchClient._on_round_state(2026-10-22)。
@@ -193,7 +193,7 @@ func _build_result_payload() -> Dictionary:
 	return MatchResultPayload.for_royale(_last_round_state, _names, PvpSession.role)
 
 
-# 应用函数(不是信号回调):唯一入口 = _on_match_sync(进场拉取)。★ 不要连回 NetBus.local_peer_info —— 那条推送路径在本项目已不存在(worker 不再广播),连上去会让本载荷走两条路。
+# 应用函数(不是信号回调):唯一入口 = _on_match_sync(进场拉取)。★ 不要连回 Wire.local_peer_info —— 那条推送路径在本项目已不存在(worker 不再广播),连上去会让本载荷走两条路。
 func _apply_peer_names(names: Dictionary) -> void:
 	_names = names
 	_ensure_id_label(PvpSession.role)
@@ -201,7 +201,7 @@ func _apply_peer_names(names: Dictionary) -> void:
 
 var _names: Dictionary = {}   # role(int) -> 昵称(peer_info 下发)
 
-# 应用函数(不是信号回调):唯一入口 = _on_match_sync(进场拉取);★ 不要连回 NetBusExt.local_peer_hues,同 _apply_peer_names 的告警。
+# 应用函数(不是信号回调):唯一入口 = _on_match_sync(进场拉取);★ 不要连回 Wire.local_peer_hues,同 _apply_peer_names 的告警。
 func _apply_peer_hues(hues: Dictionary) -> void:
 	_hues = hues
 	for role in _replicas:
@@ -225,7 +225,7 @@ func _refresh_names() -> void:
 		(_id_labels[role] as Node2D).set_label(nm, col)
 
 
-# 服务器下发生效选项:同步禁用武器。应用函数(不是信号回调):唯一入口 = _on_match_sync;★ 不要连回 NetBusExt.local_match_options,同 _apply_peer_names 的告警。
+# 服务器下发生效选项:同步禁用武器。应用函数(不是信号回调):唯一入口 = _on_match_sync;★ 不要连回 Wire.local_match_options,同 _apply_peer_names 的告警。
 
 func _process(_delta: float) -> void:
 	for role in _id_labels:

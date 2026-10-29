@@ -539,7 +539,7 @@ func _check_worker_pid_tracking() -> void:
 
 
 # ── 三条 join 的拒绝守卫与文案 ──
-# ★ 为什么是源码级:文案是发给玩家看的字符串,而探针里没有对端 —— `NetBus.reply` 在 `is_peer_live(caller)` 为假时静默跳过,那句话在探针里观测不到(行为面零守卫:`lobby_visibility_probe.tscn` 已删·2026-10-09)。
+# ★ 为什么是源码级:文案是发给玩家看的字符串,而探针里没有对端 —— `Wire.reply` 在 `is_peer_live(caller)` 为假时静默跳过,那句话在探针里观测不到(行为面零守卫:`lobby_visibility_probe.tscn` 已删·2026-10-09)。
 func _check_join_refusal_guards() -> void:
 	if _fail != "":
 		return

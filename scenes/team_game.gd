@@ -39,17 +39,17 @@ func _ready() -> void:
 	var pp := PostProcess.new()
 	pp.world_viewport = level0.get_node("WorldViewport")
 	call_deferred("add_child", pp)
-	NetBus.local_snapshot_world.connect(_on_snapshot_world)
-	NetBus.local_snapshot_own.connect(_on_snapshot_own)
-	NetBus.local_bullet_spawn.connect(_on_bullet_spawn)
-	NetBus.local_beam_fired.connect(_on_beam_fired)
-	NetBus.local_hit_event.connect(_on_hit_event)
+	Wire.local_snapshot_world.connect(_on_snapshot_world)
+	Wire.local_snapshot_own.connect(_on_snapshot_own)
+	Wire.local_bullet_spawn.connect(_on_bullet_spawn)
+	Wire.local_beam_fired.connect(_on_beam_fired)
+	Wire.local_hit_event.connect(_on_hit_event)
 	_subscribe_tile_events()   # 拆砖的两条(格级 + 子格级)必须成对,见基类注释
 	_setup_beta_time_hud()   # Beta 时间玩法:怀表镜像(普通局内部自短路)
-	NetBus.local_round_state.connect(_on_round_state)
-	NetBusExt.local_hit_confirm.connect(_on_hit_confirm)
-	NetBus.local_kill_event.connect(_on_kill_event)
-	NetBus.local_match_sync.connect(_on_match_sync)   # 进场拉取的应答(取代旧的推送+大厅缓存交接)
+	Wire.local_round_state.connect(_on_round_state)
+	Wire.local_hit_confirm.connect(_on_hit_confirm)
+	Wire.local_kill_event.connect(_on_kill_event)
+	Wire.local_match_sync.connect(_on_match_sync)   # 进场拉取的应答(取代旧的推送+大厅缓存交接)
 	_subscribe_ground_weapons()   # 地面武器事件(开局那批走 match_sync,见 _on_match_sync)
 	_subscribe_reconnect()        # 断线重连:服务器断开检测 + reclaim 成功后那条 match_start
 	# 小地图(多目标 + 队色):四个提供器同序一一对应(错位 = 队友点画成敌人色,不报错只误导人)。★ 后三个用具名方法而不是内联 lambda —— lambda 要以 return arr, 结尾才能带出数组,那是本仓没写过的形状。
@@ -72,8 +72,8 @@ func _ready() -> void:
 	add_child(_pause_menu)
 	# ★ 自己那具的染色不在这里做,等队伍表(见 _refresh_team_colors):3v3 下自己是队色,与「看别人」同一份来源(个人色相在本模式整体停用)。此前这里传的是 Settings.pvp_color_hue,默认值 0 = 不改色 ⇒ 身体恒为本体蓝(= 队 1 的颜色,青队玩家因此看见自己与队 1 同色)。
 	# ★ 别在这里补一句「表到达前先用 pvp_color_hue 兜一下」:那是给同一个语义开第二个来源,且会在倒计时里闪一次颜色;表真缺了则整局保持本体蓝,那条路已有 push_warning、不是静默。★ 进场主动拉一次(昵称/队伍/生效选项/出生点/地面武器/destroyed):本场景已建好并订阅齐了才开口要,故没有「推给一个正在切场景的客户端」那个竞态;★ 判活再发(全仓纪律)。
-	if NetBus.can_send_to_server():
-		NetBus.rpc_id(1, "match_sync")
+	if Wire.can_send_to_server():
+		Wire.send(WireKind.MATCH_SYNC, [])
 	print("进入 3v3:角色 %d 出生点 %s" % [PvpSession.role, PvpSession.spawn])
 
 
@@ -290,11 +290,11 @@ func _on_kill_event(killer: int, victim: int) -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if _match_ended or _local == null:
 		return
-	if not NetBus.can_send_to_server():
+	if not Wire.can_send_to_server():
 		return
 	if event is InputEventKey and event.pressed and not event.echo \
 			and event.physical_keycode == KEY_K:
-		NetBusExt.rpc_id(1, "suicide_request")
+		Wire.send(WireKind.SUICIDE_REQUEST, [])
 
 
 # 回合状态的四态编排已收进基类 PvpMatchClient._on_round_state(2026-10-22):
@@ -307,12 +307,12 @@ func _on_countdown_round() -> void:
 	#   客户端只在进场/重连拉过一次 ⇒ 换边后六端手里那份是旧侧的。不补发 second path 进 round_state
 	#   (那是给同一份数据开第二条投递路径),改在这里拉 —— 本来就站在「清子弹 + 还原砖」这一拍上,
 	#   且顺带把 ground_weapons 与 destroyed 一并对齐。
-	if NetBus.can_send_to_server():
+	if Wire.can_send_to_server():
 		# ★ 先置位再发:这条应答是补态口径(不是进场建态)—— 换边后 spawns 是新一侧而 PvpSession.spawn
 		#   手里是旧一侧,两者必然不一致,照进场口径硬拉 = 每局边界刷一条假告警 + 一次多余瞬移。
 		#   闸门与「重连补态」共用(_resync_pull_pending,读一次即清),不要新立一个标志。
 		_resync_pull_pending = true
-		NetBus.rpc_id(1, "match_sync")
+		Wire.send(WireKind.MATCH_SYNC, [])
 
 
 # 结算页载荷的唯一来源。★ 只读状态、不碰节点树(适配器是纯函数);_last_round_state 是基类成员,本文件不再声明。

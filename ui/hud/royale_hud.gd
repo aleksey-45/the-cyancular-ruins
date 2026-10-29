@@ -52,8 +52,8 @@ func _ready() -> void:
 	# 两块底板样式仍由代码给:颜色 token(C_*)的唯一来源是 UiFactory,抄进 .tscn 就是第二处真值。
 	_ping_wrap.add_theme_stylebox_override("panel", _plate_box(14.0, 6.0))
 	_hint_wrap.add_theme_stylebox_override("panel", _plate_box(10.0, 4.0))
-	NetBus.local_round_state.connect(_on_round_state)
-	NetBus.ping_updated.connect(_on_ping)
+	Wire.local_round_state.connect(_on_round_state)
+	Wire.ping_updated.connect(_on_ping)
 	# ★ 倒计时数字走完那一拍:PLAYING 态要收起广播(1v1/3v3 不接这条 —— 它们的 PLAYING 广播由服务器下发的状态切换收起)。
 	_broadcast.countdown_finished.connect(_on_countdown_finished)
 	_broadcast.set_broadcast(true, "大乱斗", "等待开局…")

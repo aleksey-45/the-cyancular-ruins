@@ -36,22 +36,22 @@ func _ready() -> void:
 		printerr("SMOKE_MATCH FAIL: 缺 --role")
 		get_tree().quit(1)
 		return
-	NetBus.local_match_start.connect(func(r: int, _s: Vector2i, _m: String) -> void:
+	Wire.local_match_start.connect(func(r: int, _s: Vector2i, _m: String) -> void:
 		my_role = r
 		_match_started = true
 		_frames = 0   # 计数从开局(worker 的 match_start)起算
 	)
-	NetBus.local_go_match.connect(_on_go_match)
-	NetBus.local_snapshot_world.connect(_on_snapshot_world)
-	NetBus.local_snapshot_own.connect(_on_snapshot_own)
-	NetBus.local_bullet_spawn.connect(func(_d: Dictionary) -> void: _got_bullet_spawn = true)
-	NetBus.local_round_state.connect(func(_d: Dictionary) -> void: _got_round_state = true)
-	NetBusExt.local_pvp_room_state.connect(_on_pvp_room_state)
-	multiplayer.connected_to_server.connect(_on_connected, CONNECT_ONE_SHOT)
-	multiplayer.connection_failed.connect(func() -> void:
+	Wire.local_go_match.connect(_on_go_match)
+	Wire.local_snapshot_world.connect(_on_snapshot_world)
+	Wire.local_snapshot_own.connect(_on_snapshot_own)
+	Wire.local_bullet_spawn.connect(func(_d: Dictionary) -> void: _got_bullet_spawn = true)
+	Wire.local_round_state.connect(func(_d: Dictionary) -> void: _got_round_state = true)
+	Wire.local_pvp_room_state.connect(_on_pvp_room_state)
+	Wire.connected_to_server.connect(_on_connected, CONNECT_ONE_SHOT)
+	Wire.connection_failed.connect(func() -> void:
 		printerr("SMOKE_MATCH FAIL: 连接失败")
 		get_tree().quit(1))
-	var err := NetBus.start_client("127.0.0.1")
+	var err := Wire.start_client("127.0.0.1")
 	if err != OK:
 		printerr("SMOKE_MATCH FAIL: start_client %d" % err)
 		get_tree().quit(1)
@@ -59,9 +59,9 @@ func _ready() -> void:
 func _on_connected() -> void:
 	match role:
 		"create":
-			NetBus.rpc_id(1, "create_room")
+			Wire.send(WireKind.CREATE_ROOM, [])
 		"join":
-			NetBus.rpc_id(1, "join_room", code)
+			Wire.send(WireKind.JOIN_ROOM, [code])
 		_:
 			printerr("SMOKE_MATCH FAIL: 非法 role %s" % role)
 			get_tree().quit(1)
@@ -75,7 +75,7 @@ func _on_pvp_room_state(state: Dictionary) -> void:
 	var players: Array = state.get("players", [])
 	if players.size() >= 2 and int(state.get("your_role", 0)) == int(state.get("host_role", -1)):
 		_start_sent = true
-		NetBusExt.rpc_id(1, "pvp_start")
+		Wire.rpc_id(1, "pvp_start")
 
 func _on_snapshot_world(world: Dictionary) -> void:
 	_got_snapshot = true
@@ -108,18 +108,18 @@ func _on_snapshot_own(own: Dictionary) -> void:
 			_full_state_ok = true
 
 func _on_go_match(role_assign: int, port: int) -> void:
-	multiplayer.connected_to_server.connect(_claim_worker.bind(role_assign), CONNECT_ONE_SHOT)
-	multiplayer.connection_failed.connect(func() -> void:
+	Wire.connected_to_server.connect(_claim_worker.bind(role_assign), CONNECT_ONE_SHOT)
+	Wire.connection_failed.connect(func() -> void:
 		printerr("SMOKE_MATCH FAIL: 连接对局 worker 失败")
 		get_tree().quit(1), CONNECT_ONE_SHOT)
-	NetBus.stop()
-	var err := NetBus.start_client("127.0.0.1", port)
+	Wire.stop()
+	var err := Wire.start_client("127.0.0.1", port)
 	if err != OK:
 		printerr("SMOKE_MATCH FAIL: start_client(worker) %d" % err)
 		get_tree().quit(1)
 
 func _claim_worker(role_assign: int) -> void:
-	NetBus.rpc_id(1, "claim_role", role_assign, PvpSession.player_name)
+	Wire.send(WireKind.CLAIM_ROLE, [role_assign, PvpSession.player_name])
 
 func _physics_process(_delta: float) -> void:
 	if not _match_started:
@@ -161,7 +161,7 @@ func _physics_process(_delta: float) -> void:
 		# U1:30Hz 一包两条 tick 记录(流水线:上一 tick + 本 tick);服务器每 tick 消费一条。
 		if _frames % 2 == 0 and not _prev_rec.is_empty():
 			var pair := PacketInputSource.pack_pair(_prev_rec, rec, Vector2(1, 0), 0, 0)
-			NetBus.rpc_id(1, "send_input", NetCodec.encode_input(pair))
+			Wire.send(WireKind.SEND_INPUT, [NetCodec.encode_input(pair)])
 		_prev_rec = rec
 	# 成功判定
 	if role == "create":

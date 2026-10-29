@@ -25,7 +25,7 @@ var _prev_tick_rec: Dictionary = {}   # 流水线里"上一 tick 的记录",下�
 var _last_snap_tick := 0
 # ── 网络统计读数(★ 默认关;开关 -- --netstat,必须写在 -- 之后,写在前面会被 Godot 丢掉、静默失效)──
 # 一次打一行四个量:gap = _input_seq − 最后收到的 ack(本端已发、服务器没确认的输入**记录**数;U1 后一条记录 = 1 个物理 tick,
-# 故端到端滞后 ≈ gap×16.7ms);ping = NetBus.ping_ms(EWMA 平滑的纯网络 RTT);积压 = gap×16.7 − ping(扣掉网络之后还剩多少是服务器没来得及消费的);
+# 故端到端滞后 ≈ gap×16.7ms);ping = Wire.ping_ms(EWMA 平滑的纯网络 RTT);积压 = gap×16.7 − ping(扣掉网络之后还剩多少是服务器没来得及消费的);
 # 回滚 = rollback_count() 的每秒增量(恒为 0 也可能是哑火,见 on_authoritative 的 ack 闸)。★ ack 只在 30Hz 本人包回带 ⇒ gap 有 0~2 条(0~33ms)量化偏置,判趋势不看绝对值。
 var _netstat := false
 var _netstat_checked := false
@@ -120,7 +120,7 @@ func _setup_beta_time_hud() -> void:
 	_time_watch = WatchHud.new()
 	_time_watch.position = Vector2(24.0, 124.0)   # 与单机同位:左上边距 (24,24) + 血条下方 +100
 	add_child(_time_watch)
-	NetBusExt.local_time_state.connect(_on_time_state)
+	Wire.local_time_state.connect(_on_time_state)
 
 
 func _on_time_state(payload: Dictionary) -> void:
@@ -381,8 +381,8 @@ func _physics_process(delta: float) -> void:
 	_ping_acc += delta
 	if _ping_acc >= 0.5:
 		_ping_acc = 0.0
-		if NetBus.can_send_to_server():
-			NetBus.send_ping()
+		if Wire.can_send_to_server():
+			Wire.send_ping()
 	# U1:本地预测**不锁存** —— 每物理 tick 现读真输入,60Hz 与服务器逐 tick 同序。
 	# ★ 顺序不能反:先记上一 tick 的预测整态(玩家还没步进),reconcile 才比得上 ring[C];采样本 tick 输入后玩家才步进。
 	if _have_prev_seq and _rollback != null:
@@ -409,12 +409,12 @@ func _physics_process(delta: float) -> void:
 	_have_prev_seq = true
 	if send_now:
 		# 30Hz 发包 = [上一 tick, 本 tick] 两条记录(流水线;低 tick 记录由上一包之后补齐 ⇒ 服务器收到逐 tick 连续序列)。
-		# ★ 只有真发得出去时才发:离场的三条路(ESC / MATCH_OVER / 对手离开)都会先 NetBus.stop(),而本场景到帧末才被换掉 —— 中间这一两帧 rpc_id 会打引擎错误(no multiplayer peer is active),包本来也发不出去。预测与记账照常走完(seq 照增),只是不上行;重连会重建 C2 状态。
+		# ★ 只有真发得出去时才发:离场的三条路(ESC / MATCH_OVER / 对手离开)都会先 Wire.stop(),而本场景到帧末才被换掉 —— 中间这一两帧 rpc_id 会打引擎错误(no multiplayer peer is active),包本来也发不出去。预测与记账照常走完(seq 照增),只是不上行;重连会重建 C2 状态。
 		var lo: Dictionary = _prev_tick_rec if not _prev_tick_rec.is_empty() else rec
 		var pair := PacketInputSource.pack_pair(lo, rec, aim, _last_snap_tick,
 				Engine.get_physics_frames())
-		if NetBus.can_send_to_server():
-			NetBus.rpc_id(1, "send_input", NetCodec.encode_input(pair))   # 46 B/包(含 2 条 tick 记录)
+		if Wire.can_send_to_server():
+			Wire.send(WireKind.SEND_INPUT, [NetCodec.encode_input(pair)])   # 46 B/包(含 2 条 tick 记录)
 		_prev_tick_rec = {}
 	else:
 		_prev_tick_rec = rec
@@ -439,7 +439,7 @@ func _netstat_tick(delta: float) -> void:
 	_netstat_acc = 0.0
 	var gap := _input_seq - _last_ack
 	var lag_ms := float(gap) * (1000.0 / 60.0) * float(PacketInputSource.TICKS_PER_RECORD)
-	var ping := NetBus.ping_ms
+	var ping := Wire.ping_ms
 	var rb := 0
 	if _rollback != null:
 		rb = int(_rollback.rollback_count())
@@ -596,8 +596,7 @@ func _show_result() -> void:
 
 # 结算页 → 主菜单。★ 离开仍走 Level0.safe_change_scene —— 游戏世界含全量碰撞,裸 change_scene_to_file 会同步 memdelete → 偶发原生段错误。★ 防重入由 MatchResult 那次发信号 + safe_change_scene 的 _switching 双层兜住;这里只负责"在树上才切"。
 func _leave_to_main_menu() -> void:
-	if NetBus != null:
-		NetBus.stop()
+	Wire.stop()
 	if not is_inside_tree():
 		return
 	Level0.safe_change_scene(get_tree(), "res://scenes/main_menu.tscn")
@@ -748,7 +747,7 @@ func _tick_ground_weapons() -> void:
 	_ensure_pickup_sync().tick()
 
 
-# ── 断线重连(局内自动重连:与 worker 的连接闪断 → 自己连回去、重新认领 role、重置本地 C2 —— 不切场景、不重建世界)── ★ 触发点只有"服务器断开"一条(NetBus.local_server_message,由 multiplayer.server_disconnected 驱动);对局场景此前没人订阅它,所以服务器一断客户端毫无反应:快照停更、输入自停,玩家卡在一个静止的世界里只能按 ESC 自救。
+# ── 断线重连(局内自动重连:与 worker 的连接闪断 → 自己连回去、重新认领 role、重置本地 C2 —— 不切场景、不重建世界)── ★ 触发点只有"服务器断开"一条(Wire.local_server_message,由 Wire.server_disconnected 驱动);对局场景此前没人订阅它,所以服务器一断客户端毫无反应:快照停更、输入自停,玩家卡在一个静止的世界里只能按 ESC 自救。
 # ★★ 两条时间尺度别合并:RECONNECT_RETRY_MS(2s)= 定时器节拍 —— 多久看一眼(等应答 / 两次尝试之间);RECONNECT_ATTEMPT_TIMEOUT_MS(5s)= 一次连接尝试自己的寿命 —— 一次握手最多活多久。合并成"每 2 秒 stop() + 重连一次"会在高 RTT 链路上反复掐掉正在握手的尝试(比不掐更糟);而只看节拍、不掐尝试,就是修掉的那个缺陷。
 const RECONNECT_RETRY_MS := 2000
 # 一次尝试的寿命。取值依据:一次成功握手约 2~3×RTT,5s 覆盖到 ~1.6s 的 RTT(再差的链路本就没法打);而 ENet 自己的连接超时实测 ~31.8s(连一个没人监听的端口)—— 不主动掐的话,一次尝试就能吃掉宽限期预算(GraceWindow.DEFAULT_SECONDS)的一半上下,且那整段期间一次 tick 都没有。
@@ -769,9 +768,9 @@ var _banner: StatusBanner = null
 
 # 两个子类各自 _ready 里调一次(与 _subscribe_ground_weapons() 并列)。
 func _subscribe_reconnect() -> void:
-	NetBus.local_server_message.connect(_on_server_message)
+	Wire.local_server_message.connect(_on_server_message)
 	# ★ worker 在宽限期内接受 reclaim 后会重发一条 match_start(载荷与首次开局同源)。对局里 local_match_start 此前零订阅者 —— 它唯一的消费者是 lobby_page._on_match_start(统一大厅 mp_lobby 的基类),而那个页面在对局场景里不在树上 ⇒ 这条信号到对局里是静默 no-op;所以"重连成功"的收尾必须在这里接(_on_match_start_event)。
-	NetBus.local_match_start.connect(_on_match_start_event)
+	Wire.local_match_start.connect(_on_match_start_event)
 	_setup_status_banner()   # 本地状态横幅(3.2 / 3.4);建在这里 = 三个模式零新调用点
 
 
@@ -807,14 +806,14 @@ func _recheck_disconnect() -> void:
 
 # 局内自动重连:不切场景、不重建世界 —— 场景与节点原样保留,只把连接接回去。★★ "不重建场景"不等于"世界没变":掉线那 GraceWindow.DEFAULT_SECONDS 秒里服务器照跑 —— 对面把墙拆了、地上的枪被捡走 / 丢弃 / 换局重铺 ⇒ 这条路径同样要拉一次 match_sync 把破坏态与地面武器补回来。别把"世界还在原地"读成"没什么要补的"(漏了不报错)。
 func _begin_reconnect() -> void:
-	# ★ MATCH_OVER / 对手离开那两条延时回菜单的路子会先 NetBus.stop(),而它断开的是我们自己。
+	# ★ MATCH_OVER / 对手离开那两条延时回菜单的路子会先 Wire.stop(),而它断开的是我们自己。
 	if _match_ended:
 		return
 	# ★ 宽限期预算的起算点 = 真实断开这一刻,故记在这里、且在那道菜单守卫之前(菜单开着的闪断若等"关菜单"才起算,等于凭空多拿一段预算 —— spec 的宽限期按服务器的掉线检测起算,客户端晚算的那几秒会让最后几次 reclaim 打在"已被移出"上)。★ 只在没人记过时才记:关菜单时 _recheck_disconnect() 再来一次,预算要接着走,不重置。
 	if _reconnect_started_ms == 0:
 		_reconnect_started_ms = Time.get_ticks_msec()
 	# ★ 菜单开着先不动,但不是放弃(放弃会把真掉线也一起漏掉):那一刻的重连要推迟到关菜单再发 —— 玩家下一秒可能就点「回到主菜单」,先把连接接回 worker 再走人,就会留下"人已走、role 仍被占"的幽灵(对手那边卡死、无报错)。
-	# ★ 订正过的前提:NetBus.stop() 会把 multiplayer_peer 置空,引擎在 set_multiplayer_peer 里先 clear()、last_connection_status 当场复位成 DISCONNECTED ⇒ CONNECTED→DISCONNECTED 那一跃从未被观测到,server_disconnected 根本不会发;而 PauseMenu.go_menu() 走的是直接 NetBus.stop(),连 toggled 都不经过 ⇒ "按 ESC 会引发重连"这条路径不存在。
+	# ★ 订正过的前提:Wire.stop() 会把 multiplayer_peer 置空,引擎在 set_multiplayer_peer 里先 clear()、last_connection_status 当场复位成 DISCONNECTED ⇒ CONNECTED→DISCONNECTED 那一跃从未被观测到,server_disconnected 根本不会发;而 PauseMenu.go_menu() 走的是直接 Wire.stop(),连 toggled 都不经过 ⇒ "按 ESC 会引发重连"这条路径不存在。
 	# ★ 守卫仍然保留的真正理由:菜单开着时真掉线是可能的(服务器踢人 / 网络断),而那一刻的重连要推迟到关菜单(账记在 _pending_disconnect 上,由 _recheck_disconnect() 补)。另一侧:_exit_tree 兜"重连已经在飞、玩家又按 ESC 走了"。
 	if _menu_open:
 		return
@@ -835,21 +834,21 @@ func _begin_reconnect() -> void:
 func _retry_connect() -> void:
 	if not _reconnecting:
 		return
-	NetBus.stop()
+	Wire.stop()
 	_reclaim_sent = false   # 新连接 = 新的一次 reclaim 额度(旧连接上那次的成败已无意义)
 	_attempt_started_ms = 0   # 上一轮(若有)就此作废
-	# ★ 上一轮那两条一次性结局回调若还没触发,仍挂在 MultiplayerAPI 上(信号回调挂在对象上,不随 multiplayer_peer 换掉,也不随 NetBus.stop() 清),不清的话新连接握手成功那一次 emit 会把它们一起叫起来 —— _try_reclaim 会被叫两次、_on_reconnect_failed 的旧回调还可能把新一轮的尝试记账清零。故每次重连先摘干净。
-	if multiplayer.connected_to_server.is_connected(_try_reclaim):
-		multiplayer.connected_to_server.disconnect(_try_reclaim)
-	if multiplayer.connection_failed.is_connected(_on_reconnect_failed):
-		multiplayer.connection_failed.disconnect(_on_reconnect_failed)
-	var err := NetBus.start_client(PvpSession.server_address, PvpSession.worker_port)
+	# ★ 上一轮那两条一次性结局回调若还没触发,仍挂在 MultiplayerAPI 上(信号回调挂在对象上,不随 multiplayer_peer 换掉,也不随 Wire.stop() 清),不清的话新连接握手成功那一次 emit 会把它们一起叫起来 —— _try_reclaim 会被叫两次、_on_reconnect_failed 的旧回调还可能把新一轮的尝试记账清零。故每次重连先摘干净。
+	if Wire.connected_to_server.is_connected(_try_reclaim):
+		Wire.connected_to_server.disconnect(_try_reclaim)
+	if Wire.connection_failed.is_connected(_on_reconnect_failed):
+		Wire.connection_failed.disconnect(_on_reconnect_failed)
+	var err := Wire.start_client(PvpSession.server_address, PvpSession.worker_port)
 	if err != OK:
 		_schedule_reconnect_retry()
 		return
 	_attempt_started_ms = Time.get_ticks_msec()
-	multiplayer.connected_to_server.connect(_try_reclaim, CONNECT_ONE_SHOT)
-	multiplayer.connection_failed.connect(_on_reconnect_failed, CONNECT_ONE_SHOT)
+	Wire.connected_to_server.connect(_try_reclaim, CONNECT_ONE_SHOT)
+	Wire.connection_failed.connect(_on_reconnect_failed, CONNECT_ONE_SHOT)
 	# ★★ 成功这条也要挂定时器(原先只有 err != OK 那条挂)。不挂的话,"一次连接尝试正在飞"的整段期间一次 tick 都没有 —— 宽限期判据从不被求值,而 ENet 自己的连接超时实测 ~31.8s ⇒ 最坏情形是卡在冻结世界 ~32 秒才回主菜单。★ 这里的病不是"宽限期太短"(当年它恰好是 30s),而是那一段期间判据一次都没被求值 —— 所以时长改成多少,这条修复的必要性都不变。
 	_schedule_reconnect_retry()
 
@@ -867,7 +866,7 @@ func _try_reclaim() -> void:
 		return
 	_attempt_started_ms = 0
 	_reclaim_sent = true
-	NetBusExt.rpc_id(1, "reclaim_role", PvpSession.role, PvpSession.token)
+	Wire.send(WireKind.RECLAIM_ROLE, [PvpSession.role, PvpSession.token])
 	# ★ 等 worker 回的 match_start(它带 spawn / map_path)。等到了才算成功,见 _on_resumed。
 	_schedule_reconnect_retry()
 
@@ -895,7 +894,7 @@ func _on_reconnect_retry_tick() -> void:
 		return
 	# ★★ 同一个 role 只许发一次 reclaim(本功能最易写错、症状最怪的一处):worker 接受第一次时就 _grace.leave(role) 了,第二次进 _on_reclaim 的判据("该 role 必须在宽限期里")必不成立 → 它踢连接。表现是"刚重连上几秒又断",看着像网络抖动,实则是自己把自己踢了,而且因为 token 是对的,查 token 查不出问题。
 	# 判据:这条连接还活着、且已发过 reclaim ⇒ 该做的是等它的 match_start(可靠的定向应答,连着就一定到),而不是重连一轮再发一次。真发不出去(连接没了 / 被服务器踢了)can_send_to_server() 即为 false,自然走到下面重连。
-	if _reclaim_sent and NetBus.can_send_to_server():
+	if _reclaim_sent and Wire.can_send_to_server():
 		_schedule_reconnect_retry()
 		return
 	# ★ 一次握手最多活 RECONNECT_ATTEMPT_TIMEOUT_MS(还没起飞的不受此限:0 = 无尝试在飞)。★ 这里绝不能用 RECONNECT_RETRY_MS —— 每 2 秒 stop() + 重连会在高 RTT 链路上反复掐掉正在握手的尝试,比不掐更糟;那个值只管"多久看一眼"。到点仍未落地 = 这次多半不会落地了(ENet 自己的超时 ~31.8s,是它的 6 倍多)→ 掐掉重开,让宽限期预算里能放下十来次尝试。
@@ -936,10 +935,10 @@ func _on_resumed() -> void:
 	_rollback.ticks_per_record = PacketInputSource.TICKS_PER_RECORD
 	# ★ 路径甲(局内自动重连)原来不需要 match_sync —— 场景没重建、本地世界还在;现在需要了:世界在掉线那 GraceWindow.DEFAULT_SECONDS 秒里变过。这一拉把两类丢掉的可靠事件一次补回:destroyed(被拆的墙,不补 → 幻影墙 → 预测分歧)、ground_weapons(掉落 / 被捡走的枪,不补 → 幽灵枪 / 看不见的枪)。
 	# ★ 顺序:上面已经把 C2 重置完了(新 rollback / _input_seq=0),再拉。★ 别把这一行删掉:它不在"进场建态"那条老路上,漏了不报错,只是世界悄悄不一致。
-	if NetBus.can_send_to_server():
+	if Wire.can_send_to_server():
 		# ★ 先置位再发:这条应答是补态口径,_on_match_sync 据此跳过出生点校正(它按 spawns 校正 / 告警的前提在这里不成立)。
 		_resync_pull_pending = true
-		NetBus.rpc_id(1, "match_sync")
+		Wire.send(WireKind.MATCH_SYNC, [])
 	print("[pvp] 重连成功")
 
 
@@ -957,13 +956,13 @@ func _abort_reconnect(reason: String) -> void:
 	_reconnecting = false
 	# ★ 先收起横幅再换场:换场是 await 一帧的(safe_change_scene 的防重入首行),留着文字只会在主菜单上闪一帧,读起来像 bug。原因本身仍留在下面那行 print 里。
 	_set_status("")
-	NetBus.stop()
+	Wire.stop()
 	Level0.safe_change_scene(get_tree(), "res://scenes/main_menu.tscn")
 	print("[pvp] %s" % reason)
 
 
-# 场景离开(ESC / MATCH_OVER / 对手离开 / 进程退出)→ 停掉在飞的重连。★ 必须有:_reconnecting 期间玩家仍可按 ESC 离场,不停的话重连循环会从主菜单继续跑,连上还 reclaim 成功 → worker 认为这个 role 有人管。★ 只在真在重连时断连:本函数跑在新场景 _ready 之后(safe_change_scene 先 add 新场景再摘旧场景),无条件 NetBus.stop() 会把新场景刚建起来的连接干掉。
+# 场景离开(ESC / MATCH_OVER / 对手离开 / 进程退出)→ 停掉在飞的重连。★ 必须有:_reconnecting 期间玩家仍可按 ESC 离场,不停的话重连循环会从主菜单继续跑,连上还 reclaim 成功 → worker 认为这个 role 有人管。★ 只在真在重连时断连:本函数跑在新场景 _ready 之后(safe_change_scene 先 add 新场景再摘旧场景),无条件 Wire.stop() 会把新场景刚建起来的连接干掉。
 func _exit_tree() -> void:
 	if _reconnecting:
 		_reconnecting = false
-		NetBus.stop()
+		Wire.stop()

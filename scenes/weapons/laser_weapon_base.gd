@@ -187,7 +187,7 @@ func _apply_to_player(p: Node, pos: Vector2, near: Vector2) -> void:
 	CombatFeedback.attribute_hit(p, player)
 	# 与爆炸 apply_aoe 一致:take_hit(source_pos, damage, ignore_iframes, knockback);source_pos 传光束最近点 ⇒ 击退沿光束→目标径向;ignore_iframes 用 false(激光可被无敌帧挡)。
 	p.take_hit(near, damage, false, impact)
-	# 激光直击的命中确认:把「你打中了」告诉射手本人(MatchHost.notify_direct_hit 经 NetBusExt.hit_confirm 发出),放在 take_hit 之后;单机下 player 的父节点是 WorldViewport ⇒ has_method 为假 ⇒ 自动跳过。
+	# 激光直击的命中确认:把「你打中了」告诉射手本人(MatchHost.notify_direct_hit 经 Wire.hit_confirm 发出),放在 take_hit 之后;单机下 player 的父节点是 WorldViewport ⇒ has_method 为假 ⇒ 自动跳过。
 	var host := player.get_parent() if player != null else null
 	if host != null and host.has_method("notify_direct_hit"):
 		host.notify_direct_hit(player, p)

@@ -4,7 +4,7 @@ extends Node
 # 判据:文本 REJOIN PROBE: ALL-OK(不看退出码 —— 探针挂住时 --quit-after 到期仍 exit 0 且一行 ALL-OK 都不打印,只看退出码会把「没跑完」读成「通过」)。
 # ★ --quit-after 36000(=600s @60fps)的推导:本跑量级 ≈ 60~100s(进局 ~8s + PLAYING 静置 ~3s + 离场/主菜单/回局各 ~2s + c2/c3 各 40s 观察窗 + 收尾 ~5s),取 600s = 6~10 倍余量。
 #   本仓教训:安全网给薄了会把「跑得慢」读成「功能坏了」(tests/manual/brawl_rollback_probe.tscn 被 3600 误判过,实测要 30000),故按量级给足而不是照抄别处的数。
-# 拓扑(自当大厅/裁判;全部子进程由本进程 OS.create_process 直接拉起):本进程 = 真大厅(NetBus.start_server(LOBBY_PORT) + RoomManager),不进 7777;
+# 拓扑(自当大厅/裁判;全部子进程由本进程 OS.create_process 直接拉起):本进程 = 真大厅(Wire.start_server(LOBBY_PORT) + RoomManager),不进 7777;
 #   c1/c2/c3 = 3 个 headless 客户端,各自跑真 mp_lobby → 真 pvp_game;worker 由真 RoomManager._start_match 经 WorkerLauncher.spawn_worker 拉起(与生产逐字同一条路径,只把起投端口拨到池外)。
 # 前提:请确认没有别的 Godot 占着 7777(本探针不占 7777,也别杀掉用户自己的服务端)。客户端子进程的 stdout 父进程看不到(Windows CreateProcess 不继承句柄)
 #   → 每个子进程都带 --log-file,失败时把每份引擎日志的尾部一起打印;收尾按 PID 杀全部子进程 + 按端口兜底。
@@ -50,7 +50,7 @@ func _ready() -> void:
 
 
 func _run_orchestrator() -> void:
-	var err := NetBus.start_server(LOBBY_PORT)
+	var err := Wire.start_server(LOBBY_PORT)
 	if err != OK:
 		print("PROBE: 大厅监听失败 err=%d(端口 %d 被占?本探针不占 7777)" % [err, LOBBY_PORT])
 		get_tree().quit(1)
@@ -215,7 +215,7 @@ func _kill_children() -> void:
 	print("PROBE: 按 PID 收尾 %d/%d 个子进程" % [killed, _child_pids.size()])
 	_child_pids.clear()
 	# ★ 兜底按端口杀:worker 不是本进程记过 pid 的子进程(它由 WorkerLauncher 拉起,pid 只在 launcher 的表里),故 PID 那一轮杀不到它;杀的是本跑真正分配到的那个端口(_worker_port,来自 pick_port()),不是起投点。
-	# ★★ 绝不许杀 LOBBY_PORT:大厅就在本进程里(NetBus.start_server(LOBBY_PORT)),ProcUtil.kill_udp_port 按 UDP 端口找属主 = 找到本进程的 pid → 自杀。
+	# ★★ 绝不许杀 LOBBY_PORT:大厅就在本进程里(Wire.start_server(LOBBY_PORT)),ProcUtil.kill_udp_port 按 UDP 端口找属主 = 找到本进程的 pid → 自杀。
 	#   症状极具迷惑性:探针在 _finish 里打完「按 PID 收尾」就当场消失,后面几行明细与 REJOIN PROBE: … 一个字都打不出来(退出码 255),而三端 .result 全是 OK。大厅端口由 tests/probe/rejoin_probe.sh 在探针退出之后兜底清理。
 	if _worker_port > 0:
 		ProcUtil.kill_udp_port(_worker_port)

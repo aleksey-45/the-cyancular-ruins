@@ -32,13 +32,13 @@ var _pending_go_port := -1
 
 # 收尾(建完本页全部控件、接完本页自己的信号之后调):接共用信号 + 递归补像素字体 + 进页自动拉一次房间列表;子类那几条信号先接后接都行(互不相干)。
 func _finish_lobby_ready() -> void:
-	NetBus.local_go_match.connect(_on_go_match)
-	NetBus.local_match_start.connect(_on_match_start)
-	NetBus.local_server_message.connect(_on_server_message)
-	NetBusExt.local_session_token.connect(_on_session_token)
-	multiplayer.connected_to_server.connect(_on_lobby_connected)
-	multiplayer.connection_failed.connect(_on_lobby_connect_failed)
-	NetBusExt.local_rejoin_denied.connect(_on_rejoin_denied)
+	Wire.local_go_match.connect(_on_go_match)
+	Wire.local_match_start.connect(_on_match_start)
+	Wire.local_server_message.connect(_on_server_message)
+	Wire.local_session_token.connect(_on_session_token)
+	Wire.connected_to_server.connect(_on_lobby_connected)
+	Wire.connection_failed.connect(_on_lobby_connect_failed)
+	Wire.local_rejoin_denied.connect(_on_rejoin_denied)
 	UiFactory.apply_font_recursive(self)
 	_request_list.call_deferred("正在连接服务器获取房间列表…")
 
@@ -71,7 +71,7 @@ func _add_weapon_grid(parent: Node, h_sep: int, on_cell: Callable = Callable()) 
 
 func _push_lobby_name() -> void:
 	if _connected:
-		NetBus.rpc_id(1, "lobby_name", PvpSession.player_name)
+		Wire.send(WireKind.LOBBY_NAME, [PvpSession.player_name])
 
 
 func _on_lobby_connected() -> void:
@@ -106,17 +106,17 @@ func _with_lobby(action: Callable) -> void:
 		addr = _lobby_fallback_addr()
 		_addr_edit.text = addr
 	PvpSession.server_address = addr
-	# ★★ NetBus.can_send_to_server() 不是可选项:_connected 是本端自己的记账(只在连上 / 连接失败 / 主动重连时翻),不随对端断开更新 —— 服务器掉线或踢人之后它仍是 true,于是「已连上」这条快路会把请求发往一个 ENet 已拆掉的 peer,也就是那条 Unable to send packet on channel 0(而它是周期性的:刷新列表 / 加入 / 建房都走这里)。
+	# ★★ Wire.can_send_to_server() 不是可选项:_connected 是本端自己的记账(只在连上 / 连接失败 / 主动重连时翻),不随对端断开更新 —— 服务器掉线或踢人之后它仍是 true,于是「已连上」这条快路会把请求发往一个 ENet 已拆掉的 peer,也就是那条 Unable to send packet on channel 0(而它是周期性的:刷新列表 / 加入 / 建房都走这里)。
 	# 加了这一判,断线后的第一次点击就落到下面的重连路径:动作存进 _pending_action,连上大厅之后自动补发 ⇒ 既不报错,也顺手修好「服务器断了、界面看着还连着」这个状态。
-	if _connected and _connected_addr == addr and NetBus.can_send_to_server():
+	if _connected and _connected_addr == addr and Wire.can_send_to_server():
 		action.call()
 		return
 	_status.text = "正在连接服务器…"
 	_connected = false
 	_pending_action = action
 	_on_lobby_reconnect()
-	NetBus.stop()
-	var err := NetBus.start_client(addr)
+	Wire.stop()
+	var err := Wire.start_client(addr)
 	if err != OK:
 		_status.text = "启动连接失败(%d)" % err
 		_pending_action = Callable()
@@ -143,7 +143,7 @@ func _on_local_server_pressed() -> void:
 	_status.text = msg
 	if not msg.begins_with("本机服务器"):
 		return   # 找不到 exe 等失败:保留提示,不动现有连接
-	NetBus.stop()
+	Wire.stop()
 	_connected = false
 	_connected_addr = ""
 	_addr_edit.text = "127.0.0.1"
@@ -159,14 +159,14 @@ func _on_server_message(t: String) -> void:
 
 
 
-# 大厅在 go_match 之前下发的一次性会话令牌(断线重连用)。★ 先存进 _pending_token 而不是直接写 PvpSession:go_match 也是本帧到达的,两者由 _do_go_match.call_deferred 在帧末一起落到 PvpSession,顺序就不会被 RPC 到达次序左右(时序硬约束:token 必须先于 go_match 发出 —— 客户端收到 go_match 当场 NetBus.stop() 断大厅,晚发的载荷静默丢失)。
+# 大厅在 go_match 之前下发的一次性会话令牌(断线重连用)。★ 先存进 _pending_token 而不是直接写 PvpSession:go_match 也是本帧到达的,两者由 _do_go_match.call_deferred 在帧末一起落到 PvpSession,顺序就不会被 RPC 到达次序左右(时序硬约束:token 必须先于 go_match 发出 —— 客户端收到 go_match 当场 Wire.stop() 断大厅,晚发的载荷静默丢失)。
 var _pending_token := ""
 
 func _on_session_token(token: String) -> void:
 	_pending_token = token
 
 
-# go_match 在大厅 peer 的 poll() 调用栈内作为 RPC 到达;此处若立刻 NetBus.stop(),正在 poll 的 peer 引用被清零、在自己的调用栈内被 free ⇒ 偶发原生段错误(实测「对手连入配对完成的一瞬间」闪退)。故把整个切换推迟到帧末执行。
+# go_match 在大厅 peer 的 poll() 调用栈内作为 RPC 到达;此处若立刻 Wire.stop(),正在 poll 的 peer 引用被清零、在自己的调用栈内被 free ⇒ 偶发原生段错误(实测「对手连入配对完成的一瞬间」闪退)。故把整个切换推迟到帧末执行。
 # ★ 帧末还不够:**再等一帧**才真正 stop()。go_match / session_token 是大厅对这台客户端的最后两条定向包,同帧就把连接拆掉会让服务端那一拍的发送落到已拆的 ENet peer 上(引擎报 `Unable to send packet on channel 0, max channels: 0`);多等一帧是让它们落地,代价只有 16ms 进对局。
 func _on_go_match(role: int, port: int) -> void:
 	_pending_go_role = role
@@ -176,7 +176,7 @@ func _on_go_match(role: int, port: int) -> void:
 	_do_go_match.call_deferred()
 
 
-# ── 回大厅后回局 ── 入口 = 本页房间列表里「自己那间房」那一行被按下(见 try_rejoin_row;三个大厅页共用这一份)。本页做三件事:① 发 rejoin_request(房间号, token) —— ★ 此刻本页一定连着大厅(那一行就是 room_list 载荷里来的),故这里不连大厅、不碰地址框、也不走 _with_lobby:照原稿搬会 NetBus.stop() + 重连一次,把刚拿到的列表连同自己那一行一起丢掉;② 大厅复用 go_match 把它送回原 worker,之后与首次进场逐字同一条路;③ 唯一的岔路在 _claim_role_worker(对局已经开着 ⇒ 必须发 reclaim_role)。
+# ── 回大厅后回局 ── 入口 = 本页房间列表里「自己那间房」那一行被按下(见 try_rejoin_row;三个大厅页共用这一份)。本页做三件事:① 发 rejoin_request(房间号, token) —— ★ 此刻本页一定连着大厅(那一行就是 room_list 载荷里来的),故这里不连大厅、不碰地址框、也不走 _with_lobby:照原稿搬会 Wire.stop() + 重连一次,把刚拿到的列表连同自己那一行一起丢掉;② 大厅复用 go_match 把它送回原 worker,之后与首次进场逐字同一条路;③ 唯一的岔路在 _claim_role_worker(对局已经开着 ⇒ 必须发 reclaim_role)。
 # ★ 原稿那条「地址取 PvpSession.server_address 而不是地址框」的绕法随入口一起作废:它防的是「从主菜单按按钮进来时页还没连上」那一档,而现在玩家就站在已经连上的那一页上。
 var _rejoin_sent_ms := 0
 
@@ -201,13 +201,13 @@ func _request_rejoin() -> void:
 		return
 	# ★★ 发送前先判活(与 _with_lobby 快路里那条同一条纪律、同一个症状):回局入口刻意不走 _with_lobby(它会把刚拿到的列表连同自己那一行一起丢掉),所以这一判必须自带 —— 断线后那一行还画在屏上(列表是断线前拉的),点它等于把 rejoin_request 打在 ENet 已拆掉的 peer 上。
 	# 走 _request_list 顺带把重连拉起来(它内部会判活并落到重连路径),而不是把玩家留在一句「正在回到对局…」上;rejoin 也要清掉 —— 否则下一次 go_match 会错走 reclaim_role 分支(_claim_role_worker 只看这个开关)。
-	if not NetBus.can_send_to_server():
+	if not Wire.can_send_to_server():
 		PvpSession.rejoin = false
 		_request_list("与大厅的连接已断开——正在重连并刷新房间列表…")
 		return
 	_rejoin_sent_ms = Time.get_ticks_msec()
 	_status.text = "正在回到对局…"
-	NetBusExt.rpc_id(1, "rejoin_request", PvpSession.room_code, PvpSession.token)
+	Wire.send(WireKind.REJOIN_REQUEST, [PvpSession.room_code, PvpSession.token])
 
 
 # 大厅答「回不去了」(凭据失效 / 房间号不符 / 对局已结束):清掉凭据并留在本页。★ 必须清:否则那一行永远是可点的,而每次点都是同一句失败。
@@ -246,12 +246,12 @@ func _do_go_match() -> void:
 		PvpSession.token = _pending_token
 	PvpSession.worker_port = port      # 局内自动重连要直连同一个端口
 	_pending_token = ""
-	multiplayer.connected_to_server.connect(_claim_role_worker.bind(role), CONNECT_ONE_SHOT)
-	multiplayer.connection_failed.connect(func() -> void: _on_worker_connect_failed(), CONNECT_ONE_SHOT)
-	NetBus.stop()
+	Wire.connected_to_server.connect(_claim_role_worker.bind(role), CONNECT_ONE_SHOT)
+	Wire.connection_failed.connect(func() -> void: _on_worker_connect_failed(), CONNECT_ONE_SHOT)
+	Wire.stop()
 	_connecting_worker = true
 	_go_start_ms = Time.get_ticks_msec()
-	var err := NetBus.start_client(PvpSession.server_address, port)
+	var err := Wire.start_client(PvpSession.server_address, port)
 	if err != OK:
 		_connecting_worker = false
 		_status.text = "连接对局服务器失败(%d)" % err
@@ -261,18 +261,18 @@ func _claim_role_worker(role: int) -> void:
 	_connecting_worker = false
 	_claimed_ms = Time.get_ticks_msec()
 	# ★★ 回局与首次进场的唯一分叉:对局已经开着,claim_role 这条走不得,必须改发 reclaim_role(宽限期内重新认领自己那个 role)。
-	# ★ 它的失败形态是「静默」、不是「被踢」:server_main._begin_match 在开局那一刻就 NetBus.role_claimed.disconnect(_on_role_claimed) —— 迟到的 claim_role 根本没有收件人,既不踢人也不打印(_match_started 那第一款判据因此不可达)。⇒ 可观察的后果是「这个客户端再也回不来」:它卡在大厅页,靠本页 claim 兜底梯(_return_to_lobby)收场。
+	# ★ 它的失败形态是「静默」、不是「被踢」:server_main._begin_match 在开局那一刻就 Wire.role_claimed.disconnect(_on_role_claimed) —— 迟到的 claim_role 根本没有收件人,既不踢人也不打印(_match_started 那第一款判据因此不可达)。⇒ 可观察的后果是「这个客户端再也回不来」:它卡在大厅页,靠本页 claim 兜底梯(_return_to_lobby)收场。
 	# ★ 回局时不发 player_options / report_token:worker 侧两条 handler 都按 _claims[r] == caller 反查,而此刻新 peer 还没进 _claims(要等 reclaim 被接受)⇒ 两条都静默 no-op;而 token 首次 claim 时就报过一次,worker 手里那份正是要比对的那份。
 	if PvpSession.rejoin:
 		PvpSession.rejoin = false
-		NetBusExt.rpc_id(1, "reclaim_role", role, PvpSession.token)
+		Wire.send(WireKind.RECLAIM_ROLE, [role, PvpSession.token])
 		return
 	# claim_role 保持原版 2 参(大厅/worker 兼容);本端选项走扩展节点 NetBusExt
-	NetBus.rpc_id(1, "claim_role", role, PvpSession.player_name)
-	NetBusExt.rpc_id(1, "player_options", _player_options())
+	Wire.send(WireKind.CLAIM_ROLE, [role, PvpSession.player_name])
+	Wire.send(WireKind.PLAYER_OPTIONS, [_player_options()])
 	# token 走扩展节点(原 NetBus 的 claim_role 签名一律不动);原版 worker 无本节点 ⇒ 静默丢弃 ⇒ 那局就是「不能重连」,不影响对局本身。
 	if PvpSession.token != "":
-		NetBusExt.rpc_id(1, "report_token", PvpSession.token)
+		Wire.send(WireKind.REPORT_TOKEN, [PvpSession.token])
 
 
 # 转连 worker 失败/无应答的兜底:断开当前连接回大厅,连上后 _on_lobby_connected 自动刷新列表。没有它,worker 死掉时玩家会永久停在「正在连接对局服务器」上,只能自己找出路。
@@ -283,12 +283,12 @@ func _return_to_lobby(msg: String) -> void:
 	PvpSession.rejoin = false
 	_rejoin_sent_ms = 0
 	_on_return_to_lobby()
-	NetBus.stop()
+	Wire.stop()
 	_connected = false
 	# 重连也要起表:否则 _process 那条「8s 没连上大厅就给明确提示」的兜底对新连接不成立,UDP 静默丢包时状态栏会停在「已返回大厅并刷新」而实际没刷新。
 	_lobby_start_ms = Time.get_ticks_msec()
 	_status.text = msg
-	NetBus.start_client(PvpSession.server_address)
+	Wire.start_client(PvpSession.server_address)
 
 
 func _on_match_start(role: int, spawn: Vector2i, map_path: String) -> void:
@@ -430,7 +430,7 @@ func _claim_timeout_msg() -> String:
 	return ""
 
 
-# 进对局场景。★ 各模式的切场方式刻意不同,别为了「统一」改掉:1v1 直切;大乱斗 / 3v3 必须 call_deferred —— 它们的 match_start 在 NetBus.poll 调用栈内到达,栈内切场景会在这个栈里 free 大厅 / 重建大物理世界 ⇒ 偶发原生段错误(曾实测)。
+# 进对局场景。★ 各模式的切场方式刻意不同,别为了「统一」改掉:1v1 直切;大乱斗 / 3v3 必须 call_deferred —— 它们的 match_start 在 Wire.poll 调用栈内到达,栈内切场景会在这个栈里 free 大厅 / 重建大物理世界 ⇒ 偶发原生段错误(曾实测)。
 func _enter_match_scene() -> void:
 	push_error("LobbyPage: 子类必须覆写 _enter_match_scene()")
 

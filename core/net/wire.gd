@@ -56,6 +56,11 @@ signal local_session_token(token: String)
 signal local_rejoin_denied(reason: String)
 signal ping_updated(ms: int)
 
+# 连接生命周期(客户端侧;v4 挂在 MultiplayerAPI 上的那三个,语义同名搬来):
+signal connected_to_server          # 握手完成,可以开始发会话消息
+signal connection_failed            # 连接失败(超时/被拒)
+signal server_disconnected          # 连上过之后对端断开(重连逻辑的触发点)
+
 # 服务器侧(收自客户端;caller = Wire 分配的 peer id):
 signal room_create_requested(caller: int)
 signal room_join_requested(caller: int, code: String)
@@ -279,6 +284,7 @@ func _dispatch(ev: int, peer, data: Variant) -> void:
 			else:
 				_client_connected = true
 				print("Wire: 已连接服务器")
+				connected_to_server.emit()
 		ENetConnection.EVENT_DISCONNECT:
 			if is_server_mode:
 				_on_disconnect_server(peer)
@@ -288,6 +294,10 @@ func _dispatch(ev: int, peer, data: Variant) -> void:
 				_server_peer = null
 				print("Wire: 服务器断开" if was else "Wire: 连接失败")
 				local_server_message.emit("服务器断开" if was else "连接失败")
+				if was:
+					server_disconnected.emit()
+				else:
+					connection_failed.emit()
 		ENetConnection.EVENT_RECEIVE:
 			# 实测 4.7.2:第三元素是裸 int = 通道号(不是文档写过的 dict),数据体从 peer 队列取;
 			# dict 形状也一并认(引擎若改回 dict 口径不至于再断)。

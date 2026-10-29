@@ -93,6 +93,6 @@ func go_menu() -> void:
 	get_tree().paused = false
 	Sfx.play("ui")
 	if is_pvp:
-		NetBus.stop()   # 断开对局(worker 检测断线自动拆局)
+		Wire.stop()   # 断开对局(worker 检测断线自动拆局)
 	# 世界含全量碰撞,change_scene 同步析构会偶发原生段错误(死亡后回菜单必现路径)⇒ 走 Level0.safe_change_scene。
 	Level0.safe_change_scene(get_tree(), "res://scenes/main_menu.tscn")

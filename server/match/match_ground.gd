@@ -149,12 +149,12 @@ func _broadcast_weapon_spawned(inst: int, by_role: int = -1) -> void:
 # ★ pos 显式取 canonical 而不是读 e["pos"]:今天两者等价,但契约必须是「读刚生成的节点」。
 # ★ vel 必须保持是「生成时那一份」(表里的 vel 从不被 _sync_ground_positions 刷新)—— 客户端拿它 + canonical
 # 重放落体才有「落点与何时开始模拟无关」;哪天把 vel 也做成逐帧刷新,两端落点会立刻发散而且不报错。
-	_rpc_all("weapon_spawned", [{"inst": inst, "type_id": int(e["type_id"]),
+	_rpc_all(WireKind.WEAPON_SPAWNED, [{"inst": inst, "type_id": int(e["type_id"]),
 			"mag": int(e["mag"]), "pos": _canonical_of(inst), "vel": e["vel"], "by_role": by_role}])
 
 
 func _broadcast_weapon_removed(inst: int, by_role: int) -> void:
-	_rpc_all("weapon_removed", [{"inst": inst, "by_role": by_role}])
+	_rpc_all(WireKind.WEAPON_REMOVED, [{"inst": inst, "by_role": by_role}])
 
 
 

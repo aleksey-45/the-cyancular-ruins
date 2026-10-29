@@ -23,8 +23,8 @@ func set_my_team(t: int) -> void:
 
 func _ready() -> void:
 	PixelFont.shared()
-	NetBus.local_round_state.connect(_on_round_state)
-	NetBus.ping_updated.connect(_on_ping)
+	Wire.local_round_state.connect(_on_round_state)
+	Wire.ping_updated.connect(_on_ping)
 	_broadcast.set_broadcast(true, "对战开始", "第 1 局")
 
 

@@ -46,24 +46,15 @@ func _broadcast_snapshot() -> void:
 			"rewind": bool(_rw_on.get(int(role), false)),
 			"trail": (_rw_trail.get(int(role), []) as Array).duplicate(),
 		}
-	# ★ 一次 rpc():ENet 层单次序列化 + 广播。逐 rpc_id 循环会把 O(N²) 加回来(那正是拆包要治的)。
-	# ★★ 判据必须是「**表里每一个** peer 都能收包」(`NetBus.all_peers_sendable`),不能是老的
-	#    `not get_peers().is_empty()`:广播在 ENet 层是**逐 peer** 发包,表里只要还剩一个
-	#    处于"队列已拆、API 还没忘掉"窗口的 peer(典型:本帧刚被 `disconnect_peer` 踢掉的那个),
-	#    这一发就会打 `Unable to send packet on channel 0/1, max channels: 0`。
-	#    2026-09-21 实测(未改之前,reconnect_probe 的 worker 日志):每拒绝一次错的 reclaim,
-	#    有一帧**同时**报 channel 0 与 channel 1,backtrace 两行都指向本行 —— 老判据拦不住它
-	#    (`get_peers()` 滞后,正是 `NetBus.is_peer_live` 那段注释里说过的那件事)。
-	#    代价只有"那一帧不发世界包":它本来就是 unreliable,少一帧无后果。
-	if NetBus.all_peers_sendable():
-		var wbytes := NetCodec.encode_world(world)
-		NetBus.rpc("snapshot_world", wbytes)
-		_tx_world += 1
-		_tx_world_bytes += wbytes.size()
-	else:
-		# 整发跳过:一个 peer 处于拆链路窗口 ⇒ 这一帧**所有端**都没世界包。客户端侧的 snap_gap
-		# 分不出这一种与"发了没收到";这里的计数就是用来把它分出来的。
-		_tx_world_skip += 1
+	# ★ 一次 broadcast:Wire 内部**逐 live peer** 发送、拆链路窗口里的死 peer 单独跳过
+	#    (v4 的整体闸 all_peers_sendable 是「一个坏 peer ⇒ 这一帧全员没世界包」,v5 起按 peer 个体裁剪;
+	#    unreliable 少一帧无后果)。skip 计数保留:客户端 snap_gap 分不出「没发」与「发了没收到」,
+	#    这个计数就是用来把它分出来的。
+	var wbytes := NetCodec.encode_world(world)
+	var sent := Wire.broadcast(WireKind.SNAPSHOT_WORLD, [wbytes])
+	_tx_world += sent
+	_tx_world_bytes += wbytes.size() * sent
+	_tx_world_skip += Wire.peer_ids().size() - sent
 
 
 # ── 本人包(2026-10-24 S1):**只能在玩家步进之后调用** ──
@@ -72,12 +63,12 @@ func _broadcast_snapshot() -> void:
 #   c2 是"本 tick 消费的输入已经生效"的权威态,`_ack_seq` 也是本 tick 刚消费的 seq ⇒ 状态与 ack 同拍且都是最新。
 #   ★ 别把它挪回 `_broadcast_snapshot()`:那会退回"状态/ack 都落后一拍 + 等下一次广播"的旧时序(S1 就是为了消掉它)。
 # ★ 仍判 live peer:避免给正在断开的客户端发 —— 这是全项目**最频繁**的一处定向发送(30Hz × 每个 role),
-#   所以判据必须不滞后:用 `NetBus.is_peer_live`(读 ENet peer 自己的 state),不是 `get_peers()`。
+#   所以判据必须不滞后:用 `Wire.is_peer_live`(读 ENet peer 自己的 state),不是 `get_peers()`。
 #   (本条走 unreliable → 通道 1,报出来会是 "channel **1**" 那一版;用户看到的那条 "channel 0" 只可能来自
-#   **reliable** 的定向包,见 NetBus.is_peer_live 的注释。)
+#   **reliable** 的定向包,见 Wire.is_peer_live 的注释。)
 func send_own_snapshots() -> void:
 	for role in peer_by_role:
-		if not NetBus.is_peer_live(peer_by_role[role]):
+		if not Wire.is_peer_live(peer_by_role[role]):
 			continue
 		var p: Node2D = players.get(role)
 		if p == null:
@@ -89,7 +80,7 @@ func send_own_snapshots() -> void:
 		#   docs/eng/netcode-snapshots.md §6:客户端拿它把"在路上"与"堆在服务器"分开)。
 		var q: Array = _pending_input.get(role, [])
 		var obytes := NetCodec.encode_own({"ack_seq": _ack_seq.get(role, 0), "q": q.size(), "c2": c2})
-		NetBus.rpc_id(peer_by_role[role], "snapshot_own", obytes)
+		Wire.send_to(peer_by_role[role], WireKind.SNAPSHOT_OWN, [obytes])
 		_tx_own[role] = int(_tx_own.get(role, 0)) + 1
 		_tx_own_bytes[role] = int(_tx_own_bytes.get(role, 0)) + obytes.size()
 	_snapshot_tx_diag()
@@ -115,7 +106,7 @@ func _snapshot_tx_diag() -> void:
 		"world_bytes": _tx_world_bytes,
 		"world_skipped": _tx_world_skip,
 		"own": own,
-		"peers": multiplayer.get_peers().size(),
+		"peers": Wire.peer_ids().size(),
 	})
 	_tx_at = now
 	_tx_world = 0

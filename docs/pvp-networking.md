@@ -42,7 +42,7 @@ main_menu.tscn
 
 | 文件 | 角色 |
 |---|---|
-| `core/net/net_bus.gd` / `net_bus_ext.gd` | autoload,ENet 建连 / 断开,基础与扩展 RPC,信号转发 |
+| `core/net/wire.gd`(autoload `Wire`)+ `wire_kind.gd` | 唯一传输收口:ENetConnection 直连、帧派发、信号转发;消息种类登记表 |
 | `core/net/pvp_session.gd` | 静态会话配置:role / spawn / map / 地址 / token / 回局凭据 |
 | `core/net/net_codec.gd` / `prediction_rollback.gd` | 快照 `PackedByteArray` 编解码 / C2 权威锚定与未确认输入重放 |
 | `core/net/grace_window.gd` | 掉线宽限期表与到点动作分派 |

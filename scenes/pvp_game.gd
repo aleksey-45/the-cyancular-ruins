@@ -50,18 +50,18 @@ func _ready() -> void:
 		_hp_bar = EnemyHpBar.new()
 		_world.add_child(_hp_bar)
 	# 快照拆两条:① 世界包 = 全部玩家的渲染字段(副本/血条);② 本人包 = 自己的 ack_seq + c2(只有本人需要,C2 rollback 拿它锚定/重放)。
-	NetBus.local_snapshot_world.connect(_on_snapshot_world)
-	NetBus.local_snapshot_own.connect(_on_snapshot_own)
-	NetBus.local_bullet_spawn.connect(_on_bullet_spawn)
-	NetBus.local_beam_fired.connect(_on_beam_fired)
-	NetBus.local_hit_event.connect(_on_hit_event)
+	Wire.local_snapshot_world.connect(_on_snapshot_world)
+	Wire.local_snapshot_own.connect(_on_snapshot_own)
+	Wire.local_bullet_spawn.connect(_on_bullet_spawn)
+	Wire.local_beam_fired.connect(_on_beam_fired)
+	Wire.local_hit_event.connect(_on_hit_event)
 	_subscribe_tile_events()   # 拆砖的两条(格级 + 子格级)必须成对,见基类注释
-	NetBus.local_round_state.connect(_on_round_state)
-	NetBus.local_opponent_left.connect(_on_opponent_left)
-	NetBus.local_kill_event.connect(_on_kill_event)
+	Wire.local_round_state.connect(_on_round_state)
+	Wire.local_opponent_left.connect(_on_opponent_left)
+	Wire.local_kill_event.connect(_on_kill_event)
 	# 扩展节点(NetBusExt)三载荷:生效选项/角色色相/命中确认。与 beam_fired 不同节点是有意的(发送端 match_host 的 beam_fired 走 NetBus),别顺手统一。
-	NetBusExt.local_hit_confirm.connect(_on_hit_confirm)
-	NetBus.local_match_sync.connect(_on_match_sync)   # 进场拉取的应答(取代旧的推送+大厅缓存交接)
+	Wire.local_hit_confirm.connect(_on_hit_confirm)
+	Wire.local_match_sync.connect(_on_match_sync)   # 进场拉取的应答(取代旧的推送+大厅缓存交接)
 	_subscribe_ground_weapons()   # 地面武器事件(开局那批走 match_sync,见 _on_match_sync)
 	_subscribe_reconnect()        # 断线重连:服务器断开检测 + reclaim 成功后那条 match_start
 	if Settings.pvp_show_minimap:
@@ -78,7 +78,7 @@ func _ready() -> void:
 	# 打击反馈层(命中 X 标记/击杀播报)由 Level0 统一挂载,PvP 继承它。★ 本行有意不写第二次挂载(不是漏写):CombatFeedback 的早退要求 current 已非空,而同帧第二次调用看到的还是 null,真会建出第二份 —— 后来者不要照别的分支把这一行补回来。
 	# P2 本体固定为青(UiFactory.C_TEAM_B),只染角色 AnimatedSprite2D 本体,武器/预瞄不染。
 	_apply_p2_tint()
-	# Esc 暂停菜单:PvP 不暂停树 ⇒ 对手实时;回主菜单先 NetBus.stop() 断连(worker 检测任一方断线即拆局)。开关/退出由 PauseMenu 自理,但本地输入锁必须宿主接线 —— 不锁就是「菜单开着还能边跑边开枪」。
+	# Esc 暂停菜单:PvP 不暂停树 ⇒ 对手实时;回主菜单先 Wire.stop() 断连(worker 检测任一方断线即拆局)。开关/退出由 PauseMenu 自理,但本地输入锁必须宿主接线 —— 不锁就是「菜单开着还能边跑边开枪」。
 	_pause_menu = PauseMenu.new(true)
 	_pause_menu.toggled.connect(func(open: bool) -> void:
 		_menu_open = open
@@ -86,8 +86,8 @@ func _ready() -> void:
 		_recheck_disconnect())   # 菜单开着时收到的"服务器断开"在这里补(见 PvpMatchClient._begin_reconnect)
 	add_child(_pause_menu)
 	# ★ 进场主动拉一次(昵称/色相/生效选项/出生点):本场景已经建好、订阅齐了才开口要,故没有「推给一个正在切场景的客户端」那个竞态。★ 判活再发(全仓纪律):这是定向可靠包,连接可能已不可用 ⇒ 往已拆的 peer 发就是那条 Unable to send packet on channel 0;判据 can_send_to_server()。
-	if NetBus.can_send_to_server():
-		NetBus.rpc_id(1, "match_sync")
+	if Wire.can_send_to_server():
+		Wire.send(WireKind.MATCH_SYNC, [])
 	print("进入竞技场:角色 %d 出生点 %s" % [PvpSession.role, PvpSession.spawn])
 
 
@@ -146,7 +146,7 @@ func _on_opponent_left() -> void:
 	if _hud != null:
 		_hud.show_notice("对手已离开", "对局结束")
 	var tree := get_tree()
-	var netbus := NetBus
+	var netbus := Wire
 	get_tree().create_timer(2.5).timeout.connect(func() -> void:
 		netbus.stop()
 		if not is_inside_tree():
@@ -167,11 +167,11 @@ func _apply_p2_tint() -> void:
 	_apply_tint(body, 0.0, UiFactory.C_TEAM_B)
 
 # ── 个人色相在 1v1 整体停用 ── 载荷照旧到达(match_sync 的 hues),但本模式不消费:这里只把「P2 = 青」那条固定规则重铺一次。
-# ★ 为什么停用:双方都用默认 Settings.pvp_color_hue = 0.0 时两个身体同为默认蓝,1v1 就没有「谁是谁」,而「分得出」是硬需求;该设置在大乱斗照旧消费(4~8 人靠颜色区分才有意义)。★ 唯一入口 = _on_match_sync,不要连回 NetBusExt.local_peer_hues(那条推送路径已不存在,连上去会让本载荷走两条路)。零守卫(hue_tint_probe 已删·2026-10-09)。
+# ★ 为什么停用:双方都用默认 Settings.pvp_color_hue = 0.0 时两个身体同为默认蓝,1v1 就没有「谁是谁」,而「分得出」是硬需求;该设置在大乱斗照旧消费(4~8 人靠颜色区分才有意义)。★ 唯一入口 = _on_match_sync,不要连回 Wire.local_peer_hues(那条推送路径已不存在,连上去会让本载荷走两条路)。零守卫(hue_tint_probe 已删·2026-10-09)。
 func _apply_peer_hues(_hues: Dictionary) -> void:
 	_apply_p2_tint()   # 幂等:重铺 P2 那道固定染色(载荷内容一律忽略)
 
-# 服务器下发的生效选项:同步禁用武器。★ 两端必须同表:本端 equip 对禁用槽会当场拒绝,而输入包里的切枪请求是无条件上行的 —— 服务器若无同一张表就会 equip 成功,两端槽位永久错位且静默;唯一入口 = _on_match_sync,不要连回 NetBusExt.local_match_options。
+# 服务器下发的生效选项:同步禁用武器。★ 两端必须同表:本端 equip 对禁用槽会当场拒绝,而输入包里的切枪请求是无条件上行的 —— 服务器若无同一张表就会 equip 成功,两端槽位永久错位且静默;唯一入口 = _on_match_sync,不要连回 Wire.local_match_options。
 
 func _apply_peer_names(names: Dictionary) -> void:
 	_names = names

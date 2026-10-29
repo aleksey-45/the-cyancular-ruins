@@ -43,10 +43,10 @@ static func start_on(role_peers: Dictionary, map_path: String, options: Dictiona
 	var spawns := plan_spawns(role_peers.keys() + ai_roles)
 	for role in role_peers:
 
-		if not NetBus.is_peer_live(role_peers[role]):
+		if not Wire.is_peer_live(role_peers[role]):
 			continue
-		NetBus.rpc_id(role_peers[role], "match_start", role, spawns[role], map_path)
-		NetBus.rpc_id(role_peers[role], "server_message", "大乱斗开始")
+		Wire.send_to(role_peers[role], WireKind.MATCH_START, [role, spawns[role], map_path])
+		Wire.send_to(role_peers[role], WireKind.SERVER_MESSAGE, ["大乱斗开始"])
 
 	var host := RoyaleHost.new(map_path, role_peers, options, ai_roles, spawns)
 	return host
@@ -276,7 +276,7 @@ func _respawn_player(role: int) -> void:
 		p.remove_meta("last_damager")
 		p.remove_meta("last_damager_time")
 
-# ── 自杀脱困(K 键:royale_game 客户端 → NetBusExt.suicide_request → server_main 转发)── 异常卡死时主动放弃生命:
+# ── 自杀脱困(K 键:royale_game 客户端 → Wire.suicide_request → server_main 转发)── 异常卡死时主动放弃生命:
 # 走正常倒地边沿 → 2s 复活;先清 last_damager 归因 ⇒ 自杀不计入任何人击杀(哪怕刚被人打过),只累积自己的阵亡数。
 func request_suicide_role(role: int) -> void:
 	if _round_state != RoundState.PLAYING:

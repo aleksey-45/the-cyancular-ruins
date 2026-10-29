@@ -51,7 +51,7 @@ seq(4) | held0(2) | held1(2) | ax0(4) | ax1(4) | pressed0/1(各1) | released0/1(
 
 ## 3. 消费
 
-- [`core/net/net_bus.gd`](../../core/net/net_bus.gd) 的 RPC 入口先 `NetCodec.decode_input(payload)` 再 emit `input_received(caller, pkt)` —— **解码失败返回空 + 只报一次 + 不喂进模拟**（两端版本不一致时现场会看到一条 `push_error`，而不是静默抽搐）。
+- [`core/net/wire.gd`](../../core/net/wire.gd) 的 SEND_INPUT 接收侧先 `NetCodec.decode_input(payload)` 再 emit `input_received(caller, pkt)` —— **解码失败返回空 + 只报一次 + 不喂进模拟**（两端版本不一致时现场会看到一条 `push_error`，而不是静默抽搐）。
 - `server/match/match_host.gd::_on_input`：`PacketInputSource.unpack_pair(pkt)` 拆成**连续两条**入队（低 tick 在前）。
 - `_physics_process`：**每物理 tick 恰 `pop_front()` 一条**（广播仍 30Hz，且仍在"消费本帧输入"之前 ⇒ ack 与状态配对）；`ack_seq = pkt.seq`（逐 tick 前进）。
 - `st` / `ct` 在 `_on_input` 里**先落位**再入队（不进队列、不参与模拟）：后到的覆盖先到的 —— 它们本来就只代表"最近一次"。

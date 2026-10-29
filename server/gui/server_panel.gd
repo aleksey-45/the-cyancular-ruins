@@ -148,7 +148,7 @@ func _build_header() -> Control:
 	row.add_child(_spacer())
 	row.add_child(UiFactory.label(BUILD_INFO.display(), 32, UiFactory.C_TEXT_DIM))
 	row.add_child(UiFactory.label("pid %d" % OS.get_process_id(), 32, UiFactory.C_TEXT_DIM))
-	row.add_child(UiFactory.label("%d ●" % NetBus.DEFAULT_PORT, 32, UiFactory.C_ACCENT))
+	row.add_child(UiFactory.label("%d ●" % Wire.DEFAULT_PORT, 32, UiFactory.C_ACCENT))
 	return strip
 
 
@@ -361,7 +361,7 @@ func _update_footnote() -> void:
 	if not _lan_ip.is_empty():
 		ip = _lan_ip.split(",")[0].strip_edges()
 	_footnote.text = "公网联机需转发 UDP %d 与 %s · 朋友在客户端「服务器地址」里填 %s" % [
-			NetBus.DEFAULT_PORT, WorkerLauncher.port_span_text(), ip]
+			Wire.DEFAULT_PORT, WorkerLauncher.port_span_text(), ip]
 
 
 func _sync_rows(rooms: Array[Dictionary]) -> void:

@@ -144,16 +144,16 @@ var _fails: Array[String] = []
 # ════════════════════ 生命周期 ════════════════════
 
 func _ready() -> void:
-	NetBus.local_snapshot_world.connect(_on_snap_world)
-	NetBus.local_round_state.connect(_on_round_state)
-	NetBus.local_kill_event.connect(_on_kill_event)
+	Wire.local_snapshot_world.connect(_on_snap_world)
+	Wire.local_round_state.connect(_on_round_state)
+	Wire.local_kill_event.connect(_on_kill_event)
 	# match_sync 应答计数:换边后客户端必须重拉一次(A 册/B 册约定,见 team_game._on_round_state)—— 只数次数,内容比对在相④ 的出生点断言里。
-	NetBus.local_match_sync.connect(func(_p: Dictionary) -> void: _msync += 1)
-	NetBusExt.local_team_rooms.connect(_on_team_rooms)
-	NetBusExt.local_team_room_state.connect(_on_room_state)
-	multiplayer.connected_to_server.connect(_on_lobby_connected)
-	multiplayer.connection_failed.connect(_on_lobby_failed)
-	var e := NetBus.start_client(LOBBY_ADDR, lobby_port)
+	Wire.local_match_sync.connect(func(_p: Dictionary) -> void: _msync += 1)
+	Wire.local_team_rooms.connect(_on_team_rooms)
+	Wire.local_team_room_state.connect(_on_room_state)
+	Wire.connected_to_server.connect(_on_lobby_connected)
+	Wire.connection_failed.connect(_on_lobby_failed)
+	var e := Wire.start_client(LOBBY_ADDR, lobby_port)
 	if e != OK:
 		_fail("start_client(大厅 %s:%d)失败 err=%d" % [LOBBY_ADDR, lobby_port, e])
 		_finish()
@@ -167,9 +167,9 @@ func _on_lobby_failed() -> void:
 
 
 # 连上大厅:上报昵称 → 帧末挂真大厅页。★ 页挂在探针场景下(不是本节点下):换场时 change_scene_to_file 会 free 掉探针场景,页随之消失 —— 这正是生产里的形状。
-#   留在树上的话,它的 _tick_claim_timeout 会在 claim 后 25s 调 _return_to_lobby → NetBus.stop(),把正在进行的对局从客户端这边掐断(症状是「进局 25s 后掉线」,且不报错)。
+#   留在树上的话,它的 _tick_claim_timeout 会在 claim 后 25s 调 _return_to_lobby → Wire.stop(),把正在进行的对局从客户端这边掐断(症状是「进局 25s 后掉线」,且不报错)。
 func _on_lobby_connected() -> void:
-	NetBus.rpc_id(1, "lobby_name", "BOT%d" % idx)
+	Wire.send(WireKind.LOBBY_NAME, ["BOT%d" % idx])
 	_attach_lobby.call_deferred()
 
 
@@ -181,10 +181,10 @@ func _attach_lobby() -> void:
 		return
 	lobby = load("res://scenes/mp_lobby.tscn").instantiate()
 	# ★★ _with_lobby 的快路判据是两个字符串相等(_connected_addr == 地址框),故只预置已连不够:页的地址框初值取的就是 PvpSession.server_address,而它的生产默认是云服(core/net/pvp_session.gd 初值)。
-	#   不拨这一行,下面两个 set 白设 —— 一帧后页发现「已连地址(127.0.0.1)≠ 地址框(云服)」⇒ NetBus.stop() + 按默认端口 7777 去连公网生产服(还会在它上面真的建房),而本探针的大厅(池外端口)被晾着。
+	#   不拨这一行,下面两个 set 白设 —— 一帧后页发现「已连地址(127.0.0.1)≠ 地址框(云服)」⇒ Wire.stop() + 按默认端口 7777 去连公网生产服(还会在它上面真的建房),而本探针的大厅(池外端口)被晾着。
 	#   ★ 这个坑静默:日志里满是本端自己的「已连接服务器」,看着像连上了(实测症状是探针侧「一条 玩家连入 都没有 + 45s 后没有 3v3 房」)。范本:tests/harness/rejoin_watcher.gd::_on_node_added / tests/probe/royale_c2_probe.gd::_run_client;守卫:_tick_lobby 首段(连错地址当场点名)。
 	PvpSession.server_address = LOBBY_ADDR
-	# ★ 本进程已经连上大厅(上面 start_client),而页的 _ready 会 deferred 跑一次 _request_list → _with_lobby:只有「已连同地址」那一支会复用现有连接,否则它会 NetBus.stop() 再按默认端口 7777 重连 —— 而本探针的大厅在池外端口。
+	# ★ 本进程已经连上大厅(上面 start_client),而页的 _ready 会 deferred 跑一次 _request_list → _with_lobby:只有「已连同地址」那一支会复用现有连接,否则它会 Wire.stop() 再按默认端口 7777 重连 —— 而本探针的大厅在池外端口。
 	#   故先置位再入树,让页走「已连」分支。
 	lobby.set("_connected", true)
 	lobby.set("_connected_addr", LOBBY_ADDR)

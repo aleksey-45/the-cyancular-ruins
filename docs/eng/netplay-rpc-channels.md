@@ -16,7 +16,7 @@ if (tr_channel > 0) { channel = SYSCH_MAX + tr_channel - 1; }        // = tr_cha
 
 ⇒ `transfer_channel = 0` = 系统默认:reliable 走 ENet 0、unreliable 走 ENet 1;`transfer_channel = N > 0` 走 ENet `N + 1`。
 
-`core/net/net_bus.gd` 的 `const ENet_CHANNELS := 4` 传给 `create_server/create_client`,引擎再加 `SYSCH_MAX`(2) ⇒ ENet 实际 6 条道(0~5),`transfer_channel` 可用 1~4。最大用到 3(ENet 4)。
+v5 起 [`core/net/wire.gd`](../../core/net/wire.gd) 直连 ENetConnection,通道由 `WireKind.CHANNELS := 4` 指定,四条道全归应用(0 会话 / 1 输入 / 2 快照 / 3 事件);v4 的「引擎自留 SYSCH 两条」不再适用。
 
 ## 分道规则
 - 与「会话 / 回局生命周期」成序列的消息一律留控制道(`transfer_channel = 0`);跨通道不保序。
@@ -36,5 +36,5 @@ if (tr_channel > 0) { channel = SYSCH_MAX + tr_channel - 1; }        // = tr_cha
 ## 声明与对账
 
 - `@rpc` 四参全写:`@rpc(mode, sync, transfer_mode, transfer_channel)`。三参并把 int 放第 3 位会被引擎拒(`argument 3 should be "String" but is "int"`);`mode` / `sync` / `transfer_mode` 三个字符串顺序无关,`transfer_channel` 必须是最末那个 int;`sync` 写 `"call_remote"` 是默认值。
-- 作用域:产品声明 **61** 条(`net_bus.gd` 28 + `net_bus_ext.gd` 33);`transfer_channel` 0/1/2/3 = 47/1/3/10。表里 60 个方法名,差的一条是 `beam_fired` 在 `net_bus.gd` 与 `net_bus_ext.gd` 各声明一次(两份都给通道 3)。通道号无法在运行期回读:`GDScript.get_script_method_list()` 不含 `rpc_config` ⇒ 过去的唯一自动化判据是文本对账(`rpc_channel_contract_smoke`,已删)⇒ **今天只能人工对表**;「重名集合恰好 = {beam_fired}」也没人钉了。
+- 作用域(v5,登记表 [`core/net/wire_kind.gd`](../../core/net/wire_kind.gd)):产品声明 57 条,通道 0/1/2/3 = 47/1/2/7;v4 的 61 条里有 3 条死协议(peer_info/match_options/peer_hues)与 1 条重名(beam_fired 双份)未迁;`transfer_channel` 0/1/2/3 = 47/1/3/10。表里 60 个方法名,差的一条是 `beam_fired` 在 `net_bus.gd` 与 `net_bus_ext.gd` 各声明一次(两份都给通道 3)。通道号无法在运行期回读:`GDScript.get_script_method_list()` 不含 `rpc_config` ⇒ 过去的唯一自动化判据是文本对账(`rpc_channel_contract_smoke`,已删)⇒ **今天只能人工对表**;「重名集合恰好 = {beam_fired}」也没人钉了。
 - **接收端纪律**:`beam_fired` 必须走 `NetBus`(不是 `NetBusExt`);挂错节点 = 静默 no-op。
