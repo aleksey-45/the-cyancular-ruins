@@ -5,7 +5,7 @@
 ## 渲染管线(`scenes/level_0.tscn`)
 
 - 根节点把未处理输入手动转发进 `WorldViewport`(SubViewport);世界(墙体 / 玩家 / 敌人)渲染进 SubViewport,`PostProcess`(`post_process.gd`)做像素缩放裁切 + 倒地暗角 + 残血边缘暗角(低于 35% 起、10% 满;**只在屏幕边缘**,中心保持干净,纯客户端、不挡 HUD)。
-- 相机 `core/present/camera_2d.gd` 在 `_process` 里直贴目标位置(加 `cam_y_bias`),另有 `shake()`:无前瞻、无死区、无平滑。`PlayerParams.cam_lookahead_x` / `cam_lookahead_y` / `cam_deadzone` 全仓无人读,别按它们改行为。
+- 相机 `core/present/camera_2d.gd` 在 `_process` 里直贴目标位置(加 `cam_y_bias`),另有 `shake(amount, duration)`:无前瞻、无死区、无平滑;包络 = `amount * (剩余/时长)^0.7`(尾段比线性长),且**不降级**——比当前剩余包络弱的震动被忽略,否则开火/受击的小震会把爆炸大震顶掉。联机里爆炸震由 `Explosion.client_cam_shake()` 在视觉副本爆炸时补(客户端 bullet 是 `apply_damage=false`)。`PlayerParams.cam_lookahead_x` / `cam_lookahead_y` / `cam_deadzone` 全仓无人读,别按它们改行为。
 
 - 图集构造 `core/sim/terrain_atlas.gd`(`TerrainAtlas`):源砖 → 图集 → TileSet;`Level0._create_wall_tileset()` / `_create_water_tileset()` 只剩转发。
   - **墙体 = 16px 象限**:`make_wall_tileset()` 把每块 32px 源砖拆成 4×4 个 8×8 象限、各最近邻 2× 放大成 16×16,拼成 16 列(4×4 象限)× 22 行(纹理 1-22)的 TileSet(`tile_size = 16`);`_paint_maze` 铺 16px 子格,瓦片坐标 = `Vector2i((y%4)*4 + (x%4), tex-1)`,3×3 环面。

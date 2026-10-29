@@ -152,6 +152,17 @@ static func _cam_shake(center: Vector2, radius: float, p: Node2D) -> void:
 	var amt := PlayerParams.explosion_cam_shake * (1.0 - d / reach)
 	cam.shake(amt, PlayerParams.explosion_cam_shake_time)
 
+# 客户端表现层专用:视觉副本爆炸(`BulletBase.apply_damage == false`)不走 apply_aoe,震屏在这里单独补。
+# 只取 `player` 组里的本地玩家(PvP 客户端的 player 组只有自己),距离衰减与权威路径共用 _cam_shake 同一条公式。
+static func client_cam_shake(center: Vector2, radius: float) -> void:
+	var tree := _tree()
+	if tree == null:
+		return
+	for p in tree.get_nodes_in_group("player"):
+		if p is Node2D:
+			_cam_shake(center, radius, p as Node2D)
+			return
+
 static func _tree() -> SceneTree:
 	return Engine.get_main_loop() as SceneTree
 

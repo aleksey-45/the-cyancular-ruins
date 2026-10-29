@@ -373,6 +373,9 @@ func _explode() -> void:
 		TileHitFx.mark_hit(at)
 	if apply_damage:
 		Explosion.apply_aoe(global_position, explosion_radius, explosion_damage, explosion_knockback, shooter, tile_break_unit)
+	else:
+		# 视觉副本(PvP 客户端):apply_aoe 被 gate 掉 ⇒ 爆炸震屏在这里单独补,否则联机里旁边爆炸完全没有震感。
+		Explosion.client_cam_shake(global_position, explosion_radius)
 
 
 # 表现层锚点:离本地玩家最近的那份环面副本(与 _wrap 同一套选择规则)。

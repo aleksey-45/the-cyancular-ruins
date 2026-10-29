@@ -2,6 +2,10 @@ extends Camera2D
 
 @export var target: Node2D = null
 
+# 震动包络:振幅 = amount * (剩余/总时长)^SHAKE_TAIL。指数 <1 ⇒ 尾段比线性衰减**更长**;
+# 原来的线性曲线 + 每帧随机噪声,峰值只在第一帧,读起来像"一碰就没"。
+const SHAKE_TAIL := 0.7
+
 var _shake_amt: float = 0.0
 var _shake_time: float = 0.0
 var _shake_dur: float = 0.0
@@ -13,6 +17,13 @@ func _ready() -> void:
 	zoom = Vector2(PlayerParams.cam_zoom, PlayerParams.cam_zoom)
 
 func shake(amount: float, duration: float) -> void:
+	# ★ 不降级:比当前剩余包络弱的震动直接忽略。否则开火(2px/0.1s)/受击(8px/0.25s)会把爆炸(30px/0.5s)顶掉
+	#   —— 这是"爆炸震消失得特别快"的主因(不是包络曲线)。等强度允许刷新时长(连发/连爆)。
+	var cur := 0.0
+	if _shake_time > 0.0:
+		cur = _shake_amt * pow(_shake_time / maxf(_shake_dur, 0.0001), SHAKE_TAIL)
+	if amount < cur:
+		return
 	_shake_amt = amount
 	_shake_time = duration
 	_shake_dur = duration
@@ -33,5 +44,5 @@ func _process(delta: float) -> void:
 	global_position = _base_pos
 	if _shake_time > 0.0:
 		_shake_time = maxf(_shake_time - delta, 0.0)
-		var amt := _shake_amt * (_shake_time / maxf(_shake_dur, 0.0001))
+		var amt := _shake_amt * pow(_shake_time / maxf(_shake_dur, 0.0001), SHAKE_TAIL)
 		global_position += Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0)) * amt
