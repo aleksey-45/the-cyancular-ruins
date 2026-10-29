@@ -5,6 +5,7 @@
 #include "combat_kernel.h"
 #include "prediction_history.h"
 #include "projectile_entry.h"
+#include "performance_stats.h"
 #include <godot_cpp/core/object.hpp>
 #include <godot_cpp/classes/shape2d.hpp>
 #include <algorithm>
@@ -100,6 +101,7 @@ Rect2 NativeActorCollider::world_rect(Vector2 anchor) {
 static void initialize_simulation(ModuleInitializationLevel level) {
     if (level != MODULE_INITIALIZATION_LEVEL_SCENE) return;
     ClassDB::register_class<NativeActorInput>();
+    ClassDB::register_class<NativePerformanceStats>();
     register_native_terrain();
     ClassDB::register_class<NativeActorBody>();
     ClassDB::register_class<NativeMotionTrack>();

@@ -164,12 +164,16 @@ func start_match() -> void:
 	send_baselines()
 
 func _send_state(frame: Dictionary, targets: Array) -> void:
+	var perf_fanout := NativePerformanceStats.begin()
 	var batch: NetCodec.StateBatch
 	for role in seats:
 		if targets.has(role) and seats[role]["peer"] != 0 and seats[role]["ready"]:
+			var perf_prepare := NativePerformanceStats.begin()
 			var state := world.state_for(role, frame, batch.time if batch != null else null)
 			if batch == null: batch = NetCodec.StateBatch.new(state)
+			NativePerformanceStats.end(NativePerformanceStats.STATE_PREPARE, perf_prepare)
 			NetBus.send_state(seats[role]["peer"], state, batch)
+	if batch != null: NativePerformanceStats.end(NativePerformanceStats.STATE_FANOUT, perf_fanout)
 
 func _broadcast(kind: int, data: Variant, except_role: int) -> void:
 	var peers := PackedInt32Array()

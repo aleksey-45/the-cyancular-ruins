@@ -3,6 +3,7 @@
 #include "weapon_body.h"
 #include "bullet_body.h"
 #include "projectile_entry.h"
+#include "performance_stats.h"
 #include <godot_cpp/core/object.hpp>
 #include <godot_cpp/classes/shape2d.hpp>
 #include <algorithm>
@@ -498,6 +499,7 @@ bool NativeActorBody::native_simulate_hit(Vector2 source, int damage, double for
 }
 void NativeActorBody::native_step_actor(double delta, double time_mult, bool pvp,
         const Ref<NativeTerrain> &world) {
+    const PerformanceScope scope(NativePerformanceStats::ACTOR_STEP);
     if (rewinding) return;
     NativeWeaponBody *weapon = active_weapon();
     if (!sim_downed) {

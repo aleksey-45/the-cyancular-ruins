@@ -1,4 +1,5 @@
 #include "prediction_history.h"
+#include "performance_stats.h"
 #include "combat_kernel.h"
 #include <godot_cpp/core/object.hpp>
 
@@ -46,6 +47,7 @@ void NativePredictionHistory::configure_remotes(const Array &records) {
 void NativePredictionHistory::remember(int64_t tick, NativeActorBody *player, int64_t instance,
         const Array &inventory, const Array &cursor, const Dictionary &time,
         int64_t revision, int64_t geometry, int64_t terrain) {
+    const PerformanceScope scope(NativePerformanceStats::HISTORY_SAVE);
     ERR_FAIL_COND(!player || keep <= 0);
     Dictionary contacts;
     bool changed = !metadata_valid;

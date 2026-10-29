@@ -1,4 +1,5 @@
 #include "combat_kernel.h"
+#include "performance_stats.h"
 #include <godot_cpp/core/object.hpp>
 #include <algorithm>
 #include <cmath>
@@ -199,6 +200,7 @@ void NativeCombatKernel::step_blast(int64_t id) {
 }
 void NativeCombatKernel::step(int64_t at, const Array &targets,
         const Ref<NativeTerrain> &world, bool first) {
+    const PerformanceScope scope(NativePerformanceStats::COMBAT_STEP);
     ERR_FAIL_COND(world.is_null());
     tick = at; players = targets; geometry = world; first_prediction = first;
     const Array recorded = outcomes.keys();

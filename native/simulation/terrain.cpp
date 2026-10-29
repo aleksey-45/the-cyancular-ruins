@@ -1,4 +1,5 @@
 #include "terrain.h"
+#include "performance_stats.h"
 #include <algorithm>
 #include <cmath>
 #include <godot_cpp/classes/collision_shape2d.hpp>
@@ -855,6 +856,7 @@ int NativeTerrain::flush_collisions() {
     Node *parent = Object::cast_to<Node>(ObjectDB::get_instance(parent_id));
     if (!parent || empty())
         return 0;
+    const PerformanceScope scope(NativePerformanceStats::TERRAIN_COMMIT);
     if (permanent_dirty)
         rebuild_permanent(parent);
     if (ledges_dirty)

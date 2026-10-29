@@ -78,6 +78,8 @@ func _exit_tree() -> void:
 		terrain.changed.disconnect(_on_terrain_changed)
 
 func _physics_process(_delta: float) -> void:
+	var perf_tick := NativePerformanceStats.begin()
+	var perf_simulation := NativePerformanceStats.begin()
 	var delta := ActorStep.DT
 	_snap_tick += 1
 	for pickup: WeaponPickup in pickups.values():
@@ -137,10 +139,12 @@ func _physics_process(_delta: float) -> void:
 			fuses[bullet.entity_id] = projectile_state(bullet)
 	if not fuses.is_empty():
 		broadcast(NetEvent.Kind.BULLET_FUSE, {"tick": _snap_tick, "projectiles": fuses})
+	NativePerformanceStats.end(NativePerformanceStats.SERVER_SIMULATION, perf_simulation)
 	var targets := players.keys() if _snap_tick % 2 == 0 else _impact_roles.keys()
 	if not targets.is_empty():
 		state_ready.emit(world_state(), targets)
 	_impact_roles.clear()
+	NativePerformanceStats.end(NativePerformanceStats.SERVER_TICK, perf_tick)
 
 func add_projectile(bullet: BulletBase) -> void:
 	add_child(bullet)
@@ -235,6 +239,7 @@ func live_bullets() -> Array:
 	return projectiles.values().filter(func(bullet: BulletBase) -> bool: return not bullet.is_queued_for_deletion())
 
 func world_state() -> Dictionary:
+	var perf_started := NativePerformanceStats.begin()
 	var actors := {}
 	for role in players:
 		var player: CharacterBody2D = players[role]
@@ -259,6 +264,7 @@ func world_state() -> Dictionary:
 		drops[pickup.inst] = {"type_id": pickup.type_id, "mag": pickup.mag,
 				"pos": pickup.canonical_pos, "vel": pickup.velocity}
 	var frame := {"players": actors, "pickups": drops, "projectiles": projectile_states()}
+	NativePerformanceStats.end(NativePerformanceStats.WORLD_CAPTURE, perf_started)
 	return frame
 
 func _on_time_awarded(role: int, amount: int) -> void:

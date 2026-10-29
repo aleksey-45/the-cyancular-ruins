@@ -1,4 +1,5 @@
 #include "bullet_body.h"
+#include "performance_stats.h"
 #include <godot_cpp/core/object.hpp>
 #include <godot_cpp/classes/geometry2d.hpp>
 #include <cmath>
@@ -60,6 +61,7 @@ void NativeBulletBody::start_fuse(double duration) {
 }
 void NativeBulletBody::start_player_fuse() { if (explodes) start_fuse(hit_fuse_time); }
 int NativeBulletBody::advance_physics(double delta, bool canonical) {
+    const PerformanceScope scope(NativePerformanceStats::PROJECTILE_STEP);
     ERR_FAIL_COND_V(geometry.is_null(), MOVED);
     geometry->flush_collisions();
     impact.unref();

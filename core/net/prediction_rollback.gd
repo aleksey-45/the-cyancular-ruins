@@ -319,6 +319,7 @@ func can_replay_from(dirty_tick: int, anchor_tick: int = -1) -> bool:
 	return combat_prediction.can_restore_checkpoint(at, saved["projectiles"])
 
 func replay_from(dirty_tick: int) -> void:
+	var perf_started := NativePerformanceStats.begin()
 	var at := dirty_tick - 1
 	var saved: Dictionary = _states[at]
 	var previous := _player.global_position
@@ -343,6 +344,8 @@ func replay_from(dirty_tick: int) -> void:
 		replay_ticks += 1
 		_step(_input.take(_sim_tick), true)
 	_player.rebase_visual_step(previous)
+	NativePerformanceStats.replayed(replay_ticks)
+	NativePerformanceStats.end(NativePerformanceStats.REPLAY, perf_started)
 
 func reconcile(own: Dictionary, tick: int, ping_ms: int, reuse: bool, projectiles: Dictionary) -> bool:
 	_authority_tick = tick
@@ -376,6 +379,7 @@ func reconcile(own: Dictionary, tick: int, ping_ms: int, reuse: bool, projectile
 		combat_prediction.acknowledge(tick)
 		_discarded_through = 0
 		return false
+	var perf_started := NativePerformanceStats.begin()
 	var previous := _player.global_position
 	_player.restore_state(own["state"])
 	_prepare_colliders()
@@ -398,6 +402,8 @@ func reconcile(own: Dictionary, tick: int, ping_ms: int, reuse: bool, projectile
 			_step(_input.take(_sim_tick), true)
 	_player.rebase_visual_step(previous)
 	_discarded_through = 0
+	NativePerformanceStats.replayed(replay_ticks)
+	NativePerformanceStats.end(NativePerformanceStats.REPLAY, perf_started)
 	return changed or own["rewind"]
 
 func _prepare_colliders() -> void:

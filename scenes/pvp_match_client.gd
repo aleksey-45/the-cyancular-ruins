@@ -537,12 +537,15 @@ func _apply_frame_authority() -> void:
 		_level0.flush_terrain_collision()
 		return
 	_authority_process_frame = frame
+	var perf_started := NativePerformanceStats.begin()
 	_apply_pending_authority()
+	NativePerformanceStats.end(NativePerformanceStats.CLIENT_AUTHORITY, perf_started)
 
 func _physics_process(delta: float) -> void:
 	if phase != Phase.ONLINE:
 		_local.begin_visual_step()
 		return
+	var perf_started := NativePerformanceStats.begin()
 	_apply_frame_authority()
 	_local._poll_pickup_drop(delta)
 	var src: PlayerInput = _local.input_source
@@ -550,12 +553,14 @@ func _physics_process(delta: float) -> void:
 			_local.weapons.take_uplink_switch(src.get_switch_index_pressed()))
 	NetBus.send_input(_rollback.packet())
 	_rollback.advance(delta)
+	NativePerformanceStats.end(NativePerformanceStats.CLIENT_TICK, perf_started)
 
 func _process(delta: float) -> void:
 	if phase != Phase.ONLINE:
 		return
 	# 和物理回调共用接纳点，不能在表现前再次重放同一窗口。
 	_apply_frame_authority()
+	var perf_started := NativePerformanceStats.begin()
 	_level0.flush_terrain_visuals()
 	_track_local_bullets()
 	_cull_bullet_contacts()
@@ -564,6 +569,7 @@ func _process(delta: float) -> void:
 	var render_tick := _rollback._clock - _rollback._rate * (1.0 - Engine.get_physics_interpolation_fraction())
 	_local.present_prediction(delta, render_tick - _rollback._sim_tick)
 	if _playback.frames.is_empty():
+		NativePerformanceStats.end(NativePerformanceStats.CLIENT_PRESENT, perf_started)
 		return
 	var world := _playback.advance(delta)
 	for role in world["players"]:
@@ -605,6 +611,7 @@ func _process(delta: float) -> void:
 	for role in _id_labels:
 		var point: Vector2 = _local.visuals.global_position if role == PvpSession.role else _replicas[role].global_position
 		_id_labels[role].position = point + Vector2(0, -78)
+	NativePerformanceStats.end(NativePerformanceStats.CLIENT_PRESENT, perf_started)
 
 func _make_label(role: int) -> void:
 	if not _id_labels.has(role):

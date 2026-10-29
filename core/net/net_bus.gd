@@ -82,7 +82,9 @@ func send_input(packet: Dictionary) -> void:
 	_send(1, Flow.INPUT, _codec(1).encode_input(packet))
 
 func send_state(peer: int, frame: Dictionary, batch: NetCodec.StateBatch) -> void:
+	var perf_started := NativePerformanceStats.begin()
 	var bytes := _codec(peer).encode_state(frame, batch)
+	NativePerformanceStats.end(NativePerformanceStats.STATE_ENCODE, perf_started)
 	_send(peer, Flow.STATE, bytes)
 
 func send_event(kind: int, data: Variant = null, peer: int = 1) -> void:
@@ -97,12 +99,16 @@ func broadcast_event(kind: int, data: Variant, peers: PackedInt32Array) -> void:
 		for peer in peers: send_event(kind, data, peer)
 		return
 	var bytes := _codec(peers[0]).encode_event(kind, data)
+	var perf_started := NativePerformanceStats.begin()
 	var wire := _wire(bytes)
 	_transport.send_many(peers, Flow.EVENT, wire)
+	NativePerformanceStats.end(NativePerformanceStats.TRANSPORT_SEND, perf_started)
 
 func _send(peer: int, flow: Flow, bytes: PackedByteArray) -> void:
+	var perf_started := NativePerformanceStats.begin()
 	var wire := _wire(bytes)
 	_transport.send(peer, flow, wire)
+	NativePerformanceStats.end(NativePerformanceStats.TRANSPORT_SEND, perf_started)
 
 func _wire(bytes: PackedByteArray) -> PackedByteArray:
 	var wire := PackedByteArray([NetCodec.WIRE_MAGIC, NetCodec.PROTOCOL_VERSION])
@@ -112,6 +118,7 @@ func _wire(bytes: PackedByteArray) -> PackedByteArray:
 func _physics_process(_delta: float) -> void:
 	if not _active:
 		return
+	var perf_poll := NativePerformanceStats.begin()
 	var generation := _generation
 	# 每帧接纳新包，使排队中的旧 STATE 能被最新锚点合并；派发仍受独立预算约束。
 	# 只排空旧批次会把新 STATE 留在原生队列，延长重放窗口并进一步拖慢排空。
@@ -119,6 +126,8 @@ func _physics_process(_delta: float) -> void:
 	_pending_messages.append_array(messages)
 	messages = _filter_receive_backlog(_coalesce_messages(_pending_messages))
 	_pending_messages = []
+	NativePerformanceStats.end(NativePerformanceStats.NETWORK_POLL, perf_poll)
+	var perf_dispatch := NativePerformanceStats.begin()
 	# 合并和年龄检查单独计时，不能因旧队列扫描耗尽业务派发的预算。
 	var dispatch_started := Time.get_ticks_usec()
 	var dispatched := 0
@@ -152,6 +161,7 @@ func _physics_process(_delta: float) -> void:
 		_update_ping()
 	if _active and _protocol_waiting_at > 0 and Time.get_ticks_msec() - _protocol_waiting_at > 5000:
 		_fail_protocol("服务器握手超时，请确认服务端与客户端使用相同版本")
+	NativePerformanceStats.end(NativePerformanceStats.NETWORK_DISPATCH, perf_dispatch)
 
 func _filter_receive_backlog(messages: Array) -> Array:
 	var totals := {}

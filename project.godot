@@ -26,6 +26,7 @@ run/main_scene.dedicated_server="res://server/server_main.tscn"
 [autoload]
 
 GameParameters="*res://core/config/game_parameters.gd"
+PerfMonitor="*res://core/config/perf_monitor.gd"
 NetBus="*res://core/net/net_bus.gd"
 NetSession="*res://core/net/net_session.gd"
 Settings="*res://core/config/settings.gd"
