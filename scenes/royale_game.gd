@@ -3,7 +3,8 @@ extends PvpMatchClient
 
 
 # _last_snap_tick 已上提到基类 PvpMatchClient(输入包的 st 字段读它;2026-10-24)。
-var _replicas: Dictionary = {}         # role(int) -> PlayerReplica(自己以外的全部角色)
+var _replicas: Dictionary = {}         # role(int) -> PlayerReplica(自己以外的全部角色);★ 由 _replica_set 单写,本字段保留在宿主是因为 team_match_watcher 直接读它数副本
+var _replica_set: ReplicaSet = null    # 副本集合 / 快照消费 / 头顶标签(与 3v3 共用的组合件,已 bind 到上面那份 _replicas)
 # ★ _level0(世界/Level0)已上提到基类(两个模式同名同义,子类不重复声明;重连补态那一路要在基类 _on_match_sync 里用它还原可破坏砖)。
 var _hud: RoyaleHud = null
 
@@ -24,9 +25,6 @@ const ROLE_COLORS: Array[Color] = [
 static func role_color(role: int) -> Color:
 	return ROLE_COLORS[(role - 1) % ROLE_COLORS.size()]
 
-
-var _id_labels: Dictionary = {}    # role(int) -> WorldLabel(含自己)
-var _hp_bars: Dictionary = {}      # role(int) -> EnemyHpBar(仅他人,设置开启时)
 
 func _ready() -> void:
 	CombatComponent.pvp_arena = true
@@ -54,6 +52,9 @@ func _ready() -> void:
 	call_deferred("add_child", pp)
 	# 血条(他人,设置开启时;具体 role 的实例随副本在快照里懒建)。
 	# 快照拆两条:① 世界包 = 全部玩家的渲染字段(副本/HUD 取它);② 本人包 = 自己的 ack_seq + c2(只有本人需要,C2 rollback 拿它锚定/重放)。
+	# 副本集合 / 快照消费 / 头顶标签收进组合件(与 3v3 同一份);取色 Callable = role_color(大乱斗不区分队)。
+	_replica_set = ReplicaSet.new()
+	_replica_set.bind(self, _replicas, func(r: int) -> Color: return role_color(r))
 	NetBus.local_snapshot_world.connect(_on_snapshot_world)
 	NetBus.local_snapshot_own.connect(_on_snapshot_own)
 	NetBus.local_bullet_spawn.connect(_on_bullet_spawn)
@@ -85,7 +86,7 @@ func _ready() -> void:
 	_pause_menu.toggled.connect(func(open: bool) -> void:
 		_menu_open = open
 		_refresh_input_lock()
-		_recheck_disconnect())   # 菜单开着时收到的"服务器断开"在这里补(见 PvpMatchClient._begin_reconnect)
+		_recheck_disconnect())   # 菜单开着时收到的"服务器断开"在这里补(见 ReconnectDriver._begin_reconnect(S-17 后重连状态机在 scenes/mp_client/reconnect_driver.gd))
 	add_child(_pause_menu)
 	_apply_tint(_local.get_node_or_null("AnimatedSprite2D"), role_color(PvpSession.role))
 	# ★ 进场主动拉一次(昵称/生效选项/出生点):本场景此刻已建好并订阅齐了才开口要,故不存在「推给一个正在切场景的客户端」那个竞态。★ 判活再发(全仓纪律,与 pvp_game 那处逐字同款):定向可靠包,连接可能已经不可用。
@@ -100,73 +101,9 @@ func _ready() -> void:
 
 
 func _on_snapshot_world(snap: Dictionary) -> void:
-	if _local == null:
-		return
-	var snap_tick := int(snap.get("tick", 0))
-	if snap_tick < _last_snap_tick:
-		return
-	_last_snap_tick = snap_tick   # P1.5:DELTA 已在 NetBus 解码边界合并成完整 players
-	var players_snap: Dictionary = snap["players"]
-	for role_str in players_snap:
-		var role := int(role_str)
-		var data: Dictionary = players_snap[role_str]
-		if role != PvpSession.role:
-			_ensure_replica(role)
-			var r: Node2D = _replicas[role]
-			if r != null and r.has_method("apply_snapshot"):
-				r.apply_snapshot(data, _local.global_position, snap_tick)
-				r.set_meta("haste", bool(data.get("haste", false)))   # Beta:他人加速视效
-				r.set_meta("rewind", bool(data.get("rewind", false)))   # Beta:他人回溯视效
-				r.set_meta("trail", data.get("trail", []))
-				if _hp_bars.has(role):
-					_hp_bars[role].ratio = float(data.get("hp", PlayerParams.player_max_hp)) \
-							/ float(PlayerParams.player_max_hp)
-					# 倒地尸体不显示血条(同上:线上 hp 已钳到 0)。
-					(_hp_bars[role] as Node2D).visible = not bool(data.get("downed", false))
-		# ★ 自己那一份刻意不消费:C2 下本地玩家由引擎自步进,权威整态走本人包(见 _on_snapshot_own);把世界包里自己那份写进玩家 = 每帧把权威位置强写进正在预测的玩家 = 橡皮筋,别顺手补回来。
-		# 清理已离开玩家(掉线者从快照消失):副本/头顶 ID/血条一并移除。
-	for role_str in _replicas.keys():
-		if not players_snap.has(str(role_str)):
-			_remove_replica(int(role_str))
+	# 公共段(懒建/拆副本、套 apply_snapshot、血条、掉线清理)在 ReplicaSet.apply_world_snapshot,与 3v3 逐字同一份。
+	_replica_set.apply_world_snapshot(snap)
 # 本人包:只有自己需要的 ack_seq + 权威整态 c2,C2 下喂 rollback 控制器;拆包的好处是它与世界包互不连累 —— c2 丢只少一个回滚锚点(下一个快照补上),世界包丢只让副本插值冻结一帧。
-
-
-# 懒建远端副本(按快照里出现的 role)—— 大乱斗对手数量不定。
-func _ensure_replica(role: int) -> void:
-	if _replicas.has(role) and is_instance_valid(_replicas[role]):
-		return
-	var replica: Node2D = preload("res://scenes/player/player_replica.tscn").instantiate()
-	replica.name = "ReplicaP%d" % role
-	_world.add_child(replica)
-	_replicas[role] = replica
-	_ensure_id_label(role)
-	_apply_tint(replica.get_node_or_null("AnimatedSprite2D"), role_color(role))
-	if Settings.pvp_show_enemy_hp:
-		var bar := EnemyHpBar.new()
-		_world.add_child(bar)
-		_hp_bars[role] = bar
-	_refresh_names()
-
-
-func _remove_replica(role: int) -> void:
-	if _replicas.has(role):
-		var r: Node2D = _replicas[role]
-		# ★ 先收视效再 free 副本:残影宿主挂在 _world、不在副本子树里,只 free 副本会永久留下它们。
-		_time_fx_replica_rewind_off(r)
-		if is_instance_valid(r):
-			r.queue_free()
-		_replicas.erase(role)
-	if _id_labels.has(role):
-		var l: Node = _id_labels[role]
-		if is_instance_valid(l):
-			l.queue_free()
-		_id_labels.erase(role)
-	if _hp_bars.has(role):
-		var b: Node = _hp_bars[role]
-		if is_instance_valid(b):
-			b.queue_free()
-		_hp_bars.erase(role)
-	_refresh_names()
 
 
 # 服务器权威开火(激光):逐点锚到射手副本当前渲染位置再整条画(与 pvp_client._on_beam_fired 的唯一差别:大乱斗按 shooter_role 取锚点)。★ 必须走 NetBus(不是 NetBusExt):发送端 match_host 用的是 NetBus.rpc_id,收在 NetBusExt 上会静默 no-op。
@@ -207,8 +144,8 @@ func _build_result_payload() -> Dictionary:
 # 应用函数(不是信号回调):唯一入口 = _on_match_sync(进场拉取)。★ 不要连回 NetBus.local_peer_info —— 那条推送路径在本项目已不存在(worker 不再广播),连上去会让本载荷走两条路。
 func _apply_peer_names(names: Dictionary) -> void:
 	_names = names
-	_ensure_id_label(PvpSession.role)
-	_refresh_names()
+	_replica_set.ensure_label(PvpSession.role)
+	_replica_set.refresh_labels()
 
 var _names: Dictionary = {}   # role(int) -> 昵称(peer_info 下发)
 
@@ -220,33 +157,12 @@ func _apply_role_colors() -> void:
 	if _local != null:
 		_apply_tint(_local.get_node_or_null("AnimatedSprite2D"), role_color(PvpSession.role))
 
-func _ensure_id_label(role: int) -> void:
-	if _world == null or _id_labels.has(role):
-		return
-	var lbl: Node2D = load("res://ui/factory/world_label.gd").new()
-	_world.add_child(lbl)
-	_id_labels[role] = lbl
-
-func _refresh_names() -> void:
-	for role in _id_labels:
-		var nm := str(_names.get(role, "玩家%d" % role))
-		if role == PvpSession.role:
-			nm = str(_names.get(role, PvpSession.player_name))
-		var col: Color = role_color(int(role))
-		(_id_labels[role] as Node2D).set_label(nm, col)
-
 
 # 服务器下发生效选项:同步禁用武器。应用函数(不是信号回调):唯一入口 = _on_match_sync;★ 不要连回 NetBusExt.local_match_options,同 _apply_peer_names 的告警。
 
+# 头部 ID / 血条的跟随与上图都在 ReplicaSet;本场景只留宿主侧的取色与参数。
 func _process(_delta: float) -> void:
-	for role in _id_labels:
-		var target: Node2D = _local if role == PvpSession.role else _replicas.get(role)
-		if target != null and is_instance_valid(target):
-			(_id_labels[role] as Node2D).global_position = (target as Node2D).global_position + ID_HEAD_OFFSET
-	for role in _hp_bars:
-		var r: Node2D = _replicas.get(role)
-		if r != null and is_instance_valid(r):
-			(_hp_bars[role] as Node2D).global_position = r.global_position + Vector2(0.0, -116.0)
+	_replica_set.follow(ID_HEAD_OFFSET)
 
 # 对手副本访问器(大乱斗:按 role 动态)。
 func _all_replicas() -> Array:

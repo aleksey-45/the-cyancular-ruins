@@ -5,15 +5,14 @@ extends PvpMatchClient
 
 
 # _last_snap_tick 已上提到基类 PvpMatchClient(输入包的 st 字段读它;2026-10-24)。
-var _replicas: Dictionary = {}         # role(int) -> PlayerReplica(自己以外的全部角色)
+var _replicas: Dictionary = {}         # role(int) -> PlayerReplica(自己以外的全部角色);★ 由 _replica_set 单写,本字段保留在宿主是因为 team_match_watcher 直接读它数副本
+var _replica_set: ReplicaSet = null    # 副本集合 / 快照消费 / 头顶标签(与大乱斗共用的组合件,已 bind 到上面那份 _replicas)
 # ★ _level0(世界/Level0)已上提到基类(子类 _ready 里赋值;重连补态那一路要用它还原可破坏砖)。
 var _hud: TeamHud = null
 
 var _teams: Dictionary = {}
 
 const ID_HEAD_OFFSET := Vector2(0.0, -78.0)
-var _id_labels: Dictionary = {}    # role(int) -> WorldLabel(含自己)
-var _hp_bars: Dictionary = {}      # role(int) -> EnemyHpBar(仅他人,设置开启时)
 var _names: Dictionary = {}        # role(int) -> 昵称(match_sync 下发)
 
 
@@ -39,6 +38,10 @@ func _ready() -> void:
 	var pp := PostProcess.new()
 	pp.world_viewport = level0.get_node("WorldViewport")
 	call_deferred("add_child", pp)
+	# 副本集合 / 快照消费 / 头顶标签收进组合件(与大乱斗同一份);取色 Callable = _team_color,新建后按队补配幽灵层。
+	_replica_set = ReplicaSet.new()
+	_replica_set.bind(self, _replicas,
+			func(r: int) -> Color: return _team_color(r), Callable(self, "_on_replica_created"))
 	NetBus.local_snapshot_world.connect(_on_snapshot_world)
 	NetBus.local_snapshot_own.connect(_on_snapshot_own)
 	NetBus.local_bullet_spawn.connect(_on_bullet_spawn)
@@ -69,7 +72,7 @@ func _ready() -> void:
 	_pause_menu.toggled.connect(func(open: bool) -> void:
 		_menu_open = open
 		_refresh_input_lock()
-		_recheck_disconnect())   # 菜单开着时收到的"服务器断开"在这里补(见 PvpMatchClient._begin_reconnect)
+		_recheck_disconnect())   # 菜单开着时收到的"服务器断开"在这里补(见 ReconnectDriver._begin_reconnect(S-17 后重连状态机在 scenes/mp_client/reconnect_driver.gd))
 	add_child(_pause_menu)
 	# ★ 自己那具的染色不在这里做,等队伍表(见 _refresh_team_colors):3v3 下自己是队色,与「看别人」同一份来源(颜色不可自选)。
 	# ★ 别在这里补一句「表到达前先用某个默认色兜一下」:那是给同一个语义开第二个来源,且会在倒计时里闪一次颜色;表真缺了则整局保持本体蓝,那条路已有 push_warning、不是静默。★ 进场主动拉一次(昵称/队伍/生效选项/出生点/地面武器/destroyed):本场景已建好并订阅齐了才开口要,故没有「推给一个正在切场景的客户端」那个竞态;★ 判活再发(全仓纪律)。
@@ -142,7 +145,7 @@ func _refresh_team_colors() -> void:
 		if is_instance_valid(_replicas[role]):
 			_apply_tint(_replicas[role].get_node_or_null("AnimatedSprite2D"),
 					_team_color(role))
-	_refresh_names()
+	_replica_set.refresh_labels()
 
 
 # 副本幽灵体代表的那名玩家,其队号 → 幽灵体该放的碰撞层。★ 未知队号(0 / 表外 role / 表还没到)一律返回 2 —— 与服务端 _apply_team_layers 的「什么都不配 = 保持 _ready 的层 2」逐值对齐。
@@ -212,75 +215,14 @@ func _minimap_self_color() -> Color:
 
 
 func _on_snapshot_world(snap: Dictionary) -> void:
-	if _local == null:
-		return
-	var snap_tick := int(snap.get("tick", 0))
-	if snap_tick < _last_snap_tick:
-		return
-	_last_snap_tick = snap_tick   # P1.5:DELTA 已在 NetBus 解码边界合并成完整 players
-	var players_snap: Dictionary = snap["players"]
-	for role_str in players_snap:
-		var role := int(role_str)
-		var data: Dictionary = players_snap[role_str]
-		if role != PvpSession.role:
-			_ensure_replica(role)
-			var r: Node2D = _replicas[role]
-			if r != null and r.has_method("apply_snapshot"):
-				r.apply_snapshot(data, _local.global_position, snap_tick)
-				r.set_meta("haste", bool(data.get("haste", false)))   # Beta:他人加速视效
-				r.set_meta("rewind", bool(data.get("rewind", false)))   # Beta:他人回溯视效
-				r.set_meta("trail", data.get("trail", []))
-				if _hp_bars.has(role):
-					_hp_bars[role].ratio = float(data.get("hp", PlayerParams.player_max_hp)) \
-							/ float(PlayerParams.player_max_hp)
-					# ★ 2026-10-30 补(与 pvp_game / royale_game 同口径,原 3v3 漏):线上 hp 已钳到 0,
-					#   不倒地的尸体血条藏起来,否则读成"残血还活着"。
-					(_hp_bars[role] as Node2D).visible = not bool(data.get("downed", false))
-		# ★ 自己那一份刻意不消费:C2 下本地玩家由引擎自步进,权威整态走本人包(见 _on_snapshot_own);把世界包里自己那份写进玩家 = 每帧强写 = 橡皮筋。清理已离开玩家(掉线者从快照消失):副本/头顶 ID/血条一并移除。
-	for role_str in _replicas.keys():
-		if not players_snap.has(str(role_str)):
-			_remove_replica(int(role_str))
+	# 公共段(懒建/拆副本、套 apply_snapshot、血条、掉线清理)在 ReplicaSet.apply_world_snapshot,与大乱斗逐字同一份。
+	_replica_set.apply_world_snapshot(snap)
 
 
-# 懒建远端副本(按快照里出现的 role)—— 5 名对手数量固定但 role 号可能不连续(大厅按最小空闲号分配、有人退出后留空洞),故快照里出现才建。
-func _ensure_replica(role: int) -> void:
-	if _replicas.has(role) and is_instance_valid(_replicas[role]):
-		return
-	var replica: Node2D = preload("res://scenes/player/player_replica.tscn").instantiate()
-	replica.name = "ReplicaP%d" % role
-	_world.add_child(replica)
-	_replicas[role] = replica
-	_ensure_id_label(role)
-	# ★ 队色与幽灵体层必须在这里也补一次:副本是懒建的,而队伍表早在 match_sync 就到了 —— _apply_teams() 那一刻 _replicas 还是空的,只在那时刷的话,晚建的副本会停在无人色(默认蓝)且幽灵体恒在层 2(= 队友也挡我)⇒ 每帧回滚,两处都不报错。
-	_apply_tint(replica.get_node_or_null("AnimatedSprite2D"), _team_color(role))
+# 副本新建后的 3v3 专属补配:幽灵体层必须在这里也补一次 —— 副本是懒建的,而队伍表早在 match_sync 就到了;_apply_teams() 那一刻 _replicas 还是空的,只在那时刷的话,晚建的副本幽灵体恒在层 2(= 队友也挡我)⇒ 每帧回滚,不报错。队色由 ReplicaSet 经 bind 的取色 Callable 刷。
+func _on_replica_created(replica: Node, role: int) -> void:
 	if replica.has_method("set_ghost_layer"):
 		replica.set_ghost_layer(_ghost_layer_of(role))
-	if Settings.pvp_show_enemy_hp:
-		var bar := EnemyHpBar.new()
-		_world.add_child(bar)
-		_hp_bars[role] = bar
-	_refresh_names()
-
-
-func _remove_replica(role: int) -> void:
-	if _replicas.has(role):
-		var r: Node2D = _replicas[role]
-		# ★ 先收视效再 free 副本:残影宿主挂在 _world、不在副本子树里,只 free 副本会永久留下它们。
-		_time_fx_replica_rewind_off(r)
-		if is_instance_valid(r):
-			r.queue_free()
-		_replicas.erase(role)
-	if _id_labels.has(role):
-		var l: Node = _id_labels[role]
-		if is_instance_valid(l):
-			l.queue_free()
-		_id_labels.erase(role)
-	if _hp_bars.has(role):
-		var b: Node = _hp_bars[role]
-		if is_instance_valid(b):
-			b.queue_free()
-		_hp_bars.erase(role)
-	_refresh_names()
 
 
 # 击杀播报:我击杀对手 ⇒ 屏幕中央「击杀 XXX」+ 音效(被击杀的是自己则不播)。★ 载荷仍是 role 粒度(射手 = 归因得到,0 = 无归因),协议不为团队改字段。
@@ -331,36 +273,13 @@ func _build_result_payload() -> Dictionary:
 # ── 名字 / 颜色 ── 应用函数(不是信号回调):唯一入口 = _on_match_sync(进场拉取)。
 func _apply_peer_names(names: Dictionary) -> void:
 	_names = names
-	_ensure_id_label(PvpSession.role)
-	_refresh_names()
+	_replica_set.ensure_label(PvpSession.role)
+	_replica_set.refresh_labels()
 
 
-func _ensure_id_label(role: int) -> void:
-	if _world == null or _id_labels.has(role):
-		return
-	var lbl: Node2D = load("res://ui/factory/world_label.gd").new()
-	_world.add_child(lbl)
-	_id_labels[role] = lbl
-
-
-# 头顶名按队色上色(大乱斗那份按 role 的 8 色板;1v1 那份中性亮白);★ 自己那颗也按队色 —— 六个名字里「我在哪一队」要一眼看出。
-func _refresh_names() -> void:
-	for role in _id_labels:
-		var nm := str(_names.get(role, "玩家%d" % role))
-		if role == PvpSession.role:
-			nm = str(_names.get(role, PvpSession.player_name))
-		(_id_labels[role] as Node2D).set_label(nm, _team_color(role))
-
-
+# 头部 ID / 血条的跟随与上图都在 ReplicaSet;本场景只留宿主侧的取色与参数。
 func _process(_delta: float) -> void:
-	for role in _id_labels:
-		var target: Node2D = _local if role == PvpSession.role else _replicas.get(role)
-		if target != null and is_instance_valid(target):
-			(_id_labels[role] as Node2D).global_position = (target as Node2D).global_position + ID_HEAD_OFFSET
-	for role in _hp_bars:
-		var r: Node2D = _replicas.get(role)
-		if r != null and is_instance_valid(r):
-			(_hp_bars[role] as Node2D).global_position = r.global_position + Vector2(0.0, -116.0)
+	_replica_set.follow(ID_HEAD_OFFSET)
 
 
 func _all_replicas() -> Array:

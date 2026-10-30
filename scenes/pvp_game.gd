@@ -84,7 +84,7 @@ func _ready() -> void:
 	_pause_menu.toggled.connect(func(open: bool) -> void:
 		_menu_open = open
 		_refresh_input_lock()
-		_recheck_disconnect())   # 菜单开着时收到的"服务器断开"在这里补(见 PvpMatchClient._begin_reconnect)
+		_recheck_disconnect())   # 菜单开着时收到的"服务器断开"在这里补(见 ReconnectDriver._begin_reconnect(S-17 后重连状态机在 scenes/mp_client/reconnect_driver.gd))
 	add_child(_pause_menu)
 	# ★ 进场主动拉一次(昵称/色相/生效选项/出生点):本场景已经建好、订阅齐了才开口要,故没有「推给一个正在切场景的客户端」那个竞态。★ 判活再发(全仓纪律):这是定向可靠包,连接可能已不可用 ⇒ 往已拆的 peer 发就是那条 Unable to send packet on channel 0;判据 can_send_to_server()。
 	if NetBus.can_send_to_server():

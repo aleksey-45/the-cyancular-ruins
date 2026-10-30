@@ -1,7 +1,7 @@
 class_name StatusBanner
 extends CanvasLayer
 
-# 对局内本地状态横幅。唯一数据源:`scenes/pvp_match_client.gd` 的断线重连状态机(`_set_status`)。
+# 对局内本地状态横幅。唯一数据源:宿主 `_set_status`(S-17 后由 `scenes/mp_client/reconnect_driver.gd` 的断线重连状态机驱动)。
 #
 # 为什么需要一个类:`pvp_game` / `royale_game` / `team_game` 都是 Node2D,而
 # `UiFactory.panel_box()` 返回的是 StyleBoxFlat(不是节点) —— 没有"能挂上去的东西"。
