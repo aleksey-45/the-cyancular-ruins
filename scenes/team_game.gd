@@ -12,7 +12,6 @@ var _hud: TeamHud = null
 
 var _teams: Dictionary = {}
 
-const ID_HEAD_OFFSET := Vector2(0.0, -78.0)
 var _names: Dictionary = {}        # role(int) -> 昵称(match_sync 下发)
 
 
@@ -277,9 +276,9 @@ func _apply_peer_names(names: Dictionary) -> void:
 	_replica_set.refresh_labels()
 
 
-# 头部 ID / 血条的跟随与上图都在 ReplicaSet;本场景只留宿主侧的取色与参数。
+# 头部 ID / 血条的跟随与上图都在 ReplicaSet;本场景只留调用(锚点偏移的单一来源 = WorldLabel)。
 func _process(_delta: float) -> void:
-	_replica_set.follow(ID_HEAD_OFFSET)
+	_replica_set.follow(WorldLabel.HEAD_OFFSET)
 
 
 func _all_replicas() -> Array:

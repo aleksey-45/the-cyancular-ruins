@@ -1,6 +1,7 @@
+class_name WorldLabel
 extends Node2D
 # 玩家头上 ID 文字:世界空间 Node2D,用 draw_string 居中画(压在黑色薄底板上)。
-# 位置不由自身维护——pvp_client 每帧把它 global_position 贴到对应玩家头顶(不随倒地转体旋转)。
+# 位置不由自身维护——对局宿主每帧调本文件的静态 follow(),或由 player_replica 替它贴位(不随倒地转体旋转)。
 #
 # ★ 底板 2026-09-15 按用户要求加上("所有模式下玩家名字加 0.1 黑底")。此前本文件**连描边都没有**
 #   —— 旧注释写着「带黑描边」,但 _draw 里只有一行 draw_string(名不副实,本次一并改正)。
@@ -14,6 +15,10 @@ const ALPHA := 0.85   # 文字透明度
 # **不乘文字 alpha**:它是垫在字下面的静态底,不是文字的一部分。
 const PLATE_COLOR := UiFactory.C_PLATE
 const PLATE_PAD := Vector2(6, 2)   # 底板比文字每边外扩多少(横向多留一点才衬得住字形)
+
+# ── 头顶挂件的锚点(单一来源:1v1 / 大乱斗 / 3v3 三个宿主都问这里,别在场景根上再各写一份)──
+const HEAD_OFFSET := Vector2(0.0, -78.0)      # 头顶 ID 文字相对玩家原点的偏移(-100 略高,现往下压一点)
+const HP_BAR_OFFSET := Vector2(0.0, -116.0)   # 头顶血条中心相对玩家原点的偏移
 
 var _text := ""
 var _color := Color(1, 1, 1, 1)
@@ -44,3 +49,13 @@ func _draw() -> void:
 			tw + PLATE_PAD.x * 2.0, asc + desc + PLATE_PAD.y * 2.0), PLATE_COLOR)
 	draw_string(_font, Vector2(-WIDTH * 0.5, 0.0), _text,
 			HORIZONTAL_ALIGNMENT_CENTER, WIDTH, FONT_SIZE, _color)
+
+
+## 每帧把世界层挂件(node)贴到 target + offset。挂件刻意挂在世界层、不是玩家子节点:
+## 倒地转体只转身体精灵,头顶的字要始终正立。挂件或目标已失效 = 本帧不动、不报错。
+static func follow(node: Node2D, target: Node2D, offset: Vector2) -> void:
+	if node == null or target == null:
+		return
+	if not is_instance_valid(node) or not is_instance_valid(target):
+		return
+	node.global_position = target.global_position + offset

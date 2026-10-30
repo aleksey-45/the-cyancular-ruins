@@ -8,7 +8,7 @@ extends RefCounted
 
 const REPLICA_SCENE := preload("res://scenes/player/player_replica.tscn")
 const LABEL_SCRIPT := preload("res://ui/factory/world_label.gd")
-const HP_BAR_OFFSET := Vector2(0.0, -116.0)   # 血条中心相对副本原点的偏移
+const HP_BAR_OFFSET := LABEL_SCRIPT.HP_BAR_OFFSET   # S-21:单一来源在 ui/factory/world_label.gd
 
 var _client: Node = null
 var _replicas: Dictionary = {}     # role(int) -> PlayerReplica;★ 宿主持有的同一份字典

@@ -10,8 +10,7 @@ var _remote_replica: Node2D = null
 # ★ _level0(世界/Level0)已上提到基类(两个模式同名同义,子类不重复声明):换局复位砖与重连补态复位砖共用同一个字段。
 var _hud: PvpHud = null
 
-const ID_HEAD_OFFSET := Vector2(0.0, -78.0)   # 头顶文字位置(-100 略高,现往下压一点)
-const NAME_COLOR := Color(0.94, 0.95, 0.98, 1.0)
+const NAME_COLOR := Color(0.94, 0.95, 0.98, 1.0)   # 头顶 ID 的锚点偏移在 WorldLabel(HEAD_OFFSET / HP_BAR_OFFSET),本文件不再声明
 var _id_self: Node2D = null
 var _id_opp: Node2D = null
 var _hp_bar: EnemyHpBar = null    # 对手头顶血条(设置开启时创建)
@@ -49,6 +48,7 @@ func _ready() -> void:
 	if Settings.pvp_show_enemy_hp:
 		_hp_bar = EnemyHpBar.new()
 		_world.add_child(_hp_bar)
+		_attach_opp_overheads()
 	# 快照拆两条:① 世界包 = 全部玩家的渲染字段(副本/血条);② 本人包 = 自己的 ack_seq + c2(只有本人需要,C2 rollback 拿它锚定/重放)。
 	NetBus.local_snapshot_world.connect(_on_snapshot_world)
 	NetBus.local_snapshot_own.connect(_on_snapshot_own)
@@ -191,19 +191,26 @@ func _ensure_id_labels() -> void:
 	if _world == null:
 		return
 	if _id_self == null:
-		_id_self = load("res://ui/factory/world_label.gd").new()
+		_id_self = WorldLabel.new()
 		_world.add_child(_id_self)
 	if _id_opp == null:
-		_id_opp = load("res://ui/factory/world_label.gd").new()
+		_id_opp = WorldLabel.new()
 		_world.add_child(_id_opp)
+	_attach_opp_overheads()
+
+# 对手的头顶 ID / 血条交给副本自己每帧贴位(player_replica.attach_overhead):跟随逻辑属副本,不属对局场景根。
+# 幂等(同一节点重复 attach 只更新偏移)—— ID 与血条建出来的时机不同,两条都走这一口。
+func _attach_opp_overheads() -> void:
+	if _remote_replica == null or not is_instance_valid(_remote_replica):
+		return
+	if _id_opp != null:
+		_remote_replica.attach_overhead(_id_opp, WorldLabel.HEAD_OFFSET)
+	if _hp_bar != null:
+		_remote_replica.attach_overhead(_hp_bar, WorldLabel.HP_BAR_OFFSET)
 
 func _process(_delta: float) -> void:
-	if _id_self != null and _local != null:
-		_id_self.global_position = _local.global_position + ID_HEAD_OFFSET
-	if _id_opp != null and _remote_replica != null and is_instance_valid(_remote_replica):
-		_id_opp.global_position = (_remote_replica as Node2D).global_position + ID_HEAD_OFFSET
-	if _hp_bar != null and _remote_replica != null and is_instance_valid(_remote_replica):
-		_hp_bar.global_position = (_remote_replica as Node2D).global_position + Vector2(0.0, -116.0)
+	# 自己那颗头顶 ID 跟本地玩家;对手的 ID / 血条由副本自己贴(见 _attach_opp_overheads)。
+	WorldLabel.follow(_id_self, _local, WorldLabel.HEAD_OFFSET)
 
 func _replica_for(role: int) -> Node2D:
 	return _remote_replica if int(role) != int(PvpSession.role) else null

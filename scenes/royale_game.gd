@@ -10,7 +10,6 @@ var _hud: RoyaleHud = null
 
 # ── C2 客户端预测(与 pvp_client 同一套)── 本地玩家由引擎自步进(读真实 Input,aim/手感 = 单机);本场景每物理帧在它步进前 note_post_step + reconcile,把服务器外部事件(复活瞬移/受击/击杀复位)收敛掉。
 
-const ID_HEAD_OFFSET := Vector2(0.0, -78.0)
 # 角色色板(头顶 ID / 小地图点 / 本体染色同一个来源)。★ 取色处一律走 role_color()(内部 % size()):16 色是为大乱斗 16 人上限准备的,色数少于人数就会有两人同色(头顶 ID 与地图点一起撞)。
 # ★ 生成口径(可复算):色相 22.5° 等分(360/16),S = 0.45 / V = 1.0 的 pastel;换色/加人时按这个口径重算,别手挑。
 const ROLE_COLORS: Array[Color] = [
@@ -160,9 +159,9 @@ func _apply_role_colors() -> void:
 
 # 服务器下发生效选项:同步禁用武器。应用函数(不是信号回调):唯一入口 = _on_match_sync;★ 不要连回 NetBusExt.local_match_options,同 _apply_peer_names 的告警。
 
-# 头部 ID / 血条的跟随与上图都在 ReplicaSet;本场景只留宿主侧的取色与参数。
+# 头部 ID / 血条的跟随与上图都在 ReplicaSet;本场景只留调用(锚点偏移的单一来源 = WorldLabel)。
 func _process(_delta: float) -> void:
-	_replica_set.follow(ID_HEAD_OFFSET)
+	_replica_set.follow(WorldLabel.HEAD_OFFSET)
 
 # 对手副本访问器(大乱斗:按 role 动态)。
 func _all_replicas() -> Array:

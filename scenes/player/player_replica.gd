@@ -73,6 +73,10 @@ var _aim := Vector2(1.0, 0.0)
 var _previewing := false   # 对手是否正在预瞄(heavy 蓄力)。快照仍带该字段,但**不再驱动任何外观**
 var _downed := false
 var _hit_flash_t := 0.0
+# ── 头顶挂件(头顶 ID / 血条)──
+# 挂在世界层的兄弟节点、不是副本子节点:倒地转体只转身体精灵,头顶的字要始终正立。
+# 宿主建好挂件后 attach_overhead(),本副本在 _process 里贴位 —— 三个对局场景不再各抄一份跟随即。
+var _overheads: Array[Dictionary] = []   # [{node: Node2D, offset: Vector2}]
 
 # ── 幽灵碰撞体(只碰撞、不参与任何逻辑)──
 var _ghost: StaticBody2D = null
@@ -373,6 +377,32 @@ func _in_water() -> bool:
 	return Water.is_in_water(Vector2(gp.x, gp.y + Water.feet_offset(_ghost)))
 
 
+## 让 node 每帧贴在本副本头顶 offset 处(幂等:同一节点重复 attach 只更新偏移)。
+func attach_overhead(node: Node2D, offset: Vector2) -> void:
+	if node == null:
+		return
+	for e in _overheads:
+		var n = e["node"]
+		if is_instance_valid(n) and n == node:
+			e["offset"] = offset
+			return
+	_overheads.append({"node": node, "offset": offset})
+
+
+# 贴位(挂件被别处释放 ⇒ 自动摘掉,不报错)。★ 取出来先不写类型:已释放实例赋给有类型变量会当场报错。
+func _follow_overheads() -> void:
+	if _overheads.is_empty():
+		return
+	var alive: Array[Dictionary] = []
+	for e in _overheads:
+		var n = e["node"]
+		if is_instance_valid(n):
+			var off: Vector2 = e["offset"]
+			(n as Node2D).global_position = global_position + off
+			alive.append(e)
+	_overheads = alive
+
+
 func _process(delta: float) -> void:
 	if _have_data:
 		if _clock != null:
@@ -421,6 +451,7 @@ func _process(delta: float) -> void:
 	squash.tick(delta, vel_y, on_floor, _downed)
 	_prev_vel_y = _vel.y
 	_tick_dash_ghost(delta)
+	_follow_overheads()
 
 
 # 冲刺残影(对手/队友的冲刺也要可见):渲染帧发射,强度与本体共享同一套常量(很弱的淡蓝白)。
