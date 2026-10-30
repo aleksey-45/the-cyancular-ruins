@@ -818,46 +818,9 @@ func _mmss(sec: float) -> String:
 	return "%02d:%02d" % [s / 60, s % 60]
 
 
-# ── 设计期仪器(不是守卫):把每个文字控件到最近一层 PanelContainer 的四向内缩打出来。
-# 「有没有字顶格/出框」人眼看降采样截图判不准(设计期实测把 1214≤1288 判反过)。
-# 纪律同 --matchsync-diag:开关关着时一行都不打。
+# ── 设计期仪器(不是守卫)已挪到 `tools/panel_inset_audit.gd`(S-13② 2026-10-30):面板是 Node,
+# 仪器与版式构造缠在一起不可单独跑。这里只剩开关:开关关着时一行都不打。
 func _audit_if_requested() -> void:
-	if not OS.get_cmdline_user_args().has("--panel-audit"):
+	if not PanelInsetAudit.requested():
 		return
-	_audit.call_deferred()
-
-
-func _audit() -> void:
-	for _i in 3:
-		await get_tree().process_frame
-	_audit_walk(self, Rect2())
-
-
-func _audit_walk(n: Node, box: Rect2) -> void:
-	# ★ 隐藏节点没有布局(rect 退化),量出来是 L0 这种假读数 ⇒ 直接跳过整棵子树。
-	if n is CanvasItem and not (n as CanvasItem).visible:
-		return
-	if n is PanelContainer:
-		box = (n as Control).get_global_rect()
-	if n is Label or n is Button or n is RichTextLabel or n is VScrollBar:
-		if box.size.x > 0.0:
-			var g := (n as Control).get_global_rect()
-			print("INSET %-14s L%6.1f R%6.1f T%6.1f B%6.1f  %s" % [n.get_class(),
-					g.position.x - box.position.x, box.end.x - g.end.x,
-					g.position.y - box.position.y, box.end.y - g.end.y,
-					_text_of(n).substr(0, 20)])
-	for ch in n.get_children():
-		_audit_walk(ch, box)
-
-
-func _text_of(c: Control) -> String:
-	# ★ 分支必须分开写:Button 用 as Label 会得到 null,再取 .text 就是运行时错误(实测踩过)。
-	if c is Label:
-		return (c as Label).text
-	if c is Button:
-		return (c as Button).text
-	if c is RichTextLabel:
-		return (c as RichTextLabel).text.split("\n")[0]
-	if c is VScrollBar:
-		return "<滚动条>"
-	return ""
+	PanelInsetAudit.run.call_deferred(self)

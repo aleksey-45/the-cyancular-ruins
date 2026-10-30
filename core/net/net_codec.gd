@@ -85,7 +85,7 @@ const WEAPON_SCHEMA: Array = [
 # 背包每一条(type/inst/mag —— 与 `weapon_inventory.snapshot()` 同源)。
 const INV_SCHEMA: Array = [["type", T_U8], ["inst", T_I32], ["mag", T_U8]]
 
-# 输入上行包(30Hz 一包,**内含连续两个物理 tick 的记录**;发送侧唯一来源 = PacketInputSource.pack_pair)。
+# 输入上行包(30Hz 一包,**内含连续两个物理 tick 的记录**;发送侧唯一来源 = InputWire.pack_pair(S-05;`PacketInputSource.pack_pair` 是转发壳))。
 # ★ 为什么是两条记录:本地预测按 60Hz 真输入跑(不锁存),服务器必须逐 tick 复现同一输入序列 ⇒ 一条记录 = 1 个 tick。
 #   30Hz 包只负责装两 tick(共用 aim/st/ct 与包络),所以比"每 tick 一包"省一半包头/共享字段。
 # ★ held 是位掩码:BIT_HASTE = 128、BIT_REWIND = 256 ⇒ 必须 u16(u8 会截断成 159)。
