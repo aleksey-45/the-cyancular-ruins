@@ -152,6 +152,10 @@ func _reset_world_and_clear_dynamics() -> void:
 	_seen_bullets.clear()
 # 地面武器清零 + 重新分布 + 各人背包重置为随机一把:与还原砖同一纪律,装备也是本局的进度。
 	_reset_ground_weapons()
+	# ★ BUG-04(2026-10-30):回溯环必须随换局复位 —— 否则新一局能回放到上一局的活体帧。
+	#   放在早退(无基线/无子格)之前:即使这一局没有可拆砖,回溯环也照样要清。
+	if has_method("reset_time_rewind_state"):
+		call("reset_time_rewind_state")
 	if _base_grid.is_empty():
 		return
 	var sgrid := MazeGenerator.current_subgrid
@@ -193,6 +197,11 @@ func _reset_world_and_clear_dynamics() -> void:
 		CollisionBuilder.rebuild_chunk(destructible_sub, ch, self)
 	_dirty_chunks.clear()
 	damaged_subs.clear()
+
+
+# 终局判定(给 server_main 的「终局滞留到点收场」用:worker 在 MATCH_OVER 后不主动退,只等客户端断线)。
+func is_match_over() -> bool:
+	return _round_state == RoundState.MATCH_OVER
 
 
 func _start_next_round() -> void:

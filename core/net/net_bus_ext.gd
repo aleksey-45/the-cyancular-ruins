@@ -20,13 +20,7 @@ func match_options(opts: Dictionary) -> void:
 func hit_confirm(shooter_role: int, victim_role: int) -> void:
 	local_hit_confirm.emit(shooter_role, victim_role)
 
-# ── 即时光束武器(激光)── 服务器权威开火 → 非射手客户端画视觉副本:无移动实体,事件里带整条折线;新 RPC 放本节点(原 NetBus 方法表不动)。
-signal local_beam_fired(data: Dictionary)
-
-@rpc("authority", "call_remote", "reliable", 3)
-func beam_fired(data: Dictionary) -> void:
-	local_beam_fired.emit(data)
-
+# ── 即时光束武器(激光)── 服务器权威开火 → 非射手客户端画视觉副本:无移动实体,事件里带整条折线。
 signal suicide_requested(caller: int)
 
 @rpc("any_peer", "call_remote", "reliable", 0)
@@ -184,20 +178,21 @@ func report_token(token: String) -> void:
 	token_reported.emit(multiplayer.get_remote_sender_id(), token)
 
 # 客户端 → worker:宽限期内重新认领自己那个 role;token 不对一律拒(并踢连接)。
-signal reclaim_requested(caller: int, role: int, token: String)
+signal reclaim_requested(caller: int, role: int, token: String, proto: int)
 
 @rpc("any_peer", "call_remote", "reliable", 0)
-func reclaim_role(role: int, token: String) -> void:
-	reclaim_requested.emit(multiplayer.get_remote_sender_id(), role, token)
+func reclaim_role(role: int, token: String, proto: int) -> void:
+	reclaim_requested.emit(multiplayer.get_remote_sender_id(), role, token, proto)
 
 # ── 回大厅后回局:玩家按 ESC 回主菜单 → 对应模式的大厅页里自己那间房照常列在列表里;凭(房间号, token)点它 → 大厅把 go_match 原样再发一次,
 #   客户端走与首次进场逐字同一条转连/认领路径。★ 入口不是一颗专门的「回到对局」按钮(判据是"这个 caller 有没有资格重进这间房");
 #   ★ 成功那一路不另开信号(复用原 NetBus 的 go_match),失败那一路必须显式告诉客户端,否则它会一直等一个永不到来的 go_match。
-signal rejoin_requested(caller: int, code: String, token: String)
+signal rejoin_requested(caller: int, code: String, token: String, mode: String)
 
+# ★ BUG-14(2026-10-30):带 `mode` —— 回局凭据按(房间号, 模式)判;同号跨模式共存是允许的。
 @rpc("any_peer", "call_remote", "reliable", 0)
-func rejoin_request(code: String, token: String) -> void:
-	rejoin_requested.emit(multiplayer.get_remote_sender_id(), code, token)
+func rejoin_request(code: String, token: String, mode: String) -> void:
+	rejoin_requested.emit(multiplayer.get_remote_sender_id(), code, token, mode)
 
 signal local_rejoin_denied(reason: String)
 

@@ -254,6 +254,18 @@ static func sub_hp_at(sub: Vector2i) -> int:
 	return int(sub_hp[idx])
 
 
+# 32px 块 = 2×2 个 16px 子格(block 坐标 = 子格坐标 / 2)。★ 2026-10-30 用户裁定:榴弹最小破坏单位 = 32px
+# ⇒ 同一伤害对块内 4 个子格各结算一次(与 Explosion._damage_tiles_per_block / BulletBase 直击共用这一处)。
+# 返回真正被扣到的子格数(整块已空/纹理不可破时可能 < 4)。
+static func damage_block32(block: Vector2i, amount: int, source: String, owner: Node = null) -> int:
+	var n := 0
+	for sy in 2:
+		for sx in 2:
+			if damage_sub(Vector2i(block.x * 2 + sx, block.y * 2 + sy), amount, source, owner):
+				n += 1
+	return n
+
+
 static func damage_sub(sub: Vector2i, amount: int, source: String, owner: Node = null) -> bool:
 	if sub_cols == 0 or sub.x < 0 or sub.y < 0 or sub.x >= sub_cols or sub.y >= sub_rows:
 		return false

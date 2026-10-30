@@ -90,20 +90,24 @@ func _on_network_explosion(pos: Vector2, shooter_role: int, visual_path: String)
 			float(GameParameters.MAP_WIDTH), float(GameParameters.MAP_HEIGHT))
 	var shooter := _replica_for(shooter_role)
 	var want: Node = shooter if shooter != null else (_local if shooter_role == PvpSession.role else null)
-	var best: BulletBase = null
-	var best_d := INF
-	for n in get_tree().get_nodes_in_group("bullet"):
-		var b := n as BulletBase
-		if b == null or not b.explodes or b.apply_damage or b.shooter != want:
-			continue
-		var d := b.global_position.distance_to(p)
-		if d < best_d:
-			best_d = d
-			best = b
-	if best != null:
-		best.queue_free()
-	elif shooter_role == PvpSession.role:
-		return   # 本机视觉榴弹已自炸过:再补一次就是"双爆"
+	# ★ 2026-10-30 修:对手副本还没建出来时 want == null —— 旧代码仍进下面的筛选,而那一瞬视觉子弹的
+	#   `shooter` 也是 null ⇒ `b.shooter != want` 恒 false ⇒ 最近那颗**别人的**榴弹被 queue_free()
+	#   (提前消失 / 双爆),大乱斗多榴弹时最易撞。只在能定位射手时才做子弹回收;本机那发(want == _local)照旧回收。
+	if want != null:
+		var best: BulletBase = null
+		var best_d := INF
+		for n in get_tree().get_nodes_in_group("bullet"):
+			var b := n as BulletBase
+			if b == null or not b.explodes or b.apply_damage or b.shooter != want:
+				continue
+			var d := b.global_position.distance_to(p)
+			if d < best_d:
+				best_d = d
+				best = b
+		if best != null:
+			best.queue_free()
+		elif shooter_role == PvpSession.role:
+			return   # 本机视觉榴弹已自炸过:再补一次就是"双爆"
 	if visual_path == "":
 		return
 	var scene: PackedScene = load(visual_path)
@@ -148,7 +152,9 @@ var _time_mat: ShaderMaterial = null
 var _time_sym: Label = null
 var _time_haste_mult := 3.0          # 服务器下发的加速倍率(time_state 的 m;预测与视效共用)
 var _fx_self_t := 0.0                # 自己的残影节拍(0.03s)
-var _fx_other_t := 0.0               # 他人重影节拍(0.06s)
+var _fx_other_t: Dictionary = {}     # replica(Node2D) -> 他人重影节拍剩余秒(0.06s 一对)。★ 2026-10-30 从单 float 改 per-副本:
+#  旧写法一个字段被 k 个加速者每帧减 k 次 ⇒ 触发 ≈ k/0.06 对/秒(16 人 ≈500 张 AfterImage/s);且它读
+#  `get_process_delta_time()`(idle)在给物理 delta 的调用链里 ⇒ 30fps/120fps 下节拍与注释的 0.06s 无关。
 const TIME_GLOW_SELF := Color(0.30, 0.62, 1.0)    # 自己加速:冷白蓝(与单机主角同色)
 const TIME_GLOW_OTHER := Color(1.0, 0.94, 0.86)   # 他人加速:暖白(与单机敌人同色)
 
@@ -190,7 +196,7 @@ func _tick_beta_time(delta: float) -> void:
 	# 压暗(用户裁定:PvP 也补,但只在发动者本人视角)—— 100ms ramp 与单机同款。
 	_haste_dim_t = clampf(_haste_dim_t + (delta / 0.1 if on else -delta / 0.1), 0.0, 1.0)
 	var pp := get_tree().get_first_node_in_group("post_process") as PostProcess
-	if pp != null and (_haste_dim_t > 0.001 or pp != null):
+	if pp != null and _haste_dim_t > 0.001:   # CM-17:原条件恒等于 pp != null(每帧无条件写 uniform)
 		# 只碰三个时间 uniform 里的 haste_dim;film / loan 恒 0(PvP 未接那两个的全屏版)。
 		pp.set_time_effects(0.0, 0.0, _haste_dim_t)
 	_tick_beta_rewind(delta)
@@ -286,12 +292,13 @@ func _tick_time_fx(delta: float, self_hasting: bool) -> void:
 			_time_fx_replica_off(rep)
 			continue
 		any_hasting = true
-		_time_fx_replica_on(rep)
+		_time_fx_replica_on(rep, delta)
 	if not any_hasting:
-		_fx_other_t = 0.0
+		_fx_other_t.clear()
 
 
 func _time_fx_replica_off(rep: Node2D) -> void:
+	_fx_other_t.erase(rep)   # 不再加速 ⇒ 清掉该副本的节拍表,免得键泄漏/下次加速还接着走
 	var glow := TimeGlow.on(rep)
 	if glow != null:
 		glow.queue_free()
@@ -300,7 +307,7 @@ func _time_fx_replica_off(rep: Node2D) -> void:
 		label.visible = false
 
 
-func _time_fx_replica_on(rep: Node2D) -> void:
+func _time_fx_replica_on(rep: Node2D, delta: float) -> void:
 	if TimeGlow.on(rep) == null:
 		TimeGlow.attach(rep, TIME_GLOW_OTHER)
 	var label := rep.get_node_or_null("HasteTag") as Label
@@ -312,13 +319,17 @@ func _time_fx_replica_on(rep: Node2D) -> void:
 	label.text = "▶▶ %dx" % int(round(_time_haste_mult))
 	label.visible = true
 	# 红蓝重影:同一帧贴红 / 蓝两张淡副本(加色叠加读作色差重影;与自己的交替残影区分)。
-	_fx_other_t -= get_process_delta_time()
-	if _fx_other_t <= 0.0:
-		_fx_other_t = 0.06
+	# ★ 节拍 per-副本(见 _fx_other_t 头注),且用调用链传下来的物理 delta —— 不再共享递减、不再读 idle 帧率。
+	var t := float(_fx_other_t.get(rep, 0.0))
+	t -= delta
+	if t <= 0.0:
+		_fx_other_t[rep] = 0.06
 		var anim := rep.get_node_or_null("AnimatedSprite2D") as AnimatedSprite2D
 		if anim != null:
 			AfterImage.spawn(rep.get_parent(), anim, Color(1.0, 0.25, 0.25, 0.30))
 			AfterImage.spawn(rep.get_parent(), anim, Color(0.3, 0.4, 1.0, 0.30))
+	else:
+		_fx_other_t[rep] = t
 
 
 # 他人回溯视效:副本自身底片色(满覆盖度)+ 沿服务器轨迹的时间切片残像(1 秒渐隐)。轨迹点来自快照 trail(每 3 帧一个 [x,y]),本端为每个新点生成一张底片色残像并自己淡出。
@@ -359,7 +370,7 @@ func _time_fx_replica_rewind(rep: Node2D, delta: float) -> void:
 		var host: Node2D = g["node"]
 		if float(g["t"]) < 1.0 and is_instance_valid(host):
 			# ★ 淡出按 **CanvasItem** 取,不是 Sprite2D:AfterImage 是 Node2D ⇒ 旧写法 `as Sprite2D` 恒 null,
-			#   这条"1 秒渐隐"从来没生效过。
+			#   这条"1 秒渐隐"从来没生效过。★ 2026-10-30(BUG-19)已按 CanvasItem 修好并加过期 queue_free。
 			if host.get_child_count() > 0:
 				var vis := host.get_child(0) as CanvasItem
 				if vis != null:
@@ -474,7 +485,7 @@ func _physics_process(delta: float) -> void:
 	# 位打包收在 PacketInputSource.pack_record(协议编码端的唯一来源;解码端本来就只有一份)。
 	var aim: Vector2 = _local.get_current_aim_dir()
 	# st = 最近成功解码并应用的世界快照 tick(命中回放时间基准 + 增量基线);ct = 本帧客户端物理帧号(只落位)。
-	var need_full := NetBus.snapshot_need_full()   # 增量基准断了 → 输入包带 BIT_NEED_FULL 请求 FULL
+	var need_full := NetBus.snapshot_need_full()   # 恒 false(v7 起保留位,见 BIT_NEED_FULL)
 	var rec := PacketInputSource.pack_record(src, _input_seq, aim, _last_snap_tick,
 			Engine.get_physics_frames(), need_full)
 	# 滚轮 / 数字键切枪:本地解析成目标那把的 inst 再随输入包上行。★ 位置不能过网 —— 两端 held 的顺序可能不同(拾取 / 丢弃只由服务器裁决),同一下标会解出不同的枪。
@@ -492,7 +503,7 @@ func _physics_process(delta: float) -> void:
 		var pair := PacketInputSource.pack_pair(lo, rec, aim, _last_snap_tick,
 				Engine.get_physics_frames())
 		if NetBus.can_send_to_server():
-			NetBus.rpc_id(1, "send_input", NetCodec.encode_input(pair))   # 46 B/包(含 2 条 tick 记录)
+			NetBus.rpc_id(1, "send_input", NetCodec.encode_input(pair))   # 42 B/包(含 2 条 tick 记录;P1 前 46)
 		_prev_tick_rec = {}
 	else:
 		_prev_tick_rec = rec
@@ -742,7 +753,7 @@ func _build_result_payload() -> Dictionary:
 
 # ── 对手副本访问器:两个模式唯一的结构性差异就收在这一个口上(1v1 一个固定副本 _remote_replica;大乱斗按 role 动态建 _replicas)── 语义:role 是对手的 role(不是自己的);没有对应副本(未建 / 已移除)时返回 null,调用方一律判空。★ 子类必须覆写。
 func _replica_for(_role: int) -> Node2D:
-	return null   # 基类无副本;两个子类各自实现
+	return null   # 基类无副本;三个子类各自实现
 
 
 func _on_hit_event(victim_role: int, damage: int, source_pos: Vector2, seq: int) -> void:
@@ -851,7 +862,7 @@ func _on_match_sync(payload: Dictionary) -> void:
 	if resync and _level0 != null and _level0.has_method("reset_destructibles"):
 		_level0.reset_destructibles()
 	elif resync:
-		# ★ 该还原而没还原 —— 留一条告警:_level0 是由子类赋值的共享状态字段(两个子类各自 _ready 里写),漏赋值 / 赋错类型时上面那道闸静默不成立,症状(幻影空洞拖到下一个回合边界)与"根本没写这段"逐字相同。只告警,不改行为。
+		# ★ 该还原而没还原 —— 留一条告警:_level0 是由子类赋值的共享状态字段(三个子类各自 _ready 里写),漏赋值 / 赋错类型时上面那道闸静默不成立,症状(幻影空洞拖到下一个回合边界)与"根本没写这段"逐字相同。只告警,不改行为。
 		var why := ("_level0 为 null(子类 _ready 漏赋值?)" if _level0 == null
 				else "_level0 没有 reset_destructibles()(类型不对?)")
 		push_warning("match_sync(补态): 世界未还原 —— %s;幻影空洞不会填回" % why)
@@ -860,6 +871,13 @@ func _on_match_sync(payload: Dictionary) -> void:
 	for c in destroyed:
 		if c is Vector2i:
 			_on_remote_tile_destroyed(c, true)
+	# ★★ BUG-03(2026-10-30):destroyed 只覆盖"整格与基线不同";只被打掉部分子格的砖(榴弹 32px 洞)
+	#   不在那一份里 —— 不补这一份,客户端会留下幽灵墙(贴图/碰撞都在,服务器上早已是洞)⇒ 预测每帧回滚。
+	#   静默补(不播碎片,与 destroyed 同款);应用顺序在整格之后,重复子格无害。
+	var destroyed_subs: Array = payload.get("destroyed_subs", [])
+	for s in destroyed_subs:
+		if s is Vector2i:
+			_on_remote_sub_destroyed(s, true)
 
 
 # ── 拾取(地面武器):实现落在组合件 scenes/mp_client/pickup_sync.gd(2026-10-22 拆出;Task 7)──
@@ -878,7 +896,7 @@ func _ensure_pickup_sync() -> PickupSync:
 	return _pickup_sync
 
 
-# 订阅服务器的两条地面武器事件。★ 必须走 NetBus,不是 NetBusExt —— 后者里有同名遗留的 beam_fired,挂错节点的表现是静默 no-op(对手的枪凭空消失 / 永不再现,且不报错)。两个子类各自 _ready 里调一次。
+# 订阅服务器的两条地面武器事件。★ 必须走 NetBus,不是 NetBusExt —— 后者(NetBusExt)里曾有同名遗留的 beam_fired,2026-10-30 已删,挂错节点的表现是静默 no-op(对手的枪凭空消失 / 永不再现,且不报错)。三个子类各自 _ready 里调一次。
 func _subscribe_ground_weapons() -> void:
 	_ensure_pickup_sync().subscribe()
 
@@ -920,9 +938,14 @@ var _resync_pull_pending := false
 var _banner: StatusBanner = null
 
 
-# 两个子类各自 _ready 里调一次(与 _subscribe_ground_weapons() 并列)。
+# 三个子类各自 _ready 里调一次(与 _subscribe_ground_weapons() 并列)。
 func _subscribe_reconnect() -> void:
 	NetBus.local_server_message.connect(_on_server_message)
+	# ★ 2026-10-30 修(判据从"文本子串"换成"真信号"):NetBus 在 multiplayer.server_disconnected 时往
+	#   local_server_message 里 emit "服务器断开",但同一条信号还承载连接失败/服务器文本播报 —— 旧写法
+	#   `msg.contains("断开")` 会把任何含该词的播报误判成断线(`NetBus.stop()` 掐掉活连接),而文案一改重连会
+	#   静默失效。真断线改从 `server_disconnected` 直连;local_server_message 只留播报(现在对局内无播报)。
+	multiplayer.server_disconnected.connect(_on_hard_disconnect)
 	# ★ worker 在宽限期内接受 reclaim 后会重发一条 match_start(载荷与首次开局同源)。对局里 local_match_start 此前零订阅者 —— 它唯一的消费者是 lobby_page._on_match_start(统一大厅 mp_lobby 的基类),而那个页面在对局场景里不在树上 ⇒ 这条信号到对局里是静默 no-op;所以"重连成功"的收尾必须在这里接(_on_match_start_event)。
 	NetBus.local_match_start.connect(_on_match_start_event)
 	_setup_status_banner()   # 本地状态横幅(3.2 / 3.4);建在这里 = 三个模式零新调用点
@@ -941,13 +964,19 @@ func _set_status(text: String) -> void:
 		_banner.set_text(text)
 
 
-func _on_server_message(msg: String) -> void:
+func _on_server_message(_msg: String) -> void:
+	# 只做播报(现在对局内没有服务端文本播报)。★ 断线判定已上移给 _on_hard_disconnect —— 不要再用
+	# `contains("断开")` 之类文本猜状态(2026-10-30:见 _subscribe_reconnect 头注)。
+	pass
+
+
+# 真断线(multiplayer.server_disconnected 直连,2026-10-30 起)。与 _on_server_message 同款守卫:终局/已在重连
+# 时不重复进状态机;菜单开着时记账,由 _recheck_disconnect() 在关菜单时补。
+func _on_hard_disconnect() -> void:
 	if _match_ended or _reconnecting:
 		return
-	# 服务器文本播报也走这条信号,但对局期间服务器只发「对局开始」/「大乱斗开始」;大厅那些「房间已满」之类不会到对局场景。
-	if msg.contains("断开") or msg.contains("断开连接"):
-		_pending_disconnect = true
-		_begin_reconnect()
+	_pending_disconnect = true
+	_begin_reconnect()
 
 
 # 菜单关掉时补一次:真掉线正好落在"菜单开着"那段窗口里时,上面那次 _begin_reconnect 会被守卫挡下,账记在 _pending_disconnect 上,关菜单这一刻补上;不补的话玩家会留在一个快照停更的静止世界里 —— 正是本功能要消掉的那个状态。
@@ -1020,7 +1049,7 @@ func _try_reclaim() -> void:
 		return
 	_attempt_started_ms = 0
 	_reclaim_sent = true
-	NetBusExt.rpc_id(1, "reclaim_role", PvpSession.role, PvpSession.token)
+	NetBusExt.rpc_id(1, "reclaim_role", PvpSession.role, PvpSession.token, NetCodec.PROTO_VERSION)
 	# ★ 等 worker 回的 match_start(它带 spawn / map_path)。等到了才算成功,见 _on_resumed。
 	_schedule_reconnect_retry()
 
@@ -1083,7 +1112,7 @@ func _on_resumed() -> void:
 	_input_batch_phase = 1     # 与初始一致:重连后第一包从 tick0+tick1 开始
 	_prev_tick_rec = {}        # 旧 seq 空间的流水线记录作废(否则会把断线前的输入当低 tick 发给服务器)
 	_pending_hit_events.clear()   # 旧 seq 空间的受击事件作废(新 rollback 的 _last_applied=0,注入不进去)
-	# ★ 新实例必须重新 bind + 设 map_px,照抄两个子类 _ready 里那三行。漏了都不报错:没 bind → _handle_ack 里 _p == null 直接 _trim 返回,分歧永不修复(静默失去 C2);没设 map_px → 跨接缝那一帧按裸距离比,白跑一次回滚。
+	# ★ 新实例必须重新 bind + 设 map_px,照抄三个子类 _ready 里那三行。漏了都不报错:没 bind → _handle_ack 里 _p == null 直接 _trim 返回,分歧永不修复(静默失去 C2);没设 map_px → 跨接缝那一帧按裸距离比,白跑一次回滚。
 	_rollback = PredictionRollback.new()
 	_rollback.bind(_local)
 	_rollback.map_px = Vector2(GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)

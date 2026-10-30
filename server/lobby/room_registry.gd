@@ -104,27 +104,15 @@ func list_payload(mode: String, token: String = "", rejoin: RejoinRegistry = nul
 	for code in of(mode):
 		var r: RoomTypes.Room = of(mode)[code]
 		if not r.is_duel() and not r.is_public \
-				and (rejoin == null or not rejoin.owns(token, code, now)):
+				and (rejoin == null or not rejoin.owns(token, code, now, mode)):
 			continue
 		if r.players.is_empty() and not r.in_match:
 			continue   # 未开局的空房 = 幽灵房,不列;对局中的房照列(第三人要看得见)
-		var names: Array = []
-		var host := "玩家"
-		if r.in_match:
-			for e in r.roster:
-				names.append(str((e as Dictionary).get("name", "玩家")))
-		else:
-			for peer_id in r.players:
-				names.append(name_of(peer_id))
-		if r.is_duel():
-			# 1v1 房主 = players[0](旧实现没有 host_peer);已开局 players 会空 ⇒ 退回冻结名单第一条。
-			if not r.players.is_empty():
-				host = name_of(r.players[0])
-			elif not r.roster.is_empty():
-				host = str((r.roster[0] as Dictionary).get("name", "玩家"))
-		else:
-			host = ServerStatus.host_of(r.in_match, r.host_peer,
-					int(r.player_role.get(r.host_peer, 0)), r.roster, peer_names)
+		# ★ S-12:"房主 + 名单"的判据收在 ServerStatus.host_and_roster(本函数只搬字段)。
+		var view := ServerStatus.host_and_roster(r.is_duel(), r.in_match, r.host_peer,
+				int(r.player_role.get(r.host_peer, 0)), r.roster, r.players, r.player_role, peer_names)
+		var names: Array = view["names"]
+		var host := str(view["host"])
 		var row := {"code": code, "players": names.size(), "names": names,
 				"in_match": r.in_match, "is_public": r.is_public, "host": host, "map": r.map}
 		if r.is_royale():
@@ -139,7 +127,7 @@ func list_payload(mode: String, token: String = "", rejoin: RejoinRegistry = nul
 	return arr
 
 
-# 3v3 三档人数:{1: A 队, 2: B 队, 0: 未选边}。★ 键用字符串是刻意的约定(RPC 走 Variant 编码,int 键能活下来)。
+# 3v3 三档人数:{1: A 队, 2: B 队, 0: 未选边}。★ 键**必须**是字符串:客户端 `room_list.gd` 按 `"1"/"2"/"0"` 读(这是读取契约,RPC 的 Variant 编码保不住 int 键)。
 func team_counts_of(room: RoomTypes.Room) -> Dictionary:
 	var counts := {"1": 0, "2": 0, "0": 0}
 	for role in room.player_role.values():

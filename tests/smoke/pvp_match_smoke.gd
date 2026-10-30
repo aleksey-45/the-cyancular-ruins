@@ -119,7 +119,7 @@ func _on_go_match(role_assign: int, port: int) -> void:
 		get_tree().quit(1)
 
 func _claim_worker(role_assign: int) -> void:
-	NetBus.rpc_id(1, "claim_role", role_assign, PvpSession.player_name)
+	NetBus.rpc_id(1, "claim_role", role_assign, PvpSession.player_name, NetCodec.PROTO_VERSION)
 
 func _physics_process(_delta: float) -> void:
 	if not _match_started:

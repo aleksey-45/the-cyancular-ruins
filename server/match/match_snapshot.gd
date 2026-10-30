@@ -13,13 +13,13 @@ var _tx_world_bytes := 0
 var _tx_own: Dictionary = {}        # role -> 包数
 var _tx_own_bytes: Dictionary = {}  # role -> 字节数
 
-# 世界/本人包当前是全量、每包自包含(增量实现已弃用:DELTA 链在乱序/丢包下会 RTT 级冻结)。
+# 世界/本人包都是**全量、每包自包含**(v7 起 DELTA 编解码能力已从 NetCodec 删除;历史理由:DELTA 链在乱序/丢包下会 RTT 级冻结,见 netcode-snapshots.md)。
 
 
 func _broadcast_snapshot() -> void:
 	# tick 是 60Hz 物理 tick 时间轴上的时间戳,不是包序号。
 	# 本函数只发世界包;本人包(ack+c2)由 MatchHost 在玩家步进之后 call_deferred 调。
-	# ★ 2026-10-28:增量已放弃 —— 世界包每包全量(自包含),乱序/丢包只损失那一帧;DELTA 能力留在编解码里不再上线。
+	# ★ 世界包每包全量(自包含):乱序/丢包只损失那一帧。
 	_snap_tick = _srv_tick
 	var state := {"tick": _snap_tick, "players": {}}
 	for role in players:
@@ -82,7 +82,7 @@ func send_own_snapshots() -> void:
 		var q: Array = _pending_input.get(role, [])
 		var obytes := NetCodec.encode_own({
 			"ack_seq": _ack_seq.get(role, 0), "q": q.size(), "c2": c2, "tick": _srv_tick,
-		}, true)
+		})
 		NetBus.rpc_id(peer_by_role[role], "snapshot_own", obytes)
 		_tx_own[role] = int(_tx_own.get(role, 0)) + 1
 		_tx_own_bytes[role] = int(_tx_own_bytes.get(role, 0)) + obytes.size()

@@ -22,9 +22,37 @@ var _lobby_start_ms := 0
 var _connecting_worker := false   # 是否在转连对局 worker(用于超时兜底提示)
 var _go_start_ms := 0
 var _claimed_ms := 0       # 已向 worker claim,等 match_start 的起始时间(0=未 claim)
+# 转连 worker 的一次性回调的具名引用(2026-10-30 修,BUG-18):匿名 lambda 绑定后**无法解绑**,必须留引用
+# 才能成对清理。见 _bind_worker_once / _unbind_worker_once。
+var _claim_connected: Callable = Callable()
+var _worker_fail: Callable = Callable()
 # 大厅配对结果:go_match 在大厅 peer 的 poll() 调用栈内到达,不能就地切连接 → 存下来帧末执行
 var _pending_go_role := -1
 var _pending_go_port := -1
+
+
+# 转连 worker:注册一次「连上即 claim」/「连接失败」回调(成功转连或被兜底拉回大厅 / 超时时必须成对清理)。
+func _bind_worker_once(role: int) -> void:
+	# 幂等:上一条没清干净的 one-shot 先摘掉,再挂新的(见 _unbind_worker_once 的说明)。
+	_unbind_worker_once()
+	_claim_connected = _claim_role_worker.bind(role)
+	multiplayer.connected_to_server.connect(_claim_connected, CONNECT_ONE_SHOT)
+	_worker_fail = Callable(self, "_on_worker_connect_failed")
+	multiplayer.connection_failed.connect(_worker_fail, CONNECT_ONE_SHOT)
+
+
+# 摘掉转连 worker 的一次性回调。★ 必须成对调用:connected_to_server 的 CONNECT_ONE_SHOT 只在**真正连上**的
+# 那一刻自清;「worker 连不上 / 12s 超时」这条路上它从未触发,残留的它会在下一次(大厅)连接成功时误触发。
+# connection_failed 虽然在失败瞬间自清,但「超时无应答」档也从未触发 ⇒ 同样要摘。
+func _unbind_worker_once() -> void:
+	# ★ 必须先用 is_connected 判:CONNECT_ONE_SHOT 在成功连接那一刻已**自动断开**,此时直接 disconnect
+	#   会报 "Nonexistent connection"(不是 crash,但刷屏);is_connected 兜住这两种状态。
+	if _claim_connected.is_valid() and multiplayer.connected_to_server.is_connected(_claim_connected):
+		multiplayer.connected_to_server.disconnect(_claim_connected)
+	_claim_connected = Callable()
+	if _worker_fail.is_valid() and multiplayer.connection_failed.is_connected(_worker_fail):
+		multiplayer.connection_failed.disconnect(_worker_fail)
+	_worker_fail = Callable()
 
 
 # ── 页面基建(子类在 _ready 里调)── ★ 页面底色(不透明深色)现在是骨架里的那个 ColorRect:全局清屏色被 Level0 设成浅蓝之后白字界面会看不清,所以每一页都得自带一块不透明底。
@@ -194,11 +222,11 @@ func try_rejoin_row(code: String, in_match: bool, mode: String) -> bool:
 	if not in_match:
 		return false
 	PvpSession.rejoin = true
-	_request_rejoin()
+	_request_rejoin(mode)
 	return true
 
 
-func _request_rejoin() -> void:
+func _request_rejoin(mode: String) -> void:
 	if not PvpSession.can_rejoin():
 		PvpSession.rejoin = false
 		_status.text = "回局凭据已失效,请重新建房/加入"
@@ -211,7 +239,7 @@ func _request_rejoin() -> void:
 		return
 	_rejoin_sent_ms = Time.get_ticks_msec()
 	_status.text = "正在回到对局…"
-	NetBusExt.rpc_id(1, "rejoin_request", PvpSession.room_code, PvpSession.token)
+	NetBusExt.rpc_id(1, "rejoin_request", PvpSession.room_code, PvpSession.token, mode)
 
 
 # 大厅答「回不去了」(凭据失效 / 房间号不符 / 对局已结束):清掉凭据并留在本页。★ 必须清:否则那一行永远是可点的,而每次点都是同一句失败。
@@ -250,8 +278,7 @@ func _do_go_match() -> void:
 		PvpSession.token = _pending_token
 	PvpSession.worker_port = port      # 局内自动重连要直连同一个端口
 	_pending_token = ""
-	multiplayer.connected_to_server.connect(_claim_role_worker.bind(role), CONNECT_ONE_SHOT)
-	multiplayer.connection_failed.connect(func() -> void: _on_worker_connect_failed(), CONNECT_ONE_SHOT)
+	_bind_worker_once(role)
 	NetBus.stop()
 	_connecting_worker = true
 	_go_start_ms = Time.get_ticks_msec()
@@ -269,18 +296,23 @@ func _claim_role_worker(role: int) -> void:
 	# ★ 回局时不发 player_options / report_token:worker 侧两条 handler 都按 _claims[r] == caller 反查,而此刻新 peer 还没进 _claims(要等 reclaim 被接受)⇒ 两条都静默 no-op;而 token 首次 claim 时就报过一次,worker 手里那份正是要比对的那份。
 	if PvpSession.rejoin:
 		PvpSession.rejoin = false
-		NetBusExt.rpc_id(1, "reclaim_role", role, PvpSession.token)
+		NetBusExt.rpc_id(1, "reclaim_role", role, PvpSession.token, NetCodec.PROTO_VERSION)
 		return
-	# claim_role 保持原版 2 参(大厅/worker 兼容);本端选项走扩展节点 NetBusExt
-	NetBus.rpc_id(1, "claim_role", role, PvpSession.player_name)
+	# claim_role 第 3 参 = PROTO_VERSION(2026-10-30 v7 握手;服务端不符会拒绝并踢连接);本端选项仍走扩展节点 NetBusExt
+	NetBus.rpc_id(1, "claim_role", role, PvpSession.player_name, NetCodec.PROTO_VERSION)
 	NetBusExt.rpc_id(1, "player_options", _player_options())
-	# token 走扩展节点(原 NetBus 的 claim_role 签名一律不动);原版 worker 无本节点 ⇒ 静默丢弃 ⇒ 那局就是「不能重连」,不影响对局本身。
+	# token 走扩展节点;v7 起 reclaim_role 同样带 PROTO_VERSION(第 3 参)。
 	if PvpSession.token != "":
 		NetBusExt.rpc_id(1, "report_token", PvpSession.token)
 
 
 # 转连 worker 失败/无应答的兜底:断开当前连接回大厅,连上后 _on_lobby_connected 自动刷新列表。没有它,worker 死掉时玩家会永久停在「正在连接对局服务器」上,只能自己找出路。
 func _return_to_lobby(msg: String) -> void:
+	# ★ 2026-10-30 修:必须先摘掉转连 worker 的一次性回调 —— 旧写法(匿名 connect + CONNECT_ONE_SHOT)在
+	#   `_return_to_lobby` 里没有任何 disconnect,于是 worker 连不上回大厅后,大厅一连上,上一条 one-shot
+	#   **仍会把 _claim_role_worker 叫起来**:向大厅 peer 发 claim_role/player_options/report_token 并起
+	#   25s claim 梯,玩家在大厅浏览时被无理由弹回、连接重建、列表与等待室状态丢失。
+	_unbind_worker_once()
 	_connecting_worker = false
 	_claimed_ms = 0
 	# ★ 回局失败的各种兜底都汇到这里:不清 rejoin 就会让页停在「回局态」反复重试(每次都失败);token 不清 —— 它可能还有效(比如只是 worker 端口没放行),玩家可以在列表里再点一次那一行。

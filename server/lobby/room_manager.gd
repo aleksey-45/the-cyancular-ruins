@@ -14,8 +14,9 @@ const MAX_ROOM_AGE := 7200.0        # 房间允许存在上限(秒=2h)
 # (大乱斗有 MATCH_TIME,3v3 是三局两胜),故取粗上界:3 局 × (COUNTDOWN 3 + 打到 9 杀 + ROUND_OVER 4)。⚠ 已知边界(3v3 独有,不修)。
 const TEAM_MATCH_ESTIMATE := 1800.0
 # 大乱斗一局长度的可证上界:Settings.royale_match_min 的装载钳位是 [1.0, 30.0] 分钟 ⇒ 秒数上界 30 × 60 = 1800。
-# ★ 用硬上界而不是「把房主配的时长存到房上」:_player_options() 是报到那一刻才读 Settings,而 royale_create 更早(它压根不转发
-# match_time)⇒ 存下来的是下界。★ 跨文件不变量(链有两环):钳位放宽到 30 分钟以上、或 mp_lobby.gd 的秒换算被改 —— 任一环断裂
+# ★ 用硬上界而不是「把房主配的时长存到房上」:`_player_options()` 是报到那一刻才读 Settings,而 `royale_create` 更早
+#   (它写 `rr.match_time = opts` 里那份、缺省 0,存的是**下界**)。★ 跨文件不变量(链有两环):钳位放宽到 30 分钟以上、
+#   或 mp_lobby.gd 的秒换算被改 —— 任一环断裂
 # 本上界就静默失效;守卫 = tools/room_sweep_lint.gd(它读那两个文件的片段)。⚠ 本界覆盖的是对局时钟 + 一个扫描周期,残余暴露 ~3~25s。
 const ROYALE_MATCH_TIME_CEILING := 1800.0
 var _sweep_acc := 0.0
@@ -96,7 +97,7 @@ func royale_start(caller: int) -> void:
 # ★ spawn 成功后才登记 pid(回收梯靠它判「这一局还在不在」);位置不能挪到 spawn 之前 —— 失败那一刻 pid 还是 0,登记 0 只会让回收梯晚一个周期才发现。
 	rr.worker_pid = _launcher.pid_of(port)
 
-	_grant_rejoin(rr.code, port, granted)
+	_grant_rejoin(rr.code, port, granted, ModeDefs.MODE_ROYALE)
 
 	NetDiag.audit("match_start", {"room": rr.code, "mode": ModeDefs.MODE_ROYALE, "port": port,
 			"players": rr.players.size(), "roles": str(rr.player_role.values()), "ai": 0})
@@ -106,11 +107,11 @@ func royale_start(caller: int) -> void:
 
 
 # 把这一局的回局凭据登进大厅的凭据表。★ 必须在 spawn 成功之后调(凭据里带 pid,「这一局还在不在」就是靠它判的);granted 的构造在 spawn 之前(token 要先于 go_match 发)。
-func _grant_rejoin(code: String, port: int, granted: Array) -> void:
+func _grant_rejoin(code: String, port: int, granted: Array, mode: String) -> void:
 	var pid := _launcher.pid_of(port)
 	var now := Time.get_ticks_msec()
 	for g in granted:
-		lobby.rejoin.grant(str(g[1]), code, int(g[0]), port, pid, now)
+		lobby.rejoin.grant(str(g[1]), code, int(g[0]), port, pid, now, mode)
 
 
 # 全员转连(延到帧末再判在线:转连期成员会陆续断开大厅,同步发会踩「刚断开」窗口,报 channel 错误且 go_match 丢失)。
@@ -135,6 +136,11 @@ func ai_duel(caller: int) -> void:
 	if host_room == null:
 		NetBus.reply(caller, "server_message", "只有建房(房主)才能开 AI 对战")
 		return
+	# ★ BUG-12(2026-10-30):房内已有第二人 ⇒ 拒绝。AI 对战会把房从注册表摘掉,而 guest 收不到 go_match /
+	#   server_message(摘房那条 teardown 的 msg 是空串)⇒ 停在已消失的等待室里,之后的 pvp_start 恒静默 return。
+	if host_room.players.size() > 1:
+		NetBus.reply(caller, "server_message", "房内还有其他玩家,AI 对战只能单人开局")
+		return
 # ★ 「已开局即拒绝」守卫是刻意补上的(其余 handler 都有):一个已配对开局的 1v1 房在 go_match 之后、被摘除之前的窗口里
 # 收到 AI 对战请求,会再拉一个 worker 并覆盖 worker_port,而本房紧接着被摘除 ⇒ 首个端口从此无人归还。
 	if host_room.started:
@@ -149,7 +155,7 @@ func ai_duel(caller: int) -> void:
 		lobby.teardown_room(host_room, LobbyRooms.TEARDOWN_ABORT, "无法启动对局")
 		return
 # ★ 下一行把房间从 rooms 摘除后,再无任何路径能归还本端口 —— 不在此处释放就是永久占用(500 次后 pick_port 恒 -1,大厅彻底拉不起 worker)。
-	lobby.teardown_room(host_room, LobbyRooms.TEARDOWN_DELAYED, "", false, "match_end")   # 对局消费掉房间(AI 不占第二人位);端口延迟归还
+	lobby.teardown_room(host_room, LobbyRooms.TEARDOWN_ADOPT, "", false, "match_end")   # 对局消费掉房间(AI 不占第二人位);端口由孤儿梯按 pid 归还(★ BUG-09)
 	NetDiag.audit("match_start", {"room": host_room.code, "mode": ModeDefs.MODE_PVP, "port": port,
 			"players": 1, "ai": 1})
 	await get_tree().create_timer(0.3).timeout
@@ -195,7 +201,7 @@ func royale_start_ai(caller: int) -> void:
 
 	rr.worker_pid = _launcher.pid_of(port)
 
-	_grant_rejoin(rr.code, port, granted)
+	_grant_rejoin(rr.code, port, granted, ModeDefs.MODE_ROYALE)
 	NetDiag.audit("match_start", {"room": rr.code, "mode": ModeDefs.MODE_ROYALE, "port": port,
 			"players": rr.players.size(), "ai": ai_count})
 	await get_tree().create_timer(0.3).timeout
@@ -246,7 +252,7 @@ func team_start(caller: int) -> void:
 
 	tr.worker_pid = _launcher.pid_of(port)
 
-	_grant_rejoin(tr.code, port, granted)
+	_grant_rejoin(tr.code, port, granted, ModeDefs.MODE_TEAM)
 	NetDiag.audit("match_start", {"room": tr.code, "mode": ModeDefs.MODE_TEAM, "port": port,
 			"players": tr.players.size(), "roles": str(roles), "teams": str(teams), "ai": 0})
 	await get_tree().create_timer(0.3).timeout
@@ -281,7 +287,7 @@ func _start_match(room: LobbyRooms.Room) -> void:
 
 	room.worker_pid = _launcher.pid_of(port)
 
-	_grant_rejoin(room.code, port, granted)
+	_grant_rejoin(room.code, port, granted, ModeDefs.MODE_PVP)
 
 	await get_tree().create_timer(0.3).timeout
 	if not lobby.rooms.has(room.code):   # 0.3s 内已有玩家掉线触发关房 → 别再给幽灵房发 go_match
@@ -311,6 +317,9 @@ func _process(delta: float) -> void:
 	if _match_sweep_acc >= MATCH_SWEEP_INTERVAL:
 		_match_sweep_acc = 0.0
 		_reclaim_finished_matches()
+	# ★ BUG-09:孤儿 worker(房已摘除、进程还在跑)的端口归还;★ BUG-10:回收已结束的异步杀进程线程。
+	_launcher.reap_orphans()
+	ProcUtil.reap_kill_threads()
 
 # 清理:房间从创建起超 MAX_ROOM_AGE 秒 → 杀其 worker(若有)→ 踢房内玩家 → 删房归还端口。★ 三张注册表都要扫:
 # 大乱斗 / 3v3 房的 worker_port 只在开局时分配,成员若一直连着不吭声就被永久占用(池子 500 耗尽 ⇒ pick_port 恒 -1)。不跳过 in_match 房。

@@ -27,7 +27,7 @@ class Room:
 	var max_players := 0               # 1v1 = 2;大乱斗建房页上限(2..16);3v3 = TEAM_ROLES
 	var beta := false                  # 时间玩法房:与普通房互不可进/互不可见
 	var time_rules: Dictionary = {}    # TimeRules.to_dict(),开局前 from_dict + clamp 再消费
-	var options: Dictionary = {}       # 大乱斗房主对局选项(禁武器/回合回血)
+	# (S-11 2026-10-30:原 `options` 是只写不读的死字段,已删 —— 真正生效的对局选项走 player_options → _claim_opts → MatchHost)
 	var map := ""                      # 房主上报的地图(仅列表展示);与真正定图的 player_options.map 是两个真值
 	var match_time := 0                # 大乱斗一局限时(仅列表展示)
 

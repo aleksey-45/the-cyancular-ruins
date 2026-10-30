@@ -257,7 +257,7 @@ func _on_go_match(role: int, port: int) -> void:
 
 func _do_go_match(role: int, port: int) -> void:
 	multiplayer.connected_to_server.connect(func() -> void:
-		NetBus.rpc_id(1, "claim_role", role, "BOT%d" % _idx)
+		NetBus.rpc_id(1, "claim_role", role, "BOT%d" % _idx, NetCodec.PROTO_VERSION)
 		NetBusExt.rpc_id(1, "player_options", {
 			"hue": float((_idx - 1) * 40),
 			"round_full_heal": false,

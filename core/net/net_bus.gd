@@ -14,7 +14,7 @@ signal room_list_requested(caller: int)
 signal lobby_name_set(caller: int, name: String)   # 客户端连上大厅时报昵称(房间列表显示)
 signal peer_left(peer_id: int)
 signal input_received(caller: int, pkt: Dictionary)   # 30Hz 一包(内含 2 条 tick 记录;U1 后一条记录 = 1 个物理 tick)
-signal role_claimed(caller: int, role: int, player_name: String)
+signal role_claimed(caller: int, role: int, player_name: String, proto: int)   # proto = 客户端的 PROTO_VERSION(2026-10-30 起握手校验)
 signal local_snapshot_world(world: Dictionary)   # 全部玩家的渲染字段(副本/血条用)
 signal local_snapshot_own(own: Dictionary)       # 只有本人需要的 ack_seq + 权威整态 c2
 signal local_bullet_spawn(data: Dictionary)
@@ -156,9 +156,11 @@ func send_input(payload: PackedByteArray) -> void:
 	input_received.emit(multiplayer.get_remote_sender_id(), pkt)
 
 # 客户端→worker:报到角色+昵称(role 大厅已发);worker 据此建 role→peer 映射,两人到齐后回传双方昵称(peer_info)。
+# ★ 2026-10-30(PROTO_VERSION 7):带 `proto` —— 两端线格式版本不一致时 worker 立刻拒绝并踢连接(用户可见提示),
+#   不再"比赛照开、双方各自解不出包、画面静默冻结"(旧行为只剩每条包一条 push_error)。
 @rpc("any_peer", "call_remote", "reliable", 0)
-func claim_role(role: int, player_name: String) -> void:
-	role_claimed.emit(multiplayer.get_remote_sender_id(), role, player_name)
+func claim_role(role: int, player_name: String, proto: int) -> void:
+	role_claimed.emit(multiplayer.get_remote_sender_id(), role, player_name, proto)
 
 # 客户端→worker:进场拉取(昵称/色相/生效选项/出生点/role 集合)。★ 它取代"服务器推三载荷":推给一个正在切场景的
 # 客户端时,同一次 poll 推的 4 条没有订阅方 ⇒ 静默丢失。拉的方向反过来,应答按 role 回,不依赖时序。
@@ -193,15 +195,14 @@ var _rx_own_win := 0
 var _rx_own_lost_win := 0
 var _own_step := 1
 
-# ── 全量快照(2026-10-28 放弃增量)──
-# ★ 为什么回退:DELTA 依赖 base_tick 链,unreliable 通道乱序/丢包时恢复代价是 RTT 级冻结(用户实测"联机对手显示卡");
-#   v0.5.1 就是每包自包含、实测不卡。生产端现在只发 FULL(编解码仍能解 DELTA,能力保留给探针/将来)。
-# 解码边界仍做形状归一:下游(三模式 / 探针 / watcher)收到与增量前相同的完整 {tick, players}/{ack_seq,q,c2}。
+# ── 全量快照(v7 起线格式只有 FULL)──
+# ★ 历史:DELTA 曾用于省带宽,但 base_tick 链在 unreliable 乱序/丢包下恢复代价是 RTT 级冻结(用户实测"联机对手显示卡")
+#   ⇒ 2026-10-28 生产回退全量;2026-10-30(PROTO_VERSION 7)把 DELTA 编解码**整体删除**(不再有"能力保留")。
 var _last_world_tick := -1
 var _last_own_tick := -1
 
 
-# 兼容旧接口:增量已放弃,永远不请求 FULL(输入打包处读)。
+# 兼容旧接口:增量已删除,永远不请求 FULL(输入打包处读;输入包的 BIT_NEED_FULL 位保留但恒不置位)。
 func snapshot_need_full() -> bool:
 	return false
 
@@ -356,7 +357,7 @@ func round_state(data: Dictionary) -> void:
 	local_round_state.emit(data)
 
 # ── 地面武器事件:服务器权威的"多了一件/少了一件"广播。低频(掉落/捡起),故走事件而不是塞进快照。
-# ★ 只进 NetBus,别在 NetBusExt 里也加一份:两者已有 beam_fired 重名,接收端挂错节点会静默 no-op。
+# ★ 只进 NetBus:接收端挂错节点会静默 no-op。★ 2026-10-30(S-04):`net_bus_ext.gd` 里那份同名死副本已删除,全仓只剩这一处声明(通道 3)。
 @rpc("authority", "call_remote", "reliable", 3)
 func weapon_spawned(data: Dictionary) -> void:
 	local_weapon_spawned.emit(data)

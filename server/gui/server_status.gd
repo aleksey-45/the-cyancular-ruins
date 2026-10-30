@@ -98,6 +98,25 @@ static func host_of(in_match: bool, host_peer: int, host_role: int, frozen: Arra
 	return "玩家"
 
 
+# ★ S-12(2026-10-30)房列表的「房主 + 名单」单一来源:1v1 与另两模式的唯一差异是"房主怎么取"
+#   (1v1 = players[0],其余 = host_peer + role);名单来源三模式同一份(局中读冻结 roster,等待中读 players+昵称表)。
+#   原先这段在 `RoomRegistry.list_payload` 与 `LobbyRooms.host_name_of` 各写一遍 —— 两份真相。
+static func host_and_roster(is_duel: bool, in_match: bool, host_peer: int, host_role: int,
+		frozen: Array, players: Array, roles: Dictionary, live_names: Dictionary) -> Dictionary:
+	var names: Array = []
+	for e in roster_of(in_match, frozen, players, roles, live_names):
+		names.append(str((e as Dictionary).get("name", "玩家")))
+	var host := "玩家"
+	if is_duel:
+		if not players.is_empty():
+			host = str(live_names.get(players[0], "玩家"))
+		elif not frozen.is_empty():
+			host = str((frozen[0] as Dictionary).get("name", "玩家"))
+	else:
+		host = host_of(in_match, host_peer, host_role, frozen, live_names)
+	return {"host": host, "names": names}
+
+
 # 名单侧展示数据:等待中 = players + 昵称表(实时);局中 = 冻结快照(players 已空)。
 static func roster_of(in_match: bool, frozen: Array, players: Array, roles: Dictionary,
 		live_names: Dictionary) -> Array:

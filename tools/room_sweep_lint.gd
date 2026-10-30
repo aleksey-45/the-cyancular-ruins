@@ -290,9 +290,13 @@ func _check_team_startup_contract() -> void:
 	if fill.contains("_role_set.size()"):
 		_fail = "3v3 收齐判据用的是 _role_set.size()(role 会重复/留空洞 —— 分母必须取去重后的队伍表)"
 		return
-	# ⑥ role 越界守卫必须同时管 3v3:集合外的 role 混进来会让 `_claims.size()` 提前够数开局,而 TeamHost 那侧 `spawns[role]` 缺键。
-	if not code.contains("((_royale or _team_mode) and not _role_set.has(role))"):
-		_fail = "_on_role_claimed 的越界守卫只认 _royale(集合外的 role 能混进 3v3 局里开局)"
+	# ⑥ role 越界守卫必须**三模式统一**:集合外的 role 混进来会让 `_claims.size()` 提前够数开局,而 TeamHost 那侧 `spawns[role]` 缺键。
+	# ★ 2026-10-30 B1 修:旧判据是 `((_royale or _team_mode) and not _role_set.has(role))` —— 1v1 两项皆 false,
+	#   那条前缀会让 1v1 的越界判断**恒不生效**(claim_role(3) 混进来照样开局)。现判据 = 裸 `not _role_set.has(role)`,
+	#   且**不许**再出现旧前缀;两半都查(缺判据 / 旧前缀复活)。
+	if not code.contains("or not _role_set.has(role)") \
+			or code.contains("((_royale or _team_mode) and not _role_set.has(role))"):
+		_fail = "_on_role_claimed 的越界守卫必须是三模式统一的裸 `not _role_set.has(role)`(旧前缀让 1v1 恒不生效)"
 		return
 	# ⑦ `--royale` 与 `--team` 同时为真必须当场拒绝启动。2026-10-22:守卫搬进 `ModeContext`(纯函数,
 	#    置 ok=false),真正的 `quit(1)` 在 server_main 的通用分支里 —— 两半都要在:

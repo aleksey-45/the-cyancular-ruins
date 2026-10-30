@@ -414,6 +414,26 @@ func _record_rw_frame(r: int, p: Node2D, now: float) -> void:
 
 
 
+# 换局复位回溯环(BUG-04,2026-10-30):环深的唯一裁剪是 12s,而换局间隙 = ROUND_OVER 4s + COUNTDOWN 3s = 7s < 12s
+#   ⇒ 不清的话,新一局开局按住回溯能退进**上一局的活体帧**(位置/HP/各槽弹量被写回旧局值,落点可能在本局墙体里)。
+#   换局瞬间正处于回溯态的 role 还要解冻输入源、摘 time_rewinding(否则下一局该玩家永冻、收不到输入)。
+# ★ 由 MatchRound._reset_world_and_clear_dynamics() 调(base 类不知道子类有这些表 ⇒ 走 has_method 动态调)。
+func reset_time_rewind_state() -> void:
+	for r in _rw_on.keys():
+		var src: PacketInputSource = input_sources.get(int(r), null)
+		if src != null:
+			src.frozen = false
+		var p: Node2D = players.get(int(r), null)
+		if p != null and is_instance_valid(p):
+			p.remove_meta("time_rewinding")
+	_rw_on.clear()
+	_rw_trail.clear()
+	_rw_buf.clear()
+	_rw_cursor.clear()
+	_rw_snap_t.clear()
+	_rw_t0.clear()
+
+
 func _apply_rw_frame(r: int, p: Node2D, cursor: float) -> void:
 	var buf: Array = _rw_buf.get(r, [])
 	if buf.size() < 2:
@@ -435,6 +455,12 @@ func _apply_rw_frame(r: int, p: Node2D, cursor: float) -> void:
 		if hp1 != combat.hp:
 			combat.hp = hp1
 			combat.hp_changed.emit(hp1, combat.max_hp)
+		# ★ BUG-05(2026-10-30):帧里记了 downed 就必须还原。只还原 hp 会得到「hp=0 但未倒地」的非法态
+		#   (下一次 1 点伤害立刻走死亡流程;而且 _match_round_tick 看不到倒地 ⇒ 不排复活、不掉武器)。
+		#   set_downed_by_rewind 刻意不扣血/不发 went_down —— 与单机 Player.rewind_restore 同款调用。
+		var want_downed := bool(f.get("downed", false))
+		if want_downed != combat.downed:
+			combat.set_downed_by_rewind(want_downed)
 	p.set("facing_direction", int(f["facing"]))
 	var wc := p.get("weapons") as WeaponComponent
 	if wc != null and f.has("wmags"):

@@ -121,6 +121,14 @@ while [ $# -gt 0 ]; do
 done
 
 godot_proc_count() { tasklist 2>/dev/null | grep -ci godot || true; }
+# ★ WSL 分支(BUG-25 同源):WSL 下 `tasklist` 不存在 ⇒ 上面那条恒 0,闸三形同虚设。
+if [ "$(uname -s 2>/dev/null)" = "Linux" ]; then
+	godot_proc_count() {
+		powershell.exe -NoProfile -Command \
+			"(Get-CimInstance Win32_Process | Where-Object { \$_.Name -like '*Godot*' } | Measure-Object).Count" \
+			2>/dev/null | tr -d '\r'
+	}
+fi
 
 # 闸三的判据:等它真的没了(最多 $GODOT_SETTLE_TRIES 秒),返回 0 = 干净
 wait_no_godot() {
@@ -310,6 +318,7 @@ printf '%-36s %-11s %4s  %-30s %s\n' "ENTRY" "VERDICT" "SEC" "LOG" "VERDICT LINE
 printf '%-36s %-11s %4s  %-30s %s\n' "------------------------------------" "-----------" "----" "------------------------------" "-------------------------------"
 
 N_OK=0; N_ENTRY_FAIL=0; N_GATE=0
+trap 'if lobby_alive; then kill_lobby_by_cmdline; kill_port 7777 >/dev/null 2>&1 || true; fi' EXIT
 for line in "${SEL[@]}"; do
 	IFS='|' read -r p ports est verdict sweep <<<"$line"
 	base=$(basename "$p"); base="${base%.sh}"
@@ -352,6 +361,11 @@ for line in "${SEL[@]}"; do
 	# 池内支收尾:扫池 + 判空(池外不扫)
 	if [ "$sweep" = pool ]; then
 		if ! lobby_alive; then kill_port_range "$POOL_LO" "$POOL_HI" >/dev/null 2>&1 || true; fi
+	fi
+	# ★ BUG-25:本批开始时 gate1 已确认没有活大厅 ⇒ 此刻出现的 7777 大厅一定是本批残留,清掉再进下一支。
+	if lobby_alive; then
+		kill_lobby_by_cmdline
+		kill_port 7777 >/dev/null 2>&1 || true
 	fi
 	if ! wait_no_godot; then
 		echo "[gate3] FAIL: Godot processes still alive after $p ($(godot_proc_count))."

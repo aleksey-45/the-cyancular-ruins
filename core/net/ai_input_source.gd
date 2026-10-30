@@ -2,7 +2,7 @@ class_name AiInputSource
 extends PlayerInput
 
 # AI 玩家的"手柄"(实验性 AI 补位,test-ai 分支):字段由服务端 AiNavigator 每帧写,
-# player/weapon 经基类接口读取——与 PacketInputSource/DemoInputSource 同一套注入机制。
+# player/weapon 经基类接口读取——与 PacketInputSource/LocalInputSource 同一套注入机制。
 # 仅 worker 侧存在;客户端对 AI 玩家的显示走快照副本,无需感知。
 
 var axis := 0.0               # 水平移动 -1/0/1

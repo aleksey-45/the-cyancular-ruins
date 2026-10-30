@@ -47,14 +47,14 @@ while [ "$(date +%s)" -lt "$_deadline" ]; do
   if ! kill -0 "$SERVER_PID" 2>/dev/null; then
     echo "SMOKE FAIL: 服务器进程提前退出(见 /tmp/pvp2_server.log)"
     cat /tmp/pvp2_server.log 2>/dev/null
-    kill_procs "$SERVER_PID"; kill_port; kill_my_clients; exit 1
+    kill_procs "$SERVER_PID"; kill_port; kill_my_clients; kill_lobby_by_cmdline; exit 1
   fi
   sleep 0.5
 done
 if ! grep -q "服务器就绪" /tmp/pvp2_server.log 2>/dev/null; then
   echo "SMOKE FAIL: ${SERVER_WAIT}s 内服务器未就绪"
   cat /tmp/pvp2_server.log 2>/dev/null
-  kill_procs "$SERVER_PID"; kill_port; kill_my_clients; exit 1
+    kill_procs "$SERVER_PID"; kill_port; kill_my_clients; kill_lobby_by_cmdline; exit 1
 fi
 
 echo "== 客户端 A 建房(后台,移动+开火) =="
@@ -86,8 +86,10 @@ if [ -z "$CODE" ]; then
   #   端口 ⇒ 入口的"跑后 Godot 必须为 0"那条闸判 FAIL ⇒ **整批 `run_real` 中止在第 1 支**
   #   (2026-10-08 实测 **3/3** 次,判词 `RUN_REAL FAIL(entries: ok=0 fail=1 ; gate-failures=1)`)。
   kill_procs "$SERVER_PID" "$A_PID"
+  kill_lobby_by_cmdline
   kill_port
   kill_my_clients
+  kill_lobby_by_cmdline
   kill_port_range 7800 8300
   exit 1
 fi
@@ -102,6 +104,7 @@ wait $B_PID 2>/dev/null || true
 kill_procs $SERVER_PID $A_PID $B_PID
 kill_port
 kill_my_clients   # ★ 同上:客户端不占固定端口,kill_procs 按 $! 又不可靠
+kill_lobby_by_cmdline   # BUG-25:清 console/exe 两种 server_main(失败与正常路径都要)
 # ★ 大厅已杀 ⇒ 它的 worker 现在是孤儿(`OS.create_process` 起的**孙进程**,不在上面那串 PID 里)。
 kill_port_range 7800 8300
 

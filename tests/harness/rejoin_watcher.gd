@@ -60,6 +60,7 @@ var _c3_row_read := false        # ★ 2026-10-08(债 §七.27 —— ★ 2026-1
 var _refresh_t := 0.0
 # c2 的观察读数(PLAYING 那一刻清零,窗口结束时统一判定)
 var _obs_started := false
+var _start_rpc_t := 0.0   # c1:代按「开始游戏」的 1s 节拍(2026-10-24 起 1v1 需房主主动开局)
 var _obs_t := 0.0
 var _obs_round := -1
 var _obs_state_bad := false
@@ -433,6 +434,14 @@ func _tick_c1(delta: float) -> void:
 		0:
 			# 进对局前那一份大厅页也走生产入口(理由见文件头:两次进场同一条路)。★ 页那一路不是推进条件:本相唯一的推进条件是「真进了对局场景」——把「页还不存在」也当成「不能推进」会让本相卡死(页在进对局那一刻被换场带走,此后 _drive_to_lobby_page(true) 恒返回 false ⇒ ESC 那一步永远不发生)。
 			_drive_to_lobby_page(true)
+			# ★ 2026-10-24 起 1v1 **不再自动开局**:房主必须点「开始游戏」。本探针走生产入口但没人去点 ⇒
+			#   房停在 players=2 port=0(rejoin_probe 自 2026-10-24 起的已知红)。这里以 1s 节拍代按同一 RPC
+			#   (1 人时服务器会拒,重试到真进对局为止;进对局后本相结束,不再发)。
+			if _page != null and NetBus.can_send_to_server():
+				_start_rpc_t += delta
+				if _start_rpc_t >= 1.0:
+					_start_rpc_t = 0.0
+					NetBusExt.rpc_id(1, "pvp_start")
 			if _game != null:
 				_c1_sub = 1
 				_phase_t = 0.0

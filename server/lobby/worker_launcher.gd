@@ -21,6 +21,32 @@ var _next_port := WORKER_PORT_BASE
 var _worker_ports: Dictionary = {}   # 正在使用(未释放)的 worker 端口
 var _worker_pids: Dictionary = {}   # port(int) -> pid(int):回收要判"这一局还在不在"
 var _worker_started: Dictionary = {}   # port(int) -> unix 秒:worker 自己的存活时长(worker_lost.alive_sec 用它,不是房龄)
+# ★ BUG-09(2026-10-30):房已摘除、worker 还在跑的端口(ai_duel 局)。与 _worker_ports 并存 —— 端口**继续占着**
+#   (pick_port 不会再发它、面板看得见),等进程退出后由 reap_orphans() 一并归还;差异只在"谁负责归还"。
+var _orphan_pids: Dictionary = {}      # port(int) -> pid(int)
+
+
+# 把「房已摘除、worker 还在跑」的端口登记为孤儿:端口不归还,pid 留着给 reap_orphans 判死活。
+func adopt_orphan(port: int) -> void:
+	if port <= 0 or not _worker_ports.has(port):
+		return
+	_orphan_pids[port] = int(_worker_pids.get(port, 0))
+
+
+# 孤儿梯(由 RoomManager._process 每 tick 调):pid 已退 ⇒ 端口归还。★ 必须判 pid>0:
+#   「还没登记 pid」的窗口里判成死会立刻归还一个正在被 worker 绑定的端口。
+func reap_orphans() -> int:
+	var n := 0
+	for port in _orphan_pids.keys():
+		var pid := int(_orphan_pids[port])
+		if pid <= 0:
+			continue
+		if pid_alive(pid):
+			continue
+		release_now(int(port))
+		_orphan_pids.erase(port)
+		n += 1
+	return n
 
 
 # 端口段文案的单一来源(提示串与面板都用它):手写死数字曾与真实池不符,照它放行防火墙会漏掉半个池子。
@@ -253,4 +279,5 @@ func spawn_team_worker(port: int, roles: Array, teams: Array) -> bool:
 
 # 杀指定 UDP 端口的进程(worker)。★ 不能只靠 OS.create_process 返回的 pid(跨进程需查端口);「Select -ExpandProperty OwningProcess」那条写法的坑见 core/proc_util.gd(实现收在那里)。
 func kill_worker(port: int) -> void:
-	ProcUtil.kill_udp_port(port)
+	# ★ BUG-10(2026-10-30):异步 —— 主线程不再被 PowerShell 阻塞几百 ms。
+	ProcUtil.kill_udp_port_async(port)

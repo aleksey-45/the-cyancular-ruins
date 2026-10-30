@@ -68,7 +68,7 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 			# 击退随距离衰减传入玩家(独立击退向量结算);ignore_iframes=true 穿透无敌帧
 			pp.take_hit(center, int(_falloff(d, radius, max_damage) * mult), true,
 					_falloff(d, radius, max_knockback) * mult)
-	# 可破坏瓦片(树叶/树干):按 tile_defs 爆炸衰减(75%)扣血,粒度由调用方的最小破坏单位决定(榴弹 = 1/4 格)
+	# 可破坏瓦片(树叶/树干):按 tile_defs 爆炸衰减(75%)扣血,粒度由调用方的最小破坏单位决定(榴弹 = 1/2 格 = 32px;2026-10-30 用户裁定)
 	if has_grid:
 		damage_tiles(center, radius, max_damage, shooter, tile_unit_cells)
 
@@ -104,13 +104,64 @@ static func destructible_subs(center: Vector2, radius: float) -> Array:
 	return out
 
 
-# 可破坏瓦片的扣血分派(纯静态、不碰 SceneTree ⇒ -s 冒烟可直接调)。
-# unit>=1:爆区内每个 64px 格去重后扣一次格级账(伤害取该格里最近子格的衰减值);unit<1:保持逐 16px 子格(现状)。
+# 可破坏瓦片的扣血分派(纯静态、不碰 SceneTree ⇒ -s 冒烟可直接调)。单位 = 格(64px),按 tile_unit_cells 分三档:
+#   >=1.0 → 整 64px 格(格级账,damage_tile);>=0.5 → **32px 块**(2×2 子格,整块同一伤害)†;其余 → 逐 16px 子格。
+# † 2026-10-30 用户裁定:榴弹最多破坏到 32px —— 块内 4 个子格按同一伤害结算,洞口边缘对齐 32px(不再是 16px 锯齿)。
 static func damage_tiles(center: Vector2, radius: float, max_damage: int, owner: Node = null, tile_unit_cells: float = 1.0) -> void:
 	if tile_unit_cells >= 1.0:
 		_damage_tiles_per_cell(center, radius, max_damage)
+	elif tile_unit_cells >= 0.5:
+		_damage_tiles_per_block(center, radius, max_damage, owner)
 	else:
 		_damage_tiles_per_sub(center, radius, max_damage, owner)
+
+
+# 把爆区内的可破坏子格聚成「破坏单位」(16px 子格 / 32px 块 / 64px 格),每个单位返回一个代表点:
+# `[{block: Vector2i, pos: Vector2, tex: int, d: float, unit_px: int}]`。★ 权威扣血与表现层碎片共用这一份聚合 ⇒
+# 粒子与碰撞洞落在同一批单位上(与 destructible_subs 同一份扫描,不另写一套)。顺序确定(按 block.y、block.x)。
+# d 取单位内**最近**子格的爆心距离(与整格侧的 falloff 口径一致)。
+static func destructible_units(center: Vector2, radius: float, tile_unit_cells: float) -> Array:
+	var unit_px := 16
+	if tile_unit_cells >= 1.0:
+		unit_px = 64
+	elif tile_unit_cells >= 0.5:
+		unit_px = 32
+	var per := unit_px / 16
+	var out: Array = []
+	var at: Dictionary = {}
+	for e in destructible_subs(center, radius):
+		var sub: Vector2i = e["sub"]
+		var key := Vector2i(int(sub.x) / per, int(sub.y) / per)
+		var d := float(e["d"])
+		if not at.has(key):
+			at[key] = out.size()
+			out.append({
+				"block": key,
+				"pos": Vector2(key.x * unit_px + unit_px * 0.5, key.y * unit_px + unit_px * 0.5),
+				"tex": int(e["tex"]),
+				"d": d,
+				"unit_px": unit_px,
+			})
+		elif d < float(out[at[key]]["d"]):
+			out[at[key]]["d"] = d
+			out[at[key]]["tex"] = int(e["tex"])
+	out.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		var ba: Vector2i = a["block"]
+		var bb: Vector2i = b["block"]
+		if ba.y != bb.y:
+			return ba.y < bb.y
+		return ba.x < bb.x)
+	return out
+
+
+# 32px 单位:同一块只结算一次(取块内最近子格的衰减值),再对该块所有活子格按同一伤害扣 ⇒ 洞边 32px 对齐。
+static func _damage_tiles_per_block(center: Vector2, radius: float, max_damage: int, owner: Node = null) -> void:
+	for u in destructible_units(center, radius, 0.5):
+		var dmg := int(_falloff(float(u["d"]), radius, max_damage) * TileDefs.explosion_decay())
+		if dmg <= 0:
+			continue
+		var b: Vector2i = u["block"]
+		TileDefs.damage_block32(b, dmg, "explosion", owner)
 
 
 static func _damage_tiles_per_sub(center: Vector2, radius: float, max_damage: int, owner: Node = null) -> void:

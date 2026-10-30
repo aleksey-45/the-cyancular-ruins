@@ -30,6 +30,11 @@ var _match_started := false
 # 到点仍未回来 → 走既有的移出对局 / 收场退出语义。★ 时长唯一入口是 GraceWindow.DEFAULT_SECONDS。
 var _grace := GraceWindow.new()
 var _grace_check_timer := 0.0
+# ★ 终局滞留(2026-10-30):MATCH_OVER 之后 worker 原设计不主动退(只等客户端断线/全员走光),而大厅回收梯
+#   只认「worker 进程已死」⇒ 客户端赖在结算页不退时,房与端口永久占着(唯一兜底是 2h 超龄清扫)。
+#   给一段固定滞留期:到点无论客户端在不在都收场退出,把房与端口交回回收梯。
+const MATCH_OVER_LINGER := 60.0
+var _mo_linger := 0.0
 var _tokens: Dictionary = {}   # role(int) -> token(String),客户端经 report_token 报来
 var _stop_logged := false      # lobby_stop 只许写一条(_notification 与 _exit_tree 都会到)
 
@@ -298,6 +303,17 @@ func _process(delta: float) -> void:
 			print("worker: 1v1 报到超时(%d/2),退出释放端口" % _claims.size())
 			NetDiag.audit("abort", {"mode": ModeDefs.MODE_PVP, "reason": "report_timeout"})
 			get_tree().quit(0)
+	# ★ 终局滞留到点收场:MATCH_OVER 之后 worker 不主动退(见 MatchRound 的 pass),而大厅回收梯只认 worker 死亡
+	#   ⇒ 结算页赖着不走时房/端口永久占用。这里给固定滞留期,到点主动退(先让结算数据早已送达;客户端已 _match_ended,
+	#   断开不会触发重连)。★ 只对 worker 生效,大厅没有 _host。
+	if _worker and _match_started and _host != null and _host.has_method("is_match_over") and bool(_host.call("is_match_over")):
+		_mo_linger += delta
+		if _mo_linger > MATCH_OVER_LINGER:
+			print("worker: 终局滞留 %.0fs 到点,收场退出(交回房与端口)" % MATCH_OVER_LINGER)
+			NetDiag.audit("match_over", {"mode": _mode_id(), "reason": "linger_timeout"})
+			get_tree().quit(0)
+	else:
+		_mo_linger = 0.0
 
 func _on_player_options(caller: int, opts: Dictionary) -> void:
 	for r in _claims:
@@ -312,8 +328,23 @@ func _on_token_reported(caller: int, token: String) -> void:
 			_tokens[int(r)] = token
 			return
 
+# 版本握手(2026-10-30,PROTO_VERSION 7):两端必须同一个发布包 —— 线格式删除差分 / trail 改定点 / claim RPC 参数都变了。
+# 版本不符 ⇒ 回一条用户可见的 server_message 再踢连接;旧行为是"比赛照开、双方各自解不出包、画面静默冻结"(只有 push_error)。
+func _proto_matches(caller: int, proto: int, stage: String) -> bool:
+	if proto == NetCodec.PROTO_VERSION:
+		return true
+	var msg := "客户端与服务端版本不一致(%s:客户端 v%d / 服务端 v%d)—— 两端必须同一个发布包" % [
+			stage, proto, NetCodec.PROTO_VERSION]
+	print("worker: %s(peer=%d)" % [msg, caller])
+	NetBus.reply(caller, "server_message", msg)
+	multiplayer.multiplayer_peer.disconnect_peer(caller)
+	return false
+
+
 # 宽限期内重新认领 role(断线重连)。三条拒绝条件一条都不能少:没开局 / 该 role 不在宽限期 / token 不匹配;任何一条不满足都踢连接,不能让它静默留在局里收快照。
-func _on_reclaim(caller: int, role: int, token: String) -> void:
+func _on_reclaim(caller: int, role: int, token: String, proto: int) -> void:
+	if not _proto_matches(caller, proto, "reclaim"):
+		return
 	var why := ""
 	if not _match_started or _host == null:
 		why = "尚未开局"
@@ -380,6 +411,12 @@ func _on_match_sync(caller: int) -> void:
 	var destroyed: Array = []
 	if _host != null and _host.has_method("destroyed_cells"):
 		destroyed = _host.destroyed_cells()
+	# ★★ BUG-03(2026-10-30):destroyed 只表达「整格与基线不同」;只被打掉部分子格的砖(榴弹 32px 洞)
+	#   那一份里根本没有 ⇒ 重连后客户端比服务器多出这些砖的贴图与碰撞(幽灵墙 ⇒ 每帧回滚/橡皮筋/子弹被挡)。
+	#   补态必须连 16px 子格一起给;空数组同样不带键(进场第一次多半是空的)。
+	var destroyed_subs: Array = []
+	if _host != null and _host.has_method("damaged_partial_subs"):
+		destroyed_subs = _host.damaged_partial_subs()
 	# 队伍表:必须显式下发(role 号由大厅最小空闲号分配、会留空洞,从 roles 推导必然出错);★ 不进 round_state —— 开局载荷只留一条投递路径。
 	var teams: Dictionary = {}
 	if _host != null and _host.has_method("team_map"):
@@ -396,6 +433,8 @@ func _on_match_sync(caller: int) -> void:
 	}
 	if not destroyed.is_empty():
 		data["destroyed"] = destroyed
+	if not destroyed_subs.is_empty():
+		data["destroyed_subs"] = destroyed_subs
 	if not teams.is_empty():
 		data["teams"] = teams
 	var _rpc_err := NetBus.rpc_id(caller, "match_sync_data", data)
@@ -415,7 +454,9 @@ func _on_suicide_request(caller: int) -> void:
 				_host.request_suicide_role(int(r))
 			return
 
-func _on_role_claimed(caller: int, role: int, player_name: String) -> void:
+func _on_role_claimed(caller: int, role: int, player_name: String, proto: int) -> void:
+	if not _proto_matches(caller, proto, "claim"):
+		return
 	# 防串线:对局已开始、role 越界、或该 role 已被其他 peer 占用 → 这个连接不属于本局,直接踢(端口复用竞态下迟到的客户端可能连到旧 worker);★ 越界判据 = role 是否在本局参战集合内,不是任何从人数推导出来的界(房内有人退出会留 role 空洞,拿人数当上界会踢掉真客户端)。
 	# ★★ 2026-10-30 修:原判据写成 `((_royale or _team_mode) and not _role_set.has(role))` —— 1v1 两项皆 false
 	#    ⇒ **1v1 worker 上这条越界判断恒不生效**(注释却宣称三模式都有),claim_role(3) 会被接受、与真 role1

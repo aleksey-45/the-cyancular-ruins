@@ -168,7 +168,7 @@ func equip_index(i: int) -> void:
 	_equip_index(i)
 
 
-func _equip_index(index: int) -> void:
+func _equip_index(index: int, flush_current: bool = true) -> void:
 	if index < 0 or index >= inventory.held.size():
 		return
 	# 切枪继承旧武器剩余冷却:后摇不能被切枪取消(queue_free 前先捕获)。
@@ -177,7 +177,10 @@ func _equip_index(index: int) -> void:
 		inherit_cd = _weapon.fire_cd_timer
 		# 残弹写回条目只认已入树的枪:同帧第二次切枪时上一把还是 call_deferred 未入树(其 _ready 未跑 ⇒ mag_ammo 仍是 0),照记会把残弹永久抹成 0;真机可达(滚轮走 _unhandled_input,一帧内缓冲的 OS 事件会一次性泵完)。
 		# 守卫只加在这里不外扩:fire_cd_timer 由本函数同步写入(未入树也有效),而 queue_free 必须照跑,否则未入树的旧枪实例泄漏。
-		if _weapon.is_inside_tree() and _current_index >= 0 and _current_index < inventory.held.size():
+		# ★★ flush_current=false 的两个调用点(pick_up 替换 / random_keep_one)是"条目已被重建"的路径:
+		#   这时 `inventory.held[_current_index]` 已经**不是**旧枪那一条,再写回就是"把旧枪实弹写进别的枪"
+		#   (2026-10-30 BUG-01:新枪残弹 = 旧枪残弹/保留枪残弹被覆盖)。两处调用方自己负责先把旧枪实弹落账。
+		if flush_current and _weapon.is_inside_tree() and _current_index >= 0 and _current_index < inventory.held.size():
 			inventory.held[_current_index]["mag"] = _weapon.mag_ammo
 		_weapon.queue_free()
 		_weapon = null
@@ -252,8 +255,11 @@ func pick_up(type_id: int, mag: int) -> int:
 	var dropped_mag := int(entry["mag"])
 	if _weapon != null and is_instance_valid(_weapon) and _weapon.is_inside_tree():
 		dropped_mag = _weapon.mag_ammo
+	# ★★ 这里已经把旧枪实弹收进 dropped_mag 了,随后 `held[_current_index]` 被换成**新枪**的条目;
+	#   ⇒ 调 _equip_index 时必须 flush_current=false:否则它会把旧枪实弹写回新条目,新枪残弹变成旧枪残弹
+	#   (2026-10-30 BUG-01:背包满时捡枪 = "每把枪的子弹不独立"的现场)。
 	inventory.held[_current_index] = {"type": type_id, "inst": int(entry["inst"]), "mag": mag}
-	_equip_index(_current_index)
+	_equip_index(_current_index, false)
 	_last_dropped = {"type": dropped, "mag": dropped_mag}
 	return dropped
 
@@ -287,10 +293,15 @@ func drop_current() -> Dictionary:
 
 
 # 复活用:从背包随机保留一条,返回其余(供调用方在死亡点生成掉落物);背包为空时返回空表。
+# ★★ 2026-10-30 BUG-01 修:① 先 `_flush_current_mag()` —— 手持那把的条目只在切枪/丢弃时同步,开火只扣
+#   mag_ammo ⇒ 不先落账,保留项/掉落项带的是**陈旧残弹**(少扣了刚打的那些发);
+#   ② `_equip_index(0, false)` —— held 已被替换成 1 条,旧 `_current_index` 指向的可能是**另一把枪**,
+#   默认写回会把旧枪实弹覆盖到保留条目上(残弹串账)。
 func random_keep_one() -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
 	if inventory.held.is_empty():
 		return out
+	_flush_current_mag()
 	var keep := randi() % inventory.held.size()
 	var keep_entry: Dictionary = inventory.held[keep]
 	for i in range(0, inventory.held.size()):
@@ -298,7 +309,7 @@ func random_keep_one() -> Array[Dictionary]:
 			out.append(inventory.held[i].duplicate())
 	var kept: Array[Dictionary] = [keep_entry]
 	inventory.held = kept
-	_equip_index(0)
+	_equip_index(0, false)
 	return out
 
 

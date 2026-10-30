@@ -63,6 +63,11 @@ func destroyed_cells() -> Array[Vector2i]:
 	return out
 
 
+# 重连补态的子格列表(16px/32px 洞):实现收在纯逻辑模块 core/sim/tile_resync.gd(不引 autoload ⇒ `-s` 可测)。
+# ★ 只报「所在 64px 格仍与基线相同」的死子格;整格已消失的由 destroyed_cells() 覆盖,不重复发。
+func damaged_partial_subs() -> Array[Vector2i]:
+	return TileResync.partial_damaged_subs(damaged_subs, grid, _base_grid)
+
 var destructible_sub: Array = []
 var _dirty_chunks: Dictionary = {}
 # 本局被摧毁过的 16px 子格(Vector2i → true):换局增量复位只还这些格(全量 build_sim 实测 ~0.48s ⇒ 每局卡顿)。

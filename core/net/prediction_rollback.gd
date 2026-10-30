@@ -91,6 +91,7 @@ func note_post_step(seq: int, capture: Dictionary) -> void:
 	_seqs.append(seq)
 	while _seqs.size() > KEEP:
 		var old: int = _seqs.pop_front()
+		_inputs.erase(old)   # ★ 与 advance() 的淘汰同款三清;旧写法漏这一行 ⇒ ack 断流时 _inputs 以 60/s 无界增长(重连/本人包停摆期间)
 		_captures.erase(old)
 		_events.erase(old)
 

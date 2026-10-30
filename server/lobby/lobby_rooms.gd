@@ -4,7 +4,8 @@ extends Node
 # 大厅的房间账本与生命周期(端口 7777 进程内):房间 → 玩家;1v1 两人就绪、大乱斗 N 人等待。
 # ★ 2026-10-22 起本类是**门面**:三张表搬进 RoomRegistry、三种房型类合并进 RoomTypes,这里只剩
 #   RPC handler、等待室广播与拆除收口。公开符号尽量逐字保留(外部调用点:room_manager / lobby_snapshot /
-#   rejoin_probe / team_match_probe / 服务端面板)。★ 它仍是 Node:要用 multiplayer(is_peer_online 判
+#   rejoin_probe / team_match_probe / 服务端面板 / snapshot_size_probe[ROYALE_MAX_PLAYERS] /
+#   mp_lobby/wait_room[TEAM_SIZE·TEAM_ROLES])。★ 它仍是 Node:要用 multiplayer(is_peer_online 判
 #   peer 真能收包)与 get_tree()(_release_port_later 等一帧)。依赖方向单向:本类用 launcher,反之不知道本类。
 # ★「两人凑齐 → 开局」跨了边界(房间的事 + 拉 worker 的事),故用 pairing_ready 信号通知 RoomManager。
 # ★ 拆除必须走单一收口 teardown_room:本层为「端口泄漏」这同一个失败模式补过三次;收口 = 清账本 + 广播,
@@ -14,14 +15,14 @@ signal pairing_ready(room)   # 1v1 房凑齐两人 → RoomManager 接住去拉 
 
 const ROYALE_MIN_PLAYERS := 2
 # 大乱斗人数上限:2026-10-09 由 8 提到 16(仓主裁定「上限按 16 人做」;依据:16 人实测服务器上行 143.85 KB/s,见 docs/eng/netcode-at-16-players.md)。
-# ★ ROYALE_DEFAULT_MAX(4)与 ROYALE_MIN_PLAYERS(2)不动 —— 变的是上限。★★ 改这个数必须同时看另外两处(它们各自也是 8):
+# ★ ROYALE_DEFAULT_MAX(4)与 ROYALE_MIN_PLAYERS(2)不动 —— 变的是上限。★★ 改这个数必须同时看另外两处(它们现在都是 16,上限来源 `ModeDefs.ROLE_MAX`):
 # ① scenes/mp_lobby.tscn 的 MaxPlayersSlider.max_value(不改它房主最多只能选到 8);② scenes/royale_game.gd 的 ROLE_COLORS(固定色板按 % size() 取色,只有 8 色时第 9 人与第 1 人同色)。
-const ROYALE_MAX_PLAYERS := 16
+const ROYALE_MAX_PLAYERS := ModeDefs.ROLE_MAX   # S-10:单一来源(不在本文件写第二份 16)
 const ROYALE_DEFAULT_MAX := 4
 
 # 3v3:无 AI 补位、无降级 —— 满 6 人才开(用户裁定)。两条闸门都是硬上界:TEAM_ROLES = 房间容量,TEAM_SIZE = 每队人数。
-const TEAM_SIZE := 3     # 每队人数
-const TEAM_ROLES := 6    # 两队合计(满员才开局,无 AI 补位、无降级)
+const TEAM_SIZE := ModeDefs.TEAM_SIZE   # S-10:单一来源
+const TEAM_ROLES := ModeDefs.TEAM_SIZE * ModeDefs.TEAM_COUNT   # 两队合计(满员才开局,无 AI 补位、无降级)
 
 # 三个旧房型名 = 同一个统一类的别名(零转换):外部标注 LobbyRooms.Room / RoyaleRoom / TeamRoom 逐字不变。
 const Room = RoomTypes.Room
@@ -356,10 +357,7 @@ func royale_create(caller: int, opts: Dictionary) -> void:
 	rr.max_players = clampi(n, ROYALE_MIN_PLAYERS, ROYALE_MAX_PLAYERS)
 # 列表要显示限时 ⇒ 建房这一刻就得知道它。★ 与 _player_options 那份是两个真值(权威仍是报到时 role1 那份),见 Room.map 的注释。
 	rr.match_time = int(opts.get("match_time", 0))
-	rr.options = {
-		"round_full_heal": bool(opts.get("round_full_heal", false)),
-		"disabled_weapons": opts.get("disabled_weapons", []),
-	}
+
 	rr.beta = bool(opts.get("beta", false))
 	rr.time_rules = opts.get("time", {}) if rr.beta else {}
 	_registry.add(rr)
@@ -629,17 +627,12 @@ func _is_room_host(r: RoomTypes.Room, caller: int) -> bool:
 # ★ 1v1 的房主表示与另两种不同(players[0] vs host_peer ⇒ 按 role 查名单),所以查表这一步在本类;
 #   "该读哪一边"的判据必须是纯函数。
 func host_name_of(room: Variant) -> String:
-	if room is RoomTypes.Room and not (room as RoomTypes.Room).is_duel():
-		var rr: RoomTypes.Room = room
-		return ServerStatus.host_of(bool(rr.in_match), int(rr.host_peer),
-				int(rr.player_role.get(rr.host_peer, 0)), rr.roster, _peer_names)
-	if room is RoomTypes.Room:
-		var r: RoomTypes.Room = room
-		if not r.players.is_empty():
-			return str(_peer_names.get(r.players[0], "玩家"))
-		if not r.roster.is_empty():
-			return str((r.roster[0] as Dictionary).get("name", "玩家"))
-	return "玩家"
+	var r := room as RoomTypes.Room
+	if r == null:
+		return "玩家"
+	# ★ S-12:判据在 ServerStatus.host_and_roster(纯函数、可 `-s` 测);本函数只做字段搬运。
+	return str(ServerStatus.host_and_roster(r.is_duel(), r.in_match, r.host_peer,
+			int(r.player_role.get(r.host_peer, 0)), r.roster, r.players, r.player_role, _peer_names)["host"])
 
 
 # 服务端控制台用:按 (房号, 种类) 精确取房对象;只读,找不到返回 null。
@@ -671,11 +664,11 @@ func display_roster_of(room: Variant) -> Array:
 # ★ 这里不判对局状态(「你还在宽限期吗」只有 worker 手里的 _grace 知道),只判两件事:凭据对不对得上、以及这一局的 worker 还在不在
 # (后者防止把客户端送到一个已经结束、端口可能已被复用给别的对局的地址上)。★ 判据本体是纯函数 RejoinRegistry.decision,本函数只做
 # 「查 → 判 → 发」,不在这里再写一遍 if/else(那正是漂的成因)。
-func on_rejoin_request(caller: int, code: String, token: String) -> void:
+func on_rejoin_request(caller: int, code: String, token: String, mode: String) -> void:
 	var now := Time.get_ticks_msec()
 	var e := rejoin.lookup(token, now)
 	var alive := WorkerLauncher.pid_alive(int(e.get("worker_pid", 0)))
-	var why := RejoinRegistry.decision(e, code, alive)
+	var why := RejoinRegistry.decision(e, code, alive, mode)
 	if why != "":
 # ★ worker 已经退了 → 这份凭据再也不会成立,当场清掉:留着它只会让下一个请求再走一遍同样的拒绝。
 		if not e.is_empty() and not alive:
@@ -719,11 +712,15 @@ func _flush_team_state(tr: RoomTypes.Room) -> void:
 			NetBusExt.rpc_id(peer_id, "team_room_state", mine)
 
 
-# ── 房间拆除的单一收口 ── 三种形态:TEARDOWN_DELAYED(正常关房,延迟归还)/ TEARDOWN_KILL(僵尸清扫,强杀 + 立即回收)/
-# TEARDOWN_ABORT(拉起失败,立即归还)。──
+# ── 房间拆除的单一收口 ── 四种形态:TEARDOWN_DELAYED(正常关房,延迟归还)/ TEARDOWN_KILL(僵尸清扫,强杀 + 回收)/
+# TEARDOWN_ABORT(拉起失败,立即归还)/ TEARDOWN_ADOPT(房已摘除但 worker 继续跑,端口留给它、进程退出后归还)。──
 const TEARDOWN_DELAYED := 0   # 正常关房:worker 会自己退 → **延迟**归还端口(防立刻复用撞车)
-const TEARDOWN_KILL := 1      # 僵尸清扫:worker 还活着占着端口 → 强杀 + **立即**回收
+const TEARDOWN_KILL := 1      # 僵尸清扫:worker 还活着占着端口 → 强杀 + 回收
 const TEARDOWN_ABORT := 2     # 拉起失败:worker 根本没起来 → **立即**归还(不必延迟,也无从杀)
+# ★ BUG-09(2026-10-30):AI 对战开局后房要从列表摘除(单人局不占第二人位),但 worker 还在打 —— 旧写法走 DELAYED,
+#   120s 后无条件 release_now ⇒ 端口在 worker 存活期间进池、面板显示空闲、pid 被抹、回收梯看不见这场局。
+#   ADOPT = 房摘除 + 端口继续占着,由 WorkerLauncher.reap_orphans 按 pid 存活判归还。
+const TEARDOWN_ADOPT := 3
 
 # 全部拆除路径都必须走它。理由不是「整洁」:本层为「端口泄漏」这同一个失败模式补过三次(on_peer_left 空房分支 / royale_leave 空房
 # 分支 / ai_duel 摘房前的手动释放),散着写就还会漏第四次。★ tools/room_sweep_lint 有断言钉住:端口归还与注册表删除只能出现在本函数体内。
@@ -740,10 +737,16 @@ func teardown_room(room, mode: int = TEARDOWN_DELAYED, msg: String = "",
 	if port > 0:
 		match mode:
 			TEARDOWN_KILL:
-				launcher.kill_worker(port)      # worker 还活着占着端口 → 先杀,杀完端口可直接回收
-				launcher.release_now(port)
+				# ★ BUG-10(2026-10-30):kill 已改异步(主线程不再冻几百 ms)⇒ 不能杀完立刻回收 ——
+				#   杀进程是异步的,立刻 release 可能在旧进程还没死时把同一端口发给新 worker(串线)。
+				#   改走延迟归还:延迟三档(120/360s)远大于一次 PowerShell 的耗时,旧进程必已退出。
+				launcher.kill_worker(port)
+				_release_port_later(port, _registry.port_return_delay(room.mode))
 			TEARDOWN_ABORT:
 				launcher.release_now(port)   # worker 根本没起来 → 立刻归还(不必延迟,也不必杀)
+			TEARDOWN_ADOPT:
+				# ★ BUG-09:房摘了但 worker 还在跑 ⇒ 端口继续占着(不进池、pid 不抹),等进程退出由 reap_orphans 归还。
+				launcher.adopt_orphan(port)
 			_:
 				_release_port_later(port, _registry.port_return_delay(room.mode))
 	if not msg.is_empty():

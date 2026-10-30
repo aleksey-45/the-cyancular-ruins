@@ -38,7 +38,39 @@ const SYS32 := "C:/Windows/System32"
 
 # 杀掉持有该 UDP 端口的进程(**仅当属主是"我们这一族"**)。
 # 找不到属主 / 非 Windows → 静默返回;属主是别人 / 名字读不出来 → 打印一行、**不杀**。
+# ★ BUG-10(2026-10-30):本函数是**阻塞**形态(PowerShell 启动 + 查询要几百 ms),只留给「启动前清残留」
+#   (那一刻没人等大厅循环);大厅侧关房 / 清扫走 kill_udp_port_async,否则每次关房都冻一次主线程。
 static func kill_udp_port(port: int) -> void:
+	_kill_udp_port_blocking(port)
+
+
+# 异步形态:放上后台线程跑同一段 PowerShell(输出照打)。★ 线程由 reap_kill_threads() 在主线程收尸;
+#   房间侧的端口归还**不能**依赖"杀完立刻恢复" —— 杀是异步的,归还口径见 lobby_rooms.TEARDOWN_KILL 的延迟。
+static var _kill_threads: Array[Thread] = []
+
+
+static func kill_udp_port_async(port: int) -> void:
+	if OS.get_name() != "Windows":
+		return
+	var t := Thread.new()
+	t.start(func() -> void: _kill_udp_port_blocking(port))
+	_kill_threads.append(t)
+
+
+# 主线程收尸(由大厅 tick 调):已结束的线程 join 掉,没结束的留到下一轮。★ 不 join 会泄漏线程句柄。
+static func reap_kill_threads() -> void:
+	if _kill_threads.is_empty():
+		return
+	var keep: Array[Thread] = []
+	for t in _kill_threads:
+		if t.is_alive():
+			keep.append(t)
+		else:
+			t.wait_to_finish()
+	_kill_threads = keep
+
+
+static func _kill_udp_port_blocking(port: int) -> void:
 	if OS.get_name() != "Windows":
 		return   # PowerShell 串只在 Windows 有意义;别在其它平台白起一个进程
 	# ★ 保守护栏(见文件头):`Select -ExpandProperty` 那条修正写法照旧在,只是**不再无条件

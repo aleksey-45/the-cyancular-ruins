@@ -96,6 +96,15 @@ kill_clients_by_cmdline() {
 		>/dev/null 2>&1 || true
 }
 
+# 按**命令行**杀掉本批拉起的大厅(`server_main.tscn`。BUG-25:失败路径上 console/exe 两种 Godot 各起过一个,
+#   `kill_port` 偶发漏杀 ⇒ 后续 entry 全 cascade)。★ 只允许在「本批开始时没有活大厅」的前提下调用
+#   (它是"清我们自己的残留",不是"抢用户的 7777")。
+kill_lobby_by_cmdline() {
+	powershell.exe -NoProfile -Command \
+		"Get-CimInstance Win32_Process | Where-Object { \$_.Name -like '*Godot*' -and \$_.CommandLine -like '*server_main.tscn*' } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force }" \
+		>/dev/null 2>&1 || true
+}
+
 # 7777 上有没有活着的大厅。
 # ★★ 判据**不能带 `LISTENING`**:ENet 走 **UDP**,而 UDP 行没有状态列
 #   (`UDP  0.0.0.0:7777   *:*   PID`)。2026-09-27 实测:7777 被 PID 28836 占着时,
@@ -105,3 +114,42 @@ kill_clients_by_cmdline() {
 lobby_alive() {
 	netstat -ano 2>/dev/null | grep -qE "[:.]7777[[:space:]]"
 }
+
+# ── WSL 分支(2026-10-30;BUG-25 的**真正根因**)──────────────────────────────
+# ★ 上面的原语按 **Git Bash/MSYS** 写(`netstat -ano` / `taskkill`)。实测从 WSL bash 调用
+#   `bash tests/run_real.sh` 时:netstat 是 **Linux 版**(看不到 Windows 的 UDP 7777)、`taskkill`
+#   不存在 ⇒ `lobby_alive` 恒 false、`kill_*` 全部**静默 no-op** ⇒ 失败 entry 的 godot/7777
+#   残留污染后续(首跑 4 FAIL 里有 3 支是这条;清场后单跑全绿)。
+#   这里按平台重定义同一批原语:WSL 走 `powershell.exe`/`taskkill.exe` 互操作,行为与 MSYS 版对齐。
+if [ "$(uname -s 2>/dev/null)" = "Linux" ]; then
+	kill_procs() {
+		for p in "$@"; do
+			[ -n "$p" ] || continue
+			taskkill.exe //F //PID "$p" >/dev/null 2>&1 || true
+		done
+	}
+	kill_port() {
+		local port="${1:-7777}"
+		local pids
+		pids=$(powershell.exe -NoProfile -Command \
+			"(Get-NetUDPEndpoint -LocalPort $port -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique)" \
+			2>/dev/null | tr -d '\r')
+		for p in $pids; do
+			[ -n "$p" ] || continue
+			[ "$p" = "0" ] && continue
+			echo "  kill 端口 $port 属主 PID=$p"
+			taskkill.exe //F //PID "$p" >/dev/null 2>&1 || true
+		done
+	}
+	kill_port_range() {
+		local lo="${1:-7800}" hi="${2:-8300}"
+		powershell.exe -NoProfile -Command \
+			"Get-NetUDPEndpoint -ErrorAction SilentlyContinue | Where-Object { \$_.LocalPort -ge $lo -and \$_.LocalPort -lt $hi } | ForEach-Object { Stop-Process -Id \$_.OwningProcess -Force -ErrorAction SilentlyContinue }" \
+			>/dev/null 2>&1 || true
+	}
+	lobby_alive() {
+		powershell.exe -NoProfile -Command \
+			"if (Get-NetUDPEndpoint -LocalPort 7777 -ErrorAction SilentlyContinue) { exit 0 } else { exit 1 }" \
+			>/dev/null 2>&1
+	}
+fi

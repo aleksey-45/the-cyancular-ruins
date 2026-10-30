@@ -19,6 +19,12 @@
 > **2026-10-27 再追加 1 支**（服务器命中回放历史）：`lag_history_smoke`(8) ⇒ **默认批 = 12 支 / 74 条闸断言**（`RUN_ALL OK(12 runs / 74 gated-assertions)`）；`hit_shape_smoke` 13→14、`bullet_sweep_probe` 4→6。
 >
 > **2026-10-28 协议压缩两批 + 后续**：`net_wire_smoke` 5→7（增量已放弃，链三态断言随代码移除）、`snapshot_size_probe` 5→9、`tile_break_unit_smoke` 10→11 ⇒ **默认批 = 13 支 / 88 条闸断言**（`RUN_ALL OK(13 runs / 88 gated-assertions)`；新增 `prediction_contact_smoke` 7 条）。
+> **2026-10-30 联机 bug 修复批（累计）**：+`net_metrics_smoke`(9) · `mvp_choice_smoke`(6) · `net_argv_port_smoke`(5) · `prediction_rollback_ring_smoke`(3) · `gun_ammo_independence_probe`(8) ⇒ **默认批 = 18 支 / 119 条闸断言**（`RUN_ALL OK(18 runs / 119 gated-assertions)`；`allscript_probe` 的 `EXPECTED_SCRIPTS` 同步 193→**195**）。
+> **2026-10-30 B4 协议批（v7）**：删除 DELTA 编解码 ⇒ `net_wire_smoke` 7→**5**、`snapshot_size_probe` 9→**5**（两处差分能力断言随代码退役）；trail 改 2×i16 ⇒ 两支的世界往返对 trail 加 ≤0.25 容差 ⇒ **默认批 = 18 支 / 113 条闸断言**（`RUN_ALL OK(18 runs / 113 gated-assertions)`）。
+> **2026-10-30 第五批**：`tile_break_unit_smoke` 口径改 32px（榴弹 `tile_break_unit` 0.25→**0.5** = 2×2 子格，用户裁定「榴弹最多破坏到 32px」）；新增 `resync_substate_smoke`(5，BUG-03 重连补子格）⇒ **默认批 = 19 支 / 118 条闸断言**（`RUN_ALL OK(19 runs / 118 gated-assertions)`；`EXPECTED_SCRIPTS` 197）。
+> **2026-10-30 第六批（收尾 6 条）**：新增 `rejoin_mode_smoke`(4，BUG-14 回局凭据模式维度）⇒ **默认批 = 20 支 / 122 条闸断言**（`RUN_ALL OK(20 runs / 122 gated-assertions)`；`EXPECTED_SCRIPTS` 198）。BUG-04/05/09/10/12 为无自动断言项(真链路/人眼),见 `registered-debt.md` §三十三。
+> **2026-10-30 结构重构第一刀（S-13①）**:`server_panel.gd` 的日志 tail 抽成纯逻辑 `server/gui/panel_log_tail.gd`(+`panel_log_tail_smoke` 6 条)⇒ **默认批 = 21 支 / 128 条闸断言**（`RUN_ALL OK(21 runs / 128 gated-assertions)`；`EXPECTED_SCRIPTS` 200）。
+> **2026-10-30 结构重构第二刀（S-10/S-11/S-12）**:删 `ModeRoomRules` 的 8 个零调用函数与 `Room.options` 死字段;房主/名单收成 `ServerStatus.host_and_roster` 单一来源(+`room_view_smoke` 4 条)⇒ **默认批 = 22 支 / 132 条闸断言**（`RUN_ALL OK(22 runs / 132 gated-assertions)`；`EXPECTED_SCRIPTS` 201）。
 > ★ **删了什么 = 欠了什么**：删除清单、覆盖缺口与翻案条件登记在 [`docs/eng/registered-debt.md`](../docs/eng/registered-debt.md) §九。
 > ★ 仓规未变：**一条判定类别 = 一条守卫**、**新守卫必须自带条数闸**、**先答三问再写**（[`docs/eng/test-economy.md`](../docs/eng/test-economy.md)）。
 
@@ -28,13 +34,15 @@
 
 - `smoke/` —— `-s` 冒烟：`net_wire`（线格式）/ `input_queue`（输入队列）/ `water_model`（水判定查询）/ `hit_shape`（命中几何）/ `tile_break_unit`（最小破坏单位）/ `lag_history`（服务器命中回放历史）/ `pvp_match_smoke.gd`（**真链路客户端**，只是被 `pvp_match_smoke.sh` 拉起，不走 `-s`）。
 - `probe/` —— 单点诊断与真链路探针：
-  - **默认批 6 支**：`allscript_probe.tscn` · `path_integrity_probe.gd`（无 `.tscn`，按 `-s` 跑）· `snapshot_size_probe.tscn` · `rollback_fidelity_probe.tscn` · `net_tile_fx_probe.tscn`（联机拆砖粒子表现层）· `bullet_sweep_probe.tscn`（高速弹扫掠命中）；
+  - **默认批 7 支**：`allscript_probe.tscn` · `path_integrity_probe.gd`（无 `.tscn`，按 `-s` 跑）· `snapshot_size_probe.tscn` · `rollback_fidelity_probe.tscn` · `net_tile_fx_probe.tscn`（联机拆砖粒子表现层）· `bullet_sweep_probe.tscn`（高速弹扫掠命中）· `gun_ammo_independence_probe.tscn`（枪械残弹独立性：拾取替换 / 倒地保留不得串账）；
   - **真链路（默认批排除）**：`rejoin_probe.tscn` / `royale_soak_probe.tscn` / `team_match_probe.tscn` + 对应 `.sh`。
 - `harness/` —— 被 spawn 的辅助：`rejoin_watcher` / `soak_bot_input` / `team_match_watcher` / `team_bot_input` / `menu_autotest`。`menu_autotest` 是**唯一被产品代码 `load()`** 的测试文件（产品侧钩子 = [`scenes/main_menu.gd`](../scenes/main_menu.gd) 的 `-- --autotest-*`）。
 - `scripts/` —— 独立诊断 / 迁移工具（**不是测试**，各有登记）：`convert_map` / `convert_map_v4` / `seam_analyze` / `seam_screenshot`。它们**不在**任何 glob 直径内（加进去等于让以后任何写盘工具自动进回归批）。
 - 顶层只留基础设施：`env.sh`（共享环境 + kill 助手）、`lib/`（`scan_util.gd` / `probe_base.gd`）、`known_red.txt`（已知红基线）、`path_integrity_allow.txt`、`run_all.sh`、`run_real.sh`。
 
 注意：`-s` 阶段 autoload 尚未实例化；测试脚本若静态引用会连带预加载“引用 autoload 的脚本”会在编译期出错。
+
+> ★ **2026-10-30 真链路首跑**:4 支 PASS(pvp_match_smoke / oyale_soak / oyale_role_cap / 	eam_match),ejoin_probe 仍为已知红。★ 失败 entry 会残留 7777 大厅、连累后续 entry 假 FAIL(已登记 BUG-25):串行跑前先确认 7777 空闲且无 godot 残留。
 
 ## 聚合入口
 
@@ -52,8 +60,8 @@
   `smoke/pvp_match_smoke.gd` + `probe/{rejoin,royale_soak,team_match}_probe.tscn`（它们仍在枚举集里，清掉规则会让承重安全检查 FATAL 或让它们悄悄占 7777）。**枚举 / 排除的实时数字以 `--list` 为准。**
 - **入口自己会红的九种情形**：glob 空转 / 过期排除项 / `probe/*.gd` 既没跑也没排除 / 默认批里出现开端口或拉子进程的支 / 新红 / 基线条目过期 / 基线路径不在候选面 / 基线文件本身写错 / 某支声明了 `EXPECTED_CHECKS` 却没用于比较。
 - ★★ **单支 `OK` 只证明“没有失败输出”，不证明“每条断言都跑过”**（权威：[`lib/probe_base.gd`](lib/probe_base.gd) 文件头）。`--list` 的 `GATE` 栏是 `-` 就表示那一支**没有条数闸**；带闸的支与闸值以 `GATE` 栏为准。
-  - 现有带 `EXPECTED_CHECKS` 的支：`net_wire_smoke`(5) · `input_queue_smoke`(4) · `snapshot_size_probe`(5) · `water_model_smoke`(13) · `hit_shape_smoke`(14) · `tile_break_unit_smoke`(10) · `net_tile_fx_probe`(9) · `bullet_sweep_probe`(6) · `lag_history_smoke`(8) · `net_metrics_smoke`(9)。**`gated-assertions` 的实时数以 `--list` 为准。**
-  - ★ `allscript_probe` 有自己的条数闸 `EXPECTED_SCRIPTS`（当前 **193**；`res://docs` 已进 `SKIP_DIRS`，文档目录里的临时审计驱动不计入编译面），但 `run_all` 的 `gate_of()` 只认 `EXPECTED_CHECKS` ⇒ 它的 `GATE` 栏是 `-`。**别把 `-` 读成“没有闸”**。
+  - 现有带 `EXPECTED_CHECKS` 的支：`net_wire_smoke`(7) · `input_queue_smoke`(4) · `snapshot_size_probe`(9) · `water_model_smoke`(13) · `hit_shape_smoke`(14) · `tile_break_unit_smoke`(11) · `net_tile_fx_probe`(9) · `bullet_sweep_probe`(6) · `lag_history_smoke`(8) · `net_metrics_smoke`(9) · `prediction_contact_smoke`(7) · `mvp_choice_smoke`(6) · `net_argv_port_smoke`(5) · `prediction_rollback_ring_smoke`(3) · `gun_ammo_independence_probe`(8) · `resync_substate_smoke`(5) · `rejoin_mode_smoke`(4) · `panel_log_tail_smoke`(6) · `room_view_smoke`(4)。**`gated-assertions` 的实时数以 `--list` 为准。**
+  - ★ `allscript_probe` 有自己的条数闸 `EXPECTED_SCRIPTS`（当前 **201**；`res://docs` 已进 `SKIP_DIRS`，文档目录里的临时审计驱动不计入编译面），但 `run_all` 的 `gate_of()` 只认 `EXPECTED_CHECKS` ⇒ 它的 `GATE` 栏是 `-`。**别把 `-` 读成“没有闸”**。
 - ★★ **已知红基线 [`known_red.txt`](known_red.txt)**：每行 `路径 类别 理由…`（理由必填；`#` 是注释；空行 / 类别非法 / 路径不存在 / 同一路径两行都**红**）。基线内的红 = `KNOWN-RED`：不进新红计数、但永远印出文件名，全批判词改 `OK-WITH-KNOWN-RED`。**当前基线为空（0 条）**；加行**不是**让检查变绿的手段，修好了要删行。
 
 ### `run_real.sh` —— 真链路批

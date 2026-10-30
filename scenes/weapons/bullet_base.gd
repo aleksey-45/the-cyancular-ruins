@@ -238,7 +238,7 @@ func _wrap() -> void:
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 
 # 撞墙处理:命中可子弹破坏的格(树叶/树干)⇒ 播受击碎片(所有端同款即时反馈);扣血只在权威侧执行,视觉副本只播碎片、绝不拆本地 grid。
-# ★ 破坏粒度由 tile_break_unit 决定:整格(其余枪)走格级 damage_tile,1/4 格(榴弹)走子格 damage_sub —— 这正是"一格一个单位"的用户裁定。
+# ★ 破坏粒度由 tile_break_unit 决定:整格(其余枪)走格级 damage_tile;1/2 格(榴弹 = 32px 块,2026-10-30 用户裁定)走 damage_block32;更细的走单子格。
 func _damage_tile_at(pos: Vector2, normal: Vector2) -> void:
 	var grid := MazeGenerator.current_grid
 	if grid.is_empty():
@@ -262,7 +262,11 @@ func _damage_tile_at(pos: Vector2, normal: Vector2) -> void:
 		if tex != 0 and TileDefs.bullet_destroyable(tex):
 			_spawn_tile_hit(pos, tex)
 			if apply_damage:
-				TileDefs.damage_sub(sub, hit_damage, "bullet", shooter)
+				if tile_break_unit >= 0.5:
+					# 榴弹(0.5 格)直击按 32px 块结算,与爆炸口径一致。
+					TileDefs.damage_block32(Vector2i(sub.x / 2, sub.y / 2), hit_damage, "bullet", shooter)
+				else:
+					TileDefs.damage_sub(sub, hit_damage, "bullet", shooter)
 			return
 
 
@@ -381,9 +385,10 @@ func _explode() -> void:
 		var fx: Node = explosion_visual.instantiate()
 		fx.global_position = global_position
 		get_viewport().add_child(fx)
-	# 被炸到的可破坏砖逐格播受击碎片,所有端都播(与 _damage_tile_at 同口径);扫的是与权威结算同一个 Explosion.destructible_subs,两端粒子落在同一批格上。
+	# 被炸到的可破坏砖按**破坏单位**播碎片,所有端都播;扫的是与权威扣血同一个 Explosion.destructible_units,
+	# 两端粒子落在同一批单位上(榴弹 = 32px 块 ⇒ 一块一簇,不再一块 4 簇)。
 	# ★ Explosion 返回的 pos 是 canonical:表现层必须先锚到本地玩家附近的环面副本,否则接缝附近炸出的碎片会画到另一份副本/屏幕外。
-	for e in Explosion.destructible_subs(global_position, explosion_radius):
+	for e in Explosion.destructible_units(global_position, explosion_radius, tile_break_unit):
 		var at := _fx_pos(e["pos"])
 		TileHitFx.spawn(get_viewport(), at, int(e["tex"]))
 		# 爆炸本端已播命中碎片 ⇒ 服务器随后的逐子格破坏事件去重(否则一次爆炸的双份粒子成倍)。

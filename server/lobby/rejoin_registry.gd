@@ -5,14 +5,17 @@ extends RefCounted
 # 只留"哪一局"的键、不留房号(三张注册表房号空间重叠);TTL 只是 GC 上界,判据是 worker 还活着。
 const TOKEN_TTL_SECONDS := 3600.0
 
-var _by_token: Dictionary = {}   # token(String) -> {code, role, worker_port, worker_pid, expires_at}
+var _by_token: Dictionary = {}   # token(String) -> {code, mode, role, worker_port, worker_pid, expires_at}
 
 
 # ★ 必须在 worker 拉起成功之后调(要它的 pid;进程还活着才是回局的判据)。
+# ★ BUG-14(2026-10-30):凭据必须带 mode —— 三张注册表的房号空间重叠(同号跨模式共存是允许的),
+#   只比 code 会让持 3v3 凭据的玩家在大乱斗列表里看到无关的私密房 "1234"(names/map 泄漏)。
 func grant(token: String, code: String, role: int, worker_port: int, worker_pid: int,
-		now_ms: int) -> void:
+		now_ms: int, mode: String) -> void:
 	_by_token[token] = {
 		"code": code,
+		"mode": mode,
 		"role": int(role),
 		"worker_port": int(worker_port),
 		"worker_pid": int(worker_pid),
@@ -31,11 +34,14 @@ func lookup(token: String, now_ms: int) -> Dictionary:
 
 
 # "" = 放行,否则是给玩家看的拒绝理由。★ 顺序有意义:凭据不存在时先报"凭据失效",报"房间号不符"会把人引向错的排查方向。
-static func decision(entry: Dictionary, code: String, worker_alive: bool) -> String:
+# ★ BUG-14:房间号相同时必须再比 mode(同号跨模式是允许的) —— 否则点另一模式里同号的房也会被当成自己那间。
+static func decision(entry: Dictionary, code: String, worker_alive: bool, mode: String) -> String:
 	if entry.is_empty():
 		return "凭据已失效(对局可能已结束)"
 	if str(entry.get("code", "")) != code:
 		return "房间号与凭据不符"
+	if str(entry.get("mode", "")) != mode:
+		return "该凭据属于其他模式"
 	if not worker_alive:
 		return "对局已结束"
 	return ""
@@ -43,11 +49,11 @@ static func decision(entry: Dictionary, code: String, worker_alive: bool) -> Str
 
 # ★ 身份只能靠凭据,不能靠 peer(回菜单再进大厅是一条新连接,players 已摘干净);只看 TTL、不看 worker
 # 活性 —— 活性由点下去那刻的 decision() 回答。★ 空 token 早退今天只是保险带:表里不会有空键,删了行为不变。
-func owns(token: String, code: String, now_ms: int) -> bool:
+func owns(token: String, code: String, now_ms: int, mode: String) -> bool:
 	if token.is_empty():
 		return false
 	var e := lookup(token, now_ms)
-	return not e.is_empty() and str(e.get("code", "")) == code
+	return not e.is_empty() and str(e.get("code", "")) == code and str(e.get("mode", "")) == mode
 
 
 func drop_token(token: String) -> void:

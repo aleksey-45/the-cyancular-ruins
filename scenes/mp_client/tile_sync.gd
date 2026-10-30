@@ -23,7 +23,7 @@ func bind(client: Node) -> void:
 
 # ★★ 拆砖的**两条订阅必须成对**,所以收在这一处给三个子类各调一次(原先三份手抄 ⇒ 1v1 那份漏了子格那条)。
 #   为什么两条都要:`local_tile_destroyed` 由 `damage_tile` 触发(激光、普通子弹的整格单位——2026-10-26 起
-#   普通子弹也走格级,见 bullet_base.tile_break_unit),`sub_destroyed` 由 `damage_sub` 触发(榴弹的 1/4 格爆炸
+#   普通子弹也走格级,见 bullet_base.tile_break_unit),`sub_destroyed` 由 `damage_sub` 触发(榴弹的 1/2 格 = 32px 块爆炸
 #   与子格破坏)。只接其中一条 = 服务器已经拆了、客户端墙上
 #   **贴图与碰撞都还在**(幽灵墙):本地预测撞在服务器不存在的墙上 ⇒ 每帧分歧回滚(橡皮筋),视觉子弹也被挡下。
 func subscribe() -> void:

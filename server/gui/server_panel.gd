@@ -24,7 +24,7 @@ const ROW_H := 60
 const ROW_GAP := 8
 const ROOM_ROWS_MAX := 6
 const MAP_UNITS := 15
-# 名单:行高 / 可见行数上限 / 名字定宽单位(★ 与 docs/eng/ui.md:27 的口径一致:14 单位 @ 32 号)。
+# 名单:行高 / 可见行数上限 / 名字定宽单位(★ 与 docs/eng/ui.md 的 HUD 节同口径:14 单位 @ 32 号;不抄行号)。
 const ROSTER_ROW_H := 44
 const ROSTER_ROWS_MAX := 5
 const ROSTER_UNITS := 14
@@ -39,7 +39,7 @@ const HINT_SEC := 4.0         # 一次性提示(「房间已不存在」这类)�
 
 # 日志区(spec §8):正文 16(密度档),滚动条可见,增量 tail worker_<端口>.log。
 const LOG_FONT := preload("res://assets/fonts/menu_font.tres")
-const LOG_MAX_CHARS := 64 * 1024   # ≈ 2000 行;超了从头部截断(不做无限增长)
+const LOG_MAX_CHARS := PanelLogTail.DEFAULT_MAX_CHARS   # 单一来源在 PanelLogTail(纯逻辑);这里只是面板侧别名
 
 # ★ 三态的颜色语义(spec §5.6):等待中退后、对局中金、worker 已退出红。
 const STATE_TEXT := {ServerStatus.STATE_WAITING: "等待中",
@@ -85,8 +85,7 @@ var _log_meta: Label = null
 var _log_rtl: RichTextLabel = null
 var _log_scroll: ScrollContainer = null
 var _log_path := ""
-var _log_off := 0
-var _log_buf := ""
+var _log_tail := PanelLogTail.new()   # 增量读 / 半行 / 有界截断的纯逻辑(S-13① 抽出)
 var _log_follow := true
 var _scroll_bottom_pending := false   # 延到下一帧再滚到底(I1:同帧 max_value 还是旧值)
 
@@ -424,9 +423,10 @@ func _apply_row(cells: Array[Label], r: Dictionary) -> void:
 	cells[2].add_theme_color_override("font_color", UiFactory.C_TEXT)
 
 	cells[3].text = str(STATE_TEXT.get(state, state))
+	# ★ 颜色表也用 STATE_* 常量(CM-10):字面量键在加第四态时会静默回落 C_TEXT,"worker 已退出"不再红且不报错。
 	cells[3].add_theme_color_override("font_color", {
-		"waiting": UiFactory.C_TEXT_DIM, "in_match": UiFactory.C_GOLD,
-		"stale": UiFactory.C_DANGER}.get(state, UiFactory.C_TEXT))
+		ServerStatus.STATE_WAITING: UiFactory.C_TEXT_DIM, ServerStatus.STATE_IN_MATCH: UiFactory.C_GOLD,
+		ServerStatus.STATE_STALE: UiFactory.C_DANGER}.get(state, UiFactory.C_TEXT))
 
 	var port := int(r["worker_port"])
 	cells[4].text = "—" if port <= 0 else str(port)
@@ -511,7 +511,7 @@ func _render_roster(r: Dictionary) -> void:
 		row.add_theme_constant_override("separation", 0)
 		panel.add_child(row)
 		row.add_child(_cell(str(int(e["role"])), 56, 32, UiFactory.C_TEXT_DIM))
-		# ★ 名字按 ui.md:27 的口径定宽截断(14 单位 @ 32 号),不截会顶宽、不补会错列。
+		# ★ 名字按 ui.md 的 HUD 节口径定宽截断(14 单位 @ 32 号),不截会顶宽、不补会错列。
 		row.add_child(_cell(UiFactory.fit_name(str(e["name"]), ROSTER_UNITS), 0, 32, UiFactory.C_TEXT))
 		panel.custom_minimum_size.y = ROSTER_ROW_H
 		_roster_col.add_child(panel)
@@ -697,8 +697,7 @@ func _refresh_log(room: Dictionary) -> void:
 	if path != _log_path:
 		# 换房间/换 worker:重置 offset 与跟随状态
 		_log_path = path
-		_log_off = 0
-		_log_buf = ""
+		_log_tail.reset()
 		_log_rtl.text = ""
 		_log_follow = true
 	# ★ 跟随/暂停的判据:取 append 之前 的"是否在底部"。append 之后 max_value 会变,
@@ -717,52 +716,27 @@ func _refresh_log(room: Dictionary) -> void:
 	_update_log_meta()
 
 
-# 增量读:只消费到最后一个换行为止,把可能写了一半的行留给下一轮。
-# 否则 UTF-8 会被截在多字节中间,屏幕上冒一个乱码字符。
+# 增量读(口径见 PanelLogTail 文件头):半行留给下一轮;轮转归零;超上限整段重建。
+# ★ 用 add_text 而不是 append_text:后者即使 bbcode_enabled=false 也会解析 BBCode,
+#   日志里出现 [b] 这类片段会被吞掉或改样式(实测)。
 func _append_log_delta() -> void:
-	var f := FileAccess.open(_log_path, FileAccess.READ)
-	if f == null:
-		return
-	var total := f.get_length()
-	if _log_off > total:
-		_log_off = 0            # 文件被轮转/重建
-		_log_buf = ""
+	var res := _log_tail.read_delta(_log_path)
+	if bool(res["rotated"]):
 		_log_rtl.text = ""
-	if total <= _log_off:
-		f.close()
+	if bool(res["rebuild"]):
+		_log_rtl.text = _log_tail.text
 		return
-	f.seek(_log_off)
-	var chunk := f.get_buffer(total - _log_off)
-	f.close()
-	var nl := chunk.rfind(10)   # '\n'
-	if nl < 0:
-		return                  # 还没有完整的一行
-	var consumed := nl + 1
-	_log_off += consumed
-	var text := chunk.slice(0, consumed).get_string_from_utf8()
-	_log_buf += text
-	if _log_buf.length() > LOG_MAX_CHARS:
-		# 从头部截断,并切在行边界上(切在字符中间会让首行是半截);★ 不动跟随状态
-		# —— 用户显式暂停过就别替他恢复。
-		var over := _log_buf.length() - LOG_MAX_CHARS
-		var cut_nl := _log_buf.find("\n", over)
-		if cut_nl >= 0:
-			over = cut_nl + 1
-		_log_buf = _log_buf.substr(over)
-		_log_rtl.text = _log_buf
-	else:
-		# ★ 用 add_text 而不是 append_text:后者即使 bbcode_enabled=false 也会解析 BBCode,
-		#   日志里出现 [b] 这类片段会被吞掉或改样式(实测)。
-		_log_rtl.add_text(text)
+	var added := str(res["new_text"])
+	if not added.is_empty():
+		_log_rtl.add_text(added)
 
 
 func _clear_log() -> void:
-	if _log_path.is_empty() and _log_buf.is_empty():
+	if _log_path.is_empty() and _log_tail.text.is_empty():
 		_log_meta.text = "未选中房间"
 		return
 	_log_path = ""
-	_log_off = 0
-	_log_buf = ""
+	_log_tail.reset()
 	_log_rtl.text = ""
 	_log_follow = true
 	_update_log_meta()
