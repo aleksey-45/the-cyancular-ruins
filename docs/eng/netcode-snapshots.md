@@ -5,7 +5,7 @@
 
 ## 1. 频率与载荷
 
-### 1.1 下行 30Hz，tick 域仍是 60Hz
+### 1.1 下行:世界包 30Hz、本人包 60Hz(v5),tick 域仍是 60Hz
 
 `server/match/match_state.gd`：
 
@@ -20,7 +20,7 @@
 - `SNAPSHOT_HZ` 必须是 60 的约数（30/20/15/12/10）。不整除会让 stride 被截断，tick 轴与包率同时错。
 - 同一相位决定"本 tick 是否消费一条输入记录"（见 §3）。
 
-### 1.2 世界包：一次广播，13 字段
+### 1.2 世界包：v5 起逐 peer 组帧(字段级 delta × AOI 过滤;v4 是一次广播全量)
 
 `server/match/match_snapshot.gd::_broadcast_snapshot()`：
 
@@ -28,7 +28,7 @@
 var world := {"tick": _snap_tick, "players": {}}
 # 每个 role 一条：pos / vel / facing / pose / type_id / hp / waterproof /
 #                  downed / aim / previewing / haste / rewind / trail
-NetBus.rpc("snapshot_world", NetCodec.encode_world(world))
+Wire.rpc("snapshot_world", NetCodec.encode_world(world))
 ```
 
 - 世界包含自己那一份；客户端**刻意不消费**（C2 下本地玩家自步进，权威整态走本人包）。
@@ -41,7 +41,7 @@ NetBus.rpc("snapshot_world", NetCodec.encode_world(world))
 同一函数后半段，对每个 live peer 定向：
 
 ```gdscript
-NetBus.rpc_id(peer, "snapshot_own",
+Wire.rpc_id(peer, "snapshot_own",
         NetCodec.encode_own({"ack_seq": _ack_seq.get(role, 0), "q": q.size(), "c2": c2}))
 ```
 
@@ -49,7 +49,7 @@ NetBus.rpc_id(peer, "snapshot_own",
 - `q` = 该 role 已到达但未消费的输入**记录**数。
 - `c2` = `player.capture_state()`：**25 个标量 + 武器块 8 个（仅手持非空时）+ 整个背包表**。字段表在 `core/net/net_codec.gd` 的 `C2_SCHEMA` / `WEAPON_SCHEMA` / `INV_SCHEMA`。
 - `c2` 是 C2 回滚的锚点：客户端 `restore_state()` 后用未确认输入重放。
-- ★ **S1（2026-10-24）发送时机**：本人包不在世界包广播里发，而是 MatchHost 在**消费完本 tick 输入后 call_deferred**、由 `send_own_snapshots()` 在帧末（Player 子节点步进完之后）发。⇒ `ack` 与 `c2` 是同一 tick 的最新权威态（旧实现落后一拍且要等下一次 30Hz 广播）；代价是**世界包里自己那份比本人包旧 1 tick**（客户端本来就不消费世界包的自己那份）。
+- ★ **S1（2026-10-24）发送时机**：本人包不在世界包广播里发，而是 MatchHost 在**消费完本 tick 输入后 call_deferred**、由 `send_own_snapshots()` 在帧末（Player 子节点步进完之后）发。⇒ `ack` 与 `c2` 是同一 tick 的最新权威态（旧实现落后一拍且要等下一次 30Hz 广播）；代价是**世界包里自己那份比本人包旧 1 tick**（客户端本来就不消费世界包的自己那份）。★ v5(P3) 起本人包**每个物理 tick 都发**（60Hz,`_flush_own_snapshots` 不再受 30Hz 相位门):ack 回带间隔均值 ~25ms → ~8ms,成本 ≈ +2.8 KB/s/客户端。
 - 传输：`snapshot_own` 是 `unreliable`、`transfer_channel = 0`（ENet 道 1）。
 
 ### 1.4 线格式与载荷
@@ -64,7 +64,7 @@ NetBus.rpc_id(peer, "snapshot_own",
 
 | 包 | 载荷 |
 |---|---|
-| 世界包头 | 7 B（版本 1 B + 种类 1 B + tick 4 + 人数 1） |
+| 世界包头 | FULL 8 B（版本 1 + 种类 1 + mode 1 + tick 4 + 人数 1）；DELTA 13 B（tick 4 + base 4 + 变更数 1 + 消失数 1 + 同 FULL 头 3） |
 | 世界包每人条目 | **48 B**（role 1 + bool 标志 1 + 定长 29 + trail(1+16)）；不在回溯时 **32 B** |
 | 本人包 | **94 B**（头 8 + `c2` 67 + 武器 12 + 背包 7） |
 | 输入包 | **46 B**（头 2 + 记录 44 = **两条连续 tick 记录**；`held` 必须 u16，见 [`netcode-input-uplink.md`](netcode-input-uplink.md)） |

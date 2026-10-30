@@ -39,7 +39,7 @@
 - `core/sim/ground_weapon_field.gd`(`GroundWeaponField`):场上地面武器的纯逻辑表;距离与半径走环面最短,并列按 `inst` 升序。
 - 布点:`GridPathfinder.spread_cells(cells, count, clearance, cols, rows)`,大乱斗与单机共用;内部有 `shuffle()`,不得在广播之后再调一次。开阔地板格扫描在 `EnemySpawner.open_floor_cells`。
 - 联机权威 `server/match/match_ground.gd`(`MatchGround`,继承链中间层,不得定义生命周期钩子;由 `MatchHost._physics_process` 每帧显式调 `_sync_ground_positions()` + `_handle_ground_actions(role, src)`)。
-- `weapon_spawned` / `weapon_removed` 只走 `NetBus`,不在 `NetBusExt` 里加同名;开局那批走 `match_sync` 进场拉取。`_build_collision` 把 Visual 反向平移,让画出来的枪中心落在 body 原点上;`vel` 必须保持生成时那一份。权威位置 `canonical_pos` 恒在 `[0,MAP)`,每帧由 `set_anchor(玩家位置)` + `sync_render_from_canonical()` 锚到最近副本。
+- `weapon_spawned` / `weapon_removed` 只走 `Wire`,不在 `Wire` 里加同名;开局那批走 `match_sync` 进场拉取。`_build_collision` 把 Visual 反向平移,让画出来的枪中心落在 body 原点上;`vel` 必须保持生成时那一份。权威位置 `canonical_pos` 恒在 `[0,MAP)`,每帧由 `set_anchor(玩家位置)` + `sync_render_from_canonical()` 锚到最近副本。
 - 换局 `_reset_ground_weapons` 清的与铺的都必须广播,`_next_ground_inst` 不得重置;客户端不要在 `round_state` 里自己清空。
 - 不做客户端预测:按 F/Q 只上行(`BIT_PICKUP = 32` / `BIT_DROP = 64`),服务器裁决后广播;落体视觉由客户端用事件带的 `pos` + `vel` 本地模拟。背包进 `capture_state("inv")`;`restore_state` 必须先读 `wslot`、再 `restore_inventory`、最后 equip;`inv` 不进 `_close_enough`。
 - 服务器玩家必须有枪:`MatchHost._ready` 的 `_setup_ground_weapons()`(铺 12 把 + 每人随机拿 1)是唯一来源。掉落发生在「倒地边沿」(`_drop_all_but_one`,除随机一把外全丢在倒地位置;`MatchRound` / `RoyaleHost` / `TeamHost` 各一处);换局 = 清空重铺 + 各人背包重置为随机一把。

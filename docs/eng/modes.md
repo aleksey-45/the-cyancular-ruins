@@ -40,7 +40,7 @@
 ## 大乱斗(Royale)
 
 - 入口:主菜单那颗「多 人 模 式」→ `scenes/mp_lobby.tscn`;从哪个模式进由 `_current_mode` 分派,没有静态标记。
-- 房间:`LobbyRooms` 的 `RoyaleRoom` 注册表,与 1v1 的 `rooms` 并存且互斥;建房 / 加入 / 状态广播走 `NetBusExt` 的 `royale_*` RPC。
+- 房间:`LobbyRooms` 的 `RoyaleRoom` 注册表,与 1v1 的 `rooms` 并存且互斥;建房 / 加入 / 状态广播走 `Wire` 的 `royale_*` RPC。
 - 开局:房主 `royale_start`(或 `royale_start_ai`)→ `RoomManager` 调 `WorkerLauncher.spawn_royale_worker(port, roles, ai_roles)`,用 `OS.create_process` 拉起独立 worker:命令行 `--headless --log-file <path> [--path <res> res://server/server_main.tscn] -- --worker --royale --port P --roles 1,3 [--ai-roles r,r]`(editor / template_debug 必须带 `--path` + 场景;与 `server_main.gd` 的 argv 解析逐字对应)。role 集合显式传,不从人数推导;AI 补位号由 `LobbyRooms.royale_free_roles` 取人类未占用的空闲号。
 - 开局判据:收齐 `_human_role_count()` 个人类 claim;已到 ≥2 人但 20s 收不齐 → 按已到人数降级开局;可用玩家 <2 人 → 10s 宽限后退出释放端口。`_on_role_claimed` 有报到串线防护:对局已开始 / role 不在 `--roles` 集合内 / role 已被别的 peer 占用 → `disconnect_peer`。开局延到帧末,让同一 poll 里的 `player_options` 先归档。
 - 端口归还 `ROYALE_PORT_REUSE_DELAY = 360s`。
@@ -51,7 +51,7 @@
 - `SpawnPicker` 的池是静态缓存(4 个 cache + 区域表):同一进程里换图重算必须先 `SpawnPicker.reset_cache()`。
 - 归因:`_on_bullet_hit` 先 `CombatFeedback.attribute(victim, bullet.shooter)` 再 `super`;`_attributed_killer` 读 meta,时效 `ATTRIB_WINDOW`(3s);无源死亡(溺水 / 坠落)不计分,自杀先清 meta。
 - `round_state`(大乱斗版)= `scores` / `deaths` / `names` / `alive` / `left` / `timer` / `match_winner`,昵称行覆盖真人 + 已离开者 + AI 补位。
-- 客户端 `scenes/royale_game.gd` / `.tscn`:Level0(`pvp_mode`)+ PostProcess + N-1 个 `PlayerReplica`(按快照 roles 动态建)+ `RoyaleHud` + Minimap + 血条 + 拖尾;本地玩家与 1v1 共用 C2 预测 + `PredictionRollback`;消费 `NetBus.local_*`(snapshot / bullet_spawn / beam_fired / hit_event / tile_destroyed / round_state / peer_info / kill_event)与 `NetBusExt.local_*`(match_options / peer_hues / hit_confirm)。
+- 客户端 `scenes/royale_game.gd` / `.tscn`:Level0(`pvp_mode`)+ PostProcess + N-1 个 `PlayerReplica`(按快照 roles 动态建)+ `RoyaleHud` + Minimap + 血条 + 拖尾;本地玩家与 1v1 共用 C2 预测 + `PredictionRollback`;消费 `Wire.local_*`(snapshot / bullet_spawn / beam_fired / hit_event / tile_destroyed / round_state / peer_info / kill_event)与 `Wire.local_*`(match_options / peer_hues / hit_confirm)。
 - 开局三载荷(昵称 / 角色色相 / 生效选项)走进场拉取:对局场景 `_ready` 末尾主动拉,不走推送。`MatchHost.role_spawns()` 是只读取法,`RoyaleHost` 必须覆写。
 - 人数上限 `LobbyRooms.ROYALE_MAX_PLAYERS = 16`;单端下行 ∝ N,服务器上行 ∝ N²。
 - 输入队列有上限:跟着抖动包络走、逐 tick 衰减,超了丢最旧那包并把 `pressed` / `released` / `winst` 边沿并入队首。读数入口是 `snapshot_own` 的 `q` 与服务端 `--netstat`。

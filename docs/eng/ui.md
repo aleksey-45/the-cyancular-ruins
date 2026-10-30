@@ -40,7 +40,7 @@
 
 - 主菜单只有一颗「多 人 模 式」→ `scenes/mp_lobby.tscn`。`LobbyPage`(`scenes/lobby_page.gd`)是统一大厅基类:`mp_lobby` 只留版式与三模式分派,「连大厅 → 列房间 → 配对了转连 worker」的状态机、字段、两个设置区块、回局路径、超时梯都在基类。
 - 模式差异收在 `_mode`(筛选)与 `_current_mode`(所在房)两个量上;页内按 `全部 / 1v1 / 3v3 / 大乱斗` 筛选,建房时才选模式。
-- 列表并发调三次现有列房入口(`on_list_rooms` / `royale_list` / `team_list`),前端合并打标;载荷扩 5 个键 `is_public` / `host` / `map` / `match_time`(大乱斗)/ `team_counts`(3v3),另有 `NetBusExt.room_map`(仅列表展示)。`map` 与 `player_options.map` 是两个真值。
+- 列表并发调三次现有列房入口(`on_list_rooms` / `royale_list` / `team_list`),前端合并打标;载荷扩 5 个键 `is_public` / `host` / `map` / `match_time`(大乱斗)/ `team_counts`(3v3),另有 `Wire.room_map`(仅列表展示)。`map` 与 `player_options.map` 是两个真值。
 - 房卡可点性次序:先 `can_rejoin_to(code, mode)`,再「对局中 ⇒ 禁用」;对局中的卡整体压暗 + 不接 handler 也不吃焦点。
 - 创建弹层:1v1 隐藏「公开/私密 + 邀请码」整行(`create_room` 是冻结签名、服务端永远建公开房);3v3 隐藏禁用武器行(那两个勾选框写 `Settings.pvp_disabled_weapons`,会影响另两个模式)。
 - 等待室一个面板按模式渲染三种形态(1v1 名单+退出 / 大乱斗 名单+开始+退出 / 3v3 两队+未选边+选边+开始+退出);进房置 `_in_room` 并收起「＋创建房间」「加入房间」两颗入口。

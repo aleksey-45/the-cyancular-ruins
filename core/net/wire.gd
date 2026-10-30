@@ -145,6 +145,13 @@ func start_client(addr: String, port: int = DEFAULT_PORT) -> Error:
 
 
 func stop() -> void:
+	# 优雅拆链:客户端先发断开通知再 destroy —— 对端(大厅/worker)当拍就能 peer_left 进宽限期;
+	# v4 的 MultiplayerPeer 析构自带这步,v5 直连后必须自己补。硬 vanish(崩溃/拔线)由服务端的
+	# peer 超时上限兜底(见 _on_connect_server 的 set_timeout)。
+	if _host != null and _server_peer != null \
+			and _server_peer.get_state() == ENetPacketPeer.STATE_CONNECTED:
+		_server_peer.peer_disconnect()
+		_host.flush()
 	_teardown()
 
 
@@ -344,6 +351,11 @@ func _on_connect_server(peer, data: Variant) -> void:
 	var id := _next_peer_id
 	_next_peer_id += 1
 	_peers[id] = peer
+	# 断线检测:硬 vanish(崩溃/拔线)要靠它进 peer_left/宽限期,ENet 默认(下限 5s/上限 30s)太钝;
+	# 但**下限**必须大于客户端进对局时建世界的主循环冻结(soak 实测 ~6.3s,期间应答不了任何
+	# ping —— 下限小于它就会把正在加载的活客户端判成死链,4 客户端死 3 个)。取 10s/15s:
+	# 硬 vanish ≤15s 进宽限期(60s 窗口绰绰有余);优雅断开(stop 里的 peer_disconnect)毫秒级,不依赖它。
+	peer.set_timeout(10000, 10000, 15000)
 	print("Wire: 玩家连入 peer=%d" % id)
 
 

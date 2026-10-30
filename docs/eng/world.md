@@ -19,7 +19,7 @@
 
 ## 参数体系
 
-- autoload 四个(`project.godot`):`GameParameters`(gravity0、`TILE_SIZE = 64`、地图像素尺寸、敌人数/出生距离)、`NetBus`(PvP RPC 唯一收口,`/root/NetBus` 跨场景常驻)、`NetBusExt`(旁路扩展:对局选项 / 角色色 / `hit_confirm` / 大乱斗房 RPC;未装扩展的 worker 上该节点不存在 ⇒ 扩展 RPC 静默丢弃)、`Settings`(音量 / 键位重映射 / 滚轮切枪 / 血条显示,落盘 `user://settings.cfg`)。`GameParameters.MAP_WIDTH/HEIGHT` 在 `_ready()` 由 `MazeGenerator.map_size()` 回写,`core/sim/world_builder.gd` 加载网格后再按网格写一次;两者之间没有一致性断言。
+- autoload 四个(`project.godot`):`GameParameters`(gravity0、`TILE_SIZE = 64`、地图像素尺寸、敌人数/出生距离)、`Wire`(PvP RPC 唯一收口,`/root/Wire` 跨场景常驻)、`Wire`(旁路扩展:对局选项 / 角色色 / `hit_confirm` / 大乱斗房 RPC;未装扩展的 worker 上该节点不存在 ⇒ 扩展 RPC 静默丢弃)、`Settings`(音量 / 键位重映射 / 滚轮切枪 / 血条显示,落盘 `user://settings.cfg`)。`GameParameters.MAP_WIDTH/HEIGHT` 在 `_ready()` 由 `MazeGenerator.map_size()` 回写,`core/sim/world_builder.gd` 加载网格后再按网格写一次;两者之间没有一致性断言。
 - `PlayerParams`、`EnemyParams` 不是 autoload:`RefCounted` + `const`,静态访问(如 `EnemyParams.FlyBird.wake_radius`)。
 
 ## 砖块属性与破坏(data/tile_defs.json)

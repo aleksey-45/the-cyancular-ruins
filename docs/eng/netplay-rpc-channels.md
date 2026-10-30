@@ -36,5 +36,5 @@ v5 起 [`core/net/wire.gd`](../../core/net/wire.gd) 直连 ENetConnection,通道
 ## 声明与对账
 
 - `@rpc` 四参全写:`@rpc(mode, sync, transfer_mode, transfer_channel)`。三参并把 int 放第 3 位会被引擎拒(`argument 3 should be "String" but is "int"`);`mode` / `sync` / `transfer_mode` 三个字符串顺序无关,`transfer_channel` 必须是最末那个 int;`sync` 写 `"call_remote"` 是默认值。
-- 作用域(v5,登记表 [`core/net/wire_kind.gd`](../../core/net/wire_kind.gd)):产品声明 57 条,通道 0/1/2/3 = 47/1/2/7;v4 的 61 条里有 3 条死协议(peer_info/match_options/peer_hues)与 1 条重名(beam_fired 双份)未迁;`transfer_channel` 0/1/2/3 = 47/1/3/10。表里 60 个方法名,差的一条是 `beam_fired` 在 `net_bus.gd` 与 `net_bus_ext.gd` 各声明一次(两份都给通道 3)。通道号无法在运行期回读:`GDScript.get_script_method_list()` 不含 `rpc_config` ⇒ 过去的唯一自动化判据是文本对账(`rpc_channel_contract_smoke`,已删)⇒ **今天只能人工对表**;「重名集合恰好 = {beam_fired}」也没人钉了。
-- **接收端纪律**:`beam_fired` 必须走 `NetBus`(不是 `NetBusExt`);挂错节点 = 静默 no-op。
+- 作用域(v5,登记表 [`core/net/wire_kind.gd`](../../core/net/wire_kind.gd)):产品声明 57 条,通道 0/1/2/3 = 45/1/2/9(程序化清点 2026-10-30);v4 的 61 条里有 3 条死协议(peer_info/match_options/peer_hues)与 1 条重名(beam_fired 双份)未迁;`transfer_channel` 0/1/2/3 = 47/1/3/10。表里 60 个方法名,差的一条是 `beam_fired` 在 `net_bus.gd` 与 `net_bus_ext.gd` 各声明一次(两份都给通道 3)。通道号无法在运行期回读:`GDScript.get_script_method_list()` 不含 `rpc_config` ⇒ 过去的唯一自动化判据是文本对账(`rpc_channel_contract_smoke`,已删)⇒ **今天只能人工对表**;「重名集合恰好 = {beam_fired}」也没人钉了。
+- **接收端纪律**:`beam_fired` 必须走 `Wire`(不是 `Wire`);挂错节点 = 静默 no-op。

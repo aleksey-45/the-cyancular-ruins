@@ -4,7 +4,7 @@
 
 | 角色 | 启动 | 端口 |
 |---|---|---|
-| 大厅 | 无参 | UDP `7777`(`NetBus.DEFAULT_PORT`) |
+| 大厅 | 无参 | UDP `7777`(`Wire.DEFAULT_PORT`) |
 | 对局 worker | `--worker --port P` | UDP `P`,一局一个进程 |
 
 命令行开关写在 `--` 之后;解析与校验在 `core/mp/mode_context.gd`(`ModeContext.from_args`)。
@@ -28,7 +28,7 @@
 1. 大厅建房 / 加入并写房间记录;1v1 两人、大乱斗房主开始、3v3 两队各 3 人。
 2. `RoomManager` 冻结名单(`freeze_roster`)、`pick_port()`、`OS.create_process` 拉起 `--headless --worker --port P`;worker 引擎日志写 `user://logs/worker_<port>.log`,按端口归档保留 20 份。
 3. 大厅先发 `session_token`,再发 `go_match(role, port)`。
-4. 客户端断开大厅、连 worker 端口、`claim_role(role, name)`;收齐 role 后 `MatchBootstrap.start_on` 建局。对局场景 `_ready` 末尾 `NetBus.rpc_id(1, "match_sync")` 拉 `match_sync_data`(昵称 / 色相 / 选项 / role 集合 / 出生点 / 地面武器 / 已拆格)。
+4. 客户端断开大厅、连 worker 端口、`claim_role(role, name)`;收齐 role 后 `MatchBootstrap.start_on` 建局。对局场景 `_ready` 末尾 `Wire.rpc_id(1, "match_sync")` 拉 `match_sync_data`(昵称 / 色相 / 选项 / role 集合 / 出生点 / 地面武器 / 已拆格)。
 
 ## 一局之内
 
@@ -42,9 +42,9 @@
 | 项 | 值 |
 |---|---|
 | 物理 tick | 60Hz |
-| `snapshot_world` | 30Hz,unreliable;`SNAPSHOT_HZ = 30`、`SNAPSHOT_STRIDE = 2` |
-| `snapshot_own` | 30Hz,unreliable,逐 peer;`{ack_seq, q, c2}` |
-| `send_input` | 30Hz,reliable,**手打包 46 B/包**;包内两条连续 tick 记录(`PacketInputSource.INPUT_BATCH_TICKS=2`,一条记录 = 1 tick);含只落位的 `st`/`ct`(最近成功解码的快照 tick / 客户端物理帧号,增量批才消费) |
+| `snapshot_world` | 30Hz,unreliable,逐 peer;v5 起 FULL/DELTA 两形态(delta = 按该端上行 `st` 选基线的字段级增量 × AOI 过滤视图;丢基线回落 FULL,15 包周期全量兜底) |
+| `snapshot_own` | **60Hz**(每物理 tick 帧末,玩家步进后),unreliable,逐 peer;`{ack_seq, q, c2}` |
+| `send_input` | 30Hz,reliable,**手打包 46 B/包**;包内两条连续 tick 记录(`PacketInputSource.INPUT_BATCH_TICKS=2`,一条记录 = 1 tick);含 `st`/`ct`(最近成功解码的快照 tick / 客户端物理帧号;v5 起 `st` 就是世界包 delta 的基线 ack) |
 | 编解码 | `core/net/net_codec.gd` 打包成 `PackedByteArray`(快照 + 输入同模块),RPC 入口解回同形状 `Dictionary` |
 
 ## 客户端
@@ -55,9 +55,9 @@
 
 ## 协议与发送纪律
 
-- RPC 通道号唯一来源:[`netplay-rpc-channels.md`](netplay-rpc-channels.md)。定向发送前判活 `NetBus.is_peer_live(id)`;广播前判 `NetBus.all_peers_sendable()`;答复 caller 走 `NetBus.reply`。
+- RPC 通道号唯一来源:[`netplay-rpc-channels.md`](netplay-rpc-channels.md)。定向发送前判活 `Wire.is_peer_live(id)`;广播前判 `Wire.all_peers_sendable()`;答复 caller 走 `Wire.reply`。
 - 协议只传 canonical `[0, MAP)` 坐标;跨接缝距离与插值走 `toroidal_delta_px`。
-- `beam_fired` 走 `NetBus`(不是 `NetBusExt`);接收端挂错节点 = 静默 no-op。
+- `beam_fired` 走 `Wire`(不是 `Wire`);接收端挂错节点 = 静默 no-op。
 - 榴弹的权威判定在 `_adjudicate_grenade`:只结算一次直接命中、不销毁子弹。
 
 ## 服务端运维面

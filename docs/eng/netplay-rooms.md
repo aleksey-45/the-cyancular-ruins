@@ -22,7 +22,7 @@
 
 - 入口是统一大厅房间列表里「自己那间房」那一行;行渲染与按下共用 `PvpSession.can_rejoin_to(code, mode)`(房号与模式都要对上)。
 - 判据顺序:先「是不是我的房 + 凭据还在」,再「`in_match` ⇒ disabled」。本人那一行在对局中也可见、可点。
-- 客户端 `LobbyPage.try_rejoin_row(code, in_match, mode)` → `rejoin_request(room_code, token)` → 大厅 `LobbyRooms.on_rejoin_request` 查凭据 → `NetBus.reply(caller, "go_match", role, port)`。
+- 客户端 `LobbyPage.try_rejoin_row(code, in_match, mode)` → `rejoin_request(room_code, token)` → 大厅 `LobbyRooms.on_rejoin_request` 查凭据 → `Wire.reply(caller, "go_match", role, port)`。
 - 客户端认领分叉:有 `PvpSession.rejoin` 时发 `reclaim_role`,否则 `claim_role`。`_do_go_match` 只在真收到新 token 时覆盖 `session_token`。
 - 服务端 join 守卫保持「对局中即拒绝」,不含凭据分支;回局查询只走 `on_rejoin_request`。
 - 客户端兜底:`_request_rejoin` 发前判活、大厅 15s 无应答、大厅回「回不去了」(`_on_rejoin_denied` 清凭据并重拉列表)。
@@ -41,7 +41,7 @@
 - 回局只在宽限期内真正成功:宽限到期后 worker 会 `mark_disconnected` 或收场退进程,大厅仍可能放行,客户端被 `_on_reclaim` 的判据②踢连接。
 - pid 复用:`pid_alive` 即 `OS.is_process_running`,误判方向是「多留」而非「错杀」,降级成超龄清扫兜底。
 - `_request_rejoin` 的判活假分支只在点行那一刻大厅连接已断时进入,而那一刻会真开一次大厅连接 ⇒ 探针不碰,登记为环境缺口。
-- 引擎自身的 `max channels: 0` 报错:回局路径同样会踢连接。★ 客户端侧已缓解(收到 `go_match` 后帧末再等一帧才 `NetBus.stop()`,见 `scenes/lobby_page.gd::_do_go_match`);引擎侧「判活→同帧被拆→send」窗口关不掉,偶发残余不追。
+- 引擎自身的 `max channels: 0` 报错:回局路径同样会踢连接。★ 客户端侧已缓解(收到 `go_match` 后帧末再等一帧才 `Wire.stop()`,见 `scenes/lobby_page.gd::_do_go_match`);引擎侧「判活→同帧被拆→send」窗口关不掉,偶发残余不追。
 - `ai_duel` 不发 `session_token`、不调 `_grant_rejoin`,开局即摘房 ⇒ AI 对战局没有回局入口。
 
 ## 测试

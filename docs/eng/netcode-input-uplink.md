@@ -45,7 +45,7 @@ seq(4) | held0(2) | held1(2) | ax0(4) | ax1(4) | pressed0/1(各1) | released0/1(
 - **采样 60Hz**：每条记录 = 1 个物理 tick；`TICKS_PER_RECORD := 1`。本地玩家**不再吃锁存输入**（`SampledInput` 已删除），`player.gd` 与自己那份模拟都现读真输入。
 - **发包 30Hz**：`INPUT_BATCH_TICKS := 2`，一包装两条记录（相对"每 tick 一包"省一半包头与共享字段）。
 - **流水线（关键）**：包在**本 tick** 发出，装 `[上一 tick, 本 tick]`；本 tick 记录由下一包补发。若改成"等两个 tick 都发生再发"，整包会晚 16.7ms ⇒ 服务器生效反而变慢（已否决不采用）。
-- 发送点：`scenes/pvp_match_client.gd::_physics_process`（每 tick）：`_input_seq += 1` → `pack_record(...)`（切枪 `winst` 也逐 tick 填）→ C2 `note_input`；到发包拍再 `pack_pair(...)` → **`NetBus.rpc_id(1, "send_input", NetCodec.encode_input(pair))`**。
+- 发送点：`scenes/pvp_match_client.gd::_physics_process`（每 tick）：`_input_seq += 1` → `pack_record(...)`（切枪 `winst` 也逐 tick 填）→ C2 `note_input`；到发包拍再 `pack_pair(...)` → **`Wire.rpc_id(1, "send_input", NetCodec.encode_input(pair))`**。
 - 通道：`send_input` 仍是 `reliable`、用户通道 1（ENet 道 2），有序 + 重传。★ U1 只改**载荷内容/记录粒度**，通道号/传输模式一个都没动。
 - 选 reliable 的约束：`pressed` / `released` 是边沿语义，丢边沿 = 两端脱节（抓梯 / 跳跃 / 开火）。
 
@@ -61,7 +61,7 @@ seq(4) | held0(2) | held1(2) | ax0(4) | ax1(4) | pressed0/1(各1) | released0/1(
 
 ## 4. 读数（默认关）
 
-- 客户端 `-- --netstat`（1Hz）：`_input_seq` / `_last_ack` / `gap` / `lag_ms`（= gap × 16.67ms × `TICKS_PER_RECORD`，U1 下即 gap × 16.67ms）/ `NetBus.ping_ms` / 扣网后积压 / 回滚累计 / 物理步每秒 / 渲染 fps。
+- 客户端 `-- --netstat`（1Hz）：`_input_seq` / `_last_ack` / `gap` / `lag_ms`（= gap × 16.67ms × `TICKS_PER_RECORD`，U1 下即 gap × 16.67ms）/ `Wire.ping_ms` / 扣网后积压 / 回滚累计 / 物理步每秒 / 渲染 fps。
 - `gap` 有 0~2 条记录的量化偏置（ack 只在 30Hz 本人包回带，0~33ms）；判趋势不看绝对值。本地理论：gap ≥ 1~2（服务器每 tick 消费，但 ack 30Hz 回带）。
 - 服务端 `--netstat` / `--netstat-trace`（前 600 tick 逐帧）：队列长度（条记录）/ 抖动上限 / 累计丢弃 / **客户端 `st`/`ct`**。
 - `--diag` / `CYR_DIAG=1`：`queue`（1Hz）、`queue_drop` 事件。

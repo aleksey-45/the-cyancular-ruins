@@ -60,6 +60,7 @@ var _c3_row_read := false        # ★ 2026-10-08(债 §七.27 —— ★ 2026-1
 var _refresh_t := 0.0
 # c2 的观察读数(PLAYING 那一刻清零,窗口结束时统一判定)
 var _obs_started := false
+var _pvp_started := false
 var _obs_t := 0.0
 var _obs_round := -1
 var _obs_state_bad := false
@@ -92,6 +93,13 @@ func _ready() -> void:
 	Wire.local_room_created.connect(func(code: String) -> void:
 		_room_code = code
 		_log("建房成功:%s" % code))
+	# 1v1 开局要房主点「开始游戏」(9378f5b0 起)—— 本 watcher 缺这一步,房停在 players=2
+	# 永不开局(登记债 §一那条 FAIL 的根因)。与产线同入口:等待室两人齐发 PVP_START。
+	Wire.local_pvp_room_state.connect(func(state: Dictionary) -> void:
+		if not _pvp_started and (state.get("players", []) as Array).size() >= 2:
+			_pvp_started = true
+			_log("两人齐,房主点开始")
+			Wire.send(WireKind.PVP_START, []))
 	Wire.local_room_joined.connect(func(_role: int) -> void:
 		_joins += 1
 		_log("收到 room_joined(第 %d 次)" % _joins))

@@ -3,7 +3,7 @@
 **专用服务器权威 + 客户端本地预测自己(C2)。** 服务器跑全部权威模拟;客户端不裁决伤害。本地玩家跑完整 `player.gd` 物理,服务器 30Hz 广播快照,客户端用它校正自己、渲染远端对手。
 
 - 环面世界:协议只传 canonical `[0, MAP)` 坐标;渲染各端归最近副本;距离与插值走最短路径增量。
-- 两端共用 autoload `NetBus` 收口 RPC,跨场景常驻。
+- 两端共用 autoload `Wire` 收口 RPC,跨场景常驻。
 
 ## 1. 进程拓扑
 
@@ -58,14 +58,14 @@ main_menu.tscn
 | `scenes/player/player_replica.gd` | 远端副本(视觉 + 幽灵碰撞体) |
 | `scenes/mp_lobby.gd` / `scenes/mp_lobby.tscn` | 统一联机大厅 UI |
 
-## 4. 传输层:NetBus
+## 4. 传输层:Wire(v5)
 
-服务器与客户端共用 `/root/NetBus`(autoload)。`ENetMultiplayerPeer` + Godot 高层 MultiplayerAPI;大厅端口 `7777`(`DEFAULT_PORT`),`create_server(port, 16, ENet_CHANNELS)`,`ENet_CHANNELS = 4`。
+服务器与客户端共用 `/root/Wire`(autoload,`core/net/wire.gd`)。底层 `ENetConnection` 直连(不经 MultiplayerAPI);消息种类登记表 = `core/net/wire_kind.gd`(唯一真相源:kind/方向/通道/信号一行一条)。大厅端口 `7777`(`DEFAULT_PORT`),四通道 `CH_SESSION=0 可靠 / CH_INPUT=1 可靠 / CH_STATE=2 快照专用(unreliable) / CH_EVENT=3 可靠`。握手带 magic(0x00435905),版本不符当场拒 ⇒ v4/v5 不混连。
 
 - 方法按调用方区分两端;服务端侧 `emit` 信号转交 `RoomManager` / `MatchHost`,不硬依赖类型。
-- `NetBus.is_peer_live(id)`:ENet peer 状态 `CONNECTED` 且通道数 > 0。定向发送前必须判。
-- `NetBus.all_peers_sendable()`:peer 表里每一个都能收包;空表 = false。广播前判。
-- `NetBus.reply(id, method, …)`:答复 caller 的唯一收口,内部先判活。
+- `Wire.is_peer_live(id)`:ENet peer 状态 `CONNECTED` 且通道数 > 0。定向发送前必须判。
+- `Wire.all_peers_sendable()`:peer 表里每一个都能收包;空表 = false。广播前判。
+- `Wire.reply(id, method, …)`:答复 caller 的唯一收口,内部先判活。
 
 RPC 主干:
 
@@ -147,11 +147,11 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 2. 建 `PredictionRollback`,`bind(_local)`、设 `map_px`;补 `PostProcess`(pvp_mode 下 Level0 不建)。
 3. 实例化 `PlayerReplica` 进 `WorldViewport`。
 4. 连快照 / 子弹 / 光束 / 命中 / 拆砖 / 回合 / 击杀 / 对手离开 / `match_sync` 信号。
-5. 末尾 `NetBus.rpc_id(1, "match_sync")` 拉进场载荷。
+5. 末尾 `Wire.rpc_id(1, "match_sync")` 拉进场载荷。
 
 ### 输入上报
 
-- **每物理 tick**：`note_post_step()`(上一 tick 的预测整态) + `reconcile()` + `PacketInputSource.pack_record()`(一条 = 1 tick) + C2 `note_input`；**每 2 个 tick** 把 `[上一 tick, 本 tick]` 两条记录 `pack_pair()` 后 `NetBus.rpc_id(1, "send_input", pkt)`（流水线,30Hz 发包）。
+- **每物理 tick**：`note_post_step()`(上一 tick 的预测整态) + `reconcile()` + `PacketInputSource.pack_record()`(一条 = 1 tick) + C2 `note_input`；**每 2 个 tick** 把 `[上一 tick, 本 tick]` 两条记录 `pack_pair()` 后 `Wire.rpc_id(1, "send_input", pkt)`（流水线,30Hz 发包）。
 - 包字段:`seq`(包级=高 tick,低 tick=seq-1)、`held0/1`、`ax0/1`、`pressed0/1`、`released0/1`、`winst0/1`、`aim`、`st`、`ct`。
 - 位常量 `PacketInputSource.BIT_*`:up=1 / down=2 / charge=4 / attack=8 / reload=16 / pickup=32 / drop=64 / haste=128 / rewind=256。
 - 本地预测**不锁存**(60Hz 真输入),C2 重放 1 步/记录;客户端与服务器逐 tick 同序。
@@ -199,7 +199,7 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 | 包 | 方向 | 频率 / 模式 | 字段 |
 |---|---|---|---|
 | 输入包 | 客户端 → worker | 30Hz / reliable | 手打包 **46 B**：两条 tick 记录 `seq` `held0/1` `ax0/1` `pressed0/1` `released0/1` `winst0/1` + `aim` `st` `ct`（`NetCodec.KIND_INPUT`） |
-| `snapshot_world` / `snapshot_own` | worker → 客户端 | 30Hz / unreliable | 世界包 `tick` + `players{…}`;本人包(逐 peer)`{ack_seq, q, c2}` |
+| `snapshot_world` / `snapshot_own` | worker → 客户端 | 30Hz / 60Hz;unreliable | 世界包 FULL/DELTA 两形态(delta 按上行 `st` 选基线;`tick` + `players{…}`);本人包(逐 peer)`{ack_seq, q, c2}`,命中补偿的受害者回溯环同拍记录 |
 | `bullet_spawn` | worker → 客户端 | reliable | `scene shooter_role pos vel speed range size color gravity hit_damage …` |
 | `hit_event` | worker → 客户端 | reliable | `victim_role damage source_pos` |
 | `beam_fired` | worker → 客户端 | reliable | 光束报告 + `shooter_role` |
@@ -223,8 +223,8 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
   本地模拟自己(C2) + 打包输入 ── reliable ──→  InputIntake FIFO
                             ↓ 每 tick 取一条
                             全体 Player._physics_process 权威模拟;子弹 / 光束裁决,拆墙
-                            30Hz snapshot_world ── unreliable ──→ 对手副本直出最新包
-                            30Hz snapshot_own   ── unreliable ──→ PredictionRollback(分歧才 restore+重放)
+                            30Hz snapshot_world ── unreliable(逐 peer FULL/DELTA×AOI)──→ 对手副本直出最新包
+                            60Hz snapshot_own   ── unreliable ──→ PredictionRollback(分歧才 restore+重放)
                             新子弹 / 命中 / 拆砖 ── reliable ──→ 视觉反馈
 ```
 
@@ -246,4 +246,4 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 - 子弹散射:客户端视觉子弹的散射角本地掷定,与服务器权威子弹不同;命中由服务器裁决。本地玩家子弹是视觉副本:`weapon_base.fire()` 里 `b.apply_damage = not Level0.pvp_mode`。
 - 并发上限由端口池决定:每局一个 worker,端口池 500 个;端口耗尽时 `pick_port()` 返回 -1。
 - 回局只在宽限期内真正成功;宽限到期后 worker 会移出或收场,客户端被 `_on_reclaim` 踢连接。pid 复用:`pid_alive` 即 `OS.is_process_running`,误判方向是「多留」,降级成超龄清扫兜底。
-- 引擎自身偶发 `max channels: 0` 报错:连接被踢的同拍定向发送。★ 2026-10-24 客户端侧已缓解 —— 收到 `go_match` 后在帧末**再等一帧**才 `NetBus.stop()`(`lobby_page._do_go_match`),让大厅最后两条定向包先落地。引擎侧的「判活通过→同帧被拆→send」窗口在 GDScript 里没有原子性,关不掉 ⇒ 剩下的偶发仍按「已登记、不追」处理,它只丢一条「注定要被断的连接上的最后一条包」,不影响对局。3v3 队友不在本地 `collision_mask` 里 ⇒ 队友永不判接触,与「队友不互挡」一致。
+- 引擎自身偶发 `max channels: 0` 报错:连接被踢的同拍定向发送。★ 2026-10-24 客户端侧已缓解 —— 收到 `go_match` 后在帧末**再等一帧**才 `Wire.stop()`(`lobby_page._do_go_match`),让大厅最后两条定向包先落地。引擎侧的「判活通过→同帧被拆→send」窗口在 GDScript 里没有原子性,关不掉 ⇒ 剩下的偶发仍按「已登记、不追」处理,它只丢一条「注定要被断的连接上的最后一条包」,不影响对局。3v3 队友不在本地 `collision_mask` 里 ⇒ 队友永不判接触,与「队友不互挡」一致。
