@@ -145,7 +145,7 @@ func lobby_name(name: String) -> void:
 	lobby_name_set.emit(multiplayer.get_remote_sender_id(), name)
 
 # ★ 输入上行:30Hz 一包,**内含连续两个物理 tick 的记录**(U1:客户端 60Hz 真输入、不锁存;服务器每 tick 消费一条)。
-# 载荷是手打包的 PackedByteArray(NetCodec.encode_input:头 2 B + 记录 40 B = 42 B,P1 定点化前 46 B;更早 30Hz 单条锁存记录 = 34 B)。
+# 载荷是手打包的 PackedByteArray(NetCodec.encode_input:头 2 B + 记录 40 B = 42 B)。
 # 可靠通道保序 + seq 单调(包级 seq = 高 tick 记录,低 tick = seq-1)= 服务端与客户端重放同序(C2 回滚「1 seq = 1 tick」的前提)。
 @rpc("any_peer", "call_remote", "reliable", 1)
 func send_input(payload: PackedByteArray) -> void:
@@ -171,7 +171,6 @@ func match_sync() -> void:
 # 旧实现 8 人局上行 ≈29Mbps);两者互不连累:c2 丢只少一个回滚锚点,世界包丢只冻结一帧副本插值。
 # ★ 载荷是手打包的 PackedByteArray(NetCodec 编解码),RPC 入口仍 emit 同形状 Dictionary ⇒ 消费方一行没动。
 #   实测 8 人局上行 587→72KB/s、世界包 N≤8 恒 1 片(详表见 docs/eng/netcode-snapshots.md §2);载荷无量化(float32 逐位相同)。
-#   ★ 那个读数是 60Hz 发包口径(2026-10-09 实测);2026-10-23 起下行改 30Hz ⇒ 每秒字节按 ≈½ 折算(未复测,别把 72 当现状)。
 # 诊断(--diag,默认关):快照到达间隔 >150ms 记一条。世界包是 unreliable,断流时副本只能冻结,
 # 恢复那一帧再跳 —— 这是用户报「卡顿后瞬移」里"他人瞬移"的直接证据(判据与读数见 docs/eng/tests.md)。
 var _diag_snap_us := 0
@@ -242,7 +241,7 @@ func snapshot_own(payload: PackedByteArray) -> void:
 			"c2": pkt.get("c2", {})})
 
 
-# 快照解码失败只在第一次大声报(版本不一致是一次性条件,而本函数每个快照包(~30Hz)被调);静默丢弃会让客户端表现为对手不动/自己一直回拉。
+# 快照解码失败只在第一次大声报(版本不一致是一次性条件,而本函数每个快照包都被调);静默丢弃会让客户端表现为对手不动/自己一直回拉。
 var _snap_warned := false
 
 func _snapshot_decode_warned(which: String, payload: PackedByteArray) -> void:
@@ -293,7 +292,7 @@ func tile_destroyed(cell: Vector2i) -> void:
 func round_state(data: Dictionary) -> void:
 	local_round_state.emit(data)
 
-# ── 地面武器事件:服务器权威的"多了一件/少了一件"广播。低频(掉落/捡起),故走事件而不是塞进 30Hz 快照。
+# ── 地面武器事件:服务器权威的"多了一件/少了一件"广播。低频(掉落/捡起),故走事件而不是塞进快照。
 # ★ 只进 NetBus,别在 NetBusExt 里也加一份:两者已有 beam_fired 重名,接收端挂错节点会静默 no-op。
 @rpc("authority", "call_remote", "reliable", 3)
 func weapon_spawned(data: Dictionary) -> void:

@@ -24,7 +24,7 @@ func _initialize() -> void:
 	_chk(_eq(PredictionContact.rect_gap(Rect2(0, 0, 40, 40), Rect2(43, 44, 40, 40)), 5.0),
 			"rect_gap:对角 3-4-5 = 5")
 
-	# ④ 幽灵滞后:RTT=0 时 = 半个 60Hz 间隔(0.5/60);超大 RTT 封顶 MAX_LAG_S(2026-10-30 快照全 60Hz)
+	# ④ 幽灵滞后:RTT=0 时 = 半个 60Hz 间隔(0.5/60);超大 RTT 封顶 MAX_LAG_S
 	var h0 := PredictionContact.ghost_horizon_s(0)
 	var hmax := PredictionContact.ghost_horizon_s(4000)
 	_chk(_eq(h0, 0.5 / 60.0) and _eq(hmax, PredictionContact.MAX_LAG_S),

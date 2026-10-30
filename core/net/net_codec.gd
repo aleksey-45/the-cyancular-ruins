@@ -5,7 +5,7 @@ extends RefCounted
 # 实测同一份 8 字段数据:dict(键)= 196 B vs 手打包 = 24 B ⇒ 键 + 类型标签才是大头,不是数值本身;换掉后 N=8 世界包 2.1 KB → 0.27 KB(不再分片)、本人包 588 B → ~114 B。
 # ── 2026-10-26 P1(PROTO_VERSION 4→5)字段定点化:上行 aim → 2×i16(1e-4 定点),下行 pos/vel → 2×i16(0.5px 步长)、aim → u8 角度。
 #   量化必须两端**同版一起换**(版本字节守门);本人包 c2 仍是 float32 全量 —— 它是 C2 回滚锚点,单方面量化 ⇒ 每次重放都判分歧。★ 定点常量/误差见 Q_* 与文档 §6。
-# ── 2026-10-26 P1.5(PROTO_VERSION 5→6)增量/差分:世界包滚动关键帧 + 本人包 30Hz 差分。两者都在本文件,位序表就是 schema 本身(单一来源),见各 schema 注释。
+# ── 增量/差分:世界包滚动关键帧 + 本人包差分(位序表即 schema,见各 schema 注释)。
 #   ★ 全量(FULL)仍用原来的定长字段布局;差分(DELTA)用 mask + 变化字段值。★ 世界包 FULL 由"请求/换局/新玩家"触发;本人包 FULL 每 role 每 60 tick 错峰一次。
 # ── 非量化字段(如 trail)仍是 float32:Godot 非 double 构建里 encode_float 就是 32 位 ⇒ 与旧线上字节逐位一致,不是"看上去差不多"。
 # ── 版本字节:首字节 = PROTO_VERSION,两端不同版时大声失败(解码返回空字典、调用方不 emit),而不是按错位的偏移读出垃圾值。★ 载荷里每个字节位置都是协议:改字段顺序/类型/宽度 = 改协议,两端必须同版本。
@@ -135,7 +135,7 @@ static func _own_unit_count() -> int:
 
 # ── 周期/相位(单一来源:发送侧与 sizes probe 的纯算式断言共用)──
 # 本人包全量错峰:把 60 tick 均分成若干"发送槽"(发送只在 tick 网格上发生),按 role 序号取槽 ⇒ 同一 tick 不会全员同时全量。
-# 槽数 = OWN_FULL_PERIOD / stride(30Hz 发送 ⇒ 30 槽);N > 槽数时会有重合(仍 ≤1s 周期,登记 registered-debt §十八)。
+# 槽数 = OWN_FULL_PERIOD / stride;N > 槽数时会有重合(仍 ≤1s 周期,登记 registered-debt §十八)。
 static func own_full_phase(role_index: int, n_roles: int, stride: int = 2) -> int:
 	if n_roles <= 0:
 		return 0
@@ -623,7 +623,7 @@ static func _own_unit_at(bit: int) -> Array:
 
 ## 输入包:30Hz 一包,内含连续两个物理 tick 的记录(高 tick 的 seq = 包级 seq,低 tick = seq-1)。
 ## `{"seq","held0","held1","ax0","ax1","pressed0","pressed1","released0","released1","winst0","winst1","aim","st","ct"}`
-## 头 2 B + 记录 40 B = **42 B**(P1 前 46 B;30Hz 单条锁存记录时代 34 B;7 键 Dictionary 时代 164 B/包)。
+## 头 2 B + 记录 40 B = **42 B**(P1 前 46 B;7 键 Dictionary 时代 164 B/包)。
 ## ★ aim = 单位向量 1e-4 定点(2×i16);顺序/宽度必须与 INPUT_SCHEMA 一致(漂移由 net_wire_smoke 的往返抓)。
 static func encode_input(pkt: Dictionary) -> PackedByteArray:
 	var out := PackedByteArray()

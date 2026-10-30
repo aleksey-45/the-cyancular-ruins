@@ -32,7 +32,7 @@ var _last_snap_tick := 0
 # ── 网络统计读数(★ 默认关;开关 -- --netstat,必须写在 -- 之后,写在前面会被 Godot 丢掉、静默失效)──
 # 一次打一行四个量:gap = _input_seq − 最后收到的 ack(本端已发、服务器没确认的输入**记录**数;U1 后一条记录 = 1 个物理 tick,
 # 故端到端滞后 ≈ gap×16.7ms);ping = NetBus.ping_ms(EWMA 平滑的纯网络 RTT);积压 = gap×16.7 − ping(扣掉网络之后还剩多少是服务器没来得及消费的);
-# 回滚 = rollback_count() 的每秒增量(恒为 0 也可能是哑火,见 on_authoritative 的 ack 闸)。★ ack 只在 30Hz 本人包回带 ⇒ gap 有 0~2 条(0~33ms)量化偏置,判趋势不看绝对值。
+# 回滚 = rollback_count() 的每秒增量(恒为 0 也可能是哑火,见 on_authoritative 的 ack 闸)。★ ack 随本人包回带 ⇒ gap 有 0~1 条(0~16.7ms)量化偏置,判趋势不看绝对值。
 var _netstat := false
 var _netstat_checked := false
 var _netstat_acc := 0.0
@@ -587,7 +587,7 @@ func _bullet_hits_entity(_b: BulletBase, _ent: Node2D) -> bool:
 #   · _enter_match_over_state():置终局、销毁暂停菜单(ESC 双语义的硬依赖)、弹/刷结算页。
 # 贴身判据 + 动态容差(2026-10-28)。返回"是否贴身",调用处写成 `_rollback.in_contact = _update_contact_state()`。
 # 旧实现只看 `touching_player()`(客户端本帧真的撞上幽灵体):幽灵体滞后会让你追人时预测穿过去 ⇒ 判不到贴身 ⇒
-# 仍按 2px 容差、每 30Hz 验证点回滚。这里改用"预测身位到幽灵 AABB 的间隙"进贴身区,并按相对速度抬高容差
+# 仍按 2px 容差、每 ack 验证点回滚。这里改用"预测身位到幽灵 AABB 的间隙"进贴身区,并按相对速度抬高容差
 # (容差 = 8 + 相对速度×滞后,封顶 48px);touching_player() 保留为兜底(确实撞上的那一帧)。
 func _update_contact_state() -> bool:
 	if _rollback == null or _local == null:

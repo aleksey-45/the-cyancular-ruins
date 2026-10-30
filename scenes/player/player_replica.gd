@@ -5,8 +5,7 @@ extends Node2D
 
 # 大跳变阈值:相邻两条权威快照的环面距离超过它 ⇒ 清历史、一帧落位(回溯 / 重生 / 换边本来就是瞬移,插值会演成「滑过去」;128px 的依据见 docs/eng/render.md)。
 const SNAP_DIST := 128.0
-# 欠载外插上限(2026-10-29):render_tick 超过最新快照时,用最新速度最多补 2 tick(≈33ms)、总位移 ≤60px,
-# 超出即冻结 —— 原来的「一律冻结」在一个 30Hz 包迟到时就停 33ms,肉眼就是一次卡顿。
+# 欠载外插上限:render_tick 超过最新快照时,用最新速度最多补 2 tick、总位移 ≤60px,超出即冻结。
 const UNDERRUN_EXTRAP_TICKS := 2.0
 const UNDERRUN_EXTRAP_MAX_PX := 60.0
 
@@ -204,8 +203,8 @@ func _sample_history(t: float) -> Vector2:
 	return _anchor_of(last["pos"])
 
 
-## 欠载外插:render_tick 超过最新快照时不再原地冻结(丢一个 30Hz 包就停 33ms = 明显卡顿),
-## 用最新速度最多补 UNDERRUN_EXTRAP_TICKS 个 tick、且总位移封顶,停下/变向时不会飞出去。
+## 欠载外插:render_tick 超过最新快照时用最新速度补一小段,而不是原地冻结;
+## 位移有上限,停下/变向时不会飞出去。
 func _extrapolate_underrun(last: Dictionary, t: float) -> Vector2:
 	var pc := _anchor_of(last["pos"])
 	var extra := minf(t - float(last["tick"]), UNDERRUN_EXTRAP_TICKS)
@@ -298,7 +297,6 @@ func _state_index(t: float) -> int:
 
 
 ## 连续外观量(aim / vel)在相邻两条历史之间插值;离散量(pose / facing / downed / type_id)仍取整条。
-## ★ 只插连续量:瞄准方向 30Hz 阶跃时枪口/手臂每 33ms 跳一次 = 用户看到的"对手有点卡";位置与枪口现在都连续。
 func _sampled_state_blended() -> Dictionary:
 	var st := _sampled_state()
 	if st.is_empty() or not _placed or _clock == null or place_history.size() < 2:
@@ -394,8 +392,8 @@ func _process(delta: float) -> void:
 			global_position = _sample_history(_clock.render_tick)
 			global_position = MazeGenerator.anchor_to_nearest(global_position, _local_anchor,
 					GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
-		# ★★ 幽灵体不跟渲染插值,但也**不能**直接吃最新快照(那样滞后 = 单程 + 0~33ms 发包间隔;跑速 700 时
-		#   23~46px,贴身时正好和身位同量级 ⇒ 预测碰撞与服务器不一致 ⇒ 每 30Hz 验证点回滚)。
+		# 幽灵体不跟渲染插值,但也不能直接吃最新快照(那样滞后 = 单程 + 0~1 tick;跑速 700 时 0~12px,
+		# 贴身时与身位同量级 ⇒ 预测碰撞与服务器不一致 ⇒ 每 tick 验证点回滚)。
 		#   这里把最新快照按权威速度外推到"现在"(滞后期 = 单程 + 半包间隔,RTT 由 NetBus.ping_ms 给):
 		#   匀速期误差 ≈ 0;急停/变向最坏 ≈ vel×horizon(700×0.05=35px),由客户端贴身容差动态兜底。
 		if _ghost != null:

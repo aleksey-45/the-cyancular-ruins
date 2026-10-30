@@ -42,8 +42,8 @@ var apply_damage: bool = true  # 客户端视觉副本设 false:只出特效/轨
 var _fuse_active: bool = false   # 首次碰撞(撞墙/命中敌人)后才开始计时
 var _fuse_elapsed: float = 0.0
 var _fuse_duration: float = 0.0  # 本次引信时长(撞墙=fuse_time,命中敌人=hit_fuse_time)
-# 判定点整体后移帧数(2026-10-29 用户指定 2~4 帧,取 3):爆炸当帧只播火光/碎片/震屏,
-# 再过 3 个物理帧才做一次 apply_aoe 结算。子弹在窗口里保持存活但不可见、不移动;期间被清掉则放弃这次结算。
+# 判定点整体后移帧数:爆炸当帧只播火光/碎片/震屏,再过 EXPLOSION_SETTLE_FRAMES 个物理帧才做一次 apply_aoe。
+# 子弹在窗口里保持存活但不可见、不移动;期间被清掉则放弃这次结算。
 const EXPLOSION_SETTLE_FRAMES := 3
 var _settle_frames: int = 0
 
@@ -367,8 +367,8 @@ func _start_fuse(duration: float) -> void:
 	_fuse_active = true
 
 func _explode() -> void:
-	# 判定点后移(用户指定 3 帧):权威/单机路径先只排结算,火光/碎片/震屏照旧当帧播;
-	# 子弹本体隐藏并留在树上数 3 个物理帧(_settle_explosion 结算后销毁)。视觉副本没有结算 ⇒ 照旧当帧销毁。
+	# 判定点后移:权威/单机路径先只排结算,火光/碎片/震屏照旧当帧播;
+	# 子弹本体隐藏并留在树上数 EXPLOSION_SETTLE_FRAMES 个物理帧(_settle_explosion 结算后销毁)。视觉副本没有结算 ⇒ 照旧当帧销毁。
 	if apply_damage:
 		_settle_frames = EXPLOSION_SETTLE_FRAMES
 		visible = false

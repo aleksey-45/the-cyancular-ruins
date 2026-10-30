@@ -7,9 +7,8 @@ extends RefCounted
 #   o、动不了参考;o 的长期漂移本身就是两端速率差,故不需要显式的频率状态(NTP RFC 5905 §10 / RTP RFC 3550 §6.4.1 /
 #   Valve 的"客户端时间 − 插值延迟",出处见 docs/eng/netcode-playout-clock-sync-sources.md)。
 # ★ 时间源是自己的 _local_ms、由 advance(delta) 推进(不是墙钟)⇒ 帧率无关、可手动驱动;render_tick 单调不减。
-# ★ 它只服务远端玩家副本的渲染位置(scenes/player/player_replica.gd):让 30Hz 的离散位置在两条快照之间夹逼插值;幽灵碰撞体不跟它(预测面要最小陈旧)。零守卫:视觉观感不写守卫,见 docs/eng/tests.md。
-
-const TICKS_PER_SEC := 60.0          # = 物理 tick 域(MatchState 的快照 tick);发包率随人数变(60/30Hz),但 tick 刻度不变
+# ★ 它只服务远端玩家副本的渲染位置(player_replica.gd):让离散快照在两条样本之间夹逼插值;幽灵碰撞体不跟它。
+const TICKS_PER_SEC := 60.0          # = 物理 tick 域(快照 tick 的刻度)
 const TICK_MS := 1000.0 / 60.0       # 一个 tick 多少毫秒(观测换算用)
 const WINDOW := 8                    # NTP §10 的窗口大小(8 级移位寄存器)
 const DRIFT_SLACK := 1.5             # tick:误差死区(落在这里面不纠偏)—— 挡住残余抖动

@@ -190,9 +190,8 @@ func _physics_process(delta: float) -> void:
 				if acc.spend(delta, time_economy.rules.haste_burn) < burn * 0.999:
 					on = false   # 账户当帧烧空(余额/锁定不足)→ 立即回落,与单机同款
 			p.pvp_haste_mult = time_economy.rules.haste_mult if on else 1.0
-	# 下行发包:每 SNAPSHOT_STRIDE 个物理 tick 广播一次(整数相位;2026-10-30 起全部 60Hz,stride=1)。
-	# ★ U1 后消费节奏与广播相位**解耦**:服务器每物理 tick 消费一条记录(一条 = 1 tick);广播按 60Hz。
-	# ★ S1(2026-10-24):本 tick 只广播**世界包**;本人包(ack+c2)在玩家步进之后帧末发(见下方 _flush_own_snapshots)。
+	# 下行:每 SNAPSHOT_STRIDE 个物理 tick 广播一次世界包;输入消费与广播相位解耦(每 tick 消费一条记录)。
+	# 本人包(ack+c2)在玩家步进之后帧末发(见 _flush_own_snapshots)。
 	_snapshot_tick_phase += 1
 	var snapshot_tick := false
 	if _snapshot_tick_phase >= SNAPSHOT_STRIDE:
@@ -225,11 +224,8 @@ func _physics_process(delta: float) -> void:
 # 地面武器拾取/丢弃的边沿:★ 必须紧跟 apply_packet —— 本轮开头已 clear_edges(),边沿就是这一包刚写进去的,晚一拍就被下一轮清掉。
 				_handle_ground_actions(role, src)
 
-	# ★ S1:本人包推迟到本帧末(玩家子节点步进完之后)再发 —— 那时 c2 才是"本 tick 输入已生效"的权威态,
-	#   ack 也是本 tick 刚消费的 seq;比"等下一次 30Hz 广播"少一拍(均值 ~16.7ms)。
-	#   ★ 依赖 Godot 的 call_deferred 在帧末(所有 _physics_process 之后)执行。
-	# ★ 本人包维持 30Hz(v0.5.1 同口径,实测不卡):**禁止**改成每 tick 60Hz —— 省带宽靠差分/全量错峰,
-	#   频率不是本次卡顿的成因(去翻世界包增量/插值那条链,别在这里回退)。
+	# 本人包推迟到本帧末(玩家子节点步进完之后):那时 c2 才是"本 tick 输入已生效"的权威态,ack 也是本 tick 刚消费的 seq。
+	# 依赖 Godot 的 call_deferred 在帧末(所有 _physics_process 之后)执行。
 	# 受击事件锚点:帧末(子节点步进之后)记录"上一次完成步进时的已消费 seq",下一帧裁决用它(见 MatchState._stepped_seq)。
 	if not _stepped_seq_pending:
 		_stepped_seq_pending = true

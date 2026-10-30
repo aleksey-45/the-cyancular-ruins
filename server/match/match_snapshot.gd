@@ -1,13 +1,11 @@
 class_name MatchSnapshot
 extends MatchGround
 
-# 快照广播域(阶段 5.6 拆自 server/match_host.gd)。★ tick 域始终是 60Hz 物理 tick;
-# 2026-10-30 起**所有人数**都每 tick 一包(60Hz,stride=1)—— 副本插值样本间隔 16.7ms。
+# 快照广播域(阶段 5.6 拆自 server/match_host.gd)。tick 域 = 60Hz 物理 tick,每 tick 一包。
 
 # ── 结构化诊断(--diag,默认关):快照**发出侧**计数 ──
 # 客户端 `snap_gap`(net_bus)只能证明"没收到";这里补"服务器到底发没发、给谁发了多少、
-# 哪一拍因为某个 peer 不可发而**整发跳过**"。两边按 1Hz 对账即可分开「没发出 / 发了没收到」——
-# 那正是大乱斗 C3(单 peer 快照饥饿)下一步要的证据。默认关时下面每处计数都是 0 开销(一个 bool)。
+# 哪一拍因为某个 peer 不可发而**整发跳过**"。两边按 1Hz 对账即可分开「没发出 / 发了没收到」。
 var _tx_at := 0
 var _tx_world := 0
 var _tx_world_skip := 0
@@ -15,15 +13,12 @@ var _tx_world_bytes := 0
 var _tx_own: Dictionary = {}        # role -> 包数
 var _tx_own_bytes: Dictionary = {}  # role -> 字节数
 
-# ── 全量快照(2026-10-28 放弃增量:世界/本人包恢复每包自包含)──
-# ★ 为什么回退:DELTA 依赖 base_tick 链,unreliable 通道乱序/丢包时恢复代价是 RTT 级冻结
-#   (用户实测"联机对手显示卡");v0.5.1 就是全量,实测不卡 —— 带宽换稳定。
+# 世界/本人包当前是全量、每包自包含(增量实现已弃用:DELTA 链在乱序/丢包下会 RTT 级冻结)。
 
 
 func _broadcast_snapshot() -> void:
-	# tick 是「60Hz 物理 tick 时间轴」上的时间戳,不是包序号:60Hz 发包时每包跨 1 tick(客户端 playout/历史环按它插值)。
-	# ★ S1(2026-10-24):本函数**只发世界包**;本人包(ack+c2)由 MatchHost 在玩家步进之后 call_deferred 调,不再等广播。
-	# ★ 时间域对齐:直接取 _srv_tick(广播相位仍每 2 tick,数值序列不变)⇒ 客户端输入包的 st 与服务器 tick 同刻度。
+	# tick 是 60Hz 物理 tick 时间轴上的时间戳,不是包序号。
+	# 本函数只发世界包;本人包(ack+c2)由 MatchHost 在玩家步进之后 call_deferred 调。
 	# ★ 2026-10-28:增量已放弃 —— 世界包每包全量(自包含),乱序/丢包只损失那一帧;DELTA 能力留在编解码里不再上线。
 	_snap_tick = _srv_tick
 	var state := {"tick": _snap_tick, "players": {}}

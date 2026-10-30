@@ -10,7 +10,7 @@ const HitLagHistory := preload("res://core/sim/hit_lag_history.gd")   # 命中�
 var players: Dictionary = {}        # role(int) -> Player
 var input_sources: Dictionary = {}  # role -> PacketInputSource
 var peer_by_role: Dictionary = {}   # role -> peer_id
-var _pending_input: Dictionary = {} # role -> Array[输入记录队列](30Hz 采样:一条记录管 2 个物理 tick),按序消费不丢 just_pressed 边沿
+var _pending_input: Dictionary = {} # role -> Array[输入记录队列](一条记录 = 一个物理 tick),按序消费不丢 just_pressed 边沿
 var grid: Array = []
 var _base_grid: Array = []   # 建局原始(未破坏)网格深拷贝:每局复位重铺,防客户端/服务器砖状态漂移
 
@@ -67,20 +67,16 @@ var destructible_sub: Array = []
 var _dirty_chunks: Dictionary = {}
 # 本局被摧毁过的 16px 子格(Vector2i → true):换局增量复位只还这些格(全量 build_sim 实测 ~0.48s ⇒ 每局卡顿)。
 var damaged_subs: Dictionary = {}
-var _snapshot_tick_phase := 0   # 物理 tick 相位:每 SNAPSHOT_STRIDE 个 tick 发一次(整数计数;浮点累加在整除边界会漂)
-# ── 下行发包频率(2026-10-30 起全部 60Hz)──
-# 1v1 / 3v3 / 大乱斗 / 16 人一律每物理 tick 一包:副本插值样本间隔 = 1 tick(16.7ms),对手移动/起跳/下落最自然。
-# 代价(已知并接受):16 人局世界包扇出 ≈0.6 MB/s 服务端上行(见 docs/eng/netcode-at-16-players.md §1)。
-# ★ 物理模拟 60Hz;快照 tick 用 60Hz 物理 tick 计,客户端 playout/历史环都按 tick 域 ⇒ 发包率不改协议。
-# ★ SNAPSHOT_STRIDE 必须整除 60;改回 30Hz 会把样本间隔翻倍(用户 2026-10-30 明确要求全部 60)。
+var _snapshot_tick_phase := 0   # 物理 tick 相位:每 SNAPSHOT_STRIDE 个 tick 发一次
+# 下行快照 60Hz(所有人数)。快照 tick 用 60Hz 物理 tick 计,客户端 playout/历史环按 tick 域工作。
 const SNAPSHOT_HZ := 60
 const SNAPSHOT_INTERVAL := 1.0 / SNAPSHOT_HZ
-const SNAPSHOT_STRIDE := 60 / SNAPSHOT_HZ   # = 1(60Hz 物理 tick / 60Hz 发包)
+const SNAPSHOT_STRIDE := 60 / SNAPSHOT_HZ
 var _seen_bullets: Dictionary = {}  # bullet instance_id -> true(只广播一次);每帧按在场子弹剪枝(见 _adjudicate_bullets)
 var _snap_tick := 0   # 快照 tick(60Hz 物理 tick 域;= _srv_tick,客户端靠它丢乱序旧快照 + playout 插值)
 var _srv_tick := 0    # 服务器物理 tick 计数(MatchHost 每物理 tick 起始 +1;快照 tick 与命中回放共用这条时间轴)
 var _lag_hist := HitLagHistory.new()   # 命中回放受击面历史(每 tick 推;24 tick ≈ 400ms)
-# C2 rollback:每 2 个物理 tick 恰好消费一条输入记录(FIFO;30Hz 采样),ack 让客户端重放 seq > ack 的本地输入 —— 1:1 同序,无 tick 映射漂移。
+# C2 rollback:每物理 tick 消费一条输入记录(FIFO),ack 让客户端重放 seq > ack 的本地输入 —— 1:1 同序,无 tick 映射漂移。
 var _ack_seq: Dictionary = {}   # role(int) -> 已消费输入记录的 seq
 # role(int) -> 上一次**完成步进**时的已消费 seq。★ 受击事件的时间锚点:命中裁决在 MatchHost._physics_process 回调里跑,
 # 而玩家是**子节点**、本帧步进在父回调返回之后(父先于子)⇒ 被击中的是 ack−1 那一步之后的状态。这个值由 MatchHost 在
