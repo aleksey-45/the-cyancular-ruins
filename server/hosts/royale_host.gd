@@ -208,23 +208,17 @@ func _broadcast_round_state() -> void:
 	for role in _roster():
 		var s: Dictionary = _stats.get(int(role), {})
 		deaths[int(role)] = int(s.get("deaths", 0))
-	var data := {
-		"state": _round_state,
-		"round": 1,
-		"scores": _scores,
-		"deaths": deaths,
-		"rounds_won": {},          # 大乱斗无局胜,占位空(客户端 HUD 兼容读取)
-		"timer": ceilf(_match_time) if _round_state == RoundState.PLAYING else _round_timer,
-		"names": names,
-		"alive": alive,
-		"left": _left.keys(),
-	}
-	if _round_state == RoundState.MATCH_OVER:
-		data["match_winner"] = _match_winner()
-# 逐人数据只在非空时带该键。★ 大乱斗不带 mvp(spec §3.6/§4 都没要求,结算页也不列 ACS)—— 加了它就是一个没有读者的键。
-	var table := stats_payload()
-	if not table.is_empty():
-		data["stats"] = table
+	var data := _round_state_base()
+# ★ 下面三行是**覆盖**共有键、不是追加:大乱斗的口径与回合制逐条不同,取值逐字沿用拆前的硬写值。
+	data["round"] = 1        # 大乱斗无局号,占位(客户端 HUD 按这个键读;★ 别改成 _round_num)
+	data["rounds_won"] = {}  # 大乱斗无局胜,占位空(客户端 HUD 兼容读取)
+	data["timer"] = ceilf(_match_time) if _round_state == RoundState.PLAYING else _round_timer
+	data["deaths"] = deaths
+	data["names"] = names
+	data["alive"] = alive
+	data["left"] = _left.keys()
+# match_winner / stats 由 _round_state_base 并进(与 MatchRound 同一份构造)⇒ 本模式不再各拼一份。
+# ★ 大乱斗不带 mvp(spec §3.6/§4 都没要求,结算页也不列 ACS)—— 骨架也不发,别在这里补:加了它就是一个没有读者的键。
 # 基类的广播样板,只多一个「只发在线 peer」;样板本身收在 MatchHost._rpc_all,这里走 _send_round_state(它内部仍调它,并多并一个 grace 字段)。
 	_send_round_state(data)
 

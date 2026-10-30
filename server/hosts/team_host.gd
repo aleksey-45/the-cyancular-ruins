@@ -230,24 +230,13 @@ func _threshold_team() -> int:
 
 
 func _broadcast_round_state() -> void:
-	var data := {
-		"state": _round_state,
-		"round": _round_num,
-		"scores": _scores,
-		"rounds_won": _rounds_won,
-		"timer": _round_timer,
-	}
+	var data := _round_state_base()
 	if _round_state == RoundState.ROUND_OVER and _last_round_winner != 0:
 		data["winner"] = _last_round_winner
 	if _round_state == RoundState.MATCH_OVER:
-		var w := _match_winner()
-		data["match_winner"] = w
 		# ★★ 2026-10-30 用户裁定「全场最佳必须出自胜方」:候选 = 胜队全部 role(平局 / 队号未知 ⇒ 空表 = 不限队)。
-		data["mvp"] = mvp_role(_roles_of_team(w))
-
-	var table := stats_payload()
-	if not table.is_empty():
-		data["stats"] = table
+		# match_winner 已由 _round_state_base 并进载荷(同一份构造,不再各拼一份)。
+		data["mvp"] = mvp_role(_roles_of_team(int(data["match_winner"])))
 	_send_round_state(data)
 
 

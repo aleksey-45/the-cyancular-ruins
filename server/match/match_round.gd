@@ -227,7 +227,13 @@ func _start_next_round() -> void:
 	_broadcast_round_state()
 
 
-func round_state_payload() -> Dictionary:
+# round_state 载荷的**三模式共有骨架**:5 个共有键 + MATCH_OVER 的 match_winner + 非空的 stats。
+# ★ 三个生产者(MatchRound / RoyaleHost / TeamHost)只准在这个骨架上**追加**模式键(大乱斗另需覆盖 3 个共有键,
+#   因为它的 round / rounds_won / timer 口径与回合制不同),不得再各自手拼一份共有键 —— 原先三份手拼同一个键集,
+#   改一处漏一处不报错,只会让某个模式静默读到 0。
+# ★ 键集与键值与拆前逐字一致(round_state 是两客户端 + 探针/裁判的线上契约);只落在本类,
+#   因为 _match_winner 定义在这里(基类 MatchState 编译期看不到子类方法)。
+func _round_state_base() -> Dictionary:
 	var data := {
 		"state": _round_state,
 		"round": _round_num,
@@ -235,20 +241,26 @@ func round_state_payload() -> Dictionary:
 		"rounds_won": _rounds_won,
 		"timer": _round_timer,
 	}
-
-	if _round_state == RoundState.ROUND_OVER and _last_round_winner != 0:
-		data["winner"] = _last_round_winner
 	if _round_state == RoundState.MATCH_OVER:
-		var w := _match_winner()
-		data["match_winner"] = w
-		# MVP:胜方内整场 ACS 最高者(并列 → 击杀多者 → 阵亡少者 → role 升序,权威 = 底座 mvp_role)。
-		# ★★ 2026-10-30 用户裁定「明明赢了,全场最佳却是对面」= bug ⇒ 候选集 = [胜者 role](平局 w==0 才放开全场)。
-		#    与 match_winner 同款时机、只在 MATCH_OVER 带;1v1 也给,候选规则与 3v3 同源(`mvp_role(candidates)`)。
-		data["mvp"] = mvp_role([w] if w != 0 else [])
-# 逐人数据只在非空时带该键(空表不占带宽,旧客户端忽略未知键)。★ 本函数是 1v1 专用:RoyaleHost 与 TeamHost 整体覆写了它。
+		data["match_winner"] = _match_winner()
+# 逐人数据只在非空时带该键(空表不占带宽,旧客户端忽略未知键)。
 	var table := stats_payload()
 	if not table.is_empty():
 		data["stats"] = table
+	return data
+
+
+# ★ 本函数是 1v1 专用:RoyaleHost 与 TeamHost 整体覆写了 _broadcast_round_state(它们不走这里)。
+func round_state_payload() -> Dictionary:
+	var data := _round_state_base()
+	if _round_state == RoundState.ROUND_OVER and _last_round_winner != 0:
+		data["winner"] = _last_round_winner
+	if _round_state == RoundState.MATCH_OVER:
+		# MVP:胜方内整场 ACS 最高者(并列 → 击杀多者 → 阵亡少者 → role 升序,权威 = 底座 mvp_role)。
+		# ★★ 2026-10-30 用户裁定「明明赢了,全场最佳却是对面」= bug ⇒ 候选集 = [胜者 role](平局 w==0 才放开全场)。
+		#    与 match_winner 同款时机、只在 MATCH_OVER 带;1v1 也给,候选规则与 3v3 同源(`mvp_role(candidates)`)。
+		var w := int(data["match_winner"])   # 骨架已算过同一个值,不重复调 _match_winner()
+		data["mvp"] = mvp_role([w] if w != 0 else [])
 	return data
 
 

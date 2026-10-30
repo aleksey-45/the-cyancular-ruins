@@ -26,16 +26,6 @@ var _rw_trail: Dictionary = {}     # role -> Array(回溯中每 3 帧一个 [x,y
 
 
 
-func _role_of_node(n: Node) -> int:
-	if n == null:
-		return 0
-	for r in players:
-		if players[r] == n:
-			return int(r)
-	return 0
-
-
-
 func team_of(role: int) -> int:
 	return int(_team_of.get(int(role), 0))
 
@@ -174,6 +164,10 @@ func _send_round_state(data: Dictionary) -> void:
 
 
 
+# 「节点 → role」的**唯一判据**(全仓只此一份;原先 _role_of_node 与两段内联循环另抄了三份,哨兵还不一致)。
+# ★ 查不到返回 **-1**、不是 0:0 是载荷/统计里「无归因 / 无队伍」的合法值,两种哨兵混用会把守卫变成死判据
+# (见 match_combat._replay_hurt_rect 的 `== 0` 旧写法)。★ 调用面全在 server/ 内;scenes/team_game.gd 那份同名
+# 私有实现是客户端自己的副本映射,不属这条判据。
 func _role_of(node: Node) -> int:
 	for role in players:
 		if players[role] == node:
@@ -287,6 +281,12 @@ func _clear_assist_table(victim_role: int) -> void:
 func _record_down(victim_role: int, killer_role: int) -> void:
 	victim_role = int(victim_role)
 	killer_role = int(killer_role)
+# ★ 「查不到」的哨兵是 -1(_role_of):放进去会给 _stat_entry(-1) 造出一行 role=-1 的统计行,
+#   并让 award_kill 拿到一个假 sender。受害者查不到 = 这一行根本不存在 ⇒ 不记;杀手查不到 = 与「无归因」同档(0)。
+	if victim_role < 0:
+		return
+	if killer_role < 0:
+		killer_role = 0
 	var v := _stat_entry(victim_role)
 	v["deaths"] = int(v["deaths"]) + 1
 	if killer_role == 0:

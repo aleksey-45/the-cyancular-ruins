@@ -29,8 +29,8 @@ func _on_sub_destroyed(sub: Vector2i, _pre_hp: int, owner: Node) -> void:
 		_dirty_chunks[CollisionBuilder.chunk_of(Vector2i(sub.x / 4, sub.y / 4))] = true
 	_rpc_all_ext("sub_destroyed", [sub])
 	if time_economy != null:
-		var role := _role_of_node(owner)
-		if role != 0:
+		var role := _role_of(owner)   # 查不到 = -1(不是 0:0 是「无队伍/无归因」的合法值)
+		if role >= 0:
 			time_economy.award_blocks(role, 1)
 
 
@@ -90,7 +90,9 @@ func _replay_hurt_rect(bullet: BulletBase, p: Node2D) -> Rect2:
 	var fallback: Rect2 = p.hurt_rect() if p.has_method("hurt_rect") else HitShape.hurt_rect_of(p)
 	var shooter_role := _role_of(bullet.shooter)
 	var victim_role := _role_of(p)
-	if shooter_role == 0 or victim_role == 0 or not peer_by_role.has(shooter_role):
+# ★ 无效 role 的安全阀只有这一处,且判据必须是 `< 0`(_role_of 的哨兵)—— 原写 `== 0` 时它恒假、纯死代码,
+# 真正挡住的只有下一行的 peer_by_role.has()。AI 补位没有 peer(靠 has 挡),非玩家射手才是这里挡的那一档。
+	if shooter_role < 0 or victim_role < 0 or not peer_by_role.has(shooter_role):
 		return fallback
 	var st := int(_client_snap_tick.get(shooter_role, 0))
 	if st <= 0:
@@ -209,13 +211,8 @@ func _broadcast_beam_fired(shooter_role: int, rep: Dictionary) -> void:
 # 光束直击:服务器结算后把 X 标记(hit_confirm)发给射手本人 —— 与子弹同链路;爆炸 AoE 不发(伤害方不明确)。
 
 func notify_direct_hit(shooter: Node, victim: Node) -> void:
-	var shooter_role := -1
-	var victim_role := -1
-	for role in players:
-		if players[role] == shooter:
-			shooter_role = int(role)
-		if players[role] == victim:
-			victim_role = int(role)
+	var shooter_role := _role_of(shooter)
+	var victim_role := _role_of(victim)
 	if shooter_role < 0 or victim_role < 0 or shooter_role == victim_role:
 		return
 # ★ 判活走 NetBus.is_peer_live(读 ENet peer 自己的 state),不是 get_peers():后者滞后,挡不住往已拆掉的 peer 发定向包(那条 channel 0 错误)。
@@ -231,12 +228,8 @@ func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, _victim_role: int) 
 
 		victim.take_hit(bullet.global_position, bullet.hit_damage, false, bullet.hit_impact)
 
-	var shooter_role := 0
-	for r in players:
-		if players[r] == bullet.shooter:
-			shooter_role = int(r)
-			break
-	if shooter_role != 0 and peer_by_role.has(shooter_role) \
+	var shooter_role := _role_of(bullet.shooter)
+	if shooter_role >= 0 and peer_by_role.has(shooter_role) \
 			and NetBus.is_peer_live(peer_by_role[shooter_role]):
 		NetBusExt.rpc_id(peer_by_role[shooter_role], "hit_confirm", shooter_role, _victim_role)
 	bullet.queue_free()
@@ -244,6 +237,9 @@ func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, _victim_role: int) 
 # 玩家受击反馈:实际扣血后广播 hit_event;客户端按 victim_role 分支(自己 → 白闪/击退,对手 → 闪烁)。bind(role) 的参数追加在信号参数之后。
 
 func _on_player_hit(source_pos: Vector2, damage: int, cause: String, role: int) -> void:
+# ★ 查不到的 role 是 -1(_role_of 的哨兵):放进去会让 _stat_entry(-1) 造出一行假统计(role=-1 不进任何名单)。
+	if role < 0:
+		return
 # ★ 客户端已本地预测的伤害(落水窒息,cause="water")不回声:两端跑同一份 _tick_underwater,再广播 hit_event 会让客户端二次应用。
 #   这也顺带排除"无攻击者"的来源进 dealt/taken 统计(窒息本来就没有 attacker)。判据与单一来源见 player.gd 的溺水调用。
 	if cause == "water":
