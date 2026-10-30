@@ -7,7 +7,7 @@ extends SceneTree
 # 变异验证:把 is_duel 分支对调 ⇒ ① 红(1v1 等待中取不到 players[0]);roster_of 局中不读冻结名单 ⇒ ②④ 红。
 # 跑法:"$GODOT" --headless --path . -s res://tests/smoke/room_view_smoke.gd;通过 = ROOM VIEW OK(n 条断言)。
 
-const EXPECTED_CHECKS := 4
+const EXPECTED_CHECKS := 7
 
 var _fails: Array[String] = []
 var _checks := 0
@@ -43,11 +43,34 @@ func _initialize() -> void:
 	_chk(str(r4["host"]) == "B" and (r4["names"] as Array) == ["A", "B"],
 			"大乱斗局中:房主按 host_role 查冻结名单(实得 %s)" % str(r4["host"]))
 
+	# ⑤ 3v3 分组(S-09:从 LobbyRooms 挪进 RoomTypes.static 后的纯函数)
+	var room: RoomTypes.Room = RoomTypes.Room.new()
+	room.team_of = {1: 1, 2: 2, 3: 1, 6: 2}
+	var bt := RoomTypes.by_team(room)
+	_chk((bt[1] as Array) == [1, 3] and (bt[2] as Array) == [2, 6],
+			"RoomTypes.by_team 按队号分组(实得 %s)" % str(bt))
+
+	# ⑥ 满员判据:4v2 也算 6 人,但不是 3v3
+	_chk(RoomTypes.team_ready({1: [1, 2, 3], 2: [4, 5, 6]})
+			and not RoomTypes.team_ready({1: [1, 2, 3, 4], 2: [5, 6]}),
+			"team_ready 只认 3+3(4v2 不算满员)")
+
+	# ⑦ 最小空闲号(空洞复用) + 可加入 + 三档人数(字符串键)
+	var cnt_room: RoomTypes.Room = RoomTypes.Room.new()
+	cnt_room.player_role = {10: 1, 11: 2, 12: 6, 13: 3}
+	cnt_room.team_of = {1: 1, 2: 2, 6: 1, 3: 0}
+	var cts := RoomTypes.team_counts_of(cnt_room)
+	_chk(RoomTypes.team_next_role([1, 3, 4]) == 2
+			and not RoomTypes.team_can_join({1: [1, 2, 3], 2: []}, 1)
+			and RoomTypes.team_can_join({1: [1], 2: []}, 1)
+			and cts["1"] == 2 and cts["2"] == 1 and cts["0"] == 1,
+			"最小空闲号/可加入/三档人数(实得 %s)" % str(cts))
+
 	# 判词:计数闸(条数不符也红)
 	if _checks != EXPECTED_CHECKS:
 		_fails.append("★ 实跑 %d 条断言,与 EXPECTED_CHECKS=%d 对不上(有断言被静默跳过?)" % [_checks, EXPECTED_CHECKS])
 	if _fails.is_empty():
-		print("ROOM VIEW OK(%d 条断言):1v1 等待/局中 · 大乱斗等待/局中(房主+名单单一来源)" % _checks)
+		print("ROOM VIEW OK(%d 条断言):房主+名单单一来源 · 3v3 纯判据(分组/满员/最小空闲号/三档人数)" % _checks)
 		quit(0)
 	else:
 		for f in _fails:

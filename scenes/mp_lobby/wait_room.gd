@@ -160,7 +160,7 @@ func _team_of_role(state: Dictionary, role: int) -> int:
 	return 0
 
 
-# 两队各满(= 3v3 的开局闸门,与 LobbyRooms.team_ready 同义)。★ 分母引 team_size 而不是写 "3":容量只有一个真值来源,写死的话 TEAM_SIZE 一改这行就撒谎且不报错。
+# 两队各满(= 3v3 的开局闸门,与 RoomTypes.team_ready 同义(S-09 后判据搬去 RoomTypes))。★ 分母引 team_size 而不是写 "3":容量只有一个真值来源,写死的话 TEAM_SIZE 一改这行就撒谎且不报错。
 func _both_teams_full(state: Dictionary, size: int) -> bool:
 	var counts := {1: 0, 2: 0}
 	for p in state.get("players", []):

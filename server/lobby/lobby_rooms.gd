@@ -51,24 +51,8 @@ var _peer_names: Dictionary:
 		return _registry.peer_names
 
 
-# ── 3v3 的纯判据(静态:-s 可测;RPC handler 与 RoomManager 都调它们,判据只有这一份)── 入参形状统一是 {1: [role, …], 2: [role, …]}。──
-
-# 两队是否都满员(满 6 人才允许开局)。★ 4v2 也算 6 人,但那不是 3v3。
-static func team_ready(by_team: Dictionary, size: int = TEAM_SIZE) -> bool:
-	return (by_team.get(1, []) as Array).size() == size \
-			and (by_team.get(2, []) as Array).size() == size
-
-
-static func team_can_join(by_team: Dictionary, team: int, size: int = TEAM_SIZE) -> bool:
-	return (by_team.get(team, []) as Array).size() < size
-
-# 最小空闲 role 号(有人退房留下的空洞会被复用)。★ 不能写成「人数 + 1」:那是「编号恒连续」的假设 —— 房里有 {1,3} 时按人数推会算出 3,撞上仍在房里的高号玩家、同一个 role 双份占用。
-static func team_next_role(used_roles: Array) -> int:
-	var role := 1
-	while used_roles.has(role):
-		role += 1
-	return role
-
+# ── 3v3 的纯判据已挪到 `RoomTypes` 的 static(2026-10-30 S-09):本类是 Node 且引 NetBus,写在这儿的
+#   "静态:-s 可测"是假话。本类只保留对外公开口 `team_room_ready`(RoomManager / team_match_probe 调)。──
 
 func _enter_tree() -> void:
 	NetBus.room_create_requested.connect(create_room)
@@ -462,19 +446,10 @@ func royale_free_roles(rr: RoomTypes.Room, count: int) -> Array:
 func _team_of(tr: RoomTypes.Room, role: int) -> int:
 	return int(tr.team_of.get(role, 0))
 
-# {队号: [role, …]} —— 判据的入参形状(单一来源,别在 handler 里另算一遍)。
-func _by_team(tr: RoomTypes.Room) -> Dictionary:
-	var out := {1: [], 2: []}
-	for role in tr.team_of:
-		var t := int(tr.team_of[role])
-		if out.has(t):
-			(out[t] as Array).append(int(role))
-	return out
-
-
-# 这个房能不能开局(RoomManager.team_start 调;对外的公开口 —— 别让它去读 _by_team)。
+# 这个房能不能开局(RoomManager.team_start / team_match_probe 调;对外的公开口)。
+# ★ 判据本体在 RoomTypes.team_room_ready(纯函数,`-s` 可测)。
 func team_room_ready(tr: RoomTypes.Room) -> bool:
-	return team_ready(_by_team(tr))
+	return RoomTypes.team_room_ready(tr)
 
 
 func team_room_of(caller: int) -> RoomTypes.Room:
@@ -542,7 +517,7 @@ func team_join(caller: int, code: String, invite: String, beta: bool) -> void:
 		NetBus.reply(caller, "server_message", "邀请码错误")
 		return
 # role = 最小空闲号(与 royale 同款:不重排,有人退会留空洞 → 队伍表必须显式下发)。判据在 team_next_role(按人数推的写法在「有人退过」的房里必错)。
-	var role := team_next_role(tr.player_role.values())
+	var role := RoomTypes.team_next_role(tr.player_role.values())
 	tr.players.append(caller)
 	tr.player_role[caller] = role
 # ★ 进房不自动分队:3v3 的规则是玩家自己选边(用户裁定)。未选边 = team_of 里没有该 role,等待室会把他列在「未选边」那一档。
@@ -562,8 +537,8 @@ func team_pick(caller: int, team: int) -> void:
 	var role := int(tr.player_role.get(caller, 0))
 	if role == 0:
 		return
-	var by_team := _by_team(tr)
-	if not team_can_join(by_team, team):
+	var by_team := RoomTypes.by_team(tr)
+	if not RoomTypes.team_can_join(by_team, team, TEAM_SIZE):
 		NetBus.reply(caller, "server_message", "该队已满 3 人")
 		return
 	tr.team_of[role] = team

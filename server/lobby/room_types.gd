@@ -48,6 +48,55 @@ class Room:
 		return mode == ModeDefs.MODE_TEAM
 
 
+# ── 3v3 的纯判据(2026-10-30 S-09:从 LobbyRooms 挪来;本类纯 RefCounted ⇒ `-s` 可测)──
+# 入参形状统一是 `{1: [role, …], 2: [role, …]}`(由 by_team 产出,单一来源)。
+# ★ 原注释写「静态:-s 可测」但宿主是 `LobbyRooms(Node,引 NetBus)` ⇒ 那句断言根本不成立;挪到这里才成立。
+
+# 两队是否都满员(满 6 人才允许开局)。★ 4v2 也算 6 人,但那不是 3v3。
+static func team_ready(by_team: Dictionary, size: int = ModeDefs.TEAM_SIZE) -> bool:
+	return (by_team.get(1, []) as Array).size() == size \
+			and (by_team.get(2, []) as Array).size() == size
+
+
+static func team_can_join(by_team: Dictionary, team: int, size: int = ModeDefs.TEAM_SIZE) -> bool:
+	return (by_team.get(team, []) as Array).size() < size
+
+
+# 最小空闲 role 号(有人退房留下的空洞会被复用)。★ 不能写成「人数 + 1」:那是「编号恒连续」的假设 ——
+# 房里有 {1,3} 时按人数推会算出 3,撞上仍在房里的高号玩家、同一个 role 双份占用。
+static func team_next_role(used_roles: Array) -> int:
+	var role := 1
+	while used_roles.has(role):
+		role += 1
+	return role
+
+
+# {队号: [role, …]} —— 判据的入参形状(单一来源,别在 handler 里另算一遍)。
+static func by_team(room: Room) -> Dictionary:
+	var out := {1: [], 2: []}
+	for role in room.team_of:
+		var t := int(room.team_of[role])
+		if out.has(t):
+			(out[t] as Array).append(int(role))
+	return out
+
+
+# 这个房能不能开局(RoomManager.team_start / team_match_probe 都问它)。
+static func team_room_ready(room: Room) -> bool:
+	return team_ready(by_team(room))
+
+
+# 列表载荷里的三档人数。★ 键**必须**是字符串:客户端 `room_list.gd` 按 `"1"/"2"/"0"` 读(读取契约;
+# RPC 的 Variant 编码保不住 int 键)—— 从 room_registry 挪来的同一份实现。
+static func team_counts_of(room: Room) -> Dictionary:
+	var counts := {"1": 0, "2": 0, "0": 0}
+	for role in room.player_role.values():
+		var t := int(room.team_of.get(int(role), 0))
+		var k := str(t if t == 1 or t == 2 else 0)
+		counts[k] = int(counts[k]) + 1
+	return counts
+
+
 # 日志里的房型文案(拆除 / 超时清理 / 房主转移共用):合并前这三处各写一遍三元表达式。
 static func kind_text(room: Room) -> String:
 	match room.mode:

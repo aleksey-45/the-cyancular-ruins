@@ -519,3 +519,19 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 - ★ 同批修掉 `rejoin_probe` 的**已知红**：根因 = 2026-10-24 起 1v1 改由房主点「开始游戏」，而探针的 `rejoin_watcher` 走生产入口却没人点 ⇒ 房永远 `players=2 port=0`。修法 = c1 以 1s 节拍代发同一 `pvp_start` RPC（1 人时服务器会拒，重试到进局为止）。修后 `REJOIN PROBE: ALL-OK(5)`。
 
 **全批复跑(修 BUG-25 后)**:`pvp_match_smoke` OK · `rejoin_probe` **OK(5)**(已知红已修)· `royale_soak` OK(4/4) · `royale_role_cap` OK(9/9) · `team_match_probe` FAIL(c1 观察到 MATCH_OVER;c2~c6 的引擎日志显示它们**都在跑**(相位=5、t≈673s、比分 1:5/2:9)——是机器人把比赛打完了,而相⑤还在等自杀/离场 ⇒ 该支的既有边界「3v3 不可当可信端到端守卫」(§一)复现,不是崩溃/协议回归;改进方向 = 相⑤ 前暂停或降低 bot 攻击性,属探针设计,不在本轮范围)。★ 全批**无 gate3 失败、无残留连累**(BUG-25 修法生效)。
+
+## 三十八、大重构第三刀：S-09 第一片（3v3 纯判据迁入 RoomTypes，2026-10-30，档 2）
+
+**触发**：用户「提交后继续」——按剩余清单开 S-09（`lobby_rooms.gd` 787 行职责超载）。
+
+**改了什么（第一片）**：
+- `LobbyRooms` 里那组 3v3 纯判据（`team_ready` / `team_can_join` / `team_next_role` / `_by_team` / `team_room_ready` / `room_registry.team_counts_of`）全部迁进 `RoomTypes.static`（纯 RefCounted，只依赖 `ModeDefs`）。
+  ★ 关键事实：原注释自称「静态:-s 可测」，但宿主 `LobbyRooms` 是 Node 且引 `NetBus` ⇒ **那句断言根本不成立**；迁进 `RoomTypes` 后才真的可被 `-s` 驱动。
+- `LobbyRooms.team_room_ready()` 保留为**对外公开口**（`RoomManager.team_start` 与 `team_match_probe` 调），体内只委托 `RoomTypes.team_room_ready`；`lobby_rooms` 内部的两处调用点改为 `RoomTypes.*`。
+- `room_registry` 的 `team_counts_of` 删除本地实现，改调 `RoomTypes.team_counts_of`（字符串键协议口径原样）。
+- `wait_room.gd` 注释同步（`LobbyRooms.team_ready` → `RoomTypes.team_ready`）。
+
+**守卫**：`room_view_smoke` 4→**7 条**（新增 ⑤`by_team` 分组 ⑥`team_ready` 只认 3+3(4v2 不算)⑦最小空闲号/可加入/三档人数字符串键）。默认批 132→**135 条闸断言**。
+**验证**：`ROOM VIEW OK(7 条断言)` · `SMOKE_ROOM_SWEEP OK(10 项检查)` · `ALLSCRIPT: OK(201)` · `RUN_ALL OK(22 runs / 135 gated-assertions)`。
+
+**边界**：S-09 剩余四片未做 —— ① `new_token`/`is_peer_online` 迁 `RejoinRegistry`/`NetBus`；② 面板读模型（`host_name_of`/`room_for_panel`/`display_roster_of`）迁 `lobby_snapshot`；③ 三份 `_flush_*_state` 迁 `wait_room_broadcast.gd`；④ `_release_port_later` 迁 `WorkerLauncher`（需改 `extends Node`，端口生命周期面，须同批改 `room_sweep_lint` 白名单）。

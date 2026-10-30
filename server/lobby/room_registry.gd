@@ -122,16 +122,9 @@ func list_payload(mode: String, token: String = "", rejoin: RejoinRegistry = nul
 		elif r.is_team():
 			row["max_players"] = r.max_players
 			row["beta"] = r.beta
-			row["team_counts"] = team_counts_of(r)
+			row["team_counts"] = RoomTypes.team_counts_of(r)
 		arr.append(row)
 	return arr
 
 
-# 3v3 三档人数:{1: A 队, 2: B 队, 0: 未选边}。★ 键**必须**是字符串:客户端 `room_list.gd` 按 `"1"/"2"/"0"` 读(这是读取契约,RPC 的 Variant 编码保不住 int 键)。
-func team_counts_of(room: RoomTypes.Room) -> Dictionary:
-	var counts := {"1": 0, "2": 0, "0": 0}
-	for role in room.player_role.values():
-		var t := int(room.team_of.get(int(role), 0))
-		var k := str(t if t == 1 or t == 2 else 0)
-		counts[k] = int(counts[k]) + 1
-	return counts
+# 3v3 三档人数:{1: A 队, 2: B 队, 0: 未选边} —— 实现已挪到 `RoomTypes.team_counts_of`(纯函数,`-s` 可测;2026-10-30 S-09)
