@@ -16,7 +16,7 @@
 - 掉线判据:整队走光才终局(`TeamHost.mark_disconnected`)。`server_main._expire_graces` 两处判据都必须带 `_team_mode`:分派 `GraceWindow.expire_action(_royale, _team_mode)` 必须与 `ACTION_REMOVE` 比较;末尾全员走光退出是 `(_royale or _team_mode) and …`。
 - 3v3 有 K 键自杀:`TeamHost.request_suicide_role`;闸在 `server_main._on_suicide_request` 首行 `if not (_royale or _team_mode) or _host == null: return`;覆写必须留在 `TeamHost`。
 - 3v3 满 6 人才开:超时梯 `_understaffed_wait > 30.0` → 打印超时 → `quit(0)`;满员判据 `_claims.size() >= _team_of_role.size()`;大厅闸门 `LobbyRooms.team_ready` / `team_room_ready`。
-- 分队碰撞层:队 B 身体层 = `TeamHost.TEAM_ENEMY_LAYER := 16`(不许写死);副本幽灵体 `mask` 恒 0,`layer` 按代表玩家的队;服务端 `TeamHost._apply_team_layers` 与客户端 `team_game._apply_team_collision` 逐值对齐。掩码必须保留地形(1)与敌人(4);未知队号客户端落层 2、服务端什么都不配;副本懒建,`_ensure_replica` 里要再刷一遍。
+- 分队碰撞层:队 B 身体层 = `TeamHost.TEAM_ENEMY_LAYER := 16`(不许写死);副本幽灵体 `mask` 恒 0,`layer` 按代表玩家的队;服务端 `TeamHost._apply_team_layers` 与客户端 `team_game._apply_team_collision` 逐值对齐。掩码必须保留地形(1)与敌人(4);未知队号客户端落层 2、服务端什么都不配;副本懒建:`ReplicaSet.ensure`(S-18 后,`scenes/mp_client/replica_set.gd`)建完在 `ensure` 末尾自己 `refresh_labels()`,宿主不用再刷一遍。
 - 平局:`match_winner == 0` 在 3v3 可达(两队都走光)。`ui/hud/team_hud.gd` 念「平 局」;`pvp_hud.gd` 的 1v1 兜底不能照抄到 3v3。
 - 输赢文案由 `set_my_team()` 驱动:`_apply_teams` 在队伍表到达后必须调 `_hud.set_my_team(_team_of_role(PvpSession.role))`;队号只能从队伍表读,不是 role。
 - 队色 = `modulate = 队色 / 本体主色`(`_apply_tint` 的 `color_override` 唯一参数);`BODY_BASE_COLOR = #639BFF`(`player.png` 的不透明众数色);队 1 的比值恰为 (1,1,1)(`C_TEAM_A` 就是它),队 2 有分量 > 1。换 sprite 素材要重测 `BODY_BASE_COLOR`。3v3 颜色不可自选(2026-10-24 起):`_apply_peer_hues_or_team` 覆写基类钩子、只消费载荷里的 `teams`;自己那具也走队色。

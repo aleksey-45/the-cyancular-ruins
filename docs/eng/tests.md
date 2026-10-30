@@ -106,7 +106,7 @@ bash tests/smoke/<名>.sh
 | `pickup_try` | [`server/match/match_ground.gd`](../../server/match/match_ground.gd) | `none` / `range` / `denied` / `taken` 四种成因 |
 | `pickup_add` / `pickup_remove` / `pickup_skip` | [`scenes/mp_client/pickup_sync.gd`](../../scenes/mp_client/pickup_sync.gd) | 客户端是否建出那把枪、早退原因 |
 | `tile_cell` / `tile_sub` | [`scenes/mp_client/tile_sync.gd`](../../scenes/mp_client/tile_sync.gd) | 拆砖事件是否到达、是否静默补态 |
-| `reconnect_begin` / `reconnect_resumed` | [`scenes/pvp_match_client.gd`](../../scenes/pvp_match_client.gd) | 局内自动重连的时间窗 |
+| `reconnect_begin` / `reconnect_resumed` | [`scenes/mp_client/reconnect_driver.gd`](../../scenes/mp_client/reconnect_driver.gd) | 局内自动重连的时间窗 |
 
 - **边界**:① `t` 是各进程自己的单调时钟,跨进程只能按事件对齐、不能相减;② 只记事件、不采样逐帧状态;③ 写盘失败只 `push_warning`、不影响对局;④ 诊断事件**不进任何断言**,「日志里没有」≠「没发生」(关闭时一行都没有)。
 

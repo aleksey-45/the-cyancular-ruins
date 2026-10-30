@@ -342,16 +342,15 @@ func _proto_matches(caller: int, proto: int, stage: String) -> bool:
 
 
 # 宽限期内重新认领 role(断线重连)。三条拒绝条件一条都不能少:没开局 / 该 role 不在宽限期 / token 不匹配;任何一条不满足都踢连接,不能让它静默留在局里收快照。
+# ★ 判据收在 ReclaimRules(纯逻辑,`-s` 冒烟 reclaim_rules_smoke 钉住);本函数只负责**取四个布尔 + 执行行为**(踢人 / 换源 / 复位),
+#   别在这里再写一遍 if/elif 链 —— 抄两遍就会有一条分支静默漂掉,而这条路径零真链路覆盖(路径乙的 rejoin_probe 走的是回大厅重连)。
 func _on_reclaim(caller: int, role: int, token: String, proto: int) -> void:
 	if not _proto_matches(caller, proto, "reclaim"):
 		return
-	var why := ""
-	if not _match_started or _host == null:
-		why = "尚未开局"
-	elif not _grace.has(role):
-		why = "该 role 不在宽限期"
-	elif str(_tokens.get(role, "")) != token or token == "":
-		why = "令牌不匹配"
+	var host_ready := _host != null
+	var role_in_grace := _grace.has(role)
+	var token_ok := ReclaimRules.token_matches(str(_tokens.get(role, "")), token)
+	var why := ReclaimRules.reject_reason(_match_started, host_ready, role_in_grace, token_ok)
 	if why != "":
 		print("worker: 拒绝 reclaim(role=%d,peer=%d):%s" % [role, caller, why])
 		multiplayer.multiplayer_peer.disconnect_peer(caller)

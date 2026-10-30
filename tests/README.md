@@ -26,6 +26,7 @@
 > **2026-10-30 结构重构第一刀（S-13①）**:`server_panel.gd` 的日志 tail 抽成纯逻辑 `server/gui/panel_log_tail.gd`(+`panel_log_tail_smoke` 6 条)⇒ **默认批 = 21 支 / 128 条闸断言**（`RUN_ALL OK(21 runs / 128 gated-assertions)`；`EXPECTED_SCRIPTS` 200）。
 > **2026-10-30 结构重构第二刀（S-10/S-11/S-12）**:删 `ModeRoomRules` 的 8 个零调用函数与 `Room.options` 死字段;房主/名单收成 `ServerStatus.host_and_roster` 单一来源(+`room_view_smoke` 4 条)⇒ **默认批 = 22 支 / 132 条闸断言**（`RUN_ALL OK(22 runs / 132 gated-assertions)`；`EXPECTED_SCRIPTS` 201）。
 > **2026-10-30 结构重构第三刀(S-09 第一片)**：3v3 纯判据(`team_ready`/`team_can_join`/`team_next_role`/`by_team`/`team_room_ready`/`team_counts_of`)从 `LobbyRooms`(Node、引 NetBus、**不可 `-s` 测**)挪进 `RoomTypes.static`;`room_view_smoke` 扩到 **7 条** ⇒ **默认批 = 22 支 / 135 条闸断言**(`RUN_ALL OK(22 runs / 135 gated-assertions)`)。
+> **2026-10-30 守卫缺口批（01 审查 §9 G-01/G-02/G-04/G-05）**：新增 `grace_dispatch_smoke`(6，宽限到点三态/边界/排序) · `reclaim_rules_smoke`(5，重连拒绝判据，`_on_reclaim` 改用纯函数 `ReclaimRules`) · `rollback_fidelity_probe` 补条数闸(33，实测值) ⇒ **默认批 = 24 支 / 179 条闸断言**（`RUN_ALL OK(24 runs / 179 gated-assertions)`；`EXPECTED_SCRIPTS` 201→**208**，含并行批 4 支与守卫批 3 支）。G-04 只改真链路客户端 `pvp_match_smoke.gd`（`st` 改真实最近快照 tick；**不在默认批**），G-03（房间/端口回收梯）本轮未做。
 > ★ **删了什么 = 欠了什么**：删除清单、覆盖缺口与翻案条件登记在 [`docs/eng/registered-debt.md`](../docs/eng/registered-debt.md) §九。
 > ★ 仓规未变：**一条判定类别 = 一条守卫**、**新守卫必须自带条数闸**、**先答三问再写**（[`docs/eng/test-economy.md`](../docs/eng/test-economy.md)）。
 
@@ -33,7 +34,7 @@
 
 一个 stem 的 `.gd` / `.tscn` / `.sh` 伴随文件同桶。
 
-- `smoke/` —— `-s` 冒烟：`net_wire`（线格式）/ `input_queue`（输入队列）/ `water_model`（水判定查询）/ `hit_shape`（命中几何）/ `tile_break_unit`（最小破坏单位）/ `lag_history`（服务器命中回放历史）/ `pvp_match_smoke.gd`（**真链路客户端**，只是被 `pvp_match_smoke.sh` 拉起，不走 `-s`）。
+- `smoke/` —— `-s` 冒烟：`net_wire`（线格式）/ `input_queue`（输入队列）/ `water_model`（水判定查询）/ `hit_shape`（命中几何）/ `tile_break_unit`（最小破坏单位）/ `lag_history`（服务器命中回放历史）/ `grace_dispatch`（宽限到点分派三态）/ `reclaim_rules`（局内重连拒绝判据）/ `pvp_match_smoke.gd`（**真链路客户端**，只是被 `pvp_match_smoke.sh` 拉起，不走 `-s`）。
 - `probe/` —— 单点诊断与真链路探针：
   - **默认批 7 支**：`allscript_probe.tscn` · `path_integrity_probe.gd`（无 `.tscn`，按 `-s` 跑）· `snapshot_size_probe.tscn` · `rollback_fidelity_probe.tscn` · `net_tile_fx_probe.tscn`（联机拆砖粒子表现层）· `bullet_sweep_probe.tscn`（高速弹扫掠命中）· `gun_ammo_independence_probe.tscn`（枪械残弹独立性：拾取替换 / 倒地保留不得串账）；
   - **真链路（默认批排除）**：`rejoin_probe.tscn` / `royale_soak_probe.tscn` / `team_match_probe.tscn` + 对应 `.sh`。
@@ -61,8 +62,8 @@
   `smoke/pvp_match_smoke.gd` + `probe/{rejoin,royale_soak,team_match}_probe.tscn`（它们仍在枚举集里，清掉规则会让承重安全检查 FATAL 或让它们悄悄占 7777）。**枚举 / 排除的实时数字以 `--list` 为准。**
 - **入口自己会红的九种情形**：glob 空转 / 过期排除项 / `probe/*.gd` 既没跑也没排除 / 默认批里出现开端口或拉子进程的支 / 新红 / 基线条目过期 / 基线路径不在候选面 / 基线文件本身写错 / 某支声明了 `EXPECTED_CHECKS` 却没用于比较。
 - ★★ **单支 `OK` 只证明“没有失败输出”，不证明“每条断言都跑过”**（权威：[`lib/probe_base.gd`](lib/probe_base.gd) 文件头）。`--list` 的 `GATE` 栏是 `-` 就表示那一支**没有条数闸**；带闸的支与闸值以 `GATE` 栏为准。
-  - 现有带 `EXPECTED_CHECKS` 的支：`net_wire_smoke`(7) · `input_queue_smoke`(4) · `snapshot_size_probe`(9) · `water_model_smoke`(13) · `hit_shape_smoke`(14) · `tile_break_unit_smoke`(11) · `net_tile_fx_probe`(9) · `bullet_sweep_probe`(6) · `lag_history_smoke`(8) · `net_metrics_smoke`(9) · `prediction_contact_smoke`(7) · `mvp_choice_smoke`(6) · `net_argv_port_smoke`(5) · `prediction_rollback_ring_smoke`(3) · `gun_ammo_independence_probe`(8) · `resync_substate_smoke`(5) · `rejoin_mode_smoke`(4) · `panel_log_tail_smoke`(6) · `room_view_smoke`(7)。**`gated-assertions` 的实时数以 `--list` 为准。**
-  - ★ `allscript_probe` 有自己的条数闸 `EXPECTED_SCRIPTS`（当前 **201**；`res://docs` 已进 `SKIP_DIRS`，文档目录里的临时审计驱动不计入编译面），但 `run_all` 的 `gate_of()` 只认 `EXPECTED_CHECKS` ⇒ 它的 `GATE` 栏是 `-`。**别把 `-` 读成“没有闸”**。
+  - 现有带 `EXPECTED_CHECKS` 的支：`net_wire_smoke`(7) · `input_queue_smoke`(4) · `snapshot_size_probe`(9) · `water_model_smoke`(13) · `hit_shape_smoke`(14) · `tile_break_unit_smoke`(11) · `net_tile_fx_probe`(9) · `bullet_sweep_probe`(6) · `lag_history_smoke`(8) · `net_metrics_smoke`(9) · `prediction_contact_smoke`(7) · `mvp_choice_smoke`(6) · `net_argv_port_smoke`(5) · `prediction_rollback_ring_smoke`(3) · `gun_ammo_independence_probe`(8) · `resync_substate_smoke`(5) · `rejoin_mode_smoke`(4) · `panel_log_tail_smoke`(6) · `room_view_smoke`(7) · `grace_dispatch_smoke`(6) · `reclaim_rules_smoke`(5) · `rollback_fidelity_probe`(33)。**`gated-assertions` 的实时数以 `--list` 为准。**
+  - ★ `allscript_probe` 有自己的条数闸 `EXPECTED_SCRIPTS`（当前 **208**；`res://docs` 已进 `SKIP_DIRS`，文档目录里的临时审计驱动不计入编译面），但 `run_all` 的 `gate_of()` 只认 `EXPECTED_CHECKS` ⇒ 它的 `GATE` 栏是 `-`。**别把 `-` 读成“没有闸”**。
 - ★★ **已知红基线 [`known_red.txt`](known_red.txt)**：每行 `路径 类别 理由…`（理由必填；`#` 是注释；空行 / 类别非法 / 路径不存在 / 同一路径两行都**红**）。基线内的红 = `KNOWN-RED`：不进新红计数、但永远印出文件名，全批判词改 `OK-WITH-KNOWN-RED`。**当前基线为空（0 条）**；加行**不是**让检查变绿的手段，修好了要删行。
 
 ### `run_real.sh` —— 真链路批

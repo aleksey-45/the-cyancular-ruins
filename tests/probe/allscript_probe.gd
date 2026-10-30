@@ -18,12 +18,12 @@ const SKIP_DIRS := ["res://.godot", "res://builds", "res://releases", "res://gam
 #
 # `EXPECTED_SCRIPTS` 的数法:数的是"`res://` 下参与编译面的 `.gd` 个数" ——
 # 排除名字以 `.` 开头的目录、`SKIP_DIRS` 各项、以及 `*.gd.remap`(见 `_collect`)。
-# 复算两条(必须同时成立):`git ls-files '*.gd' | wc -l` 等于本常量;
+# 复算两条(必须同时成立):`git ls-files '*.gd'` **减去 SKIP_DIRS 命中的** 等于本常量(2026-10-30:215 tracked / 208 实扫);
 # `git ls-files --others --exclude-standard '*.gd'` = 0(工作树没有未跟踪脚本)。
 # 改这个常量是"覆盖变了得有人过目",不是"让闸变绿";历次取值见 git log。
 # ★ 2026-10-26:`res://docs` 进 SKIP_DIRS —— docs/ 是文档目录,出现 `.gd` 只可能是临时审计驱动
 #   (如 `docs/audit/*/_drivers/`),不属于编译面/导出面;不收它时这些草稿会让条数闸随机变红。
-const EXPECTED_SCRIPTS := 201   # 2026-10-30: 200 + room_view_smoke.gd(S-12 房主/名单单一来源)
+const EXPECTED_SCRIPTS := 208   # 2026-10-30: 201 + G-01/G-02 守卫批 3 支(reclaim_rules.gd / grace_dispatch_smoke.gd / reclaim_rules_smoke.gd) + 并行批 4 支(wait_room_broadcast / replica_set / input_uplink / reconnect_driver)
 
 var _fails: Array[String] = []
 var _total := 0

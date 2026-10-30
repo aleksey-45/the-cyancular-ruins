@@ -100,7 +100,7 @@ NetBus.rpc_id(peer, "snapshot_own",
 | 包 | 处理 | 丢弃规则 |
 |---|---|---|
 | 世界包 | `net_bus.snapshot_world` 解码后 emit 完整 `{tick, players}` → 三模式 `_on_snapshot_world` 只喂对手副本 | `tick <= 已应用 tick` ⇒ 丢（新的赢） |
-| 本人包 | `net_bus.snapshot_own` 解码后 emit 完整 `c2` → [`pvp_match_client.gd`](../../scenes/pvp_match_client.gd) `_on_snapshot_own` → `_rollback.on_authoritative(ack, c2)` | ① `ack > _input_seq` ⇒ 丢（跨纪元残留）；② `ack <= _acked` 由 [`prediction_rollback.gd`](../../core/net/prediction_rollback.gd) 挡 |
+| 本人包 | `net_bus.snapshot_own` 解码后 emit 完整 `c2` → [`pvp_match_client.gd`](../../scenes/pvp_match_client.gd) `_on_snapshot_own` → `_rollback.on_authoritative(ack, c2)` | ① `ack > seq`（判据在 `InputUplink.accept_ack`）⇒ 丢（跨纪元残留）；② `ack <= _acked` 由 [`prediction_rollback.gd`](../../core/net/prediction_rollback.gd) 挡 |
 
 `unreliable` 不保证顺序，"新的赢"是唯一正确的做法；丢弃不产生延迟累加。重连时 `NetBus.reset_snapshot_state()` 作废合并基准。
 
@@ -144,7 +144,7 @@ NetBus.rpc_id(peer, "snapshot_own",
 | 数据源 | 在哪 | 读数 |
 |---|---|---|
 | `snapshot_own.q` | 本人包 | 服务器侧已到达未消费的记录数 |
-| `_input_seq - _last_ack` | `pvp_match_client.gd` 的 `-- --netstat`（1Hz） | 未确认记录数（在途 + 在队） |
+| `InputUplink` 的 `seq - _last_ack`（S-17 后读数在 `core/net/input_uplink.gd`） | `pvp_match_client.gd` 的 `-- --netstat`（1Hz） | 未确认记录数（在途 + 在队） |
 | 服务端 `--netstat` / `--netstat-trace` | `input_intake.gd` | 队列长度 · 抖动上限 · 累计丢弃（1Hz / 前 600 tick 逐帧） |
 | `--diag` / `CYR_DIAG=1` | `NetDiag` | `snap_gap`（>150ms）、`snap_rx`、`snapshot_tx`、`queue`、`queue_drop` |
 

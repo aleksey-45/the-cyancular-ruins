@@ -52,7 +52,7 @@
 ## 4. ack 与时钟
 
 - 服务器在本人包回带 `ack_seq` + `q`；客户端只把它们喂 `PredictionRollback` 与 `--netstat` 读数，不据此调时钟。
-- 丢弃：`ack > _input_seq`（跨纪元残留）与 `ack <= _acked`（同纪元旧包）。
+- 丢弃：`ack > seq`（跨纪元残留;判据在 `InputUplink.accept_ack`）与 `ack <= _acked`（同纪元旧包）。
 - 上行不带客户端时间戳 / `tick_count`；没有"客户端领先服务器多少 tick"的参数。
 - 客户端没有播放时钟、没有时钟同步、没有速率纠偏；世界包 `tick` 只用于乱序丢弃。
 

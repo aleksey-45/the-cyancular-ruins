@@ -25,6 +25,9 @@ var _max_ack := -1
 var _ack_sane := false     # create:ack 已推进到 ≥30
 var _full_state_ok := false  # create:快照 c2 整态携带且 pos 与散字段一致
 var _start_sent := false   # create:1v1 开局改由房主点「开始游戏」(2026-10-24),本探针代按一次
+# 最近一次**成功解码并应用**的世界快照 tick(输入包 st 字段 = 命中回放的时间基准,见 match_combat._replay_hurt_rect)。
+# ★ 没有快照之前保持 0(协议 st=0 的既有口径);收到第一个世界包起就是真 tick —— 别写死 0(G-04)。
+var _last_snap_tick := 0
 
 func _ready() -> void:
 	var args := OS.get_cmdline_user_args()
@@ -79,6 +82,9 @@ func _on_pvp_room_state(state: Dictionary) -> void:
 
 func _on_snapshot_world(world: Dictionary) -> void:
 	_got_snapshot = true
+	# G-04:记下最近一个世界包的 tick —— 上行输入包的 `st`(命中回放时间基准)就是它。
+	#   没有快照前保持初值 0;此后每个世界包都会刷新(与真客户端 scenes/pvp_match_client.gd 同源)。
+	_last_snap_tick = int(world.get("tick", 0))
 	var players_snap: Dictionary = world.get("players", {})
 	var me: Dictionary = players_snap.get(str(PvpSession.role), {})
 	if not me.is_empty():
@@ -154,13 +160,16 @@ func _physics_process(_delta: float) -> void:
 			"released": released,
 			"winst": 0,
 			"aim": Vector2(1, 0),
-			# 两个只落位的扩展字段(本批无消费者);冒烟手工组包,给 0 即可。
-			"st": 0,
+			# ★ G-04:st = 最近一次成功解码的世界快照 tick(命中回放的时间基准);写死 0 会让真链路
+			#   跑在假基准上(match_combat 的 clampi(st - PLAYOUT_TICKS, ...) 被夹到 0)。没有快照前是 0。
+			#   ct(客户端物理帧号)仍是"只落位"字段,保持 0。
+			"st": _last_snap_tick,
 			"ct": 0,
 		}
 		# U1:30Hz 一包两条 tick 记录(流水线:上一 tick + 本 tick);服务器每 tick 消费一条。
 		if _frames % 2 == 0 and not _prev_rec.is_empty():
-			var pair := PacketInputSource.pack_pair(_prev_rec, rec, Vector2(1, 0), 0, 0)
+			# ★ 第 4 参 = 包级 `st`(pack_pair 以**参数**为准,不读 rec 里的 st);与真客户端同口径。
+			var pair := PacketInputSource.pack_pair(_prev_rec, rec, Vector2(1, 0), _last_snap_tick, 0)
 			NetBus.rpc_id(1, "send_input", NetCodec.encode_input(pair))
 		_prev_rec = rec
 	# 成功判定

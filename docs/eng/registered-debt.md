@@ -534,4 +534,28 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 **守卫**：`room_view_smoke` 4→**7 条**（新增 ⑤`by_team` 分组 ⑥`team_ready` 只认 3+3(4v2 不算)⑦最小空闲号/可加入/三档人数字符串键）。默认批 132→**135 条闸断言**。
 **验证**：`ROOM VIEW OK(7 条断言)` · `SMOKE_ROOM_SWEEP OK(10 项检查)` · `ALLSCRIPT: OK(201)` · `RUN_ALL OK(22 runs / 135 gated-assertions)`。
 
-**边界**：S-09 剩余四片未做 —— ① `new_token`/`is_peer_online` 迁 `RejoinRegistry`/`NetBus`；② 面板读模型（`host_name_of`/`room_for_panel`/`display_roster_of`）迁 `lobby_snapshot`；③ 三份 `_flush_*_state` 迁 `wait_room_broadcast.gd`；④ `_release_port_later` 迁 `WorkerLauncher`（需改 `extends Node`，端口生命周期面，须同批改 `room_sweep_lint` 白名单）。
+**后续三片（同日完成）**：
+- ② `RejoinRegistry.new_token()`（令牌本属凭据表）与 `NetBus.is_peer_online()`（判据 = `has_multiplayer_peer() and is_peer_live()`）：`lobby_rooms` / `room_manager` 的全部调用点改过去。
+- ③ 面板读模型（`host_name_of` / `room_for_panel` / `display_roster_of`）→ `LobbySnapshot.host_of / room_for_panel / roster_of`（只搬字段；`LobbyRooms` 新增只读公开口 `peer_names` / `registry`）；`server_panel` 调用点跟改。
+- ④ 三份 `_flush_{royale,pvp,team}_state` → 新 `server/lobby/wait_room_broadcast.gd`（`WaitRoomBroadcast.flush_*`，**保留** `call_deferred` + `await process_frame` 的时序约定与发送前再判开局）；`_release_port_later` → `WorkerLauncher.release_port_later(host, launcher, port, delay)`（本类仍 RefCounted，由大厅传 host 拿 SceneTree 定时器）；`room_sweep_lint` 的模式列表改为 `WorkerLauncher.release_port_later(`，白名单去掉 `_release_port_later`。
+- **结果**：`lobby_rooms.gd` 787 → **650 行**（审查目标 ≤400 未完全达到：剩余主体是 RPC handler 与拆除收口本身，再拆要动协议面/房间生命周期，属下一轮，已登记）。`SMOKE_ROOM_SWEEP OK(10 项)`。
+
+## 三十九、大重构第四/五刀 + B 组守卫（S-18 / S-17 / G-01·G-02·G-04·G-05，2026-10-30，档 2~3）
+
+**S-18（副本集合与快照消费去重）**：新增 `scenes/mp_client/replica_set.gd`（134 行，`ReplicaSet`，组合件 `bind(client, replicas, tint_of, on_created)`；API `ensure/remove/apply_world_snapshot/ensure_label/refresh_labels/follow`）。`royale_game.gd` 285→**201**、`team_game.gd` 372→**291**。逐字保留：`ReplicaP%d` 节点名、BUG-23 的 `visible = not downed`、BUG-19 的「先 `_time_fx_replica_rewind_off` 再 free」、tick 闸与 `_last_snap_tick` 写回、昵称兜底；`_replicas` 字段留在宿主（`team_match_watcher` 直读它）。
+**S-17（pvp_match_client 两刀）**：新增 `core/net/input_uplink.gd`（125 行；`begin_tick/submit/take_packet/accept_ack/reset_epoch/netstat_tick`）与 `scenes/mp_client/reconnect_driver.gd`（192 行；`bind/subscribe/recheck_disconnect/begin/retry/cancel/abort/on_resumed/on_exit_tree`）。宿主 1154→**942**。硬约束逐字保留：`seq` 只在 `reset_epoch` 归零、`winst` 每 tick 读一次即清、`_prev_tick_rec` 30Hz 两记录一包、ack 纪元、netstat 窗口、重试预算 2000/5000ms。三条信号改挂 RefCounted 驱动（宿主强持）。
+**B 组守卫**：
+- G-02 `tests/smoke/grace_dispatch_smoke.gd`（6 条，含 `expired()` 边界与 role 升序）+ 变异：`expire_action` 分派对调 ⇒ ①②③ 红。★ 附带发现：只对调两个常量的**值**不会红（断言比的是符号常量），已写进守卫注释。
+- G-01 `core/net/reclaim_rules.gd`（`reject_reason` + `token_matches`）+ `server_main._on_reclaim` 改为「4 布尔 → 纯函数」，三拒绝分支/文案/踢人逐字等价；`reclaim_rules_smoke` 5 条；变异：删 `role_in_grace` 分支 ⇒ ③红、`token_matches` 恒 true ⇒ ④红。
+- G-04 `pvp_match_smoke.gd`：`_last_snap_tick` 记真实快照 tick，`"st"` 与 `pack_pair` 第 4 参都传它（原注释「给 0 即可」已过期）。
+- G-05 `rollback_fidelity_probe.gd`：实测 33 条后补 `EXPECTED_CHECKS=33` + 计数打印（同配置两次稳定）；变异：删一个 `_check` ⇒ 条数闸红。`team_match_probe.MIN_CHECKS` 未动（需真链路实测）。
+- 同步：`EXPECTED_SCRIPTS` 201→**208**、`tests/README.md` 清单/总数、`check_naming` 绿。
+
+**验证（默认批）**：`GRACE DISPATCH OK(6)` · `RECLAIM RULES OK(5)` · `[fid] checks = 33` · `ALLSCRIPT: OK(208)` · `RUN_ALL OK(24 runs / 179 gated-assertions)`。
+
+**边界**：
+1. G-01 的行为面（踢人 / 换输入源 / `_ack_seq`/`_stepped_seq` 复位 / match_start 应答）与 G-02 的到点真动作（移出对局 / `quit(0)`）仍需真 worker 探针；本轮只把**判据**变可测。
+2. G-04 只到「真链路 smoke 传入真实 `st`」；回放窗口注入的两个断言未做。
+3. S-17 的三条信号改挂 RefCounted 驱动（宿主强持），等价性靠生命周期论证 + 真链路 smoke；真断线时刻的 reclaim 路径未单独实测。
+4. 仍**未做**的审查重构：S-03（net_bus 三职）、S-05（packet_input_source 四职）、S-14/S-15/S-16/S-19/S-21（中项）、S-13②③。其中 S-03/S-05 属协议/输入承重面，需真链路 + 逐条变异，建议独立一轮。
+5. 本轮改动**未提交**（提交在收口时由 Lead 逐文件点名）。

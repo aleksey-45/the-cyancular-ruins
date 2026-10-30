@@ -56,7 +56,7 @@ main_menu.tscn
 | `server/match/match_bootstrap.gd` / `match_host.gd` / `match_state.gd` | 建局引导 / 权威对局编排 / 回合状态机与记分 |
 | `server/match/match_snapshot.gd` / `match_combat.gd` / `match_round.gd` | 60Hz 世界包与本人包(每包全量) / 子弹爆炸光束裁决与拆墙 / 回合迁移与换局复位 |
 | `scenes/pvp_game.gd` + `.tscn` / `royale_game.gd` / `team_game.gd` | 三个客户端对局场景 |
-| `scenes/pvp_match_client.gd` | 三个对局客户端共用基类(输入上报、C2、重连) |
+| `scenes/pvp_match_client.gd` | 三个对局客户端共用基类(输入上行委托 `core/net/input_uplink.gd`、重连委托 `scenes/mp_client/reconnect_driver.gd`) |
 | `scenes/player/player_replica.gd` | 远端副本(视觉 + 幽灵碰撞体) |
 | `scenes/mp_lobby.gd` / `scenes/mp_lobby.tscn` | 统一联机大厅 UI |
 
@@ -156,7 +156,7 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 ### 快照消费
 
 - `snapshot_world`:NetBus 解码即 emit(全量,丢弃 `tick` 回退的旧包;增量已放弃,无 base_tick/FULL 请求);自己那份刻意不消费;对手部分交 `PlayerReplica.apply_snapshot()`。
-- `snapshot_own`:NetBus 解码即 emit(全量,丢弃旧 tick);`ack_seq > _input_seq` 的跨纪元残留再丢;其余喂 `PredictionRollback`。★ 本人包由服务端在"消费并步进完本 tick"之后帧末发(S1),`ack/c2` 是最新同拍态;世界包里自己那份因此比本人包旧 1 tick(客户端不消费它)。
+- `snapshot_own`:NetBus 解码即 emit(全量,丢弃旧 tick);`ack_seq > seq`（`InputUplink.accept_ack`）的跨纪元残留再丢;其余喂 `PredictionRollback`。★ 本人包由服务端在"消费并步进完本 tick"之后帧末发(S1),`ack/c2` 是最新同拍态;世界包里自己那份因此比本人包旧 1 tick(客户端不消费它)。
 - 容差:`pos_tol = 2.0`;接触期 `contact_pos_tol` 动态 8→48(`PredictionContact.contact_tol`,随速度放大)。`in_contact` 由 `Player.touching_player()` 在 `note_post_step()` / `reconcile()` 之前写入,不进 `capture_state()`、不上行。
 - 分歧处理:预测被证实不动;真性分歧才 `restore(权威态)` 并按序重放 `(ack, last_applied]` 的本地输入。
 

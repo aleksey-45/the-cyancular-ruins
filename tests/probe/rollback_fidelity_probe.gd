@@ -7,14 +7,21 @@ extends Node
 
 const DT := 1.0 / 60.0
 const MARKER := "ROLLBACK FIDELITY PROBE: ALL-OK"
+# ★ 条数闸(G-05 补):下面的 `_ran` 完成戳只挡"整个测试函数中途报错",挡不住"单条 `_check` 被删 /
+#   被跳过"—— 那种形态下 `_failures` 仍空、`ALL-OK` 照打。故再钉一条计数闸:本文件每个 `_check` 站点 = 1 条,
+#   实跑条数 `!=` 本值 ⇒ 红。★ 2026-10-30 原样跑一次实测 **33 条**(全 ✓),本值 = 实测值;跑两次确认稳定。
+#   加/删 `_check` 站点必须同批改这个常量,否则本支变红(方向 = 宁假红,不静默少跑)。
+const EXPECTED_CHECKS := 33
 
 var _failures: Array[String] = []
+var _checks := 0
 
 # ★ 假绿防线(Godot 的运行时错误只中断当前函数,调用它的 _ready() 会照常往下走):「测试函数中途报错 → 一条 _check 都没跑到 → _failures 仍空 → 照样打印 ALL-OK 并 exit 0」。
 #   实测:把 map_px 从 _close_enough 里删掉(必报错),红跑却印了 ALL-OK。故每个测试函数在最后一行给自己盖完成戳;缺戳 = 没跑完 = 红。
 var _ran: Dictionary = {}
 
 func _check(ok: bool, msg: String) -> void:
+	_checks += 1
 	if ok:
 		print("[fid]   ✓ %s" % msg)
 	else:
@@ -43,6 +50,10 @@ func _ready() -> void:
 	_test_feedback_only()
 	_require_ran("feedback_only")
 	_check_source_guard()
+	# ★ 条数闸(G-05):见 EXPECTED_CHECKS 的注释。`_checks` 只数 `_check` 站点,闸自身不计入。
+	if _checks != EXPECTED_CHECKS:
+		_fail("★ 实跑 %d 条断言,与 EXPECTED_CHECKS=%d 对不上(有断言被静默跳过?)" % [_checks, EXPECTED_CHECKS])
+	print("[fid] checks = %d (EXPECTED_CHECKS=%d)" % [_checks, EXPECTED_CHECKS])
 	if _failures.is_empty():
 		print(MARKER)
 		get_tree().quit(0)
