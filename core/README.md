@@ -16,11 +16,13 @@ present/  表现:字体、音效、视觉特效(与玩法无关的"给人看/听
   —— 改地图格式 / 碰撞语义 / 环面数学时动这里。`maze_generator` 只留**会话状态**
   (选中的地图文件 + `current_grid`)并转发;`.cyrm` 格式在 `map_format`,环面几何与寻路在
   `grid_pathfinder`。
-- `net/`(10)`ai_input_source` `local_input_source` `packet_input_source` `player_input`
-  `net_bus` `net_bus_ext` `prediction_rollback` `pvp_session` `proc_util` `local_server`
+- `net/`(12)`ai_input_source` `local_input_source` `packet_input_source` `player_input`
+  `net_bus` `net_bus_ext` `snapshot_rx` `prediction_rollback` `pvp_session` `proc_util`
+  `local_server` `lan_ip`
   —— 改协议 / 联机 / 进程编排时动这里。输入源也在这里(`player_input` 纯接口 +
   `local_input_source` / `packet_input_source` / `ai_input_source` 三个实现):本地输入、网络包、
-  AI 脚本三种来源可换。
+  AI 脚本三种来源可换。★ 下行接收逻辑在 `snapshot_rx`(纯 RefCounted、`-s` 可测),`net_bus` 只留 RPC 表 + emit;
+  LAN IP 发现在 `lan_ip`,`local_server` 只留进程编排与转发壳。
 - `config/`(6)`build_info` `enemy_params` `game_parameters` `player_params` `run_options`
   `settings` —— 改数值 / 选项时动这里。
 - `present/`(3)`laser_visual` `pixel_font` `sfx` —— 改观感 / 听感时动这里。

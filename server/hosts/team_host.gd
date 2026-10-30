@@ -131,19 +131,7 @@ func _match_round_tick(delta: float) -> void:
 		if _down_counted.get(role, false):
 			continue
 		_down_counted[role] = true
-# 掉落:倒地这一刻在原地丢下除随机保留一把外的全部武器(理由见 MatchGround._drop_all_but_one)。共用 _down_counted 闩 ⇒ 每次死亡
-# 恰好一次。★ 本行与另外两处边沿是同一个契约的三份落地:少写这一处,3v3 会静默退化成「死亡不掉武器」。
-		_drop_all_but_one(p, int(role))
-# 逐人数据:倒下一律计 death;击杀只在「归因到且异队」时计给杀手。★ 刻意放在 scorer != 0 那道闸之外 —— deaths 的口径是「谁死了都算死」。
-		_record_down(int(role), _attributed_killer(p))
-# 击杀定义(继承 1v1 的「不分死因」):任一玩家倒地 → 对方队 +1;队友误炸也照此(乱扔雷 = 给对面送分,惩罚自带)。★★ 记分(无归因的
-# 队分)与逐人 kills(有归因)是两条账:溺水/自杀/队友误炸让队分 +1 而无人记 kills ⇒ 结算页的击杀之和不等于记分条上的队分(见 docs/eng/modes.md)。
-		var scorer := _enemy_team_of(int(role))
-		if scorer != 0:
-			_scores[scorer] = int(_scores.get(scorer, 0)) + 1
-
-			_broadcast_kill(_attributed_killer(p), int(role))
-			_broadcast_round_state()
+		_on_down_edge(int(role))
 # ★★ 击杀者复位已按用户要求删除(2026-09-21,那个函数已整体删掉):击杀者原地不动,受害者 2s 后回本方出生点复活。
 # ★ 代价照实记录:那条规则本是为反「反复活点蹲守」而立,删后 3v3 不再有这条性质;将来若要找回,正确的形状是「复活点选点避开存活敌人」(TeamSpawn.respawn_cell 的 RESPAWN_CLEARANCE 已做一半),而不是把击杀者瞬移走。
 	match _round_state:
@@ -321,6 +309,21 @@ func request_suicide_role(role: int) -> void:
 
 
 # 逐人数据 + ACS / MVP 的口径已上提到 MatchState(公式见 core/sim/score_rules.gd);本文件只留 3v3 特有的两处写入:倒地边沿 _record_down、子弹直击补归因。
+
+
+# 3v3 口径:击杀定义沿用 1v1 的「不分死因」(任一玩家倒地 → 对方队 +1;队友误炸也照此,乱扔雷 = 给对面送分);
+# 逐人 kills 仍只在「归因到且异队」时由基类 _record_down 记(队分与逐人 kills 是两条账,见 docs/eng/modes.md)。
+func _down_killer_of(role: int) -> int:
+	return _attributed_killer(players[int(role)])
+
+
+func _award_down(victim_role: int, killer_role: int) -> void:
+	var scorer := _enemy_team_of(victim_role)
+	if scorer == 0:
+		return
+	_scores[scorer] = int(_scores.get(scorer, 0)) + 1
+	_broadcast_kill(killer_role, victim_role)
+	_broadcast_round_state()
 
 
 # 子弹直击的归因写入(与 RoyaleHost._on_bullet_hit 逐字同构):服务器上子弹撞玩家不靠物理,只经 _adjudicate_bullets 到这里。

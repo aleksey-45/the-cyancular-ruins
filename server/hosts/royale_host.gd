@@ -109,18 +109,7 @@ func _match_round_tick(delta: float) -> void:
 				if not p.is_downed() or _down_counted.get(role, false):
 					continue
 				_down_counted[role] = true
-# 掉落:倒地这一刻在原地丢下除随机保留一把外的全部武器(理由见 MatchGround._drop_all_but_one);共用 _down_counted 闩 ⇒ 每次死亡恰好一次。
-				_drop_all_but_one(p, int(role))
-				var killer := _attributed_killer(p)
-# 逐人统计:倒地边沿记 death(一律)与击杀(仅在归因到时)。★ 口径与 1v1 不同、别照抄那一份:那边是「不分死因、对方死亡
-# 都算」,大乱斗是自由混战 + 归因制 ⇒ 无归因的死亡(溺水/坠落/自杀)不计任何人的击杀。★ _deaths 那份独立计数已删
-# (与逐人表记同一件事,两份必然漂)。
-				_record_down(int(role), killer)
-				if killer != 0:
-					_scores[killer] = int(_scores.get(killer, 0)) + 1
-					_broadcast_kill(killer, role)
-# ★ 基类 _record_down 里那笔 award_kill 是唯一写端(3v3 与大乱斗同一份),此处不得再记一笔 —— 重复会让大乱斗的击杀颗粒翻倍。
-				_broadcast_round_state()
+				_on_down_edge(int(role))
 			# 周期广播(倒计时/比分同步)
 			_hud_sync -= delta
 			if _hud_sync <= 0.0:
@@ -149,6 +138,20 @@ func _attributed_killer(victim: Node2D) -> int:
 		if players[role] == shooter:
 			return int(role)
 	return 0
+
+
+# 大乱斗口径:击杀靠归因(无归因的死亡——溺水/坠落/自杀——不计任何人的击杀);分记给归因到的杀手,
+# 且**无条件**广播一次 round_state(即使 killer=0,排行榜/存活态也可能变了)。★ 与 1v1 不同、别照抄那一份。
+func _down_killer_of(role: int) -> int:
+	return _attributed_killer(players[int(role)])
+
+
+func _award_down(victim_role: int, killer_role: int) -> void:
+	if killer_role != 0:
+		_scores[killer_role] = int(_scores.get(killer_role, 0)) + 1
+		_broadcast_kill(killer_role, victim_role)
+# ★ 基类 _record_down 里那笔 award_kill 是唯一写端(3v3 与大乱斗同一份),此处不得再记一笔 —— 重复会让大乱斗的击杀颗粒翻倍。
+	_broadcast_round_state()
 
 
 func _finish_match() -> void:

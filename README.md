@@ -67,7 +67,7 @@ level_editor/  浏览器地图编辑器(editor.html + smoke.js + sync-*.js)
 maps/     .cyrm 地图(v4 二进制)
 data/     tile_defs.json / enemies.json / weapons.json(与编辑器共享的属性表、敌人注册表与武器注册表)
 assets/   字体(含中文像素字体 unifont)与纹理
-tools/    发布 / 控制台脚本(build_release.py、make_server_console.py)+ check_naming.py(命名规范检查)
+tools/    发布 / 控制台脚本(build_release.py、make_server_console.py)+ check_naming.py(命名规范检查)+ gen_rpc_channel_table.py(RPC 通道表对账 `--check`)
 ```
 
 技术细节见 [`CLAUDE.md`](CLAUDE.md)(索引,分域正文在 docs/eng/*.md)与 [`RELEASE.md`](RELEASE.md)。

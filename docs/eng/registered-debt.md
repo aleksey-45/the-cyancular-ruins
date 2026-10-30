@@ -4,8 +4,8 @@
 
 ## 已知红
 
-- `tests/probe/team_match_probe.sh` —— 整跑判 `FAIL`,不可当 3v3 的端到端守卫;影响面 = 3v3 只能靠该支日志 + 人工试玩。
-- `tests/probe/rejoin_probe.sh` —— 2026-10-24 实测整跑 `FAIL`:房停在 `players=2 port=0`(客户端没写出结果文件)。失败点在**配对前**,而 `rejoin_watcher` 没有「房主点开始」动作(9378f5b0 起 1v1 需房主开始)⇒ 不可当重连端到端守卫;与本批 U1 无关。影响面 = 局内自动重连/回大厅回局只能靠该支日志 + 人工试玩,或者先修 watcher。
+- `tests/probe/team_match_probe.sh` —— **不可当 3v3 的端到端守卫**：2026-10-31 同配置两跑，第一跑 `FAIL`（c4 相⑤ 观察窗内快照间隔 10009ms > 1s，其余 5 端 19~34ms；c4 进程仍在跑心跳、分数也不变 ⇒ "该 peer 10s 没收到世界包"，探针自己写明"客户端停顿 / 定向投递异常无法区分"），第二跑 **`TEAM MATCH PROBE: ALL-OK`** ⇒ 判为**时序性 flake**，不是崩溃/协议回归；影响面 = 3v3 只能靠该支日志 + 人工试玩。翻案条件 = 同配置再现 10s 级单端快照断流时按真缺陷查（先看 `all_peers_sendable` 与 `is_peer_live` 对该 peer 的读数）。
+- `tests/probe/rejoin_probe.sh` —— 2026-10-24 起的**已知红已修**（见 §三十七：watcher 代发 `pvp_start`）；2026-10-31 复跑 `REJOIN PROBE: ALL-OK(5)`。
 - `tests/known_red.txt` 基线当前 **0 条** —— 任何红都算新红,`run_all.sh` 退出码非 0。
 
 ## 已知边界
@@ -33,7 +33,7 @@
 | `mode_defs` / `mode_options` / `mode_room_rules` | 模式常量/选项键/房间规则表的单一来源（3v3 曾上发 1v1 的禁用武器；16 人上限只改了一半） | **零守卫**，只能靠联机场景行为/试玩 |
 | `mode_context` | worker argv 解析边界（`--` 之后、`--roles` 等长、role 0/17） | **零守卫** |
 | `room_registry` | 同号跨模式不串、三表合一、`started`↔`in_match` 双向别名 | **零守卫** |
-| `rpc_channel_contract` | 通道表 ↔ `@rpc` 声明文本对账（含 `beam_fired` 重名集合） | **零守卫**，见 [`netplay-rpc-channels.md`](netplay-rpc-channels.md) 已改口 |
+| `rpc_channel_contract` | 通道表 ↔ `@rpc` 声明文本对账（含 `beam_fired` 重名集合） | **已由 `tools/gen_rpc_channel_table.py --check` 接管**（S-02，2026-10-31），见 [`netplay-rpc-channels.md`](netplay-rpc-channels.md) |
 | `server_input_sanitize` | 轴钳位 / 队列有界 / 丢包保边沿 / 抖动上限 | **已由 `input_queue_smoke` 接管**（24 条按 4 类压缩，覆盖面按类别等价；逐值细目不再断言） |
 | `network_input` | `get_axis("up","down")` 由 held 推导（梯子回拉根因） | **零守卫** |
 | `net_diag` / `ops_log` | `--diag` 开关零成本与落盘、审计文件命名/保留策略 | **零守卫** |
@@ -463,7 +463,7 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 
 **B8 文档/注释批（逐条真改，不只是标状态）**：
 - **CM（代码注释/常量）**：`CM-01/02/06`（P1.5 差分口径 + mask u16/u32）随 v7 重写 `net_codec.gd` 不复存在；`CM-03` `net_bus` 注释改为陈述"NetBusExt 仍有同名副本(待删)"；`CM-04` `DemoInputSource`→`LocalInputSource`；`CM-05` `net_diag` 区分 `log_event()`(默认关) 与 `audit()`(常开)；`CM-07` 三处 8→16；`CM-08` `rr.match_time` 存的是建房页那份(缺省 0，下界)；`CM-09` 键必须是字符串(客户端 `room_list.gd` 读 "1"/"2"/"0")；`CM-10` `server_panel` 状态颜色表改用 `ServerStatus.STATE_*` 常量；`CM-11` 去掉 `ui.md:27` 行号(两处)；`CM-12` 外部读者清单补 `snapshot_size_probe`/`wait_room`；`CM-13` 已随 BUG-16 修(输出已捕获)；`CM-14` 46→42 B；`CM-15` 1s 渐隐已随 BUG-19 修(注释补记)；`CM-16` 两个子类→三个子类(6 处)；`CM-17` 去掉恒真条件 `(_haste_dim_t>0.001 or pp!=null)` → `_haste_dim_t>0.001`（**行为侧**:不再每帧无条件写 uniform，观感需人眼）。
-- **DD（文档）**：`DD-01` RPC 合计 60→**61**（`net_bus` 28 + `net_bus_ext` 33；通道 3 补 `explosion`，46/1/3/**11**）；`DD-02` "一条记录管 2 tick"→"一包两条记录、每条 1 tick"（3 处文档）；`DD-07` 1v1 超龄是**裸** `MAX_ROOM_AGE`（无在局宽限）；`DD-13/04` `pvp-networking` 世界包改 v7 全量口径；`DD-14` `_input_pair_phase`→`_input_batch_phase`；其余 `DD-03/05/06/08/09/10/11/12/15/16` 已在前几批随 v7/BUG 修同步。
+- **DD（文档）**：`DD-01` RPC 合计 **60**（`net_bus` 28 + `net_bus_ext` 32；通道 3 = 10，46/1/3/**10**）—— 2026-10-30 时写的 61/33/11 是 S-04 删 `net_bus_ext.beam_fired` 死副本**之前**的数；2026-10-31 S-02 起由 `tools/gen_rpc_channel_table.py --check` 对账（见 §四十一）。`DD-02` "一条记录管 2 tick"→"一包两条记录、每条 1 tick"（3 处文档）；`DD-07` 1v1 超龄是**裸** `MAX_ROOM_AGE`（无在局宽限）；`DD-13/04` `pvp-networking` 世界包改 v7 全量口径；`DD-14` `_input_pair_phase`→`_input_batch_phase`；其余 `DD-03/05/06/08/09/10/11/12/15/16` 已在前几批随 v7/BUG 修同步。
 
 **验证**：`RUN_ALL OK(20 runs / 122 gated-assertions)`（B8 只改注释/文档 + BUG-24 的 server_main 代码；解析由 allscript 198 覆盖）· `allscript_probe 198` · `check_naming` 绿 · md 链接 0 缺失。
 
@@ -483,7 +483,7 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 **边界**：
 1. UI 侧的跟随/暂停与滚动位置**仍无断言**（I1/I2 语义，只能人眼）；本次只保证 tail 的纯逻辑。
 2. `S-13②`（`_audit*` 搬进独立的审计工具，**尚未创建**）、`S-13③`（关房二次确认保留 3 行）未做。
-3. 其余大重构未动，计划顺序：`S-09`(lobby_rooms 拆) → `S-10/S-11/S-12`(死规则/死字段/房主名单单一来源) → `S-18`(replica_set) → `S-17`(pvp_match_client 两刀) → `S-03/S-05`(net_bus/packet_input_source)。承重面项需真链路批验收。
+3. 其余大重构未动，计划顺序：`S-09`(lobby_rooms 拆) → `S-10/S-11/S-12`(死规则/死字段/房主名单单一来源) → `S-18`(replica_set) → `S-17`(pvp_match_client 两刀) → `S-03/S-05`(net_bus/packet_input_source)。承重面项需真链路批验收。（**2026-10-31：该清单已全部完成，见 §四十一**。）
 4. 本轮改动**未提交**。
 
 ## 三十六、大重构第二刀：S-10 / S-11 / S-12（去重复真相源，2026-10-30，档 2）
@@ -495,7 +495,7 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 
 **验证**：`ALLSCRIPT: OK(201)` · `RUN_ALL OK(22 runs / 132 gated-assertions)`（见本轮终验）· 命名/链接检查绿。
 
-**边界**：`S-09`（lobby_rooms 拆分）、`S-13②③`、`S-18`/`S-17`/`S-03`/`S-05` 仍未做；本轮改动**未提交**。
+**边界**：`S-09`（lobby_rooms 拆分）、`S-13②③`、`S-18`/`S-17`/`S-03`/`S-05` 仍未做；本轮改动**未提交**。（**2026-10-31：S-03/S-05 已完成，见 §四十一。**）
 
 ## 三十七、真链路批首跑结果 + BUG-25（测试基建，2026-10-30）
 
@@ -557,7 +557,7 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 1. G-01 的行为面（踢人 / 换输入源 / `_ack_seq`/`_stepped_seq` 复位 / match_start 应答）与 G-02 的到点真动作（移出对局 / `quit(0)`）仍需真 worker 探针；本轮只把**判据**变可测。
 2. G-04 只到「真链路 smoke 传入真实 `st`」；回放窗口注入的两个断言未做。
 3. S-17 的三条信号改挂 RefCounted 驱动（宿主强持），等价性靠生命周期论证 + 真链路 smoke；真断线时刻的 reclaim 路径未单独实测。
-4. 同日后又完成：S-13②③、S-05、S-14、S-16、S-19、S-21（见 §四十）。仍**未做**：S-03（net_bus 三职）、S-15（卡点见 §四十）。
+4. 同日后又完成：S-13②③、S-05、S-14、S-16、S-19、S-21（见 §四十）。仍**未做**：S-03（net_bus 三职）、S-15（卡点见 §四十）。（**2026-10-31：S-03 / S-15 均已完成，见 §四十一**。）
 5. 本轮改动**未提交**（提交在收口时由 Lead 逐文件点名）。
 
 ## 四十、大重构第六刀：S-13②③ / S-05 / S-14 / S-16 / S-19 / S-21（2026-10-30，档 2~3）
@@ -568,7 +568,7 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 **S-16**：`MatchRound._round_state_base()`（5 共有键 + MATCH_OVER 的 `match_winner` + 非空 `stats`）落在 MatchRound 而非 MatchState（子类符号编译期不可见）；三模式 `_broadcast_round_state` 改 base + 各自追加；**键集/键值逐字一致**，仅 Dictionary 插入序变化（消费方全按键读）。变异：删 `"state"` 默认批 0 新红 ⇒ 该键集的守卫在真链路 watcher（`team_match_watcher` 的 ROUND_STATE_TIMEOUT）。
 **S-19**：`TimeFx`（185 行，`bind/tick/detach`）承接 `_rw_film_mats/_rw_ghosts/_fx_self_t/_fx_other_t` 与 ~160 行视效；宿主 942→**798**，只留 `_ensure_time_fx()` / `_tick_time_fx()` / `_time_fx_replica_rewind_off()`（名字保留，S-18 的 `ReplicaSet.remove()` 按名调）。`detach` 比旧实现更严：`rewind_off` 后额外清 `_fx_other_t` 键。1v1 空集合 no-op 实测。
 **S-21**：`HEAD_OFFSET`/`HP_BAR_OFFSET`/`follow()` 单一来源 = `ui/factory/world_label.gd`（`class_name WorldLabel`）；跟随下沉 `player_replica.attach_overhead`（幂等、失效自动摘）；三宿主删本地常量、只留调用；`replica_set.gd` 的血条偏移也改成引用同一常量。
-**S-15 ⛔ 未做（按纪律主动停手）**：三条前置可观测断言（1v1 结算 kills 与记分条同数 / 大乱斗无归因死亡不记 kills / 3v3 队友误炸→对方队 +1 且无人记 kills）全仓都不存在；且"相位统一为只在 PLAYING 记账"本身是行为变更（1v1/3v3 在 ROUND_OVER 4s 窗口内仍记账）⇒ 抽模板必然在记分归属上二选一。按"重构前先绿，不绿不动"停手。另记：3v3 每次倒地调 `_attributed_killer(p)` 两次（team_host.gd:138/:145），抽模板会合并成一次（幂等等价）。
+**S-15 ⛔ 未做（按纪律主动停手）**：三条前置可观测断言（1v1 结算 kills 与记分条同数 / 大乱斗无归因死亡不记 kills / 3v3 队友误炸→对方队 +1 且无人记 kills）全仓都不存在；且"相位统一为只在 PLAYING 记账"本身是行为变更（1v1/3v3 在 ROUND_OVER 4s 窗口内仍记账）⇒ 抽模板必然在记分归属上二选一。按"重构前先绿，不绿不动"停手。另记：3v3 每次倒地调 `_attributed_killer(p)` 两次（team_host.gd:138/:145），抽模板会合并成一次（幂等等价）。（**2026-10-31 已做：三条判据以 `tests/probe/down_edge_probe.tscn` 落地并在重构前原样跑绿，相位与广播时机逐字保留、未做"统一为只在 PLAYING 记账"的行为变更；见 §四十一**。）
 
 **验证**：`ALLSCRIPT: OK(211)` · `RUN_ALL OK(24 runs / 179 gated-assertions)` · `NET WIRE OK(5)` / `INPUT QUEUE OK(4)` / `ROLLBACK FIDELITY PROBE: ALL-OK`（33 条闸）· 命名检查 OK。
 **边界**：
@@ -576,4 +576,38 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 2. S-05 暴露的两个守卫缺口**已补**（2026-10-30 同日）：`net_wire_smoke` 5→6（包级 `seq/ct` 必须取高 tick 记录）、`input_queue_smoke` 4→6（`apply_packet` 边沿按位累积/`winst>0` 覆盖、`clear_edges` 连切枪一起清）；三条变异实测红、还原后绿。默认批 179→**182 条**。
 3. S-19/S-21 的观感项（残影/重影/标签跟随）只能人眼；1v1 标签跟随比旧实现少滞后 1 帧（≤16.7ms）。
 4. `--panel-audit` 仪器本身需要非 headless 面板实例才能跑，属设计期工具、无自动断言。
-5. 仍**未做**：S-03（net_bus 三职）、S-15（卡点如上）、S-06（`_close_enough` 比对集）、S-07/S-02 生成式通道表。
+5. 仍**未做**：S-03（net_bus 三职）、S-15（卡点如上）、S-06（`_close_enough` 比对集）、S-07/S-02 生成式通道表。（**2026-10-31：这五项全部完成，见 §四十一**。）
+
+## 四十一、S 批收尾：S-03 / S-06 / S-07 / S-02 / S-15（2026-10-31，档 2~3）
+
+**起因**：用户「完成登记未做的所有联机部分优化任务，就是 S03 那些」= 01 审查 §3 落地顺序里剩下的结构项（§四十-5 那条清单 + §三十六-4 的计划顺序）。本批把 **01 审查里所有"建议做"的 S 项**全部落地；S-04 的 `beam_fired` 副本（已由 5dd1e1d1 删除）、S-08（不建议动）、S-25~S-27（文档结构重构，保留登记）不变。
+
+**改了什么**：
+1. **S-03（档 3）net_bus 三职拆分**：新增 [`core/net/snapshot_rx.gd`](../../core/net/snapshot_rx.gd)（`SnapshotRx`，RefCounted，不引 autoload）承接「解码 → tick 去重 → 坏包只警告一次 → tick 缺口丢包估计 → 1Hz 诊断窗口」；`net_bus.gd` 的入口只留 `accept_* + emit`（`send_input` / `snapshot_world` / `snapshot_own` / `reset_snapshot_state` / `snap_stats`），RPC 方法表与通道号仍独占 `net_bus.gd`（协议面不搬）。emit 形状逐字不变（`{tick, players}` / `{ack_seq, q, c2}`）。
+2. **S-06（档 3）`_close_enough` 比对集单一来源**：`PredictionRollback.PREDICTED_FIELDS` + `_within(field, a, b)` 分派；位置容差仍是"接触与否二选一"（未简化）。`rollback_fidelity_probe` 33→**34**（㉑ = 表里每个键都出现在真 `capture_state()` 里）。
+3. **S-07（档 2）LAN IP 发现拆出**：新增 [`core/net/lan_ip.gd`](../../core/net/lan_ip.gd)（`LanIp`）；`local_server.gd` 214→**93 行**，只留同名转发壳，调用点（`server_main` / `lobby_page` / `mp_lobby`）零改动；纯解析拆成 `parse_default_routes` / `parse_ip_file_line` / `rank_private` 三个静态函数 + `lan_ip_smoke` 5 条。
+4. **S-02（皮 + 工具）通道表改生成式**：新增 [`tools/gen_rpc_channel_table.py`](../../tools/gen_rpc_channel_table.py)（`--check` 只读对账，漂移 exit 1；`--self-test`；`--write` 幂等但**本沙箱写不进 `docs/eng`**）；`docs/eng/netplay-rpc-channels.md` 按代码同步。**真值 = 60 条（`net_bus` 28 + `net_bus_ext` 32）/ 通道 46-1-3-10** —— 审计里的 61/33/11 是 S-04 删 `beam_fired` 副本之前的数，工具第一次跑抓到的正是这条真漂移。**不要按 61 改回文档**（那会让 `--check` 永久红）。
+5. **S-15（档 3）倒地边沿模板方法**：`MatchRound._on_down_edge(role)` + 两个虚函数 `_down_killer_of(role)` / `_award_down(victim_role, killer_role)`；三个宿主各覆写两份差异。**相位与广播时机逐字保留**（1v1/3v3 在 `_round_state` 判断之外、大乱斗关在 `PLAYING` 里；1v1 只在 `scorer != 0` 广播、大乱斗无条件、3v3 在 `scorer != 0`）；**未做** 01 审查提的"相位统一成只在 PLAYING 记账"（那是行为变更，本批不碰）。新增 `tests/probe/down_edge_probe.tscn`（3 条）= 01 审查 S-15 要求的"重构前必须先绿"的三条可观测判据。
+
+**守卫（逐条变异实测，红→还原→绿）**：
+- `snapshot_rx_smoke`（7 条 + 条数闸）：① 同 tick 幂等；② 旧包丢弃；③ 坏包只警告一次（世界/本人共用快照旗 + 输入旗独立）；④ `reset()` 后旧 tick 重新接受；⑤ tick 缺口估计 + 步长学习；⑥ 本人包返回形状；⑦ `take_diag()` 键集 = 旧 `snap_rx` 的 8 键。
+  变异实测：删 `tick <= _last_world_tick` 去重 ⇒ ①②④红；`warn_snapshot_once` 恒 true ⇒ ③红；`reset()` 漏清两条 tick ⇒ ④红；`snapshot_loss` 首参用错（`tick,tick`）⇒ ⑤红（lost=0 step=3）；`world_msgs` 键改名 ⇒ ⑦红。
+- `rollback_fidelity_probe` ㉑：`PREDICTED_FIELDS` 的 `vel`→`velocity` ⇒ ㉑ + ①/④/⑩红；`_within` 的 pos 分支恒 true ⇒ ②③⑰红。
+- `lan_ip_smoke`（5 条）：metric 排序方向反转 / 删同网卡去重 / 去掉"先 strip 再截分隔符" 各红一次。
+- `down_edge_probe`（3 条）：删 1v1 `_scores` 自增 ⇒ ①红（记分条 0 / 结算 kills 5）；`RoyaleHost._down_killer_of` 改回对手 ⇒ ②红（kills=1、记分 {2:1}）；`TeamHost._award_down` 用 `team_of(killer)` ⇒ ③红（对方队 0）。
+  ★ **重构前先绿的验证**：把三处内联代码临时复原成重构前原样（各模式自己的 drop/record/score/广播）跑 `down_edge_probe` = `ALL-OK`，再还原成模板 ⇒ 同一支仍 `ALL-OK`（抽取前后三条判据都绿）。
+- `tools/gen_rpc_channel_table.py --check`：文档合计 60→61 ⇒ 红（1 项）；删一条 `@rpc` 声明 ⇒ 红（8 项）；`--self-test` 绿。
+
+**验证（本机 headless；默认批不占 7777、不弹窗）**：本会话沙箱里 `bash tests/run_all.sh` 起不来（Git Bash 的 signal pipe 被沙箱拒绝），故按 `run_all.sh` 的同一枚举口径**逐支手跑**：**27 支全绿 / 0 红**（smoke/*.gd 排除 `pvp_match_smoke.gd` + probe/*.tscn 排除三支真链路 + probe/*.gd 无同名 tscn），`ALLSCRIPT: OK(216)`，闸断言合计 **198**（= 各支 `EXPECTED_CHECKS` 求和，含 `rollback_fidelity_probe` 34），`tools/gen_rpc_channel_table.py --check` = `OK(60 条 / 46/1/3/10)`，`--self-test` 绿，`python tools/check_naming.py` 绿。
+★ 手跑环境：`APPDATA` 指向工作区内 `.tmp/appdata`（否则引擎写 `user://` 被沙箱拒绝 ⇒ 启动即 signal 11；`panel_log_tail_smoke` 这类真写 `user://` 的支会被误判红）。
+**真链路批（用户认领后跑，Git Bash，占 7777/池/池外端口）**：`RUN_REAL FAIL(ok=4 fail=1)` —— `pvp_match_smoke` OK（`SMOKE PASS`，27s）· `rejoin_probe` **OK（`REJOIN PROBE: ALL-OK(5)`，59s；已知红已修后复跑）** · `royale_soak` OK（`SOAK: ALL-OK(4/4)`，132s）· `royale_role_cap` OK（`ROLE CAP PROBE: ALL-OK(9/9)`，119s）· `team_match_probe` **FAIL**（c4 相⑤ 单端快照间隔 10009ms；同配置**第二跑 `TEAM MATCH PROBE: ALL-OK`** ⇒ 判 flake，已登记到本文件「已知红」第一条）。全批 `gate-failures=0`、无残留连累。
+
+**边界（照实）**：
+1. **真链路批已跑**（2026-10-31，用户认领）：4/5 PASS；`team_match_probe` 的失败是同配置第二跑不复现的**时序 flake**（详见「已知红」第一条与上面的验证段），已按仓规「同配置跑两次」下结论。⇒ S-03 的**接线段**（`NetBus` handler 真调 `accept_* + emit`）与 S-15 的 RPC 载荷由「不崩 + 链路通」间接覆盖（`pvp_match`/`soak`/`role_cap`/`rejoin` 绿），但仍**没有一条断言直接数**某个 RPC 的到达；S-07 的真网卡路由仍只有本机单跑读数。
+2. `down_edge_probe` 只证"记分 / 逐人 kills / 队分归属"三个语义；`round_state` / `kill_event` 的**线上载荷字节**在空 peer 表上短路（`_rpc_all` 不发包）⇒ 广播内容零覆盖。
+3. `snapshot_rx_smoke` 不覆盖 NetDiag 落盘、`--diag` 开关与真实丢包分布；`NetBus` 侧 `take_diag` 的调用接线断了冒烟不会红（只有真链路 `--diag` 能看出）。
+4. `gen_rpc_channel_table.py` 只能证明「两 autoload 的行首声明文本 ↔ 文档表/合计」一致 + 跨 autoload 无重名；**测不到**运行期派发（`GDScript.get_script_method_list()` 读不到 `rpc_config`）、`@rpc` 是否被引擎接受、接收端挂在哪个节点。
+5. **S-07 顺带修掉的既有缺陷（行为变化）**：旧 `_read_ip_file_best` 在 `本机局域网 IP: <ip>(…` 上把 `IP:` 后的值按第一个空格截成空串 ⇒ `local_ip.txt` 快回路径**从未命中**（每次白跑一次 netstat）；新实现先 strip 再截 ⇒ 快回路径首次真正生效（仍校验 IP 属于本机）。副作用：网络切换后若旧 `local_ip.txt` 的 IP 仍是本机地址（多网卡在线），旧 IP 会继续占第一候选，靠「不通就换」兜底。另 `_priv_score` 3 档 → 4 档（192.168=4 / 10=3 / 172.16-31=2 / 其它=1；`>=2` 的"是否私有"语义不变，只让 fallback 排序更确定）。
+6. **class 缓存 / `.uid` 是手工补的**：本会话沙箱下 `.godot/editor` 不可写 ⇒ 引擎无法重建 `global_script_class_cache.cfg`、也不会生成 `.uid`。本轮 `SnapshotRx` / `LanIp` 两条缓存条目与 5 个新增 `.gd.uid` 由 Lead 按 Godot 格式手工落盘（`.godot/` 是本地缓存、不入库；无沙箱环境重开编辑器会被引擎覆盖/重生成，无副作用）。
+7. 本轮改动**已提交**（25 个文件；逐个文件点名 `git add`，新 `.gd` 连 `.gd.uid`、`.tscn` 不加）。提交环境：本会话后半段切到完全访问后才可用 `git`（先前沙箱下子进程写不进工作区子目录）。
+8. `lan_ip_smoke` 的 ⑤ 经 `LanIp.lan_ip_candidates()` **间接**拉一次 `netstat.exe`（只读、不开端口、不写盘）—— 这是 `tests/run_all.sh` 承重安全检查的已知盲区（它只扫入口源码文本，看不见经 helper 间接拉起的进程，见该文件头「它的盲区」）。若以后要求默认批"零子进程"覆盖到间接形态，这条断言要改成注入式（netstat 文本作为参数喂纯函数，不碰真环境）。

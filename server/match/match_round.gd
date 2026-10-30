@@ -47,21 +47,7 @@ func _match_round_tick(delta: float) -> void:
 		if _down_counted.get(role, false):
 			continue
 		_down_counted[role] = true
-# 掉落:倒地这一刻在原地丢下「除随机保留一把」外的全部武器。★ 必须在倒地边沿、不能在复活流程里 ——
-# _respawn_player 会先把人瞬移到出生点,那样就掉在出生点。★ 复用 _down_counted 闩 ⇒ 每次死亡恰好丢一次。
-		_drop_all_but_one(p, role)
-# 逐人统计:倒地边沿记 death(一律)与击杀。★ 击杀记给对手、不分死因(自杀/溺水也让对方 +1,1v1 没有归因),
-# 结算页 kills 必须与记分条同口径,否则「5 杀取胜」的局在结算页只显示 3 杀;别在这里用子类的具名归因函数 ——
-# 基类并集里出现子类方法名会破坏「子类方法不得泄漏进基类」。
-		_record_down(int(role), _opponent_of(int(role)))
-
-		var scorer := _opponent_of(role)
-		if scorer != 0:
-			_scores[scorer] = int(_scores.get(scorer, 0)) + 1
-			_broadcast_kill(scorer, role)
-			_broadcast_round_state()
-# 击杀后双方复位:死者照常走 _respawn_player(2s 后满血复活);活着的一方立刻回出生点但保留血量、不回血(防复活点连杀)。
-			_reset_survivor(scorer)
+		_on_down_edge(int(role))
 	match _round_state:
 		RoundState.COUNTDOWN:
 			if not _countdown_can_start(delta):
@@ -92,6 +78,35 @@ func _match_round_tick(delta: float) -> void:
 		RoundState.MATCH_OVER:
 			pass   # 对局结束,等玩家退出/服务器关房
 
+
+
+# ── 倒地边沿的公共骨架(S-15)── 三模式同形:掉武器 → 算 killer → 记 death/kills → 记分/广播。
+# ★ 只在**各模式自己的相位**里被调用(1v1/3v3 在 _round_state 判断之外、大乱斗关在 PLAYING 里):本函数不搬相位。
+# ★ 差异全交给两个虚函数(1v1 默认:击杀记给对手、分记给对手、击杀后复位幸存者;大乱斗/3v3 覆写成归因制/队分)。
+func _on_down_edge(role: int) -> void:
+	var p: Node2D = players[int(role)]
+	_drop_all_but_one(p, int(role))
+	var killer := _down_killer_of(int(role))
+	_record_down(int(role), killer)
+	_award_down(int(role), killer)
+
+
+# 这次死亡算谁的击杀。默认 = 1v1 口径(对手、不分死因);大乱斗/3v3 覆写成归因制(meta last_damager)。
+func _down_killer_of(role: int) -> int:
+	return _opponent_of(int(role))
+
+
+# 记分 / kill 广播 / 幸存者复位。★ 三个模式在这块的**广播时机**本就不同(1v1 只在 scorer != 0 时、大乱斗无条件、
+# 3v3 在 scorer != 0 时),故保持各自原样留在覆写里 —— 抽的是骨架,不是把三套口径合成一套。
+func _award_down(victim_role: int, killer_role: int) -> void:
+	var scorer := _opponent_of(victim_role)
+	if scorer == 0:
+		return
+	_scores[scorer] = int(_scores.get(scorer, 0)) + 1
+	_broadcast_kill(scorer, victim_role)
+	_broadcast_round_state()
+# 击杀后双方复位:死者照常走 _respawn_player(2s 后满血复活);活着的一方立刻回出生点但保留血量、不回血(防复活点连杀)。
+	_reset_survivor(scorer)
 
 
 func _handle_respawns(delta: float) -> void:

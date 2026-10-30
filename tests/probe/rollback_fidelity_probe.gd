@@ -11,7 +11,7 @@ const MARKER := "ROLLBACK FIDELITY PROBE: ALL-OK"
 #   被跳过"—— 那种形态下 `_failures` 仍空、`ALL-OK` 照打。故再钉一条计数闸:本文件每个 `_check` 站点 = 1 条,
 #   实跑条数 `!=` 本值 ⇒ 红。★ 2026-10-30 原样跑一次实测 **33 条**(全 ✓),本值 = 实测值;跑两次确认稳定。
 #   加/删 `_check` 站点必须同批改这个常量,否则本支变红(方向 = 宁假红,不静默少跑)。
-const EXPECTED_CHECKS := 33
+const EXPECTED_CHECKS := 34
 
 var _failures: Array[String] = []
 var _checks := 0
@@ -43,6 +43,8 @@ func _ready() -> void:
 	CombatComponent.pvp_arena = true   # 生产 PvP 的真实口径(否则无敌帧会挡住 ⑫ 的二次受击)
 	_test_torus_compare()
 	_require_ran("torus")
+	_test_predicted_fields()
+	_require_ran("predicted_fields")
 	_test_contact_tolerance()
 	_require_ran("contact_tol")
 	await _test_event_alignment()
@@ -102,6 +104,24 @@ func _test_torus_compare() -> void:
 
 	p.queue_free()
 	_ran["torus"] = true   # ★ 完成戳必须在最后一行:中途报错就到不了这里(见顶部说明)
+
+
+# ── F 组:PREDICTED_FIELDS ↔ capture_state() 键集对账(S-06)──
+# 那 4 个字段是「预测被证实」的唯一比对集(const PREDICTED_FIELDS)。名字漂了(rename / typo)不会报错,
+# 只会静默把该字段判成「永远一致 / 永远分歧」⇒ 这条按**真** capture_state() 逐键点名(不是抄一份键表)。
+# 去掉什么才红:把表里任一键改成 capture_state() 里不存在的名字 ⇒ 本断言红;删掉本断言 ⇒ 条数闸红。
+func _test_predicted_fields() -> void:
+	var p: Node2D = preload("res://scenes/player/player.tscn").instantiate()
+	add_child(p)
+	var cap: Dictionary = p.capture_state()
+	var missing: Array = []
+	for f in PredictionRollback.PREDICTED_FIELDS:
+		if not cap.has(String(f)):
+			missing.append(String(f))
+	_check(missing.is_empty(),
+			"㉑ PREDICTED_FIELDS 每个键都在真 capture_state() 里(缺 %s)" % str(missing))
+	p.queue_free()
+	_ran["predicted_fields"] = true   # ★ 完成戳必须在最后一行
 
 
 # ── C 组:接触期容差(贴身时用 contact_pos_tol,非接触期保持 pos_tol)── 手法与 A 组同款:直接摆 _captures + on_authoritative + reconcile,不依赖真实物理世界。

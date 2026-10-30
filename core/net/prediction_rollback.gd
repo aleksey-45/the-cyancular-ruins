@@ -44,6 +44,12 @@ var contact_pos_tol: float = DEFAULT_CONTACT_POS_TOL
 # ★ 2026-10-28:客户端在贴身区按"相对速度 × 幽灵滞后"动态覆盖它(8~48px,见 core/net/prediction_contact.gd);
 #   本常量现在只是下限/默认值,别再以为它恒是 8。
 
+# 「预测被证实」要比对的字段集合(单一来源):S-06 —— 原先这 4 个字段的判据散在 _close_enough 函数体里,
+# 往 Player.capture_state() 加一个"影响下一帧判定"的字段时没有任何东西提醒也加进比对(症状 = 两端慢慢漂、
+# 只在碰巧回滚时纠正,不报错)。★ 这里只列"要比"的字段;inv/wslot/残弹是非预测字段,刻意不比(见 weapons.md)。
+# ★ 每个键都必须在真 capture_state() 里存在 —— `rollback_fidelity_probe` 的预测字段断言盯着这一点。
+const PREDICTED_FIELDS := ["down", "hp", "pos", "vel"]
+
 # 接入方每物理步写一次:本帧是否正在贴身(Player.touching_player())。★ 默认 false = 改动前的行为;它不进 capture_state/restore_state、不上行(纯客户端本地量)。
 var in_contact: bool = false
 
@@ -227,19 +233,30 @@ func _trim(below: int) -> void:
 		_events.erase(s)
 
 # 两整态是否"预测被证实":只比影响判定的关键量,避免过度回滚;超出 = 服务器外部事件或漂移 → 走 rollback。
+# ★ 比对集 = PREDICTED_FIELDS(单一来源);容差与判据按字段分派在 _within(位置容差是接触与否二选一,不能简化)。
 func _close_enough(a: Dictionary, b: Dictionary) -> bool:
-	if a.get("down", false) != b.get("down", false):
-		return false
-	if int(a.get("hp", 0)) != int(b.get("hp", 0)):
-		return false
-	# 容差按接触与否二选一:非接触期的位置分歧是真的(要立刻纠正),
-	# 接触期的位置分歧是接触几何噪声(实测纠正不动,见 contact_pos_tol 的说明)。
-	var tol: float = contact_pos_tol if in_contact else pos_tol
-	if _pos_dist(a.get("pos", Vector2.ZERO), b.get("pos", Vector2.ZERO)) > tol:
-		return false
-	var va: Vector2 = a.get("vel", Vector2.ZERO)
-	var vb: Vector2 = b.get("vel", Vector2.ZERO)
-	return va.distance_to(vb) < 20.0
+	for f in PREDICTED_FIELDS:
+		if not _within(String(f), a, b):
+			return false
+	return true
+
+
+# 单字段比对。默认分支 false = 表里出现未知字段时判分歧(大声:宁多回滚一次,也不静默当成一致)。
+func _within(field: String, a: Dictionary, b: Dictionary) -> bool:
+	match field:
+		"down":
+			return a.get("down", false) == b.get("down", false)
+		"hp":
+			return int(a.get("hp", 0)) == int(b.get("hp", 0))
+		"pos":
+			var tol: float = contact_pos_tol if in_contact else pos_tol
+			return _pos_dist(a.get("pos", Vector2.ZERO), b.get("pos", Vector2.ZERO)) <= tol
+		"vel":
+			var va: Vector2 = a.get("vel", Vector2.ZERO)
+			var vb: Vector2 = b.get("vel", Vector2.ZERO)
+			return va.distance_to(vb) < 20.0
+		_:
+			return false
 
 
 # 两个位置在环面上是否几乎同位:裸 distance_to 在跨接缝那一帧会给出「一整幅地图宽」的假分歧 ⇒ 白跑一次回滚。
