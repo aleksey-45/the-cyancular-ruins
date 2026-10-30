@@ -27,14 +27,14 @@ if (tr_channel > 0) { channel = SYSCH_MAX + tr_channel - 1; }        // = tr_cha
 | `transfer_channel` | 实际 ENet 道 | 语义 | 该通道上的 RPC |
 |---|---|---|---|
 | **0**(默认) | reliable→**0** / unreliable→**1** | 关键握手 / 会话序列 / 生命周期宣告 + 全部快照 | `ai_duel` / `claim_role` / `create_room` / `go_match` / `join_room` / `list_rooms` / `lobby_name` / `match_options` / `match_start` / `match_sync` / `match_sync_data` / `opponent_left` / `peer_info` / `ping` / `player_options` / `pong` / `pvp_room_state` / `pvp_start` / `reclaim_role` / `rejoin_denied` / `rejoin_request` / `report_token` / `room_created` / `room_joined` / `room_list` / `room_map` / `round_state` / `royale_create` / `royale_join` / `royale_leave` / `royale_list` / `royale_rooms` / `royale_start` / `royale_start_ai` / `server_message` / `session_token` / `snapshot_own` / `snapshot_world` / `suicide_request` / `team_create` / `team_join` / `team_leave` / `team_list` / `team_pick` / `team_rooms` / `team_start` |
-| **1** | **2** | 30Hz 输入 | `send_input`(采样 30Hz;一条记录管 2 个物理 tick) |
+| **1** | **2** | 30Hz 输入 | `send_input`(30Hz 一包装两条记录,每条 = 1 个物理 tick) |
 | **2** | **3** | 10Hz 状态镜像 | `royale_room_state` / `team_room_state` / `time_state` |
-| **3** | **4** | 比赛期内的一次性 FX / 生成事件 | `beam_fired` / `beam_fired` / `bullet_spawn` / `hit_confirm` / `hit_event` / `kill_event` / `sub_destroyed` / `tile_destroyed` / `weapon_removed` / `weapon_spawned` |
+| **3** | **4** | 比赛期内的一次性 FX / 生成事件 | `beam_fired` / `beam_fired` / `bullet_spawn` / `explosion` / `hit_confirm` / `hit_event` / `kill_event` / `sub_destroyed` / `tile_destroyed` / `weapon_removed` / `weapon_spawned` |
 
-**合计 60 条**:`transfer_channel` 0 = 46 / 1 = 1 / 2 = 3 / 3 = 10。
+**合计 61 条**:`transfer_channel` 0 = 46 / 1 = 1 / 2 = 3 / 3 = 11。
 
 ## 声明与对账
 
 - `@rpc` 四参全写:`@rpc(mode, sync, transfer_mode, transfer_channel)`。三参并把 int 放第 3 位会被引擎拒(`argument 3 should be "String" but is "int"`);`mode` / `sync` / `transfer_mode` 三个字符串顺序无关,`transfer_channel` 必须是最末那个 int;`sync` 写 `"call_remote"` 是默认值。
-- 作用域:产品声明 **60** 条(`net_bus.gd` 28 + `net_bus_ext.gd` 32);`transfer_channel` 0/1/2/3 = 46/1/3/10。表里 59 个方法名,差的一条是 `beam_fired` 在 `net_bus.gd` 与 `net_bus_ext.gd` 各声明一次(两份都给通道 3)。通道号无法在运行期回读:`GDScript.get_script_method_list()` 不含 `rpc_config` ⇒ 过去的唯一自动化判据是文本对账(`rpc_channel_contract_smoke`,已删)⇒ **今天只能人工对表**;「重名集合恰好 = {beam_fired}」也没人钉了。
+- 作用域:产品声明 **61** 条(`net_bus.gd` 28 + `net_bus_ext.gd` 33);`transfer_channel` 0/1/2/3 = 46/1/3/11。表里 60 个方法名,比声明少的一条是 `beam_fired` 在 `net_bus.gd` 与 `net_bus_ext.gd` 各声明一次(两份都给通道 3)。通道号无法在运行期回读:`GDScript.get_script_method_list()` 不含 `rpc_config` ⇒ 过去的唯一自动化判据是文本对账(`rpc_channel_contract_smoke`,已删)⇒ **今天只能人工对表**;「重名集合恰好 = {beam_fired}」也没人钉了。
 - **接收端纪律**:`beam_fired` 必须走 `NetBus`(不是 `NetBusExt`);挂错节点 = 静默 no-op。

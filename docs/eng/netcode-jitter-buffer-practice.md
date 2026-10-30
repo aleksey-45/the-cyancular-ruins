@@ -1,5 +1,7 @@
 # 目标延迟与播放速率：主流实现的源码级调研（增量）
 
+> **本文是调研(一手来源/对照)**:本仓实现细节的权威 = [`netcode-client-interp-and-input-details.md`](netcode-client-interp-and-input-details.md)。
+
 > 本仓有**固定 playout 缓冲 + 本地播放时钟**，没有自适应目标延迟、没有抖动驱动的深度控制律之外的速率调控：远端玩家副本渲染「最新快照 − `PLAYOUT_TICKS`」那一刻的夹逼插值位置（`scenes/player/player_replica.gd` + `core/net/playout_clock.gd`）。
 
 ## 1. 本仓的现行机制

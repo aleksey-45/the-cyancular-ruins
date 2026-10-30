@@ -15,7 +15,7 @@
 
 - 触发点只有服务器断开(`NetBus.local_server_message`)。菜单开着时记 `_pending_disconnect`,关菜单由 `_recheck_disconnect()` 补发。
 - 两条时间尺度:`RECONNECT_RETRY_MS = 2000`(定时器节拍),`RECONNECT_ATTEMPT_TIMEOUT_MS = 5000`(一次握手寿命);预算 = `GraceWindow.DEFAULT_SECONDS`。同一条连接只发一次 `reclaim_role`;收到 worker 回的 `match_start` 才算成功。
-- 成功(`_on_resumed`):`_input_seq` / `_have_prev_seq` / `_prev_sent_seq` / `_input_pair_phase` 归零,重建 `PredictionRollback` 并重新 `bind`、设 `map_px` 与 `ticks_per_record`,再置 `_resync_pull_pending` 并 `NetBus.rpc_id(1, "match_sync")`。
+- 成功(`_on_resumed`):`_input_seq` / `_have_prev_seq` / `_prev_sent_seq` / `_input_batch_phase` 归零,重建 `PredictionRollback` 并重新 `bind`、设 `map_px` 与 `ticks_per_record`,再置 `_resync_pull_pending` 并 `NetBus.rpc_id(1, "match_sync")`。
 - `_on_snapshot_own` 丢弃 `ack > _input_seq` 的快照(跨纪元残留 ack);`_cancel_reconnect()` 停掉在飞的重连循环,`_abort_reconnect(reason)` 收横幅、`NetBus.stop()`、回主菜单。
 
 ## 补态(match_sync)

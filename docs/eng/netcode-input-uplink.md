@@ -26,9 +26,9 @@
 | `st` | int | ★ 本端**最近成功解码**的服务器世界快照 tick（不是"最后收到"） |
 | `ct` | int | ★ 该 tick 的客户端物理帧号；低 tick 记录 = `ct - 1` |
 
-位：`BIT_UP 1` / `BIT_DOWN 2` / `BIT_CHARGE 4` / `BIT_ATTACK 8` / `BIT_RELOAD 16` / `BIT_PICKUP 32` / `BIT_DROP 64` / `BIT_HASTE 128` / `BIT_REWIND 256` / **`BIT_NEED_FULL 512`**（P1.5：增量/差分基准断了，请求服务器补 FULL；不是玩家动作）。加位 = 改协议，两端必须同版本。
+位：`BIT_UP 1` / `BIT_DOWN 2` / `BIT_CHARGE 4` / `BIT_ATTACK 8` / `BIT_RELOAD 16` / `BIT_PICKUP 32` / `BIT_DROP 64` / `BIT_HASTE 128` / `BIT_REWIND 256` / **`BIT_NEED_FULL 512`**（v7 起为保留位，恒不置位；差分已删除，不再有"请求补 FULL"的动作）。加位 = 改协议，两端必须同版本。
 
-**线格式**（`NetCodec.KIND_INPUT`，`PROTO_VERSION = 6`）：头 2 B + 记录 40 B = **42 B/包**（P1 前 46 B）。实测 42 B（`net_wire_smoke.gd` 的 `[readout]` 行）。布局：
+**线格式**（`NetCodec.KIND_INPUT`，`PROTO_VERSION = 7`）：头 2 B + 记录 40 B = **42 B/包**（P1 前 46 B）。实测 42 B（`net_wire_smoke.gd` 的 `[readout]` 行）。布局：
 
 ```
 头: 版本 1B | 种类 1B

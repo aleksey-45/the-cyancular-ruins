@@ -77,8 +77,8 @@
 
 ### I. 超龄判据的输入
 
-**I1** `create_room` / `royale_create` 必须给 `created_at` 赋时间戳。**I2** 1v1 的超龄判断**不是**裸
-`MAX_ROOM_AGE`（有宽限）。**I3** 大乱斗在局宽限必须引用 `ROYALE_MATCH_TIME_CEILING`（可证上界，
+**I1** `create_room` / `royale_create` 必须给 `created_at` 赋时间戳。**I2** 1v1 的超龄判断**就是裸**
+`MAX_ROOM_AGE`（没有在局宽限；在局宽限只给大乱斗 / 3v3）。**I3** 大乱斗在局宽限必须引用 `ROYALE_MATCH_TIME_CEILING`（可证上界，
 不是 `RoyaleHost.MATCH_TIME` 那个默认值）与 `rr.in_match` 门控，且**含** `SWEEP_INTERVAL`。
 
 ## 2. 相关文件

@@ -97,7 +97,7 @@
 
 ## 十四、2026-10-26 子弹最小破坏单位（榴弹 1/4 格，其余 1 格）—— 边界与代价
 
-**改了什么**：`BulletBase.tile_break_unit`（@export，单位 = 格，默认 1.0）；榴弹 `grenade_bullet.tscn` 设 **0.25**（= 1 个 16px 子格），其余枪不覆盖 = 1.0。`_damage_tile_at` 按单位分派：整格走 `TileDefs.damage_tile`（格级 `hp_grid`），1/4 格走 `damage_sub`（子格 `sub_hp`）。`Explosion.apply_aoe(..., tile_unit_cells)` 把同一参数传给新的公开 `Explosion.damage_tiles`：整格侧对爆区内每个 64px 格**去重**后按最近子格的衰减值扣一次；子格侧保持现状。`damage_sub` 在整格 16 子格打空、`current_grid[cell]=0` 的同时把 `hp_grid[cell]=0`（两本账在"格子已消失"上对齐）。`grenade_bullet.tscn` 的 collision_mask 5→1（task-8 分离的收尾：榴弹也不再靠物理碰撞吃敌人）。新守卫 `tests/smoke/tile_break_unit_smoke.gd`（10 条断言 + 条数闸）。
+**改了什么**：`BulletBase.tile_break_unit`（@export，单位 = 格，默认 1.0）；榴弹 `grenade_bullet.tscn` 设 **0.25**（= 1 个 16px 子格；★ 2026-10-30 起改为 **0.5 = 32px**，见 §三十二），其余枪不覆盖 = 1.0。`_damage_tile_at` 按单位分派：整格走 `TileDefs.damage_tile`（格级 `hp_grid`），1/4 格走 `damage_sub`（子格 `sub_hp`）。`Explosion.apply_aoe(..., tile_unit_cells)` 把同一参数传给新的公开 `Explosion.damage_tiles`：整格侧对爆区内每个 64px 格**去重**后按最近子格的衰减值扣一次；子格侧保持现状。`damage_sub` 在整格 16 子格打空、`current_grid[cell]=0` 的同时把 `hp_grid[cell]=0`（两本账在"格子已消失"上对齐）。`grenade_bullet.tscn` 的 collision_mask 5→1（task-8 分离的收尾：榴弹也不再靠物理碰撞吃敌人）。新守卫 `tests/smoke/tile_break_unit_smoke.gd`（10 条断言 + 条数闸）。
 
 **平衡变化（请人眼验收）**：普通子弹打可破坏砖从"16px 逐子格磨"变成"整格一个单位" ⇒ 手枪（10 伤）一发打掉整片树叶格、步枪（4 伤）两发；榴弹仍是 16px 圆洞（爆炸单位 0.25）。网络事件类型相应变化：普通子弹破坏发 `tile_destroyed`，榴弹破坏发 `sub_destroyed`（task-6 的粒子层两种事件都走既有去重）。
 
@@ -315,3 +315,207 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 4. 导出构建的服务端日志目录**未在本机实测**（本轮只跑了 headless 开发态与纯逻辑冒烟；导出模板冒烟要跑完整 `build_release.py`）—— 首次真跑发布时请确认 `log/` 真的出现在 exe 旁。
 5. 引擎级 `--log-file` 只覆盖由 `start_server.bat` 启动的进程；直接双击 exe 时控制台输出不落盘（NetDiag 的结构化日志仍落盘）。
 6. 客户端导出构建不强制日志（`--diag` 仍 opt-in），日志仍去 `user://logs`。
+
+## 二十九、联机 B2 批修复（2026-10-30，档 1~2）
+
+**起因**：B1 批之后用户指令「继续修 bug」，按审查台账 `docs/audit/2026-10-30-netplay/` 的 B2/B3 段做客户端接线与回滚环。
+
+**改了什么**（6 条，详见 [02-bug台账 §6](../audit/2026-10-30-netplay/02-bug台账.md)）：
+1. `BUG-08` 回滚环泄漏：`PredictionRollback.note_post_step()` 的淘汰循环补 `_inputs.erase(old)` —— 生产路径（`pvp_match_client._physics_process`）走的是 `note_post_step` + `note_input`，旧代码只有 `advance()` 那条会清 `_inputs` ⇒ ack 断流（重连中/本人包停摆）时 `_inputs` 以 60 份/秒无界增长。
+2. `BUG-18` 大厅假 claim 梯：`lobby_page.gd` 的转连 worker 一次性回调收成具名 `Callable`（`_claim_connected` / `_worker_fail`），`_bind_worker_once` / `_unbind_worker_once` 成对；`_do_go_match` 绑定，`_return_to_lobby` **先解绑**。旧写法（匿名 lambda + `CONNECT_ONE_SHOT` + 无解绑）在 worker 连不上回大厅后，大厅一连上仍会跑 `_claim_role_worker` ⇒ 向大厅 peer 发 `claim_role/player_options/report_token` 并起 25s claim 梯，把玩家从大厅弹走。
+3. `BUG-20` 加速重影节拍器：`pvp_match_client._fx_other_t` 从单 float 改 **per-副本 `Dictionary`**，递减改用调用链传下来的**物理 delta**（原为 `get_process_delta_time()`，在物理 delta 链里 ⇒ 帧率相关）；`_time_fx_replica_off` 里 `erase`。旧写法 k 个加速者每帧被减 k 次 ⇒ 触发 ≈ k/0.06 对/秒（16 人 ≈500 张 AfterImage/s）。
+4. `BUG-21` 断线判定：局内从 `msg.contains("断开")` 文本子串改为 `multiplayer.server_disconnected` 直连 `_on_hard_disconnect`；`_on_server_message` 只留播报。旧判据把任何含"断开"的服务器播报当断线（`NetBus.stop()` 掐活连接），文案一改则重连静默失效。
+5. `BUG-22` 权威爆炸 cull：`_on_network_explosion` 先判 `want != null` 再回收视觉弹 —— 对手副本未建时旧代码用 `b.shooter != null` 匹配，会把**别人的**榴弹 `queue_free()`（提前消失/双爆）。
+6. `BUG-23` 3v3 尸体血条：`team_game.gd` 补 `visible = not downed`（与 `royale_game.gd:125` / `pvp_game.gd:118` 同口径；3v3 原漏）。
+
+**守卫（能答「去掉什么才红」）**：
+- 新增 `tests/smoke/prediction_rollback_ring_smoke.gd`（3 条 + `EXPECTED_CHECKS`）：①`note_post_step` 淘汰后 `_inputs.size() <= KEEP`；②最新 seq 仍在环里；③最老 seq 已被清。**变异验证**：删掉 `_inputs.erase(old)` 那行 ⇒ ①②③ 里两处红（`_inputs.size()=500`、`has(0)==true`），还原 ⇒ `ROLLBACK RING OK(3 条断言)`。
+- `allscript_probe` 条数闸 193→**194**（+新冒烟）；`tests/README.md` 的"现有带 `EXPECTED_CHECKS` 的支"清单与默认批读数同批校正为 **17 支 / 111 条闸断言**（原来那份清单已滞后：net_wire 5→7、snapshot_size 5→9、tile_break 10→11 且漏 4 支）。
+
+**验证（本机 headless；未占 7777、未弹窗）**：`ROLLBACK RING OK(3 条断言)` · `ALLSCRIPT: OK(194 个脚本全部加载)` · `python tools/check_naming.py` 绿。
+
+**边界（照实）**：
+1. **真链路批未跑**（`pvp_match_smoke` / `rejoin_probe` / `team_match_probe` / `royale_soak`：占 7777/端口池、拉子进程）—— 按 AGENTS §1 等用户认领。
+2. `BUG-18/20/21/22/23` 五条**没有专属自动断言**（连接接线 / 观感 / 视觉），只能人眼验收；已在台账逐条登记"无自动断言"。
+3. `BUG-20` 只修了"共享递减 + idle delta"两处；重影本身的观感（0.06s 一对）仍需人眼。
+4. 本轮改动**未提交**（工作树 `M` 4 个源文件 + `M tests/probe/allscript_probe.gd` + `M tests/README.md` + 新增冒烟与 `.gd.uid`）。
+
+## 三十、联机 B3 批修复：BUG-01 残弹独立性（2026-10-30，档 2）
+
+**起因**：用户实机报「每把枪械的子弹数量不独立」；前轮把三条候选（同帧切枪窗口 / C2 条目滞后 / 拾取复用 inst）都核过未定案，本轮用真 `player.tscn` 探针复现并定位。
+
+**根因（已定位）**：`WeaponComponent._equip_index()` 切枪时会把旧枪 `mag_ammo` 写回 `inventory.held[_current_index]`；但两处调用点**在调用前已经把条目换掉了**，写回于是落到**另一把枪**的条目上：
+1. `pick_up()` 的「背包满 ⇒ 替换手上那把」：先写新条目、再 `_equip_index` ⇒ 旧枪实弹覆盖新条目 ⇒ 新枪 `pending_mag` = 旧枪残弹（地面那件的残弹被丢弃）。**这就是"背包满捡枪，新枪子弹跟着上一把走"**。
+2. `random_keep_one()`（倒地随机保留一把）：不 flush 当前枪条目（条目陈旧 = 少扣刚打的发数），且 `held` 替换成 1 条后仍调默认 flush 的 `_equip_index(0)` ⇒ 旧枪实弹覆盖保留条目；掉落的当前枪带陈旧条目值。
+
+**改了什么**（`scenes/player/weapon_component.gd`，档 2）：
+- `_equip_index(index, flush_current: bool = true)`：新增开关；两个重建路径调用点传 `false`。默认行为不变。
+- `pick_up()` 替换分支：`_equip_index(_current_index, false)`（旧枪实弹已由 `_last_dropped` 带走）。
+- `random_keep_one()`：替换 `held` 前先 `_flush_current_mag()`；替换后 `_equip_index(0, false)`。
+
+**守卫**：新增 `tests/probe/gun_ammo_independence_probe.gd` + `.tscn`（8 条 + `EXPECTED_CHECKS`；真 `player.tscn`，不碰网络/端口）：
+① 背包满拾取替换 → 新枪残弹取地面值；② 新枪条目残弹也是地面值；③ 被换下那把带自己实弹；④ 随机保留项条目正确；
+⑤ 倒地掉落的当前枪带真实实弹（不是条目陈旧值）；⑥ 对照：背包没满的拾取路径不变。
+**变异验证（三条，逐条改坏 → 红 → 还原 → 绿）**：`pick_up` 改回默认 flush ⇒ ①②红；`random_keep_one` 去掉 flush ⇒ ⑤红；`random_keep_one` 改回默认 flush ⇒ ④红。
+未修状态的红色原文已抄进 `docs/audit/2026-10-30-netplay/02-bug台账.md` 的 BUG-01 段。
+
+**验证（本机 headless；未占 7777、未弹窗）**：`KH gun_ammo_independence PROBE: ALL-OK` · `ALLSCRIPT: OK(195 个脚本全部加载)`（条数闸 194→195）· `python tools/check_naming.py` 绿。`tests/README.md` 默认批读数同步 **18 支 / 119 条闸断言**（+`gun_ammo_independence_probe`(8)）。
+
+**边界（照实）**：
+1. **同帧多次切枪窗口**（一条旧枪在 `call_deferred` 未入树时被切走 ⇒ 不写回）未改：它保证"不把 0 写回"，与本次两条重建路径无关；真机可达但需同帧两次切枪事件，留 `_mag_ready` 抓手登记为后续项。
+2. `restore_inventory`（回滚重建）后调用方 `equip_index` 会**瞬时**把旧实例实弹写进恢复条目；紧随的 `apply_mag(st["mag"])` 纠正、下帧 capture 再 flush ⇒ 自愈，未改。
+3. 原候选 2（C2 `inv` 条目滞后）与候选 4（`pickup_sync` 缺 `mag` 默认 0）与本 bug 无关，仍可能独立成立，保留登记。
+4. 本轮改动**未提交**（工作树含 B2 批未提交改动 + 本批）。
+
+## 三十一、联机 B4 协议批：v7（DELTA 删除 + trail 定点化 + 版本握手，2026-10-30，档 3）
+
+**起因**：审查台账 B4 批（`docs/audit/2026-10-30-netplay/01-代码与注释审查.md` S-01 / S-22 / BUG-07）。**两端必须同版发布。**
+
+**改了什么**（`core/net/net_codec.gd` 由 922 行重写为 ~620 行）：
+1. **S-01 删差分半套**：`PROTO_VERSION 6→7`。删除 `encode_world(full,prev,keyframes)` / `encode_own(full,prev)` 的 DELTA 分支、`apply_world` / `apply_own`、`_enc_value` / `_unit_equal` / `_deep_equal` / `_delta_mask` / `_write_masked_fields` / `_write_unit_value` / `_read_unit_into` / `_read_masked_fields` / `_own_unit_at` / `_own_unit_count`、`own_full_phase` / `world_keyframe_quota`、`OWN_FULL_PERIOD` / `WORLD_KF_PERIOD` / `W_MASK_ALL`。解码侧 `flags` 必须恰为 FULL（其它值一律拒绝）；`decode_world` / `decode_own` 返回形状收窄为 `{tick,players}` / `{ack_seq,q,tick,c2}`。
+2. **S-22 trail 定点化**：`trail` 从 2×float32 改 **2×i16（Q_SCALE=0.5px 步长）**，与 pos/vel 同精度；世界条目 33→**25 B**、最坏世界包 791→**536 B**、N=16 常态包（trail 2 点）536→**408 B**。
+3. **BUG-07 版本握手**：`NetBus.claim_role(role, name, proto)` / `NetBusExt.reclaim_role(role, token, proto)` 带 `PROTO_VERSION`；`server_main._proto_matches()` 在 claim/reclaim 入口校验，不符则**回一条用户可见的 `server_message` 并踢连接**（旧行为只剩每条包一条 push_error、比赛照开、画面静默冻结）。客户端两处（大厅 claim / 对局重连 reclaim）+ 两支测试客户端同步。
+
+**守卫（承重断言逐条变异验证）**：
+- `net_wire_smoke`：7→**5** 条（删 ⑤本人包差分 / ⑥世界包 keyframe+差分；trail 往返加 ≤0.25 容差）。
+- `snapshot_size_probe`：9→**5** 条（删 ⑥~⑨ 差分/相位断言；`_t_bytes(T_TRAIL)` 改 1+4n；删 `_report_change_rate` / `_mask_bytes`；trail 往返容差同款）。读数：条目 **25 B**、最坏包 **536 B**、本人包 99 B。
+- `allscript_probe`：`EXPECTED_SCRIPTS` 195 不变（无新增脚本）；全批 `RUN_ALL OK(18 runs / 113 gated-assertions)`。
+- 变异验证（本批承重面 = 线格式；三条**实测**逐条改坏 → 红 → 还原 → 绿）：
+  ① trail 量化步长错（`roundi(px * Q_SCALE)` 改成 `roundi(px * 1.0)`，误差 0.5 > 容差 0.25）⇒ `net_wire_smoke` ③ 红（`NET WIRE FAILED: 1 处`），还原后 `NET WIRE OK(5 条断言)`；
+  ② 容量预算少算（`_schema_bytes` 的 T_TRAIL 从 `1+4n` 改 `1+2n`）⇒ `snapshot_size_probe` ④ 红（`FAIL ["最坏世界包必须能逐字段解码回来…"]`），还原后 `SNAPSHOT SIZE PROBE: ALL-OK`；
+  ③ flags 判据删除（`decode_world`/`decode_own` 的 `!= FULL` 守卫整段拿去）⇒ `net_wire_smoke` ② 红（flags 字节改坏后仍被当合法包解出），还原后 `NET WIRE OK(5 条断言)`。
+
+**验证（本机 headless；默认批不占 7777、不弹窗）**：
+- `bash tests/run_all.sh` ⇒ `RUN_ALL OK(18 runs / 113 gated-assertions)`，18 支全 OK（net_wire 5 / snapshot_size 5 / allscript 195 / gun_ammo 8 / rollback ring 3 …）。
+- `net_wire_smoke` readout：输入 42 B、世界 2 人 50 B、本人包 99 B；`SNAPSHOT SIZE PROBE: ALL-OK`（条目 25 B、最坏 536 B）。
+- `python tools/check_naming.py` 绿（见随后终验）。
+
+**边界（照实）**：
+1. **真链路批未跑**（`pvp_match_smoke` / `rejoin_probe` / `team_match_probe` / `royale_soak`：占 7777/端口池、拉子进程）—— 档 3 要求真链路跑批，按 AGENTS §1 等用户认领；本批的"两端同版"只由版本字节与握手守门，跨进程未见真包。
+2. 旧客户端（v6）连 v7 worker：claim 参数不匹配 ⇒ RPC 调用失败；v7 客户端连 v6 worker：worker 侧 `_on_role_claimed` 收不到 proto 参数 ⇒ 同样失败。方向正确（大声失败），但**未做跨版本矩阵测试**（发布纪律 = 两端必须同包，登记为边界）。
+3. `flags` 字节保留（恒 FULL）以不动头部布局；将来若要重新引入"多形态"再定义位，现在**不许按位读**。
+4. `snapshot_size_probe` 的每秒折算列按 `SNAP_HZ=60`；输出/带宽数字见 `netcode-at-16-players.md` §1（N=16 ≈487 KB/s trail 2 点 / ≈364 KB/s 空 trail）。
+5. 本轮改动**未提交**（工作树含 B2/B3 批未提交改动 + 本批）。
+
+## 三十二、榴弹 32px 破坏单位 + BUG-03 重连补子格（2026-10-30，档 3）
+
+**起因**：① 用户裁定「榴弹应该是最多破坏到 32px 而不是 16px」；② 审查台账 BUG-03（P1）：重连补破坏态只补"整格已消失"，16px 子格破坏全漏 ⇒ 幽灵墙。
+
+**改了什么**：
+1. **爆炸/直击分三档**（`core/sim/explosion.gd` / `scenes/weapons/bullet_base.gd` / `core/sim/tile_defs.gd`）：
+   `tile_break_unit >= 1.0` → 整 64px 格；`>= 0.5` → **32px 块**（2×2 子格，`TileDefs.damage_block32` 收口，块内 4 子格按**同一伤害**结算 ⇒ 洞边对齐 32px）；`< 0.5` → 逐 16px 子格。`grenade_bullet.tscn` 的 `tile_break_unit` **0.25 → 0.5**。
+   爆炸碎片改为按**破坏单位**播（新 `Explosion.destructible_units`：16/32/64px 单位聚合、顺序确定、`d` 取单位内最近子格）⇒ 榴弹一块一簇，不再一块 4 簇。
+2. **BUG-03 补态**：新增纯逻辑 `core/sim/tile_resync.gd`（`TileResync.partial_damaged_subs`）—— 只报「所在 64px 格仍与基线相同」的死子格（整格已消失的由 `destroyed_cells()` 展开，不重复发），顺序确定；`MatchState.damaged_partial_subs()` 委托它；`server_main._on_match_sync` 在载荷加 `destroyed_subs`（空数组不带键）；`pvp_match_client._on_match_sync` 在应用 `destroyed` 之后逐子格静默补（复用 `_on_remote_sub_destroyed(sub, true)`，不另写清瓦片/清碰撞逻辑）。
+
+**守卫（逐条变异验证）**：
+- `tile_break_unit_smoke`（11 条，口径改 32px）：① 边界（0.25/0.5 都走子格路径）；② 场景值 `tile_break_unit = 0.5`；④ `damage_block32` 一次清 2×2 子格、格级账不动；⑨ 爆炸 0.5：**块内 4 子格同生共死**（`_block_uniform`）、死亡子格数 = 4×块数、格级账只在整格全灭时归 0。
+  变异：榴弹场景回 0.25 ⇒ ② 红；爆炸 `>= 0.5` 分派失效（改 `>=0.75`）⇒ ⑨ 红。
+- 新增 `resync_substate_smoke`（5 条 + 条数闸）：① 部分破坏子格必进列表；② 整格已消失的不重复发；③ 未破坏不发；④ 顺序确定（打乱插入顺序仍 (y,x) 升序、两次逐位相同）；⑤ 全是整格消失时列表为空（无假阳性）。
+  变异：删「格仍与基线相同」过滤 ⇒ ①②③⑤ 红（实测 4 处）；删 `sort_custom` ⇒ ④ 红。
+- `allscript_probe` 条数闸 195→**197**（+`tile_resync.gd` +`resync_substate_smoke.gd`）。
+
+**验证（本机 headless；默认批不占 7777、不弹窗）**：`TILE BREAK UNIT OK(11 条断言)` · `RESYNC SUBSTATE OK(5 条断言)` · `ALLSCRIPT: OK(197 个脚本全部加载)` · `RUN_ALL OK(19 runs / 118 gated-assertions)`。
+
+**边界（照实）**：
+1. **真链路未跑**（v7 + 本批的 `match_sync` 载荷变化要跨进程验证：`pvp_match_smoke` / `rejoin_probe`）—— 按 AGENTS §1 等用户认领。
+2. 客户端 `_on_remote_sub_destroyed(sub, true)` 在真 Level0 上的效果（贴图/碰撞块重建）无人眼验收；只由代码路径与既有链保证。
+3. 16px 子格 **HP 被磨低但没死**的状态不进补态（外观/碰撞都不变，客户端无需知道）；若将来客户端要显示"受损砖"需要另加字段。
+4. 32px 块内 4 个子格的纹理可能不同（树叶+树干混块）：破坏按块统一结算（爆炸 AoE 语义），碎片取块内最近子格的纹理 —— 观感边界。
+5. 本批改动**未提交**（工作树含 B2/B3/B4 未提交改动 + 本批）。
+
+## 三十三、联机 B5/B6 收尾批：BUG-04/05/09/10/12/14（2026-10-30，档 2~3；**台账 23 条全部修完**）
+
+**起因**：用户「继续下所有」—— 收掉审查台账剩下的 6 条。
+
+**改了什么**：
+1. **BUG-04**（回溯环跨局，档 3，`match_host.gd`/`match_round.gd`）：新增 `MatchHost.reset_time_rewind_state()` —— 清 `_rw_buf/_rw_cursor/_rw_snap_t/_rw_t0/_rw_trail`，并对换局瞬间正处于回溯态的 role 解冻 `src.frozen=false` + `remove_meta("time_rewinding")`（否则下一局该玩家输入源永冻）；`MatchRound._reset_world_and_clear_dynamics()` 在**早退之前**动态调用它（`has_method`，base 类不持子类表）。环深 12s vs 换局间隙 7s 的漏洞关闭。
+2. **BUG-05**（回溯不还原 downed，档 3，`match_host._apply_rw_frame`）：补 `combat.set_downed_by_rewind(bool(f["downed"]))`（该方法刻意不扣血/不发 went_down，与单机 `Player.rewind_restore` 同款）⇒ 不再出现"hp=0 且未倒地"的非法态。
+3. **BUG-09**（ai_duel 摘房即还端口，档 3，`lobby_rooms.gd`/`worker_launcher.gd`/`room_manager.gd`）：新增拆除形态 `TEARDOWN_ADOPT`：房摘除但端口**继续占着**，`WorkerLauncher.adopt_orphan()` 记孤儿 pid，`RoomManager._process` 每 tick `reap_orphans()` 在进程退出后归还。旧写法走 DELAYED（120s 后无条件 release）⇒ 面板显示空闲、pid 被抹、回收梯看不见这场局。
+4. **BUG-10**（同步 PowerShell 冻主线程，档 2，`proc_util.gd`/`worker_launcher.gd`/`lobby_rooms.gd`）：`kill_udp_port` 拆出阻塞核心 `_kill_udp_port_blocking`；新增 `kill_udp_port_async`（后台 `Thread`，主线程 `reap_kill_threads()` 收尸）；`kill_worker` 改走异步。★ 连带把 `TEARDOWN_KILL` 的"杀完立刻 release"改成**延迟归还**——杀已是异步的，立刻 release 可能在旧进程未死时把同端口发给新 worker（串线），延迟三档远大于一次 PowerShell 耗时。
+5. **BUG-12**（ai_duel 不通知 guest，档 2，`room_manager.ai_duel`）：房内 `players.size() > 1` 直接拒绝并回 `server_message`（不再摘房后把 guest 留在已消失的等待室）。
+6. **BUG-14**（回局凭据无模式，档 3，`rejoin_registry.gd`/`room_registry.gd`/`lobby_rooms.gd`/`net_bus_ext.gd`/`lobby_page.gd`/`room_manager.gd`）：凭据加 `mode`；`decision`/`owns` 都按（房间号，**模式**）判；`_grant_rejoin(..., mode)` 四处调用点各传 `ModeDefs.MODE_*`；`rejoin_request` RPC 带 `mode`（NetBusExt 扩展协议，两端同版）。跨模式同号房的泄漏与误放行都关闭。
+
+**守卫**：
+- 新增 `tests/smoke/rejoin_mode_smoke.gd`（4 条 + 条数闸）：① 凭据带 mode、同模式放行；② 同号跨模式拒绝；③ `owns` 按（房间号，模式）过滤列表；④ 同模式下 worker 死 / 房号不符 / TTL 过期三条原判据不回归。
+  **变异验证（三条实测）**：去掉 decision 的 mode 比较 ⇒ ② 红；去掉 owns 的 mode 比较 ⇒ ③ 红；grant 不存 mode ⇒ ①③④ 红；还原后 `REJOIN MODE OK(4 条断言)`。
+- `tools/room_sweep_lint.gd` 的 ⑥ 号检查随 B1 的越界守卫修正同步更新（旧断言期待的是已被修掉的 `((_royale or _team_mode) and ...)` 前缀；现断言裸 `not _role_set.has(role)` 且不许旧前缀复活）⇒ `SMOKE_ROOM_SWEEP OK(10 项检查)`。
+- `allscript_probe` 条数闸 197→**198**（+`rejoin_mode_smoke.gd`）。
+
+**验证（本机 headless；默认批不占 7777、不弹窗）**：`REJOIN MODE OK(4)` · `TILE BREAK UNIT OK(11)` · `RESYNC SUBSTATE OK(5)` · `ALLSCRIPT: OK(198 个脚本)` · `SMOKE_ROOM_SWEEP OK` · `RUN_ALL OK(20 runs / 122 gated-assertions)`。
+
+**边界（照实）**：
+1. **BUG-04/05/09/10/12 无自动断言**：服务器 Beta 回溯 / 大厅生命周期都没有可实例化的探针地基（`MatchHost` 要真地图与 autoload；`WorkerLauncher` 引 `NetDiag` ⇒ `-s` 编不过）。BUG-09/10 由 `room_sweep_lint` 守结构，行为只能真链路 + 人眼。★ 这 5 条**未做变异验证**（无断言可变异）。
+2. **真链路批未跑**：v7 线格式、`match_sync` 补态、大厅拆除/cert 改动都要跨进程验（`pvp_match_smoke`/`rejoin_probe`/`team_match_probe`/`royale_soak`，占 7777）—— 等用户认领。
+3. BUG-09 的孤儿梯只按 pid 存活判归还：AI worker 若**僵死**（进程活着但不退），端口会一直占着（旧实现更糟：120s 后端口被复用而 worker 还在）；2h 超龄清扫看不到已摘除的房 ⇒ 无兜底，登记为已知边界。
+4. BUG-10 的"not ours 不杀"警告仍会被 PowerShell 打出（在后台线程里），但顺序/时间戳与主线程日志可能交错；线程收尸在大厅 tick 里做，退出前未收的线程由引擎等待。
+5. 本轮改动**未提交**（工作树累计 B2~B6 全部未提交）。
+
+## 三十四、B8 文档/注释批 + BUG-24「打完房间不回收」（2026-10-30，档 1~2 + 一条承重修复）
+
+**起因**：① 用户「开始 B8 文档」= 01 的 `DD-*`(文档漂移) / `CM-*`(注释漂移) 批；② 用户现场问「打完了房间没有回收是什么原因」。
+
+**BUG-24（新登记，用户实报）—— 打完不回收的根因与修法**：
+- **根因**：`MatchRound._match_round_tick` 的 `MATCH_OVER` 分支是 `pass`（"等玩家退出/服务器关房"）⇒ **worker 对局结束后不主动退**；
+  而大厅回收梯 `_reclaim_finished_matches` 的唯一判据是 `_match_over(port,pid) = not pid_alive(pid)` ⇒ **只要客户端还连在 worker 上（结算页赖着不退 / 迟退），房与端口就一直占着**；
+  唯一兜底是 `_sweep_stale_rooms` 的 **2h 超龄**（对 1v1 是裸 `MAX_ROOM_AGE`）。
+- **修法**：`MatchRound` 暴露 `is_match_over()`；`server_main._process` 给 worker 加**终局滞留**：`MATCH_OVER` 起 `MATCH_OVER_LINGER = 60s`，到点无论客户端在不在都 `quit(0)` 收场（先让结算数据早已送达；客户端 `_match_ended` 已置位，断开不会触发重连）。房/端口随后由回收梯 ≤30s 收掉。
+- **边界**：① 真链路未跑（需一局打到 MATCH_OVER 并观察 ≤90s 内房消失）；② 60s 是否合适属产品口径，可调；③ 无自动断言（worker 生命周期无 `-s` 地基）。
+
+**B8 文档/注释批（逐条真改，不只是标状态）**：
+- **CM（代码注释/常量）**：`CM-01/02/06`（P1.5 差分口径 + mask u16/u32）随 v7 重写 `net_codec.gd` 不复存在；`CM-03` `net_bus` 注释改为陈述"NetBusExt 仍有同名副本(待删)"；`CM-04` `DemoInputSource`→`LocalInputSource`；`CM-05` `net_diag` 区分 `log_event()`(默认关) 与 `audit()`(常开)；`CM-07` 三处 8→16；`CM-08` `rr.match_time` 存的是建房页那份(缺省 0，下界)；`CM-09` 键必须是字符串(客户端 `room_list.gd` 读 "1"/"2"/"0")；`CM-10` `server_panel` 状态颜色表改用 `ServerStatus.STATE_*` 常量；`CM-11` 去掉 `ui.md:27` 行号(两处)；`CM-12` 外部读者清单补 `snapshot_size_probe`/`wait_room`；`CM-13` 已随 BUG-16 修(输出已捕获)；`CM-14` 46→42 B；`CM-15` 1s 渐隐已随 BUG-19 修(注释补记)；`CM-16` 两个子类→三个子类(6 处)；`CM-17` 去掉恒真条件 `(_haste_dim_t>0.001 or pp!=null)` → `_haste_dim_t>0.001`（**行为侧**:不再每帧无条件写 uniform，观感需人眼）。
+- **DD（文档）**：`DD-01` RPC 合计 60→**61**（`net_bus` 28 + `net_bus_ext` 33；通道 3 补 `explosion`，46/1/3/**11**）；`DD-02` "一条记录管 2 tick"→"一包两条记录、每条 1 tick"（3 处文档）；`DD-07` 1v1 超龄是**裸** `MAX_ROOM_AGE`（无在局宽限）；`DD-13/04` `pvp-networking` 世界包改 v7 全量口径；`DD-14` `_input_pair_phase`→`_input_batch_phase`；其余 `DD-03/05/06/08/09/10/11/12/15/16` 已在前几批随 v7/BUG 修同步。
+
+**验证**：`RUN_ALL OK(20 runs / 122 gated-assertions)`（B8 只改注释/文档 + BUG-24 的 server_main 代码；解析由 allscript 198 覆盖）· `allscript_probe 198` · `check_naming` 绿 · md 链接 0 缺失。
+
+**边界**：`S-04`（删 `net_bus_ext.beam_fired` 副本）、`S-25~S-27`（文档结构重构）、`G-01~G-05`（守卫缺口）本轮**不做**，保留登记；本轮改动**未提交**。
+
+## 三十五、大重构第一刀：S-13① 面板日志 tail 抽出（2026-10-30，档 2）
+
+**起因**：用户「先做大重构」—— 先做 01 审查里的大结构项，从风险最低、且有纯逻辑可测价值的一段开始。
+
+**改了什么**：
+- 新增 `server/gui/panel_log_tail.gd`（`PanelLogTail`，RefCounted）：面板日志的**增量读 / 半行不消费 / 文件轮转归零 / 超上限从头部按行边界截断**全部收进纯逻辑；`max_chars` 单一来源。
+- `server_panel.gd` 删掉 `_log_off/_log_buf` 与整段 `_append_log_delta` 实现，改为委托 `_log_tail.read_delta()`；跟随/暂停与滚动位置（I1/I2）**留在 UI 侧不动**，`LOG_MAX_CHARS` 变成 `PanelLogTail.DEFAULT_MAX_CHARS` 的别名（单一来源）。
+- 新增守卫 `tests/smoke/panel_log_tail_smoke.gd`（6 条 + 条数闸）：① 首次读全量；② 半行不消费（offset 不前进）；③ 补全后只吐新增；④ 重建归零 + rotated；⑤ 超上限切在行边界（首行不能半截）；⑥ reset 后重读。
+  **变异验证（三条实测）**：把 `nl<0` 的早退去掉（半行被消费）⇒ ② 红；删 rotated 归零 ⇒ ④ 红；删行边界切分 ⇒ ⑤ 红；还原后 `PANEL LOG TAIL OK(6 条断言)`。
+- `allscript_probe` 条数闸 198→**200**（+两个 .gd）；默认批 20→**21 支 / 128 条闸断言**。
+
+**边界**：
+1. UI 侧的跟随/暂停与滚动位置**仍无断言**（I1/I2 语义，只能人眼）；本次只保证 tail 的纯逻辑。
+2. `S-13②`（`_audit*` 搬进独立的审计工具，**尚未创建**）、`S-13③`（关房二次确认保留 3 行）未做。
+3. 其余大重构未动，计划顺序：`S-09`(lobby_rooms 拆) → `S-10/S-11/S-12`(死规则/死字段/房主名单单一来源) → `S-18`(replica_set) → `S-17`(pvp_match_client 两刀) → `S-03/S-05`(net_bus/packet_input_source)。承重面项需真链路批验收。
+4. 本轮改动**未提交**。
+
+## 三十六、大重构第二刀：S-10 / S-11 / S-12（去重复真相源，2026-10-30，档 2）
+
+- **S-10**：`core/mp/mode_room_rules.gd` 的 8 个规则函数（`min_players` / `max_players` / `team_size` / `needs_teams` / `start_allowed` / `degraded_start_allowed` / `visible_in_match` / `freeze_roster`）全仓**零调用点**，已删（只留 `port_return_seconds`，它唯一被 `room_registry.port_return_delay` 调用）；`LobbyRooms` 的三个上限常量改为 `ModeDefs` 的别名（`ROYALE_MAX_PLAYERS := ModeDefs.ROLE_MAX`、`TEAM_SIZE := ModeDefs.TEAM_SIZE`、`TEAM_ROLES := ModeDefs.TEAM_SIZE * ModeDefs.TEAM_COUNT`）⇒ 两处真相合成一处，漂移类缺陷结构性消失（无需再补盯漂移的守卫）。
+- **S-11**：删 `RoomTypes.Room.options` 只写不读死字段 + 唯一写点（`royale_create` 里那三行）;真正的对局选项一直走 `player_options → _claim_opts → MatchHost`。
+- **S-12**：新增 `ServerStatus.host_and_roster(...)`（纯函数）作为「房主 + 名单」的唯一判据（1v1 = players[0] / 局中退回冻结名单第一条；大乱斗·3v3 = host_peer + role）；`RoomRegistry.list_payload` 与 `LobbyRooms.host_name_of` 改为只搬字段。新增 `tests/smoke/room_view_smoke.gd`（4 条：4 种组合）。
+  **变异验证（两条实测）**：`is_duel` 分支对调 ⇒ 4 处红；`roster_of` 局中不读冻结名单 ⇒ ②④红；还原后 `ROOM VIEW OK(4 条断言)`。
+
+**验证**：`ALLSCRIPT: OK(201)` · `RUN_ALL OK(22 runs / 132 gated-assertions)`（见本轮终验）· 命名/链接检查绿。
+
+**边界**：`S-09`（lobby_rooms 拆分）、`S-13②③`、`S-18`/`S-17`/`S-03`/`S-05` 仍未做；本轮改动**未提交**。
+
+## 三十七、真链路批首跑结果 + BUG-25（测试基建，2026-10-30）
+
+**结果（本机，用户认领后 `run_real.sh --yes`；环境 7777/池内全空、无 godot 残留）**：
+
+| 支 | 首跑（串行全批） | 干净环境单跑 |
+|---|---|---|
+| `pvp_match_smoke` | FAIL（join 端 `bullet_spawn=false`） | **PASS**（`SMOKE PASS`，24s） |
+| `royale_soak_probe` | FAIL（`Couldn't create an ENet host` err=20） | **PASS**（`SOAK: ALL-OK(4/4)`，134s） |
+| `royale_role_cap_probe` | FAIL（同上 err=20） | **PASS**（`ROLE CAP PROBE: ALL-OK(9/9)`，119s） |
+| `team_match_probe` | **OK**（`TEAM MATCH PROBE: ALL-OK`，203s） | — |
+| `rejoin_probe` | FAIL（`房 8677 一直没配对 players=2 port=0`） | 未再跑：**已知红**（2026-10-24 起，见 §一） |
+
+⇒ **v7 线格式 / claim 握手 / 快照 / 输入 / `match_sync` 补态 / 大厅建房配对在真跨进程链路上已被验证**（4 支 PASS）。
+
+**BUG-25（新登记，P2，测试基建，未修）—— 串行真链路批会被"上一支的残留"连累**：
+- 现象：全批首跑时 `pvp_match_smoke` FAIL 后，**两个 `server_main.tscn` 大厅进程仍占着 7777**（`Get-CimInstance` 实测：一个 console 版 + 一个 exe 版）；随后两支 soak 直接 `Couldn't create an ENet host err=20` 假 FAIL。清掉残留后单跑 → 三支全 PASS。
+- 根因方向：`pvp_match_smoke.sh` 的 `kill_procs $SERVER_PID ...` 在 Git Bash/MSYS 下不可靠（脚本自己注释过），`kill_port`/`kill_port_range` 只覆盖 7777 与 worker 池的组合，未覆盖"console/exe 两种 Godot 同时起大厅"的情形；`run_real.sh` 只在整批开始做 `lobby_alive` 闸、不在 entry 之间清扫 7777。
+- **根因（已定位并修）**：测试基建的清理原语按 **Git Bash/MSYS** 写（`netstat -ano` / `taskkill`）；从 **WSL bash** 调用时它们是 Linux 版/不存在 ⇒ `lobby_alive` 恒 false、`kill_*` 全静默 no-op、闸三的 `tasklist|grep godot` 恒 0。**修法**：`tests/env.sh` / `tests/run_real.sh` 加 WSL 分支（走 `powershell.exe`/`taskkill.exe` 互操作），并新增 `kill_lobby_by_cmdline`（按命令行清 `server_main.tscn`），接入 `pvp_match_smoke.sh` 全部收尾路径与 `run_real.sh` 每支 entry 尾部 + EXIT trap。
+- **验证**：修后单跑 `pvp_match_smoke` PASS 且跑后 `7777 空闲 / 无 godot`；三份 shell `bash -n` 全过。
+- ★ 同批修掉 `rejoin_probe` 的**已知红**：根因 = 2026-10-24 起 1v1 改由房主点「开始游戏」，而探针的 `rejoin_watcher` 走生产入口却没人点 ⇒ 房永远 `players=2 port=0`。修法 = c1 以 1s 节拍代发同一 `pvp_start` RPC（1 人时服务器会拒，重试到进局为止）。修后 `REJOIN PROBE: ALL-OK(5)`。
+
+**全批复跑(修 BUG-25 后)**:`pvp_match_smoke` OK · `rejoin_probe` **OK(5)**(已知红已修)· `royale_soak` OK(4/4) · `royale_role_cap` OK(9/9) · `team_match_probe` FAIL(c1 观察到 MATCH_OVER;c2~c6 的引擎日志显示它们**都在跑**(相位=5、t≈673s、比分 1:5/2:9)——是机器人把比赛打完了,而相⑤还在等自杀/离场 ⇒ 该支的既有边界「3v3 不可当可信端到端守卫」(§一)复现,不是崩溃/协议回归;改进方向 = 相⑤ 前暂停或降低 bot 攻击性,属探针设计,不在本轮范围)。★ 全批**无 gate3 失败、无残留连累**(BUG-25 修法生效)。

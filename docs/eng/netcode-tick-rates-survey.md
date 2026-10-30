@@ -16,7 +16,7 @@
 |---|---|---|
 | A | 60Hz | Godot 物理 tick |
 | B | 60Hz | `MatchState.SNAPSHOT_HZ`（2026-10-30 起所有人数） |
-| C | 30Hz | 采样与上行同频，`PacketInputSource.TICKS_PER_RECORD = 2` |
+| C | 30Hz | 采样与上行同频（30Hz 一包装 2 条记录），`PacketInputSource.TICKS_PER_RECORD = 1`（一条记录 = 1 tick） |
 | tick 域 | 60Hz | 快照 `tick` 每包 +1（60Hz 发包），一个包 = 1 个物理 tick |
 
 ## 2. 逐家清单

@@ -14,45 +14,46 @@
 | 状态 | **待定位** / **待修** / **已修(本轮无)** |
 
 合计:**23 条**(用户报 2 + 本轮新确认 21)。其中 P1 5 条、P2 12 条、P3 6 条。
-**本轮已修 8 条**(2026-10-30):BUG-02 / BUG-06 / BUG-11 / BUG-13 / BUG-15 / BUG-16 / BUG-17 / BUG-19(泄漏面);状态见各条标题与 [`registered-debt.md` §二十六](../../eng/registered-debt.md)。
+**本轮已修 24 条**(2026-10-30 七批:B5 用户追加的 BUG-24 也在内);另登记 **BUG-25**(测试基建,已修,见 §2.9):第一批 8 条(BUG-02 / 06 / 11 / 13 / 15 / 16 / 17 / 19 泄漏面,见 [`registered-debt.md` §二十六](../../eng/registered-debt.md));第二批 6 条(BUG-08 / 18 / 20 / 21 / 22 / 23,见 §二十九);第三批 1 条(用户实机报的 **BUG-01**,见 §三十);第四批 1 条(**BUG-07** 版本拒绝,随 B4 协议批 v7 落地,见 §三十一);第五批 1 条(**BUG-03** 重连补子格,见 §三十二);第六批 6 条(**BUG-04/05/09/10/12/14** 收尾,见 §三十三)。状态见各条标题。
 
 ---
 
 ## 1. 用户已报(待定位)
 
-### BUG-01 ｜ P1 ｜ 每把枪械的子弹数量不独立(待定位)
+### BUG-01 ｜ P1 ｜ 每把枪械的子弹数量不独立(**已定位并修复 2026-10-30**)
 
-**现象(用户口径)**:不同枪械的残弹互相牵连 —— 切枪/拾取后某把枪的残弹不是它自己上次的。
+**根因(已定位;与最初猜的三条候选都不同 —— 是"条目已被重建、却仍让 `_equip_index` 做残弹写回")**。
+`WeaponComponent._equip_index()` 切枪时会把旧枪的 `mag_ammo` 写回 `inventory.held[_current_index]`;
+但下面两处调用点**在调用之前就已经把条目换掉了**,于是写回落到**另一把枪**的条目上:
 
-**已复核、不成立的路径**(残弹按 `inst` 记的设计本身是完整且自洽的):
+1. **`pick_up()` 的「背包满 ⇒ 替换手上那把」**(`weapon_component.gd:250-258`,旧实现):
+   先 `inventory.held[_current_index] = {type: 新枪, inst: 旧, mag: 地面残弹}`,再 `_equip_index(_current_index, flush)`
+   ⇒ 写回把**旧枪实弹**盖到刚写入的**新条目**上;随后 `_equip_index` 的 `pending_mag` 正是从该条目取
+   ⇒ **新枪残弹 = 旧枪残弹**(地面那件的残弹被丢掉)。这是"背包满时捡枪,新枪子弹跟着上一把走"的现场。
+2. **`random_keep_one()`(倒地随机保留一把)**(旧实现):替换 `held` 前不 flush 当前枪条目(条目陈旧 = 少扣刚打的发数),
+   替换成 1 条后仍调**默认 flush** 的 `_equip_index(0)` ⇒ 旧枪实弹覆盖**保留那把**的条目;掉落的当前枪则带陈旧条目值。
 
-- 背包条目 `{type, inst, mag}` 按把记,[`weapon_inventory.gd:23`](../../../core/sim/weapon_inventory.gd#L23) 明写"按类型记会让『丢一把空弹、捡一把满弹』变成免费换弹且不报错"。
-- 切枪写回 → 新枪 `pending_mag` → 入树 `_ready` 消费:[`weapon_component.gd:171-203`](../../../scenes/player/weapon_component.gd#L171)、[`weapon_base.gd:178-184`](../../../scenes/weapons/weapon_base.gd#L178)。
-- 回滚整态:`player.gd:549-552`(mag/rld/rld_t 进 capture)、`:647-650`(restore 走 `apply_mag`)。
+**探针复现(未修状态,逐字)**:`KH gun_ammo_independence PROBE: FAIL | 新枪残弹必须来自地面那件(5),不能继承旧枪实弹(3);实得 3; 新枪的背包条目残弹也必须是 5(实得 3); 随机保留那把的条目残弹必须是它自己的(22,kept_idx=1);实得 7; 倒地掉落的当前枪必须带真实实弹 7(不是条目陈旧值 11),实得 [11, 33]`
 
-**最像这个症状的三条候选机制**(按可能性排序):
+**改了什么**([`weapon_component.gd`](../../../scenes/player/weapon_component.gd)):
+`_equip_index(index, flush_current: bool = true)` 增加"是否把旧枪实弹写回条目"的开关,并在注释里钉死两个 `false` 调用点的理由;
+`pick_up()` 替换分支改传 `false`(旧枪实弹已由 `_last_dropped` 带走);`random_keep_one()` 先 `_flush_current_mag()`
+(把当前枪真实实弹落进它自己的条目)再 `_equip_index(0, false)`。**档位**:单系统(玩法逻辑,不动协议/存档)。
 
-1. **同帧多次切枪的"未入树"窗口 —— 写回被跳过,残弹永久丢失/串账。**
-   [`weapon_component.gd:178-181`](../../../scenes/player/weapon_component.gd#L178) 自己写着:`# 残弹写回条目只认已入树的枪:同帧第二次切枪时上一把还是 call_deferred 未入树(其 _ready 未跑 ⇒ mag_ammo 仍是 0),照记会把残弹永久抹成 0;真机可达(滚轮走 _unhandled_input,一帧内缓冲的 OS 事件会一次性泵完)。`
-   ⇒ 注释描述的正是"残弹在枪之间归零/串账"的可见症状。触发:**滚轮/数字键在同一帧内切两次以上**(60Hz 下一帧 16.7ms,滚轮一格一事件,快速拨两格即可)。
-   已有的现成抓手:[`weapon_base.gd:78-81`](../../../scenes/weapons/weapon_base.gd#L78) 的 `_mag_ready` 标志语义就是"弹数已落定",可直接替掉 `is_inside_tree()` 判据。
-2. **C2 的 `inv` 条目只随"切枪/丢弃/快照 flush 当前枪"更新,非手持枪残弹只是条目里的滞后值。**
-   [`weapon_component.gd:355`](../../../scenes/player/weapon_component.gd#L355) 自承:`⚠ 删掉 _restore_mag 不等于弹数有了常规纠正路径:_close_enough 仍不比 mag,sync_soft_state 的指纹只比结构 ⇒ 非回滚来源的弹数分歧仍会静默保留`。PvP 下若某次 `restore_inventory` 用滞后条目重建,就会看到残弹回跳。
-3. **拾取替换复用旧条目的 `inst`**:[`weapon_component.gd:250-257`](../../../scenes/player/weapon_component.gd#L250) 新枪继承旧枪的 `inst`;`restore` 时 `_next_inst` 顶到已用之上([`weapon_inventory.gd:110-117`](../../../core/sim/weapon_inventory.gd#L110))能防撞号,但"换枪后同一身份指向另一把"会让任何按 `inst` 的异步写落到新枪。
+**守卫**:新增 [`tests/probe/gun_ammo_independence_probe.gd`](../../../tests/probe/gun_ammo_independence_probe.gd)(+`.tscn`,8 条 + `EXPECTED_CHECKS`):
+① 背包满拾取替换 → 新枪残弹取地面值;② 新枪条目残弹也是地面值;③ 被换下那把带自己的实弹;④ 随机保留项条目正确;
+⑤ 倒地掉落的当前枪带真实实弹(不是条目陈旧值);⑥ 对照:背包没满的拾取路径不变。
+**变异验证(三条,逐条改坏确认红)**:`pick_up` 改回默认 flush ⇒ ①/② 红;`random_keep_one` 去掉 flush ⇒ ⑤ 红;
+`random_keep_one` 改回默认 flush ⇒ ④ 红。还原后 `KH gun_ammo_independence PROBE: ALL-OK`。
 
-**定位计划(做完就能定性,不建议先改)**:
-① 打开 `-- --diag`(事件表见 [`core/net/net_diag.gd`](../../../core/net/net_diag.gd)),复现一次"两把枪各打一半 → 快速交替切枪",抓 `pickup_add`/`pickup_remove` 与本人包序列;
-② 写一支**一次性** `-s`/探针(放 `.superpowers/`,不进 `tests/`):给玩家两把枪 → 各自 `mag_ammo` 设成不同值 → 交替切 10 次 → 逐条断言两把的残弹不变;再加"同一帧切两次"(`_equip_index` 连调)复现候选 1;
-③ 若 ② 全绿而实机仍复现,再查服务器侧:客户端 `winst` 与服务端 `inst` 是否错位(`equip_inst` 找不到时**静默不动**,[`weapon_component.gd:157-164`](../../../scenes/player/weapon_component.gd#L157))。
-
-**第四条候选(客户端子审查补)**:地面武器事件的载荷缺 `mag` 键时默认 **0** —— [`pickup_sync.gd:69`](../../../scenes/mp_client/pickup_sync.gd#L69) `node.configure(type_id, inst, int(data.get("mag", 0)), ...)`、`:76` 同款。若某条广播路径(掉线补偿/重连补态/本机掉落)没带 `mag`,地面那把就是"0 发",捡起来立刻空弹 —— 用户读成"这把枪的子弹跟别的枪串了"。查法:在 `pickup_sync` 建节点处打一条 `--diag`(`pickup_add` 已有,补 `mag` 字段),看有没有 `mag=0` 且非满弹的合法态。
-
-**修法方向**:候选 1 → 把"写回残弹"的判据从 `is_inside_tree()` 换成 `_mag_ready`,或切枪时先在旧实例上同步落值再 `queue_free`;候选 2 → 让 `inv` 在每次开火后同步当前条目(或 capture 时 flush 全部);候选 3 → 换枪时给新条目分配新 `inst` 并把旧 `inst` 随掉落物走。**档位**:候选 1/2 属单系统(不动协议);候选 3 若动 `inst` 语义属承重面(它进 C2)。
-
-**验收判据**:同一支探针连续跑两次同结论(时序类结论本仓要求同配置跑两次);变异验证 = 把修掉的那一行改回去,探针必红。
+**边界(照实)**:
+- 同帧多次切枪的"未入树写回跳过"窗口(原候选 1)未单独改:它修的是"别把 0 写回",与本次的两处重建路径无关;
+  真机可达但需要同帧两次切枪事件,已留 `_mag_ready` 抓手,登记为后续项。
+- `restore_inventory`(回滚重建)后调用方 `equip_index` 仍会瞬时把旧实例实弹写进恢复条目;紧随其后的
+  `apply_mag(st["mag"])` 会把它纠正回来、下一帧 capture 再 flush ⇒ **瞬时、自愈**,未改(见 §二十九 边界)。
+- 原候选 2(C2 条目滞后)与候选 4(`pickup_sync` 缺 mag 默认 0)与本 bug 无关,仍可能各自独立成立,保留登记。
 
 ---
-
 ### BUG-02 ｜ P1 ｜ 结算页 MVP 总是标给败方(**已修 2026-10-30**)
 
 **已复核、不成立的路径**(四段逐行核对,均无取反):
@@ -75,23 +76,30 @@
 
 ---
 
+
+### BUG-24 ｜ P1 ｜ 打完对局房间不回收(worker 不主动退,回收梯只认进程死亡)(**已修 2026-10-30**)
+
+- **现象(用户实报)**:一局打完(进结算页)后,房间里一直显示「对局中」,端口不归还;要等很久才消失。
+- **根因**:`MatchRound._match_round_tick` 的 `MATCH_OVER` 分支是 `pass`(等玩家退出/服务器关房)⇒ **worker 不主动退**;大厅 `_reclaim_finished_matches` 的唯一判据 `_match_over = not pid_alive(pid)` ⇒ 客户端还连着(结算页不退)就永远不回收;唯一兜底 = 2h 超龄清扫。
+- **修法**:`MatchRound.is_match_over()` + `server_main._process` 的 `MATCH_OVER_LINGER = 60s` 终局滞留到点 `quit(0)`(客户端已 `_match_ended`,断开不触发重连),房/端口随后 ≤30s 被回收梯收掉。
+- **验收**:真链路打一局到 MATCH_OVER,不点返回,断言 ≤90s 内 `lobby.rooms` 里该房消失、端口回池(需真链路批)。**无自动断言**(worker 生命周期无 `-s` 地基)。
 ## 2. 本轮新确认
 
-### BUG-03 ｜ P1 ｜ 重连补破坏态只补"整格已消失"的格,16px 子格破坏全部漏补(照旧 X6 的细化)
+### BUG-03 ｜ P1 ｜ 重连补破坏态只补"整格已消失"的格,16px 子格破坏全部漏补(照旧 X6 的细化)(**已修 2026-10-30**)
 
 - **证据**:[`match_state.gd:51-63`](../../../server/match/match_state.gd#L51) 的 `destroyed_cells()` 只比较 64px 格级 `grid` 与 `_base_grid`;子格破坏路径只写 `damaged_subs`([`match_combat.gd:24-30`](../../../server/match/match_combat.gd#L24)),格级 `grid` 要等 16 个子格全死才清零([`tile_defs.gd:288`](../../../core/sim/tile_defs.gd#L288))。`match_sync` 只带 `destroyed_cells()`(`server_main.gd:371-374`),`damaged_subs` 从不上线。
 - **影响**:掉线→宽限内重连后,客户端重建的世界比服务器多出**所有只被打掉部分子格的砖**(榴弹 `tile_break_unit=0.25` 打出的洞全在此列)。本地玩家/子弹撞在服务器不存在的墙上 ⇒ 每条快照一次回滚(橡皮筋),且大乱斗没有换局复位、整局无法自愈。
 - **修法**:`match_sync` 载荷增加 `subs`(服务器已有的 `damaged_subs`),客户端在 `destroyed` 循环之后逐条 `tile_sync.on_sub(sub, true)`(`on_sub` 已支持 silent 与去重,重复投递无害)。**不要**改成"有子格死即报整格"——那是另一个方向的幽灵墙。
 - **验收**:探针断言"造一次只死 1 个子格的破坏后,match_sync 载荷的子格集合非空且含该 sub";去掉写 `damaged_subs` 那行即红。档 **3**(改 match_sync 载荷)。
 
-### BUG-04 ｜ P1 ｜ 回溯环缓不随换局复位,可回放到上一局的帧(仅 Beta 时间玩法)
+### BUG-04 ｜ P1 ｜ 回溯环缓不随换局复位,可回放到上一局的帧(仅 Beta 时间玩法)(**已修 2026-10-30**)
 
 - **证据**:环缓唯一裁剪是深度裁剪([`match_host.gd:411-413`](../../../server/match/match_host.gd#L411),默认 12s,[`time_rules.gd:107-110`](../../../core/config/time_rules.gd#L107));`_rw_t0` 只在环空时重设(`:313-314`)。而 `_reset_world_and_clear_dynamics()`([`match_round.gd:148-196`](../../../server/match/match_round.gd#L148))清子弹/重铺武器/还原砖,**一行都不碰** `_rw_buf/_rw_cursor/_rw_snap_t/_rw_t0/_rw_trail`。换局间隙 = 4s + 3s = **7s < 12s** ⇒ 新一局开局按住回溯可退进上一局的活体帧。
 - **影响**:位置/HP/各槽弹量被写回上一局的值;开局时砖已还原,回放点可能落在本局墙体内。这正是 `_finish_rw` 那段"被复写的未来又被看到"注释要防的现象,只是漏了局边界。
 - **修法**:在 `_reset_world_and_clear_dynamics()` 里(与 `damaged_subs.clear()` 同处)清 `_rw_buf/_rw_cursor/_rw_snap_t/_rw_t0/_rw_trail`,并处理"换局瞬间正处在回溯态"的 role(`src.frozen=false` + `remove_meta("time_rewinding")`),否则下一局该玩家输入源永久冻结。
 - **验收**:探针断言"换局后 `_rw_buf[role]` 最老帧 t ≥ 换局时刻";去掉 clear 即红。档 **3**。
 
-### BUG-05 ｜ P2 ｜ 回溯记录 `downed` 却从不还原,回放到死亡帧得到"0 血但活着"(仅 Beta)
+### BUG-05 ｜ P2 ｜ 回溯记录 `downed` 却从不还原,回放到死亡帧得到"0 血但活着"(仅 Beta)(**已修 2026-10-30**)
 
 - **证据**:记录侧写了 `"downed": p.is_downed()`([`match_host.gd:381`](../../../server/match/match_host.gd#L381));应用侧 `_apply_rw_frame` 全文不读该字段(`:417-480`),HP 被 `clampi` 成 0(`:434`)而 downed 仍 false。单机侧对应能力已存在且**全仓零调用**:[`combat_component.gd:100-101`](../../../scenes/player/combat_component.gd#L100) `set_downed_by_rewind()`。
 - **影响**:服务器上出现"hp=0 且未倒地"的非法态:血条空但人还在跑,下一次 1 点伤害立刻触发死亡流程;`_match_round_tick` 看不到倒地 ⇒ 不排复活、不掉武器、不记账。
@@ -104,25 +112,25 @@
 - **影响**:三处都错 —— (a) `:45` 承诺的"清掉占用大厅端口的残留进程"是空操作(旧 bat 起的 `Godot*` 进程名不受 `taskkill /IM "Cyancular Ruins Server.exe"` 命中),旧实例继续占 7777,新实例 bind 失败静默退出;(b) `:59` 就绪轮询的第一类判据永假;(c) 反向也错:`:214` `line.contains(":%d " % port)` 会匹配 **TCP 行的对端地址**,本机某客户端连着远端 7777 时会假报"已启动"。
 - **修法**:把"谁占着 UDP 端口"收成 `ProcUtil.pids_on_udp_port(port)`(用已经跑通的 `Get-NetUDPEndpoint`),`local_server` 的清理与就绪轮询、`kill_udp_port` 共用;删 `_pids_on_port`。档 **单系统**(副作用:名族护栏会让"别人的进程占 7777"从静默杀变成打印一行不杀,需确认取向)。
 
-### BUG-07 ｜ P2 ｜ `PROTO_VERSION` 不一致没有拒绝路径:跨版本照常开局,之后双方静默冻结
+### BUG-07 ｜ P2 ｜ `PROTO_VERSION` 不一致没有拒绝路径:跨版本照常开局,之后双方静默冻结(**已修 2026-10-30,v7**)
 
 - **证据**:[`net_codec.gd:918`](../../../core/net/net_codec.gd#L918) 只校验版本字节 → 解码返回空;`net_bus.gd:252-253` 一条 `push_error` 后 return,比赛继续(`:255-256` 自己写着"该玩家整局动不了,且服务器侧不报任何错")。三个开局握手(`claim_role` / `match_sync` / `match_sync_data`)都不带版本位。
 - **影响**:大厅 RPC 走 Godot 原生序列化,与 `PROTO_VERSION` 无关 ⇒ 跨版本照样建房/加入/配对/开局;之后 send_input/snapshot 全丢,双方各自一条 `push_error`,画面上"对手不动、自己也动不了"。可达:本机 `LocalServer` 拉起的 server exe 与客户端同目录,换版不同步是自然操作。
 - **修法**:在已有的一次性开局握手里带 proto 字段,worker 发现不等就回 `server_message` + 拒绝开局并踢连接;客户端把解码失败升级成用户可见横幅。档 **3**。
 
-### BUG-08 ｜ P2 ｜ `note_post_step` 的环淘汰漏清 `_inputs`:ack 断流时按 tick 无界增长
+### BUG-08 ｜ P2 ｜ `note_post_step` 的环淘汰漏清 `_inputs`:ack 断流时按 tick 无界增长(**已修 2026-10-30**)
 
 - **证据**:[`prediction_rollback.gd:92-95`](../../../core/net/prediction_rollback.gd#L92) 淘汰循环只 `_captures.erase(old)` + `_events.erase(old)`,**没有 `_inputs.erase(old)`**;而同一段在 `advance()`(`:82-86`)里是三个都清。生产路径走 `note_post_step`([`pvp_match_client.gd:435`](../../../scenes/pvp_match_client.gd#L435))。
 - **影响**:`_inputs` 的唯一回收者是 ack 驱动的 `_trim`;ack 正常时环里只有 1~3 条,看不出来;本人包通道停摆(重连中)而世界包还在、玩家照常步进时,`_inputs` 以 60 份/秒线性增长(每份 10 键 Dictionary + Vector2)。长期无 ack 的对局线性吃内存。
 - **修法**:`:94` 后补一行 `_inputs.erase(old)`;更彻底是三个并行字典收成一个 `_ring[seq] = {rec, cap, events}`。档 **3**(回滚环),实质一行。
 
-### BUG-09 ｜ P2 ｜ `ai_duel` 开局即摘房:端口在 worker 存活时归还进池,且抹掉活 worker 的 pid
+### BUG-09 ｜ P2 ｜ `ai_duel` 开局即摘房:端口在 worker 存活时归还进池,且抹掉活 worker 的 pid(**已修 2026-10-30**)
 
 - **证据**:[`room_manager.gd:146-152`](../../../server/lobby/room_manager.gd#L146) spawn 成功后立刻 `teardown_room(..., TEARDOWN_DELAYED, "", false, "match_end")`;`lobby_rooms.gd:747-748` 重新计时归还端口 ⇒ 120s 后 `release_now(port)`,而 `worker_launcher.gd:32-38` 会清 `_worker_ports/_worker_pids`。`worker_launcher.gd:11-14` 却称"承重的是『worker 进程活着 ⇒ 房对象与它占的端口都还在』"。
 - **影响**:端口在 worker 存活期间进池;面板显示空闲、回收梯看不见这场局。`pick_port` 回绕命中时(约 500 次分配)新房 worker 绑失败 quit(1),spawn 只判 pid>0 ⇒ 照发 `go_match`,客户端连到旧 worker 被"拒绝串线连接"踢掉。
 - **修法**:AI 局做成真 `in_match` 房交给 `_reclaim_finished_matches` 按 pid 回收;或新增"只 erase、不归还端口"的拆除形态 + 孤儿 pid 梯。档 **3**,须真链路跑 `ai_duel→再建房`。
 
-### BUG-10 ｜ P2 ｜ 拆除收口体内**同步**跑 PowerShell:`kill_worker` 每次阻塞主线程数百毫秒
+### BUG-10 ｜ P2 ｜ 拆除收口体内**同步**跑 PowerShell:`kill_worker` 每次阻塞主线程数百毫秒(**已修 2026-10-30**)
 
 - **证据**:`lobby_rooms.gd:743` `launcher.kill_worker(port)` → [`worker_launcher.gd:253`](../../../server/lobby/worker_launcher.gd#L253) `ProcUtil.kill_udp_port(port)` → [`proc_util.gd:58`](../../../core/net/proc_util.gd#L58) `OS.execute("powershell.exe", ..., false, true)`(阻塞)。
 - **影响**:每次关房/超龄扫/worker 退出都冻一次主线程;大厅 poll 不走(建房/加入包排队);面板每次关房 UI 冻一次;关服按房数线性延长。
@@ -134,7 +142,7 @@
 - **影响**:`claim_role(3, …)` 在 1v1 worker 上被接受;与真 role1 合起来凑满 `_claims.size() >= 2` 触发 `_begin_match`,大厅派来的 role2 一 claim 就被当串线踢掉,对局带幽灵 role 开起来。
 - **修法**:去掉 `(_royale or _team_mode) and` 前缀,三模式统一 `not _role_set.has(role)`;配 `-s` 断言(`ctx.roles == [1,2]`)+ 源码断言。档 **单系统**(服务端接线)。
 
-### BUG-12 ｜ P2 ｜ `ai_duel` 摘房时不通知同房第二人:guest 被静默留在已消失的等待室
+### BUG-12 ｜ P2 ｜ `ai_duel` 摘房时不通知同房第二人:guest 被静默留在已消失的等待室(**已修 2026-10-30**)
 
 - **证据**:[`room_manager.gd:132`](../../../server/lobby/room_manager.gd#L132) 门禁只判 caller 是房主;`:152` 的 teardown 传 `msg=""` 与 `false`,而 `lobby_rooms.gd:749` `if not msg.is_empty():` ⇒ 对房内任何人都不发一行。`ai_duel` 是 `any_peer` RPC,任何已连客户端可达。
 - **影响**:房主在"自己+对手已在房"时点 AI 对战:房立刻消失,guest 收不到消息也收不到 `go_match`,停在等待室;此后 `pvp_start` 恒静默 return。
@@ -146,7 +154,7 @@
 - **影响**:注释宣称的取舍是"只少最老的几个点",实际是"除头 4 个点外全都没有";每次回溯都这样。
 - **修法**:客户端改成比较**最后一个点**是否变化(或按"与上次不同的后缀"生成),每来一个新点出一张淡副本(20Hz),协议零改动。档 **单系统**;观感只能人眼验收。
 
-### BUG-14 ｜ P3 ｜ 回局凭据只存房号不存模式:跨模式同号房互相列进对方列表
+### BUG-14 ｜ P3 ｜ 回局凭据只存房号不存模式:跨模式同号房互相列进对方列表(**已修 2026-10-30**)
 
 - **证据**:[`rejoin_registry.gd:8`](../../../server/lobby/rejoin_registry.gd#L8) 记录 `{code, role, worker_port, worker_pid, expires_at}`(无 mode),`decision`/`owns` 只比 code;而同仓 `room_registry.gd:8` 明写"同号跨 mode 共存是允许的",`lobby_rooms.gd:646` 也要求"必须带 kind"。
 - **影响**:持 3v3 房 `"1234"` 凭据的玩家会在**大乱斗**列表看到无关私密房 `"1234"`(其 names/map 被泄漏);点它时 `decision` 也放行,但 `go_match` 用的是他自己那场。前提 = 两模式同号。
@@ -169,7 +177,7 @@
 - **影响**:现网 `ROYALE_MAX_PLAYERS=16` 撞不到;但这是"容量预算对不上写入量"的同款形态(探针 ⑤ 正是在防这类事)。
 - **修法**:循环里 `if emitted >= 200: break`。档 **1**。
 
-### BUG-18 ｜ P2 ｜ 转连 worker 的一次性回调不成对:回大厅 25s 后被"假 claim 梯"踢出大厅
+### BUG-18 ｜ P2 ｜ 转连 worker 的一次性回调不成对:回大厅 25s 后被"假 claim 梯"踢出大厅(**已修 2026-10-30**)
 
 - **证据**:[`lobby_page.gd:253-254`](../../../scenes/lobby_page.gd#L253) `multiplayer.connected_to_server.connect(_claim_role_worker.bind(role), CONNECT_ONE_SHOT)`,而 `_return_to_lobby()`(`:283-295`)只做 `NetBus.stop()` + `start_client(...)`,**没有任何 disconnect**;`_claim_role_worker` 首行 `_claimed_ms = Time.get_ticks_msec()`(`:265-266`),`_tick_claim_timeout` 在 25000ms 后 `_return_to_lobby(...)`(`:325-326`)。
 - **影响**:worker 12s 连不上(`_tick_worker_connect_timeout` 的既有档)→ 回大厅重连;**大厅一连上,上一条 worker 转连留下的 one-shot 仍会把 `_claim_role_worker` 叫起来** ⇒ 向大厅 peer 发 `claim_role`/`player_options`/`report_token`,并起 25s claim 梯 ⇒ 玩家在大厅浏览时被无理由弹回、连接重建、列表与等待室状态丢失。另:[`pvp_match_client.gd:954-958`](../../../scenes/pvp_match_client.gd#L954) 对同一条引擎事实已写了"每次先摘干净",两处纪律不一致。
@@ -181,25 +189,25 @@
 - **影响**:每次回溯每秒 20+ 个空 Node2D 永久挂在 `_world`(长局/多人回溯线性增长);对手在回溯中离场时(`_remove_replica` 只 free 副本)残影宿主照样漏。同一段代码还有 [BUG-13](02-bug台账.md)(残像 0.2s 后停摆)—— 三个症状同源:这块视效的清理与节拍都没有单一所有者。
 - **修法**:`alive` 循环加 `else: g["node"].queue_free()`;淡出改 `(host.get_child(0) as CanvasItem)` 或删掉这层;`_remove_replica` 里调 `_time_fx_replica_rewind_off(rep)`。档 **单系统**(观感只能人眼验收)。
 
-### BUG-20 ｜ P2 ｜ 他人加速重影的节拍器是**共享单例**,并按"副本数 × 帧率"双重缩放
+### BUG-20 ｜ P2 ｜ 他人加速重影的节拍器是**共享单例**,并按"副本数 × 帧率"双重缩放(**已修 2026-10-30**)
 
 - **证据**:[`pvp_match_client.gd:277-289`](../../../scenes/pvp_match_client.gd#L277) `for rep_node in _all_replicas(): … _time_fx_replica_on(rep)`,而 `_fx_other_t -= get_process_delta_time()`(`:315-317`)用的是**客户端根上的一个字段**。
 - **影响**:k 个加速者时字段每帧被减 k 次 ⇒ 触发 ≈ `k/0.06` 对/秒(16 人 ≈500 张 AfterImage/s);且 `_physics_process` 链里读 idle delta ⇒ 30fps 时 0.033s、120fps 时 0.12s,与注释的 0.06s 无关。卡顿+泄漏的组合。
 - **修法**:计时器搬进副本(或 `{rep: t}` 字典),函数签名加 `delta` 传物理 delta。档 **单系统**。
 
-### BUG-21 ｜ P2 ｜ 用中文播报子串判定"服务器断开",第二条判据恒假
+### BUG-21 ｜ P2 ｜ 用中文播报子串判定"服务器断开",第二条判据恒假(**已修 2026-10-30**)
 
 - **证据**:[`pvp_match_client.gd:904-910`](../../../scenes/pvp_match_client.gd#L904) `if msg.contains("断开") or msg.contains("断开连接"):` —— 后者恒被前者覆盖;`local_server_message`(`net_bus.gd:49-50`)同时承载 `server_message` 文本播报与本地 `server_disconnected` 的「服务器断开」。
 - **影响**:任何含"断开"的服务端文案都会被当成断线并 `_begin_reconnect()` → `NetBus.stop()` 掐掉活连接;文案一改则重连静默失效。**判据是自然语言,不是状态**。
 - **修法**:断开走专用信号(`multiplayer.server_disconnected` 直连),文本播报单列。档 **单系统**。
 
-### BUG-22 ｜ P3 ｜ 权威爆炸按 `shooter` 匹配,但 `want` 可为 null ⇒ 会吃掉别人的榴弹
+### BUG-22 ｜ P3 ｜ 权威爆炸按 `shooter` 匹配,但 `want` 可为 null ⇒ 会吃掉别人的榴弹(**已修 2026-10-30**)
 
 - **证据**:[`pvp_match_client.gd:91-106`](../../../scenes/pvp_match_client.gd#L91) `var want: Node = shooter if shooter != null else (_local if shooter_role == PvpSession.role else null)`;筛选条件含 `b.shooter != want`,只有"自己那发"才 early return。
 - **影响**:快照还没建出射手副本时 `want == null`,而那一刻 `_on_bullet_spawn` 给出的视觉弹 `shooter` 也是 null ⇒ **最近那颗别人的榴弹**被 `queue_free()`(双爆/提前消失),大乱斗多榴弹时最易撞。
 - **修法**:`want == null` 时直接 return,只在本端能定位射手时才 cull。档 **单系统**。
 
-### BUG-23 ｜ P3 ｜ 3v3 倒地尸体仍挂血条(大乱斗有、3v3 漏)
+### BUG-23 ｜ P3 ｜ 3v3 倒地尸体仍挂血条(大乱斗有、3v3 漏)(**已修 2026-10-30**)
 
 - **证据**:[`team_game.gd:233-235`](../../../scenes/team_game.gd#L233) 只写 `_hp_bars[role].ratio = …`;大乱斗 [`royale_game.gd:121-125`](../../../scenes/royale_game.gd#L121) 紧随 `visibility = not bool(data.get("downed", false))`,并注释"线上 hp 已钳到 0,否则会读成还活着"。
 - **影响**:3v3 尸体头顶一条 0 血条,读成"残血还活着"。
@@ -207,6 +215,18 @@
 
 ---
 
+
+## 2.9 测试基建(本轮新登记)
+
+### BUG-25 ｜ P2 ｜ 串行真链路批会被"上一支的残留"连累(**已修 2026-10-30**)
+
+- **现象(2026-10-30 首跑)**:全批首跑 `pvp_match_smoke` FAIL 后,两个 `server_main.tscn` 大厅进程仍占 7777(console + exe 各一);随后 `royale_soak_probe` / `royale_role_cap_probe` 直接 `Couldn't create an ENet host err=20` 假 FAIL。清场后单跑三支全 **PASS**。
+- **根因方向**:`pvp_match_smoke.sh` 的 `kill_procs $SERVER_PID` 在 Git Bash/MSYS 下不可靠(脚本自注);`kill_port`/`kill_port_range` 覆盖不到"两种 Godot 二进制各起一个大堂";`run_real.sh` 只在整批开始做 `lobby_alive` 闸,entry 之间不扫 7777。
+- **影响**:任何一支失败 ⇒ 后续 entry 全假 FAIL,时序结论不可信。
+- **根因(已定位)**:测试基建的清理原语(`lobby_alive` / `kill_port` / `kill_port_range` / `kill_procs`)按 **Git Bash/MSYS** 写(`netstat -ano` / `taskkill`);从 **WSL bash** 调用时这些命令是 Linux 版或不存在 ⇒ **全部静默 no-op**,闸三的 `tasklist | grep godot` 也恒 0。失败 entry 的 godot/7777 因此留下并污染后续。
+- **修法**:`tests/env.sh` 与 `tests/run_real.sh` 加 **WSL 分支**(`uname -s == Linux` 时走 `powershell.exe`/`taskkill.exe` 互操作重定义同一批原语);另新增 `kill_lobby_by_cmdline`(按命令行清 `server_main.tscn`)并在 `pvp_match_smoke.sh` 全部收尾路径 + `run_real.sh` 的每支 entry 尾部/EXIT trap 调用。
+- **验证**:修后单跑 `pvp_match_smoke` **PASS** 且跑后 `7777 空闲 / 无 godot 残留`;三份 shell `bash -n` 全过;完整真链路批见 §三十七。
+- **验收**:故意让一支 FAIL,断言之后 `lobby_alive=false` 且 7777 属主为 0。
 ## 3. 旧 bughunt 报告(2026-10-22)复核对照
 
 旧报告 17 条(X1~X17)在 `.superpowers/bughunt/REPORT.md`。本轮只复核了与本模块直接相关的几条:
@@ -238,10 +258,10 @@
 | **B1** | BUG-06(local_server UDP)、BUG-11(1v1 claim_role)、BUG-13(残像停摆)、BUG-15(-port)、BUG-16(诊断)、BUG-17(200 人封顶) | 全在"单系统"档、单点改动、不动协议;BUG-06/11 是服务端接线,能靠人眼/日志验收 | 默认批 + 手动点一次"重启本机服务器" |
 | **B2** | BUG-18(lobby_page 假 claim 梯)、BUG-21(子串判断开)、BUG-23(3v3 血条) | 大厅/客户端接线,单点;BUG-18 是用户在大厅就会撞到的,P2 里最优先 | 默认批 + 手动"worker 连不上→回大厅→再浏览 25s" |
 | **B3** | BUG-19/20/22(残影泄漏 + 节拍器 + 爆炸 cull) | 同一块视效代码,一起改更安全;观感只能人眼 | 人眼:两人局各回溯一次,看 CPU/节点数 |
-| **B4** | BUG-03(重连子格)、BUG-07(版本拒绝)、BUG-08(回滚环) | 都碰线上契约/回滚,一起做能共用一次真链路批 | `net_wire_smoke` + `rejoin_probe` + `pvp_match_smoke` + `royale_soak`;前后查 `tasklist \| grep -i godot` 为空 |
-| **B5** | BUG-04/05(回溯跨局/倒地) | Beta 时间玩法,须人眼 + 一局真回溯;先补探针再修 | 探针 + 真链路一局 |
-| **B6** | BUG-09/10/12(AI 局摘房/同步 kill/guest 通知) | 都是大厅生命周期,会互相影响,建议同一批 | `pvp_room_smoke` + 手动 `ai_duel` → 再建房 |
-| **B7** | BUG-01/02(用户报的两条) | **先定位再修**:按 §1 的定位计划各跑一次,拿到证据再进修复批 | 见各条的"定位计划" |
+| **B4** | BUG-03(重连子格)、BUG-07(版本拒绝)、BUG-08(回滚环) | **已完成**:B4 协议批(v7:删差分 + trail 定点化 + BUG-07 版本握手)+ BUG-03 补态(载荷加 `destroyed_subs`)均已落地 | `net_wire_smoke`(5)+ `snapshot_size_probe`(5)+ 默认批 20/122 全绿;真链路(`pvp_match_smoke`/`rejoin_probe`/`team_match_probe`/`royale_soak`,占 7777)待用户认领 |
+| **B5** | BUG-04/05(回溯跨局/倒地) | **已完成**:换局清回溯环 + 解冻回溯态 role(`reset_time_rewind_state`);`_apply_rw_frame` 还原 downed。无自动断言(服务器 Beta 回溯无探针基础),登记 §三十三 边界 | 真链路一局 Beta 回溯 + 人眼 |
+| **B6** | BUG-09/10/12(AI 局摘房/同步 kill/guest 通知) | **已完成**:`TEARDOWN_ADOPT` + 孤儿 pid 梯(BUG-09);kill 改异步线程 + KILL 走延迟归还(BUG-10);房内>1 人拒绝 AI 对战(BUG-12)。`room_sweep_lint` 绿 | `room_sweep_lint` + 手动 `ai_duel` → 再建房(真链路待认领) |
+| **B7** | BUG-01、BUG-02(用户实机报) | **已完成**:BUG-02 按用户裁定「MVP 出自胜方」修(§二十六);BUG-01 定位到"重建条目后仍写回旧枪实弹"并修 + 新增探针(§三十) | `gun_ammo_independence_probe` 8 条绿 |
 | **B8** | 文档/注释:01 的 `DD-*` / `CM-*` / `G-*` | 纯文本与守卫补齐,零生产风险;但要在代码定稿之后一次性刷,避免二次漂移 | `python tools/check_naming.py` + 各支条数闸复核 |
 
 > ★ 跑测试前先问用户(AGENTS.md §1):进入验证阶段先列"这轮要跑哪些测试",用户认领的自己跑,其余 agent 跑;任何占 7777 的步骤先查 `lobby_alive`。
@@ -265,7 +285,12 @@
 | BUG-19/20/22 | 无自动断言(视效/节点数),人眼 + 运行时节点计数 | — |
 | BUG-21 | `-s`:文本"断开"不再触发重连;`server_disconnected` 信号触发 | 把判据改回子串匹配 |
 | BUG-23 | 人眼(3v3 尸体无血条) | 删 `visible = not downed` 那行 |
-| BUG-01/02 | 纯逻辑 `-s`:给定两份 stats/两把枪的状态,断言各自独立 | 见各条定位计划 |
+| BUG-01 | `gun_ammo_independence_probe`(8 条,真 player.tscn) | 把 `pick_up`/`random_keep_one` 的 `_equip_index(..., false)` 改回默认 flush ⇒ 红 |
+| BUG-02 | `-s`:给定 stats/候选集,断言 MVP 必在胜方 | 删 `candidates` 过滤 ⇒ 红(`mvp_choice_smoke`) |
+| BUG-03 | `resync_substate_smoke`(5 条):`TileResync.partial_damaged_subs` 只补「格仍在」的死子格 | 删「格仍与基线相同」过滤 ⇒ 红;删排序 ⇒ ④红 |
+| BUG-14 | `rejoin_mode_smoke`(4 条):凭据带 mode;decision/owns 按(房间号,模式)判 | 去掉 decision 的 mode 比较 ⇒ ②红;去掉 owns 的 mode 比较 ⇒ ③红;grant 不存 mode ⇒ ①红 |
+| BUG-09 | `room_sweep_lint`(结构与回收梯) | AI 局走 `TEARDOWN_ADOPT` + `reap_orphans`(无自动断言,登记边界) |
+| BUG-07 | 跨进程握手(claim/reclaim 带 proto,服务端拒+踢) | 无专属自动断言;变异 = 删 server_main._proto_matches 的两处调用 ⇒ 跨版本不再被拒(需真链路才能观测,登记边界) |
 | BUG-17 | `encode_world` 200 人输入不越界 | 删循环封顶 |
 
 ---
@@ -295,3 +320,64 @@
 - `allscript_probe` ⇒ `ALLSCRIPT: OK(192 个脚本全部加载)`(条数闸 190→192,两支新 smoke)
 
 > 未跑:真链路批(`pvp_match_smoke` / `rejoin_probe` / `team_match_probe` / `royale_soak`)、`pvp_room_smoke` —— 会占 7777/端口池与拉子进程,按纪律先问用户。修复未提交(git 未 add)。
+
+### 第二批(2026-10-30,客户端接线 + 回滚环;用户「继续修 bug」)
+
+| ID | 改了什么 | 守卫 / 验证 |
+|---|---|---|
+| BUG-08 | [`prediction_rollback.gd`](../../../core/net/prediction_rollback.gd) `note_post_step` 的环淘汰补 `_inputs.erase(old)`(与 `advance()` 同款三清) | 新增 [`tests/smoke/prediction_rollback_ring_smoke.gd`](../../../tests/smoke/prediction_rollback_ring_smoke.gd) **3 条**;`ROLLBACK RING OK(3 条断言)`;**变异验证**:删掉该行 ⇒ 正好 2 条红(①②③里两处),加回 ⇒ 绿 |
+| BUG-18 | [`lobby_page.gd`](../../../scenes/lobby_page.gd) 转连 worker 的 `connected_to_server` / `connection_failed` 收成具名 Callable + `_bind_worker_once` / `_unbind_worker_once` 成对;`_do_go_match` 绑定、`_return_to_lobby` 先解绑(含 `is_connected` 守卫,避免对已自清的一次性连接 disconnect 报错) | 无自动断言(连接接线);人眼:worker 连不上→回大厅→浏览 25s 不再被弹回 |
+| BUG-20 | [`pvp_match_client.gd`](../../../scenes/pvp_match_client.gd) 他人加速重影节拍从单 float 改 **per-副本字典**,递减改用调用链传入的**物理 delta**(不再 `get_process_delta_time()`);`_time_fx_replica_off` 清表 | 无自动断言(观感/节拍);人眼:多人加速时重影频率不再随人数/帧率翻倍 |
+| BUG-21 | [`pvp_match_client.gd`](../../../scenes/pvp_match_client.gd) 局内断线判定从 `msg.contains("断开")` 文本子串改为 `multiplayer.server_disconnected` 直连 `_on_hard_disconnect`;`_on_server_message` 只留播报 | 无自动断言(接线);去掉文本猜状态后,文案改动不再影响重连 |
+| BUG-22 | [`pvp_match_client.gd`](../../../scenes/pvp_match_client.gd) 权威爆炸回收视觉弹前判 `want != null` —— 对手副本未建时不再把别人的榴弹 `queue_free()` | 无自动断言(视觉);大乱斗多榴弹时人眼 |
+| BUG-23 | [`team_game.gd`](../../../scenes/team_game.gd) 3v3 倒地尸体血条隐藏(`visible = not downed`,与大乱斗同口径) | 无自动断言(观感);3v3 尸体头顶不再挂 0 血条 |
+
+**第二批验证证据(本机 headless,未占 7777/未弹窗)**:`prediction_rollback_ring_smoke` `ROLLBACK RING OK(3 条断言)`(含变异验证)· `allscript_probe` `ALLSCRIPT: OK(194 个脚本全部加载)`(条数闸 193→194)· `python tools/check_naming.py` 绿。`tests/README.md` 的闸值表与默认批读数(17 支 / 111 条闸断言)同批校正。
+
+> 仍未跑:真链路批(占 7777/端口池、拉子进程,按纪律等用户认领)。BUG-01(每把枪残弹不独立)仍待定位;BUG-20 已修但观感只能人眼验收。
+
+### 第三批(2026-10-30,用户实机报的 BUG-01:残弹独立性)
+
+| ID | 改了什么 | 守卫 / 验证 |
+|---|---|---|
+| BUG-01 | [`weapon_component.gd`](../../../scenes/player/weapon_component.gd):`_equip_index()` 增 `flush_current` 开关;`pick_up()` 替换分支传 `false`(旧枪实弹已由 `_last_dropped` 带走);`random_keep_one()` 先 `_flush_current_mag()`(当前枪条目落账)再 `_equip_index(0, false)` | 新增 [`tests/probe/gun_ammo_independence_probe.gd`](../../../tests/probe/gun_ammo_independence_probe.gd)+`.tscn`(**8 条** + `EXPECTED_CHECKS`);未修时红色原文见 BUG-01 段;**变异验证 3 条**各自红、还原后 `KH gun_ammo_independence PROBE: ALL-OK` |
+
+**第三批验证证据(本机 headless,未占 7777/未弹窗)**:`KH gun_ammo_independence PROBE: ALL-OK` · `ALLSCRIPT: OK(195 个脚本全部加载)`(条数闸 194→195)· `python tools/check_naming.py` 绿。`tests/README.md` 默认批读数同步为 **18 支 / 119 条闸断言**。
+
+> 仍未跑:真链路批(占 7777/端口池、拉子进程,按纪律等用户认领)。BUG-01 的"同帧多次切枪窗口"与"`restore_inventory` 瞬时覆盖"按边界登记未改。
+### 第四批(2026-10-30,B4 协议批 v7:删差分 + trail 定点化 + BUG-07 版本握手;档 3)
+
+| 项 | 改了什么 | 守卫 / 验证 |
+|---|---|---|
+| S-01(审查项) | [`net_codec.gd`](../../../core/net/net_codec.gd) 重写:`PROTO_VERSION 6→7`,删除全部 DELTA 机制(encode 的 full/prev/keyframes 分支、`apply_world`/`apply_own`、mask/位序表/周期相位/关键帧名额);解码侧 flags 必须恰为 FULL | `net_wire_smoke` 7→**5**、`snapshot_size_probe` 9→**5**(差分断言退役);差异见 [`registered-debt.md` §三十一](../../eng/registered-debt.md) |
+| S-22(审查项) | `trail` 从 2×float32 改 **2×i16(Q_SCALE 0.5px)**,与世界 pos/vel 同精度 | 世界条目 **25 B**(原 33)、最坏包 **536 B**(原 791)、N=16 常态 **408 B**(原 536);`net_wire_smoke` ③ / `snapshot_size_probe` ③⑤ 对 trail 加 ≤0.25 容差 |
+| BUG-07 | `claim_role` / `reclaim_role` 带 `PROTO_VERSION`;`server_main._proto_matches()` 在入口校验,不符 ⇒ 回可见 `server_message` 并踢连接 | 无专属自动断言(跨进程握手);两条变异验证见 §三十一 |
+
+**第四批验证证据(本机 headless;默认批不占 7777/不弹窗)**:`RUN_ALL OK(18 runs / 113 gated-assertions)`(18 支全绿)· `net_wire_smoke` readout 输入 42 B / 世界 2 人 50 B / 本人包 99 B · `SNAPSHOT SIZE PROBE: ALL-OK`(条目 25 B / 最坏 536 B)· `ALLSCRIPT: OK(195 个脚本)` · `python tools/check_naming.py` 绿。变异验证三条(实测):trail 步长错 ⇒ net_wire ③ 红;预算少算 ⇒ snapshot ④ 红;flags 判据删除 ⇒ net_wire ② 红;还原全绿。
+
+> **仍未跑**:档 3 要求真链路跑批 —— `pvp_match_smoke` / `rejoin_probe` / `team_match_probe` / `royale_soak`(占 7777/端口池、拉子进程)按 AGENTS §1 等用户认领;两版之间的"同版"只由版本字节 + 握手守门,跨进程未见真包。
+
+### 第五批(2026-10-30,榴弹 32px 破坏单位 + BUG-03 重连补子格;档 3)
+
+| 项 | 改了什么 | 守卫 / 验证 |
+|---|---|---|
+| 用户裁定 | 榴弹最小破坏单位 16px→**32px**:`grenade_bullet.tscn` `tile_break_unit` 0.25→0.5;`Explosion.damage_tiles` 三档分派(64px/32px 块/16px 子格);`TileDefs.damage_block32` 收口(块内 4 子格同一伤害);碎片按破坏单位播(`Explosion.destructible_units`,一块一簇) | `tile_break_unit_smoke`(11)口径改 32px;变异:场景回 0.25 ⇒ ②红、爆炸分派失效 ⇒ ⑨红 |
+| BUG-03 | 新增 `core/sim/tile_resync.gd`(纯逻辑);`MatchState.damaged_partial_subs()` 委托;`server_main` 载荷加 `destroyed_subs`(空不带键);客户端 `_on_match_sync` 在 `destroyed` 之后静默补 16px/32px 子格(复用 `_on_remote_sub_destroyed(sub,true)`) | 新增 `resync_substate_smoke`(5):部分破坏补齐 · 整格不重复 · 未动不发 · 顺序确定 · 无假阳性;变异:删整格过滤 ⇒ 4 处红、删排序 ⇒ ④红 |
+
+**第五批验证证据(本机 headless;默认批不占 7777/不弹窗)**:`TILE BREAK UNIT OK(11 条断言)` · `RESYNC SUBSTATE OK(5 条断言)` · `ALLSCRIPT: OK(197 个脚本)` · `RUN_ALL OK(19 runs / 118 gated-assertions)`(19 支全绿)。
+
+> **仍未跑**:真链路批(本批改了 `match_sync` 载荷,必须跨进程验:`pvp_match_smoke` / `rejoin_probe`;占 7777)等用户认领。
+### 第六批(2026-10-30,收尾 6 条;台账 23 条全部修完)
+
+| ID | 改了什么 | 守卫 / 验证 |
+|---|---|---|
+| BUG-04 | `MatchHost.reset_time_rewind_state()`(清环 + 解冻回溯态 role);`MatchRound._reset_world_and_clear_dynamics()` 早退前动态调用 | 无自动断言(服务器 Beta 回溯无探针地基),登记边界 |
+| BUG-05 | `_apply_rw_frame` 补 `combat.set_downed_by_rewind(bool(f["downed"]))` | 无自动断言,同上 |
+| BUG-09 | 新拆除形态 `TEARDOWN_ADOPT` + `WorkerLauncher.adopt_orphan/reap_orphans`;ai_duel 改用它 | `room_sweep_lint` 绿;行为待真链路 |
+| BUG-10 | `ProcUtil.kill_udp_port_async`(Thread)+ `reap_kill_threads`;`kill_worker` 异步;KILL 改延迟归还 | 无自动断言(时序类,按仓规不写);`room_sweep_lint` 绿 |
+| BUG-12 | `ai_duel` 房内 >1 人拒绝并回 `server_message` | 无自动断言 |
+| BUG-14 | 凭据加 `mode`;`decision`/`owns`/`_grant_rejoin`/`rejoin_request` RPC 全带模式 | 新增 `rejoin_mode_smoke`(4);变异 3 条实测红→还原绿 |
+
+**第六批验证证据(本机 headless;默认批不占 7777/不弹窗)**:`REJOIN MODE OK(4 条断言)` · `SMOKE_ROOM_SWEEP OK(10 项检查)` · `ALLSCRIPT: OK(198)` · `RUN_ALL OK(20 runs / 122 gated-assertions)`。
+
+> **仍未跑**:真链路批(占 7777;v7 线格式 + `match_sync` 补态 + 大厅拆除/凭据改动都要跨进程验)等用户认领。BUG-04/05/09/10/12 五条无自动断言,只能真链路 + 人眼。
