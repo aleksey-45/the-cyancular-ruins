@@ -20,7 +20,7 @@ var _box_on: StyleBoxFlat
 
 # 初始化地图选择卡片网格
 func setup(initial: String = "", columns := 2, max_h := 320.0,
-		title := "地　图(点选;缩略图 = 开局地形简略图)") -> void:
+		title := "地图(点选;缩略图 = 开局地形简略图)") -> void:
 	add_theme_constant_override("separation", 8)
 	add_child(UiFactory.header_strip(title, 32))
 
@@ -38,7 +38,7 @@ func setup(initial: String = "", columns := 2, max_h := 320.0,
 	_box_off = _style_off()
 	_box_on = _style_on()
 
-	_add_card("", "随　机", "进图时从目录中现挑一份", MapCatalog.random_texture())
+	_add_card("", "随机", "进图时从目录中现挑一份", MapCatalog.random_texture())
 	var maps := MapCatalog.list_maps()
 	var names: Array[String] = []
 	for m in maps:

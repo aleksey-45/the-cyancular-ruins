@@ -41,7 +41,7 @@ theme_type_variation = &"HeaderStrip"
 layout_mode = 2
 theme_override_colors/font_color = Color(0.8784314, 0.6627451, 0.30980393, 1)
 theme_override_font_sizes/font_size = 48
-text = "—— 设 置 ——"
+text = "—— 设置 ——"
 
 [node name="HBoxContainer1" type="HBoxContainer" parent="MarginContainer1/VBoxContainer1" unique_id=70617914]
 layout_mode = 2
@@ -301,4 +301,4 @@ unique_name_in_owner = true
 custom_minimum_size = Vector2(280, 72)
 layout_mode = 2
 theme_type_variation = &"BtnLegacy"
-text = "返 回(Esc)"
+text = "返回(Esc)"

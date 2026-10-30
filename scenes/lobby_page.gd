@@ -120,7 +120,7 @@ func _on_lobby_connect_failed() -> void:
 	_lobby_start_ms = 0
 	_connected = false
 	_pending_action = Callable()
-	_status.text = "未检测到本地服务器——请创建房间或输入 8 位房间号加入"
+	_status.text = "请创建房间或输入8位房间号加入"
 
 
 # 确保连接到大厅后执行指定动作
@@ -131,7 +131,7 @@ func _with_lobby(action: Callable) -> void:
 		_push_lobby_name()
 		action.call()
 		return
-	_status.text = "正在连接本地大厅…"
+	_status.text = "正在连接房间…"
 	_connected = false
 	_pending_action = action
 	_on_lobby_reconnect()
@@ -207,18 +207,18 @@ func _tick_lobby_connect_timeout() -> void:
 			and Time.get_ticks_msec() - _lobby_start_ms > 8000:
 		_lobby_start_ms = 0
 		_pending_action = Callable()
-		_status.text = "未检测到本地服务器——请创建房间或输入 8 位房间号加入"
+		_status.text = "连接超时，请创建房间或输入8位房间号加入"
 
 
 # 角色认领超时检测
 
 func _ensure_own_server() -> bool:
 	NetSession.close()
-	_status.text = "正在启动本机专属服务器…"
+	_status.text = "正在创建房间…"
 	PvpSession.server_address = "127.0.0.1"
 	var port: int = await LocalServer.launch_and_connect()
 	if port <= 0:
-		_status.text = "启动本机服务器失败，请检查日志"
+		_status.text = "创建房间失败，请检查日志"
 		return false
 	PvpSession.server_port = port
 	_connected = true
@@ -347,7 +347,7 @@ func _beta_payload() -> Dictionary:
 func _add_map_picker(vb: VBoxContainer) -> void:
 	var picker := MapPicker.new()
 	vb.add_child(picker)
-	picker.setup(Settings.mp_map_path, 2, 260.0, "地　图(房主选;缩略图 = 开局地形简略图)")
+	picker.setup(Settings.mp_map_path, 2, 260.0, "地图(房主选;缩略图 = 开局地形简略图)")
 	Settings.mp_map_path = picker.selected
 	picker.picked.connect(func(p: String) -> void:
 		Settings.mp_map_path = p

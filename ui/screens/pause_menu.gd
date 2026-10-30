@@ -46,11 +46,11 @@ func _ready() -> void:
 	# 标题栏：单人模式显示「—— 已暂停 ——」，对战模式显示「—— 菜单 ——」
 	vb.add_child(UiFactory.header_strip("—— 已暂停 ——" if not is_pvp else "—— 菜单 ——", 64))
 
-	var resume := UiFactory.menu_button("继 续 游 戏", 32, Vector2(480, 72), "gold")
+	var resume := UiFactory.menu_button("继续游戏", 32, Vector2(480, 72), "gold")
 	resume.pressed.connect(close)
 	vb.add_child(resume)
 
-	var menu := UiFactory.menu_button("回 到 主 菜 单", 32, Vector2(480, 72), "quiet")
+	var menu := UiFactory.menu_button("回到主菜单", 32, Vector2(480, 72), "quiet")
 	menu.pressed.connect(go_menu)
 	vb.add_child(menu)
 

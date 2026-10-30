@@ -58,4 +58,4 @@ alignment = 1
 custom_minimum_size = Vector2(420, 88)
 layout_mode = 2
 theme_type_variation = &"BtnGold"
-text = "返 回 主 菜 单"
+text = "返回主菜单"

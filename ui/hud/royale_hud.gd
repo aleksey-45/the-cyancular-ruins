@@ -163,12 +163,12 @@ func _refresh_broadcast(state: int, data: Dictionary, names: Dictionary, rows: A
 			_timer_label.text = "对局结束"
 			var mw := int(data["match_winner"])
 			if mw == 0:
-				_broadcast.set_broadcast(true, "平 局", "杀敌数不相上下")
+				_broadcast.set_broadcast(true, "平局", "杀敌数不相上下")
 			elif not rows.is_empty():
 				var wname := str(names.get(mw, "P%d" % mw))
 				if wname == _my_name:
-					_broadcast.set_broadcast(true, "胜 利 !", "你是大乱斗之王")
+					_broadcast.set_broadcast(true, "胜利！", "你是大乱斗之王")
 				else:
-					_broadcast.set_broadcast(true, "失 败", "%s 赢得了大乱斗" % wname)
+					_broadcast.set_broadcast(true, "失败", "%s 赢得了大乱斗" % wname)
 		_:
 			pass

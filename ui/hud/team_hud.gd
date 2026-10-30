@@ -72,4 +72,4 @@ func _on_round_state(data: Dictionary) -> void:
 			elif mwinner != 0:
 				_broadcast.set_broadcast(true, "失败", "再接再厉…")
 			else:
-				_broadcast.set_broadcast(true, "平 局", "双方都离开了对局…")
+				_broadcast.set_broadcast(true, "平局", "双方都离开了对局…")

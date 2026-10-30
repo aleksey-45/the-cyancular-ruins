@@ -236,7 +236,7 @@ func _fill_sp_panel(panel: PanelContainer) -> PanelContainer:
 	row.add_theme_constant_override("separation", SP_BUTTON_GAP)
 	vb.add_child(row)
 
-	var go := UiFactory.menu_button("开 始 探 索", 32, Vector2(420, 88), "gold")
+	var go := UiFactory.menu_button("开始探索", 32, Vector2(420, 88), "gold")
 	go.pressed.connect(func() -> void:
 		Sfx.play("ui")
 		Settings.sp_disabled_weapons.clear()

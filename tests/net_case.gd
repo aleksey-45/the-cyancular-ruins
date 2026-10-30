@@ -1,7 +1,12 @@
 extends "res://tests/case.gd"
 
+class LobbySession extends RoomSession:
+	var messages: Array[String] = []
+	func message(_peer: int, value: String) -> void: messages.append(value)
+
 func run(tree: SceneTree) -> void:
 	_input()
+	_lobby()
 	_codec(tree)
 	_playback()
 
@@ -36,6 +41,45 @@ func _input() -> void:
 	expect(wire.size() == 1, "START has no obsolete bot payload")
 	stream = _body(wire, NetCodec.EVENT + NetEvent.Kind.START)
 	expect(codec.decode_event(NetEvent.Kind.START, stream) == null and stream.get_available_bytes() == 0, "START round trip")
+
+func _lobby() -> void:
+	var codec := NetCodec.new()
+	var join := {"code": "00048213", "beta": true}
+	var wire := codec.encode_event(NetEvent.Kind.JOIN, join)
+	var stream := _body(wire, NetCodec.EVENT + NetEvent.Kind.JOIN)
+	expect(wire.size() == 6 and codec.decode_event(NetEvent.Kind.JOIN, stream) == join,
+			"JOIN preserves leading-zero room code and gameplay selection")
+	expect(stream.get_available_bytes() == 0, "JOIN consumes its complete payload")
+	var options := {"map": "res://maps/newfactory.cyrm", "max_players": 8, "match_time": 300,
+			"round_full_heal": false, "disabled_weapons": WeaponRegistry.all_ids().slice(0, 1),
+			"beta": true, "time": TimeRules.new().to_dict(), "hue": 0.25}
+	var create := {"mode": PvpSession.MODE_ROYALE, "options": options}
+	stream = _body(codec.encode_event(NetEvent.Kind.CREATE, create), NetCodec.EVENT + NetEvent.Kind.CREATE)
+	expect(codec.decode_event(NetEvent.Kind.CREATE, stream) == create and stream.get_available_bytes() == 0,
+			"CREATE round trip preserves room options")
+	var session := LobbySession.new()
+	session.code = join["code"]
+	session.mode = PvpSession.MODE_ROYALE
+	session.options = options
+	session.seats = {1: {"name": "host", "team": 0}, 2: {"name": "guest", "team": 0}}
+	var room := session.room_data()
+	room.merge({"your_role": 2, "token": "01".repeat(16)})
+	stream = _body(codec.encode_event(NetEvent.Kind.ROOM, room), NetCodec.EVENT + NetEvent.Kind.ROOM)
+	expect(codec.decode_event(NetEvent.Kind.ROOM, stream) == room and stream.get_available_bytes() == 0,
+			"ROOM preserves roster, options and rejoin credentials")
+	var listed := session.room_data()
+	listed.merge({"in_match": true, "joinable": false, "rejoinable": true})
+	stream = _body(codec.encode_event(NetEvent.Kind.ROOMS, [listed]), NetCodec.EVENT + NetEvent.Kind.ROOMS)
+	expect(codec.decode_event(NetEvent.Kind.ROOMS, stream) == [listed] and stream.get_available_bytes() == 0,
+			"ROOMS preserves match, gameplay and rejoin flags")
+	session._on_event(3, NetEvent.Kind.JOIN, join.merged({"beta": false}, true))
+	expect(session.messages.back() == "该房间为「错乱大乱斗」，请从「Beta」进入" and session.seats.size() == 2,
+			"gameplay mismatch names the Beta room and its entry without adding a seat")
+	session.options["beta"] = false
+	session._on_event(3, NetEvent.Kind.JOIN, join)
+	expect(session.messages.back() == "该房间为「大乱斗」，请从「多人模式」进入" and session.seats.size() == 2,
+			"gameplay mismatch names the regular room and its entry")
+	session.free()
 
 func _codec(tree: SceneTree) -> void:
 	var parent := world(tree)

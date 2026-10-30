@@ -1,4 +1,4 @@
-[gd_scene load_steps=58 format=3]
+[gd_scene load_steps=54 format=3]
 
 [ext_resource type="Theme" path="res://ui/theme/menu_theme.tres" id="1_xj1ww"]
 [ext_resource type="Script" uid="uid://bgulbpan3miyr" path="res://scenes/mp_lobby.gd" id="1_lobby"]
@@ -365,26 +365,6 @@ border_width_right = 2
 border_width_bottom = 2
 border_color = Color(0.349, 0.851, 0.902, 1)
 
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_dyf0w"]
-content_margin_left = 10.0
-content_margin_right = 10.0
-bg_color = Color(0.106, 0.118, 0.141, 1)
-border_width_left = 2
-border_width_top = 2
-border_width_right = 2
-border_width_bottom = 2
-border_color = Color(0.25, 0.31, 0.4, 1)
-
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_xncon"]
-content_margin_left = 10.0
-content_margin_right = 10.0
-bg_color = Color(0.106, 0.118, 0.141, 1)
-border_width_left = 2
-border_width_top = 2
-border_width_right = 2
-border_width_bottom = 2
-border_color = Color(0.349, 0.851, 0.902, 1)
-
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_kn1wx"]
 content_margin_left = 40.0
 content_margin_top = 20.0
@@ -603,26 +583,6 @@ border_width_right = 2
 border_width_bottom = 2
 border_color = Color(0.349, 0.851, 0.902, 1)
 
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_tkcv8"]
-content_margin_left = 10.0
-content_margin_right = 10.0
-bg_color = Color(0.106, 0.118, 0.141, 1)
-border_width_left = 2
-border_width_top = 2
-border_width_right = 2
-border_width_bottom = 2
-border_color = Color(0.25, 0.31, 0.4, 1)
-
-[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_36ry5"]
-content_margin_left = 10.0
-content_margin_right = 10.0
-bg_color = Color(0.106, 0.118, 0.141, 1)
-border_width_left = 2
-border_width_top = 2
-border_width_right = 2
-border_width_bottom = 2
-border_color = Color(0.349, 0.851, 0.902, 1)
-
 [node name="MpLobby" type="Control" unique_id=1874235467]
 layout_mode = 3
 anchors_preset = 15
@@ -678,8 +638,6 @@ theme_override_styles/normal = SubResource("StyleBoxFlat_xsicv")
 theme_override_styles/focus = SubResource("StyleBoxFlat_7uuf6")
 placeholder_text = "房间号"
 
-
-
 [node name="FilterAll" type="Button" parent="." unique_id=382391109]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(220, 72)
@@ -728,7 +686,7 @@ theme_override_styles/disabled = SubResource("StyleBoxFlat_co1jw")
 theme_override_styles/focus = SubResource("StyleBoxFlat_ygl7g")
 toggle_mode = true
 button_group = SubResource("ButtonGroup_u64m4")
-text = "1 v 1"
+text = "1v1"
 
 [node name="FilterTeam" type="Button" parent="." unique_id=468793753]
 unique_name_in_owner = true
@@ -753,7 +711,7 @@ theme_override_styles/disabled = SubResource("StyleBoxFlat_gkue4")
 theme_override_styles/focus = SubResource("StyleBoxFlat_ennis")
 toggle_mode = true
 button_group = SubResource("ButtonGroup_u64m4")
-text = "3 v 3"
+text = "3v3"
 
 [node name="FilterRoyale" type="Button" parent="." unique_id=1787443688]
 unique_name_in_owner = true
@@ -778,7 +736,7 @@ theme_override_styles/disabled = SubResource("StyleBoxFlat_m2fv5")
 theme_override_styles/focus = SubResource("StyleBoxFlat_58uhb")
 toggle_mode = true
 button_group = SubResource("ButtonGroup_u64m4")
-text = "大 乱 斗"
+text = "大乱斗"
 
 [node name="CreateBtn" type="Button" parent="." unique_id=1218192058]
 unique_name_in_owner = true
@@ -851,9 +809,9 @@ anchor_top = 0.5
 anchor_right = 0.5
 anchor_bottom = 0.5
 offset_left = -385.0
-offset_top = -211.0
+offset_top = -171.0
 offset_right = 385.0
-offset_bottom = 211.0
+offset_bottom = 171.0
 grow_horizontal = 2
 grow_vertical = 2
 theme_type_variation = &"PanelCarved"
@@ -888,18 +846,6 @@ theme_override_styles/normal = SubResource("StyleBoxFlat_cvxo2")
 theme_override_styles/focus = SubResource("StyleBoxFlat_54yg2")
 placeholder_text = "房间号"
 
-[node name="JoinInviteEdit" type="LineEdit" parent="JoinPanel/Body/VBoxContainer1" unique_id=1916132375]
-unique_name_in_owner = true
-custom_minimum_size = Vector2(560, 64)
-layout_mode = 2
-theme_override_colors/font_color = Color(0.878, 0.914, 0.949, 1)
-theme_override_colors/font_placeholder_color = Color(0.51, 0.573, 0.639, 1)
-theme_override_colors/caret_color = Color(0.349, 0.851, 0.902, 1)
-theme_override_font_sizes/font_size = 32
-theme_override_styles/normal = SubResource("StyleBoxFlat_dyf0w")
-theme_override_styles/focus = SubResource("StyleBoxFlat_xncon")
-placeholder_text = "邀请码(私密房,可空)"
-
 [node name="HBoxContainer1" type="HBoxContainer" parent="JoinPanel/Body/VBoxContainer1" unique_id=877699981]
 layout_mode = 2
 theme_override_constants/separation = 16
@@ -909,14 +855,14 @@ unique_name_in_owner = true
 custom_minimum_size = Vector2(220, 64)
 layout_mode = 2
 theme_type_variation = &"BtnGold"
-text = "加 入"
+text = "加入"
 
 [node name="JoinCancelBtn" type="Button" parent="JoinPanel/Body/VBoxContainer1/HBoxContainer1" unique_id=1800362792]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(220, 64)
 layout_mode = 2
 theme_type_variation = &"BtnQuiet"
-text = "取 消"
+text = "取消"
 
 [node name="CreateMask" type="ColorRect" parent="." unique_id=367709863]
 unique_name_in_owner = true
@@ -963,7 +909,7 @@ theme_type_variation = &"HeaderStrip"
 layout_mode = 2
 theme_override_colors/font_color = Color(0.8784314, 0.6627451, 0.30980393, 1)
 theme_override_font_sizes/font_size = 48
-text = "创 建 房 间"
+text = "创建房间"
 
 [node name="CreateCloseBtn" type="Button" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer1" unique_id=1011064369]
 unique_name_in_owner = true
@@ -1004,7 +950,7 @@ theme_override_styles/disabled = SubResource("StyleBoxFlat_tc3lm")
 theme_override_styles/focus = SubResource("StyleBoxFlat_vi557")
 toggle_mode = true
 button_group = SubResource("ButtonGroup_jb4lf")
-text = "1 v 1"
+text = "1v1"
 
 [node name="CreateModeTeam" type="Button" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer1/HBoxContainer1" unique_id=952505212]
 unique_name_in_owner = true
@@ -1025,7 +971,7 @@ theme_override_styles/disabled = SubResource("StyleBoxFlat_eq5qq")
 theme_override_styles/focus = SubResource("StyleBoxFlat_hh8sm")
 toggle_mode = true
 button_group = SubResource("ButtonGroup_jb4lf")
-text = "3 v 3"
+text = "3v3"
 
 [node name="CreateModeRoyale" type="Button" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer1/HBoxContainer1" unique_id=2087350687]
 unique_name_in_owner = true
@@ -1046,31 +992,7 @@ theme_override_styles/disabled = SubResource("StyleBoxFlat_1u2xm")
 theme_override_styles/focus = SubResource("StyleBoxFlat_a638s")
 toggle_mode = true
 button_group = SubResource("ButtonGroup_jb4lf")
-text = "大 乱 斗"
-
-[node name="PrivacyRow" type="VBoxContainer" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer1" unique_id=1972772629]
-unique_name_in_owner = true
-layout_mode = 2
-theme_override_constants/separation = 16
-
-[node name="PublicCheck" type="CheckButton" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer1/PrivacyRow" unique_id=1067158900]
-unique_name_in_owner = true
-layout_mode = 2
-button_pressed = true
-text = "公开房间(不勾选 = 私密,凭邀请码进入)"
-
-[node name="InviteEdit" type="LineEdit" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer1/PrivacyRow" unique_id=194796364]
-unique_name_in_owner = true
-visible = false
-custom_minimum_size = Vector2(0, 64)
-layout_mode = 2
-theme_override_colors/font_color = Color(0.878, 0.914, 0.949, 1)
-theme_override_colors/font_placeholder_color = Color(0.51, 0.573, 0.639, 1)
-theme_override_colors/caret_color = Color(0.349, 0.851, 0.902, 1)
-theme_override_font_sizes/font_size = 32
-theme_override_styles/normal = SubResource("StyleBoxFlat_tkcv8")
-theme_override_styles/focus = SubResource("StyleBoxFlat_36ry5")
-placeholder_text = "邀请码(留空自动生成)"
+text = "大乱斗"
 
 [node name="MaxPlayersRow" type="HBoxContainer" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer1" unique_id=903729244]
 unique_name_in_owner = true
@@ -1170,14 +1092,14 @@ unique_name_in_owner = true
 custom_minimum_size = Vector2(280, 88)
 layout_mode = 2
 theme_type_variation = &"BtnQuiet"
-text = "取 消"
+text = "取消"
 
 [node name="CreateOkBtn" type="Button" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer3" unique_id=1597425928]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(400, 88)
 layout_mode = 2
 theme_type_variation = &"BtnGold"
-text = "创 建 房 间"
+text = "创建房间"
 
 [node name="WaitPanel" type="PanelContainer" parent="." unique_id=1401617370]
 unique_name_in_owner = true
@@ -1204,14 +1126,13 @@ custom_minimum_size = Vector2(800, 0)
 layout_mode = 2
 theme_override_constants/separation = 20
 
-[node name="PanelContainer1" type="PanelContainer" parent="WaitPanel/Body/VBoxContainer1" unique_id=205186339]
-layout_mode = 2
-theme_type_variation = &"HeaderStrip"
-
-[node name="WaitTitle" type="Label" parent="WaitPanel/Body/VBoxContainer1/PanelContainer1" unique_id=327804430]
+[node name="WaitTitle" type="Button" parent="WaitPanel/Body/VBoxContainer1" unique_id=327804430]
 unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 64)
 layout_mode = 2
-theme_type_variation = &"HeaderTitle"
+mouse_default_cursor_shape = 2
+tooltip_text = "点击复制房间号"
+theme_type_variation = &"BtnGold"
 
 [node name="WaitBody" type="VBoxContainer" parent="WaitPanel/Body/VBoxContainer1" unique_id=213424249]
 unique_name_in_owner = true
@@ -1269,7 +1190,7 @@ unique_name_in_owner = true
 custom_minimum_size = Vector2(440, 64)
 layout_mode = 2
 theme_type_variation = &"BtnGold"
-text = "开 始 游 戏"
+text = "开始游戏"
 
 [node name="WaitLeaveBtn" type="Button" parent="WaitPanel/Body/VBoxContainer1" unique_id=2110607890]
 unique_name_in_owner = true

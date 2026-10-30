@@ -14,21 +14,18 @@ var _grid: GridContainer = null
 var _filter_btns := {}             # 模式到筛选按钮的映射
 var _join_panel: PanelContainer = null
 var _join_code_edit: LineEdit = null
-var _join_invite_edit: LineEdit = null
 
 var _create_panel: PanelContainer = null
 var _create_mask: ColorRect = null
 var _form_rows := {}
 var _create_mode := PvpSession.MODE_PVP
 var _create_mode_btns := {}
-var _public_check: CheckButton = null
-var _invite_edit: LineEdit = null
 var _max_slider: HSlider = null
 var _time_slider: HSlider = null
 var _weapon_checks: Array[CheckButton] = []
 
 var _wait_panel: PanelContainer = null
-var _wait_title: Label = null
+var _wait_title: Button = null
 var _wait_body: VBoxContainer = null
 var _wait_count: Label = null
 var _wait_hue: Control = null
@@ -91,14 +88,13 @@ func _build_ui() -> void:
 	# 加入房间面板
 	_join_panel = %JoinPanel
 	_join_code_edit = %JoinCodeEdit
-	_join_invite_edit = %JoinInviteEdit
 	_join_panel.visible = false
 	%JoinOkBtn.pressed.connect(func() -> void:
 		_join_panel.visible = false
 		var code := _join_code_edit.text.strip_edges()
 		if not code.is_empty() and _code_edit != null:
 			_code_edit.text = code
-		_join_code(code, _mode, _join_invite_edit.text))
+		_join_code(code))
 	%JoinCancelBtn.pressed.connect(func() -> void: _join_panel.visible = false)
 
 	# 创建房间弹窗与参数表单
@@ -114,13 +110,6 @@ func _build_ui() -> void:
 			PvpSession.MODE_TEAM: %CreateModeTeam, PvpSession.MODE_ROYALE: %CreateModeRoyale}
 	for m: String in [PvpSession.MODE_PVP, PvpSession.MODE_TEAM, PvpSession.MODE_ROYALE]:
 		(_create_mode_btns[m] as Button).pressed.connect(func() -> void: _apply_create_form(m))
-
-	_public_check = %PublicCheck
-	_invite_edit = %InviteEdit
-	_public_check.button_pressed = true
-	_invite_edit.visible = false
-	_public_check.toggled.connect(func(on: bool) -> void:
-		_invite_edit.visible = not on)
 
 	_max_slider = %MaxPlayersSlider
 	_max_slider.value_changed.connect(func(v: float) -> void:
@@ -140,7 +129,7 @@ func _build_ui() -> void:
 		Settings.save())
 
 	_form_rows = {
-		"privacy": %PrivacyRow, "max_players": %MaxPlayersRow, "match_time": %MatchTimeRow,
+		"max_players": %MaxPlayersRow, "match_time": %MatchTimeRow,
 		"full_heal": %FullHealRow, "weapons": %WeaponsBlock, "map": %MapBlock,
 		"beta": %BetaBlock,
 	}
@@ -162,6 +151,7 @@ func _build_ui() -> void:
 	_wait_panel = %WaitPanel
 	_wait_panel.visible = false
 	_wait_title = %WaitTitle
+	_wait_title.pressed.connect(_copy_room_code)
 	_wait_body = %WaitBody
 	_wait_count = %WaitCount
 	_wait_hue = %WaitHueRow
@@ -253,12 +243,6 @@ const MODE_COLOR := {
 	PvpSession.MODE_TEAM: UiFactory.C_MODE_TEAM,
 	PvpSession.MODE_ROYALE: UiFactory.C_MODE_ROYALE,
 }
-const MODE_LABEL := {
-	PvpSession.MODE_PVP: "1 v 1",
-	PvpSession.MODE_TEAM: "3 v 3",
-	PvpSession.MODE_ROYALE: "大 乱 斗",
-}
-
 
 # 创建单张房间卡片按钮
 func _make_card(r: Dictionary) -> Button:
@@ -312,7 +296,7 @@ func _make_card(r: Dictionary) -> Button:
 			Sfx.play("ui")
 			_current_mode = mode
 			if not try_rejoin_row(code, in_match, mode):
-				_join_code(code, mode))
+				_join_code(code))
 	return btn
 
 
@@ -344,16 +328,14 @@ func _card_header(mode: String, r: Dictionary) -> Control:
 	row.add_theme_constant_override("separation", 16)
 	strip.add_child(row)
 
-	var name_l := UiFactory.label(str(MODE_LABEL[mode]), 32, MODE_COLOR[mode])
+	var name_l := UiFactory.label(PvpSession.mode_name(mode, r["beta"]), 32, MODE_COLOR[mode])
 	name_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	name_l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	row.add_child(name_l)
 
 	var in_match := bool(r.get("in_match", false))
-	var is_public := bool(r.get("is_public", true))
-	var mine := PvpSession.can_rejoin_to(str(r.get("code", "")), mode)
-	var badge := "对局中" if in_match else ("私密 · 我的" if (not is_public and mine) else "等待中")
-	var badge_col := UiFactory.C_TEXT_DIM if in_match 			else (UiFactory.C_TEXT if not is_public else UiFactory.C_ACCENT)
+	var badge := "对局中" if in_match else "等待中"
+	var badge_col := UiFactory.C_TEXT_DIM if in_match else UiFactory.C_ACCENT
 	var badge_l := UiFactory.label(badge, 16, badge_col)
 	badge_l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	row.add_child(badge_l)
@@ -404,14 +386,13 @@ func _card_body(r: Dictionary) -> Control:
 
 
 func _card_subtitle(mode: String, r: Dictionary) -> String:
-	var pub := "公开" if bool(r.get("is_public", true)) else "私密"
 	if mode == PvpSession.MODE_ROYALE:
 		var mins := int(r.get("match_time", 0)) / 60
-		return "%s · 限时 %d 分" % [pub, mins] if mins > 0 else pub
+		return "限时 %d 分" % mins if mins > 0 else "不限时"
 	if mode == PvpSession.MODE_TEAM:
 		var tc: Dictionary = r.get("team_counts", {})
-		return "%s · A%d / B%d / 未选%d" % [pub, int(tc.get(1, 0)), int(tc.get(2, 0)), int(tc.get(0, 0))]
-	return "%s · 三局两胜" % pub
+		return "A%d / B%d / 未选%d" % [int(tc.get(1, 0)), int(tc.get(2, 0)), int(tc.get(0, 0))]
+	return "三局两胜"
 
 
 func _card_map_thumb(mode: String, map_path: String) -> Control:
@@ -473,18 +454,18 @@ func _toggle_join_panel() -> void:
 func _on_join_pressed() -> void:
 	var code := _code_edit.text.strip_edges() if _code_edit != null else ""
 	if not code.is_empty():
-		_join_code(code, _mode)
+		_join_code(code)
 	else:
 		_toggle_join_panel()
 
 
-# 根据房间号与模式发起加入请求
-func _join_code(code: String, _mode_hint: String, invite: String = "") -> void:
+# 根据房间号发起加入请求
+func _join_code(code: String) -> void:
 	_join_with_code(code, func() -> void:
 		_ack = false
 		_sent_ms = Time.get_ticks_msec()
 		_join_pending = code
-		NetBus.send_event(NetEvent.Kind.JOIN, {"code": code, "invite": invite, "beta": PvpSession.beta_mode}))
+		NetBus.send_event(NetEvent.Kind.JOIN, {"code": code, "beta": PvpSession.beta_mode}))
 
 func _open_create_dialog() -> void:
 	_create_mode = _mode if _mode != "" else PvpSession.MODE_PVP
@@ -516,7 +497,6 @@ func _apply_create_form(mode: String) -> void:
 	_form_rows["match_time"].visible = is_royale
 	_form_rows["full_heal"].visible = is_pvp
 	_form_rows["weapons"].visible = not is_team
-	_form_rows["privacy"].visible = not is_pvp
 	for m in _create_mode_btns:
 		(_create_mode_btns[m] as Button).disabled = false
 	(_create_mode_btns[mode] as Button).disabled = true
@@ -524,11 +504,7 @@ func _apply_create_form(mode: String) -> void:
 
 # 构建创建房间的配置载荷
 func _create_payload(mode: String) -> Dictionary:
-	var d := {
-		"is_public": _public_check.button_pressed,
-		"invite_code": _invite_edit.text.strip_edges(),
-		"map": Settings.mp_map_path,
-	}
+	var d := {"map": Settings.mp_map_path}
 	if mode == PvpSession.MODE_ROYALE:
 		d["max_players"] = int(_max_slider.value)
 		d["match_time"] = int(_time_slider.value) * 60
@@ -548,7 +524,7 @@ func _on_create_pressed() -> void:
 	payload["round_full_heal"] = Settings.pvp_round_full_heal
 	payload.merge(_beta_payload())
 	NetBus.send_event(NetEvent.Kind.CREATE, {"mode": _create_mode, "options": payload})
-	_status.text = "正在建房…"
+	_status.text = "正在创建房间…"
 
 func _unhandled_input(ev: InputEvent) -> void:
 	if not _create_panel.visible:
@@ -624,10 +600,11 @@ func _on_wait_leave_pressed() -> void:
 
 func _wait_title_text(state: Dictionary, mode: String) -> String:
 	var code := str(state.get("code", ""))
-	var invite := ""
-	if not bool(state.get("is_public", true)):
-		invite = "  邀请码 %s" % str(state.get("invite_code", ""))
-	return "—— %s房间 %s ——%s" % [str(MODE_LABEL.get(mode, mode)), code, invite]
+	return "%s房间 %s" % [PvpSession.mode_name(mode, state["beta"]), code]
+
+func _copy_room_code() -> void:
+	DisplayServer.clipboard_set(_room_code)
+	_status.text = "已复制房间号：%s" % _room_code
 
 
 func _fill_flat_roster(plist: Array, my_role: int, host_role: int) -> void:

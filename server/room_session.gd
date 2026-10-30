@@ -35,8 +35,7 @@ func _on_event(peer: int, kind: int, data: Variant) -> void:
 				var entry := room_data()
 				entry["joinable"] = world == null and seats.size() < max_players()
 				entry["rejoinable"] = seats.values().any(func(seat: Dictionary) -> bool: return seat["token"] == data["token"])
-				if options.get("is_public", true) or entry["rejoinable"]:
-					rooms.append(entry)
+				rooms.append(entry)
 			NetBus.send_event(NetEvent.Kind.ROOMS, rooms, peer)
 		NetEvent.Kind.JOIN:
 			if data["code"] != code or code.is_empty():
@@ -44,9 +43,9 @@ func _on_event(peer: int, kind: int, data: Variant) -> void:
 			elif world != null or seats.size() >= max_players():
 				message(peer, "房间已满")
 			elif options.get("beta", false) != data["beta"]:
-				message(peer, "房间玩法不同")
-			elif not options.get("is_public", true) and data["invite"] != options.get("invite_code", ""):
-				message(peer, "邀请码错误")
+				var beta: bool = options.get("beta", false)
+				message(peer, "该房间为「%s」，请从「%s」进入" % [
+						PvpSession.mode_name(mode, beta), "Beta" if beta else "多人模式"])
 			else:
 				add_seat(peer)
 				broadcast_room()
@@ -132,14 +131,13 @@ func room_data() -> Dictionary:
 	return {"code": code, "mode": mode, "map": options.get("map", "res://maps/newfactory.cyrm"), "players": roster,
 			"names": names, "count": seats.size(), "max_players": max_players(), "team_size": 3,
 			"teams": teams, "team_counts": team_counts, "match_time": options.get("match_time", 300),
-			"is_public": options.get("is_public", true), "host_role": host_role, "in_match": world != null,
+			"host_role": host_role, "in_match": world != null,
 			"beta": options.get("beta", false), "host_name": seats[host_role]["name"] if seats.has(host_role) else ""}
 
 func broadcast_room() -> void:
 	for role in seats:
 		if seats[role]["peer"] != 0:
 			var payload := room_data()
-			payload["invite_code"] = options.get("invite_code", "")
 			payload["your_role"] = role
 			payload["token"] = seats[role]["token"]
 			NetBus.send_event(NetEvent.Kind.ROOM, payload, seats[role]["peer"])

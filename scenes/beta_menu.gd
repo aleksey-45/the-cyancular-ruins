@@ -8,7 +8,7 @@ const CARDS := [
 	{
 		"mode": PvpSession.MODE_ROYALE,
 		"scene": "res://scenes/mp_lobby.tscn",
-		"name": "错乱大乱斗",
+		"name": PvpSession.BETA_MODE_NAMES[PvpSession.MODE_ROYALE],
 		"tag": "Royale",
 		"tag_color": Color(0.92, 0.28, 0.24),
 		"desc": "时间权柄下的大乱斗——每个人的时间各自流动。\n击杀、拆砖、造成伤害都能榨出时间颗粒,\n回溯带你脱离火线,加速让你先手。",
@@ -17,7 +17,7 @@ const CARDS := [
 	{
 		"mode": PvpSession.MODE_TEAM,
 		"scene": "res://scenes/mp_lobby.tscn",
-		"name": "时空 3v3",
+		"name": PvpSession.BETA_MODE_NAMES[PvpSession.MODE_TEAM],
 		"tag": "Team",
 		"tag_color": Color(0.30, 0.55, 0.95),
 		"desc": "三人一队的时间战场——回溯免伤脱离危险,\n消耗时间颗粒加速抢先手;队伍与时间同样重要。",

@@ -86,7 +86,7 @@ modulate = Color(1, 1, 1, 0)
 custom_minimum_size = Vector2(720, 104)
 layout_mode = 2
 theme_type_variation = &"BtnAccent"
-text = "单 人 模 式"
+text = "单人模式"
 
 [node name="MultiBtn" type="Button" parent="UILayer/UIRoot/MenuBox/PlayGroup"]
 unique_name_in_owner = true
@@ -94,7 +94,7 @@ modulate = Color(1, 1, 1, 0)
 custom_minimum_size = Vector2(640, 88)
 layout_mode = 2
 theme_type_variation = &"BtnPrimary"
-text = "多 人 模 式"
+text = "多人模式"
 
 [node name="BetaBtn" type="Button" parent="UILayer/UIRoot/MenuBox/PlayGroup"]
 unique_name_in_owner = true
@@ -123,7 +123,7 @@ modulate = Color(1, 1, 1, 0)
 custom_minimum_size = Vector2(560, 76)
 layout_mode = 2
 theme_type_variation = &"BtnPrimary"
-text = "设 置"
+text = "设置"
 
 [node name="VerBtn" type="Button" parent="UILayer/UIRoot/MenuBox/OptGroup"]
 unique_name_in_owner = true
@@ -131,7 +131,7 @@ modulate = Color(1, 1, 1, 0)
 custom_minimum_size = Vector2(560, 76)
 layout_mode = 2
 theme_type_variation = &"BtnPrimary"
-text = "信 息"
+text = "信息"
 
 [node name="SepB" type="ColorRect" parent="UILayer/UIRoot/MenuBox"]
 unique_name_in_owner = true
@@ -147,4 +147,4 @@ modulate = Color(1, 1, 1, 0)
 custom_minimum_size = Vector2(640, 88)
 layout_mode = 2
 theme_type_variation = &"BtnQuiet"
-text = "退 出"
+text = "退出"

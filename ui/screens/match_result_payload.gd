@@ -117,14 +117,14 @@ static func _name_of(names: Dictionary, role: int) -> String:
 # 1v1 单挑胜负判定
 static func _verdict(match_winner: int, my_role: int) -> String:
 	if match_winner == 0:
-		return "平 局"
+		return "平局"
 	return "胜利!" if match_winner == my_role else "失败"
 
 
 # 3v3 团队对抗胜负判定
 static func _verdict_team(match_winner: int, my_team: int) -> String:
 	if match_winner == 0:
-		return "平 局"
+		return "平局"
 	if my_team == 0:
 		return "失败"
 	return "胜利!" if match_winner == my_team else "失败"

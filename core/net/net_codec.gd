@@ -7,7 +7,7 @@ const STATE := 1
 const EVENT := 2
 const KEEP := 64
 const WIRE_MAGIC := 199
-const PROTOCOL_VERSION := 4
+const PROTOCOL_VERSION := 5
 const MODES := [PvpSession.MODE_PVP, PvpSession.MODE_TEAM, PvpSession.MODE_ROYALE]
 enum Field { U8, I8, U16, I32, U32, F64, VEC, BOOL, INVENTORY, DRIVER, RECORD, PATH }
 const INPUT_FIELDS := [["target_tick", Field.I32], ["view_tick", Field.I32], ["ax", Field.F64], ["held", Field.U16], ["aim", Field.VEC]]
@@ -50,7 +50,7 @@ const WEAPON_FIELDS := [
 	["rld_t", Field.F64], ["aim_f", Field.I8], ["aim_cf", Field.I8], ["mag", Field.I32],
 ]
 const TIME_FIELDS := [["b", Field.F64], ["w", Field.F64], ["l", Field.F64], ["win", Field.F64], ["m", Field.F64], ["cap", Field.I32], ["k", Field.BOOL]]
-const OPTIONS := ["is_public", "invite_code", "map", "max_players", "match_time", "round_full_heal", "disabled_weapons", "beta", "time", "hue"]
+const OPTIONS := ["map", "max_players", "match_time", "round_full_heal", "disabled_weapons", "beta", "time", "hue"]
 const TIME_RULES := ["initial", "cap", "rewind_burn", "haste_burn", "window", "regen", "kill_ratio", "haste_mult"]
 const STATS := ["kills", "deaths", "assists", "dealt", "taken", "kscore"]
 var state_ack := 0
@@ -251,7 +251,6 @@ func encode_event(kind: int, data: Variant) -> PackedByteArray:
 			_put_options(s, data["options"])
 		NetEvent.Kind.JOIN:
 			s.put_u32(int(data["code"]))
-			_put_string(s, data["invite"])
 			s.put_u8(int(data["beta"]))
 		NetEvent.Kind.LIST:
 			_put_token(s, data["token"])
@@ -265,7 +264,6 @@ func encode_event(kind: int, data: Variant) -> PackedByteArray:
 			_put_string(s, data)
 		NetEvent.Kind.ROOM:
 			_put_room(s, data)
-			_put_string(s, data["invite_code"])
 			s.put_u16(data["your_role"])
 			_put_token(s, data["token"])
 		NetEvent.Kind.ROOMS:
@@ -370,14 +368,14 @@ func decode_event(kind: int, s: StreamPeerBuffer) -> Variant:
 	match kind:
 		NetEvent.Kind.HELLO: return {"name": _get_string(s), "hue": s.get_double()}
 		NetEvent.Kind.CREATE: return {"mode": MODES[s.get_u8()], "options": _get_options(s)}
-		NetEvent.Kind.JOIN: return {"code": "%08d" % s.get_u32(), "invite": _get_string(s), "beta": bool(s.get_u8())}
+		NetEvent.Kind.JOIN: return {"code": "%08d" % s.get_u32(), "beta": bool(s.get_u8())}
 		NetEvent.Kind.LIST: return {"token": _get_token(s), "beta": bool(s.get_u8())}
 		NetEvent.Kind.REJOIN: return {"code": "%08d" % s.get_u32(), "token": _get_token(s)}
 		NetEvent.Kind.PICK_TEAM, NetEvent.Kind.READY: return s.get_u32()
 		NetEvent.Kind.MAP, NetEvent.Kind.MESSAGE, NetEvent.Kind.REJOIN_DENIED, NetEvent.Kind.ROOM_CLOSED: return _get_string(s)
 		NetEvent.Kind.ROOM:
 			var room := _get_room(s)
-			room.merge({"invite_code": _get_string(s), "your_role": s.get_u16(), "token": _get_token(s)})
+			room.merge({"your_role": s.get_u16(), "token": _get_token(s)})
 			return room
 		NetEvent.Kind.ROOMS:
 			var rooms: Array = []
@@ -741,8 +739,8 @@ static func _put_options(s: StreamPeerBuffer, data: Dictionary) -> void:
 		if not mask & (1 << i): continue
 		var value: Variant = data[OPTIONS[i]]
 		match OPTIONS[i]:
-			"is_public", "round_full_heal", "beta": s.put_u8(int(value))
-			"invite_code", "map": _put_string(s, value)
+			"round_full_heal", "beta": s.put_u8(int(value))
+			"map": _put_string(s, value)
 			"max_players", "match_time": s.put_u32(value)
 			"hue": s.put_double(value)
 			"disabled_weapons":
@@ -762,8 +760,8 @@ static func _get_options(s: StreamPeerBuffer) -> Dictionary:
 		if not mask & (1 << i): continue
 		var key: String = OPTIONS[i]
 		match key:
-			"is_public", "round_full_heal", "beta": data[key] = bool(s.get_u8())
-			"invite_code", "map": data[key] = _get_string(s)
+			"round_full_heal", "beta": data[key] = bool(s.get_u8())
+			"map": data[key] = _get_string(s)
 			"max_players", "match_time": data[key] = s.get_u32()
 			"hue": data[key] = s.get_double()
 			"disabled_weapons":
@@ -786,7 +784,7 @@ static func _put_room(s: StreamPeerBuffer, data: Dictionary) -> void:
 	s.put_u16(data["max_players"])
 	s.put_u32(data["match_time"])
 	s.put_u16(data["host_role"])
-	s.put_u8(int(data["is_public"]) | (int(data["in_match"]) << 1) | (int(data["beta"]) << 2))
+	s.put_u8(int(data["in_match"]) | (int(data["beta"]) << 1))
 	s.put_u16(data["players"].size())
 	for player: Dictionary in data["players"]:
 		s.put_u16(player["role"])
@@ -797,7 +795,7 @@ static func _get_room(s: StreamPeerBuffer) -> Dictionary:
 	var data := {"code": "%08d" % s.get_u32(), "mode": MODES[s.get_u8()], "map": _get_string(s),
 			"max_players": s.get_u16(), "match_time": s.get_u32(), "host_role": s.get_u16()}
 	var flags := s.get_u8()
-	data.merge({"is_public": bool(flags & 1), "in_match": bool(flags & 2), "beta": bool(flags & 4), "team_size": 3, "host_name": ""})
+	data.merge({"in_match": bool(flags & 1), "beta": bool(flags & 2), "team_size": 3, "host_name": ""})
 	var roster: Array = []
 	var names: Array = []
 	var teams := {}
