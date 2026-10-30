@@ -61,7 +61,7 @@ STATE 先与同 tick 历史及实际交互依赖比较，保留有效前缀，�
 
 ## EasyTier 与进程生命周期
 
-官方 EasyTier nightly 通过 `--no-tun` 转发应用层 UDP。STUN 直连失败时经中继；禁用 P2P 是否走公网中继取决于实际路由和节点。`relay.txt` 配置 `txt://et2.lctn.cc.cd` 与 `udp://183.230.36.171:11010`。下载流程见[构建与工具](tools.md)。
+官方 EasyTier nightly 通过 `--no-tun` 转发应用层 UDP。STUN 直连失败时经中继；禁用 P2P 是否走公网中继取决于实际路由和节点。进入大厅时补齐缺失的 `relay.txt`，已有文件不覆盖。内置默认节点与发布文件均为 `txt://et2.lctn.cc.cd` 和 `udp://183.230.36.171:11010`；macOS 将配置打包到 `Contents/Helpers`，首次进入大厅时复制到用户数据目录。下载流程见[构建与工具](tools.md)。
 
 本地服务与 UDP 转发以临时 socket 绑定端口 0 选择端口，再交给实际服务。Windows 的 [OwnedProcessGroup](../../native/process_group/process_group.cpp) 以 Job Object 持有会话子进程，关闭 Job 或客户端退出时回收。macOS 使用独立进程组和寿命管道，显式关闭也主动终止进程组。启动与关闭统一由 [NetSession](../../core/net/net_session.gd) 管理。
 

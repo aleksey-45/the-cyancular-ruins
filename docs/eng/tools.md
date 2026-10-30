@@ -63,7 +63,7 @@
   - 基于 godot-cpp（分支 `godot-4.5-stable`，commit `e83fd09`），通过 SCons 4.9.1 编译 Windows x64 DLL。默认使用 MSVC，亦支持 `--mingw` 参数或 `MINGW_PREFIX` 环境变量指定 LLVM MinGW 工具链。产物位于 `native/process_group/bin/`。
   - macOS 使用 `--platform macos`，以 Xcode Clang 编译 arm64 + x86_64 通用动态库，部署目标为 macOS 12。
 - **macOS 发布 (`tools/build_macos.py`)**：
-  - 编译通用进程、GNS 与场景模拟扩展，合并官方 EasyTier 两种架构，导出、签名并归档 `.app`。`tools/fetch_easytier.py --platform macos` 可单独安装通用 EasyTier。产物和双架构 CI 验证见[发布手册](../../RELEASE.md)。
+  - 编译通用进程、GNS 与场景模拟扩展，合并官方 EasyTier 两种架构，将可执行组件与 `relay.txt` 放入 `Contents/Helpers`，导出、签名并归档 `.app`。`tools/fetch_easytier.py --platform macos` 可单独安装通用 EasyTier。产物和双架构 CI 验证见[发布手册](../../RELEASE.md)。
 - **GNS 扩展构建 (`tools/build_gns.py`)**：
   - 使用 CMake 3.31.6 与 Ninja 1.11.1.4，固定 GNS v1.6.1、Protobuf v21.12 与 godot-cpp 4.5 的源码提交。依赖缓存位于 `.test_logs/native/`，运行库静态链接进扩展。
   - Windows 使用 MSVC 或 `MINGW_PREFIX` 指定的 LLVM MinGW，密码库采用系统 BCrypt。macOS 使用 `--platform macos`，静态链接 OpenSSL 3.5.9，分别编译 arm64 与 x86_64 后合成通用动态库。产物位于 `native/gns/bin/`。

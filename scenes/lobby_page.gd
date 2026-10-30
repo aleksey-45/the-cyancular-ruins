@@ -19,6 +19,7 @@ var _rejoin_sent_ms := 0
 
 # 初始化大厅通用信号接线与字体设置
 func _finish_lobby_ready() -> void:
+	Tunnel.ensure_relay_file()
 	NetBus.event_received.connect(_on_net_event)
 	NetBus.connected_to_server.connect(_on_lobby_connected)
 	NetBus.connection_failed.connect(_on_lobby_connect_failed)

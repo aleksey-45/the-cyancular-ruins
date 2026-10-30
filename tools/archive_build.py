@@ -153,7 +153,7 @@ def main() -> None:
         else:
             print("\n[提示] %s/%s 不存在，分发包中缺少中继节点配置"
                   % (EASYTIER_PKG_DIR, RELAY_FILE))
-            print("  首次启动建房时将自动生成模板配置文件。")
+            print("  进入联机大厅时将自动生成默认配置文件。")
 
     # 在 releases 目录保留历史归档副本
     os.makedirs(RELEASES, exist_ok=True)

@@ -41,6 +41,7 @@ def main():
             Path(BUILD_INFO).write_text(original, encoding='utf-8', newline='\n')
         helpers = app / 'Contents/Helpers'
         helpers.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / 'easytier/relay.txt', helpers / 'relay.txt')
         for name in ('easytier-core', 'easytier-cli'):
             target = helpers / name
             shutil.copy2(ROOT / 'easytier' / name, target)
