@@ -232,8 +232,7 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 
 | 脚本 | 覆盖 |
 |---|---|
-| `tests/smoke/pvp_room_smoke.sh` | 建房 → 配对 → `go_match`(占 7777) |
-| `tests/smoke/pvp_match_smoke.sh` | 输入 → 模拟 → 快照 → 子弹广播 |
+| `tests/smoke/pvp_match_smoke.sh` | 建房 → 房主开始 → 输入 → 模拟 → 快照 → 子弹广播 |
 | `tests/smoke/net_wire_smoke.gd` | 线格式(三 kind 头/往返/坏包 + schema 对齐) |
 | `tests/smoke/input_queue_smoke.gd` | 输入队列(轴收口/有界/回复力/上限) |
 | `tests/probe/rejoin_probe.sh` | 回大厅后回局三端 |

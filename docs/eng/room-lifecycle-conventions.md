@@ -5,8 +5,10 @@
 > ★★ **现状**:① 这些约定有一层源码文本检查器 [`tools/room_sweep_lint.gd`](../../tools/room_sweep_lint.gd)，
 > 按需跑:`"$GODOT" --headless --path . -s res://tools/room_sweep_lint.gd`，判词 `SMOKE_ROOM_SWEEP OK`，
 > **不进任何默认批、不碰端口**；它判的是「某人有没有写这段字」，**不算行为守卫**。
-> ② **行为**替代是 [`tests/smoke/pvp_room_smoke.sh`](../../tests/smoke/pvp_room_smoke.sh)
-> （建房 → 配对 → `go_match`；**只有它碰 7777**，由用户跑）。③ ⇒ **第 3 节的人工自查仍要照做** ——
+> ② 原**行为**替代 `pvp_room_smoke.sh`（建房 → 配对 → `go_match`；**唯一碰 7777** 的那支）已于 2026-10-30 删除
+> （结构性恒红、挂死并毒化真链路批，见 [`registered-debt.md`](registered-debt.md) §二十七）⇒ 房间回收这一带
+> **今天没有行为守卫**：`pvp_match_smoke.sh` 只跑到 1v1 建房 → 开始 → 对局，不断言端口归还 / 超龄房收掉
+> （缺口即审查 G-03）。③ ⇒ **第 3 节的人工自查仍要照做** ——
 > 它管那层检查器判不了的部分:调用链有没有真的接上、行为对不对。
 
 ## 1. 约定清单
@@ -99,4 +101,5 @@
 4. `grep -n "prune\|_grant_rejoin\|pid_alive\|_reclaim_finished_matches" server/` —— E1–E3、B1–B4。
 5. `grep -n "GraceWindow.expire_action\|if _royale\|if _team_mode" server/` —— G1 是否还有人手写模式分派。
 6. **真链路跑一遍** 3v3 与 1v1：建房 → 开局 → 全员走光 → 确认 worker 退出、端口释放
-   （`tests/probe/team_match_probe.sh` / `tests/smoke/pvp_room_smoke.sh`；★ 3v3 真链路**仍没有可信的端到端守卫**）。
+   （`tests/probe/team_match_probe.sh` / `tests/smoke/pvp_match_smoke.sh`；★ 3v3 真链路**仍没有可信的端到端守卫**；
+   ★ 1v1 的端口归还与回收梯**零自动断言**，只能人眼 + 日志）。

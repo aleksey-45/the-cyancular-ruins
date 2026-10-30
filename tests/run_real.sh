@@ -88,7 +88,6 @@ FAIL_RE='(^|[^A-Za-z0-9])FAIL[A-Z]{0,4}([^A-Za-z0-9]|$)'
 # 耗时估计取自各支自己的头注(不是猜的);改了头注就要同步改这里。
 ENTRIES=(
 	"tests/smoke/pvp_match_smoke.sh|7777 + pool[7800,8300]|~20s|SMOKE PASS|pool"
-	"tests/smoke/pvp_room_smoke.sh|7777 + pool[7800,8300]|~40s|SMOKE PASS|pool"
 	"tests/probe/rejoin_probe.sh|lobby 29300 / worker 29350 (OUT of pool)|60~110s|REJOIN PROBE: ALL-OK|nopool"
 	"tests/probe/royale_soak_probe.sh|7777 + pool[7800,8300]|~150-200s|SOAK: ALL-OK|pool"
 	"tests/probe/royale_role_cap_probe.sh|7777 + pool[7800,8300]|~3-5min|ROLE CAP PROBE: ALL-OK(9/9)|pool"
