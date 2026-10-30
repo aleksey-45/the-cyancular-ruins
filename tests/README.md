@@ -63,7 +63,7 @@
 - **入口自己会红的九种情形**：glob 空转 / 过期排除项 / `probe/*.gd` 既没跑也没排除 / 默认批里出现开端口或拉子进程的支 / 新红 / 基线条目过期 / 基线路径不在候选面 / 基线文件本身写错 / 某支声明了 `EXPECTED_CHECKS` 却没用于比较。
 - ★★ **单支 `OK` 只证明“没有失败输出”，不证明“每条断言都跑过”**（权威：[`lib/probe_base.gd`](lib/probe_base.gd) 文件头）。`--list` 的 `GATE` 栏是 `-` 就表示那一支**没有条数闸**；带闸的支与闸值以 `GATE` 栏为准。
   - 现有带 `EXPECTED_CHECKS` 的支：`net_wire_smoke`(7) · `input_queue_smoke`(4) · `snapshot_size_probe`(9) · `water_model_smoke`(13) · `hit_shape_smoke`(14) · `tile_break_unit_smoke`(11) · `net_tile_fx_probe`(9) · `bullet_sweep_probe`(6) · `lag_history_smoke`(8) · `net_metrics_smoke`(9) · `prediction_contact_smoke`(7) · `mvp_choice_smoke`(6) · `net_argv_port_smoke`(5) · `prediction_rollback_ring_smoke`(3) · `gun_ammo_independence_probe`(8) · `resync_substate_smoke`(5) · `rejoin_mode_smoke`(4) · `panel_log_tail_smoke`(6) · `room_view_smoke`(7) · `grace_dispatch_smoke`(6) · `reclaim_rules_smoke`(5) · `rollback_fidelity_probe`(33)。**`gated-assertions` 的实时数以 `--list` 为准。**
-  - ★ `allscript_probe` 有自己的条数闸 `EXPECTED_SCRIPTS`（当前 **208**；`res://docs` 已进 `SKIP_DIRS`，文档目录里的临时审计驱动不计入编译面），但 `run_all` 的 `gate_of()` 只认 `EXPECTED_CHECKS` ⇒ 它的 `GATE` 栏是 `-`。**别把 `-` 读成“没有闸”**。
+  - ★ `allscript_probe` 有自己的条数闸 `EXPECTED_SCRIPTS`（当前 **211**；`res://docs` 已进 `SKIP_DIRS`，文档目录里的临时审计驱动不计入编译面），但 `run_all` 的 `gate_of()` 只认 `EXPECTED_CHECKS` ⇒ 它的 `GATE` 栏是 `-`。**别把 `-` 读成“没有闸”**。
 - ★★ **已知红基线 [`known_red.txt`](known_red.txt)**：每行 `路径 类别 理由…`（理由必填；`#` 是注释；空行 / 类别非法 / 路径不存在 / 同一路径两行都**红**）。基线内的红 = `KNOWN-RED`：不进新红计数、但永远印出文件名，全批判词改 `OK-WITH-KNOWN-RED`。**当前基线为空（0 条）**；加行**不是**让检查变绿的手段，修好了要删行。
 
 ### `run_real.sh` —— 真链路批

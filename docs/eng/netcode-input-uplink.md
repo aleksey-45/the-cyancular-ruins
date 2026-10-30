@@ -3,7 +3,7 @@
 > ★ **2026-10-26 P1：`aim` 定点化（46 B/包 → 42 B/包）**。上行 `aim` 由 2×float32 改成 2×i16（1e-4 定点，解码后 normalize；零向量回 `Vector2.RIGHT`），省 4 B/包 ≈ −8.7%。
 > ★ **2026-10-24 U1：上行去锁存 —— 本地 60Hz 真输入、30Hz 包内装两条 tick 记录（42 B/包）**。
 > 此前是"30Hz 采样 + 本地也锁存"（34 B/包）：本地手感与服务器输入都被锁在 30Hz；现在一条记录 = **1 个物理 tick**，本地预测按 60Hz 现读真输入，服务器**每 tick 消费一条**，两端逐 tick 同序。
-> 线格式唯一来源 = [`core/net/net_codec.gd`](../../core/net/net_codec.gd) 的 `INPUT_SCHEMA` + `encode_input` / `decode_input`；组包/拆包在 [`core/net/packet_input_source.gd`](../../core/net/packet_input_source.gd) 的 `pack_record` / `pack_pair` / `unpack_pair`。
+> 线格式唯一来源 = [`core/net/net_codec.gd`](../../core/net/net_codec.gd) 的 `INPUT_SCHEMA` + `encode_input` / `decode_input`；组包/拆包实现已到 [`core/net/input_wire.gd`](../../core/net/input_wire.gd) 的 `pack_record` / `pack_pair` / `unpack_pair`(S-05;`PacketInputSource` 上的同名方法是为兼容调用点的转发壳,数值/位定义单一来源在 `InputWire`)。
 
 ## 1. 载荷
 

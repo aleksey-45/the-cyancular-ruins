@@ -21,7 +21,7 @@
 |---|---|
 | `server/time_economy.gd` | `TimeEconomy`：服务器权威颗粒经济 —— 每 role 一份 `GrainAccount` + 四条结算缝（击杀/伤害/拆砖/回复）+ 10Hz 镜像载荷 |
 | `server/match/match_host.gd` | `_tick_beta_rewind()` 每 role 各自的回溯机（环缓/倒放/免伤/轨迹）；`_record_rw_frame`（20Hz）；`_apply_rw_frame`；`_finish_rw`（松手 / 颗粒耗尽共用）；加速态在快照之前定格。线上三件（`match_snapshot.gd`）:`haste` 布尔 / `rewind` 布尔 / `trail`（回溯轨迹点） |
-| `scenes/pvp_match_client.gd` | `_setup_beta_time_hud()` 挂 `WatchHud` + 订阅 `NetBusExt.local_time_state`；`_on_time_state` 挂镜像账户并点亮怀表；`_tick_beta_time` 本地预测加速（写 `player.pvp_haste_mult`，不本地扣颗粒）；`_tick_beta_rewind` 本地预测回溯（冻结 `input_source`、置免伤 meta `time_rewinding`、世界 + 自己上底片，位置不本地预测）；`_apply_own_film` 只作用于世界图层 + 自己；`_tick_time_fx` 双侧视效 |
+| `scenes/pvp_match_client.gd` | `_setup_beta_time_hud()` 挂 `WatchHud` + 订阅 `NetBusExt.local_time_state`；`_on_time_state` 挂镜像账户并点亮怀表；`_tick_beta_time` 本地预测加速（写 `player.pvp_haste_mult`，不本地扣颗粒）；`_tick_beta_rewind` 本地预测回溯（冻结 `input_source`、置免伤 meta `time_rewinding`、世界 + 自己上底片，位置不本地预测）；`_apply_own_film` 只作用于世界图层 + 自己；`TimeFx.tick` 双侧视效(S-19 后实现已到 `scenes/mp_client/time_fx.gd`,宿主只留委托) |
 | `scenes/lobby_page.gd` | 建房页时间参数滑条（`TimeRules` 实例；`_beta_payload()` 先 `clamp_self()` 再上报 `{"beta":true,"time":…}`） |
 
 ### 1.3 纯逻辑层（两侧共用，`-s` 可直接跑）
@@ -133,7 +133,7 @@
 | `ui/watch_hud.gd` | `DIAL = 84.0`、`BIG_FONT = 96`、`SMALL_FONT = 32`、`CAP_FONT = 16`、表盘冷灰阶色板 + 红长针 / 白短针 / 贷款深红;大数字定长 0.2s 滚动(不是指数逼近),即时色:回溯 `Color8(210,62,62)` / 加速 `Color8(168,96,216)` / 常态白 |
 | `scenes/level_0.gd` | 底片 ramp ≤ `0.2`、压暗 ramp `0.1`;`GLOW_PLAYER` / `GLOW_ENEMY` / `GLOW_ELITE` / `GLOW_RADIUS = 1500.0`;`Sfx.pitch_mult = clampf(1 + LOAN_PITCH_RANGE·depth (+0.12 加速 / −0.15 回溯), 0.7, 1.8)` |
 | `scenes/effects/grain_crystal_fx.gd` | `SHARD_COUNT = 10`、`SCATTER_TIME = 0.28`、`ARRIVE_RATE = 16.0`、`MAX_FLY_SPEED = 4200.0`、`ABSORB_RADIUS = 16.0`、`ABSORB_TIMEOUT = 1.6`、`ABSORB_TAIL = 0.8` |
-| `scenes/pvp_match_client.gd` | 两个节拍计时器(自己 `0.03`、他人 `0.06`);`TIME_GLOW_SELF` / `TIME_GLOW_OTHER`;`_time_haste_mult` 默认 `3.0`(首包后被服务器下发值覆盖) |
+| `scenes/pvp_match_client.gd` | 两个节拍计时器(自己 `0.03`、他人 `0.06`);`TimeFx` 的 `TIME_GLOW_SELF` / `TIME_GLOW_OTHER`(S-19 后);`_time_haste_mult` 默认 `3.0`(首包后被服务器下发值覆盖) |
 | `server/match/match_host.gd` | `TIME_SYNC_INTERVAL = 0.1`(10Hz 镜像)、`RW_SNAP_DT = 1/20`;轨迹每 3 物理帧一点,`_rw_trail` 上限 10 点(字面量) |
 | `core/net/net_codec.gd` | `TRAIL_WIRE_MAX := 4`:线上只带最近 4 点(`_put_trail` 取尾部、多余截断) |
 

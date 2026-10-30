@@ -323,7 +323,7 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 **改了什么**（6 条，详见 [02-bug台账 §6](../audit/2026-10-30-netplay/02-bug台账.md)）：
 1. `BUG-08` 回滚环泄漏：`PredictionRollback.note_post_step()` 的淘汰循环补 `_inputs.erase(old)` —— 生产路径（`pvp_match_client._physics_process`）走的是 `note_post_step` + `note_input`，旧代码只有 `advance()` 那条会清 `_inputs` ⇒ ack 断流（重连中/本人包停摆）时 `_inputs` 以 60 份/秒无界增长。
 2. `BUG-18` 大厅假 claim 梯：`lobby_page.gd` 的转连 worker 一次性回调收成具名 `Callable`（`_claim_connected` / `_worker_fail`），`_bind_worker_once` / `_unbind_worker_once` 成对；`_do_go_match` 绑定，`_return_to_lobby` **先解绑**。旧写法（匿名 lambda + `CONNECT_ONE_SHOT` + 无解绑）在 worker 连不上回大厅后，大厅一连上仍会跑 `_claim_role_worker` ⇒ 向大厅 peer 发 `claim_role/player_options/report_token` 并起 25s claim 梯，把玩家从大厅弹走。
-3. `BUG-20` 加速重影节拍器：`pvp_match_client._fx_other_t` 从单 float 改 **per-副本 `Dictionary`**，递减改用调用链传下来的**物理 delta**（原为 `get_process_delta_time()`，在物理 delta 链里 ⇒ 帧率相关）；`_time_fx_replica_off` 里 `erase`。旧写法 k 个加速者每帧被减 k 次 ⇒ 触发 ≈ k/0.06 对/秒（16 人 ≈500 张 AfterImage/s）。
+3. `BUG-20` 加速重影节拍器：`TimeFx._fx_other_t`(S-19 后;原在 `pvp_match_client`)从单 float 改 **per-副本 `Dictionary`**，递减改用调用链传下来的**物理 delta**（原为 `get_process_delta_time()`，在物理 delta 链里 ⇒ 帧率相关）；`_time_fx_replica_off` 里 `erase`。旧写法 k 个加速者每帧被减 k 次 ⇒ 触发 ≈ k/0.06 对/秒（16 人 ≈500 张 AfterImage/s）。
 4. `BUG-21` 断线判定：局内从 `msg.contains("断开")` 文本子串改为 `multiplayer.server_disconnected` 直连 `_on_hard_disconnect`；`_on_server_message` 只留播报。旧判据把任何含"断开"的服务器播报当断线（`NetBus.stop()` 掐活连接），文案一改则重连静默失效。
 5. `BUG-22` 权威爆炸 cull：`_on_network_explosion` 先判 `want != null` 再回收视觉弹 —— 对手副本未建时旧代码用 `b.shooter != null` 匹配，会把**别人的**榴弹 `queue_free()`（提前消失/双爆）。
 6. `BUG-23` 3v3 尸体血条：`team_game.gd` 补 `visible = not downed`（与 `royale_game.gd:125` / `pvp_game.gd:118` 同口径；3v3 原漏）。
@@ -557,5 +557,23 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 1. G-01 的行为面（踢人 / 换输入源 / `_ack_seq`/`_stepped_seq` 复位 / match_start 应答）与 G-02 的到点真动作（移出对局 / `quit(0)`）仍需真 worker 探针；本轮只把**判据**变可测。
 2. G-04 只到「真链路 smoke 传入真实 `st`」；回放窗口注入的两个断言未做。
 3. S-17 的三条信号改挂 RefCounted 驱动（宿主强持），等价性靠生命周期论证 + 真链路 smoke；真断线时刻的 reclaim 路径未单独实测。
-4. 仍**未做**的审查重构：S-03（net_bus 三职）、S-05（packet_input_source 四职）、S-14/S-15/S-16/S-19/S-21（中项）、S-13②③。其中 S-03/S-05 属协议/输入承重面，需真链路 + 逐条变异，建议独立一轮。
+4. 同日后又完成：S-13②③、S-05、S-14、S-16、S-19、S-21（见 §四十）。仍**未做**：S-03（net_bus 三职）、S-15（卡点见 §四十）。
 5. 本轮改动**未提交**（提交在收口时由 Lead 逐文件点名）。
+
+## 四十、大重构第六刀：S-13②③ / S-05 / S-14 / S-16 / S-19 / S-21（2026-10-30，档 2~3）
+
+**S-13②③**：`server_panel.gd` 的设计期仪器（`--panel-audit` 的 INSET 打印）→ 新 `tools/panel_inset_audit.gd`（`PanelInsetAudit.requested()/run(root)`，等 3 帧版式落定再量）；面板只留开关一行，890→**826 行**。S-13③ 复核：关房二次确认已走 `ServerStatus.can_close`（三行调用已在），无需改。
+**S-05**：`packet_input_source.gd` 的**纯打包/常量**（`BIT_*`×10、`TICKS_PER_RECORD`、`INPUT_BATCH_TICKS`、`pack_record/pack_pair/unpack_pair`）→ 新 `core/net/input_wire.gd`（119 行，`InputWire` 全 static）；原文件 277→187，保留队列/边沿/latch 语义 + **同名转发壳**（调用点 6 处不越界）。逐字性：对 HEAD 做顶层单位切分 49/49 归类、0 UNCLASSIFIED；`net_wire_smoke` 仍 `42 B/包`、`NET WIRE OK(5)`、`INPUT QUEUE OK(4)`。**6 条变异实测**（清单位表/记录数/包级 seq/位定义/边沿累积/winst 帧末清），并暴露两个真缺口：`net_wire` 不钉"包级 seq=高 tick"、`input_queue` 对 `apply_packet` 边沿累积/winst 清零零覆盖（登记待补）。
+**S-14**：`_role_of(node)->int`（查不到 `-1`）成唯一判据；`_role_of_node` 与 `match_combat` 两段内联循环收编；`match_combat.gd:93` 的 `== 0` → `< 0`（"无效 role 直接返回"的安全阀首次真正生效，且可证与旧行为等价）；`_record_down`/`_on_player_hit` 首部加 `role < 0` 防御。12 个调用点全核。变异：改名漏改 ⇒ allscript 12 条 `LOAD[FAIL]` 点名（说明默认批只能抓"接线漏"、抓不到哨兵语义）。
+**S-16**：`MatchRound._round_state_base()`（5 共有键 + MATCH_OVER 的 `match_winner` + 非空 `stats`）落在 MatchRound 而非 MatchState（子类符号编译期不可见）；三模式 `_broadcast_round_state` 改 base + 各自追加；**键集/键值逐字一致**，仅 Dictionary 插入序变化（消费方全按键读）。变异：删 `"state"` 默认批 0 新红 ⇒ 该键集的守卫在真链路 watcher（`team_match_watcher` 的 ROUND_STATE_TIMEOUT）。
+**S-19**：`TimeFx`（185 行，`bind/tick/detach`）承接 `_rw_film_mats/_rw_ghosts/_fx_self_t/_fx_other_t` 与 ~160 行视效；宿主 942→**798**，只留 `_ensure_time_fx()` / `_tick_time_fx()` / `_time_fx_replica_rewind_off()`（名字保留，S-18 的 `ReplicaSet.remove()` 按名调）。`detach` 比旧实现更严：`rewind_off` 后额外清 `_fx_other_t` 键。1v1 空集合 no-op 实测。
+**S-21**：`HEAD_OFFSET`/`HP_BAR_OFFSET`/`follow()` 单一来源 = `ui/factory/world_label.gd`（`class_name WorldLabel`）；跟随下沉 `player_replica.attach_overhead`（幂等、失效自动摘）；三宿主删本地常量、只留调用；`replica_set.gd` 的血条偏移也改成引用同一常量。
+**S-15 ⛔ 未做（按纪律主动停手）**：三条前置可观测断言（1v1 结算 kills 与记分条同数 / 大乱斗无归因死亡不记 kills / 3v3 队友误炸→对方队 +1 且无人记 kills）全仓都不存在；且"相位统一为只在 PLAYING 记账"本身是行为变更（1v1/3v3 在 ROUND_OVER 4s 窗口内仍记账）⇒ 抽模板必然在记分归属上二选一。按"重构前先绿，不绿不动"停手。另记：3v3 每次倒地调 `_attributed_killer(p)` 两次（team_host.gd:138/:145），抽模板会合并成一次（幂等等价）。
+
+**验证**：`ALLSCRIPT: OK(211)` · `RUN_ALL OK(24 runs / 179 gated-assertions)` · `NET WIRE OK(5)` / `INPUT QUEUE OK(4)` / `ROLLBACK FIDELITY PROBE: ALL-OK`（33 条闸）· 命名检查 OK。
+**边界**：
+1. 默认批**不实例化** MatchHost/RoyaleHost/TeamHost ⇒ S-14 哨兵语义、S-16 键集在默认批零覆盖，只能真链路（`team_match_probe`/`royale_soak`）与 watcher 断言。
+2. S-05 暴露的两个守卫缺口（net_wire 包级 seq、input_queue 边沿/winst）已登记，待补。
+3. S-19/S-21 的观感项（残影/重影/标签跟随）只能人眼；1v1 标签跟随比旧实现少滞后 1 帧（≤16.7ms）。
+4. `--panel-audit` 仪器本身需要非 headless 面板实例才能跑，属设计期工具、无自动断言。
+5. 仍**未做**：S-03（net_bus 三职）、S-15（卡点如上）、S-06（`_close_enough` 比对集）、S-07/S-02 生成式通道表。

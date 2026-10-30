@@ -23,7 +23,7 @@ const SKIP_DIRS := ["res://.godot", "res://builds", "res://releases", "res://gam
 # 改这个常量是"覆盖变了得有人过目",不是"让闸变绿";历次取值见 git log。
 # ★ 2026-10-26:`res://docs` 进 SKIP_DIRS —— docs/ 是文档目录,出现 `.gd` 只可能是临时审计驱动
 #   (如 `docs/audit/*/_drivers/`),不属于编译面/导出面;不收它时这些草稿会让条数闸随机变红。
-const EXPECTED_SCRIPTS := 208   # 2026-10-30: 201 + G-01/G-02 守卫批 3 支(reclaim_rules.gd / grace_dispatch_smoke.gd / reclaim_rules_smoke.gd) + 并行批 4 支(wait_room_broadcast / replica_set / input_uplink / reconnect_driver)
+const EXPECTED_SCRIPTS := 211   # 2026-10-30: 201 + G-01/G-02 守卫批 3 支(reclaim_rules.gd / grace_dispatch_smoke.gd / reclaim_rules_smoke.gd) + 并行批 4 支(wait_room_broadcast / replica_set / input_uplink / reconnect_driver)
 
 var _fails: Array[String] = []
 var _total := 0
