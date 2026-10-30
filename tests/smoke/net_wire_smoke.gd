@@ -11,7 +11,7 @@ extends SceneTree
 # ★ 与 snapshot_size_probe 的分工:那边量**体积/最坏包/容量**(场景探针,要真 Player);这里量**协议正确性**(纯逻辑 `-s`)。
 # 跑法:"$GODOT" --headless --path . -s res://tests/smoke/net_wire_smoke.gd;通过 = NET WIRE OK(n 条断言)。
 
-const EXPECTED_CHECKS := 5
+const EXPECTED_CHECKS := 6
 
 var _fails: Array[String] = []
 var _checks := 0
@@ -71,6 +71,20 @@ func _initialize() -> void:
 			and int(recs[0].get("st", -1)) == 987654321 and int(recs[1].get("st", -1)) == 987654321
 	_chk(rt, "三 kind 往返逐字段一致(世界含混合 bool;本人整态;输入两 tick 记录 + 拆包 seq/ct 连续)")
 
+	# ⑤ 包级 seq/ct 必须取**高 tick** 记录(2026-10-30,输入批):S-05 变异实测暴露的缺口 ——
+	#   旧断言只比"inp 与解码自洽",而 inp 本身由 pack_pair 构造 ⇒ 取 lo 也会两边一起偏、照样绿。
+	#   这里独立造一对已知 seq/ct 的记录再打包,钉死"包级 seq=hi.seq、ct=传入 client_tick"。
+	var s5 := PacketInputSource.new()
+	var lo5 := PacketInputSource.pack_record(s5, 7000, Vector2(1, 0))
+	var hi5 := PacketInputSource.pack_record(s5, 7001, Vector2(1, 0))
+	var p5 := PacketInputSource.pack_pair(lo5, hi5, Vector2(1, 0), 111, 222)
+	var d5 := NetCodec.decode_input(NetCodec.encode_input(p5))
+	var r5 := PacketInputSource.unpack_pair(d5)
+	var seq_ok := int(d5.get("seq", 0)) == int(hi5["seq"]) \
+			and int(d5.get("ct", 0)) == 222 \
+			and int(r5[1].get("seq", 0)) == int(hi5["seq"]) \
+			and int(r5[0].get("seq", 0)) == int(hi5["seq"]) - 1
+	_chk(seq_ok, "包级 seq/ct 必须取高 tick 记录(取 lo ⇒ 本条红;实得 seq=%d ct=%d)" % [int(d5.get("seq", 0)), int(d5.get("ct", 0))])
 	# ④ schema↔生产者逐键对齐(去掉什么才红:给 pack_pair 加字段不登记 ⇒ 线上静默丢字段)
 	var schema_keys := _schema_keys(NetCodec.INPUT_SCHEMA)
 	var missing: Array = []
@@ -101,7 +115,7 @@ func _initialize() -> void:
 	if _checks != EXPECTED_CHECKS:
 		_fails.append("★ 实跑 %d 条断言,与 EXPECTED_CHECKS=%d 对不上(有断言被静默跳过?)" % [_checks, EXPECTED_CHECKS])
 	if _fails.is_empty():
-		print("NET WIRE OK(%d 条断言):版本/种类头 · 坏包空 · 三 kind 往返 · schema 对齐" % _checks)
+		print("NET WIRE OK(%d 条断言):版本/种类头 · 坏包空 · 三 kind 往返 · 包级 seq/ct · schema 对齐" % _checks)
 		quit(0)
 	else:
 		for f in _fails:

@@ -6,7 +6,7 @@ extends SceneTree
 #   ④ 上限钳位:不缩到 1(一 tick 到两包就丢)也不超硬顶(回到无界老问题)。
 # 跑法:"$GODOT" --headless --path . -s res://tests/smoke/input_queue_smoke.gd;通过 = INPUT QUEUE OK(n 条断言)。
 
-const EXPECTED_CHECKS := 4
+const EXPECTED_CHECKS := 6
 
 var _fails: Array[String] = []
 var _checks := 0
@@ -62,11 +62,25 @@ func _initialize() -> void:
 			"上限钳位:0→%d、3→5、99→%d(包络+MARGIN 且夹在 [MIN,MAX])" % [
 					PacketInputSource.adapted_cap(0), PacketInputSource.adapted_cap(99)])
 
+	# ⑤ apply_packet:边沿按位**累积**、winst>0 才覆盖(2026-10-30,输入批:S-05 变异暴露的两个缺口)
+	var s5 := PacketInputSource.new()
+	s5.apply_packet({"pressed": 8, "held": 1, "ax": 0.5, "aim": Vector2(1, 0), "winst": 5})
+	s5.apply_packet({"pressed": 32, "held": 2, "winst": 0})
+	var edge_ok := s5._attack_just_pressed_raw() and s5._pickup_pressed_raw() \
+			and s5._switch_inst_raw() == 5 and not s5.haste_held()
+	_chk(edge_ok, "apply_packet:两包 pressed 必须按位累积、winst>0 才覆盖(实得 attack=%s pickup=%s winst=%d)"
+			% [str(s5._attack_just_pressed_raw()), str(s5._pickup_pressed_raw()), s5._switch_inst_raw()])
+
+	# ⑥ clear_edges:边沿与切枪清零(**held 保留**给缺包沿用)
+	s5.clear_edges()
+	var clear_ok := not s5._attack_just_pressed_raw() and not s5._pickup_pressed_raw() \
+			and s5._switch_inst_raw() == 0 and s5.rewind_held() == false
+	_chk(clear_ok, "clear_edges 必须同时清 pressed/released/切枪(切枪不清 ⇒ 本条红);held 不被动")
 	# 判词:计数闸(条数不符也红 —— 防断言被静默跳过)
 	if _checks != EXPECTED_CHECKS:
 		_fails.append("★ 实跑 %d 条断言,与 EXPECTED_CHECKS=%d 对不上(有断言被静默跳过?)" % [_checks, EXPECTED_CHECKS])
 	if _fails.is_empty():
-		print("INPUT QUEUE OK(%d 条断言):轴收口 · 有界+边沿 · 回复力 · 上限钳位" % _checks)
+		print("INPUT QUEUE OK(%d 条断言):轴收口 · 有界+边沿 · 回复力 · 上限钳位 · apply_packet 边沿/切枪" % _checks)
 		quit(0)
 	else:
 		for f in _fails:

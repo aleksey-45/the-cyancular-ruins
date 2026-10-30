@@ -573,7 +573,7 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 **验证**：`ALLSCRIPT: OK(211)` · `RUN_ALL OK(24 runs / 179 gated-assertions)` · `NET WIRE OK(5)` / `INPUT QUEUE OK(4)` / `ROLLBACK FIDELITY PROBE: ALL-OK`（33 条闸）· 命名检查 OK。
 **边界**：
 1. 默认批**不实例化** MatchHost/RoyaleHost/TeamHost ⇒ S-14 哨兵语义、S-16 键集在默认批零覆盖，只能真链路（`team_match_probe`/`royale_soak`）与 watcher 断言。
-2. S-05 暴露的两个守卫缺口（net_wire 包级 seq、input_queue 边沿/winst）已登记，待补。
+2. S-05 暴露的两个守卫缺口**已补**（2026-10-30 同日）：`net_wire_smoke` 5→6（包级 `seq/ct` 必须取高 tick 记录）、`input_queue_smoke` 4→6（`apply_packet` 边沿按位累积/`winst>0` 覆盖、`clear_edges` 连切枪一起清）；三条变异实测红、还原后绿。默认批 179→**182 条**。
 3. S-19/S-21 的观感项（残影/重影/标签跟随）只能人眼；1v1 标签跟随比旧实现少滞后 1 帧（≤16.7ms）。
 4. `--panel-audit` 仪器本身需要非 headless 面板实例才能跑，属设计期工具、无自动断言。
 5. 仍**未做**：S-03（net_bus 三职）、S-15（卡点如上）、S-06（`_close_enough` 比对集）、S-07/S-02 生成式通道表。
