@@ -62,7 +62,8 @@ static func for_royale(round: Dictionary, names: Dictionary, my_role: int) -> Di
 	}
 
 
-# 3v3。两节(A/B 队),栏内按 ACS 排;mvp 指向 ACS 最高者。★ stats 按 role、names 也按 role ⇒ 直接可拼。★ 某 role 没有 stats 条目(掉线 / 中途加入)⇒ 跳过该行,不硬造 0。
+# 3v3。两节(A/B 队),栏内按 ACS 排;mvp 指向**胜队内** ACS 最高者(2026-10-30 用户裁定:全场最佳必须出自胜方,
+# 服务端 `mvp_role(candidates)` 已按胜队过滤;本文件只按 role 打星,不自己再筛)。★ stats 按 role、names 也按 role ⇒ 直接可拼。★ 某 role 没有 stats 条目(掉线 / 中途加入)⇒ 跳过该行,不硬造 0。
 static func for_team(round: Dictionary, names: Dictionary, teams: Dictionary, my_team: int) -> Dictionary:
 	var stats: Dictionary = round.get("stats", {})
 	var mvp_role: int = int(round.get("mvp", 0))

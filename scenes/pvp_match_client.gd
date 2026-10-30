@@ -335,35 +335,68 @@ func _time_fx_replica_rewind(rep: Node2D, delta: float) -> void:
 		m.set_shader_parameter("coverage", 1.0)
 		rep.material = m
 		_rw_film_mats[rep] = m
-	# 轨迹残像:快照的 trail 里比上次多出来的点 → 每点一张淡副本(挂在副本父级,位置即轨迹点)。
+	# 轨迹残像:快照的 trail 里**新出现**的点 → 每点一张淡副本(挂在副本父级,位置即轨迹点)。
+	# ★★ 2026-10-30 修(用户视角:回溯残像只闪一下就没了):线上 trail 只带最近 TRAIL_WIRE_MAX=4 点
+	#   ⇒ 数组长度很早就**饱和**;旧判据 `new_trail.size() > trail.size()` 在饱和后恒假 ⇒ 每次回溯只出前
+	#   4 个点(≈0.2s)就停摆。判据改成"新旧两条数组的**重叠段**之后的点"(见 _fresh_trail_points)。
 	var trail: Array = rep.get_meta("trail_last", [])
 	var new_trail: Array = rep.get_meta("trail", [])
-	if new_trail.size() > trail.size():
-		var anim := rep.get_node_or_null("AnimatedSprite2D") as AnimatedSprite2D
-		if anim != null:
-			for i in range(trail.size(), new_trail.size()):
-				var pt: Array = new_trail[i]
-				var ghost_host := Node2D.new()
-				ghost_host.global_position = Vector2(float(pt[0]), float(pt[1]))
-				rep.get_parent().add_child(ghost_host)
-				AfterImage.spawn(ghost_host, anim, Color(0.82, 0.88, 0.92, 0.35))
-				var ghosts: Array = _rw_ghosts.get(rep, [])
-				ghosts.append({"node": ghost_host, "t": 0.0})
-				_rw_ghosts[rep] = ghosts
+	var anim := rep.get_node_or_null("AnimatedSprite2D") as AnimatedSprite2D
+	if anim != null:
+		for pt in _fresh_trail_points(trail, new_trail):
+			var ghost_host := Node2D.new()
+			ghost_host.global_position = Vector2(float(pt[0]), float(pt[1]))
+			rep.get_parent().add_child(ghost_host)
+			AfterImage.spawn(ghost_host, anim, Color(0.82, 0.88, 0.92, 0.35))
+			var ghosts: Array = _rw_ghosts.get(rep, [])
+			ghosts.append({"node": ghost_host, "t": 0.0})
+			_rw_ghosts[rep] = ghosts
 	rep.set_meta("trail_last", new_trail.duplicate())
 	var ghosts2: Array = _rw_ghosts.get(rep, [])
+	var alive: Array = []
 	for g in ghosts2:
 		g["t"] = float(g["t"]) + delta
 		var host: Node2D = g["node"]
-		if is_instance_valid(host) and host.get_child_count() > 0:
-			var spr := host.get_child(0) as Sprite2D
-			if spr != null:
-				spr.modulate.a = clampf(0.35 * (1.0 - float(g["t"])), 0.0, 1.0)
-	var alive: Array = []
-	for g in ghosts2:
-		if float(g["t"]) < 1.0 and is_instance_valid(g["node"]):
+		if float(g["t"]) < 1.0 and is_instance_valid(host):
+			# ★ 淡出按 **CanvasItem** 取,不是 Sprite2D:AfterImage 是 Node2D ⇒ 旧写法 `as Sprite2D` 恒 null,
+			#   这条"1 秒渐隐"从来没生效过。
+			if host.get_child_count() > 0:
+				var vis := host.get_child(0) as CanvasItem
+				if vis != null:
+					vis.modulate.a = clampf(0.35 * (1.0 - float(g["t"])), 0.0, 1.0)
 			alive.append(g)
+		elif is_instance_valid(host):
+			host.queue_free()   # ★ 过期即释放:旧写法只从 alive 里丢、不 free ⇒ 每次回溯漏 20+ 个空 Node2D
 	_rw_ghosts[rep] = alive
+
+
+# 新旧两条 trail 之间「新出现的点」。两条都是线上截断后的最近 N 点(旧的在先、新的在后):
+# 找最大的 k 使 `old 的后缀(k)` == `new 的前缀(k)`,`new[k..]` 就是新点。
+# ★ 不能按长度差判(线上长度饱和在 TRAIL_WIRE_MAX);不能按首点判(首点每包都在变);k ≤ 4,类 O(k²) 可忽略。
+static func _fresh_trail_points(old_trail: Array, new_trail: Array) -> Array:
+	var max_k := mini(old_trail.size(), new_trail.size())
+	var k := max_k
+	while k > 0:
+		var same := true
+		for j in k:
+			if not _same_trail_pt(old_trail[old_trail.size() - k + j], new_trail[j]):
+				same = false
+				break
+		if same:
+			break
+		k -= 1
+	return new_trail.slice(k)
+
+
+# 两个 trail 点是否同一点(线上是 [x, y] 浮点数组;往返/量化后可能差一个 eps,故用 is_equal_approx)。
+static func _same_trail_pt(a: Variant, b: Variant) -> bool:
+	if not (a is Array) or not (b is Array):
+		return false
+	var x: Array = a
+	var y: Array = b
+	return x.size() >= 2 and y.size() >= 2 \
+			and is_equal_approx(float(x[0]), float(y[0])) \
+			and is_equal_approx(float(x[1]), float(y[1]))
 
 
 func _time_fx_replica_rewind_off(rep: Node2D) -> void:

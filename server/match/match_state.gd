@@ -248,29 +248,19 @@ func stats_payload() -> Dictionary:
 	return out
 
 
-# MVP = 整场 ACS 最高者;并列 → 击杀多者 → 阵亡少者 → role 号升序。★ 候选按 role 升序遍历 + 只在严格更优时替换
-# ⇒ 完全并列时天然胜者是最小 role,不依赖字典迭代顺序。★★ 已离开者照样参与评选(用户裁定,不是遗漏)。
-func mvp_role() -> int:
-	var best_role := 0
-	var best_acs := -1.0
-	var best_kills := -1
-	var best_deaths := 1 << 30
-	var roles: Array = _roster().keys()
-	roles.sort()
-	for r in roles:
+# MVP = 整场 ACS 最高者;并列 → 击杀多者 → 阵亡少者 → role 号升序。★ 比较与并列规则收在
+# `ScoreRules.pick_mvp`(纯函数、`-s` 可测);本函数只负责把 roster 的 ACS/击杀/阵亡折成一张表。
+# ★★ 已离开者照样参与评选(用户裁定,不是遗漏);★★ 2026-10-30 用户裁定「全场最佳必须出自胜方」:
+#    候选集由调用方给 `candidates` —— 1v1 传 [胜者 role]、3v3 传胜队全部 role。空表 = 不限队
+#    (平局 / 未决出 / 大乱斗不发 mvp 那档);候选全不在册时回落全 roster,免得结算页的 ★ 凭空消失。
+func mvp_role(candidates: Array = []) -> int:
+	var table := {}
+	for r in _roster():
 		var role := int(r)
 		var s: Dictionary = _stats.get(role, {})
-		var acs := _acs_of(role)
-		var kills := int(s.get("kills", 0))
-		var deaths := int(s.get("deaths", 0))
-		if acs > best_acs \
-				or (acs == best_acs and (kills > best_kills
-						or (kills == best_kills and deaths < best_deaths))):
-			best_role = role
-			best_acs = acs
-			best_kills = kills
-			best_deaths = deaths
-	return best_role
+		table[role] = {"acs": _acs_of(role), "kills": int(s.get("kills", 0)),
+				"deaths": int(s.get("deaths", 0))}
+	return ScoreRules.pick_mvp(table, candidates)
 
 
 # ★ 写端不过滤队伍 —— 过滤只有一处,在 _record_down 的读端(写端过滤会让「队友误伤拿助攻」这条规则散成两份判断)。

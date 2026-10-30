@@ -240,14 +240,27 @@ func _broadcast_round_state() -> void:
 	if _round_state == RoundState.ROUND_OVER and _last_round_winner != 0:
 		data["winner"] = _last_round_winner
 	if _round_state == RoundState.MATCH_OVER:
-		data["match_winner"] = _match_winner()
-
-		data["mvp"] = mvp_role()
+		var w := _match_winner()
+		data["match_winner"] = w
+		# ★★ 2026-10-30 用户裁定「全场最佳必须出自胜方」:候选 = 胜队全部 role(平局 / 队号未知 ⇒ 空表 = 不限队)。
+		data["mvp"] = mvp_role(_roles_of_team(w))
 
 	var table := stats_payload()
 	if not table.is_empty():
 		data["stats"] = table
 	_send_round_state(data)
+
+
+# 某队全部 role(给 mvp_role 的候选集)。★ 用 `_roster()`(在场 ∪ 已离开 ∪ 计过分)而不是 players:
+# 裁定「已离开者照样参与评选」⇒ 走光/掉线的人只要属于胜队就仍是候选。队号 <= 0(平局 / 未知)⇒ 空表 = 不限队。
+func _roles_of_team(team: int) -> Array:
+	var out: Array = []
+	if team <= 0:
+		return out
+	for role in _roster():
+		if team_of(int(role)) == team:
+			out.append(int(role))
+	return out
 
 
 # ── 击杀归因(自带一份,不上提基类):kill_event 要带「是谁杀的」(归因不到就带 0)。★ 基类归属有「基类不得含子类方法」的反向断言守着(那条探针已删);两份都读同一个 meta,单一来源仍是 CombatFeedback。

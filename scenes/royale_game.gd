@@ -151,6 +151,8 @@ func _ensure_replica(role: int) -> void:
 func _remove_replica(role: int) -> void:
 	if _replicas.has(role):
 		var r: Node2D = _replicas[role]
+		# ★ 先收视效再 free 副本:残影宿主挂在 _world、不在副本子树里,只 free 副本会永久留下它们。
+		_time_fx_replica_rewind_off(r)
 		if is_instance_valid(r):
 			r.queue_free()
 		_replicas.erase(role)

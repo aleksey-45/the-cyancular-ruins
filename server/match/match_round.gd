@@ -230,9 +230,12 @@ func round_state_payload() -> Dictionary:
 	if _round_state == RoundState.ROUND_OVER and _last_round_winner != 0:
 		data["winner"] = _last_round_winner
 	if _round_state == RoundState.MATCH_OVER:
-		data["match_winner"] = _match_winner()
-# MVP:整场 ACS 最高者(并列 → 击杀多者 → 阵亡少者 → role 升序,权威 = 底座 mvp_role)。★ 与 match_winner 同款时机、只在 MATCH_OVER 带;1v1 也给,口径与 3v3 逐字相同、不限于胜方。
-		data["mvp"] = mvp_role()
+		var w := _match_winner()
+		data["match_winner"] = w
+		# MVP:胜方内整场 ACS 最高者(并列 → 击杀多者 → 阵亡少者 → role 升序,权威 = 底座 mvp_role)。
+		# ★★ 2026-10-30 用户裁定「明明赢了,全场最佳却是对面」= bug ⇒ 候选集 = [胜者 role](平局 w==0 才放开全场)。
+		#    与 match_winner 同款时机、只在 MATCH_OVER 带;1v1 也给,候选规则与 3v3 同源(`mvp_role(candidates)`)。
+		data["mvp"] = mvp_role([w] if w != 0 else [])
 # 逐人数据只在非空时带该键(空表不占带宽,旧客户端忽略未知键)。★ 本函数是 1v1 专用:RoyaleHost 与 TeamHost 整体覆写了它。
 	var table := stats_payload()
 	if not table.is_empty():

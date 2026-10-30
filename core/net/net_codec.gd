@@ -180,6 +180,10 @@ static func encode_world(world: Dictionary, full: bool = true, prev: Dictionary 
 	var base_players: Dictionary = prev.get("players", {})
 	var emitted := 0
 	for key in players:
+		# ★ 与容量预算对齐:`resize` 按 `mini(players.size(), 200)` 算,循环**必须**同顶 ——
+		#   旧写法只约束 resize、循环不封顶,玩家数 >200 时下标写越界 ⇒ 包被截断、解码端 `o != size` 判死(整帧丢)。
+		if emitted >= 200:
+			break
 		var e: Dictionary = players[key]
 		if not full:
 			var role := int(key)

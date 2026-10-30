@@ -49,3 +49,44 @@ static func kscore(kills: int, assists: int, dealt: int, deaths: int,
 # 场均。局数下限 1(与既有 `_acs_of` 的 `maxi(_rounds_for(role), 1)` 同口径)。
 static func acs(total_kscore: int, rounds: int) -> float:
 	return float(total_kscore) / float(maxi(rounds, 1))
+
+
+# 在候选集里挑 MVP:ACS 高 → 击杀多 → 阵亡少 → role 号升序。纯函数(不碰节点/autoload),`-s` 可测。
+# stats: role(int) -> {"acs": float, "kills": int, "deaths": int}。
+# ★★ 2026-10-30 用户裁定「全场最佳必须出自胜方」:候选由调用方给(1v1 = [胜者 role]、3v3 = 胜队 role 集);
+#    空表 = 不限队(平局 / 大乱斗不发 mvp 那档);候选**全不在 stats 里**时回落全表 —— 宁可给一个 MVP,
+#    也不要把结算页的 ★ 弄丢(返回 0 = 没有星)。
+# ★ 初始化用「先收第一个候选」而不是 `best_acs := -1.0`:kscore 可以**为负**(死亡惩罚)⇒ 全员负 ACS 时
+#   旧写法会把 MVP 判成 0(没有星),且完全并列时仍天然取最小 role,不依赖字典迭代顺序。
+static func pick_mvp(stats: Dictionary, candidates: Array = []) -> int:
+	var pool: Array = []
+	if candidates.is_empty():
+		pool = stats.keys()
+	else:
+		for c in candidates:
+			var cr := int(c)
+			if stats.has(cr):
+				pool.append(cr)
+		if pool.is_empty():
+			pool = stats.keys()
+	pool.sort()
+	var best_role := 0
+	var best_acs := 0.0
+	var best_kills := 0
+	var best_deaths := 0
+	var first := true
+	for r in pool:
+		var role := int(r)
+		var s: Dictionary = stats[role]
+		var acs_v := float(s.get("acs", 0.0))
+		var kills := int(s.get("kills", 0))
+		var deaths := int(s.get("deaths", 0))
+		if first or acs_v > best_acs \
+				or (acs_v == best_acs and (kills > best_kills
+						or (kills == best_kills and deaths < best_deaths))):
+			best_role = role
+			best_acs = acs_v
+			best_kills = kills
+			best_deaths = deaths
+			first = false
+	return best_role

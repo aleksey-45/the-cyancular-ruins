@@ -229,3 +229,70 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 
 **代价（照实登记）**：16 人局服务端上行从 ≈305 KB/s 升到 **≈610 KB/s**（≈4.9 Mbit/s，世界包 536B×16×60 + 本人包 99B×16×60）；`PLAYOUT_TICKS=2` 只有 1 包抖动余量，网络抖动/连丢 2 包时更依赖有界外插，可能看到轻微过冲再回拉。
 **守卫/验证**：`run_all` 13 支全绿、真链路 soak 4 客户端（60Hz 路径）`SOAK: ALL-OK(4/4)`；插值的 Hermite/aim/外插行为只有临时探针验证，按「观感不写守卫」登记；命中回放深度与渲染延迟仍由 `lag_comp.gd` 单一常量保证同源。
+
+## 二十五、联机模块全量审查（2026-10-30，只登记不修）
+
+**做了什么**：对联机模块做了一次**只读**审查 —— `core/net/**`（16 支 / 3120 行）、`server/**`（24 支 / 6412 行）、客户端联机场景（9 支 / 3232 行）、联机文档 13 篇（1023 行）、联机守卫 18 支（6125 行），合计约 2 万行。产物：`docs/audit/2026-10-30-netplay/`（[00 总览与结论](../audit/2026-10-30-netplay/00-总览与结论.md) / [01 代码与注释审查](../audit/2026-10-30-netplay/01-代码与注释审查.md) / [02 bug 台账](../audit/2026-10-30-netplay/02-bug台账.md)）。基线 `326d586b`，**未改任何生产代码**。
+
+**读数**：23 条行为缺陷（P1 × 5 / P2 × 12 / P3 × 6；其中 2 条为用户实机报）、27 条结构债、17 条注释问题、16 条文档漂移、5 条守卫盲区。旧 bughunt 报告（2026-10-22，`.superpowers/bughunt/REPORT.md`）的 17 条已逐条给复核状态（已修 3 / 仍在 3 / 未复核 11）。
+
+**P1 清单**（详情、证据行号与修法见 02 台账）：
+- `BUG-03` 重连补破坏态只补 64px 整格，16px 子格破坏全部漏补（旧报告 X6 的细化）⇒ 幻影墙 + 每帧回滚；
+- `BUG-04` 回溯环缓不随换局复位（12s 环缓 > 7s 换局间隙）⇒ 可回放到上一局的帧（仅 Beta 时间玩法）；
+- `BUG-05` 回溯记录 `downed` 但从不还原 ⇒ 回放到死亡帧得到「0 血且未倒地」的非法态（仅 Beta）；
+- `BUG-06` 「重启本机服务器」的端口属主探测对 UDP 失明（`netstat` 行只有 4 列，判据写 `>= 5`）⇒ 残留进程清不掉、就绪轮询恒不成立；
+- `BUG-01` / `BUG-02` 用户实机报的两条（每把枪械的子弹数量不独立 / 结算页 MVP 总是标给败方）。**`BUG-02` 已修**（2026-10-30，见 §二十六：根因是口径 —— MVP 只看 ACS、与胜负脱钩；用户裁定「全场最佳必须出自胜方」）；`BUG-01` 仍未定位，02 里给了候选机制与定位计划，**不建议在拿到现场证据前动代码**。
+
+**本轮不修的理由**：本条是登记条目，不是修复批次；修复顺序、档位、验收判据、要跑的测试见 00 §4 与 02 §4（★ 跑测试前先列清单问用户）。
+
+**修后必须同步**（否则二次漂移）：`docs/eng/netplay.md`（P1.5/30Hz 残留）、`netplay-rpc-channels.md`（61 条 / 通道 3 少 explosion）、`netcode-snapshots.md`（滚动关键帧/DELTA 已下线）、`netcode-at-16-players.md` 与 `netcode-delta-and-quantization-details.md`（trail「<1 B/点」算错、536 B 把 trail 2 点当典型）、`room-lifecycle-conventions.md`（I2 1v1 宽限写反）；守卫：`net_wire_smoke` / `snapshot_size_probe`（差分半套删除或量化后条数闸与容差都要改）。
+
+## 二十六、联机 B1 批修复（2026-10-30，档 1~2）
+
+**起因**：联机模块全量审查（见 §二十五 / `docs/audit/2026-10-30-netplay/`）后用户指令「开做」，并裁定「MVP 是明明赢了、全场最佳却是对面」= **bug**。
+
+**改了什么**（8 条，详见 [02-bug台账 §6](../audit/2026-10-30-netplay/02-bug台账.md)）：
+1. `BUG-02` MVP 归属：新增纯函数 `ScoreRules.pick_mvp(stats, candidates)`（ACS → 击杀 → 阵亡 → role 升序；**先收第一个候选**，修掉旧 `best_acs := -1.0` 在全员负 ACS 时返回 0=没有 ★ 的边界）；`MatchState.mvp_role(candidates)` 改为折表调用；1v1 传 `[胜者 role]`、3v3 传 `_roles_of_team(胜队)`，平局/候选全失配回落全 roster。**根因是口径不是取反**：旧实现只按 ACS 挑、与胜负脱钩，而 1v1 局内比分可以极端（赢的局 5-4、输的局 0-5）⇒ 败方总 kills 更多、deaths 更少 ⇒ ACS 反超。
+2. `BUG-06` 端口属主探测：`ProcUtil` 新增 `pids_on_udp_port` / `_pid_of_udp_line` / `_addr_has_port`（**UDP 行只有 4 列**、端口按冒号后整段解析）；`local_server` 的残留清理/就绪轮询改调它，删 `_pids_on_port`。
+3. `BUG-11` 1v1 `claim_role` 越界判据：`server_main._on_role_claimed` 去掉 `(_royale or _team_mode) and` 前缀。
+4. `BUG-13` 回溯残像停摆：`pvp_match_client` 按"新旧 trail 重叠段之后的点"判新点（线上长度饱和在 `TRAIL_WIRE_MAX`，旧"数组变长"判据会停摆）。
+5. `BUG-15` `--port` 校验：`ModeContext._parse_port`（非法 token / 缺值 / 越界一律拒绝启动）。
+6. `BUG-16` `ProcUtil.kill_udp_port` 捕获 PowerShell 输出并 print（"不是我们一族就不杀"的警告原来不可见）。
+7. `BUG-17` `NetCodec.encode_world` 循环封顶 200，与 `resize` 预算对齐。
+8. `BUG-19`（泄漏面）残影过期即 `queue_free`、淡出按 `CanvasItem`、子类 `_remove_replica` 先收残影再 free 副本。
+
+**守卫（能答「去掉什么才红」）**：
+- `tests/smoke/mvp_choice_smoke.gd`（6 条 + `EXPECTED_CHECKS`）：①不限队仍取 ACS 最高（旧口径回归）；②候选=[胜者] 必须给胜者；③3v3 候选=胜队时必须只在胜队内挑；④不限队仍取全场最高（证明候选参数是唯一开关）；⑤完全并列 → 最小 role 且与插入顺序无关；⑥全员负 ACS 仍给出 MVP。去掉什么才红：删 `candidates` 过滤 ⇒ ②；`pick_mvp` 回退恒全表 ⇒ ②；删 `pool.sort()`/改并列规则 ⇒ ⑤；把首收逻辑改回 `best_acs := -1.0` ⇒ ⑥。
+- `tests/smoke/net_argv_port_smoke.gd`（5 条 + `EXPECTED_CHECKS`）：UDP 4 列解析、TCP/对端不误命中、`:17777` 不当前缀、`--port` 非法/缺值/越界拒绝、合法 8123 进 ctx。去掉什么才红：列数判据改回 `>= 5` ⇒ ①；删 `cols[0] != "UDP"` ⇒ ②；`_addr_has_port` 改回 `contains(":"+port)` ⇒ ③；`_parse_port` 换回 `int()` ⇒ ④；`_parse_port` 不写 `ctx["port"]` ⇒ ⑤。
+- `allscript_probe` 条数闸 190 → **192**（两支新 smoke）。
+
+**验证（本机 headless；未占 7777、未弹窗）**：`mvp_choice_smoke` `MVP CHOICE OK(6 条断言)` · `net_argv_port_smoke` `NET ARGV OK(5 条断言)` · `net_wire_smoke` `NET WIRE OK(7 条断言)` · `snapshot_size_probe` `SNAPSHOT SIZE PROBE: ALL-OK` · `allscript_probe` `ALLSCRIPT: OK(192 个脚本全部加载)` · `python tools/check_naming.py` `命名检查 OK`。
+
+**边界（照实）**：
+1. **真链路批未跑**（`pvp_match_smoke` / `rejoin_probe` / `team_match_probe` / `royale_soak`：占 7777/端口池、拉子进程）—— 按 AGENTS §1 等用户认领。
+2. **`BUG-20`（加速重影节拍器共享单例）未修**；观感类（残像/淡出）无自动断言，只能人眼。
+3. `BUG-11` / `BUG-13` / `BUG-16` / `BUG-17` 四条修复**没有专属自动断言**（接线/观感/诊断/潜在越界），已在台账登记。
+4. MVP 口径变了 ⇒ 3v3 的 MVP **只会出自胜队**；平局（`match_winner == 0`）退回全场 ACS 最高。这是裁定，不是遗漏。
+5. 本轮改动**未提交**（git 未 add/commit）；新加两支 smoke 的 `.gd.uid` 已由 `--headless --import` 生成。
+
+
+## 二十七、删除 `pvp_room_smoke`（2026-10-30）—— 删了什么 = 欠了什么
+
+> 依据：[`docs/audit/2026-10-30-联机验证审计.md`](../audit/2026-10-30-联机验证审计.md) §1.1（A1）。本轮只删测试资产，**未改任何产品代码**。
+
+**现象（代码路径级确定性，不需复现）**：该支自 2026-10-24（1v1 改为房主点「开始游戏」）起**结构性恒红** —— `pvp_smoke_client.gd`（harness/）从不发 `pvp_start`（`pairing_ready` 全仓唯一发射点在 `pvp_start` 内），`match_start` 判词不可达；30s 轮询超时后 `wait $A_PID/$B_PID` **永久阻塞**，只能靠 `run_real.sh` 的 `timeout 1200` 强杀 ⇒ `.sh` 的 kill 收尾行永远跑不到 ⇒ 大厅 + 2 客户端成孤儿 ⇒ 闸三 FAIL 并 **break** ⇒ 真链路批条目 3~6（rejoin / soak / role_cap / team_match）整批不跑。它违反本仓自述的「一条永远红的闸等于没有闸」，且此前从未登记。
+
+**改了什么**：
+- 删 `pvp_room_smoke.sh`（smoke/）+ `pvp_smoke_client.gd` / `.gd.uid` / `.tscn`（harness/）；
+- `tests/run_real.sh` 的 `ENTRIES` 删行（6 → 5）+ `tests/README.md` 的清单 / 计数 / harness 列表同步；
+- `allscript_probe.EXPECTED_SCRIPTS` 192 → **191**（编译面少一个 `.gd`）；
+- `docs/eng/netplay.md` / `docs/eng/room-lifecycle-conventions.md` / `docs/pvp-networking.md` 的引用同步。
+
+**留下的覆盖缺口（如实登记，不新增也不减少原有缺口）**：
+1. **不受影响的**：1v1 建房 → 房主开始 → 对局 仍由 `pvp_match_smoke.sh` 覆盖（它的 create 端在 2/2 且自己是房主时代按 `pvp_start`；join 端按码加入走同一支）—— 这是删它的主要依据。
+2. **原本就没有的**：房间回收梯（端口归还 / 超龄房收掉 / worker 退出）**任何真链路都不断言**（审查 G-03）—— 本条不新增该缺口，但请别把「删了一支真链路」误读成「覆盖变少」：那支从未真正覆盖到这里。
+3. **确实失去的**：真链路里「房间列表 UI 路径」（列表 → 点行加入）与「claim 后收不到 `match_start` 的客户端表现」不再有人看（`pvp_match` 有 600 帧自超时兜底）。
+
+**验证**：`bash tests/run_real.sh --list`（闸四：ENTRIES 每条匹配真实文件、无遗留 `.sh` 未登记）· `python tools/check_naming.py`（规则 C：文档引用路径存在）· `git status --short`（四个文件 staged 删除）。**真链路批未跑**（占 7777，按 AGENTS §1 等用户认领）。
+
+**翻案条件**：需要真链路覆盖「房间列表 UI 路径」或「claim 后无 `match_start` 的客户端行为」时重写一支 —— 必须带**客户端自超时**与**可达判词**，且不得占用批内前序支的清理窗口。

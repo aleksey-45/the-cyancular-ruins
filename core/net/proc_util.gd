@@ -33,6 +33,9 @@ extends RefCounted
 #       那时双击服务端会打印警告而不是静默杀 ⇒ 有意的取舍,登记在 docs/eng/registered-debt.md §六。
 
 
+const SYS32 := "C:/Windows/System32"
+
+
 # 杀掉持有该 UDP 端口的进程(**仅当属主是"我们这一族"**)。
 # 找不到属主 / 非 Windows → 静默返回;属主是别人 / 名字读不出来 → 打印一行、**不杀**。
 static func kill_udp_port(port: int) -> void:
@@ -55,4 +58,56 @@ static func kill_udp_port(port: int) -> void:
 			"Stop-Process -Id $id -Force -ErrorAction SilentlyContinue}" + \
 			"else{Write-Output ('[ProcUtil] UDP " + str(port) + " held by ' + $n + " + \
 			"' -- not ours, not killing it')}}"
-	OS.execute("powershell.exe", ["-NoProfile", "-Command", ps], [], false, true)
+	# ★ 必须**捕获输出**:这条 `-not ours` 警告是「证不出是自己人就不杀」取向的唯一可见反馈(见文件头)。
+	#   旧写法是 `OS.execute(..., [], false, true)`(不捕获 + 自开控制台)⇒ 警告一闪即逝/根本进不了日志。
+	var out: Array = []
+	OS.execute("powershell.exe", ["-NoProfile", "-Command", ps], out, false, false)
+	for line in out:
+		var s := str(line).strip_edges()
+		if not s.is_empty():
+			print(s)
+
+
+# ── 按 UDP 端口查属主 PID(netstat 版;静默、只要 pid)────────────────────────────
+# 用途:大厅「本机服务器」按钮的**残留清理**与**就绪轮询**(local_server),以及任何想"先问是谁占着"的调用方。
+# ★★ 坑(旧的 local_server._pids_on_port 就是踩的这个):**UDP 行只有 4 列** ——
+#   `  UDP    0.0.0.0:7777         *:*      1234`,没有 State 列;TCP 行才是 5 列。
+#   按 `cols.size() >= 5` 判 ⇒ 对 UDP 恒假 ⇒ 一个属主都找不到(而 TCP 行又会命中**对端**地址,反向误报)。
+#   判据必须是「第 1 列 == `UDP` 且第 2 列(本地地址)端口命中」。
+# ★ 返回值可能含**本进程自己**;调用方自己判 `OS.get_process_id()`。
+# ★ 只查 UDP:大厅/worker 都是 UDP(ENet),这能同时避开"本机某客户端连着远端 7777"的 TCP 对端假阳性。
+static func pids_on_udp_port(port: int) -> Array[int]:
+	var pids: Array[int] = []
+	if OS.get_name() != "Windows":
+		return pids
+	var out: Array = []
+	OS.execute(SYS32 + "/netstat.exe", PackedStringArray(["-ano"]), out, false, false)
+	for chunk in out:
+		for line in str(chunk).split("\n"):
+			var pid := _pid_of_udp_line(line, port)
+			if pid > 0 and not pids.has(pid):
+				pids.append(pid)
+	return pids
+
+
+# netstat -ano 的一行 → 该行的属主 pid(UDP 且本地端口命中);否则 -1。纯函数(不碰 OS),`-s` 可测。
+static func _pid_of_udp_line(line: String, port: int) -> int:
+	var cols := line.strip_edges().split(" ", false)
+	if cols.size() < 4 or cols[0] != "UDP":
+		return -1
+	# cols[1] = 本地地址,形如 `0.0.0.0:7777` / `[::]:7777` / `127.0.0.1:7777`
+	if not _addr_has_port(cols[1], port):
+		return -1
+	# UDP 行的最后一列就是 pid(没有 State 列)。TCP 行即使列数够也不进这里(上面已经挡掉)。
+	var pid := int(cols[cols.size() - 1])
+	return pid if pid > 0 else -1
+
+
+# 地址串的**端口**是否等于 port。★ 必须按冒号后整段解析,不能 `contains(":7777")`:
+# 后者会被 `:17777` / `:77770` 这类前缀串命中;也不能 `contains(":7777 ")`(行尾无空格时会漏)。
+static func _addr_has_port(addr: String, port: int) -> bool:
+	var at := addr.rfind(":")
+	if at < 0 or at + 1 >= addr.length():
+		return false
+	var tail := addr.substr(at + 1)
+	return tail.is_valid_int() and int(tail) == port

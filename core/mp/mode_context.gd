@@ -53,8 +53,7 @@ static func from_args(args: PackedStringArray, default_port: int = 7777) -> Dict
 			FLAG_TEAM:
 				ctx["team"] = true
 			FLAG_PORT:
-				if i + 1 < args.size():
-					ctx["port"] = int(args[i + 1])
+				_parse_port(args, i, ctx)
 			FLAG_ROLES:
 				_parse_int_list(args, i, ModeDefs.ROLE_MAX, "role", roles, ctx)
 			FLAG_AI_ROLES:
@@ -93,6 +92,28 @@ static func from_args(args: PackedStringArray, default_port: int = 7777) -> Dict
 	if roles.is_empty():
 		ctx["roles"] = [1, 2] as Array[int]
 	return ctx
+
+
+# --port 值校验(与 --roles/--teams 同口径:非法 token / 越界一律拒绝启动)。
+# ★ 旧写法直接 `int(args[i + 1])`:`--port abc` 得 0 ⇒ ENet `create_server(0)` 绑**随机端口**并成功 ⇒
+#   worker 打印"就绪"、活着,却占一个外面找不到的端口,靠 30 秒报到梯才退出(用户侧 = 房永远连不上)。
+const PORT_MIN := 1
+const PORT_MAX := 65535
+
+
+static func _parse_port(args: PackedStringArray, i: int, ctx: Dictionary) -> void:
+	if i + 1 >= args.size():
+		_fail(ctx, "缺 port 值")
+		return
+	var s := str(args[i + 1]).strip_edges()
+	if not s.is_valid_int():
+		_fail(ctx, "port 不是整数: %s" % s)
+		return
+	var v := int(s)
+	if v < PORT_MIN or v > PORT_MAX:
+		_fail(ctx, "port 越界(允许 %d..%d): %d" % [PORT_MIN, PORT_MAX, v])
+		return
+	ctx["port"] = v
 
 
 static func _parse_int_list(args: PackedStringArray, i: int, max_value: int, label: String,

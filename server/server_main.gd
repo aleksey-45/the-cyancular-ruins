@@ -409,8 +409,11 @@ func _on_suicide_request(caller: int) -> void:
 
 func _on_role_claimed(caller: int, role: int, player_name: String) -> void:
 	# 防串线:对局已开始、role 越界、或该 role 已被其他 peer 占用 → 这个连接不属于本局,直接踢(端口复用竞态下迟到的客户端可能连到旧 worker);★ 越界判据 = role 是否在本局参战集合内,不是任何从人数推导出来的界(房内有人退出会留 role 空洞,拿人数当上界会踢掉真客户端)。
+	# ★★ 2026-10-30 修:原判据写成 `((_royale or _team_mode) and not _role_set.has(role))` —— 1v1 两项皆 false
+	#    ⇒ **1v1 worker 上这条越界判断恒不生效**(注释却宣称三模式都有),claim_role(3) 会被接受、与真 role1
+	#    凑满 2 人开场,把大厅派来的 role2 当串线踢掉。1v1 的 `_role_set` 由 ModeContext 给 `[1, 2]`,三模式统一判。
 	if _host != null or _match_started \
-			or ((_royale or _team_mode) and not _role_set.has(role)) \
+			or not _role_set.has(role) \
 			or (_claims.has(role) and _claims[role] != caller):
 		print("worker: 拒绝串线连接 peer=%d(role=%d)" % [caller, role])
 		multiplayer.multiplayer_peer.disconnect_peer(caller)

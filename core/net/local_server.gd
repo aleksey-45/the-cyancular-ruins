@@ -42,8 +42,9 @@ static func _restart_impl() -> String:
 		return "未找到 %s —— 请把它和客户端放在同一目录" % SERVER_EXE
 	print("[LocalServer] 重启本机服务器…")
 	OS.execute(SYS32 + "/taskkill.exe", PackedStringArray(["/F", "/IM", SERVER_EXE]))
-	# 兜底:清掉占用大厅端口的任意残留进程(旧 bat 大厅 / 僵尸实例),否则新实例 bind 失败会静默退出
-	for pid in _pids_on_port(LOBBY_PORT):
+	# 兜底:清掉占用大厅端口的任意残留进程(旧 bat 大厅 / 僵尸实例),否则新实例 bind 失败会静默退出。
+	# ★ 必须走 ProcUtil.pids_on_udp_port(netstat 的 UDP 行是 4 列;旧实现按 5 列判 ⇒ 一个都找不到、这里成了空操作)。
+	for pid in ProcUtil.pids_on_udp_port(LOBBY_PORT):
 		if pid != OS.get_process_id():
 			OS.execute(SYS32 + "/taskkill.exe", PackedStringArray(["/F", "/PID", str(pid)]))
 	# 等端口释放(强杀后立刻复用偶发失败)
@@ -56,7 +57,7 @@ static func _restart_impl() -> String:
 	var tried_headless := false
 	for _i in range(45):
 		await _sleep(1.0)
-		if not _pids_on_port(LOBBY_PORT).is_empty():
+		if not ProcUtil.pids_on_udp_port(LOBBY_PORT).is_empty():
 			return "本机服务器已(重)启动;" + lan_ip_hint()
 		# ★ 无显卡机器(虚拟机 / 远程桌面 / Windows Server / 驱动缺失):服务端是普通 Godot 导出,非 headless 启动会在视频驱动
 		#   初始化处秒崩(实测报 Unable to initialize video driver)⇒ 进程 1 秒内就没了。自动改 `--headless` 再拉一次(服务端不需要渲染)。
@@ -202,23 +203,9 @@ static func _priv_score(ip: String) -> int:
 	return 1
 
 
-static func _pids_on_port(port: int) -> Array[int]:
-	# Web:没有 netstat / 进程概念。
-	if OS.has_feature("web"):
-		return []
-	var out: Array = []
-	var pids: Array[int] = []
-	OS.execute(SYS32 + "/netstat.exe", PackedStringArray(["-ano"]), out, false, false)
-	for chunk in out:
-		for line in str(chunk).split("\n"):
-			if not line.contains(":%d " % port):
-				continue
-			var cols := line.strip_edges().split(" ", false)
-			if cols.size() >= 5:
-				var pid := int(cols[cols.size() - 1])
-				if pid > 0 and not pids.has(pid):
-					pids.append(pid)
-	return pids
+# ★ `_pids_on_port()` 已删(2026-10-30):它按 `cols.size() >= 5` 判 UDP 行,而 netstat 的 UDP 行只有 4 列
+#   ⇒ 残留清理是空操作、就绪轮询恒不成立。实现收进 `ProcUtil.pids_on_udp_port()`(UDP 4 列/端口按冒号后整段解析),
+#   与 `ProcUtil.kill_udp_port` 同住一处 —— 别再在这里抄第三份。
 
 
 static func _sleep(sec: float) -> void:
