@@ -70,7 +70,7 @@ func _indent_of(line: String) -> int:
 	return n
 
 
-# 拆除动作(端口归还/注册表删除/杀 worker)只许出现在 server/lobby_rooms.gd 的 teardown_room / _release_port_later 内;断言形态取「只许出现在这一处」而不是数调用点个数(个数会随实现漂,这句是契约)。
+# 拆除动作(端口归还/注册表删除/杀 worker)只许出现在 server/lobby/lobby_rooms.gd 的 teardown_room 内(延迟归还本体在 WorkerLauncher.release_port_later);断言形态取「只许出现在这一处」而不是数调用点个数(个数会随实现漂,这句是契约)。
 func _check_teardown_funnel() -> void:
 	var src := FileAccess.get_file_as_string("res://server/lobby/lobby_rooms.gd")
 	if src.is_empty():
@@ -90,7 +90,7 @@ func _check_teardown_funnel() -> void:
 			cur_body += line + "\n"
 	if not cur_name.is_empty():
 		funcs.append({"name": cur_name, "body": cur_body})
-	var allowed := ["teardown_room", "_release_port_later"]
+	var allowed := ["teardown_room"]
 	for f in funcs:
 		for line in (f["body"] as String).split("\n"):
 			var t: String = line.strip_edges()
@@ -99,7 +99,7 @@ func _check_teardown_funnel() -> void:
 			# ★ 模式列表必须含当前的端口归还入口(`launcher.release_now`)、三张只读视图 + 当前注册表的删除原语
 			# (`_registry.erase`,2026-10-22 三表合一后)与凭据表作废(`rejoin.drop_port`):改名/搬家时同款改这里。
 			#   三张表名互为子串(`team_rooms.erase(` 里含 `rooms.erase(`):只留裸那条判词会点错名字 —— 多留一条字符串是加宽判据面,不是放宽白名单。
-			for pat in ["_release_port_later(", "launcher.release_now(", "_registry.erase(",
+			for pat in ["WorkerLauncher.release_port_later(", "launcher.release_now(", "_registry.erase(",
 					"royale_rooms.erase(", "team_rooms.erase(", "rooms.erase(", "rejoin.drop_port("]:
 				if t.contains(pat):
 					if not allowed.has(f["name"]):

@@ -620,7 +620,7 @@ func _close_room() -> void:
 	_reset_confirm()
 	if _rm == null or _rm.lobby == null:
 		return
-	var room = _rm.lobby.room_for_panel(code, kind)
+	var room = LobbySnapshot.room_for_panel(_rm.lobby, code, kind)
 	if room == null:
 		# 从渲染到点击之间房已经没了:no-op + 说一句(计划 Task 6 Step 1 要求)。
 		_set_hint("房间 %s 已不存在" % code)

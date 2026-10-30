@@ -5,8 +5,8 @@ extends Node
 # ★ 2026-10-22 起本类是**门面**:三张表搬进 RoomRegistry、三种房型类合并进 RoomTypes,这里只剩
 #   RPC handler、等待室广播与拆除收口。公开符号尽量逐字保留(外部调用点:room_manager / lobby_snapshot /
 #   rejoin_probe / team_match_probe / 服务端面板 / snapshot_size_probe[ROYALE_MAX_PLAYERS] /
-#   mp_lobby/wait_room[TEAM_SIZE·TEAM_ROLES])。★ 它仍是 Node:要用 multiplayer(is_peer_online 判
-#   peer 真能收包)与 get_tree()(_release_port_later 等一帧)。依赖方向单向:本类用 launcher,反之不知道本类。
+#   mp_lobby/wait_room[TEAM_SIZE·TEAM_ROLES])。★ 它仍是 Node:要用 multiplayer(拆除时断连 peer)与 get_tree()
+#   (等待室广播的延帧起点)。依赖方向单向:本类用 launcher / broadcaster,反过来它们不知道本类。
 # ★「两人凑齐 → 开局」跨了边界(房间的事 + 拉 worker 的事),故用 pairing_ready 信号通知 RoomManager。
 # ★ 拆除必须走单一收口 teardown_room:本层为「端口泄漏」这同一个失败模式补过三次;收口 = 清账本 + 广播,
 #   端口归还只是借 launcher。
@@ -49,6 +49,14 @@ var team_rooms: Dictionary:
 var _peer_names: Dictionary:
 	get:
 		return _registry.peer_names
+# S-09:广播组件(WaitRoomBroadcast)只能通过公开口读昵称表 —— 别再让外部碰下划线字段。
+var peer_names: Dictionary:
+	get:
+		return _registry.peer_names
+# S-09:面板适配层(LobbySnapshot)按 (code, kind) 查房 —— 只读公开口,别让它碰 `_registry`。
+var registry: RoomRegistry:
+	get:
+		return _registry
 
 
 # ── 3v3 的纯判据已挪到 `RoomTypes` 的 static(2026-10-30 S-09):本类是 Node 且引 NetBus,写在这儿的
@@ -107,15 +115,8 @@ func on_list_rooms(caller: int) -> void:
 func freeze_roster(room) -> void:
 	_registry.freeze_roster(room)
 
-# 一次性会话令牌(16 位 hex)。★ 旧 Godot 的 randi() 是 32 位,拼两次取 16 hex 得 64 位熵 —— 够防「误顶替」,不防恶意爆破(本设计不承担反作弊)。
-# ★ 必须是两段 %08x,不能写成 "%016x" % ((randi() << 32) | randi()):后者会越过 int64 正半区,而 %x 对负数是带符号打印(实测 12 次抽样 8 次落在负半区,长度与字符都不符契约)。
-static func new_token() -> String:
-	return "%08x%08x" % [randi(), randi()]
-
-# 该 peer 现在真的能收包吗?★ 判据是 ENet peer 自己的 state(NetBus.is_peer_live):以前读 multiplayer.get_peers(),实测它把
-# 「ENet 层已断、peer_map 还没收敛」的 peer 仍报在线(晚一拍)⇒ 判早了等于没判。这才是那条 channel 0 错误的正解。
-func is_peer_online(peer_id: int) -> bool:
-	return multiplayer.has_multiplayer_peer() and NetBus.is_peer_live(peer_id)
+# ★ S-09(2026-10-30):`new_token` 已挪到 `RejoinRegistry.new_token`(令牌本属凭据表);
+#   `is_peer_online` 已挪到 `NetBus.is_peer_online`(判断"现在能不能收包"是传输层的事)。
 
 func create_room(caller: int) -> void:
 # ★ 三路互斥(1v1 / 大乱斗 / 3v3):同一个客户端同时挂两种房会收到双重 go_match 互相覆盖,而旧房无人认领 → 幽灵房(端口永不归还)。
@@ -143,7 +144,7 @@ func create_room(caller: int) -> void:
 	NetDiag.audit("room_created", {"room": code, "mode": ModeDefs.MODE_PVP, "peer": caller,
 			"nick": str(_peer_names.get(caller, "玩家"))})
 	NetBus.reply(caller, "room_created", code)
-	_flush_pvp_state.call_deferred(room)   # 1v1 等待室状态(2026-10-24:开局改由房主点开始)
+	WaitRoomBroadcast.flush_pvp.call_deferred(self, room)   # 1v1 等待室状态(2026-10-24:开局改由房主点开始)
 
 func join_room(caller: int, code: String) -> void:
 	var room: RoomTypes.Room = _registry.find(code, ModeDefs.MODE_PVP)
@@ -181,7 +182,7 @@ func join_room(caller: int, code: String) -> void:
 	NetBus.reply(caller, "room_joined", 2)
 
 	# ★ 2026-10-24:不再自动开局 —— 两人齐后广播等待室状态,由房主点「开始游戏」触发 pairing_ready。
-	_flush_pvp_state.call_deferred(room)
+	WaitRoomBroadcast.flush_pvp.call_deferred(self, room)
 
 # 掉线 / 退出:三种房型逐条同款(摘人 → 3v3 顺带清空出的队位 → 局中不拆 → 空房拆 → 房主转移 + 广播)。
 # ★★ 对局中(in_match)的房不拆:客户端转连 worker 时会全部断开大厅,拆了就再也不会出现在列表里 ——「看得见」与「回局」
@@ -210,7 +211,7 @@ func on_peer_left(peer_id: int) -> void:
 				continue
 			if room.is_duel():
 				# 1v1(2026-10-24 起有等待室状态):房主 = players[0],退出后自动顺位;刷新两边等待室(对手离开 / 换房主)。
-				_flush_pvp_state.call_deferred(room)
+				WaitRoomBroadcast.flush_pvp.call_deferred(self, room)
 				continue
 			if room.host_peer == peer_id:
 				room.host_peer = room.players[0]
@@ -235,37 +236,12 @@ func _broadcast_state(room: RoomTypes.Room) -> void:
 	elif room.is_team():
 		_broadcast_team_state(room)
 	elif room.is_duel():
-		_flush_pvp_state.call_deferred(room)
+		WaitRoomBroadcast.flush_pvp.call_deferred(self, room)
 
 
-# 房内全员广播实时状态(等待室 UI 刷新)。★ 延到帧末再发:调用点常在「刚有人断开」的路径上,此时其余成员的连接状态可能还没收敛。
+# 房内全员广播实时状态(等待室 UI 刷新)。实现已挪到 `WaitRoomBroadcast`(S-09;那里保留 call_deferred + 再等一帧的时序约定)。
 func _broadcast_royale_state(rr: RoomTypes.Room) -> void:
-	_flush_royale_state.call_deferred(rr)   # 体内再等一帧,见该函数的注释
-
-
-func _flush_royale_state(rr: RoomTypes.Room) -> void:
-# ★ 等下一帧再发(而非本帧末):调用点几乎都在「刚有人断开」的路径上,而此时其余成员的断开信号可能还没被 MultiplayerAPI 处理 ——
-# get_peers() 仍把已断的 peer 报为在线(实测滞后超过一帧),同步发/帧末发都会踩 max channels: 0 且包会丢。
-	await get_tree().process_frame
-# ★★ 真正发送前再判一次开局(调用点那层的 in_match 守卫只挡住「排队时已开局」的情况):本函数是 call_deferred + 再等一帧,从排队到
-# 发送之间房间完全可能已经开局,而那一刻正是成员集体转连 worker、陆续断开大厅的窗口(实测 6 人局开局后瞬间 5 条 max channels: 0)。
-	if rr.in_match:
-		return
-	var plist: Array = []
-	for peer_id in rr.players:
-		plist.append({"role": rr.player_role[peer_id], "name": _peer_names.get(peer_id, "玩家")})
-	var state := {
-		"code": rr.code, "is_public": rr.is_public, "invite_code": rr.invite_code,
-		"max_players": rr.max_players, "host_role": rr.player_role.get(rr.host_peer, 0),
-		"players": plist, "in_match": rr.in_match,
-	}
-	for peer_id in rr.players:
-		if is_peer_online(peer_id):
-# ★ 每个 peer 送他自己那一份(多带 your_role):等待室 UI 靠它判「(我)/(房主)」—— 原先让客户端按昵称反查,两人同名(默认都叫 Anon)
-# 时必然匹配到先出现的那个 → 高亮错行、房主看不到开局按钮。role 本来就是服务器权威分配的,不必让客户端猜。
-			var mine := state.duplicate()
-			mine["your_role"] = rr.player_role[peer_id]
-			NetBusExt.rpc_id(peer_id, "royale_room_state", mine)
+	WaitRoomBroadcast.flush_royale.call_deferred(self, rr)
 
 func royale_room_of(caller: int) -> RoomTypes.Room:
 	return _registry.room_of_peer(ModeDefs.MODE_ROYALE, caller)
@@ -296,24 +272,7 @@ func pvp_start(caller: int) -> void:
 	pairing_ready.emit(room)
 
 
-# 1v1 等待室状态:{code, players:[{role,name}], host_role, in_match} + 每人一份 your_role。
-# ★ 延帧再发、发送前再判开局:理由与 _flush_royale_state 逐字相同(断开信号未收敛会踩 max channels: 0 并丢包)。
-func _flush_pvp_state(room: RoomTypes.Room) -> void:
-	await get_tree().process_frame
-	if room.in_match or room.started:
-		return
-	var plist: Array = []
-	for peer_id in room.players:
-		plist.append({"role": room.player_role[peer_id], "name": _peer_names.get(peer_id, "玩家")})
-	var host_role := 0
-	if not room.players.is_empty():
-		host_role = int(room.player_role.get(room.players[0], 0))
-	var state := {"code": room.code, "players": plist, "host_role": host_role, "in_match": room.in_match}
-	for peer_id in room.players:
-		if is_peer_online(peer_id):
-			var mine := state.duplicate()
-			mine["your_role"] = room.player_role[peer_id]
-			NetBusExt.rpc_id(peer_id, "pvp_room_state", mine)
+# 1v1 等待室状态:实现已挪到 `WaitRoomBroadcast.flush_pvp`(S-09;时序同 royale)。
 
 func royale_create(caller: int, opts: Dictionary) -> void:
 	if _in_team_room(caller):
@@ -598,40 +557,7 @@ func _is_room_host(r: RoomTypes.Room, caller: int) -> bool:
 	return r.host_peer == caller
 
 
-# 服务端控制台(server/gui/)用:这间房的房主昵称。只读,判据在 ServerStatus.host_of(可冒烟)。
-# ★ 1v1 的房主表示与另两种不同(players[0] vs host_peer ⇒ 按 role 查名单),所以查表这一步在本类;
-#   "该读哪一边"的判据必须是纯函数。
-func host_name_of(room: Variant) -> String:
-	var r := room as RoomTypes.Room
-	if r == null:
-		return "玩家"
-	# ★ S-12:判据在 ServerStatus.host_and_roster(纯函数、可 `-s` 测);本函数只做字段搬运。
-	return str(ServerStatus.host_and_roster(r.is_duel(), r.in_match, r.host_peer,
-			int(r.player_role.get(r.host_peer, 0)), r.roster, r.players, r.player_role, _peer_names)["host"])
-
-
-# 服务端控制台用:按 (房号, 种类) 精确取房对象;只读,找不到返回 null。
-# ★ 房号空间跨模式重叠(都是 4 位号)⇒ 只按 code 查会查到另一模式的同号房,故必须带 kind。
-# ★ 拆除仍必须走 teardown_room 单一收口 —— 本函数不改变任何状态。
-func room_for_panel(code: String, kind: String) -> Variant:
-	match kind:
-		"1v1":
-			return _registry.find(code, ModeDefs.MODE_PVP)
-		"royale":
-			return _registry.find(code, ModeDefs.MODE_ROYALE)
-		"team":
-			return _registry.find(code, ModeDefs.MODE_TEAM)
-	return null
-
-
-# 服务端控制台用:名单侧的展示数据(只读)。返回 [{role, name}]。判据在 ServerStatus.roster_of。
-# ★ 不能直接读 roster:它开局那一刻才冻结 —— 等待中的房 roster 是空的(名字只在 players + _peer_names 里);
-#   局中的房 players 已空(成员转连 worker),只能读冻结快照。
-func display_roster_of(room: Variant) -> Array:
-	var r: RoomTypes.Room = room as RoomTypes.Room
-	if r == null:
-		return []
-	return ServerStatus.roster_of(r.in_match, r.roster, r.players, r.player_role, _peer_names)
+# ★ S-09(2026-10-30):面板读模型(`host_name_of` / `room_for_panel` / `display_roster_of`)已挪到 `LobbySnapshot`。
 
 
 # ── 回大厅后回局 ── 客户端在自己的大厅页上点自己那间房(对局中的房照常列在列表里,别人点它只会被「该房间的对局已进行中」拒掉)。
@@ -658,33 +584,9 @@ func on_rejoin_request(caller: int, code: String, token: String, mode: String) -
 	NetBus.reply(caller, "go_match", int(e.get("role", 0)), int(e.get("worker_port", 0)))
 
 
-# 房间状态广播(等待室/选边)。与 royale 那两条同款:call_deferred + 帧末再等一帧 + 开局后不再发。
+# 房间状态广播(等待室/选边):实现已挪到 `WaitRoomBroadcast.flush_team`(S-09;时序同 royale)。
 func _broadcast_team_state(tr: RoomTypes.Room) -> void:
-	_flush_team_state.call_deferred(tr)
-
-
-func _flush_team_state(tr: RoomTypes.Room) -> void:
-# ★ 等下一帧再发、真正发送前再判一次 in_match(理由与 _flush_royale_state 逐字相同:断开信号未收敛会踩 max channels: 0 并丢包)。
-	await get_tree().process_frame
-	if tr.in_match:
-		return
-	var plist: Array = []
-	for peer_id in tr.players:
-		var role := int(tr.player_role[peer_id])
-		plist.append({"role": role, "name": _peer_names.get(peer_id, "玩家"),
-				"team": _team_of(tr, role)})
-	var state := {
-		"code": tr.code, "is_public": tr.is_public, "invite_code": tr.invite_code,
-		"host_role": tr.player_role.get(tr.host_peer, 0), "team_size": TEAM_SIZE,
-		"players": plist, "in_match": tr.in_match,
-	}
-	for peer_id in tr.players:
-		if is_peer_online(peer_id):
-			# 每个 peer 送**他自己那一份**(多带 `your_role`):等待室靠它标"(我)",按昵称反查在
-			# 同名玩家(默认都叫 Anon)上必然高亮错行 —— 与 royale 同款。
-			var mine := state.duplicate()
-			mine["your_role"] = tr.player_role[peer_id]
-			NetBusExt.rpc_id(peer_id, "team_room_state", mine)
+	WaitRoomBroadcast.flush_team.call_deferred(self, tr)
 
 
 # ── 房间拆除的单一收口 ── 四种形态:TEARDOWN_DELAYED(正常关房,延迟归还)/ TEARDOWN_KILL(僵尸清扫,强杀 + 回收)/
@@ -716,17 +618,17 @@ func teardown_room(room, mode: int = TEARDOWN_DELAYED, msg: String = "",
 				#   杀进程是异步的,立刻 release 可能在旧进程还没死时把同一端口发给新 worker(串线)。
 				#   改走延迟归还:延迟三档(120/360s)远大于一次 PowerShell 的耗时,旧进程必已退出。
 				launcher.kill_worker(port)
-				_release_port_later(port, _registry.port_return_delay(room.mode))
+				WorkerLauncher.release_port_later(self, launcher, port, _registry.port_return_delay(room.mode))
 			TEARDOWN_ABORT:
 				launcher.release_now(port)   # worker 根本没起来 → 立刻归还(不必延迟,也不必杀)
 			TEARDOWN_ADOPT:
 				# ★ BUG-09:房摘了但 worker 还在跑 ⇒ 端口继续占着(不进池、pid 不抹),等进程退出由 reap_orphans 归还。
 				launcher.adopt_orphan(port)
 			_:
-				_release_port_later(port, _registry.port_return_delay(room.mode))
+				WorkerLauncher.release_port_later(self, launcher, port, _registry.port_return_delay(room.mode))
 	if not msg.is_empty():
 		for peer_id in peers:
-			if is_peer_online(peer_id):
+			if NetBus.is_peer_online(peer_id):
 				NetBus.reply(peer_id, "server_message", msg)
 	_registry.erase(room)
 	var why := reason
@@ -745,10 +647,4 @@ func teardown_room(room, mode: int = TEARDOWN_DELAYED, msg: String = "",
 			if multiplayer.has_multiplayer_peer() and multiplayer.get_peers().has(peer_id):
 				multiplayer.disconnect_peer(peer_id)
 
-# 延迟归还 worker 端口:给旧 worker 留足退出时间,防止端口被立刻复用导致串线。delay 由 teardown_room 按房型给三档
-# (默认值是 1v1 那一档)。★ 本方法留在 LobbyRooms 是因为它要 await get_tree() —— RefCounted 没有树(见 WorkerLauncher 类头)。
-func _release_port_later(port: int, delay: float = WorkerLauncher.WORKER_PORT_REUSE_DELAY) -> void:
-	if port <= 0:
-		return
-	await get_tree().create_timer(delay).timeout
-	launcher.release_now(port)
+# ★ S-09(2026-10-30):延迟归还端口已挪到 `WorkerLauncher.release_port_later`(端口生命周期归它;大厅只传 host)。

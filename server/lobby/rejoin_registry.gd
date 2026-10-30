@@ -5,6 +5,13 @@ extends RefCounted
 # 只留"哪一局"的键、不留房号(三张注册表房号空间重叠);TTL 只是 GC 上界,判据是 worker 还活着。
 const TOKEN_TTL_SECONDS := 3600.0
 
+
+# 一次性会话令牌(16 位 hex)。★ 旧 Godot 的 randi() 是 32 位,拼两次取 16 hex 得 64 位熵 —— 够防「误顶替」,不防恶意爆破(本设计不承担反作弊)。
+# ★ 必须是两段 %08x,不能写成 "%016x" % ((randi() << 32) | randi()):后者会越过 int64 正半区,而 %x 对负数是带符号打印
+#   (实测 12 次抽样 8 次落在负半区,长度与字符都不符契约)。S-09:从 LobbyRooms 挪来(令牌本属凭据表)。
+static func new_token() -> String:
+	return "%08x%08x" % [randi(), randi()]
+
 var _by_token: Dictionary = {}   # token(String) -> {code, mode, role, worker_port, worker_pid, expires_at}
 
 

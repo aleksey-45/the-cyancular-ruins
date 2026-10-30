@@ -84,9 +84,9 @@ func royale_start(caller: int) -> void:
 # ★ token 必须在 go_match 之前发到客户端:go_match 一到客户端就 NetBus.stop() 断大厅,之后再发就静默丢失;登记进回局表则要等 spawn 成功(要 pid)。
 	var granted: Array = []   # [[role, token], …]
 	for pid in rr.players:
-		var tk := LobbyRooms.new_token()
+		var tk := RejoinRegistry.new_token()
 		granted.append([int(rr.player_role[pid]), tk])
-		if lobby.is_peer_online(pid):
+		if NetBus.is_peer_online(pid):
 			NetBusExt.rpc_id(pid, "session_token", tk)
 	if not _launcher.spawn_royale_worker(port, rr.player_role.values()):
 		rr.in_match = false
@@ -118,9 +118,9 @@ func _grant_rejoin(code: String, port: int, granted: Array, mode: String) -> voi
 # ★ 参数刻意不带类型标注:大乱斗房与 3v3 房在这两个字段上同名同义(players / player_role),标了就会在传另一种房时运行时
 # 类型不符,而「再抄一份 _send_go_match_team」是本仓禁止的第二份真相(同一个动作只许有一处实现)。
 func _send_go_match(rr, port: int) -> void:
-	await get_tree().process_frame   # 同 _flush_royale_state:等断开信号落定再判在线
+	await get_tree().process_frame   # 同 WaitRoomBroadcast.flush_royale:等断开信号落定再判在线
 	for peer_id in rr.players:
-		if lobby.is_peer_online(peer_id):
+		if NetBus.is_peer_online(peer_id):
 			NetBus.reply(peer_id, "go_match", rr.player_role[peer_id], port)
 
 
@@ -188,9 +188,9 @@ func royale_start_ai(caller: int) -> void:
 
 	var granted: Array = []   # [[role, token], …]
 	for pid in rr.players:
-		var tk := LobbyRooms.new_token()
+		var tk := RejoinRegistry.new_token()
 		granted.append([int(rr.player_role[pid]), tk])
-		if lobby.is_peer_online(pid):
+		if NetBus.is_peer_online(pid):
 			NetBusExt.rpc_id(pid, "session_token", tk)
 # 参战集合 = 房里真人的已分配号 + AI 补位号(真人号可能带空洞,故不能写成 1..max_players)。
 	if not _launcher.spawn_royale_worker(port, rr.player_role.values() + ai_roles, ai_roles):
@@ -234,9 +234,9 @@ func team_start(caller: int) -> void:
 
 	var granted: Array = []   # [[role, token], …]
 	for pid in tr.players:
-		var tk := LobbyRooms.new_token()
+		var tk := RejoinRegistry.new_token()
 		granted.append([int(tr.player_role[pid]), tk])
-		if lobby.is_peer_online(pid):
+		if NetBus.is_peer_online(pid):
 			NetBusExt.rpc_id(pid, "session_token", tk)
 # ★ roles 与 teams 同序:roles 按号升序取,teams 跟着同一顺序取队号。★ team_of 缺该 role 时取 0 ⇒ spawn_team_worker 的取值校验当场拒绝并走拆除,不会拉起一个必然 quit 的子进程。
 	var roles: Array = tr.player_role.values()
@@ -276,9 +276,9 @@ func _start_match(room: LobbyRooms.Room) -> void:
 
 	var granted: Array = []   # [[role, token], …]
 	for pid in room.players:
-		var tk := LobbyRooms.new_token()
+		var tk := RejoinRegistry.new_token()
 		granted.append([int(room.player_role[pid]), tk])
-		if lobby.is_peer_online(pid):
+		if NetBus.is_peer_online(pid):
 			NetBusExt.rpc_id(pid, "session_token", tk)
 	if not _launcher.spawn_worker(port):
 		NetBus.reply(room.players[0], "server_message", "无法启动对局")
@@ -299,11 +299,11 @@ func _start_match(room: LobbyRooms.Room) -> void:
 
 
 func _send_go_match_1v1(room: LobbyRooms.Room, port: int) -> void:
-	await get_tree().process_frame   # 同 _flush_royale_state:等断开信号落定再判在线
+	await get_tree().process_frame   # 同 WaitRoomBroadcast.flush_royale:等断开信号落定再判在线
 	if not lobby.rooms.has(room.code):   # 帧末前已关房 → 别再给幽灵房发 go_match
 		return
 	for peer_id in room.players:
-		if lobby.is_peer_online(peer_id):
+		if NetBus.is_peer_online(peer_id):
 			NetBus.reply(peer_id, "go_match", room.player_role[peer_id], port)
 
 
@@ -365,7 +365,7 @@ func _sweep_stale_rooms() -> void:
 # 对局结束即回收:in_match(1v1 是 started)的房不再在「客户端转连 worker」那一刻被拆,必须有替代回收路径,否则端口与列表位永久占用。
 # ★ 判据 = worker 进程还在不在(WorkerLauncher.pid_alive):三种模式的 worker 都在对局结束时自己退,这是精确答案;任何按「一局
 # 大约多久」估的界都会既早(收掉还在打的局)又晚(白占端口)。★ 兜底仍在:2h 超龄清扫会把 worker 一直不退的僵尸房连进程一起杀掉。
-# ★ 回收必须走拆除单一收口(端口归还 / 注册表删除只许出现在 lobby_rooms.teardown_room 与 _release_port_later;lint 的 _check_reclaim_ladder 钉住本函数)。
+# ★ 回收必须走拆除单一收口(端口归还 / 注册表删除只许出现在 lobby_rooms.teardown_room;lint 的 _check_reclaim_ladder 钉住本函数)。
 func _reclaim_finished_matches() -> void:
 # ★ 凭据表的 GC 搭这条梯(30s 一次):TTL 只是表的上界,不需要独立定时器,再立一条梯就是本仓禁止的「同一件事两处实现」。
 	lobby.rejoin.prune(Time.get_ticks_msec())

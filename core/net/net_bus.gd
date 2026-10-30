@@ -77,6 +77,12 @@ func stop() -> void:
 
 # ── 发包前的存活判据:不用 multiplayer.get_peers()(它随 API 信号更新,比 ENet 真实状态晚,断开握手期间可达秒级)。
 # 真身:enet_peer_disconnect() 当场 reset_queues ⇒ channelCount=0 而 get_peers() 仍报在线 ⇒ 定向发送报 channel 0 错(0 = reliable)。
+# 大厅侧"该 peer 现在能不能收包"的唯一判据(S-09:从 LobbyRooms 挪来)。★ 判据本体仍是 ENet peer state:
+# 旧写法读 multiplayer.get_peers(),实测把「ENet 已断、peer_map 还没收敛」的 peer 仍报在线(晚一拍)⇒ 判早了等于没判。
+func is_peer_online(id: int) -> bool:
+	return multiplayer.has_multiplayer_peer() and is_peer_live(id)
+
+
 func is_peer_live(id: int) -> bool:
 	if multiplayer.multiplayer_peer == null:
 		return false

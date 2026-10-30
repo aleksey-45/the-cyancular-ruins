@@ -281,3 +281,14 @@ func spawn_team_worker(port: int, roles: Array, teams: Array) -> bool:
 func kill_worker(port: int) -> void:
 	# ★ BUG-10(2026-10-30):异步 —— 主线程不再被 PowerShell 阻塞几百 ms。
 	ProcUtil.kill_udp_port_async(port)
+
+
+# 延迟归还 worker 端口(2026-10-30 S-09:从 `LobbyRooms` 挪来 —— 端口生命周期属于这里,不属于 RPC handler)。
+# 给旧 worker 留足退出时间,防止端口被立刻复用导致串线。delay 由 teardown_room 按房型给三档。
+# ★ 本类仍是 RefCounted(不能 get_tree)⇒ 由调用方(大厅 Node)传 host 来拿 SceneTree 定时器。
+static func release_port_later(host: Node, launcher: WorkerLauncher, port: int,
+		delay: float = WORKER_PORT_REUSE_DELAY) -> void:
+	if port <= 0:
+		return
+	await host.get_tree().create_timer(delay).timeout
+	launcher.release_now(port)
