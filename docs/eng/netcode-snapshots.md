@@ -5,20 +5,21 @@
 
 ## 1. 频率与载荷
 
-### 1.1 下行 30Hz，tick 域仍是 60Hz
+### 1.1 下行发包率随人数切换，tick 域始终 60Hz
 
 `server/match/match_state.gd`：
 
 | 常量 | 值 |
 |---|---|
-| `SNAPSHOT_HZ` | `30` |
-| `SNAPSHOT_INTERVAL` | `1.0 / SNAPSHOT_HZ` |
-| `SNAPSHOT_STRIDE` | `60 / SNAPSHOT_HZ` = `2` |
+| `SNAPSHOT_HZ_SMALL` / `SNAPSHOT_SMALL_MAX_PLAYERS` | `60` / `6`（≤6 人：1v1 / 3v3） |
+| `SNAPSHOT_HZ_LARGE` | `30`（>6 人：大乱斗 / 16 人） |
+| `snapshot_stride()` | `1`（60Hz，每 tick 一包）或 `2`（30Hz，每 2 tick 一包） |
 
-- 物理模拟 60Hz。快照 `tick` 是 60Hz 物理 tick 域的时间戳，每包 `+= SNAPSHOT_STRIDE`，一个包跨 2 个物理 tick。
-- 触发：`server/match/match_host.gd` 的整数相位 `_snapshot_tick_phase`，满 `SNAPSHOT_STRIDE` 广播一次（浮点累加在整除边界会漂成 3 tick 一次）。
-- `SNAPSHOT_HZ` 必须是 60 的约数（30/20/15/12/10）。不整除会让 stride 被截断，tick 轴与包率同时错。
-- 同一相位决定"本 tick 是否消费一条输入记录"（见 §3）。
+- 物理模拟始终 60Hz。快照 `tick` 是 60Hz 物理 tick 域的时间戳；60Hz 时每包跨 1 tick，30Hz 时跨 2 tick。
+- 触发：`server/match/match_host.gd` 的整数相位 `_snapshot_tick_phase`，满 `snapshot_stride()` 广播一次（浮点累加在整除边界会漂成 3 tick 一次）。
+- stride 必须整除 60；发包率变化不改协议、不改客户端 playout/历史环的 tick 刻度。
+- 同一相位决定"本 tick 是否消费一条输入记录"（见 §3）；输入上行仍是 30Hz（`INPUT_BATCH_TICKS=2`），与下行发包率无关。
+- ★ 2026-10-30：1v1/3v3 从 30Hz 提到 60Hz —— 副本插值的样本间隔减半（用户反馈"对手明显不如玩家自然"）；>6 人保持 30Hz 守扇出带宽（16 人 60Hz 世界包 ≈0.5 MB/s 服务端上行）。
 
 ### 1.2 世界包：一次广播，13 字段
 

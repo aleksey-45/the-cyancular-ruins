@@ -67,14 +67,18 @@ var destructible_sub: Array = []
 var _dirty_chunks: Dictionary = {}
 # 本局被摧毁过的 16px 子格(Vector2i → true):换局增量复位只还这些格(全量 build_sim 实测 ~0.48s ⇒ 每局卡顿)。
 var damaged_subs: Dictionary = {}
-var _snapshot_tick_phase := 0   # 物理 tick 相位:每 SNAPSHOT_STRIDE 个 tick 发一次(整数计数;用浮点累加在整除边界上会漂成 3 tick 一次)
-# ── 下行发包频率(2026-10-23 起 30Hz)── ★ 物理模拟仍是 60Hz:快照的 tick 用 60Hz 物理 tick 计,30Hz 发包 ⇒ 每包跨 2 tick(SNAPSHOT_STRIDE)。
-# 为什么 30Hz:下行载荷/发包次数减半(docs/eng/netcode-snapshots.md §5.2 那条「60→30Hz」选项);代价 = C2 对账频率减半、副本插值样本间隔翻倍(playout 的 tick 域不变,仍是 60Hz tick)。
-# ★ SNAPSHOT_STRIDE 由 SNAPSHOT_HZ 推导(= 60Hz物理 tick / SNAPSHOT_HZ,必须整除):客户端 playout 时钟与位置历史都按「60Hz 物理 tick」计,两处不一致会让副本时间轴快/慢一倍。
-# ★ 非整除的 HZ(如 40)会让 stride 被整除截断 ⇒ tick 时间轴与包率同时错;要改先选 60 的约数(30/20/15/12/10)。
-const SNAPSHOT_HZ := 30
-const SNAPSHOT_INTERVAL := 1.0 / SNAPSHOT_HZ
-const SNAPSHOT_STRIDE := 60 / SNAPSHOT_HZ   # = 60Hz 物理 tick / 30Hz 发包
+var _snapshot_tick_phase := 0   # 物理 tick 相位:每 snapshot_stride() 个 tick 发一次(整数计数;浮点累加在整除边界会漂)
+# ── 下行发包频率:按在场人数切换(2026-10-30)──
+# ≤ SNAPSHOT_SMALL_MAX_PLAYERS(1v1 / 3v3 = 2~6 人)走 60Hz:样本间隔 = 1 tick ⇒ 副本插值的样本密度翻倍,
+#   对手移动/起跳/下落的加速度误差减半,观感明显更接近本地玩家;>6 人(大乱斗 / 16 人)仍 30Hz,守住扇出带宽预算
+#   (16 人 × 60Hz 世界包 ≈ 0.5 MB/s 服务端上行,见 docs/eng/netcode-at-16-players.md §1)。
+# ★ 物理模拟始终 60Hz;快照 tick 用 60Hz 物理 tick 计,客户端 playout 时钟与位置历史都按 tick 域 ⇒ 发包率变化不改协议。
+# ★ stride 必须是 60 的整除(60/30 ⇒ 1/2);非整除会让 tick 时间轴与包率同时错。
+const SNAPSHOT_HZ_SMALL := 60
+const SNAPSHOT_HZ_LARGE := 30
+const SNAPSHOT_SMALL_MAX_PLAYERS := 6
+func snapshot_stride() -> int:
+	return 1 if players.size() <= SNAPSHOT_SMALL_MAX_PLAYERS else 2
 var _seen_bullets: Dictionary = {}  # bullet instance_id -> true(只广播一次);每帧按在场子弹剪枝(见 _adjudicate_bullets)
 var _snap_tick := 0   # 快照 tick(60Hz 物理 tick 域;= _srv_tick,客户端靠它丢乱序旧快照 + playout 插值)
 var _srv_tick := 0    # 服务器物理 tick 计数(MatchHost 每物理 tick 起始 +1;快照 tick 与命中回放共用这条时间轴)
