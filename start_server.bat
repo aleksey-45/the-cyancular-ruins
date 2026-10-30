@@ -14,6 +14,9 @@ rem   现模式 = `:78[0-9][0-9] :79[0-9][0-9] :8[0-2][0-9][0-9]` ⇒ 正好覆�
 rem   ★ 命中差实测(真实 netstat -ano -p UDP,临时占 8000 / 7801 / 8300):旧模式漏掉 :8000,新模式命中。
 chcp 65001 >nul
 cd /d "%~dp0"
+rem 2026-10-30: console output also goes to a file (engine --log-file) in log\ next to this script.
+rem   The server's structured logs (diag/ops/worker) are written to the same folder by NetDiag.
+if not exist "%~dp0log" mkdir "%~dp0log"
 rem 引擎路径可用环境变量 GODOT 覆盖(换机器/换引擎版本只需设一次,不必改这些脚本)
 if not defined GODOT set "GODOT=D:\Program Files\Godot_v4.7.1-stable_win64\Godot_v4.7.1-stable_win64_console.exe"
 rem ★ 名族判定里的第 4 条 =「**该 exe 自己的名字**」。发布版 exe 被改过名(如 `RoF_server.exe`)时,
@@ -69,7 +72,7 @@ echo   Starting PvP lobby on port 7777 (workers auto-spawn)...
 echo   Wait for "server ready" output below, then keep this window open.
 echo   Close this window = stop the lobby.
 echo ============================================
-"%GODOT%" --headless --path . res://server/server_main.tscn
+"%GODOT%" --headless --log-file "%~dp0log\server_console.log" --path . res://server/server_main.tscn
 echo.
 echo Server exited. If "listen failed" appeared above, port 7777 is in use.
 pause
@@ -81,7 +84,7 @@ echo   Launching exported server (headless): %RELEASE_EXE%
 echo   Console only: no Vulkan/OpenGL needed (VM / RDP / no-GPU friendly).
 echo   Keep this window open = lobby running. Close it = stop the lobby.
 echo ============================================
-"%RELEASE_EXE%" --headless
+"%RELEASE_EXE%" --headless --log-file "%~dp0log\server_console.log"
 echo.
 echo Server exited. If "listen failed" appeared above, port 7777 is in use.
 pause

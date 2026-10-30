@@ -26,7 +26,7 @@
 ## 开局链路
 
 1. 大厅建房 / 加入并写房间记录;1v1 两人、大乱斗房主开始、3v3 两队各 3 人。
-2. `RoomManager` 冻结名单(`freeze_roster`)、`pick_port()`、`OS.create_process` 拉起 `--headless --worker --port P`;worker 引擎日志写 `user://logs/worker_<port>.log`,按端口归档保留 20 份。
+2. `RoomManager` 冻结名单(`freeze_roster`)、`pick_port()`、`OS.create_process` 拉起 `--headless --worker --port P`;worker 引擎日志写 `<日志目录>/worker_<port>.log`(日志目录:导出服务端 = exe 同目录 `log/`,开发态 = `user://logs`),按端口归档保留 20 份。
 3. 大厅先发 `session_token`,再发 `go_match(role, port)`。
 4. 客户端断开大厅、连 worker 端口、`claim_role(role, name)`;收齐 role 后 `MatchBootstrap.start_on` 建局。对局场景 `_ready` 末尾 `NetBus.rpc_id(1, "match_sync")` 拉 `match_sync_data`(昵称 / 色相 / 选项 / role 集合 / 出生点 / 地面武器 / 已拆格)。
 
@@ -62,7 +62,8 @@
 
 ## 服务端运维面
 
-- 面板:`server/gui/server_panel.tscn` 挂在 `server_main.tscn` 上;`DisplayServer.get_name() == "headless"` 时不实例化。只读大厅状态(房间 / 端口 / worker 存活 / 名单),唯一写操作是关房,走 `teardown_room`。审计:`NetDiag.audit()` 常开(仅非 client 进程),一行一 JSON 写 `user://logs/ops-<role>-<pid>-<时间戳>.jsonl`;关窗优雅拆房并写 `lobby_stop`;每局 worker 日志按端口归档。审计事件与字段的权威在 [`tests.md`](tests.md) 的「运维审计通道」一节。
+- 面板:`server/gui/server_panel.tscn` 挂在 `server_main.tscn` 上;`DisplayServer.get_name() == "headless"` 时不实例化。只读大厅状态(房间 / 端口 / worker 存活 / 名单),唯一写操作是关房,走 `teardown_room`。审计:`NetDiag.audit()` 常开(仅非 client 进程),一行一 JSON 写 `<日志目录>/ops-<role>-<pid>-<时间戳>.jsonl`;关窗优雅拆房并写 `lobby_stop`;每局 worker 日志按端口归档。审计事件与字段的权威在 [`tests.md`](tests.md) 的「运维审计通道」一节。
+- **日志落盘目录(2026-10-30)**:选择逻辑收在 [`core/net/net_metrics.gd`](../../core/net/net_metrics.gd) 的 `server_log_dir`(纯函数,`-s` 可测)。**导出构建的服务端** = exe 同目录 `log/`(默认开,无需 `--diag`);开发态 / 编辑器 / 客户端 = `user://logs`。同目录里同时落:结构化 `diag-<role>-<pid>-<时间戳>.jsonl`、运维 `ops-*.jsonl`、worker 引擎日志 `worker_<port>.log`(归档保留 20 份)。打包侧由 `build_release.py` 的产物冒烟断言「exe 同目录跑完出现非空 `log/`」。`--netstat` 每秒一行含**下行丢包估计**(world/own 两本账,tick 缺口推算,口径见 `NetMetrics.snapshot_loss`),`--diag` 每秒一条 `snap_rx` 带 `world_lost/own_lost/loss_pct`。
 
 ## 测试
 

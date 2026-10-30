@@ -90,16 +90,17 @@ bash tests/smoke/<名>.sh
 
 实现:[`core/net/net_diag.gd`](../../core/net/net_diag.gd)(`class_name NetDiag`,静态、无 autoload)。
 
-- **开关**:① 客户端命令行 `-- --diag` —— 必须写在 `--` 之后,写在前面会被 Godot 丢掉;② 环境变量 `CYR_DIAG=1`,worker 作为子进程继承(它的命令行固定拼出,不带 `--diag`)。
-- **文件**:`user://logs/diag-<role>-<pid>-<时间戳>.jsonl`,一行一个 JSON,字段 `t` / `pid` / `role` / `event` / `data`。
+- **开关**:① 客户端命令行 `-- --diag` —— 必须写在 `--` 之后,写在前面会被 Godot 丢掉;② 环境变量 `CYR_DIAG=1`,worker 作为子进程继承(它的命令行固定拼出,不带 `--diag`);③ **导出构建的服务端默认开**(2026-10-30:打包后的服务端必须永远有日志,不再要求服主记得加开关)。
+- **文件**:`<日志目录>/diag-<role>-<pid>-<时间戳>.jsonl`,一行一个 JSON,字段 `t` / `pid` / `role` / `event` / `data`。**日志目录**:导出构建的服务端 = **exe 同目录 `log/`**;其余 = `user://logs`。选择逻辑在 [`core/net/net_metrics.gd`](../../core/net/net_metrics.gd) 的 `server_log_dir`(纯函数,`-s` 可测),`NetDiag.log_dir()` 只做一次转调 —— 别在两处各判一次是否导出。
 - **默认关 = 零成本**:`enabled()` 懒查一次;关着时不开文件、不拼 JSON。
-- 判据:**零守卫**（原 `net_diag_smoke.gd` 已随 2026-10-24 默认批削减删除；缺口登记在 [`registered-debt.md`](registered-debt.md) §九）。
+- 判据:**零守卫**（原 `net_diag_smoke.gd` 已随 2026-10-24 默认批削减删除；缺口登记在 [`registered-debt.md`](registered-debt.md) §九）。2026-10-30 起 `snap_rx` 的丢包字段与目录选择各有一支纯逻辑冒烟（`net_metrics_smoke`）；**接线**（`NetBus` 调用点、`NetDiag.log_dir` 调用点）仍无守卫，导出侧由 `build_release.py` 的 `require_log_dir` 兜底。
 
 | 事件 | 落点 | 读它回答什么 |
 |---|---|---|
 | `session_start` | `net_diag.gd` 自己 | 版本 / 引擎 / OS / 文件路径 |
+| `server_boot` | [`server/server_main.gd`](../../server/server_main.gd) | 服务端启动参数（worker / port / 模式 / role 集合）|
 | `snap_gap` | [`core/net/net_bus.gd`](../../core/net/net_bus.gd) 的 `snapshot_world` | 世界包断流 >150ms |
-| `snap_rx` / `snapshot_tx` | `net_bus.gd` / [`server/match/match_snapshot.gd`](../../server/match/match_snapshot.gd) | 按 1Hz 对账「没发出」与「发了没收到」 |
+| `snap_rx` / `snapshot_tx` | `net_bus.gd` / [`server/match/match_snapshot.gd`](../../server/match/match_snapshot.gd) | 按 1Hz 对账「没发出」与「发了没收到」;`snap_rx` 另有 `world_lost` / `world_loss_pct` / `own_lost` / `own_loss_pct` / `step`（**下行丢包估计**:相邻快照 tick 缺口按学到的步长折算,口径见 `NetMetrics.snapshot_loss`）|
 | `rollback` | [`core/net/prediction_rollback.gd`](../../core/net/prediction_rollback.gd) 的 `_handle_ack` | 位置 / 速度误差、是否贴身、重放条数 |
 | `queue` / `queue_drop` | [`server/match/input_intake.gd`](../../server/match/input_intake.gd) | 服务器输入队列深度 / 上限 / 累计丢弃 |
 | `pickup_try` | [`server/match/match_ground.gd`](../../server/match/match_ground.gd) | `none` / `range` / `denied` / `taken` 四种成因 |
@@ -114,7 +115,7 @@ bash tests/smoke/<名>.sh
 实现同样在 `net_diag.gd`,与 `--diag` 互不替代。
 
 - **开关**:**常开**,但只在**非 client 进程**(`should_audit(role())`)。服务端启动即 `NetDiag.set_role("server")` —— 漏这一行,`role()` 会把大厅推断成 client,审计永远不写。
-- **文件**:`user://logs/ops-<role>-<pid>-<时间戳>.jsonl`,与 diag 同形;每条都 `flush`。
+- **文件**:`<日志目录>/ops-<role>-<pid>-<时间戳>.jsonl`(日志目录口径与 `--diag` 同一处:`NetDiag.log_dir()`;导出服务端 = exe 同目录 `log/`),与 diag 同形;每条都 `flush`。
 - **保留策略**:数值只看常量 `NetDiag.OPS_KEEP`(60 份)与 `OPS_WARN_BYTES`(8 MiB)。开新文件前按文件名里的**时间戳段**倒序保留最新 N 份;单文件超上限 `push_warning` 一次。
 - 一个进程一个文件(1 大厅 + 每局 1 worker)⇒ N 份 ≈ N-1 局。
 - **事件**:`lobby_start` / `lobby_stop` · `room_created` / `room_closed` · `player_join` / `player_leave` / `player_detach` / `host_transfer` · `match_start` / `match_begin` / `match_end` / `match_over` · `abort` · `worker_spawn_failed` / `worker_lost`。细节归 `--diag`。

@@ -115,7 +115,7 @@ def _smoke_root() -> str:
     return root
 
 
-def smoke_check(exe: str, extra: list, expect: str = "") -> str:
+def smoke_check(exe: str, extra: list, expect: str = "", require_log_dir: bool = False) -> str:
     print("== 冒烟 [%s] %s" % (os.path.basename(exe), " ".join(extra) or "(直接启动)"))
     # ★ extra 里的开关**必须放在 `--` 之后**:server_main.gd 读的是 `OS.get_cmdline_user_args()`
     #   (分隔符之后的那截)。写在 `--` 之前 Godot 会把它当自己的参数丢掉,`--worker` 静默失效 →
@@ -145,6 +145,17 @@ def smoke_check(exe: str, extra: list, expect: str = "") -> str:
             sys.exit("冒烟失败:%s 在**项目目录之外**的干净目录里退出码 = %d(崩溃或异常退出?)\n"
                      "  ★ 崩溃不打 SCRIPT ERROR,只看文本会把这一档读成 OK,故此处查返回码。\n"
                      "  末尾输出:\n  %s" % (os.path.basename(exe), r.returncode, tail))
+        # ★ 2026-10-30 增(只对服务端):**打包后的服务端必须默认落盘** —— 运行完 exe 同目录必须
+        #   出现 `log/` 且里面有文件。判"有没有文件"而不是"有没有那一行 print":文件才是排障时真拿到的东西。
+        #   去掉什么才红:NetDiag.enabled() 删掉「导出服务端默认开」那段,或 log_dir() 不再选 exe 同目录。
+        if require_log_dir:
+            log_dir = os.path.join(tmp, "log")
+            files = sorted(os.listdir(log_dir)) if os.path.isdir(log_dir) else []
+            if not files:
+                sys.exit("冒烟失败:%s 起来了但**没有在 exe 同目录生成 log/**(目录 %s,文件 %d 个)\n"
+                         "  ★ 打包后的服务端必须默认有日志;检查 NetDiag.enabled() 的「导出服务端默认开」"
+                         "与 log_dir() 的口径。" % (os.path.basename(exe), log_dir, len(files)))
+            print("    OK(默认日志目录:%s,文件 %s)" % (log_dir, ", ".join(files[:6])))
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     bad = [ln for ln in out.splitlines()
@@ -321,7 +332,8 @@ def main() -> None:
         # 这里拿仓库那份 json 与它逐条对账(理由见 check_weapon_registry 上方)
         check_weapon_registry(smoke_check(CLIENT_OUT, ["--registry-report"],
                                           expect="[registry] weapons="))
-        smoke_check(SERVER_OUT, ["--worker", "--port", "7999"], expect="worker 就绪")
+        smoke_check(SERVER_OUT, ["--worker", "--port", "7999"], expect="worker 就绪",
+                    require_log_dir=True)
         # macOS:客户端 + 服务端(serverui 特征 ⇒ server_main)。不能在本机执行 ⇒ 只做结构/体积校验。
         # ★ 必须先删旧 zip:Godot 的 mac 导出**复用已存在的 zip 会静默产出空包**(实测 22 B 的 EOCD-only zip,
         #   导出仍报 OK)⇒ 先删再导 + verify_mac_zip 兜底。Windows exe 覆盖写没有这个问题。

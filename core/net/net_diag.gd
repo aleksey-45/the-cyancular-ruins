@@ -40,23 +40,40 @@ static var _ops_file: FileAccess = null
 
 
 ## 是否开启(懒查一次;`--diag` 必须在 `--` 之后,或环境变量 `CYR_DIAG=1`)。
+## ★ 2026-10-30 追加:**导出构建里的服务端默认开** —— 打包后的服务端必须永远有日志可查(运营/排障前提),
+##   所以不再要求服主记得加 `--diag`。开发态 / 客户端仍默认关(测试与正常对局行为逐字不变)。
 static func enabled() -> bool:
 	if not _checked:
 		_checked = true
 		_enabled = OS.get_cmdline_user_args().has("--diag") or OS.get_environment("CYR_DIAG") == "1"
+		if not _enabled and role() == "server" and OS.has_feature("template"):
+			_enabled = true
 	return _enabled
 
 
 ## 本进程角色(server / client),写进每一行便于多进程日志并排读。
+## ★ 导出标记:服务端导出用 `serverui`(项目主场景覆盖),worker 命令行带 `--worker`;两者都算服务端。
 static func role() -> String:
 	if _role.is_empty():
 		var ua := OS.get_cmdline_user_args()
-		_role = "server" if (OS.has_feature("dedicated_server") or ua.has("--worker") or ua.has("--server")) else "client"
+		_role = "server" if (OS.has_feature("dedicated_server") or OS.has_feature("serverui")
+				or ua.has("--worker") or ua.has("--server")) else "client"
 	return _role
 
 
 static func set_role(r: String) -> void:
 	_role = r
+
+
+## 日志落盘目录(2026-10-30)。**打包后的服务端** = exe 同目录的 `log/`(导出即生效,不需要任何开关);
+## 其余(开发态 / 编辑器 / 客户端) = `user://logs`。选择逻辑收在 NetMetrics.server_log_dir(纯函数,`-s` 可测)——
+## 别在这里另写一份判据:口径漂了就等于"打包后日志又回 user://",而现场没人找得到它。
+static func log_dir() -> String:
+	return NetMetrics.server_log_dir(
+			role() == "server",
+			OS.has_feature("template"),
+			OS.get_executable_path().get_base_dir(),
+			ProjectSettings.globalize_path(DIR_NAME))
 
 
 const OPS_KEEP := 60
@@ -101,7 +118,9 @@ static func log_event(event: String, data: Dictionary = {}, urgent := false) -> 
 	_mutex.lock()
 	_file.store_line(line)
 	_count += 1
-	if urgent:
+	# ★ 服务端每行都刷:worker 可能被强杀/崩溃,缓冲区里的"最后几条"恰恰是最值钱的现场。
+	#   服务端事件率低(1Hz 采样 + 少量事件),每行 flush 的代价可以忽略;客户端保留原语义(只在 urgent 刷)。
+	if urgent or role() == "server":
 		_file.flush()
 	_mutex.unlock()
 
@@ -137,7 +156,7 @@ static func _ensure_open() -> void:
 		return
 	_mutex.lock()
 	if _file == null and not _open_failed:
-		var dir := ProjectSettings.globalize_path(DIR_NAME)
+		var dir := log_dir()
 		DirAccess.make_dir_recursive_absolute(dir)
 		var stamp := Time.get_datetime_string_from_system().replace(":", "").replace("-", "").replace(" ", "_")
 		var path := dir.path_join("diag-%s-%d-%s.jsonl" % [role(), OS.get_process_id(), stamp])
@@ -199,7 +218,7 @@ static func _ensure_audit_open() -> void:
 		return
 	_mutex.lock()
 	if _ops_file == null and not _ops_failed:
-		var dir := ProjectSettings.globalize_path(DIR_NAME)
+		var dir := log_dir()
 		DirAccess.make_dir_recursive_absolute(dir)
 		_prune_ops(dir)
 		var stamp := Time.get_datetime_string_from_system().replace(":", "").replace("-", "").replace(" ", "_")

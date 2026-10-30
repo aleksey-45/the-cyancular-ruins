@@ -48,6 +48,9 @@ func _ready() -> void:
 	# ★ 解析完立刻落进实例标志(报到梯读它);位置紧跟校验、不进任何分支 —— 写进某条分支里迟早会漏掉另一种形态。
 	_worker = is_worker
 	NetDiag.set_role("server")   # 导出标记已换成 serverui ⇒ role() 推断不出服务端,必须显式声明
+	# ★ 打包后的服务端默认落盘(exe 同目录 log/);开发态落 user://logs。启动就打出路径 ——
+	#   "日志在哪"不该靠人从源码里翻(运维第一句话永远是这个)。
+	print("[server] 日志目录: %s" % NetDiag.log_dir())
 	_royale = bool(ctx["royale"])
 	_team_mode = bool(ctx["team"])
 	_role_set.assign(ctx["roles"])
@@ -56,6 +59,11 @@ func _ready() -> void:
 	_team_of_role = ctx["team_of"]
 	var port := int(ctx["port"])
 	_apply_test_flags(args)
+	# 启动即落一条:打包后的服务端"一定有日志文件"这件事就靠它兜底(不必等第一条对局事件)。
+	# diag 走 `--diag`/CYR_DIAG=1/导出构建默认开;ops 审计本来就只有服务端写。
+	NetDiag.log_event("server_boot", {"worker": is_worker, "port": port,
+			"royale": _royale, "team": _team_mode, "roles": _role_set})
+	NetDiag.audit("server_boot", {"worker": is_worker, "port": port})
 	if is_worker:
 		_run_worker(port)
 		return

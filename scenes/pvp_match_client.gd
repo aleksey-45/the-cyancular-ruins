@@ -528,9 +528,16 @@ func _netstat_tick(delta: float) -> void:
 	var where := Vector2.ZERO
 	if _local != null and is_instance_valid(_local):
 		where = (_local as Node2D).global_position
-	print("[netstat] seq=%d ack=%d gap=%d(滞后 %.0fms) | ping=%dms | 扣网后积压≈%.0fms | 回滚累计=%d (+%d/s) | 事件对齐=%d(+%d/s) 拒绝=%d(+%d/s) | pos=(%.0f,%.0f) | 物理步/秒=%d 渲染fps=%d"
+	# 下行丢包估计(2026-10-30):世界包 / 本人包各一本账,tick 缺口推算(口径见 NetMetrics.snapshot_loss)。
+	# ★ 这一项是「卡/瞬移」的第一手判据:world_lost 涨而 ping 稳 = 链路丢包,不是服务器慢。
+	var snap := NetBus.snap_stats()
+	var wl := int(snap["world_lost"])
+	var ol := int(snap["own_lost"])
+	print("[netstat] seq=%d ack=%d gap=%d(滞后 %.0fms) | ping=%dms | 扣网后积压≈%.0fms | 回滚累计=%d (+%d/s) | 事件对齐=%d(+%d/s) 拒绝=%d(+%d/s) | 世界包 rx=%d 丢=%d(≈%d%%) | 本人包 rx=%d 丢=%d(≈%d%%) | pos=(%.0f,%.0f) | 物理步/秒=%d 渲染fps=%d"
 			% [_input_seq, _last_ack, gap, lag_ms, ping, lag_ms - float(ping), rb, rb - _netstat_prev_rb,
 			ea, ea - _netstat_prev_ea, er, er - _netstat_prev_er,
+			int(snap["world_rx"]), wl, NetMetrics.loss_pct(int(snap["world_rx"]), wl),
+			int(snap["own_rx"]), ol, NetMetrics.loss_pct(int(snap["own_rx"]), ol),
 			where.x, where.y, _netstat_steps, Engine.get_frames_per_second()])
 	_netstat_steps = 0
 	_netstat_prev_rb = rb

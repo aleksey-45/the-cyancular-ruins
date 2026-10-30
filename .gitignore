@@ -72,3 +72,5 @@ gamelogs/
 #   ★ 2026-10-04 订正:那半句"本次只做 ignore"已过期 —— `allscript_probe.gd:7-9` 现已把
 #   `res://_crashtest` 收进 SKIP_DIRS,即"假红"那半边已按本注预定的方式根治。
 _crashtest/
+# 服务端默认日志目录(2026-10-30):导出服务端在 exe 同目录建 log/,start_server.bat 在仓库根跑时也用它
+log/

@@ -296,3 +296,22 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 **验证**：`bash tests/run_real.sh --list`（闸四：ENTRIES 每条匹配真实文件、无遗留 `.sh` 未登记）· `python tools/check_naming.py`（规则 C：文档引用路径存在）· `git status --short`（四个文件 staged 删除）。**真链路批未跑**（占 7777，按 AGENTS §1 等用户认领）。
 
 **翻案条件**：需要真链路覆盖「房间列表 UI 路径」或「claim 后无 `match_start` 的客户端行为」时重写一支 —— 必须带**客户端自超时**与**可达判词**，且不得占用批内前序支的清理窗口。
+
+
+## 二十八、下行丢包估计 + 打包服务端默认日志（2026-10-30，档 2）
+
+> 用户指令：「有没有性能分析的 log（延迟/丢包/回滚）」→ 补丢包度量；「以后打包服务端都要有生成 log 的功能（默认同目录建立 log 文件夹然后往里面写文件）」。
+
+**改了什么**：
+1. **下行丢包估计**（新文件 [`core/net/net_metrics.gd`](../../core/net/net_metrics.gd)，纯静态、`-s` 可测）：世界包 / 本人包走 unreliable、每快照 tick 一包且包内带 `tick` ⇒ 相邻两包 tick 差 > 学到的步长即记丢包。`NetBus` 里两本累计账（`_rx_world_lost` / `_rx_own_lost`），`--netstat` 每秒一行新增 `世界包 rx/丢/≈%`、`本人包 rx/丢/≈%`；`--diag` 的 `snap_rx` 每秒一条新增 `world_lost / world_loss_pct / own_lost / own_loss_pct / step`。计数**始终在跑**（几行整数），只有日志是默认关。
+2. **打包服务端默认日志**：`NetDiag.enabled()` 追加「导出构建（`OS.has_feature("template")`）里的服务端默认开」；`NetDiag.log_dir()` 走 `NetMetrics.server_log_dir`（导出服务端 = **exe 同目录 `log/`**，其余 = `user://logs`）；diag 与 ops 两个文件都落该目录，worker 的引擎日志 `worker_<port>.log` 同目录（`worker_launcher.log_path` 改调 `NetDiag.log_dir()`，不再自判）；`server_main` 启动即打「日志目录: …」并落 `server_boot`；服务端写 diag 每行 flush（worker 可能被强杀，最后几条最值钱）。
+3. **打包侧断言**：[`tools/build_release.py`](../../tools/build_release.py) 的服务端产物冒烟加 `require_log_dir=True` —— 跑完 exe 同目录必须出现非空 `log/`，否则发布脚本红。`start_server.bat` 加 `mkdir log` + 引擎 `--log-file "%~dp0log\server_console.log"`（控制台输出另存）。
+4. **守卫**：新 `tests/smoke/net_metrics_smoke.gd`（9 条 + `EXPECTED_CHECKS`，tick 缺口口径 / 步长折算 / 首包与乱序 / 丢包率分母 / 日志目录四组合）；`allscript_probe.EXPECTED_SCRIPTS` 191 → **193**。
+
+**边界（照实）**：
+1. 丢包是**估计**不是链路真值：迟到/乱序包（旧 tick）不计丢也不更新基线；重连/换局靠 `reset_snapshot_state()` 清基线（不清会把纪元跳变记成一笔假丢包）。**真实丢包分布未做人为丢包专测**（要真链路 + 网络损伤工具）。
+2. 上行输入丢包仍只有间接读数（`input_intake` 的队列丢弃），没有 seq 缺口统计。
+3. `NetMetrics` 的纯函数面有两处**接线**不在该冒烟里（`NetBus` 调用点、`NetDiag.log_dir` 调用点）：接线断了冒烟不会红，只有真链路 `--netstat` 读数或打包冒烟能发现 —— `build_release.py` 的 `require_log_dir` 正是后者的自动化。
+4. 导出构建的服务端日志目录**未在本机实测**（本轮只跑了 headless 开发态与纯逻辑冒烟；导出模板冒烟要跑完整 `build_release.py`）—— 首次真跑发布时请确认 `log/` 真的出现在 exe 旁。
+5. 引擎级 `--log-file` 只覆盖由 `start_server.bat` 启动的进程；直接双击 exe 时控制台输出不落盘（NetDiag 的结构化日志仍落盘）。
+6. 客户端导出构建不强制日志（`--diag` 仍 opt-in），日志仍去 `user://logs`。

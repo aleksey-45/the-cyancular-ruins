@@ -83,7 +83,10 @@ func busy_ports() -> Array[Dictionary]:
 # ── worker 的引擎日志落盘(两个 spawn 共用)── worker 是独立进程,stdout 父进程看不到(Windows CreateProcess
 # 不继承句柄)⇒ 它崩了/报错/提前退出,大厅这边一个字都收不到。⚠ --log-file 是引擎选项,必须排在 -- 之前(之后会被当用户参数吞掉)。
 func log_path(port: int) -> String:
-	var dir := ProjectSettings.globalize_path("user://logs")
+	# ★ 目录口径与 NetDiag 同源(别在这里另判一次是否导出):打包后的服务端 = exe 同目录 `log/`,
+	#   开发态 = user://logs。worker 的引擎日志(--log-file)与它自己的 diag/ops jsonl 落在同一个文件夹里,
+	#   出问题时"一个目录 = 一整场对局的全部日志",不用去 user:// 里翻。
+	var dir := NetDiag.log_dir()
 	DirAccess.make_dir_recursive_absolute(dir)
 	return dir.path_join("worker_%d.log" % port)
 

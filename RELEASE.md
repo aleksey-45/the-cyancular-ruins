@@ -72,6 +72,7 @@
 - **把 exe 拷到项目目录外的干净文件夹再运行**:在项目目录里跑时 Godot 会用本地文件补缺失项,会掩盖打包漏项。
 - 完整玩一遍(移动 / 射击 / HUD / 后处理 / 死亡效果),并确认地图 / 关卡正常加载。
 - 单文件大小 ≈ 45 MB + 新增资源。
+- **服务端日志(2026-10-30 起,默认开)**:导出的服务端 `Cyancular Ruins Server.exe` 启动即在 **exe 同目录建 `log/`** 并写入 —— `diag-server-<pid>-<时间戳>.jsonl`(结构化诊断:快照收发 / **下行丢包估计** / 回滚 / 输入队列)、`ops-server-<pid>-<时间戳>.jsonl`(运维审计)、worker 的 `worker_<port>.log`(引擎日志,按端口归档保留 20 份);用 `start_server.bat` 起时控制台输出另存 `log\server_console.log`。**不需要任何开关**;`build_release.py` 的产物冒烟会断言「跑完 exe 同目录有 `log/` 且非空」,红了 = 打包后的服务端会没有日志。开发态(源码 + Godot)日志仍在 `user://logs`。
 
 ### 1.4 发布
 把 `The Cyancular Ruins.exe` 这一个文件发出去即可。

@@ -177,6 +177,22 @@ var _diag_snap_us := 0
 var _diag_rx := 0        # 本秒收世界包数(--diag;与服务器 snapshot_tx 的 world_msgs 对账)
 var _diag_rx_at := 0     # 上一次汇总的世界包时间戳(usec)
 
+# ── 下行丢包估计(tick 缺口;2026-10-30 补)──
+# ★ 为什么补:此前"丢包"只能拿客户端 `snap_rx.world_msgs` 与服务器 `snapshot_tx.world_msgs`
+#   两份 jsonl 按秒手工对账 —— 现场没人会对,于是所有"卡/瞬移"的结论都停在猜测。
+#   现在客户端自己按 tick 缺口算(口径见 NetMetrics.snapshot_loss):世界包 / 本人包各一本累计账,
+#   `--netstat` 每秒一行、`--diag` 每秒一条 `snap_rx`。**默认不计日志**,计数始终在跑(几行整数,零分配)。
+var _snap_step := 1      # 学到的"无丢包时相邻快照的 tick 步长"(只在没记丢包的那一步学)
+var _rx_world := 0       # 累计收世界包数
+var _rx_world_lost := 0  # 累计估计丢掉的世界包数
+var _rx_world_win := 0   # 本汇总窗口
+var _rx_world_lost_win := 0
+var _rx_own := 0
+var _rx_own_lost := 0
+var _rx_own_win := 0
+var _rx_own_lost_win := 0
+var _own_step := 1
+
 # ── 全量快照(2026-10-28 放弃增量)──
 # ★ 为什么回退:DELTA 依赖 base_tick 链,unreliable 通道乱序/丢包时恢复代价是 RTT 级冻结(用户实测"联机对手显示卡");
 #   v0.5.1 就是每包自包含、实测不卡。生产端现在只发 FULL(编解码仍能解 DELTA,能力保留给探针/将来)。
@@ -191,9 +207,21 @@ func snapshot_need_full() -> bool:
 
 
 # 重连/换局:清 tick 去重锚点(不清会拿上一纪元的 tick 去比,把新纪元的包全丢掉)。
+# ★ 丢包基线一起清:新纪元第一个包没有"上一包",拿旧基线算会把纪元跳变记成一笔假丢包。
+#   累计计数(_rx_*_lost)不清 —— 那是整场对局的账;`--netstat` 看的是它。
 func reset_snapshot_state() -> void:
 	_last_world_tick = -1
 	_last_own_tick = -1
+	_snap_step = 1
+	_own_step = 1
+
+
+## 下行度量读数(`--netstat` 用):累计收包 / 估计丢包 / 当前步长。零日志成本。
+func snap_stats() -> Dictionary:
+	return {
+		"world_rx": _rx_world, "world_lost": _rx_world_lost,
+		"own_rx": _rx_own, "own_lost": _rx_own_lost, "step": _snap_step,
+	}
 
 
 @rpc("authority", "call_remote", "unreliable", 0)
@@ -205,18 +233,43 @@ func snapshot_world(payload: PackedByteArray) -> void:
 	var tick := int(pkt.get("tick", 0))
 	if tick <= _last_world_tick:
 		return   # 乱序/重复旧包
+	# 丢包估计先于基线更新:用**上一包学到的**步长算缺口,算完才允许学新步长
+	# (顺序反了会把缺口本身学成步长 ⇒ 永远 0 丢包)。
+	var lost := NetMetrics.snapshot_loss(_last_world_tick, tick, _snap_step)
+	if lost == 0:
+		var d := tick - _last_world_tick
+		if d > 0 and d <= 8:
+			_snap_step = d
 	_last_world_tick = tick
+	_rx_world += 1
+	_rx_world_lost += lost
+	_rx_world_win += 1
+	_rx_world_lost_win += lost
 	var now := Time.get_ticks_usec()
 	if NetDiag.enabled():
 		# 1Hz 收包计数:和服务器 `snapshot_tx` 的 world_msgs 按同一秒对账 ⇒
-		# 「服务器没发(含 all_peers_sendable 整发跳过)」与「发了但这条链路没收到」从此可分。
+		# 「服务器没发(含 all_peers_sendable 整发跳过)」与「发了但这条链路没收到」从此可分;
+		# 本包再加 tick 缺口估计 ⇒ 不用对账也能直接读"丢了几包/几%"。
 		_diag_rx += 1
 		if _diag_rx_at == 0:
 			_diag_rx_at = now
 		elif now - _diag_rx_at >= 1000000:
-			NetDiag.log_event("snap_rx", {"interval_ms": int((now - _diag_rx_at) / 1000), "world_msgs": _diag_rx})
+			NetDiag.log_event("snap_rx", {
+				"interval_ms": int((now - _diag_rx_at) / 1000),
+				"world_msgs": _rx_world_win,
+				"world_lost": _rx_world_lost_win,
+				"world_loss_pct": NetMetrics.loss_pct(_rx_world_win, _rx_world_lost_win),
+				"own_msgs": _rx_own_win,
+				"own_lost": _rx_own_lost_win,
+				"own_loss_pct": NetMetrics.loss_pct(_rx_own_win, _rx_own_lost_win),
+				"step": _snap_step,
+			})
 			_diag_rx_at = now
 			_diag_rx = 0
+			_rx_world_win = 0
+			_rx_world_lost_win = 0
+			_rx_own_win = 0
+			_rx_own_lost_win = 0
 		if _diag_snap_us > 0:
 			var gap_ms := int((now - _diag_snap_us) / 1000)
 			if gap_ms > 150:
@@ -235,7 +288,17 @@ func snapshot_own(payload: PackedByteArray) -> void:
 	var tick := int(pkt.get("tick", 0))
 	if tick <= _last_own_tick:
 		return   # 旧包
+	# 本人包同一套 tick 缺口估计(与 snapshot_world 同口径、各自一本步长账)。
+	var lost := NetMetrics.snapshot_loss(_last_own_tick, tick, _own_step)
+	if lost == 0:
+		var d := tick - _last_own_tick
+		if d > 0 and d <= 8:
+			_own_step = d
 	_last_own_tick = tick
+	_rx_own += 1
+	_rx_own_lost += lost
+	_rx_own_win += 1
+	_rx_own_lost_win += lost
 	# ★ 下游仍收完整 c2(与全量时代同形状):rollback 锚点/软同步零改动。
 	local_snapshot_own.emit({"ack_seq": int(pkt.get("ack_seq", 0)), "q": int(pkt.get("q", 0)),
 			"c2": pkt.get("c2", {})})
