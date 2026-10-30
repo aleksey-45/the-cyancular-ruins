@@ -16,7 +16,7 @@ const LagComp := preload("res://core/net/lag_comp.gd")
 const HitShape := preload("res://core/sim/hit_shape.gd")   # 受击判定几何唯一入口(cull 用)
 const PredictionContact := preload("res://core/net/prediction_contact.gd")   # 幽灵体外推的滞后/接触判据(纯函数)
 
-# ── playout 缓冲插值 ── 延迟量 = LagComp.PLAYOUT_TICKS(60Hz tick 域,3 tick ≈ 50ms):1 个发包间隔是夹逼插值下限,
+# ── playout 缓冲插值 ── 延迟量 = LagComp.PLAYOUT_TICKS(60Hz tick 域;2 tick ≈ 33ms):1 个发包间隔是夹逼插值下限,
 # 第 2 个吸收抖动;改大更抗抖但对手更迟。★ 服务器命中回放与这里共用同一常量(时间域解耦),别在副本里另写一个数。
 const HISTORY_MAX := 12
 

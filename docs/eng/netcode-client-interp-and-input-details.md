@@ -5,7 +5,7 @@
 ## 1. 副本：playout 缓冲插值
 
 - `_process`：`_clock.advance(delta)` ⇒ `global_position = _sample_history(_clock.render_tick)`，再把取样点 `anchor_to_nearest(...)` 回本地玩家最近的副本。
-- 位置历史环 `place_history`（元素 `{tick, pos, st}`，pos 是 canonical，定长 `HISTORY_MAX = 12`）；`PLAYOUT_TICKS = 3`（单一来源 `core/net/lag_comp.gd`）—— 60Hz tick 域、下行 30Hz ⇒ **1.5 个发包间隔 ≈ 50ms 缓冲**。
+- 位置历史环 `place_history`（元素 `{tick, pos, st}`，pos 是 canonical，定长 `HISTORY_MAX = 12`）；`PLAYOUT_TICKS = 2`（单一来源 `core/net/lag_comp.gd`）—— 60Hz tick 域、下行 60Hz ⇒ **2 个发包间隔 ≈ 33ms 缓冲**。
 - `apply_snapshot(data, local_anchor, tick)` 的第三参参与计算：喂 `PlayoutClock.on_snapshot(tick)` 与 `_push_history(tick, pos)`。
 - 取样:比最老还老冻在最老、不倒退;比最新还新(underrun)**有界外插**(最新权威速度,最多 2 tick / 60px,超出冻结);中间用三次 Hermite(切线 = 快照 `vel` × 本段时长)。跨接缝的那一对样本必须**先锚进同一个副本空间再插**,否则差量是一整幅地图。
 - 相邻样本的环面距离 > `SNAP_DIST`（128 px）⇒ 清历史、一帧落位（回溯 / 重生 / 换边本来就是瞬移）。

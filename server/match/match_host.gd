@@ -190,12 +190,12 @@ func _physics_process(delta: float) -> void:
 				if acc.spend(delta, time_economy.rules.haste_burn) < burn * 0.999:
 					on = false   # 账户当帧烧空(余额/锁定不足)→ 立即回落,与单机同款
 			p.pvp_haste_mult = time_economy.rules.haste_mult if on else 1.0
-	# 下行发包:每 snapshot_stride() 个物理 tick 广播一次(整数相位;≤6 人 60Hz / 更大局 30Hz,见 MatchState)。
-	# ★ U1 后消费节奏与广播相位**解耦**:服务器每物理 tick 消费一条记录(一条 = 1 tick);广播按人数切换。
+	# 下行发包:每 SNAPSHOT_STRIDE 个物理 tick 广播一次(整数相位;2026-10-30 起全部 60Hz,stride=1)。
+	# ★ U1 后消费节奏与广播相位**解耦**:服务器每物理 tick 消费一条记录(一条 = 1 tick);广播按 60Hz。
 	# ★ S1(2026-10-24):本 tick 只广播**世界包**;本人包(ack+c2)在玩家步进之后帧末发(见下方 _flush_own_snapshots)。
 	_snapshot_tick_phase += 1
 	var snapshot_tick := false
-	if _snapshot_tick_phase >= snapshot_stride():
+	if _snapshot_tick_phase >= SNAPSHOT_STRIDE:
 		_snapshot_tick_phase = 0
 		snapshot_tick = true
 		_broadcast_snapshot()

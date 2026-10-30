@@ -5,21 +5,21 @@
 
 ## 1. 频率与载荷
 
-### 1.1 下行发包率随人数切换，tick 域始终 60Hz
+### 1.1 下行 60Hz，tick 域也是 60Hz
 
 `server/match/match_state.gd`：
 
 | 常量 | 值 |
 |---|---|
-| `SNAPSHOT_HZ_SMALL` / `SNAPSHOT_SMALL_MAX_PLAYERS` | `60` / `6`（≤6 人：1v1 / 3v3） |
-| `SNAPSHOT_HZ_LARGE` | `30`（>6 人：大乱斗 / 16 人） |
-| `snapshot_stride()` | `1`（60Hz，每 tick 一包）或 `2`（30Hz，每 2 tick 一包） |
+| `SNAPSHOT_HZ` | `60`（所有人数的对局） |
+| `SNAPSHOT_INTERVAL` | `1.0 / SNAPSHOT_HZ` |
+| `SNAPSHOT_STRIDE` | `60 / SNAPSHOT_HZ` = `1` |
 
-- 物理模拟始终 60Hz。快照 `tick` 是 60Hz 物理 tick 域的时间戳；60Hz 时每包跨 1 tick，30Hz 时跨 2 tick。
-- 触发：`server/match/match_host.gd` 的整数相位 `_snapshot_tick_phase`，满 `snapshot_stride()` 广播一次（浮点累加在整除边界会漂成 3 tick 一次）。
+- 物理模拟 60Hz。快照 `tick` 是 60Hz 物理 tick 域的时间戳，每包 `+= 1`，一个包跨 1 个物理 tick。
+- 触发：`server/match/match_host.gd` 的整数相位 `_snapshot_tick_phase`，满 `SNAPSHOT_STRIDE` 广播一次（浮点累加在整除边界会漂）。
 - stride 必须整除 60；发包率变化不改协议、不改客户端 playout/历史环的 tick 刻度。
 - 同一相位决定"本 tick 是否消费一条输入记录"（见 §3）；输入上行仍是 30Hz（`INPUT_BATCH_TICKS=2`），与下行发包率无关。
-- ★ 2026-10-30：1v1/3v3 从 30Hz 提到 60Hz —— 副本插值的样本间隔减半（用户反馈"对手明显不如玩家自然"）；>6 人保持 30Hz 守扇出带宽（16 人 60Hz 世界包 ≈0.5 MB/s 服务端上行）。
+- ★ 2026-10-30：从"≤6 人 60Hz / >6 人 30Hz"改为**全部 60Hz**（用户指定）—— 样本间隔一律 16.7ms；代价见 [`netcode-at-16-players.md`](netcode-at-16-players.md) §1（16 人局服务端上行 ≈0.6 MB/s）。
 
 ### 1.2 世界包：一次广播，13 字段
 
@@ -115,18 +115,18 @@ NetBus.rpc_id(peer, "snapshot_own",
 ## 2. 远端副本：playout 缓冲插值
 
 - [`player_replica.gd`](../../scenes/player/player_replica.gd) `apply_snapshot` 把快照位置塞进定长历史环并喂播放时钟；`_process` 在「最新 − `PLAYOUT_TICKS`」那一刻对两条相邻快照夹逼插值。
-- `PLAYOUT_TICKS = 3`（60Hz tick 域；单一来源 `core/net/lag_comp.gd`）；下行 30Hz ⇒ **1.5 个发包间隔 ≈ 50ms 缓冲**，也是「画面比权威晚多少」的旋钮。
-- 无外插：取样比最新还新（underrun）冻在最新；比最老还老冻在最老。跨接缝那一对样本先锚进同一副本空间再 lerp。
+- `PLAYOUT_TICKS = 2`（60Hz tick 域；单一来源 `core/net/lag_comp.gd`）；下行 60Hz ⇒ **2 个发包间隔 ≈ 33ms 缓冲**，也是「画面比权威晚多少」的旋钮。
+- 两端：最新端（underrun）**有界外插**（最新速度、最多 2 tick / 60px，超出冻结）；最老端冻结、不倒退。样本之间走三次 Hermite（切线 = 快照 `vel` × 段时长）。跨接缝那一对样本先锚进同一副本空间再插。
 - `SNAP_DIST = 128 px`：相邻样本的环面距离超它 ⇒ 清历史、一帧落位（回溯 / 重生 / 换边）。
 - [`player_replica.gd`](../../scenes/player/player_replica.gd) 的 `_clock` 是 `core/net/playout_clock.gd`（窗口最小延迟选样的本地播放时钟，不与服务器做时钟同步、不做速率纠偏以外的动作）。
 - 幽灵体（`_build_ghost_body`，`StaticBody2D`，层按队配）**不跟插值**：跟未经平滑的 `target`，预测面要最小陈旧。
 - 两个 `anchor_to_nearest` 是承重的：渲染位置与目标相隔整幅地图时最短向量为 0 ⇒ 副本会永远留在远副本。
-- `aim` / `pose` / `facing` 逐包瞬跳。`_aim` 是单位向量，若加插值必须 `slerp` 或 `lerp_angle`（直接 `lerp` 会穿原点）。
+- `aim` / `vel` 这两个连续量在相邻两条历史之间插值（`slerp` / `lerp`）；`pose` / `facing` / `downed` / `type_id` 仍逐包取整条（离散量不该插）。
 
 ### 2.1 时间域解耦：服务器命中回放（2026-10-26）
 
 - 同一个 `PLAYOUT_TICKS` 用在两处：客户端**渲染**远端副本时的延迟，和服务器**裁决命中**时的回放深度（`core/net/lag_comp.gd` 单一来源）。
-- 服务器 tick 域对齐：`MatchHost._physics_process` 每 tick 起始 `_srv_tick += 1`；`_broadcast_snapshot` 里 `_snap_tick = _srv_tick`（广播相位仍每 2 tick ⇒ tick 数值序列不变）。客户端输入包里的 `st` 从此与服务器 tick **同一刻度**。
+- 服务器 tick 域对齐：`MatchHost._physics_process` 每 tick 起始 `_srv_tick += 1`；`_broadcast_snapshot` 里 `_snap_tick = _srv_tick`（2026-10-30 起每 tick 都广播 ⇒ tick 数值序列连续）。客户端输入包里的 `st` 从此与服务器 tick **同一刻度**。
 - 裁决路径（`server/match/match_combat.gd`）：`st = _client_snap_tick[shooter]`（射手最近解码的快照 tick）⇒ `want = clamp(st - PLAYOUT_TICKS, _srv_tick - MAX_REWIND_TICKS, _srv_tick)` ⇒ 用 `HitLagHistory.rect_for(victim, want)` 取**射手观看时刻**的对手受击面，再走 `HitShape` 线段扫掠（含子弹体积 grow）。榴弹直击同一路径。
 - 历史环 `core/sim/hit_lag_history.gd`：每 tick 存 `role → {p: canonical 位置, r: 相对受击面的 Rect2}`，容量 24 tick（400ms），超限丢最老；无该 tick/该 role 时回退现时受击面。
 - **不动的部分**：移动预测继续吃最新态（幽灵体不接插值、位置照旧）；爆炸 AoE **不回放**（现时位置，见 registered-debt §十五）。协议字节零改动。
@@ -170,7 +170,7 @@ NetBus.rpc_id(peer, "snapshot_own",
 
 | 维度 | 本仓 | 主流 |
 |---|---|---|
-| 状态发送频率 | 30Hz + 客户端 playout 插值（`PLAYOUT_TICKS = 3` ≈ 50ms 缓冲）+ 服务器按射手观看时刻回放命中 | 10~30Hz + 客户端插值缓冲 |
+| 状态发送频率 | 60Hz + 客户端 playout 插值（`PLAYOUT_TICKS = 2` ≈ 33ms 缓冲）+ 服务器按射手观看时刻回放命中 | 10~128Hz + 客户端插值缓冲 |
 | 编码 | schema 表手打包（P1 世界 `pos`/`vel`/`aim` 与输入 `aim` 定点化；P1.5 世界/本人包差分） | 绑定 + 量化 + 位打包 |
 | 增量 | 全量自包含（世界/本人包；增量 P1.5 已于 2026-10-28 放弃） | 对已 ack 的基线增量 |
 | 客户端时钟 | 本地播放时钟（窗口最小延迟选样），不与服务器做显式时钟同步 | 播放时钟跟服务器时钟 |

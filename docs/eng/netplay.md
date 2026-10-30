@@ -42,15 +42,15 @@
 | 项 | 值 |
 |---|---|
 | 物理 tick | 60Hz |
-| `snapshot_world` | 30Hz,unreliable;`SNAPSHOT_HZ = 30`、`SNAPSHOT_STRIDE = 2`;P1.5 起 = 滚动关键帧 DELTA(FULL 只在请求/换局/名单变化时发) |
-| `snapshot_own` | 30Hz,unreliable,逐 peer;`{ack_seq, q, c2}`(P1.5 起 FULL/差分两态,合并后形状不变;全量每 role 每 60 tick 错峰) |
+| `snapshot_world` | 60Hz,unreliable;`SNAPSHOT_HZ = 60`、`SNAPSHOT_STRIDE = 1`(2026-10-30 起所有人数;16 人上行 ≈0.6 MB/s);P1.5 起 = 滚动关键帧 DELTA(FULL 只在请求/换局/名单变化时发) |
+| `snapshot_own` | 每 tick 一包,unreliable,逐 peer;`{ack_seq, q, c2}`(P1.5 起 FULL/差分两态,合并后形状不变;全量每 role 每 60 tick 错峰) |
 | `send_input` | 30Hz,reliable,**手打包 42 B/包**(P1 定点化前 46 B);包内两条连续 tick 记录(`PacketInputSource.INPUT_BATCH_TICKS=2`,一条记录 = 1 tick);`st` = 最近成功解码的快照 tick(命中回放时间基准),`ct` = 客户端物理帧号(仍只落位);`held` 的 `BIT_NEED_FULL=512` 用于请服务器补 FULL(增量修复) |
 | 编解码 | `core/net/net_codec.gd` 打包成 `PackedByteArray`(快照 + 输入同模块),RPC 入口解回同形状 `Dictionary` |
 
 ## 客户端
 
 - 流程 `main_menu` → `mp_lobby` → `pvp_game`(`pvp_mode = true`)。本地玩家 = C2:`PredictionRollback`(`core/net/prediction_rollback.gd`);预测被证实不动,真性分歧才 `restore(权威态)` 并按序重放未确认输入。容差 `pos_tol = 2.0`,接触期 `contact_pos_tol = 8.0`。
-- 远端对手 = `PlayerReplica`:位置走 **playout 缓冲插值**(`PLAYOUT_TICKS = 3` ≈ 50ms 缓冲,取样后再 `anchor_to_nearest` 锚回本地玩家最近副本);幽灵碰撞体**不跟插值**,直出最新快照锚点;快照 `type_id = 0` = 空手。副本幽灵碰撞体 `StaticBody2D`(layer 2 / mask 0,3v3 按队配),本地玩家补 `collision_mask |= 2`;渲染层带排在世界的墙体/梯子/建筑层之前(与本体同带)。对手预瞄线不可见(快照 `previewing` 客户端不消费)。
+- 远端对手 = `PlayerReplica`:位置走 **playout 缓冲插值**(`PLAYOUT_TICKS = 2` ≈ 33ms 缓冲,取样后再 `anchor_to_nearest` 锚回本地玩家最近副本);幽灵碰撞体**不跟插值**,直出最新快照锚点;快照 `type_id = 0` = 空手。副本幽灵碰撞体 `StaticBody2D`(layer 2 / mask 0,3v3 按队配),本地玩家补 `collision_mask |= 2`;渲染层带排在世界的墙体/梯子/建筑层之前(与本体同带)。对手预瞄线不可见(快照 `previewing` 客户端不消费)。
 - 离开对局的路径(ESC / MATCH_OVER / 对手离开)都走 `Level0.safe_change_scene`;世界由 `WorldReaper` 分帧拆除。
 
 ## 协议与发送纪律

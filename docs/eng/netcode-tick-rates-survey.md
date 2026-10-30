@@ -15,9 +15,9 @@
 | 量 | 值 | 位置 |
 |---|---|---|
 | A | 60Hz | Godot 物理 tick |
-| B | 30Hz | `MatchState.SNAPSHOT_HZ` |
+| B | 60Hz | `MatchState.SNAPSHOT_HZ`（2026-10-30 起所有人数） |
 | C | 30Hz | 采样与上行同频，`PacketInputSource.TICKS_PER_RECORD = 2` |
-| tick 域 | 60Hz | 快照 `tick` 每包 +2，一个包跨 2 个物理 tick |
+| tick 域 | 60Hz | 快照 `tick` 每包 +1（60Hz 发包），一个包 = 1 个物理 tick |
 
 ## 2. 逐家清单
 
@@ -39,7 +39,7 @@
 | 抖动余量 | 1–2 帧 @60fps ≈ 17–33 ms | 不缩放（绝对时间） |
 | 合计 | — | 10pps → 350 ms；30pps → 150 ms；60pps → 85 ms |
 
-- 本仓只用这套配方的**下界**一档：固定 playout 3 tick（≈50ms）+ 抖动深度补偿（上限 4 tick），不做 3 × 发送间隔 那种等比丢包保护。
+- 本仓只用这套配方的**下界**一档：固定 playout 2 tick（≈33ms，2026-10-30 起）+ 抖动深度补偿（上限 4 tick），不做 3 × 发送间隔 那种等比丢包保护。
 
 ## 4. 边界
 

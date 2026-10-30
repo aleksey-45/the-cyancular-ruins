@@ -2,7 +2,7 @@ class_name MatchSnapshot
 extends MatchGround
 
 # 快照广播域(阶段 5.6 拆自 server/match_host.gd)。★ tick 域始终是 60Hz 物理 tick;
-# 发包率按在场人数切换:≤6 人(1v1/3v3)每 tick 一包(60Hz),更大局每 2 tick 一包(30Hz)—— 见 MatchState.snapshot_stride()。
+# 2026-10-30 起**所有人数**都每 tick 一包(60Hz,stride=1)—— 副本插值样本间隔 16.7ms。
 
 # ── 结构化诊断(--diag,默认关):快照**发出侧**计数 ──
 # 客户端 `snap_gap`(net_bus)只能证明"没收到";这里补"服务器到底发没发、给谁发了多少、
@@ -21,7 +21,7 @@ var _tx_own_bytes: Dictionary = {}  # role -> 字节数
 
 
 func _broadcast_snapshot() -> void:
-	# tick 是「60Hz 物理 tick 时间轴」上的时间戳,不是包序号:60Hz 发包时每包跨 1 tick、30Hz 时跨 2 tick(客户端 playout/历史环按它插值)。
+	# tick 是「60Hz 物理 tick 时间轴」上的时间戳,不是包序号:60Hz 发包时每包跨 1 tick(客户端 playout/历史环按它插值)。
 	# ★ S1(2026-10-24):本函数**只发世界包**;本人包(ack+c2)由 MatchHost 在玩家步进之后 call_deferred 调,不再等广播。
 	# ★ 时间域对齐:直接取 _srv_tick(广播相位仍每 2 tick,数值序列不变)⇒ 客户端输入包的 st 与服务器 tick 同刻度。
 	# ★ 2026-10-28:增量已放弃 —— 世界包每包全量(自包含),乱序/丢包只损失那一帧;DELTA 能力留在编解码里不再上线。

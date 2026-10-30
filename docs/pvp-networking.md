@@ -111,7 +111,7 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 ### 每物理帧时序
 
 1. 同步地面武器位置、Beta 时间玩法(`time_economy`)与加速态。
-2. 快照相位:每 `SNAPSHOT_STRIDE = 2` 个 tick 广播一次 `snapshot_world` + 逐 peer `snapshot_own`(30Hz);**世界包每包全量**(增量已在 2026-10-28 放弃:DELTA 链在乱序/丢包下会 RTT 级冻结),**本人包 30Hz 差分**(每 role 每 60 tick 错峰一次全量)。详见 `eng/netcode-snapshots.md` §1.4.1。
+2. 快照相位:每 `SNAPSHOT_STRIDE = 1` 个 tick 广播一次 `snapshot_world` + 逐 peer `snapshot_own`(2026-10-30 起全 60Hz);**世界包每包全量**(增量已在 2026-10-28 放弃:DELTA 链在乱序/丢包下会 RTT 级冻结),**本人包逐 tick 差分**(每 role 每 60 tick 错峰一次全量)。详见 `eng/netcode-snapshots.md` §1.4.1。
 3. 消费输入:每 2 个 tick 从 FIFO 取一条记录;`clear_edges()`,`apply_packet()`,更新 `_ack_seq[role]`。COUNTDOWN 期间清空队列并 `reset_state()`。
 4. 玩家与子弹的 `_physics_process` 由场景树步进(父先于子,读到的是本帧注入)。
 5. `_adjudicate_bullets()`、`_broadcast_pending_beams()`、`_match_round_tick()`、队列诊断。
@@ -174,7 +174,7 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 `Node2D` + `AnimatedSprite2D`,不做物理。
 
 - `apply_snapshot(data, local_anchor, tick)`:存 canonical 目标,更新朝向 / 姿态 / 倒地 / 武器槽 / 受击闪烁。`type_id = 0` = 空手,与换枪同等重建。
-- 位置走 playout 缓冲插值:固定 `PLAYOUT_TICKS = 3`(60Hz tick 域、下行 30Hz ⇒ 1.5 个发包间隔 ≈ 50ms 缓冲)之后的那一刻,对两条相邻快照夹逼插值;取样点再 `anchor_to_nearest` 回本地玩家最近副本。两端冻结(不外插、不倒退);相邻样本环面距离 > `SNAP_DIST = 128 px` ⇒ 清历史一帧落位(回溯 / 重生 / 换边)。
+- 位置走 playout 缓冲插值:固定 `PLAYOUT_TICKS = 2`(60Hz tick 域、下行 60Hz ⇒ 2 个发包间隔 ≈ 33ms 缓冲)之后的那一刻,对两条相邻快照夹逼插值;取样点再 `anchor_to_nearest` 回本地玩家最近副本。最老端冻结、不倒退;最新端有界外插(≤2 tick/60px);相邻样本环面距离 > `SNAP_DIST = 128 px` ⇒ 清历史一帧落位(回溯 / 重生 / 换边)。
 - 渲染层带:副本在 `_ready` 里把自己挪到世界结构层(`Level0.wall_layer`:墙体 / 梯子 / 建筑)之前 —— 本体在 `level_0.tscn` 里就排在那层之前,副本运行时 `add_child` 到世界末尾会盖住那些结构(现象:只有别人的角色压在地形上)。
 - 幽灵碰撞体:`StaticBody2D`,`collision_layer = 2` / `collision_mask = 0`;五份 `CollisionPolygon2D` 按 `pose` 切换,`downed` 时不切;节点进 `player_replica` 组。★ 幽灵体**不跟插值**:跟未经平滑的最新快照锚点(预测面要最小陈旧)。
 - 姿态映射 `POSE_ANIM`:`0 idle / 1 move / 2 fly / 3 charge / 4 squat`;倒地停动画并转体,幽灵体世界旋转压回 0。
