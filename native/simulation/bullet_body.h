@@ -30,7 +30,6 @@ public:
     type native_get_##name() const { return name; }
 #include "bullet_fields.inc"
 #undef BULLET_FIELD
-    void configure_bullet(const Dictionary &values);
     void bind_physics(const Ref<NativeTerrain> &world, double gravity, double drag, double damping);
     void set_shooter(Node *node);
     Node *get_shooter() const;

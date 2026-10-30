@@ -19,40 +19,6 @@ var source: Node = null
 
 @export var explosion_visual: PackedScene = null
 
-func _init() -> void:
-	configure_bullet({
-		"entity_id": 0,
-		"type_id": 0,
-		"input_seq": 0,
-		"input_epoch": 1,
-		"adjudicated_pos": Vector2.ZERO,
-		"adjudicated": false,
-		"velocity_vec": Vector2.ZERO,
-		"speed": 0.0,
-		"size": 1.0,
-		"gravity_factor": 0.0,
-		"max_range": 0.0,
-		"traveled": 0.0,
-		"hit_damage": 0,
-		"hit_impact": 0.0,
-		"apply_damage": true,
-		"prediction_only": false,
-		"fuse_started": false,
-		"finished": false,
-		"exploded": false,
-		"direct_hit": false,
-		"explodes": false,
-		"direct_hit_damage": 10,
-		"fuse_time": 0.5,
-		"hit_fuse_time": 0.1,
-		"explosion_radius": 128.0,
-		"explosion_damage": 35,
-		"explosion_knockback": 900.0,
-		"_fuse_active": false,
-		"_fuse_elapsed": 0.0,
-		"_fuse_duration": 0.0
-	})
-
 func setup(dir: Vector2, spd: float, rng: float, siz: float, col: Color, src: Node) -> void:
 	velocity_vec = dir.normalized() * spd
 	speed = spd

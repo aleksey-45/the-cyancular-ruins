@@ -25,7 +25,6 @@ void NativeBulletBody::_bind_methods() {
     ADD_PROPERTY(PropertyInfo(GetTypeInfo<type>::VARIANT_TYPE, #name, PROPERTY_HINT_NONE, "", field_usage(#name)), "_native_set_" #name, "_native_get_" #name);
 #include "bullet_fields.inc"
 #undef BULLET_FIELD
-    ClassDB::bind_method(D_METHOD("configure_bullet", "values"), &NativeBulletBody::configure_bullet);
     ClassDB::bind_method(D_METHOD("bind_physics", "geometry", "gravity", "drag", "damping"), &NativeBulletBody::bind_physics);
     ClassDB::bind_method(D_METHOD("set_shooter", "node"), &NativeBulletBody::set_shooter);
     ClassDB::bind_method(D_METHOD("get_shooter"), &NativeBulletBody::get_shooter);
@@ -40,11 +39,6 @@ void NativeBulletBody::_bind_methods() {
     ClassDB::bind_method(D_METHOD("native_player_contact", "players", "radius", "point_only", "map_size", "team"), &NativeBulletBody::native_player_contact);
     ClassDB::bind_method(D_METHOD("native_contact_query", "players", "local", "radius", "point_only", "map_size", "queries"), &NativeBulletBody::native_contact_query);
     ClassDB::bind_static_method("NativeBulletBody", D_METHOD("contact_distance_native", "from", "to", "position", "radius", "map_size"), &NativeBulletBody::contact_distance);
-}
-void NativeBulletBody::configure_bullet(const Dictionary &values) {
-#define BULLET_FIELD(type, name, initial) if (values.has(#name)) name = static_cast<type>(values[#name]);
-#include "bullet_fields.inc"
-#undef BULLET_FIELD
 }
 void NativeBulletBody::bind_physics(const Ref<NativeTerrain> &world, double gravity, double drag, double damping) {
     geometry = world; world_gravity = gravity; water_drag = drag; bounce_damping = damping;

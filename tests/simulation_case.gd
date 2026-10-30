@@ -14,6 +14,7 @@ class BetaWorld extends Node:
 	func broadcast(kind: int, data: Variant) -> void: events.append([kind, data])
 
 func run(tree: SceneTree) -> void:
+	_grenade(tree)
 	var parent := world(tree)
 	var actor := player(parent)
 	var initial := actor.capture_state()
@@ -40,6 +41,67 @@ func run(tree: SceneTree) -> void:
 	_confirmed_lifecycle(actor, initial)
 	_world_rewind(parent, actor)
 	_beta_history(parent, actor)
+
+func _grenade(tree: SceneTree) -> void:
+	var source: BulletBase = preload("res://scenes/weapons/grenade_bullet.tscn").instantiate()
+	expect(source.explodes, "grenade scene loads its explosive type")
+	var fields := ["explodes", "direct_hit_damage", "fuse_time", "hit_fuse_time",
+			"explosion_radius", "explosion_damage", "explosion_knockback"]
+	var expected := {}
+	for field in fields: expected[field] = source.get(field)
+	var packed := PackedScene.new()
+	expect(packed.pack(source) == OK, "grenade scene can be repacked for export")
+	var path := OS.get_temp_dir().path_join("cyr-grenade-%d.scn" % OS.get_process_id())
+	expect(ResourceSaver.save(packed, path) == OK, "grenade scene can be saved in binary format")
+	var binary := ResourceLoader.load(path, "PackedScene", ResourceLoader.CACHE_MODE_IGNORE) as PackedScene
+	var restored: BulletBase = binary.instantiate()
+	for field in fields:
+		expect(restored.get(field) == expected[field], "binary scene retains grenade %s" % field)
+	restored.free()
+	source.free()
+	DirAccess.remove_absolute(path)
+
+	var parent := world(tree)
+	var actor := player(parent)
+	var authority := AuthorityWorld.new()
+	parent.add_child(authority)
+	authority.set_physics_process(false)
+	authority.terrain = TileDefs.terrain
+	authority.players = {actor.role: actor}
+	authority._stats = {actor.role: {"self_damage": 0}}
+	authority.time_economy = TimeEconomy.new(TimeRules.new())
+	authority.time_economy.add_role(actor.role)
+	authority.beta = BetaHistory.new(authority)
+	authority._round_state = NetEvent.RoundState.PLAYING
+	actor.authority_world = authority
+	for type_id in WeaponRegistry.all_ids():
+		if WeaponRegistry.scene_of(type_id) == "res://scenes/weapons/grenade_launcher.tscn":
+			actor.weapons.set_initial_inventory([type_id])
+	var weapon: WeaponBase = actor.weapons.current_weapon()
+	weapon.bullet_scene = binary
+	var events: Array = []
+	authority.event.connect(func(kind: int, data: Variant, _except: int) -> void: events.append([kind, data]))
+	weapon._spawn_projectiles({"serial": 1, "input_seq": 0, "input_epoch": 1,
+			"dir": Vector2.DOWN, "pos": Vector2(160, 150)})
+	var bullet: BulletBase = authority.live_bullets()[0]
+	expect(bullet.apply_damage, "authority grenade remains authoritative with the multiplayer display flag set")
+	var terrain_before := TileDefs.terrain.capture_cell(Vector2i(2, 3))
+	var hp_before := actor.hp
+	var fused := false
+	for tick in range(1, 61):
+		authority._snap_tick = tick
+		authority.beta.tick(ActorStep.DT)
+		bullet.simulate_tick(ActorStep.DT)
+		fused = fused or bullet._fuse_active
+		if bullet.finished: break
+	var explosions := events.filter(func(event: Array) -> bool: return event[0] == NetEvent.Kind.EXPLOSION)
+	expect(fused and bullet.exploded and bullet.is_queued_for_deletion(), "Beta grenade bounces, starts its fuse and detonates")
+	expect(explosions.size() == 1 and explosions[0][1]["id"] == bullet.entity_id,
+			"authority broadcasts the grenade explosion once")
+	expect(actor.hp < hp_before and TileDefs.terrain.capture_cell(Vector2i(2, 3)) != terrain_before,
+			"grenade explosion damages players and terrain")
+	actor.authority_world = null
+	cleanup()
 
 func _world_rewind(parent: Node, actor: Player) -> void:
 	var scene := preload("res://scenes/enemies/enemy_bullet.tscn")

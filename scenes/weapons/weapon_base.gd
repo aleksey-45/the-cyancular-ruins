@@ -142,7 +142,7 @@ func _spawn_projectiles(action: Dictionary) -> void:
 		b.global_position = spec["pos"]
 		b.adjudicated_pos = b.global_position
 		b.adjudicated = true
-		b.apply_damage = not Level0.pvp_mode
+		b.apply_damage = player.authority_world != null or not Level0.pvp_mode
 		b.set_meta("scene_path", bullet_scene.resource_path)
 		if player.authority_world != null:
 			player.authority_world.add_projectile(b)
