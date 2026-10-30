@@ -4,6 +4,24 @@
 #include <godot_cpp/core/object.hpp>
 
 using namespace godot;
+void NativePredictionFrame::_bind_methods() {
+#define FRAME_PROPERTY(name, info) \
+    ClassDB::bind_method(D_METHOD("get_" #name), &NativePredictionFrame::get_##name); \
+    ClassDB::bind_method(D_METHOD("set_" #name, "value"), &NativePredictionFrame::set_##name); \
+    { PropertyInfo property = info; property.usage = PROPERTY_USAGE_NONE; ADD_PROPERTY(property, "set_" #name, "get_" #name); }
+    FRAME_PROPERTY(player, PropertyInfo(Variant::ARRAY, "player"))
+    FRAME_PROPERTY(cursor, PropertyInfo(Variant::ARRAY, "cursor"))
+    FRAME_PROPERTY(remote, PropertyInfo(Variant::DICTIONARY, "remote"))
+    FRAME_PROPERTY(layers, PropertyInfo(Variant::DICTIONARY, "layers"))
+    FRAME_PROPERTY(time, PropertyInfo(Variant::DICTIONARY, "time"))
+    FRAME_PROPERTY(projectiles, PropertyInfo(Variant::OBJECT, "projectiles", PROPERTY_HINT_RESOURCE_TYPE, "NativeProjectileSnapshot"))
+    FRAME_PROPERTY(revision, PropertyInfo(Variant::INT, "revision"))
+    FRAME_PROPERTY(geometry, PropertyInfo(Variant::INT, "geometry"))
+    FRAME_PROPERTY(terrain, PropertyInfo(Variant::INT, "terrain"))
+    FRAME_PROPERTY(rewinding, PropertyInfo(Variant::BOOL, "rewinding"))
+#undef FRAME_PROPERTY
+}
+
 void NativePredictionHistory::_bind_methods() {
     ClassDB::bind_method(D_METHOD("bind_sources", "states", "entries", "hitboxes", "keep"), &NativePredictionHistory::bind_sources);
     ClassDB::bind_method(D_METHOD("capture_hitboxes", "tick", "players"), &NativePredictionHistory::capture_hitboxes);
@@ -49,16 +67,18 @@ void NativePredictionHistory::remember(int64_t tick, NativeActorBody *player, in
         int64_t revision, int64_t geometry, int64_t terrain) {
     const PerformanceScope scope(NativePerformanceStats::HISTORY_SAVE);
     ERR_FAIL_COND(!player || keep <= 0);
-    Dictionary contacts;
+    Ref<NativePredictionFrame> saved;
+    saved.instantiate();
+    saved->contacts.reserve(remotes.size() + 1);
     bool changed = !metadata_valid;
-    contacts[player->role] = Array::make(player->get_global_position(), player->sim_downed, player->team);
+    saved->contacts.push_back({player->role, player->team, player->get_global_position(), player->sim_downed, player->rewinding});
     for (Remote &entry : remotes) {
         const NativeActorBody *actor = Object::cast_to<NativeActorBody>(ObjectDB::get_instance(entry.actor_id));
         const int64_t layer = actor && entry.collider.is_valid() ? entry.collider->get_collision_layer() : 0;
         const bool present = actor != nullptr, rewinding = actor && actor->rewinding;
         changed |= entry.present != present || entry.sampled_layer != layer || entry.rewinding != rewinding;
         entry.present = present; entry.sampled_layer = layer; entry.rewinding = rewinding;
-        if (layer) contacts[entry.role] = Array::make(actor->get_global_position(), actor->sim_downed, actor->team);
+        if (layer) saved->contacts.push_back({entry.role, actor->team, actor->get_global_position(), actor->sim_downed, actor->rewinding});
     }
     if (changed) {
         // Published metadata is immutable. Replace its containers on change;
@@ -74,16 +94,17 @@ void NativePredictionHistory::remember(int64_t tick, NativeActorBody *player, in
         modes.make_read_only(); layers.make_read_only();
         remote_modes = modes; remote_layers = layers; metadata_valid = true;
     }
-    Dictionary players, cursors, saved;
-    players[player->role] = player->capture_prediction_state_native(instance, inventory);
-    cursors[player->role] = cursor;
-    saved["players"] = players; saved["cursors"] = cursors; saved["remote"] = remote_modes;
-    saved["layers"] = remote_layers; saved["contacts"] = contacts; saved["geometry"] = geometry;
+    saved->player = player->capture_prediction_state_native(instance, inventory);
+    saved->cursor = cursor; saved->remote = remote_modes;
+    saved->layers = remote_layers; saved->geometry = geometry;
     const Ref<NativeProjectileSnapshot> snapshot = NativeProjectileSnapshot::capture(projectiles, projectile_capacity);
     projectile_capacity = snapshot->size();
-    saved["projectiles"] = snapshot; saved["revision"] = revision;
-    saved["time"] = time; saved["terrain"] = terrain; saved["rewinding"] = player->rewinding;
+    saved->projectiles = snapshot; saved->revision = revision;
+    saved->time = time; saved->terrain = terrain; saved->rewinding = player->rewinding;
     frames[tick] = saved;
     frames.erase(tick - keep);
 }
-void godot::register_native_history() { ClassDB::register_class<NativePredictionHistory>(); }
+void godot::register_native_history() {
+    ClassDB::register_class<NativePredictionFrame>();
+    ClassDB::register_class<NativePredictionHistory>();
+}

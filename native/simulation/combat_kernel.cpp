@@ -1,5 +1,6 @@
 #include "combat_kernel.h"
 #include "performance_stats.h"
+#include "prediction_history.h"
 #include <godot_cpp/core/object.hpp>
 #include <algorithm>
 #include <cmath>
@@ -16,10 +17,6 @@ Vector2 shortest_delta(Vector2 from, Vector2 to, Vector2 size) {
     if (std::abs(x) > double(size.x) * .5) x = -(x > 0 ? 1 : -1) * (double(size.x) - std::abs(x));
     if (std::abs(y) > double(size.y) * .5) y = -(y > 0 ? 1 : -1) * (double(size.y) - std::abs(y));
     return Vector2(x, y);
-}
-Array ensure_array(Dictionary &dict, int64_t key) {
-    if (!dict.has(key)) dict[key] = Array();
-    return dict[key];
 }
 Dictionary ensure_dictionary(Dictionary &dict, int64_t key) {
     if (!dict.has(key)) dict[key] = Dictionary();
@@ -40,6 +37,10 @@ std::vector<int64_t> merge_ids(const std::vector<int64_t> &a, const std::vector<
 void NativeCombatKernel::_bind_methods() {
     ClassDB::bind_method(D_METHOD("configure", "player", "sources", "profiles", "rules"), &NativeCombatKernel::configure);
     ClassDB::bind_method(D_METHOD("bind_hitboxes", "value"), &NativeCombatKernel::bind_hitboxes);
+    ClassDB::bind_method(D_METHOD("begin_tick", "tick"), &NativeCombatKernel::begin_tick);
+    ClassDB::bind_method(D_METHOD("reset_queries"), &NativeCombatKernel::reset_queries);
+    ClassDB::bind_method(D_METHOD("discard_queries_after", "tick"), &NativeCombatKernel::discard_queries_after);
+    ClassDB::bind_method(D_METHOD("commit_catch_up", "id", "plan"), &NativeCombatKernel::commit_catch_up);
     ClassDB::bind_method(D_METHOD("step", "tick", "players", "geometry", "first_prediction"), &NativeCombatKernel::step);
     ClassDB::bind_method(D_METHOD("take_notifications"), &NativeCombatKernel::take_notifications);
     ClassDB::bind_method(D_METHOD("step_beams", "tick", "role", "players", "geometry"), &NativeCombatKernel::step_beams);
@@ -51,17 +52,59 @@ void NativeCombatKernel::configure(NativeActorBody *player, const Dictionary &so
         const Dictionary &weapon_profiles, const Dictionary &rules) {
     local_id = player ? uint64_t(player->get_instance_id()) : 0;
     projectiles = sources["projectiles"]; blasts = sources["blasts"]; beams = sources["beams"]; hits = sources["hits"]; ended = sources["ended"];
-    outcomes = sources["outcomes"]; proxy_queries = sources["proxy_queries"]; owner_modes = sources["owner_modes"];
+    outcomes = sources["outcomes"];
     hitboxes = sources["hitboxes"];
     keep = rules["keep"]; radius = rules["contact_radius"]; inner_fraction = rules["inner_fraction"];
     blocked_fraction = rules["blocked_fraction"]; beam_hit_mult = rules["beam_hit_mult"]; target_window = rules["target_window"];
     step_delta = rules["dt"];
+    query_history.clear(); query_history.resize(size_t(keep) + 1);
     profiles.clear();
     const Array ids = weapon_profiles.keys();
     for (int i = 0; i < ids.size(); ++i) {
         const Dictionary data = weapon_profiles[ids[i]];
         profiles[int64_t(ids[i])] = Profile{double(data["impact"]), double(data["explosion_radius"]),
             double(data["explosion_knockback"]), int(data["damage"]), int(data["explosion_damage"])};
+    }
+}
+NativeCombatKernel::QueryFrame &NativeCombatKernel::query_frame(int64_t at) {
+    QueryFrame &frame = query_history[uint64_t(at) % query_history.size()];
+    if (frame.tick != at) {
+        frame.tick = at; frame.contacts.clear(); frame.owners.clear();
+    }
+    return frame;
+}
+const NativeCombatKernel::QueryFrame *NativeCombatKernel::find_queries(int64_t at) const {
+    const QueryFrame &frame = query_history[uint64_t(at) % query_history.size()];
+    return frame.tick == at ? &frame : nullptr;
+}
+void NativeCombatKernel::record_owner(QueryFrame &frame, int64_t role, bool rewinding) {
+    for (OwnerMode &owner : frame.owners) {
+        if (owner.role == role) { owner.rewinding = rewinding; return; }
+    }
+    frame.owners.push_back({role, rewinding});
+}
+void NativeCombatKernel::begin_tick(int64_t at) {
+    QueryFrame &frame = query_frame(at);
+    frame.contacts.clear(); frame.owners.clear();
+}
+void NativeCombatKernel::reset_queries() {
+    for (QueryFrame &frame : query_history) {
+        frame.tick = -1; frame.contacts.clear(); frame.owners.clear();
+    }
+}
+void NativeCombatKernel::discard_queries_after(int64_t at) {
+    for (QueryFrame &frame : query_history) {
+        if (frame.tick > at) { frame.tick = -1; frame.contacts.clear(); frame.owners.clear(); }
+    }
+}
+void NativeCombatKernel::commit_catch_up(int64_t id, const Dictionary &plan) {
+    const Dictionary queries = plan["queries"];
+    const Array ticks = queries.keys();
+    for (int i = 0; i < ticks.size(); ++i) {
+        QueryFrame &frame = query_frame(ticks[i]);
+        const Array query = queries[ticks[i]];
+        frame.contacts.push_back({query[0], query[1], query[2], query[5], query[3], query[4], query[6]});
+        record_owner(frame, id >> 48, false);
     }
 }
 NativeActorBody *NativeCombatKernel::local() const {
@@ -89,6 +132,7 @@ std::vector<int64_t> NativeCombatKernel::attack_ids(const Dictionary &entries, i
         for (int i = 0; i < ids.size(); ++i) consider(ids[i]);
         sort_ids(included);
     }
+    if (hits.is_empty()) return included;
     std::vector<int64_t> confirmed;
     const Array hit_ids = hits.keys();
     for (int i = 0; i < hit_ids.size(); ++i) {
@@ -107,7 +151,8 @@ Dictionary NativeCombatKernel::confirmed_hit(int64_t id, int source, int64_t rol
     return confirmed_result_at(id, tick, source, role);
 }
 Dictionary NativeCombatKernel::confirmed_result_at(int64_t id, int64_t at, int source, int64_t role) const {
-    const Array records = hits.get(id, Array());
+    if (!hits.has(id)) return Dictionary();
+    const Array records = hits[id];
     for (int i = 0; i < records.size(); ++i) {
         const Dictionary hit = records[i];
         if (int64_t(hit["tick"]) == at && int(hit["source"]) == source && int64_t(hit["victim"]) == role) return hit;
@@ -134,8 +179,9 @@ void NativeCombatKernel::apply_hit(int64_t id, int source, NativeActorBody *targ
     remember_outcome(Array::make("hit", id, source, target->role), value);
 }
 bool NativeCombatKernel::apply_confirmed_hits(int64_t id, int source, int64_t role) {
+    if (!hits.has(id)) return false;
     bool applied = false;
-    const Array records = hits.get(id, Array());
+    const Array records = hits[id];
     for (int i = 0; i < records.size(); ++i) {
         const Dictionary hit = records[i];
         if (int64_t(hit["tick"]) != tick || int(hit["source"]) != source || (role && int64_t(hit["shooter"]) != role)) continue;
@@ -157,8 +203,10 @@ void NativeCombatKernel::reset_projectile(NativeProjectileEntry *entry, const Di
     if (entry) entry->reset_at(state, at);
 }
 NativeActorBody *NativeCombatKernel::contact(NativeBulletBody *bullet, bool point_only) {
-    const Array queries = ensure_array(proxy_queries, tick);
-    return bullet->native_contact_query(players, local(), radius, point_only, geometry->size(), queries);
+    ProjectileContactQuery query;
+    NativeActorBody *victim = bullet->native_contact_query(players, local(), radius, point_only, geometry->size(), query);
+    query_frame(tick).contacts.push_back(query);
+    return victim;
 }
 void NativeCombatKernel::finish_direct(NativeBulletBody *bullet) {
     remember_outcome(Array::make("contact", bullet->entity_id), Dictionary());
@@ -215,7 +263,6 @@ void NativeCombatKernel::step(int64_t at, const Array &targets,
     tick = at; players = targets; geometry = world; first_prediction = first;
     const Array recorded = outcomes.keys();
     for (int i = 0; i < recorded.size(); ++i) if (int64_t(recorded[i]) < tick - keep) outcomes.erase(recorded[i]);
-    proxy_queries.erase(tick - keep); owner_modes.erase(tick - keep);
     const auto ids = attack_ids(projectiles, 2);
     std::vector<int64_t> current_blasts;
     const Array blast_ids = blasts.keys();
@@ -233,7 +280,7 @@ void NativeCombatKernel::step(int64_t at, const Array &targets,
         if (!bullet) continue;
         NativeActorBody *owner = Object::cast_to<NativeActorBody>(bullet->get_shooter());
         if (owner && owner != local()) {
-            Dictionary modes = ensure_dictionary(owner_modes, tick); modes[owner->role] = owner->rewinding;
+            record_owner(query_frame(tick), owner->role, owner->rewinding);
         }
         if (!entry->active && entry->confirmed && entry->birth_tick == tick)
             reset_projectile(entry, entry->origin_state, entry->origin_tick);
@@ -272,17 +319,22 @@ void NativeCombatKernel::step_contacts(const std::vector<int64_t> &candidates) {
         const NativeActorBody *owner = Object::cast_to<NativeActorBody>(bullet->get_shooter());
         if (!entry->active || entry->moved_tick != tick || bullet->exploded || bullet->direct_hit || (owner && owner->rewinding)) continue;
         bool known = false;
-        const Array records = hits.get(id, Array());
-        for (int i = 0; i < records.size(); ++i) if (int(Dictionary(records[i])["source"]) == 0) { known = true; break; }
+        if (hits.has(id)) {
+            const Array records = hits[id];
+            for (int i = 0; i < records.size(); ++i) if (int(Dictionary(records[i])["source"]) == 0) { known = true; break; }
+        }
         NativeActorBody *victim = nullptr;
         Vector2 position = bullet->get_position();
         if (!known) victim = contact(bullet);
-        else for (int i = 0; i < records.size(); ++i) {
-            const Dictionary hit = records[i];
-            if (int(hit["source"]) != 0 || int64_t(hit["tick"]) != tick) continue;
-            for (int p = 0; p < players.size(); ++p) {
-                NativeActorBody *player = Object::cast_to<NativeActorBody>(players[p]);
-                if (player && player->role == int64_t(hit["victim"])) { victim = player; position = hit["pos"]; }
+        else {
+            const Array records = hits[id];
+            for (int i = 0; i < records.size(); ++i) {
+                const Dictionary hit = records[i];
+                if (int(hit["source"]) != 0 || int64_t(hit["tick"]) != tick) continue;
+                for (int p = 0; p < players.size(); ++p) {
+                    NativeActorBody *player = Object::cast_to<NativeActorBody>(players[p]);
+                    if (player && player->role == int64_t(hit["victim"])) { victim = player; position = hit["pos"]; }
+                }
             }
         }
         if (!victim) continue;
@@ -356,26 +408,24 @@ bool NativeCombatKernel::step_beams(int64_t at, int64_t role, const Array &targe
     return queried;
 }
 bool NativeCombatKernel::proxy_queries_match(int64_t at, const Array &proxies, const Dictionary &actors, Vector2 size) const {
-    const Dictionary modes = owner_modes.get(at, Dictionary());
-    const Array roles = modes.keys();
-    for (int i = 0; i < roles.size(); ++i) {
-        if (!actors.has(roles[i])) return false;
-        const NativeActorBody *actor = Object::cast_to<NativeActorBody>(actors[roles[i]]);
-        if (!actor || actor->rewinding != bool(modes[roles[i]])) return false;
+    const QueryFrame *frame = find_queries(at);
+    if (!frame) return true;
+    for (const OwnerMode &owner : frame->owners) {
+        if (!actors.has(owner.role)) return false;
+        const NativeActorBody *actor = Object::cast_to<NativeActorBody>(actors[owner.role]);
+        if (!actor || actor->rewinding != owner.rewinding) return false;
     }
-    const Array queries = proxy_queries.get(at, Array());
-    for (int i = 0; i < queries.size(); ++i) {
-        const Array query = queries[i];
-        double best = query[5];
+    for (const ProjectileContactQuery &query : frame->contacts) {
+        double best = query.local_distance;
         const NativeActorBody *own = local();
         int64_t victim = std::isfinite(best) && own ? own->role : 0;
         for (int p = 0; p < proxies.size(); ++p) {
             const NativeActorBody *player = Object::cast_to<NativeActorBody>(proxies[p]);
-            if (!player || player->role == int64_t(query[3]) || player->sim_downed || player->rewinding || (int64_t(query[4]) && int64_t(query[4]) == player->team)) continue;
-            const double distance = NativeBulletBody::contact_distance(query[0], query[1], player->get_global_position(), query[2], size);
+            if (!player || player->role == query.shooter || player->sim_downed || player->rewinding || (query.team && query.team == player->team)) continue;
+            const double distance = NativeBulletBody::contact_distance(query.from, query.to, player->get_global_position(), query.radius, size);
             if (distance < best || (std::isfinite(distance) && distance == best && player->role < victim)) { best = distance; victim = player->role; }
         }
-        if (victim != int64_t(query[6])) return false;
+        if (victim != query.victim) return false;
     }
     return true;
 }
@@ -395,20 +445,17 @@ Dictionary NativeCombatKernel::catch_up_remote(int64_t id, const Dictionary &his
             bullet->adjudicated_pos = bullet->get_position(); simulate_projectile(bullet, delta);
             entry->sim_tick = at; entry->moved_tick = at;
             const Vector2 from = bullet->adjudicated_pos, to = from + shortest_delta(from, bullet->get_global_position(), size);
-            const Dictionary saved = history[at], contacts = saved["contacts"], remote = saved["remote"];
-            const Array local_contact = contacts[own->role];
-            if (NativeBulletBody::contact_distance(from, to, local_contact[0], radius, size) < infinity) {
+            const Ref<NativePredictionFrame> saved = history[at];
+            if (NativeBulletBody::contact_distance(from, to, saved->contacts.front().position, radius, size) < infinity) {
                 reset_projectile(entry, entry->origin_state, entry->origin_tick); entry->active = false;
                 return Dictionary();
             }
             double best = infinity; int64_t victim = 0;
-            const Array roles = contacts.keys();
-            for (int i = 0; i < roles.size(); ++i) {
-                const int64_t role = roles[i];
+            for (const NativePredictionFrame::Contact &target : saved->contacts) {
+                const int64_t role = target.role;
                 if (role == own->role || role == id >> 48) continue;
-                const Array target = contacts[role], mode = remote[role];
-                if (bool(target[1]) || bool(mode[0]) || (team && team == int64_t(target[2]))) continue;
-                const double distance = NativeBulletBody::contact_distance(from, to, target[0], radius, size);
+                if (target.downed || target.rewinding || (team && team == target.team)) continue;
+                const double distance = NativeBulletBody::contact_distance(from, to, target.position, radius, size);
                 if (distance < best || (std::isfinite(distance) && distance == best && role < victim)) { best = distance; victim = role; }
             }
             queries[at] = Array::make(from, to, radius, id >> 48, team, infinity, victim);

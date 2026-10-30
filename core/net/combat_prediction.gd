@@ -23,8 +23,6 @@ var rewards: Dictionary = {}
 var reward_changes: Dictionary = {}
 # 已实际执行的阶段结果；确认消息先与这些结果比较，再决定是否使历史失效。
 var _outcomes: Dictionary = {}
-var _proxy_queries: Dictionary = {}
-var _owner_modes: Dictionary = {}
 const KEEP := 64
 const TARGET_TICK_WINDOW := 12
 var _native := NativeCombatKernel.new()
@@ -33,8 +31,7 @@ var _native_bound := false
 func _ensure_native() -> void:
 	if _native_bound: return
 	_native.configure(_player, {"projectiles": projectiles, "blasts": blasts, "beams": beams,
-			"hits": hits, "ended": ended, "outcomes": _outcomes, "proxy_queries": _proxy_queries,
-			"owner_modes": _owner_modes, "hitboxes": hitboxes},
+			"hits": hits, "ended": ended, "outcomes": _outcomes, "hitboxes": hitboxes},
 			WeaponRegistry.native_profiles(), {"keep": KEEP, "dt": ActorStep.DT,
 			"contact_radius": BulletBase.PLAYER_HIT_RADIUS, "inner_fraction": Explosion.INNER_FRACTION,
 			"blocked_fraction": Explosion.BLOCKED_FRACTION, "beam_hit_mult": LaserWeaponBase.HIT_MULT,
@@ -125,9 +122,7 @@ func catch_up_remote(id: int, history: Dictionary, through: int) -> Dictionary:
 			Vector2(GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT))
 
 func commit_catch_up(id: int, plan: Dictionary) -> void:
-	for at in plan["queries"]:
-		_proxy_queries.get_or_add(at, []).append(plan["queries"][at])
-		_owner_modes.get_or_add(at, {})[id >> 48] = false
+	_native.commit_catch_up(id, plan)
 	for at in plan["contacts"]: _remember_outcome(at, ["contact", id], {})
 
 func checkpoint_projectile(id: int, state: Dictionary, at_tick: int, owner: Node2D) -> bool:
@@ -176,10 +171,7 @@ func restore_checkpoint(at_tick: int, states: NativeProjectileSnapshot) -> void:
 	# 保留新收到的权威事件；只撤销失效后缀产生的推测结果。
 	for at in _outcomes.keys():
 		if at > at_tick: _outcomes.erase(at)
-	for at in _proxy_queries.keys():
-		if at > at_tick: _proxy_queries.erase(at)
-	for at in _owner_modes.keys():
-		if at > at_tick: _owner_modes.erase(at)
+	_native.discard_queries_after(at_tick)
 	for id in beams.keys():
 		if not beams[id].get("confirmed", false) and beams[id]["tick"] > at_tick: beams.erase(id)
 	for id in blasts.keys():
@@ -295,8 +287,7 @@ func _has_local_hit(id: int) -> bool:
 func prepare(at_tick: int, states: Dictionary) -> void:
 	TileDefs.terrain.reset_prediction(at_tick)
 	_outcomes.clear()
-	_proxy_queries.clear()
-	_owner_modes.clear()
+	_native.reset_queries()
 	for id in beams.keys():
 		if beams[id]["tick"] <= at_tick or not beams[id]["confirmed"]:
 			beams.erase(id)
@@ -386,8 +377,7 @@ func step(tick: int, players: Array, first_prediction: bool) -> void:
 	_publish_native_events()
 
 func begin_tick(at_tick: int) -> void:
-	_proxy_queries[at_tick] = []
-	_owner_modes[at_tick] = {}
+	_native.begin_tick(at_tick)
 
 # 只重查远端几何，固定本地当时的候选结果；包括原先没有接触的路径。
 func proxy_queries_match(at_tick: int, proxies: Array) -> bool:
@@ -403,8 +393,7 @@ func clear() -> void:
 	_native.take_notifications()
 	TileDefs.terrain.reset_prediction(-1)
 	_outcomes.clear()
-	_proxy_queries.clear()
-	_owner_modes.clear()
+	_native.reset_queries()
 	for entry: NativeProjectileEntry in projectiles.values(): entry["bullet"].free()
 	projectiles.clear()
 	beams.clear()

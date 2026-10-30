@@ -26,10 +26,11 @@
 | Godot：[CharacterBody2D](https://docs.godotengine.org/en/stable/classes/class_characterbody2d.html)、[PhysicsBody2D](https://docs.godotengine.org/en/stable/classes/class_physicsbody2d.html)、[PhysicsServer2D](https://docs.godotengine.org/en/stable/classes/class_physicsserver2d.html) | CharacterBody2D 提供运动和查询接口，角色玩法仍由调用方定义；保留节点不妨碍原生调用物理 API |
 | Godot：[位姿实现](https://github.com/godotengine/godot/blob/4.6-stable/modules/godot_physics_2d/godot_body_2d.cpp)、[同帧运动学查询问题 #76256](https://github.com/godotengine/godot/issues/76256) | 手动多 tick 查询须核对物理空间实际采用的变换，不能只写场景变换就假定查询同步；源码和问题有版本适用范围 |
 | Godot：[Core Types](https://docs.godotengine.org/en/stable/engine_details/architecture/core_types.html)、[C++ Core Types](https://docs.godotengine.org/en/stable/tutorials/scripting/cpp/core_types.html)、[Static Typing](https://docs.godotengine.org/en/stable/tutorials/scripting/gdscript/static_typing.html) | 分清 Variant、引用容器、打包数组与准确类型调用，避免无依据地认为每份引用都是深复制 |
+| Godot 4.7.1：[Dictionary 实现](https://github.com/godotengine/godot/blob/4.7.1-stable/core/variant/dictionary.cpp)、[Dictionary 接口](https://docs.godotengine.org/en/stable/classes/class_dictionary.html) | 带类型字典仍使用 Variant 哈希表和类型校验，不等同于 C++ 数值结构；适用于按身份查找，固定字段热记录可使用结构体或连续数组 |
 | Godot：[SceneTree](https://docs.godotengine.org/en/stable/classes/class_scenetree.html)、[CanvasItem](https://docs.godotengine.org/en/stable/classes/class_canvasitem.html)、[Collision Shapes](https://docs.godotengine.org/en/stable/tutorials/physics/collision_shapes_2d.html) | 回调、变换传播、可见性和形状管理属于引擎成本；移入 C++ 后这些职责仍存在 |
 
 ## 当前采用
 
-原生角色、武器、弹丸、预测战斗、代理、历史和地形。原生热循环直接访问明确类型，输入及快照在边界转换；低频历史元数据变化时生成。Godot 保留节点生命周期、资源和物理空间，脚本管理会话、装配和表现，模拟在主线程执行。
+原生角色、武器、弹丸、预测战斗、代理、历史和地形。原生热循环直接访问明确类型，输入及快照在边界转换。预测检查点使用明确字段，弹丸、接触历史和查询依赖使用连续数值；查询历史以带 tick 的有界槽复用容量。低频历史元数据变化时生成，实体身份索引和协议适配保留字典。Godot 保留节点生命周期、资源和物理空间，脚本管理会话、装配和表现，模拟在主线程执行。
 
 没有实现独立物理引擎、全游戏 ECS、通用内存页 CoW 或后台场景模拟。当前职责见[场景内原生模拟](native_scene_simulation.md)和[原生战斗](native_combat_simulation.md)。

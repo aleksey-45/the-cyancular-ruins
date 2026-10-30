@@ -1,7 +1,36 @@
 #pragma once
 #include "simulation.h"
+#include "projectile_snapshot.h"
 
 namespace godot {
+class NativePredictionFrame : public RefCounted {
+    GDCLASS(NativePredictionFrame, RefCounted)
+protected:
+    static void _bind_methods();
+public:
+    struct Contact {
+        int64_t role = 0, team = 0;
+        Vector2 position;
+        bool downed = false, rewinding = false;
+    };
+    std::vector<Contact> contacts;
+#define FRAME_FIELD(type, name) \
+    type name = {}; \
+    type get_##name() const { return name; } \
+    void set_##name(const type &value) { name = value; }
+    FRAME_FIELD(Array, player)
+    FRAME_FIELD(Array, cursor)
+    FRAME_FIELD(Dictionary, remote)
+    FRAME_FIELD(Dictionary, layers)
+    FRAME_FIELD(Dictionary, time)
+    FRAME_FIELD(Ref<NativeProjectileSnapshot>, projectiles)
+    FRAME_FIELD(int64_t, revision)
+    FRAME_FIELD(int64_t, geometry)
+    FRAME_FIELD(int64_t, terrain)
+    FRAME_FIELD(bool, rewinding)
+#undef FRAME_FIELD
+};
+
 class NativePredictionHistory : public RefCounted {
     GDCLASS(NativePredictionHistory, RefCounted)
     struct Remote {

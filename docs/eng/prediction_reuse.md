@@ -34,6 +34,6 @@
 
 ## 历史所有权
 
-原生历史保存角色、弹丸、代理接触、游标和版本。弹丸使用每帧独占的有序数值数组，直接与协议字典比较、恢复到原生弹丸；不逐颗构造历史字典。背包等低频元数据在变化时生成，历史引用按只读约定复用。检查点不拥有节点，协议只包含可序列化数据。场景重置、epoch 切换和确认裁剪同步释放失效历史。
+`NativePredictionFrame` 保存本地角色、弹丸、代理接触、游标和版本。接触历史为每帧独占的连续数值样本；弹丸使用独占的有序数值数组，直接与协议字典比较、恢复到原生弹丸，不逐颗构造历史字典。背包等低频元数据在变化时生成，历史引用按只读约定复用。弹丸查询和射手回溯依赖使用带绝对 tick 的有界原生槽。检查点不拥有节点，协议只包含可序列化数据。场景重置、epoch 切换和确认裁剪同步释放失效历史。
 
 实现入口：[PredictionRollback](../../core/net/prediction_rollback.gd)、[CombatPrediction](../../core/net/combat_prediction.gd)、[NativePredictionHistory](../../native/simulation/prediction_history.cpp)。参考依据见[联机基础资料](netcode_architecture_research.md)与[局部重放调研](selective_replay_research.md)。

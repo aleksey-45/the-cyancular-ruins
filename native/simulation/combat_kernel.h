@@ -9,8 +9,18 @@ namespace godot {
 class NativeCombatKernel : public RefCounted {
     GDCLASS(NativeCombatKernel, RefCounted)
     struct Profile { double impact = 0, radius = 0, knock = 0; int damage = 0, blast_damage = 0; };
+    struct OwnerMode { int64_t role = 0; bool rewinding = false; };
+    struct QueryFrame {
+        int64_t tick = -1;
+        std::vector<ProjectileContactQuery> contacts;
+        std::vector<OwnerMode> owners;
+    };
+    std::vector<QueryFrame> query_history;
+    QueryFrame &query_frame(int64_t at);
+    const QueryFrame *find_queries(int64_t at) const;
+    void record_owner(QueryFrame &frame, int64_t role, bool rewinding);
     std::unordered_map<int64_t, Profile> profiles;
-    Dictionary projectiles, blasts, beams, hits, ended, outcomes, proxy_queries, owner_modes, hitboxes;
+    Dictionary projectiles, blasts, beams, hits, ended, outcomes, hitboxes;
     uint64_t local_id = 0;
     int keep = 0, target_window = 0;
     double radius = 0, inner_fraction = 0, blocked_fraction = 0, beam_hit_mult = 0, step_delta = 0;
@@ -37,6 +47,10 @@ protected:
 public:
     void configure(NativeActorBody *player, const Dictionary &sources, const Dictionary &weapon_profiles, const Dictionary &rules);
     void bind_hitboxes(const Dictionary &value) { hitboxes = value; }
+    void begin_tick(int64_t at);
+    void reset_queries();
+    void discard_queries_after(int64_t at);
+    void commit_catch_up(int64_t id, const Dictionary &plan);
     void step(int64_t at, const Array &targets, const Ref<NativeTerrain> &world, bool first);
     Array take_notifications();
     bool step_beams(int64_t at, int64_t role, const Array &targets, const Ref<NativeTerrain> &world);

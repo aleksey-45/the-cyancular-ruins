@@ -38,6 +38,7 @@ func run(tree: SceneTree) -> void:
 	expect(actor.capture_state() == simulated, "restoring actor and weapon reproduces the same tick")
 	actor.restore_state(initial)
 	_replay(actor)
+	_query_history(parent, actor, initial)
 	_confirmed_lifecycle(actor, initial)
 	_world_rewind(parent, actor)
 	_beta_history(parent, actor)
@@ -144,19 +145,19 @@ func _replay(actor: Player) -> void:
 		if tick == 104: authority_projectiles = _projectiles(rollback.combat_prediction)
 	var original := actor.capture_state()
 	var original_projectiles := _projectiles(rollback.combat_prediction)
-	var saved: Dictionary = rollback._states[104]
+	var saved: NativePredictionFrame = rollback._states[104]
 	expect(not authority_projectiles.is_empty(), "replay fixture has a live projectile")
-	var snapshot: NativeProjectileSnapshot = saved["projectiles"]
+	var snapshot: NativeProjectileSnapshot = saved.projectiles
 	expect(snapshot.matches(authority_projectiles), "later simulation cannot mutate an earlier projectile frame")
 	var altered := authority_projectiles.duplicate(true)
 	for id in altered: altered[id]["fuse_elapsed"] += 0.25
 	expect(not snapshot.matches(altered) and snapshot.matches(authority_projectiles),
 			"projectile comparison detects changed timers without changing stored history")
 	var buffer := InputBuffer.new()
-	buffer.restore_cursor(saved["cursors"][actor.role])
+	buffer.restore_cursor(saved.cursor)
 	var own := {"epoch": 1, "ack": buffer.ack, "action_ack": buffer.action_ack,
 			"timing_seq": 0, "lead": 2, "input": buffer._last, "rewind": false,
-			"state": Player.expand_prediction_state(saved["players"][actor.role])}
+			"state": Player.expand_prediction_state(saved.player)}
 	var frame := {"tick": 104, "map_revision": TileDefs.terrain.revision, "own": own,
 			"time": {}, "world": {"players": {}, "projectiles": authority_projectiles}}
 	expect(rollback.reusable_tick(frame) == 108, "matching authority retains the full prediction suffix")
@@ -177,6 +178,62 @@ func _projectiles(combat: CombatPrediction) -> Dictionary:
 		var entry: NativeProjectileEntry = combat.projectiles[id]
 		if entry.active and not entry.bullet.finished: states[id] = entry.bullet.motion_state()
 	return states
+
+func _query_history(parent: Node, actor: Player, initial: Dictionary) -> void:
+	actor.restore_state(initial)
+	var owner := player(parent, 2)
+	var proxy := player(parent, 3)
+	var rollback := PredictionRollback.new()
+	rollback.bind(actor)
+	rollback.terrain = TileDefs.terrain
+	rollback._native_history.configure_remotes([
+			[owner.role, owner, ActorCollider.new(owner, 1), 0],
+			[proxy.role, proxy, ActorCollider.new(proxy, 1), 0]])
+	var combat := rollback.combat_prediction
+	combat.actors = {actor.role: actor, owner.role: owner, proxy.role: proxy}
+	for at in range(4):
+		rollback._sim_tick = at
+		rollback._remember_state()
+	var id: int = (owner.role << 48) | 1
+	var state := {"type_id": WeaponRegistry.all_ids()[0], "pos": Vector2(64, 32),
+			"vel": Vector2(60, 0), "traveled": 0.0, "fuse_active": false,
+			"fuse_elapsed": 0.0, "fuse_duration": 0.0, "direct_hit": false}
+	combat.seed_projectile(id, state, 0, owner)
+	combat.projectiles[id].bullet.gravity_factor = 0.0
+	var positions := [actor.position, proxy.position]
+	actor.position = Vector2(70, 32)
+	proxy.position = Vector2(70, 32)
+	owner.rewinding = true
+	rollback._sim_tick = 4
+	rollback._remember_state()
+	expect(not rollback._states[3].remote[owner.role][0] and rollback._states[4].remote[owner.role][0],
+			"later owner modes cannot mutate an earlier prediction frame")
+	var plan := combat.catch_up_remote(id, rollback._states, 3)
+	expect(not plan.is_empty() and plan["contacts"].is_empty(),
+			"remote catch-up reads saved contact positions instead of current scene nodes")
+	actor.position = positions[0]
+	proxy.position = positions[1]
+	owner.rewinding = false
+	if not plan.is_empty(): combat.commit_catch_up(id, plan)
+	expect(combat.proxy_queries_match(1, [owner, proxy]), "unchanged remote query dependencies retain history")
+	proxy.position = Vector2(70, 32)
+	expect(not combat.proxy_queries_match(1, [owner, proxy]), "a previously missed proxy entering the path invalidates history")
+	proxy.position = positions[1]
+	owner.rewinding = true
+	expect(not combat.proxy_queries_match(1, [owner, proxy]), "a changed projectile owner rewind mode invalidates history")
+	owner.rewinding = false
+	combat._native.discard_queries_after(1)
+	proxy.position = Vector2(70, 32)
+	expect(not combat.proxy_queries_match(1, [owner, proxy]) and combat.proxy_queries_match(2, [owner, proxy]),
+			"suffix invalidation keeps earlier queries and discards later queries")
+	proxy.position = positions[1]
+	combat.begin_tick(1 + CombatPrediction.KEEP + 1)
+	proxy.position = Vector2(70, 32)
+	expect(combat.proxy_queries_match(1, [owner, proxy]), "reused history slots do not expose stale tick queries")
+	combat.clear()
+	owner.free()
+	proxy.free()
+	actor.restore_state(initial)
 
 func _confirmed_lifecycle(actor: Player, initial: Dictionary) -> void:
 	actor.restore_state(initial)

@@ -9,12 +9,12 @@
 | 角色状态、输入、运动 | `NativeActorBody : CharacterBody2D`；[ActorStep](../../core/sim/actor_step.gd) 准备输入及上下文后调用原生步进 |
 | 武器计时、弹药、后坐力 | `NativeWeaponBody : Node2D`；武器场景提供注册表配置 |
 | 弹道、预测战斗 | `NativeBulletBody`、`NativeCombatKernel`；[战斗模拟](native_combat_simulation.md) |
-| 代理与预测历史 | `NativeMotionTrack`、`NativePredictionHistory`，有界保存模拟所需样本 |
+| 代理与预测历史 | `NativeMotionTrack`、`NativePredictionHistory`、`NativePredictionFrame`，有界保存模拟所需样本 |
 | 地形 | `NativeTerrain` 独占可变地形与历史；[地形接口](native_terrain.md) |
 | 节点与资源 | Godot 场景；脚本管理生成、装配、释放、账户和网络事件 |
 | 显示与音画 | 脚本读取模拟结果，在表现阶段更新 |
 
-原生循环通过类型明确的成员和对象调用访问状态；配置、输入和网络快照在边界转换。本地弹丸历史保存连续原生数值，其他检查点数据使用 Dictionary/Array。节点生命周期与物理空间仍由 Godot 管理。
+原生循环通过类型明确的成员和对象调用访问状态；配置、输入和网络快照在边界转换。预测检查点使用明确字段的原生对象，弹丸和角色接触历史保存连续原生数值。角色状态与游标使用值数组，账户、按身份索引及低频元数据保留 Dictionary。节点生命周期与物理空间仍由 Godot 管理。
 
 ## 执行顺序
 

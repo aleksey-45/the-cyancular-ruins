@@ -2,6 +2,12 @@
 #include "simulation.h"
 
 namespace godot {
+struct ProjectileContactQuery {
+    Vector2 from, to;
+    double radius = 0, local_distance = 0;
+    int64_t shooter = 0, team = 0, victim = 0;
+};
+
 struct ProjectileMotionState {
     int64_t type = 0;
     Vector2 position, velocity;
@@ -46,7 +52,7 @@ public:
     NativeActorBody *native_player_contact(const Array &players, double radius, bool point_only,
         Vector2 map_size, int team) const;
     NativeActorBody *native_contact_query(const Array &players, NativeActorBody *local,
-        double radius, bool point_only, Vector2 map_size, const Array &queries) const;
+        double radius, bool point_only, Vector2 map_size, ProjectileContactQuery &query) const;
     static double contact_distance(Vector2 from, Vector2 to, Vector2 position, double radius, Vector2 map_size);
 };
 void register_native_bullet();

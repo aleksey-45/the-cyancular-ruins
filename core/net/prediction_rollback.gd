@@ -24,7 +24,7 @@ var _collision_anchor: ActorCollider
 var _roles: Array = []
 var _actor_roles: Array = []
 var _players: Array = []
-var _states: Dictionary = {}
+var _states: Dictionary[int, NativePredictionFrame] = {}
 var _native_history := NativePredictionHistory.new()
 var _hitboxes: Dictionary = {}
 var _commands: Dictionary = {}
@@ -133,20 +133,20 @@ func reusable_tick(frame: Dictionary, invalid_from: int = 0) -> int:
 	if own["rewind"]: return _reject_reuse()
 	if _clock < tick or int(_clock) - tick > MAX_REPLAY or own["ack"] < _discarded_through:
 		return _reject_reuse()
-	var saved: Dictionary = _states[tick]
+	var saved := _states[tick]
 	if terrain != null:
-		var error := terrain.difference(tick, saved["terrain"], frame["map_revision"])
+		var error := terrain.difference(tick, saved.terrain, frame["map_revision"])
 		if not error.is_empty(): return _reject_reuse()
-	elif saved["revision"] != frame["map_revision"]:
+	elif saved.revision != frame["map_revision"]:
 		return _reject_reuse()
-	var field := Player.prediction_difference(saved["players"][_player.role], own["state"])
+	var field := Player.prediction_difference(saved.player, own["state"])
 	if not field.is_empty(): return _reject_reuse()
 	# 本地锚点包含弹道；远端 HP、武器和账户不属于本地预测域。
-	if not saved["projectiles"].matches(frame["world"]["projectiles"]): return _reject_reuse()
+	if not saved.projectiles.matches(frame["world"]["projectiles"]): return _reject_reuse()
 	var economy_tick := 0
 	var accounts := {}
 	if frame["time"].has(_player.role): accounts[_player.role] = frame["time"][_player.role]
-	if saved["time"] != accounts:
+	if saved.time != accounts:
 		if time_economy == null or not accounts.has(_player.role): return _reject_reuse()
 		if accounts[_player.role]["m"] != time_economy.rules.haste_mult: return _reject_reuse()
 		_reuse_economy = PredictionEconomy.review(time_economy, _states, _commands,
@@ -156,7 +156,7 @@ func reusable_tick(frame: Dictionary, invalid_from: int = 0) -> int:
 	buffer.restore_authority(own["epoch"], own["ack"], own["action_ack"], own["input"], tick)
 	buffer.push({"frames": history, "actions": actions}, tick)
 	_reuse_buffers[_player.role] = buffer
-	_reuse_cursors[tick] = {_player.role: buffer.capture_cursor()}
+	_reuse_cursors[tick] = buffer.capture_cursor()
 	_reuse_tick = tick
 	for at in range(tick + 1, _sim_tick + 1):
 		if invalid_from > tick and at >= invalid_from:
@@ -175,7 +175,7 @@ func reusable_tick(frame: Dictionary, invalid_from: int = 0) -> int:
 		_sample_proxies(at)
 		if not combat_prediction.proxy_queries_match(at, _remote_players()):
 			break
-		_reuse_cursors[at] = {_player.role: buffer.capture_cursor()}
+		_reuse_cursors[at] = buffer.capture_cursor()
 		_reuse_commands[at] = {_player.role: command}
 		_reuse_tick = at
 	_sample_proxies(_sim_tick)
@@ -202,7 +202,7 @@ func _commit_reuse(partial: bool) -> void:
 		_reuse_economy.clear()
 	if not partial: _input = _reuse_buffers[_player.role]
 	for at in _reuse_cursors:
-		if _states.has(at): _states[at]["cursors"] = _reuse_cursors[at]
+		if _states.has(at): _states[at].cursor = _reuse_cursors[at]
 	for at in _reuse_commands: _commands[at]["inputs"] = _reuse_commands[at]
 	if not partial:
 		var latest: Dictionary = _commands.get(_sim_tick, {}).get("inputs", {}).get(_player.role, {})
@@ -214,7 +214,7 @@ func _commit_reuse(partial: bool) -> void:
 	_reuse_commands.clear()
 
 func confirm_projectile(id: int, state: Dictionary, at_tick: int, owner: Node2D) -> bool:
-	var same: bool = _states.has(at_tick) and _states[at_tick]["projectiles"].state_matches(id, state)
+	var same: bool = _states.has(at_tick) and _states[at_tick].projectiles.state_matches(id, state)
 	var changed := combat_prediction.checkpoint_projectile(id, state, at_tick, owner)
 	return changed and not same
 
@@ -234,17 +234,16 @@ func review_projectile_spawn(id: int, changed: Vector2i, new_identity: bool) -> 
 			+ GameParameters.gravity0 * maxf(bullet.gravity_factor, 0.0) * ActorStep.DT * ActorStep.DT * ticks * (ticks + 1) / 2.0
 	var padding := CollisionAabb.world_rect(bullet).size.length() + bullet.safe_margin + 1.0
 	var bounds := Rect2(bullet.position, Vector2.ONE).grow(travel + padding)
-	if CollisionBuilder.affects_since(_states[origin].get("geometry", -1), bounds): return changed
+	if CollisionBuilder.affects_since(_states[origin].geometry, bounds): return changed
 	if terrain != null and not terrain.unchanged_since(origin, bounds): return changed
 	for at in range(origin + 1, _sim_tick + 1):
-		if not _states.has(at) or not _states[at].has("contacts") \
-				or not _states[at]["remote"].has(id >> 48) \
-				or _states[at]["remote"][id >> 48][0]: return changed
+		if not _states.has(at) or not _states[at].remote.has(id >> 48) \
+				or _states[at].remote[id >> 48][0]: return changed
 	var plan := combat_prediction.catch_up_remote(id, _states, _sim_tick)
 	if plan.is_empty(): return changed
 	for at in plan["states"]:
 		var state: Dictionary = plan["states"][at]
-		if not state.is_empty(): _states[at]["projectiles"].insert_state(id, state)
+		if not state.is_empty(): _states[at].projectiles.insert_state(id, state)
 	combat_prediction.commit_catch_up(id, plan)
 	return Vector2i.ZERO
 
@@ -275,14 +274,14 @@ func bullet_rewind_matches(data: Dictionary) -> bool:
 	var at: int = data["tick"]
 	var role: int = data["role"]
 	if not _states.has(at): return false
-	if not _states[at]["projectiles"].matches(data["projectiles"], role): return false
+	if not _states[at].projectiles.matches(data["projectiles"], role): return false
 	for id in data["projectiles"]:
 		if not combat_prediction.projectiles.has(id): return false
 	var actor: Player = _player if role == _player.role else _replicas[role]._forecast if _replicas.has(role) else null
 	if actor == null or actor.rewinding != data["rewind"]: return false
 	for tick in range(at + 1, _sim_tick + 1):
 		if not _states.has(tick): return false
-		var mode: Variant = _states[tick].get("rewinding") if role == _player.role else _states[tick]["remote"].get(role, [null])[0]
+		var mode: Variant = _states[tick].rewinding if role == _player.role else _states[tick].remote.get(role, [null])[0]
 		if mode != data["rewind"]: return false
 	return true
 
@@ -290,7 +289,7 @@ func _commit_economy(plan: Dictionary, through: int) -> void:
 	var roles: Array = plan["roles"]
 	for at in plan["states"]:
 		if at > through or not _states.has(at): continue
-		for role in roles: _states[at]["time"][role] = plan["states"][at][role]
+		for role in roles: _states[at].time[role] = plan["states"][at][role]
 		if _commands.has(at) and plan["rewards"].has(at):
 			var trace: Dictionary = _commands[at]["economy"]
 			trace["rewards"] = trace["rewards"].filter(func(reward: Dictionary) -> bool: return not roles.has(reward["role"]))
@@ -301,32 +300,32 @@ func _commit_economy(plan: Dictionary, through: int) -> void:
 func can_replay_from(dirty_tick: int, anchor_tick: int = -1) -> bool:
 	var at := dirty_tick - 1
 	if _player.rewinding or at < maxi(_authority_tick, anchor_tick) or not _states.has(at): return false
-	var saved: Dictionary = _states[at]
-	if saved["cursors"][_player.role][0] != epoch: return false
+	var saved := _states[at]
+	if saved.cursor[0] != epoch: return false
 	if terrain != null:
-		if not terrain.can_restore(at, saved["terrain"]): return false
-	elif saved["revision"] != terrain_revision:
+		if not terrain.can_restore(at, saved.terrain): return false
+	elif saved.revision != terrain_revision:
 		return false
-	if _discarded_through > saved["cursors"][_player.role][1]: return false
-	if saved["layers"].size() != _replicas.size(): return false
+	if _discarded_through > saved.cursor[1]: return false
+	if saved.layers.size() != _replicas.size(): return false
 	for role in _replicas:
-		if not saved["layers"].has(role): return false
-		if saved["layers"][role] != _replicas[role]._ghost.collision_layer: return false
-	return combat_prediction.can_restore_checkpoint(at, saved["projectiles"])
+		if not saved.layers.has(role): return false
+		if saved.layers[role] != _replicas[role]._ghost.collision_layer: return false
+	return combat_prediction.can_restore_checkpoint(at, saved.projectiles)
 
 func replay_from(dirty_tick: int) -> void:
 	var perf_started := NativePerformanceStats.begin()
 	var at := dirty_tick - 1
-	var saved: Dictionary = _states[at]
+	var saved := _states[at]
 	var previous := _player.global_position
 	if terrain != null: terrain.restore_checkpoint(at)
-	_player.restore_state(Player.expand_prediction_state(saved["players"][_player.role]))
-	_input.restore_cursor(saved["cursors"][_player.role])
+	_player.restore_state(Player.expand_prediction_state(saved.player))
+	_input.restore_cursor(saved.cursor)
 	_input.push(packet().merged({"frames": history}, true), at)
 	if time_economy != null:
-		for role in saved["time"]: time_economy.restore_account(role, saved["time"][role])
+		for role in saved.time: time_economy.restore_account(role, saved.time[role])
 	_prepare_colliders()
-	combat_prediction.restore_checkpoint(at, saved["projectiles"])
+	combat_prediction.restore_checkpoint(at, saved.projectiles)
 	for tick in _states.keys():
 		if tick > at: _states.erase(tick)
 	for tick in _commands.keys():

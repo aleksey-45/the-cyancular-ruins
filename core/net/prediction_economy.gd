@@ -14,9 +14,9 @@ static func review(economy: TimeEconomy, states: Dictionary, commands: Dictionar
 	var old := TimeEconomy.new(economy.rules, roles)
 	var fresh := TimeEconomy.new(economy.rules, roles)
 	for role in roles:
-		if not states[anchor]["time"].has(role): return _stop(plan, anchor + 1)
-		old.restore_account(role, states[anchor]["time"][role])
-		fresh.restore_account(role, replacement.get(role, states[anchor]["time"][role]))
+		if not states[anchor].time.has(role): return _stop(plan, anchor + 1)
+		old.restore_account(role, states[anchor].time[role])
+		fresh.restore_account(role, replacement.get(role, states[anchor].time[role]))
 	plan["states"][anchor] = fresh.state_payload()
 	var incoming := _calendar(rewards.values(), fresh.accounts)
 	for at in range(anchor + 1, through + 1):
@@ -56,7 +56,7 @@ static func review(economy: TimeEconomy, states: Dictionary, commands: Dictionar
 			applied.append_array(_deposit(fresh, incoming, at, phase))
 		var expected := old.state_payload()
 		for role in roles:
-			if expected[role] != states[at]["time"].get(role, {}):
+			if expected[role] != states[at].time.get(role, {}):
 				return _stop(plan, at)
 		plan["states"][at] = fresh.state_payload()
 		plan["rewards"][at] = applied

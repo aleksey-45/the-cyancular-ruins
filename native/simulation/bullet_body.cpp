@@ -37,7 +37,6 @@ void NativeBulletBody::_bind_methods() {
     ClassDB::bind_method(D_METHOD("start_player_fuse"), &NativeBulletBody::start_player_fuse);
     ClassDB::bind_method(D_METHOD("_start_fuse", "duration"), &NativeBulletBody::start_fuse);
     ClassDB::bind_method(D_METHOD("native_player_contact", "players", "radius", "point_only", "map_size", "team"), &NativeBulletBody::native_player_contact);
-    ClassDB::bind_method(D_METHOD("native_contact_query", "players", "local", "radius", "point_only", "map_size", "queries"), &NativeBulletBody::native_contact_query);
     ClassDB::bind_static_method("NativeBulletBody", D_METHOD("contact_distance_native", "from", "to", "position", "radius", "map_size"), &NativeBulletBody::contact_distance);
 }
 void NativeBulletBody::bind_physics(const Ref<NativeTerrain> &world, double gravity, double drag, double damping) {
@@ -158,7 +157,7 @@ NativeActorBody *NativeBulletBody::native_player_contact(const Array &players, d
     return contact(players, radius, point_only, size, team);
 }
 NativeActorBody *NativeBulletBody::native_contact_query(const Array &players, NativeActorBody *local,
-        double radius, bool point_only, Vector2 size, const Array &queries_in) const {
+        double radius, bool point_only, Vector2 size, ProjectileContactQuery &query) const {
     const NativeActorBody *owner = Object::cast_to<NativeActorBody>(get_shooter());
     const int team = owner ? int(owner->team) : 0;
     const Vector2 from = adjudicated && !point_only ? adjudicated_pos : get_global_position();
@@ -167,8 +166,7 @@ NativeActorBody *NativeBulletBody::native_contact_query(const Array &players, Na
     if (local && local->role != entity_id >> 48 && !local->sim_downed && !local->rewinding && (!team || team != local->team))
         own_distance = contact_distance(from, to, local->get_global_position(), radius, size);
     NativeActorBody *victim = contact(players, radius, point_only, size, team);
-    Array queries = queries_in;
-    queries.push_back(Array::make(from, to, radius, entity_id >> 48, team, own_distance, victim ? victim->role : 0));
+    query = {from, to, radius, own_distance, entity_id >> 48, team, victim ? victim->role : 0};
     return victim;
 }
 void godot::register_native_bullet() { ClassDB::register_class<NativeBulletBody>(); }
