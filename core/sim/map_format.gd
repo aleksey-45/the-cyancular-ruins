@@ -291,21 +291,18 @@ static func load_map_file(path: String) -> Array[Array]:
 # 解析地图文件的 spawn 元数据行(坐标=格,空格分隔)。
 # 支持:
 #   # player <col> <row>           单机玩家出生点(向后兼容;多行时最后一行生效)
-#   # player2 <col> <row>          PvP 第二出生点(向后兼容)
+#   # player2 <col> <row>          PvP 第二出生点(向后兼容;老图回退路径用)
 #   # enemy <type_id> <col> <row>  敌人出生点
-#   # spawn <col> <row>            通用出生点列表(PvP / 大乱斗;≥5 个,由地图作者写死)
-#   # teamspawn <1|2> <col> <row>  团队模式每队出生点列表(每队 ≥5 个)
+#   # respawn <1|2> <col> <row>    按阵营半区的复活点列表(侧 1 = 左半 / 侧 2 = 右半;每侧 ≥5 个,由地图作者写死)
 # 返回 {"player": Vector2i, "player2": Vector2i, "enemies": [...],
-#       "spawns": [Vector2i], "teamspawns": {1: [Vector2i], 2: [Vector2i]}};
-# 列表键只在非空时出现(与 enemies 同约定)。# spawn / # teamspawn 按文件顺序去重(首次出现生效)。
-# 非法行 push_warning 跳过、不抛错(老地图没有这些行 ⇒ 两个列表都是空,行为与改造前逐字一致)。
+#       "respawns": {1: [Vector2i], 2: [Vector2i]}};
+# 列表键只在非空时出现(与 enemies 同约定)。# respawn 按文件顺序**按侧去重**(首次出现生效)。
+# 非法行 push_warning 跳过、不抛错(老地图没有这些行 ⇒ respawns 键不存在,各模式走改造前的回退路径)。
 static func parse_spawn_metadata(lines: Array) -> Dictionary:
 	var result := {}
 	var enemies: Array = []
-	var spawns: Array = []
-	var teamspawns := {1: [], 2: []}
-	var seen_spawn := {}
-	var seen_team := {1: {}, 2: {}}
+	var respawns := {1: [], 2: []}
+	var seen := {1: {}, 2: {}}
 	for line in lines:
 		var text := String(line).strip_edges()
 		if not text.begins_with("#"):
@@ -339,37 +336,27 @@ static func parse_spawn_metadata(lines: Array) -> Dictionary:
 						enemies.append({"type": type_id, "cell": Vector2i(x, y)})
 					else:
 						push_warning("MapFormat: 非法 enemy 行 %s" % text)
-			"spawn":
-				var c := _parse_cell_tokens(parts, 1)
-				if c.x >= 0 and c.y >= 0:
-					if not seen_spawn.has(c):
-						seen_spawn[c] = true
-						spawns.append(c)
-				else:
-					push_warning("MapFormat: 非法 spawn 行 %s" % text)
-			"teamspawn":
+			"respawn":
 				if parts.size() < 2 or not parts[1].is_valid_int():
-					push_warning("MapFormat: 非法 teamspawn 行(缺队号)%s" % text)
+					push_warning("MapFormat: 非法 respawn 行(缺侧号)%s" % text)
 					continue
-				var team := int(parts[1])
-				if team != 1 and team != 2:
-					push_warning("MapFormat: 非法 teamspawn 队号 %s(只认 1/2)" % text)
+				var side := int(parts[1])
+				if side != 1 and side != 2:
+					push_warning("MapFormat: 非法 respawn 侧号 %s(只认 1/2)" % text)
 					continue
 				var c := _parse_cell_tokens(parts, 2)
 				if c.x >= 0 and c.y >= 0:
-					if not (seen_team[team] as Dictionary).has(c):
-						(seen_team[team] as Dictionary)[c] = true
-						(teamspawns[team] as Array).append(c)
+					if not (seen[side] as Dictionary).has(c):
+						(seen[side] as Dictionary)[c] = true
+						(respawns[side] as Array).append(c)
 				else:
-					push_warning("MapFormat: 非法 teamspawn 行 %s" % text)
+					push_warning("MapFormat: 非法 respawn 行 %s" % text)
 			_:
 				pass  # 普通 # 注释,忽略
 	if enemies.size() > 0:
 		result["enemies"] = enemies
-	if spawns.size() > 0:
-		result["spawns"] = spawns
-	if not (teamspawns[1] as Array).is_empty() or not (teamspawns[2] as Array).is_empty():
-		result["teamspawns"] = teamspawns
+	if not (respawns[1] as Array).is_empty() or not (respawns[2] as Array).is_empty():
+		result["respawns"] = respawns
 	return result
 
 
@@ -412,15 +399,11 @@ static func load_spawns(path: String) -> Dictionary:
 		var enemies: Array = result["enemies"]
 		for i in range(enemies.size()):
 			enemies[i]["cell"] = Vector2i(enemies[i]["cell"].x / 2, enemies[i]["cell"].y / 2)
-	# # spawn / # teamspawn 同样是格坐标,旧格式(2×2→1)同步 ÷2(老图没有这些行,空列表不受影响)
-	if result.has("spawns"):
-		var spawns: Array = result["spawns"]
-		for i in range(spawns.size()):
-			spawns[i] = Vector2i(spawns[i].x / 2, spawns[i].y / 2)
-	if result.has("teamspawns"):
-		var teams: Dictionary = result["teamspawns"]
-		for t in teams:
-			var arr: Array = teams[t]
+	# # respawn 同样是格坐标,旧格式(2×2→1)同步 ÷2(老图没有这些行 ⇒ 空列表不受影响)
+	if result.has("respawns"):
+		var sides: Dictionary = result["respawns"]
+		for t in sides:
+			var arr: Array = sides[t]
 			for i in range(arr.size()):
 				arr[i] = Vector2i(arr[i].x / 2, arr[i].y / 2)
 	return result

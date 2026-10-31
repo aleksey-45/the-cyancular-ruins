@@ -1,20 +1,22 @@
 extends Node
 
-# 出生点**地图数据**探针:真实地图(要读盘,故是场景探针而不是 `-s` 冒烟)——
-#   ① 地图 meta 里真的写足了数据:`# spawn` ≥5(两张图)、`# teamspawn 1/2` 每队 ≥5(newfactory);
-#   ② 每个点都过现有 SpawnPicker 判据(地板 + 头顶 2 格 + 同层连通区 ≥ area_threshold,即"不贴死角/不在水里");
-#   ③ 1v1 / 大乱斗 / 团队三条接线真的在用这份数据:互不相同、≥ 环面间距、换局/复活排除上一次位置。
-# 去掉什么才红:删地图里的 # spawn 行 ⇒ ①②;把 1v1 改回固定两点 ⇒ ⑦;把 respawn 的 last 排除删掉 ⇒ ⑧;
-#   把 team 的 side_swap 分支删掉 ⇒ ⑬;把 plan_spawns 换成任何几何生成 ⇒ ⑩ / ⑫ 的"点在地图数据里"不成立。
-# 测不到什么:出生点在"手感/观感"上是否舒服(要人眼);真实对局的 match_start 与摆位同源(真链路)。
+# 出生/复活点**地图数据**探针:真实地图(要读盘,故是场景探针而不是 `-s` 冒烟)——
+#   ① 每张图的 `# respawn 1|2` 都写足:每侧 ≥5、点在**自己半区**、过 SpawnPicker 判据、半区 3×3 每桶 ≥1、同侧两两 ≥ 最小间距;
+#   ② 1v1 按侧:role1 侧 1(左半)/ role2 侧 2(右半)、复活仍在本方半区、换边互换、role_spawns 只读;
+#   ③ 对抗按侧:队 1 侧 1 / 队 2 侧 2、换边互换、局内复活仍在同侧且排除上一次;
+#   ④ 大乱斗无阵营 ⇒ 用两侧并集(全图散布),复活排除上一次。
+# 去掉什么才红:地图里删掉某侧数据 ⇒ ①②;把 1v1 改回固定两点/全图随机 ⇒ ②;复活不接侧/不排除 last ⇒ ②③;
+#   对抗换边不换侧 ⇒ ③;大乱斗只取一侧 ⇒ ④。
+# 测不到什么:出生点在"手感/观感"上是否舒服(要人眼);真对局的 match_start 与摆位同源(真链路)。
 # 跑法:"$GODOT" --headless --path . --quit-after 3600 res://tests/probe/map_spawn_data_probe.tscn;判据 grep 末行 MARKER。
 
 const NEWFACTORY := "res://maps/newfactory.cyrm"
 const DEMO := "res://maps/demo.cyrm"
 const MARKER := "MAP SPAWN DATA PROBE: ALL-OK"
-const EXPECTED_CHECKS := 17
-const FAR := 15            # SpawnPicker.FAR_CELLS 的当前值(1v1 两人最小环面距离)
-const MIN_POINTS := 5      # 用户需求:每张地图至少 5 个合理出生点(每队同理)
+const EXPECTED_CHECKS := 18
+const MIN_PER_SIDE := 5
+const BUCKETS := 9
+const MIN_SIDE_GAP := 5
 
 var _fails: Array[String] = []
 var _checks := 0
@@ -47,171 +49,206 @@ func _load_map(path: String) -> void:
 	WorldBuilder.load_grid()
 
 
-func _map_spawns() -> Dictionary:
-	return MapFormat.load_spawns(MazeGenerator.map_file_path())
+func _sides() -> Dictionary:
+	var raw: Dictionary = MapFormat.load_spawns(MazeGenerator.map_file_path()).get("respawns", {})
+	return {1: (raw.get(1, []) as Array), 2: (raw.get(2, []) as Array)}
 
 
-# 合格判据 = SpawnPicker 的两条地板谓词 + 连通区门槛(与运行时选点池同一套;不新造几何)。
+# 合格判据 = SpawnPicker 的地板/抬头判据 + 不孤立(连通区 ≥2,与工具的 --check 同一套;不新造几何)。
 func _valid_cell(c: Vector2i) -> bool:
 	var d := SpawnPicker.grid_dims()
 	if c.x < 0 or c.y < 0 or c.x >= d.x or c.y >= d.y:
 		return false
-	if not SpawnPicker.roomy_floor(c):
+	if not SpawnPicker.floor_cells_has(c):
 		return false
-	return int(SpawnPicker.region_sizes().get(c, 0)) >= SpawnPicker.area_threshold()
+	if int(MazeGenerator.current_grid[posmod(c.y - 2, d.y)][c.x]) != MazeGenerator.EMPTY:
+		return false
+	return int(SpawnPicker.region_sizes().get(c, 0)) >= 2
 
 
-func _all_valid(label: String, cells: Array) -> bool:
+func _bad_points(cells: Array) -> Array[String]:
 	var bad: Array[String] = []
 	for raw in cells:
 		var c: Vector2i = raw
 		if not _valid_cell(c):
 			bad.append(str(c))
-	if not bad.is_empty():
-		print("[map-spawn]   %s 不合格点: %s" % [label, ", ".join(bad)])
-	return bad.is_empty()
+	return bad
+
+
+func _side_problems(side: int, cells: Array) -> Array[String]:
+	var d := SpawnPicker.grid_dims()
+	var bad: Array[String] = []
+	var buckets := {}
+	for raw in cells:
+		var c: Vector2i = raw
+		if SpawnChooser.side_of(c, d) != side:
+			bad.append("越侧 %s" % str(c))
+			continue
+		# 离本侧两条边界(接缝 / 半区中线)太近:对面半区的点在环面距离上还贴着它 ⇒ "各占半区"只在名字上成立。
+		if not SpawnChooser.side_inside_margin(c, side, d):
+			bad.append("贴边界 %s" % str(c))
+			continue
+		buckets[SpawnChooser.bucket_of(c, side, d)] = true
+	for b in BUCKETS:
+		if not buckets.has(b):
+			bad.append("桶 %d 空" % b)
+	return bad
+
+
+func _min_pair_dist(cells: Array) -> int:
+	var d := SpawnPicker.grid_dims()
+	var best := 1 << 30
+	for i in range(cells.size()):
+		for j in range(i + 1, cells.size()):
+			best = mini(best, GridPathfinder.toroidal_dist(cells[i], cells[j], d.x, d.y))
+	return best if cells.size() >= 2 else 0
+
+
+func _sides_ok(label: String, sides: Dictionary) -> void:
+	var s1: Array = sides.get(1, [])
+	var s2: Array = sides.get(2, [])
+	# 去掉什么才红:某侧不足 5 个点(或两侧被塞成同一批点)⇒ 本条红。
+	_chk(s1.size() >= MIN_PER_SIDE and s2.size() >= MIN_PER_SIDE,
+			"%s 每侧 ≥%d(实测 %d / %d)" % [label, MIN_PER_SIDE, s1.size(), s2.size()])
+	# 去掉什么才红:把点写到对面半区 / 均匀判据被破坏(某桶空)⇒ 本条红。
+	var side_bad: Array[String] = []
+	side_bad.append_array(_side_problems(1, s1))
+	side_bad.append_array(_side_problems(2, s2))
+	_chk(side_bad.is_empty(), "%s 每点在自己半区且 3×3 每桶 ≥1%s" % [
+			label, "" if side_bad.is_empty() else "(问题: %s)" % ", ".join(side_bad)])
+	# 去掉什么才红:写进墙里/水里/孤立单格 ⇒ 本条红(点必须过 SpawnPicker 判据)。
+	var bad: Array[String] = []
+	bad.append_array(_bad_points(s1))
+	bad.append_array(_bad_points(s2))
+	_chk(bad.is_empty(), "%s 每点过 SpawnPicker 判据(地板+抬头 2 格+不孤立)%s" % [
+			label, "" if bad.is_empty() else "(不合格: %s)" % ", ".join(bad)])
+	# 去掉什么才红:两点贴在一起(同侧最小距 < 5)⇒ 本条红。
+	_chk(_min_pair_dist(s1) >= MIN_SIDE_GAP and _min_pair_dist(s2) >= MIN_SIDE_GAP,
+			"%s 同侧两两 ≥%d(实测 %d / %d)" % [label, MIN_SIDE_GAP, _min_pair_dist(s1), _min_pair_dist(s2)])
 
 
 func _checks_newfactory_data() -> void:
-	var sp := _map_spawns()
-	var spawns: Array = sp.get("spawns", [])
-	var teams: Dictionary = sp.get("teamspawns", {})
-	var t1: Array = teams.get(1, [])
-	var t2: Array = teams.get(2, [])
-	# 去掉什么才红:地图文件里删掉 # spawn 行 / 只剩 4 个点 ⇒ 本条红。
-	_chk(spawns.size() >= MIN_POINTS, "① newfactory # spawn ≥ %d(实测 %d)" % [MIN_POINTS, spawns.size()])
-	# 去掉什么才红:写进一个墙里/水里/死角格 ⇒ 本条红(点必须过 SpawnPicker 判据)。
-	_chk(_all_valid("newfactory # spawn", spawns), "② newfactory # spawn 每个点都是开阔地板格 + 连通区达标")
-	# 去掉什么才红:删 # teamspawn 行 / 每队不足 5 个 ⇒ 本条红。
-	_chk(t1.size() >= MIN_POINTS and t2.size() >= MIN_POINTS,
-			"③ newfactory # teamspawn 每队 ≥ %d(实测 %d / %d)" % [MIN_POINTS, t1.size(), t2.size()])
-	_chk(_all_valid("newfactory # teamspawn1", t1) and _all_valid("newfactory # teamspawn2", t2),
-			"④ newfactory # teamspawn 每个点都是开阔地板格 + 连通区达标")
-	# 去掉什么才红:两队点写进同一片区域(跨队距离 ≤ 队内距离)⇒ 本条红。
-	var min_cross := _cross_min(t1, t2)
-	var max_in := maxi(_max_pair_dist(t1), _max_pair_dist(t2))
-	_chk(min_cross > max_in, "⑤ newfactory 两队点集分开(跨队最小 %d > 队内最大 %d)" % [min_cross, max_in])
-	# 去掉什么才红:把 # player / # player2 行也删了 ⇒ 本条红(MapCatalog 的 PvP 图校验与单机入口都读这两个旧键)。
+	_sides_ok("newfactory", _sides())
+	var sp := MapFormat.load_spawns(NEWFACTORY)
+	# 去掉什么才红:删掉 # player / # player2 行 ⇒ 本条红(MapCatalog 的 PvP 图校验与老图回退都读这两个旧键)。
 	_chk(sp.get("player", Vector2i(-1, -1)).x >= 0 and sp.get("player2", Vector2i(-1, -1)).x >= 0,
-			"⑥ newfactory 旧键 # player / # player2 保留(向后兼容)")
+			"newfactory 旧键 # player / # player2 保留(向后兼容)")
 
 
 func _checks_duel() -> void:
-	var sp := _map_spawns()
-	var points: Array = sp.get("spawns", [])
+	var d := SpawnPicker.grid_dims()
+	var sides := _sides()
 	var h := MatchHost.new(NEWFACTORY, {1: 20001, 2: 20002})
 	add_child(h)
 	var p1 := _cell_of(h.players[1])
 	var p2 := _cell_of(h.players[2])
-	# 去掉什么才红:MatchState._spawn_cell 改回固定两点 ⇒ 两人不一定在 # spawn 里 / 不满足间距(地图上两点可能 <15)。
-	_chk(points.has(p1) and points.has(p2) and p1 != p2,
-			"⑦ 1v1 首次落点都取自 # spawn 且互不相同(%s / %s)" % [str(p1), str(p2)])
-	_chk(GridPathfinder.toroidal_dist(p1, p2, SpawnPicker.grid_dims().x, SpawnPicker.grid_dims().y) >= FAR,
-			"⑧ 1v1 首次两人相距 ≥ %d(实测 %d)" % [FAR, GridPathfinder.toroidal_dist(p1, p2,
-					SpawnPicker.grid_dims().x, SpawnPicker.grid_dims().y)])
-	# 复活/换局:重新随机且排除本 role 上一次位置(去掉 _duel_spawns 的排除 ⇒ 有概率与上一次同格 ⇒ 本条红)。
+	# 去掉什么才红:1v1 从全图/固定两点取 ⇒ 两人不一定各在自己半区 / 不在数据里 ⇒ 本条红。
+	_chk(SpawnChooser.side_of(p1, d) == 1 and SpawnChooser.side_of(p2, d) == 2
+			and (sides[1] as Array).has(p1) and (sides[2] as Array).has(p2) and p1 != p2,
+			"⑥ 1v1 首次:role1 在侧 1(左半)/ role2 在侧 2(右半),都取自地图数据")
+	# 复活/局内重摆:仍在本方半区,且排除自己的上一次位置。
 	var new1 := h._spawn_cell(1)
 	var new2 := h._spawn_cell(2)
-	_chk(new1 != p1 and points.has(new1), "⑨ 1v1 复活重随机且排除自己的上一次位置(%s → %s)" % [str(p1), str(new1)])
-	_chk(new2 != p2 and points.has(new2), "⑩ 1v1 对手复活同样排除上一次位置(%s → %s)" % [str(p2), str(new2)])
-	# match_sync 的只读取法:两次调用必须同值(去掉 role_spawns 的只读实现、改成再调 _spawn_cell ⇒ 本条红)。
+	_chk(SpawnChooser.side_of(new1, d) == 1 and (sides[1] as Array).has(new1) and new1 != p1
+			and SpawnChooser.side_of(new2, d) == 2 and (sides[2] as Array).has(new2) and new2 != p2,
+			"⑦ 1v1 复活:仍在本方半区且排除上一次位置(%s→%s / %s→%s)" % [
+					str(p1), str(new1), str(p2), str(new2)])
+	# 换边:role1 去侧 2、role2 去侧 1(去掉 _side_swap 对侧判定的影响 ⇒ 本条红)。
+	h._side_swap = true
+	var swap1 := h._spawn_cell(1)
+	var swap2 := h._spawn_cell(2)
+	_chk(SpawnChooser.side_of(swap1, d) == 2 and (sides[2] as Array).has(swap1)
+			and SpawnChooser.side_of(swap2, d) == 1 and (sides[1] as Array).has(swap2),
+			"⑧ 1v1 换边:role1 ↔ 侧 2、role2 ↔ 侧 1")
+	# match_sync 的只读取法:两次调用必须同值(去掉 role_spawns 的只读实现 ⇒ 本条红)。
 	var a := h.role_spawns()
 	var b := h.role_spawns()
-	var cur: Vector2i = a.get(1, Vector2i(-1, -1))
-	_chk(a == b and cur == new1, "⑪ role_spawns() 只读且等于最近一次落位")
+	_chk(a == b and a.get(1, Vector2i(-1, -1)) == swap1, "⑨ role_spawns() 只读且等于最近一次落位")
 	h.queue_free()
 
 
 func _checks_royale() -> void:
-	var sp := _map_spawns()
-	var points: Array = sp.get("spawns", [])
-	var plan := RoyaleHost.plan_spawns([1, 2, 3, 4, 5])
+	var sides := _sides()
+	var union: Array = []
+	union.append_array(sides[1])
+	union.append_array(sides[2])
+	var roles: Array = []
+	for i in range(1, 17):
+		roles.append(i)
+	var plan := RoyaleHost.plan_spawns(roles)
 	var cells: Array = []
 	for r in plan:
 		cells.append(plan[r])
 	var uniq := {}
+	var left_n := 0
+	var right_n := 0
+	var in_data := true
 	for c in cells:
 		uniq[c] = true
-	var all_in_data := true
-	for c in cells:
-		if not points.has(c):
-			all_in_data = false
-	# 去掉什么才红:plan_spawns 走几何生成(不读地图数据)⇒ 抽到的点不在 # spawn 列表里 ⇒ 本条红。
-	_chk(cells.size() == 5 and uniq.size() == 5 and all_in_data,
-			"⑫ 大乱斗 plan_spawns 的 5 个点互不相同且取自 # spawn(实测 %d 个)" % cells.size())
-	# 复活排除上一次位置:空局面(无存活玩家)"离所有人远"这一条恒成立,只剩 last 排除在起作用。
-	var first_point: Vector2i = points[0]
+		if not union.has(c):
+			in_data = false
+		if SpawnChooser.side_of(c, SpawnPicker.grid_dims()) == 1:
+			left_n += 1
+		else:
+			right_n += 1
+	# 去掉什么才红:大乱斗只取单侧列表 / 走几何生成 ⇒ 出现不在并集里的点或某一侧 0 个点 ⇒ 本条红。
+	_chk(cells.size() == 16 and uniq.size() == 16 and in_data and left_n > 0 and right_n > 0,
+			"⑩ 大乱斗 16 人:16 个互不相同的点、全部取自两侧并集、左右两侧都有(左 %d / 右 %d)"
+			% [left_n, right_n])
+	# 复活:从并集里选,且排除本 role 上一次位置(空局面只剩 last 排除在起作用)。
+	var first_point: Vector2i = union[0]
 	var last := {1: first_point}
-	var respawn := RoyaleSpawn.respawn_cell(1, {}, {}, last, points)
-	# 去掉什么才红:respawn_cell 不接 last / 不排除 ⇒ 有线概率抽回 points[0] ⇒ 本条红(给固定 seed 不适用,故用"不等于"判留痕)。
-	_chk(respawn.x >= 0 and respawn != last[1] and points.has(respawn),
-			"⑬ 大乱斗复活排除 last(上次 %s → 本次 %s)" % [str(last[1]), str(respawn)])
+	var respawn := RoyaleSpawn.respawn_cell(1, {}, {}, last, union)
+	_chk(respawn.x >= 0 and respawn != last[1] and union.has(respawn),
+			"⑪ 大乱斗复活:取自并集且排除上一次(%s→%s)" % [str(last[1]), str(respawn)])
 
 
 func _checks_team() -> void:
-	var sp := _map_spawns()
-	var teams: Dictionary = sp.get("teamspawns", {})
-	var t1: Array = teams.get(1, [])
-	var t2: Array = teams.get(2, [])
+	var d := SpawnPicker.grid_dims()
+	var sides := _sides()
 	var team_of := {1: 1, 2: 1, 3: 1, 4: 2, 5: 2, 6: 2}
 	var first := TeamHost.plan_team_spawns(team_of, {}, false)
 	var side_ok := true
-	for role in first:
-		var c: Vector2i = first[role]
-		if int(team_of[int(role)]) == 1:
-			side_ok = side_ok and t1.has(c)
-		else:
-			side_ok = side_ok and t2.has(c)
 	var uniq := {}
 	for role in first:
-		uniq[first[role]] = true
-	# 去掉什么才红:plan_team_spawns 不用 # teamspawn(走几何生成)或不按队分流 ⇒ 本条红。
+		var c: Vector2i = first[role]
+		uniq[c] = true
+		if int(team_of[int(role)]) == 1:
+			side_ok = side_ok and SpawnChooser.side_of(c, d) == 1 and (sides[1] as Array).has(c)
+		else:
+			side_ok = side_ok and SpawnChooser.side_of(c, d) == 2 and (sides[2] as Array).has(c)
+	# 去掉什么才红:对抗不按队取侧 / 用几何生成 ⇒ 本条红。
 	_chk(first.size() == 6 and uniq.size() == 6 and side_ok,
-			"⑭ 团队 plan_team_spawns:6 人互不相同、队 1 取 # teamspawn 1、队 2 取 # teamspawn 2")
+			"⑫ 对抗开局:队 1 取侧 1、队 2 取侧 2,6 人互不相同且都取自地图数据")
 	var second := TeamHost.plan_team_spawns(team_of, first, true)
 	var swap_ok := true
 	var no_repeat := true
 	for role in second:
 		var c: Vector2i = second[role]
 		if int(team_of[int(role)]) == 1:
-			swap_ok = swap_ok and t2.has(c)
+			swap_ok = swap_ok and SpawnChooser.side_of(c, d) == 2 and (sides[2] as Array).has(c)
 		else:
-			swap_ok = swap_ok and t1.has(c)
+			swap_ok = swap_ok and SpawnChooser.side_of(c, d) == 1 and (sides[1] as Array).has(c)
 		if c == first.get(int(role), Vector2i(-1, -2)):
 			no_repeat = false
-	# 去掉什么才红:side_swap 分支删掉 ⇒ 队 1 仍取 t1;last 排除删掉 ⇒ 有概率与上一局同格(6 人挤 7 点,概率不低)。
-	_chk(swap_ok and no_repeat, "⑮ 团队换边:两队换用另一侧点集,且每人都不与上一局同位")
+	# 去掉什么才红:换边不换侧 ⇒ 本条红;last 排除删掉 ⇒ 6 人在 9 点里重随机、概率与上一局同位。
+	_chk(swap_ok and no_repeat, "⑬ 对抗换边:两队换用另一侧点集,且每人都不与上一局同位")
+	# 局内复活:仍在本队这一局所在侧,且排除本 role 上一次位置(去掉 respawn_cell 的侧/ last 参数 ⇒ 本条红)。
+	var fp: Vector2i = first[1]
+	var last := {1: fp}
+	var respawn := TeamSpawn.respawn_cell(1, {}, team_of, last, sides, false)
+	_chk(respawn.x >= 0 and respawn != last[1] and SpawnChooser.side_of(respawn, d) == 1
+			and (sides[1] as Array).has(respawn),
+			"⑭ 对抗局内复活:仍在本方半区且排除上一次(%s→%s)" % [str(last[1]), str(respawn)])
 
 
 func _checks_demo_data() -> void:
-	var sp := _map_spawns()
-	var spawns: Array = sp.get("spawns", [])
-	# 去掉什么才红:demo.cyrm 没写 # spawn / 只写 4 个 ⇒ 本条红。
-	_chk(spawns.size() >= MIN_POINTS, "⑯ demo # spawn ≥ %d(实测 %d)" % [MIN_POINTS, spawns.size()])
-	_chk(_all_valid("demo # spawn", spawns), "⑰ demo # spawn 每个点都是开阔地板格 + 连通区达标")
+	_sides_ok("demo", _sides())
 
 
 func _cell_of(node: Node2D) -> Vector2i:
 	return Vector2i(int(node.global_position.x) / GameParameters.TILE_SIZE,
 			int(node.global_position.y) / GameParameters.TILE_SIZE)
-
-
-func _cross_min(a1: Array, a2: Array) -> int:
-	var d := SpawnPicker.grid_dims()
-	var best := 1 << 30
-	for a in a1:
-		for b in a2:
-			best = mini(best, GridPathfinder.toroidal_dist(a, b, d.x, d.y))
-	return best
-
-
-func _max_pair_dist(arr: Array) -> int:
-	var d := SpawnPicker.grid_dims()
-	var best := 0
-	for i in range(arr.size()):
-		for j in range(i + 1, arr.size()):
-			best = maxi(best, GridPathfinder.toroidal_dist(arr[i], arr[j], d.x, d.y))
-	return best
 
 
 func _finish() -> void:

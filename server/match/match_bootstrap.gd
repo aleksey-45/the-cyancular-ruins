@@ -13,27 +13,35 @@ extends RefCounted
 # 与旧 lobby._start_match 同逻辑,只是脱离大厅进程/房间状态。
 
 const PVP_MAP := "res://maps/newfactory.cyrm"
-# ★ 1v1 出生点 = 地图 meta 的 `# spawn` 列表(固定数据):start_on 随机算好一份交给宿主,并广播同一份。
-#   无 `# spawn` 的老图回退到改造前的两点逻辑(`# player` / `# player2` + role2 缺失时 far_spawn_from)。
+# ★ 1v1 出生点 = 地图 meta 的 `# respawn 1|2` 列表(按半区写死的固定数据):start_on 按侧随机算好一份交给宿主,并广播同一份。
+#   侧 1 = 左半 / 侧 2 = 右半;role1 → 侧 1、role2 → 侧 2(其它 role 沿用旧口径走侧 2)。
+#   无 `# respawn` 的老图回退到改造前的两点逻辑(`# player` / `# player2` + role2 缺失时 far_spawn_from)。
 # ★ `far_spawn_from` / `FAR_CELLS` 仍住在 `core/sim/spawn_picker.gd`(这个文件静态引用 autoload,`-s` 下编译不过)。
 
 
-# 1v1 出生点(随机、互不相同、两两 ≥ SpawnPicker.FAR_CELLS)。空表 = 老图无 `# spawn` 或点数不够 → 调用方走回退路径。
+# 1v1 出生点:每个 role 从**自己半区**的 `# respawn` 列表随机取一格(互不相同、尽量 ≥ SpawnPicker.FAR_CELLS)。
+# 空表 = 老图无 `# respawn` / 某侧无点 → 调用方走 legacy 回退路径。
 static func plan_spawns(roles: Array) -> Dictionary:
-	var points: Array = (MazeGenerator.load_spawns().get("spawns", []) as Array).duplicate()
+	var sides: Dictionary = MazeGenerator.load_spawns().get("respawns", {})
 	var out := {}
-	if points.size() < roles.size():
+	if sides.is_empty():
 		return out
-	var picked := SpawnChooser.pick_many(points, roles.size(), null, SpawnPicker.FAR_CELLS,
-			MazeGenerator.map_size())
-	if picked.size() < roles.size():
-		return out
-	for i in range(roles.size()):
-		out[int(roles[i])] = picked[i]
+	var dims := MazeGenerator.map_size()
+	var taken: Array = []
+	for role in roles:
+		var side := SpawnChooser.SIDE_LEFT if int(role) == 1 else SpawnChooser.SIDE_RIGHT
+		var points: Array = sides.get(side, [])
+		if points.is_empty():
+			return {}
+		var cell := SpawnChooser.pick(points, taken, null, SpawnPicker.FAR_CELLS, taken, dims)
+		if cell.x < 0:
+			return {}
+		taken.append(cell)
+		out[int(role)] = cell
 	return out
 
 
-# 老地图(无 `# spawn`)的向后兼容路径:逐字保留改造前行为 —— 地图两点 + role2 缺失时现挑一个远离 role1 的地板格。
+# 老地图(无 `# respawn`)的向后兼容路径:逐字保留改造前行为 —— 地图两点 + role2 缺失时现挑一个远离 role1 的地板格。
 # ★ role_peers 的键为 1/2 时与改造前一致;其它 role(1v1 AI 补位)沿用旧代码的"非 1 即 s2"口径。
 static func legacy_plan_spawns(roles: Array, map_path: String) -> Dictionary:
 	var spawns := MazeGenerator.load_spawns()

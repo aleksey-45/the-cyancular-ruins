@@ -17,33 +17,42 @@
 - 子格:一格 64px = 4×4 个 16px 子格(`MapFormatV4.SUB_PER_CELL = 4`)。格值 packed = `texture*16 + shape`;`EMPTY = 0`、`SOLID = 31`(纹理 1 全砖)。
 - v3 文本(`# cyrm-v3`,每格 4 字符 = 3 位十进制纹理 + 1 位形状 hex)与单字符文本格式仍可读,加载时转换为 125×75;出生点 `# player <col> <row>`、`# player2 <col> <row>`(PvP 第二出生点),读口 `MapFormat.load_spawns` / `parse_spawn_metadata`。
 
-### 出生点:地图数据(`# spawn` / `# teamspawn`)
+### 出生/复活点:按阵营半区的地图数据(`# respawn <1|2> <col> <row>`)
 
-**出生点是地图数据,不是运行时生成的**:`.cyrm` v4 的 meta 文本行(格式层不动,仍是 `u16 meta_len` + UTF-8 文本)新增两类行,由地图作者写死:
+**出生/复活点是地图数据,不是运行时生成的**:`.cyrm` v4 的 meta 文本行(格式层不动,仍是 `u16 meta_len` + UTF-8 文本)按**阵营半区**写死:
 
 | 行 | 含义 | 约束 |
 |---|---|---|
-| `# spawn <col> <row>` | 通用出生点列表(PvP 1v1 / 大乱斗) | 每张图 **≥5** 个;按文件顺序**去重**(首次出现生效) |
-| `# teamspawn <1\|2> <col> <row>` | 团队模式每队出生点列表(队号只认 1 / 2) | 每队 **≥5** 个(支持每队 1~5 人);同样去重 |
-| `# player` / `# player2` | 单机玩家 / PvP 第二出生点 | **向后兼容保留**:单机入口、`MapCatalog` 的 PvP 图校验(要求两点都有)与老图都还读它们 |
+| `# respawn 1 <col> <row>` | **侧 1** 的复活点列表 | 侧 1 = **左半**(`x < cols/2`);每侧 **≥5**(当前两张图各写 9 个) |
+| `# respawn 2 <col> <row>` | **侧 2** 的复活点列表 | 侧 2 = **右半**(`x ≥ cols/2`);同侧按文件顺序**去重**(首次出现生效) |
+| `# player` / `# player2` | 单机玩家 / PvP 第二出生点 | **向后兼容保留**:单机入口、`MapCatalog` 的 PvP 图校验(要求两点都有)与老图无 `# respawn` 时的回退路径还读它们 |
 | `# enemy <type> <col> <row>` | 敌人出生点 | 不变 |
 
-- 解析:`MapFormat.parse_spawn_metadata` → `load_spawns()` 的 `spawns: [Vector2i]` / `teamspawns: {1: [...], 2: [...]}`(空列表时连键都不带,老图的 `is_empty()` 回退判据因此成立)。非法行(负数 / 非整数 / 缺列 / 队号不是 1|2)`push_warning` 后跳过、**不抛错**;坐标是格(col = x,row = y),不做越界重排(界外由数据校验工具/探针报红)。
-- 数据合格判据 = 运行时同一套 `SpawnPicker`:地板格(本格空 + 正下方挡路)+ 头顶 ≥2 格净空 + 同层连通区 ≥ `area_threshold()`;单机/空中落点风格不在合格集里(`newfactory` 的 `# player (23,43)` 其实是空中落点、`# player2 (26,9)` 是 1 格孤岛,所以两张旧键与新列表并存、互不替代)。
+- **半区语义**(常量在 `SpawnChooser.SIDE_LEFT = 1` / `SIDE_RIGHT = 2`,`side_of` / `side_offset` / `bucket_of` 是唯一划分):
+  - **1v1**:role1 默认侧 1(左半)、role2 侧 2(右半);每局换边(`MatchState._side_swap`)时互换 ⇔ "每人只在自己那半边出生/复活"。
+  - **对抗(team)**:队 1 → 侧 1、队 2 → 侧 2;换边(下一局,`TeamHost._side_swap_round`)时两队互换侧。
+  - **大乱斗**:无阵营 ⇒ 用**两侧列表的并集**当候选(全图散布),开局散点与复活都从并集里取。
+  - ⚠ 环面世界:左右接缝在 `x = 0`,所以两侧在接缝处也是相邻的。这是世界几何的固有边界,不改变"各占半区"的定义;1v1 的两人最小间距(`SpawnPicker.FAR_CELLS`)只是**软约束**(点不够时逐级放宽)。
+- **"均匀散布"判据**(写死可校验,工具与探针同源 `SpawnChooser.bucket_of`):把**该侧半区**按 3 列 × 3 行切成 9 个桶(列以半区宽度为范围、行以整幅地图高度为范围)⇒ **每桶 ≥1 个点**,且**同侧两两环面距离 ≥ 5 格**;不允许"全挤一条带/一个角落/一个高度"。另要求**离本侧的两条边界(环面接缝 `x=0`/`cols` 与半区中线 `x=cols/2`)都 ≥ `SpawnChooser.SIDE_EDGE_MARGIN = 10` 格** —— 环面上"两半"在这两处都相邻,贴边会让对面半区的点落在几格内(实测两侧最近横向间隔 ≥21 格)。`newfactory` / `demo` 每侧 9 点正好 9/9 桶覆盖(实测同侧最小两两距 11~22 格)。
+- **点合格判据**(全来自现有 `SpawnPicker`,工具 `--check`/探针同源):地板格(本格空 + 正下方挡路 + 头顶 1 格空)+ 头顶 2 格净空 + 同层连通区 ≥2(不孤立单格死角)+ 本格必须 EMPTY(不在水里)。⚠ 比 `spawn_candidates()` 的"开阔"门槛(`area_threshold`)宽 —— 严格档会把 `newfactory` 的全部合格点压到底部一条开阔带(用户已否决,见 [`registered-debt.md`](registered-debt.md) §四十六)。
+- 解析:`MapFormat.parse_spawn_metadata` → `load_spawns()` 的 `respawns: {1: [...], 2: [...]}`(两侧都空时连键都不带 ⇒ 老图回退判据成立)。非法行(负数 / 非整数 / 缺列 / 侧号不是 1|2)`push_warning` 后跳过、**不抛错**;坐标是格(col = x,row = y),越界不做重排(界外由工具/探针报红)。旧格式(2×2→1)的坐标同样 ÷2。
 - 写盘工具 [`tools/map_spawn_meta.gd`](../../tools/map_spawn_meta.gd)(SceneTree 脚本,`-s` 跑):
-  `--list` / `--suggest N --clearance C --half 1|2`(只打印建议,不写)/ `--inspect "x,y;..."` / `--spawn/--team1/--team2 ... --write`。
-  写盘走 `MapFormatV4.replace_meta`:只替换 meta 文本段,**层块字节逐字节原样保留**(走 `serialize()` 会从格级网格重铺场景层,丢掉编辑器画的 16px 混排);写后自动回读:出生点列表与场景层逐格都要与写入前一致。
-- 浏览器编辑器(`level_editor/`)对未知 meta 行的处理:它们被 `parseMeta` 归入 `comments`、`buildMeta` 原样以 `# ` 前缀回写 ⇒ **`# spawn` / `# teamspawn` 行不会丢**(行内容逐字保留;行顺序会被挪到注释区且首尾空白被 trim)。编辑器里没有出生点的可视化 UI:改点用上面的工具或直接改 meta 文本。v1/v2/v3 老图**不新增**这些行,也不会报错(空列表 → 各模式回退路径)。
+  - `--check` 校验地图现有数据(每侧 ≥5 / 在自己半区 / 每个点合格 / 9 桶覆盖 / 同侧间距);
+  - `--suggest [--side 1|2]` 按半区**均匀撒点建议**(每桶挑一个"离已选点最远"的合格格;只打印、不写盘,人确认后用固定坐标写死);
+  - `--list` / `--inspect "x,y;..."`;`--respawn1 "x,y;..." --respawn2 "..." --write` 写盘。
+  写盘走 `MapFormatV4.replace_meta`:只替换 meta 文本段,**层块字节逐字节原样保留**(走 `serialize()` 会从格级网格重铺场景层,丢掉编辑器画的 16px 混排);写后自动回读:两侧列表与场景层逐格都要与写入前一致。
+- 浏览器编辑器(`level_editor/`)对未知 meta 行的处理:它们被 `parseMeta` 归入 `comments`、`buildMeta` 原样以 `# ` 前缀回写 ⇒ **`# respawn` 行不会丢**(行内容逐字保留;行顺序会被挪到注释区且首尾空白被 trim)。编辑器里没有复活点的可视化 UI:改点用上面的工具或直接改 meta 文本。v1/v2/v3 老图**不新增**这些行,也不会报错(空列表 → 各模式回退路径)。
 - 运行时选点(唯一随机实现 = [`core/sim/spawn_chooser.gd`](../../core/sim/spawn_chooser.gd) 的 `SpawnChooser.pick` / `pick_many`):
   - **排除上一次位置 = 硬约束**(若整张列表都被排除,才让位 —— 宁可重选自己的旧点,也不与对手同格);**最小间距 = 软约束**,按 `RELAX_STEP = 5` 逐级放宽到 0(点不够是地图数据的边界,不该把人甩到 (-1,-1) 的墙角)。
-  - **1v1**:`MatchBootstrap.plan_spawns` 从 `# spawn` 随机取两人(互不相同、两两 ≥ `SpawnPicker.FAR_CELLS`,并广播同一份);`MatchState` 用 `_duel_spawns` 记每个 role 最近一次落点,复活 / 换局 / 击杀后复位都重随机并排除自己上一次;`role_spawns()` 只读不重算(match_sync 会重复拉)。**老图无 `# spawn` 时逐字回退改造前行为**:`# player` / `# player2` 两点 + `_side_swap` 换边(role2 缺失时 `far_spawn_from` 现挑)。
-  - **大乱斗**:`RoyaleSpawn.plan_spawns` 从 `# spawn` 取 N 人(两两尽量 ≥ `SPAWN_CLEARANCE`);`respawn_cell` 用同一列表,筛「距所有存活玩家 ≥ `RESPAWN_CLEARANCE`」且 `≠ _last_spawn[role]`,全筛空时退化为同池随机(不再回 (-1,-1) 角落)。**缺 `# spawn` 时回退现有 `SpawnPicker` 几何生成并 `push_warning` 一次**;数据点不够 N 人时用地板格补足(与改造前同一条兜底)。
-  - **团队**:`TeamSpawn.plan_team_spawns(teams, last, side_swap)` 每局从对应侧列表取点(队 1 用 `# teamspawn 1`、队 2 用 `2`;`side_swap` 换边后对调),每人随机且排除本 role 上一局点位、队内尽量拉开;**缺数据或人数超过列表 → 回退改造前的几何生成**(重试循环原样保留)并 `push_warning` 一次。团队**局内复活**仍走 `SpawnPicker.respawn_pools()`(只有开局/换局读地图数据)。
+  - **1v1**:`MatchBootstrap.plan_spawns` 让每个 role 从**自己半区**的列表随机取一格(并广播同一份);`MatchState._spawn_cell` 在**本 role 自己的半区**里重选(复活 / 换局 / 击杀后复位),排除自己上一次落点,并与对手尽量保持 `FAR_CELLS`;`role_spawns()` 只读不重算(match_sync 会重复拉)。**缺 `# respawn` 的老图**逐字回退改造前行为:`# player` / `# player2` 两点 + `_side_swap` 换边(role2 缺失时 `far_spawn_from` 现挑),并 `push_warning` 一次。
+  - **对抗**:`TeamSpawn.plan_team_spawns(teams, last, side_swap)` 每局按队取侧,每人随机、排除本 role 上一局点位、队内尽量拉开;**局内复活** `TeamSpawn.respawn_cell` 也用**本队这一局所在侧**的数据(不跨侧、不回退几何),筛「离存活敌人 ≥ `RESPAWN_CLEARANCE`」且排除自己上一次落点。缺数据 / 某队人数超过该侧列表 ⇒ 回退改造前的几何生成(重试循环原样保留)并 `push_warning` 一次。
+  - **大乱斗**:`RoyaleSpawn.plan_spawns` 从**两侧并集**取 N 人(两两尽量 ≥ `SPAWN_CLEARANCE`);`respawn_cell` 用同一并集,筛「距所有存活玩家 ≥ `RESPAWN_CLEARANCE`」且 `≠ _last_spawn[role]`,全筛空时退化为同池随机(不再回 (-1,-1) 角落)。**缺数据时回退现有 `SpawnPicker` 几何生成并 `push_warning` 一次**;数据点不够 N 人时用地板格补足(与改造前同一条兜底)。
 - 已知边界(照实):
-  1. `# spawn` 的合格集来自现有"开阔地板"判据,所以像 `newfactory` 这种图,合格点会集中在一小片开阔带上(实测 30 个全在 y=90)⇒ 随机的**空间分布**受地图本身限制;要更丰富的落点分布,得在地图上开新的开阔区,或放宽判据(需改 `SpawnPicker` 口径,不在本轮)。
-  2. 超过数据列表人数的对局(如大乱斗 16 人 / 团队某队 5 人以上)**混合**使用数据点 + 几何补足;数据点优先,但这不是"全部落点都在地图数据里"。
-  3. "上一次位置"记录的是上一次**出生点**,不是死亡地点。
-  4. 脚本探针只覆盖默认图(`newfactory` / `demo`)与纯逻辑;真链路(两端 match_start / match_sync 与摆位同源)仍需真链路批。
+  1. **"均匀"是桶覆盖 + 同侧间距,不是连续均匀分布**:9 个点里有的桶会靠近半区边界(环面接缝两侧可能很近);两半在接缝处相邻是环面世界的固有几何。
+  2. 超过数据列表人数的对局(如大乱斗 16 人 / 某队人数超过该侧列表)**混合**使用数据点 + 几何补足;数据点优先,但这不是"全部落点都在地图数据里"。
+  3. "上一次位置"记录的是上一次**出生/复活点**,不是死亡地点。
+  4. 脚本探针只覆盖默认图(`newfactory` / `demo`)与纯逻辑;真链路(两端 match_start / match_sync 与摆位同源、换边后客户端重拉)仍需真链路批。
+
 
 
 ## 参数体系
@@ -72,7 +81,7 @@
 
 ## 水
 
-- 纹理 21 水 / 22 水面,`type=liquid`(无碰撞,`is_blocked = false`)。地图只画 21;水面 22 由 `Level0._paint_water` 派生(该格上方非 liquid → 水面层)。`WaterLayer`(水体)与 `WaterSurfaceLayer`(水面)两个 TileMapLayer;水面起伏由 `scenes/effects/water_surface_batch.gd`(合批静态网格 + 内联 canvas vertex shader)做逐格正弦上下拉伸(格底锚定、相位逐格错开),水体层不挂 shader。
+- 纹理 21 水 / 22 水面,`type=liquid`(无碰撞,`is_blocked = false`)。地图只画 21;水面 22 由 `Level0._paint_water` 派生(该格上方非 liquid → 水面层)。★ 渲染侧两块砖的下标是 **0-based**(纹理 id − 1):水体图集用 `WATER_BODY_BRICK = 20`、水面合批用 `WATER_SURFACE_BRICK = 21`;混用不会报错,只会让整片水变成水面(2026-11-01 修,守卫 `tests/probe/water_atlas_probe.tscn`)。`WaterLayer`(水体)与 `WaterSurfaceLayer`(水面)两个 TileMapLayer;水面起伏由 `scenes/effects/water_surface_batch.gd`(合批静态网格 + 内联 canvas vertex shader)做逐格正弦上下拉伸(格底锚定、相位逐格错开),水体层不挂 shader。
 - `Water`(`core/sim/water.gd`,静态,不引 autoload,`-s` 可测):**身体查询唯一入口 `sample_body(body, was_in_water)`**,结果在 `core/sim/water_sample.gd`(纯数据)。采样点 = 活动碰撞箱的**头顶/脚底**(不再是"中心 + 半身");水面线 = 所在水袋顶边,并**归一到离身体最近的环面副本**;向上扫连续液体格有 rows 上限(全液列标 `SURFACE_FULL`,不死循环)。字段:`in_water`(脚底深度 ≥ `GameParameters.water_enter_depth`=8px 进、> `water_exit_depth`=-2px 出,**滞回**)/ `head_under`(头低于水面线才扣氧,玩家与敌人同一条线)/ `feet_depth` / `submersion_ratio` / `surface_kind`(`NONE`/`FREE`/`CEILING`/`FULL`)。点查询 `is_in_water` / `surface_y_at`(返回段顶边,已归一最近副本;点不在水里返回 pos.y)/ `submerged` 只保留给未迁移面(子弹阻力 / 爆炸 / 预瞄)。`feet_offset` 的缓存签名同时数 `CollisionShape2D` 与 `CollisionPolygon2D`(姿态切换即失效重算),爬梯与对手副本共用它。
 - 主角(`scenes/player/swim_component.gd`):水中跳过攀爬/重力/跳跃/下蹲/冲刺;左右 = 水平游(× `player_swim_speed`),按上 = 上浮(`player_swim_up`)、不按 = 下沉(`player_swim_down`);没有水面悬停/浮力弹簧,出水由 `in_water` 滞回判回 false 自动恢复普通物理。`SwimComponent.sample` 是玩家本帧水状态的唯一来源,根只读它。呼吸按 `head_under`(头低于水面线)扣;氧气上限 `player_waterproof_max = 10`,空后每 `water_drown_damage_interval`(1.5s)扣 `player_waterproof_damage = 5`。敌人(`EnemyBase._apply_water`)落水浮力回水面(浮力目标用归一后的 `surface_y`),水平朝 `_water_swim_dir()` 游(JumpBird / BlackBird 覆写为朝玩家,基类 = 漂着);`head_under` 时防水值按 `GameParameters.water_drain_interval`(1s)掉 1、出水按 `water_recover_interval`(0.3s)回 1,上限 `waterproof_max`(black / jump 6,fly 10);归零后每 `EnemyParams.shared.drown_interval`(1.5s)扣 `shared.drown_damage`(5)。FlyBird 寻路把水当障碍,但正下方是水仍可飞越;它对水中玩家的 ×1.5 增伤用 `sample_body(player)` 判,与玩家自身同源。
 - 爆炸:目标格是水 ⇒ 伤害/击退 × 该格 `explosion_decay`(0.25)(**点口径,未收口**);LOS 遮挡 75% 不变(仅墙后掩体,梯/链不挡也不减)。子弹阻力 `velocity_vec *= exp(-water_bullet_drag·Δt)`,玩家与敌人子弹共用。水粒子(`scenes/effects/water_fx.gd`,运行期挂主角 + 敌人)按 `sample_body` 的 `feet_depth` 分模式:贴水面溅水花、没入深上浮气泡。

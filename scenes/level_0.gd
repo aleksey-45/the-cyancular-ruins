@@ -266,10 +266,13 @@ func _create_wall_tileset() -> TileSet:
 
 
 # 水体专用 64px 图集:墙体图集改成 16px 象限制后,_paint_water 的「形状列×纹理行」老格式没了着落(水体被按 16px 坐标压缩画错位);水不可破坏,永远按 64px 整格渲染,构造同样收在 TerrainAtlas,仅供 water_layer 使用。
+# ★★ 两个用途各用各的砖(2026-11-01 修):水体图集 = `WATER_BODY_BRICK`(纹理 21 水,均匀半透明填充)、
+#   水面合批 = `WATER_SURFACE_BRICK`(纹理 22 水面,顶边亮带)。此前两处共用一块(idx 21 = 水面)⇒ 整个水体被画成水面。
 func _create_water_tileset() -> TileSet:
 	var ts := GameParameters.TILE_SIZE
-	# 水面合批 shader 的采样源(= 水体纹理放大到 ts×ts)
-	Level0.surface_texture = ImageTexture.create_from_image(TerrainAtlas.water_brick_image(ts))
+	# 水面合批 shader 的采样源 = 水面砖(不是水体砖;混用会让水面失去顶边亮带、整片水一个颜色)
+	Level0.surface_texture = ImageTexture.create_from_image(
+			TerrainAtlas.water_brick_image(ts, TerrainAtlas.WATER_SURFACE_BRICK))
 	return TerrainAtlas.make_water_tileset(ts)
 
 

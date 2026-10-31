@@ -16,11 +16,17 @@ const QUAD_SRC: int = 8        # 源砖拆成 4×4 个 8×8 象限
 const QUAD_TILE: int = 16      # 每个象限最近邻放大 2× → 16×16
 const QUAD_COLS: int = 16      # 图集列数 = 4×4 象限
 const SUB_PER_CELL: int = 4    # 一个 64px 格 = 4×4 个 16px 子格(与 cyrm v4 网格一致)
-# 水体层用的那块源砖 —— 0-based 下标(= 纹理 id − 1),21 = 源砖表第 22 块(与"水"的 id 21 差一,既有画面就是这块砖,别改)。
-const WATER_LAYER_BRICK: int = 21
+# 水体的两块源砖(0-based 下标 = 纹理 id − 1;源砖表 10 列,第 idx 块 = 第 (idx/10) 行第 (idx%10) 列):
+#   · 纹理 21「水」= idx **20**:整块均匀的半透明填充(alpha≈0.82)⇒ **水体格**用它铺;
+#   · 纹理 22「水面」= idx **21**:顶边多一条更亮的横向亮带 ⇒ **水面格**(上方非液体的那一排)用它画。
+# ★★ 2026-11-01 修:本常量此前只有一个值 21 并同时喂给"水体图集"和"水面合批" —— 21 是 0-based 下标,
+#   即纹理 22「水面」⇒ **整个水体都被画成水面**(用户报「把水体都变成水面了」)。别再把两个用途合回一个常量:
+#   水体图集必须用 BODY,水面合批必须用 SURFACE;混用不会报错,只会让整片水看起来像水面/像死水。
+const WATER_BODY_BRICK: int = 20        # 纹理 21「水」= 均匀半透明填充
+const WATER_SURFACE_BRICK: int = 21     # 纹理 22「水面」= 顶边亮带
 
 static var _src_cache: Image = null
-static var _brick_cache: Dictionary = {}    # ts → ts×ts 水砖 Image
+static var _brick_cache: Dictionary = {}    # "ts|idx" → ts×ts 水砖 Image(键必须带 idx,见 water_brick_image)
 static var _tex_cache: Dictionary = {}      # "path|cell_px|air" → ImageTexture
 
 
@@ -86,15 +92,18 @@ static func make_wall_tileset() -> TileSet:
 
 # ── 水体图集(64px 整格,shape 掩码)────────────────────────────────
 
-# 水体层那块源砖放大到 ts×ts——水面合批 shader 的采样源,也是水体图集的源图。
-static func water_brick_image(ts: int) -> Image:
-	if _brick_cache.has(ts):
-		return _brick_cache[ts]
+# 把指定的水砖(默认 = 水体砖)放大到 ts×ts:水体图集的源图,也是水面合批 shader 的采样源。
+# ★ idx 必须由调用方按用途传(WATER_BODY_BRICK / WATER_SURFACE_BRICK);缓存键带 idx —— 只按 ts 缓存会让
+#   先来的那个调用把另一个用途的图也拿走(静默串味)。
+static func water_brick_image(ts: int, idx: int = WATER_BODY_BRICK) -> Image:
+	var key := "%d|%d" % [ts, idx]
+	if _brick_cache.has(key):
+		return _brick_cache[key]
 	var src_img := source_image()
 	var img := Image.create(SRC_TILE, SRC_TILE, false, Image.FORMAT_RGBA8)
-	img.blit_rect(src_img, source_rect(WATER_LAYER_BRICK), Vector2i.ZERO)
+	img.blit_rect(src_img, source_rect(idx), Vector2i.ZERO)
 	img.resize(ts, ts, Image.INTERPOLATE_NEAREST)
-	_brick_cache[ts] = img
+	_brick_cache[key] = img
 	return img
 
 

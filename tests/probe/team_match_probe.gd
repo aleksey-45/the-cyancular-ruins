@@ -4,7 +4,7 @@ extends Node
 # 判据:文本 TEAM MATCH PROBE: ALL-OK(不看退出码 —— 探针挂住时 --quit-after 到期仍 exit 0 且一行 ALL-OK 都不打印,只看退出码会把「没跑完」读成「通过」)。
 # ═══ 五相(每相的存在理由见对应注释)═══
 #   相① 六人开局 —— 真大厅(池外端口)+ 6 个 headless 客户端各跑真 mp_lobby 页:建房 → 点公开列表加入 → 各自选边(3 A / 3 B)→ 房主点开始 → 6 端都进 team_game。断言:6 端都进对局;每端的 match_sync.teams 与大厅的 team_of 逐端一致;每端本地玩家与权威快照收敛。★ 同时覆盖「从没被真跑过」的等待室渲染路径(team_room_state 真正到达并被画出来)。
-#   相② 按队散点 —— 开局那一刻 6 个出生点两两分组:队内最大距离 < 队间最小距离(与 A 册 team_host_probe 同一条判据,这里在真链路上再验一次)。
+#   相② 按队分半区 —— 开局那一刻 6 个出生点必须**各在自己队那半边**(地图 `# respawn 1|2`;队1=侧1左半、队2=侧2右半),两侧各 3 人。
 #   相③ 子弹穿透队友(负)+ 爆炸满效(正)—— 甲(1 队最低 role)走到队友乙身边(≤170px 且视线通畅)连射:乙 hp 不变;再换榴弹贴脸一投:乙 hp 下降且被推飞。★ 这一对缺一不可:只验「穿透」会让「伤害系统整个坏了」也全绿。★ 另从乙端独立取证:数「从我身边飞过(≤45px)的非自己子弹」—— 没有它,「乙 hp 不变」可以靠「子弹根本没飞到」骗过。
 #   相④ 打到 9 杀(回合机收局)→ ROUND_OVER → 第 2 局开局后各端出生点已**换到另一侧**(地图 `# teamspawn` 另一队那份列表、重随机,且不与第 1 局同处;判据见相④ 的注释)。★ 9 杀多半由回退模式(K 自杀脱困)推动(逐端读数 REC BACKOFF,裁判照实打出来)⇒ 这一相验的是回合机 + 整队换边 + 换边重拉 match_sync,而不是「枪法」。断言各端 scores 的键是队号 1/2、rounds_won 六端一致。
 #   相⑤ 少人继续 —— 6 号客户端在 PLAYING 中途按 ESC 离场(唯一走 safe_change_scene 的局内退出路径)→ 服务器不终局、其余 5 端仍持续收到快照(间隔 < 1s)、且掉线者已被移出对局。
@@ -392,26 +392,26 @@ func _assert_stage3() -> void:
 	_check(conv_ok.size() == CLIENT_COUNT and conv_bad == 0,
 			"相① 六端本地玩家与权威快照收敛(不符 %d 端)" % conv_bad)
 
-	# ── 相② 按队散点:队内最大距离 < 队间最小距离 ──
+	# ── 相② 每人在自己队那半边出生(2026-11-01 新契约:出生点 = 地图 `# respawn <side>` 数据)──
+	# ★ 旧判据「队内最大距离 < 队间最小距离」是几何散点时代的产物:现在每队占**一整侧**、点在该侧均匀散布
+	#   ⇒ 队内跨度本就可能大于跨侧最小距(环面接缝与半区中线两处天然相邻)。现在钉用户要的那条:**每人都在本队那侧**。
 	if r1.size() == CLIENT_COUNT:
 		var d := _grid_dims()
 		if d == Vector2i.ZERO:
-			pass   # 地图尺寸读不到 —— `_grid_dims()` 已记 FAIL;没有尺寸就不算环面距离(算出来只会误导)
+			pass   # 地图尺寸读不到 —— `_grid_dims()` 已记 FAIL;没有尺寸就判不了半区
 		else:
-			var max_in := 0
-			var min_cross := 1 << 30
-			var rs: Array = r1.keys()
-			rs.sort()
-			for a in range(rs.size()):
-				for b in range(a + 1, rs.size()):
-					var dist := MazeGenerator.toroidal_dist(r1[rs[a]], r1[rs[b]], d.x, d.y)
-					if int(r1_team.get(rs[a], 0)) == int(r1_team.get(rs[b], 0)):
-						max_in = maxi(max_in, dist)
-					else:
-						min_cross = mini(min_cross, dist)
-			_check(min_cross > max_in,
-					"相② 队间最小距离 %d 格 > 队内最大距离 %d 格(6 个出生点)" % [min_cross, max_in])
-			_notes.append("相② 队内最大 %d 格 / 队间最小 %d 格" % [max_in, min_cross])
+			var wrong_side := 0
+			var side_counts := {1: 0, 2: 0}
+			for r in r1:
+				var want := int(r1_team.get(int(r), 0))
+				var got := SpawnChooser.side_of(r1[r], d)
+				side_counts[got] = int(side_counts.get(got, 0)) + 1
+				if want == 0 or got != want:
+					wrong_side += 1
+			_check(wrong_side == 0, "相② ★ 每人都出生在自己队那半边(队1=左半/队2=右半;错 %d 人)" % wrong_side)
+			_check(int(side_counts[1]) == PROBE_TEAM_SIZE and int(side_counts[2]) == PROBE_TEAM_SIZE,
+					"相② 两侧各 %d 人(实得 %d / %d)" % [PROBE_TEAM_SIZE, side_counts[1], side_counts[2]])
+			_notes.append("相② 侧分布 %d/%d" % [side_counts[1], side_counts[2]])
 	else:
 		_check(false, "相② 只收到 %d/6 个出生点读数" % r1.size())
 
@@ -559,12 +559,14 @@ func _assert_stage3() -> void:
 	# 出生点改成地图数据(`# teamspawn <1|2>`)后,换边 = 改用另一侧那份列表并重新随机(且排除各自的上一处),
 	# 精确格位不再是契约。现在钉两条更本质的:
 	#   ① 每人第 2 局不与第 1 局同处(排除语义);
-	#   ② 每人都换到了对手那侧 —— 离**对手队第 1 局落点**的最近距离 < 离**自己队第 1 局落点**的最近距离。
+	#   ② 每人都换到了**另一侧**(出生侧翻转)—— 直接看半区(`SpawnChooser.side_of`),不用距离判据。
 	if r2.size() == CLIENT_COUNT and r1.size() == CLIENT_COUNT:
 		var d := _grid_dims()
 		if d == Vector2i.ZERO:
 			pass   # 地图尺寸读不到 —— `_grid_dims()` 已记 FAIL(同相②)
 		else:
+			# 换边判据 = 直接看**半区**:第 2 局每人的出生侧必须与第 1 局相反。比「离对手队落点更近」的距离判据本质
+			# (后者在半区均匀散布下可能出现「对手侧的点恰好离我更远」的随机抖动)。
 			var same_cell := 0
 			var not_swapped := 0
 			for r in r1:
@@ -572,19 +574,10 @@ func _assert_stage3() -> void:
 					continue
 				if MazeGenerator.toroidal_dist(r1[r], r2[r], d.x, d.y) <= 1:
 					same_cell += 1
-				var mine := int(lobby_teams.get(int(r), 0))
-				var d_own := 1 << 30
-				var d_other := 1 << 30
-				for o in r1:
-					var dd: int = MazeGenerator.toroidal_dist(r2[r], r1[o], d.x, d.y)
-					if int(lobby_teams.get(int(o), 0)) == mine:
-						d_own = mini(d_own, dd)
-					else:
-						d_other = mini(d_other, dd)
-				if not (d_other < d_own):
+				if SpawnChooser.side_of(r2[r], d) == SpawnChooser.side_of(r1[r], d):
 					not_swapped += 1
 			_check(same_cell == 0, "相④ ★ 第 2 局每人的出生点都不与第 1 局同处(实得 %d 人重复)" % same_cell)
-			_check(not_swapped == 0, "相④ ★ 整队换到另一侧(每人离对手队第 1 局落点更近;没换侧 %d 人)" % not_swapped)
+			_check(not_swapped == 0, "相④ ★ 换边:第 2 局每人都换到了另一侧(没换侧 %d 人)" % not_swapped)
 			# 换边那一拍客户端**重拉 match_sync**:每端都应 ≥2 次应答(进场 1 + 换局 1)
 			_check(msync_seen == CLIENT_COUNT and msync_min >= 2,
 					"相④ ★ 换边后各端都重拉了 match_sync(六端最少应答次数 %d,应 ≥2)" % msync_min)

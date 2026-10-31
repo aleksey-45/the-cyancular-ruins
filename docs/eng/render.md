@@ -10,6 +10,7 @@
 - 图集构造 `core/sim/terrain_atlas.gd`(`TerrainAtlas`):源砖 → 图集 → TileSet;`Level0._create_wall_tileset()` / `_create_water_tileset()` 只剩转发。
   - **墙体 = 16px 象限**:`make_wall_tileset()` 把每块 32px 源砖拆成 4×4 个 8×8 象限、各最近邻 2× 放大成 16×16,拼成 16 列(4×4 象限)× 22 行(纹理 1-22)的 TileSet(`tile_size = 16`);`_paint_maze` 铺 16px 子格,瓦片坐标 = `Vector2i((y%4)*4 + (x%4), tex-1)`,3×3 环面。
   - **水体 = 64px 整格**:`make_water_tileset(ts)`,水砖放大到 ts×ts、按 2×2 shape 掩码挖象限 → 16 形状列 × 1 行;`_paint_water` 按 `shape_of(v)` 取列。
+- ★★ **两块水砖各用各的**(2026-11-01 修「水体被画成水面」):`TerrainAtlas.WATER_BODY_BRICK = 20`(0-based ⇒ 纹理 21「水」,均匀半透明填充)给水体图集;`TerrainAtlas.WATER_SURFACE_BRICK = 21`(纹理 22「水面」,顶边亮带)给 `WaterSurfaceBatch` 的 shader 采样源(`Level0.surface_texture`)。此前两者共用 idx 21(= 纹理 22)⇒ 深水也带亮线、整片水一个观感。守卫:`tests/probe/water_atlas_probe.tscn`(6 条)。
   - `TerrainAtlas.SKY_COLOR`(`b0e5f6`)是「空气格 / 清屏色」的唯一来源:`Level0` 的 `RenderingServer.set_default_clear_color()` 与主菜单背景底色都读它。它是世界底色,不是 UI token,也别改 `MapCatalog.BG`(选图缩略图底色,语义不同)。
 - 碰撞 `core/sim/collision_builder.gd`(`CollisionBuilder`,静态可测):形状掩码展开成 16px 子格(每 64px 格 → 4×4),贪心合并矩形后按 9 环面副本偏移实例化(每块矩形 ×9,共享同一 shape)。永久墙建一个整图节点、建一次不动;可破坏层按分块存节点(块边长 12 格),摧毁时只重建所在块。只有 type=wall 产生碰撞。
 - `core/sim/collision_aabb.gd`(`CollisionAabb`:从任意节点求**启用中**碰撞体的世界 AABB)是激光命中、water 脚底偏移、飞鸟避障矩形的共同几何来源;三者各带兜底值,只在目标真没有碰撞体时生效。多边形与形状必须分开判(`CollisionPolygon2D` 与 `CollisionShape2D` 是并列类);本作所有身体(三敌人 + 玩家 5 个姿态箱)都只用多边形。

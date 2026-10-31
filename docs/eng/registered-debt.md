@@ -745,7 +745,7 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 
 ### C. 出生点改为**地图数据**（方向修正，实施中）
 
-用户明确裁掉"用程序生成候选"的方向：「出生点是地图数据，应该写死在地图文件」。⇒ `.cyrm` v4 的 meta 文本行扩展为 `# spawn <col> <row>`（通用出生点，每图 ≥5）与 `# teamspawn <1|2> <col> <row>`（团队模式每队 ≥5），`# player`/`# player2` 保留向后兼容；选点只在"地图给的列表"里随机 + 排除上一次位置。详细验收与实施记录见本文件 §四十六（由实施方补）。
+用户明确裁掉"用程序生成候选"的方向：「出生点是地图数据，应该写死在地图文件」。⇒ `.cyrm` v4 的 meta 文本行扩展为**按阵营半区**的 `# respawn <1|2> <col> <row>`（侧 1 = 左半 / 侧 2 = 右半，每侧 ≥5 且 3×3 桶覆盖），`# player`/`# player2` 保留向后兼容；选点只在"地图给的**本侧**列表"里随机 + 排除上一次位置。⚠ 本小节写下时的初版格式（`# spawn` / `# teamspawn`）与"底部开阔带"数据已被用户否决并重做，现行口径与实施记录见本文件 §四十六。
 
 ### D. 3v3 → 「对抗」：人数弹性 2~10 + 目标/补贴（2026-11-01，档 2）
 
@@ -772,33 +772,61 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 4. **掉线 / 人数变化不重算目标与补贴**：`_rules` 是开局快照；客户端队伍表也不随掉线更新 ⇒ 两端同值优先于实时公平。要实时化必须让 `match_sync`/`round_state` 下发更新后的队伍表（协议改动）。
 5. ~~服务端面板 `server/gui/server_panel.gd::KIND_TEXT` 与 Beta 房显示名「时空 3v3」仍是旧文案~~ —— **Lead 收口时已一并改掉**：`KIND_TEXT` 的 `team` = 「对抗」、Beta 房显示名 = 「时空对抗」（`menu_autotest` 的字面量断言同步）、`scenes/mp_lobby.tscn` 两颗按钮默认 `text` = 「对抗」、`RoomTypes.kind_text()` = 「对抗房」。
 
-## 四十六、出生点改「地图数据」+ 所有模式随机/不重复（2026-11-01，档 2）
+## 四十六、出生/复活点改「按阵营半区的地图数据」（2026-11-01，档 2；含被否决的上一版）
 
-**方向**（用户裁定，见 §四十五 C）：出生点是地图数据，写死在 `.cyrm` 的 meta 里；程序只做「从地图给的列表里随机挑 + 排除上一次 + 最小间距」。旧实现（1v1 固定两点；大乱斗/团队用 `SpawnPicker` 几何生成）不再作为主路径。
+**方向（现行，用户 2026-11-01 追加裁定）**：「**绝对不能底部开阔地带随机**，全部改成在地图里写**复活点**，然后**均匀散布在属于对应阵营玩家的那半边**」。程序只做「从地图给的**本侧**列表里随机挑 + 排除上一次 + 最小间距」。
+- **侧**：侧 1 = 左半（`x < cols/2`）、侧 2 = 右半（常量在 `SpawnChooser.SIDE_LEFT/SIDE_RIGHT`）；1v1 role1/role2 各占一侧（每局换边互换），对抗队 1/队 2 各占一侧（换边互换），大乱斗无阵营 ⇒ **两侧并集**。
+- **均匀判据**（可校验）：每侧半区切 3 列 × 3 行 9 桶，**每桶 ≥1 点** + 同侧两两 ≥5 格 + **离本侧两条边界（环面接缝 / 半区中线）都 ≥ `SpawnChooser.SIDE_EDGE_MARGIN = 10` 格**（环面上两半在这两处都相邻，不留边距"各占半区"只在名字上成立、两队可能贴脸）；点必须过 `SpawnPicker` 判据（地板 + 头顶 2 格 + 不孤立 + 不在水）。
 
-**改动面**：
-- 格式/解析：`core/sim/map_format.gd::parse_spawn_metadata` 新增 `# spawn <col> <row>` 与 `# teamspawn <1|2> <col> <row>`（列表保序去重；非法行 `push_warning` 跳过；严格 `is_valid_int`，否则 `abc` 会静默变 (0,0)）；`load_spawns()` 新增 `spawns` / `teamspawns` 两个键，旧文本格式坐标同样 ÷2；`# player`/`# player2`/`# enemy` 逐字保留。
-- 写盘：`core/sim/map_format_v4.gd::replace_meta` 只替换 body 里的 meta 文本段，**层块字节原样搬**（压缩位沿用原文件，压不回去就退回裸 body）；工具 `tools/map_spawn_meta.gd` 校验（判据 = 运行时 `SpawnPicker` 地板/抬头/连通区）+ 建议 + 写盘 + 回读校验（出生点列表与场景层逐格不变）。
-- 数据：`maps/newfactory.cyrm` = `# spawn` 10 个 + `# teamspawn 1` 7 个 + `# teamspawn 2` 7 个（分布在两片开阔带上，跨队最小距 17 > 队内最大距 14）；`maps/demo.cyrm` = `# spawn` 8 个。两图的 `# player`/`# player2` 原样保留。
-- 选点：新纯逻辑 `core/sim/spawn_chooser.gd`（`SpawnChooser.pick` / `pick_many`）——排除项是硬约束、最小间距按 5 逐级放宽、候选空返回 (-1,-1)；1v1 / 大乱斗 / 团队共用这一份。
-- 接线：1v1（`MatchBootstrap.plan_spawns` + `MatchState._duel_spawns` / `_spawn_cell` / `role_spawns`：首次与 match_start 同源，换局/复活/击杀复位重随机并排除自己上一次、与对手 ≥ `FAR_CELLS`）；大乱斗（`RoyaleSpawn.plan_spawns` / `respawn_cell` + `RoyaleHost._last_spawn`）；团队（`TeamSpawn.plan_team_spawns(teams, last, side_swap)` + `TeamHost._side_swap_round`，删掉了旧的 `_swap_spawns` 精确对调）。**三条模式都保留"缺 `# spawn` / `# teamspawn` → 回退改造前逻辑"**（1v1 回固定两点+`_side_swap`；大乱斗/团队回 `SpawnPicker` 几何生成并 `push_warning` 一次）。
+**⛔ 被否决的上一版（同日，用户明确否决，留档防回退）**：曾把 `# spawn` 10 个点全写在 `newfactory` 底部开阔带（y=90）——`spawn_candidates()` 的严格"开阔"门槛（3 格宽 + 连通区 ≥20）会把全图合格点压到那一条带上，所以 1v1 就落在底部。**不要再把 `spawn_candidates()` 当数据来源**；放宽后的合格判据 = 地板 + 头顶 2 格 + 同层连通区 ≥2（仍全部复用 `SpawnPicker` 函数）。
+
+**改动面（现行）**：
+- 格式/解析：`# respawn <1|2> <col> <row>`（侧号只认 1/2；同侧按文件顺序去重；非法行 `push_warning` 跳过；严格 `is_valid_int`）；`load_spawns()` 返回 `respawns: {1: [...], 2: [...]}`（两侧都空不带键）；旧文本格式坐标 ÷2；`# player`/`# player2`/`# enemy` 逐字保留。上一版的 `# spawn` / `# teamspawn` 关键字**已删除**（地图数据一并重写；工具写盘时会清掉残留行）。
+- 数据：`maps/newfactory.cyrm` 与 `maps/demo.cyrm` 各写**每侧 9 点**（3×3 每桶 1 点；两侧的两条边界都留 ≥10 格边距）；newfactory 两侧最小两两距 22 / 11 格；demo 18 / 20 格。`# player`/`# player2` 原样保留。
+- 写盘：`MapFormatV4.replace_meta` 只换 meta 文本段、层块字节原样搬；工具 `tools/map_spawn_meta.gd` 有 `--check`（每侧 ≥5 / 自己半区 / 9 桶覆盖 / 同侧间距 / 地表合理）、`--suggest`（按半区每桶挑"离已选点最远"的合格格；只打印，人确认后写死）、`--respawn1/--respawn2 ... --write`（写后回读：列表等于写入值 + 场景层逐格不变）。
+- 选点：`SpawnChooser` 增加半区/桶定义（`side_of` / `side_offset` / `bucket_of`）；`pick` / `pick_many` 语义不变（排除硬约束、间距软约束逐级放宽、空候选 (-1,-1)）。
+- 接线：1v1（`MatchBootstrap.plan_spawns` 按 role 取侧；`MatchState._duel_side` / `_spawn_cell` / `role_spawns`：复活/换局/击杀复位都在自己半区重随机、排除自己上一次、与对手尽量 ≥ `FAR_CELLS`）；对抗（`TeamSpawn.plan_team_spawns(teams, last, side_swap)` 按队取侧 + `TeamSpawn.respawn_cell(..., last, sides, side_swap)` **局内复活也用本侧数据**）；大乱斗（`RoyaleSpawn.plan_spawns` / `respawn_cell` 用两侧并集）。三条模式**缺数据/人数超列表才回退改造前逻辑**（1v1 回 `# player`/`# player2`；大乱斗/对抗回 `SpawnPicker` 几何生成）并 `push_warning` 一次。
 
 **守卫**：
-- `tests/smoke/spawn_chooser_smoke.gd`（15 条 + `EXPECTED_CHECKS` 闸）：meta 解析（多行/重复/非法坐标/队号分流/老图不加空键）· 排除上一次 · 随机覆盖全部候选 · 最小间距可行时满足 · 不可行时放宽 · 退化优先级（不与对手同格）· 空候选 · 单候选被排除 · `pick_many` 不重复/间距/不足 · 1v1 数据抽样 32 轮 ≥ `FAR_CELLS`。
-- `tests/probe/map_spawn_data_probe.tscn`（17 条 + 闸，场景探针，要读盘）：两张图的 `# spawn` 数量与每个点过 `SpawnPicker` 判据 · newfactory 两队 `# teamspawn` 数量/判据/两队分开 · 旧键仍在 · 1v1 首次落点在数据里且 ≥ `FAR_CELLS` · 复活排除自己上一次 · `role_spawns()` 只读 · 大乱斗 `plan_spawns` 取数据点 · 大乱斗复活排除 last · 团队按队分流 · 团队 `side_swap` 换侧且不与上一局同位。
-- **变异实测**：① `SpawnChooser.pick` 删掉 `exclude.has(c)` 过滤 ⇒ `spawn_chooser_smoke` ⑥ 红（排除上一次失效）；② `MapFormat._parse_cell_tokens` 把 `is_valid_int` 换成宽松 `int()` ⇒ 同支 ③ 红（`abc` 变 (0,0)）；③ `TeamSpawn.plan_team_spawns` 删 `side_swap` 分支 ⇒ `map_spawn_data_probe` ⑮ 红；④ `MatchState._spawn_cell` 删 `_duel_spawns` 排除 ⇒ probe ⑨ 红。
-- 编辑器侧**不改代码**：`level_editor/core/40_meta.js` 的未知 meta 行本来就走 `comments` 往返（`parseMeta` → `comments` → `buildMeta` 以 `# ` 回写），`# spawn` / `# teamspawn` 不会丢（实测 round-trip：行内容逐字保留，行顺序被挪到注释区、首尾空白被 trim）。
+- `tests/smoke/spawn_chooser_smoke.gd`（19 条 + `EXPECTED_CHECKS` 闸）：解析按侧分流/去重/非法行/老图不加空键 · 旧键保留 · 侧边界与 3×3 桶划分 · 大乱斗并集 · 排除上一次 · 随机覆盖 · 间距可行/放宽 · 退化优先级 · 空/单候选 · `pick_many` 去重/间距/不足 · 1v1 两人各在自己半区 + 复活同侧且不与上一次同格（32 轮）。
+- `tests/probe/map_spawn_data_probe.tscn`（18 条 + 闸，真实地图）：两张图每侧 ≥5 / 在自己半区 / 9 桶覆盖 / 同侧 ≥5 格 / 每点过 `SpawnPicker` 判据 / 旧键保留；1v1 首次各在自己半区、复活同侧且排除上一次、换边互换、`role_spawns()` 只读；大乱斗 16 人 16 点全取自并集且左右都有、复活排除 last；对抗开局按队取侧、换边互换、局内复活同侧且排除上一次。
+- **变异实测（本轮）**：① `MapFormat` 的 respawn 侧号强制成 1 ⇒ smoke ③④ 红；② `TeamSpawn` 删 `side_swap` 分支 ⇒ probe ⑬ 红（前一轮的两条：`SpawnChooser.pick` 删 `exclude` 过滤 ⇒ smoke 排他断言红；`MapFormat` 把 `is_valid_int` 换成宽松 `int()` ⇒ `abc` 变 (0,0) 断言红 —— 均在本次重写后仍存在等价断言）。
+- 编辑器侧**不改代码**：未知 meta 行本来就走 `comments` 往返（`parseMeta` → `comments` → `buildMeta` 以 `# ` 回写），`# respawn` 不会丢（实测 round-trip：行内容逐字保留，行顺序被挪到注释区、首尾空白被 trim）。
 
 **边界（照实登记）**：
-1. **1v1 的落点分布变了**：旧的两点里 `# player (23,43)` 是空中落点、`# player2 (26,9)` 是 1 格孤岛，都不满足"地板 + 头顶 + 连通区"判据 ⇒ 新的合格集全在 `newfactory` 底部开阔带（y=90）。即 1v1 从"手写两点"变成"底部这条带的随机点"，**手感/观感需试玩确认**；要别的分布得在地图里开新的开阔区或放宽 `SpawnPicker` 口径（不在本轮）。
-2. **人数超过数据列表时混合来源**：大乱斗 16 人 / 团队某队超过列表长度时，数据点优先、剩余用 `SpawnPicker` 地板格补足（与改造前同一条兜底）；这些落点不保证全部来自地图数据。
-3. **团队局内复活仍走几何池**：只有开局/换局读 `# teamspawn`；`TeamSpawn.respawn_cell` 的池序列没动。
-4. **`team_match_probe` 相④ 的期望过期**：它用 `TeamHost.compute_swap_spawns` 算"第 2 局 = 第 1 局点集精确对调"，而新换边是"另一侧列表重随机"。该支只有真链路批跑；修法 = 相④ 改成校验「第 2 局每人在另一侧列表里、且都不等于第 1 局自己的点」，属探针改动（不在本轮，真链路批本轮未跑）。
-5. **`EXPECTED_SCRIPTS` 已同步为 229**：本批新增 `core/sim/spawn_chooser.gd`、`tools/map_spawn_meta.gd`、`tests/smoke/spawn_chooser_smoke.gd`、`tests/probe/map_spawn_data_probe.gd`（对抗规则批已把前两个算进 227，本批两个测试脚本落地后 227→229）；全量默认批实测 `ALLSCRIPT: OK(229 个脚本全部加载)`。
-6. **真链路批本轮未跑**（占 7777 + 拉子进程）：`match_start` 广播与宿主摆位同源、`match_sync` 的 `role_spawns()` 新鲜度只有静态断言，未见真包。
-7. **待同步的旧描述（本轮写作用域外，已 grep 定位）**：
-   - `docs/eng/weapons.md:46`：「布点 `GridPathfinder.spread_cells`…大乱斗与单机共用」—— 大乱斗开局散点已改为「地图 `# spawn` + `SpawnChooser`」，`spread_cells` 现在只剩单机地面武器铺点与团队的几何回退用。
-   - `docs/eng/netplay.md:37`：「换局 `_side_swap`」—— 该标志现在只影响**老图回退路径**（数据驱动 1v1 每局直接重随机）；换边语义在团队模式是 `TeamHost._side_swap_round`。
-   - `scenes/pvp_match_client.gd:660` 的注释「1v1 每局换边（`role_spawns()` 在 player / player2 之间对调）」同上过期；行为本身仍正确（重连补态那次不按 spawns 硬拉）。
+1. **"均匀"= 桶覆盖 + 同侧间距,不是连续均匀分布**：9 点里仍可能靠近半区边界（环面接缝两侧很近是环面世界的固有几何）；同侧最小距 newfactory 侧 2 只有 11 格。
+2. **跨侧最小距不保证**：两侧在接缝处相邻，1v1 的 `FAR_CELLS` 是软约束（点不够时逐级放宽）；用户要求的是"各占半区"，不是"两人一定 ≥15"。
+3. **人数超过数据列表时混合来源**：大乱斗 16 人 / 某队人数超过该侧列表时，数据点优先、剩余用 `SpawnPicker` 地板格补足（与改造前同一条兜底）。
+4. **`team_match_probe` 相④ 的期望过期**：它用 `TeamHost.compute_swap_spawns` 算"第 2 局 = 第 1 局点集精确对调"，而现行换边是"另一侧列表重随机"；真链路批本轮未跑，修法 = 相④ 改成校验「第 2 局每人在另一侧列表里、且都不等于第 1 局自己的点」。
+5. **`EXPECTED_SCRIPTS` 已同步为 230**（`tests/probe/water_atlas_probe.gd` 是水渲染批新增；本 spawn 批新增的 4 个脚本在 227→229 那一步已计入）；`ALLSCRIPT: OK(230 个脚本全部加载)`。
+6. **真链路批本轮未跑**（占 7777 + 拉子进程）：`match_start` 广播与宿主摆位同源、`match_sync` 的 `role_spawns()` 新鲜度、换边后客户端重拉只有静态断言，未见真包。
+7. **待同步的旧描述（写作用域外，已 grep 定位）**：
+   - `docs/eng/weapons.md:46`：「布点 `GridPathfinder.spread_cells`…大乱斗与单机共用」—— 大乱斗散点已改为「地图 `# respawn` + `SpawnChooser`」，`spread_cells` 现在只剩单机地面武器铺点与对抗的几何回退用。
+   - `docs/eng/netplay.md:37`：「换局 `_side_swap`」—— 1v1 的 `_side_swap` 现在决定"role1 这局在左半还是右半"（数据路径有感），团队换边语义是 `TeamHost._side_swap_round`。
+   - `scenes/pvp_match_client.gd:660` 的注释「1v1 每局换边（`role_spawns()` 在 player / player2 之间对调）」过期；行为本身仍正确（重连补态那次不按 spawns 硬拉）。
 
+## 四十七、水图集：水体被画成水面（2026-11-01，档 1~2）
 
+**现象**（用户报）：「目前水的代码错了，把水体都变成水面了」。
+
+**根因（确定性，一行常量）**：[`core/sim/terrain_atlas.gd`](../../core/sim/terrain_atlas.gd) 只有一个
+`WATER_LAYER_BRICK = 21`，它同时喂给两处：**水体图集**（`make_water_tileset`）与**水面合批**（`Level0.surface_texture`）。
+而下标是 **0-based**（= 纹理 id − 1，见同文件 `source_rect(idx)` 与 `_paint_maze_copies` 的 `tex - 1`）：
+21 = 源砖表第 22 块 = **纹理 22「水面」**（顶边带亮带）。⇒ 整个水体都用"水面"那块砖画 ⇒ 深水也带亮线、整片水一个观感。
+数据侧可证：`newfactory` 有 **7200** 个纹理 21 子格，其中 **6776** 个上方还是液体（= 深水格），只有 896 个纹理 22 是真正的水面格。
+
+**改法**（纯渲染层，协议/存档/联机零影响）：
+- 常量拆成两个并写清 0-based 语义：`WATER_BODY_BRICK = 20`（纹理 21「水」，均匀半透明填充）/ `WATER_SURFACE_BRICK = 21`（纹理 22「水面」，顶边亮带）；
+- `water_brick_image(ts, idx)` 增加 idx 参数、**缓存键带 idx**（只按 ts 缓存会让先来的调用把另一张图也拿走）；
+- `Level0._create_water_tileset`：水体图集用 BODY、`surface_texture` 用 SURFACE。
+- **未改**：`_paint_water` 的几何/形状掩码、水面合批 shader、纹理 21/22 的地图数据（本就"地图只画 21、22 由上方非 liquid 派生"）。
+
+**守卫**：[`tests/probe/water_atlas_probe.tscn`](../../tests/probe/water_atlas_probe.tscn)（6 条 + `EXPECTED_CHECKS` 闸）：
+下标映射 20/21 · 水面砖顶带更亮（顶 8 行 vs 其余 ≥ +12 亮度）· 水体砖无亮带且 alpha 恒定 · 两块砖放大图不同 ·
+水体图集由 BODY 构成 · 缓存按 idx 分开。
+变异实测：`WATER_BODY_BRICK` 改回 21 ⇒ ①③④⑥ 红（四条一起，正是本次 bug 的形状）。
+
+**已知边界（照实）**：
+1. **观感只能人眼**：探针验的是"选对了哪块砖"，不是"水面亮带是否好看/深水是否够暗"；
+2. `_paint_water` 仍按 **64px 整格**判"上方是否 liquid"（旧设计），所以一块 64px 格里若只有上缘是水，整格按水面画 —— 本次没动这个口径；
+3. 菜单背景 `bake_map_image` 走的是 22 行墙体图集（纹理 id 直接对应行），本来就正确，未受影响。

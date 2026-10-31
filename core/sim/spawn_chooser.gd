@@ -1,8 +1,8 @@
 class_name SpawnChooser
 extends RefCounted
 
-# 出生点的**唯一随机选格实现**(1v1 / 大乱斗 / 团队模式共用):纯静态、不引 autoload / Node ⇒ `-s` 可测。
-# ★ 输入是「本局可用的点名列表」—— 由地图 meta 的 `# spawn` / `# teamspawn` 行提供(MapFormat 解析),本类**不生成**候选:
+# 出生点的**唯一随机选格实现**(1v1 / 大乱斗 / 对抗模式共用):纯静态、不引 autoload / Node ⇒ `-s` 可测。
+# ★ 输入是「本局可用的点名列表」—— 由地图 meta 的 `# respawn <side> <col> <row>` 行提供(MapFormat 解析),本类**不生成**候选:
 #   点合理不合理是地图数据的责任(规则侧由 tools/map_spawn_meta.gd 与 map_spawn_data_probe 校验)。
 # 约束分两层:
 #   · exclude(绝不选中的格,如"本 role 上一次出生点")= 硬约束;若整个列表都被排除,按"宁可退化也别回 (-1,-1)"让位。
@@ -10,6 +10,46 @@ extends RefCounted
 # ★ 随机源 = 调用方传的 RandomNumberGenerator(rng == null 用全局 RNG,生产路径;测试传定 seed 的 rng 才能复现)。
 
 const RELAX_STEP := 5   # 最小间距的逐级放宽步长(与大乱斗散点 / 单机铺点的既有步长一致)
+
+# ── 阵营半区(侧)定义 ── 1v1 / 对抗按侧出生:侧 1 = 左半(x < cols/2)、侧 2 = 右半(x >= cols/2)。
+# ★ 环面世界:左右接缝在 x=0,所以两半在接缝两侧也相邻 —— 这是世界几何的固有边界,不改变"各占半区"的定义。
+# ★ 大乱斗无阵营 ⇒ 用两侧列表的并集(全图散布),不走 side_of。
+const SIDE_LEFT := 1
+const SIDE_RIGHT := 2
+# 数据规则(工具/探针用,运行时选点不需要):复活点离本侧的两条边界(接缝 / 半区中线)至少这么多格。
+# ★ 环面上"两半"在接缝与中线两处都相邻 —— 贴边的点会让对面半区的点落在几格内。
+const SIDE_EDGE_MARGIN := 10
+
+
+static func side_of(cell: Vector2i, dims: Vector2i) -> int:
+	if dims.x <= 0:
+		return SIDE_LEFT
+	return SIDE_LEFT if cell.x < dims.x / 2 else SIDE_RIGHT
+
+
+# 该侧的 x 起点(左半 0 / 右半 cols/2);"是否在自己半区"与 3×3 桶划分都用它。
+static func side_offset(side: int, dims: Vector2i) -> int:
+	return 0 if side == SIDE_LEFT else dims.x / 2
+
+
+# 数据规则(工具/探针用,运行时选点不需要):点要离本侧的**两条边界** —— 环面接缝(x=0 / x=cols)与半区中线
+# (x=cols/2)—— 都 ≥ `SIDE_EDGE_MARGIN` 格。理由:环面上"两半"在接缝与中线两处都相邻,贴边的点会让对面半区的
+# 点落在几格内("各占半区"就只在名字上成立),队间/两人也可能开局贴脸。
+static func side_inside_margin(cell: Vector2i, side: int, dims: Vector2i) -> bool:
+	var half := dims.x / 2
+	if side == SIDE_LEFT:
+		return cell.x >= SIDE_EDGE_MARGIN and cell.x < half - SIDE_EDGE_MARGIN
+	return cell.x >= half + SIDE_EDGE_MARGIN and cell.x < dims.x - SIDE_EDGE_MARGIN
+
+
+# 半区内的 3×3 "均匀散布"桶(返回 0..8;列以半区宽度为范围、行以整幅地图高度为范围)。
+# ★ 工具 `--check` 与探针的"每桶 ≥1"都读这一份划分,不各自再算一遍。
+static func bucket_of(cell: Vector2i, side: int, dims: Vector2i) -> int:
+	var half := maxi(dims.x / 2, 1)
+	var rel := cell.x - side_offset(side, dims)
+	var bx := clampi(int(rel * 3 / half), 0, 2)
+	var by := clampi(int(cell.y * 3 / maxi(dims.y, 1)), 0, 2)
+	return by * 3 + bx
 
 
 # 在 candidates 里随机挑一个满足约束的格;candidates 为空 → Vector2i(-1, -1)。

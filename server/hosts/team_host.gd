@@ -10,8 +10,9 @@ extends MatchHost
 #   ③ 伤害补贴(只在人数差 ≥ 阈值时给,倍乘**弹丸直击/激光**的武器伤害 + 榴弹的直击/爆炸伤害)。
 #   人数差为 0(含 6 人 3v3)时三处都**恒等**:目标 9、不写比分、max_hp 不动、倍率 1.0 —— 既有 6 人探针照旧。
 # ★ 本类是末端子类,生命周期钩子只能在这里;_init 顺序不可整理。
-# ★ 出生点/选点:数据 = 地图 `# teamspawn 1/2`(固定数据);随机/排除上一局/换边侧的选择在 TeamSpawn.plan_team_spawns,
-#   本文件只持有 _round_spawns / _side_swap_round / _spawned_once 三份状态与 _spawn_cell / role_spawns 的覆写。
+# ★ 出生点/选点:数据 = 地图 `# respawn 1|2`(按阵营半区写死;队 1 = 侧 1 左半、队 2 = 侧 2 右半,换边时互换);
+#   随机/排除上一局/侧的选择在 TeamSpawn.plan_team_spawns,本文件只持有 _round_spawns / _side_swap_round /
+#   _spawned_once / _last_spawn 四份状态与 _spawn_cell / role_spawns / _respawn_cell_for 的覆写。
 
 const TEAM_ROUNDS_TO_WIN := 2    # ★ 不能叫 ROUNDS_TO_WIN:基类 MatchState 已有该常量,同名遮蔽会报错
 # ★ _endgame_winner 的「未定」哨兵:必须三态,不能拿 0 当未定 —— 0 是合法结果(两队都走光 = 平局)。
@@ -23,8 +24,9 @@ const TEAM_ENEMY_LAYER := TeamSpawn.TEAM_ENEMY_LAYER
 const META_DAMAGE_SUBSIDY := "team_damage_subsidy"
 
 var _round_spawns: Dictionary = {}   # role -> Vector2i(本局出生点,与 match_start / 换局后 match_sync 广播的同一份)
-var _side_swap_round := false        # 换边:每局取反;true 时队 1 用 `# teamspawn 2`、队 2 用 `# teamspawn 1`
+var _side_swap_round := false        # 换边:每局取反;true 时队 1 用侧 2(右半)、队 2 用侧 1(左半)
 var _spawned_once: Dictionary = {}   # role -> true(首次摆位走出生点,之后走动态复活点)
+var _last_spawn: Dictionary = {}     # role -> Vector2i(最近一次出生/复活格:局内复活排除本 role 上一次位置用)
 
 var _endgame_winner := ENDGAME_NONE
 
@@ -43,7 +45,7 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 		WorldBuilder.load_grid()
 	_team_of = teams.duplicate()
 # ★ spawns 传空只在手工/测试路径才自己算一份:plan_team_spawns 是随机的(SpawnChooser),重算会得到另一份散点,
-#   而广播给客户端的是 start_on 那一份。出生点数据 = 地图 `# teamspawn` 列表(缺则 TeamSpawn 回退几何生成)。
+#   而广播给客户端的是 start_on 那一份。出生点数据 = 地图 `# respawn 1|2` 两侧列表(缺则 TeamSpawn 回退几何生成)。
 	_round_spawns = spawns if not spawns.is_empty() else plan_team_spawns(_team_of)
 # ★ 第 5 个实参是 teams、不是 spawns(两者在 RoyaleHost 里同名易混):传错不是崩溃,而是整局队伍判定全错 —— _team_of 被塞成 {role: Vector2i} ⇒ team_of() 返回 0 ⇒ 子弹不穿队友、队伍表下发为空。
 	super._init(map_path, role_peers, options, ai_roles, teams)
@@ -195,15 +197,22 @@ func team_map() -> Dictionary:
 
 
 func _spawn_cell(role: int) -> Vector2i:
+	role = int(role)
+	var cell: Vector2i
 	if not _spawned_once.has(role):
 		_spawned_once[role] = true
-		return _round_spawns.get(int(role), Vector2i(-1, -1))
-	return _respawn_cell_for(int(role))
+		cell = _round_spawns.get(role, Vector2i(-1, -1))
+	else:
+		cell = _respawn_cell_for(role)
+	_last_spawn[role] = cell
+	return cell
 
 
-# 复活点:选格计算(池序列 / 「躲敌人不躲队友」/ 环面距离)在 TeamSpawn.respawn_cell;本函数只留虚方法覆写与状态读取。
+# 复活点:选格计算(本队这一局所在侧的 `# respawn` 列表 / 「躲敌人不躲队友」/ 排除上一次位置)在 TeamSpawn.respawn_cell;
+# 本函数只留虚方法覆写与状态读取(数据缺失时 TeamSpawn 自己回退几何并 warning 一次)。
 func _respawn_cell_for(role: int) -> Vector2i:
-	return TeamSpawn.respawn_cell(int(role), players, _team_of)
+	return TeamSpawn.respawn_cell(int(role), players, _team_of, _last_spawn,
+			map_spawn_data().get("respawns", {}), _side_swap_round)
 
 
 # ★ 复活时清 last_damager / last_damager_time:meta 在受击瞬间写下、跨倒地保留,而归因窗口是 ATTRIB_WINDOW(3s)⇒ 复活后 3s 内的
@@ -288,7 +297,7 @@ func _round_over(winner_team: int) -> void:
 
 
 # 换局:局胜到 TEAM_ROUNDS_TO_WIN → MATCH_OVER;否则整队换边 + 下一局。★ 与基类的实质差异:① 局胜的键是队号(基类按 role 查,
-# 团队下永远是 0 → 永远打不完);② 换边 = 两队换用另一侧的点集(`# teamspawn 1/2` 对调),且每局从列表里重随机、排除上一局本人点位;
+# 团队下永远是 0 → 永远打不完);② 换边 = 两队换用另一侧的 `# respawn` 点集(队 1↔侧 2 / 队 2↔侧 1),且每局从列表里重随机;
 # ③ 换边后必须清 _spawned_once —— 否则 _spawn_cell 走动态复活点分支,开局的人会被撒到「离敌人远」的随机格而不是本方出生点。
 # ★ 与 _match_winner() 互补:一个判要不要进 MATCH_OVER,一个判报哪一队。
 func _start_next_round() -> void:

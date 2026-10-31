@@ -105,9 +105,9 @@ descriptor (u32)
   `MapFormat.convert_old_grid` 逐字对应。旧字母表只认 `0-9` 与 `A`（大小写均可）。
 - **meta 文本形状**就是那几行 `# ...` 注释。输出顺序：先注释，再出生点（`player` / `player2` /
   `player3`…），最后敌人。
-- **游戏侧新增的出生点行 `# spawn` / `# teamspawn`（见 [world.md](world.md)「出生点:地图数据」）编辑器不认识，
+- **游戏侧新增的按侧复活点行 `# respawn <1|2> <col> <row>`（见 [world.md](world.md)「出生/复活点:按阵营半区的地图数据」）编辑器不认识，
   但不会丢**：`parseMeta` 把它们归入 `comments`，`buildMeta` 再以 `# ` 前缀原样回写（行内容逐字保留；行顺序被挪到
-  注释区、首尾空白被 `trim`）。⇒ 编辑器保存 `.cyrm` 不需要为这两类行做任何事；**也没有出生点的可视化 UI**，
+  注释区、首尾空白被 `trim`）。⇒ 编辑器保存 `.cyrm` 不需要为这类行做任何事；**也没有复活点的可视化 UI**，
   改点走 [`tools/map_spawn_meta.gd`](../../tools/map_spawn_meta.gd) 或直接改 meta 文本。
 - **解析失败的行降级成注释而不是丢掉**（含坐标不是整数、坐标个数不够）。整数判定必须是**整数字面量**
   （`/^[+-]?\d+$/`），不可用 `isFinite`（`parseInt('3.5')===3` / `parseInt('7abc')===7` / `parseInt('1e3')===1`）。

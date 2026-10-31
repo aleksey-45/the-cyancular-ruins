@@ -4,8 +4,8 @@ extends MatchHost
 # 大乱斗权威对局(N 人限时死斗):roles 1..N 散点出生,死亡 2s 复活,复活点动态选「离所有存活敌人 ≥ 若干格」的地板格。
 # ★ 限时 MATCH_TIME:倒计时归零 → MATCH_OVER,击杀最多者胜(并列 = 0)。★ 击杀归因靠受害者 meta(last_damager),无源死亡不计分。
 # ★ 排行榜数据经 round_state 下发(scores / names / timer / match_winner)。★ 中途掉线 = 移出对局(节点释放,排行榜标「离开」),
-# 剩余 < 2 人时终局。★ 出生点数据 = 地图 meta 的 `# spawn` 行(固定数据);随机/排除上一次/最小间距在
-# core/sim/spawn_chooser.gd,散点/复活编排在 server/hosts/royale_spawn.gd(RoyaleSpawn);缺数据的老图回退 SpawnPicker 几何生成。
+# 剩余 < 2 人时终局。★ 出生点数据 = 地图 meta 的 `# respawn 1|2` 行(按阵营半区写死;大乱斗无阵营 ⇒ 两侧并集,全图散布);
+# 随机/排除上一次/最小间距在 core/sim/spawn_chooser.gd,散点/复活编排在 server/hosts/royale_spawn.gd(RoyaleSpawn);缺数据的老图回退 SpawnPicker 几何生成。
 # 这里只留生命周期、_round_spawns/_spawned_once/_last_spawn 的状态与同名转发。
 
 const MATCH_TIME := 300.0        # 一局时长(秒)
@@ -61,7 +61,7 @@ static func plan_spawns(roles: Array) -> Dictionary:
 	return RoyaleSpawn.plan_spawns(roles)
 
 
-# 出生点:首次 = 开局散点(权威是 _round_spawns);复活 = 地图 `# spawn` 列表里离所有存活敌人 ≥ RESPAWN_CLEARANCE
+# 出生点:首次 = 开局散点(权威是 _round_spawns);复活 = 地图 `# respawn` 两侧并集里离所有存活敌人 ≥ RESPAWN_CLEARANCE
 # 且不是本 role 上一次位置的随机格(缺数据的老图走 SpawnPicker.respawn_pools() 的旧池序列)。
 # ★ role_spawns 覆写不可省 —— 基类走 _spawn_cell,而本类的 _spawn_cell 第二次起返回动态复活点且带 _spawned_once 副作用。
 func role_spawns() -> Dictionary:
@@ -69,7 +69,7 @@ func role_spawns() -> Dictionary:
 
 
 # ★ _spawned_once 的「首次」闩与 _round_spawns / _last_spawn 的状态留在宿主;选格计算在 RoyaleSpawn。
-# 出生点数据 = 地图 `# spawn` 列表;复活点额外排除本 role 上一次落点(=该 role 的上一次位置)。
+# 出生点数据 = 地图 `# respawn` 两侧并集(大乱斗无阵营);复活点额外排除本 role 上一次落点(=该 role 的上一次位置)。
 func _spawn_cell(role: int) -> Vector2i:
 	role = int(role)
 	var cell: Vector2i
@@ -77,8 +77,7 @@ func _spawn_cell(role: int) -> Vector2i:
 		_spawned_once[role] = true
 		cell = _round_spawns.get(role, Vector2i(-1, -1))
 	else:
-		cell = RoyaleSpawn.respawn_cell(role, players, _left, _last_spawn,
-				(map_spawn_data().get("spawns", []) as Array))
+		cell = RoyaleSpawn.respawn_cell(role, players, _left, _last_spawn, map_all_respawn_points())
 	_last_spawn[role] = cell
 	return cell
 

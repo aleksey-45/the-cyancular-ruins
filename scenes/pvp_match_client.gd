@@ -657,7 +657,7 @@ func _on_match_sync(payload: Dictionary) -> void:
 	var opts: Dictionary = payload.get("options", {})
 	if not opts.is_empty():
 		_apply_match_options(opts)
-	# 出生点校正只对进场那次做:那时 spawns[role] 与 PvpSession.spawn 确实同源(都由服务器同一次摆位产生),不一致就是 bug —— 留痕 + 以 sync 为准。★ 重连补态那次必然不一致,而那不是 bug:出生点现在来自地图 `# spawn` 列表(每局/每次复活重随机),而 PvpSession.spawn 只在进场写一次 —— 按它硬拉 = 把玩家瞬移走,而服务器那具身体从掉线起就没动过 ⇒ 这条路既不校正、也不告警、也不回写 PvpSession.spawn。
+	# 出生点校正只对进场那次做:那时 spawns[role] 与 PvpSession.spawn 确实同源(都由服务器同一次摆位产生),不一致就是 bug —— 留痕 + 以 sync 为准。★ 重连补态那次必然不一致,而那不是 bug:出生/复活点现在来自地图 `# respawn <1|2>` 按侧列表(每局/每次复活重随机),而 PvpSession.spawn 只在进场写一次 —— 按它硬拉 = 把玩家瞬移走,而服务器那具身体从掉线起就没动过 ⇒ 这条路既不校正、也不告警、也不回写 PvpSession.spawn。
 	var sp: Dictionary = payload.get("spawns", {})
 	if not resync and sp.has(PvpSession.role):
 		var want: Vector2i = sp[PvpSession.role]
