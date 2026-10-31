@@ -14,7 +14,7 @@ class Room:
 	var code: String = ""
 	var host_peer: int = 0             # 1v1 旧实现没有它(房主 = players[0]);统一后也写入,展示仍按 players[0]
 	var players: Array[int] = []       # peer ids(**只表示"此刻还连在大厅这个房里的人"**)
-	var player_role: Dictionary = {}   # peer id -> role(1v1:1/2;大乱斗:1..N;3v3:1..6,最小空闲号)
+	var player_role: Dictionary = {}   # peer id -> role(1v1:1/2;大乱斗:1..N;两队对抗:1..TEAM_ROLES=10,最小空闲号)
 	var in_match := false              # 已开局(1v1 的旧名 `started` 是它的属性别名)
 	var worker_port: int = 0           # 本房拉起的 worker UDP 端口(关房时归还)
 # worker 进程 pid:「这一局还在不在」的唯一精确判据;0 = 还没登记(拉起中)→ 一律判没结束。
@@ -23,8 +23,8 @@ class Room:
 	var created_at: float = 0.0        # 创建时间戳(unix 秒;超龄清理用)
 	var is_public := true
 	var invite_code := ""              # 私密房凭此码进入
-	var team_of: Dictionary = {}       # 3v3: role(int) -> 1/2(**选边前不在表里**)
-	var max_players := 0               # 1v1 = 2;大乱斗建房页上限(2..16);3v3 = TEAM_ROLES
+	var team_of: Dictionary = {}       # 两队对抗: role(int) -> 1/2(**选边前不在表里**;开局时未选边者由 team_autofill 补位)
+	var max_players := 0               # 1v1 = 2;大乱斗建房页上限(2..16);两队对抗 = TEAM_ROLES(= TEAM_SIZE × 2 = 10)
 	var beta := false                  # 时间玩法房:与普通房互不可进/互不可见
 	var time_rules: Dictionary = {}    # TimeRules.to_dict(),开局前 from_dict + clamp 再消费
 	# (S-11 2026-10-30:原 `options` 是只写不读的死字段,已删 —— 真正生效的对局选项走 player_options → _claim_opts → MatchHost)
@@ -48,14 +48,16 @@ class Room:
 		return mode == ModeDefs.MODE_TEAM
 
 
-# ── 3v3 的纯判据(2026-10-30 S-09:从 LobbyRooms 挪来;本类纯 RefCounted ⇒ `-s` 可测)──
+# ── 两队对抗 的纯判据(2026-10-30 S-09:从 LobbyRooms 挪来;本类纯 RefCounted ⇒ `-s` 可测)──
 # 入参形状统一是 `{1: [role, …], 2: [role, …]}`(由 by_team 产出,单一来源)。
 # ★ 原注释写「静态:-s 可测」但宿主是 `LobbyRooms(Node,引 NetBus)` ⇒ 那句断言根本不成立;挪到这里才成立。
 
-# 两队是否都满员(满 6 人才允许开局)。★ 4v2 也算 6 人,但那不是 3v3。
-static func team_ready(by_team: Dictionary, size: int = ModeDefs.TEAM_SIZE) -> bool:
-	return (by_team.get(1, []) as Array).size() == size \
-			and (by_team.get(2, []) as Array).size() == size
+# 这个房能开局吗 = **两队各至少 1 人**(2026-11:由「两队各满 3 人才开」改成对抗语义,用户裁定「两队都有人即可开始」)。
+# ★ 4v2 这种人数不等的局**合法**(补贴由 TeamRules 算),不再是"不是 3v3";上界(每队 ≤ TEAM_SIZE、总 ≤ TEAM_ROLES)
+# 由 team_join / team_can_join 在进房/选边那一刻拦,不在这里再判 —— 否则同一条容量规则会有两份。
+static func team_ready(by_team: Dictionary) -> bool:
+	return (by_team.get(1, []) as Array).size() >= TeamRules.MIN_PER_TEAM \
+			and (by_team.get(2, []) as Array).size() >= TeamRules.MIN_PER_TEAM
 
 
 static func team_can_join(by_team: Dictionary, team: int, size: int = ModeDefs.TEAM_SIZE) -> bool:
@@ -86,6 +88,34 @@ static func team_room_ready(room: Room) -> bool:
 	return team_ready(by_team(room))
 
 
+# 开局那一刻的**完整**队伍归属:`role -> 队号`,已选边的原样保留,未选边的按「当前人少那一队」贪心补位
+# (势均时补 1 队;同队内按 role 升序,保证确定性)。用户裁定「未选边的人开局时自动补到人少那一队」。
+# ★ 纯函数(只读 room.player_role / room.team_of,返回新表,不写回)—— 写回由 RoomManager.team_start 做一次:
+#   同一件事两处写,漂了不报错,只会让"大厅队伍表"与"worker 的 --teams"不一致。
+# ★ 为什么贪心不会超出每队上限:总人数 ≤ TEAM_ROLES = 2 × TEAM_SIZE,每次都给当前人少的那队 ⇒ 任何一队
+#   最多只能被补到 ⌈总人数/2⌉ ≤ TEAM_SIZE。
+static func team_autofill(room: Room) -> Dictionary:
+	var out := {}
+	var unassigned: Array = []
+	for role in room.player_role.values():
+		var r := int(role)
+		var t := int(room.team_of.get(r, 0))
+		if t == 1 or t == 2:
+			out[r] = t
+		else:
+			unassigned.append(r)
+	unassigned.sort()
+	var counts := {1: 0, 2: 0}
+	for r in out:
+		counts[int(out[r])] = int(counts[int(out[r])]) + 1
+	for r in unassigned:
+		# 势均 → 1 队(确定性优先;用户没有规定平手归谁)
+		var pick := 1 if int(counts[1]) <= int(counts[2]) else 2
+		out[int(r)] = pick
+		counts[pick] = int(counts[pick]) + 1
+	return out
+
+
 # 列表载荷里的三档人数。★ 键**必须**是字符串:客户端 `room_list.gd` 按 `"1"/"2"/"0"` 读(读取契约;
 # RPC 的 Variant 编码保不住 int 键)—— 从 room_registry 挪来的同一份实现。
 static func team_counts_of(room: Room) -> Dictionary:
@@ -98,10 +128,11 @@ static func team_counts_of(room: Room) -> Dictionary:
 
 
 # 日志里的房型文案(拆除 / 超时清理 / 房主转移共用):合并前这三处各写一遍三元表达式。
+# ★ 模式 id 仍是 "team";文案跟玩家看到的叫法走(「对抗」,不再写 3v3,也不加"团队"等额外前缀)。
 static func kind_text(room: Room) -> String:
 	match room.mode:
 		ModeDefs.MODE_ROYALE:
 			return "大乱斗房"
 		ModeDefs.MODE_TEAM:
-			return "3v3 房"
+			return "对抗房"
 	return "房间"

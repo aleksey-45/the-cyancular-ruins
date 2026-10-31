@@ -577,8 +577,8 @@ func _check_reclaim_ladder() -> void:
 		_fail = "无法读取 room_manager.gd"
 		return
 	var code := ScanUtil.code_only(src)
-	if not code.contains("const MATCH_SWEEP_INTERVAL := 10.0"):
-		_fail = "缺 MATCH_SWEEP_INTERVAL=10 常量(回收梯的周期;2026-11-01 由 30 收到 10)"
+	if not code.contains("const MATCH_SWEEP_INTERVAL := 1.0"):
+		_fail = "缺 MATCH_SWEEP_INTERVAL=1 常量(回收梯的周期;2026-11-01 30 → 10 → 1,用户要求「秒删」)"
 		return
 	var proc := ScanUtil.func_body(code, "_process")
 	if proc.is_empty():

@@ -151,7 +151,7 @@ func _run_beta_flow(tree: SceneTree) -> void:
 		return
 	# 两张卡的名字与版本号都必须在
 	var texts := _collect_texts(beta)
-	for want in ["错乱大乱斗", "时空 3v3", "Royale", "Team", "beta_0.0"]:
+	for want in ["错乱大乱斗", "时空对抗", "Royale", "Team", "beta_0.0"]:
 		if texts.find(want) < 0:
 			print("AUTOTEST[beta]: Beta 页缺「%s」" % want)
 			tree.quit(1)

@@ -25,7 +25,7 @@
 
 ## 开局链路
 
-1. 大厅建房 / 加入并写房间记录;1v1 两人、大乱斗房主开始、3v3 两队各 3 人。
+1. 大厅建房 / 加入并写房间记录;1v1 两人、大乱斗房主开始、对抗(2~10 人,两队各 ≥1 即可开)。
 2. `RoomManager` 冻结名单(`freeze_roster`)、`pick_port()`、`OS.create_process` 拉起 `--headless --worker --port P`;worker 引擎日志写 `<日志目录>/worker_<port>.log`(日志目录:导出服务端 = exe 同目录 `log/`,开发态 = `user://logs`),按端口归档保留 20 份。
 3. 大厅先发 `session_token`,再发 `go_match(role, port)`。
 4. 客户端断开大厅、连 worker 端口、`claim_role(role, name, proto)`(v7 起带版本号,服务端不符即拒绝+踢连接);收齐 role 后 `MatchBootstrap.start_on` 建局。对局场景 `_ready` 末尾 `NetBus.rpc_id(1, "match_sync")` 拉 `match_sync_data`(昵称 / 色相 / 选项 / role 集合 / 出生点 / 地面武器 / 已拆格)。
@@ -34,7 +34,7 @@
 
 - 地图:默认 `MatchBootstrap.PVP_MAP = res://maps/newfactory.cyrm`;房主上报的 `player_options.map` 经 `MapCatalog.resolve_pvp_map()` 校验(只认 `res://maps/*.cyrm`、拒 `..`、须有双出生点),不合规回落默认图。
 - `MatchHost` 建世界(只碰撞不渲染)+ 每 role 一份 `player.tscn`,注入 `PacketInputSource`。
-- 回合:`MatchState.RoundState` COUNTDOWN → PLAYING → ROUND_OVER → MATCH_OVER;`KILLS_TO_WIN = 5`、`ROUNDS_TO_WIN = 2`、`COUNTDOWN_TIME = 3.0`、`ROUND_OVER_TIME = 4.0`、`RESPAWN_DELAY = 2.0`。击杀记给对方(倒地边沿,不分死因);换局 `_side_swap`。COUNTDOWN 双端禁移动 / 开火:服务器清输入队列并 `reset_state()`,客户端 `InputSource.frozen`。
+- 回合:`MatchState.RoundState` COUNTDOWN → PLAYING → ROUND_OVER → MATCH_OVER;`KILLS_TO_WIN = 5`、`ROUNDS_TO_WIN = 2`、`COUNTDOWN_TIME = 3.0`、`ROUND_OVER_TIME = 4.0`、`RESPAWN_DELAY = 2.0`。击杀记给对方(倒地边沿,不分死因);换局整队换到另一侧(地图 `# teamspawn` 的另一队列表、重随机;旧图的几何回退仍用 `_side_swap` 翻点集)。COUNTDOWN 双端禁移动 / 开火:服务器清输入队列并 `reset_state()`,客户端 `InputSource.frozen`。
 - ★★ 开局倒计时(三模式同一条):服务器等客户端场景就绪(`mark_client_ready`,上限 `COUNTDOWN_HOLD_MAX=2.0s`)才开始走时钟,并在 COUNTDOWN 期间**每 0.5s 重播一次当前剩余**(`MatchRound._countdown_resync_tick`;大乱斗原就有,1v1/3v3 2026-11-01 补上)。客户端走秒器 = 纯逻辑 `CountdownClock`(`ui/hud/countdown_clock.gd`):重复 `start` **只采纳更短的剩余、绝不回拨**,显示 `ceil(剩余)` 且钳到 ≥1 ⇒ 数字单调不增、`3→2→1` 一个不落。守卫 = `tests/smoke/countdown_clock_smoke.gd`(9 条)。
 - 换局:服务器 `_reset_world_and_clear_dynamics()` 还原可破坏砖与子格 HP 基线、清子弹、重置地面武器;客户端同刻 `Level0.reset_destructibles()`。
 

@@ -74,6 +74,11 @@ var _room_states := 0            # 收到几份 team_room_state(等待室渲染�
 var _list_rows := 0              # 房间列表渲染出的行数
 var _wait_rows := 0              # 等待室名单行数(含两队标题行)
 var _wait_count_text := ""       # 等待室计数文案
+var _room_team_counts := {1: 0, 2: 0}   # 最近一份 team_room_state 的两队人数(见 _tick_start:产品闸门放宽后要自己等 3+3)
+# ★ 2026-11:对抗模式的开局闸门从「两队各 3 人」放宽成「两队各 ≥1 人」⇒ 「开始游戏」按钮在 2 人时就亮了。
+#   本探针验的是 **6 人局**(相②/相④/相⑤ 都按 6 人写死:3+3 分队、换边点集、副本数 5),所以必须自己等到
+#   3+3 才点,否则会在第 2 个人进房时就把对局开成 2 人局,后面所有相位都会红在"没收到 N/6 份结果"上。
+const PROBE_TEAM_SIZE := 3
 
 # ── 对局阶段 ──
 var _game: Node = null
@@ -356,9 +361,14 @@ func _on_room_state(state: Dictionary) -> void:
 	# 选边是否已经生效(服务器回了"该队已满"时状态不变 → 由 `_tick_pick` 重试)
 	var my_role := int(state.get("your_role", 0))
 	var want := 1 if idx <= 3 else 2
+	_room_team_counts = {1: 0, 2: 0}
 	for p in (state.get("players", []) as Array):
-		if typeof(p) == TYPE_DICTIONARY and int(p.get("role", 0)) == my_role \
-				and int(p.get("team", 0)) == want:
+		if typeof(p) != TYPE_DICTIONARY:
+			continue
+		var t := int(p.get("team", 0))
+		if _room_team_counts.has(t):
+			_room_team_counts[t] = int(_room_team_counts[t]) + 1
+		if int(p.get("role", 0)) == my_role and t == want:
 			_picked = true
 
 
@@ -434,7 +444,7 @@ var _k2_revived := false
 var _k2_t := 0.0
 
 
-# c1:两队各 3 人 → 「开始游戏」按钮可见 → 点它(真按钮回调 → team_start)
+# c1:两队各 3 人(本探针的 6 人局)→ 「开始游戏」按钮可见 → 点它(真按钮回调 → team_start)
 func _tick_start() -> void:
 	if idx != 1 or _started or not _lobby_attached:
 		return
@@ -446,8 +456,12 @@ func _tick_start() -> void:
 	#    `WaitStartBtn` 自己不写 visible(默认 true)⇒ 大厅页刚挂上那一帧(`_wait_start` 已非 null 但
 	#    面板还没亮、房里 0 人)就会被判成"可以点",`pressed.emit()` 之后 `_started = true` **永久锁死**,
 	#    真到"两队各 3 人"时**再也不会点** ⇒ 探针 105s 后打 `房主没有点开始`(实测日志:t=0.2s 点开始,
-	#    t=0.6s 才建房)。`is_visible_in_tree()` 恰好等于"面板亮了 ∧ 我是房主 ∧ 3+3"。
+	#    t=0.6s 才建房)。`is_visible_in_tree()` 恰好等于"面板亮了 ∧ 我是房主 ∧ 闸门满足"。
 	if b == null or not (b as Button).is_visible_in_tree():
+		return
+	# ★ 产品闸门(2026-11)已放宽成「两队各 ≥1 人」⇒ 光看按钮可见会在 2 人时就开局。本探针是 **6 人局**,
+	#   故在这里自己等到 3+3(判据来自服务器下发的 team_room_state,不是猜)。
+	if int(_room_team_counts[1]) < PROBE_TEAM_SIZE or int(_room_team_counts[2]) < PROBE_TEAM_SIZE:
 		return
 	_started = true
 	_log("两队各 3 人 → 点「开 始 游 戏」(真按钮回调)")

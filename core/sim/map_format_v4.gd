@@ -247,6 +247,62 @@ static func join_meta(meta_lines: Array) -> String:
 	return s
 
 
+# 只替换 v4 文件 body 里的 meta 文本段(**层块字节原样保留**),返回新文件字节;任何一步失败 → 空 PackedByteArray。
+# 用途:地图旁路数据(出生点 / 注释 / 敌人)的写入 —— 走 serialize() 会先从格级网格重铺场景层,编辑器画的 16px 混排会丢;
+# 本函数把 old_meta 之后的所有字节当不透明尾巴搬过去,逐字节无损。压缩位沿用原文件:能压就压,压不动退回裸 body(§3.5 两条都合法)。
+static func replace_meta(data: PackedByteArray, meta_lines: Array) -> PackedByteArray:
+	if data.size() < HEADER_SIZE or not is_v4_data(data):
+		return PackedByteArray()
+	var h := read_header(data)
+	if int(h["version"]) != 4:
+		return PackedByteArray()
+	var body := data.slice(HEADER_SIZE)
+	var compression := int(h["compression"])
+	if compression == 1:
+		body = body.decompress(int(h["body_size"]), FileAccess.COMPRESSION_DEFLATE)
+		if body.size() != int(h["body_size"]):
+			return PackedByteArray()
+	elif compression != 0:
+		return PackedByteArray()
+	if crc32(body) != int(h["crc32"]):
+		return PackedByteArray()
+	if body.size() < 2:
+		return PackedByteArray()
+	var meta_len := body.decode_u16(0)
+	if body.size() < 2 + meta_len:
+		return PackedByteArray()
+	var tail := body.slice(2 + meta_len)
+	var meta_bytes := join_meta(meta_lines).to_utf8_buffer()
+	if meta_bytes.size() > 65535:
+		push_error("MapFormatV4: meta 超过 65535 字节,拒绝写入")
+		return PackedByteArray()
+	var new_body := PackedByteArray()
+	write_u16(new_body, meta_bytes.size())
+	new_body.append_array(meta_bytes)
+	new_body.append_array(tail)
+	var payload := new_body
+	if compression == 1:
+		var packed := new_body.compress(FileAccess.COMPRESSION_DEFLATE)
+		# 回读校验:compress 的参数语义在 4.x 各小版本间动过,压出来解不回去就退回裸 body(仍然合法)。
+		if not packed.is_empty() \
+				and packed.decompress(new_body.size(), FileAccess.COMPRESSION_DEFLATE) == new_body:
+			payload = packed
+		else:
+			compression = 0
+	var out := PackedByteArray()
+	out.append_array(MAGIC.to_ascii_buffer())
+	out.append(4)
+	out.append(compression)
+	write_u32(out, new_body.size())
+	write_u32(out, crc32(new_body))
+	write_u16(out, int(h["sub_cols"]))
+	write_u16(out, int(h["sub_rows"]))
+	out.append(int(h["layer_flags"]))
+	out.append(data[19])                 # reserved 原样保留
+	out.append_array(payload)
+	return out
+
+
 # 中性描述符(hue 4 / brightness 4 / saturation 4 / alpha 7):alpha 的中性是档 7(原色),hue/brightness/saturation 的中性是档 4,刻意不同。
 static func neutral_descriptor(texture: int) -> int:
 	return (texture << 12) | (7 << 9) | (4 << 6) | (4 << 3) | 4

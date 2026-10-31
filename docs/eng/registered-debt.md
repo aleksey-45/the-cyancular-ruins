@@ -685,15 +685,15 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 **改了什么**：
 - 新增纯分派 [`server/match/match_exit_rules.gd`](../../server/match/match_exit_rules.gd)：`after_peer_left(match_over, claims_left)` → `ACTION_GRACE`（未终局）/ `ACTION_WAIT`（终局但还有人看结算）/ `ACTION_QUIT`（终局且一个不剩）。形态与 `GraceWindow.expire_action` 同款（纯函数，答案只此一处）。
 - [`server/server_main.gd`](../../server/server_main.gd) 的 `_on_peer_left`：`_host != null` 时**先判终局** —— 是终局就按上面分派，不再进宽限（`ACTION_QUIT` 立刻 `quit(0)`，日志行「对局已结束且全员离开」+ `NetDiag.audit("match_over", {reason:"all_left_after_match"})`）。顺带把三处「按 peer 反查 role」的循环收成 `_role_of_peer()`、把"宿主是否终局"收成 `_host_match_over()`。
-- [`server/lobby/room_manager.gd`](../../server/lobby/room_manager.gd)：`MATCH_SWEEP_INTERVAL` **30s → 10s**（量级关系不变：仍 ≪ 端口归还延迟 120/360s）。
-- [`scenes/mp_lobby.gd`](../../scenes/mp_lobby.gd)：大厅页 **每 3s 静默重拉一次列表**（`AUTO_REFRESH_S`；`_send_list_request(silent)` 不清表、不写状态栏，只在答到后按模式整体替换）⇒ 房被拆掉之后最迟 3s 那行房卡就消失，不必玩家手点刷新。判据含 `_ack`（有建房/加入在等应答时不插队）与 `NetBus.can_send_to_server()`（断线时不从这里发起重连）。
+- [`server/lobby/room_manager.gd`](../../server/lobby/room_manager.gd)：`MATCH_SWEEP_INTERVAL` **30s → 10s → 1s**（量级关系不变：仍 ≪ 端口归还延迟 120/360s；1s 是用户追加要求「秒删」后取的档）。
+- [`scenes/mp_lobby.gd`](../../scenes/mp_lobby.gd)：大厅页 **每 1s 静默重拉一次列表**（`AUTO_REFRESH_S`；`_send_list_request(silent)` 不清表、不写状态栏，只在答到后按模式整体替换）⇒ 房被拆掉之后最迟 3s 那行房卡就消失，不必玩家手点刷新。判据含 `_ack`（有建房/加入在等应答时不插队）与 `NetBus.can_send_to_server()`（断线时不从这里发起重连）。
 
-**净效果**：全员回大厅后，worker ≈1 帧内退 → 回收梯 ≤10s 收房 → 客户端 ≤3s 后列表干净；旧口径是 60~90s + 必须手点刷新。
+**净效果**：全员回大厅后，worker ≈1 帧内退 → 回收梯 ≤1s 收房 → 客户端 ≤1s 后列表干净；旧口径是 60~90s + 必须手点刷新。
 
 **守卫**：[`tests/smoke/match_exit_rules_smoke.gd`](../../tests/smoke/match_exit_rules_smoke.gd)（5 条 + 条数闸）。变异实测：删"未终局 ⇒ 宽限"那条早退 ⇒ ①⑤ 红；`ACTION_QUIT` 的 `<= 0` 写成 `< 0` ⇒ ③ 红；把 WAIT 分支删掉（终局后一律退）⇒ ② 红。
-`tools/room_sweep_lint.gd` 的常量钉同步改成 `MATCH_SWEEP_INTERVAL := 10.0`（不改 ⇒ lint 红）。
+`tools/room_sweep_lint.gd` 的常量钉同步改成 `MATCH_SWEEP_INTERVAL := 1.0`（不改 ⇒ lint 红）。
 
-**边界（照实）**：① worker → 大厅**没有直连通道**（两个进程），所以"退进程"不能立刻通知大厅，`MATCH_SWEEP_INTERVAL` 那 10s 就是回收延迟的下限；② 玩家**留在结算页不动**时 worker 仍按 `MATCH_OVER_LINGER=60s` 退（这是有意的：结算页期间快照还要继续发）；③ 3s 轮询是客户端行为，不碰协议，但玩家在"房间已满/不存在"自动刷新那一次性额度上不受影响（轮询走 silent 分支、不清 `_got`）；④ 回收延迟的端到端实测只能真链路 + 日志（`room_closed` 的 `reason` 与 `match_over` 的 `reason`），默认批只覆盖纯判据。
+**边界（照实）**：① worker → 大厅**没有直连通道**（两个进程），所以"退进程"不能立刻通知大厅，`MATCH_SWEEP_INTERVAL` 那 1s 就是回收延迟的下限（要做到真 0 延迟，得给 worker→大厅开一条通知通道：两个进程之间今天只有「进程活着没有」这一个信号，本轮不做）；② 玩家**留在结算页不动**时 worker 仍按 `MATCH_OVER_LINGER=60s` 退（这是有意的：结算页期间快照还要继续发）；③ 3s 轮询是客户端行为，不碰协议，但玩家在"房间已满/不存在"自动刷新那一次性额度上不受影响（轮询走 silent 分支、不清 `_got`）；④ 回收延迟的端到端实测只能真链路 + 日志（`room_closed` 的 `reason` 与 `match_over` 的 `reason`），默认批只覆盖纯判据。
 
 ### B. 开局 3s 倒计时最后 1 秒显示不出来
 
@@ -716,3 +716,89 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 **同批的客户端连带改动（必须一起看）**：COUNTDOWN 从"每局 1~2 条"变成"每 0.5s 一条"⇒ [`scenes/pvp_match_client.gd`](../../scenes/pvp_match_client.gd) 的「新一局」分支改成**边沿触发**（`_countdown_round_seen` 记已跑过的局号）。不改的话:每 0.5s 清一次子弹、复位一次砖,3v3 还会每 0.5s 重拉一次 `match_sync`（六端 × 6 次/局 = 一次换局六倍补态流量）。这是"高频重播"这类改动的通用配套:凡按条执行的客户端分支,都要先问一句"这条会不会被重播"。
 
 **注释额度**：本批在 `server/server_main.gd` / `server/match/match_round.gd` / `scenes/mp_lobby.gd` / `scenes/pvp_match_client.gd` / `ui/hud/broadcast.gd` 各加了 2~4 行注释，这几份文件**本来就超过** `comment-style.md` §8 的 15%（改前 17~24%），本批未删旧注释、只按"留关键一条"收敛了新加的。翻案 = 后续批把它们收敛成行内短注（同 §四十三 边界 7）。
+
+## 四十五、房间秒删 + 「捡不动枪械」+ 出生点改地图数据（2026-11-01，档 2~3）
+
+**起因**：用户确认上一批两个 bug 已修，追加三条：「所有人退出以后房间应该秒删才对」「可能会存在捡不动枪械的情况，修复这个bug」「调整所有模式下玩家出生位置…（后追加：出生点是地图数据，应该写死在地图文件而不是采用其他实现）」，另加 3v3→对抗与版本号 0.5.3。
+
+### A. 房间「秒删」（回收梯 10s → 1s）
+
+上一批把回收梯收到 10s，用户仍觉得慢（"应该秒删"）。改动极小：
+- `server/lobby/room_manager.gd`：`MATCH_SWEEP_INTERVAL` 10 → **1.0**（每 tick 一次 pid 存活查询，≤几张房，可忽略；判据仍是 `_match_over(port,pid)` = worker 进程死了没有）；
+- `scenes/mp_lobby.gd`：静默列表轮询 `AUTO_REFRESH_S` 3 → **1.0** ⇒ 房被拆后最多 ~1s 那行房卡就消失；
+- `tools/room_sweep_lint.gd` 的常量钉同步成 `:= 1.0`（不改 ⇒ lint 红）；文档三处（`netplay-rooms.md` / `room-lifecycle-conventions.md` / 本文件 §四十四）同步。
+- **边界（照实）**：worker 与大厅是两个进程、之间只有「进程还活着没有」一个信号 ⇒ 1s 是**下限**；要真 0 延迟必须开一条 worker→大厅通知通道（改协议/加连接），本轮不做。玩家**留在结算页**不走时仍按 `MATCH_OVER_LINGER=60s` 退。
+
+### B. 「捡不动枪械」= 两端落点发散 + 单次裁决太硬
+
+**根因（两个叠加，都能在代码里指到）**：
+1. 客户端也在本地模拟落体（`WeaponPickup` CharacterBody2D），而客户端那份地形（可破坏砖被拆的时序）与帧时序和服务器不同 ⇒ 同一把枪两端落点可差几十~上百 px。于是「看得见、走到脚边、F 提示亮着，服务器判定的最近一把却在 2 格外」——`pickup_try` 的 `result: "range"`（用户对局日志里确实有 dist=95.9 / 188.8 两条，radius=64）。
+2. 拾取是"按一次 F 判一次"的单次裁决：客户端预测位置超前（跑动/跳落中）时，人眼觉得"就在脚边"，本端权威位置差几十 px 也是常态 ⇒ 那次按压被 range 拒掉就永久丢弃。
+
+**改法**（协议零改动，`weapon_spawned` 复用）：
+- `server/match/match_ground.gd::_sync_ground_positions()`：`_settled` false→true 那一刻**重播一次** `_broadcast_weapon_spawned(inst, -1, true)`（载荷 `settled:true`、`vel` 零、`pos` 取当下 canonical）；只发一次。
+- `scenes/mp_client/pickup_sync.gd`：重复 `inst` 不再静默 `return`，改走 `_reanchor_existing()`（重锚 `canonical_pos` + 停稳 + 更新本地表 + `pickup_anchor` 事件）。
+- `server/match/match_ground.gd`：`PICKUP_INTENT_S = 0.4s` 的拾取意图重试（`_tick_pickup_intents`，每 tick 再判一次，成功/被禁用闸门拒绝即清）；重试路径不打 `pickup_try` 诊断。
+- `GroundWeaponField.reanchor(inst, pos, vel)`：纯逻辑表的原地重锚（只改位置/速度，不动 type/mag）。
+- **守卫**：`tests/smoke/ground_weapon_field_smoke.gd`（5 条：最近一把 / 接缝够得着 / 重锚生效 / 过期重播拒绝 / 重锚不改 type·mag），变异：`reanchor` 恒 false ⇒ ③④ 红。
+- **测不到什么（照实）**：① 客户端节点真的跟着搬（要 `WeaponPickup` + 真实场景，只能真链路/人眼）；② 服务器"落定只发一次"的时序；③ 0.4s 重试的实际手感。⇒ 修复的有效性最终靠"真人对局里还能不能复现捡不动"（下一版若还复现，取 `--diag --pickup-diag` 日志按 `pickup_try range.dist` 与 `pickup_anchor` 分布定位）。
+
+### C. 出生点改为**地图数据**（方向修正，实施中）
+
+用户明确裁掉"用程序生成候选"的方向：「出生点是地图数据，应该写死在地图文件」。⇒ `.cyrm` v4 的 meta 文本行扩展为 `# spawn <col> <row>`（通用出生点，每图 ≥5）与 `# teamspawn <1|2> <col> <row>`（团队模式每队 ≥5），`# player`/`# player2` 保留向后兼容；选点只在"地图给的列表"里随机 + 排除上一次位置。详细验收与实施记录见本文件 §四十六（由实施方补）。
+
+### D. 3v3 → 「对抗」：人数弹性 2~10 + 目标/补贴（2026-11-01，档 2）
+
+**用户口径**：模式显示名只写「对抗」（两个汉字，不加"每队 N 人 / 2~10 人"之类副文案）；内部 mode id / RPC 通道 / 回放凭据**仍是 `"team"`**。规则：两队各 ≥1 人即可开始、上限 10 人；按人数调整每局击杀目标；少人方有开局比分补贴、血量补贴，极端少时还有伤害补贴。出生点不在此批（见上面 C / §四十六）——`TeamSpawn` 与 `team_host.gd` 的出生点行**一行没动**。
+
+**改动面**：
+- 新纯逻辑类 [`core/mp/team_rules.gd`](../../core/mp/team_rules.gd)（`TeamRules`）= 目标/比分/血量/伤害四组公式的**单一来源**；服务器（`TeamHost`）与客户端（`scenes/team_game.gd` 只复算血量那一半）都读它，不新增协议字段。
+  - 目标 = `clampi(总人数 + 3, 5, 13)` ⇒ **2 人 → 5、6 人 → 9、10 人 → 13**（3v3 的 9 逐字保留）。
+  - 比分补贴 = `min(人数差, 目标-1)`，每局开局给；上限防"开局即胜"。
+  - 血量补贴 = 每差 1 人 +10% 基础 `max_hp`、封顶 +40%（50→70，封顶 70）。
+  - 伤害补贴 = 人数差 ≥ 3 才给，每差 +10%、封顶 +30%（差 0~2 倍率恒 1.0）。
+- `ModeDefs.TEAM_SIZE` 3 → **5**（= 每队上限；容量 `TEAM_ROLES` 随之 = 10）。`RoomTypes.team_ready` 由「每队 == 3」改成「两队各 ≥1」（下限常量 `TeamRules.MIN_PER_TEAM`）；新增纯函数 `RoomTypes.team_autofill`（开局把未选边者补进人少那队），由 `RoomManager.team_start` 在拉起 worker **之前**写回 `room.team_of` 再下发 `--teams`。
+- `TeamHost`：`TEAM_KILLS_TO_WIN` 常量删除，改实例 `_kills_to_win`（来自 `TeamRules`）；`_initial_scores()` 每局开局重给比分补贴（势均时仍是**空表**）；`_apply_health_subsidy()` 抬真值；换枪 `weapon_changed` 时把倍率写进武器 `damage`，`_adjudicate_bullets` 前置把倍率写给子弹的 `direct_hit_damage` / `explosion_damage`（子弹 meta 标记只乘一次）。`round_state` 追加 `target`（恒有）与 `handicap`（仅差 > 0）。
+- `ui/hud/team_hud.gd`：目标与「先到 N 杀」文案只从载荷取（旧实现写死 `9`）；模式文案改「对抗」。大厅模式名唯一来源 = `scenes/mp_lobby/room_list.gd::MODE_LABEL`（筛选按钮 / 建房弹层分段按钮的 `text` 在 `register()` 里由它覆盖，`.tscn` 里的默认文字只是编辑器占位）。
+
+**守卫**：[`tests/smoke/team_rules_smoke.gd`](../../tests/smoke/team_rules_smoke.gd)（12 条 + `EXPECTED_CHECKS` 闸）：目标锚点/单调上界 · 6 人 3v3 四条恒等 · 所有 n v n 势均局恒等 · 比分补贴 = 差且恒 < 目标 · 血量斜率与封顶 · 伤害阈值与封顶 · `team_counts` 只认 1/2 队 · 开局闸门 · 未选边补位（含确定性与上限）· 容量。`tests/smoke/room_view_smoke.gd` ⑥⑦ 同步改成新语义。**变异实测**：`KILLS_BASE` 3→2 ⇒ ①③ 红（目标 5/8/12）；`DAMAGE_THRESHOLD` 3→2 ⇒ ⑦ 红（差 2 得 1.1）；`HP_CAP_PERMILLE` 400→10000 ⇒ ⑥ 红（差 8 给 40 而非 20）；`RoomTypes.team_ready` 回退成「每队 == 5」⇒ ⑨ + `room_view_smoke` ⑥ 红。
+
+**同批必须一起改的既有断言**：`tests/probe/down_edge_probe.gd` ③ 的夹具是 1v2（人数差 1）⇒ 少人方开局带 1 分比分补贴，原来判"绝对值 1"会红；改成判**增量**（`score_before + 1`）。`tests/harness/team_match_watcher.gd` 的「开始游戏」闸门：产品闸门放宽后按钮在 2 人时就亮，探针必须自己等到 **3+3**（`PROBE_TEAM_SIZE`，判据来自 `team_room_state`），否则 6 人 `team_match_probe` 会开成 2 人局。`tests/probe/allscript_probe.gd` 的脚本数闸按本批新增脚本 +5（223 → 227，提交前按文件头的两条复算复核）。
+
+**边界（照实登记）**：
+1. **真实链路只覆盖 6 人（人数差 0）那一档**：2 人 / 3v1 / 5v5 等有补贴的对局**没有任何自动探针**（`team_match_probe` 是 6 人写死；且只有 `run_real.sh` 跑它）⇒ 目标/补贴值靠 `team_rules_smoke` 钉公式，真机行为靠试玩。
+2. **血量补贴的可见性有损**：① 敌人血条分母仍是 `PlayerParams.player_max_hp`（`scenes/mp_client/replica_set.gd`），被补贴方的血条会顶格一段时间；② 本人 HUD 的血条分段在 `ui/hud/hud.gd::_ready` 按出厂 `max_hp` 一次建成（不重建），+20 血的最后 20 点不会多画格（颜色比例仍按当前 max 算）。C2 数值本身一致（两端同公式复算）。
+3. **伤害补贴的落点边界**：乘的是武器 `damage`（弹丸直击 + 激光）与子弹自带的 `direct_hit_damage` / `explosion_damage`；**爆炸对队友与自伤同样吃这个倍率**（本模式"爆炸对队友满效"是既有裁定）。子弹出膛后第一次裁决前已被判定命中的极端情况乘不到 → 概率级、不追。
+4. **掉线 / 人数变化不重算目标与补贴**：`_rules` 是开局快照；客户端队伍表也不随掉线更新 ⇒ 两端同值优先于实时公平。要实时化必须让 `match_sync`/`round_state` 下发更新后的队伍表（协议改动）。
+5. ~~服务端面板 `server/gui/server_panel.gd::KIND_TEXT` 与 Beta 房显示名「时空 3v3」仍是旧文案~~ —— **Lead 收口时已一并改掉**：`KIND_TEXT` 的 `team` = 「对抗」、Beta 房显示名 = 「时空对抗」（`menu_autotest` 的字面量断言同步）、`scenes/mp_lobby.tscn` 两颗按钮默认 `text` = 「对抗」、`RoomTypes.kind_text()` = 「对抗房」。
+
+## 四十六、出生点改「地图数据」+ 所有模式随机/不重复（2026-11-01，档 2）
+
+**方向**（用户裁定，见 §四十五 C）：出生点是地图数据，写死在 `.cyrm` 的 meta 里；程序只做「从地图给的列表里随机挑 + 排除上一次 + 最小间距」。旧实现（1v1 固定两点；大乱斗/团队用 `SpawnPicker` 几何生成）不再作为主路径。
+
+**改动面**：
+- 格式/解析：`core/sim/map_format.gd::parse_spawn_metadata` 新增 `# spawn <col> <row>` 与 `# teamspawn <1|2> <col> <row>`（列表保序去重；非法行 `push_warning` 跳过；严格 `is_valid_int`，否则 `abc` 会静默变 (0,0)）；`load_spawns()` 新增 `spawns` / `teamspawns` 两个键，旧文本格式坐标同样 ÷2；`# player`/`# player2`/`# enemy` 逐字保留。
+- 写盘：`core/sim/map_format_v4.gd::replace_meta` 只替换 body 里的 meta 文本段，**层块字节原样搬**（压缩位沿用原文件，压不回去就退回裸 body）；工具 `tools/map_spawn_meta.gd` 校验（判据 = 运行时 `SpawnPicker` 地板/抬头/连通区）+ 建议 + 写盘 + 回读校验（出生点列表与场景层逐格不变）。
+- 数据：`maps/newfactory.cyrm` = `# spawn` 10 个 + `# teamspawn 1` 7 个 + `# teamspawn 2` 7 个（分布在两片开阔带上，跨队最小距 17 > 队内最大距 14）；`maps/demo.cyrm` = `# spawn` 8 个。两图的 `# player`/`# player2` 原样保留。
+- 选点：新纯逻辑 `core/sim/spawn_chooser.gd`（`SpawnChooser.pick` / `pick_many`）——排除项是硬约束、最小间距按 5 逐级放宽、候选空返回 (-1,-1)；1v1 / 大乱斗 / 团队共用这一份。
+- 接线：1v1（`MatchBootstrap.plan_spawns` + `MatchState._duel_spawns` / `_spawn_cell` / `role_spawns`：首次与 match_start 同源，换局/复活/击杀复位重随机并排除自己上一次、与对手 ≥ `FAR_CELLS`）；大乱斗（`RoyaleSpawn.plan_spawns` / `respawn_cell` + `RoyaleHost._last_spawn`）；团队（`TeamSpawn.plan_team_spawns(teams, last, side_swap)` + `TeamHost._side_swap_round`，删掉了旧的 `_swap_spawns` 精确对调）。**三条模式都保留"缺 `# spawn` / `# teamspawn` → 回退改造前逻辑"**（1v1 回固定两点+`_side_swap`；大乱斗/团队回 `SpawnPicker` 几何生成并 `push_warning` 一次）。
+
+**守卫**：
+- `tests/smoke/spawn_chooser_smoke.gd`（15 条 + `EXPECTED_CHECKS` 闸）：meta 解析（多行/重复/非法坐标/队号分流/老图不加空键）· 排除上一次 · 随机覆盖全部候选 · 最小间距可行时满足 · 不可行时放宽 · 退化优先级（不与对手同格）· 空候选 · 单候选被排除 · `pick_many` 不重复/间距/不足 · 1v1 数据抽样 32 轮 ≥ `FAR_CELLS`。
+- `tests/probe/map_spawn_data_probe.tscn`（17 条 + 闸，场景探针，要读盘）：两张图的 `# spawn` 数量与每个点过 `SpawnPicker` 判据 · newfactory 两队 `# teamspawn` 数量/判据/两队分开 · 旧键仍在 · 1v1 首次落点在数据里且 ≥ `FAR_CELLS` · 复活排除自己上一次 · `role_spawns()` 只读 · 大乱斗 `plan_spawns` 取数据点 · 大乱斗复活排除 last · 团队按队分流 · 团队 `side_swap` 换侧且不与上一局同位。
+- **变异实测**：① `SpawnChooser.pick` 删掉 `exclude.has(c)` 过滤 ⇒ `spawn_chooser_smoke` ⑥ 红（排除上一次失效）；② `MapFormat._parse_cell_tokens` 把 `is_valid_int` 换成宽松 `int()` ⇒ 同支 ③ 红（`abc` 变 (0,0)）；③ `TeamSpawn.plan_team_spawns` 删 `side_swap` 分支 ⇒ `map_spawn_data_probe` ⑮ 红；④ `MatchState._spawn_cell` 删 `_duel_spawns` 排除 ⇒ probe ⑨ 红。
+- 编辑器侧**不改代码**：`level_editor/core/40_meta.js` 的未知 meta 行本来就走 `comments` 往返（`parseMeta` → `comments` → `buildMeta` 以 `# ` 回写），`# spawn` / `# teamspawn` 不会丢（实测 round-trip：行内容逐字保留，行顺序被挪到注释区、首尾空白被 trim）。
+
+**边界（照实登记）**：
+1. **1v1 的落点分布变了**：旧的两点里 `# player (23,43)` 是空中落点、`# player2 (26,9)` 是 1 格孤岛，都不满足"地板 + 头顶 + 连通区"判据 ⇒ 新的合格集全在 `newfactory` 底部开阔带（y=90）。即 1v1 从"手写两点"变成"底部这条带的随机点"，**手感/观感需试玩确认**；要别的分布得在地图里开新的开阔区或放宽 `SpawnPicker` 口径（不在本轮）。
+2. **人数超过数据列表时混合来源**：大乱斗 16 人 / 团队某队超过列表长度时，数据点优先、剩余用 `SpawnPicker` 地板格补足（与改造前同一条兜底）；这些落点不保证全部来自地图数据。
+3. **团队局内复活仍走几何池**：只有开局/换局读 `# teamspawn`；`TeamSpawn.respawn_cell` 的池序列没动。
+4. **`team_match_probe` 相④ 的期望过期**：它用 `TeamHost.compute_swap_spawns` 算"第 2 局 = 第 1 局点集精确对调"，而新换边是"另一侧列表重随机"。该支只有真链路批跑；修法 = 相④ 改成校验「第 2 局每人在另一侧列表里、且都不等于第 1 局自己的点」，属探针改动（不在本轮，真链路批本轮未跑）。
+5. **`EXPECTED_SCRIPTS` 已同步为 229**：本批新增 `core/sim/spawn_chooser.gd`、`tools/map_spawn_meta.gd`、`tests/smoke/spawn_chooser_smoke.gd`、`tests/probe/map_spawn_data_probe.gd`（对抗规则批已把前两个算进 227，本批两个测试脚本落地后 227→229）；全量默认批实测 `ALLSCRIPT: OK(229 个脚本全部加载)`。
+6. **真链路批本轮未跑**（占 7777 + 拉子进程）：`match_start` 广播与宿主摆位同源、`match_sync` 的 `role_spawns()` 新鲜度只有静态断言，未见真包。
+7. **待同步的旧描述（本轮写作用域外，已 grep 定位）**：
+   - `docs/eng/weapons.md:46`：「布点 `GridPathfinder.spread_cells`…大乱斗与单机共用」—— 大乱斗开局散点已改为「地图 `# spawn` + `SpawnChooser`」，`spread_cells` 现在只剩单机地面武器铺点与团队的几何回退用。
+   - `docs/eng/netplay.md:37`：「换局 `_side_swap`」—— 该标志现在只影响**老图回退路径**（数据驱动 1v1 每局直接重随机）；换边语义在团队模式是 `TeamHost._side_swap_round`。
+   - `scenes/pvp_match_client.gd:660` 的注释「1v1 每局换边（`role_spawns()` 在 player / player2 之间对调）」同上过期；行为本身仍正确（重连补态那次不按 spawns 硬拉）。
+
+

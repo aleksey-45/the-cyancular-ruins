@@ -77,7 +77,7 @@ func _ready() -> void:
 	# ★ 别在这里补一句「表到达前先用某个默认色兜一下」:那是给同一个语义开第二个来源,且会在倒计时里闪一次颜色;表真缺了则整局保持本体蓝,那条路已有 push_warning、不是静默。★ 进场主动拉一次(昵称/队伍/生效选项/出生点/地面武器/destroyed):本场景已建好并订阅齐了才开口要,故没有「推给一个正在切场景的客户端」那个竞态;★ 判活再发(全仓纪律)。
 	if NetBus.can_send_to_server():
 		NetBus.rpc_id(1, "match_sync")
-	print("进入 3v3:角色 %d 出生点 %s" % [PvpSession.role, PvpSession.spawn])
+	print("进入对抗:角色 %d 出生点 %s" % [PvpSession.role, PvpSession.spawn])
 
 
 # ── 队伍表:唯一入口 = 基类钩子 _apply_peer_hues_or_team(由 _on_match_sync 调)── ★ 落成钩子覆写而不是自己覆写整个 _on_match_sync:基类那份把「名字/颜色/选项/出生点校正/地面武器先清后灌/destroyed 补态」六件事写在一起,3v3 的差异只有颜色那一段换个来源;整段抄一遍 = 把两条纪律复制成两份,将来只改一处。
@@ -85,7 +85,7 @@ func _apply_peer_hues_or_team(payload: Dictionary) -> void:
 	var teams: Dictionary = payload.get("teams", {})
 	if teams.is_empty():
 		# 3v3 worker 的 team_map() 恒非空(队伍表由 --teams 显式传入),故这里到不了;真到这儿的话 _my_team 恒 0 ⇒ 赢的局会被 HUD 报成输的,故留一条痕而不是静默。
-		push_warning("match_sync: 3v3 载荷里没有 teams(队伍表没到 → HUD 判不出我方胜负)")
+		push_warning("match_sync: 对抗载荷里没有 teams(队伍表没到 → HUD 判不出我方胜负)")
 		return
 	_apply_teams(teams)
 
@@ -98,6 +98,28 @@ func _apply_teams(teams: Dictionary) -> void:
 		_hud.set_my_team(_team_of_role(PvpSession.role))
 	_refresh_team_colors()
 	_apply_team_collision()
+	_apply_team_health_subsidy(teams)
+
+
+# 血量补贴的**客户端镜像**:服务端给少人方抬 max_hp(TeamHost._apply_health_subsidy),客户端必须算出同一个数 ——
+# 否则快照里的 hp(如 60)会被 `Player.apply_authoritative_state` / `restore_state` 钳到客户端上限(50),
+# 表现为"少人方血条永远满格 / 先于服务器倒地",而且每帧 C2 回滚。
+# ★ 公式**不复制**:两端都调 TeamRules(单一来源);本端不新增协议字段(队伍表本来就在 match_sync 里)。
+# ★ 差 0(6 人 3v3)时 hp_bonus = 0 ⇒ 这一段整段跳过,`combat.max_hp` 保持出厂值 —— 行为与改造前逐字一致。
+func _apply_team_health_subsidy(teams: Dictionary) -> void:
+	if _local == null or not is_instance_valid(_local):
+		return
+	var rules := TeamRules.subsidy(teams)
+	var my_team := _team_of_role(PvpSession.role)
+	var want := PlayerParams.player_max_hp
+	if int(rules["hp_bonus"]) > 0 and int(rules["smaller_team"]) == my_team:
+		want = PlayerParams.player_max_hp + int(rules["hp_bonus"])
+	var c := _local.get("combat") as CombatComponent
+	if c == null or c.max_hp == want:
+		return
+	c.max_hp = want
+	# 只抬上限、不改当前血:当前血由下一份本人包(c2)带来,这里改了反而会被立刻覆盖。
+	c.hp_changed.emit(c.hp, c.max_hp)
 
 
 func _team_of_role(role: int) -> int:

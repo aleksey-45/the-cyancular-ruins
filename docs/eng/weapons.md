@@ -39,8 +39,11 @@
 - 丢弃:长按 Q ≥ `PlayerParams.weapon_drop_hold_time`(0.6s)。计时在客户端本地做,满阈值才把一次 `BIT_DROP` 边沿上行;HUD 有 `C_DANGER` 进度条。
 - 地面武器 `WeaponPickup`(CharacterBody2D,`scenes/weapons/weapon_pickup.tscn`):视觉 = 把 `WeaponRegistry.scene_of(type_id)` 的场景实例化当哑子节点(不驱动 `tick()` 即静止);碰撞箱由 `SpriteBounds.from_sprite` 按像素 alpha 求;`WORLD_SCALE = 2.5` 只此一处。必须挂在 `$WorldViewport` 下。`configure()` 必须在 `add_child` 之前;重建先 `remove_child` 再 `queue_free`。
 - 落体摩擦是速度衰减 + 阈值置零(`weapon_stop_eps = 6.0`),不可改为滑固定时长,否则客户端(晚一个 RTT 才开始模拟)与服务器落点发散。
+- ★★ 落定重锚(2026-11-01,修用户报的「捡不动枪械」):客户端也在本地模拟落体,而它那份地形(可破坏砖被拆的时序)/帧时序与服务器不同 ⇒ 落点可差几十~上百 px,于是「看得见、走到脚边、F 提示亮着,服务器判定却在 2 格外」。修法 = 服务器在 `_settled` false→true 那一刻**重播一次** `weapon_spawned`(载荷 `settled: true`、`vel` 给零、`pos` 取当下 canonical),客户端对重复 `inst` 走 `PickupSync._reanchor_existing`(重锚 + 停稳)而不是静默忽略。只发一次、走可靠通道,落定后位置不再变 ⇒ 不花带宽。
+- ★ 拾取意图重试(同一批):按 F 那一刻够不着时,服务器保留 `PICKUP_INTENT_S = 0.4s` 的意图、期间每 tick 再判一次(`_tick_pickup_intents`),覆盖"客户端预测位置超前/还在跳落中"这类几十 px 的位置差;成功或被禁用闸门拒绝才清。重试路径不打 `pickup_try` 诊断(否则一次按 F 刷 24 条同义事件)。
+- 诊断补充:客户端新增 `pickup_anchor` 事件(收到重锚),`pickup_skip` 多一个 `reason: "reanchor_missing"`(重播过期:那件已被捡走)。
 - `core/sim/ground_weapon_field.gd`(`GroundWeaponField`):场上地面武器的纯逻辑表;距离与半径走环面最短,并列按 `inst` 升序。
-- 布点:`GridPathfinder.spread_cells(cells, count, clearance, cols, rows)`,大乱斗与单机共用;内部有 `shuffle()`,不得在广播之后再调一次。开阔地板格扫描在 `EnemySpawner.open_floor_cells`。
+- 布点:**出生点已经是地图数据**(`.cyrm` meta 的 `# spawn` / `# teamspawn`,见 [`world.md`](world.md));`RoyaleSpawn.plan_spawns` 现在优先从 `# spawn` 列表随机取(缺数据才回退 `SpawnPicker` 几何)。旧的 `GridPathfinder.spread_cells(cells, count, clearance, cols, rows)` 仍用于单机布枪与老图回退;它内部有 `shuffle()`,不得在广播之后再调一次。开阔地板格扫描在 `EnemySpawner.open_floor_cells`。
 - 联机权威 `server/match/match_ground.gd`(`MatchGround`,继承链中间层,不得定义生命周期钩子;由 `MatchHost._physics_process` 每帧显式调 `_sync_ground_positions()` + `_handle_ground_actions(role, src)`)。
 - `weapon_spawned` / `weapon_removed` 只走 `NetBus`,不在 `NetBusExt` 里加同名;开局那批走 `match_sync` 进场拉取。`_build_collision` 把 Visual 反向平移,让画出来的枪中心落在 body 原点上;`vel` 必须保持生成时那一份。权威位置 `canonical_pos` 恒在 `[0,MAP)`,每帧由 `set_anchor(玩家位置)` + `sync_render_from_canonical()` 锚到最近副本。
 - 换局 `_reset_ground_weapons` 清的与铺的都必须广播,`_next_ground_inst` 不得重置;客户端不要在 `round_state` 里自己清空。

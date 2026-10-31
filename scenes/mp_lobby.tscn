@@ -800,7 +800,7 @@ theme_override_styles/disabled = SubResource("StyleBoxFlat_gkue4")
 theme_override_styles/focus = SubResource("StyleBoxFlat_ennis")
 toggle_mode = true
 button_group = SubResource("ButtonGroup_u64m4")
-text = "3 v 3"
+text = "对抗"
 
 [node name="FilterRoyale" type="Button" parent="." unique_id=1787443688]
 unique_name_in_owner = true
@@ -1062,7 +1062,7 @@ theme_override_styles/disabled = SubResource("StyleBoxFlat_eq5qq")
 theme_override_styles/focus = SubResource("StyleBoxFlat_hh8sm")
 toggle_mode = true
 button_group = SubResource("ButtonGroup_jb4lf")
-text = "3 v 3"
+text = "对抗"
 
 [node name="CreateModeRoyale" type="Button" parent="CreatePanel/Body/VBoxContainer1/HBoxContainer2/VBoxContainer1/HBoxContainer1" unique_id=2087350687]
 unique_name_in_owner = true

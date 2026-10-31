@@ -104,6 +104,7 @@ bash tests/smoke/<名>.sh
 | `rollback` | [`core/net/prediction_rollback.gd`](../../core/net/prediction_rollback.gd) 的 `_handle_ack` | 位置 / 速度误差、是否贴身、重放条数 |
 | `queue` / `queue_drop` | [`server/match/input_intake.gd`](../../server/match/input_intake.gd) | 服务器输入队列深度 / 上限 / 累计丢弃 |
 | `pickup_try` | [`server/match/match_ground.gd`](../../server/match/match_ground.gd) | `none` / `range` / `denied` / `taken` 四种成因 |
+| `pickup_anchor` | [`scenes/mp_client/pickup_sync.gd`](../../scenes/mp_client/pickup_sync.gd) | 收到服务器的**落定重锚**(落定那一刻重播的权威位置);没它 = 两端落点发散会永久留着 |
 | `pickup_add` / `pickup_remove` / `pickup_skip` | [`scenes/mp_client/pickup_sync.gd`](../../scenes/mp_client/pickup_sync.gd) | 客户端是否建出那把枪、早退原因 |
 | `tile_cell` / `tile_sub` | [`scenes/mp_client/tile_sync.gd`](../../scenes/mp_client/tile_sync.gd) | 拆砖事件是否到达、是否静默补态 |
 | `reconnect_begin` / `reconnect_resumed` | [`scenes/mp_client/reconnect_driver.gd`](../../scenes/mp_client/reconnect_driver.gd) | 局内自动重连的时间窗 |

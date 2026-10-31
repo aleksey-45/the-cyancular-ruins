@@ -17,9 +17,12 @@ var _rw_snap_t: Dictionary = {}    # role -> float(采样节拍)
 var _rw_t0: Dictionary = {}        # role -> float(环缓零点;回放按 t-t0 寻帧)
 
 func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
-		ai_roles: Array = [], teams: Dictionary = {}) -> void:
+		ai_roles: Array = [], teams: Dictionary = {}, spawns: Dictionary = {}) -> void:
 	_options = options
 	_team_of = teams.duplicate()
+# 1v1 出生点:start_on 算好的那一份(与 match_start / match_sync 广播同源)。空 = 手工/测试路径(基类 _spawn_cell 自己随机)。
+# ★ 子类(RoyaleHost / TeamHost)覆写了 _spawn_cell 与 role_spawns,本表对它们无效(它们各自持有自己的点表)。
+	_duel_spawns = spawns.duplicate()
 	_round_full_heal = bool(options.get("round_full_heal", false))
 	var raw_disabled: Array = options.get("disabled_weapons", [])
 	for v in raw_disabled:

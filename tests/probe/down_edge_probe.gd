@@ -89,11 +89,14 @@ func _test_royale_unattributed() -> void:
 
 
 # ── ③ 3v3:队友误炸只给对方队加分,不记任何人的 kills ──
+# ★ 本夹具是 1v2(teams = {1:1, 2:1, 3:2})⇒ 人数差 1,2026-11 起少人方(2 队)开局带 TeamRules 的比分补贴
+#   (score_bonus = min(差, 目标-1) = 1)。所以这里判的是**增量**而不是绝对值 —— 判绝对 1 会被那笔开局补贴顶红。
 func _test_team_friendly_fire() -> void:
 	var teams := {1: 1, 2: 1, 3: 2}
 	var h: TeamHost = TeamHost.new(MAP, {1: 19001, 2: 19002, 3: 19003}, {}, [], {}, teams)
 	add_child(h)
 	h._round_state = MatchState.RoundState.PLAYING
+	var score_before := int(h._scores.get(2, 0))
 	var attacker = h.players[1]   # 1 队
 	var victim = h.players[2]     # 也是 1 队(队友)
 	victim.set_meta("last_damager", attacker)
@@ -104,9 +107,9 @@ func _test_team_friendly_fire() -> void:
 	var atk: Dictionary = stats.get(1, {})
 	var vic: Dictionary = stats.get(2, {})
 	var raw_atk: Dictionary = h._stats.get(1, {})   # team_kills 是原始计数,不在 stats_payload 的 7 个载荷字段里
-	_chk(int(h._scores.get(2, 0)) == 1 and int(atk.get("kills", -1)) == 0
+	_chk(int(h._scores.get(2, 0)) == score_before + 1 and int(atk.get("kills", -1)) == 0
 			and int(raw_atk.get("team_kills", -1)) == 1 and int(vic.get("deaths", 0)) == 1,
-			"③ 3v3 队友误炸:对方队 +1(%d)、肇事者 kills=%d team_kills=%d、死者 deaths=%d(期望 1/0/1/1)"
-			% [int(h._scores.get(2, 0)), int(atk.get("kills", -1)), int(raw_atk.get("team_kills", -1)),
-			int(vic.get("deaths", 0))])
+			"③ 3v3 队友误炸:对方队 +1(%d→%d)、肇事者 kills=%d team_kills=%d、死者 deaths=%d(期望 +1/0/1/1)"
+			% [score_before, int(h._scores.get(2, 0)), int(atk.get("kills", -1)),
+			int(raw_atk.get("team_kills", -1)), int(vic.get("deaths", 0))])
 	h.queue_free()

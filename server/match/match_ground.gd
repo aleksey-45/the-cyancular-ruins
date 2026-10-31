@@ -13,6 +13,13 @@ var ground_weapons := GroundWeaponField.new()
 var _next_ground_inst := 1
 var _ground_nodes: Dictionary = {}     # inst -> WeaponPickup(服务器侧;headless 不渲染)
 var _self_drop_until: Dictionary = {}  # role -> {inst: 解禁时刻(ms)},防"丢完立刻捡回"
+var _settled_seen: Dictionary = {}     # inst -> 上一次看到的 _settled(落定那一刻重播一次权威位置)
+# 拾取意图重试窗口(秒):按 F 那一刻够不着 → 保留这么久,期间每 tick 再判一次。
+# ★ 为什么需要:输入走可靠通道(按压本身不会丢),但客户端是预测位置、还可能在跑动/跳落中,它眼里的
+#   "在脚边"与本端权威位置差几十 px 是常态 ⇒ 单次裁决会把一次很合理的长按判成 range。0.4s 覆盖一次
+#   起跳/落地的位移量级,又短到不会"路过就自动捡"。
+const PICKUP_INTENT_S := 0.4
+var _pickup_intent: Dictionary = {}    # role -> 过期时刻(ms)
 
 
 # 本局投放的武器类型清单:每种 2 把、跳过被禁的;与单机 Level0._default_weapon_types 同源(都取注册表),差别只在禁用表。
@@ -61,18 +68,31 @@ func _remove_ground_weapon(inst: int) -> void:
 	if n != null and is_instance_valid(n):
 		n.queue_free()
 	_ground_nodes.erase(inst)
+	_settled_seen.erase(inst)
 	for role in _self_drop_until:
 		(_self_drop_until[role] as Dictionary).erase(inst)
 
 
 # 把落体的实际位置每帧同步回表:落点由 WeaponPickup 物理决定,而拾取判定(nearest_within)读的是表里的 pos。
+# ★ 每 tick 的地面武器维护在这里(位置同步 / 落定重锚 / 拾取意图重试)—— 别在 match_host 里另接一条 tick:
+#   本函数已是"地面武器唯一每帧入口",再立一条就是同一件事两处实现。
 func _sync_ground_positions() -> void:
 	for inst in _ground_nodes:
 		var n = _ground_nodes[inst]
 		if n != null and is_instance_valid(n):
+			var pk := n as WeaponPickup
 			var e: Dictionary = ground_weapons.get_entry(int(inst))
 			if not e.is_empty():
-				e["pos"] = (n as WeaponPickup).canonical_pos
+				e["pos"] = pk.canonical_pos
+			# ★★ 落定那一刻重播一次「它现在在这儿」(用户报的「捡不动」):客户端也在本地模拟落体,而它那份地形
+			#   (可破坏砖被拆的时序)/帧时序与本端不同 ⇒ 落点可能差几十~上百 px。于是玩家看着枪在脚边、F 提示亮着,
+			#   本端判定的最近一把却在 2 格外 ⇒ 拾取被判 range 拒绝。重播走既有的 weapon_spawned(可靠通道),
+			#   客户端对重复 inst 走「原地重锚并停稳」而不是忽略(见 PickupSync._reanchor_existing)。
+			#   只发一次:落定后位置不再变(逐帧位置同步纯属浪费带宽)。
+			if pk._settled and not bool(_settled_seen.get(int(inst), false)):
+				_broadcast_weapon_spawned(int(inst), -1, true)
+			_settled_seen[int(inst)] = pk._settled
+	_tick_pickup_intents()
 
 
 # ★ 仅测试用(见 test_ground_teleport):把最近的一把挪到脚下;判据直接用 PlayerParams.weapon_pickup_radius,免得「服务器认为够得着」与「实际捡得到」漂移。
@@ -142,15 +162,22 @@ func _live_velocity_of(inst: int) -> Vector2:
 
 
 # by_role = 这把是谁刚丢下的(-1 = 开局铺的/无主)。★ 客户端靠它排除自己刚丢的那把:那条 0.5s 冷却只有服务器知道,不告诉客户端就会「短暂显示 F 却捡不起来」。
-func _broadcast_weapon_spawned(inst: int, by_role: int = -1) -> void:
+# settled = 这件**已经落定**,这是一条「原地重锚」而不是"又生成了一件":vel 给零、客户端对重复 inst 走重锚并停稳
+# (见 PickupSync._reanchor_existing)。★ 重锚只改位置/速度,不动 inst/type_id/mag —— 减员/替换语义一概不触发。
+func _broadcast_weapon_spawned(inst: int, by_role: int = -1, settled: bool = false) -> void:
 	var e: Dictionary = ground_weapons.get_entry(inst)
 	if e.is_empty():
 		return
 # ★ pos 显式取 canonical 而不是读 e["pos"]:今天两者等价,但契约必须是「读刚生成的节点」。
 # ★ vel 必须保持是「生成时那一份」(表里的 vel 从不被 _sync_ground_positions 刷新)—— 客户端拿它 + canonical
 # 重放落体才有「落点与何时开始模拟无关」;哪天把 vel 也做成逐帧刷新,两端落点会立刻发散而且不报错。
-	_rpc_all("weapon_spawned", [{"inst": inst, "type_id": int(e["type_id"]),
-			"mag": int(e["mag"]), "pos": _canonical_of(inst), "vel": e["vel"], "by_role": by_role}])
+# ★ 唯一的例外就是重锚(settled=true):它要的是「现在就停在这儿」,所以 vel=零。
+	var vel: Vector2 = Vector2.ZERO if settled else (e["vel"] as Vector2)
+	var data := {"inst": inst, "type_id": int(e["type_id"]),
+			"mag": int(e["mag"]), "pos": _canonical_of(inst), "vel": vel, "by_role": by_role}
+	if settled:
+		data["settled"] = true
+	_rpc_all("weapon_spawned", [data])
 
 
 func _broadcast_weapon_removed(inst: int, by_role: int) -> void:
@@ -180,19 +207,43 @@ func _handle_ground_actions(role: int, src: PacketInputSource) -> void:
 	if p.is_downed():
 		return
 	if src.is_pickup_pressed():
-		_try_server_pickup(p, role)
+		# 记一次拾取意图:这一次没够着也不立刻作废,见 PICKUP_INTENT_S / _tick_pickup_intents。
+		_pickup_intent[int(role)] = Time.get_ticks_msec() + int(PICKUP_INTENT_S * 1000.0)
+		if _try_server_pickup(p, role):
+			_pickup_intent.erase(int(role))
 	if src.is_drop_pressed():
 		_try_server_drop(p, role)
 
 
+# 拾取意图的每 tick 重试(由 _sync_ground_positions 调)。★ 只对"还在窗口里且没倒地"的人重试;
+# 期间每次重试都不再打 range/none 诊断(否则一次按 F 会刷 24 条同义事件,把真信号淹掉)。
+func _tick_pickup_intents() -> void:
+	if _pickup_intent.is_empty():
+		return
+	var now := Time.get_ticks_msec()
+	for r in _pickup_intent.keys():
+		var role := int(r)
+		if int(_pickup_intent[r]) <= now:
+			_pickup_intent.erase(r)
+			continue
+		var p: Node2D = players.get(role, null)
+		if p == null or p.is_downed():
+			_pickup_intent.erase(r)
+			continue
+		if _try_server_pickup(p, role, false):
+			_pickup_intent.erase(r)
+
+
 # 拾取:一次只捡最近的一把(与单机同规则);服务器裁决 —— 两人抢同一把时谁先被消费到这里谁得,输的一方客户端从未预测过,不需要回滚。
-func _try_server_pickup(p: Node2D, role: int) -> void:
+# ★ 返回 true = 这一次按 F 已经有结果(拿到 / 被禁用闸门拒);false = 附近确实够不着 ⇒ 调用方保留拾取意图重试。
+# ★ log_miss=false 供重试路径用(理由见 _tick_pickup_intents)。
+func _try_server_pickup(p: Node2D, role: int, log_miss: bool = true) -> bool:
 	var e: Dictionary = ground_weapons.nearest_within(
 			p.global_position, PlayerParams.weapon_pickup_radius, _live_self_drops(role))
 	if e.is_empty():
 		# 诊断(--diag,默认关):把「一次都没命中」拆成两种成因 —— 附近确实没枪(none),还是枪在但超出 64px 半径(range)。
 		# 这就是用户那张「看得见却捡不起来」的现场唯一能分开的解释;半径与距离同源(weapon_pickup_radius + 环面最短距离)。
-		if NetDiag.enabled():
+		if log_miss and NetDiag.enabled():
 			var any: Dictionary = ground_weapons.nearest_within(p.global_position, 1e9, _live_self_drops(role))
 			if any.is_empty():
 				NetDiag.log_event("pickup_try", {"role": role, "result": "none"})
@@ -202,13 +253,13 @@ func _try_server_pickup(p: Node2D, role: int) -> void:
 				NetDiag.log_event("pickup_try", {"role": role, "result": "range",
 						"dist": snappedf(dist, 0.1), "radius": PlayerParams.weapon_pickup_radius,
 						"type": int(any.get("type_id", 0))})
-		return
+		return false
 	var inst := int(e["inst"])
 	var dropped: int = p.weapons.pick_up(int(e["type_id"]), int(e["mag"]))
 	if dropped < 0:
 		NetDiag.log_event("pickup_try", {"role": role, "result": "denied",
 				"type": int(e["type_id"]), "inst": inst})
-		return   # 被禁用闸门拒绝:地面那件留着(与单机同款哨兵,见 WeaponComponent.PICKUP_DENIED)
+		return true   # 被禁用闸门拒绝:地面那件留着(与单机同款哨兵,见 WeaponComponent.PICKUP_DENIED);重试也没用
 	NetDiag.log_event("pickup_try", {"role": role, "result": "taken", "type": int(e["type_id"]),
 			"inst": inst, "replaced": dropped})
 	_remove_ground_weapon(inst)
@@ -221,6 +272,7 @@ func _try_server_pickup(p: Node2D, role: int) -> void:
 				Vector2(PlayerParams.weapon_drop_speed * p.facing_direction, -PlayerParams.weapon_drop_up),
 				0, role)
 		_broadcast_weapon_spawned(ni, role)
+	return true
 
 
 func _try_server_drop(p: Node2D, role: int) -> void:

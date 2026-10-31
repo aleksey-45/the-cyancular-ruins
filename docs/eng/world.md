@@ -17,6 +17,35 @@
 - 子格:一格 64px = 4×4 个 16px 子格(`MapFormatV4.SUB_PER_CELL = 4`)。格值 packed = `texture*16 + shape`;`EMPTY = 0`、`SOLID = 31`(纹理 1 全砖)。
 - v3 文本(`# cyrm-v3`,每格 4 字符 = 3 位十进制纹理 + 1 位形状 hex)与单字符文本格式仍可读,加载时转换为 125×75;出生点 `# player <col> <row>`、`# player2 <col> <row>`(PvP 第二出生点),读口 `MapFormat.load_spawns` / `parse_spawn_metadata`。
 
+### 出生点:地图数据(`# spawn` / `# teamspawn`)
+
+**出生点是地图数据,不是运行时生成的**:`.cyrm` v4 的 meta 文本行(格式层不动,仍是 `u16 meta_len` + UTF-8 文本)新增两类行,由地图作者写死:
+
+| 行 | 含义 | 约束 |
+|---|---|---|
+| `# spawn <col> <row>` | 通用出生点列表(PvP 1v1 / 大乱斗) | 每张图 **≥5** 个;按文件顺序**去重**(首次出现生效) |
+| `# teamspawn <1\|2> <col> <row>` | 团队模式每队出生点列表(队号只认 1 / 2) | 每队 **≥5** 个(支持每队 1~5 人);同样去重 |
+| `# player` / `# player2` | 单机玩家 / PvP 第二出生点 | **向后兼容保留**:单机入口、`MapCatalog` 的 PvP 图校验(要求两点都有)与老图都还读它们 |
+| `# enemy <type> <col> <row>` | 敌人出生点 | 不变 |
+
+- 解析:`MapFormat.parse_spawn_metadata` → `load_spawns()` 的 `spawns: [Vector2i]` / `teamspawns: {1: [...], 2: [...]}`(空列表时连键都不带,老图的 `is_empty()` 回退判据因此成立)。非法行(负数 / 非整数 / 缺列 / 队号不是 1|2)`push_warning` 后跳过、**不抛错**;坐标是格(col = x,row = y),不做越界重排(界外由数据校验工具/探针报红)。
+- 数据合格判据 = 运行时同一套 `SpawnPicker`:地板格(本格空 + 正下方挡路)+ 头顶 ≥2 格净空 + 同层连通区 ≥ `area_threshold()`;单机/空中落点风格不在合格集里(`newfactory` 的 `# player (23,43)` 其实是空中落点、`# player2 (26,9)` 是 1 格孤岛,所以两张旧键与新列表并存、互不替代)。
+- 写盘工具 [`tools/map_spawn_meta.gd`](../../tools/map_spawn_meta.gd)(SceneTree 脚本,`-s` 跑):
+  `--list` / `--suggest N --clearance C --half 1|2`(只打印建议,不写)/ `--inspect "x,y;..."` / `--spawn/--team1/--team2 ... --write`。
+  写盘走 `MapFormatV4.replace_meta`:只替换 meta 文本段,**层块字节逐字节原样保留**(走 `serialize()` 会从格级网格重铺场景层,丢掉编辑器画的 16px 混排);写后自动回读:出生点列表与场景层逐格都要与写入前一致。
+- 浏览器编辑器(`level_editor/`)对未知 meta 行的处理:它们被 `parseMeta` 归入 `comments`、`buildMeta` 原样以 `# ` 前缀回写 ⇒ **`# spawn` / `# teamspawn` 行不会丢**(行内容逐字保留;行顺序会被挪到注释区且首尾空白被 trim)。编辑器里没有出生点的可视化 UI:改点用上面的工具或直接改 meta 文本。v1/v2/v3 老图**不新增**这些行,也不会报错(空列表 → 各模式回退路径)。
+- 运行时选点(唯一随机实现 = [`core/sim/spawn_chooser.gd`](../../core/sim/spawn_chooser.gd) 的 `SpawnChooser.pick` / `pick_many`):
+  - **排除上一次位置 = 硬约束**(若整张列表都被排除,才让位 —— 宁可重选自己的旧点,也不与对手同格);**最小间距 = 软约束**,按 `RELAX_STEP = 5` 逐级放宽到 0(点不够是地图数据的边界,不该把人甩到 (-1,-1) 的墙角)。
+  - **1v1**:`MatchBootstrap.plan_spawns` 从 `# spawn` 随机取两人(互不相同、两两 ≥ `SpawnPicker.FAR_CELLS`,并广播同一份);`MatchState` 用 `_duel_spawns` 记每个 role 最近一次落点,复活 / 换局 / 击杀后复位都重随机并排除自己上一次;`role_spawns()` 只读不重算(match_sync 会重复拉)。**老图无 `# spawn` 时逐字回退改造前行为**:`# player` / `# player2` 两点 + `_side_swap` 换边(role2 缺失时 `far_spawn_from` 现挑)。
+  - **大乱斗**:`RoyaleSpawn.plan_spawns` 从 `# spawn` 取 N 人(两两尽量 ≥ `SPAWN_CLEARANCE`);`respawn_cell` 用同一列表,筛「距所有存活玩家 ≥ `RESPAWN_CLEARANCE`」且 `≠ _last_spawn[role]`,全筛空时退化为同池随机(不再回 (-1,-1) 角落)。**缺 `# spawn` 时回退现有 `SpawnPicker` 几何生成并 `push_warning` 一次**;数据点不够 N 人时用地板格补足(与改造前同一条兜底)。
+  - **团队**:`TeamSpawn.plan_team_spawns(teams, last, side_swap)` 每局从对应侧列表取点(队 1 用 `# teamspawn 1`、队 2 用 `2`;`side_swap` 换边后对调),每人随机且排除本 role 上一局点位、队内尽量拉开;**缺数据或人数超过列表 → 回退改造前的几何生成**(重试循环原样保留)并 `push_warning` 一次。团队**局内复活**仍走 `SpawnPicker.respawn_pools()`(只有开局/换局读地图数据)。
+- 已知边界(照实):
+  1. `# spawn` 的合格集来自现有"开阔地板"判据,所以像 `newfactory` 这种图,合格点会集中在一小片开阔带上(实测 30 个全在 y=90)⇒ 随机的**空间分布**受地图本身限制;要更丰富的落点分布,得在地图上开新的开阔区,或放宽判据(需改 `SpawnPicker` 口径,不在本轮)。
+  2. 超过数据列表人数的对局(如大乱斗 16 人 / 团队某队 5 人以上)**混合**使用数据点 + 几何补足;数据点优先,但这不是"全部落点都在地图数据里"。
+  3. "上一次位置"记录的是上一次**出生点**,不是死亡地点。
+  4. 脚本探针只覆盖默认图(`newfactory` / `demo`)与纯逻辑;真链路(两端 match_start / match_sync 与摆位同源)仍需真链路批。
+
+
 ## 参数体系
 
 - autoload 四个(`project.godot`):`GameParameters`(gravity0、`TILE_SIZE = 64`、地图像素尺寸、敌人数/出生距离)、`NetBus`(PvP RPC 唯一收口,`/root/NetBus` 跨场景常驻)、`NetBusExt`(旁路扩展:对局选项 / 角色色 / `hit_confirm` / 大乱斗房 RPC;未装扩展的 worker 上该节点不存在 ⇒ 扩展 RPC 静默丢弃)、`Settings`(音量 / 键位重映射 / 滚轮切枪 / 血条显示,落盘 `user://settings.cfg`)。`GameParameters.MAP_WIDTH/HEIGHT` 在 `_ready()` 由 `MazeGenerator.map_size()` 回写,`core/sim/world_builder.gd` 加载网格后再按网格写一次;两者之间没有一致性断言。

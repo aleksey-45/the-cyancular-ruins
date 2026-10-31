@@ -1,7 +1,7 @@
 class_name MpLobby
 extends LobbyPage
 
-# 统一联机大厅:1v1 / 大乱斗 / 3v3 三套协议在本页合并。顶栏(昵称/地址/启服) → 模式筛选 + 创建/加入 → 房卡网格 → 状态栏。
+# 统一联机大厅:1v1 / 大乱斗 / 对抗 三套协议在本页合并。顶栏(昵称/地址/启服) → 模式筛选 + 创建/加入 → 房卡网格 → 状态栏。
 # ★ 一条纪律:三个模式在本页的差异全部收在 _mode / _current_mode 两个变量上(筛选值 / 创建弹层形态 / 等待室形态 / 转连方式);别再按"哪个页面"分叉。
 # ★ ack 梯顺序 = worker → claim → 大厅 → ack(合并后唯一一条):1v1 旧页那条 join 梯的职责由末尾那条(建房/加入 8s 无应答)覆盖。三套服务端注册表原样保留:本页并发调三次现有列房 RPC,前端合并打标。
 # ★★ 静态骨架在 scenes/mp_lobby.tscn 里:版式(页面留白 / 各行坐标 / 控件尺寸 / 间距 / 固定文案)一律去编辑器里拖,别回来加坐标常量。
@@ -64,7 +64,7 @@ var _auto_refreshed := false
 # ★★ 列表静默自动刷新(2026-11-01,用户报「游戏结束后房间不会关闭」):房卡是**拉**出来的(服务端不推),
 #   而一局结束后房要等回收梯判到 worker 死亡才被拆 —— 不轮询的话那行房卡会一直挂在屏幕上,像是房没关。
 #   "静默" = 不写状态栏、不清空已有列表(应答到达时按模式整体替换)⇒ 不会闪、也不会打断玩家正在看的行。
-const AUTO_REFRESH_S := 3.0
+const AUTO_REFRESH_S := 1.0
 var _auto_refresh_t := 0.0
 
 # ── 四块面板(纯搬移;见文件头)──
@@ -275,7 +275,7 @@ func _on_room_state_team(state: Dictionary) -> void:
 	var code := str(state.get("code", ""))
 	if int(state.get("host_role", 0)) == int(state.get("your_role", 0)):
 		NetBusExt.rpc_id(1, "room_map", code, Settings.mp_map_path)
-	_status.text = "已进入 3v3 房间 %s,等待选边/开局…" % code
+	_status.text = "已进入对抗房间 %s,等待选边/开局…" % code
 	_wait.show(state, PvpSession.MODE_TEAM)
 
 
@@ -400,7 +400,7 @@ func _unhandled_input(ev: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 
 
-# 选边(仅 3v3)。★ 按 team 号上行,服务端"先拦后分"。
+# 选边(仅对抗)。★ 按 team 号上行,服务端"先拦后分"。
 func _on_wait_pick(team: int) -> void:
 	NetBusExt.rpc_id(1, "team_pick", team)
 
@@ -416,7 +416,7 @@ func _on_wait_start_pressed() -> void:
 
 
 # 「退出房间」。★ 三个模式不同款(照两个旧页逐字对齐):1v1 没有 leave RPC —— 断开即触发大厅 on_peer_left 清房,基类 _return_to_lobby 正好是那条收口(NetBus.stop() + 重连 + 刷新列表)。
-# ★ 大乱斗 / 3v3 有 leave RPC,且不能断大厅 peer:断开会走 on_peer_left 那条另一条路径去关房,同一件事就有两个实现 ⇒ 只发 leave,然后走共用的页面清理(_on_return_to_lobby)+ 重拉列表 —— 不重连,大厅 peer 还在。
+# ★ 大乱斗 / 对抗有 leave RPC,且不能断大厅 peer:断开会走 on_peer_left 那条另一条路径去关房,同一件事就有两个实现 ⇒ 只发 leave,然后走共用的页面清理(_on_return_to_lobby)+ 重拉列表 —— 不重连,大厅 peer 还在。
 func _on_wait_leave_pressed() -> void:
 	if _wait_mode == PvpSession.MODE_ROYALE:
 		NetBusExt.rpc_id(1, "royale_leave")
@@ -432,7 +432,7 @@ func _on_wait_leave_pressed() -> void:
 
 
 # ★★ 判据必须是本页的 _current_mode(我当前所在那间房的模式),不是 PvpSession.room_mode —— 后者是凭据的模式,它在"建了房但 note_room 还没跑到"那一档上是空串。两个量语义不同,不要合并成一个字段。
-# ★ 两页刻意不同的那条纪律现在按 _current_mode 分派:1v1 直切;大乱斗 / 3v3 必须 call_deferred —— 它们的 match_start 在 NetBus.poll 调用栈内到达,栈内切场景会在这个栈里 free 大厅 / 重建大物理世界 → 偶发原生段错误(曾实测)。
+# ★ 两页刻意不同的那条纪律现在按 _current_mode 分派:1v1 直切;大乱斗 / 对抗必须 call_deferred —— 它们的 match_start 在 NetBus.poll 调用栈内到达,栈内切场景会在这个栈里 free 大厅 / 重建大物理世界 → 偶发原生段错误(曾实测)。
 # ★★ else 那一支刻意什么都不做、只 push_error,不默认切任何一个场景:本函数有三条进入路径(建房 / 加入 / 回局),任何一条漏记 _current_mode 都会落到这里 —— 切一个默认场景是静默的错值(玩家进了错的对局场景,只是看起来怪),而"留在原地 + 一条红"是响的。
 func _enter_match_scene() -> void:
 	if _current_mode == PvpSession.MODE_PVP:
@@ -489,7 +489,7 @@ func _lobby_action_allowed() -> bool:
 		if _current_mode == PvpSession.MODE_ROYALE:
 			_status.text = "已在大乱斗房间中(先退出房间再操作)"
 		elif _current_mode == PvpSession.MODE_TEAM:
-			_status.text = "已在 3v3 房间中(先退出房间再操作)"
+			_status.text = "已在对抗房间中(先退出房间再操作)"
 		else:
 			_status.text = "已在 1v1 房间中(先退出房间再操作)"
 		return false
@@ -499,7 +499,7 @@ func _lobby_action_allowed() -> bool:
 # 三个模式的权威规则项都上发,worker 各取自己认得的键(server_main._on_player_options 与 MatchBootstrap 都按 role1 那份生效);不认得的键被静默忽略。
 # ★ time(Beta 时间玩法规则)必须在这里 —— 它是权威那一份:worker 侧 MatchHost 读的正是 options.get("time"),而建房载荷里的 time 只存在房对象上、没有任何读者。漏了它 ⇒ Beta 局的时间经济静默为空(一切结算短路),而那不报错。
 # ★★ 1v1 必须排除 time:PvpSession.beta_mode 是会话级的,而统一大厅让 Beta 会话里的玩家能切到 1v1 建局;但 1v1 的 create_room(caller) 是冻结签名、载荷里没有任何 beta 标记 ⇒ 那个房没法按 beta 隔离 ⇒ 没勾 Beta 的普通玩家能加进来打上一局带时间经济的 1v1。
-# ★ 键集由 ModeDefs.OPTION_KEYS 决定(2026-10-22 统一):3v3 不再上发禁用武器/回合回血(X5:界面藏了控件就不该让它生效);大乱斗不再上发回合回血(它没有回合);1v1 不再上发 match_time(只有大乱斗读)。
+# ★ 键集由 ModeDefs.OPTION_KEYS 决定(2026-10-22 统一):对抗不再上发禁用武器/回合回血(X5:界面藏了控件就不该让它生效);大乱斗不再上发回合回血(它没有回合);1v1 不再上发 match_time(只有大乱斗读)。
 # ★★ 组装(ModeOptions.build)在 scenes/mp_lobby/create_panel.gd;快照的读取留在本页:下面那行 `"match_time": int(Settings.royale_match_min * 60.0)` 是
 #    ROYALE_MATCH_TIME_CEILING 上界链的第二环,tools/room_sweep_lint.gd 钉着它必须住在 scenes/mp_lobby.gd 的源码里(别搬走那一行)。
 func _player_options() -> Dictionary:

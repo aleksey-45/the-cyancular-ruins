@@ -23,7 +23,10 @@ const SKIP_DIRS := ["res://.godot", "res://builds", "res://releases", "res://gam
 # 改这个常量是"覆盖变了得有人过目",不是"让闸变绿";历次取值见 git log。
 # ★ 2026-10-26:`res://docs` 进 SKIP_DIRS —— docs/ 是文档目录,出现 `.gd` 只可能是临时审计驱动
 #   (如 `docs/audit/*/_drivers/`),不属于编译面/导出面;不收它时这些草稿会让条数闸随机变红。
-const EXPECTED_SCRIPTS := 222   # 2026-11-01: 218 + 倒计时走秒器批(countdown_clock · countdown_clock_smoke) + 终局退出判据批(match_exit_rules · match_exit_rules_smoke)
+const EXPECTED_SCRIPTS := 229   # 2026-11-01: 223 + 本批新增脚本:core/mp/team_rules.gd、tests/smoke/team_rules_smoke.gd(对抗规则)、
+                                #   core/sim/spawn_chooser.gd、tools/map_spawn_meta.gd、tests/smoke/spawn_chooser_smoke.gd、
+                                #   tests/probe/map_spawn_data_probe.gd(出生点改地图数据)、tests/smoke/ground_weapon_field_smoke.gd(捡枪重锚)
+                                #   ★ 提交前按本文件头的两条复算(减 SKIP_DIRS / `--others` 为 0)再核一次;合并多批时以 `git ls-files` 为准。
 
 var _fails: Array[String] = []
 var _total := 0

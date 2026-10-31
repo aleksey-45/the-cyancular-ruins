@@ -15,7 +15,7 @@ const CARD_GAP := 24.0
 # 房卡高度:容纳「标题带 + 房号 48 + 副标题 32 + 缩略图/人数 120 + 名单 32×3 + …等 N 人」;★ 名单字号 16→32 后旧 440 会挤爆,改高度而不是把名单压回过小。
 const CARD_H := 520.0
 
-# 模式色(与对局无关的一套,只在菜单系用)。★ 3v3 刻意不用蓝 —— #639BFF 就是 UiFactory.C_TEAM_A(队 1 的队色),而队色在 3v3 里是有玩法语义的颜色("一眼看出谁是队友"),撞色会让大厅的「3v3」与对局的「队 1」混淆。
+# 模式色(与对局无关的一套,只在菜单系用)。★ 对抗刻意不用蓝 —— #639BFF 就是 UiFactory.C_TEAM_A(队 1 的队色),而队色在对抗里是有玩法语义的颜色("一眼看出谁是队友"),撞色会让大厅的「对抗」与对局的「队 1」混淆。
 # ★★ 模式色定义在 ui/factory/ui_factory.gd(调色板单一来源是硬约束:颜色只在那里定义,不要再写 Color(...) 字面量)。这里只引用不写字面量,否则同一套颜色会被定义两遍、静默漂移。
 const MODE_COLOR := {
 	PvpSession.MODE_PVP: UiFactory.C_ACCENT,
@@ -24,7 +24,7 @@ const MODE_COLOR := {
 }
 const MODE_LABEL := {
 	PvpSession.MODE_PVP: "1 v 1",
-	PvpSession.MODE_TEAM: "3 v 3",
+	PvpSession.MODE_TEAM: "对抗",
 	PvpSession.MODE_ROYALE: "大 乱 斗",
 }
 
@@ -43,12 +43,16 @@ func setup(p: MpLobby) -> void:
 
 
 # 接骨架:四颗筛选按钮 + 加入弹层。★ 控件的信号在这里接(不挪进页 _ready):"按钮画在屏上、按下去毫无反应"没有任何运行时信号可观测。
+# ★ 模式名只有一处真相 = MODE_LABEL(房卡标题、等待室标题、筛选按钮、建房弹层的模式分段按钮全从它取):
+#   骨架 `.tscn` 里那几颗按钮的默认 `text` 只是编辑器里的占位,进树后被这里覆盖 —— 加新模式/改叫法不用再改两处文案。
 func register(root: Node) -> void:
 	_filter_btns = {}
 	for f in [["", root.get_node("%FilterAll")], [PvpSession.MODE_PVP, root.get_node("%FilterPvp")],
 			[PvpSession.MODE_TEAM, root.get_node("%FilterTeam")], [PvpSession.MODE_ROYALE, root.get_node("%FilterRoyale")]]:
 		var m: String = f[0]
 		var b: Button = f[1]
+		if MODE_LABEL.has(m):
+			b.text = str(MODE_LABEL[m])
 		b.button_pressed = (m == page._mode)
 		b.pressed.connect(func() -> void: page._set_filter(m))
 		_filter_btns[m] = b

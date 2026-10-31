@@ -100,7 +100,13 @@ var _round_num := 1
 var _scores: Dictionary = {}     # role -> 本局击杀
 var _rounds_won: Dictionary = {} # 局胜数(键:1v1 = role;TeamHost = **队号**)—— 下一个人别按 role 查
 var _round_timer := 0.0
-var _side_swap := false          # true 时 P1 用 player2 出生点(每局换边)
+var _side_swap := false          # 每局换边(只影响老地图回退路径:true 时 P1 用 # player2 的落点;数据驱动路径不再需要它)
+# ── 出生点数据(地图 meta 的 # spawn 行)与 1v1 的落点状态 ──
+# ★ RoyaleHost / TeamHost 覆写了 _spawn_cell / role_spawns(各用各的点表),下面这几张只服务基类 = 1v1。
+var _map_spawn_data: Dictionary = {}     # 懒加载:MazeGenerator.load_spawns() 的整份解析结果(# spawn / # teamspawn / 旧键)
+var _map_spawn_data_loaded := false
+var _duel_spawns: Dictionary = {}        # role -> 最近一次落点(role_spawns() 的来源;也是"上一次位置"的排除项)
+var _duel_placed: Dictionary = {}        # role -> true(本局已摆过位:首次用 start_on 预算好的同一份)
 var _respawn_pending: Dictionary = {}  # role -> 剩余复活秒
 var _down_counted: Dictionary = {}     # role -> 本次倒地是否已计分/已入复活流程
 var _last_round_winner := 0            # 最近一局的胜者 role(客户端播报"本局胜利/落败"用)
@@ -345,17 +351,62 @@ func _attributed_role_within(victim: Node2D, window_ms: int) -> int:
 
 
 
+# ── 出生点 ── 数据来源 = 地图 meta 的 `# spawn` 行(固定数据,由地图作者写死;语法与解析见 MapFormat.parse_spawn_metadata)。
+# 选点算法全部在 SpawnChooser(纯静态随机 + 排除 + 最小间距);本类只持有"上一次落点"状态。
+# ★ 老地图(无 `# spawn`)完整保留改造前行为:地图 # player / # player2 两点 + `_side_swap` 换边。
+func map_spawn_data() -> Dictionary:
+	if not _map_spawn_data_loaded:
+		_map_spawn_data_loaded = true
+		_map_spawn_data = MazeGenerator.load_spawns()
+	return _map_spawn_data
+
+
+func _map_birth_points() -> Array:
+	return (map_spawn_data().get("spawns", []) as Array)
+
+
+# 1v1 出生格。首次 = MatchBootstrap.start_on 预算好的那一份(与 match_start 同源);之后(复活 / 换局 / 击杀后复位)
+# 重新随机:排除本 role 上一次落点,并与其它 role 的落点保持 SpawnPicker.FAR_CELLS 的环面距离(点不够时 SpawnChooser 逐级放宽)。
+# ★ 副作用(写 _duel_spawns)是刻意的:它就是"上一次位置"的唯一记录;role_spawns() 只读不调。
 func _spawn_cell(role: int) -> Vector2i:
+	var r := int(role)
+	var points := _map_birth_points()
+	if points.is_empty():
+		return _legacy_spawn_cell(r)
+	if not _duel_placed.has(r) and _duel_spawns.has(r):
+		_duel_placed[r] = true
+		return _duel_spawns[r]
+	_duel_placed[r] = true
+	var anchors: Array = []
+	for other in _duel_spawns:
+		if int(other) != r:
+			anchors.append(_duel_spawns[other])
+	var exclude: Array = []
+	if _duel_spawns.has(r):
+		exclude.append(_duel_spawns[r])
+	var cell := SpawnChooser.pick(points, exclude, null, SpawnPicker.FAR_CELLS, anchors,
+			SpawnPicker.grid_dims())
+	if cell.x < 0:
+		cell = _legacy_spawn_cell(r)
+	_duel_spawns[r] = cell
+	return cell
+
+
+# 老地图回退(逐字等同改造前的 _spawn_cell):地图两固定点 + 每局换边。网格/地图没加载时同样回 (-1,-1)。
+func _legacy_spawn_cell(role: int) -> Vector2i:
 	var spawns := MazeGenerator.load_spawns()
 	var key := "player" if (role == 1) != _side_swap else "player2"
 	return spawns.get(key, Vector2i(-1, -1))
 
 
-
+# 出生点表(match_sync 的只读取法):= 最近一次落位结果,绝不重算 —— 重算会与客户端手里那份不一致。
+# ★ 老地图路径没有落点状态,仍按旧行为现算(纯函数、无副作用)。
 func role_spawns() -> Dictionary:
-	var out := {}
-	for role in players:
-		out[int(role)] = _spawn_cell(int(role))
-	return out
+	if _map_birth_points().is_empty():
+		var out := {}
+		for role in players:
+			out[int(role)] = _legacy_spawn_cell(int(role))
+		return out
+	return _duel_spawns.duplicate()
 
 

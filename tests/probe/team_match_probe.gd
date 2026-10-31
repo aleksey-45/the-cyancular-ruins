@@ -6,7 +6,7 @@ extends Node
 #   相① 六人开局 —— 真大厅(池外端口)+ 6 个 headless 客户端各跑真 mp_lobby 页:建房 → 点公开列表加入 → 各自选边(3 A / 3 B)→ 房主点开始 → 6 端都进 team_game。断言:6 端都进对局;每端的 match_sync.teams 与大厅的 team_of 逐端一致;每端本地玩家与权威快照收敛。★ 同时覆盖「从没被真跑过」的等待室渲染路径(team_room_state 真正到达并被画出来)。
 #   相② 按队散点 —— 开局那一刻 6 个出生点两两分组:队内最大距离 < 队间最小距离(与 A 册 team_host_probe 同一条判据,这里在真链路上再验一次)。
 #   相③ 子弹穿透队友(负)+ 爆炸满效(正)—— 甲(1 队最低 role)走到队友乙身边(≤170px 且视线通畅)连射:乙 hp 不变;再换榴弹贴脸一投:乙 hp 下降且被推飞。★ 这一对缺一不可:只验「穿透」会让「伤害系统整个坏了」也全绿。★ 另从乙端独立取证:数「从我身边飞过(≤45px)的非自己子弹」—— 没有它,「乙 hp 不变」可以靠「子弹根本没飞到」骗过。
-#   相④ 打到 9 杀(回合机收局)→ ROUND_OVER → 第 2 局开局后各端出生点已对调(用生产函数 TeamHost.compute_swap_spawns 算期望再与实测比对)。★ 9 杀多半由回退模式(K 自杀脱困)推动(逐端读数 REC BACKOFF,裁判照实打出来)⇒ 这一相验的是回合机 + 整队换边 + 换边重拉 match_sync,而不是「枪法」。断言各端 scores 的键是队号 1/2、rounds_won 六端一致。
+#   相④ 打到 9 杀(回合机收局)→ ROUND_OVER → 第 2 局开局后各端出生点已**换到另一侧**(地图 `# teamspawn` 另一队那份列表、重随机,且不与第 1 局同处;判据见相④ 的注释)。★ 9 杀多半由回退模式(K 自杀脱困)推动(逐端读数 REC BACKOFF,裁判照实打出来)⇒ 这一相验的是回合机 + 整队换边 + 换边重拉 match_sync,而不是「枪法」。断言各端 scores 的键是队号 1/2、rounds_won 六端一致。
 #   相⑤ 少人继续 —— 6 号客户端在 PLAYING 中途按 ESC 离场(唯一走 safe_change_scene 的局内退出路径)→ 服务器不终局、其余 5 端仍持续收到快照(间隔 < 1s)、且掉线者已被移出对局。
 # ═══ 拓扑(自当大厅/裁判;全部子进程由本进程 OS.create_process 直接拉起)═══ 本进程 = 真大厅(NetBus.start_server(LOBBY_PORT) + RoomManager),不占 7777;c1..c6 = 6 个 headless 客户端,各跑真 mp_lobby → 真 team_game;worker 由真 RoomManager.team_start 经 WorkerLauncher.spawn_team_worker 拉起(与生产逐字同一条路径,只把起投端口拨到池外)。
 #   ★ 端口纪律(与 reconnect_probe 同源):大厅与 worker 都落在真大厅的 worker 端口池(7800~8299)之外、且不占 7777 —— 本机常驻一个真大厅时,池内端口可能被它发给别人的对局,而本探针收尾会按端口杀 worker,会把别人那局一起杀掉。
@@ -22,6 +22,9 @@ const WORKER_PORT_OUT := 29250     # `RoomManager` 的 `pick_port` 起投点(见
 const POOL_LOW := 7800
 const POOL_HIGH := 8300
 const CLIENT_COUNT := 6
+# 本探针是「六人 3v3」用例:产品闸门已放宽成两队各 ≥1 即可开局(`RoomTypes.team_ready`),
+# 探针必须自己等每队 3 人全选完才点开始,否则 worker 侧会被 `team_autofill` 补人(相① 的"端 == 厅"会假红)。
+const PROBE_TEAM_SIZE := 3
 const CHILD_QUIT_AFTER := "54000"  # 子进程兜底(60fps ≈ 900s);正常由本进程收尾/按 PID 杀
 const BOOT_TIMEOUT := 45.0         # 等"6 人进房并选边完毕"的上限
 const FINAL_TIMEOUT := 800.0       # ★ 收工上限。必须 > (boot 三段的**绝对**上限 105s = BOOT_TIMEOUT+60) + RESULT_WAIT(680)
@@ -166,13 +169,19 @@ func _stage_wait_full() -> void:
 		if _t > BOOT_TIMEOUT + 30.0:
 			_finish("只有 %d/%d 人进了房(选边前)\n%s" % [tr.players.size(), CLIENT_COUNT, _dump()])
 		return
-	if not _rm.lobby.team_room_ready(tr):
-		if _t > BOOT_TIMEOUT + 30.0:
-			_finish("6 人已进房但选边没收齐(队号表 %s)\n%s" % [str(tr.team_of), _dump()])
-		return
+	# ★★ 2026-11-01:产品闸门放宽成「两队各 ≥1 即可开局」(`RoomTypes.team_ready`),所以**不能**再用它判
+	#   「选边收齐」—— 那会在 3+1 时就放行,探针存下的大厅队伍表只剩 4 个 role,而 worker 那边被
+	#   `team_autofill` 补成 6 人 ⇒ 相① 的"端 == 厅"必然假红(实测 204s 那跑就是这样)。
+	#   本探针是**六人 3v3** 用例,必须自己等 3+3 全部选完(与 `team_match_watcher` 的 `PROBE_TEAM_SIZE` 同一条口径)。
 	var by := {1: 0, 2: 0}
 	for r in tr.team_of:
-		by[int(tr.team_of[r])] = int(by.get(int(tr.team_of[r]), 0)) + 1
+		var t := int(tr.team_of[r])
+		by[t] = int(by.get(t, 0)) + 1
+	if tr.team_of.size() < CLIENT_COUNT or int(by[1]) != PROBE_TEAM_SIZE or int(by[2]) != PROBE_TEAM_SIZE:
+		if _t > BOOT_TIMEOUT + 30.0:
+			_finish("6 人已进房但选边没收齐(应 %d+%d,实得 %s / 队号表 %s)\n%s"
+					% [PROBE_TEAM_SIZE, PROBE_TEAM_SIZE, str(by), str(tr.team_of), _dump()])
+		return
 	print("PROBE: 6 人已到齐并选边完毕 → 队号表 %s(每队 %s)" % [str(tr.team_of), str(by)])
 	# ★ 立刻存档:成员转连 worker 后会陆续断开大厅,on_peer_left 把它们从 player_role 摘掉,并连带把 team_of 里已无人持有的 role 逐个 erase(见 lobby_rooms.on_peer_left 的 3v3 那一段)—— 到收尾时再读 _room() 拿到的是空队伍表。
 	#   ★ 订正本条的**理由**(代码与结论都不变):原先写的是「房在开局那一刻就被对局消费掉了」—— 对局中的房现在刻意不拆(它要活到 worker 退出,否则「看得见 / 回局」都无从谈起),所以收尾时房还在,只是表已经空了。故「必须在这里存档」照旧成立,变的只是原因。
@@ -545,24 +554,37 @@ func _assert_stage3() -> void:
 			_notes.append("相④ **真实交火击杀 0 次** —— 这一半未覆盖")
 		_notes.append("相④ 第 1 局:%s" % round1[round1.keys()[0]])
 
-	# ── 相④ 换边:期望值用**生产函数**算,不是探针自己推 ──
+	# ── 相④ 换边(2026-11-01 新语义:第 2 局换到**另一侧**的出生点列表并重随机,不再是精确对调)──
+	# 旧实现的换边 = 两队点集整体互换(`TeamHost.compute_swap_spawns`),所以旧判据是"第 2 局 == 第 1 局对调"。
+	# 出生点改成地图数据(`# teamspawn <1|2>`)后,换边 = 改用另一侧那份列表并重新随机(且排除各自的上一处),
+	# 精确格位不再是契约。现在钉两条更本质的:
+	#   ① 每人第 2 局不与第 1 局同处(排除语义);
+	#   ② 每人都换到了对手那侧 —— 离**对手队第 1 局落点**的最近距离 < 离**自己队第 1 局落点**的最近距离。
 	if r2.size() == CLIENT_COUNT and r1.size() == CLIENT_COUNT:
-		var want: Dictionary = TeamHost.compute_swap_spawns(r1, lobby_teams)
-		_check(not want.is_empty(), "相④ 换边表非空(两队人数相等)")
 		var d := _grid_dims()
 		if d == Vector2i.ZERO:
 			pass   # 地图尺寸读不到 —— `_grid_dims()` 已记 FAIL(同相②)
 		else:
-			var bad := 0
-			for r in want:
+			var same_cell := 0
+			var not_swapped := 0
+			for r in r1:
 				if not r2.has(r):
-					bad += 1
 					continue
-				var got: Vector2i = r2[r]
-				var exp: Vector2i = want[r]
-				if MazeGenerator.toroidal_dist(got, exp, d.x, d.y) > 1:
-					bad += 1
-			_check(bad == 0, "相④ ★ 整队换边:第 2 局各端出生点 == 第 1 局对调(生产函数算的期望;不符 %d 个)" % bad)
+				if MazeGenerator.toroidal_dist(r1[r], r2[r], d.x, d.y) <= 1:
+					same_cell += 1
+				var mine := int(lobby_teams.get(int(r), 0))
+				var d_own := 1 << 30
+				var d_other := 1 << 30
+				for o in r1:
+					var dd: int = MazeGenerator.toroidal_dist(r2[r], r1[o], d.x, d.y)
+					if int(lobby_teams.get(int(o), 0)) == mine:
+						d_own = mini(d_own, dd)
+					else:
+						d_other = mini(d_other, dd)
+				if not (d_other < d_own):
+					not_swapped += 1
+			_check(same_cell == 0, "相④ ★ 第 2 局每人的出生点都不与第 1 局同处(实得 %d 人重复)" % same_cell)
+			_check(not_swapped == 0, "相④ ★ 整队换到另一侧(每人离对手队第 1 局落点更近;没换侧 %d 人)" % not_swapped)
 			# 换边那一拍客户端**重拉 match_sync**:每端都应 ≥2 次应答(进场 1 + 换局 1)
 			_check(msync_seen == CLIENT_COUNT and msync_min >= 2,
 					"相④ ★ 换边后各端都重拉了 match_sync(六端最少应答次数 %d,应 ≥2)" % msync_min)

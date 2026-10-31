@@ -10,8 +10,9 @@ var lobby: LobbyRooms = null
 
 const SWEEP_INTERVAL := 600.0       # 清理扫描周期(秒=10min)
 const MAX_ROOM_AGE := 7200.0        # 房间允许存在上限(秒=2h)
-# 3v3 一局时长的估值(秒=30min),只用于 _sweep_stale_rooms 的在局宽限。★ TeamHost 侧没有「本局最多打多久」的常量可读
-# (大乱斗有 MATCH_TIME,3v3 是三局两胜),故取粗上界:3 局 × (COUNTDOWN 3 + 打到 9 杀 + ROUND_OVER 4)。⚠ 已知边界(3v3 独有,不修)。
+# 对抗一局时长的估值(秒=30min),只用于 _sweep_stale_rooms 的在局宽限。★ TeamHost 侧没有「本局最多打多久」的常量可读
+# (大乱斗有 MATCH_TIME,对抗是三局两胜),故取粗上界:3 局 × (COUNTDOWN 3 + 打到最多 13 杀(2~10 人时的目标上界)+ ROUND_OVER 4)。
+# 目标随人数缩放(见 TeamRules),13 是它的上界 ⇒ 本估值对 2~10 人全部成立。⚠ 已知边界(对抗独有,不修)。
 const TEAM_MATCH_ESTIMATE := 1800.0
 # 大乱斗一局长度的可证上界:Settings.royale_match_min 的装载钳位是 [1.0, 30.0] 分钟 ⇒ 秒数上界 30 × 60 = 1800。
 # ★ 用硬上界而不是「把房主配的时长存到房上」:`_player_options()` 是报到那一刻才读 Settings,而 `royale_create` 更早
@@ -22,10 +23,10 @@ const ROYALE_MATCH_TIME_CEILING := 1800.0
 var _sweep_acc := 0.0
 
 # 对局中房间的回收梯周期(秒)。★ 比 SWEEP_INTERVAL 密得多,因为判据与目的都不同:那条是「房挂太久了」,这条是「这一局结束了」——
-# 10 分钟一轮意味着每局结束后要多占最多 10 分钟。★ 2026-11-01 用户报「游戏结束后房间不会关闭」:30s 那档意味着
-# worker 退进程后房/端口还要在列表里最多再挂 30s(叠加旧口径的 60s 终局滞留 ⇒ 实感 90s)⇒ 收到 10s。
-# 判据仍不读宽限期,10s 仍比端口归还延迟(120/360)小一个量级,量级结论不变。
-const MATCH_SWEEP_INTERVAL := 10.0
+# 10 分钟一轮意味着每局结束后要多占最多 10 分钟。★ 2026-11-01 用户报「所有人退出以后房间应该秒删」:先收到 10s,
+# 再收到 **1s**(人眼可感知的「秒删」)。代价只有每 tick 一次 pid 存活查询(≤几张房),可忽略。
+# 判据仍不读宽限期;1s 比端口归还延迟(120/360)小两个量级,量级结论不变。
+const MATCH_SWEEP_INTERVAL := 1.0
 var _match_sweep_acc := 0.0
 
 
@@ -210,9 +211,12 @@ func royale_start_ai(caller: int) -> void:
 	_send_go_match.call_deferred(rr, port)
 
 
-# ── 3v3:房主开局(两队各 3 人才允许)→ 拉起 --team worker → 全员 go_match。★ 与 royale_start 的三处实质差异:
-# ① 满员判据是「两队各 3 人」(4v2 人数也够 6,但那不是 3v3);② 命令行多一个 --teams(与 --roles 同序等长),它才是队伍
-# 归属的唯一来源(role 号因「退出留空洞、最小空闲号复用」而不连续,推不出队号);③ 没有 AI 补位(用户裁定:满 6 人才开)。
+# ── 对抗:房主开局(两队各 ≥1 人即可)→ 拉起 --team worker → 全员 go_match。★ 与 royale_start 的三处实质差异:
+# ① 开局判据是「两队各 ≥1 人」(人数可以不等 —— 少人方的比分/血量/伤害补贴由 `TeamRules` 按人数差算,不在这里);
+# ② 命令行多一个 --teams(与 --roles 同序等长),它才是队伍归属的唯一来源(role 号因「退出留空洞、最小空闲号复用」
+#    而不连续,推不出队号);③ 没有 AI 补位。
+# ★★ 开局这一刻先把「未选边」的人补进人少那一队(`RoomTypes.team_autofill`)再下发 --teams:这是"未选边"唯一能被
+#    消费的时刻(用户裁定「未选边的人开局时自动补到人少那一队」);写在别处会让大厅队伍表与 worker 的 --teams 分家。
 func team_start(caller: int) -> void:
 	var tr := lobby.team_room_of(caller)
 	if tr == null:
@@ -223,8 +227,9 @@ func team_start(caller: int) -> void:
 	if tr.in_match:
 		return   # 已开局(重复请求防重入:不会双开 worker)
 	if not lobby.team_room_ready(tr):
-		NetBus.reply(caller, "server_message", "两队各 3 人才能开始")
+		NetBus.reply(caller, "server_message", "两队各至少 1 人才能开始")
 		return
+	tr.team_of = RoomTypes.team_autofill(tr)
 	var port := _launcher.pick_port()
 	if port < 0:
 		NetBus.reply(caller, "server_message", "无法分配对局端口")

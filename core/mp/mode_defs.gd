@@ -19,7 +19,12 @@ const MODE_IDS: Array[String] = [MODE_PVP, MODE_ROYALE, MODE_TEAM]
 
 # 角色号上界(大乱斗人数上限 16)。worker 的 `--roles` / `--ai-roles` 越界按此拒绝(ModeContext)。
 const ROLE_MAX := 16
-const TEAM_SIZE := 3
+# 「两队对抗」(mode id 仍是 "team"):`TEAM_SIZE` = **每队人数上限**(不是每队必须满员),`TEAM_ROLES` 由它乘出来
+# ⇒ 大厅容量 / 加入上限 / 列表 cap 全都是 10。开局条件(两队各 ≥1 人)与目标/补贴公式都不在这里 ——
+# 前者在 `RoomTypes.team_ready`,后者在 `TeamRules`(纯逻辑单一来源)。
+# ★ 2026-11 由「两队各 3、满 6 才开」改成「每队 1..5、两队各有 1 人即开」:3v3 那一档(两队各 3)仍是主用法,
+#   但人数不再写死在模式定义里 —— 写死 3 会在 4v4 / 5v5 时静默截断,而现象只是"第 7 个人进不来"。
+const TEAM_SIZE := 5
 const TEAM_COUNT := 2
 
 # 选项下发的键:**只列该模式真的有这一项**的(UI 按同一份表显隐 —— 藏了控件却仍生效是明确缺陷)。
@@ -46,7 +51,7 @@ static func label(mode: String) -> String:
 	match mode:
 		MODE_PVP: return "1v1"
 		MODE_ROYALE: return "大乱斗"
-		MODE_TEAM: return "3v3"
+		MODE_TEAM: return "对抗"   # ★ mode id 仍是 "team";只改显示名(2 个汉字,不加副文案)
 	return ""
 
 static func option_keys(mode: String) -> Array:

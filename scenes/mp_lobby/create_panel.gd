@@ -33,9 +33,12 @@ func register(root: Node) -> void:
 	(root.get_node("%CreateOkBtn") as Button).pressed.connect(page._on_create_pressed)
 
 	# 三颗模式分段按钮(ButtonGroup 互斥;模式色在骨架里)。★ 必须登记进 mode_btns:_apply_create_form 靠它把当前项置灰。
+	# ★ 按钮文案 = RoomList.MODE_LABEL(模式名的唯一真相;骨架里的默认 text 只是占位) —— 与筛选按钮同一份。
 	mode_btns = {PvpSession.MODE_PVP: root.get_node("%CreateModePvp"),
 			PvpSession.MODE_TEAM: root.get_node("%CreateModeTeam"), PvpSession.MODE_ROYALE: root.get_node("%CreateModeRoyale")}
 	for m: String in [PvpSession.MODE_PVP, PvpSession.MODE_TEAM, PvpSession.MODE_ROYALE]:
+		if RoomList.MODE_LABEL.has(m):
+			(mode_btns[m] as Button).text = str(RoomList.MODE_LABEL[m])
 		(mode_btns[m] as Button).pressed.connect(func() -> void: apply(m))
 
 	# 「禁用武器」网格:行 = WeaponRegistry(每台武器一颗勾选框),故留代码。★ 回调把 cb 与 type_id 都收进 form.weapon_checks。

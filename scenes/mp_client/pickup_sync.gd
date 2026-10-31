@@ -61,8 +61,15 @@ func _spawn_pickup_node(data: Dictionary) -> void:
 		NetDiag.log_event("pickup_skip", {"reason": "no_world", "inst": int(data.get("inst", 0))})
 		return
 	var inst := int(data.get("inst", 0))
-	if inst <= 0 or _pickup_nodes.has(inst):
-		NetDiag.log_event("pickup_skip", {"reason": "dup" if _pickup_nodes.has(inst) else "bad_inst", "inst": inst})
+	if inst <= 0:
+		NetDiag.log_event("pickup_skip", {"reason": "bad_inst", "inst": inst})
+		return
+	# ★★ 重复 inst = 服务器的**原地重锚**(武器落定那一刻重播一次权威位置),不是"又生成了一件":
+	#   收下它并把本地副本搬过去。收下的理由:客户端也在本地模拟落体,而它那份地形(可破坏砖被拆的时序)/
+	#   帧时序与本端不同 ⇒ 落点可能差几十~上百 px,于是「看得见、走到脚边、F 提示亮着,服务器却判 range」——
+	#   用户报的「捡不动」正是这个形状。旧实现在这里静默 return,等于让那份偏差永久留着。
+	if _pickup_nodes.has(inst):
+		_reanchor_existing(inst, data)
 		return
 	var type_id := int(data.get("type_id", 1))
 	var node: WeaponPickup = PICKUP_SCENE.instantiate()
@@ -81,6 +88,25 @@ func _spawn_pickup_node(data: Dictionary) -> void:
 			"pos": [snappedf(node.canonical_pos.x, 0.01), snappedf(node.canonical_pos.y, 0.01)]})
 	if int(data.get("by_role", -1)) == int(PvpSession.role):
 		_self_drop_until[inst] = Time.get_ticks_msec() 				+ int(PlayerParams.weapon_pickup_self_delay * 1000.0)
+
+
+# 服务器说"这件枪现在在这儿"(落定重播):把本地副本搬过去并停稳,别让它继续按本端那份地形往下滚。
+# ★ settled=true 时连 _settled 一起置:本端若还在模拟落体,重锚之后不该再纠正回旧落点。
+func _reanchor_existing(inst: int, data: Dictionary) -> void:
+	var n = _pickup_nodes.get(inst, null)
+	if n == null or not is_instance_valid(n):
+		_pickup_nodes.erase(inst)
+		return
+	var node := n as WeaponPickup
+	node.canonical_pos = data.get("pos", node.canonical_pos)
+	node.velocity = data.get("vel", Vector2.ZERO)
+	node._settled = bool(data.get("settled", false)) or node.velocity == Vector2.ZERO
+	node.sync_render_from_canonical()
+	if not ground_weapons.reanchor(inst, node.canonical_pos, node.velocity):
+		NetDiag.log_event("pickup_skip", {"reason": "reanchor_missing", "inst": inst})
+		return
+	# ★ 重锚会把玩家眼里的枪"挪一下"(最多几十 px)。这不是表现瑕疵:它换来的是「看到的和捡到的是同一把」。
+	NetDiag.log_event("pickup_anchor", {"inst": inst, "settled": bool(data.get("settled", false))})
 
 
 # 清空本端的地面武器表与全部拾取物节点(_on_match_sync 的"先清后灌"用)。★ 为什么必须先清:match_sync 的 ground_weapons 是全量,不清就直接 add,掉线期间已被服务器移除的那些会变成永久幽灵枪(看着在、按 F 无效);进场那次本地本来是空的,清一遍是 no-op。

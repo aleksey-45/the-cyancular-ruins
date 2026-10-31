@@ -73,18 +73,18 @@ func show(state: Dictionary, mode: String) -> void:
 		_fill_team_roster(state, plist, my_role, host_role)
 		page._wait_count.text = _team_count_text(state, plist)
 
-	# 选边按钮(仅 3v3)。★ 自己那支的按钮置灰:既少一次无意义的上行,也让「已在该队时再点该队」那条幂等 wart(服务器回"该队已满"、状态不变)不可达。
+	# 选边按钮(仅对抗)。★ 自己那支的按钮置灰:既少一次无意义的上行,也让「已在该队时再点该队」那条幂等 wart(服务器回"该队已满"、状态不变)不可达。
 	var my_team := _team_of_role(state, my_role) if is_team else 0
 	page._wait_pick_a.visible = is_team and my_team != 1
 	page._wait_pick_b.visible = is_team and my_team != 2
-	# 「开始游戏」:1v1 从 2026-10-24 起也有这颗按钮(两人齐后由房主点);3v3 还要求两队各满。
+	# 「开始游戏」:1v1 从 2026-10-24 起也有这颗按钮(两人齐后由房主点);对抗要求**两队各 ≥1 人**
+	# (不再要求每队满 3:2026-11 起 2~10 人都能开,少人方的补贴由 TeamRules 负责)。
 	if is_pvp:
 		page._wait_start.visible = is_host and maxi(plist.size(), int(state.get("count", 1))) >= 2
 	elif mode == PvpSession.MODE_ROYALE:
 		page._wait_start.visible = is_host
 	else:
-		page._wait_start.visible = is_host and _both_teams_full(
-				state, int(state.get("team_size", LobbyRooms.TEAM_SIZE)))
+		page._wait_start.visible = is_host and _both_teams_ready(state)
 
 
 # 收起等待室。★ 唯一调用点是页的 _on_return_to_lobby()。不恢复创建弹层 —— 玩家要建房会自己再点「＋ 创建房间」。★★ 两颗入口按钮在这里恢复,与 show() 的收起成对。
@@ -114,7 +114,7 @@ func _fill_flat_roster(plist: Array, my_role: int, host_role: int) -> void:
 		page._wait_body.add_child(_roster_row(shown, p, my_role, host_role))
 
 
-# 名单行(3v3:两队 + 未选边三档)。★ 两队标题恒出(哪怕 0 人):"这局有 A、B 两队"是规则、不是当前人数;缺了空队的标题,新来的玩家看不出该往哪边站。
+# 名单行(对抗:两队 + 未选边三档)。★ 两队标题恒出(哪怕 0 人):"这局有 A、B 两队"是规则、不是当前人数;缺了空队的标题,新来的玩家看不出该往哪边站。
 func _fill_team_roster(state: Dictionary, plist: Array, my_role: int, host_role: int) -> void:
 	var buckets := {0: [], 1: [], 2: []}
 	for p in plist:
@@ -160,8 +160,9 @@ func _team_of_role(state: Dictionary, role: int) -> int:
 	return 0
 
 
-# 两队各满(= 3v3 的开局闸门,与 RoomTypes.team_ready 同义(S-09 后判据搬去 RoomTypes))。★ 分母引 team_size 而不是写 "3":容量只有一个真值来源,写死的话 TEAM_SIZE 一改这行就撒谎且不报错。
-func _both_teams_full(state: Dictionary, size: int) -> bool:
+# 两队各有至少 1 人(= 对抗的开局闸门,与 `RoomTypes.team_ready` 同义)。★ 下限的唯一真相是
+# `TeamRules.MIN_PER_TEAM`(别在这里写死 1 或 3):容量 / 下限各只有一处真值来源。
+func _both_teams_ready(state: Dictionary) -> bool:
 	var counts := {1: 0, 2: 0}
 	for p in state.get("players", []):
 		if typeof(p) != TYPE_DICTIONARY:
@@ -169,7 +170,7 @@ func _both_teams_full(state: Dictionary, size: int) -> bool:
 		var t := int(p.get("team", 0))
 		if counts.has(t):
 			counts[t] += 1
-	return counts[1] == size and counts[2] == size
+	return counts[1] >= TeamRules.MIN_PER_TEAM and counts[2] >= TeamRules.MIN_PER_TEAM
 
 
 func _team_count_text(state: Dictionary, plist: Array) -> String:
@@ -177,7 +178,8 @@ func _team_count_text(state: Dictionary, plist: Array) -> String:
 	for p in plist:
 		if typeof(p) == TYPE_DICTIONARY and int(p.get("team", 0)) != 0:
 			picked += 1
-	return "%d / %d 人(已选边 %d 人;两队各 %d 人才可开局)" % [
+	# 只留玩家真正需要知道的一句话:两队各有 1 人即可开始;容量取 TEAM_ROLES / TEAM_SIZE 单一来源。
+	return "%d / %d 人(已选边 %d 人;两队各 1 人即可开始,每队最多 %d 人)" % [
 			plist.size(), LobbyRooms.TEAM_ROLES, picked,
 			int(state.get("team_size", LobbyRooms.TEAM_SIZE))]
 

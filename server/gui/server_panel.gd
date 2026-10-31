@@ -46,7 +46,7 @@ const STATE_TEXT := {ServerStatus.STATE_WAITING: "等待中",
 		ServerStatus.STATE_IN_MATCH: "对局中", ServerStatus.STATE_STALE: "worker 已退出"}
 
 # 房种 → 显示名 / 颜色。★ 一处定义,行与「所选房间」都用它:分两处抄迟早漂(改一处漏另一处)。
-const KIND_TEXT := {"1v1": "1v1", "royale": "大乱斗", "team": "3v3"}
+const KIND_TEXT := {"1v1": "1v1", "royale": "大乱斗", "team": "对抗"}
 
 var _rm: RoomManager = null
 var _lan_ip := ""

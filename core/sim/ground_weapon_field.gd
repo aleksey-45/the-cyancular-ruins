@@ -39,6 +39,18 @@ func get_entry(inst: int) -> Dictionary:
 	return {}
 
 
+# 原地重锚:同一件武器的**新权威位置**(服务器落定那一刻重播一次;客户端收到后重锚本地副本)。
+# 返回 false = 这件不在表里(已被捡走/被移除 —— 调用方据此知道"这条重播过期了")。
+# ★ 与 add/remove 的分工:这里只改位置与速度,不动 inst/type_id/mag —— 重锚不是"又生成了一件"。
+func reanchor(inst: int, pos: Vector2, vel: Vector2) -> bool:
+	var e := get_entry(inst)
+	if e.is_empty():
+		return false
+	e["pos"] = pos
+	e["vel"] = vel
+	return true
+
+
 # 距离 pos 最近的、在 radius 内的条目(环面最短距离)。无则返回空字典。
 # ★ 距离与半径判定都走**环面最短**:武器可能在接缝另一侧,用绝对坐标差会得出
 #   "隔了整幅地图"→ 贴脸也捡不到。

@@ -1,24 +1,38 @@
 class_name TeamHost
 extends MatchHost
 
-# 3v3 团队对抗权威对局(第三个模式宿主,与 RoyaleHost 平级):6 人两队各 3、三局两胜、每队先到 TEAM_KILLS_TO_WIN 击杀赢一局、
-# 局间整队换边、局内死亡 2s 复活;击杀后不复位任何人(代价见 _match_round_tick)。★ 计分不分死因:任一玩家倒地 → 对方队 +1;
+# 对抗模式(内部 mode id 仍是 "team")第三个模式宿主,与 RoyaleHost 平级:两队(各 1..5 人,总 2..10)、三局两胜、
+# 每局先到**动态目标**击杀赢一局(目标 = 总人数 + 3,钳 [5,13] ⇒ 6 人 = 9,与改造前的 3v3 逐字一致)、局间整队换边、
+# 局内死亡 2s 复活;击杀后不复位任何人(代价见 _match_round_tick)。★ 计分不分死因:任一玩家倒地 → 对方队 +1;
 # 子弹穿透队友、爆炸对队友满效(现状)。★ 掉线:整队走光才终局(走光即弃权,两队都走光 = 平局);队伍归属来自 MatchState._team_of。
+# ★★ 人数不等时给少人方三种补贴(公式的**单一来源** = core/mp/team_rules.gd,本文件只负责"什么时候用"):
+#   ① 开局比分补贴(每局开局给,上限 目标-1);② 血量补贴(max_hp 加成,服务端真值 + 客户端镜像);
+#   ③ 伤害补贴(只在人数差 ≥ 阈值时给,倍乘**弹丸直击/激光**的武器伤害 + 榴弹的直击/爆炸伤害)。
+#   人数差为 0(含 6 人 3v3)时三处都**恒等**:目标 9、不写比分、max_hp 不动、倍率 1.0 —— 既有 6 人探针照旧。
 # ★ 本类是末端子类,生命周期钩子只能在这里;_init 顺序不可整理。
+# ★ 出生点/选点:数据 = 地图 `# teamspawn 1/2`(固定数据);随机/排除上一局/换边侧的选择在 TeamSpawn.plan_team_spawns,
+#   本文件只持有 _round_spawns / _side_swap_round / _spawned_once 三份状态与 _spawn_cell / role_spawns 的覆写。
 
-const TEAM_KILLS_TO_WIN := 9     # ★ 不能叫 KILLS_TO_WIN:基类 MatchState 已有该常量,同名遮蔽会报错
-const TEAM_ROUNDS_TO_WIN := 2    # ★ 同上,基类是 ROUNDS_TO_WIN
+const TEAM_ROUNDS_TO_WIN := 2    # ★ 不能叫 ROUNDS_TO_WIN:基类 MatchState 已有该常量,同名遮蔽会报错
 # ★ _endgame_winner 的「未定」哨兵:必须三态,不能拿 0 当未定 —— 0 是合法结果(两队都走光 = 平局)。
 const ENDGAME_NONE := -1
 # 散点 / 复活选格 / 队层契约的常量与实现都在 TeamSpawn(server/hosts/team_spawn.gd)。★ 下面这行是转出:客户端
 # scenes/team_game.gd 与 tests/harness/team_match_watcher.gd 按这个**名字**读数,契约表那条注释也留在 TeamSpawn 里。
 const TEAM_ENEMY_LAYER := TeamSpawn.TEAM_ENEMY_LAYER
+# 伤害补贴写到子弹上的标记(子弹只被补贴一次;子弹会飞好几十帧,重复乘会指数放大)。
+const META_DAMAGE_SUBSIDY := "team_damage_subsidy"
 
-var _round_spawns: Dictionary = {}   # role -> Vector2i(本局出生点,与 match_start 广播的同一份)
-var _swap_spawns: Dictionary = {}    # role -> Vector2i(换边后的点;两队点集整体对调)
+var _round_spawns: Dictionary = {}   # role -> Vector2i(本局出生点,与 match_start / 换局后 match_sync 广播的同一份)
+var _side_swap_round := false        # 换边:每局取反;true 时队 1 用 `# teamspawn 2`、队 2 用 `# teamspawn 1`
 var _spawned_once: Dictionary = {}   # role -> true(首次摆位走出生点,之后走动态复活点)
 
 var _endgame_winner := ENDGAME_NONE
+
+# 本局的规则快照(TeamRules.subsidy 的返回值):counts / total / diff / smaller_team / kills_target / score_bonus /
+# hp_bonus / damage_mult。★ 在开局那一刻算一次就**不再重算**(掉线不改目标/补贴:客户端手里的队伍表也不会随掉线更新,
+# 重算会让两端看到的血上限不一致)。
+var _rules: Dictionary = {}
+var _kills_to_win: int = TeamRules.KILLS_MIN
 
 
 func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
@@ -28,12 +42,105 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 		MazeGenerator.set_map_file(map_path)
 		WorldBuilder.load_grid()
 	_team_of = teams.duplicate()
-# ★ spawns 传空只在手工/测试路径才自己算一份:plan_team_spawns 内部有 shuffle,重算会得到另一份散点,而广播给客户端的是 start_on 那一份。
+# ★ spawns 传空只在手工/测试路径才自己算一份:plan_team_spawns 是随机的(SpawnChooser),重算会得到另一份散点,
+#   而广播给客户端的是 start_on 那一份。出生点数据 = 地图 `# teamspawn` 列表(缺则 TeamSpawn 回退几何生成)。
 	_round_spawns = spawns if not spawns.is_empty() else plan_team_spawns(_team_of)
-	_swap_spawns = compute_swap_spawns(_round_spawns, _team_of)
 # ★ 第 5 个实参是 teams、不是 spawns(两者在 RoyaleHost 里同名易混):传错不是崩溃,而是整局队伍判定全错 —— _team_of 被塞成 {role: Vector2i} ⇒ team_of() 返回 0 ⇒ 子弹不穿队友、队伍表下发为空。
 	super._init(map_path, role_peers, options, ai_roles, teams)
 	_apply_team_layers()
+	_init_team_rules()
+
+
+# 规则快照 + 开局比分补贴(血量补贴要等玩家节点的 @onready 落地,见 _ready)。
+# ★ 队伍表在这里已经是最终值:大厅侧先把「未选边」补好(RoomTypes.team_autofill)再下发 --teams。
+func _init_team_rules() -> void:
+	_rules = TeamRules.subsidy(_team_of)
+	_kills_to_win = int(_rules["kills_target"])
+	_scores = _initial_scores()
+
+
+# 每局开局的比分:少人方带 `score_bonus` 分;势均(差 0)⇒ **空表**,与改造前的 6 人 3v3 逐字一致。
+func _initial_scores() -> Dictionary:
+	var bonus := int(_rules.get("score_bonus", 0))
+	if bonus <= 0:
+		return {}
+	return {int(_rules["smaller_team"]): bonus}
+
+
+# 开局一次性的待遇落地。★ 必须在玩家子节点 @onready 之后(所以是 _ready 而不是 _init),且要在 super._ready()
+# 之前接上 weapon_changed —— 那一行会铺地面武器并给每人发一把,漏接的话"开局那把枪"没有伤害补贴,换一次枪才补上。
+# ★ 差 0(含 6 人 3v3)时这里**一个字节都不改**:max_hp 保持 PlayerParams 默认、不连信号、不碰子弹 ⇒ 行为逐字一致。
+func _ready() -> void:
+	if int(_rules.get("hp_bonus", 0)) > 0:
+		_apply_health_subsidy()
+	if float(_rules.get("damage_mult", 1.0)) > 1.0:
+		for role in players:
+			var wc = (players[role] as Node).get("weapons")
+			if wc != null and wc.has_signal("weapon_changed"):
+				wc.weapon_changed.connect(_on_team_weapon_changed.bind(int(role)))
+	super._ready()
+
+
+# 血量补贴:少人方 max_hp = 基础 + 加成,并拉满。★ 客户端在 scenes/team_game.gd::_apply_team_health_subsidy 用**同一份**
+# TeamRules 从 match_sync 的 teams 复算(不新增协议字段);两边必须同值,否则 C2 的 hp 每次快照都被钳到客户端上限。
+func _apply_health_subsidy() -> void:
+	var bonus := int(_rules.get("hp_bonus", 0))
+	var small := int(_rules.get("smaller_team", 0))
+	if bonus <= 0 or small == 0:
+		return
+	for role in players:
+		if team_of(int(role)) != small:
+			continue
+		var c := (players[role] as Node).get("combat") as CombatComponent
+		if c == null:
+			continue
+		c.max_hp = PlayerParams.player_max_hp + bonus
+		c.hp = c.max_hp
+		c.hp_changed.emit(c.hp, c.max_hp)
+
+
+# 换枪时把伤害倍率刷到新武器实例上(武器每次 equip 都是新实例;直接写 `damage` 就改变了它之后所有弹丸的 `hit_damage`)。
+# ★ 幂等靠"新实例没有标记":同一实例只乘一次(`team_base_damage` 记原值),否则换枪/重入会叠乘。
+func _on_team_weapon_changed(_type_id: int, role: int) -> void:
+	var mult := float(_rules.get("damage_mult", 1.0))
+	if mult <= 1.0:
+		return
+	var p: Node2D = players.get(int(role))
+	if p == null or not is_instance_valid(p):
+		return
+	var w = p.get("weapons")
+	if w == null:
+		return
+	var weapon: WeaponBase = w.current_weapon()
+	if weapon == null or not is_instance_valid(weapon):
+		return
+	if weapon.has_meta("team_base_damage"):
+		return
+	weapon.set_meta("team_base_damage", int(weapon.damage))
+	weapon.damage = maxi(1, roundi(float(weapon.damage) * mult))
+
+
+# 伤害补贴的**弹丸直击/爆炸**那一半:`hit_damage` 已由武器 `damage` 乘过(见上),此处只乘子弹场景自带的
+# `direct_hit_damage` / `explosion_damage`(榴弹的直击与 AoE 走它们,不经武器 damage)。
+# ★ 挂在裁决之前(而不是自己另起一个节拍):子弹出膛后第一帧就会被裁决,晚一拍就可能漏掉首发。
+# ⚠ 已知边界:爆炸伤害对**队友与自伤**同样吃这个倍率(本模式的爆炸对队友满效是既有裁定),见 registered-debt。
+func _adjudicate_bullets() -> void:
+	var mult := float(_rules.get("damage_mult", 1.0))
+	if mult > 1.0:
+		var small := int(_rules.get("smaller_team", 0))
+		for b in get_tree().get_nodes_in_group("bullet"):
+			if not is_instance_valid(b) or not (b is BulletBase):
+				continue
+			var bullet := b as BulletBase
+			if bullet.has_meta(META_DAMAGE_SUBSIDY):
+				continue
+			var shooter_role := _role_of(bullet.shooter)
+			if shooter_role < 0 or team_of(shooter_role) != small:
+				continue
+			bullet.set_meta(META_DAMAGE_SUBSIDY, true)
+			bullet.direct_hit_damage = maxi(1, roundi(float(bullet.direct_hit_damage) * mult))
+			bullet.explosion_damage = maxi(1, roundi(float(bullet.explosion_damage) * mult))
+	super._adjudicate_bullets()
 
 
 # ── 队友不互挡(用户裁定「完全穿透」)── 契约与配层规则单一来源 = TeamSpawn.apply_team_layers;本函数只留
@@ -56,19 +163,20 @@ static func start_on(role_peers: Dictionary, map_path: String, options: Dictiona
 		if not NetBus.is_peer_live(role_peers[role]):
 			continue
 		NetBus.rpc_id(role_peers[role], "match_start", role, spawns[role], map_path)
-		NetBus.rpc_id(role_peers[role], "server_message", "3v3 开始")
+		NetBus.rpc_id(role_peers[role], "server_message", "对抗开始")
 
 	return TeamHost.new(map_path, role_peers, options, [], spawns, teams)
 
 
-# ── 散点 ── 实现(重试循环 / 基座 / 队内间距的逐条「为什么」)在 TeamSpawn.plan_team_spawns。
+# ── 散点 ── 实现(数据驱动 / 缺数据回退几何)在 TeamSpawn.plan_team_spawns。
 # ★ 保留静态转发而不是让调用点直接引 TeamSpawn:start_on 与手工路径的调用面零 diff,搬运不牵连调用方。
-static func plan_team_spawns(teams: Dictionary) -> Dictionary:
-	return TeamSpawn.plan_team_spawns(teams)
+static func plan_team_spawns(teams: Dictionary, last: Dictionary = {}, side_swap := false) -> Dictionary:
+	return TeamSpawn.plan_team_spawns(teams, last, side_swap)
 
 
 # 换边点集(两队点整体对调):实现在 TeamSpawn.compute_swap_spawns。★ 保留静态转发是因为 team_match_probe 相④
 # 直接用 `TeamHost.compute_swap_spawns(...)` 算期望 —— 探针不在本次改动面内,这个名字必须继续可用。
+# ⚠ 数据驱动的出生点从第 2 局起是「换用另一侧点集 + 重随机」,不再是第 1 局的精确对调 ⇒ 相④ 的期望会过期(见 registered-debt)。
 static func compute_swap_spawns(spawns: Dictionary, teams: Dictionary) -> Dictionary:
 	return TeamSpawn.compute_swap_spawns(spawns, teams)
 
@@ -133,11 +241,11 @@ func _match_round_tick(delta: float) -> void:
 		_down_counted[role] = true
 		_on_down_edge(int(role))
 # ★★ 击杀者复位已按用户要求删除(2026-09-21,那个函数已整体删掉):击杀者原地不动,受害者 2s 后回本方出生点复活。
-# ★ 代价照实记录:那条规则本是为反「反复活点蹲守」而立,删后 3v3 不再有这条性质;将来若要找回,正确的形状是「复活点选点避开存活敌人」(TeamSpawn.respawn_cell 的 RESPAWN_CLEARANCE 已做一半),而不是把击杀者瞬移走。
+# ★ 代价照实记录:那条规则本是为反「反复活点蹲守」而立,删后对抗不再有这条性质;将来若要找回,正确的形状是「复活点选点避开存活敌人」(TeamSpawn.respawn_cell 的 RESPAWN_CLEARANCE 已做一半),而不是把击杀者瞬移走。
 	match _round_state:
 		RoundState.COUNTDOWN:
 			# ★ 与基类 MatchRound 同一条就绪闸:客户端场景建好(发过 match_sync)后倒计时才开始、并补发一次。
-			#   本类整段覆写了 _match_round_tick ⇒ 不抄这道闸,3v3 开局那一局的倒计时会从"客户端还在切场景"时起算,
+			#   本类整段覆写了 _match_round_tick ⇒ 不抄这道闸,对抗开局那一局的倒计时会从"客户端还在切场景"时起算,
 			#   本地时钟比服务器慢 1~2s ⇒ 最后 1 秒被 PLAYING 转变截掉(2026-11-01 用户实见)。
 			if not _countdown_can_start(delta):
 				return
@@ -158,7 +266,9 @@ func _match_round_tick(delta: float) -> void:
 		RoundState.PLAYING:
 			_handle_respawns(delta)
 			for t in [1, 2]:
-				if int(_scores.get(t, 0)) >= TEAM_KILLS_TO_WIN:
+				# 目标随人数缩放(TeamRules):6 人 = 9(与改造前逐字一致),2 人 = 5,10 人 = 13。
+				# ★ 比分里含少人方的开局补贴,但补贴上限是「目标 - 1」⇒ 不可能靠补贴开局即胜。
+				if int(_scores.get(t, 0)) >= _kills_to_win:
 					_round_over(t)
 					break
 		RoundState.ROUND_OVER:
@@ -177,9 +287,10 @@ func _round_over(winner_team: int) -> void:
 	_broadcast_round_state()
 
 
-# 换局:局胜到 TEAM_ROUNDS_TO_WIN → MATCH_OVER;否则整队换边 + 下一局。★ 与基类的三处实质差异:① 局胜的键是队号(基类按 role 查,
-# 团队下永远是 0 → 永远打不完);② 换边 = 两份点集整体互换;③ 换边后必须清 _spawned_once —— 否则 _spawn_cell 走动态复活点分支,
-# 开局的六个人会被撒到「离敌人远」的随机格而不是本方出生点。★ 与 _match_winner() 互补:一个判要不要进 MATCH_OVER,一个判报哪一队。
+# 换局:局胜到 TEAM_ROUNDS_TO_WIN → MATCH_OVER;否则整队换边 + 下一局。★ 与基类的实质差异:① 局胜的键是队号(基类按 role 查,
+# 团队下永远是 0 → 永远打不完);② 换边 = 两队换用另一侧的点集(`# teamspawn 1/2` 对调),且每局从列表里重随机、排除上一局本人点位;
+# ③ 换边后必须清 _spawned_once —— 否则 _spawn_cell 走动态复活点分支,开局的人会被撒到「离敌人远」的随机格而不是本方出生点。
+# ★ 与 _match_winner() 互补:一个判要不要进 MATCH_OVER,一个判报哪一队。
 func _start_next_round() -> void:
 	if _threshold_team() != 0:
 		_round_state = RoundState.MATCH_OVER
@@ -187,14 +298,14 @@ func _start_next_round() -> void:
 		return
 	_reset_world_and_clear_dynamics()
 
-	if not _swap_spawns.is_empty():
-		var tmp := _round_spawns
-		_round_spawns = _swap_spawns
-		_swap_spawns = tmp
+	_side_swap_round = not _side_swap_round
+	_round_spawns = plan_team_spawns(_team_of, _round_spawns, _side_swap_round)
 
 	_spawned_once.clear()
 	_round_num += 1
-	_scores = {}
+	# 每局重给少人方开局比分补贴;势均时是**空表**(与改造前逐字一致)。别写成"整场只给一次":_scores 每局清零,
+	# 只给一次的话第 2 局起补贴就消失了,而补的是"这一局开局"的劣势。
+	_scores = _initial_scores()
 # ★ 整场累计的 _stats 不清零:ACS 是整场口径,与每局清零的 _scores(队伍比分)是两份不同的东西。
 	_respawn_pending = {}
 	_down_counted = {}
@@ -232,6 +343,17 @@ func _threshold_team() -> int:
 
 func _broadcast_round_state() -> void:
 	var data := _round_state_base()
+	# 本局击杀目标 + 少人方补贴:HUD 只从这里读数(**别在 HUD 里再写死一个 9** —— 目标随人数变)。
+	# ★ 键名 `target` 是 team_hud 的读取契约;`handicap` 只在有人数差时出现(差 0 ⇒ 载荷不多这个键)。
+	data["target"] = _kills_to_win
+	if int(_rules.get("diff", 0)) > 0:
+		data["handicap"] = {
+			"team": int(_rules["smaller_team"]),
+			"diff": int(_rules["diff"]),
+			"score": int(_rules["score_bonus"]),
+			"hp": int(_rules["hp_bonus"]),
+			"damage_pct": roundi((float(_rules["damage_mult"]) - 1.0) * 100.0),
+		}
 	if _round_state == RoundState.ROUND_OVER and _last_round_winner != 0:
 		data["winner"] = _last_round_winner
 	if _round_state == RoundState.MATCH_OVER:
@@ -306,7 +428,7 @@ func _finish_match() -> void:
 
 
 # ── 自杀脱困(K 键:客户端 → NetBusExt.suicide_request → server_main._on_suicide_request)── 异常卡死时主动放弃生命,先清归因 ⇒
-# 自杀不计入任何人击杀(3v3 下落进无归因档:对方队 +1、无人被计击杀)。★ 必须留在子类;server_main 原先只认 _royale ⇒ 3v3 的 K 键被静默丢掉。
+# 自杀不计入任何人击杀(对抗下落进无归因档:对方队 +1、无人被计击杀)。★ 必须留在子类;server_main 原先只认 _royale ⇒ 对抗的 K 键被静默丢掉。
 func request_suicide_role(role: int) -> void:
 	if _round_state != RoundState.PLAYING:
 		return
@@ -321,10 +443,10 @@ func request_suicide_role(role: int) -> void:
 		combat.force_down()
 
 
-# 逐人数据 + ACS / MVP 的口径已上提到 MatchState(公式见 core/sim/score_rules.gd);本文件只留 3v3 特有的两处写入:倒地边沿 _record_down、子弹直击补归因。
+# 逐人数据 + ACS / MVP 的口径已上提到 MatchState(公式见 core/sim/score_rules.gd);本文件只留对抗特有的两处写入:倒地边沿 _record_down、子弹直击补归因。
 
 
-# 3v3 口径:击杀定义沿用 1v1 的「不分死因」(任一玩家倒地 → 对方队 +1;队友误炸也照此,乱扔雷 = 给对面送分);
+# 对抗口径:击杀定义沿用 1v1 的「不分死因」(任一玩家倒地 → 对方队 +1;队友误炸也照此,乱扔雷 = 给对面送分);
 # 逐人 kills 仍只在「归因到且异队」时由基类 _record_down 记(队分与逐人 kills 是两条账,见 docs/eng/modes.md)。
 func _down_killer_of(role: int) -> int:
 	return _attributed_killer(players[int(role)])

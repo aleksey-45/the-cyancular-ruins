@@ -13,37 +13,59 @@ extends RefCounted
 # 与旧 lobby._start_match 同逻辑,只是脱离大厅进程/房间状态。
 
 const PVP_MAP := "res://maps/newfactory.cyrm"
+# ★ 1v1 出生点 = 地图 meta 的 `# spawn` 列表(固定数据):start_on 随机算好一份交给宿主,并广播同一份。
+#   无 `# spawn` 的老图回退到改造前的两点逻辑(`# player` / `# player2` + role2 缺失时 far_spawn_from)。
+# ★ `far_spawn_from` / `FAR_CELLS` 仍住在 `core/sim/spawn_picker.gd`(这个文件静态引用 autoload,`-s` 下编译不过)。
 
 
-# ★ `far_spawn_from` / `FAR_CELLS` 已搬到 `core/sim/spawn_picker.gd`(2026-10-02 合并时)。
-#   理由不是"更整齐",而是**原来那条断言根本没在跑**:它写在 `-s` 探针里,
-#   而本文件静态引用了 autoload(`GameParameters` / `NetBus`)⇒ 在 `-s` 下**编译失败**,
-#   探针里 `load()` 到的是一个没有成员的 GDScript ⇒ `mb.far_spawn_from(...)` 抛
-#   "Nonexistent function" 而被**静默跳过**,verdict 照打 OK。
-#   `SpawnPicker` 自述"全部 static、不引任何 autoload、可被 -s 测试加载",正是这类选格逻辑的家。
+# 1v1 出生点(随机、互不相同、两两 ≥ SpawnPicker.FAR_CELLS)。空表 = 老图无 `# spawn` 或点数不够 → 调用方走回退路径。
+static func plan_spawns(roles: Array) -> Dictionary:
+	var points: Array = (MazeGenerator.load_spawns().get("spawns", []) as Array).duplicate()
+	var out := {}
+	if points.size() < roles.size():
+		return out
+	var picked := SpawnChooser.pick_many(points, roles.size(), null, SpawnPicker.FAR_CELLS,
+			MazeGenerator.map_size())
+	if picked.size() < roles.size():
+		return out
+	for i in range(roles.size()):
+		out[int(roles[i])] = picked[i]
+	return out
+
+
+# 老地图(无 `# spawn`)的向后兼容路径:逐字保留改造前行为 —— 地图两点 + role2 缺失时现挑一个远离 role1 的地板格。
+# ★ role_peers 的键为 1/2 时与改造前一致;其它 role(1v1 AI 补位)沿用旧代码的"非 1 即 s2"口径。
+static func legacy_plan_spawns(roles: Array, map_path: String) -> Dictionary:
+	var spawns := MazeGenerator.load_spawns()
+	var s1: Vector2i = spawns.get("player", Vector2i(-1, -1))
+	var s2: Vector2i = spawns.get("player2", Vector2i(-1, -1))
+	if s2.x < 0 and s1.x >= 0:
+		s2 = SpawnPicker.far_spawn_from(s1, MapFormat.load_map_file(map_path))
+		print("MatchBootstrap: 图 %s 无 player2 出生点 → role2 自动分配 %s" % [map_path, s2])
+	var out := {}
+	for role in roles:
+		out[int(role)] = s1 if int(role) == 1 else s2
+	return out
+
+
 static func start_on(role_peers: Dictionary, map_path: String = PVP_MAP,
 		options: Dictionary = {}, ai_roles: Array = []) -> Node:
 	MazeGenerator.set_map_file(map_path)
 	GameParameters.refresh_map_size()
-	# 同一进程里换图时 SpawnPicker 的三级缓存必须清(它的注释点名过这条纪律;worker 一局一进程,
-	# 但大厅/单人若也建宿主就会踩,清一次是零成本的保险)。
+	# 同一进程里换图时 SpawnPicker 的几何缓存必须清(回退路径用它;worker 一局一进程,清一次是零成本的保险)。
 	SpawnPicker.reset_cache()
-	var spawns := MazeGenerator.load_spawns()
-	var s1: Vector2i = spawns.get("player", Vector2i(-1, -1))
-	var s2: Vector2i = spawns.get("player2", Vector2i(-1, -1))
-	# 只标了一个出生点的图(单人图,如 demo.cyrm):给 role2 现挑一个远离 role1 的地板格 ——
-	# 否则两端会落在同一个点上(或落到 (-1,-1) 的兜底格上)。
-	if s2.x < 0 and s1.x >= 0:
-		s2 = SpawnPicker.far_spawn_from(s1, MapFormat.load_map_file(map_path))
-		print("MatchBootstrap: 图 %s 无 player2 出生点 → role2 自动分配 %s" % [map_path, s2])
+	var roles: Array = role_peers.keys()
+	var spawns := plan_spawns(roles)
+	if spawns.is_empty():
+		spawns = legacy_plan_spawns(roles, map_path)
 	for role in role_peers:
 		var peer_id: int = role_peers[role]
 		# 判活:有客户端可能已经在「报到 → 收到 match_start」之间的窗口里断开(它自己 stop() 了),
 		# 而这两条是**定向**可靠包 → 往正在断开的 peer 发就是那条 channel 0 错误(判据见 NetBus)。
 		if not NetBus.is_peer_live(peer_id):
 			continue
-		var spawn := s1 if role == 1 else s2
-		NetBus.rpc_id(peer_id, "match_start", role, spawn, map_path)
+		NetBus.rpc_id(peer_id, "match_start", role, spawns.get(int(role), Vector2i(-1, -1)), map_path)
 		NetBus.rpc_id(peer_id, "server_message", "对局开始")
-	var host := MatchHost.new(map_path, role_peers, options, ai_roles)
+	# ★ 第 5 个实参是 teams(本模式空表)、第 6 个是 spawns —— 传错不是崩溃,而是两端出生点不一致(只剩一行日志可查)。
+	var host := MatchHost.new(map_path, role_peers, options, ai_roles, {}, spawns)
 	return host

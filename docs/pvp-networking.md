@@ -93,9 +93,9 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 
 - 房型 `RoomTypes.Room`:字段并集,`mode` 是模式唯一真相。注册表 `RoomRegistry`:`mode -> {code: Room}`;`LobbyRooms` 是门面,`rooms` / `royale_rooms` / `team_rooms` 是三个只读视图。
 - 房号 4 位,只在本 mode 内唯一(`RoomRegistry.next_code(mode)`)。
-- 建房:生成房号,房主 role = 1;1v1 回 `room_created(code)`,大乱斗 / 3v3 走等待室状态广播。
+- 建房:生成房号,房主 role = 1;1v1 回 `room_created(code)`,大乱斗 / 对抗走等待室状态广播。
 - 加入:房间不存在 / 对局中 / 已满 / 邀请码错 → `server_message`;成功则分配 role 并 `room_joined`。
-- 1v1 满两人自动开局(经 `pairing_ready`);大乱斗房主 `royale_start`;3v3 两队各 3 人后房主 `team_start`。
+- 1v1 满两人自动开局(经 `pairing_ready`);大乱斗房主 `royale_start`;对抗两队各 ≥1 人(总 2~10)后房主 `team_start`。
 - 开局:冻结名单(`freeze_roster`)→ `pick_port()` → `OS.create_process` 拉起 worker → 发 `session_token` 与 `go_match(role, port)`;客户端转连 worker 并 `claim_role`,worker 侧 `MatchBootstrap.start_on` / `TeamHost.start_on` / `RoyaleHost.start_on` 建局。
 - 地图:默认 `MatchBootstrap.PVP_MAP = res://maps/newfactory.cyrm`;房主上报的 `player_options.map` 经 `MapCatalog.resolve_pvp_map()` 校验(只认 `res://maps/*.cyrm`、拒 `..`、须有双出生点),不合规回落默认图。
 - 掉线:`server_main._on_peer_left` 把 role 放进宽限期,玩家节点不销毁;到点按 `GraceWindow.expire_action` 移出或收场。
