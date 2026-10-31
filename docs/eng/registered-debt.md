@@ -182,7 +182,7 @@ ound_state(COUNTDOWN, timer=3.0)，而那一刻客户端还在切场景、PvpHud
 **修法（服务器侧就绪闸 + 补发，协议零改动）**：MatchRound 新增 mark_client_ready(role) / _countdown_can_start(delta)——COUNTDOWN 的时钟**等所有网络 peer 都发过 match_sync（客户端场景 _ready 才发）后才开始**（AI 补位不等；上限 COUNTDOWN_HOLD_MAX=2.0s 兜底，超时照常开局）。就绪闸放行那一 tick 再**补发一次** 
 ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时钟同拍。server_main._on_match_sync 里调 mark_client_ready；MatchHost._ready / _start_next_round 复位就绪闸与补发标志。
 
-**边界（如实登记）**：① 只覆盖 1v1（MatchRound._match_round_tick）；RoyaleHost / TeamHost 整段覆写了 _match_round_tick，不走这道闸 —— 大乱斗本来就有 HUD_SYNC_INTERVAL 周期重播可兜底，3v3 的 COUNTDOWN 仍按旧时序（若同样症状再现，需在各自覆写里加同样的就绪闸）；② 只修"起点丢失"，不改变本地走秒精度（Broadcast.tick(delta)，与服务器时钟的长期漂移仍靠下一次状态广播校正）；③ 真链路 smoke 只验证收到 round_state + 能行动，**倒计时数字观感只能人眼**；④ 协议/字节不变，PROTO_VERSION 不动。
+**边界（如实登记）**：① 只覆盖 1v1（MatchRound._match_round_tick）；RoyaleHost / TeamHost 整段覆写了 _match_round_tick，不走这道闸 —— 大乱斗本来就有 HUD_SYNC_INTERVAL 周期重播可兜底，3v3 的 COUNTDOWN 仍按旧时序（若同样症状再现，需在各自覆写里加同样的就绪闸）；★ **2026-11-01 已按这条翻案**：3v3 补了同款就绪闸，三模式的倒计时重播统一成 `_countdown_resync_tick`，见 §四十四 B；② 只修"起点丢失"，不改变本地走秒精度（Broadcast.tick(delta)，与服务器时钟的长期漂移仍靠下一次状态广播校正）；★ 2026-11-01：本地走秒器已抽成 `CountdownClock`，重播改为"只采纳更短的剩余"，漂移被重播锚定吸收；③ 真链路 smoke 只验证收到 round_state + 能行动，**倒计时数字观感只能人眼**；④ 协议/字节不变，PROTO_VERSION 不动。
 
 
 ## 二十一、放弃增量快照 + 命中 X 搬回屏幕中心（2026-10-28，档 3）
@@ -458,7 +458,7 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 - **根因**：`MatchRound._match_round_tick` 的 `MATCH_OVER` 分支是 `pass`（"等玩家退出/服务器关房"）⇒ **worker 对局结束后不主动退**；
   而大厅回收梯 `_reclaim_finished_matches` 的唯一判据是 `_match_over(port,pid) = not pid_alive(pid)` ⇒ **只要客户端还连在 worker 上（结算页赖着不退 / 迟退），房与端口就一直占着**；
   唯一兜底是 `_sweep_stale_rooms` 的 **2h 超龄**（对 1v1 是裸 `MAX_ROOM_AGE`）。
-- **修法**：`MatchRound` 暴露 `is_match_over()`；`server_main._process` 给 worker 加**终局滞留**：`MATCH_OVER` 起 `MATCH_OVER_LINGER = 60s`，到点无论客户端在不在都 `quit(0)` 收场（先让结算数据早已送达；客户端 `_match_ended` 已置位，断开不会触发重连）。房/端口随后由回收梯 ≤30s 收掉。
+- **修法**：`MatchRound` 暴露 `is_match_over()`；`server_main._process` 给 worker 加**终局滞留**：`MATCH_OVER` 起 `MATCH_OVER_LINGER = 60s`，到点无论客户端在不在都 `quit(0)` 收场（先让结算数据早已送达；客户端 `_match_ended` 已置位，断开不会触发重连）。房/端口随后由回收梯 ≤30s 收掉。★ **2026-11-01 更新**：终局后**全员离开即立刻退进程**、回收梯 30s→**10s**（见 §四十四 A）⇒ 本条的"≤90s"已降为 ≤10s；`MATCH_OVER_LINGER=60s` 只对"留在结算页不走"的人生效。
 - **边界**：① 真链路未跑（需一局打到 MATCH_OVER 并观察 ≤90s 内房消失）；② 60s 是否合适属产品口径，可调；③ 无自动断言（worker 生命周期无 `-s` 地基）。
 
 **B8 文档/注释批（逐条真改，不只是标状态）**：
@@ -668,3 +668,51 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 3. 接触判据仍是客户端启发式（AABB 间隙 + 迟滞），不是精确碰撞；放宽的只是"速度/位置差多少算分歧"，`hp`/`down` 仍精确比较。
 4. 心跳 10s 节流后，`metrics-*` 只够看趋势；需要 1s 精度时加 `--diag-verbose`（文件会重新变大，属显式选择）。
 5. 本轮**未重跑真链路批**（改了客户端预测容差与日志落盘；`prediction_contact_smoke`/`rollback_contact_vel_smoke`/默认批覆盖逻辑面，真链路 soak 已手动跑 5 次做读数，但 `run_real.sh` 整批未跑）。
+
+## 四十四、终局房间回收 + 开局倒计时最后 1 秒（2026-11-01，档 2~3）
+
+**起因**：用户报三件 ——「游戏结束后房间不会关闭」「刚开始游戏的 3s 倒计时最后 1 秒还是显示不出来」。
+（同批第三条「回滚量」已在 §四十三 收口，本条不再重复。）
+
+### A. 终局之后房/端口还要多占 60~90s
+
+**两条旧口径叠加**：① worker 在 `MATCH_OVER` 后**不主动退**，靠 `server_main` 的 `MATCH_OVER_LINGER = 60s` 滞留兜底；
+② 玩家一退对局场景，`_on_peer_left` 仍按"对局中掉线"把他塞进 **60s 宽限期**（`GraceWindow.DEFAULT_SECONDS`）——
+而终局之后**没有重连语义**（结算数据早已送达、客户端已 `_match_ended` 不再重连）⇒ 宽限期纯粹是白等。
+③ 大厅回收梯 `MATCH_SWEEP_INTERVAL = 30s`，所以 worker 终于退了之后房/端口还要再挂 ≤30s。
+④ 收官还有一层：大厅的房间列表是**拉**出来的（服务端不推送），玩家站在大厅不点刷新，那行房卡就一直挂着。
+
+**改了什么**：
+- 新增纯分派 [`server/match/match_exit_rules.gd`](../../server/match/match_exit_rules.gd)：`after_peer_left(match_over, claims_left)` → `ACTION_GRACE`（未终局）/ `ACTION_WAIT`（终局但还有人看结算）/ `ACTION_QUIT`（终局且一个不剩）。形态与 `GraceWindow.expire_action` 同款（纯函数，答案只此一处）。
+- [`server/server_main.gd`](../../server/server_main.gd) 的 `_on_peer_left`：`_host != null` 时**先判终局** —— 是终局就按上面分派，不再进宽限（`ACTION_QUIT` 立刻 `quit(0)`，日志行「对局已结束且全员离开」+ `NetDiag.audit("match_over", {reason:"all_left_after_match"})`）。顺带把三处「按 peer 反查 role」的循环收成 `_role_of_peer()`、把"宿主是否终局"收成 `_host_match_over()`。
+- [`server/lobby/room_manager.gd`](../../server/lobby/room_manager.gd)：`MATCH_SWEEP_INTERVAL` **30s → 10s**（量级关系不变：仍 ≪ 端口归还延迟 120/360s）。
+- [`scenes/mp_lobby.gd`](../../scenes/mp_lobby.gd)：大厅页 **每 3s 静默重拉一次列表**（`AUTO_REFRESH_S`；`_send_list_request(silent)` 不清表、不写状态栏，只在答到后按模式整体替换）⇒ 房被拆掉之后最迟 3s 那行房卡就消失，不必玩家手点刷新。判据含 `_ack`（有建房/加入在等应答时不插队）与 `NetBus.can_send_to_server()`（断线时不从这里发起重连）。
+
+**净效果**：全员回大厅后，worker ≈1 帧内退 → 回收梯 ≤10s 收房 → 客户端 ≤3s 后列表干净；旧口径是 60~90s + 必须手点刷新。
+
+**守卫**：[`tests/smoke/match_exit_rules_smoke.gd`](../../tests/smoke/match_exit_rules_smoke.gd)（5 条 + 条数闸）。变异实测：删"未终局 ⇒ 宽限"那条早退 ⇒ ①⑤ 红；`ACTION_QUIT` 的 `<= 0` 写成 `< 0` ⇒ ③ 红；把 WAIT 分支删掉（终局后一律退）⇒ ② 红。
+`tools/room_sweep_lint.gd` 的常量钉同步改成 `MATCH_SWEEP_INTERVAL := 10.0`（不改 ⇒ lint 红）。
+
+**边界（照实）**：① worker → 大厅**没有直连通道**（两个进程），所以"退进程"不能立刻通知大厅，`MATCH_SWEEP_INTERVAL` 那 10s 就是回收延迟的下限；② 玩家**留在结算页不动**时 worker 仍按 `MATCH_OVER_LINGER=60s` 退（这是有意的：结算页期间快照还要继续发）；③ 3s 轮询是客户端行为，不碰协议，但玩家在"房间已满/不存在"自动刷新那一次性额度上不受影响（轮询走 silent 分支、不清 `_got`）；④ 回收延迟的端到端实测只能真链路 + 日志（`room_closed` 的 `reason` 与 `match_over` 的 `reason`），默认批只覆盖纯判据。
+
+### B. 开局 3s 倒计时最后 1 秒显示不出来
+
+**根因（两条叠加）**：
+1. **3v3 没有就绪闸**。1v1 早已有（§二十：等客户端 `match_sync` 再走时钟 + 补发一次），而 `TeamHost`/`RoyaleHost`
+   整段覆写了 `_match_round_tick`，从不走那道闸 ⇒ 3v3 开局那一局，服务器在客户端**还在切场景**时就开始走 3s 时钟。
+   客户端晚 1~2s 才开始走秒 ⇒ 它显示 3、2 之后，服务器的 PLAYING 转变就到了，**最后 1 秒被截掉**（正是用户看到的现象）。
+2. **客户端走秒器会被"回拨"**。HUD 每收到一条 COUNTDOWN 就 `start_countdown(timer)`，旧实现无条件 `_countdown = seconds`；
+   而大乱斗本来每 0.5s 重播一次 COUNTDOWN ⇒ 本地时钟被反复拨回（数字会跳），且重播与本地走秒不同相时最后一秒同样被削。
+
+**改了什么**：
+- 服务器：`MatchRound._countdown_resync_tick()`（COUNTDOWN 期间每 `COUNTDOWN_RESYNC = 0.5s` 重播一次当前剩余），**三模式共用**；3v3 补上就绪闸 + 就绪后补发（与 1v1 同款）。
+- 客户端：抽出纯逻辑 [`ui/hud/countdown_clock.gd`](../../ui/hud/countdown_clock.gd)（`CountdownClock`），`Broadcast` 只负责"什么时候开始 / 把数字画出来 / 走完通知"。两条不变量：**重复 start 只采纳更短的剩余、绝不回拨**（`minf`）；**只有走到 0 才算结束、显示值钳到 ≥1** ⇒ 数字单调不增、`3→2→1` 一个不落。
+- 重播是权威锚点：晚到的客户端在 ≤0.5s 内就被拉回服务器剩余（以前它会一直慢一截）。
+
+**守卫**：[`tests/smoke/countdown_clock_smoke.gd`](../../tests/smoke/countdown_clock_smoke.gd)（9 条 + 条数闸）。变异实测：删 `minf(_remaining, seconds)` ⇒ ②⑦ 红；显示下限 `maxi(..., MIN_DISPLAY)` 去掉 ⇒ ④⑦ 红；`_remaining > 0.0` 改 `>= 0.0` ⇒ ④ 少一个 "1"；`stop()` 不清 `_running` ⇒ ⑥ 红。
+
+**边界（照实）**：① 服务器每 0.5s 重播是**可靠**通道上的重复消息（3s 内 6 条，字节可忽略），但"数字在屏幕上的观感"仍只能人眼；② 就绪闸上限 `COUNTDOWN_HOLD_MAX = 2.0s`：客户端场景若加载超过 2s，闸会超时放行，此时靠重播锚定把误差压到 ≤0.5s（不再有整秒缺口）；③ 默认批只钉纯逻辑；三模式各自的 `_countdown_resync_tick` 接线是源码级（`down_edge_probe` 只覆盖倒地边沿），真链路 `pvp_match_smoke` 只验"收到 round_state + 能动"；④ 心跳/带宽读数未重测（每局多 6 条可靠消息，量级上测不出来）。
+
+**同批的客户端连带改动（必须一起看）**：COUNTDOWN 从"每局 1~2 条"变成"每 0.5s 一条"⇒ [`scenes/pvp_match_client.gd`](../../scenes/pvp_match_client.gd) 的「新一局」分支改成**边沿触发**（`_countdown_round_seen` 记已跑过的局号）。不改的话:每 0.5s 清一次子弹、复位一次砖,3v3 还会每 0.5s 重拉一次 `match_sync`（六端 × 6 次/局 = 一次换局六倍补态流量）。这是"高频重播"这类改动的通用配套:凡按条执行的客户端分支,都要先问一句"这条会不会被重播"。
+
+**注释额度**：本批在 `server/server_main.gd` / `server/match/match_round.gd` / `scenes/mp_lobby.gd` / `scenes/pvp_match_client.gd` / `ui/hud/broadcast.gd` 各加了 2~4 行注释，这几份文件**本来就超过** `comment-style.md` §8 的 15%（改前 17~24%），本批未删旧注释、只按"留关键一条"收敛了新加的。翻案 = 后续批把它们收敛成行内短注（同 §四十三 边界 7）。

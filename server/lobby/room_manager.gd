@@ -22,8 +22,10 @@ const ROYALE_MATCH_TIME_CEILING := 1800.0
 var _sweep_acc := 0.0
 
 # 对局中房间的回收梯周期(秒)。★ 比 SWEEP_INTERVAL 密得多,因为判据与目的都不同:那条是「房挂太久了」,这条是「这一局结束了」——
-# 10 分钟一轮意味着每局结束后要多占最多 10 分钟。30s 是「比端口归还延迟(120/360)小一个量级」的量级选择,判据不读宽限期。
-const MATCH_SWEEP_INTERVAL := 30.0
+# 10 分钟一轮意味着每局结束后要多占最多 10 分钟。★ 2026-11-01 用户报「游戏结束后房间不会关闭」:30s 那档意味着
+# worker 退进程后房/端口还要在列表里最多再挂 30s(叠加旧口径的 60s 终局滞留 ⇒ 实感 90s)⇒ 收到 10s。
+# 判据仍不读宽限期,10s 仍比端口归还延迟(120/360)小一个量级,量级结论不变。
+const MATCH_SWEEP_INTERVAL := 10.0
 var _match_sweep_acc := 0.0
 
 
@@ -367,7 +369,7 @@ func _sweep_stale_rooms() -> void:
 # 大约多久」估的界都会既早(收掉还在打的局)又晚(白占端口)。★ 兜底仍在:2h 超龄清扫会把 worker 一直不退的僵尸房连进程一起杀掉。
 # ★ 回收必须走拆除单一收口(端口归还 / 注册表删除只许出现在 lobby_rooms.teardown_room;lint 的 _check_reclaim_ladder 钉住本函数)。
 func _reclaim_finished_matches() -> void:
-# ★ 凭据表的 GC 搭这条梯(30s 一次):TTL 只是表的上界,不需要独立定时器,再立一条梯就是本仓禁止的「同一件事两处实现」。
+# ★ 凭据表的 GC 搭这条梯(10s 一次):TTL 只是表的上界,不需要独立定时器,再立一条梯就是本仓禁止的「同一件事两处实现」。
 	lobby.rejoin.prune(Time.get_ticks_msec())
 	var done: Array = []
 	for code in lobby.rooms:

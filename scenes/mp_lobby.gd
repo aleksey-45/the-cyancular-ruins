@@ -61,6 +61,12 @@ var _multi_left := 0               # 这一次尝试里还没被认领的应答�
 
 var _auto_refreshed := false
 
+# ★★ 列表静默自动刷新(2026-11-01,用户报「游戏结束后房间不会关闭」):房卡是**拉**出来的(服务端不推),
+#   而一局结束后房要等回收梯判到 worker 死亡才被拆 —— 不轮询的话那行房卡会一直挂在屏幕上,像是房没关。
+#   "静默" = 不写状态栏、不清空已有列表(应答到达时按模式整体替换)⇒ 不会闪、也不会打断玩家正在看的行。
+const AUTO_REFRESH_S := 3.0
+var _auto_refresh_t := 0.0
+
 # ── 四块面板(纯搬移;见文件头)──
 var _rooms: RoomList = null
 var _form: OptionsForm = null
@@ -166,12 +172,12 @@ func _set_filter(mode: String) -> void:
 
 # 三个载荷入口各自把条目并入同一张表,再统一重绘。★ 每条都打上 mode 标 —— 卡片要显示模式、筛选器也按它过滤,而服务端载荷里没有这个键。
 func _ingest_rooms(mode: String, rooms: Array) -> void:
-	_rooms.ingest(mode, rooms)
+	var changed := _rooms.ingest(mode, rooms)
 	# ★ 不无条件清 _ack / _sent_ms:它们是加入的 8s 兜底,而一次列房应答并不能证明那次加入有应答 —— 无条件下会刚好在"加入请求丢了、用户又点了一次刷新"时把兜底拆掉;只有"没有待应答的加入"时清才安全。
 	if _join_pending.is_empty():
 		_ack = true
 		_sent_ms = 0
-	if _rooms.all_got():
+	if _rooms.all_got() and changed:
 		_rooms.redraw()
 
 
@@ -192,9 +198,11 @@ func _on_team_rooms(rooms: Array) -> void:
 
 
 # 基类钩子:不是一条统一 RPC —— 三条并发、各自到达,合并后重绘(刷新延迟由最慢那份决定);token 仍要带,大厅据此把持凭据本人自己那间私密房也列出来。
-func _send_list_request() -> void:
-	_rooms.reset_got()
-	_rooms.clear_rooms()
+# ★ silent = 静默轮询(见 AUTO_REFRESH_S):不清表、不复位计数 —— 清表会让房卡在每次轮询时闪一下空。
+func _send_list_request(silent: bool = false) -> void:
+	if not silent:
+		_rooms.reset_got()
+		_rooms.clear_rooms()
 	NetBus.rpc_id(1, "list_rooms")
 	NetBusExt.rpc_id(1, "royale_list", PvpSession.token)
 	NetBusExt.rpc_id(1, "team_list", PvpSession.token)
@@ -439,7 +447,7 @@ func _enter_match_scene() -> void:
 
 
 # 梯顺序 = worker → claim → 大厅 → ack(合并后唯一的一条;见文件头)。★ 别重排:1v1 旧页那条 join 梯的职责由末尾的 ack 梯覆盖(建房 / 加入 8s 无应答)。
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if _tick_rejoin_timeout():
 		return
 	if _tick_worker_connect_timeout():
@@ -452,6 +460,21 @@ func _process(_delta: float) -> void:
 		_probe_multi_join = false
 		_multi_left = 0
 		_status.text = "8 秒无响应——地址不通,或该服务器不是最新版(开服方请用最新服务端)"
+	_tick_auto_refresh(delta)
+
+
+# 静默轮询:只在本页"闲着"时发(已连上 / 没有待应答的建房·加入 / 不在房里 / 不在转连途中)。
+# ★ 判据含 _ack:_ack == false 时有一条建房/加入在等应答,插一轮列房只会搅乱那条状态机;不在这里做重连,故判 `NetBus.can_send_to_server()` 而不是 `_connected`(后者不随对端断开更新)。
+func _tick_auto_refresh(delta: float) -> void:
+	if not _connected or not _ack or _in_room or _connecting_worker:
+		return
+	if not NetBus.can_send_to_server():
+		return
+	_auto_refresh_t += delta
+	if _auto_refresh_t < AUTO_REFRESH_S:
+		return
+	_auto_refresh_t = 0.0
+	_send_list_request(true)
 
 
 

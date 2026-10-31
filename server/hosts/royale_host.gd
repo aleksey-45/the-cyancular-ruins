@@ -77,6 +77,7 @@ func _ready() -> void:
 	super._ready()
 	_round_state = RoundState.COUNTDOWN
 	_round_timer = COUNTDOWN_TIME
+	_countdown_resync = COUNTDOWN_RESYNC
 	_match_time = _cfg_match_time if _cfg_match_time > 0.0 else MATCH_TIME
 
 	_broadcast_round_state()
@@ -90,11 +91,10 @@ func _match_round_tick(delta: float) -> void:
 			if _round_timer <= 0.0:
 				_round_state = RoundState.PLAYING
 				_broadcast_round_state()
-# 倒计时每 0.5s 重播:客户端切场景/建 HUD 有延迟,_ready 只广播一次会漏收。
-			_hud_sync -= delta
-			if _hud_sync <= 0.0:
-				_hud_sync = 0.5
-				_broadcast_round_state()
+			else:
+				# 倒计时每 0.5s 重播(与 1v1/3v3 同一实现):客户端切场景/建 HUD 有延迟,_ready 只广播一次会漏收;
+				# 重播同时是「把本地时钟锚到服务器剩余」的唯一手段(客户端 CountdownClock 只采纳更短的值)。
+				_countdown_resync_tick(delta)
 		RoundState.PLAYING:
 			_match_time = maxf(_match_time - delta, 0.0)
 

@@ -136,6 +136,14 @@ func _match_round_tick(delta: float) -> void:
 # ★ 代价照实记录:那条规则本是为反「反复活点蹲守」而立,删后 3v3 不再有这条性质;将来若要找回,正确的形状是「复活点选点避开存活敌人」(TeamSpawn.respawn_cell 的 RESPAWN_CLEARANCE 已做一半),而不是把击杀者瞬移走。
 	match _round_state:
 		RoundState.COUNTDOWN:
+			# ★ 与基类 MatchRound 同一条就绪闸:客户端场景建好(发过 match_sync)后倒计时才开始、并补发一次。
+			#   本类整段覆写了 _match_round_tick ⇒ 不抄这道闸,3v3 开局那一局的倒计时会从"客户端还在切场景"时起算,
+			#   本地时钟比服务器慢 1~2s ⇒ 最后 1 秒被 PLAYING 转变截掉(2026-11-01 用户实见)。
+			if not _countdown_can_start(delta):
+				return
+			if not _countdown_bcast_done:
+				_countdown_bcast_done = true
+				_broadcast_round_state()
 			_round_timer -= delta
 			if _round_timer <= 0.0:
 				_round_state = RoundState.PLAYING
@@ -145,6 +153,8 @@ func _match_round_tick(delta: float) -> void:
 								(players[heal_role] as Node).max_hp,
 								(players[heal_role] as Node).max_waterproof, false)
 				_broadcast_round_state()
+			else:
+				_countdown_resync_tick(delta)
 		RoundState.PLAYING:
 			_handle_respawns(delta)
 			for t in [1, 2]:
@@ -192,6 +202,9 @@ func _start_next_round() -> void:
 		_respawn_player(role)
 	_round_state = RoundState.COUNTDOWN
 	_round_timer = COUNTDOWN_TIME
+	_countdown_hold = COUNTDOWN_HOLD_MAX
+	_countdown_bcast_done = false
+	_countdown_resync = COUNTDOWN_RESYNC
 	_broadcast_round_state()
 
 

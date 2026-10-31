@@ -31,8 +31,8 @@ var punch_enabled := true
 
 var _center: CenterContainer = null
 var _panel: PanelContainer = null
-var _counting := false
-var _countdown := 0.0
+# 倒计时走秒器(纯逻辑,单一实现 = `ui/hud/countdown_clock.gd`;本组件只管"什么时候开始/把数字画出来/走完通知")。
+var _clock := CountdownClock.new()
 var _punch := 0.0
 
 
@@ -80,7 +80,7 @@ func _ready() -> void:
 
 # 显示 / 收起广播:show == false 时同时停掉倒计时 —— 三个 HUD 原先每一个"收起"调用点都顺手置了标志,这里把那条口径收进组件(少一处漏改的机会)。
 func set_broadcast(show: bool, big_text: String, sub_text: String) -> void:
-	_counting = false
+	_clock.stop()
 	mask.visible = show
 	_center.visible = show
 	big.text = big_text
@@ -89,36 +89,34 @@ func set_broadcast(show: bool, big_text: String, sub_text: String) -> void:
 	_apply_punch()
 
 
+# 收到 COUNTDOWN 就调一次(每 0.5s 会重播一条)。★ "重复调用不得回拨"由 CountdownClock.start 的 min 规则保证 ——
+# 那正是「最后一秒被旧时间重新盖回去」那个缺陷的守卫点,别在这里再判一次 _clock.running()。
 func start_countdown(seconds: float, sub_text: String) -> void:
-	_countdown = seconds
-	_counting = true
+	_clock.start(seconds)
 	mask.visible = true
 	_center.visible = true
 	sub.text = sub_text
-	_set_big_text(str(maxi(ceili(_countdown), 1)))
+	_set_big_text(_clock.text())
 
 
 func stop_countdown() -> void:
-	_counting = false
+	_clock.stop()
 
 
 func is_counting() -> bool:
-	return _counting
+	return _clock.running()
 
 
 # 倒计时本地走秒(服务器只在状态切换时广播一次 round_state,两次之间由本端自己走)。★ 与 1v1 的"对手掉线中"共用同一口径(GraceWindow.tick_display),
-# 但那条住在 PvpHud 里 —— 掉线可能发生在倒计时中,两者各自走各自的。★ 脉冲衰减不受 _counting 早退影响(否则数字走完后画面会卡在放大态)。
+# 但那条住在 PvpHud 里 —— 掉线可能发生在倒计时中,两者各自走各自的。★ 脉冲衰减不受走秒早退影响(否则数字走完后画面会卡在放大态)。
 func tick(delta: float) -> void:
 	if _punch > 0.0:
 		_punch = maxf(0.0, _punch - delta * PUNCH_DECAY)
 		_apply_punch()
-	if not _counting:
-		return
-	_countdown -= delta
-	if _countdown > 0.0:
-		_set_big_text(str(maxi(ceili(_countdown), 1)))
-	else:
-		_counting = false
+	var r := _clock.tick(delta)
+	if r == CountdownClock.TICK_RUNNING:
+		_set_big_text(_clock.text())
+	elif r == CountdownClock.TICK_FINISHED:
 		countdown_finished.emit()
 
 

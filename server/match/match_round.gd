@@ -12,6 +12,22 @@ var _client_ready: Dictionary = {}       # role(int) -> true:该客户端场景�
 # 开局那次 COUNTDOWN 广播落在"客户端还在切场景"的窗口里会被丢掉(信号无订阅方)⇒ 就绪后**补发一次**,
 # 让 HUD 从 3 起走、且与服务器时钟同拍;之后每局换局时复位。
 var _countdown_bcast_done := false
+# ★ 倒计时期间每 0.5s 重播一次「当前剩余」(三模式共用,见 _countdown_resync_tick)。
+var _countdown_resync := 0.0
+
+
+# COUNTDOWN 期间的重播节拍(2026-11-01):客户端从「收到那一刻」起自己走秒,而它可能晚到(场景加载 / 重连),
+# 不重播时本地时钟会比服务器慢一截 ⇒ 最后 1 秒被 PLAYING 转变截掉(用户实见「最后 1 秒显示不出来」)。
+# ★ 配合客户端的 CountdownClock.start 的 min 规则:重播只会把本地时钟**拉短**,绝不回拨;显示数字因此单调不增。
+# ★ 三模式的 COUNTDOWN 分支各写了一遍,但节拍本体只许有这一份。
+const COUNTDOWN_RESYNC := 0.5
+
+
+func _countdown_resync_tick(delta: float) -> void:
+	_countdown_resync -= delta
+	if _countdown_resync <= 0.0:
+		_countdown_resync = COUNTDOWN_RESYNC
+		_broadcast_round_state()
 
 
 func mark_client_ready(role: int) -> void:
@@ -65,6 +81,8 @@ func _match_round_tick(delta: float) -> void:
 								(players[heal_role] as Node).max_hp,
 								(players[heal_role] as Node).max_waterproof, false)
 				_broadcast_round_state()
+			else:
+				_countdown_resync_tick(delta)
 		RoundState.PLAYING:
 			_handle_respawns(delta)
 			for role in players:
@@ -76,7 +94,7 @@ func _match_round_tick(delta: float) -> void:
 			if _round_timer <= 0.0:
 				_start_next_round()
 		RoundState.MATCH_OVER:
-			pass   # 对局结束,等玩家退出/服务器关房
+			pass   # 对局结束:全员离开由 server_main._on_peer_left 立刻收场(见 MatchExitRules);留在结算页的人走 MATCH_OVER_LINGER 兜底
 
 
 
@@ -214,7 +232,7 @@ func _reset_world_and_clear_dynamics() -> void:
 	damaged_subs.clear()
 
 
-# 终局判定(给 server_main 的「终局滞留到点收场」用:worker 在 MATCH_OVER 后不主动退,只等客户端断线)。
+# 终局判定(给 server_main 的「终局滞留到点收场」用:全员离开由 _on_peer_left 立刻收场,滞留只兜「有人赖在结算页不走」)。
 func is_match_over() -> bool:
 	return _round_state == RoundState.MATCH_OVER
 
@@ -239,6 +257,7 @@ func _start_next_round() -> void:
 	_round_timer = COUNTDOWN_TIME
 	_countdown_hold = COUNTDOWN_HOLD_MAX
 	_countdown_bcast_done = false   # 就绪闸打开时再补发一次(见 COUNTDOWN 分支)
+	_countdown_resync = COUNTDOWN_RESYNC
 	_broadcast_round_state()
 
 

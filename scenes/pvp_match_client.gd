@@ -50,6 +50,8 @@ var _menu_open := false
 # 回合状态模板要在基类里销毁它(ESC 双语义的硬依赖),基类拿不到子类声明的字段。
 var _pause_menu: PauseMenu = null
 var _last_round_state: Dictionary = {}      # 最近一条 round_state(结算载荷的输入之一)
+# 「新一局」分支(清子弹 / 复位砖 / 3v3 重拉 match_sync)已经跑过的局号 —— 边沿触发的记账,见 _on_round_state。
+var _countdown_round_seen := 0
 
 # 玩家本体精灵(player.png)的主色(RGB)。★ 数值是实测的不是拍的:主色 #639BFF 占 12987 个不透明像素里的 10875(83.6%),次色 #5585D9 是它的暗调同色;复测办法 = 按 alpha>200 过滤 player.png 全部像素取众数。换 sprite 素材要重测这一行 —— 它错了不报错,只是队色整体偏色(整队一起偏,更容易漏)。★ 唯一源是 UiFactory.C_TEAM_A(队 1 token,同值),这里是别名不存字面量;零守卫:hue_tint_probe 的守卫 D(钉 C_TEAM_A == 本常量 == png 众数)已随该探针删除(2026-10-09)。
 const BODY_BASE_COLOR := UiFactory.C_TEAM_A   # #639BFF(本体主色 == 队 1 token)
@@ -479,7 +481,11 @@ func _on_round_state(data: Dictionary) -> void:
 	var state := int(data.get("state", 0))
 	_round_locked = state == 0
 	_refresh_input_lock()
-	if state == 0 and int(data.get("round", 1)) > 1:
+	# ★★ 这条分支必须**边沿触发**(同一局只跑一次):COUNTDOWN 期间服务器每 0.5s 重播一条(倒计时锚点)⇒ 按条触发的
+	#   旧写法会每 0.5s 清一次子弹、复位一次砖,3v3 还每 0.5s 重拉一次 match_sync(六端 ×6 次/局)。
+	var round := int(data.get("round", 1))
+	if state == 0 and round > 1 and round != _countdown_round_seen:
+		_countdown_round_seen = round
 		_clear_bullets_for_new_round()
 		_on_countdown_round()
 	elif state == 3 and _should_handle_match_over():

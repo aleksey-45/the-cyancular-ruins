@@ -2,7 +2,8 @@
 
 ## 对局中的房
 
-- 房活到 worker 进程退出。回收梯 `RoomManager._reclaim_finished_matches` 每 `MATCH_SWEEP_INTERVAL`(30s)一轮,判据 `_match_over(port, pid)` + `WorkerLauncher.pid_alive(pid)`。
+- 房活到 worker 进程退出。回收梯 `RoomManager._reclaim_finished_matches` 每 `MATCH_SWEEP_INTERVAL`(10s)一轮,判据 `_match_over(port, pid)` + `WorkerLauncher.pid_alive(pid)`。
+- ★★ 终局(`MATCH_OVER`)之后**没有重连语义**:最后一个参与者一走,worker 立刻 `quit(0)`(判据 = 纯函数 `MatchExitRules.after_peer_left`,`tests/smoke/match_exit_rules_smoke.gd` 5 条)⇒ 房/端口最多再被回收梯收 `MATCH_SWEEP_INTERVAL`(10s)。玩家回了大厅还看得见那间房,是**客户端列表要拉**、而本页每 3s 静默重拉一次(`MpLobby.AUTO_REFRESH_S`)。玩家留在结算页不动时,worker 仍按 `MATCH_OVER_LINGER`(60s)到点退。
 - `worker_port <= 0` 或 `worker_pid <= 0` 一律判「没结束」(拉起中窗口);pid 在 `OS.create_process` 成功之后登记。
 - 兜底 `_sweep_stale_rooms`:每 `SWEEP_INTERVAL`(600s)扫一次,房龄 > `MAX_ROOM_AGE`(7200s)连 worker 一起杀。1v1 无在局宽限;大乱斗 / 3v3 的在局宽限为 `SWEEP_INTERVAL` + 一局上界(`ROYALE_MATCH_TIME_CEILING` / `TEAM_MATCH_ESTIMATE`,各 1800s)。
 - 房记录 `RoomTypes.Room` 字段:`mode / code / host_peer / players / player_role / in_match / worker_port / worker_pid / roster / created_at / is_public / invite_code / team_of / max_players / beta / time_rules / options / map / match_time`;`started` 是 `in_match` 的属性别名。
@@ -34,7 +35,7 @@
 - 凭据死处只有 `clear_rejoin()` 的调用点:换房号或换模式、大厅答「回不去了」、回局 15s 无应答、玩家进了另一间房。
 - 表 `server/lobby/rejoin_registry.gd`(`RejoinRegistry`):`token -> {code, role, worker_port, worker_pid, expires_at}`;`TOKEN_TTL_SECONDS = 3600` 只是 GC 上界,「这一局还在不在」由 `worker_pid` 活性回答。
 - `RejoinRegistry.decision(entry, code, worker_alive)` 返回 `""` = 放行,否则是拒绝理由;拒绝顺序:凭据不存在 → 房间号不符 → worker 不在。
-- 作废该房凭据走 `drop_port(worker_port)`,键是 worker 端口不是房号;`port <= 0` 不清。GC 搭 30s 回收梯(`_reclaim_finished_matches` 首行 `lobby.rejoin.prune`)。
+- 作废该房凭据走 `drop_port(worker_port)`,键是 worker 端口不是房号;`port <= 0` 不清。GC 搭 10s 回收梯(`_reclaim_finished_matches` 首行 `lobby.rejoin.prune`)。
 
 ## 已知边界(登记,不修)
 

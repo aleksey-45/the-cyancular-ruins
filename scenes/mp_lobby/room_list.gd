@@ -78,7 +78,9 @@ func hide_join_panel() -> void:
 
 
 # 三个载荷入口各自把条目并入同一张表(打完 mode 标),再统一重绘。★ 每条都打上 mode 标 —— 卡片要显示模式、筛选器也按它过滤,而服务端载荷里没有这个键。
-func ingest(mode: String, rooms: Array) -> void:
+# 返回值 = 这份载荷是否**变了**(页据此决定要不要重绘):静默轮询每 3s 来一轮,载荷没变就没必要重建整张网格
+# (重建会清掉悬停/按下态,还白白 free 建一遍节点)。
+func ingest(mode: String, rooms: Array) -> bool:
 	var tagged: Array = []
 	for r in rooms:
 		if typeof(r) != TYPE_DICTIONARY:
@@ -86,8 +88,11 @@ func ingest(mode: String, rooms: Array) -> void:
 		var d: Dictionary = (r as Dictionary).duplicate()
 		d["mode"] = mode
 		tagged.append(d)
+	var prev: Variant = _rooms_by_mode.get(mode, null)
+	var changed: bool = prev != tagged
 	_rooms_by_mode[mode] = tagged
 	_got[mode] = true
+	return changed
 
 
 # 三张表都回来了才重绘(页在收齐那一刻调 redraw)。

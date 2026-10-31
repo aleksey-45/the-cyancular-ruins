@@ -533,14 +533,24 @@ func _on_peer_left(peer_id: int) -> void:
 	if _host != null:
 		if not is_participant:
 			return   # 被踢的串线连接断开不影响对局
+		# ★★ 2026-11-01(用户报「游戏结束后房间不会关闭」):终局之后**没有重连语义** —— 结算数据早已送达、
+		#   客户端已 _match_ended 不再重连 ⇒ 最后一个参与者一走就立刻退进程,把房与端口交回大厅。
+		#   旧行为走的是「进 60s 宽限」+「终局滞留 60s」两套口径 ⇒ 全员回大厅后房/端口还要占 60~90s。
+		#   还有人在看结算则继续跑(快照照发),别把他一起踢出对局。
+		if _host_match_over():
+			var mo_role := _role_of_peer(peer_id)
+			if mo_role == 0:
+				return
+			_claims.erase(mo_role)
+			if MatchExitRules.after_peer_left(true, _claims.size()) == MatchExitRules.ACTION_QUIT:
+				print("worker: 对局已结束且全员离开 —— 收场退出(交回房与端口)")
+				NetDiag.audit("match_over", {"mode": _mode_id(), "reason": "all_left_after_match"})
+				get_tree().quit(0)
+			return
 		if _royale or _team_mode:
 			# 大乱斗/3v3:单个参与者掉线 = 先进宽限期(不立刻移出,身体留在场上),宽限内可被 reclaim_role 认领回来;到点仍未回来才走 mark_disconnected(3v3 由 TeamHost 判整队走光才终局)。
 			# ★ 身体不销毁是本设计最省的一处:分数/阵亡/血量/背包/位置/世界破坏/地面武器全在活着的节点与进程内存里,一条都不用恢复。
-			var role := 0
-			for r in _claims:
-				if _claims[r] == peer_id:
-					role = int(r)
-					break
+			var role := _role_of_peer(peer_id)
 			if role == 0:
 				return
 			_claims.erase(role)
@@ -552,11 +562,7 @@ func _on_peer_left(peer_id: int) -> void:
 				print("worker: 玩家掉线进宽限(剩 %d 人在线)" % _claims.size())
 			return
 		# 1v1:一方掉线不再拆局退进程 —— 进宽限期等它回来(这是 1v1 能做重连的前提:原实现的 queue_free() + quit(0) 会让对局状态随之蒸发)。
-		var role1 := 0
-		for r in _claims:
-			if _claims[r] == peer_id:
-				role1 = int(r)
-				break
+		var role1 := _role_of_peer(peer_id)
 		if role1 == 0:
 			return
 		_claims.erase(role1)
@@ -580,6 +586,20 @@ func _on_peer_left(peer_id: int) -> void:
 			print("worker: 角色报到后掉线,退出")
 			NetDiag.audit("abort", {"mode": ModeDefs.MODE_PVP, "reason": "claim_left"})
 			get_tree().quit(0)
+
+
+# 本局参与者 role(按 peer 反查;0 = 不是参与者)。★ 三个模式的分支原先各抄了一份同样的循环 —— 判定只许有一处。
+func _role_of_peer(peer_id: int) -> int:
+	for r in _claims:
+		if _claims[r] == peer_id:
+			return int(r)
+	return 0
+
+
+# 宿主是否已进终局(MATCH_OVER)。★ 先判有效:宽限到点那一路会 queue_free 宿主,而 peer_left 与它可能同帧。
+func _host_match_over() -> bool:
+	return _host != null and is_instance_valid(_host) and _host.has_method("is_match_over") \
+			and bool(_host.call("is_match_over"))
 
 
 func _notification(what: int) -> void:

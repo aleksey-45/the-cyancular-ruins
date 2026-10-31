@@ -98,6 +98,7 @@ func _ready() -> void:
 	# 开局 COUNTDOWN 广播此刻还没有订阅方(客户端在切场景)⇒ 先挂起,等 match_sync 报到后补发(见 MatchRound 就绪闸)。
 	_countdown_hold = COUNTDOWN_HOLD_MAX
 	_countdown_bcast_done = false
+	_countdown_resync = COUNTDOWN_RESYNC
 # 禁用武器槽位:玩家 @onready 在 _init 时未就绪(碰不得 weapons),进树后才应用。
 	for role in players:
 		(players[role] as Node).weapons.set_enabled_types(_disabled_weapons)
