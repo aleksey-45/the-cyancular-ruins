@@ -13,6 +13,17 @@ const CONTACT_GAP := 12.0      # 预测身位 AABB 间隙 ≤ 此值视为"贴�
 const MAX_LAG_S := 0.05        # 幽灵滞后估计上限(单程 + 半个 60Hz 间隔,封顶 50ms = 3 tick)
 const BASE_CONTACT_TOL := 8.0  # 与 PredictionRollback.DEFAULT_CONTACT_POS_TOL 同值(旧行为下限)
 const MAX_CONTACT_TOL := 48.0
+# 贴身容差的**迟滞**(秒):离开贴身区后仍按贴身容差放行一小段。★ 测因:尸体/挡住后的脱离那一瞬,
+# 速度差还没收敛(实测 vel_err 100~350 持续 5~10 个 ack),而 `in_contact` 已翻 false ⇒ 容差瞬间掉回 2/20px
+# ⇒ 每个 ack 一次回滚(soak 里非接触 pos 失败多半是这一档)。150ms ≈ 9 tick,比幽灵滞后(≤3 tick)留 3 倍余量。
+const CONTACT_GRACE_S := 0.15
+
+
+# 迟滞计时(纯函数,冒烟可测):贴身当帧刷新为 CONTACT_GRACE_S,否则按 delta 递减到 0。
+static func grace_after(left_s: float, delta: float, contact_now: bool) -> float:
+	if contact_now:
+		return CONTACT_GRACE_S
+	return maxf(0.0, left_s - maxf(delta, 0.0))
 
 
 # 两个 AABB 的最小间隙(相交 = 0,角对角 = 欧氏距离)。
@@ -29,8 +40,16 @@ static func ghost_horizon_s(ping_ms: int) -> float:
 
 
 # 贴身容差(px):下限 8(旧行为),随"相对速度 × 滞后"增长,封顶 48。
-static func contact_tol(rel_speed: float, horizon_s: float) -> float:
-	var drift := absf(rel_speed) * clampf(horizon_s, 0.0, MAX_LAG_S)
+# ★ 2026-10-31:drift 取「相对速度」与「幽灵锚点自身速度」的**大者** —— 本地玩家是被**幽灵所在位置**挡住/推开的,
+#   所以即使双方同速同向(相对速度≈0),预测位置与服务器仍差 |v_ghost|×horizon(跑速 700 ⇒ 35px);
+#   只按相对速度算会让这一档恒用 8px ⇒ 每 5~6 个 ack 回滚一次(实测 3 客户端 soak:接触期 pos 分歧 p50≈10~26px)。
+# ★ TOL_MODEL_FACTOR:实测残差 = pos_err / 计算容差,p50≈1.1~1.5、p90≈1.7~2.0 ⇒ 模型系统性偏紧一倍;
+#   乘 2 后 pos 类回滚剩 ~9~12%(仍被 48px 封顶兜住,不会无限放宽)。
+const TOL_MODEL_FACTOR := 2.0
+
+static func contact_tol(rel_speed: float, anchor_speed: float, horizon_s: float) -> float:
+	var h := clampf(horizon_s, 0.0, MAX_LAG_S)
+	var drift := maxf(absf(rel_speed), absf(anchor_speed)) * h * TOL_MODEL_FACTOR
 	return clampf(BASE_CONTACT_TOL + drift, BASE_CONTACT_TOL, MAX_CONTACT_TOL)
 
 

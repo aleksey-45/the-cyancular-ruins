@@ -218,7 +218,7 @@ func snapshot_world(payload: PackedByteArray) -> void:
 		# 本包再加 tick 缺口估计 ⇒ 不用对账也能直接读"丢了几包/几%"。
 		var diag := _rx.take_diag(now)
 		if not diag.is_empty():
-			NetDiag.log_event("snap_rx", diag)
+			NetDiag.log_metric("snap_rx", diag)
 		var gap_ms := int(d.get("gap_ms", 0))
 		if gap_ms > SnapshotRx.SNAP_GAP_MS:
 			NetDiag.log_event("snap_gap", {"gap_ms": gap_ms, "tick": int(d.get("tick", 0)),

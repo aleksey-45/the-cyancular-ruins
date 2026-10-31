@@ -324,6 +324,18 @@ for line in "${SEL[@]}"; do
 	base=$(basename "$p"); base="${base%.sh}"
 	log="$LOG_DIR/$base.log"
 
+	# ★ 2026-10-31(用户报「日志 700KB 混在一起没法找」):每支再开一个**自己的目录**,
+	#   并把 `CYR_LOG_DIR` 指过去(绝对值;NetDiag 的 diag/metrics/ops + worker 的 engine log 都落这里,
+	#   子进程经 OS.create_process 继承环境)。支级 `$log` 仍是**编排输出**(探针+大厅的 stdout)——
+	#   判词/汇总照旧 grep 它,不动。
+	entry_dir="$LOG_DIR/$base"
+	mkdir -p "$entry_dir"
+	entry_dir_win="$(cd "$entry_dir" && pwd -W 2>/dev/null || true)"
+	if [ -z "$entry_dir_win" ] && command -v wslpath >/dev/null 2>&1; then
+		entry_dir_win="$(wslpath -w "$entry_dir" 2>/dev/null || true)"
+	fi
+	if [ -n "$entry_dir_win" ]; then export CYR_LOG_DIR="$entry_dir_win"; else unset CYR_LOG_DIR; fi
+
 	# 回收范围:池内才扫池;池外由它们自己扫自己那一段(硬规定,见文件头)
 	if [ "$sweep" = pool ]; then
 		if ! lobby_alive; then kill_port_range "$POOL_LO" "$POOL_HI" >/dev/null 2>&1 || true; fi

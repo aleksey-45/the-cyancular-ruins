@@ -103,7 +103,7 @@ func _snapshot_tx_diag() -> void:
 	var own := {}
 	for role in _tx_own:
 		own[int(role)] = {"msgs": int(_tx_own[role]), "bytes": int(_tx_own_bytes.get(role, 0))}
-	NetDiag.log_event("snapshot_tx", {
+	NetDiag.log_metric("snapshot_tx", {
 		"interval_ms": now - _tx_at,
 		"world_msgs": _tx_world,
 		"world_bytes": _tx_world_bytes,

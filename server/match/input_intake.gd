@@ -94,7 +94,7 @@ func _diag_tick(pending: Dictionary, delta: float) -> void:
 		return
 	_diag_acc = 0.0
 	for role in pending:
-		NetDiag.log_event("queue", {
+		NetDiag.log_metric("queue", {
 			"role": int(role),
 			"depth": (pending[role] as Array).size(),
 			"cap": PacketInputSource.adapted_cap(int(_q_peak.get(role, 0))),

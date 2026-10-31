@@ -44,6 +44,19 @@ var contact_pos_tol: float = DEFAULT_CONTACT_POS_TOL
 # ★ 2026-10-28:客户端在贴身区按"相对速度 × 幽灵滞后"动态覆盖它(8~48px,见 core/net/prediction_contact.gd);
 #   本常量现在只是下限/默认值,别再以为它恒是 8。
 
+# 接触期**速度**容差(px/s)。★ 2026-10-31:同一台机器 3 客户端 soak 实测,回滚里 **83~98% 是"纯速度分歧"**
+#   (pos 在容差内、hp 未变、只有 vel 超过 20)且几乎全部发生在贴身(92~98%)—— 贴身时客户端撞的是"幽灵体"
+#   (按权威速度外推的对手),服务器撞的是对手**此刻**的真实身体,碰撞法线/冲量必然不同 ⇒ 贴身期速度分歧是
+#   接触几何噪声,和位置同理(见 DEFAULT_CONTACT_POS_TOL 的由来)。容差 400 ≈ 走速(~700)的 57%:
+#   实测贴身期 vel_err p90=275~334,400 覆盖常规碰撞噪声;仍能抓住冲刺/击退量级(>400)的真分歧。
+#   ★ 非接触期仍是严格 20(那一档不是几何噪声,是"两端慢慢漂"的起点)。
+const DEFAULT_CONTACT_VEL_TOL := 400.0
+var contact_vel_tol: float = DEFAULT_CONTACT_VEL_TOL
+# ★ 边界:贴身判据 `in_contact` 是客户端启发式(幽灵 AABB 间隙 ≤ CONTACT_GAP),不是精确碰撞 ⇒ 容差放宽
+#   期间若真的漏掉一次"只改了速度、位置几乎没动"的权威修正(理论上只有击退初速),要等下一次位置分歧或
+#   hit_event 才会纠正。观感/命中仍由 hit_event/快照兜底,不是静默错下去。
+const VEL_TOL := 20.0
+
 # 「预测被证实」要比对的字段集合(单一来源):S-06 —— 原先这 4 个字段的判据散在 _close_enough 函数体里,
 # 往 Player.capture_state() 加一个"影响下一帧判定"的字段时没有任何东西提醒也加进比对(症状 = 两端慢慢漂、
 # 只在碰巧回滚时纠正,不报错)。★ 这里只列"要比"的字段;inv/wslot/残弹是非预测字段,刻意不比(见 weapons.md)。
@@ -212,9 +225,12 @@ func _handle_ack(ack: int, S: Dictionary) -> void:
 	if NetDiag.enabled():
 		NetDiag.log_event("rollback", {
 			"ack": ack,
+			"field": last_fail_field,
 			"pos_err": snappedf(_pos_dist(predicted.get("pos", Vector2.ZERO), S.get("pos", Vector2.ZERO)), 0.01),
 			"vel_err": snappedf(Vector2(predicted.get("vel", Vector2.ZERO)).distance_to(Vector2(S.get("vel", Vector2.ZERO))), 0.01),
 			"in_contact": in_contact,
+			"pos_tol": snappedf(contact_pos_tol if in_contact else pos_tol, 0.01),
+			"vel_tol": snappedf(contact_vel_tol if in_contact else VEL_TOL, 0.01),
 			"hp_before": int(predicted.get("hp", 0)),
 			"hp_after": int(S.get("hp", 0)),
 			"replay": _last_applied - ack,
@@ -234,9 +250,14 @@ func _trim(below: int) -> void:
 
 # 两整态是否"预测被证实":只比影响判定的关键量,避免过度回滚;超出 = 服务器外部事件或漂移 → 走 rollback。
 # ★ 比对集 = PREDICTED_FIELDS(单一来源);容差与判据按字段分派在 _within(位置容差是接触与否二选一,不能简化)。
+# ★ `last_fail_field` 只为诊断(--diag 的 rollback 行):告诉读日志的人"这次到底哪个字段判了分歧",不用再猜。
+var last_fail_field := ""
+
 func _close_enough(a: Dictionary, b: Dictionary) -> bool:
+	last_fail_field = ""
 	for f in PREDICTED_FIELDS:
 		if not _within(String(f), a, b):
+			last_fail_field = String(f)
 			return false
 	return true
 
@@ -254,7 +275,8 @@ func _within(field: String, a: Dictionary, b: Dictionary) -> bool:
 		"vel":
 			var va: Vector2 = a.get("vel", Vector2.ZERO)
 			var vb: Vector2 = b.get("vel", Vector2.ZERO)
-			return va.distance_to(vb) < 20.0
+			var vtol: float = contact_vel_tol if in_contact else VEL_TOL
+			return va.distance_to(vb) < vtol
 		_:
 			return false
 

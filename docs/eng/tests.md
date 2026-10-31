@@ -91,7 +91,7 @@ bash tests/smoke/<名>.sh
 实现:[`core/net/net_diag.gd`](../../core/net/net_diag.gd)(`class_name NetDiag`,静态、无 autoload)。
 
 - **开关**:① 客户端命令行 `-- --diag` —— 必须写在 `--` 之后,写在前面会被 Godot 丢掉;② 环境变量 `CYR_DIAG=1`,worker 作为子进程继承(它的命令行固定拼出,不带 `--diag`);③ **导出构建的服务端默认开**(2026-10-30:打包后的服务端必须永远有日志,不再要求服主记得加开关)。
-- **文件**:`<日志目录>/diag-<role>-<pid>-<时间戳>.jsonl`,一行一个 JSON,字段 `t` / `pid` / `role` / `event` / `data`。**日志目录**:导出构建的服务端 = **exe 同目录 `log/`**;其余 = `user://logs`。选择逻辑在 [`core/net/net_metrics.gd`](../../core/net/net_metrics.gd) 的 `server_log_dir`(纯函数,`-s` 可测),`NetDiag.log_dir()` 只做一次转调 —— 别在两处各判一次是否导出。
+- **文件**(2026-10-31 起分两份,别混回一个):`<日志目录>/diag-<role>-<pid>-<时间戳>.jsonl` = **事件**(回滚/丢包间隔/队列丢包/换局…,小而稀,直接 grep);`<日志目录>/metrics-<role>-<pid>-<时间戳>.jsonl` = **心跳指标**(queue / snapshot_tx / snap_rx,默认 **10s** 一条,`--diag-verbose` 或 `CYR_DIAG_VERBOSE=1` 才 1s —— 旧版每秒每角色一行,长局把 diag 撑到 700KB)。另有常开的运维 `ops-*.jsonl`(只有服务端)。一行一个 JSON,字段 `t` / `pid` / `role` / `event` / `data`。**日志目录**:导出构建的服务端 = **exe 同目录 `log/`**;其余 = `user://logs`;`CYR_LOG_DIR` 环境变量可整体覆盖(真链路批按支分目录)。选择逻辑在 [`core/net/net_metrics.gd`](../../core/net/net_metrics.gd) 的 `server_log_dir`(纯函数,`-s` 可测),`NetDiag.log_dir()` 只做一次转调 + env 覆盖 —— 别在第三处再判一次。
 - **默认关 = 零成本**:`enabled()` 懒查一次;关着时不开文件、不拼 JSON。
 - 判据:**零守卫**（原 `net_diag_smoke.gd` 已随 2026-10-24 默认批削减删除；缺口登记在 [`registered-debt.md`](registered-debt.md) §九）。2026-10-30 起 `snap_rx` 的丢包字段与目录选择各有一支纯逻辑冒烟（`net_metrics_smoke`）；**接线**（`NetBus` 调用点、`NetDiag.log_dir` 调用点）仍无守卫，导出侧由 `build_release.py` 的 `require_log_dir` 兜底。
 

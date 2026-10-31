@@ -618,12 +618,53 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 **现象（`build_release.py` 的服务端产物冒烟当场抓到，发布中止）**：
 `SCRIPT ERROR: Parse Error: Identifier "PanelInsetAudit" not declared in the current scope`（两次）→ `Failed to load script "res://server/gui/server_panel.gd"`。
 
-**根因**：S-13②（2026-10-31 00:21）把面板的设计期仪器从 `server_panel.gd` 挪到 `tools/panel_inset_audit.gd`，而 `export_presets.cfg` 的**所有预设**都排除 `tools/*`；`server_main.gd` 以 `preload("res://server/gui/server_panel.tscn")` 拉起面板 ⇒ 服务端主场景加载时 `server_panel.gd` 解析失败。**编辑器里一切正常**（class cache 知道类名），只有导包后现形 —— 这正是「产物冒烟」存在的理由。客户端不受影响：客户端预设排除 `server/gui/*`，且客户端主场景不加载 `server_main.gd`。
+**根因**：S-13②（2026-10-31 00:21）把面板的设计期仪器从 `server_panel.gd` 挪到 `tools/` 下的 panel_inset_audit.gd（该路径已移走），而 `export_presets.cfg` 的**所有预设**都排除 `tools/*`；`server_main.gd` 以 `preload("res://server/gui/server_panel.tscn")` 拉起面板 ⇒ 服务端主场景加载时 `server_panel.gd` 解析失败。**编辑器里一切正常**（class cache 知道类名），只有导包后现形 —— 这正是「产物冒烟」存在的理由。客户端不受影响：客户端预设排除 `server/gui/*`，且客户端主场景不加载 `server_main.gd`。
 
 **为什么之前没发现**：上一份发布产物（`RoF_v0.5.2_202610301027`）早于 S-13②；S 批只跑默认批 + 真链路，**两条链路都不看"导出包里有没有这个脚本"**（它们的盲区，只有 `build_release.py` 的产物冒烟覆盖）。
 
-**修法**：`git mv tools/panel_inset_audit.gd server/gui/panel_inset_audit.gd`（连 `.gd.uid`）—— 服务端预设会打包 `server/gui/*`，类名可解析；客户端预设排除 `server/gui/*`（客户端本来就没有面板）。同步 `server_panel.gd` 注释与本文件 §三十五。
+**修法**：`git mv` 把 panel_inset_audit.gd 从 `tools/` 移入 `server/gui/`（已移走；连 `.gd.uid`）—— 服务端预设会打包 `server/gui/*`，类名可解析；客户端预设排除 `server/gui/*`（客户端本来就没有面板）。同步 `server_panel.gd` 注释与本文件 §三十五。
 
 **验证**：`ALLSCRIPT: OK(216)`（无 `LOAD[FAIL]`）· `python tools/check_naming.py` 绿 · `build_release.py` 全流程重跑（Windows 客户端/服务端 + 冒烟 + macOS + Web + 归档）全绿；服务端冒烟断言「worker 就绪」+ exe 同目录 `log/` 非空。
 
 **边界**：① 该类名是"产品脚本对 dev 仪器的硬引用"，仪器文件必须留在**被服务端预设打包**的目录里（别再挪回 `tools/`；挪之前先看 `export_presets.cfg` 的 `exclude_filter`）；② 产物冒烟不含 macOS/Web 的**运行**（Windows 主机跑不了 mac 二进制），那两份只有结构/体积校验；③ 这类"只在导出包才现形"的缺陷，默认批/真链路两条链路都抓不到 —— 发布前必须跑 `build_release.py`（它自带产物冒烟）。
+
+## 四十三、日志分流 + 接触期回滚率治理（2026-10-31，档 2~3）
+
+**起因**：用户报「log 是不是太没用了，应该分开放，不要 700KB 放在一起，不然找都不好找」+「回滚数量偏多，能不能压到 5% 以内」。
+
+### A. 日志分流（诊断文件不再一个大杂烩）
+
+**查到的三条根因**：
+1. `diag-*.jsonl` 里 **99% 是心跳**（`queue` 每角色每秒一条 + `snapshot_tx` 每秒一条 + `snap_rx` 每秒一条）⇒ 7 分钟 ≈200KB、长局 ≈700KB，真正稀有的 `rollback`/`snap_gap`/丢包事件被埋；实测用户那次 7.7 分钟的 worker diag 里事件只有 4 条、其余全是心跳。
+2. **引擎日志 `user://logs/godot.log` 被同机多进程共写**（导出服务端的大厅 + N 个客户端 + worker 都写同一路径，Godot 轮转互相踩）⇒ 一个文件里同时出现 `[server]` 启动行和客户端 `进入竞技场` 行；worker 另有 `worker_<port>.log`（但实测曾是 0 字节）。
+3. 真链路测试每支一个 tee 文件（探针 + 大厅 + 全部客户端混在一起）。
+
+**改了什么**：
+- `NetDiag`（[`core/net/net_diag.gd`](../../core/net/net_diag.gd)）新增 **`log_metric()` → `metrics-*.jsonl`**（与事件文件分开），默认 **10s 节流**、`--diag-verbose`（或 `CYR_DIAG_VERBOSE=1`）才 1s；`queue` / `snapshot_tx` / `snap_rx` 三处心跳改走它。`diag-*.jsonl` 从此只写事件。
+- `NetDiag.log_dir()` 支持 **`CYR_LOG_DIR`** 环境变量整体覆盖；`tests/run_real.sh` 按支 `export CYR_LOG_DIR=<entry 目录>`（子进程继承）⇒ 每支自己的 diag/metrics/ops + `worker_<port>.log` 落 `<entry>/`。
+- `royale_soak_probe` 给每个客户端传 `--log-file <entry>/soak_cN_engine.log`（`--log-file` 会关掉轮转，文件名即最终名）。
+- `project.godot` 加 `debug/file_logging/log_path.serverui = "user://logs/server_engine.log"` ⇒ 导出服务端的引擎日志不再和客户端共写 `godot.log`。
+- 冒烟：[`tests/smoke/net_diag_split_smoke.gd`](../../tests/smoke/net_diag_split_smoke.gd)（5 条 + 条数闸）。变异实测：心跳写回事件文件 ⇒ ②红；删节流 ⇒ ③红；删 `CYR_LOG_DIR` 分支 ⇒ ⑤红。
+- **验证（实测布局）**：`CYR_LOG_DIR`+`CYR_DIAG=1` 跑 3 客户端 soak，目录里各自独立 —— `diag-client-*/metrics-client-*`（diag 只有 `rollback 71` / `snap_gap 1` / `pickup_add 10` 这类事件，心跳在 metrics 里）、`diag-server/metrics-server/ops-server`、`soak_c1_engine.log`/`c2`/`c3`、`worker_7800.log`。
+
+### B. 回滚率（3 客户端 soak，45s 局、55s 观测；60Hz 本人包 ⇒ 每秒 60 个 ack 验证点）
+
+**根因（`--diag` 的 rollback 行按字段统计）**：改前回滚率 **9.7% / 22.8% / 14.5% of acks**（5.8~13.7 次/秒）。构成：
+- **83~98% 是"纯速度分歧"**（`pos` 在容差内、`hp` 未变、只有 `vel` 超 20），且 **92~98% 发生在贴身**；
+- 贴身时客户端撞的是**幽灵体**（按权威速度外推的对手），服务器撞的是对手**此刻**的真实身体 ⇒ 碰撞法线/冲量必然不同。位置容差早有接触期放宽（8→48px），**速度容差却没有对应档**（恒 20）。
+- 其余：`hp` 变化（真实受击，正常）、`down` 变化（死亡/复活瞬移，正常）、非接触期小偏差。
+
+**改了什么**：
+- [`core/net/prediction_rollback.gd`](../../core/net/prediction_rollback.gd)：新增 `contact_vel_tol`（默认 **400**，走速 ~700 的 57%）；非接触仍 `VEL_TOL = 20`。`rollback` 诊断行新增 `field`（哪个字段判分歧）/`pos_tol`/`vel_tol`。
+- [`core/net/prediction_contact.gd`](../../core/net/prediction_contact.gd)：`contact_tol(rel_speed, anchor_speed, horizon)` —— drift 取**相对速度与幽灵锚点速度的大者**（两人同速同向时锚点位移仍差 |v_ghost|×horizon）× **2.0 模型系数**（实测残差 p90≈1.7~2.0）；新增 **150ms 迟滞**（离开贴身区后速度差还没收敛，容差不能立刻掉回 2/20）。
+- [`scenes/pvp_match_client.gd`](../../scenes/pvp_match_client.gd) 接入 anchor_speed 与迟滞。
+- 冒烟：[`tests/smoke/rollback_contact_vel_smoke.gd`](../../tests/smoke/rollback_contact_vel_smoke.gd)（5 条）；`prediction_contact_smoke` 7→**9**（锚点速度 + 迟滞）。变异：接触期容差改回 20 ⇒ ②/④红；`drift` 只按相对速度 ⇒ ⑧红；迟滞恒 0 ⇒ ⑨红。
+
+**结果（三跑同配置）**：**1.4% / 3.4% / 9.5%**、**0.9% / 2.1% / 6.1%**、**1.6% / 4.1% / 2.2%** of acks —— 常规客户端 **1~4%**（≈0.5~2.5 次/秒），只有"整局贴脸互撞"的 bot 客户端到 6~9.5%。**中位数从 ~14% 降到 ~2%**。
+
+**边界（照实）**：
+1. **5% 是统计口径**（rollbacks / 60Hz acks，按 diag 时间跨度折算），不是引擎计数器；bot 行为随机 ⇒ 单次读数波动大，结论按三次同配置跑取中位/最差。
+2. 仍未压到 <5% 的**只有极端贴脸 bot**（整局互撞）：残差是"刚好超出容差"的 pos 分歧（p50 超出 1.2~1.5 倍），继续放宽能压下去但会掩盖真实漂移 —— **本轮不做**，翻案条件 = 真人试玩仍觉得"被拉回"明显，再考虑把模型系数/封顶上限调大或改幽灵锚点模型。
+3. 接触判据仍是客户端启发式（AABB 间隙 + 迟滞），不是精确碰撞；放宽的只是"速度/位置差多少算分歧"，`hp`/`down` 仍精确比较。
+4. 心跳 10s 节流后，`metrics-*` 只够看趋势；需要 1s 精度时加 `--diag-verbose`（文件会重新变大，属显式选择）。
+5. 本轮**未重跑真链路批**（改了客户端预测容差与日志落盘；`prediction_contact_smoke`/`rollback_contact_vel_smoke`/默认批覆盖逻辑面，真链路 soak 已手动跑 5 次做读数，但 `run_real.sh` 整批未跑）。

@@ -49,7 +49,7 @@
 
 ## 客户端
 
-- 流程 `main_menu` → `mp_lobby` → `pvp_game`(`pvp_mode = true`)。本地玩家 = C2:`PredictionRollback`(`core/net/prediction_rollback.gd`);预测被证实不动,真性分歧才 `restore(权威态)` 并按序重放未确认输入。容差 `pos_tol = 2.0`,接触期 `contact_pos_tol` 动态 8→48(`PredictionContact.contact_tol`)。
+- 流程 `main_menu` → `mp_lobby` → `pvp_game`(`pvp_mode = true`)。本地玩家 = C2:`PredictionRollback`(`core/net/prediction_rollback.gd`);预测被证实不动,真性分歧才 `restore(权威态)` 并按序重放未确认输入。容差:位置 `pos_tol = 2.0`、接触期 `contact_pos_tol` 动态 8→48;速度 `VEL_TOL = 20`、接触期 `contact_vel_tol = 400`(2026-10-31:接触期速度分歧是幽灵体 vs 真实身体的碰撞几何噪声)。`contact_pos_tol`/迟滞由 `PredictionContact.contact_tol(rel_speed, anchor_speed, horizon)` 算(drift 取相对/锚点速度大者 ×2 模型系数,离开贴身区后 150ms 内仍按贴身容差)。
 - 远端对手 = `PlayerReplica`:位置走 **playout 缓冲插值**(`PLAYOUT_TICKS = 2` ≈ 33ms 缓冲,取样后再 `anchor_to_nearest` 锚回本地玩家最近副本);幽灵碰撞体**不跟插值**,按权威速度外推(≤2 tick / 60px);快照 `type_id = 0` = 空手。副本幽灵碰撞体 `StaticBody2D`(layer 2 / mask 0,3v3 按队配),本地玩家补 `collision_mask |= 2`;渲染层带排在世界的墙体/梯子/建筑层之前(与本体同带)。对手预瞄线不可见(快照 `previewing` 客户端不消费)。
 - 离开对局的路径(ESC / MATCH_OVER / 对手离开)都走 `Level0.safe_change_scene`;世界由 `WorldReaper` 分帧拆除。
 

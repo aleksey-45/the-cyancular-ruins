@@ -20,6 +20,7 @@ var _rollback = null            # PredictionRollback
 var _pending_hit_events: Array = []   # [[source_pos: Vector2, damage: int, seq: int], ...]
 const PredictionContact := preload("res://core/net/prediction_contact.gd")   # 贴身判据/动态容差(纯函数)
 const ReplicaScript := preload("res://scenes/player/player_replica.gd")      # 要它的 GROUP 常量(副本没 class_name)
+var _contact_grace_left := 0.0   # 贴身容差迟滞剩余秒(见 PredictionContact.CONTACT_GRACE_S;纯本地量,不上行)
 # ── 输入上行(每 tick 采样 → PacketInputSource.pack_record → packet_input_source.pack_pair → 发包 → ack/seq 记账 → netstat)──
 # 实现落在组合件 core/net/input_uplink.gd(2026-10-30 拆出;S-17 第一刀)。本类只留采样口(_physics_process 里现读
 # src / aim / winst)与 C2 预步(它要宿主的 `_rollback` 与 `_update_contact_state()`),其余三步调组件:
@@ -434,10 +435,13 @@ func _bullet_hits_entity(_b: BulletBase, _ent: Node2D) -> bool:
 #   · _should_handle_match_over():大乱斗忽略第二条 MATCH_OVER,1v1/3v3 要处理(第二条载荷要刷新结算页);
 #   · _on_countdown_round():三模式都复位砖,3v3 额外重拉 match_sync(换边);
 #   · _enter_match_over_state():置终局、销毁暂停菜单(ESC 双语义的硬依赖)、弹/刷结算页。
-# 贴身判据 + 动态容差(2026-10-28)。返回"是否贴身",调用处写成 `_rollback.in_contact = _update_contact_state()`。
+# 贴身判据 + 动态容差(2026-10-28;2026-10-31 把"幽灵锚点速度"也计入)。返回"是否贴身",调用处写成
+# `_rollback.in_contact = _update_contact_state()`。
 # 旧实现只看 `touching_player()`(客户端本帧真的撞上幽灵体):幽灵体滞后会让你追人时预测穿过去 ⇒ 判不到贴身 ⇒
-# 仍按 2px 容差、每 ack 验证点回滚。这里改用"预测身位到幽灵 AABB 的间隙"进贴身区,并按相对速度抬高容差
-# (容差 = 8 + 相对速度×滞后,封顶 48px);touching_player() 保留为兜底(确实撞上的那一帧)。
+# 仍按 2px 容差、每 ack 验证点回滚。这里改用"预测身位到幽灵 AABB 的间隙"进贴身区,并抬高容差
+# (容差 = 8 + max(相对速度, 幽灵体自身速度)×滞后,封顶 48px);touching_player() 保留为兜底(确实撞上的那一帧)。
+# ★ 2026-10-31:只按"相对速度"算不够 —— 本地玩家是被**幽灵所在位置**挡住的,两人同速同向(相对速度≈0)时,
+#   预测位置与服务器仍差 |v_ghost|×horizon(跑速 700 ⇒ 35px);用 max(...) 才覆盖这个锚点位移。
 func _update_contact_state() -> bool:
 	if _rollback == null or _local == null:
 		return false
@@ -446,6 +450,7 @@ func _update_contact_state() -> bool:
 	var h := float(GameParameters.MAP_HEIGHT)
 	var best_gap := INF
 	var rel_speed := 0.0
+	var anchor_speed := 0.0
 	for n in get_tree().get_nodes_in_group(ReplicaScript.GROUP):
 		var rep := n as Node2D
 		if rep == null or not is_instance_valid(rep) or not rep.has_method("ghost_rect"):
@@ -458,9 +463,15 @@ func _update_contact_state() -> bool:
 			best_gap = gap
 			var gv: Vector2 = rep.ghost_velocity() if rep.has_method("ghost_velocity") else Vector2.ZERO
 			rel_speed = (_local.velocity - gv).length()
+			anchor_speed = gv.length()
 	var horizon := PredictionContact.ghost_horizon_s(NetBus.ping_ms)
-	_rollback.contact_pos_tol = PredictionContact.contact_tol(rel_speed, horizon)
-	return _local.touching_player() or PredictionContact.is_contact(best_gap)
+	_rollback.contact_pos_tol = PredictionContact.contact_tol(rel_speed, anchor_speed, horizon)
+	# ★ 2026-10-31 迟滞:离开贴身区后的一小段仍按贴身容差(理由见 PredictionContact.CONTACT_GRACE_S)。
+	#   没有它:脱离那一瞬速度差还没收敛、而容差已掉回 2px/20 ⇒ soak 里每个 ack 一次回滚的连发。
+	var now_contact: bool = _local.touching_player() or PredictionContact.is_contact(best_gap)
+	_contact_grace_left = PredictionContact.grace_after(_contact_grace_left,
+			get_physics_process_delta_time(), now_contact)
+	return now_contact or _contact_grace_left > 0.0
 
 
 func _on_round_state(data: Dictionary) -> void:

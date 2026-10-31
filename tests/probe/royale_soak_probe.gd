@@ -120,12 +120,19 @@ func _run_orchestrator() -> void:
 	var child_extra := PackedStringArray()
 	if _netstat_children:
 		child_extra.append("--netstat")
+	# ★ 2026-10-31:每个客户端一份**自己的引擎日志**(`--log-file` 会关掉轮转,文件名即最终名)。
+	#   目录由入口给(`run_real.sh` 按支 export CYR_LOG_DIR);没设就不传 —— 开发态手跑行为不变。
+	#   ★ `--log-file` 是引擎选项,必须排在 `--` 之前。
+	var run_log_dir := OS.get_environment("CYR_LOG_DIR")
 	for i in range(1, _clients + 1):
 		var child_args := PackedStringArray(["--headless", "--path",
 				ProjectSettings.globalize_path("res://"), "res://tests/probe/royale_soak_probe.tscn",
 				"--", "--role=c%d" % i, "--clients=%d" % _clients,
 				"--match=%d" % _match_secs, "--run=%.0f" % _run_secs])
 		child_args.append_array(child_extra)
+		if not run_log_dir.is_empty():
+			child_args.insert(1, "--log-file")
+			child_args.insert(2, run_log_dir.path_join("soak_c%d_engine.log" % i))
 		child_pids.append(OS.create_process(exe, child_args))
 	print("SOAK: 大厅就绪,%d 客户端已拉起(match=%ds run=%.0fs)" % [_clients, _match_secs, _run_secs])
 	var deadline := Time.get_ticks_msec() + int((_run_secs + 120.0) * 1000.0)

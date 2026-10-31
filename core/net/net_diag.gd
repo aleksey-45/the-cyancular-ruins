@@ -18,9 +18,16 @@ extends RefCounted
 #   · 时间 `t` 是**各进程自己的** `Time.get_ticks_msec()`,跨进程只能按日志文件里的同一事件对齐,不能直接相减;
 #   · `log_event()` 默认关时不开文件、不走 JSON(生产零开销);但 `audit()` 是**另一条常开通道**(大厅/worker 进程默认就写)。
 #   · 不参与任何判定:写盘失败只打一条 warning,不影响对局。
+# ★★ 2026-10-31 分流(用户报「700KB 混在一起没法找」):诊断分**两个文件** ——
+#   · `diag-<role>-<pid>-<stamp>.jsonl`   = **事件**(回滚 / 丢包间隔 / 队列丢包 / 换局 …),小而稀,直接 grep;
+#   · `metrics-<role>-<pid>-<stamp>.jsonl` = **心跳指标**(queue / snapshot_tx / snap_rx),量大且只用来画/对账;
+#     默认 **10s 一行**,`--diag-verbose`(或 `CYR_DIAG_VERBOSE=1`)才 1s 一行。两者别再混回一个文件。
+#   · 另有 `ops-<role>-<pid>-<stamp>.jsonl`(运维审计,常开、只有服务端)。
 # 开关与落盘口径:`docs/eng/tests.md` 的「结构化诊断(--diag)」一节。
 
 const DIR_NAME := "user://logs"
+# 心跳指标默认采样间隔(ms);`--diag-verbose` 下回到 1s。★ 传 1Hz 会把 10 分钟的局写成 ~200KB,这正是旧 diag 文件难读的原因。
+const METRIC_INTERVAL_MS := 10000
 
 static var _checked := false
 static var _enabled := false
@@ -30,6 +37,15 @@ static var _file: FileAccess = null
 static var _mutex := Mutex.new()
 static var _count := 0
 static var _open_failed := false
+
+# ── 心跳指标(与事件分开落盘)──
+static var _metrics_path := ""
+static var _metrics_file: FileAccess = null
+static var _metrics_failed := false
+static var _metrics_count := 0
+static var _metrics_last: Dictionary = {}   # event -> 上次写盘 t(ms);同名事件按 METRIC_INTERVAL_MS 节流
+static var _verbose_checked := false
+static var _verbose := false
 
 static var _ops_checked := false
 static var _ops_skipped := false
@@ -68,12 +84,36 @@ static func set_role(r: String) -> void:
 ## 日志落盘目录(2026-10-30)。**打包后的服务端** = exe 同目录的 `log/`(导出即生效,不需要任何开关);
 ## 其余(开发态 / 编辑器 / 客户端) = `user://logs`。选择逻辑收在 NetMetrics.server_log_dir(纯函数,`-s` 可测)——
 ## 别在这里另写一份判据:口径漂了就等于"打包后日志又回 user://",而现场没人找得到它。
+## ★ 2026-10-31:`CYR_LOG_DIR` 环境变量可整体覆盖(真链路批按 entry 分目录、子进程继承环境);
+##   生产不设它 ⇒ 行为逐字不变。
 static func log_dir() -> String:
+	var override := OS.get_environment("CYR_LOG_DIR")
+	if not override.is_empty():
+		return override
 	return NetMetrics.server_log_dir(
 			role() == "server",
 			OS.has_feature("template"),
 			OS.get_executable_path().get_base_dir(),
 			ProjectSettings.globalize_path(DIR_NAME))
+
+
+## 是否开「心跳逐秒」(默认 10s 一条):`--diag-verbose` 或 `CYR_DIAG_VERBOSE=1`。
+static func verbose() -> bool:
+	if not _verbose_checked:
+		_verbose_checked = true
+		_verbose = OS.get_cmdline_user_args().has("--diag-verbose") or OS.get_environment("CYR_DIAG_VERBOSE") == "1"
+	return _verbose
+
+
+static func metric_interval_ms() -> int:
+	return 1000 if verbose() else METRIC_INTERVAL_MS
+
+
+## 该不该写这条心跳?纯函数(冒烟可测):`last_ms < 0` = 本进程第一次 ⇒ 写;否则要满一个间隔。
+static func metric_due(last_ms: int, now_ms: int, interval_ms: int) -> bool:
+	if last_ms < 0:
+		return true
+	return now_ms - last_ms >= maxi(interval_ms, 1)
 
 
 const OPS_KEEP := 60
@@ -135,10 +175,68 @@ static func count() -> int:
 	return _count
 
 
+## 写一条**心跳指标**(queue / snapshot_tx / snap_rx 这类周期读数)。
+## ★ 与 log_event 分文件 + 按 METRIC_INTERVAL_MS 节流(默认 10s;`--diag-verbose` 1s):
+##   旧实现每秒每角色一行 ⇒ 7 分钟就 200KB、长局 700KB,真正稀有的 rollback/snap_gap 被埋在中间。
+static func log_metric(event: String, data: Dictionary = {}) -> void:
+	if not enabled():
+		return
+	var now := Time.get_ticks_msec()
+	var last := int(_metrics_last.get(event, -1))
+	if not metric_due(last, now, metric_interval_ms()):
+		return
+	_metrics_last[event] = now
+	_ensure_metrics_open()
+	if _metrics_file == null:
+		return
+	var line := JSON.stringify({
+		"t": now,
+		"pid": OS.get_process_id(),
+		"role": role(),
+		"event": event,
+		"data": data,
+	})
+	_mutex.lock()
+	_metrics_file.store_line(line)
+	_metrics_count += 1
+	if role() == "server":
+		_metrics_file.flush()
+	_mutex.unlock()
+
+
+## 心跳指标文件绝对路径(未开启/未落盘为空)。
+static func metrics_path() -> String:
+	return _metrics_path
+
+
+static func _ensure_metrics_open() -> void:
+	if _metrics_file != null or _metrics_failed:
+		return
+	_mutex.lock()
+	if _metrics_file == null and not _metrics_failed:
+		var dir := log_dir()
+		DirAccess.make_dir_recursive_absolute(dir)
+		var stamp := Time.get_datetime_string_from_system().replace(":", "").replace("-", "").replace(" ", "_")
+		var path := dir.path_join("metrics-%s-%d-%s.jsonl" % [role(), OS.get_process_id(), stamp])
+		_metrics_file = FileAccess.open(path, FileAccess.WRITE)
+		if _metrics_file == null:
+			_metrics_failed = true
+			push_warning("NetDiag: 无法创建 %s(指标不落盘)" % path)
+		else:
+			_metrics_path = path
+			_metrics_file.store_line(JSON.stringify({
+				"t": Time.get_ticks_msec(), "pid": OS.get_process_id(), "role": role(),
+				"event": "metrics_start", "data": {"log": path, "interval_ms": metric_interval_ms()},
+			}))
+	_mutex.unlock()
+
+
 static func flush() -> void:
 	_mutex.lock()
 	if _file != null:
 		_file.flush()
+	if _metrics_file != null:
+		_metrics_file.flush()
 	_mutex.unlock()
 
 
@@ -148,6 +246,10 @@ static func close() -> void:
 		_file.flush()
 		_file.close()
 		_file = null
+	if _metrics_file != null:
+		_metrics_file.flush()
+		_metrics_file.close()
+		_metrics_file = null
 	_mutex.unlock()
 
 
@@ -292,6 +394,41 @@ static func end_for_test() -> void:
 	_path = ""
 	_count = 0
 	_open_failed = false
+	_metrics_path = ""
+	_metrics_failed = false
+	_metrics_count = 0
+	_metrics_last.clear()
+
+
+static func begin_metrics_for_test(path: String) -> void:
+	_metrics_failed = false
+	_metrics_path = path
+	_metrics_count = 0
+	_metrics_last.clear()
+	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
+	_metrics_file = FileAccess.open(path, FileAccess.WRITE)
+	if _metrics_file == null:
+		_metrics_failed = true
+		return
+	_metrics_file.store_line(JSON.stringify({
+		"t": Time.get_ticks_msec(), "pid": OS.get_process_id(), "role": role(),
+		"event": "metrics_start", "data": {"test": true},
+	}))
+
+
+static func metrics_count() -> int:
+	return _metrics_count
+
+
+static func end_metrics_for_test() -> void:
+	if _metrics_file != null:
+		_metrics_file.flush()
+		_metrics_file.close()
+	_metrics_file = null
+	_metrics_path = ""
+	_metrics_failed = false
+	_metrics_count = 0
+	_metrics_last.clear()
 
 
 static func begin_audit_for_test(path: String) -> void:

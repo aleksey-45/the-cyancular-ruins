@@ -37,6 +37,10 @@ LoadingScreen="*res://core/ui/loading_screen.gd"
 file_logging/enable_file_logging=true
 file_logging/enable_file_logging.pc=true
 file_logging/max_log_files=64
+; ★ 2026-10-31:服务端导出（custom feature `serverui`）的**引擎控制台日志**单独一份 —— 否则同机开一个
+; 服务端 + N 个客户端时，多进程共写 user://logs/godot.log，轮转互相踩 ⇒ 大杂烩（用户报「700KB 混在一起」）。
+; 客户端仍是默认 godot.log（同机多客户端请用 `--log-file` 各自指定，见 RELEASE.md 的日志节）。
+file_logging/log_path.serverui="user://logs/server_engine.log"
 
 [display]
 

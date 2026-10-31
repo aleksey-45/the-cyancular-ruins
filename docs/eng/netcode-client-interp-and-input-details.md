@@ -10,7 +10,7 @@
 - 取样:比最老还老冻在最老、不倒退;比最新还新(underrun)**有界外插**(最新权威速度,最多 2 tick / 60px,超出冻结);中间用三次 Hermite(切线 = 快照 `vel` × 本段时长)。跨接缝的那一对样本必须**先锚进同一个副本空间再插**,否则差量是一整幅地图。
 - 相邻样本的环面距离 > `SNAP_DIST`（128 px）⇒ 清历史、一帧落位（回溯 / 重生 / 换边本来就是瞬移）。
 - 幽灵体 `_ghost` **不跟渲染插值**，但自 2026-10-28 起也**不直接吃最新快照**：位置 = 最新快照 + 权威速度 × 滞后估计（`core/net/prediction_contact.gd` 的 `ghost_horizon_s` = RTT/2 + 半个 30Hz 间隔，封顶 50ms），再锚回本地玩家最近副本。δ 匀速期≈0；急停/变向最坏 ≈ 速度×滞后（700px/s ⇒ 35px）。`_ghost.global_rotation = 0.0` 抵消倒地转体。
-- **贴身容差**（同日起）：客户端 `PvpMatchClient._update_contact_state()` 每物理帧用"预测身位到幽灵 AABB 的间隙"判贴身（不再只靠 `touching_player()`，否则追人时幽灵滞后会让预测穿过去、判不到贴身），并按相对速度把 `contact_pos_tol` 从 8px 抬到 ≤48px。
+- **贴身容差**（2026-10-28 起，2026-10-31 补两处）：客户端 `PvpMatchClient._update_contact_state()` 每物理帧用"预测身位到幽灵 AABB 的间隙"判贴身（不再只靠 `touching_player()`，否则追人时幽灵滞后会让预测穿过去、判不到贴身），并按 `contact_tol(rel_speed, anchor_speed, horizon)` 把 `contact_pos_tol` 从 8px 抬到 ≤48px：drift 取**相对速度与幽灵锚点速度的大者**（两人同速同向时锚点位移仍会差 |v_ghost|×horizon）×2 模型系数（实测残差 p90≈1.7~2.0）；离开贴身区后 **150ms 迟滞**内仍按贴身容差（脱离瞬间速度差还没收敛，否则每个 ack 回滚一次）。配套 `PredictionRollback.contact_vel_tol = 400`（接触期速度容差；非接触仍 20）。
 - **外观态也按同一个渲染时刻取样**:`pose` / `facing` / `aim` / `aim_facing` / `downed` / `type_id` / `vel` 与位置一起进历史环,渲染时取「`tick <= render_tick` 的最后一条」刷到画面上。★ 别退回「逐包瞬跳」:那会让动画 / 朝向 / 枪口比身体早一拍多 —— 对手停下后腿还在走(滑步)。
 - 幽灵碰撞体是唯一吃**最新**快照的东西：姿态箱按最新 `pose` 切、位置跟最新锚点 —— 预测面要最小陈旧（观感面才要平滑）。
 - `aim` / `pose` / `facing` 的取值规则不变;2026-10-29 起连续量(`aim` 用 `slerp`、`vel` 用 `lerp`)在相邻两条历史之间插值,离散态(`pose` / `facing` / `downed` / `type_id`)本身不插值、只延迟。
