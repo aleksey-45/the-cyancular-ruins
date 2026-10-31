@@ -562,7 +562,7 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 
 ## 四十、大重构第六刀：S-13②③ / S-05 / S-14 / S-16 / S-19 / S-21（2026-10-30，档 2~3）
 
-**S-13②③**：`server_panel.gd` 的设计期仪器（`--panel-audit` 的 INSET 打印）→ 新 `tools/panel_inset_audit.gd`（`PanelInsetAudit.requested()/run(root)`，等 3 帧版式落定再量）；面板只留开关一行，890→**826 行**。S-13③ 复核：关房二次确认已走 `ServerStatus.can_close`（三行调用已在），无需改。
+**S-13②③**：`server_panel.gd` 的设计期仪器（`--panel-audit` 的 INSET 打印）→ 新 `server/gui/panel_inset_audit.gd`（`PanelInsetAudit.requested()/run(root)`，等 3 帧版式落定再量）；面板只留开关一行，890→**826 行**。S-13③ 复核：关房二次确认已走 `ServerStatus.can_close`（三行调用已在），无需改。★ 2026-10-31：该文件原先放在 `tools/`，而导出预设排除 `tools/*` ⇒ 服务端 exe 解析 `PanelInsetAudit` 失败（见 §四十二）；已挪回 `server/gui/`。
 **S-05**：`packet_input_source.gd` 的**纯打包/常量**（`BIT_*`×10、`TICKS_PER_RECORD`、`INPUT_BATCH_TICKS`、`pack_record/pack_pair/unpack_pair`）→ 新 `core/net/input_wire.gd`（119 行，`InputWire` 全 static）；原文件 277→187，保留队列/边沿/latch 语义 + **同名转发壳**（调用点 6 处不越界）。逐字性：对 HEAD 做顶层单位切分 49/49 归类、0 UNCLASSIFIED；`net_wire_smoke` 仍 `42 B/包`、`NET WIRE OK(5)`、`INPUT QUEUE OK(4)`。**6 条变异实测**（清单位表/记录数/包级 seq/位定义/边沿累积/winst 帧末清），并暴露两个真缺口：`net_wire` 不钉"包级 seq=高 tick"、`input_queue` 对 `apply_packet` 边沿累积/winst 清零零覆盖（登记待补）。
 **S-14**：`_role_of(node)->int`（查不到 `-1`）成唯一判据；`_role_of_node` 与 `match_combat` 两段内联循环收编；`match_combat.gd:93` 的 `== 0` → `< 0`（"无效 role 直接返回"的安全阀首次真正生效，且可证与旧行为等价）；`_record_down`/`_on_player_hit` 首部加 `role < 0` 防御。12 个调用点全核。变异：改名漏改 ⇒ allscript 12 条 `LOAD[FAIL]` 点名（说明默认批只能抓"接线漏"、抓不到哨兵语义）。
 **S-16**：`MatchRound._round_state_base()`（5 共有键 + MATCH_OVER 的 `match_winner` + 非空 `stats`）落在 MatchRound 而非 MatchState（子类符号编译期不可见）；三模式 `_broadcast_round_state` 改 base + 各自追加；**键集/键值逐字一致**，仅 Dictionary 插入序变化（消费方全按键读）。变异：删 `"state"` 默认批 0 新红 ⇒ 该键集的守卫在真链路 watcher（`team_match_watcher` 的 ROUND_STATE_TIMEOUT）。
@@ -611,3 +611,19 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 6. **class 缓存 / `.uid` 是手工补的**：本会话沙箱下 `.godot/editor` 不可写 ⇒ 引擎无法重建 `global_script_class_cache.cfg`、也不会生成 `.uid`。本轮 `SnapshotRx` / `LanIp` 两条缓存条目与 5 个新增 `.gd.uid` 由 Lead 按 Godot 格式手工落盘（`.godot/` 是本地缓存、不入库；无沙箱环境重开编辑器会被引擎覆盖/重生成，无副作用）。
 7. 本轮改动**已提交**（25 个文件；逐个文件点名 `git add`，新 `.gd` 连 `.gd.uid`、`.tscn` 不加）。提交环境：本会话后半段切到完全访问后才可用 `git`（先前沙箱下子进程写不进工作区子目录）。
 8. `lan_ip_smoke` 的 ⑤ 经 `LanIp.lan_ip_candidates()` **间接**拉一次 `netstat.exe`（只读、不开端口、不写盘）—— 这是 `tests/run_all.sh` 承重安全检查的已知盲区（它只扫入口源码文本，看不见经 helper 间接拉起的进程，见该文件头「它的盲区」）。若以后要求默认批"零子进程"覆盖到间接形态，这条断言要改成注入式（netstat 文本作为参数喂纯函数，不碰真环境）。
+9. ★ 2026-10-31 发布时发现 S-13② 把面板仪器放进 `tools/` 会让**服务端导出包解析失败**（默认批/真链路都不覆盖"导出包内容"）；已修复，见 §四十二。
+
+## 四十二、发布阻断修复：`PanelInsetAudit` 在导出包里不可解析（2026-10-31，档 1）
+
+**现象（`build_release.py` 的服务端产物冒烟当场抓到，发布中止）**：
+`SCRIPT ERROR: Parse Error: Identifier "PanelInsetAudit" not declared in the current scope`（两次）→ `Failed to load script "res://server/gui/server_panel.gd"`。
+
+**根因**：S-13②（2026-10-31 00:21）把面板的设计期仪器从 `server_panel.gd` 挪到 `tools/panel_inset_audit.gd`，而 `export_presets.cfg` 的**所有预设**都排除 `tools/*`；`server_main.gd` 以 `preload("res://server/gui/server_panel.tscn")` 拉起面板 ⇒ 服务端主场景加载时 `server_panel.gd` 解析失败。**编辑器里一切正常**（class cache 知道类名），只有导包后现形 —— 这正是「产物冒烟」存在的理由。客户端不受影响：客户端预设排除 `server/gui/*`，且客户端主场景不加载 `server_main.gd`。
+
+**为什么之前没发现**：上一份发布产物（`RoF_v0.5.2_202610301027`）早于 S-13②；S 批只跑默认批 + 真链路，**两条链路都不看"导出包里有没有这个脚本"**（它们的盲区，只有 `build_release.py` 的产物冒烟覆盖）。
+
+**修法**：`git mv tools/panel_inset_audit.gd server/gui/panel_inset_audit.gd`（连 `.gd.uid`）—— 服务端预设会打包 `server/gui/*`，类名可解析；客户端预设排除 `server/gui/*`（客户端本来就没有面板）。同步 `server_panel.gd` 注释与本文件 §三十五。
+
+**验证**：`ALLSCRIPT: OK(216)`（无 `LOAD[FAIL]`）· `python tools/check_naming.py` 绿 · `build_release.py` 全流程重跑（Windows 客户端/服务端 + 冒烟 + macOS + Web + 归档）全绿；服务端冒烟断言「worker 就绪」+ exe 同目录 `log/` 非空。
+
+**边界**：① 该类名是"产品脚本对 dev 仪器的硬引用"，仪器文件必须留在**被服务端预设打包**的目录里（别再挪回 `tools/`；挪之前先看 `export_presets.cfg` 的 `exclude_filter`）；② 产物冒烟不含 macOS/Web 的**运行**（Windows 主机跑不了 mac 二进制），那两份只有结构/体积校验；③ 这类"只在导出包才现形"的缺陷，默认批/真链路两条链路都抓不到 —— 发布前必须跑 `build_release.py`（它自带产物冒烟）。

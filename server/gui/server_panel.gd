@@ -818,7 +818,8 @@ func _mmss(sec: float) -> String:
 	return "%02d:%02d" % [s / 60, s % 60]
 
 
-# ── 设计期仪器(不是守卫)已挪到 `tools/panel_inset_audit.gd`(S-13② 2026-10-30):面板是 Node,
+# ── 设计期仪器(不是守卫)已挪到 `server/gui/panel_inset_audit.gd`(S-13② 2026-10-30;2026-10-31 从
+# `tools/` 挪回 `server/gui/` —— 导出包排除 `tools/*`,否则服务端 exe 解析这个类名失败):面板是 Node,
 # 仪器与版式构造缠在一起不可单独跑。这里只剩开关:开关关着时一行都不打。
 func _audit_if_requested() -> void:
 	if not PanelInsetAudit.requested():

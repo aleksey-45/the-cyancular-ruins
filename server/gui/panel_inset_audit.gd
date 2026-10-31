@@ -7,6 +7,10 @@ extends RefCounted
 #
 # 2026-10-30 S-13②:从 `server/gui/server_panel.gd` 挪出 —— 面板是 Node,判据/仪器与版式构造缠在一起
 # 不可单独跑、也不可单独验;这里只吃一个 root(通常就是面板自己),开关仍是 `-- --panel-audit`。
+# ★ 2026-10-31 挪到 `server/gui/`:原先放在 `tools/` 下,而导出预设把 `tools/*` 排除在包外 ⇒ 被产品脚本
+#   `server_panel.gd` 以类名引用时,导出的服务端 exe **解析失败**(Identifier "PanelInsetAudit" not declared,
+#   `build_release.py` 的服务端冒烟当场抓到)。放回 `server/gui/` 后服务端预设会打包它(客户端预设排除整个
+#   `server/gui/`,客户端不含面板、也不受影响)。
 
 const ARG := "--panel-audit"
 
