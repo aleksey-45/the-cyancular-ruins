@@ -54,7 +54,7 @@ seq(4) | held0(2) | held1(2) | ax0(4) | ax1(4) | pressed0/1(各1) | released0/1(
 
 - [`core/net/net_bus.gd`](../../core/net/net_bus.gd) 的 RPC 入口先 `NetCodec.decode_input(payload)` 再 emit `input_received(caller, pkt)` —— **解码失败返回空 + 只报一次 + 不喂进模拟**（两端版本不一致时现场会看到一条 `push_error`，而不是静默抽搐）。
 - `server/match/match_host.gd::_on_input`：`PacketInputSource.unpack_pair(pkt)` 拆成**连续两条**入队（低 tick 在前）。
-- `_physics_process`：**每物理 tick 恰 `pop_front()` 一条**（广播仍 30Hz，且仍在"消费本帧输入"之前 ⇒ ack 与状态配对）；`ack_seq = pkt.seq`（逐 tick 前进）。
+- `_physics_process`：**每物理 tick 恰 `pop_front()` 一条**（世界/本人快照下行自 2026-10-30 起是 **60Hz**（`SNAPSHOT_STRIDE=1`），输入上行仍是 30Hz —— 两者无关；且仍在"消费本帧输入"之前 ⇒ ack 与状态配对）；`ack_seq = pkt.seq`（逐 tick 前进）。
 - `st` / `ct` 在 `_on_input` 里**先落位**再入队（不进队列、不参与模拟）：后到的覆盖先到的 —— 它们本来就只代表"最近一次"。`st` 的读者是命中回放（同文件 §3 后的命中判定路径），`ct` 无消费者。
 - 队列空 ⇒ 沿用上一条 `held` / `axis` / `aim`；`clear_edges()` 每个 tick 清边沿与切枪。
 - 上限（`PacketInputSource.adapted_cap` / `push_pending`，单位 = **条 tick 记录**）：`cap = clamp(peak + 2, 4, 16)`（U1 后一条 = 1 tick，MIN/MAX/MARGIN 翻倍以保住同样的时间缓冲 [66, 266] ms）；`peak` 每 tick 衰减 1；丢最旧一条并把边沿并入队首；返回值是丢之前的深度。

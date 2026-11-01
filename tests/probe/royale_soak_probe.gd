@@ -53,6 +53,11 @@ var _snap_count := 0
 var _snap_bytes := 0
 var _snap_gaps: Array = []
 var _snap_worst_ms := 0.0
+# 快照到达间隔的分布读数(2026-11-01 诊断「多人是否更卡」加):max 单点会被一次偶发/探针自身事件污染,
+# 分桶计数 + p99 才能区分"持续断流"与"一次尖峰"。**只进本探针的结果文件,不进生产日志。**
+var _snap_gaps_over_50 := 0
+var _snap_gaps_over_100 := 0
+var _snap_gaps_over_250 := 0
 var _last_snap_us := 0
 var _round_states := 0
 var _kills := 0
@@ -432,6 +437,13 @@ func _on_snapshot_world(snap: Dictionary) -> void:
 		var gap := float(now - _last_snap_us) / 1000.0
 		_snap_gaps.append(gap)
 		_snap_worst_ms = maxf(_snap_worst_ms, gap)
+		# 分桶:50ms ≈ 3 个发包间隔、100ms ≈ 6 个、250ms ≈ 15 个。p95 之外还要能说出"断了几次、断多久"。
+		if gap > 50.0:
+			_snap_gaps_over_50 += 1
+		if gap > 100.0:
+			_snap_gaps_over_100 += 1
+		if gap > 250.0:
+			_snap_gaps_over_250 += 1
 	_last_snap_us = now
 	_snap_count += 1
 	_snap_bytes += var_to_bytes(snap).size()
@@ -471,10 +483,11 @@ func _finish(ok: bool, why: String) -> void:
 		lines.append("  观测 %.1fs:帧间隔 avg=%.2fms p95=%.2fms max=%.2fms(发生于 %.1fs 处);>33ms %d 帧,>100ms %d 次" % [
 				secs, _avg(_proc_gaps), _pct(_proc_gaps, 0.95), _worst_ms, _worst_at,
 				_frames_33, _stalls_100])
-		lines.append("  快照 %d 次 / %.0f KB(≈%.1f KB/s);到达间隔 max=%.1fms p95=%.1fms" % [
+		lines.append("  快照 %d 次 / %.0f KB(≈%.1f KB/s);到达间隔 p95=%.1fms p99=%.1fms max=%.1fms(>50ms %d 次 / >100ms %d 次 / >250ms %d 次)" % [
 				_snap_count, float(_snap_bytes) / 1024.0,
 				float(_snap_bytes) / 1024.0 / maxf(secs, 0.001),
-				_snap_worst_ms, _pct(_snap_gaps, 0.95)])
+				_pct(_snap_gaps, 0.95), _pct(_snap_gaps, 0.99), _snap_worst_ms,
+				_snap_gaps_over_50, _snap_gaps_over_100, _snap_gaps_over_250])
 		lines.append("  事件:round_state %d,kill_event %d,hit_event %d,倒地(复活)%d 次,别人离场播报 %d 次" % [
 				_round_states, _kills, _hits, _deaths, _saw_left])
 		# C2 读数(2026-10-28 受击事件对齐):回滚 / 事件对齐 / 拒绝次数 —— 真链路里唯一能证明"注入真的生效了"的读数。

@@ -30,7 +30,7 @@ static func plan_spawns(roles: Array) -> Dictionary:
 	var taken: Array = []
 	for role in roles:
 		var side := SpawnChooser.SIDE_LEFT if int(role) == 1 else SpawnChooser.SIDE_RIGHT
-		var points: Array = sides.get(side, [])
+		var points: Array = SpawnPicker.filter_reachable(sides.get(side, []))
 		if points.is_empty():
 			return {}
 		var cell := SpawnChooser.pick(points, taken, null, SpawnPicker.FAR_CELLS, taken, dims)
@@ -60,6 +60,11 @@ static func start_on(role_peers: Dictionary, map_path: String = PVP_MAP,
 		options: Dictionary = {}, ai_roles: Array = []) -> Node:
 	MazeGenerator.set_map_file(map_path)
 	GameParameters.refresh_map_size()
+	# ★★ 必须在地图出生点规划**之前**把网格载进 MazeGenerator:可抵达判据(`SpawnPicker.reachable_spawn_cells`)
+	#   读 `current_grid`,网格为空时所有 `# respawn` 点都会被判"不可抵达" ⇒ 永远掉进 legacy 回退。
+	#   (RoyaleHost/TeamHost 的 start_on 本来就是这个顺序,只有这里漏了 —— 2026-11-01 修。)
+	if MazeGenerator.current_grid == null or MazeGenerator.current_grid.is_empty():
+		WorldBuilder.load_grid()
 	# 同一进程里换图时 SpawnPicker 的几何缓存必须清(回退路径用它;worker 一局一进程,清一次是零成本的保险)。
 	SpawnPicker.reset_cache()
 	var roles: Array = role_peers.keys()

@@ -13,7 +13,7 @@ extends Node
 const NEWFACTORY := "res://maps/newfactory.cyrm"
 const DEMO := "res://maps/demo.cyrm"
 const MARKER := "MAP SPAWN DATA PROBE: ALL-OK"
-const EXPECTED_CHECKS := 18
+const EXPECTED_CHECKS := 20
 const MIN_PER_SIDE := 5
 const BUCKETS := 9
 const MIN_SIDE_GAP := 5
@@ -43,6 +43,9 @@ func _ready() -> void:
 	_finish()
 
 
+# ★ 可达性**不做合成网格的"冒烟式"断言**(2026-11-01 用户裁定:根本不应该写这个可达的冒烟)——
+#   可达性只由 `tools/map_spawn_meta.gd --check` 与真实地图的"每个复活点可抵达"数据校验守。
+
 func _load_map(path: String) -> void:
 	MazeGenerator.set_map_file(path)
 	SpawnPicker.reset_cache()   # ★ static 缓存跨图不自动失效,换图必须显式清
@@ -54,7 +57,7 @@ func _sides() -> Dictionary:
 	return {1: (raw.get(1, []) as Array), 2: (raw.get(2, []) as Array)}
 
 
-# 合格判据 = SpawnPicker 的地板/抬头判据 + 不孤立(连通区 ≥2,与工具的 --check 同一套;不新造几何)。
+# 合格判据 = 与 tools/map_spawn_meta.gd::_bad_reason 同源:地板 + 头顶 2 格 + 可抵达(跳跃感知图主可达区)。
 func _valid_cell(c: Vector2i) -> bool:
 	var d := SpawnPicker.grid_dims()
 	if c.x < 0 or c.y < 0 or c.x >= d.x or c.y >= d.y:
@@ -63,7 +66,7 @@ func _valid_cell(c: Vector2i) -> bool:
 		return false
 	if int(MazeGenerator.current_grid[posmod(c.y - 2, d.y)][c.x]) != MazeGenerator.EMPTY:
 		return false
-	return int(SpawnPicker.region_sizes().get(c, 0)) >= 2
+	return SpawnPicker.is_reachable_spawn(c)
 
 
 func _bad_points(cells: Array) -> Array[String]:
@@ -75,7 +78,7 @@ func _bad_points(cells: Array) -> Array[String]:
 	return bad
 
 
-func _side_problems(side: int, cells: Array) -> Array[String]:
+func _side_problems(side: int, cells: Array, require_buckets: bool) -> Array[String]:
 	var d := SpawnPicker.grid_dims()
 	var bad: Array[String] = []
 	var buckets := {}
@@ -89,9 +92,10 @@ func _side_problems(side: int, cells: Array) -> Array[String]:
 			bad.append("贴边界 %s" % str(c))
 			continue
 		buckets[SpawnChooser.bucket_of(c, side, d)] = true
-	for b in BUCKETS:
-		if not buckets.has(b):
-			bad.append("桶 %d 空" % b)
+	if require_buckets:
+		for b in BUCKETS:
+			if not buckets.has(b):
+				bad.append("桶 %d 空" % b)
 	return bad
 
 
@@ -104,31 +108,41 @@ func _min_pair_dist(cells: Array) -> int:
 	return best if cells.size() >= 2 else 0
 
 
-func _sides_ok(label: String, sides: Dictionary) -> void:
+func _sides_ok(label: String, sides: Dictionary, require_buckets: bool) -> void:
 	var s1: Array = sides.get(1, [])
 	var s2: Array = sides.get(2, [])
 	# 去掉什么才红:某侧不足 5 个点(或两侧被塞成同一批点)⇒ 本条红。
 	_chk(s1.size() >= MIN_PER_SIDE and s2.size() >= MIN_PER_SIDE,
 			"%s 每侧 ≥%d(实测 %d / %d)" % [label, MIN_PER_SIDE, s1.size(), s2.size()])
-	# 去掉什么才红:把点写到对面半区 / 均匀判据被破坏(某桶空)⇒ 本条红。
+	# 去掉什么才红:把点写到对面半区 / (PvP 图)均匀判据被破坏 ⇒ 本条红。
 	var side_bad: Array[String] = []
-	side_bad.append_array(_side_problems(1, s1))
-	side_bad.append_array(_side_problems(2, s2))
-	_chk(side_bad.is_empty(), "%s 每点在自己半区且 3×3 每桶 ≥1%s" % [
-			label, "" if side_bad.is_empty() else "(问题: %s)" % ", ".join(side_bad)])
-	# 去掉什么才红:写进墙里/水里/孤立单格 ⇒ 本条红(点必须过 SpawnPicker 判据)。
+	side_bad.append_array(_side_problems(1, s1, require_buckets))
+	side_bad.append_array(_side_problems(2, s2, require_buckets))
+	_chk(side_bad.is_empty(), "%s 每点在自己半区%s%s" % [
+			label, "且 3×3 每桶 ≥1" if require_buckets else "(非 PvP 图不强制 3×3)",
+			"" if side_bad.is_empty() else "(问题: %s)" % ", ".join(side_bad)])
+	# 去掉什么才红:写进墙里/水里/孤立单格/不可达 ⇒ 本条红(点必须过 SpawnPicker 判据)。
 	var bad: Array[String] = []
 	bad.append_array(_bad_points(s1))
 	bad.append_array(_bad_points(s2))
-	_chk(bad.is_empty(), "%s 每点过 SpawnPicker 判据(地板+抬头 2 格+不孤立)%s" % [
+	_chk(bad.is_empty(), "%s 每点过 SpawnPicker 判据(地板+抬头 2 格+不孤立+可抵达)%s" % [
 			label, "" if bad.is_empty() else "(不合格: %s)" % ", ".join(bad)])
+	# 去掉什么才红:数据里有不可达点(头顶空气不在主可达区)⇒ 本条红。★ 本轮用户实报的"封闭空间复活点"就靠这条。
+	var unreachable := 0
+	for c in s1:
+		if not SpawnPicker.is_reachable_spawn(c):
+			unreachable += 1
+	for c in s2:
+		if not SpawnPicker.is_reachable_spawn(c):
+			unreachable += 1
+	_chk(unreachable == 0, "%s 每个复活点头顶空气属于主可达区(不可达 %d 个)" % [label, unreachable])
 	# 去掉什么才红:两点贴在一起(同侧最小距 < 5)⇒ 本条红。
 	_chk(_min_pair_dist(s1) >= MIN_SIDE_GAP and _min_pair_dist(s2) >= MIN_SIDE_GAP,
 			"%s 同侧两两 ≥%d(实测 %d / %d)" % [label, MIN_SIDE_GAP, _min_pair_dist(s1), _min_pair_dist(s2)])
 
 
 func _checks_newfactory_data() -> void:
-	_sides_ok("newfactory", _sides())
+	_sides_ok("newfactory", _sides(), true)
 	var sp := MapFormat.load_spawns(NEWFACTORY)
 	# 去掉什么才红:删掉 # player / # player2 行 ⇒ 本条红(MapCatalog 的 PvP 图校验与老图回退都读这两个旧键)。
 	_chk(sp.get("player", Vector2i(-1, -1)).x >= 0 and sp.get("player2", Vector2i(-1, -1)).x >= 0,
@@ -243,7 +257,7 @@ func _checks_team() -> void:
 
 
 func _checks_demo_data() -> void:
-	_sides_ok("demo", _sides())
+	_sides_ok("demo", _sides(), false)
 
 
 func _cell_of(node: Node2D) -> Vector2i:

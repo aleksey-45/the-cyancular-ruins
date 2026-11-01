@@ -794,12 +794,24 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 - 编辑器侧**不改代码**：未知 meta 行本来就走 `comments` 往返（`parseMeta` → `comments` → `buildMeta` 以 `# ` 回写），`# respawn` 不会丢（实测 round-trip：行内容逐字保留，行顺序被挪到注释区、首尾空白被 trim）。
 
 **边界（照实登记）**：
-1. **"均匀"= 桶覆盖 + 同侧间距,不是连续均匀分布**：9 点里仍可能靠近半区边界（环面接缝两侧很近是环面世界的固有几何）；同侧最小距 newfactory 侧 2 只有 11 格。
+1. **"均匀"= 桶覆盖 + 同侧间距,不是连续均匀分布**：9 点里仍可能靠近半区边界（环面接缝两侧很近是环面世界的固有几何）；同侧最小距 newfactory 现在 13/18 格。
 2. **跨侧最小距不保证**：两侧在接缝处相邻，1v1 的 `FAR_CELLS` 是软约束（点不够时逐级放宽）；用户要求的是"各占半区"，不是"两人一定 ≥15"。
 3. **人数超过数据列表时混合来源**：大乱斗 16 人 / 某队人数超过该侧列表时，数据点优先、剩余用 `SpawnPicker` 地板格补足（与改造前同一条兜底）。
+
+### 四十六补、修复:复活点落进封闭空间（2026-11-01，档 2）
+
+**用户实报**：「你把一些复活点给放到完全不联通的封闭空间里了」。上一轮的"同层连通区 ≥2"挡不住四面是墙的 2 格小密室。
+
+**修法**：
+- 判据换成**可抵达**：`SpawnPicker.reachable_spawn_cells()` = 跳跃感知图的主连通分量。节点 = 可站格(地板格 / 攀爬通道格)+ 液体格(可游);边 = 走 / 跳落组合(升 ≤4 格、横移 ≤6 格、直落 ≤29 行)/ 爬 / 游泳;主分量 = 节点数最大者。近似口径与边界写进 [world.md](world.md)。
+- 数据重做：`newfactory` 每侧 9 点、9/9 桶、每点可达(同侧最小距 13/18);`demo`(单机多房间图、无 `# player2`)主可达区只够 6/5 点(6/9、5/9 桶)⇒ 非 PvP 图只强制「每侧 ≥5 + 可达 + 边界 + 间距」,不强制 3×3 桶;`newfactory` 仍强制 9/9。
+- 运行时防御：`SpawnPicker.filter_reachable` 在 1v1/对抗/大乱斗取地图列表时剔掉不可达点并 `push_warning` 一次(工具/探针/运行时同源)。
+- 守卫：`spawn_chooser_smoke` 22 条(+3:合成网格主区可抵达 / 密封小间不可达 / filter 剔点);`map_spawn_data_probe` 23 条(+5:两图每点可抵达、合成网格 3 条)。变异：`is_reachable_spawn` 改成 `floor_cells_has` ⇒ smoke 与 probe 的"密封小间不可达"双双红。
+- **边界(照实)**：跳跃感知图是近似(不支持多段跳/冲刺/外力,不模拟拆砖开路后的新连通)；`demo` 的桶覆盖无法满足(其主可达区本身只覆盖上半个图),该图不是 PvP 图、`# respawn` 当前无生产消费者;工具/探针按"非 PvP 图不强制 3×3"放行。旧的"缺数据回退几何生成"路径仍可能选到封闭区(老图兜底,未改)。
+
 4. **`team_match_probe` 相④ 的期望过期**：它用 `TeamHost.compute_swap_spawns` 算"第 2 局 = 第 1 局点集精确对调"，而现行换边是"另一侧列表重随机"；真链路批本轮未跑，修法 = 相④ 改成校验「第 2 局每人在另一侧列表里、且都不等于第 1 局自己的点」。
-5. **`EXPECTED_SCRIPTS` 已同步为 230**（`tests/probe/water_atlas_probe.gd` 是水渲染批新增；本 spawn 批新增的 4 个脚本在 227→229 那一步已计入）；`ALLSCRIPT: OK(230 个脚本全部加载)`。
-6. **真链路批本轮未跑**（占 7777 + 拉子进程）：`match_start` 广播与宿主摆位同源、`match_sync` 的 `role_spawns()` 新鲜度、换边后客户端重拉只有静态断言，未见真包。
+5. **`EXPECTED_SCRIPTS` 当前 230**（水渲染批新增 `water_atlas_probe`；本 spawn 批的 4 个脚本已在 227→229 计入）；`ALLSCRIPT: OK(230 个脚本全部加载)`。
+6. **真链路批未跑**（占 7777 + 拉子进程）：`match_start` 广播与宿主摆位同源、`match_sync` 的 `role_spawns()` 新鲜度、换边后客户端重拉只有静态断言，未见真包。
 7. **待同步的旧描述（写作用域外，已 grep 定位）**：
    - `docs/eng/weapons.md:46`：「布点 `GridPathfinder.spread_cells`…大乱斗与单机共用」—— 大乱斗散点已改为「地图 `# respawn` + `SpawnChooser`」，`spread_cells` 现在只剩单机地面武器铺点与对抗的几何回退用。
    - `docs/eng/netplay.md:37`：「换局 `_side_swap`」—— 1v1 的 `_side_swap` 现在决定"role1 这局在左半还是右半"（数据路径有感），团队换边语义是 `TeamHost._side_swap_round`。
@@ -830,3 +842,64 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 1. **观感只能人眼**：探针验的是"选对了哪块砖"，不是"水面亮带是否好看/深水是否够暗"；
 2. `_paint_water` 仍按 **64px 整格**判"上方是否 liquid"（旧设计），所以一块 64px 格里若只有上缘是水，整格按水面画 —— 本次没动这个口径；
 3. 菜单背景 `bake_map_image` 走的是 22 行墙体图集（纹理 id 直接对应行），本来就正确，未受影响。
+
+## 四十八、多人联机「感觉更卡」诊断（2026-11-01，只读诊断 + 文档修正，档 0/2）
+
+**起因**：用户报「看看其他联机和 1v1 是不是一样的，我怎么感觉其他联机有点卡」。**本轮没有改任何产品代码**（结论：三模式的网络/插值/回滚/快照是**同一份代码**；没找到"与 1v1 不一致且能解释卡"的低风险点，改动项见文末「建议修复（待裁）」）。
+
+**管线对比（源码级，逐项确认"同一条"）**：
+- 服务器：三模式都走 `MatchHost._physics_process` → `MatchSnapshot._broadcast_snapshot`（`SNAPSHOT_HZ=60` / `SNAPSHOT_STRIDE=1`，`match_state.gd:67-69`）+ `send_own_snapshots`（逐 role 定向 `snapshot_own`，`match_snapshot.gd:69-89`）；`_sync_ground_positions`、`_adjudicate_bullets`、`_push_lag_frame`、`_broadcast_pending_beams` 全在基类，三模式共用。
+- 客户端：`pvp_game` / `royale_game` / `team_game` **都** `_rollback = PredictionRollback.new()`（`pvp_game.gd:36`、`royale_game.gd:45`、`team_game.gd:33`、重连重建在 `pvp_match_client.gd:786`）⇒ **不是"只有 1v1 开预测"**；远端副本都走 `PlayerReplica` + `PlayoutClock`（`PLAYOUT_TICKS=2`，单一来源 `core/net/lag_comp.gd`）；输入上行、贴身容差、受击事件注入全在 `PvpMatchClient` 基类。
+- 差异只在**量**上（对手数/子弹数）与两处 UI 节拍：大乱斗 `round_state` **1Hz 周期广播**（`royale_host.gd:12 HUD_SYNC_INTERVAL=1.0`，HUD 复用行只改文字），1v1/对抗只在状态转折/击杀时发；大乱斗/对抗多一份 `ReplicaSet`（懒建副本 + 头顶 ID + 血条 + 小地图多点）。**AI 数 = 0**（`royale_start_ai` 无客户端调用点；soak 的 ops 日志恒 `"ai":0`）。
+
+**实测读数（本机 20 逻辑核，`royale_soak_probe` 同配置只改 `--clients`；表与逐项结论在 [`netcode-at-16-players.md`](netcode-at-16-players.md) §5）**：
+- 快照到达 p95 在所有人数都是 17.3~17.9ms（60Hz 保持）；客户端帧 p95 17.4~18.0ms、avg 16.65~16.70ms（headless 无渲染）。
+- worker 每 tick CPU ≈4.4ms@2 人 → ≈6.7ms@4 → ≈10.2ms@8（16.67ms 预算），**按斜率 14~16 人会越预算**；这是「1v1 不卡、多人卡」最可信的产品侧解释（云主机弱 vCPU / 同机多个 worker 会提前撞线）。
+- 单端下行 ≈18 KB/s@8，**带宽不是瓶颈**。
+- C2 回滚/局：≈7@2 人、7~117@4、16~244@8 ⇒ 受"对手数 × 交火密度"驱动，多人更容易被拉回，但不是代码分叉。
+
+**本轮只落的文档修正（旧断言与源码冲突，逐条 `grep` 复核）**：
+1. [`netcode-at-16-players.md`](netcode-at-16-players.md) §2「命中补偿：现状 = 没有」**与源码相反** —— 2026-10-26 已落地按射手观看时刻回放（`core/sim/hit_lag_history.gd` + `match_combat._replay_hurt_rect`）；已改写。
+2. [`netcode-client-interp-and-input-details.md`](netcode-client-interp-and-input-details.md) 两处「广播仍 30Hz / 相位每 2 tick」与「客户端没有播放时钟」：前者是 2026-10-30 前的口径（现 `SNAPSHOT_STRIDE=1`，60Hz）；后者与 `core/net/playout_clock.gd` 冲突（副本有播放时钟，缺的只是"客户端↔服务器显式时钟同步"）。
+3. [`netcode-input-uplink.md`](netcode-input-uplink.md) §3「广播仍 30Hz」同步订正。
+
+**建议修复（待 Lead 裁；本轮均未动）**：
+1. **服务器 per-tick 成本（首推）**：8 人局已用 ~10ms/16.67ms。可降项：`capture_state()` 每 tick 每 role 新建大字典（`match_snapshot.gd:69-89`）可复用；命中裁决 `_adjudicate_bullets` 的 O(子弹×玩家)（`match_combat.gd:38-72`）可按子弹位移邻域裁剪；世界快照降 30Hz 能省最多但**用户已裁定 60Hz，不擅改**。风险档 3（协议/手感）；验证 = 先加"worker tick CPU 1Hz 读数（仅 `--diag`）"再前后对比 + `royale_soak` 的 p95/max。
+2. **客户端 O(子弹×玩家) 的视觉子弹 cull**：`pvp_match_client.gd::_cull_bullet_contacts` 每物理帧对每颗视觉子弹各 `get_nodes_in_group()` 两次（玩家 + 副本）—— 8 人局比 1v1 高一个量级。可先把"玩家实体列表"每帧缓存一次（同帧复用）。风险档 2；**该文件不在本任务写作用域，改前需 Lead 批**；验证 = `rollback_fidelity_probe` 绿 + 真链路 soak 帧 p95 不升。
+3. **小地图每帧建两份 entries**（`royale_game.gd::_minimap_entries()` 被 `_minimap_others` / `_minimap_colors` 各调一次，`team_game.gd` 同构）：与 1v1 的常量级 provider 不一致但收益仅微秒级，**不值得单独改**（登记不修）。
+4. **回滚频率**（多人更易"被拉回"）：调 `PredictionContact` 的 `ghost_horizon` / `contact_pos_tol` 风险高且缺真实 WAN 数据，**不裁、不动**。
+
+**边界（照实）**：
+- `royale_soak` 的 headless 客户端**没有渲染** ⇒ "画面卡"它答不了；同机跑 8 端有 CPU 争用；`--clients=12` 在本机跑不干净（有端赶不上观测窗）。
+- 没跑 `tests/run_real.sh` / `team_match_probe`（要 Lead 认领），也没做丢包/抖动注入（仓库无该仪器）。
+- worker CPU 取自 OS 进程 `TotalProcessorTime`（整局均值近似，含启动/收尾 1~2s），不是引擎内 per-tick 计时；「ms/tick」是折算值，**证据强度：中**（趋势可信，绝对值 ±20%）。
+- 云服务器真实 vCPU/网络条件未知 ⇒ 「多人卡」的线上确认需要：`--diag` 的 `snapshot_tx` / 客户端 `snap_gap` 读数 + 线上 ping。这两项仓库已有，只差在真实云局上采集。
+
+## 四十九、≤1 格台阶自动跳跃 + 多人局视觉子弹 cull 缓存（2026-11-01，档 2）
+
+### A. 自动跳跃（用户要求「加上一个小于等于一格会自动跳跃」）
+
+**判据**（纯逻辑 [`core/sim/step_jump.gd`](../../core/sim/step_jump.gd)）：把"脚底前方那一列、从脚底往上连续多少个实体 16px 子格"
+当作台阶高度 —— `0` = 没挡路、`1..4` = ≤1 格（64px）⇒ 自动起跳、`-1`（第 5 个子格还是实体）= 墙高于一格 ⇒ **不**跳
+（否则对着墙会反复起跳）。
+
+**接线**（[`scenes/player/player.gd`](../../scenes/player/player.gd) 的 `_tick_vertical`）：条件 = 在地面 + 朝前走 + 非下蹲 / 非水中 / 非攀爬 /
+**非冲刺**（冲刺本身有低重力可跨沟，跳会打断冲刺）+ 当前没有跳跃缓冲；满足就写 `jump_buffer_timer`，走既有跳跃管线（土狼时间/可变高度/挤压脉冲全部复用）。
+子格实体判定**与 `CollisionBuilder.build_sub` 同源**（`TileDefs.type_id_of == TYPE_WALL`，可破坏砖再过 `sub_alive`，
+否则打穿的洞口会被误判成台阶）；子格坐标**环面回绕**（接缝旁的台阶不能判成没挡路）。
+
+**为什么读 16px 子格而不是碰撞体/射线**：客户端预测与服务器重放要得出**同一个**决定 —— 任何一端独有的物理状态都会让两端分叉，
+而子格表是两端同一份地图数据。**守卫**：[`tests/smoke/step_jump_smoke.gd`](../../tests/smoke/step_jump_smoke.gd)（7 条：无阻挡 0 /
+16px 台阶 1 / **正好 1 格 4** / 高于一格 -1 / 左右镜像 / dir=0 / 连续段）；变异：删「第 5 子格」判据 ⇒ ④ 红。
+
+**边界（照实）**：① 探针只钉判据；「真的跳得上去 / 手感是否太灵敏」只能试玩（跳跃高度 ≈ `jump_velocity²/(2g)`）；
+② 判据是静态地图近似，不模拟"拆砖后新出现的台阶"（被打穿的砖不再算实体，见 `sub_alive` 分支）与外力击退；
+③ 角色在**斜坡/攀爬边沿**的自动跳未特判（攀爬中 `latched` 已早退）。
+
+### B. 客户端视觉子弹受击候选每物理帧缓存（多人局性能，诊断见 §四十八）
+
+`scenes/pvp_match_client.gd::_cull_bullet_contacts` 旧实现里，**每颗视觉子弹**都对 `BulletBase.CONTACT_GROUPS`（player + player_replica）
+各查一次 `get_nodes_in_group` ⇒ O(子弹×玩家数) 的组查询；8 人局比 1v1 高一个量级。现在改为
+`_contact_targets_now()` **每物理帧取一次**（组序 + 组内序与旧逐次查询**完全一致**，故行为等价）。
+**边界**：① 视觉 cull 只影响"子弹在客户端何时消失"，不参与伤害裁决；② 帧内新加入的副本最多晚 1 帧被看到（≤16ms）；
+③ 无自动性能守卫（headless 测不出渲染路径），只能真机/`royale_soak` 读数对比。

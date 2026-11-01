@@ -254,7 +254,7 @@ func _physics_process(delta: float) -> void:
 		is_charge = false
 		is_squat = false
 
-	_tick_vertical(delta, latched, in_water, mult)
+	_tick_vertical(delta, latched, in_water, mult, float(horizontal_input))
 	_tick_crouch_and_dash(delta, latched, in_water)
 	_tick_horizontal(delta, in_water, horizontal_input, mult)
 	_tick_facing(delta, horizontal_input)
@@ -272,7 +272,7 @@ func _physics_process(delta: float) -> void:
 	_wrap_position()
 
 
-func _tick_vertical(delta: float, latched: bool, in_water: bool, mult: Vector2) -> void:
+func _tick_vertical(delta: float, latched: bool, in_water: bool, mult: Vector2, horizontal_input: float) -> void:
 	if latched or in_water:
 		return
 	if is_on_floor():
@@ -283,6 +283,18 @@ func _tick_vertical(delta: float, latched: bool, in_water: bool, mult: Vector2) 
 		velocity.y += gravity * grav_mult * delta
 		coyote_timer = maxf(coyote_timer - delta, 0.0)
 
+	# ★ 自动跳跃(用户 2026-11-01):地面朝前走、前方是 **≤1 格(64px)** 高的台阶时自动起跳;
+	#   更高的墙不自动跳(否则对着墙会反复起跳),冲刺中也不跳(冲刺本身有低重力可跨沟,跳会打断冲刺)。
+	#   判据只读 16px 子格(两端同一份数据),不读碰撞体/射线 —— 客户端预测与服务器重放必须得出同一结论。
+	if not latched and not in_water and not is_squat and not is_charge and is_on_floor() and jump_buffer_timer <= 0.0:
+		var dir := 0
+		if horizontal_input > 0.01:
+			dir = 1
+		elif horizontal_input < -0.01:
+			dir = -1
+		if dir != 0 and StepJump.low_step_height(_front_feet_subcell(dir), dir,
+				Callable(self, "_sub_solid_at")) > 0:
+			jump_buffer_timer = jump_buffer_time
 	if input_source.is_action_just_pressed("up"):
 		jump_buffer_timer = jump_buffer_time
 	else:
@@ -302,6 +314,37 @@ func _tick_vertical(delta: float, latched: bool, in_water: bool, mult: Vector2) 
 	if not jump_cut_applied and input_source.is_action_just_released("up") and velocity.y < 0.0:
 		velocity.y *= jump_cut_factor
 		jump_cut_applied = true
+
+
+# 自动跳跃的两个数据口:脚底前方落在哪个 16px 子格 / 该子格有没有碰撞。
+# ★ 用 hurt_rect()(= 当前姿态的逻辑体)而不是碰撞箱:与"受击面"同一份几何,蹲下时不会用站立身高去探。
+func _front_feet_subcell(dir: int) -> Vector2i:
+	var r := hurt_rect()
+	var sub := float(GameParameters.TILE_SIZE) / float(StepJump.SUB_PER_CELL)
+	var x := r.position.x + r.size.x * 0.5 + float(dir) * (r.size.x * 0.5 + 1.0)
+	var y := r.position.y + r.size.y - 2.0
+	return Vector2i(int(floor(x / sub)), int(floor(y / sub)))
+
+
+# 子格是否挡路:**与 CollisionBuilder.build_sub 同一份判据**(否则会出现"看起来是墙但没碰撞/已被打穿"的误判):
+#   type=wall 才有碰撞;可破坏砖还要 `sub_alive`(被摧毁的子格纹理不变、碰撞已删 —— 只判纹理会让打穿的洞口被当成台阶)。
+# ★ 世界是环面的 ⇒ 子格坐标先环面回绕,否则接缝旁的台阶永远判成"没挡路"。
+func _sub_solid_at(cell: Vector2i) -> bool:
+	var sub := MazeGenerator.current_subgrid
+	if sub.is_empty():
+		return false
+	var sr := sub.size()
+	var sc := (sub[0] as Array).size()
+	var wrapped := Vector2i(posmod(cell.x, sc), posmod(cell.y, sr))
+	var tex := int((sub[wrapped.y] as Array)[wrapped.x])
+	if tex == 0:
+		return false
+	if TileDefs.type_id_of(tex) != TileDefs.TYPE_WALL:
+		return false
+	var destr: bool = TileDefs.bullet_destroyable(tex) or TileDefs.explosion_destroyable(tex)
+	if destr and TileDefs.sub_cols != 0 and not TileDefs.sub_alive(wrapped):
+		return false
+	return true
 
 
 func _tick_crouch_and_dash(delta: float, latched: bool, in_water: bool) -> void:

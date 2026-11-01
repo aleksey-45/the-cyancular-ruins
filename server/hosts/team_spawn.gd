@@ -81,12 +81,12 @@ static func plan_team_spawns(teams: Dictionary, last: Dictionary = {}, side_swap
 	return out
 
 
-# 地图两侧的复活点列表(顺带按 SpawnChooser 的 side 常量取键;缺数据时返回两个空数组)。
+# 地图两侧的复活点列表(顺带按 SpawnChooser 的 side 常量取键;缺数据时返回两个空数组。不可达点在此剔除 + warning 一次)。
 static func _map_sides() -> Dictionary:
 	var raw: Dictionary = MazeGenerator.load_spawns().get("respawns", {})
 	var out := {SpawnChooser.SIDE_LEFT: [], SpawnChooser.SIDE_RIGHT: []}
 	for side in [SpawnChooser.SIDE_LEFT, SpawnChooser.SIDE_RIGHT]:
-		out[side] = (raw.get(side, []) as Array).duplicate()
+		out[side] = SpawnPicker.filter_reachable(raw.get(side, []))
 	return out
 
 

@@ -29,13 +29,13 @@ static func _respawn_pools() -> Array:
 	return SpawnPicker.respawn_pools()
 
 
-# 大乱斗的候选 = 两侧 `# respawn` 列表的并集(无阵营 ⇒ 全图散布)。
+# 大乱斗的候选 = 两侧 `# respawn` 列表的并集(无阵营 ⇒ 全图散布;不可达点在此剔除 + warning 一次)。
 static func map_spawn_points() -> Array:
 	var sides: Dictionary = MazeGenerator.load_spawns().get("respawns", {})
 	var out: Array = []
 	out.append_array(sides.get(1, []))
 	out.append_array(sides.get(2, []))
-	return out
+	return SpawnPicker.filter_reachable(out)
 
 
 static func _warn_legacy_spawn() -> void:

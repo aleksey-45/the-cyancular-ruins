@@ -11,7 +11,8 @@ extends SceneTree
 # 判据(每侧独立):≥ MIN_PER_SIDE 个;都在自己半区(侧 1 = 左半 x<cols/2 / 侧 2 = 右半);
 #   离本侧两条边界(环面接缝 / 半区中线)都 ≥ `SpawnChooser.SIDE_EDGE_MARGIN` 格(两半在这两处都相邻);
 #   3 列 × 3 行共 9 个桶每桶 ≥1 个(均匀散布);同侧两两环面距离 ≥ MIN_SIDE_GAP;
-#   每个点都过 `_bad_reason`(地板 + 头顶 2 格 + 不孤立 + 不在水里;判据全来自 SpawnPicker)。
+#   每个点都过 `_bad_reason`(地板 + 头顶 2 格净空 + **可抵达** + 不在水里;判据全来自 SpawnPicker)。
+#   ★ 可抵达 = 跳跃感知图(走/落/跳/爬)的主连通分量,防"四面是墙的小密室"。
 # --write 后自动回读:列表等于写入值、场景层逐格与写入前相同(层块字节无损)。
 
 const MIN_PER_SIDE := 5      # 每侧最少点数(对抗每队最多 5 人 ⇒ 够 5 人取点且不重复的前提)
@@ -39,9 +40,15 @@ func _initialize() -> void:
 	MazeGenerator.current_grid = grid
 	TileDefs.load_defs()
 	SpawnPicker.reset_cache()
+	var is_pvp := MapFormat.load_spawns(map_path).has("player2")
 	var dims := SpawnPicker.grid_dims()
-	print("MAP SPAWN META: %s(%d×%d 格;侧 1 = 左半 x<%d / 侧 2 = 右半)" % [
-			map_path, dims.x, dims.y, dims.x / 2])
+	var sizes := SpawnPicker.reachable_component_sizes()
+	var top: Array = []
+	for i in mini(5, sizes.size()):
+		top.append(int(sizes[i]))
+	print("MAP SPAWN META: %s(%d×%d 格;侧 1 = 左半 x<%d / 侧 2 = 右半;可达主区 %d 个可站格;分量 %d 个,前几大 %s)" % [
+			map_path, dims.x, dims.y, dims.x / 2, SpawnPicker.main_reachable_size(),
+			sizes.size(), str(top)])
 	if bool(opt.get("list", false)):
 		_list(dims)
 	if opt.has("inspect"):
@@ -52,12 +59,12 @@ func _initialize() -> void:
 	var r1: Array = _parse_cells(str(opt.get("respawn1", "")))
 	var r2: Array = _parse_cells(str(opt.get("respawn2", "")))
 	if has_lists:
-		_check_side(1, r1, dims)
-		_check_side(2, r2, dims)
+		_check_side(1, r1, dims, is_pvp)
+		_check_side(2, r2, dims, is_pvp)
 	elif bool(opt.get("check", false)):
 		var raw: Dictionary = MapFormat.load_spawns(map_path).get("respawns", {})
-		_check_side(1, raw.get(1, []), dims)
-		_check_side(2, raw.get(2, []), dims)
+		_check_side(1, raw.get(1, []), dims, is_pvp)
+		_check_side(2, raw.get(2, []), dims, is_pvp)
 	if bool(opt.get("write", false)) and has_lists and _fails.is_empty():
 		_write(map_path, r1, r2)
 	if _fails.is_empty():
@@ -126,7 +133,8 @@ func _parse_cells(text: String) -> Array:
 
 
 # 合格判据的唯一实现(校验 / 建议共用):返回失败原因;空串 = 合格。
-# 判据全部来自 SpawnPicker(不另造几何):地板格(本格空 + 正下方挡路 + 头顶 1 格净空)+ 头顶 2 格净空 + 同层连通区 ≥2(不孤立)。
+# 判据全部来自 SpawnPicker(不另造几何):地板格(本格空 + 正下方挡路 + 头顶 1 格净空)+ 头顶 2 格净空
+# + **可抵达**(跳跃感知图的主连通分量,防四面是墙的小密室 —— 上一轮"连通区 ≥2"挡不住它)。
 func _bad_reason(c: Vector2i) -> String:
 	var d := SpawnPicker.grid_dims()
 	if c.x < 0 or c.y < 0 or c.x >= d.x or c.y >= d.y:
@@ -136,12 +144,12 @@ func _bad_reason(c: Vector2i) -> String:
 	var grid := MazeGenerator.current_grid
 	if int(grid[posmod(c.y - 2, d.y)][c.x]) != MazeGenerator.EMPTY:
 		return "头顶净空不足 2 格"
-	if int(SpawnPicker.region_sizes().get(c, 0)) < 2:
-		return "同层连通区 < 2(孤立单格死角)"
+	if not SpawnPicker.is_reachable_spawn(c):
+		return "不可抵达(不在跳跃感知图的主可达区:封闭空间 / 跳/落/爬都到不了)"
 	return ""
 
 
-func _check_side(side: int, arr: Array, dims: Vector2i) -> void:
+func _check_side(side: int, arr: Array, dims: Vector2i, is_pvp: bool) -> void:
 	if arr.size() < MIN_PER_SIDE:
 		_fails.append("侧 %d 只有 %d 个点(要求 ≥%d)" % [side, arr.size(), MIN_PER_SIDE])
 	var buckets := {}
@@ -158,22 +166,21 @@ func _check_side(side: int, arr: Array, dims: Vector2i) -> void:
 			bad += 1
 			continue
 		if not SpawnChooser.side_inside_margin(c, side, dims):
-			_fails.append("侧 %d 点 %s 贴半区边界(要求离接缝/中线都 ≥%d 格;环面上两半在这两处相邻)" % [
+			_fails.append("侧 %d 点 %s 贴半区边界(要求离接缝/中线都 ≥%d 格)" % [
 					side, str(c), SpawnChooser.SIDE_EDGE_MARGIN])
 			bad += 1
 			continue
-		var b := SpawnChooser.bucket_of(c, side, dims)
-		buckets[b] = int(buckets.get(b, 0)) + 1
-	if bad == 0:
+		buckets[SpawnChooser.bucket_of(c, side, dims)] = true
+	# 3×3 桶覆盖只对 PvP 图(有 # player2)强制:单机 demo 图的多房间主可达区只覆盖部分桶,无法满足也无法用于 PvP。
+	if bad == 0 and is_pvp:
 		for b in BUCKETS:
-			if int(buckets.get(b, 0)) < 1:
+			if not buckets.has(b):
 				_fails.append("侧 %d 的 3×3 桶 #%d 没有点(均匀判据:每桶 ≥1)" % [side, b])
 	var min_gap := _min_pair_dist(arr)
 	if arr.size() >= 2 and min_gap < MIN_SIDE_GAP:
 		_fails.append("侧 %d 两两最小距离 %d < %d" % [side, min_gap, MIN_SIDE_GAP])
-	print("  侧 %d: %d 个点 / 桶覆盖 %d/9 / 最小两两距 %d / 半区 %s" % [
-			side, arr.size(), buckets.size(), min_gap,
-			"左(x<%d)" % (dims.x / 2) if side == 1 else "右(x≥%d)" % (dims.x / 2)])
+	print("  侧 %d: %d 个点 / 桶覆盖 %d/9%s / 最小两两距 %d" % [
+			side, arr.size(), buckets.size(), "" if is_pvp else "(非 PvP 图,不强制)", min_gap])
 
 
 func _list(dims: Vector2i) -> void:

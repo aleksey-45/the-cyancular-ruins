@@ -19,7 +19,7 @@
 ### 1.1 服务器命中回放（时间域解耦）
 
 - 客户端把「最近解码的快照 tick」放进输入包的 `st`；服务器据此算 `want = clamp(st − PLAYOUT_TICKS, _srv_tick − MAX_REWIND_TICKS, _srv_tick)`，用 `HitLagHistory.rect_for(victim, want)` 取**射手当时看到的**对手受击面，再走 `HitShape` 线段扫掠（含子弹体积 grow）。
-- 服务器 tick 与快照 tick 同域：`MatchHost` 每物理 tick `_srv_tick += 1`，广播时 `_snap_tick = _srv_tick`（相位仍每 2 tick，序列不变）。
+- 服务器 tick 与快照 tick 同域：`MatchHost` 每物理 tick `_srv_tick += 1`，广播时 `_snap_tick = _srv_tick`（2026-10-30 起 `SNAPSHOT_STRIDE = 1` ⇒ 每 tick 一包，tick 序列连续）。
 - **只有裁决回放**：渲染（副本插值）与移动预测（幽灵体）都仍吃最新/playout 各自原有口径；爆炸 AoE 不回放（现时位置）。协议零改动。
 
 ## 2. 输入上行
@@ -44,7 +44,7 @@
 
 ## 3. 服务端消费
 
-- **每物理 tick 恰 `pop_front()` 一条**（一包到两条）；`ack_seq = pkt.seq`（逐 tick 前进）；广播仍 30Hz。
+- **每物理 tick 恰 `pop_front()` 一条**（一包到两条）；`ack_seq = pkt.seq`（逐 tick 前进）；世界/本人快照下行自 **2026-10-30** 起是 **60Hz**（`SNAPSHOT_STRIDE = 1`），与输入上行的 30Hz 是两条互不相干的节拍。
 - 队列空 ⇒ 沿用上一条记录的 `held` / `axis` / `aim`；`clear_edges()` 在每个 tick 末清 `pressed` / `released` / `winst`。
 - 饥饿期不记账：没有"猜了哪一帧"的记录，也不专门回滚；分歧只在收到权威 `c2` 时由 C2 纠正。
 - 上限与丢弃（`PacketInputSource`，单位 = 条 tick 记录）：`cap = clamp(peak + 2, 4, 16)`；`peak` 每 tick 衰减 1；丢最旧一条并把边沿并入队首；`reset_input_queue()` 连包络一起清。
@@ -54,7 +54,7 @@
 - 服务器在本人包回带 `ack_seq` + `q`；客户端只把它们喂 `PredictionRollback` 与 `--netstat` 读数，不据此调时钟。
 - 丢弃：`ack > seq`（跨纪元残留;判据在 `InputUplink.accept_ack`）与 `ack <= _acked`（同纪元旧包）。
 - 上行不带客户端时间戳 / `tick_count`；没有"客户端领先服务器多少 tick"的参数。
-- 客户端没有播放时钟、没有时钟同步、没有速率纠偏；世界包 `tick` 只用于乱序丢弃。
+- 客户端**有**远端副本的播放时钟（`core/net/playout_clock.gd`，每副本一个：窗口 8 样本、漂移死区 1.5 tick、纠偏 ≤10%/s、深度补偿 ≤4 tick），渲染延迟 = `PLAYOUT_TICKS`（= 2 tick ≈33ms，与服务器命中回放共用同一常量）。**没有**的是「客户端时钟 ↔ 服务器时钟」的显式同步：上行不带客户端时间戳，快照 `tick` 不用于校时（只在副本历史里做 tick 域取样/去重），也没有速率纠偏作用于本地玩家的输入预测。
 
 ## 5. 静默 bug 清单（现行代码的约束）
 

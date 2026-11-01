@@ -388,6 +388,27 @@ func _on_bullet_spawn(data: Dictionary) -> void:
 
 # ── 本地视觉子弹撞到"该打的人" → 立刻消失(否则画面看起来还是像穿透)──
 # 子弹 mask=1 只撞地形、对手在客户端只是幽灵体 ⇒ 物理上撞不到;服务器按"线段 vs 受击面"裁决,客户端 cull 必须用同一套 HitShape + 同一段位移。★ 榴弹不走这条(引信/反弹由 _check_player_contact 管)。
+# ★ 候选列表**每物理帧缓存一次**:旧实现里每颗视觉子弹都各查两遍 `get_nodes_in_group` ⇒ O(子弹×玩家数) 的组查询,
+#   8 人局比 1v1 高一个量级(读数与结论见 registered-debt §四十八)。缓存只省"取组"这一步,遍历顺序与逐次查询逐字相同。
+var _contact_targets: Array = []
+var _contact_targets_frame := -1
+
+
+# 本帧的受击候选(player + 对手副本),按 BulletBase.CONTACT_GROUPS 的组序 + 组内顺序收集 —— 与旧逐次查询同序。
+func _contact_targets_now() -> Array:
+	var f := Engine.get_physics_frames()
+	if f != _contact_targets_frame:
+		_contact_targets_frame = f
+		_contact_targets.clear()
+		var tree := get_tree()
+		if tree != null:
+			for group in BulletBase.CONTACT_GROUPS:
+				for n in tree.get_nodes_in_group(group):
+					if n is Node2D:
+						_contact_targets.append(n)
+	return _contact_targets
+
+
 func _cull_bullet_contacts() -> void:
 	for n in get_tree().get_nodes_in_group("bullet"):
 		var b := n as BulletBase
@@ -402,17 +423,16 @@ func _cull_bullet_contacts() -> void:
 func _bullet_contact_target(b: BulletBase) -> Node2D:
 	var w := float(GameParameters.MAP_WIDTH)
 	var h := float(GameParameters.MAP_HEIGHT)
-	for group in BulletBase.CONTACT_GROUPS:
-		for n in get_tree().get_nodes_in_group(group):
-			if n == b.shooter or not (n is Node2D):
-				continue
-			if not _bullet_hits_entity(b, n as Node2D):
-				continue
-			if not HitShape.hurtable(n):
-				continue
-			if HitShape.segment_hits_rect(b.prev_pos, b.global_position,
-					_bullet_hurt_rect(n as Node2D), w, h, b.hit_grow()) >= 0.0:
-				return n as Node2D
+	for n in _contact_targets_now():
+		if n == b.shooter or not (n is Node2D):
+			continue
+		if not _bullet_hits_entity(b, n as Node2D):
+			continue
+		if not HitShape.hurtable(n):
+			continue
+		if HitShape.segment_hits_rect(b.prev_pos, b.global_position,
+				_bullet_hurt_rect(n as Node2D), w, h, b.hit_grow()) >= 0.0:
+			return n as Node2D
 	return null
 
 

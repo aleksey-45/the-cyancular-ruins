@@ -362,9 +362,9 @@ func map_spawn_data() -> Dictionary:
 	return _map_spawn_data
 
 
-# 某侧的复活点列表(空 = 该侧无数据 / 老图)。
+# 某侧的复活点列表(空 = 该侧无数据 / 老图)。不可达点(数据写错/地图被改)在这里被剔掉 + push_warning 一次。
 func map_respawn_points(side: int) -> Array:
-	return ((map_spawn_data().get("respawns", {}) as Dictionary).get(int(side), []) as Array)
+	return SpawnPicker.filter_reachable((map_spawn_data().get("respawns", {}) as Dictionary).get(int(side), []))
 
 
 # 两侧并集:大乱斗无阵营,用它保证全图散布。
@@ -373,7 +373,7 @@ func map_all_respawn_points() -> Array:
 	var out: Array = []
 	out.append_array(sides.get(1, []))
 	out.append_array(sides.get(2, []))
-	return out
+	return SpawnPicker.filter_reachable(out)
 
 
 # 老图回退告警:只打一次(每进程一局,足够)。
