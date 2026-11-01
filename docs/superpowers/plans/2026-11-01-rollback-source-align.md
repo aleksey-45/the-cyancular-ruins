@@ -35,6 +35,7 @@
 | 权威态应用有三份：单机 `Player.rewind_restore`、服务器 `match_host` 回溯恢复、客户端 `Player.restore_state` | 三处 grep `rewind_restore` / `restore_state` |
 | 服务器输入队列溢出 = 丢最旧一条（真丢一个 tick 的输入） | `core/net/packet_input_source.gd::push_pending` |
 | 回滚计数可观测：`PredictionRollback.rollback_count()`；`--diag` 会记 `rollback` 事件 | `core/net/prediction_rollback.gd` / `core/net/net_diag.gd` |
+| 速率口径：输入**记录** 60Hz / 输入**发包** 30Hz(2 条/包, reliable 通道 1) / 下行快照 60Hz | `core/net/input_uplink.gd` / `core/net/input_wire.gd` / `server/match/match_state.gd` |
 
 **为什么这套能消掉“持续回滚”：** 持续回滚的形态是「每次 ack 都判分歧」——只可能来自「重放用的状态/世界与预测时不同」。上面三类源头（本地独有状态、事件时刻、三份实现漂移）都会制造这个形态；网络抖动型回滚是偶发的，不在此列。
 
@@ -181,18 +182,26 @@ create 建房 → join 加入 → 房主自动 `pvp_start` → 两端实例化**
 
 ---
 
-### R4 · 输入不丢 tick（P3，需先测量）
+### R4 · 服务端输入队列不丢 tick（P3，需先测量）
 
-**猜测：** 服务器队列溢出丢最旧 = 真丢一个 tick ⇒ 必回滚；多人局 worker CPU 高时（§四十八：8 人 ≈10ms/tick）会变频繁。
+**先对齐事实（2026-11-01 复核，别再口误）：**
+- 输入**采样/记录 = 60Hz**：`InputUplink.seq` 每物理 tick 一条记录（`TICKS_PER_RECORD = 1`，`netcode-input-uplink.md`）；
+- 输入**发包 = 30Hz**：每包 2 条记录（`INPUT_BATCH_TICKS = 2`），走 **reliable 通道 1**（保序）；
+- 下行**快照 = 60Hz**（`SNAPSHOT_HZ = 60` / `SNAPSHOT_STRIDE = 1`）。
+⇒ “30Hz”只是**发包频率**，不是输入降到 30Hz。
+
+**猜测（修正后）：** 输入走可靠通道 ⇒ 网络丢包不会“丢 tick”，只会**重传延迟**；真正丢 tick 的是
+**服务端输入队列溢出时丢最旧一条**（`PacketInputSource.push_pending`，cap 4~16 条 = 66~266ms）。50ms 公网下队列常驻
+~2~3 条，平时够；抖动突发（一次积压 > cap）才会丢 ⇒ 每丢一条客户端多算一 tick ⇒ 一次回滚。多人局 worker CPU 高时（§四十八 8 人 ≈10ms/tick）更容易积压。
 
 **做什么：**
-- [ ] 用 `--diag` 的 `queue_drop` 事件统计每局丢包次数（1v1 / 4 人 / 8 人，各两次）。
-- [ ] 若丢包确实存在：先试**最保守**的两条（不改协议语义）：① `QUEUE_CAP` 上限放宽（代价：输入延迟增加，必须用 playout/延迟读数证明可接受）；② 客户端把**最近 2 条记录**都带上（现有 pair 已覆盖 2 tick，评估加到 3 条）。
-- [ ] 若仍丢：写“丢包时通知客户端按服务器已消费数重放”的设计（改协议，档 3，单独评审）。
+- [ ] 用 `--diag` 的 `queue_drop` 事件统计每局“服务端丢 tick”次数（1v1 / 4 人 / 8 人，各两次）；同时记 `snap_gap` p95/p99 看抖动。
+- [ ] 若丢 tick 确实存在：先试**最保守**的两条（不改协议语义）：① `QUEUE_CAP` 上限放宽（代价：输入延迟增加，必须用 playout/延迟读数证明可接受）；② 评估“把 30Hz 合包改成 60Hz 单记录包”（字节/秒不变、包数×2：重传延迟从“2 tick 一起补”变成“1 tick”，属发包策略调整，要核对带宽与 ENet 头开销）。
+- [ ] 若仍丢：写“队列满时按服务器已消费数通知客户端重放”的设计（改协议，档 3，单独评审）。
 
-**验收：** 丢包次数前后对比；若不动协议必须有数据支撑。
+**验收：** 丢 tick 次数前后对比；若不动协议必须有数据支撑。
 
-**边界：** 只有数据表明丢包频繁才做；不为了让计数器归零而牺牲延迟。
+**边界：** 只有数据表明丢 tick 频繁才做；不为了让计数器归零而牺牲延迟；`30Hz 发包`本身不是缺陷，别把“输入 30Hz”当结论。
 
 ---
 
