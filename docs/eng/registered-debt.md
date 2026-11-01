@@ -232,7 +232,7 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 
 ## 二十五、联机模块全量审查（2026-10-30，只登记不修）
 
-**做了什么**：对联机模块做了一次**只读**审查 —— `core/net/**`（16 支 / 3120 行）、`server/**`（24 支 / 6412 行）、客户端联机场景（9 支 / 3232 行）、联机文档 13 篇（1023 行）、联机守卫 18 支（6125 行），合计约 2 万行。产物：`docs/audit/2026-10-30-netplay/`（[00 总览与结论](../audit/2026-10-30-netplay/00-总览与结论.md) / [01 代码与注释审查](../audit/2026-10-30-netplay/01-代码与注释审查.md) / [02 bug 台账](../audit/2026-10-30-netplay/02-bug台账.md)）。基线 `326d586b`，**未改任何生产代码**。
+**做了什么**：对联机模块做了一次**只读**审查 —— `core/net/**`（16 支 / 3120 行）、`server/**`（24 支 / 6412 行）、客户端联机场景（9 支 / 3232 行）、联机文档 13 篇（1023 行）、联机守卫 18 支（6125 行），合计约 2 万行。产物：`docs/archive/audit/2026-10-30-netplay/`（[00 总览与结论](../archive/audit/2026-10-30-netplay/00-总览与结论.md) / [01 代码与注释审查](../archive/audit/2026-10-30-netplay/01-代码与注释审查.md) / [02 bug 台账](../archive/audit/2026-10-30-netplay/02-bug台账.md)）。基线 `326d586b`，**未改任何生产代码**。
 
 **读数**：23 条行为缺陷（P1 × 5 / P2 × 12 / P3 × 6；其中 2 条为用户实机报）、27 条结构债、17 条注释问题、16 条文档漂移、5 条守卫盲区。旧 bughunt 报告（2026-10-22，`.superpowers/bughunt/REPORT.md`）的 17 条已逐条给复核状态（已修 3 / 仍在 3 / 未复核 11）。
 
@@ -249,9 +249,9 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 
 ## 二十六、联机 B1 批修复（2026-10-30，档 1~2）
 
-**起因**：联机模块全量审查（见 §二十五 / `docs/audit/2026-10-30-netplay/`）后用户指令「开做」，并裁定「MVP 是明明赢了、全场最佳却是对面」= **bug**。
+**起因**：联机模块全量审查（见 §二十五 / `docs/archive/audit/2026-10-30-netplay/`）后用户指令「开做」，并裁定「MVP 是明明赢了、全场最佳却是对面」= **bug**。
 
-**改了什么**（8 条，详见 [02-bug台账 §6](../audit/2026-10-30-netplay/02-bug台账.md)）：
+**改了什么**（8 条，详见 [02-bug台账 §6](../archive/audit/2026-10-30-netplay/02-bug台账.md)）：
 1. `BUG-02` MVP 归属：新增纯函数 `ScoreRules.pick_mvp(stats, candidates)`（ACS → 击杀 → 阵亡 → role 升序；**先收第一个候选**，修掉旧 `best_acs := -1.0` 在全员负 ACS 时返回 0=没有 ★ 的边界）；`MatchState.mvp_role(candidates)` 改为折表调用；1v1 传 `[胜者 role]`、3v3 传 `_roles_of_team(胜队)`，平局/候选全失配回落全 roster。**根因是口径不是取反**：旧实现只按 ACS 挑、与胜负脱钩，而 1v1 局内比分可以极端（赢的局 5-4、输的局 0-5）⇒ 败方总 kills 更多、deaths 更少 ⇒ ACS 反超。
 2. `BUG-06` 端口属主探测：`ProcUtil` 新增 `pids_on_udp_port` / `_pid_of_udp_line` / `_addr_has_port`（**UDP 行只有 4 列**、端口按冒号后整段解析）；`local_server` 的残留清理/就绪轮询改调它，删 `_pids_on_port`。
 3. `BUG-11` 1v1 `claim_role` 越界判据：`server_main._on_role_claimed` 去掉 `(_royale or _team_mode) and` 前缀。
@@ -278,7 +278,7 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 
 ## 二十七、删除 `pvp_room_smoke`（2026-10-30）—— 删了什么 = 欠了什么
 
-> 依据：[`docs/audit/2026-10-30-联机验证审计.md`](../audit/2026-10-30-联机验证审计.md) §1.1（A1）。本轮只删测试资产，**未改任何产品代码**。
+> 依据：[`docs/archive/audit/2026-10-30-联机验证审计.md`](../archive/audit/2026-10-30-联机验证审计.md) §1.1（A1）。本轮只删测试资产，**未改任何产品代码**。
 
 **现象（代码路径级确定性，不需复现）**：该支自 2026-10-24（1v1 改为房主点「开始游戏」）起**结构性恒红** —— `pvp_smoke_client.gd`（harness/）从不发 `pvp_start`（`pairing_ready` 全仓唯一发射点在 `pvp_start` 内），`match_start` 判词不可达；30s 轮询超时后 `wait $A_PID/$B_PID` **永久阻塞**，只能靠 `run_real.sh` 的 `timeout 1200` 强杀 ⇒ `.sh` 的 kill 收尾行永远跑不到 ⇒ 大厅 + 2 客户端成孤儿 ⇒ 闸三 FAIL 并 **break** ⇒ 真链路批条目 3~6（rejoin / soak / role_cap / team_match）整批不跑。它违反本仓自述的「一条永远红的闸等于没有闸」，且此前从未登记。
 
@@ -318,9 +318,9 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 
 ## 二十九、联机 B2 批修复（2026-10-30，档 1~2）
 
-**起因**：B1 批之后用户指令「继续修 bug」，按审查台账 `docs/audit/2026-10-30-netplay/` 的 B2/B3 段做客户端接线与回滚环。
+**起因**：B1 批之后用户指令「继续修 bug」，按审查台账 `docs/archive/audit/2026-10-30-netplay/` 的 B2/B3 段做客户端接线与回滚环。
 
-**改了什么**（6 条，详见 [02-bug台账 §6](../audit/2026-10-30-netplay/02-bug台账.md)）：
+**改了什么**（6 条，详见 [02-bug台账 §6](../archive/audit/2026-10-30-netplay/02-bug台账.md)）：
 1. `BUG-08` 回滚环泄漏：`PredictionRollback.note_post_step()` 的淘汰循环补 `_inputs.erase(old)` —— 生产路径（`pvp_match_client._physics_process`）走的是 `note_post_step` + `note_input`，旧代码只有 `advance()` 那条会清 `_inputs` ⇒ ack 断流（重连中/本人包停摆）时 `_inputs` 以 60 份/秒无界增长。
 2. `BUG-18` 大厅假 claim 梯：`lobby_page.gd` 的转连 worker 一次性回调收成具名 `Callable`（`_claim_connected` / `_worker_fail`），`_bind_worker_once` / `_unbind_worker_once` 成对；`_do_go_match` 绑定，`_return_to_lobby` **先解绑**。旧写法（匿名 lambda + `CONNECT_ONE_SHOT` + 无解绑）在 worker 连不上回大厅后，大厅一连上仍会跑 `_claim_role_worker` ⇒ 向大厅 peer 发 `claim_role/player_options/report_token` 并起 25s claim 梯，把玩家从大厅弹走。
 3. `BUG-20` 加速重影节拍器：`TimeFx._fx_other_t`(S-19 后;原在 `pvp_match_client`)从单 float 改 **per-副本 `Dictionary`**，递减改用调用链传下来的**物理 delta**（原为 `get_process_delta_time()`，在物理 delta 链里 ⇒ 帧率相关）；`_time_fx_replica_off` 里 `erase`。旧写法 k 个加速者每帧被减 k 次 ⇒ 触发 ≈ k/0.06 对/秒（16 人 ≈500 张 AfterImage/s）。
@@ -357,7 +357,7 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 ① 背包满拾取替换 → 新枪残弹取地面值；② 新枪条目残弹也是地面值；③ 被换下那把带自己实弹；④ 随机保留项条目正确；
 ⑤ 倒地掉落的当前枪带真实实弹（不是条目陈旧值）；⑥ 对照：背包没满的拾取路径不变。
 **变异验证（三条，逐条改坏 → 红 → 还原 → 绿）**：`pick_up` 改回默认 flush ⇒ ①②红；`random_keep_one` 去掉 flush ⇒ ⑤红；`random_keep_one` 改回默认 flush ⇒ ④红。
-未修状态的红色原文已抄进 `docs/audit/2026-10-30-netplay/02-bug台账.md` 的 BUG-01 段。
+未修状态的红色原文已抄进 `docs/archive/audit/2026-10-30-netplay/02-bug台账.md` 的 BUG-01 段。
 
 **验证（本机 headless；未占 7777、未弹窗）**：`KH gun_ammo_independence PROBE: ALL-OK` · `ALLSCRIPT: OK(195 个脚本全部加载)`（条数闸 194→195）· `python tools/check_naming.py` 绿。`tests/README.md` 默认批读数同步 **18 支 / 119 条闸断言**（+`gun_ammo_independence_probe`(8)）。
 
@@ -369,7 +369,7 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 
 ## 三十一、联机 B4 协议批：v7（DELTA 删除 + trail 定点化 + 版本握手，2026-10-30，档 3）
 
-**起因**：审查台账 B4 批（`docs/audit/2026-10-30-netplay/01-代码与注释审查.md` S-01 / S-22 / BUG-07）。**两端必须同版发布。**
+**起因**：审查台账 B4 批（`docs/archive/audit/2026-10-30-netplay/01-代码与注释审查.md` S-01 / S-22 / BUG-07）。**两端必须同版发布。**
 
 **改了什么**（`core/net/net_codec.gd` 由 922 行重写为 ~620 行）：
 1. **S-01 删差分半套**：`PROTO_VERSION 6→7`。删除 `encode_world(full,prev,keyframes)` / `encode_own(full,prev)` 的 DELTA 分支、`apply_world` / `apply_own`、`_enc_value` / `_unit_equal` / `_deep_equal` / `_delta_mask` / `_write_masked_fields` / `_write_unit_value` / `_read_unit_into` / `_read_masked_fields` / `_own_unit_at` / `_own_unit_count`、`own_full_phase` / `world_keyframe_quota`、`OWN_FULL_PERIOD` / `WORLD_KF_PERIOD` / `W_MASK_ALL`。解码侧 `flags` 必须恰为 FULL（其它值一律拒绝）；`decode_world` / `decode_own` 返回形状收窄为 `{tick,players}` / `{ack_seq,q,tick,c2}`。
@@ -1004,3 +1004,50 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
    （见回滚 plan R4）。60Hz 发包让“一次重传只影响 1 个 tick”。
 4. `aim` 也从“30Hz 取样”变成**每 tick 现读**（更跟手，字节不变）。
 5. 未做真实公网对照读数（发出去 1.68 KB/s 是算术值，非实测），下一次真链路跑批可顺手看一眼服务器上行。
+
+## 五十二、开火/后坐预测一致性诊断（R6）：结论「没有时序 bug」+ 两条待查（2026-11-01，档 0 诊断，零产品改动）
+
+**起因**：用户问「开火后坐不预测吗？如果没有预测且认为可以预测那就加入 plan」，并裁定先诊断、别预设修法
+（见 `docs/superpowers/plans/2026-11-01-rollback-source-align.md` §R6）。
+
+**先钉事实（代码）**：后坐**是**预测的 —— `WeaponBase.fire()` 在两端同一份 `Player._physics_process → weapons.tick()` 里跑，
+`fire()` 末尾 `player.apply_recoil(...)` 直接改 `velocity.x`；影响"哪一 tick 开火"的武器状态
+（`fire_cd / aiming / fire_buf / aim_f / aim_cf / mag / rld / rld_t`）全部进 `capture_state()`，`restore_state()` 经
+`_apply_weapon_state()` 回灌 ⇒ 回滚重放能复现同一发、同一次后坐。**所以没有"把后坐加入预测"这种改动可做**；
+要查的是"为什么偶尔还差一 tick"。★ 明确禁止把开火/后坐改成服务器确认制（50ms 下手感代价不可接受）。
+
+**怎么测**：一次性探针（未入库，`.superpowers/` 已 gitignore、不进 `allscript_probe` 编译面）—— 本机 `127.0.0.1` 大厅 +
+两个真实客户端进程各自实例化 `pvp_game.tscn`（真预测 + rollback），`PacketInputSource` 注入"只开火、不按方向"，
+`CYR_DIAG=1` 收两端 `diag-*.jsonl`；探针把每次 rollback 的**前 3 帧 / 后 3 帧**（`ack/gap/seq/速度/pos/floor/fire_cd/
+_fire_buffered/aiming/mag/rld` + 服务器 `c2` 原始整态）打成 `LBRB {…}`，按 ack 与 diag 对齐。
+三档：同 tick 开火（`edge`）/ 跨 tick 缓冲开火（`buffer`，冷却最后 20% 窗口）/ `hold`（20 帧按 1 帧松，复现旧观测）。
+共跑 13 局、**有效 10 局**（`edge` 2×60s、`buffer` 2×60s、`hold` 5×20s、1×15s 冒烟）；**作废 3 局**：
+`buffer` 2 局（探针冷启动 bug：冷却恒 0 ⇒ 窗口永不出现、0 发）+ 1 局 15s（探针把攻击位写成 `1`，按的其实是"跳"）。
+逐条读数见 plan §R6 的表（表内 9 局 = 4×60s + 5×20s）。
+
+**结论（照实）**：
+1. **稳态没有开火/后坐时序分歧**：5 局 60s、两端合计 ≈1000 发（含单端 316 发/局的全自动档），稳态回滚 **0**；
+   同 tick 与缓冲两档都没产出稳态回滚。所有 `near_fire=True` 的回滚都落在**死亡/复活窗口**或**开局窗口**。
+2. 早先"loopback 20s 里 2 次 `vel`-only"**能复现**，但归因是 **A 类开局窗口**（不是后坐）或 **B 类战斗纠正**。
+3. **A 类（开局窗口）**：`MatchHost` 的 `COUNTDOWN` 分支清空输入队列 + `reset_state()`（`server/match/match_host.gd:219-222`）
+   ⇒ 倒计时期间 `_ack_seq` 恒 0 而客户端照常预测并累积 `seq`；开局第一个 PLAYING ack 让预测环整段对不上 ⇒
+   **每局最多一次 `vel` 回滚**。同一窗口两端都出现"速度累积但位置不动"的态（客户端 `v=(0,7813)`、服务器
+   `c2.vel=(0,7733)`、`pos` 冻结 `(3168,2145.435)`）。
+4. **B 类（设计内）**：`down` 类每条 `c2` 都是 `hp=0/down=true`；`pos` 类伴随复生传送或 `PvpSession.spawn` 校正；
+   `hp` 类是挨打回灌 ⇒ C2 的权威纠正，不是要消灭的回滚。
+5. **R4（服务端丢 tick）在本机未复现**：全部 13 局 `queue_drop` **0 条**、`snap_gap` 0 条；`ack` 跳变只出现在开局窗口
+   （输入走 reliable 通道 1，不是丢包）。⇒ R4 的证据仍只能来自公网抖动读数。
+6. 采样口径：探针轮询 `rollback_count()` 会漏"同一帧第二次回滚"（`pre_2` B：diag 6 条 / 探针 5 条）⇒
+   **回滚次数一律以 diag 的 `rollback` 行为准**，探针只提供上下文。
+
+**待查（本轮不出修法，已定性登记）**：
+- **① 开局窗口的速度冻结**：倒计时期间是否该把 `velocity` 也钉住（现在只钉位置/清输入）—— 代价 1 次/局的 `vel` 回滚，
+  是否值得改取决于"开局那一帧是否可见橡皮筋"（需人眼）；改法候选 = `COUNTDOWN` 分支补 `velocity = Vector2.ZERO`。
+- **② C 类未定案 1 例（样本量 = 1）**：`pre_1` B 在 f=777…803 连续 4 次 `vel`，服务器 `c2` 是
+  "`vel.y` 每 tick +26.67（重力）累积、`vel.x` 按空气阻力衰减，但 `pos` 几乎不动、`hp=50/down=false`"。
+  当前 `c2` 不带 `on_floor` 可观测性 ⇒ 下一步要**先在服务器侧把 `is_on_floor` 加进 diag**（不进快照）再复现，
+  否则只能当噪声。**不许**为了消掉它去放宽 `_close_enough` 的 `vel` 容差。
+
+**守卫**：本轮是**诊断**，没有新守卫（诊断类不写断言，见 `docs/eng/tests.md` 的不写清单）；一次性探针未入库，
+复现命令与参数写在 plan §R6「方法」段。plan §R6 / §R0c / 结果表已同步；`docs/eng/netcode-input-uplink.md` 的
+60Hz 口径不因此改动。

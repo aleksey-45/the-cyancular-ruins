@@ -101,6 +101,7 @@ Godot **4.7.1 标准版(非 mono)** 做的 2D 横版射击 demo「The Cyancular 
 - 同一个量是**乘子**还是**浓度**,把方向写进注释与派发。
 - `.ps1` 必须 **CRLF**;编码 =「**纯 ASCII 或带 UTF-8 BOM**」。`.bat` 同样必须 **CRLF**,编码不查。两者都由 `.gitattributes` 的 `eol=crlf` + `python tools/check_naming.py` 的**规则 E**逐文件守(红了用 `rm <file> && git checkout -- <file>` 重新落盘,纯 EOL、不动内容);PowerShell 起带空格的路径要**手工内嵌双引号**。
 - **噪声与信号分不清时:同配置跑两次**。
+- **文档真相源只有一处**:`docs/eng/*.md`(域)、`README.md` / `RELEASE.md` / `AGENTS.md` / `CLAUDE.md`(入口)、`docs/pvp-networking.md`(网络设计)。`docs/archive/**` 是**历史快照**(过期数值、已改掉的协议、已废弃路径都在里面)⇒ **不要当依据引用**;只有写明"当时"时引用才成立。新写的结论一律进 `docs/eng/`,不要往归档里补。
 
 ## 4. 去哪查(指针)
 
@@ -108,6 +109,7 @@ Godot **4.7.1 标准版(非 mono)** 做的 2D 横版射击 demo「The Cyancular 
 |---|---|
 | 架构、参数体系、网络协议、敌人 / 武器 / UI / 渲染的域细节 | [`CLAUDE.md`](CLAUDE.md) 是索引 → 按域读 [`docs/eng/`](docs/eng);域的真相源 = `ls docs/eng/*.md` |
 | 既有红 / 待还的债 / 已裁定不做 | [`docs/eng/registered-debt.md`](docs/eng/registered-debt.md) |
+| 历史归档(旧审计 / 旧计划 / 旧 spec) | [`docs/archive/`](docs/archive/README.md) —— **历史快照,不是真相源**;只在追溯"当时为什么这么定"时读,查现状一律以源码 + `docs/eng/` 为准 |
 | 发布、裁剪模板、版本号、产物冒烟 | [`RELEASE.md`](RELEASE.md) |
 | 目录分层、操作、PvP 规则要点 | [`README.md`](README.md) |
 | 测试分层与跑法 | [`tests/README.md`](tests/README.md)、[`tests/env.sh`](tests/env.sh) 的注释 |

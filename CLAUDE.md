@@ -49,3 +49,4 @@ Godot 不在 PATH,用绝对路径。**两个二进制不能混用**:`GODOT`(cons
 | 注释怎么写(含**注释额度**:>100 行的 `.gd` ≤15%)、守卫幻觉怎么标 | [`docs/eng/comment-style.md`](docs/eng/comment-style.md) |
 | 房间 / 端口生命周期约定(回收梯、超龄扫、端口池) | [`docs/eng/room-lifecycle-conventions.md`](docs/eng/room-lifecycle-conventions.md) |
 | **动手前必看**:既有红 / 待还的债 / 已裁定不做 | [`docs/eng/registered-debt.md`](docs/eng/registered-debt.md) |
+| 追溯"当时为什么这么定"(旧审计 / 旧计划 / 旧 spec) | [`docs/archive/`](docs/archive/README.md) —— **历史快照,非真相源**:过期数值 / 已改协议 / 已废弃路径都在里面,查现状别读它 |
