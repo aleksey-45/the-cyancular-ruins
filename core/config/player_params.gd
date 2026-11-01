@@ -37,7 +37,7 @@ const cam_lookahead_y: float = 80.0    # ★ 当前**未使用**:垂直前瞻会
 const cam_y_bias: float = -100.0       # 基础向上偏移(保留原 100px)
 const cam_smooth_x: float = 10.0       # X 平滑指数系数
 const cam_smooth_y: float = 8.0        # Y 平滑指数系数
-const cam_deadzone: float = 8.0        # 死区像素(小于此值镜头不动)
+const cam_deadzone: float = 24.0       # 死区像素(小于此值镜头不动);≥16px = 一格台阶的抬升不再推画面
 # 相机缩放(<1 = 视野更大;0.75 = 4→3 整数下采样,像素缩放最干净、无滚动抖动)
 const cam_zoom: float = 0.75
 
