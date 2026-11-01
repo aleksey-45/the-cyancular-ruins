@@ -259,7 +259,7 @@ def check(decls, doc_text, code_problems=()):
 
 
 def _cell_suffix(cell: str) -> str:
-    """保留 RPC 名单后面的说明文字(通道 1 的「(30Hz …)」);名单本身由代码生成。"""
+    """保留 RPC 名单后面的说明文字(通道 1 的「(60Hz …)」);名单本身由代码生成。"""
     rest = []
     for chunk in cell.split(" / "):
         r = _NAME_TOKEN.sub("", chunk.strip()).strip()

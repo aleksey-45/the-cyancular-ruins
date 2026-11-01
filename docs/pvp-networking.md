@@ -114,14 +114,14 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 
 1. 同步地面武器位置、Beta 时间玩法(`time_economy`)与加速态。
 2. 快照相位:每 `SNAPSHOT_STRIDE = 1` 个 tick 广播一次 `snapshot_world` + 逐 peer `snapshot_own`(2026-10-30 起全 60Hz);**世界包与本人包都每包全量**(v7 删除了 DELTA 编解码;历史:差分曾在乱序/丢包下 RTT 级冻结)。详见 `eng/netcode-snapshots.md` §1.4.1。
-3. 消费输入:每 tick 从 FIFO 取一条记录(30Hz 一包装两条,流水线);`clear_edges()`,`apply_packet()`,更新 `_ack_seq[role]`。COUNTDOWN 期间清空队列并 `reset_state()`。
+3. 消费输入:每 tick 从 FIFO 取一条记录(60Hz 一包一条;2026-11-01 改回 60Hz 单记录包,见 [`netcode-input-uplink.md`](eng/netcode-input-uplink.md) 与 `registered-debt.md` §五十一);`clear_edges()`,`apply_packet()`,更新 `_ack_seq[role]`。COUNTDOWN 期间清空队列并 `reset_state()`。
 4. 玩家与子弹的 `_physics_process` 由场景树步进(父先于子,读到的是本帧注入)。
 5. `_adjudicate_bullets()`、`_broadcast_pending_beams()`、`_match_round_tick()`、队列诊断。
 6. 可破坏碰撞块重建:每帧最多 2 块(`CollisionBuilder.rebuild_chunk`)。
 
 ### 输入 / 快照(权威在 docs/eng)
 
-- 输入包字段 / 位常量 / 30Hz 一包两记录:见 [`netcode-input-uplink.md`](eng/netcode-input-uplink.md)。
+- 输入包字段 / 位常量 / 60Hz 一包一条记录(2026-11-01 改回 60Hz 单记录包;此前 30Hz 一包两条):见 [`netcode-input-uplink.md`](eng/netcode-input-uplink.md)。
 - 快照频率 / 字段 / 尺寸 / trail 定点 / 丢弃规则:见 [`netcode-snapshots.md`](eng/netcode-snapshots.md)。
 - 通道归属与 RPC 清单:见 [`netplay-rpc-channels.md`](eng/netplay-rpc-channels.md)。
 
@@ -148,9 +148,9 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 
 ### 输入上报
 
-- **每物理 tick**：`note_post_step()`(上一 tick 的预测整态) + `reconcile()` + `PacketInputSource.pack_record()`(一条 = 1 tick) + C2 `note_input`；**每 2 个 tick** 把 `[上一 tick, 本 tick]` 两条记录 `pack_pair()` 后 `NetBus.rpc_id(1, "send_input", pkt)`（流水线,30Hz 发包）。
-- 包字段:`seq`(包级=高 tick,低 tick=seq-1)、`held0/1`、`ax0/1`、`pressed0/1`、`released0/1`、`winst0/1`、`aim`、`st`、`ct`。
-- 位常量 `PacketInputSource.BIT_*`:up=1 / down=2 / charge=4 / attack=8 / reload=16 / pickup=32 / drop=64 / haste=128 / rewind=256 / **need_full=512**(P1.5:增量基准断了,请求服务器补 FULL;不是玩家动作)。
+- **每物理 tick**：`note_post_step()`(上一 tick 的预测整态) + `reconcile()` + `PacketInputSource.pack_record()`(一条 = 1 tick) + C2 `note_input`；本 tick 的一条记录经 `InputUplink.begin_tick()` / `submit()` / `take_packet()` **本 tick 立即发** `NetBus.rpc_id(1, "send_input", pkt)`（60Hz 一包一条;2026-11-01 改回 60Hz 单记录包,原 30Hz 合包的 `pack_pair()` 已删）。
+- 包字段(单记录 9 字段,28 B/包):`seq`、`held`、`ax`、`pressed`、`released`、`winst`、`aim`、`st`、`ct`(`seq` 即该 tick 的序号,不再有"包级 seq / 低 tick = seq-1")。
+- 位常量 `PacketInputSource.BIT_*`:up=1 / down=2 / charge=4 / attack=8 / reload=16 / pickup=32 / drop=64 / haste=128 / rewind=256 / **need_full=512**(v7 起为**保留位**、恒不置位:差分已删,`NetBus.snapshot_need_full()` 恒 false;仍在线格式里但不用)。
 - 本地预测**不锁存**(60Hz 真输入),C2 重放 1 步/记录;客户端与服务器逐 tick 同序。
 
 ### 快照消费
@@ -193,7 +193,7 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 
 ## 10. 协议汇总
 
-> 协议与字段的权威在 [`eng/netplay-rpc-channels.md`](eng/netplay-rpc-channels.md)(通道归属 / 61 条)、[`eng/netcode-snapshots.md`](eng/netcode-snapshots.md)(世界/本人包字段与尺寸)、[`eng/netcode-input-uplink.md`](eng/netcode-input-uplink.md)(输入包)。本文不再逐字段抄写(重复即漂移,见 01 审查 S-25)。
+> 协议与字段的权威在 [`eng/netplay-rpc-channels.md`](eng/netplay-rpc-channels.md)(通道归属 / 60 条)、[`eng/netcode-snapshots.md`](eng/netcode-snapshots.md)(世界/本人包字段与尺寸)、[`eng/netcode-input-uplink.md`](eng/netcode-input-uplink.md)(输入包)。本文不再逐字段抄写(重复即漂移,见 01 审查 S-25)。
 
 
 ## 11. 环面纪律
