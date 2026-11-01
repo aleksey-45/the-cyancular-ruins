@@ -5,6 +5,9 @@ const HitShape := preload("res://core/sim/hit_shape.gd")   # 受击判定几何�
 @export var animator : AnimatedSprite2D
 
 var gravity: float = GameParameters.gravity0
+# 自动跳跃的落地余量(px):按v=-sqrt(2gh)算的峰值高度**等于**台阶高度,60Hz 离散化下可能差一帧够不到,
+# 加 2px(远小于一个 16px 子格,肉眼不可辨)保证真的能站上去。
+const AUTO_JUMP_CLEARANCE := 2.0
 var jump_velocity: float = PlayerParams.jump_velocity
 var charge_down_velocity: float = PlayerParams.charge_down_velocity
 var charge_velocity: float = PlayerParams.charge_velocity   # 冲刺速度
@@ -286,15 +289,25 @@ func _tick_vertical(delta: float, latched: bool, in_water: bool, mult: Vector2, 
 	# ★ 自动跳跃(用户 2026-11-01):地面朝前走、前方是 **≤1 格(64px)** 高的台阶时自动起跳;
 	#   更高的墙不自动跳(否则对着墙会反复起跳),冲刺中也不跳(冲刺本身有低重力可跨沟,跳会打断冲刺)。
 	#   判据只读 16px 子格(两端同一份数据),不读碰撞体/射线 —— 客户端预测与服务器重放必须得出同一结论。
+	# ★★ 跳跃高度 = 台阶高度(用户同日裁定「跳跃高度应该和墙高度相同」):按 v = -sqrt(2·g·h) 给**刚好越过**的速度,
+	#   不是整段满力跳(满力跳≈3 格,撞 16px 台阶会莫名窜很高)。+2px 是离散化的落地余量(等高在 60Hz 下可能差一帧)。
 	if not latched and not in_water and not is_squat and not is_charge and is_on_floor() and jump_buffer_timer <= 0.0:
 		var dir := 0
 		if horizontal_input > 0.01:
 			dir = 1
 		elif horizontal_input < -0.01:
 			dir = -1
-		if dir != 0 and StepJump.low_step_height(_front_feet_subcell(dir), dir,
-				Callable(self, "_sub_solid_at")) > 0:
-			jump_buffer_timer = jump_buffer_time
+		if dir != 0:
+			var step_sub := StepJump.low_step_height(_front_feet_subcell(dir), dir, Callable(self, "_sub_solid_at"))
+			if step_sub > 0:
+				var sub_px := float(GameParameters.TILE_SIZE) / float(StepJump.SUB_PER_CELL)
+				var step_px := float(step_sub) * sub_px + AUTO_JUMP_CLEARANCE
+				velocity.y = StepJump.jump_velocity_for_height(step_px, gravity)
+				jump_buffer_timer = 0.0
+				coyote_timer = 0.0
+				# 小跳不参与「松上键截断」:否则松手那一下会把速度削半、正好够不上台阶。
+				jump_cut_applied = true
+				squash.impulse(SquashStretch.Impulse.JUMP)
 	if input_source.is_action_just_pressed("up"):
 		jump_buffer_timer = jump_buffer_time
 	else:

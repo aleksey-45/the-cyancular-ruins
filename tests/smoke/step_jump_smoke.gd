@@ -8,7 +8,7 @@ extends SceneTree
 #   ② 跳跃后能不能真的落上去(物理 + 跳跃高度,由 PlayerParams 决定);③ 手感(自动跳是否太灵敏)。
 # 跑法:"$GODOT" --headless --path . -s res://tests/smoke/step_jump_smoke.gd;通过 = STEP JUMP OK(n 条断言)。
 
-const EXPECTED_CHECKS := 7
+const EXPECTED_CHECKS := 10
 
 var _fails: Array[String] = []
 var _checks := 0
@@ -72,6 +72,19 @@ func _initialize() -> void:
 			"dir==0 必须返回 0(实得 %d)" % StepJump.low_step_height(feet, 0, one))
 
 	# ⑦ 台阶"中间有空"不算连续实体(2 个子格高但缺一个 ⇒ 高度 1)
+	# ... 以下为「跳跃高度 = 台阶高度」的三条(用户 2026-11-01 裁定)
+	var g := 1600.0
+	var v64 := StepJump.jump_velocity_for_height(64.0, g)
+	var v16 := StepJump.jump_velocity_for_height(16.0, g)
+	# ⑧ 峰值高度必须 == 给定高度(v²/(2g) 还原)
+	_chk(absf((v64 * v64) / (2.0 * g) - 64.0) < 0.01,
+			"★ 64px 台阶的起跳速度应恰好跳到 64px(反算得 %.2f)" % ((v64 * v64) / (2.0 * g)))
+	# ⑨ 台阶越高跳得越有力(单调),且 1 格(64px)的小跳必须弱于整段满力跳
+	_chk(absf(v16) < absf(v64) and absf(v64) < 1000.0 and absf(v16) > 0.0,
+			"★ 16px 台阶应比 64px 跳得轻,且 1 格小跳弱于满力跳(实得 |%.1f| / |%.1f|)" % [v16, v64])
+	# ⑩ 退化输入不产生 NaN/正值
+	_chk(StepJump.jump_velocity_for_height(0.0, g) == 0.0 and StepJump.jump_velocity_for_height(64.0, 0.0) == 0.0,
+			"零高度/零重力必须返回 0(不得出 NaN/正速度)")
 	var gap := _solid_set([Vector2i(11, 20), Vector2i(11, 18)])
 	_chk(StepJump.low_step_height(feet, 1, gap) == 1,
 			"不连续实体只按连续段计高(实得 %d)" % StepJump.low_step_height(feet, 1, gap))

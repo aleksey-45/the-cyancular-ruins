@@ -31,3 +31,13 @@ static func low_step_height(feet_sub: Vector2i, dir: int, solid_at: Callable) ->
 	if bool(solid_at.call(Vector2i(ahead_x, feet_sub.y - MAX_STEP_SUBCELLS))):
 		return -1
 	return h
+
+
+# 跳到指定高度所需的上跳初速度:峰值高度 = h ⇔ v = -sqrt(2·g·h)。
+# ★ 2026-11-01 用户裁定「跳跃高度应该和墙高度相同」:自动跳要用**刚好越过高台**的速度,
+#   而不是整段满力跳(满力跳 ≈ 3 格,撞 16px 台阶会莫名其妙窜很高)。g 必须是两端同一个常量
+#   (player.gd 的 `gravity` = PlayerParams.gravity0),否则预测/重放会算出不同速度。
+static func jump_velocity_for_height(height_px: float, gravity: float) -> float:
+	if gravity <= 0.0 or height_px <= 0.0:
+		return 0.0
+	return -sqrt(2.0 * gravity * height_px)
