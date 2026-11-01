@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use subagent-driven-development (recommended) or executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
-> **写于 2026-10-27**（用户已批准 spec `docs/superpowers/specs/2026-10-27-ui-components-design.md`）。
+> **写于 2026-10-27**（用户已批准 spec `docs/archive/superpowers/specs/2026-10-27-ui-components-design.md`）。
 > ★ **执行方式**：本计划按仓库档位执行（Phase 0/1/3/4/5 = 档 1 纯表现；Phase 2 = 档 2 单子系统），**不逐任务评审**，最后整体评审 + 全量复核。若用户改选 subagent-driven，则每任务加一次独立 review。
 > ★ **开工前置（硬）**：并行会话的未提交工作先由本会话替其提交（见 §0 Prereq）；然后 `git status` 必须只剩本计划自己的改动。共用工作树纪律：**逐个文件 `git add`、逐 hunk 认领**，绝不 `git add -A`。
 
@@ -14,7 +14,7 @@
 
 **Tech Stack:** Godot 4.7.1 标准版（非 mono）/ GDScript / `.tscn` 场景 / 生成式 Theme。
 
-**Spec:** [`docs/superpowers/specs/2026-10-27-ui-components-design.md`](../specs/2026-10-27-ui-components-design.md)（执行者两篇都读）
+**Spec:** [`docs/archive/superpowers/specs/2026-10-27-ui-components-design.md`](../specs/2026-10-27-ui-components-design.md)（执行者两篇都读）
 
 ## Global Constraints
 
@@ -26,7 +26,7 @@
 - **判据一律 grep 判词文本**（`GEN THEME: OK` / `AUTOTEST[...]: DONE` / `RUN_ALL …` / `ALL-OK`），退出码不作判据。
 - **取图/量几何必须带窗口**（`--headless` 下视口纹理是空壳）；量几何的 dump 脚本要选出一条**只依赖布局**的路径（headless 可跑）。
 - **不新增永久守卫**；Phase 2 按档 2 做**一条**承重断言变异验证（武器框数 = 背包把数）。
-- **证据归档**：`docs/audit/2026-10-27-ui/p1/<phase>/`（before/after PNG + diff 数字 + 读数 json），与代码同 commit。
+- **证据归档**：`docs/archive/audit/2026-10-27-ui/p1/<phase>/`（before/after PNG + diff 数字 + 读数 json），与代码同 commit。
 - **真链路不跑**：需要 7777 的 `rejoin/team_match` watcher 本批不跑（spec D8），只在报告里写「未跑 + 理由」。
 - **共享工作树**：开工前 `git status` 确认只含本任务文件；发现他人改动立即停下报告。
 
@@ -55,18 +55,18 @@
 
 **Files:**
 - Create: `.superpowers/sdd/_gen/p1_shots.gd`、`.superpowers/sdd/_gen/p1_shots.tscn`、`.superpowers/sdd/_gen/p1_diff.py`（整目录 gitignored，只作一次性量具）
-- Create: `docs/audit/2026-10-27-ui/p1/phase0/before/*.png`（入库证据）
+- Create: `docs/archive/audit/2026-10-27-ui/p1/phase0/before/*.png`（入库证据）
 
 **Interfaces:**
 - 产出：`p1_shots.gd` 约定 `-- <输出子目录>`；固定 14 个镜头：`settings_top` / `info_top` / `beta_menu` / `main_sp_panel` / `lobby_empty` / `lobby_rooms` / `lobby_create_pvp` / `lobby_create_team` / `lobby_create_royale` / `lobby_join` / `wait_pvp` / `wait_royale` / `wait_team` / `pause_menu`。
 - `p1_diff.py <before_dir> <after_dir>` → 逐图打印 `changed_px` 与总 `mean_abs`；`changed_px > 0` 时列出差异图（`diff_<name>.png`）。
 
-- [ ] **Step 1: 写取图驱动**，复用 `docs/audit/2026-10-27-ui/_drivers/ui_audit_shots.gd` 的流程（同 `add_child` + `_save`），但**固定夹具**：`PvpSession.server_address = "127.0.0.1"`；大厅状态栏文本由夹具直接灌死（`lobby.get("_status").text = "夹具"`），避免「连接中/超时/共 N 个房间」时序抖动；`pause_menu` 用 `level_0.tscn` + `PauseMenu` 打开态。
+- [ ] **Step 1: 写取图驱动**，复用 `docs/archive/audit/2026-10-27-ui/_drivers/ui_audit_shots.gd` 的流程（同 `add_child` + `_save`），但**固定夹具**：`PvpSession.server_address = "127.0.0.1"`；大厅状态栏文本由夹具直接灌死（`lobby.get("_status").text = "夹具"`），避免「连接中/超时/共 N 个房间」时序抖动；`pause_menu` 用 `level_0.tscn` + `PauseMenu` 打开态。
 - [ ] **Step 2: 跑两遍，证明夹具确定**。命令（窗口模式，不要 `--headless`）：
-      `"$GODOT" --path . --quit-after 3600 res://.superpowers/sdd/_gen/p1_shots.tscn -- docs/audit/2026-10-27-ui/p1/phase0/before`
+      `"$GODOT" --path . --quit-after 3600 res://.superpowers/sdd/_gen/p1_shots.tscn -- docs/archive/audit/2026-10-27-ui/p1/phase0/before`
       跑两次到 `before/` 与临时 `before2/`，`python .superpowers/sdd/_gen/p1_diff.py before before2`，期望 **changed_px = 0**。若不为 0，逐个镜头找随机源并钉死（设置/地址/随机地图/随机房间数据），直到 0。
 - [ ] **Step 3: 生成正式基线**，存档到 `phase0/before/`，commit。
-- [ ] **Step 4: Commit**：`git add docs/audit/2026-10-27-ui/p1/phase0/before` + `git commit -m "test(ui): P1 迁移前基线截图(逐像素对比夹具)"`
+- [ ] **Step 4: Commit**：`git add docs/archive/audit/2026-10-27-ui/p1/phase0/before` + `git commit -m "test(ui): P1 迁移前基线截图(逐像素对比夹具)"`
 
 ### Task 2: `header_strip_panel` 组件
 
@@ -100,7 +100,7 @@
 - [ ] **Step 2: 改 3 个 `.gd` 调用点**（main_menu ×2：`"—— 单人开局 ——",48,true` / `"禁用武器(勾选 = 本局不可用)",32,false`；beta_menu ×1 `centered=true`；map_picker ×1 `false`）。
 - [ ] **Step 3: 几何复核**：跑 Task 2 的 probe 扩展到「实例化整个场景后遍历 HeaderStripPanel」：期望 15 个组件全部左/右内边距 24，页首 6 条 `alignment=CENTER`、分区 9 条 `LEFT`。
 - [ ] **Step 4: 取图 diff**：`p1_shots` 跑 after，`python p1_diff.py phase0/before <after>`，期望 **changed_px = 0**（14 镜头全 0）；若非 0 停在第一个不为 0 的镜头查原因。
-- [ ] **Step 5: Commit**：逐个 add 4 tscn + 3 gd + `docs/audit/2026-10-27-ui/p1/phase0/after` + `p1_diff.txt`，`git commit -m "refactor(ui): 15 条标题带 + 4 处代码调用改用 HeaderStripPanel"`
+- [ ] **Step 5: Commit**：逐个 add 4 tscn + 3 gd + `docs/archive/audit/2026-10-27-ui/p1/phase0/after` + `p1_diff.txt`，`git commit -m "refactor(ui): 15 条标题带 + 4 处代码调用改用 HeaderStripPanel"`
 
 ---
 
@@ -113,7 +113,7 @@
 - Rewrite: `ui/screens/pause_menu.gd`
 - Modify: `tools/gen_menu_theme.gd`（新增 `PanelCarvedBodyInset72` 变体）、`ui/theme/menu_theme.tres`（生成物）
 - Modify 调用点：`scenes/level_0.gd:620`、`scenes/pvp_game.gd:82`、`scenes/royale_game.gd:82`、`scenes/team_game.gd:67`
-- 证据: `docs/audit/2026-10-27-ui/p1/phase1/`
+- 证据: `docs/archive/audit/2026-10-27-ui/p1/phase1/`
 
 **Interfaces:**
 - 场景：`CanvasLayer`(layer=145，`process_mode=3`) → `Root Control`(full rect, visible=false) → `Dim ColorRect`(0,0,0,0.55) + `Center CenterContainer` → `Panel PanelContainer`(`PanelCarved`) → `Body PanelContainer`(`PanelCarvedBodyInset72`) → `VBox`(sep 28) → `Header HeaderStripPanel`(`title_size=64`,`centered=true`) + `Resume Button`(`BtnGold`, min 480×72) + `Back Button`(`BtnQuiet`, min 480×72)。
@@ -139,7 +139,7 @@
 
 **Files:**
 - Create（scratch）: `.superpowers/sdd/_gen/p1_hud.gd/.tscn`、`.superpowers/sdd/_gen/p1_hud_readouts.gd`（读节点 rect/文本）
-- Create: `docs/audit/2026-10-27-ui/p1/phase2/before/`（PNG + `readouts.json`）
+- Create: `docs/archive/audit/2026-10-27-ui/p1/phase2/before/`（PNG + `readouts.json`）
 
 **Interfaces:**
 - 夹具固定：`MazeGenerator.set_map_file("res://maps/newfactory.cyrm")` + `GameParameters.refresh_map_size()`（钉死地图与尺寸）；实例化 `level_0.tscn`，等 30 帧，隐藏 `WorldViewport` 与 PostProcess（HUD 半透明底板后面统一成纯背景）；固定玩家状态：满血、背包 3 把（手枪/步枪/霰弹）、氧满；截图 `hud_full`，再改状态：低血(25%)、背包 1 把、氧半，截图 `hud_low`。
@@ -245,4 +245,4 @@
 
 ## Execution Handoff
 
-计划保存到 `docs/superpowers/plans/2026-10-27-ui-components.md`。执行方式建议 **Native**（仓库档位不要求逐任务评审；任务间接口由本计划锁定），最后整体评审。用户已批准 spec 并指示「开工」，按 Native 执行。
+计划保存到 `docs/archive/superpowers/plans/2026-10-27-ui-components.md`。执行方式建议 **Native**（仓库档位不要求逐任务评审；任务间接口由本计划锁定），最后整体评审。用户已批准 spec 并指示「开工」，按 Native 执行。

@@ -15,9 +15,9 @@
 **Tech Stack:** Godot 4.7.1 标准版（非 mono）/ GDScript / ENet。
 
 **Spec:** 无独立 spec 文件；设计事实来自 2026-10-28 会话的回滚来源分析，以及三处必读：
-- [`docs/eng/netcode-snapshots.md`](../../eng/netcode-snapshots.md) §1.3（本人包 `ack` / `c2`）、§2.1（服务器命中回放）
-- [`docs/eng/netcode-client-interp-and-input-details.md`](../../eng/netcode-client-interp-and-input-details.md) §3（服务器每 tick 恰消费一条记录）、§4（ack）
-- [`docs/eng/registered-debt.md`](../../eng/registered-debt.md) §二十二（接触回滚：扫描结论 + 边界照实写的先例）
+- [`docs/eng/netcode-snapshots.md`](../../../eng/netcode-snapshots.md) §1.3（本人包 `ack` / `c2`）、§2.1（服务器命中回放）
+- [`docs/eng/netcode-client-interp-and-input-details.md`](../../../eng/netcode-client-interp-and-input-details.md) §3（服务器每 tick 恰消费一条记录）、§4（ack）
+- [`docs/eng/registered-debt.md`](../../../eng/registered-debt.md) §二十二（接触回滚：扫描结论 + 边界照实写的先例）
 
 ---
 

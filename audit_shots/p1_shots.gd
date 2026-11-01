@@ -2,12 +2,12 @@ extends Node
 
 # 【一次性】P1 组件迁移的前后取图夹具（scratch，P1 收尾删除）。
 # 用法（★ 不带 --headless：headless 下视口纹理是空壳，取图静默为空）：
-#   "<GODOT>" --path . --quit-after 3600 res://audit_shots/p1_shots.tscn -- docs/audit/2026-10-27-ui/p1/phase0/before
+#   "<GODOT>" --path . --quit-after 3600 res://audit_shots/p1_shots.tscn -- docs/archive/audit/2026-10-27-ui/p1/phase0/before
 # 判定"夹具是否确定"：同一进程外连续跑两次到两个目录，逐像素 diff 必须全 0。
 # 固定项：设置里的地图/禁用武器、PvpSession 地址与昵称、大厅状态栏文本、信息页版本号与 commit 列表
 # （这两处随 git HEAD 变）、主菜单背景（shader 每帧在动）、LineEdit 光标闪烁（时间相位）。
 
-const OUT_ROOT := "res://docs/audit/2026-10-27-ui/p1/"
+const OUT_ROOT := "res://docs/archive/audit/2026-10-27-ui/p1/"
 const EXPECTED := 14
 const CLEAR_BG := Color(0.07, 0.08, 0.10, 1.0)
 

@@ -18,7 +18,7 @@
 - 物理模拟 60Hz。快照 `tick` 是 60Hz 物理 tick 域的时间戳，每包 `+= 1`，一个包跨 1 个物理 tick。
 - 触发：`server/match/match_host.gd` 的整数相位 `_snapshot_tick_phase`，满 `SNAPSHOT_STRIDE` 广播一次（浮点累加在整除边界会漂）。
 - stride 必须整除 60；发包率变化不改协议、不改客户端 playout/历史环的 tick 刻度。
-- 同一相位决定"本 tick 是否消费一条输入记录"（见 §3）；输入上行仍是 30Hz（`INPUT_BATCH_TICKS=2`），与下行发包率无关。
+- 同一相位决定"本 tick 是否消费一条输入记录"（见 §3）；输入上行自 2026-11-01 改回 60Hz 单记录包（`INPUT_BATCH_TICKS=1`，一包一条记录），与下行发包率无关（此前的 30Hz 一包两条已废弃）。
 - ★ 2026-10-30：从"≤6 人 60Hz / >6 人 30Hz"改为**全部 60Hz**（用户指定）—— 样本间隔一律 16.7ms；代价见 [`netcode-at-16-players.md`](netcode-at-16-players.md) §1（16 人局服务端上行 ≈0.6 MB/s）。
 
 ### 1.2 世界包：一次广播，13 字段
@@ -55,7 +55,7 @@ NetBus.rpc_id(peer, "snapshot_own",
 
 ### 1.4 线格式与载荷
 
-- `core/net/net_codec.gd` 用一张 schema 表 + 手打包成 `PackedByteArray`（快照 + 输入同模块）。首字节 `PROTO_VERSION := 7`（**6→7 两端必须同版**：DELTA 编解码已删除 + trail 改定点），第二字节种类（`KIND_WORLD` / `KIND_OWN` / `KIND_INPUT`）。
+- `core/net/net_codec.gd` 用一张 schema 表 + 手打包成 `PackedByteArray`（快照 + 输入同模块）。首字节 `PROTO_VERSION := 8`（**7→8 两端必须同版**：2026-11-01 输入上行改回 60Hz 单记录包；**6→7** 是 DELTA 编解码删除 + trail 改定点），第二字节种类（`KIND_WORLD` / `KIND_OWN` / `KIND_INPUT`）。
 - ★ 2026-10-24 bool 打包：bool 按**记录**打包成 1 B 标志字节（`T_BOOLS`；世界 4 个 / `c2` 7 个 / 武器块 3 个）。**不是跨字段位流** —— 收益等价（世界条目当时 51→48 B、本人包 102→94 B）但不需要 bit 游标与 padding 校验，解码也不会因尾部 padding 判据制造误红/误绿；代价是组内对齐浪费 ≤7 bit。小整数位宽 / 真位流留给后续（要先登记每字段值域）。
 - ★ 2026-10-26 **P1 字段定点化**（`PROTO_VERSION 4→5`）：世界包 `pos` / `vel` → 2×i16（**0.5px** / 0.5px·s⁻¹ 步长；i16 只有 ±32767，0.1px 步长装不下 9600px 地图）、`aim` → u8 角度（256 向）；输入包 `aim` → 2×i16（1e-4 定点，解码后 normalize）。★ `c2` / 本人包**不动** —— 它是 C2 回滚锚点，单方面量化会让每次重放判分歧；世界包字段都是渲染量，量化是两端同版一起换。误差与方案见 [`netcode-delta-and-quantization-details.md`](netcode-delta-and-quantization-details.md) §6。
 - ★ 2026-10-30 **DELTA 删除 + trail 定点化**（`PROTO_VERSION 6→7`）：生产 2026-10-28 已回退全量，差分只剩探针在养 ⇒ 这次把差分编解码**整体删除**（线格式真相从 3 份回到 1 份）；`trail` 从 2×float32 改 2×i16（0.5px 步长，与 pos/vel 同 Q_SCALE）⇒ 世界条目 33→25 B、最坏世界包 791→536 B。

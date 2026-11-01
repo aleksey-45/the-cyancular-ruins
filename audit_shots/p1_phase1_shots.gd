@@ -2,7 +2,7 @@ extends Node
 
 # 【一次性】Phase 1 暂停菜单取图夹具(收尾删除)。固定在纯色底上,不拉世界(随机地图/动画不进图)。
 # 用法(★ 不带 --headless):
-#   "<GODOT>" --path . --quit-after 600 res://audit_shots/p1_phase1_shots.tscn -- docs/audit/2026-10-27-ui/p1/phase1/before
+#   "<GODOT>" --path . --quit-after 600 res://audit_shots/p1_phase1_shots.tscn -- docs/archive/audit/2026-10-27-ui/p1/phase1/before
 # 迁移前:PauseMenu.new(bool) 现建节点;迁移后:res://ui/screens/pause_menu.tscn 存在 ⇒ 走场景。
 # 同一夹具前后各跑一次,逐像素 diff 必须全 0。
 

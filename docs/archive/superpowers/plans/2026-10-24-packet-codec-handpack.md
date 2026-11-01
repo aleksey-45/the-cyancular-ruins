@@ -13,10 +13,10 @@
 **Tech Stack:** Godot 4.7.1 标准版（非 mono）/ GDScript / ENet
 
 **Spec（2026-10-24 清理后仍存活的文档）:**
-- [`docs/eng/netcode-input-uplink.md`](../../eng/netcode-input-uplink.md) §2（164 B 实测）§5.1（手打包方案）
-- [`docs/eng/netcode-snapshots.md`](../../eng/netcode-snapshots.md) §1.2/§5.1（快照线格式与 schema 表）§5.4（载荷口径的赌注）
-- [`docs/eng/netplay-rpc-channels.md`](../../eng/netplay-rpc-channels.md)（通道表，**本批不改**）
-- [`AGENTS.md`](../../../AGENTS.md)（档 3 纪律、测试经济学、共用工作树）
+- [`docs/eng/netcode-input-uplink.md`](../../../eng/netcode-input-uplink.md) §2（164 B 实测）§5.1（手打包方案）
+- [`docs/eng/netcode-snapshots.md`](../../../eng/netcode-snapshots.md) §1.2/§5.1（快照线格式与 schema 表）§5.4（载荷口径的赌注）
+- [`docs/eng/netplay-rpc-channels.md`](../../../eng/netplay-rpc-channels.md)（通道表，**本批不改**）
+- [`AGENTS.md`](../../../../AGENTS.md)（档 3 纪律、测试经济学、共用工作树）
 
 > ★ **已删文档的结论已内联**：原先引用的 `docs/superpowers/specs/2026-10-13-net-bandwidth-and-cpu-optimization-design.md`（编码器 294 µs / 一次性分配 / 决策 #6 的上行扩字段）与 `docs/superpowers/plans/2026-10-09-input-uplink-codec-and-redundancy.md`（输入手打包草案）已随 2026-10-24 文档清理删除；与本批有关的结论抄在 §1，不必去点死链。
 
