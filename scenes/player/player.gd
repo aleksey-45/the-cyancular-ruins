@@ -647,9 +647,10 @@ func capture_state() -> Dictionary:
 		"coyote": coyote_timer,
 		"jbuf": jump_buffer_timer,
 		"jcut": jump_cut_applied,
-		# ★ 自动跳的"满速横移"窗口剩余时间也必须进整态:它影响后续几帧的 velocity.x,
-		#   不回放的话,回滚重放的轨迹会与原预测分叉(客户端表现为抖动/拉回)。
-		"ajs": _auto_jump_assist,
+		# ★ 自动跳的"满速横移"窗口 **不进整态/不上线**:它是本地表现量,只影响自己后半秒的横移补速,
+		#   且服务器从不 restore(只有客户端回滚重放会用到);进了 c2 就要动线格式(protocol 变更)与快照体积,
+		#   收益不抵风险。已知边界:回滚重放时该窗口可能少/多几帧 ⇒ 偏差 <= 0.25s 的横移补速,自愈。
+
 		"squat": is_squat,
 		"charge": is_charge,
 		"ct": charge_timer,
@@ -694,7 +695,6 @@ func restore_state(st: Dictionary) -> void:
 	coyote_timer = float(st.get("coyote", coyote_timer))
 	jump_buffer_timer = float(st.get("jbuf", jump_buffer_timer))
 	jump_cut_applied = bool(st.get("jcut", jump_cut_applied))
-	_auto_jump_assist = float(st.get("ajs", _auto_jump_assist))
 	is_squat = bool(st.get("squat", is_squat))
 	is_charge = bool(st.get("charge", is_charge))
 	charge_timer = float(st.get("ct", charge_timer))

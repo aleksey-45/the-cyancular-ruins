@@ -888,7 +888,9 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 
 **跳跃高度 = 台阶高度**（用户同日裁定「跳跃高度应该和墙高度相同」）：起跳速度按 `v = -sqrt(2·g·h)` 给（峰值恰好到台阶顶，
 不是满力跳 —— 满力跳 ≈3 格，撞 16px 台阶会莫名窜很高）；`g` 用 `player.gd` 的 `gravity`（= `PlayerParams.gravity0`，两端同一常量）；
-`+2px` 是 60Hz 离散化的落地余量（远小于一个子格）；这段小跳 `jump_cut_applied = true`，不参与「松上键截断」（否则松手削半正好够不上）。
+`+4px` 是 60Hz 离散化的落地余量（远小于一个子格）；这段小跳 `jump_cut_applied = true`，不参与「松上键截断」（否则松手削半正好够不上）。
+**注意**：`_auto_jump_assist`（0.25s 满速横移窗口）是**本地表现量**，刻意不进 `capture_state`/不上线（否则要动线格式与快照体积）；
+副作用：回滚重放时窗口可能少/多几帧 ⇒ 偏差 ≤0.25s 的横移补速，自愈（`snapshot_size_probe` 的 schema 对齐闸会拦住「偷偷加 captured 字段」）。
 子格实体判定**与 `CollisionBuilder.build_sub` 同源**（`TileDefs.type_id_of == TYPE_WALL`，可破坏砖再过 `sub_alive`，
 否则打穿的洞口会被误判成台阶）；子格坐标**环面回绕**（接缝旁的台阶不能判成没挡路）。
 
