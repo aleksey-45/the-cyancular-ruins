@@ -21,7 +21,7 @@ var _pending_hit_events: Array = []   # [[source_pos: Vector2, damage: int, seq:
 const PredictionContact := preload("res://core/net/prediction_contact.gd")   # 贴身判据/动态容差(纯函数)
 const ReplicaScript := preload("res://scenes/player/player_replica.gd")      # 要它的 GROUP 常量(副本没 class_name)
 var _contact_grace_left := 0.0   # 贴身容差迟滞剩余秒(见 PredictionContact.CONTACT_GRACE_S;纯本地量,不上行)
-# ── 输入上行(每 tick 采样 → PacketInputSource.pack_record → packet_input_source.pack_pair → 发包 → ack/seq 记账 → netstat)──
+# ── 输入上行(每 tick 采样 → PacketInputSource.pack_record → encode_input → 发包(60Hz) → ack/seq 记账 → netstat)──
 # 实现落在组合件 core/net/input_uplink.gd(2026-10-30 拆出;S-17 第一刀)。本类只留采样口(_physics_process 里现读
 # src / aim / winst)与 C2 预步(它要宿主的 `_rollback` 与 `_update_contact_state()`),其余三步调组件:
 # begin_tick() → submit(rec, aim) → take_packet()。★ seq 归零时机 / `_prev_tick_rec` 流水线 / ack 纪元 /
@@ -353,7 +353,7 @@ func _physics_process(delta: float) -> void:
 	if switch_inst > 0:
 		rec["winst"] = switch_inst
 	uplink.submit(rec, aim)      # 记录 predict 输入 + 30Hz 流水线组包(submit 内逐字搬自原函数中段)
-	uplink.take_packet()         # 本 tick 该发就发(pack_pair → can_send → send_input;原 send_now 分支)
+	uplink.take_packet()         # 本 tick 该发就发(encode_input → can_send → send_input;原 send_now 分支)
 	# 地面武器:锚点 + 落点同步 + F 提示(纯本地表现,不参与预测)。
 	_tick_ground_weapons()
 	_cull_bullet_contacts()

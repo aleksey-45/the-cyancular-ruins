@@ -3,7 +3,7 @@ extends PlayerInput
 
 # 网络注入输入(服务器权威模拟的唯一消费方):从输入包取轴/按键/边沿/切枪/瞄准。held/axis/aim/weapon 新记录到达即覆盖(紧跟客户端);
 # 边沿累积(|=)不覆盖 ⇒ 一次到多条记录也不丢边沿(抓梯/跳跃/开火都靠边沿);缺包时 held 保持上一条,边沿在记录消费后由 MatchHost 的 clear_edges() 清空。
-# ★ 本类只留队列/边沿/latch 语义 + PlayerInput 实现:线格式(位定义/协议常量/pack_*/unpack_pair)已搬 core/net/input_wire.gd;下面别名与转发壳保住原公共 API(同名同签名)。
+# ★ 本类只留队列/边沿/latch 语义 + PlayerInput 实现:线格式(位定义/协议常量/pack_record)已搬 core/net/input_wire.gd;下面别名与转发壳保住原公共 API(同名同签名)。
 
 # ── 线格式转发壳:数值与实现的唯一来源 = InputWire;别名只为保住 `PacketInputSource.BIT_*` 等既有引用 ──
 const BIT_UP := InputWire.BIT_UP
@@ -17,7 +17,6 @@ const BIT_HASTE := InputWire.BIT_HASTE
 const BIT_REWIND := InputWire.BIT_REWIND
 const BIT_NEED_FULL := InputWire.BIT_NEED_FULL
 const TICKS_PER_RECORD := InputWire.TICKS_PER_RECORD
-const INPUT_BATCH_TICKS := InputWire.INPUT_BATCH_TICKS
 
 
 # ── 线格式函数转发壳(公共 API 同名同签名;实现 = InputWire)──
@@ -25,15 +24,6 @@ static func pack_record(src: PlayerInput, seq: int, aim: Vector2, snap_tick: int
 		client_tick: int = 0, need_full: bool = false) -> Dictionary:
 	return InputWire.pack_record(src, seq, aim, snap_tick, client_tick, need_full)
 
-
-static func pack_pair(lo_rec: Dictionary, hi_rec: Dictionary, aim: Vector2, snap_tick: int = 0,
-		client_tick: int = 0) -> Dictionary:
-	return InputWire.pack_pair(lo_rec, hi_rec, aim, snap_tick, client_tick)
-
-
-# 服务端拆包:还原成两条"逐 tick 记录"(键集与 pack_record 一致,供队列/apply_packet 直接用)。
-static func unpack_pair(pkt: Dictionary) -> Array:
-	return InputWire.unpack_pair(pkt)
 
 var _axis := 0.0
 var _held := 0

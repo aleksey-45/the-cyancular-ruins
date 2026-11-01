@@ -27,7 +27,7 @@ if (tr_channel > 0) { channel = SYSCH_MAX + tr_channel - 1; }        // = tr_cha
 | `transfer_channel` | 实际 ENet 道 | 语义 | 该通道上的 RPC |
 |---|---|---|---|
 | **0**(默认) | reliable→**0** / unreliable→**1** | 关键握手 / 会话序列 / 生命周期宣告 + 全部快照 | `ai_duel` / `claim_role` / `create_room` / `go_match` / `join_room` / `list_rooms` / `lobby_name` / `match_options` / `match_start` / `match_sync` / `match_sync_data` / `opponent_left` / `peer_info` / `ping` / `player_options` / `pong` / `pvp_room_state` / `pvp_start` / `reclaim_role` / `rejoin_denied` / `rejoin_request` / `report_token` / `room_created` / `room_joined` / `room_list` / `room_map` / `round_state` / `royale_create` / `royale_join` / `royale_leave` / `royale_list` / `royale_rooms` / `royale_start` / `royale_start_ai` / `server_message` / `session_token` / `snapshot_own` / `snapshot_world` / `suicide_request` / `team_create` / `team_join` / `team_leave` / `team_list` / `team_pick` / `team_rooms` / `team_start` |
-| **1** | **2** | 30Hz 输入 | `send_input`(30Hz 一包装两条记录,每条 = 1 个物理 tick) |
+| **1** | **2** | 60Hz 输入 | `send_input`(60Hz 一包一条记录,每条 = 1 个物理 tick) |
 | **2** | **3** | 10Hz 状态镜像 | `royale_room_state` / `team_room_state` / `time_state` |
 | **3** | **4** | 比赛期内的一次性 FX / 生成事件 | `beam_fired` / `bullet_spawn` / `explosion` / `hit_confirm` / `hit_event` / `kill_event` / `sub_destroyed` / `tile_destroyed` / `weapon_removed` / `weapon_spawned` |
 

@@ -129,6 +129,7 @@ EXCLUDED=(
 	"tests/probe/rejoin_probe.tscn|B 真链路:自当大厅(池外 29300)+ 拉子进程;由 tests/probe/rejoin_probe.sh 编排"
 	"tests/probe/royale_soak_probe.tscn|B 真链路(压力):起大厅 + N 个真 royale_game 客户端;其 .sh 会 kill_port 7777"
 	"tests/probe/team_match_probe.tscn|B 真链路:六人;自当大厅(池外 29200)+ 拉子进程"
+	"tests/probe/bot_1v1_probe.tscn|B 真链路:bot 1v1 探针(自当大厅 + 拉子进程);由 tests/probe/bot_1v1_probe.sh 编排"
 	"tests/smoke/pvp_match_smoke.gd|B 真链路客户端:要 --role、且要 7777 上有大厅;由 tests/smoke/pvp_match_smoke.sh 编排"
 )
 

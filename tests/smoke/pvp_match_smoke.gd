@@ -20,7 +20,6 @@ var _got_round_state := false   # 回合制:收到 round_state(初始 COUNTDOWN 
 # C2 rollback(阶段3):create 端发带 seq 的输入包,断言服务器 1/tick 消费、ack 随 tick 前进、
 # 快照带权威整态(c2)且其 pos 与散字段 pos 一致(证明全态快照在链路上可用)。
 var _sent_seq := 0
-var _prev_rec: Dictionary = {}   # U1:上一 tick 的记录(流水线:本包发 [上一 tick, 本 tick])
 var _max_ack := -1
 var _ack_sane := false     # create:ack 已推进到 ≥30
 var _full_state_ok := false  # create:快照 c2 整态携带且 pos 与散字段一致
@@ -166,12 +165,8 @@ func _physics_process(_delta: float) -> void:
 			"st": _last_snap_tick,
 			"ct": 0,
 		}
-		# U1:30Hz 一包两条 tick 记录(流水线:上一 tick + 本 tick);服务器每 tick 消费一条。
-		if _frames % 2 == 0 and not _prev_rec.is_empty():
-			# ★ 第 4 参 = 包级 `st`(pack_pair 以**参数**为准,不读 rec 里的 st);与真客户端同口径。
-			var pair := PacketInputSource.pack_pair(_prev_rec, rec, Vector2(1, 0), _last_snap_tick, 0)
-			NetBus.rpc_id(1, "send_input", NetCodec.encode_input(pair))
-		_prev_rec = rec
+		# 60Hz:每 tick 一包一条记录(与真客户端同口径;rec 里的 st/ct 直接进包)。
+		NetBus.rpc_id(1, "send_input", NetCodec.encode_input(rec))
 	# 成功判定
 	if role == "create":
 		# 多打一会儿(到 ~480 帧)再退:帧>240 只够开火但不够 bullet 广播到 join 端,提前 quit 会触发「中途断线拆房」→ join 永远等不到 bullet_spawn。

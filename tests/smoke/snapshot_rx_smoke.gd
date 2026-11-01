@@ -155,6 +155,4 @@ func _fixture_own() -> Dictionary:
 
 func _fixture_input() -> Dictionary:
 	var src := PacketInputSource.new()
-	var lo := PacketInputSource.pack_record(src, 123455, Vector2(0.6, -0.8))
-	var hi := PacketInputSource.pack_record(src, 123456, Vector2(0.6, -0.8))
-	return PacketInputSource.pack_pair(lo, hi, Vector2(0.6, -0.8), 987654321, 12345678)
+	return PacketInputSource.pack_record(src, 123456, Vector2(0.6, -0.8), 987654321, 12345678)

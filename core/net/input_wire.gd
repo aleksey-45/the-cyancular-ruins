@@ -18,9 +18,11 @@ const BIT_HASTE := 128
 const BIT_REWIND := 256
 const BIT_NEED_FULL := 512   # v7 起为**保留位**:差分已删 ⇒ 恒不置位(加位 = 改协议;历史见 netcode-input-uplink.md)
 
-# ── 协议常量(两端必须同版本):一条记录 = 1 个物理 tick(60Hz 真输入、不锁存;C2 重放 1 步/记录);30Hz 发包 = 每 2 tick 一包、包内两条记录(流水线)──
+# ── 协议常量(两端必须同版本):一条记录 = 1 个物理 tick(60Hz 真输入、不锁存;C2 重放 1 步/记录);
+#   2026-11-01 起**发包也是 60Hz**:每 tick 一包、包内一条记录(原 30Hz 一包两条的合包被撤 —— 它把输入延迟最多多压 1 tick,
+#   且重传一次要补两条记录;代价是包数×2、每包头 2 B。带宽 28 B×60 ≈ 1.68 KB/s/客户端)。──
 const TICKS_PER_RECORD := 1
-const INPUT_BATCH_TICKS := 2
+const INPUT_BATCH_TICKS := 1   # 每包几条记录(现状 = 1:60Hz 一包一条)
 
 
 # ── 编码端:组一个输入包(协议发送侧的唯一实现)──
@@ -86,34 +88,5 @@ static func pack_record(src: PlayerInput, seq: int, aim: Vector2, snap_tick: int
 	}
 
 
-# ── 编解码端:30Hz 包内装"上一 tick + 本 tick"两条记录(流水线)──
-# ★ 包必须在**本 tick** 就发出去(等两个 tick 都发生再发会让服务器生效晚 16.7ms);本 tick 记录的下一条由下一包补发。
-# ★ seq 语义:包级 seq = **高 tick** 记录的 seq(低 tick = seq-1);两记录共用 aim(30Hz 取样)/st/ct。
-static func pack_pair(lo_rec: Dictionary, hi_rec: Dictionary, aim: Vector2, snap_tick: int = 0,
-		client_tick: int = 0) -> Dictionary:
-	return {
-		"seq": int(hi_rec.get("seq", 0)),
-		"held0": int(lo_rec.get("held", 0)), "held1": int(hi_rec.get("held", 0)),
-		"ax0": float(lo_rec.get("ax", 0.0)), "ax1": float(hi_rec.get("ax", 0.0)),
-		"pressed0": int(lo_rec.get("pressed", 0)), "pressed1": int(hi_rec.get("pressed", 0)),
-		"released0": int(lo_rec.get("released", 0)), "released1": int(hi_rec.get("released", 0)),
-		"winst0": int(lo_rec.get("winst", 0)), "winst1": int(hi_rec.get("winst", 0)),
-		"aim": aim, "st": snap_tick, "ct": client_tick,
-	}
-
-
-# 服务端拆包:还原成两条"逐 tick 记录"(键集与 pack_record 一致,供队列/apply_packet 直接用)。
-static func unpack_pair(pkt: Dictionary) -> Array:
-	var hi_seq := int(pkt.get("seq", 0))
-	var aim: Vector2 = pkt.get("aim", Vector2.ZERO)
-	var st := int(pkt.get("st", 0))
-	var ct := int(pkt.get("ct", 0))
-	var lo := {"seq": hi_seq - 1, "ax": float(pkt.get("ax0", 0.0)),
-			"held": int(pkt.get("held0", 0)), "pressed": int(pkt.get("pressed0", 0)),
-			"released": int(pkt.get("released0", 0)), "winst": int(pkt.get("winst0", 0)),
-			"aim": aim, "st": st, "ct": ct - 1}
-	var hi := {"seq": hi_seq, "ax": float(pkt.get("ax1", 0.0)),
-			"held": int(pkt.get("held1", 0)), "pressed": int(pkt.get("pressed1", 0)),
-			"released": int(pkt.get("released1", 0)), "winst": int(pkt.get("winst1", 0)),
-			"aim": aim, "st": st, "ct": ct}
-	return [lo, hi]
+# ── 编解码端:一包一条记录(60Hz)── 记录字典与 pack_record() 的键集逐字一致,
+#   由 NetCodec.encode_input 手打包、decode_input 表驱动解包;服务端收到即当作一条 tick 记录入队(不再拆包)。

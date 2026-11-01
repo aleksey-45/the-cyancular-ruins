@@ -156,12 +156,11 @@ func reset_input_queue(role: int) -> void:
 func _on_input(caller: int, pkt: Dictionary) -> void:
 	for role in peer_by_role:
 		if peer_by_role[role] == caller:
-# U1:一包两条 tick 记录(30Hz 包)⇒ 拆成连续两条入队(低 tick seq = 高 tick - 1)。
-# ★ st/ct:不是队列的一部分,后到的覆盖先到的 —— 它们只代表"最近一次"。st 是命中回放时间基准 + 增量基线;ct 仍只落位。
+			# 60Hz:一包 = 一条 tick 记录(入队即用,不再拆包)。
+			# ★ st/ct:不是队列的一部分,后到的覆盖先到的 —— 它们只代表“最近一次”。st 是命中回放时间基准;ct 仍只落位。
 			_client_snap_tick[int(role)] = int(pkt.get("st", 0))
 			_client_tick[int(role)] = int(pkt.get("ct", 0))
-			for rec in PacketInputSource.unpack_pair(pkt):
-				_intake.intake(_pending_input, int(role), rec)
+			_intake.intake(_pending_input, int(role), pkt)
 			return
 
 

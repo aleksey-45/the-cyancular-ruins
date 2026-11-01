@@ -45,7 +45,7 @@
 | 物理 tick | 60Hz |
 | `snapshot_world` | 60Hz,unreliable;`SNAPSHOT_HZ = 60`、`SNAPSHOT_STRIDE = 1`(所有人数)。**每包全量**(v7 起 DELTA 已删);世界条目 trail 2 点 = **25 B**、空 trail = 17 B ⇒ N=16 世界包 408 B(多人回溯时)/ 280 B(常态),上行 ≈0.49 MB/s(回溯)/≈0.36 MB/s(常态) |
 | `snapshot_own` | 每 tick 一包,unreliable,逐 peer;`{ack_seq, q, c2}`,**每包全量** 99 B(v7 起无差分) |
-| `send_input` | 30Hz,reliable,**手打包 42 B/包**(P1 定点化前 46 B);包内两条连续 tick 记录(`PacketInputSource.INPUT_BATCH_TICKS=2`,一条记录 = 1 tick);`st` = 最近成功解码的快照 tick(命中回放时间基准),`ct` = 客户端物理帧号(仍只落位);`held` 的 `BIT_NEED_FULL=512` 为保留位(v7 起恒不置位) |
+| `send_input` | 60Hz,reliable,**手打包 28 B/包**(2026-11-01 前 30Hz 一包两条 42 B);每包一条 tick 记录(`InputWire.INPUT_BATCH_TICKS=1`,一条记录 = 1 tick);
 | 编解码 | `core/net/net_codec.gd` 打包成 `PackedByteArray`(快照 + 输入同模块),RPC 入口解回同形状 `Dictionary` |
 
 ## 客户端

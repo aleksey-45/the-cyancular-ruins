@@ -4,7 +4,7 @@ extends SceneTree
 #   ② 解码守卫写松(不查版本/长度) ⇒ 错位值喂进权威模拟 = 静默分歧 ⇒ 断言②(三 kind 坏包一律空)。
 #   ③ 编码侧手写内联、解码侧按 schema 表读 ⇒ 字段顺序/宽度/位打包漂移 ⇒ 断言③(三 kind 往返;含 held u16=415、混合 bool、st/ct 非零;
 #      P1 定点字段用容差比:pos/vel ≤0.25、aim 点积 ≥0.9999 且长度≈1)。
-#   ④ schema 与生产者脱钩(pack_pair 加字段不登记) ⇒ 该字段线上被静默丢掉 ⇒ 断言④(INPUT_SCHEMA ↔ pack_pair 逐键对齐)。
+#   ④ schema 与生产者脱钩(pack_record 加字段不登记) ⇒ 该字段线上被静默丢掉 ⇒ 断言④(INPUT_SCHEMA ↔ pack_pair 逐键对齐)。
 #   ⑤ 负 hp(倒地瞬间的合法中间态)必须钳成 0:直接 & 0xFF 会回绕成 251 ⇒ 客户端血条 251/50 被钳成满(真实 bug)。
 # ★ 2026-10-30(PROTO_VERSION 6→7):DELTA 机制整体删除 ⇒ 原 ⑤本人包差分 / ⑥世界包 keyframe+差分 两条断言随代码退役;
 #   trail 改 2×i16 ⇒ ③的世界往返对 trail 加 ≤0.25 容差。条数闸 7 → 5。
@@ -55,37 +55,26 @@ func _initialize() -> void:
 	var wd := NetCodec.decode_world(wb)
 	var od := NetCodec.decode_own(ob)
 	var id := NetCodec.decode_input(ib)
-	var recs := PacketInputSource.unpack_pair(id)
 	var rt := int(wd.get("tick", -1)) == int(world["tick"]) \
 			and _world_same(world["players"], wd.get("players", {})) \
 			and int(od.get("ack_seq", -1)) == int(own["ack_seq"]) \
 			and int(od.get("q", -1)) == int(own["q"]) \
 			and _dict_same(own["c2"], od.get("c2", {})) \
 			and _input_same(inp, id) \
-			and recs.size() == 2 \
-			and int(recs[0].get("seq", 0)) == int(inp["seq"]) - 1 \
-			and int(recs[1].get("seq", 0)) == int(inp["seq"]) \
-			and int(recs[0].get("ct", 0)) == int(inp["ct"]) - 1 \
-			and int(recs[1].get("ct", 0)) == int(inp["ct"]) \
-			and int(recs[0].get("held", 0)) == 415 and int(recs[1].get("held", 0)) == 257 \
-			and int(recs[0].get("st", -1)) == 987654321 and int(recs[1].get("st", -1)) == 987654321
-	_chk(rt, "三 kind 往返逐字段一致(世界含混合 bool;本人整态;输入两 tick 记录 + 拆包 seq/ct 连续)")
+			and int(id.get("seq", 0)) == 123456 \
+			and int(id.get("held", 0)) == 415 \
+			and int(id.get("ct", 0)) == 12345678 \
+			and int(id.get("st", 0)) == 987654321
+	_chk(rt, "三 kind 往返逐字段一致(世界含混合 bool;本人整态;输入单记录 held u16/seq/st/ct)")
 
-	# ⑤ 包级 seq/ct 必须取**高 tick** 记录(2026-10-30,输入批):S-05 变异实测暴露的缺口 ——
-	#   旧断言只比"inp 与解码自洽",而 inp 本身由 pack_pair 构造 ⇒ 取 lo 也会两边一起偏、照样绿。
-	#   这里独立造一对已知 seq/ct 的记录再打包,钉死"包级 seq=hi.seq、ct=传入 client_tick"。
+	# ⑤ 字段槽位独立验证:另造一条已知 seq/st/ct 的记录,独立 encode→decode,钉死"每个字段落在自己的槽位"
+	#   (去掉什么才红:encode_input 字段顺序/宽度写错 —— 上一组往返是同一个 fixture 自洽,可能两边一起偏)。
 	var s5 := PacketInputSource.new()
-	var lo5 := PacketInputSource.pack_record(s5, 7000, Vector2(1, 0))
-	var hi5 := PacketInputSource.pack_record(s5, 7001, Vector2(1, 0))
-	var p5 := PacketInputSource.pack_pair(lo5, hi5, Vector2(1, 0), 111, 222)
-	var d5 := NetCodec.decode_input(NetCodec.encode_input(p5))
-	var r5 := PacketInputSource.unpack_pair(d5)
-	var seq_ok := int(d5.get("seq", 0)) == int(hi5["seq"]) \
-			and int(d5.get("ct", 0)) == 222 \
-			and int(r5[1].get("seq", 0)) == int(hi5["seq"]) \
-			and int(r5[0].get("seq", 0)) == int(hi5["seq"]) - 1
-	_chk(seq_ok, "包级 seq/ct 必须取高 tick 记录(取 lo ⇒ 本条红;实得 seq=%d ct=%d)" % [int(d5.get("seq", 0)), int(d5.get("ct", 0))])
-	# ④ schema↔生产者逐键对齐(去掉什么才红:给 pack_pair 加字段不登记 ⇒ 线上静默丢字段)
+	var hi5 := PacketInputSource.pack_record(s5, 7001, Vector2(1, 0), 111, 222)
+	var d5 := NetCodec.decode_input(NetCodec.encode_input(hi5))
+	var slot_ok := int(d5.get("seq", 0)) == 7001 and int(d5.get("st", 0)) == 111 and int(d5.get("ct", 0)) == 222
+	_chk(slot_ok, "seq/st/ct 必须落在各自槽位(实得 seq=%d st=%d ct=%d)" % [int(d5.get("seq", 0)), int(d5.get("st", 0)), int(d5.get("ct", 0))])
+	# ④ schema↔生产者逐键对齐(去掉什么才红:给 pack_record 加字段不登记 ⇒ 线上静默丢字段)
 	var schema_keys := _schema_keys(NetCodec.INPUT_SCHEMA)
 	var missing: Array = []
 	var extra: Array = []
@@ -96,7 +85,7 @@ func _initialize() -> void:
 		if not schema_keys.has(k):
 			extra.append(k)
 	_chk(missing.is_empty() and extra.is_empty(),
-			"INPUT_SCHEMA 与 pack_pair() 逐键对齐(表外未覆盖 %s / 表内多余 %s)" % [str(missing), str(extra)])
+			"INPUT_SCHEMA 与 pack_record() 逐键对齐(表外未覆盖 %s / 表内多余 %s)" % [str(missing), str(extra)])
 
 	# ⑤ 负 hp(倒地瞬间的合法中间态)必须钳成 0:直接 & 0xFF 会回绕成 251 ⇒ 客户端血条 251/50 被钳成满
 	#   (真实 bug:敌方玩家倒地后血条变满)。去掉什么才红:把 clamp 改回 & 0xFF。
@@ -108,7 +97,7 @@ func _initialize() -> void:
 			"负 hp 编码钳到 0(不回绕 251 → 倒地血条不会变满)")
 
 	# 读数(不是断言):协议尺寸
-	print("[readout] 输入 %d B/包(内含 2 条 tick 记录);世界 2 人共 %d B;本人包 %d B" % [
+	print("[readout] 输入 %d B/包(一条 tick 记录,60Hz);世界 2 人共 %d B;本人包 %d B" % [
 			ib.size(), wb.size(), ob.size()])
 
 	# 判词:计数闸(条数不符也红 —— 防断言被静默跳过)
@@ -163,23 +152,17 @@ func _fixture_own() -> Dictionary:
 
 
 func _fixture_input() -> Dictionary:
-	# 两条 tick 记录(值故意不同:held/ax/pressed/released/winst 全错开 ⇒ held0↔held1、ax0↔ax1 之类的错位必红)。
+	# 一条 tick 记录(值故意"丑":held 含 BIT_REWIND=256 ⇒ 必须 u16;ax/边沿/winst 全非零 ⇒ 字段错位必红)。
 	var src := PacketInputSource.new()
-	var lo := PacketInputSource.pack_record(src, 123455, Vector2(0.6, -0.8))
-	lo["held"] = PacketInputSource.BIT_UP | PacketInputSource.BIT_DOWN | PacketInputSource.BIT_CHARGE \
+	var rec := PacketInputSource.pack_record(src, 123456, Vector2(0.6, -0.8), 987654321, 12345678)
+	rec["held"] = PacketInputSource.BIT_UP | PacketInputSource.BIT_DOWN | PacketInputSource.BIT_CHARGE \
 			| PacketInputSource.BIT_ATTACK | PacketInputSource.BIT_RELOAD \
-			| PacketInputSource.BIT_HASTE | PacketInputSource.BIT_REWIND   # 415:含 BIT_REWIND=256 ⇒ 必须 u16
-	lo["ax"] = -0.5
-	lo["pressed"] = 3
-	lo["released"] = 1
-	lo["winst"] = 77
-	var hi := PacketInputSource.pack_record(src, 123456, Vector2(0.6, -0.8))
-	hi["held"] = PacketInputSource.BIT_UP | PacketInputSource.BIT_REWIND   # 257
-	hi["ax"] = 0.5
-	hi["pressed"] = 8
-	hi["released"] = 0
-	hi["winst"] = 0
-	return PacketInputSource.pack_pair(lo, hi, Vector2(0.6, -0.8), 987654321, 12345678)
+			| PacketInputSource.BIT_HASTE | PacketInputSource.BIT_REWIND   # 415
+	rec["ax"] = -0.5
+	rec["pressed"] = 3
+	rec["released"] = 1
+	rec["winst"] = 77
+	return rec
 
 
 func _flip(buf: PackedByteArray) -> PackedByteArray:

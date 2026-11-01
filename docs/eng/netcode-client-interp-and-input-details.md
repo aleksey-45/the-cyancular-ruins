@@ -24,7 +24,7 @@
 
 ## 2. 输入上行
 
-`InputWire.pack_record()`（S-05；`PacketInputSource.pack_record()` 是同签名转发壳）产出**单 tick 记录**（9 字段）；`InputWire.pack_pair()` 把它与上一 tick 的记录装成 30Hz 线上包（`INPUT_BATCH_TICKS = 2`，**42 B/包**；P1 aim 定点化前 46 B）。`need_full=true` 时 `held` 带上 `BIT_NEED_FULL=512`（增量基准断，请求服务器补 FULL）。
+`InputWire.pack_record()`（S-05；`PacketInputSource.pack_record()` 是同签名转发壳）产出**单 tick 记录**（9 字段）；**2026-11-01 起一包只装这一条记录**（`pack_pair`/`unpack_pair` 已删）。
 
 | 字段 | 含义 |
 |---|---|
@@ -33,12 +33,12 @@
 | `held` | 按住位掩码 |
 | `pressed` / `released` | 边沿位掩码 |
 | `winst` | 切枪目标 inst；0 = 本包无请求 |
-| `aim` | 世界坐标瞄准方向（30Hz 取样，两条记录共用） |
+| `aim` | 世界坐标瞄准方向（每条记录自带，60Hz 现读不锁存） |
 | `st` / `ct` | 只落位的扩展字段（见 `netcode-input-uplink.md`） |
 
 位定义：`BIT_UP 1` / `BIT_DOWN 2` / `BIT_CHARGE 4` / `BIT_ATTACK 8` / `BIT_RELOAD 16` / `BIT_PICKUP 32` / `BIT_DROP 64` / `BIT_HASTE 128` / `BIT_REWIND 256`。加位 = 改协议，两端必须同版本。
 
-- 频率：**采样 60Hz**（一条记录 = 1 tick，`TICKS_PER_RECORD := 1`）；**发包 30Hz**，一包装两条 tick 记录（`INPUT_BATCH_TICKS := 2`，流水线：本包 = 上一 tick + 本 tick）。客户端本地预测与 C2 重放**不锁存**，逐 tick 1:1。
+- 频率：**采样 60Hz + 发包 60Hz**（一条记录 = 1 tick，`TICKS_PER_RECORD := 1`、`INPUT_BATCH_TICKS := 1`；2026-11-01 起一包一条，不再有 30Hz 合包/流水线）。客户端本地预测每 tick 现读真输入。
 - 通道：`send_input` 是 `reliable`、用户通道 1（ENet 道 2）。
 - `pressed` / `released` 是边沿语义，靠 reliable 的保序 + 重传保证不丢。
 

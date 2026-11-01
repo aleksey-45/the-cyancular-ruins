@@ -8,6 +8,7 @@ extends RefCounted
 # ── 2026-10-30 P2(PROTO_VERSION 6→7):① **DELTA 机制整体删除**(生产 2026-10-28 已回退全量,差分只剩探针在养 ⇒ 线格式真相从 3 份回到 1 份);
 #   ② **trail 改 2×i16**(Q_SCALE,0.5px 步长):它是唯一没量化、也是世界包里最大的一坨变长字段 —— 4 点 8B→4B,
 #   最坏世界包 791→536 B、回溯时 536→408 B。两端必须同版发布(旧客户端被版本字节拒绝)。
+# ── 2026-11-01(PROTO_VERSION 7→8):输入上行改 **60Hz 一包一条记录**(原 30Hz 一包两条);下行不变。
 # ── 版本字节:首字节 = PROTO_VERSION,两端不同版时大声失败(解码返回空字典、调用方不 emit + 客户端 claim 握手拒绝),而不是按错位的偏移读出垃圾值。
 #   ★ 载荷里每个字节位置都是协议:改字段顺序/类型/宽度 = 改协议,两端必须同版本。
 # ── 输入包(KIND_INPUT)也走这里:同一套版本字节 + schema 表。类名保留 NetCodec —— 它现在是**全项目**线格式编解码器(快照 + 输入)。
@@ -18,7 +19,7 @@ extends RefCounted
 #   (解码按 schema 读 ⇒ 顺序/宽度错 = 解出来的值必不对,立刻红),容量用 `_schema_bytes()` 预算(少算 ⇒ 越界/尺寸错,④ 最坏包抓)。
 #   ⇒ 改 schema 必须同步改三个 encode_*;不改就一定红,不会静默。
 
-const PROTO_VERSION := 7
+const PROTO_VERSION := 8   # 2026-11-01:输入上行改 60Hz 单记录包(原 30Hz 一包两条)
 const KIND_WORLD := 1
 const KIND_OWN := 2
 const KIND_INPUT := 3
@@ -85,7 +86,7 @@ const WEAPON_SCHEMA: Array = [
 # 背包每一条(type/inst/mag —— 与 `weapon_inventory.snapshot()` 同源)。
 const INV_SCHEMA: Array = [["type", T_U8], ["inst", T_I32], ["mag", T_U8]]
 
-# 输入上行包(30Hz 一包,**内含连续两个物理 tick 的记录**;发送侧唯一来源 = InputWire.pack_pair(S-05;`PacketInputSource.pack_pair` 是转发壳))。
+# 输入上行包(60Hz 一包一条记录;发送侧唯一来源 = PacketInputSource.pack_record → InputWire.pack_record)。
 # ★ 为什么是两条记录:本地预测按 60Hz 真输入跑(不锁存),服务器必须逐 tick 复现同一输入序列 ⇒ 一条记录 = 1 个 tick。
 #   30Hz 包只负责装两 tick(共用 aim/st/ct 与包络),所以比"每 tick 一包"省一半包头/共享字段。
 # ★ held 是位掩码:BIT_HASTE = 128、BIT_REWIND = 256 ⇒ 必须 u16(u8 会截断成 159)。
@@ -94,11 +95,11 @@ const INV_SCHEMA: Array = [["type", T_U8], ["inst", T_I32], ["mag", T_U8]]
 # aim = 世界坐标瞄准方向,单位向量 1e-4 定点(2×i16);两条记录共用。
 const INPUT_SCHEMA: Array = [
 	["seq", T_I32],
-	["held0", T_U16], ["held1", T_U16],
-	["ax0", T_F], ["ax1", T_F],
-	["pressed0", T_U8], ["pressed1", T_U8],
-	["released0", T_U8], ["released1", T_U8],
-	["winst0", T_I32], ["winst1", T_I32],
+	["held", T_U16],
+	["ax", T_F],
+	["pressed", T_U8],
+	["released", T_U8],
+	["winst", T_I32],
 	["aim", T_FAIM], ["st", T_I32], ["ct", T_I32],
 ]
 
@@ -360,11 +361,12 @@ static func _read_inv(r: Dictionary) -> Array:
 	return inv
 
 
-## 输入包:30Hz 一包,内含连续两个物理 tick 的记录(高 tick 的 seq = 包级 seq,低 tick = seq-1)。
+## 输入包:60Hz 一包一条 tick 记录(seq/held/ax/pressed/released/winst/aim/st/ct)。
 ## `{"seq","held0","held1","ax0","ax1","pressed0","pressed1","released0","released1","winst0","winst1","aim","st","ct"}`
 ## 头 2 B + 记录 40 B = **42 B**(P1 前 46 B;7 键 Dictionary 时代 164 B/包)。
 ## ★ aim = 单位向量 1e-4 定点(2×i16);顺序/宽度必须与 INPUT_SCHEMA 一致(漂移由 net_wire_smoke 的往返抓)。
 static func encode_input(pkt: Dictionary) -> PackedByteArray:
+	# 一条 tick 记录 = 2 B 头 + 26 B(PROTO_VERSION 8);60Hz 发包 ⇒ ≈1.68 KB/s/客户端。
 	var out := PackedByteArray()
 	out.resize(_INPUT_BYTES)
 	var i := 0
@@ -374,31 +376,18 @@ static func encode_input(pkt: Dictionary) -> PackedByteArray:
 	i += 1
 	out.encode_u32(i, int(pkt.get("seq", 0)))
 	i += 4
-	var h0 := int(pkt.get("held0", 0))
-	out[i] = h0 & 0xFF
+	var held := int(pkt.get("held", 0))   # u16:BIT_REWIND=256 必须留高位
+	out[i] = held & 0xFF
 	i += 1
-	out[i] = (h0 >> 8) & 0xFF
+	out[i] = (held >> 8) & 0xFF
 	i += 1
-	var h1 := int(pkt.get("held1", 0))
-	out[i] = h1 & 0xFF
-	i += 1
-	out[i] = (h1 >> 8) & 0xFF
-	i += 1
-	out.encode_float(i, float(pkt.get("ax0", 0.0)))
+	out.encode_float(i, float(pkt.get("ax", 0.0)))
 	i += 4
-	out.encode_float(i, float(pkt.get("ax1", 0.0)))
-	i += 4
-	out[i] = int(pkt.get("pressed0", 0)) & 0xFF
+	out[i] = int(pkt.get("pressed", 0)) & 0xFF
 	i += 1
-	out[i] = int(pkt.get("pressed1", 0)) & 0xFF
+	out[i] = int(pkt.get("released", 0)) & 0xFF
 	i += 1
-	out[i] = int(pkt.get("released0", 0)) & 0xFF
-	i += 1
-	out[i] = int(pkt.get("released1", 0)) & 0xFF
-	i += 1
-	out.encode_u32(i, int(pkt.get("winst0", 0)))
-	i += 4
-	out.encode_u32(i, int(pkt.get("winst1", 0)))
+	out.encode_u32(i, int(pkt.get("winst", 0)))
 	i += 4
 	var aim: Vector2 = pkt.get("aim", Vector2.ZERO)
 	var alim := int(AIM_FP)

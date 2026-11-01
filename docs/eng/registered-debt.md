@@ -977,3 +977,30 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 怀表改为在 `_on_time_state` 里懒建 ⇒ 普通局永远不出现，与开局路径/房间来源无关。
 **边界**：`PvpSession.beta_mode` 的串场景问题本身没动（它还影响房间列表过滤）；本处只保证 HUD/时间玩法不被它误开。
 **零守卫**：HUD 可见性属观感（真机看），没有自动断言；`time_state` 只在 beta 局下发这一点由服务端规则保证。
+
+## 五十一、输入上行改回 60Hz（一包一条记录，2026-11-01，档 3）
+
+**起因**：用户裁定「改回全部 60」。此前上行是 **60Hz 采样 / 30Hz 发包（一包两条 tick 记录，流水线）**，
+合包让服务器最多多等 1 tick，且一次重传要补两条记录；用户要求上行也 60Hz。
+
+**改了什么**：
+- `InputWire.INPUT_BATCH_TICKS := 1`；删除 `pack_pair` / `unpack_pair`（`PacketInputSource` 上的转发壳同删）。
+- `InputUplink`：去掉 30Hz 节拍/流水线（`_input_batch_phase` / `_send_now` / `_prev_tick_rec`），改为
+  `begin_tick()` 只 `seq += 1`、`submit(rec)` 存本 tick 记录、`take_packet()` **本 tick 立即发**。
+- `NetCodec`：`INPUT_SCHEMA` 改单记录 9 字段；`encode_input` 重写；**`PROTO_VERSION 7→8`**（线格式变了，两端必须同 build）。
+  输入包 **42 B → 28 B**（头 2 + 记录 26），60Hz ⇒ **1.68 KB/s/客户端**（原 30Hz ⇒ 1.26 KB/s，带宽 +33%）。
+- `MatchHost._on_input`：解码出的记录**直接入队**（不再拆包）；`st`/`ct` 仍只作“最近一次”元数据。
+- 测试夹具同步：`net_wire_smoke`（单记录往返 + 槽位独立校验 + schema↔`pack_record` 对齐）、
+  `snapshot_rx_smoke`、`pvp_match_smoke`（每 tick 发一条）。
+
+**验证**：默认批 `RUN_ALL OK(41 runs / 348 gated-assertions)`（+6 支来自另一会话的 bot 批）·
+`NET WIRE OK(6)` · `SNAPSHOT RX OK(7)` · `INPUT QUEUE OK(6)` · `ROLLBACK FIDELITY PROBE: ALL-OK` ·
+真链路 `bash tests/smoke/pvp_match_smoke.sh` → **SMOKE PASS**。
+
+**代价 / 边界（照实）**：
+1. **带宽 +33%**（1.26→1.68 KB/s/客户端）换“输入最多旧 1 tick、重传粒度 1 tick”；下行快照不变。
+2. **协议不兼容**：`PROTO_VERSION 8`，旧客户端/旧服务端会握手拒绝（本就要求两端同 build）。
+3. 输入仍走 **reliable 通道 1**：公网丢包 = 重传延迟，**不会丢 tick**；真丢 tick 只发生在服务端输入队列溢出丢最旧一条
+   （见回滚 plan R4）。60Hz 发包让“一次重传只影响 1 个 tick”。
+4. `aim` 也从“30Hz 取样”变成**每 tick 现读**（更跟手，字节不变）。
+5. 未做真实公网对照读数（发出去 1.68 KB/s 是算术值，非实测），下一次真链路跑批可顺手看一眼服务器上行。

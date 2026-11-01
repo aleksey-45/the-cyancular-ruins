@@ -1,20 +1,17 @@
 class_name InputUplink
 extends RefCounted
 
-# 输入上行组合件(2026-10-30 从 PvpMatchClient 拆出;S-17 第一刀):seq / 30Hz 节拍 / 流水线 / 发包 / ack 记账 / netstat。
+# 输入上行组合件(2026-10-30 从 PvpMatchClient 拆出;S-17 第一刀):seq / 60Hz 逐 tick 发包 / ack 记账 / netstat。
 # 形状是组合:宿主只留采样与 C2 预步,其余调 begin_tick() → submit(rec, aim) → take_packet();
 # 另有 accept_ack(ack) / reset_epoch() / netstat_tick(delta);本类经 bind(client) 读宿主 _rollback / _local / _last_snap_tick。
-# ★ 逐字不变量与细节见 docs/eng/netcode-input-uplink.md:seq 只在 reset_epoch 归零;30Hz 一包两条记录;ack > seq 必丢。
+# ★ 逐字不变量与细节见 docs/eng/netcode-input-uplink.md:seq 只在 reset_epoch 归零;一包一条记录(60Hz);ack > seq 必丢。
 
 var _client: Node = null
 
 var seq := 0             # 本地每 tick 单调的输入序号(60Hz 真输入;服务器每 tick 消费一条记录并回带 ack)
 var have_prev_seq := false
 var prev_sent_seq := 0
-var _input_batch_phase := 1     # 1 = 本 tick 先攒、下一 tick 发包(首包即从 tick0+tick1 开始,不需要伪造 seq0)
-var _prev_tick_rec: Dictionary = {}   # 流水线里"上一 tick 的记录",下一包作为低 tick 记录发出去
-var _pending_pair: Dictionary = {}    # 本 tick 已组好、待 take_packet() 发出的包
-var _send_now := false                # 本 tick 是否发包(由 begin_tick 定)
+var _pending_pkt: Dictionary = {}   # 本 tick 待发的记录(60Hz:当 tick 就发)
 
 # ── 网络统计读数(默认关;开关 -- --netstat,必须写在 -- 之后):gap = seq − 最后 ack;ping = NetBus.ping_ms;积压 = gap×16.7ms − ping;回滚 = rollback_count() 每秒增量(恒 0 也可能是哑火)。
 var _netstat := false
@@ -31,38 +28,31 @@ func bind(client: Node) -> void:
 	_client = client
 
 
-# 每物理 tick 第一步(宿主在 C2 预步之后调):推进 30Hz 节拍 + 分配本 tick 的 seq。
+# 每物理 tick 第一步(宿主在 C2 预步之后调):分配本 tick 的 seq(60Hz,每 tick 一包)。
 func begin_tick() -> void:
-	_send_now = _input_batch_phase == 0
-	_input_batch_phase = (_input_batch_phase + 1) % PacketInputSource.INPUT_BATCH_TICKS
 	seq += 1
 
 
-# 本 tick 采完样 → 预测历史记账 + 30Hz 流水线组包;tick_rec = PacketInputSource.pack_record(...) 的产物,aim 供 pack_pair 复用。
+# 本 tick 采完样 → 预测历史记账 + 60Hz 逐 tick 发包;tick_rec = PacketInputSource.pack_record(...) 的产物。
 func submit(tick_rec: Dictionary, aim: Vector2) -> void:
 	if _client._rollback != null:
 		_client._rollback.note_input(seq, tick_rec)
 	prev_sent_seq = seq
 	have_prev_seq = true
-	if _send_now:
-		# 30Hz 发包 = [上一 tick, 本 tick] 两条记录(流水线;低 tick 记录由上一包之后补齐 ⇒ 服务器收到逐 tick 连续序列)。
-		var lo: Dictionary = _prev_tick_rec if not _prev_tick_rec.is_empty() else tick_rec
-		_pending_pair = PacketInputSource.pack_pair(lo, tick_rec, aim, _client._last_snap_tick,
-				Engine.get_physics_frames())
-	else:
-		_prev_tick_rec = tick_rec
+	# 60Hz:本 tick 的这条记录本 tick 就发(不再等下一 tick 合包 ⇒ 服务器收到的输入最多旧 1 个 tick)。
+	_pending_pkt = tick_rec
 
 
 # 本 tick 的输入包上行(逐字搬自宿主 send_now 分支)。★ 只有真发得出去时才发:离场三条路都会先 NetBus.stop(),
 # 中间一两帧 rpc_id 会打引擎错误(no multiplayer peer is active);预测与记账照常走完(seq 照增),重连会重建 C2 状态。
 func take_packet() -> void:
-	if not _send_now:
+	if _pending_pkt.is_empty():
 		return
-	var pair: Dictionary = _pending_pair
-	_pending_pair = {}
+	var pkt: Dictionary = _pending_pkt
+	_pending_pkt = {}
 	if NetBus.can_send_to_server():
-		NetBus.rpc_id(1, "send_input", NetCodec.encode_input(pair))   # 42 B/包(含 2 条 tick 记录;P1 前 46)
-	_prev_tick_rec = {}
+		NetBus.rpc_id(1, "send_input", NetCodec.encode_input(pkt))   # 28 B/包(一条 tick 记录;60Hz)
+	
 
 
 # 本人包回带的 ack 记账口(逐字搬自宿主 _on_snapshot_own 的闸);返回 false = 这条 ack 必须丢掉。
@@ -79,8 +69,7 @@ func reset_epoch() -> void:
 	seq = 0
 	have_prev_seq = false
 	prev_sent_seq = -1
-	_input_batch_phase = 1     # 与初始一致:重连后第一包从 tick0+tick1 开始
-	_prev_tick_rec = {}        # 旧 seq 空间的流水线记录作废(否则会把断线前的输入当低 tick 发给服务器)
+	_pending_pkt = {}          # 旧 seq 空间的待发记录作废(否则会把断线前的输入发给服务器)
 
 
 # 网络统计读数(逐字搬自宿主 _netstat_tick):开关懒查一次(宿主没有 _ready ⇒ 不能放进 _ready)。

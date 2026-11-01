@@ -208,7 +208,7 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 
 ```
 客户端                          worker                          对手客户端
-每物理帧(输入 60Hz 采样 / 30Hz 发包 —— 一包两条 tick 记录;快照 60Hz 每包全量):
+每物理帧(输入 60Hz 采样 + 60Hz 发包 —— 一包一条 tick 记录;快照 60Hz 每包全量):
   本地模拟自己(C2) + 打包输入 ── reliable ──→  InputIntake FIFO
                             ↓ 每 tick 取一条
                             全体 Player._physics_process 权威模拟;子弹 / 光束裁决,拆墙
