@@ -762,6 +762,10 @@ func _apply_weapon_state(st: Dictionary) -> void:
 	var wslot := int(st.get("wslot", weapons._current_type))
 	# ★ 把手持的是哪一把交给 restore_inventory 按 inst 解析(同型号两把只有它能区分);下面那句 equip_type 只作兜底(老载荷无 winst、或权威那把不在表里时)。
 	var by_inst := weapons.restore_inventory(st.get("inv", []), int(st.get("winst", 0)))
+	# ★★ 同型号两把(winst 变了、wslot 没变):类型判据恒假 ⇒ 旧实现不重建实例,手里还是**上一把**枪的实例,
+	#   而 _current_index 已指向权威那一把 ⇒ 开火扣错枪的弹、切枪把残弹写进另一把(用户用两把狙击枪实测的弹数/开火异常)。
+	if weapons._current_index >= 0 and not weapons.instance_matched():
+		weapons.equip_index_authoritative(weapons._current_index)
 	if wslot > 0 and wslot != weapons._current_type:
 		# 手上实例的类型与权威不符(_current_type 由 _equip_index/_unequip 维护)→ 必须重建。这是已有行为,别绕开;但重建的落点要分两种,by_inst 就是判别器:
 		# ★ 按 winst 解析成功 → 走 equip_index(下标):不能用 equip_type(wslot),后者按类型找第一个,同型号两把时会把刚解析对的下标冲回第 0 把。
@@ -779,9 +783,13 @@ func _apply_weapon_state(st: Dictionary) -> void:
 		w._current_aim_facing = int(st.get("aim_cf", w._current_aim_facing))
 		# 弹药/装填随权威整态回灌(理由见 capture_state)。
 		# ★ 必须走 WeaponComponent.apply_mag():本帧刚重建过实例时 _weapon 还没入树,直接写 mag_ammo 会被 _ready 用条目旧值盖掉;apply_mag 按 is_inside_tree() 分流,未入树写 pending_mag 由 _ready 消费(同步调用,不排 deferred)。
-		WeaponComponent.apply_mag(w, int(st.get("mag", w.mag_ammo)))
-		w._reloading = bool(st.get("rld", w._reloading))
-		w._reload_t = float(st.get("rld_t", w._reload_t))
+		# ★★ 只在载荷**真的带了** mag 时回灌:软同步(sync_soft_state)的载荷没有 mag,旧写法拿 `w.mag_ammo` 当默认值,
+		#   而刚重建的实例还没入树、mag_ammo 是声明初值 0 ⇒ 一按 winst 重建就把 pending_mag 冲成 0(两把狙击枪切到第二把 = 0 弹)。
+		if st.has("mag"):
+			WeaponComponent.apply_mag(w, int(st["mag"]))
+		if st.has("rld"):
+			w._reloading = bool(st["rld"])
+			w._reload_t = float(st.get("rld_t", w._reload_t))
 
 # 攀爬跳离梯顶时清跳跃缓冲/土狼/截断标记:防止残留输入造成二次起跳(由 climb 组件调用)。
 func cancel_jump_state() -> void:

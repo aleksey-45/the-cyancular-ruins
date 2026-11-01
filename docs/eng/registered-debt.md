@@ -937,3 +937,30 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 `_contact_targets_now()` **每物理帧取一次**（组序 + 组内序与旧逐次查询**完全一致**，故行为等价）。
 **边界**：① 视觉 cull 只影响"子弹在客户端何时消失"，不参与伤害裁决；② 帧内新加入的副本最多晚 1 帧被看到（≤16ms）；
 ③ 无自动性能守卫（headless 测不出渲染路径），只能真机/`royale_soak` 读数对比。
+
+## 五十、切枪/换弹残留 bug（同型号两把）+ PvP 时钟 HUD（2026-11-01，档 2/3）
+
+**用户报**：「切枪/换弹还有bug……我用两把狙击枪测出来的」「非beta模式不应该有时间hud（PVP,房主有）」。
+
+### A. 同型号两把（`winst` 变、`wslot` 不变）—— 弹数/开火异常（档 3）
+1. **实例与下标分家**：`player._apply_weapon_state` 旧实现只在 `wslot != _current_type` 时重建武器实例 ⇒
+   两把同型号时类型恒等 ⇒ 永不重建；而 `restore_inventory` 可能把 `_current_index` 改指另一把（按 `winst` 解析或按类型兜底）。
+   结果：手里是上一把枪的实例、下标/条目是另一把 ⇒ **开火扣错枪的弹、切枪把残弹写进另一把**。
+   修法：`WeaponComponent` 记 `_equipped_inst` + `instance_matched()`；权威同步时实例与下标不一致就
+   `equip_index_authoritative()`（重建实例但**不**把旧实例残弹写回条目——条目刚被权威整表覆盖）。
+2. **软同步把弹数冲成 0**：`apply_mag(w, int(st.get("mag", w.mag_ammo)))` 在 `sync_soft_state`（载荷无 `mag`）时
+   拿 `w.mag_ammo` 当默认值；刚重建的实例未入树、`mag_ammo` 是声明初值 0 ⇒ `pending_mag` 被写成 0（切到第二把 = 0 弹）。
+   修法：`st.has("mag")` / `st.has("rld")` 才回灌。
+**守卫**：[`tests/probe/wheel_switch_probe.tscn`](../../tests/probe/wheel_switch_probe.tscn)（11 条，真 `player.tscn`）：
+同帧双滚 / 上行必须是目标 inst / 换弹中切走再切回残弹不变且不残留换弹 / 换弹完成后条目同步 / 切枪后开火只扣 1 发 /
+**实例与下标分家 ⇒ 必须重建** / 同型号 `equip_inst` 取对条目。
+**变异实测**：注释掉"实例与下标分家 ⇒ 重建"⇒ ⑥ 红（实例残弹 4、期望 2、`instance_matched()=false`）；还原后绿。
+回归：`gun_ammo_independence` ALL-OK · `rollback_fidelity` ALL-OK(34) · `prediction_rollback_ring` OK。
+
+### B. PvP 非 beta 局出现时钟 HUD（档 1/2）
+**根因**：`pvp_match_client._setup_beta_time_hud` 用**会话级** `PvpSession.beta_mode` 决定挂不挂怀表；该标志是跨场景的
+（从 Beta 菜单进来后转建 1v1 的房间会带着它）⇒ **房主**一人看到时钟，从码加入的对手没有。
+**修法**：改成"收到服务器第一帧 `time_state` 才算这局有 Beta 时间玩法"（服务器只在 time 规则开启时发这个包），
+怀表改为在 `_on_time_state` 里懒建 ⇒ 普通局永远不出现，与开局路径/房间来源无关。
+**边界**：`PvpSession.beta_mode` 的串场景问题本身没动（它还影响房间列表过滤）；本处只保证 HUD/时间玩法不被它误开。
+**零守卫**：HUD 可见性属观感（真机看），没有自动断言；`time_state` 只在 beta 局下发这一点由服务端规则保证。

@@ -156,11 +156,10 @@ var _time_haste_mult := 3.0          # 服务器下发的加速倍率(time_state
 
 
 func _setup_beta_time_hud() -> void:
-	if not PvpSession.beta_mode:
-		return
-	_time_watch = WatchHud.new()
-	_time_watch.position = Vector2(24.0, 124.0)   # 与单机同位:左上边距 (24,24) + 血条下方 +100
-	add_child(_time_watch)
+	# ★★ 怀表**不再按会话级 PvpSession.beta_mode 决定**:那个标志是跨场景的,从 Beta 菜单进来后转建 1v1 的房主
+	#   会带着 beta_mode=true 进非 beta 局 ⇒ 只有房主一人看到时钟(用户报的"房主为什么会有时钟 HUD")。
+	#   改成**收到第一帧 time_state 才算这局有 Beta 时间玩法**(服务器只在 time 规则开启时发这个包),
+	#   于是普通局永远不建怀表,与开局路径/房间来源无关。
 	NetBusExt.local_time_state.connect(_on_time_state)
 
 
@@ -172,8 +171,12 @@ func _on_time_state(payload: Dictionary) -> void:
 	if _time_mirror == null:
 		_time_mirror = GrainAccount.new()
 		Level0.grain_account = _time_mirror
-		# WatchHud._ready 那会儿账户还没到(挂表早于首包)→ 它把自己藏了;首包到时点亮。
-		if _time_watch != null:
+		# 首帧 time_state = 这局确实是 Beta 时间玩法 ⇒ 这时才挂怀表(账户已就位,WatchHud._ready 不会再把自己藏起来)。
+		if _time_watch == null:
+			_time_watch = WatchHud.new()
+			_time_watch.position = Vector2(24.0, 124.0)   # 与单机同位:左上边距 (24,24) + 血条下方 +100
+			add_child(_time_watch)
+		else:
 			_time_watch.visible = true
 	_time_mirror.cap = float(m.get("cap", 1800.0))
 	_time_mirror.window = float(m.get("win", 250.0))

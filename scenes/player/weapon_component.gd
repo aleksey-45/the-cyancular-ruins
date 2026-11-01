@@ -104,6 +104,9 @@ func _peek_cycle(dir: int) -> int:
 # ★★ 上行的是 inst 而不是背包位置:「第 N 把」的含义由本端背包决定,而拾取/丢弃是服务器裁决、客户端不预测,那约 1 RTT 的窗口里同一个下标在两端会解出不同的枪;inst 逐把唯一,与两端 held 的顺序无关。
 # 历史代价:这里曾发 inventory.held[next][type](类型 id)而消费端按位置读 ⇒ 背包 [步枪2, 手枪1] 从步枪滚一下发 1 会切回步枪,[手枪1, 重狙3] 发 3 越界早退;两条都只表现为滚轮切不动,代码里没有任何一处会红。
 var _switch_inst := 0   # 待发切枪的目标 **inst**(>0 = 待发,打包后清零)
+# 当前武器实例对应的那一把的 inst(0 = 空手/未记录)。★ 与 _current_index 是两回事:_current_index 回答"背包里选中的是哪一条",
+# 它可能被权威整表/_apply_weapon_state 改指另一条(同型号两把时类型判据完全看不出差别),而实例还是旧那把 ⇒ 开火扣错枪的弹。
+var _equipped_inst := 0
 
 func request_net_cycle(dir: int) -> void:
 	var next := _peek_cycle(dir)
@@ -195,6 +198,7 @@ func _equip_index(index: int, flush_current: bool = true) -> void:
 		return
 	_current_index = index
 	_current_type = type_id
+	_equipped_inst = int(inventory.held[index]["inst"])
 	_weapon = scene.instantiate() as WeaponBase
 	# ★ 必须在 add_child 之前写:入树前直接写 mag_ammo 会被 _ready 冲掉,故把条目残弹塞进 pending_mag 由 _ready 消费;MAG_FULL(-1) 语义是满弹,不设 pending。
 	if int(inventory.held[index]["mag"]) != WeaponInventory.MAG_FULL:
@@ -214,6 +218,7 @@ func _unequip() -> void:
 	_weapon = null
 	_current_index = -1
 	_current_type = 0
+	_equipped_inst = 0
 	weapon_changed.emit(0)
 	inventory_changed.emit()
 
@@ -283,6 +288,7 @@ func drop_current() -> Dictionary:
 	_weapon = null
 	_current_index = -1
 	_current_type = 0
+	_equipped_inst = 0
 	inventory_changed.emit()
 	var idx := _first_enabled_index()
 	if idx >= 0:
@@ -347,6 +353,19 @@ func restore_inventory(entries: Array, want_inst: int = 0) -> bool:
 	_current_type = 0
 	inventory_changed.emit()
 	return false
+
+
+# 手持实例是否**就是** _current_index 指向的那一把。同型号两把时 type 相同、下标也可能被权威改指,
+# 只有 inst 能区分;返回 false 表示"该重建实例"(否则开火/写残弹会落到另一把枪上)。
+func instance_matched() -> bool:
+	return _weapon != null and is_instance_valid(_weapon) and _equipped_inst == inst_at_index(_current_index) \
+			and _equipped_inst > 0
+
+
+# 权威同步专用:按当前下标重建手持实例,**不**把旧实例残弹写回条目 —— 条目刚被权威整表覆盖过,
+# 写回就是"把上一把枪的残弹盖到这一把上"(用户实测:两把狙击枪切枪后弹数/开火异常)。
+func equip_index_authoritative(index: int) -> void:
+	_equip_index(index, false)
 
 
 func _flush_current_mag() -> void:

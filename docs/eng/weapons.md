@@ -9,6 +9,13 @@
 - 精灵 pose 的唯一入口 = `_apply_sprite_pose()`(合成顺序:换弹压枪 > 开火后坐 > 走路 bob)。走路 bob **不跑自己的计时器**:相位取宿主 `AnimatedSprite2D` 的 `frame + frame_progress`(仅 `move` 动画;蹲/冲/飞是单帧姿态、没有帧进度 ⇒ 自然不抖),幅度随水平速度淡入。只写 `Sprite2D` 的 position/rotation ⇒ 枪口 `Muzzle` 与出弹点零影响;对手/队友副本的枪同样由 `drive_remote_visual(aim, facing, animator, |vel.x|)` 驱动。
 - 术语:`type_id` = 武器类型 id(整数 1–N,与键位、背包位置无关);`inst` = 逐把唯一,进输入包与 `capture_state`;`index` = 背包位置(0-based,只在本地用于按键解析 / HUD 行号)。`slot` 只保留在三处:`Player.weapon_slot` 挂点、容量格 UI(`WeaponSlots` / `C_SLOT_*`)、`capture_state()` 的 `wslot` 键。
 - 上行传解析结果:输入包带 `"winst"` = 目标那把的 `inst`。客户端本地解析(数字键按 `index`、滚轮按相对位置)出 `inst`;服务器 `equip_inst(inst)`,`index_of_inst` 找不到就静默不动。下行世界包的枪型字段是 `type_id`。改这个键 = 改协议,两端必须同一 build。
+- ★★ **同型号两把(`winst` 变、`wslot` 不变)**(2026-11-01,用户用两把狙击枪实测「弹数/开火异常」):
+  ① `_apply_weapon_state` 旧实现只在 `wslot != _current_type` 时重建实例 ⇒ 同型号时恒不重建,`_current_index` 已指向权威那把、
+     手里却是**上一把**的实例 ⇒ 开火扣错枪的弹、切枪把残弹写进另一把。修法:`WeaponComponent` 记 `_equipped_inst`(实例对应哪一把)+
+     `instance_matched()`,权威同步时若"实例与下标分家"就 `equip_index_authoritative()`(重建但**不**把旧实例残弹写回条目)。
+  ② 同一处 `apply_mag(w, st.get("mag", w.mag_ammo))` 在**软同步**(载荷无 `mag`)时把默认值 `w.mag_ammo` 写回新实例,而新实例未入树、
+     `mag_ammo` 还是声明初值 0 ⇒ `pending_mag` 被冲成 0(切到第二把 = 0 弹)。改为 `st.has("mag")` / `st.has("rld")` 才回灌。
+  守卫:`tests/probe/wheel_switch_probe.tscn`(11 条:同帧双滚 / 上行 inst / 换弹中切换 / 换弹完成写回 / 切枪后开火 / 实例与下标分家 / 同型号 equip_inst)。
 - `equip_type` 对「背包里没有这个类型」`push_error` 且不加入。发放走 `pick_up(type_id, MAG_FULL)` 或 `set_initial_inventory([...])`。
 - 现有武器:手枪 / 步枪 / m82a1(重狙,heavy_aim)/ s686(霰弹 8 丸 ±3°、射程 1400)/ 榴弹发射器(重型)/ 激光枪(中型即时光束)。
 - 弹速(2026-10-26 P1 命中手感,全量 +25%):手枪 1750 / 步枪 2000 / m82a1 3750 / s686 1375 / 榴弹 1375(px/s);敌弹平抛初速上下限同步 ×1.25(250/1600 → 312.5/2000)。激光是 hitscan,`bullet_speed` 不参与弹道;S686 射程同步 1100→1400(原射程小于可见半宽)。
