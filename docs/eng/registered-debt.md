@@ -906,6 +906,13 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
    [ledge forgiveness 思路](https://github.com/1342Drumbum/game-mechanics-optimizations/blob/main/73_ledge_forgiveness.md)。
    **确定性**：这三处都只读两端同一份 16px 子格/常量，抬升是 `global_position` 的确定性修正，客户端预测与服务器重放一致。
 
+**上楼梯画面抖动（用户追问「是不是没有死区导致的」）**：**是的**。`core/present/camera_2d.gd` 旧实现每帧
+`_base_pos = target.global_position + cam_y_bias` 后直接 `global_position = _base_pos` —— `PlayerParams` 里的
+`cam_lookahead_x` / `cam_smooth_x` / `cam_smooth_y` / `cam_deadzone` **四个参数一个都没用上**。于是自动跳/台沿抬升
+（1~17px 级的瞬时 y 变化）会整屏跟着跳。修法：横 = 前瞻 + 死区 + 指数平滑，纵 = 死区 + **不前瞻** + 指数平滑
+（`1−exp(−k·Δt)`，与帧率无关；目标位移超 `SNAP_X/SNAP_Y` = 复活/换边/接缝回绕 ⇒ 直接对齐）；
+瞄准换算仍用平滑后的基位置。**零守卫**（纯表现，按分档属「皮」，只能人眼对比）。
+
 **边界（照实）**：① 探针只钉判据；「真的跳得上去 / 手感是否太灵敏」只能试玩（跳跃高度 ≈ `jump_velocity²/(2g)`）；
 ② 判据是静态地图近似，不模拟"拆砖后新出现的台阶"（被打穿的砖不再算实体，见 `sub_alive` 分支）与外力击退；
 ③ 角色在**斜坡/攀爬边沿**的自动跳未特判（攀爬中 `latched` 已早退）。

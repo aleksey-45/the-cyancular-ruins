@@ -33,7 +33,7 @@ const player_waterproof_max: int = 10        # 防水值(氧气)上限
 const player_waterproof_damage: int = 5      # 防水值空后每秒扣血
 
 const cam_lookahead_x: float = 100.0   # 满速时的水平前瞻像素
-const cam_lookahead_y: float = 80.0    # 满速上升/下落时的垂直前瞻像素
+const cam_lookahead_y: float = 80.0    # ★ 当前**未使用**:垂直前瞻会在跳跃时叠加成上下摆,相机改为死区+平滑(见 core/present/camera_2d.gd)
 const cam_y_bias: float = -100.0       # 基础向上偏移(保留原 100px)
 const cam_smooth_x: float = 10.0       # X 平滑指数系数
 const cam_smooth_y: float = 8.0        # Y 平滑指数系数
