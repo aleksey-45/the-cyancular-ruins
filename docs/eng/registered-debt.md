@@ -896,6 +896,16 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
 而子格表是两端同一份地图数据。**守卫**：[`tests/smoke/step_jump_smoke.gd`](../../tests/smoke/step_jump_smoke.gd)（10 条：无阻挡 0 /
 16px 台阶 1 / **正好 1 格 4** / 高于一格 -1 / 左右镜像 / dir=0 / 连续段 / 峰值高度=台阶高度 / 小跳<满力跳 / 退化输入）；变异：删「第 5 子格」判据 ⇒ ④ 红。
 
+**上台阶掉速 / 卡脚（2026-11-01 用户实测反馈，通用修法）**：
+1. **水平速度偏慢**：贴台沿时 `velocity.x` 每帧被碰撞解算清零，而空中用 `accel_air`（远小于 `accel_ground`）⇒ 越过台沿的前半秒肉眼可见慢。
+   修法：自动跳瞬间把 `velocity.x` 拉回地面满速，并在 `AUTO_JUMP_ASSIST_S = 0.25s` 窗口内直接强制满速（与地面跑速同值）。
+2. **卡脚**：矩形碰撞箱在台沿角上同时接触「地板 + 竖墙」两面，`move_and_slide` 滑不开，人就贴在台沿上。
+   修法：`_try_ledge_nudge()` —— 空中 + 撞墙 + 有横移输入 + 台沿顶面在脚上方 ≤1 子格（`AUTO_LEDGE_NUDGE_PX = 16`）+ 台沿上方一格净空 ⇒ 直接抬到台沿上并保留横移。
+3. **物理参数**：`_ready` 设 `floor_snap_length = 4.0`、`max_slides = 6`（tile 接缝上的抓地余量与复杂接触解算次数）。参考
+   [CharacterBody2D 卡角修法](https://bugnet.io/blog/fix-godot-character-body-2d-stuck-on-tile-corners) 与
+   [ledge forgiveness 思路](https://github.com/1342Drumbum/game-mechanics-optimizations/blob/main/73_ledge_forgiveness.md)。
+   **确定性**：这三处都只读两端同一份 16px 子格/常量，抬升是 `global_position` 的确定性修正，客户端预测与服务器重放一致。
+
 **边界（照实）**：① 探针只钉判据；「真的跳得上去 / 手感是否太灵敏」只能试玩（跳跃高度 ≈ `jump_velocity²/(2g)`）；
 ② 判据是静态地图近似，不模拟"拆砖后新出现的台阶"（被打穿的砖不再算实体，见 `sub_alive` 分支）与外力击退；
 ③ 角色在**斜坡/攀爬边沿**的自动跳未特判（攀爬中 `latched` 已早退）。

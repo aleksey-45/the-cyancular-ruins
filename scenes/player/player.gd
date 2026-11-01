@@ -8,6 +8,12 @@ var gravity: float = GameParameters.gravity0
 # 自动跳跃的落地余量(px):按v=-sqrt(2gh)算的峰值高度**等于**台阶高度,60Hz 离散化下可能差一帧够不到,
 # 加 2px(远小于一个 16px 子格,肉眼不可辨)保证真的能站上去。
 const AUTO_JUMP_CLEARANCE := 2.0
+# 自动跳后的"满速横移"窗口(秒):落地/贴墙那几帧 velocity.x 会被墙接触清零,而空中加速度远低于地面
+# ⇒ 玩家会明显觉得"上台阶变慢"。窗口内直接强制地面目标速度(与地面跑速同值),腾空越过台沿后立刻是满速。
+const AUTO_JUMP_ASSIST_S := 0.25
+# 卡脚修复的抬升上限(px):跳上台阶时脚底会以 ≤1 个子格(16px)的深度卡进台沿的竖直面/顶面,
+# 判据见 _try_ledge_nudge。超过这个深度就不是"卡脚"而是真撞墙,不该抬。
+const AUTO_LEDGE_NUDGE_PX := 16.0
 var jump_velocity: float = PlayerParams.jump_velocity
 var charge_down_velocity: float = PlayerParams.charge_down_velocity
 var charge_velocity: float = PlayerParams.charge_velocity   # 冲刺速度
@@ -28,6 +34,7 @@ var jump_cut_factor: float = PlayerParams.jump_cut_factor
 var coyote_timer: float = 0.0
 var jump_buffer_timer: float = 0.0
 var jump_cut_applied: bool = false   # 本次跳跃是否已截断(可变高度)
+var _auto_jump_assist: float = 0.0   # >0 = 自动跳的"满速横移"窗口剩余秒数(见 _tick_horizontal)
 
 var is_squat: bool = false
 var is_charge: bool = false
@@ -155,6 +162,12 @@ func _ready() -> void:
 	add_child(squash)
 	squash.setup(animator, SquashStretch.Profile.PLAYER)
 
+	# 贴台沿/台阶时减少"卡角":多给一点抓地余量 + 允许更多次滑动解算。
+	# 依据(查到的通用修法):CharacterBody2D 矩形箱在 tile 接缝会同时接触"地面 + 竖面"两面,
+	# floor_snap_length 太小会让它离地一帧、max_slides=4 有时吃不完复杂接触 —— 4px 抓地与 6 次滑动是常用起点。
+	floor_snap_length = 4.0
+	max_slides = 6
+
 
 var _speed_mult := 1.0  # 时间场速度域倍率(加速;跨函数用,故设成员)
 
@@ -270,6 +283,7 @@ func _physics_process(delta: float) -> void:
 	# ★ 水中/攀爬中置 0 是落实设计取舍(游泳不该有自由落体那种弹感),不是修 bug;梯子下行那条满幅假挤压仍是残留。实测读数与推导见 docs/eng/player.md。
 	_pre_move_vy = 0.0 if (in_water or latched) else velocity.y
 	move_and_slide()
+	_try_ledge_nudge(in_water, latched, horizontal_input)   # 卡脚修复,见函数注释
 
 	_tick_slide_reactions()
 	_wrap_position()
@@ -303,6 +317,10 @@ func _tick_vertical(delta: float, latched: bool, in_water: bool, mult: Vector2, 
 				var sub_px := float(GameParameters.TILE_SIZE) / float(StepJump.SUB_PER_CELL)
 				var step_px := float(step_sub) * sub_px + AUTO_JUMP_CLEARANCE
 				velocity.y = StepJump.jump_velocity_for_height(step_px, gravity)
+				# ★ 起跳瞬间把横移拉回**地面满速**:贴着台沿时 velocity.x 已被墙接触清零,
+				#   而空中加速度(accel_air)远低于地面 ⇒ 不补这一下,越过台沿的头半秒会明显"慢吞吞"。
+				velocity.x = horizontal_input * move_speed * _speed_mult * mult.x
+				_auto_jump_assist = AUTO_JUMP_ASSIST_S
 				jump_buffer_timer = 0.0
 				coyote_timer = 0.0
 				# 小跳不参与「松上键截断」:否则松手那一下会把速度削半、正好够不上台阶。
@@ -360,6 +378,39 @@ func _sub_solid_at(cell: Vector2i) -> bool:
 	return true
 
 
+# 卡脚修复:跳跃/下落贴着台沿时,脚底会以 ≤1 个子格的深度卡在台沿竖直面或顶面
+# (矩形碰撞箱同时撞"地板+竖墙"两面 ⇒ velocity.x 被接触解算吃掉、人贴着台沿往下滑)。
+# 处理:空中 + 撞墙 + 有横移输入 + 台沿顶面在脚上方 ≤ AUTO_LEDGE_NUDGE_PX + 台沿上方一格净空 ⇒ 抬到台沿上,
+# 横移速度保留(比等碰撞滑开快得多)。判据读两端同一份 16px 子格 ⇒ 客户端预测与服务器重放决定一致。
+func _try_ledge_nudge(in_water: bool, latched: bool, horizontal_input: float) -> void:
+	if in_water or latched or is_on_floor() or not is_on_wall() or absf(horizontal_input) < 0.01:
+		return
+	var sub := MazeGenerator.current_subgrid
+	if sub.is_empty():
+		return
+	var dir := 1 if horizontal_input > 0.0 else -1
+	var sub_px := float(GameParameters.TILE_SIZE) / float(StepJump.SUB_PER_CELL)
+	var r := hurt_rect()
+	var feet_y := r.position.y + r.size.y
+	var x_px := r.position.x + r.size.x * 0.5 + float(dir) * (r.size.x * 0.5 + 1.0)
+	var col := int(floor(x_px / sub_px))
+	var feet_sub := int(floor(feet_y / sub_px))
+	# 只看"脚所在子格"与"再上一格":台沿顶面必须在这 2 个子格内,否则是撞真墙/差得太多,不抬。
+	for k in range(0, 2):
+		var row := feet_sub - k
+		if not _sub_solid_at(Vector2i(col, row)):
+			continue
+		var dy := feet_y - float(row) * sub_px
+		if dy <= 0.0 or dy > AUTO_LEDGE_NUDGE_PX:
+			continue   # 这一行不在范围内(可能脚正好压在子格边界上),再看下一行
+		# 台沿上方要有一格净空(否则是把人往墙里塞)
+		if _sub_solid_at(Vector2i(col, row - 1)) or _sub_solid_at(Vector2i(col, row - 2)):
+			return
+		global_position.y -= dy + 1.0
+		velocity.y = minf(velocity.y, 0.0)
+		return
+
+
 func _tick_crouch_and_dash(delta: float, latched: bool, in_water: bool) -> void:
 	if latched or in_water:
 		return
@@ -394,10 +445,16 @@ func _tick_horizontal(delta: float, in_water: bool, horizontal_input: float, mul
 		var speed_target := (crouch_walk_speed if is_squat else move_speed) * _speed_mult
 		var target_velocity_x = horizontal_input * speed_target * mult.x
 		if horizontal_input != 0:
-			if is_on_floor():
+			if _auto_jump_assist > 0.0 and not is_on_floor():
+				# 自动跳的短窗内直接给满速:越过台沿那几帧墙接触会把 velocity.x 打成 0,
+				# 走空中的 approach 要几十帧才补回来 —— 那正是"上台阶水平速度偏慢"的成因。
+				velocity.x = target_velocity_x
+				_auto_jump_assist = maxf(_auto_jump_assist - delta, 0.0)
+			elif is_on_floor():
 				velocity.x = MathUtil.approach(velocity.x, target_velocity_x, accel_ground, delta)
 			else:
 				velocity.x = MathUtil.approach(velocity.x, target_velocity_x, accel_air, delta)
+				_auto_jump_assist = maxf(_auto_jump_assist - delta, 0.0)
 		else:
 			_brake_horizontal(delta)
 
@@ -573,6 +630,9 @@ func capture_state() -> Dictionary:
 		"coyote": coyote_timer,
 		"jbuf": jump_buffer_timer,
 		"jcut": jump_cut_applied,
+		# ★ 自动跳的"满速横移"窗口剩余时间也必须进整态:它影响后续几帧的 velocity.x,
+		#   不回放的话,回滚重放的轨迹会与原预测分叉(客户端表现为抖动/拉回)。
+		"ajs": _auto_jump_assist,
 		"squat": is_squat,
 		"charge": is_charge,
 		"ct": charge_timer,
@@ -617,6 +677,7 @@ func restore_state(st: Dictionary) -> void:
 	coyote_timer = float(st.get("coyote", coyote_timer))
 	jump_buffer_timer = float(st.get("jbuf", jump_buffer_timer))
 	jump_cut_applied = bool(st.get("jcut", jump_cut_applied))
+	_auto_jump_assist = float(st.get("ajs", _auto_jump_assist))
 	is_squat = bool(st.get("squat", is_squat))
 	is_charge = bool(st.get("charge", is_charge))
 	charge_timer = float(st.get("ct", charge_timer))
