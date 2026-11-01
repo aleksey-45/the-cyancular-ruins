@@ -3,6 +3,8 @@
 > **写于 2026-11-01。只出计划,未开始实现。** 依据 [`docs/superpowers/specs/2026-10-30-联机测试bot-design.md`](../specs/2026-10-30-联机测试bot-design.md) 的修订版,只做**最小切片**:一个真实客户端 Bot 在 1v1 真链路里自己进局、移动、交火、被击杀 / 复活,并在日志里说清它知道什么、为什么这么做。
 >
 > ★ 这不是完整智能的实现计划。阶段 1 跑通后再逐阶段补导航、战术、武器与场景编排。本计划刻意简单:少量文件、少量任务、每步可停。
+>
+> **进度(2026-11-01):** B1 / B2 的核心代码已落盘(`tests/harness/bot/` 三个模块 + `tests/smoke/bot_brain_smoke.gd`),**尚未跑验证**;B0 接线与 B3 真实客户端跑通待做。
 
 **Goal:** 证明“Bot 能作为真实客户端把一段 1v1 对局玩起来,且感知受限、行为可解释、失败可归因”。
 
@@ -60,43 +62,40 @@
 ### B1 · 观察层最小集(纯逻辑)
 
 **做什么:**
-- [ ] 新 `tests/harness/bot_observation.gd`(RefCounted,无 `class_name`;由 watcher preload)。
-- [ ] 三个来源各一个采样函数:
-  - **主画面**:按摄像机 `get_base_global_position()` / `zoom` / 视口尺寸算实际可见世界矩形(环面锚定),判断角色是否入画;
-  - **雷达**:复用最小地图的半径与环面最短距离规则(`RANGE_CELLS` 不另抄常量,抽成共享小块或读同一份来源);
-  - **记忆**:每条观察带 `time` 与来源,过期后标记“失联”,不保留无限精度。
-- [ ] 输出统一 `Observation` 字典:身份 / 来源 / 敌我 / 位置 / 时间 / 不确定性 / 已观察动作(未观察到 = “未知”)。
-- [ ] 守卫:纯 `-s` 冒烟用构造用例断言——视口外但雷达内只产生雷达来源;雷达外只剩记忆;设置关闭时不产出雷达观察。带 `EXPECTED_CHECKS` 条数闸。
+- [x] 新 `tests/harness/bot/bot_observation.gd`(RefCounted,无 `class_name`;由 watcher preload)。
+- [x] 三个来源各一个采样函数(主画面 / 雷达 / 记忆;本实现是 `in_view` / `in_radar` / `build`)。
+- [x] 输出统一 `Observation` 字典:身份 / 来源 / 敌我 / 位置 / 时间 / 不确定性 / 已观察动作。
+- [x] 守卫:纯 `-s` 冒烟(`tests/smoke/bot_brain_smoke.gd`)带 `EXPECTED_CHECKS` 条数闸。
 
-**验收:** 冒烟 `ALL-OK`;变异(把雷达半径判据写错 / 记忆永不过期)⇒ 红。
+**验收:** 冒烟 `ALL-OK`(待跑);变异(把雷达半径判据写错 / 记忆永不过期)⇒ 红。
 
 ---
 
 ### B2 · 决策最小集(纯逻辑)
 
 **做什么:**
-- [ ] 新 `tests/harness/bot_brain.gd`(RefCounted)。
-- [ ] 主树 5 分支(不可行动 / 紧急 / 脱困 / 战术 / 搜索),每分支只实现最小可辨形态。
-- [ ] 战术评分最小版:对每个可感知敌人算“距离 + 是否有射击通路(先只按视线近似)+ 威胁”,队友支援先留接口不实现。
-- [ ] 滞回:目标切换需新目标评分明显更优;动作最短承诺 0.3s。
-- [ ] 输出 `Intent`:移动轴 / 是否跳 / 瞄准点 / 是否开火 / 要不要换弹或拾取。
-- [ ] 守卫:`-s` 冒烟用构造局面断言——多敌人时选评分更高者、窗口外雷达内仍能接敌、无敌人时走搜索。
+- [x] 新 `tests/harness/bot/bot_brain.gd`(RefCounted)。
+- [x] 主树最小形态(不可行动 / 搜索 / 交战;紧急与脱困先留空壳)。
+- [x] 战术评分最小版:距离 + 主画面来源加成;队友支援先留接口不实现。
+- [x] 滞回:新目标评分需超过 `SWITCH_MARGIN` 才切换。
+- [x] 输出 `Intent`:移动轴 / 是否跳 / 瞄准 / 是否开火 / 换弹 / 切枪 / 拾取 / reason。
+- [x] 守卫:`-s` 冒烟用构造局面断言——多敌人选近者、记忆不开火、无敌人走搜索、卡住会跳。
 
-**验收:** 冒烟 `ALL-OK`;变异(去掉滞回 / 忽略雷达来源)⇒ 红。
+**验收:** 冒烟 `ALL-OK`(待跑);变异(去掉滞回 / 忽略雷达来源)⇒ 红。
 
 ---
 
 ### B3 · 手柄与接线(真实客户端)
 
 **做什么:**
-- [ ] 新 `tests/harness/bot_input.gd`:真实 `PlayerInput` 子类,实现全部读口与边沿(参照 `team_bot_input.gd`),`source_kind()` 返回 `Kind.AI`。
-- [ ] 新 `tests/harness/bot_watcher.gd`:挂 root、跨换场存活;每物理帧:采样观察 → `bot_brain.decide` → 写手柄;`_release()` 清空输入。
-- [ ] 在 1v1 客户端里加一个**显式开关**(命令行参数或测试钩子)启用 watcher,默认关闭,不改变正常玩法。
+- [x] 新 `tests/harness/bot/bot_input.gd`:真实 `PlayerInput` 子类,实现全部读口与边沿(参照 `team_bot_input.gd`),`source_kind()` 返回 `Kind.AI`。
+- [ ] 新 `tests/harness/bot/bot_watcher.gd`:挂 root、跨换场存活;每物理帧:采样观察 → `bot_brain.decide` → 写手柄;`_release()` 清空输入。
+- [ ] 接线**不改产品代码**:探针场景挂真 `mp_lobby.tscn` 驱动建房 / 加入 / 开局,换场后 root 上的 watcher 接管真 `pvp_game`(与 `team_match_watcher.gd` 同一范式)。
 - [ ] 证据日志:每 0.5s 一行 JSON——观察到的角色数 / 来源分布 / 当前意图 / 放弃原因 / 距上次推进时长。
 
 **验收:** headless 1v1 真链路里,Bot 自己进局、移动、开火;日志能回答“它看到了谁、为什么开火”。
 
-**不做:** 不接 3v3 / 大乱斗;不做拟人化。
+**不做:** 不接 3v3 / 大乱斗;不做拟人化;不在 `pvp_game` / `PvpMatchClient` 里加 Bot 分支。
 
 ---
 

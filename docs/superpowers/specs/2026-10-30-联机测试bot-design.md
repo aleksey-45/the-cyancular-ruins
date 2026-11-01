@@ -217,6 +217,45 @@
 
 **首期从阶段 1 打通,再逐阶段交付。** 初步实施计划见 [`docs/superpowers/plans/2026-11-01-bot-preliminary.md`](../plans/2026-11-01-bot-preliminary.md)。
 
+## 6.5 低耦合实施设计(2026-11-01)
+
+### 依赖方向(单向,禁止回指)
+
+```
+bot_input(哑手柄)  ←  bot_watcher(唯一适配器)  →  bot_observation(纯规则)
+                                                    →  bot_brain(纯决策)
+```
+
+- `bot_brain` / `bot_observation` 是 **RefCounted 纯逻辑**,不 `extends Node`、不 import 任何会话态类(`PvpSession` / `NetBus` / `MatchHost`),只吃基础类型(`Vector2` / `Dictionary` / `Array` / `float`)。
+- 需要产品常量(摄像机缩放、雷达半径、队伍表、地图尺寸)时,由 **watcher 取一次作为参数传进来**,纯逻辑侧不自己读全局。
+- 环面几何只复用 `core/sim/grid_pathfinder.gd` 的纯静态函数(那是几何单一来源),**不复制环面数学**,也不引 MapFormat / MazeGenerator 的会话态。
+- 三个模块之间只靠**固定形状的字典**通信:
+  - `Observation`:`{role, source, relation, pos, time, uncertainty, seen_action, ...}`
+  - `Intent`:`{axis, jump, aim, fire, reload, switch_to, pickup, reason}`
+  - 形状写进各文件头;改字段必须同批改消费方与冒烟。
+- 唯一允许碰运行时对象的是 `bot_watcher`:读摄像机、本地玩家、副本、`match_sync` 队伍表,然后只把**过滤后的观察**交给 brain。
+
+### 文件布局(首期)
+
+| 文件 | 性质 | 是否碰产品对象 |
+|---|---|---|
+| `tests/harness/bot/bot_observation.gd` | 纯逻辑 | 否 |
+| `tests/harness/bot/bot_brain.gd` | 纯逻辑 | 否 |
+| `tests/harness/bot/bot_input.gd` | `PlayerInput` 子类(哑手柄) | 否(只实现契约) |
+| `tests/harness/bot/bot_watcher.gd` | Node 适配器 | 是(唯一耦合点) |
+| `tests/probe/bot_1v1_probe.*` | 探针场景 + 脚本 | 是(接线) |
+
+### 产品代码零改动
+
+- 接线复用既有真链路范式:探针场景把真 `mp_lobby.tscn` 挂在自己下面驱动建房 / 加入 / 开局,换场后 **watcher 挂在 `get_tree().root` 上**接管真 `pvp_game`。
+- **不在** `pvp_game.gd` / `PvpMatchClient` / `NetBus` 里加 `--bot` 分支;首期不改协议、不改输入包格式。
+- 若后续要进产品(陪玩),只需把 watcher 换成产品侧装配,三个纯模块原样搬走。
+
+### 可测性
+
+- `bot_observation` / `bot_brain` 用 `-s` 冒烟以构造用例断言,带 `EXPECTED_CHECKS` 条数闸。
+- `bot_watcher` 的接线正确性靠真链路跑通与日志证据,不靠源码文本守卫。
+
 ## 7. 落地与文档要求
 
 - 沿用仓库工程纪律:`AGENTS.md` / `CLAUDE.md` 的档位判定、单一真相源、守卫规矩、逐个文件 `git add`。
