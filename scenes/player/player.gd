@@ -270,11 +270,13 @@ func _physics_process(delta: float) -> void:
 		is_charge = false
 		is_squat = false
 
-	_tick_vertical(delta, latched, in_water, mult, float(horizontal_input))
+	_tick_vertical(delta, latched, in_water, mult)
 	_tick_crouch_and_dash(delta, latched, in_water)
 	_tick_horizontal(delta, in_water, horizontal_input, mult)
 	_tick_facing(delta, horizontal_input)
 	_tick_pose_and_collision(delta, in_water)
+	if not latched and not in_water:
+		_try_step_or_jump(delta, mult, float(horizontal_input))
 
 	# 爆炸击退位移单独走 move_and_collide(带碰撞),不污染 velocity —— 地面把向下击退吃掉后再减回去会把玩家弹起。
 	combat.apply_knock(delta)
@@ -283,13 +285,17 @@ func _physics_process(delta: float) -> void:
 	# ★ 水中/攀爬中置 0 是落实设计取舍(游泳不该有自由落体那种弹感),不是修 bug;梯子下行那条满幅假挤压仍是残留。实测读数与推导见 docs/eng/player.md。
 	_pre_move_vy = 0.0 if (in_water or latched) else velocity.y
 	move_and_slide()
+	if _step_up_snap:
+		# 迈台阶后脚底只离台面 1px:吸一下地,避免"腾空一帧"(姿态切 FLY/落地挤压)造成的抖动
+		_step_up_snap = false
+		apply_floor_snap()
 	_try_ledge_nudge(in_water, latched, horizontal_input)   # 卡脚修复,见函数注释
 
 	_tick_slide_reactions()
 	_wrap_position()
 
 
-func _tick_vertical(delta: float, latched: bool, in_water: bool, mult: Vector2, horizontal_input: float) -> void:
+func _tick_vertical(delta: float, latched: bool, in_water: bool, mult: Vector2) -> void:
 	if latched or in_water:
 		return
 	if is_on_floor():
@@ -300,40 +306,6 @@ func _tick_vertical(delta: float, latched: bool, in_water: bool, mult: Vector2, 
 		velocity.y += gravity * grav_mult * delta
 		coyote_timer = maxf(coyote_timer - delta, 0.0)
 
-	# ★ 自动跳跃(用户 2026-11-01):地面朝前走、前方是 **≤1 格(64px)** 高的台阶时自动起跳;
-	#   更高的墙不自动跳(否则对着墙会反复起跳),冲刺中也不跳(冲刺本身有低重力可跨沟,跳会打断冲刺)。
-	#   判据只读 16px 子格(两端同一份数据),不读碰撞体/射线 —— 客户端预测与服务器重放必须得出同一结论。
-	# ★★ 跳跃高度 = 台阶高度(用户同日裁定「跳跃高度应该和墙高度相同」):按 v = -sqrt(2·g·h) 给**刚好越过**的速度,
-	#   不是整段满力跳(满力跳≈3 格,撞 16px 台阶会莫名窜很高)。+2px 是离散化的落地余量(等高在 60Hz 下可能差一帧)。
-	if not latched and not in_water and not is_squat and not is_charge and is_on_floor() and jump_buffer_timer <= 0.0:
-		var dir := 0
-		if horizontal_input > 0.01:
-			dir = 1
-		elif horizontal_input < -0.01:
-			dir = -1
-		if dir != 0:
-			var sub_px := float(GameParameters.TILE_SIZE) / float(StepJump.SUB_PER_CELL)
-			var feet_sub := _front_feet_subcell(dir)
-			var step_sub := StepJump.low_step_height(feet_sub, dir, Callable(self, "_sub_solid_at"))
-			if StepJump.is_walk_up_step(step_sub) and _step_up_headroom_clear(feet_sub, dir, step_sub):
-				# ★ 矮台阶(≤32px)直接**迈上去**,不起跳:连续台阶每级都跳会一路上下颠(用户第三轮报的"连续上台阶抖动")。
-				#   抬起 = 台阶高度 +1px(踩到台面),横移补满速,竖直速度清零 —— 下一帧 move_and_slide 正常贴地。
-				global_position.y -= float(step_sub) * sub_px + 1.0
-				velocity.y = 0.0
-				velocity.x = horizontal_input * move_speed * _speed_mult * mult.x
-				_auto_jump_assist = AUTO_JUMP_ASSIST_S
-			elif step_sub > 0:
-				var step_px := float(step_sub) * sub_px + AUTO_JUMP_CLEARANCE
-				velocity.y = StepJump.jump_velocity_for_height(step_px, gravity)
-				# ★ 起跳瞬间把横移拉回**地面满速**:贴着台沿时 velocity.x 已被墙接触清零,
-				#   而空中加速度(accel_air)远低于地面 ⇒ 不补这一下,越过台沿的头半秒会明显"慢吞吞"。
-				velocity.x = horizontal_input * move_speed * _speed_mult * mult.x
-				_auto_jump_assist = AUTO_JUMP_ASSIST_S
-				jump_buffer_timer = 0.0
-				coyote_timer = 0.0
-				# 小跳不参与「松上键截断」:否则松手那一下会把速度削半、正好够不上台阶。
-				jump_cut_applied = true
-				squash.impulse(SquashStretch.Impulse.JUMP)
 	if input_source.is_action_just_pressed("up"):
 		jump_buffer_timer = jump_buffer_time
 	else:
@@ -353,6 +325,52 @@ func _tick_vertical(delta: float, latched: bool, in_water: bool, mult: Vector2, 
 	if not jump_cut_applied and input_source.is_action_just_released("up") and velocity.y < 0.0:
 		velocity.y *= jump_cut_factor
 		jump_cut_applied = true
+
+
+# ★★ 迈台阶 / 自动跳(用户 2026-11-01 三轮反馈的收敛版)——
+#   必须在 **move_and_slide 之前**判断"这一帧的水平位移会不会被低台阶挡住":
+#   旧实现是"撞上台阶之后下一帧才抬" ⇒ **每级台阶固定丢一帧水平位移**(700px/s ≈ 12px),
+#   连续台阶就是"走一下、顿一下"的卡顿感(这正是用户说"还是卡顿"的剩余来源)。
+#   现在:test_move 先探本帧位移 → 被挡且是矮台阶 ⇒ 先抬到台阶顶、同一帧的 move_and_slide 就迈上去;
+#   3~4 子格(48/64px)按台阶高度起跳。判据只读两端同一份 16px 子格 + 物理 test_move,
+#   客户端预测与服务器重放读同一份状态 ⇒ 联机下同一结论(差异只会来自拆砖等本就该回滚的事件)。
+var _step_up_snap := false   # 本帧抬过台阶 ⇒ move_and_slide 之后 apply_floor_snap() 吸地
+
+func _try_step_or_jump(delta: float, mult: Vector2, horizontal_input: float) -> void:
+	if not is_on_floor() or is_squat or is_charge or jump_buffer_timer > 0.0:
+		return
+	var dx := velocity.x * delta
+	if absf(dx) < 0.5:
+		return
+	var dir := 1 if dx > 0.0 else -1
+	if not test_move(global_transform, Vector2(dx, 0.0)):
+		return   # 这一帧本来就过得去
+	var feet := _front_feet_subcell(dir)
+	var h := StepJump.low_step_height(feet, dir, Callable(self, "_sub_solid_at"))
+	if h <= 0 or not _step_up_headroom_clear(feet, dir, h):
+		return
+	var sub_px := float(GameParameters.TILE_SIZE) / float(StepJump.SUB_PER_CELL)
+	# 抬起来之后本帧位移必须真的进得去(物理判据,不只信网格):否则那面"台阶"其实进不去,不抬。
+	var lift := float(h) * sub_px + 1.0
+	if test_move(global_transform.translated(Vector2(0.0, -lift)), Vector2(dx, 0.0)):
+		return
+	var full_x := horizontal_input * move_speed * _speed_mult * mult.x
+	if StepJump.is_walk_up_step(h):
+		# 矮台阶(≤32px):抬到台阶顶,同一帧的 move_and_slide 直接迈上去 —— 不丢那一帧。
+		global_position.y -= lift
+		velocity.y = 0.0
+		velocity.x = full_x
+		_auto_jump_assist = AUTO_JUMP_ASSIST_S
+		_step_up_snap = true
+		return
+	# 3~4 子格(48/64px):按台阶高度起跳(跳高 = 台阶高度,不是满力跳)。
+	velocity.y = StepJump.jump_velocity_for_height(float(h) * sub_px + AUTO_JUMP_CLEARANCE, gravity)
+	velocity.x = full_x
+	_auto_jump_assist = AUTO_JUMP_ASSIST_S
+	jump_buffer_timer = 0.0
+	coyote_timer = 0.0
+	jump_cut_applied = true
+	squash.impulse(SquashStretch.Impulse.JUMP)
 
 
 # 自动跳跃的两个数据口:脚底前方落在哪个 16px 子格 / 该子格有没有碰撞。
@@ -387,8 +405,10 @@ func _sub_solid_at(cell: Vector2i) -> bool:
 
 
 # 迈台阶前的净空检查:台阶顶面往上一格(4 个 16px 子格)必须是空的,否则抬上去就是把头塞进天花板。
+# ★ 台阶的实体子格 = 从脚底那行往上连续 step_sub 行,顶面 = (feet_sub.y - step_sub + 1) 行的上沿
+#   ⇒ 顶面**上方**第一行 = feet_sub.y - step_sub(顶面那行自己是实体,不能算进净空 —— 旧写法把顶面行也算进去,恒 false)。
 func _step_up_headroom_clear(feet_sub: Vector2i, dir: int, step_sub: int) -> bool:
-	var top_row := feet_sub.y - step_sub + 1   # 台阶顶面所在子格行
+	var top_row := feet_sub.y - step_sub   # 台阶顶面上方第一行
 	for k in range(0, StepJump.SUB_PER_CELL):
 		if _sub_solid_at(Vector2i(feet_sub.x + dir, top_row - k)):
 			return false
