@@ -901,7 +901,15 @@ ound_state(COUNTDOWN, timer=3.0)，客户端 HUD 从 3 起走且与服务器时�
    修法：自动跳瞬间把 `velocity.x` 拉回地面满速，并在 `AUTO_JUMP_ASSIST_S = 0.25s` 窗口内直接强制满速（与地面跑速同值）。
 2. **卡脚**：矩形碰撞箱在台沿角上同时接触「地板 + 竖墙」两面，`move_and_slide` 滑不开，人就贴在台沿上。
    修法：`_try_ledge_nudge()` —— 空中 + 撞墙 + 有横移输入 + 台沿顶面在脚上方 ≤1 子格（`AUTO_LEDGE_NUDGE_PX = 16`）+ 台沿上方一格净空 ⇒ 直接抬到台沿上并保留横移。
-3. **物理参数**：`_ready` 设 `floor_snap_length = 4.0`、`max_slides = 6`（tile 接缝上的抓地余量与复杂接触解算次数）。参考
+3. **连续上台阶抖动（用户第三轮）**：根因是**每级台阶都触发一次自动跳**（起跳→落地→再起跳，人一路上下颠），
+   camera 只是跟着颠。修法：≤2 子格（32px）的台阶**不起跳、直接迈上去**（`StepJump.is_walk_up_step` +
+   `_step_up_headroom_clear`：抬起=台阶高+1px、横移补满速、vy 清零；抬升前查台阶顶面往上一格净空），
+   只有 48/64px 才走「按台阶高度起跳」；配合 `cam_deadzone` 24→**32px**（一步迈上去的抬升完全不推画面）。
+   搜索到的通用解也印证这条路：相机抖动多为相机/角色更新率不一致或对台阶位移做逐帧硬跟随
+   （[Camera2D 抖动](https://bugnet.io/blog/fix-camera2d-jittering-following-player-godot)、
+   [ledge forgiveness](https://github.com/1342Drumbum/game-mechanics-optimizations/blob/main/73_ledge_forgiveness.md)）；
+   再往下的办法是把角色表现位置与物理位置分离（visual smoothing），本轮没做（见边界）。
+4. **物理参数**：`_ready` 设 `floor_snap_length = 4.0`、`max_slides = 6`（tile 接缝上的抓地余量与复杂接触解算次数）。参考
    [CharacterBody2D 卡角修法](https://bugnet.io/blog/fix-godot-character-body-2d-stuck-on-tile-corners) 与
    [ledge forgiveness 思路](https://github.com/1342Drumbum/game-mechanics-optimizations/blob/main/73_ledge_forgiveness.md)。
    **确定性**：这三处都只读两端同一份 16px 子格/常量，抬升是 `global_position` 的确定性修正，客户端预测与服务器重放一致。

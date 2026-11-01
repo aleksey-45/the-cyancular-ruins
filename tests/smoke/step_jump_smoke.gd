@@ -8,7 +8,7 @@ extends SceneTree
 #   ② 跳跃后能不能真的落上去(物理 + 跳跃高度,由 PlayerParams 决定);③ 手感(自动跳是否太灵敏)。
 # 跑法:"$GODOT" --headless --path . -s res://tests/smoke/step_jump_smoke.gd;通过 = STEP JUMP OK(n 条断言)。
 
-const EXPECTED_CHECKS := 10
+const EXPECTED_CHECKS := 12
 
 var _fails: Array[String] = []
 var _checks := 0
@@ -71,6 +71,11 @@ func _initialize() -> void:
 	_chk(StepJump.low_step_height(feet, 0, one) == 0,
 			"dir==0 必须返回 0(实得 %d)" % StepJump.low_step_height(feet, 0, one))
 
+	# ⑦b 迈台阶判据:≤2 子格(32px)走上去、3~4 子格(48/64px)才起跳
+	var walk_ok := StepJump.is_walk_up_step(1) and StepJump.is_walk_up_step(2)
+	var jump_ok := not StepJump.is_walk_up_step(3) and not StepJump.is_walk_up_step(4)
+	_chk(walk_ok, "≤2 子格(16/32px)必须是\"走上去\"(不跳)")
+	_chk(jump_ok, "3~4 子格(48/64px)必须仍然起跳")
 	# ⑦ 台阶"中间有空"不算连续实体(2 个子格高但缺一个 ⇒ 高度 1)
 	# ... 以下为「跳跃高度 = 台阶高度」的三条(用户 2026-11-01 裁定)
 	var g := 1600.0

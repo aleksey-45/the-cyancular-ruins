@@ -9,6 +9,7 @@ extends RefCounted
 # ★ 为什么用子格而不是 64px 格:碰撞是 16px 子格级的,台阶可能只有 16/32/48px 高 —— 只按整格判会漏掉矮台阶。
 const SUB_PER_CELL := 4                    # 一格 = 4×4 个 16px 子格(与 cyrm v4 一致)
 const MAX_STEP_SUBCELLS := SUB_PER_CELL    # "≤1 格" = 最多 4 个子格
+const WALK_UP_MAX_SUBCELLS := 2            # ≤2 子格(32px)直接迈上去,不跳
 
 
 # 返回前方台阶高度(子格数):
@@ -31,6 +32,13 @@ static func low_step_height(feet_sub: Vector2i, dir: int, solid_at: Callable) ->
 	if bool(solid_at.call(Vector2i(ahead_x, feet_sub.y - MAX_STEP_SUBCELLS))):
 		return -1
 	return h
+
+
+# 矮台阶直接"迈上去"、不跳。★ 2026-11-01:连续上台阶抖动(用户第三轮)的根源是每级台阶都触发一次自动跳:
+# 起跳→上升→落地→再起跳,人一直在上下颠。≤2 子格(32px)的台阶脚一抬就上得去 ⇒ 直接抬起身体(保留横移),
+# 只有 3~4 子格(48/64px)才起跳。返回 true = 走上去。
+static func is_walk_up_step(height_subcells: int) -> bool:
+	return height_subcells > 0 and height_subcells <= WALK_UP_MAX_SUBCELLS
 
 
 # 跳到指定高度所需的上跳初速度:峰值高度 = h ⇔ v = -sqrt(2·g·h)。

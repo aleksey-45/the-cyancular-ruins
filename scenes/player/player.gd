@@ -312,9 +312,17 @@ func _tick_vertical(delta: float, latched: bool, in_water: bool, mult: Vector2, 
 		elif horizontal_input < -0.01:
 			dir = -1
 		if dir != 0:
-			var step_sub := StepJump.low_step_height(_front_feet_subcell(dir), dir, Callable(self, "_sub_solid_at"))
-			if step_sub > 0:
-				var sub_px := float(GameParameters.TILE_SIZE) / float(StepJump.SUB_PER_CELL)
+			var sub_px := float(GameParameters.TILE_SIZE) / float(StepJump.SUB_PER_CELL)
+			var feet_sub := _front_feet_subcell(dir)
+			var step_sub := StepJump.low_step_height(feet_sub, dir, Callable(self, "_sub_solid_at"))
+			if StepJump.is_walk_up_step(step_sub) and _step_up_headroom_clear(feet_sub, dir, step_sub):
+				# ★ 矮台阶(≤32px)直接**迈上去**,不起跳:连续台阶每级都跳会一路上下颠(用户第三轮报的"连续上台阶抖动")。
+				#   抬起 = 台阶高度 +1px(踩到台面),横移补满速,竖直速度清零 —— 下一帧 move_and_slide 正常贴地。
+				global_position.y -= float(step_sub) * sub_px + 1.0
+				velocity.y = 0.0
+				velocity.x = horizontal_input * move_speed * _speed_mult * mult.x
+				_auto_jump_assist = AUTO_JUMP_ASSIST_S
+			elif step_sub > 0:
 				var step_px := float(step_sub) * sub_px + AUTO_JUMP_CLEARANCE
 				velocity.y = StepJump.jump_velocity_for_height(step_px, gravity)
 				# ★ 起跳瞬间把横移拉回**地面满速**:贴着台沿时 velocity.x 已被墙接触清零,
@@ -375,6 +383,15 @@ func _sub_solid_at(cell: Vector2i) -> bool:
 	var destr: bool = TileDefs.bullet_destroyable(tex) or TileDefs.explosion_destroyable(tex)
 	if destr and TileDefs.sub_cols != 0 and not TileDefs.sub_alive(wrapped):
 		return false
+	return true
+
+
+# 迈台阶前的净空检查:台阶顶面往上一格(4 个 16px 子格)必须是空的,否则抬上去就是把头塞进天花板。
+func _step_up_headroom_clear(feet_sub: Vector2i, dir: int, step_sub: int) -> bool:
+	var top_row := feet_sub.y - step_sub + 1   # 台阶顶面所在子格行
+	for k in range(0, StepJump.SUB_PER_CELL):
+		if _sub_solid_at(Vector2i(feet_sub.x + dir, top_row - k)):
+			return false
 	return true
 
 
