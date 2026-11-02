@@ -47,6 +47,11 @@ var _fuse_duration: float = 0.0  # 本次引信时长(撞墙=fuse_time,命中敌
 const EXPLOSION_SETTLE_FRAMES := 3
 var _settle_frames: int = 0
 
+# ── 对象池(core/present/bullet_pool.gd)──
+var _pool = null   # 归属池(不写死类名:池 ↔ 子弹互相引用,会踩循环依赖);null = 未池化,despawn 直接销毁
+var _scene_defaults: Dictionary = {}   # 场景给的 @export 初值快照(复用还原成"刚实例化"那份,不是代码默认值)
+var _use_token: int = 0                # 使用代号:每次复位自增,让延迟销毁回调认出自己属于哪一次使用
+
 func setup(dir: Vector2, spd: float, rng: float, siz: float, col: Color, src: Node) -> void:
 	velocity_vec = dir.normalized() * spd
 	speed = spd
@@ -65,8 +70,119 @@ func _ready() -> void:
 		sp.modulate = bullet_color
 	add_to_group("bullet")
 	# 子弹尾迹:设置开启时所有子弹都挂(单人/自己的弹/AI 弹/对手副本弹同一处接线,统一用武器弹色)。
+	# ★ 池化复用**不重建**(重建 = 每次出池多挂一条 Line2D,屏幕上就是拖尾叠加),只刷新点集/颜色(见 _ensure_trail)。
 	if Settings.pvp_show_trajectories:
+		_ensure_trail()
+
+
+# 服务器进程 = headless 渲染器:池化里唯一按"有没有渲染"分叉的判据。
+static func _headless() -> bool:
+	return DisplayServer.get_name() == "headless"
+
+
+func _ensure_trail() -> void:
+	var t := _trail_child()
+	if t == null:
 		BulletTrail.attach(self, bullet_color)
+		return
+	t.clear_points()   # 上一发的点集必须清:复用瞬间会甩出一条横跨半屏的旧轨迹(真机上最像"子弹从旧位置飞来")
+	t.default_color = Color(bullet_color.r, bullet_color.g, bullet_color.b, 0.55)   # 弹色跟下一发走;表达式与 BulletTrail.attach 同一口径
+	t.add_point(global_position)
+
+
+func _trail_child() -> Line2D:
+	for c in get_children():
+		var t := c as BulletTrail
+		if t != null:
+			return t
+	return null
+
+
+# ── 对象池生命周期(组件 = core/present/bullet_pool.gd)──
+# 结束这一次使用:池化弹回池(离树,下一发可复用),未池化弹照旧销毁。★ 子弹消失的每条路径都必须走这里 ——
+# 直接 queue_free 会绕过池,而"延迟销毁"那种写法还会在归还未落地时把已被复用的新一发收掉。
+func despawn() -> void:
+	if _pool != null:
+		_pool.call("release", self)   # release 幂等(离树/入池都自检);池化弹绝不自己 queue_free
+		return
+	queue_free()
+
+
+func set_pool(p) -> void:   # 由池在首次实例化时注入归属(池不在节点树上,子弹没有别的办法找到它)
+	_pool = p
+
+
+# 抓一次场景给的 @export 初值(只有首次有效):复用必须还原成"刚实例化"那份 —— 榴弹场景覆盖了
+# explodes / fuse_time / explosion_radius / tile_break_unit,写回代码默认值就不炸了。
+func remember_scene_defaults() -> void:
+	if not _scene_defaults.is_empty():
+		return
+	_scene_defaults = {
+		"explodes": explodes, "direct_hit_damage": direct_hit_damage,
+		"fuse_time": fuse_time, "hit_fuse_time": hit_fuse_time,
+		"explosion_radius": explosion_radius, "explosion_damage": explosion_damage,
+		"explosion_knockback": explosion_knockback, "explosion_visual": explosion_visual,
+		"tile_break_unit": tile_break_unit,
+	}
+
+
+# 复用前的完整复位(池在 acquire 侧调,且必须在调用方 setup() 之前 —— setup 注入的弹速/伤害/颜色不能被冲掉)。
+func reset_for_pool() -> void:
+	global_position = Vector2.ZERO
+	prev_pos = Vector2.ZERO
+	velocity_vec = Vector2.ZERO
+	speed = 0.0
+	traveled = 0.0
+	max_range = 0.0
+	size = 1.0   # hit_grow 的尺寸项:碰撞矩形是场景共享 sub-resource(改它会影响所有实例),能复位的只有这层缩放
+	scale = Vector2.ONE
+	rotation = 0.0
+	gravity_factor = 0.0
+	breaks_terrain = false
+	has_aoe = false
+	bullet_color = Color.WHITE
+	source = null
+	shooter = null
+	hit_damage = 0
+	hit_impact = 0.0
+	apply_damage = true
+	explodes = bool(_scene_defaults.get("explodes", false))
+	direct_hit_damage = int(_scene_defaults.get("direct_hit_damage", 10))
+	fuse_time = float(_scene_defaults.get("fuse_time", 0.5))
+	hit_fuse_time = float(_scene_defaults.get("hit_fuse_time", 0.1))
+	explosion_radius = float(_scene_defaults.get("explosion_radius", 128.0))
+	explosion_damage = int(_scene_defaults.get("explosion_damage", 35))
+	explosion_knockback = float(_scene_defaults.get("explosion_knockback", 900.0))
+	explosion_visual = _scene_defaults.get("explosion_visual", null)
+	tile_break_unit = float(_scene_defaults.get("tile_break_unit", 1.0))
+	_fuse_active = false
+	_fuse_elapsed = 0.0
+	_fuse_duration = 0.0
+	_settle_frames = 0
+	_use_token += 1
+	set_physics_process(true)
+	visible = true
+	modulate = Color.WHITE
+	# meta 是跨发累积的玩法闩,不是缓存,必须清空:grenade_direct_hit 留着 ⇒ 复用后的下一颗榴弹永不结算直击;
+	# 伤害补贴闩留着 ⇒ 3v3 再乘一次;回溯精英去重表留着 ⇒ 打不动精英。场景路径由池在 acquire 末尾重写。
+	for k in get_meta_list():
+		remove_meta(k)
+	# 服务器唯一跳过的一项 = Sprite2D tint:它是复位清单里唯一要"找子节点再写属性"的表现项,而服务器上
+	# Sprite2D 没有读者(不画、不进快照、不进 hit_grow —— 那只看 size 与 shape.size)。visible/modulate 照旧复位:
+	# 各一次字段写入,不值得为它开第二条复位路径(两套路径迟早演变成"客户端绿、服务器红")。
+	if not _headless():
+		var sp := get_node_or_null("Sprite2D") as Sprite2D
+		if sp != null:
+			sp.modulate = bullet_color   # tint 跟下一发的 setup 走(未 setup 时 = 白)
+
+
+# 撞墙后的延迟销毁(等破坏回调跑完)。池化后必须带使用代号:这 50ms 内若已被复用,旧定时器不许收掉"新的一发"。
+func _despawn_after(sec: float) -> void:
+	var token := _use_token
+	get_tree().create_timer(sec).timeout.connect(func() -> void:
+		if is_instance_valid(self) and token == _use_token:
+			despawn()
+	)
 
 func _physics_process(delta: float) -> void:
 	delta = TimeField.bullet_delta(delta, self)   # 时间场:回溯冻结/加速(我方弹随玩家)
@@ -91,7 +207,7 @@ func _physics_process(delta: float) -> void:
 		if _fuse_elapsed >= _fuse_duration:
 			_explode()
 			if _settle_frames == 0:
-				queue_free()
+				despawn()
 			return
 	_apply_water_drag(delta)
 	var step := velocity_vec * delta
@@ -117,7 +233,7 @@ func _physics_process(delta: float) -> void:
 		if explodes:
 			_explode()
 		if _settle_frames == 0:
-			queue_free()
+			despawn()
 		return
 	_wrap()
 	# 环面 wrap 会把 global_position 整幅平移;扫掠起点要跟着平移,否则下一帧/裁决读到的线段横穿整图。
@@ -189,7 +305,7 @@ func _on_hurt_target(from: Vector2, to: Vector2, hit: Dictionary) -> void:
 		_spawn_hit_fx(target)
 		target.hurt(hit_damage, velocity_vec, hit_impact)
 		Sfx.play("hit")
-	queue_free()
+	despawn()
 
 
 # 命中反馈:命中 X 回到**屏幕中心**(CombatFeedback.hit_marker,用户裁定 —— 别再把 X 搬到目标上);
@@ -216,7 +332,7 @@ func _on_terrain_collision(col: KinematicCollision2D) -> void:
 	_damage_tile_at(col.get_position(), col.get_normal())
 	set_physics_process(false)
 	velocity_vec = Vector2.ZERO
-	get_tree().create_timer(0.05).timeout.connect(queue_free)
+	_despawn_after(0.05)
 
 # 子弹在水里受速度方向阻力:velocity_vec *= exp(-drag·Δt)(纯系数在 Water.bullet_drag_factor)。
 func _apply_water_drag(delta: float) -> void:
@@ -402,7 +518,7 @@ func _explode() -> void:
 func _settle_explosion() -> void:
 	var s: Node = shooter if is_instance_valid(shooter) else null
 	Explosion.apply_aoe(global_position, explosion_radius, explosion_damage, explosion_knockback, s, tile_break_unit)
-	queue_free()
+	despawn()
 
 
 # 表现层锚点:离本地玩家最近的那份环面副本(与 _wrap 同一套选择规则)。

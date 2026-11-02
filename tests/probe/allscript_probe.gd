@@ -26,7 +26,12 @@ const SKIP_DIRS := ["res://.godot", "res://builds", "res://releases", "res://gam
 # ★ 2026-11-02:255→241(`docs/archive` 8 + `audit_shots` 6 个取图驱动删除)→237(`tests/scripts/` 4 个
 #   迁移 / 一次性工具整目录删除)→**238**(新增 `scenes/player/player_visual.gd`:本体与副本共享姿态表)。
 #   三次都是**真增删文件**,不是放水。历次取值见 git log。
-const EXPECTED_SCRIPTS := 238
+# ★ 2026-11-02 性能批(同一天第二批):238→**242** —— 新增 4 个(全是真落地的新脚本):
+#   `server/match/tick_timing.gd`(O0 分段计时)、`core/present/bullet_pool.gd` + `tests/smoke/bullet_pool_smoke.gd`
+#   + `tests/probe/bullet_pool_probe.gd`(O2/O3 子弹池与守卫)。
+#   ★ 同日被**挪出仓库**的 `tests/probe/bullet_golden_probe.gd`(O4 前置金标准探针,停在 parse error)
+#   不计入 —— 见 `docs/superpowers/plans/2026-11-01-bullet-perf.md` §O4「金标准探针暂不入库」。
+const EXPECTED_SCRIPTS := 242
 
 var _fails: Array[String] = []
 var _total := 0

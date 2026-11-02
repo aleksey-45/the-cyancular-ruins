@@ -79,6 +79,9 @@ func _correct_local_spawn() -> void:
 	var ts := GameParameters.TILE_SIZE
 	_local.global_position = Vector2(PvpSession.spawn.x * ts + ts / 2.0,
 			PvpSession.spawn.y * ts + ts / 2.0)
+	# 校正后立刻落稳:只摆到格子中心会再差一层地面高度(见 _settle_local_spawn)。
+
+	_settle_local_spawn(_local)
 
 
 # ── 三模式同构引导(2026-11-02 从三个子类 _ready 上提:三个文件原先各有一份 ~95 行逐字相同的引导)──
@@ -99,10 +102,7 @@ func _boot_world() -> void:
 	var local: Node2D = _world.get_node("Player")
 	var ts := GameParameters.TILE_SIZE
 	local.position = Vector2(PvpSession.spawn.x * ts + ts / 2.0, PvpSession.spawn.y * ts + ts / 2.0)
-	# ★ 2026-11-01(R7 候选一):出生即落稳。服务器玩家比客户端场景早建若干 tick,它**已经站在地面**;
-	#   客户端从"格子中心"开始自由落体 ⇒ 首条 ack 到达时 pos 差几个像素 ⇒ 每局固定一次开局回滚
-	#   (实测 pos.y 91.28→100.91,服务器同刻 100.906;差额 > pos_tol 2px)。在出首帧/开预测之前把它踩稳,
-	#   两端从同一姿态起步。只用同一套物理(同重力 + move_and_slide),不做传送、不改服务器。
+	# 出生即落稳(见 _settle_local_spawn):服务器已站地面,客户端从格子中心自由落体会差几 px ⇒ 首条 ack 判一次回滚。
 	_settle_local_spawn(local)
 	# 与对手(层 2)物理碰撞:服务器侧已给每个玩家 mask |= 2,客户端本地玩家也必须,否则本地预测直接穿过对手副本、服务器却挡住 ⇒ 每帧分歧回滚(C2 的无限回滚循环);对手那侧由 player_replica 的幽灵碰撞体提供。★ 不改 player.tscn(玩家掩码要保持 5,单机不需要这一位)。★ 3v3 之后会由 _apply_team_collision() 按队改写掩码 —— 不要因为那一路就把本行删掉:队伍表到达前它是唯一的碰撞来源。零守卫(enemy_logic_smoke 已删·2026-10-09)。
 	local.collision_mask |= 2
@@ -134,9 +134,8 @@ func _boot_world() -> void:
 	if NetBus.can_send_to_server():
 		NetBus.rpc_id(1, "match_sync")
 
-# 把本地玩家从出生点落到地面(2026-11-01, R7 候选一):与服务器同一套物理(同重力 + move_and_slide),
-# 只是"提前把这段下落跑完"。★ 最多 8 步(≈133ms);8 步还没落地就放弃 —— 出生点本来悬空(掉坑/在半空)
-# 时不要自作聪明地传送它,让正常物理继续跑。★ 必须在 bind(_rollback) / 开预测之前调用:它只改当前位置与速度。
+# 出生落稳:用同一套物理把下落提前跑完(≤8 步,超了放弃 —— 悬空出生点不传送)。必须在 _rollback.bind 之前调用。
+
 func _settle_local_spawn(local: Node2D) -> void:
 	var body := local as CharacterBody2D
 	if body == null:
@@ -184,7 +183,7 @@ func _on_network_explosion(pos: Vector2, shooter_role: int, visual_path: String)
 				best_d = d
 				best = b
 		if best != null:
-			best.queue_free()
+			best.despawn()
 		elif shooter_role == PvpSession.role:
 			return   # 本机视觉榴弹已自炸过:再补一次就是"双爆"
 	if visual_path == "":
@@ -504,10 +503,9 @@ func _physics_process(delta: float) -> void:
 func _on_bullet_spawn(data: Dictionary) -> void:
 	if _world == null:
 		return
-	var scene: PackedScene = load(data["scene"])
-	if scene == null:
+	var b := _take_visual_bullet(String(data["scene"]))
+	if b == null:
 		return
-	var b: BulletBase = scene.instantiate()
 	b.setup(data["vel"].normalized(), data["speed"], data["range"], data["size"], data["color"], null)
 	b.gravity_factor = data["gravity"]
 	b.hit_damage = data["hit_damage"]
@@ -528,6 +526,19 @@ func _on_bullet_spawn(data: Dictionary) -> void:
 	# ★ 视觉副本也要认射手:指向射手副本而不是本地玩家 —— BulletBase 里凡是用 shooter 的地方都自带类型 / 分组守卫(见 _wrap 的 is_in_group("player") 与 _check_player_contact 的 n == shooter),拿副本当射手不会破坏它们。
 	b.shooter = _replica_for(int(data.get("shooter_role", 0)))
 	# 尾迹不在此挂:BulletBase._ready 统一接线,副本弹与本地弹同一处。
+
+
+# 视觉子弹取实例的唯一入口:池优先,池拿不到(路径空 / 加载失败)时退回一次性实例。
+# ★ 所有"新建一颗视觉弹"的路径都必须走这里:绕过它就等于一半复用一半新建,池也永远攒不到闲置。
+# 返回值尚未进树,调用方负责 setup / 定位 / add_child。
+func _take_visual_bullet(scene_path: String) -> BulletBase:
+	var b: BulletBase = BulletPool.shared().acquire(scene_path)
+	if b != null:
+		return b
+	var scene: PackedScene = load(scene_path) as PackedScene
+	if scene == null:
+		return null
+	return scene.instantiate() as BulletBase
 
 
 # ── 本地视觉子弹撞到"该打的人" → 立刻消失(否则画面看起来还是像穿透)──
@@ -559,7 +570,7 @@ func _cull_bullet_contacts() -> void:
 		if b == null or b.apply_damage or b.explodes:
 			continue
 		if _bullet_contact_target(b) != null:
-			b.queue_free()   # 立刻:queue_free 在本帧绘制之前生效,不会多亮一帧
+			b.despawn()   # pool 回池(queue_free 会绕过池);两者都在本帧绘制前生效,不会多亮一帧
 
 
 # 这颗视觉子弹的上一帧位移有没有穿过"该打的人";候选 = BulletBase.CONTACT_GROUPS(player / player_replica),排掉射手本人,
@@ -658,6 +669,7 @@ func _on_round_state(data: Dictionary) -> void:
 
 
 # 新一局开始:清本地子弹(服务器同刻也清)。三模式相同,故不留钩子。
+# ★ 这里仍用 queue_free 而不是 despawn:换局是低频重活,回收到池省不出什么,直接销毁不会把上一局状态带进来。
 func _clear_bullets_for_new_round() -> void:
 	for b in get_tree().get_nodes_in_group("bullet"):
 		if is_instance_valid(b):
@@ -694,6 +706,7 @@ func _enter_match_over_state(_data: Dictionary) -> void:
 func _refresh_input_lock() -> void:
 	if _local != null and _local.has_method("set_controls_locked"):
 		_local.set_controls_locked(_round_locked or _menu_open or _match_ended)
+
 
 
 # ── 结算页:挂载/刷新/离场接线落在组合件 scenes/mp_client/result_screen.gd(2026-10-22 拆出;Task 6) ──

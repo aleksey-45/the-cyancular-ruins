@@ -184,6 +184,7 @@ func _ready() -> void:
 		pending_mag = MAG_UNSET
 	_mag_ready = true
 	_base_sprite_pos = sprite.position
+	# ★ 预瞄线与爆炸预览标记是**武器**的子节点(武器实例从不进出对象池),只在入树时建一次就够;子弹侧对应的是拖尾。
 	_laser = Line2D.new()
 	_laser.width = 1.0  # 细激光(经玩家 2.5x 缩放渲染约 2.5px)
 	_laser.default_color = laser_color
@@ -320,10 +321,18 @@ func apply_hit(target: Node, dir: Vector2) -> void:
 		target.hurt(damage, dir, impact)
 
 # 出弹钩子:fire() 同步朝向/冷却后调用。基类默认按 pellet 出物理子弹;即时光束类武器(激光)覆写本方法,用一次性几何追踪替代逐帧飞行的弹丸;base_dir 是已钳制仰角的瞄准方向(世界系),与默认出弹同一来源。
+# ★ 两端都从这里出弹:客户端视觉弹(pvp_mode=true)与服务器权威弹(pvp_mode 恒 false)取同一份池与同一份复位。
+#   服务器只跳过 Sprite2D tint 这一项表现复位(见 BulletBase.reset_for_pool);玩法字段两端一视同仁 —— 漏一项 = 两端各错一半。
 func _spawn_projectiles(base_dir: Vector2) -> void:
 	var spread := deg_to_rad(spread_deg)
+	var scene_path := bullet_scene.resource_path
+	var pool := BulletPool.shared()
 	for i in pellet_count:
-		var b: BulletBase = bullet_scene.instantiate()
+		var b: BulletBase = pool.acquire(scene_path)
+		if b == null:
+			# 回落:池构造不出来(路径空 / 加载失败)时退回旧的一次性实例,行为与池化前逐字相同。
+			b = bullet_scene.instantiate()
+			b.set_meta("scene_path", scene_path)
 		# Beta 时间玩法(PvP):射手加速 ⇒ 出膛弹速 ×同倍率。★ 只读注入进来的 haste_mult —— 单机它恒 1(弹速倍率由 TimeField.bullet_delta 承担,不会双乘);max_range 不动:加速时弹飞得更快但射程不变。
 		# ★ 原先这里读的是 player.get(pvp_haste_mult) —— 字符串反射 + 存在性探测,而宿主根的静态类型是 Node2D(它没有 class_name);现在读宿主每帧推入的 haste_mult。
 		var hm := haste_mult
@@ -338,7 +347,7 @@ func _spawn_projectiles(base_dir: Vector2) -> void:
 		# PvP:本地生成的子弹只做视觉(不裁决伤害);服务器权威子弹(Level0.pvp_mode=false)照常裁决。
 		b.apply_damage = not Level0.pvp_mode
 		# 服务器广播 bullet_spawn 时用(场景路径在运行期实例上可能为空)。
-		b.set_meta("scene_path", bullet_scene.resource_path)
+		b.set_meta("scene_path", scene_path)
 		get_viewport().add_child(b)
 
 func _live_projectiles() -> int:
