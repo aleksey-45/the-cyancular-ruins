@@ -438,9 +438,9 @@ func _enter_match_scene() -> void:
 	if _current_mode == PvpSession.MODE_PVP:
 		get_tree().change_scene_to_file("res://scenes/pvp_game.tscn")
 	elif _current_mode == PvpSession.MODE_ROYALE:
-		get_tree().call_deferred("change_scene_to_file", "res://scenes/royale_game.tscn")
+		get_tree().change_scene_to_file.call_deferred("res://scenes/royale_game.tscn")
 	elif _current_mode == PvpSession.MODE_TEAM:
-		get_tree().call_deferred("change_scene_to_file", "res://scenes/team_game.tscn")
+		get_tree().change_scene_to_file.call_deferred("res://scenes/team_game.tscn")
 	else:
 		var msg := "mp_lobby: match_start 到了但 _current_mode 是「%s」—— 建房/加入/回局三条路里有一条没记模式。**不切场景**(切错的场景比留在原地更难查)。"
 		push_error(msg % _current_mode)

@@ -48,7 +48,7 @@ func _ready() -> void:
 	_rollback.map_px = Vector2(GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 	var pp := PostProcess.new()
 	pp.world_viewport = level0.get_node("WorldViewport")
-	call_deferred("add_child", pp)
+	add_child.call_deferred(pp)
 	# 血条(他人,设置开启时;具体 role 的实例随副本在快照里懒建)。
 	# 快照拆两条:① 世界包 = 全部玩家的渲染字段(副本/HUD 取它);② 本人包 = 自己的 ack_seq + c2(只有本人需要,C2 rollback 拿它锚定/重放)。
 	# 副本集合 / 快照消费 / 头顶标签收进组合件(与 3v3 同一份);取色 Callable = role_color(大乱斗不区分队)。

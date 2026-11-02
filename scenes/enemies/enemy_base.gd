@@ -65,7 +65,7 @@ func _water_swim_dir() -> Vector2:
 func _ready() -> void:
 	add_to_group("enemies")
 	_setup_contact_area()
-	call_deferred("add_child", WaterFx.new())
+	add_child.call_deferred(WaterFx.new())
 	# 补间形变。★ 用 $AnimatedSprite2D 而不是 _anim:子类 _ready 是先 super._ready() 后才给 _anim 赋值,此处它还是 null。
 	squash = SquashStretch.new()
 	add_child(squash)

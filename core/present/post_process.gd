@@ -42,7 +42,7 @@ func _ready() -> void:
 	rect.name = "ShaderRect"
 	rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	call_deferred("add_child", rect)
+	add_child.call_deferred(rect)
 
 	var shader := load("res://core/present/post_process.gdshader") as Shader
 	if shader == null:

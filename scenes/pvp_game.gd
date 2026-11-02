@@ -40,7 +40,7 @@ func _ready() -> void:
 	# pvp_mode 下 Level0 不建后处理,这里补(否则 SubViewport 不显示)。
 	var pp := PostProcess.new()
 	pp.world_viewport = level0.get_node("WorldViewport")
-	call_deferred("add_child", pp)
+	add_child.call_deferred(pp)
 	var replica := preload("res://scenes/player/player_replica.tscn").instantiate()
 	replica.name = "RemoteReplica"
 	level0.get_node("WorldViewport").add_child(replica)

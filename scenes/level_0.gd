@@ -256,7 +256,7 @@ func _ready() -> void:
 	var pp := PostProcess.new()
 	pp.world_viewport = $WorldViewport
 	_post_process = pp
-	call_deferred("add_child", pp)
+	add_child.call_deferred(pp)
 	_build_pause_menu()
 
 
@@ -348,7 +348,7 @@ func _paint_water_copies(grid: Array[Array], copies: Array) -> void:
 	if not surface_cells.is_empty():
 		var batch := WaterSurfaceBatch.new()
 		batch.setup(surface_cells, Level0.surface_texture, ts)
-		surf.call_deferred("add_child", batch)
+		surf.add_child.call_deferred(batch)
 
 
 # Web-only:把中心副本之外的 8 份环面瓦片 / 水面、以及整层碰撞分帧建完(期间树是暂停的,玩家/敌人不跑物理),

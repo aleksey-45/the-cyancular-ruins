@@ -31,7 +31,7 @@ static func play(kind: String, pitch: float = 1.0, volume_db: float = 0.0) -> vo
 	p.pitch_scale = pitch * pitch_mult * (randf_range(0.94, 1.06) if kind in PITCH_VARIATION else 1.0)
 # 游戏启动链里树正在建子节点,直接 add_child 会被拒 ⇒ 延迟到帧末入树,再依序延迟播放。
 	tree.root.add_child.call_deferred(p)
-	p.call_deferred("play")
+	p.play.call_deferred()
 	p.finished.connect(p.queue_free)
 
 

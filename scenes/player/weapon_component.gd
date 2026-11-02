@@ -203,7 +203,7 @@ func _equip_index(index: int, flush_current: bool = true) -> void:
 	# ★ 必须在 add_child 之前写:入树前直接写 mag_ammo 会被 _ready 冲掉,故把条目残弹塞进 pending_mag 由 _ready 消费;MAG_FULL(-1) 语义是满弹,不设 pending。
 	if int(inventory.held[index]["mag"]) != WeaponInventory.MAG_FULL:
 		_weapon.pending_mag = clampi(int(inventory.held[index]["mag"]), 0, _weapon.mag_size)
-	body.weapon_slot.call_deferred("add_child", _weapon)
+	body.weapon_slot.add_child.call_deferred(_weapon)
 	_weapon.equip(body, inherit_cd)
 	Sfx.play("switch")
 	weapon_changed.emit(type_id)

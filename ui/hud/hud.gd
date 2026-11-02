@@ -284,13 +284,13 @@ func _build_segments(count: int) -> void:
 	plate.color = PLATE_COLOR
 	plate.position = Vector2(MARGIN.x - BAR_PLATE_PAD.x, MARGIN.y - BAR_PLATE_PAD.y)
 	plate.size = Vector2(bar_w + BAR_PLATE_PAD.x * 2.0, SEG_H + BAR_PLATE_PAD.y * 2.0)
-	call_deferred("add_child", plate)
+	add_child.call_deferred(plate)
 	for i in range(count):
 		var seg := ColorRect.new()
 		seg.position = Vector2(MARGIN.x + i * (SEG_W + SEG_GAP), MARGIN.y)
 		seg.size = Vector2(SEG_W, SEG_H)
 		seg.color = COLOR_NORMAL
-		call_deferred("add_child", seg)
+		add_child.call_deferred(seg)
 		_segments.append(seg)
 		_ghost_tweens.append(null)
 
@@ -320,19 +320,19 @@ func _build_waterproof(wp_max: int) -> void:
 	_wp_plate.size = Vector2(_wp_w + BAR_PLATE_PAD.x * 2.0, WATERPROOF_H + BAR_PLATE_PAD.y * 2.0)
 	_wp_plate.color = PLATE_COLOR
 	_wp_plate.modulate.a = 0.0
-	call_deferred("add_child", _wp_plate)
+	add_child.call_deferred(_wp_plate)
 	_wp_back = ColorRect.new()
 	_wp_back.position = Vector2(MARGIN.x, y)
 	_wp_back.size = Vector2(_wp_w, WATERPROOF_H)
 	_wp_back.color = WATERPROOF_BACK
 	_wp_back.modulate.a = 0.0
-	call_deferred("add_child", _wp_back)
+	add_child.call_deferred(_wp_back)
 	_wp_bar = ColorRect.new()
 	_wp_bar.position = Vector2(MARGIN.x, y)
 	_wp_bar.size = Vector2(_wp_w, WATERPROOF_H)
 	_wp_bar.color = WATERPROOF_COLOR
 	_wp_bar.modulate.a = 0.0
-	call_deferred("add_child", _wp_bar)
+	add_child.call_deferred(_wp_bar)
 
 func _on_waterproof(cur: int, max: int) -> void:
 	if _wp_bar != null:
@@ -394,7 +394,7 @@ func _build_kill_label() -> void:
 	_kill_label.text = "%03d" % _kills
 	_kill_label.add_theme_color_override("font_color", KILL_COLOR)
 	UiFactory.style_control(_kill_label, KILL_FONT_SIZE)      # 像素字体 + 字号(16 倍数)
-	call_deferred("add_child", wrap)
+	add_child.call_deferred(wrap)
 
 func _on_enemy_spawned(enemy: Node) -> void:
 	if enemy.has_signal("died"):

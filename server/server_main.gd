@@ -489,7 +489,7 @@ func _on_role_claimed(caller: int, role: int, player_name: String, proto: int) -
 # 开局延到帧末再执行,不在 _on_role_claimed 里同步开:每个客户端都是「claim_role 紧接 player_options」两条包(同一次 poll 到达),
 #   同步开局会在同一次 poll 里抢先建局,那个客户端的本端选项(角色颜色 / 禁武器规则)还没归档。重入由 _begin_match 自身的守卫兜住。
 func _defer_begin_match() -> void:
-	call_deferred("_begin_match")
+	_begin_match.call_deferred()
 
 func _begin_match() -> void:
 	if _match_started or _host != null or _claims.size() + _ai_roles.size() < 2:

@@ -36,7 +36,7 @@ func _ready() -> void:
 	_rollback.map_px = Vector2(GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 	var pp := PostProcess.new()
 	pp.world_viewport = level0.get_node("WorldViewport")
-	call_deferred("add_child", pp)
+	add_child.call_deferred(pp)
 	# 副本集合 / 快照消费 / 头顶标签收进组合件(与大乱斗同一份);取色 Callable = _team_color,新建后按队补配幽灵层。
 	_replica_set = ReplicaSet.new()
 	_replica_set.bind(self, _replicas,
