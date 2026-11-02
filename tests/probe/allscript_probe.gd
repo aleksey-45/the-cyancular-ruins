@@ -6,7 +6,7 @@ extends Node
 
 const SKIP_DIRS := ["res://.godot", "res://builds", "res://releases", "res://gamelogs",
 		"res://crashlogs", "res://maps", "res://map", "res://backup", "res://editor/_build",
-		"res://_crashtest", "res://docs", "res://audit_shots"]
+		"res://_crashtest", "res://docs"]
 # ★ 为什么要收 `res://_crashtest`(与 `tools/check_naming.py` 里同名的根同因):它是 gitignore 的
 #   现场草稿,存着编译不过的旧 `.gd` 备份;不收它本探针"改前就红",而一条永远红的闸等于没有闸。
 #   ⚠ 它与 `tests/path_integrity_allow.txt` 是两份手工同步的真相源(登记:registered-debt R25)——

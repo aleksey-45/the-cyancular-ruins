@@ -41,7 +41,7 @@ static func _random_cyrm(dir: String) -> String:
 static var current_grid: Array[Array] = []
 
 # 当前关卡的 16px 子格纹理表(cyrm v4):逻辑读格级 `current_grid`,碰撞/破坏/渲染读这张表
-# (见 docs/2026-09-20-cyrm-v4-handover.md §3 选项 A);空 = 调用方自行从格级展开。
+# (见 docs/eng/world.md 的 v4 / 子格一节);空 = 调用方自行从格级展开。
 static var current_subgrid: Array[Array] = []
 
 

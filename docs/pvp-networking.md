@@ -40,26 +40,6 @@ main_menu.tscn
                 → pvp_game.tscn / royale_game.tscn / team_game.tscn
 ```
 
-## 3. 文件地图
-
-| 文件 | 角色 |
-|---|---|
-| `core/net/net_bus.gd` / `net_bus_ext.gd` | autoload,ENet 建连 / 断开,基础与扩展 RPC,信号转发 |
-| `core/net/pvp_session.gd` | 静态会话配置:role / spawn / map / 地址 / token / 回局凭据 |
-| `core/net/net_codec.gd` / `prediction_rollback.gd` | 快照 `PackedByteArray` 编解码 / C2 权威锚定与未确认输入重放 |
-| `core/net/grace_window.gd` | 掉线宽限期表与到点动作分派 |
-| `core/net/local_input_source.gd` / `packet_input_source.gd` | 本地输入源 / 网络输入源(服务器唯一消费方) |
-| `server/server_main.gd` | 入口:大厅分支 / worker 分支、认领、宽限、结算 |
-| `server/lobby/room_manager.gd` / `lobby_rooms.gd` | 拉 worker、配对开局、清扫与回收 / 房间账本门面、RPC handler、`teardown_room` 收口 |
-| `server/lobby/room_registry.gd` / `room_types.gd` | 单一注册表 `mode -> {code: Room}` 与列表载荷 / 单一房型 `Room` |
-| `server/lobby/worker_launcher.gd` / `rejoin_registry.gd` | 端口池、拉起 / 杀 worker、port → pid / 回局凭据表 |
-| `server/match/match_bootstrap.gd` / `match_host.gd` / `match_state.gd` | 建局引导 / 权威对局编排 / 回合状态机与记分 |
-| `server/match/match_snapshot.gd` / `match_combat.gd` / `match_round.gd` | 60Hz 世界包与本人包(每包全量) / 子弹爆炸光束裁决与拆墙 / 回合迁移与换局复位 |
-| `scenes/pvp_game.gd` + `.tscn` / `royale_game.gd` / `team_game.gd` | 三个客户端对局场景 |
-| `scenes/pvp_match_client.gd` | 三个对局客户端共用基类(输入上行委托 `core/net/input_uplink.gd`、重连委托 `scenes/mp_client/reconnect_driver.gd`) |
-| `scenes/player/player_replica.gd` | 远端副本(视觉 + 幽灵碰撞体) |
-| `scenes/mp_lobby.gd` / `scenes/mp_lobby.tscn` | 统一联机大厅 UI |
-
 ## 4. 传输层:NetBus
 
 服务器与客户端共用 `/root/NetBus`(autoload)。`ENetMultiplayerPeer` + Godot 高层 MultiplayerAPI;大厅端口 `7777`(`DEFAULT_PORT`),`create_server(port, 16, ENet_CHANNELS)`,`ENet_CHANNELS = 4`。
@@ -216,18 +196,6 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
                             60Hz snapshot_own   ── unreliable ──→ 全量 c2 → PredictionRollback(分歧才 restore+重放)
                             新子弹 / 命中 / 拆砖 ── reliable ──→ 视觉反馈
 ```
-
-## 13. 测试
-
-| 脚本 | 覆盖 |
-|---|---|
-| `tests/smoke/pvp_match_smoke.sh` | 建房 → 房主开始 → 输入 → 模拟 → 快照 → 子弹广播 |
-| `tests/smoke/net_wire_smoke.gd` | 线格式(三 kind 头/往返/坏包 + schema 对齐) |
-| `tests/smoke/input_queue_smoke.gd` | 输入队列(轴收口/有界/回复力/上限) |
-| `tests/probe/rejoin_probe.sh` | 回大厅后回局三端 |
-| `tests/probe/rollback_fidelity_probe.tscn` | C2 容差与接触提示接线 |
-
-★ 原 `rpc_channel_contract_smoke` / `room_registry_smoke` / `mode_*_smoke` / `resync_world_probe` 已随 2026-10-24 默认批激进削减删除（缺口见 [`eng/registered-debt.md`](eng/registered-debt.md) §九）。
 
 ## 14. 已知边界
 

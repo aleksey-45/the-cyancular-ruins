@@ -1,7 +1,7 @@
 class_name MapFormatV4
 extends RefCounted
 
-# .cyrm v4 二进制格式的编解码(格式定义见 docs/superpowers/specs/2026-09-19-cyrm-v4-editor-design.md §3)。头 20 字节:magic CYRM /
+# .cyrm v4 二进制格式的编解码(格式定义见 docs/eng/world.md 的「`.cyrm` v4」一节)。头 20 字节:magic CYRM /
 # version=4 / compression(0=裸,1=deflate=zlib) / body_size u32LE(解压后) / body_crc32 u32LE / sub_cols u16LE / sub_rows u16LE /
 # layer_flags / reserved;body = u16 meta_len + meta_utf8 + 逐层块;描述符 u32 = hue/brightness/saturation/alpha/texture 位域。
 # ★ 游戏侧只消费「场景」层(唯一碰撞层):flatten_scene() 把 4×4 子格扁平化回"单纹理 + 2×2 形状掩码"(v3 迁移图无损,编辑器真画的混排图有损)。
