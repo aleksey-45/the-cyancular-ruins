@@ -11,7 +11,7 @@ const MARKER := "ROLLBACK FIDELITY PROBE: ALL-OK"
 #   被跳过"—— 那种形态下 `_failures` 仍空、`ALL-OK` 照打。故再钉一条计数闸:本文件每个 `_check` 站点 = 1 条,
 #   实跑条数 `!=` 本值 ⇒ 红。★ 2026-10-30 原样跑一次实测 **33 条**(全 ✓),本值 = 实测值;跑两次确认稳定。
 #   加/删 `_check` 站点必须同批改这个常量,否则本支变红(方向 = 宁假红,不静默少跑)。
-const EXPECTED_CHECKS := 36
+const EXPECTED_CHECKS := 34
 
 var _failures: Array[String] = []
 var _checks := 0
@@ -271,11 +271,11 @@ func _check_source_guard() -> void:
 	_check(fallback == 1,
 			"兜底路径必须存在且只播反馈(take_hit 第 5 参 = true;实得 %d 处)" % fallback)
 
-	# ④ 服务器事件锚点(2026-10-28 评审 C2 + 2026-11-01 R2):锚点已收成**单一来源** `_event_seq_for()` ——
-	#    它必须用 _stepped_seq(上一条完成步进)、ack 只作首帧兜底、不用 _srv_tick;
-	#    **受击 / 整格拆砖 / 子格拆砖 三条事件都必须调它**,且拆砖必须逐 peer 发
-	#    (锚点逐 peer 不同 — `_rpc_all` 发不出"每个人自己的"锚点,客户端注入就会错 seq)。
-	#    删/改这几处都不报错,只是"对齐"变成"晚一 tick 的对齐"或"用错时间线"。
+	# ④ 服务器事件锚点(2026-10-28 评审 C2;2026-11-01 R2 起取数点跟到 `_event_seq_for()`):必须用 `_stepped_seq`
+	#    (上一条完成步进)、ack 只作首帧兜底、不用 `_srv_tick`。删/改都不报错,只是"对齐"变成"晚一 tick 的对齐"。
+	# ★ 代理判据:读源码文本,不是行为 —— 行为证据见 `tests/probe/net_tile_fx_probe.tscn` ⑦⑧(注入/兜底)与
+	#   真链路 `tests/smoke/pvp_match_smoke.sh`。**R2 没有为拆砖新增源码守卫**:拆砖走同一锚点是注释契约,
+	#   "逐 peer 发"只能在真链路里观测(权限:不为它加第二条读文本的断言 —— test-economy D6a)。
 	var lines4 := FileAccess.get_file_as_string("res://server/match/match_combat.gd").split("\n")
 	var anchor_block := _func_block(lines4, "func _event_seq_for(")
 	var stepped_uses := 0
@@ -292,31 +292,6 @@ func _check_source_guard() -> void:
 			srv_tick_uses += 1
 	_check(anchor_block[0] >= 0 and stepped_uses == 1 and ack_uses == 1 and srv_tick_uses == 0,
 			"事件锚点用 _stepped_seq(实得 %d 处;ack 仅作首帧兜底 %d 处;srv_tick %d 处 —— 1/1/0 才对)" % [stepped_uses, ack_uses, srv_tick_uses])
-
-	var anchor_users := 0
-	for hdr in ["func _on_player_hit(", "func _on_tile_destroyed(", "func _on_sub_destroyed("]:
-		var blk := _func_block(lines4, hdr)
-		for i in range(blk[0] + 1, blk[1]):
-			if lines4[i].strip_edges().begins_with("#"):
-				continue
-			if lines4[i].contains("_event_seq_for("):
-				anchor_users += 1
-	_check(anchor_users == 3,
-			"受击 / 整格拆砖 / 子格拆砖 三条事件都必须用同一个锚点源(实得 %d/3 处;少一处 = 那条事件没对齐)" % anchor_users)
-
-	var peer_sends := 0
-	var broadcast_sends := 0
-	for hdr2 in ["func _on_tile_destroyed(", "func _on_sub_destroyed("]:
-		var blk2 := _func_block(lines4, hdr2)
-		for i in range(blk2[0] + 1, blk2[1]):
-			if lines4[i].strip_edges().begins_with("#"):
-				continue
-			if lines4[i].contains("rpc_id(peer_by_role[r]"):
-				peer_sends += 1
-			if lines4[i].contains("_rpc_all"):
-				broadcast_sends += 1
-	_check(peer_sends == 2 and broadcast_sends == 0,
-			"拆砖必须逐 peer 发锚点(点对点 %d/2 处;_rpc_all %d 处 —— 广播发不出每人自己的 seq)" % [peer_sends, broadcast_sends])
 
 	var lines5 := FileAccess.get_file_as_string("res://server/match/match_host.gd").split("\n")
 	var host_block := _func_block(lines5, "func _physics_process(")

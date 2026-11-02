@@ -19,7 +19,7 @@
 - [`docs/eng/netcode-snapshots.md`](../../eng/netcode-snapshots.md)（`ack`/`c2`/整态）
 - [`core/net/prediction_rollback.gd`](../../../core/net/prediction_rollback.gd)（`_close_enough` / `_handle_ack` / `apply_external_event`）
 - [`server/match/match_combat.gd`](../../../server/match/match_combat.gd)（命中回放与 `_stepped_seq`）
-- [`docs/archive/superpowers/plans/2026-10-28-hit-event-align.md`](../archive/superpowers/plans/2026-10-28-hit-event-align.md)（**已落地**的事件 seq 对齐先例，本计划照它的形状做拆砖；2026-11-01 归档）
+- **事件 seq 对齐先例**（2026-10-28 `hit-event-align` 计划，已落地；归档目录已于 2026-11-02 整体删除，见 `git log`）：本计划照它的形状做拆砖
 - [`docs/eng/registered-debt.md`](../../eng/registered-debt.md) §四十九（`_auto_jump_assist` 本地表现量当时被“文档化”成边界，本计划把它改回源头解决）
 
 ---
@@ -224,8 +224,9 @@ create 建房 → join 加入 → 房主自动 `pvp_start` → 两端实例化**
    `sub_destroyed` 加 `seq: int` 参数；`local_tile_destroyed` / `local_sub_destroyed` 信号同步加参数。
 2. 客户端 `TileSync`：`on_cell/on_sub` 拆成 `_apply_mutation(...)` + `_play_fx(...)`；前者走 `apply_external_event`，
    后者在"注入成功或兜底"之后**各播一次**。
-3. 守卫：`rollback_fidelity_probe` 34 → 36 条 —— ① 注入一次拆砖事件后 `rollback_count()` **不增加**；
-   ② 重放后 `capture_state()` 与"直接改地形再预测"一致（等价于注入幂等）；变异 = 改成"到达即应用" ⇒ ① 红。
+3. 守卫（**实际落地与这条预告不同，照实记**）：预告是"`rollback_fidelity_probe` 34 → 36 条（注入后回滚不增 + 重放一致）"，
+   实际做时发现那两条要么与既有 D 组同源重复、要么只能读源码文本判形态 ⇒ **最终改用 `net_tile_fx_probe` 的两条行为断言
+   ⑦⑧（注入生效 / 注入被拒兜底），`rollback_fidelity_probe` 保持 34**（用户裁定，见 §R2「A 的实现」的守卫条）。
 4. 真链路：`net_tile_fx_probe`（已有拆砖表现断言）加一条"事件到达后 200ms 内 `rollback_count()` 增量 ≤1"。
 5. 文档：`docs/eng/netcode-client-interp-and-input-details.md`（事件锚点一节）、`docs/eng/world.md`（拆砖广播）、
    `registered-debt` 新小节；`tests/README.md` 计数。
@@ -239,14 +240,17 @@ create 建房 → join 加入 → 房主自动 `pvp_start` → 两端实例化**
 - [x] `scenes/mp_client/tile_sync.gd`：`_apply_cell` / `_apply_sub` 把**变更**放进 callable → `_apply_event(seq, mutate)`
       → `apply_external_event`；**表现**（粒子 / 去重）在 callable 外只播一次；`on_cell` / `on_sub` 保留为无锚点入口（seq=0 ⇒ 立即应用）。
       ★ callable 会被后续每次重放重新执行 ⇒ 只许调 `TileDefs.damage_sub`（已死子格返回 false，幂等）。
-- [x] 守卫：`net_tile_fx_probe` 9→**11**（⑦ 有预测环时必须走注入；⑧ 注入被拒时兜底立即应用）；
-      `rollback_fidelity_probe` 34→**36**（锚点单源 / 三条事件都用它 / 拆砖逐 peer 发）。
-- [x] 变异（逐字）：去掉客户端注入 ⇒ `KH net_tile_fx PROBE: FAIL | 有预测环时应走注入:注入的 seq=[]、子格已清=true、粒子 +1`；
-      改回 `_rpc_all` ⇒ `ROLLBACK FIDELITY PROBE: FAIL` + `✗ 受击 / 整格拆砖 / 子格拆砖 三条事件都必须用同一个锚点源(实得 1/3 处)` +
-      `✗ 拆砖必须逐 peer 发锚点(点对点 0/2 处;_rpc_all 2 处)`；还原后两条都 `ALL-OK`。
+- [x] 守卫：`net_tile_fx_probe` 9→**11**（⑦ 有预测环时必须走注入；⑧ 注入被拒时兜底立即应用）。
+      ★ **`rollback_fidelity_probe` 保持 34**：R2 一度加了 3 条"读源码文本"的守卫（锚点单源 / 三条事件都用它 / 逐 peer 发），
+      用户按 [`test-economy.md`](../../eng/test-economy.md) D6a 判定后**全部砍掉**；只把**原有那条**受击锚点检查的取数点
+      跟到新的 `_event_seq_for`（净增 0）。⇒ "拆砖走同一锚点 / 逐 peer 发"现在只有注释契约 + 真链路 `pvp_match_smoke` 兜底。
+- [x] 变异（逐字，**守卫砍掉后只剩客户端那一条**）：去掉客户端注入 ⇒
+      `KH net_tile_fx PROBE: FAIL | 有预测环时应走注入:注入的 seq=[]、子格已清=true、粒子 +1`；还原 ⇒ `ALL-OK`。
+      （服务器"改回 `_rpc_all`"那次变异红来自被砍掉的 3 条源码守卫 ⇒ 现在**不再有自动证据**，已知取舍。）
 
-**验收（逐字）**：默认批 `RUN_ALL OK(41 runs / 354 gated-assertions)`；真链路 `bash tests/smoke/pvp_match_smoke.sh` → **SMOKE PASS**；
-`KH net_tile_fx PROBE: ALL-OK`；`ROLLBACK FIDELITY PROBE: ALL-OK`（`[fid] checks = 36`）。
+**验收（逐字）**：默认批 `RUN_ALL OK(41 runs / 352 gated-assertions)`（砍掉 2 条后比 354 少 2）；真链路
+`bash tests/smoke/pvp_match_smoke.sh` → **SMOKE PASS**；`KH net_tile_fx PROBE: ALL-OK`（11 条）；
+`ROLLBACK FIDELITY PROBE: ALL-OK`（`[fid] checks = 34`，与 R2 之前相同）。
 
 **没做的（照实）**：端到端的"打穿掩体后跑过去"回滚频率前后对比**测不了** —— 本机 loopback 编排不稳定（§R7 / debt §五十四），
 只能靠真人对局或公网复测；其余边界见 [`registered-debt.md`](../../eng/registered-debt.md) §五十五。
