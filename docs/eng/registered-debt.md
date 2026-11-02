@@ -25,6 +25,7 @@
 - **`CombatComponent.restore_alive_state()`**（`revive()` 减去 `hp=max_hp`）：C2 回滚 / 权威态 / 回溯三条恢复路径的"倒地→活着"都走它 ⇒ 跨"死亡→活着"的恢复现在按快照 hp，**旧行为是满血**（修 bug，但属可感知变化，headless 够不到、无断言）。
 - **服务器 Beta 回溯只寻帧**（[`server/match/match_host.gd`](../../server/match/match_host.gd) `_apply_rw_frame` 调 `Player.rewind_restore`）：它依赖帧 schema `p/v/hp/facing/downed/widx/wmags/wlive`；改了 `_record_rw_frame` 的键就必须同步 `rewind_restore`，**没有前置编译提示**。
 - **客户端出生即落稳**（[`scenes/pvp_match_client.gd`](../../scenes/pvp_match_client.gd) `_settle_local_spawn`，三模式共用）：在 `_boot_world()` 里把"从格子中心落到地面"这段物理**提前跑完**（≤8 步，超了放弃）。**未跑验证**（用户当轮要求别测 + 另一会话占着 Godot 进程）⇒ 若出现"出生卡在墙里 / 悬空不动 / 落点比服务器高"，第一嫌疑是这里；正常表现应是首条 ack 时两端 `pos` 差 < 2px（原先实测差 9.6px，每局固定一次开局回滚）。
+- **服务器按实例 id 判"这颗弹广播过没有"**（[`server/match/match_combat.gd`](../../server/match/match_combat.gd) 的 `_seen_bullets`）——子弹池化（[`core/present/bullet_pool.gd`](../../core/present/bullet_pool.gd)）之后，"同一帧内死一颗 → 池把它借给下一发"会被判成同一颗 ⇒ **不再广播**（客户端少看见一发、服务器不报错）。池已加"同一物理帧归还的实例不借出"（`_released_frame`）缓解；**结构修复未做**：把广播判据改成每发一个 use generation，或广播后清 meta 改按 `use_id` 记账（动 `server/match/**`，要单独评审）。
 - [`docs/eng/registered-debt.md`](registered-debt.md) 本身**不是**逐项待办:它只登记"现在仍成立"的边界;任务清单在 `docs/superpowers/plans/`。
 
 ## 零守卫面（按面列出;只统计 2026-10-24 削减后仍无替代守卫的）
