@@ -73,36 +73,45 @@ O0 测量 → O1 AABB 粗筛 → O2 客户端弹池 → O3 服务器弹池 →�
 
 ## 任务
 
-### O0 · 服务器 tick 分段计时（只加诊断，不改行为）
+### O0 · 服务器 tick 分段计时（只加诊断，不改行为）—— **已完成 2026-11-02，数据待跑**
 
 **猜测：** 8 人局 10ms/tick 里，子弹裁决可能只占一小部分；`capture_state`/快照编码/逐 peer RPC 可能更大。没有分段数据前任何结构优化都是猜。
 
-**做什么：**
-- [ ] `server/match/` 内加**默认关闭**的计时（`--diag` 才开）：每 tick 累计 `_adjudicate_bullets` / `_push_lag_frame` / 快照编码 / 逐 peer 发送的微秒数 + 子弹数、玩家数；1Hz 打一行到 diag 日志（**不要**新增常驻生产日志）。
-- [ ] 用 `royale_soak`（`--clients=2/4/8`，同配置两次）跑，记录分段占比。
-- [ ] 数据写进本计划 §结果表；并回答：裁决占 tick 的百分比是多少？
+**落地（子代理实现，Lead 复跑 `ALLSCRIPT` 复核）**
+- 新建 `server/match/tick_timing.gd`（132 行，`RefCounted`、**无 `class_name`**、`preload` 使用）；`server/match/match_host.gd` **纯追加 21 行**（`git diff -U0` 全为 `+`，现有语句一字未动）：1 处成员声明 + 6 处紧贴被测调用的 mark。
+- 段：`adjudicate`（含 `_push_lag_frame`）/ `world_snap`（`encode_world` + 单次广播 rpc）/ `own_snap`（`capture_state` + `encode_own` + **逐 peer `rpc_id`**，在帧末 deferred，不计入 tick 窗口）/ `rewind`（Beta 时间玩法才有）+ 整 tick；附带 `players` / `bullets_avg` / `bullets_max`。
+- 落盘：`event=tick_sections` 进**心跳指标文件**（`NetDiag.log_metric`，1 行/窗口；窗口跟随 `NetDiag.metric_interval_ms()`：默认 10s、`--diag-verbose` 1s —— 1s 窗口若不跟随会被 10s 节流吞掉）。不新增常驻生产日志。
+- **关闭 diag 的开销**：判据收在类内（`on == false` ⇒ 立即 return），不读时钟/不分配/不拼串/不写盘；实测 100k 次 mark 减空循环 = 0.41~0.50 µs/2 次 ⇒ 每 tick 10 次 ≈ **2~2.5 µs（10ms tick 的 0.02%）**。是"空实现级"，不是数学 0（要严格 0 只能复制一份 `_physics_process`，重排，不做）。
+- 口径三条（别混读）：`*_avg_us` 是**均摊到每 tick**（sum/ticks，与 `tick_avg_us` 可比）；`*_max_us` 是**单次**最长；`own_snap` 在 deferred 里跑，**不与 tick 窗口相加对账**。
 
-**验收：** 分段读数表（2/4/8 人各两次）；代码默认路径行为不变（关闭 diag 时零计时开销 —— 用 `if NetDiag.enabled()` 包住或等价开关）。
+**数据跑法（还没跑：7777 当轮被另一会话占着）**
+```
+CYR_DIAG=1 CYR_DIAG_VERBOSE=1 CYR_LOG_DIR="$PWD/gamelogs/o0_8pa" \
+  bash tests/probe/royale_soak_probe.sh 8 60 90      # 2/4/8 人 × 各两次
+grep -h '"tick_sections"' "$LOGDIR"/metrics-server-*.jsonl | tail -20
+```
+★ 必须用 `CYR_DIAG=1`（worker 是子进程，命令行由 WorkerLauncher 固定拼、不带 `--diag`）。
 
+**验收（部分）**：关闭 diag 行为逐字不变（纯追加 + 空实现可复核）；分段字段与落盘已由临时 `-s` 烟测验（`O0 TIMING SMOKE: OK(16 项)`，已删）；**2/4/8 人读数表未填**（见 §结果表）。
 **不做：** 不加每帧字符串拼接/日志；不改裁决逻辑。
 
 ---
 
-### O1 · 裁决宽相位 AABB 粗筛（零风险削峰）
+### O1 · 裁决宽相位 AABB 粗筛（零风险削峰）—— **已完成 2026-11-02，Lead 复跑确认**
 
-**猜测：** `_adjudicate_bullets` 对每颗子弹 × 每个玩家都进 `segment_hits_rect`（内部可能没有 AABB 早退）；先用“子弹本帧扫掠 AABB vs 玩家 hurt rect”做矩形判交，能砍掉绝大多数“明显不可能命中”的精确计算。
+**猜测：** `_adjudicate_bullets` 对每颗子弹 × 每个玩家都进 `segment_hits_rect`；先用"子弹本帧扫掠 AABB vs 玩家 hurt rect"做矩形判交，能砍掉绝大多数"明显不可能命中"的精确计算。
 
-**做什么：**
-- [ ] 读 `HitShape.segment_hits_rect`：若内部已有 AABB 早退，则本任务改成“复用 `_push_lag_frame` 已算好的 rect 列表”，避免每子弹重复取 rect（减少函数调用与 rect 构造）。
-- [ ] `_adjudicate_bullets`：每 tick 先把“每个玩家在 replay tick 的 hurt rect”取一次进局部数组（避免每子弹每玩家都查历史表），再对每颗子弹：
-  1. 子弹本帧扫掠 AABB（`Rect2(prev_pos, global_position)` grow `hit_grow()`）与每个候选 rect `intersects` 粗筛；
-  2. 通过者才做精确 `segment_hits_rect`。
-- [ ] 守卫：扩展 `tests/probe/bullet_sweep_probe`（或新增等价性探针）：对**构造用例 + 随机用例**（固定随机种子）跑“粗筛路径”与“直接精确路径”（代码里留一个 `_adjudicate_exact_only()` 或 debug 开关），断言命中集合**完全一致**。
-- [ ] 变异：把粗筛判据写错（如用 `encloses` 或漏 grow）⇒ 等价性断言红。
+**落地（子代理实现 + Lead 复跑 `BULLET SWEEP PROBE: ALL-OK`）**
+- `core/sim/hit_shape.gd`：新增 `sweep_may_hit(a,b,rect,w,h,grow)`（扫掠 AABB vs **最近环面副本**、**含边界** `<=`/`>=`、**含 grow**）与 `candidate_hits(..., exact_only=false)`（粗筛是**纯门** → 精确）。
+- `server/match/match_combat.gd`：`adjudicate_exact_only`（生产默认 false，只给守卫切新旧路径）；**每颗子弹只算一次** `prev/cur/grow`（`hit_grow()` 要查碰撞体 + 三角函数，原来是每候选算一次）；回放受击面按 **(射手 role, 受害者 role) 每 tick** 缓存（`_hurt_rect_cache` + `_hurt_rect_cache_tick`，随 `_srv_tick` 自愈）。
+- **与计划原文的两处必要偏离（不改会变成行为 bug）**：
+  1. **不能"每玩家每 tick 取一份 rect"** —— 回放 tick 依赖**射手**自己的 `_client_snap_tick`，逐射手不同 ⇒ 必须按 (射手, 受害者) 缓存；
+  2. **回退支（现时 `hurt_rect()`）与 `HitShape.hurtable()` 刻意不缓存** —— 同帧 `take_hit` 可能击倒/击退，缓存会让"同帧先被打死的人还吃后续子弹"，那是行为改变。
+- 命中顺序为何不变（可证）：生产顺序 = `for role in players` 插入序 + 首个命中 `break`；粗筛不把任何数值喂给精确那一步（无 ULP 漂移），且真命中 ⇒ 必过粗筛（保守），被拒者原本也判 false 并 `continue` ⇒ 首个 true 下标不变。
 
-**验收：** `BULLET SWEEP PROBE: ALL-OK`；O0 读数的裁决分段下降；全量批绿。
-
-**边界：** 单机模式不跑这条（单机命中在 `bullet_base` 侧），本任务只动 PvP 服务器裁决。
+**守卫**：`tests/probe/bullet_sweep_probe.gd` `EXPECTED_CHECKS 6 → 15`：构造 6 例两路径逐例一致 / 粗筛从未否掉精确判中 / 贴边相切必须放行（只许"多放过"）/ 擦边必须算 grow / 跨环面缝按最近副本对齐 / 粗筛不是恒真 / 随机 400 例（固定种子）两路径一致 / 随机用例分布有效（真命中 104、否掉 274 都不为 0）/ **tick 模拟 200 颗弹**：命中集合与命中顺序（首个命中索引序列）一致。
+**变异（逐字）**：漏 grow ⇒ `✗ 擦边…` + `✗ 随机 400 例…(不一致 23)` + `FAIL`；改用 `encloses` ⇒ `✗ 贴边相切…` + `✗ 跨环面缝…` + `✗ 随机…(不一致 99)` + `✗ tick 模拟…(命中 23 颗)` + `FAIL`；各自还原后 `BULLET SWEEP PROBE: ALL-OK`。
+**测不到什么**：守卫把生产决策函数 `HitShape.candidate_hits` 当被测对象（`_adjudicate_bullets` 是破坏性的，同一状态跑不了两遍）；若有人把粗筛从生产里整个删掉（只留精确），探针不会红 —— 那是纯性能回退、行为不变。**O0 的"裁决分段下降"读数未取**（7777 当轮被占）。
 
 ---
 
@@ -151,14 +160,18 @@ O0 测量 → O1 AABB 粗筛 → O2 客户端弹池 → O3 服务器弹池 →�
 
 ---
 
-### O5 · 空间哈希（只在 O4 之后仍不够时）
+### O5 · 空间哈希（**已评估：不采用，2026-11-02**）
 
 **猜测：** 人数/子弹数上升后（16 人 × 上百发），O1 的 AABB 粗筛仍是 O(子弹×玩家)；空间哈希把候选降到常数级。
 
-**做什么：**
-- [ ] 只在 O0 数据显示裁决仍占 >tick 20% 时启动；先做**玩家 16 个**的哈希（小规模，其实线性扫也快）——**大概率不值得做**，写明即可。
+**评估结论（不采用，理由逐条）**
+1. **量级本来就小**：O1 之后每 tick 的工作是"子弹 × 玩家"次**矩形判交**。16 人 × 上百发 ≈ 1600 次矩形相交 ≈ 微秒级（单次矩形判交是十几条比较），远小于 1ms，也远小于 O4 要动的"整弹物理（节点 + `move_and_slide`）"。
+2. **哈希的重建成本抵掉收益**：要查的对象是**玩家**（每 tick 位置都在变），哈希每 tick 都要重建/更新；16 个条目的插入 ≈ 16 次线性扫的成本 —— 换不来常数级收益。
+3. **动态 AABB 的合适结构不是哈希**：真要继续压，按 §1.3 的排序应是 sweep-and-prune（少量动态 AABB），而不是空间哈希；而它同样受第 1 条量级限制。
+4. **真正的结构收益在 O4**：把服务器子弹从节点/物理体改成纯数据，省的是每颗子弹的节点与 `move_and_slide`，不是"候选筛选"。
 
-**验收：** 若无收益，本任务标记“已评估不采用”并写入债务。
+**验收（本轮）**：结论写入本计划（本节）与 §不做；**不写代码、不写守卫**（性能项没有行为判据，按 `test-economy` 不写"零断言守卫"）。
+**翻案条件**：O0 数据显示"裁决段仍占 tick >20%"**且** O4 已落地、子弹数/玩家数再上一个量级（如 16 人 + 数百发常驻）时，重开本任务，先做 sweep-and-prune 而不是哈希。
 
 ---
 
@@ -214,6 +227,8 @@ HUD **18~19ms** / ENet **13~23ms**，差值 ≤5ms 且方向随机 ⇒ 与公网
 ## 不做（明确排除）
 
 - 不用 kd-tree/四叉树做动态子弹宽相位（§1.3）；
+- **不做空间哈希 / sweep-and-prune（O5 已评估：量级不够，见 §O5 的翻案条件）**；
 - 不改客户端/服务器命中几何（`HitShape` 单一真相源）；
 - 不改协议语义（O6 只改显示；O4 是服务器内部结构）；
-- 不为了性能牺牲确定性（池化必须完整 reset，且不进 `capture_state` 语义）。
+- 不为了性能牺牲确定性（池化必须完整 reset，且不进 `capture_state` 语义）；
+- **O4 纯数据弹在 O0 数据出来之前不启动**（§1.1 硬要求）。

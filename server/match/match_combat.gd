@@ -4,6 +4,13 @@ extends MatchSnapshot
 const HitShape := preload("res://core/sim/hit_shape.gd")   # 受击判定几何唯一入口
 const LagComp := preload("res://core/net/lag_comp.gd")     # playout / 回放深度常量(与客户端副本同源)
 
+# 裁决宽相位开关:false(生产默认)= 先 AABB 粗筛再精确;true = 直接精确(旧路径)。
+# ★ 只给 tests/probe/bullet_sweep_probe 做新旧等价对比用;改它只影响算力,不影响任何命中结果(见 hit_shape.candidate_hits)。
+var adjudicate_exact_only := false
+# 每 tick 的回放受击面缓存:shooter_role -> {victim_role: Rect2};所属 tick 见 _hurt_rect_cache_tick。
+var _hurt_rect_cache: Dictionary = {}
+var _hurt_rect_cache_tick := -1
+
 # 子弹 / 爆炸 / 光束的裁决与广播域;拆墙广播也在这里(它同属「命中/破坏」这条线)。
 
 # 事件的**时间锚点** = 上一次完成步进时的已消费 seq(MatchState._stepped_seq,帧末 deferred 记录)。
@@ -53,6 +60,9 @@ func _on_sub_destroyed(sub: Vector2i, _pre_hp: int, owner: Node) -> void:
 func _adjudicate_bullets() -> void:
 	# 命中回放采样必须在本帧裁决之前推(含当前 tick):裁决读的就是"射手观看时刻"那一帧的受击面。
 	_push_lag_frame()
+	# 回放受击面按 tick 缓存(见 _replay_rect_cached):这一行之后 _lag_hist / _srv_tick / _client_snap_tick 本帧不再变。
+	var w := float(GameParameters.MAP_WIDTH)
+	var h := float(GameParameters.MAP_HEIGHT)
 # 帧末用「本帧在场」的集合替换 _seen_bullets,顺带剪掉已消失的条目。★ 必须剪:大乱斗不换局、永不调 _reset_world_and_clear_dynamics,不剪就整局只增不减。
 	var live: Dictionary = {}
 	for b in get_tree().get_nodes_in_group("bullet"):
@@ -70,17 +80,21 @@ func _adjudicate_bullets() -> void:
 			continue
 
 		if bullet.explodes:
-			_adjudicate_grenade(bullet)
+			_adjudicate_grenade(bullet, w, h)
 			continue
 # 命中裁决:子弹上一位置→当前位置的线段 vs 玩家受击面(与客户端 cull / 单机子弹同一套 hit_shape)。★ 队友穿透用 continue 而不是 break —— 队友不挡弹道,后面若有敌人照样打得到。
 		var shooter_role := _role_of(bullet.shooter)
+# ★ 扫掠参数每颗子弹算一次:prev/cur 全程不变,hit_grow() 要查碰撞体 + 三角函数,放进玩家循环里是每颗 × 每人白烧。
+		var prev := bullet.prev_pos
+		var cur := bullet.global_position
+		var grow := bullet.hit_grow()
 		for role in players:
 			var p := players[role] as Player
 			if p == bullet.shooter:
 				continue
 			if same_team(shooter_role, int(role)):
 				continue
-			if _segment_hits_player(bullet, p):
+			if _segment_hits_player(bullet, p, prev, cur, grow, w, h):
 				_on_bullet_hit(bullet, p, role)
 				break
 # 剪枝用替换而不是逐条 erase:两者都是 O(子弹数),替换少一次遍历。
@@ -89,33 +103,53 @@ func _adjudicate_bullets() -> void:
 
 # 线段扫掠判命中:受击面来源唯一(Player.hurt_rect → HitShape),不再用中心点距离。
 # ★★ 时间域解耦:读**射手观看时刻**的受击面(历史回放),否则"看着中/服务器不中";移动预测仍吃最新态,只影响裁决。
-func _segment_hits_player(bullet: BulletBase, p: Node2D) -> bool:
+# ★ 宽相位:候选先过 AABB 粗筛(sweep_may_hit 在 hit_shape 内,与精确同一套环面锚点 + grow),过了才进精确。
+func _segment_hits_player(bullet: BulletBase, p: Node2D, prev: Vector2, cur: Vector2,
+		grow: Vector2, w: float, h: float) -> bool:
 	if not HitShape.hurtable(p):
 		return false
 	var rect := _replay_hurt_rect(bullet, p)
-	var w := float(GameParameters.MAP_WIDTH)
-	var h := float(GameParameters.MAP_HEIGHT)
-	return HitShape.segment_hits_rect(bullet.prev_pos, bullet.global_position, rect, w, h,
-			bullet.hit_grow()) >= 0.0
+	return HitShape.candidate_hits(prev, cur, rect, w, h, grow, adjudicate_exact_only)
 
 
 # 射手观看时刻的受击面:st − PLAYOUT_TICKS(夹在 srv−MAX_REWIND..srv);无有效 st(非网络射手/尚未收到快照)或
 # 无历史(开局/刚重连)时回退现时受击面 —— AI 补位没有"观看时刻",按现时裁决。
 func _replay_hurt_rect(bullet: BulletBase, p: Node2D) -> Rect2:
-	var pl := p as Player
-	var fallback: Rect2 = pl.hurt_rect() if pl != null else HitShape.hurt_rect_of(p)
+	var rect := _replay_rect_cached(bullet, p)
+	return rect if rect.size != Vector2.ZERO else _live_hurt_rect(p)
+
+
+# 历史回放那一支(纯函数于 _client_snap_tick / _srv_tick / _lag_hist,三者在一次裁决内都不变)
+# ⇒ 按 (射手 role, 受害者 role) 每 tick 只解析一次,不必每颗子弹每个玩家重查历史表。
+# ★ 回退支(现时受击面)不缓存:同帧 take_hit / 倒地可能改动它,必须每次重读 —— 那才是逐位等价。
+# ★ 缓存生命周期 = 一个 _srv_tick;tick 变了自动清(不依赖调用顺序,免得将来别的入口读到上一帧的矩形)。
+func _replay_rect_cached(bullet: BulletBase, p: Node2D) -> Rect2:
+	if _hurt_rect_cache_tick != _srv_tick:
+		_hurt_rect_cache_tick = _srv_tick
+		_hurt_rect_cache.clear()
 	var shooter_role := _role_of(bullet.shooter)
 	var victim_role := _role_of(p)
 # ★ 无效 role 的安全阀只有这一处,且判据必须是 `< 0`(_role_of 的哨兵)—— 原写 `== 0` 时它恒假、纯死代码,
 # 真正挡住的只有下一行的 peer_by_role.has()。AI 补位没有 peer(靠 has 挡),非玩家射手才是这里挡的那一档。
 	if shooter_role < 0 or victim_role < 0 or not peer_by_role.has(shooter_role):
-		return fallback
+		return Rect2()
 	var st := int(_client_snap_tick.get(shooter_role, 0))
 	if st <= 0:
-		return fallback
+		return Rect2()
+	var by_victim: Dictionary = _hurt_rect_cache.get(shooter_role, {})
+	if by_victim.has(victim_role):
+		return by_victim[victim_role]
 	var want := clampi(st - LagComp.PLAYOUT_TICKS, _srv_tick - LagComp.MAX_REWIND_TICKS, _srv_tick)
 	var rect := _lag_hist.rect_for(victim_role, want)
-	return rect if rect.size != Vector2.ZERO else fallback
+	by_victim[victim_role] = rect
+	_hurt_rect_cache[shooter_role] = by_victim
+	return rect
+
+
+# 现时受击面(回退口径):读当前姿态/位置,不缓存。
+func _live_hurt_rect(p: Node2D) -> Rect2:
+	var pl := p as Player
+	return pl.hurt_rect() if pl != null else HitShape.hurt_rect_of(p)
 
 
 # 每物理 tick 把全员「位置 + 相对受击面」记进历史环;只记判定几何(不记姿态/朝向),内存 = 24 tick × 人数。
@@ -135,11 +169,14 @@ func _push_lag_frame() -> void:
 # 爆炸弹对玩家的权威判定:只结算一次「直接命中」,不销毁子弹 —— 物理掩码已不含玩家,命中全靠这里的线段扫掠;
 # 销毁会把引信一起吞掉(爆炸永不触发)。引信由 bullet_base._check_player_contact 两端同源起,这里只补权威伤害 + 射手端反馈。
 
-func _adjudicate_grenade(bullet: BulletBase) -> void:
+func _adjudicate_grenade(bullet: BulletBase, w: float, h: float) -> void:
 	if bullet.shooter == null:
 		return   # 敌方爆炸弹(理论上只有敌方弹药):同普通弹的 shooter == null 分支,不补刀
 	if bullet.has_meta("grenade_direct_hit"):
 		return   # 榴弹会在判定框内连续穿行好几帧,只结算第一次
+	var prev := bullet.prev_pos
+	var cur := bullet.global_position
+	var grow := bullet.hit_grow()
 	for role in players:
 		var p := players[role] as Player
 		if p == bullet.shooter:
@@ -148,7 +185,7 @@ func _adjudicate_grenade(bullet: BulletBase) -> void:
 # (伤害 + 击退都照吃;爆炸走 Explosion.apply_aoe,那条路径按现状不动)。
 		if same_team(_role_of(bullet.shooter), int(role)):
 			continue
-		if _segment_hits_player(bullet, p):
+		if _segment_hits_player(bullet, p, prev, cur, grow, w, h):
 			_grenade_direct_hit(bullet, p)
 			break
 

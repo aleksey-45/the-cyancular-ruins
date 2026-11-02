@@ -40,6 +40,19 @@ static func rect_at(rect: Rect2, anchor: Vector2, w: float, h: float) -> Rect2:
 		off.y = h * roundf((anchor.y - c.y) / h)
 	return Rect2(rect.position + off, rect.size)
 
+## 宽相位 AABB 粗筛:线段 a→b 的轴对齐扫掠框,与受击面的**最近环面副本**是否可能相交。
+## ★ 只许「放过」不许「漏」:精确判中的必须返回 true(多余的 true 只是白跑一次精确,结果仍由 segment_hits_rect 定)。
+## ★ 比较必须含边界:segment_hits_rect 贴边/相切算中,而 Rect2.intersects 默认排斥边界、Rect2.encloses 更强 ⇒ 两者都会漏。
+## ★ grow 必须算:擦边命中靠子弹体积外扩(见 bullet_base.hit_grow),漏掉它会把真命中筛掉。
+static func sweep_may_hit(a: Vector2, b: Vector2, rect: Rect2, torus_w: float = 0.0, torus_h: float = 0.0,
+		grow: Vector2 = Vector2.ZERO) -> bool:
+	var r := rect_at(rect, a, torus_w, torus_h)
+	if not grow.is_zero_approx():
+		r = Rect2(r.position - grow, r.size + grow * 2.0)
+	var lo := Vector2(minf(a.x, b.x), minf(a.y, b.y))
+	var hi := Vector2(maxf(a.x, b.x), maxf(a.y, b.y))
+	return lo.x <= r.end.x and hi.x >= r.position.x and lo.y <= r.end.y and hi.y >= r.position.y
+
 ## 线段 vs 矩形(Liang-Barsky)。命中返回 t∈[0,1](起点在框内=0,贴边/相切算中);未中返回 -1。grow = 子弹体积外扩(世界轴半展)。
 static func segment_hits_rect(a: Vector2, b: Vector2, rect: Rect2, torus_w: float = 0.0, torus_h: float = 0.0,
 		grow: Vector2 = Vector2.ZERO) -> float:
@@ -66,6 +79,14 @@ static func segment_hits_rect(a: Vector2, b: Vector2, rect: Rect2, torus_w: floa
 		if t0 > t1:
 			return -1.0
 	return t0
+
+## 单个候选(一个受击面)的最终判定 = AABB 粗筛 → 精确。exact_only=true 是「直接精确」旧路径,只给等价性守卫用。
+## ★ 两条路径必须逐例同判:粗筛是纯门(gate),不把任何数值喂给精确那一步 ⇒ 命中结果与命中顺序逐位不变。
+static func candidate_hits(a: Vector2, b: Vector2, rect: Rect2, w: float, h: float,
+		grow: Vector2, exact_only: bool = false) -> bool:
+	if not exact_only and not sweep_may_hit(a, b, rect, w, h, grow):
+		return false
+	return segment_hits_rect(a, b, rect, w, h, grow) >= 0.0
 
 ## 线段与矩形相交的入射点(未中返回 (INF,0))。
 static func segment_entry_point(a: Vector2, b: Vector2, rect: Rect2) -> Vector2:

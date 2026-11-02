@@ -166,7 +166,17 @@ func _on_input(caller: int, pkt: Dictionary) -> void:
 			return
 
 
+# ══ O0(bullet-perf 计划 §O0)· tick 分段计时 —— **只做诊断,默认关** ══
+# 唯一实现 = server/match/tick_timing.gd。`NetDiag.enabled()`(`--diag` / `CYR_DIAG=1` / 导出服务端默认开)
+# 为假时,下面每一处 mark 都只是一次空实现调用:不读时钟、不分配、不拼字符串、不写盘 ⇒ 默认路径行为逐字不变。
+# 打开时按 `NetDiag.metric_interval_ms()` 窗口(默认 10s,`--diag-verbose` 1s)吐一行 `tick_sections` 到**心跳
+# 指标文件**(不刷事件文件、不新增常驻生产日志)。★ 只测量:6 处插入都紧贴被测调用的前后,**不重排**任何现有语句。
+# ★ 段的定义与口径(每 tick 摊 / 单次最长 / 次数)写在 tick_timing.gd 头部,改段名要两边一起改。
+var _tick_timing := preload("res://server/match/tick_timing.gd").new()
+
+
 func _physics_process(delta: float) -> void:
+	var _t_all: int = _tick_timing.begin()   # O0:整 tick 计时起点(关闭 diag 时 = -1)
 # ★★ 快照广播必须放在「消费本帧输入」之前:Player 是子节点(父先于子),本帧玩家要到本函数返回后才步进 —— 若在消费后广播,
 # 状态还是「上一输入模拟完(S_{F-1})」而 ack 已指向刚消费的 C_F ⇒ ack 领先状态一拍,客户端移动中每次快照都误判分歧、画面被拉回
 # (server-rendered 插值吸收,故旧路径不暴露;C2 rollback 一比整态就现形)。放消费前则 ack 与状态配对一致。
@@ -180,7 +190,9 @@ func _physics_process(delta: float) -> void:
 
 	_debug_destroy_tile(delta)
 	if time_economy != null:
+		var _t_rewind: int = _tick_timing.begin()
 		_tick_beta_rewind(delta)   # Beta 回溯机(环缓/倒放/免伤/轨迹)
+		_tick_timing.end(&"rewind", _t_rewind)
 # 加速态必须在快照之前定格(快照的 haste 位读的就是这个倍率);★ 裁决在服务器:按住 + 账户可耗才生效,只乘自己。
 	if time_economy != null:
 		for role in input_sources:
@@ -202,7 +214,9 @@ func _physics_process(delta: float) -> void:
 	if _snapshot_tick_phase >= SNAPSHOT_STRIDE:
 		_snapshot_tick_phase = 0
 		snapshot_tick = true
+		var _t_world: int = _tick_timing.begin()
 		_broadcast_snapshot()
+		_tick_timing.end(&"world_snap", _t_world)   # O0:含 encode_world + 单次广播 rpc
 
 	if time_economy != null:
 		time_economy.tick(delta)
@@ -239,7 +253,9 @@ func _physics_process(delta: float) -> void:
 		_own_flush_pending = true
 		_flush_own_snapshots.call_deferred()
 
+	var _t_adj: int = _tick_timing.begin()   # O0:这一段含 _push_lag_frame(lag 历史写入)
 	_adjudicate_bullets()
+	_tick_timing.end(&"adjudicate", _t_adj)
 
 	_broadcast_pending_beams()
 
@@ -257,6 +273,7 @@ func _physics_process(delta: float) -> void:
 				continue
 			CollisionBuilder.rebuild_chunk(destructible_sub, ch, self)
 			processed += 1
+	_tick_timing.end_tick(_t_all, players, self)   # O0:整 tick 收尾 + 子弹数/玩家数(窗口到点才吐一行)
 
 
 # ★ S1:本人包发送点。由 `_physics_process` 在消费完本 tick 输入后 call_deferred 进来 ——
@@ -268,7 +285,11 @@ func _flush_own_snapshots() -> void:
 	_own_flush_pending = false
 	if not is_inside_tree():
 		return
+	# O0:本人包段 = capture_state + encode_own + 逐 peer rpc_id。★ 它在帧末 deferred 跑,不在 `_t_all` 的
+	# 窗口里 ⇒ 读 `own_snap_*` 时要单独看,别拿它去和 tick_avg_us 相加对账。
+	var _t_own: int = _tick_timing.begin()
 	send_own_snapshots()
+	_tick_timing.end(&"own_snap", _t_own)
 
 
 # 帧末记录每个 role "上一次完成步进时的已消费 seq"(受击事件锚点;call_deferred 保证跑在 Player 子节点步进之后)。
