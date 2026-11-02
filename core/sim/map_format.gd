@@ -85,17 +85,23 @@ static func _read_bytes(path: String) -> PackedByteArray:
 	return data
 
 
-## 是否 v4 二进制(头 4 字节 "CYRM")。
-static func is_v4(path: String) -> bool:
-	return MapFormatV4.is_v4_data(_read_bytes(path))
+
+## v4 判定 + 解析**一次读盘**:命中 v4 返回 parse 结果(含 ok/error),非 v4 返回空字典。
+## ★ 5 处调用点原先各写 `if is_v4(path): MapFormatV4.parse(_read_bytes(path))` —— 同一份文件
+##   每次调用被读盘 2 次、CRC32 算 2 次(启动时这些路径会全走一遍)。空字典 = 「不是 v4」,不是错误。
+static func _v4(path: String) -> Dictionary:
+	var data := _read_bytes(path)
+	if data.is_empty() or not MapFormatV4.is_v4_data(data):
+		return {}
+	return MapFormatV4.parse(data)
 
 
 ## 16px 子格纹理表(选项 A 的会话态装填源):
 ##   v4 → 场景层描述符直读;v3/旧格式 → 把 2×2 形状掩码展开成 4×4(每个 32px 象限 = 2×2 个
 ##   同纹理 16px 子格,与 §3.6 迁移规则一致,几何逐像素等价)。
 static func load_subgrid(path: String) -> Array[Array]:
-	if is_v4(path):
-		var v := MapFormatV4.parse(_read_bytes(path))
+	var v := _v4(path)
+	if not v.is_empty():
 		if not bool(v.get("ok", false)):
 			push_error("MapFormat: v4 解析失败 %s(%s)" % [path, str(v.get("error", "?"))])
 			return []
@@ -134,8 +140,8 @@ static func expand_cells_to_subgrid(grid: Array) -> Array[Array]:
 
 ## 地图的注释/出生点行(v4 = body 里的 meta 文本;文本格式 = 原样行)。显示名等目录工具用。
 static func load_meta_lines(path: String) -> Array:
-	if is_v4(path):
-		var v := MapFormatV4.parse(_read_bytes(path))
+	var v := _v4(path)
+	if not v.is_empty():
 		if not bool(v.get("ok", false)):
 			return []
 		return v["meta_lines"]
@@ -234,8 +240,9 @@ static func map_size(path: String) -> Vector2i:
 		push_error("MapFormat: 找不到地图文件 %s" % path)
 		return Vector2i.ZERO
 	# v4 二进制优先(头部即尺寸);旧文本格式走下面的逐行统计
-	if is_v4(path):
-		var h := MapFormatV4.read_header(_read_bytes(path))
+	var raw := _read_bytes(path)
+	if MapFormatV4.is_v4_data(raw):
+		var h := MapFormatV4.read_header(raw)
 		return Vector2i(int(h["sub_cols"]) / 4, int(h["sub_rows"]) / 4)
 	var lines := read_lines(path)
 	var grid_lines := _grid_lines(lines)
@@ -260,8 +267,8 @@ static func load_map_file(path: String) -> Array[Array]:
 		push_error("MapFormat: 找不到地图文件 %s" % path)
 		return []
 	# v4 二进制(现行格式):场景层扁平化成游戏网格
-	if is_v4(path):
-		var v := MapFormatV4.parse(_read_bytes(path))
+	var v := _v4(path)
+	if not v.is_empty():
 		if not bool(v.get("ok", false)):
 			push_error("MapFormat: v4 解析失败 %s(%s)" % [path, str(v.get("error", "?"))])
 			return []
@@ -369,8 +376,8 @@ static func load_spawns(path: String) -> Dictionary:
 		push_error("MapFormat: 找不到地图文件 %s" % path)
 		return {}
 	# v4:spawn/注释都在 body 的 meta 文本里(仍是 "# player x y" 那几行),坐标本来就是格级
-	if is_v4(path):
-		var v := MapFormatV4.parse(_read_bytes(path))
+	var v := _v4(path)
+	if not v.is_empty():
 		if not bool(v.get("ok", false)):
 			push_error("MapFormat: v4 解析失败 %s(%s)" % [path, str(v.get("error", "?"))])
 			return {}
