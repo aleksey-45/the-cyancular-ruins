@@ -1,6 +1,10 @@
+class_name Player
 extends CharacterBody2D
 
-const HitShape := preload("res://core/sim/hit_shape.gd")   # 受击判定几何唯一入口(不做 class_name:新全局类名要等编辑器重扫缓存)
+# ★ 本文件有 class_name(2026-11-02 才加):承重的回滚 / 命中 / 快照路径原先只能按名反射
+#   (has_method / call / get),拼错不报错、只在运行期静默失效。代价 = 新环境必须 `--import`
+#   一次重建全局类缓存(否则别的脚本报 Could not find type Player)—— 本地跑批与 CI 都已显式 import。
+const HitShape := preload("res://core/sim/hit_shape.gd")   # 受击判定几何唯一入口
 
 @export var animator : AnimatedSprite2D
 

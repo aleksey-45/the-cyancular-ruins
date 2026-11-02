@@ -54,7 +54,7 @@ func _match_round_tick(delta: float) -> void:
 # 武器、并再广播一次带新 mvp 的终局载荷。★ 只排除 MATCH_OVER —— ROUND_OVER 期间倒地照旧入账。
 		if _round_state == RoundState.MATCH_OVER:
 			continue
-		var p: Node2D = players[role]
+		var p := players[role] as Player
 		if not p.is_downed():
 			continue
 # ★ 复活调度独立于计分闩锁:塞进 _down_counted 那道闩里,已计分的人就再也不会被安排复活。
@@ -137,14 +137,13 @@ func _handle_respawns(delta: float) -> void:
 # 在这里再掉一次会掉在出生点、而且是多余的一遍。
 
 func _respawn_player(role: int) -> void:
-	var p: Node2D = players[role]
+	var p := players[role] as Player
 	var spawn := _spawn_cell(role)
 	var ts := GameParameters.TILE_SIZE
 	p.global_position = Vector2(spawn.x * ts + ts * 0.5, spawn.y * ts + ts * 0.5)
 	p.velocity = Vector2.ZERO
 	p.apply_authoritative_state(p.max_hp, p.max_waterproof, false)
-	if p.has_method("cancel_jump_state"):
-		p.cancel_jump_state()
+	p.cancel_jump_state()
 	_respawn_pending.erase(role)
 	_down_counted[role] = false
 # 助攻表随复活清空(新的一条命;三模式的 _respawn_player 都 super 到这里)。★ 「复活清空 ≡ 倒地清空」靠
@@ -156,15 +155,14 @@ func _respawn_player(role: int) -> void:
 func _reset_survivor(role: int) -> void:
 	if not players.has(role):
 		return
-	var p: Node2D = players[role]
+	var p := players[role] as Player
 	if p.is_downed():   # 同归于尽:双方都是死者、无活方,各走自己的复活流程
 		return
 	var spawn := _spawn_cell(role)
 	var ts := GameParameters.TILE_SIZE
 	p.global_position = Vector2(spawn.x * ts + ts * 0.5, spawn.y * ts + ts * 0.5)
 	p.velocity = Vector2.ZERO
-	if p.has_method("cancel_jump_state"):
-		p.cancel_jump_state()
+	p.cancel_jump_state()
 
 
 func _round_over(winner: int) -> void:

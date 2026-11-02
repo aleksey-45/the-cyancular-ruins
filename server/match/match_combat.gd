@@ -75,7 +75,7 @@ func _adjudicate_bullets() -> void:
 # 命中裁决:子弹上一位置→当前位置的线段 vs 玩家受击面(与客户端 cull / 单机子弹同一套 hit_shape)。★ 队友穿透用 continue 而不是 break —— 队友不挡弹道,后面若有敌人照样打得到。
 		var shooter_role := _role_of(bullet.shooter)
 		for role in players:
-			var p: Node2D = players[role]
+			var p := players[role] as Player
 			if p == bullet.shooter:
 				continue
 			if same_team(shooter_role, int(role)):
@@ -102,7 +102,8 @@ func _segment_hits_player(bullet: BulletBase, p: Node2D) -> bool:
 # 射手观看时刻的受击面:st − PLAYOUT_TICKS(夹在 srv−MAX_REWIND..srv);无有效 st(非网络射手/尚未收到快照)或
 # 无历史(开局/刚重连)时回退现时受击面 —— AI 补位没有"观看时刻",按现时裁决。
 func _replay_hurt_rect(bullet: BulletBase, p: Node2D) -> Rect2:
-	var fallback: Rect2 = p.hurt_rect() if p.has_method("hurt_rect") else HitShape.hurt_rect_of(p)
+	var pl := p as Player
+	var fallback: Rect2 = pl.hurt_rect() if pl != null else HitShape.hurt_rect_of(p)
 	var shooter_role := _role_of(bullet.shooter)
 	var victim_role := _role_of(p)
 # ★ 无效 role 的安全阀只有这一处,且判据必须是 `< 0`(_role_of 的哨兵)—— 原写 `== 0` 时它恒假、纯死代码,
@@ -121,8 +122,8 @@ func _replay_hurt_rect(bullet: BulletBase, p: Node2D) -> Rect2:
 func _push_lag_frame() -> void:
 	var entries: Dictionary = {}
 	for role in players:
-		var p: Node2D = players[role]
-		if p == null or not is_instance_valid(p) or not p.has_method("hurt_rect"):
+		var p := players[role] as Player
+		if p == null or not is_instance_valid(p):
 			continue
 		var rect: Rect2 = p.hurt_rect()
 		entries[int(role)] = {
@@ -140,7 +141,7 @@ func _adjudicate_grenade(bullet: BulletBase) -> void:
 	if bullet.has_meta("grenade_direct_hit"):
 		return   # 榴弹会在判定框内连续穿行好几帧,只结算第一次
 	for role in players:
-		var p: Node2D = players[role]
+		var p := players[role] as Player
 		if p == bullet.shooter:
 			continue
 # ★ 直击穿透队友(与普通弹同口径)。★ 别顺手把爆炸也豁免:用户裁定子弹穿透队友、爆炸对队友满效
@@ -156,9 +157,10 @@ func _grenade_direct_hit(bullet: BulletBase, victim: Node2D) -> void:
 	bullet.set_meta("grenade_direct_hit", true)
 # ★ 归因先于伤害(全仓纪律):一击致死时倒地边沿同帧读 last_damager,大乱斗靠它计击杀分。
 	CombatFeedback.attribute(victim, bullet.shooter)
-	if victim.has_method("take_hit"):
+	var pl := victim as Player
+	if pl != null:
 
-		victim.take_hit(bullet.global_position, bullet.direct_hit_damage, false, bullet.hit_impact)
+		pl.take_hit(bullet.global_position, bullet.direct_hit_damage, false, bullet.hit_impact)
 
 	notify_direct_hit(bullet.shooter, victim)
 
@@ -205,7 +207,7 @@ func _broadcast_bullet_spawn(bullet: CharacterBody2D) -> void:
 
 func _broadcast_pending_beams() -> void:
 	for role in players:
-		var p: Node2D = players[role]
+		var p := players[role] as Player
 		if p == null or p.weapons == null:
 			continue
 
@@ -239,9 +241,10 @@ func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, _victim_role: int) 
 # ★★ 归因先于伤害(全仓纪律)。★ 这一行必须住在基类:1v1 走 MatchBootstrap.start_on 直接建 MatchHost(全仓唯一
 # 实例化点),没有子类那层覆写 ⇒ 原先 1v1 的子弹不进 dealt / taken,结算页显示「击杀 5 / 造成 0 / 承受 0」。
 	CombatFeedback.attribute(victim, bullet.shooter)
-	if victim.has_method("take_hit"):
+	var pl := victim as Player
+	if pl != null:
 
-		victim.take_hit(bullet.global_position, bullet.hit_damage, false, bullet.hit_impact)
+		pl.take_hit(bullet.global_position, bullet.hit_damage, false, bullet.hit_impact)
 
 	var shooter_role := _role_of(bullet.shooter)
 	if shooter_role >= 0 and peer_by_role.has(shooter_role) \
