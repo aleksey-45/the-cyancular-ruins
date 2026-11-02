@@ -178,6 +178,62 @@ create 建房 → join 加入 → 房主自动 `pvp_start` → 两端实例化**
 
 ### R2 · 拆砖事件按服务器 tick/seq 对齐（P1，收益最大）
 
+## §设计附录（2026-11-01 写，**待用户拍板 A / B 后才动代码**）
+
+**现状（逐字，先别信记忆）**
+- 服务器：`MatchHost` 的 `TileDefs.on_destroyed` / `on_sub_destroyed` 回调里 `_rpc_all("tile_destroyed", [cell])`
+  （`server/match/match_combat.gd:21`）与 `_rpc_all_ext("sub_destroyed", [sub])`（`:30`），通道 **3（reliable）**，
+  **载荷里没有 seq / tick**。
+- 客户端：`TileSync.on_cell` / `on_sub`（`scenes/mp_client/tile_sync.gd:34` / `:56`）**到达即改地形**
+  （`TileDefs.damage_sub` + 分块碰撞重建 + 粒子），没有任何"这次变更属于哪个 tick"的概念。
+- ★★ **预测环已经有现成的注入机制**：`PredictionRollback.apply_external_event(seq, callable)`
+  （`core/net/prediction_rollback.gd:134`）会把"恢复 `capture[seq]` → 应用事件 → 重放 (seq, last_applied]"做成原子操作，
+  并把事件记进 `_events` 供后续任何一次重放重新应用（`_apply_events_at`）。**受击事件就是这么做的**：
+  服务器用 `_stepped_seq[role]` 当锚点、逐 peer 发 `hit_event(..., hit_seq)`（`match_combat.gd:276-284`），
+  客户端 `_apply_local_hit_event` 调 `apply_external_event`，REJECTED 时退回"只播反馈"。
+  ⇒ **方案 A 不是新造轮子，是把拆砖接到同一条已守卫的链路上。**
+
+**方案 A（推荐：小、复用既有机制）**
+- 服务器：`tile_destroyed(cell)` → `tile_destroyed(cell, seq)`、`sub_destroyed(sub)` → `sub_destroyed(sub, seq)`；
+  `seq = _stepped_seq[role]`（与受击**同一个锚点定义、同一句理由**：裁决发生在玩家子节点本帧步进之前）；
+  **逐 peer 发**（`peer_by_role`，与 `hit_event` 同款），不再 `_rpc_all`。
+- 客户端：`TileSync` 拆两半 —— **只改地形的 callable** 交给 `apply_external_event(seq, cb)`；
+  **表现（粒子/音效）与注入结果无关、只播一次**；REJECTED ⇒ 立即执行同一 callable（= 今天的行为，不报错、不告警）。
+- 幂等性**硬要求**（callable 会被 `_apply_events_at` 重放多次）：只调 `TileDefs.damage_sub`（已死子格返回 false）、
+  不重复播粒子、不重复扣耐久/不发奖励。
+- 协议：**加参数不升 `PROTO_VERSION`**（两端同 build；这里动的是既有 RPC 的参数，不是快照/c2 字段）。
+- 代价：拆砖事件从 1 次广播变成 N 次点对点（16 人局 = 16 次/事件；`hit_event` 本来就是这个量级）。
+- 失败形态：seq 环外/已被 ack ⇒ 兜底立即应用（= 今天行为，只少一次精度）；乱序 ⇒ 幂等吸收；**没有新的静默状态源**。
+
+**方案 B（更根本、更重）**：客户端记"每 tick 的地形变更账本"，回滚重放前把地形回退到该 capture 的 tick、回放后再前滚
+（复用单机 `TileLedger` 思路，但**不能**搬 `TimeField`/`WorldRewind` 的时间玩法语义）。
+- 收益面更大：任何"地形影响预测"的场景都受益（不止拆砖那一下）。
+- 代价：要定义 PvP 的 tick↔事件映射、每 tick 变更集的内存上限、账本与真实地形的一致性；失败形态是**静默的**
+  （账本漂移 ⇒ 幽灵墙/空洞，比 A 难查）。
+
+| 维度 | A | B |
+|---|---|---|
+| 改动面 | 2 个 RPC 参数 + 逐 peer 发送 + `TileSync` 拆"变更/表现" | 新账本类 + 重放钩子 + 内存上限 + 文档 |
+| 风险 | 低（复用已守卫的 `apply_external_event`） | 高（新状态源、静默失败） |
+| 收益 | 消掉"拆砖瞬间回滚 + 幽灵墙循环" | 同上 + 未来所有地形影响预测的场景 |
+| 回滚性 | 一处 `git revert` | 要拆重放路径 |
+| 守卫 | 复用 `rollback_fidelity_probe`（注入一次拆砖后 `rollback_count()` 增量为 0、重放后地形一致） | 需新探针 + 账本一致性断言 |
+
+**若选 A 的实现计划（等拍板后照做）**
+1. 服务器 `match_combat.gd`：两个广播改逐 peer 带 `_stepped_seq`；`net_bus.gd` / `net_bus_ext.gd` 的 `tile_destroyed` /
+   `sub_destroyed` 加 `seq: int` 参数；`local_tile_destroyed` / `local_sub_destroyed` 信号同步加参数。
+2. 客户端 `TileSync`：`on_cell/on_sub` 拆成 `_apply_mutation(...)` + `_play_fx(...)`；前者走 `apply_external_event`，
+   后者在"注入成功或兜底"之后**各播一次**。
+3. 守卫：`rollback_fidelity_probe` 34 → 36 条 —— ① 注入一次拆砖事件后 `rollback_count()` **不增加**；
+   ② 重放后 `capture_state()` 与"直接改地形再预测"一致（等价于注入幂等）；变异 = 改成"到达即应用" ⇒ ① 红。
+4. 真链路：`net_tile_fx_probe`（已有拆砖表现断言）加一条"事件到达后 200ms 内 `rollback_count()` 增量 ≤1"。
+5. 文档：`docs/eng/netcode-client-interp-and-input-details.md`（事件锚点一节）、`docs/eng/world.md`（拆砖广播）、
+   `registered-debt` 新小节；`tests/README.md` 计数。
+
+**需要拍板：A 还是 B？**（默认按 A 出实现；B 留作"若 A 之后仍见到地形相关回滚"的后手，并先登记不实现。）
+
+---
+
 **猜测：** 客户端收到拆砖事件就改地形，回滚重放用“更新后的地形”⇒ 重放结果 ≠ 原预测 ⇒ 在刚打穿的砖附近反复回滚（尤其楼梯/掩体）。
 
 **两个候选方案（先写设计再选一个）：**
