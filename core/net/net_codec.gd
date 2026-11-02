@@ -531,55 +531,75 @@ static func _schema_bytes(schema: Array) -> int:
 
 
 # ── 定长读(小端,游标 + 越界守卫)──
+# ★ 多字节数一律走 PackedByteArray 内置 `decode_*`(内核就是小端,与旧手拼 `lo | hi << 8` 逐字节同值):
+#   手拼只留在**编码侧** —— 那是实测 304 → 47 µs/包 的那步优化(见文件头);解码侧没有这个理由。
+# ★ 内置 `decode_*` 越界会**引擎报错**(手写版只会安静读出垃圾)⇒ 读之前必须过长度守卫;守卫语义与旧手写版
+#   逐字对齐:越界 ⇒ `bad = true` + 返 0(整个包被 decode_* 丢弃,不崩、不刷屏)。
+
+# 统一长度守卫:吃掉 n 字节并返回字段起始下标;越界 ⇒ bad=true + 返 -1(调用方据此返 0)。
+static func _take(r: Dictionary, n: int) -> int:
+	var o: int = r["o"]
+	var d: PackedByteArray = r["d"]
+	if o + n > d.size():
+		r["bad"] = true
+		return -1
+	r["o"] = o + n
+	return o
+
 
 static func _rd_u8(r: Dictionary) -> int:
-	var d: PackedByteArray = r["d"]
-	var o: int = r["o"]
-	if o + 1 > d.size():
-		r["bad"] = true
+	var o := _take(r, 1)
+	if o < 0:
 		return 0
-	r["o"] = o + 1
+	var d: PackedByteArray = r["d"]
 	return d[o]
 
 
 static func _rd_i8(r: Dictionary) -> int:
-	var v := _rd_u8(r)
-	return v - 256 if v >= 128 else v
+	var o := _take(r, 1)
+	if o < 0:
+		return 0
+	var d: PackedByteArray = r["d"]
+	return d.decode_s8(o)
 
 
 static func _rd_u16(r: Dictionary) -> int:
-	var lo := _rd_u8(r)
-	var hi := _rd_u8(r)
-	return lo | (hi << 8)
+	var o := _take(r, 2)
+	if o < 0:
+		return 0
+	var d: PackedByteArray = r["d"]
+	return d.decode_u16(o)
 
 
 static func _rd_i16(r: Dictionary) -> int:
-	var v := _rd_u16(r)
-	return v - 65536 if v >= 32768 else v
+	var o := _take(r, 2)
+	if o < 0:
+		return 0
+	var d: PackedByteArray = r["d"]
+	return d.decode_s16(o)
 
 
 static func _rd_u32(r: Dictionary) -> int:
-	var d: PackedByteArray = r["d"]
-	var o: int = r["o"]
-	if o + 4 > d.size():
-		r["bad"] = true
+	var o := _take(r, 4)
+	if o < 0:
 		return 0
-	r["o"] = o + 4
+	var d: PackedByteArray = r["d"]
 	return d.decode_u32(o)
 
 
 static func _rd_i32(r: Dictionary) -> int:
-	var v := _rd_u32(r)
-	return v - 4294967296 if v >= 2147483648 else v
+	var o := _take(r, 4)
+	if o < 0:
+		return 0
+	var d: PackedByteArray = r["d"]
+	return d.decode_s32(o)
 
 
 static func _rd_f(r: Dictionary) -> float:
-	var d: PackedByteArray = r["d"]
-	var o: int = r["o"]
-	if o + 4 > d.size():
-		r["bad"] = true
+	var o := _take(r, 4)
+	if o < 0:
 		return 0.0
-	r["o"] = o + 4
+	var d: PackedByteArray = r["d"]
 	return d.decode_float(o)
 
 

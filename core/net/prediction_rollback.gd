@@ -201,8 +201,24 @@ func _step(record: Dictionary) -> void:
 	for i in maxi(1, ticks_per_record):
 		if i > 0:
 			_scratch.clear_edges()   # 第二 tick 起只保留 held(边沿只在该记录第一个 tick 生效)
-		_p._physics_process(PHYS_DT)
+		_manual_sim_step()
 	_p.set_input_source(prev)
+
+
+# ★★ 重放用的**手动物理步**。这里是「双驱动」的控制器那一半 —— 引擎也在步进同一个节点,时序契约:
+#   ① 引擎侧:本地玩家节点自己的 `_physics_process` 每物理帧被引擎调一次,**重放期间不失能**(全仓没有对它
+#      set_physics_process(false));它负责"本帧这一 tick"的那一次步进。
+#   ② 控制器侧:生产路径只有 `_replay_steps_after` 调到这里,而它由**父节点**(PvpMatchClient)的
+#      `_physics_process` 同步驱动 —— 树序上父先于子(玩家是它 add_child(level_0) 的孙子),所以重放永远是
+#      `(ack, _last_applied]` 这些**引擎已经步进过**的旧 tick,不重复步进当前帧。纯逻辑探针走 advance() 手动
+#      驱动,同一个入口;那种"接入方自己步进"的模式下须由接入方保证不双跑。
+#   ③ ⇒ 以上靠两个**没有守卫**的前提:父节点排玩家之前(重排节点 / 改 physics_priority 会静默破掉)+
+#      `_last_applied` 只是上一帧的 seq(note_post_step 必须先于本帧步进)。任一破掉 = 多跑一 tick、回滚分歧。
+#   ④ 收敛方向(动玩家物理入口/帧序 = "回滚与快照"承重面,需 Lead 决策,此处**没有**落地):玩家侧抽
+#      `step_sim(dt)` 作唯一物理步入口,引擎与重放共用,并把只该在引擎路径做的每帧表现副作用挡在重放外;
+#      本函数随之只调 `_p.step_sim(PHYS_DT)`。★ PHYS_DT 与引擎 delta 的等价还依赖 physics_ticks_per_second == 60。
+func _manual_sim_step() -> void:
+	_p._physics_process(PHYS_DT)
 
 func _handle_ack(ack: int, S: Dictionary) -> void:
 	if ack <= _acked:
