@@ -1,6 +1,6 @@
 # 工具与格式(地图编辑器等)
 
-> 本文件覆盖编辑器的两种打开方式、目录结构、格式与验收入口。返回索引：[`CLAUDE.md`](../../CLAUDE.md)。
+> 本文件覆盖编辑器的两种打开方式、目录结构、格式与验收入口。返回索引：[`README.md`](README.md)。
 > 各层细节：[core](editor-core.md) / [ui](editor-ui.md) / [render](editor-render.md) / [io](editor-io.md) /
 > [server](editor-server.md)。★ 冲突以源码为准，读之前先 `grep` 复核。
 
@@ -9,12 +9,17 @@
 **带库工作流(推荐)**：双击 `level_editor/serve.bat`(需要 node) ⇒ `http://127.0.0.1:8777/`。服务器是
 `level_editor/editor_server.js`(node，**只绑 127.0.0.1**，端口 8777 避开 7777/7800+/7999)，
 实现分片在 `level_editor/server/`。
+- ★ **重复双击 = 结束上一个编辑器服务器再起新的**(入口写 `level_editor/.editor_server.pid`，按
+  pid/端口/命令行三重判据确认"是自己人"才 `taskkill`；查不到命令行就 **fail closed** 拒绝杀)。`--keep` 关掉该行为。
+  这条挡的是"改了 `server/*.js` 重启后行为没变，因为跑的还是内存里那份旧代码" —— 契约见 [`editor-server.md`](editor-server.md) §7。
+- ★ 编辑器**开机不自动打开地图**：空状态里给「新建 / 打开文件… / 打开文件夹…」三个入口
+  （HTTP 版与单文件版同一套 UI；单文件版的 FSA 由垫片接管）。
 
 **开箱即用(不需要 node)**：**`level_editor/dist/cyrm-editor.html`** —— 单文件、双击即用(全部分片 + 图集 +
 worker 源码都内联进这一个 HTML;`file://` 下没有服务器也能跑)。
 - 点右栏「**本地目录…**」选一个装有 `.cyrm` 的目录(如 `maps/`，需 Chrome/Edge 的 File System Access 权限)
   ⇒ 库列表与 `Ctrl+S` 都直接读写它;没有该能力的浏览器用「**打开文件…**」，保存退化为下载 `.cyrm`。
-  库是空的时候开机**自动给一张 125×75 的空白图**。
+  ★ 单文件版**不再**在库为空时自动造一张空白图(②)：空状态由 `#empty-hint` 说明三个入口。
 - ★ **边界**(`node browser_check.js` 在 `file://` 下 17/17):IndexedDB、localStorage、同页 Worker 编解码往返
   都可用;不保证的是 File System Access。编解码在单文件版里跑在**主线程**，大图保存会有一帧级停顿。
 - 重新打包:`node level_editor/build_dist.js`;抓漂移:`node level_editor/build_dist.js --check`
@@ -30,7 +35,7 @@ worker 源码都内联进这一个 HTML;`file://` 下没有服务器也能跑)�
 level_editor/editor.html            入口:分片清单(顺序的单一真相源)
 level_editor/core/    12 片         格式层(冻结)
 level_editor/render/  19 片         渲染层
-level_editor/ui/      19 片         界面层
+level_editor/ui/      20 片         界面层
 level_editor/tint.js / level_editor/io.js / level_editor/worker.js   单文件模块(未拆:都 <300 行)
 level_editor/tile_defs.js           生成物(sync-tiles.js)
 level_editor/server/  9 片 + level_editor/editor_server.js(入口,62 行)
@@ -61,6 +66,9 @@ level_editor/dist/cyrm-editor.html  生成物(**开箱即用**的那个单文件
   两边改一处必须同步改另一处(契约与常量见 [`editor-core.md`](editor-core.md))。
 - **砖形由画笔大小表达**(整数大小画整格、`.25/.5/.75` 画子格);**纹理 22(水面)不在调色板里**
   (游戏侧按地形自动派生)。
+- **出生点** `# player` / `# player2` 与**按侧复活点** `# respawn <1|2>` 都能在编辑器里放:后者按半区画
+  `R1`/`R2`、带 3×3 桶辅助线、校验会报"每侧 <5 / 越半区 / 空桶"等 warning(判据见
+  [`editor-core.md`](editor-core.md) §9、UI 见 [`editor-ui.md`](editor-ui.md) §12.5)。
 - **可改层**:[`level_editor/render/`](../../level_editor/render) / [`level_editor/ui/`](../../level_editor/ui) /
   [`level_editor/io.js`](../../level_editor/io.js) + [`level_editor/worker.js`](../../level_editor/worker.js);
   [`level_editor/tint.js`](../../level_editor/tint.js)(辅码像素数学)与 core 同为**冻结层**。
@@ -110,3 +118,10 @@ node parts_check.js --ratio      # 注释额度(>100 非空行的 .js ≤15%)
 3 个子格(¾ 格)** —— 选框是**格对齐**的;③ **选区拖动时的逐块去烤是同步的**，面积已 ≤3~4 块，
 极端情况下仍可能掉一帧;④ **崩溃栅栏比的是「任意地图最新的一份草稿」**，给另一张图写的草稿会抑制掉
 一次合法的恢复提示;⑤ 单文件版的编解码跑在**主线程**，`file://` 下 File System Access 要看浏览器给不给。
+
+## 6. Windows 脚本的两条硬约束(改 `.ps1` / `.bat` 前必看)
+
+- **换行**:`.ps1` 与 `.bat` **必须 CRLF** —— 裸 LF 的 `.ps1` 会被 PowerShell 解析成一条怪命令;`.bat` 会被 cmd 吃掉行尾。
+- **编码**:`.ps1` = 「**纯 ASCII 或带 UTF-8 BOM**」(无 BOM 的非 ASCII 在中/英区域会按 GBK 读 ⇒ 中文全乱、字符串被截断);`.bat` 不查编码。
+- 两条都由 [`check_naming.py`](../../tools/check_naming.py) 的**规则 E** 逐文件守。红了的标准修法是 `rm <file> && git checkout -- <file>` 重新落盘(**纯 EOL,不动内容**)。
+- **带空格的路径**在 PowerShell 里要**手工内嵌双引号**(`& "C:\Program Files\..."`);传参给 `.bat` 同理。

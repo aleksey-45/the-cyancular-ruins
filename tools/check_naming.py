@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-# 命名与目录规范检查(防复发)。规范见 docs/naming-cleanup-plan.md §"采用的规范"。
+# 命名与目录规范检查(防复发)。**规范 = 本文件的规则 A~F**(各规则函数的注释即规范原文;旧文案指向的 docs/naming-cleanup-plan.md 已于 2026-10-24 文档清理删除,别再引它)。
 #
 # 为什么需要它:命名整改最典型的失败模式是「整完就漂回去」—— `.tscn` 的 PascalCase 约定
 # 就是这么失效的(约定写着 Pascal,现实 51/56 是 snake,而没有任何东西会报错)。
-# 2026-09-14 补上 `docs/naming-cleanup-plan.md` 结尾提过、但一直没落地的这一条。
+# 2026-09-14 补上原规范文末提过、但一直没落地的这一条(原文档已删;规范即本文件的规则 A~F)。
 #
 # 用法:
 #   python tools/check_naming.py            # 检查,有违规 → exit 1(CI/本地都能用)
@@ -60,8 +60,11 @@ def _md_in(rel_dir: str) -> list[str]:
     return sorted("%s/%s" % (rel_dir, f) for f in os.listdir(d) if f.endswith(".md"))
 
 
-DOC_FILES = (["README.md", "CLAUDE.md", "RELEASE.md"]
+DOC_FILES = (["README.md", "AGENTS.md", "CLAUDE.md", "RELEASE.md"]
              + _md_in("docs/eng") + _md_in("docs/eng/debt") + _md_in("tests"))
+# ★ 2026-11-02:入口收敛成**一份** —— `AGENTS.md` 是唯一真相源,`CLAUDE.md` 是它的**生成副本**
+#   (`tools/sync_agents_md.py`)。两者都在本表里:AGENTS 的链接必须活;副本万一被手改出坏链接也要红
+#   (改坏的那一版会先被规则 F 抓住,两条规则互为兜底,不冲突)。
 # 被文档引用时检查存在性的扩展名
 DOC_EXTS = (".gd", ".tscn", ".json", ".js", ".html", ".cyrm", ".cfg",
             ".shader", ".gdshader", ".bat", ".py", ".md", ".ttf", ".otf", ".png")
@@ -556,6 +559,38 @@ def self_test() -> int:
     return 0
 
 
+# ── 规则 F:入口文档的**预算**与**副本一致**(2026-11-02)─────────────────────────────────
+# 为什么要有这条:AGENTS.md 会被**注入每个会话的上下文**,它的长度是每次交互的固定税。
+# 它从 61 行涨到 117 行(11.9 KB)的过程里,涨的全是"历史叙述 / 可执行细节 / 会过期的清单" ——
+# 那三类东西的正确归宿是 registered-debt / 脚本头 / `--list`,不是入口文件。
+# ★ 射程(别读多):本规则只挡"又长回去了"和"副本漂了",**不判断内容对不对**;
+#   预算超了就说明该搬内容,而不是"把字号调小"。
+ENTRY_BUDGETS = {"AGENTS.md": 70, "README.md": 90, "RELEASE.md": 180, "docs/eng/README.md": 80}
+
+
+def check_entry_docs() -> None:
+    for rel, cap in ENTRY_BUDGETS.items():
+        full = os.path.join(PROJECT, rel)
+        if not os.path.exists(full):
+            _fail.append("F 入口文档不存在: %s" % rel)
+            continue
+        n = _line_count(rel)
+        if n > cap:
+            _fail.append("F %s 有 %d 行,超过预算 %d 行 ⇒ 把历史/细节搬去 "
+                         "docs/eng 或脚本头,别加长入口文件" % (rel, n, cap))
+    # 副本一致性:CLAUDE.md 必须是 AGENTS.md 的生成物(与 tools/sync_agents_md.py 同一判据)
+    try:
+        import sync_agents_md  # 同目录(tools/)
+    except ImportError:  # 被当作包/别处调用时按路径兜底,不让导入失败变成"静默跳过"
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "sync_agents_md", os.path.join(TOOLS, "sync_agents_md.py"))
+        sync_agents_md = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(sync_agents_md)
+    for e in sync_agents_md.check_mirror():
+        _fail.append("F " + e)
+
+
 def main() -> int:
     verbose = "-v" in sys.argv or "--verbose" in sys.argv
     report_only = "--report" in sys.argv
@@ -566,6 +601,7 @@ def main() -> int:
     check_doc_paths()
     check_tscn()
     check_ps1_bat()
+    check_entry_docs()
     if _notes and verbose:
         print("— 备注(不判失败,仅 -v 显示) —")
         for n in _notes:
@@ -574,11 +610,11 @@ def main() -> int:
         print("— 违规 %d 条 —" % len(_fail))
         for f in _fail:
             print("  " + f)
-        print("\n命名检查 FAIL(规范见 docs/naming-cleanup-plan.md;"
+        print("\n命名检查 FAIL(规范 = 本文件的规则 A~F;"
               "确属有意偏离要加进 ACCEPTED_CLASS_FILES 并写明何时销)")
         return 0 if report_only else 1
     print("命名检查 OK(目录小写 / class_name↔文件名 / 文档路径 / .tscn snake_case / "
-          ".ps1·.bat 的 CRLF 与 .ps1 编码)")
+          ".ps1·.bat 的 CRLF 与 .ps1 编码 / 入口文档预算与 CLAUDE.md 副本一致)")
     return 0
 
 

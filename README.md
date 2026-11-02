@@ -70,4 +70,4 @@ assets/   字体(含中文像素字体 unifont)与纹理
 tools/    发布 / 控制台脚本(build_release.py、make_server_console.py)+ check_naming.py(命名规范检查)+ gen_rpc_channel_table.py(RPC 通道表对账 `--check`)
 ```
 
-技术细节见 [`CLAUDE.md`](CLAUDE.md)(索引,分域正文在 docs/eng/*.md)与 [`RELEASE.md`](RELEASE.md)。
+技术细节见 [`AGENTS.md`](AGENTS.md)(入口;分域正文按 [`docs/eng/README.md`](docs/eng/README.md) 的路由读)与 [`RELEASE.md`](RELEASE.md)。
