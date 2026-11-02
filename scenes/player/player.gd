@@ -110,15 +110,9 @@ var _was_submerged: bool = false
 var _waterproof_drown_timer: float = 0.0
 
 enum Pose { STAND, MOVE, FLY, CHARGE, SQUAT }
-const POSE_ANIM: Dictionary = {
-	Pose.STAND: "idle", Pose.MOVE: "move", Pose.FLY: "fly",
-	Pose.CHARGE: "charge", Pose.SQUAT: "squat",
-}
-const POSE_NODE: Dictionary = {
-	Pose.STAND: "CollisionShape2D_stand", Pose.MOVE: "CollisionShape2D_move",
-	Pose.FLY: "CollisionShape2D_fly", Pose.CHARGE: "CollisionShape2D_charge",
-	Pose.SQUAT: "CollisionShape2D_squat",
-}
+# 姿态动画名 / 碰撞箱节点名 / 冲刺残影常量 = **与远端副本共享的单一来源**。
+# 键就是本文件的 Pose 枚举值;顺序一致性由 _ready 里那句 push_error 兜住(改一处忘另一处不会静默)。
+const PlayerVisual := preload("res://scenes/player/player_visual.gd")
 
 # 姿态锁:进入某姿态后锁定一小段时间,防止 is_on_floor()/velocity 抖动导致 move↔fly 等高频切换(走路抽搐)。
 var state: Pose = Pose.STAND
@@ -144,7 +138,10 @@ func _ready() -> void:
 	hp_changed.emit(combat.hp, combat.max_hp)
 
 	for pose in Pose.values():
-		_coll_by_pose[pose] = get_node(POSE_NODE[pose])
+		_coll_by_pose[pose] = get_node(PlayerVisual.COLLISION_NODE[pose])
+	# 共享表的键是裸 int:枚举顺序改了这里会立刻喊,而不是静默放错动画 / 用错碰撞箱。
+	if int(Pose.SQUAT) != PlayerVisual.POSE_SQUAT:
+		push_error("PlayerVisual.POSE_* 与 player.gd 的 Pose 枚举顺序不一致")
 
 	# 单机开局空手:武器全部散落在地图上,由 Level0._ready 铺;联机由 MatchHost 调 set_initial_inventory 发随机一把。
 	weapons.set_initial_inventory([])
@@ -153,7 +150,7 @@ func _ready() -> void:
 	_reload_ring.scale = Vector2.ONE / scale.x
 	_reload_ring.visible = false
 	add_child(_reload_ring)
-	call_deferred("add_child", WaterFx.new())
+	add_child.call_deferred(WaterFx.new())
 	# 补间形变:挂在玩家自己身上(与 _reload_ring 同款的一个接入点覆盖单机/PvP/大乱斗);animator 是 @export 引用,场景实例化时就已就位。
 	squash = SquashStretch.new()
 	# ★ 先 add_child() 再 setup(),与另两个宿主(敌鸟/对手副本)统一。两种序今天等价 —— SquashStretch 没有 _ready,入树不触发按参数建出来的东西。
@@ -177,9 +174,7 @@ var _ghost_t := 0.0     # 残影生成计时(加速时)
 var _ghost_flip := false  # 红/蓝交替
 # 冲刺残影:渲染帧里发射(不在物理 tick —— 回滚重放不会重复生成)。
 var _dash_ghost_t := 0.0
-const DASH_GHOST_INTERVAL := 0.02
-const DASH_GHOST_DURATION := 0.20
-const DASH_GHOST_TINT := Color(0.78, 0.92, 1.0, 0.30)
+# 冲刺残影的 3 个常量与远端副本共用一份,见 player_visual.gd。
 
 
 # 本帧倍率推给三个消费点:攀爬/武器的宿主引用是一次给入的、而倍率每帧在变 ⇒ 只能每帧推;游泳走 swim.update 的调用参数。
@@ -201,8 +196,8 @@ func _process(delta: float) -> void:
 		return
 	_dash_ghost_t -= delta
 	if _dash_ghost_t <= 0.0:
-		_dash_ghost_t = DASH_GHOST_INTERVAL
-		AfterImage.spawn(get_parent(), animator, DASH_GHOST_TINT, DASH_GHOST_DURATION, -1)
+		_dash_ghost_t = PlayerVisual.DASH_GHOST_INTERVAL
+		AfterImage.spawn(get_parent(), animator, PlayerVisual.DASH_GHOST_TINT, PlayerVisual.DASH_GHOST_DURATION, -1)
 
 
 func _physics_process(delta: float) -> void:
@@ -519,7 +514,7 @@ func _tick_pose_and_collision(delta: float, in_water: bool) -> void:
 		state = desired
 		state_lock_timer = STATE_LOCK_TIME
 
-	animator.play(POSE_ANIM[state])
+	animator.play(PlayerVisual.ANIM[state])
 
 	for pose in _coll_by_pose:
 		_coll_by_pose[pose].disabled = pose != state

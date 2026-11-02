@@ -19,23 +19,11 @@ const PredictionContact := preload("res://core/net/prediction_contact.gd")   # �
 # 第 2 个吸收抖动;改大更抗抖但对手更迟。★ 服务器命中回放与这里共用同一常量(时间域解耦),别在副本里另写一个数。
 const HISTORY_MAX := 12
 
-const POSE_ANIM: Dictionary = {
-	0: "idle", 1: "move", 2: "fly", 3: "charge", 4: "squat",
-}  # 与 player.gd Pose 枚举值一致
-
-const POSE_FLY := 2
-const POSE_CHARGE := 3
-# 冲刺残影(与 player.gd 的常量同值:两个宿主都走 AfterImage.spawn,强度只在这两处调)。
-const DASH_GHOST_INTERVAL := 0.02
-const DASH_GHOST_DURATION := 0.20
-const DASH_GHOST_TINT := Color(0.78, 0.92, 1.0, 0.30)
-
 const LAND_VEL_EPS := 1.0
 
-const POSE_SHAPE: Dictionary = {
-	0: "CollisionShape2D_stand", 1: "CollisionShape2D_move", 2: "CollisionShape2D_fly",
-	3: "CollisionShape2D_charge", 4: "CollisionShape2D_squat",
-}
+# 姿态动画名 / 碰撞箱节点名 / 残影常量与本体共享**同一份**(player_visual.gd)——
+# 原先这里各写一份、值一字不差,改本体忘副本就会静默放错动画 / 用错箱子。
+const PlayerVisual := preload("res://scenes/player/player_visual.gd")
 
 # 幽灵体所在组:榴弹「碰到玩家」判定要把对手副本也算进候选。单列一组而不是并进 player:后者是「玩家实体」的语义,Explosion.apply_aoe 会遍历它逐个 take_hit、BulletBase._wrap 会取它第一个节点当锚点 —— 副本混进去会被当玩家结算 / 被当锚点。
 const GROUP := "player_replica"
@@ -119,12 +107,12 @@ func _build_ghost_body(src: Node) -> void:
 	_ghost.collision_layer = 2
 	_ghost.collision_mask = 0
 	add_child(_ghost)
-	for pose in POSE_SHAPE:
-		var from := src.get_node_or_null(POSE_SHAPE[pose]) as CollisionPolygon2D
+	for pose in PlayerVisual.COLLISION_NODE:
+		var from := src.get_node_or_null(PlayerVisual.COLLISION_NODE[pose]) as CollisionPolygon2D
 		if from == null:
-			continue   # player.tscn 改名了 → 少一份形状,不是致命(但 POSE_SHAPE 必须同步改)
+			continue   # player.tscn 改名了 → 少一份形状,不是致命(但 PlayerVisual.COLLISION_NODE 必须同步改)
 		var poly := CollisionPolygon2D.new()
-		poly.name = POSE_SHAPE[pose]
+		poly.name = PlayerVisual.COLLISION_NODE[pose]
 		poly.polygon = from.polygon
 		poly.position = from.position
 		poly.disabled = pose != 0
@@ -270,7 +258,7 @@ func _state_from(data: Dictionary) -> Dictionary:
 	if absf(aim_v.x) > 0.1:
 		_pkt_aim_facing = 1 if aim_v.x > 0.0 else -1
 	return {
-		"pose": clampi(int(data["pose"]), 0, POSE_SHAPE.size() - 1),
+		"pose": clampi(int(data["pose"]), 0, PlayerVisual.COLLISION_NODE.size() - 1),
 		"facing": facing,
 		"aim": aim_v,
 		"aim_facing": _pkt_aim_facing,
@@ -341,7 +329,7 @@ func _apply_visual_state(st: Dictionary) -> void:
 		rotation = -PI / 2.0 * float(_facing)   # 倒地转体(与 player._downed 一致)
 	else:
 		rotation = 0.0
-		animator.play(POSE_ANIM.get(_pose, "idle"))
+		animator.play(PlayerVisual.ANIM.get(_pose, "idle"))
 	var type_id := int(st["type_id"])
 	if type_id != _weapon_type_int:
 		_swap_weapon(type_id)
@@ -442,7 +430,7 @@ func _process(delta: float) -> void:
 	# 补间形变。放在 _process 而不是 apply_snapshot:后者没有 delta,而本函数是副本的表现层时钟(插值推进与受击闪烁衰减都在这儿);挂在快照回调上会与插值产生拍频。★ 参数必须成对:on_floor 取当前姿态,vel_y 取上一帧的值(与本体「_pre_move_vy 配帧首 is_on_floor()」同款)。
 	# ★ 组件内部的落地判据是 on_floor and vel_y > squash_land_min_vy:若把当前的 _vel.y 传进去,落地那一帧服务器已经把它清零了 ⇒ 挤压永远不会触发。
 	# ★ on_floor 的两半都不能省:pose != FLY 只是「站在地上」的代理,它在两种 _vel.y 并不趋于 0 的状态下同样为真 —— ① 水中下沉(姿态被强制成 MOVE/STAND,而 velocity.y 恒为 player_swim_down = 320);② 空中冲刺(本体把 is_charge 判在 not is_on_floor() 之前,冲刺只改 velocity.x)。代理单独成判 ⇒ 落地项每帧重触发、指数恢复把 _impulse 压到约 -0.91:让对手下沉期间持续约 9% 挤压、冲刺起步满幅 -10%,而本体在这两种状态里都是中性的 ⇒ 两端出现本体从不显示的持续 / 反向形变。★ 这半在计划初稿里就有、曾被删过一次(理由只在调用点传当前 _vel.y 时成立),别删第三次。
-	var on_floor := (not _downed) and _pose != POSE_FLY \
+	var on_floor := (not _downed) and _pose != PlayerVisual.POSE_FLY \
 			and absf(_vel.y) < LAND_VEL_EPS
 	# ★ 水中:本体在 player.gd 把落地候选清零(_pre_move_vy = 0.0 if (in_water or latched)),故本体游泳时精确中性;副本此前没有这一项 ⇒ 下沉期间空中连续项恒成立(clamp(320/700) × 0.30 ≈ 0.137)⇒ 对手下沉全过程恒带约 1.37% 拉伸,而本体是 1.0000。★ 消掉它不需要协议字段:本体的 in_water 本身就是纯位置网格查询,客户端有同一张图 —— 见 _in_water()。★ 爬梯那一半刻意不在这里补:本体的 latched 是闩锁,客户端手里只有无状态的位置代理(中心 / 脚底落在通道格),拿它当判据会对「路过梯子 / 贴梯走过」误触发 ⇒ 那是引入一类本体从不显示的新形变,比留着残留更坏(本轮只修水中那一半);残留如实登记:空中爬梯持续 2.5~3.0% 拉伸、梯底停下那一下约 6.3% 挤压。
 	var vel_y := _prev_vel_y
@@ -457,12 +445,12 @@ func _process(delta: float) -> void:
 # 冲刺残影(对手/队友的冲刺也要可见):渲染帧发射,强度与本体共享同一套常量(很弱的淡蓝白)。
 # 副本不参与回滚 ⇒ 这里没有"重放重复生成"的问题;无相机路径(服务器)直接跳过。
 func _tick_dash_ghost(delta: float) -> void:
-	if _pose != POSE_CHARGE or _downed or not is_inside_tree():
+	if _pose != PlayerVisual.POSE_CHARGE or _downed or not is_inside_tree():
 		_dash_ghost_t = 0.0
 		return
 	if get_viewport().get_camera_2d() == null:
 		return
 	_dash_ghost_t -= delta
 	if _dash_ghost_t <= 0.0:
-		_dash_ghost_t = DASH_GHOST_INTERVAL
-		AfterImage.spawn(get_parent(), animator, DASH_GHOST_TINT, DASH_GHOST_DURATION, -1)
+		_dash_ghost_t = PlayerVisual.DASH_GHOST_INTERVAL
+		AfterImage.spawn(get_parent(), animator, PlayerVisual.DASH_GHOST_TINT, PlayerVisual.DASH_GHOST_DURATION, -1)

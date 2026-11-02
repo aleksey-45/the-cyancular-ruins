@@ -23,9 +23,10 @@ const SKIP_DIRS := ["res://.godot", "res://builds", "res://releases", "res://gam
 # 改这个常量是"覆盖变了得有人过目",不是"让闸变绿";历次取值见 git log。
 # ★ 2026-10-26:`res://docs` 进 SKIP_DIRS —— docs/ 是文档目录,出现 `.gd` 只可能是临时审计驱动
 #   (如 `docs/audit/*/_drivers/`),不属于编译面/导出面;不收它时这些草稿会让条数闸随机变红。
-# ★ 2026-11-02:255→241(`docs/archive` 8 + `audit_shots` 6 个取图驱动删除)→**237**(`tests/scripts/` 4 个
-#   迁移 / 一次性工具整目录删除)。两次都是**真删文件**,不是放水。历次取值见 git log。
-const EXPECTED_SCRIPTS := 237
+# ★ 2026-11-02:255→241(`docs/archive` 8 + `audit_shots` 6 个取图驱动删除)→237(`tests/scripts/` 4 个
+#   迁移 / 一次性工具整目录删除)→**238**(新增 `scenes/player/player_visual.gd`:本体与副本共享姿态表)。
+#   三次都是**真增删文件**,不是放水。历次取值见 git log。
+const EXPECTED_SCRIPTS := 238
 
 var _fails: Array[String] = []
 var _total := 0
