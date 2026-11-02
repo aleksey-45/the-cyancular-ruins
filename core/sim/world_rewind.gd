@@ -91,24 +91,27 @@ func record(delta: float, player: Node, enemies: Array, bullets: Array) -> void:
 
 ## 进入回溯:清空场上活弹(状态改由快照重建),游标归零。
 # 玩家状态快照:位置/速度/HP/朝向/倒地 + 武器弹量(武器类型与下标、背包各格残弹、手持实弹数)。
+# ★★ 类型化(玩家有 class_name Player 之后):原先这 5 处对**玩家根**按名访问 —— get("velocity") / get("hp") /
+#   get("facing_direction") / has_method("is_downed") / get("weapons")。成员名一改,get 静默返回 null ⇒ 快照值静默退化;
+#   has_method("is_downed") 尤其致命:改名后 downed 恒 false ⇒ 消费端静默跳过倒地/复活还原,且没有任何断言会红
+#   (零守卫:两支 rewind 探针已于 2026-10-09 删)。现在收窄一次,直接成员访问。
 func _snapshot_player(player: Node) -> Dictionary:
+	var p := player as Player
 	var d := {
-		"p": (player as Node2D).global_position,
-		"v": player.get("velocity"),
-		"hp": int(player.get("hp")),
-		"facing": int(player.get("facing_direction")),
-		"downed": player.has_method("is_downed") and player.is_downed(),
+		"p": p.global_position,
+		"v": p.velocity,
+		"hp": p.hp,
+		"facing": p.facing_direction,
+		"downed": p.is_downed(),
 		"wslot": 0, "widx": -1, "wmags": [], "wlive": -1,
 	}
-# ★ 取组件用 as + 点名报错,不用带类型的直接赋值:后者在 weapons 不是 WeaponComponent 时会抛错并中止整个函数
+# ★ 取组件仍用 as + 点名报错(而不是直接赋给带类型的变量):后者在 weapons 不是 WeaponComponent 时会抛错并中止整个函数
 #   ⇒ 退化成空字典(连同位置/HP 一起丢);现在武器四键停在初值,已收集的部分照旧返回。
-	var wc := player.get("weapons") as WeaponComponent
+	var wc := p.weapons as WeaponComponent
 	if wc == null:
 		push_error("WorldRewind: player.weapons 不是 WeaponComponent —— 武器段无法回溯;本帧返回已收集的部分")
 		return d
 # ★ 反射改真类型访问买到的不是编译期红:4.7.1 对 class_name 上的未知成员只按警告级 UNSAFE_* 处理,拼错同样是运行期报错。
-# ★ 本函数仍有 5 处按名访问玩家根(player.gd 无 class_name,类型化要动类结构,该处**零守卫**(台账已于 2026-11-02 精简,历史见 git log));
-#   其中 has_method("is_downed") 一改名就静默把 downed 写成 false ⇒ 消费端静默跳过倒地/复活还原。零守卫(两支 rewind 探针已删·2026-10-09)。
 	d["wslot"] = wc._current_type
 	d["widx"] = wc._current_index
 	var inv: WeaponInventory = wc.inventory
@@ -209,8 +212,13 @@ func _apply(f: Dictionary, player: Node) -> void:
 		_apply_completed += 1
 		_bullets_completed += 1
 		return
-	if is_instance_valid(player) and player.has_method("rewind_restore"):
-		player.rewind_restore(f["player"])
+	# ★★ 类型化:原先 `player.has_method("rewind_restore")` + 按名 call 是第 6 处玩家根按名访问 —— 函数一改名,
+	#   玩家态整段静默不回放(且零守卫)。★ 顺序不可反:is_instance_valid() 必须先于 as 收窄 —— 对真 freed 实例做
+	#   `as Player` 会抛错并中止整个 _apply()(同帧 _apply_bullets 整段被跳过),故 var p 的类型收窄留在守卫之后。
+	if is_instance_valid(player):
+		var p := player as Player
+		if p != null:
+			p.rewind_restore(f["player"])
 	for d in f["enemies"]:
 # ★★ is_instance_valid() 必须先于类型收窄:对真 freed 实例做 as EnemyBase 会抛错并中止整个 _apply() ⇒ 同帧
 #   _apply_bullets() 整段被跳过。故 var raw 故意不加类型(带类型的赋值本身就会碰 freed 实例)。freed/非节点 ⇒

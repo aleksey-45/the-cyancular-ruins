@@ -23,9 +23,7 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 		ai_roles: Array = [], spawns: Dictionary = {}) -> void:
 # ★ 散点必须在 super._init() 之前就绪:父类 _init 摆位会虚调 _spawn_cell(role),那时 _round_spawns 若还空,首次摆位会拿到
 # (-1,-1) 并被 _spawned_once 闩死 ⇒ 全体玩家挤到地图回卷角落,散点/复活设计失效。
-	if MazeGenerator.current_grid == null or MazeGenerator.current_grid.is_empty():
-		MazeGenerator.set_map_file(map_path)
-		WorldBuilder.load_grid()
+	MatchHost.ensure_spawn_grid(map_path)
 # ★ 出生点单一来源:常规路径由 start_on 算好传进来(它同时把同一份经 match_start 广播给客户端);传空 = 手工/测试路径才自己算。
 # 这里不得再调一次 plan_spawns —— 它是随机的(SpawnChooser),重算出的是另一份散点,而实际摆位读的是这一份,事后覆盖
 # _round_spawns 也改不回任何人的位置(_spawned_once 已闩)⇒ 广播给客户端的那份从不生效、两端位置不一致,且完全不报错。
@@ -37,11 +35,7 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 # ── 开局(在 worker 进程调用):算散点出生 → 逐角色 match_start → 建 RoyaleHost。ai_roles = AI 补位 role 列表(由服务端 AI 驱动,不发 match_start)。──
 static func start_on(role_peers: Dictionary, map_path: String, options: Dictionary = {},
 		ai_roles: Array = []) -> Node:
-	MazeGenerator.set_map_file(map_path)
-	GameParameters.refresh_map_size()
-
-	if MazeGenerator.current_grid == null or MazeGenerator.current_grid.is_empty():
-		WorldBuilder.load_grid()
+	MatchHost.prepare_map(map_path)
 	var spawns := plan_spawns(role_peers.keys() + ai_roles)
 	for role in role_peers:
 
@@ -130,27 +124,9 @@ func _match_round_tick(delta: float) -> void:
 			pass   # 结果展示阶段:客户端弹结算页,**玩家自己退**(不再有 N 秒自动回菜单)
 
 
-# 击杀归因:读受害者 meta 里的射手节点(子弹直击/爆炸在命中时写入),映射回 role;★ 带时效 —— 伤害超过 ATTRIB_WINDOW
-# (3000ms)的射手不再归因(防止「被打一枪后溺水」误计)。★ ATTRIB_WINDOW 与逐人伤害的 ATTRIB_FRESH_MS(8ms)都住在底座
-# MatchState:子类重复声明基类成员是硬 Parse Error。
-func _attributed_killer(victim: Node2D) -> int:
-	if not victim.has_meta("last_damager"):
-		return 0
-	var shooter: Node = victim.get_meta("last_damager")
-	if shooter == null or not is_instance_valid(shooter) or shooter == victim:
-		return 0
-	if victim.has_meta("last_damager_time"):
-		var age := Time.get_ticks_msec() - int(victim.get_meta("last_damager_time"))
-		if age > ATTRIB_WINDOW:
-			return 0
-	for role in players:
-		if players[role] == shooter:
-			return int(role)
-	return 0
-
-
-# 大乱斗口径:击杀靠归因(无归因的死亡——溺水/坠落/自杀——不计任何人的击杀);分记给归因到的杀手,
-# 且**无条件**广播一次 round_state(即使 killer=0,排行榜/存活态也可能变了)。★ 与 1v1 不同、别照抄那一份。
+# 击杀归因:读受害者 meta 里的射手节点(子弹直击/爆炸在命中时写入),映射回 role;带时效(超 ATTRIB_WINDOW 不归因)。
+# ★ 函数本体与 team_host 那份逐字同款 ⇒ 已上提到 MatchHost._attributed_killer(3s 窗口 = ATTRIB_WINDOW);
+# 本类只留「大乱斗口径」的覆写:_down_killer_of 走归因(1v1 走对手、无归因死亡不计分)。
 func _down_killer_of(role: int) -> int:
 	return _attributed_killer(players[int(role)])
 
@@ -163,9 +139,9 @@ func _award_down(victim_role: int, killer_role: int) -> void:
 	_broadcast_round_state()
 
 
+# ★ 置态 + 广播两条已上提到 MatchHost._finish_match(与 TeamHost 逐字同款);这里只留收场文案。
 func _finish_match() -> void:
-	_round_state = RoundState.MATCH_OVER
-	_broadcast_round_state()
+	super._finish_match()
 	print("RoyaleHost: 对局结束,胜者 role %d" % _match_winner())
 
 
@@ -246,19 +222,8 @@ func set_display_names(names: Dictionary) -> void:
 
 func mark_disconnected(role: int) -> void:
 	role = int(role)
-	if _left.has(role):
+	if not _detach_role(role):
 		return
-	_left[role] = true
-	_respawn_pending.erase(role)
-	_down_counted[role] = true
-	if players.has(role):
-		var p: Node = players[role]
-		if is_instance_valid(p):
-			p.queue_free()
-		players.erase(role)
-	if input_sources.has(role):
-		input_sources.erase(role)
-	peer_by_role.erase(role)
 	_broadcast_round_state()
 # 剩余玩家 < 2 → 直接终局(独行者判胜)。★ 判据必须是 players(真人 + AI 补位),不是 peer_by_role:AI 补位由服务端驱动、
 # 没有 peer,按 peer 数会在「2 真人 + 2 AI 掉 1 真人」时把剩下 1 真人 + 2 AI 当场判终局。

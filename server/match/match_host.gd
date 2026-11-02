@@ -54,37 +54,39 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 
 	peer_by_role = role_peers.duplicate()
 	for role in role_peers:
-		var p: Node2D = preload("res://scenes/player/player.tscn").instantiate()
-		var src := PacketInputSource.new()
-		p.set_input_source(src)
-		add_child(p)
-		p.collision_mask |= 2   # 与对方玩家(层2)物理碰撞;自身节点互不作用由 Godot 排除
-		players[role] = p
-		input_sources[role] = src
-
-		var spawn := _spawn_cell(role)
-		var ts := GameParameters.TILE_SIZE
-		p.global_position = Vector2(spawn.x * ts + ts * 0.5, spawn.y * ts + ts * 0.5)
-		print("MatchHost: 角色 %d 出生点 %s" % [role, spawn])
+		_add_player(role, PacketInputSource.new(), null)
 # AI 补位(实验性):同一 player.tscn,输入源换 AiInputSource、由 AiNavigator 驱动;入 players 即自动获得快照/裁决/计分/复活覆盖
 # (不入 input_sources —— 它不走网络包)。★ 代码就位,但界面未接(客户端按钮已删)。
 	for ai_role in _ai_roles:
-		var role := int(ai_role)
-		var p: Node2D = preload("res://scenes/player/player.tscn").instantiate()
-		var src := AiInputSource.new()
-		p.set_input_source(src)
-		add_child(p)
-		p.collision_mask |= 2
-		players[role] = p
-		var nav := AiNavigator.new()
+		_add_player(int(ai_role), AiInputSource.new(), AiNavigator.new())
+
+
+# 出生:建一个玩家节点并摆到出生点。★ 原先这里是两个逐行同构的循环(网络玩家 / AI 补位),现在只有这一份。
+# ★★ 行为逐字等价 —— 副作用顺序与拆前一致:实例化 → 换输入源 → 入树 → 与对方玩家(层2)互撞 → 记 players
+#   →(网络玩家记 input_sources / AI 挂导航器)→ `_spawn_cell` → 摆位 → 出生点日志。★ 顺序不可整理:
+#   `_spawn_cell` 带副作用(散点闩 / 上次落点记录,RNG 按调用次序取值),导航器与输入源表都必须在它之前就位。
+# ★ nav == null ⇒ 网络玩家(nav 非 null 即 AI 补位,它的输入源由 nav 每帧写、不进 input_sources)。
+# ★ 两条 print 文案由 nav 是否为 null 拼出,与拆前那两条**逐字相同**("角色 %d 出生点" / "AI 角色 %d 出生点")。
+func _add_player(role: int, src: PlayerInput, nav: AiNavigator) -> Node2D:
+	var p: Node2D = preload("res://scenes/player/player.tscn").instantiate()
+	p.set_input_source(src)
+	add_child(p)
+	p.collision_mask |= 2   # 与对方玩家(层2)物理碰撞;自身节点互不作用由 Godot 排除
+	players[role] = p
+	if nav == null:
+		input_sources[role] = src
+	else:
 		nav.host = self
 		nav.role = role
 		nav.src = src
 		p.add_child(nav)
-		var spawn := _spawn_cell(role)
-		var ts := GameParameters.TILE_SIZE
-		p.global_position = Vector2(spawn.x * ts + ts * 0.5, spawn.y * ts + ts * 0.5)
-		print("MatchHost: AI 角色 %d 出生点 %s" % [role, spawn])
+
+	var spawn := _spawn_cell(role)
+	var ts := GameParameters.TILE_SIZE
+	p.global_position = Vector2(spawn.x * ts + ts * 0.5, spawn.y * ts + ts * 0.5)
+	var who := "AI " if nav != null else ""   # 日志前缀:拼出来与拆前那两条 print 逐字相同
+	print("MatchHost: %s角色 %d 出生点 %s" % [who, role, spawn])
+	return p
 
 
 func _enter_tree() -> void:
@@ -455,3 +457,63 @@ func _apply_rw_frame(r: int, p: Node2D, cursor: float) -> void:
 	#   顺带删掉原先那段 `f["bullets"]` 分支:`_record_rw_frame` 从来不写这个键 ⇒ `hist` 恒空、整段是死代码。
 	if p.has_method("rewind_restore"):
 		p.rewind_restore(f)
+
+
+# ══ 队制模式(TeamHost / RoyaleHost)共用段 ══ 原先这两个文件里逐字重复的几段收在这里,子类只留「差异覆写」。
+# ★ 1v1 直接建 MatchHost(全仓唯一实例化点 = MatchBootstrap.start_on)⇒ 凡会改变 1v1 语义的段一律**没有**上提:
+#   自杀脱困(server_main 按 has_method 派发,上提会让 1v1 也吃到 K 键)、复活清归因 meta(会改 Beta 局里
+#   复活后的颗粒归因)、`_down_killer_of`(1v1 是 _opponent_of 口径)、`_on_bullet_hit`(刻意保留的双写点)。
+
+
+# 掉线宽限期到点后把 role 从对局里摘掉(两个子类 mark_disconnected 里逐字相同的 11 行:节点释放 +
+# players / input_sources / peer_by_role 三张表移除)。★ 终局判据刻意留在子类:大乱斗是「剩余 < 2 人」、
+# 对抗是「某队一个人不剩」,两者语义不同,别在这里合并。
+# ★ 幂等:已离开 ⇒ false,调用方直接 return(等价于原先那一句 `if _left.has(role): return`)。
+func _detach_role(role: int) -> bool:
+	role = int(role)
+	if _left.has(role):
+		return false
+	_left[role] = true
+	_respawn_pending.erase(role)
+	_down_counted[role] = true
+	if players.has(role):
+		var p: Node = players[role]
+		if is_instance_valid(p):
+			p.queue_free()
+		players.erase(role)
+	if input_sources.has(role):
+		input_sources.erase(role)
+	peer_by_role.erase(role)
+	return true
+
+
+# 终局收场:置 MATCH_OVER + 广播(两个子类逐字相同的两条)。★ 收场日志是模式差异(队号 / role),留在子类覆写里,
+# 且必须排在 super 之后 —— 它读的 _match_winner() 已经先被广播载荷读过一次(顺序与拆前逐字一致)。
+func _finish_match() -> void:
+	_round_state = RoundState.MATCH_OVER
+	_broadcast_round_state()
+
+
+# 「这次倒地算谁的击杀」的归因读端(3v3 与大乱斗共用):上一个打 victim 的人;归因年龄 > ATTRIB_WINDOW(3s)、
+# 无归因、自伤 ⇒ 0。★ 唯一实现是 MatchState._attributed_role_within;大乱斗原先把它那 14 行函数体整段抄了一份。
+# ★ 1v1 不用它(MatchRound._down_killer_of 走 _opponent_of),故上提不改变 1v1 行为。
+func _attributed_killer(victim: Node2D) -> int:
+	return _attributed_role_within(victim, ATTRIB_WINDOW)
+
+
+# ── start_on 的地图前奏(两个子类逐字相同)── 换图 → 重算世界尺寸 → 网格未载则载入。
+# ★ 顺序不可倒:散点与可抵达判据(SpawnPicker.reachable_spawn_cells)都读 MazeGenerator.current_grid,
+#   网格为空时所有 `# respawn` 点都会被判"不可抵达" ⇒ 永远掉进几何回退(与 MatchBootstrap.start_on 同一条理由)。
+static func prepare_map(map_path: String) -> void:
+	MazeGenerator.set_map_file(map_path)
+	GameParameters.refresh_map_size()
+	if MazeGenerator.current_grid == null or MazeGenerator.current_grid.is_empty():
+		WorldBuilder.load_grid()
+
+
+# 手工 / 测试路径建局前的地图兜底(两个子类 _init 里逐字同款的 3 行):网格已在 MazeGenerator 里就**不再换图** ——
+# 散点要读的正是那份网格,而调用方(探针等)可能已经为同一局预载过它。
+static func ensure_spawn_grid(map_path: String) -> void:
+	if MazeGenerator.current_grid == null or MazeGenerator.current_grid.is_empty():
+		MazeGenerator.set_map_file(map_path)
+		WorldBuilder.load_grid()

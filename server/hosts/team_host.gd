@@ -40,9 +40,7 @@ var _kills_to_win: int = TeamRules.KILLS_MIN
 func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 		ai_roles: Array = [], spawns: Dictionary = {}, teams: Dictionary = {}) -> void:
 
-	if MazeGenerator.current_grid == null or MazeGenerator.current_grid.is_empty():
-		MazeGenerator.set_map_file(map_path)
-		WorldBuilder.load_grid()
+	MatchHost.ensure_spawn_grid(map_path)
 	_team_of = teams.duplicate()
 # ★ spawns 传空只在手工/测试路径才自己算一份:plan_team_spawns 是随机的(SpawnChooser),重算会得到另一份散点,
 #   而广播给客户端的是 start_on 那一份。出生点数据 = 地图 `# respawn 1|2` 两侧列表(缺则 TeamSpawn 回退几何生成)。
@@ -155,10 +153,7 @@ func _apply_team_layers() -> void:
 
 static func start_on(role_peers: Dictionary, map_path: String, options: Dictionary = {},
 		teams: Dictionary = {}) -> Node:
-	MazeGenerator.set_map_file(map_path)
-	GameParameters.refresh_map_size()
-	if MazeGenerator.current_grid == null or MazeGenerator.current_grid.is_empty():
-		WorldBuilder.load_grid()
+	MatchHost.prepare_map(map_path)
 	var spawns := plan_team_spawns(teams)
 	for role in role_peers:
 
@@ -217,6 +212,8 @@ func _respawn_cell_for(role: int) -> Vector2i:
 
 # ★ 复活时清 last_damager / last_damager_time:meta 在受击瞬间写下、跨倒地保留,而归因窗口是 ATTRIB_WINDOW(3s)⇒ 复活后 3s 内的
 # 环境死亡会记到复活前那名射手头上。与 RoyaleHost 那份逐字同构(对等性欠债别留)。⚠ 零守卫:team_host_probe 已删(2026-10-09)。
+# ★★ 逐字同构但**刻意不并到 MatchHost**:MatchHost 同时是 1v1 的类 ⇒ 上提等于让 1v1 也清这两条 meta,
+#    而 Beta 局的 award_damage 读的正是 3s 窗口(_attributed_role_within)⇒ 1v1 复活后的伤害归因会变。
 func _respawn_player(role: int) -> void:
 	super._respawn_player(role)
 	var p: Node2D = players.get(role)
@@ -288,14 +285,8 @@ func _match_round_tick(delta: float) -> void:
 			pass
 
 
-func _round_over(winner_team: int) -> void:
-	_last_round_winner = winner_team
-	_rounds_won[winner_team] = int(_rounds_won.get(winner_team, 0)) + 1
-	_round_state = RoundState.ROUND_OVER
-	_round_timer = ROUND_OVER_TIME
-	_broadcast_round_state()
-
-
+# ★ _round_over 不再覆写:本模式要的「记局胜(键 = 队号)+ 置 ROUND_OVER + 广播」与 MatchRound._round_over 逐字相同
+#   (调用点传的就是队号 `_round_over(t)`),原先那份等于把基类整段抄了一遍。
 # 换局:局胜到 TEAM_ROUNDS_TO_WIN → MATCH_OVER;否则整队换边 + 下一局。★ 与基类的实质差异:① 局胜的键是队号(基类按 role 查,
 # 团队下永远是 0 → 永远打不完);② 换边 = 两队换用另一侧的 `# respawn` 点集(队 1↔侧 2 / 队 2↔侧 1),且每局从列表里重随机;
 # ③ 换边后必须清 _spawned_once —— 否则 _spawn_cell 走动态复活点分支,开局的人会被撒到「离敌人远」的随机格而不是本方出生点。
@@ -384,29 +375,16 @@ func _roles_of_team(team: int) -> Array:
 	return out
 
 
-# ── 击杀归因(自带一份,不上提基类):kill_event 要带「是谁杀的」(归因不到就带 0)。★ 基类归属有「基类不得含子类方法」的反向断言守着(那条探针已删);两份都读同一个 meta,单一来源仍是 CombatFeedback。
-func _attributed_killer(victim: Node2D) -> int:
-	return _attributed_role_within(victim, ATTRIB_WINDOW)
+# ── 击杀归因:`_attributed_killer`(读上次射手 meta,3s 窗口)已上提到 MatchHost(与 RoyaleHost 逐字同款那份);
+# 单一来源仍是 CombatFeedback 写 meta + MatchState._attributed_role_within 读。
 
 
 # ── 中途掉线(宽限期到点后由 server_main 调):移出对局,但整队走光才终局。★ 判据是「某个队一个人都不剩」,不是 royale 那条 players.size() < 2(6 人局掉 1 个就终局 = 剩下的人白打);也不能数 peer_by_role(那是「有连接的人」)。
 func mark_disconnected(role: int) -> void:
 	role = int(role)
-	if _left.has(role):
+	if not _detach_role(role):
 		return
-	_left[role] = true
-
 	_left_round[role] = int(_leave_round.get(role, _round_num))
-	_respawn_pending.erase(role)
-	_down_counted[role] = true
-	if players.has(role):
-		var p: Node = players[role]
-		if is_instance_valid(p):
-			p.queue_free()
-		players.erase(role)
-	if input_sources.has(role):
-		input_sources.erase(role)
-	peer_by_role.erase(role)
 
 	var alive_teams := {}
 	for r in players:
@@ -430,14 +408,16 @@ func _decided_by_rounds() -> bool:
 	return _threshold_team() != 0
 
 
+# ★ 置态 + 广播两条已上提到 MatchHost._finish_match(与 RoyaleHost 逐字同款);这里只留收场文案。
 func _finish_match() -> void:
-	_round_state = RoundState.MATCH_OVER
-	_broadcast_round_state()
+	super._finish_match()
 	print("TeamHost: 对局结束(整队走光),胜者队 %d" % _match_winner())
 
 
 # ── 自杀脱困(K 键:客户端 → NetBusExt.suicide_request → server_main._on_suicide_request)── 异常卡死时主动放弃生命,先清归因 ⇒
 # 自杀不计入任何人击杀(对抗下落进无归因档:对方队 +1、无人被计击杀)。★ 必须留在子类;server_main 原先只认 _royale ⇒ 对抗的 K 键被静默丢掉。
+# ★★ 与 RoyaleHost 那份逐字同构,但**不许**并到 MatchHost:server_main 按 `has_method("request_suicide_role")` 派发 ⇒
+#    上提就等于给 1v1 也开了 K 键自杀(那是行为变更,不是重构)。
 func request_suicide_role(role: int) -> void:
 	if _round_state != RoundState.PLAYING:
 		return
