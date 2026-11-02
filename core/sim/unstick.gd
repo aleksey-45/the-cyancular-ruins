@@ -22,7 +22,7 @@ static func push_up_dy(rect: Rect2, ts: int, max_cells: int = 8) -> float:
 	if ts <= 0:
 		return 0.0
 	var total := 0.0
-	for _i in range(max_cells):
+	for _i in max_cells:
 		var cur := Rect2(rect.position - Vector2(0.0, total), rect.size)
 		# ★ 内缩不能省:TileQuery 的格范围是 floori(rect.end / ts) 且**含端点**,
 		#   一个正好 64 宽、正好对齐格线的矩形会把右边那一列也算进去 —— 那一列若是墙,

@@ -21,8 +21,8 @@ func _on_tile_destroyed(cell: Vector2i) -> void:
 # ★★ 必须一起清两处:sub_hp(下一局 build_sim 会按它把墙长回来)+ destructible_sub(本局分块碰撞数组)。
 	TileDefs.zero_cell_sub_hp(cell)
 	if not destructible_sub.is_empty():
-		for sy in range(4):
-			for sx in range(4):
+		for sy in 4:
+			for sx in 4:
 				destructible_sub[cell.y * 4 + sy][cell.x * 4 + sx] = MazeGenerator.EMPTY
 				damaged_subs[Vector2i(cell.x * 4 + sx, cell.y * 4 + sy)] = true
 		_dirty_chunks[CollisionBuilder.chunk_of(cell)] = true

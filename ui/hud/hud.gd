@@ -285,7 +285,7 @@ func _build_segments(count: int) -> void:
 	plate.position = Vector2(MARGIN.x - BAR_PLATE_PAD.x, MARGIN.y - BAR_PLATE_PAD.y)
 	plate.size = Vector2(bar_w + BAR_PLATE_PAD.x * 2.0, SEG_H + BAR_PLATE_PAD.y * 2.0)
 	add_child.call_deferred(plate)
-	for i in range(count):
+	for i in count:
 		var seg := ColorRect.new()
 		seg.position = Vector2(MARGIN.x + i * (SEG_W + SEG_GAP), MARGIN.y)
 		seg.size = Vector2(SEG_W, SEG_H)
@@ -356,7 +356,7 @@ func _start_ghost(i: int) -> void:
 	seg.visible = true
 	var base := seg.color  # 当前底色(青/红)
 	var tw := create_tween()
-	for _b in range(2):
+	for _b in 2:
 		tw.tween_property(seg, "color", Color.WHITE, 0.08)
 		tw.tween_property(seg, "color", base, 0.08)
 	tw.tween_property(seg, "modulate:a", 0.0, 0.2)   # 最后淡出

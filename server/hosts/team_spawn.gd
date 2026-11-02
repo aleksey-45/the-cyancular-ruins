@@ -107,7 +107,7 @@ static func _warn_legacy_spawn(why := "") -> void:
 static func _plan_team_spawns_geometry(teams: Dictionary) -> Dictionary:
 	var best := {}
 	var best_margin := -(1 << 30)   # ★ GDScript 不接受 `-1 << 30`(移位只收正操作数)
-	for _attempt in range(SPAWN_MAX_TRIES):
+	for _attempt in SPAWN_MAX_TRIES:
 		var cand := _plan_team_spawns_once(teams)
 		var margin := _spawn_margin(cand, teams)
 		if margin > best_margin:

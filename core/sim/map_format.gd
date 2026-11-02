@@ -26,42 +26,38 @@ static func shape_of(v: int) -> int:
 # v3 每格 4 字符:[纹理 3 位 0xx][形状hex]。纹理 000=空气,001/002/.../021=水体等;形状 hex 0-F。
 # 纹理用 3 位十进制数字,不用字母(纹理数增长不依赖字母表)。
 
+## 字符 → 数值的**唯一解码表**(0-9 / A-F / a-f);非法返回 -1,**不打印**(口径由调用方定)。
+## ★ 原先「形状字符」与「瓦片字符」各写一份 match 表,后者是前者的子集 ⇒ 收到这里一份。
+static func _hex_char_value(ch: String) -> int:
+	if ch.length() != 1:
+		return -1
+	var c := ch.unicode_at(0)
+	if c >= 48 and c <= 57:
+		return c - 48          # 0-9
+	if c >= 65 and c <= 70:
+		return c - 55          # A-F
+	if c >= 97 and c <= 102:
+		return c - 87          # a-f
+	return -1
+
+## 形状字符(v3 每格 4 字符组里那一位)→ 0-15;非法按 0 处理并告警。
 static func shape_char_to_value(ch: String) -> int:
-	if ch.is_valid_int():
-		var n := ch.to_int()
-		if n >= 0 and n <= 9:
-			return n
-	match ch:
-		"A", "a": return 10
-		"B", "b": return 11
-		"C", "c": return 12
-		"D", "d": return 13
-		"E", "e": return 14
-		"F", "f": return 15
-		_:
-			push_warning("MapFormat: 非法形状字符 \"%s\"，按 0 处理" % ch)
-			return 0
+	var v := _hex_char_value(ch)
+	if v < 0:
+		push_warning("MapFormat: 非法形状字符 " + ch + "，按 0 处理")
+		return 0
+	return v
 
 static func _value_to_shape_char(v: int) -> String:
 	return "0123456789ABCDEF"[v]
 
-# .cyrm 单字符 → 瓦片值:0-9 → 0-9,'A'/'a' → 10;非法字符按 0 处理。
+# .cyrm 单字符 → 瓦片值:0-9 → 0-9;A/a → 10(旧格式只到 A,没有 B~F);其余按 0 处理并告警。
 static func _tile_char_to_value(ch: String) -> int:
-	match ch:
-		"0": return 0
-		"1": return 1
-		"2": return 2
-		"3": return 3
-		"4": return 4
-		"5": return 5
-		"6": return 6
-		"7": return 7
-		"8": return 8
-		"9": return 9
-		"A", "a": return 10
-		_:
-			push_warning("MapFormat: 非法瓦片字符 \"%s\"，按 0 处理" % ch)
-			return EMPTY
+	var v := _hex_char_value(ch)
+	if v < 0 or v > 10:
+		push_warning("MapFormat: 非法瓦片字符 " + ch + "，按 0 处理")
+		return 0
+	return v
 
 # ── 读文件 ──
 # 读整个 .cyrm 的行(含注释与空行)。调用方先自行 FileAccess.file_exists 并报错
@@ -216,13 +212,13 @@ static func convert_old_grid(old: Array) -> Array[Array]:
 	var rows := old.size()
 	var cols := (old[0] as Array).size()
 	var out: Array[Array] = []
-	for ny in range(rows / 2):
+	for ny in rows / 2:
 		var row: Array[int] = []
-		for nx in range(cols / 2):
+		for nx in cols / 2:
 			var shape := 0
 			var tex := 0
-			for sy in range(2):
-				for sx in range(2):
+			for sy in 2:
+				for sx in 2:
 					var ov: int = (old[ny * 2 + sy] as Array)[nx * 2 + sx]
 					if ov != 0:
 						shape |= 1 << (sy * 2 + sx)

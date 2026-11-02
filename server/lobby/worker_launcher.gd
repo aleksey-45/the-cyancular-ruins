@@ -65,7 +65,7 @@ func release_now(port: int) -> void:
 
 
 func pick_port() -> int:
-	for _tries in range(WORKER_PORT_SPAN):
+	for _tries in WORKER_PORT_SPAN:
 		var p := _next_port
 		_next_port += 1
 		if _next_port >= WORKER_PORT_BASE + WORKER_PORT_SPAN:

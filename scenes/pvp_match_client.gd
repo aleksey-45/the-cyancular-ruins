@@ -13,7 +13,7 @@ var _world: Node = null   # WorldViewport(视觉子弹/TileHitFx 副本挂这里
 var _level0: Node = null  # 世界(Level0):补态那一路要还原可破坏砖(见 _on_match_sync)
 var _round_locked := false      # COUNTDOWN 冻结态(别把倒计时里提前解锁)
 var _ping_acc := 0.0
-# C2 客户端预测:见 core/prediction_rollback.gd 与 docs/pvp-c2-retrospective.md。
+# C2 客户端预测:见 core/prediction_rollback.gd 与 docs/eng/netcode-snapshots.md。
 var _rollback = null            # PredictionRollback
 # 受击事件队列:网络回调跑在 idle 帧,而注入要重放(内部 move_and_slide)—— 物理帧外 move_and_slide 位移恒 0(实测),
 # 故回调只入队,统一在下一个物理帧开头注入(反馈最多晚 1 帧 ≈16.7ms)。
@@ -205,7 +205,7 @@ func _tick_beta_time(delta: float) -> void:
 
 # 本地回溯预测:按住 + 镜像可耗 + 未倒地 ⇒ 冻结本地输入源、置免伤闸、世界 + 自己上底片。★ 位置不本地预测 —— 服务器每帧权威写回(C2 的 on_authoritative 就是那条路);本地只负责"站着 + 看底片 + 免伤"。
 func _tick_beta_rewind(delta: float) -> void:
-	# ★ 进 / 出两条路读的必须是宿主自己那一个 input_source(刻意不改成"注入源"):换成另一个对象去冻结,解冻就落不到玩家真读的那个源上 ⇒ 死锁(债单 §六.7,同一函数 src.frozen = true 与 player.set_controls_locked() 是同一个对象的两条写路)。点访问取代反射:拼错成员名当场报错。
+	# ★ 进 / 出两条路读的必须是宿主自己那一个 input_source(刻意不改成"注入源"):换成另一个对象去冻结,解冻就落不到玩家真读的那个源上 ⇒ 死锁(同一函数 src.frozen = true 与 player.set_controls_locked() 是同一个对象的两条写路)。点访问取代反射:拼错成员名当场报错。
 	var downed: bool = _local.is_downed()
 	var want := Input.is_action_pressed("rewind") 			and _time_mirror != null and _time_mirror.can_spend() and not downed
 	if want and not _time_rewinding:

@@ -43,11 +43,11 @@ func same_team(a_role: int, b_role: int) -> bool:
 func destroyed_cells() -> Array[Vector2i]:
 	var out: Array[Vector2i] = []
 	var rows := mini(grid.size(), _base_grid.size())
-	for y in range(rows):
+	for y in rows:
 		var cur: Array = grid[y]
 		var base: Array = _base_grid[y]
 		var cols := mini(cur.size(), base.size())
-		for x in range(cols):
+		for x in cols:
 			if int(cur[x]) != int(base[x]):
 				out.append(Vector2i(x, y))
 	return out

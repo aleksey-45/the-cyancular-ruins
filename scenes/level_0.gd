@@ -291,9 +291,9 @@ func _paint_maze_copies(layer: TileMapLayer, copies: Array) -> void:
 	for c: Vector2i in copies:
 		var offset_x = c.x * sc
 		var offset_y = c.y * sr
-		for y in range(sr):
+		for y in sr:
 			var row: Array = MazeGenerator.current_subgrid[y]
-			for x in range(sc):
+			for x in sc:
 				var tex: int = row[x]
 				if tex == MazeGenerator.EMPTY or Water.is_liquid(tex):
 					continue
@@ -318,9 +318,9 @@ func _paint_water_copies(grid: Array[Array], copies: Array) -> void:
 	for c: Vector2i in copies:
 		var ox := c.x * cols
 		var oy := c.y * rows
-		for y in range(rows):
+		for y in rows:
 			var row: Array = grid[y]
-			for x in range(cols):
+			for x in cols:
 				var v: int = row[x]
 				if v == MazeGenerator.EMPTY:
 					continue

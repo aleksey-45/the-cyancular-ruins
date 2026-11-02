@@ -69,7 +69,7 @@ static func plan_spawns(roles: Array) -> Dictionary:
 				break
 			picked.append(c)
 	var out := {}
-	for i in range(n):
+	for i in n:
 		out[int(roles[i])] = picked[i] if i < picked.size() else Vector2i(-1, -1)
 	return out
 

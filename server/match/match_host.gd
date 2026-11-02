@@ -232,10 +232,10 @@ func _physics_process(delta: float) -> void:
 	# 受击事件锚点:帧末(子节点步进之后)记录"上一次完成步进时的已消费 seq",下一帧裁决用它(见 MatchState._stepped_seq)。
 	if not _stepped_seq_pending:
 		_stepped_seq_pending = true
-		call_deferred("_record_stepped_seq")
+		_record_stepped_seq.call_deferred()
 	if snapshot_tick:
 		_own_flush_pending = true
-		call_deferred("_flush_own_snapshots")
+		_flush_own_snapshots.call_deferred()
 
 	_adjudicate_bullets()
 

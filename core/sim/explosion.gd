@@ -222,8 +222,8 @@ static func make_circle_texture(size: int) -> ImageTexture:
 	var img := Image.create(size, size, false, Image.FORMAT_RGBA8)
 	img.fill(Color(0, 0, 0, 0))
 	var cx := size * 0.5
-	for y in range(size):
-		for x in range(size):
+	for y in size:
+		for x in size:
 			var d := Vector2(x - cx, y - cx).length() / cx
 			if d <= 1.0:
 				img.set_pixel(x, y, Color(1, 1, 1, (1.0 - d) * 0.9))

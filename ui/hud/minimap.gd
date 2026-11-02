@@ -65,8 +65,8 @@ func _ready() -> void:
 
 	# 地形底图:墙=亮灰,水=蓝,空气=深色半透明(1 像素 = 1 格,着色器按 PX_PER_CELL 放大)
 	var img := Image.create(cols, rows, false, Image.FORMAT_RGBA8)
-	for y in range(rows):
-		for x in range(cols):
+	for y in rows:
+		for x in cols:
 			var v: int = grid[y][x]
 			if v == MazeGenerator.EMPTY:
 				img.set_pixel(x, y, Color(0.05, 0.09, 0.13, 0.55))

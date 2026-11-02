@@ -61,10 +61,10 @@ static func build_atlas_image() -> Image:
 	var src_img := source_image()
 	var atlas := Image.create(QUAD_COLS * QUAD_TILE, TEX_COUNT * QUAD_TILE, false, Image.FORMAT_RGBA8)
 	atlas.fill(Color(0, 0, 0, 0))
-	for tex in range(TEX_COUNT):
+	for tex in TEX_COUNT:
 		var src := source_rect(tex)
-		for qy in range(4):
-			for qx in range(4):
+		for qy in 4:
+			for qx in 4:
 # ★ 每个象限必须一张新图:复用同一张会让 blit 只覆盖左上 8×8,而 resize(16,16) 是空操作 ⇒ 象限互相串味(静默)。
 				var q := Image.create(QUAD_SRC, QUAD_SRC, false, Image.FORMAT_RGBA8)
 				q.blit_rect(src_img, Rect2i(src.position.x + qx * QUAD_SRC,
@@ -84,8 +84,8 @@ static func make_wall_tileset() -> TileSet:
 	atlas.texture_region_size = Vector2i(QUAD_TILE, QUAD_TILE)
 	atlas.texture = ImageTexture.create_from_image(atlas_img)
 	tile_set.add_source(atlas)
-	for q in range(QUAD_COLS):
-		for tex in range(TEX_COUNT):
+	for q in QUAD_COLS:
+		for tex in TEX_COUNT:
 			atlas.create_tile(Vector2i(q, tex))
 	return tile_set
 
@@ -114,10 +114,10 @@ static func make_water_tileset(ts: int) -> TileSet:
 	var half: int = ts / 2
 	var atlas_img := Image.create(16 * ts, ts, false, Image.FORMAT_RGBA8)
 	atlas_img.fill(Color(0, 0, 0, 0))
-	for shape in range(16):
+	for shape in 16:
 		var tile := img.duplicate()
-		for sy in range(2):
-			for sx in range(2):
+		for sy in 2:
+			for sx in 2:
 				if (shape & (1 << (sy * 2 + sx))) == 0:
 					tile.fill_rect(Rect2i(sx * half, sy * half, half, half), Color(0, 0, 0, 0))
 		atlas_img.blit_rect(tile, Rect2i(0, 0, ts, ts), Vector2i(shape * ts, 0))
@@ -127,7 +127,7 @@ static func make_water_tileset(ts: int) -> TileSet:
 	atlas.texture_region_size = Vector2i(ts, ts)
 	atlas.texture = ImageTexture.create_from_image(atlas_img)
 	tile_set.add_source(atlas)
-	for shape in range(16):
+	for shape in 16:
 		atlas.create_tile(Vector2i(shape, 0))
 	return tile_set
 
@@ -157,10 +157,10 @@ static func bake_map_image(path: String, cell_px: int, air: Color) -> Image:
 	var cols: int = (subgrid[0] as Array).size()
 	var out := Image.create(cols * sp, rows * sp, false, Image.FORMAT_RGBA8)
 	out.fill(air)
-	for y in range(rows):
+	for y in rows:
 		var row: Array = subgrid[y]
 		var qy := y % SUB_PER_CELL
-		for x in range(cols):
+		for x in cols:
 			var tex := int(row[x])
 			if tex < 1 or tex > TEX_COUNT:
 				continue                                # 0 = 空气;越界纹理当空气

@@ -56,7 +56,7 @@ static func _restart_impl() -> String:
 	print("[LocalServer] 已启动 pid=%d %s" % [pid, exe])
 	# 轮询等端口就绪:实测专用服务器引擎冷启动 + bind 要 6~30 秒(磁盘/安全软件扫描),netstat 本身也吃时间 ⇒ 每秒探一次、最多约 45 秒。
 	var tried_headless := false
-	for _i in range(45):
+	for _i in 45:
 		await _sleep(1.0)
 		if not ProcUtil.pids_on_udp_port(LOBBY_PORT).is_empty():
 			return "本机服务器已(重)启动;" + lan_ip_hint()

@@ -96,7 +96,7 @@ static func build_dial_texture() -> ImageTexture:
 	# 12 刻度
 	for i in 12:
 		var ang := -PI * 0.5 + TAU * float(i) / 12.0
-		for t in range(3):
+		for t in 3:
 			var px := int(c + cos(ang) * (r_face - 4.0 - float(t) * 2.0))
 			var py := int(c + sin(ang) * (r_face - 4.0 - float(t) * 2.0))
 			if px >= 0 and py >= 0 and px < n and py < n:

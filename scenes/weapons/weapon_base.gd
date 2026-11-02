@@ -315,7 +315,7 @@ func apply_hit(target: Node, dir: Vector2) -> void:
 # 出弹钩子:fire() 同步朝向/冷却后调用。基类默认按 pellet 出物理子弹;即时光束类武器(激光)覆写本方法,用一次性几何追踪替代逐帧飞行的弹丸;base_dir 是已钳制仰角的瞄准方向(世界系),与默认出弹同一来源。
 func _spawn_projectiles(base_dir: Vector2) -> void:
 	var spread := deg_to_rad(spread_deg)
-	for i in range(pellet_count):
+	for i in pellet_count:
 		var b: BulletBase = bullet_scene.instantiate()
 		# Beta 时间玩法(PvP):射手加速 ⇒ 出膛弹速 ×同倍率。★ 只读注入进来的 haste_mult —— 单机它恒 1(弹速倍率由 TimeField.bullet_delta 承担,不会双乘);max_range 不动:加速时弹飞得更快但射程不变。
 		# ★ 原先这里读的是 player.get(pvp_haste_mult) —— 字符串反射 + 存在性探测,而宿主根的静态类型是 Node2D(它没有 class_name);现在读宿主每帧推入的 haste_mult。

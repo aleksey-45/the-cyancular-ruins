@@ -312,8 +312,8 @@ static func restore_sub(sub: Vector2i, hp: int) -> void:
 static func zero_cell_sub_hp(cell: Vector2i) -> void:
 	if sub_cols == 0:
 		return
-	for sy in range(4):
-		for sx in range(4):
+	for sy in 4:
+		for sx in 4:
 			restore_sub(Vector2i(cell.x * 4 + sx, cell.y * 4 + sy), 0)
 
 
@@ -325,8 +325,8 @@ static func destroy_cell(cell: Vector2i) -> void:
 		return
 	var subs: Array[Vector2i] = []
 	var pre_hp: Array[int] = []
-	for sy in range(4):
-		for sx in range(4):
+	for sy in 4:
+		for sx in 4:
 			var sub := Vector2i(cell.x * 4 + sx, cell.y * 4 + sy)
 			if sub.x < 0 or sub.y < 0 or sub.x >= sub_cols or sub.y >= sub_rows:
 				continue

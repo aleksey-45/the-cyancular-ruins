@@ -174,7 +174,7 @@ func _sample_history(t: float) -> Vector2:
 		return _anchor_of(first["pos"])
 	if t >= float(last["tick"]):
 		return _extrapolate_underrun(last, t)
-	for i in range(n - 1):
+	for i in n - 1:
 		var a: Dictionary = place_history[i]
 		var b: Dictionary = place_history[i + 1]
 		var ta := float(a["tick"])

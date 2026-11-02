@@ -36,14 +36,14 @@ static func build_sub(grid: Array[Array], only_destructible: bool) -> Array[Arra
 	var cols = sgrid[0].size()
 	var rows = sgrid.size()
 	var sub: Array[Array] = []
-	for _r in range(rows):
+	for _r in rows:
 		var srow: Array[int] = []
 		srow.resize(cols)
 		srow.fill(MazeGenerator.EMPTY)
 		sub.append(srow)
-	for y in range(rows):
+	for y in rows:
 		var srow: Array = sgrid[y]
-		for x in range(cols):
+		for x in cols:
 			var tex: int = srow[x]
 			if tex == 0:
 				continue
@@ -162,8 +162,8 @@ static func build_climb_ledges(grid: Array[Array], parent: Node) -> int:
 	var rects: Array = []
 	var thin := RectangleShape2D.new()
 	thin.size = Vector2(TILE_TS, LEDGE_THICKNESS)
-	for y in range(rows):
-		for x in range(cols):
+	for y in rows:
+		for x in cols:
 			var v: int = grid[y][x]
 			if v == 0:
 				continue

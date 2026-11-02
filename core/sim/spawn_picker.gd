@@ -49,8 +49,8 @@ static func floor_cells() -> Array:
 		return []
 	var rows := grid.size()
 	var cols: int = (grid[0] as Array).size()
-	for y in range(rows):
-		for x in range(cols):
+	for y in rows:
+		for x in cols:
 			var c := Vector2i(x, y)
 			if MazeGenerator.is_floor_cell_with_headroom(grid, c):
 				_floor_cell_cache.append(c)
@@ -68,8 +68,8 @@ static func region_sizes() -> Dictionary:
 	var rows := grid.size()
 	var cols := (grid[0] as Array).size()
 	var seen := {}
-	for y in range(rows):
-		for x in range(cols):
+	for y in rows:
+		for x in cols:
 			var start := Vector2i(x, y)
 			if seen.has(start) or not floor_cells_has(start):
 				continue
