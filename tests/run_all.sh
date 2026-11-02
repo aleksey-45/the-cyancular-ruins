@@ -117,8 +117,8 @@ declare -A BUDGET_OVERRIDE=(
 # ★★ 2026-10-08(测试经济 D2/D5):原 A 组(10 支非 headless 视觉探针)与原 E 组(8 支无判词/词汇不符的
 #   读数工具 + 1 支 helper)、C 组的 `brawl_rollback_probe`(自陈读数不可信)、D 组的 `menu_autotest`
 #   **都不再住在本入口的 glob 直径内** ⇒ 相应排除规则一并删除(留着就是"匹配不到文件"的过期规则,
-#   本块开头那条闸会直接红)。它们的去处与跑法见 `tests/manual/README.md`;判据与理由见
-#   `docs/eng/test-economy.md`(D2 仪器不是守卫 / D5 只证明别的东西 / K1-K5 什么才值得留)。
+#   本块开头那条闸会直接红)。判据与理由见 `docs/eng/test-economy.md`
+#   (D2 仪器不是守卫 / D5 只证明别的东西 / K1-K5 什么才值得留)。
 # ★★ 2026-10-09(测试面削减 90%):本表 **9 条 → 4 条** —— 删掉了 5 条指向**已删文件**的规则
 #   (`ground_net_probe` / `reconnect_probe` / `royale_bound_probe` / `royale_c2_probe` / `royale_probe`)。
 #   现行清单见 `tests/README.md`。
@@ -134,16 +134,13 @@ EXCLUDED=(
 )
 
 # ── 不在本入口 glob 直径内、但要**显式交代**的候选(`pattern|理由`)────────────────
-# 为什么单列:它们**不是测试**,而是 `tests/scripts/` 下的**诊断/迁移工具**。本入口只 glob
-# `tests/smoke/*.gd` + `tests/probe/*.tscn`(R1 的口径),所以它们不进批 —— 但"不进批"这件事
-# 必须**看得见**(否则就是"枚举会过期"那一类静默遗漏)。★ 也正因如此**不把** `tests/scripts/*.gd`
-# 加进 glob:那等于让以后任何一个新工具脚本(可能原地写盘)**自动进回归批**。
-OUT_OF_SCOPE=(
-	"tests/scripts/convert_map.gd|工具(迁移):**原地写回** res://maps/*.cyrm。★ 且今天跑它**会毁图**(债单:registered-debt.md §六.19):两张在库图已是 v4 二进制(CYRM\\x04),它认不出 v2/v3 标记 ⇒ 落进『v1 单字符 250x150』那一支并覆盖写回。"
-	"tests/scripts/convert_map_v4.gd|工具(迁移):把 maps/ 全量转 v4 并**原地覆盖**。今天两张图已是 v4 ⇒ 它只会打『跳过』(此刻无害),但它是写盘工具、且没有任何判词行。"
-	"tests/scripts/seam_analyze.gd|工具(一次性分析):读 res://tests/_seam_a_old.png / _seam_b_fixed.png —— **这两张图不在库里**(债单:registered-debt.md §六.20)(由 seam_screenshot.gd 生成)⇒ 今天跑它会 load 出 null 再解引用。无判词。"
-	'tests/scripts/seam_screenshot.gd|工具 + **非 headless**(头注:需要真实渲染(非 --headless))⇒ 会弹窗抢焦点,硬规定不许 agent 自跑。'
-)
+# ★ 2026-11-02:**本数组已清空,刻意保留这套机器**。原先列的 4 个 `tests/scripts/*.gd` 已整目录删除 ——
+#   它们不是测试,是迁移 / 一次性分析工具(其中 `convert_map.gd` 今天跑会**毁图**、`seam_screenshot.gd`
+#   会弹窗)。留着它们的唯一作用是"看得见的不进批";删掉文件之后这个作用也不存在了。
+# ★ 机制保留的理由:第 678/705 行的"每支必须在枚举集或排除表里"的不变式要遍历它;`set -u` 下数组
+#   不存在会炸。以后若再出现明显是工具、又会被 glob 扫到的脚本,**填在这里而不是塞进 glob**
+#   (塞进 glob = 让以后任何写盘工具自动进回归批)。
+OUT_OF_SCOPE=()
 
 # ── 承重安全检查的模式(见文件头「它的盲区」)────────────────────────────────
 DANGER_RE='NetBus\.start_server\(|ENetMultiplayerPeer|OS\.create_process\('
@@ -729,7 +726,7 @@ echo "[env] log dir    = $LOG_DIR"
 echo "[env] quit-after = $QUIT_AFTER frames (scene probes) ; budget: smoke=${SMOKE_BUDGET}s scene=${SCENE_BUDGET}s (+per-file overrides)"
 echo "[enum] enumerated $N_ENUM files (tests/smoke/*.gd = $N_SMOKE_ENUM, tests/probe/*.tscn = $N_PROBE_TSCN_ENUM, tests/probe/*.gd without tscn = $N_PROBE_GD_ENUM)"
 echo "[enum] excluded   $N_EXCLUDED files of the enumeration ($(( ${#EXCLUDED[@]} )) rules) -> see --list"
-echo "[enum] out of glob scope: ${#OUT_OF_SCOPE[@]} files (tests/scripts/*.gd tools) -> see --list"
+echo "[enum] out of glob scope: ${#OUT_OF_SCOPE[@]} files (tools that must NOT enter the batch) -> see --list"
 echo "[enum] running    $N_RUN files${ONLY:+ (filter: --only $ONLY)}"
 
 if [ "$LIST_ONLY" -eq 1 ]; then

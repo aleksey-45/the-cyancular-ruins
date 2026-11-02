@@ -13,7 +13,7 @@
 - `smoke/` —— `-s` 冒烟（单进程、不碰网络/磁盘/真场景、autoload 未实例化）。**真链路客户端** `pvp_match_smoke.gd` 也在这里，但它只在真链路批里被 `.sh` 拉起、不走 `-s`。
 - `probe/` —— 场景探针（真实例化 `.tscn`）+ 少量按 `-s` 跑的纯逻辑探针；默认批与真链路的划分见 `--list`。
 - `harness/` —— 被 spawn 的辅助（watcher / bot input / `menu_autotest`）。`menu_autotest` 是**唯一被产品代码 `load()`** 的测试文件（产品侧钩子 = [`scenes/main_menu.gd`](../scenes/main_menu.gd) 的 `-- --autotest-*`）。
-- `scripts/` —— 独立诊断 / 迁移工具（**不是测试**）：`convert_map` / `convert_map_v4` / `seam_analyze` / `seam_screenshot`。它们**不在**任何 glob 直径内（加进去等于让以后任何写盘工具自动进回归批）。
+- ~~`scripts/`~~ —— **2026-11-02 整目录删除**：那 4 个"迁移 / 一次性分析"工具不是测试，且其中 `convert_map.gd` 今天跑会**毁图**（两图已是 v4）、`seam_screenshot.gd` 会弹窗。一次性工具用完即删，不再入库。
 - 顶层只留基础设施：`env.sh`（共享环境 + kill 助手）、`lib/`（`scan_util.gd` / `probe_base.gd`）、`known_red.txt`（已知红基线）、`path_integrity_allow.txt`、`run_all.sh`、`run_real.sh`。
 
 注意：`-s` 阶段 autoload 尚未实例化；测试脚本若静态引用会连带预加载"引用 autoload 的脚本"，会在编译期出错。

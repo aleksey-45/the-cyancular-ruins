@@ -89,7 +89,7 @@ func _apply_bus_volume(bus_name: String, linear: float) -> void:
 # ★ 为什么要有它(用户裁定,而不是静态 window_width_override):基准逻辑空间 1920×1440,而装不下它的屏(如 1080p)上照存档档开窗会超出屏幕、被 OS 钳位
 #   ⇒ 玩家看到"既不全屏也不居中";静态键无法自适应任意屏,"收进屏幕"只能在运行时量可用区 ⇒ 选择逻辑落在这里,开窗动作落在 apply_display()。
 # ★ 纯函数:不读 DisplayServer、不写任何字段、无副作用 ⇒ headless 下也可真红真绿。★ 逻辑空间不动(仍 1920×1440),窗口档只决定窗口多大。
-# ★ 不靠 DISPLAY_RESOLUTIONS 的下标顺序:"放得下的最大"与"最小"都按面积现算。⚠ 覆盖上限:只保证选出来的档对,"真窗口真的变成这个尺寸/真的居中"非 headless 仍未实测(见 registered-debt §五.13)。
+# ★ 不靠 DISPLAY_RESOLUTIONS 的下标顺序:"放得下的最大"与"最小"都按面积现算。⚠ 覆盖上限:只保证选出来的档对,"真窗口真的变成这个尺寸/真的居中"非 headless 仍未实测(非 headless 的窗口尺寸此前一直未实测)。
 func fit_resolution(available: Vector2i) -> Vector2i:
 	var smallest := DISPLAY_RESOLUTIONS[0]
 	for r in DISPLAY_RESOLUTIONS:

@@ -31,7 +31,7 @@ echo "== 启动服务器 =="
 "$GODOT" --headless --path . res://server/server_main.tscn > /tmp/pvp2_server.log 2>&1 &
 SERVER_PID=$!
 
-# ★★ 2026-10-08(closeout 批修复 registered-debt.md §五.9):**用有界轮询取代固定 `sleep`**。
+# ★★ 2026-10-08(closeout 批修复):**用有界轮询取代固定 `sleep`**。
 #   原实现:起服务器后 `sleep 3`(不管它起没起)、起建房客户端后 `sleep 2`,然后直接 grep 房间号
 #   ⇒ 客户端/引擎加载稍慢就假红「服务器未建房间」,而**真因是还没加载完**
 #   (实测:同一棵树、同配置连红三次;把 `sleep 3`/`sleep 2` 改成 `12`/`12` 后**一次就绿**)。
