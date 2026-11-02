@@ -12,7 +12,12 @@ extends ProbeBase
 # 测不到什么:镜头观感(相机探针另有)、真人按方向键的输入时序、以及经网络预测/回放的观感(需真链路)。
 # 去掉什么才红:把 `_try_step_or_jump` 改回"只在 is_on_wall 时抬"(即旧的一帧顿挫)⇒ ②③ 红;
 #   把 `apply_floor_snap()` 删掉 ⇒ ④ 红(每级台阶腾空一帧)。
-const EXPECTED_CHECKS := 5
+# ★ 2026-11-01(R1):⑤ 之后追加 ⑥⑦ **回放确定性**——夹具另造一格高的墙,走到墙前触发**自动跳**,
+#   在跳起的空中窗口 capture_state → 跑 18 帧记轨迹 → restore_state → 用同一串输入重放 18 帧 ⇒ 逐帧 pos/vel 必须**精确相等**。
+#   去掉什么才红:把 `_auto_jump_assist`(0.25s 强制满速窗口)加回去 ⇒ ⑦ 红。理由:它不在 `capture_state()` 里,
+#   第一遍空中 18 帧把它从 0.25 衰减到 0,`restore_state` 不会把它恢复 ⇒ 第二遍走 `approach_air` 而不是强制满速,
+#   横移速度从第 1 帧起就不同(这也正是联机回滚重放分歧的来源)。⑥ 是 ⑦ 的非空转前提(必须真的在空中)。
+const EXPECTED_CHECKS := 7
 
 const CELL := 16                      # 子格像素(与游戏一致:TILE_SIZE 64 / SUB_PER_CELL 4)
 const COLS := 160
@@ -23,6 +28,7 @@ const STAIR_W := 8                    # 每级台阶宽(子格)= 128px
 const STAIRS := 10
 
 var _player: Node = null
+var _body: StaticBody2D = null
 var _checks := 0
 
 
@@ -140,9 +146,80 @@ func _ready() -> void:
 			big_drop += 1
 	_chk(big_drop == 0, "⑤ 没有明显下坠帧(>2px 的下移 %d 帧)" % big_drop)
 
+	# ── ⑥⑦ 回放确定性:一格高的墙 ⇒ 自动跳 ⇒ 空中窗口 capture/restore/重放 ──
+	# 刻意排在 ①~⑤ 之后:自动跳必然腾空一段,混进上面那段测量会让 ④ 恒不成立。
+	var wall_x := STAIR_X0 + STAIRS * STAIR_W + 22          # 子格列:台阶终点右侧 22 子格(352px)
+	var wall_top := FLOOR_ROW - STAIRS - StepJump.MAX_STEP_SUBCELLS
+	_add_wall(Vector2i(wall_x, wall_top), StepJump.MAX_STEP_SUBCELLS, 8)
+	var walk := {"ax": 1.0, "held": 0, "pressed": 0, "released": 0}
+	var got_air := false
+	for _i in 120:
+		src.clear_edges()
+		src.apply_packet(walk)
+		await get_tree().physics_frame
+		if not (pn as CharacterBody2D).is_on_floor():
+			got_air = true
+			break
+	# 离地那一帧的接触解算让过去,再 capture(整段窗口都在空中 ⇒ is_on_floor 缓存两遍一致)
+	for _i in 3:
+		src.clear_edges()
+		src.apply_packet(walk)
+		await get_tree().physics_frame
+	var snap: Dictionary = _player.capture_state()
+	var traj_a: Array[Vector4] = []
+	var air_a := 0
+	for _i in 18:
+		src.clear_edges()
+		src.apply_packet(walk)
+		await get_tree().physics_frame
+		traj_a.append(_pose4(pn))
+		if not (pn as CharacterBody2D).is_on_floor():
+			air_a += 1
+	_player.restore_state(snap)
+	var traj_b: Array[Vector4] = []
+	var air_b := 0
+	for _i in 18:
+		src.clear_edges()
+		src.apply_packet(walk)
+		await get_tree().physics_frame
+		traj_b.append(_pose4(pn))
+		if not (pn as CharacterBody2D).is_on_floor():
+			air_b += 1
+	var diff := 0
+	for i in traj_a.size():
+		if traj_a[i] != traj_b[i]:
+			diff += 1
+	_chk(got_air and air_a == 18 and air_b == 18,
+			"⑥ ★ 夹具前置:自动跳离地,且回放窗口整段在空中(第一遍 %d/18、第二遍 %d/18 帧离地)" % [air_a, air_b])
+	_chk(diff == 0,
+			"⑦ ★ 回放确定性:capture→18 帧→restore→同一串输入重放,逐帧 pos/vel 精确一致(%d 帧不一致)" % diff)
+
 	if _checks != EXPECTED_CHECKS:
 		_check(false, "实跑 %d 条断言,与 EXPECTED_CHECKS=%d 对不上" % [_checks, EXPECTED_CHECKS])
 	_finish()
+
+
+# 一格高的墙:同时写进 16px 子格数据(自动跳判据读它)与真实碰撞(物理读它)。
+func _add_wall(top_left: Vector2i, cells_high: int, cells_wide: int) -> void:
+	var sub := MazeGenerator.current_subgrid as Array
+	for y in range(top_left.y, top_left.y + cells_high):
+		for x in range(top_left.x, top_left.x + cells_wide):
+			sub[y][x] = 1
+	var shape := RectangleShape2D.new()
+	var w := float(cells_wide * CELL)
+	var h := float((ROWS - top_left.y) * CELL)
+	shape.size = Vector2(w, h)
+	var cs := CollisionShape2D.new()
+	cs.shape = shape
+	cs.global_position = Vector2(top_left.x * CELL + w * 0.5, top_left.y * CELL + h * 0.5)
+	_body.add_child(cs)
+
+
+# 回放比对的采样:位置 + 速度(精确相等,不做容差 —— 这里的差异由"整态漏字段"造成,量级远大于浮点噪声)
+func _pose4(p: Node) -> Vector4:
+	var body := p as CharacterBody2D
+	var n := p as Node2D
+	return Vector4(n.global_position.x, n.global_position.y, body.velocity.x, body.velocity.y)
 
 
 # 混凝土碰撞:地板 + 每级台阶各一个矩形(与子格几何一致),碰撞层 1 = 玩家 mask 覆盖的层。
@@ -151,6 +228,7 @@ func _build_collision() -> void:
 	body.collision_layer = 1
 	body.collision_mask = 0
 	add_child(body)
+	_body = body
 	for i in STAIRS + 1:
 		var shape := RectangleShape2D.new()
 		var top_row: int

@@ -8,9 +8,9 @@ var gravity: float = GameParameters.gravity0
 # 自动跳跃的落地余量(px):按v=-sqrt(2gh)算的峰值高度**等于**台阶高度,60Hz 离散化下可能差一帧够不到,
 # 加 2px(远小于一个 16px 子格,肉眼不可辨)保证真的能站上去。
 const AUTO_JUMP_CLEARANCE := 2.0
-# 自动跳后的"满速横移"窗口(秒):落地/贴墙那几帧 velocity.x 会被墙接触清零,而空中加速度远低于地面
-# ⇒ 玩家会明显觉得"上台阶变慢"。窗口内直接强制地面目标速度(与地面跑速同值),腾空越过台沿后立刻是满速。
-const AUTO_JUMP_ASSIST_S := 0.25
+# ★ 2026-11-01(R1 删):这里原有一个 `AUTO_JUMP_ASSIST_S = 0.25s` 的"自动跳后强制满速"窗口。
+#   它不进 capture_state() ⇒ 回滚重放时第一遍把窗口衰减掉、第二遍走 approach_air ⇒ 横移从第 1 帧就不同
+#   (重放变成新历史,不是复现)。现在只保留"起跳/迈台阶那一瞬间把 velocity.x 拉满"(velocity 本来就在整态里)。
 # 卡脚修复的抬升上限(px):跳上台阶时脚底会以 ≤1 个子格(16px)的深度卡进台沿的竖直面/顶面,
 # 判据见 _try_ledge_nudge。超过这个深度就不是"卡脚"而是真撞墙,不该抬。
 const AUTO_LEDGE_NUDGE_PX := 16.0
@@ -34,7 +34,6 @@ var jump_cut_factor: float = PlayerParams.jump_cut_factor
 var coyote_timer: float = 0.0
 var jump_buffer_timer: float = 0.0
 var jump_cut_applied: bool = false   # 本次跳跃是否已截断(可变高度)
-var _auto_jump_assist: float = 0.0   # >0 = 自动跳的"满速横移"窗口剩余秒数(见 _tick_horizontal)
 
 var is_squat: bool = false
 var is_charge: bool = false
@@ -360,13 +359,11 @@ func _try_step_or_jump(delta: float, mult: Vector2, horizontal_input: float) -> 
 		global_position.y -= lift
 		velocity.y = 0.0
 		velocity.x = full_x
-		_auto_jump_assist = AUTO_JUMP_ASSIST_S
 		_step_up_snap = true
 		return
 	# 3~4 子格(48/64px):按台阶高度起跳(跳高 = 台阶高度,不是满力跳)。
 	velocity.y = StepJump.jump_velocity_for_height(float(h) * sub_px + AUTO_JUMP_CLEARANCE, gravity)
 	velocity.x = full_x
-	_auto_jump_assist = AUTO_JUMP_ASSIST_S
 	jump_buffer_timer = 0.0
 	coyote_timer = 0.0
 	jump_cut_applied = true
@@ -482,16 +479,10 @@ func _tick_horizontal(delta: float, in_water: bool, horizontal_input: float, mul
 		var speed_target := (crouch_walk_speed if is_squat else move_speed) * _speed_mult
 		var target_velocity_x = horizontal_input * speed_target * mult.x
 		if horizontal_input != 0:
-			if _auto_jump_assist > 0.0 and not is_on_floor():
-				# 自动跳的短窗内直接给满速:越过台沿那几帧墙接触会把 velocity.x 打成 0,
-				# 走空中的 approach 要几十帧才补回来 —— 那正是"上台阶水平速度偏慢"的成因。
-				velocity.x = target_velocity_x
-				_auto_jump_assist = maxf(_auto_jump_assist - delta, 0.0)
-			elif is_on_floor():
+			if is_on_floor():
 				velocity.x = MathUtil.approach(velocity.x, target_velocity_x, accel_ground, delta)
 			else:
 				velocity.x = MathUtil.approach(velocity.x, target_velocity_x, accel_air, delta)
-				_auto_jump_assist = maxf(_auto_jump_assist - delta, 0.0)
 		else:
 			_brake_horizontal(delta)
 
