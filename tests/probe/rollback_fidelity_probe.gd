@@ -172,14 +172,24 @@ func _test_contact_tolerance() -> void:
 
 # ── 源码守卫 ── map_px 不接线的话,环面修复在真机上是惰性的、而且静默:不报错、探针全绿、生产行为与修复前逐帧一致(实测过)。所以把「接线了」这件事本身变成断言。
 # ★ 若日后改法换了入口(例如搬进 player.gd),请把这里改成认新入口,别删掉这条断言。
+# ★★ 2026-11-02 换入口(引导段上提):三个对局场景的引导段(pvp_arena → set_map_file → refresh_map_size →
+#    pvp_mode → level_0 → 摆 local → mask |= 2 → 建 PredictionRollback + bind + map_px → PostProcess + 共用订阅)
+#    从 pvp_game / royale_game / team_game 三份逐字复制上提成 PvpMatchClient._boot_world(),map_px 那一行也跟着搬进本文件。
+#    **为什么扫这个文件、并且把范围限死在 `_boot_world` 块**:① 引导只剩这一处 ⇒ 扫它等于同时守住三个模式(比原来只守 1v1 更严);
+#    ② 不能扫整个文件 —— 基类 _pull_resync()(重连补态)里也有一句 `_rollback.map_px`,不限定块的话删掉 _boot_world 里那句仍会假绿;
+#    ③ 判据不变:非注释行里出现 map_px = 接线存在。别改成"扫 _pull_resync"或直接删断言 —— 那都会放走"引导段忘了设环面尺寸"。
 func _check_source_guard() -> void:
-	var txt := FileAccess.get_file_as_string("res://scenes/pvp_game.gd")
+	var lines0 := FileAccess.get_file_as_string("res://scenes/pvp_match_client.gd").split("\n")
+	var boot := _func_block(lines0, "func _boot_world(")
 	var found := false
-	for line in txt.split("\n"):
-		if line.contains("map_px") and not line.strip_edges().begins_with("#"):
+	for i in range(boot[0] + 1, boot[1]):
+		if lines0[i].strip_edges().begins_with("#"):
+			continue
+		if lines0[i].contains("map_px"):
 			found = true
 			break
-	_check(found, "pvp_client 给控制器设了 map_px(不设 = 环面修复惰性且静默)")
+	_check(boot[0] >= 0 and found,
+			"PvpMatchClient._boot_world() 给控制器设了 map_px(不设 = 环面修复惰性且静默;块没找到 = 引导段入口名改了,守卫也要跟着改)")
 
 	# ② 接触提示的接线(in_contact 必须在 note_post_step 之前写 —— 它是那一步的消费方)。漏了这一行 = 静默退回 2px 容差:不报错、探针全绿、真机行为与改动前逐帧一致。
 	#   ★ 要拦下的变异:把赋值挪到 note_post_step(...) 之后 —— 接触提示永远用上一帧的信息(差一帧),静默且没有别的守卫看得见。

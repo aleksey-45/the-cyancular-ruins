@@ -141,16 +141,17 @@ func _sample_walk_bob(anim: AnimatedSprite2D, speed_x: float) -> void:
 	_walk_bob = Vector2(cos(prog * TAU) * WALK_BOB_X, sin(step) * WALK_BOB_Y) * ratio
 	_walk_bob_rot = sin(step) * deg_to_rad(WALK_BOB_ROT_DEG) * ratio
 
+# ── 玩家按名访问 → `as Player` + 直接访问(2026-11-02)──
+# 宿主 `player` 的声明类型是 Node2D(兼容副本武器的 null / 测试夹具),但生产宿主恒为 Player(已有 class_name)。
+# 故这些口不再 `get("x")` / `has_method("x")` + 字符串调用:拼错成员名 = 编译期报错,不再静默拿到 null 或漏调。
+# ★ 非 Player 宿主一律按"没有该接口"处理:旧 has_method 判据在那种宿主上返回的也是"没有",二者同向。
 func _host_walk_anim() -> AnimatedSprite2D:
-	if player == null:
-		return null
-	return player.get("animator") as AnimatedSprite2D
+	var p := player as Player
+	return p.animator if p != null else null
 
 func _host_speed_x() -> float:
-	if player == null:
-		return 0.0
-	var v = player.get("velocity")
-	return absf((v as Vector2).x) if v is Vector2 else 0.0
+	var p := player as Player
+	return absf(p.velocity.x) if p != null else 0.0
 
 @onready var sprite: Sprite2D = $Sprite2D
 @onready var muzzle: Marker2D = $Muzzle
@@ -195,7 +196,9 @@ func _ready() -> void:
 	add_child.call_deferred(_explosion_marker)
 
 func _player_ok() -> bool:
-	return player != null and (not player.has_method("is_downed") or not player.is_downed())
+	# ★ 旧写法是 `has_method("is_downed")` 兜容非 Player 宿主;宿主恒为 Player ⇒ 直接判。
+	var p := player as Player
+	return p != null and not p.is_downed()
 
 # 宿主没注入开火接口时的响亮失败:点名是谁违约(武器名 + 宿主节点 + 宿主脚本路径)。
 func _report_missing_attack_hook(hook: String) -> void:
@@ -209,22 +212,25 @@ func _report_missing_attack_hook(hook: String) -> void:
 # ── 攻击输入查询:只读 player 注入进来的输入(LocalInputSource / PacketInputSource)── 这三个查询原先各带一句「宿主没有该接口就读全局 Input」的兜底,那会让 player 缺方法时绕过注入层偷读全局输入总线 —— 在权威服务器 / 回放 / 预测下是错的来源(headless 服务器读到的是宿主机桌面按键状态)。
 # 缺接口 = 违约:当帧调 _report_missing_attack_hook() 点名宿主,查询返回 false(不开火)。为什么不让违约把整局带走:武器每个物理帧都会被问一次,而「不开火 + 报错」既不凭全局输入打出子弹,也不静默过关。★ 纪律:本文件里不得再出现读全局输入总线的写法(零守卫:扫这条子串的文本探针今天不在仓库里)。
 func _attack_pressed() -> bool:
-	if player == null or not player.has_method("is_attack_pressed"):
+	var p := player as Player
+	if p == null:
 		_report_missing_attack_hook("is_attack_pressed")
 		return false
-	return player.is_attack_pressed()
+	return p.is_attack_pressed()
 
 func _attack_just_pressed() -> bool:
-	if player == null or not player.has_method("is_attack_just_pressed"):
+	var p := player as Player
+	if p == null:
 		_report_missing_attack_hook("is_attack_just_pressed")
 		return false
-	return player.is_attack_just_pressed()
+	return p.is_attack_just_pressed()
 
 func _attack_just_released() -> bool:
-	if player == null or not player.has_method("is_attack_just_released"):
+	var p := player as Player
+	if p == null:
 		_report_missing_attack_hook("is_attack_just_released")
 		return false
-	return player.is_attack_just_released()
+	return p.is_attack_just_released()
 
 func equip(p: Node2D, inherit_cooldown: float = 0.0) -> void:
 	player = p
@@ -299,8 +305,9 @@ func fire() -> void:
 	mag_ammo = maxi(mag_ammo - 1, 0)
 	if mag_ammo == 0:
 		start_reload()
-	if player != null and player.has_method("apply_recoil"):
-		player.apply_recoil(recoil_push)
+	var host := player as Player
+	if host != null:
+		host.apply_recoil(recoil_push)
 	_recoil_timer = RECOIL_TIME
 	_apply_sprite_pose()   # 立即反映后坐(不等下一 tick);bob 用上一 tick 的采样
 	var cam: Camera2D = get_viewport().get_camera_2d()
@@ -396,12 +403,12 @@ func _auto_aim() -> void:
 	if absf(dir.x) > 0.1:
 		facing = 1 if dir.x > 0.0 else -1
 		_aim_facing = facing
-	if player != null and player.has_method("set_facing") and absf(dir.x) > 0.1:
-		player.set_facing(facing)
+	var p := player as Player
+	if p != null and absf(dir.x) > 0.1:
+		p.set_facing(facing)
 		# 冲刺时 player.set_facing 被锁(身体保持冲刺方向,位移需要),此时枪口不跟随身体翻转、保持鼠标瞄准侧;非冲刺时 set_facing 成功、get_facing() 读回一致,无差异。
-		var charging := false
-		if player.has_method("is_charging"):
-			charging = bool(player.is_charging())
+		# ★ 旧写法对 is_charging 有 has_method 兜底;宿主恒为 Player ⇒ 直接读(非 Player 宿主上旧写法算 charging=false,这里走 p==null 同一分支)。
+		var charging: bool = p.is_charging()
 		if not charging:
 			facing = get_facing()
 	_current_aim_facing = facing
@@ -472,13 +479,15 @@ func get_current_aim_dir() -> Vector2:
 	return _aim_world_dir()
 
 func _aim_world_dir() -> Vector2:
-	# 网络驱动的玩家(服务器上的远端模拟)用注入的瞄准;本地玩家返回 ZERO ⇒ 落回鼠标。★ has_method 守卫:冒烟里的 StubPlayer 没有该方法时跳过,不破坏测试。
-	if player != null and player.has_method("get_aim_dir_override"):
-		var override: Vector2 = player.get_aim_dir_override()
+	# 网络驱动的玩家(服务器上的远端模拟)用注入的瞄准;本地玩家返回 ZERO ⇒ 落回鼠标。★ 宿主恒为 Player(有 class_name)⇒ 直接调,
+	# 不再 has_method 探测:拼错方法名当场编译报错,不会静默落回"读鼠标"那条错源(非 Player 宿主 = 违约,与 null 同路落回鼠标)。
+	var p := player as Player
+	if p != null:
+		var override: Vector2 = p.get_aim_dir_override()
 		if override != Vector2.ZERO:
 			return override
 		# override 存在但为 ZERO(网络玩家还没收到瞄准)时:网络驱动 ⇒ 永不读宿主机 OS 鼠标(服务器 headless 上没有鼠标,读了是垃圾方向),用朝向兜底;本地 PlayerInput 的 override 恒为 ZERO ⇒ is_network_driven()==false ⇒ 走下面的鼠标路径。
-		if player.has_method("input_is_network") and player.input_is_network():
+		if p.input_is_network():
 			return Vector2(float(get_facing()), 0.0)
 	# 用基类 Viewport 而非 SubViewport:冒烟测试把武器挂到 SceneTree 根(Window),标 SubViewport 会在运行时类型检查失败(Window≠SubViewport),函数被中断返回零方向。
 	var sub: Viewport = get_viewport()
@@ -506,6 +515,5 @@ func _aim_world_dir() -> Vector2:
 	return dir.normalized()
 
 func get_facing() -> int:
-	if player != null and player.has_method("get_facing"):
-		return player.get_facing()
-	return 1
+	var p := player as Player
+	return p.get_facing() if p != null else 1

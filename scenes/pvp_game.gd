@@ -15,55 +15,23 @@ var _id_self: Node2D = null
 var _id_opp: Node2D = null
 var _hp_bar: EnemyHpBar = null    # 对手头顶血条(设置开启时创建)
 var _minimap: Minimap = null      # 小地图(设置开启时创建)
-var _names: Dictionary = {}       # role(int) -> 昵称(peer_info 下发;击杀播报取名字用)
+# _names(role -> 昵称)已上提到基类:1v1 与两个 N-副本模式同名同义,本文件不再声明。
 
 func _ready() -> void:
-	CombatComponent.pvp_arena = true   # PvP:取消命中无敌帧(每发结算一次)
-	MazeGenerator.set_map_file(PvpSession.map_path)
-	# 重算世界尺寸:_ready 启动时算的是随机 demo 图(8000 宽),PvP 固定图是 9600 宽;不重算则本地插值/回绕按错边界 ⇒ 玩家在图中间被空气墙弹走。
-	GameParameters.refresh_map_size()
-	Level0.pvp_mode = true
-	var level0: Node = load("res://scenes/level_0.tscn").instantiate()
-	add_child(level0)
-	_level0 = level0
-	_world = level0.get_node("WorldViewport")
-	var local: Node2D = _world.get_node("Player")
-	var ts := GameParameters.TILE_SIZE
-	local.position = Vector2(PvpSession.spawn.x * ts + ts / 2.0, PvpSession.spawn.y * ts + ts / 2.0)
-	# 与对手(层 2)物理碰撞:服务器侧已给每个玩家 mask |= 2,客户端本地玩家也必须,否则本地预测直接穿过对手副本、服务器却挡住 ⇒ 每帧分歧回滚(C2 的无限回滚循环);对手那侧由 player_replica 的幽灵碰撞体提供。★ 不改 player.tscn(玩家掩码要保持 5,单机不需要这一位)。零守卫(enemy_logic_smoke 已删·2026-10-09)。
-	local.collision_mask |= 2
-	_local = local
-	_rollback = PredictionRollback.new()
-	_rollback.bind(_local)
-	# 环面尺寸:分歧判定要用它取最短向量,否则跨接缝那一帧客户端与服务器相差一整幅地图宽会被误判成分歧、白跑一次回滚(见 PredictionRollback._pos_dist)。★ 不设 = 静默惰性(不报错,只是修复不生效),故 tests/probe/rollback_fidelity_probe 有源码守卫钉这一行。
-	_rollback.map_px = Vector2(GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
-	# pvp_mode 下 Level0 不建后处理,这里补(否则 SubViewport 不显示)。
-	var pp := PostProcess.new()
-	pp.world_viewport = level0.get_node("WorldViewport")
-	add_child.call_deferred(pp)
+	# 三模式同构的引导(世界 / 出生点 / 幽灵碰撞位 / C2 控制器 / 环面尺寸 / 后处理 / 共用订阅 / match_sync 进场拉取)
+	# 全在基类 _boot_world();本文件只留 1v1 独有的部分:单副本 / 对手血条 / 小地图 / HUD / 染色 / 暂停菜单。
+	_boot_world()
+	# 1v1 只有一个固定副本(大乱斗 / 3v3 是 N 个按 role 懒建,见 ReplicaSet)。
 	var replica := preload("res://scenes/player/player_replica.tscn").instantiate()
 	replica.name = "RemoteReplica"
-	level0.get_node("WorldViewport").add_child(replica)
+	_world.add_child(replica)
 	_remote_replica = replica
 	if Settings.pvp_show_enemy_hp:
 		_hp_bar = EnemyHpBar.new()
 		_world.add_child(_hp_bar)
 		_attach_opp_overheads()
-	# 快照拆两条:① 世界包 = 全部玩家的渲染字段(副本/血条);② 本人包 = 自己的 ack_seq + c2(只有本人需要,C2 rollback 拿它锚定/重放)。
-	NetBus.local_snapshot_world.connect(_on_snapshot_world)
-	NetBus.local_snapshot_own.connect(_on_snapshot_own)
-	NetBus.local_bullet_spawn.connect(_on_bullet_spawn)
-	NetBus.local_beam_fired.connect(_on_beam_fired)
-	NetBus.local_hit_event.connect(_on_hit_event)
-	_subscribe_tile_events()   # 拆砖的两条(格级 + 子格级)必须成对,见基类注释
-	NetBus.local_round_state.connect(_on_round_state)
+	# 1v1 独有:对手离开这条终局信号(大乱斗 / 3v3 走 round_state 的「走光即弃权」,没有这条)。
 	NetBus.local_opponent_left.connect(_on_opponent_left)
-	NetBus.local_kill_event.connect(_on_kill_event)
-	# 扩展节点(NetBusExt)三载荷:生效选项/角色色相/命中确认。与 beam_fired 不同节点是有意的(发送端 match_host 的 beam_fired 走 NetBus),别顺手统一。
-	NetBusExt.local_hit_confirm.connect(_on_hit_confirm)
-	NetBus.local_match_sync.connect(_on_match_sync)   # 进场拉取的应答(取代旧的推送+大厅缓存交接)
-	_subscribe_ground_weapons()   # 地面武器事件(开局那批走 match_sync,见 _on_match_sync)
-	_subscribe_reconnect()        # 断线重连:服务器断开检测 + reclaim 成功后那条 match_start
 	if Settings.pvp_show_minimap:
 		_minimap = Minimap.new()
 		_minimap.setup(
@@ -86,9 +54,6 @@ func _ready() -> void:
 		_refresh_input_lock()
 		_recheck_disconnect())   # 菜单开着时收到的"服务器断开"在这里补(见 ReconnectDriver._begin_reconnect(S-17 后重连状态机在 scenes/mp_client/reconnect_driver.gd))
 	add_child(_pause_menu)
-	# ★ 进场主动拉一次(昵称/色相/生效选项/出生点):本场景已经建好、订阅齐了才开口要,故没有「推给一个正在切场景的客户端」那个竞态。★ 判活再发(全仓纪律):这是定向可靠包,连接可能已不可用 ⇒ 往已拆的 peer 发就是那条 Unable to send packet on channel 0;判据 can_send_to_server()。
-	if NetBus.can_send_to_server():
-		NetBus.rpc_id(1, "match_sync")
 	print("进入竞技场:角色 %d 出生点 %s" % [PvpSession.role, PvpSession.spawn])
 
 

@@ -1,151 +1,11 @@
 [gd_scene format=3 uid="uid://bbmqsehc1n6nm"]
 
 [ext_resource type="Script" uid="uid://c3lcpld4toenv" path="res://scenes/player/player.gd" id="1_kyqiw"]
-[ext_resource type="Texture2D" uid="uid://ci4i15dm78q3w" path="res://assets/textures/player.png" id="1_rpqav"]
 [ext_resource type="Script" path="res://scenes/player/climb_component.gd" id="3_climb"]
 [ext_resource type="Script" path="res://scenes/player/weapon_component.gd" id="4_wpn"]
 [ext_resource type="Script" path="res://scenes/player/combat_component.gd" id="5_cmb"]
 [ext_resource type="Script" path="res://scenes/player/swim_component.gd" id="6_swim"]
-
-[sub_resource type="AtlasTexture" id="AtlasTexture_miouo"]
-atlas = ExtResource("1_rpqav")
-region = Rect2(144, 1, 48, 48)
-
-[sub_resource type="AtlasTexture" id="AtlasTexture_bhhdu"]
-atlas = ExtResource("1_rpqav")
-region = Rect2(96, 0, 48, 48)
-
-[sub_resource type="AtlasTexture" id="AtlasTexture_kyqiw"]
-atlas = ExtResource("1_rpqav")
-region = Rect2(0, 0, 48, 48)
-
-[sub_resource type="AtlasTexture" id="AtlasTexture_gntrk"]
-atlas = ExtResource("1_rpqav")
-region = Rect2(48, 0, 48, 48)
-
-[sub_resource type="AtlasTexture" id="AtlasTexture_dewec"]
-atlas = ExtResource("1_rpqav")
-region = Rect2(0, 49, 48, 48)
-
-[sub_resource type="AtlasTexture" id="AtlasTexture_5ixxa"]
-atlas = ExtResource("1_rpqav")
-region = Rect2(48, 49, 48, 48)
-
-[sub_resource type="AtlasTexture" id="AtlasTexture_nn08x"]
-atlas = ExtResource("1_rpqav")
-region = Rect2(96, 49, 48, 48)
-
-[sub_resource type="AtlasTexture" id="AtlasTexture_52ee3"]
-atlas = ExtResource("1_rpqav")
-region = Rect2(144, 49, 48, 48)
-
-[sub_resource type="AtlasTexture" id="AtlasTexture_megsn"]
-atlas = ExtResource("1_rpqav")
-region = Rect2(0, 97, 48, 48)
-
-[sub_resource type="AtlasTexture" id="AtlasTexture_yoq75"]
-atlas = ExtResource("1_rpqav")
-region = Rect2(48, 97, 48, 48)
-
-[sub_resource type="AtlasTexture" id="AtlasTexture_ksbbd"]
-atlas = ExtResource("1_rpqav")
-region = Rect2(96, 97, 48, 48)
-
-[sub_resource type="AtlasTexture" id="AtlasTexture_glx4g"]
-atlas = ExtResource("1_rpqav")
-region = Rect2(144, 97, 48, 48)
-
-[sub_resource type="AtlasTexture" id="AtlasTexture_wk01"]
-atlas = ExtResource("1_rpqav")
-region = Rect2(0, 145, 48, 48)
-
-[sub_resource type="AtlasTexture" id="AtlasTexture_wk12"]
-atlas = ExtResource("1_rpqav")
-region = Rect2(48, 145, 48, 48)
-
-[sub_resource type="AtlasTexture" id="AtlasTexture_wk23"]
-atlas = ExtResource("1_rpqav")
-region = Rect2(96, 145, 48, 48)
-
-[sub_resource type="AtlasTexture" id="AtlasTexture_wk30"]
-atlas = ExtResource("1_rpqav")
-region = Rect2(144, 145, 48, 48)
-
-[sub_resource type="SpriteFrames" id="SpriteFrames_dewec"]
-animations = [{
-"frames": [{
-"duration": 1.0,
-"texture": SubResource("AtlasTexture_miouo")
-}],
-"loop": 1,
-"name": &"charge",
-"speed": 5.0
-}, {
-"frames": [{
-"duration": 1.0,
-"texture": SubResource("AtlasTexture_bhhdu")
-}],
-"loop": 1,
-"name": &"fly",
-"speed": 5.0
-}, {
-"frames": [{
-"duration": 1.0,
-"texture": SubResource("AtlasTexture_kyqiw")
-}, {
-"duration": 1.0,
-"texture": SubResource("AtlasTexture_gntrk")
-}],
-"loop": 1,
-"name": &"idle",
-"speed": 2.0
-}, {
-"frames": [{
-"duration": 1.0,
-"texture": SubResource("AtlasTexture_dewec")
-}, {
-"duration": 1.0,
-"texture": SubResource("AtlasTexture_wk01")
-}, {
-"duration": 1.0,
-"texture": SubResource("AtlasTexture_5ixxa")
-}, {
-"duration": 1.0,
-"texture": SubResource("AtlasTexture_wk12")
-}, {
-"duration": 1.0,
-"texture": SubResource("AtlasTexture_nn08x")
-}, {
-"duration": 1.0,
-"texture": SubResource("AtlasTexture_wk23")
-}, {
-"duration": 1.0,
-"texture": SubResource("AtlasTexture_52ee3")
-}, {
-"duration": 1.0,
-"texture": SubResource("AtlasTexture_wk30")
-}],
-"loop": 1,
-"name": &"move",
-"speed": 16.0
-}, {
-"frames": [{
-"duration": 1.0,
-"texture": SubResource("AtlasTexture_megsn")
-}, {
-"duration": 0.5,
-"texture": SubResource("AtlasTexture_yoq75")
-}, {
-"duration": 1.0,
-"texture": SubResource("AtlasTexture_ksbbd")
-}, {
-"duration": 0.5,
-"texture": SubResource("AtlasTexture_glx4g")
-}],
-"loop": 1,
-"name": &"squat",
-"speed": 1.5
-}]
+[ext_resource type="SpriteFrames" path="res://scenes/player/player_frames.tres" id="2_frames"]
 
 [node name="Player" type="CharacterBody2D" unique_id=722796191 node_paths=PackedStringArray("animator", "weapon_slot")]
 scale = Vector2(2.5, 2.5)
@@ -157,7 +17,7 @@ weapon_slot = NodePath("WeaponSlot")
 
 [node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="." unique_id=29481906]
 texture_filter = 1
-sprite_frames = SubResource("SpriteFrames_dewec")
+sprite_frames = ExtResource("2_frames")
 animation = &"move"
 autoplay = "idle"
 

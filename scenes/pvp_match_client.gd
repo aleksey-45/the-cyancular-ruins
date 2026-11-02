@@ -11,6 +11,11 @@ const HitShape := preload("res://core/sim/hit_shape.gd")   # 受击判定几何�
 var _local: Node2D = null
 var _world: Node = null   # WorldViewport(视觉子弹/TileHitFx 副本挂这里)
 var _level0: Node = null  # 世界(Level0):补态那一路要还原可破坏砖(见 _on_match_sync)
+# ── 副本表(大乱斗 / 3v3 两个 N-副本模式共用;1v1 走单副本 _remote_replica,本表恒空)──
+# _replicas 由 _replica_set 单写;字段留在宿主是因为 tests/harness/team_match_watcher.gd 直接读它数副本。
+var _replicas: Dictionary = {}
+var _replica_set: ReplicaSet = null   # 副本集合 / 快照消费 / 头顶标签(已 bind 到上面那份 _replicas)
+var _names: Dictionary = {}           # role(int) -> 昵称(match_sync 下发;击杀播报与结算页取名字用)
 var _round_locked := false      # COUNTDOWN 冻结态(别把倒计时里提前解锁)
 var _ping_acc := 0.0
 # C2 客户端预测:见 core/prediction_rollback.gd 与 docs/eng/netcode-snapshots.md。
@@ -74,6 +79,55 @@ func _correct_local_spawn() -> void:
 	var ts := GameParameters.TILE_SIZE
 	_local.global_position = Vector2(PvpSession.spawn.x * ts + ts / 2.0,
 			PvpSession.spawn.y * ts + ts / 2.0)
+
+
+# ── 三模式同构引导(2026-11-02 从三个子类 _ready 上提:三个文件原先各有一份 ~95 行逐字相同的引导)──
+# 世界 / 出生点 / 幽灵碰撞位 / C2 控制器 / 环面尺寸 / 后处理 / 共用订阅 / match_sync 进场拉取。
+# 子类 _ready = `_boot_world()` + 只留真正的差异(副本结构:1v1 固定一个 / N 个按 role 懒建;HUD / 小地图装配;退场文案)。
+# ★ 语句顺序是承重的(与上提前的三个文件逐行一致):本地玩家必须先摆好再建控制器 ⇒ 再订阅 ⇒ 最后才开口拉 match_sync。
+# ★ 只提"逐字相同"的部分(判据:剔掉注释后逐行 diff);1v1 独有的 local_opponent_left / 单副本 / 自己的名字表都不在这里。
+func _boot_world() -> void:
+	CombatComponent.pvp_arena = true   # PvP:取消命中无敌帧(每发结算一次)
+	MazeGenerator.set_map_file(PvpSession.map_path)
+	# 重算世界尺寸:_ready 启动时算的是随机 demo 图(8000 宽),PvP 固定图是 9600 宽;不重算则本地插值/回绕按错边界 ⇒ 玩家在图中间被空气墙弹走。
+	GameParameters.refresh_map_size()
+	Level0.pvp_mode = true
+	var level0: Node = load("res://scenes/level_0.tscn").instantiate()
+	add_child(level0)
+	_level0 = level0
+	_world = level0.get_node("WorldViewport")
+	var local: Node2D = _world.get_node("Player")
+	var ts := GameParameters.TILE_SIZE
+	local.position = Vector2(PvpSession.spawn.x * ts + ts / 2.0, PvpSession.spawn.y * ts + ts / 2.0)
+	# 与对手(层 2)物理碰撞:服务器侧已给每个玩家 mask |= 2,客户端本地玩家也必须,否则本地预测直接穿过对手副本、服务器却挡住 ⇒ 每帧分歧回滚(C2 的无限回滚循环);对手那侧由 player_replica 的幽灵碰撞体提供。★ 不改 player.tscn(玩家掩码要保持 5,单机不需要这一位)。★ 3v3 之后会由 _apply_team_collision() 按队改写掩码 —— 不要因为那一路就把本行删掉:队伍表到达前它是唯一的碰撞来源。零守卫(enemy_logic_smoke 已删·2026-10-09)。
+	local.collision_mask |= 2
+	_local = local
+	_rollback = PredictionRollback.new()
+	_rollback.bind(_local)
+	# 环面尺寸:分歧判定要用它取最短向量,否则跨接缝那一帧客户端与服务器相差一整幅地图宽会被误判成分歧、白跑一次回滚(见 PredictionRollback._pos_dist)。★ 不设 = 静默惰性(不报错,只是修复不生效),故 tests/probe/rollback_fidelity_probe 的源码守卫钉的就是本函数里这一行(守卫扫的块 = `func _boot_world(`)。
+	_rollback.map_px = Vector2(GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+	# pvp_mode 下 Level0 不建后处理,这里补(否则 SubViewport 不显示)。
+	var pp := PostProcess.new()
+	pp.world_viewport = level0.get_node("WorldViewport")
+	add_child.call_deferred(pp)
+	# 快照拆两条:① 世界包 = 全部玩家的渲染字段(副本/血条);② 本人包 = 自己的 ack_seq + c2(只有本人需要,C2 rollback 拿它锚定/重放)。拆包的好处是两条互不连累 —— c2 丢只少一个回滚锚点(下一个快照补上),世界包丢只让副本插值冻结一个快照间隔(16.7ms)。
+	NetBus.local_snapshot_world.connect(_on_snapshot_world)
+	NetBus.local_snapshot_own.connect(_on_snapshot_own)
+	NetBus.local_bullet_spawn.connect(_on_bullet_spawn)
+	NetBus.local_beam_fired.connect(_on_beam_fired)
+	NetBus.local_hit_event.connect(_on_hit_event)
+	_subscribe_tile_events()   # 拆砖的两条(格级 + 子格级)必须成对,见基类注释
+	NetBus.local_round_state.connect(_on_round_state)
+	NetBus.local_kill_event.connect(_on_kill_event)
+	# 扩展节点(NetBusExt)载荷:命中确认。★ 与 beam_fired 分属两个节点是有意的(发送端 match_host 的 beam_fired 走 NetBus.rpc_id),别顺手统一 —— 挂错节点 = 静默 no-op。
+	NetBusExt.local_hit_confirm.connect(_on_hit_confirm)
+	NetBus.local_match_sync.connect(_on_match_sync)   # 进场拉取的应答(取代旧的推送+大厅缓存交接)
+	_subscribe_ground_weapons()   # 地面武器事件(开局那批走 match_sync,见 _on_match_sync)
+	_subscribe_reconnect()        # 断线重连:服务器断开检测 + reclaim 成功后那条 match_start
+	# ★ 进场主动拉一次(昵称/角色色/生效选项/出生点/地面武器/destroyed):订阅齐了才开口要,故没有「推给一个正在切场景的客户端」那个竞态。★ 判活再发(全仓纪律):这是定向可靠包,连接可能已不可用 ⇒ 往已拆的 peer 发就是那条 Unable to send packet on channel 0;判据 can_send_to_server()。
+	# 本行之后的子类装配(HUD / 小地图 / 暂停菜单)不受影响:应答要走网络 poll,最早也在下一帧,本帧内不存在"应答比 HUD 先到"的窗口。
+	if NetBus.can_send_to_server():
+		NetBus.rpc_id(1, "match_sync")
 
 func _on_hit_confirm(shooter_role: int, victim_role: int) -> void:
 	if shooter_role == PvpSession.role:
@@ -285,9 +339,74 @@ func _time_fx_replica_rewind_off(rep: Node2D) -> void:
 	_ensure_time_fx().detach(rep)
 
 
-# 本类全部对手副本(视效遍历用)。子类覆写;基类空。
+# ── 副本模式(大乱斗 / 3v3)共用的那一批(2026-11-02 从两个子类各一份上提;剔注释后逐行 diff 相同才搬)──
+# ★ 1v1 不在其中:它的同名函数语义不同(单副本 _remote_replica + 自定义快照路径 + 自己那一颗头顶 ID),由 pvp_game 覆写
+#   _on_snapshot_world / _replica_for / _apply_peer_names / _process。★ _replicas / _replica_set 是 N-副本模式的字段(在基类声明),
+#   1v1 不建 ⇒ 本表恒空;上提后 1v1 调 _all_replicas() 仍得空数组(与上提前的基类默认逐字同效)。
+# 本类全部对手副本(视效遍历用)。
 func _all_replicas() -> Array:
-	return []
+	return _replicas.values()   # Beta 时间视效:遍历全部对手副本
+
+
+# 对手副本访问器(N-副本模式:按 role 动态)。★ 1v1 覆写成单副本版本(见 pvp_game)。
+func _replica_for(role: int) -> Node2D:
+	var r = _replicas.get(int(role))
+	return r if r is Node2D else null
+
+
+# 世界快照的公共段(懒建/拆副本、套 apply_snapshot、血条、掉线清理)在 ReplicaSet.apply_world_snapshot。
+func _on_snapshot_world(snap: Dictionary) -> void:
+	_replica_set.apply_world_snapshot(snap)
+
+
+# 昵称表。★ 应用函数(不是信号回调):唯一入口 = _on_match_sync(进场拉取 / 换局重拉 / 重连补态)。
+# ★ 不要连回 NetBus.local_peer_info —— 那条推送路径在本项目已不存在(worker 不再广播),连上去会让本载荷走两条路。
+func _apply_peer_names(names: Dictionary) -> void:
+	_names = names
+	_replica_set.ensure_label(PvpSession.role)
+	_replica_set.refresh_labels()
+
+
+# 头部 ID / 血条的跟随与上图都在 ReplicaSet;本场景只留调用(锚点偏移的单一来源 = WorldLabel)。
+func _process(_delta: float) -> void:
+	_replica_set.follow(WorldLabel.HEAD_OFFSET)
+
+
+# ── 小地图:两个提供器的共同遍历 —— 一次过滤、一份顺序来源 ──
+# ★ 为什么必须共用而不是各写一份 for:ui/minimap.gd 是按下标对应的,两个数组错位一格就是「队友点画成敌人色」—— 不报错、只误导人;而错位最容易发生在「某个副本已 queue_free、尚未从 _replicas 抹掉」那个窗口里。★ 顺序:_replicas 是 Dictionary(保插入序),两次调用之间没有任何写入 ⇒ 两边逐项同序。
+func _minimap_entries() -> Array:
+	var arr: Array = []
+	for role in _replicas:
+		var r = _replicas[role]
+		if is_instance_valid(r):
+			arr.append([int(role), (r as Node2D).global_position])
+	return arr
+
+
+func _minimap_others() -> Array:
+	var arr: Array = []
+	for e in _minimap_entries():
+		arr.append(e[1])
+	return arr
+
+
+# ── K = 自杀脱困:卡进墙/夹缝时主动放弃生命,走服务器权威 2s 复活(不计入任何人击杀;3v3 按「不分死因」给对方队 +1)──
+# ★ 1v1 没有这条路径(PvpHost 不处理 suicide_request)⇒ 用能力钩子显式声明,而不是让基类顺手给 1v1 加一个新按键(那是行为变化,不是重构)。
+func _supports_k_suicide() -> bool:
+	return false
+
+
+# ★ 判活再发(全仓纪律):按 K 的那一刻连接可能已经不可用,而这是定向可靠包 ⇒ 不判就是那条 channel 0 错误。
+func _unhandled_input(event: InputEvent) -> void:
+	if not _supports_k_suicide():
+		return
+	if _match_ended or _local == null:
+		return
+	if not NetBus.can_send_to_server():
+		return
+	if event is InputEventKey and event.pressed and not event.echo \
+			and event.physical_keycode == KEY_K:
+		NetBusExt.rpc_id(1, "suicide_request")
 
 
 # ── 拆砖:实现落在组合件 scenes/mp_client/tile_sync.gd(2026-10-22 拆出;Task 7) ──
@@ -589,9 +708,8 @@ func _build_result_payload() -> Dictionary:
 	return {}
 
 
-# ── 对手副本访问器:两个模式唯一的结构性差异就收在这一个口上(1v1 一个固定副本 _remote_replica;大乱斗按 role 动态建 _replicas)── 语义:role 是对手的 role(不是自己的);没有对应副本(未建 / 已移除)时返回 null,调用方一律判空。★ 子类必须覆写。
-func _replica_for(_role: int) -> Node2D:
-	return null   # 基类无副本;三个子类各自实现
+# ── 副本访问器 _replica_for() / 快照消费 _on_snapshot_world() / 昵称 _apply_peer_names() 已上提到上面的「副本模式」段
+#   (2026-11-02):1v1 与两个 N-副本模式的形状差异由 pvp_game 覆写那三处表达,这里不再各留一份。
 
 
 func _on_hit_event(victim_role: int, damage: int, source_pos: Vector2, seq: int) -> void:
@@ -604,6 +722,13 @@ func _on_hit_event(victim_role: int, damage: int, source_pos: Vector2, seq: int)
 	var r := _replica_for(victim_role)
 	if r != null and r.has_method("play_hit"):
 		r.play_hit(source_pos)
+
+
+# 击杀播报:显示名兜底文案按模式不同(1v1「对手」/ 大乱斗与 3v3「玩家%d」)⇒ 实现留在三个子类。
+# ★ 基类必须声明这个名字:_boot_world() 里 `NetBus.local_kill_event.connect(_on_kill_event)` 要能解析到它,
+#   否则整个脚本解析失败(实测:"Identifier _on_kill_event not declared")。和 _apply_role_colors 同属"子类必须覆写"的口。
+func _on_kill_event(_killer: int, _victim: int) -> void:
+	push_error("PvpMatchClient: 子类必须覆写 _on_kill_event")
 
 
 func _drain_hit_events() -> void:
@@ -652,11 +777,8 @@ func _on_beam_fired(data: Dictionary) -> void:
 	LaserVisual.spawn_beam(_world, pts, half_width, color, lifetime, int(data.get("style", 0)))
 
 
-# ── 子类必须覆写的两口:昵称表 / 角色颜色(形状随"对手 1 个 vs N 个"而定,故实现留在子类;在这里声明,否则基类调用未声明的函数 = 编译不过)──
-func _apply_peer_names(_names: Dictionary) -> void:
-	push_error("PvpMatchClient: 子类必须覆写 _apply_peer_names")
-
-
+# ── 子类必须覆写的那一口:角色颜色(形状随"对手 1 个 vs N 个"而定,故实现留在子类)──
+# ★ 2026-11-02:_apply_peer_names() 的 N-副本版本已上提到「副本模式」段(1v1 覆写自己的单副本版);这里只剩颜色。
 func _apply_role_colors() -> void:
 	push_error("PvpMatchClient: 子类必须覆写 _apply_role_colors")
 

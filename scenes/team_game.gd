@@ -5,55 +5,22 @@ extends PvpMatchClient
 
 
 # _last_snap_tick 已上提到基类 PvpMatchClient(输入包的 st 字段读它;2026-10-24)。
-var _replicas: Dictionary = {}         # role(int) -> PlayerReplica(自己以外的全部角色);★ 由 _replica_set 单写,本字段保留在宿主是因为 team_match_watcher 直接读它数副本
-var _replica_set: ReplicaSet = null    # 副本集合 / 快照消费 / 头顶标签(与大乱斗共用的组合件,已 bind 到上面那份 _replicas)
-# ★ _level0(世界/Level0)已上提到基类(子类 _ready 里赋值;重连补态那一路要用它还原可破坏砖)。
+# _replicas / _replica_set / _names 也已上提到基类(2026-11-02,与大乱斗逐字同一份);本文件不再声明。
+# ★ _level0(世界/Level0)已上提到基类(重连补态那一路要用它还原可破坏砖)。
 var _hud: TeamHud = null
 
 var _teams: Dictionary = {}
 
-var _names: Dictionary = {}        # role(int) -> 昵称(match_sync 下发)
-
 
 func _ready() -> void:
-	CombatComponent.pvp_arena = true
-	MazeGenerator.set_map_file(PvpSession.map_path)
-	GameParameters.refresh_map_size()
-	Level0.pvp_mode = true
-	var level0: Node = load("res://scenes/level_0.tscn").instantiate()
-	add_child(level0)
-	_level0 = level0
-	_world = level0.get_node("WorldViewport")
-	var local: Node2D = _world.get_node("Player")
-	var ts := GameParameters.TILE_SIZE
-	local.position = Vector2(PvpSession.spawn.x * ts + ts / 2.0, PvpSession.spawn.y * ts + ts / 2.0)
-	# 与其它玩家(层 2)物理碰撞 —— 这只是队伍表到达之前的临时态:服务器侧 TeamHost._apply_team_layers 按队配层,客户端在 _apply_teams 里用 _apply_team_collision() 跟上同一条契约(不同步 = 每帧分歧回滚),时间窗只有开局倒计时那几秒。★ 不要因为下面有 _apply_team_collision() 就把这一行删掉:队伍表到达前它是唯一的碰撞来源。
-	local.collision_mask |= 2
-	_local = local
-	_rollback = PredictionRollback.new()
-	_rollback.bind(_local)
-	# 环面尺寸:分歧判定要用它取最短向量,否则跨接缝那一帧客户端与服务器相差一整幅地图宽会被误判成分歧、白跑一次回滚(见 PredictionRollback._pos_dist)。★ 不设 = 静默惰性。零守卫:rollback_fidelity_probe 的源码守卫只扫 scenes/pvp_game.gd,不覆盖本文件。
-	_rollback.map_px = Vector2(GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
-	var pp := PostProcess.new()
-	pp.world_viewport = level0.get_node("WorldViewport")
-	add_child.call_deferred(pp)
+	# 三模式同构的引导(世界 / 出生点 / 幽灵碰撞位 / C2 控制器 / 环面尺寸 / 后处理 / 共用订阅 / match_sync 进场拉取)
+	# 全在基类 _boot_world();本文件只留 3v3 独有的部分:N 个懒建副本 / 队色 / 排位 HUD / 暂停菜单 / 换边重拉。
+	_boot_world()
 	# 副本集合 / 快照消费 / 头顶标签收进组合件(与大乱斗同一份);取色 Callable = _team_color,新建后按队补配幽灵层。
 	_replica_set = ReplicaSet.new()
 	_replica_set.bind(self, _replicas,
 			func(r: int) -> Color: return _team_color(r), Callable(self, "_on_replica_created"))
-	NetBus.local_snapshot_world.connect(_on_snapshot_world)
-	NetBus.local_snapshot_own.connect(_on_snapshot_own)
-	NetBus.local_bullet_spawn.connect(_on_bullet_spawn)
-	NetBus.local_beam_fired.connect(_on_beam_fired)
-	NetBus.local_hit_event.connect(_on_hit_event)
-	_subscribe_tile_events()   # 拆砖的两条(格级 + 子格级)必须成对,见基类注释
 	_setup_beta_time_hud()   # Beta 时间玩法:怀表镜像(普通局内部自短路)
-	NetBus.local_round_state.connect(_on_round_state)
-	NetBusExt.local_hit_confirm.connect(_on_hit_confirm)
-	NetBus.local_kill_event.connect(_on_kill_event)
-	NetBus.local_match_sync.connect(_on_match_sync)   # 进场拉取的应答(取代旧的推送+大厅缓存交接)
-	_subscribe_ground_weapons()   # 地面武器事件(开局那批走 match_sync,见 _on_match_sync)
-	_subscribe_reconnect()        # 断线重连:服务器断开检测 + reclaim 成功后那条 match_start
 	# 小地图(多目标 + 队色):四个提供器同序一一对应(错位 = 队友点画成敌人色,不报错只误导人)。★ 后三个用具名方法而不是内联 lambda —— lambda 要以 return arr, 结尾才能带出数组,那是本仓没写过的形状。
 	if Settings.pvp_show_minimap:
 		var minimap := Minimap.new()
@@ -74,9 +41,8 @@ func _ready() -> void:
 		_recheck_disconnect())   # 菜单开着时收到的"服务器断开"在这里补(见 ReconnectDriver._begin_reconnect(S-17 后重连状态机在 scenes/mp_client/reconnect_driver.gd))
 	add_child(_pause_menu)
 	# ★ 自己那具的染色不在这里做,等队伍表(见 _refresh_team_colors):3v3 下自己是队色,与「看别人」同一份来源(颜色不可自选)。
-	# ★ 别在这里补一句「表到达前先用某个默认色兜一下」:那是给同一个语义开第二个来源,且会在倒计时里闪一次颜色;表真缺了则整局保持本体蓝,那条路已有 push_warning、不是静默。★ 进场主动拉一次(昵称/队伍/生效选项/出生点/地面武器/destroyed):本场景已建好并订阅齐了才开口要,故没有「推给一个正在切场景的客户端」那个竞态;★ 判活再发(全仓纪律)。
-	if NetBus.can_send_to_server():
-		NetBus.rpc_id(1, "match_sync")
+	# ★ 别在这里补一句「表到达前先用某个默认色兜一下」:那是给同一个语义开第二个来源,且会在倒计时里闪一次颜色;表真缺了则整局保持本体蓝,那条路已有 push_warning、不是静默。
+	# ★ 进场拉取的 match_sync 已由基类 _boot_world() 末尾发出(本场景在它返回后建 HUD / 小地图;应答要走网络 poll,最早下一帧)。
 	print("进入对抗:角色 %d 出生点 %s" % [PvpSession.role, PvpSession.spawn])
 
 
@@ -201,24 +167,8 @@ func _apply_team_collision() -> void:
 			r.set_ghost_layer(_ghost_layer_of(int(role)))
 
 
-# 小地图:两个提供器的共同遍历 —— 一次过滤、一份顺序来源。
-# ★ 为什么必须共用而不是各写一份 for:ui/minimap.gd 是按下标对应的,两个数组错位一格就是「队友点画成敌人色」—— 不报错、只误导人;而错位最容易发生在「某个副本已 queue_free、尚未从 _replicas 抹掉」那个窗口里。★ 顺序:_replicas 是 Dictionary(保插入序),两次调用之间没有任何写入 ⇒ 两边逐项同序。
-func _minimap_entries() -> Array:
-	var arr: Array = []
-	for role in _replicas:
-		var r = _replicas[role]
-		if is_instance_valid(r):
-			arr.append([int(role), (r as Node2D).global_position])
-	return arr
-
-
-func _minimap_others() -> Array:
-	var arr: Array = []
-	for e in _minimap_entries():
-		arr.append(e[1])
-	return arr
-
-
+# ── 小地图:本模式只留两处取色(点位遍历 _minimap_entries / _minimap_others 已上提到基类:与大乱斗逐字同一份)──
+# ★ 位置与颜色必须共用同一份 entries 的纪律随基类走(见 PvpMatchClient._minimap_entries 的注释)。
 # 与 _minimap_others() 一一对应的颜色:队友点画队色,敌人点画对方队色(3v3 下「这是谁」比「是不是敌人」更需要一眼看出)。
 func _minimap_colors() -> Array:
 	var arr: Array = []
@@ -233,11 +183,7 @@ func _minimap_self_color() -> Color:
 
 
 # 进场拉取的应答。★ 本文件不覆写 _on_match_sync(六件事全在基类),只覆写颜色那一段的钩子。
-
-
-func _on_snapshot_world(snap: Dictionary) -> void:
-	# 公共段(懒建/拆副本、套 apply_snapshot、血条、掉线清理)在 ReplicaSet.apply_world_snapshot,与大乱斗逐字同一份。
-	_replica_set.apply_world_snapshot(snap)
+# ★ 世界快照 _on_snapshot_world() 已上提到基类「副本模式」段(2026-11-02,与大乱斗逐字同一份)。
 
 
 # 副本新建后的 3v3 专属补配:幽灵体层必须在这里也补一次 —— 副本是懒建的,而队伍表早在 match_sync 就到了;_apply_teams() 那一刻 _replicas 还是空的,只在那时刷的话,晚建的副本幽灵体恒在层 2(= 队友也挡我)⇒ 每帧回滚,不报错。队色由 ReplicaSet 经 bind 的取色 Callable 刷。
@@ -256,14 +202,9 @@ func _on_kill_event(killer: int, victim: int) -> void:
 
 
 # K = 自杀脱困:卡进墙/夹缝时主动放弃生命,走服务器权威 2s 复活(不计入任何人击杀,但按「不分死因」给对方队 +1);★ worker 侧闸门认 _team_mode。
-func _unhandled_input(event: InputEvent) -> void:
-	if _match_ended or _local == null:
-		return
-	if not NetBus.can_send_to_server():
-		return
-	if event is InputEventKey and event.pressed and not event.echo \
-			and event.physical_keycode == KEY_K:
-		NetBusExt.rpc_id(1, "suicide_request")
+# ★ 按键处理本身已上提到基类(与大乱斗逐字同一份);这里只声明"本模式开放这条路径"(1v1 不开放)。
+func _supports_k_suicide() -> bool:
+	return true
 
 
 # 回合状态的四态编排已收进基类 PvpMatchClient._on_round_state(2026-10-22):
@@ -291,22 +232,7 @@ func _build_result_payload() -> Dictionary:
 			_team_of_role(PvpSession.role))
 
 
-# ── 名字 / 颜色 ── 应用函数(不是信号回调):唯一入口 = _on_match_sync(进场拉取)。
-func _apply_peer_names(names: Dictionary) -> void:
-	_names = names
-	_replica_set.ensure_label(PvpSession.role)
-	_replica_set.refresh_labels()
-
-
-# 头部 ID / 血条的跟随与上图都在 ReplicaSet;本场景只留调用(锚点偏移的单一来源 = WorldLabel)。
-func _process(_delta: float) -> void:
-	_replica_set.follow(WorldLabel.HEAD_OFFSET)
-
-
-func _all_replicas() -> Array:
-	return _replicas.values()   # Beta 时间视效:遍历全部对手副本
-
-
-func _replica_for(role: int) -> Node2D:
-	var r = _replicas.get(int(role))
-	return r if r is Node2D else null
+# ── 名字 / 颜色 ──
+# ★ _apply_peer_names() / _names / _process / _all_replicas / _replica_for / _minimap_entries / _minimap_others
+#   已上提到基类「副本模式」段(2026-11-02,与大乱斗逐字同一份);本文件只留 3v3 自己的颜色那一段
+#   (_apply_peer_hues_or_team → _apply_teams → 队色),在上半部分。

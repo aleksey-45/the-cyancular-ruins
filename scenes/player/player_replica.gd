@@ -25,6 +25,12 @@ const LAND_VEL_EPS := 1.0
 # 原先这里各写一份、值一字不差,改本体忘副本就会静默放错动画 / 用错箱子。
 const PlayerVisual := preload("res://scenes/player/player_visual.gd")
 
+# 本体精灵帧:从 player.tscn 抽成独立 .tres(2026-11-02)。此前副本在 _ready 里 instantiate 整只 player.tscn、
+# 只为抄 sprite_frames + 5 份碰撞多边形,再 free ⇒ 每个副本一次完整节点树实例化。
+# ★ 现在帧数据走本文件的 @export,而 player.tscn 的 AnimatedSprite2D 引用的也是同一份 .tres ⇒ 本体与副本仍只有一处帧数据,不会漂。
+const PlayerScene := preload("res://scenes/player/player.tscn")   # 只读它的 SceneState 取幽灵体多边形,不实例化
+@export var sprite_frames: SpriteFrames = preload("res://scenes/player/player_frames.tres")
+
 # 幽灵体所在组:榴弹「碰到玩家」判定要把对手副本也算进候选。单列一组而不是并进 player:后者是「玩家实体」的语义,Explosion.apply_aoe 会遍历它逐个 take_hit、BulletBase._wrap 会取它第一个节点当锚点 —— 副本混进去会被当玩家结算 / 被当锚点。
 const GROUP := "player_replica"
 
@@ -72,10 +78,9 @@ var _ghost_shapes: Dictionary = {}   # pose(int) -> CollisionPolygon2D
 
 func _ready() -> void:
 	add_to_group(GROUP)
-	var tmp := preload("res://scenes/player/player.tscn").instantiate()
-	animator.sprite_frames = tmp.get_node("AnimatedSprite2D").sprite_frames
-	_build_ghost_body(tmp)
-	tmp.free()
+	# ★ 帧来自独立 .tres(与本体同一份),不再 instantiate player.tscn —— 见文件头 PlayerScene 那两条注释。
+	animator.sprite_frames = sprite_frames
+	_build_ghost_body()
 	_weapon_slot_node = Node2D.new()
 	_weapon_slot_node.name = "WeaponSlot"
 	add_child(_weapon_slot_node)
@@ -100,24 +105,46 @@ func _reorder_before_structures() -> void:
 		return
 	host.move_child(self, structures.get_index())
 
-# 幽灵碰撞体:StaticBody2D(layer 2 = 玩家层,与 player.tscn 一致;mask 0 = 它不需要感知任何东西,只被本地玩家的 move_and_slide 撞到)挂 5 份姿态多边形,形状从 player.tscn 现抄。用 StaticBody2D 而不是 CharacterBody2D:副本自身不由物理驱动,CharacterBody2D 会引入它自己的物理步进与 move_and_slide 竞争;作为副本子节点 ⇒ 位置 / 朝向 / 环面回绕全自动跟随。
-func _build_ghost_body(src: Node) -> void:
+# 幽灵碰撞体:StaticBody2D(layer 2 = 玩家层,与 player.tscn 一致;mask 0 = 它不需要感知任何东西,只被本地玩家的 move_and_slide 撞到)挂 5 份姿态多边形,形状从 player.tscn 的打包数据(SceneState)现读。用 StaticBody2D 而不是 CharacterBody2D:副本自身不由物理驱动,CharacterBody2D 会引入它自己的物理步进与 move_and_slide 竞争;作为副本子节点 ⇒ 位置 / 朝向 / 环面回绕全自动跟随。
+# ★ 为什么不 instantiate:只为抄数据把整只 Player 建出来再 free,每建一个副本就一份完整节点树(还要实例化 4 个组件脚本)。SceneState 只读打包值:零节点、零 _ready、零 free。
+# ★ 单一真相源仍是 player.tscn(改本体的箱子,副本自动跟上);读不到(节点改名 / 多边形恰好等于默认值而未被存进打包)⇒ 少一份形状,不是致命(但 PlayerVisual.COLLISION_NODE 必须同步改),与旧实现 get_node_or_null()==null 那条分支同款。
+func _build_ghost_body() -> void:
 	_ghost = StaticBody2D.new()
 	_ghost.name = "GhostBody"
 	_ghost.collision_layer = 2
 	_ghost.collision_mask = 0
 	add_child(_ghost)
+	var st := PlayerScene.get_state()
 	for pose in PlayerVisual.COLLISION_NODE:
-		var from := src.get_node_or_null(PlayerVisual.COLLISION_NODE[pose]) as CollisionPolygon2D
-		if from == null:
-			continue   # player.tscn 改名了 → 少一份形状,不是致命(但 PlayerVisual.COLLISION_NODE 必须同步改)
+		var node_name: String = PlayerVisual.COLLISION_NODE[pose]
+		var shape := _scene_node_props(st, node_name, ["polygon", "position"])
+		if not bool(shape["found"]):
+			continue
 		var poly := CollisionPolygon2D.new()
-		poly.name = PlayerVisual.COLLISION_NODE[pose]
-		poly.polygon = from.polygon
-		poly.position = from.position
+		poly.name = node_name
+		poly.polygon = shape["polygon"]
+		if shape.has("position"):
+			poly.position = shape["position"]
 		poly.disabled = pose != 0
 		_ghost.add_child(poly)
 		_ghost_shapes[pose] = poly
+
+
+# 从 PackedScene 的 SceneState 里读一个子节点的若干**已存储**属性(不实例化节点树)。
+# 返回 {"found": bool, <属性名>: Variant ...};found 的判据 = 节点存在且取到了 polygon(要求取到的属性缺省时不写进返回表,调用方用节点默认值)。
+# ★ .tscn 只存"与默认值不同"的属性 ⇒ 取不到 ≠ 读错,只代表它等于默认值。
+func _scene_node_props(st: SceneState, node_name: String, wanted: Array) -> Dictionary:
+	for i in st.get_node_count():
+		if String(st.get_node_name(i)) != node_name:
+			continue
+		var out := {}
+		for j in st.get_node_property_count(i):
+			var pn := String(st.get_node_property_name(i, j))
+			if wanted.has(pn):
+				out[pn] = st.get_node_property_value(i, j)
+		out["found"] = out.has("polygon")
+		return out
+	return {"found": false}
 
 # 幽灵体所在碰撞层。★ 默认值不变(_build_ghost_body 里那句 2,全项目唯一一处),本函数只是把它变成可改的:3v3 按该副本代表的那名玩家的队配层(队 B 的玩家身体在层 16,见 TeamHost.TEAM_ENEMY_LAYER 那张契约表);1v1 / 大乱斗不调它 ⇒ 行为逐字不变。
 # ★ 为什么必须跟着队走:幽灵体的全部用途是让「预测所依据的世界」与权威一致。队友之间是完全穿透(服务器侧两队掩码互指对方的位),副本若恒在层 2,本地预测就会被队友挡下 —— 而服务器上他穿过去了 ⇒ 每帧分歧、每帧回滚(与「幽灵体缺失」同一个形状)。

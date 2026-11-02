@@ -8,6 +8,15 @@ extends RefCounted
 #   ② 排序必须确定性 —— 同样的局两次跑要给出同一个榜(主键降序 → 阵亡升序 → 昵称升序);
 #   ③ match_winner == 0 是平局。1v1 那条别照抄 ui/pvp_hud.gd 的兜底("P%d 获胜!" % (1 if w1 > w2 else 2))—— 那会把平局念成「P1 获胜」。
 
+# ── 类型化字典试点(2026-11-02,`Dictionary[String, Variant]`)──
+# 本仓 Godot 4.7.1 已实测支持 `Dictionary[K, V]`。这里给三个适配器与 _row 的返回、以及 mvp 标记字典(唯一同构的子字典)标上类型,
+# 把"载荷的键是 String"从注释变成类型。
+# ★★ 实测口径(别再凭印象):类型化字典**不会**因为"键名拼错"而报错 —— GDScript 只校验**键/值的类型**
+#    (键必须 String;值必须声明的那个类型),不校验键名这个字符串本身写得对不对。故 `payload["titel"]` 这类拼错
+#    今天仍然静默返回 null,本试点**治不了**它;能治它的是"具名结构而不是字典"(Resource / 类)。那要动读侧
+#    ui/match_result.gd(跨文件)⇒ 本轮只做写侧标注,不改变任何返回值/行为。
+# ★ 跨脚本传参:**运行期类型不擦除**(实测:传进形参为 Dictionary 的函数、或存进 untyped Dictionary 再取,
+#    `is_typed()` 仍为 true);但静态检查在接收侧看不到 —— 形参是 Dictionary 时不做键/值校验。故这层类型只在构造处(本文件)起作用。
 # 各模式的列 —— 顺序就是显示顺序:大乱斗无 ACS(单局死斗 ⇒ acs ≡ kscore)、无助攻(自由混战无归属);1v1 无助攻(same_team 恒 false ⇒ 那模式拿不到助攻)。
 # ★ 新增列必须同时在 ui/match_result.gd 的 COLUMN_TITLES 里有标题,否则表头退化成裸英文键名(.get(col, col) 兜底、不报错)。零守卫(match_result_payload_smoke 已删·2026-10-09)。
 const C_DUEL := ["kills", "deaths", "dealt", "taken", "acs"]
@@ -17,7 +26,7 @@ const C_TEAM := ["kills", "deaths", "assists", "dealt", "taken", "acs"]
 
 # 1v1。行数据一律读 stats(服务端算好的七字段),不再读 scores —— scores 是"本局击杀"(每局清零),不是结算页要的整场口径。
 # ★ 遍历仍写死 [1, 2]:缺条目 = 0(不是"没有这个人的数据")—— 写成 if not stats.has(role): continue 会在一局 5-0 时画出只有一行的榜,输的那位从自己的结算页上消失。
-static func for_duel(round: Dictionary, names: Dictionary, my_role: int) -> Dictionary:
+static func for_duel(round: Dictionary, names: Dictionary, my_role: int) -> Dictionary[String, Variant]:
 	var stats: Dictionary = round.get("stats", {})
 	var mvp_role: int = int(round.get("mvp", 0))
 	var rows: Array = []
@@ -27,7 +36,7 @@ static func for_duel(round: Dictionary, names: Dictionary, my_role: int) -> Dict
 				int(s.get("assists", 0)), int(s.get("dealt", 0)), int(s.get("taken", 0)),
 				int(s.get("acs", 0)), int(role) == mvp_role))
 	_finish(rows, "kills")
-	var mvp_pos := {}
+	var mvp_pos: Dictionary[String, int] = {}
 	for ri in rows.size():
 		if bool(rows[ri]["mvp"]):
 			mvp_pos = {"section": 0, "row": ri}
@@ -44,7 +53,7 @@ static func for_duel(round: Dictionary, names: Dictionary, my_role: int) -> Dict
 # 大乱斗。自由混战:行数据读 stats(scores / deaths 那两条键留给局内 HUD —— ui/royale_hud.gd 的排行榜按它们显示实时比分,与本页是两回事)。
 # ★★ 标题恒为「游戏结束」,与 match_winner 无关(用户裁定:「大乱斗结算榜单不应该有任何胜利/失败,而是游戏结束」)⇒ 刻意不调 _verdict。
 # ★ my_role 仍是第 3 个形参(调用方传 PvpSession.role,签名不动):本函数用不到它,但不要删。零守卫(kh_l6_probe 已删·2026-10-09)。
-static func for_royale(round: Dictionary, names: Dictionary, my_role: int) -> Dictionary:
+static func for_royale(round: Dictionary, names: Dictionary, my_role: int) -> Dictionary[String, Variant]:
 	var stats: Dictionary = round.get("stats", {})
 	var rows: Array = []
 	for role in stats:
@@ -64,7 +73,7 @@ static func for_royale(round: Dictionary, names: Dictionary, my_role: int) -> Di
 
 # 3v3。两节(A/B 队),栏内按 ACS 排;mvp 指向**胜队内** ACS 最高者(2026-10-30 用户裁定:全场最佳必须出自胜方,
 # 服务端 `mvp_role(candidates)` 已按胜队过滤;本文件只按 role 打星,不自己再筛)。★ stats 按 role、names 也按 role ⇒ 直接可拼。★ 某 role 没有 stats 条目(掉线 / 中途加入)⇒ 跳过该行,不硬造 0。
-static func for_team(round: Dictionary, names: Dictionary, teams: Dictionary, my_team: int) -> Dictionary:
+static func for_team(round: Dictionary, names: Dictionary, teams: Dictionary, my_team: int) -> Dictionary[String, Variant]:
 	var stats: Dictionary = round.get("stats", {})
 	var mvp_role: int = int(round.get("mvp", 0))
 	var sections: Array = []
@@ -84,7 +93,7 @@ static func for_team(round: Dictionary, names: Dictionary, teams: Dictionary, my
 			"color": UiFactory.C_TEAM_A if t == 1 else UiFactory.C_TEAM_B,
 			"rows": rows,
 		})
-	var pos := {}
+	var pos: Dictionary[String, int] = {}
 	for si in sections.size():
 		var rows: Array = sections[si]["rows"]
 		for ri in rows.size():
@@ -101,7 +110,7 @@ static func for_team(round: Dictionary, names: Dictionary, teams: Dictionary, my
 
 
 static func _row(nm: String, kills: int, deaths: int, assists: int, dealt: int, taken: int,
-		acs: int, mvp: bool = false) -> Dictionary:
+		acs: int, mvp: bool = false) -> Dictionary[String, Variant]:
 	return {"rank": 0, "name": nm, "kills": kills, "deaths": deaths, "assists": assists,
 			"dealt": dealt, "taken": taken, "acs": acs, "mvp": mvp}
 
