@@ -102,12 +102,6 @@ static func explosion_decay_of(texture: int) -> float:
 	return _decay[texture]
 
 
-# 旧接口保留(少量非热点调用/tests 仍比对字符串);内部走预计算表。
-static func type_of(texture: int) -> String:
-	var tid := type_id_of(texture)
-	return _TYPE_NAMES[tid] if tid >= 0 and tid < _TYPE_NAMES.size() else "wall"
-
-
 # 类型 id(热点:寻路/LOS/水判定),省去字符串比较。
 static func type_id_of(texture: int) -> int:
 	_ensure_tables()
@@ -222,10 +216,6 @@ static func init_sub_hp(sgrid: Array) -> void:
 		for x in sub_cols:
 			var tex := int(row[x])
 			sub_hp[y * sub_cols + x] = hp_of(tex) if tex != 0 else 0
-
-
-static func sub_of(pos: Vector2) -> Vector2i:
-	return Vector2i(posmod(int(pos.x) / 16, sub_cols), posmod(int(pos.y) / 16, sub_rows))
 
 
 static func sub_texture(sub: Vector2i) -> int:

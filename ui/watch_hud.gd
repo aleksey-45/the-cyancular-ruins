@@ -179,8 +179,3 @@ func tremble() -> void:
 func flash_locked() -> void:
 	_lock_flash_t = 1.2
 
-## 吸收结晶:入账 + 颤抖(结晶 FX 到达时调用;数值动画由 _process 自动追随)
-func absorb(amount: int) -> void:
-	if Level0.grain_account != null:
-		Level0.grain_account.deposit(amount)
-	tremble()

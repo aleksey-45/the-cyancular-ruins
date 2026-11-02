@@ -35,14 +35,6 @@ func _init(tiers: Dictionary, new_capacity: int = DEFAULT_CAPACITY,
 	max_weapons = maxi(1, new_max_weapons)
 
 
-func set_capacity(n: int) -> void:
-	capacity = maxi(1, n)
-
-
-func set_max_weapons(n: int) -> void:
-	max_weapons = maxi(1, n)
-
-
 func tier_of(type_id: int) -> int:
 	return int(_tiers.get(type_id, TIER_LIGHT))
 

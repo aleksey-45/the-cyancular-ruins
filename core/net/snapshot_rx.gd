@@ -149,5 +149,3 @@ func world_tick() -> int:
 	return _last_world_tick
 
 
-func own_tick() -> int:
-	return _last_own_tick

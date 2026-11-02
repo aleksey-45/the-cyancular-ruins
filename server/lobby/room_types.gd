@@ -127,12 +127,3 @@ static func team_counts_of(room: Room) -> Dictionary:
 	return counts
 
 
-# 日志里的房型文案(拆除 / 超时清理 / 房主转移共用):合并前这三处各写一遍三元表达式。
-# ★ 模式 id 仍是 "team";文案跟玩家看到的叫法走(「对抗」,不再写 3v3,也不加"团队"等额外前缀)。
-static func kind_text(room: Room) -> String:
-	match room.mode:
-		ModeDefs.MODE_ROYALE:
-			return "大乱斗房"
-		ModeDefs.MODE_TEAM:
-			return "对抗房"
-	return "房间"

@@ -226,17 +226,6 @@ static func convert_old_grid(old: Array) -> Array[Array]:
 		out.append(row)
 	return out
 
-# v3 网格序列化:125 格/行,每格 4 字符(纹理 3 位 0xx + 形状 hex;空气 = "0000")。
-# 供地图转换脚本(单一转换源)。
-static func serialize_v3_grid(grid: Array) -> Array[String]:
-	var out: Array[String] = []
-	for row in grid:
-		var sb := ""
-		for v in row:
-			sb += "%03d" % texture_of(v) + _value_to_shape_char(shape_of(v))
-		out.append(sb)
-	return out
-
 # 读取地图文件的列/行数(格子级),供 GameParameters 初始化 MAP 像素尺寸。
 # 逻辑与 load_map_file 一致:跳过空行与 # 注释行,以首个有效行为宽度,
 # 宽度不一致的行(如抬头)不计入行数。返回转换后的游戏网格尺寸(v3 125×75,旧图同)。

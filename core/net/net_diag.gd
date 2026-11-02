@@ -284,10 +284,6 @@ static func _ensure_open() -> void:
 	_mutex.unlock()
 
 
-static func audit_path() -> String:
-	return _ops_path
-
-
 static func audit(event: String, data: Dictionary = {}) -> void:
 	if _ops_skipped or _ops_failed:
 		return
@@ -431,31 +427,3 @@ static func end_metrics_for_test() -> void:
 	_metrics_last.clear()
 
 
-static func begin_audit_for_test(path: String) -> void:
-	_ops_checked = true
-	_ops_skipped = false
-	_ops_failed = false
-	_ops_warned = false
-	_ops_path = ""
-	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
-	_ops_file = FileAccess.open(path, FileAccess.WRITE)
-	if _ops_file == null:
-		_ops_failed = true
-		return
-	_ops_path = path
-	_ops_file.store_line(JSON.stringify({
-		"t": Time.get_ticks_msec(), "pid": OS.get_process_id(), "role": role(),
-		"event": "session_start", "data": {"test": true},
-	}))
-
-
-static func end_audit_for_test() -> void:
-	if _ops_file != null:
-		_ops_file.flush()
-		_ops_file.close()
-	_ops_file = null
-	_ops_path = ""
-	_ops_checked = false
-	_ops_skipped = false
-	_ops_failed = false
-	_ops_warned = false

@@ -99,10 +99,6 @@ func start_countdown(seconds: float, sub_text: String) -> void:
 	_set_big_text(_clock.text())
 
 
-func stop_countdown() -> void:
-	_clock.stop()
-
-
 func is_counting() -> bool:
 	return _clock.running()
 

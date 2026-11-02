@@ -124,7 +124,3 @@ static func subsidy(teams: Dictionary) -> Dictionary:
 	}
 
 
-# 某个队号是不是"需要补贴的少人方"。势均 / 队号非法 ⇒ false(恒等分支:什么都不要给)。
-static func is_subsidized_team(counts: Dictionary, team: int) -> bool:
-	var s := smaller_team(counts)
-	return s != 0 and int(team) == s

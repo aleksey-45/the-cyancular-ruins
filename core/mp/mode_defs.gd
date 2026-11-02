@@ -44,9 +44,6 @@ const RESULT_COLUMNS: Dictionary = {
 	MODE_TEAM: ["kills", "deaths", "assists", "dealt", "taken", "acs"],
 }
 
-static func is_mode(mode: String) -> bool:
-	return MODE_IDS.has(mode)
-
 static func label(mode: String) -> String:
 	match mode:
 		MODE_PVP: return "1v1"
@@ -57,5 +54,3 @@ static func label(mode: String) -> String:
 static func option_keys(mode: String) -> Array:
 	return (OPTION_KEYS.get(mode, []) as Array).duplicate()
 
-static func result_columns(mode: String) -> Array:
-	return (RESULT_COLUMNS.get(mode, []) as Array).duplicate()

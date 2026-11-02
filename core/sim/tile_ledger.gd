@@ -27,10 +27,6 @@ func count() -> int:
 	return n
 
 
-func newest_t() -> float:
-	return float(_entries[-1]["t"]) if not _entries.is_empty() else -1.0
-
-
 ## 取 (target_t, cursor_t] 区间内待还原的格,按 t 降序(最新破坏先还原)。
 func take_range(target_t: float, cursor_t: float) -> Array:
 	var picked: Array = []

@@ -65,18 +65,6 @@ func is_hasting() -> bool:
 
 # ── 纯静态倍率查询(实体脚本调用;current 为 null 时恒 1)────────────
 
-static func player_delta(d: float) -> float:
-	var f := current
-	if f == null:
-		return d
-	match f.mode:
-		Mode.REWIND:
-			return 0.0
-		Mode.HASTE:
-			return d * TimeParams.HASTE_PLAYER
-	return d
-
-
 static func enemy_delta(d: float, node: Node) -> float:
 	var f := current
 	if f == null:

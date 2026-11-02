@@ -168,15 +168,6 @@ func apply_completed_count() -> int:
 	return _apply_completed
 
 
-# 子弹段"走完或无事可做"的帧数:与 apply_completed_count() 是两条独立分子(_apply 空帧早退也会给它 +1)。
-func apply_bullets_completed_count() -> int:
-	return _bullets_completed
-
-
-func invalid_ref_count() -> int:
-	return _invalid_refs
-
-
 # 回放完成度的唯一判据:正常返回空串,否则返回一句可直接当探针判词的错话(只读、无副作用;无样本也在这里报)。
 func replay_completion_error() -> String:
 	if _apply_started <= 0:
@@ -305,10 +296,6 @@ func current_target() -> float:
 ## 回放中的子弹节点(回溯期 Level0 用它们对精英做二次伤害判定)。
 func replay_bullets() -> Array:
 	return _replay_bullets
-
-
-func frame_count() -> int:
-	return _frames.size()
 
 
 func recorded_seconds() -> float:

@@ -139,13 +139,6 @@ static func reap_step() -> bool:
 		return true
 	return false
 
-# 就地拆完剩余(下一次换场接手时兜底)。
-static func finish_reap() -> void:
-	for n in _reap_queue:
-		if is_instance_valid(n):
-			n.free()
-	_reap_queue.clear()
-
 # 诊断(只给 -- --perf-teardown-detail 用):把旧世界逐个子树拆下来计时,回答「remove_child 那几十毫秒到底花在谁身上」。★ 破坏性 —— 子树当场 free、世界不再退役,只能单次诊断用。
 static func _teardown_detail(tree: SceneTree, old: Node) -> void:
 	var total := Time.get_ticks_usec()
