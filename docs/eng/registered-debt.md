@@ -1166,3 +1166,39 @@ f=50 又一条；上下文显示客户端在 f=50 被墙挡住 `velocity.x 642�
 3. 注入被拒（环外 4.3s / 已 ack / 乱序）⇒ 立即应用 = 旧行为：那一次仍可能产生一次回滚，但不会连环。
 4. 观感（粒子簇数 / 致死一击去重）仍是人眼项，探针只钉节点数与坐标。
 5. **没有**验证"拆砖后跑过去不再回滚"的端到端读数（本机 loopback 编排不稳，见 §五十四）—— 这一条要靠真人对局/公网复测。
+
+## 五十六、三处权威态恢复的"倒地→活着"合并为单一实现（R3，2026-11-01，档 3，**行为未验证**）
+
+**起因**：plan §R3。三处状态恢复入口各写了一份"把状态灌回玩家"的代码，历史上已多次出现"只在一端修好"
+（`mag/rld`、同型号 `winst`）。本轮把三处函数体逐行摊开对比（差异表在 plan §R3），发现两处**真实漂移**：
+
+1. **`revive()` 会把 hp 顶成满血**：`Player.restore_state()`（C2 回滚）、`Player.apply_authoritative_state()`
+   （网络权威 hp）、`Player.rewind_restore()`（回溯）都是"先把快照/权威 hp 写进去，再处理倒地"
+   —— 旧写法在"倒地→活着"那一支调 `combat.revive()`，而 `revive()` 里有 `hp = max_hp` ⇒ **刚恢复的 hp 被冲掉**。
+   表现：C2 回滚跨"死亡→活着"那一帧会把客户端血量算成满血 ⇒ 与服务器继续分歧、可能再回滚；
+   权威态那条同理（权威说 hp=30、倒地=false，本地却变满血）。
+2. **服务器回溯不清 `knock_velocity`**：单机回溯清、服务器不清 ⇒ 回溯期间残留爆炸击退向量（位置会被继续推）。
+
+**改了什么**
+- `scenes/player/combat_component.gd`：新增 **`restore_alive_state()`** = `set_downed_by_rewind(false)` + 旋转归零 + 灰屏复位
+  （= `revive()` 减去 `hp = max_hp`）；`revive()` 改为 `restore_alive_state() + hp = max_hp`（表现复位只有这一份）。
+- `scenes/player/player.gd`：`apply_authoritative_state()` / `restore_state()` / `rewind_restore()` 三处的
+  "倒地→活着"分支都改调 `combat.restore_alive_state()`（**不再** `revive()`）。`revive()` 只剩"满血复活"语义
+  （`restart_at()`、PvP 回合复活）。
+- `server/match/match_host.gd::_apply_rw_frame`：**删掉整段抄写**（位置/速度/hp+信号/facing/倒地/武器残弹 +
+  一段从不生效的 `f["bullets"]` 死分支），改为 `p.rewind_restore(f)` ⇒ 服务器回溯与单机回溯是**同一份实现**，
+  顺带修掉漂移 2。
+
+**为什么这叫"合并"而不是"重写"**：`Player.rewind_restore` 本来就是那份完整实现（schema = 回溯帧），
+服务器那份是它的逐字抄写；本轮只是让服务器调它，并把三处"变成活着"的语义收成一个函数。
+
+**验证：本轮没跑任何测试**（用户当轮明确"别测"）。⇒ 已知风险：`restore_alive_state()` 的旋转/灰屏复位对
+"服务器回溯"是新增（服务器没有 `post_process` 组 ⇒ 预期空操作），对 C2 回滚/权威态是新增（原先 `revive()` 也做，
+等价，只是不再改 hp）。**下次开跑至少要这三样**：
+1. `bash tests/run_all.sh`（默认批，含 `rollback_fidelity_probe` / `snapshot_size_probe`）；
+2. 纯逻辑/场景探针补一条：同一份 payload 走 `restore_state` 与 `rewind_restore` 后 `capture_state()` 的 hp/down 一致
+   （去掉 `restore_alive_state` 那两处调用 ⇒ 应红）；
+3. 真链路 `bash tests/probe/team_match_probe.sh`（Beta 回溯在对抗里）—— 人眼确认回溯后血量/灰屏/击退正常。
+
+**边界（照实）**：`restore_state()` 的 hp 修复会**改变**"跨死亡回滚"的本地血量（从满血变成快照值）——这是修 bug，
+但如果哪里依赖了"回滚后满血"的旧行为，会在此暴露。

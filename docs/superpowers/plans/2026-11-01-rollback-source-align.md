@@ -253,19 +253,51 @@ create 建房 → join 加入 → 房主自动 `pvp_start` → 两端实例化**
 
 ---
 
-### R3 · 权威态应用合并为单一实现（P2，防漂移）
+### R3 · 权威态应用合并为单一实现（P2，防漂移）—— **B+C 已合并；A 保留（不同 schema）；守卫待补**
 
-**猜测：** 三份复制（单机回溯恢复 / 服务器回溯恢复 / 客户端 `restore_state`）已经出现过“只在一端修好”的缺陷（`mag/rld`、同型号 `winst` 都是这一类）⇒ 这类漂移会表现为“持续回滚”。
+**猜测：** 三份复制（单机回溯恢复 / 服务器回溯恢复 / 客户端 `restore_state`）已经出现过“只在一端修好”的缺陷
+（`mag/rld`、同型号 `winst` 都是这一类）⇒ 这类漂移会表现为“持续回滚”。
 
-**做什么：**
-- [ ] grep 三处函数体，列出**字段级差异表**（哪些字段写、哪些不写、哪些走 `apply_mag` 之类的分流）。
-- [ ] 抽一个 `PlayerState.apply(player, st, opts)`（或等价的最小公共层），三处改为调用它；差异用 `opts` 表达（如 `flush_inventory=false`、`weapons=mode`）。
-- [ ] 守卫：新增纯逻辑/场景探针，用**同一份 payload** 分别走三处入口，断言得到的 `capture_state()` 相等（除时间相关字段）。
-- [ ] 变异：把其中一处改回旧写法 ⇒ 探针红。
+**字段级差异表（2026-11-01 逐行 grep 三处函数体得出）**
 
-**验收：** 三处入口 payload→state 一致；`rollback_fidelity_probe` 仍 ALL-OK；全量批绿。
+三处入口 = **A** `Player.restore_state(st)`（C2 回滚，schema 来自 `capture_state()`）、
+**B** `Player.rewind_restore(d)`（单机 `WorldRewind`，schema = `p/v/hp/facing/downed/widx/wmags/wlive`）、
+**C** `MatchHost._apply_rw_frame`（服务器 Beta 回溯，schema **与 B 完全相同**，因为它抄的就是 B）。
 
-**风险：** 档 3——三处入口各有微妙时序（`sync_soft_state` 早退、回滚重放中调用），必须先列差异表再动。
+| 字段 | A（C2 回滚） | B（单机回溯） | C（服务器回溯，旧） | 合并后 |
+|---|---|---|---|---|
+| 位置 / 速度 | `pos` / `vel` | `p` / `v`（`v` 为 null 时跳过） | `p` / `v`（无条件写） | B（C 改为调 B） |
+| hp + `hp_changed` | 写（clamp） | 写（clamp + 有变化才发信号） | 写（clamp + 有变化才发信号） | B |
+| `knock_velocity` | **不碰** | **清零** | **不碰** ← **漂移①** | B（清零） |
+| facing | `facing` | `facing` | `facing`（`p.set` 字符串反射） | B（类型化） |
+| 倒地→活着 | 旧：`combat.revive()`（hp 被顶成满血 ← **漂移②**） | 旧：`combat.revive()`（同一个漂移②） | 旧：`set_downed_by_rewind(false)`（不清旋转/灰屏 ← **漂移③**） | 三处统一 `CombatComponent.restore_alive_state()`（= `revive()` 减去 hp），`revive()` 改为调它 + `hp=max_hp` |
+| 活着→倒地 | 不碰 | `set_downed_by_rewind(true)` | `set_downed_by_rewind(v)` | B |
+| 武器残弹 | 全表 `inv`（type/inst/mag）+ `winst` → `restore_inventory`+`equip_*`+`fire_cd/rld` 等 | `wmags`（只有 mag）+ `widx` + `wlive` → `equip_index` + 写条目 + `apply_mag` | 同 B（逐字抄，含语句序注释） | B（C 改为调 B） |
+| 姿态 / 跳跃 / 冲刺 / 攀爬态 | 全写（`state/coyote/jbuf/jcut/squat/charge/clatch/swim…`） | **不写** | **不写** | 保持现状（回溯不恢复这些：动作在回溯期间被冻结/丢弃） |
+| 子弹 | 不涉及 | `WorldRewind` 另行重建（`_apply_bullets`） | 旧代码有 `f["bullets"]` 分支但 **`_record_rw_frame` 从不写该键 ⇒ 死代码** | 删掉死分支 |
+
+⇒ **A 与 B/C 是两种 schema**（A 是"预测整态"，B/C 是"回溯帧"），强行合会改线格式/内存；本轮只合并 **B+C**
+（同一 schema 的真重复），A 保留并在此表留档，避免以后又有人以为"三处已经统一了"。
+
+**改了什么（2026-11-01）**
+- [x] `server/match/match_host.gd::_apply_rw_frame`：**删掉整段抄写**（位置/速度/hp+信号/facing/倒地/武器残弹 + 死的 bullets 分支），
+      改为 `p.rewind_restore(f)`（`if p.has_method(...)` 兜底）—— 服务器回溯与单机回溯从此是同一份实现。
+- [x] `scenes/player/combat_component.gd`：新增 **`restore_alive_state()`**（`set_downed_by_rewind(false)` + 旋转归零 + 灰屏复位，
+      即 `revive()` 减去 `hp=max_hp`），`revive()` 改为调它 + `hp = max_hp`（表现复位只有这一份）。
+- [x] `scenes/player/player.gd`：**三处**"倒地→活着"全部改调 `combat.restore_alive_state()`（不再 `revive()`）——
+      `apply_authoritative_state()`、`restore_state()`（C2 回滚）、`rewind_restore()`（回溯）；
+      `revive()` 只剩"满血复活"语义（`restart_at()` / PvP 回合复活）。
+- [ ] 守卫（**本轮按用户要求没写也没跑**）：计划是"同一份 payload 分别走 `restore_state` 与
+      `rewind_restore` 取到的 `capture_state()` 相等（hp/down 至少必须相等）"+ 变异（把那两处改回 `revive()` ⇒ 红）。
+      现状登记在 [`registered-debt.md`](../../eng/registered-debt.md) §五十六，含"下次怎么验"。
+- [x] 顺带修掉的三处真实漂移：**服务器回溯不清 `knock_velocity`**、**单机回溯 hp 被顶满**、
+      **C2 回滚跨死亡帧 hp 被顶满 + 权威态 hp 被顶满**（②在 A/B 两条路径上各有一处）。
+
+**验收（本轮未跑，照实）**：代码已改；`rollback_fidelity_probe` / 默认批 **没跑**（用户明确"别测"）。
+下次开跑时至少要：默认批 + `rollback_fidelity_probe` + 真链路 `team_match_probe`（Beta 回溯在对抗里）三样。
+
+**风险（照实）**：档 3；合并的是"行为等价体"，但 `rewind_set_alive()` 的表现复位（旋转/灰屏）对单机是**新增**
+（旧 `revive()` 本来就做，等价；对服务器是新增：服务器没有 `post_process` 组 ⇒ 空操作）。
 
 ---
 

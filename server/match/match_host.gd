@@ -448,62 +448,10 @@ func _apply_rw_frame(r: int, p: Node2D, cursor: float) -> void:
 			f = e
 		else:
 			break
-	p.global_position = f["p"]
-	p.set("velocity", f["v"])
-# ★ 战斗段同样改成句柄点访问:原三处 combat.get/set/call 反射里最阴的是 call("emit_signal", …) —— 名字对不上时 call 当场
-# 报错并中止整段(连后面的武器段一起跳过)。hp_changed 是 CombatComponent 自己声明的信号,直接 emit 是同一件事的类型化写法。
-	var combat := p.get("combat") as CombatComponent
-	if combat != null:
-		var hp1 := clampi(int(f["hp"]), 0, combat.max_hp)
-		if hp1 != combat.hp:
-			combat.hp = hp1
-			combat.hp_changed.emit(hp1, combat.max_hp)
-		# ★ BUG-05(2026-10-30):帧里记了 downed 就必须还原。只还原 hp 会得到「hp=0 但未倒地」的非法态
-		#   (下一次 1 点伤害立刻走死亡流程;而且 _match_round_tick 看不到倒地 ⇒ 不排复活、不掉武器)。
-		#   set_downed_by_rewind 刻意不扣血/不发 went_down —— 与单机 Player.rewind_restore 同款调用。
-		var want_downed := bool(f.get("downed", false))
-		if want_downed != combat.downed:
-			combat.set_downed_by_rewind(want_downed)
-	p.set("facing_direction", int(f["facing"]))
-	var wc := p.get("weapons") as WeaponComponent
-	if wc != null and f.has("wmags"):
-		var inv: WeaponInventory = wc.inventory
-# ★★ 与单机 Player.rewind_restore 同一处修法、逐字对齐:① 切枪必须排在「条目写回」之前 —— _equip_index 会把走掉那把的出膛
-# 实弹写回条目,排在写回之后就会冲掉刚恢复的快照值;② 手持实弹走 WeaponComponent.apply_mag()(未入树窗口写 pending_mag,由
-# WeaponBase._ready 消费)而不是直接写 mag_ammo —— 后者会被 _ready 用条目旧值覆盖;③ wlive < 0 且确实切了枪 ⇒ 取快照条目值。
-# ★ 语义口径:wlive 与 wmags 各自照抄快照,不许「以条目为准」把 wlive 丢掉。⚠ 行为侧零守卫(写法/语句序有探针 S9,已删 2026-10-09)。
-		var want_idx := int(f.get("widx", -1))
-		var switched := want_idx >= 0 and want_idx != wc._current_index
-		if switched:
-			wc.equip_index(want_idx)
-		if inv != null:
-			var held: Array = inv.held
-			var mags: Array = f["wmags"]
-			for i in mini(held.size(), mags.size()):
-				held[i]["mag"] = int(mags[i])
-		var live: WeaponBase = wc.current_weapon()
-		if live != null and is_instance_valid(live):
-			var want := int(f.get("wlive", -1))
-			if want < 0 and switched and inv != null and wc._current_index >= 0 \
-					and wc._current_index < inv.held.size():
-				want = int(inv.held[wc._current_index]["mag"])
-# ★ wlive 的 -1 是哨兵(没记),条目的 MAG_FULL(-1) 是满弹 —— 两个 -1 语义不同,不折算会让新枪停在 _equip_index 从恢复前条目取的有限旧值。
-				if want == WeaponInventory.MAG_FULL:
-					want = live.mag_size
-			if want >= 0:
-				WeaponComponent.apply_mag(live, want)
-
-	var hist: Array = f.get("bullets", [])
-	if hist.is_empty():
-		return
-	var live_own: Array = []
-	for b in get_tree().get_nodes_in_group("bullet"):
-		if is_instance_valid(b) and b is Node2D and b.get("shooter") == p:
-			live_own.append(b)
-	for i in mini(hist.size(), live_own.size()):
-		var b: Node2D = live_own[i]
-		var h: Dictionary = hist[i]
-		b.global_position = h["p"]
-		b.set("velocity_vec", h["v"])
-		if b.has_method("apply_rewind_state") and not (h["fs"] as Dictionary).is_empty():
-			b.call("apply_rewind_state", h["fs"])
+	# ★ 2026-11-01(R3):逐字段恢复**只有一份实现** = `Player.rewind_restore`(单机回溯走的是同一个函数)。
+	#   原先这里把"位置/速度/hp+信号/facing/倒地/武器残弹"整段抄了一遍,已经抄出两处口径相反:
+	#   ① 服务器不清 `knock_velocity`(单机清)⇒ 回溯期间残留爆炸击退向量;
+	#   ② 单机"倒地→活着"走 `revive()` 会把 hp 顶成满血、冲掉快照值(本轮已统一成 `rewind_set_alive()`)。
+	#   顺带删掉原先那段 `f["bullets"]` 分支:`_record_rw_frame` 从来不写这个键 ⇒ `hist` 恒空、整段是死代码。
+	if p.has_method("rewind_restore"):
+		p.rewind_restore(f)

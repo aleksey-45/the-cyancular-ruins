@@ -644,7 +644,8 @@ func apply_authoritative_state(hp_val: int, waterproof_val: int, downed_val: boo
 	if downed_val and not combat.is_downed():
 		combat.force_down()
 	elif not downed_val and combat.is_downed():
-		combat.revive()
+		# ★ 2026-11-01(R3):不能走 revive() —— 它会把 hp 顶成 max_hp,冲掉上面刚采纳的**权威** hp。
+		combat.restore_alive_state()
 
 # C2 预测的整态捕获/恢复:覆盖决定下一物理帧输出的全部变量(player 本体 + climb/swim/combat + 当前武器)。
 # 服务器快照 = capture_state();客户端 rollback = restore_state(权威态) 后重放未确认输入。漏一个变量 → 重放与服务器分歧。字段键名尽量短,压缩协议体积。
@@ -725,7 +726,9 @@ func restore_state(st: Dictionary) -> void:
 	if down_v and not combat.is_downed():
 		combat.force_down()
 	elif not down_v and combat.is_downed():
-		combat.revive()
+		# ★ 2026-11-01(R3):不能走 revive() —— 它会把 hp 顶成 max_hp,冲掉上面刚从整态恢复的 hp
+		#   (C2 回滚跨"死亡→活着"那一帧时会因此得出满血,与服务器继续分歧)。
+		combat.restore_alive_state()
 	combat.iframes = float(st.get("ifr", combat.iframes))
 	combat.knock_velocity = st.get("knock", combat.knock_velocity)
 	_waterproof_timer = float(st.get("wp_t", _waterproof_timer))
@@ -1030,4 +1033,6 @@ func rewind_restore(d: Dictionary) -> void:
 	if bool(d["downed"]) and not downed_now:
 		combat.set_downed_by_rewind(true)
 	elif not bool(d["downed"]) and downed_now:
-		combat.revive()
+		# ★ 2026-11-01(R3):不能走 revive() —— 它会把 hp 顶成满血,冲掉上面刚从快照恢复的 hp。
+		#   restore_alive_state() = revive() 减去 hp(旋转/灰屏/动画照旧);三处**状态恢复**入口(权威态 / 整态回滚 / 回溯)共用同一份(见 plan §R3)。
+		combat.restore_alive_state()

@@ -20,7 +20,7 @@
 | 落点 | 职责 |
 |---|---|
 | `server/time_economy.gd` | `TimeEconomy`：服务器权威颗粒经济 —— 每 role 一份 `GrainAccount` + 四条结算缝（击杀/伤害/拆砖/回复）+ 10Hz 镜像载荷 |
-| `server/match/match_host.gd` | `_tick_beta_rewind()` 每 role 各自的回溯机（环缓/倒放/免伤/轨迹）；`_record_rw_frame`（20Hz）；`_apply_rw_frame`；`_finish_rw`（松手 / 颗粒耗尽共用）；加速态在快照之前定格。线上三件（`match_snapshot.gd`）:`haste` 布尔 / `rewind` 布尔 / `trail`（回溯轨迹点） |
+| `server/match/match_host.gd` | `_tick_beta_rewind()` 每 role 各自的回溯机（环缓/倒放/免伤/轨迹）；`_record_rw_frame`（20Hz）；`_apply_rw_frame`（★ 2026-11-01 R3 起**只做寻帧，逐字段恢复委托 `Player.rewind_restore`**，不再自带一份抄写）；`_finish_rw`（松手 / 颗粒耗尽共用）；加速态在快照之前定格。线上三件（`match_snapshot.gd`）:`haste` 布尔 / `rewind` 布尔 / `trail`（回溯轨迹点） |
 | `scenes/pvp_match_client.gd` | `_setup_beta_time_hud()` 挂 `WatchHud` + 订阅 `NetBusExt.local_time_state`；`_on_time_state` 挂镜像账户并点亮怀表；`_tick_beta_time` 本地预测加速（写 `player.pvp_haste_mult`，不本地扣颗粒）；`_tick_beta_rewind` 本地预测回溯（冻结 `input_source`、置免伤 meta `time_rewinding`、世界 + 自己上底片，位置不本地预测）；`_apply_own_film` 只作用于世界图层 + 自己；`TimeFx.tick` 双侧视效(S-19 后实现已到 `scenes/mp_client/time_fx.gd`,宿主只留委托) |
 | `scenes/lobby_page.gd` | 建房页时间参数滑条（`TimeRules` 实例；`_beta_payload()` 先 `clamp_self()` 再上报 `{"beta":true,"time":…}`） |
 
@@ -69,7 +69,7 @@
 7. **颗粒账户口径**（`GrainAccount`，纯逻辑零场景依赖）：一笔 `spend(delta, rate)` 同时扣总余额与短时窗（`short_used`）；短时窗满 ⇒ 溢出进贷款（`loan_used`）；贷款达 `loan_max` ⇒ `locked = true` 且 `can_spend()` 恒假；`regen(delta)` 无论是否在消耗都照走，先还贷后回窗，贷满锁定者还清那一刻自动解锁；`deposit(amount)` 只进总余额并夹 `cap`；`loan_depth() = loan_used / loan_max ∈ [0,1]`（`loan_max <= 0` 时返回 0）。
 8. **单机「录像带」模型**：`WorldRewind.finish()` 把过去的将来从 `_frames` 裁掉（至少留 1 帧），磁带钟退回出口，之后 `record()` 从这里续录；`TileLedger.prune_after(exit_t)` 同裁 ⇒ 两次回溯互不串带。PvP 同一语义在 `MatchHost._finish_rw`。
 9. **PvP 环缓只存该 role 自己**：位置 / 速度 / HP / 朝向 / 倒地 / 自己的武器弹量 + `b.shooter == p` 的自己的子弹；不重建已消亡的弹。回溯期间输入源 frozen、`take_hit` 免伤，自己的子弹随回放倒放且照常伤害他人。回溯重建的子弹必须补 `scene_path` meta：写这份 meta 的唯一地方是出膛那一刻，重建弹绕过它 ⇒ 再录进快照时 `sp` 是空串 ⇒ 下次回溯该弹凭空消失。
-10. **弹药回溯的语句序**（单机 `Player.rewind_restore` 与服务器 `_apply_rw_frame` 逐字对齐）：切枪必须排在条目写回之前（`_equip_index` 会把走掉那把的出膛实弹写回条目）；手持实弹走 `WeaponComponent.apply_mag()`（未入树窗口写 pending，由 `WeaponBase._ready` 消费），不直接写 `mag_ammo`；`wlive`（手持实弹）与 `wmags`（各槽条目）各自照抄快照。
+10. **弹药回溯的语句序**（**唯一实现** = 单机 `Player.rewind_restore`；服务器 `_apply_rw_frame` 只寻帧后调它 —— 2026-11-01 R3 合并前这里有两份逐字抄写，已抄出两处口径相反）：切枪必须排在条目写回之前（`_equip_index` 会把走掉那把的出膛实弹写回条目）；手持实弹走 `WeaponComponent.apply_mag()`（未入树窗口写 pending，由 `WeaponBase._ready` 消费），不直接写 `mag_ammo`；`wlive`（手持实弹）与 `wmags`（各槽条目）各自照抄快照。
 11. **单机录制期保留尸体**：`WorldRewind.hold_corpses` 由 `Level0._tick_rewind` 每帧同步（录制 = true / 回放 = false）；保留下来的尸体隐藏时必须同时摘碰撞层（还原走 `_rw_held_layer`），否则是虚空碰撞箱；过期由 `WorldRewind.expire_corpses()` 按 `rw_death_ms` 清理。精英不保留。
 12. **进/出回溯必须读同一个输入源**：单机状态沿是 `WorldRewind.was_rewinding`，PvP 是 `_rw_on[role]`；置 `src.frozen = true` 与解冻必须是宿主自己那一个 `input_source` 对象（换对象 ⇒ `want` 恒假、回溯出不来）。
 13. **PvP 数值权威在服务器，客户端只做预测**：客户端拿 10Hz `TimeState` 镜像（`TimeEconomy.state_payload()`），本地不扣颗粒；本地加速只写 `pvp_haste_mult`，本地回溯只做冻结输入源 + 免伤 + 底片，位置由快照权威写回。建房参数走 `TimeRules.from_dict()`，其内部调 `clamp_self()`。
@@ -153,4 +153,4 @@
 
 - 回溯不还原「被打磨、但还没碎」的砖血;格级 HP 基线的纹路口径只在混纹理格上两侧不一致。`TimeField.current` 是 static 且从不置回 `null`;同一进程内「菜单 → 单机 → 回菜单 → PvP」这条路径上的残留影响未核。
 - `TileLedger` 只看 `not is_rewinding()`,不按破坏来源过滤;今天单机没有第二个破坏来源。
-- PvP 侧回溯的端到端行为(免伤 / 倒放 / 弹量)在 headless 里够不到;`MatchHost._apply_rw_frame` 与 `Player.rewind_restore` 的「逐字对齐」是注释声明,不是断言。线上 `trail` 只带最近 4 点 ⇒ 回溯残像比完整轨迹短;唯一判据是人眼。
+- PvP 侧回溯的端到端行为(免伤 / 倒放 / 弹量)在 headless 里够不到;2026-11-01(R3)起 `MatchHost._apply_rw_frame` **不再自带一份抄写**、只寻帧后调 `Player.rewind_restore` ⇒ "两份会不会漂"这个问题从根上消失,但**行为本身仍无断言**(用户当轮要求不测,见 [`registered-debt.md`](registered-debt.md) §五十六)。线上 `trail` 只带最近 4 点 ⇒ 回溯残像比完整轨迹短;唯一判据是人眼。

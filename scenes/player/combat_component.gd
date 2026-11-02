@@ -109,21 +109,28 @@ func set_downed_by_rewind(v: bool) -> void:
 		went_down.emit()
 
 
-func revive() -> void:
+## 回溯专用(2026-11-01 R3):把倒地态恢复成"活着"的状态与表现 —— 与 `revive()` 的唯一区别是**不动 `hp`**。
+## ★ 为什么必须分开:调用方(`Player.rewind_restore`)刚从快照恢复过 `hp`,再走 `revive()` 会把 hp 顶成满血、
+##   把快照值冲掉(旧实现正是这样:单机回溯从倒地回到死前,血量变成满血)。而服务器那份旧实现又只置 downed、
+##   不恢复旋转/灰屏 ⇒ 两端口径相反。现在 `revive()` = 本函数 + `hp = max_hp`,两边都只有这一份实现。
+func restore_alive_state() -> void:
 	if not downed:
 		return
-	downed = false
-	hp = max_hp
+	set_downed_by_rewind(false)   # downed=false + 动画切 idle(不扣血、不发 went_down)
 	body.rotation = 0.0
-	var animator: AnimatedSprite2D = body.animator
-	if animator != null:
-		animator.play("idle")
-	# 复位倒地变灰:_downed() 只 set_downed(true),不复位则复活后屏幕一直灰(PvP 回合复活)。
+	# 复位倒地变灰:_downed() 只 set_downed(true),不复位则复活后屏幕一直灰。
 	var tree := body.get_tree()
 	if tree != null:
 		var pp := tree.get_first_node_in_group("post_process")
 		if pp != null and pp.has_method("set_downed"):
 			pp.set_downed(false)
+
+
+func revive() -> void:
+	if not downed:
+		return
+	restore_alive_state()
+	hp = max_hp
 
 func _downed() -> void:
 	downed = true
