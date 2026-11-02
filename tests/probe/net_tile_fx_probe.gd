@@ -4,17 +4,21 @@ extends ProbeBase
 # 覆盖:① 格级事件只新增 **1 簇**粒子(旧实现 17 簇);② 粒子坐标已锚到本地玩家附近的环面副本;
 #       ③ silent(重连补态)0 簇;④ 已死/重复子格不播;⑤ 本端刚播过命中碎片的破坏事件去重;
 #       ⑥ 格级事件仍然清掉 16 个子格状态(防止"只把粒子数按住、状态没清")。
+# ★ 2026-11-01(R2)追加:⑦ **有预测环时变更必须走 `apply_external_event(seq, cb)` 注入**(seq 透传、地形照拆、粒子仍 1 簇);
+#       ⑧ **注入被拒时兜底立即应用**(地形照拆)。去掉注入(改回"到达即改地形")⇒ ⑦ 红。
 #
-# 最强保证:直接调 TileSync.on_cell / on_sub,断言节点数与世界坐标;不碰网络、不开端口。
+# 最强保证:直接调 TileSync 的事件入口,断言节点数与世界坐标、以及注入是否被调用;不碰网络、不开端口。
 # 测不到什么:① `sub_destroyed` RPC 是否真从服务器到达(要真链路);② 服务端 headless 是否白建粒子;
-#   ③ 观感(簇大小/去重是否"感觉没反馈")—— 按 AGENTS.md 观感项只能人眼。
+#   ③ 服务器"逐 peer 发 seq"这一步(这里用 stub rollback 代替真 C2;真链路由 `pvp_match_smoke` 兜底);
+#   ④ 观感(簇大小/去重是否"感觉没反馈")—— 按 AGENTS.md 观感项只能人眼。
 # 变异验证(去掉/改掉哪一处会红):
 #   · on_cell 的 16 次 on_sub 改回透传 silent ⇒ ①红(17 簇);
 #   · 去掉 _fx_pos / 去掉 anchor_to_nearest ⇒ ②红;
 #   · 去掉 consume_hit_near ⇒ ⑤红;
-#   · 去掉 damage_sub 的返回值判据 ⇒ ④红。
+#   · 去掉 damage_sub 的返回值判据 ⇒ ④红;
+#   · 去掉 `_apply_event` 的注入分支(直接 mutate.call())⇒ ⑦红。
 
-const EXPECTED_CHECKS := 9
+const EXPECTED_CHECKS := 11
 
 const TileHitFx := preload("res://scenes/effects/tile_hit_fx.gd")
 
@@ -36,6 +40,9 @@ const REPEAT_SUB := Vector2i(8, 4)
 const DEDUP_SUB := Vector2i(12, 4)
 # silent 形态用格(0,0)。
 const SILENT_CELL := Vector2i(0, 0)
+# R2(注入)用格:⑩ 有预测环 ⇒ 走注入;⑪ 注入被拒 ⇒ 兜底立即应用。
+const INJECT_CELL := Vector2i(5, 2)
+const REJECT_CELL := Vector2i(1, 2)
 
 # 本地玩家位置:贴左接缝(所以 canonical 右侧的粒子必须被搬过来)。
 const LOCAL_POS := Vector2(10.0, 192.0)
@@ -44,6 +51,22 @@ const LOCAL_POS := Vector2(10.0, 192.0)
 class StubClient extends Node:
 	var _world: Node2D = null
 	var _local: Node2D = null
+	var _rollback = null      # ⑩⑪ 用:R2 注入路径的替身(见 StubRollback)
+
+
+# 预测环替身:只实现 TileSync 用到的那一个方法。`reject=true` = 模拟"环外/已 ack"的拒绝路径。
+class StubRollback extends RefCounted:
+	var seqs: Array[int] = []
+	var calls := 0
+	var reject := false
+
+	func apply_external_event(seq: int, cb: Callable) -> int:
+		if reject:
+			return 1
+		seqs.append(seq)
+		calls += 1
+		cb.call()
+		return 0
 
 
 var _client: StubClient = null
@@ -119,6 +142,33 @@ func _run() -> void:
 	_check(_particle_count() == 2, "刚播过命中碎片的砖,破坏事件应被去重,实得 %d" % _particle_count())
 	_checks += 1
 
+	# ⑩ R2:有预测环 ⇒ 变更必须走 `apply_external_event(seq, cb)` 注入(seq 透传、地形照拆、粒子仍只 1 簇)。
+	#    ★ 这里走 RPC 入口 `_rpc_on_cell`(带锚点),而 `on_cell` 是"无锚点 ⇒ 立即应用"的老入口。
+	var rb := StubRollback.new()
+	_client._rollback = rb
+	var particles_before := _particle_count()
+	_sync._rpc_on_cell(INJECT_CELL, 42)
+	var cleared_inject := true
+	for sy in 4:
+		for sx in 4:
+			if TileDefs.sub_alive(Vector2i(INJECT_CELL.x * 4 + sx, INJECT_CELL.y * 4 + sy)):
+				cleared_inject = false
+	_check(rb.seqs == [42] and cleared_inject and _particle_count() == particles_before + 1,
+			"有预测环时应走注入:注入的 seq=%s、子格已清=%s、粒子 +%d" % [
+				str(rb.seqs), str(cleared_inject), _particle_count() - particles_before])
+	_checks += 1
+
+	# ⑪ 注入被拒(环外 / 已 ack)⇒ 兜底立即应用:地形照拆,不报错、不告警。
+	rb.reject = true
+	_sync._rpc_on_cell(REJECT_CELL, 43)
+	var cleared_reject := true
+	for sy in 4:
+		for sx in 4:
+			if TileDefs.sub_alive(Vector2i(REJECT_CELL.x * 4 + sx, REJECT_CELL.y * 4 + sy)):
+				cleared_reject = false
+	_check(cleared_reject, "注入被拒时应兜底立即应用(该格 16 个子格必须被拆),否则客户端留幽灵墙")
+	_checks += 1
+
 	# ⑨ 条数闸(防"断言被静默跳过、verdict 仍 ALL-OK")
 	if _checks != EXPECTED_CHECKS:
 		_check(false, "实跑 %d 条断言,与 EXPECTED_CHECKS=%d 对不上(有断言被静默跳过?)"
@@ -131,7 +181,7 @@ func _run() -> void:
 
 func _build_world() -> void:
 	# 5 块可破坏树叶格(其余空气):每格 16 个子格都是纹理 15。
-	var alive_cells := [CELL_EVENT, SUB_CELL, REPEAT_SUB / 4, DEDUP_SUB / 4, SILENT_CELL]
+	var alive_cells := [CELL_EVENT, SUB_CELL, REPEAT_SUB / 4, DEDUP_SUB / 4, SILENT_CELL, INJECT_CELL, REJECT_CELL]
 	var grid: Array[Array] = []
 	for y in ROWS:
 		var row: Array = []

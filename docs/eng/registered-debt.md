@@ -1124,3 +1124,45 @@ f=50 又一条；上下文显示客户端在 f=50 被墙挡住 `velocity.x 642�
 （重试/更长等待，或把探针正式入库成 `run_real` 支）——否则测了也说不清是修复还是噪声。
 
 **守卫**：本轮零代码改动、零新守卫（负面结论按诊断类登记，不写断言）；探针仍是 `.superpowers/` 下的一次性脚本。
+
+## 五十五、拆砖事件按 seq 注入预测历史（R2，2026-11-01，档 3）
+
+**起因**：plan §R2。客户端收到拆砖事件**到达即改地形**，而回滚重放读的是"拆完之后"的地形 ⇒ 重放 ≠ 原预测
+⇒ 打穿掩体/楼梯附近连环回滚（幽灵墙循环）。这是唯一"到达即改世界、却不参与预测时序"的服务器事件
+（受击早在 §十五 就按 seq 对齐了）。用户拍板走**方案 A（复用受击事件那套注入机制）**。
+
+**改了什么**（4 个文件，协议不升版本 —— 动的是既有 RPC 参数，不是快照/c2 字段）：
+1. `server/match/match_combat.gd`：新增 **`_event_seq_for(role)` 单一来源**（把受击路径里原来内联的
+   `_stepped_seq` + `max(ack−1,0)` 兜底搬进来，受击改调它）；`_on_tile_destroyed` / `_on_sub_destroyed` 改成
+   **逐 peer 点对点发**并带该 peer 的锚点（`NetBus.rpc_id(peer_by_role[r], "tile_destroyed", cell, seq)` /
+   `NetBusExt.rpc_id(..., "sub_destroyed", sub, seq)`），不再 `_rpc_all`。
+   ★ 锚点逐 peer 不同 ⇒ 广播发不出"每个人自己的" seq，这是必须点对点的原因。
+2. `core/net/net_bus.gd` / `net_bus_ext.gd`：`tile_destroyed(cell, seq)` / `sub_destroyed(sub, seq)`；
+   信号 `local_tile_destroyed(cell, seq)` / `local_sub_destroyed(sub, seq)`。
+3. `scenes/mp_client/tile_sync.gd`：订阅改接 `_rpc_on_cell` / `_rpc_on_sub`；`_apply_cell` / `_apply_sub` 把
+   **变更**放进 callable，交给新增的 `_apply_event(seq, mutate)` → `PredictionRollback.apply_external_event`；
+   **表现**（粒子 / 致命一击去重）在 callable **之外**只播一次；`on_cell` / `on_sub` 保留为**无锚点入口**（seq=0 ⇒ 立即应用）。
+   ★ 幂等硬要求：callable 会被后续每次重放重新执行 ⇒ 只许调 `TileDefs.damage_sub`（已死子格返回 false）。
+4. 探针：`net_tile_fx_probe` 9→**11**（⑦ 有预测环时必须走注入、⑧ 注入被拒时兜底立即应用）；
+   `rollback_fidelity_probe` 34→**36**（锚点单源 / 受击·整格·子格三条事件都用它 / 拆砖逐 peer 发）。
+
+**验证（逐字）**：
+- 默认批：`RUN_ALL OK(41 runs / 354 gated-assertions)`（+4 = 上面两条探针各 +2）；`KH net_tile_fx PROBE: ALL-OK`；
+  `ROLLBACK FIDELITY PROBE: ALL-OK`（`[fid] checks = 36 (EXPECTED_CHECKS=36)`）；`SNAPSHOT SIZE PROBE: ALL-OK`；
+  `ALLSCRIPT: OK(241 个脚本全部加载)`；跑完 `godot procs after = 0`。
+- 真链路（档 3 必做）：`bash tests/smoke/pvp_match_smoke.sh` → **SMOKE PASS**（7777 空闲时跑，前后无残留进程）。
+- 变异（逐条，档 3 要求）：
+  · 去掉客户端注入（`_apply_event` 直接 `mutate.call()`）⇒
+    `KH net_tile_fx PROBE: FAIL | 有预测环时应走注入:注入的 seq=[]、子格已清=true、粒子 +1`；
+  · 服务器改回 `_rpc_all` ⇒ `ROLLBACK FIDELITY PROBE: FAIL` +
+    `✗ 受击 / 整格拆砖 / 子格拆砖 三条事件都必须用同一个锚点源(实得 1/3 处;少一处 = 那条事件没对齐)` +
+    `✗ 拆砖必须逐 peer 发锚点(点对点 0/2 处;_rpc_all 2 处 —— 广播发不出每人自己的 seq)`；
+  · 还原后两条都 `ALL-OK`。
+
+**代价 / 边界（照实）**：
+1. 拆砖从 1 次广播变 **N 次点对点**（16 人局 = 16 次/事件，与 `hit_event` 同量级）。拆砖事件本身稀；若之后有"高频小破坏"
+   玩法，要重新评估这次改动。
+2. 探针里用 **stub rollback** 代替真 C2 ⇒ 客户端注入路径是行为级验证；服务器"逐 peer 发 seq"只有源码守卫 + 真链路。
+3. 注入被拒（环外 4.3s / 已 ack / 乱序）⇒ 立即应用 = 旧行为：那一次仍可能产生一次回滚，但不会连环。
+4. 观感（粒子簇数 / 致死一击去重）仍是人眼项，探针只钉节点数与坐标。
+5. **没有**验证"拆砖后跑过去不再回滚"的端到端读数（本机 loopback 编排不稳，见 §五十四）—— 这一条要靠真人对局/公网复测。

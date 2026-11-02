@@ -75,12 +75,13 @@ func royale_rooms(rooms: Array) -> void:
 
 
 # ── Beta 时间玩法:16px 子格被摧毁(cyrm v4)。客户端清一个 16px 渲染格与本地预测碰撞(与 tile_destroyed 同链路,粒度细到子格)。
-signal local_sub_destroyed(sub: Vector2i)
+# ★ 2026-11-01(R2):带 `seq` 锚点 —— 客户端把它注入预测历史(`apply_external_event`),而不是"到达即改地形"。
+signal local_sub_destroyed(sub: Vector2i, seq: int)
 
 
 @rpc("authority", "call_remote", "reliable", 3)
-func sub_destroyed(sub: Vector2i) -> void:
-	local_sub_destroyed.emit(sub)
+func sub_destroyed(sub: Vector2i, seq: int) -> void:
+	local_sub_destroyed.emit(sub, seq)
 
 
 signal local_time_state(payload: Dictionary)

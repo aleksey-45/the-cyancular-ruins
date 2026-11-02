@@ -22,7 +22,7 @@ signal local_beam_fired(data: Dictionary)   # 即时光束武器(激光)权威�
 signal local_go_match(role: int, port: int)   # 大厅配对完:客户端去连对局 worker(role/port 由此给)
 signal local_peer_info(names: Dictionary)     # worker 开局:双方昵称 {role(int) -> name}(头上显示)
 signal local_hit_event(victim_role: int, damage: int, source_pos: Vector2, seq: int)
-signal local_tile_destroyed(cell: Vector2i)
+signal local_tile_destroyed(cell: Vector2i, seq: int)
 signal local_round_state(data: Dictionary)
 signal local_kill_event(killer: int, victim: int)
 signal local_weapon_spawned(data: Dictionary)   # 场上多了一件地面武器({inst,type_id,mag,pos,vel})
@@ -270,9 +270,11 @@ func match_sync_data(payload: Dictionary) -> void:
 func hit_event(victim_role: int, damage: int, source_pos: Vector2, seq: int) -> void:
 	local_hit_event.emit(victim_role, damage, source_pos, seq)
 
+# 拆砖(R2,2026-11-01):`seq` = 服务器"上一次完成步进时的已消费 seq"(逐 peer 不同,与 hit_event 同一锚点定义)。
+# ★ 加参数不升 PROTO_VERSION:两端同 build 才连得上,而这是既有 RPC 的参数、不是快照/c2 字段。
 @rpc("authority", "call_remote", "reliable", 3)
-func tile_destroyed(cell: Vector2i) -> void:
-	local_tile_destroyed.emit(cell)
+func tile_destroyed(cell: Vector2i, seq: int) -> void:
+	local_tile_destroyed.emit(cell, seq)
 
 @rpc("authority", "call_remote", "reliable", 0)
 func round_state(data: Dictionary) -> void:

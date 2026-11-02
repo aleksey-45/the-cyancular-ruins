@@ -1,6 +1,6 @@
 # tests/ — 冒烟 / 探针 / 真链路(无测试框架)
 
-没有单测框架。**判据一律 grep 脚本自己打的 OK 文本**(如 `… ALL-OK` / `… OK(…)`);**退出码从来不是判据**。引擎路径与单支跑法见根 [`CLAUDE.md`](../CLAUDE.md)「常用命令」。
+没有单测框架。**判据一律 grep 脚本自己打的 OK 文本**(如 `… ALL-OK` / `… OK(…)`);**退出码从来不是判据**。引擎路径与单支跑法见根 [`AGENTS.md`](../AGENTS.md) §1「跑什么」。
 
 > ## ★★ 2026-10-24 默认批激进削减：20 → 6
 >
@@ -13,7 +13,7 @@
 > ⇒ **默认批 = 6 支**；真链路批**未动**（6 条 entries）。
 >
 > **2026-10-26 追加 5 支**（水判定 / 命中几何 / 最小破坏单位 / 联机拆砖粒子 / 子弹扫掠）：
-> `water_model_smoke`(13) · `hit_shape_smoke`(13) · `tile_break_unit_smoke`(10) · `net_tile_fx_probe`(9) · `bullet_sweep_probe`(4)
+> `water_model_smoke`(13) · `hit_shape_smoke`(13) · `tile_break_unit_smoke`(10) · `net_tile_fx_probe`(11) · `bullet_sweep_probe`(4)
 > ⇒ **默认批 = 11 支 / 62 条闸断言**（全批判词 `RUN_ALL OK(11 runs / 62 gated-assertions)`）。上面 2026-10-24 的"6 支"保留为历史记录。
 >
 > **2026-10-27 再追加 1 支**（服务器命中回放历史）：`lag_history_smoke`(8) ⇒ **默认批 = 12 支 / 74 条闸断言**（`RUN_ALL OK(12 runs / 74 gated-assertions)`）；`hit_shape_smoke` 13→14、`bullet_sweep_probe` 4→6。
@@ -34,6 +34,7 @@
 > **2026-11-01 联机收尾批（房间秒删 / 捡不动枪 / 出生点按侧地图数据 / 对抗模式）**：新增 `team_rules_smoke`(13，对抗模式目标与三种补贴) · `spawn_chooser_smoke`(**19**，按侧复活点解析/半区桶/随机/排除上一次/间距) · `ground_weapon_field_smoke`(5，落定重锚) · `map_spawn_data_probe`(**20**，真实地图按侧复活点数据 + 每点可抵达) · `water_atlas_probe`(6，水图集) · `step_jump_smoke`(10，自动跳跃:判据 + 跳高=台阶高) ⇒ **默认批 = 40 支 / 323 条闸断言**（`EXPECTED_SCRIPTS` 222→**235**）。同批:回收梯 10s→**1s**、拾取落定重锚 + 0.4s 意图重试、出生/复活点改写死在地图 meta 的 `# respawn <1|2>`（按阵营半区、每侧 ≥5 且 3×3 桶覆盖）、3v3 改名「对抗」并支持 2~10 人 + 目标/比分/血量/伤害补贴；**水体/水面砖修正**（`WATER_BODY_BRICK=20` / `WATER_SURFACE_BRICK=21`，此前整片水体被画成水面）、**复活点改为可抵达判据**（跳跃感知主连通分量，禁止封闭空间；`--check` 工具校验）、**≤1 格台阶自动跳跃（≤32px 直接迈上去，更高才跳）**、客户端视觉子弹受击候选**每物理帧缓存**（多人局 O(子弹×玩家) 组查询）；**相机补死区/平滑/前瞻**（`cam_deadzone=24`，连续空间跟随，跨接缝不露馅、真传送直接重锚）。
 > **2026-11-01 输入 60Hz 批**：上行从 30Hz 一包两条改回 **60Hz 一包一条**（`InputWire.INPUT_BATCH_TICKS := 1`、输入包 42→**28 B/包**、`PROTO_VERSION 7→8`，两端必须同 build）；`pack_pair`/`unpack_pair` 删除，`net_wire_smoke`/`snapshot_rx_smoke`/`pvp_match_smoke` 夹具改单记录；服务端 `_on_input` 收到即入队（不再拆包）。默认批 = **41 支 / 348 条**（其中 +6 支来自另一会话的 bot 批，`EXPECTED_SCRIPTS` 235→**241**）；真链路 `pvp_match_smoke` **SMOKE PASS**。
 > **2026-11-01 R1 批**：删 `_auto_jump_assist`（自动跳的本地计时器；它进不了整态 ⇒ 回滚重放分歧）；`stair_climb_probe` 5→**7**（+ ⑥ 非空转前提、⑦ 回放确定性：自动跳空中窗口 capture→18 帧→restore→同输入重放须逐帧精确相等）⇒ 默认批 = **41 支 / 350 条**（`RUN_ALL OK(41 runs / 350 gated-assertions)`；`EXPECTED_SCRIPTS` 241 不变）。
+> **2026-11-01 R2 批**：拆砖事件按 seq 注入预测历史（服务器 `_event_seq_for` 单源 + 逐 peer 发；客户端 `TileSync` 变更走 `apply_external_event`，粒子在注入外只播一次）⇒ `net_tile_fx_probe` 9→**11**、`rollback_fidelity_probe` 34→**36**；默认批 = **41 支 / 354 条**（`RUN_ALL OK(41 runs / 354 gated-assertions)`）；真链路 `bash tests/smoke/pvp_match_smoke.sh` **SMOKE PASS**。
 > ★ **删了什么 = 欠了什么**：删除清单、覆盖缺口与翻案条件登记在 [`docs/eng/registered-debt.md`](../docs/eng/registered-debt.md) §九。
 > ★ 仓规未变：**一条判定类别 = 一条守卫**、**新守卫必须自带条数闸**、**先答三问再写**（[`docs/eng/test-economy.md`](../docs/eng/test-economy.md)）。
 
@@ -72,7 +73,7 @@ ejoin_probe 仍为已知红。★ 失败 entry 会残留 7777 大厅、连累后
   `smoke/pvp_match_smoke.gd` + `probe/{rejoin,royale_soak,team_match}_probe.tscn`（它们仍在枚举集里，清掉规则会让承重安全检查 FATAL 或让它们悄悄占 7777）。**枚举 / 排除的实时数字以 `--list` 为准。**
 - **入口自己会红的九种情形**：glob 空转 / 过期排除项 / `probe/*.gd` 既没跑也没排除 / 默认批里出现开端口或拉子进程的支 / 新红 / 基线条目过期 / 基线路径不在候选面 / 基线文件本身写错 / 某支声明了 `EXPECTED_CHECKS` 却没用于比较。
 - ★★ **单支 `OK` 只证明“没有失败输出”，不证明“每条断言都跑过”**（权威：[`lib/probe_base.gd`](lib/probe_base.gd) 文件头）。`--list` 的 `GATE` 栏是 `-` 就表示那一支**没有条数闸**；带闸的支与闸值以 `GATE` 栏为准。
-  - 现有带 `EXPECTED_CHECKS` 的支：`net_wire_smoke`(6) · `input_queue_smoke`(6) · `snapshot_size_probe`(9) · `water_model_smoke`(13) · `hit_shape_smoke`(14) · `tile_break_unit_smoke`(11) · `net_tile_fx_probe`(9) · `bullet_sweep_probe`(6) · `lag_history_smoke`(8) · `net_metrics_smoke`(9) · `prediction_contact_smoke`(9) · `mvp_choice_smoke`(6) · `net_argv_port_smoke`(5) · `prediction_rollback_ring_smoke`(3) · `gun_ammo_independence_probe`(8) · `resync_substate_smoke`(5) · `rejoin_mode_smoke`(4) · `panel_log_tail_smoke`(6) · `room_view_smoke`(7) · `grace_dispatch_smoke`(6) · `reclaim_rules_smoke`(5) · `snapshot_rx_smoke`(7) · `lan_ip_smoke`(5) · `net_diag_split_smoke`(5) · `rollback_contact_vel_smoke`(5) · `down_edge_probe`(3) · `rollback_fidelity_probe`(34) · `team_rules_smoke`(13) · `spawn_chooser_smoke`(19) · `ground_weapon_field_smoke`(5) · `map_spawn_data_probe`(20) · `water_atlas_probe`(6) · `step_jump_smoke`(12) · `torus_camera_probe`(8) · `wheel_switch_probe`(11) · `stair_climb_probe`(7)。**`gated-assertions` 的实时数以 `--list` 为准。**
+  - 现有带 `EXPECTED_CHECKS` 的支：`net_wire_smoke`(6) · `input_queue_smoke`(6) · `snapshot_size_probe`(9) · `water_model_smoke`(13) · `hit_shape_smoke`(14) · `tile_break_unit_smoke`(11) · `net_tile_fx_probe`(11) · `bullet_sweep_probe`(6) · `lag_history_smoke`(8) · `net_metrics_smoke`(9) · `prediction_contact_smoke`(9) · `mvp_choice_smoke`(6) · `net_argv_port_smoke`(5) · `prediction_rollback_ring_smoke`(3) · `gun_ammo_independence_probe`(8) · `resync_substate_smoke`(5) · `rejoin_mode_smoke`(4) · `panel_log_tail_smoke`(6) · `room_view_smoke`(7) · `grace_dispatch_smoke`(6) · `reclaim_rules_smoke`(5) · `snapshot_rx_smoke`(7) · `lan_ip_smoke`(5) · `net_diag_split_smoke`(5) · `rollback_contact_vel_smoke`(5) · `down_edge_probe`(3) · `rollback_fidelity_probe`(36) · `team_rules_smoke`(13) · `spawn_chooser_smoke`(19) · `ground_weapon_field_smoke`(5) · `map_spawn_data_probe`(20) · `water_atlas_probe`(6) · `step_jump_smoke`(12) · `torus_camera_probe`(8) · `wheel_switch_probe`(11) · `stair_climb_probe`(7)。**`gated-assertions` 的实时数以 `--list` 为准。**
   - ★ `allscript_probe` 有自己的条数闸 `EXPECTED_SCRIPTS`（当前 **241**；**232 是 2026-11-01 输入 60Hz 批之前的旧数**，235→241 的来历见上方「2026-11-01 输入 60Hz 批」段；`res://docs` 已进 `SKIP_DIRS`，文档目录里的临时审计驱动不计入编译面），但 `run_all` 的 `gate_of()` 只认 `EXPECTED_CHECKS` ⇒ 它的 `GATE` 栏是 `-`。**别把 `-` 读成“没有闸”**。
 - ★★ **已知红基线 [`known_red.txt`](known_red.txt)**：每行 `路径 类别 理由…`（理由必填；`#` 是注释；空行 / 类别非法 / 路径不存在 / 同一路径两行都**红**）。基线内的红 = `KNOWN-RED`：不进新红计数、但永远印出文件名，全批判词改 `OK-WITH-KNOWN-RED`。**当前基线为空（0 条）**；加行**不是**让检查变绿的手段，修好了要删行。
 

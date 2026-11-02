@@ -6,6 +6,15 @@ const LagComp := preload("res://core/net/lag_comp.gd")     # playout / 回放深
 
 # 子弹 / 爆炸 / 光束的裁决与广播域;拆墙广播也在这里(它同属「命中/破坏」这条线)。
 
+# 事件的**时间锚点** = 上一次完成步进时的已消费 seq(MatchState._stepped_seq,帧末 deferred 记录)。
+# ★ 裁决与拆砖都发生在玩家子节点本帧步进之前(父先于子)⇒ 处理的是"上一步之后"的状态;传当帧 ack 会让注入晚一步。
+# ★ 不能用 _srv_tick:输入饥饿(队列空、沿用上一条 held)时 ack 与实际步进脱钩,而 _srv_tick 每 tick +1。
+# ★★ 锚点**逐 peer 不同** ⇒ 受击与拆砖都必须点对点发(不能 _rpc_all),每个客户端拿自己那条时间线(2026-11-01 R2)。
+func _event_seq_for(role) -> int:
+	var fallback := maxi(int(_ack_seq.get(int(role), 0)) - 1, 0)
+	return int(_stepped_seq.get(int(role), fallback))
+
+
 func _on_tile_destroyed(cell: Vector2i) -> void:
 # ★ 子格是 16px(v4:64px 格 → 4×4),必须按当前格展开 —— 别用 *2,那是 v3 时代 32px/2×2 的过期口径:
 # 会把邻格象限清出洞,而被拆那一格 16 个子格一个都没清(留幽灵墙)。反向换算见 _on_sub_destroyed 的 sub / 4。
@@ -18,7 +27,10 @@ func _on_tile_destroyed(cell: Vector2i) -> void:
 				damaged_subs[Vector2i(cell.x * 4 + sx, cell.y * 4 + sy)] = true
 		_dirty_chunks[CollisionBuilder.chunk_of(cell)] = true
 
-	_rpc_all("tile_destroyed", [cell])
+	# 拆砖事件带**逐 peer 的 seq 锚点**,客户端把它注入预测历史(2026-11-01 R2)。★ 不能 _rpc_all:锚点逐 peer 不同。
+	for r in peer_by_role:
+		if NetBus.is_peer_live(peer_by_role[r]):
+			NetBus.rpc_id(peer_by_role[r], "tile_destroyed", cell, _event_seq_for(r))
 
 
 # 16px 子格被摧毁:清持久子格 + 标记分块重建 + 广播;owner(射手节点)映射成 role,Beta 时间玩法在这里结算拆砖得颗粒。
@@ -27,7 +39,10 @@ func _on_sub_destroyed(sub: Vector2i, _pre_hp: int, owner: Node) -> void:
 	if not destructible_sub.is_empty() 			and sub.y >= 0 and sub.y < destructible_sub.size() 			and sub.x >= 0 and sub.x < (destructible_sub[0] as Array).size():
 		destructible_sub[sub.y][sub.x] = MazeGenerator.EMPTY
 		_dirty_chunks[CollisionBuilder.chunk_of(Vector2i(sub.x / 4, sub.y / 4))] = true
-	_rpc_all_ext("sub_destroyed", [sub])
+	# 子格事件同样带逐 peer 的 seq 锚点(理由见 _event_seq_for)。
+	for r in peer_by_role:
+		if NetBus.is_peer_live(peer_by_role[r]):
+			NetBusExt.rpc_id(peer_by_role[r], "sub_destroyed", sub, _event_seq_for(r))
 	if time_economy != null:
 		var role := _role_of(owner)   # 查不到 = -1(不是 0:0 是「无队伍/无归因」的合法值)
 		if role >= 0:
@@ -273,11 +288,8 @@ func _on_player_hit(source_pos: Vector2, damage: int, cause: String, role: int) 
 		var rw_attacker := _attributed_role_within(stat_victim, ATTRIB_WINDOW)
 		if rw_attacker != 0 and rw_attacker != int(role) and not same_team(rw_attacker, int(role)):
 			time_economy.award_damage(rw_attacker, int(role), damage)
-	# 受击事件的时间锚点 = **上一次完成步进时的已消费 seq**(MatchState._stepped_seq,帧末 deferred 记录)。
-	# ★ 裁决发生在玩家子节点本帧步进之前(父先于子)⇒ 被击中的是上一步之后的状态;传当帧 ack 会让注入晚一步。
-	# ★ 不能用 _srv_tick:输入饥饿(队列空、沿用上一条 held)时 ack 与实际步进脱钩,而 _srv_tick 每 tick +1。
-	var fallback := maxi(int(_ack_seq.get(int(role), 0)) - 1, 0)
-	var hit_seq := int(_stepped_seq.get(int(role), fallback))
+	# 受击事件的时间锚点见 _event_seq_for(逐 peer 不同 ⇒ 下面必须点对点发)。
+	var hit_seq := _event_seq_for(role)
 	for r in peer_by_role:
 
 		if NetBus.is_peer_live(peer_by_role[r]):

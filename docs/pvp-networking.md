@@ -132,7 +132,7 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 - 命中 = 子弹上一位置→当前位置的线段与玩家受击面(`Player.hurt_rect()`,= 当前姿态箱 AABB)相交(`core/sim/hit_shape.gd`);命中后 `take_hit` + 广播 `hit_event` + `queue_free()`。
 - 榴弹在 `_adjudicate_grenade`:只结算一次直接命中,不销毁子弹,引信照常爆炸。
 - 即时光束:`_broadcast_pending_beams()` 轮询 `collect_pending_beam_report()`,经 `beam_fired` 广播给非射手端。
-- 拆墙:`_on_tile_destroyed` 清 `sub_hp` 与 `destructible_sub` 子格、标 `_dirty_chunks`、广播 `tile_destroyed`;16px 子格拆毁走 `_on_sub_destroyed` + `sub_destroyed`。
+- 拆墙:`_on_tile_destroyed` 清 `sub_hp` 与 `destructible_sub` 子格、标 `_dirty_chunks`、广播 `tile_destroyed`;16px 子格拆毁走 `_on_sub_destroyed` + `sub_destroyed`。★ 2026-11-01(R2):两条拆砖事件都带**逐 peer 的 seq 锚点**(`MatchCombat._event_seq_for` = 上一条完成步进的输入 seq,与 `hit_event` 同源)且**点对点发**(不能用 `_rpc_all`);客户端据此把"改地形"注入预测历史,见 [`netcode-snapshots.md`](eng/netcode-snapshots.md) §2.3。
 
 ## 7. 客户端对局
 
@@ -163,7 +163,7 @@ RPC 里用 `multiplayer.get_remote_sender_id()` 取真实调用方。通道号�
 ### 事件消费
 
 - `bullet_spawn`:生成视觉子弹副本,`apply_damage = false`,摆到 canonical 位置;`hit_event`:带受击方**上一条完成步进**的输入 `seq` —— 本人分支交给 `_apply_local_hit_event`,能按服务器命中时刻注入预测历史时 restore+重放(本地击退与权威同源),否则只播白闪/震屏/挤压、不扣血(权威 c2 可能已含这一发);对手端只播闪烁。★ 溺水窒息是客户端已预测的伤害(`cause="water"`),服务器**不**发它的 `hit_event`。
-- `tile_destroyed` / `sub_destroyed`:同步拆砖渲染与碰撞;`round_state`:四态编排在基类,1v1 新一局清子弹 + 复位砖,`MATCH_OVER` 刷新结算页。
+- `tile_destroyed` / `sub_destroyed`:同步拆砖渲染与碰撞;★ 2026-11-01(R2)两者都带 seq 锚点,`TileSync` 把"改地形"交给 `apply_external_event` 注入预测历史(粒子仍在注入之外只播一次),注入被拒/无锚点则立即应用 = 旧行为。`round_state`:四态编排在基类,1v1 新一局清子弹 + 复位砖,`MATCH_OVER` 刷新结算页。
 - `opponent_left`:置 `_match_ended`、停重连、2.5s 后回主菜单。
 
 ## 8. 远端副本:PlayerReplica

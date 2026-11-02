@@ -230,29 +230,26 @@ create 建房 → join 加入 → 房主自动 `pvp_start` → 两端实例化**
 5. 文档：`docs/eng/netcode-client-interp-and-input-details.md`（事件锚点一节）、`docs/eng/world.md`（拆砖广播）、
    `registered-debt` 新小节；`tests/README.md` 计数。
 
-**需要拍板：A 还是 B？**（默认按 A 出实现；B 留作"若 A 之后仍见到地形相关回滚"的后手，并先登记不实现。）
+**已拍板：走 A（2026-11-01，用户选 A）**；B 留作后手、不实现。
 
----
+**A 的实现（已完成，4 个文件；协议不升版本 —— 动的是既有 RPC 参数，不是快照/c2 字段）**
+- [x] `server/match/match_combat.gd`：新增 **`_event_seq_for(role)` 单一来源**（受击原来内联的 `_stepped_seq` + `max(ack−1,0)` 兜底搬进来，受击改调它）；
+      `_on_tile_destroyed` / `_on_sub_destroyed` 改**逐 peer 点对点发**并带该 peer 的锚点（不再 `_rpc_all` —— 锚点逐 peer 不同）。
+- [x] `core/net/net_bus.gd` / `net_bus_ext.gd`：`tile_destroyed(cell, seq)` / `sub_destroyed(sub, seq)` + 对应信号加参。
+- [x] `scenes/mp_client/tile_sync.gd`：`_apply_cell` / `_apply_sub` 把**变更**放进 callable → `_apply_event(seq, mutate)`
+      → `apply_external_event`；**表现**（粒子 / 去重）在 callable 外只播一次；`on_cell` / `on_sub` 保留为无锚点入口（seq=0 ⇒ 立即应用）。
+      ★ callable 会被后续每次重放重新执行 ⇒ 只许调 `TileDefs.damage_sub`（已死子格返回 false，幂等）。
+- [x] 守卫：`net_tile_fx_probe` 9→**11**（⑦ 有预测环时必须走注入；⑧ 注入被拒时兜底立即应用）；
+      `rollback_fidelity_probe` 34→**36**（锚点单源 / 三条事件都用它 / 拆砖逐 peer 发）。
+- [x] 变异（逐字）：去掉客户端注入 ⇒ `KH net_tile_fx PROBE: FAIL | 有预测环时应走注入:注入的 seq=[]、子格已清=true、粒子 +1`；
+      改回 `_rpc_all` ⇒ `ROLLBACK FIDELITY PROBE: FAIL` + `✗ 受击 / 整格拆砖 / 子格拆砖 三条事件都必须用同一个锚点源(实得 1/3 处)` +
+      `✗ 拆砖必须逐 peer 发锚点(点对点 0/2 处;_rpc_all 2 处)`；还原后两条都 `ALL-OK`。
 
-**猜测：** 客户端收到拆砖事件就改地形，回滚重放用“更新后的地形”⇒ 重放结果 ≠ 原预测 ⇒ 在刚打穿的砖附近反复回滚（尤其楼梯/掩体）。
+**验收（逐字）**：默认批 `RUN_ALL OK(41 runs / 354 gated-assertions)`；真链路 `bash tests/smoke/pvp_match_smoke.sh` → **SMOKE PASS**；
+`KH net_tile_fx PROBE: ALL-OK`；`ROLLBACK FIDELITY PROBE: ALL-OK`（`[fid] checks = 36`）。
 
-**两个候选方案（先写设计再选一个）：**
-- **方案 A（小、先上）**：事件到达时把**预测环的 capture 清到事件锚点之后**，并让下一次 ack 走“权威锚定”而不是重放旧输入。
-  实现点：`PredictionRollback` 加 `drop_before(seq)`；`TileSync` 拿到事件带的服务器 tick/seq（需服务器补字段）后调用。
-  代价：事件到达那一下会接受一次“小橡皮筋”（≤ playout），但不会形成循环。
-- **方案 B（正确、后做）**：复用单机 `TileLedger`：PvP 客户端也记“每 tick 的地形变更账本”，回滚重放前把地形回退到该 capture 的 tick，回放后前滚。
-  代价：要定义 PvP 的“tick↔事件”映射与内存上限；单机的 `WorldRewind` 依赖 `TimeField`，必须做适配层，不能把时间玩法语义带进来。
-
-**做什么：**
-- [ ] 先写 §设计附录（两方案的影响面、字段、失败形态），用户拍板选 A 或 B。
-- [ ] 服务器：拆砖广播补“服务器 tick/seq”（只加载荷字段，不改通道、不升 PROTO_VERSION；两端同 build）。
-- [ ] 客户端：按选中方案实现；`TileSync` 不直接改地形的地方要抽成“按 tick 应用”的口。
-- [ ] 守卫：新增场景探针（或扩展 `resync_*`）：模拟「先预测 10 帧 → 到达一条拆砖事件 → 下一次 ack 恰好在事件锚点」⇒ 断言**不产生连续两次以上回滚**（`rollback_count()` 增量 ≤1）。
-- [ ] 变异：把事件改成“到达即应用但不清 capture” ⇒ 断言红。
-
-**验收：** 守卫绿 + 变异红/绿原文；R0 场景（打穿掩体后跑过去）回滚频率前后对比；真链路批绿。
-
-**边界：** 方案 A 的一次性小橡皮筋不可避免；方案 B 的内存与实现复杂度要登记。
+**没做的（照实）**：端到端的"打穿掩体后跑过去"回滚频率前后对比**测不了** —— 本机 loopback 编排不稳定（§R7 / debt §五十四），
+只能靠真人对局或公网复测；其余边界见 [`registered-debt.md`](../../eng/registered-debt.md) §五十五。
 
 ---
 
