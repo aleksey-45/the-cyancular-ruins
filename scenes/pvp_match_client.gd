@@ -99,6 +99,11 @@ func _boot_world() -> void:
 	var local: Node2D = _world.get_node("Player")
 	var ts := GameParameters.TILE_SIZE
 	local.position = Vector2(PvpSession.spawn.x * ts + ts / 2.0, PvpSession.spawn.y * ts + ts / 2.0)
+	# ★ 2026-11-01(R7 候选一):出生即落稳。服务器玩家比客户端场景早建若干 tick,它**已经站在地面**;
+	#   客户端从"格子中心"开始自由落体 ⇒ 首条 ack 到达时 pos 差几个像素 ⇒ 每局固定一次开局回滚
+	#   (实测 pos.y 91.28→100.91,服务器同刻 100.906;差额 > pos_tol 2px)。在出首帧/开预测之前把它踩稳,
+	#   两端从同一姿态起步。只用同一套物理(同重力 + move_and_slide),不做传送、不改服务器。
+	_settle_local_spawn(local)
 	# 与对手(层 2)物理碰撞:服务器侧已给每个玩家 mask |= 2,客户端本地玩家也必须,否则本地预测直接穿过对手副本、服务器却挡住 ⇒ 每帧分歧回滚(C2 的无限回滚循环);对手那侧由 player_replica 的幽灵碰撞体提供。★ 不改 player.tscn(玩家掩码要保持 5,单机不需要这一位)。★ 3v3 之后会由 _apply_team_collision() 按队改写掩码 —— 不要因为那一路就把本行删掉:队伍表到达前它是唯一的碰撞来源。零守卫(enemy_logic_smoke 已删·2026-10-09)。
 	local.collision_mask |= 2
 	_local = local
@@ -128,6 +133,23 @@ func _boot_world() -> void:
 	# 本行之后的子类装配(HUD / 小地图 / 暂停菜单)不受影响:应答要走网络 poll,最早也在下一帧,本帧内不存在"应答比 HUD 先到"的窗口。
 	if NetBus.can_send_to_server():
 		NetBus.rpc_id(1, "match_sync")
+
+# 把本地玩家从出生点落到地面(2026-11-01, R7 候选一):与服务器同一套物理(同重力 + move_and_slide),
+# 只是"提前把这段下落跑完"。★ 最多 8 步(≈133ms);8 步还没落地就放弃 —— 出生点本来悬空(掉坑/在半空)
+# 时不要自作聪明地传送它,让正常物理继续跑。★ 必须在 bind(_rollback) / 开预测之前调用:它只改当前位置与速度。
+func _settle_local_spawn(local: Node2D) -> void:
+	var body := local as CharacterBody2D
+	if body == null:
+		return
+	var g: float = float(local.get("gravity"))
+	if g <= 0.0:
+		return
+	for _i in 8:
+		if body.is_on_floor():
+			return
+		body.velocity.y += g * (1.0 / 60.0)
+		body.move_and_slide()
+
 
 func _on_hit_confirm(shooter_role: int, victim_role: int) -> void:
 	if shooter_role == PvpSession.role:

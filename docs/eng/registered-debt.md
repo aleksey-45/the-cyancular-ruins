@@ -21,6 +21,10 @@
 - [`tests/probe/path_integrity_probe.gd`](../../tests/probe/path_integrity_probe.gd) 在 Windows 上不区分大小写 —— 路径大小写写错会通过(导出成 `.pck` 后区分大小写);它只答"有没有",不答"大小写对不对"。
 - [`tests/probe/snapshot_size_probe.gd`](../../tests/probe/snapshot_size_probe.gd) 的世界包分片悬崖（FULL 最坏 trail 4 点，`8 + N×49`）：N≈28 时 1380 B < 1400 B MTU —— 超 MTU 即 unreliable 分片，丢一片 = 整帧丢。稳态 keyframe 帧远小于此。
 - [`core/net/prediction_rollback.gd`](../../core/net/prediction_rollback.gd) 的 `PREDICTED_KEYS` 是"预测被证实"要比对的**唯一字段集**;往 `Player.capture_state()` 加影响判定的字段时,**没有东西提醒你也加进比对**（症状 = 两端慢慢漂）。当前由 `rollback_fidelity_probe` 的键集对账兜底。
+- **拆砖事件的 seq 注入有一条"退化回旧行为"的兜底**（[`scenes/mp_client/tile_sync.gd`](../../scenes/mp_client/tile_sync.gd) `_apply_event`）：`seq=0`（重连补态 / 探针直调）或注入被拒（环外 4.3s / 已 ack / 乱序 / 没有 rollback）⇒ **立即应用**。那一次仍可能产生一次回滚（不会连环）。服务器"逐 peer 发 seq"**没有自动守卫**，只有真链路 `pvp_match_smoke` 间接反映。
+- **`CombatComponent.restore_alive_state()`**（`revive()` 减去 `hp=max_hp`）：C2 回滚 / 权威态 / 回溯三条恢复路径的"倒地→活着"都走它 ⇒ 跨"死亡→活着"的恢复现在按快照 hp，**旧行为是满血**（修 bug，但属可感知变化，headless 够不到、无断言）。
+- **服务器 Beta 回溯只寻帧**（[`server/match/match_host.gd`](../../server/match/match_host.gd) `_apply_rw_frame` 调 `Player.rewind_restore`）：它依赖帧 schema `p/v/hp/facing/downed/widx/wmags/wlive`；改了 `_record_rw_frame` 的键就必须同步 `rewind_restore`，**没有前置编译提示**。
+- **客户端出生即落稳**（[`scenes/pvp_match_client.gd`](../../scenes/pvp_match_client.gd) `_settle_local_spawn`，三模式共用）：在 `_boot_world()` 里把"从格子中心落到地面"这段物理**提前跑完**（≤8 步，超了放弃）。**未跑验证**（用户当轮要求别测 + 另一会话占着 Godot 进程）⇒ 若出现"出生卡在墙里 / 悬空不动 / 落点比服务器高"，第一嫌疑是这里；正常表现应是首条 ack 时两端 `pos` 差 < 2px（原先实测差 9.6px，每局固定一次开局回滚）。
 - [`docs/eng/registered-debt.md`](registered-debt.md) 本身**不是**逐项待办:它只登记"现在仍成立"的边界;任务清单在 `docs/superpowers/plans/`。
 
 ## 零守卫面（按面列出;只统计 2026-10-24 削减后仍无替代守卫的）
@@ -39,3 +43,5 @@
 | 可破坏砖碰撞逐 16px 子格与游戏规则一致(`tile_collision`) | 碰撞/渲染不一致 | **零守卫** |
 | 地图目录/选图路径校验；cyrm v4 编解码 CRC 往返(`map_catalog` / `map_format_v4`) | 存档 / 地图格式面 | **零守卫** |
 | 鸟跟随玩家跨接缝回绕(`wrap_probe`) | 接缝露馅 | **零守卫**（原支本就零断言,删掉不减少保证) |
+| 拆砖事件的时间锚点（`MatchCombat._event_seq_for` 用 `_stepped_seq`、受击/整格/子格三条事件都走它、拆砖逐 peer 发） | 锚点晚一 tick / 广播发不出每人自己的 seq ⇒ 注入错 seq、幽灵墙循环 | **零守卫**（源码文本守卫按 `test-economy` D6a 砍掉）；行为面只有 `net_tile_fx_probe` 的注入/兜底两条 + 真链路间接反映 |
+| 回溯/权威态的状态恢复（`Player.rewind_restore` / `restore_state` / `apply_authoritative_state` 的 hp·倒地·击退·武器残弹） | 两份抄写漂移（服务器不清 `knock_velocity`、`revive()` 把 hp 顶成满血） | **零守卫**（headless 够不到端到端）；2026-11-01 已合并成单一实现，漂移源消失 |
