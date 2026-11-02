@@ -1,6 +1,6 @@
 # 房间生命周期约定（端口 / 拆除 / 三张注册表 / 宽限界）
 
-> 房间从建到拆的**约定清单**——每条 = 一个不变量 + 违反后的**症状**。返回索引：[`CLAUDE.md`](../../CLAUDE.md)。
+> 房间从建到拆的**约定清单**——每条 = 一个不变量 + 违反后的**症状**。返回索引：[`README.md`](README.md)。
 >
 > ★★ **现状**:① 这些约定有一层源码文本检查器 [`tools/room_sweep_lint.gd`](../../tools/room_sweep_lint.gd)，
 > 按需跑:`"$GODOT" --headless --path . -s res://tools/room_sweep_lint.gd`，判词 `SMOKE_ROOM_SWEEP OK`，

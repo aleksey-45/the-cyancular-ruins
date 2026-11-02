@@ -19,7 +19,7 @@
 #   · **已知红基线 `tests/known_red.txt`**:每行 `路径 类别 理由…`(理由**必填**;`#` 是注释;
 #     **空行 = 违规**;类别 ∈ `OK+RC|FAIL|NO-VERDICT|TIMEOUT|*`)。基线内的红 = `KNOWN-RED` ⇒
 #     **不进**新红计数,但**永远**印出文件名与条数。★ 需要它的理由是本仓自己的话:
-#     `tests/probe/allscript_probe.gd:14` 的"一条**永远红**的闸等于没有闸" —— 一建起来就永远 FAIL
+#     `tests/probe/allscript_probe.gd` 的"一条**永远红**的闸等于没有闸" —— 一建起来就永远 FAIL
 #     的入口,后面几个包**没法**拿它判断"我这次改坏了没有"。
 #     ★ 销一条就要**删行**;"修好了却没删行"= 过期基线条目 ⇒ 也红(与 §三「销掉时删行」同规)。
 #   · 全批判词:
@@ -162,7 +162,7 @@ done
 ascii_only() { LC_ALL=C sed 's/[^ -~]//g'; }
 
 # ── 已知红基线(tests/known_red.txt)────────────────────────────────────────
-# 为什么需要它:本仓自己的话 —— `tests/probe/allscript_probe.gd:14` 的"**一条永远红的闸等于
+# 为什么需要它:本仓自己的话 —— `tests/probe/allscript_probe.gd` 的"**一条永远红的闸等于
 # 没有闸**"(原话在 `docs/eng/tests.md` 的同类讨论里)。当时钟摆的另一头是:`run_all.sh` 一建
 # 起来就**永远** FAIL(3 支既有红)⇒ 后面几个工作包**没法**用它判断"我这次改坏了没有"。
 # 所以:基线内的红 = `KNOWN-RED`,**不进**新红计数、**不**改全批判词为全绿(**永远**印出文件名
@@ -249,7 +249,7 @@ load_known_red() {
 #       它与 (a) 类(引擎在说话)和 (c) 类(脚本补一句**说明**)的区别只有一条:**它在对本次运行下判断**。
 #       ★ 为什么必须补这一支(评审 I-1 的一手证据):本仓中文失败汇总是**现网词汇**
 #       (`grep -rn 'print.*失败\|不通过' tests/{smoke,probe}/*.gd | grep -vcE 'FAIL|✗'` = **33 行**,
-#       例 `tests/smoke/app_info_smoke.gd:43`),而 `FAIL_RE` 只认 `FAIL`/`FAILURES` 这类**大写英文** ⇒
+#       例 `tests/smoke/app_info_smoke.gd`),而 `FAIL_RE` 只认 `FAIL`/`FAILURES` 这类**大写英文** ⇒
 #       判词后再出现一句 `APP INFO SMOKE: 3 条失败`:旧口径 `NO-VERDICT`(**归红**),
 #       Task 6 初版落 `OK` / **`OK+RC`(本入口明说"不算红")** ⇒ **真红被洗白**。
 #     **★ 落地的清单(每项挡什么 / 边界在哪)**:判准是上面那句话,清单只是**今天实现它的词汇** ——
@@ -274,7 +274,7 @@ load_known_red() {
 #         ★ **为什么放松(控制器 R26)**:旧口径("命中行必须**就是**最后一条非引擎噪声行")当时**明知**
 #         会让"判词之后再打非噪声行"的支**假红**,按"方向安全(假红可查)"接受了;但
 #         `haste_probe` 那行 `  notes: …`(约一半跑次会出现)让一支**健康**探针**随机**落 `NO-VERDICT`
-#         ⇒ 会训练所有人**忽略 `NO-VERDICT`** —— 那正是 `tests/probe/allscript_probe.gd:14`
+#         ⇒ 会训练所有人**忽略 `NO-VERDICT`** —— 那正是 `tests/probe/allscript_probe.gd`
 #         "一条永远红的闸等于没有闸"的另一面("永远"变成"随机")。新口径只让 (b) 类尾行推翻判词。
 #     ★★ **放松了什么 / 会不会把真红读成绿(照实写,别读多)**:放松的正是 (c) 那一类 ——
 #       旧口径下"判词 + **任何**非噪声尾行"必红,现在只要尾行**不带判定形状**就算绿。
@@ -453,7 +453,7 @@ classify_selfcheck() {
 
 	# ── ⑨ 组(2026-10-05 Task 6):② 改口径后的五条。行抄自**实测日志 / 实测台账**,不是编的 ────
 	# ⑨a **判词之后跟良性尾行(`notes:`)⇒ 必须判绿**(这就是本任务修的那个假红)。
-	#     出处:`tests/probe/haste_probe.gd:313-315` 的 `  notes: …` + `task-2-control-batch.txt`
+	#     出处:`tests/probe/haste_probe.gd` 的 `  notes: …` + `task-2-control-batch.txt`
 	#     「NO-VERDICT 那两次」的日志末尾原文(判词 → notes → 输入桩噪声)。
 	#     ★ 去掉什么才会红:把 ② 改回**旧口径**(命中行必须是最后一条非引擎噪声行)⇒ 落 `NO-VERDICT`。
 	check_case "benign-note-tail-after-verdict" 0 OK \
@@ -462,7 +462,7 @@ classify_selfcheck() {
 		'ERROR: PlayerInput: 子类必须覆写 _switch_index_raw()' \
 		'   at: push_error (core/variant/variant_utility.cpp:1023)' \
 		'      GDScript backtrace (most recent call first):' \
-		'          [0] _switch_index_raw (res://core/net/player_input.gd:127)'
+		'          [0] _switch_index_raw (res://core/net/player_input.gd)'
 	# ⑨b ★ **这一条就是本次有意放松的那一类(把它钉在判据里,别只写在注释里)**:判词之后跟一条
 	#     **顶格、非判定形状**的说明行 ⇒ **放行**。★ 去掉什么才会红:同 ⑨a(旧口径 ⇒ NO-VERDICT)。
 	#     ★ 风险口径:这是"放松"的正脸 —— 它能放行良性尾行,也能放行**长得不像判定**的真报错;
@@ -494,7 +494,7 @@ classify_selfcheck() {
 	# ★ 这三条的"去掉什么才会红":把 `SELFFAIL_RE` 从 ② 的 grep 里拿掉
 	#   (即回到只查 `ITEM_RE` 的那一版)⇒ 三条全部变绿(⑨f rc=1 那条变 **`OK+RC` = 明确"不算红"**)。
 	# ⑨f 中文失败汇总(**现网词汇**:`grep -rn 'print.*失败\|不通过' tests/{smoke,probe}/*.gd | grep -vcE 'FAIL|✗'`
-	#     = 33 行;行形状抄自 `tests/smoke/app_info_smoke.gd:43` 那一族)。rc=1 ⇒ 初版会落 `OK+RC`(**不算红**)。
+	#     = 33 行;行形状抄自 `tests/smoke/app_info_smoke.gd` 那一族)。rc=1 ⇒ 初版会落 `OK+RC`(**不算红**)。
 	check_case "repo-failure-words-tail-after-verdict" 1 NO-VERDICT \
 		'APP INFO SMOKE: ALL-OK(version=「main #1431」, commits=20)' \
 		'APP INFO SMOKE: 3 条失败'

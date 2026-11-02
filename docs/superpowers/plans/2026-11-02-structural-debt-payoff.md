@@ -57,7 +57,7 @@ Expected: `RUN_REAL ...` 判词；未认领 ⇒ 在报告与台账写"真链路�
 按"最可能咬到人"排序。每条都要在它所属任务里有对应的一步，不能只写在纸上。
 
 1. **加 `class_name Player` 后全局类缓存没重建** → 干净环境（CI / 新 clone）里别的脚本报 `Could not find type "Player"`，而本机因为 `.godot/` 缓存是热的反而全绿。**期望行为：先 import 再跑批的人不需要知道这件事也能绿。**（T3 步骤 1、T6 步骤 3）
-2. **抽时间玩法组件后 `ReplicaSet.remove()` 的按名调用静默失效** → `scenes/mp_client/replica_set.gd:56` 是 `_client._time_fx_replica_rewind_off(r)`，按名调；方法一改名/搬走就**不报错**，变成"副本拆了但残影/底片材质表还留着"= 节点泄漏（BUG-19 的形态）。**期望行为：迁移后该名字仍在宿主上。**（T5 步骤 3）
+2. **抽时间玩法组件后 `ReplicaSet.remove()` 的按名调用静默失效** → `scenes/mp_client/replica_set.gd` 是 `_client._time_fx_replica_rewind_off(r)`，按名调；方法一改名/搬走就**不报错**，变成"副本拆了但残影/底片材质表还留着"= 节点泄漏（BUG-19 的形态）。**期望行为：迁移后该名字仍在宿主上。**（T5 步骤 3）
 3. **清死代码时两份手工表不同步** → 删了 `audit_shots/` 却忘了从 `SKIP_DIRS` 摘 `res://audit_shots`，`path_integrity_probe` 立刻红（它正是为此而设），但只看 `allscript_probe` 的人会以为是"条数闸漂了"。**期望行为：两条探针同轮跑、同轮绿。**（T2 步骤 4）
 4. **CI 在干净 clone 上不先 import 就开跑** → 需要资源的探针全红，而红的原因是没装缓存，不是代码坏。**期望行为：首跑红必须能凭日志一眼区分"没 import"与"真红"。**（T6 步骤 3）
 5. **把 R7 当成"已修好"提交** → 工作树里那两行只实现了"两端速度归零"，**没有**原计划要求的可复跑守卫与 2×60s 复测；若不登记就提交，台账会从此说谎。**期望行为：提交信息与台账都写"守卫/真链路待补"，不写"已修复回滚"。**（T1 步骤 5）
@@ -77,7 +77,7 @@ Expected: `RUN_REAL ...` 判词；未认领 ⇒ 在报告与台账写"真链路�
 - Consumes: 无（第一个任务）
 - Produces: 一棵干净的工作树 + 4 个提交。后续所有任务的 `git diff` 基线。
 
-> ⚠ **归属前置（不满足就停手）：** 这些改动**不是同一个会话的**。`docs/audit/2026-11-01-关卡编辑器问题汇报.md:54` 明写"`assets/textures/weapons.png` 不是本轮任何 agent 动的"，而 `pvp_match_client.gd` / `match_host.gd` 的改动是 R7（另一个主题）。本仓明文规定多会话共用工作树，**未认领的 hunk 不提交**。
+> ⚠ **归属前置（不满足就停手）：** 这些改动**不是同一个会话的**。`docs/audit/2026-11-01-关卡编辑器问题汇报.md` 明写"`assets/textures/weapons.png` 不是本轮任何 agent 动的"，而 `pvp_match_client.gd` / `match_host.gd` 的改动是 R7（另一个主题）。本仓明文规定多会话共用工作树，**未认领的 hunk 不提交**。
 
 - [ ] **Step 1: 先做可恢复快照（不改工作树）**
 
@@ -176,7 +176,7 @@ Expected: `RUN_ALL OK(n runs / m gated-assertions)` 或 `OK-WITH-KNOWN-RED`；`g
 **Files:**
 - Delete: `audit_shots/`（19 个 tracked 文件）
 - Delete: `docs/archive/audit/2026-10-27-ui/_drivers/`、`docs/archive/audit/2026-10-27-ui/p1/_drivers/`（8 `.gd` + 8 `.tscn` + 2 `.py`）
-- Modify: `tests/probe/allscript_probe.gd:8-11`（`SKIP_DIRS` 去两项）
+- Modify: `tests/probe/allscript_probe.gd`（`SKIP_DIRS` 去两项）
 - Modify: `tests/README.md` / `docs/eng/registered-debt.md`（若读数变了）
 
 **Interfaces:**
@@ -248,9 +248,9 @@ Expected: `git show --stat` 里只有删除 + 一个 `SKIP_DIRS` 文件的改动
 ### Task 3: `class_name Player` + 非回滚调用点类型化（档 2）
 
 **Files:**
-- Modify: `scenes/player/player.gd:1-10`（加 `class_name`）
-- Modify: `server/match/match_round.gd:146,166`、`server/match/match_combat.gd:90,110,144,227`、`server/match/match_snapshot.gd:78`
-- Modify: `scenes/pvp_match_client.gd:194,209`（`_local` 已是 `Node2D`，但 `is_downed()` / `input_source` / `pvp_haste_mult` 是 `Player` 独有）
+- Modify: `scenes/player/player.gd`（加 `class_name`）
+- Modify: `server/match/match_round.gd,166`、`server/match/match_combat.gd,110,144,227`、`server/match/match_snapshot.gd`
+- Modify: `scenes/pvp_match_client.gd,209`（`_local` 已是 `Node2D`，但 `is_downed()` / `input_source` / `pvp_haste_mult` 是 `Player` 独有）
 
 **Interfaces:**
 - Consumes: T1 的干净工作树
@@ -276,16 +276,16 @@ Expected: 缓存文件里出现 `Player`（`grep` 计数 ≥ 1）。**若 `--imp
 
 - [ ] **Step 2: 逐个替换非回滚调用点（每处都是"调用方已经知道对面是 Player"的地方）**
 
-**必须落到 `Player` 类型的局部变量上**才能拿到真编译期检查 —— `p is Player` 只做运行时判定、**不窄化静态类型**（`p` 仍是 `Node2D`，成员调用依旧是 unsafe access，拼错只警告）。形态（示例，`match_combat.gd:90`）：
+**必须落到 `Player` 类型的局部变量上**才能拿到真编译期检查 —— `p is Player` 只做运行时判定、**不窄化静态类型**（`p` 仍是 `Node2D`，成员调用依旧是 unsafe access，拼错只警告）。形态（示例，`match_combat.gd`）：
 
 ```gdscript
 	var pl := p as Player
 	var fallback: Rect2 = pl.hurt_rect() if pl != null else HitShape.hurt_rect_of(p)
 ```
 
-其余同款：`match_round.gd:146,166`（`p.has_method("cancel_jump_state")` → `var pl := p as Player; if pl != null: pl.cancel_jump_state()`）、
-`match_combat.gd:110,144,227`（`hurt_rect` / `take_hit`）、`match_snapshot.gd:78`（`capture_state`）、
-`pvp_match_client.gd:194,209`（`_local` 声明为 `var _local: Player = null`）。
+其余同款：`match_round.gd,166`（`p.has_method("cancel_jump_state")` → `var pl := p as Player; if pl != null: pl.cancel_jump_state()`）、
+`match_combat.gd,144,227`（`hurt_rect` / `take_hit`）、`match_snapshot.gd`（`capture_state`）、
+`pvp_match_client.gd,209`（`_local` 声明为 `var _local: Player = null`）。
 
 Expected: `grep -n 'has_method' server/match/match_round.gd server/match/match_combat.gd server/match/match_snapshot.gd` **归零**（除 `_host.has_method` 那类非 Player 目标）。
 
@@ -315,8 +315,8 @@ git commit -m "refactor(sim): 给 Player 注册 class_name,非回滚调用点去
 ### Task 4: 回滚路径类型化（档 3 · 真链路归到 T9 末尾统一跑）
 
 **Files:**
-- Modify: `server/match/match_host.gd:381-389,452-509`（`_record_rw_frame` / `_apply_rw_frame`）
-- Modify: `core/sim/world_rewind.gd:97-105,221`
+- Modify: `server/match/match_host.gd,452-509`（`_record_rw_frame` / `_apply_rw_frame`）
+- Modify: `core/sim/world_rewind.gd,221`
 
 **Interfaces:**
 - Consumes: T3 产出的 `Player` 类型
@@ -330,7 +330,7 @@ bash tests/run_all.sh --only snapshot
 ```
 
 Expected: `rollback_fidelity_probe` 与 `snapshot_size_probe` 的既有判词（前者 34 条断言）全绿，把逐字判词抄进本任务报告。
-**本步刻意不写新断言**：`core/sim/world_rewind.gd:111` 自述"零守卫（两支 rewind 探针已删·2026-10-09）"，
+**本步刻意不写新断言**：`core/sim/world_rewind.gd` 自述"零守卫（两支 rewind 探针已删·2026-10-09）"，
 先跑基线才知道后面的变异能不能被既有断言抓到 —— 不然就是在凑一条"为改动定制"的守卫。
 
 - [ ] **Step 2: `_apply_rw_frame` 改点访问**
@@ -350,7 +350,7 @@ Expected: `grep -n 'p\.get(\|p\.set(' server/match/match_host.gd` **归零**；�
 
 - [ ] **Step 3: `world_rewind.gd` 五处改点访问**
 
-`var player := _player as Player` 之后：`player.velocity` / `player.hp` / `player.facing_direction` / `player.is_downed()` / `player.weapons`；`world_rewind.gd:221` 的 `has_method("rewind_restore")` 改成 `player is Player` + 直接调用。
+`var player := _player as Player` 之后：`player.velocity` / `player.hp` / `player.facing_direction` / `player.is_downed()` / `player.weapons`；`world_rewind.gd` 的 `has_method("rewind_restore")` 改成 `player is Player` + 直接调用。
 同时把 `:111` 那段"零守卫"注释改写为"由点访问 + `rollback_fidelity_probe` 的往返断言守"。
 
 Expected: `grep -n 'player\.get(\|player\.set(\|has_method' core/sim/world_rewind.gd` **归零**。
@@ -386,8 +386,8 @@ git commit -m "refactor(net): 回滚录制/回放改 Player 点访问"
 - Create: `scenes/mp_client/match_time_view.gd`（+ `.gd.uid`）
 - Create: `tests/smoke/time_ramp_smoke.gd`（+ `.gd.uid`）
 - Modify: `core/sim/math_util.gd`（+ 1 个静态函数）
-- Modify: `scenes/pvp_match_client.gd:147-260`（抽走时间玩法整块，留 3 个委托口）
-- Modify: `scenes/mp_client/time_fx.gd:88`（改读宿主访问器）
+- Modify: `scenes/pvp_match_client.gd`（抽走时间玩法整块，留 3 个委托口）
+- Modify: `scenes/mp_client/time_fx.gd`（改读宿主访问器）
 - Modify: `tests/probe/allscript_probe.gd`（`EXPECTED_SCRIPTS` 241 → **243**）
 - Modify: `tests/README.md` 顶部判词台账（支数/闸值以实跑为准）
 
@@ -463,12 +463,12 @@ func time_haste_mult() -> float:
 	return _time_view.haste_mult() if _time_view != null else 3.0
 ```
 
-Review Focus #2 的钉子：**`_time_fx_replica_rewind_off` 必须仍留在宿主上**（`replica_set.gd:56` 按名调），内容不变。
+Review Focus #2 的钉子：**`_time_fx_replica_rewind_off` 必须仍留在宿主上**（`replica_set.gd` 按名调），内容不变。
 
 Expected: `grep -n '_time_mirror\|_time_watch\|_time_sym\|_time_mat\|_haste_dim_t\|_time_film_t' scenes/pvp_match_client.gd` **归零**；
 `grep -n '_time_fx_replica_rewind_off' scenes/pvp_match_client.gd scenes/mp_client/replica_set.gd` 两处都在。
 
-- [ ] **Step 4: 改 `time_fx.gd:88` 的跨组件私有读**
+- [ ] **Step 4: 改 `time_fx.gd` 的跨组件私有读**
 
 ```gdscript
 			label.text = "▶▶ %dx" % int(round(_client.time_haste_mult()))
@@ -612,7 +612,7 @@ git commit -m "ci(gate): 默认批接入 GitHub Actions(windows-latest + 先 imp
 
 **Files:**
 - Modify: `core/README.md`（整份重写清单部分）
-- Modify: `docs/archive/README.md:25`（那条"这些文件现在都在本目录下"的口径已与现状不符）
+- Modify: `docs/archive/README.md`（那条"这些文件现在都在本目录下"的口径已与现状不符）
 - ~~Modify: `AGENTS.md` §4 指针表~~ → **已在 T10 完成**（`docs/superpowers/` 与 `docs/audit/` 两行已进 AGENTS §4）
 
 **Interfaces:**
@@ -627,7 +627,7 @@ git commit -m "ci(gate): 默认批接入 GitHub Actions(windows-latest + 先 imp
 
 - [x] **Step 2: 指针表 —— 已随 T10 的 AGENTS.md 重写落地**（两行都在；本条只剩归档口径）
 
-在 `docs/archive/README.md:25` 那行后面补一句："2026-11-01 起重新启用 `docs/superpowers/{plans,specs}/` 作为**在飞**计划的落点；归档时整份搬进本目录。"
+在 `docs/archive/README.md` 那行后面补一句："2026-11-01 起重新启用 `docs/superpowers/{plans,specs}/` 作为**在飞**计划的落点；归档时整份搬进本目录。"
 
 Expected: `ls docs` 的四类聚集地（`eng` / `archive` / `superpowers` / `audit`）在入口文档里都能查到。
 
@@ -756,7 +756,7 @@ bash tests/run_all.sh --only map_spawn
 Expected: `MAP SPAWN DATA ... ALL-OK`，判词里列出**每张图**。
 变异：复制 `maps/demo.cyrm` 到 `maps/_tmp_bad.cyrm` 并塞一个贴边 respawn 点 ⇒ 红；删掉临时图 ⇒ 绿。
 
-- [ ] **Step 2: HUD 底板色复本一致性（补 `ui_factory.gd:97` 自认的那条零守卫）**
+- [ ] **Step 2: HUD 底板色复本一致性（补 `ui_factory.gd` 自认的那条零守卫）**
 
 先确认承载字段：
 
@@ -767,7 +767,7 @@ grep -n 'bg_color\|theme_override_styles\|C_PLATE' ui/hud/pvp_hud.tscn ui/hud/te
 把结论写进本步骤（读的是 `theme_override_styles/panel` 的 `bg_color` 还是 `self_modulate`），再写探针：
 实例化两个 `.tscn`，取底板节点上的实际颜色，与 `UiFactory.C_PLATE` 逐位比较（4 位浮点）。
 
-为什么值得写：`ui_factory.gd:97` 明文写着"改色必须手工同步那两处 —— 原守卫已删（2026-10-09），**今天零守卫**"。
+为什么值得写：`ui_factory.gd` 明文写着"改色必须手工同步那两处 —— 原守卫已删（2026-10-09），**今天零守卫**"。
 这是"改配色 → 某个模式 HUD 底色不对"的唯一自动判据，且属于**行为可观测**（渲染值），不是读源码文本。
 
 ```bash

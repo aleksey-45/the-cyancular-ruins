@@ -1,7 +1,7 @@
 # 编辑器 io 门面与 tint 像素缓存（`level_editor/io.js` / `level_editor/tint.js`）
 
 > 本文件记 `level_editor/io.js` 与 `level_editor/tint.js` 的契约与常量。★ 冲突以源码为准，读前先 `grep` 复核。
-> 返回索引：[`CLAUDE.md`](../../CLAUDE.md)。格式核心层见 [`editor-core.md`](editor-core.md)。
+> 返回索引：[`README.md`](README.md)。格式核心层见 [`editor-core.md`](editor-core.md)。
 
 ## 1. io.js：每请求 30 秒超时
 

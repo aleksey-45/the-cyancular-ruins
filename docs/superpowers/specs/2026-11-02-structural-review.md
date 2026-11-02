@@ -42,33 +42,33 @@ PickupSync、子弹接触剔除、命中事件队列、round_state、结算页�
 （已部分组件化：`TileSync` / `TimeFx` / `PickupSync` 已抽出，说明方向成立，只剩时间玩法那一块没摘。）
 
 ### C2 · 最承重的路径在用字符串反射
-`Player` 是模拟核心却**故意无 `class_name`**（`scenes/player/player.gd:5` 注释：新全局类名要等编辑器重扫缓存）。
+`Player` 是模拟核心却**故意无 `class_name`**（`scenes/player/player.gd` 注释：新全局类名要等编辑器重扫缓存）。
 于是权威侧访问退化成字符串：
 
-- `server/match/match_host.gd:452-509` —— 回滚重放整段是 `p.set("velocity", …)` / `p.get("combat")` / `b.call("apply_rewind_state", …)`；
-- `core/sim/world_rewind.gd:97-105,221` —— 5 处按名访问，`has_method("is_downed")` 一改名就**静默**把 `downed` 写成 false（该文件 111 行自述"零守卫"）；
-- `server/match/match_combat.gd:90,110,144,227` 与 `server/match/match_snapshot.gd:78` —— `has_method(...)` 守卫 + `call(...)`。
+- `server/match/match_host.gd` —— 回滚重放整段是 `p.set("velocity", …)` / `p.get("combat")` / `b.call("apply_rewind_state", …)`；
+- `core/sim/world_rewind.gd,221` —— 5 处按名访问，`has_method("is_downed")` 一改名就**静默**把 `downed` 写成 false（该文件 111 行自述"零守卫"）；
+- `server/match/match_combat.gd,110,144,227` 与 `server/match/match_snapshot.gd` —— `has_method(...)` 守卫 + `call(...)`。
 
 字段改名/拼错在 GDScript 里不报错：`get()` 拿不到返回 null，静默走默认值。这正是"回滚分歧 / 命中判定诡异"
 最肥沃的土壤（对应 `registered-debt` §二十二、§四十三）。
 
 ### C3 · `beta_mode` 会话级全局 + 冻结 RPC 签名
-`core/net/pvp_session.gd:20` 的 `static var beta_mode` 渗透了：大厅房间过滤、join RPC 签名
+`core/net/pvp_session.gd` 的 `static var beta_mode` 渗透了：大厅房间过滤、join RPC 签名
 （`royale_join(code, invite, beta)`）、建房载荷、HUD 挂载、选项面板显隐、服务器房间类型、match options。
-注释里已记下两次真实故障：`pvp_match_client.gd:158-163`（房主专属时钟 HUD）与
-`scenes/mp_lobby.gd:501`（1v1 必须显式排除 time，因为 `create_room(caller)` 是冻结签名）。
+注释里已记下两次真实故障：`pvp_match_client.gd`（房主专属时钟 HUD）与
+`scenes/mp_lobby.gd`（1v1 必须显式排除 time，因为 `create_room(caller)` 是冻结签名）。
 ⇒ 结构上 1v1 永远无法 beta，且每个新入口都会重新踩一次。
 
 ### C4 · 两套出生点系统并存，旧的那套自认零守卫
 `core/sim/spawn_picker.gd`（网格几何推导 + 6 个 `static var` 缓存）与
 `core/sim/spawn_chooser.gd`（地图 meta `# respawn` 点名随机）同时在跑；
-`server/hosts/team_spawn.gd:125` 仍在用旧系统兜底；`spawn_picker.gd:10-11` 自述自适应分支
+`server/hosts/team_spawn.gd` 仍在用旧系统兜底；`spawn_picker.gd` 自述自适应分支
 "生产图永不触发 + 原守卫已删（2026-10-09）⇒ **今天零守卫**"。
 
 ### C5 · 跨文件同值常量/表靠注释同步（4 处）
-`ui/factory/ui_factory.gd:97`（底板色在 2 个 `.tscn` 各抄一份，原守卫已删）·
-`scenes/player/player_replica.gd:28-31`（`DASH_GHOST_*` 与 `player.gd` 同值）·
-`player_replica.gd:125`（`POSE_SHAPE` 必须同步）· `server/lobby/worker_launcher.gd:196`（argv 与 `server_main.gd` 逐字对应）。
+`ui/factory/ui_factory.gd`（底板色在 2 个 `.tscn` 各抄一份，原守卫已删）·
+`scenes/player/player_replica.gd`（`DASH_GHOST_*` 与 `player.gd` 同值）·
+`player_replica.gd`（`POSE_SHAPE` 必须同步）· `server/lobby/worker_launcher.gd`（argv 与 `server_main.gd` 逐字对应）。
 四条都违背本仓"单一真相源优先于守卫"。
 
 ### C6 · 死代码副本把守卫打出了洞（**已处理：2026-11-02 全部删除**）
@@ -105,7 +105,7 @@ PickupSync、子弹接触剔除、命中事件队列、round_state、结算页�
 `docs/superpowers/`（3 计划 + 1 spec）与 `docs/audit/`（一次性审计）——**四处口径互相矛盾，且没有任何一处写全**。
 最典型：`core/README.md` 说 `sim(12) net(12) config(6) present(3)`、四个 autoload；
 实测 `sim 31 / net 22 / config 9 / present 6`，另有它完全没提的 `mp/`(5) 与 `ui/`(1)，
-autoload 已是 **5 个**（`LoadingScreen` 在 `project.godot:33`）。
+autoload 已是 **5 个**（`LoadingScreen` 在 `project.godot`）。
 
 **★ 已在 2026-11-02 本会话处理（入口部分）**：`AGENTS.md` **117 行 / 11.9 KB → 61 行 / 6.0 KB**；
 架构索引搬进新建的 `docs/eng/README.md`（26 行，按域路由）；`CLAUDE.md` 改为
@@ -115,7 +115,7 @@ autoload 已是 **5 个**（`LoadingScreen` 在 `project.godot:33`）。
 **未处理**：`core/README.md` 的过期清单（计划 T7）、`docs/CyR单人模式主策划案(1).md` 的 `(1)` 改名（T10 Step 6，需 `git mv`）。
 
 ### E6 · 手工条数闸
-`tests/probe/allscript_probe.gd:26` `EXPECTED_SCRIPTS := 241` 需手工数（`git ls-files '*.gd'` 减 SKIP_DIRS）。
+`tests/probe/allscript_probe.gd` `EXPECTED_SCRIPTS := 241` 需手工数（`git ls-files '*.gd'` 减 SKIP_DIRS）。
 今天恰好对（255 − 8 − 6 = 241），但那行常量后的注释已堆了三次历史订正。
 
 ## 4. 不做（明确排除）
@@ -145,7 +145,7 @@ autoload 已是 **5 个**（`LoadingScreen` 在 `project.godot:33`）。
 | **重资产承重**：4 支真链路占 2~5 分钟/支，全部要用户认领才能跑 | `rollback_fidelity_probe` 530 行/35 断言 · `team_match_probe` 821 行/51 断言且**无条数闸** · `royale_soak_probe` 535 行/0 断言（判词靠 print） | D8 边界 / 认领制 ⇒ 平时不跑 |
 | **前提已死的"老"**：文件头还在描述已退役的对象 | `snapshot_size_probe` 头行仍写"同时量两种线格式（Dictionary 直发 → 手打包）"，而 Dictionary 线格式在 v7 已退役（该文件自己 2026-10-30 的备注写明 ⑥~⑨ 随 DELTA 一起退役） | 过期文档 = 让读者按错误前提解读判词 |
 | **枚举写死**：新数据不会被覆盖 | `map_spawn_data_probe` 把 `maps/` 里两张图写成常量 ⇒ 加第三张图时探针静默不覆盖（而"换图后复活点落封闭空间"已发生过一次，§四十六补） | 与本仓自述"枚举会过期"同一个病 |
-| **承重面反而零守卫**（比"测试太多"更值得管） | ① 导出面禁 `RegEx`（AGENTS 硬规则，`registered-debt` §四十二 有真实发布阻断前科）**零守卫**；② `ui_factory.gd:97` 自认配色复本"原守卫已删、今天零守卫"；③ `worker_launcher.gd:196` 自认 argv"两边改一处必须同步"**零守卫**；④ `AGENTS.md` **不在** `check_naming.py` 的 `DOC_FILES` ⇒ 它的 30+ 链接零守卫 | K3 面（改坏了很久才发现）缺守卫 |
+| **承重面反而零守卫**（比"测试太多"更值得管） | ① 导出面禁 `RegEx`（AGENTS 硬规则，`registered-debt` §四十二 有真实发布阻断前科）**零守卫**；② `ui_factory.gd` 自认配色复本"原守卫已删、今天零守卫"；③ `worker_launcher.gd` 自认 argv"两边改一处必须同步"**零守卫**；④ `AGENTS.md` **不在** `check_naming.py` 的 `DOC_FILES` ⇒ 它的 30+ 链接零守卫 | K3 面（改坏了很久才发现）缺守卫 |
 
 **结论（决定计划怎么改）：**
 1. **验证的"仪式"要砍**：逐条变异、每任务真链路 → 整计划 ≤3 次变异、真链路整批一次（计划「验证口径」节）。

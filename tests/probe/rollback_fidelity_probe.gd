@@ -299,7 +299,10 @@ func _check_source_guard() -> void:
 	for i in range(host_block[0] + 1, host_block[1]):
 		if lines5[i].strip_edges().begins_with("#"):
 			continue
-		if lines5[i].contains("call_deferred(\"_record_stepped_seq\")"):
+		# ★ 判据是"**把 _record_stepped_seq 排到帧末**",不是某个拼写:两种合法写法都算 ——
+		#   `call_deferred("_record_stepped_seq")`(旧)与 `_record_stepped_seq.call_deferred()`(Godot 4 的
+		#   Callable 形式)。2026-11-02 把全仓换成后者时,这条按拼写钉的守卫把"行为没变"误判成红过一次。
+		if lines5[i].contains("_record_stepped_seq") and lines5[i].contains("call_deferred"):
 			sched += 1
 	_check(host_block[0] >= 0 and sched == 1,
 			"MatchHost 每 tick 排一次帧末 _record_stepped_seq(实得 %d 处;0 = 锚点永远不前进)" % sched)

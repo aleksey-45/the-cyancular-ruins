@@ -35,7 +35,7 @@ func update(parent: CharacterBody2D, delta: float, move_mult: Vector2 = Vector2.
 	# 回溯整帧早在根里早退,到不了这里;正常态该倍率恒 1。
 	# ★★ 2026-10-03 修:**PvP 下这条原先恒 1** —— `TimeField.current` 只由单机 Level0 创建
 	#   ⇒ PvP 里 `player_speed_mult()` 恒 1.0,与本行上面那句注释直接矛盾。
-	#   改成与根 `player.gd:191` 同一条判据:有世界时间场走它,否则读 `pvp_haste_mult`。
+	#   改成与根 `player.gd` 同一条判据:有世界时间场走它,否则读 `pvp_haste_mult`。
 	# ★★ 2026-10-05(closeout 批 Task 3 / T10,审计 §2.5 的同族):PvP 那一半原先走
 	#   `parent.get("pvp_haste_mult")` —— **字符串反射**,而 `parent` 的静态类型是
 	#   `CharacterBody2D`(玩家根没有 `class_name`,给它上类型要动类结构,R11 已否)。

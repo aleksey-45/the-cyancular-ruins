@@ -1,13 +1,13 @@
 # 编辑器界面层（`level_editor/ui/`）
 
 > 本文件记 `level_editor/ui/` 的状态账、持久化层级与启动顺序。★ 冲突以源码为准，读前先 `grep` 复核。
-> 返回索引：[`CLAUDE.md`](../../CLAUDE.md)。相邻几份：[`editor-core.md`](editor-core.md) /
+> 返回索引：[`README.md`](README.md)。相邻几份：[`editor-core.md`](editor-core.md) /
 > [`editor-render.md`](editor-render.md) / [`editor-io.md`](editor-io.md) / [`editor-server.md`](editor-server.md)。
 > **游戏侧** UI 语汇在 [`ui.md`](ui.md)（与本文件不是一回事）。
 
 ## 1. 分片与加载顺序
 
-- 19 片按**文件名字典序**加载，`NN_` 前缀就是顺序。顺序的真相源是 `level_editor/editor.html` 的 `<script src>` 列表；
+- 20 片按**文件名字典序**加载，`NN_` 前缀就是顺序。顺序的真相源是 `level_editor/editor.html` 的 `<script src>` 列表；
   `loader.js` 从同一处读，`parts_check.js` 守「目录 ↔ 页面」一致。
 - 分片共享**同一个作用域**：**顶层名不许重名**，重名即静默覆盖。
 - 末片恒为 `99_exports.js`：公开 API 表只在它里面，`editor_smoke.js` 按它取名字。
@@ -214,15 +214,23 @@ applySize → resizeMap → createEmptyMap → Core.clampMapSize
   折算（`panBy` 不钳视图 ⇒ 环面模式下会算出越界坐标）。
 - ★★ **P1/P2 是位置语义、不是「第几条记录」**：放 P1 = 写第 0 条、放 P2 = 写第 1 条；缺号一律**显式拒绝**
   并说明理由，不可 `push` 出一条位置不对的记录。
-- ★★ **库列表里混进备份的后果**：`openFromUrl` 的兜底是「打开列表第一行」⇒ 开机可能直接打开一份退路。
+- ★★ **开机不自动打开任何地图**（空启动是合法状态：`#empty-hint` 写着三个入口，`app.map === null`）。
+  只有 `?p=<名字>` 才打开指定图。旧实现"打开库列表第一行"已被删掉 —— 它会让开机直接打开一份 `.v3.bak` 退路。
+- ★★ **文件级动作全部在 `level_editor/ui/86_fileops.js`**（新建 / 打开文件夹 / 打开文件 / 保存 / 另存为 / 导出 / 复制 /
+  重命名 / 删除 / 校验），面板布局在 `level_editor/ui/85_panels.js` —— 「面板」与「文件」分片，因为它们的两半（读盘/写盘）
+  完全不同，混在一个文件里迟早互相牵制。86 的入口是 `installFileOps()`，由 `buildPanels()` 末尾调用。
+- ★ **库列表里混进备份的后果**：`openMap` 的兜底不再存在（不自动开第一行），但过滤仍必须在列表侧做。
 - ★ **面板监听只挂一份**：`#lib-list` 那一处用**委托**一次，不给每行挂监听。
-- ★ **背景层时面板要换一套控件**：纹理调色板 + 辅码 ↔ 颜色选择器；工具条上「渐变」压暗到 0.45。
+- ★ **背景层时面板要换一套控件**：纹理调色板 + 辅码 ↔ 颜色选择器；右栏工具组里「渐变」压暗到 0.45。
   藏的是**整行**而不是控件的直接父节点（「只改辅码」那个 input 外面还包着 `<label>`）。
   输入框里的回车也当「应用尺寸」。
-- ★ **没打开地图时的提示要一致**：四个出生点按钮与改尺寸面板都必须说「先打开一张地图」。
-- ★ **导出的敌人类型清单来自页面注册表**（`globalThis.ENEMY_REGISTRY`），导出校验只警告不阻止导出。
+- ★ **没打开地图时的提示要一致**：四个出生点按钮、改尺寸面板、工具落笔都必须说「先打开一张地图」。
+- ★ **敌人类型从右栏下拉选**（`#spawn-enemy-type`，选项来自页面注册表 `globalThis.ENEMY_REGISTRY`）；
+  以前 `spawnAt` 写死 `types[0]` ⇒ 永远只放 `jump_bird`。
   ★ 已知边界：第 3 个及以后的出生点游戏侧读不到（`map_format.gd` 只认 `player` / `player2`）。
-- ★ **`editor_server.js` 不做删除动作**：删地图请直接在磁盘上删 `maps/` 下的文件。
+- ★★ **删除与重命名是真的**（`DELETE /api/map?p=` / `POST /api/map/rename?from=&to=`，见
+  [`editor-server.md`](editor-server.md)）：以前「删除」只往状态栏打一句话、「重命名」只改内存里的名字
+  （Ctrl+S 的结果是"另存一份 + 旧文件还在"）。删除前必须 `confirm`，且**不能**就地覆盖目标名（409）。
 - ★ **刷新库列表排在说结果之后**：那条 GET 失败时 `guard` 会往同一条状态栏写一行错误，先写「已保存 …」
   再被它盖掉的话用户看到的是「刷新失败了」，而保存其实成功了。刷新不影响落盘。
 - ★ **`refreshStatus` 是几条换图路的公共收口**（打开 / 新建 / 复制 / 改尺寸 / 草稿恢复），
@@ -237,3 +245,74 @@ applySize → resizeMap → createEmptyMap → Core.clampMapSize
   并删掉自检建的库。
 - ★ 「IndexedDB 可打开」与「草稿盘已打开（`app.db`）」**不是**同一件事，两条读数各自要能看到。
 - ★ 抽成具名函数（`runSelfTest`），判「有没有护栏」必须是**行为**断言。
+- ★ **空启动是合法状态**：`app.map === null` 那两条分支验的是「`#empty-hint` 真的显示出来了」与
+  「状态栏真的说 (未打开)」，不是恒真占位；两条分支都保持 3 条检查（`browser_check.js` 的条数闸 17 不许漂）。
+
+## 12. 版式（IA）· 工具细分选项 · 图层三态 · 纹理缩略图
+
+### 12.1 三块的分工（用户反馈 ⑤：工具没有细分选项、且位置反了）
+
+| 区 | 放什么 | 判据 |
+|---|---|---|
+| `#toolbar`（顶栏） | **系统级**：文件（新建/打开文件夹/打开文件/保存/另存为/导出）、编辑（撤销/重做）、视图（网格/子格/环面/适配）、画布尺寸、压缩、校验、自检 | 这些动作改的是"整个会话/整个文档"，与当前工具无关 |
+| `#right`（右栏） | **工具 + 它的参数**（`#tools` 八颗 / `#tool-opts` 按 `data-for` 只显示当前工具那一组）→ 图层 → 纹理调色板 → 辅码 → 背景色 → 出生点 | 「工具 → 选项」必须相邻，否则用户不知道那个参数是给谁的 |
+| `#lib`（左栏） | 库列表 + **贴着列表**的库操作（复制/重命名/删除） | 操作对象在列表里，操作就必须在列表上/上方（旧实现被 `flex:1` 顶到整页最底部） |
+
+- ★★ **工具选择器只有 `.tool` 一个类名**：`#tools .tool`、`.tool`、`#toolbar .tool` 三种写法在 node 替身里
+  都要认（`tests/editor/lib/stubs_*.js`）—— 老断言不必逐个改写，但**生产代码**一律用 `#tools .tool`。
+- ★★ **状态栏必须说"现在会怎么落笔"**：只有画笔/橡皮显示 `× 尺寸`；矩形显示「填充/描边」、直线显示「宽 N 子格」。
+  以前一律显示 `工具 X × brushSize` ⇒ 直线挂着"× 1"却根本不读那个值（参数在说谎）。
+
+### 12.2 工具细分选项（值在落笔时读，不在控件处缓存）
+
+- 取值只有一处：`toolOption(id, fallback)`（`level_editor/ui/55_interaction.js` 的 `stNow()` 走它）——缺控件时回落默认值，
+  node 冒烟与旧 DOM 都不会炸。
+- 矩形 `#rect-mode`：`fill` / `outline`。描边的"圈"判据在 `regionCells` 的 `ring` 参数里，判在**折算之前**的
+  原坐标上（跨接缝时接缝两侧各留一条边）。
+- 直线 `#line-width`：1 / 2 / 4 子格。`lineBandTargets` 把线上每个子格点扩成 w×w 方块再并起来，
+  与画笔共用 `regionCells`（不在第二处写"怎么算一条线"）。
+- 选框：复制/剪切/粘贴/水平镜像/垂直镜像/清除**六颗按钮**，与 `Ctrl+C/X/V`、`H/V`、`Delete` 共用
+  `doCopySelection` / `doCutSelection` / `doPasteSelection` / `doClearSelection` / `mirrorSelection`
+  —— 以前只有热键，能力不可发现（用户反馈 ⑤）。
+
+### 12.3 图层"可编辑目标"三态（用户反馈 ⑥ 的真正落点）
+
+| 态 | 判据 | 落笔时 |
+|---|---|---|
+| 不存在（`layer_flags` 缺位 ⇒ `map.layers[L] === null`） | `Render.layerArray(map, L) === null` | **拒绝**并说明「本图只有 X/Y」 |
+| 锁定 | `app.r.layerLocked(L)` | **拒绝**并说明「先解锁」 |
+| 隐藏 | `app.r.layerVisible(L) === false` | 允许，但**每次切换提示一次**「笔迹会保存但看不到」 |
+
+- ★★ **唯一闸 = `canEditLayer(L, map)`**（`level_editor/ui/60_brush_layer.js`）：`paintCells` / `moveRegion` /
+  `pasteRegion` / `mirrorRegion` 全过它。`map` 参数必须传调用方那张图（node 冒烟传独立造的图，
+  此时不能拿 `app.map` 当判据；锁定/可见只在"就是当前打开的图"时才是拦截理由）。
+- ★★ **图标从状态反推**（`syncLayerIcons()`）：🔒/🔓 用字形表达锁定、👁 用明暗表达可见、缺席层在行内写
+  「本图无此层」。以前只靠点击那一刻改 `style.opacity`，开机四个 🔒 都满不透明 ⇒ 用户以为"全锁着"。
+  `applyUiState` / `setLayer` / `refreshStatus` 三处都要调它（否则换图后图标是上一张图的）。
+- ★ **`layerVisible` / `layerLocked` 必须持久化**（`cyrm.ui.v1`）：不存的话刷新后总是复位成全可见/全未锁，
+  而"当前层"会恢复 —— 用户会落进一个不存在的层的静默区。
+
+### 12.4 纹理调色板的缩略图（用户反馈 ⑨）
+
+- ★ 一块纹理 = 32×32 源像素 = **4×4 个 8×8 象限**；子格渲染按 `X%4 / Y%4` 挑象限（`editor-core.md` §7）
+  ⇒ 预览必须把 **4×4 象限拼成 64×64** 再当 `background-image`，只画一个象限会让靠四角拼图案的砖看不出样子。
+- ★ 用**中性辅码**（`Core.neutralDesc(tex)`，4/4/4/7 = 游戏默认观感）；缩略图与当前选中的辅码无关。
+- ★ 缩略图**只是表现**：`paletteThumbURL` 在图集没装好（`atlasCapacity() < tex`）或 node 环境（无 canvas）
+  时返回空串 ⇒ 按钮回落成数字，**不许因此抛**。数字仍留在图上当角标（CSS 有 `text-shadow`）。
+- ★ 纹理 22（水面）仍不进调色板（游戏侧自动派生）。
+
+### 12.5 按侧复活点（用户反馈 ⑦：出生点不符合当前游戏要求）
+
+- 数据在 `map.respawns`（元素 `{side, x, y}`），侧 1 = 左半、侧 2 = 右半 —— 与游戏侧
+  `SpawnChooser.SIDE_LEFT/SIDE_RIGHT` 同源；格式仍是 meta 文本行（`editor-core.md` §8）。
+- 右栏「复活点(按半区)」：`放侧1` / `放侧2` / `删最近(按视图中心那一侧)` / `清空侧1` / `清空侧2`，外加一行
+  计数「侧1 n · 侧2 n(联机建议每侧 ≥5)」。
+- ★ **放置坐标与出生点共用同一条口径**：`viewCenterCell()`（视图中心那一格，`Render.wrapIdx` 折算回图内）。
+- ★ **放错半区不拦**（地图作者可能故意），只由 `validateMap` 报 warning + 状态栏当场提一句 —— 拦下来反而
+  让"故意放对面"这类巧思没法表达。
+- ★ **删最近只删"视图中心所在那一侧"**：跨侧删点会让"我刚放的那个"和"被删的那个"错位，用户无从预期。
+- 可视化：`drawOverlay` 按侧画 `R1`（深绿）/`R2`（深橙）标记，标记随 2×2 副本走（`+offs`，不是 3×3 时代的 `-offs`）。
+- 辅助线：顶栏 `标线`（`#tg-guides`，热键 **R**）叠加半区中线 + 每半区 3×3 桶网格 —— 那是游戏侧"均匀散布"
+  判据的对照物；状态存 `cyrm.ui.v1` 的 `guides` 字段。
+- ★ 新面板的每一颗按钮都走 `guard(...)`；`refreshRespawnCount()` 由 `statusLine()` 统一刷（任何一次换图 /
+  撤销 / 改尺寸之后计数都不会停在旧值）。

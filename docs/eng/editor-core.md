@@ -1,7 +1,7 @@
 # 编辑器格式核心层（`level_editor/core/`）
 
 > 本文件记 `level_editor/core/` 的契约、常量与边界。★ 冲突以源码为准，读前先 `grep` 复核。
-> 返回索引：[`CLAUDE.md`](../../CLAUDE.md)。
+> 返回索引：[`README.md`](README.md)。
 
 ## 1. 分片与加载顺序
 
@@ -104,11 +104,15 @@ descriptor (u32)
 - 旧 2×2 字母网格 → 1 格 packed：纹理取组内首个非零，形状 = 2×2 掩码；逻辑与游戏侧
   `MapFormat.convert_old_grid` 逐字对应。旧字母表只认 `0-9` 与 `A`（大小写均可）。
 - **meta 文本形状**就是那几行 `# ...` 注释。输出顺序：先注释，再出生点（`player` / `player2` /
-  `player3`…），最后敌人。
-- **游戏侧新增的按侧复活点行 `# respawn <1|2> <col> <row>`（见 [world.md](world.md)「出生/复活点:按阵营半区的地图数据」）编辑器不认识，
-  但不会丢**：`parseMeta` 把它们归入 `comments`，`buildMeta` 再以 `# ` 前缀原样回写（行内容逐字保留；行顺序被挪到
-  注释区、首尾空白被 `trim`）。⇒ 编辑器保存 `.cyrm` 不需要为这类行做任何事；**也没有复活点的可视化 UI**，
-  改点走 [`tools/map_spawn_meta.gd`](../../tools/map_spawn_meta.gd) 或直接改 meta 文本。
+  `player3`…），再**按侧复活点**（侧 1 全部在前、侧 2 在后），最后敌人。
+- **按侧复活点 `# respawn <1|2> <col> <row>` 编辑器认识**（见 [world.md](world.md)「出生/复活点:按阵营半区的地图数据」）：
+  `parseMeta` 把合法行解析进 `map.respawns`（元素 `{side, x, y}`，侧 1 = 左半、侧 2 = 右半），
+  `buildMeta` 按**侧分组**回写（侧 1 全部在前、侧 2 在后）——★ 游戏侧同侧按**文件顺序**去重（首次出现生效），
+  顺序一变"生效的那条"也会变，故输出必须确定。
+- **侧号只认 `1|2`、坐标必须是整数字面量**（与 `map_format.gd` / `_parse_cell_tokens` 同口径）；
+  认不出的 `# respawn` 行**降级成注释**（走下面那条通用规则），不会被丢掉。
+- 可视化：画布上按侧画 `R1`/`R2` 标记（侧 1 深绿、侧 2 深橙），顶栏「标线」叠加半区中线与 3×3 桶网格；
+  校验见 §9。★ 这不改变格式：meta 仍是 `u16 meta_len` + UTF-8 文本，v4 二进制一个字节没动。
 - **解析失败的行降级成注释而不是丢掉**（含坐标不是整数、坐标个数不够）。整数判定必须是**整数字面量**
   （`/^[+-]?\d+$/`），不可用 `isFinite`（`parseInt('3.5')===3` / `parseInt('7abc')===7` / `parseInt('1e3')===1`）。
 - **v3 → v4 迁移**：旧掩码 bit `(qy*2+qx)` 为 1 → 新网格的 4 个子格 `X∈[2qx,2qx+1], Y∈[2qy,2qy+1]`
@@ -122,6 +126,12 @@ descriptor (u32)
   是 4 的倍数。
 - **导出前校验只报告、不阻止导出**：`errors` = 真正非法；`warnings` = 能导出但游戏里可能不按预期跑。
   `encodeMap` **只拒 `errors`**。
+- **复活点判据**（`_checkRespawns`，常量 `RESPAWN_MIN_PER_SIDE = 5` / `RESPAWN_MIN_SIDE_GAP = 5` /
+  `RESPAWN_EDGE_MARGIN = 10` / `RESPAWN_BUCKETS = 3`，与 `core/sim/spawn_chooser.gd`、
+  [`tools/map_spawn_meta.gd`](../../tools/map_spawn_meta.gd) 同源）：每侧点数、点必须在自己半区、
+  离接缝（`x=0`/`cols`）与半区中线 ≥10 格、同侧两两环面距离 ≥5 格、每侧 3×3 桶覆盖。
+  ★ 全是 **warning**（游戏侧对不合规老图有回退路径），且"没有任何 `# respawn`"只在**有 `player2`（PvP 意图）**
+  时才提示 —— 单机图不该被这条吵。
 - `encodeMap` 必须先跑一遍 `validateMap`：`decodeMap` 在尺寸／图层长度上是严格的（非 4 倍数、图层长度
   不符一律拒收）。
 

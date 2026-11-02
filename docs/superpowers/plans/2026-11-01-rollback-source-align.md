@@ -132,7 +132,7 @@ create 建房 → join 加入 → 房主自动 `pvp_start` → 两端实例化**
 **读数（逐字）：**
 - `queue_drop`：**全部 13 局（含 3 局作废）合计 0 条**；服务端 `metrics` 里 `queue` 心跳正常、`snap_gap` 0 条。
 - `ack` 跳变只在**开局窗口**出现（`gap` 从 71 一路涨、`ack` 从 0 一跳 72），原因是 `MatchHost` 的 `COUNTDOWN`
-  分支清空输入队列 + `reset_state()`（`server/match/match_host.gd:219-222`）——**不是丢包/重传**（输入走 reliable 通道 1）。
+  分支清空输入队列 + `reset_state()`（`server/match/match_host.gd`）——**不是丢包/重传**（输入走 reliable 通道 1）。
 - 结论：**R4 在本机 loopback 未复现**（本机无抖动，队列不积压）；R4 只在公网抖动下才可能发生 ⇒ 本计划保留 R4，
   但它的证据只能来自公网读数（§R0a 的 A4/B20 那两局，当时未采字段）。
 
@@ -182,14 +182,14 @@ create 建房 → join 加入 → 房主自动 `pvp_start` → 两端实例化**
 
 **现状（逐字，先别信记忆）**
 - 服务器：`MatchHost` 的 `TileDefs.on_destroyed` / `on_sub_destroyed` 回调里 `_rpc_all("tile_destroyed", [cell])`
-  （`server/match/match_combat.gd:21`）与 `_rpc_all_ext("sub_destroyed", [sub])`（`:30`），通道 **3（reliable）**，
+  （`server/match/match_combat.gd`）与 `_rpc_all_ext("sub_destroyed", [sub])`（`:30`），通道 **3（reliable）**，
   **载荷里没有 seq / tick**。
-- 客户端：`TileSync.on_cell` / `on_sub`（`scenes/mp_client/tile_sync.gd:34` / `:56`）**到达即改地形**
+- 客户端：`TileSync.on_cell` / `on_sub`（`scenes/mp_client/tile_sync.gd` / `:56`）**到达即改地形**
   （`TileDefs.damage_sub` + 分块碰撞重建 + 粒子），没有任何"这次变更属于哪个 tick"的概念。
 - ★★ **预测环已经有现成的注入机制**：`PredictionRollback.apply_external_event(seq, callable)`
-  （`core/net/prediction_rollback.gd:134`）会把"恢复 `capture[seq]` → 应用事件 → 重放 (seq, last_applied]"做成原子操作，
+  （`core/net/prediction_rollback.gd`）会把"恢复 `capture[seq]` → 应用事件 → 重放 (seq, last_applied]"做成原子操作，
   并把事件记进 `_events` 供后续任何一次重放重新应用（`_apply_events_at`）。**受击事件就是这么做的**：
-  服务器用 `_stepped_seq[role]` 当锚点、逐 peer 发 `hit_event(..., hit_seq)`（`match_combat.gd:276-284`），
+  服务器用 `_stepped_seq[role]` 当锚点、逐 peer 发 `hit_event(..., hit_seq)`（`match_combat.gd`），
   客户端 `_apply_local_hit_event` 调 `apply_external_event`，REJECTED 时退回"只播反馈"。
   ⇒ **方案 A 不是新造轮子，是把拆砖接到同一条已守卫的链路上。**
 
@@ -382,7 +382,7 @@ fire_cd / _fire_buffered / aiming / mag / rld` + 服务器 `c2` 原始整态）�
 - **A 类 · 开局前窗口（`ack` 长时间为 0）**：`hold` 第 2 局 A 的两次 `vel` 回滚在 f=59/62，而回滚前后 `ack` 一路是 **0**、
   `gap` 从 71 一路涨到 74，**第一条 ack=72 一到就触发**。同一时刻两端速度都巨大（客户端 `v=(0,7813)`、服务器 `c2.vel=(0,7733)`）
   而位置冻结在 `(3168, 2145.435)`。成因在服务器侧可读：`MatchHost` 的 `COUNTDOWN` 分支**清空输入队列 + `reset_state()`**
-  （`server/match/match_host.gd:219-222`）⇒ 倒计时期间 `_ack_seq` 恒 0，客户端却在照常预测并累积 `seq`；开局第一个
+  （`server/match/match_host.gd`）⇒ 倒计时期间 `_ack_seq` 恒 0，客户端却在照常预测并累积 `seq`；开局第一个
   PLAYING ack 让预测环整段对不上 ⇒ 每局**最多一次** `vel` 回滚。**与开火无关**（两次都在 `fire_cd=0` 的冷枪状态）。
 - **B 类 · 受击 / 倒地 / 复活（设计内）**：`down` 类的每一条 `LBRB` 里服务器 `c2` 都是 `hp=0 / down=true`
   （例：`pre_2` B f=193，服务器 `pos=(6543→6494)`、`c2.down=True`、客户端刚被传到复生点 `(6574→6491)`）；
@@ -421,7 +421,7 @@ fire_cd / _fire_buffered / aiming / mag / rld` + 服务器 `c2` 原始整态）�
 首条 ack=72 一到就触发；同一时刻客户端 `v=(0,7813)`、服务器 `c2.vel=(0,7733)`，`pos` 冻结在 `(3168, 2145.435)`。
 
 **试过什么（2026-11-01，已回退，未入库）：** 按"倒计时只冻输入、没冻状态"的猜测**两端各加一处**
-`velocity = Vector2.ZERO` —— 服务器 `MatchHost` 的 COUNTDOWN 分支（`server/match/match_host.gd:219` 之后）、
+`velocity = Vector2.ZERO` —— 服务器 `MatchHost` 的 COUNTDOWN 分支（`server/match/match_host.gd` 之后）、
 客户端 `PvpMatchClient._physics_process` 的 `_round_locked` 分支。
 
 **实测结果（本机 loopback，`ax=1` 走位 2×30s + 站桩 2×20s）：没有可分辨改善，而且上下文直接否掉了假设。**
