@@ -104,7 +104,13 @@ ENTRIES=(
 #   `tests/README.md`。
 #   **别把本数组删掉**:闸四同时遍历 `ENTRIES` 与 `WRAPPERS`,数组不存在会让 `set -u` 下的
 #   展开报错;留着空数组 = "现在一支包装都没有"这件事**看得见**。
-WRAPPERS=()
+WRAPPERS=(
+	# ★ 2026-11-02 登记:这 4 支在 `tests/probe/` 下但**不进本批**。
+	#   `bot_1v1_probe.sh`:bot 批(3748daa1)新增,自当大厅用池外 29400/29450 且拉子进程;
+	#     尚未在真链路里跑出稳定性读数(导航仍未补齐)⇒ 先登记不跑,否则闸四 FATAL 会挡住整批。
+	#   ★ 它一旦稳定,挪进 ENTRIES(附端口/耗时/判词)再跑,别在这里"临时跑一次"。
+	"tests/probe/bot_1v1_probe.sh|bot 1v1 探针:自当大厅(池外 29400)+ 拉子进程;导航未补齐,先不进批"
+)
 
 ASSUME_YES=0
 LIST_ONLY=0
