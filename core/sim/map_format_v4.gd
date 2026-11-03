@@ -98,11 +98,16 @@ static func parse(data: PackedByteArray) -> Dictionary:
 			if bit == 1:
 				var descs := PackedInt32Array()
 				descs.resize(n)
+				# ★ 2026-11-02 解析提速:legacy 迁移**按 palette 项预计算一次**(通常几十项),
+				#   而不是每格一次 —— 旧写法 240k 次 `migrate_descriptor`(每次 1~2 次 TileDefs 字典查)
+				#   是整段解析的主耗时。迁移规则仍是唯一入口 `migrate_descriptor`,这里只是把结果摊成表。
+				var migrated := PackedInt32Array()
+				migrated.resize(pc)
+				for pi in pc:
+					migrated[pi] = migrate_descriptor(palette[pi])
 				for i in n:
 					var idx := body[off + i] if iw == 1 else body.decode_u16(off + i * 2)
-					# ★ 读时迁移(唯一入口):旧图集废弃槽位(legacy_texture_map)在这里改写成 base 纹理 + 合成 hue 档,
-					#   下游(scene_to_subgrid / flatten_scene / scene_to_descgrid)看到的永远是迁移后的描述符。
-					descs[i] = migrate_descriptor(palette[idx]) if idx < pc else 0
+					descs[i] = migrated[idx] if idx < pc else 0
 				out["scene"] = descs
 			off += n * iw
 		elif kind == 2:
@@ -151,6 +156,8 @@ static func scene_to_subgrid(scene: PackedInt32Array, sc: int, sr: int) -> Array
 
 
 # 「场景」层 → 游戏网格:纹理取 16 子格中出现最多的非零者(平票取小 id),形状 = 2×2 象限掩码(象限内有任一子格非空即置位)。
+# ★ 2026-11-02 解析提速:旧写法每个格建一个 `Dictionary` 数 16 个子格(15k 次分配 + 每子格字典读写)。
+#   改成**一次分配**的按纹理 id 计数平表(`cnt`)+ 本格 touched 列表(只清被碰过的项),结果逐位同旧实现。
 static func flatten_scene(scene: PackedInt32Array, sub_cols: int, sub_rows: int) -> Array[Array]:
 	var cols := sub_cols / SUB_PER_CELL
 	var rows := sub_rows / SUB_PER_CELL
@@ -160,9 +167,13 @@ static func flatten_scene(scene: PackedInt32Array, sub_cols: int, sub_rows: int)
 		row.resize(cols)
 		row.fill(0)
 		grid.append(row)
+	var cnt := PackedInt32Array()
+	cnt.resize(4096)
+	var touched := PackedInt32Array()
+	touched.resize(16)
 	for r in rows:
 		for c in cols:
-			var counts := {}
+			var n_touched := 0
 			var shape := 0
 			for qy in 2:
 				for qx in 2:
@@ -174,18 +185,43 @@ static func flatten_scene(scene: PackedInt32Array, sub_cols: int, sub_rows: int)
 							var tex := (scene[y * sub_cols + x] >> 12) & 0xFFF
 							if tex != 0:
 								any = true
-								counts[tex] = int(counts.get(tex, 0)) + 1
+								if cnt[tex] == 0:
+									touched[n_touched] = tex
+									n_touched += 1
+								cnt[tex] += 1
 					if any:
 						shape |= 1 << (qy * 2 + qx)
 			var best := 0
 			var best_n := 0
-			for tex in counts:
-				var nn := int(counts[tex])
-				if nn > best_n or (nn == best_n and tex < best):
-					best = tex
+			for k in n_touched:
+				var tex2 := touched[k]
+				var nn := cnt[tex2]
+				cnt[tex2] = 0
+				if nn > best_n or (nn == best_n and tex2 < best):
+					best = tex2
 					best_n = nn
 			grid[r][c] = MapFormat.pack(best, shape)
 	return grid
+
+
+# 「场景」层 → 子格纹理表 + 描述符表(**一次遍历**;2026-11-02 解析提速:原先 scene_to_subgrid 与
+# scene_to_descgrid 各扫 240k 一次)。两者逐项等价于各自旧实现。
+static func scene_to_subgrid_and_desc(scene: PackedInt32Array, sc: int, sr: int) -> Dictionary:
+	var texs: Array[Array] = []
+	var descs: Array[Array] = []
+	for y in sr:
+		var trow: Array[int] = []
+		var drow: Array[int] = []
+		trow.resize(sc)
+		drow.resize(sc)
+		var base := y * sc
+		for x in sc:
+			var d: int = scene[base + x]
+			drow[x] = d
+			trow[x] = (d >> 12) & 0xFFF
+		texs.append(trow)
+		descs.append(drow)
+	return {"textures": texs, "descs": descs}
 
 
 # 单层游戏网格 → v4 二进制(只写「场景」层;子格辅码一律取中性 (4,4,4,7))。meta_lines = 原样保留的注释/出生点行。

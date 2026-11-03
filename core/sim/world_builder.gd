@@ -22,16 +22,28 @@ static func load_grid() -> Array:
 		GameParameters.MAP_WIDTH = grid0[0].size() * GameParameters.TILE_SIZE
 		GameParameters.MAP_HEIGHT = grid0.size() * GameParameters.TILE_SIZE
 		return grid0
-	var grid := MazeGenerator.load_map_file()
-	if grid.is_empty():
-		push_error("WorldBuilder: 地图加载失败")
-		return []
-	MazeGenerator.current_grid = grid
-	# cyrm v4(选项 A):子格纹理表 + 描述符表与格级网格一起装填(★ 唯一装填点,两行必须同一次赋值);
-	# v3/旧图由 MapFormat 内部展开并合成描述符(legacy 纹理读时迁移)
-	var sd := MapFormat.load_subgrid_with_descs(MazeGenerator.map_file_path())
-	MazeGenerator.current_subgrid = sd["textures"]
-	MazeGenerator.current_subdesc = sd["descs"]
+	# ★ 2026-11-02 解析提速:一次解析拿全套(v4)。旧写法 `load_map_file()` + `load_subgrid_with_descs()`
+	#   把同一份 cyrm **解析了两遍**(各含读盘/CRC/240k 迁移)⇒ 这里只解析一次。
+	var bundle := MapFormat.load_map_bundle(map_path)
+	var grid: Array[Array]
+	if not bundle.is_empty():
+		grid = bundle["grid"]
+		if grid.is_empty():
+			push_error("WorldBuilder: 地图解析失败")
+			return []
+		MazeGenerator.current_grid = grid
+		MazeGenerator.current_subgrid = bundle["textures"]
+		MazeGenerator.current_subdesc = bundle["descs"]
+	else:
+		# 非 v4(v3 / 旧文本图):回退旧路径(两条各自展开,只在老图上付这份钱)
+		grid = MazeGenerator.load_map_file()
+		if grid.is_empty():
+			push_error("WorldBuilder: 地图加载失败")
+			return []
+		MazeGenerator.current_grid = grid
+		var sd := MapFormat.load_subgrid_with_descs(map_path)
+		MazeGenerator.current_subgrid = sd["textures"]
+		MazeGenerator.current_subdesc = sd["descs"]
 	TileDefs.load_defs()
 	GameParameters.MAP_WIDTH = grid[0].size() * GameParameters.TILE_SIZE
 	GameParameters.MAP_HEIGHT = grid.size() * GameParameters.TILE_SIZE

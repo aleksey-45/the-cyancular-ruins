@@ -35,7 +35,7 @@
 > - 必须用 **HTTP(S) 起一个静态服务**再访问(例如 `python -m http.server 8000 -d web_build` → `http://localhost:8000/`);直接双击 `index.html`(`file://`)不行。
 > - **上线部署**:静态服务器要开 **gzip/brotli**(wasm ≈39.5MB,压缩后传输约 10MB)+ `Cache-Control` 长缓存;`python -m http.server` 不压缩,只适合本地验证。首屏还会烘一张菜单背景图(Web 上已降到 16px/格 ≈15MB),慢机器上首进菜单要等几秒。
 > - `build_release.py` 对 Web 只做**文件结构校验**(index.html + 足够大的 .wasm),**不启动浏览器** ⇒ "浏览器里真能跑"要人开一次页面确认(单机流程:开始游戏 → 移动/射击 → HUD/后处理正常)。
-> - **进关不再黑屏 / 不再卡 2 秒**:Level0 建图做了两层优化(2026-11-02):① 铺图算法 —— 每个 16px 子格的 atlas 坐标按地图**预计算成平表** + 整行空气跳过 ⇒ 铺 9 份环面副本 **1.4s → ~0.13s(≈10×)**;② 剩下的碰撞(≈330ms)按每帧 8ms 预算**分帧**建(期间 `get_tree().paused` 冻结物理 + `LoadingScreen` 遮罩显示阶段/百分比)。桌面 `_ready` 同步耗时 **≈2.2s → 0.5~0.65s**。详见 [`docs/eng/world.md`](docs/eng/world.md) §进关卡建图的耗时与分帧。
+> - **进关不再黑屏 / 不再卡 2 秒**:Level0 建图做了三层优化(2026-11-02):① 铺图算法 —— 每个 16px 子格的 atlas 坐标按地图**预计算成平表** + 整行空气跳过 ⇒ 铺 9 份环面副本 **1.4s → ~0.13s(≈10×)**;② 解析器 —— legacy 迁移按 palette 预计算、`flatten_scene` 去掉每格字典、**一次解析拿全套**(旧代码把同一份 cyrm 解析两遍)⇒ **225~350ms → ~110ms**;③ 剩下的碰撞(≈330ms)按每帧 8ms 预算**分帧**建(期间 `get_tree().paused` 冻结物理 + `LoadingScreen` 遮罩显示阶段/百分比)。桌面 `_ready` 同步耗时 **≈2.2s → 0.35~0.45s**。详见 [`docs/eng/world.md`](docs/eng/world.md) §进关卡建图的耗时与分帧。
 > - **后处理必须保留**:世界渲染在 `WorldViewport`(SubViewport)里,由 `PostProcess` 负责呈现到屏幕 —— 整节点删掉会只剩天空+HUD。Web 若要降性能,应针对具体效果降级,别删这个节点。
 > - 实测(2026-10-24,桌面 Chromium):主菜单 → 单机 → 载入遮罩(分帧进度)→ 关卡正常渲染可玩;帧率/发热需在目标机自测。
 > - 已知差异:Web 版跑不了 `LocalServer`(taskkill/netstat/create_process 在浏览器里不存在;相关入口本就随联机一起隐藏);首次加载体积 = 全部资源(数十 MB),首次进入要等 wasm+资源下载。

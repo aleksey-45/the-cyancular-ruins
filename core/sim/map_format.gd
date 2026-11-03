@@ -79,6 +79,28 @@ static func _read_bytes(path: String) -> PackedByteArray:
 
 
 
+## 进关卡一次性拿全套(map_format 2026-11-02 解析提速):**只解析一次** v4,派生出
+## `{grid(格级), textures(子格纹理), descs(子格描述符)}`。空字典 = 非 v4(调用方回退旧路径)。
+## ★ 旧调用方(WorldBuilder.load_grid)先 `load_map_file()` 再 `load_subgrid_with_descs()`,
+##   同一份 cyrm 被**解析两遍**(各含 CRC32 + 240k 迁移),这是进关卡那 225~350ms 的主要来源。
+static func load_map_bundle(path: String) -> Dictionary:
+	var v := _v4(path)
+	if v.is_empty():
+		return {}
+	if not bool(v.get("ok", false)):
+		push_error("MapFormat: v4 解析失败 %s(%s)" % [path, str(v.get("error", "?"))])
+		return {"grid": [], "textures": [], "descs": []}
+	var sc := int(v["sub_cols"])
+	var sr := int(v["sub_rows"])
+	var scene: PackedInt32Array = v["scene"]
+	var sd := MapFormatV4.scene_to_subgrid_and_desc(scene, sc, sr)
+	return {
+		"grid": MapFormatV4.flatten_scene(scene, sc, sr),
+		"textures": sd["textures"],
+		"descs": sd["descs"],
+	}
+
+
 ## v4 判定 + 解析**一次读盘**:命中 v4 返回 parse 结果(含 ok/error),非 v4 返回空字典。
 ## ★ 5 处调用点原先各写 `if is_v4(path): MapFormatV4.parse(_read_bytes(path))` —— 同一份文件
 ##   每次调用被读盘 2 次、CRC32 算 2 次(启动时这些路径会全走一遍)。空字典 = 「不是 v4」,不是错误。
