@@ -17,9 +17,6 @@ var _countdown_resync := 0.0
 
 
 # COUNTDOWN 期间的重播节拍(2026-11-01):客户端从「收到那一刻」起自己走秒,而它可能晚到(场景加载 / 重连),
-# 不重播时本地时钟会比服务器慢一截 ⇒ 最后 1 秒被 PLAYING 转变截掉(用户实见「最后 1 秒显示不出来」)。
-# ★ 配合客户端的 CountdownClock.start 的 min 规则:重播只会把本地时钟**拉短**,绝不回拨;显示数字因此单调不增。
-# ★ 三模式的 COUNTDOWN 分支各写了一遍,但节拍本体只许有这一份。
 const COUNTDOWN_RESYNC := 0.5
 
 
@@ -173,9 +170,6 @@ func _round_over(winner: int) -> void:
 	_broadcast_round_state()
 
 # 换局复位(增量,2026-10-24):只还原「被拆过的 16px 子格」—— 整图 build_sim 实测 ~0.48s ⇒ 每局卡顿。
-# 与客户端 Level0.reset_destructibles() 同构:sub_hp / 可破坏碰撞子格 / 格级网格与 HP 逐格回基线,只 rebuild 脏块;
-# 永久墙与攀爬条从不变化 ⇒ 永不重建。★ 兜底:名单以 damaged_subs 为准,再并上「与 _base_grid 不同的 64px 格」的 16 个子格
-# (格级 destroy 路径只清子格 HP、不一定逐子格发回调;漏了它下一局就是「客户端有墙、服务器没有」)。
 func _reset_world_and_clear_dynamics() -> void:
 	for b in get_tree().get_nodes_in_group("bullet"):
 		if is_instance_valid(b):
@@ -260,11 +254,6 @@ func _start_next_round() -> void:
 
 
 # round_state 载荷的**三模式共有骨架**:5 个共有键 + MATCH_OVER 的 match_winner + 非空的 stats。
-# ★ 三个生产者(MatchRound / RoyaleHost / TeamHost)只准在这个骨架上**追加**模式键(大乱斗另需覆盖 3 个共有键,
-#   因为它的 round / rounds_won / timer 口径与回合制不同),不得再各自手拼一份共有键 —— 原先三份手拼同一个键集,
-#   改一处漏一处不报错,只会让某个模式静默读到 0。
-# ★ 键集与键值与拆前逐字一致(round_state 是两客户端 + 探针/裁判的线上契约);只落在本类,
-#   因为 _match_winner 定义在这里(基类 MatchState 编译期看不到子类方法)。
 func _round_state_base() -> Dictionary:
 	var data := {
 		"state": _round_state,

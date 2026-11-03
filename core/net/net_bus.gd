@@ -76,9 +76,6 @@ func stop() -> void:
 
 
 # ── 发包前的存活判据:不用 multiplayer.get_peers()(它随 API 信号更新,比 ENet 真实状态晚,断开握手期间可达秒级)。
-# 真身:enet_peer_disconnect() 当场 reset_queues ⇒ channelCount=0 而 get_peers() 仍报在线 ⇒ 定向发送报 channel 0 错(0 = reliable)。
-# 大厅侧"该 peer 现在能不能收包"的唯一判据(S-09:从 LobbyRooms 挪来)。★ 判据本体仍是 ENet peer state:
-# 旧写法读 multiplayer.get_peers(),实测把「ENet 已断、peer_map 还没收敛」的 peer 仍报在线(晚一拍)⇒ 判早了等于没判。
 func is_peer_online(id: int) -> bool:
 	return multiplayer.has_multiplayer_peer() and is_peer_live(id)
 
@@ -176,16 +173,6 @@ func match_sync() -> void:
 	match_sync_received.emit(multiplayer.get_remote_sender_id())
 
 # ── 服务器 → 客户端(权威方 = peer1 可调);快照拆两条:世界包(全部玩家渲染字段,构造一次、广播一次 = O(N))
-# 与本人包(自己的 ack_seq + 权威整态 c2,定向发本人)。★ 世界包必须用 rpc() 广播,别退化回逐 rpc_id 循环(那是 O(N²),
-# 旧实现 8 人局上行 ≈29Mbps);两者互不连累:c2 丢只少一个回滚锚点,世界包丢只冻结一帧副本插值。
-# ★ 载荷是手打包的 PackedByteArray(NetCodec 编解码),RPC 入口仍 emit 同形状 Dictionary ⇒ 消费方一行没动。
-#   实测 8 人局上行 587→72KB/s、世界包 N≤8 恒 1 片(详表见 docs/eng/netcode-snapshots.md §2);载荷无量化(float32 逐位相同)。
-# ── 下行接收逻辑(S-03:解码/tick 去重/坏包只警告一次/丢包与诊断计数)整体住在 core/net/snapshot_rx.gd
-#   —— 那是纯逻辑(RefCounted,不引 autoload),`-s` 冒烟可直接驱动;本文件的 @rpc 方法表与通道号仍独占(协议面不搬)。
-# ★ 诊断(--diag,默认关):快照到达间隔 >150ms 记一条。世界包是 unreliable,断流时副本只能冻结,
-#   恢复那一帧再跳 —— 这是用户报「卡顿后瞬移」里"他人瞬移"的直接证据(判据与读数见 docs/eng/tests.md)。
-# ── 下行丢包估计(tick 缺口;2026-10-30 补;口径收在 NetMetrics):客户端自己按 tick 缺口算(世界包 / 本人包
-#   各一本累计账,`--netstat` 每秒一行、`--diag` 每秒一条 `snap_rx`)。**默认不计日志**,计数始终在跑(几行整数)。
 var _rx := SnapshotRx.new()
 
 

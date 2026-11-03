@@ -1,9 +1,6 @@
 extends RefCounted
 
 # 激光光束几何追踪(纯静态、可 -s 冒烟、不引 autoload):开火瞬间沿方向逐格走 32px 子格,遇墙翻对应轴反射,
-# 至多 max_bounces 次;第 (max_bounces+1) 次碰墙被吸收(停在该墙表面),或累计距离 >= max_len 在空中消失。
-# 判定语义与 CollisionBuilder.build_sub 完全一致(只认 type=wall 且形状位实心;通道/液体/气体无碰撞 ⇒ 光束穿过水/梯)。
-# 环面:固体判定 posmod 回规范副本,坐标保持在射手所在副本的连续系。不声明 class_name(用 preload 引用即可)。
 
 const SUB_TS: float = 32.0  # 子格边长(px)
 

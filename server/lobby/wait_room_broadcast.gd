@@ -2,16 +2,6 @@ class_name WaitRoomBroadcast
 extends RefCounted
 
 # 等待室状态广播的三种「同一件事」(2026-10-30 S-09 第三片:从 `LobbyRooms` 挪出;那里是 Node、引 NetBus,
-#   三份 flush 各带一段同样的延帧注释,职责与 RPC handler 混在一起)。
-#
-# ★ 时序约定(逐字保留,别"优化"成同步发):
-#   1) 调用方一律 `WaitRoomBroadcast.flush_*.call_deferred(lobby, room)` —— 帧末起步;
-#   2) 体内 `await lobby.get_tree().process_frame` **再等一帧**;
-#   3) 真正发送前再判一次 `in_match`/`started`。
-#   原因:调用点几乎都在「刚有人断开」的路径上,断开信号还没被 MultiplayerAPI 处理完(实测滞后超过一帧),
-#   同步发/帧末发都会踩 `max channels: 0` 且包会丢(6 人局开局瞬间实测 5 条)。
-#
-# ★ 本文件引用 autoload(NetBus/NetBusExt)⇒ **不可 `-s` 测**(与 lobby_rooms 同款),守卫边界登记在债单。
 
 # 大乱斗等待室:{code, is_public, invite_code, max_players, host_role, players, in_match} + 每人一份 your_role。
 static func flush_royale(lobby: LobbyRooms, rr: RoomTypes.Room) -> void:

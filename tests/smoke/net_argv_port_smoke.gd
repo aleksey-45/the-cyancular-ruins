@@ -1,11 +1,5 @@
 extends SceneTree
 # 端口解析守卫(netstat 行解析 + `--port` 启动参数校验)。存在理由(逐条对应真实缺陷):
-#   ① `local_server._pids_on_port`(2026-10-30 已删)按 `cols.size() >= 5` 判 netstat 行 —— 而 **UDP 行只有 4 列**
-#      (`UDP 0.0.0.0:7777 *:* 1234`,没有 State 列)⇒ 对 UDP 恒假:「重启本机服务器」的残留清理是空操作、
-#      就绪轮询恒不成立(用户侧 = 服务器起不来)。同时 `line.contains(":7777 ")` 会命中 TCP 行的**对端**地址。
-#   ② `--port` 旧实现直接 `int(args[i+1])`:`--port abc` ⇒ 0 ⇒ ENet `create_server(0)` 绑随机端口并成功
-#      ⇒ worker 打印"就绪"却占一个找不到的端口,靠 30 秒报到梯才退。
-# 跑法:"$GODOT" --headless --path . -s res://tests/smoke/net_argv_port_smoke.gd;通过 = "NET ARGV OK(n 条断言)"。
 
 const EXPECTED_CHECKS := 5
 

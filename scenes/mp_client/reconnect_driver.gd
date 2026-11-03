@@ -17,7 +17,7 @@ var _reconnecting := false
 var _reconnect_started_ms := 0   # ★ 真实断开时刻(不是"关菜单"时刻,见 _begin_reconnect)
 var _reclaim_sent := false   # ★ 本条连接上是否已发过 reclaim(判据见 _on_reconnect_retry_tick)
 var _pending_disconnect := false   # 断线时菜单开着 → 记账,关菜单再来(见 recheck_disconnect)
-var _attempt_started_ms := 0   # 当前这次连接尝试的起飞时刻;0 = 没有尝试在飞
+var _attempt_started_ms := 0   # 当前这次连接尝试的起飞时刻;0 = 没有进行中的尝试
 var _retry_timer: SceneTreeTimer = null   # 单一定时器(判据见 _schedule_reconnect_retry)
 
 
@@ -95,7 +95,7 @@ func _retry_connect() -> void:
 	_attempt_started_ms = Time.get_ticks_msec()
 	_client.multiplayer.connected_to_server.connect(_try_reclaim, CONNECT_ONE_SHOT)
 	_client.multiplayer.connection_failed.connect(_on_reconnect_failed, CONNECT_ONE_SHOT)
-	# ★★ 成功这条也要挂定时器:不挂的话"一次尝试正在飞"的整段期间一次 tick 都没有 —— 宽限期判据从不被求值。
+	# ★★ 成功这条也要挂定时器:不挂的话"一次尝试尚未返回"的整段期间一次 tick 都没有 —— 宽限期判据从不被求值。
 	_schedule_reconnect_retry()
 
 
@@ -116,7 +116,7 @@ func _try_reclaim() -> void:
 	_schedule_reconnect_retry()
 
 
-# 重试节拍(单一定时器)。★ 一个时刻只能有一个定时器在飞;已有的没到点就直接返回,链条不会断:
+# 重试节拍(单一定时器)。★ 一个时刻只能有一个定时器在等;已有的没到点就直接返回,链条不会断:
 func _schedule_reconnect_retry() -> void:
 	if not _reconnecting:
 		return
@@ -167,7 +167,7 @@ func _on_resumed() -> void:
 	print("[pvp] 重连成功")
 
 
-# 宿主 _cancel_reconnect() 委托:「对手已离开」是终局,停掉在飞的重连循环。★ worker 收场"先发 opponent_left、紧接着 quit(0)",到达顺序不保证 ⇒ 由此口收口。
+# 宿主 _cancel_reconnect() 委托:「对手已离开」是终局,停掉正在跑的重连循环。★ worker 收场"先发 opponent_left、紧接着 quit(0)",到达顺序不保证 ⇒ 由此口收口。
 func cancel() -> void:
 	_reconnecting = false
 	_reconnect_started_ms = 0
@@ -185,7 +185,7 @@ func _abort_reconnect(reason: String) -> void:
 	print("[pvp] %s" % reason)
 
 
-# 场景离开 → 停掉在飞的重连(宿主 _exit_tree 委托)。★ 只在真在重连时断连(本函数跑在新场景 _ready 之后)。
+# 场景离开 → 停掉正在跑的重连(宿主 _exit_tree 委托)。★ 只在真在重连时断连(本函数跑在新场景 _ready 之后)。
 func on_exit_tree() -> void:
 	if _reconnecting:
 		_reconnecting = false

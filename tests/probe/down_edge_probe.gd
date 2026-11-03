@@ -1,15 +1,5 @@
 extends Node
 # 三模式「倒地边沿」记分口径守卫(S-15:把 ~20 行×3 的倒地边沿收成 MatchRound._on_down_edge 模板之后,
-# 记分 / 记 kills / 队分归属第一次能在默认批里被观测到 —— 此前只有真链路 soak/team_match 间接覆盖)。
-# 场景探针(要真 MatchHost / RoyaleHost / TeamHost + 真地图 + autoload)⇒ 不是 `-s`:
-#   godot --headless --path . res://tests/probe/down_edge_probe.tscn(判据 grep 末行 MARKER)。
-# 三条断言 = S-15 重构前后都要求绿的可观测判据:
-#   ① 1v1 打到 5 杀取胜:逐人表 kills(结算页口径)与记分条 _scores 同数,且相位进 ROUND_OVER;
-#   ② 大乱斗无归因死亡(溺水/坠落/自杀):不给任何人记 kills、也不加分,但死者 deaths 照记;
-#   ③ 3v3 队友误炸:对方队 +1,但无人记 kills(肇事者记 team_kills,死者 deaths 照记)。
-# 去掉什么才红:① _award_down 的 scorer 改错 / 漏记 _scores ⇒ ①;② 把 _down_killer_of 在 RoyaleHost 里改回 1v1 口径
-#   (记给对手)⇒ ②;③ _award_down 把队分写成 kills,或漏掉 _record_down 的 same_team 早退 ⇒ ③。
-# 测不到什么:广播载荷的线上字节(_rpc_all 在空 peer 表上短路,只证明不崩)、结算页排版/观感。
 
 const MAP := "res://maps/demo.cyrm"
 const DT := 1.0 / 60.0

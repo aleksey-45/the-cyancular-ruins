@@ -1,10 +1,6 @@
 extends Node
 
 # 1v1 Bot 真链路探针:
-#   裁判(lobby)= 本进程起真大厅(NetBus.start_server + RoomManager,池外端口),拉起 2 个客户端子进程;
-#   客户端(c1/c2)= 真 mp_lobby → 真 pvp_game,由 bot_watcher 驱动。
-# 判据:两个客户端结果文件都含 `BOT_1V1 OK`,裁判打印 `BOT 1V1 PROBE: ALL-OK`。
-# 跑法:bash tests/probe/bot_1v1_probe.sh(或人工 --role=lobby + 另起 c1/c2)。
 
 const LOBBY_PORT := 29400
 const WORKER_PORT_OUT := 29450

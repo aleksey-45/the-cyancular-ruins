@@ -99,7 +99,7 @@ static func _greedy_region(sub: Array[Array], sub_rect: Rect2i, ts: int) -> Arra
 	return rects
 
 
-# 把 rects 实例化到 parent 下名为 node_name 的 StaticBody2D:每块矩形按 9 个环面副本偏移(tx*cols*ts, ty*rows*ts),9 副本共享同一 RectangleShape2D。返回总 shape 数。
+# 把 rects 实例化到 parent 下名为 node_name 的 StaticBody2D:每块矩形按 9 个环面副本偏移(tx*cols*ts, ty*rows*ts),9 副本共享同一 RectangleShape2D。
 static func _instantiate(rects: Array, parent: Node, node_name: String, cols: int, rows: int, ts: int) -> int:
 	var existing := parent.get_node_or_null(node_name)
 	if existing != null:

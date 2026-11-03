@@ -1,12 +1,5 @@
 extends SceneTree
 # 自动跳跃判据守卫(2026-11-01 用户要求「小于等于一格会自动跳跃」)。
-# 守卫对象 = StepJump(纯逻辑:无 autoload / 无 Node ⇒ 本文件能 `-s` 跑):
-#   low_step_height(feet_sub, dir, solid_at) -> 0 / 1..4 / -1。
-# 去掉什么才红:把 `MAX_STEP_SUBCELLS` 判据删掉(高于一格也返回 h)⇒ ④ 红;把循环上界改成 1 ⇒ ③ 红;
-#   `if h == 0: return 0` 删掉(没挡路也当台阶)⇒ ① 红;dir 恒 1 ⇒ ⑥ 红。
-# 测不到什么:① player.gd 是否真的在"地面 + 朝前走 + 非冲刺"时调用它(行为侧,只能试玩/真链路);
-#   ② 跳跃后能不能真的落上去(物理 + 跳跃高度,由 PlayerParams 决定);③ 手感(自动跳是否太灵敏)。
-# 跑法:"$GODOT" --headless --path . -s res://tests/smoke/step_jump_smoke.gd;通过 = STEP JUMP OK(n 条断言)。
 
 const EXPECTED_CHECKS := 12
 

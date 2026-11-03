@@ -1,13 +1,6 @@
 extends Node
 
 # 子弹对象池场景探针(真场景树:走 _ready / 物理帧 / 组查询)。验六件事:
-#   ① 武器出弹走池(第二发复用同一实例),武器自己的 _laser / _explosion_marker 不随开火增长;
-#   ② 客户端"他人子弹"入口也走池;③ 归还后离树 / 不在 bullet 组 / 物理关 / 不再移动;
-#   ④ 撞墙延迟销毁带使用代号(旧定时器不许收掉已被复用的一发);⑤ 复用 3 次后子节点不增长;
-#   ⑥ 复用后拖尾点集被清、颜色跟上新一发(真机上"复用瞬间甩出旧轨迹"就是这个缺陷);
-#   ⑦ 复用后首帧扫掠起点 = 出膛位置(不是上一次的值);
-#   ⑧ 池化弹在自己的物理回调里命中 → despawn 回池;⑨ 同一物理帧归还的实例不再借出。
-# 跑法:godot --headless --path . res://tests/probe/bullet_pool_probe.tscn;判据 grep 末行 "BULLET POOL PROBE: ALL-OK"。
 
 const EXPECTED_CHECKS := 9
 const MARKER := "BULLET POOL PROBE: ALL-OK"

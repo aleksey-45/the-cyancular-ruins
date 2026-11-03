@@ -2,12 +2,6 @@ class_name RoomRegistry
 extends RefCounted
 
 # 三张房间表合一(`mode -> {code: Room}`,2026-10-22 spec §3 方案 B 的第二步)。
-# ★ 为什么合一:1v1 / 大乱斗 / 3v3 各一张表 ⇒ 清扫、回收梯、拆除、列表、面板每处都写三遍循环与
-#   「三选一」的 `is` 判定;漏一张的症状是**静默端口泄漏**(本层补过五次的那个失败模式)。
-# ★ 房号空间与旧实现逐字相同:每个 mode 内 4 位随机号、**只在本 mode 内去重**(同号跨 mode 共存是允许的
-#   —— 拆除按 (mode, code) 精确定位,不再像旧实现那样按 code 反查三张表)。
-# ★ 增删只走 add / erase:`of(mode)` 是内部表的**只读视图**(约定,不复制 —— 复制会给每个调用点加一层成本)。
-#   `tools/room_sweep_lint.gd` 钉住「表内 `.erase(` 只许出现在 `erase()` 里」「拆除延迟只许引用规则表」。
 
 # peer id -> 昵称(原 LobbyRooms._peer_names,列表 / 冻结名单 / 面板都读它)。
 var peer_names: Dictionary = {}

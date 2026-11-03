@@ -1,8 +1,5 @@
 extends PlayerInput
-# 大乱斗压力探针的脚本「手柄」(extends PlayerInput,与 AiInputSource 同一套注入机制)。目的:让 headless 客户端在真 royale_game 场景里把局内行为真的踩一遍(走动 / 跳 / 冲刺 / 下蹲 / 上下爬 / 各武器开火 / 切枪 / 静默),而不是只连上收快照。
-# 探针每物理帧调 step();探针直接把本对象塞进本地玩家的 input_source。
-# 无 class_name(新建全局类要刷 --import 全局类缓存,本仓踩过这个坑),由探针 preload 引用。
-# frozen:PvP 的 COUNTDOWN/结算冻结会置它(set_controls_locked)。基类把公开读口对 frozen 短路,本类只覆写不碰 frozen 的 _*_raw() 钩子 → 无需自己认。下方 step() 里那个 if frozen 是本类自己的「冻结期不推进脚本」逻辑(清 held/边沿),与基类短路是两件事,勿删。
+# 大乱斗压力探针的脚本「手柄」(extends PlayerInput,与 AiInputSource 同一套注入机制)。
 
 const PHASE_TICKS := 75      # 每段行为持续 tick(≈1.25s)
 const ACTIONS: Array[String] = [

@@ -27,12 +27,6 @@ const PredictionContact := preload("res://core/net/prediction_contact.gd")   # �
 const ReplicaScript := preload("res://scenes/player/player_replica.gd")      # 要它的 GROUP 常量(副本没 class_name)
 var _contact_grace_left := 0.0   # 贴身容差迟滞剩余秒(见 PredictionContact.CONTACT_GRACE_S;纯本地量,不上行)
 # ── 输入上行(每 tick 采样 → PacketInputSource.pack_record → encode_input → 发包(60Hz) → ack/seq 记账 → netstat)──
-# 实现落在组合件 core/net/input_uplink.gd(2026-10-30 拆出;S-17 第一刀)。本类只留采样口(_physics_process 里现读
-# src / aim / winst)与 C2 预步(它要宿主的 `_rollback` 与 `_update_contact_state()`),其余三步调组件:
-# begin_tick() → submit(rec, aim) → take_packet()。★ seq 归零时机 / `_prev_tick_rec` 流水线 / ack 纪元 /
-# netstat 统计窗口全部随组件走(不变量写在组件文件头,改之前先读那一节)。
-# ★ 组件懒建:基类没有 _ready(三个子类各有一个,在基类再加会被覆盖掉、静默失效)⇒ 第一次用到时 new + bind;
-#   bind 只存引用、没有副作用,与"实例化时就建"在行为上不可分。
 var _input_uplink: InputUplink = null
 
 
@@ -58,7 +52,7 @@ var _last_round_state: Dictionary = {}      # 最近一条 round_state(结算载
 # 「新一局」分支(清子弹 / 复位砖 / 3v3 重拉 match_sync)已经跑过的局号 —— 边沿触发的记账,见 _on_round_state。
 var _countdown_round_seen := 0
 
-# 玩家本体精灵(player.png)的主色(RGB)。★ 数值是实测的不是拍的:主色 #639BFF 占 12987 个不透明像素里的 10875(83.6%),次色 #5585D9 是它的暗调同色;复测办法 = 按 alpha>200 过滤 player.png 全部像素取众数。换 sprite 素材要重测这一行 —— 它错了不报错,只是队色整体偏色(整队一起偏,更容易漏)。★ 唯一源是 UiFactory.C_TEAM_A(队 1 token,同值),这里是别名不存字面量;零守卫:hue_tint_probe 的守卫 D(钉 C_TEAM_A == 本常量 == png 众数)已随该探针删除(2026-10-09)。
+# 玩家本体精灵(player.png)的主色(RGB)。
 const BODY_BASE_COLOR := UiFactory.C_TEAM_A   # #639BFF(本体主色 == 队 1 token)
 
 
@@ -85,10 +79,6 @@ func _correct_local_spawn() -> void:
 
 
 # ── 三模式同构引导(2026-11-02 从三个子类 _ready 上提:三个文件原先各有一份 ~95 行逐字相同的引导)──
-# 世界 / 出生点 / 幽灵碰撞位 / C2 控制器 / 环面尺寸 / 后处理 / 共用订阅 / match_sync 进场拉取。
-# 子类 _ready = `_boot_world()` + 只留真正的差异(副本结构:1v1 固定一个 / N 个按 role 懒建;HUD / 小地图装配;退场文案)。
-# ★ 语句顺序是承重的(与上提前的三个文件逐行一致):本地玩家必须先摆好再建控制器 ⇒ 再订阅 ⇒ 最后才开口拉 match_sync。
-# ★ 只提"逐字相同"的部分(判据:剔掉注释后逐行 diff);1v1 独有的 local_opponent_left / 单副本 / 自己的名字表都不在这里。
 func _boot_world() -> void:
 	CombatComponent.pvp_arena = true   # PvP:取消命中无敌帧(每发结算一次)
 	MazeGenerator.set_map_file(PvpSession.map_path)
@@ -104,18 +94,18 @@ func _boot_world() -> void:
 	local.position = Vector2(PvpSession.spawn.x * ts + ts / 2.0, PvpSession.spawn.y * ts + ts / 2.0)
 	# 出生即落稳(见 _settle_local_spawn):服务器已站地面,客户端从格子中心自由落体会差几 px ⇒ 首条 ack 判一次回滚。
 	_settle_local_spawn(local)
-	# 与对手(层 2)物理碰撞:服务器侧已给每个玩家 mask |= 2,客户端本地玩家也必须,否则本地预测直接穿过对手副本、服务器却挡住 ⇒ 每帧分歧回滚(C2 的无限回滚循环);对手那侧由 player_replica 的幽灵碰撞体提供。★ 不改 player.tscn(玩家掩码要保持 5,单机不需要这一位)。★ 3v3 之后会由 _apply_team_collision() 按队改写掩码 —— 不要因为那一路就把本行删掉:队伍表到达前它是唯一的碰撞来源。零守卫(enemy_logic_smoke 已删·2026-10-09)。
+	# 与对手(层 2)物理碰撞:服务器侧已给每个玩家 mask |= 2,客户端本地玩家也必须,否则本地预测直接穿过对手副本、服务器却挡住 ⇒ 每帧分歧回滚(C2 的无限回滚循环);对手那侧由 player_replica 的幽灵碰撞体提供。
 	local.collision_mask |= 2
 	_local = local
 	_rollback = PredictionRollback.new()
 	_rollback.bind(_local)
-	# 环面尺寸:分歧判定要用它取最短向量,否则跨接缝那一帧客户端与服务器相差一整幅地图宽会被误判成分歧、白跑一次回滚(见 PredictionRollback._pos_dist)。★ 不设 = 静默惰性(不报错,只是修复不生效),故 tests/probe/rollback_fidelity_probe 的源码守卫钉的就是本函数里这一行(守卫扫的块 = `func _boot_world(`)。
+	# 环面尺寸:分歧判定要用它取最短向量,否则跨接缝那一帧客户端与服务器相差一整幅地图宽会被误判成分歧、白跑一次回滚(见 PredictionRollback._pos_dist)。
 	_rollback.map_px = Vector2(GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 	# pvp_mode 下 Level0 不建后处理,这里补(否则 SubViewport 不显示)。
 	var pp := PostProcess.new()
 	pp.world_viewport = level0.get_node("WorldViewport")
 	add_child.call_deferred(pp)
-	# 快照拆两条:① 世界包 = 全部玩家的渲染字段(副本/血条);② 本人包 = 自己的 ack_seq + c2(只有本人需要,C2 rollback 拿它锚定/重放)。拆包的好处是两条互不连累 —— c2 丢只少一个回滚锚点(下一个快照补上),世界包丢只让副本插值冻结一个快照间隔(16.7ms)。
+	# 快照拆两条:① 世界包 = 全部玩家的渲染字段(副本/血条);② 本人包 = 自己的 ack_seq + c2(只有本人需要,C2 rollback 拿它锚定/重放)。
 	NetBus.local_snapshot_world.connect(_on_snapshot_world)
 	NetBus.local_snapshot_own.connect(_on_snapshot_own)
 	NetBus.local_bullet_spawn.connect(_on_bullet_spawn)
@@ -124,12 +114,12 @@ func _boot_world() -> void:
 	_subscribe_tile_events()   # 拆砖的两条(格级 + 子格级)必须成对,见基类注释
 	NetBus.local_round_state.connect(_on_round_state)
 	NetBus.local_kill_event.connect(_on_kill_event)
-	# 扩展节点(NetBusExt)载荷:命中确认。★ 与 beam_fired 分属两个节点是有意的(发送端 match_host 的 beam_fired 走 NetBus.rpc_id),别顺手统一 —— 挂错节点 = 静默 no-op。
+	# 扩展节点(NetBusExt)载荷:命中确认。
 	NetBusExt.local_hit_confirm.connect(_on_hit_confirm)
 	NetBus.local_match_sync.connect(_on_match_sync)   # 进场拉取的应答(取代旧的推送+大厅缓存交接)
 	_subscribe_ground_weapons()   # 地面武器事件(开局那批走 match_sync,见 _on_match_sync)
 	_subscribe_reconnect()        # 断线重连:服务器断开检测 + reclaim 成功后那条 match_start
-	# ★ 进场主动拉一次(昵称/角色色/生效选项/出生点/地面武器/destroyed):订阅齐了才开口要,故没有「推给一个正在切场景的客户端」那个竞态。★ 判活再发(全仓纪律):这是定向可靠包,连接可能已不可用 ⇒ 往已拆的 peer 发就是那条 Unable to send packet on channel 0;判据 can_send_to_server()。
+	# ★ 进场主动拉一次(昵称/角色色/生效选项/出生点/地面武器/destroyed):订阅齐了才开口要,故没有「推给一个正在切场景的客户端」那个竞态。
 	# 本行之后的子类装配(HUD / 小地图 / 暂停菜单)不受影响:应答要走网络 poll,最早也在下一帧,本帧内不存在"应答比 HUD 先到"的窗口。
 	if NetBus.can_send_to_server():
 		NetBus.rpc_id(1, "match_sync")
@@ -232,9 +222,6 @@ var _time_haste_mult := 3.0          # 服务器下发的加速倍率(time_state
 
 func _setup_beta_time_hud() -> void:
 	# ★★ 怀表**不再按会话级 PvpSession.beta_mode 决定**:那个标志是跨场景的,从 Beta 菜单进来后转建 1v1 的房主
-	#   会带着 beta_mode=true 进非 beta 局 ⇒ 只有房主一人看到时钟(用户报的"房主为什么会有时钟 HUD")。
-	#   改成**收到第一帧 time_state 才算这局有 Beta 时间玩法**(服务器只在 time 规则开启时发这个包),
-	#   于是普通局永远不建怀表,与开局路径/房间来源无关。
 	NetBusExt.local_time_state.connect(_on_time_state)
 
 
@@ -261,7 +248,7 @@ func _on_time_state(payload: Dictionary) -> void:
 	_time_mirror.locked = bool(m.get("k", false))
 
 
-# Beta 时间玩法:本地预测加速(与服务器同一判据 —— 按住 + 镜像账户可耗)。倍率写进 pvp_haste_mult,player 的速度域 / 武器 tick 会吃它;烧颗粒只由服务器做(镜像 10Hz 校正,本地不扣,避免双份漂移)。
+# Beta 时间玩法:本地预测加速(与服务器同一判据 —— 按住 + 镜像账户可耗)。
 func _tick_beta_time(delta: float) -> void:
 	if not PvpSession.beta_mode or _local == null:
 		return
@@ -278,9 +265,9 @@ func _tick_beta_time(delta: float) -> void:
 	_tick_time_fx(delta, on)
 
 
-# 本地回溯预测:按住 + 镜像可耗 + 未倒地 ⇒ 冻结本地输入源、置免伤闸、世界 + 自己上底片。★ 位置不本地预测 —— 服务器每帧权威写回(C2 的 on_authoritative 就是那条路);本地只负责"站着 + 看底片 + 免伤"。
+# 本地回溯预测:按住 + 镜像可耗 + 未倒地 ⇒ 冻结本地输入源、置免伤闸、世界 + 自己上底片。
 func _tick_beta_rewind(delta: float) -> void:
-	# ★ 进 / 出两条路读的必须是宿主自己那一个 input_source(刻意不改成"注入源"):换成另一个对象去冻结,解冻就落不到玩家真读的那个源上 ⇒ 死锁(同一函数 src.frozen = true 与 player.set_controls_locked() 是同一个对象的两条写路)。点访问取代反射:拼错成员名当场报错。
+	# ★ 进 / 出两条路读的必须是宿主自己那一个 input_source(刻意不改成"注入源"):换成另一个对象去冻结,解冻就落不到玩家真读的那个源上 ⇒ 死锁(同一函数 src.frozen = true 与 player.set_controls_locked() 是同一个对象的两条写路)。
 	var downed: bool = _local.is_downed()
 	var want := Input.is_action_pressed("rewind") 			and _time_mirror != null and _time_mirror.can_spend() and not downed
 	if want and not _time_rewinding:
@@ -336,10 +323,6 @@ func _film_targets() -> Array:
 
 
 # ── 他人视效状态 / 生成 / 清理:实现落在组合件 scenes/mp_client/time_fx.gd(2026-10-30 抽出;S-19)──
-# 以副本节点为键的三张表 + 两份节拍器原挂在本类根上、清理散在两处 —— 漏一处就是节点泄漏(BUG-19)。
-# ★ 组件懒建(基类没有 _ready:三个子类各有一个,在基类再加会被覆盖):第一次用到时 new + bind,只存引用、无副作用。
-# ★ _time_fx_replica_rewind_off 这个名字保留:ReplicaSet.remove() 按名调它,它是「先 detach 再 queue_free」
-#   那条 BUG-19 顺序的调用口(顺序在拆除方,别倒过来:节点释放后表键再也碰不到)。
 var _time_fx: TimeFx = null
 
 
@@ -361,10 +344,6 @@ func _time_fx_replica_rewind_off(rep: Node2D) -> void:
 
 
 # ── 副本模式(大乱斗 / 3v3)共用的那一批(2026-11-02 从两个子类各一份上提;剔注释后逐行 diff 相同才搬)──
-# ★ 1v1 不在其中:它的同名函数语义不同(单副本 _remote_replica + 自定义快照路径 + 自己那一颗头顶 ID),由 pvp_game 覆写
-#   _on_snapshot_world / _replica_for / _apply_peer_names / _process。★ _replicas / _replica_set 是 N-副本模式的字段(在基类声明),
-#   1v1 不建 ⇒ 本表恒空;上提后 1v1 调 _all_replicas() 仍得空数组(与上提前的基类默认逐字同效)。
-# 本类全部对手副本(视效遍历用)。
 func _all_replicas() -> Array:
 	return _replicas.values()   # Beta 时间视效:遍历全部对手副本
 
@@ -431,10 +410,6 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 # ── 拆砖:实现落在组合件 scenes/mp_client/tile_sync.gd(2026-10-22 拆出;Task 7) ──
-# 本类只留这三个委托口(名字/签名逐字不变:三个子类 _ready 调 _subscribe_tile_events(),
-# _on_match_sync 直接调 _on_remote_tile_destroyed(cell, true);原 resync_world_probe 也调它,该探针已于 2026-10-24 删除)。
-# ★ 组件懒建:基类没有 _ready(三个子类各有一个,在基类再加会被覆盖掉、静默失效)⇒ 第一次用到时
-#   new + bind;bind 只存引用、没有副作用,与"实例化时就建"在行为上不可分。
 var _tile_sync: TileSync = null
 
 
@@ -474,9 +449,6 @@ func _physics_process(delta: float) -> void:
 	var uplink := _ensure_input_uplink()
 	if uplink.have_prev_seq and _rollback != null:
 		# 贴身提示:只在接触期放宽容差(见 core/prediction_rollback.gd 的 contact_pos_tol)。★ 必须在 reconcile() 之前 —— 它是消费方。
-		# ★ 2026-10-28 起判据不只靠 touching_player():幽灵体滞后会让你追人时预测穿过去、本帧根本没撞上 ⇒ 旧写法判不到
-		#   贴身、按 2px 容差挨回滚。`_update_contact_state()` 用"预测身位到幽灵 AABB 的间隙"兜住这种贴身,并按相对速度
-		#   动态抬高 contact_pos_tol(上限 48px)。touching_player() 仍是它内部的兜底分支。
 		_rollback.in_contact = _update_contact_state()
 		_rollback.note_post_step(uplink.prev_sent_seq, _local.capture_state())
 		_rollback.reconcile()
@@ -542,9 +514,6 @@ func _take_visual_bullet(scene_path: String) -> BulletBase:
 
 
 # ── 本地视觉子弹撞到"该打的人" → 立刻消失(否则画面看起来还是像穿透)──
-# 子弹 mask=1 只撞地形、对手在客户端只是幽灵体 ⇒ 物理上撞不到;服务器按"线段 vs 受击面"裁决,客户端 cull 必须用同一套 HitShape + 同一段位移。★ 榴弹不走这条(引信/反弹由 _check_player_contact 管)。
-# ★ 候选列表**每物理帧缓存一次**:旧实现里每颗视觉子弹都各查两遍 `get_nodes_in_group` ⇒ O(子弹×玩家数) 的组查询,
-#   8 人局比 1v1 高一个量级(读数与结论见 registered-debt §四十八)。缓存只省"取组"这一步,遍历顺序与逐次查询逐字相同。
 var _contact_targets: Array = []
 var _contact_targets_frame := -1
 
@@ -606,19 +575,6 @@ func _bullet_hits_entity(_b: BulletBase, _ent: Node2D) -> bool:
 
 
 # ── 回合状态:三模式共用的四态编排(2026-10-22 从三个子类各一份收上来) ──
-# ★ 顺序是承重的,逐字保持旧实现:状态处理**前后各刷一次**输入锁(它是幂等的;这样 3v3 旧版末尾
-#   那一次也不丢,pvp 旧版开头那一次也不丢)。三个钩子之外的 if 一律不许加进来。
-# ★ 模式差异只通过钩子表达:
-#   · _should_handle_match_over():大乱斗忽略第二条 MATCH_OVER,1v1/3v3 要处理(第二条载荷要刷新结算页);
-#   · _on_countdown_round():三模式都复位砖,3v3 额外重拉 match_sync(换边);
-#   · _enter_match_over_state():置终局、销毁暂停菜单(ESC 双语义的硬依赖)、弹/刷结算页。
-# 贴身判据 + 动态容差(2026-10-28;2026-10-31 把"幽灵锚点速度"也计入)。返回"是否贴身",调用处写成
-# `_rollback.in_contact = _update_contact_state()`。
-# 旧实现只看 `touching_player()`(客户端本帧真的撞上幽灵体):幽灵体滞后会让你追人时预测穿过去 ⇒ 判不到贴身 ⇒
-# 仍按 2px 容差、每 ack 验证点回滚。这里改用"预测身位到幽灵 AABB 的间隙"进贴身区,并抬高容差
-# (容差 = 8 + max(相对速度, 幽灵体自身速度)×滞后,封顶 48px);touching_player() 保留为兜底(确实撞上的那一帧)。
-# ★ 2026-10-31:只按"相对速度"算不够 —— 本地玩家是被**幽灵所在位置**挡住的,两人同速同向(相对速度≈0)时,
-#   预测位置与服务器仍差 |v_ghost|×horizon(跑速 700 ⇒ 35px);用 max(...) 才覆盖这个锚点位移。
 func _update_contact_state() -> bool:
 	if _rollback == null or _local == null:
 		return false
@@ -677,9 +633,6 @@ func _clear_bullets_for_new_round() -> void:
 
 
 # 新一局 COUNTDOWN 的模式差异:默认只复位可破坏砖;3v3 覆写并在 super 之后重拉 match_sync。
-# ★ 地面武器**不要**在这里清:服务器换局是「先 _reset_ground_weapons(广播 removed×旧 + spawned×新)、
-#   再 _broadcast_round_state」,两条走同一条可靠通道、保序到达 ⇒ 本条到达时新一轮那批早已在本地建好,
-#   再清一次会让第 2 局起客户端地面恒空(服务器有 10 把、客户端一把都看不见)。
 func _on_countdown_round() -> void:
 	if _level0 != null and _level0.has_method("reset_destructibles"):
 		_level0.reset_destructibles()
@@ -702,7 +655,7 @@ func _enter_match_over_state(_data: Dictionary) -> void:
 	_show_result()
 
 
-# 本地输入锁的单一口(三个维度:冻结期 / 菜单打开 / 结算后回菜单途中)。★ 合并时把大乱斗那版多出的 _match_ended 一并带进 1v1 —— 这是本步唯一的行为差异(1v1 在 MATCH_OVER 之后那几秒输入也被锁),与 _match_ended 的语义一致,属有意统一。
+# 本地输入锁的单一口(三个维度:冻结期 / 菜单打开 / 结算后回菜单途中)。
 func _refresh_input_lock() -> void:
 	if _local != null and _local.has_method("set_controls_locked"):
 		_local.set_controls_locked(_round_locked or _menu_open or _match_ended)
@@ -729,7 +682,7 @@ func _show_result() -> void:
 	_ensure_result_screen().show()
 
 
-# 结算页 → 主菜单。★ 离开仍走 Level0.safe_change_scene —— 游戏世界含全量碰撞,裸 change_scene_to_file 会同步 memdelete → 偶发原生段错误。★ 防重入由 MatchResult 那次发信号 + safe_change_scene 的 _switching 双层兜住;这里只负责"在树上才切"。
+# 结算页 → 主菜单。
 func _leave_to_main_menu() -> void:
 	if NetBus != null:
 		NetBus.stop()
@@ -786,7 +739,7 @@ func _apply_local_hit_event(source_pos: Vector2, damage: int, seq: int) -> void:
 	_local.take_hit(source_pos, damage, false, -1.0, true)
 
 
-# 服务器权威开火(即时光束武器):对手端据此画光束视觉副本(不开物理子弹)。原始 pts 在射手 canonical 系(可能隔整幅地图跨接缝)⇒ 逐点锚到射手副本当前渲染位置(副本位置已由 player_replica 每帧归到本地玩家最近副本);光束整条路径 ≤ bullet_range 远小于半图 ⇒ 逐点 anchor_to_nearest 会把整条折线搬到可见副本、跨接缝连续。★ 只画对手那发:自己那发已由本地预测自画,再收服务器版会双光束。
+# 服务器权威开火(即时光束武器):对手端据此画光束视觉副本(不开物理子弹)。
 func _on_beam_fired(data: Dictionary) -> void:
 	if _world == null:
 		return
@@ -837,7 +790,7 @@ func _on_match_sync(payload: Dictionary) -> void:
 	var opts: Dictionary = payload.get("options", {})
 	if not opts.is_empty():
 		_apply_match_options(opts)
-	# 出生点校正只对进场那次做:那时 spawns[role] 与 PvpSession.spawn 确实同源(都由服务器同一次摆位产生),不一致就是 bug —— 留痕 + 以 sync 为准。★ 重连补态那次必然不一致,而那不是 bug:出生/复活点现在来自地图 `# respawn <1|2>` 按侧列表(每局/每次复活重随机),而 PvpSession.spawn 只在进场写一次 —— 按它硬拉 = 把玩家瞬移走,而服务器那具身体从掉线起就没动过 ⇒ 这条路既不校正、也不告警、也不回写 PvpSession.spawn。
+	# 出生点校正只对进场那次做:那时 spawns[role] 与 PvpSession.spawn 确实同源(都由服务器同一次摆位产生),不一致就是 bug —— 留痕 + 以 sync 为准。
 	var sp: Dictionary = payload.get("spawns", {})
 	if not resync and sp.has(PvpSession.role):
 		var want: Vector2i = sp[PvpSession.role]
@@ -852,12 +805,12 @@ func _on_match_sync(payload: Dictionary) -> void:
 	for e in gw:
 		if e is Dictionary:
 			_spawn_pickup_node(e)
-	# ★★ 补态那一路:先把本地世界还原成建局基线,再应用 destroyed。顺序不可换 —— destroyed 表达的是「与建局基线不同的格」,客户端在宽限期内错过一次换局时服务器已把可破坏砖还原成基线,那些格等于基线、永不进载荷,而客户端本地还留着上一局拆出来的破洞(幻影空洞);客户端唯一的还原路径是新回合 COUNTDOWN 里的 Level0.reset_destructibles(),而重连回来时那一局可能已打到 PLAYING ⇒ 那条分支不触发。
+	# ★★ 补态那一路:先把本地世界还原成建局基线,再应用 destroyed。
 	# ★「先还原 + 再应用」恰好等于服务器的 grid(还原给基线、destroyed 给差异),不上线任何新字节;顺序反过来会把刚补好的洞又填回去,症状与"根本没还原"逐字相同。★ 只在补态这一路做(闸门 = 读一次即清的 resync);reset_destructibles() 只重铺瓦片层 + 整层重建碰撞,不碰玩家 / 子弹 / 地面武器,非 COUNTDOWN 时刻调用安全。
 	if resync and _level0 != null and _level0.has_method("reset_destructibles"):
 		_level0.reset_destructibles()
 	elif resync:
-		# ★ 该还原而没还原 —— 留一条告警:_level0 是由子类赋值的共享状态字段(三个子类各自 _ready 里写),漏赋值 / 赋错类型时上面那道闸静默不成立,症状(幻影空洞拖到下一个回合边界)与"根本没写这段"逐字相同。只告警,不改行为。
+		# ★ 该还原而没还原 —— 留一条告警:_level0 是由子类赋值的共享状态字段(三个子类各自 _ready 里写),漏赋值 / 赋错类型时上面那道闸静默不成立,症状(幻影空洞拖到下一个回合边界)与"根本没写这段"逐字相同。
 		var why := ("_level0 为 null(子类 _ready 漏赋值?)" if _level0 == null
 				else "_level0 没有 reset_destructibles()(类型不对?)")
 		push_warning("match_sync(补态): 世界未还原 —— %s;幻影空洞不会填回" % why)
@@ -876,11 +829,6 @@ func _on_match_sync(payload: Dictionary) -> void:
 
 
 # ── 拾取(地面武器):实现落在组合件 scenes/mp_client/pickup_sync.gd(2026-10-22 拆出;Task 7)──
-# 本类只留五个委托口(名字/签名逐字不变):三个子类 _ready 调 _subscribe_ground_weapons();
-# _on_match_sync 调 _clear_ground_weapons() / _spawn_pickup_node();_physics_process 每帧调 _tick_ground_weapons()。
-# 节点表 / F 提示 / `[pkd]` 诊断行全部随组件走,文本逐字未改;宿主只提供 _world / _local。
-# ★ 组件懒建:基类没有 _ready(三个子类各有一个,在基类再加会被覆盖掉、静默失效)⇒ 第一次用到时
-#   new + bind;bind 只存引用、没有副作用,与"实例化时就建"在行为上不可分。
 var _pickup_sync: PickupSync = null
 
 
@@ -891,7 +839,7 @@ func _ensure_pickup_sync() -> PickupSync:
 	return _pickup_sync
 
 
-# 订阅服务器的两条地面武器事件。★ 必须走 NetBus,不是 NetBusExt —— 后者(NetBusExt)里曾有同名遗留的 beam_fired,2026-10-30 已删,挂错节点的表现是静默 no-op(对手的枪凭空消失 / 永不再现,且不报错)。三个子类各自 _ready 里调一次。
+# 订阅服务器的两条地面武器事件。
 func _subscribe_ground_weapons() -> void:
 	_ensure_pickup_sync().subscribe()
 
@@ -900,7 +848,7 @@ func _spawn_pickup_node(data: Dictionary) -> void:
 	_ensure_pickup_sync().on_spawned(data)
 
 
-# 清空本端的地面武器表与全部拾取物节点(_on_match_sync 的"先清后灌"用)。★ 为什么必须先清:match_sync 的 ground_weapons 是全量,不清就直接 add,掉线期间已被服务器移除的那些会变成永久幽灵枪(看着在、按 F 无效);进场那次本地本来是空的,清一遍是 no-op。
+# 清空本端的地面武器表与全部拾取物节点(_on_match_sync 的"先清后灌"用)。
 func _clear_ground_weapons() -> void:
 	_ensure_pickup_sync().clear()
 
@@ -915,17 +863,11 @@ func _tick_ground_weapons() -> void:
 
 
 # ── 断线重连(局内自动重连:与 worker 的连接闪断 → 自己连回去、重新认领 role、重置本地 C2 —— 不切场景、不重建世界)──
-# 实现落在组合件 scenes/mp_client/reconnect_driver.gd(2026-10-30 拆出;S-17 第二刀)。本类只留委托口 + 横幅那两口:
-# 三个子类 _ready 调 _subscribe_reconnect()、关菜单回调调 _recheck_disconnect()、pvp_game._on_opponent_left 调
-# _cancel_reconnect()、_exit_tree 停掉在飞的重连。★ 组件经 bind 拿两个 Callable:`_set_status`(横幅文本,本类唯一
-# 数据源)与 `_pull_resync`(重连成功后的补态拉取:C2 重置 + 发 match_sync)。什么时候进 / 退出重连循环、重试预算
-# 与两个定时器时长全部随组件走(不变量写在组件文件头;★ 与对局场景解耦的只有"横幅文本"与"补态拉取"两个口)。
-# ★ 组件懒建:与 tile_sync / pickup_sync 同款 —— 基类没有 _ready,第一次用到时 new + bind(bind 只存引用、无副作用)。
 var _reconnect_driver: ReconnectDriver = null
-# ★ 下一条 match_sync 应答属于重连补态(而非进场建态)。两口共用同一条信号(重连不重建场景 ⇒ 子类 _ready 里那个订阅还在),而 _on_match_sync 里的出生点校正对两种口径的答案相反,故必须让应答自己知道是哪一次拉的。取用点:_on_match_sync 首行(读一次、当场清掉);置位点:_pull_resync() 发送前那一行,以及 3v3 team_game._on_round_state 的「新一轮 COUNTDOWN」那一拉(换边后 spawns 是新一侧,与 PvpSession.spawn 手里的旧一侧必然不一致)。
+# ★ 下一条 match_sync 应答属于重连补态(而非进场建态)。
 var _resync_pull_pending := false
 
-# ── 本地状态横幅── ★ 它只有一个数据源:本类的 _set_status()(由 ReconnectDriver 的四个转折点驱动:begin / retry_tick / resumed / cancel|abort)。服务器侧的「谁掉线了」走 round_state 的 grace 字段(见 MatchState.grace_snapshot),两者刻意不共用同一个节点 —— 一条是"我这边断了",一条是"对面断了",同时显示会互相覆盖。
+# ── 本地状态横幅── ★ 它只有一个数据源:本类的 _set_status()(由 ReconnectDriver 的四个转折点驱动:begin / retry_tick / resumed / cancel|abort)。
 # ★ 它由 _subscribe_reconnect() 里建(三个子类都已经在各自 _ready 里调它)⇒ 不加新调用点,也就不存在"某个模式漏调 ⇒ 那个模式静默没有提示"这一档。
 var _banner: StatusBanner = null
 
@@ -943,7 +885,7 @@ func _subscribe_reconnect() -> void:
 	_setup_status_banner()   # 本地状态横幅(3.2 / 3.4);建在这里 = 三个模式零新调用点
 
 
-# 建横幅(幂等)。★ 必须从场景实例化:层位 140 只住在 ui/status_banner.tscn 里,.new() 建出来的是 CanvasLayer 默认的 layer 1 —— 画在三个对局 HUD(130)与小地图(131)底下,横幅被盖住且不报错。零守卫:hud_declarative_probe ⑧ 已删(2026-10-09)。
+# 建横幅(幂等)。
 func _setup_status_banner() -> void:
 	if _banner != null:
 		return
@@ -962,14 +904,14 @@ func _pull_resync() -> void:
 	# ★ 必须重置:worker 在 reclaim 时把 _ack_seq[role] 归 0 重协商锚点,而客户端这边的 _acked 还停在断线前那个数 —— 不重置的话新快照的 ack 一律 <= _acked,on_authoritative 全数丢弃(C2 静默失效,要等 seq 重新爬过那个数才恢复),同时环里断线前的记录会被当成未确认输入重放,与服务器的新锚点错位。
 	_ensure_input_uplink().reset_epoch()   # seq 归零 + 流水线 / 节拍作废(逐字见 InputUplink.reset_epoch)
 	_pending_hit_events.clear()   # 旧 seq 空间的受击事件作废(新 rollback 的 _last_applied=0,注入不进去)
-	# ★ 新实例必须重新 bind + 设 map_px,照抄三个子类 _ready 里那三行。漏了都不报错:没 bind → _handle_ack 里 _p == null 直接 _trim 返回,分歧永不修复(静默失去 C2);没设 map_px → 跨接缝那一帧按裸距离比,白跑一次回滚。
+	# ★ 新实例必须重新 bind + 设 map_px,照抄三个子类 _ready 里那三行。
 	_rollback = PredictionRollback.new()
 	_rollback.bind(_local)
 	_rollback.map_px = Vector2(GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 	_rollback.ticks_per_record = PacketInputSource.TICKS_PER_RECORD
 	NetBus.reset_snapshot_state()   # P1.5:增量合并基准作废(重连可能连到已跑过一段时间的 worker)
 	_last_snap_tick = 0
-	# ★ 路径甲(局内自动重连)原来不需要 match_sync —— 场景没重建、本地世界还在;现在需要了:世界在掉线那 GraceWindow.DEFAULT_SECONDS 秒里变过。这一拉把两类丢掉的可靠事件一次补回:destroyed(被拆的墙,不补 → 幻影墙 → 预测分歧)、ground_weapons(掉落 / 被捡走的枪,不补 → 幽灵枪 / 看不见的枪)。
+	# ★ 路径甲(局内自动重连)原来不需要 match_sync —— 场景没重建、本地世界还在;现在需要了:世界在掉线那 GraceWindow.DEFAULT_SECONDS 秒里变过。
 	# ★ 顺序:上面已经把 C2 重置完了(新 rollback / seq=0),再拉。★ 别把这一行删掉:它不在"进场建态"那条老路上,漏了不报错,只是世界悄悄不一致。
 	if NetBus.can_send_to_server():
 		# ★ 先置位再发:这条应答是补态口径,_on_match_sync 据此跳过出生点校正(它按 spawns 校正 / 告警的前提在这里不成立)。
@@ -982,13 +924,13 @@ func _recheck_disconnect() -> void:
 	_ensure_reconnect_driver().recheck_disconnect()
 
 
-# 「对手已离开」是终局信号:把在飞的重连循环停掉(并收起状态横幅) —— 判据与理由随组件走(含"两条消息到达顺序不保证"那一节);
+# 「对手已离开」是终局信号:把正在跑的重连循环停掉(并收起状态横幅) —— 判据与理由随组件走(含"两条消息到达顺序不保证"那一节);
 # 本口是 pvp_game._on_opponent_left 的调用点,名字 / 签名逐字不变。
 func _cancel_reconnect() -> void:
 	_ensure_reconnect_driver().cancel()
 
 
-# 场景离开(ESC / MATCH_OVER / 对手离开 / 进程退出)→ 停掉在飞的重连(ReconnectDriver.on_exit_tree 的委托;
+# 场景离开(ESC / MATCH_OVER / 对手离开 / 进程退出)→ 停掉正在跑的重连(ReconnectDriver.on_exit_tree 的委托;
 # "为什么必须有 / 为什么只在真在重连时断连"随组件走)。★ 这是引擎回调,名字不能改。
 func _exit_tree() -> void:
 	if _reconnect_driver != null:

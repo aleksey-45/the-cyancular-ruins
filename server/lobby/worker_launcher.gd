@@ -164,7 +164,7 @@ func _archive_log(port: int) -> void:
 			DirAccess.remove_absolute(dir.path_join(n))
 
 
-# 拉起 headless worker(同一可执行文件 + --worker):editor / template_debug 要带 --path 与场景,导出 exe 靠 run/main_scene.serverui 的主场景覆盖(不再用 dedicated_server 标记 —— 那会让引擎强制空显示驱动);ai_roles 非空则透传 --ai-roles(这些 role 由服务端 AI 驱动,不等 claim)。
+# 拉起 headless worker(同一可执行文件 + --worker):editor / template_debug 要带 --path 与场景,导出 exe 靠 run/main_scene.serverui 的主场景覆盖(不再用 dedicated_server 标记 —— 那会让引擎强制空显示驱动);。
 func spawn_worker(port: int, ai_roles: Array = []) -> bool:
 	_archive_log(port)
 	var exe := OS.get_executable_path()
@@ -193,7 +193,7 @@ func spawn_worker(port: int, ai_roles: Array = []) -> bool:
 	return pid > 0
 
 
-# 拉起大乱斗 worker:roles = 本局全部参战 role(真人已分配号 + AI 补位号)。★ 不再传「人数 + role 上界」—— role 由「最小空闲号」分配、退出后不重排,编号会留空洞({1,3} 而 2 人),从人数推导必错;解析侧与 server_main.gd 的 argv 逐字对应,两边改一处必须同步改另一处。
+# 拉起大乱斗 worker:roles = 本局全部参战 role(真人已分配号 + AI 补位号)。
 func spawn_royale_worker(port: int, roles: Array, ai_roles: Array = []) -> bool:
 	_archive_log(port)
 	var role_strs := []
@@ -277,7 +277,7 @@ func spawn_team_worker(port: int, roles: Array, teams: Array) -> bool:
 	return pid > 0
 
 
-# 杀指定 UDP 端口的进程(worker)。★ 不能只靠 OS.create_process 返回的 pid(跨进程需查端口);「Select -ExpandProperty OwningProcess」那条写法的坑见 core/proc_util.gd(实现收在那里)。
+# 杀指定 UDP 端口的进程(worker)。
 func kill_worker(port: int) -> void:
 	# ★ BUG-10(2026-10-30):异步 —— 主线程不再被 PowerShell 阻塞几百 ms。
 	ProcUtil.kill_udp_port_async(port)

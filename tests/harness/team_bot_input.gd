@@ -1,10 +1,6 @@
 extends PlayerInput
 
 # 3v3 真链路探针(tests/probe/team_match_probe.*)的脚本手柄:一根哑手柄 —— 它自己不做任何决策,只把观察者(team_match_watcher.gd)每物理帧写进来的 axis / aim / attack / 一次性边沿(jump / switch_index / F)报给输入读口。
-# ★ 决策不放这儿:决策要读真 team_game 的运行时状态(快照里别人的位置、自己的背包、地面武器表、A* 世界网格),而观察者挂在 root 上、跨换场存活、能直接读那些生产对象 —— 手柄自持状态的话,那份「该不该开火」的知识就要在两个文件之间对不上。
-# ★ 无 class_name(新建全局类要刷 --import 全局类缓存,本仓踩过这个坑),由观察者 preload。
-# ★ 故意不覆写 frozen 的判定:基类 PlayerInput 的公开读口对 frozen 短路,本类只覆写 _*_raw() 钩子 → COUNTDOWN/结算期的「禁移动禁开火」由基类负责;观察者只管自己的相位推进。
-# ★★ 边沿一律按帧打标,不做「读一次即清」:同一物理帧里有两处读它们 —— 客户端组上行包(PacketInputSource.pack_record,问带参钩子)与玩家自己的本地判定(问无参钩子);读一次即清 ⇒ 总有一处拿到 false ⇒ 本地与服务器分叉,而 C2 每帧把客户端拉回权威态 ⇒ 表现成「机器人走不动、打不出子弹」且不报错。
 
 var axis := 0.0              # 水平轴(-1 左 / +1 右)
 var aim := Vector2.RIGHT     # 瞄准方向(世界向量;观察者按环面最短向量算)
@@ -50,7 +46,7 @@ func _axis_raw(neg: String, _pos: String) -> float:
 	return (1.0 if hold_down else 0.0) - (1.0 if hold_up else 0.0)
 
 
-# ★★★ 带参钩子必须真实现(本手柄最要命的一处):上行包问的是带参的 is_action_pressed("attack"/"up"/…)(packet_input_source.gd),而本类原先三个带参钩子全是恒 false 的桩 ⇒ BIT_ATTACK/BIT_UP 的 held/pressed/released 从未进过输入包 ⇒ 服务器侧那名玩家从来不跳、不开火(本地照样动,因为本地走无参钩子);后果是双向的 —— 相③ 的 near 结构性恒 0,且每次跳跃都是「客户端跳了、服务器没跳」的分歧,C2 每帧回滚把客户端拉回去。★ 对照样板:soak_bot_input.gd 老实实现了这三个带参钩子,所以大乱斗 soak 的机器人在服务器侧是真能开火的。
+# ★★★ 带参钩子必须真实现(本手柄最要命的一处):上行包问的是带参的 is_action_pressed("attack"/"up"/…)(packet_input_source.gd),而本类原先三个带参钩子全是恒 false 的桩 ⇒ BIT_ATTACK/BIT_UP 的 held/pressed/relea。
 func _action_pressed_raw(action: String) -> bool:
 	match action:
 		"attack":
@@ -81,7 +77,7 @@ func _attack_pressed_raw() -> bool:
 	return attack
 
 
-# ★★ 开火的三个边沿都得给:WeaponBase 按枪种选边沿 —— full_auto → _attack_pressed();半自动 → _attack_just_pressed();heavy_aim(m82a1 与榴弹发射器)→ _attack_just_released()(按住预瞄、松开发射)。只给「按住」⇒ 重型枪只进预瞄、永不发射,而相③ 的判决依赖「甲真的开火了」⇒ 抽到重狙必然判成「没开火」,判决被枪种污染。
+# ★★ 开火的三个边沿都得给:WeaponBase 按枪种选边沿 —— full_auto → _attack_pressed();半自动 → _attack_just_pressed();heavy_aim(m82a1 与榴弹发射器)→ _attack_just_released()(按住预瞄、松开发射)。
 func _attack_just_pressed_raw() -> bool:
 	return _edge_now("atk")
 

@@ -2,9 +2,6 @@ class_name ServerStatus
 extends RefCounted
 
 # 服务端控制台的数据层:把大厅能证明的事实归一成面板可直接渲染的快照。纯静态、零 autoload。
-# ★ 只吃纯字典:lobby_rooms.gd 引用 NetBus ⇒ -s 冒烟里编译不过,故判据住这里(可被冒烟钉住),
-#   字段搬运住 lobby_snapshot.gd(spec §6.1)。
-# ★ 局中房的 players 一定是空的 ⇒ 人数按冻结 roster 算;房数/端口/worker 存活是三个独立量,不许互推。
 
 const WL := preload("res://server/lobby/worker_launcher.gd")
 

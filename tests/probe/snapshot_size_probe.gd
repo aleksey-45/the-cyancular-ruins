@@ -1,13 +1,6 @@
 extends Node
 
 # 快照体积/线格式探针(场景模式):把「一份快照到底多少字节、随人数怎么长」从估算变成实测,并同时量两种线格式(Dictionary 直发 → NetCodec 手打包)。
-# 跑法:"$GODOT" --headless --path . res://tests/probe/snapshot_size_probe.tscn;期望末行 "SNAPSHOT SIZE PROBE: ALL-OK"。
-# 存在理由:早先 soak 实测「每人每快照 ≈0.96 KB」(原始记录随 2026-10-24 文档清理删除),但那是整包读数;拆包(世界包 / 本人包)之后还需要知道「这 0.96 KB 里多少是 c2 权威整态、多少是渲染散字段」,以及换成手打包线格式后还剩多少。本探针量这个,并给 N=2..8 的折算表与分片折算。
-# ★ 它同时是线格式的字段表判据(见末尾 ①②③):NetCodec 的 schema 必须与 player.capture_state() / match_snapshot 的字段表逐键对齐 —— 少一个字段 ⇒ 那个字段在线上被静默丢掉(客户端拿不到权威值,表现为「某个效果偶发不生效」)。
-#   这条判据的道理:本仓最大的病是「枚举会过期」;编解码两侧共用一张表能防顺序漂移,但防不了「表没跟上 producer」⇒ 这里用真实 producer 的输出对表。
-# ⚠ 判据 grep 文本 "SNAPSHOT SIZE PROBE: ALL-OK"(不只看退出码),并带条数闸(见 _checks)。⚠ 只量「载荷」,不含 ENet 分片头/RPC 方法名等固定开销(见末尾打印的备注)。
-# ★ 2026-10-30(PROTO_VERSION 6→7):原 ⑥~⑨(增量/差分)四条断言随 DELTA 机制一起退役;trail 改 2×i16 ⇒ ③⑤ 的往返容差含 trail。
-#   去掉什么才红:把 trail 从 i16 改回 float32(尺寸变大)、把定点舍入删掉(往返容差红)。
 
 const MTU := 1400          # ENet 默认 MTU
 const FRAG_HEADER := 8     # 分片包每片大致头部开销(粗估,用于折算片数)
@@ -121,9 +114,6 @@ func _ready() -> void:
 			"最坏世界包(N=%d × trail %d 点)必须 ≤ %d B(实得 %d B = %d 片)" % [
 					cap, TRAIL_PHYSICAL_MAX, WORLD_PACKET_BUDGET, worst_bytes, _frags(worst_bytes)])
 	# ⑤ 2026-10-24 加(编码器改「预分配 + 下标写」后才有这条风险):最坏包必须能**逐字段解码回来**。
-	# ★ 去掉什么才红:把编码容量预算算小 ⇒ 写越界;注意最后那句 `out.resize(i)` 会把短掉的尾巴**补 0** ⇒ 包长对、能解码,
-	#   但末尾字段值是 0 —— 所以这里必须**逐字段比**,只比「能解码/人数对」抓不住(实测:容量少 8 B 时旧版 ⑤ 仍绿)。
-	# ★ 期望值里 trail 要按**线上截断后**的形态比(线上只留最近 TRAIL_WIRE_MAX 点)。
 	var worst_dec := NetCodec.decode_world(worst_packet)
 	var expected := worst_players.duplicate(true)
 	var last_pts := _trail_pts(TRAIL_PHYSICAL_MAX).slice(TRAIL_PHYSICAL_MAX - NetCodec.TRAIL_WIRE_MAX)

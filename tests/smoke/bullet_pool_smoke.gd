@@ -1,13 +1,6 @@
 extends SceneTree
 
 # 子弹对象池冒烟(纯逻辑 -s,不实例化场景树、不引 autoload):池的账本 + 复用复位清单。
-# 最强保证:借出的实例与"刚从 .tscn 实例化"的那颗逐字段等价(逐项复位)、池上限与回落、meta 清零、双 release 幂等。
-# 测不到的:进树后的物理/渲染与"归还是否真的离树"(见 tests/probe/bullet_pool_probe)。
-# 跑法:"$GODOT" --headless --path . -s res://tests/smoke/bullet_pool_smoke.gd;通过 = 结尾打 BULLET POOL SMOKE OK(n 条)。
-# ★ 本文件**不静态引用** bullet_base / bullet_pool:它们(传递地)引用 autoload,而 -s 阶段 autoload 尚未注册 ⇒
-#   编译期就红。改用运行期 load() + 无类型变量(本文件只碰字段名,不需要静态类型)。
-# ★ 池对"同一物理帧刚归还"的实例压一帧不借(理由 = bullet_pool.gd::release 里那条服务器广播判据)⇒
-#   下面每次想验证"真的复用了同一个实例"都要先 await physics_frame,否则拿到的是新实例、断言会变成空转。
 
 const EXPECTED_CHECKS := 5
 const BULLET_PATH := "res://scenes/weapons/bullet.tscn"

@@ -2,9 +2,6 @@ class_name MapFormat
 extends RefCounted
 
 # `.cyrm` 地图**格式**层:格子值编解码(packed)+ 文件解析/序列化 + spawn 元数据。
-# ★ 本类**无会话状态** —— 读哪份文件、当前网格是什么,一律由调用方给(路径参数 / grid 参数)。
-#   会话级状态(选中的地图文件、current_grid)留在 MazeGenerator,那里也是生产代码的统一入口。
-# ★ 改这里 = 改磁盘格式;改 GridPathfinder = 改环面数学/寻路。两者不搭界。
 
 # 地图格子值:packed = 纹理*16 + 形状掩码(0-335)。0 = 空气。
 # 形状掩码 4bit = 2×2 子格(1<<(sy*2+sx):bit0 左上/bit1 右上/bit2 左下/bit3 右下),15=全砖。
@@ -335,15 +332,6 @@ static func _load_text_grid(path: String) -> Array[Array]:
 
 
 # 解析地图文件的 spawn 元数据行(坐标=格,空格分隔)。
-# 支持:
-#   # player <col> <row>           单机玩家出生点(向后兼容;多行时最后一行生效)
-#   # player2 <col> <row>          PvP 第二出生点(向后兼容;老图回退路径用)
-#   # enemy <type_id> <col> <row>  敌人出生点
-#   # respawn <1|2> <col> <row>    按阵营半区的复活点列表(侧 1 = 左半 / 侧 2 = 右半;每侧 ≥5 个,由地图作者写死)
-# 返回 {"player": Vector2i, "player2": Vector2i, "enemies": [...],
-#       "respawns": {1: [Vector2i], 2: [Vector2i]}};
-# 列表键只在非空时出现(与 enemies 同约定)。# respawn 按文件顺序**按侧去重**(首次出现生效)。
-# 非法行 push_warning 跳过、不抛错(老地图没有这些行 ⇒ respawns 键不存在,各模式走改造前的回退路径)。
 static func parse_spawn_metadata(lines: Array) -> Dictionary:
 	var result := {}
 	var enemies: Array = []

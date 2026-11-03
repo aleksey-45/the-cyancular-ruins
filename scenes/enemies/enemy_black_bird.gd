@@ -2,11 +2,6 @@ class_name EnemyBlackBird
 extends EnemyBase
 
 # 绕背瞬移刺客:睡眠 → 随机游走 → 周期性判定「玩家另一侧 × 距玩家 2~6 格(随机)」的
-# 地板格落点(LOS 通)→ 起飞上跳 → 落地播 disappear → 白闪 → 传送 → 闪后空中播 appear
-# → 落地 → 带跳跃的地面冲锋打 7 伤 → 大后跳(命中/未命中都) → 回游走,玩家远离入睡。
-# (★ 2026-10-04 按 `EnemyParams.BlackBird` 订正:原文写"3~8 格""6 伤",
-#  真值是 teleport_min_tiles=2 / teleport_max_tiles=6、charge_damage=7。)
-# 地面敌人(同 JumpBird 模式),全程受重力,不用飞行寻路。
 
 enum State { SLEEP, WAKE, WANDER, TAKE_OFF, CHARGE, BACK_HOP }
 
@@ -94,9 +89,6 @@ func _ai(delta: float) -> void:
 
 
 # 每个状态一个 _tick_*,`_ai` 只留派发(阶段 5.3:原先是 146 行的单 match)。
-# 绕背瞬移那条链(TAKE_OFF → CHARGE 的 appear 滞留 → 落地 → 停顿 → 冲锋)原本横跨两个
-# match 分支、靠 _wait_land/_left_ground/_prep_timer 一串标志位串起来,现在各自归位。
-# ★ 各段里的 `return` 语义不变:match 是 `_ai` 的最后一条语句。
 
 func _tick_sleep(delta: float, dist: float) -> void:
 	if _wake_timer > 0.0:
@@ -308,10 +300,6 @@ func _find_flank_cell() -> bool:
 
 
 # 黑鸟碰撞箱(按 scale 换算)在 pos 处覆盖的格子是否全是 EMPTY。
-# 用于瞬移落点清空判定:落点/下落路径不能穿墙。
-# 逐格环面判定收在 core/tile_query.gd(与飞鸟避障/预瞄判墙同源)。
-# 空网格视为"全清":TileQuery 在空网格返回 false(= 没压到东西),`not` 之后正是 true ——
-# 与旧实现的显式 is_empty 早退同义(探针会清空 current_grid,真实地图不会)。
 func _body_clear_at(pos: Vector2) -> bool:
 	var ts := GameParameters.TILE_SIZE
 	var rect := Rect2(pos + _body_min, _body_max - _body_min)

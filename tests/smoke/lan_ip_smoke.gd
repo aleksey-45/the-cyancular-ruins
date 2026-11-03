@@ -1,11 +1,5 @@
 extends SceneTree
 # LAN IP 纯解析守卫:S-07 把局域网 IP 发现从 local_server.gd 拆到 core/net/lan_ip.gd。
-# 守卫对象 = LanIp 的三个 static 纯函数 + LocalServer 的同名转发壳(无 autoload / 无 Node ⇒ 可 -s 跑):
-#   parse_default_routes(netstat -rn 文本) / parse_ip_file_line(local_ip.txt 首行) / rank_private(私有网段排序)。
-# 测不到什么:本机真实路由表里第一条是不是真网卡(要网络环境);netstat 是否真被 OS.execute;转发壳有多"薄"。
-# ★ ⑤ 会经 `LanIp.lan_ip_candidates()` **间接**读一次真实环境(local_ip.txt + `netstat -rn`,只读、不开端口、不写盘)
-#   —— 属 `tests/run_all.sh` 承重安全检查的已知盲区(它只扫入口源码文本、看不见经 helper 间接拉起的进程)。
-# 跑法:"$GODOT" --headless --path . -s res://tests/smoke/lan_ip_smoke.gd;通过 = LAN IP OK(n 条断言)。
 
 const EXPECTED_CHECKS := 5
 
@@ -55,7 +49,7 @@ func _initialize() -> void:
 	_chk(order == ["10.0.0.7", "10.0.0.9", "10.0.0.5"],
 			"默认路由没按 metric 升序(实得 %s)" % [order])
 
-	# ③ local_ip.txt 首行(样例 = server_main 实际落盘格式「本机局域网 IP: <ip><其它候选…>」):括号 / 英文逗号 / 中文逗号 / 空格都要抽出 IP,缺 IP: 前缀 / 非 IPv4 / 空行 ⇒ ""。`IP:` 后不先 strip 就按空格截断 ⇒ 合法行抽成空串 ⇒ 红。
+	# ③ local_ip.txt 首行(样例 = server_main 实际落盘格式「本机局域网 IP: <ip><其它候选…>」):括号 / 英文逗号 / 中文逗号 / 空格都要抽出 IP,缺 IP: 前缀 / 非 IPv4 / 空行 ⇒ ""。
 	_chk(LanIp.parse_ip_file_line("本机局域网 IP: 10.10.10.166(其它候选: 192.168.1.5,第一候选不通就换)") == "10.10.10.166"
 			and LanIp.parse_ip_file_line("IP: 192.168.1.7,第一候选不通就换") == "192.168.1.7"
 			and LanIp.parse_ip_file_line("IP: 172.16.3.9，中文逗号") == "172.16.3.9"

@@ -2,9 +2,6 @@ class_name LobbyPage
 extends Control
 
 # 大厅页的共享基类(统一大厅 mp_lobby extends 它)。
-# ★ 为什么:大厅页本是一份「连大厅 → 列房间 → 配对了转连 worker」的状态机,历史上按模式复制成了三份实现 —— 同一处修正要改三遍,漏一处不报错(表现是「1v1 里好了、另两个没变」);三页合一后,凡是各模式语义相同的都上提到这里,子类只留真正的差异。
-# ★ 上提判据是「剔掉注释后的代码是否逐字相同」(不是「看起来像」);那些只差 1~3 行的差异全部落成下方「子类钩子」。刻意不在这里的:_ready 与整页 chrome / 三个弹层(它们是 mp_lobby.tscn 的静态骨架)、各模式的 _on_room_list 变体(N 人房行样式与文案都不同)、_process 的派发(梯顺序与页面专属梯有关,合并会改行为)。要再上提一批,先按同样口径量一遍差异。
-# ★ 本类读 Settings autoload(禁用武器网格那个设置区块要用),故不放进 ui/ui_factory.gd —— 那个工厂至今零 autoload 依赖(Settings 读写全留在调用方),是它的一条不变量。
 
 # 本机服务器一键启停(同目录 Cyancular Ruins Server.exe)。用 preload 而非全局类名,避免新脚本未进全局类缓存时整份场景解析失败;常量可继承,子类直接读本常量、无需各自再声明。
 const LocalServer := preload("res://core/net/local_server.gd")
@@ -73,7 +70,7 @@ func _finish_lobby_ready() -> void:
 
 # ── 设置区块(子类建房用)── 读写 Settings,故留在本类而不是 ui/ui_factory.gd(那个工厂零 autoload 依赖)。
 
-# 禁用武器网格(2 列 + 定尺寸剪影,横排会溢出屏幕)。勾选直写 Settings.pvp_disabled_weapons + save()(房主开关,禁用项随 player_options 上发);h_sep 是调用方的版式值(剪影是长条形,列距本就不同),on_cell 给需要额外记账的调用方。
+# 禁用武器网格(2 列 + 定尺寸剪影,横排会溢出屏幕)。
 # ★★ 间距键名分两层,别混:GridContainer 认 h_separation / v_separation,而 HBoxContainer / VBoxContainer 只认 separation —— 把 h_separation 写在 HBox 上会被存下来但永不读取(静默无效覆盖,合一前的旧大厅页里就有写错过的一份)。
 const WEAPON_GRID_MAX_H := 144.0
 
@@ -147,7 +144,7 @@ func _with_lobby(action: Callable) -> void:
 		addr = _lobby_fallback_addr()
 		_addr_edit.text = addr
 	PvpSession.server_address = addr
-	# ★★ NetBus.can_send_to_server() 不是可选项:_connected 是本端自己的记账(只在连上 / 连接失败 / 主动重连时翻),不随对端断开更新 —— 服务器掉线或踢人之后它仍是 true,于是「已连上」这条快路会把请求发往一个 ENet 已拆掉的 peer,也就是那条 Unable to send packet on channel 0(而它是周期性的:刷新列表 / 加入 / 建房都走这里)。
+	# ★★ NetBus.can_send_to_server() 不是可选项:_connected 是本端自己的记账(只在连上 / 连接失败 / 主动重连时翻),不随对端断开更新 —— 服务器掉线或踢人之后它仍是 true,于是「已连上」这条快路会把请求发往一个 ENet 已拆掉的 peer,也就是那条 Unable。
 	# 加了这一判,断线后的第一次点击就落到下面的重连路径:动作存进 _pending_action,连上大厅之后自动补发 ⇒ 既不报错,也顺手修好「服务器断了、界面看着还连着」这个状态。
 	if _connected and _connected_addr == addr and NetBus.can_send_to_server():
 		action.call()
@@ -200,14 +197,14 @@ func _on_server_message(t: String) -> void:
 
 
 
-# 大厅在 go_match 之前下发的一次性会话令牌(断线重连用)。★ 先存进 _pending_token 而不是直接写 PvpSession:go_match 也是本帧到达的,两者由 _do_go_match.call_deferred 在帧末一起落到 PvpSession,顺序就不会被 RPC 到达次序左右(时序硬约束:token 必须先于 go_match 发出 —— 客户端收到 go_match 当场 NetBus.stop() 断大厅,晚发的载荷静默丢失)。
+# 大厅在 go_match 之前下发的一次性会话令牌(断线重连用)。
 var _pending_token := ""
 
 func _on_session_token(token: String) -> void:
 	_pending_token = token
 
 
-# go_match 在大厅 peer 的 poll() 调用栈内作为 RPC 到达;此处若立刻 NetBus.stop(),正在 poll 的 peer 引用被清零、在自己的调用栈内被 free ⇒ 偶发原生段错误(实测「对手连入配对完成的一瞬间」闪退)。故把整个切换推迟到帧末执行。
+# go_match 在大厅 peer 的 poll() 调用栈内作为 RPC 到达;此处若立刻 NetBus.stop(),正在 poll 的 peer 引用被清零、在自己的调用栈内被 free ⇒ 偶发原生段错误(实测「对手连入配对完成的一瞬间」闪退)。
 # ★ 帧末还不够:**再等一帧**才真正 stop()。go_match / session_token 是大厅对这台客户端的最后两条定向包,同帧就把连接拆掉会让服务端那一拍的发送落到已拆的 ENet peer 上(引擎报 `Unable to send packet on channel 0, max channels: 0`);多等一帧是让它们落地,代价只有 16ms 进对局。
 func _on_go_match(role: int, port: int) -> void:
 	_pending_go_role = role
@@ -217,7 +214,7 @@ func _on_go_match(role: int, port: int) -> void:
 	_do_go_match.call_deferred()
 
 
-# ── 回大厅后回局 ── 入口 = 本页房间列表里「自己那间房」那一行被按下(见 try_rejoin_row;三个大厅页共用这一份)。本页做三件事:① 发 rejoin_request(房间号, token) —— ★ 此刻本页一定连着大厅(那一行就是 room_list 载荷里来的),故这里不连大厅、不碰地址框、也不走 _with_lobby:照原稿搬会 NetBus.stop() + 重连一次,把刚拿到的列表连同自己那一行一起丢掉;② 大厅复用 go_match 把它送回原 worker,之后与首次进场逐字同一条路;③ 唯一的岔路在 _claim_role_worker(对局已经开着 ⇒ 必须发 reclaim_role)。
+# ── 回大厅后回局 ── 入口 = 本页房间列表里「自己那间房」那一行被按下(见 try_rejoin_row;三个大厅页共用这一份)。
 # ★ 原稿那条「地址取 PvpSession.server_address 而不是地址框」的绕法随入口一起作废:它防的是「从主菜单按按钮进来时页还没连上」那一档,而现在玩家就站在已经连上的那一页上。
 var _rejoin_sent_ms := 0
 
@@ -260,7 +257,7 @@ func _on_rejoin_denied(reason: String) -> void:
 	_request_list("已刷新房间列表")
 
 
-# 回局请求发出后大厅一直没应答的兜底(15s):没有它玩家会停在一句「正在回到对局…」上,而本页其它兜底梯(worker 转连 / claim)此时都还没启动。★ 判据里带 PvpSession.rejoin:回局成功时它已被清掉,这条梯自然失效。
+# 回局请求发出后大厅一直没应答的兜底(15s):没有它玩家会停在一句「正在回到对局…」上,而本页其它兜底梯(worker 转连 / claim)此时都还没启动。
 func _tick_rejoin_timeout() -> bool:
 	if PvpSession.rejoin and _rejoin_sent_ms > 0 \
 			and Time.get_ticks_msec() - _rejoin_sent_ms > 15000:
@@ -318,9 +315,6 @@ func _claim_role_worker(role: int) -> void:
 # 转连 worker 失败/无应答的兜底:断开当前连接回大厅,连上后 _on_lobby_connected 自动刷新列表。没有它,worker 死掉时玩家会永久停在「正在连接对局服务器」上,只能自己找出路。
 func _return_to_lobby(msg: String) -> void:
 	# ★ 2026-10-30 修:必须先摘掉转连 worker 的一次性回调 —— 旧写法(匿名 connect + CONNECT_ONE_SHOT)在
-	#   `_return_to_lobby` 里没有任何 disconnect,于是 worker 连不上回大厅后,大厅一连上,上一条 one-shot
-	#   **仍会把 _claim_role_worker 叫起来**:向大厅 peer 发 claim_role/player_options/report_token 并起
-	#   25s claim 梯,玩家在大厅浏览时被无理由弹回、连接重建、列表与等待室状态丢失。
 	_unbind_worker_once()
 	_connecting_worker = false
 	_claimed_ms = 0
@@ -343,7 +337,7 @@ func _on_match_start(role: int, spawn: Vector2i, map_path: String) -> void:
 	_enter_match_scene()
 
 
-# ── 超时梯(共用的三条)── ★ 本基类不提供 _process:梯顺序由子类定(合一前的两个旧页就不同),且各有一条页面专属梯。顺序看着无所谓,实际有差:某一 tick 里「大厅-8s 先清 _pending_action、claim-25s 再 _return_to_lobby」若被并成只跑后者,_pending_action 就不再被清 —— 单看代码看不出来。故派发留在子类,这里只给函数体。
+# ── 超时梯(共用的三条)── ★ 本基类不提供 _process:梯顺序由子类定(合一前的两个旧页就不同),且各有一条页面专属梯。
 
 # 转连 worker 12s 无连接(死端口/worker 死了)。返回 true = 已处理,调用方应 return。
 func _tick_worker_connect_timeout() -> bool:
@@ -445,7 +439,7 @@ func _beta_payload() -> Dictionary:
 	return {"beta": true, "time": time_rules.to_dict()}
 
 
-# ── 建房/对战选项面板里的「选图」一节(三个联机页共用)── 房主选 ⇒ 存 Settings.mp_map_path ⇒ 报到时随 player_options 上报 ⇒ worker 开局定图。★ 存档里那张图被删 / 改名时归一化成「随机」:否则上报的坏路径只会让服务器静默回落默认图,玩家以为选的是别的图。
+# ── 建房/对战选项面板里的「选图」一节(三个联机页共用)── 房主选 ⇒ 存 Settings.mp_map_path ⇒ 报到时随 player_options 上报 ⇒ worker 开局定图。
 # ★ 滚动区高度 260 → 470(2026-10-24):260 只够第一行,第二行卡片被截在创建/取消按钮上沿(视觉上是"图被切了一半")。
 func _add_map_picker(vb: VBoxContainer) -> void:
 	var picker := MapPicker.new()
@@ -476,7 +470,7 @@ func _claim_timeout_msg() -> String:
 	return ""
 
 
-# 进对局场景。★ 各模式的切场方式刻意不同,别为了「统一」改掉:1v1 直切;大乱斗 / 3v3 必须 call_deferred —— 它们的 match_start 在 NetBus.poll 调用栈内到达,栈内切场景会在这个栈里 free 大厅 / 重建大物理世界 ⇒ 偶发原生段错误(曾实测)。
+# 进对局场景。
 func _enter_match_scene() -> void:
 	push_error("LobbyPage: 子类必须覆写 _enter_match_scene()")
 

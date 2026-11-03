@@ -38,9 +38,6 @@ func source_kind() -> int:
 
 
 # ── 输入队列:自适应抖动缓冲上限。队列单位 = **一条 tick 记录**(不是包;一包进两条)。──
-# 原先写死 MAX_PENDING_INPUT = 8,而它同时是上限又是稳态(生产与消费是两个独立时钟)⇒ 队列长度是带反射壁的零漂移随机游走,没有回复力
-# ⇒ 那层延迟永久(ack 永久落后)。现在上限跟实测抖动包络走:peak = 丢之前的原始深度(每 tick 衰减 1)⇒ cap = peak + MARGIN,钳在 [MIN,MAX]。
-# ★ 口径:U1 后一条记录 = 1 tick ⇒ MIN/MAX/MARGIN 翻倍以保住同样的**时间**缓冲 [4,16] 条 = [66,266] ms;每丢一条 = 服务器少模拟 1 tick ⇒ C2 回滚纠正一次(有界)。
 const QUEUE_CAP_MIN := 4
 const QUEUE_CAP_MAX := 16
 const QUEUE_CAP_MARGIN := 2

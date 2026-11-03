@@ -1,16 +1,6 @@
 extends Node
 
-# 「回大厅后回局」的真链路端到端探针(场景模式,autoload 必须已实例化)。跑法:timeout 900 bash tests/probe/rejoin_probe.sh,或直接 godot --headless --path . --quit-after 36000 res://tests/probe/rejoin_probe.tscn。
-# 判据:文本 REJOIN PROBE: ALL-OK(不看退出码 —— 探针挂住时 --quit-after 到期仍 exit 0 且一行 ALL-OK 都不打印,只看退出码会把「没跑完」读成「通过」)。
-# ★ --quit-after 36000(=600s @60fps)的推导:本跑量级 ≈ 60~100s(进局 ~8s + PLAYING 静置 ~3s + 离场/主菜单/回局各 ~2s + c2/c3 各 40s 观察窗 + 收尾 ~5s),取 600s = 6~10 倍余量。
-#   本仓教训:安全网给薄了会把「跑得慢」读成「功能坏了」(tests/manual/brawl_rollback_probe.tscn 被 3600 误判过,实测要 30000),故按量级给足而不是照抄别处的数。
-# 拓扑(自当大厅/裁判;全部子进程由本进程 OS.create_process 直接拉起):本进程 = 真大厅(NetBus.start_server(LOBBY_PORT) + RoomManager),不进 7777;
-#   c1/c2/c3 = 3 个 headless 客户端,各自跑真 mp_lobby → 真 pvp_game;worker 由真 RoomManager._start_match 经 WorkerLauncher.spawn_worker 拉起(与生产逐字同一条路径,只把起投端口拨到池外)。
-# 前提:请确认没有别的 Godot 占着 7777(本探针不占 7777,也别杀掉用户自己的服务端)。客户端子进程的 stdout 父进程看不到(Windows CreateProcess 不继承句柄)
-#   → 每个子进程都带 --log-file,失败时把每份引擎日志的尾部一起打印;收尾按 PID 杀全部子进程 + 按端口兜底。
-# ★ 与任务书的偏离(理由都在实现处再写一遍):① _clean() 的返回值必须看(残留 .result 会被当成本跑结果下判决,而且是绿的;清不掉就整段收工);
-#   ② 收尾按端口兜底要杀 _worker_port(pick_port() 发出来的那个),不是起投点 WORKER_PORT_OUT;③ 断言计数 MIN_CHECKS —— 本探针是这条路唯一的观测者,一段被截断的跑不许打印 ALL-OK;④ 每条判词带断言条数。
-#   ④ 每条判词都带断言条数(`ALL-OK(N 条断言)`),与仓内既有探针同款。
+# 「回大厅后回局」的真链路端到端探针(场景模式,autoload 必须已实例化)。
 
 const PREFIX := "rejoin_probe_"
 const LOBBY_PORT := 29300
@@ -21,7 +11,7 @@ const CHILD_QUIT_AFTER := "36000"
 const BOOT_TIMEOUT := 40.0
 const FINAL_TIMEOUT := 180.0
 const RESULT_WAIT := 90.0
-# 一条绿的跑至少要跑到的断言数:相① 端口 1 条 + 相② 4 条(行在不在 / in_match / 名单 / pid);三端结果不合格时走 _check(false, …),那本来就已经是红的。判据只对「否则会打印 ALL-OK」的那一跑生效(见 _finish)。
+# 一条绿的跑至少要跑到的断言数:相① 端口 1 条 + 相② 4 条(行在不在 / in_match / 名单 / pid);三端结果不合格时走 _check(false, …),那本来就已经是红的。
 const MIN_CHECKS := 5
 
 var _role := "lobby"
@@ -163,7 +153,7 @@ func _finish(why: String) -> void:
 			_check(false, "%s: %s" % [who, txt.split("\n")[0]])
 	if why != "":
 		_check(false, why)
-	# ★★ 计数守卫只对「否则会打印 ALL-OK」的那一跑生效(已经有红时不叠加噪音)。本探针是回局这条路唯一的观测者,而「某一段没跑到」与「跑到了且没事」在输出上长得一样 --quit-after 到期、阶段梯断掉、客户端早退都会走到这里)。
+	# ★★ 计数守卫只对「否则会打印 ALL-OK」的那一跑生效(已经有红时不叠加噪音)。
 	if _failures.is_empty() and _checks < MIN_CHECKS:
 		_check(false, "只跑了 %d 条断言(期望 ≥ %d)—— 有阶段没跑到,这个 ALL-OK 不算数"
 				% [_checks, MIN_CHECKS])

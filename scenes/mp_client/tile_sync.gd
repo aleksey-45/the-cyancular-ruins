@@ -2,24 +2,6 @@ class_name TileSync
 extends RefCounted
 
 # 拆砖(瓦片破坏)组合件(2026-10-22 从 PvpMatchClient 拆出;Task 7):两条订阅 + 格级/子格级处理。
-# 形状是**组合**不是继承:宿主 PvpMatchClient 只剩 `_subscribe_tile_events()` /
-# `_on_remote_tile_destroyed()` / `_on_remote_sub_destroyed()` 三个委托口(原 `resync_world_probe` 直接调格级那个,该探针已于 2026-10-24 删除);
-# 本类经 bind(client) 读宿主的 `_world`(与拆件前同一个字段、同一个对象)与 `_local`。
-# ★ `--diag` 的事件名 `tile_cell` / `tile_sub` 逐字未改(NetDiag 判据)。
-#
-# ★ 表现层两条纪律(2026-10-26 粒子修复,原缺陷见 docs/eng/registered-debt.md):
-#   ① 服务器事件带的是 **canonical** 坐标([0,MAP));玩家每帧被 wrap 回 canonical、墙体按 3×3 环面副本铺
-#      ⇒ 粒子必须先 anchor_to_nearest 到本地玩家附近再画,否则接缝附近直接画到另一份副本/屏幕外。
-#   ② 一次"格级销毁"只播 **1 簇**粒子:16 个子格的清理一律 silent,由格级那一簇统一负责(旧实现 17 簇)。
-#
-# ★★ 2026-11-01(R2):拆砖是**服务器外部事件**,必须按 seq 锚点注入预测历史,不能"到达即改地形"。
-#   到达即改 ⇒ 回滚重放时地形已经是"拆完之后"的,而客户端当初预测那几帧时墙还在 ⇒ 重放结果 ≠ 原预测
-#   ⇒ 在刚打穿的砖/掩体附近连环回滚(幽灵墙循环)。现在两条 RPC 都带逐 peer 的 seq(服务器用 `_stepped_seq`),
-#   变更走 `PredictionRollback.apply_external_event(seq, cb)`(与受击事件同一套机制):
-#   恢复 capture[seq] → 应用变更 → 重放 (seq, last_applied],并把 cb 记进事件表供之后每次重放重新应用。
-#   ★ 幂等硬要求:cb 会被重放多次 ⇒ 只许调 `TileDefs.damage_sub`(已死子格返回 false),不许播粒子/发奖励。
-#   ★ 无锚点(重连补态 / 探针直调 / seq=0)或注入被拒(环外 / 已 ack / 没有 rollback)⇒ **立即应用** = 旧行为。
-#   变异(去掉注入、改回到达即应用)会让 `net_tile_fx_probe` 的"有预测环时应注入"断言红。
 
 const TileHitFx := preload("res://scenes/effects/tile_hit_fx.gd")
 
@@ -31,10 +13,6 @@ func bind(client: Node) -> void:
 
 
 # ★★ 拆砖的**两条订阅必须成对**,所以收在这一处给三个子类各调一次(原先三份手抄 ⇒ 1v1 那份漏了子格那条)。
-#   为什么两条都要:`local_tile_destroyed` 由 `damage_tile` 触发(激光、普通子弹的整格单位——2026-10-26 起
-#   普通子弹也走格级,见 bullet_base.tile_break_unit),`sub_destroyed` 由 `damage_sub` 触发(榴弹的 1/2 格 = 32px 块爆炸
-#   与子格破坏)。只接其中一条 = 服务器已经拆了、客户端墙上
-#   **贴图与碰撞都还在**(幽灵墙):本地预测撞在服务器不存在的墙上 ⇒ 每帧分歧回滚(橡皮筋),视觉子弹也被挡下。
 func subscribe() -> void:
 	NetBus.local_tile_destroyed.connect(_rpc_on_cell)
 	NetBusExt.local_sub_destroyed.connect(_rpc_on_sub)
@@ -90,9 +68,6 @@ func _apply_sub(sub: Vector2i, seq: int, silent: bool) -> void:
 	NetDiag.log_event("tile_sub", {"sub": [sub.x, sub.y], "silent": silent,
 			"has_world": _client._world != null, "seq": seq})
 	# 返回值 = 这次调用真的"拆掉了一个活子格"。false(本来就不可破 / 已死 / 迟到或重复事件)不播粒子 ——
-	# 否则格级展开的 16 次里会混进早就没了的子格,看起来像凭空爆一簇。
-	# ★ 用数组当可变捕获:注入路径下 cb 会在 `apply_external_event` 里**同步**执行,这里读得到返回值;
-	#   重放时 cb 再跑一遍只会把 false 写回,不产生第二次粒子(粒子在下面、cb 之外)。
 	var destroyed := [false]
 	var mutate := func() -> void:
 		destroyed[0] = TileDefs.damage_sub(sub, 999999, "explosion")

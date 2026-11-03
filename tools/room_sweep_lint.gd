@@ -1,8 +1,5 @@
 extends SceneTree
 # 房间生命周期约定的源码级检查器(按需跑,不进任何默认批):断言全是对产品源码文本的判形态,一条行为断言都没有。
-# 跑法:"$GODOT" --headless --path . -s res://tools/room_sweep_lint.gd(不碰任何端口);通过 = 判词 SMOKE_ROOM_SWEEP OK。
-# 检查的约定(名字见 CHECK_NAMES):拆除单一收口、worker argv 契约、3v3 启动契约与 spawn 守卫、worker PID 跟踪、
-#   拒绝入房的三条文案、回局凭据的回收梯、四个 spawn 点登记凭据的顺序。约定文本在 docs/eng/room-lifecycle-conventions.md。
 
 var _fail := ""
 # ★ 每个 `_check_*` 都必须跑到尾,否则判词会假绿:脚本错误不给 `_fail` 赋值,只让出错那个函数当场结束、调用方照常往下走 ⇒ 判词仍是 OK。
@@ -109,10 +106,6 @@ func _check_teardown_funnel() -> void:
 
 
 # ── 注册表:三表合一的落点、删除唯一原语、拆除按 mode 判定 ──
-# ★ 为什么单独钉(2026-10-22 Task 9):「注册表删除」从三张表搬进 RoomRegistry.erase,「端口延迟三档」从
-#   teardown_room 里的 `is` 二分改成读 room.mode。只钉 lobby_rooms 的调用点会让两条绕道失明:
-#   ① 在 registry 别处直接 `_tables[x].erase(...)`(旧的三条收口换成一条却没守住);
-#   ② teardown 回到按房型类 `is` 判定(三张表房号空间重叠 ⇒ 静默错拆)。
 func _check_registry_funnel() -> void:
 	if _fail != "":
 		return
@@ -291,9 +284,6 @@ func _check_team_startup_contract() -> void:
 		_fail = "3v3 收齐判据用的是 _role_set.size()(role 会重复/留空洞 —— 分母必须取去重后的队伍表)"
 		return
 	# ⑥ role 越界守卫必须**三模式统一**:集合外的 role 混进来会让 `_claims.size()` 提前够数开局,而 TeamHost 那侧 `spawns[role]` 缺键。
-	# ★ 2026-10-30 B1 修:旧判据是 `((_royale or _team_mode) and not _role_set.has(role))` —— 1v1 两项皆 false,
-	#   那条前缀会让 1v1 的越界判断**恒不生效**(claim_role(3) 混进来照样开局)。现判据 = 裸 `not _role_set.has(role)`,
-	#   且**不许**再出现旧前缀;两半都查(缺判据 / 旧前缀复活)。
 	if not code.contains("or not _role_set.has(role)") \
 			or code.contains("((_royale or _team_mode) and not _role_set.has(role))"):
 		_fail = "_on_role_claimed 的越界守卫必须是三模式统一的裸 `not _role_set.has(role)`(旧前缀让 1v1 恒不生效)"
@@ -418,10 +408,6 @@ func _check(src: String) -> void:
 				+ "mp_lobby.gd 的 \"match_time\" 必须仍由 Settings.royale_match_min × 60.0 得来,"
 				+ "否则上界静默失效(改换算要一起改上界常量)"); return
 	# ★ 环三(写入端)= scenes/mp_lobby.tscn 里 `MatchTimeSlider` 节点的 `max_value`:它才是真正产生下发值的那一环 —— `value_changed` 把滑块值不钳位地写进
-	#   `Settings.royale_match_min`,而装载钳位 [1,30] 只在下一次装载时生效 ⇒ 放宽 `max_value` 后前两环照绿、下发值已能到 3600(静默失效)。
-	# ★ 判据读 .tscn 且比数值而不是子串(`contains("15")` 挡不住 `15.0 → 150.0`);`MatchTimeSlider` 必须恰一个且仍是 HSlider(读错同名节点会得到别的上限)。
-	#   读不到骨架 ⇒ 响亮报「读不到」;另加反向:`.gd` 里不许再出现 `_time_slider.max_value`(否则上限回到两个家,判据被架空)。
-	# ⚠ server/royale_host.gd 原样收下客户端给的 `match_time`、worker 侧也不钳位 ⇒ 上界依赖客户端行为,不是无条件成立(登记见 docs/eng/registered-debt.md)。
 	var tscn_src := FileAccess.get_file_as_string("res://scenes/mp_lobby.tscn")
 	if tscn_src.is_empty():
 		_fail = "无法读取 scenes/mp_lobby.tscn(读不到骨架 ≠ 上界链第三环变了)"; return

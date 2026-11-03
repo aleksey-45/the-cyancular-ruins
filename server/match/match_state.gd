@@ -14,7 +14,7 @@ var _pending_input: Dictionary = {} # role -> Array[输入记录队列](一条�
 var grid: Array = []
 var _base_grid: Array = []   # 建局原始(未破坏)网格深拷贝:每局复位重铺,防客户端/服务器砖状态漂移
 
-# 队伍表 role -> 队号(1/2):唯一权威,由大厅经 worker 命令行 --teams 显式传入。★ 不从 role 号推导(role 由「最小空闲号」分配、退出后不重排,编号留空洞);★ 空表 = 无队伍(1v1 / 大乱斗 / 单机)⇒ team_of 恒 0、same_team 恒 false。
+# 队伍表 role -> 队号(1/2):唯一权威,由大厅经 worker 命令行 --teams 显式传入。
 var _team_of: Dictionary = {}
 
 # Beta 时间玩法(B21)的服务器权威颗粒经济;★ 普通局恒 null(一切结算/广播短路),由 MatchHost._init 按房主 options 建。
@@ -118,7 +118,7 @@ var _left_round: Dictionary = {}     # role -> 离开时所处的局号(ACS 的"
 # role -> 掉线那一刻所处的局号(与 _left_round 是两件事:后者是移出时写下的最终值)。★ 必须分开:掉线与宽限期到点之间
 # 隔着 60s、可能换过局,而 ACS 分母要的是「他实际参与了几局」。⚠ 已知边界(不修):_round_num 在新一局 COUNTDOWN 期间就已 +1 ⇒ 那 ~3s 窗口里掉线的人被记上一局没打过的局号。
 var _leave_round: Dictionary = {}
-# 助攻表:每受害者一张小表 victim_role -> {attacker_role: 最后命中时刻(ms)}。★ 归因只有单个 last_damager meta,回答不了「还有谁打过他」;★ 写入口唯一(_note_hit,由 MatchCombat._on_player_hit 调),窗口复用 ATTRIB_WINDOW。
+# 助攻表:每受害者一张小表 victim_role -> {attacker_role: 最后命中时刻(ms)}。
 var _assist_times: Dictionary = {}
 # role -> true(已移出对局)。★ 必须住底座(_roster / mvp_role 都要读);子类重复声明基类成员是硬 Parse Error,故 RoyaleHost / TeamHost 那两行必须一起删。
 var _left: Dictionary = {}
@@ -127,7 +127,7 @@ var _left: Dictionary = {}
 var grace_snapshot: Dictionary = {}
 # 归因时效(3s)。★ 三个读者原先各抄一份同名常量,故收在底座(子类那两行必须删:同名遮蔽报错)。
 const ATTRIB_WINDOW := CombatFeedback.ATTRIB_WINDOW_MS
-# 「这一下伤害是谁打的」的新鲜度阈值(ms)。★ 与 ATTRIB_WINDOW 是两个问题、两个窗口:3s 答「这次死亡算谁的击杀」,本阈值答「这一下」——共用会把一次 0.4s 引信的榴弹自爆也计入。★ 8ms 的依据:真实命中路径 attribute → take_hit →
+# 「这一下伤害是谁打的」的新鲜度阈值(ms)。
 # took_hit 是同一调用栈(年龄 ≈ 0~1ms),而上一物理帧留下的归因至少 ~16.7ms 之前。★★ 前提就是「归因与伤害同一调用栈」:将来新增延迟扣血型伤害必须自己每帧重写归因,否则被静默判成无攻击者(ACS 偏低)。
 const ATTRIB_FRESH_MS := 8
 
@@ -148,7 +148,7 @@ func _rpc_all(method: String, args: Array = [], except_role: int = -1,
 
 		NetBus.callv("rpc_id", [peer, method] + args)
 
-# Beta 时间玩法的广播走 NetBusExt(NetBus 纪律:原方法表不动)。★★ time_state / sub_destroyed 声明在 NetBusExt:发在 NetBus 上会让 Godot 查不到 RPC 配置表而直接 return —— 它们从未发出、且每次都打一条错误;⇒ 这两个 RPC 首次真正生效,需要一次真链路复核。
+# Beta 时间玩法的广播走 NetBusExt(NetBus 纪律:原方法表不动)。
 func _rpc_all_ext(method: String, args: Array = [], except_role: int = -1,
 		live_only: bool = true) -> void:
 	for role in peer_by_role:
@@ -162,7 +162,7 @@ func _rpc_all_ext(method: String, args: Array = [], except_role: int = -1,
 		NetBusExt.callv("rpc_id", [peer, method] + args)
 
 
-# round_state 的唯一出口:三个生产者拼完 data 后都必须调它,宽限期读数只在这里并进去一次。★ 不并进 _rpc_all(会让每条事件白背一个 grace),也不让三个生产者各写一句(三份必然漂,而「其中一个忘了」不报错)。⚠ 零守卫:grace_feed_probe ④ 已删(2026-10-09)。
+# round_state 的唯一出口:三个生产者拼完 data 后都必须调它,宽限期读数只在这里并进去一次。
 func _send_round_state(data: Dictionary) -> void:
 	GraceWindow.merge_into(data, grace_snapshot)
 	_rpc_all("round_state", [data])
@@ -171,9 +171,6 @@ func _send_round_state(data: Dictionary) -> void:
 
 
 # 「节点 → role」的**唯一判据**(全仓只此一份;原先 _role_of_node 与两段内联循环另抄了三份,哨兵还不一致)。
-# ★ 查不到返回 **-1**、不是 0:0 是载荷/统计里「无归因 / 无队伍」的合法值,两种哨兵混用会把守卫变成死判据
-# (见 match_combat._replay_hurt_rect 的 `== 0` 旧写法)。★ 调用面全在 server/ 内;scenes/team_game.gd 那份同名
-# 私有实现是客户端自己的副本映射,不属这条判据。
 func _role_of(node: Node) -> int:
 	for role in players:
 		if players[role] == node:
@@ -181,7 +178,7 @@ func _role_of(node: Node) -> int:
 	return -1
 
 
-# 两名玩家是否同队(给只拿得到节点的武器用)。★ 队伍表空 ⇒ 恒 false ⇒ 激光行为逐字不变(别改成「没表就返回 true」);★ 两种「查不到」都安全(_role_of 返回 -1,而 same_team(-1, -1) 也是 false)。
+# 两名玩家是否同队(给只拿得到节点的武器用)。
 func is_friendly(a: Node, b: Node) -> bool:
 	if a == null or b == null:
 		return false
@@ -254,10 +251,6 @@ func stats_payload() -> Dictionary:
 
 
 # MVP = 整场 ACS 最高者;并列 → 击杀多者 → 阵亡少者 → role 号升序。★ 比较与并列规则收在
-# `ScoreRules.pick_mvp`(纯函数、`-s` 可测);本函数只负责把 roster 的 ACS/击杀/阵亡折成一张表。
-# ★★ 已离开者照样参与评选(用户裁定,不是遗漏);★★ 2026-10-30 用户裁定「全场最佳必须出自胜方」:
-#    候选集由调用方给 `candidates` —— 1v1 传 [胜者 role]、3v3 传胜队全部 role。空表 = 不限队
-#    (平局 / 未决出 / 大乱斗不发 mvp 那档);候选全不在册时回落全 roster,免得结算页的 ★ 凭空消失。
 func mvp_role(candidates: Array = []) -> int:
 	var table := {}
 	for r in _roster():
@@ -332,7 +325,7 @@ func _fresh_attacker_role(victim_role: int) -> int:
 	return _attributed_role_within(victim, ATTRIB_FRESH_MS)
 
 
-# 「上一个打 victim 的人」,归因年龄 ≤ window_ms(超窗/无归因/自伤 → 0)。★ 窗口是参数而不是常量:两个读者问的是两个不同的问题(击杀归属 3s / 逐人伤害 8ms);★ shooter == victim 的守卫不可省(防有人绕过写端直接 set_meta)。
+# 「上一个打 victim 的人」,归因年龄 ≤ window_ms(超窗/无归因/自伤 → 0)。
 func _attributed_role_within(victim: Node2D, window_ms: int) -> int:
 	if not victim.has_meta("last_damager"):
 		return 0
@@ -352,9 +345,6 @@ func _attributed_role_within(victim: Node2D, window_ms: int) -> int:
 
 
 # ── 出生/复活点 ── 数据来源 = 地图 meta 的 `# respawn <1|2> <col> <row>` 行(按阵营半区写死;语法见 MapFormat)。
-# 选点算法全部在 SpawnChooser(纯静态随机 + 排除 + 最小间距 + 半区/bucket 定义);本类只持有侧判定与"上一次落点"状态。
-# ★ 老地图(无 `# respawn`)完整保留改造前行为:地图 # player / # player2 两点 + `_side_swap` 换边,并 push_warning 一次。
-# ★ 侧 1 = 左半(x < cols/2)、侧 2 = 右半;1v1 的 role1 默认侧 1、role2 侧 2,每局换边时互换。
 func map_spawn_data() -> Dictionary:
 	if not _map_spawn_data_loaded:
 		_map_spawn_data_loaded = true

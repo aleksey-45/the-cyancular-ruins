@@ -26,9 +26,6 @@ const INPUT_BATCH_TICKS := 1   # 每包几条记录(现状 = 1:60Hz 一包一条
 
 
 # ── 编码端:组一个输入包(协议发送侧的唯一实现)──
-# ★ 位打包原先在两个客户端各手抄一份、解码端只有一份;编码端分叉不报错(某键在一个模式里永远没反应)⇒ 收在这里。
-# ★ seq/aim/st/ct 由调用方给;src 走公开读口 ⇒ 自动遵守 frozen(冻结期组出全中性包);st/ct 默认 0 让老调用点不用改。
-#   st = 最近成功解码的服务器快照 tick(命中回放时间基准);ct = 客户端物理帧号(仍只落位)。
 static func pack_record(src: PlayerInput, seq: int, aim: Vector2, snap_tick: int = 0,
 		client_tick: int = 0, need_full: bool = false) -> Dictionary:
 	var held := 0

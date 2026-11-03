@@ -17,7 +17,7 @@ const LaserVisual := preload("res://core/present/laser_visual.gd")
 # 对可破坏砖单次扣血量(树叶/树干用 explosion 语义,不穿墙只磨)。
 @export var tile_chip: int = 8
 
-# 命中判据(每段):折线线段与目标受击面(hurt_rect,含 2.5x 缩放的活动碰撞箱)外扩 beam_half_width×HIT_MULT 后相交即中。★ 早前 CollisionAabb 认不出多边形、身体框恒为 36×36 兜底,修好后判定才第一次落在身体上。
+# 命中判据(每段):折线线段与目标受击面(hurt_rect,含 2.5x 缩放的活动碰撞箱)外扩 beam_half_width×HIT_MULT 后相交即中。
 const HIT_MULT: float = 1.75
 
 enum BeamStyle { FLASH = 0 }   # 预留视觉风格;目前只有"单发瞬光"

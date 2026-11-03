@@ -1,15 +1,5 @@
 extends SceneTree
 # 联机度量守卫(NetMetrics):下行丢包估计 + 服务端日志目录选择。存在理由逐条对应真实缺陷:
-#   ① tick 缺口口径写错 ⇒ 丢包率静默恒 0(于是"卡/瞬移"永远只能猜)或恒 100(噪声)。
-#      去掉什么才红:把 `snapshot_loss` 的 `- 1` 删掉 ⇒ ②③ 变红(无丢包也记丢 1 包);
-#      把首包判据 `prev_tick < 0` 删掉 ⇒ ① 红;把乱序判据 `tick <= prev_tick` 删掉 ⇒ ⑤ 红。
-#   ② 步长自适应:60Hz 下步长 1、若将来降频步长 2,缺口都要按步长折算(见 ④ 与 ⑧ 的分工)。
-#   ③ 丢包率换算:分母必须是 rx+lost(不是 rx),否则 100% 丢包时算出 0%。
-#   ④ 日志目录:导出构建的服务端必须 = exe 同目录 `log/`(打包后默认落盘);其余 = user://logs。
-#      去掉什么才红:把 `is_server and is_template` 合取删掉 ⇒ ⑦⑧;把 return 改成恒 user 目录 ⇒ ⑦。
-# ★ 测不到什么:它不碰真链路(丢包在真实网络里的分布、迟到包算不算丢 —— 后者靠 `reset_snapshot_state`
-#   清基线,不在这支的断言面内);--netstat / --diag 的接线也各有一处源码守卫(见 registered-debt §二十八)。
-# 跑法:"$GODOT" --headless --path . -s res://tests/smoke/net_metrics_smoke.gd;通过 = NET METRICS OK(n 条断言)。
 
 const EXPECTED_CHECKS := 9
 

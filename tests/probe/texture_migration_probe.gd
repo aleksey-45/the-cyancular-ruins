@@ -1,11 +1,6 @@
 extends SceneTree
 
 # legacy 纹理读时迁移守卫:旧图集废弃槽位(tex 2-5 / 16-18,新图集里全透明)必须在**读时**迁移成
-# base + hue 辅码,三个入口(v4 二进制 / v3 文本 / 迁移合成规则)一个都不能漏 —— 漏了的症状是
-# 墙在游戏里整块消失(透明像素)且不报错。规则单一来源 = data/tile_defs.json 的 legacy_texture_map。
-# 最强保证:合成 v4 字节与 v3 文本喂给生产读口,逐描述符对迁移表;表本身全槽位核对。
-# 测不到什么:真图 maps/*.cyrm 的盘上字节(tools/migrate_map_textures.gd --write 的回读断言管)、渲染行号(wall_tint_probe)。
-# 跑法:"$GODOT" --headless --path . -s res://tests/probe/texture_migration_probe.gd;判词 = TEXTURE MIGRATION OK(n 条断言)。
 
 const EXPECTED_CHECKS := 4
 const V3_TMP := "user://texture_migration_probe.cyrm"

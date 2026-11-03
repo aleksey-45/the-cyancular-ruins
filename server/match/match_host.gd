@@ -62,11 +62,6 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 
 
 # 出生:建一个玩家节点并摆到出生点。★ 原先这里是两个逐行同构的循环(网络玩家 / AI 补位),现在只有这一份。
-# ★★ 行为逐字等价 —— 副作用顺序与拆前一致:实例化 → 换输入源 → 入树 → 与对方玩家(层2)互撞 → 记 players
-#   →(网络玩家记 input_sources / AI 挂导航器)→ `_spawn_cell` → 摆位 → 出生点日志。★ 顺序不可整理:
-#   `_spawn_cell` 带副作用(散点闩 / 上次落点记录,RNG 按调用次序取值),导航器与输入源表都必须在它之前就位。
-# ★ nav == null ⇒ 网络玩家(nav 非 null 即 AI 补位,它的输入源由 nav 每帧写、不进 input_sources)。
-# ★ 两条 print 文案由 nav 是否为 null 拼出,与拆前那两条**逐字相同**("角色 %d 出生点" / "AI 角色 %d 出生点")。
 func _add_player(role: int, src: PlayerInput, nav: AiNavigator) -> Node2D:
 	var p: Node2D = preload("res://scenes/player/player.tscn").instantiate()
 	p.set_input_source(src)
@@ -167,11 +162,6 @@ func _on_input(caller: int, pkt: Dictionary) -> void:
 
 
 # ══ O0(bullet-perf 计划 §O0)· tick 分段计时 —— **只做诊断,默认关** ══
-# 唯一实现 = server/match/tick_timing.gd。`NetDiag.enabled()`(`--diag` / `CYR_DIAG=1` / 导出服务端默认开)
-# 为假时,下面每一处 mark 都只是一次空实现调用:不读时钟、不分配、不拼字符串、不写盘 ⇒ 默认路径行为逐字不变。
-# 打开时按 `NetDiag.metric_interval_ms()` 窗口(默认 10s,`--diag-verbose` 1s)吐一行 `tick_sections` 到**心跳
-# 指标文件**(不刷事件文件、不新增常驻生产日志)。★ 只测量:6 处插入都紧贴被测调用的前后,**不重排**任何现有语句。
-# ★ 段的定义与口径(每 tick 摊 / 单次最长 / 次数)写在 tick_timing.gd 头部,改段名要两边一起改。
 var _tick_timing := preload("res://server/match/tick_timing.gd").new()
 
 
@@ -441,9 +431,6 @@ func _record_rw_frame(r: int, p: Node2D, now: float) -> void:
 
 
 # 换局复位回溯环(BUG-04,2026-10-30):环深的唯一裁剪是 12s,而换局间隙 = ROUND_OVER 4s + COUNTDOWN 3s = 7s < 12s
-#   ⇒ 不清的话,新一局开局按住回溯能退进**上一局的活体帧**(位置/HP/各槽弹量被写回旧局值,落点可能在本局墙体里)。
-#   换局瞬间正处于回溯态的 role 还要解冻输入源、摘 time_rewinding(否则下一局该玩家永冻、收不到输入)。
-# ★ 由 MatchRound._reset_world_and_clear_dynamics() 调(base 类不知道子类有这些表 ⇒ 走 has_method 动态调)。
 func reset_time_rewind_state() -> void:
 	for r in _rw_on.keys():
 		var src: PacketInputSource = input_sources.get(int(r), null)
@@ -472,24 +459,14 @@ func _apply_rw_frame(r: int, p: Node2D, cursor: float) -> void:
 		else:
 			break
 	# ★ 2026-11-01(R3):逐字段恢复**只有一份实现** = `Player.rewind_restore`(单机回溯走的是同一个函数)。
-	#   原先这里把"位置/速度/hp+信号/facing/倒地/武器残弹"整段抄了一遍,已经抄出两处口径相反:
-	#   ① 服务器不清 `knock_velocity`(单机清)⇒ 回溯期间残留爆炸击退向量;
-	#   ② 单机"倒地→活着"走 `revive()` 会把 hp 顶成满血、冲掉快照值(本轮已统一成 `rewind_set_alive()`)。
-	#   顺带删掉原先那段 `f["bullets"]` 分支:`_record_rw_frame` 从来不写这个键 ⇒ `hist` 恒空、整段是死代码。
 	if p.has_method("rewind_restore"):
 		p.rewind_restore(f)
 
 
 # ══ 队制模式(TeamHost / RoyaleHost)共用段 ══ 原先这两个文件里逐字重复的几段收在这里,子类只留「差异覆写」。
-# ★ 1v1 直接建 MatchHost(全仓唯一实例化点 = MatchBootstrap.start_on)⇒ 凡会改变 1v1 语义的段一律**没有**上提:
-#   自杀脱困(server_main 按 has_method 派发,上提会让 1v1 也吃到 K 键)、复活清归因 meta(会改 Beta 局里
-#   复活后的颗粒归因)、`_down_killer_of`(1v1 是 _opponent_of 口径)、`_on_bullet_hit`(刻意保留的双写点)。
 
 
 # 掉线宽限期到点后把 role 从对局里摘掉(两个子类 mark_disconnected 里逐字相同的 11 行:节点释放 +
-# players / input_sources / peer_by_role 三张表移除)。★ 终局判据刻意留在子类:大乱斗是「剩余 < 2 人」、
-# 对抗是「某队一个人不剩」,两者语义不同,别在这里合并。
-# ★ 幂等:已离开 ⇒ false,调用方直接 return(等价于原先那一句 `if _left.has(role): return`)。
 func _detach_role(role: int) -> bool:
 	role = int(role)
 	if _left.has(role):

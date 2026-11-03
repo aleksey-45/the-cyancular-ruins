@@ -3,11 +3,6 @@ extends RefCounted
 # 全局类缓存(运行 / 导出两面都要那份缓存),而 preload 不受缓存状态影响 —— 导出后不会突然「找不到类型 PlayoutClock」。
 
 # 客户端播放时钟(按服务器 tick 计):回答"此刻该渲染服务器历史的哪一 tick"。
-# ★ 参考不是"最新收到的包":观测 o = local_ms − tick × TICK_MS,参考取最近 WINDOW(8) 个观测的最小值 —— 迟到包只给更大的
-#   o、动不了参考;o 的长期漂移本身就是两端速率差,故不需要显式的频率状态(NTP RFC 5905 §10 / RTP RFC 3550 §6.4.1 /
-#   Valve 的"客户端时间 − 插值延迟",出处见 docs/eng/netcode-playout-clock-sync-sources.md)。
-# ★ 时间源是自己的 _local_ms、由 advance(delta) 推进(不是墙钟)⇒ 帧率无关、可手动驱动;render_tick 单调不减。
-# ★ 它只服务远端玩家副本的渲染位置(player_replica.gd):让离散快照在两条样本之间夹逼插值;幽灵碰撞体不跟它。
 const TICKS_PER_SEC := 60.0          # = 物理 tick 域(快照 tick 的刻度)
 const TICK_MS := 1000.0 / 60.0       # 一个 tick 多少毫秒(观测换算用)
 const WINDOW := 8                    # NTP §10 的窗口大小(8 级移位寄存器)

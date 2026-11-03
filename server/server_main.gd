@@ -1,9 +1,5 @@
 extends Node2D
 # 服务器入口(headless)。角色由命令行 user args 决定 —— ★ 开关必须写在 -- 之后(写在前面会被 Godot 丢掉、静默跑错分支):
-#  无参数 = 大厅(默认,7777):只做建房/配对,配对完成后为每局拉起一个 --worker 子进程;--worker --port P = 1v1(独占端口等两名客户端 claim_role)。
-#  --worker --royale --port P [--roles 1,3] [--ai-roles r,r] = 大乱斗(限时死斗,收齐全部人类 role 或 20s 超时按已到人数 ≥2 开局,全员走光才退出)。
-#  --worker --team --port P --roles r,... --teams t,... = 3v3(满员才开、不降级,收不齐就超时退出释放端口,整队走光才终局)。
-# ★ 两种模式收人方向相反:大乱斗可按已到人数降级开局,3v3 两队人数必须相等 ⇒ --roles 与 --teams 同序等长(队号不从 role 号推);也不再传「人数 + role 上界」两个整数 —— 有人退出会留 role 空洞,从人数推导必然出错。
 
 var _room_manager: RoomManager = null   # 大厅侧:留引用给控制台面板读房间账本(以前是匿名 add_child)
 var _host: Node = null
@@ -240,7 +236,7 @@ func _expire_graces(now_ms: int) -> void:
 	for role in _grace.expired(now_ms):
 		_grace.leave(role)
 		_sync_grace_snapshot()
-		# ★ 到点做什么 = 纯分派(GraceWindow.expire_action),别在这里再写一遍 if/else:原先的 else 把 1v1 与 team 一起吞了,3v3 第一个宽限到期的人会带着整局退进程(用户裁定是该队少人继续打)。形态由 tools/room_sweep_lint.gd 钉住,答案本身零守卫(grace_window_smoke 已删·2026-10-09)。
+		# ★ 到点做什么 = 纯分派(GraceWindow.expire_action),别在这里再写一遍 if/else:原先的 else 把 1v1 与 team 一起吞了,3v3 第一个宽限到期的人会带着整局退进程(用户裁定是该队少人继续打)。
 		if GraceWindow.expire_action(_royale, _team_mode) == GraceWindow.ACTION_REMOVE:
 			if _host != null and _host.has_method("mark_disconnected"):
 				_host.mark_disconnected(role)
@@ -377,14 +373,14 @@ func _on_reclaim(caller: int, role: int, token: String, proto: int) -> void:
 		_host._broadcast_round_state()
 	print("worker: role %d 重连成功(peer=%d)" % [role, caller])
 
-# 进场拉取:对局场景建好后主动要一次昵称/色相/生效选项/出生点/role 集合;★ 它取代原先服务器推三载荷那条路径(同一次 poll 里推 4 条,而那一刻新场景的订阅方还不存在 → 静默丢失)。不在本局(role==0)→ 静默丢弃。
+# 进场拉取:对局场景建好后主动要一次昵称/色相/生效选项/出生点/role 集合;★ 它取代原先服务器推三载荷那条路径(同一次 poll 里推 4 条,而那一刻新场景的订阅方还不存在 → 静默丢失)。
 func _on_match_sync(caller: int) -> void:
 	var role := 0
 	for r in _claims:
 		if _claims[r] == caller:
 			role = int(r)
 			break
-	# ── 诊断开关(默认关):-- --matchsync-diag —— 只是诊断,开关关着时本块一行都不打(生产行为逐字不变)。★ 开关必须写在 -- 之后(写在前面会被 Godot 当引擎参数丢掉、静默失效);它把本函数两个静默早退(role==0 / is_peer_live 为假)的全部读数一次打出来。
+	# ── 诊断开关(默认关):-- --matchsync-diag —— 只是诊断,开关关着时本块一行都不打(生产行为逐字不变)。
 	if OS.get_cmdline_user_args().has("--matchsync-diag"):
 		print("[matchsync-diag] 收到 match_sync: caller=%d role=%d _claims.has(caller)=%s _claims 键=%s 值=%s is_peer_live(caller)=%s role_claimed 已连=%s" % [
 				caller, role, str(_claims.has(caller)), str(_claims.keys()), str(_claims.values()),
@@ -457,9 +453,6 @@ func _on_role_claimed(caller: int, role: int, player_name: String, proto: int) -
 	if not _proto_matches(caller, proto, "claim"):
 		return
 	# 防串线:对局已开始、role 越界、或该 role 已被其他 peer 占用 → 这个连接不属于本局,直接踢(端口复用竞态下迟到的客户端可能连到旧 worker);★ 越界判据 = role 是否在本局参战集合内,不是任何从人数推导出来的界(房内有人退出会留 role 空洞,拿人数当上界会踢掉真客户端)。
-	# ★★ 2026-10-30 修:原判据写成 `((_royale or _team_mode) and not _role_set.has(role))` —— 1v1 两项皆 false
-	#    ⇒ **1v1 worker 上这条越界判断恒不生效**(注释却宣称三模式都有),claim_role(3) 会被接受、与真 role1
-	#    凑满 2 人开场,把大厅派来的 role2 当串线踢掉。1v1 的 `_role_set` 由 ModeContext 给 `[1, 2]`,三模式统一判。
 	if _host != null or _match_started \
 			or not _role_set.has(role) \
 			or (_claims.has(role) and _claims[role] != caller):
@@ -534,9 +527,6 @@ func _on_peer_left(peer_id: int) -> void:
 		if not is_participant:
 			return   # 被踢的串线连接断开不影响对局
 		# ★★ 2026-11-01(用户报「游戏结束后房间不会关闭」):终局之后**没有重连语义** —— 结算数据早已送达、
-		#   客户端已 _match_ended 不再重连 ⇒ 最后一个参与者一走就立刻退进程,把房与端口交回大厅。
-		#   旧行为走的是「进 60s 宽限」+「终局滞留 60s」两套口径 ⇒ 全员回大厅后房/端口还要占 60~90s。
-		#   还有人在看结算则继续跑(快照照发),别把他一起踢出对局。
 		if _host_match_over():
 			var mo_role := _role_of_peer(peer_id)
 			if mo_role == 0:

@@ -2,11 +2,6 @@ class_name RoomTypes
 extends RefCounted
 
 # 大厅唯一的房记录(2026-10-22 三房型合并,spec §3 方案 B):`mode` 字段 + 三种房型字段的**并集**。
-# ★ 为什么合一:三张表 × 三个类 ⇒ teardown / 清扫 / 列表 / 面板五处各写一份 `is RoyaleRoom` 判定;
-#   加第四个模式要改十几处,漏一处都是静默错(端口不还 / 拆错房)。判据改成 `mode` 只有一份。
-# ★ 字段是并集,不是「每个模式都该用」:`is_duel() / is_royale() / is_team()` 才是"这字段归谁"的答案。
-# ★ 外部(lobby_snapshot / room_manager / 探针)仍按 `LobbyRooms.Room` / `RoyaleRoom` / `TeamRoom` 标注 ——
-#   那三个名字在 lobby_rooms.gd 里是本类的**别名**(同一个类,零转换)。
 
 
 class Room:
@@ -89,11 +84,6 @@ static func team_room_ready(room: Room) -> bool:
 
 
 # 开局那一刻的**完整**队伍归属:`role -> 队号`,已选边的原样保留,未选边的按「当前人少那一队」贪心补位
-# (势均时补 1 队;同队内按 role 升序,保证确定性)。用户裁定「未选边的人开局时自动补到人少那一队」。
-# ★ 纯函数(只读 room.player_role / room.team_of,返回新表,不写回)—— 写回由 RoomManager.team_start 做一次:
-#   同一件事两处写,漂了不报错,只会让"大厅队伍表"与"worker 的 --teams"不一致。
-# ★ 为什么贪心不会超出每队上限:总人数 ≤ TEAM_ROLES = 2 × TEAM_SIZE,每次都给当前人少的那队 ⇒ 任何一队
-#   最多只能被补到 ⌈总人数/2⌉ ≤ TEAM_SIZE。
 static func team_autofill(room: Room) -> Dictionary:
 	var out := {}
 	var unassigned: Array = []

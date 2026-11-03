@@ -2,14 +2,6 @@ class_name LobbyRooms
 extends Node
 
 # 大厅的房间账本与生命周期(端口 7777 进程内):房间 → 玩家;1v1 两人就绪、大乱斗 N 人等待。
-# ★ 2026-10-22 起本类是**门面**:三张表搬进 RoomRegistry、三种房型类合并进 RoomTypes,这里只剩
-#   RPC handler、等待室广播与拆除收口。公开符号尽量逐字保留(外部调用点:room_manager / lobby_snapshot /
-#   rejoin_probe / team_match_probe / 服务端面板 / snapshot_size_probe[ROYALE_MAX_PLAYERS] /
-#   mp_lobby/wait_room[TEAM_SIZE·TEAM_ROLES])。★ 它仍是 Node:要用 multiplayer(拆除时断连 peer)与 get_tree()
-#   (等待室广播的延帧起点)。依赖方向单向:本类用 launcher / broadcaster,反过来它们不知道本类。
-# ★「两人凑齐 → 开局」跨了边界(房间的事 + 拉 worker 的事),故用 pairing_ready 信号通知 RoomManager。
-# ★ 拆除必须走单一收口 teardown_room:本层为「端口泄漏」这同一个失败模式补过三次;收口 = 清账本 + 广播,
-#   端口归还只是借 launcher。
 
 signal pairing_ready(room)   # 1v1 房凑齐两人 → RoomManager 接住去拉 worker + 发 go_match
 
@@ -21,9 +13,6 @@ const ROYALE_MAX_PLAYERS := ModeDefs.ROLE_MAX   # S-10:单一来源(不在本文
 const ROYALE_DEFAULT_MAX := 4
 
 # 两队对抗(mode id 仍是 "team"):**两队各 ≥1 人即可开局**,总人数 2..TEAM_ROLES(=10),每队上限 TEAM_SIZE(=5)。
-# ★ 2026-11 由「满 6 人才开、无 AI 补位、无降级」改成对抗语义(用户裁定「两队都有人即可开始游戏,上限 10 人」)。
-#   两条闸门仍是硬上界:TEAM_ROLES = 房间容量(= 加入上限),TEAM_SIZE = 每队人数上限;人数**下限**只有"每队 1 人"
-#   (判据在 `RoomTypes.team_ready`),不再要求满员。开局目标 / 补贴公式在 `TeamRules`(单一来源)。
 const TEAM_SIZE := ModeDefs.TEAM_SIZE   # S-10:单一来源(每队上限,不是每队必须的人数)
 const TEAM_ROLES := ModeDefs.TEAM_SIZE * ModeDefs.TEAM_COUNT   # 两队合计 = 房间容量 / 加入上限
 
@@ -376,9 +365,6 @@ func royale_leave(caller: int) -> void:
 			_broadcast_royale_state(rr)
 
 # 房间列表的纯构造(理由同 room_list_payload:无对端时 reply 静默跳过 ⇒ 不抽出来探针观测不到)。★ 只列公开房;in_match 的房照列
-# (第三人要看得见),未开局的空房仍不列(那是幽灵房)。★★ token(未认领欠账 B1,用户裁定甲案):私密房只对本人列出 —— 此前私密房一律
-# continue ⇒ 在私密房里打到一半按 ESC 回主菜单的玩家列表里没有那一行,回局入口整个不存在。判据 = 凭据正是这一间房(RejoinRegistry.owns)。
-# ★ 默认 "" ⇒ 不传 = 与从前逐字相同的行为(第三人、既有探针/冒烟调用点)。
 func royale_list_payload(token: String = "") -> Array:
 	return _registry.list_payload(ModeDefs.MODE_ROYALE, token, rejoin)
 
@@ -566,10 +552,6 @@ func _is_room_host(r: RoomTypes.Room, caller: int) -> bool:
 
 
 # ── 回大厅后回局 ── 客户端在自己的大厅页上点自己那间房(对局中的房照常列在列表里,别人点它只会被「该房间的对局已进行中」拒掉)。
-# ★ 应答复用 go_match(方法表一个字不动)⇒ 客户端那条「连 worker → 认领 role → 进对局」的路与首次进场逐字同一条。
-# ★ 这里不判对局状态(「你还在宽限期吗」只有 worker 手里的 _grace 知道),只判两件事:凭据对不对得上、以及这一局的 worker 还在不在
-# (后者防止把客户端送到一个已经结束、端口可能已被复用给别的对局的地址上)。★ 判据本体是纯函数 RejoinRegistry.decision,本函数只做
-# 「查 → 判 → 发」,不在这里再写一遍 if/else(那正是漂的成因)。
 func on_rejoin_request(caller: int, code: String, token: String, mode: String) -> void:
 	var now := Time.get_ticks_msec()
 	var e := rejoin.lookup(token, now)
@@ -605,11 +587,6 @@ const TEARDOWN_ABORT := 2     # 拉起失败:worker 根本没起来 → **立即
 const TEARDOWN_ADOPT := 3
 
 # 全部拆除路径都必须走它。理由不是「整洁」:本层为「端口泄漏」这同一个失败模式补过三次(on_peer_left 空房分支 / royale_leave 空房
-# 分支 / ai_duel 摘房前的手动释放),散着写就还会漏第四次。★ tools/room_sweep_lint 有断言钉住:端口归还与注册表删除只能出现在本函数体内。
-# mode 三种形态见 TEARDOWN_* 常量(默认 DELAYED);msg 空串 = 不发;disconnect_peers = true 时立刻断开房内玩家(清扫路径要,正常关房由 peer_left 自然收尾)。
-# ★ 端口延迟三档由 room.mode 决定(1v1 120s / 大乱斗 360s / 对抗 360s),数值唯一来源是
-#   RoomRegistry.port_return_delay → ModeRoomRules → WorkerLauncher.*_PORT_REUSE_DELAY。
-# ★ 别把 对抗 并回 120s:「短于或等于断线宽限期会让重连的客户端连到别的局」是 1v1 从 30 → 120 的老坑。
 func teardown_room(room, mode: int = TEARDOWN_DELAYED, msg: String = "",
 		disconnect_peers: bool = false, reason: String = "") -> void:
 # ★ 三态判定读 room.mode(is_duel/is_royale/is_team)。旧写法用 `room is RoyaleRoom` 二分 —— 三张表的房号空间重叠,

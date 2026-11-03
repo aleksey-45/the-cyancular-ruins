@@ -2,24 +2,6 @@ class_name ScoreRules
 extends RefCounted
 
 # 逐人计分口径(**纯静态、无 autoload、可 `-s` 测**)。
-# ★ 为什么单独成文件:口径要能被 `-s` 冒烟直接钉(性质断言),而宿主链
-#   (`MatchState` → …)引用 `NetBus`,静态引用它会连带编译到 autoload ⇒ `-s` 里
-#   **连 `_initialize()` 都进不去、直接挂到 timeout**。与 `core/sim/weapon_inventory.gd` /
-#   `core/sim/explosion.gd` 同款取舍(纯逻辑、可 `-s` 测)。
-# ★ 三模式共用**同一份** —— 这正是统计面能上提到基类的前提:旧口径
-#   `kill_bonus_score(敌方存活人数)` 在 1v1(两人)与大乱斗(自由混战)里根本没有对应物。
-#
-# ★★ 五个权重是**首版默认值,属于平衡参数、预期会被调**(spec §3.2)。守卫分**两半**,别只读前半句:
-#   ① score_rules_smoke.gd(已删·2026-10-09) 钉的是**性质**(死亡多 ⇒ ACS 低…),**它自己与权重取值无关** ——
-#      调数确实不会让它红;
-#   ② 但**测量生产路径分数**的那几条把**字面量**写进了期望值(stats_delivery_probe.tscn(已删·2026-10-09) ①、
-#      team_host_probe.tscn(已删·2026-10-09) ⑬d/⑬e/⑬f/⑬g)。**实测(2026-09-26,HEAD)**:`KILL_SCORE` 100→110
-#      ⇒ `score_rules_smoke` 与 `match_result_payload_smoke` 照旧全绿,而 `stats_delivery_probe` 红
-#      **1** 条(①)、`team_host_probe` 红 **6** 条(⑬d ×2 / ⑬e ×2 / ⑬f 的 `[仪器]` 前提 ×1 / ⑬g ×1
-#      —— ⑬f 与 ⑬g 各自的**主**断言仍绿,红的只是它们的前置/派生读数)。
-#   ⇒ **"调数不该让任何探针红"是错的(2026-09-26 订正)**:调权重必须**同步改那两处期望值**
-#      (或把它们改成从本文件的常量派生)。★ 别把那 7 条当假红去放宽 —— 它们正是
-#      "新公式真的走在生产路径上"的唯一守卫。
 
 const KILL_SCORE := 100          # 一个击杀
 const ASSIST_SCORE := 50         # 一次助攻
@@ -52,12 +34,6 @@ static func acs(total_kscore: int, rounds: int) -> float:
 
 
 # 在候选集里挑 MVP:ACS 高 → 击杀多 → 阵亡少 → role 号升序。纯函数(不碰节点/autoload),`-s` 可测。
-# stats: role(int) -> {"acs": float, "kills": int, "deaths": int}。
-# ★★ 2026-10-30 用户裁定「全场最佳必须出自胜方」:候选由调用方给(1v1 = [胜者 role]、3v3 = 胜队 role 集);
-#    空表 = 不限队(平局 / 大乱斗不发 mvp 那档);候选**全不在 stats 里**时回落全表 —— 宁可给一个 MVP,
-#    也不要把结算页的 ★ 弄丢(返回 0 = 没有星)。
-# ★ 初始化用「先收第一个候选」而不是 `best_acs := -1.0`:kscore 可以**为负**(死亡惩罚)⇒ 全员负 ACS 时
-#   旧写法会把 MVP 判成 0(没有星),且完全并列时仍天然取最小 role,不依赖字典迭代顺序。
 static func pick_mvp(stats: Dictionary, candidates: Array = []) -> int:
 	var pool: Array = []
 	if candidates.is_empty():

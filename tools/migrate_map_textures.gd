@@ -1,15 +1,6 @@
 extends SceneTree
 
 # legacy 纹理迁移工具:旧图集废弃槽位(tex 2-5 / 16-18,新图集里全透明)改写成 base + hue 辅码。
-# 规则单一来源 = data/tile_defs.json 的 legacy_texture_map(TileDefs.legacy_base_of)+ MapFormatV4.migrate_descriptor。
-# ★ 只**原位改写场景层调色板的 u32 值**(索引流 / meta / 其余层 / compression 位不动,层块字节无损);
-#   走 serialize() 会从格级网格重铺场景层、丢掉编辑器画的 16px 混排 ⇒ 禁止。
-# 跑法:
-#   "$GODOT" --headless --path . -s res://tools/migrate_map_textures.gd -- --check
-#   "$GODOT" --headless --path . -s res://tools/migrate_map_textures.gd -- --write
-# 判据 = 结尾 MAP TEXTURE MIGRATE: OK / FAIL(grep 文本,不是退出码)。--write 后自动回读断言:
-#   ① 解压 body 与意图 body 逐字节相同(索引流/meta/其余层无损)② 调色板无 legacy 纹理
-#   ③ 逐格纹理 = 迁移前纹理按表映射。
 
 const MAP_DIR := "res://maps"
 

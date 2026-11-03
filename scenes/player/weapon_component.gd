@@ -5,7 +5,7 @@ extends Node
 # ★ 是背包模型:8 格容量预算(轻 2/中 3/重 4)与 4 把上限两条独立闸门(见 WeaponInventory),不再是按类型 id 直接切枪。
 # ★ _current_type 刻意仍是武器类型 id(1-6),不是背包位置:快照的 weapon 字段、capture_state 的 wslot、PlayerReplica._swap_weapon 全按类型 id 走,协议与副本因此零改动;背包位置只用于本地按键/滚轮。
 
-# ★ 场景路径 / 显示名 / 重量档三张常量表已整体删除:唯一来源是 data/weapons.json,由 core/sim/weapon_registry.gd(WeaponRegistry)读;这里不留任何副本,留一张就会与 json 分家。零守卫(enemy_logic_smoke 已删·2026-10-09)。
+# ★ 场景路径 / 显示名 / 重量档三张常量表已整体删除:唯一来源是 data/weapons.json,由 core/sim/weapon_registry.gd(WeaponRegistry)读;这里不留任何副本,留一张就会与 json 分家。
 
 signal weapon_changed(type_id: int)    # equip_type 成功后发射(菜单图标/HUD 武器显示跟随);0 = 空手
 signal inventory_changed()          # 背包内容变化(格子 UI 跟随)
@@ -127,7 +127,7 @@ func consume_switch_inst() -> int:
 	return v
 
 
-# 上行前把「玩家想切到哪一把」解析成 inst(上行传解析结果,不传寻址方式)。两条来源都是本地交互,只有客户端知道玩家点的是第几个:数字键 → key_index(1-based 背包位置)查那一把的 inst;滚轮 → request_net_cycle 已本地切好并 push_switch_inst。
+# 上行前把「玩家想切到哪一把」解析成 inst(上行传解析结果,不传寻址方式)。
 # ★ 数字键优先;滚轮那条无论如何都取走(读一次即清,别让它漏到下一帧变成一次迟到的切枪)。返回 0 = 本次没有切枪请求。
 func take_uplink_switch(key_index: int) -> int:
 	var wheel_inst := consume_switch_inst()
@@ -179,10 +179,6 @@ func _equip_index(index: int, flush_current: bool = true) -> void:
 	if _weapon != null and is_instance_valid(_weapon):
 		inherit_cd = _weapon.fire_cd_timer
 		# 残弹写回条目只认已入树的枪:同帧第二次切枪时上一把还是 call_deferred 未入树(其 _ready 未跑 ⇒ mag_ammo 仍是 0),照记会把残弹永久抹成 0;真机可达(滚轮走 _unhandled_input,一帧内缓冲的 OS 事件会一次性泵完)。
-		# 守卫只加在这里不外扩:fire_cd_timer 由本函数同步写入(未入树也有效),而 queue_free 必须照跑,否则未入树的旧枪实例泄漏。
-		# ★★ flush_current=false 的两个调用点(pick_up 替换 / random_keep_one)是"条目已被重建"的路径:
-		#   这时 `inventory.held[_current_index]` 已经**不是**旧枪那一条,再写回就是"把旧枪实弹写进别的枪"
-		#   (2026-10-30 BUG-01:新枪残弹 = 旧枪残弹/保留枪残弹被覆盖)。两处调用方自己负责先把旧枪实弹落账。
 		if flush_current and _weapon.is_inside_tree() and _current_index >= 0 and _current_index < inventory.held.size():
 			inventory.held[_current_index]["mag"] = _weapon.mag_ammo
 		_weapon.queue_free()
@@ -223,7 +219,7 @@ func _unequip() -> void:
 	inventory_changed.emit()
 
 
-# 把权威/条目里的弹数写到武器实例上(同步,不排 deferred)。分支只有一条判据 is_inside_tree():已入树 ⇒ 同步写就是终值;未入树(本帧刚 instantiate、_ready 还没跑)⇒ 交给 pending_mag。与 _equip_index 那处「残弹写回只认已入树的枪」是同一条判据。
+# 把权威/条目里的弹数写到武器实例上(同步,不排 deferred)。
 static func apply_mag(w: WeaponBase, mag: int) -> void:
 	if w == null or not is_instance_valid(w):
 		return
@@ -299,10 +295,6 @@ func drop_current() -> Dictionary:
 
 
 # 复活用:从背包随机保留一条,返回其余(供调用方在死亡点生成掉落物);背包为空时返回空表。
-# ★★ 2026-10-30 BUG-01 修:① 先 `_flush_current_mag()` —— 手持那把的条目只在切枪/丢弃时同步,开火只扣
-#   mag_ammo ⇒ 不先落账,保留项/掉落项带的是**陈旧残弹**(少扣了刚打的那些发);
-#   ② `_equip_index(0, false)` —— held 已被替换成 1 条,旧 `_current_index` 指向的可能是**另一把枪**,
-#   默认写回会把旧枪实弹覆盖到保留条目上(残弹串账)。
 func random_keep_one() -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
 	if inventory.held.is_empty():
@@ -345,7 +337,7 @@ func restore_inventory(entries: Array, want_inst: int = 0) -> bool:
 		_current_type = keep_type
 		inventory_changed.emit()
 		return by_inst
-	# 权威说手上那把没了(或本来空手)⇒ 清空手持,让调用方按 wslot 重新 equip_type。★ 武器实例也要放掉:只清索引的话 _weapon 还活着,而 tick()/fire() 只判 _player_ok()、不看索引 ⇒ 手上留着一把索引 -1 却照常开火的幽灵枪。
+	# 权威说手上那把没了(或本来空手)⇒ 清空手持,让调用方按 wslot 重新 equip_type。
 	if _weapon != null and is_instance_valid(_weapon):
 		_weapon.queue_free()
 	_weapon = null
@@ -393,7 +385,7 @@ func current_type_id() -> int:
 	return _current_type
 
 
-# 手持那一条的 inst(逐把唯一);空手 / 下标越界返回 0。★ 与 current_type_id() 的分工:那个是类型 id(协议/副本按它走),同型号两把恒等;这个才回答是哪一把,权威态(capture_state 的 winst)与 UI 高亮都需要它。
+# 手持那一条的 inst(逐把唯一);空手 / 下标越界返回 0。
 func current_inst() -> int:
 	return inst_at_index(_current_index)
 

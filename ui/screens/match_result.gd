@@ -2,15 +2,10 @@ class_name MatchResult
 extends CanvasLayer
 
 # 对局结算页(模式无关),层位 150。★ 层位只住在 ui/match_result.tscn 里 ⇒ 本控件只能从场景实例化,绝不 MatchResult.new()
-#   (那是 CanvasLayer 默认的 layer 1,画在 HUD/小地图底下且压暗罩盖不住)。
-# ★★ 两条纪律:① 本控件不知道任何模式的规则(不读 NetBus / Settings、不 import 任何 *Host),模式差异全部由 ui/match_result_payload.gd 的三个适配器折成载荷 —— 谁能被 grep 到跨过这条线,谁就是缺陷;
-#   ② leave_requested 只发一次(见 _leaving):下游 safe_change_scene 是一次换场,连发两次会叠加第二次换场(把刚建出来的主菜单当 old 退役)。
-# ★ 本页的 ESC 闸门是 visible(_unhandled_input 首行)⇒ 调用方必须在"折载荷之前"就让本页可见,否则一具不可见的结算页是 ESC 够不着、按钮也点不到的空壳(今天由 PvpMatchClient._show_result() 的"挂载即亮"保证)。
-# ★ ESC 的双重语义在本页安全,但依赖一处外部事实:MATCH_OVER 时三个客户端都把暂停菜单 queue_free 掉了 ⇒ 不会同时触发两件事;⚠ 谁将来删掉那两行,ESC 就会在本页同时开菜单。
 
 signal leave_requested
 
-# ★ 键名 = 适配器给的列名(MatchResultPayload.C_*),标题才是给人看的。★★ 三个列常量里出现的每一个键都必须在这里有标题 —— 漏一个不报错,只是那列表头退化成裸英文键名(下面 .get(col, col) 的兜底),而所有数值断言照样全绿。零守卫(match_result_payload_smoke 已删·2026-10-09)。
+# ★ 键名 = 适配器给的列名(MatchResultPayload.C_*),标题才是给人看的。
 const COLUMN_TITLES := {"kills": "击杀", "deaths": "阵亡", "assists": "助攻",
 		"dealt": "造成", "taken": "承受", "acs": "ACS"}
 const NAME_UNITS := 12                 # 昵称定宽(半角单位);换字体要重算
@@ -50,7 +45,7 @@ func show_result(payload: Dictionary) -> void:
 		_sections_box.add_child(_build_section(sections[i], i, columns, mvp))
 	visible = true
 	set_process_unhandled_input(true)
-	# ★★ 居中必须在内容装好之后、按 get_combined_minimum_size() 自己算偏移量。为什么不能用 set_anchors_and_offsets_preset(PRESET_CENTER, PRESET_MODE_MINSIZE):_ready() 里那次只定锚点,
+	# ★★ 居中必须在内容装好之后、按 get_combined_minimum_size() 自己算偏移量。
 	#   偏移量按"调用那一刻的尺寸"推(那时面板还是 0×0)⇒ 左上角钉在视口中心、内容往右下长出去;换 PRESET_MODE_MINSIZE 也不对 —— Godot 4.7 那一档取 get_minimum_size()、不含 custom_minimum_size,
 	#   实测 custom_minimum_size.x = 1120 而内容最小宽只有 476 ⇒ 面板被摆在"宽 476"的位置上、随后被撑到 1120,往右长出去 322px(而当时全部数值断言都是绿的)。锚点已是 (0.5,0.5),偏移量取 ±半尺寸即为居中。
 	var half := _panel.get_combined_minimum_size() * 0.5

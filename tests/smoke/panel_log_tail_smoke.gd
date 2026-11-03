@@ -1,14 +1,5 @@
 extends SceneTree
 # 服务端面板日志 tail 守卫(01 审查 S-13①:tail 是面板里唯一有纯逻辑可测价值的一段,
-# 从 `server_panel.gd` 抽成 `PanelLogTail` 后由本文件驱动)。
-# 覆盖(逐条对应抽取前 `_append_log_delta` 的口径):
-#   ① 首次读返回全部完整行;② **半行不消费**(没有换行结尾的尾巴留到下一轮,offset 不前进);
-#   ③ 补全半行后只返回新增的那一行;④ 文件被轮转/重建(offset > 长度)⇒ 归零重读并回报 rotated;
-#   ⑤ 超上限从头部截断且**切在行边界**(首行不能是半截);⑥ reset 清状态、重读得到全文。
-# 最强保证:纯 RefCounted + 真临时文件,不碰 SceneTree/autoload;不用 UI 也能测。
-# 测不到什么:UI 侧跟随/暂停与滚动位置(I1/I2,留在 `server_panel._refresh_log`,要人眼)。
-# 变异验证:删「没有换行就 return」⇒ ② 红;删 rotated 归零 ⇒ ④ 红;删行边界切分 ⇒ ⑤ 红。
-# 跑法:"$GODOT" --headless --path . -s res://tests/smoke/panel_log_tail_smoke.gd;通过 = PANEL LOG TAIL OK(n 条断言)。
 
 const EXPECTED_CHECKS := 6
 const TMP := "user://panel_log_tail_smoke.log"

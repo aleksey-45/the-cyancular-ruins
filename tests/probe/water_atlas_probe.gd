@@ -1,11 +1,5 @@
 extends Node
 # 水体/水面砖映射守卫(2026-11-01 用户报「把水体都变成水面了」)。
-# 守卫对象 = TerrainAtlas 的水砖选择:水体图集必须用纹理 21「水」(0-based 下标 20,均匀半透明填充)、
-# 水面合批必须用纹理 22「水面」(下标 21,顶边亮带)。此前两者共用一个常量 21(= 纹理 22)⇒ **整个水体被画成水面**。
-# 场景探针(要 load res:// 纹理,不是纯 `-s`):godot --headless --path . res://tests/probe/water_atlas_probe.tscn
-# 去掉什么才红:WATER_BODY_BRICK 改回 21 ⇒ ③④⑤;WATER_SURFACE_BRICK 改成 20 ⇒ ②;两个常量合并成一个 ⇒ ①③;
-#   water_brick_image 的缓存键退回只按 ts ⇒ ⑥(先取 BODY 再取 SURFACE 会拿到同一张)。
-# 测不到什么:屏幕上的观感(水面亮带的 sway 动画)、`_paint_water` 的 shape 掩码几何、地图里 21/22 的实际分布。
 
 const MARKER := "WATER ATLAS PROBE: ALL-OK"
 const EXPECTED_CHECKS := 6

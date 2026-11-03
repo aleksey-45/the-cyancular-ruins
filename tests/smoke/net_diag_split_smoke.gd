@@ -1,13 +1,5 @@
 extends SceneTree
 # 诊断日志**分流**守卫(2026-10-31,用户报「日志 700KB 混在一起,找都不好找」):
-# 结构化诊断从「一个 diag 文件什么都有、每秒每角色一行」改成:
-#   · `diag-*.jsonl`   = 事件(回滚/丢包间隔/队列丢包…),小而稀;
-#   · `metrics-*.jsonl` = 心跳(queue/snapshot_tx/snap_rx),按 10s 节流(`--diag-verbose` 才 1s);
-#   · `CYR_LOG_DIR` 环境变量整体覆盖落盘目录(真链路按支分目录)。
-# 去掉什么才红:把 `log_metric` 改回 `log_event`(写进 diag 文件)⇒ ② 红;删节流(metric_due 恒 true)⇒ ③ 红;
-#   删 `CYR_LOG_DIR` 分支 ⇒ ⑤ 红。★ 它测不到:真实进程里 `--diag` 开关与 `--diag-verbose` 的命令行解析(那是
-#   `enabled()`/`verbose()` 的懒查一次,冒烟里用 begin_*_for_test 直接注入);也测不到真落盘目录的权限/旋转。
-# 跑法:"$GODOT" --headless --path . -s res://tests/smoke/net_diag_split_smoke.gd;通过 = NET DIAG SPLIT OK(n 条断言)。
 
 const EXPECTED_CHECKS := 5
 const TMP_DIAG := "user://net_diag_split_test/diag.jsonl"

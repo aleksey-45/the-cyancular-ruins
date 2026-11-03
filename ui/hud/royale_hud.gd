@@ -23,7 +23,7 @@ const ST_PLAYING := 1
 const ST_ROUND_OVER := 2
 const ST_MATCH_OVER := 3
 
-# 节点句柄一律从 royale_hud.tscn 取;★ 排行榜的行不在这里(行数随人数变,由 _refresh_board 建/复用)。★ 宿主必须用 preload("res://ui/hud/royale_hud.tscn").instantiate() 建,不能 RoyaleHud.new() —— .new() 建出来的 CanvasLayer 没有子节点,下面这些 @onready 全是 null、_ready 解引用必崩。
+# 节点句柄一律从 royale_hud.tscn 取;★ 排行榜的行不在这里(行数随人数变,由 _refresh_board 建/复用)。
 @onready var _board_bg: ColorRect = $BoardBg
 @onready var _board_vbox: VBoxContainer = $BoardBox
 @onready var _timer_label: Label = $BoardBox/TimerLabel
@@ -40,7 +40,7 @@ var _big: Label:
 var _rows: Array[Label] = []
 var _last_row_count := -1
 var _state := ST_COUNTDOWN
-# role(int) -> 剩余秒(只由服务器下发)。★ 大乱斗的 RoyaleHost 本来就 1Hz 广播 round_state,server_main 也每秒刷一次读数 ⇒ 这里的值恒新,不需要 1v1 那样的本地走秒;★ 1v1/3v3 只在状态转折时广播,故它们那边必须本地走 —— 别为了"统一"给大乱斗也加一遍。
+# role(int) -> 剩余秒(只由服务器下发)。
 var _grace: Dictionary = {}
 var _my_name := "Anon"
 

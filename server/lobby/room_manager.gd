@@ -15,17 +15,10 @@ const MAX_ROOM_AGE := 7200.0        # 房间允许存在上限(秒=2h)
 # 目标随人数缩放(见 TeamRules),13 是它的上界 ⇒ 本估值对 2~10 人全部成立。⚠ 已知边界(对抗独有,不修)。
 const TEAM_MATCH_ESTIMATE := 1800.0
 # 大乱斗一局长度的可证上界:Settings.royale_match_min 的装载钳位是 [1.0, 30.0] 分钟 ⇒ 秒数上界 30 × 60 = 1800。
-# ★ 用硬上界而不是「把房主配的时长存到房上」:`_player_options()` 是报到那一刻才读 Settings,而 `royale_create` 更早
-#   (它写 `rr.match_time = opts` 里那份、缺省 0,存的是**下界**)。★ 跨文件不变量(链有两环):钳位放宽到 30 分钟以上、
-#   或 mp_lobby.gd 的秒换算被改 —— 任一环断裂
-# 本上界就静默失效;守卫 = tools/room_sweep_lint.gd(它读那两个文件的片段)。⚠ 本界覆盖的是对局时钟 + 一个扫描周期,残余暴露 ~3~25s。
 const ROYALE_MATCH_TIME_CEILING := 1800.0
 var _sweep_acc := 0.0
 
 # 对局中房间的回收梯周期(秒)。★ 比 SWEEP_INTERVAL 密得多,因为判据与目的都不同:那条是「房挂太久了」,这条是「这一局结束了」——
-# 10 分钟一轮意味着每局结束后要多占最多 10 分钟。★ 2026-11-01 用户报「所有人退出以后房间应该秒删」:先收到 10s,
-# 再收到 **1s**(人眼可感知的「秒删」)。代价只有每 tick 一次 pid 存活查询(≤几张房),可忽略。
-# 判据仍不读宽限期;1s 比端口归还延迟(120/360)小两个量级,量级结论不变。
 const MATCH_SWEEP_INTERVAL := 1.0
 var _match_sweep_acc := 0.0
 
@@ -212,11 +205,6 @@ func royale_start_ai(caller: int) -> void:
 
 
 # ── 对抗:房主开局(两队各 ≥1 人即可)→ 拉起 --team worker → 全员 go_match。★ 与 royale_start 的三处实质差异:
-# ① 开局判据是「两队各 ≥1 人」(人数可以不等 —— 少人方的比分/血量/伤害补贴由 `TeamRules` 按人数差算,不在这里);
-# ② 命令行多一个 --teams(与 --roles 同序等长),它才是队伍归属的唯一来源(role 号因「退出留空洞、最小空闲号复用」
-#    而不连续,推不出队号);③ 没有 AI 补位。
-# ★★ 开局这一刻先把「未选边」的人补进人少那一队(`RoomTypes.team_autofill`)再下发 --teams:这是"未选边"唯一能被
-#    消费的时刻(用户裁定「未选边的人开局时自动补到人少那一队」);写在别处会让大厅队伍表与 worker 的 --teams 分家。
 func team_start(caller: int) -> void:
 	var tr := lobby.team_room_of(caller)
 	if tr == null:
@@ -245,7 +233,7 @@ func team_start(caller: int) -> void:
 		granted.append([int(tr.player_role[pid]), tk])
 		if NetBus.is_peer_online(pid):
 			NetBusExt.rpc_id(pid, "session_token", tk)
-# ★ roles 与 teams 同序:roles 按号升序取,teams 跟着同一顺序取队号。★ team_of 缺该 role 时取 0 ⇒ spawn_team_worker 的取值校验当场拒绝并走拆除,不会拉起一个必然 quit 的子进程。
+# ★ roles 与 teams 同序:roles 按号升序取,teams 跟着同一顺序取队号。
 	var roles: Array = tr.player_role.values()
 	roles.sort()
 	var teams: Array = []
@@ -341,9 +329,6 @@ func _sweep_stale_rooms() -> void:
 	for rcode in lobby.royale_rooms:
 		var rr: LobbyRooms.RoyaleRoom = lobby.royale_rooms[rcode]
 # ★ 在局宽限 = SWEEP_INTERVAL + 一局时长:房龄从建房起算(含此前在大厅等待的全部时间),而清扫由 _process 的计时器驱动、
-# 不是每帧 ⇒ 房间可能已比阈值老上整整一个扫描周期才等到判它的那次 tick;从拉起 worker 到成员转连离厅还有 0.3~1.5s。
-# 宽限盖住「阈值 + 整个扫描周期 + 最长一局」,等待中(in_match=false)的房不占端口、杀不到东西,仍按裸 MAX_ROOM_AGE 清。
-# ⚠ 1v1 分支刻意不享受同样宽限(照实登记的既有不对称):2h 超龄 + 一局只有几分钟,量级上够不着,但同一扇「开局转连窗口」在 1v1 同样成立。
 		var in_match_grace := (SWEEP_INTERVAL + ROYALE_MATCH_TIME_CEILING) if rr.in_match else 0.0
 		if now - rr.created_at > MAX_ROOM_AGE + in_match_grace:
 			stale_royale.append(rr)
@@ -370,9 +355,6 @@ func _sweep_stale_rooms() -> void:
 		lobby.teardown_room(room, LobbyRooms.TEARDOWN_KILL, "房间超时(>2h),已关闭", true, "sweep_timeout")
 
 # 对局结束即回收:in_match(1v1 是 started)的房不再在「客户端转连 worker」那一刻被拆,必须有替代回收路径,否则端口与列表位永久占用。
-# ★ 判据 = worker 进程还在不在(WorkerLauncher.pid_alive):三种模式的 worker 都在对局结束时自己退,这是精确答案;任何按「一局
-# 大约多久」估的界都会既早(收掉还在打的局)又晚(白占端口)。★ 兜底仍在:2h 超龄清扫会把 worker 一直不退的僵尸房连进程一起杀掉。
-# ★ 回收必须走拆除单一收口(端口归还 / 注册表删除只许出现在 lobby_rooms.teardown_room;lint 的 _check_reclaim_ladder 钉住本函数)。
 func _reclaim_finished_matches() -> void:
 # ★ 凭据表的 GC 搭这条梯(10s 一次):TTL 只是表的上界,不需要独立定时器,再立一条梯就是本仓禁止的「同一件事两处实现」。
 	lobby.rejoin.prune(Time.get_ticks_msec())

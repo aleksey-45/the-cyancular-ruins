@@ -1,11 +1,6 @@
 extends SceneTree
 
 # 最小破坏单位(tile_break_unit)冒烟(纯逻辑 -s:合成 grid/subgrid,不读地图、不引 autoload)。
-# 最强保证:整格单位走格级账(一次清整格 16 子格)、1/2 格单位(32px 块)整块 2×2 子格同一伤害、
-#   爆炸按单位分派且整格侧去重、子格路径清空整格时两本账(hp_grid / sub_hp)在"格子已消失"上对齐、
-#   榴弹场景确实覆盖为 0.5(2026-10-30 用户裁定:榴弹最多破坏到 32px,不是 16px)。
-# 测不到什么:实际拆砖手感/粒子观感(人眼)、真地图 cyrm v4 子格数据、网络事件链路(真链路批)。
-# 跑法:"$GODOT" --headless --path . -s res://tests/smoke/tile_break_unit_smoke.gd;通过 = 结尾打 TILE BREAK UNIT OK(n 条断言)。
 
 const EXPECTED_CHECKS := 11
 const CELLS := 16          # 16×16 格 = 1024×1024 px(半径 350 内不会有环面重复副本)

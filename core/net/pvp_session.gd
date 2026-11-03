@@ -2,9 +2,6 @@ class_name PvpSession
 extends RefCounted
 
 # 会话配置(菜单→匹配→对局 间传递),静态 RefCounted、非 autoload。加字段前先 grep 确认有读者。
-# 回局凭据只在 clear_rejoin 的调用点死:**reset() 不得清凭据、也不得拨 server_address**(两件事都踩过坑,
-# 症状是自己那间房恒灰、自建服玩家被踢回云;详见 docs/eng/netplay.md)。can_rejoin_to 是列表渲染与
-# 行按下共用的唯一判据,房号与模式都要对上。
 
 # ★ 默认连本项目自己的服务器(用户 2026-10-24 明确要求硬编码);局域网联机由玩家在大厅把地址改成服务端那台电脑的局域网 IP
 # (服务端窗口会打印"朋友在服务器地址里填这个",已按默认路由网卡优先、排除虚拟网卡)。

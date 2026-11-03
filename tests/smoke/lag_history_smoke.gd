@@ -1,9 +1,6 @@
 extends SceneTree
 
 # 命中回放历史环冒烟(纯逻辑 -s:直接 new() 驱动,不读地图、不引 autoload)。
-# 最强保证:环形容量/丢最老、nearest_tick 向下取整+两端夹取、rect_for = 历史位置 + 相对受击面、无数据返回空、
-#   同 tick 覆盖语义、clear 复位。测不到什么:真实服务器 tick 推进与回放命中率(真链路 + 人眼)。
-# 跑法:"$GODOT" --headless --path . -s res://tests/smoke/lag_history_smoke.gd;通过 = 结尾打 LAG HISTORY OK(n 条断言)。
 
 const EXPECTED_CHECKS := 8
 const Hist := preload("res://core/sim/hit_lag_history.gd")

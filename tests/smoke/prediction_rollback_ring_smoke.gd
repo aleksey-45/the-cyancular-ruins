@@ -1,11 +1,5 @@
 extends SceneTree
 # 回滚环内存守卫(PredictionRollback.note_post_step 的淘汰必须连带清 _inputs)。
-# 存在理由:生产路径 = 每物理帧 `note_post_step(seq, capture)`(pvp_match_client._physics_process)
-#   + 同帧 `note_input(seq, record)`(填 _inputs)。旧实现只有 **advance()** 的淘汰是三清
-#   (_inputs/_captures/_events),`note_post_step` 的淘汰只清两份、漏 `_inputs.erase(old)` ⇒
-#   ack 断流(重连中/本人包通道停摆)而世界包还在、玩家照常步进时,_inputs 以 60 份/秒无界增长
-#   (每份 10 键 Dictionary + Vector2),长期无 ack 的对局线性吃内存,且掉出环的记录已无法重放、只占空间。
-# 跑法:"$GODOT" --headless --path . -s res://tests/smoke/prediction_rollback_ring_smoke.gd;通过 = "ROLLBACK RING OK(n 条断言)"。
 
 const EXPECTED_CHECKS := 3
 

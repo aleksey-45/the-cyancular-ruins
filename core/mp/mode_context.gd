@@ -2,18 +2,6 @@ class_name ModeContext
 extends RefCounted
 
 # worker argv 解析 + 校验(纯函数、不引 autoload ⇒ `-s` 可测)。
-#
-# 为什么收在这里:`server_main._ready` 里"模式开关互斥 / --roles 与 --teams 等长 / role 上界"
-# 原本与开关解析混在同一个 match 循环里,而 role 上界是**字面量 8** —— 大厅把上限提到 16 时
-# 只改了大厅/UI/色板,worker 仍卡 8(16 人房第 9 人起被当串线踢;X1)。收成纯函数后:
-#   · 上界只认 `ModeDefs.ROLE_MAX`;
-#   · 越界/非法 token 从"静默丢"改成**拒绝启动**(静默丢正是 X1 活到今天的原因);
-#   · 上面三条校验都能用最便宜的 `-s` 冒烟钉住。
-#
-# 返回字典(全部键恒存在):
-#   ok:bool / error:String / worker:bool / royale:bool / team:bool / port:int
-#   roles:Array[int] / ai_roles:Array[int] / teams:Array[int] / team_of:Dictionary(role -> 队号)
-# ★ `default_port` 由调用方给(`server_main` 传 `NetBus.DEFAULT_PORT`)—— 本文件不引 autoload。
 
 const FLAG_WORKER := "--worker"
 const FLAG_ROYALE := "--royale"

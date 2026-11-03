@@ -2,23 +2,6 @@ class_name NetCodec
 extends RefCounted
 
 # 线格式:把载荷从 Dictionary 换成手打包的 PackedByteArray(快照 + 输入共用一套版本字节与 schema 表)。原先每个字段都要在线上带键名字符串(每帧重复)+ 4 字节类型标签 ——
-# 实测同一份 8 字段数据:dict(键)= 196 B vs 手打包 = 24 B ⇒ 键 + 类型标签才是大头,不是数值本身;换掉后 N=8 世界包 2.1 KB → 0.27 KB(不再分片)、本人包 588 B → ~114 B。
-# ── 2026-10-26 P1(PROTO_VERSION 4→5)字段定点化:上行 aim → 2×i16(1e-4 定点),下行 pos/vel → 2×i16(0.5px 步长)、aim → u8 角度。
-#   量化必须两端**同版一起换**(版本字节守门);本人包 c2 仍是 float32 全量 —— 它是 C2 回滚锚点,单方面量化 ⇒ 每次重放都判分歧。★ 定点常量/误差见 Q_* 与文档 §6。
-# ── 2026-10-30 P2(PROTO_VERSION 6→7):① **DELTA 机制整体删除**(生产 2026-10-28 已回退全量,差分只剩探针在养 ⇒ 线格式真相从 3 份回到 1 份);
-#   ② **trail 改 2×i16**(Q_SCALE,0.5px 步长):它是唯一没量化、也是世界包里最大的一坨变长字段 —— 4 点 8B→4B,
-#   最坏世界包 791→536 B、回溯时 536→408 B。两端必须同版发布(旧客户端被版本字节拒绝)。
-# ── 2026-11-01(PROTO_VERSION 7→8):输入上行改 **60Hz 一包一条记录**(原 30Hz 一包两条);下行不变。
-# ── 2026-11-03(PROTO_VERSION 8→9):武器块加 **chg(蓄力比)/ trg(扳机延迟累计)** —— 复合弓与 M249 的开火状态必须可回滚重放。
-# ── 版本字节:首字节 = PROTO_VERSION,两端不同版时大声失败(解码返回空字典、调用方不 emit + 客户端 claim 握手拒绝),而不是按错位的偏移读出垃圾值。
-#   ★ 载荷里每个字节位置都是协议:改字段顺序/类型/宽度 = 改协议,两端必须同版本。
-# ── 输入包(KIND_INPUT)也走这里:同一套版本字节 + schema 表。类名保留 NetCodec —— 它现在是**全项目**线格式编解码器(快照 + 输入)。
-# ── ★★ 2026-10-24 编码侧性能:解码仍**表驱动**(`_unpack` 按 schema 读,不可信输入必须逐字段守边界),但**编码侧改成手写内联**
-#   (`out.encode_float(i,v)` / 直接下标写),不再每字段调一个静态函数、不再经 schema 的 `match`/`dict.get` 双重派发。实测(N=16):
-#   表驱动 ~304 µs/包 → 内联 ~47 µs/包(一次性量具 .superpowers/net/encode_profile.gd;同文件还量过「只 resize」= 0.2 µs ⇒ 瓶颈是每字段的
-#   GDScript 调用,不是分配)。★ 代价 = 编码侧的字段顺序/宽度与 schema **成了两份**:漂移由 `snapshot_size_probe` 的往返判据 ③ 抓
-#   (解码按 schema 读 ⇒ 顺序/宽度错 = 解出来的值必不对,立刻红),容量用 `_schema_bytes()` 预算(少算 ⇒ 越界/尺寸错,④ 最坏包抓)。
-#   ⇒ 改 schema 必须同步改三个 encode_*;不改就一定红,不会静默。
 
 const PROTO_VERSION := 9   # 2026-11-03:武器块加 chg/trg(复合弓蓄力、M249 扳机延迟可回滚)
 const KIND_WORLD := 1
@@ -90,12 +73,6 @@ const WEAPON_SCHEMA: Array = [
 const INV_SCHEMA: Array = [["type", T_U8], ["inst", T_I32], ["mag", T_U8]]
 
 # 输入上行包(60Hz 一包一条记录;发送侧唯一来源 = PacketInputSource.pack_record → InputWire.pack_record)。
-# ★ 为什么是两条记录:本地预测按 60Hz 真输入跑(不锁存),服务器必须逐 tick 复现同一输入序列 ⇒ 一条记录 = 1 个 tick。
-#   30Hz 包只负责装两 tick(共用 aim/st/ct 与包络),所以比"每 tick 一包"省一半包头/共享字段。
-# ★ held 是位掩码:BIT_HASTE = 128、BIT_REWIND = 256 ⇒ 必须 u16(u8 会截断成 159)。
-# ★ 低 tick 记录 = 上一包之后的那一 tick(流水线);seq(包级)= 高 tick 记录的 seq,低记录 seq = seq-1。
-# st = 本端**最近成功解码**的服务器快照 tick(命中回放的时间基准,见 match_combat._replay_hurt_rect);ct = 高 tick 的客户端物理帧号(低记录 ct = ct-1;仍只落位)。
-# aim = 世界坐标瞄准方向,单位向量 1e-4 定点(2×i16);两条记录共用。
 const INPUT_SCHEMA: Array = [
 	["seq", T_I32],
 	["held", T_U16],
@@ -538,10 +515,6 @@ static func _schema_bytes(schema: Array) -> int:
 
 
 # ── 定长读(小端,游标 + 越界守卫)──
-# ★ 多字节数一律走 PackedByteArray 内置 `decode_*`(内核就是小端,与旧手拼 `lo | hi << 8` 逐字节同值):
-#   手拼只留在**编码侧** —— 那是实测 304 → 47 µs/包 的那步优化(见文件头);解码侧没有这个理由。
-# ★ 内置 `decode_*` 越界会**引擎报错**(手写版只会安静读出垃圾)⇒ 读之前必须过长度守卫;守卫语义与旧手写版
-#   逐字对齐:越界 ⇒ `bad = true` + 返 0(整个包被 decode_* 丢弃,不崩、不刷屏)。
 
 # 统一长度守卫:吃掉 n 字节并返回字段起始下标;越界 ⇒ bad=true + 返 -1(调用方据此返 0)。
 static func _take(r: Dictionary, n: int) -> int:

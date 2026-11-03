@@ -1,11 +1,6 @@
 extends Node2D
 
 # 激光光束视觉:两层 Line2D(外光晕 + 内亮芯)沿折线铺点,存续 lifetime 后淡出销毁。
-# 纯视觉/一次性:开火时整条路径已由 BeamTrace.trace 算出,这里只负责把它画出来。
-# 无碰撞、无物理、不参与命中判定——伤害在开火瞬间由 laser_gun 结算。
-#
-# 坐标约定:本节点挂到 viewport、位置 (0,0);points 传世界坐标(与墙体同坐标系)。
-# 折线在反射处有硬拐角 → 关节/端帽设 round,避免转折处断裂露出空隙。
 
 var lifetime: float = 0.4
 

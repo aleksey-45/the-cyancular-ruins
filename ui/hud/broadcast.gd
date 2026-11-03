@@ -2,12 +2,6 @@ class_name Broadcast
 extends Control
 
 # 中央广播(三个对局 HUD 共用):压暗遮罩 + 凿刻面板 + 大字/副文案;三个模式真正不同的只有"显示什么文案",那部分留在各自 HUD。
-# ★ 它是对局 HUD 的一部分、不是独立 CanvasLayer:以子节点形式挂进 HUD(三个 HUD 都在 layer 130),不另起一层去和 status_banner(140)/结算页(150)抢位置。
-# ★ 声明式契约:用 broadcast.tscn 的 instantiate() 建,不要 Broadcast.new()(那样得到的是没有子节点、也没铺满宿主的空 Control);
-#   本组件是"裸骨架 tscn + 代码建子节点",故脚本里没有 @onready $路径 —— 零守卫(hud_declarative_probe 已删·2026-10-09)。
-# ── 视觉:面板 = UiFactory.menu_panel();大字落在 UiFactory.header_strip() 标题带里(琥珀 C_GOLD);★ 颜色一律从 UiFactory 调色板取,唯一字面量例外是全屏压暗罩。
-# ★★ 边界登记:菜单系 token(C_HEADER/C_INNER/C_GOLD/C_EDGE/C_TEXT_MUTE)在 UiFactory 里划定"只给菜单系用",广播层是刻意的例外(用户要求与菜单同一套器物感)
-#   ⇒ 改这几个 token 会连带改到对局内广播的外观,今天没有守卫拦着(menu_style_probe 已删·2026-10-09);被 HUD 读的那批 token 一个都没动。
 
 # 巨大数字 / 主文案。字号必须是 16 的倍数(本项目像素字体硬约定,见 ui/factory/ui_factory.gd 文件头)。
 const BIG_FONT := 144

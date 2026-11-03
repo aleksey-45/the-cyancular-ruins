@@ -31,7 +31,7 @@ const PlayerVisual := preload("res://scenes/player/player_visual.gd")
 const PlayerScene := preload("res://scenes/player/player.tscn")   # 只读它的 SceneState 取幽灵体多边形,不实例化
 @export var sprite_frames: SpriteFrames = preload("res://scenes/player/player_frames.tres")
 
-# 幽灵体所在组:榴弹「碰到玩家」判定要把对手副本也算进候选。单列一组而不是并进 player:后者是「玩家实体」的语义,Explosion.apply_aoe 会遍历它逐个 take_hit、BulletBase._wrap 会取它第一个节点当锚点 —— 副本混进去会被当玩家结算 / 被当锚点。
+# 幽灵体所在组:榴弹「碰到玩家」判定要把对手副本也算进候选。
 const GROUP := "player_replica"
 
 const HIT_FLASH_TIME := 0.35   # 受击闪烁时长(秒),闪烁频率对齐本地 iframe 眨眼感
@@ -43,7 +43,7 @@ var squash: SquashStretch = null
 var _vel: Vector2 = Vector2.ZERO
 var _pose: int = 0
 var _dash_ghost_t := 0.0   # 冲刺残影发射计时(渲染帧,与本体同一套 AfterImage/强度)
-# 上一帧的 vel.y。组件靠「上次在下落 + 现在已经落地」这一对值推导落地冲击,单看当前的 _vel.y 推不出来 —— 服务器在落地那一帧就把它清零了;与本体「_pre_move_vy 配帧首 is_on_floor()」是同款配对。
+# 上一帧的 vel.y。
 var _prev_vel_y: float = 0.0
 
 var _weapon_slot_node: Node2D        # 武器挂点(运行时加,排在 AnimatedSprite2D 后 → 画在身体上层)
@@ -58,7 +58,7 @@ var place_history: Array = []
 # 首帧是否已直落:第一帧历史里还没有样本,走插值会从原点滑过去;幽灵体也必须立刻落到权威位置,否则白分歧一次。
 var _placed := false
 var _facing := 1
-# ★★ 瞄准侧(与 _facing 不是同一个量,枪口外观只认这一个)。_facing 来自快照的 facing 字段 = 服务器的走路朝向(player.gd 的移动代码排在 weapons.tick 之后,每帧覆盖 _auto_aim 写进去的瞄准侧);而枪口俯仰必须按瞄准侧折叠(clamp_pitch 先 dir.x * facing)。二者混用时,倒着走会让枪口折到反侧极限而上翘(用户报过「A 往回走的时候,在 B 眼里枪还会翘起来」)。
+# ★★ 瞄准侧(与 _facing 不是同一个量,枪口外观只认这一个)。
 # 本体那边由 _auto_aim 的 _aim_facing 承担同一职责,下面是它的逐字同款规则:鼠标有明确水平分量则跟随并记住,近垂直瞄(±0.1 以内)沿用上次明确侧,不随走路翻侧。
 var _aim_facing := 1
 # 包域的上一次瞄准侧(只由快照更新、用于折下一条快照的外观态);_aim_facing 反而是「按 playout 取样后正在显示的那一侧」。
@@ -105,7 +105,7 @@ func _reorder_before_structures() -> void:
 		return
 	host.move_child(self, structures.get_index())
 
-# 幽灵碰撞体:StaticBody2D(layer 2 = 玩家层,与 player.tscn 一致;mask 0 = 它不需要感知任何东西,只被本地玩家的 move_and_slide 撞到)挂 5 份姿态多边形,形状从 player.tscn 的打包数据(SceneState)现读。用 StaticBody2D 而不是 CharacterBody2D:副本自身不由物理驱动,CharacterBody2D 会引入它自己的物理步进与 move_and_slide 竞争;作为副本子节点 ⇒ 位置 / 朝向 / 环面回绕全自动跟随。
+# 幽灵碰撞体:StaticBody2D(layer 2 = 玩家层,与 player.tscn 一致;mask 0 = 它不需要感知任何东西,只被本地玩家的 move_and_slide 撞到)挂 5 份姿态多边形,形状从 player.tscn 的打包数据(SceneState)现读。
 # ★ 为什么不 instantiate:只为抄数据把整只 Player 建出来再 free,每建一个副本就一份完整节点树(还要实例化 4 个组件脚本)。SceneState 只读打包值:零节点、零 _ready、零 free。
 # ★ 单一真相源仍是 player.tscn(改本体的箱子,副本自动跟上);读不到(节点改名 / 多边形恰好等于默认值而未被存进打包)⇒ 少一份形状,不是致命(但 PlayerVisual.COLLISION_NODE 必须同步改),与旧实现 get_node_or_null()==null 那条分支同款。
 func _build_ghost_body() -> void:
@@ -146,7 +146,7 @@ func _scene_node_props(st: SceneState, node_name: String, wanted: Array) -> Dict
 		return out
 	return {"found": false}
 
-# 幽灵体所在碰撞层。★ 默认值不变(_build_ghost_body 里那句 2,全项目唯一一处),本函数只是把它变成可改的:3v3 按该副本代表的那名玩家的队配层(队 B 的玩家身体在层 16,见 TeamHost.TEAM_ENEMY_LAYER 那张契约表);1v1 / 大乱斗不调它 ⇒ 行为逐字不变。
+# 幽灵体所在碰撞层。
 # ★ 为什么必须跟着队走:幽灵体的全部用途是让「预测所依据的世界」与权威一致。队友之间是完全穿透(服务器侧两队掩码互指对方的位),副本若恒在层 2,本地预测就会被队友挡下 —— 而服务器上他穿过去了 ⇒ 每帧分歧、每帧回滚(与「幽灵体缺失」同一个形状)。
 func set_ghost_layer(n: int) -> void:
 	if _ghost != null and is_instance_valid(_ghost):
@@ -378,13 +378,13 @@ func _swap_weapon(type_id: int) -> void:
 	_weapon = scene.instantiate()
 	_weapon_slot_node.add_child(_weapon)
 
-# 枪口朝向 / 仰角:委托 WeaponBase.drive_remote_visual(副本武器不 equip,由其驱动外观,不读鼠标 / 不开火);★ 预瞄红线不在此画(只有使用者本人可见)。★ 第二个参数是 _aim_facing(瞄准侧)不是 _facing(走路朝向):该参数同时决定 clamp_pitch 的折叠坐标系与 scale.x,两者都必须跟「枪指向哪边」;喂走路朝向会让倒走时枪口折到反侧并翘起。身体翻转(animator.flip_h)与倒地转体继续用 _facing。
+# 枪口朝向 / 仰角:委托 WeaponBase.drive_remote_visual(副本武器不 equip,由其驱动外观,不读鼠标 / 不开火);★ 预瞄红线不在此画(只有使用者本人可见)。
 func _drive_weapon_visual() -> void:
 	if _weapon == null or not _weapon.has_method("drive_remote_visual"):
 		return
 	_weapon.drive_remote_visual(_aim, _aim_facing, animator, absf(_vel.x))
 
-# 对手此刻是否在水中(脚底探针,与本体同口径 —— 本体同样按活动碰撞箱的脚底采样;偏移走 Water.feet_offset,幽灵体换姿态会自动失效重算)。★ 这一格不需要协议字段:本体的 in_water 本身就是纯位置网格查询(读 MazeGenerator.current_grid,而 PvP 客户端也建同一张图),故副本在客户端跑同一查询即可:零载荷字段、零 RPC、零服务器改动。★ 位置用渲染用的 global_position(已锚到最近副本、可能不在 [0,MAP))是安全的:Water.is_in_water → GridPathfinder.cell_of 两端都 posmod,而 MAP_WIDTH/HEIGHT 由 GameParameters.refresh_map_size() 按「格数 × TILE_SIZE」算出 ⇒ 恒为 64 的整数倍 ⇒ 整幅平移一个副本后落回同一格(实测:锚到非 canonical 副本与 canonical 查询同值)。
+# 对手此刻是否在水中(脚底探针,与本体同口径 —— 本体同样按活动碰撞箱的脚底采样;偏移走 Water.feet_offset,幽灵体换姿态会自动失效重算)。
 func _in_water() -> bool:
 	if _ghost == null or not is_instance_valid(_ghost):
 		return false
@@ -438,9 +438,6 @@ func _process(delta: float) -> void:
 			global_position = MazeGenerator.anchor_to_nearest(global_position, _local_anchor,
 					GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 		# 幽灵体不跟渲染插值,但也不能直接吃最新快照(那样滞后 = 单程 + 0~1 tick;跑速 700 时 0~12px,
-		# 贴身时与身位同量级 ⇒ 预测碰撞与服务器不一致 ⇒ 每 tick 验证点回滚)。
-		#   这里把最新快照按权威速度外推到"现在"(滞后期 = 单程 + 半包间隔,RTT 由 NetBus.ping_ms 给):
-		#   匀速期误差 ≈ 0;急停/变向最坏 ≈ vel×horizon(700×0.05=35px),由客户端贴身容差动态兜底。
 		if _ghost != null:
 			var horizon := PredictionContact.ghost_horizon_s(NetBus.ping_ms)
 			var ghost_pos := _opponent_canonical + _snap_vel * horizon
@@ -454,12 +451,12 @@ func _process(delta: float) -> void:
 			modulate.a = 1.0
 	elif modulate.a != 1.0:
 		modulate.a = 1.0
-	# 补间形变。放在 _process 而不是 apply_snapshot:后者没有 delta,而本函数是副本的表现层时钟(插值推进与受击闪烁衰减都在这儿);挂在快照回调上会与插值产生拍频。★ 参数必须成对:on_floor 取当前姿态,vel_y 取上一帧的值(与本体「_pre_move_vy 配帧首 is_on_floor()」同款)。
+	# 补间形变。
 	# ★ 组件内部的落地判据是 on_floor and vel_y > squash_land_min_vy:若把当前的 _vel.y 传进去,落地那一帧服务器已经把它清零了 ⇒ 挤压永远不会触发。
 	# ★ on_floor 的两半都不能省:pose != FLY 只是「站在地上」的代理,它在两种 _vel.y 并不趋于 0 的状态下同样为真 —— ① 水中下沉(姿态被强制成 MOVE/STAND,而 velocity.y 恒为 player_swim_down = 320);② 空中冲刺(本体把 is_charge 判在 not is_on_floor() 之前,冲刺只改 velocity.x)。代理单独成判 ⇒ 落地项每帧重触发、指数恢复把 _impulse 压到约 -0.91:让对手下沉期间持续约 9% 挤压、冲刺起步满幅 -10%,而本体在这两种状态里都是中性的 ⇒ 两端出现本体从不显示的持续 / 反向形变。★ 这半在计划初稿里就有、曾被删过一次(理由只在调用点传当前 _vel.y 时成立),别删第三次。
 	var on_floor := (not _downed) and _pose != PlayerVisual.POSE_FLY \
 			and absf(_vel.y) < LAND_VEL_EPS
-	# ★ 水中:本体在 player.gd 把落地候选清零(_pre_move_vy = 0.0 if (in_water or latched)),故本体游泳时精确中性;副本此前没有这一项 ⇒ 下沉期间空中连续项恒成立(clamp(320/700) × 0.30 ≈ 0.137)⇒ 对手下沉全过程恒带约 1.37% 拉伸,而本体是 1.0000。★ 消掉它不需要协议字段:本体的 in_water 本身就是纯位置网格查询,客户端有同一张图 —— 见 _in_water()。★ 爬梯那一半刻意不在这里补:本体的 latched 是闩锁,客户端手里只有无状态的位置代理(中心 / 脚底落在通道格),拿它当判据会对「路过梯子 / 贴梯走过」误触发 ⇒ 那是引入一类本体从不显示的新形变,比留着残留更坏(本轮只修水中那一半);残留如实登记:空中爬梯持续 2.5~3.0% 拉伸、梯底停下那一下约 6.3% 挤压。
+	# ★ 水中:本体在 player.gd 把落地候选清零(_pre_move_vy = 0.0 if (in_water or latched)),故本体游泳时精确中性;副本此前没有这一项 ⇒ 下沉期间空中连续项恒成立(clamp(320/700) × 0.30 ≈ 0.137)⇒ 对手下沉全过程恒带约 1.37% 拉伸,而本体是 1.0000。
 	var vel_y := _prev_vel_y
 	if _in_water():
 		vel_y = 0.0

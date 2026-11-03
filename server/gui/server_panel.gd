@@ -1,10 +1,6 @@
 extends CanvasLayer
 
 # 服务端控制台:大厅进程内的只读运维面板。唯一的写操作是「关闭房间」,且走 teardown_room 单一收口。
-# ★ 层号:本进程里没有别的 UI ⇒ 取一个即可;别照抄对局内 HUD 的 128~150(那是给地图上的 HUD 排的)。
-# ★ 数据只经两条路进来:ServerStatus.build(纯判据,-s 可测)+ LobbySnapshot.collect(适配层,零判据)。
-#   面板自己不判业务(人数口径 / state / 房龄都在 ServerStatus 里)—— 否则就是第二份真相。
-# ★ 版式数字全部来自 spec §5;改之前先读那节(尤其「横向零余量」那条)。
 
 const LAYER := 100
 
@@ -606,9 +602,6 @@ func _reset_confirm() -> void:
 
 
 # ★★ 执行时重新解析房对象,绝不拿快照里的对象直接操作:
-#   快照是纯字典拷贝,而且从渲染到点击之间房完全可能已经没了(或被回收梯收掉)。
-#   解析不到 = no-op + 刷新 + 一句话,不报错也不关错房。
-# ★ 必须走 teardown_room 单一收口:端口归还/删注册表只许出现在它体内(tools/room_sweep_lint 钉着)。
 func _close_room() -> void:
 	# ★★ C1:武装的目标必须仍是当前选中的目标,否则一律不执行(判据 = ServerStatus.can_close)。
 	#   武装后改选别行 ⇒ 这一次点击只是取消武装,不会关掉任何房。

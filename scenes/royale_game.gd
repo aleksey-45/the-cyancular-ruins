@@ -41,7 +41,7 @@ func _ready() -> void:
 			Callable(self, "_minimap_colors"),
 			Callable())
 		add_child(minimap)
-	# HUD(左上角击杀排行榜)+ Esc 菜单。★ 必须声明式实例化场景,不能 RoyaleHud.new() —— 那个建出来的 CanvasLayer 没有子节点,HUD 的 @onready 全是 null、_ready 解引用必崩(零守卫:hud_declarative_probe 已删·2026-10-09)。
+	# HUD(左上角击杀排行榜)+ Esc 菜单。
 	_hud = preload("res://ui/hud/royale_hud.tscn").instantiate() as RoyaleHud
 	add_child(_hud)
 	_setup_beta_time_hud()   # Beta 时间玩法:怀表镜像(普通局内部自短路)
@@ -63,7 +63,7 @@ func _ready() -> void:
 
 
 
-# 服务器权威开火(激光):逐点锚到射手副本当前渲染位置再整条画(与 pvp_client._on_beam_fired 的唯一差别:大乱斗按 shooter_role 取锚点)。★ 必须走 NetBus(不是 NetBusExt):发送端 match_host 用的是 NetBus.rpc_id,收在 NetBusExt 上会静默 no-op。
+# 服务器权威开火(激光):逐点锚到射手副本当前渲染位置再整条画(与 pvp_client._on_beam_fired 的唯一差别:大乱斗按 shooter_role 取锚点)。
 
 
 

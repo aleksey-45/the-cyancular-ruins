@@ -45,11 +45,6 @@ var contact_pos_tol: float = DEFAULT_CONTACT_POS_TOL
 #   本常量现在只是下限/默认值,别再以为它恒是 8。
 
 # 接触期**速度**容差(px/s)。★ 2026-10-31:同一台机器 3 客户端 soak 实测,回滚里 **83~98% 是"纯速度分歧"**
-#   (pos 在容差内、hp 未变、只有 vel 超过 20)且几乎全部发生在贴身(92~98%)—— 贴身时客户端撞的是"幽灵体"
-#   (按权威速度外推的对手),服务器撞的是对手**此刻**的真实身体,碰撞法线/冲量必然不同 ⇒ 贴身期速度分歧是
-#   接触几何噪声,和位置同理(见 DEFAULT_CONTACT_POS_TOL 的由来)。容差 400 ≈ 走速(~700)的 57%:
-#   实测贴身期 vel_err p90=275~334,400 覆盖常规碰撞噪声;仍能抓住冲刺/击退量级(>400)的真分歧。
-#   ★ 非接触期仍是严格 20(那一档不是几何噪声,是"两端慢慢漂"的起点)。
 const DEFAULT_CONTACT_VEL_TOL := 400.0
 var contact_vel_tol: float = DEFAULT_CONTACT_VEL_TOL
 # ★ 边界:贴身判据 `in_contact` 是客户端启发式(幽灵 AABB 间隙 ≤ CONTACT_GAP),不是精确碰撞 ⇒ 容差放宽
@@ -58,9 +53,6 @@ var contact_vel_tol: float = DEFAULT_CONTACT_VEL_TOL
 const VEL_TOL := 20.0
 
 # 「预测被证实」要比对的字段集合(单一来源):S-06 —— 原先这 4 个字段的判据散在 _close_enough 函数体里,
-# 往 Player.capture_state() 加一个"影响下一帧判定"的字段时没有任何东西提醒也加进比对(症状 = 两端慢慢漂、
-# 只在碰巧回滚时纠正,不报错)。★ 这里只列"要比"的字段;inv/wslot/残弹是非预测字段,刻意不比(见 weapons.md)。
-# ★ 每个键都必须在真 capture_state() 里存在 —— `rollback_fidelity_probe` 的预测字段断言盯着这一点。
 const PREDICTED_FIELDS := ["down", "hp", "pos", "vel"]
 
 # 接入方每物理步写一次:本帧是否正在贴身(Player.touching_player())。★ 默认 false = 改动前的行为;它不进 capture_state/restore_state、不上行(纯客户端本地量)。
@@ -127,10 +119,6 @@ func on_authoritative(ack: int, state: Dictionary) -> void:
 enum EventApply { APPLIED, REJECTED }
 
 # 把一次服务器外部事件(受击)注入预测历史:恢复 _captures[seq] → apply() → 重放 (seq, last_applied]。
-# 锚点 = 服务器**上一条已完成步进**的 seq(裁决在子节点步进之前,见 MatchState._stepped_seq 的注释);
-# 注入记进 _events,后续任何一次回滚重放都会在对应 seq 重新应用它(I3:否则迟到旧 ack 会把它抹掉)。
-# 返回 REJECTED = 不能安全注入(未来 / 已 ack / 环里没有 / 乱序 / callable 失效),调用方必须走兜底(只播反馈)。
-# ★ 事件按 seq 递增到达(reliable 保序);seq 回退拒绝。★ 本 API 不碰 _rollbacks(事件对齐不是"预测被证伪")。
 func apply_external_event(seq: int, apply: Callable) -> int:
 	if _p == null or not apply.is_valid():
 		_event_rejects += 1
@@ -206,17 +194,6 @@ func _step(record: Dictionary) -> void:
 
 
 # ★★ 重放用的**手动物理步**。这里是「双驱动」的控制器那一半 —— 引擎也在步进同一个节点,时序契约:
-#   ① 引擎侧:本地玩家节点自己的 `_physics_process` 每物理帧被引擎调一次,**重放期间不失能**(全仓没有对它
-#      set_physics_process(false));它负责"本帧这一 tick"的那一次步进。
-#   ② 控制器侧:生产路径只有 `_replay_steps_after` 调到这里,而它由**父节点**(PvpMatchClient)的
-#      `_physics_process` 同步驱动 —— 树序上父先于子(玩家是它 add_child(level_0) 的孙子),所以重放永远是
-#      `(ack, _last_applied]` 这些**引擎已经步进过**的旧 tick,不重复步进当前帧。纯逻辑探针走 advance() 手动
-#      驱动,同一个入口;那种"接入方自己步进"的模式下须由接入方保证不双跑。
-#   ③ ⇒ 以上靠两个**没有守卫**的前提:父节点排玩家之前(重排节点 / 改 physics_priority 会静默破掉)+
-#      `_last_applied` 只是上一帧的 seq(note_post_step 必须先于本帧步进)。任一破掉 = 多跑一 tick、回滚分歧。
-#   ④ 收敛方向(动玩家物理入口/帧序 = "回滚与快照"承重面,需 Lead 决策,此处**没有**落地):玩家侧抽
-#      `step_sim(dt)` 作唯一物理步入口,引擎与重放共用,并把只该在引擎路径做的每帧表现副作用挡在重放外;
-#      本函数随之只调 `_p.step_sim(PHYS_DT)`。★ PHYS_DT 与引擎 delta 的等价还依赖 physics_ticks_per_second == 60。
 func _manual_sim_step() -> void:
 	_p._physics_process(PHYS_DT)
 

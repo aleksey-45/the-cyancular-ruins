@@ -2,21 +2,9 @@ class_name MatchBootstrap
 extends RefCounted
 
 # 建局:在 **worker 进程**里调用 —— 重算世界尺寸 + 给两端发 match_start + 建权威对局宿主。
-#
-# ★ 为什么单独成文件(2026-09-14):它原本住在 server/room_manager.gd(RoomManager)里,
-#   而 RoomManager 是大厅侧的房间注册表(+ 端口池 + 房间状态广播 + PowerShell 杀进程)。
-#   worker 进程只需要建局,却因为 class_name 连带加载整张大厅注册表。
-#   MatchHost / RoyaleHost 都住在"对局宿主"这一侧,建局引导也该在这一侧。
-#
-# role_peers = {role: peer_id};options = 房主(role1)的对局选项(禁武器/回合回血等,见 MatchHost);
-# ai_roles = AI 补位 role 列表(实验性):这些 role 由服务端 AI 驱动,不发 match_start。
-# 与旧 lobby._start_match 同逻辑,只是脱离大厅进程/房间状态。
 
 const PVP_MAP := "res://maps/newfactory.cyrm"
 # ★ 1v1 出生点 = 地图 meta 的 `# respawn 1|2` 列表(按半区写死的固定数据):start_on 按侧随机算好一份交给宿主,并广播同一份。
-#   侧 1 = 左半 / 侧 2 = 右半;role1 → 侧 1、role2 → 侧 2(其它 role 沿用旧口径走侧 2)。
-#   无 `# respawn` 的老图回退到改造前的两点逻辑(`# player` / `# player2` + role2 缺失时 far_spawn_from)。
-# ★ `far_spawn_from` / `FAR_CELLS` 仍住在 `core/sim/spawn_picker.gd`(这个文件静态引用 autoload,`-s` 下编译不过)。
 
 
 # 1v1 出生点:每个 role 从**自己半区**的 `# respawn` 列表随机取一格(互不相同、尽量 ≥ SpawnPicker.FAR_CELLS)。

@@ -2,23 +2,9 @@ class_name CollisionAabb
 extends RefCounted
 
 # 从任意节点求「启用中的碰撞体」在世界系的几何。纯静态、不引 autoload(-s 可空跑),
-# 与 core/collision_builder.gd 同风格。
-#
-# ★只并**启用**的碰撞体(disabled 跳过):姿态碰撞箱(玩家蹲/站/飞、飞鸟站/飞两套)
-# 运行时靠 disabled 切换,合并禁用箱会把命中框/避障框/脚底偏移撑得比实际碰撞体大一圈。
-#
-# 原本在 water / laser_weapon_base / enemy_fly_base 各写一遍,合并为单一来源。
-# 兜底值(水 24px / 激光 18px / 鸟 40×40)是各自的调参结果,**由调用方自备**,不在这里统一。
 
 
 # ★ `CollisionPolygon2D` 与 `CollisionShape2D` 是**并列类**(都直接继承 Node2D),不是父子 ——
-#   两个分支缺一不可。原先只判 `child is CollisionShape2D` 且注释写成"多边形继承自形状",
-#   于是**本作所有身体**(三个敌人 + 玩家 5 个姿态箱,全是多边形)一个都读不到:
-#   has_any 恒 false、world_rect 恒零矩形,**每个调用方静默走自己的兜底** ——
-#   激光判定框恒为原点周围 36×36(实测扫垂直偏移 ±16 命中 / ±24 不中,与身体无关)、
-#   water 脚底偏移恒 24px、飞鸟避障恒 40×40。2026-09-15 修。
-#   (Godot 编译器会直接拒绝 `多边形 is CollisionShape2D`:静态可判为假。)
-# 该节点是否有任何启用中的碰撞体。
 static func has_any(n: Node2D) -> bool:
 	for child in n.get_children():
 		if child is CollisionPolygon2D:

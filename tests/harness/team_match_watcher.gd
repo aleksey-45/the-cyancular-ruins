@@ -1,12 +1,6 @@
 extends Node
 
-# 3v3 真链路探针(tests/probe/team_match_probe.*)的观察者(客户端子进程用)。挂在 get_tree().root 上:换场(真 mp_lobby → 真 team_game)不会把它带走 ⇒ 它能在换场之后读真 team_game 实例的状态。
-# ★ 它做的四件事:① 驱动真大厅页(scenes/mp_lobby.tscn,筛选到 3v3):建房 / 点房卡加入 / 选边 / 房主开局 —— 这就是「A 册/B 册那五条从没被真跑过」里的等待室渲染路径(team_room_state);
-#   ② 换场后接管真 team_game:注入脚本手柄(team_bot_input.gd),按快照驱动走位/开火;③ 按相位采样并做客户端侧断言(收敛 / 队友弹穿透 / 换边 / 掉线观察窗);④ 把带 REC 前缀的结构化读数写进结果文件,交给裁判(探针进程)做跨端比对。
-# ★ 为什么读数要写成行文本而不是「客户端自己判完就完事」:跨端断言(6 端队伍表是否与大厅一致、队内/队间距离、换边是否对调、掉线后其余端还在收快照)天然需要全部 6 端的数据在一处,而 6 端是 6 个独立进程 —— 裁判读结果文件就是那个「一处」。
-# ★ 相位编号是本文件自己的(相①..相⑤),与其它探针的编号无关。
-# ═══ 相⑤ 的一处照实偏离(任务书写的是「排行榜里 6 号标离开」)═══ 3v3 的 TeamHost._broadcast_round_state 载荷没有 left / alive / names 三个键(只在大乱斗版里有),而 3v3 的 HUD(ui/team_hud.gd)是按队记分条、没有排行榜 ⇒ 「排行榜标离开」在 3v3 里没有对应物。
-#   客户端真正可观测的等价信号有两条,本探针都取:① round_state 恒为 PLAYING(服务器不终局、该队少人继续);② 掉线者在世界快照里消失 → team_game._on_snapshot_world 把它的副本/头顶 ID 一起拆掉(_replica_for(role) == null)—— 这正是「该 role 已被移出对局」在客户端的唯一投影。两条都要等宽限期(60s)到点才成立 —— 观察窗按它定,见 OBSERVE_MAX。
+# 3v3 真链路探针(tests/probe/team_match_probe.*)的观察者(客户端子进程用)。
 
 const BotHandle := preload("res://tests/harness/team_bot_input.gd")
 
@@ -33,7 +27,7 @@ const NEAR_PX := 45.0            # (乙端)"子弹从我身边飞过"的判定�
 const BRAWL_MAX := 210.0         # 相④ 打到 9 杀的上限(脚本机器人互射)
 const FIGHT_PX := 520.0          # 混战:进入这个距离且视线通畅就开火
 const LEAVE_AT := 2.5            # 第 2 局 PLAYING 后多久按 ESC(相⑤)
-# 相⑤ 观察窗。★ 推导:必须盖住「宽限期(GraceWindow.DEFAULT_SECONDS)到点」这一刻 —— 掉线者被移出对局发生在宽限到期时,而 _expire_graces 每秒才轮询一次(故实际落在 60~61s),本端还要从第 2 局 PLAYING 起算。
+# 相⑤ 观察窗。
 #   取 110 = 60 + 50(旧值 60 = 30 + 30,同形:盖住宽限期后余下 ~50s 给负载与轮询粒度)。★ 改 GraceWindow.DEFAULT_SECONDS 必须重算这里;它同时进 team_match_probe.RESULT_WAIT 的求和。
 #   ★ 改 `GraceWindow.DEFAULT_SECONDS` 必须重算这里;它同时进 `team_match_probe.RESULT_WAIT` 的求和。
 const OBSERVE_MAX := 110.0
@@ -203,7 +197,7 @@ func _attach_lobby() -> void:
 func _physics_process(delta: float) -> void:
 	if _quitting:
 		return
-	# ★ 对局场景可能已经退役(MATCH_OVER 后客户端 6s 自动回主菜单 → safe_change_scene 把整具世界拆掉),而本观察者挂在 root 上、照样在跑 —— 不判这一档就会每帧对已释放实例取字段(实测 run14 报 previously freed)。退役即收工:把手上读数落盘、退出。
+	# ★ 对局场景可能已经退役(MATCH_OVER 后客户端 6s 自动回主菜单 → safe_change_scene 把整具世界拆掉),而本观察者挂在 root 上、照样在跑 —— 不判这一档就会每帧对已释放实例取字段(实测 run14 报 previously freed)。
 	if _local != null and not is_instance_valid(_local):
 		if not _done:
 			_fail("对局世界已退役(客户端已离开对局)——观察者停止采样")
@@ -281,7 +275,7 @@ func _tick_lobby() -> void:
 			_fail("大厅页没挂上(%.0fs)" % ENTER_TIMEOUT)
 			_finish()
 		return
-	# ★★ 守卫(照 royale_c2_watcher._stage_lobby):本端连的必须是本探针的大厅,不能是云服。入树后一帧,页 _ready 那次 deferred _request_list 已跑完:地址框的值被写回 PvpSession.server_address,而连错时 _connected_addr 也会跟着变成那个错地址。
+	# ★★ 守卫(照 royale_c2_watcher._stage_lobby):本端连的必须是本探针的大厅,不能是云服。
 	#   (_attach_lobby 预置的 _connected_addr 是我们自己写的值,它单独证明不了什么 —— 真正会露馅的是 PvpSession.server_address。)当场点名,别让下一个人再从「45s 后没有 3v3 房」逆推。★ 漏了 _attach_lobby 那行预置就是这个守卫拦的。
 	if PvpSession.server_address != LOBBY_ADDR or String(lobby.get("_connected_addr")) != LOBBY_ADDR:
 		_fail("本端连的是 %s,不是本探针大厅 %s —— 检查 _attach_lobby 里 PvpSession.server_address 的预置"
@@ -406,7 +400,7 @@ var _pick_logged := false
 var _pick_retry_t := 2.0
 var _kills_attr := 0
 var _kills_unattr := 0
-# ★ 相⑤ 补:K 键自杀的端到端(3v3 里收尾批才把 suicide_request 接上 worker,此前它在 3v3 是静默丢弃的)。第 3 号客户端在第 2 局 PLAYING 里按一次 K,观测「权威快照 downed=true → 2s 后 false」这条链。
+# ★ 相⑤ 补:K 键自杀的端到端(3v3 里收尾批才把 suicide_request 接上 worker,此前它在 3v3 是静默丢弃的)。
 # ★ 这个观测必须跨相位跑(PH_SWAP → PH_OBSERVE):早先写在 _tick_swap 里,而 _tick_swap 在 PH_SWAP 结束(1.2s)后就不再被调 ⇒ 观测窗口只有 0.2s ⇒ 永远等不到复活(实测 run9:六端 0 端报告走通,而 K 其实已经按下去了)。
 func _tick_k2(delta: float) -> void:
 	if idx != 3 or _game == null or _phase < PH_SWAP:
@@ -452,11 +446,6 @@ func _tick_start() -> void:
 		return
 	var b = lobby.get("_wait_start")
 	# ★★ 判据必须是 `is_visible_in_tree()` 而**不是** `Button.visible`:`visible` 只管**节点自身**,
-	#    祖先隐藏不算 —— 而 `scenes/mp_lobby.tscn` 里只有父面板 `WaitPanel` 是 `visible = false`,
-	#    `WaitStartBtn` 自己不写 visible(默认 true)⇒ 大厅页刚挂上那一帧(`_wait_start` 已非 null 但
-	#    面板还没亮、房里 0 人)就会被判成"可以点",`pressed.emit()` 之后 `_started = true` **永久锁死**,
-	#    真到"两队各 3 人"时**再也不会点** ⇒ 探针 105s 后打 `房主没有点开始`(实测日志:t=0.2s 点开始,
-	#    t=0.6s 才建房)。`is_visible_in_tree()` 恰好等于"面板亮了 ∧ 我是房主 ∧ 闸门满足"。
 	if b == null or not (b as Button).is_visible_in_tree():
 		return
 	# ★ 产品闸门(2026-11)已放宽成「两队各 ≥1 人」⇒ 光看按钮可见会在 2 人时就开局。本探针是 **6 人局**,
@@ -565,13 +554,6 @@ func _tick_play() -> void:
 
 
 # ── 队色 + 分队碰撞层:**两端是否真的对齐**(A 册定的契约,客户端这一半在 team_game)──
-# 契约(A 册 `TeamHost._init` 末段 / `_apply_team_layers`):
-#   1 队 玩家 layer=2 mask=1|4|16 ;2 队 玩家 layer=16(TERM_ENEMY_LAYER) mask=1|4|2
-#   副本幽灵体 layer 按**它代表的那名玩家**的队,mask 恒 0。
-# 队色:`_apply_tint(..., color_override)` 走 **modulate 比值** ⇒ 有效身体色 = modulate × 主色。
-# ★ 为什么这条要在真链路里查:服务端与客户端**各自**实现一半(A 册服务端 / B 册客户端),两边
-#   数值不一致 = 可走空间不一致 = **每帧回滚**(不报错,只表现为"手感发飘");而队色错 =
-#   6 个人里认不出队友。两者都只有"拿真对象的真字段比对"才看得出来。
 func _check_team_visual_layer() -> void:
 	var want_layer := 2 if _team == 1 else TeamHost.TEAM_ENEMY_LAYER
 	var layer_ok: bool = _local.collision_layer == want_layer
@@ -658,9 +640,6 @@ func _tick_meet(delta: float) -> void:
 
 func _tick_meet_shooter(delta: float) -> void:
 	# ★ 甲的**超时兜底**:走位窗口用完就带着手上有的读数进混战 —— 早先这个超时只写在不走位的
-	#   那一支里,于是甲若一直没能贴脸(出生点落在密封小间/中间隔着到不了的地形),它会
-	#   **在 PH_MEET 里一直待到整局结束**(实测 run10:t=226 还在相位 3,而别人早进了混战),
-	#   相③ 连一条 BULLET 读数都不会有。
 	if _phase_t > RENDEZVOUS_MAX:
 		_bot.axis = 0.0
 		_bot.attack = false
@@ -864,9 +843,6 @@ func _tick_brawl_phase(delta: float) -> void:
 
 
 # ★★ 回退模式(照实登记,报告里要写明占比):脚本机器人在平台跳跃图上无法可靠接近对手(全部留存日志里 killA=0:至今没有一次有归因击杀;真正的障碍看起来是「走位到达」而不是「开火」,但这一点本探针没有独立验证过)。
-#   对局只在先到 9 杀时收局,所以「打不到人」= 相④ 的换边断言与相⑤ 全都跑不到 ⇒ 在「混战 90s 且最近 20s 一次击杀都没有」之后,让机器人每 4s 按一次 K(自杀脱困,不分死因给对方队 +1)把状态机推到 ROUND_OVER。
-#   它是记录在案的降级:每端写 REC BACKOFF n=N,裁判把它当读数打出来(不隐藏);「真实交火击杀」另有独立读数(killA/killU),报告照实分栏。
-#   这样相④ 的判据仍然是非空转的:它验的是回合机 + 整队换边 + 换边重拉 match_sync,那三样与「谁杀的」无关,坏了照样红。
 func _tick_backoff(delta: float) -> void:
 	if _backoff:
 		_backoff_t -= delta
@@ -915,16 +891,10 @@ func _tick_brawl(delta: float) -> void:
 		return
 	var d := _delta(_local.global_position, tgt)
 	# ★ **提前量**:两边都在动,照当前位置开火等于每发都打在敌人身后(理论上;本探针未能
-	#   用读数证明过它 —— 见报告 §7 的未覆盖栏:(两边在动 +
-	#   弹道飞行时间)。按快照里的 `vel` 外推 `dist / 弹速` 秒。
-	#   弹速取 1000px/s 作常数:六把枪实际在 900~1400 之间,没必要为它引武器表(打不中才是问题)。
 	var t_lead: float = clampf(d.length() / 1000.0, 0.0, 0.5)
 	var aim_at := tgt + _vel_of(_nearest_enemy_role()) * t_lead
 	_bot.aim = _delta(_local.global_position, aim_at).normalized()
 	# ★ **一律逼近到 ~100px 再打**:远距离对射在本探针里从未产生击杀(两边都在动 +
-	#   弹道飞行时间 → 每发都擦过去);贴脸打时飞行时间 ~0.1s,提前量几乎不起作用。
-	#   隔墙那档(有距离但无视线)也走同一条:贴近到 100px 往往就绕到同一侧了
-	#   (实测的僵局正是"两边各贴一堵墙、相距 320px、视线 0"卡了 40s)。
 	if d.length() <= 140.0:
 		_bot.axis = 0.0
 		_pulse_attack(delta)
@@ -1006,10 +976,6 @@ func _esc_leave() -> void:
 		_finish()
 		return
 	# 真 ESC:走 PauseMenu 自己的 `_unhandled_input`(ui_cancel → 开菜单)
-	# ★ `keycode` 与 `physical_keycode` **都要设**:`PauseMenu._unhandled_input` 判的是
-	#   `event.is_action_pressed("ui_cancel")`(走 InputMap),而默认 `ui_cancel` 绑的是
-	#   **keycode** Escape —— 只给 physical 时 `is_action_pressed` 恒 false(实测 run11:
-	#   菜单没打开,`_open` 仍是 false,而 `go_menu()` 照样把人送走了 ⇒ "离场绿、菜单红")。
 	var ev := InputEventKey.new()
 	ev.pressed = true
 	ev.keycode = KEY_ESCAPE
@@ -1061,10 +1027,6 @@ func _tick_observe() -> void:
 			if _obs_playing_bad:
 				_fail("相⑤ 观察窗内 round_state 离开过 PLAYING(服务器不该因少人改状态)")
 			# ★ 判据只用**观察窗内**的最大间隔(理由见 `_on_snap_world`:全会话最大值包含
-			#   "进对局建世界"那一大段,拿它当判据会让每一跑都红 —— 那是伪影,不是服务器停了)。
-			# ★★ **单端超 1s 也判红**(不做"多端才红"的容忍):可能是本进程自己卡了一下,
-			#   也可能是**服务器对这一个 peer 的定向投递**异常(`snapshot_own` 逐 peer 定向发,
-			#   只卡一端正是那条路的可疑症状),两者本探针**分不清** ⇒ 保守判红。
 			if _obs_max_gap > 1000.0:
 				_fail("相⑤ 观察窗内快照间隔 %.0fms > 1s(可能是本进程停顿,也可能是服务器对本 peer 的定向投递异常 —— 无法区分,保守判红)"
 						% _obs_max_gap)
@@ -1200,10 +1162,6 @@ func _local_bullet_count() -> int:
 
 
 # ════════ 机器人导航(相③ 走位 / 相④ 接近共用)════════
-# ★★ 为什么不是「朝目标 x 硬走」(既有骨架 royale_soak_probe 的形状),也不是仓内那套 GridPathfinder.astar_path_nearest(敌人用的 4 邻域地板格图):实测两种都到不了人 ——
-#   硬走:90s 内位移 ≈ 0(卡在同一格);4 邻域地板格 A*:整个地图的最大连通区只有 77 格(4%),因为地板格按 4 邻接算,而工厂图是平台跳跃图(台面之间隔空隙、靠跳跃跨)⇒ 规划出来的路径第一步往往就不可执行。
-#   故这里自建一张跳跃感知图:节点 = 可站格(地板格 ∪ 通道格),边 = 玩家真能做出来的位移(走 / 落 / 跳(上 1~3 格、横 -6~6 格,竖直与水平通道都要净空)/ 爬梯);Python 侧离线核对过同一套判据:全图 2095 个节点、最大连通区 1792(85.5%),实测出生点都在主连通区里。
-# ★ 图每局建一次(实测 330ms,发生在开局 COUNTDOWN 里,不影响对局),不每帧重建。
 var _nav_adj: Dictionary = {}       # cell -> Array[Vector2i](邻居表)
 var _nav_built := false
 var _path: Array = []
@@ -1230,10 +1188,6 @@ func _build_nav_graph() -> void:
 			if _standable(c):
 				nodes.append(c)
 	# ★★ 邻居必须**先按环面归一化再入表**:`_nav_cell_solid` 读格是 `posmod` 的,而键不是 ——
-	#   落/跳那两条会算出 y+30(越界)这样的坐标,于是邻居表里出现**不是键**的格,
-	#   下一帧 `_nav_adj[cur]` 当场 `Invalid access to property ... on Dictionary`:
-	#   表现是主机器人**每帧抛错、原地不动**(实测:相③ 的甲 50s 一步没挪),
-	#   而错误信息里的坐标(y=117 > rows-1=99)就是证据。
 	for c in nodes:
 		var keep: Array = []
 		for n in _nav_neighbors(c):
@@ -1379,20 +1333,12 @@ func _nav_to(target: Vector2, stop_px: float, delta: float) -> void:
 		return
 	var tc := GridPathfinder.cell_of(target, TILE, _dims().x, _dims().y)
 	# ★★ BFS 的**起点**用"最近一次真正站在图节点上的格",不是"当前格":
-	#   机器人在空中(跳跃/坠落)时当前格是**空气**,`_nearest_nav_node` 可能就近落到
-	#   **脚下的小连通区**(比如一个坑底),于是 BFS 恒返回空 → 判"路径空" → 连按 K 脱困。
-	#   实测:甲(21,10)与乙(149,12)明明在同一个主连通区(1792 格),却被判"路径空"。
 	_repath_t -= delta
 	if _path_to != tc or _path.is_empty() or _repath_t <= 0.0:
 		_path = _find_path(_last_node, tc)
 		_path_to = tc
 		_repath_t = 0.7
 	# 卡住检测:★ 判据是「**离目标**的最近距离有没有被刷新」,不是"有没有动" ——
-	#   原地蹦跳(平台图上很常见:起跳 200px 再落回)会把"位移"判据骗过去(实测:主角在
-	#   同一格原地跳了 15s,`_stuck_t` 一直是 0 → K 脱困永远不触发)。
-	# ★★ **到站后不再计时**:到站了当然"距离不再刷新" —— 不排除这一档,乙一到位就被判"卡住"
-	#   而连按 K 自杀(实测:乙在 113px 处 15s 内按了 3 次 K,把**对方队**的比分从 1 送到 3,
-	#   相④ 立刻退化成"自杀推分")。
 	var dist := to_t.length()
 	if dist <= stop_px * 2.0:
 		_stuck_to = tc
@@ -1423,13 +1369,6 @@ func _nav_to(target: Vector2, stop_px: float, delta: float) -> void:
 	var latched := bool(_local.climb.is_latched())
 	var want_vert := absf(wp.y) > TILE * 1.2
 	# ★ 卡死兜底:梯子上的死锁(爬到顶被挡/挂在梯顶)也在这一档里 —— 卡够久就按 K 脱困
-	#   (K = 生产里的「自杀脱困」,见 TeamHost.request_suicide_role;本探针顺带覆盖它)。
-	# ★ K 只在「**真的到不了**」时才按:路径为空(封闭小间 —— 实测出生点就可能落在 6 格
-	#   密封口袋里,BFS 无路)或**长期**卡死(可规划但执行不了)。且一次对局最多 K_MAX 次:
-	#   K 自杀按「不分死因」给**对方队**送分,按多了相④ 的 9 杀就全是送的。
-	# ★★ **相③ 期间一律不许按 K**(只在相④ 混战里允许):K 是"自杀 → 重生在别处",而相③
-	#   要的正是"两个人留在原地贴脸" —— 实测:乙在甲连射的 2.6s 里按了一次 K,重生到 3824px
-	#   外,连射当场变成 `shots=0 dist=3824`(读数全废)。K 在相③ 里只会**自我拆台**。
 	if _phase == PH_BRAWL and _stuck_t > STUCK_K and _k_used < K_MAX and _phase_t > 20.0 \
 			and (_path.is_empty() or _stuck_t > STUCK_K * 2.0):
 		_k_used += 1

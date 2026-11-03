@@ -1,19 +1,6 @@
 extends Node
 
-# 3v3 团队模式的六人真链路端到端探针(场景模式,autoload 必须已实例化)。跑法:timeout 1800 bash tests/probe/team_match_probe.sh,或直接 godot --headless --path . --quit-after 54000 res://tests/probe/team_match_probe.tscn。
-# 判据:文本 TEAM MATCH PROBE: ALL-OK(不看退出码 —— 探针挂住时 --quit-after 到期仍 exit 0 且一行 ALL-OK 都不打印,只看退出码会把「没跑完」读成「通过」)。
-# ═══ 五相(每相的存在理由见对应注释)═══
-#   相① 六人开局 —— 真大厅(池外端口)+ 6 个 headless 客户端各跑真 mp_lobby 页:建房 → 点公开列表加入 → 各自选边(3 A / 3 B)→ 房主点开始 → 6 端都进 team_game。断言:6 端都进对局;每端的 match_sync.teams 与大厅的 team_of 逐端一致;每端本地玩家与权威快照收敛。★ 同时覆盖「从没被真跑过」的等待室渲染路径(team_room_state 真正到达并被画出来)。
-#   相② 按队分半区 —— 开局那一刻 6 个出生点必须**各在自己队那半边**(地图 `# respawn 1|2`;队1=侧1左半、队2=侧2右半),两侧各 3 人。
-#   相③ 子弹穿透队友(负)+ 爆炸满效(正)—— 甲(1 队最低 role)走到队友乙身边(≤170px 且视线通畅)连射:乙 hp 不变;再换榴弹贴脸一投:乙 hp 下降且被推飞。★ 这一对缺一不可:只验「穿透」会让「伤害系统整个坏了」也全绿。★ 另从乙端独立取证:数「从我身边飞过(≤45px)的非自己子弹」—— 没有它,「乙 hp 不变」可以靠「子弹根本没飞到」骗过。
-#   相④ 打到 9 杀(回合机收局)→ ROUND_OVER → 第 2 局开局后各端出生点已**换到另一侧**(地图 `# teamspawn` 另一队那份列表、重随机,且不与第 1 局同处;判据见相④ 的注释)。★ 9 杀多半由回退模式(K 自杀脱困)推动(逐端读数 REC BACKOFF,裁判照实打出来)⇒ 这一相验的是回合机 + 整队换边 + 换边重拉 match_sync,而不是「枪法」。断言各端 scores 的键是队号 1/2、rounds_won 六端一致。
-#   相⑤ 少人继续 —— 6 号客户端在 PLAYING 中途按 ESC 离场(唯一走 safe_change_scene 的局内退出路径)→ 服务器不终局、其余 5 端仍持续收到快照(间隔 < 1s)、且掉线者已被移出对局。
-# ═══ 拓扑(自当大厅/裁判;全部子进程由本进程 OS.create_process 直接拉起)═══ 本进程 = 真大厅(NetBus.start_server(LOBBY_PORT) + RoomManager),不占 7777;c1..c6 = 6 个 headless 客户端,各跑真 mp_lobby → 真 team_game;worker 由真 RoomManager.team_start 经 WorkerLauncher.spawn_team_worker 拉起(与生产逐字同一条路径,只把起投端口拨到池外)。
-#   ★ 端口纪律(与 reconnect_probe 同源):大厅与 worker 都落在真大厅的 worker 端口池(7800~8299)之外、且不占 7777 —— 本机常驻一个真大厅时,池内端口可能被它发给别人的对局,而本探针收尾会按端口杀 worker,会把别人那局一起杀掉。
-# ═══ 前提 ═══ 请确认没有别的 Godot 占着 7777(本探针不占 7777,但别杀掉用户自己的服务端)。客户端子进程的 stdout 父进程看不到(Windows CreateProcess 不继承句柄)→ 每个子进程都带 --log-file;失败时本探针把每个客户端的引擎日志尾部一起打印出来。
-#   收尾按 PID 杀本进程拉起过的全部子进程(客户端是从临时端口连出去的,只按端口杀根本杀不到),worker 另按 UDP 端口补一刀(它才是真的 bind 端口那一侧)。
-# ═══ 时间预算 ═══ 相①~③ 约 40~90s;相④ 打到 9 杀是本探针最大的时间不确定项(上限 BRAWL_MAX=210s);相⑤ 的观察窗要等满 60s 宽限期(上限 OBSERVE_MAX=110s)。整跑量级 3~10 分钟;安全网 --quit-after 54000(60fps 下 = 900s;run/max_fps=60)。
-#   本进程自己的收工上限 FINAL_TIMEOUT(见下面常量区:它是按 **绝对** 轴算的 —— boot 三段上限 105s + RESULT_WAIT 680s + 余量,而不是"680 加一点")。
+# 3v3 团队模式的六人真链路端到端探针(场景模式,autoload 必须已实例化)。
 
 const RESULT_PREFIX := "team_match_probe_"
 # ★ 端口纪律(与 reconnect_probe 的常量区同源):全仓对局 worker 的池 = WorkerLauncher.WORKER_PORT_BASE(7800)~ +SPAN(500)= 8300 开区间;本探针的大厅与 worker 都取池外(29xxx),同时远离 7777 与常见服务端口。
@@ -29,17 +16,8 @@ const CHILD_QUIT_AFTER := "54000"  # 子进程兜底(60fps ≈ 900s);正常由�
 const BOOT_TIMEOUT := 45.0         # 等"6 人进房并选边完毕"的上限
 const FINAL_TIMEOUT := 800.0       # ★ 收工上限。必须 > (boot 三段的**绝对**上限 105s = BOOT_TIMEOUT+60) + RESULT_WAIT(680)
                                    #   —— 两条预算**不同钟**:RESULT_WAIT 从 `_start_t` 算,而 `_start_t` 最晚能取到 105s;
-                                   #   原先取 780 < 785 ⇒ 最坏情况下这里先到点,判词退化成「超时(780s;阶段 3)」,
-                                   #   把「只收到 N/6 份结果」那条能指路的失败信息盖掉(2026-10-15 修)。
-                                   #   仍须 < 子进程安全网 CHILD_QUIT_AFTER(54000 帧 ≈ 900s)。
-# 等 6 份客户端结果文件的上限。★ 必须大于客户端自己的时间线(它们的相位全靠自己的时钟推),且逐项按 watcher 的常量求和算出来 —— 别凭印象写:这行漂过两次(一次把 RENDEZVOUS_MAX 记成 70,实际是 100;一次停在宽限期还是 30s 时的那份求和)。
-#   越时的表象是「只收到 N/6 份客户端结果」,读起来像产品故障,其实是探针自己的预算算错了。逐项:进局 ~5s + SETTLE 1.2 + RENDEZVOUS_MAX 100 + BRAWL_MAX 210 + 换局 SETTLE 1.2 + OBSERVE_MAX 110 + PEER_WAIT 120 ≈ 547.4s;
-#   进局那一档的硬上限是 ENTER_TIMEOUT 90s(不是 5s),最坏 ≈ 632.4s ⇒ 取 680 兜住两种走法。★ 但要与收工上限对表时**走绝对轴**:本值从 `_start_t` 起算,而 `_start_t` 最晚能到 BOOT_TIMEOUT+60 = 105s ⇒ 本值能到的最晚时刻 = 105+680 = **785**,故 `FINAL_TIMEOUT` 取 800(取 780 会让收工上限先到点,症状同样是「只收到 N/6 份结果」)。
 const RESULT_WAIT := 680.0
 # ★★ 条数闸的**下界**(不是精确数)。为什么只能是下界:相③ 的断言条数随"抽到什么武器"**合法浮动**
-#   (抽到榴弹/激光那几档只进 `_notes`、不占断言账本,见 :419/:465),精确数只能等一次真跑后按实测钉。
-#   这一闸挡的是「跨端断言一条都没跑 / 大片静默跳过」——那几种情况的实得 ≤ 6(`--nospawn`、没有结果文件、
-#   或 `_assert_stage3()` 早退)。★ 与 `tests/lib/probe_base.gd` 文件头那条纪律同源。
 const MIN_CHECKS := 24
 
 var _role := "lobby"
@@ -88,7 +66,7 @@ func _run_orchestrator() -> void:
 		return
 	_rm = RoomManager.new()
 	add_child(_rm)
-	# ★★ 把 worker 的端口起投点拨到池外(见文件头「端口纪律」)。WorkerLauncher 的分配器是「唯一递增 + 占用集合」(_next_port 自 WORKER_PORT_BASE 起递增到 BASE+SPAN 再回卷),本机上可能同时跑着用户自己的真大厅 —— 它会往池里发端口,而本探针收尾按 UDP 端口杀 worker 时不看属主,撞上池内端口就有误杀别人对局的危险。
+	# ★★ 把 worker 的端口起投点拨到池外(见文件头「端口纪律」)。
 	#   拨到池外即从根上避开(pick_port 会立刻回卷 _next_port,故这只影响第一发)。
 	_rm.get("_launcher").set("_next_port", WORKER_PORT_OUT)
 	# ★ _clean() 失败(上一跑的进程还活着)时必须整段收工:只 push 一条然后继续拉起客户端的话,6 个新客户端与那批残留进程会互相覆盖 .result,而且本进程退出后 _kill_children() 再也不跑 ⇒ 留下一堆孤儿进程攥着文件,把下一跑也逼进这一支(实测复现过)。
@@ -170,9 +148,6 @@ func _stage_wait_full() -> void:
 			_finish("只有 %d/%d 人进了房(选边前)\n%s" % [tr.players.size(), CLIENT_COUNT, _dump()])
 		return
 	# ★★ 2026-11-01:产品闸门放宽成「两队各 ≥1 即可开局」(`RoomTypes.team_ready`),所以**不能**再用它判
-	#   「选边收齐」—— 那会在 3+1 时就放行,探针存下的大厅队伍表只剩 4 个 role,而 worker 那边被
-	#   `team_autofill` 补成 6 人 ⇒ 相① 的"端 == 厅"必然假红(实测 204s 那跑就是这样)。
-	#   本探针是**六人 3v3** 用例,必须自己等 3+3 全部选完(与 `team_match_watcher` 的 `PROBE_TEAM_SIZE` 同一条口径)。
 	var by := {1: 0, 2: 0}
 	for r in tr.team_of:
 		var t := int(tr.team_of[r])
@@ -439,7 +414,7 @@ func _assert_stage3() -> void:
 		var near := int(near_counts.get(victim_role, 0))
 		var why := _tok(bl, "reason", "")
 		if why == "no_bullet_weapon" and wtype == 0:
-			# ★★ 空手是缺陷,不是抽签:wtype == 0 = 手上没有武器 —— 而这是已登记的生产失效(服务器玩家必须有枪,不发的话服务器上玩家开不了火,PvP 静默哑火)。早先这一档与「抽到榴弹/激光」共用一条 _check(true, …),于是空手会让相③ 打出一行 OK 而不是红 —— 真缺陷被读成「抽签结果」。故先判武器前提。
+			# ★★ 空手是缺陷,不是抽签:wtype == 0 = 手上没有武器 —— 而这是已登记的生产失效(服务器玩家必须有枪,不发的话服务器上玩家开不了火,PvP 静默哑火)。
 			_check(false, "相③ 甲(role %d)是**空手**(wtype=0)却进了连射子状态 —— 「服务器玩家必须有枪」这条生产前提没成立(空手 = PvP 静默哑火),不是抽签"
 					% shooter_role)
 		elif why == "no_bullet_weapon":
@@ -480,11 +455,6 @@ func _assert_stage3() -> void:
 		_check(moved > 8.0, "相③ ★ 乙被推飞(%.0fpx)" % moved)
 	else:
 		# ★ 照实分栏,两种情形**判据不同**(理由见下):
-		#   · 本局压根没有榴弹发射器(初始武器是**随机**发的一把,12 把里 2 把是榴弹)——
-		#     这是**抽签结果**不是代码缺陷 → 记成**未覆盖**(note),不当红;
-		#   · 其余原因(切枪超时/没视线/没枪)—— 那是**探针或产品**的问题 → 红。
-		#   把"抽签没抽到"判成红 = 用户跑一次红一次而重启一次可能就绿,那种红没有信息量;
-		#   反过来把"切枪失败"记成未覆盖 = 放走真缺陷。两者必须分开。
 		var why := _tok(gl, "reason", "?")
 		if why == "rendezvous_timeout":
 			# ★ 与子弹那半边**同口径**:判词只写"未覆盖",且不把未经证实的因果写成结论 ——
@@ -526,13 +496,6 @@ func _assert_stage3() -> void:
 			ka = maxi(ka, int(kill_attr[r]))
 			ku = maxi(ku, int(kill_unattr[r]))
 		# ★ 这一条**记读数、不当红**(理由见 watcher 的 `_tick_backoff`):脚本机器人能不能
-		#   在平台跳跃图上接近对手,是**探针的质量**,不是产品缺陷 —— 判成红只会让"用户跑一次
-		#   红一次"而重启一次可能就绿(没有信息量)。真交火为 0 时报告里**照实写明**它未覆盖。
-		# ★★ 这一栏**只作读数,不作绿断言**(与榴弹那半边同口径):`ka>=1` 会让"9 杀主要靠
-		#   回退模式推"这种局面照样全绿(run20 实测:`ka=1` 而 `killU=10`、`REC BACKOFF n=1..7`)。
-		# ★★ 回退模式那一句**必须真去解析 `REC BACKOFF` 再下判词**:早先那句话是**写死的**
-		#   ("仍在推动回合"),裁判侧**从不解析**这个读数 —— 于是没启用回退模式的那一跑也会
-		#   照着念,报告里的"未覆盖分栏"跟着失真。这里按端读一遍(有该行 ⟺ 该端 `_backoff` 被置起)。
 		var bo_tags: Array = []
 		var bo_max := 0
 		for i in range(1, CLIENT_COUNT + 1):
@@ -555,11 +518,6 @@ func _assert_stage3() -> void:
 		_notes.append("相④ 第 1 局:%s" % round1[round1.keys()[0]])
 
 	# ── 相④ 换边(2026-11-01 新语义:第 2 局换到**另一侧**的出生点列表并重随机,不再是精确对调)──
-	# 旧实现的换边 = 两队点集整体互换(`TeamHost.compute_swap_spawns`),所以旧判据是"第 2 局 == 第 1 局对调"。
-	# 出生点改成地图数据(`# teamspawn <1|2>`)后,换边 = 改用另一侧那份列表并重新随机(且排除各自的上一处),
-	# 精确格位不再是契约。现在钉两条更本质的:
-	#   ① 每人第 2 局不与第 1 局同处(排除语义);
-	#   ② 每人都换到了**另一侧**(出生侧翻转)—— 直接看半区(`SpawnChooser.side_of`),不用距离判据。
 	if r2.size() == CLIENT_COUNT and r1.size() == CLIENT_COUNT:
 		var d := _grid_dims()
 		if d == Vector2i.ZERO:
@@ -685,7 +643,7 @@ func _clean() -> bool:
 					continue
 				var err := DirAccess.remove_absolute(ProjectSettings.globalize_path(p))
 				if err != OK:
-					# ★★ 当场退出,不能只警告:_results_ready() 数的是「存在且以 OK/FAIL 开头」的文件 —— 上一跑的残留会被当成这一跑的结果下判决(而且看不出是旧的)。删不掉几乎只有一个原因:上一跑的客户端进程还活着(它攥着文件)。
+					# ★★ 当场退出,不能只警告:_results_ready() 数的是「存在且以 OK/FAIL 开头」的文件 —— 上一跑的残留会被当成这一跑的结果下判决(而且看不出是旧的)。
 					print("PROBE: 删不掉上一跑的 %s(错误 %d)—— 多半是上一跑的进程还活着;"
 							% [p, err] + "残留文件会被当成本跑的读数下判决,故直接退出")
 					return false
@@ -776,12 +734,6 @@ func _same_pairs(a: Dictionary, b: Dictionary) -> bool:
 
 
 # 环面回绕尺寸(相②/相④ 的格距离要用)。★ **必须来自地图文件本身**,不能回落硬编码:
-# 裁判进程**从不加载地图**(它只当大厅),`MazeGenerator.current_grid` 恒空 —— 早先这里回落
-# `(150,100)`,恰好等于 `newfactory` 的尺寸,于是"碰巧对";**换图之后会静默按错尺寸回绕**
-# (格距离全错,而断言照跑)。改为直接读地图头(`MapFormat.map_size`)。
-# ★★ 读不到时**返回 `Vector2i.ZERO` 并记一条 FAIL,绝不回落任何字面量**:回落到一个"本图像素的
-#   尺寸"正是上面说的"碰巧对" —— 它会让换图后**照样全绿**。返回零则调用方一眼可见(相②/相④
-#   的环面判据直接跳过,而这条 FAIL 已经把整跑判红)。失败**只记一次**(两个调用点各调一次)。
 func _grid_dims() -> Vector2i:
 	var d := MapFormat.map_size(MatchBootstrap.PVP_MAP)
 	if d.x <= 0 or d.y <= 0:

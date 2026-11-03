@@ -2,10 +2,6 @@ class_name WaitRoom
 extends RefCounted
 
 # 大厅页的「等待室」面板(2026-10-22 Task 10 纯搬移自 scenes/mp_lobby.gd):选边 / 开始按钮 / 满员文案 / 房主判断 / 名单行 / 角色颜色行。
-# 三个模式共用一个面板(骨架里那一个,启动即建、默认隐藏),每次 show() 清空重填。
-# ★ 节点路径(%语义名)、信号、文案逐字未动:标题里的「—— {模式名}房间 {code} ——」、人数行、分队标题、按钮文案都是玩家可见的对齐点。
-# ★★ 节点句柄仍住在页上(page._wait_*):tests/harness/team_match_watcher.gd 用 lobby.get("_wait_body" / "_wait_count" / "_wait_pick_a" / "_wait_start") 读名单与按钮,
-#    句柄搬进本文件它们会静默拿到 null("名单没画"与"探针拿不到节点"在输出上长得一样)。故本文件只搬行为,不搬句柄。
 
 var page: MpLobby = null
 
@@ -14,7 +10,7 @@ func setup(p: MpLobby) -> void:
 	page = p
 
 
-# 接骨架 + 信号。★ 选边按钮用 bind(队号) 而不是两条匿名 lambda:绑定实参能被 Callable.get_bound_arguments() 读出来 —— 两颗按钮的文案只差一个 A/B 字,对调之后行为是错的且没有任何运行时信号。
+# 接骨架 + 信号。
 # 零守卫:读绑实参的那条断言随 lobby_* 探针一起删了(2026-10-09)。
 func register(root: Node) -> void:
 	page._wait_panel = root.get_node("%WaitPanel") as PanelContainer
@@ -37,7 +33,7 @@ func show(state: Dictionary, mode: String) -> void:
 	page._wait_mode = mode
 	page._create_dialog.set_visible(false)
 	page._wait_panel.visible = true
-	# 进房 = 收起两颗入口按钮 + 关掉可能开着的加入弹层(见页的 _create_btn 上方那段:闸门拦不住直接绑定的弹层,层级会翻过来)。与 hide() 成对;三颗都启动即建(骨架 / _build_ui 登记)⇒ 没有 null 可判。
+	# 进房 = 收起两颗入口按钮 + 关掉可能开着的加入弹层(见页的 _create_btn 上方那段:闸门拦不住直接绑定的弹层,层级会翻过来)。
 	page._in_room = true
 	page._create_btn.visible = false
 	page._join_btn.visible = false

@@ -14,9 +14,6 @@ var _hurt_rect_cache_tick := -1
 # 子弹 / 爆炸 / 光束的裁决与广播域;拆墙广播也在这里(它同属「命中/破坏」这条线)。
 
 # 事件的**时间锚点** = 上一次完成步进时的已消费 seq(MatchState._stepped_seq,帧末 deferred 记录)。
-# ★ 裁决与拆砖都发生在玩家子节点本帧步进之前(父先于子)⇒ 处理的是"上一步之后"的状态;传当帧 ack 会让注入晚一步。
-# ★ 不能用 _srv_tick:输入饥饿(队列空、沿用上一条 held)时 ack 与实际步进脱钩,而 _srv_tick 每 tick +1。
-# ★★ 锚点**逐 peer 不同** ⇒ 受击与拆砖都必须点对点发(不能 _rpc_all),每个客户端拿自己那条时间线(2026-11-01 R2)。
 func _event_seq_for(role) -> int:
 	var fallback := maxi(int(_ack_seq.get(int(role), 0)) - 1, 0)
 	return int(_stepped_seq.get(int(role), fallback))
@@ -120,9 +117,6 @@ func _replay_hurt_rect(bullet: BulletBase, p: Node2D) -> Rect2:
 
 
 # 历史回放那一支(纯函数于 _client_snap_tick / _srv_tick / _lag_hist,三者在一次裁决内都不变)
-# ⇒ 按 (射手 role, 受害者 role) 每 tick 只解析一次,不必每颗子弹每个玩家重查历史表。
-# ★ 回退支(现时受击面)不缓存:同帧 take_hit / 倒地可能改动它,必须每次重读 —— 那才是逐位等价。
-# ★ 缓存生命周期 = 一个 _srv_tick;tick 变了自动清(不依赖调用顺序,免得将来别的入口读到上一帧的矩形)。
 func _replay_rect_cached(bullet: BulletBase, p: Node2D) -> Rect2:
 	if _hurt_rect_cache_tick != _srv_tick:
 		_hurt_rect_cache_tick = _srv_tick

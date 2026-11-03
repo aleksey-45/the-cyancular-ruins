@@ -117,9 +117,6 @@ static func damage_tiles(center: Vector2, radius: float, max_damage: int, owner:
 
 
 # 把爆区内的可破坏子格聚成「破坏单位」(16px 子格 / 32px 块 / 64px 格),每个单位返回一个代表点:
-# `[{block: Vector2i, pos: Vector2, tex: int, d: float, unit_px: int}]`。★ 权威扣血与表现层碎片共用这一份聚合 ⇒
-# 粒子与碰撞洞落在同一批单位上(与 destructible_subs 同一份扫描,不另写一套)。顺序确定(按 block.y、block.x)。
-# d 取单位内**最近**子格的爆心距离(与整格侧的 falloff 口径一致)。
 static func destructible_units(center: Vector2, radius: float, tile_unit_cells: float) -> Array:
 	var unit_px := 16
 	if tile_unit_cells >= 1.0:

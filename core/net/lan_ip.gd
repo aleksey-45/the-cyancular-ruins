@@ -2,10 +2,6 @@ class_name LanIp
 extends RefCounted
 
 # 本机局域网候选 IP 发现(只用于「朋友填哪个地址」的提示,不承载联机逻辑)。纯静态、无 autoload 依赖。
-# 候选顺序:local_ip.txt(秒回)→ netstat -rn 默认路由网卡(按 metric 升序)→ 其余私有地址;查询失败 / 非 Windows / Web 只剩私有排序(不保证第一个是真网卡)。
-# ★ 默认路由优先是为了排除 WSL / Hyper-V / Docker / VMware 虚拟网卡的地址(看着像局域网、对端不可达)。
-# ★ 用 netstat 而不是 PowerShell(实测冷启动 2.5 秒会卡大厅页);也别改成工作线程:进程退出时会偶发原生访问违例。
-# 守卫:tests/smoke/lan_ip_smoke.gd 钉住三个纯解析与转发壳同源;测不到真网卡上哪条默认路由是真的。
 
 const SYS32 := "C:/Windows/System32"
 

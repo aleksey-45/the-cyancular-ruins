@@ -2,10 +2,6 @@ class_name CreatePanel
 extends RefCounted
 
 # 大厅页的「建房弹层」面板(2026-10-22 Task 10 纯搬移自 scenes/mp_lobby.gd)。
-# 本文件负责:弹层显隐(压暗罩 + 本体)、三颗模式分段按钮(= 模式切换)、按模式变形(_apply_create_form 的显隐那一半、
-# 建房载荷组装)、报到选项(player_options)的组装。★ RPC 一律留在页里(scenes/mp_lobby.gd)—— 本文件只产出载荷。
-# ★ 节点路径(%语义名)、信号、文案逐字未动:弹层本体 / 压暗罩 / 标题行 / 双列版式 / 左列五行与右列两条区块标题都在 .tscn 里。
-# ★ 建房弹层:压暗罩与弹层本体是两个节点 —— 罩子铺满整页(拦下背后的点击),本体居中。
 
 var page: MpLobby = null
 var form: OptionsForm = null
@@ -23,7 +19,7 @@ func setup(p: MpLobby, f: OptionsForm) -> void:
 # 接骨架:压暗罩 / 弹层本体 / 三颗模式按钮 / 关闭·取消·确定,并建出动态的三块(禁用武器网格 / 地图选择器 / Beta 时间参数行)。
 # ★ 控件的信号在这里接(不挪进页 _ready):"按钮画在屏上、按下去毫无反应"没有任何运行时信号可观测。
 func register(root: Node) -> void:
-	# ★ 压暗罩铺满整页 + mouse_filter = STOP(拦下背后的点击 = 点弹层外不会误触房卡)在骨架里;它的颜色是调色板纪律的已知例外(全屏遮罩不属于 C_PLATE 那条「HUD 底板 0.1」家族,见 docs/eng/ui.md):Color(0,0,0,0.55) 与 ui/screens/match_result.gd 的 MASK_COLOR、暂停菜单逐字同值 —— 改一处就要一起改(值现在住在 .tscn 里)。
+	# ★ 压暗罩铺满整页 + mouse_filter = STOP(拦下背后的点击 = 点弹层外不会误触房卡)在骨架里;它的颜色是调色板纪律的已知例外(全屏遮罩不属于 C_PLATE 那条「HUD 底板 0.1」家族,见 docs/eng/ui.md):Color(0,0,0,0.55) 与 ui/screens/ma。
 	mask = root.get_node("%CreateMask") as ColorRect
 	mask.visible = false
 	panel = root.get_node("%CreatePanel") as PanelContainer
@@ -77,7 +73,7 @@ func apply(mode: String) -> void:
 		b.button_pressed = m == mode
 
 
-# 按模式给三套 payload 的公共部分 + 各自的私有键。★ map 三个模式都上发:1v1 的 create_room 签名冻结、塞不进 payload,故地图一律走 room_map 那条独立的 RPC(建房成功后由本端补发);3v3 不带 disabled_weapons,那一项从 player_options 走,与建房载荷无关。
+# 按模式给三套 payload 的公共部分 + 各自的私有键。
 func build_payload(mode: String) -> Dictionary:
 	var d := {
 		"is_public": form.is_public(),

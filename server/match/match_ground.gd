@@ -15,9 +15,6 @@ var _ground_nodes: Dictionary = {}     # inst -> WeaponPickup(服务器侧;headl
 var _self_drop_until: Dictionary = {}  # role -> {inst: 解禁时刻(ms)},防"丢完立刻捡回"
 var _settled_seen: Dictionary = {}     # inst -> 上一次看到的 _settled(落定那一刻重播一次权威位置)
 # 拾取意图重试窗口(秒):按 F 那一刻够不着 → 保留这么久,期间每 tick 再判一次。
-# ★ 为什么需要:输入走可靠通道(按压本身不会丢),但客户端是预测位置、还可能在跑动/跳落中,它眼里的
-#   "在脚边"与本端权威位置差几十 px 是常态 ⇒ 单次裁决会把一次很合理的长按判成 range。0.4s 覆盖一次
-#   起跳/落地的位移量级,又短到不会"路过就自动捡"。
 const PICKUP_INTENT_S := 0.4
 var _pickup_intent: Dictionary = {}    # role -> 过期时刻(ms)
 
@@ -85,10 +82,6 @@ func _sync_ground_positions() -> void:
 			if not e.is_empty():
 				e["pos"] = pk.canonical_pos
 			# ★★ 落定那一刻重播一次「它现在在这儿」(用户报的「捡不动」):客户端也在本地模拟落体,而它那份地形
-			#   (可破坏砖被拆的时序)/帧时序与本端不同 ⇒ 落点可能差几十~上百 px。于是玩家看着枪在脚边、F 提示亮着,
-			#   本端判定的最近一把却在 2 格外 ⇒ 拾取被判 range 拒绝。重播走既有的 weapon_spawned(可靠通道),
-			#   客户端对重复 inst 走「原地重锚并停稳」而不是忽略(见 PickupSync._reanchor_existing)。
-			#   只发一次:落定后位置不再变(逐帧位置同步纯属浪费带宽)。
 			if pk._settled and not bool(_settled_seen.get(int(inst), false)):
 				_broadcast_weapon_spawned(int(inst), -1, true)
 			_settled_seen[int(inst)] = pk._settled
@@ -136,11 +129,6 @@ func _canonical_of(inst: int) -> Vector2:
 
 
 # 给 match_sync_data 的载荷(客户端进场拉取时一并拿到开局那批)。
-# ★ 本函数是「当前状态」、不是「生成事件」(后者是 _broadcast_weapon_spawned):pos 与 vel 都取活节点此刻的值。
-# 调用时机两个(进场一次 + 每次重连一次);重连那次那些枪早已落定,若沿用条目里「生成时刻的 vel」,客户端会把它
-# 重扔一次(configure 会置 velocity 且 _settled = false,重演约 2 格下落),F 提示就会指着服务器上没有枪的位置。
-# 取活速度而不是强行落定(置零 / 置 _settled),是因为后者会把一把半空中的枪冻住。
-# ⚠ 零守卫:ground_action_probe 已删(2026-10-09),「载荷 pos == 拾取判定圆心」这条契约今天只靠本注释维持。
 func ground_weapons_payload() -> Array:
 	var out: Array = []
 	for e in ground_weapons.entries:
@@ -169,9 +157,6 @@ func _broadcast_weapon_spawned(inst: int, by_role: int = -1, settled: bool = fal
 	if e.is_empty():
 		return
 # ★ pos 显式取 canonical 而不是读 e["pos"]:今天两者等价,但契约必须是「读刚生成的节点」。
-# ★ vel 必须保持是「生成时那一份」(表里的 vel 从不被 _sync_ground_positions 刷新)—— 客户端拿它 + canonical
-# 重放落体才有「落点与何时开始模拟无关」;哪天把 vel 也做成逐帧刷新,两端落点会立刻发散而且不报错。
-# ★ 唯一的例外就是重锚(settled=true):它要的是「现在就停在这儿」,所以 vel=零。
 	var vel: Vector2 = Vector2.ZERO if settled else (e["vel"] as Vector2)
 	var data := {"inst": inst, "type_id": int(e["type_id"]),
 			"mag": int(e["mag"]), "pos": _canonical_of(inst), "vel": vel, "by_role": by_role}

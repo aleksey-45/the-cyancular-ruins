@@ -1,11 +1,6 @@
 class_name WorldLabel
 extends Node2D
 # 玩家头上 ID 文字:世界空间 Node2D,用 draw_string 居中画(压在黑色薄底板上)。
-# 位置不由自身维护——对局宿主每帧调本文件的静态 follow(),或由 player_replica 替它贴位(不随倒地转体旋转)。
-#
-# ★ 底板 2026-09-15 按用户要求加上("所有模式下玩家名字加 0.1 黑底")。此前本文件**连描边都没有**
-#   —— 旧注释写着「带黑描边」,但 _draw 里只有一行 draw_string(名不副实,本次一并改正)。
-#   名字常压在浅灰蓝开阔区上,光靠 0.85 alpha 的亮色文字读不出来。
 
 const FONT_PATH := "res://assets/fonts/less_perfect_dos_vga.ttf"
 const FONT_SIZE := 32   # 16 的整数倍(像素字体锐利;全仓字号规范的最后一处违例)

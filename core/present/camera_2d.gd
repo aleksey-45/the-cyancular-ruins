@@ -14,10 +14,6 @@ var _shake_time: float = 0.0
 var _shake_dur: float = 0.0
 var _base_pos: Vector2 = Vector2.ZERO
 # ★★ 连续(未取模)空间的玩家位置与镜头中心。环面世界把玩家坐标取模 ⇒ 跨接缝那一帧坐标会瞬间差一整张图;
-#   若直接在取模坐标上做死区/平滑,这一帧就会被当成"横穿地图"的大位移(要么平滑出 9600px 平移,要么靠 snap 硬跳一帧)。
-#   这里改成:先把玩家位移按"最短取模差"累积成连续坐标,死区/平滑全在连续空间里做,
-#   最后镜头节点位置 = 玩家当前取模坐标 + 连续空间里的偏移 —— 跨接缝时玩家与镜头**同帧一起跳**,
-#   偏移不变 ⇒ 画面与没加死区时一样无缝(这才是环面相机该有的做法)。
 var _target_cont: Vector2 = Vector2.ZERO
 var _cam_cont: Vector2 = Vector2.ZERO
 var _tracked := false

@@ -1,10 +1,6 @@
 extends Node
 
 # 子弹扫掠命中探针(场景模式:要真物理步进与真 bullet 场景)。验两类事:
-#   A. 裁决等价性(O1 宽相位 AABB 粗筛):构造用例 + 固定种子随机用例,「先粗筛」与「直接精确」两条路径
-#      的命中判决/命中顺序必须逐例一致;粗筛只许放过、不许漏(漏 grow、用 encloses/intersects、不对齐环面缝都会红)。
-#   B. 真子弹场景:① 高速弹一帧跨过目标也能命中(治穿透);② 擦边 2px 靠子弹体积 grow 命中;③ 尸体不吃弹。
-# 跑法:godot --headless --path . res://tests/probe/bullet_sweep_probe.tscn;判据 grep 末行 "BULLET SWEEP PROBE: ALL-OK"。
 
 const EXPECTED_CHECKS := 15
 const MARKER := "BULLET SWEEP PROBE: ALL-OK"
@@ -108,9 +104,6 @@ func _run() -> void:
 
 
 # ── A. 宽相位等价性(O1)───────────────────────────────────────────────────────────────────────
-# 生产裁决每颗子弹每个候选只做一件事:HitShape.candidate_hits(...)。本块把同一条生产函数在 exact_only=true
-# (直接精确,旧路径)与 false(先 AABB 粗筛,新路径)下逐例对比。★ 粗筛是**纯门**:它不把任何数值喂给精确那一步,
-# 所以两路径的精确调用集合虽然可以不同(粗筛会多放过一些),判决布尔值必须逐例相同 ⇒ 命中集合、命中顺序都不变。
 func _equivalence_block() -> void:
 	# 构造用例:覆盖"必须放过"的四种边缘 + 一个"必须否掉"的反例。
 	var crossing := EqCase.new("高速跨过", Vector2(100, 100), Vector2(150, 100), Rect2(110, 82, 20, 40), Vector2(5, 2))

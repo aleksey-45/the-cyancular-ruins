@@ -1,15 +1,5 @@
 extends SceneTree
 # 重连补态的子格守卫(BUG-03:重连后客户端比服务器多出"只被打掉部分子格的砖" ⇒ 幽灵墙/每帧回滚)。
-# 存在理由:match_sync 载荷的 `destroyed` 只表达「64px 格与建局基线不同」;榴弹现在按 32px 块破坏
-#   (2×2 子格),只灭几个子格的砖**格子本身没变** ⇒ 不在那一份里。不补这一份,客户端重连后:
-#   贴图与碰撞都还留着、服务器上早已是洞 ⇒ 本地预测每帧撞不存在的墙(橡皮筋/子弹被挡)。
-# 守卫 = 补态列表的纯函数(`TileResync.partial_damaged_subs`,不引 autoload ⇒ 本文件能 `-s` 跑):
-#   只收"格仍与基线相同"的死子格,整格已消失的交给 `destroyed_cells()` 展开、不重复发;顺序确定。
-# 测不到什么:① 载荷真从 worker 到达客户端(要真链路);② 客户端 `_on_remote_sub_destroyed` 静默补在真
-#   Level0 上的效果(场景探针/人眼);③ 16px 子格 HP 只被磨低但没死的情况(外观不变,不需要补)。
-# 变异验证:删掉"格仍与基线相同"过滤 ⇒ ② 红(整格子格被重复发);删 sort_custom ⇒ ④ 红;
-#   把 `damaged` 换成全量遍历 ⇒ ③/⑤ 红。
-# 跑法:"$GODOT" --headless --path . -s res://tests/smoke/resync_substate_smoke.gd;通过 = 结尾打 RESYNC SUBSTATE OK(n 条断言)。
 
 const EXPECTED_CHECKS := 5
 
@@ -25,9 +15,6 @@ func _chk(ok: bool, msg: String) -> void:
 
 func _initialize() -> void:
 	# 夹具:6×6 格(全实心 = 1);damaged_subs 里混三种情况:
-	#   ① (1,1) 部分破坏:子格 (4,4)、(5,5) 死,格子仍实心 ⇒ 必须补;
-	#   ② (2,2) 整格消失:16 子格全死 + grid 归 0 ⇒ 由 destroyed_cells() 覆盖,必须**不**重复发;
-	#   ③ (3,3) 完全没动 ⇒ 不发。
 	var base: Array = []
 	for y in 6:
 		var row: Array = []

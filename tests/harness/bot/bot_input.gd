@@ -1,9 +1,6 @@
 extends PlayerInput
 
 # Bot 的哑手柄:只把 watcher 每物理帧写进来的意图报给输入读口,自身不做任何决策。
-# ★ 全部钩子都要实现(含带参 is_action_pressed("attack"/"up"/"down") 与三个开火边沿):
-#   漏一个的后果是"本地能动、服务器侧不动且 C2 每帧回滚"(见 team_bot_input.gd 文件头)。
-# ★ 边沿按物理帧打标、整帧有效:同一物理帧里组上行包与本地判定各读一次,读一次即清必有一处拿到 false。
 
 var axis := 0.0              # 水平轴(-1 左 / +1 右)
 var aim := Vector2.RIGHT     # 世界单位向量

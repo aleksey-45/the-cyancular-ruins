@@ -2,11 +2,6 @@ class_name TeamSpawn
 extends RefCounted
 
 # 团队模式的散点选格 / 队层契约 / 复活选格:只有静态计算与配层写入,不持有状态、不碰生命周期。
-# ★ 出生/复活点数据 = 地图 meta 的 `# respawn 1|2` 行(按阵营半区写死的固定数据);队 1 用侧 1(左半)、队 2 用侧 2(右半),
-#   换边(下一局)时两队互换侧。随机/排除上一次/最小间距在 core/sim/spawn_chooser.gd。
-# ★ 缺数据的老图回退到改造前的 SpawnPicker 几何生成(判据与重试循环原样保留),并 push_warning 一次。
-# ★ 拆出来的理由:这些计算只读「地图 + 队伍表 + 当前存活者」,与对局流程无关;TeamHost 只留生命周期钩子与虚方法覆写。
-# ★ 常量全部住这里作单一来源;TeamHost.TEAM_ENEMY_LAYER 是转出(客户端 team_game 与 team_match_watcher 读的是那个名字)。
 
 const SPAWN_CLEARANCE := 15      # 两个基座的最小环面距离(格)
 const TEAMMATE_CLEARANCE := 3    # 队内三人最小间距(格):够散开,又不至于走出"队形"
@@ -18,9 +13,6 @@ const TEAM_ENEMY_LAYER := 16
 
 
 # 队友不互挡(用户裁定「完全穿透」)── ★ 必须「分队位」而不是改掩码:Godot 的碰撞按节点配,没有「按对」的开关,
-# 全部玩家同在第 2 层时掩码含 2 就是与所有玩家碰撞;队 B 挪到层位 16、两队掩码互指即可 A↔B 挡、A↔A 与 B↔B 穿。
-# ★ 契约:1 队 layer=2 / mask=21、2 队 layer=16 / mask=7(都保留地形 1 与敌人 4,抹 2 时丢掉 1|4 会穿墙);必须在 super._init 之后调。
-# ★ 幂等(直接赋值、不叠加):单独成函数是为了让「手工摆位」路径能补调一次,而不必自己再抄一份配层规则(第二份真相)。
 static func apply_team_layers(players: Dictionary, teams: Dictionary) -> void:
 	for role in players:
 		var p: Node2D = players[role]
@@ -41,9 +33,6 @@ static func apply_team_layers(players: Dictionary, teams: Dictionary) -> void:
 
 
 # 团队出生点(每局调用一次):用地图 meta 的 `# respawn 1|2` 列表(按阵营半区写死)——队 1 取侧 1、队 2 取侧 2,
-# 每人随机一格、不与本人上一局同格、队内尽量拉开;`side_swap` = 换边(两队互换侧)。
-# ★ 缺数据(老图无 `# respawn`)或某队人数超过该侧列表 ⇒ 回退改造前的几何生成(`_plan_team_spawns_geometry`,逐字保留),
-#   并 push_warning 一次。★★ 数据路径**不做**几何重试:点的合理性由地图数据负责(tools/map_spawn_meta.gd 校验)。
 static func plan_team_spawns(teams: Dictionary, last: Dictionary = {}, side_swap := false) -> Dictionary:
 	var by_team := {1: [], 2: []}
 	for role in teams:
@@ -180,9 +169,6 @@ static func compute_swap_spawns(spawns: Dictionary, teams: Dictionary) -> Dictio
 
 
 # 局内复活点:用**本队这一局所在侧**的 `# respawn` 列表(不跨侧、不回退几何),筛「离所有存活敌人 ≥ RESPAWN_CLEARANCE」
-# 且「不是本 role 上一次落点」的格随机取一个。★ 判据是「离敌人远」、不是「离所有玩家远」(队友在附近复活是好事)。
-# ★ 侧:队 1 → 侧 1(左半)、队 2 → 侧 2;`side_swap` 时两队互换。★ 缺数据(老图 / 队号非法 / 该侧列表为空)才回退
-#   改造前的 SpawnPicker.respawn_pools() 池序列,并 push_warning 一次。
 static func respawn_cell(role: int, players: Dictionary, teams: Dictionary, last: Dictionary = {},
 		sides: Dictionary = {}, side_swap := false) -> Vector2i:
 	var t := int(teams.get(int(role), 0))

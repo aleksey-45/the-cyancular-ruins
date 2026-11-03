@@ -1,14 +1,5 @@
 extends SceneTree
 # 局内闪断重连(reclaim)拒绝判据守卫(G-01:`_on_reclaim` 的三条拒绝分支零自动断言)。
-# 守卫对象 = ReclaimRules(纯逻辑:无 autoload / 无 Node ⇒ 本文件能 `-s` 跑):
-#   reject_reason(match_started, host_ready, role_in_grace, token_ok) 返回 ""=放行,否则 = 逐字拒绝理由。
-# 三条拒绝一条都不能少:没开局(含 host 未就绪)/ 该 role 不在宽限期 / 令牌空或不符;任一条不满足都踢连接。
-# ★ 顺序也钉住:多处同时不满足时理由按旧 if/elif 链的顺序报(别调换分支 —— 日志里的"为什么被踢"会变)。
-# 去掉什么才红:删 `role_in_grace` 分支 ⇒ ③ 红;token_matches 恒 true 或删空串判据 ⇒ ④ 红;
-#   把宽限/令牌两支对调 ⇒ ③ 的优先级子断言红;`not match_started or not host_ready` 拆丢一支 ⇒ ①② 红。
-# 测不到什么:① server_main 是否真的调用本模块(要真 worker);② 踢人、(重)换输入源、`_ack_seq`/`_stepped_seq`
-#   复位、match_start 应答 —— 那些是行为,不是纯判据。真链路(rejoin_probe)覆盖路径乙(回大厅重连),不是这条。
-# 跑法:"$GODOT" --headless --path . -s res://tests/smoke/reclaim_rules_smoke.gd;通过 = RECLAIM RULES OK(n 条断言)。
 
 const EXPECTED_CHECKS := 5
 

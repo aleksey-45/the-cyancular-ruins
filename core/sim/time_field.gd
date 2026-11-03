@@ -2,15 +2,6 @@ class_name TimeField
 extends RefCounted
 
 # 世界时间场(第一阶段):把"回溯/加速/贷款"翻译成各实体每帧的 delta 倍率。
-# 集中一处、纯静态查询,实体脚本只加一行 `delta = TimeField.xxx_delta(delta, self)`。
-#
-# 设计要点:
-#   · current 只由**单机 Level0** 创建;PvP/菜单/探针为 null → 所有倍率恒 1(零影响)。
-#   · HASTE(加速):玩家与精英 ×HASTE_PLAYER(2),普通敌人与敌方子弹 ×HASTE_WORLD(1)
-#     ——"玩家相对普通敌人两倍"由**相对差**达成,不动 Engine.time_scale(物理/tween/网络不受扰)。
-#   · REWIND(回溯):普通敌人/子弹/玩家 ×0(冻结,由回放器接管位置);**精英与玩家无关照常行动**
-#     (策划案:精英怪不受回溯影响,依旧保持原本行为)。
-#   · 贷款深度:普通敌人表现加速 ×(1 + LOAN_ENEMY_SPEED_BONUS·depth)(实为自身时间变慢的错觉)。
 
 enum Mode { NONE, REWIND, HASTE }
 

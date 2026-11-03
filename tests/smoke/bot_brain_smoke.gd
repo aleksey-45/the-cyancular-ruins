@@ -1,11 +1,6 @@
 extends SceneTree
 
 # Bot 纯逻辑守卫(观察 + 决策)。跑法:"$GODOT" --headless --path . -s res://tests/smoke/bot_brain_smoke.gd
-# 判据:文本 `BOT BRAIN ALL-OK`;条数闸 EXPECTED_CHECKS。守卫挡的缺陷:
-#   ① 敌我从 role 号推导(队伍表缺失时误判友军)  ② 感知按玩家中心矩形判(跨接缝漏看)
-#   ③ 雷达半径/环面写错(近处敌人判成很远)        ④ 记忆永不过期(全知)
-#   ⑤ 决策无滞回(每帧来回切目标)                 ⑥ 对记忆位置开火(空放)
-#   ⑦ 无敌人时原地不动(不搜索)                   ⑧ 卡住不跳(永远贴墙)
 
 const EXPECTED_CHECKS := 25
 const Obs := preload("res://tests/harness/bot/bot_observation.gd")

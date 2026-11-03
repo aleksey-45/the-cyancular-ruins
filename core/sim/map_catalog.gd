@@ -2,14 +2,6 @@ class_name MapCatalog
 extends RefCounted
 
 # 地图目录(选图 UI + 联机定图的**单一来源**):
-#   · 列出可用 .cyrm(res://maps/ + exe 旁的开发者地图,与 MazeGenerator 的取图规则同源)
-#   · 判定"能不能打联机"(是否两个出生点都有)与地图尺寸
-#   · 生成**开局简略图**(每格 1 像素的色块图,由 UI 侧转成纹理)
-#   · 服务器侧校验客户端上报的地图路径(联机定图时**只能**用仓内 res://maps/*.cyrm)
-#
-# ★ 本类**不引任何 autoload**(Settings/RunOptions 一律不碰),这样 `-s` 探针能直接用它;
-#   也只返回 `Image` 纯数据、不碰渲染 —— 缩略图"内容对不对"才机器可验(纹理由 UI 侧包)。
-# ★ 缓存是会话级的(静态);探针改完语料/想重扫时调 `clear_cache()`。
 
 const CELL_PX: int = 2                     # 每格 2px:125×75 → 250×150;150×100 → 300×200
 const BG := Color(0.04, 0.07, 0.11, 1.0)   # 空气 = 背景

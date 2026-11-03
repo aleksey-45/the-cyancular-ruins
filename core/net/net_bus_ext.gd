@@ -202,9 +202,6 @@ func rejoin_denied(reason: String) -> void:
 	local_rejoin_denied.emit(reason)
 
 # ── 权威爆炸表现同步 ── 视觉榴弹是各端自己模拟的(自己的=本地预测、对手的=快照位置+初速重建),
-# 爆炸位置/时刻与服务器裁决天然不同步 ⇒ 爆炸动画与掉血位置对不上;本机视觉弹先炸 + 权威伤害后到
-# 读起来像"双爆"。服务器在权威位置广播本事件,客户端收掉自己那颗视觉榴弹、改画在权威位置。
-# ★ 可靠通道(爆炸表现丢了就像"哑弹"),RPC 仍放本节点(原 NetBus 方法表不动)。
 signal local_explosion(pos: Vector2, shooter_role: int, visual: String)
 
 @rpc("authority", "call_remote", "reliable", 3)

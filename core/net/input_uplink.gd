@@ -2,9 +2,6 @@ class_name InputUplink
 extends RefCounted
 
 # 输入上行组合件(2026-10-30 从 PvpMatchClient 拆出;S-17 第一刀):seq / 60Hz 逐 tick 发包 / ack 记账 / netstat。
-# 形状是组合:宿主只留采样与 C2 预步,其余调 begin_tick() → submit(rec, aim) → take_packet();
-# 另有 accept_ack(ack) / reset_epoch() / netstat_tick(delta);本类经 bind(client) 读宿主 _rollback / _local / _last_snap_tick。
-# ★ 逐字不变量与细节见 docs/eng/netcode-input-uplink.md:seq 只在 reset_epoch 归零;一包一条记录(60Hz);ack > seq 必丢。
 
 var _client: Node = null
 

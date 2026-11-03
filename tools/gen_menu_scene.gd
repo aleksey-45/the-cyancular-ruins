@@ -1,16 +1,6 @@
 extends Node
 
 # 【一次性工具】把「代码里建的菜单屏」导出成 .tscn 骨架。
-# ★ 为什么是「导出」而不是手写:判据是外观不变,而手抄一棵几十节点的树(锚点/尺寸/容器参数/样式)几乎必然抄错一两处,且抄错不报错 —— 本工具让现有代码自己把树建出来。
-#   样式从 theme_override_* 转成 theme_type_variation 时逐值与 Theme 比对:只有「这个节点显式设的每一样都恰好等于某个变体的取值」才换,换不掉的原样留在 .tscn 里(诚实的兜底,外观也不变)。
-# 跑法:"$GODOT" --headless --path . --quit-after 600 res://tools/gen_menu_scene.tscn -- <屏名>;输出 res://tests/_gen/<屏名>.tscn(不带脚本,纯骨架)。屏名与要剥的动态子树见 SCREENS。
-# 生成物落进 .superpowers/(整目录 gitignore)⇒ 是校验用骨架、不是产物;产物是人工把校验过的骨架整理成 scenes/*.tscn 之后那一份。
-# ★★ 重跑前必须还原输入:生成器读的就是 SCREENS[名].scene —— 它一旦已被覆盖成迁移版,拿到的是「已迁移的场景」:strip 全失败 + 换成变体 0 个,而照样写出一个文件。
-#   还原用 git show HEAD:<路径> 把 .tscn 与 .gd 两个文件都拿回迁移前。
-# ★★ 改名必须连同后代的 parent= 路径一起改(那一段是父节点名):只改父不改子 ⇒ 实例化时整棵子树静默消失。
-# ★★ 别写死 theme 的 ext_resource id(每次生成都会变,如 1_m75q5):写死 ⇒ str.replace 一声不响什么都不做 ⇒ 脚本没挂上、动态行全空而零报错。用正则取 id,并对两处替换都加断言。
-# ★★ 落地时把「导出那一刻代码写下的值」清回中性(本机 IP / 昵称 / 服务器地址 / 状态栏输出 / Settings 派生的局时与色片颜色 / 筛选选中态):只清「代码会写」的那些,静态设计值一个字不动(清错会真改行为)。
-# ★★ 动态宿主在骨架里必须是空的:代码运行时往里填的容器(房卡格 / 禁用武器块 / 地图选择器宿主 / %BetaBlock)逐个断言「骨架里没孩子」;%BetaBlock 不能走 strip 谓词 —— beta 关着时它常态为空,而 strip 把「容器本来就空」也算失败,它有孩子的后果是静默重复。
 
 const THEME_PATH := "res://ui/theme/menu_theme.tres"
 const OUT_DIR := "res://.superpowers/sdd/_gen"
@@ -48,7 +38,7 @@ var _fails: Array[String] = []
 var _converted := 0
 var _kept := 0
 var _fonts_dropped := 0
-# ★★ 必须显式持有 theme:Control.theme 是本节点的局部 theme,子节点上它是 null(生效值靠父链回退)。拿它去比 ⇒ 子节点全部匹配不上 ⇒ 表现为「一个都没换、全部保留」(实测:换成变体 0 / 保留 66)。
+# ★★ 必须显式持有 theme:Control.theme 是本节点的局部 theme,子节点上它是 null(生效值靠父链回退)。
 var _theme: Theme = null
 
 
@@ -79,7 +69,7 @@ func _ready() -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
 
-	# 2) 挂上 Theme(变体才解析得到值),再把可换的 override 换成变体。★ Theme 只能挂在 Control/Window 上 ⇒ 根是 CanvasLayer 时挂到第一个 Control(结算页就是那个 Root),挂上后整棵子树都解析得到变体。
+	# 2) 挂上 Theme(变体才解析得到值),再把可换的 override 换成变体。
 	_theme = theme
 	var theme_owner: Control = root as Control
 	if theme_owner == null:
@@ -110,7 +100,7 @@ func _ready() -> void:
 			box.remove_child(c)
 			c.queue_free()
 
-	# 3b) ★★ 清掉所有 material:材质里挂的是运行时资源(主菜单背景那张 TerrainAtlas.terrain_texture() 烘出来的 4800×3200 贴图),PackedScene.pack 会把它整张内嵌进 .tscn;这类资源本来就得由代码在 _ready 里重建,清掉只是让 .tscn 不背死重量。★ 清的是属性不是节点:那个 ColorRect 还在(位置/尺寸/底色都保留),只是 material 为空。
+	# 3b) ★★ 清掉所有 material:材质里挂的是运行时资源(主菜单背景那张 TerrainAtlas.terrain_texture() 烘出来的 4800×3200 贴图),PackedScene.pack 会把它整张内嵌进 .tscn;这类资源本来就得由代码在 _ready 里重建,清掉只是让 .tscn 不背死重量。
 	_clear_materials(root)
 
 	# 4) 起名 + 设 owner(没 owner 的节点不会被 pack 收进去)。
@@ -219,7 +209,7 @@ func _matches(c: Control, overrides: Array[String], vname: String) -> bool:
 	return true
 
 
-# 纹理按像素比。★ 不能写 have != theme.get_icon(...):_make_switch() 画出来的是运行时 ImageTexture,而 Theme 引用的是文件里的 PNG(CompressedTexture2D)—— 两者像素相同、对象不同,Resource 的 == 是同一性 ⇒ 那条比对恒假,CheckButton 永远换不成变体(实测:0 个转换)。两条 PNG 的 .import 已把 fix_alpha_border 关掉(见 gen_menu_theme 文件头),故逐像素可相等。
+# 纹理按像素比。
 func _tex_eq(a, b) -> bool:
 	if a == null or b == null:
 		return a == null and b == null
@@ -387,7 +377,7 @@ func _find(root: Node, pred: Callable) -> Node:
 	return null
 
 
-# 定位一个唯一的结构候选:0 个(结构改了)或 ≥2 个(谓词有歧义)都算失败。★★ 为什么要它而不是直接用 _find:_find 返回第一个匹配 —— 谓词一旦有歧义,它会静默剥掉一棵本不该剥的子树,骨架里少一块而一条日志都没有(实测:大厅那条「第一个 ScrollContainer」命中到弹层里的地图选择器)。
+# 定位一个唯一的结构候选:0 个(结构改了)或 ≥2 个(谓词有歧义)都算失败。
 func _unique(root: Node, pred: Callable, label: String) -> Node:
 	var hits: Array[Node] = []
 	_collect(root, pred, hits)
@@ -413,7 +403,7 @@ func _name_nodes(root: Node) -> void:
 func _name_children(n: Node) -> void:
 	var used := {}
 	for c in n.get_children():
-		# ★★ 只给「自动名」起名:代码建的节点若没显式 name = …,Godot 给的是 @HBoxContainer@12 这种;而显式起过名的(如结算页的 Panel / TitleLabel)本来就是语义名,再改一遍等于把作者的意思抹掉。判据就是那个 @ 前缀。
+		# ★★ 只给「自动名」起名:代码建的节点若没显式 name = …,Godot 给的是 @HBoxContainer@12 这种;而显式起过名的(如结算页的 Panel / TitleLabel)本来就是语义名,再改一遍等于把作者的意思抹掉。
 		if str(c.name).begins_with("@"):
 			var base := c.get_class()
 			var k: int = int(used.get(base, 0)) + 1

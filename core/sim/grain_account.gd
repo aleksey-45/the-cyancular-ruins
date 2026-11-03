@@ -2,10 +2,6 @@ class_name GrainAccount
 extends RefCounted
 
 # 时间颗粒账户(个人钟的记账芯):总余额 + 短时限额 + 贷款状态机,纯逻辑零场景依赖(-s 可测)。
-# balance 总余额(结晶入账只进这里) / short_used 短时窗已用 / loan_used 贷款已借(窗满后继续消耗即借入) /
-# loan_depth = loan_used/loan_max ∈ [0,1](世界反馈:变亮/色差/敌加速/变调的驱动量) / locked 贷满后强制锁定,
-# 长针以 50/s 回拨、还清为止,期间任何技能都取不出颗粒(按了也空转)。
-# 口径:spend 一笔同时扣「总余额」与「短时窗」;regen 50/s 先还贷后回窗(还清瞬间解锁);deposit 只加总余额(夹上限)。
 
 signal balance_changed(balance: float)
 signal window_changed(short_used: float, loan_used: float)

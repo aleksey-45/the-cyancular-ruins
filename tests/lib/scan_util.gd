@@ -92,7 +92,7 @@ static func func_body(code: String, name: String) -> String:
 
 
 ## 同上,但只认行首(列 0)的函数定义。
-## ★★ 为什么必须有它:func_body 是裸子串搜索,而 code_only 会剥掉缩进 ⇒ 文件里若有内部类且它也有同名方法,那个缩进的方法会被当成顶层那个先命中 —— 取到的是错的那个体,而且不报错(实测:scenes/level_0.gd 的内部类 _Reaper 也有 func _ready())。★ 配套要求:code 必须是保留缩进的 code_view。
+## ★★ 为什么必须有它:func_body 是裸子串搜索,而 code_only 会剥掉缩进 ⇒ 文件里若有内部类且它也有同名方法,那个缩进的方法会被当成顶层那个先命中 —— 取到的是错的那个体,而且不报错(实测:scenes/level_0.gd 的内部类 _Reaper 也有 func _ready())。
 static func top_func_body(code: String, name: String) -> String:
 	var i := code.find("\nfunc " + name + "(")
 	if i < 0:

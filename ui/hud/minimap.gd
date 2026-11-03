@@ -1,7 +1,7 @@
 class_name Minimap
 extends CanvasLayer
 
-# 小地图(可选视觉):以玩家为中心的圆形视野。地形由 ui/minimap_circle.gdshader 画圆(圆外直接 discard),敌人点只在圆内(世界距离 <= RANGE_CELLS 格)才显示;由 pvp_client / royale_game / team_game 按设置挂载。
+# 小地图(可选视觉):以玩家为中心的圆形视野。
 # ★ 环面:地形靠采样器 repeat_enable 免费回绕;敌人距离走 toroidal_delta_px 的最短向量 —— 玩家在接缝附近时地图另一头的敌人其实就在身边,直接相减会判成"很远"而误藏。
 
 const RADIUS_PX := 140.0    # 圆在屏幕上的半径(像素)
@@ -10,7 +10,7 @@ const RADIUS_PX := 140.0    # 圆在屏幕上的半径(像素)
 const RANGE_CELLS := 50.0
 const PX_PER_CELL := RADIUS_PX / RANGE_CELLS
 const EDGE := 24.0          # 圆的外接方框距屏幕**右**边缘
-# 距屏幕下边缘的留白。★ 必须比 EDGE 大得多 —— 右下角是延迟条(PingWrap 锚在离下边 24px 处、向上生长),而小地图 layer 131 画在 PvpHud(130) 之上 ⇒ 旧缩略图碰不到它,换成 280×280 的圆会盖住延迟数字。
+# 距屏幕下边缘的留白。
 # ★ 这个数是算出来的不是拍的:延迟条 font_size 32、锚在离下边 24px 向上生长,实测其矩形上沿 y=1367、左沿 x=1784;圆心 (1756, 1300-EDGE_BOTTOM)、半径 140
 #   ⇒ "不压到"要求 28² + (1367-cy)² > 140² ⇒ EDGE_BOTTOM > 70.17;用户要 70(恰好差 0.2px 擦到),取 72 留 1.5px 余量。★ 改延迟条字号/文案/锚点或改 RADIUS_PX 都必须重算这个数;零守卫(原 tests/manual/minimap_circle_probe 已删·2026-10-09)。
 const EDGE_BOTTOM := 72.0
@@ -25,9 +25,9 @@ var _local_provider: Callable = Callable()   # () -> Vector2 本地玩家世界�
 var _enemy_provider: Callable = Callable()   # () -> Vector2 对手世界坐标(INF=无)
 # 多目标模式(大乱斗):others_provider () -> Array[Vector2],按需扩点位池
 var _others_provider: Callable = Callable()
-# 多目标模式(3v3)的可选颜色提供器:() -> Array[Color],与 _others_provider 的返回同序。★ 可选:1v1 / 大乱斗不传 ⇒ 默认 Callable() = 不回填颜色、点位保持 ENEMY_COLOR,两者行为逐字不变。
+# 多目标模式(3v3)的可选颜色提供器:() -> Array[Color],与 _others_provider 的返回同序。
 var _color_provider: Callable = Callable()
-# 3v3 的"我"那个点:队色提供器 () -> Color,可选第四参。★ 必须是每帧求值的 Callable 而不是建点时定下的 Color:队色由 match_sync 下发、比小地图建立晚;不传 ⇒ 自己那个点走 SELF_COLOR,1v1 / 大乱斗行为逐字不变。
+# 3v3 的"我"那个点:队色提供器 () -> Color,可选第四参。
 var _self_color_provider: Callable = Callable()
 # 自己那个点的白描边。★ 同队同色时颜色本身分不出"我"与队友,故需要一个与颜色正交的维度 —— 去掉它就等于没修;1v1 / 大乱斗不显示它。
 var _ring_self: ColorRect

@@ -1,32 +1,8 @@
 extends RefCounted
 
 # O0(bullet-perf 计划 `docs/superpowers/plans/2026-11-01-bullet-perf.md` §O0)· 服务器 tick 分段计时。
-#
-# **只做诊断,默认关**:`NetDiag.enabled()` 为假时(`MatchHost._ready` 把 `on` 定为假)本文件的每个
-# mark 都只是一次「立即 return」的方法调用 —— 不读时钟、不分配、不拼字符串、不写盘,也不改任何行为。
-# ★ 判据故意收在**本文件里**(调用点不写 `if`):MatchHost 的默认路径就只是一串空实现调用,
-#   计划要求的「关闭时零计时开销(一个 if 或空实现)」取的是**空实现**这一支。
-#
-# 用法(MatchHost 是唯一使用方,也是唯一接线点):
-#   var t := _tick_timing.begin()        # 关闭时返回 -1
-#   ...被测的那一段...
-#   _tick_timing.end(&"adjudicate", t)   # 关闭时立即 return
-#   _tick_timing.end_tick(t_all, players, self)   # 整 tick 收尾 + 窗口到点就吐一行
-#
-# 落盘口径:每**一个 `NetDiag.metric_interval_ms()` 窗口**一行 `tick_sections` 到**心跳指标文件**
-# (`metrics-<role>-<pid>-<stamp>.jsonl`)——默认 10s 一行,`--diag-verbose` / `CYR_DIAG_VERBOSE=1` 回到 1s。
-# ★ 窗口长度刻意跟着 `NetDiag.metric_interval_ms()` 走:若自己固定 1s 而文件 10s 才收一条,
-#   中间 9 个窗口会被 `log_metric` 的节流静默丢掉(读数看着对、其实只看过十分之一)。
-# ★ 用 `log_metric` 而不是 `log_event`:这是周期读数,按仓规进心跳文件,不许刷事件文件。
-#
-# ★ 没有 `class_name`:新全局类名要等编辑器重扫 `.godot/global_script_class_cache.cfg` 才生效,
-#   而 headless 探针/导出不重扫 ⇒ 一律 `preload("res://server/match/tick_timing.gd")` 引用。
 
 # 会被逐段累计的段名(**配对的是 MatchHost 里的调用点**,改名要两边一起改):
-#   adjudicate = `_adjudicate_bullets()`(含 `_push_lag_frame`,即 lag 历史写入)
-#   own_snap   = `_flush_own_snapshots()` → `send_own_snapshots()`(含 capture_state + encode_own + 逐 peer rpc_id)
-#   world_snap = `_broadcast_snapshot()`(含 encode_world + 单次广播 rpc)
-#   rewind     = `_tick_beta_rewind()`(Beta 时间玩法才跑,普通局 runs 恒 0)
 const SECTIONS: Array[StringName] = [&"adjudicate", &"own_snap", &"world_snap", &"rewind"]
 
 # 是否累计。**构造时问一次 `NetDiag.enabled()`**(它自己懒查一次就缓存:命令行 `--diag` / `CYR_DIAG=1` /
@@ -99,7 +75,7 @@ func _emit(now: int) -> void:
 			"interval_ms": (now - _win_at) / 1000,
 			"ticks": ticks,
 			"players": _players,
-			# 每 tick 摊到的子弹数(峰值另列):判"这局到底多少弹在飞",别拿末帧读数代表整窗。
+			# 每 tick 摊到的子弹数(峰值另列):判"这局同时在场的子弹数",别拿末帧读数代表整窗。
 			"bullets_avg": roundi(float(_bullets_sum) / float(ticks)),
 			"bullets_max": _bullets_max,
 			"tick_avg_us": roundi(tick_avg),
@@ -107,9 +83,6 @@ func _emit(now: int) -> void:
 		}
 		for section in SECTIONS:
 			# 三段口径分开列,别混读:
-			#   `*_avg_us` = 本窗口**均摊到每个 tick**(sum / ticks) ⇒ 与 tick_avg_us 可比、占比才有意义;
-			#   `*_max_us` = **单次**最长(不摊) ⇒ 看尖峰;
-			#   `*_runs`   = 本窗口跑了多少次(own_snap/world_snap 是 15Hz,只有 1/4 的 tick 有)。
 			var avg := float(int(_sum.get(section, 0))) / float(ticks)
 			d["%s_runs" % section] = int(_runs.get(section, 0))
 			d["%s_avg_us" % section] = roundi(avg)

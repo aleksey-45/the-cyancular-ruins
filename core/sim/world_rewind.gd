@@ -91,10 +91,6 @@ func record(delta: float, player: Node, enemies: Array, bullets: Array) -> void:
 
 ## 进入回溯:清空场上活弹(状态改由快照重建),游标归零。
 # 玩家状态快照:位置/速度/HP/朝向/倒地 + 武器弹量(武器类型与下标、背包各格残弹、手持实弹数)。
-# ★★ 类型化(玩家有 class_name Player 之后):原先这 5 处对**玩家根**按名访问 —— get("velocity") / get("hp") /
-#   get("facing_direction") / has_method("is_downed") / get("weapons")。成员名一改,get 静默返回 null ⇒ 快照值静默退化;
-#   has_method("is_downed") 尤其致命:改名后 downed 恒 false ⇒ 消费端静默跳过倒地/复活还原,且没有任何断言会红
-#   (零守卫:两支 rewind 探针已于 2026-10-09 删)。现在收窄一次,直接成员访问。
 func _snapshot_player(player: Node) -> Dictionary:
 	var p := player as Player
 	var d := {

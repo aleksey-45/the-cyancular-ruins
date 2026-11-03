@@ -43,10 +43,10 @@ func _ready() -> void:
 		add_child(_minimap)
 	_hud = preload("res://ui/hud/pvp_hud.tscn").instantiate() as PvpHud
 	add_child(_hud)
-	# 打击反馈层(命中 X 标记/击杀播报)由 Level0 统一挂载,PvP 继承它。★ 本行有意不写第二次挂载(不是漏写):CombatFeedback 的早退要求 current 已非空,而同帧第二次调用看到的还是 null,真会建出第二份 —— 后来者不要照别的分支把这一行补回来。
+	# 打击反馈层(命中 X 标记/击杀播报)由 Level0 统一挂载,PvP 继承它。
 	# P2 本体固定为青(UiFactory.C_TEAM_B),只染角色 AnimatedSprite2D 本体,武器/预瞄不染。
 	_apply_p2_tint()
-	# Esc 暂停菜单:PvP 不暂停树 ⇒ 对手实时;回主菜单先 NetBus.stop() 断连(worker 检测任一方断线即拆局)。开关/退出由 PauseMenu 自理,但本地输入锁必须宿主接线 —— 不锁就是「菜单开着还能边跑边开枪」。
+	# Esc 暂停菜单:PvP 不暂停树 ⇒ 对手实时;回主菜单先 NetBus.stop() 断连(worker 检测任一方断线即拆局)。
 	_pause_menu = preload("res://ui/screens/pause_menu.tscn").instantiate() as PauseMenu
 	_pause_menu.is_pvp = true
 	_pause_menu.toggled.connect(func(open: bool) -> void:
@@ -108,7 +108,7 @@ func _on_opponent_left() -> void:
 	if _match_ended or _local == null:
 		return
 	_match_ended = true
-	# ★ 与到达顺序无关的收口:若「服务器断开」先到(worker 收场两条消息同拍),重连循环已经在飞 —— 这里把它停掉,否则它会继续跑满 60 秒。
+	# ★ 与到达顺序无关的收口:若「服务器断开」先到(worker 收场两条消息同拍),重连循环已经在跑 —— 这里把它停掉,否则它会继续跑满 60 秒。
 	_cancel_reconnect()
 	print("[pvp] 对手已离开(2.5s 后回主菜单)")
 	if _hud != null:
@@ -121,7 +121,7 @@ func _on_opponent_left() -> void:
 			return
 		Level0.safe_change_scene(tree, "res://scenes/main_menu.tscn"))
 
-# P2(role 2)的本体颜色 —— 1v1 里唯一的染色规则:自己控 P2 ⇒ 染本地玩家,自己控 P1 ⇒ 染对手副本(只染角色 AnimatedSprite2D,武器不染)。★ 口径:P1 恒蓝、P2 恒青,用的是 3v3 队 2 那个 token(UiFactory.C_TEAM_B),机制在 PvpMatchClient._apply_tint(modulate 比值 = 目标色 / 本体主色)。
+# P2(role 2)的本体颜色 —— 1v1 里唯一的染色规则:自己控 P2 ⇒ 染本地玩家,自己控 P1 ⇒ 染对手副本(只染角色 AnimatedSprite2D,武器不染)。
 # ★ 颜色不可自选(2026-10-24 用户裁定):大厅不再有改色控件;1v1 固定蓝/青,3v3 固定队色,大乱斗按 role 自动取色。
 func _apply_p2_tint() -> void:
 	var body: Node = null
@@ -138,7 +138,7 @@ func _apply_p2_tint() -> void:
 func _apply_role_colors() -> void:
 	_apply_p2_tint()
 
-# 服务器下发的生效选项:同步禁用武器。★ 两端必须同表:本端 equip 对禁用槽会当场拒绝,而输入包里的切枪请求是无条件上行的 —— 服务器若无同一张表就会 equip 成功,两端槽位永久错位且静默;唯一入口 = _on_match_sync,不要连回 NetBusExt.local_match_options。
+# 服务器下发的生效选项:同步禁用武器。
 
 func _apply_peer_names(names: Dictionary) -> void:
 	_names = names

@@ -1,20 +1,6 @@
 extends Node
 
 # 回局真链路探针的观察者(每端一个,挂在 root 上;换场不会把它带走)。三端各跑一条剧本:
-#   c1 = actor:建房 → 开局 → 进 pvp_game → 到 PLAYING → ESC + 点「回到主菜单」→ 按主菜单上那颗「多 人 模 式」(生产入口)→ 在房间列表里点自己那间房那一行 → 回到原局。
-#     断言四条:⓪ 那一行可点(disabled == false)—— 这是新入口本身的断言(前置计划交付的是「对局中的房一律 disabled」,回局这一档要在同一行上把它翻过来;少了这条,「次序写反」会以「c1 一直点不动 → 超时」的形式表现,与「回局坏了」分不开);
-#     ① 回局后进了 pvp_game;② PvpSession.role 与离开前一致;③ 重新收到服务器广播(PLAYING 的 round_state 计数严格增长)—— 这是「真的回到那一局」的唯一客观证据(离场期间客户端断着、一条广播都收不到)。★ 不拿 instance_id 做断言:路径乙会重建场景、节点 ID 必然不同,写成断言就是伪断言(身体未销毁由 tests/probe/reconnect_probe 相① 钉住)。
-#   ★★ 两次进场都走生产入口(按主菜单那颗「多 人 模 式」= main_menu.gd 的 PvpSession.reset() + change_scene_to_file(mp_lobby.tscn)),再由生产那条 change_scene_to_file 建出真大厅页 —— 本端只在页 _ready 之前预置「已连着本探针大厅」(_on_node_added;生产连的是默认端口 7777,本探针不能碰)。
-#   ★★★ 这里曾经写着「主菜单那几步只是换场,不承载判据」并用 _attach_page_in 直接挂页 —— 那句话错了,而且正好错在承重的那一步:主菜单那三个联机按钮的 PvpSession.reset() 就是抹掉回局凭据的那一步(C1);
-#     于是整条测试链(含本探针那条「自己那间房那一行必须可点」)在生产里根本回不去的实现上一直全绿 —— 唯一会红的观测者绕过了唯一会红的那一步。⇒ 别再绕过主菜单;要改这条路径,先想清楚「凭据是在哪一拍没的」。
-#   c2 = 对手:点列表加入 → 进 pvp_game → 在场上留满一个观察窗(C2_OBSERVE),然后才落盘。★ 任务书把 c2 定位成「这一局还在的见证」却没给它任何断言(进了局就 _finish,零条断言也算 OK);这里补四条它自己能观测的:在场并看到 PLAYING / 掉线者的身体每一帧都在权威快照里 / 观察窗内一直是 PLAYING 且局号未变 / 快照连续 —— 没有这几条,c1 那边「回到的是同一局」就没有第二个人作证。
-#   c3 = 第三人:只连大厅:① 列表里看得见这个房(in_match=true)② 加入被拒。★ ② 是用户点名的要求(「C 可以看到 A 与 B 的房间,尽管无论在对战还是掉线 C 都不应该进去」);★ 它同时是 c1 那一行的反向对照:同一行、同一份载荷,c3 手里没有凭据 ⇒ 客户端不该把它变可点(本端断言:那一行 disabled == true)。
-# 失败时把结果写进 user://rejoin_probe_<who>.result(子进程 stdout 父进程看不到)。
-# ★ 两条纪律(与 team_match_watcher 同款):① 先置位再入树(大厅页 _ready 会 deferred 跑一次 _request_list,只有「已连同地址」那一支会复用现有连接,否则它会 NetBus.stop() 并按默认端口 7777 重连用户自己的服务端);② 页挂在探针场景下(不是本节点下):换场时它随探针场景一起被 free,那正是生产的形状。
-# ═══ 与任务书的偏离(理由都在实现处再写一遍)═══ ① c2 的加入触发条件:_room_code 只在 local_room_created 里赋值(只有建房者收得到)⇒ 照任务书写 c2 恒为空串、永远不加入 ⇒ 整跑在 40s 的 BOOT_TIMEOUT 上红,改成「列表里有可点的行就点」。
-#   ② 周期刷新列表(三个角色都要):列表是请求/响应式的,挂页时那 1~2 次请求通常落在「房还没建 / 对局还没开」之前,之后再也不会有列表到达 ⇒ c2 看不到房、c3 看不到 in_match;节拍沿用 team_match_watcher._tick_lobby_join 的 1.5s,且只在连接活着时发(绝不让页走到「未连 → 重连默认端口 7777」)。
-#   ③ 本端自己维持与大厅(29300)的连接,页不许自己去连(生产里那一步是页 _ready → _with_lobby → NetBus.start_client(addr),端口取默认 7777):手法是 _on_node_added 在页 _ready 之前预置 _connected/_connected_addr 并把 PvpSession.server_address 拨回本探针大厅,于是页的 _request_list 走已连快路;万一预置没赶上,_drive_to_lobby_page 有兜底修复(重连 29300 + 拨回地址框),两条路都不碰 7777。
-#   ④ _page 一律用 is_instance_valid 判死活(换场后 _page 是已释放对象,取字段会抛 previously freed);⑤ _rec 的读数要活到结果文件里(任务书用 WRITE 打开 ⇒ 之前写进去的行全被截掉);⑥ c3 那条原来是 _fail(...) 后紧跟一条无条件 _ok(...)(同一件事同时进两个账本),改成 if/else;⑦ 每条判词带断言计数(_checks + MIN_CHECKS_*):被截断的跑不许打印 OK。
 
 const LOBBY_ADDR := "127.0.0.1"
 const ENTER_TIMEOUT := 60.0      # 从挂页到"进 pvp_game 且到 PLAYING"
@@ -137,9 +123,6 @@ func _enter_main_menu() -> void:
 
 
 # 大厅页入树时(生产那条 change_scene_to_file 建出来的)在它 _ready 之前把三件事摆好:
-#   ① PvpSession.server_address = LOBBY_ADDR —— 页的地址框拿它做初值(ui_factory.line_edit(..., PvpSession.server_address)),而 _with_lobby 的快路判据是 _connected_addr == _addr_edit.text;不拨它,页 _ready 那次 deferred _request_list 会判「地址变了」→ NetBus.stop() + 按默认端口 7777 重连(本进程与探针大厅 29300 的连接当场拆掉,症状是「c1 从这一刻起什么都收不到」)。
-#   ② 同一行对转连 worker 也是必需的:_do_go_match 用 PvpSession.server_address 连 worker,而 worker 就在 127.0.0.1 —— 不拨它,c1/c2 会去连云地址上的 29350(必失败)。③ _connected / _connected_addr:让页走「已连」的快路(本进程已经连上大厅了)。
-# ★★ 为什么必须是 node_added:_connected 是页自己的私有变量、新建时恒 false,而页 _ready 末尾就把 _request_list 排进 deferred ⇒ 晚一拍(下一帧)再补就来不及了:页已经走了慢路(NetBus.stop() 拆连接 + start_client 按默认端口 7777 去连用户自己的服务端)。node_added 早于 _ready,所以这两个值在这里设是生效的。
 func _on_node_added(n: Node) -> void:
 	if not (n is LobbyPage) or not n.has_method("_on_room_list"):
 		return
@@ -239,9 +222,6 @@ func _script_path(n: Node) -> String:
 
 
 # 把 _page 与换场对齐:页随旧场景一起被 free 掉之后,下一次进场要重新按按钮(生产入口)。
-# ★ 只有「曾经绑过、又被换场带走」才复位 _menu_clicked;页还没建出来时不能复位(否则每帧都会再按一次按钮,而按钮里是 change_scene_to_file)。
-# ★★ 「曾经绑过」必须用自己的布尔 _page_bound,不能写 _page != null —— 实测(Godot 4.7.1):已释放对象的引用与 null 比较是 true(freed != null → false),
-#   所以 _page != null 在页被换场带走之后恒为 false ⇒ had 恒 false ⇒ _menu_clicked 永不复位 ⇒ 回局那一相永远按不下第二次按钮(症状是「按下主菜单按钮后 25s 没等到大厅页」)。判「页还在不在」只有 is_instance_valid()。
 var _page_bound := false
 
 func _sync_page() -> void:
@@ -353,7 +333,7 @@ func _on_room_list(rooms: Array) -> void:
 			_page.call("_join_code", _room_code, "")
 
 
-# 服务器广播的回合状态。★ PLAYING 的判据取服务器广播的 round_state(state==1),不是本地 _round_locked 的默认值 —— 后者在第一条 round_state 到达之前就是 false,照它判会在刚进场景那一帧就「以为」开打了(team_match_watcher 用的是同一个读数)。
+# 服务器广播的回合状态。
 func _on_round_state(data: Dictionary) -> void:
 	var st := int(data.get("state", -1))
 	if st == 1:
@@ -404,7 +384,7 @@ func _physics_process(delta: float) -> void:
 			_tick_c3(delta)
 
 
-# 每帧重认对局场景。★ 绝不能缓存:本端的剧本里游戏场景会连换三次(大厅 → pvp_game → 主菜单 → pvp_game),旧那具早被 safe_change_scene 退役掉,对着已释放实例取字段会报 previously freed。_game 为 null 表示「此刻不在对局里」(大厅页 / 主菜单 / 换场中间)。
+# 每帧重认对局场景。
 func _refresh_game() -> void:
 	var cs := get_tree().current_scene
 	if cs == null or not _is_game(cs):
@@ -425,14 +405,14 @@ func _is_game(n: Node) -> bool:
 # ── c1(actor)──
 var _c1_sub := 0      # 0 建房/等开局 1 打一会 2 已按 ESC 回主菜单 3 已点自己那间房那一行
 func _tick_c1(delta: float) -> void:
-	# ★ 只看总预算,不看 _page 的死活:相 2 里本端故意要经历「页被换场带走 → 再走一次生产入口」,把 not is_instance_valid(_page) 写进这条守卫会让相 2 永远进不去。各相自己的界(等列表 / 等回局)写在各自的 _phase_t 判据里。
+	# ★ 只看总预算,不看 _page 的死活:相 2 里本端故意要经历「页被换场带走 → 再走一次生产入口」,把 not is_instance_valid(_page) 写进这条守卫会让相 2 永远进不去。
 	if _phase_t > ENTER_TIMEOUT + MENU_TIMEOUT + REJOIN_TIMEOUT + RESULT_WAIT:
 		_finish("c1 超时(阶段 %d)" % _c1_sub)
 		return
 	_sync_page()
 	match _c1_sub:
 		0:
-			# 进对局前那一份大厅页也走生产入口(理由见文件头:两次进场同一条路)。★ 页那一路不是推进条件:本相唯一的推进条件是「真进了对局场景」——把「页还不存在」也当成「不能推进」会让本相卡死(页在进对局那一刻被换场带走,此后 _drive_to_lobby_page(true) 恒返回 false ⇒ ESC 那一步永远不发生)。
+			# 进对局前那一份大厅页也走生产入口(理由见文件头:两次进场同一条路)。
 			_drive_to_lobby_page(true)
 			# ★ 2026-10-24 起 1v1 **不再自动开局**:房主必须点「开始游戏」。本探针走生产入口但没人去点 ⇒
 			#   房停在 players=2 port=0(rejoin_probe 自 2026-10-24 起的已知红)。这里以 1s 节拍代按同一 RPC

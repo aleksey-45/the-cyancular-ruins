@@ -1,11 +1,6 @@
 extends SceneTree
 
 # 水判定冒烟(纯逻辑 -s,合成网格,不读地图文件、不引 autoload)。
-# 最强保证:Water.sample_body 的采样点/水面线/滞回/环面归一/全液列上限按设计工作,
-#   且 feet_offset 的缓存签名能把 CollisionPolygon2D 的姿态切换算进去(旧实现只数 CollisionShape2D ⇒ 缓存永不失效)。
-# 测不到什么:实际游泳手感/水面观感(人眼验收)、真实玩家姿态箱几何(player.tscn)、
-#   子弹阻力与爆炸的"点口径"(本轮未迁移)、水粒子观感。
-# 跑法:"$GODOT" --headless --path . -s res://tests/smoke/water_model_smoke.gd;通过 = 结尾打 WATER MODEL OK(n 条断言)。
 
 const EXPECTED_CHECKS := 13
 const ROWS := 12

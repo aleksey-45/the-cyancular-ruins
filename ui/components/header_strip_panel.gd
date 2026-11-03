@@ -2,10 +2,6 @@ class_name HeaderStripPanel
 extends PanelContainer
 
 # 标题带组件(P1/2026-10-27):版式(左右 24 / 上下 20 内边距、只有下边一条线)由 Theme 变体
-# HeaderStrip 给;文字色/字号基准由 HeaderTitle 变体给。本脚本只接三个参数 —— 不要再在这里
-# 写第二份内边距/颜色值,改外观去 tools/gen_menu_theme.gd。
-#
-# 语义档(2026-10-27 用户裁定):页首/弹层/暂停/结算分区/卡片标题 = centered;表单内分区标题 = 左对齐。
 
 @export var title: String = "":
 	set(v):

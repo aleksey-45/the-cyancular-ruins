@@ -1,11 +1,6 @@
 extends SceneTree
 
 # 出生/复活点「按阵营半区的地图数据 → 随机选点」守卫(SpawnChooser + MapFormat 的 `# respawn <1|2>` 解析)。
-# 存在理由:① 解析错一位 ⇒ 选点器拿到不存在的格/重复格;非法坐标用宽松 int() 会静默变 (0,0)。
-#   ② 侧判定错 ⇒ 1v1/对抗的人会出生到对面半区(用户明确要求"各占半区");桶划分错 ⇒ "均匀散布"校验形同虚设。
-#   ③ 选点必须真随机、必须排除"上一次位置"、尽量守最小间距,候选不足时不崩也不回 (-1,-1)。
-# 跑法:"$GODOT" --headless --path . -s res://tests/smoke/spawn_chooser_smoke.gd;通过 = "SPAWN CHOOSER OK(n 条断言)"。
-# 测不到什么:宿主接线(1v1/对抗各自取侧、复活同侧、换边互换)与真实地图数据质量在 tests/probe/map_spawn_data_probe。
 
 const EXPECTED_CHECKS := 19
 const FAR := 15   # SpawnPicker.FAR_CELLS 的当前值(1v1 两人最小环面距离;软约束)

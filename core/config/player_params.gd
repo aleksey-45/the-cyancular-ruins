@@ -72,9 +72,6 @@ const weapon_stop_eps: float = 6.0            # 水平速度低于此值即置�
 const weapon_pickup_self_delay: float = 0.5
 
 # 补间形变(squash & stretch,实现见 scenes/effects/squash_stretch.gd):上限 0.06 = 满冲击时最少 0.94 / 最多 1.06,
-# 每项都是在 [-1,1] 的合成量上相乘 ⇒ 叠加多少事件都不会超上限。★ 这组常量在 EnemyParams.shared 有一份同名同值
-# 副本(8 个同名:amount / recover / land_min_vy / land_ref_vy / land / hurt / air / air_ref_vy),两侧刻意不共享常量
-# ⇒ 改一侧要问另一侧是否也该改;零守卫(squash_stretch_smoke.gd 已删·2026-10-09 曾逐名钉这 8 个同值),两份漂移是真隐患。
 const squash_amount: float = 0.06          # 满冲击形变量
 const squash_recover: float = 16.0         # 冲击回归速率(指数,越大回正越快)
 const squash_jump: float = 0.75            # 起跳拉伸

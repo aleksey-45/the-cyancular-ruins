@@ -1,15 +1,5 @@
 extends SceneTree
 # 地面武器纯逻辑表守卫(「看得见却捡不起来」修复的承重部分之一)。
-# 守卫对象 = GroundWeaponField(纯逻辑:无 autoload / 无 Node ⇒ 本文件能 `-s` 跑):
-#   add / remove / get_entry / nearest_within(环面最短距离)/ **reanchor**(2026-11-01 新增)。
-# ★ reanchor 是"落定重锚"的半个实现:服务器在武器落定那一刻重播一次权威位置,客户端收下并把本地副本搬过去;
-#   没有它,两端各自模拟落体(地形/时序不同)的落点会永久差几十~上百 px ⇒ 玩家看着枪在脚边、服务器判 range。
-# 去掉什么才红:reanchor 改成恒 return false ⇒ ③④ 红;reanchor 顺手把 type_id/mag 也覆盖掉 ⇒ ⑤ 红;
-#   nearest_within 里的环面距离改成绝对坐标差 ⇒ ② 红(接缝另一侧的枪会"隔着整幅地图")。
-# 测不到什么:① 客户端节点是否真的跟着搬(要 WeaponPickup + 真实场景,属真链路/人眼);
-#   ② 服务器落定检测(`_settled` false→true 只发一次)与 `weapon_spawned` 重播时序(要真 MatchHost);
-#   ③ 拾取意图 0.4s 重试(要真玩家按 F)。
-# 跑法:"$GODOT" --headless --path . -s res://tests/smoke/ground_weapon_field_smoke.gd;通过 = GROUND WEAPON FIELD OK(n 条断言)。
 
 const EXPECTED_CHECKS := 5
 

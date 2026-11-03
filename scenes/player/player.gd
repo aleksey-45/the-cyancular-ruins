@@ -13,10 +13,6 @@ var gravity: float = GameParameters.gravity0
 # 加 2px(远小于一个 16px 子格,肉眼不可辨)保证真的能站上去。
 const AUTO_JUMP_CLEARANCE := 2.0
 # ★ 2026-11-01(R1 删):这里原有一个 `AUTO_JUMP_ASSIST_S = 0.25s` 的"自动跳后强制满速"窗口。
-#   它不进 capture_state() ⇒ 回滚重放时第一遍把窗口衰减掉、第二遍走 approach_air ⇒ 横移从第 1 帧就不同
-#   (重放变成新历史,不是复现)。现在只保留"起跳/迈台阶那一瞬间把 velocity.x 拉满"(velocity 本来就在整态里)。
-# 卡脚修复的抬升上限(px):跳上台阶时脚底会以 ≤1 个子格(16px)的深度卡进台沿的竖直面/顶面,
-# 判据见 _try_ledge_nudge。超过这个深度就不是"卡脚"而是真撞墙,不该抬。
 const AUTO_LEDGE_NUDGE_PX := 16.0
 var jump_velocity: float = PlayerParams.jump_velocity
 var charge_down_velocity: float = PlayerParams.charge_down_velocity
@@ -210,7 +206,7 @@ func _physics_process(delta: float) -> void:
 	_speed_mult = tm
 	if TimeField.current != null and TimeField.current.is_rewinding():
 		return
-	# squash 必须在最首行(倒地早退之前):否则倒地后 animator.scale 会卡在最后一个挤压值上。参数成对读:is_on_floor() 是上一帧 move_and_slide 的结果,_pre_move_vy 是那次调用之前缓存的 velocity.y。
+	# squash 必须在最首行(倒地早退之前):否则倒地后 animator.scale 会卡在最后一个挤压值上。
 	squash.tick(delta, _pre_move_vy, is_on_floor(), combat.is_downed())
 	if combat.is_downed():
 		# 倒地不更新 _pre_move_vy:不归零的话,被击杀那一刻的下坠速度会陈旧地留满整个倒地窗口,并与复活首帧的地面态配对 → 一个满幅假挤压脉冲。
@@ -326,12 +322,6 @@ func _tick_vertical(delta: float, latched: bool, in_water: bool, mult: Vector2) 
 
 
 # ★★ 迈台阶 / 自动跳(用户 2026-11-01 三轮反馈的收敛版)——
-#   必须在 **move_and_slide 之前**判断"这一帧的水平位移会不会被低台阶挡住":
-#   旧实现是"撞上台阶之后下一帧才抬" ⇒ **每级台阶固定丢一帧水平位移**(700px/s ≈ 12px),
-#   连续台阶就是"走一下、顿一下"的卡顿感(这正是用户说"还是卡顿"的剩余来源)。
-#   现在:test_move 先探本帧位移 → 被挡且是矮台阶 ⇒ 先抬到台阶顶、同一帧的 move_and_slide 就迈上去;
-#   3~4 子格(48/64px)按台阶高度起跳。判据只读两端同一份 16px 子格 + 物理 test_move,
-#   客户端预测与服务器重放读同一份状态 ⇒ 联机下同一结论(差异只会来自拆砖等本就该回滚的事件)。
 var _step_up_snap := false   # 本帧抬过台阶 ⇒ move_and_slide 之后 apply_floor_snap() 吸地
 
 func _try_step_or_jump(delta: float, mult: Vector2, horizontal_input: float) -> void:
@@ -412,9 +402,6 @@ func _step_up_headroom_clear(feet_sub: Vector2i, dir: int, step_sub: int) -> boo
 
 
 # 卡脚修复:跳跃/下落贴着台沿时,脚底会以 ≤1 个子格的深度卡在台沿竖直面或顶面
-# (矩形碰撞箱同时撞"地板+竖墙"两面 ⇒ velocity.x 被接触解算吃掉、人贴着台沿往下滑)。
-# 处理:空中 + 撞墙 + 有横移输入 + 台沿顶面在脚上方 ≤ AUTO_LEDGE_NUDGE_PX + 台沿上方一格净空 ⇒ 抬到台沿上,
-# 横移速度保留(比等碰撞滑开快得多)。判据读两端同一份 16px 子格 ⇒ 客户端预测与服务器重放决定一致。
 func _try_ledge_nudge(in_water: bool, latched: bool, horizontal_input: float) -> void:
 	if in_water or latched or is_on_floor() or not is_on_wall() or absf(horizontal_input) < 0.01:
 		return
@@ -618,7 +605,7 @@ func is_downed() -> bool:
 func is_charging() -> bool:
 	return is_charge
 
-# 本物理步的滑动碰撞里有没有非地形碰撞体(= 远端玩家身体所在的层)。判层不判组名/节点名:判 player_replica 组要在本文件写字面量而与它互相引用成环,判 TEAM_ENEMY_LAYER 又会把 server/ 拖进核心玩家类。
+# 本物理步的滑动碰撞里有没有非地形碰撞体(= 远端玩家身体所在的层)。
 # ★ 地形恒为层 1 ⇒ 与 ~1 相与就是非地形;本地玩家的 mask 里除地形外只有对手幽灵体(3v3 队友在层 2、本地 mask 不含 2 ⇒ 队友不算接触)。
 # ★ 写成函数而不是每帧刷新的字段:本文件 move_and_slide() 有 3 个调用点,做字段必然漏刷一处,而漏了不报错。用途:C2 预测只在贴身时放宽容差。
 func touching_player() -> bool:
@@ -682,7 +669,7 @@ func capture_state() -> Dictionary:
 		# ★ 与 mag/rld 同口径:进 capture/restore,不进 _close_enough 的比对。加法式键:老接收端忽略未知键,不协商。
 		"winst": weapons.current_inst(),
 	}
-	# 背包整表(每条 {type, inst, mag})必须进整态:restore_state 会 equip_type(wslot),若不先重建背包,重放时可能切到客户端背包里没有的类型(equip_type 只 push_error、不再凭空造枪)。只进 capture/restore,不进比对。
+	# 背包整表(每条 {type, inst, mag})必须进整态:restore_state 会 equip_type(wslot),若不先重建背包,重放时可能切到客户端背包里没有的类型(equip_type 只 push_error、不再凭空造枪)。
 	st["inv"] = weapons.snapshot_inventory()
 	var w: WeaponBase = weapons._weapon
 	if w != null:
@@ -691,7 +678,7 @@ func capture_state() -> Dictionary:
 		st["fire_buf"] = w._fire_buffered
 		st["aim_f"] = w._aim_facing
 		st["aim_cf"] = w._current_aim_facing
-		# 弹药/装填必须进整态,否则 rollback 重放不确定:同一串输入在记得残弹与忘了残弹两种初态下会走出不同结果,重放就不是复现而是新历史。只进 capture/restore,不进比对(_reload_t 是连续量,比它会每帧判分歧、每帧回滚)。
+		# 弹药/装填必须进整态,否则 rollback 重放不确定:同一串输入在记得残弹与忘了残弹两种初态下会走出不同结果,重放就不是复现而是新历史。
 		st["mag"] = w.mag_ammo
 		st["rld"] = w._reloading
 		st["rld_t"] = w._reload_t
@@ -798,9 +785,6 @@ func _apply_weapon_state(st: Dictionary) -> void:
 		w._aim_facing = int(st.get("aim_f", w._aim_facing))
 		w._current_aim_facing = int(st.get("aim_cf", w._current_aim_facing))
 		# 弹药/装填随权威整态回灌(理由见 capture_state)。
-		# ★ 必须走 WeaponComponent.apply_mag():本帧刚重建过实例时 _weapon 还没入树,直接写 mag_ammo 会被 _ready 用条目旧值盖掉;apply_mag 按 is_inside_tree() 分流,未入树写 pending_mag 由 _ready 消费(同步调用,不排 deferred)。
-		# ★★ 只在载荷**真的带了** mag 时回灌:软同步(sync_soft_state)的载荷没有 mag,旧写法拿 `w.mag_ammo` 当默认值,
-		#   而刚重建的实例还没入树、mag_ammo 是声明初值 0 ⇒ 一按 winst 重建就把 pending_mag 冲成 0(两把狙击枪切到第二把 = 0 弹)。
 		if st.has("mag"):
 			WeaponComponent.apply_mag(w, int(st["mag"]))
 		if st.has("rld"):
@@ -1004,11 +988,6 @@ func rewind_restore(d: Dictionary) -> void:
 	facing_direction = int(d["facing"])
 	var downed_now := is_downed()
 	# 武器弹量回溯:背包各格残弹 + 手持那件实弹;当前武器不同则切回。
-	# ★ 类型化访问取代早先的字符串反射(get/call/set 带字符串):反射改名只在运行期暴露 —— get 拼错静默返回 null、整段被 if 跳过,set 拼错静默不写,call 拼错会中止整个 rewind_restore。
-	# ★ 买到的不是编译期就红(Godot 对 class_name 脚本类型上的未知成员只当警告级不安全访问),而是错当场、点名成员、带文件行号地炸,而不是静默把状态写歪。零守卫:rewind_weapon_probe 已删(2026-10-09)。
-	# ★ 语句序:切枪必须排在条目写回之前 —— _equip_index 会把走掉那把的出膛实弹写回条目,排在写回之后就会冲掉刚恢复的快照值。
-	# ★ 语义口径(别改成以条目为准):回溯 = 逐字段回到快照记录的值,wlive(手持实弹)与 wmags(各槽条目)在快照时就允许不同(条目只在切枪/丢弃时同步,开火只扣 mag_ammo)⇒ 任何从条目推导当前枪、或从当前枪写回条目的动作,都不许在恢复之后把已恢复的值改掉。
-	# ★ wlive < 0(快照没记手持实弹)且确实切了枪时,新实例取快照条目值 held[widx](旧语句序里 _equip_index 就是从恢复后的条目取的)。
 	var wc: WeaponComponent = weapons
 	if wc != null and d.has("wmags"):
 		var inv: WeaponInventory = wc.inventory

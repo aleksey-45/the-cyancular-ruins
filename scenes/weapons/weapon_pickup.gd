@@ -58,7 +58,7 @@ func _ready() -> void:
 	velocity = drop_velocity
 
 
-# 由生成方调用。★ 必须在 add_child 之前调:_ready 会按当时的 type_id 建视觉与碰撞箱,先入树再 configure 的话 _ready 已经用 @export 默认值(手枪)建过一次了;入树后仍可调,走重建路径。
+# 由生成方调用。
 func configure(p_type_id: int, p_inst: int, p_mag: int, p_vel: Vector2) -> void:
 	type_id = p_type_id
 	inst = p_inst

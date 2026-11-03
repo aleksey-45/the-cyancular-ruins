@@ -86,10 +86,6 @@ func _apply_bus_volume(bus_name: String, linear: float) -> void:
 	AudioServer.set_bus_mute(idx, linear <= 0.001)
 
 # ── 显示:按可用区挑一档能放下的分辨率 ── 返回能放下的最大档;四档全放不下时返回最小档(不是 0、不崩 —— 缩到最小档仍比"窗口被 OS 钳到屏幕外"好)。
-# ★ 为什么要有它(用户裁定,而不是静态 window_width_override):基准逻辑空间 1920×1440,而装不下它的屏(如 1080p)上照存档档开窗会超出屏幕、被 OS 钳位
-#   ⇒ 玩家看到"既不全屏也不居中";静态键无法自适应任意屏,"收进屏幕"只能在运行时量可用区 ⇒ 选择逻辑落在这里,开窗动作落在 apply_display()。
-# ★ 纯函数:不读 DisplayServer、不写任何字段、无副作用 ⇒ headless 下也可真红真绿。★ 逻辑空间不动(仍 1920×1440),窗口档只决定窗口多大。
-# ★ 不靠 DISPLAY_RESOLUTIONS 的下标顺序:"放得下的最大"与"最小"都按面积现算。⚠ 覆盖上限:只保证选出来的档对,"真窗口真的变成这个尺寸/真的居中"非 headless 仍未实测(非 headless 的窗口尺寸此前一直未实测)。
 func fit_resolution(available: Vector2i) -> Vector2i:
 	var smallest := DISPLAY_RESOLUTIONS[0]
 	for r in DISPLAY_RESOLUTIONS:
@@ -104,10 +100,6 @@ func fit_resolution(available: Vector2i) -> Vector2i:
 	return best
 
 # ── 显示:把内存里的档位落到真窗口 ── 两个调用方:autoload _ready()(开窗即用存档档)与设置页(玩家改完即时生效)。
-# ★ headless 早退:无窗口后端(服务器 / -s 冒烟)上不该碰窗口 API。★ 收进屏幕:存档档放得下就照它(用户裁定优先),放不下才改用 fit_resolution()。
-# ★ 改完尺寸必须按可用区重新居中 —— 实测不重居中时窗口会停在"按旧尺寸算出的位置"、小屏上偏到一边。
-# ★ 可用区取 screen_get_usable_rect(不是 screen_get_size):任务栏占掉的像素不算可用(实测本机 2560×1600 vs 可用 2560×1528)。
-# ⚠ 覆盖上限:"存档档放得下就照它"那两行内联在早退之后,headless 结构性走不到 ⇒ 无运行时守卫(要真覆盖得跑一次非 headless 读窗口几何)。
 func apply_display() -> void:
 	if DisplayServer.get_name() == "headless":
 		return

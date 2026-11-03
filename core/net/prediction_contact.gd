@@ -1,13 +1,6 @@
 extends RefCounted
 
 # 预测接触判据 / 动态容差的纯函数(无 autoload、无 SceneTree ⇒ `-s` 可测)。
-#
-# 为什么要这一层:客户端预测撞的"对手身体"是幽灵体 = **最新快照**(滞后 ≈ 单程 + 0~1 tick 发包间隔;
-# 跑速 700 时 0~12px),而服务器裁决用自己此刻的位置。旧实现:①幽灵体直接吃最新快照、不外推;
-# ②"是否贴身"用客户端自己的碰撞结果 `touching_player()` 判 ⇒ 追人时幽灵滞后让你预测穿过去、
-# 判不到贴身 ⇒ 仍按 2px 容差,每 60Hz 验证点挨一次回滚。这里给两件事:
-#   - `rect_gap`:用"预测身位到幽灵 AABB 的间隙"判贴身(不依赖本帧是否真的撞上);
-#   - `contact_tol`:贴身容差按"相对速度 × 滞后"动态抬高,封顶 48px(约 0.6 身位,不掩盖真分歧)。
 
 const CONTACT_GAP := 12.0      # 预测身位 AABB 间隙 ≤ 此值视为"贴身区"(px)
 const MAX_LAG_S := 0.05        # 幽灵滞后估计上限(单程 + 半个 60Hz 间隔,封顶 50ms = 3 tick)
@@ -40,11 +33,6 @@ static func ghost_horizon_s(ping_ms: int) -> float:
 
 
 # 贴身容差(px):下限 8(旧行为),随"相对速度 × 滞后"增长,封顶 48。
-# ★ 2026-10-31:drift 取「相对速度」与「幽灵锚点自身速度」的**大者** —— 本地玩家是被**幽灵所在位置**挡住/推开的,
-#   所以即使双方同速同向(相对速度≈0),预测位置与服务器仍差 |v_ghost|×horizon(跑速 700 ⇒ 35px);
-#   只按相对速度算会让这一档恒用 8px ⇒ 每 5~6 个 ack 回滚一次(实测 3 客户端 soak:接触期 pos 分歧 p50≈10~26px)。
-# ★ TOL_MODEL_FACTOR:实测残差 = pos_err / 计算容差,p50≈1.1~1.5、p90≈1.7~2.0 ⇒ 模型系统性偏紧一倍;
-#   乘 2 后 pos 类回滚剩 ~9~12%(仍被 48px 封顶兜住,不会无限放宽)。
 const TOL_MODEL_FACTOR := 2.0
 
 static func contact_tol(rel_speed: float, anchor_speed: float, horizon_s: float) -> float:

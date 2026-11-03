@@ -2,15 +2,6 @@ class_name Unstick
 extends RefCounted
 
 # 「把一个压进实心格的矩形向上挤出去」的单一来源。纯静态、不引 autoload(格尺寸由参数传入,
-# 同 core/tile_query.gd / core/collision_aabb.gd 的约定),故 `-s` 可 load。
-#
-# 目前只有地面武器(scenes/weapons/weapon_pickup.gd)在用 —— 贴墙丢弃、或停稳后
-# 可破坏砖被重铺盖在它身上时会嵌进实心格。EnemyFlyBase 的"向下逃逸"是另一套
-# (只在 A* 空路径时触发、且方向相反),日后要接同一套可复用本类。
-#
-# ★ 为什么不整格跳:一格 = 64 世界像素,轻微嵌进去就弹一整格,视觉上很突兀,
-#   也会让"落点与何时开始模拟无关"这条联机地基更难对(两端嵌入深度可能不同)。
-#   本类每步只推"刚好清空当前最靠上那一行"的量。
 
 const PROBE_INSET := 0.5   # 探测矩形四边内缩(像素)
 

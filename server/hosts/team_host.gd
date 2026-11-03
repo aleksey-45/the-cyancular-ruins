@@ -2,17 +2,6 @@ class_name TeamHost
 extends MatchHost
 
 # 对抗模式(内部 mode id 仍是 "team")第三个模式宿主,与 RoyaleHost 平级:两队(各 1..5 人,总 2..10)、三局两胜、
-# 每局先到**动态目标**击杀赢一局(目标 = 总人数 + 3,钳 [5,13] ⇒ 6 人 = 9,与改造前的 3v3 逐字一致)、局间整队换边、
-# 局内死亡 2s 复活;击杀后不复位任何人(代价见 _match_round_tick)。★ 计分不分死因:任一玩家倒地 → 对方队 +1;
-# 子弹穿透队友、爆炸对队友满效(现状)。★ 掉线:整队走光才终局(走光即弃权,两队都走光 = 平局);队伍归属来自 MatchState._team_of。
-# ★★ 人数不等时给少人方三种补贴(公式的**单一来源** = core/mp/team_rules.gd,本文件只负责"什么时候用"):
-#   ① 开局比分补贴(每局开局给,上限 目标-1);② 血量补贴(max_hp 加成,服务端真值 + 客户端镜像);
-#   ③ 伤害补贴(只在人数差 ≥ 阈值时给,倍乘**弹丸直击/激光**的武器伤害 + 榴弹的直击/爆炸伤害)。
-#   人数差为 0(含 6 人 3v3)时三处都**恒等**:目标 9、不写比分、max_hp 不动、倍率 1.0 —— 既有 6 人探针照旧。
-# ★ 本类是末端子类,生命周期钩子只能在这里;_init 顺序不可整理。
-# ★ 出生点/选点:数据 = 地图 `# respawn 1|2`(按阵营半区写死;队 1 = 侧 1 左半、队 2 = 侧 2 右半,换边时互换);
-#   随机/排除上一局/侧的选择在 TeamSpawn.plan_team_spawns,本文件只持有 _round_spawns / _side_swap_round /
-#   _spawned_once / _last_spawn 四份状态与 _spawn_cell / role_spawns / _respawn_cell_for 的覆写。
 
 const TEAM_ROUNDS_TO_WIN := 2    # ★ 不能叫 ROUNDS_TO_WIN:基类 MatchState 已有该常量,同名遮蔽会报错
 # ★ _endgame_winner 的「未定」哨兵:必须三态,不能拿 0 当未定 —— 0 是合法结果(两队都走光 = 平局)。
@@ -121,9 +110,6 @@ func _on_team_weapon_changed(_type_id: int, role: int) -> void:
 
 
 # 伤害补贴的**弹丸直击/爆炸**那一半:`hit_damage` 已由武器 `damage` 乘过(见上),此处只乘子弹场景自带的
-# `direct_hit_damage` / `explosion_damage`(榴弹的直击与 AoE 走它们,不经武器 damage)。
-# ★ 挂在裁决之前(而不是自己另起一个节拍):子弹出膛后第一帧就会被裁决,晚一拍就可能漏掉首发。
-# ⚠ 已知边界:爆炸伤害对**队友与自伤**同样吃这个倍率(本模式的爆炸对队友满效是既有裁定),见 registered-debt。
 func _adjudicate_bullets() -> void:
 	var mult := float(_rules.get("damage_mult", 1.0))
 	if mult > 1.0:
@@ -211,9 +197,6 @@ func _respawn_cell_for(role: int) -> Vector2i:
 
 
 # ★ 复活时清 last_damager / last_damager_time:meta 在受击瞬间写下、跨倒地保留,而归因窗口是 ATTRIB_WINDOW(3s)⇒ 复活后 3s 内的
-# 环境死亡会记到复活前那名射手头上。与 RoyaleHost 那份逐字同构(对等性欠债别留)。⚠ 零守卫:team_host_probe 已删(2026-10-09)。
-# ★★ 逐字同构但**刻意不并到 MatchHost**:MatchHost 同时是 1v1 的类 ⇒ 上提等于让 1v1 也清这两条 meta,
-#    而 Beta 局的 award_damage 读的正是 3s 窗口(_attributed_role_within)⇒ 1v1 复活后的伤害归因会变。
 func _respawn_player(role: int) -> void:
 	super._respawn_player(role)
 	var p: Node2D = players.get(role)
@@ -286,11 +269,6 @@ func _match_round_tick(delta: float) -> void:
 
 
 # ★ _round_over 不再覆写:本模式要的「记局胜(键 = 队号)+ 置 ROUND_OVER + 广播」与 MatchRound._round_over 逐字相同
-#   (调用点传的就是队号 `_round_over(t)`),原先那份等于把基类整段抄了一遍。
-# 换局:局胜到 TEAM_ROUNDS_TO_WIN → MATCH_OVER;否则整队换边 + 下一局。★ 与基类的实质差异:① 局胜的键是队号(基类按 role 查,
-# 团队下永远是 0 → 永远打不完);② 换边 = 两队换用另一侧的 `# respawn` 点集(队 1↔侧 2 / 队 2↔侧 1),且每局从列表里重随机;
-# ③ 换边后必须清 _spawned_once —— 否则 _spawn_cell 走动态复活点分支,开局的人会被撒到「离敌人远」的随机格而不是本方出生点。
-# ★ 与 _match_winner() 互补:一个判要不要进 MATCH_OVER,一个判报哪一队。
 func _start_next_round() -> void:
 	if _threshold_team() != 0:
 		_round_state = RoundState.MATCH_OVER
@@ -379,7 +357,7 @@ func _roles_of_team(team: int) -> Array:
 # 单一来源仍是 CombatFeedback 写 meta + MatchState._attributed_role_within 读。
 
 
-# ── 中途掉线(宽限期到点后由 server_main 调):移出对局,但整队走光才终局。★ 判据是「某个队一个人都不剩」,不是 royale 那条 players.size() < 2(6 人局掉 1 个就终局 = 剩下的人白打);也不能数 peer_by_role(那是「有连接的人」)。
+# ── 中途掉线(宽限期到点后由 server_main 调):移出对局,但整队走光才终局。
 func mark_disconnected(role: int) -> void:
 	role = int(role)
 	if not _detach_role(role):
@@ -415,9 +393,6 @@ func _finish_match() -> void:
 
 
 # ── 自杀脱困(K 键:客户端 → NetBusExt.suicide_request → server_main._on_suicide_request)── 异常卡死时主动放弃生命,先清归因 ⇒
-# 自杀不计入任何人击杀(对抗下落进无归因档:对方队 +1、无人被计击杀)。★ 必须留在子类;server_main 原先只认 _royale ⇒ 对抗的 K 键被静默丢掉。
-# ★★ 与 RoyaleHost 那份逐字同构,但**不许**并到 MatchHost:server_main 按 `has_method("request_suicide_role")` 派发 ⇒
-#    上提就等于给 1v1 也开了 K 键自杀(那是行为变更,不是重构)。
 func request_suicide_role(role: int) -> void:
 	if _round_state != RoundState.PLAYING:
 		return

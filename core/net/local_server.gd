@@ -2,10 +2,6 @@ class_name LocalServer
 extends RefCounted
 
 # 本机服务器一键启动/重启(客户端大乱斗大厅 / 1v1 页的按钮用):按映像名强杀旧服务端 + 清掉占用大厅端口的
-# 残留进程(含 bat 起的旧 Godot 大厅),再从客户端同目录拉起新实例 ⇒ 按一次按钮必然回到"全新空大厅"状态。
-# 服务端 exe = 与客户端同目录的 "Cyancular Ruins Server.exe"(打包脚本保证成对生成);仅 Windows(taskkill/netstat),找不到 exe 返回明确提示。
-# ★ restart() 是协程(内部有等待),调用方必须 await。
-# ★ 局域网候选 IP / 提示的实现已搬到 core/net/lan_ip.gd(本文件只管进程控制);这里只留同名转发壳,调用点不变。
 
 const SERVER_EXE := "Cyancular Ruins Server.exe"
 const LOBBY_PORT := 7777

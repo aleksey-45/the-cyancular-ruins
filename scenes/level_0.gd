@@ -30,8 +30,8 @@ static var pvp_mode: bool = false
 # 做法:新场景手动实例化并接管 current_scene,旧世界摘树,再交给分帧拆除器(见 start_reap)在后续几秒里一小批一小批拆掉 —— 既躲开「一帧里同步 memdelete 整具世界」,又不像以前那样永不释放(那会让退出时渲染器析构段错误)。
 # 注意:摘树必须回到帧末进行,故本函数先 await 一帧(见函数内注释)。
 
-# 换场「在飞」标志:防同帧/近帧重入。本函数首行 await 一帧,故两次调用可以同时在飞;第二次 resume 时 old = tree.current_scene 拿到的已是第一次刚建出来的新场景 ⇒ 再实例化一份、把第一份也挂进拆除队列(建出两份场景、菜单叠菜单)。触发很现实:PvP 的「对手离开」2.5s 定时器与玩家点「回到主菜单」可以先后落在同一帧附近。
-# ★ 守卫放在这个收口点而非各调用点:调用点每新增一条退出路径就要记得补一次守卫,漏一条就复现 —— 与「拆除逻辑散在多处」同病;此处一处覆盖全部现有与将来的调用方。
+# _switching:换场进行中(防同帧/近帧重入)。
+# ★ 守卫只放在这里:调用点漏补一次就复现,收口点一处覆盖全部调用方。
 static var _switching: bool = false
 
 ## 个人钟账户与时间场(单机;PvP 不建 → 时间系统整体旁路)
@@ -51,7 +51,7 @@ var _glows: Dictionary = {}
 
 static func safe_change_scene(tree: SceneTree, path: String) -> void:
 	if _switching:
-		return   # 已有一次换场在飞:忽略后到的请求(目标都是主菜单,先到者胜)
+		return   # 已有一次换场未完成:忽略后到的请求(目标都是主菜单,先到者胜)
 	_switching = true
 	# 先回到帧末再动树:调用方(按钮按下 / R 重载的输入处理)可能正处于旧场景节点发出的信号调用栈里,立刻摘树会触发 CanvasItem EXIT_TREE 状态错误(headless 实测)。
 	await tree.process_frame
@@ -73,7 +73,7 @@ static func safe_change_scene(tree: SceneTree, path: String) -> void:
 		tree.root.remove_child(old)
 		t = _perf_log("remove_child(old)", t)
 		old.visible = false
-		# ★ 导出 exe 实测:不再把旧世界挂起 —— 原先摘树后存进 _retired、挂到「下一次换场」才释放,于是退出时那具挂起的世界从不释放 ⇒ SubViewport 的 RID 全泄漏(实测 6264 个 CanvasItem + 3 个 shader 未释放)⇒ 渲染器析构段错误(exit 139),进程要拖约 1.5s 才死(用户报的「玩好一局后点退出要等 1s」就是这条);第 2 次及以后换场还要同步 free 一整具世界(实测 79.5ms)。
+		# ★ 导出 exe 实测:不再把旧世界挂起 —— 原先摘树后存进 _retired、挂到「下一次换场」才释放,于是退出时那具挂起的世界从不释放 ⇒ SubViewport 的 RID 全泄漏(实测 6264 个 CanvasItem + 3 个 shader 未释放)⇒ 渲染器析构段错误(exit 139),进程要拖。
 		# 现在:摘树后立刻交给分帧拆除器,几秒内拆干净 —— 用户真去点退出时它早没了。对照实测(导出 exe):不进游戏的流程退出码 0、零泄漏;进过游戏的是 139。
 		# -- --perf-reap-sync 保留旧行为(同步 free),只给 A/B 对照用:本机负载漂移能让同一段代码的 remove_child 在 20~100ms 之间跳,跨轮比较不可信,只有同进程交替才量得准。
 		if OS.get_cmdline_user_args().has("--perf-reap-sync"):
@@ -85,7 +85,7 @@ static func safe_change_scene(tree: SceneTree, path: String) -> void:
 	_perf_log("总计", t0)
 	_switching = false   # 换场完成:放行后续换场(回菜单→再进游戏→再回菜单是一串合法调用)
 
-# ── 退役世界的分帧拆除器 ── 背景(实测,-- --autotest-switch 两趟单机往返):第 1 次退出 load 2.21 / add_child 13.06 / remove_child 31.86 / 总计 53.90 ms;第 2 次退出 load 3.21 / add_child 14.68 / remove_child 21.72 / free 79.54 / 总计 133.28 ms —— 第 2 次是第 1 次的 2.5 倍,「有些时候才卡」就是这一笔(第 1 次 _retired 还是空)。
+# ── 退役世界的分帧拆除器 ── 背景(实测,-- --autotest-switch 两趟单机往返):第 1 次退出 load 2.21 / add_child 13.06 / remove_child 31.86 / 总计 53.90 ms;第 2 次退出 load 3.21 / add_child 14.68。
 # 做法:那笔同步 free 改为摊到后续帧 —— 菜单已上屏、旧世界已摘树,分帧拆它谁也看不见。
 # 拆除顺序 = 逆前序:一次性收集整棵子树的前序列表,然后从尾往前 free。前序保证祖先先于后代被访问 ⇒ 逆序即后代先于祖先被释放 ⇒ 每个父节点轮到时子节点早已拆光(大容器本来是一锤子买卖,逆前序把它变成一个个拆,单帧峰值才压得下来)。预算按时间而非个数:节点大小差三个数量级,按个数会一会儿空转一会儿爆帧。
 const REAP_BUDGET_US := 3000      # 每帧拆除预算(≈0.18 帧 @60fps)
@@ -198,7 +198,7 @@ func _ready() -> void:
 	_pristine_subdesc = []
 	Level0.wall_layer = $WorldViewport/WallLayer
 	TileDefs.on_sub_destroyed = Callable(self, "_on_sub_destroyed")
-	# 格级销毁:激光走的是格级 damage_tile(laser_weapon_base.gd 传 source=explosion;子格表为空的合成网格里子弹也回落这条路)。这条回调此前只有服务器接了(server/match/match_host.gd)⇒ 单机整格被拆后 16 子格仍 sub_alive = 幽灵砖;收口见 TileDefs.destroy_cell。
+	# 格级销毁:激光走的是格级 damage_tile(laser_weapon_base.gd 传 source=explosion;子格表为空的合成网格里子弹也回落这条路)。
 	TileDefs.on_destroyed = Callable(self, "_on_tile_destroyed")
 	TileDefs.init_hp(grid)
 	TileDefs.init_sub_hp(MazeGenerator.current_subgrid)
@@ -289,9 +289,6 @@ func _collect_wall_descs() -> Array:
 
 
 # 水体专用 64px 图集:水不可破坏,永远按 64px 整格渲染;行 = 本图去重液体描述符(水体砖 tint),构造在 TerrainAtlas。
-# ★★ 两块水砖各用各的(2026-11-01 修):水体图集 = `WATER_BODY_BRICK`(纹理 21 水)、水面合批 = `WATER_SURFACE_BRICK`(纹理 22 水面)。
-# ★ 水面合批**不消费辅码**:surface_texture 恒为中性水面砖(已登记 docs/eng/registered-debt.md)——
-#   带 hue/bri 辅码的水在深水格有色、水面亮带仍是原色。
 func _create_water_tileset() -> TileSet:
 	var ts := GameParameters.TILE_SIZE
 	Level0.surface_texture = ImageTexture.create_from_image(
@@ -577,7 +574,7 @@ func _restore_sub(e: Dictionary) -> void:
 		_dirty_chunks[CollisionBuilder.chunk_of(cell)] = true
 	if _grid_ref[cell.y][cell.x] == 0 and not _pristine_grid.is_empty():
 		_grid_ref[cell.y][cell.x] = _pristine_grid[cell.y][cell.x]
-		# ★ 格级 HP 也要一起还:格级销毁走的是 damage_tile,它把 hp_grid[cell] 打成 0,而上面那句只还了 current_grid 基线 ⇒ 回溯复原后「整格看着回来了」,下一发激光却一发即碎(原本 4 发的树干)。基线纹理取 tex(current_subgrid 从不被破坏改动),不能取 hp_of(_pristine_grid[...]) —— 那是打包后的格值,不是纹理。
+		# ★ 格级 HP 也要一起还:格级销毁走的是 damage_tile,它把 hp_grid[cell] 打成 0,而上面那句只还了 current_grid 基线 ⇒ 回溯复原后「整格看着回来了」,下一发激光却一发即碎(原本 4 发的树干)。
 		# ★ 只在该格已被打空时补(<= 0):这一句的职责是保住子格级那条路径留下的正值 —— damage_sub 只清 grid、不碰 hp_grid ⇒ 那种格的 hp_grid 是被打磨过的折减值(如 6),要原样留着。于是本行有意不对称:被激光(damage_tile)打空的格回到满血基线;被子弹磨死的格保留折减值(⇒ 那条路径上「回溯后一发即碎」仍在,已登记 docs/eng/registered-debt.md 六)。
 		# ★ 幂等不靠这个守卫,靠外面那句 _grid_ref[cell.y][cell.x] == 0:同一格 16 个子格各复原一次,只有第一次进得来。★ 覆盖上限(实测):tex 是被复原子格的纹理,而格级基线取 16 子格的多数纹理(MapFormatV4.flatten_scene);两张在库图(demo/newfactory)没有「16 子格全活且混纹理」的格 ⇒ 两者同值;编辑器真画的 4×4 混排图会让这里还原成子格的 hp 而非基线。
 		if TileDefs.hp_grid_at(cell) <= 0:
@@ -606,9 +603,6 @@ func _on_sub_destroyed(sub: Vector2i, pre_hp: int, _owner: Node = null) -> void:
 
 
 # PvP 换局复位(增量,2026-10-24):只还原「被拆过的 16px 子格」—— 全量重铺 9 环面副本实测 ~0.86s、整层碰撞重建 ~0.48s
-# ⇒ 每局打完卡 ~1.4s。现在按 `_damaged_subs`(再并上与基线不同的 64px 格的 16 个子格做兜底)逐格还:
-# sub_hp / 可破坏碰撞子格 / 瓦片(9 副本)/ 格级网格与 HP,最后只 rebuild 脏块。永久墙/攀爬条从不变 ⇒ 永不重建。
-# ★ 两端同一语义:服务器 MatchRound._reset_world_and_clear_dynamics() 做同一套增量复位。
 func reset_destructibles() -> void:
 	if _pristine_grid.is_empty() or _pristine_subgrid.is_empty():
 		return
@@ -714,7 +708,7 @@ func _place_player(_grid: Array[Array], spawn_cell: Vector2i) -> void:
 			return
 	player.position = Vector2(pos.x * ts + ts / 2.0, pos.y * ts + ts / 2.0)
 
-# 单机 ESC 菜单:呼出 = 暂停整份模拟,退出 = 解暂停后回主菜单。PauseMenu 自己管暂停与切场景(open() 里 paused=true、go_menu() 首行先解暂停再走 Level0.safe_change_scene),故本处不需要任何信号接线;PvP 菜单由 pvp_client 自建(PvP 下本方法不会被调)。
+# 单机 ESC 菜单:呼出 = 暂停整份模拟,退出 = 解暂停后回主菜单。
 func _build_pause_menu() -> void:
 	var pm := preload("res://ui/screens/pause_menu.tscn").instantiate() as PauseMenu
 	pm.is_pvp = false
@@ -738,7 +732,7 @@ func _give_starting_weapon(p: Node) -> void:
 	p.weapons.set_initial_inventory([int(p.weapons.default_type())])
 
 
-# 单机初始武器清单:每种 2 把,跳过本局被禁的类型(禁用武器不该出现在地图上 —— 与 set_enabled_types 同源:RunOptions.disabled_weapons)。★ 清单来自注册表(json 顺序 = 散落顺序):加第 7 把枪只改 json,这里一个字不动。
+# 单机初始武器清单:每种 2 把,跳过本局被禁的类型(禁用武器不该出现在地图上 —— 与 set_enabled_types 同源:RunOptions.disabled_weapons)。
 func _default_weapon_types() -> Array:
 	var out: Array = []
 	for type_id in WeaponRegistry.all_ids():
@@ -759,7 +753,7 @@ func spawn_pickup(type_id: int, mag: int, pos: Vector2, vel: Vector2,
 	var node: WeaponPickup = PICKUP_SCENE.instantiate()
 	# ★ 顺序不能反:configure 必须在 add_child 之前 —— _ready 一入树就按当时的 type_id 建视觉与碰撞箱,先入树的话它已经用 @export 默认值(手枪)建过一次了。
 	node.configure(type_id, inst, mag, vel)
-	# ★★ 必须挂进 WorldViewport(SubViewport),不能 add_child(self):世界(瓦片/玩家/敌人)全渲染在那个 SubViewport 里,由相机 + PostProcess 呈现;挂到 Level0 自己身上 = 在渲染树之外 —— 节点存在、有视觉、有碰撞,但屏幕上什么都看不到。(EnemySpawner.spawn_all 走的是同一件事。)
+	# ★★ 必须挂进 WorldViewport(SubViewport),不能 add_child(self):世界(瓦片/玩家/敌人)全渲染在那个 SubViewport 里,由相机 + PostProcess 呈现;挂到 Level0 自己身上 = 在渲染树之外 —— 节点存在、有视觉、有碰撞,但屏幕上什么都看不到。
 	$WorldViewport.add_child(node)
 	node.global_position = pos
 	node.canonical_pos = pos   # 权威位置(渲染位置由锚点推出,见 WeaponPickup)
@@ -841,7 +835,7 @@ func _live_self_drops() -> Array:
 	return out
 
 
-# ── 拾取提示(每把能捡的武器各自一个「F」)── 判据 = 能不能捡,不是「是不是最近那把」:在拾取半径内 + 不是自己刚丢下的(冷却) + 该武器类型没被禁用。★ 与 try_pickup_for 的选法仍是同一套 —— 按 F 捡的仍是最近那把,只是能捡的每一把都会提示。
+# ── 拾取提示(每把能捡的武器各自一个「F」)── 判据 = 能不能捡,不是「是不是最近那把」:在拾取半径内 + 不是自己刚丢下的(冷却) + 该武器类型没被禁用。
 ## 时间玩法视效驱动:底片化 ramp ≤200ms、加速压暗 ramp 100ms、贷款深度直传
 func _tick_time_visuals(delta: float) -> void:
 	if _post_process == null or time_field == null:
@@ -862,7 +856,7 @@ func _tick_time_visuals(delta: float) -> void:
 	_sync_time_glows()
 
 
-# 时间状态高亮:加速 ⇒ 主角 + 场上敌人;回溯 ⇒ 只有精英。★ 配色是规则不是装饰:精英在两种状态下都必须是「极为亮眼的黄」,其余实体的高亮只是「时间场生效中」的可读提示;用加色副本(TimeGlow)而不是 modulate —— 后者在非 HDR 2D 里被夹到 1.0,且会被敌人每帧的受击白闪覆盖(实测完全看不出高亮)。
+# 时间状态高亮:加速 ⇒ 主角 + 场上敌人;回溯 ⇒ 只有精英。
 const GLOW_PLAYER := Color(0.30, 0.62, 1.0)      # 主角:冷白蓝
 const GLOW_ENEMY := Color(1.0, 0.94, 0.86)       # 普通敌:暖白
 const GLOW_ELITE := Color(1.0, 0.82, 0.06)       # 精英:亮黄(两层叠加 → "极为亮眼")
@@ -971,7 +965,7 @@ func _tick_rewind(delta: float) -> void:
 
 func _update_pickup_prompt() -> void:
 	var pl := $WorldViewport.get_node_or_null("Player") as Node2D
-	# ★ 先把表里的 pos 刷成视觉中心(可见的枪在哪),判定与提示才与玩家看到的一致。★★ 并且必须先设锚点:WeaponPickup 的 canonical_pos(权威,恒在 [0,MAP))与渲染位置是两回事,渲染位置每帧由锚点锚到玩家的最近副本 —— 不设锚点的话跨接缝的枪会画在地图另一头(屏幕外),表现就是「接缝附近的枪看不见」。联机侧由 PvpMatchClient._tick_ground_weapons 做同一件事。
+	# ★ 先把表里的 pos 刷成视觉中心(可见的枪在哪),判定与提示才与玩家看到的一致。
 	var anchor: Vector2 = pl.global_position if pl != null else Vector2.ZERO
 	for inst in _pickup_nodes:
 		var n0 = _pickup_nodes.get(inst, null)

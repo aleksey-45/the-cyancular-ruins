@@ -1,12 +1,5 @@
 extends SceneTree
 # 回局凭据模式维度守卫(BUG-14:三张注册表房号空间重叠 ⇒ 只比房间号会让持 3v3 凭据的玩家
-#   在大乱斗列表里看到无关的私密房 "1234"(names/map 泄漏),点下去还会被放行)。
-# 守卫 = RejoinRegistry 的纯逻辑(RefCounted、不引 autoload ⇒ 本文件能 `-s` 跑):
-#   凭据必须存 mode;decision / owns 都必须按(房间号, 模式)判。
-# 测不到什么:① 两个 list_payload 的过滤在真实列表里的效果(要真链路大厅);② 回局 RPC 把 mode 送到
-#   worker 的那一段(真链路)。③ 同号跨模式的**真实**共存场景(夹具里合成)。
-# 变异验证:去掉 decision 的 mode 比较 ⇒ ② 红;去掉 owns 的 mode 比较 ⇒ ③ 红;grant 不存 mode ⇒ ① 红。
-# 跑法:"$GODOT" --headless --path . -s res://tests/smoke/rejoin_mode_smoke.gd;通过 = 结尾打 REJOIN MODE OK(n 条断言)。
 
 const EXPECTED_CHECKS := 4
 

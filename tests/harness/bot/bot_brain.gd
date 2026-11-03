@@ -1,12 +1,6 @@
 extends RefCounted
 
 # 纯决策:Observation[] + 上下文 / 状态 → Intent。不碰节点、不读全局。
-# Intent = {axis:float, jump:bool, aim:Vector2, fire:bool, reload:bool,
-#           switch_to:int, pickup:bool, reason:String}
-# state(跨帧记忆,由调用方持有)= {target_role:int, last_seen:Vector2, strafe:float,
-#                                 strafe_t:float, stuck_t:float, roam:float, roam_t:float}
-# ctx 键:can_act / self_pos / self_vx / now / delta / fire_range_px /
-#        preferred_range_px / backoff_px / map_size。
 
 const Geo := preload("res://core/sim/grid_pathfinder.gd")
 

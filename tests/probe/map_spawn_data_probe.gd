@@ -1,14 +1,6 @@
 extends Node
 
 # 出生/复活点**地图数据**探针:真实地图(要读盘,故是场景探针而不是 `-s` 冒烟)——
-#   ① 每张图的 `# respawn 1|2` 都写足:每侧 ≥5、点在**自己半区**、过 SpawnPicker 判据、半区 3×3 每桶 ≥1、同侧两两 ≥ 最小间距;
-#   ② 1v1 按侧:role1 侧 1(左半)/ role2 侧 2(右半)、复活仍在本方半区、换边互换、role_spawns 只读;
-#   ③ 对抗按侧:队 1 侧 1 / 队 2 侧 2、换边互换、局内复活仍在同侧且排除上一次;
-#   ④ 大乱斗无阵营 ⇒ 用两侧并集(全图散布),复活排除上一次。
-# 去掉什么才红:地图里删掉某侧数据 ⇒ ①②;把 1v1 改回固定两点/全图随机 ⇒ ②;复活不接侧/不排除 last ⇒ ②③;
-#   对抗换边不换侧 ⇒ ③;大乱斗只取一侧 ⇒ ④。
-# 测不到什么:出生点在"手感/观感"上是否舒服(要人眼);真对局的 match_start 与摆位同源(真链路)。
-# 跑法:"$GODOT" --headless --path . --quit-after 3600 res://tests/probe/map_spawn_data_probe.tscn;判据 grep 末行 MARKER。
 
 const NEWFACTORY := "res://maps/newfactory.cyrm"
 const DEMO := "res://maps/demo.cyrm"

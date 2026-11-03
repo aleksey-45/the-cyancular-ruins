@@ -1,10 +1,6 @@
 extends RefCounted
 
 # 纯感知规则(不碰节点 / 会话态):输入是候选角色与相机 / 雷达参数,输出固定形状的 Observation 数组。
-# Observation = {role:int, source:String, relation:String, pos:Vector2, time:float,
-#                uncertainty:float, seen_action:String}
-# 来源优先级 view > radar > memory;memory 原地刷新,过期条目不再输出。
-# 环面数学复用 GridPathfinder(几何单一来源),本文件不复制。
 
 const Geo := preload("res://core/sim/grid_pathfinder.gd")
 
@@ -54,9 +50,6 @@ static func in_radar(pos: Vector2, self_pos: Vector2, radius_px: float,
 
 
 # candidates: [{role:int, pos:Vector2, action?:String}]。
-# ctx 键:my_role / mode / teams / self_pos / cam_center / view_size / map_size /
-#        radar_radius_px / radar_uncertainty_px / now / memory_ttl。
-# memory: role -> {pos, time},可见时刷新、不可见但未过期时作 memory 来源。
 static func build(candidates: Array, ctx: Dictionary, memory: Dictionary) -> Array:
 	var out: Array = []
 	var now := float(ctx.get("now", 0.0))

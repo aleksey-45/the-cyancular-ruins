@@ -2,12 +2,6 @@ class_name SpawnChooser
 extends RefCounted
 
 # 出生点的**唯一随机选格实现**(1v1 / 大乱斗 / 对抗模式共用):纯静态、不引 autoload / Node ⇒ `-s` 可测。
-# ★ 输入是「本局可用的点名列表」—— 由地图 meta 的 `# respawn <side> <col> <row>` 行提供(MapFormat 解析),本类**不生成**候选:
-#   点合理不合理是地图数据的责任(规则侧由 tools/map_spawn_meta.gd 与 map_spawn_data_probe 校验)。
-# 约束分两层:
-#   · exclude(绝不选中的格,如"本 role 上一次出生点")= 硬约束;若整个列表都被排除,按"宁可退化也别回 (-1,-1)"让位。
-#   · min_dist(与 anchors 各格的环面距离)= 软约束:每轮按 RELAX_STEP 放宽,直到 0 —— 点不够是地图数据的边界,不该把人甩到墙角。
-# ★ 随机源 = 调用方传的 RandomNumberGenerator(rng == null 用全局 RNG,生产路径;测试传定 seed 的 rng 才能复现)。
 
 const RELAX_STEP := 5   # 最小间距的逐级放宽步长(与大乱斗散点 / 单机铺点的既有步长一致)
 

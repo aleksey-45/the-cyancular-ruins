@@ -1,15 +1,5 @@
 extends SceneTree
 # 开局倒计时走秒器守卫(2026-11-01 用户报「开局 3s 倒计时最后 1 秒显示不出来」)。
-# 守卫对象 = CountdownClock(纯逻辑:无 autoload / 无 Node ⇒ 本文件能 `-s` 跑)。
-# 两条承重不变量:
-#   ① 重复 start **绝不回拨**(服务器每 0.5s 重播 COUNTDOWN,重复调用是常态;回拨就会把已经走过的数字重新盖回来);
-#   ② 只走到 0 才结束、显示值钳到 ≥1 ⇒ 3→2→1 一个不落,"1" 走满整整一秒。
-# 去掉什么才红:删 `minf(_remaining, seconds)` ⇒ ② 红(重复 start 被拨回 3.0);把 `maxi(..., MIN_DISPLAY)` 去掉 ⇒ ④⑦ 红;
-#   `_remaining > 0.0` 改成 `>= 0.0` ⇒ ④ 少一个 "1";stop() 不清 _running ⇒ ⑥ 红。
-# 测不到什么:① 服务器是否真的每 0.5s 重播(那是 `_countdown_resync_tick` 的接线,源码级);
-#   ② 客户端是否**晚到**(场景加载慢 ⇒ 第一条 COUNTDOWN 丢失)—— 那由服务器就绪闸 + 重播锚定解决,只能真链路/人眼;
-#   ③ 数字在屏幕上的实际观感(字号/脉冲/遮罩)—— 纯表现,按仓规不写守卫。
-# 跑法:"$GODOT" --headless --path . -s res://tests/smoke/countdown_clock_smoke.gd;通过 = COUNTDOWN CLOCK OK(n 条断言)。
 
 const EXPECTED_CHECKS := 9
 const DT := 1.0 / 60.0

@@ -30,7 +30,7 @@ func _ready() -> void:
 			Callable(self, "_minimap_colors"),
 			Callable(self, "_minimap_self_color"))
 		add_child(minimap)
-	# HUD(记分条按队号)+ Esc 菜单。★ 必须声明式实例化场景,不能 TeamHud.new() —— 那个建出来的 CanvasLayer 没有子节点,HUD 的 @onready 全是 null、_ready 解引用必崩(零守卫:hud_declarative_probe 已删·2026-10-09)。
+	# HUD(记分条按队号)+ Esc 菜单。
 	_hud = preload("res://ui/hud/team_hud.tscn").instantiate() as TeamHud
 	add_child(_hud)
 	_pause_menu = preload("res://ui/screens/pause_menu.tscn").instantiate() as PauseMenu
@@ -60,7 +60,7 @@ func _apply_peer_hues_or_team(payload: Dictionary) -> void:
 func _apply_teams(teams: Dictionary) -> void:
 	_teams = teams
 	if _hud != null and is_instance_valid(_hud):
-		# ★★ 这一行漏了不报错,后果是赢的局报成输的:_my_team 恒 0 ⇒ TeamHud 的 mwinner == _my_team and _my_team != 0 恒假 ⇒ 「本局胜利!」/「胜利!」两条文案一次都不会出现。(★ 平局那一支不受影响:它走 else,_my_team 取什么值都念「平局」—— 别把这条契约写成「平局分支不可达」。)队号只能从队伍表读,不是 role。
+		# ★★ 这一行漏了不报错,后果是赢的局报成输的:_my_team 恒 0 ⇒ TeamHud 的 mwinner == _my_team and _my_team != 0 恒假 ⇒ 「本局胜利!」/「胜利!」两条文案一次都不会出现。
 		_hud.set_my_team(_team_of_role(PvpSession.role))
 	_refresh_team_colors()
 	_apply_team_collision()
@@ -68,10 +68,6 @@ func _apply_teams(teams: Dictionary) -> void:
 
 
 # 血量补贴的**客户端镜像**:服务端给少人方抬 max_hp(TeamHost._apply_health_subsidy),客户端必须算出同一个数 ——
-# 否则快照里的 hp(如 60)会被 `Player.apply_authoritative_state` / `restore_state` 钳到客户端上限(50),
-# 表现为"少人方血条永远满格 / 先于服务器倒地",而且每帧 C2 回滚。
-# ★ 公式**不复制**:两端都调 TeamRules(单一来源);本端不新增协议字段(队伍表本来就在 match_sync 里)。
-# ★ 差 0(6 人 3v3)时 hp_bonus = 0 ⇒ 这一段整段跳过,`combat.max_hp` 保持出厂值 —— 行为与改造前逐字一致。
 func _apply_team_health_subsidy(teams: Dictionary) -> void:
 	if _local == null or not is_instance_valid(_local):
 		return
@@ -135,7 +131,7 @@ func _refresh_team_colors() -> void:
 	_replica_set.refresh_labels()
 
 
-# 副本幽灵体代表的那名玩家,其队号 → 幽灵体该放的碰撞层。★ 未知队号(0 / 表外 role / 表还没到)一律返回 2 —— 与服务端 _apply_team_layers 的「什么都不配 = 保持 _ready 的层 2」逐值对齐。
+# 副本幽灵体代表的那名玩家,其队号 → 幽灵体该放的碰撞层。
 # 旧实现是 return 2 if _team_of_role(role) == 1 else TeamHost.TEAM_ENEMY_LAYER —— 它把「未知」当成了队 2,于是两端对同一具身体放不同的层,两队掩码不同 ⇒ 队 2 玩家在服务端会被挡住、在客户端不会 ⇒ C2 每帧分歧。今天生产路径到不了这里(worker 的 team_map() 恒非空),修它是消除一个静默不对称。
 func _ghost_layer_of(role: int) -> int:
 	match _team_of_role(role):
@@ -146,7 +142,7 @@ func _ghost_layer_of(role: int) -> int:
 	return 2   # 表外 / 表未到:与服务端"什么都不配"(保持层 2)对齐,不再落到队 2 的层
 
 
-# ── 队友不互挡:客户端那一半(服务端那一半在 TeamHost._apply_team_layers)── 契约(两边逐值对齐):1 队玩家 layer = 2、mask = 21(地形 1 | 敌人层 4 | 队 B 层 16);2 队玩家 layer = 16(TeamHost.TEAM_ENEMY_LAYER)、mask = 7(地形 1 | 敌人层 4 | 玩家层 2);副本幽灵体 mask 恒 0,layer 按它代表那名玩家的队。
+# ── 队友不互挡:客户端那一半(服务端那一半在 TeamHost._apply_team_layers)── 契约(两边逐值对齐):1 队玩家 layer = 2、mask = 21(地形 1 | 敌人层 4 | 队 B 层 16);2 队玩家 layer = 16(TeamHost.TEAM_ENEMY_LAYE。
 # ★ 为什么必须分队位而不是改掩码:Godot 的碰撞按节点配,没有「按对」的开关。★ 两边 layer/mask 必须逐值相同:服务器是权威模拟、客户端是 C2 预测,掩码不同 = 同一帧两边可走空间不同 = 每帧分歧回滚(不是调参能缓解的)。★ 用常量不用字面量 16:层位是全局资源,将来可能挪。
 func _apply_team_collision() -> void:
 	if _local == null:
@@ -177,7 +173,7 @@ func _minimap_colors() -> Array:
 	return arr
 
 
-# 「我」那个点的颜色与身体 / 头顶 ID 同源 —— 三处都问 _team_color(role)。★ 惰性求值(每帧被 Minimap 调一次),不是建点时定色:队色由 match_sync 下发,比小地图建立晚。★ 自己那具的身体自 2026-09-21 起也走队色,本条让这个点跟上同一口径(此前它是恒定的 SELF_COLOR,与队色只差 Δ=(25,2,0),青队玩家分不清自己与队友)。
+# 「我」那个点的颜色与身体 / 头顶 ID 同源 —— 三处都问 _team_color(role)。
 func _minimap_self_color() -> Color:
 	return _team_color(PvpSession.role)
 
@@ -186,7 +182,7 @@ func _minimap_self_color() -> Color:
 # ★ 世界快照 _on_snapshot_world() 已上提到基类「副本模式」段(2026-11-02,与大乱斗逐字同一份)。
 
 
-# 副本新建后的 3v3 专属补配:幽灵体层必须在这里也补一次 —— 副本是懒建的,而队伍表早在 match_sync 就到了;_apply_teams() 那一刻 _replicas 还是空的,只在那时刷的话,晚建的副本幽灵体恒在层 2(= 队友也挡我)⇒ 每帧回滚,不报错。队色由 ReplicaSet 经 bind 的取色 Callable 刷。
+# 副本新建后的 3v3 专属补配:幽灵体层必须在这里也补一次 —— 副本是懒建的,而队伍表早在 match_sync 就到了;_apply_teams() 那一刻 _replicas 还是空的,只在那时刷的话,晚建的副本幽灵体恒在层 2(= 队友也挡我)⇒ 每帧回滚,不报错。
 func _on_replica_created(replica: Node, role: int) -> void:
 	if replica.has_method("set_ghost_layer"):
 		replica.set_ghost_layer(_ghost_layer_of(role))
@@ -208,15 +204,9 @@ func _supports_k_suicide() -> bool:
 
 
 # 回合状态的四态编排已收进基类 PvpMatchClient._on_round_state(2026-10-22):
-# 清子弹 / 复位砖 / 输入锁 / 结算页挂载与刷新都是公共段;3v3 只多一件"换边后重拉 match_sync"。
-# ★ MATCH_OVER 刻意**不**覆写"首次才消费"的闸(与大乱斗相反,别照抄):本模式终局之后还会再死人,
-#   第二条终局载荷必须刷新结算页(见 TeamHost._finish_match 的既有注释)。
 func _on_countdown_round() -> void:
 	super._on_countdown_round()
 	# ★★ 重拉 match_sync:3v3 每局整队换边,而 TeamHost.role_spawns() 返回的是当下那一份,
-	#   客户端只在进场/重连拉过一次 ⇒ 换边后六端手里那份是旧侧的。不补发 second path 进 round_state
-	#   (那是给同一份数据开第二条投递路径),改在这里拉 —— 本来就站在「清子弹 + 还原砖」这一拍上,
-	#   且顺带把 ground_weapons 与 destroyed 一并对齐。
 	if NetBus.can_send_to_server():
 		# ★ 先置位再发:这条应答是补态口径(不是进场建态)—— 换边后 spawns 是新一侧而 PvpSession.spawn
 		#   手里是旧一侧,两者必然不一致,照进场口径硬拉 = 每局边界刷一条假告警 + 一次多余瞬移。
@@ -233,6 +223,3 @@ func _build_result_payload() -> Dictionary:
 
 
 # ── 名字 / 颜色 ──
-# ★ _apply_peer_names() / _names / _process / _all_replicas / _replica_for / _minimap_entries / _minimap_others
-#   已上提到基类「副本模式」段(2026-11-02,与大乱斗逐字同一份);本文件只留 3v3 自己的颜色那一段
-#   (_apply_peer_hues_or_team → _apply_teams → 队色),在上半部分。

@@ -1,9 +1,6 @@
 extends Node
 
 # 1v1 真实客户端 Bot 观察者:挂 get_tree().root(跨换场存活)。
-# ① 驱动真大厅(mp_lobby)建房 / 加入 / 开局;② 换场后接管真 pvp_game,注入哑手柄;
-# ③ 每物理帧 采样观察 → bot_brain.decide → 写手柄;④ 写证据日志与结果文件。
-# ★ 产品代码零改动:本节点只存在于测试进程。唯一耦合点就是本文件(读运行时对象)。
 
 const BotHandle := preload("res://tests/harness/bot/bot_input.gd")
 const Obs := preload("res://tests/harness/bot/bot_observation.gd")

@@ -1,10 +1,5 @@
 extends SceneTree
 # 输入队列守卫(PacketInputSource 纯逻辑;`-s` 可跑,不碰服务器/7777)。四个判定类别各一条:
-#   ① 轴收口:ax 协议上无界(ax=50 ≈ 35000px/s,全图才 9600px),非有限值必须先判有限性再钳到 0 —— 否则原样穿过。
-#   ② 有界 + 丢最旧 + 保边沿:队列是带反射壁的随机游走,无界 ⇒ 积压不可恢复;丢包必须把 pressed/released/winst 边沿并进队首。
-#   ③ 回复力:上限跟着抖动包络走、能自己缩回 ⇒ 网络安静时把堆着的陈旧记录释放掉(这是原设计缺失的那一环)。
-#   ④ 上限钳位:不缩到 1(一 tick 到两包就丢)也不超硬顶(回到无界老问题)。
-# 跑法:"$GODOT" --headless --path . -s res://tests/smoke/input_queue_smoke.gd;通过 = INPUT QUEUE OK(n 条断言)。
 
 const EXPECTED_CHECKS := 6
 

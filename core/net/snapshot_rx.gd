@@ -1,11 +1,6 @@
 class_name SnapshotRx
 extends RefCounted
 # 下行接收侧的纯逻辑(S-03):解码 → tick 去重 → 坏包只警告一次 → 丢包/诊断计数。
-# NetBus 的 @rpc handler 只留 `var d := _rx.accept_*(payload)` + emit —— RPC 方法表与通道号仍独占 net_bus.gd(协议面不搬)。
-# ★ 不引 autoload(NetMetrics 是 class_name 纯静态;NetDiag 的 1Hz 落盘留在 NetBus):`-s` 冒烟能直接实例化本类。
-# 返回空字典 = 丢弃(坏包 / 乱序旧包 / 重复 tick);非空 = 调用方应 emit,键形状见各 accept_* 的注释。
-# 测不到什么:① 真实链路里丢包的分布(这里只按 tick 缺口**估计**);② NetDiag 落盘/`--diag` 开关(在 NetBus 侧);
-#   ③ 重连/换局时调用方是否真的调了 reset()(接线段,只有真链路看得到)。
 
 const SNAP_GAP_MS := 150   # 相邻世界包到达间隔超过它 ⇒ NetBus 记一条 snap_gap(--diag)
 

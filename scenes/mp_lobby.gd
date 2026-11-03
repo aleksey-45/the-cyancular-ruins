@@ -2,21 +2,6 @@ class_name MpLobby
 extends LobbyPage
 
 # 统一联机大厅:1v1 / 大乱斗 / 对抗 三套协议在本页合并。顶栏(昵称/地址/启服) → 模式筛选 + 创建/加入 → 房卡网格 → 状态栏。
-# ★ 一条纪律:三个模式在本页的差异全部收在 _mode / _current_mode 两个变量上(筛选值 / 创建弹层形态 / 等待室形态 / 转连方式);别再按"哪个页面"分叉。
-# ★ ack 梯顺序 = worker → claim → 大厅 → ack(合并后唯一一条):1v1 旧页那条 join 梯的职责由末尾那条(建房/加入 8s 无应答)覆盖。三套服务端注册表原样保留:本页并发调三次现有列房 RPC,前端合并打标。
-# ★★ 静态骨架在 scenes/mp_lobby.tscn 里:版式(页面留白 / 各行坐标 / 控件尺寸 / 间距 / 固定文案)一律去编辑器里拖,别回来加坐标常量。
-#
-# ★★ 2026-10-22 Task 10 拆件(纯搬移,行为零变化):本页只留四件事 ——
-#   ① 编排(_build_ui 按语义名把骨架接给四块面板) ② RPC 发送(NetBusExt.rpc_id(...) 的名字与参数逐字未动)
-#   ③ 模式切换状态(_mode / _create_mode / _wait_mode / _current_mode) ④ 信号转发(NetBus / NetBusExt 的入口 handler)。
-#   四块面板在 scenes/mp_lobby/ 下:
-#     · room_list.gd    —— 房间列表 / 刷新归并 / 加入弹层 / 房卡绘制
-#     · create_panel.gd —— 建房弹层:模式分段按钮、弹层显隐、建房载荷与 player_options 的组装
-#     · options_form.gd —— 建房表单行显隐(_form_rows 那张表)与控件值读写
-#     · wait_room.gd    —— 等待室:选边 / 开始按钮 / 满员文案 / 房主判断 / 名单行
-#   ★ 节点路径(%NodeName)、信号、文案、_form_rows 键名一律逐字不变;_build_ui 的登记逻辑也仍在(只是分给各面板的 register)。
-#   ★★ 节点句柄里 _grid / _wait_panel / _wait_title / _wait_body / _wait_count / _wait_start / _wait_pick_a / _wait_pick_b / _wait_leave
-#     留在本页:测试(honest 口径,tests/harness/{rejoin,team_match}_watcher.gd)用 get("_grid") / get("_wait_body") 读它们 —— 搬走 = 探针静默拿到 null。
 
 var _mode := ""                    # 当前筛选:"" = 全部;否则 PvpSession.MODE_*
 var _grid: GridContainer = null
@@ -53,7 +38,7 @@ var _sent_ms := 0
 # ★★ 漏了给它赋值 = 两条真缺陷:① _current_mode 停在空串 ⇒ _enter_match_scene() 落进 else ⇒ 1v1 的加入者被送进错场景;② note_room() 从不被调用 ⇒ 自己那间房永远是灰的。
 var _join_pending := ""
 
-# 「模式未知 ⇒ 三张表都问一次」这一次尝试还在飞。★ 三张表里只有一间存在,另两张必然回「房间不存在」/「房间已满」—— 那是预期噪音:既不显示、也不花掉那次自动刷新额度(_auto_refreshed)。
+# 「模式未知 ⇒ 三张表都问一次」这一次尝试还没返回。★ 三张表里只有一间存在,另两张必然回「房间不存在」/「房间已满」—— 那是预期噪音:既不显示、也不花掉那次自动刷新额度(_auto_refreshed)。
 # ★★ 关闸只能靠 _multi_left 数应答条数,不能靠"任一正向应答就收尾":1v1 的 join_room 成功是立即回的,而 royale/team 是 call_deferred + await ⇒ 正向一到就关闸,
 # 那两张表稍后到的 absent 会漏出去触发一次刷新 —— 后果不是"多一条提示",而是那一次性额度被花掉:之后第一张真陈旧卡片被拒时反而不会自动刷新了。
 var _probe_multi_join := false
@@ -89,7 +74,7 @@ func _ready() -> void:
 
 	_finish_lobby_ready()
 
-	# Beta 页预选的筛选模式(从主菜单直接进来时为 "")。★★ 它读的是 entry_mode 而不是 room_mode:后者是凭据的模式,混用会把一个凭据字段写成非凭据的值,而 can_rejoin_to() 正是拿 room_mode 判"这一行是不是我的房"。
+	# Beta 页预选的筛选模式(从主菜单直接进来时为 "")。
 	if PvpSession.entry_mode != "":
 		_set_filter(PvpSession.entry_mode)
 
@@ -279,7 +264,7 @@ func _on_room_state_team(state: Dictionary) -> void:
 	_wait.show(state, PvpSession.MODE_TEAM)
 
 
-# 大厅文本播报。★★ 收到任何一句服务端文案,就证明"它回了" ⇒ 一律解除 8 秒兜底(_ack / _sent_ms);兜底的语义是「服务器一个字都没回」—— 枚举白名单是替一个不需要枚举的东西枚举,漏一条就会让 8 秒后 _process 把真拒绝覆盖成「地址不通/服务器不是最新版」。
+# 大厅文本播报。
 # ★ 「模式未知的三连发」里的拒绝是预期噪音(三张表只有一间存在):吞掉、不显示也不刷新(刷新额度是一次性的)。非多表时「房间已满 / 房间不存在」仍走旧 1v1 的行为:提示并自动刷新一次(闸门由 _auto_refreshed 把着)。
 func _on_server_message(t: String) -> void:
 	if LocalServer.restarting:
@@ -313,7 +298,7 @@ func _swallow_absent(t: String) -> bool:
 	return _probe_multi_join and (t == "房间不存在" or t == "房间已满")
 
 
-# 「模式未知的三连发」一张表都没接受时的收尾。★ 与 _on_server_message 非多表那一支同款同闸门(_auto_refreshed 一次性);三张表的 absent 是预期噪音,只有"全拒"这一档才升级成真失败。★ 只在 _claim_multi_reply 把闸门收到 0、且没有任何一张表接受时被调。
+# 「模式未知的三连发」一张表都没接受时的收尾。
 func _settle_multi_fail(t: String) -> void:
 	_join_pending = ""
 	if not _auto_refreshed:
@@ -323,7 +308,7 @@ func _settle_multi_fail(t: String) -> void:
 		_status.text = t
 
 
-# 多表尝试期间:每收到一条服务端应答就认领一格,认领完即关闸。★★ 闸门由应答条数关,不由"任一正向应答"关 —— 1v1 的 join_room 成功是立即回的,而 royale/team 是 call_deferred + await,
+# 多表尝试期间:每收到一条服务端应答就认领一格,认领完即关闸。
 # 正向一到就关闸,那两张表稍后到的 absent 会漏出去、误触发一次自动刷新(一次性额度被噪音花掉)。★ 另两条关闸路径:8s 一个字都没回(见 _process)、以及下一次加入开始时重设。
 func _claim_multi_reply() -> void:
 	if not _probe_multi_join:
@@ -415,7 +400,7 @@ func _on_wait_start_pressed() -> void:
 		NetBusExt.rpc_id(1, "team_start")
 
 
-# 「退出房间」。★ 三个模式不同款(照两个旧页逐字对齐):1v1 没有 leave RPC —— 断开即触发大厅 on_peer_left 清房,基类 _return_to_lobby 正好是那条收口(NetBus.stop() + 重连 + 刷新列表)。
+# 「退出房间」。
 # ★ 大乱斗 / 对抗有 leave RPC,且不能断大厅 peer:断开会走 on_peer_left 那条另一条路径去关房,同一件事就有两个实现 ⇒ 只发 leave,然后走共用的页面清理(_on_return_to_lobby)+ 重拉列表 —— 不重连,大厅 peer 还在。
 func _on_wait_leave_pressed() -> void:
 	if _wait_mode == PvpSession.MODE_ROYALE:
@@ -431,7 +416,7 @@ func _on_wait_leave_pressed() -> void:
 
 
 
-# ★★ 判据必须是本页的 _current_mode(我当前所在那间房的模式),不是 PvpSession.room_mode —— 后者是凭据的模式,它在"建了房但 note_room 还没跑到"那一档上是空串。两个量语义不同,不要合并成一个字段。
+# ★★ 判据必须是本页的 _current_mode(我当前所在那间房的模式),不是 PvpSession.room_mode —— 后者是凭据的模式,它在"建了房但 note_room 还没跑到"那一档上是空串。
 # ★ 两页刻意不同的那条纪律现在按 _current_mode 分派:1v1 直切;大乱斗 / 对抗必须 call_deferred —— 它们的 match_start 在 NetBus.poll 调用栈内到达,栈内切场景会在这个栈里 free 大厅 / 重建大物理世界 → 偶发原生段错误(曾实测)。
 # ★★ else 那一支刻意什么都不做、只 push_error,不默认切任何一个场景:本函数有三条进入路径(建房 / 加入 / 回局),任何一条漏记 _current_mode 都会落到这里 —— 切一个默认场景是静默的错值(玩家进了错的对局场景,只是看起来怪),而"留在原地 + 一条红"是响的。
 func _enter_match_scene() -> void:
@@ -497,11 +482,6 @@ func _lobby_action_allowed() -> bool:
 
 
 # 三个模式的权威规则项都上发,worker 各取自己认得的键(server_main._on_player_options 与 MatchBootstrap 都按 role1 那份生效);不认得的键被静默忽略。
-# ★ time(Beta 时间玩法规则)必须在这里 —— 它是权威那一份:worker 侧 MatchHost 读的正是 options.get("time"),而建房载荷里的 time 只存在房对象上、没有任何读者。漏了它 ⇒ Beta 局的时间经济静默为空(一切结算短路),而那不报错。
-# ★★ 1v1 必须排除 time:PvpSession.beta_mode 是会话级的,而统一大厅让 Beta 会话里的玩家能切到 1v1 建局;但 1v1 的 create_room(caller) 是冻结签名、载荷里没有任何 beta 标记 ⇒ 那个房没法按 beta 隔离 ⇒ 没勾 Beta 的普通玩家能加进来打上一局带时间经济的 1v1。
-# ★ 键集由 ModeDefs.OPTION_KEYS 决定(2026-10-22 统一):对抗不再上发禁用武器/回合回血(X5:界面藏了控件就不该让它生效);大乱斗不再上发回合回血(它没有回合);1v1 不再上发 match_time(只有大乱斗读)。
-# ★★ 组装(ModeOptions.build)在 scenes/mp_lobby/create_panel.gd;快照的读取留在本页:下面那行 `"match_time": int(Settings.royale_match_min * 60.0)` 是
-#    ROYALE_MATCH_TIME_CEILING 上界链的第二环,tools/room_sweep_lint.gd 钉着它必须住在 scenes/mp_lobby.gd 的源码里(别搬走那一行)。
 func _player_options() -> Dictionary:
 	return _create_dialog.player_options(_current_mode, {
 		"round_full_heal": Settings.pvp_round_full_heal,

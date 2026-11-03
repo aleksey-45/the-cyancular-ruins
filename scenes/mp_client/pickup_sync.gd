@@ -2,14 +2,10 @@ class_name PickupSync
 extends RefCounted
 
 # 地面武器(拾取)组合件(2026-10-22 从 PvpMatchClient 拆出;Task 7):事件订阅 + 节点表 + F 提示 + 诊断。
-# 形状是**组合**不是继承:宿主 PvpMatchClient 只剩 `_subscribe_ground_weapons()` / `_spawn_pickup_node()` /
-# `_clear_ground_weapons()` / `_remove_pickup_node()` / `_tick_ground_weapons()` 五个委托口;
-# 本类经 bind(client) 读宿主的 `_world` / `_local`(与拆件前同一个字段、同一个对象)。
-# ★ `[pkd]` 诊断行是运维判据,文本逐字未改(见 docs/eng/weapons.md)。
 
 var _client: Node = null
 
-# ── 拾取诊断插桩(★ 默认关;开关 -- --pickup-diag,必须写在 -- 之后,写在前面会被 Godot 丢掉)── 用来回答「地上的枪看得见、走过去却没有 F 提示」:那种症状只有两种成因 —— ① 客户端压根没建出这把枪(on_spawned 的早退是静默 return);② 建出来了但 canonical_pos(提示判据读的值)与画出来的位置不在一处。两者在画面上长得一模一样,只能靠数字分;判据是玩家 400px 内的枪每 30 物理帧打一行。
+# ── 拾取诊断插桩(★ 默认关;开关 -- --pickup-diag,必须写在 -- 之后,写在前面会被 Godot 丢掉)── 用来回答「地上的枪看得见、走过去却没有 F 提示」:那种症状只有两种成因 —— ① 客户端压根没建出这把枪(on_spawned 的早退是静默 return);② 建出来了但 canonical_pos(提示判据读的值)与画出来的位置不在一处。
 var _pickup_diag := false
 var _pickup_diag_checked := false
 var _pickup_diag_frame := 0
@@ -35,7 +31,7 @@ func _pickup_diag_on() -> bool:
 	return _pickup_diag
 
 
-# 订阅服务器的两条地面武器事件。★ 必须走 NetBus,不是 NetBusExt —— 后者(NetBusExt)里曾有同名遗留的 beam_fired,2026-10-30 已删,挂错节点的表现是静默 no-op(对手的枪凭空消失 / 永不再现,且不报错)。三个子类各自 _ready 里经宿主调一次。
+# 订阅服务器的两条地面武器事件。
 func subscribe() -> void:
 	NetBus.local_weapon_spawned.connect(on_spawned)
 	NetBus.local_weapon_removed.connect(on_removed)
@@ -65,9 +61,6 @@ func _spawn_pickup_node(data: Dictionary) -> void:
 		NetDiag.log_event("pickup_skip", {"reason": "bad_inst", "inst": inst})
 		return
 	# ★★ 重复 inst = 服务器的**原地重锚**(武器落定那一刻重播一次权威位置),不是"又生成了一件":
-	#   收下它并把本地副本搬过去。收下的理由:客户端也在本地模拟落体,而它那份地形(可破坏砖被拆的时序)/
-	#   帧时序与本端不同 ⇒ 落点可能差几十~上百 px,于是「看得见、走到脚边、F 提示亮着,服务器却判 range」——
-	#   用户报的「捡不动」正是这个形状。旧实现在这里静默 return,等于让那份偏差永久留着。
 	if _pickup_nodes.has(inst):
 		_reanchor_existing(inst, data)
 		return
@@ -109,7 +102,7 @@ func _reanchor_existing(inst: int, data: Dictionary) -> void:
 	NetDiag.log_event("pickup_anchor", {"inst": inst, "settled": bool(data.get("settled", false))})
 
 
-# 清空本端的地面武器表与全部拾取物节点(_on_match_sync 的"先清后灌"用)。★ 为什么必须先清:match_sync 的 ground_weapons 是全量,不清就直接 add,掉线期间已被服务器移除的那些会变成永久幽灵枪(看着在、按 F 无效);进场那次本地本来是空的,清一遍是 no-op。
+# 清空本端的地面武器表与全部拾取物节点(_on_match_sync 的"先清后灌"用)。
 func clear() -> void:
 	for inst in _pickup_nodes:
 		var n = _pickup_nodes[inst]
@@ -151,7 +144,7 @@ func tick() -> void:
 	_update_pickup_prompt(lp)
 
 
-# F 提示:贴到"按 F 会捡到的那一把"上方,每把能捡的各自一个。★ 与服务器 _try_server_pickup 用同一个 nearest_within + 同一个半径,否则会出现"提示了 A、服务器却捡了 B";★ "自己刚丢下"的冷却与服务器同源:weapon_spawned 带 by_role,本端据此写 _self_drop_until,冷却期内不给提示(与服务器 _live_self_drops 同口径)。
+# F 提示:贴到"按 F 会捡到的那一把"上方,每把能捡的各自一个。
 func _update_pickup_prompt(lp: Vector2) -> void:
 	var self_drops := _live_self_drops()
 	var w := float(GameParameters.MAP_WIDTH)

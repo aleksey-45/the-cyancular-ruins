@@ -1,24 +1,6 @@
 extends Node
 
 # 大乱斗压力探针(场景模式):一个进程当大厅/裁判,再拉起 N 个 headless 客户端子进程,
-# 每个客户端**跑真 `royale_game` 场景**(不是只连上数快照的轻量客户端 —— 卡顿就发生在
-# 建图/副本/HUD/后处理那个世界里),并用脚本机器人把局内行为踩一遍。
-#
-# 用法:
-#   "$GODOT" --headless --path . res://tests/probe/royale_soak_probe.tscn [-- --clients=4 --match=60 --run=90]
-# 无参 = 大厅/裁判。**跑前先确认 7777 空闲**(有僵尸 Godot 占着会直接 FAIL)。
-# 收尾建议用 tests/probe/royale_soak_probe.sh(Windows 下 bash kill 杀不死 headless Godot)。
-#
-# 埋点(每客户端写一份 user://soak_cN.result):
-#   - 主循环帧间隔 avg/p95/max、>33ms 帧数、>100ms 卡顿次数与最坏发生时刻
-#   - 收到快照的 次数/字节每秒、**到达间隔 max/p95**(这条从客户端视角量 worker 侧有没有停)
-#   - round_state / kill_event / hit_event 计数、本地玩家倒地(复活)次数
-#   - 是否等到 MATCH_OVER
-#
-# ★ 边界(报告里必须照抄,别把数字说过头):1. headless 客户端没有渲染 ⇒ 量到的是网络 + 模拟 + 场景树成本,不含画面(「渲染卡不卡」本探针答不了);
-#   2. 大乱斗客户端上报的输入包不带 seq(royale_game.gd 的 pkt 无该字段)⇒ 快照里的 ack_seq 恒为 0,客户端无从推算 _pending_input 积压,这项只在报告里给机制与触发条件;
-#   3. 崩溃判据 = 结果文件缺失 / 客户端进程消失,不是「没看见报错」;
-#   4. MATCH_OVER 之后结算页那条出场路径(玩家自己点「返回主菜单」)不在覆盖内 —— 客户端在 MATCH_OVER 当场写结果并退出,观测窗就到这里(自动退场已随结算页批次删除,不是被换场摘掉)。
 
 const BotInput := preload("res://tests/harness/soak_bot_input.gd")
 
@@ -205,9 +187,6 @@ func _run_client() -> void:
 	NetBus.local_match_start.connect(_on_match_start)
 	NetBus.local_go_match.connect(_on_go_match)
 	# ★ 这里原先接住 worker 推来的三条开局载荷、缓存进 PvpSession.pending_*;那条推路径已整体换成进场拉取(对局场景 _ready 末尾自己 match_sync),pending_* 四字段连带 clear_pending_payloads() 一起删了。
-	#   本探针不需要自己拉(真 royale_game 场景会自己发 match_sync);守卫:tests/probe/match_sync_probe 的反向断言(全仓不得再出现那些标识符)会拦住复活。
-	# 全流程兜底:连大厅→建房/加入→转连→claim→match_start 走不完就 FAIL 退出(否则挂死)。
-	# 全流程兜底:连大厅→建房/加入→转连→claim→match_start 走不完就 FAIL 退出(否则挂死)
 	get_tree().create_timer(60.0).timeout.connect(func() -> void:
 		if is_inside_tree() and not _match_running:
 			_finish(false, "60s 内没进对局(流程卡住)"))
@@ -375,10 +354,6 @@ func _physics_process(_delta: float) -> void:
 
 
 # 局内按 ESC 回主菜单 —— 唯一走过 `Level0.safe_change_scene` 的**局内**退出路径
-# (本仓历史上那条路径偶发原生段错误,`_switching` 防重入就是为它加的)。
-# 一次压到四件事:①该换场本身不崩;②服务器侧 `_on_peer_left` → `RoyaleHost.mark_disconnected`
-# 把该 role 移出对局而其余人继续;③其余端收到 `round_state.left` 非空;④其余端把离场者的
-# 副本/头顶 ID/血条一起拆掉(`royale_game._remove_replica` 那条路径)。
 func _esc_leave() -> void:
 	_esc_done = true
 	_done = true   # 止住 _process/_check_deadline,离场后不再写第二份结果

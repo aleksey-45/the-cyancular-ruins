@@ -1,13 +1,5 @@
 extends SceneTree
 # 下行接收逻辑守卫(S-03:把 net_bus.gd 里"解码 → tick 去重 → 坏包只警告一次 → 丢包/诊断计数"抽成 SnapshotRx 之后,
-# 这些行为第一次能被 `-s` 驱动 —— 旧实现住在 autoload 的 @rpc handler 里,只有真链路看得到)。
-# 守卫对象 = core/net/snapshot_rx.gd(RefCounted,不引 autoload;载荷用 NetCodec 真编解码构造)。
-# 去掉什么才红:删 `tick <= _last_world_tick` 去重 ⇒ ① 红;删 reset() 的两条 tick 复位 ⇒ ④ 红;
-#   删 warn_snapshot_once 的旗(改成恒 true)⇒ ③ 红;把丢包估计挪到基线更新之后 / 删步长学习 ⇒ ⑤ 红;
-#   改 take_diag 的键集 ⇒ ⑦ 红。
-# 测不到什么:① NetBus 侧"handler 是否真的调 accept_* + emit"(接线段,只能真链路 smoke);
-#   ② `--diag` 的落盘开关与文件轮转(NetDiag 侧);③ 真实网络里迟到/丢包的分布。
-# 跑法:"$GODOT" --headless --path . -s res://tests/smoke/snapshot_rx_smoke.gd;通过 = SNAPSHOT RX OK(n 条断言)。
 
 const EXPECTED_CHECKS := 7
 

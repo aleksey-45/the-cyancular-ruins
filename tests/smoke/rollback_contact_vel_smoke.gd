@@ -1,14 +1,5 @@
 extends SceneTree
 # 回滚"接触期速度容差"守卫(2026-10-31):同一台机器 3 客户端 soak 实测,回滚里 83~98% 是
-# **纯速度分歧**(pos 在容差内、hp 未变、只有 vel 超 20)且 92~98% 发生在贴身 —— 贴身时客户端撞的是
-# 按权威速度外推的"幽灵体",服务器撞的是对手此刻的真实身体,碰撞冲量必然不同。故:
-#   · 贴身期 vel 容差放宽到 contact_vel_tol(默认 400);
-#   · 非接触期仍是严格 VEL_TOL=20;
-#   · 位置容差不受影响(仍由 contact_pos_tol / pos_tol 二选一)。
-# 去掉什么才红:把 `_within` 的 vel 分支改回恒用 20 ⇒ ②/(④)红;把 position 分支也改成接触期放宽 ⇒ ③红;
-#   把 contact_vel_tol 默认值改成 20 ⇒ ②红。
-# 测不到什么:真机上"贴身"判据本身(那由 prediction_contact_smoke 钉几何);也不测观感(回滚少了是否手感更好要人眼)。
-# 跑法:"$GODOT" --headless --path . -s res://tests/smoke/rollback_contact_vel_smoke.gd;通过 = ROLLBACK CONTACT VEL OK(n 条断言)。
 
 const EXPECTED_CHECKS := 5
 

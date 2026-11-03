@@ -2,9 +2,6 @@ class_name PauseMenu
 extends CanvasLayer
 
 # 暂停菜单(Esc 呼出)。P1 场景化:骨架/版式在 pause_menu.tscn,本脚本只管开合、暂停与切场景。
-# 单机暂停整棵场景树(敌人/物理全停);PvP 不暂停树(服务器权威继续跑,本地只是弹层),
-# 回主菜单 = 断开连接(worker 检测任一方断开即拆局退出,见 server_main._on_peer_left)。
-# ★ process_mode=ALWAYS 写在场景里(树暂停时本层仍响应输入);Esc 由本层独占(set_input_as_handled)。
 
 # ★ 宿主(PvP)据此锁本地输入:PvP 下不暂停树,没有这道接线就是"菜单开着还能边跑边开枪"。
 signal toggled(open: bool)

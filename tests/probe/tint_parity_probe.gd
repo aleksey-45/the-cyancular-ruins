@@ -1,11 +1,6 @@
 extends SceneTree
 
 # tint 跨语言 parity 守卫:TerrainAtlas.tint_color 必须与 level_editor/tint.js 逐字节一致。
-# golden 向量内嵌自 level_editor/tests/tint/20_golden_and_exhaustive.js(从规格手推;跨语言 parity 的标准做法 =
-# 两边各持一份同源的固定向量,谁漂谁红)。规范 = tint.js:HSV、fposmod、乘数 (k+6)/10、round(clamp01*255)。
-# 最强保证:档位表 / HSV 数学 / 取整规则与 JS 端逐字节相同 ⇒ 编辑器里调好的颜色进游戏不变样。
-# 测不到什么:图集烘培的象限几何(wall_tint_probe)、shader 侧(水面合批不消费辅码)。
-# 跑法:"$GODOT" --headless --path . -s res://tests/probe/tint_parity_probe.gd;判词 = TINT PARITY OK(n 条断言)。
 
 const EXPECTED_CHECKS := 3
 

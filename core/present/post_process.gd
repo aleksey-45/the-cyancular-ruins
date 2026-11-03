@@ -79,6 +79,7 @@ func set_downed(v: bool) -> void:
 func flash_hit(strength: float = 1.0) -> void:
 	_hit_red = maxf(_hit_red, clampf(strength, 0.0, 1.0))
 
+
 ## 时间玩法三效果统一入口(Level0 每帧调;单机才有,常态全 0 = 无痕)
 func set_time_effects(film: float, loan: float, haste: float) -> void:
 	_film = clampf(film, 0.0, 1.0)

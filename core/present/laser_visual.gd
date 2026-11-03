@@ -1,12 +1,6 @@
 extends RefCounted
 
 # 激光光束/枪口光球的视觉构建(纯静态、preload 引用、不引 autoload)。把"已算好的光束几何 →
-# 画成视觉节点"从激光武器实例里解耦出来:本地武器开火、PvP 远端收到 beam_fired 事件都调同一套。
-# 无 class_name(仓库同款:BeamTrace / TileHitFx 都是 preload-only 静态,省去新类名刷缓存)。
-#
-# 坐标约定(与 laser_beam.tscn 现约定一致):折线点传"所在 parent 系的世界坐标";
-# parent 是能 add_child 的 viewport/节点(本地=武器 get_viewport(),PvP 远端=_world SubViewport),
-# 光束节点挂 parent 后 global_position 置 0 → points 直接是世界系。光束淡出自毁,无需外部清理。
 
 const BEAM_SCENE := preload("res://scenes/weapons/laser_beam.tscn")
 

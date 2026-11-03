@@ -184,7 +184,7 @@ func hurt_rect() -> Rect2:
 func is_hurtable() -> bool:
 	return not is_dead and collision_layer != 0
 
-# 受击通用逻辑:扣血、击退、白闪(子类覆写 hurt() 时也应调用本方法,避免逻辑分叉)。knock_strength <= 0 时回落敌人自身 knockback_strength;set_velocity=true(爆炸)设独立击退向量 knock_velocity、不覆盖移动速度,false(枪击)叠加到原速度。
+# 受击通用逻辑:扣血、击退、白闪(子类覆写 hurt() 时也应调用本方法,避免逻辑分叉)。
 func _apply_hit(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, set_velocity: bool = false) -> void:
 	hp -= damage
 	var ks := knockback_strength if knock_strength <= 0.0 else knock_strength
@@ -206,7 +206,7 @@ func _apply_knock_only(knock_dir: Vector2, knock_strength: float, set_velocity: 
 		velocity += knock_dir.normalized() * ks
 
 
-# 当前是否处于 SLEEP 态。★ 子类必须覆写:本方法原先在 _is_far_sleeping() 里硬编码成 state != 0,隐含了「所有子类的 State.SLEEP 都是枚举第一个」这条没人写下、也没人守的约定 —— 新敌人只要把 SLEEP 排在第二位,它的远处睡眠优化就会静默失效。
+# 当前是否处于 SLEEP 态。
 # 现在每个子类自己写 state == State.SLEEP,加新敌人时照抄一行即可;默认实现的 state == 0 只是兜底,别依赖它。
 func _is_asleep() -> bool:
 	return state == 0
@@ -274,7 +274,7 @@ func _on_death() -> void:
 	pass
 
 
-# 冲锋冲击力:沿远离本体的方向猛推玩家(覆盖 take_hit 的普通击退);away 为 0(与玩家完全重合)时朝玩家背向推,拿不到 get_facing 就用 LEFT。原本 FlyBird / BlackBird 各抄一份,收为基类单一来源。
+# 冲锋冲击力:沿远离本体的方向猛推玩家(覆盖 take_hit 的普通击退);away 为 0(与玩家完全重合)时朝玩家背向推,拿不到 get_facing 就用 LEFT。
 # ★ 名字刻意不叫 _apply_charge_impact:两个子类各自持有同名但两参的包装方法,而 GDScript 不允许子类以不同签名覆写父类方法(Parse Error,整个子类脚本加载失败 ⇒ -s 冒烟挂死),故基类另起名、子类包装转调这里。
 func _smash_player(p: Node, impact: float, impact_up: float) -> void:
 	var p2 := p as Node2D

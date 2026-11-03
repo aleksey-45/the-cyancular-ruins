@@ -1,14 +1,6 @@
 extends SceneTree
 
 # 路径一致性守卫:全仓 .gd / .tscn / .sh 里出现的每个 res:// 字面量都必须指向真实存在的文件或目录(目录重构期间每搬一步跑一次)。
-# 跑法:"$GODOT" --headless --path . -s res://tests/probe/path_integrity_probe.gd;通过 = PATH INTEGRITY: ALL-OK 退出 0。
-# ★ 必须剥注释再扫:注释里的 res://old/path 不是代码(直接 grep 会既假红又漏改)。★ .tscn 只查 ext_resource 的 path=,uid= 不查(uid 由 .gd.uid 边车与 .tscn 头承载)。★ 豁免走 tests/path_integrity_allow.txt,每行一个完整路径 + 可选「# 原因」。
-# ★★ 覆盖面边界(本守卫能给的最强保证是什么、测不到什么):扫 SCAN_ROOTS(core/ scenes/ server/ ui/ tests/)下的 .gd/.tscn(走 ScanUtil.collect),
-#   外加 tests/ 下递归收的 .sh(自己用 DirAccess 收 —— 刻意不动共享脚手架 ScanUtil,它另有 5 个探针依赖它「只收 .gd/.tscn」的语义)。看不见的载体(已知边界,不是漏扫):project.godot 的 autoload/main_scene、start_server.bat、tools/*.py。
-# ★★ 拆串 / %-格式化 / 变量拼接本守卫结构性看不见:正则是 res://[A-Za-z0-9_./-]*,只取单个字符串字面量 ⇒ "res://ui/" + "pause_menu.gd" 被削成 res://ui/,而那是个仍然存在的目录 ⇒ 通过、不报红。
-#   ⇒ 每个搬迁 task 必须自己按形态扫一遍(按形态扫一遍.md 的 Task 4 Step 3b);★ 反向纪律:有些拆串是负向断言(断言某字符串不该出现),必须原样保留 —— 先判它是活引用还是负向断言,再决定动不动。
-#
-# ★★ 豁免条目是无条件的(命中即放行,不看这条路径今天还在不在)⇒ 豁免会活过自己的成因:改豁免表、或删被豁免路径的生产者时,必须一并复核「它当初为什么被豁免」。
 
 const SCAN_ROOTS := ["res://core", "res://scenes", "res://server", "res://ui",
 	"res://tests"]
@@ -69,7 +61,7 @@ func _code_only(src: String) -> String:
 
 func _load_allow() -> Dictionary:
 	var allow := {}
-	# ★ 豁免表同样不能用 _su.read()(它读的是 .txt,不是已导入资源 ⇒ 恒返回 "" ⇒ 豁免表恒空、豁免形同虚设;实测放进去的 res://__l5_synthetic__.gd 照样报红):这里直接用 FileAccess 读。豁免文件不存在 = 空豁免,不是错误。
+	# ★ 豁免表同样不能用 _su.read()(它读的是 .txt,不是已导入资源 ⇒ 恒返回 "" ⇒ 豁免表恒空、豁免形同虚设;实测放进去的 res://__l5_synthetic__.gd 照样报红):这里直接用 FileAccess 读。
 	if not FileAccess.file_exists(ALLOW_PATH):
 		return allow
 	var f := FileAccess.open(ALLOW_PATH, FileAccess.READ)
@@ -131,7 +123,7 @@ func _initialize() -> void:
 		# .sh 走 FileAccess(见 _read_sh 的注释);.gd/.tscn 仍走 ScanUtil.read。
 		var src: String = _read_sh(f) if f.ends_with(".sh") else _su.read(f)
 		if src.is_empty():
-			# ★ 不许静默跳过(sc_util 文件头明写「调用方必须自己判空并报红 —— 静默返回 "" 是这类探针最典型的失明方式」):ScanUtil.read 在「文件不存在」与「打不开/内容为空」时都返回 ""。今天不该发生(collect/_collect_sh 只返真实存在的文件),但真发生时必须看得见,否则那些字面量一条都不会被检查、而 verdict 照样 ALL-OK。
+			# ★ 不许静默跳过(sc_util 文件头明写「调用方必须自己判空并报红 —— 静默返回 "" 是这类探针最典型的失明方式」):ScanUtil.read 在「文件不存在」与「打不开/内容为空」时都返回 ""。
 			skipped.append(f)
 			print("[SKIP] %s（读不到内容,该文件的 res:// 字面量未被检查）" % f)
 			continue

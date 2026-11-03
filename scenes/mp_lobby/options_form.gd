@@ -2,9 +2,6 @@ class_name OptionsForm
 extends RefCounted
 
 # 大厅页建房弹层的「选项表单」面板(2026-10-22 Task 10 纯搬移自 scenes/mp_lobby.gd)。
-# 本文件只负责两件事:①表单行显隐(_form_rows 那张表 + 按模式显隐)②这些控件的值读写(灌值 / 写回 Settings / 建房时读值)。
-# ★ 节点路径(%语义名)、信号、文案逐字未动:行显隐靠 .tscn 里的名字对上,错一个不报错,只是那一行永远不隐藏。
-# ★ 谁改变可见性、谁读控件值,两条都收在这里 —— 建房弹层的编排(create_panel.gd)只问本文件要值,不再直接碰这些节点。
 
 # ★ 键名固定:_apply_create_form 按这几个键显隐,max_players / match_time / weapons / privacy 按模式显隐,map 三模式都可见,beta 由 PvpSession.beta_mode 在建面板那一刻定。
 var rows := {}
@@ -36,7 +33,7 @@ func register(root: Node) -> void:
 	max_slider.value_changed.connect(func(v: float) -> void:
 		(root.get_node("%MaxPlayersLabel") as Label).text = "%d 人" % int(v))
 
-	# 一局限时(分钟;仅大乱斗可见)。★ 上界 15 是 ROYALE_MATCH_TIME_CEILING 那条上界链的第三环(Settings.royale_match_min 的写入端),别在这里改数值(见 docs/eng/modes.md);值从 Settings 灌。
+	# 一局限时(分钟;仅大乱斗可见)。
 	time_slider = root.get_node("%MatchTimeSlider") as HSlider
 	time_slider.value = Settings.royale_match_min
 	(root.get_node("%MatchTimeLabel") as Label).text = "%d 分钟" % int(Settings.royale_match_min)
@@ -45,7 +42,7 @@ func register(root: Node) -> void:
 		Settings.save()
 		(root.get_node("%MatchTimeLabel") as Label).text = "%d 分钟" % int(v))
 
-	# 「每回合开始回满血」房主选项(仅 1v1 可见)。★★ 它必须留在创建弹层里:Settings.pvp_round_full_heal 的写入方只有这一颗勾选框,而它仍被 _player_options() 读取并上报 —— 移走就等于玩家再也打不开它。
+	# 「每回合开始回满血」房主选项(仅 1v1 可见)。
 	# ★ 它是房主 / 服务器规则(大乱斗恒 false、3v3 压根不发),故归属创建弹层。
 	var full_heal: CheckButton = root.get_node("%FullHealCheck") as CheckButton
 	full_heal.button_pressed = Settings.pvp_round_full_heal
@@ -57,7 +54,7 @@ func register(root: Node) -> void:
 	(rows["beta"] as Node).visible = PvpSession.beta_mode
 
 
-# 按模式显隐表单行 —— 本弹层唯一的分支(模式层那一半在 create_panel.apply)。★ 3v3 关掉禁用武器不只是"规则里没有":那两个勾选框写的是 Settings.pvp_disabled_weapons,在 3v3 页勾一下会连带改掉另两个模式(功能缺陷,不是审美)。
+# 按模式显隐表单行 —— 本弹层唯一的分支(模式层那一半在 create_panel.apply)。
 func apply_rows(mode: String) -> void:
 	var is_royale := mode == PvpSession.MODE_ROYALE
 	var is_team := mode == PvpSession.MODE_TEAM
@@ -85,12 +82,12 @@ func max_players() -> int:
 	return int(max_slider.value)
 
 
-# 建房载荷里的 match_time 是秒(滑块是分钟)。★ 与页 _player_options() 那一行 `Settings.royale_match_min * 60.0` 不是同一个量:那条是报到选项、被 tools/room_sweep_lint.gd 钉在页里;这条是建房载荷。
+# 建房载荷里的 match_time 是秒(滑块是分钟)。
 func match_time() -> int:
 	return int(time_slider.value) * 60
 
 
-# 禁用武器网格的勾选结果 → type_id 数组。★ 与 LobbyPage._add_weapon_grid 的 on_cell 回调配对:那个回调负责把 cb 与 type_id 一起收进 weapon_checks(见 on_weapon_cell)。
+# 禁用武器网格的勾选结果 → type_id 数组。
 func checked_weapons() -> Array:
 	var out: Array = []
 	for cb in weapon_checks:

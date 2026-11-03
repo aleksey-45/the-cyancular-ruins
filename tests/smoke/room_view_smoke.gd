@@ -1,11 +1,5 @@
 extends SceneTree
 # 房列表「房主 + 名单」守卫(01 审查 S-12:同一段判据原先在 RoomRegistry.list_payload 与
-#   LobbyRooms.host_name_of 各写一遍 ⇒ 收进 ServerStatus.host_and_roster 单一来源后由本文件钉住)。
-# 覆盖四种组合:1v1 等待中(房主 = players[0])/ 1v1 局中(players 空 ⇒ 冻结名单第一条)/
-#   大乱斗·对抗 等待中(房主 = host_peer)/ 局中(host_peer 的 role 命中冻结名单)。
-# 测不到什么:list_payload 与面板的实际渲染(真链路/人眼);本文件只测纯判据。
-# 变异验证:把 is_duel 分支对调 ⇒ ① 红(1v1 等待中取不到 players[0]);roster_of 局中不读冻结名单 ⇒ ②④ 红。
-# 跑法:"$GODOT" --headless --path . -s res://tests/smoke/room_view_smoke.gd;通过 = ROOM VIEW OK(n 条断言)。
 
 const EXPECTED_CHECKS := 7
 

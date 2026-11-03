@@ -2,23 +2,8 @@ class_name MatchResultPayload
 extends RefCounted
 
 # 结算页的适配器:把三个模式各自的 round_state 形状,折成 MatchResult 认的那一个载荷。
-# ★★ 为什么单独一个文件:① 它们是纯函数(不碰节点、不读 autoload)⇒ -s 冒烟直接钉;② 三个模式共用「列标题 / 没有的列不列 / 平局文案」这些口径,抄三份必然漂。
-# ★ 反过来,ui/match_result.gd 不知道任何模式规则;模式差异全部收在本文件。
-# ★★ 三条不改会静默出错的口径:① columns 由数据决定 —— 某模式没有的数不进 columns,而不是补一列恒 0(恒 0 的列读起来像"这人打了但什么都没干");
-#   ② 排序必须确定性 —— 同样的局两次跑要给出同一个榜(主键降序 → 阵亡升序 → 昵称升序);
-#   ③ match_winner == 0 是平局。1v1 那条别照抄 ui/pvp_hud.gd 的兜底("P%d 获胜!" % (1 if w1 > w2 else 2))—— 那会把平局念成「P1 获胜」。
 
 # ── 类型化字典试点(2026-11-02,`Dictionary[String, Variant]`)──
-# 本仓 Godot 4.7.1 已实测支持 `Dictionary[K, V]`。这里给三个适配器与 _row 的返回、以及 mvp 标记字典(唯一同构的子字典)标上类型,
-# 把"载荷的键是 String"从注释变成类型。
-# ★★ 实测口径(别再凭印象):类型化字典**不会**因为"键名拼错"而报错 —— GDScript 只校验**键/值的类型**
-#    (键必须 String;值必须声明的那个类型),不校验键名这个字符串本身写得对不对。故 `payload["titel"]` 这类拼错
-#    今天仍然静默返回 null,本试点**治不了**它;能治它的是"具名结构而不是字典"(Resource / 类)。那要动读侧
-#    ui/match_result.gd(跨文件)⇒ 本轮只做写侧标注,不改变任何返回值/行为。
-# ★ 跨脚本传参:**运行期类型不擦除**(实测:传进形参为 Dictionary 的函数、或存进 untyped Dictionary 再取,
-#    `is_typed()` 仍为 true);但静态检查在接收侧看不到 —— 形参是 Dictionary 时不做键/值校验。故这层类型只在构造处(本文件)起作用。
-# 各模式的列 —— 顺序就是显示顺序:大乱斗无 ACS(单局死斗 ⇒ acs ≡ kscore)、无助攻(自由混战无归属);1v1 无助攻(same_team 恒 false ⇒ 那模式拿不到助攻)。
-# ★ 新增列必须同时在 ui/match_result.gd 的 COLUMN_TITLES 里有标题,否则表头退化成裸英文键名(.get(col, col) 兜底、不报错)。零守卫(match_result_payload_smoke 已删·2026-10-09)。
 const C_DUEL := ["kills", "deaths", "dealt", "taken", "acs"]
 const C_ROYALE := ["kills", "deaths", "dealt", "taken"]
 const C_TEAM := ["kills", "deaths", "assists", "dealt", "taken", "acs"]

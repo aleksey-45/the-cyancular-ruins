@@ -1,15 +1,5 @@
 extends SceneTree
 # 线格式守卫(NetCodec,三 kind:world / own / input)。存在理由逐条对应真实缺陷:
-#   ① 三个 encode_* 各自写死版本/种类字节 ⇒ 版本号会漂(两份真相) ⇒ 断言①(三 kind 首字节同为 PROTO_VERSION、第二字节互异且正确)。
-#   ② 解码守卫写松(不查版本/长度) ⇒ 错位值喂进权威模拟 = 静默分歧 ⇒ 断言②(三 kind 坏包一律空)。
-#   ③ 编码侧手写内联、解码侧按 schema 表读 ⇒ 字段顺序/宽度/位打包漂移 ⇒ 断言③(三 kind 往返;含 held u16=415、混合 bool、st/ct 非零;
-#      P1 定点字段用容差比:pos/vel ≤0.25、aim 点积 ≥0.9999 且长度≈1)。
-#   ④ schema 与生产者脱钩(pack_record 加字段不登记) ⇒ 该字段线上被静默丢掉 ⇒ 断言④(INPUT_SCHEMA ↔ pack_pair 逐键对齐)。
-#   ⑤ 负 hp(倒地瞬间的合法中间态)必须钳成 0:直接 & 0xFF 会回绕成 251 ⇒ 客户端血条 251/50 被钳成满(真实 bug)。
-# ★ 2026-10-30(PROTO_VERSION 6→7):DELTA 机制整体删除 ⇒ 原 ⑤本人包差分 / ⑥世界包 keyframe+差分 两条断言随代码退役;
-#   trail 改 2×i16 ⇒ ③的世界往返对 trail 加 ≤0.25 容差。条数闸 7 → 5。
-# ★ 与 snapshot_size_probe 的分工:那边量**体积/最坏包/容量**(场景探针,要真 Player);这里量**协议正确性**(纯逻辑 `-s`)。
-# 跑法:"$GODOT" --headless --path . -s res://tests/smoke/net_wire_smoke.gd;通过 = NET WIRE OK(n 条断言)。
 
 const EXPECTED_CHECKS := 6
 

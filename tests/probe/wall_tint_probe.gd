@@ -1,10 +1,5 @@
 extends Node
 # 墙体图集「按描述符行烘」守卫:make_wall_tileset_for / build_atlas_image_for 的行 = 描述符序列,
-# 像素 = 源砖(tex-1 槽)对应象限逐像素 tint_color,最近邻 2×;行号回落走 fallback_row。
-# 场景探针(要 load res:// 纹理,不是纯 -s):godot --headless --path . --quit-after 3600 res://tests/probe/wall_tint_probe.tscn
-# 去掉什么才红:行序不按传入描述符(row_of 错位)⇒ ①③;烘培漏 tint(直接搬源像素)⇒ ②③;
-#   象限→列映射(qy*4+qx)或 2× 放大改成插值/错序 ⇒ ③;fallback_row 的中性回落删掉 ⇒ ④。
-# 测不到什么:Level0 铺贴的瓦片坐标(需真场景 + 地图)、tint 数学本身与 JS 的 parity(tint_parity_probe)、水面合批(不消费辅码)。
 
 const MARKER := "WALL TINT PROBE: ALL-OK"
 const EXPECTED_CHECKS := 4

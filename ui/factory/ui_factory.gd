@@ -2,10 +2,6 @@ class_name UiFactory
 extends RefCounted
 
 # UI 控件工厂:全项目菜单/HUD 控件的唯一入口;纯静态、无实例状态、不引 autoload,任何场景/工具可直接调用。
-# ★ 字号必须是 16 的倍数(像素字体只在 16/32/48… 下与渲染缩放整数对齐,像素边缘才锐利),违反会被 style_control 当场 assert。
-# ★ separation / custom_minimum_size 这类布局度量不要求 16 的倍数:16 对齐针对字形光栅化,不是间距/尺寸 —— 把 420×64 的
-#   按钮改成 416×64、把 separation 22 改成 32 只会破坏版式节奏,所以 button() 里的默认尺寸保持原值,别顺手对齐。
-# 字体配置的唯一来源是 core/pixel_font.gd 的 PixelFont.shared();本工厂只负责怎么用字体建控件。
 
 
 static func pixel_font() -> FontFile:
@@ -75,9 +71,6 @@ const C_MODE_TEAM   := Color(0.627, 0.549, 1.0)      # #A08CFF 紫
 const C_MODE_ROYALE := Color(0.910, 0.639, 0.239)    # #E8A33D 琥珀
 
 # ── 菜单系视觉(方向 B「遗迹青铜」):只给菜单屏用,对局内 HUD 一律不用它们,也不会因它们的加入而改变一个像素 ──
-# ★★ 上面那批 token(C_ACCENT / C_TEXT / C_TEXT_DIM / C_DANGER / C_WARN / C_PLATE / C_SLOT_* / C_TEAM_* / C_GRACE / C_MODE_*)一个都不许改 ——
-#   ui/hud/ 下的脚本读它们;C_SURFACE / C_BORDER 还被对局内重连横幅 status_banner.gd 的 panel_box(false) 读,C_BG / C_FIELD 只被菜单系读。冻结点以 HUD 为准。
-# ★ 色值统一写 hex 字符串 Color(#RRGGBB)(对 8bit 精确),浮点反算会与探针 hex 期望差 1/255;⚠ 冻结守卫 menu_style_probe 已删(2026-10-09)⇒ 这批色值今天零自动化守卫。
 const C_HEADER     := Color("#1B242C")   # 标题带底 / 按钮填充
 const C_INNER      := Color("#1E2830")   # 面板内亮线(凿刻感的来源)
 const C_EDGE       := Color("#46545F")   # 按钮描边
@@ -223,13 +216,6 @@ static func menu_button(text: String, size: int, min_size: Vector2 = Vector2(640
 
 
 # ── 标题带(HeaderStrip)的版式规则(2026-10-27 用户裁定,别再单点改)──
-# 左右内边距一律对称 HEADER_INSET(24);上下 HEADER_PAD_Y(20)。
-# ★ 旧档是「左 0 / 右 40」——那会让汉字贴住带左缘(用户点名「很多汉字顶格了」),居中档还要靠非对称边距硬凑。
-# centered=true  = 页首标题 / 弹层标题 / 暂停菜单 / 结算页分区 / 卡片标题:文字在带内居中;
-# centered=false = 表单内分区标题(音量 / 地图 / 禁用武器 …):左对齐,吃同一份对称内边距。
-# ★ 改这里必须同步 tools/gen_menu_theme.gd(HeaderStrip 变体是它的镜像;⚠ menu_theme_mirror_smoke 已删·2026-10-09 ⇒ 零守卫)
-#   与 15 条 .tscn 里的 HeaderStrip + Label.horizontal_alignment。
-# ★ 唯一刻意不跟的一处:scenes/mp_lobby/room_list.gd 的 _card_header 左右 0(卡头住在自带内边距的卡里,要和卡体左缘对齐),那是版式不是漂移。
 const HEADER_INSET := 24.0
 const HEADER_PAD_Y := 20.0
 
@@ -391,7 +377,7 @@ static func button(text: String, size: int, min_size: Vector2 = Vector2(420, 64)
 	var b := Button.new()
 	b.text = text
 	style_control(b, size)
-	# ★ 默认 420×64 是旧式页面(暂停/设置/信息/Beta/结算页)的按钮列度量,故意不凑 16 的倍数(见文件头第 2 条);主菜单起走 menu_button()(默认 640×88),本函数的默认值没有跟着变。尺寸不合场景的调用方直接传 min_size。
+	# ★ 默认 420×64 是旧式页面(暂停/设置/信息/Beta/结算页)的按钮列度量,故意不凑 16 的倍数(见文件头第 2 条);主菜单起走 menu_button()(默认 640×88),本函数的默认值没有跟着变。
 	b.custom_minimum_size = min_size
 	style_button(b, variant)
 	# ★ 点击音不在这里挂:调用方的 handler(close/go_menu)各自会响一声,而 ESC 走同两条路径 ⇒ 这里再挂一次就是同帧同调两个播放器的双响;统一由状态转移出声。

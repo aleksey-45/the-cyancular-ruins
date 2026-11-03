@@ -1,12 +1,5 @@
 extends SceneTree
 # MVP 归属守卫(`ScoreRules.pick_mvp`;2026-10-30 用户裁定「全场最佳必须出自胜方」)。
-# 存在理由(逐条对应真实缺陷):
-#   ① 用户实机报「明明赢了,全场最佳却是对面」—— 旧实现 `mvp_role()` 在**全 roster** 里挑 ACS 最高者,
-#      与胜负完全脱钩:1v1 里赢家若"赢的局 5-4、输的局 0-5",败方的 kills 更多、deaths 更少 ⇒ ACS 反而更高
-#      ⇒ ★ 落在败方。现在候选集由调用方给(1v1 = [胜者 role]、3v3 = 胜队 role 集)。
-#   ② 并列/平局规则的确定性:ACS → 击杀多 → 阵亡少 → role 号升序;同一份数据两次给同一答案。
-#   ③ 旧实现 `best_acs := -1.0` 在**全员负 ACS** 时返回 0(= 结算页没有 ★)—— 死亡惩罚足以把 kscore 压成负。
-# 跑法:"$GODOT" --headless --path . -s res://tests/smoke/mvp_choice_smoke.gd;通过 = "MVP CHOICE OK(n 条断言)"。
 
 const EXPECTED_CHECKS := 6
 

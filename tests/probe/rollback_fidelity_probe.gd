@@ -1,16 +1,10 @@
 extends Node
 
-# C2 回放保真探针(场景模式:要真 Player,故 autoload 必须已实例化,不能用 -s 跑)。跑法:godot --headless --path . res://tests/probe/rollback_fidelity_probe.tscn。
-# 期望:末行 "ROLLBACK FIDELITY PROBE: ALL-OK"(判据 grep 该文本,不只看退出码)。
-# A 组 · 环面比较:_close_enough 原先比 pos 用裸 distance_to,而环面上客户端与服务器在跨接缝那一帧可能相差一整幅地图宽(其实同一个物理点)→ 误判分歧、白跑一次回滚。
-# B 组 · 重放保真:回滚重放时对手身体没被倒回 → 重放与原始预测对不上 → 级联回滚。这两条是本批的全部内容,故断言都钉在这里。
+# C2 回放保真探针(场景模式:要真 Player,故 autoload 必须已实例化,不能用 -s 跑)。
 
 const DT := 1.0 / 60.0
 const MARKER := "ROLLBACK FIDELITY PROBE: ALL-OK"
 # ★ 条数闸(G-05 补):下面的 `_ran` 完成戳只挡"整个测试函数中途报错",挡不住"单条 `_check` 被删 /
-#   被跳过"—— 那种形态下 `_failures` 仍空、`ALL-OK` 照打。故再钉一条计数闸:本文件每个 `_check` 站点 = 1 条,
-#   实跑条数 `!=` 本值 ⇒ 红。★ 2026-10-30 原样跑一次实测 **33 条**(全 ✓),本值 = 实测值;跑两次确认稳定。
-#   加/删 `_check` 站点必须同批改这个常量,否则本支变红(方向 = 宁假红,不静默少跑)。
 const EXPECTED_CHECKS := 34
 
 var _failures: Array[String] = []
@@ -107,9 +101,6 @@ func _test_torus_compare() -> void:
 
 
 # ── F 组:PREDICTED_FIELDS ↔ capture_state() 键集对账(S-06)──
-# 那 4 个字段是「预测被证实」的唯一比对集(const PREDICTED_FIELDS)。名字漂了(rename / typo)不会报错,
-# 只会静默把该字段判成「永远一致 / 永远分歧」⇒ 这条按**真** capture_state() 逐键点名(不是抄一份键表)。
-# 去掉什么才红:把表里任一键改成 capture_state() 里不存在的名字 ⇒ 本断言红;删掉本断言 ⇒ 条数闸红。
 func _test_predicted_fields() -> void:
 	var p: Node2D = preload("res://scenes/player/player.tscn").instantiate()
 	add_child(p)
@@ -171,13 +162,6 @@ func _test_contact_tolerance() -> void:
 
 
 # ── 源码守卫 ── map_px 不接线的话,环面修复在真机上是惰性的、而且静默:不报错、探针全绿、生产行为与修复前逐帧一致(实测过)。所以把「接线了」这件事本身变成断言。
-# ★ 若日后改法换了入口(例如搬进 player.gd),请把这里改成认新入口,别删掉这条断言。
-# ★★ 2026-11-02 换入口(引导段上提):三个对局场景的引导段(pvp_arena → set_map_file → refresh_map_size →
-#    pvp_mode → level_0 → 摆 local → mask |= 2 → 建 PredictionRollback + bind + map_px → PostProcess + 共用订阅)
-#    从 pvp_game / royale_game / team_game 三份逐字复制上提成 PvpMatchClient._boot_world(),map_px 那一行也跟着搬进本文件。
-#    **为什么扫这个文件、并且把范围限死在 `_boot_world` 块**:① 引导只剩这一处 ⇒ 扫它等于同时守住三个模式(比原来只守 1v1 更严);
-#    ② 不能扫整个文件 —— 基类 _pull_resync()(重连补态)里也有一句 `_rollback.map_px`,不限定块的话删掉 _boot_world 里那句仍会假绿;
-#    ③ 判据不变:非注释行里出现 map_px = 接线存在。别改成"扫 _pull_resync"或直接删断言 —— 那都会放走"引导段忘了设环面尺寸"。
 func _check_source_guard() -> void:
 	var lines0 := FileAccess.get_file_as_string("res://scenes/pvp_match_client.gd").split("\n")
 	var boot := _func_block(lines0, "func _boot_world(")
@@ -192,10 +176,6 @@ func _check_source_guard() -> void:
 			"PvpMatchClient._boot_world() 给控制器设了 map_px(不设 = 环面修复惰性且静默;块没找到 = 引导段入口名改了,守卫也要跟着改)")
 
 	# ② 接触提示的接线(in_contact 必须在 note_post_step 之前写 —— 它是那一步的消费方)。漏了这一行 = 静默退回 2px 容差:不报错、探针全绿、真机行为与改动前逐帧一致。
-	#   ★ 要拦下的变异:把赋值挪到 note_post_step(...) 之后 —— 接触提示永远用上一帧的信息(差一帧),静默且没有别的守卫看得见。
-	#   ★ 2026-10-28 入口改成 `_update_contact_state()`(距离判贴身 + 动态容差),touching_player() 降级成函数内兜底;
-	#     本守卫跟着认新入口(原注释已要求"换了入口就改这里,别删断言")。
-	#   ★ 位置序就是契约;但比较范围收在同一帧块内(包住该赋值的那一层顶层函数):别处无关函数里新增/删掉一条 note_post_step 不该把这条带红。
 	var txt2 := FileAccess.get_file_as_string("res://scenes/pvp_match_client.gd")
 	var lines := txt2.split("\n")
 	var hint_line := -1
@@ -228,9 +208,6 @@ func _check_source_guard() -> void:
 			% [hint_line, note_line])
 
 	# ③ 受击事件时刻对齐的接线(2026-10-28):网络回调只入队,由物理帧开头的 _drain_hit_events 注入
-	#    (帧外 move_and_slide 位移恒 0,所以注入不能在网络回调里做);_apply_local_hit_event 必须**恰好一处**
-	#    apply_external_event + **一处** feedback-only 兜底(take_hit 第 5 参 true)。
-	#    ★ 删掉注入不报错、不崩,只是静默退回"事件到达即扣血"的旧行为(对枪期回滚变多)⇒ 只能靠源码守卫。
 	var lines3 := FileAccess.get_file_as_string("res://scenes/pvp_match_client.gd").split("\n")
 	var ev_block := _func_block(lines3, "func _on_hit_event(")
 	var drain_block := _func_block(lines3, "func _drain_hit_events(")
@@ -282,10 +259,6 @@ func _check_source_guard() -> void:
 			"兜底路径必须存在且只播反馈(take_hit 第 5 参 = true;实得 %d 处)" % fallback)
 
 	# ④ 服务器事件锚点(2026-10-28 评审 C2;2026-11-01 R2 起取数点跟到 `_event_seq_for()`):必须用 `_stepped_seq`
-	#    (上一条完成步进)、ack 只作首帧兜底、不用 `_srv_tick`。删/改都不报错,只是"对齐"变成"晚一 tick 的对齐"。
-	# ★ 代理判据:读源码文本,不是行为 —— 行为证据见 `tests/probe/net_tile_fx_probe.tscn` ⑦⑧(注入/兜底)与
-	#   真链路 `tests/smoke/pvp_match_smoke.sh`。**R2 没有为拆砖新增源码守卫**:拆砖走同一锚点是注释契约,
-	#   "逐 peer 发"只能在真链路里观测(权限:不为它加第二条读文本的断言 —— test-economy D6a)。
 	var lines4 := FileAccess.get_file_as_string("res://server/match/match_combat.gd").split("\n")
 	var anchor_block := _func_block(lines4, "func _event_seq_for(")
 	var stepped_uses := 0
@@ -434,9 +407,6 @@ func _test_event_alignment() -> void:
 			"⑨ 黄金对照 hp 一致(%d vs %d)" % [int(cap1.get("hp", 0)), int(cap2.get("hp", 0))])
 
 	# ③ 越界拒绝:未来 seq / 已 ack 的 seq —— 都不许调用事件,也不许改整态
-	#   ★ 顺序:先做「已 ack」再看「注入后 reconcile」—— 推到 ack=30 会把 _captures[25] trim 掉,之后就没法摆权威态了。
-	#   ★ 用无类型变量接返回值 + typeof 断言:拒绝路径若被删,越界访问只打断 apply_external_event 本身、调用方照常往下跑,
-	#     返回值会是 null —— 用 `not null` 判会假绿(实测:删两条拒绝后本支曾打 ALL-OK)。
 	var calls := [0]
 	var ok_future = c1.apply_external_event(31, func() -> void: calls[0] += 1)
 	c1.on_authoritative(25, (c1._captures[25] as Dictionary).duplicate(true))

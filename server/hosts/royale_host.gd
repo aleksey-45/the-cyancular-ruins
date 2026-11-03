@@ -2,11 +2,6 @@ class_name RoyaleHost
 extends MatchHost
 
 # 大乱斗权威对局(N 人限时死斗):roles 1..N 散点出生,死亡 2s 复活,复活点动态选「离所有存活敌人 ≥ 若干格」的地板格。
-# ★ 限时 MATCH_TIME:倒计时归零 → MATCH_OVER,击杀最多者胜(并列 = 0)。★ 击杀归因靠受害者 meta(last_damager),无源死亡不计分。
-# ★ 排行榜数据经 round_state 下发(scores / names / timer / match_winner)。★ 中途掉线 = 移出对局(节点释放,排行榜标「离开」),
-# 剩余 < 2 人时终局。★ 出生点数据 = 地图 meta 的 `# respawn 1|2` 行(按阵营半区写死;大乱斗无阵营 ⇒ 两侧并集,全图散布);
-# 随机/排除上一次/最小间距在 core/sim/spawn_chooser.gd,散点/复活编排在 server/hosts/royale_spawn.gd(RoyaleSpawn);缺数据的老图回退 SpawnPicker 几何生成。
-# 这里只留生命周期、_round_spawns/_spawned_once/_last_spawn 的状态与同名转发。
 
 const MATCH_TIME := 300.0        # 一局时长(秒)
 const HUD_SYNC_INTERVAL := 1.0   # 倒计时/比分周期广播

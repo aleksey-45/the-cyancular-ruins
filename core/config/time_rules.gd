@@ -2,10 +2,6 @@ class_name TimeRules
 extends RefCounted
 
 # PvP 时间玩法参数总表:建房页可自定义的全部数值 + 服务器侧钳制。
-# ★ 与单机 TimeParams 的分工:那份是单机用的 const 表(单机行为逐位不变,本类不碰它);本类是每局可调的
-#   实例数据 —— 房主在 Beta 建房页改 → player_options 上报 → 服务器 clamp_self() 后写进对局状态 →
-#   随 match_start / match_sync 下发,全员同一份规则。
-# ★ 零 autoload / 零场景依赖(服务器与客户端共用,-s 可直接测);客户端上报的数值不可信,一切以服务器 clamp 后的那份为准。
 
 # ── 默认值(用户裁定)──
 const DEF_INITIAL := 1000.0
@@ -73,11 +69,6 @@ static func from_dict(d: Dictionary) -> TimeRules:
 	r.block_gain = int(d.get("block_gain", DEF_BLOCK_GAIN))
 	r.damage_gain = int(d.get("damage_gain", DEF_DAMAGE_GAIN))
 	# ★★ 2026-10-15:服务器**不听**载荷里的 `haste_mult`。加速倍率是**用户裁定固定 ×3**、且**不进建房页**
-	#   (见 `DEF_HASTE_MULT` 的注释与 `scenes/lobby_page.gd` 的 `_trow` 清单 —— 那七行里没有 haste),
-	#   所以 3.0 以外的值只可能来自被改过的客户端。`from_dict()` 的唯一调用方就是服务器
-	#   (`server/match/match_host.gd`),故在这里钉死;`to_dict()`(客户端)仍照发,便于将来要放开时对账。
-	#   ★ **仍未闭合的另一半**:1v1 也能塞 `time`(门只在客户端 `scenes/mp_lobby.gd`),
-	#   那一半要服务器认识模式 ⇒ 得往 options 里加 `mode`(协议改动,登记在 docs/eng/registered-debt.md 的「零守卫」表)。
 	r.haste_mult = DEF_HASTE_MULT
 	r.clamp_self()
 	return r

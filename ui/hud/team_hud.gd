@@ -2,10 +2,6 @@ class_name TeamHud
 extends CanvasLayer
 
 # 对抗对局 HUD(CanvasLayer layer=130,与 PvpHud/RoyaleHud 同层)。布局沿用 pvp_hud.tscn(记分条/延迟;
-# 中央广播走共享组件 ui/hud/broadcast.tscn),只改语义:记分与播报的键是"队号"、判胜负按"我方队伍",
-# 都不是 role。本页是最小可用版式,联机 UI 重做那份会把它一起重做。
-# ★ 击杀目标**不写死**:由 `round_state` 的 `target` 下发(`TeamHost._broadcast_round_state`,值来自 TeamRules)。
-#   本 HUD 刻意不引 TeamHost(会把 MatchHost 整条链拖进客户端)—— 从前那个写死的 `9` 就是这么来的:人数一变它就开始撒谎。
 
 const ST_COUNTDOWN := 0
 const ST_PLAYING := 1

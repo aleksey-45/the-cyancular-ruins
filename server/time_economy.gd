@@ -2,13 +2,6 @@ class_name TimeEconomy
 extends RefCounted
 
 # Beta 时间玩法的服务器权威颗粒经济(P2/B21):每个 role 一份 GrainAccount + 三条入账。
-#
-# ★ 服务器权威:账户只住在 worker 侧;客户端拿到的只是 10Hz 显示镜像(time_state),
-#   任何客户端数值都不参与结算(防作弊的唯一数值来源)。
-# ★ 纯逻辑零 NetBus(-s 可测):宿主持有一份,四条结算缝都调这里 ——
-#   击杀(倒地边沿)/ 伤害(took_hit,归因到攻击者)/ 拆砖(16px 子格,归因到射手)/ 回复(tick)。
-# ★ 过滤口径(用户裁定 2026-09-28):只算**敌方** —— 自杀/自伤/归因不到,谁都不给;
-#   同队伤害由调用方按 same_team 过滤(3v3);被击杀者余额不减。
 
 var rules: TimeRules
 var accounts: Dictionary = {}   # role(int) -> GrainAccount

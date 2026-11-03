@@ -375,9 +375,6 @@ func _kill_ghost(i: int) -> void:
 # 右上角击杀计数:初始 000,每死一个敌人 +1(三位零填充)。
 func _build_kill_label() -> void:
 	# 底板已按用户要求去掉(这是第 3 次动它了,故把踩过的坑写死在这):⚠ 去掉底色只能靠 draw_center = false,不能只删 bg_color 那一行 ——
-	#   StyleBoxFlat 的默认底色是不透明灰 (0.6,0.6,0.6,1.0)、draw_center 默认 true ⇒ 只删 bg_color 等于把半透明黑板换成一块实心灰板(比原来还显眼,实测发过一版)。
-	#   draw_center = false 保留 content_margin,文字位置不受影响。★ 本条三个模式一起生效(PvP / 大乱斗都实例化 level_0.tscn,共用这个 Hud)。
-	# ★ 刻意做成无脚本的独立场景(而不是塞进 level_0.tscn):创建方式与场景解耦。零守卫(kh_l3_visual_probe 已删·2026-10-09)。
 	var wrap := KILL_COUNTER_SCENE.instantiate() as PanelContainer
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = PLATE_COLOR

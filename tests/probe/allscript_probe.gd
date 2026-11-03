@@ -8,32 +8,8 @@ const SKIP_DIRS := ["res://.godot", "res://builds", "res://releases", "res://gam
 		"res://crashlogs", "res://maps", "res://map", "res://backup", "res://editor/_build",
 		"res://_crashtest", "res://docs"]
 # ★ 为什么要收 `res://_crashtest`(与 `tools/check_naming.py` 里同名的根同因):它是 gitignore 的
-#   现场草稿,存着编译不过的旧 `.gd` 备份;不收它本探针"改前就红",而一条永远红的闸等于没有闸。
-#   ⚠ 它与 `tests/path_integrity_allow.txt` 是两份手工同步的真相源(登记:registered-debt R25)——
-#   增删 `SKIP_DIRS` 时必须同时改豁免表,否则 `path_integrity_probe` 会红。
 
 # ★ 为什么必须有一条数闸:一个过宽的 `SKIP_DIRS` 项、一个 `.gdignore`、一次 `DirAccess.open`
-#   失败,都只让 `_total` 变小,而探针照打 `OK(n)` ⇒ 它是一道 fail-open 的闸:自己瞎了也不知道。
-#   故下面的判据用 `!=` 而不是 `<` —— 它同时钉住"没有少、也没有多"。
-#
-# `EXPECTED_SCRIPTS` 的数法:数的是"`res://` 下参与编译面的 `.gd` 个数" ——
-# 排除名字以 `.` 开头的目录、`SKIP_DIRS` 各项、以及 `*.gd.remap`(见 `_collect`)。
-# 复算两条(必须同时成立):`git ls-files '*.gd'` **减去 SKIP_DIRS 命中的** 等于本常量;
-# `git ls-files --others --exclude-standard '*.gd'` = 0(工作树没有未跟踪脚本)。
-# 改这个常量是"覆盖变了得有人过目",不是"让闸变绿";历次取值见 git log。
-# ★ 2026-10-26:`res://docs` 进 SKIP_DIRS —— docs/ 是文档目录,出现 `.gd` 只可能是临时审计驱动
-#   (如 `docs/audit/*/_drivers/`),不属于编译面/导出面;不收它时这些草稿会让条数闸随机变红。
-# ★ 2026-11-02:255→241(`docs/archive` 8 + `audit_shots` 6 个取图驱动删除)→237(`tests/scripts/` 4 个
-#   迁移 / 一次性工具整目录删除)→**238**(新增 `scenes/player/player_visual.gd`:本体与副本共享姿态表)。
-#   三次都是**真增删文件**,不是放水。历次取值见 git log。
-# ★ 2026-11-02 性能批(同一天第二批):238→**242** —— 新增 4 个(全是真落地的新脚本):
-#   `server/match/tick_timing.gd`(O0 分段计时)、`core/present/bullet_pool.gd` + `tests/smoke/bullet_pool_smoke.gd`
-#   + `tests/probe/bullet_pool_probe.gd`(O2/O3 子弹池与守卫)。
-#   ★ 同日被**挪出仓库**的 `tests/probe/bullet_golden_probe.gd`(O4 前置金标准探针,停在 parse error)
-#   不计入 —— 见 `docs/superpowers/plans/2026-11-01-bullet-perf.md` §O4「金标准探针暂不入库」。
-# ★ 2026-11-03 纹理重编码批:242→**246** —— 新增 4 个(全是真落地的新脚本):
-#   `tools/migrate_map_textures.gd`(legacy 纹理的调色板原位迁移工具)+ 守卫三支
-#   `tests/probe/tint_parity_probe.gd` / `tests/probe/texture_migration_probe.gd` / `tests/probe/wall_tint_probe.gd`。
 const EXPECTED_SCRIPTS := 246
 
 var _fails: Array[String] = []

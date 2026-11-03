@@ -1,17 +1,6 @@
 extends SceneTree
 
 # 从 UiFactory 的现有取值生成 ui/theme/menu_theme.tres(+ 两个开关图标 PNG)。
-# ★ 为什么是「生成」而不是手写:.tres 里的颜色是 float32 的十进制序列化,手抄有两个风险 —— ① 精度(0.105882354 抄成 0.106 就差 1.2e-4,而守卫按值比对、容差 1/65536 ⇒ 当场红);
-#   ② 漂移(改了 UiFactory 的值而忘了改 .tres,那种不一致不会报错,只让「编辑器里拖出来的」与「运行时建的」长得不一样)。由工厂自己产出 ⇒ 逐位相同由构造保证,不靠人抄。
-# 跑法(改过 UiFactory 的菜单系样式之后必须重跑):"$GODOT" --headless --path . -s res://tools/gen_menu_theme.gd;之后跑一次 --import(让两个 PNG 进导入缓存)。
-# ★ 本工具不引 autoload(UiFactory / PixelFont 都不依赖它们),故 -s 可跑。
-# ⚠ 原来接着要跑的两条守卫 ui_palette_single_source_smoke 与 menu_style_probe 都已删·2026-10-09 ⇒ 今天只剩逐屏取图兜底。
-# ★★ 两个 PNG 的 .import 里 process/fix_alpha_border 必须为 false(已提交在仓里):默认 true 会改写透明像素附近的 RGB —— 图标肉眼无差(那些像素本来就透明),
-#   但镜像守卫逐像素比对时实测差 100 个像素。别顺手改回 true;★ 运行工具不会重写 .import,但删掉 .import 重新导入会退回默认 true,那时镜像守卫会红。
-# ★ 变体的字号一律 32(与 UiFactory.menu_button / button 的既有调用点一致);需要别的字号的调用方自己去 .tscn 里写 theme_type_variation + 尺寸,不要在这里加档。
-# ★★ 覆盖上限(照实登记):只保证「Theme 里能表达的那些样式与工厂逐位相同」;工厂里带运行时参数的入口(menu_panel(padding) / fit_name)在 Theme 里表达不了 ——
-#   用到它们的地方只能各自表达(代码,或 .tscn 里的显式节点 / SubResource),没有「外观不变」的机械保证,只有逐屏取图。
-# ⚠ Filter 变体刻意一个都没有:模式色是运行时值,由 mp_lobby.tscn 的内联 SubResource 承担;手改那几态时注意 Button 的「选中」画的是 pressed 主题项(不是 normal),只改 normal 画面毫无变化且不报错,那批 SubResource 必须五态都写。
 
 const OUT_THEME := "res://ui/theme/menu_theme.tres"
 const OUT_SWITCH_OFF := "res://ui/theme/switch_off.png"
@@ -99,9 +88,6 @@ func _label_variants(t: Theme, C: Dictionary) -> void:
 
 
 # ── 按钮 ── BtnPrimary = menu_button("primary")(菜单系的新语汇);另四个变体覆盖 menu_button 的其余档;两个 BtnLegacy* 覆盖旧的 style_button() —— 暂停菜单/结算页那一族还在用,迁移期要让它们能落成同一外观。
-# ★★ 刻意不设基础类型 Button:Godot 的主题查找沿类链回退,而 CheckButton : public Button —— 曾在基础类型上设 Button/styles/*,于是每个 CheckButton 都静默穿上按钮的皮
-#   (实测空 CheckButton 最小尺寸从 (40,22) 涨到 (120,62),设置页左栏实测差 3.5% 像素,而没有任何守卫会红)。⇒ 基础类型留空(CheckButton 落回引擎默认主题),主按钮改挂 BtnPrimary。
-#   ★ 两种修法都不行:补 StyleBoxEmpty 会把焦点环一起丢掉(截图里看不见);照抄默认主题的 focus 盒带 Color(1,1,1,0.75),而"Theme 里的颜色必须只来自 UiFactory"这条纪律今天零守卫(`ui_palette_single_source_smoke` 已删·2026-10-09)⇒ 只能人工守。
 func _button_variants(t: Theme, F: GDScript, C: Dictionary) -> void:
 	_menu_btn(t, F, C, "BtnPrimary", _c(C, "C_EDGE"), _c(C, "C_TEXT"))
 	_menu_btn(t, F, C, "BtnQuiet", _c(C, "C_BORDER_DIM"), _c(C, "C_TEXT_DIM"))

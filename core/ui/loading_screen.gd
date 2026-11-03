@@ -1,10 +1,6 @@
 extends CanvasLayer
 
 # 跨场景「载入中」遮罩(2026-10-24)。用途 = Web 上 Level0 的建图被拆成多帧(9 份环面瓦片/水面/整层碰撞),
-# 期间用一个挡画面的遮罩 + 进度文字替代"点完开始黑屏几秒"。
-# ★ 桌面建图很快 ⇒ 只有调用方显式 show_loading() 才亮(目前只有 main_menu 在 Web 上进关前会调),不改变桌面观感。
-# ★ 必须在「树暂停」时也刷新:Web 建图期间 get_tree().paused = true(冻结玩家/敌人物理),遮罩要能画出来 ⇒ PROCESS_MODE_ALWAYS。
-# ★ 层位 200:高于 PauseMenu(145) / 结算(150),任何一屏都能盖住。
 
 var _dim: ColorRect = null
 var _title: Label = null

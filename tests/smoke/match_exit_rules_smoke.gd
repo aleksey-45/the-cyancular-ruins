@@ -1,13 +1,5 @@
 extends SceneTree
 # 对局结束后「某个 peer 离开」该怎么办的守卫(2026-11-01 用户报「游戏结束后房间不会关闭」)。
-# 守卫对象 = MatchExitRules(纯逻辑:无 autoload / 无 Node ⇒ 本文件能 `-s` 跑)。
-# 语义:MATCH_OVER 之后没有重连价值(结算数据已送达、客户端已 _match_ended)⇒ 最后一个参与者一走就该退进程;
-#   还有人看结算则继续跑。**未终局**时一律走宽限(60s 重连窗口) —— 那条不能被"退进程"顺手收掉。
-# 去掉什么才红:把 `if not match_over` 那条早退删掉(未终局也按 claims 判)→ ①⑤ 红;QUIT 的 `<= 0` 写成 `< 0` ⇒ ③ 红;
-#   WAIT 分支删掉(终局后一律 QUIT)⇒ ② 红(一个人退就带走另一个人的结算页)。
-# 测不到什么:① server_main._on_peer_left 是否真的按这个分派(源码级里没有断言,靠真链路日志行
-#   「对局已结束且全员离开」);② quit(0) 之后大厅多久把房拆掉(那是回收梯,`MATCH_SWEEP_INTERVAL`)。
-# 跑法:"$GODOT" --headless --path . -s res://tests/smoke/match_exit_rules_smoke.gd;通过 = MATCH EXIT RULES OK(n 条断言)。
 
 const EXPECTED_CHECKS := 5
 

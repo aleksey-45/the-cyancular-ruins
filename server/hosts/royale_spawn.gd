@@ -2,9 +2,6 @@ class_name RoyaleSpawn
 extends RefCounted
 
 # 大乱斗的散点选格 / 复活选格:只有静态计算,不持有状态、不碰生命周期。
-# ★ 出生点数据 = 地图 meta 的 `# respawn 1|2` 行(按阵营半区写死的固定数据;大乱斗无阵营 ⇒ 用**两侧并集**当候选,全图散布)。
-#   随机/排除/最小间距在 SpawnChooser;缺数据的老图回退到改造前的 SpawnPicker 几何生成(池子判据不变),并 push_warning 一次。
-# ★ 出生点的权威那份(_round_spawns / _last_spawn)仍住 RoyaleHost:一次性副作用与「广播给客户端的是同一份」都在宿主里。
 
 const SPAWN_CLEARANCE := 15      # 开局散点两两最小距离(格)
 const RESPAWN_CLEARANCE := 8     # 复活点与存活敌人的最小环面距离(格)
@@ -75,9 +72,6 @@ static func plan_spawns(roles: Array) -> Dictionary:
 
 
 # 复活选格:池内离所有存活玩家 ≥ RESPAWN_CLEARANCE、且不是本 role 上一次出生点的格,随机取一个。
-# ★ 池子:有地图 `# respawn` 数据就用它(宿主传两侧并集,单档);老图回退到 SpawnPicker.respawn_pools() 的逐档序列(判据不变)。
-# ★ 已移出对局的 role(_left)不参与「存活」判定 —— 他们的节点可能已 queue_free。
-# ★ 全档都筛空(极小图 / 满员贴脸 / 点全被排除)时退化为同池随机,绝不回 (-1,-1) 把复活点甩到地图角落。
 static func respawn_cell(role: int, players: Dictionary, left: Dictionary,
 		last: Dictionary = {}, points: Array = []) -> Vector2i:
 	var d := _grid_dims()

@@ -2,10 +2,6 @@ class_name RoomList
 extends RefCounted
 
 # 大厅页的「房间列表」面板(2026-10-22 Task 10 纯搬移自 scenes/mp_lobby.gd):模式筛选 / 三个载荷归并 / 房卡绘制 / 加入弹层(房号 + 邀请码)。
-# ★ 节点路径(%语义名)、信号、文案、房卡版式一律逐字未动:卡片按载荷现建,名字 / meta("code") / 禁用态都是探针与回调的据点。
-# ★ 状态归这里:_rooms_by_mode / _got / 四颗筛选按钮 / 加入弹层的三个节点;页只留 _mode(筛选值)与加入应答那套状态机(_ack / _sent_ms / _join_pending / …)。
-# ★★ _grid 仍住在页上(scenes/mp_lobby.gd 的 var _grid):tests/harness/{rejoin,team_match}_watcher.gd 用 _page.get("_grid") 按卡号找房卡,
-#    句柄搬进本文件它们会静默拿到 null(而"探针找不到卡"与"卡没建出来"在输出上长得一样)。
 
 # ★ 只有这三个版式常量留在代码里:房卡是运行时按载荷建的(_make_card),而它的宽必须与 .tscn 里 CardGrid 的 offset_left/right + h_separation 一致 —— 同一件事有两个来源,改一个就要改另一个,否则卡片与网格错位(而不报错)。
 # ★ 其余版式常量(各行 / 各块的 y 与空档、按钮尺寸)已随迁移进 .tscn,代码里不再有副本。
@@ -15,7 +11,7 @@ const CARD_GAP := 24.0
 # 房卡高度:容纳「标题带 + 房号 48 + 副标题 32 + 缩略图/人数 120 + 名单 32×3 + …等 N 人」;★ 名单字号 16→32 后旧 440 会挤爆,改高度而不是把名单压回过小。
 const CARD_H := 520.0
 
-# 模式色(与对局无关的一套,只在菜单系用)。★ 对抗刻意不用蓝 —— #639BFF 就是 UiFactory.C_TEAM_A(队 1 的队色),而队色在对抗里是有玩法语义的颜色("一眼看出谁是队友"),撞色会让大厅的「对抗」与对局的「队 1」混淆。
+# 模式色(与对局无关的一套,只在菜单系用)。
 # ★★ 模式色定义在 ui/factory/ui_factory.gd(调色板单一来源是硬约束:颜色只在那里定义,不要再写 Color(...) 字面量)。这里只引用不写字面量,否则同一套颜色会被定义两遍、静默漂移。
 const MODE_COLOR := {
 	PvpSession.MODE_PVP: UiFactory.C_ACCENT,
@@ -113,7 +109,7 @@ func clear_rooms() -> void:
 	_rooms_by_mode.clear()
 
 
-# 重绘整张网格。★★ 必须先 remove_child 再 queue_free:只 queue_free 的话旧节点要到帧末才没,同帧再建一次就会在网格里留下两批卡叠着(它们都还是 _grid 的子节点,get_children() 数得出来)。
+# 重绘整张网格。
 # 生产里三条 RPC 应答确实可能落在同一帧(ingest 每收到一条就可能触发一次重绘)。本仓在"热重建视觉"那处踩过同款(WeaponPickup.configure)。
 func redraw() -> void:
 	for c in page._grid.get_children():
@@ -141,7 +137,7 @@ func redraw() -> void:
 	page._status.text = "共 %d 个房间(显示 %d 个;未满优先,对局中的照列)" % [total, shown]
 
 
-# 一张房卡 = 一颗 Button(卡本体就是可点区域)。★ 不用 PanelContainer + 覆盖层:那样"点不动"的判据会散在覆盖层的连接数上,而 disabled / focus_mode / pressed 三个原生属性都在 Button 上,判据落在同一个节点上。
+# 一张房卡 = 一颗 Button(卡本体就是可点区域)。
 # ★ 子节点一律 mouse_filter = IGNORE:内容画在 Button 之上,但点击必须落到卡本体,否则点文字那一片就等于没点。
 func _make_card(r: Dictionary) -> Button:
 	var mode := str(r.get("mode", PvpSession.MODE_PVP))
@@ -157,7 +153,7 @@ func _make_card(r: Dictionary) -> Button:
 	btn.set_meta("mode", mode)
 	btn.text = ""   # 内容全部自绘
 
-	# ★ 卡底:外层 C_BORDER 线由 Button 自己的 stylebox 画,内层 C_INNER 线由这块内缩 1px 的透明底 PanelContainer 画(与 UiFactory.menu_panel() 同一个形状)。外壳必须仍是 Button(卡的 text 恒空 + meta("code") 是找卡的据点),所以不能真的把卡换成 PanelContainer;零守卫:读 meta("code") 的探针已删(2026-10-09)。
+	# ★ 卡底:外层 C_BORDER 线由 Button 自己的 stylebox 画,内层 C_INNER 线由这块内缩 1px 的透明底 PanelContainer 画(与 UiFactory.menu_panel() 同一个形状)。
 	var frame := PanelContainer.new()
 	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	frame.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -195,7 +191,7 @@ func _make_card(r: Dictionary) -> Button:
 		btn.focus_mode = Control.FOCUS_ALL
 		btn.pressed.connect(func() -> void:
 			Sfx.play("ui")
-			# ★★ 回局那条路也要记下模式 —— 与"加入"那条同款。ESC 回主菜单 → 多人模式(新页,_current_mode == "")→ 点自己那间对局中的房 → try_rejoin_row → go_match → match_start → _enter_match_scene() 落进 else ⇒ 回局也会进错场景。
+			# ★★ 回局那条路也要记下模式 —— 与"加入"那条同款。
 			# 没有这一行,_enter_match_scene 的 else(push_error)就是唯一能把它喊出来的地方。
 			page._current_mode = mode
 			if not page.try_rejoin_row(code, in_match, mode):
@@ -208,7 +204,7 @@ func _card_width() -> float:
 	return floor(usable / float(CARD_COLUMNS))
 
 
-# 卡头 = 一条标题带(方向 B):C_HEADER 底 + 只有下边一条 C_BORDER 线;左 = 模式名(模式色),右 = 状态角标。★ 与 UiFactory.header_strip() 同一个味道,但工厂版标题色固定为金、也不带右侧角标,故按同一套版式拼一条。
+# 卡头 = 一条标题带(方向 B):C_HEADER 底 + 只有下边一条 C_BORDER 线;左 = 模式名(模式色),右 = 状态角标。
 # ★ 角标三档次序:对局中 优先于 私密 · 我的 —— 一间对局中的私密房对别人根本不列出,能同时满足两条的只有"我的房且已开局",那时"对局中"是更有用的信息。
 func _card_header(mode: String, r: Dictionary) -> Control:
 	var strip := PanelContainer.new()

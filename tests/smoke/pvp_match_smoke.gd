@@ -1,10 +1,5 @@
 extends Node
 # B2 loopback 冒烟客户端:建房后发送固定输入(移动 + 开火),断言:
-#  create: 收到快照且自己位置发生变化(输入→服务器权威模拟→快照→客户端)
-#  join:   收到快照 + 收到对手子弹 spawn 广播(开火→服务器→broadcast→对手)
-# 命中/掉血不在此冒烟覆盖(出生点相距远,无法确定性命中);留用户手动端到端。
-# 用法: godot --headless --path . Tests/pvp_match_smoke.tscn -- --role create
-#       godot --headless --path . Tests/pvp_match_smoke.tscn -- --role join --code 0000
 
 var role: String = ""
 var code: String = ""
@@ -95,9 +90,6 @@ func _on_snapshot_world(world: Dictionary) -> void:
 
 
 # 本人包:只有自己需要的 ack_seq + 权威整态 c2。
-# ★ S1(2026-10-24):本人包在玩家步进之后发(c2 = 第 T tick 状态),世界包仍在步进前发(自己那份 pos = T-1)⇒
-#   移动中两者天然差 1~2 tick 位移。断言从"<0.5px 同拍"放宽为"静止时仍 <0.5px;移动时 ≤ 一 tick 位移 + 8px 余量",
-#   仍然能抓"c2 丢了 / 位置完全对不上 / 解码错位"这类真错。
 func _on_snapshot_own(own: Dictionary) -> void:
 	var ack: int = int(own.get("ack_seq", -1))
 	if ack > _max_ack:
@@ -138,11 +130,6 @@ func _physics_process(_delta: float) -> void:
 		var ax := 1.0
 		if _frames > 240:
 			# ★ 开火必须能覆盖**任何**武器。服务器发给这个角色的是**随机**一把,而
-			#   `m82a1` 与榴弹发射器是 **heavy_aim**(按住预瞄、**松开**才发射)——
-			#   只发 held/pressed、从不发 released 的话,拿到这两把就**一枪都不开**,
-			#   join 端永远等不到 bullet_spawn。实测:强制发 m82a1 → 必红,发手枪 → 必绿。
-			#   按下 20 帧 / 松开 10 帧的循环同时对三种武器都成立:
-			#   full_auto 连发、半自动吃 pressed 边沿、heavy_aim 吃 released 边沿。
 			var cyc := (_frames - 240) % 30
 			if cyc < 20:
 				held = PacketInputSource.BIT_ATTACK

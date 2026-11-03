@@ -7,7 +7,7 @@ const ACTION_NAMES := {
 	"left": "左移", "right": "右移", "up": "跳跃/上爬", "down": "下蹲/下落",
 	"charge": "冲刺", "attack": "开火", "R": "重开(单机)",
 	"F": "拾取", "Q": "丢弃(长按)",
-	# ★ ACTION_NAMES 与 Settings.REMAPPABLE_ACTIONS 必须逐条对齐:漏一条就退化成 ACTION_NAMES.get(action, action)、界面显示英文键名。零守卫(settings_actions_smoke 已删·2026-10-09)。
+	# ★ ACTION_NAMES 与 Settings.REMAPPABLE_ACTIONS 必须逐条对齐:漏一条就退化成 ACTION_NAMES.get(action, action)、界面显示英文键名。
 	"rewind": "时间回溯", "haste": "时间加速",
 }
 
@@ -121,7 +121,7 @@ func _fill_bind_grid() -> void:
 		_refresh_bind_label(action)
 
 
-# ★ 切场景必须延迟到帧末:change_scene_to_file 会同步 memdelete 当前场景,而本函数两条调用路径(ESC 的 _unhandled_input 与返回按钮)在切换之后还会碰 self/get_tree()(headless 实测 Cannot call method set_input_as_handled on a null value,真机上是悬垂指针)。零守卫(settings_esc_probe 已删·2026-10-09)。
+# ★ 切场景必须延迟到帧末:change_scene_to_file 会同步 memdelete 当前场景,而本函数两条调用路径(ESC 的 _unhandled_input 与返回按钮)在切换之后还会碰 self/get_tree()(headless 实测 Cannot call method set_input_as_handled on a null value,真机上是悬垂指针)。
 # 本菜单是纯 UI(无世界、无大物理),普通切场景只销毁一棵 Control 树;反方向(游戏世界 → 菜单)才需要挂起式切换,见 Level0.safe_change_scene。
 func _go_back() -> void:
 	Sfx.play("ui")

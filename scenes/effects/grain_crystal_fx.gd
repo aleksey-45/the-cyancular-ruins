@@ -2,9 +2,6 @@ class_name GrainCrystalFx
 extends Node2D
 
 # 乌鸫精英击杀结晶(第一阶段):身体碎裂 → 结晶炸开散落 → 飞向怀表 → 被吸收。
-# 世界空间节点(挂 WorldViewport 侧),但目标点每帧按**相机会算**到屏幕上的怀表中心
-# ——怀表是 HUD 控件(屏幕空间),这样不需要跨 canvas 层搬节点。
-# 吸收完成:入账(Level0.grain_account.deposit)+ 怀表颤抖(WatchHud.tremble)。
 
 const SHARD_COUNT := 10
 const SCATTER_TIME := 0.28          # 炸开+散落阶段时长(秒)
@@ -54,10 +51,6 @@ func _process(delta: float) -> void:
 			s["p"] = (s["p"] as Vector2) + (s["v"] as Vector2) * delta
 	else:
 		# 阶段二:全体飞向怀表。三条纪律,缺一条都会"看着飞到了、颗粒没入账":
-		#  ① **指数收敛而不是纯加速** —— 纯加速追踪会绕着目标来回冲(过冲后速度越来越大),
-		#  ② **按线段判近** —— 高速下一帧能跨过目标几十像素,只判"当前点是否在半径内"会**穿过去**
-		#     (FLY_ACCEL 提到 5200 之后实测就是这样:FX 一直飞、_absorbed 永远 false、余额零变化);
-		#  ③ **兜底入账** —— 颗粒是**数值承诺**,特效再怎么飞丢也必须入账。超时即吸收。
 		var target := _watch_world_target()
 		var all_done := true
 		for s in _shards:

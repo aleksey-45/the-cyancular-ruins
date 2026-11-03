@@ -57,9 +57,6 @@ func _physics_process(delta: float) -> void:
 
 
 # 黏滞目标:保持当前目标,除非它失效,或新目标明显更近(TARGET_STICKY 倍以内)。
-# ★ 返回的 dir 恒为「我 → 对手」,而 MazeGenerator.toroidal_delta_px(a, b) 返回 a → b ⇒ 传 (对手, 我) 后必须取负。
-# 黏滞分支曾漏掉取负:锁定之后每一帧都瞄反、远则逃近则贴(只有换目标那一帧是对的)。
-# ⚠ 零守卫:ai_input_source_smoke.gd 的「AI 目标方向」两条断言已删(2026-10-09)。
 func _pick_target(p: Node2D) -> Dictionary:
 	var cur: Node2D = null
 	var cur_dist := INF

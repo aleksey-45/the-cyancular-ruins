@@ -2,10 +2,6 @@ class_name InputIntake
 extends RefCounted
 
 # 服务器输入队列(纯搬移自 MatchHost,行为零变化):入队 + 有界丢包 + 抖动包络 + 1Hz 队列诊断。
-# ★ 队列本体不住这里:_pending_input 住 MatchState(快照 match_snapshot 要按 role 读深度),本模块只写它;
-# 抖动包络 / 累计丢弃是纯诊断读数,除本文件的诊断外没有读者,故收在这里。
-# ★ 上限的判据住 PacketInputSource(adapted_cap / push_pending):不住这里也不住 MatchHost,因为那条判据要能用最便宜的
-# `-s` 冒烟跑 —— MatchHost 引用 NetBus 自动加载 ⇒ 冒烟加载不了它。★ 服务端自述 ρ≈1、开局有「1 秒内 0→8」的突刺;无界 ⇒ 积压不可恢复。
 
 var _q_peak: Dictionary = {}   # role -> 最近「一次轮询到过几条输入记录」的原始深度(丢记录之前),每 tick 衰减 1
 var _q_drops: Dictionary = {}  # role -> 累计被丢弃的**陈旧**记录数(诊断;丢一条=服务器跳过一格输入)
@@ -26,10 +22,6 @@ func reset(pending: Dictionary, role: int) -> void:
 
 
 # 缓冲本帧到达的记录,按 seq 序 FIFO,**每物理 tick 消费一条**(U1:一条记录 = 1 个 tick;30Hz 包一次到两条)⇒ 服务器权威模拟
-# 与客户端「重放未确认输入」1:1 同序(C2 rollback 需要)。
-# ★ 包络按**记录**学(与消费单位一致,不按包)。
-# ★ 入队走 push_pending():有界,且丢记录时保住边沿。★ 上限跟着实测抖动包络走(一 tick 到几条就留几条 +2 余量,包络每 tick 衰减 1)
-# ⇒ 网络一安静上限自己缩回去,把堆着的陈旧记录释放掉(丢的永远是最旧那条,边沿并入下一条)。没有这一步就是 ρ=1 的零漂移随机游走:顶上去就永远停在那儿。
 func intake(pending: Dictionary, role: int, pkt: Dictionary) -> void:
 	if not pending.has(role):
 		pending[role] = []

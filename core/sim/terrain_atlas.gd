@@ -17,11 +17,6 @@ const QUAD_TILE: int = 16      # 每个象限最近邻放大 2× → 16×16
 const QUAD_COLS: int = 16      # 图集列数 = 4×4 象限
 const SUB_PER_CELL: int = 4    # 一个 64px 格 = 4×4 个 16px 子格(与 cyrm v4 网格一致)
 # 水体的两块源砖(0-based 下标 = 纹理 id − 1;源砖表 10 列,第 idx 块 = 第 (idx/10) 行第 (idx%10) 列):
-#   · 纹理 21「水」= idx **20**:整块均匀的半透明填充(alpha≈0.82)⇒ **水体格**用它铺;
-#   · 纹理 22「水面」= idx **21**:顶边多一条更亮的横向亮带 ⇒ **水面格**(上方非液体的那一排)用它画。
-# ★★ 2026-11-01 修:本常量此前只有一个值 21 并同时喂给"水体图集"和"水面合批" —— 21 是 0-based 下标,
-#   即纹理 22「水面」⇒ **整个水体都被画成水面**(用户报「把水体都变成水面了」)。别再把两个用途合回一个常量:
-#   水体图集必须用 BODY,水面合批必须用 SURFACE;混用不会报错,只会让整片水看起来像水面/像死水。
 const WATER_BODY_BRICK: int = 20        # 纹理 21「水」= 均匀半透明填充
 const WATER_SURFACE_BRICK: int = 21     # 纹理 22「水面」= 顶边亮带
 
@@ -238,9 +233,6 @@ static func _tinted_water_brick(ts: int, desc: int) -> Image:
 # ── 整张地图 → 真实地形图(主菜单背景)──────────────────────────────
 
 # 把一张 .cyrm 按"游戏里那一格长什么样"烘成 Image:地形来源 = MapFormat.load_subgrid_with_descs 的
-# **描述符表** + 本类同一份按描述符行的图集(与 Level0 画出的是同一套像素,辅码颜色一并烘进去)。
-# ★ 空气先与图集合成一遍再缩放:源砖里有半透明(水 ≈0.82、树叶、梯子)与全透明像素,直接 blit 会把原始 RGB(可能是黑)搬过去 ⇒ 梯子/树叶变黑块。
-# ★ 本函数不缓存返回值:cell_px = 32 时整张 newfactory 是 4800×3200 ≈ 61MB;要么用 terrain_texture(),要么调用方拿完就丢。
 static func bake_map_image(path: String, cell_px: int, air: Color) -> Image:
 	var sp: int = maxi(1, cell_px / SUB_PER_CELL)      # 每个子格占几像素
 	var descgrid: Array = MapFormat.load_subgrid_with_descs(path)["descs"]

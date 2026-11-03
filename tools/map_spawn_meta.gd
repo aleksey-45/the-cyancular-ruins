@@ -1,19 +1,6 @@
 extends SceneTree
 
 # 地图「按阵营半区的复活点」数据(`# respawn <1|2> <col> <row>`)的校验 / 建议 / 写盘工具。
-# ★ 与游戏侧共用同一套判据:SpawnPicker(地板/抬头/连通区)+ SpawnChooser(半区与 3×3 桶定义);不另造几何。
-# ★ 地图文件才是真相源:本工具只校验 + 把**人手确认过的固定坐标**写进 meta;`--suggest` 只打印建议、不写盘。
-#
-#   "$GODOT" --headless --path . -s res://tools/map_spawn_meta.gd -- --map res://maps/newfactory.cyrm --check
-#   "$GODOT" --headless --path . -s res://tools/map_spawn_meta.gd -- --map res://maps/newfactory.cyrm --suggest
-#   "$GODOT" --headless --path . -s res://tools/map_spawn_meta.gd -- --map res://maps/newfactory.cyrm \
-#       --respawn1 "x,y;..." --respawn2 "x,y;..." --write
-# 判据(每侧独立):≥ MIN_PER_SIDE 个;都在自己半区(侧 1 = 左半 x<cols/2 / 侧 2 = 右半);
-#   离本侧两条边界(环面接缝 / 半区中线)都 ≥ `SpawnChooser.SIDE_EDGE_MARGIN` 格(两半在这两处都相邻);
-#   3 列 × 3 行共 9 个桶每桶 ≥1 个(均匀散布);同侧两两环面距离 ≥ MIN_SIDE_GAP;
-#   每个点都过 `_bad_reason`(地板 + 头顶 2 格净空 + **可抵达** + 不在水里;判据全来自 SpawnPicker)。
-#   ★ 可抵达 = 跳跃感知图(走/落/跳/爬)的主连通分量,防"四面是墙的小密室"。
-# --write 后自动回读:列表等于写入值、场景层逐格与写入前相同(层块字节无损)。
 
 const MIN_PER_SIDE := 5      # 每侧最少点数(对抗每队最多 5 人 ⇒ 够 5 人取点且不重复的前提)
 const BUCKETS := 9           # 半区内 3 列 × 3 行
