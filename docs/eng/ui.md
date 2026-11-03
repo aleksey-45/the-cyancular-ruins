@@ -12,6 +12,7 @@
 - 菜单 token 只给菜单系(主菜单 / 设置 / 信息 / 统一大厅 / Beta / 结算页 / 暂停菜单)用;HUD 读的 `C_ACCENT` / `C_TEXT` / `C_TEXT_DIM` / `C_SURFACE` / `C_BORDER` / `C_PLATE` / `C_SLOT_*` / `C_TEAM_*` / `C_GRACE` / `C_MODE_*` 不许改。
 - 按钮 = 暗填充 + 2px 亮描边、直角(`style_button(b, variant)`,`variant="quiet"` 是弱化项);描边对页面底与对填充都 ≥ 3:1。其余工厂方法:`panel_box()`(**不透明**)、`row_box()` / `style_row_button()`、`style_line_edit()`、`style_check()`(自绘开关图标)、`style_slider()`。
 - 开关 / 勾选框行 = 定宽标签列 + 紧邻开关(`HBoxContainer`,标签 `custom_minimum_size.x` 固定);裸 `CheckButton` 塞进宽容器会被拉到全宽。
+- 禁用武器区:单人开局 `CheckList` 与大厅建房两列网格各放在限高 `ScrollContainer` 中,只纵向滚动,超出内容时显示右侧滚动条;标题、开始/确定按钮不随列表滚动。
 - 生成物:改过 `UiFactory` 的菜单系样式后必须重跑 `tools/gen_menu_theme.gd` 重建 `ui/theme/menu_theme.tres`。
 
 ## HUD

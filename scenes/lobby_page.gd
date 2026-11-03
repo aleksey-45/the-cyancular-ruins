@@ -75,12 +75,21 @@ func _finish_lobby_ready() -> void:
 
 # 禁用武器网格(2 列 + 定尺寸剪影,横排会溢出屏幕)。勾选直写 Settings.pvp_disabled_weapons + save()(房主开关,禁用项随 player_options 上发);h_sep 是调用方的版式值(剪影是长条形,列距本就不同),on_cell 给需要额外记账的调用方。
 # ★★ 间距键名分两层,别混:GridContainer 认 h_separation / v_separation,而 HBoxContainer / VBoxContainer 只认 separation —— 把 h_separation 写在 HBox 上会被存下来但永不读取(静默无效覆盖,合一前的旧大厅页里就有写错过的一份)。
+const WEAPON_GRID_MAX_H := 144.0
+
 func _add_weapon_grid(parent: Node, h_sep: int, on_cell: Callable = Callable()) -> void:
 	var wgrid := GridContainer.new()
 	wgrid.columns = 2
 	wgrid.add_theme_constant_override("h_separation", h_sep)
 	wgrid.add_theme_constant_override("v_separation", 6)
-	parent.add_child(wgrid)
+	# ★ ScrollContainer 里的内容不会被父容器拉伸成等宽 ⇒ 显式 EXPAND,两列才不被横向压窄。
+	wgrid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(0, WEAPON_GRID_MAX_H)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	scroll.add_child(wgrid)
+	parent.add_child(scroll)
 	for type_id: int in WeaponRegistry.all_ids():
 		var type_i := type_id
 		var cell := WeaponIcons.make_weapon_check(type_i, Settings.pvp_disabled_weapons.has(type_i),

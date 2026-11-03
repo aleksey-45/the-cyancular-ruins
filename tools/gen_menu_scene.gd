@@ -325,29 +325,39 @@ func _strip_lobby_dynamic(root: Node) -> Node:
 	return box
 
 
-# 创建弹层右列的「禁用武器」块(LobbyPage._add_weapon_grid 在代码里 new 一个 GridContainer 填进去,行 = WeaponRegistry,勾选态与 type_id 记账都要在代码里重接)⇒ 剥块的孩子。
-# ★★ 返回父容器而不是那个 2 列 GridContainer(证据:_add_weapon_grid 自己 new 网格,骨架里不能留一个网格,留了就会变成两个);★ 只判「2 列」不够 —— 地图选择器内部的网格也是 2 列(实测命中 2 个候选),判据再加「不在 ScrollContainer 里」,这样与 strip 列表的先后顺序无关。
+# 创建弹层右列的「禁用武器」整块(LobbyPage._add_weapon_grid 在代码里 new 一个 ScrollContainer + 2 列 GridContainer 填进去,行 = WeaponRegistry,勾选态与 type_id 记账都要在代码里重接)⇒ 剥整块的孩子(连那块滚动区一起剥,代码运行时会自己重建)。
+# ★★ 返回「禁用武器块」这个大 VBox 而不是里面的网格:骨架里既不能留网格、也不能留滚动区;_add_weapon_grid 自己 new 两者,留了就会变成两份。
+# ★ 判据 = 结构形状(标题带 + 滚动区两个直接孩子)+ 排除 MapPicker:地图选择器是同一个形状,只按形状会命中两个候选。
 func _strip_lobby_weapon_grid(root: Node) -> Node:
-	var grid := _unique(root, func(n: Node) -> bool:
-		return n is GridContainer and (n as GridContainer).columns == 2 and not _under_scroll(n),
-		"禁用武器网格(2 列 GridContainer,且不在 ScrollContainer 里)")
-	return grid.get_parent() if grid != null else null
+	return _unique(root, func(n: Node) -> bool:
+		return n is VBoxContainer and not (n is MapPicker) and _looks_like_titled_scroll_block(n),
+		"禁用武器块(不是 MapPicker 的「标题带 + 滚动区」VBox)")
 
 
-# 创建弹层右列的「地图选择器」整块(LobbyPage._add_map_picker 在代码里 new 一个 MapPicker 并 setup() 出缩略图网格)⇒ 剥宿主容器(map_block)的孩子 = 把整块选择器从骨架拿走。
-# ★★ 返回的不是 ScrollContainer 自己的父节点:那一层是 MapPicker 本人(setup() 里 add_child(scroll)),而代码会 new 一个 ⇒ 骨架里连选择器节点都不能留,否则运行时是两个选择器;★ 中间那一层的形状要断一下(两个直接孩子,且第一个是标题带)—— 否则「祖父」只是碰巧对。
+# 「标题带 + 滚动区」两块共用的形状:2 个直接孩子、首子是标题带、次子是滚动区。
+# ★ 只断形状不断内容 —— 区块里装的是武器格还是地图卡片由调用方的类别/排除条件区分。
+func _looks_like_titled_scroll_block(n: Node) -> bool:
+	if n.get_child_count() != 2:
+		return false
+	var head := n.get_child(0)
+	return head is PanelContainer and (head as PanelContainer).theme_type_variation == &"HeaderStrip" \
+			and n.get_child(1) is ScrollContainer
+
+
+# 创建弹层右列的「地图选择器」整块(LobbyPage._add_map_picker 在代码里 new 一个 MapPicker 并 setup() 出缩略图网格)⇒ 剥宿主容器(MapBlock)的孩子 = 把整块选择器从骨架拿走。
+# ★★ 返回的不是 MapPicker 自己的父节点:那一层是 MapPicker 本人(setup() 里 add_child(scroll)),而代码会 new 一个 ⇒ 骨架里连选择器节点都不能留,否则运行时是两个选择器。
+# ★ 定位靠 MapPicker 本人 + 形状断言(两个直接孩子、首子是标题带),不靠「唯一的 ScrollContainer」——禁用武器块现在也有一个 ScrollContainer,按数量定位会直接炸掉。
 func _strip_lobby_map_picker(root: Node) -> Node:
-	var scroll := _unique(root, func(n: Node) -> bool: return n is ScrollContainer,
-			"地图选择器内部的 ScrollContainer")
-	if scroll == null:
+	var picker := _unique(root, func(n: Node) -> bool:
+		return n is MapPicker and _looks_like_titled_scroll_block(n),
+		"地图选择器块(MapPicker:标题带 + 滚动区)")
+	if picker == null:
 		return null
-	var picker := scroll.get_parent()
-	if picker == null or picker.get_parent() == null or picker.get_child_count() != 2 \
-			or not (picker.get_child(0) is PanelContainer):
-		_fails.append("地图选择器:ScrollContainer 的父节点形状不像 `MapPicker`"
-				+ "(期望 2 个直接孩子、首子是标题带)⇒ 无法安全定位宿主容器")
+	var host := picker.get_parent()
+	if host == null:
+		_fails.append("地图选择器:MapPicker 没有父节点 ⇒ 无法定位宿主容器")
 		return null
-	return picker.get_parent()
+	return host
 
 
 func _clear_materials(n: Node) -> void:
@@ -393,16 +403,6 @@ func _collect(root: Node, pred: Callable, out: Array[Node]) -> void:
 		out.append(root)
 	for c in root.get_children():
 		_collect(c, pred, out)
-
-
-# n 的任一祖先是不是 ScrollContainer?用于把「地图选择器滚动区里的那个网格」与「禁用武器网格」分开(见 _strip_lobby_weapon_grid)。
-func _under_scroll(n: Node) -> bool:
-	var p := n.get_parent()
-	while p != null:
-		if p is ScrollContainer:
-			return true
-		p = p.get_parent()
-	return false
 
 
 # ── 起名 + owner ── 代码建的节点名是 @VBoxContainer@12 这种,进 .tscn 之后在编辑器里没法读 ⇒ 按「类型 + 同类序号」重起一个稳定的名字。★ 只影响可读性,不影响任何取值。

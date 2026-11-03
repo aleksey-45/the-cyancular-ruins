@@ -255,6 +255,9 @@ const SP_CHECK_GAP := 20
 const SP_BUTTON_GAP := 28
 const SP_PANEL_MIN_W := 560.0
 
+# 列表固定可见高度,地图选择器和底部按钮不随武器数量往屏外挤。
+const SP_CHECK_LIST_MAX_H := 320.0
+
 func _header(title_text: String, size: int, centered: bool) -> HeaderStripPanel:
 	var h := HEADER_STRIP_PANEL.instantiate() as HeaderStripPanel
 	h.apply(title_text, size, centered)
@@ -283,7 +286,15 @@ func _fill_sp_panel(panel: PanelContainer) -> PanelContainer:
 	# ★ 名字是公开契约:menu_weapon_grid_probe 按这个名字在面板子树里找勾选列(它不写死路径 —— 版式再挪一层也不会瞎)。零守卫:该探针已删·2026-10-09。
 	check_list.name = "CheckList"
 	check_list.add_theme_constant_override("separation", SP_CHECK_GAP)
-	vb.add_child(check_list)
+	# ★ ScrollContainer 里的内容不会被父容器拉伸成等宽 ⇒ 显式 EXPAND,勾选框才不被横向压窄。
+	check_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	# ★ 高度上限设在 ScrollContainer 上、不在里面的 VBox 上:ScrollContainer 的 min_size.y 恒为 0,把上限写在内层会被吃掉(见 server/gui/server_panel.gd 的 _log_scroll 注释)。
+	var check_scroll := ScrollContainer.new()
+	check_scroll.custom_minimum_size = Vector2(0, SP_CHECK_LIST_MAX_H)
+	check_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	check_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	check_scroll.add_child(check_list)
+	vb.add_child(check_scroll)
 	var ids: Array[int] = WeaponRegistry.all_ids()
 	for type_id: int in ids:
 		var cb := CheckButton.new()
@@ -306,7 +317,7 @@ func _fill_sp_panel(panel: PanelContainer) -> PanelContainer:
 		Settings.sp_disabled_weapons.clear()
 		for i in checks.size():
 			if checks[i].button_pressed:
-				# ★ 必须是 ids[i]:不能写成 i + 1。序号只在「json 恰好是 1..N 的稠密连续段」时才等于 type_id —— 一旦重排 json 或留下空洞,i + 1 会静默禁用错的那把枪(而今天 ids == [1..6],两种写法同结果,正是「改了不报错」的那一类)。
+				# ★ 必须是 ids[i]:不能写成 i + 1。序号只在「json 恰好是 1..N 的稠密连续段」时才等于 type_id —— 一旦重排 json 或留下空洞,i + 1 会静默禁用错的那把枪(两条写法在稠密时同结果,正是「改了不报错」的那一类)。
 				Settings.sp_disabled_weapons.append(int(ids[i]))
 		Settings.sp_map_path = picker.selected   # "" = 随机
 		Settings.save()

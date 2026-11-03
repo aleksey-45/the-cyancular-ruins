@@ -21,7 +21,7 @@ var sfx_volume: float = 1.0:
 # ── 通用 ── 鼠标滚轮切枪。★ 默认 true:滚轮切枪本就已实现,但默认关着 = 该功能形同虚设;已有存档里显式存过 false 的仍读 false。
 var wheel_switch: bool = true
 
-var sp_disabled_weapons: Array[int] = []   # 禁用的武器槽位(1-6;第 6 槽=激光枪)
+var sp_disabled_weapons: Array[int] = []   # 禁用的武器 type_id(上界由 data/weapons.json 决定,不写死)
 
 # 选图:"" = 随机(= 上游行为:进图时从 res://maps 里现挑一份,会话内固定)。单人/联机各记一条;联机三模式共用一条"上次选的图"。
 var sp_map_path: String = ""
