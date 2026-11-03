@@ -52,7 +52,7 @@ var _trigger_t: float = 0.0
 # impact:命中击退力度(>0 会覆盖敌人自身 knockback_strength)。
 @export var impact: float = 60.0
 
-# max_live_projectiles:同屏同时在飞弹数上限(0=无限)。防风暴类武器(榴弹)多人同炸:同时爆炸的 AoE/拆砖/碰撞重建连锁会让自建房机器卡死/闪退;弹数满时开火不发射(冷却照走,等场上的爆完再打)。
+# max_live_projectiles:同屏子弹数上限(0=无限)。防风暴类武器(榴弹)多人同炸:同时爆炸的 AoE/拆砖/碰撞重建连锁会让自建房机器卡死/闪退;弹数满时开火不发射(冷却照走,等场上的爆完再打)。
 @export var max_live_projectiles: int = 0
 
 # ── 后坐/镜头 ── recoil_push:开火把玩家向后推的力度(蹲下时不推)。
@@ -78,16 +78,16 @@ var _trigger_t: float = 0.0
 
 # ── 弹道/预览(榴弹等抛体用)── bullet_gravity:重力下坠倍率,发射时注入子弹(0=直线)。
 @export var bullet_gravity: float = 0.0
-# preview_arc:true=重武器预瞄画抛物线弧线(取代直线激光)。
+# preview_arc:强制画抛物线弧线。★ 现在不需要开它:有重力的武器(bullet_gravity≠0)默认就按真实弹道画。
 @export var preview_arc: bool = false
 # preview_time:预瞄参考时长(秒),仅供画弧;真实爆炸时机由子弹 fuse_time 决定。
 @export var preview_time: float = 0.5
 
-# ── 换弹(固定玩法,无开关可关;全模式开放)── PvP(1v1/大乱斗)一并开放:此前那道 reload_active() 闸门在 Level0.pvp_mode 与网络输入源下恒 false ⇒ PvP 两端一致地不换弹;开放后两端跑同一套(按下的边沿经输入包上行 BIT_RELOAD,弹药与装填进度进 Player.capture_state())。闸门整个删掉而不是改成恒 true:项目约定是「换弹恒开」,留个恒真的函数只会让人以为还有开关。
+# ── 换弹(固定玩法,无开关可关;全模式开放)── PvP(1v1/大乱斗)一并开放:此前那道 reload_active() 闸门在 Level0.pvp_mode 与网络输入源下恒 false ⇒ PvP 两端一致地不换弹;开放后两端跑同一套(按下的边沿经输入包上行 BIT_RELOAD,弹药与装填进度进 Player.capture_state())。
 @export var mag_size: int = 12        # 弹夹容量
 @export var reload_time: float = 1.2  # 换弹全程耗时(秒)
 var mag_ammo: int = 0                 # 弹夹内残弹
-# 入树前的待生效残弹。哨兵不能用 0(0 是合法弹数),也不能用 WeaponInventory.MAG_FULL(-1),故取 -2。★ 为什么需要它:新武器实例用 call_deferred(add_child) 入树,而 _ready() 会把 mag_ammo 重置为 mag_size ⇒ 入树前同步写残弹会被冲掉;原先的对策是排一个帧末 deferred 写回,而那个写回会覆盖它之后发生的一切(含回滚重放期间打出的每一发)。
+# 入树前的待生效残弹。
 const MAG_UNSET := -2
 var pending_mag: int = MAG_UNSET
 # 弹数是否已落定。★ 语义只有一个:_ready() 已跑过、mag_ammo 不再等于声明初值 0。
@@ -166,9 +166,6 @@ func _sample_walk_bob(anim: AnimatedSprite2D, speed_x: float) -> void:
 	_walk_bob_rot = sin(step) * deg_to_rad(WALK_BOB_ROT_DEG) * ratio
 
 # ── 玩家按名访问 → `as Player` + 直接访问(2026-11-02)──
-# 宿主 `player` 的声明类型是 Node2D(兼容副本武器的 null / 测试夹具),但生产宿主恒为 Player(已有 class_name)。
-# 故这些口不再 `get("x")` / `has_method("x")` + 字符串调用:拼错成员名 = 编译期报错,不再静默拿到 null 或漏调。
-# ★ 非 Player 宿主一律按"没有该接口"处理:旧 has_method 判据在那种宿主上返回的也是"没有",二者同向。
 func _host_walk_anim() -> AnimatedSprite2D:
 	var p := player as Player
 	return p.animator if p != null else null
@@ -181,7 +178,7 @@ func _host_speed_x() -> float:
 @onready var muzzle: Marker2D = $Muzzle
 @onready var _charge_arrow: Sprite2D = get_node_or_null("ChargeArrow") as Sprite2D
 var player: Node2D
-# 加速倍率(PvP):由宿主每物理帧推入(player.gd 的 _push_haste_mult → 当前那把枪)。★ 为什么是注入成员而不是 equip() 的参数:宿主引用只在 equip() 给一次,而倍率每帧都在变。★ 只被 _spawn_projectiles() 读:单机它恒 1(弹速倍率由 TimeField.bullet_delta 承担,不会双乘)。
+# 加速倍率(PvP):由宿主每物理帧推入(player.gd 的 _push_haste_mult → 当前那把枪)。
 # ★ 覆盖上限(照实):默认 1.0 ⇒ 宿主忘推 = 静默回到 1×(不报错)。零守卫(rewind_weapon_probe 已删·2026-10-09 的 S10)。
 var haste_mult: float = 1.0
 var fire_cd_timer: float = 0.0
@@ -270,7 +267,7 @@ func equip(p: Node2D, inherit_cooldown: float = 0.0) -> void:
 	_fire_buffered = false
 	cancel_aim()
 
-# 武器帧逻辑由所属 Player 的物理 tick 显式驱动(不跑 idle _process):冷却/缓冲开火/重武器松开/预瞄/后坐必须落在固定的物理 tick 上,否则同一输入在客户端预测重放 / 服务器权威模拟下会落在不同 tick(rollback 需要确定性);未被 Player 驱动的实例(对手副本武器,player==null)由 drive_remote_visual 外部驱动。
+# 武器帧逻辑由所属 Player 的物理 tick 显式驱动(不跑 idle _process):冷却/缓冲开火/重武器松开/预瞄/后坐必须落在固定的物理 tick 上,否则同一输入在客户端预测重放 / 服务器权威模拟下会落在不同 tick(rollback 需要确定性);未被 Player 驱动的实例(对手副本武器。
 func tick(delta: float) -> void:
 	if not _player_ok():
 		return
@@ -402,7 +399,7 @@ func _spawn_projectiles(base_dir: Vector2) -> void:
 			# 回落:池构造不出来(路径空 / 加载失败)时退回旧的一次性实例,行为与池化前逐字相同。
 			b = bullet_scene.instantiate()
 			b.set_meta("scene_path", scene_path)
-		# Beta 时间玩法(PvP):射手加速 ⇒ 出膛弹速 ×同倍率。★ 只读注入进来的 haste_mult —— 单机它恒 1(弹速倍率由 TimeField.bullet_delta 承担,不会双乘);max_range 不动:加速时弹飞得更快但射程不变。
+		# Beta 时间玩法(PvP):射手加速 ⇒ 出膛弹速 ×同倍率。
 		# ★ 原先这里读的是 player.get(pvp_haste_mult) —— 字符串反射 + 存在性探测,而宿主根的静态类型是 Node2D(它没有 class_name);现在读宿主每帧推入的 haste_mult。
 		var hm := haste_mult
 		var ang := base_dir.angle() + randf_range(-spread, spread)
@@ -439,7 +436,7 @@ func cancel_aim() -> void:
 func is_previewing() -> bool:
 	return _aiming
 
-# PvP:服务器权威方向驱动副本武器外观(远端对手枪):只画朝向 + 枪口旋转,不读鼠标、不开火。副本武器不 equip(player==null)、_process 早退,由 player_replica 每帧调用本方法替代(复刻 _auto_aim 的镜像/旋转,俯仰随枪 clamp)。
+# PvP:服务器权威方向驱动副本武器外观(远端对手枪):只画朝向 + 枪口旋转,不读鼠标、不开火。
 # ★ 预瞄线不对副本画:预瞄红线只有使用者本人可见,对手看不到你在蓄力重狙/榴弹。故本方法不收 show_preview 参数,并显式把 _aiming 压回 false(让「副本永不预瞄」成为写下来的意图);服务端快照仍带 previewing 字段,此处刻意不消费 —— 日后要改回「看得见」从这里接。
 func drive_remote_visual(aim_dir: Vector2, facing: int,
 		walk_anim: AnimatedSprite2D = null, walk_speed_x: float = 0.0) -> void:
@@ -470,7 +467,7 @@ func get_movement_multiplier() -> Vector2:
 		return Vector2.ONE
 	return Vector2(move_penalty, jump_penalty)
 
-# 与枪口相同的出弹方向:经过 ±45° 仰角钳制后的世界单位向量。local.x 按 facing 折叠,还原世界坐标时再乘回 facing(与 _auto_aim 的旋转一致);折叠用 _current_aim_facing 而不是 get_facing() —— 后者会被走路输入覆盖,朝向与鼠标反侧时子弹翻折到走路侧。
+# 与枪口相同的出弹方向:经过 ±45° 仰角钳制后的世界单位向量。
 func _clamped_aim_dir() -> Vector2:
 	var facing := _current_aim_facing
 	var pitch := clamp_pitch(_aim_world_dir(), facing, pitch_clamp_deg)
@@ -503,7 +500,8 @@ func _update_laser() -> void:
 	if not _aiming:
 		_update_explosion_marker(false)
 		return
-	if preview_arc:
+	if preview_arc or not is_zero_approx(bullet_gravity):
+		# ★ 有下坠的武器默认走真实弹道(与 fire 同源),不再要求逐个武器手动开 preview_arc。
 		_laser.points = _sample_arc_points()
 		_update_explosion_marker(true)
 	else:
@@ -538,7 +536,7 @@ func _sample_arc_points() -> PackedVector2Array:
 		pts.append(to_local(p))
 	return pts
 
-# 预瞄判墙:以 center 为圆心、半径 6px 的小球是否压到任一墙(非 EMPTY)格(环面)。小球按格子 AABB 粗查(球很小,最多跨 2 格,不会漏;比精确圆简单且略保守,宁多判墙不少判);逐格环面判定收在 core/tile_query.gd,空网格 ⇒ false(= 无墙)。
+# 预瞄判墙:以 center 为圆心、半径 6px 的小球是否压到任一墙(非 EMPTY)格(环面)。
 func _disk_overlaps_solid(center: Vector2) -> bool:
 	var r := PREVIEW_COLLISION_RADIUS * bullet_size
 	return TileQuery.rect_overlaps_solid(
@@ -579,14 +577,14 @@ func _aim_world_dir() -> Vector2:
 	var win: Viewport = sub.get_window()
 	if win == null:
 		return Vector2(float(get_facing()), 0.0)
-	# 窗口鼠标 → 世界坐标:鼠标用根 Window 的真实坐标(SubViewport 的 get_mouse_position 是被 push 进去的窗口坐标,不能直接用)。相机把屏幕中心映射到 cam.global_position,world_mouse = 相机基准 + 鼠标偏移。
+	# 窗口鼠标 → 世界坐标:鼠标用根 Window 的真实坐标(SubViewport 的 get_mouse_position 是被 push 进去的窗口坐标,不能直接用)。
 	var win_size := win.get_visible_rect().size
 	var mouse := win.get_mouse_position()
 	# 用相机无抖动的基准位置,避免镜头抖动让准星跟着跳。
 	var cam_center: Vector2 = cam.global_position
 	if cam.has_method("get_base_global_position"):
 		cam_center = cam.get_base_global_position()
-	# PostProcess 是中心裁剪(显示世界视口中心、窗口大小的区域);相机 zoom(<1 视野更大)让窗口 1px = 世界 1/zoom px,鼠标偏移按 zoom 放大回世界坐标。★ 不能 ÷crop_scale:crop 只定裁剪比例、不改像素换算,÷ 它会放大偏移,瞄准「水平」实际偏下,而榴弹枪口离地极近,弧线几步内就撞地板。
+	# PostProcess 是中心裁剪(显示世界视口中心、窗口大小的区域);相机 zoom(<1 视野更大)让窗口 1px = 世界 1/zoom px,鼠标偏移按 zoom 放大回世界坐标。
 	var world_mouse := cam_center + (mouse - win_size * 0.5) / cam.zoom
 	var origin := player.global_position if player != null else global_position
 	var dir := world_mouse - origin
