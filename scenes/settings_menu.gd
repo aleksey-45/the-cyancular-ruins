@@ -5,9 +5,10 @@ extends Control
 
 const ACTION_NAMES := {
 	"left": "左移", "right": "右移", "up": "跳跃/上爬", "down": "下蹲/下落",
-	"charge": "冲刺", "attack": "开火", "R": "重开(单机)",
+	"attack": "开火", "R": "重开(单机)",
 	"F": "拾取", "Q": "丢弃(长按)",
 	# ★ ACTION_NAMES 与 Settings.REMAPPABLE_ACTIONS 必须逐条对齐:漏一条就退化成 ACTION_NAMES.get(action, action)、界面显示英文键名。
+	# ★ 冲刺没有独立键(双击左/右走触发),因此不在这张表里。
 	"rewind": "时间回溯", "haste": "时间加速",
 }
 
@@ -155,25 +156,38 @@ func _cancel_capture() -> void:
 	_refresh_bind_label(action)
 
 
+# 捕获态:这个事件该怎么处理。Shift / Ctrl / Alt / Tab 都是合法键位(玩家会拿它们当跳跃 / 技能键);
+# Esc 只用来取消;鼠标键也能绑。纯判定,UI 只负责分发 —— 故收成 static,可单独验。
+const CAPTURE_IGNORE := 0
+const CAPTURE_ACCEPT := 1
+const CAPTURE_CANCEL := 2
+
+static func capture_action(event: InputEvent) -> int:
+	var key := event as InputEventKey
+	if key != null:
+		if not key.pressed:
+			return CAPTURE_IGNORE
+		return CAPTURE_CANCEL if key.physical_keycode == KEY_ESCAPE else CAPTURE_ACCEPT
+	var btn := event as InputEventMouseButton
+	if btn != null:
+		return CAPTURE_ACCEPT if btn.pressed else CAPTURE_IGNORE
+	return CAPTURE_IGNORE
+
+
 func _input(event: InputEvent) -> void:
 	if _capturing_action == "":
 		return
-	var ev: InputEvent = null
-	if event is InputEventKey and event.pressed:
-		# 修饰键单独按下不作为绑定(留给组合键的未来扩展)。
-		if event.physical_keycode in [KEY_SHIFT, KEY_CTRL, KEY_ALT, KEY_ESCAPE]:
-			if event.physical_keycode == KEY_ESCAPE:
-				_cancel_capture()
-				get_viewport().set_input_as_handled()
+	match capture_action(event):
+		CAPTURE_IGNORE:
 			return
-		ev = event
-	elif event is InputEventMouseButton and event.pressed:
-		ev = event
-	if ev == null:
-		return
-	# 键位 API 的既有语义(设计如此,非缺陷):set_binding 先 action_erase_events 再只写这一个 ⇒ 用户主动重绑 = 该动作从此按单键(默认多键如 up=W+Space 只留新键)。
+		CAPTURE_CANCEL:
+			# ★ 顺序不能反:先标记事件已处理,再收尾 —— _cancel_capture() 只是刷新按钮文案,但约定在前更安全。
+			get_viewport().set_input_as_handled()
+			_cancel_capture()
+			return
+	# 键位 API 的既有语义(设计如此,非缺陷):set_binding 先 action_erase_events 再只写这一个 ⇒ 用户主动重绑 = 该动作从此按单键(默认本来就是单键)。
 	# 而显示(get_binding_names)与持久化(save/load_settings)都遍历全部事件,故存档往返不丢键。
-	Settings.set_binding(_capturing_action, ev)
+	Settings.set_binding(_capturing_action, event)
 	Sfx.play("switch")
 	_capturing_action = ""
 	_refresh_bind_label_for(_capture_btn)

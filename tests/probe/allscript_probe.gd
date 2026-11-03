@@ -10,7 +10,7 @@ const SKIP_DIRS := ["res://.godot", "res://builds", "res://releases", "res://gam
 # ★ 为什么要收 `res://_crashtest`(与 `tools/check_naming.py` 里同名的根同因):它是 gitignore 的
 
 # ★ 为什么必须有一条数闸:一个过宽的 `SKIP_DIRS` 项、一个 `.gdignore`、一次 `DirAccess.open`
-const EXPECTED_SCRIPTS := 246
+const EXPECTED_SCRIPTS := 249
 
 var _fails: Array[String] = []
 var _total := 0

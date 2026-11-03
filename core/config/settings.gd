@@ -4,9 +4,11 @@ extends Node
 # 首次运行用 InputMap 现值当默认键位;读写 API 全部带类型,改值后调 save() 落盘。
 
 const SAVE_PATH := "user://settings.cfg"
+# 键位迁移版本:存档里没有/更老 ⇒ 先跑一次迁移再落盘(迁移过一次就置成当前值,玩家自己改的键位不会再被覆盖)。
+const BINDINGS_VERSION := 1
 
-# 可重映射的动作(1-5 切枪槽固定,不开放重绑)。
-const REMAPPABLE_ACTIONS: Array[String] = ["left", "right", "up", "down", "charge", "attack", "R", "F", "Q", "rewind", "haste"]
+# 可重映射的动作(1-5 切枪槽固定,不开放重绑;★ 冲刺没有独立键 —— 双击左/右走触发,见 LocalInputSource)。
+const REMAPPABLE_ACTIONS: Array[String] = ["left", "right", "up", "down", "attack", "R", "F", "Q", "rewind", "haste"]
 
 # ── 音量(0-1 线性)──
 var master_volume: float = 0.8:
@@ -118,7 +120,7 @@ func apply_display() -> void:
 	else:
 		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
 
-# ── 键位重映射 ── 每动作支持多个键位(原作默认 up=W+空格、down=S+Shift),存取都保序完整往返。
+# ── 键位重映射 ── 每动作支持多个键位,存取都保序完整往返;默认一律单键(up=空格、down=S)。
 # ⚠ set_binding 是 erase 后只写一个事件的单键写入 ⇒ 主动重绑某动作 = 把该动作改成单键(多键动作会被静默压成单键);这是设计语义不是缺陷。
 
 func get_binding_names(action: String) -> String:
@@ -127,14 +129,21 @@ func get_binding_names(action: String) -> String:
 		names.append(_event_display_name(ev))
 	return " / ".join(names)
 
-func set_binding(action: String, event: InputEvent) -> void:
+func set_binding(action: String, event: InputEvent, path: String = SAVE_PATH) -> void:
 	if not action in InputMap.get_actions():
 		return
 	InputMap.action_erase_events(action)
 	var ev := event.duplicate()
 	ev.pressed = false
+	# ★ 只留键本身:按住 Ctrl/Shift/Alt 时捕获到的事件自带修饰位,原样存下去会把"K"变成"Ctrl+K"(匹配不上、静默失效)。
+	if ev is InputEventKey:
+		var key := ev as InputEventKey
+		key.shift_pressed = false
+		key.ctrl_pressed = false
+		key.alt_pressed = false
+		key.meta_pressed = false
 	InputMap.action_add_event(action, ev)
-	save()
+	save(path)
 
 func reset_bindings() -> void:
 	InputMap.load_from_project_settings()
@@ -159,6 +168,7 @@ func save(path: String = SAVE_PATH) -> void:
 	cf.set_value("audio", "master_volume", master_volume)
 	cf.set_value("audio", "sfx_volume", sfx_volume)
 	cf.set_value("controls", "wheel_switch", wheel_switch)
+	cf.set_value("controls", "bindings_version", BINDINGS_VERSION)
 	cf.set_value("single", "disabled_weapons", sp_disabled_weapons)
 	cf.set_value("single", "map_path", sp_map_path)
 	cf.set_value("pvp", "map_path", mp_map_path)
@@ -190,6 +200,7 @@ func load_settings(path: String = SAVE_PATH) -> void:
 	master_volume = float(cf.get_value("audio", "master_volume", 0.8))
 	sfx_volume = float(cf.get_value("audio", "sfx_volume", 1.0))
 	wheel_switch = bool(cf.get_value("controls", "wheel_switch", true))
+	var bind_ver := int(cf.get_value("controls", "bindings_version", 0))
 	sp_disabled_weapons.assign(cf.get_value("single", "disabled_weapons", []))
 	sp_map_path = str(cf.get_value("single", "map_path", ""))
 	mp_map_path = str(cf.get_value("pvp", "map_path", ""))
@@ -227,6 +238,10 @@ func load_settings(path: String = SAVE_PATH) -> void:
 					continue
 				cleaned.append(item)
 			arr = cleaned
+		# 迁移 v1(2026-11-03 用户改令):跳跃改成"只能绑一个键、默认空格"。老存档里 up 是旧默认(W 或 W+空格)
+		# ⇒ 一律折成空格;迁移只跑这一次(迁完立刻落盘版本号),之后玩家自己改的键位照常还原。
+		if bind_ver < 1 and action == "up":
+			arr = [{"k": KEY_SPACE}]
 		if arr is Array and not (arr as Array).is_empty():
 			InputMap.action_erase_events(action)
 			for item in arr:
@@ -235,6 +250,9 @@ func load_settings(path: String = SAVE_PATH) -> void:
 						InputMap.action_add_event(action, _make_key(int(item["k"])))
 					elif item.has("m"):
 						InputMap.action_add_event(action, _make_mouse(int(item["m"])))
+	# 迁移过一次就落盘(否则每次启动都要再迁一遍,而且存档里留的还是旧默认值)。
+	if bind_ver < BINDINGS_VERSION:
+		save(path)
 
 func _make_key(keycode: int) -> InputEventKey:
 	var ev := InputEventKey.new()

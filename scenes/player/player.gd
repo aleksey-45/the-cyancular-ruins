@@ -5,6 +5,7 @@ extends CharacterBody2D
 #   (has_method / call / get),拼错不报错、只在运行期静默失效。代价 = 新环境必须 `--import`
 #   一次重建全局类缓存(否则别的脚本报 Could not find type Player)—— 本地跑批与 CI 都已显式 import。
 const HitShape := preload("res://core/sim/hit_shape.gd")   # 受击判定几何唯一入口
+const DashRule := preload("res://core/sim/dash_rule.gd")   # 冲刺倍率/准入判据唯一入口(两端同一份算式)
 
 @export var animator : AnimatedSprite2D
 
@@ -175,6 +176,9 @@ var _ghost_flip := false  # 红/蓝交替
 # 冲刺残影:渲染帧里发射(不在物理 tick —— 回滚重放不会重复生成)。
 var _dash_ghost_t := 0.0
 # 冲刺残影的 3 个常量与远端副本共用一份,见 player_visual.gd。
+# 下冲残影:下冲是一次性速度赋值、没有冲刺那样的持续态,故自带一段发射窗口(约 3 张)。纯表现,不进整态。
+const DOWN_DASH_GHOST_TIME := 0.06
+var _down_dash_ghost_t := 0.0
 
 
 # 本帧倍率推给三个消费点:攀爬/武器的宿主引用是一次给入的、而倍率每帧在变 ⇒ 只能每帧推;游泳走 swim.update 的调用参数。
@@ -187,9 +191,11 @@ func _push_haste_mult(tm: float) -> void:
 
 
 func _process(delta: float) -> void:
-	# 冲刺残影(纯表现):只在渲染帧发射 ⇒ C2 回滚重放不会把同一段冲刺再生成一遍;
+	# 冲刺 / 下冲残影(纯表现):只在渲染帧发射 ⇒ C2 回滚重放不会把同一段冲刺再生成一遍;
 	# 服务器/无相机路径直接跳过(看不见的节点不花)。强度/间隔见 DASH_GHOST_* 常量。
-	if not is_charge or animator == null or not is_inside_tree():
+	if _down_dash_ghost_t > 0.0:
+		_down_dash_ghost_t = maxf(_down_dash_ghost_t - delta, 0.0)
+	if not (is_charge or _down_dash_ghost_t > 0.0) or animator == null or not is_inside_tree():
 		_dash_ghost_t = 0.0
 		return
 	if get_viewport().get_camera_2d() == null:
@@ -265,7 +271,7 @@ func _physics_process(delta: float) -> void:
 		is_squat = false
 
 	_tick_vertical(delta, latched, in_water, mult)
-	_tick_crouch_and_dash(delta, latched, in_water)
+	_tick_crouch_and_dash(delta, latched, in_water, mult)
 	_tick_horizontal(delta, in_water, horizontal_input, mult)
 	_tick_facing(delta, horizontal_input)
 	_tick_pose_and_collision(delta, in_water)
@@ -431,25 +437,30 @@ func _try_ledge_nudge(in_water: bool, latched: bool, horizontal_input: float) ->
 		return
 
 
-func _tick_crouch_and_dash(delta: float, latched: bool, in_water: bool) -> void:
+func _tick_crouch_and_dash(delta: float, latched: bool, in_water: bool, mult: Vector2) -> void:
 	if latched or in_water:
 		return
+	# 下冲:空中按 S 给一次向下的速度脉冲。已经比他掉得还快时不给(= 不许用它刹车)。
 	if not is_on_floor() and input_source.is_action_just_pressed("down") \
-			and not climb.is_over_climb_tile():
+			and not climb.is_over_climb_tile() \
+			and DashRule.down_dash_allowed(velocity.y, charge_down_velocity):
 		velocity.y = charge_down_velocity
+		_down_dash_ghost_t = DOWN_DASH_GHOST_TIME
 	# 下蹲逐帧推导,不用按下/松开边沿:旧实现把 release 分支套在 is_on_floor() 内,空中松开 S 不执行 ⇒ 落地仍蹲(卡蹲)。
 	var want_squat := is_on_floor() and input_source.is_action_pressed("down")
 	if want_squat and not is_squat:
 		is_charge = false   # 冲刺中按 S → 取消冲刺进蹲
 	is_squat = want_squat
 
+	# 冲刺 = 双击左/右走(没有独立键,边沿由 LocalInputSource 合成);已比冲刺还快时不触发。
 	if not is_charge and not is_squat and input_source.is_action_just_pressed("charge"):
-		is_charge = true
-		charge_timer = charge_duration
-		squash.impulse(SquashStretch.Impulse.DASH)
-		# 冲刺方向沿用最近移动方向;没在走路(如刚用枪瞄)则保留当前朝向。
-		if _last_move_timer > 0.0:
-			facing_direction = _last_move_dir
+		if DashRule.dash_allowed(velocity.x, DashRule.dash_speed(charge_velocity, _speed_mult, mult.x)):
+			is_charge = true
+			charge_timer = charge_duration
+			squash.impulse(SquashStretch.Impulse.DASH)
+			# 冲刺方向沿用最近移动方向;没在走路(如刚用枪瞄)则保留当前朝向。
+			if _last_move_timer > 0.0:
+				facing_direction = _last_move_dir
 
 
 # 水平速度:攀爬中不锁横移(爬/挂/空闲都可左右走,由 climb 只管垂直)。
@@ -457,8 +468,9 @@ func _tick_horizontal(delta: float, in_water: bool, horizontal_input: float, mul
 	if in_water:
 		return
 	if is_charge:
-		velocity.x = charge_velocity * facing_direction
-		charge_timer -= delta
+		# 速度 ×tm、计时 ÷tm(判据见 DashRule)⇒ 时间加速只让冲刺更快、不改变冲刺距离;武器减速只缩短距离。
+		velocity.x = DashRule.dash_speed(charge_velocity, _speed_mult, mult.x) * facing_direction
+		charge_timer -= delta * _speed_mult
 		if charge_timer <= 0:
 			is_charge = false
 	else:
