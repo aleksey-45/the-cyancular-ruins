@@ -104,13 +104,40 @@ static func parse(data: PackedByteArray) -> Dictionary:
 				descs.resize(n)
 				for i in n:
 					var idx := body[off + i] if iw == 1 else body.decode_u16(off + i * 2)
-					descs[i] = palette[idx] if idx < pc else 0
+					# ★ 读时迁移(唯一入口):旧图集废弃槽位(legacy_texture_map)在这里改写成 base 纹理 + 合成 hue 档,
+					#   下游(scene_to_subgrid / flatten_scene / scene_to_descgrid)看到的永远是迁移后的描述符。
+					descs[i] = migrate_descriptor(palette[idx]) if idx < pc else 0
 				out["scene"] = descs
 			off += n * iw
 		elif kind == 2:
 			off += n * 4   # 背景层:整块 RGBA,游戏侧暂不消费
 		else:
 			return {"ok": false, "error": "未知层类型 %d" % kind}
+	return out
+
+
+# legacy 纹理描述符的读时迁移(单一合成规则,v4/v3/工具共用):tex 在 TileDefs.legacy_base_of 的表里 ⇒
+# 纹理换成 base、hue 档 = clampi(旧 hue + legacy hue − 4, 0, 7)(两偏移都是 15° 的整数倍 ⇒ 档位直接相加),
+# brightness/saturation/alpha 与保留位原样。非 legacy(含空气 0)原样返回。
+static func migrate_descriptor(d: int) -> int:
+	var tex := (d >> 12) & 0xFFF
+	var base := TileDefs.legacy_base_of(tex)
+	if d == 0 or base == 0:
+		return d
+	var hue := clampi((d & 7) + TileDefs.legacy_hue_of(tex) - 4, 0, 7)
+	return (d & ~((0xFFF << 12) | 7)) | (base << 12) | hue
+
+
+# 「场景」层描述符 → 16px 子格 u32 描述符表(Array[Array],[y][x] = 描述符,0 = 空气):渲染侧按描述符行取图集
+# (Level0._desc_row / TerrainAtlas.build_atlas_image_for),逻辑侧继续读 scene_to_subgrid 的纹理表。
+static func scene_to_descgrid(scene: PackedInt32Array, sc: int, sr: int) -> Array[Array]:
+	var out: Array[Array] = []
+	for y in sr:
+		var row: Array[int] = []
+		row.resize(sc)
+		for x in sc:
+			row[x] = int(scene[y * sc + x])
+		out.append(row)
 	return out
 
 

@@ -10,6 +10,11 @@ static var _grid_ref: Array[Array] = []
 # 建图时的原始(未破坏)网格深拷贝:每局复位用它重铺瓦片/碰撞(不被运行时 damage_tile 污染)。
 static var _pristine_grid: Array[Array] = []
 static var _pristine_subgrid: Array[Array] = []   # cyrm v4:子格纹理表基线(复位/回溯用)
+static var _pristine_subdesc: Array[Array] = []   # cyrm v4:子格描述符表基线(与 _pristine_subgrid 同点保存)
+# 描述符 → 图集行号(墙体 16px 象限行 / 水体 64px 形状行);_ready 里随 tileset 一起建。
+static var _desc_row: Dictionary = {}
+static var _water_row: Dictionary = {}
+static var _row_warned := false                   # 缺失描述符回落中性行只告警一次
 # 持久化可破坏层 16px 子格(cyrm v4:64px 格 → 4×4):摧毁时清该格 16 个子格,下帧只重建所在分块。
 static var _destructible_sub: Array[Array] = []
 # 本帧被摧毁砖所在的分块(Vector2i → true);_process 里逐块重建后清空。
@@ -190,6 +195,7 @@ func _ready() -> void:
 	_grid_ref = grid
 	_pristine_grid = MazeGenerator.copy_grid(grid)
 	_pristine_subgrid = []   # _ready 里随 current_subgrid 一起存基线
+	_pristine_subdesc = []
 	Level0.wall_layer = $WorldViewport/WallLayer
 	TileDefs.on_sub_destroyed = Callable(self, "_on_sub_destroyed")
 	# 格级销毁:激光走的是格级 damage_tile(laser_weapon_base.gd 传 source=explosion;子格表为空的合成网格里子弹也回落这条路)。这条回调此前只有服务器接了(server/match/match_host.gd)⇒ 单机整格被拆后 16 子格仍 sub_alive = 幽灵砖;收口见 TileDefs.destroy_cell。
@@ -197,11 +203,12 @@ func _ready() -> void:
 	TileDefs.init_hp(grid)
 	TileDefs.init_sub_hp(MazeGenerator.current_subgrid)
 	_pristine_subgrid = MazeGenerator.copy_grid(MazeGenerator.current_subgrid)
+	_pristine_subdesc = MazeGenerator.copy_grid(MazeGenerator.current_subdesc)
 	_damaged_subs.clear()
 
-	var tile_set = _create_wall_tileset()
+	var built := _create_wall_tileset()
 	var wl: TileMapLayer = $WorldViewport/WallLayer
-	wl.tile_set = tile_set
+	wl.tile_set = built["tileset"]
 	# ★ Web:建图(9 份环面瓦片 + 9 份水面 + 整层碰撞)在 wasm 里要好几秒 ⇒ 先铺中心副本让画面有内容,
 	#   其余交给 _web_build_world() 逐帧补完(期间树暂停 + 载入遮罩)。桌面路径逐字不变。
 	var web_progressive := OS.has_feature("web") and not pvp_mode
@@ -253,20 +260,112 @@ func _ready() -> void:
 	_build_pause_menu()
 
 
-# 墙体/所有非空气砖的图集(16px 象限制)。构造已上提到 TerrainAtlas —— 主菜单背景要「真实的那个世界」,必须与这里用同一份映射(见 terrain_atlas.gd 文件头)。
-func _create_wall_tileset() -> TileSet:
-	return TerrainAtlas.make_wall_tileset()
+# 墙体/所有非空气砖的图集(16px 象限制,**按描述符行烘**:行 = 本图去重描述符,辅码颜色烘进像素)。
+# 构造在 TerrainAtlas —— 主菜单背景要「真实的那个世界」,必须与这里用同一份映射(见 terrain_atlas.gd 文件头)。
+func _create_wall_tileset() -> Dictionary:
+	var built := TerrainAtlas.make_wall_tileset_for(_collect_wall_descs())
+	_desc_row = built["row_of"]
+	return built
 
 
-# 水体专用 64px 图集:墙体图集改成 16px 象限制后,_paint_water 的「形状列×纹理行」老格式没了着落(水体被按 16px 坐标压缩画错位);水不可破坏,永远按 64px 整格渲染,构造同样收在 TerrainAtlas,仅供 water_layer 使用。
-# ★★ 两个用途各用各的砖(2026-11-01 修):水体图集 = `WATER_BODY_BRICK`(纹理 21 水,均匀半透明填充)、
-#   水面合批 = `WATER_SURFACE_BRICK`(纹理 22 水面,顶边亮带)。此前两处共用一块(idx 21 = 水面)⇒ 整个水体被画成水面。
+# 本图墙体描述符的去重排序列表:生产路径读 current_subdesc;合成网格路径(探针直写 current_subgrid、
+# subdesc 为空)按纹理回落中性描述符 ⇒ 行号语义退回"每纹理一行"。
+func _collect_wall_descs() -> Array:
+	var uniq := {}
+	var sd := MazeGenerator.current_subdesc
+	if sd.is_empty():
+		for row in MazeGenerator.current_subgrid:
+			for t in row:
+				if int(t) != 0:
+					uniq[MapFormatV4.neutral_descriptor(int(t))] = true
+	else:
+		for row in sd:
+			for d in row:
+				if int(d) != 0:
+					uniq[int(d)] = true
+	var out: Array = uniq.keys()
+	out.sort()
+	return out
+
+
+# 水体专用 64px 图集:水不可破坏,永远按 64px 整格渲染;行 = 本图去重液体描述符(水体砖 tint),构造在 TerrainAtlas。
+# ★★ 两块水砖各用各的(2026-11-01 修):水体图集 = `WATER_BODY_BRICK`(纹理 21 水)、水面合批 = `WATER_SURFACE_BRICK`(纹理 22 水面)。
+# ★ 水面合批**不消费辅码**:surface_texture 恒为中性水面砖(已登记 docs/eng/registered-debt.md)——
+#   带 hue/bri 辅码的水在深水格有色、水面亮带仍是原色。
 func _create_water_tileset() -> TileSet:
 	var ts := GameParameters.TILE_SIZE
-	# 水面合批 shader 的采样源 = 水面砖(不是水体砖;混用会让水面失去顶边亮带、整片水一个颜色)
 	Level0.surface_texture = ImageTexture.create_from_image(
 			TerrainAtlas.water_brick_image(ts, TerrainAtlas.WATER_SURFACE_BRICK))
-	return TerrainAtlas.make_water_tileset(ts)
+	var uniq := {}
+	uniq[MapFormatV4.neutral_descriptor(TerrainAtlas.WATER_BODY_BRICK + 1)] = true   # 中性行恒在(回落目标)
+	var sd := MazeGenerator.current_subdesc
+	if sd.is_empty():
+		for row in MazeGenerator.current_subgrid:
+			for t in row:
+				if Water.is_liquid(int(t)):
+					uniq[MapFormatV4.neutral_descriptor(int(t))] = true
+	else:
+		for row in sd:
+			for d in row:
+				if int(d) != 0 and Water.is_liquid((int(d) >> 12) & 0xFFF):
+					uniq[int(d)] = true
+	var descs: Array = uniq.keys()
+	descs.sort()
+	var built := TerrainAtlas.make_water_tileset_for(ts, descs)
+	_water_row = built["row_of"]
+	return built["tileset"]
+
+
+# 子格描述符(合成网格路径 subdesc 缺失/该格为 0 → 按纹理回落中性描述符)。
+static func _desc_or_neutral(sd: Array, y: int, x: int, tex: int) -> int:
+	if y < sd.size():
+		var drow: Array = sd[y]
+		if x < drow.size() and int(drow[x]) != 0:
+			return int(drow[x])
+	return MapFormatV4.neutral_descriptor(tex)
+
+
+# 墙体图集行号:缺失描述符回落中性行(TerrainAtlas.fallback_row)并只告警一次。
+static func _wall_row(desc: int) -> int:
+	if not _desc_row.has(desc) and not _row_warned:
+		_row_warned = true
+		push_warning("Level0: 描述符 0x%X 不在墙体图集行表,回落中性行" % desc)
+	return TerrainAtlas.fallback_row(_desc_row, desc)
+
+
+# 水体图集行号(缺失回落中性行;中性水体行恒在 _water_row 里)。
+static func _water_row_of(desc: int) -> int:
+	return TerrainAtlas.fallback_row(_water_row, desc)
+
+
+# 64px 水格的格级描述符 = 16 子格的多数非零描述符(平票取小,与 flatten_scene 的多数纹理同口径);
+# subdesc 缺失/全零 → 该格纹理的中性描述符。
+static func _water_desc_of(v: int, x: int, y: int) -> int:
+	var fallback := MapFormatV4.neutral_descriptor(MazeGenerator.texture_of(v))
+	var sd := MazeGenerator.current_subdesc
+	if sd.is_empty():
+		return fallback
+	var counts := {}
+	for sy in 4:
+		var yy := y * 4 + sy
+		if yy >= sd.size():
+			continue
+		var drow: Array = sd[yy]
+		for sx in 4:
+			var xx := x * 4 + sx
+			if xx >= drow.size():
+				continue
+			var d := int(drow[xx])
+			if d != 0:
+				counts[d] = int(counts.get(d, 0)) + 1
+	var best := 0
+	var best_n := 0
+	for d in counts:
+		var nn := int(counts[d])
+		if nn > best_n or (nn == best_n and d < best):
+			best = d
+			best_n = nn
+	return best if best != 0 else fallback
 
 
 # 环面 9 份副本的偏移(渲染铺图 / 水面 / 碰撞共用)。
@@ -284,10 +383,12 @@ func _paint_maze(layer: TileMapLayer) -> void:
 
 # 只铺指定环面副本(Web 分帧建图用;桌面走 _paint_maze 一次铺 9 份)。
 func _paint_maze_copies(layer: TileMapLayer, copies: Array) -> void:
-	# cyrm v4:铺 16px 子格(MazeGenerator.current_subgrid;纹理 0 = 空气跳过,液体由 _paint_water 分层铺)。瓦片坐标 = (象限 qy*4+qx, 纹理-1)。
+	# cyrm v4:铺 16px 子格(MazeGenerator.current_subgrid;纹理 0 = 空气跳过,液体由 _paint_water 分层铺)。
+	# 瓦片坐标 = (象限 qy*4+qx, _desc_row[描述符]) —— 行按描述符烘(辅码颜色),不再按 tex-1。
 	var source_id = 0
 	var sc = MazeGenerator.current_subgrid[0].size()
 	var sr = MazeGenerator.current_subgrid.size()
+	var sd := MazeGenerator.current_subdesc
 	for c: Vector2i in copies:
 		var offset_x = c.x * sc
 		var offset_y = c.y * sr
@@ -298,7 +399,7 @@ func _paint_maze_copies(layer: TileMapLayer, copies: Array) -> void:
 				if tex == MazeGenerator.EMPTY or Water.is_liquid(tex):
 					continue
 				layer.set_cell(Vector2i(x + offset_x, y + offset_y), source_id,
-						Vector2i((y % 4) * 4 + (x % 4), tex - 1))
+						Vector2i((y % 4) * 4 + (x % 4), _wall_row(_desc_or_neutral(sd, y, x, tex))))
 
 
 # 水格铺图:水体格铺水体瓦片(纹理 21,水体专用 64px 图集的 atlas 行 0);水面格(上方非 liquid)只放 Sprite 亮线,不铺瓦片(避免双层半透明叠加变深)。
@@ -307,8 +408,8 @@ func _paint_water(grid: Array[Array]) -> void:
 
 
 # 只铺指定环面副本的水面(Web 分帧建图用;桌面 _paint_water 一次铺 9 份 ⇒ 仍是一个合批)。
+# 水体行号 = _water_row[该格描述符](格级描述符 = 16 子格的多数描述符,与 flatten_scene 同口径)。
 func _paint_water_copies(grid: Array[Array], copies: Array) -> void:
-	const BODY_ROW := 0   # 水体专用图集只有一行(纹理 21)
 	var ts := GameParameters.TILE_SIZE
 	var cols := grid[0].size()
 	var rows := grid.size()
@@ -335,7 +436,7 @@ func _paint_water_copies(grid: Array[Array], copies: Array) -> void:
 					})
 				else:
 					wl.set_cell(Vector2i(x + ox, y + oy), 0,
-						Vector2i(MazeGenerator.shape_of(v), BODY_ROW))
+						Vector2i(MazeGenerator.shape_of(v), _water_row_of(_water_desc_of(v, x, y))))
 
 	# 合批:一个 canvas item 画所有水面格(替代 N 个 Sprite,省 draw call,画面不变)
 	if not surface_cells.is_empty():
@@ -466,10 +567,11 @@ func _restore_sub(e: Dictionary) -> void:
 	var cell := Vector2i(sub.x / 4, sub.y / 4)
 	if tex == 0:
 		return
+	var atlas_row := _wall_row(_desc_or_neutral(MazeGenerator.current_subdesc, sub.y, sub.x, tex))
 	for ty in range(-1, 2):
 		for tx in range(-1, 2):
 			wall_layer.set_cell(Vector2i(sub.x + tx * sc, sub.y + ty * sr), 0,
-					Vector2i((sub.y % 4) * 4 + (sub.x % 4), tex - 1))
+					Vector2i((sub.y % 4) * 4 + (sub.x % 4), atlas_row))
 	if not _destructible_sub.is_empty():
 		_destructible_sub[sub.y][sub.x] = MazeGenerator.SOLID
 		_dirty_chunks[CollisionBuilder.chunk_of(cell)] = true
@@ -538,7 +640,8 @@ func reset_destructibles() -> void:
 		if not _destructible_sub.is_empty():
 			_destructible_sub[sub.y][sub.x] = CollisionBuilder.destructible_value(tex)
 		if wl != null and tex != 0:
-			var atlas := Vector2i((sub.y % 4) * 4 + (sub.x % 4), tex - 1)
+			var atlas := Vector2i((sub.y % 4) * 4 + (sub.x % 4),
+					_wall_row(_desc_or_neutral(_pristine_subdesc, sub.y, sub.x, tex)))
 			for ty in range(-1, 2):
 				for tx in range(-1, 2):
 					wl.set_cell(Vector2i(sub.x + tx * sc, sub.y + ty * sr), 0, atlas)

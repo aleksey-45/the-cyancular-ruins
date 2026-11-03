@@ -12,7 +12,9 @@
 ### `.cyrm` v4(二进制)
 
 - 头 20 字节:`CYRM` magic(4)/ `version=4`(1)/ `compression`(1:0 = 裸 body,1 = zlib deflate)/ `body_size` u32LE(解压后)/ `body_crc32` u32LE / `sub_cols` u16LE / `sub_rows` u16LE / `layer_flags`(1)/ reserved(1)。校验:`sub_cols` / `sub_rows` 必须非零且为 4 的倍数;`body_size` 必须在解压前按 `MAX_BODY_SIZE = 64MB` 拦;`compression=0` 时 `body_size` 必须恰等于文件余量;CRC32 不符即失败。
-- body = `u16 meta_len` + meta UTF-8(含出生点行)+ 逐层块;层块 `kind=1` = 调色板 + 索引流,`kind=2` = 整块 RGBA;调色板描述符 u32 是 hue/brightness/saturation/alpha/texture 位域。
+- body = `u16 meta_len` + meta UTF-8(含出生点行)+ 逐层块;层块 `kind=1` = 调色板 + 索引流,`kind=2` = 整块 RGBA;调色板描述符 u32 位域 = bit0-2 hue / bit3-5 brightness / bit6-8 saturation / bit9-11 alpha / bit12-23 texture(0 = 空气)/ bit24-31 保留 0(与 `level_editor/core/90_desc.js` 逐字一致);中性 = (hue4, bri4, sat4, alpha7)。
+- **legacy 纹理读时迁移**:旧图集的 tex 2-5 / 16-18(纯色方块与树叶的色相变体)已废弃 —— 新图集 `assets/textures/structure.png` 这 7 个槽位全透明,其余 15 块像素未动。纹理 id 空间**稳定 1..22 不重编号**、格式**保持 v4 不升版本**;颜色一律由描述符辅码承载。迁移表**单一来源 = `data/tile_defs.json` 的 `legacy_texture_map`**(旧 tex → {base, hue 档}:2→(1,3)、3→(1,1)、4→(1,5)、5→(1,0)、16→(15,2)、17→(15,7)、18→(15,7);读口 `TileDefs.legacy_base_of` / `legacy_hue_of`),合成规则唯一实现 = `MapFormatV4.migrate_descriptor`:tex→base、hue 档 = `clampi(旧hue + legacy_hue − 4, 0, 7)`(两偏移都是 15° 整数倍 ⇒ 档位直接相加),bri/sat/alpha 与保留位原样;非 legacy 不动。迁移在**读时**对所有入口生效:v4 二进制(`MapFormatV4.parse` 的 scene 描述符)、v3 文本与 v1 旧字母格式(`MapFormat.load_map_file` 的 packed 网格 + `expand_cells_to_subdescgrid` 的描述符合成);新写出一律不产生 legacy id(serialize 无需迁移,内存网格已无 legacy)。仓内 `maps/*.cyrm` 已由 `tools/migrate_map_textures.gd --write` 原位改写 scene 层调色板(索引流/meta/其余层逐字节无损)。守卫:`tests/probe/texture_migration_probe.gd`。
+- 游戏侧消费描述符(不再丢弃辅码):`MapFormat.load_subgrid_with_descs` 返回 {textures, descs},`MazeGenerator.current_subdesc` = 子格 u32 描述符表(**唯一装填点 = `WorldBuilder.load_grid`**,与 current_subgrid 同一次赋值);渲染按描述符行烘图集(`TerrainAtlas`,像素数学规范 = `level_editor/tint.js` 的移植,见 [`render.md`](render.md))。
 - `layer_flags` bit0 前景 / bit1 场景 / bit2 后景 / bit3 背景;游戏只消费**场景层**,`flatten_scene()` 把 4×4 子格扁平化回「单纹理 + 2×2 形状掩码」。
 - 子格:一格 64px = 4×4 个 16px 子格(`MapFormatV4.SUB_PER_CELL = 4`)。格值 packed = `texture*16 + shape`;`EMPTY = 0`、`SOLID = 31`(纹理 1 全砖)。
 - v3 文本(`# cyrm-v3`,每格 4 字符 = 3 位十进制纹理 + 1 位形状 hex)与单字符文本格式仍可读,加载时转换为 125×75;出生点 `# player <col> <row>`、`# player2 <col> <row>`(PvP 第二出生点),读口 `MapFormat.load_spawns` / `parse_spawn_metadata`。
@@ -68,10 +70,10 @@
 
 | 纹理 | 属性 |
 |---|---|
-| 1-10 | 墙,hp 1,不可破 |
+| 1-10 | 墙,hp 1,不可破(2-5 = legacy 槽位,json 里已无条目,读时迁移成 1+hue 辅码) |
 | 11 梯子 | passage,climb 1.6 / descent 2.0 |
 | 12-14 锁链 | passage,climb 2.0,**无下降倍率** |
-| 15-18 树叶 | 墙,hp 8,子弹/爆炸可破,`elastic`(弱弹 150) |
+| 15 树叶 | 墙,hp 8,子弹/爆炸可破,`elastic`(弱弹 150);16-18 = legacy 槽位,读时迁移成 15+hue 辅码 |
 | 19-20 树干 | 墙,hp 30,子弹/爆炸可破 |
 | 21 水 / 22 水面 | `liquid`,无碰撞 |
 

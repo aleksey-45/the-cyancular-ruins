@@ -12,38 +12,6 @@ window.TILE_DEFS = {
       "explosion_destroyable": false,
       "elastic": false
     },
-    "2": {
-      "name": "全色方块-2",
-      "type": "wall",
-      "hp": 1,
-      "bullet_destroyable": false,
-      "explosion_destroyable": false,
-      "elastic": false
-    },
-    "3": {
-      "name": "全色方块-3",
-      "type": "wall",
-      "hp": 1,
-      "bullet_destroyable": false,
-      "explosion_destroyable": false,
-      "elastic": false
-    },
-    "4": {
-      "name": "全色方块-4",
-      "type": "wall",
-      "hp": 1,
-      "bullet_destroyable": false,
-      "explosion_destroyable": false,
-      "elastic": false
-    },
-    "5": {
-      "name": "全色方块-5",
-      "type": "wall",
-      "hp": 1,
-      "bullet_destroyable": false,
-      "explosion_destroyable": false,
-      "elastic": false
-    },
     "6": {
       "name": "描边方块",
       "type": "wall",
@@ -129,30 +97,6 @@ window.TILE_DEFS = {
       "explosion_destroyable": true,
       "elastic": true
     },
-    "16": {
-      "name": "树叶-2",
-      "type": "wall",
-      "hp": 8,
-      "bullet_destroyable": true,
-      "explosion_destroyable": true,
-      "elastic": true
-    },
-    "17": {
-      "name": "树叶-3",
-      "type": "wall",
-      "hp": 8,
-      "bullet_destroyable": true,
-      "explosion_destroyable": true,
-      "elastic": true
-    },
-    "18": {
-      "name": "树叶-4",
-      "type": "wall",
-      "hp": 8,
-      "bullet_destroyable": true,
-      "explosion_destroyable": true,
-      "elastic": true
-    },
     "19": {
       "name": "树干（竖）",
       "type": "wall",
@@ -186,6 +130,36 @@ window.TILE_DEFS = {
       "explosion_destroyable": false,
       "elastic": false,
       "explosion_decay": 0.25
+    }
+  },
+  "legacy_texture_map": {
+    "2": {
+      "base": 1,
+      "hue": 3
+    },
+    "3": {
+      "base": 1,
+      "hue": 1
+    },
+    "4": {
+      "base": 1,
+      "hue": 5
+    },
+    "5": {
+      "base": 1,
+      "hue": 0
+    },
+    "16": {
+      "base": 15,
+      "hue": 2
+    },
+    "17": {
+      "base": 15,
+      "hue": 7
+    },
+    "18": {
+      "base": 15,
+      "hue": 7
     }
   }
 };

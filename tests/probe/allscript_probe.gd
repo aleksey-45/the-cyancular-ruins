@@ -31,7 +31,10 @@ const SKIP_DIRS := ["res://.godot", "res://builds", "res://releases", "res://gam
 #   + `tests/probe/bullet_pool_probe.gd`(O2/O3 子弹池与守卫)。
 #   ★ 同日被**挪出仓库**的 `tests/probe/bullet_golden_probe.gd`(O4 前置金标准探针,停在 parse error)
 #   不计入 —— 见 `docs/superpowers/plans/2026-11-01-bullet-perf.md` §O4「金标准探针暂不入库」。
-const EXPECTED_SCRIPTS := 242
+# ★ 2026-11-03 纹理重编码批:242→**246** —— 新增 4 个(全是真落地的新脚本):
+#   `tools/migrate_map_textures.gd`(legacy 纹理的调色板原位迁移工具)+ 守卫三支
+#   `tests/probe/tint_parity_probe.gd` / `tests/probe/texture_migration_probe.gd` / `tests/probe/wall_tint_probe.gd`。
+const EXPECTED_SCRIPTS := 246
 
 var _fails: Array[String] = []
 var _total := 0

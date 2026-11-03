@@ -26,6 +26,9 @@ static var _elastic: PackedByteArray = PackedByteArray()
 static var _climb_speed: PackedFloat32Array = PackedFloat32Array()
 static var _climb_descent: PackedFloat32Array = PackedFloat32Array()
 static var _decay: PackedFloat32Array = PackedFloat32Array()   # 逐格爆炸衰减(缺省回落全局)
+# 旧图集废弃槽位 → (base 纹理, hue 档) 的读时迁移表(data/tile_defs.json 的 legacy_texture_map 单一来源;0 = 非 legacy)。
+static var _legacy_base: PackedInt32Array = PackedInt32Array()
+static var _legacy_hue: PackedInt32Array = PackedInt32Array()
 static var _tables_built := false
 
 # 未加载 defs 时的缺省,须与旧 tile(tex).get(..., 缺省) 完全一致:type=wall、hp 1、各开关 false、climb 0、衰减回落全局 0.75。
@@ -42,6 +45,8 @@ static func _ensure_tables() -> void:
 	_climb_speed.resize(n)
 	_climb_descent.resize(n)
 	_decay.resize(n)
+	_legacy_base.resize(n)
+	_legacy_hue.resize(n)
 	_type.fill(TYPE_WALL)
 	_hp.fill(1)
 	_bullet_destroyable.fill(0)
@@ -49,8 +54,18 @@ static func _ensure_tables() -> void:
 	_elastic.fill(0)
 	_climb_speed.fill(0.0)
 	_climb_descent.fill(0.0)
+	_legacy_base.fill(0)
+	_legacy_hue.fill(0)
 	var fallback := float(_defs.get("explosion_decay", 0.75))
 	_decay.fill(fallback)
+	var legacy: Dictionary = _defs.get("legacy_texture_map", {})
+	for key in legacy:
+		var ltex := int(String(key))
+		if ltex < 1 or ltex >= n:
+			continue
+		var entry: Dictionary = legacy[key]
+		_legacy_base[ltex] = int(entry.get("base", 0))
+		_legacy_hue[ltex] = int(entry.get("hue", 4))
 	var tiles: Dictionary = _defs.get("tiles", {})
 	for tex in range(1, n):
 		var d: Dictionary = tiles.get(str(tex), {})
@@ -70,6 +85,22 @@ static func _ensure_tables() -> void:
 		_climb_speed[tex] = float(d.get("climb_speed", 0.0))
 		_climb_descent[tex] = float(d.get("climb_descent_speed", 0.0))
 		_decay[tex] = float(d.get("explosion_decay", fallback))
+
+
+# legacy 纹理读时迁移口(表 = data/tile_defs.json 的 legacy_texture_map,单一来源):非 legacy 一律返回 0。
+# ★ 先 load_defs 再查表:迁移的第一入口在格式层(MapFormatV4.parse),它跑在生产侧任何显式 load_defs 之前。
+static func legacy_base_of(tex: int) -> int:
+	load_defs()
+	if tex < 1 or tex > MAX_TEXTURE:
+		return 0
+	return _legacy_base[tex]
+
+
+static func legacy_hue_of(tex: int) -> int:
+	load_defs()
+	if tex < 1 or tex > MAX_TEXTURE:
+		return 0
+	return _legacy_hue[tex]
 
 
 static func load_defs() -> void:

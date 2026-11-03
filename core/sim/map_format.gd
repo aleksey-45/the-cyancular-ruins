@@ -92,18 +92,60 @@ static func _v4(path: String) -> Dictionary:
 	return MapFormatV4.parse(data)
 
 
-## 16px 子格纹理表(选项 A 的会话态装填源):
-##   v4 → 场景层描述符直读;v3/旧格式 → 把 2×2 形状掩码展开成 4×4(每个 32px 象限 = 2×2 个
-##   同纹理 16px 子格,与 §3.6 迁移规则一致,几何逐像素等价)。
+## 16px 子格纹理表(选项 A 的会话态装填源)= load_subgrid_with_descs 的 textures 包装(调用面不变)。
 static func load_subgrid(path: String) -> Array[Array]:
+	return load_subgrid_with_descs(path)["textures"]
+
+
+## 16px 子格的纹理表 + u32 描述符表:{"textures": Array[Array], "descs": Array[Array]}(空气都是 0)。
+##   v4 → 场景层直读(parse 已做 legacy 读时迁移);v3/旧字母格式 → 2×2 形状掩码展开成 4×4,
+##   legacy 纹理改写成 base、描述符按迁移规则合成(见 expand_cells_to_subdescgrid)。
+static func load_subgrid_with_descs(path: String) -> Dictionary:
 	var v := _v4(path)
 	if not v.is_empty():
 		if not bool(v.get("ok", false)):
 			push_error("MapFormat: v4 解析失败 %s(%s)" % [path, str(v.get("error", "?"))])
-			return []
-		return MapFormatV4.scene_to_subgrid(v["scene"], int(v["sub_cols"]), int(v["sub_rows"]))
-	var grid := load_map_file(path)
-	return expand_cells_to_subgrid(grid)
+			return {"textures": [], "descs": []}
+		return {
+			"textures": MapFormatV4.scene_to_subgrid(v["scene"], int(v["sub_cols"]), int(v["sub_rows"])),
+			"descs": MapFormatV4.scene_to_descgrid(v["scene"], int(v["sub_cols"]), int(v["sub_rows"])),
+		}
+	return expand_cells_to_subdescgrid(_load_text_grid(path))
+
+
+## 格级网格(未做 legacy 迁移的原始纹理)→ 子格纹理表 + 描述符表:每格展开成 4×4;纹理 = legacy 改写成
+## base、其余原样;描述符 = migrate_descriptor(中性描述符)(legacy → packDesc(base, legacy_hue, 4,4,7),
+## 其余 → 中性)。★ 与 load_map_file 的读时迁移共用 MapFormatV4.migrate_descriptor / TileDefs 那一份规则。
+static func expand_cells_to_subdescgrid(grid: Array) -> Dictionary:
+	var texs := expand_cells_to_subgrid(grid)
+	var descs: Array[Array] = []
+	if grid.is_empty():
+		return {"textures": texs, "descs": descs}
+	var cols: int = (grid[0] as Array).size()
+	var rows := grid.size()
+	for ry in rows * 4:
+		var drow: Array[int] = []
+		drow.resize(cols * 4)
+		descs.append(drow)
+	for y in rows:
+		for x in cols:
+			var v := int(grid[y][x])
+			var tex := texture_of(v)
+			if tex == 0:
+				continue
+			var base := TileDefs.legacy_base_of(tex)
+			var desc := MapFormatV4.migrate_descriptor(MapFormatV4.neutral_descriptor(tex))
+			var sh := shape_of(v)
+			for qy in 2:
+				for qx in 2:
+					if sh & (1 << (qy * 2 + qx)) == 0:
+						continue
+					for sy in 2:
+						for sx in 2:
+							var t := texs[y * 4 + qy * 2 + sy]
+							t[x * 4 + qx * 2 + sx] = base if base != 0 else tex
+							descs[y * 4 + qy * 2 + sy][x * 4 + qx * 2 + sx] = desc
+	return {"textures": texs, "descs": descs}
 
 
 ## 格级网格 → 16px 子格纹理表(2×2 形状掩码 ×2 展开;兼容旧格式与测试合成网格)。
@@ -269,7 +311,19 @@ static func load_map_file(path: String) -> Array[Array]:
 			push_error("MapFormat: v4 解析失败 %s(%s)" % [path, str(v.get("error", "?"))])
 			return []
 		return MapFormatV4.flatten_scene(v["scene"], int(v["sub_cols"]), int(v["sub_rows"]))
-	# v3 / 旧文本格式(只读兼容:老图、编辑器旧导出)
+	# v3 / 旧文本格式(只读兼容:老图、编辑器旧导出):legacy 纹理读时改写成 base(与 v4 的 parse 同一规则)
+	var grid := _load_text_grid(path)
+	for row in grid:
+		for x in (row as Array).size():
+			var v2 := int(row[x])
+			var base := TileDefs.legacy_base_of(texture_of(v2))
+			if base != 0:
+				row[x] = pack(base, shape_of(v2))
+	return grid
+
+
+## v3 / v1 文本格式的格级网格(★ 不含 legacy 迁移;生产入口 load_map_file / load_subgrid_with_descs 各自迁移)。
+static func _load_text_grid(path: String) -> Array[Array]:
 	var lines := read_lines(path)
 	if has_v3_marker(lines):
 		return parse_v3_grid(lines)

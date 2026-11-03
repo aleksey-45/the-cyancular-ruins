@@ -13,6 +13,7 @@
 
 ## 已知边界
 
+- **水面合批不消费辅码**（[`scenes/level_0.gd`](../../scenes/level_0.gd) `_create_water_tileset` 的 `surface_texture` + [`scenes/effects/water_surface_batch.gd`](../../scenes/effects/water_surface_batch.gd)）：水面亮带恒采样**中性**水面砖（`WATER_SURFACE_BRICK`），只有水体层按描述符行 tint —— 地图给水体上了 hue/bri 辅码时，深水格有色、水面亮带仍原色（症状 = 水面处颜色断层）。规避 = 别给水格上辅码；修 = 水面砖也按格级水体描述符 tint（合批要按行分桶）。
 - [`tests/harness/menu_autotest.gd`](../../tests/harness/menu_autotest.gd) 被产品代码 [`scenes/main_menu.gd`](../../scenes/main_menu.gd) `load()`(菜单的 `-- --autotest-*` 钩子)—— 改名 / 删除 / 移动它,必须同批改产品代码,否则钩子失效。
 - [`tools/gen_menu_theme.gd`](../../tools/gen_menu_theme.gd) 手抄 `UiFactory.menu_panel()` 的 64/46,镜像守卫用同一对字面量 —— 改 `menu_panel()` 默认值**不会红**,生成物与守卫一起静默用旧值;改默认值必须两处同改。
 - 默认批多数支没有 `EXPECTED_CHECKS` 条数闸(`run_all.sh` 表里 `GATE` 栏为 `-`)—— 单支 `OK` 只证明"没有失败输出",不证明每条断言都跑过。

@@ -44,6 +44,9 @@ static var current_grid: Array[Array] = []
 # (见 docs/eng/world.md 的 v4 / 子格一节);空 = 调用方自行从格级展开。
 static var current_subgrid: Array[Array] = []
 
+# 当前关卡的 16px 子格 u32 描述符表(与 current_subgrid 同尺寸同来源,0 = 空气;渲染按它取图集行)。★ 唯一装填点 = WorldBuilder.load_grid(与 current_subgrid 同一次赋值);空 = 合成网格路径,渲染侧回落中性描述符。
+static var current_subdesc: Array[Array] = []
+
 
 # ── 转发:格子值编解码与文件读取(MapFormat)──
 const EMPTY: int = MapFormat.EMPTY
