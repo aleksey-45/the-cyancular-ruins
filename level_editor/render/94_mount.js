@@ -21,7 +21,10 @@ function mount(canvas, opts) {                // ★ opts.slicer 是注入缝(�
     setSubGrid: function (b) { S.s.subGrid = !!b; S.render(); },
     setTorus: function (b) { S.s.torus = !!b; S.render(); },
     setDimOthers: function (b) { S.s.dimOthers = !!b; S.render(); },
+    // 半区中线 + 3×3 桶网格(出生点/复活点的"均匀散布"判据在画布上的对照物)
     setLayerVisible: function (L, b) { S.s.layerVisible[L] = !!b; S.render(); },   // ★ 可见性只影响合成(离屏内容照旧保留)⇒ 开关是 4 次 drawImage 的事,不重画任何一层
+    setGuides: function (b) { S.s.guides = !!b; S.render(); },
+    guides: function () { return !!S.s.guides; },
     layerVisible: function (L) { return S.s.layerVisible[L]; },
     setLayerLocked: function (L, b) { S.s.layerLocked[L] = !!b; },
     layerLocked: function (L) { return S.s.layerLocked[L]; },

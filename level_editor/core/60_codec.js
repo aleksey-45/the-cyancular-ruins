@@ -59,7 +59,7 @@ function decodeBody(body, subCols, subRows, flags) {
   }
   return {
     name: '', subCols: subCols, subRows: subRows, layers: layers,
-    players: meta.players, enemies: meta.enemies, comments: meta.comments,
+    players: meta.players, enemies: meta.enemies, respawns: meta.respawns, comments: meta.comments,
   };
 }
 

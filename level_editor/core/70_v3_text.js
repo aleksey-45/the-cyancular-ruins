@@ -120,7 +120,7 @@ function parseV3Text(text) {
     for (var x = 0; x < cellsW; x++) packed[y * cellsW + x] = rows[y][x];
   }
   return { cellsW: cellsW, cellsH: cellsH, packed: packed,
-           players: players, enemies: enemies, comments: meta.comments };
+           players: players, enemies: enemies, respawns: meta.respawns, comments: meta.comments };
 }
 
 // ── 取角映射(规格 §2.2,规范定义)──
@@ -148,7 +148,8 @@ function migrateV3(parsed) {
       if (v === 0) continue;
       var tex = _v3TexOf(v), shape = _v3ShapeOf(v);
       if (tex === 0 || shape === 0) continue;
-      var d = neutralDesc(tex);
+      // ★ legacy 纹理 id 在**产出 desc 时**就迁移(v3 文本与旧字母格式都经这里;表缺席时是 no-op,见 95_legacy.js)。
+      var d = migrateDescriptor(neutralDesc(tex));
       for (var qy = 0; qy < 2; qy++) {
         for (var qx = 0; qx < 2; qx++) {
           if (!(shape & (1 << (qy * 2 + qx)))) continue;

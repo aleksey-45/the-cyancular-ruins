@@ -117,7 +117,9 @@ const Render = globalThis.Render;
          '★★ 补的正是**新露出来的右边**那 16px(clearRect 184,0,16,150;世界矩形 = 新视图的右边缘)');
 
       // ── ⑪d2 ★★ 视图没重建完时不做自拷贝搬移(搬移的前提是整张图属于同一次视图)──
-      const pPending = r.setView({ x: 40, y: 40, zoom: 16 });   // 不 await:重建在飞
+      // ★ 视图必须落在 panBy 的钳制范围内(clampPanView:画布中心要在地图 2×2 内容矩形里),否则
+      //   panBy 会把它当成"已在界外 ⇒ 1px 都不许再往外"而整支早退,这条就变成空转。
+      const pPending = r.setView({ x: 2, y: 2, zoom: 16 });   // 不 await:重建在飞
       const pc1 = r.stats().panCopies;
       await r.panBy(16, 0);
       eq(r.stats().panCopies, pc1,

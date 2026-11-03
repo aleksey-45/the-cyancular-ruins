@@ -30,6 +30,7 @@ function commandFor(ev) {
   //   的全部绑定里都没被占(B/E/G/L/M/I 是工具、[ ] 是画笔、0-9 是图层、方向键平移、Del/Esc 选区;
   //   V 只被 Ctrl+V 占,而带修饰键的分支上面就 return 了,两条路不会撞)。
   if (k === 'h') return 'mirror:h';
+  if (k === 'r') return 'toggle-guides';
   if (k === 'v') return 'mirror:v';
   if (k === '[') return 'brush-smaller';
   if (k === ']') return 'brush-bigger';
@@ -54,8 +55,10 @@ function bytesOfEntry(e) {
   if (!e) return 0;
   if (e.kind === 'cells') return 12 + e.idx.length * 4 + e.before.length * 4 + e.after.length * 4;
   if (e.kind === 'spawn') {
-    var n = (e.before ? e.before.players.length + e.before.enemies.length : 0) +
-            (e.after ? e.after.players.length + e.after.enemies.length : 0);
+    var n = (e.before ? e.before.players.length + e.before.enemies.length +
+                        (e.before.respawns || []).length : 0) +
+            (e.after ? e.after.players.length + e.after.enemies.length +
+                       (e.after.respawns || []).length : 0);
     return 64 + 32 * n;
   }
   if (e.kind === 'whole') return 64 + (e.bytes || 0);
@@ -110,7 +113,8 @@ function snapshotMap(map) {
   }
   var sp = snapshotSpawns(map);
   return { subCols: map.subCols, subRows: map.subRows, layers: layers,
-           players: sp.players, enemies: sp.enemies, comments: map.comments.slice() };
+           players: sp.players, enemies: sp.enemies, respawns: sp.respawns,
+           comments: map.comments.slice() };
 }
 function bytesOfSnapshot(s) {
   var n = 0;

@@ -24,10 +24,32 @@ module.exports = (async function () {
   eq(Core.parseMeta(Core.buildMeta(m3)).players.length, 3, 'parseMeta: 第 3 个出生点不丢');
 
   eq(Core.buildMeta(Core.createMap('t', 2, 2)), '', 'buildMeta: 什么都沒有时是空串');
+  // ── 按侧复活点 # respawn <1|2> <col> <row>(游戏侧按阵营半区读;见 docs/eng/world.md)──
+  var mr = Core.createMap('r', 4, 3);
+  mr.players = [{ x: 1, y: 1 }, { x: 6, y: 1 }];
+  mr.respawns = [{ side: 2, x: 6, y: 2 }, { side: 1, x: 1, y: 0 }, { side: 1, x: 2, y: 2 }];
+  mr.enemies = [{ type: 'fly_bird', x: 3, y: 1 }];
+  eq(Core.buildMeta(mr),
+     '# player 1 1\n# player2 6 1\n# respawn 1 1 0\n# respawn 1 2 2\n# respawn 2 6 2\n# enemy fly_bird 3 1\n',
+     '★★ buildMeta 按侧分组写 respawn(侧 1 全在前):游戏侧同侧按**文件顺序**去重,顺序变了生效的那条也会变');
+  var mrBack = Core.parseMeta(Core.buildMeta(mr));
+  eq(mrBack.respawns, [{ side: 1, x: 1, y: 0 }, { side: 1, x: 2, y: 2 }, { side: 2, x: 6, y: 2 }],
+     'parseMeta: 复活点回读(含侧号)');
+  eq(mrBack.comments, [], '★ 认识 respawn 之后它们不再落进注释区');
+
+  // 侧号只认 1|2、坐标必须是整数字面量;认不出就整行降级成注释(与 map_format.gd 同口径)
+  eq(Core.parseMeta('# respawn 3 1 2\n').respawns, [], '侧号 3 → 不当复活点');
+  eq(Core.parseMeta('# respawn 3 1 2\n').comments, ['respawn 3 1 2'], '★ 侧号 3 的行降级成注释,不丢原文');
+  eq(Core.parseMeta('# respawn 1 abc 2\n').comments, ['respawn 1 abc 2'], '坐标非整数 → 降级成注释');
+  eq(Core.parseMeta('# respawn 1 3.5 2\n').comments, ['respawn 1 3.5 2'], '小数坐标 → 降级成注释(不吃前缀)');
+  eq(Core.parseMeta('# respawn 1 3\n').comments, ['respawn 1 3'], '缺一个坐标 → 降级成注释');
+  // round-trip:buildMeta → parseMeta → buildMeta 稳定
+  var rt = Core.buildMeta(mr);
+  eq(Core.buildMeta(Core.parseMeta(rt)), rt, '★★ respawn 的 meta 往返稳定(再存一次字节不变)');
   // ★ 一张表 = 一条守卫(D9):12 条"一个输入一条断言"收成一张 —— 失败时点名是哪一行。
   //   这张表钉的是**同一条规则**:非法/畸形 spawn 行一律整行降级为注释(前缀截断不许吃掉原文)。
   tableEq('parseMeta:非法/畸形 spawn 行整行降级为注释,正常行不受影响', [
-    ['空串 → 三个空数组', Core.parseMeta(''), { players: [], enemies: [], comments: [] }],
+    ['空串 → 四个空数组', Core.parseMeta(''), { players: [], enemies: [], respawns: [], comments: [] }],
     ['缺坐标的 player 注释不被误认', Core.parseMeta('# player 是主角\n').comments, ['player 是主角']],
     ['CRLF 也要能吃', Core.parseMeta('# demo\r\n# player 1 2\r\n').players, [{ x: 1, y: 2 }]],
     ['非法 player → 不当出生点', Core.parseMeta('# player abc 4\n').players, []],

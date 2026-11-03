@@ -17,38 +17,61 @@ button { background:var(--panel2); color:var(--text); border:1px solid var(--bor
          border-radius:4px; padding:5px 9px; font-size:13px; cursor:pointer; }
 button:hover { border-color:var(--accent); }
 button.on { border-color:var(--accent); background:#243040; }
+button:disabled { opacity:.45; cursor:default; }
+button:disabled:hover { border-color:var(--border); }
 input[type=number] { width:64px; background:var(--panel2); color:var(--text);
                      border:1px solid var(--border); border-radius:4px; padding:3px 6px; }
 select { background:var(--panel2); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:3px; }
-#toolbar { display:flex; align-items:center; gap:6px; padding:6px 10px;
+/* 顶栏 = 系统级动作(文件/编辑/视图/画布),不含绘图工具 */
+#toolbar { display:flex; align-items:center; gap:3px; padding:5px 8px;
            background:var(--panel); border-bottom:1px solid var(--border); flex-wrap:wrap; }
+#toolbar .grp { color:var(--dim); font-size:12px; margin:0 2px 0 6px; }
 #toolbar .sep { width:1px; height:20px; background:var(--border); margin:0 4px; }
 #toolbar label { color:var(--dim); }
+#toolbar button { padding:4px 7px; }
 #mid { flex:1; display:flex; min-height:0; }
-#lib { width:200px; background:var(--panel); border-right:1px solid var(--border);
+#lib { width:210px; background:var(--panel); border-right:1px solid var(--border);
        display:flex; flex-direction:column; }
 #lib h2 { font-size:13px; margin:8px 10px 4px; color:var(--accent); }
+/* 库操作贴着它作用的对象:放在列表**上方**(原实现在列表下方,被 flex:1 顶到整页最底) */
+#lib-btns { display:flex; flex-wrap:wrap; gap:4px; padding:4px 6px; border-bottom:1px solid var(--border); }
+#lib-backend { padding:3px 10px; color:var(--dim); font-size:12px; border-bottom:1px solid var(--border); }
 #lib-list { list-style:none; margin:0; padding:0 6px; overflow:auto; flex:1; }
 #lib-list .lib-row { padding:4px 6px; border-radius:3px; cursor:pointer; color:var(--dim); }
 #lib-list .lib-row:hover { background:var(--panel2); color:var(--text); }
-#lib-btns { display:flex; flex-wrap:wrap; gap:4px; padding:6px; border-top:1px solid var(--border); }
+#lib-list .lib-row.cur { background:var(--panel2); color:var(--accent); }
 #canvas-wrap { flex:1; min-width:0; position:relative; background:#0e1013; }
 #map-canvas { display:block; width:100%; height:100%; image-rendering:pixelated; }
-#right { width:240px; background:var(--panel); border-left:1px solid var(--border);
+#empty-hint[hidden] { display:none; }   /* ★ id 选择器的 display:flex 会压过 UA 的 [hidden],必须补这一条 */
+#empty-hint { position:absolute; inset:0; display:flex; flex-direction:column; gap:6px;
+              align-items:center; justify-content:center; text-align:center;
+              color:var(--dim); font-size:14px; line-height:1.9; pointer-events:none; }
+#empty-hint b { color:var(--text); }
+/* 右栏 = 工具 + 工具细分选项 + 图层 + 纹理/辅码 */
+#right { width:250px; background:var(--panel); border-left:1px solid var(--border);
          overflow:auto; }
 #right h2 { font-size:13px; margin:8px 10px 4px; color:var(--accent); }
+#tools { display:grid; grid-template-columns:repeat(4,1fr); gap:4px; padding:2px 10px 6px; }
+#tools button { padding:5px 2px; font-size:12px; }
+#tool-opts { padding:0 10px 4px; border-bottom:1px solid var(--border); }
+#tool-opts .opt { display:flex; align-items:center; gap:6px; color:var(--dim); padding:2px 0; }
+#tool-opts .hint { color:var(--dim); font-size:12px; line-height:1.6; }
+#sel-ops { display:flex; flex-wrap:wrap; gap:4px; }
+#sel-ops button { padding:3px 7px; font-size:12px; }
 .layer-row { display:flex; align-items:center; gap:6px; padding:3px 10px; cursor:pointer; }
 .layer-row .name { flex:1; }
 .layer-row.cur { background:var(--panel2); color:var(--accent); }
+.layer-row .gone { color:var(--dim); font-size:11px; }
 .layer-row button { padding:2px 6px; font-size:12px; }
 #palette { display:flex; flex-wrap:wrap; gap:4px; padding:4px 10px; }
-#palette .sw { width:26px; height:26px; border:1px solid var(--border); cursor:pointer;
-               image-rendering:pixelated; }
+#palette .sw { width:32px; height:32px; border:1px solid var(--border); cursor:pointer;
+               image-rendering:pixelated; background-size:cover; background-position:center;
+               padding:0; font-size:10px; color:#fff; text-shadow:0 0 3px #000; }
 #palette .sw.on { border-color:var(--accent); border-width:2px; }
 .desc-row { display:flex; align-items:center; gap:6px; padding:2px 10px; color:var(--dim); }
 .desc-row select { flex:1; }
 #statusbar { display:flex; gap:14px; align-items:center; padding:4px 10px;
-             background:var(--panel); border-top:1px solid var(--border); color:var(--dim); }
+             background:var(--panel); border-top:1px solid var(--border); color:var(--dim); flex-wrap:wrap; }
 #status-msg { color:var(--warn); }
 #boot-error { background:#3a2320; color:#ffd9d0; padding:8px 12px; border-bottom:1px solid var(--danger); }
 </style>
@@ -57,51 +80,116 @@ select { background:var(--panel2); color:var(--text); border:1px solid var(--bor
 <script>
 // 单文件版的运行时开关(见 level_editor/standalone_shim.js):没有服务器,没有 Worker。
 window.__CYRM_STANDALONE__ = true;
-window.__CYRM_ATLAS_URL__ = "data:image/png;base64,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";
-window.__CYRM_WORKER_SRC__ = "// worker.js —— 闸 3:二进制编解码 + CRC32 进 Web Worker(规格 §4.3)。\n// ★ 编辑器只走 HTTP(规格 §4.9),故 `new Worker('worker.js')` **原生可用** ——\n//   不需要 Blob URL 那种绕法,也**不需要降级路径**:主线程一帧都不阻塞。\n// ★ 经典 Worker(不是 module worker):importScripts 同步加载 core/ 的 12 个分片,于是 worker 里\n//   **只有一份格式实现**。CRC32 与 deflate 都住在 core/ 分片的 encodeMap/decodeMap 里,\n//   本文件**一个字节的格式逻辑都不重复** —— 第二份实现的症状是\"编辑器存得下、游戏读不出\",\n//   而且不报错。\n// ★ 本文件刻意写成薄壳:只做消息收发。\n'use strict';\n\nimportScripts(\n  'core/00_constants.js', 'core/10_map.js', 'core/20_bytes.js', 'core/30_layers.js',\n  'core/40_meta.js', 'core/50_compress.js', 'core/60_codec.js', 'core/70_v3_text.js',\n  'core/80_validate.js', 'core/85_geometry.js', 'core/90_desc.js', 'core/99_exports.js'\n);\n\nfunction errText(e) {\n  if (!e) return '未知错误';\n  var m = (e.message !== undefined) ? String(e.message) : String(e);\n  // core/ 分片在\"Zlib 尾损坏\"那一档抛的是**无 message 的 TypeError**,细节在 e.cause\n  // (计划 1 账本 Task 7 Minor 2 实测)。不回退读它就等于把错误信息丢掉。\n  if (m === '' && e.cause && e.cause.message) m = String(e.cause.message);\n  return m === '' ? String(e) : m;\n}\n\n// ★ 刻意**不**用 transfer 列表搬 Uint8Array:一次保存/载入才走一趟,复制那点字节\n//   远比\"transfer 之后 buffer 被 detach\"这一类跨环境差异便宜。少一个变量。\nfunction reply(id, payload) {\n  var msg = { id: id };\n  for (var k in payload) msg[k] = payload[k];\n  self.postMessage(msg);\n}\n\nself.onmessage = function (ev) {\n  var msg = ev.data || {};\n  var id = msg.id;\n  var op = msg.op;\n  if (op === 'ping') { reply(id, { ok: true, pong: true }); return; }\n  if (op === 'encode') {\n    Core.encodeMap(msg.map, { compress: msg.compress !== false }).then(function (bytes) {\n      reply(id, { ok: true, bytes: bytes });\n    }).catch(function (e) {\n      reply(id, { ok: false, error: errText(e) });\n    });\n    return;\n  }\n  if (op === 'decode') {\n    Core.decodeMap(msg.bytes).then(function (map) {\n      reply(id, { ok: true, map: map });\n    }).catch(function (e) {\n      reply(id, { ok: false, error: errText(e) });\n    });\n    return;\n  }\n  reply(id, { ok: false, error: 'worker: 未知操作 ' + op });\n};\n";
+window.__CYRM_ATLAS_URL__ = "data:image/png;base64,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";
+window.__CYRM_WORKER_SRC__ = "// worker.js —— 闸 3:二进制编解码 + CRC32 进 Web Worker(规格 §4.3)。\n// ★ 编辑器只走 HTTP(规格 §4.9),故 `new Worker('worker.js')` **原生可用** ——\n//   不需要 Blob URL 那种绕法,也**不需要降级路径**:主线程一帧都不阻塞。\n// ★ 经典 Worker(不是 module worker):importScripts 同步加载 core/ 的 13 个分片与 tile_defs.js,\n//   于是 worker 里**只有一份格式实现**。CRC32 与 deflate 都住在 core/ 分片的 encodeMap/decodeMap 里,\n//   本文件**一个字节的格式逻辑都不重复** —— 第二份实现的症状是\"编辑器存得下、游戏读不出\",\n//   而且不报错。\n// ★ tile_defs.js 要一起装:validateMap 的「纹理不在 tile_defs ⇒ error」那道闸必须落在**真做编码的\n//   worker 侧**才拦得住保存(encodeMap 只拒 errors)。它写的是 `window.TILE_DEFS`,而 Worker 没有\n//   window ⇒ 先补一个别名再 import(node 冒烟里 importScripts 是替身、window 已由入口补好,都不受影响)。\n// ★ 本文件刻意写成薄壳:只做消息收发。\n'use strict';\n\nif (typeof window === 'undefined') self.window = self;\n\nimportScripts(\n  'core/00_constants.js', 'core/10_map.js', 'core/20_bytes.js', 'core/30_layers.js',\n  'core/40_meta.js', 'core/50_compress.js', 'core/60_codec.js', 'core/70_v3_text.js',\n  'core/80_validate.js', 'core/85_geometry.js', 'core/90_desc.js', 'core/95_legacy.js',\n  'core/99_exports.js', 'tile_defs.js'\n);\n\nfunction errText(e) {\n  if (!e) return '未知错误';\n  var m = (e.message !== undefined) ? String(e.message) : String(e);\n  // core/ 分片在\"Zlib 尾损坏\"那一档抛的是**无 message 的 TypeError**,细节在 e.cause\n  // (计划 1 账本 Task 7 Minor 2 实测)。不回退读它就等于把错误信息丢掉。\n  if (m === '' && e.cause && e.cause.message) m = String(e.cause.message);\n  return m === '' ? String(e) : m;\n}\n\n// ★ 刻意**不**用 transfer 列表搬 Uint8Array:一次保存/载入才走一趟,复制那点字节\n//   远比\"transfer 之后 buffer 被 detach\"这一类跨环境差异便宜。少一个变量。\nfunction reply(id, payload) {\n  var msg = { id: id };\n  for (var k in payload) msg[k] = payload[k];\n  self.postMessage(msg);\n}\n\nself.onmessage = function (ev) {\n  var msg = ev.data || {};\n  var id = msg.id;\n  var op = msg.op;\n  if (op === 'ping') { reply(id, { ok: true, pong: true }); return; }\n  if (op === 'encode') {\n    Core.encodeMap(msg.map, { compress: msg.compress !== false }).then(function (bytes) {\n      reply(id, { ok: true, bytes: bytes });\n    }).catch(function (e) {\n      reply(id, { ok: false, error: errText(e) });\n    });\n    return;\n  }\n  if (op === 'decode') {\n    Core.decodeMap(msg.bytes).then(function (map) {\n      reply(id, { ok: true, map: map });\n    }).catch(function (e) {\n      reply(id, { ok: false, error: errText(e) });\n    });\n    return;\n  }\n  reply(id, { ok: false, error: 'worker: 未知操作 ' + op });\n};\n";
 </script>
 <div id="boot-error" hidden></div>
 
+<!-- ── 顶栏:系统级(文件 / 编辑 / 视图 / 画布 / 校验) ── -->
 <div id="toolbar">
-  <button class="tool" data-tool="brush" title="画笔 (B)">画笔</button>
-  <button class="tool" data-tool="rect" title="矩形">矩形</button>
-  <button class="tool" data-tool="bucket" title="油漆桶 (G)">油漆桶</button>
-  <button class="tool" data-tool="eraser" title="橡皮 (E)">橡皮</button>
-  <button class="tool" data-tool="line" title="直线 (L)">直线</button>
-  <button class="tool" data-tool="select" title="选框 (M)">选框</button>
-  <button class="tool" data-tool="picker" title="吸管 (I)">吸管</button>
-  <button class="tool" data-tool="gradient" title="渐变(仅背景层)">渐变</button>
+  <span class="grp">文件</span>
+  <button id="btn-new" title="新建一张地图(名字 + 尺寸,直接落盘)">新建</button>
+  <button id="btn-open-folder" title="选一个装有 .cyrm 的目录(File System Access);库列表与保存都读写它">打开目录…</button>
+  <button id="btn-open-file" title="从本地选 .cyrm 读入(不改服务器 maps/)">打开文件…</button>
   <span class="sep"></span>
-  <label>画笔</label><input id="brush-size" type="number" min="0.25" max="15" step="0.25" value="1">
+  <button id="btn-save" title="保存到当前目标(Ctrl+S)">保存</button>
+  <button id="btn-save-as" title="另存为(可改名字,Ctrl+Shift+S)">另存为…</button>
+  <button id="btn-export" title="下载一份 .cyrm 到本地(不写磁盘)">导出</button>
   <span class="sep"></span>
+  <button id="btn-undo" title="撤销(Ctrl+Z)">撤销</button>
+  <button id="btn-redo" title="重做(Ctrl+Shift+Z / Ctrl+Y)">重做</button>
+  <span class="sep"></span>
+  <span class="grp">视图</span>
   <button id="tg-grid" class="on">网格</button>
-  <button id="tg-subgrid">子格</button>
-  <button id="tg-torus" class="on">环面</button>
-  <span class="sep"></span>
+  <button id="tg-subgrid" title="子格线:只画被拆成 16px 混排的格">子格</button>
+  <button id="tg-torus" class="on" title="环面预览:当前图 + 右邻 + 下邻 + 右下邻">环面</button>
+  <button id="tg-guides" title="半区中线 + 3×3 桶网格(联机复活点「均匀散布」判据的对照线)">标线</button>
   <button id="btn-fit">适配</button>
+  <span class="sep"></span>
+  <span class="grp">画布</span>
+  <input id="size-w" type="number" min="1" max="400" step="1" value="125">
+  <span style="color:var(--dim)">×</span>
+  <input id="size-h" type="number" min="1" max="300" step="1" value="75">
+  <span style="color:var(--dim)">格</span>
+  <button id="btn-resize" title="重叠区的内容保留;落在新图之外的出生点/敌人会被移除并在状态栏报出来(审计 A10)">应用尺寸</button>
+  <span class="sep"></span>
+  <label title="导出/保存时是否 deflate">压缩</label>
+  <input id="opt-compress" type="checkbox" checked>
+  <span class="sep"></span>
+  <button id="btn-check" title="跑一遍完整校验(格式/名字/编码),只报告不阻止保存">校验</button>
   <button id="btn-selftest">自检</button>
 </div>
 
 <div id="mid">
   <div id="lib">
     <h2>库(maps/*.cyrm)</h2>
-    <ul id="lib-list"><li class="lib-row">加载中 …</li></ul>
+    <!-- 库操作贴着列表:在列表**上方** -->
     <div id="lib-btns">
-      <button id="btn-new">新建</button>
-      <button id="btn-dup">复制</button>
-      <button id="btn-rename">重命名</button>
-      <button id="btn-del">删除</button>
-      <button id="btn-export">导出校验</button>
+      <button id="btn-dup" title="把当前地图复制成一个新文件">复制</button>
+      <button id="btn-rename" title="改磁盘上的文件名(服务端 rename)">重命名…</button>
+      <button id="btn-del" title="删除磁盘上的这张地图(不可恢复;maps/ 在 git 里,可用 git restore 找回)">删除</button>
+    </div>
+    <div id="lib-backend">服务器 maps/</div>
+    <ul id="lib-list"><li class="lib-row">加载中 …</li></ul>
+  </div>
+  <div id="canvas-wrap">
+    <canvas id="map-canvas"></canvas>
+    <div id="empty-hint" hidden>
+      <div><b>还没有打开地图</b></div>
+      <div>顶部「新建」造一张 · 「打开文件…」读本地 .cyrm · 「打开文件夹…」直接读写一个目录</div>
     </div>
   </div>
-  <div id="canvas-wrap"><canvas id="map-canvas"></canvas></div>
   <div id="right">
+    <h2>工具</h2>
+    <div id="tools">
+      <button class="tool" data-tool="brush" title="画笔 (B)">画笔</button>
+      <button class="tool" data-tool="rect" title="矩形">矩形</button>
+      <button class="tool" data-tool="bucket" title="油漆桶 (G)">油漆桶</button>
+      <button class="tool" data-tool="eraser" title="橡皮 (E)">橡皮</button>
+      <button class="tool" data-tool="line" title="直线 (L)">直线</button>
+      <button class="tool" data-tool="select" title="选框 (M)">选框</button>
+      <button class="tool" data-tool="picker" title="吸管 (I)">吸管</button>
+      <button class="tool" data-tool="gradient" title="渐变(仅背景层)">渐变</button>
+    </div>
+    <div id="tool-opts">
+      <div class="opt" data-for="brush eraser">
+        <span>尺寸</span>
+        <input id="brush-size" type="number" min="0.25" max="15" step="0.25" value="1">
+        <span style="color:var(--dim);font-size:12px">整数=整格,小数=子格</span>
+      </div>
+      <div class="opt" data-for="rect">
+        <span>矩形</span>
+        <select id="rect-mode">
+          <option value="fill">填充</option>
+          <option value="outline">描边</option>
+        </select>
+      </div>
+      <div class="opt" data-for="line">
+        <span>直线宽度</span>
+        <select id="line-width">
+          <option value="1">1 子格</option>
+          <option value="2">2 子格</option>
+          <option value="4">1 格</option>
+        </select>
+      </div>
+      <div class="opt" data-for="select"><div id="sel-ops">
+        <button id="sel-copy" title="Ctrl+C">复制选区</button>
+        <button id="sel-cut" title="Ctrl+X">剪切</button>
+        <button id="sel-paste" title="Ctrl+V">粘贴</button>
+        <button id="sel-mirror-h" title="H">水平镜像</button>
+        <button id="sel-mirror-v" title="V">垂直镜像</button>
+        <button id="sel-clear" title="Delete">清除</button>
+      </div></div>
+      <div class="opt" data-for="bucket"><span class="hint">油漆桶:同值连通填充(跨环面),受选区约束</span></div>
+      <div class="opt" data-for="picker"><span class="hint">吸管:吸取当前层的纹理 + 辅码(空气不吸)</span></div>
+      <div class="opt" data-for="gradient"><span class="hint">渐变:从拖拽起点到终点,用下方两个颜色槽(仅背景层)</span></div>
+    </div>
     <h2>图层</h2>
     <div id="layers">
-      <div class="layer-row" data-layer="0"><span class="name">前景</span><button class="vis" title="显示/隐藏">👁</button><button class="lock" title="锁定">🔒</button></div>
-      <div class="layer-row cur" data-layer="1"><span class="name">场景</span><button class="vis" title="显示/隐藏">👁</button><button class="lock" title="锁定">🔒</button></div>
-      <div class="layer-row" data-layer="2"><span class="name">后景</span><button class="vis" title="显示/隐藏">👁</button><button class="lock" title="锁定">🔒</button></div>
-      <div class="layer-row" data-layer="3"><span class="name">背景</span><button class="vis" title="显示/隐藏">👁</button><button class="lock" title="锁定">🔒</button></div>
+      <div class="layer-row" data-layer="0"><span class="name">前景</span><button class="vis" title="显示/隐藏">👁</button><button class="lock" title="锁定/解锁">🔓</button></div>
+      <div class="layer-row cur" data-layer="1"><span class="name">场景</span><button class="vis" title="显示/隐藏">👁</button><button class="lock" title="锁定/解锁">🔓</button></div>
+      <div class="layer-row" data-layer="2"><span class="name">后景</span><button class="vis" title="显示/隐藏">👁</button><button class="lock" title="锁定/解锁">🔓</button></div>
+      <div class="layer-row" data-layer="3"><span class="name">背景</span><button class="vis" title="显示/隐藏">👁</button><button class="lock" title="锁定/解锁">🔓</button></div>
     </div>
     <div class="desc-row"><label><input id="dim-others" type="checkbox" checked> 非当前层压暗 60%</label></div>
     <h2>纹理调色板</h2>
@@ -111,12 +199,12 @@ window.__CYRM_WORKER_SRC__ = "// worker.js —— 闸 3:二进制编解码 + CRC
     <div class="desc-row"><span>亮度</span><select id="desc-bri"></select></div>
     <div class="desc-row"><span>饱和</span><select id="desc-sat"></select></div>
     <div class="desc-row"><span>透明</span><select id="desc-alp"></select></div>
-    <div class="desc-row"><label><input id="desc-only" type="checkbox"> 只改辅码(不碰纹理)</label></div>
+    <div class="desc-row"><label><input id="desc-only" type="checkbox"> 只改辅码(保留原纹理,只改色相/亮度/饱和/透明)</label></div>
     <h2 id="bg-color-title">颜色(背景层)</h2>
     <div class="desc-row" id="bg-color-row">
       <span>起点</span>
-      <input id="bg-color" type="color" value="#00ffff">
-      <span id="bg-color-val">#00ffff</span>
+      <input id="bg-color" type="color" value="#b0e5f6">
+      <span id="bg-color-val">#b0e5f6</span>
     </div>
     <div class="desc-row" id="bg-color-row2">
       <span>终点</span>
@@ -124,21 +212,23 @@ window.__CYRM_WORKER_SRC__ = "// worker.js —— 闸 3:二进制编解码 + CRC
       <span id="bg-color2-val">#101820</span>
     </div>
     <h2>出生点工具</h2>
+    <div class="desc-row"><span>敌人类型</span><select id="spawn-enemy-type"></select></div>
     <div class="desc-row">
       <button id="spawn-p1">放 P1</button>
       <button id="spawn-p2">放 P2</button>
       <button id="spawn-enemy">放敌人</button>
     </div>
     <div class="desc-row"><button id="spawn-clear">清空出生点</button></div>
-    <h2>画布尺寸</h2>
-    <div class="desc-row"><span>宽</span><input id="size-w" type="number" min="1" max="400" step="1" value="125"><span>格</span></div>
-    <div class="desc-row"><span>高</span><input id="size-h" type="number" min="1" max="300" step="1" value="75"><span>格</span></div>
+    <h2>复活点(按半区)</h2>
+    <div class="desc-row"><span id="respawn-count" style="color:var(--dim)">侧1 0 · 侧2 0</span></div>
     <div class="desc-row">
-      <button id="btn-resize" title="重叠区的内容保留;落在新图之外的出生点/敌人会被移除并在状态栏报出来(审计 A10)">应用尺寸</button>
+      <button id="spawn-r1">放侧1</button>
+      <button id="spawn-r2">放侧2</button>
     </div>
-    <h2>导出</h2>
+    <div class="desc-row"><button id="spawn-rdel">删最近(按视图中心那一侧)</button></div>
     <div class="desc-row">
-      <label><input id="opt-compress" type="checkbox" checked title="取消 = 导裸 body(compression=0)。浏览器 deflate 与 Godot COMPRESSION_DEFLATE 的兼容性未实测,这条是退路(规格 §3.5)"> 压缩(deflate)</label>
+      <button id="spawn-rclear1">清空侧1</button>
+      <button id="spawn-rclear2">清空侧2</button>
     </div>
   </div>
 </div>
@@ -223,6 +313,9 @@ function createMap(name, cellsW, cellsH) {
     ],
     players: [],
     enemies: [],
+    // ★ `# respawn <1|2> <col> <row>` 的复活点列表(元素 {side, x, y})。侧 1 = 左半、侧 2 = 右半,
+    //   与游戏侧 SpawnChooser.SIDE_LEFT/SIDE_RIGHT 同源;格式仍是 meta 文本行,不是二进制字段。
+    respawns: [],
     comments: [],
   };
 }
@@ -412,7 +505,9 @@ function decodeColorLayer(r, subCols, subRows) {
 // core/40_meta.js —— 元数据段(JSON)编解码。
 
 
-// meta 文本形状与游戏侧 MapFormat.parse_spawn_metadata() 对齐:先注释、再出生点、最后敌人(规格 §3.2)。
+// meta 文本形状与游戏侧 MapFormat.parse_spawn_metadata() 对齐:先注释、再出生点、再**按侧复活点**、
+// 最后敌人(规格 §3.2)。★ respawn 行按侧分组写(侧 1 全部在前、侧 2 在后):游戏侧按文件顺序去重,
+// 顺序一变"首次出现生效"的那条也会变,故输出必须确定。
 function buildMeta(map) {
   var lines = [];
   var i;
@@ -420,6 +515,13 @@ function buildMeta(map) {
   for (i = 0; i < map.players.length; i++) {
     var kw = i === 0 ? 'player' : (i === 1 ? 'player2' : 'player' + (i + 1));
     lines.push('# ' + kw + ' ' + map.players[i].x + ' ' + map.players[i].y);
+  }
+  var rs = map.respawns || [];
+  for (var side = 1; side <= 2; side++) {
+    for (i = 0; i < rs.length; i++) {
+      if (rs[i].side !== side) continue;
+      lines.push('# respawn ' + side + ' ' + rs[i].x + ' ' + rs[i].y);
+    }
   }
   for (i = 0; i < map.enemies.length; i++) {
     var e = map.enemies[i];
@@ -432,7 +534,7 @@ function buildMeta(map) {
 function parseMeta(text) {
   // 整数字面量(允许前导正负号):不用 isFinite,因为 parseInt 的前缀截断不是 NaN(3.5 / 7abc / 1e3 都会被静默改写)。
   var INT_TOKEN = /^[+-]?\d+$/;
-  var players = [], enemies = [], comments = [];
+  var players = [], enemies = [], respawns = [], comments = [];
   var lines = String(text == null ? '' : text).split(/\r?\n/);
   for (var i = 0; i < lines.length; i++) {
     var s = lines[i].trim();
@@ -446,6 +548,14 @@ function parseMeta(text) {
         players.push({ x: parseInt(parts[1], 10), y: parseInt(parts[2], 10) });
         continue;
       }
+    } else if (head === 'respawn' && parts.length >= 4) {
+      // ★ 侧号只认 1|2(与 map_format.gd 同口径);认不出的行**降级成注释**而不是丢掉。
+      var side = parseInt(parts[1], 10);
+      if ((parts[1] === '1' || parts[1] === '2') &&
+          INT_TOKEN.test(parts[2]) && INT_TOKEN.test(parts[3])) {
+        respawns.push({ side: side, x: parseInt(parts[2], 10), y: parseInt(parts[3], 10) });
+        continue;
+      }
     } else if (head === 'enemy' && parts.length >= 4) {
       if (INT_TOKEN.test(parts[2]) && INT_TOKEN.test(parts[3])) {
         enemies.push({ type: parts[1], x: parseInt(parts[2], 10), y: parseInt(parts[3], 10) });
@@ -454,7 +564,7 @@ function parseMeta(text) {
     }
     comments.push(body);
   }
-  return { players: players, enemies: enemies, comments: comments };
+  return { players: players, enemies: enemies, respawns: respawns, comments: comments };
 }
 </script>
 <script>
@@ -574,7 +684,7 @@ function decodeBody(body, subCols, subRows, flags) {
   }
   return {
     name: '', subCols: subCols, subRows: subRows, layers: layers,
-    players: meta.players, enemies: meta.enemies, comments: meta.comments,
+    players: meta.players, enemies: meta.enemies, respawns: meta.respawns, comments: meta.comments,
   };
 }
 
@@ -797,7 +907,7 @@ function parseV3Text(text) {
     for (var x = 0; x < cellsW; x++) packed[y * cellsW + x] = rows[y][x];
   }
   return { cellsW: cellsW, cellsH: cellsH, packed: packed,
-           players: players, enemies: enemies, comments: meta.comments };
+           players: players, enemies: enemies, respawns: meta.respawns, comments: meta.comments };
 }
 
 // ── 取角映射(规格 §2.2,规范定义)──
@@ -825,7 +935,8 @@ function migrateV3(parsed) {
       if (v === 0) continue;
       var tex = _v3TexOf(v), shape = _v3ShapeOf(v);
       if (tex === 0 || shape === 0) continue;
-      var d = neutralDesc(tex);
+      // ★ legacy 纹理 id 在**产出 desc 时**就迁移(v3 文本与旧字母格式都经这里;表缺席时是 no-op,见 95_legacy.js)。
+      var d = migrateDescriptor(neutralDesc(tex));
       for (var qy = 0; qy < 2; qy++) {
         for (var qx = 0; qx < 2; qx++) {
           if (!(shape & (1 << (qy * 2 + qx)))) continue;
@@ -893,6 +1004,34 @@ function validateMap(map) {
   }
   if (errors.length) return { errors: errors, warnings: warnings };
 
+  // ── 纹理合法性:desc 的 tex 非 0 且不在 tile_defs 键集 ⇒ error(encodeMap 只拒 errors)──
+  // ★ 拦两类:① legacy 纹理 id(2,3,4,5,16,17,18 —— 新图集那 7 槽全透明;读时应已被
+  //   95_legacy.js 迁移,内存里还有 = 有入口绕过了迁移);② 越界号(格式只保证 tex ≤ 4095)。
+  // ★ TILE_DEFS 缺席(部分 node 冒烟只装 core)时跳过:没有表可判,别把"没表"当成"全非法"。
+  var defs = globalThis.TILE_DEFS;
+  if (defs && defs.tiles) {
+    var knownTex = {};
+    var texKeys = Object.keys(defs.tiles);
+    for (var ki = 0; ki < texKeys.length; ki++) knownTex[texKeys[ki]] = true;
+    for (L = 0; L < LAYER_COUNT; L++) {
+      layer = map.layers[L];
+      if (!layer || layer.kind !== 'tex' || !layer.desc) continue;
+      var badTex = null;
+      for (var di = 0; di < layer.desc.length; di++) {
+        var tx = texOf(layer.desc[di]);
+        if (tx === 0 || knownTex[tx]) continue;
+        if (!badTex) badTex = {};
+        badTex[tx] = true;
+      }
+      if (badTex) {
+        errors.push(LAYER_NAMES[L] + '层有纹理 ' +
+                    Object.keys(badTex).sort(function (a, b) { return a - b; }).join('/') +
+                    ' 不在 tile_defs(legacy id 应在读时已迁移,越界号没有对应图集槽位)');
+      }
+    }
+    if (errors.length) return { errors: errors, warnings: warnings };
+  }
+
   var cellsW = map.subCols / SUB_PER_CELL, cellsH = map.subRows / SUB_PER_CELL;
   var scene = map.layers[LAYER_SCENE] ? map.layers[LAYER_SCENE].desc : null;
 
@@ -924,7 +1063,93 @@ function validateMap(map) {
   }
   if (allEmpty) warnings.push('四个图层全是空的');
 
+  // 按阵营半区的复活点(`# respawn <1|2>`)
+  warnings = warnings.concat(_checkRespawns(map, cellsW, cellsH, scene));
   return { errors: errors, warnings: warnings };
+}
+
+// ── 复活点判据(与游戏侧同源,常量见 core/sim/spawn_chooser.gd 与 tools/map_spawn_meta.gd)──
+// ★ 全是 warning:编辑器只报告、不阻止保存(游戏侧自己对不合规的老图有回退路径)。
+const RESPAWN_MIN_PER_SIDE = 5;      // 每侧最少点数(当前两张图各 9)
+const RESPAWN_MIN_SIDE_GAP = 5;      // 同侧两两环面距离下限(格)
+const RESPAWN_EDGE_MARGIN = 10;      // 离接缝 x=0/cols 与半区中线的最短距离(格)
+const RESPAWN_BUCKETS = 3;           // 每个半区按 3×3 桶切分,要求每桶 ≥1 点
+function _torusDist(a, b, n) {
+  var d = Math.abs(a - b);
+  return Math.min(d, n - d);
+}
+function _checkRespawns(map, cellsW, cellsH, sceneDesc) {
+  var out = [];
+  var rs = map.respawns || [];
+  var pvpIntent = map.players.length >= 2;
+  if (!rs.length) {
+    if (pvpIntent) out.push('这是 PvP 图(有 player2)但没有任何「# respawn」复活点:联机会走老图两点回退');
+    return out;                        // 单机图不需要按侧复活点
+  }
+  var half = cellsW / 2;
+  for (var side = 1; side <= 2; side++) {
+    var pts = [];
+    for (var i = 0; i < rs.length; i++) if (rs[i].side === side) pts.push(rs[i]);
+    var label = '侧 ' + side;
+    if (!pts.length) { out.push(label + ' 一个复活点都没有(该侧要做联机出生就至少 ' + RESPAWN_MIN_PER_SIDE + ' 个)'); continue; }
+    if (pts.length < RESPAWN_MIN_PER_SIDE) {
+      out.push(label + ' 只有 ' + pts.length + ' 个复活点,少于建议的 ' + RESPAWN_MIN_PER_SIDE + ' 个');
+    }
+    // ① 必须在自己的半区里
+    var wrong = [];
+    for (i = 0; i < pts.length; i++) {
+      var own = side === 1 ? (pts[i].x < half) : (pts[i].x >= half);
+      if (!own) wrong.push(pts[i].x + ',' + pts[i].y);
+      out = out.concat(_checkSpawn(pts[i], label + ' 复活点', cellsW, cellsH, sceneDesc));
+    }
+    if (wrong.length) {
+      out.push(label + ' 有 ' + wrong.length + ' 个点不在自己半区(' +
+               (side === 1 ? '左半 x<' + half : '右半 x≥' + half) + '):' + wrong.slice(0, 3).join(' ') +
+               (wrong.length > 3 ? ' …' : ''));
+    }
+    // ② 离接缝/中线太近
+    var marg = [];
+    for (i = 0; i < pts.length; i++) {
+      var m = side === 1 ? Math.min(pts[i].x, half - pts[i].x) : Math.min(pts[i].x - half, cellsW - pts[i].x);
+      if (m < RESPAWN_EDGE_MARGIN) marg.push(pts[i].x + ',' + pts[i].y);
+    }
+    if (marg.length) {
+      out.push(label + ' 有 ' + marg.length + ' 个点离接缝/半区中线不足 ' + RESPAWN_EDGE_MARGIN +
+               ' 格:' + marg.slice(0, 3).join(' ') + (marg.length > 3 ? ' …' : ''));
+    }
+    // ③ 同侧两两环面距离(只报第一对最近的,避免刷屏)
+    var best = null;
+    for (i = 0; i < pts.length; i++) {
+      for (var j = i + 1; j < pts.length; j++) {
+        var d = Math.max(_torusDist(pts[i].x, pts[j].x, cellsW), _torusDist(pts[i].y, pts[j].y, cellsH));
+        if (!best || d < best.d) best = { d: d, a: pts[i], b: pts[j] };
+      }
+    }
+    if (best && best.d < RESPAWN_MIN_SIDE_GAP) {
+      out.push(label + ' 有两个点挨得太近(环面距离 ' + best.d + ' 格 < ' + RESPAWN_MIN_SIDE_GAP + '):(' +
+               best.a.x + ',' + best.a.y + ')-(' + best.b.x + ',' + best.b.y + ')');
+    }
+    // ④ 3×3 桶覆盖(PvP 图要求每桶 ≥1;非 PvP 图只提示不只当错误)
+    var bset = {};
+    for (i = 0; i < pts.length; i++) {
+      var bx = Math.floor(((pts[i].x - (side === 1 ? 0 : half)) / (half / RESPAWN_BUCKETS)));
+      var by = Math.floor(pts[i].y / (cellsH / RESPAWN_BUCKETS));
+      bx = Math.max(0, Math.min(RESPAWN_BUCKETS - 1, bx));
+      by = Math.max(0, Math.min(RESPAWN_BUCKETS - 1, by));
+      bset[bx + '/' + by] = true;
+    }
+    var empty = [];
+    for (var cx = 0; cx < RESPAWN_BUCKETS; cx++) {
+      for (var cy = 0; cy < RESPAWN_BUCKETS; cy++) {
+        if (!bset[cx + '/' + cy]) empty.push('(' + cx + ',' + cy + ')');
+      }
+    }
+    if (empty.length) {
+      out.push(label + ' 的 3×3 桶有 ' + empty.length + ' 个空桶' +
+               (pvpIntent ? '(PvP 图要求每桶 ≥1)' : '(非 PvP 图只作提示)') + ':' + empty.slice(0, 4).join(' '));
+    }
+  }
+  return out;
 }
 
 // 越界 / 落在实心格。返回 warning 文案数组(可能为空)。
@@ -1023,6 +1248,60 @@ function neutralDesc(texture) {
 }
 </script>
 <script>
+/* == core/95_legacy.js == */
+// core/95_legacy.js —— legacy 纹理 id 的读时迁移(新图集里 7 个全透明槽:tex 2,3,4,5,16,17,18)。
+
+
+// ★ 纹理 id 空间稳定 1..22 不重编号、文件格式保持 v4:legacy 槽在新图集里已清成全透明,
+//   旧文件/旧草稿里的 legacy id 在**读时**迁移,内存即干净 ⇒ 新保存的文件不再含 legacy id。
+//   另一半守卫在 80_validate.js(tex 不在 tile_defs ⇒ error,encodeMap 只拒 errors 天然拦住残留)。
+// ★ 迁移表 = tile_defs.js 的 legacy_texture_map(sync-tiles.js 从 data/tile_defs.json 生成,
+//   单一真相源,别在这里抄一份)。TILE_DEFS 缺席时(部分 node 冒烟只装 core)按"没有表"原样返回:
+//   页面与 worker 都装了 tile_defs.js,生产路径上恒有表。
+function legacyTexMap() {
+  var defs = globalThis.TILE_DEFS;
+  var lm = defs && defs.legacy_texture_map;
+  return (lm && typeof lm === 'object') ? lm : null;
+}
+
+// 合成规则(已定决策,别改):tex 命中 legacy_texture_map ⇒ new_tex = base,
+// new_hue = clamp(hueOf(d) + legacy_hue − 4, 0, 7);bri/sat/alpha 原样。未命中原样返回。
+// ★ hue 是档位不是角度:legacy_hue 是旧槽自己的色相档(中性 = 4),(k−4) 是它相对中性的偏移;
+//   叠加当前偏移后钳回 0..7(钳制会截断色相,这是既定规则接受的代价)。
+function migrateDescriptor(d) {
+  var tex = texOf(d);
+  if (tex === 0) return d;                        // 空气(含"tex 0 辅码非 0"的畸形)不迁移
+  var lm = legacyTexMap();
+  if (!lm || !Object.prototype.hasOwnProperty.call(lm, String(tex))) return d;
+  var hit = lm[String(tex)];
+  var base = hit ? (hit.base | 0) : 0;
+  if (base < 1 || base > TEXTURE_MAX) return d;   // 表项畸形不迁移(宁留原样交给 validateMap 报 error)
+  var hue = hueOf(d) + ((hit.hue | 0) - HUE_NEUTRAL);
+  if (hue < 0) hue = 0;
+  if (hue > 7) hue = 7;
+  return packDesc(base, hue, brightOf(d), satOf(d), alphaOf(d));
+}
+
+// 整图三个纹理层**原地**迁移(颜色层是 RGBA 不是描述符,一个字节都不许碰)。交回同一个 map 对象。
+// ★ 调用点 = 所有"从字节/IndexedDB 产出 map"的读入口:mapFromBytes(ui/10_util.js)、
+//   offerDraft(ui/75_draft_store.js)、checkCrashSlot(ui/80_ui_state.js);v3/旧字母那条路由
+//   migrateV3(core/70_v3_text.js)在产出 desc 时逐条套 migrateDescriptor,不经这里。
+function migrateMap(map) {
+  if (!map || !map.layers) return map;
+  for (var L = 0; L < LAYER_COUNT; L++) {
+    var layer = map.layers[L];
+    if (!layer || layer.kind !== 'tex' || !layer.desc) continue;
+    var a = layer.desc;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] === 0) continue;                   // 空气是绝大多数,先跳过
+      var m = migrateDescriptor(a[i]);
+      if (m !== a[i]) a[i] = m;
+    }
+  }
+  return map;
+}
+</script>
+<script>
 /* == core/99_exports.js == */
 // core/99_exports.js —— 公开 API 表。改这里等于改公开接口。
 
@@ -1057,6 +1336,7 @@ globalThis.Core = {
   isV3Text: isV3Text, parseV3Text: parseV3Text,
   _v3Pack: _v3Pack, _v3TexOf: _v3TexOf, _v3ShapeOf: _v3ShapeOf,
   subcellRender: subcellRender, migrateV3: migrateV3,
+  migrateDescriptor: migrateDescriptor, migrateMap: migrateMap,
   MAX_CELLS_W: MAX_CELLS_W, MAX_CELLS_H: MAX_CELLS_H,
   clampMapSize: clampMapSize, validateMap: validateMap,
 };
@@ -1071,38 +1351,6 @@ window.TILE_DEFS = {
   "tiles": {
     "1": {
       "name": "全色方块-1",
-      "type": "wall",
-      "hp": 1,
-      "bullet_destroyable": false,
-      "explosion_destroyable": false,
-      "elastic": false
-    },
-    "2": {
-      "name": "全色方块-2",
-      "type": "wall",
-      "hp": 1,
-      "bullet_destroyable": false,
-      "explosion_destroyable": false,
-      "elastic": false
-    },
-    "3": {
-      "name": "全色方块-3",
-      "type": "wall",
-      "hp": 1,
-      "bullet_destroyable": false,
-      "explosion_destroyable": false,
-      "elastic": false
-    },
-    "4": {
-      "name": "全色方块-4",
-      "type": "wall",
-      "hp": 1,
-      "bullet_destroyable": false,
-      "explosion_destroyable": false,
-      "elastic": false
-    },
-    "5": {
-      "name": "全色方块-5",
       "type": "wall",
       "hp": 1,
       "bullet_destroyable": false,
@@ -1194,30 +1442,6 @@ window.TILE_DEFS = {
       "explosion_destroyable": true,
       "elastic": true
     },
-    "16": {
-      "name": "树叶-2",
-      "type": "wall",
-      "hp": 8,
-      "bullet_destroyable": true,
-      "explosion_destroyable": true,
-      "elastic": true
-    },
-    "17": {
-      "name": "树叶-3",
-      "type": "wall",
-      "hp": 8,
-      "bullet_destroyable": true,
-      "explosion_destroyable": true,
-      "elastic": true
-    },
-    "18": {
-      "name": "树叶-4",
-      "type": "wall",
-      "hp": 8,
-      "bullet_destroyable": true,
-      "explosion_destroyable": true,
-      "elastic": true
-    },
     "19": {
       "name": "树干（竖）",
       "type": "wall",
@@ -1251,6 +1475,36 @@ window.TILE_DEFS = {
       "explosion_destroyable": false,
       "elastic": false,
       "explosion_decay": 0.25
+    }
+  },
+  "legacy_texture_map": {
+    "2": {
+      "base": 1,
+      "hue": 3
+    },
+    "3": {
+      "base": 1,
+      "hue": 1
+    },
+    "4": {
+      "base": 1,
+      "hue": 5
+    },
+    "5": {
+      "base": 1,
+      "hue": 0
+    },
+    "16": {
+      "base": 15,
+      "hue": 2
+    },
+    "17": {
+      "base": 15,
+      "hue": 7
+    },
+    "18": {
+      "base": 15,
+      "hue": 7
     }
   }
 };
@@ -1703,7 +1957,8 @@ function visibleSubRange(view, viewW, viewH, subCols, subRows) {
   return { x0: x0, y0: y0, x1: x1, y1: y1 };
 }
 
-// ★ 环面 3×3 只返回"与视口相交"的那些副本偏移(最多 9 份,通常 1 份):无脑铺 9 份是 9 倍开销,而屏幕上绝大多数时候只看得到一份。
+// ★ 环面偏移的"相交过滤"版(公开面,测试与几何断言用)。★ 合成侧**不再**用它:88 的 torusList 固定 2×2
+//   (只铺右/下两份),理由见那里的注释 —— 这条留着是因为 torusOffsets 是 99_exports 的公开 API。
 function intersects(a0, a1, b0, b1) { return a1 > b0 && a0 < b1; }
 function torusOffsets(view, viewW, viewH, mapW, mapH) {
   var r = visibleSubRange(view, viewW, viewH, mapW, mapH);
@@ -1718,6 +1973,23 @@ function torusOffsets(view, viewW, viewH, mapW, mapH) {
     }
   }
   return out;
+}
+
+// ⑩ 的配套:视图钳制(只在 panBy 里用)。2×2(定义 A)只有右/下两份副本 ⇒ "有内容的世界矩形" =
+// [0, 2W] × [0, 2H](环面关掉时 [0, W] × [0, H])。判据:画布中心必须落在该矩形内 ——
+// 比"至少一份副本与画布相交"更强(中心永远有内容),而 fit/默认视图离边界很远,不会被钳到。
+// ★ 棘轮:视图已经在界外时(setView 直接给定 / 刚关掉环面 / 缩放过)只允许往界内走 —— 否则下一次 1px 的
+//   拖拽会把它瞬移到边界上:画面跳一下,而脏区那套还得为这次瞬移付一次整片重建。
+function clampPanAxis(cur, next, lo, hi) {
+  if (cur < lo) return Math.max(next, cur);
+  if (cur > hi) return Math.min(next, cur);
+  return Math.max(lo, Math.min(hi, next));
+}
+function clampPanView(view, x, y, viewW, viewH, subCols, subRows, torusOn) {
+  var vw = viewW / view.zoom, vh = viewH / view.zoom;
+  var right = (torusOn ? 2 : 1) * subCols, bottom = (torusOn ? 2 : 1) * subRows;
+  return { x: clampPanAxis(view.x, x, -vw / 2, right - vw / 2),
+           y: clampPanAxis(view.y, y, -vh / 2, bottom - vh / 2) };
 }
 
 // 屏幕 → 子格(折算回主网格)。★ 副本上落笔靠的就是这一步:无论点在哪个副本上,结果都落在 [0, subCols) 里。
@@ -1873,7 +2145,7 @@ function createMountState(canvas, opts) {
     s: {
       map: null, layer: RenderCore.LAYER_SCENE,
       view: { x: 0, y: 0, zoom: 8 },
-      grid: true, subGrid: false, torus: true, dimOthers: true,
+      grid: true, subGrid: false, torus: true, dimOthers: true, guides: false,
       layerVisible: [true, true, true, true],
       layerLocked: [false, false, false, false],
       selection: null,
@@ -2197,8 +2469,16 @@ function installLayerPath(S) {
 </script>
 <script>
 /* == render/88_install_draw.js == */
-// render/88_install_draw.js —— 坐标换算、① 的合成路径、网格/覆盖层、唯一渲染入口与 resize/fit。
+// render/88_install_draw.js —— 坐标换算、① 的合成路径、网格/覆盖层/画布边框、唯一渲染入口与 resize/fit。
 // ★ ② 那一簇(drawLayerPath / paintLayerRect / buildLayers)住在 86_install_layer_path.js。
+
+// ⑫ 画布底色 = 游戏侧的「空气 / 清屏色」(#b0e5f6 = TerrainAtlas.SKY_COLOR,见 docs/eng/render.md)。
+// "图外的空白"与"图内的空气格"必须同色,才谈得上所见即所得。★ 网格线必须同时改深色:浅底上白线看不见。
+var CANVAS_BG = '#b0e5f6';
+var GRID_SUB_LINE = 'rgba(0,0,0,0.14)';        // 子格线(16px)
+var GRID_CELL_LINE = 'rgba(0,0,0,0.26)';       // 格线(64px)
+var MAP_EDGE_LINE = 'rgba(84,160,255,0.55)';   // ⑪ 地图矩形边框(副本);与选区框 #e0b34a 刻意不同色
+var MAP_EDGE_CUR = 'rgba(84,160,255,0.9)';     // 当前图([0,0] 那份)更亮:它才是"正在编辑的画布"
 
 function installDraw(S) {
   var s = S.s, canvas = S.canvas, ctx = S.ctx, thumbs = S.thumbs;
@@ -2212,10 +2492,14 @@ function installDraw(S) {
     return { x: (X - s.view.x) * s.view.zoom, y: (Y - s.view.y) * s.view.zoom };
   }
 
-  // ★★ torusList 由本簇产出、被 86 的 drawLayerPath 经 S.torusList 晚绑定取用(首轮漏了它,render_smoke 当场红)。关掉环面时只画一份:副本本来就是冗余的,保证来自 paintLayerRect 的折算而不是它们。
+  // ★★ torusList 由本簇产出、被 86 的 drawLayerPath 经 S.torusList 晚绑定取用(首轮漏了它,render_smoke 当场红)。
+  // ★★ 固定 2×2(定义 A):当前图 + 右邻 + 下邻 + 右下邻。副本本身是冗余的(离屏层已按可见范围折叠,保证来自
+  //    paintLayerRect 的环面折算),留它们只为"环面铺贴"这个交付面;而 ±1 的 3×3 在 fit 视图下**必然**铺 9 份
+  //    (fit 取 min 缩放 ⇒ 两轴的世界范围恒大于地图),画布被副本盖满 ⇒ 画布边界彻底看不见(⑩/⑪)。
   function torusList(W, H) {
-    if (!s.torus) return [[0, 0]];
-    return torusOffsets(s.view, W, H, s.map.subCols, s.map.subRows);
+    if (!s.torus || !s.map) return [[0, 0]];
+    var w = s.map.subCols, h = s.map.subRows;
+    return [[0, 0], [w, 0], [0, h], [w, h]];
   }
 
   // 路径一:< 8 px/子格 走缩略图合成 —— 一次 drawImage 顶掉几十万次。
@@ -2237,42 +2521,156 @@ function installDraw(S) {
     ctx.globalAlpha = 1;
   }
 
-  // ★ 子格线只在 zoom ≥ 4 时画:阈值 4 是本文件自己的选择(4 px/子格时一个子格还有 4 个屏幕像素、线还分得开,再稀就只是给画面加噪点),不是规格里的数字。只画可见区(不裁剪 = 每次重画整张图的线)。
+  // ④ 一格 = 2×2 个 32px 象限、每象限 2×2 子格。返回该象限的"多数纹理"(0 = 该象限全空;平票取小 id)——
+  //    这就是游戏侧 flatten_scene 保留的那点信息(多数纹理 + 2×2 象限掩码),故象限之间"有没有内容 / 多数纹理不同"
+  //    才是游戏里看得见的差异;同一象限内部 16px 或辅码的差异会被压掉,不算拆分。
+  function quadMajorTex(arr, cols, bx, by, qx, qy) {
+    var t = [0, 0, 0, 0], k, m, n, best = 0, bestN = 0;
+    for (k = 0; k < 4; k++) {
+      t[k] = (arr[(by + qy * 2 + (k >> 1)) * cols + bx + qx * 2 + (k & 1)] >>> 12) & 0xFFF;
+    }
+    for (k = 0; k < 4; k++) {
+      if (t[k] === 0) continue;
+      n = 0;
+      for (m = 0; m < 4; m++) if (t[m] === t[k]) n++;
+      if (n > bestN || (n === bestN && t[k] < best)) { best = t[k]; bestN = n; }
+    }
+    return best;
+  }
+  function cellIsSplit(arr, cols, cx, cy) {
+    var bx = cx * SUB, by = cy * SUB, t0 = quadMajorTex(arr, cols, bx, by, 0, 0), qx, qy;
+    for (qy = 0; qy < 2; qy++) {
+      for (qx = 0; qx < 2; qx++) {
+        if (qx === 0 && qy === 0) continue;
+        if (quadMajorTex(arr, cols, bx, by, qx, qy) !== t0) return true;
+      }
+    }
+    return false;
+  }
+  // 按格的缓存:内容版本号(③ 的 touch,编辑某格 +1)当失效键 —— 每帧对可见的几千格重算 16 次查表太贵。
+  // ★ 缓存**按格**分配(cellsW × cellsH,不是子格数):400×300 格是 120KB,按子格数会是 1.9MB。
+  // ★ 缓存同时钉住"层 / 层数组对象 / 格宽 / 格高":换图与 whole 差量会换掉 layers[L](防御性拷贝),那时一律重建;
+  //   只判宽不判高会让"同宽更高"的图沿用短数组,Uint8Array 的越界写**不抛**(静默丢),子格线就不再出现。
+  var splitL = -1, splitArr = null, splitW = 0, splitH = 0, splitFlags = null, splitVer = null;
+  function cachedSplit(L, arr, cx, cy) {
+    var cols = s.map.subCols, cw = cols / SUB, ch = s.map.subRows / SUB, i, v;
+    if (splitL !== L || splitArr !== arr || splitW !== cw || splitH !== ch) {
+      splitL = L; splitArr = arr; splitW = cw; splitH = ch;
+      splitFlags = new Uint8Array(cw * ch);
+      splitVer = new Int32Array(cw * ch);
+    }
+    i = cy * cw + cx;
+    v = S.cellCache ? S.cellCache.version(L, cx, cy) : 0;
+    if (splitFlags[i] !== 0 && splitVer[i] === v) return splitFlags[i] === 1;
+    splitFlags[i] = cellIsSplit(arr, cols, cx, cy) ? 1 : 2;
+    splitVer[i] = v;
+    return splitFlags[i] === 1;
+  }
+
+  // ★ 子格线:阈值 zoom ≥ 4 是本文件自己的选择(4 px/子格时线还分得开,再稀只是噪点);判据从"整屏铺满"改成
+  //   "只画被拆分的格"(④),且只看当前层 —— 背景层是逐子格 RGBA 渐变,没有"纹理拆分",一律不画。
+  // ★ 网格线与地图矩形求交后再画:图外属于画布之外,一根线都不该有(⑪ 之前它一直画到画布边缘,
+  //   于是"网格停在哪 = 图到哪"这条最廉价的线索也一起丢了)。
   function drawGrid(W, H) {
-    var r = visibleSubRange(s.view, W, H, s.map.subCols, s.map.subRows);
-    var z = s.view.zoom;
+    var z = s.view.zoom, cols = s.map.subCols, rows = s.map.subRows;
+    var r = visibleSubRange(s.view, W, H, cols, rows);
+    var x0 = Math.max(r.x0, 0), x1 = Math.min(r.x1, cols);
+    var y0 = Math.max(r.y0, 0), y1 = Math.min(r.y1, rows);
+    if (x1 <= x0 || y1 <= y0) return;                        // 可见区完全在图外
+    var sxL = (x0 - s.view.x) * z, sxR = (x1 - s.view.x) * z;
+    var syT = (y0 - s.view.y) * z, syB = (y1 - s.view.y) * z;
     ctx.lineWidth = 1;
-    ctx.strokeStyle = 'rgba(255,255,255,0.16)';
-    ctx.beginPath();
-    if (s.subGrid && z >= 4) {
-      for (var X = Math.floor(r.x0 / 1); X <= r.x1; X++) {
-        var sx = Math.round((X - s.view.x) * z) + 0.5;
-        if (sx < -1 || sx > W + 1) continue;
-        ctx.moveTo(sx, 0); ctx.lineTo(sx, H);
+    var arr = s.subGrid && z >= 4 && !layerIsColor(s.layer) ? layerArray(s.map, s.layer) : null;
+    if (arr) {
+      ctx.strokeStyle = GRID_SUB_LINE;
+      ctx.beginPath();
+      for (var cy = Math.floor(y0 / SUB); cy * SUB < y1; cy++) {
+        for (var cx = Math.floor(x0 / SUB); cx * SUB < x1; cx++) {
+          if (!cachedSplit(s.layer, arr, cx, cy)) continue;
+          var cxs = cx * SUB, cys = cy * SUB;
+          var vy0 = (Math.max(cys, y0) - s.view.y) * z, vy1 = (Math.min(cys + SUB, y1) - s.view.y) * z;
+          var hx0 = (Math.max(cxs, x0) - s.view.x) * z, hx1 = (Math.min(cxs + SUB, x1) - s.view.x) * z;
+          for (var k = 1; k < SUB; k++) {
+            if (cxs + k > x0 && cxs + k < x1) {
+              var sxk = Math.round((cxs + k - s.view.x) * z) + 0.5;
+              ctx.moveTo(sxk, vy0); ctx.lineTo(sxk, vy1);
+            }
+            if (cys + k > y0 && cys + k < y1) {
+              var syk = Math.round((cys + k - s.view.y) * z) + 0.5;
+              ctx.moveTo(hx0, syk); ctx.lineTo(hx1, syk);
+            }
+          }
+        }
       }
-      for (var Y = r.y0; Y <= r.y1; Y++) {
-        var sy = Math.round((Y - s.view.y) * z) + 0.5;
-        if (sy < -1 || sy > H + 1) continue;
-        ctx.moveTo(0, sy); ctx.lineTo(W, sy);
-      }
+      ctx.stroke();
     }
-    ctx.stroke();
-    ctx.strokeStyle = 'rgba(255,255,255,0.30)';   // 格线(64px = 4 个子格)
+    ctx.strokeStyle = GRID_CELL_LINE;                       // 格线(64px = 4 个子格)
     ctx.beginPath();
-    for (var X2 = Math.floor(r.x0 / SUB) * SUB; X2 <= r.x1; X2 += SUB) {
+    for (var X2 = Math.ceil(x0 / SUB) * SUB; X2 <= x1; X2 += SUB) {
       var sx2 = Math.round((X2 - s.view.x) * z) + 0.5;
-      if (sx2 < -1 || sx2 > W + 1) continue;
-      ctx.moveTo(sx2, 0); ctx.lineTo(sx2, H);
+      ctx.moveTo(sx2, syT); ctx.lineTo(sx2, syB);
     }
-    for (var Y2 = Math.floor(r.y0 / SUB) * SUB; Y2 <= r.y1; Y2 += SUB) {
+    for (var Y2 = Math.ceil(y0 / SUB) * SUB; Y2 <= y1; Y2 += SUB) {
       var sy2 = Math.round((Y2 - s.view.y) * z) + 0.5;
-      if (sy2 < -1 || sy2 > H + 1) continue;
-      ctx.moveTo(0, sy2); ctx.lineTo(W, sy2);
+      ctx.moveTo(sxL, sy2); ctx.lineTo(sxR, sy2);
     }
     ctx.stroke();
   }
 
-  // spawn 标记 + 选区框。★ 字体/对齐设一次(每标记重设 font 是排版最贵的一项)。
+  // ⑪ 画布范围:按 torusList 的每份副本给地图矩形画 1~2px 边框。环面开着时屏幕每一处都是地图内容
+  //    (副本 + 离屏层的折算),没有任何像素属于"图外" ⇒ 边框是唯一能说出"画布到哪结束"的东西。
+  function drawMapBounds(W, H) {
+    if (!s.map) return;
+    var offs = torusList(W, H), z = s.view.zoom;
+    var wpx = Math.round(s.map.subCols * z), hpx = Math.round(s.map.subRows * z);
+    for (var i = 0; i < offs.length; i++) {
+      var p = subToScreen(offs[i][0], offs[i][1]);
+      if (p.x > W || p.y > H || p.x + wpx < 0 || p.y + hpx < 0) continue;
+      ctx.strokeStyle = (i === 0) ? MAP_EDGE_CUR : MAP_EDGE_LINE;
+      ctx.lineWidth = (i === 0) ? 2 : 1;
+      ctx.strokeRect(Math.round(p.x), Math.round(p.y), wpx, hpx);
+    }
+    ctx.lineWidth = 1;
+  }
+
+  // 半区中线 + 3×3 桶网格:游戏侧"均匀散布"判据的对照物(侧 1 = 左半、侧 2 = 右半,每半 3 列 × 3 行)。
+  // ★ 只在 guides 打开时画 —— 它是辅助线,不是地图内容。
+  function drawGuides(W, H) {
+    if (!s.map || !s.guides) return;
+    var z = s.view.zoom;
+    var cols = s.map.subCols / SUB, rows = s.map.subRows / SUB;
+    var offs = torusList(W, H);
+    ctx.save();
+    ctx.lineWidth = 1;
+    for (var i = 0; i < offs.length; i++) {
+      var ox = offs[i][0] / SUB, oy = offs[i][1] / SUB;   // 副本偏移换成"格"
+      // 3×3 桶(每半区 3 列 × 3 行)
+      ctx.strokeStyle = 'rgba(0,0,0,0.18)';
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      for (var b = 1; b < 3; b++) {
+        var xl = subToScreen((ox + cols / 2 / 3 * b) * SUB, 0);
+        var xr = subToScreen((ox + cols / 2 + cols / 2 / 3 * b) * SUB, 0);
+        if (xl.x > -1 && xl.x < W + 1) { ctx.moveTo(xl.x, 0); ctx.lineTo(xl.x, H); }
+        if (xr.x > -1 && xr.x < W + 1) { ctx.moveTo(xr.x, 0); ctx.lineTo(xr.x, H); }
+        var yb = subToScreen(0, (oy + rows / 3 * b) * SUB);
+        if (yb.y > -1 && yb.y < H + 1) { ctx.moveTo(0, yb.y); ctx.lineTo(W, yb.y); }
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // 半区中线(更实、更暗)
+      var mid = subToScreen((ox + cols / 2) * SUB, 0);
+      ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(mid.x, 0); ctx.lineTo(mid.x, H);
+      ctx.stroke();
+      ctx.lineWidth = 1;
+    }
+    ctx.restore();
+  }
+
+  // spawn / 复活点标记 + 选区框。★ 字体/对齐设一次(每标记重设 font 是排版最贵的一项)。
   function drawOverlay(W, H) {
     if (!s.map) return;
     ctx.save();
@@ -2282,7 +2680,8 @@ function installDraw(S) {
     var offs = torusList(W, H);
     var mark = function (cellX, cellY, color, label) {
       for (var i = 0; i < offs.length; i++) {
-        var X = cellX * SUB - offs[i][0], Y = cellY * SUB - offs[i][1];
+        // ★ offs 是"副本的世界偏移"(2×2 全是非负),所以标记要 **加** 上去;减号是 3×3 时代的写法(那时偏移是 -1/0/+1),留着会让标记往反方向漂到空地上。
+        var X = cellX * SUB + offs[i][0], Y = cellY * SUB + offs[i][1];
         var p = subToScreen(X, Y);
         if (p.x < -64 || p.y < -64 || p.x > W + 64 || p.y > H + 64) continue;
         ctx.fillStyle = color;
@@ -2294,10 +2693,15 @@ function installDraw(S) {
       }
     };
     for (var i = 0; i < s.map.players.length; i++) {
-      mark(s.map.players[i].x, s.map.players[i].y, '#54a0ff', 'P' + (i + 1));
+      mark(s.map.players[i].x, s.map.players[i].y, '#1f6feb', 'P' + (i + 1));
     }
     for (var j = 0; j < s.map.enemies.length; j++) {
-      mark(s.map.enemies[j].x, s.map.enemies[j].y, '#c96fb0', 'E');
+      mark(s.map.enemies[j].x, s.map.enemies[j].y, '#8a2f6b', 'E');
+    }
+    // ★ 按侧复活点(侧 1 深绿 / 侧 2 深橙;浅底上要够暗才看得见)
+    var rs = s.map.respawns || [];
+    for (var ri = 0; ri < rs.length; ri++) {
+      mark(rs[ri].x, rs[ri].y, rs[ri].side === 1 ? '#1a7f37' : '#b45309', 'R' + rs[ri].side);
     }
     if (s.preview) {
       var pv = subToScreen(s.preview.x, s.preview.y);
@@ -2325,7 +2729,7 @@ function installDraw(S) {
   }
 
   // ★ 唯一渲染入口:同一帧只许画一次画布。
-  // ★★ 三条路径按 zoom 分工:① 缩略图(< 8)、② 视口离屏层(≥ 8);而合成那一步(层可见性/压暗/3×3 副本)两条路都走 ⇒ "切层"只是重新合成,永远不重画任何一层。
+  // ★★ 三条路径按 zoom 分工:① 缩略图(< 8)、② 视口离屏层(≥ 8);而合成那一步(层可见性/压暗/2×2 副本)两条路都走 ⇒ "切层"只是重新合成,永远不重画任何一层。
   // ★★ 换图之后的唯一收口也在这里:①② 的像素全是按旧图集算出来的,而它们只可能被这一条路合成到屏幕上 ⇒ 在唯一入口上作废既不会漏、也不会白付。★ 本帧不画:上一次的画面留在屏幕上,重建落地后由它自己的 .then(render) 画。
   function render() {
     if (!s.map) return;
@@ -2334,10 +2738,12 @@ function installDraw(S) {
     var t0 = S.nowMs();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.globalAlpha = 1;
-    ctx.fillStyle = '#0e1013';
+    ctx.fillStyle = CANVAS_BG;
     ctx.fillRect(0, 0, W, H);
     if (zoomPath(s.view.zoom) === 'thumb') drawThumbPath(W, H); else S.drawLayerPath(W, H);
     if (s.grid) drawGrid(W, H);
+    drawMapBounds(W, H);                         // ★ 画布范围画在网格之上、标记/选区之下(选区框要压住边框)
+    drawGuides(W, H);                            // 半区中线 + 3×3 桶(guides 关着时直接 return)
     drawOverlay(W, H);
     stat.renders++;
     stat.lastRenderMs = S.nowMs() - t0;
@@ -2544,8 +2950,17 @@ function installEdit(S) {
     dxPx = Math.round(dxPx); dyPx = Math.round(dyPx);
     if (dxPx === 0 && dyPx === 0) return;
     var W = canvas.width, H = canvas.height;
-    s.view.x += dxPx / s.view.zoom;
-    s.view.y += dyPx / s.view.zoom;
+    // ★★ ⑩ 的配套:先把"想去的视图"钳一遍,再由钳制后的位置**反算实际位移** —— 若先把 view 推过去再夹,
+    //    自拷贝与 panStrips 仍按没夹过的 dx 走 ⇒ 内容与视图错开(clampPanView 在 50_view.js)。
+    //    反算之后再量化一次,保证 view / panStrips / 自拷贝三者仍然同源(这条不变量在上面那段注释里)。
+    var v0x = s.view.x, v0y = s.view.y;
+    var fitv = clampPanView(s.view, v0x + dxPx / s.view.zoom, v0y + dyPx / s.view.zoom,
+                            W, H, s.map.subCols, s.map.subRows, s.torus);
+    dxPx = Math.round((fitv.x - v0x) * s.view.zoom);
+    dyPx = Math.round((fitv.y - v0y) * s.view.zoom);
+    if (dxPx === 0 && dyPx === 0) return;              // 已经顶到边界:1px 都不动,也就不该重画
+    s.view.x = v0x + dxPx / s.view.zoom;
+    s.view.y = v0y + dyPx / s.view.zoom;
     if (zoomPath(s.view.zoom) !== 'layers') { S.render(); return; }
     // ★★ 视图一动,在飞的那一轮重建(条带按旧视图算的)就不能再往这些画布上写 —— 而"自拷贝搬移"又要求整张图属于同一次视图 ⇒ 不干净时老实走整片重建(分帧)。
     if (!S.layersClean) return S.observed('panBy', S.buildLayers().then(S.render));
@@ -2611,7 +3026,10 @@ function mount(canvas, opts) {                // ★ opts.slicer 是注入缝(�
     setSubGrid: function (b) { S.s.subGrid = !!b; S.render(); },
     setTorus: function (b) { S.s.torus = !!b; S.render(); },
     setDimOthers: function (b) { S.s.dimOthers = !!b; S.render(); },
+    // 半区中线 + 3×3 桶网格(出生点/复活点的"均匀散布"判据在画布上的对照物)
     setLayerVisible: function (L, b) { S.s.layerVisible[L] = !!b; S.render(); },   // ★ 可见性只影响合成(离屏内容照旧保留)⇒ 开关是 4 次 drawImage 的事,不重画任何一层
+    setGuides: function (b) { S.s.guides = !!b; S.render(); },
+    guides: function () { return !!S.s.guides; },
     layerVisible: function (L) { return S.s.layerVisible[L]; },
     setLayerLocked: function (L, b) { S.s.layerLocked[L] = !!b; },
     layerLocked: function (L) { return S.s.layerLocked[L]; },
@@ -2833,7 +3251,12 @@ var app = {
 /* == ui/10_util.js == */
 // ui/10_util.js —— DOM/时间/错误通道等基础设施。
 
-function $(id) { return document.getElementById(id); }
+// ★ node 冒烟里有的相位没有 document(纯逻辑断言):`$` 必须能安全地返回 null —— 否则任何一条
+//   "顺手报个状态栏"的代码都会把整支冒烟打断在 ReferenceError 上(后面的断言一行都不跑)。
+function $(id) {
+  if (typeof document === 'undefined' || !document || typeof document.getElementById !== 'function') return null;
+  return document.getElementById(id);
+}
 function nowMs() {
   return (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
 }
@@ -2892,11 +3315,13 @@ function mapFromBytes(fileName, bytes) {
   var fmt = detectFormat(bytes);
   if (fmt === 'v4') {
     return Io.decodeMap(bytes).then(function (map) {
+      Core.migrateMap(map);                         // ★ legacy 纹理 id 读时迁移(v4 入口;见 core/95_legacy.js)
       map.name = nameFromFile(fileName);          // ★★ 见 nameFromFile
       return { map: map, sourceFormat: 'v4' };
     });
   }
   var text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+  // ★ v3/旧字母那条路的 legacy 迁移在 Core.migrateV3 产出 desc 时逐条做(migrateDescriptor)。
   var map = Core.migrateV3(Core.parseV3Text(text));
   map.name = nameFromFile(fileName);
   return Promise.resolve({ map: map, sourceFormat: fmt });
@@ -2933,6 +3358,20 @@ function clampTexture(tex, atlasCap) {
   if (!isFinite(cap) || cap < 1) cap = 1;
   return Math.max(1, Math.min(cap, t));
 }
+// ★ 恢复出来的 selectedTexture(cyrm.ui.v1)要过与 legacy 迁移**同一张表**消毒:旧会话可能存着 legacy 号(如 5)
+//   或越界号,而新图集那 7 槽全透明,"开机画笔落笔不可见"是**静默错**(比保存被纹理闸拦下更糟)。
+//   规则:命中 legacy_texture_map → base(辅码四档不动,颜色由辅码给);不在 tiles 键集且非 0 → 回落 1;
+//   合法号原样;表缺席(node 冒烟)不猜,原样交给 clampTexture 的图集上界。
+function sanitizeRestoredTexture(tex) {
+  var t = parseInt(tex, 10);
+  if (!isFinite(t) || t < 1) return 1;
+  var defs = globalThis.TILE_DEFS;
+  if (!defs || !defs.tiles) return t;
+  // legacy → base 复用 core 的迁移规则(单一真相源;neutralDesc 的四档不影响 texOf 的结果)。
+  var migrated = Core.texOf(Core.migrateDescriptor(Core.neutralDesc(t)));
+  if (Object.prototype.hasOwnProperty.call(defs.tiles, String(migrated))) return migrated;
+  return 1;
+}
 function texturePalette(defs) {
   if (!defs || !defs.tiles) return [];
   var out = [];
@@ -2966,7 +3405,9 @@ function idxOf(map, X, Y) {
   return Render.wrapIdx(Y, map.subRows) * map.subCols + Render.wrapIdx(X, map.subCols);
 }
 // ★ 两种单位(格 / 子格)的换算只此一处:region.unit === 'cell' ⇒ 每格 16 个子格。
-function regionCells(map, region, clip) {
+// ★ ring=true 只要矩形边框那一圈(矩形工具的"描边"档):判据写在**折算之前**的原坐标上,
+//   跨接缝时也能正确地在接缝两侧各留一条边。
+function regionCells(map, region, clip, ring) {
   var out = [], seen = new Set();
   function add(X, Y) {
     var wx = Render.wrapIdx(X, map.subCols), wy = Render.wrapIdx(Y, map.subRows);
@@ -2975,10 +3416,15 @@ function regionCells(map, region, clip) {
     if (seen.has(i)) return;                           // 环面下 3×3 会重复命中,去重
     seen.add(i); out.push(i);
   }
+  function onRing(x, y) {
+    if (!ring) return true;
+    return x === region.x0 || x === region.x1 || y === region.y0 || y === region.y1;
+  }
   var k = Core.SUB_PER_CELL;
   if (region.unit === 'cell') {
     for (var cy = region.y0; cy <= region.y1; cy++) {
       for (var cx = region.x0; cx <= region.x1; cx++) {
+        if (!onRing(cx, cy)) continue;
         for (var qy = 0; qy < k; qy++) {
           for (var qx = 0; qx < k; qx++) add(cx * k + qx, cy * k + qy);
         }
@@ -2986,14 +3432,17 @@ function regionCells(map, region, clip) {
     }
   } else {
     for (var y = region.y0; y <= region.y1; y++) {
-      for (var x = region.x0; x <= region.x1; x++) add(x, y);
+      for (var x = region.x0; x <= region.x1; x++) {
+        if (!onRing(x, y)) continue;
+        add(x, y);
+      }
     }
   }
   return out;
 }
 // ★★ Core.lineCells 的坐标必须是整数:非整数或 NaN 会让它的 for(;;) 死循环、挂住整个
 //    标签页。所有调用点都在这里 floor(★ 这条只剩行为侧一半:产物是整数;新加一个忘了 floor
-//    的调用点今天抓不到 —— 零守卫登记在 docs/eng/debt/guard-strength-gaps.md)。
+//    的调用点今天抓不到 —— 零守卫登记在 docs/eng/registered-debt.md)。
 function strokePoints(from, to) {
   var pts = [];
   if (!to || (from.x === to.x && from.y === to.y)) { pts.push(from); return pts; }
@@ -3011,6 +3460,25 @@ function lineTargets(map, a, b, clip) {
     var idx = wy * map.subCols + wx;
     if (seen.has(idx)) continue;
     seen.add(idx); out.push(idx);
+  }
+  return out;
+}
+// ★★ "直线宽度"(右栏细分选项):宽度=1 子格走 lineTargets(原路径);更宽时把线上每个子格点
+//    扩成一个 w×w 的子格方块再并起来 —— 与画笔同一种几何(regionCells),不在第二处写"怎么算一条线"。
+function lineBandTargets(map, a, b, clip, w) {
+  var width = (typeof w === 'number' && isFinite(w) && w >= 1) ? Math.floor(w) : 1;
+  if (width <= 1) return lineTargets(map, a, b, clip);
+  var pts = strokePoints({ kind: 'sub', x: a.x, y: a.y }, { kind: 'sub', x: b.x, y: b.y });
+  var lo = Math.floor((width - 1) / 2), hi = Math.ceil((width - 1) / 2);
+  var out = [], seen = new Set();
+  for (var i = 0; i < pts.length; i++) {
+    var reg = { unit: 'sub', x0: pts[i].x - lo, y0: pts[i].y - lo,
+                x1: pts[i].x + hi, y1: pts[i].y + hi };
+    var list = regionCells(map, reg, clip);
+    for (var j = 0; j < list.length; j++) {
+      if (seen.has(list[j])) continue;
+      seen.add(list[j]); out.push(list[j]);
+    }
   }
   return out;
 }
@@ -3042,6 +3510,9 @@ function constrainSquare(a, b, shift) {
 
 // ── 落笔:先读旧值、再写、产出一条差量 ──
 function paintCells(map, L, idx, valueOf) {
+  // ★★ 图层"可编辑目标"三态的唯一闸(不存在 / 锁定 / 隐藏):所有落笔、粘贴、镜像、选区搬运
+  //    都从这里过 —— 以前锁定是纯装饰(全仓没有一处读 layerLocked),用户反馈 ⑥。
+  if (!canEditLayer(L, map)) return null;
   var arr = Render.layerArray(map, L);
   if (!arr || !arr.length) return null;
   var changed = [], before = [], after = [], seen = new Set();
@@ -3093,13 +3564,14 @@ function applyTool(st, tool, from, to) {
       return paintCells(map, L, idx, function () { return 0; });   // 两层都置空气(色层 = 黑)
     }
   } else if (tool === 'rect') {
+    // ★ 细分选项:填充 / 描边(描边只画矩形那一圈)
     idx = regionCells(map, {
       unit: from.kind,
       x0: Math.min(from.x, to.x), y0: Math.min(from.y, to.y),
       x1: Math.max(from.x, to.x), y1: Math.max(from.y, to.y),
-    }, clip);
+    }, clip, st.rectMode === 'outline');
   } else if (tool === 'line') {
-    idx = lineTargets(map, toSub(from), toSub(to), clip);
+    idx = lineBandTargets(map, toSub(from), toSub(to), clip, st.lineWidth);
   }
   if (!idx) return null;
   return paintCells(map, L, idx, valueFor(st, L));
@@ -3189,18 +3661,33 @@ function createGradientJob(map, a, b, rgba0, rgba1, opts) {
 </script>
 <script>
 /* == ui/25_spawn.js == */
-// ui/25_spawn.js —— 出生点与敌人的增删与差量。
+// ui/25_spawn.js —— 出生点 / 按侧复活点 / 敌人的增删与差量。
 
 
-// ── 出生点与敌人(★ A9:它们的增删也要进历史)──
+// ── 出生点 / 复活点 / 敌人(★ A9:它们的增删也要进历史)──
+// ★ respawns 是无序数组,但**同侧顺序有意义**(游戏侧按文件顺序去重、首次出现生效)⇒ 快照按数组顺序拷。
 function snapshotSpawns(map) {
   return {
     players: map.players.map(function (p) { return { x: p.x, y: p.y }; }),
     enemies: map.enemies.map(function (e) { return { type: e.type, x: e.x, y: e.y }; }),
+    respawns: (map.respawns || []).map(function (r) { return { side: r.side, x: r.x, y: r.y }; }),
   };
 }
 function spawnDiff(before, after) {
   return { kind: 'spawn', before: before, after: after };
+}
+// 从快照装回地图(撤销/重做与崩溃恢复共用;★ 重启字段不是整份替换 map)。
+function applySpawns(map, snap) {
+  if (!snap) return;
+  map.players = (snap.players || []).map(function (p) { return { x: p.x, y: p.y }; });
+  map.enemies = (snap.enemies || []).map(function (e) { return { type: e.type, x: e.x, y: e.y }; });
+  map.respawns = (snap.respawns || []).map(function (r) { return { side: r.side, x: r.x, y: r.y }; });
+}
+function respawnCounts(map) {
+  var out = { 1: 0, 2: 0 };
+  var rs = (map && map.respawns) || [];
+  for (var i = 0; i < rs.length; i++) if (out[rs[i].side] !== undefined) out[rs[i].side]++;
+  return out;
 }
 function spawnIndexAt(map, cellX, cellY, kind) {
   var x = Render.wrapIdx(Math.floor(cellX), Core.cellsWOf(map));
@@ -3234,7 +3721,49 @@ function removeSpawn(map, kind, index) {
 }
 function clearSpawns(map) {
   var before = snapshotSpawns(map);
-  map.players = []; map.enemies = [];
+  map.players = []; map.enemies = []; map.respawns = [];
+  return spawnDiff(before, snapshotSpawns(map));
+}
+
+// ── 按侧复活点(`# respawn <1|2> <col> <row>`)──
+// ★ 侧 1 = 左半(x < cellsW/2)、侧 2 = 右半 —— 与游戏侧 SpawnChooser.SIDE_LEFT/SIDE_RIGHT 同源。
+//   放错半区**不拦**(地图作者可能故意这么干),由 validateMap 报 warning。
+function sideOfCell(map, cellX) {
+  var half = Core.cellsWOf(map) / 2;
+  return Render.wrapIdx(Math.floor(cellX), Core.cellsWOf(map)) < half ? 1 : 2;
+}
+function addRespawn(map, side, cellX, cellY) {
+  var before = snapshotSpawns(map);
+  var x = Render.wrapIdx(Math.floor(cellX), Core.cellsWOf(map));
+  var y = Render.wrapIdx(Math.floor(cellY), Core.cellsHOf(map));
+  if (!map.respawns) map.respawns = [];
+  map.respawns.push({ side: (side === 2 ? 2 : 1), x: x, y: y });
+  return { diff: spawnDiff(before, snapshotSpawns(map)), x: x, y: y, side: (side === 2 ? 2 : 1) };
+}
+// 删"这一侧离 (cellX,cellY) 最近的那个点"(精确同格优先)。没有可删的返回 null。
+function removeRespawnNear(map, side, cellX, cellY) {
+  var rs = (map && map.respawns) || [];
+  var x = Render.wrapIdx(Math.floor(cellX), Core.cellsWOf(map));
+  var y = Render.wrapIdx(Math.floor(cellY), Core.cellsHOf(map));
+  var bi = -1, bd = Infinity;
+  for (var i = 0; i < rs.length; i++) {
+    if (rs[i].side !== side) continue;
+    var d = Math.abs(rs[i].x - x) + Math.abs(rs[i].y - y);
+    if (d < bd) { bd = d; bi = i; }
+  }
+  if (bi < 0) return null;
+  var before = snapshotSpawns(map);
+  var at = { x: rs[bi].x, y: rs[bi].y };
+  rs.splice(bi, 1);
+  return { diff: spawnDiff(before, snapshotSpawns(map)), at: at };
+}
+function clearRespawns(map, side) {
+  var rs = (map && map.respawns) || [];
+  var keep = [];
+  for (var i = 0; i < rs.length; i++) if (side && rs[i].side !== side) keep.push(rs[i]);
+  if (keep.length === rs.length) return null;
+  var before = snapshotSpawns(map);
+  map.respawns = keep;
   return spawnDiff(before, snapshotSpawns(map));
 }
 </script>
@@ -3266,15 +3795,21 @@ function resizeMap(map, w, h) {
     if (inRange(e)) out.enemies.push({ type: e.type, x: e.x, y: e.y });
     else dropped.push({ kind: 'enemy', type: e.type, x: e.x, y: e.y });
   }
+  // ★ 按侧复活点同样"只丢不钳":钳一个点回边界 = 替地图作者决定它该在哪一侧。
+  var rs = map.respawns || [];
+  for (i = 0; i < rs.length; i++) {
+    if (inRange(rs[i])) out.respawns.push({ side: rs[i].side, x: rs[i].x, y: rs[i].y });
+    else dropped.push({ kind: 'respawn', side: rs[i].side, x: rs[i].x, y: rs[i].y });
+  }
   return { map: out, dropped: dropped, size: { w: cellsW, h: cellsH } };
 }
 // ★★ 尺寸闸只此一条路:applySize → resizeMap → createEmptyMap → Core.clampMapSize。这里不再
 //    写第二个 Core.createMap 调用 —— 第二个造图入口就是 A8 复发(输 99999 分配巨图卡死)。
 function resizeReportLines(dropped) {
   return (dropped || []).map(function (d) {
-    return d.kind === 'enemy'
-      ? ('敌人 ' + d.type + ' 落在图外 (' + d.x + ',' + d.y + '),已移除')
-      : ('出生点落在图外 (' + d.x + ',' + d.y + '),已移除');
+    if (d.kind === 'enemy') return '敌人 ' + d.type + ' 落在图外 (' + d.x + ',' + d.y + '),已移除';
+    if (d.kind === 'respawn') return '侧 ' + d.side + ' 复活点落在图外 (' + d.x + ',' + d.y + '),已移除';
+    return '出生点落在图外 (' + d.x + ',' + d.y + '),已移除';
   });
 }
 // ★ 输入框回显只在这一个函数里写(DOM 与状态一致):输了 99999 而框里仍写着 99999、图却已是 400×300。
@@ -3371,6 +3906,7 @@ function commandFor(ev) {
   //   的全部绑定里都没被占(B/E/G/L/M/I 是工具、[ ] 是画笔、0-9 是图层、方向键平移、Del/Esc 选区;
   //   V 只被 Ctrl+V 占,而带修饰键的分支上面就 return 了,两条路不会撞)。
   if (k === 'h') return 'mirror:h';
+  if (k === 'r') return 'toggle-guides';
   if (k === 'v') return 'mirror:v';
   if (k === '[') return 'brush-smaller';
   if (k === ']') return 'brush-bigger';
@@ -3395,8 +3931,10 @@ function bytesOfEntry(e) {
   if (!e) return 0;
   if (e.kind === 'cells') return 12 + e.idx.length * 4 + e.before.length * 4 + e.after.length * 4;
   if (e.kind === 'spawn') {
-    var n = (e.before ? e.before.players.length + e.before.enemies.length : 0) +
-            (e.after ? e.after.players.length + e.after.enemies.length : 0);
+    var n = (e.before ? e.before.players.length + e.before.enemies.length +
+                        (e.before.respawns || []).length : 0) +
+            (e.after ? e.after.players.length + e.after.enemies.length +
+                       (e.after.respawns || []).length : 0);
     return 64 + 32 * n;
   }
   if (e.kind === 'whole') return 64 + (e.bytes || 0);
@@ -3451,7 +3989,8 @@ function snapshotMap(map) {
   }
   var sp = snapshotSpawns(map);
   return { subCols: map.subCols, subRows: map.subRows, layers: layers,
-           players: sp.players, enemies: sp.enemies, comments: map.comments.slice() };
+           players: sp.players, enemies: sp.enemies, respawns: sp.respawns,
+           comments: map.comments.slice() };
 }
 function bytesOfSnapshot(s) {
   var n = 0;
@@ -3487,7 +4026,7 @@ function wholeDiff(map, tag) {
 function adoptMapInto(dst, src) {
   dst.subCols = src.subCols; dst.subRows = src.subRows;
   dst.layers = src.layers;
-  dst.players = src.players; dst.enemies = src.enemies;
+  dst.players = src.players; dst.enemies = src.enemies; dst.respawns = src.respawns;
   dst.comments = src.comments;
   return dst;
 }
@@ -3502,9 +4041,7 @@ function applyEntry(map, e, dir) {
     return;
   }
   if (e.kind === 'spawn') {
-    var v = dir < 0 ? e.before : e.after;
-    map.players = v.players.map(function (p) { return { x: p.x, y: p.y }; });
-    map.enemies = v.enemies.map(function (q) { return { type: q.type, x: q.x, y: q.y }; });
+    applySpawns(map, dir < 0 ? e.before : e.after);   // ★ 出生点/复活点/敌人三张表一起装回(一处口径)
     return;
   }
   if (e.kind === 'whole') {
@@ -3528,6 +4065,7 @@ function applyEntry(map, e, dir) {
     });
     map.players = s.players.map(function (p) { return { x: p.x, y: p.y }; });
     map.enemies = s.enemies.map(function (q) { return { type: q.type, x: q.x, y: q.y }; });
+    map.respawns = (s.respawns || []).map(function (r) { return { side: r.side, x: r.x, y: r.y }; });
     map.comments = s.comments.slice();
   }
 }
@@ -3573,6 +4111,7 @@ function copyRegion(map, L, sel) {
 function clipSize(clip) { return clip ? { w: clip.w, h: clip.h } : { w: 0, h: 0 }; }
 // ★ 决定 ④:两种数据类型不互相猜。拒绝时给出原因(状态栏要显示),不静默。
 function pasteRegion(map, L, clip, X, Y) {
+  if (!canEditLayer(L, map)) return { ok: false, why: '这一层不可编辑(不存在或已锁定)' };
   if (!clip) return { ok: false, why: '剪贴板是空的' };
   var isColorLayer = (L === Core.LAYER_BG);
   if (isColorLayer && clip.kind !== 'color') {
@@ -3598,6 +4137,7 @@ function pasteRegion(map, L, clip, X, Y) {
 //   被清空。于是"拖到图外"在环面上就是恒等位移(旧实现漏了 − 选区.x,会静默删掉被裁的列)。
 function moveRegion(map, L, sel, dx, dy) {
   if (!sel) return null;
+  if (!canEditLayer(L, map)) return null;
   var arr = Render.layerArray(map, L);
   if (!arr) return null;
   var from = new Map(), to = new Map();
@@ -3635,6 +4175,7 @@ function mirrorRegion(map, L, sel, axis) {
   if (axis !== 'h' && axis !== 'v') {
     throw new Error('镜像轴非法(只能是 h 水平 / v 垂直):实得 ' + String(axis));
   }
+  if (!canEditLayer(L, map)) return null;
   var arr = Render.layerArray(map, L);
   if (!arr) return null;
   var idx = [], before = [], after = [], x, y;
@@ -3672,6 +4213,54 @@ function mirrorSelection(axis) {
   status('已' + (axis === 'h' ? '水平' : '垂直') + '镜像选区(' +
          (sel.w / Core.SUB_PER_CELL) + '×' + (sel.h / Core.SUB_PER_CELL) + ' 格)');
   return out.diff;
+}
+
+// ── 选区操作的具名入口 ──
+// ★ 以前这四件事只写在 keydown 的内联块里 ⇒ 右栏没有任何按钮/提示,能力不可发现(用户反馈 ⑤)。
+//   现在热键与右栏按钮共用这几个函数,文案与失败原因只有一处。
+function doCopySelection() {
+  var sel = app.r.selection();
+  if (!sel) { status('先框选一块,再复制'); return null; }
+  clipboard = copyRegion(app.map, app.r.layer(), sel);
+  if (!clipboard) { status('复制失败:这一层读不到内容'); return null; }
+  status('已复制 ' + clipSize(clipboard).w + '×' + clipSize(clipboard).h + ' 子格');
+  return clipboard;
+}
+function doCutSelection() {
+  var sel = app.r.selection();
+  if (!sel) { status('先框选一块,再剪切'); return null; }
+  if (!canEditLayer(app.r.layer())) return null;
+  clipboard = copyRegion(app.map, app.r.layer(), sel);
+  var diff = applyTool({ map: app.map, layer: app.r.layer(), desc: 0, rgba: 0, brushSize: 0.25,
+                         selection: sel, rectMode: 'fill' }, 'rect',
+                       { kind: 'sub', x: sel.x, y: sel.y },
+                       { kind: 'sub', x: sel.x + sel.w - 1, y: sel.y + sel.h - 1 });
+  pushAndShow(diff);
+  status('已剪切 ' + clipSize(clipboard).w + '×' + clipSize(clipboard).h + ' 子格到剪贴板');
+  return diff;
+}
+function doPasteSelection() {
+  if (!clipboard) { status('剪贴板是空的(先复制或剪切一块)'); return null; }
+  var sel = app.r.selection();
+  var at = sel ? { x: sel.x, y: sel.y } : { x: 0, y: 0 };
+  var out = pasteRegion(app.map, app.r.layer(), clipboard, at.x, at.y);
+  if (!out.ok) { status('粘贴失败:' + out.why); return null; }
+  pushAndShow(out.diff);
+  if (sel) app.r.setSelection({ x: at.x, y: at.y, w: clipSize(clipboard).w, h: clipSize(clipboard).h });
+  status('已粘贴 ' + clipSize(clipboard).w + '×' + clipSize(clipboard).h + ' 子格');
+  return out.diff;
+}
+function doClearSelection() {
+  var sel = app.r.selection();
+  if (!sel) { status('先框选一块,再清除'); return null; }
+  if (!canEditLayer(app.r.layer())) return null;
+  var diff = applyTool({ map: app.map, layer: app.r.layer(), desc: 0, rgba: 0, brushSize: 0.25,
+                         selection: sel, rectMode: 'fill' }, 'rect',
+                       { kind: 'sub', x: sel.x, y: sel.y },
+                       { kind: 'sub', x: sel.x + sel.w - 1, y: sel.y + sel.h - 1 });
+  pushAndShow(diff);
+  status('已清除选区内容');
+  return diff;
 }
 
 // ── 交互(指针 / 滚轮 / 热键)──
@@ -3778,14 +4367,23 @@ function runJob(job, onApply, label) {
 function statusLine() {
   if (!app.map) return;
   var set = function (id, txt) { var el = $(id); if (el) el.textContent = txt; };
-  set('st-tool', '工具 ' + (TOOL_LABELS[app.st.tool] || app.st.tool) + ' × ' + app.st.brushSize);
-  set('st-tex', '纹理 ' + Core.texOf(app.st.desc));
+  // ★ 状态栏只说"现在会怎么落笔":只有画笔/橡皮显示尺寸,矩形/直线显示各自的模式(反馈 ⑤)。
+  var label = TOOL_LABELS[app.st.tool] || app.st.tool;
+  var extra = '';
+  if (app.st.tool === 'brush' || app.st.tool === 'eraser') extra = ' × ' + app.st.brushSize;
+  else if (app.st.tool === 'rect') extra = ' · ' + (toolOption('rect-mode', 'fill') === 'outline' ? '描边' : '填充');
+  else if (app.st.tool === 'line') extra = ' · 宽 ' + (parseInt(toolOption('line-width', '1'), 10) || 1) + ' 子格';
+  set('st-tool', '工具 ' + label + extra);
+  // ★★ 「只改辅码」必须在这里可见:勾上之后纹理位不再参与落笔,状态栏却还写着"纹理 N" 就是状态在说谎(反馈 ⑧)。
+  set('st-tex', app.st.descOnly ? ('辅码模式(纹理不变) ' + Core.texOf(app.st.desc))
+                                : ('纹理 ' + Core.texOf(app.st.desc)));
   set('st-desc', '辅码 ' + Core.hueOf(app.st.desc) + '/' + Core.brightOf(app.st.desc) + '/' +
                  Core.satOf(app.st.desc) + '/' + Core.alphaOf(app.st.desc));
   var sel = app.r.selection();
   set('st-sel', sel ? ('选区 ' + (sel.w / Core.SUB_PER_CELL) + '×' + (sel.h / Core.SUB_PER_CELL) + ' 格') : '无选区');
   set('st-undo', '撤销 ' + undoHistory.depth() + ' / 重做 ' + undoHistory.redoDepth());
   renderSaveState();                // ★ 每落一笔都要跟着翻(状态栏是"现在"的样子)
+  if (typeof refreshRespawnCount === 'function') refreshRespawnCount();
 }
 
 function hitOf(ev) {
@@ -3802,7 +4400,13 @@ function k2of(hit) { return hit.kind === 'cell' ? Core.SUB_PER_CELL : 1; }
 function stNow() {
   return { map: app.map, layer: app.r.layer(), desc: app.st.desc, rgba: app.st.rgba,
            rgba2: app.st.rgba2, brushSize: app.st.brushSize, selection: app.r.selection(),
-           descOnly: app.st.descOnly };
+           descOnly: app.st.descOnly, rectMode: toolOption('rect-mode', 'fill'),
+           lineWidth: parseInt(toolOption('line-width', '1'), 10) || 1 };
+}
+
+function toolOption(id, fallback) {
+  var el = $(id);
+  return (el && el.value !== undefined && el.value !== '') ? String(el.value) : String(fallback);
 }
 function subRectOf(from, to) {
   var k = Core.SUB_PER_CELL;
@@ -3829,8 +4433,7 @@ function installInteraction() {
   //   它是一个按下/抬起的状态,故 keydown 置位、keyup 与 blur 清位 —— blur 那条不是装饰:
   //   按住空格去点别的窗口(或 Alt+Tab)时 keyup 到不了这个页面,清不掉的话回来一拖就莫名平移。
   var spaceDown = false;
-  // ★ 两个颜色槽:规格 §4.4 的渐变是"两端各选一色" ⇒ 必须两个颜色状态(rgba 起点 / rgba2 终点);
-  //   给成同一个色的话渐变会退化成纯色填充,而且看不出来。
+  // ★ 两个颜色槽 = 渐变的全部(两端同色会退化成纯色填充,而且看不出来;规格 §4.4)。
   app.st = { tool: 'brush', brushSize: 1, desc: Core.neutralDesc(1),
              rgba: 0xFF00FFFF, rgba2: 0x101820FF,
              descOnly: false, selStart: null, stroke: null, panning: null, selDrag: null,
@@ -3851,10 +4454,7 @@ function installInteraction() {
       // ★ 没打开地图时退回线性口径(与 Render.inSel 的 W/H 缺省同款)—— 指针事件比 setMap 早到是可能的。
       var W = app.map ? app.map.subCols : 0, H = app.map ? app.map.subRows : 0;
       if (app.st.tool === 'select') {
-        // ★ 判"按在选区里"必须先把命中换算到子格:整格命中给的是格号,而选区是子格单位 —— 直接比会差
-        //   4 倍(而且永远不成立),表现为"选框工具一拖就是在重新框选,选区永远拖不动";换算只有 toSub 一处。
-        // ★★ 判据与 regionCells 的 clip 同一个(inRect → Render.inSel,带环面折算):三个"选区"口径此前
-        //   是三种,各自在接缝那一侧给出不同答案 —— 最刺眼的是"框里画,一半画得进去、一半什么都没发生"。
+        // ★★ 判"按在选区里"必须先经 toSub 换算(整格命中是格号、选区是子格单位,直接比差 4 倍),且判据与 regionCells 的 clip 同一个(inRect→Render.inSel,带环面折算)。
         var hs = toSub(hit);
         if (sel && inRect(sel, hs.x, hs.y, W, H)) {
           app.st.selDrag = { from: hit, dx: 0, dy: 0 };   // 选区内按下 = 拖动它
@@ -3877,9 +4477,7 @@ function installInteraction() {
         var s0 = stNow();
         var job = createBucketJob(app.map, s0.layer, hit.x * k2of(hit), hit.y * k2of(hit),
                                   { clip: s0.selection });
-        // ★★ runJob 交回的是一整条分帧链的 promise(slicer.run → onApply → 落笔):丢掉它 = 拒绝逃到
-        //   全局围栏,而围栏会 snapshot() ⇒ 一次普通的落笔失败会把当前图写进崩溃槽位,下次开机弹假的
-        //   「上次异常退出」。guard 是终点(它自己吞掉结果、只往状态栏写一行),故这里是唯一该接住的地方。
+        // ★★ runJob 的 promise 必须交给 guard:丢掉它 = 拒绝逃到全局围栏,围栏 snapshot() ⇒ 一次落笔失败换来一个假的「上次异常退出」。
         guard('油漆桶填充', function () {
           return runJob(job, function () {
             pushAndShow(paintCells(app.map, s0.layer, job.result(), valueFor(s0, s0.layer)));
@@ -3994,9 +4592,7 @@ function installInteraction() {
           // ★ Shift 约束(规格 §4.8):直线锁水平/垂直/45° —— 与预览同一个函数
           pushAndShow(applyTool(stNow(), 'line', st0.from, shiftHit(st0.from, hit, ev.shiftKey)));
         } else if (!st0.painted) {
-          // ★ 按下与松开之间没有 pointermove(单击)时,画笔/橡皮的落笔只在 pointermove 那条路上发生 ⇒
-          //   一次单击什么都不画;而"拿画笔点一格"是最常见的编辑动作,必须同样有效。
-          // ★ 判据取 painted 而不是"last 是否等于 from":pointermove 在同一格内也会落笔。
+          // ★ 单击也要落笔(判据取 painted 而不是"last 是否等于 from":pointermove 在同一格内也会落笔)。
           pushAndShow(applyTool(stNow(), app.st.tool, st0.from, st0.from));
         }
       }
@@ -4036,35 +4632,15 @@ function installInteraction() {
       else if (cmd.indexOf('layer:') === 0) { setLayer(parseInt(cmd.slice(6), 10)); }
       else if (cmd === 'undo') pend = doUndo();
       else if (cmd === 'redo') pend = doRedo();
-      else if (cmd === 'copy') {
-        clipboard = copyRegion(app.map, app.r.layer(), app.r.selection());
-        status(clipboard ? '已复制 ' + clipSize(clipboard).w + '×' + clipSize(clipboard).h : '先框选一块');
-      }
-      else if (cmd === 'cut') {
-        var s2 = app.r.selection();
-        if (!s2) { status('先框选一块'); return; }
-        clipboard = copyRegion(app.map, app.r.layer(), s2);
-        pushAndShow(applyTool({ map: app.map, layer: app.r.layer(), desc: 0, rgba: 0,
-                                brushSize: 0.25, selection: s2 },
-                              'rect', { kind: 'sub', x: s2.x, y: s2.y },
-                              { kind: 'sub', x: s2.x + s2.w - 1, y: s2.y + s2.h - 1 }));
-      }
-      else if (cmd === 'paste') {
-        var sel = app.r.selection();
-        var at = sel ? { x: sel.x, y: sel.y } : { x: 0, y: 0 };
-        var out = pasteRegion(app.map, app.r.layer(), clipboard, at.x, at.y);
-        if (!out.ok) { status('粘贴失败:' + out.why); return; }
-        pushAndShow(out.diff);
-        if (sel) app.r.setSelection({ x: at.x, y: at.y, w: clipSize(clipboard).w, h: clipSize(clipboard).h });
-      }
+      else if (cmd === 'copy') { doCopySelection(); }
+      else if (cmd === 'cut') { doCutSelection(); }
+      else if (cmd === 'paste') { doPasteSelection(); }
       else if (cmd.indexOf('mirror:') === 0) { pend = mirrorSelection(cmd.slice(7)); }
-      else if (cmd === 'clear-selection') {
-        var s3 = app.r.selection();
-        if (!s3) { status('先框选一块'); return; }
-        pushAndShow(applyTool({ map: app.map, layer: app.r.layer(), desc: 0, rgba: 0,
-                                brushSize: 0.25, selection: s3 },
-                              'rect', { kind: 'sub', x: s3.x, y: s3.y },
-                              { kind: 'sub', x: s3.x + s3.w - 1, y: s3.y + s3.h - 1 }));
+      else if (cmd === 'clear-selection') { doClearSelection(); }
+      else if (cmd === 'toggle-guides') {
+        var gEl = $('tg-guides');
+        if (gEl) gEl.click();
+        else if (app.r && app.r.setGuides) app.r.setGuides(!app.r.guides());
       }
       else if (cmd === 'cancel-selection') {
         // ★★ Esc 可能在拖动途中按下去(左键还按着、selDrag 还在飞)而照样合法:选区没了 ⇒ 没有可搬的
@@ -4117,11 +4693,117 @@ function arrowPan(dir) {
   return Promise.resolve(app.r.panBy(d[0], d[1]));      // ★ 视图入口:promise 交给 guard
 }
 function selectToolButton() {
-  document.querySelectorAll('#toolbar .tool').forEach(function (b) {
+  document.querySelectorAll('#tools .tool').forEach(function (b) {
     b.classList.toggle('on', b.dataset.tool === app.st.tool);
   });
+  // 工具细分选项跟着换组(函数在 85_panels.js;启动早期可能还没定义 ⇒ 守卫)
+  if (typeof syncToolOptions === 'function') syncToolOptions();
   statusLine();
 }
+
+// ── 图层"可编辑目标"三态:不存在(null) / 锁定 / 隐藏 ──
+// ★★ 用户反馈 ⑥「图层有严重 bug」的真正落点:实盘图的 layer_flags 只有场景层(0b0010)⇒ 另外
+//    三层在内存里是 null,点进去画什么都不发生且零提示;而 🔒 以前是纯装饰(没有任何落笔路径读它)。
+//    这两件事的收口就是这一个函数 —— 所有落笔/粘贴/镜像/选区搬运都必须先问它。
+var hiddenWarned = {};                 // "这一层隐藏"每次切换只提示一次,免得每一笔都刷状态栏
+function layerExists(L) {
+  return !!(app.map && Render.layerArray(app.map, L));
+}
+function existingLayerNames() {
+  if (!app.map) return '(没有地图)';
+  var out = [];
+  for (var L = 0; L < Core.LAYER_COUNT; L++) if (layerExists(L)) out.push(Core.LAYER_NAMES[L]);
+  return out.length ? out.join('/') : '(没有图层)';
+}
+// ★ map 参数:落笔函数自己拿到的那张图(测试会传独立造的图,此时不能拿 app.map 当判据)。
+//   锁定/可见只在"正在编辑的就是当前打开的那张图"时才是拦截理由;别的 map 只判层存在性。
+function canEditLayer(L, map) {
+  var m = map || app.map;
+  if (!m) { status('先打开一张地图'); return false; }
+  if (!Render.layerArray(m, L)) {
+    status('「' + Core.LAYER_NAMES[L] + '」这一层在这张图里不存在(layer_flags 缺位):本图只有 ' +
+           existingLayerNames() + '。要四层齐全请用顶部「新建」。');
+    return false;
+  }
+  if (m !== app.map || !app.r) return true;
+  if (app.r.layerLocked && app.r.layerLocked(L)) {
+    status('「' + Core.LAYER_NAMES[L] + '」已锁定 —— 先在图层行解锁再画');
+    return false;
+  }
+  if (app.r.layerVisible && !app.r.layerVisible(L) && !hiddenWarned[L]) {
+    hiddenWarned[L] = true;
+    status('提示:「' + Core.LAYER_NAMES[L] + '」当前隐藏 —— 笔迹会写进数据,但屏幕上看不到');
+  }
+  return true;
+}
+// 图层行的图标必须**从状态反推**(而不是只靠点击时改一次):🔒/🔓 用字形表达锁定,
+// 👁 用明暗表达可见;缺席层在行内标「本图无此层」,用户才不会把"空的"当成"坏的"。
+function syncLayerIcons() {
+  var rows = document.querySelectorAll('#layers .layer-row');
+  // ★ 空启动(没有地图)时不该把四行都标成「本图无此层」—— 那不是"缺层",是"没有图"。
+  //   这一态整块淡出,交给画布中央的 #empty-hint 说话。
+  if (!app.map) {
+    for (var r0 = 0; r0 < rows.length; r0++) {
+      rows[r0].style.opacity = '0.45';
+      if (rows[r0]._goneEl && rows[r0]._goneEl.parentNode &&
+          typeof rows[r0]._goneEl.parentNode.removeChild === 'function') {
+        rows[r0]._goneEl.parentNode.removeChild(rows[r0]._goneEl);
+      }
+      rows[r0]._goneEl = null;
+    }
+    return;
+  }
+  for (var i = 0; i < rows.length; i++) {
+    var row = rows[i], L = parseInt(row.dataset.layer, 10);
+    if (!(L >= 0 && L < Core.LAYER_COUNT)) continue;
+    row.style.opacity = '';
+    var vis = row.querySelector('.vis'), lock = row.querySelector('.lock');
+    var nameEl = row.querySelector('.name');
+    var exists = layerExists(L);
+    if (vis) {
+      var v = app.r && app.r.layerVisible ? app.r.layerVisible(L) : true;
+      vis.style.opacity = (v && exists) ? '1' : '0.35';
+      vis.title = v ? '隐藏这一层' : '显示这一层';
+    }
+    if (lock) {
+      var lk = app.r && app.r.layerLocked ? app.r.layerLocked(L) : false;
+      lock.textContent = lk ? '🔒' : '🔓';
+      lock.style.opacity = exists ? (lk ? '1' : '0.7') : '0.3';
+      lock.title = lk ? '已锁定(落笔会被拒绝)' : '未锁定(点击锁定)';
+    }
+    // ★ 缺席层的"本图无此层"标记自己记账(row._goneEl),不靠 querySelector 回查 —— 假 DOM
+    //   (node 冒烟)的 querySelector 每次都造一个新对象,回查会得到"永远存在"的假象。
+    var gone = row._goneEl || null;
+    if (!exists) {
+      if (!gone && nameEl) {
+        gone = document.createElement('span');
+        gone.className = 'gone';
+        gone.textContent = '本图无此层';
+        if (nameEl.parentNode) nameEl.parentNode.insertBefore(gone, nameEl.nextSibling);
+        row._goneEl = gone;
+      }
+    } else if (gone) {
+      if (gone.parentNode && typeof gone.parentNode.removeChild === 'function') {
+        gone.parentNode.removeChild(gone);
+      }
+      row._goneEl = null;
+    }
+  }
+}
+function toggleLayerVisible(L) {
+  if (!app.r || !app.r.setLayerVisible) return;
+  app.r.setLayerVisible(L, !app.r.layerVisible(L));
+  if (L !== app.r.layer()) hiddenWarned[L] = false;
+  syncLayerIcons();
+  status('「' + Core.LAYER_NAMES[L] + '」' + (app.r.layerVisible(L) ? '已显示' : '已隐藏'));
+}
+function toggleLayerLocked(L) {
+  if (!app.r || !app.r.setLayerLocked) return;
+  app.r.setLayerLocked(L, !app.r.layerLocked(L));
+  syncLayerIcons();
+  status('「' + Core.LAYER_NAMES[L] + '」' + (app.r.layerLocked(L) ? '已锁定(落笔会被拒绝)' : '已解锁'));
+}
+
 function setLayer(L) {
   if (!(L >= 0 && L < Core.LAYER_COUNT)) return;
   app.r.setLayer(L);
@@ -4130,6 +4812,7 @@ function setLayer(L) {
   });
   // ★ 规格 §4.5:选中的是背景层时,右侧的纹理调色板换成颜色选择器,工具条里只有「渐变」额外可用。
   if (typeof syncPanelForLayer === 'function') syncPanelForLayer();
+  syncLayerIcons();
   statusLine();
 }
 
@@ -4187,7 +4870,8 @@ function saveTargetName(asNew) {
 /* == ui/65_save_current.js == */
 // ui/65_save_current.js —— 存盘主流程与导出报告。
 
-function saveCurrent(asNew) {
+// forcedName:另存为对话框选定的名字(优先于 saveTargetName);不传 = 走旧口径(saveCurrent(asNew))。
+function saveCurrent(asNew, forcedName) {
   if (!app.map) { status('先打开一张地图'); return Promise.resolve(); }
   // ★★ 备份不是保存目标:.v3.bak 装的是这张图原文的最后一手退路,就地覆盖它 = 把退路换成 v4(名字还会漂成 <名>v3bak.v3.bak);★ 库列表只管点击,故 ?p= 那条 URL 直接打开的路要靠这道闸。
   if (!asNew && isBackupName(app.name)) {
@@ -4205,14 +4889,19 @@ function saveCurrent(asNew) {
   if (needsV3Confirm(app.sourceFormat, v3Confirmed)) {
     var okGo = window.confirm(
       '原文件是 v3 文本,保存会把它转成 v4 二进制(不可逆)。\n' +
-      '★ 游戏现在**读不了** v4 —— 在期 E 把 map_format.gd 迁移过去之前,这个文件在游戏里会失效。\n' +
+      '★ 游戏读的就是 v4(map_format.gd 早已迁移)—— 转换后这张图仍能直接被游戏加载。\n' +
       (backupName ? ('保存前会先把原文备份到 ' + backupName + '。\n') : '') +
       '(本次会话不再询问)');
     if (!okGo) { status('已取消保存(磁盘上那份没有被碰过)'); return Promise.resolve(); }
     v3Confirmed = true;
   }
-  var name = saveTargetName(asNew);
+  var name = forcedName || saveTargetName(asNew);
   if (!name) return Promise.resolve();
+  // ★ 另存为传进来的名字必须过与服务器同一套判据(86_fileops 的 isValidMapName):坏名字不该先写盘再 400。
+  if (typeof mapNameProblem === 'function') {
+    var bad = mapNameProblem(name);
+    if (bad) { status('保存目标名不能用:' + bad); return Promise.resolve(); }
+  }
   status('保存 ' + name + ' …');
   // ★★ 草稿盘那条记录挂在存盘前那个键上:另存为会换名字,存完再问键就找不到了 —— 于是旧名字下那条
   //    脏草稿会留着,下次打开那张旧图时弹一次假的恢复提示。
@@ -4264,8 +4953,10 @@ function exportReport() {
   var rep = Core.validateMap(app.map);
   var lines = validateLines(rep);
   if (!lines.length) lines = ['校验通过:没有发现问题'];
+  var rc = (typeof respawnCounts === 'function') ? respawnCounts(app.map) : { 1: 0, 2: 0 };
   lines.push('尺寸 ' + Core.cellsWOf(app.map) + '×' + Core.cellsHOf(app.map) + ' 格 · 出生点 ' +
-             app.map.players.length + ' · 敌人 ' + app.map.enemies.length);
+             app.map.players.length + ' · 复活点 侧1 ' + rc[1] + '/侧2 ' + rc[2] +
+             ' · 敌人 ' + app.map.enemies.length);
   if (app.map.players.length > 2) {
     lines.push('⚠ 第 3 个及以后的出生点游戏侧读不到(map_format.gd 只认 player/player2)');
   }
@@ -4273,7 +4964,8 @@ function exportReport() {
 }
 function showExportReport() {
   var rep = exportReport();
-  window.alert(rep.lines.join('\n'));
+  // ★ 报告也走页内对话框:window.alert 在自动化下会被自动取消,而且它没有"只报告不阻止"的可见层次。
+  if (typeof showReport === 'function') showReport('导出校验', rep.lines, rep.ok);
   status(rep.ok ? '导出校验:没有 error' : '导出校验:有 error(encodeMap 会拒绝导出)');
 }
 </script>
@@ -4605,6 +5297,7 @@ function offerDraft() {
                              new Date(rec.savedAt || 0).toLocaleString() + '),要恢复吗?');
     if (!yes) { status('草稿仍在草稿盘里(屏幕上的图没被动过)'); return false; }
     return Io.decodeMap(rec.bytes).then(function (map) {
+      Core.migrateMap(map);              // ★ 上次会话存的草稿可能还带 legacy 纹理 id:恢复也是读入口,同样迁移
       map.name = rec.name2 || map.name || '';
       app.map = map; app.sourceFormat = 'v4';
       if (rec.name) app.name = rec.name;
@@ -4640,7 +5333,21 @@ function applyUiState() {
   // ★★ 这一处必须走本文件的 setLayer(它内部再调 app.r.setLayer):直接调 app.r.setLayer 只换渲染层,
   //    而面板与图层行不会跟着动 ⇒ 用户看到的与正在发生的是两回事(右侧摆着纹理调色板,刷子却画在背景层上)。
   setLayer(u.layer);
+  // ★ 可见/锁定也是"下次打开时界面该长什么样"的一部分(以前不存:刷新后总是复位成全可见/全未锁,
+  //   而图标又只靠点击那一刻改 —— 用户反馈 ⑥)。逐个字段校验,坏值当没存过。
+  if (u.layerVisible && u.layerVisible.length === Core.LAYER_COUNT) {
+    for (var L = 0; L < Core.LAYER_COUNT; L++) {
+      if (u.layerVisible[L] === false) app.r.setLayerVisible(L, false);
+    }
+  }
+  if (u.layerLocked && u.layerLocked.length === Core.LAYER_COUNT) {
+    for (var L2 = 0; L2 < Core.LAYER_COUNT; L2++) {
+      if (u.layerLocked[L2] === true) app.r.setLayerLocked(L2, true);
+    }
+  }
+  syncLayerIcons();
   app.r.setGrid(u.grid); app.r.setSubGrid(u.subGrid);
+  if (app.r.setGuides) app.r.setGuides(!!u.guides);
   app.r.setTorus(u.torus); app.r.setDimOthers(u.dimOthers);
   app.st.tool = u.tool;
   app.st.brushSize = u.brushSize;
@@ -4648,11 +5355,12 @@ function applyUiState() {
   //    selectToolButton() 画 —— 少了它,重载之后高亮钉在 editor.html 写死的画笔上。
   selectToolButton();
   if (u.selectedTexture > 0) {
-    app.st.desc = Core.packDesc(clampTexture(u.selectedTexture, Render.atlasCapacity()),
+    // ★ 先过 sanitizeRestoredTexture(legacy → base、tile_defs 外 → 1,见 20_tools.js):旧存档的 legacy 号在新图集是透明槽,落笔不可见是静默错
+    app.st.desc = Core.packDesc(clampTexture(sanitizeRestoredTexture(u.selectedTexture), Render.atlasCapacity()),
                                 Core.hueOf(app.st.desc), Core.brightOf(app.st.desc),
                                 Core.satOf(app.st.desc), Core.alphaOf(app.st.desc));
   }
-  [['tg-grid', u.grid], ['tg-subgrid', u.subGrid], ['tg-torus', u.torus]].forEach(function (pair) {
+  [['tg-grid', u.grid], ['tg-subgrid', u.subGrid], ['tg-torus', u.torus], ['tg-guides', !!u.guides]].forEach(function (pair) {
     var el = $(pair[0]);
     if (el) el.classList.toggle('on', !!pair[1]);
   });
@@ -4678,10 +5386,15 @@ function persistUi() {
       grid: $('tg-grid') ? $('tg-grid').classList.contains('on') : true,
       subGrid: $('tg-subgrid') ? $('tg-subgrid').classList.contains('on') : false,
       torus: $('tg-torus') ? $('tg-torus').classList.contains('on') : true,
+      guides: $('tg-guides') ? $('tg-guides').classList.contains('on') : !!(prev && prev.guides),
       dimOthers: $('dim-others') ? !!$('dim-others').checked : true,
       compress: optCompress(),
       panelOpen: prev.panelOpen, playerRef: prev.playerRef,
       selectedTexture: Core.texOf(app.st.desc),
+      layerVisible: app.r && app.r.layerVisible
+        ? [0, 1, 2, 3].map(function (L) { return app.r.layerVisible(L) !== false; }) : prev.layerVisible,
+      layerLocked: app.r && app.r.layerLocked
+        ? [0, 1, 2, 3].map(function (L) { return app.r.layerLocked(L) === true; }) : prev.layerLocked,
     };
     writeUiState(localStore(), app.uist);
   }, UI_SAVE_THROTTLE_MS);
@@ -4748,6 +5461,7 @@ function checkCrashSlot() {
                });
     }
     return Io.decodeMap(crash.bytes).then(function (map) {
+      Core.migrateMap(map);              // ★ 崩溃快照同样是读入口:legacy 纹理 id 迁移照做(与 offerDraft 同一条)
       map.name = crash.name2 || '';
       app.map = map; app.name = crash.name; app.sourceFormat = 'v4';
       dirty = true;                  // ★ 屏幕上这份 ≠ 磁盘上那份(不回血:该 Ctrl+S 了)
@@ -4761,7 +5475,7 @@ function checkCrashSlot() {
 </script>
 <script>
 /* == ui/85_panels.js == */
-// ui/85_panels.js —— 右侧面板与图集装载。
+// ui/85_panels.js —— 右栏面板(工具/工具选项/图层/纹理/辅码/出生点)、画布尺寸与库列表装载。
 
 // ★ 恢复成功 ⇒ 消费掉这条快照:留着的话每一次打开都会再弹一次「上次异常退出」(一次偶发页面异常
 //    变成一个永久的开机弹窗)。清不掉不致命(下次会问,而那时用户点"不要"会被 declined 记住)。
@@ -4777,23 +5491,63 @@ function consumeCrashSlot() {
   });
 }
 
+// 工具细分选项:只显示当前工具那一组(工具与它的参数必须相邻,反馈 ⑤)。
+function syncToolOptions() {
+  var opts = document.querySelectorAll('#tool-opts .opt');
+  for (var i = 0; i < opts.length; i++) {
+    var keys = String(opts[i].dataset.for || '').split(/\s+/);
+    opts[i].style.display = (keys.indexOf(app.st.tool) >= 0) ? '' : 'none';
+  }
+}
+
+// 纹理缩略图 = 4×4 个象限拼成 64×64(只画一个象限会让靠四角拼图案的砖看不出样子)。
+// ★ 用**当前辅码**染色(Core.packDesc(tex, 当前四档)):按钮上看得见的是「基准纹理 + 你手上这套辅码」,
+//   调档位当场能预览(旧实现恒用中性辅码,调色板对"调了档位"毫无反应)。
+// ★ app.st 还没建好时(极早的启动路径 / node 冒烟)回落中性档 —— 缩略图只是表现,不许抛。
+function paletteThumbURL(tex) {
+  if (typeof document === 'undefined' || !document.createElement) return '';
+  var cap = (typeof Render.atlasCapacity === 'function') ? Render.atlasCapacity() : 0;
+  if (!(cap >= tex)) return '';                       // 图集还没装好/node 冒烟:回落成数字
+  try {
+    var k = Core.SUB_PER_CELL, px = 16, size = k * px;
+    var cv = document.createElement('canvas');
+    if (!cv || typeof cv.getContext !== 'function') return '';
+    cv.width = size; cv.height = size;
+    var g = cv.getContext('2d');
+    if (!g) return '';
+    var cur = (app && app.st && isFinite(app.st.desc)) ? app.st.desc : null;
+    var desc = cur === null ? Core.neutralDesc(tex)
+      : Core.packDesc(tex, Core.hueOf(cur), Core.brightOf(cur), Core.satOf(cur), Core.alphaOf(cur));
+    for (var qy = 0; qy < k; qy++) {
+      for (var qx = 0; qx < k; qx++) {
+        var tile = Render.tileFor(desc, qx, qy);
+        if (tile) g.drawImage(tile, qx * px, qy * px);
+      }
+    }
+    return cv.toDataURL();
+  } catch (e) { return ''; }                          // 缩略图只是表现,失败退回数字,不影响画布
+}
+// ★ 辅码四档变化时只重画调色板按钮的**背景**(不重建面板):按钮用 dataset.tex 记着自己的纹理号。
+function refreshPaletteThumbs() {
+  if (typeof document === 'undefined' || !document.querySelectorAll) return;
+  var btns = document.querySelectorAll('#palette .sw');
+  for (var i = 0; i < btns.length; i++) {
+    var tex = parseInt(btns[i].dataset && btns[i].dataset.tex, 10);
+    if (!isFinite(tex) || tex <= 0) continue;
+    var url = paletteThumbURL(tex);
+    if (url) btns[i].style.backgroundImage = 'url(' + url + ')';
+  }
+}
+
 // ── 面板构建(★ 每个控件只挂一次监听 —— 审计 A16:旧实现同时挂了 22 个独立监听与一个容器委托)──
 function buildPanels() {
+  // 图层行:点击=切层;👁/🔒 各自的开关走 60_brush_layer 的两个具名入口(它们同时刷图标与状态栏)。
   document.querySelectorAll('#layers .layer-row').forEach(function (row) {
     var L = parseInt(row.dataset.layer, 10);
     row.addEventListener('click', function () { setLayer(L); });
-    row.querySelector('.vis').addEventListener('click', function (ev) {
-      ev.stopPropagation();
-      var on = !app.r.layerVisible(L);
-      app.r.setLayerVisible(L, on);
-      this.style.opacity = on ? '1' : '0.35';
-    });
-    row.querySelector('.lock').addEventListener('click', function (ev) {
-      ev.stopPropagation();
-      var on = !app.r.layerLocked(L);
-      app.r.setLayerLocked(L, on);
-      this.style.opacity = on ? '0.35' : '1';
-    });
+    var vis = row.querySelector('.vis'), lock = row.querySelector('.lock');
+    if (vis) vis.addEventListener('click', function (ev) { ev.stopPropagation(); toggleLayerVisible(L); });
+    if (lock) lock.addEventListener('click', function (ev) { ev.stopPropagation(); toggleLayerLocked(L); });
   });
   // 纹理调色板:从 tile_defs 派生;纹理 22 不在其中(审计 A7)。
   var pal = texturePalette(app.tileDefs);
@@ -4801,8 +5555,11 @@ function buildPanels() {
   pal.forEach(function (e) {
     var b = document.createElement('button');
     b.className = 'sw';
+    b.dataset.tex = String(e.tex);              // ★ refreshPaletteThumbs 靠它找回每颗按钮的纹理号
     b.title = e.tex + ' ' + e.name + (e.type ? '(' + e.type + ')' : '');
-    b.textContent = String(e.tex);
+    var url = paletteThumbURL(e.tex);
+    if (url) b.style.backgroundImage = 'url(' + url + ')';
+    b.textContent = String(e.tex);                   // 数字留在图上当角标(text-shadow 保证可读)
     b.addEventListener('click', function () {
       app.st.desc = Core.packDesc(e.tex, Core.hueOf(app.st.desc), Core.brightOf(app.st.desc),
                                   Core.satOf(app.st.desc), Core.alphaOf(app.st.desc));
@@ -4834,17 +5591,48 @@ function buildPanels() {
     sel.addEventListener('change', function () {
       app.st.desc = Core.packDesc(Core.texOf(app.st.desc), +$('desc-hue').value, +$('desc-bri').value,
                                   +$('desc-sat').value, +$('desc-alp').value);
+      refreshPaletteThumbs();                  // ★ 缩略图按当前辅码染色:档位一变就重画按钮背景(不重建面板)
       statusLine();
     });
   });
+  // ★★ 「只改辅码」的反馈(用户反馈 ⑧:勾上之后落笔可能是空操作、却一个字都不说):
+  //    ① 勾/取消都刷状态栏;② 四档全中性时明说"这一笔不会产生可见变化"。
   var only = $('desc-only');
-  if (only) only.addEventListener('change', function () { app.st.descOnly = only.checked; });
+  if (only) only.addEventListener('change', function () {
+    app.st.descOnly = only.checked;
+    statusLine();
+    if (only.checked && isNeutralDesc(app.st.desc)) {
+      status('只改辅码:当前四档是中性档(4/4/4/7),落笔不会产生可见变化 —— 先调色相/亮度/饱和/透明');
+    } else {
+      status(only.checked ? '只改辅码:保留原纹理,只改四档辅码' : '已关闭「只改辅码」:落笔会同时写纹理');
+    }
+  });
   var bs = $('brush-size');
-  if (bs) {
-    bs.addEventListener('change', function () { setBrush(parseFloat(bs.value) || 1); });
-  }
-  document.querySelectorAll('#toolbar .tool').forEach(function (b) {
+  if (bs) bs.addEventListener('change', function () { setBrush(parseFloat(bs.value) || 1); });
+  // 工具选择(工具已挪到右栏 #tools)
+  document.querySelectorAll('#tools .tool').forEach(function (b) {
     b.addEventListener('click', function () { app.st.tool = b.dataset.tool; selectToolButton(); });
+  });
+  // 工具细分选项:值本身在落笔时读(stNow/toolOption),这里只负责把状态栏刷成"现在会怎么落笔"。
+  ['rect-mode', 'line-width'].forEach(function (id) {
+    var el = $(id);
+    if (el) el.addEventListener('change', function () { statusLine(); });
+  });
+  // 选区操作按钮(与 Ctrl+C/X/V、H/V、Delete 同一个实现 —— 以前只有热键,能力不可发现)
+  [['sel-copy', function () { doCopySelection(); }],
+   ['sel-cut', function () { doCutSelection(); }],
+   ['sel-paste', function () { doPasteSelection(); }],
+   ['sel-mirror-h', function () { guard('镜像', function () { return mirrorSelection('h'); }); }],
+   ['sel-mirror-v', function () { guard('镜像', function () { return mirrorSelection('v'); }); }],
+   ['sel-clear', function () { doClearSelection(); }]].forEach(function (pair) {
+    var el = $(pair[0]);
+    if (el) el.addEventListener('click', function () { guard(pair[0], pair[1]); });
+  });
+  // 撤销/重做:落盘与历史都在键盘上有,但按钮是用户能找到它们的前提。
+  [['btn-undo', function () { return doUndo(); }],
+   ['btn-redo', function () { return doRedo(); }]].forEach(function (pair) {
+    var el = $(pair[0]);
+    if (el) el.addEventListener('click', function () { guard(pair[0], pair[1]); });
   });
   $('tg-grid').addEventListener('click', function () {
     this.classList.toggle('on'); app.r.setGrid(this.classList.contains('on'));
@@ -4857,6 +5645,16 @@ function buildPanels() {
   });
   var dim = $('dim-others');
   if (dim) dim.addEventListener('change', function () { app.r.setDimOthers(dim.checked); });
+  // 出生点工具:敌人类型从页面注册表来(以前写死 types[0] ⇒ 永远放 jump_bird,用户反馈 ⑦ 的一半)
+  var et = $('spawn-enemy-type');
+  if (et) {
+    var reg = importEnemyTypes();
+    for (var i = 0; i < reg.length; i++) {
+      var op = document.createElement('option');
+      op.value = reg[i]; op.textContent = reg[i];
+      et.appendChild(op);
+    }
+  }
   var p1 = $('spawn-p1'), p2 = $('spawn-p2'), en = $('spawn-enemy'), cl = $('spawn-clear');
   if (p1) p1.addEventListener('click', function () { spawnAt('player', 0); });
   if (p2) p2.addEventListener('click', function () { spawnAt('player', 1); });
@@ -4869,6 +5667,24 @@ function buildPanels() {
       if (!app.map) { status('先打开一张地图'); return null; }
       return pushAndShow(clearSpawns(app.map));
     });
+  });
+  // ── 按侧复活点(`# respawn <1|2> <col> <row>`,游戏侧按半区读)──
+  // ★ 见 25_spawn.js 的 addRespawn/sideOfCell:侧 1 = 左半、侧 2 = 右半。
+  [['spawn-r1', function () { spawnRespawn(1); }],
+   ['spawn-r2', function () { spawnRespawn(2); }],
+   ['spawn-rdel', function () { deleteRespawnNear(); }],
+   ['spawn-rclear1', function () { clearRespawnSide(1); }],
+   ['spawn-rclear2', function () { clearRespawnSide(2); }]].forEach(function (pair) {
+    var el = $(pair[0]);
+    if (el) el.addEventListener('click', function () { guard(pair[0], pair[1]); });
+  });
+  // 辅助线(半区中线 + 3×3 桶)
+  var tgG = $('tg-guides');
+  if (tgG) tgG.addEventListener('click', function () {
+    this.classList.toggle('on');
+    var on = this.classList.contains('on');
+    if (app.r && app.r.setGuides) app.r.setGuides(on);
+    status(on ? '已显示标线:半区中线 + 3×3 桶(联机复活点均匀散布的对照)' : '已隐藏标线');
   });
   // ── 画布尺寸面板(规格 A10;★ resizeMap / wholeDiff / applyEntry 的 whole 分支在生产里的唯一入口)──
   // ★ 与上面四个出生点按钮同款:没打开地图时说一句话。★ 输入框里的回车也当"应用尺寸" ——
@@ -4901,65 +5717,14 @@ function buildPanels() {
       }
     });
   }
-  var bn = $('btn-new'), bd = $('btn-dup'), br = $('btn-rename'), bx = $('btn-del');
-  if (bn) bn.addEventListener('click', function () {
-    var name = window.prompt('新地图名字(不含 .cyrm)', 'new_map');
-    if (!name) return;
-    var m = createEmptyMap(name, 125, 75);       // ★ 尺寸只经这一个闸
-    app.map = m; app.name = freshName(name);
-    app.sourceFormat = 'v4';
-    undoHistory = createHistory({});
-    markDirty();                    // ★ 新建只活在内存里(还没写盘)⇒ 磁盘状态是「未保存」
-    // ★ setMap 返回的是分帧重建派生出来的 promise ⇒ 必须收口:抛在任务回调里同步 try/catch 接不住。
-    guard('新建地图', function () { return app.r.setMap(m); });
-    status('新建 ' + app.name + '(还没写盘 —— Ctrl+S 才落盘)');
-    refreshStatus(); statusLine();
-  });
-  if (bd) bd.addEventListener('click', function () {
-    if (!app.map) { status('先打开一张地图'); return; }
-    var copy = resizeMap(app.map, Core.cellsWOf(app.map), Core.cellsHOf(app.map)).map;
-    copy.name = (app.map.name || 'map') + '_copy';
-    app.map = copy;
-    app.name = freshName(copy.name);
-    app.sourceFormat = 'v4';
-    undoHistory = createHistory({});
-    markDirty();                    // ★ 同上:副本也只活在内存里(还没写盘)
-    guard('复制地图', function () { return app.r.setMap(copy); });   // ★ 同上:分帧重建的 promise
-    status('已复制为 ' + app.name + '(还没写盘)');
-    refreshStatus();
-  });
-  if (br) br.addEventListener('click', function () {
-    if (!app.map) { status('先打开一张地图'); return; }
-    var n = window.prompt('新的名字(不含 .cyrm)', app.map.name);
-    if (!n) return;
-    app.map.name = Core.sanitizeName(n);
-    app.name = app.map.name + '.cyrm';
-    markDirty();                    // ★ 改名只改内存里那份(磁盘上还是旧名字,要 Ctrl+S 才落盘)
-    status('改名为 ' + app.name + '(还要 Ctrl+S 才写盘)');
-    refreshStatus();
-  });
-  if (bx) bx.addEventListener('click', function () {
-    status('删除地图请直接在磁盘上删 maps/ 下的文件(编辑器不做删除动作 —— 这是故意的)');
-  });
-  var exp = $('btn-export');
-  if (exp) exp.addEventListener('click', showExportReport);
-  // ★★ 背景层的两个颜色槽(规格 §4.4/§4.5):①起点 ②终点 —— 两个槽是渐变的全部,只接一个的话
-  //    "渐变"永远退化成一个纯色(两端同色),而且看不出来。背景层是不透明的真彩(alpha 走辅码那一路)。
-  [['bg-color', 'rgba'], ['bg-color2', 'rgba2']].forEach(function (spec) {
-    var inp = $(spec[0]), lab = $(spec[0] + '-val');
-    if (!inp) return;
-    var m0 = /^#([0-9a-f]{6})$/i.exec(inp.value);
-    if (m0) app.st[spec[1]] = (parseInt(m0[1], 16) * 256 + 255) >>> 0;
-    inp.addEventListener('input', function () {
-      var m = /^#([0-9a-f]{6})$/i.exec(inp.value);
-      if (!m) return;
-      app.st[spec[1]] = (parseInt(m[1], 16) * 256 + 255) >>> 0;
-      if (lab) lab.textContent = inp.value;
-      statusLine();
-    });
-  });
+  // ★★ 文件级动作(新建/打开文件/打开文件夹/保存/另存为/导出/复制/重命名/删除/校验)在 ui/86_fileops.js:
+  //    它们各自都有"写盘/读盘"两半,与面板布局无关,分片放能把"面板"与"文件"分干净。
+  if (typeof installFileOps === 'function') installFileOps();
   selectToolButton();
   syncPanelForLayer();
+  syncToolOptions();
+  syncLayerIcons();
+  refreshRespawnCount();
   statusLine();
 }
 
@@ -4989,8 +5754,60 @@ function syncPanelForLayer() {
     if (titles[i].textContent === '辅码') titles[i].style.display = isBg ? 'none' : '';
   }
   // ★ 渐变只在背景层可用(纹理层没有颜色可插值);其余工具照旧。
-  var g = document.querySelector('#toolbar .tool[data-tool="gradient"]');
+  var g = document.querySelector('#tools .tool[data-tool="gradient"]');
   if (g) g.style.opacity = isBg ? '1' : '0.45';
+}
+
+// 中性档 = 完全按原图(不染色)。用它把"勾了只改辅码但没调档位 ⇒ 落笔没有任何可见变化"说清楚。
+function isNeutralDesc(d) {
+  return Core.hueOf(d) === 4 && Core.brightOf(d) === 4 && Core.satOf(d) === 4 && Core.alphaOf(d) === 7;
+}
+
+// 视图中心那一格(不猜鼠标位置:按下按钮时鼠标在按钮上)。出生点与复活点共用这一条口径。
+function viewCenterCell() {
+  var v = app.r.view();
+  return {
+    cx: Math.round((v.x + app.canvas.width / v.zoom / 2) / Core.SUB_PER_CELL),
+    cy: Math.round((v.y + app.canvas.height / v.zoom / 2) / Core.SUB_PER_CELL),
+  };
+}
+function spawnRespawn(side) {
+  if (!app.map) { status('先打开一张地图'); return; }
+  var c = viewCenterCell();
+  var out = addRespawn(app.map, side, c.cx, c.cy);
+  pushAndShow(out.diff);
+  var cnt = respawnCounts(app.map);
+  var own = sideOfCell(app.map, out.x) === side;
+  status('侧 ' + side + ' 复活点放到 (' + out.x + ',' + out.y + ')' +
+         (own ? '' : '(注意:这个点在另一半区 —— 游戏侧按半区读,校验会报出来)') +
+         ';现在 侧1 ' + cnt[1] + ' 个 / 侧2 ' + cnt[2] + ' 个');
+  statusLine();
+}
+function deleteRespawnNear() {
+  if (!app.map) { status('先打开一张地图'); return; }
+  var c = viewCenterCell();
+  var side = sideOfCell(app.map, c.cx);
+  var out = removeRespawnNear(app.map, side, c.cx, c.cy);
+  if (!out) { status('侧 ' + side + ' 没有任何复活点可删'); return; }
+  pushAndShow(out.diff);
+  status('已删掉侧 ' + side + ' 离视图中心最近的复活点 (' + out.at.x + ',' + out.at.y + ')');
+  statusLine();
+}
+function clearRespawnSide(side) {
+  if (!app.map) { status('先打开一张地图'); return; }
+  var diff = clearRespawns(app.map, side);
+  if (!diff) { status('侧 ' + side + ' 本来就没有复活点'); return; }
+  pushAndShow(diff);
+  status('已清空侧 ' + side + ' 的复活点');
+  statusLine();
+}
+// 面板上的计数(每侧与 "≥5" 的对照 —— 游戏侧联机要求每侧 ≥5)
+function refreshRespawnCount() {
+  var el = $('respawn-count');
+  if (!el) return;
+  if (!app.map) { el.textContent = '侧1 0 · 侧2 0'; return; }
+  var c = respawnCounts(app.map);
+  el.textContent = '侧1 ' + c[1] + ' · 侧2 ' + c[2] + '(联机建议每侧 ≥5)';
 }
 
 function spawnAt(kind, playerIndex) {
@@ -5020,8 +5837,11 @@ function spawnAt(kind, playerIndex) {
     status('P' + (playerIndex + 1) + ' 放到 (' + px + ',' + py + ')');
     return;
   }
-  pushAndShow(addSpawn(app.map, 'enemy', cx, cy, types[0] || 'fly_bird'));
-  status('敌人放到 (' + cx + ',' + cy + ')');
+  // ★ 类型取右栏下拉(以前写死 types[0],永远放 jump_bird);注册表空时回落旧行为。
+  var etype = toolOption('spawn-enemy-type', types[0] || 'fly_bird');
+  if (types.length && types.indexOf(etype) < 0) etype = types[0] || 'fly_bird';
+  pushAndShow(addSpawn(app.map, 'enemy', cx, cy, etype));
+  status('敌人(' + etype + ')放到 (' + cx + ',' + cy + ')');
 }
 
 // ── 图集(结构图一次装进来)──
@@ -5044,49 +5864,697 @@ function loadAtlas() {
 }
 </script>
 <script>
-/* == ui/90_open.js == */
-// ui/90_open.js —— 打开地图、库列表、写回服务端。
+/* == ui/86_fileops.js == */
+// ui/86_fileops.js —— 文件级动作:新建 / 打开文件 / 打开文件夹 / 保存 / 另存为 / 导出 / 复制 / 重命名 / 删除 / 校验。
+// ★ 顶层只放声明,一个 DOM 都不碰(node 冒烟会加载本分片);所有绑定发生在 installFileOps()。
+// ★ 对话框一律页内生成(createElement 挂 body):window.prompt/alert 在自动化下会被自动取消或卡住页面,
+//   而用户要的是"真的",不是"看起来像真的"。
 
-function openMap(name) {
-  status('打开 ' + name + ' …');
-  return fetch('/api/map?p=' + encodeURIComponent(name))
-    .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
-    .then(function (buf) {
-      var bytes = new Uint8Array(buf);
-      return mapFromBytes(name, bytes).then(function (out) {
-        return { out: out, bytes: bytes };
-      });
-    })
-    .then(function (got) {
-      var out = got.out;
-      // ★★★ app.raw 只能在这里认领(此刻解码已经成功):写在上一步("拿到字节"就写)的话,一次失败的打开
-      //    会把那个失败文件的字节留在 app.raw 里,而 app.map / app.name / app.sourceFormat 仍是上一张图的 ⇒
-      //    ① saveCurrent 的原文备份取的就是 app.raw(A.v3.bak 里装的是 B 的字节);② offerDraft 的 sameBytes
-      //    拿草稿与另一个文件比字节,那道闸等于不存在。两个读者当场就错,而两处都不报错。
-      app.raw = got.bytes;
-      app.map = out.map; app.name = name; app.sourceFormat = out.sourceFormat;
-      dirty = false;                 // ★★ 打开 = 屏幕上这份与磁盘上那份同源(见 dirty 那段)
-      // ★★ 另两笔账也要一起归位:draftSavedRev 推到当前 rev(否则上一张图留下的防抖定时器会给这张一笔都没画过的图写出一条脏草稿),lastAutoSaveAt 归零。
-      draftSavedRev = draftRev;
-      lastAutoSaveAt = 0;
-      return Promise.resolve(app.r.setMap(app.map)).then(function () {
-        refreshStatus();
-        status('已打开 ' + name + '(' + out.sourceFormat + ')');
-      });
-    });
+// 名字口径必须与服务器同一套(browser 里不能 require servers 的文件):server/map_names.js 的 MAP_NAME_RE。
+var FILEOPS_MAX_MAP_NAME_LEN = 64;
+var FILEOPS_MAP_NAME_RE = /^[A-Za-z0-9_\-]+(?:\.cyrm|\.v3\.bak)$/;
+
+function isValidMapName(name) {
+  if (typeof name !== 'string') return false;
+  if (name.length === 0 || name.length > FILEOPS_MAX_MAP_NAME_LEN) return false;
+  if (name.indexOf('\0') >= 0) return false;
+  return FILEOPS_MAP_NAME_RE.test(name);
+}
+function mapNameProblem(name) {
+  if (name === null || name === undefined || name === '') return '名字是空的';
+  if (typeof name !== 'string') return '名字必须是字符串';
+  if (name.length > FILEOPS_MAX_MAP_NAME_LEN) return '名字太长(上限 ' + FILEOPS_MAX_MAP_NAME_LEN + ' 字符)';
+  if (!isValidMapName(name)) return '只接受裸文件名,形如 ' + FILEOPS_MAP_NAME_RE.source + '(不带目录、不带其它后缀)';
+  return '';
+}
+// 用户在对话框里输的是"名字",不是文件名:没后缀就补 .cyrm,绝不把用户输入直接当路径。
+function normalizeMapFileName(raw) {
+  var s = String(raw == null ? '' : raw).trim();
+  if (!s) return '';
+  if (/\.v3\.bak$/i.test(s) || /\.cyrm$/i.test(s)) return s;
+  return Core.sanitizeName(s) + '.cyrm';
 }
 
-// ★★ PUT 必须显式带 Content-Type: application/json(页面上唯一会改磁盘的那个调用):服务器的写端点
-//    只收这一个类型,别的类型一律 415 —— 不写 headers 时浏览器按 body 的类型推,new Blob([bytes]) 推出来的是 application/octet-stream。
-function putMapBytes(name, bytes) {
+// ── 可注入的 UI 面 ──
+// 测试替身靠这几个钩子驱动真流程,不必造一套真 DOM(与 render 的 backend 注入同一手法)。
+var fileOpsAsk = null;          // function(spec) -> Promise<obj|null>
+var fileOpsPick = null;         // function() -> Promise<{name, bytes}|null>
+var fileOpsReportSink = null;   // function(title, lines, ok) -> any
+
+function askForm(spec) {
+  if (typeof fileOpsAsk === 'function') return fileOpsAsk(spec);
+  return defaultAskDialog(spec);
+}
+function pickFile() {
+  if (typeof fileOpsPick === 'function') return fileOpsPick();
+  return pickFileByInput();
+}
+function showReport(title, lines, ok) {
+  if (typeof fileOpsReportSink === 'function') return fileOpsReportSink(title, lines, ok);
+  return defaultReportDialog(title, lines, ok);
+}
+
+// ── 页内对话框(真 DOM)──
+function dialogParts() {
+  if (typeof document === 'undefined' || !document || typeof document.createElement !== 'function') return null;
+  var host = document.body || document.documentElement;
+  if (!host || typeof host.appendChild !== 'function') return null;
+  return { doc: document, host: host };
+}
+function fileOpsEl(tag, cls) {
+  var el = document.createElement(tag);
+  if (cls) el.className = cls;
+  return el;
+}
+function defaultAskDialog(spec) {
+  var d = dialogParts();
+  if (!d) return Promise.resolve(null);
+  spec = spec || {};
+  return new Promise(function (resolve) {
+    var overlay = fileOpsEl('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:9999';
+    var card = fileOpsEl('div');
+    card.style.cssText = 'min-width:340px;max-width:560px;background:#1f2329;color:#d7dde5;border:1px solid #343b45;border-radius:6px;padding:14px 16px;font-size:13px;box-shadow:0 8px 30px rgba(0,0,0,.5)';
+    var head = fileOpsEl('div');
+    head.textContent = spec.title || '输入';
+    head.style.cssText = 'font-weight:bold;margin-bottom:10px;color:#54a0ff';
+    card.appendChild(head);
+    var inputs = [];
+    (spec.fields || []).forEach(function (f) {
+      var row = fileOpsEl('label');
+      row.style.cssText = 'display:flex;gap:8px;align-items:center;margin:6px 0';
+      var lab = fileOpsEl('span');
+      lab.textContent = f.label || f.name;
+      lab.style.cssText = 'width:130px;color:#8b94a1';
+      var inp = fileOpsEl('input');
+      inp.type = f.type || 'text';
+      inp.value = f.value === undefined || f.value === null ? '' : String(f.value);
+      if (f.min !== undefined) inp.min = String(f.min);
+      if (f.max !== undefined) inp.max = String(f.max);
+      inp.style.cssText = 'flex:1;background:#262b32;color:#d7dde5;border:1px solid #343b45;border-radius:4px;padding:4px 6px';
+      row.appendChild(lab); row.appendChild(inp); card.appendChild(row);
+      inputs.push({ name: f.name, el: inp });
+    });
+    if (spec.hint) {
+      var hint = fileOpsEl('div');
+      hint.textContent = spec.hint;
+      hint.style.cssText = 'color:#8b94a1;margin:8px 0 2px;line-height:1.6';
+      card.appendChild(hint);
+    }
+    var btns = fileOpsEl('div');
+    btns.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:12px';
+    var cancel = fileOpsEl('button');
+    cancel.textContent = spec.cancelText || '取消';
+    var okBtn = fileOpsEl('button');
+    okBtn.textContent = spec.okText || '确定';
+    okBtn.style.cssText = 'border-color:#54a0ff;background:#243040';
+    btns.appendChild(cancel); btns.appendChild(okBtn); card.appendChild(btns);
+    overlay.appendChild(card);
+    d.host.appendChild(overlay);
+    var settled = false;
+    function close(val) {
+      if (settled) return;
+      settled = true;
+      if (overlay.remove) overlay.remove();
+      else if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+      resolve(val);
+    }
+    function submit() {
+      var out = {};
+      inputs.forEach(function (it) { out[it.name] = it.el.value; });
+      close(out);
+    }
+    cancel.addEventListener('click', function () { close(null); });
+    okBtn.addEventListener('click', submit);
+    overlay.addEventListener('click', function (ev) { if (ev.target === overlay) close(null); });
+    overlay.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Escape') { ev.preventDefault(); close(null); }
+      else if (ev.key === 'Enter') { ev.preventDefault(); submit(); }
+    });
+    if (inputs.length && inputs[0].el.focus) inputs[0].el.focus();
+  });
+}
+function defaultReportDialog(title, lines, ok) {
+  var d = dialogParts();
+  var text = String(title || '报告') + '\n\n' + (lines || []).join('\n');
+  if (!d) {
+    if (typeof console !== 'undefined') console.log(text);
+    return null;
+  }
+  var overlay = fileOpsEl('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:9999';
+  var card = fileOpsEl('div');
+  card.style.cssText = 'min-width:360px;max-width:640px;max-height:70vh;overflow:auto;background:#1f2329;color:#d7dde5;border:1px solid #343b45;border-radius:6px;padding:14px 16px;font-size:13px';
+  var head = fileOpsEl('div');
+  head.textContent = String(title || '报告') + (ok === false ? ' —— 有 error' : '');
+  head.style.cssText = 'font-weight:bold;margin-bottom:10px;color:' + (ok === false ? '#e06a5a' : '#54a0ff');
+  var pre = fileOpsEl('pre');
+  pre.textContent = (lines || []).join('\n');
+  pre.style.cssText = 'white-space:pre-wrap;line-height:1.6;margin:0 0 12px;color:#d7dde5';
+  var closeBtn = fileOpsEl('button');
+  closeBtn.textContent = '关闭';
+  closeBtn.addEventListener('click', function () {
+    if (overlay.remove) overlay.remove(); else if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
+  });
+  card.appendChild(head); card.appendChild(pre); card.appendChild(closeBtn);
+  overlay.appendChild(card);
+  d.host.appendChild(overlay);
+  return null;
+}
+
+// ── 空状态 ──
+function clearCanvasPixels() {
+  var cv = app.canvas;
+  if (!cv || typeof cv.width !== 'number') return;
+  try { cv.width = cv.width; } catch (e) { /* 只清屏:失败不影响状态归位 */ }
+}
+function setEmptyStatusText() {
+  var set = function (id, txt) { var el = $(id); if (el) el.textContent = txt; };
+  set('st-name', '(未打开)'); set('st-size', ''); set('st-valid', '');
+  set('st-sel', ''); set('st-undo', ''); set('st-save', '');
+}
+// ★★ `hidden` 属性管不住它:editor.html 的 `#empty-hint` 带 `display:flex`(id 选择器优先级高于 UA 的
+//    `[hidden]{display:none}`)⇒ 只设 hidden 的话空状态永远挂在画布上(实测:打开地图后提示还浮着)。
+//    显示器上就两条路:显式 `style.display`。
+function showEmptyState(keepStatus) {
+  var hint = $('empty-hint');
+  if (hint) {
+    hint.hidden = false;
+    hint.style.display = 'flex';
+    hint.style.pointerEvents = 'auto';   // 没图时挡住画布,别让点击落到 null map 上
+  }
+  clearCanvasPixels();
+  setEmptyStatusText();
+  if (keepStatus !== true) status('还没有打开地图 —— 顶部「新建」/「打开文件…」/「打开文件夹…」');
+}
+function hideEmptyHint() {
+  var hint = $('empty-hint');
+  if (hint) {
+    hint.hidden = true;
+    hint.style.display = 'none';
+    hint.style.pointerEvents = 'none';
+  }
+}
+function emptyHintShown() {
+  var hint = $('empty-hint');
+  return !!(hint && hint.style && hint.style.display !== 'none');
+}
+
+// ── 库/后端显示条 ──
+function refreshBackendLabel() {
+  var el = $('lib-backend');
+  if (!el) return;
+  el.textContent = fileOpsStandalone() ? '单文件版:本地文件由垫片管理' : fileOpsBackendLabel();
+  if (fileOpsStandalone() || fileOpsBackendKind() !== FILEOPS_BACKEND_DIR) return;
+  if (typeof document === 'undefined' || !document || typeof document.createElement !== 'function') return;
+  var back = document.createElement('button');
+  back.className = 'lib-backend-reset';
+  back.textContent = '切回服务器 maps/';
+  back.style.cssText = 'margin-left:8px;padding:1px 6px;font-size:12px';
+  back.addEventListener('click', function () { guard('切回服务器库', useServerBackendFlow); });
+  if (el.appendChild) el.appendChild(back);
+}
+// 目录后端 → 服务器库:列表/读/写一起换回来(只换列表不换写盘 = 下一次保存写到看不见的地方)。
+function useServerBackendFlow() {
+  setFileOpsBackend(FILEOPS_BACKEND_SERVER, null);
+  refreshBackendLabel();
+  status('已切回服务器 maps/ —— 库列表与保存都读写它');
+  return refreshLibrary();
+}
+
+// ── 文件动作 ──
+function uniqueCopyName(rows, base) {
+  var has = {};
+  (rows || []).forEach(function (r) { has[r.name] = true; });
+  var stem = Core.sanitizeName(base) + '_copy';
+  var name = stem + '.cyrm', n = 2;
+  while (has[name]) { name = stem + n + '.cyrm'; n++; if (n > 999) break; }
+  return name;
+}
+
+function newMapFlow() {
+  var wDef = parseInt(($('size-w') || {}).value, 10) || 125;
+  var hDef = parseInt(($('size-h') || {}).value, 10) || 75;
+  return askForm({
+    title: '新建地图', okText: '创建并写盘',
+    hint: '名字只接受 [A-Za-z0-9_-];创建后立即写进当前库(' + fileOpsBackendLabel() + ')。',
+    fields: [
+      { name: 'name', label: '名字(不含 .cyrm)', value: 'new_map' },
+      { name: 'w', label: '宽(格)', type: 'number', value: String(wDef), min: 1, max: 400 },
+      { name: 'h', label: '高(格)', type: 'number', value: String(hDef), min: 1, max: 300 },
+    ],
+  }).then(function (ans) {
+    if (!ans) return null;
+    var full = normalizeMapFileName(ans.name);
+    var bad = mapNameProblem(full);
+    if (bad) { status('名字不能用:' + bad); return null; }
+    if (isBackupName(full)) { status('不能新建叫「' + full + '」的地图(那是原文备份的名字)'); return null; }
+    var w = parseInt(ans.w, 10), h = parseInt(ans.h, 10);
+    if (!isFinite(w) || !isFinite(h)) { status('宽高必须是数字(实得 ' + ans.w + ' × ' + ans.h + ')'); return null; }
+    return listLibraryMaps().then(function (rows) {
+      var dup = (rows || []).some(function (r) { return r.name === full; });
+      if (dup) { status('同名地图已存在:' + full + ' —— 换一个名字,或用「打开文件…」'); return null; }
+      var map = createEmptyMap(nameFromFile(full), w, h);
+      var cw = Core.cellsWOf(map), ch = Core.cellsHOf(map);
+      return encodeForWrite(map).then(function (bytes) {
+        return putMapBytes(full, bytes).then(function () {
+          return setMapFromBytes(full, bytes, 'v4').then(function () {
+            return refreshLibrary().then(function () {
+              status('已新建并写盘 ' + full + '(' + cw + '×' + ch + ' 格)');
+            });
+          });
+        });
+      });
+    });
+  });
+}
+
+// 「打开文件…」= 读本地 .cyrm 进来;★ 不伪装成"已在库里":它还没写进任何库,Ctrl+S 才会写。
+function openFileFlow() {
+  return Promise.resolve(pickFile()).then(function (picked) {
+    if (!picked || !picked.bytes) return null;
+    var bytes = picked.bytes;
+    return setMapFromBytes(picked.name, bytes, null, { dirty: true }).then(function (out) {
+      return listLibraryMaps().then(function (rows) {
+        var same = (rows || []).some(function (r) { return r.name === picked.name; });
+        status('已读入 ' + picked.name + '(' + out.sourceFormat + ')' +
+               (same ? ' —— 当前库里已有同名文件,保存会覆盖同名文件'
+                     : ' —— 还没写进任何库,Ctrl+S 会写进' + fileOpsBackendLabel()));
+        return out;
+      });
+    }).catch(function (e) {
+      status('读入失败:' + msgOf(e) + '(文件可能不是 .cyrm / 已损坏)');
+      return null;
+    });
+  });
+}
+function pickFileByInput() {
+  var d = dialogParts();
+  if (!d) return Promise.resolve(null);
+  return new Promise(function (resolve) {
+    var inp = d.doc.createElement('input');
+    inp.type = 'file';
+    inp.accept = '.cyrm,application/octet-stream';
+    inp.style.display = 'none';
+    d.host.appendChild(inp);
+    var done = false;
+    function finish(v) {
+      if (done) return;
+      done = true;
+      if (inp.remove) inp.remove(); else if (inp.parentNode) inp.parentNode.removeChild(inp);
+      resolve(v);
+    }
+    inp.addEventListener('change', function () {
+      var f = inp.files && inp.files[0];
+      if (!f) return finish(null);
+      f.arrayBuffer().then(function (buf) {
+        finish({ name: f.name, bytes: new Uint8Array(buf) });
+      }, function () { finish(null); });
+    });
+    inp.click();
+  });
+}
+
+function openFolderFlow() {
+  if (fileOpsStandalone()) {
+    status('单文件版:本地目录由垫片管理,请用左侧「本地目录…」');
+    return Promise.resolve(null);
+  }
+  if (typeof window === 'undefined' || !window || typeof window.showDirectoryPicker !== 'function') {
+    status('这个浏览器没有目录访问能力(File System Access)—— 请用「打开文件…」;保存会写到' + fileOpsBackendLabel());
+    return Promise.resolve(null);
+  }
+  return Promise.resolve(window.showDirectoryPicker({ mode: 'readwrite' })).then(function (handle) {
+    setFileOpsBackend(FILEOPS_BACKEND_DIR, handle);
+    refreshBackendLabel();
+    status('已切到本地目录:' + handle.name + ' —— 库列表与保存都读写这个目录');
+    return refreshLibrary();
+  }).catch(function (e) {
+    var name = (e && e.name) ? String(e.name) : '';
+    if (name === 'AbortError' || name === 'NotAllowedError') { status('已取消(库没换)'); return null; }
+    status('打开目录失败:' + msgOf(e) + ' —— 可以用「打开文件…」');
+    return null;
+  });
+}
+
+function duplicateMapFlow() {
+  if (!app.map) { status('先打开一张地图'); return Promise.resolve(null); }
+  var base = app.map.name || nameFromFile(app.name) || 'map';
+  return listLibraryMaps().then(function (rows) {
+    var name = uniqueCopyName(rows, base);
+    return encodeForWrite(app.map).then(function (bytes) {
+      return putMapBytes(name, bytes).then(function () {
+        return setMapFromBytes(name, bytes, 'v4').then(function () {
+          return refreshLibrary().then(function () { status('已复制为 ' + name); });
+        });
+      });
+    });
+  });
+}
+
+function renameMapFlow() {
+  if (!app.map || !app.name) { status('先打开一张地图'); return Promise.resolve(null); }
+  var oldName = app.name;
+  return askForm({
+    title: '重命名 ' + oldName, okText: '改名',
+    hint: '改的是磁盘上的文件名(库的身份)。目标已存在会被拒(409),不覆盖。',
+    fields: [{ name: 'name', label: '新名字(不含 .cyrm)', value: nameFromFile(oldName) }],
+  }).then(function (ans) {
+    if (!ans) return null;
+    var next = normalizeMapFileName(ans.name);
+    var bad = mapNameProblem(next);
+    if (bad) { status('名字不能用:' + bad); return null; }
+    if (isBackupName(next)) { status('不能改成备份名的形式(' + next + ')'); return null; }
+    if (next === oldName) { status('名字没变'); return null; }
+    return renameMapFile(oldName, next).then(function () {
+      app.name = next;
+      if (app.map) app.map.name = nameFromFile(next);
+      return refreshLibrary().then(function () {
+        refreshStatus();
+        status('已改名为 ' + next);
+      });
+    });
+  });
+}
+
+function deleteMapFlow() {
+  if (!app.map || !app.name) { status('先打开一张地图'); return Promise.resolve(null); }
+  var name = app.name;
+  var msg = '删除 ' + name + '?不可恢复' +
+            (fileOpsBackendKind() === FILEOPS_BACKEND_DIR ? '(本地目录里的文件)' : '(maps/ 在 git 里,可用 git restore 找回)');
+  var ok = (typeof window !== 'undefined' && typeof window.confirm === 'function') ? window.confirm(msg) : false;
+  if (!ok) { status('已取消删除'); return Promise.resolve(null); }
+  return deleteMapFile(name).then(function () {
+    return closeMap().then(function () {
+      return refreshLibrary().then(function () { status('已删除 ' + name); });
+    });
+  });
+}
+
+function saveAsFlow() {
+  if (!app.map) { status('先打开一张地图'); return Promise.resolve(null); }
+  return askForm({
+    title: '另存为', okText: '保存',
+    fields: [{ name: 'name', label: '新名字(不含 .cyrm)',
+               value: nameFromFile(app.name || app.map.name || 'map') }],
+  }).then(function (ans) {
+    if (!ans) return null;
+    var next = normalizeMapFileName(ans.name);
+    var bad = mapNameProblem(next);
+    if (bad) { status('名字不能用:' + bad); return null; }
+    return saveCurrent(true, next);
+  });
+}
+
+function exportDownloadFlow() {
+  if (!app.map) { status('先打开一张地图'); return Promise.resolve(null); }
+  var name = normalizeMapFileName(app.name || app.map.name || 'map');
+  return encodeForWrite(app.map).then(function (bytes) {
+    if (typeof document === 'undefined' || !document || typeof URL === 'undefined' || !URL.createObjectURL) {
+      status('当前环境不能下载(已编码 ' + bytes.length + ' 字节)');
+      return null;
+    }
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
+    a.download = name;
+    (document.body || document.documentElement).appendChild(a);
+    a.click();
+    if (a.remove) a.remove();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 0);
+    status('已导出下载 ' + name + '(' + bytes.length + ' 字节;没有写磁盘)');
+    return { name: name, size: bytes.length };
+  });
+}
+
+// 校验:只报告,不阻止保存(规格 §4.7)。★ 真的跑一遍 encodeForWrite —— 只过 validateMap 证明不了"能编码"。
+function checkMapFlow() {
+  if (!app.map) { status('先打开一张地图'); return Promise.resolve(null); }
+  var rep = Core.validateMap(app.map);
+  var lines = validateLines(rep);
+  if (!lines.length) lines = ['校验通过:没有发现问题'];
+  var ok = rep.errors.length === 0;
+  var np = mapNameProblem(app.name || '');
+  lines.push(np ? ('✖ 文件名不能用:' + np) : ('文件名:' + app.name + ' ✓'));
+  if (np) ok = false;
+  return encodeForWrite(app.map).then(function (bytes) {
+    lines.push('编码通过:' + bytes.length + ' 字节' +
+               (bytes[0] === 0x43 && bytes[1] === 0x59 ? '(CYRM v' + bytes[4] + ')' : '(魔数异常!)'));
+    return { lines: lines, ok: ok };
+  }, function (e) {
+    lines.push('✖ 编码失败(保存/导出会被拒):' + msgOf(e));
+    return { lines: lines, ok: false };
+  }).then(function (out) {
+    out.lines.push('尺寸 ' + Core.cellsWOf(app.map) + '×' + Core.cellsHOf(app.map) + ' 格 · 出生点 ' +
+                   app.map.players.length + ' · 敌人 ' + app.map.enemies.length +
+                   ' · 库 ' + fileOpsBackendLabel());
+    showReport('校验 ' + (app.name || '(没名字)'), out.lines, out.ok);
+    status(out.ok ? '校验:没有 error' : '校验:有 error(保存/导出会被拒)');
+    return out;
+  });
+}
+
+// ── 绑定 ──
+// ★ 每个元素只绑一次(buildPanels 在测试里会被跑多遍;真 DOM 上重复绑 = 一次点击发两遍请求)。
+function fileOpsBind(id, label, fn) {
+  var el = $(id);
+  if (!el || typeof el.addEventListener !== 'function') return null;
+  if (el.__fileOpsBound) return el;
+  el.__fileOpsBound = true;
+  el.addEventListener('click', function () { guard(label, fn); });
+  return el;
+}
+function installFileOps() {
+  fileOpsBind('btn-new', '新建地图', newMapFlow);
+  fileOpsBind('btn-open-folder', '打开文件夹', openFolderFlow);
+  fileOpsBind('btn-open-file', '打开文件', openFileFlow);
+  fileOpsBind('btn-save', '保存', function () { return saveCurrent(false); });
+  fileOpsBind('btn-save-as', '另存为', saveAsFlow);
+  fileOpsBind('btn-export', '导出', exportDownloadFlow);
+  fileOpsBind('btn-check', '校验', checkMapFlow);
+  fileOpsBind('btn-dup', '复制地图', duplicateMapFlow);
+  fileOpsBind('btn-rename', '重命名', renameMapFlow);
+  fileOpsBind('btn-del', '删除地图', deleteMapFlow);
+  refreshBackendLabel();
+  if (app.map) hideEmptyHint();
+  return true;
+}
+</script>
+<script>
+/* == ui/90_open.js == */
+// ui/90_open.js —— 打开地图、库列表、传输后端(服务器 maps/ / 本地目录)、保存出口。
+
+// ── 传输后端 ──
+// 同一时刻只有一个后端:server(/api/*,库 = 服务器的 maps/)/ dir(File System Access 目录句柄)。
+// 切换入口只有 setFileOpsBackend(86_fileops.js 的「打开文件夹…」);列表、读、写、删、改名都问它 ——
+// 否则"列表来自 A、保存写到 B"是静默的,而用户以为自己在改同一个库。
+var FILEOPS_BACKEND_SERVER = 'server';
+var FILEOPS_BACKEND_DIR = 'dir';
+var fileOpsBackend = { kind: FILEOPS_BACKEND_SERVER, handle: null, label: '服务器 maps/' };
+
+function fileOpsBackendKind() { return fileOpsBackend.kind; }
+function fileOpsDirHandle() { return fileOpsBackend.handle; }
+function fileOpsBackendLabel() { return fileOpsBackend.label; }
+// 纯状态切换(不碰 DOM):#lib-backend 的文案由 86_fileops 的 refreshBackendLabel 写。
+function setFileOpsBackend(kind, handle) {
+  if (kind !== FILEOPS_BACKEND_SERVER && kind !== FILEOPS_BACKEND_DIR) {
+    throw new Error('未知的传输后端:' + JSON.stringify(kind));
+  }
+  if (kind === FILEOPS_BACKEND_DIR && !handle) throw new Error('本地目录后端必须给目录句柄');
+  fileOpsBackend = {
+    kind: kind, handle: handle || null,
+    label: kind === FILEOPS_BACKEND_DIR
+      ? ('本地目录:' + String((handle && handle.name) || '(未命名)'))
+      : '服务器 maps/',
+  };
+  return fileOpsBackend;
+}
+// 单文件版(dist/cyrm-editor.html)的文件后端由 standalone_shim.js 接管:这里让位,不写第二套。
+function fileOpsStandalone() { return globalThis.__CYRM_STANDALONE__ === true; }
+
+// ── HTTP 失败要带原因 ──
+// 服务器失败时 body 是**人话**(api.js / map_ops.js 都 sendText 一段原因)。只抛 `HTTP 400` 的话,
+// 用户以为是名字写错,实际可能是 409 目标已存在 / 415 内容类型 / 404 服务端还没实现。
+function readErrorBody(r) {
+  if (!r || typeof r.text !== 'function') return Promise.resolve('');
+  return r.text().then(function (t) { return String(t == null ? '' : t).trim(); },
+                       function () { return ''; });
+}
+function httpError(status, body) {
+  return new Error('HTTP ' + status + (body ? ':' + body : ''));
+}
+function jsonOkOrThrow(r, what) {
+  if (r && r.ok) return (typeof r.json === 'function') ? r.json() : Promise.resolve({});
+  return readErrorBody(r).then(function (body) { throw new Error(what + '失败:' + msgOf(httpError(r ? r.status : 0, body))); });
+}
+
+// ── 服务器后端(/api/*)──
+function serverListMaps() {
+  return fetch('/api/maps').then(function (r) { return jsonOkOrThrow(r, '列库'); })
+    .then(function (data) { return (data && data.maps) || []; });
+}
+function serverReadMapBytes(name) {
+  return fetch('/api/map?p=' + encodeURIComponent(name)).then(function (r) {
+    if (r.ok) return r.arrayBuffer();
+    return readErrorBody(r).then(function (body) { throw httpError(r.status, body); });
+  }).then(function (buf) { return new Uint8Array(buf); });
+}
+// ★★ PUT 必须显式带 Content-Type: application/json(服务器的写闸只收这一个类型,别的 415);
+//    不写时浏览器按 Blob 的类型推,推出来的是 application/octet-stream。
+function serverPutMapBytes(name, bytes) {
   return fetch('/api/map?p=' + encodeURIComponent(name), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: new Blob([bytes]),
-  }).then(function (r) {
-    if (!r.ok) throw new Error('HTTP ' + r.status + (r.status === 415 ? '(内容类型不对)' : ''));
-    return r.json();
+  }).then(function (r) { return jsonOkOrThrow(r, '写盘'); });
+}
+function serverDeleteMapFile(name) {
+  return fetch('/api/map?p=' + encodeURIComponent(name), {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+  }).then(function (r) { return jsonOkOrThrow(r, '删除'); });
+}
+function serverRenameMapFile(from, to) {
+  return fetch('/api/map/rename?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+  }).then(function (r) { return jsonOkOrThrow(r, '重命名'); });
+}
+
+// ── 本地目录后端(File System Access 目录句柄)──
+// ★ 入口/迭代器都是 promise 形态(不用 async generator):还要兼容不支持 for await 的环境。
+function dirListMaps(dir) {
+  var rows = [];
+  if (!dir || typeof dir.entries !== 'function') return Promise.resolve(rows);
+  var it = dir.entries();
+  function step() {
+    return it.next().then(function (r) {
+      if (r.done) {
+        rows.sort(function (a, b) { return a.name < b.name ? -1 : 1; });
+        return rows;
+      }
+      var entry = r.value;
+      if (entry[1].kind !== 'file' || !/\.cyrm$/i.test(entry[0])) return step();
+      return entry[1].getFile().then(function (f) {
+        rows.push({ name: entry[0], size: f.size, mtime: f.lastModified });
+        return step();
+      }, function () { return step(); });
+    });
+  }
+  return step();
+}
+function dirReadMapBytes(dir, name) {
+  return dir.getFileHandle(name).then(function (h) { return h.getFile(); },
+                                      function () { throw new Error('本地目录里没有 ' + name); })
+    .then(function (f) { return f.arrayBuffer(); })
+    .then(function (buf) { return new Uint8Array(buf); });
+}
+function dirPutMapBytes(dir, name, bytes) {
+  return dir.getFileHandle(name, { create: true })
+    .then(function (h) { return h.createWritable(); })
+    .then(function (w) { return w.write(bytes).then(function () { return w.close(); }); })
+    .then(function () { return { name: name, size: bytes.length }; });
+}
+function dirDeleteMapFile(dir, name) {
+  return Promise.resolve(dir.removeEntry(name)).then(function () { return { ok: true, deleted: name }; });
+}
+// FSA 没有 rename:同目录下"读旧 → 写新 → 删旧"。★ 两步之间失败会留下两份(新已写、旧未删),
+// 所以删旧失败要把"新名字已经存在"说出来 —— 不能假装整件事没发生。
+function dirRenameMapFile(dir, from, to) {
+  return dirReadMapBytes(dir, from).then(function (bytes) {
+    return dirPutMapBytes(dir, to, bytes).then(function (out) {
+      return dirDeleteMapFile(dir, from).then(function () { return { ok: true, name: out.name }; },
+        function (e) {
+          throw new Error('已写成 ' + to + ',但删不掉旧文件 ' + from + '(' + msgOf(e) +
+                          ') —— 现在目录里有两份,请手动删掉旧的');
+        });
+    });
   });
+}
+
+// ── 统一的库/读写/删/改名出口(按当前后端分派)──
+function listLibraryMaps() {
+  return fileOpsBackend.kind === FILEOPS_BACKEND_DIR
+    ? dirListMaps(fileOpsBackend.handle) : serverListMaps();
+}
+function readMapBytes(name) {
+  return fileOpsBackend.kind === FILEOPS_BACKEND_DIR
+    ? dirReadMapBytes(fileOpsBackend.handle, name) : serverReadMapBytes(name);
+}
+function putMapBytes(name, bytes) {
+  return fileOpsBackend.kind === FILEOPS_BACKEND_DIR
+    ? dirPutMapBytes(fileOpsBackend.handle, name, bytes) : serverPutMapBytes(name, bytes);
+}
+function deleteMapFile(name) {
+  return fileOpsBackend.kind === FILEOPS_BACKEND_DIR
+    ? dirDeleteMapFile(fileOpsBackend.handle, name) : serverDeleteMapFile(name);
+}
+function renameMapFile(from, to) {
+  return fileOpsBackend.kind === FILEOPS_BACKEND_DIR
+    ? dirRenameMapFile(fileOpsBackend.handle, from, to) : serverRenameMapFile(from, to);
+}
+
+// ── 打开 ──
+function openMap(name) {
+  status('打开 ' + name + ' …');
+  return readMapBytes(name).then(function (bytes) {
+    return mapFromBytes(name, bytes).then(function (out) { return { out: out, bytes: bytes }; });
+  }).then(function (got) {
+    var out = got.out;
+    // ★★★ app.raw 只能在这里认领(此刻解码已经成功):写在"拿到字节"那一步的话,一次失败的打开
+    //    会把失败文件的字节留在 app.raw,而 app.map/app.name 仍是上一张图 ⇒ 原文备份、草稿字节闸全错位。
+    app.raw = got.bytes;
+    app.map = out.map; app.name = name; app.sourceFormat = out.sourceFormat;
+    dirty = false;                 // 打开 = 屏幕上这份与磁盘上那份同源
+    draftSavedRev = draftRev;
+    lastAutoSaveAt = 0;
+    if (typeof hideEmptyHint === 'function') hideEmptyHint();
+    return Promise.resolve(app.r.setMap(app.map)).then(function () {
+      refreshStatus();
+      status('已打开 ' + name + '(' + out.sourceFormat + ')');
+    });
+  });
+}
+
+// 「所有换图路都走这里」:新建 / 复制 / 打开文件 / ?p= 都归它 —— 解码 → 认领 → setMap → refreshStatus。
+// ★ sourceFormatOverride 只在**与解码判据一致**时采用:v3 文件被当成 v4 会让「保存前备份原文」那道门失效。
+// ★ opts.dirty = true:这份图还没写进任何库(打开文件只是读入),状态栏要如实说「未保存」。
+function setMapFromBytes(name, bytes, sourceFormatOverride, opts) {
+  opts = opts || {};
+  return mapFromBytes(name, bytes).then(function (out) {
+    var fmt = out.sourceFormat;
+    if (sourceFormatOverride && sourceFormatOverride === out.sourceFormat) fmt = sourceFormatOverride;
+    app.raw = bytes;
+    app.map = out.map; app.name = name; app.sourceFormat = fmt;
+    draftSavedRev = draftRev;
+    lastAutoSaveAt = 0;
+    if (opts.dirty) { dirty = true; } else { dirty = false; }
+    if (typeof hideEmptyHint === 'function') hideEmptyHint();
+    return Promise.resolve(app.r.setMap(app.map)).then(function () {
+      refreshStatus();
+      if (typeof statusLine === 'function') statusLine();
+      if (opts.dirty) markDirty();          // 排一次草稿:读入的文件还没写进任何库
+      return { map: app.map, sourceFormat: fmt };
+    });
+  });
+}
+
+// 关掉当前图,回到空状态:文件动作(删除当前图 / 打开失败)用它把界面与内存一起归位。
+function closeMap() {
+  app.map = null; app.name = null; app.raw = null; app.sourceFormat = null;
+  if (typeof refreshRespawnCount === 'function') refreshRespawnCount();
+  undoHistory = createHistory({});
+  app.st.selDrag = null;
+  if (app.r) {
+    if (app.r.setSelection) app.r.setSelection(null);
+    if (app.r.setSelDrag) app.r.setSelDrag(null, 0, 0);
+    if (app.r.setPreview) app.r.setPreview(null);
+  }
+  dirty = false;
+  draftSavedRev = draftRev;
+  lastAutoSaveAt = 0;
+  if (typeof showEmptyState === 'function') showEmptyState();
+  return Promise.resolve(true);
 }
 
 function refreshStatus() {
@@ -5095,28 +6563,33 @@ function refreshStatus() {
   var set = function (id, txt) { var el = $(id); if (el) el.textContent = txt; };
   set('st-name', (m.name || '(无名)') + (app.name ? ' · ' + app.name : ''));
   set('st-size', Core.cellsWOf(m) + '×' + Core.cellsHOf(m) + ' 格');
-  // ★★ 尺寸面板的两个框也要跟着走(DOM 必须与状态一致):refreshStatus 是打开/新建/复制/改尺寸/草稿恢复
-  //    这几条换图路的公共收口,漏一处就是"框里写着上一张图的尺寸,一按应用尺寸把当前这张改了"。
+  // ★★ 尺寸面板的两个框也要跟着走(DOM 必须与状态一致):refreshStatus 是打开/新建/复制/改尺寸/草稿恢复的公共收口。
   sizeInputsSync();
   var rep = Core.validateMap(m);
   set('st-valid', rep.errors.length ? ('error ' + rep.errors.length)
                                     : (rep.warnings.length ? ('⚠ ' + rep.warnings.length) : '校验 OK'));
-  renderSaveState();                // ★ 打开/新建/复制/改名/保存后都要跟着翻
+  renderSaveState();
+  // ★★ 图层行图标(本图无此层 / 🔒 / 👁 明暗)必须从真实状态反推:这里是换图的公共收口,只有它能保证跟着刷新。
+  if (typeof syncLayerIcons === 'function') syncLayerIcons();
+  if (typeof refreshRespawnCount === 'function') refreshRespawnCount();
 }
 
+var lastLibraryRows = [];
 function refreshLibrary() {
-  return fetch('/api/maps').then(function (r) {
-    if (!r.ok) throw new Error('HTTP ' + r.status);
-    return r.json();
-  }).then(function (data) {
+  return listLibraryMaps().then(function (rows) {
+    lastLibraryRows = (rows || []).slice();
+    if (typeof refreshBackendLabel === 'function') refreshBackendLabel();
     var ul = $('lib-list');
     if (!ul) return;
     ul.innerHTML = '';
-    // ★★ 原文备份不进库列表:openFromUrl 的兜底是"打开列表第一行",列表里混进备份之后开机就可能直接
-    //    打开一份退路;★ 但只过滤显示这一侧 —— ?p= 直接打开那条路它管不到,故 saveCurrent 那道闸不可省。
-    var rows = (data.maps || []).filter(function (mm) { return !isBackupName(mm.name); });
-    if (!rows.length) { ul.textContent = 'maps/ 下没有 .cyrm'; return; }
-    rows.forEach(function (mm) {
+    // ★ 原文备份不进库列表(库的身份是地图):只过滤显示这一侧;?p= 直接打开那条路它管不到。
+    var shown = lastLibraryRows.filter(function (mm) { return !isBackupName(mm.name); });
+    if (!shown.length) {
+      ul.textContent = fileOpsBackend.kind === FILEOPS_BACKEND_DIR
+        ? '这个目录下没有 .cyrm' : 'maps/ 下没有 .cyrm';
+      return;
+    }
+    shown.forEach(function (mm) {
       var li = document.createElement('li');
       li.className = 'lib-row';
       li.dataset.name = mm.name;
@@ -5127,18 +6600,20 @@ function refreshLibrary() {
   });
 }
 
+// ② 空启动:不再自动打开库列表第一行(用户要的是"真的文件操作",替他随机开一张等于替他做决定)。
+// ?p= 仍打开指定图;失败照旧**向上抛** —— 启动链该在"打开失败"这一站停下,由 bootLoad 的 catch 说原因。
 function openFromUrl() {
-  var p = new URLSearchParams(location.search).get('p');
+  var search = (typeof location !== 'undefined' && location && location.search) ? location.search : '';
+  var p = new URLSearchParams(search).get('p');
   if (p) return openMap(p);
   return refreshLibrary().then(function () {
-    var first = document.querySelector('#lib-list .lib-row');
-    return first ? openMap(first.dataset.name) : null;
+    if (!app.map && typeof showEmptyState === 'function') showEmptyState();
   });
 }
 </script>
 <script>
 /* == ui/92_boot.js == */
-// ui/92_boot.js —— 启动:装载图集、库、默认图。
+// ui/92_boot.js —— 启动:装载图集、库、可选的 ?p= 地图;② 空启动(不再自动打开第一行)。
 
 
 function boot() {
@@ -5182,6 +6657,9 @@ function bootLoad() {
     return loadAtlas();
   }).then(function () {
     buildPanels();
+    // ★★ 文件级动作(新建/打开/保存/…的绑定在 86_fileops):buildPanels 里也会调,这里再兜一次 ——
+    //    "面板建了但文件按钮没接上"是用户报过的形态;两边都幂等(每个元素只绑一次)。
+    if (typeof installFileOps === 'function') installFileOps();
     return openFromUrl();
   }).then(function () {
     return checkCrashSlot();
@@ -5191,12 +6669,15 @@ function bootLoad() {
   }).then(function () {
     applyUiState();
     installUiStateSave();
+    // ② 空启动:没有图就停在空状态(不再替用户自动打开库里随便一张)。
+    if (!app.map && typeof showEmptyState === 'function') showEmptyState(true);
     return null;
   }).then(function () {
     if (new URLSearchParams(location.search).has('selftest')) return runSelfTest();
     return null;
   }).catch(function (e) {
     status('启动失败:' + msgOf(e));
+    if (typeof showEmptyState === 'function') showEmptyState(true);
   });
 }
 </script>
@@ -5287,7 +6768,9 @@ function selfTest() {
     setErrorSink(savedSinkST);
     check('guard 的失败上报到 sink(可见)', !!sinkGot && sinkGot.indexOf('自检用的假错') >= 0,
           sinkGot || '没有上报 —— 那就成了"按了没反应"');
-    check('地图已打开', app.map !== null);
+    // ★ ② 空启动之后"没有地图"是**合法状态**:这一段以前直接读 app.map,空启动时自检会自己红。
+    //   两条分支都保持 3 条检查(browser_check 的条数闸 17 不许漂):有图就验图,没图就验"空状态真的长出来了"。
+    check('渲染器已挂载', !!(app.r && typeof app.r.render === 'function'));
     check('画布有尺寸', app.canvas.width > 1 && app.canvas.height > 1,
           app.canvas.width + '×' + app.canvas.height);
     check('localStorage 可读写', probeLocalStorage());
@@ -5295,6 +6778,12 @@ function selfTest() {
       check('map.name 来自文件名', app.map.name === nameFromFile(app.name),
             'name=' + app.map.name + ' / 文件 ' + app.name);
       check('缩略图已建', app.r.stats().thumbsBuilt > 0);
+    } else {
+      var hintEl = $('empty-hint');
+      check('空启动:画布上给出了「还没有打开地图」提示', !!(hintEl && hintEl.hidden === false));
+      var stName = $('st-name');
+      check('空启动:状态栏说"(未打开)"', !!(stName && String(stName.textContent).indexOf('未打开') >= 0),
+            stName ? String(stName.textContent) : '没有 #st-name');
     }
     return probeIndexedDb().then(function (idb) {
       check('IndexedDB 可打开', idb.ok, idb.why);
@@ -5342,37 +6831,53 @@ globalThis.Editor = {
   app: app,
 
   TOOLS: TOOLS, TOOL_LABELS: TOOL_LABELS, DERIVED_TEXTURES: DERIVED_TEXTURES,
+  RESPAWN_MIN_PER_SIDE: RESPAWN_MIN_PER_SIDE, RESPAWN_MIN_SIDE_GAP: RESPAWN_MIN_SIDE_GAP,
+  RESPAWN_EDGE_MARGIN: RESPAWN_EDGE_MARGIN,
   createEmptyMap: createEmptyMap, resizeMap: resizeMap, resizeReportLines: resizeReportLines,
   // ★ 改尺寸面板(规格 A10)与"压缩"开关(规格 §3.5)接上之后,下面这几个才有生产调用点 —— 在那之前
   //   resizeMap 只被 btn-dup 用(尺寸不变),wholeDiff / applyEntry 的 whole 分支只有测试在跑。
   applySize: applySize, sizeInputsSync: sizeInputsSync, adoptMapInto: adoptMapInto,
   optCompress: optCompress, encodeForWrite: encodeForWrite, DEFAULT_COMPRESS: DEFAULT_COMPRESS,
   texturePalette: texturePalette, clampTexture: clampTexture, validateLines: validateLines,
+  sanitizeRestoredTexture: sanitizeRestoredTexture,
   paintCells: paintCells, valueFor: valueFor, regionCells: regionCells, inRect: inRect,
-  idxOf: idxOf, strokePoints: strokePoints, lineTargets: lineTargets, toSub: toSub,
+  idxOf: idxOf, strokePoints: strokePoints, lineTargets: lineTargets, lineBandTargets: lineBandTargets,
+  toSub: toSub,
   constrainLine: constrainLine, constrainSquare: constrainSquare,
-  applyTool: applyTool, pickAt: pickAt,
+  applyTool: applyTool, pickAt: pickAt, toolOption: toolOption,
   createBucketJob: createBucketJob, createGradientJob: createGradientJob, lerpRGBA: lerpRGBA,
-  snapshotSpawns: snapshotSpawns, spawnDiff: spawnDiff, spawnIndexAt: spawnIndexAt,
+  snapshotSpawns: snapshotSpawns, applySpawns: applySpawns, spawnDiff: spawnDiff, spawnIndexAt: spawnIndexAt,
   addSpawn: addSpawn, removeSpawn: removeSpawn, clearSpawns: clearSpawns,
+  // ── 按侧复活点(`# respawn <1|2>`)──
+  respawnCounts: respawnCounts, sideOfCell: sideOfCell, addRespawn: addRespawn,
+  removeRespawnNear: removeRespawnNear, clearRespawns: clearRespawns,
   commandFor: commandFor, hasSelection: hasSelection, isTypingTarget: isTypingTarget,
   MAX_UNDO: MAX_UNDO, MAX_UNDO_BYTES: MAX_UNDO_BYTES, bytesOfEntry: bytesOfEntry,
   createHistory: createHistory, snapshotMap: snapshotMap, bytesOfSnapshot: bytesOfSnapshot,
   wholeDiff: wholeDiff, applyEntry: applyEntry, diffCells: diffCells, cellCountOf: cellCountOf,
   copyRegion: copyRegion, clipSize: clipSize, pasteRegion: pasteRegion,
+  doCopySelection: doCopySelection, doCutSelection: doCutSelection,
+  doPasteSelection: doPasteSelection, doClearSelection: doClearSelection,
   moveRegion: moveRegion, mirrorRegion: mirrorRegion, mirrorSelection: mirrorSelection,
   installInteraction: installInteraction, runJob: runJob, statusLine: statusLine,
   pushAndShow: pushAndShow, doUndo: doUndo, doRedo: doRedo, hitOf: hitOf,
   brushSteps: function () { return BRUSH_STEPS.slice(); }, setBrush: setBrush, setLayer: setLayer,
+  // ── 图层"可编辑目标"三态(不存在/锁定/隐藏)与图标同步 ──
+  layerExists: layerExists, existingLayerNames: existingLayerNames, canEditLayer: canEditLayer,
+  syncLayerIcons: syncLayerIcons, toggleLayerVisible: toggleLayerVisible,
+  toggleLayerLocked: toggleLayerLocked,
 
   buildPanels: buildPanels, syncPanelForLayer: syncPanelForLayer,
+  syncToolOptions: syncToolOptions, paletteThumbURL: paletteThumbURL, isNeutralDesc: isNeutralDesc,
   saveCurrent: saveCurrent, saveTargetName: saveTargetName,
   needsV3Confirm: needsV3Confirm, needsV3Backup: needsV3Backup,
   v3BackupName: v3BackupName, isBackupName: isBackupName, freshName: freshName,
   // ★ runSelfTest 是自检那条异步入口的具名收口(相位 ⑮b⑩b ③ 驱动它);dropStaleSelection 给相位 ⑰ 直接用。
   runSelfTest: runSelfTest, dropStaleSelection: dropStaleSelection,
   importEnemyTypes: importEnemyTypes, exportReport: exportReport, showExportReport: showExportReport,
-  spawnAt: spawnAt,
+  spawnAt: spawnAt, viewCenterCell: viewCenterCell, spawnRespawn: spawnRespawn,
+  deleteRespawnNear: deleteRespawnNear, clearRespawnSide: clearRespawnSide,
+  refreshRespawnCount: refreshRespawnCount,
 
   // ── 持久化三层 + 闸 4 ──
   DRAFT_DB: DRAFT_DB, DRAFT_STORE: DRAFT_STORE, CRASH_STORE: CRASH_STORE,
@@ -5386,6 +6891,24 @@ globalThis.Editor = {
   //   真跑一遍(见 editor_smoke 相位 ⑮b)。
   markDirty: markDirty, scheduleDraftSave: scheduleDraftSave, flushDraft: flushDraft,
   markDraftSaved: markDraftSaved, offerDraft: offerDraft,
+
+  // ── 文件级动作(86_fileops)+ 传输后端(90_open)──
+  installFileOps: installFileOps,
+  newMapFlow: newMapFlow, openFileFlow: openFileFlow, openFolderFlow: openFolderFlow,
+  duplicateMapFlow: duplicateMapFlow, renameMapFlow: renameMapFlow, deleteMapFlow: deleteMapFlow,
+  saveAsFlow: saveAsFlow, exportDownloadFlow: exportDownloadFlow, checkMapFlow: checkMapFlow,
+  isValidMapName: isValidMapName, mapNameProblem: mapNameProblem,
+  normalizeMapFileName: normalizeMapFileName, uniqueCopyName: uniqueCopyName,
+  showEmptyState: showEmptyState, hideEmptyHint: hideEmptyHint, refreshBackendLabel: refreshBackendLabel,
+  emptyHintShown: emptyHintShown,
+  useServerBackendFlow: useServerBackendFlow, askForm: askForm, showReport: showReport,
+  setMapFromBytes: setMapFromBytes, closeMap: closeMap,
+  FILEOPS_BACKEND_SERVER: FILEOPS_BACKEND_SERVER, FILEOPS_BACKEND_DIR: FILEOPS_BACKEND_DIR,
+  fileOpsBackendKind: fileOpsBackendKind, fileOpsDirHandle: fileOpsDirHandle,
+  fileOpsBackendLabel: fileOpsBackendLabel, setFileOpsBackend: setFileOpsBackend,
+  fileOpsStandalone: fileOpsStandalone, listLibraryMaps: listLibraryMaps, readMapBytes: readMapBytes,
+  deleteMapFile: deleteMapFile, renameMapFile: renameMapFile,
+  libraryRows: function () { return lastLibraryRows.slice(); },
 };
 </script>
 <script>
@@ -5539,19 +7062,13 @@ document.addEventListener('DOMContentLoaded', function () { Editor.boot(); });
     if (E && E.refreshLibrary) return E.refreshLibrary();
     return Promise.resolve();
   }
-  // ★ 库是空的(没选目录、也没打开文件)时开机给一张空白图:否则双击进来是一片黑画布 +
-  //   一句"加载中…",用户得自己想到去点「新建」。★ 只在这一种状态下动 prompt(新建要问名字,
-  //   自动路径用默认名),点完立刻还原 —— 不许把人家的重命名提示也吞掉。
-  function autoNewIfEmpty() {
+  // ★ 库是空的(没选目录、也没打开文件)时**不再替用户造一张空白图**(② 空启动:用户要真的文件动作)。
+  //   改成显示空状态提示;之后的「新建」走编辑器自己的页内对话框(不再是 prompt 被垫片篡改)。
+  function emptyStateIfNoMap() {
     var E = window.Editor;
     if (!E || !E.app || !E.app.r) return;
     if (E.app.map) return;
-    var btn = document.getElementById('btn-new');
-    if (!btn) return;
-    var orig = window.prompt;
-    window.prompt = function () { return 'new_map'; };
-    try { btn.click(); } finally { window.prompt = orig; }
-    if (E.status) E.status('单文件版:库是空的,先给一张 125×75 的空白图 —— Ctrl+S 会写 new_map.cyrm');
+    if (E.showEmptyState) E.showEmptyState(true);
   }
   function pickDir() {
     if (!hasFsa()) { hint('此浏览器没有目录访问能力,请用「打开文件…」'); return Promise.resolve(); }
@@ -5593,14 +7110,14 @@ document.addEventListener('DOMContentLoaded', function () { Editor.boot(); });
       } catch (e) { /* 同上 */ }
       hint(hasFsa() ? '先选「本地目录…」或「打开文件…」' : '本浏览器无目录访问能力;用「打开文件…」,保存即下载');
     }
-    // 等 boot 的链走完(库列过一次 + 渲染器挂上)再看要不要给空白图:早于它就会与 openFromUrl 抢。
+    // 等 boot 的链走完(库列过一次 + 渲染器挂上)再看要不要显示空状态:早于它就会与 openFromUrl 抢。
     var tries = 0;
     var timer = setInterval(function () {
       var E = window.Editor;
       tries++;
       if (E && E.app && E.app.r && E.app.db !== undefined && libSettled) {
         clearInterval(timer);
-        setTimeout(autoNewIfEmpty, 600);
+        setTimeout(emptyStateIfNoMap, 600);
       } else if (tries > 80) {
         clearInterval(timer);
       }

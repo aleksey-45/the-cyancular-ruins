@@ -189,6 +189,29 @@ module.exports = (async function () {
     ok(tab15.draft.has('draft_probe'), '★ 删除失败也**不影响这次写入**');
     fail15.deleteTx = false;
 
+    // ── 崩溃槽位也是读入口:快照里的 legacy 纹理 id 恢复时同样迁移 ──
+    // ★ 与 62 的 ⑥b 同一条决策的两个落点(offerDraft / checkCrashSlot 各自独立调 migrateMap);
+    //   删掉 checkCrashSlot 里那一句,这条就红。
+    {
+      const lg = Editor.createEmptyMap('crash_probe', 4, 4);
+      lg.layers[Core.LAYER_SCENE].desc[0] = Core.neutralDesc(4);      // legacy:tex4 → (tex1,hue5)
+      lg.players = [{ x: 1, y: 1 }];
+      const savedDefs = globalThis.TILE_DEFS;
+      globalThis.TILE_DEFS = undefined;                               // 扮演旧编辑器编出 legacy 字节
+      let lgBytes;
+      try { lgBytes = await globalThis.Io.encodeMap(lg, { compress: true }); }
+      finally { globalThis.TILE_DEFS = savedDefs; }
+      tab15.crash.set('crash', { key: 'crash', name: 'crash_probe.cyrm', name2: 'crash_probe',
+                                 bytes: lgBytes, savedAt: Date.now() + 60000, why: 'legacy 测试' });
+      Editor.app.map = Editor.createEmptyMap('crash_probe', 4, 4);
+      Editor.app.name = 'crash_probe.cyrm';
+      globalThis.confirm = function () { return true; };
+      eq(await Editor.checkCrashSlot(), true, '⑪d 前提:崩溃快照比主草稿新 ⇒ 恢复');
+      eq(Editor.app.map.layers[Core.LAYER_SCENE].desc[0], Core.packDesc(1, 5, 4, 4, 7),
+         '★★★ 崩溃快照里的 legacy tex4 恢复时已迁成 (tex1,hue5)');
+      tab15.crash.clear();
+    }
+
   } finally {
     stubs.restoreStubs15();
   }

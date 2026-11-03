@@ -1,8 +1,8 @@
-[gd_resource type="Theme" format=3]
+[gd_resource type="Theme" format=3 uid="uid://dy3s25k06g63"]
 
-[ext_resource type="Texture2D" path="res://ui/theme/switch_on.png" id="1_wuk8g"]
-[ext_resource type="Texture2D" path="res://ui/theme/switch_off.png" id="2_1mp8e"]
-[ext_resource type="FontVariation" path="res://assets/fonts/menu_font.tres" id="3_lynl6"]
+[ext_resource type="Texture2D" uid="uid://68dy0gqavqxc" path="res://ui/theme/switch_on.png" id="1_wuk8g"]
+[ext_resource type="Texture2D" uid="uid://c7qbvl0ithgjs" path="res://ui/theme/switch_off.png" id="2_1mp8e"]
+[ext_resource type="FontVariation" uid="uid://b7jd3amjab174" path="res://assets/fonts/menu_font.tres" id="3_lynl6"]
 
 [sub_resource type="StyleBoxFlat" id="StyleBoxFlat_srg36"]
 content_margin_left = 40.0

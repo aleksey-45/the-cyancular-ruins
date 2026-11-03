@@ -16,38 +16,61 @@ button { background:var(--panel2); color:var(--text); border:1px solid var(--bor
          border-radius:4px; padding:5px 9px; font-size:13px; cursor:pointer; }
 button:hover { border-color:var(--accent); }
 button.on { border-color:var(--accent); background:#243040; }
+button:disabled { opacity:.45; cursor:default; }
+button:disabled:hover { border-color:var(--border); }
 input[type=number] { width:64px; background:var(--panel2); color:var(--text);
                      border:1px solid var(--border); border-radius:4px; padding:3px 6px; }
 select { background:var(--panel2); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:3px; }
-#toolbar { display:flex; align-items:center; gap:6px; padding:6px 10px;
+/* 顶栏 = 系统级动作(文件/编辑/视图/画布),不含绘图工具 */
+#toolbar { display:flex; align-items:center; gap:3px; padding:5px 8px;
            background:var(--panel); border-bottom:1px solid var(--border); flex-wrap:wrap; }
+#toolbar .grp { color:var(--dim); font-size:12px; margin:0 2px 0 6px; }
 #toolbar .sep { width:1px; height:20px; background:var(--border); margin:0 4px; }
 #toolbar label { color:var(--dim); }
+#toolbar button { padding:4px 7px; }
 #mid { flex:1; display:flex; min-height:0; }
-#lib { width:200px; background:var(--panel); border-right:1px solid var(--border);
+#lib { width:210px; background:var(--panel); border-right:1px solid var(--border);
        display:flex; flex-direction:column; }
 #lib h2 { font-size:13px; margin:8px 10px 4px; color:var(--accent); }
+/* 库操作贴着它作用的对象:放在列表**上方**(原实现在列表下方,被 flex:1 顶到整页最底) */
+#lib-btns { display:flex; flex-wrap:wrap; gap:4px; padding:4px 6px; border-bottom:1px solid var(--border); }
+#lib-backend { padding:3px 10px; color:var(--dim); font-size:12px; border-bottom:1px solid var(--border); }
 #lib-list { list-style:none; margin:0; padding:0 6px; overflow:auto; flex:1; }
 #lib-list .lib-row { padding:4px 6px; border-radius:3px; cursor:pointer; color:var(--dim); }
 #lib-list .lib-row:hover { background:var(--panel2); color:var(--text); }
-#lib-btns { display:flex; flex-wrap:wrap; gap:4px; padding:6px; border-top:1px solid var(--border); }
+#lib-list .lib-row.cur { background:var(--panel2); color:var(--accent); }
 #canvas-wrap { flex:1; min-width:0; position:relative; background:#0e1013; }
 #map-canvas { display:block; width:100%; height:100%; image-rendering:pixelated; }
-#right { width:240px; background:var(--panel); border-left:1px solid var(--border);
+#empty-hint[hidden] { display:none; }   /* ★ id 选择器的 display:flex 会压过 UA 的 [hidden],必须补这一条 */
+#empty-hint { position:absolute; inset:0; display:flex; flex-direction:column; gap:6px;
+              align-items:center; justify-content:center; text-align:center;
+              color:var(--dim); font-size:14px; line-height:1.9; pointer-events:none; }
+#empty-hint b { color:var(--text); }
+/* 右栏 = 工具 + 工具细分选项 + 图层 + 纹理/辅码 */
+#right { width:250px; background:var(--panel); border-left:1px solid var(--border);
          overflow:auto; }
 #right h2 { font-size:13px; margin:8px 10px 4px; color:var(--accent); }
+#tools { display:grid; grid-template-columns:repeat(4,1fr); gap:4px; padding:2px 10px 6px; }
+#tools button { padding:5px 2px; font-size:12px; }
+#tool-opts { padding:0 10px 4px; border-bottom:1px solid var(--border); }
+#tool-opts .opt { display:flex; align-items:center; gap:6px; color:var(--dim); padding:2px 0; }
+#tool-opts .hint { color:var(--dim); font-size:12px; line-height:1.6; }
+#sel-ops { display:flex; flex-wrap:wrap; gap:4px; }
+#sel-ops button { padding:3px 7px; font-size:12px; }
 .layer-row { display:flex; align-items:center; gap:6px; padding:3px 10px; cursor:pointer; }
 .layer-row .name { flex:1; }
 .layer-row.cur { background:var(--panel2); color:var(--accent); }
+.layer-row .gone { color:var(--dim); font-size:11px; }
 .layer-row button { padding:2px 6px; font-size:12px; }
 #palette { display:flex; flex-wrap:wrap; gap:4px; padding:4px 10px; }
-#palette .sw { width:26px; height:26px; border:1px solid var(--border); cursor:pointer;
-               image-rendering:pixelated; }
+#palette .sw { width:32px; height:32px; border:1px solid var(--border); cursor:pointer;
+               image-rendering:pixelated; background-size:cover; background-position:center;
+               padding:0; font-size:10px; color:#fff; text-shadow:0 0 3px #000; }
 #palette .sw.on { border-color:var(--accent); border-width:2px; }
 .desc-row { display:flex; align-items:center; gap:6px; padding:2px 10px; color:var(--dim); }
 .desc-row select { flex:1; }
 #statusbar { display:flex; gap:14px; align-items:center; padding:4px 10px;
-             background:var(--panel); border-top:1px solid var(--border); color:var(--dim); }
+             background:var(--panel); border-top:1px solid var(--border); color:var(--dim); flex-wrap:wrap; }
 #status-msg { color:var(--warn); }
 #boot-error { background:#3a2320; color:#ffd9d0; padding:8px 12px; border-bottom:1px solid var(--danger); }
 </style>
@@ -55,46 +78,111 @@ select { background:var(--panel2); color:var(--text); border:1px solid var(--bor
 <body>
 <div id="boot-error" hidden></div>
 
+<!-- ── 顶栏:系统级(文件 / 编辑 / 视图 / 画布 / 校验) ── -->
 <div id="toolbar">
-  <button class="tool" data-tool="brush" title="画笔 (B)">画笔</button>
-  <button class="tool" data-tool="rect" title="矩形">矩形</button>
-  <button class="tool" data-tool="bucket" title="油漆桶 (G)">油漆桶</button>
-  <button class="tool" data-tool="eraser" title="橡皮 (E)">橡皮</button>
-  <button class="tool" data-tool="line" title="直线 (L)">直线</button>
-  <button class="tool" data-tool="select" title="选框 (M)">选框</button>
-  <button class="tool" data-tool="picker" title="吸管 (I)">吸管</button>
-  <button class="tool" data-tool="gradient" title="渐变(仅背景层)">渐变</button>
+  <span class="grp">文件</span>
+  <button id="btn-new" title="新建一张地图(名字 + 尺寸,直接落盘)">新建</button>
+  <button id="btn-open-folder" title="选一个装有 .cyrm 的目录(File System Access);库列表与保存都读写它">打开目录…</button>
+  <button id="btn-open-file" title="从本地选 .cyrm 读入(不改服务器 maps/)">打开文件…</button>
   <span class="sep"></span>
-  <label>画笔</label><input id="brush-size" type="number" min="0.25" max="15" step="0.25" value="1">
+  <button id="btn-save" title="保存到当前目标(Ctrl+S)">保存</button>
+  <button id="btn-save-as" title="另存为(可改名字,Ctrl+Shift+S)">另存为…</button>
+  <button id="btn-export" title="下载一份 .cyrm 到本地(不写磁盘)">导出</button>
   <span class="sep"></span>
+  <button id="btn-undo" title="撤销(Ctrl+Z)">撤销</button>
+  <button id="btn-redo" title="重做(Ctrl+Shift+Z / Ctrl+Y)">重做</button>
+  <span class="sep"></span>
+  <span class="grp">视图</span>
   <button id="tg-grid" class="on">网格</button>
-  <button id="tg-subgrid">子格</button>
-  <button id="tg-torus" class="on">环面</button>
-  <span class="sep"></span>
+  <button id="tg-subgrid" title="子格线:只画被拆成 16px 混排的格">子格</button>
+  <button id="tg-torus" class="on" title="环面预览:当前图 + 右邻 + 下邻 + 右下邻">环面</button>
+  <button id="tg-guides" title="半区中线 + 3×3 桶网格(联机复活点「均匀散布」判据的对照线)">标线</button>
   <button id="btn-fit">适配</button>
+  <span class="sep"></span>
+  <span class="grp">画布</span>
+  <input id="size-w" type="number" min="1" max="400" step="1" value="125">
+  <span style="color:var(--dim)">×</span>
+  <input id="size-h" type="number" min="1" max="300" step="1" value="75">
+  <span style="color:var(--dim)">格</span>
+  <button id="btn-resize" title="重叠区的内容保留;落在新图之外的出生点/敌人会被移除并在状态栏报出来(审计 A10)">应用尺寸</button>
+  <span class="sep"></span>
+  <label title="导出/保存时是否 deflate">压缩</label>
+  <input id="opt-compress" type="checkbox" checked>
+  <span class="sep"></span>
+  <button id="btn-check" title="跑一遍完整校验(格式/名字/编码),只报告不阻止保存">校验</button>
   <button id="btn-selftest">自检</button>
 </div>
 
 <div id="mid">
   <div id="lib">
     <h2>库(maps/*.cyrm)</h2>
-    <ul id="lib-list"><li class="lib-row">加载中 …</li></ul>
+    <!-- 库操作贴着列表:在列表**上方** -->
     <div id="lib-btns">
-      <button id="btn-new">新建</button>
-      <button id="btn-dup">复制</button>
-      <button id="btn-rename">重命名</button>
-      <button id="btn-del">删除</button>
-      <button id="btn-export">导出校验</button>
+      <button id="btn-dup" title="把当前地图复制成一个新文件">复制</button>
+      <button id="btn-rename" title="改磁盘上的文件名(服务端 rename)">重命名…</button>
+      <button id="btn-del" title="删除磁盘上的这张地图(不可恢复;maps/ 在 git 里,可用 git restore 找回)">删除</button>
+    </div>
+    <div id="lib-backend">服务器 maps/</div>
+    <ul id="lib-list"><li class="lib-row">加载中 …</li></ul>
+  </div>
+  <div id="canvas-wrap">
+    <canvas id="map-canvas"></canvas>
+    <div id="empty-hint" hidden>
+      <div><b>还没有打开地图</b></div>
+      <div>顶部「新建」造一张 · 「打开文件…」读本地 .cyrm · 「打开文件夹…」直接读写一个目录</div>
     </div>
   </div>
-  <div id="canvas-wrap"><canvas id="map-canvas"></canvas></div>
   <div id="right">
+    <h2>工具</h2>
+    <div id="tools">
+      <button class="tool" data-tool="brush" title="画笔 (B)">画笔</button>
+      <button class="tool" data-tool="rect" title="矩形">矩形</button>
+      <button class="tool" data-tool="bucket" title="油漆桶 (G)">油漆桶</button>
+      <button class="tool" data-tool="eraser" title="橡皮 (E)">橡皮</button>
+      <button class="tool" data-tool="line" title="直线 (L)">直线</button>
+      <button class="tool" data-tool="select" title="选框 (M)">选框</button>
+      <button class="tool" data-tool="picker" title="吸管 (I)">吸管</button>
+      <button class="tool" data-tool="gradient" title="渐变(仅背景层)">渐变</button>
+    </div>
+    <div id="tool-opts">
+      <div class="opt" data-for="brush eraser">
+        <span>尺寸</span>
+        <input id="brush-size" type="number" min="0.25" max="15" step="0.25" value="1">
+        <span style="color:var(--dim);font-size:12px">整数=整格,小数=子格</span>
+      </div>
+      <div class="opt" data-for="rect">
+        <span>矩形</span>
+        <select id="rect-mode">
+          <option value="fill">填充</option>
+          <option value="outline">描边</option>
+        </select>
+      </div>
+      <div class="opt" data-for="line">
+        <span>直线宽度</span>
+        <select id="line-width">
+          <option value="1">1 子格</option>
+          <option value="2">2 子格</option>
+          <option value="4">1 格</option>
+        </select>
+      </div>
+      <div class="opt" data-for="select"><div id="sel-ops">
+        <button id="sel-copy" title="Ctrl+C">复制选区</button>
+        <button id="sel-cut" title="Ctrl+X">剪切</button>
+        <button id="sel-paste" title="Ctrl+V">粘贴</button>
+        <button id="sel-mirror-h" title="H">水平镜像</button>
+        <button id="sel-mirror-v" title="V">垂直镜像</button>
+        <button id="sel-clear" title="Delete">清除</button>
+      </div></div>
+      <div class="opt" data-for="bucket"><span class="hint">油漆桶:同值连通填充(跨环面),受选区约束</span></div>
+      <div class="opt" data-for="picker"><span class="hint">吸管:吸取当前层的纹理 + 辅码(空气不吸)</span></div>
+      <div class="opt" data-for="gradient"><span class="hint">渐变:从拖拽起点到终点,用下方两个颜色槽(仅背景层)</span></div>
+    </div>
     <h2>图层</h2>
     <div id="layers">
-      <div class="layer-row" data-layer="0"><span class="name">前景</span><button class="vis" title="显示/隐藏">👁</button><button class="lock" title="锁定">🔒</button></div>
-      <div class="layer-row cur" data-layer="1"><span class="name">场景</span><button class="vis" title="显示/隐藏">👁</button><button class="lock" title="锁定">🔒</button></div>
-      <div class="layer-row" data-layer="2"><span class="name">后景</span><button class="vis" title="显示/隐藏">👁</button><button class="lock" title="锁定">🔒</button></div>
-      <div class="layer-row" data-layer="3"><span class="name">背景</span><button class="vis" title="显示/隐藏">👁</button><button class="lock" title="锁定">🔒</button></div>
+      <div class="layer-row" data-layer="0"><span class="name">前景</span><button class="vis" title="显示/隐藏">👁</button><button class="lock" title="锁定/解锁">🔓</button></div>
+      <div class="layer-row cur" data-layer="1"><span class="name">场景</span><button class="vis" title="显示/隐藏">👁</button><button class="lock" title="锁定/解锁">🔓</button></div>
+      <div class="layer-row" data-layer="2"><span class="name">后景</span><button class="vis" title="显示/隐藏">👁</button><button class="lock" title="锁定/解锁">🔓</button></div>
+      <div class="layer-row" data-layer="3"><span class="name">背景</span><button class="vis" title="显示/隐藏">👁</button><button class="lock" title="锁定/解锁">🔓</button></div>
     </div>
     <div class="desc-row"><label><input id="dim-others" type="checkbox" checked> 非当前层压暗 60%</label></div>
     <h2>纹理调色板</h2>
@@ -104,12 +192,12 @@ select { background:var(--panel2); color:var(--text); border:1px solid var(--bor
     <div class="desc-row"><span>亮度</span><select id="desc-bri"></select></div>
     <div class="desc-row"><span>饱和</span><select id="desc-sat"></select></div>
     <div class="desc-row"><span>透明</span><select id="desc-alp"></select></div>
-    <div class="desc-row"><label><input id="desc-only" type="checkbox"> 只改辅码(不碰纹理)</label></div>
+    <div class="desc-row"><label><input id="desc-only" type="checkbox"> 只改辅码(保留原纹理,只改色相/亮度/饱和/透明)</label></div>
     <h2 id="bg-color-title">颜色(背景层)</h2>
     <div class="desc-row" id="bg-color-row">
       <span>起点</span>
-      <input id="bg-color" type="color" value="#00ffff">
-      <span id="bg-color-val">#00ffff</span>
+      <input id="bg-color" type="color" value="#b0e5f6">
+      <span id="bg-color-val">#b0e5f6</span>
     </div>
     <div class="desc-row" id="bg-color-row2">
       <span>终点</span>
@@ -117,21 +205,23 @@ select { background:var(--panel2); color:var(--text); border:1px solid var(--bor
       <span id="bg-color2-val">#101820</span>
     </div>
     <h2>出生点工具</h2>
+    <div class="desc-row"><span>敌人类型</span><select id="spawn-enemy-type"></select></div>
     <div class="desc-row">
       <button id="spawn-p1">放 P1</button>
       <button id="spawn-p2">放 P2</button>
       <button id="spawn-enemy">放敌人</button>
     </div>
     <div class="desc-row"><button id="spawn-clear">清空出生点</button></div>
-    <h2>画布尺寸</h2>
-    <div class="desc-row"><span>宽</span><input id="size-w" type="number" min="1" max="400" step="1" value="125"><span>格</span></div>
-    <div class="desc-row"><span>高</span><input id="size-h" type="number" min="1" max="300" step="1" value="75"><span>格</span></div>
+    <h2>复活点(按半区)</h2>
+    <div class="desc-row"><span id="respawn-count" style="color:var(--dim)">侧1 0 · 侧2 0</span></div>
     <div class="desc-row">
-      <button id="btn-resize" title="重叠区的内容保留;落在新图之外的出生点/敌人会被移除并在状态栏报出来(审计 A10)">应用尺寸</button>
+      <button id="spawn-r1">放侧1</button>
+      <button id="spawn-r2">放侧2</button>
     </div>
-    <h2>导出</h2>
+    <div class="desc-row"><button id="spawn-rdel">删最近(按视图中心那一侧)</button></div>
     <div class="desc-row">
-      <label><input id="opt-compress" type="checkbox" checked title="取消 = 导裸 body(compression=0)。浏览器 deflate 与 Godot COMPRESSION_DEFLATE 的兼容性未实测,这条是退路(规格 §3.5)"> 压缩(deflate)</label>
+      <button id="spawn-rclear1">清空侧1</button>
+      <button id="spawn-rclear2">清空侧2</button>
     </div>
   </div>
 </div>
@@ -185,6 +275,7 @@ window.ENEMY_REGISTRY = [
 <script src="core/80_validate.js"></script>
 <script src="core/85_geometry.js"></script>
 <script src="core/90_desc.js"></script>
+<script src="core/95_legacy.js"></script>
 <script src="core/99_exports.js"></script>
 <script src="tile_defs.js"></script>
 <script src="tint.js"></script>
@@ -223,6 +314,7 @@ window.ENEMY_REGISTRY = [
 <script src="ui/75_draft_store.js"></script>
 <script src="ui/80_ui_state.js"></script>
 <script src="ui/85_panels.js"></script>
+<script src="ui/86_fileops.js"></script>
 <script src="ui/90_open.js"></script>
 <script src="ui/92_boot.js"></script>
 <script src="ui/96_selftest.js"></script>

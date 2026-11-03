@@ -137,3 +137,42 @@ eq(Editor.crashIsNewer({ savedAt: 200, declined: false }, { savedAt: 100 }), tru
   eq(keep.panelOpen.lib, false, '★ 合法字段原样保留(只回落坏字段)');
   eq(keep.playerRef, def.playerRef, '★ 缺的字段补默认(不是整份丢掉)');
 })();
+
+// ── 文件动作的纯逻辑(①):名字判据必须与服务器**同一套**;传输后端切换只是状态 ──
+(function () {
+  const srv = require('../../editor_server.js');
+  const cases = ['a.cyrm', 'A_1-2.cyrm', 'x.v3.bak', 'demo.cyrm', '.cyrm', '', 'a.txt',
+                 'a/b.cyrm', '../a.cyrm', 'a.cyr', 'a.cyrm ', 'x'.repeat(60) + '.cyrm',
+                 'x'.repeat(80) + '.cyrm'];
+  const rows = cases.map(function (n) {
+    return [JSON.stringify(n), Editor.isValidMapName(n), srv.isValidMapName(n)];
+  });
+  tableEq('客户端 isValidMapName 与服务器逐值一致(单一来源 = server/map_names.js 的 MAP_NAME_RE)', rows);
+  tableEq('mapNameProblem:合法名字返回空串,不合法给得出原因', [
+    ['合法', Editor.mapNameProblem('demo.cyrm') === '', true],
+    ['空名', Editor.mapNameProblem('').length > 0, true],
+    ['带目录', Editor.mapNameProblem('maps/demo.cyrm').length > 0, true],
+    ['超长', Editor.mapNameProblem('x'.repeat(80) + '.cyrm').length > 0, true],
+    ['非字符串', Editor.mapNameProblem(42).length > 0, true],
+  ]);
+  tableEq('normalizeMapFileName:没后缀补 .cyrm,已带的不重复加', [
+    ['裸名(顺带 sanitize)', Editor.normalizeMapFileName('my map!'), 'my_map.cyrm'],
+    ['已带 .cyrm', Editor.normalizeMapFileName('a.cyrm'), 'a.cyrm'],
+    ['备份名原样', Editor.normalizeMapFileName('a.v3.bak'), 'a.v3.bak'],
+    ['空输入', Editor.normalizeMapFileName(''), ''],
+  ]);
+  eq(Editor.uniqueCopyName([], 'demo'), 'demo_copy.cyrm', 'uniqueCopyName:空库直接用 <名>_copy');
+  eq(Editor.uniqueCopyName([{ name: 'demo_copy.cyrm' }], 'demo'), 'demo_copy2.cyrm',
+     '★★ 已存在则继续派生(覆盖别人的图是最坏的一种"复制")');
+
+  eq(Editor.fileOpsBackendLabel(), '服务器 maps/', '后端默认 = 服务器 maps/');
+  Editor.setFileOpsBackend(Editor.FILEOPS_BACKEND_DIR, { name: 'mydir' });
+  eq(Editor.fileOpsBackendKind(), 'dir', '★ 切到本地目录:同一时刻只有一个后端');
+  eq(Editor.fileOpsBackendLabel(), '本地目录:mydir', '★ 后端标签带目录名(#lib-backend 要能说清现在读写哪)');
+  throws(function () { Editor.setFileOpsBackend('nope'); },
+         '★ 未知后端正当场抛(不许静默当服务器)', '未知的传输后端');
+  throws(function () { Editor.setFileOpsBackend(Editor.FILEOPS_BACKEND_DIR, null); },
+         '★ 目录后端必须给句柄(否则后面每一次读写都是空指针)', '目录句柄');
+  Editor.setFileOpsBackend(Editor.FILEOPS_BACKEND_SERVER, null);
+  eq(Editor.fileOpsBackendLabel(), '服务器 maps/', '★ 能切回服务器(否则测试后面全在被切换的后端上跑)');
+})();

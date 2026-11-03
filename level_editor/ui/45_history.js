@@ -20,7 +20,7 @@ function wholeDiff(map, tag) {
 function adoptMapInto(dst, src) {
   dst.subCols = src.subCols; dst.subRows = src.subRows;
   dst.layers = src.layers;
-  dst.players = src.players; dst.enemies = src.enemies;
+  dst.players = src.players; dst.enemies = src.enemies; dst.respawns = src.respawns;
   dst.comments = src.comments;
   return dst;
 }
@@ -35,9 +35,7 @@ function applyEntry(map, e, dir) {
     return;
   }
   if (e.kind === 'spawn') {
-    var v = dir < 0 ? e.before : e.after;
-    map.players = v.players.map(function (p) { return { x: p.x, y: p.y }; });
-    map.enemies = v.enemies.map(function (q) { return { type: q.type, x: q.x, y: q.y }; });
+    applySpawns(map, dir < 0 ? e.before : e.after);   // ★ 出生点/复活点/敌人三张表一起装回(一处口径)
     return;
   }
   if (e.kind === 'whole') {
@@ -61,6 +59,7 @@ function applyEntry(map, e, dir) {
     });
     map.players = s.players.map(function (p) { return { x: p.x, y: p.y }; });
     map.enemies = s.enemies.map(function (q) { return { type: q.type, x: q.x, y: q.y }; });
+    map.respawns = (s.respawns || []).map(function (r) { return { side: r.side, x: r.x, y: r.y }; });
     map.comments = s.comments.slice();
   }
 }
@@ -106,6 +105,7 @@ function copyRegion(map, L, sel) {
 function clipSize(clip) { return clip ? { w: clip.w, h: clip.h } : { w: 0, h: 0 }; }
 // ★ 决定 ④:两种数据类型不互相猜。拒绝时给出原因(状态栏要显示),不静默。
 function pasteRegion(map, L, clip, X, Y) {
+  if (!canEditLayer(L, map)) return { ok: false, why: '这一层不可编辑(不存在或已锁定)' };
   if (!clip) return { ok: false, why: '剪贴板是空的' };
   var isColorLayer = (L === Core.LAYER_BG);
   if (isColorLayer && clip.kind !== 'color') {
@@ -131,6 +131,7 @@ function pasteRegion(map, L, clip, X, Y) {
 //   被清空。于是"拖到图外"在环面上就是恒等位移(旧实现漏了 − 选区.x,会静默删掉被裁的列)。
 function moveRegion(map, L, sel, dx, dy) {
   if (!sel) return null;
+  if (!canEditLayer(L, map)) return null;
   var arr = Render.layerArray(map, L);
   if (!arr) return null;
   var from = new Map(), to = new Map();
@@ -168,6 +169,7 @@ function mirrorRegion(map, L, sel, axis) {
   if (axis !== 'h' && axis !== 'v') {
     throw new Error('镜像轴非法(只能是 h 水平 / v 垂直):实得 ' + String(axis));
   }
+  if (!canEditLayer(L, map)) return null;
   var arr = Render.layerArray(map, L);
   if (!arr) return null;
   var idx = [], before = [], after = [], x, y;
@@ -205,6 +207,54 @@ function mirrorSelection(axis) {
   status('已' + (axis === 'h' ? '水平' : '垂直') + '镜像选区(' +
          (sel.w / Core.SUB_PER_CELL) + '×' + (sel.h / Core.SUB_PER_CELL) + ' 格)');
   return out.diff;
+}
+
+// ── 选区操作的具名入口 ──
+// ★ 以前这四件事只写在 keydown 的内联块里 ⇒ 右栏没有任何按钮/提示,能力不可发现(用户反馈 ⑤)。
+//   现在热键与右栏按钮共用这几个函数,文案与失败原因只有一处。
+function doCopySelection() {
+  var sel = app.r.selection();
+  if (!sel) { status('先框选一块,再复制'); return null; }
+  clipboard = copyRegion(app.map, app.r.layer(), sel);
+  if (!clipboard) { status('复制失败:这一层读不到内容'); return null; }
+  status('已复制 ' + clipSize(clipboard).w + '×' + clipSize(clipboard).h + ' 子格');
+  return clipboard;
+}
+function doCutSelection() {
+  var sel = app.r.selection();
+  if (!sel) { status('先框选一块,再剪切'); return null; }
+  if (!canEditLayer(app.r.layer())) return null;
+  clipboard = copyRegion(app.map, app.r.layer(), sel);
+  var diff = applyTool({ map: app.map, layer: app.r.layer(), desc: 0, rgba: 0, brushSize: 0.25,
+                         selection: sel, rectMode: 'fill' }, 'rect',
+                       { kind: 'sub', x: sel.x, y: sel.y },
+                       { kind: 'sub', x: sel.x + sel.w - 1, y: sel.y + sel.h - 1 });
+  pushAndShow(diff);
+  status('已剪切 ' + clipSize(clipboard).w + '×' + clipSize(clipboard).h + ' 子格到剪贴板');
+  return diff;
+}
+function doPasteSelection() {
+  if (!clipboard) { status('剪贴板是空的(先复制或剪切一块)'); return null; }
+  var sel = app.r.selection();
+  var at = sel ? { x: sel.x, y: sel.y } : { x: 0, y: 0 };
+  var out = pasteRegion(app.map, app.r.layer(), clipboard, at.x, at.y);
+  if (!out.ok) { status('粘贴失败:' + out.why); return null; }
+  pushAndShow(out.diff);
+  if (sel) app.r.setSelection({ x: at.x, y: at.y, w: clipSize(clipboard).w, h: clipSize(clipboard).h });
+  status('已粘贴 ' + clipSize(clipboard).w + '×' + clipSize(clipboard).h + ' 子格');
+  return out.diff;
+}
+function doClearSelection() {
+  var sel = app.r.selection();
+  if (!sel) { status('先框选一块,再清除'); return null; }
+  if (!canEditLayer(app.r.layer())) return null;
+  var diff = applyTool({ map: app.map, layer: app.r.layer(), desc: 0, rgba: 0, brushSize: 0.25,
+                         selection: sel, rectMode: 'fill' }, 'rect',
+                       { kind: 'sub', x: sel.x, y: sel.y },
+                       { kind: 'sub', x: sel.x + sel.w - 1, y: sel.y + sel.h - 1 });
+  pushAndShow(diff);
+  status('已清除选区内容');
+  return diff;
 }
 
 // ── 交互(指针 / 滚轮 / 热键)──

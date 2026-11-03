@@ -31,6 +31,7 @@ globalThis.Core = {
   isV3Text: isV3Text, parseV3Text: parseV3Text,
   _v3Pack: _v3Pack, _v3TexOf: _v3TexOf, _v3ShapeOf: _v3ShapeOf,
   subcellRender: subcellRender, migrateV3: migrateV3,
+  migrateDescriptor: migrateDescriptor, migrateMap: migrateMap,
   MAX_CELLS_W: MAX_CELLS_W, MAX_CELLS_H: MAX_CELLS_H,
   clampMapSize: clampMapSize, validateMap: validateMap,
 };

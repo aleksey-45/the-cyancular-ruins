@@ -2,7 +2,7 @@
 // 只读源码判形态,不跑行为断言(那是 6 个 *_smoke.js 的事)。查四条:
 //   1. editor.html 的 <script src> 顺序 == 目录内文件名字典序,且两边不许多、不许少;
 //   2. 跨模块顶层名不重名(重名 = 静默覆盖,var/function 那条连错误都没有);
-//   3. worker.js 的 importScripts 列表 == 页面加载的 core 分片列表(只错这一处时,
+//   3. worker.js 的 importScripts 列表 == 页面加载的 core 分片列表 + tile_defs.js(只错这一处时,
 //      页面照常、只有编解码在浏览器里死 —— node 侧一条断言都看不到);
 //   4. 每个模块以 99_exports.js 收尾(公开 API 表只在它里面)。
 // --baseline [git-rev]:额外做"代码等价"比对 —— 分片按序拼接后(忽略注释与空白)必须与那一版
@@ -174,15 +174,16 @@ function checkStructure() {
     if (want[want.length - 1] !== '99_exports.js') fail(mod.dir + '/: 末片不是 99_exports.js');
   }
 
-  // worker 只要 core 的分片;两边不一致 = 浏览器里只有 worker 死。
+  // worker 要 core 的分片 + tile_defs.js(validateMap 的「纹理不在 tile_defs」闸在真编码的 worker 侧也要成立);
+  // 两边不一致 = 浏览器里只有 worker 死。
   const worker = read('worker.js');
   const m = /importScripts\(([\s\S]*?)\);/.exec(worker);
   const workerList = m ? (m[1].match(/'([^']+)'/g) || []).map(s => s.slice(1, -1)) : [];
-  const coreList = (byDir['core'] || []).map(f => 'core/' + f);
+  const coreList = (byDir['core'] || []).map(f => 'core/' + f).concat(['tile_defs.js']);
   if (workerList.join(',') !== coreList.join(',')) {
-    fail('worker.js 的 importScripts 列表与页面加载的 core 分片不一致\n        worker ' + workerList.join(' ') + '\n        html   ' + coreList.join(' '));
+    fail('worker.js 的 importScripts 列表与页面加载的 core 分片 + tile_defs.js 不一致\n        worker ' + workerList.join(' ') + '\n        应为   ' + coreList.join(' '));
   } else {
-    ok('worker.js: importScripts 与页面 core 分片一致(' + coreList.length + ' 片)');
+    ok('worker.js: importScripts 与页面 core 分片 + tile_defs.js 一致(' + coreList.length + ' 片)');
   }
 
   // 跨模块重名。只比页面侧三个模块:io/tint/tile_defs 仍是自己的 IIFE,不与它们同域。

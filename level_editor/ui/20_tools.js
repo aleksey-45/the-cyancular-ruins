@@ -27,6 +27,20 @@ function clampTexture(tex, atlasCap) {
   if (!isFinite(cap) || cap < 1) cap = 1;
   return Math.max(1, Math.min(cap, t));
 }
+// ★ 恢复出来的 selectedTexture(cyrm.ui.v1)要过与 legacy 迁移**同一张表**消毒:旧会话可能存着 legacy 号(如 5)
+//   或越界号,而新图集那 7 槽全透明,"开机画笔落笔不可见"是**静默错**(比保存被纹理闸拦下更糟)。
+//   规则:命中 legacy_texture_map → base(辅码四档不动,颜色由辅码给);不在 tiles 键集且非 0 → 回落 1;
+//   合法号原样;表缺席(node 冒烟)不猜,原样交给 clampTexture 的图集上界。
+function sanitizeRestoredTexture(tex) {
+  var t = parseInt(tex, 10);
+  if (!isFinite(t) || t < 1) return 1;
+  var defs = globalThis.TILE_DEFS;
+  if (!defs || !defs.tiles) return t;
+  // legacy → base 复用 core 的迁移规则(单一真相源;neutralDesc 的四档不影响 texOf 的结果)。
+  var migrated = Core.texOf(Core.migrateDescriptor(Core.neutralDesc(t)));
+  if (Object.prototype.hasOwnProperty.call(defs.tiles, String(migrated))) return migrated;
+  return 1;
+}
 function texturePalette(defs) {
   if (!defs || !defs.tiles) return [];
   var out = [];
@@ -60,7 +74,9 @@ function idxOf(map, X, Y) {
   return Render.wrapIdx(Y, map.subRows) * map.subCols + Render.wrapIdx(X, map.subCols);
 }
 // ★ 两种单位(格 / 子格)的换算只此一处:region.unit === 'cell' ⇒ 每格 16 个子格。
-function regionCells(map, region, clip) {
+// ★ ring=true 只要矩形边框那一圈(矩形工具的"描边"档):判据写在**折算之前**的原坐标上,
+//   跨接缝时也能正确地在接缝两侧各留一条边。
+function regionCells(map, region, clip, ring) {
   var out = [], seen = new Set();
   function add(X, Y) {
     var wx = Render.wrapIdx(X, map.subCols), wy = Render.wrapIdx(Y, map.subRows);
@@ -69,10 +85,15 @@ function regionCells(map, region, clip) {
     if (seen.has(i)) return;                           // 环面下 3×3 会重复命中,去重
     seen.add(i); out.push(i);
   }
+  function onRing(x, y) {
+    if (!ring) return true;
+    return x === region.x0 || x === region.x1 || y === region.y0 || y === region.y1;
+  }
   var k = Core.SUB_PER_CELL;
   if (region.unit === 'cell') {
     for (var cy = region.y0; cy <= region.y1; cy++) {
       for (var cx = region.x0; cx <= region.x1; cx++) {
+        if (!onRing(cx, cy)) continue;
         for (var qy = 0; qy < k; qy++) {
           for (var qx = 0; qx < k; qx++) add(cx * k + qx, cy * k + qy);
         }
@@ -80,14 +101,17 @@ function regionCells(map, region, clip) {
     }
   } else {
     for (var y = region.y0; y <= region.y1; y++) {
-      for (var x = region.x0; x <= region.x1; x++) add(x, y);
+      for (var x = region.x0; x <= region.x1; x++) {
+        if (!onRing(x, y)) continue;
+        add(x, y);
+      }
     }
   }
   return out;
 }
 // ★★ Core.lineCells 的坐标必须是整数:非整数或 NaN 会让它的 for(;;) 死循环、挂住整个
 //    标签页。所有调用点都在这里 floor(★ 这条只剩行为侧一半:产物是整数;新加一个忘了 floor
-//    的调用点今天抓不到 —— 零守卫登记在 docs/eng/debt/guard-strength-gaps.md)。
+//    的调用点今天抓不到 —— 零守卫登记在 docs/eng/registered-debt.md)。
 function strokePoints(from, to) {
   var pts = [];
   if (!to || (from.x === to.x && from.y === to.y)) { pts.push(from); return pts; }
@@ -105,6 +129,25 @@ function lineTargets(map, a, b, clip) {
     var idx = wy * map.subCols + wx;
     if (seen.has(idx)) continue;
     seen.add(idx); out.push(idx);
+  }
+  return out;
+}
+// ★★ "直线宽度"(右栏细分选项):宽度=1 子格走 lineTargets(原路径);更宽时把线上每个子格点
+//    扩成一个 w×w 的子格方块再并起来 —— 与画笔同一种几何(regionCells),不在第二处写"怎么算一条线"。
+function lineBandTargets(map, a, b, clip, w) {
+  var width = (typeof w === 'number' && isFinite(w) && w >= 1) ? Math.floor(w) : 1;
+  if (width <= 1) return lineTargets(map, a, b, clip);
+  var pts = strokePoints({ kind: 'sub', x: a.x, y: a.y }, { kind: 'sub', x: b.x, y: b.y });
+  var lo = Math.floor((width - 1) / 2), hi = Math.ceil((width - 1) / 2);
+  var out = [], seen = new Set();
+  for (var i = 0; i < pts.length; i++) {
+    var reg = { unit: 'sub', x0: pts[i].x - lo, y0: pts[i].y - lo,
+                x1: pts[i].x + hi, y1: pts[i].y + hi };
+    var list = regionCells(map, reg, clip);
+    for (var j = 0; j < list.length; j++) {
+      if (seen.has(list[j])) continue;
+      seen.add(list[j]); out.push(list[j]);
+    }
   }
   return out;
 }
@@ -136,6 +179,9 @@ function constrainSquare(a, b, shift) {
 
 // ── 落笔:先读旧值、再写、产出一条差量 ──
 function paintCells(map, L, idx, valueOf) {
+  // ★★ 图层"可编辑目标"三态的唯一闸(不存在 / 锁定 / 隐藏):所有落笔、粘贴、镜像、选区搬运
+  //    都从这里过 —— 以前锁定是纯装饰(全仓没有一处读 layerLocked),用户反馈 ⑥。
+  if (!canEditLayer(L, map)) return null;
   var arr = Render.layerArray(map, L);
   if (!arr || !arr.length) return null;
   var changed = [], before = [], after = [], seen = new Set();
@@ -187,13 +233,14 @@ function applyTool(st, tool, from, to) {
       return paintCells(map, L, idx, function () { return 0; });   // 两层都置空气(色层 = 黑)
     }
   } else if (tool === 'rect') {
+    // ★ 细分选项:填充 / 描边(描边只画矩形那一圈)
     idx = regionCells(map, {
       unit: from.kind,
       x0: Math.min(from.x, to.x), y0: Math.min(from.y, to.y),
       x1: Math.max(from.x, to.x), y1: Math.max(from.y, to.y),
-    }, clip);
+    }, clip, st.rectMode === 'outline');
   } else if (tool === 'line') {
-    idx = lineTargets(map, toSub(from), toSub(to), clip);
+    idx = lineBandTargets(map, toSub(from), toSub(to), clip, st.lineWidth);
   }
   if (!idx) return null;
   return paintCells(map, L, idx, valueFor(st, L));

@@ -1,4 +1,4 @@
-// ui/92_boot.js —— 启动:装载图集、库、默认图。
+// ui/92_boot.js —— 启动:装载图集、库、可选的 ?p= 地图;② 空启动(不再自动打开第一行)。
 
 
 function boot() {
@@ -42,6 +42,9 @@ function bootLoad() {
     return loadAtlas();
   }).then(function () {
     buildPanels();
+    // ★★ 文件级动作(新建/打开/保存/…的绑定在 86_fileops):buildPanels 里也会调,这里再兜一次 ——
+    //    "面板建了但文件按钮没接上"是用户报过的形态;两边都幂等(每个元素只绑一次)。
+    if (typeof installFileOps === 'function') installFileOps();
     return openFromUrl();
   }).then(function () {
     return checkCrashSlot();
@@ -51,11 +54,14 @@ function bootLoad() {
   }).then(function () {
     applyUiState();
     installUiStateSave();
+    // ② 空启动:没有图就停在空状态(不再替用户自动打开库里随便一张)。
+    if (!app.map && typeof showEmptyState === 'function') showEmptyState(true);
     return null;
   }).then(function () {
     if (new URLSearchParams(location.search).has('selftest')) return runSelfTest();
     return null;
   }).catch(function (e) {
     status('启动失败:' + msgOf(e));
+    if (typeof showEmptyState === 'function') showEmptyState(true);
   });
 }

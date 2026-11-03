@@ -1,4 +1,4 @@
-[gd_resource type="FontVariation" load_steps=4 format=3]
+[gd_resource type="FontVariation" format=3 uid="uid://b7jd3amjab174"]
 
 [ext_resource type="FontFile" uid="uid://c0pv8l2vamgkx" path="res://assets/fonts/less_perfect_dos_vga.ttf" id="1_dos"]
 [ext_resource type="FontFile" uid="uid://bmavvucmdqmil" path="res://assets/fonts/unifont-17.0.05.otf" id="2_cjk"]
@@ -10,5 +10,5 @@ hinting = 0
 subpixel_positioning = 0
 
 [resource]
-base_font = ExtResource("1_dos")
 fallbacks = Array[Font]([ExtResource("2_cjk"), SubResource("SystemFont_backstop")])
+base_font = ExtResource("1_dos")

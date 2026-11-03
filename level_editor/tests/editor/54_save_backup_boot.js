@@ -10,9 +10,9 @@ module.exports = (async function () {
   try {
 
     // ── v3 源首次保存 ──
-    // ★ 为什么必须另立一条:确认框原先只说「不可逆」,而决定性的事实是"游戏今天读不了 v4"
-    //   —— 用户以为只是换了个格式,实际是把一张能玩的图换成游戏打不开的。
-    // ★★ 断言口径:①确认文案里那三件事都在;②备份真的从唯一那个写盘出口出去了、字节 == 打开时那份原文。
+    // ★ 为什么必须另立一条:确认框原先只说「不可逆」;而用户真正要知道的是"转成 v4 之后游戏还能不能读"
+    //   —— 旧文案写的是"游戏现在读不了 v4",那是过期事实(map_format.gd 早已迁移),必须改对。
+    // ★★ 断言口径:①确认文案里那三件事都在(且旧错话不再出现);②备份真的从唯一那个写盘出口出去了、字节 == 打开时那份原文。
     await (async function () {
       const savedConfirm = globalThis.confirm;
       let asked = 0, askText = '';
@@ -27,13 +27,13 @@ module.exports = (async function () {
         putLog14.length = 0;
         await Editor.saveCurrent(false);
         eq(asked, 1, '⑭d2 前提:首次转换保存**问了一次**(实得 ' + asked + ' 次)');
-        // ★ 三件事一件都不能少:转成 v4 二进制 / 不可逆 / 游戏现在读不了 v4
+        // ★ 三件事一件都不能少:转成 v4 二进制 / 不可逆 / **游戏读的就是 v4**(旧文案说"读不了"是过期事实)
         ok(askText.indexOf('v4 二进制') >= 0 && askText.indexOf('不可逆') >= 0,
            '★★ 确认框说了"保存会把它转成 v4 二进制、不可逆"(实得 ' + JSON.stringify(askText) + ')');
-        ok(askText.indexOf('读不了') >= 0 && askText.indexOf('map_format.gd') >= 0,
-           '★★★ 确认框说了**决定性的那件事**:游戏现在读不了 v4,要等期 E 迁移 map_format.gd' +
-           '(旧文案只说「不可逆」—— 用户不知道自己换来的是一张游戏打不开的图;实得 ' +
-           JSON.stringify(askText) + ')');
+        ok(askText.indexOf('游戏读的就是 v4') >= 0 && askText.indexOf('map_format.gd') >= 0 &&
+           askText.indexOf('读不了') < 0,
+           '★★★ 确认框说的是**现在的**事实:游戏读的就是 v4(map_format.gd 早已迁移),旧文案「读不了 v4」' +
+           '必须不再出现(实得 ' + JSON.stringify(askText) + ')');
         // ★ 文案里那个名字必须与下面真写出去的那个同源(两处各写一份字面量 = "说的与做的不是一回事")。
         ok(askText.indexOf(Editor.v3BackupName('demo_v3src.cyrm')) >= 0,
            '★★ 确认框**点名**了备份文件(用户得知道退路落在哪个名字上;实得 ' +
@@ -139,8 +139,8 @@ module.exports = (async function () {
        status14 + '")');
     status14 = '';
     elOf14('btn-del').click();
-    ok(status14.indexOf('删除地图') >= 0,
-       '★ 面板上的其它按钮也接上了(「删除」按钮给出了它的说明;实得 "' + status14 + '")');
+    ok(status14.indexOf('先打开一张地图') >= 0,
+       '★ 面板上的其它按钮也接上了(「删除」在没打开地图时说的是人话;实得 "' + status14 + '")');
     // ★ 背景层:派生提示行与「只改辅码」那一行都要跟着调色板一起藏。
     const rows = { 'desc-hue': mkRow14(), 'desc-bri': mkRow14(), 'desc-sat': mkRow14(),
                    'desc-alp': mkRow14(), 'desc-only': mkRow14() };
@@ -164,6 +164,49 @@ module.exports = (async function () {
        '★ 切回纹理层时派生提示行要**回来**(藏了不还原 = 提示永久消失)');
     eq(rows['desc-only'].style.display, '',
        '★ 切回纹理层时「只改辅码」那一行也回来');
+
+    // ── ① 文件动作:打开文件 / 打开文件夹 / 校验(真流程;文件选择与报告用注入钩子) ──
+    const v4bytes = new Uint8Array(await globalThis.Io.encodeMap(
+      Editor.createEmptyMap('picked', 4, 4), { compress: true }));
+    globalThis.mapBytes14['picked.cyrm'] = v4bytes;
+    globalThis.libRows14 = [];
+    globalThis.fileOpsPick = function () { return Promise.resolve({ name: 'picked.cyrm', bytes: v4bytes }); };
+    try {
+      await Editor.openFileFlow();
+      eq(Editor.app.name, 'picked.cyrm', '★ 打开文件:app.name = 选中的文件名');
+      eq(elOf14('st-save').textContent, '未保存',
+         '★★ 打开文件读入的是**副本**:状态栏必须说「未保存」(假装成"已保存"= 用户以为库里已经有它了)');
+      ok(status14.indexOf('还没写进任何库') >= 0,
+         '★★ 而且说清楚"还没写进任何库,Ctrl+S 会写进…"(实得 "' + status14 + '")');
+      ok(Editor.app.raw && Editor.app.raw.length > 0,
+         '★ app.raw = 读进来的那份字节(删掉它则"原文备份"那条路对读入的文件不可用)');
+      globalThis.libRows14 = [{ name: 'picked.cyrm', size: v4bytes.length, mtime: 1 }];
+      await Editor.openFileFlow();
+      ok(status14.indexOf('保存会覆盖同名') >= 0,
+         '★★ 库里已有同名文件 ⇒ 明说"保存会覆盖同名"(实得 "' + status14 + '")');
+    } finally { globalThis.fileOpsPick = null; }
+
+    // 打开文件夹:没有 File System Access 时要说人话,而不是默默什么都不发生
+    const savedPicker = globalThis.window.showDirectoryPicker;
+    delete globalThis.window.showDirectoryPicker;
+    status14 = '';
+    await Editor.openFolderFlow();
+    ok(status14.indexOf('没有目录访问能力') >= 0,
+       '★ 浏览器没有 FSA 时「打开文件夹…」明说原因并指路「打开文件…」(实得 "' + status14 + '")');
+    globalThis.window.showDirectoryPicker = savedPicker;
+
+    // 校验:必须**真跑一遍编码**(只跑 validateMap 证明不了"能存成 .cyrm")
+    const reports = [];
+    globalThis.fileOpsReportSink = function (title, lines) { reports.push({ title: title, lines: lines.slice() }); };
+    try {
+      const cres = await Editor.checkMapFlow();
+      ok(cres && cres.ok === true, '★ 校验:干净的小图 ok = true(实得 ' + JSON.stringify(cres && cres.ok) + ')');
+      ok(reports.length === 1 && reports[0].lines.some(function (l) { return l.indexOf('编码通过') >= 0; }),
+         '★★ 报告里有"编码通过 …字节" —— 校验真的跑了一遍 encodeForWrite(实得 ' +
+         JSON.stringify(reports.length ? reports[0].lines : null) + ')');
+      ok(reports[0].lines.some(function (l) { return l.indexOf('文件名:picked.cyrm') >= 0; }),
+         '★ 报告里也判了文件名(服务器会 400 的那些名字不该等到写盘才发现)');
+    } finally { globalThis.fileOpsReportSink = null; }
 
   } finally {
     stubs.restoreStubs14();

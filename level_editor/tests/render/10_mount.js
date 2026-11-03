@@ -88,14 +88,86 @@ try {
       // 网格线:格线恒画,子格线只在 zoom ≥ 4 且开了子格时画(C15)
       // ★ 判据用 moveTo(线段起点)而不是 stroke(整条路径一次):两组线各 beginPath+stroke,故 stroke 恒为 2,拿它分不出子格线开没开。
       const coarseMoves = countOps(cv1.ctx, 'op', 'moveTo');
-      ok(coarseMoves > 0, '格线按**可见区**画出来(moveTo ' + coarseMoves + ' 条线段;B8:不裁剪 = 每次重画整张图)');
+      ok(coarseMoves > 0, '格线按**可见区**画出来(moveTo ' + coarseMoves + ' 条线段;⑪ 起与地图矩形求交,不再画到图外)');
       cv1.ctx.ops.length = 0;
       r1.setSubGrid(true);
       const subMoves = countOps(cv1.ctx, 'op', 'moveTo');
       ok(subMoves > coarseMoves,
          '★★ setSubGrid(true) 多画一层子格线(' + subMoves + ' > ' + coarseMoves +
-         '):格线 64px、子格线 16px,后者密 4 倍');
+         '):④ 起只画被拆分的格 —— m1 那几格都是 1 个子格非空(象限掩码不齐)⇒ 也算拆分');
       r1.setSubGrid(false);
+      // ── ⑩ 固定 2×2 + ⑪ 画布范围 + ⑫ 底色:一次渲染同时钉四件事 ──
+      // 地图 16×12 子格 @4px ⇒ 屏幕上 64×48 px;四份副本的左上角 (0,0)/(64,0)/(0,48)/(64,48) 全在画布内。
+      cv1.ctx.ops.length = 0;
+      await r1.setView({ x: 0, y: 0, zoom: 4 });
+      ok(someOp(cv1.ctx, function (o) {
+           return o.op === 'fillRect' && o.style === '#b0e5f6' && o.x === 0 && o.y === 0;
+         }),
+         '★ ⑫ 整屏底色 = 游戏侧空气色 #b0e5f6(不是编辑器的 #0e1013)');
+      eq(countOps(cv1.ctx, 'op', 'strokeRect'), 4,
+         '★★ ⑩ 环面固定 2×2:四份副本各画一个地图边框(实得 ' +
+         countOps(cv1.ctx, 'op', 'strokeRect') + ' 个 strokeRect)');
+      // ★ 地图右侧/下侧在屏幕上是 64/48;不裁剪的旧画法会一路画到画布边(200/150)。
+      const gx = [], gy = [];
+      cv1.ctx.ops.forEach(function (o) {
+        if (o.op === 'moveTo') { gx.push(o.x); gy.push(o.y); }
+      });
+      const gridMaxX = gx.length ? Math.max.apply(null, gx) : -1;
+      const gridMaxY = gy.length ? Math.max.apply(null, gy) : -1;
+      ok(gridMaxX > 0 && gridMaxX <= 64.5 && gridMaxY > 0 && gridMaxY <= 48.5,
+         '★★ ⑪ 网格线与地图矩形求交后再画:最远 x/y = ' + gridMaxX + '/' + gridMaxY +
+         ',地图右/下边缘 = 64/48(旧画法 = 画满画布 200×150,于是"网格停在哪 = 图到哪"这条线索不存在)');
+      cv1.ctx.ops.length = 0;
+      r1.setTorus(false);
+      eq(countOps(cv1.ctx, 'op', 'strokeRect'), 1,
+         '★ 关掉环面只剩一个画布边框(实得 ' + countOps(cv1.ctx, 'op', 'strokeRect') + ' 个)');
+      r1.setTorus(true);
+      // ── 出生点标记必须落在**副本内容**上 ──
+      // ★ 2×2 的副本偏移是非负数,标记坐标要 **加** 偏移;3×3 时代写的是减号(那时偏移是 -1/0/+1)。
+      //   少这条断言时,减号残留会让四个 "P1" 全漂到没有内容的那一侧(画面上就是"空地上浮着 P1"),
+      //   而当时没有任何断言看得到 —— 渲染冒烟只数 drawImage 与边框。
+      m1.players = [{ x: 0, y: 0 }];
+      cv1.ctx.ops.length = 0;
+      await r1.setView({ x: 0, y: 0, zoom: 4 });
+      const pMarks = cv1.ctx.ops.filter(function (o) {
+        return o.op === 'fillRect' && o.alpha === 0.75;
+      }).map(function (o) { return o.x + ',' + o.y; }).sort();
+      const pWant = ['0,0', '0,48', '64,0', '64,48'].sort();
+      ok(JSON.stringify(pMarks) === JSON.stringify(pWant),
+         '★★ ⑩ 出生点标记跟着 2×2 副本走(实得 [' + pMarks.join(' ') + '],期望 [' + pWant.join(' ') +
+         '];减号残留会让它们落到负坐标 = 空地上)');
+      m1.players = [];
+      // ── ④ 全空图上开子格:一条子格线都不许有(旧实现整屏铺满,与"有没有被拆分"无关)──
+      const mE = Core.createMap('empty', 4, 3);
+      const cvE = fakeCanvas(200, 150);
+      const rE = Render.mount(cvE, SLICE);
+      await rE.setMap(mE);
+      await rE.setView({ x: 0, y: 0, zoom: 16 });
+      cvE.ctx.ops.length = 0;
+      rE.setSubGrid(false);
+      const emptyCellMoves = countOps(cvE.ctx, 'op', 'moveTo');
+      cvE.ctx.ops.length = 0;
+      rE.setSubGrid(true);
+      const emptySubMoves = cvE.ctx.ops.filter(function (o) {
+        return o.op === 'moveTo' && o.style === 'rgba(0,0,0,0.14)';
+      }).length;
+      ok(emptyCellMoves > 0 && emptySubMoves === 0,
+         '★★ ④ 全空图上开子格**一条子格线都不画**(实得 ' + emptySubMoves + ' 条;格线 ' + emptyCellMoves +
+         ' 条照画)—— 旧实现是无条件整屏铺满');
+      // ★★ 缓存失效:同一格从"均匀"变成"拆分"之后,子格线必须**立刻**出现(失效键是 ③ 的内容版本号)。
+      //    少了这一条,"按格缓存"可以在第一次算完之后永远不再更新,而上面那条(全空 ⇒ 0)照样绿。
+      mE.layers[Core.LAYER_SCENE].desc[(1 * Core.SUB_PER_CELL) * mE.subCols + (1 * Core.SUB_PER_CELL)] =
+        Core.neutralDesc(3);
+      rE.editCells(Core.LAYER_SCENE, [{ cx: 1, cy: 1 }]);      // 走 ③ 的 touch ⇒ 版本号 +1
+      cvE.ctx.ops.length = 0;
+      rE.render();
+      const afterEdit = cvE.ctx.ops.filter(function (o) {
+        return o.op === 'moveTo' && o.style === 'rgba(0,0,0,0.14)';
+      }).length;
+      eq(afterEdit, 6,
+         '★★ ④ 缓存失效:编辑让一格变成拆分之后子格线立刻出现(6 条 = 该格 3 竖 + 3 横;实得 ' + afterEdit +
+         ',version=' + rE.cells().version(Core.LAYER_SCENE, 1, 1) +
+         ')。★ 少了"版本号当失效键"这条,按格缓存会在第一次算完永远不再更新');
       // ★★ 副本必须逐层铺出去:视口左边缘越过接缝时,离屏层那一份要被平移 −subCols×zoom
       //    再画一次(合成次数 = 层数 × 副本数)。★ 离屏层本身读格时就环面折算,所以
       //    副本不会画错内容(偏移是 subCols 的整数倍 ⇒ 折算前后是同一格)。
@@ -106,11 +178,11 @@ try {
       r1.setTorus(false);
       const noTorus = countOps(cv1.ctx, 'op', 'drawImage');
       r1.setTorus(true);
-      eq([acrossSeam, noTorus], [8, 4],
-         '★★ 环面开关决定"每层被**合成几次**":跨接缝 2 份副本 × 4 层 = 8 次 drawImage,' +
+      eq([acrossSeam, noTorus], [16, 4],
+         '★★ 环面开关决定"每层被**合成几次**":环面 = 固定 2×2 四份副本 × 4 层 = 16 次 drawImage,' +
          '关掉环面 1 份 × 4 层 = 4 次(实得 ' + acrossSeam + ' / ' + noTorus + ')。' +
-         '★ 本断言**只**数次数 —— 这个视图下 ±subCols 那几份副本必然整个落在画布外,' +
-         '所以它**不是**"接缝另一侧的内容被画出来了"的判据(那一条看 ⑪e:像素画到 x ≥ 96)');
+         '★ 份数与视图无关(这里视口只与主网格相交,旧 ±1 窗口只会返回 1 份 = 4 次、与关掉环面不可辨);' +
+         '★ 本断言**只**数次数 —— 它**不是**"接缝另一侧的内容被画出来了"的判据(那一条看 ⑪e:像素画到 x ≥ 96)');
       const hs = r1.screenToSub(0, 0);
       ok(hs.X >= 0 && hs.X < m1.subCols && hs.Y >= 0 && hs.Y < m1.subRows,
          '★ screenToSub 在副本上也折回 [0, subCols)(A4:副本上能落笔)');
@@ -125,7 +197,7 @@ try {
 
       // ── ⑩f 层可见性 / 压暗 / 选区框 ──
       // ★★ 判据从"drawImage 总次数为 0"改成"少了几次":② 之后主画布上画的是四张离屏层
-      //    (每层各几份副本),藏掉一层只会让它那几份消失,其余三层照画(总次数 4 → 3)。
+      //    (每层各 2×2 份副本),藏掉一层只会让它那 4 份消失,其余三层照画(16 → 12)。
       //    "次数变成 0"是逐子格那条旧路径的说法。
       cv1.ctx.ops.length = 0;
       r1.setLayerVisible(Core.LAYER_SCENE, false);
@@ -133,9 +205,10 @@ try {
       cv1.ctx.ops.length = 0;
       r1.setLayerVisible(Core.LAYER_SCENE, true);
       const shown = countOps(cv1.ctx, 'op', 'drawImage');
-      ok(hidden === shown - 1 && hidden > 0,
-         '★ 隐藏场景层之后 drawImage 正好少 1 次(实得 隐藏 ' + hidden + ' 次 / 显示 ' + shown +
-         ' 次;其余 ' + hidden + ' 次照画)。★ 次数**只**说明"合成的份数少了一份"——' +
+      ok(shown - hidden === 4 && hidden > 0,
+         '★ 隐藏场景层之后 drawImage 正好少 4 次(实得 隐藏 ' + hidden + ' 次 / 显示 ' + shown +
+         ' 次;少掉的正是该层的 2×2 四份副本,其余 ' + hidden + ' 次照画)。' +
+         '★ 次数**只**说明"合成的份数少了一份"——' +
          '"那一层有没有离屏层"它分不出来(`!s.layerVisible[L]` 与 `!layerCv[L]` 共用同一个 continue);' +
          '真守卫在 ⑪a(按**对象身份**判主画布合成的就是那一层的离屏层)');
       ok(r1.layerVisible(Core.LAYER_SCENE) === true, 'layerVisible 读回 true');
@@ -156,7 +229,11 @@ try {
       r1.setLayer(Core.LAYER_SCENE);
       cv1.ctx.ops.length = 0;
       r1.setSelection({ x: 2, y: 2, w: 4, h: 4 });
-      eq(countOps(cv1.ctx, 'op', 'strokeRect'), 1, 'setSelection 立刻重画并画出选区框(1 个 strokeRect)');
+      // ★ ⑪ 起画布边框也用 strokeRect ⇒ 判据只能数**选区那个颜色**的,不能数总数。
+      const selRects = cv1.ctx.ops.filter(function (o) {
+        return o.op === 'strokeRect' && o.style === '#e0b34a';
+      }).length;
+      eq(selRects, 1, 'setSelection 立刻重画并画出选区框(1 个 #e0b34a 的 strokeRect;边框是另一种颜色)');
       eq(r1.selection(), { x: 2, y: 2, w: 4, h: 4 }, 'selection() 读回选区');
       ok(r1.setSelection(null) === undefined && r1.selection() === null,
          '★ setSelection(null) 清掉选区(并重画 —— 旧框不许留在屏幕上)');

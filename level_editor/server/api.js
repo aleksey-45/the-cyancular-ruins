@@ -5,9 +5,13 @@ const { isValidMapName, mapPathFor, MAP_NAME_RE } = require('./map_names.js');
 const { listMaps, serveMapFile } = require('./maps.js');
 const { writeGuardReject } = require('./gates.js');
 const { receiveMapFile } = require('./atomic_write.js');
+const { handleMapRename, handleMapDelete } = require('./map_ops.js');
 
 // /api/* 的分派。
 function handleApi(req, res, parsed, ctx) {
+  // 地图的"真动作":改名(POST)/ 删除(DELETE)。★ 写闸与名字闸都在 map_ops.js 里,
+  // 这里只分派 —— 判据别抄成第二份。
+  if (parsed.pathname === '/api/map/rename') return handleMapRename(req, res, parsed, ctx);
   if (parsed.pathname === '/api/maps') {
     if (req.method !== 'GET' && req.method !== 'HEAD') return sendText(res, 405, '只接受 GET');
     const maps = listMaps(ctx.mapsDir, ctx.logger);
@@ -15,6 +19,7 @@ function handleApi(req, res, parsed, ctx) {
     return sendJson(res, 200, { maps: maps });
   }
   if (parsed.pathname === '/api/map') {
+    if (req.method === 'DELETE') return handleMapDelete(req, res, parsed, ctx);
     const name = parsed.searchParams.get('p');
     // 名字不过关一律在碰文件系统之前回 400。
     if (!isValidMapName(name)) {
@@ -31,7 +36,7 @@ function handleApi(req, res, parsed, ctx) {
       if (bad) return sendText(res, bad.status, bad.message);
       return receiveMapFile(req, res, name, ctx);
     }
-    return sendText(res, 405, '只接受 GET / PUT');
+    return sendText(res, 405, '只接受 GET / PUT / DELETE');
   }
   return sendText(res, 404, '未知接口 ' + parsed.pathname);
 }

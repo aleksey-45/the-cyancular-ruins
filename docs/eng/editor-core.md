@@ -5,9 +5,10 @@
 
 ## 1. 分片与加载顺序
 
-- 12 片按**文件名字典序**加载，`NN_` 前缀就是顺序。顺序的真相源是 `level_editor/editor.html` 的
+- 13 片按**文件名字典序**加载，`NN_` 前缀就是顺序。顺序的真相源是 `level_editor/editor.html` 的
   `<script src>` 列表；node 侧的 `level_editor/loader.js` 从同一处读，不另抄一份。
-- `level_editor/worker.js` 的 `importScripts` 列表必须与页面加载的 core 分片**逐项相同**，`parts_check.js` 守这条。
+- `level_editor/worker.js` 的 `importScripts` 列表必须与页面加载的 core 分片**逐项相同**、末尾再加
+  `tile_defs.js`（§6.1 的纹理闸必须在真做编码的 worker 侧也成立），`parts_check.js` 守这条。
 - 分片在**一个共享作用域**里求值，可直接引用彼此的顶层声明；**顶层名不许重名**，重名即静默覆盖。
 - ★ **core/ 是纯逻辑**：不引用任何 DOM API，必须能被 node 直接 `new Function(src)()` 求值。
 - 末片恒为 `99_exports.js`：公开 API 表只在它里面。
@@ -82,6 +83,29 @@ descriptor (u32)
   （如 `0x000007FF`）会让 `isAir(d) === false` 与 `texOf(d) === 0` 得出相反结论；`decodeMap` /
   `decodeTexLayer` 不归一化来路不明的描述符。
 
+### 6.1 legacy 纹理 id：读时迁移（`95_legacy.js`）
+
+- 背景：旧图集 22 块里 tex **2,3,4,5**（纯色方块色相变体）与 **16,17,18**（树叶色相变体）废弃。
+  新 `structure.png` 这 7 槽**全透明**、其余 15 块未动；纹理 id 空间**稳定 1..22 不重编号**，
+  文件格式**保持 v4 不升版本**。`tile_defs.js`（生成物）现为 **15 条 `tiles` + 顶层 `legacy_texture_map`**
+  （旧 tex → `{base, hue}`）；UI 可点选调色板 = 15 条再排除派生的 22 ⇒ **14 项**（[editor-ui.md](editor-ui.md) §12.4）。
+- ★ **迁移发生在读时、不在文件里**：`migrateDescriptor(d)` 的规则（已定决策）——
+  `tex = texOf(d)` 命中 `legacy_texture_map` 时 `new_tex = base`、
+  `new_hue = clamp(hueOf(d) + legacy_hue − 4, 0, 7)`（hue 是档位，legacy_hue 4 = 中性）、
+  bri/sat/alpha 原样；未命中（含 tex 0 与畸形）原样返回。`migrateMap(map)` 对**三个 tex 层**原地迁移，
+  color 层是 RGBA 不是描述符、一个字节不碰。
+- ★ **表缺席是 no-op 而不是抛**：迁移表来自 `globalThis.TILE_DEFS`（worker 侧由 `importScripts('tile_defs.js')`
+  带上，见 §1）；只装 core 的 node 冒烟里没有表 ⇒ 原样返回。生产路径（页面 / worker / dist）恒有表。
+- ★ **`decodeMap` 自己不迁移**（core 的格式契约不变）；迁移挂在页面侧**全部四个读入口**上：
+  v4 二进制（`level_editor/ui/10_util.js` 的 `mapFromBytes`）、v3 文本与旧字母格式（`migrateV3` 在产出 desc 时逐条
+  `migrateDescriptor`，`level_editor/core/70_v3_text.js`）、**草稿恢复**（`level_editor/ui/75_draft_store.js` 的 `offerDraft`）与
+  **崩溃槽位**（`level_editor/ui/80_ui_state.js` 的 `checkCrashSlot`）。漏掉任何一个，上次会话的旧数据就会带着
+  legacy id 回到内存。
+- 迁移后**内存即干净** ⇒ 新保存的文件不再含 legacy id；最后一道防线是 §9 的「纹理不在 tile_defs」error
+  （`encodeMap` 只拒 errors）。守卫：`level_editor/tests/format/70_legacy_migration.js`（全表 + 钳制 +
+  migrateMap + v3/legacy 文本 + 纹理闸）、editor 冒烟的三处接线（`10_core_tools` ①b / `62` ⑥b / `66` ⑪d）、
+  tint 冒烟 ⑥b（真图集：15 块非空、legacy 7 槽全透明 —— 「把空槽抠掉重排图集」会红）。
+
 ## 7. 取角映射（`subcellRender`）
 
 子格全局坐标 `(X, Y)` → 目标矩形（世界像素）+ 源矩形（贴图块内偏移）；调用方按 `(texture-1)` 定位贴图块，
@@ -126,6 +150,10 @@ descriptor (u32)
   是 4 的倍数。
 - **导出前校验只报告、不阻止导出**：`errors` = 真正非法；`warnings` = 能导出但游戏里可能不按预期跑。
   `encodeMap` **只拒 `errors`**。
+- ★ **「纹理不在 tile_defs」是 error**（§6.1 的另一半守卫）：tex 层 desc 的 `texOf` 非 0 且不在
+  `TILE_DEFS.tiles` 键集（legacy id 与越界号都算）⇒ 每层报一条、点名纹理号。`encodeMap` 只拒 errors，
+  故它天然拦住「绕过迁移入口手改内存」的 legacy 残留被保存出去。`TILE_DEFS` 缺席时跳过这条检查
+  （没有表可判，别把"没表"当成"全非法"）。
 - **复活点判据**（`_checkRespawns`，常量 `RESPAWN_MIN_PER_SIDE = 5` / `RESPAWN_MIN_SIDE_GAP = 5` /
   `RESPAWN_EDGE_MARGIN = 10` / `RESPAWN_BUCKETS = 3`，与 `core/sim/spawn_chooser.gd`、
   [`tools/map_spawn_meta.gd`](../../tools/map_spawn_meta.gd) 同源）：每侧点数、点必须在自己半区、

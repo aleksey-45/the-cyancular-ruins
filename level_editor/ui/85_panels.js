@@ -1,4 +1,4 @@
-// ui/85_panels.js —— 右侧面板与图集装载。
+// ui/85_panels.js —— 右栏面板(工具/工具选项/图层/纹理/辅码/出生点)、画布尺寸与库列表装载。
 
 // ★ 恢复成功 ⇒ 消费掉这条快照:留着的话每一次打开都会再弹一次「上次异常退出」(一次偶发页面异常
 //    变成一个永久的开机弹窗)。清不掉不致命(下次会问,而那时用户点"不要"会被 declined 记住)。
@@ -14,23 +14,63 @@ function consumeCrashSlot() {
   });
 }
 
+// 工具细分选项:只显示当前工具那一组(工具与它的参数必须相邻,反馈 ⑤)。
+function syncToolOptions() {
+  var opts = document.querySelectorAll('#tool-opts .opt');
+  for (var i = 0; i < opts.length; i++) {
+    var keys = String(opts[i].dataset.for || '').split(/\s+/);
+    opts[i].style.display = (keys.indexOf(app.st.tool) >= 0) ? '' : 'none';
+  }
+}
+
+// 纹理缩略图 = 4×4 个象限拼成 64×64(只画一个象限会让靠四角拼图案的砖看不出样子)。
+// ★ 用**当前辅码**染色(Core.packDesc(tex, 当前四档)):按钮上看得见的是「基准纹理 + 你手上这套辅码」,
+//   调档位当场能预览(旧实现恒用中性辅码,调色板对"调了档位"毫无反应)。
+// ★ app.st 还没建好时(极早的启动路径 / node 冒烟)回落中性档 —— 缩略图只是表现,不许抛。
+function paletteThumbURL(tex) {
+  if (typeof document === 'undefined' || !document.createElement) return '';
+  var cap = (typeof Render.atlasCapacity === 'function') ? Render.atlasCapacity() : 0;
+  if (!(cap >= tex)) return '';                       // 图集还没装好/node 冒烟:回落成数字
+  try {
+    var k = Core.SUB_PER_CELL, px = 16, size = k * px;
+    var cv = document.createElement('canvas');
+    if (!cv || typeof cv.getContext !== 'function') return '';
+    cv.width = size; cv.height = size;
+    var g = cv.getContext('2d');
+    if (!g) return '';
+    var cur = (app && app.st && isFinite(app.st.desc)) ? app.st.desc : null;
+    var desc = cur === null ? Core.neutralDesc(tex)
+      : Core.packDesc(tex, Core.hueOf(cur), Core.brightOf(cur), Core.satOf(cur), Core.alphaOf(cur));
+    for (var qy = 0; qy < k; qy++) {
+      for (var qx = 0; qx < k; qx++) {
+        var tile = Render.tileFor(desc, qx, qy);
+        if (tile) g.drawImage(tile, qx * px, qy * px);
+      }
+    }
+    return cv.toDataURL();
+  } catch (e) { return ''; }                          // 缩略图只是表现,失败退回数字,不影响画布
+}
+// ★ 辅码四档变化时只重画调色板按钮的**背景**(不重建面板):按钮用 dataset.tex 记着自己的纹理号。
+function refreshPaletteThumbs() {
+  if (typeof document === 'undefined' || !document.querySelectorAll) return;
+  var btns = document.querySelectorAll('#palette .sw');
+  for (var i = 0; i < btns.length; i++) {
+    var tex = parseInt(btns[i].dataset && btns[i].dataset.tex, 10);
+    if (!isFinite(tex) || tex <= 0) continue;
+    var url = paletteThumbURL(tex);
+    if (url) btns[i].style.backgroundImage = 'url(' + url + ')';
+  }
+}
+
 // ── 面板构建(★ 每个控件只挂一次监听 —— 审计 A16:旧实现同时挂了 22 个独立监听与一个容器委托)──
 function buildPanels() {
+  // 图层行:点击=切层;👁/🔒 各自的开关走 60_brush_layer 的两个具名入口(它们同时刷图标与状态栏)。
   document.querySelectorAll('#layers .layer-row').forEach(function (row) {
     var L = parseInt(row.dataset.layer, 10);
     row.addEventListener('click', function () { setLayer(L); });
-    row.querySelector('.vis').addEventListener('click', function (ev) {
-      ev.stopPropagation();
-      var on = !app.r.layerVisible(L);
-      app.r.setLayerVisible(L, on);
-      this.style.opacity = on ? '1' : '0.35';
-    });
-    row.querySelector('.lock').addEventListener('click', function (ev) {
-      ev.stopPropagation();
-      var on = !app.r.layerLocked(L);
-      app.r.setLayerLocked(L, on);
-      this.style.opacity = on ? '0.35' : '1';
-    });
+    var vis = row.querySelector('.vis'), lock = row.querySelector('.lock');
+    if (vis) vis.addEventListener('click', function (ev) { ev.stopPropagation(); toggleLayerVisible(L); });
+    if (lock) lock.addEventListener('click', function (ev) { ev.stopPropagation(); toggleLayerLocked(L); });
   });
   // 纹理调色板:从 tile_defs 派生;纹理 22 不在其中(审计 A7)。
   var pal = texturePalette(app.tileDefs);
@@ -38,8 +78,11 @@ function buildPanels() {
   pal.forEach(function (e) {
     var b = document.createElement('button');
     b.className = 'sw';
+    b.dataset.tex = String(e.tex);              // ★ refreshPaletteThumbs 靠它找回每颗按钮的纹理号
     b.title = e.tex + ' ' + e.name + (e.type ? '(' + e.type + ')' : '');
-    b.textContent = String(e.tex);
+    var url = paletteThumbURL(e.tex);
+    if (url) b.style.backgroundImage = 'url(' + url + ')';
+    b.textContent = String(e.tex);                   // 数字留在图上当角标(text-shadow 保证可读)
     b.addEventListener('click', function () {
       app.st.desc = Core.packDesc(e.tex, Core.hueOf(app.st.desc), Core.brightOf(app.st.desc),
                                   Core.satOf(app.st.desc), Core.alphaOf(app.st.desc));
@@ -71,17 +114,48 @@ function buildPanels() {
     sel.addEventListener('change', function () {
       app.st.desc = Core.packDesc(Core.texOf(app.st.desc), +$('desc-hue').value, +$('desc-bri').value,
                                   +$('desc-sat').value, +$('desc-alp').value);
+      refreshPaletteThumbs();                  // ★ 缩略图按当前辅码染色:档位一变就重画按钮背景(不重建面板)
       statusLine();
     });
   });
+  // ★★ 「只改辅码」的反馈(用户反馈 ⑧:勾上之后落笔可能是空操作、却一个字都不说):
+  //    ① 勾/取消都刷状态栏;② 四档全中性时明说"这一笔不会产生可见变化"。
   var only = $('desc-only');
-  if (only) only.addEventListener('change', function () { app.st.descOnly = only.checked; });
+  if (only) only.addEventListener('change', function () {
+    app.st.descOnly = only.checked;
+    statusLine();
+    if (only.checked && isNeutralDesc(app.st.desc)) {
+      status('只改辅码:当前四档是中性档(4/4/4/7),落笔不会产生可见变化 —— 先调色相/亮度/饱和/透明');
+    } else {
+      status(only.checked ? '只改辅码:保留原纹理,只改四档辅码' : '已关闭「只改辅码」:落笔会同时写纹理');
+    }
+  });
   var bs = $('brush-size');
-  if (bs) {
-    bs.addEventListener('change', function () { setBrush(parseFloat(bs.value) || 1); });
-  }
-  document.querySelectorAll('#toolbar .tool').forEach(function (b) {
+  if (bs) bs.addEventListener('change', function () { setBrush(parseFloat(bs.value) || 1); });
+  // 工具选择(工具已挪到右栏 #tools)
+  document.querySelectorAll('#tools .tool').forEach(function (b) {
     b.addEventListener('click', function () { app.st.tool = b.dataset.tool; selectToolButton(); });
+  });
+  // 工具细分选项:值本身在落笔时读(stNow/toolOption),这里只负责把状态栏刷成"现在会怎么落笔"。
+  ['rect-mode', 'line-width'].forEach(function (id) {
+    var el = $(id);
+    if (el) el.addEventListener('change', function () { statusLine(); });
+  });
+  // 选区操作按钮(与 Ctrl+C/X/V、H/V、Delete 同一个实现 —— 以前只有热键,能力不可发现)
+  [['sel-copy', function () { doCopySelection(); }],
+   ['sel-cut', function () { doCutSelection(); }],
+   ['sel-paste', function () { doPasteSelection(); }],
+   ['sel-mirror-h', function () { guard('镜像', function () { return mirrorSelection('h'); }); }],
+   ['sel-mirror-v', function () { guard('镜像', function () { return mirrorSelection('v'); }); }],
+   ['sel-clear', function () { doClearSelection(); }]].forEach(function (pair) {
+    var el = $(pair[0]);
+    if (el) el.addEventListener('click', function () { guard(pair[0], pair[1]); });
+  });
+  // 撤销/重做:落盘与历史都在键盘上有,但按钮是用户能找到它们的前提。
+  [['btn-undo', function () { return doUndo(); }],
+   ['btn-redo', function () { return doRedo(); }]].forEach(function (pair) {
+    var el = $(pair[0]);
+    if (el) el.addEventListener('click', function () { guard(pair[0], pair[1]); });
   });
   $('tg-grid').addEventListener('click', function () {
     this.classList.toggle('on'); app.r.setGrid(this.classList.contains('on'));
@@ -94,6 +168,16 @@ function buildPanels() {
   });
   var dim = $('dim-others');
   if (dim) dim.addEventListener('change', function () { app.r.setDimOthers(dim.checked); });
+  // 出生点工具:敌人类型从页面注册表来(以前写死 types[0] ⇒ 永远放 jump_bird,用户反馈 ⑦ 的一半)
+  var et = $('spawn-enemy-type');
+  if (et) {
+    var reg = importEnemyTypes();
+    for (var i = 0; i < reg.length; i++) {
+      var op = document.createElement('option');
+      op.value = reg[i]; op.textContent = reg[i];
+      et.appendChild(op);
+    }
+  }
   var p1 = $('spawn-p1'), p2 = $('spawn-p2'), en = $('spawn-enemy'), cl = $('spawn-clear');
   if (p1) p1.addEventListener('click', function () { spawnAt('player', 0); });
   if (p2) p2.addEventListener('click', function () { spawnAt('player', 1); });
@@ -106,6 +190,24 @@ function buildPanels() {
       if (!app.map) { status('先打开一张地图'); return null; }
       return pushAndShow(clearSpawns(app.map));
     });
+  });
+  // ── 按侧复活点(`# respawn <1|2> <col> <row>`,游戏侧按半区读)──
+  // ★ 见 25_spawn.js 的 addRespawn/sideOfCell:侧 1 = 左半、侧 2 = 右半。
+  [['spawn-r1', function () { spawnRespawn(1); }],
+   ['spawn-r2', function () { spawnRespawn(2); }],
+   ['spawn-rdel', function () { deleteRespawnNear(); }],
+   ['spawn-rclear1', function () { clearRespawnSide(1); }],
+   ['spawn-rclear2', function () { clearRespawnSide(2); }]].forEach(function (pair) {
+    var el = $(pair[0]);
+    if (el) el.addEventListener('click', function () { guard(pair[0], pair[1]); });
+  });
+  // 辅助线(半区中线 + 3×3 桶)
+  var tgG = $('tg-guides');
+  if (tgG) tgG.addEventListener('click', function () {
+    this.classList.toggle('on');
+    var on = this.classList.contains('on');
+    if (app.r && app.r.setGuides) app.r.setGuides(on);
+    status(on ? '已显示标线:半区中线 + 3×3 桶(联机复活点均匀散布的对照)' : '已隐藏标线');
   });
   // ── 画布尺寸面板(规格 A10;★ resizeMap / wholeDiff / applyEntry 的 whole 分支在生产里的唯一入口)──
   // ★ 与上面四个出生点按钮同款:没打开地图时说一句话。★ 输入框里的回车也当"应用尺寸" ——
@@ -138,65 +240,14 @@ function buildPanels() {
       }
     });
   }
-  var bn = $('btn-new'), bd = $('btn-dup'), br = $('btn-rename'), bx = $('btn-del');
-  if (bn) bn.addEventListener('click', function () {
-    var name = window.prompt('新地图名字(不含 .cyrm)', 'new_map');
-    if (!name) return;
-    var m = createEmptyMap(name, 125, 75);       // ★ 尺寸只经这一个闸
-    app.map = m; app.name = freshName(name);
-    app.sourceFormat = 'v4';
-    undoHistory = createHistory({});
-    markDirty();                    // ★ 新建只活在内存里(还没写盘)⇒ 磁盘状态是「未保存」
-    // ★ setMap 返回的是分帧重建派生出来的 promise ⇒ 必须收口:抛在任务回调里同步 try/catch 接不住。
-    guard('新建地图', function () { return app.r.setMap(m); });
-    status('新建 ' + app.name + '(还没写盘 —— Ctrl+S 才落盘)');
-    refreshStatus(); statusLine();
-  });
-  if (bd) bd.addEventListener('click', function () {
-    if (!app.map) { status('先打开一张地图'); return; }
-    var copy = resizeMap(app.map, Core.cellsWOf(app.map), Core.cellsHOf(app.map)).map;
-    copy.name = (app.map.name || 'map') + '_copy';
-    app.map = copy;
-    app.name = freshName(copy.name);
-    app.sourceFormat = 'v4';
-    undoHistory = createHistory({});
-    markDirty();                    // ★ 同上:副本也只活在内存里(还没写盘)
-    guard('复制地图', function () { return app.r.setMap(copy); });   // ★ 同上:分帧重建的 promise
-    status('已复制为 ' + app.name + '(还没写盘)');
-    refreshStatus();
-  });
-  if (br) br.addEventListener('click', function () {
-    if (!app.map) { status('先打开一张地图'); return; }
-    var n = window.prompt('新的名字(不含 .cyrm)', app.map.name);
-    if (!n) return;
-    app.map.name = Core.sanitizeName(n);
-    app.name = app.map.name + '.cyrm';
-    markDirty();                    // ★ 改名只改内存里那份(磁盘上还是旧名字,要 Ctrl+S 才落盘)
-    status('改名为 ' + app.name + '(还要 Ctrl+S 才写盘)');
-    refreshStatus();
-  });
-  if (bx) bx.addEventListener('click', function () {
-    status('删除地图请直接在磁盘上删 maps/ 下的文件(编辑器不做删除动作 —— 这是故意的)');
-  });
-  var exp = $('btn-export');
-  if (exp) exp.addEventListener('click', showExportReport);
-  // ★★ 背景层的两个颜色槽(规格 §4.4/§4.5):①起点 ②终点 —— 两个槽是渐变的全部,只接一个的话
-  //    "渐变"永远退化成一个纯色(两端同色),而且看不出来。背景层是不透明的真彩(alpha 走辅码那一路)。
-  [['bg-color', 'rgba'], ['bg-color2', 'rgba2']].forEach(function (spec) {
-    var inp = $(spec[0]), lab = $(spec[0] + '-val');
-    if (!inp) return;
-    var m0 = /^#([0-9a-f]{6})$/i.exec(inp.value);
-    if (m0) app.st[spec[1]] = (parseInt(m0[1], 16) * 256 + 255) >>> 0;
-    inp.addEventListener('input', function () {
-      var m = /^#([0-9a-f]{6})$/i.exec(inp.value);
-      if (!m) return;
-      app.st[spec[1]] = (parseInt(m[1], 16) * 256 + 255) >>> 0;
-      if (lab) lab.textContent = inp.value;
-      statusLine();
-    });
-  });
+  // ★★ 文件级动作(新建/打开文件/打开文件夹/保存/另存为/导出/复制/重命名/删除/校验)在 ui/86_fileops.js:
+  //    它们各自都有"写盘/读盘"两半,与面板布局无关,分片放能把"面板"与"文件"分干净。
+  if (typeof installFileOps === 'function') installFileOps();
   selectToolButton();
   syncPanelForLayer();
+  syncToolOptions();
+  syncLayerIcons();
+  refreshRespawnCount();
   statusLine();
 }
 
@@ -226,8 +277,60 @@ function syncPanelForLayer() {
     if (titles[i].textContent === '辅码') titles[i].style.display = isBg ? 'none' : '';
   }
   // ★ 渐变只在背景层可用(纹理层没有颜色可插值);其余工具照旧。
-  var g = document.querySelector('#toolbar .tool[data-tool="gradient"]');
+  var g = document.querySelector('#tools .tool[data-tool="gradient"]');
   if (g) g.style.opacity = isBg ? '1' : '0.45';
+}
+
+// 中性档 = 完全按原图(不染色)。用它把"勾了只改辅码但没调档位 ⇒ 落笔没有任何可见变化"说清楚。
+function isNeutralDesc(d) {
+  return Core.hueOf(d) === 4 && Core.brightOf(d) === 4 && Core.satOf(d) === 4 && Core.alphaOf(d) === 7;
+}
+
+// 视图中心那一格(不猜鼠标位置:按下按钮时鼠标在按钮上)。出生点与复活点共用这一条口径。
+function viewCenterCell() {
+  var v = app.r.view();
+  return {
+    cx: Math.round((v.x + app.canvas.width / v.zoom / 2) / Core.SUB_PER_CELL),
+    cy: Math.round((v.y + app.canvas.height / v.zoom / 2) / Core.SUB_PER_CELL),
+  };
+}
+function spawnRespawn(side) {
+  if (!app.map) { status('先打开一张地图'); return; }
+  var c = viewCenterCell();
+  var out = addRespawn(app.map, side, c.cx, c.cy);
+  pushAndShow(out.diff);
+  var cnt = respawnCounts(app.map);
+  var own = sideOfCell(app.map, out.x) === side;
+  status('侧 ' + side + ' 复活点放到 (' + out.x + ',' + out.y + ')' +
+         (own ? '' : '(注意:这个点在另一半区 —— 游戏侧按半区读,校验会报出来)') +
+         ';现在 侧1 ' + cnt[1] + ' 个 / 侧2 ' + cnt[2] + ' 个');
+  statusLine();
+}
+function deleteRespawnNear() {
+  if (!app.map) { status('先打开一张地图'); return; }
+  var c = viewCenterCell();
+  var side = sideOfCell(app.map, c.cx);
+  var out = removeRespawnNear(app.map, side, c.cx, c.cy);
+  if (!out) { status('侧 ' + side + ' 没有任何复活点可删'); return; }
+  pushAndShow(out.diff);
+  status('已删掉侧 ' + side + ' 离视图中心最近的复活点 (' + out.at.x + ',' + out.at.y + ')');
+  statusLine();
+}
+function clearRespawnSide(side) {
+  if (!app.map) { status('先打开一张地图'); return; }
+  var diff = clearRespawns(app.map, side);
+  if (!diff) { status('侧 ' + side + ' 本来就没有复活点'); return; }
+  pushAndShow(diff);
+  status('已清空侧 ' + side + ' 的复活点');
+  statusLine();
+}
+// 面板上的计数(每侧与 "≥5" 的对照 —— 游戏侧联机要求每侧 ≥5)
+function refreshRespawnCount() {
+  var el = $('respawn-count');
+  if (!el) return;
+  if (!app.map) { el.textContent = '侧1 0 · 侧2 0'; return; }
+  var c = respawnCounts(app.map);
+  el.textContent = '侧1 ' + c[1] + ' · 侧2 ' + c[2] + '(联机建议每侧 ≥5)';
 }
 
 function spawnAt(kind, playerIndex) {
@@ -257,8 +360,11 @@ function spawnAt(kind, playerIndex) {
     status('P' + (playerIndex + 1) + ' 放到 (' + px + ',' + py + ')');
     return;
   }
-  pushAndShow(addSpawn(app.map, 'enemy', cx, cy, types[0] || 'fly_bird'));
-  status('敌人放到 (' + cx + ',' + cy + ')');
+  // ★ 类型取右栏下拉(以前写死 types[0],永远放 jump_bird);注册表空时回落旧行为。
+  var etype = toolOption('spawn-enemy-type', types[0] || 'fly_bird');
+  if (types.length && types.indexOf(etype) < 0) etype = types[0] || 'fly_bird';
+  pushAndShow(addSpawn(app.map, 'enemy', cx, cy, etype));
+  status('敌人(' + etype + ')放到 (' + cx + ',' + cy + ')');
 }
 
 // ── 图集(结构图一次装进来)──

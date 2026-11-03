@@ -50,6 +50,9 @@ function install() {
     return (els17[id] = mkEl17(id));
   }
   const dom17 = {
+    // ★ 文件动作的页内对话框/报告要挂 body;⑰ 的流程测试用注入钩子,这里只给个可挂的宿主。
+    body: { appendChild: function () {}, removeChild: function () {} },
+    documentElement: { appendChild: function () {} },
     getElementById: function (id) { return id === 'status-msg' ? statusEl17 : el17(id); },
     querySelectorAll: function () { return []; },
     // ★ 只有这一条查询要真给东西:`openFromUrl` 的兜底是"打开列表**第一行**" ——
@@ -82,8 +85,39 @@ function install() {
   //   自己补的)。空 search = 走"打开列表第一行"那条兜底。
   globalThis.location = { search: '' };
   globalThis.confirm = function () { globalThis.asked17++; return false; };
+  globalThis.deleteLog17 = [];
+  globalThis.renameLog17 = [];
+  globalThis.deleteMode17 = 'ok';
+  globalThis.renameMode17 = 'ok';
+  function errResponse17(status, text) {
+    return { ok: false, status: status, text: function () { return Promise.resolve(String(text)); } };
+  }
+  function queryName17(u, key) {
+    const m = new RegExp('[?&]' + key + '=([^&]*)').exec(u);
+    return m ? decodeURIComponent(m[1]) : '';
+  }
   globalThis.fetch = function (url, init) {
     const u = String(url);
+    const method = (init && init.method) || 'GET';
+    if (u.indexOf('/api/map/rename') === 0) {
+      const from = queryName17(u, 'from'), to = queryName17(u, 'to');
+      globalThis.renameLog17.push({ url: u, from: from, to: to, init: init });
+      if (globalThis.renameMode17 !== 'ok') {
+        return Promise.resolve(globalThis.renameMode17 === '409'
+          ? errResponse17(409, '目标已存在,拒绝覆盖:' + to) : errResponse17(500, '改名失败'));
+      }
+      return Promise.resolve({ ok: true, status: 200,
+        json: function () { return Promise.resolve({ ok: true, name: to }); } });
+    }
+    if (method === 'DELETE') {
+      const name = queryName17(u, 'p');
+      globalThis.deleteLog17.push({ url: u, name: name, init: init });
+      if (globalThis.deleteMode17 !== 'ok') {
+        return Promise.resolve(errResponse17(Number(globalThis.deleteMode17) || 500, '删不掉'));
+      }
+      return Promise.resolve({ ok: true, status: 200,
+        json: function () { return Promise.resolve({ ok: true, deleted: name }); } });
+    }
     if (init && init.method === 'PUT') {
       puts17.push({ url: u, init: init });
       return Promise.resolve({ ok: true, status: 200,
@@ -95,14 +129,14 @@ function install() {
     }
     const q = u.indexOf('/api/map?p=');
     if (q >= 0) {
-      const p = decodeURIComponent(u.slice(q + '/api/map?p='.length));
+      const p = decodeURIComponent(u.slice(q + '/api/map?p='.length).split('&')[0]);
       const body = bodies17[p];
-      if (!body) return Promise.resolve({ ok: false, status: 404 });
+      if (!body) return Promise.resolve(errResponse17(404, '找不到地图 ' + p));
       return Promise.resolve({ ok: true, status: 200, arrayBuffer: function () {
         return Promise.resolve(body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength));
       } });
     }
-    return Promise.resolve({ ok: false, status: 404 });
+    return Promise.resolve(errResponse17(404, '未知接口'));
   };
   Editor.app.tileDefs = globalThis.TILE_DEFS;
   Editor.setErrorSink(function (t) { errs17.push(String(t)); });

@@ -1,6 +1,11 @@
 // ui/10_util.js —— DOM/时间/错误通道等基础设施。
 
-function $(id) { return document.getElementById(id); }
+// ★ node 冒烟里有的相位没有 document(纯逻辑断言):`$` 必须能安全地返回 null —— 否则任何一条
+//   "顺手报个状态栏"的代码都会把整支冒烟打断在 ReferenceError 上(后面的断言一行都不跑)。
+function $(id) {
+  if (typeof document === 'undefined' || !document || typeof document.getElementById !== 'function') return null;
+  return document.getElementById(id);
+}
 function nowMs() {
   return (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
 }
@@ -59,11 +64,13 @@ function mapFromBytes(fileName, bytes) {
   var fmt = detectFormat(bytes);
   if (fmt === 'v4') {
     return Io.decodeMap(bytes).then(function (map) {
+      Core.migrateMap(map);                         // ★ legacy 纹理 id 读时迁移(v4 入口;见 core/95_legacy.js)
       map.name = nameFromFile(fileName);          // ★★ 见 nameFromFile
       return { map: map, sourceFormat: 'v4' };
     });
   }
   var text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+  // ★ v3/旧字母那条路的 legacy 迁移在 Core.migrateV3 产出 desc 时逐条做(migrateDescriptor)。
   var map = Core.migrateV3(Core.parseV3Text(text));
   map.name = nameFromFile(fileName);
   return Promise.resolve({ map: map, sourceFormat: fmt });

@@ -1,17 +1,23 @@
 // worker.js —— 闸 3:二进制编解码 + CRC32 进 Web Worker(规格 §4.3)。
 // ★ 编辑器只走 HTTP(规格 §4.9),故 `new Worker('worker.js')` **原生可用** ——
 //   不需要 Blob URL 那种绕法,也**不需要降级路径**:主线程一帧都不阻塞。
-// ★ 经典 Worker(不是 module worker):importScripts 同步加载 core/ 的 12 个分片,于是 worker 里
-//   **只有一份格式实现**。CRC32 与 deflate 都住在 core/ 分片的 encodeMap/decodeMap 里,
+// ★ 经典 Worker(不是 module worker):importScripts 同步加载 core/ 的 13 个分片与 tile_defs.js,
+//   于是 worker 里**只有一份格式实现**。CRC32 与 deflate 都住在 core/ 分片的 encodeMap/decodeMap 里,
 //   本文件**一个字节的格式逻辑都不重复** —— 第二份实现的症状是"编辑器存得下、游戏读不出",
 //   而且不报错。
+// ★ tile_defs.js 要一起装:validateMap 的「纹理不在 tile_defs ⇒ error」那道闸必须落在**真做编码的
+//   worker 侧**才拦得住保存(encodeMap 只拒 errors)。它写的是 `window.TILE_DEFS`,而 Worker 没有
+//   window ⇒ 先补一个别名再 import(node 冒烟里 importScripts 是替身、window 已由入口补好,都不受影响)。
 // ★ 本文件刻意写成薄壳:只做消息收发。
 'use strict';
+
+if (typeof window === 'undefined') self.window = self;
 
 importScripts(
   'core/00_constants.js', 'core/10_map.js', 'core/20_bytes.js', 'core/30_layers.js',
   'core/40_meta.js', 'core/50_compress.js', 'core/60_codec.js', 'core/70_v3_text.js',
-  'core/80_validate.js', 'core/85_geometry.js', 'core/90_desc.js', 'core/99_exports.js'
+  'core/80_validate.js', 'core/85_geometry.js', 'core/90_desc.js', 'core/95_legacy.js',
+  'core/99_exports.js', 'tile_defs.js'
 );
 
 function errText(e) {

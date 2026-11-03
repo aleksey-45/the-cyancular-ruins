@@ -12,7 +12,7 @@ function createMountState(canvas, opts) {
     s: {
       map: null, layer: RenderCore.LAYER_SCENE,
       view: { x: 0, y: 0, zoom: 8 },
-      grid: true, subGrid: false, torus: true, dimOthers: true,
+      grid: true, subGrid: false, torus: true, dimOthers: true, guides: false,
       layerVisible: [true, true, true, true],
       layerLocked: [false, false, false, false],
       selection: null,

@@ -1,7 +1,67 @@
 'use strict';
-// tests/tint/30_tiles_and_cache.js —— 贴图块定位、16×16 小图合成、tinted-tile 缓存与 LRU。
+// tests/tint/30_tiles_and_cache.js —— 贴图块定位、16×16 小图合成、真图集版面契约、tinted-tile 缓存与 LRU。
+const fs = require('fs');
+const path = require('path');
+const zlib = require('zlib');
 const Core = globalThis.Core;
 const Tint = globalThis.Tint;
+
+// ── 最小 PNG 解码(只支持 8-bit RGBA 非隔行,structure.png 正是这个形状;别的形状当场抛)──
+// ★ 为什么解**真**图集:相位 ⑥b 钉的是「纹理 id ↔ 槽位」的**版面契约**(id 空间稳定 1..22、
+//   7 个 legacy 槽全透明、其余 15 块非空)—— 合成图集(makeAtlas)每块都画着假像素,测不了这条契约。
+function readPngRGBA(file) {
+  const buf = fs.readFileSync(file);
+  const SIG = [137, 80, 78, 71, 13, 10, 26, 10];
+  for (let i = 0; i < 8; i++) {
+    if (buf[i] !== SIG[i]) throw new Error('readPngRGBA: 不是 PNG:' + file);
+  }
+  let pos = 8, w = 0, h = 0, depth = -1, color = -1, interlace = -1;
+  const idat = [];
+  while (pos + 8 <= buf.length) {
+    const len = buf.readUInt32BE(pos);
+    const type = buf.toString('ascii', pos + 4, pos + 8);
+    const data = buf.subarray(pos + 8, pos + 8 + len);
+    if (type === 'IHDR') {
+      w = data.readUInt32BE(0); h = data.readUInt32BE(4);
+      depth = data[8]; color = data[9]; interlace = data[12];
+    } else if (type === 'IDAT') idat.push(data);
+    else if (type === 'IEND') break;
+    pos += 12 + len;                                // len + type + data + CRC
+  }
+  if (depth !== 8 || color !== 6 || interlace !== 0) {
+    throw new Error('readPngRGBA: 只支持 8-bit RGBA 非隔行(实得 depth=' + depth +
+                    ' color=' + color + ' interlace=' + interlace + ')');
+  }
+  const raw = zlib.inflateSync(Buffer.concat(idat));
+  const stride = w * 4;
+  if (raw.length !== h * (stride + 1)) {
+    throw new Error('readPngRGBA: 解压后 ' + raw.length + ' 字节 ≠ ' + h + ' 行 ×(1+' + stride + ')');
+  }
+  const out = Buffer.alloc(w * h * 4);
+  const prev = Buffer.alloc(stride), cur = Buffer.alloc(stride);
+  let rp = 0;
+  for (let y = 0; y < h; y++) {
+    const ft = raw[rp++];
+    raw.copy(cur, 0, rp, rp + stride); rp += stride;
+    for (let x = 0; x < stride; x++) {
+      const a = x >= 4 ? cur[x - 4] : 0;            // 左(已还原)
+      const b = prev[x];                            // 上
+      const c = x >= 4 ? prev[x - 4] : 0;           // 左上
+      let v = cur[x];
+      if (ft === 1) v += a;
+      else if (ft === 2) v += b;
+      else if (ft === 3) v += (a + b) >> 1;
+      else if (ft === 4) {
+        const p = a + b - c, pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c);
+        v += (pa <= pb && pa <= pc) ? a : (pb <= pc ? b : c);
+      } else if (ft !== 0) throw new Error('readPngRGBA: 未知 filter 类型 ' + ft);
+      cur[x] = v & 255;
+    }
+    cur.copy(out, y * stride, 0, stride);
+    cur.copy(prev, 0, 0, stride);
+  }
+  return { data: new Uint8ClampedArray(out.buffer, out.byteOffset, out.length), width: w, height: h };
+}
 
 // ==== 相位 ⑥ 贴图块定位与 16×16 小图 ====
 (function () {
@@ -12,13 +72,9 @@ const Tint = globalThis.Tint;
     ['第 21 块(第三行首块 = 水)', Tint.textureBlockRect(21, 320), { x: 0, y: 64, w: 32, h: 32 }],
     ['第 22 块(水面)', Tint.textureBlockRect(22, 320), { x: 32, y: 64, w: 32, h: 32 }],
   ]);
-  let inside = true;
-  for (let t = 1; t <= 22; t++) {
-    const r = Tint.textureBlockRect(t, 320);
-    if (r.x < 0 || r.y < 0 || r.x + r.w > 320 || r.y + r.h > 320) inside = false;
-  }
-  ok(inside, 'textureBlockRect: 22 块纹理全部落在 320×320 的 structure.png 里');
   throws(function () { Tint.textureBlockRect(0, 320); }, 'textureBlockRect: 纹理号 0 抛错', '纹理号');
+  // ★ 「22 块都落在 320×320 里」那条旧断言已由相位 ⑥b 取代:它只对**合成**坐标系成立,
+  //   而真正要钉的契约是「tile_defs 的 15 块落在**真图集**里且非空、legacy 7 槽全透明」。
 
   const atlas = makeAtlas();
   const neutral = Core.neutralDesc(3);
@@ -70,6 +126,58 @@ const Tint = globalThis.Tint;
          '★ buildTilePixels: 象限坐标 4(越界)→ 抛错', '象限坐标');
   throws(function () { Tint.buildTilePixels(atlas, ATLAS_W, 3, 0.5, 0, neutral); },
          '★ buildTilePixels: 象限坐标 0.5(非整数)→ 抛错', '象限坐标');
+})();
+
+// ==== 相位 ⑥b 真图集的版面契约:tile_defs 的 15 块非空、legacy 7 槽全透明 ====
+// ★ 去掉什么它才会红:① 把 7 个全透明的 legacy 槽从 structure.png 里抠掉重排(id 空间稳定 1..22
+//   是既定决策,重排 = 每张旧图都画错块);② 任何一块的像素丢了/画错了位置;③ legacy 槽没清干净
+//   (还留着旧纯色方块/树叶色相变体)。合成图集测不出这三条,必须解码真 structure.png。
+// ★ 计数走**注入 backend**(缓存那条路 = 画布作画的真路):数每张 16×16 小图的非透明像素。
+(function () {
+  globalThis.window = globalThis;                   // tile_defs.js 是 `window.TILE_DEFS = {…}`
+  require('../../loader.js').loadModules(['tile_defs']);
+  const defs = globalThis.TILE_DEFS;
+  const png = readPngRGBA(path.join(__dirname, '..', '..', 'structure.png'));
+  ok(!!(defs && defs.tiles && defs.legacy_texture_map) &&
+     Object.keys(defs.tiles).length === 15 &&
+     Object.keys(defs.legacy_texture_map).length === 7 &&
+     png.width === 320 && png.height === 320,
+     '⑥b 前提:tile_defs 15 块 + legacy 表 7 条,真图集 320×320(实得 ' +
+     (defs ? Object.keys(defs.tiles || {}).length + '/' +
+       Object.keys(defs.legacy_texture_map || {}).length : '没装') +
+     ' 与 ' + png.width + '×' + png.height + ')');
+
+  const madeReal = [];
+  const realCache = Tint.createTileCache({ backend: {
+    createTile: function (pixels, size) { madeReal.push(pixels); return { pixels: pixels, size: size }; },
+  } });
+  realCache.setSource(png.data, png.width);
+  // 一块纹理 = 4×4 个象限小图;全 16 张的非透明像素数就是"这块槽有没有画着东西"。
+  function opaqueCount(tex) {
+    madeReal.length = 0;
+    const d = Core.neutralDesc(tex);
+    for (let qy = 0; qy < 4; qy++) {
+      for (let qx = 0; qx < 4; qx++) realCache.get(tex, qx, qy, d);
+    }
+    let n = 0;
+    for (const px of madeReal) {
+      for (let i = 3; i < px.length; i += 4) if (px[i] > 0) n++;
+    }
+    return n;
+  }
+  const rows = [];
+  for (const k of Object.keys(defs.tiles)) {
+    const tex = parseInt(k, 10);
+    const r = Tint.textureBlockRect(tex, png.width);
+    rows.push(['tex' + tex + ' 落在图集内',
+               r.x >= 0 && r.y >= 0 && r.x + r.w <= png.width && r.y + r.h <= png.height, true]);
+    rows.push(['tex' + tex + ' 非空槽', opaqueCount(tex) > 0, true]);
+  }
+  for (const k of Object.keys(defs.legacy_texture_map)) {
+    const tex = parseInt(k, 10);
+    rows.push(['legacy tex' + tex + ' 全透明', opaqueCount(tex), 0]);
+  }
+  tableEq('真 structure.png:15 块全部落在图集且非空槽,legacy 7 槽全透明(版面契约)', rows);
 })();
 
 // ==== 相位 ⑦ tinted-tile 缓存(规格 §4.2 ④ / §4.3 闸 1)====

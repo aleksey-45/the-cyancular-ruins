@@ -40,6 +40,27 @@ module.exports = (async function () {
   eq(o4.sourceFormat, 'legacy', 'mapFromBytes: 旧字母格式(规格 §3.6 的第三种输入)');
   eq(o4.map.subCols, 4, 'legacy: 2×2 字符 → 1 格 = 4 子格');
 
+  // ── 相位 ①b legacy 纹理 id:v4 文件在**读入口**迁移(mapFromBytes 的接线),迁移后即可保存 ──
+  // ★ 旧编辑器写出的文件就带 legacy id(tex 2,3,4,5,16,17,18);先把 TILE_DEFS 收起来编一份
+  //   (旧编辑器没有纹理闸,收起表 = 回到当时),再走今天的读入口 —— 删掉 mapFromBytes 里的
+  //   Core.migrateMap 调用,这条就红。
+  {
+    const legacyMap = Core.createMap('lg', 2, 1);
+    legacyMap.layers[Core.LAYER_SCENE].desc[0] = Core.neutralDesc(2);   // legacy:tex2 → (tex1,hue3)
+    legacyMap.players = [{ x: 1, y: 0 }];
+    const savedDefs = globalThis.TILE_DEFS;
+    globalThis.TILE_DEFS = undefined;
+    let legacyBytes;
+    try { legacyBytes = await Core.encodeMap(legacyMap, { compress: false }); }
+    finally { globalThis.TILE_DEFS = savedDefs; }
+    const gotL = await Editor.mapFromBytes('legacy_v4.cyrm', legacyBytes);
+    eq(gotL.map.layers[Core.LAYER_SCENE].desc[0], Core.packDesc(1, 3, 4, 4, 7),
+       '★★★ 带 legacy tex2 的 v4 文件打开时已迁成 (tex1,hue3)(内存即干净)');
+    const reL = await Core.decodeMap(await Core.encodeMap(gotL.map, { compress: false }));
+    eq(reL.layers[Core.LAYER_SCENE].desc[0], Core.packDesc(1, 3, 4, 4, 7),
+       '★★ 迁移后的图照常保存,写出去的就是迁移后的描述符(新保存的文件不再含 legacy id)');
+  }
+
   // ── 相位 ② 尺寸/纹理钳制(闸 1:用户输入一律钳制,不报错回滚)──
   tableEq('createEmptyMap 走 clampMapSize(闸 1:钳制而不是报错回滚)', [
     ['99999 格 → 400(宽)', Editor.createEmptyMap('x', 99999, 99999).subCols, 400 * SUB],
@@ -61,7 +82,7 @@ module.exports = (async function () {
 
   // ── 相位 ③ 调色板从 tile_defs 派生(纹理 22 不可点选)──
   const pal = Editor.texturePalette(TILE_DEFS);
-  eq(pal.length, 21, '★ 调色板 21 项(1..22 去掉自动派生的 22)');
+  eq(pal.length, 14, '★ 调色板 14 项(tile_defs 现 15 条,去掉自动派生的 22;旧图集时代是 21)');
   ok(pal.every(function (e) { return e.tex !== 22; }),
      '★★ 纹理 22(水面)不在可点选调色板里 —— 游戏侧它是自动派生的,画了会不一致(A7)');
   eq(Editor.DERIVED_TEXTURES, [22], 'DERIVED_TEXTURES = [22](A7 那一条,写成常量便于 UI 提示)');
@@ -238,5 +259,73 @@ module.exports = (async function () {
   ok(d3.before.players.length === 1 && d3.after.players.length === 0, 'removeSpawn 的差量也是整表前后');
   eq(Editor.spawnIndexAt(ms, 4, 2), null, '★ spawnIndexAt 用环面坐标判:(4,2) 与 (3,2) 不是同一个格');
   ok(Editor.spawnIndexAt(ms, 3 - 4, 2) !== null, '★ spawnIndexAt 折算环面:(−1,2) 与 (3,2) 是同一个格');
+
+  // ── 图层"可编辑目标"三态(用户反馈 ⑥:锁定以前是纯装饰、缺层以前是静默)──
+  {
+    const ml = Core.createMap('lock', 2, 1);
+    const savedMap = Editor.app.map, savedR = Editor.app.r;
+    const stL = { map: ml, layer: Core.LAYER_SCENE, desc: Core.neutralDesc(1), rgba: 0xFF00FFFF,
+                  brushSize: 1, selection: null, descOnly: false };
+    Editor.app.map = ml;
+    Editor.app.r = { layerLocked: function (L) { return L === Core.LAYER_SCENE; },
+                     layerVisible: function () { return true; } };
+    ok(Editor.applyTool(stL, 'brush', { kind: 'cell', x: 0, y: 0 }, null) === null,
+       '★★★ 锁定层落笔被拒绝(旧实现 layerLocked 全仓没有一个消费者 ⇒ 锁了照样改数据)');
+    Editor.app.r.layerLocked = function () { return false; };
+    ok(Editor.applyTool(stL, 'brush', { kind: 'cell', x: 0, y: 0 }, null) !== null,
+       '★ (对照)解锁之后同一笔立刻生效 —— 拒绝来自那道闸,不是来自别处的空操作');
+    // ★ 实盘图(layer_flags=0b0010)解码后 3 个层是 null:落笔必须返回 null(而不是改坏数据)
+    const m1L = Core.createMap('one-layer', 2, 1);
+    m1L.layers[Core.LAYER_FRONT] = null; m1L.layers[Core.LAYER_BACK] = null; m1L.layers[Core.LAYER_BG] = null;
+    const stF = { map: m1L, layer: Core.LAYER_FRONT, desc: Core.neutralDesc(1), rgba: 0xFF00FFFF,
+                  brushSize: 1, selection: null, descOnly: false };
+    ok(Editor.layerExists(m1L, Core.LAYER_FRONT) === false, '★ 缺席层(layer_flags 缺位)被判为"不存在"');
+    ok(Editor.applyTool(stF, 'brush', { kind: 'cell', x: 0, y: 0 }, null) === null,
+       '★★ 缺席层落笔返回 null(数据一个字节都不动)');
+    Editor.app.map = savedMap; Editor.app.r = savedR;
+  }
+  // ── 按侧复活点(⑦ # respawn <1|2>:增删、按半区、校验)──
+  {
+    const mr = Core.createMap('r', 4, 3);          // 4×3 格 ⇒ 半区中线 x = 2
+    const out1 = Editor.addRespawn(mr, 1, 1, 1);
+    eq(mr.respawns, [{ side: 1, x: 1, y: 1 }], 'addRespawn: 侧 1 的点写进 map.respawns');
+    eq(out1.diff.kind, 'spawn', '★ 复活点的增删也进历史(kind spawn)');
+    eq(Editor.snapshotSpawns(mr).respawns.length, 1, '★★ 快照带 respawns(撤销/重做要用)');
+    Editor.addRespawn(mr, 2, 3, 2);
+    eq(Editor.respawnCounts(mr), { 1: 1, 2: 1 }, 'respawnCounts 按侧计数');
+    eq(Editor.sideOfCell(mr, 1), 1, 'sideOfCell: x=1 在左半(侧 1)');
+    eq(Editor.sideOfCell(mr, 3), 2, 'sideOfCell: x=3 在右半(侧 2)');
+    const del = Editor.removeRespawnNear(mr, 2, 3, 2);
+    ok(del !== null && mr.respawns.length === 1 && mr.respawns[0].side === 1,
+       'removeRespawnNear 只删指定的那一侧');
+    eq(Editor.removeRespawnNear(mr, 2, 0, 0), null, '★★ 那一侧没有点 → null(不跨侧删)');
+    eq(Editor.clearRespawns(mr, 2), null, '清空一个本来就空的侧 → null');
+    Editor.addRespawn(mr, 2, 3, 1);
+    ok(Editor.clearRespawns(mr, 2) !== null && Editor.respawnCounts(mr)[1] === 1,
+       '清空侧 2 不碰侧 1');
+    Editor.addRespawn(mr, 2, 3, 1);               // 快照前把侧 2 补回来:两侧都有点,才验得出"整表装回"
+    const snap = Editor.snapshotSpawns(mr);
+    mr.respawns = [];
+    Editor.applySpawns(mr, snap);
+    eq(Editor.respawnCounts(mr), { 1: 1, 2: 1 }, '★★ applySpawns 把 respawns 也装回去(撤销/重做)');
+  }
+  {
+    const mr2 = Core.createMap('r2', 4, 3);
+    Editor.addRespawn(mr2, 1, 3, 2);               // 靠右
+    const rz = Editor.resizeMap(mr2, 2, 3);        // 缩到 2 格宽 ⇒ x=3 越界
+    eq(rz.map.respawns.length, 0, 'resizeMap 丢掉落在图外的复活点(只丢不钳)');
+    ok(rz.dropped.some(function (d) { return d.kind === 'respawn' && d.side === 1; }),
+       '★ 丢掉的复活点带 side 一起报出来');
+  }
+  {
+    const mv = Core.createMap('v', 20, 6);         // 半区中线 x = 10
+    mv.players = [{ x: 1, y: 1 }, { x: 18, y: 1 }];
+    mv.respawns = [{ side: 1, x: 12, y: 1 }];      // 侧 1 却放在右半
+    const rep = Core.validateMap(mv);
+    const txt = rep.warnings.join('\n');
+    ok(txt.indexOf('少于建议的') >= 0, '★★ 校验报「每侧 <5」(实得: ' + txt.split('\n')[0] + ')');
+    ok(txt.indexOf('不在自己半区') >= 0, '★★ 校验报「越半区」');
+    eq(rep.errors.length, 0, '★ 复活点问题只进 warnings —— 不阻止保存');
+  }
 
 })();

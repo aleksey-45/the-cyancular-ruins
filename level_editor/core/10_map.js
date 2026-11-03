@@ -23,6 +23,9 @@ function createMap(name, cellsW, cellsH) {
     ],
     players: [],
     enemies: [],
+    // ★ `# respawn <1|2> <col> <row>` 的复活点列表(元素 {side, x, y})。侧 1 = 左半、侧 2 = 右半,
+    //   与游戏侧 SpawnChooser.SIDE_LEFT/SIDE_RIGHT 同源;格式仍是 meta 文本行,不是二进制字段。
+    respawns: [],
     comments: [],
   };
 }

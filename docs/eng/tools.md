@@ -33,11 +33,11 @@ worker 源码都内联进这一个 HTML;`file://` 下没有服务器也能跑)�
 
 ```
 level_editor/editor.html            入口:分片清单(顺序的单一真相源)
-level_editor/core/    12 片         格式层(冻结)
+level_editor/core/    13 片         格式层(编解码冻结;95_legacy.js = legacy 纹理 id 读时迁移)
 level_editor/render/  19 片         渲染层
 level_editor/ui/      20 片         界面层
-level_editor/tint.js / level_editor/io.js / level_editor/worker.js   单文件模块(未拆:都 <300 行)
-level_editor/tile_defs.js           生成物(sync-tiles.js)
+level_editor/tint.js / level_editor/io.js / level_editor/worker.js   单文件模块(都 <300 行)
+level_editor/tile_defs.js           生成物(sync-tiles.js:15 条 tiles + legacy_texture_map)
 level_editor/server/  9 片 + level_editor/editor_server.js(入口,62 行)
 level_editor/tests/   harness.js + format|tint|worker_io|render|editor|server/(各套件的分片)
 level_editor/{loader,parts_check,build_dist,standalone_shim,dist_smoke}.js
@@ -48,7 +48,9 @@ level_editor/dist/cyrm-editor.html  生成物(**开箱即用**的那个单文件
 
 - **改分片顺序** ⇒ 改 [`level_editor/editor.html`](../../level_editor/editor.html)(唯一真相源);
   [`level_editor/worker.js`](../../level_editor/worker.js) 的 `importScripts` 列表必须与其中的
-  `level_editor/core/` 分片一致，`node level_editor/parts_check.js` 会抓不一致。
+  `level_editor/core/` 分片一致、**末尾再加 `tile_defs.js`**(worker 没有 window,worker.js 顶部先补
+  `self.window = self` 别名;validateMap 的「纹理不在 tile_defs」闸要在真做编码的 worker 侧也成立),
+  `node level_editor/parts_check.js` 会抓不一致。
 - 生成物两处:[`level_editor/dist/cyrm-editor.html`](../../level_editor/dist/cyrm-editor.html)(build_dist.js)、
   [`level_editor/tile_defs.js`](../../level_editor/tile_defs.js)(sync-tiles.js)—— 都别手改。
 - 注释额度:>100 非空行的 `.js` 文件整行注释 ÷ 非空行 ≤ 15%，`node parts_check.js --ratio` 可复算。
@@ -58,6 +60,9 @@ level_editor/dist/cyrm-editor.html  生成物(**开箱即用**的那个单文件
 - **格式**:`.cyrm` **v4 二进制**(明文 20 字节头 + deflate + CRC32)，四图层、每格 4×4 个 16px 子格、
   每子格带辅码。**导入**认三种输入(v4 二进制 / 带 `# cyrm-v3` 标记的 v3 文本 / 旧字母格式)，
   **导出只有二进制一种**;打开 v3 文本的图首次 `Ctrl+S` 会弹一次确认(v3 → v4 的迁移是一次性的)。
+  ★ **legacy 纹理 id(2,3,4,5,16,17,18 —— 新图集那 7 个全透明槽)在读取时迁移**:三种导入与草稿/
+  崩溃恢复四个入口都过 `Core.migrateDescriptor/migrateMap`,纹理 id 空间稳定 1..22、格式保持 v4 不升版本
+  (规则与守卫见 [`editor-core.md`](editor-core.md) §6.1)。
 - **游戏侧读的是 v4**:`core/sim/map_format.gd` 的 `is_v4()` → `MapFormatV4.parse()` 是现行唯一在跑的路径;
   `maps/*.cyrm` 实盘都是 v4。编辑器保存的唯一出口 `PUT /api/map` 写的正是 `maps/`，
   `MazeGenerator._random_cyrm` 随机取 `maps/` 下任意 `*.cyrm`。
@@ -73,7 +78,8 @@ level_editor/dist/cyrm-editor.html  生成物(**开箱即用**的那个单文件
   [`level_editor/io.js`](../../level_editor/io.js) + [`level_editor/worker.js`](../../level_editor/worker.js);
   [`level_editor/tint.js`](../../level_editor/tint.js)(辅码像素数学)与 core 同为**冻结层**。
 - **敌人表**:编辑器内嵌的敌人注册表由 `node level_editor/sync-enemies.js` 从 `data/enemies.json` 重新生成
-  (`--check` 只校验);砖块属性表同理走 `sync-tiles.js`。
+  (`--check` 只校验);砖块属性表同理走 `sync-tiles.js` —— 生成物 `tile_defs.js` 含 **15 条 `tiles` +
+  顶层 `legacy_texture_map`(7 条旧 tex → {base,hue})**,两处都以 `data/tile_defs.json` 为单一真相源。
 
 ## 4. 测试与验收
 

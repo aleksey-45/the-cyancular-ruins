@@ -83,8 +83,9 @@ module.exports = (async function () {
   // ★ 场景:16×16 格的图在右边缘框 {x:40,w:8}(装得下),再缩成 8×16 格(32 子格宽)⇒ 装不下了。
   const m17 = Editor.createEmptyMap('s17', 16, 16);
   const arr17 = m17.layers[Core.LAYER_SCENE].desc;
+  const TEX17 = [1, 6, 7, 8, 9, 10, 11, 12];   // ★ 8 个互不相同的**合法**纹理(legacy id 会被 encodeMap 的纹理闸拒);图案语义不变
   for (let y = 0; y < m17.subRows; y++) {
-    for (let x = 0; x < m17.subCols; x++) arr17[y * m17.subCols + x] = Core.neutralDesc(1 + (x % 8));
+    for (let x = 0; x < m17.subCols; x++) arr17[y * m17.subCols + x] = Core.neutralDesc(TEX17[x % 8]);
   }
   Editor.app.map = m17;
   Editor.app.name = 's17.cyrm';

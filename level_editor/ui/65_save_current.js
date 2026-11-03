@@ -1,6 +1,7 @@
 // ui/65_save_current.js —— 存盘主流程与导出报告。
 
-function saveCurrent(asNew) {
+// forcedName:另存为对话框选定的名字(优先于 saveTargetName);不传 = 走旧口径(saveCurrent(asNew))。
+function saveCurrent(asNew, forcedName) {
   if (!app.map) { status('先打开一张地图'); return Promise.resolve(); }
   // ★★ 备份不是保存目标:.v3.bak 装的是这张图原文的最后一手退路,就地覆盖它 = 把退路换成 v4(名字还会漂成 <名>v3bak.v3.bak);★ 库列表只管点击,故 ?p= 那条 URL 直接打开的路要靠这道闸。
   if (!asNew && isBackupName(app.name)) {
@@ -18,14 +19,19 @@ function saveCurrent(asNew) {
   if (needsV3Confirm(app.sourceFormat, v3Confirmed)) {
     var okGo = window.confirm(
       '原文件是 v3 文本,保存会把它转成 v4 二进制(不可逆)。\n' +
-      '★ 游戏现在**读不了** v4 —— 在期 E 把 map_format.gd 迁移过去之前,这个文件在游戏里会失效。\n' +
+      '★ 游戏读的就是 v4(map_format.gd 早已迁移)—— 转换后这张图仍能直接被游戏加载。\n' +
       (backupName ? ('保存前会先把原文备份到 ' + backupName + '。\n') : '') +
       '(本次会话不再询问)');
     if (!okGo) { status('已取消保存(磁盘上那份没有被碰过)'); return Promise.resolve(); }
     v3Confirmed = true;
   }
-  var name = saveTargetName(asNew);
+  var name = forcedName || saveTargetName(asNew);
   if (!name) return Promise.resolve();
+  // ★ 另存为传进来的名字必须过与服务器同一套判据(86_fileops 的 isValidMapName):坏名字不该先写盘再 400。
+  if (typeof mapNameProblem === 'function') {
+    var bad = mapNameProblem(name);
+    if (bad) { status('保存目标名不能用:' + bad); return Promise.resolve(); }
+  }
   status('保存 ' + name + ' …');
   // ★★ 草稿盘那条记录挂在存盘前那个键上:另存为会换名字,存完再问键就找不到了 —— 于是旧名字下那条
   //    脏草稿会留着,下次打开那张旧图时弹一次假的恢复提示。
@@ -77,8 +83,10 @@ function exportReport() {
   var rep = Core.validateMap(app.map);
   var lines = validateLines(rep);
   if (!lines.length) lines = ['校验通过:没有发现问题'];
+  var rc = (typeof respawnCounts === 'function') ? respawnCounts(app.map) : { 1: 0, 2: 0 };
   lines.push('尺寸 ' + Core.cellsWOf(app.map) + '×' + Core.cellsHOf(app.map) + ' 格 · 出生点 ' +
-             app.map.players.length + ' · 敌人 ' + app.map.enemies.length);
+             app.map.players.length + ' · 复活点 侧1 ' + rc[1] + '/侧2 ' + rc[2] +
+             ' · 敌人 ' + app.map.enemies.length);
   if (app.map.players.length > 2) {
     lines.push('⚠ 第 3 个及以后的出生点游戏侧读不到(map_format.gd 只认 player/player2)');
   }
@@ -86,6 +94,7 @@ function exportReport() {
 }
 function showExportReport() {
   var rep = exportReport();
-  window.alert(rep.lines.join('\n'));
+  // ★ 报告也走页内对话框:window.alert 在自动化下会被自动取消,而且它没有"只报告不阻止"的可见层次。
+  if (typeof showReport === 'function') showReport('导出校验', rep.lines, rep.ok);
   status(rep.ok ? '导出校验:没有 error' : '导出校验:有 error(encodeMap 会拒绝导出)');
 }

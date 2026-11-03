@@ -62,7 +62,8 @@ function install() {
     getElementById: function (id) { return id === 'status-msg' ? statusEl16 : el16(id); },
     querySelectorAll: function (sel) {
       if (sel === '#layers .layer-row') return layerRows16;
-      if (sel === '#toolbar .tool') return toolBtns16;
+      // 工具已从顶栏挪到右栏 #tools(用户反馈 ⑤):三种写法都认,老断言不必逐个改写。
+      if (sel === '#tools .tool' || sel === '#toolbar .tool' || sel === '.tool') return toolBtns16;
       return [];
     },
     querySelector: function (sel) {

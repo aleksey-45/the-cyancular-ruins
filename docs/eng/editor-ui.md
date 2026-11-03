@@ -67,6 +67,18 @@ applySize → resizeMap → createEmptyMap → Core.clampMapSize
 - ★★ 备份**不是地图**：内容是这张图**原文**的最后一手退路。`isBackupName` 两处消费者：`refreshLibrary`
   的列表过滤与 `saveCurrent` 的一道闸（列表只管点击，`?p=xxx.v3.bak` 这条 URL 直接打开的路它管不到）。
 
+### 5.2 legacy 纹理 id：三个 UI 读入口的迁移（与 v3→v4 是两回事）
+
+- v3→v4 迁的是**容器**；这里迁的是**描述符里的纹理号**（旧图集 7 个废弃槽，规则与背景见
+  [`editor-core.md`](editor-core.md) §6.1，实现在 `level_editor/core/95_legacy.js`）。
+- ★★ ui 侧的调用点**恰好三处**，一个都不能少：`mapFromBytes`（`10_util.js`，v4 文件；v3/旧字母那半由
+  `Core.migrateV3` 在产出 desc 时逐条做）、`offerDraft`（`75_draft_store.js`，IndexedDB 草稿）、
+  `checkCrashSlot`（`80_ui_state.js`，崩溃槽位）。草稿/崩溃快照存的是**编码后的字节**，上次会话由旧
+  编辑器写下的那份带着 legacy id —— 恢复入口漏迁移，旧草稿就会把 legacy id 带回内存（新图集那 7 槽
+  全透明 ⇒ 画布上看不见，保存又会被纹理闸拒）。
+- ★ 迁移后内存即干净 ⇒ 新保存的文件不再含 legacy id；`encodeMap` 的「纹理不在 tile_defs」error 是
+  最后防线（`editor-core.md` §9）。
+
 ## 6. PUT 只有一个出口：`putMapBytes`
 
 - ★★ PUT **必须显式带** `Content-Type: application/json`，服务器写端点只收这一个类型，别的类型一律 **415**。
@@ -135,6 +147,11 @@ applySize → resizeMap → createEmptyMap → Core.clampMapSize
 - ★★ **`selectedTexture` 不许在 `readUiState` 里用图集派生的上界钳**：`bootLoad` 在图集存在之前就读这份状态，
   那时 `atlasCapacity()` 是 0 ⇒ `clampTexture` 返回 1 ⇒ 每次开机静默毁掉用户选中的纹理。
   钳制在 `applyUiState` 里做，它跑在 `loadAtlas()` **之后**。
+- ★ `applyUiState` 恢复纹理位前先过 **`sanitizeRestoredTexture`**（`level_editor/ui/20_tools.js`）：
+  命中 `legacy_texture_map` → 换成 base（辅码四档不动，下次落笔的颜色由辅码给）、不在 `TILE_DEFS.tiles`
+  键集且非 0 → 回落 1、表缺席 → 原样交给 `clampTexture`。理由：旧存档里的 legacy 纹理号在新图集上是
+  **透明槽**，「开机画笔落笔不可见」是静默错，比保存被纹理闸拦下更糟（§5.2、
+  [`editor-core.md`](editor-core.md) §6.1）。
 - ★ `playerRef` 的位置**按格坐标**（`cx`/`cy`）存。
 - ★ `localStore()`：读 localStorage 这件事本身在私密模式下就可能抛，故读与写的调用方都不必各自 `try`。
   `writeUiState` 的写失败是静默的。
@@ -296,10 +313,13 @@ applySize → resizeMap → createEmptyMap → Core.clampMapSize
 
 - ★ 一块纹理 = 32×32 源像素 = **4×4 个 8×8 象限**；子格渲染按 `X%4 / Y%4` 挑象限（`editor-core.md` §7）
   ⇒ 预览必须把 **4×4 象限拼成 64×64** 再当 `background-image`，只画一个象限会让靠四角拼图案的砖看不出样子。
-- ★ 用**中性辅码**（`Core.neutralDesc(tex)`，4/4/4/7 = 游戏默认观感）；缩略图与当前选中的辅码无关。
+- ★★ 用**当前辅码**染色（`Core.packDesc(tex, 当前四档)`，`app.st` 没建好时回落中性）：按钮上看得见的是
+  「基准纹理 + 手上这套辅码」。辅码四档 `change` 时走 `refreshPaletteThumbs()` **只重画按钮背景**
+  （按钮用 `dataset.tex` 记着自己的纹理号），不重建面板。旧实现恒用中性辅码，调档位在调色板上毫无反应。
 - ★ 缩略图**只是表现**：`paletteThumbURL` 在图集没装好（`atlasCapacity() < tex`）或 node 环境（无 canvas）
   时返回空串 ⇒ 按钮回落成数字，**不许因此抛**。数字仍留在图上当角标（CSS 有 `text-shadow`）。
-- ★ 纹理 22（水面）仍不进调色板（游戏侧自动派生）。
+- ★ 纹理 22（水面）仍不进调色板（游戏侧自动派生）；`tile_defs` 现 15 块 ⇒ 调色板 **14 项**
+  （legacy 纹理 id 的处理见 §5.2 与 [`editor-core.md`](editor-core.md) §6.1）。
 
 ### 12.5 按侧复活点（用户反馈 ⑦：出生点不符合当前游戏要求）
 

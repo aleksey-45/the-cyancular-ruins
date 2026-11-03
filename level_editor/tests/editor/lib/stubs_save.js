@@ -60,10 +60,13 @@ function install() {
   const toolBtns14 = Editor.TOOLS.map(function (t) { const b = mkEl14(null); b.dataset = { tool: t }; return b; });
   const gradBtn14 = mkEl14(null);
   const dom14 = {
+    // ★ 文件动作的页内对话框要挂 body(`fileOpsAsk` 注入之外的那条真路);替身给一个可挂的宿主。
+    body: { appendChild: function () {}, removeChild: function () {} },
+    documentElement: { appendChild: function () {} },
     getElementById: function (id) { return id === 'status-msg' ? statusEl14 : elOf14(id); },
     querySelectorAll: function (sel) {
       if (sel === '#layers .layer-row') return layerRows14;
-      if (sel === '#toolbar .tool') return toolBtns14;
+      if (sel === '#tools .tool' || sel === '#toolbar .tool' || sel === '.tool') return toolBtns14;
       return [];
     },
     querySelector: function (sel) {
@@ -74,7 +77,7 @@ function install() {
         return { width: 0, height: 0, getContext: function () {
           return { drawImage: function () {},
                    getImageData: function (x, y, w, h) { return { data: new Uint8ClampedArray(w * h * 4) }; } };
-        } };
+        }, toDataURL: function () { return 'data:image/png;base64,'; } };
       }
       const e = mkEl14(null); made.push(e); return e;
     },
@@ -88,26 +91,69 @@ function install() {
       set: function () { if (img.onload) img.onload(); },
     });
   };
-  // ★ 记账的 fetch 替身(**只**在内存里演;测试不许往真 maps/ 写):PUT 可切 ok/500,
-  //   `GET /api/map?p=` 可切 404,`GET /api/maps` 恒空库。
+  // ★ 记账的 fetch 替身(**只**在内存里演;测试不许往真 maps/ 写):PUT / DELETE / POST rename 三个写端点
+  //   都能切成功/失败,失败时带 `text()`(客户端必须把服务端那句人话带出来);库列表与读字节也在替身里摆。
   globalThis.putLog14 = [];
+  globalThis.deleteLog14 = [];
+  globalThis.renameLog14 = [];
   globalThis.putMode14 = 'ok';
+  globalThis.deleteMode14 = 'ok';        // 'ok' | 数字(404/409/500…)
+  globalThis.renameMode14 = 'ok';
+  globalThis.libRows14 = [];             // GET /api/maps 的内容(测试自己摆)
   globalThis.mapGetMode14 = 'ok';
+  globalThis.mapBytes14 = {};            // name → Uint8Array(GET /api/map?p=)
+  function errResponse14(status, text) {
+    return { ok: false, status: status, text: function () { return Promise.resolve(String(text)); } };
+  }
+  function queryName14(u, key) {
+    const m = new RegExp('[?&]' + key + '=([^&]*)').exec(u);
+    return m ? decodeURIComponent(m[1]) : '';
+  }
   globalThis.fetch14 = function (url, init) {
     const u = String(url);
-    if (init && init.method === 'PUT') {
-      globalThis.putLog14.push({ url: u, init: init });
-      if (globalThis.putMode14 !== 'ok') return Promise.resolve({ ok: false, status: 500 });
+    const method = (init && init.method) || 'GET';
+    if (u.indexOf('/api/map/rename') === 0) {
+      const from = queryName14(u, 'from'), to = queryName14(u, 'to');
+      globalThis.renameLog14.push({ url: u, from: from, to: to, init: init });
+      if (globalThis.renameMode14 !== 'ok') {
+        return Promise.resolve(globalThis.renameMode14 === '409'
+          ? errResponse14(409, '目标已存在,拒绝覆盖:' + to)
+          : errResponse14(Number(globalThis.renameMode14) || 500, '改名失败'));
+      }
+      globalThis.libRows14 = globalThis.libRows14.map(function (r) {
+        return r.name === from ? { name: to, size: r.size, mtime: r.mtime } : r;
+      });
       return Promise.resolve({ ok: true, status: 200,
-        json: function () { return Promise.resolve({ name: 'dirty_copy.cyrm', size: 42 }); } });
+        json: function () { return Promise.resolve({ ok: true, name: to }); } });
+    }
+    if (method === 'PUT') {
+      globalThis.putLog14.push({ url: u, init: init });
+      if (globalThis.putMode14 !== 'ok') return Promise.resolve(errResponse14(500, '磁盘写满'));
+      const name = queryName14(u, 'p');
+      return Promise.resolve({ ok: true, status: 200,
+        json: function () { return Promise.resolve({ name: name, size: 42 }); } });
+    }
+    if (method === 'DELETE') {
+      const name = queryName14(u, 'p');
+      globalThis.deleteLog14.push({ url: u, name: name, init: init });
+      if (globalThis.deleteMode14 !== 'ok') {
+        return Promise.resolve(errResponse14(Number(globalThis.deleteMode14) || 500, '删不掉'));
+      }
+      globalThis.libRows14 = globalThis.libRows14.filter(function (r) { return r.name !== name; });
+      return Promise.resolve({ ok: true, status: 200,
+        json: function () { return Promise.resolve({ ok: true, deleted: name }); } });
     }
     if (u.indexOf('/api/maps') === 0) {
       return Promise.resolve({ ok: true, status: 200,
-        json: function () { return Promise.resolve({ maps: [] }); } });
+        json: function () { return Promise.resolve({ maps: globalThis.libRows14.slice() }); } });
     }
-    if (globalThis.mapGetMode14 !== 'ok') return Promise.resolve({ ok: false, status: 404 });
-    return Promise.resolve({ ok: true, status: 200,
-      arrayBuffer: function () { return Promise.resolve(new ArrayBuffer(0)); } });
+    if (globalThis.mapGetMode14 !== 'ok') return Promise.resolve(errResponse14(404, '找不到地图'));
+    const name = queryName14(u, 'p');
+    const body = globalThis.mapBytes14[name];
+    if (!body) return Promise.resolve(errResponse14(404, '找不到地图 ' + name));
+    return Promise.resolve({ ok: true, status: 200, arrayBuffer: function () {
+      return Promise.resolve(body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength));
+    } });
   };
   globalThis.view14 = { x: 0, y: 0, zoom: 1 };
 
@@ -121,6 +167,10 @@ function install() {
     layer: function () { return Core.LAYER_SCENE; },
     selection: function () { return null; },
     setSelection: function () {}, setSelDrag: function () {}, setPreview: function () {},
+    setMap: function () { calls14.push('setMap'); return Promise.resolve(); },
+    setLayer: function () {}, setGrid: function () {}, setSubGrid: function () {},
+    setTorus: function () {}, setDimOthers: function () {},
+    layerVisible: function () { return true; }, layerLocked: function () { return false; },
     editCells: function () { calls14.push('editCells'); },
     render: function () { calls14.push('render'); },
     invalidateAll: function () { calls14.push('invalidateAll'); return Promise.resolve(); },

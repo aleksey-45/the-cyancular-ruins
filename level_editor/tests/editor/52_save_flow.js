@@ -151,4 +151,73 @@ module.exports = (async function () {
   eq(Editor.app.sourceFormat, 'v4',
      '★★ app.sourceFormat 更新成 v4(落盘的就是 v4 二进制;实得 ' + Editor.app.sourceFormat + ')');
 
+  // ── 文件动作(①):新建 / 复制 / 另存为 / 强制目标名 / 写盘失败要带原因 ──
+  // ★ 这些都走「真流程 + 注入的对话钩子」:断言落到**副作用**(PUT 的名字 / app 状态 / 磁盘字节闸),不是"没抛"。
+  globalThis.libRows14 = [];
+  putLog14.length = 0;
+  globalThis.fileOpsAsk = function () { return Promise.resolve({ name: 'brand_new', w: '8', h: '6' }); };
+  try {
+    await Editor.newMapFlow();
+  } finally { globalThis.fileOpsAsk = null; }
+  ok(putLog14.length === 1 && putLog14[0].url.indexOf('/api/map?p=brand_new.cyrm') >= 0,
+     '★★ 新建 = **立即真写盘**:恰好一条 PUT,写的是 brand_new.cyrm(只建内存不落盘的实现在这里红;实得 ' +
+     JSON.stringify(putLog14.map(function (p) { return p.url; })) + ')');
+  eq(Editor.app.name, 'brand_new.cyrm', '★★ 新建后 app.name 就是落盘名(实得 ' + Editor.app.name + ')');
+  eq([Core.cellsWOf(Editor.app.map), Core.cellsHOf(Editor.app.map)], [8, 6],
+     '★ 新建用的是对话框里给的尺寸');
+  eq(Editor.app.sourceFormat, 'v4', '★ 新建的图源格式 = v4(它从来没以 v3 存在过)');
+
+  // 同名拒绝:库里已有 brand_new.cyrm ⇒ 不许再建(否则一次点击就把别人的图覆盖掉)
+  putLog14.length = 0;
+  globalThis.libRows14 = [{ name: 'brand_new.cyrm', size: 1, mtime: 1 }];
+  globalThis.fileOpsAsk = function () { return Promise.resolve({ name: 'brand_new', w: '8', h: '6' }); };
+  try { await Editor.newMapFlow(); } finally { globalThis.fileOpsAsk = null; }
+  eq(putLog14.length, 0, '★★★ 同名地图已存在 ⇒ 新建被拒,**一个 PUT 都没发**(覆盖式新建在这里红)');
+  ok(status14.indexOf('同名地图已存在') >= 0, '★★ 拒绝要说出理由(实得 "' + status14 + '")');
+
+  // 复制:名字自动去重,并且复制内容真的写盘再打开
+  globalThis.libRows14 = [{ name: 'brand_new.cyrm', size: 1, mtime: 1 }];
+  putLog14.length = 0;
+  await Editor.duplicateMapFlow();
+  ok(putLog14.length === 1 && putLog14[0].url.indexOf('/api/map?p=brand_new_copy.cyrm') >= 0,
+     '★ 复制 = 取当前图字节写到 `<名>_copy.cyrm`(实得 ' +
+     JSON.stringify(putLog14.map(function (p) { return p.url; })) + ')');
+  eq(Editor.app.name, 'brand_new_copy.cyrm', '★ 复制后打开的是副本(实得 ' + Editor.app.name + ')');
+  globalThis.libRows14 = [{ name: 'brand_new_copy.cyrm', size: 1, mtime: 1 }];
+  putLog14.length = 0;
+  await Editor.duplicateMapFlow();
+  ok(putLog14.length === 1 && putLog14[0].url.indexOf('/api/map?p=brand_new_copy_copy.cyrm') >= 0,
+     '★ 再复制一次:名字继续派生(实得 ' + JSON.stringify(putLog14.map(function (p) { return p.url; })) + ')');
+
+  // 另存为:对话框选的名字优先于 saveTargetName
+  globalThis.fileOpsAsk = function () { return Promise.resolve({ name: 'saved_as' }); };
+  putLog14.length = 0;
+  try { await Editor.saveAsFlow(); } finally { globalThis.fileOpsAsk = null; }
+  eq(putLog14.length, 1, '★★ 另存为恰好一条 PUT(实得 ' + putLog14.length + ' 条)');
+  ok(putLog14.length === 1 && putLog14[0].url.indexOf('/api/map?p=saved_as.cyrm') >= 0,
+     '★★★ 另存为写的是**对话框选的名字**(不是 saveTargetName 的自动名;实得 "' +
+     (putLog14.length ? putLog14[0].url : '(没有请求)') + '")');
+  eq(Editor.app.name, 'saved_as.cyrm', '★★ 另存为之后 app.name = 新名字(实得 ' + Editor.app.name + ')');
+
+  // saveCurrent 的第二个参数:强制目标名(对话框那条路的入口)
+  putLog14.length = 0;
+  await Editor.saveCurrent(false, 'forced.cyrm');
+  eq(putLog14.length, 1, '★ saveCurrent(asNew, forcedName) 照样恰好一条 PUT');
+  ok(putLog14.length === 1 && putLog14[0].url.indexOf('/api/map?p=forced.cyrm') >= 0,
+     '★★ forcedName 优先于 saveTargetName(实得 "' + (putLog14.length ? putLog14[0].url : '(没有请求)') + '")');
+  // 坏名字:必须在发请求之前拦下(服务器会 400,但那要等一次往返)
+  putLog14.length = 0;
+  status14 = '';
+  await Editor.saveCurrent(false, '../逃出 maps.cyrm');
+  eq(putLog14.length, 0, '★★★ 非法目标名 ⇒ 一个 PUT 都不发(先写盘再 400 = 半截状态)');
+  ok(status14.indexOf('保存目标名不能用') >= 0, '★ 而且说得出理由(实得 "' + status14 + '")');
+
+  // 写盘失败:错误文本必须带服务端那句人话(只抛 HTTP 500 时用户看不出是"磁盘写满")
+  putMode14 = 'fail';
+  let putErr = null;
+  await Editor.putMapBytes('x.cyrm', new Uint8Array([1, 2, 3])).catch(function (e) { putErr = e; });
+  ok(putErr && errText(putErr).indexOf('磁盘写满') >= 0,
+     '★★★ 写盘失败要带服务端响应 body(实得 "' + (putErr ? errText(putErr) : '(没有拒绝)') + '")');
+  putMode14 = 'ok';
+
 })();

@@ -27,7 +27,9 @@ module.exports = (async function () {
     globalThis.document = {
       getElementById: function () { return null; },
       querySelector: function () { return null; },
-      querySelectorAll: function (sel) { return sel === '#toolbar .tool' ? toolBtns : []; },
+      querySelectorAll: function (sel) {
+        return (sel === '#tools .tool' || sel === '#toolbar .tool' || sel === '.tool') ? toolBtns : [];
+      },
     };
     const calls = [];
     Editor.app.r = {

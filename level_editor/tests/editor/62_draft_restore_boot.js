@@ -62,6 +62,32 @@ module.exports = (async function () {
   eq(await Editor.offerDraft(), false, '★ (对照)字节不同时仍然问(用户这次点了取消)');
   eq(asked15, 1, '★ (对照)这一次真弹了确认框');
 
+  // ── ⑥b 上次会话留下的草稿带 legacy 纹理 id ⇒ 恢复入口同样过迁移 ──
+  // ★★ 草稿存的是编码后的字节,旧编辑器写的那份带 tex 2,3,4,5,16,17,18;不迁移的话
+  //    上次会话的旧草稿会把 legacy id 带回内存(新图集那 7 槽全透明 ⇒ 画布上看不见,
+  //    而且保存会被 encodeMap 的纹理闸拒)。删掉 offerDraft 里的 Core.migrateMap 这条就红。
+  {
+    const lg15 = Editor.createEmptyMap('draft_probe', 4, 4);
+    lg15.layers[Core.LAYER_SCENE].desc[0] = Core.neutralDesc(16);   // legacy:tex16 → (tex15,hue2)
+    lg15.players = [{ x: 1, y: 1 }];
+    const savedDefs15 = globalThis.TILE_DEFS;
+    globalThis.TILE_DEFS = undefined;               // 扮演旧编辑器(没有纹理闸)才编得出 legacy 字节
+    let lgBytes15;
+    try { lgBytes15 = await globalThis.Io.encodeMap(lg15, { compress: true }); }
+    finally { globalThis.TILE_DEFS = savedDefs15; }
+    tab15.draft.set('draft_probe', { key: 'draft_probe', name: 'draft_probe.cyrm', name2: 'draft_probe',
+                                     bytes: lgBytes15, sourceFormat: 'v4', savedAt: Date.now(), dirty: true });
+    Editor.app.map = Editor.createEmptyMap('draft_probe', 4, 4);   // 真文件里那份:空的
+    Editor.app.name = 'draft_probe.cyrm';
+    Editor.app.raw = new Uint8Array([9, 9, 9]);                    // 与草稿字节不同 ⇒ 该问
+    asked15 = 0;
+    globalThis.confirm = function () { asked15++; return true; };
+    eq(await Editor.offerDraft(), true, '⑥b 前提:草稿被恢复了');
+    eq(asked15, 1, '⑥b 前提:那一次真问了');
+    eq(Editor.app.map.layers[Core.LAYER_SCENE].desc[0], Core.packDesc(15, 2, 4, 4, 7),
+       '★★★ 草稿里的 legacy tex16 恢复时已迁成 (tex15,hue2)(草稿恢复也是读入口)');
+  }
+
   // ── ⑦ 第 3 层:applyUiState 把 UI 小状态真的按回界面(含"缩放只在 setMap 之后")──
   Editor.app.map = Editor.createEmptyMap('draft_probe', 4, 4);
   calls15.length = 0;
@@ -71,7 +97,7 @@ module.exports = (async function () {
   Editor.app.uist = { layer: Core.LAYER_BG, zoom: 0, tool: 'line', brushSize: 3,
                       grid: false, subGrid: true, torus: false, dimOthers: false,
                       panelOpen: { lib: true, right: true },
-                      playerRef: { cx: 7, cy: 9, visible: true }, selectedTexture: 5 };
+                      playerRef: { cx: 7, cy: 9, visible: true }, selectedTexture: 9 };
   Editor.applyUiState();
   eq(Editor.app.st.tool, 'line', '★★ applyUiState 把图层/工具按回界面(tool=line)');
   eq(Editor.app.st.brushSize, 3, '★ 画笔大小也按回去了');
@@ -93,20 +119,39 @@ module.exports = (async function () {
   calls15.length = 0;
   Editor.applyUiState();
   ok(calls15.indexOf('setZoomAt') >= 0, '★ 真存过缩放时要恢复它(setZoomAt 被调了)');
-  // ★★ 纹理那条**不能写死 5**:`clampTexture` 对"容量 < 1(没有信息)"给的是 **1**,而图集
-  //    状态是**上一个分片留下的**(⑭ 的替身留的是 512×640 ⇒ cap 320)。写死 5 的话,哪天
-  //    那个替身改成空图集,这条会**因为环境**而红。故判据取 `clampTexture(5, cap)`。
-  // ★★ 但容量 < 5 时 5 会被钳成 cap,而 cap 可能**恰好等于**恢复前那份的纹理位 ⇒ 那条就
+  // ★★ 纹理那条**不能写死数字**:判据取 `clampTexture(9, cap)` —— `clampTexture` 对"容量 < 1
+  //    (没有信息)"给的是 **1**,而图集状态是**上一个分片留下的**(⑭ 的替身留的是 512×640 ⇒ cap 320)。
+  //    ★★ 但容量 < 9 时 9 会被钳成 cap,而 cap 可能**恰好等于**恢复前那份的纹理位 ⇒ 那条就
   //    **不再证明**"纹理位真的被按回去了"。故把前提**明文断言出来**。
-  ok(cap15 >= 5,
-     '★★ 前提:图集容量 ≥ 5(实得 ' + cap15 + ')—— 本分片假设 ⑭ 留下的图集还在' +
-     '(512×640 ⇒ 320)。★ 容量 < 5 时下面那条只剩"不越界"这一半,不是功能红');
-  eq(Editor.app.st.desc === Core.packDesc(Editor.clampTexture(5, cap15),
+  // ★ 9 是**合法**纹理(在 tile_defs、非 legacy):这条验的是"ui state 往返保真";
+  //   legacy 存档值的消毒在 ⑦b 单独钉(两种语义不许混在一条断言里)。
+  ok(cap15 >= 9,
+     '★★ 前提:图集容量 ≥ 9(实得 ' + cap15 + ')—— 本分片假设 ⑭ 留下的图集还在' +
+     '(512×640 ⇒ 320)。★ 容量 < 9 时下面那条只剩"不越界"这一半,不是功能红');
+  eq(Editor.app.st.desc === Core.packDesc(Editor.clampTexture(9, cap15),
                                           Core.hueOf(pre15), Core.brightOf(pre15),
                                           Core.satOf(pre15), Core.alphaOf(pre15)), true,
      '★ 选中的纹理也按回去了(只换纹理位,四个辅码档位**不动** —— 与恢复**之前**那份逐位比;' +
-     '纹理位按 clampTexture(5, ' + cap15 + ') 判,故与图集状态无关;' +
+     '纹理位按 clampTexture(9, ' + cap15 + ') 判,故与图集状态无关;' +
      '恢复前那份的纹理位 = ' + Core.texOf(pre15) + ')');
+
+  // ── ⑦b 恢复的 selectedTexture 过 legacy 表消毒(「落笔不可见」是静默错;旧存档可能存着 legacy 号或越界号)──
+  tableEq('sanitizeRestoredTexture:legacy → base,tile_defs 之外 → 1,合法号原样', [
+    ['legacy 5 → base 1', Editor.sanitizeRestoredTexture(5), 1],
+    ['legacy 16 → base 15', Editor.sanitizeRestoredTexture(16), 15],
+    ['合法 9 原样', Editor.sanitizeRestoredTexture(9), 9],
+    ['越界 99 → 1', Editor.sanitizeRestoredTexture(99), 1],
+    ['0 → 1', Editor.sanitizeRestoredTexture(0), 1],
+  ]);
+  Editor.app.st.desc = pre15;                    // 回到已知的辅码四档
+  Editor.app.uist.selectedTexture = 5;           // 旧会话存下的 legacy 值
+  Editor.applyUiState();
+  eq(Editor.app.st.desc === Core.packDesc(Editor.clampTexture(1, cap15),
+                                          Core.hueOf(pre15), Core.brightOf(pre15),
+                                          Core.satOf(pre15), Core.alphaOf(pre15)), true,
+     '★★ 端到端:存档里 selectedTexture=5(legacy)⇒ 开机画笔 = base 1、辅码四档不动' +
+     '(摘掉 applyUiState 里的 sanitizeRestoredTexture 调用这里就红;实得 tex = ' +
+     Core.texOf(Editor.app.st.desc) + ')');
 
   // ── ⑨ 真跑一遍 `bootLoad()`:启动那条链**行为上**确实去问了一次草稿 ──
   // ★★ 为什么源码级那条不够:它只证明"函数名出现在函数体附近",一个把它删掉、却在紧邻的

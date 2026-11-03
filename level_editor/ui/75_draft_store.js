@@ -92,6 +92,7 @@ function offerDraft() {
                              new Date(rec.savedAt || 0).toLocaleString() + '),要恢复吗?');
     if (!yes) { status('草稿仍在草稿盘里(屏幕上的图没被动过)'); return false; }
     return Io.decodeMap(rec.bytes).then(function (map) {
+      Core.migrateMap(map);              // ★ 上次会话存的草稿可能还带 legacy 纹理 id:恢复也是读入口,同样迁移
       map.name = rec.name2 || map.name || '';
       app.map = map; app.sourceFormat = 'v4';
       if (rec.name) app.name = rec.name;

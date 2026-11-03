@@ -44,7 +44,9 @@ function fakeCtx() {
     fillStyle: '', strokeStyle: '', font: '', textAlign: '', textBaseline: '', lineWidth: 1,
     setTransform: function () {}, save: function () {}, restore: function () {},
     beginPath: function () {},
-    moveTo: function (x, y) { ops.push({ op: 'moveTo', x: x, y: y }); },
+    // ★ moveTo 也要记 strokeStyle:网格是两条独立路径(子格线 0.14 / 格线 0.26),而 stroke 只记整条路径的样式
+    //   ⇒ 不记在 moveTo 上就分不出某一根线属于哪一组(④「子格线只画被拆分的格」的断言全靠它)。
+    moveTo: function (x, y) { ops.push({ op: 'moveTo', x: x, y: y, style: String(this.strokeStyle) }); },
     lineTo: function () {},
     stroke: function () { ops.push({ op: 'stroke', style: String(this.strokeStyle) }); },
     fillRect: function (x, y, w, h) {

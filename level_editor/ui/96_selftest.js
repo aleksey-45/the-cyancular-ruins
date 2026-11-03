@@ -83,7 +83,9 @@ function selfTest() {
     setErrorSink(savedSinkST);
     check('guard 的失败上报到 sink(可见)', !!sinkGot && sinkGot.indexOf('自检用的假错') >= 0,
           sinkGot || '没有上报 —— 那就成了"按了没反应"');
-    check('地图已打开', app.map !== null);
+    // ★ ② 空启动之后"没有地图"是**合法状态**:这一段以前直接读 app.map,空启动时自检会自己红。
+    //   两条分支都保持 3 条检查(browser_check 的条数闸 17 不许漂):有图就验图,没图就验"空状态真的长出来了"。
+    check('渲染器已挂载', !!(app.r && typeof app.r.render === 'function'));
     check('画布有尺寸', app.canvas.width > 1 && app.canvas.height > 1,
           app.canvas.width + '×' + app.canvas.height);
     check('localStorage 可读写', probeLocalStorage());
@@ -91,6 +93,12 @@ function selfTest() {
       check('map.name 来自文件名', app.map.name === nameFromFile(app.name),
             'name=' + app.map.name + ' / 文件 ' + app.name);
       check('缩略图已建', app.r.stats().thumbsBuilt > 0);
+    } else {
+      var hintEl = $('empty-hint');
+      check('空启动:画布上给出了「还没有打开地图」提示', !!(hintEl && hintEl.hidden === false));
+      var stName = $('st-name');
+      check('空启动:状态栏说"(未打开)"', !!(stName && String(stName.textContent).indexOf('未打开') >= 0),
+            stName ? String(stName.textContent) : '没有 #st-name');
     }
     return probeIndexedDb().then(function (idb) {
       check('IndexedDB 可打开', idb.ok, idb.why);

@@ -19,18 +19,17 @@ function defaultSleep(ms) {
   return new Promise(function (r) { setTimeout(r, ms); });
 }
 
-// 带重试的 rename:注入 renameFn / sleepFn 是为了让测试确定性(「前两次 EPERM 第三次成功」拿活的读写竞态去测
-// 必然飘),也才能顺带断言尝试次数 —— 只断言"最终成功"的话,把重试砍成 1 次也照样绿。
+// 瞬态错误重试的唯一实现(rename 与 unlink 共用同一份额度/退避,别各抄一份):注入 opFn / sleepFn
+// 是为了让测试确定性(「前两次 EPERM 第三次成功」拿活的竞态去测必然飘),也才能顺带断言尝试次数。
 // ★★ 刻意不做同步退避(Atomics.wait 能同步睡):同步睡会把事件循环冻住,而竞争者(正在流地图的读流)恰恰需要
 //    事件循环转起来才能把 fd 关掉 —— 同步版对这个 bug 结构上无效,不是参数没调好。
-function renameWithRetry(tmpPath, target, renameFn, sleepFn) {
-  const rename = renameFn || function (a, b) { return fs.promises.rename(a, b); };
+function withTransientRetry(opFn, sleepFn) {
   const sleep = sleepFn || defaultSleep;
   let attempts = 0;
   function attempt() {
     attempts++;
     // 包一层 Promise.resolve().then:注入的实现可能同步抛(fs.renameSync 就是)也可能异步 reject,两种都得走同一条重试路径。
-    return Promise.resolve().then(function () { return rename(tmpPath, target); })
+    return Promise.resolve().then(opFn)
       .then(function () { return attempts; })
       .catch(function (e) {
         const code = e && e.code !== undefined ? String(e.code) : '';
@@ -42,6 +41,11 @@ function renameWithRetry(tmpPath, target, renameFn, sleepFn) {
       });
   }
   return attempt();
+}
+
+function renameWithRetry(tmpPath, target, renameFn, sleepFn) {
+  const rename = renameFn || function (a, b) { return fs.promises.rename(a, b); };
+  return withTransientRetry(function () { return rename(tmpPath, target); }, sleepFn);
 }
 
 // 原子写:先写同目录的临时文件再 rename 覆盖。临时文件必须在同一目录(同一卷)—— 跨卷 rename 会退化成"复制 + 删除"。
@@ -84,6 +88,6 @@ function receiveMapFile(req, res, name, ctx) {
 module.exports = {
   RENAME_RETRY_CODES: RENAME_RETRY_CODES, RENAME_MAX_ATTEMPTS: RENAME_MAX_ATTEMPTS,
   RENAME_RETRY_BASE_MS: RENAME_RETRY_BASE_MS, RENAME_RETRY_MAX_MS: RENAME_RETRY_MAX_MS,
-  renameWithRetry: renameWithRetry, writeMapAtomic: writeMapAtomic,
-  receiveMapFile: receiveMapFile,
+  withTransientRetry: withTransientRetry, renameWithRetry: renameWithRetry,
+  writeMapAtomic: writeMapAtomic, receiveMapFile: receiveMapFile,
 };

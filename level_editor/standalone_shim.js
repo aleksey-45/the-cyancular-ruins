@@ -142,19 +142,13 @@
     if (E && E.refreshLibrary) return E.refreshLibrary();
     return Promise.resolve();
   }
-  // ★ 库是空的(没选目录、也没打开文件)时开机给一张空白图:否则双击进来是一片黑画布 +
-  //   一句"加载中…",用户得自己想到去点「新建」。★ 只在这一种状态下动 prompt(新建要问名字,
-  //   自动路径用默认名),点完立刻还原 —— 不许把人家的重命名提示也吞掉。
-  function autoNewIfEmpty() {
+  // ★ 库是空的(没选目录、也没打开文件)时**不再替用户造一张空白图**(② 空启动:用户要真的文件动作)。
+  //   改成显示空状态提示;之后的「新建」走编辑器自己的页内对话框(不再是 prompt 被垫片篡改)。
+  function emptyStateIfNoMap() {
     var E = window.Editor;
     if (!E || !E.app || !E.app.r) return;
     if (E.app.map) return;
-    var btn = document.getElementById('btn-new');
-    if (!btn) return;
-    var orig = window.prompt;
-    window.prompt = function () { return 'new_map'; };
-    try { btn.click(); } finally { window.prompt = orig; }
-    if (E.status) E.status('单文件版:库是空的,先给一张 125×75 的空白图 —— Ctrl+S 会写 new_map.cyrm');
+    if (E.showEmptyState) E.showEmptyState(true);
   }
   function pickDir() {
     if (!hasFsa()) { hint('此浏览器没有目录访问能力,请用「打开文件…」'); return Promise.resolve(); }
@@ -196,14 +190,14 @@
       } catch (e) { /* 同上 */ }
       hint(hasFsa() ? '先选「本地目录…」或「打开文件…」' : '本浏览器无目录访问能力;用「打开文件…」,保存即下载');
     }
-    // 等 boot 的链走完(库列过一次 + 渲染器挂上)再看要不要给空白图:早于它就会与 openFromUrl 抢。
+    // 等 boot 的链走完(库列过一次 + 渲染器挂上)再看要不要显示空状态:早于它就会与 openFromUrl 抢。
     var tries = 0;
     var timer = setInterval(function () {
       var E = window.Editor;
       tries++;
       if (E && E.app && E.app.r && E.app.db !== undefined && libSettled) {
         clearInterval(timer);
-        setTimeout(autoNewIfEmpty, 600);
+        setTimeout(emptyStateIfNoMap, 600);
       } else if (tries > 80) {
         clearInterval(timer);
       }

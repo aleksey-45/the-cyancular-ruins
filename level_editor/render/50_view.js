@@ -22,7 +22,8 @@ function visibleSubRange(view, viewW, viewH, subCols, subRows) {
   return { x0: x0, y0: y0, x1: x1, y1: y1 };
 }
 
-// ★ 环面 3×3 只返回"与视口相交"的那些副本偏移(最多 9 份,通常 1 份):无脑铺 9 份是 9 倍开销,而屏幕上绝大多数时候只看得到一份。
+// ★ 环面偏移的"相交过滤"版(公开面,测试与几何断言用)。★ 合成侧**不再**用它:88 的 torusList 固定 2×2
+//   (只铺右/下两份),理由见那里的注释 —— 这条留着是因为 torusOffsets 是 99_exports 的公开 API。
 function intersects(a0, a1, b0, b1) { return a1 > b0 && a0 < b1; }
 function torusOffsets(view, viewW, viewH, mapW, mapH) {
   var r = visibleSubRange(view, viewW, viewH, mapW, mapH);
@@ -37,6 +38,23 @@ function torusOffsets(view, viewW, viewH, mapW, mapH) {
     }
   }
   return out;
+}
+
+// ⑩ 的配套:视图钳制(只在 panBy 里用)。2×2(定义 A)只有右/下两份副本 ⇒ "有内容的世界矩形" =
+// [0, 2W] × [0, 2H](环面关掉时 [0, W] × [0, H])。判据:画布中心必须落在该矩形内 ——
+// 比"至少一份副本与画布相交"更强(中心永远有内容),而 fit/默认视图离边界很远,不会被钳到。
+// ★ 棘轮:视图已经在界外时(setView 直接给定 / 刚关掉环面 / 缩放过)只允许往界内走 —— 否则下一次 1px 的
+//   拖拽会把它瞬移到边界上:画面跳一下,而脏区那套还得为这次瞬移付一次整片重建。
+function clampPanAxis(cur, next, lo, hi) {
+  if (cur < lo) return Math.max(next, cur);
+  if (cur > hi) return Math.min(next, cur);
+  return Math.max(lo, Math.min(hi, next));
+}
+function clampPanView(view, x, y, viewW, viewH, subCols, subRows, torusOn) {
+  var vw = viewW / view.zoom, vh = viewH / view.zoom;
+  var right = (torusOn ? 2 : 1) * subCols, bottom = (torusOn ? 2 : 1) * subRows;
+  return { x: clampPanAxis(view.x, x, -vw / 2, right - vw / 2),
+           y: clampPanAxis(view.y, y, -vh / 2, bottom - vh / 2) };
 }
 
 // 屏幕 → 子格(折算回主网格)。★ 副本上落笔靠的就是这一步:无论点在哪个副本上,结果都落在 [0, subCols) 里。

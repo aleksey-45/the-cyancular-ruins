@@ -96,8 +96,17 @@ function installEdit(S) {
     dxPx = Math.round(dxPx); dyPx = Math.round(dyPx);
     if (dxPx === 0 && dyPx === 0) return;
     var W = canvas.width, H = canvas.height;
-    s.view.x += dxPx / s.view.zoom;
-    s.view.y += dyPx / s.view.zoom;
+    // ★★ ⑩ 的配套:先把"想去的视图"钳一遍,再由钳制后的位置**反算实际位移** —— 若先把 view 推过去再夹,
+    //    自拷贝与 panStrips 仍按没夹过的 dx 走 ⇒ 内容与视图错开(clampPanView 在 50_view.js)。
+    //    反算之后再量化一次,保证 view / panStrips / 自拷贝三者仍然同源(这条不变量在上面那段注释里)。
+    var v0x = s.view.x, v0y = s.view.y;
+    var fitv = clampPanView(s.view, v0x + dxPx / s.view.zoom, v0y + dyPx / s.view.zoom,
+                            W, H, s.map.subCols, s.map.subRows, s.torus);
+    dxPx = Math.round((fitv.x - v0x) * s.view.zoom);
+    dyPx = Math.round((fitv.y - v0y) * s.view.zoom);
+    if (dxPx === 0 && dyPx === 0) return;              // 已经顶到边界:1px 都不动,也就不该重画
+    s.view.x = v0x + dxPx / s.view.zoom;
+    s.view.y = v0y + dyPx / s.view.zoom;
     if (zoomPath(s.view.zoom) !== 'layers') { S.render(); return; }
     // ★★ 视图一动,在飞的那一轮重建(条带按旧视图算的)就不能再往这些画布上写 —— 而"自拷贝搬移"又要求整张图属于同一次视图 ⇒ 不干净时老实走整片重建(分帧)。
     if (!S.layersClean) return S.observed('panBy', S.buildLayers().then(S.render));

@@ -100,6 +100,9 @@ function parseArgs(argv) {
     else if (a === '--port') { const n = parseInt(argv[++i], 10); if (isFinite(n)) o.port = n; }
     else if (a === '--maps') o.mapsDir = argv[++i];
     else if (a === '--root') o.rootDir = argv[++i];
+    // 单实例(见 server/instance.js):默认「重启 = 结束上一个自己」;--keep 关掉它,便于并行跑第二个实例。
+    else if (a === '--keep' || a === '--no-replace') o.replaceStale = false;
+    else if (a === '--pid-file') o.pidFile = argv[++i];
     else console.error('[editor] 未知参数 ' + a);
   }
   return o;

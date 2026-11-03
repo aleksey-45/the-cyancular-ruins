@@ -14,7 +14,21 @@ function applyUiState() {
   // ★★ 这一处必须走本文件的 setLayer(它内部再调 app.r.setLayer):直接调 app.r.setLayer 只换渲染层,
   //    而面板与图层行不会跟着动 ⇒ 用户看到的与正在发生的是两回事(右侧摆着纹理调色板,刷子却画在背景层上)。
   setLayer(u.layer);
+  // ★ 可见/锁定也是"下次打开时界面该长什么样"的一部分(以前不存:刷新后总是复位成全可见/全未锁,
+  //   而图标又只靠点击那一刻改 —— 用户反馈 ⑥)。逐个字段校验,坏值当没存过。
+  if (u.layerVisible && u.layerVisible.length === Core.LAYER_COUNT) {
+    for (var L = 0; L < Core.LAYER_COUNT; L++) {
+      if (u.layerVisible[L] === false) app.r.setLayerVisible(L, false);
+    }
+  }
+  if (u.layerLocked && u.layerLocked.length === Core.LAYER_COUNT) {
+    for (var L2 = 0; L2 < Core.LAYER_COUNT; L2++) {
+      if (u.layerLocked[L2] === true) app.r.setLayerLocked(L2, true);
+    }
+  }
+  syncLayerIcons();
   app.r.setGrid(u.grid); app.r.setSubGrid(u.subGrid);
+  if (app.r.setGuides) app.r.setGuides(!!u.guides);
   app.r.setTorus(u.torus); app.r.setDimOthers(u.dimOthers);
   app.st.tool = u.tool;
   app.st.brushSize = u.brushSize;
@@ -22,11 +36,12 @@ function applyUiState() {
   //    selectToolButton() 画 —— 少了它,重载之后高亮钉在 editor.html 写死的画笔上。
   selectToolButton();
   if (u.selectedTexture > 0) {
-    app.st.desc = Core.packDesc(clampTexture(u.selectedTexture, Render.atlasCapacity()),
+    // ★ 先过 sanitizeRestoredTexture(legacy → base、tile_defs 外 → 1,见 20_tools.js):旧存档的 legacy 号在新图集是透明槽,落笔不可见是静默错
+    app.st.desc = Core.packDesc(clampTexture(sanitizeRestoredTexture(u.selectedTexture), Render.atlasCapacity()),
                                 Core.hueOf(app.st.desc), Core.brightOf(app.st.desc),
                                 Core.satOf(app.st.desc), Core.alphaOf(app.st.desc));
   }
-  [['tg-grid', u.grid], ['tg-subgrid', u.subGrid], ['tg-torus', u.torus]].forEach(function (pair) {
+  [['tg-grid', u.grid], ['tg-subgrid', u.subGrid], ['tg-torus', u.torus], ['tg-guides', !!u.guides]].forEach(function (pair) {
     var el = $(pair[0]);
     if (el) el.classList.toggle('on', !!pair[1]);
   });
@@ -52,10 +67,15 @@ function persistUi() {
       grid: $('tg-grid') ? $('tg-grid').classList.contains('on') : true,
       subGrid: $('tg-subgrid') ? $('tg-subgrid').classList.contains('on') : false,
       torus: $('tg-torus') ? $('tg-torus').classList.contains('on') : true,
+      guides: $('tg-guides') ? $('tg-guides').classList.contains('on') : !!(prev && prev.guides),
       dimOthers: $('dim-others') ? !!$('dim-others').checked : true,
       compress: optCompress(),
       panelOpen: prev.panelOpen, playerRef: prev.playerRef,
       selectedTexture: Core.texOf(app.st.desc),
+      layerVisible: app.r && app.r.layerVisible
+        ? [0, 1, 2, 3].map(function (L) { return app.r.layerVisible(L) !== false; }) : prev.layerVisible,
+      layerLocked: app.r && app.r.layerLocked
+        ? [0, 1, 2, 3].map(function (L) { return app.r.layerLocked(L) === true; }) : prev.layerLocked,
     };
     writeUiState(localStore(), app.uist);
   }, UI_SAVE_THROTTLE_MS);
@@ -122,6 +142,7 @@ function checkCrashSlot() {
                });
     }
     return Io.decodeMap(crash.bytes).then(function (map) {
+      Core.migrateMap(map);              // ★ 崩溃快照同样是读入口:legacy 纹理 id 迁移照做(与 offerDraft 同一条)
       map.name = crash.name2 || '';
       app.map = map; app.name = crash.name; app.sourceFormat = 'v4';
       dirty = true;                  // ★ 屏幕上这份 ≠ 磁盘上那份(不回血:该 Ctrl+S 了)

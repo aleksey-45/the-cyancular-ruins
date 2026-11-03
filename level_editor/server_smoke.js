@@ -22,13 +22,15 @@ const harness = require('./tests/harness.js').start();
     require('./tests/server/30_map_name_guard.js');
     require('./tests/server/40_api_read.js');
     require('./tests/server/50_write_gates.js');
+    require('./tests/server/55_map_ops.js');
     require('./tests/server/60_rename_retry.js');
     require('./tests/server/70_e2e.js');
+    require('./tests/server/75_instance.js');
     await globalThis.serverChain;
   } finally {
     await cleanup();
   }
-  harness.finish('SERVER SMOKE OK', 163);
+  harness.finish('SERVER SMOKE OK', 241);
 })().catch(async function (err) {
   console.error('FAIL: 未捕获异常(后面的断言一行都没跑):');
   console.error(err && err.stack ? err.stack : String(err));

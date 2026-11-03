@@ -3,14 +3,23 @@
 function statusLine() {
   if (!app.map) return;
   var set = function (id, txt) { var el = $(id); if (el) el.textContent = txt; };
-  set('st-tool', '工具 ' + (TOOL_LABELS[app.st.tool] || app.st.tool) + ' × ' + app.st.brushSize);
-  set('st-tex', '纹理 ' + Core.texOf(app.st.desc));
+  // ★ 状态栏只说"现在会怎么落笔":只有画笔/橡皮显示尺寸,矩形/直线显示各自的模式(反馈 ⑤)。
+  var label = TOOL_LABELS[app.st.tool] || app.st.tool;
+  var extra = '';
+  if (app.st.tool === 'brush' || app.st.tool === 'eraser') extra = ' × ' + app.st.brushSize;
+  else if (app.st.tool === 'rect') extra = ' · ' + (toolOption('rect-mode', 'fill') === 'outline' ? '描边' : '填充');
+  else if (app.st.tool === 'line') extra = ' · 宽 ' + (parseInt(toolOption('line-width', '1'), 10) || 1) + ' 子格';
+  set('st-tool', '工具 ' + label + extra);
+  // ★★ 「只改辅码」必须在这里可见:勾上之后纹理位不再参与落笔,状态栏却还写着"纹理 N" 就是状态在说谎(反馈 ⑧)。
+  set('st-tex', app.st.descOnly ? ('辅码模式(纹理不变) ' + Core.texOf(app.st.desc))
+                                : ('纹理 ' + Core.texOf(app.st.desc)));
   set('st-desc', '辅码 ' + Core.hueOf(app.st.desc) + '/' + Core.brightOf(app.st.desc) + '/' +
                  Core.satOf(app.st.desc) + '/' + Core.alphaOf(app.st.desc));
   var sel = app.r.selection();
   set('st-sel', sel ? ('选区 ' + (sel.w / Core.SUB_PER_CELL) + '×' + (sel.h / Core.SUB_PER_CELL) + ' 格') : '无选区');
   set('st-undo', '撤销 ' + undoHistory.depth() + ' / 重做 ' + undoHistory.redoDepth());
   renderSaveState();                // ★ 每落一笔都要跟着翻(状态栏是"现在"的样子)
+  if (typeof refreshRespawnCount === 'function') refreshRespawnCount();
 }
 
 function hitOf(ev) {
@@ -27,7 +36,13 @@ function k2of(hit) { return hit.kind === 'cell' ? Core.SUB_PER_CELL : 1; }
 function stNow() {
   return { map: app.map, layer: app.r.layer(), desc: app.st.desc, rgba: app.st.rgba,
            rgba2: app.st.rgba2, brushSize: app.st.brushSize, selection: app.r.selection(),
-           descOnly: app.st.descOnly };
+           descOnly: app.st.descOnly, rectMode: toolOption('rect-mode', 'fill'),
+           lineWidth: parseInt(toolOption('line-width', '1'), 10) || 1 };
+}
+
+function toolOption(id, fallback) {
+  var el = $(id);
+  return (el && el.value !== undefined && el.value !== '') ? String(el.value) : String(fallback);
 }
 function subRectOf(from, to) {
   var k = Core.SUB_PER_CELL;
@@ -54,8 +69,7 @@ function installInteraction() {
   //   它是一个按下/抬起的状态,故 keydown 置位、keyup 与 blur 清位 —— blur 那条不是装饰:
   //   按住空格去点别的窗口(或 Alt+Tab)时 keyup 到不了这个页面,清不掉的话回来一拖就莫名平移。
   var spaceDown = false;
-  // ★ 两个颜色槽:规格 §4.4 的渐变是"两端各选一色" ⇒ 必须两个颜色状态(rgba 起点 / rgba2 终点);
-  //   给成同一个色的话渐变会退化成纯色填充,而且看不出来。
+  // ★ 两个颜色槽 = 渐变的全部(两端同色会退化成纯色填充,而且看不出来;规格 §4.4)。
   app.st = { tool: 'brush', brushSize: 1, desc: Core.neutralDesc(1),
              rgba: 0xFF00FFFF, rgba2: 0x101820FF,
              descOnly: false, selStart: null, stroke: null, panning: null, selDrag: null,
@@ -76,10 +90,7 @@ function installInteraction() {
       // ★ 没打开地图时退回线性口径(与 Render.inSel 的 W/H 缺省同款)—— 指针事件比 setMap 早到是可能的。
       var W = app.map ? app.map.subCols : 0, H = app.map ? app.map.subRows : 0;
       if (app.st.tool === 'select') {
-        // ★ 判"按在选区里"必须先把命中换算到子格:整格命中给的是格号,而选区是子格单位 —— 直接比会差
-        //   4 倍(而且永远不成立),表现为"选框工具一拖就是在重新框选,选区永远拖不动";换算只有 toSub 一处。
-        // ★★ 判据与 regionCells 的 clip 同一个(inRect → Render.inSel,带环面折算):三个"选区"口径此前
-        //   是三种,各自在接缝那一侧给出不同答案 —— 最刺眼的是"框里画,一半画得进去、一半什么都没发生"。
+        // ★★ 判"按在选区里"必须先经 toSub 换算(整格命中是格号、选区是子格单位,直接比差 4 倍),且判据与 regionCells 的 clip 同一个(inRect→Render.inSel,带环面折算)。
         var hs = toSub(hit);
         if (sel && inRect(sel, hs.x, hs.y, W, H)) {
           app.st.selDrag = { from: hit, dx: 0, dy: 0 };   // 选区内按下 = 拖动它
@@ -102,9 +113,7 @@ function installInteraction() {
         var s0 = stNow();
         var job = createBucketJob(app.map, s0.layer, hit.x * k2of(hit), hit.y * k2of(hit),
                                   { clip: s0.selection });
-        // ★★ runJob 交回的是一整条分帧链的 promise(slicer.run → onApply → 落笔):丢掉它 = 拒绝逃到
-        //   全局围栏,而围栏会 snapshot() ⇒ 一次普通的落笔失败会把当前图写进崩溃槽位,下次开机弹假的
-        //   「上次异常退出」。guard 是终点(它自己吞掉结果、只往状态栏写一行),故这里是唯一该接住的地方。
+        // ★★ runJob 的 promise 必须交给 guard:丢掉它 = 拒绝逃到全局围栏,围栏 snapshot() ⇒ 一次落笔失败换来一个假的「上次异常退出」。
         guard('油漆桶填充', function () {
           return runJob(job, function () {
             pushAndShow(paintCells(app.map, s0.layer, job.result(), valueFor(s0, s0.layer)));
@@ -219,9 +228,7 @@ function installInteraction() {
           // ★ Shift 约束(规格 §4.8):直线锁水平/垂直/45° —— 与预览同一个函数
           pushAndShow(applyTool(stNow(), 'line', st0.from, shiftHit(st0.from, hit, ev.shiftKey)));
         } else if (!st0.painted) {
-          // ★ 按下与松开之间没有 pointermove(单击)时,画笔/橡皮的落笔只在 pointermove 那条路上发生 ⇒
-          //   一次单击什么都不画;而"拿画笔点一格"是最常见的编辑动作,必须同样有效。
-          // ★ 判据取 painted 而不是"last 是否等于 from":pointermove 在同一格内也会落笔。
+          // ★ 单击也要落笔(判据取 painted 而不是"last 是否等于 from":pointermove 在同一格内也会落笔)。
           pushAndShow(applyTool(stNow(), app.st.tool, st0.from, st0.from));
         }
       }
@@ -261,35 +268,15 @@ function installInteraction() {
       else if (cmd.indexOf('layer:') === 0) { setLayer(parseInt(cmd.slice(6), 10)); }
       else if (cmd === 'undo') pend = doUndo();
       else if (cmd === 'redo') pend = doRedo();
-      else if (cmd === 'copy') {
-        clipboard = copyRegion(app.map, app.r.layer(), app.r.selection());
-        status(clipboard ? '已复制 ' + clipSize(clipboard).w + '×' + clipSize(clipboard).h : '先框选一块');
-      }
-      else if (cmd === 'cut') {
-        var s2 = app.r.selection();
-        if (!s2) { status('先框选一块'); return; }
-        clipboard = copyRegion(app.map, app.r.layer(), s2);
-        pushAndShow(applyTool({ map: app.map, layer: app.r.layer(), desc: 0, rgba: 0,
-                                brushSize: 0.25, selection: s2 },
-                              'rect', { kind: 'sub', x: s2.x, y: s2.y },
-                              { kind: 'sub', x: s2.x + s2.w - 1, y: s2.y + s2.h - 1 }));
-      }
-      else if (cmd === 'paste') {
-        var sel = app.r.selection();
-        var at = sel ? { x: sel.x, y: sel.y } : { x: 0, y: 0 };
-        var out = pasteRegion(app.map, app.r.layer(), clipboard, at.x, at.y);
-        if (!out.ok) { status('粘贴失败:' + out.why); return; }
-        pushAndShow(out.diff);
-        if (sel) app.r.setSelection({ x: at.x, y: at.y, w: clipSize(clipboard).w, h: clipSize(clipboard).h });
-      }
+      else if (cmd === 'copy') { doCopySelection(); }
+      else if (cmd === 'cut') { doCutSelection(); }
+      else if (cmd === 'paste') { doPasteSelection(); }
       else if (cmd.indexOf('mirror:') === 0) { pend = mirrorSelection(cmd.slice(7)); }
-      else if (cmd === 'clear-selection') {
-        var s3 = app.r.selection();
-        if (!s3) { status('先框选一块'); return; }
-        pushAndShow(applyTool({ map: app.map, layer: app.r.layer(), desc: 0, rgba: 0,
-                                brushSize: 0.25, selection: s3 },
-                              'rect', { kind: 'sub', x: s3.x, y: s3.y },
-                              { kind: 'sub', x: s3.x + s3.w - 1, y: s3.y + s3.h - 1 }));
+      else if (cmd === 'clear-selection') { doClearSelection(); }
+      else if (cmd === 'toggle-guides') {
+        var gEl = $('tg-guides');
+        if (gEl) gEl.click();
+        else if (app.r && app.r.setGuides) app.r.setGuides(!app.r.guides());
       }
       else if (cmd === 'cancel-selection') {
         // ★★ Esc 可能在拖动途中按下去(左键还按着、selDrag 还在飞)而照样合法:选区没了 ⇒ 没有可搬的

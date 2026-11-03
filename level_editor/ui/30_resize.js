@@ -24,15 +24,21 @@ function resizeMap(map, w, h) {
     if (inRange(e)) out.enemies.push({ type: e.type, x: e.x, y: e.y });
     else dropped.push({ kind: 'enemy', type: e.type, x: e.x, y: e.y });
   }
+  // ★ 按侧复活点同样"只丢不钳":钳一个点回边界 = 替地图作者决定它该在哪一侧。
+  var rs = map.respawns || [];
+  for (i = 0; i < rs.length; i++) {
+    if (inRange(rs[i])) out.respawns.push({ side: rs[i].side, x: rs[i].x, y: rs[i].y });
+    else dropped.push({ kind: 'respawn', side: rs[i].side, x: rs[i].x, y: rs[i].y });
+  }
   return { map: out, dropped: dropped, size: { w: cellsW, h: cellsH } };
 }
 // ★★ 尺寸闸只此一条路:applySize → resizeMap → createEmptyMap → Core.clampMapSize。这里不再
 //    写第二个 Core.createMap 调用 —— 第二个造图入口就是 A8 复发(输 99999 分配巨图卡死)。
 function resizeReportLines(dropped) {
   return (dropped || []).map(function (d) {
-    return d.kind === 'enemy'
-      ? ('敌人 ' + d.type + ' 落在图外 (' + d.x + ',' + d.y + '),已移除')
-      : ('出生点落在图外 (' + d.x + ',' + d.y + '),已移除');
+    if (d.kind === 'enemy') return '敌人 ' + d.type + ' 落在图外 (' + d.x + ',' + d.y + '),已移除';
+    if (d.kind === 'respawn') return '侧 ' + d.side + ' 复活点落在图外 (' + d.x + ',' + d.y + '),已移除';
+    return '出生点落在图外 (' + d.x + ',' + d.y + '),已移除';
   });
 }
 // ★ 输入框回显只在这一个函数里写(DOM 与状态一致):输了 99999 而框里仍写着 99999、图却已是 400×300。
