@@ -296,10 +296,10 @@ func _on_hurt_target(from: Vector2, to: Vector2, hit: Dictionary) -> void:
 		if not velocity_vec.is_zero_approx():
 			rotation = velocity_vec.angle()
 		return
-	# 命中敌人:优先走 source(武器)的 apply_hit;切枪后旧武器已 free 时用子弹自带 damage/impact 兜底;视觉副本(apply_damage=false)不裁决伤害,直接消失。
+	# 伤害随子弹保存,不会因射手拉下一弓或切枪而改变。
 	if apply_damage and is_instance_valid(source) and source.has_method("apply_hit"):
 		_spawn_hit_fx(target)
-		source.apply_hit(target, velocity_vec)
+		source.apply_hit(target, velocity_vec, hit_damage)
 		Sfx.play("hit")
 	elif apply_damage and target.has_method("hurt"):
 		_spawn_hit_fx(target)

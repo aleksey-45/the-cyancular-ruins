@@ -53,7 +53,7 @@ class StubEnemy extends Node2D:
 class StubSource extends Node:
 	var hits := 0
 
-	func apply_hit(target: Node, _dir: Vector2) -> void:
+	func apply_hit(target: Node, _dir: Vector2, _shot_damage: int) -> void:
 		hits += 1
 		if target != null and target.has_method("hurt"):
 			target.hurt(1, Vector2.RIGHT)

@@ -17,7 +17,10 @@
      `mag_ammo` 还是声明初值 0 ⇒ `pending_mag` 被冲成 0(切到第二把 = 0 弹)。改为 `st.has("mag")` / `st.has("rld")` 才回灌。
   守卫:`tests/probe/wheel_switch_probe.tscn`(11 条:同帧双滚 / 上行 inst / 换弹中切换 / 换弹完成写回 / 切枪后开火 / 实例与下标分家 / 同型号 equip_inst)。
 - `equip_type` 对「背包里没有这个类型」`push_error` 且不加入。发放走 `pick_up(type_id, MAG_FULL)` 或 `set_initial_inventory([...])`。
-- 现有武器:手枪 / 步枪 / m82a1(重狙,heavy_aim)/ s686(霰弹 8 丸 ±3°、射程 1400)/ 榴弹发射器(重型)/ 激光枪(中型即时光束)。
+- 现有武器:手枪 / 步枪 AK74U / m82a1(重狙,heavy_aim)/ s686(霰弹 8 丸 ±3°、射程 1400)/ 榴弹发射器(重型)/ 激光枪(中型即时光束)/ 复合弓(中型)/ M249(重型)。
+- 复合弓:`charge_time` 秒蓄满,`charge_ratio` 从 0 到 1 线性换算 `charge_damage_min..damage` / `charge_speed_min..bullet_speed`;当前为 1.2s、4–35 伤害、500–1800px/s。松开发箭,单箭自动搭箭 0.7s;箭场景独立,`bullet_gravity = 0.1`。蓄力只后移 `ChargeArrow` 精灵,弓身不动,箭实体从该精灵所在位置出膛;不用红色激光。`ChargeArrow` 挂在 2.5× 玩家根下,故场景里显式 `scale = 0.4`(=1/2.5)与出膛箭的世界尺寸逐像素对齐,松手不跳变。
+- M249:100 发、换弹 5.5s、弹速 2200px/s、单发伤害与 AK74U 同为 4;`trigger_delay = 0.25s` 是每次按住的首发等待,中途松开清零,持续按住后按正常冷却连发。后推/枪口后坐/震屏分别为 120/9/4.5(步枪的 1.5 倍)。
+- 蓄力比 `chg` 与扳机累计 `trg` 进 `Player.capture_state` / 权威本人包 / `restore_state`;不新增输入键。`BulletBase.hit_damage` 在出膛时保存本发伤害,敌人命中经 `apply_hit(..., hit_damage)`、PvP 由权威子弹结算,不会读到下一弓的蓄力值。
 - 弹速(2026-10-26 P1 命中手感,全量 +25%):手枪 1750 / 步枪 2000 / m82a1 3750 / s686 1375 / 榴弹 1375(px/s);敌弹平抛初速上下限同步 ×1.25(250/1600 → 312.5/2000)。激光是 hitscan,`bullet_speed` 不参与弹道;S686 射程同步 1100→1400(原射程小于可见半宽)。
 
 **即时光束(`LaserWeaponBase extends WeaponBase`)**:

@@ -1,0 +1,22 @@
+[gd_scene format=3 uid="uid://c8arrowb0w001"]
+
+[ext_resource type="Script" uid="uid://dy03viwkb5gno" path="res://scenes/weapons/bullet_base.gd" id="1_bl"]
+[ext_resource type="Texture2D" uid="uid://c5gmp0htncrd4" path="res://assets/textures/bullets.png" id="2_arr"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_arrow"]
+size = Vector2(42, 5)
+
+[node name="ArrowBullet" type="CharacterBody2D"]
+collision_layer = 0
+collision_mask = 1
+motion_mode = 1
+script = ExtResource("1_bl")
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("RectangleShape2D_arrow")
+
+[node name="Sprite2D" type="Sprite2D" parent="."]
+texture_filter = 1
+texture = ExtResource("2_arr")
+region_enabled = true
+region_rect = Rect2(17, 13, 45, 6)

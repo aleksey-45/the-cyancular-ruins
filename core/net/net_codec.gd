@@ -9,6 +9,7 @@ extends RefCounted
 #   ② **trail 改 2×i16**(Q_SCALE,0.5px 步长):它是唯一没量化、也是世界包里最大的一坨变长字段 —— 4 点 8B→4B,
 #   最坏世界包 791→536 B、回溯时 536→408 B。两端必须同版发布(旧客户端被版本字节拒绝)。
 # ── 2026-11-01(PROTO_VERSION 7→8):输入上行改 **60Hz 一包一条记录**(原 30Hz 一包两条);下行不变。
+# ── 2026-11-03(PROTO_VERSION 8→9):武器块加 **chg(蓄力比)/ trg(扳机延迟累计)** —— 复合弓与 M249 的开火状态必须可回滚重放。
 # ── 版本字节:首字节 = PROTO_VERSION,两端不同版时大声失败(解码返回空字典、调用方不 emit + 客户端 claim 握手拒绝),而不是按错位的偏移读出垃圾值。
 #   ★ 载荷里每个字节位置都是协议:改字段顺序/类型/宽度 = 改协议,两端必须同版本。
 # ── 输入包(KIND_INPUT)也走这里:同一套版本字节 + schema 表。类名保留 NetCodec —— 它现在是**全项目**线格式编解码器(快照 + 输入)。
@@ -19,7 +20,7 @@ extends RefCounted
 #   (解码按 schema 读 ⇒ 顺序/宽度错 = 解出来的值必不对,立刻红),容量用 `_schema_bytes()` 预算(少算 ⇒ 越界/尺寸错,④ 最坏包抓)。
 #   ⇒ 改 schema 必须同步改三个 encode_*;不改就一定红,不会静默。
 
-const PROTO_VERSION := 8   # 2026-11-01:输入上行改 60Hz 单记录包(原 30Hz 一包两条)
+const PROTO_VERSION := 9   # 2026-11-03:武器块加 chg/trg(复合弓蓄力、M249 扳机延迟可回滚)
 const KIND_WORLD := 1
 const KIND_OWN := 2
 const KIND_INPUT := 3
@@ -76,11 +77,13 @@ const C2_SCHEMA: Array = [
 	["winst", T_I32],
 ]
 
-# 当前武器的字段(仅 `capture_state()` 里 `w != null` 时存在)。★ 3 个 bool 打包成首字节标志 ⇒ 12 B(改前 14 B)。
+# 当前武器的字段(仅 `capture_state()` 里 `w != null` 时存在)。★ 3 个 bool 打包成首字节标志 ⇒ 20 B(加蓄力/起转后)。
 # ★ 武器块"整体存在/整体缺席":存在性由本人包头的 FLAG_WEAPON 位声明(包恒为 FULL,不存在"字段消失"的差分包问题)。
+# ★ chg(蓄力比)/ trg(扳机延迟已累计时长)是弓与机枪的跨 tick 开火状态:漏一个,重放就会在错误的 tick 出弹。
 const WEAPON_SCHEMA: Array = [
 	["_flags", T_BOOLS, ["aiming", "fire_buf", "rld"]],
 	["fire_cd", T_F], ["aim_f", T_I8], ["aim_cf", T_I8], ["mag", T_U8], ["rld_t", T_F],
+	["chg", T_F], ["trg", T_F],
 ]
 
 # 背包每一条(type/inst/mag —— 与 `weapon_inventory.snapshot()` 同源)。
@@ -334,6 +337,10 @@ static func _write_own_body(out: PackedByteArray, i: int, c2: Dictionary) -> int
 		out[i] = int(c2.get("mag", 0)) & 0xFF
 		i += 1
 		out.encode_float(i, float(c2.get("rld_t", 0.0)))
+		i += 4
+		out.encode_float(i, float(c2.get("chg", 0.0)))
+		i += 4
+		out.encode_float(i, float(c2.get("trg", 0.0)))
 		i += 4
 	return _write_inv(out, i, c2.get("inv", []))
 

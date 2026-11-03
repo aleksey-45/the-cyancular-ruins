@@ -148,6 +148,7 @@ func _fixture_own() -> Dictionary:
 		"knock": Vector2(-123.456, 78.9), "wslot": 3, "winst": 77,
 		"fire_cd": 0.25, "aiming": true, "fire_buf": true,
 		"aim_f": 1, "aim_cf": -1, "mag": 7, "rld": true, "rld_t": 0.125,
+		"chg": 0.625, "trg": 0.1875,
 		"inv": [{"type": 1, "inst": 77, "mag": 30}],
 	}
 	return {"ack_seq": 123456, "q": 5, "c2": c2}

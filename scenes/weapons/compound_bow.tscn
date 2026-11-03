@@ -1,0 +1,55 @@
+[gd_scene format=3 uid="uid://c7compoundbow01"]
+
+[ext_resource type="Script" uid="uid://knjsw64jktvh" path="res://scenes/weapons/weapon_base.gd" id="1_wb"]
+[ext_resource type="PackedScene" uid="uid://c8arrowb0w001" path="res://scenes/weapons/arrow_bullet.tscn" id="2_ar"]
+[ext_resource type="Texture2D" uid="uid://b0cphfvl3wqnj" path="res://assets/textures/weapons.png" id="3_wpn"]
+[ext_resource type="Texture2D" uid="uid://c5gmp0htncrd4" path="res://assets/textures/bullets.png" id="4_arw"]
+
+[node name="CompoundBow" type="Node2D"]
+script = ExtResource("1_wb")
+bullet_scene = ExtResource("2_ar")
+tier = 1
+weapon_name = "Compound Bow"
+fire_cooldown = 0.15
+heavy_aim = true
+bullet_range = 1600.0
+impact = 900.0
+recoil_push = 30.0
+recoil_kick = 2.0
+cam_shake = 1.0
+cam_shake_time = 0.08
+move_penalty = 0.7
+jump_penalty = 0.85
+penalty_mode = 2
+show_aim_laser = false
+pitch_clamp_deg = 50.0
+bullet_gravity = 0.1
+charge_time = 1.2
+charge_damage_min = 4
+charge_speed_min = 500.0
+damage = 35
+bullet_speed = 1800.0
+charge_arrow_pull = 10.0
+spread_deg = 0.5
+mag_size = 1
+reload_time = 0.7
+
+[node name="Sprite2D" type="Sprite2D" parent="."]
+texture_filter = 1
+position = Vector2(10, 10)
+texture = ExtResource("3_wpn")
+region_enabled = true
+region_rect = Rect2(4, 60, 20, 44)
+
+[node name="ChargeArrow" type="Sprite2D" parent="."]
+visible = false
+z_index = -1
+texture_filter = 1
+position = Vector2(24, 7)
+scale = Vector2(0.4, 0.4)
+texture = ExtResource("4_arw")
+region_enabled = true
+region_rect = Rect2(17, 13, 45, 6)
+
+[node name="Muzzle" type="Marker2D" parent="."]
+position = Vector2(24, 7)

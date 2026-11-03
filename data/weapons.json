@@ -5,6 +5,8 @@
     { "id": 3, "name": "重狙 M82A1", "tier": "heavy",  "scene": "res://scenes/weapons/m82a1.tscn" },
     { "id": 4, "name": "霰弹 S686",  "tier": "light",  "scene": "res://scenes/weapons/s686.tscn" },
     { "id": 5, "name": "榴弹发射器", "tier": "heavy",  "scene": "res://scenes/weapons/grenade_launcher.tscn" },
-    { "id": 6, "name": "激光枪",     "tier": "medium", "scene": "res://scenes/weapons/laser_gun.tscn" }
+    { "id": 6, "name": "激光枪",     "tier": "medium", "scene": "res://scenes/weapons/laser_gun.tscn" },
+    { "id": 7, "name": "复合弓",     "tier": "medium", "scene": "res://scenes/weapons/compound_bow.tscn" },
+    { "id": 8, "name": "M249",       "tier": "heavy",  "scene": "res://scenes/weapons/m249.tscn" }
   ]
 }

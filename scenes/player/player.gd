@@ -695,6 +695,9 @@ func capture_state() -> Dictionary:
 		st["mag"] = w.mag_ammo
 		st["rld"] = w._reloading
 		st["rld_t"] = w._reload_t
+		# 蓄力比与扳机延迟累计同样是"影响下一帧会不会出弹、出的是哪一发"的跨 tick 状态:漏一个,重放就会在错误的 tick 出弹(弓)/提前起转(机枪)。
+		st["chg"] = w.charge_ratio
+		st["trg"] = w._trigger_t
 	return st
 
 func restore_state(st: Dictionary) -> void:
@@ -803,6 +806,11 @@ func _apply_weapon_state(st: Dictionary) -> void:
 		if st.has("rld"):
 			w._reloading = bool(st["rld"])
 			w._reload_t = float(st.get("rld_t", w._reload_t))
+		# 软同步不带计时字段时保持原值。
+		if st.has("chg"):
+			w.charge_ratio = float(st["chg"])
+		if st.has("trg"):
+			w._trigger_t = float(st["trg"])
 
 # 攀爬跳离梯顶时清跳跃缓冲/土狼/截断标记:防止残留输入造成二次起跳(由 climb 组件调用)。
 func cancel_jump_state() -> void:

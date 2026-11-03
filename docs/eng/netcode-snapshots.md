@@ -48,14 +48,14 @@ NetBus.rpc_id(peer, "snapshot_own",
 
 - `ack_seq` = 该 role 已消费输入记录的 seq。
 - `q` = 该 role 已到达但未消费的输入**记录**数。
-- `c2` = `player.capture_state()`：**25 个标量 + 武器块 8 个（仅手持非空时）+ 整个背包表**。字段表在 `core/net/net_codec.gd` 的 `C2_SCHEMA` / `WEAPON_SCHEMA` / `INV_SCHEMA`。
+- `c2` = `player.capture_state()`：**25 个标量 + 武器块 10 个（仅手持非空时）+ 整个背包表**。字段表在 `core/net/net_codec.gd` 的 `C2_SCHEMA` / `WEAPON_SCHEMA` / `INV_SCHEMA`。
 - `c2` 是 C2 回滚的锚点：客户端 `restore_state()` 后用未确认输入重放。
 - ★ **S1（2026-10-24）发送时机**：本人包不在世界包广播里发，而是 MatchHost 在**消费完本 tick 输入后 call_deferred**、由 `send_own_snapshots()` 在帧末（Player 子节点步进完之后）发。⇒ `ack` 与 `c2` 是同一 tick 的最新权威态（旧实现落后一拍且要等下一次 30Hz 广播）；代价是**世界包里自己那份比本人包旧 1 tick**（客户端本来就不消费世界包的自己那份）。
 - 传输：`snapshot_own` 是 `unreliable`、`transfer_channel = 0`（ENet 道 1）。
 
 ### 1.4 线格式与载荷
 
-- `core/net/net_codec.gd` 用一张 schema 表 + 手打包成 `PackedByteArray`（快照 + 输入同模块）。首字节 `PROTO_VERSION := 8`（**7→8 两端必须同版**：2026-11-01 输入上行改回 60Hz 单记录包；**6→7** 是 DELTA 编解码删除 + trail 改定点），第二字节种类（`KIND_WORLD` / `KIND_OWN` / `KIND_INPUT`）。
+- `core/net/net_codec.gd` 用一张 schema 表 + 手打包成 `PackedByteArray`（快照 + 输入同模块）。首字节 `PROTO_VERSION := 9`（**8→9 两端必须同版**：武器块追加 float32 `chg` 蓄力比与 `trg` 扳机累计,用于权威恢复和回滚重放；**7→8** 是输入上行改回 60Hz 单记录包；**6→7** 是 DELTA 编解码删除 + trail 改定点），第二字节种类（`KIND_WORLD` / `KIND_OWN` / `KIND_INPUT`）。
 - ★ 2026-10-24 bool 打包：bool 按**记录**打包成 1 B 标志字节（`T_BOOLS`；世界 4 个 / `c2` 7 个 / 武器块 3 个）。**不是跨字段位流** —— 收益等价（世界条目当时 51→48 B、本人包 102→94 B）但不需要 bit 游标与 padding 校验，解码也不会因尾部 padding 判据制造误红/误绿；代价是组内对齐浪费 ≤7 bit。小整数位宽 / 真位流留给后续（要先登记每字段值域）。
 - ★ 2026-10-26 **P1 字段定点化**（`PROTO_VERSION 4→5`）：世界包 `pos` / `vel` → 2×i16（**0.5px** / 0.5px·s⁻¹ 步长；i16 只有 ±32767，0.1px 步长装不下 9600px 地图）、`aim` → u8 角度（256 向）；输入包 `aim` → 2×i16（1e-4 定点，解码后 normalize）。★ `c2` / 本人包**不动** —— 它是 C2 回滚锚点，单方面量化会让每次重放判分歧；世界包字段都是渲染量，量化是两端同版一起换。误差与方案见 [`netcode-delta-and-quantization-details.md`](netcode-delta-and-quantization-details.md) §6。
 - ★ 2026-10-30 **DELTA 删除 + trail 定点化**（`PROTO_VERSION 6→7`）：生产 2026-10-28 已回退全量，差分只剩探针在养 ⇒ 这次把差分编解码**整体删除**（线格式真相从 3 份回到 1 份）；`trail` 从 2×float32 改 2×i16（0.5px 步长，与 pos/vel 同 Q_SCALE）⇒ 世界条目 33→25 B、最坏世界包 791→536 B。
@@ -69,7 +69,7 @@ NetBus.rpc_id(peer, "snapshot_own",
 |---|---|
 | 世界包 FULL 头 | 8 B（版本 1 + 种类 1 + flags 1 + tick 4 + 人数 1） |
 | 世界包每人条目 | **25 B**（role 1 + bool 标志 1 + 定长 14 + trail(1+8)；trail 2 点）；不在回溯时 **17 B** |
-| 本人包 | **99 B**（头 13：版本/种类/flags/tick/ack/q/武器标志 + `c2` 67 + 武器 12 + 背包 7） |
+| 本人包 | **107 B**（头 13：版本/种类/flags/tick/ack/q/武器标志 + `c2` 67 + 武器 20 + 背包 7） |
 | 输入包 | **42 B**（头 2 + 记录 40 = **两条连续 tick 记录**；`held` 必须 u16，见 [`netcode-input-uplink.md`](netcode-input-uplink.md)）。P1 前 46 B |
 
 按 60Hz 折算（v7：世界包每人条目 25 B、本人包 99 B/包；服务器上行按扇出算，世界包每个 peer 一份）：

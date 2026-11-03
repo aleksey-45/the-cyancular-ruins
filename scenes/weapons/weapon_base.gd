@@ -23,6 +23,19 @@ const WALK_BOB_REF_SPEED: float = 700.0    # px/s:达到此速度时满幅
 @export var fire_cooldown: float = 0.2
 # heavy_aim:按住左键进入激光预瞄,松开才发射。
 @export var heavy_aim: bool = false
+# trigger_delay:扳机延迟(秒)。>0 时按住连发武器要先把扳机压满这么久才出第一发(机枪起转),期间松开 = 一发不打。
+@export var trigger_delay: float = 0.0
+
+# ── 蓄力(弓)── charge_time > 0 表示本武器按蓄力比缩放伤害/弹速;0 = 不蓄力(其余枪械全都不设)。
+# 蓄力比与扳机计时随权威状态捕获/恢复。
+@export var charge_time: float = 0.0
+# 0 蓄力的伤害/弹速;满蓄力用 damage / bullet_speed。
+@export var charge_damage_min: int = 0
+@export var charge_speed_min: float = 0.0
+var charge_ratio: float = 0.0
+# 蓄力箭的视觉:拉弓时整支箭后退(弓身不动)。pull = 满蓄力时后退多少 px;节点名 ChargeArrow,不在就跳过。
+@export var charge_arrow_pull: float = 0.0
+var _trigger_t: float = 0.0
 
 # ── 子弹 ── bullet_speed(px/s)越大弹道越直、越难闪避。
 @export var bullet_speed: float = 900.0
@@ -57,6 +70,8 @@ const WALK_BOB_REF_SPEED: float = 700.0    # px/s:达到此速度时满幅
 # ── 激光(heavy_aim 用)── 预瞄激光线长度(px)。
 @export var laser_length: float = 600.0
 @export var laser_color: Color = Color(1.0, 0.2, 0.2, 0.6)
+# show_aim_laser:heavy_aim 武器预瞄时是否画那条直线激光。弓关掉它(拉弓靠箭后移表达,一条红线从枪口射出去是枪械的语汇)。
+@export var show_aim_laser: bool = true
 
 # ── 瞄准 ── pitch_clamp_deg:本枪仰角钳制角(枪口/激光/出弹方向共用)。
 @export var pitch_clamp_deg: float = 45.0
@@ -121,6 +136,15 @@ func _apply_sprite_pose() -> void:
 		pos -= Vector2(1.0, 0.0) * recoil_kick * (_recoil_timer / RECOIL_TIME)
 	sprite.position = pos + _walk_bob
 	sprite.rotation = rot + _walk_bob_rot
+	_apply_charge_arrow_pose()
+
+
+# 只移动箭,弓身不动;ChargeArrow 的 z_index 让箭画在弓身后。
+func _apply_charge_arrow_pose() -> void:
+	if _charge_arrow == null:
+		return
+	_charge_arrow.visible = charge_time > 0.0 and _aiming
+	_charge_arrow.position = _base_arrow_pos + Vector2(-charge_arrow_pull * charge_ratio, 0.0)
 
 # ★ 走路 bob 的相位取自**宿主模型的走路动画帧**(move 的 frame + frame_progress),不是独立计时器:
 #   模型换一帧 = 枪跟着换一次;单帧姿态(蹲/冲刺/飞行)没有帧进度 ⇒ 自然不抖,不为它们加代码。
@@ -155,7 +179,7 @@ func _host_speed_x() -> float:
 
 @onready var sprite: Sprite2D = $Sprite2D
 @onready var muzzle: Marker2D = $Muzzle
-
+@onready var _charge_arrow: Sprite2D = get_node_or_null("ChargeArrow") as Sprite2D
 var player: Node2D
 # 加速倍率(PvP):由宿主每物理帧推入(player.gd 的 _push_haste_mult → 当前那把枪)。★ 为什么是注入成员而不是 equip() 的参数:宿主引用只在 equip() 给一次,而倍率每帧都在变。★ 只被 _spawn_projectiles() 读:单机它恒 1(弹速倍率由 TimeField.bullet_delta 承担,不会双乘)。
 # ★ 覆盖上限(照实):默认 1.0 ⇒ 宿主忘推 = 静默回到 1×(不报错)。零守卫(rewind_weapon_probe 已删·2026-10-09 的 S10)。
@@ -164,6 +188,7 @@ var fire_cd_timer: float = 0.0
 
 var _recoil_timer: float = 0.0
 var _base_sprite_pos: Vector2 = Vector2.ZERO
+var _base_arrow_pos: Vector2 = Vector2.ZERO   # 蓄力箭的"未拉弓"位置(_ready 抓一次)
 var _aiming: bool = false
 var _fire_buffered: bool = false
 var _aim_facing: int = 1          # 最近一次明确的瞄准侧(近垂直瞄时用,不随走路翻侧)
@@ -184,6 +209,10 @@ func _ready() -> void:
 		pending_mag = MAG_UNSET
 	_mag_ready = true
 	_base_sprite_pos = sprite.position
+	# 蓄力箭的基准位置只抓一次:之后每帧只写 position(不读回),重复抓会把已后移的位置当成基准、越蓄越靠后。
+	if _charge_arrow != null:
+		_base_arrow_pos = _charge_arrow.position
+		_charge_arrow.visible = false
 	# ★ 预瞄线与爆炸预览标记是**武器**的子节点(武器实例从不进出对象池),只在入树时建一次就够;子弹侧对应的是拖尾。
 	_laser = Line2D.new()
 	_laser.width = 1.0  # 细激光(经玩家 2.5x 缩放渲染约 2.5px)
@@ -260,26 +289,51 @@ func tick(delta: float) -> void:
 	if heavy_aim:
 		if _attack_just_pressed():
 			_aiming = true
+		if _aiming:
+			if _attack_pressed():
+				_advance_charge(delta)
+			elif charge_time > 0.0 and not _attack_just_released():
+				# 按住信号消失又没有松开边沿(暂停/菜单把输入掩掉):这一弓作取消,不让蓄力挂在陈旧的 _aiming 上继续涨。
+				_aiming = false
+				charge_ratio = 0.0
 		if _attack_just_released():
+			# ★ 语义与改动前一致:松开就发射一次(不论本帧之前是否处于预瞄态),`_aiming` 只是提前清掉。
 			_aiming = false
-			_update_laser()
 			try_fire()
+			charge_ratio = 0.0
 		_update_laser()
 	elif full_auto:
 		if _attack_pressed():
-			try_fire()
-	else:
-		if _attack_just_pressed():
-			try_fire()
+			_tick_trigger(delta)
+		else:
+			_trigger_t = 0.0
+	elif _attack_just_pressed():
+		try_fire()
 	_recoil_recover(delta)
 	# 走路 bob 的相位取宿主模型帧(不是计时器);换弹/后坐/bob 的合成只在 _apply_sprite_pose 一处。
 	_sample_walk_bob(_host_walk_anim(), _host_speed_x())
 	_apply_sprite_pose()
 
+
+# 扳机延迟:压满 trigger_delay 才允许开火。★ 冷却仍在这里判(try_fire 内部),故起转期间按住不动不会白耗冷却。
+func _tick_trigger(delta: float) -> void:
+	if trigger_delay <= 0.0:
+		try_fire()
+		return
+	_trigger_t = minf(_trigger_t + delta, trigger_delay)
+	if _trigger_t >= trigger_delay:
+		try_fire()
+
+
+func _advance_charge(delta: float) -> void:
+	if charge_time > 0.0:
+		charge_ratio = minf(charge_ratio + delta / charge_time, 1.0)
+
 func try_fire() -> void:
 	if fire_cd_timer > 0.0:
 		# 冷却 >0.5 的武器:最后 20% 内按开火不丢弃,改为缓冲,冷却结束自动打。
-		if fire_cooldown > 0.5 and fire_cd_timer <= fire_cooldown * 0.2:
+		# ★ 蓄力武器不缓冲:它这一发的伤害/弹速由"这一弓"的蓄力比决定,而缓冲要等到冷却结束才出弹,那时 charge_ratio 已是下一弓的值或已清零 —— 打出去的会是错的一发。
+		if fire_cooldown > 0.5 and fire_cd_timer <= fire_cooldown * 0.2 and charge_time <= 0.0:
 			_fire_buffered = true
 		return
 	fire()
@@ -300,6 +354,7 @@ func fire() -> void:
 		return
 	# 开火瞬间同步朝向/枪口到鼠标:直接开火(_unhandled_input,input 阶段)先于 _process,读到的是上一物理帧被走路覆盖的 get_facing(),clamp_pitch 会折到走路侧、子弹打偏;统一先 _auto_aim,所有开火路径都取本帧最新瞄准方向。
 	_auto_aim()
+	_apply_charge_arrow_pose()
 	var base_dir := _clamped_aim_dir()
 	_spawn_projectiles(base_dir)
 	Sfx.play("shoot_heavy" if heavy_aim else ("shotgun" if pellet_count > 1 else "shoot"))
@@ -315,15 +370,29 @@ func fire() -> void:
 	if cam != null and cam.has_method("shake"):
 		cam.shake(cam_shake, cam_shake_time)
 
-# 命中回调:伤害/冲击由枪械管理(BulletBase 不含伤害)。
-func apply_hit(target: Node, dir: Vector2) -> void:
+# 本发的伤害:蓄力武器按蓄力比在 charge_damage_min..damage 之间线性插值,其余枪恒为 damage。
+func current_damage() -> int:
+	if charge_time <= 0.0:
+		return damage
+	return int(round(lerpf(float(charge_damage_min), float(damage), charge_ratio)))
+
+# 本发的弹速:同上口径,charge_speed_min..bullet_speed。
+func current_bullet_speed() -> float:
+	if charge_time <= 0.0:
+		return bullet_speed
+	return lerpf(charge_speed_min, bullet_speed, charge_ratio)
+
+# 伤害取自出膛时的子弹,不读射手当前正在拉的下一弓。
+func apply_hit(target: Node, dir: Vector2, shot_damage: int) -> void:
 	if target != null and target.has_method("hurt"):
-		target.hurt(damage, dir, impact)
+		target.hurt(shot_damage, dir, impact)
 
 # 出弹钩子:fire() 同步朝向/冷却后调用。基类默认按 pellet 出物理子弹;即时光束类武器(激光)覆写本方法,用一次性几何追踪替代逐帧飞行的弹丸;base_dir 是已钳制仰角的瞄准方向(世界系),与默认出弹同一来源。
 # ★ 两端都从这里出弹:客户端视觉弹(pvp_mode=true)与服务器权威弹(pvp_mode 恒 false)取同一份池与同一份复位。
 #   服务器只跳过 Sprite2D tint 这一项表现复位(见 BulletBase.reset_for_pool);玩法字段两端一视同仁 —— 漏一项 = 两端各错一半。
 func _spawn_projectiles(base_dir: Vector2) -> void:
+	var shot_speed := current_bullet_speed()
+	var shot_damage := current_damage()
 	var spread := deg_to_rad(spread_deg)
 	var scene_path := bullet_scene.resource_path
 	var pool := BulletPool.shared()
@@ -338,12 +407,12 @@ func _spawn_projectiles(base_dir: Vector2) -> void:
 		var hm := haste_mult
 		var ang := base_dir.angle() + randf_range(-spread, spread)
 		# ★ 局部变量,不动 bullet_speed 成员:多弹丸武器(霰弹)逐弹 ×会累积,跨发更会永久变快。
-		b.setup(Vector2.from_angle(ang), bullet_speed * hm, bullet_range, bullet_size, bullet_color, self)
+		b.setup(Vector2.from_angle(ang), shot_speed * hm, bullet_range, bullet_size, bullet_color, self)
 		b.shooter = player
 		b.gravity_factor = bullet_gravity
-		b.hit_damage = damage
+		b.hit_damage = shot_damage
 		b.hit_impact = impact
-		b.global_position = muzzle.global_position
+		b.global_position = _charge_arrow.global_position if _charge_arrow != null else muzzle.global_position
 		# PvP:本地生成的子弹只做视觉(不裁决伤害);服务器权威子弹(Level0.pvp_mode=false)照常裁决。
 		b.apply_damage = not Level0.pvp_mode
 		# 服务器广播 bullet_spawn 时用(场景路径在运行期实例上可能为空)。
@@ -361,6 +430,8 @@ func _live_projectiles() -> int:
 
 func cancel_aim() -> void:
 	_aiming = false
+	charge_ratio = 0.0
+	_trigger_t = 0.0
 	if _laser != null:
 		_laser.visible = false
 
@@ -428,7 +499,7 @@ func _auto_aim() -> void:
 func _update_laser() -> void:
 	if _laser == null or muzzle == null:
 		return
-	_laser.visible = _aiming
+	_laser.visible = _aiming and show_aim_laser
 	if not _aiming:
 		_update_explosion_marker(false)
 		return

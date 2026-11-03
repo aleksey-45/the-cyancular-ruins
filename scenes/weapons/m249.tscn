@@ -1,0 +1,37 @@
+[gd_scene format=3 uid="uid://c8m249saw001x"]
+
+[ext_resource type="Script" uid="uid://knjsw64jktvh" path="res://scenes/weapons/weapon_base.gd" id="1_wb"]
+[ext_resource type="Texture2D" uid="uid://b0cphfvl3wqnj" path="res://assets/textures/weapons.png" id="2_wpn"]
+
+[node name="M249" type="Node2D"]
+script = ExtResource("1_wb")
+tier = 2
+weapon_name = "M249"
+full_auto = true
+trigger_delay = 0.25
+fire_cooldown = 0.09
+bullet_speed = 2200.0
+bullet_range = 1700.0
+spread_deg = 1.6
+damage = 4
+impact = 750.0
+recoil_push = 120.0
+recoil_kick = 9.0
+cam_shake = 4.5
+cam_shake_time = 0.12
+move_penalty = 0.5
+jump_penalty = 0.7
+penalty_mode = 1
+pitch_clamp_deg = 55.0
+mag_size = 100
+reload_time = 5.5
+
+[node name="Sprite2D" type="Sprite2D" parent="."]
+texture_filter = 1
+position = Vector2(16, 10)
+texture = ExtResource("2_wpn")
+region_enabled = true
+region_rect = Rect2(62, 40, 74, 26)
+
+[node name="Muzzle" type="Marker2D" parent="."]
+position = Vector2(52, 6)
