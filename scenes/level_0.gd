@@ -209,26 +209,19 @@ func _ready() -> void:
 	var built := _create_wall_tileset()
 	var wl: TileMapLayer = $WorldViewport/WallLayer
 	wl.tile_set = built["tileset"]
-	# ★ Web:建图(9 份环面瓦片 + 9 份水面 + 整层碰撞)在 wasm 里要好几秒 ⇒ 先铺中心副本让画面有内容,
-	#   其余交给 _web_build_world() 逐帧补完(期间树暂停 + 载入遮罩)。桌面路径逐字不变。
-	var web_progressive := OS.has_feature("web") and not pvp_mode
-	if web_progressive:
-		_paint_maze_copies(wl, [Vector2i.ZERO])
-	else:
-		_paint_maze(wl)
+	# ★ 2026-11-02 进关卡卡顿优化:**所有平台**一律「先只铺中心副本 → 其余逐帧补完」。
+	#   桌面实测:整段同步建图 ≈2.2s(网格 315ms / 铺 9 份瓦片 1.4s / 碰撞 330ms),期间窗口完全不刷新。
+	#   现在首帧只铺中心副本(约 160ms),剩下的交给 _build_world_progressive() 在每帧时间预算内跑完
+	#   (期间树暂停 + 载入遮罩),不再出现一次 2 秒的硬卡顿。
+	_paint_maze_copies(wl, [Vector2i.ZERO])
 	Level0.water_layer = $WorldViewport/WaterLayer
 	Level0.water_surface_layer = $WorldViewport/WaterSurfaceLayer
 	Level0.water_layer.tile_set = _create_water_tileset()
-	if web_progressive:
-		_paint_water_copies(grid, [Vector2i.ZERO])
-	else:
-		_paint_water(grid)
+	_paint_water_copies(grid, [Vector2i.ZERO])
 
-	if web_progressive:
-		get_tree().paused = true   # 玩家/敌人已生成但物理不跑,等碰撞建完再解
-		_web_build_world.call_deferred(grid)
-	else:
-		_build_wall_collision.call_deferred(grid)
+	LoadingScreen.show_loading("正在构建世界…")
+	get_tree().paused = true   # 玩家/敌人已生成但物理不跑,等建图补完再解
+	_build_world_progressive.call_deferred(grid)
 	if pvp_mode:
 		return  # 世界已建;敌人/单玩家放置/后处理交给 PvP 场景
 	EnemySpawner.load_types()
@@ -374,11 +367,7 @@ func _ring_copies() -> Array:
 	return out
 
 
-func _paint_maze(layer: TileMapLayer) -> void:
-	_paint_maze_copies(layer, _ring_copies())
-
-
-# 只铺指定环面副本(Web 分帧建图用;桌面走 _paint_maze 一次铺 9 份)。
+# 只铺指定环面副本(建图分帧用:首帧只铺中心,其余逐帧补)。
 func _paint_maze_copies(layer: TileMapLayer, copies: Array) -> void:
 	# cyrm v4:铺 16px 子格(MazeGenerator.current_subgrid;纹理 0 = 空气跳过,液体由 _paint_water 分层铺)。
 	# 瓦片坐标 = (象限 qy*4+qx, _desc_row[描述符]) —— 行按描述符烘(辅码颜色),不再按 tex-1。
@@ -400,11 +389,7 @@ func _paint_maze_copies(layer: TileMapLayer, copies: Array) -> void:
 
 
 # 水格铺图:水体格铺水体瓦片(纹理 21,水体专用 64px 图集的 atlas 行 0);水面格(上方非 liquid)只放 Sprite 亮线,不铺瓦片(避免双层半透明叠加变深)。
-func _paint_water(grid: Array[Array]) -> void:
-	_paint_water_copies(grid, _ring_copies())
-
-
-# 只铺指定环面副本的水面(Web 分帧建图用;桌面 _paint_water 一次铺 9 份 ⇒ 仍是一个合批)。
+# 只铺指定环面副本的水面(建图分帧用:首帧只铺中心,其余逐帧补)。
 # 水体行号 = _water_row[该格描述符](格级描述符 = 16 子格的多数描述符,与 flatten_scene 同口径)。
 func _paint_water_copies(grid: Array[Array], copies: Array) -> void:
 	var ts := GameParameters.TILE_SIZE
@@ -442,21 +427,27 @@ func _paint_water_copies(grid: Array[Array], copies: Array) -> void:
 		surf.add_child.call_deferred(batch)
 
 
-# Web-only:把中心副本之外的 8 份环面瓦片 / 水面、以及整层碰撞分帧建完(期间树是暂停的,玩家/敌人不跑物理),
-# 每步更新载入遮罩;完成后解暂停、隐藏遮罩。★ 与桌面路径(一次 _paint_maze + build_sim)语义等价:
-# 同样 9 份副本、同样的 WallCollision / DestructibleChunk_* / ClimbLedges 节点与 _destructible_sub。
-func _web_build_world(grid: Array[Array]) -> void:
+# 进关卡建图的**唯一**入口(2026-11-02 起桌面/Web 共用):中心副本已在 _ready 铺过,这里补完
+# 其余 8 份环面瓦片 / 水面 + 整层碰撞。★ 按**每帧时间预算**切,而不是"一项一帧":
+# 桌面单份瓦片只要 ~160ms、Web 要几百 ms,固定一项一帧会让桌面白等 8 帧。
+# 期间树是暂停的(玩家/敌人不跑物理),每步刷新载入遮罩;完成后解暂停、隐藏遮罩。
+const BOOT_BUDGET_US := 8000   # 每帧建图预算(≥1 项/帧:单步超预算也会在该步之后让帧)
+
+func _build_world_progressive(grid: Array[Array]) -> void:
 	var wl: TileMapLayer = $WorldViewport/WallLayer
 	var copies := _ring_copies()
+	var t := Time.get_ticks_usec()
+	# ① 瓦片:中心已在 _ready 铺过,剩 8 份
 	var done := 0
-	# ① 瓦片:中心已在 _ready 铺过,剩 8 份逐帧
 	for c: Vector2i in copies:
 		if c == Vector2i.ZERO:
 			continue
 		_paint_maze_copies(wl, [c])
 		done += 1
-		LoadingScreen.set_progress(0.35 * float(done) / 8.0, "铺瓦片 %d/9" % (done + 1))
-		await get_tree().process_frame
+		LoadingScreen.set_progress(0.02 + 0.30 * float(done) / 8.0, "铺瓦片 %d/9" % (done + 1))
+		if Time.get_ticks_usec() - t >= BOOT_BUDGET_US:
+			await get_tree().process_frame
+			t = Time.get_ticks_usec()
 	# ② 水面:同样剩 8 份
 	var water_done := 0
 	for c: Vector2i in copies:
@@ -464,14 +455,17 @@ func _web_build_world(grid: Array[Array]) -> void:
 			continue
 		_paint_water_copies(grid, [c])
 		water_done += 1
-		LoadingScreen.set_progress(0.35 + 0.15 * float(water_done) / 8.0, "水面 %d/9" % (water_done + 1))
-		await get_tree().process_frame
-	# ③ 碰撞:永久墙(整图贪心,单步) → 可破坏层(逐块分帧) → 攀爬基座条
-	LoadingScreen.set_progress(0.55, "碰撞:永久墙")
+		LoadingScreen.set_progress(0.32 + 0.13 * float(water_done) / 8.0, "水面 %d/9" % (water_done + 1))
+		if Time.get_ticks_usec() - t >= BOOT_BUDGET_US:
+			await get_tree().process_frame
+			t = Time.get_ticks_usec()
+	# ③ 碰撞:永久墙(整图贪心,单步) → 可破坏层(逐块,按预算让帧) → 攀爬基座条
+	LoadingScreen.set_progress(0.45, "碰撞:永久墙")
 	var perm := CollisionBuilder.build_sub(grid, false)
 	CollisionBuilder.build_permanent(perm, $WorldViewport, "WallCollision")
 	await get_tree().process_frame
-	LoadingScreen.set_progress(0.65, "碰撞:可破坏层")
+	t = Time.get_ticks_usec()
+	LoadingScreen.set_progress(0.55, "碰撞:可破坏层")
 	var sub := CollisionBuilder.build_sub(grid, true)
 	var cw := ceili(sub[0].size() / float(CollisionBuilder.CHUNK_CELLS * 4))
 	var ch := ceili(sub.size() / float(CollisionBuilder.CHUNK_CELLS * 4))
@@ -481,10 +475,11 @@ func _web_build_world(grid: Array[Array]) -> void:
 		for chx in cw:
 			CollisionBuilder.rebuild_chunk(sub, Vector2i(chx, chy), $WorldViewport)
 			n += 1
-			if n % 4 == 0 or n == total:
-				LoadingScreen.set_progress(0.65 + 0.33 * float(n) / float(maxi(total, 1)),
-						"碰撞块 %d/%d" % [n, total])
+			LoadingScreen.set_progress(0.55 + 0.40 * float(n) / float(maxi(total, 1)),
+					"碰撞块 %d/%d" % [n, total])
+			if Time.get_ticks_usec() - t >= BOOT_BUDGET_US:
 				await get_tree().process_frame
+				t = Time.get_ticks_usec()
 	CollisionBuilder.build_climb_ledges(grid, $WorldViewport)
 	_destructible_sub = sub
 	LoadingScreen.set_progress(1.0, "完成")
@@ -650,11 +645,6 @@ func reset_destructibles() -> void:
 		CollisionBuilder.rebuild_chunk(_destructible_sub, ch, $WorldViewport)
 	_dirty_chunks.clear()
 	_damaged_subs.clear()
-
-
-func _build_wall_collision(grid: Array[Array]) -> void:
-	# 永久墙 + 可破坏分块 + 攀爬基座条,逻辑迁到 WorldBuilder.build_sim(服务器复用)
-	_destructible_sub = WorldBuilder.build_sim($WorldViewport, grid)
 
 
 # 单人「倒地按 R 重启」:原地复位,不重建世界。

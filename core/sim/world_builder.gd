@@ -6,7 +6,22 @@ extends RefCounted
 # build_sim 把碰撞节点挂到 parent 下(客户端=WorldViewport,服务器=服务器世界节点)。
 
 # 加载地图 → current_grid + TileDefs + 地图像素尺寸;返回网格(空=失败)。
+# ★ 2026-11-02 进关卡卡顿优化:解析结果按**地图路径**缓存。同一进程里"玩一局→回菜单→再开"
+#   每次都要重解析 cyrm(实测 315ms,占进关卡同步耗时的 ~15%)⇒ 缓存后第二次起接近 0。
+#   返回的是**深拷贝**:调用方(Level0/TileDefs)会改自己的网格,不能把缓存本体交出去。
+static var _grid_cache: Dictionary = {}   # map_path(String) -> {grid, subgrid, subdesc}
+
 static func load_grid() -> Array:
+	var map_path := MazeGenerator.map_file_path()
+	var cached: Dictionary = _grid_cache.get(map_path, {})
+	if not cached.is_empty():
+		var grid0: Array[Array] = MazeGenerator.copy_grid(cached["grid"])
+		MazeGenerator.current_grid = grid0
+		MazeGenerator.current_subgrid = MazeGenerator.copy_grid(cached["subgrid"])
+		MazeGenerator.current_subdesc = MazeGenerator.copy_grid(cached["subdesc"])
+		GameParameters.MAP_WIDTH = grid0[0].size() * GameParameters.TILE_SIZE
+		GameParameters.MAP_HEIGHT = grid0.size() * GameParameters.TILE_SIZE
+		return grid0
 	var grid := MazeGenerator.load_map_file()
 	if grid.is_empty():
 		push_error("WorldBuilder: 地图加载失败")
@@ -20,6 +35,11 @@ static func load_grid() -> Array:
 	TileDefs.load_defs()
 	GameParameters.MAP_WIDTH = grid[0].size() * GameParameters.TILE_SIZE
 	GameParameters.MAP_HEIGHT = grid.size() * GameParameters.TILE_SIZE
+	_grid_cache[map_path] = {
+		"grid": MazeGenerator.copy_grid(grid),
+		"subgrid": MazeGenerator.copy_grid(MazeGenerator.current_subgrid),
+		"subdesc": MazeGenerator.copy_grid(MazeGenerator.current_subdesc),
+	}
 	return grid
 
 # 建碰撞(永久墙 + 可破坏分块 + 攀爬基座条),挂到 parent;返回持久可破坏子格(摧毁重建用)。

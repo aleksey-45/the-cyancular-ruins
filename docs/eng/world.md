@@ -101,3 +101,10 @@
 - **命中裁决的时间域**:PvP 服务器结算命中时不用现时受击面,而是按**射手观看时刻**回放 `core/sim/hit_lag_history.gd` 的受击面历史(`st − LagComp.PLAYOUT_TICKS`,见 `core/net/lag_comp.gd`);移动预测 / 幽灵体仍吃最新态,AoE 不回放(边界见 [`registered-debt.md`](registered-debt.md) §十五)。
 - 地面武器 layer = 8 / mask = 9(地形 + 其它掉落物):玩家与敌人的掩码都不含 4,子弹 mask 也不含 ⇒ 三者天然不碰。
 - `match_host.gd` 与两端客户端给玩家补的 `|= 2` 是**玩家层**,与掉落物层无关,别写成 `|= 2 | 8`。层 6 / 值 32 与层 7 / 值 64 无生产代码引用;`project.godot` 没有 `layer_names`,层义只活在代码里,加新层时没有任何自动提醒。
+
+## 进关卡建图的耗时与分帧(2026-11-02)
+
+- **一次进关卡要做的活**(桌面实测,headless 无渲染):解析 cyrm 网格 ≈**225~350ms** + `init_hp/init_sub_hp` 基线 ≈**50~85ms** + 造 tileset ≈**65~85ms** + 铺 9 份环面瓦片/水面 ≈**1.4s** + 碰撞(`CollisionBuilder` 永久墙 + 分块可破坏层 + 攀爬条)≈**330ms**。合计 ≈**2.2s**,旧实现全在 `_ready` 同一帧跑完 ⇒ 进关卡整窗卡死 2 秒。
+- **现在**:`_ready` 只做"网格 + tileset + **中心副本**"(≈0.5~0.7s),其余交给 `level_0._build_world_progressive()`,按**每帧 8ms 预算**(`BOOT_BUDGET_US`)补完 8 份瓦片 / 8 份水面 / 整层碰撞;期间 `get_tree().paused = true` + `LoadingScreen` 遮罩,完成后解暂停。Web 与桌面**同一条路径**(以前只有 Web 走分帧、桌面一帧建完)。
+- **网格解析有进程内缓存**(`WorldBuilder._grid_cache`,按地图路径):第二次进同一张图省掉那 225~350ms;返回的是深拷贝(调用方会改自己的网格)。
+- 分帧粒度仍是"一份副本/一步",单步(铺一份瓦片 ≈160ms)会超预算 ⇒ 遮罩期间帧仍是长帧。若要再压:**按行带切 `_paint_maze_copies`**、或**靠近边缘才铺对应副本**(当前 9 份全铺)。
