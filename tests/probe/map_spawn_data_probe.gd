@@ -1,10 +1,12 @@
 extends Node
 
 # 出生/复活点**地图数据**探针:真实地图(要读盘,故是场景探针而不是 `-s` 冒烟)——
+# ★ 2026-11-04:枚举 `res://maps/*.cyrm`(不再写死两张图);PvP 图按 `# player`+`# player2` 判,
+#   行为面只在第一张 PvP 图上跑,数据面对每张图跑。
 
-const NEWFACTORY := "res://maps/newfactory.cyrm"
-const DEMO := "res://maps/demo.cyrm"
+const MAPS_DIR := "res://maps"
 const MARKER := "MAP SPAWN DATA PROBE: ALL-OK"
+# 条数闸下界(2 张图时);实际闸 = 运行时的 `_expected`:加图不红,少图/断言跳过才红。run_all 的 GATE 栏读这个常量。
 const EXPECTED_CHECKS := 20
 const MIN_PER_SIDE := 5
 const BUCKETS := 9
@@ -12,6 +14,7 @@ const MIN_SIDE_GAP := 5
 
 var _fails: Array[String] = []
 var _checks := 0
+var _expected := 0
 
 
 func _chk(ok: bool, msg: String) -> void:
@@ -24,15 +27,53 @@ func _chk(ok: bool, msg: String) -> void:
 
 
 func _ready() -> void:
-	_load_map(NEWFACTORY)
-	_checks_newfactory_data()
-	_checks_duel()
+	var maps := _list_maps()
+	if maps.is_empty():
+		_fails.append("res://maps 下没有任何 .cyrm —— 枚举面为空")
+		_finish()
+		return
+	var pvp_maps: Array[String] = []
+	for path in maps:
+		var is_pvp := _has_pvp_keys(path)
+		_expected += 5 + (1 if is_pvp else 0)
+		_load_map(path)
+		_checks_map_data(path, is_pvp)
+		if is_pvp:
+			pvp_maps.append(path)
+	if pvp_maps.is_empty():
+		_fails.append("maps/ 里没有 PvP 图(# player / # player2 双旧键全缺)")
+		_finish()
+		return
+	# 行为面(1v1 / 大乱斗 / 对抗取点)只需要一张 PvP 图:取排序后的第一张,行为结果与"用哪张"无关。
+	_load_map(pvp_maps[0])
+	_expected += 9
+	_checks_duel(pvp_maps[0])
 	_checks_royale()
 	_checks_team()
-	await get_tree().process_frame
-	_load_map(DEMO)
-	_checks_demo_data()
 	_finish()
+
+
+# 图集枚举面:maps/ 下全部 .cyrm,排序保证行为面挑的图是确定的。
+func _list_maps() -> Array[String]:
+	var out: Array[String] = []
+	var d := DirAccess.open(MAPS_DIR)
+	if d == null:
+		return out
+	for f in d.get_files():
+		if f.ends_with(".cyrm"):
+			out.append(MAPS_DIR.path_join(f))
+	out.sort()
+	return out
+
+
+# PvP 图判据 = 旧键 `# player` + `# player2` 都在(与 MapCatalog 的 PvP 校验同源)。
+func _has_pvp_keys(path: String) -> bool:
+	var sp := MapFormat.load_spawns(path)
+	return sp.get("player", Vector2i(-1, -1)).x >= 0 and sp.get("player2", Vector2i(-1, -1)).x >= 0
+
+
+func _map_label(path: String) -> String:
+	return path.get_file().get_basename()
 
 
 # ★ 可达性**不做合成网格的"冒烟式"断言**(2026-11-01 用户裁定:根本不应该写这个可达的冒烟)——
@@ -133,18 +174,19 @@ func _sides_ok(label: String, sides: Dictionary, require_buckets: bool) -> void:
 			"%s 同侧两两 ≥%d(实测 %d / %d)" % [label, MIN_SIDE_GAP, _min_pair_dist(s1), _min_pair_dist(s2)])
 
 
-func _checks_newfactory_data() -> void:
-	_sides_ok("newfactory", _sides(), true)
-	var sp := MapFormat.load_spawns(NEWFACTORY)
-	# 去掉什么才红:删掉 # player / # player2 行 ⇒ 本条红(MapCatalog 的 PvP 图校验与老图回退都读这两个旧键)。
-	_chk(sp.get("player", Vector2i(-1, -1)).x >= 0 and sp.get("player2", Vector2i(-1, -1)).x >= 0,
-			"newfactory 旧键 # player / # player2 保留(向后兼容)")
+func _checks_map_data(path: String, is_pvp: bool) -> void:
+	_sides_ok(_map_label(path), _sides(), is_pvp)
+	if is_pvp:
+		var sp := MapFormat.load_spawns(path)
+		# 去掉什么才红:删掉 # player / # player2 行 ⇒ 本条红(MapCatalog 的 PvP 图校验与老图回退都读这两个旧键)。
+		_chk(sp.get("player", Vector2i(-1, -1)).x >= 0 and sp.get("player2", Vector2i(-1, -1)).x >= 0,
+				"%s 旧键 # player / # player2 保留(向后兼容)" % _map_label(path))
 
 
-func _checks_duel() -> void:
+func _checks_duel(pvp_map: String) -> void:
 	var d := SpawnPicker.grid_dims()
 	var sides := _sides()
-	var h := MatchHost.new(NEWFACTORY, {1: 20001, 2: 20002})
+	var h := MatchHost.new(pvp_map, {1: 20001, 2: 20002})
 	add_child(h)
 	var p1 := _cell_of(h.players[1])
 	var p2 := _cell_of(h.players[2])
@@ -248,20 +290,18 @@ func _checks_team() -> void:
 			"⑭ 对抗局内复活:仍在本方半区且排除上一次(%s→%s)" % [str(last[1]), str(respawn)])
 
 
-func _checks_demo_data() -> void:
-	_sides_ok("demo", _sides(), false)
-
-
 func _cell_of(node: Node2D) -> Vector2i:
 	return Vector2i(int(node.global_position.x) / GameParameters.TILE_SIZE,
 			int(node.global_position.y) / GameParameters.TILE_SIZE)
 
 
 func _finish() -> void:
-	if _checks != EXPECTED_CHECKS:
-		_fails.append("★ 实跑 %d 条断言,与 EXPECTED_CHECKS=%d 对不上(有断言被静默跳过?)"
-				% [_checks, EXPECTED_CHECKS])
-	print("[map-spawn] checks = %d (EXPECTED_CHECKS=%d)" % [_checks, EXPECTED_CHECKS])
+	if _expected < EXPECTED_CHECKS:
+		_fails.append("★ 动态条数闸 %d < 基线 %d —— 地图或断言面缩水了" % [_expected, EXPECTED_CHECKS])
+	if _checks != _expected:
+		_fails.append("★ 实跑 %d 条断言,与动态条数闸 %d 对不上(有断言被静默跳过?)"
+				% [_checks, _expected])
+	print("[map-spawn] checks = %d (动态闸 = %d / 基线 %d)" % [_checks, _expected, EXPECTED_CHECKS])
 	if _fails.is_empty():
 		print(MARKER)
 		get_tree().quit(0)

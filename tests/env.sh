@@ -109,7 +109,7 @@ kill_lobby_by_cmdline() {
 # ★★ 判据**不能带 `LISTENING`**:ENet 走 **UDP**,而 UDP 行没有状态列
 #   (`UDP  0.0.0.0:7777   *:*   PID`)。2026-09-27 实测:7777 被 PID 28836 占着时,
 #   带 `.*LISTENING` 的判据**不命中**,去掉就命中 ⇒ 那一版是**结构性恒假**。
-#   本仓三支脚本(`royale_soak_probe` / `rejoin_probe` / `team_match_probe`)原先都用的那版
+#   本仓原三支真链路脚本都用的那版
 #   ⇒ 它们的"7777 已被占用"提示与连带清理**从未触发过**(登记见 docs/eng/tests.md)。
 lobby_alive() {
 	netstat -ano 2>/dev/null | grep -qE "[:.]7777[[:space:]]"

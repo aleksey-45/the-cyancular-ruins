@@ -89,8 +89,6 @@ FAIL_RE='(^|[^A-Za-z0-9])FAIL[A-Z]{0,4}([^A-Za-z0-9]|$)'
 ENTRIES=(
 	"tests/smoke/pvp_match_smoke.sh|7777 + pool[7800,8300]|~20s|SMOKE PASS|pool"
 	"tests/probe/rejoin_probe.sh|lobby 29300 / worker 29350 (OUT of pool)|60~110s|REJOIN PROBE: ALL-OK|nopool"
-	"tests/probe/royale_soak_probe.sh|7777 + pool[7800,8300]|~150-200s|SOAK: ALL-OK|pool"
-	"tests/probe/royale_role_cap_probe.sh|7777 + pool[7800,8300]|~3-5min|ROLE CAP PROBE: ALL-OK(9/9)|pool"
 	"tests/probe/team_match_probe.sh|lobby 29200 / worker 29250 (OUT of pool)|3~10min|TEAM MATCH PROBE: ALL-OK|nopool"
 )
 
@@ -104,12 +102,8 @@ ENTRIES=(
 #   `tests/README.md`。
 #   **别把本数组删掉**:闸四同时遍历 `ENTRIES` 与 `WRAPPERS`,数组不存在会让 `set -u` 下的
 #   展开报错;留着空数组 = "现在一支包装都没有"这件事**看得见**。
+# ★★ 2026-11-04:1 条 → 0 条(bot_1v1 整支删;覆盖归零见 registered-debt 零守卫面)。
 WRAPPERS=(
-	# ★ 2026-11-02 登记:这 4 支在 `tests/probe/` 下但**不进本批**。
-	#   `bot_1v1_probe.sh`:bot 批(3748daa1)新增,自当大厅用池外 29400/29450 且拉子进程;
-	#     尚未在真链路里跑出稳定性读数(导航仍未补齐)⇒ 先登记不跑,否则闸四 FATAL 会挡住整批。
-	#   ★ 它一旦稳定,挪进 ENTRIES(附端口/耗时/判词)再跑,别在这里"临时跑一次"。
-	"tests/probe/bot_1v1_probe.sh|bot 1v1 探针:自当大厅(池外 29400)+ 拉子进程;导航未补齐,先不进批"
 )
 
 ASSUME_YES=0

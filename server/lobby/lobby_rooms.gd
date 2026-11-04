@@ -26,7 +26,7 @@ var rejoin := RejoinRegistry.new()   # 回局凭据表:★ 独立于房对象(�
 var _registry := RoomRegistry.new()
 
 # 三张表 → registry 的只读视图(1v1 / 大乱斗 / 对抗)。★ 别在这里增删:只走 _registry.add / _registry.erase
-# (tools/room_sweep_lint.gd 钉住:表内删除与端口归还只许出现在收口里)。
+# (原先由已删的 tools/room_sweep_lint.gd 钉住:表内删除与端口归还只许出现在收口里;现零守卫)。
 var rooms: Dictionary:
 	get:
 		return _registry.of(ModeDefs.MODE_PVP)

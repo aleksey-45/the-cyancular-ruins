@@ -39,7 +39,7 @@ PROJECT = os.path.dirname(TOOLS)
 # ★ 这张表必须与 .gitignore 对齐:表里没有、而 .gitignore 有的目录(如 releases/ 下带发布标识的
 #   归档目录、_crashtest/ 的一次性现场)会让本检查在**干净工作树**上也恒 FAIL ——
 #   2026-10-03 实测 5 条 A 类违规全来自这两个目录,与代码无关。
-SKIP_DIRS = {".godot", ".git", ".superpowers", ".claude", "builds", "backup",
+SKIP_DIRS = {".godot", ".git", ".superpowers", ".claude", ".tmp", "builds", "backup",
              "releases", "_crashtest", "__pycache__", "docs", "assets"}
 # 文档路径检查的对象 = 仓库根三份 + `docs/eng/`(含 `debt/`)+ `tests/*.md`
 # ★ 2026-10-13 改(两步):

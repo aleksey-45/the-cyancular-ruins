@@ -235,7 +235,7 @@ func spawn_royale_worker(port: int, roles: Array, ai_roles: Array = []) -> bool:
 
 
 # 拉起 3v3 worker(--team --roles r,r,... --teams t,t,...):roles 与 teams 同序、等长,第 i 个 role 的队号就是 teams[i]。
-# ★ 队号必须显式传、不能从 role 号推(同上:编号留空洞);与 server_main.gd 的 argv 逐字对应,守卫 = tools/room_sweep_lint.gd 的双向断言。
+# ★ 队号必须显式传、不能从 role 号推(同上:编号留空洞);与 server_main.gd 的 argv 逐字对应(现零守卫)。
 func spawn_team_worker(port: int, roles: Array, teams: Array) -> bool:
 	_archive_log(port)
 	if roles.size() != teams.size():

@@ -340,7 +340,7 @@ func _sweep_stale_rooms() -> void:
 		if now - tr.created_at > MAX_ROOM_AGE + grace:
 			stale_team.append(tr)
 # ★★ 这三条 is_empty() 是并列的,加新注册表时必须一起收进来:漏掉任何一张,「只有那张表的房超龄」的那次 tick 会在这里提前
-# return、永远不清扫 ⇒ 端口永久泄漏,而症状是静默的(列表拼接那行照旧在)。守卫 = tools/room_sweep_lint 的 _check 逐个点名这三张表。
+# return、永远不清扫 ⇒ 端口永久泄漏,而症状是静默的(列表拼接那行照旧在)。(现零守卫;人工自查见 docs/eng/room-lifecycle-conventions.md §3)
 	if stale.is_empty() and stale_royale.is_empty() and stale_team.is_empty():
 		return
 

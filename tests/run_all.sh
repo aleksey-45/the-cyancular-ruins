@@ -99,12 +99,8 @@ FAILED_LIST="$LOG_DIR/failed.log"
 # 为什么需要:各支自己在文件头声明了 `timeout N`,统一 60 会把它们**误杀**(误杀与真失败在
 # 输出上长得一样,是本仓最怕的那类假红)。★ 这里只列**文件头自己声明过**的加长值。
 # ★ 预算给**小**了是**可见的红**(TIMEOUT 栏会点名),不会静默变成绿 —— 方向是安全的。
+# ★ 2026-11-04:原 5 条指向已删 smoke ⇒ 按 test-economy D1 清空;机制保留(文件头声明 timeout > 60 时在此补一行)。
 declare -A BUDGET_OVERRIDE=(
-	["team_spawn_smoke.gd"]=90          # 头注:`timeout 90`
-	["duel_spawn_timeout_smoke.gd"]=150 # 头注:`timeout 150`(真拉起一个池外 worker)
-	["spawn_pool_smoke.gd"]=120         # 头注:`timeout 120`
-	["menu_theme_mirror_smoke.gd"]=120  # 头注:`timeout 120`
-	["ui_palette_single_source_smoke.gd"]=120 # 头注:`timeout 120`
 )
 
 # ── 排除清单(`pattern|理由`)─────────────────────────────────────────────────
@@ -121,15 +117,12 @@ declare -A BUDGET_OVERRIDE=(
 #   (D2 仪器不是守卫 / D5 只证明别的东西 / K1-K5 什么才值得留)。
 # ★★ 2026-10-09(测试面削减 90%):本表 **9 条 → 4 条** —— 删掉了 5 条指向**已删文件**的规则
 #   (`ground_net_probe` / `reconnect_probe` / `royale_bound_probe` / `royale_c2_probe` / `royale_probe`)。
-#   现行清单见 `tests/README.md`。
-#   ★ 留下的这 4 条**必须留**:那 4 支仍在枚举集里(`smoke/*.gd` 或 `probe/*.tscn`),
-#     清掉规则 ⇒ 承重安全检查(`DANGER_RE`)立刻 FATAL,或它们悄悄进批**占 7777**。
+# ★★ 2026-11-04:4 条 → 3 条(royale_soak / bot_1v1 已整支删);剩下 3 条**必须留**:仍在枚举集里,
+#   清掉规则 ⇒ 承重安全检查 FATAL,或悄悄进批**占 7777**。现行清单见 `tests/README.md`。
 EXCLUDED=(
 	# ── B 真链路 / 多进程 / 占 7777 ────────────────────────────────────────
 	"tests/probe/rejoin_probe.tscn|B 真链路:自当大厅(池外 29300)+ 拉子进程;由 tests/probe/rejoin_probe.sh 编排"
-	"tests/probe/royale_soak_probe.tscn|B 真链路(压力):起大厅 + N 个真 royale_game 客户端;其 .sh 会 kill_port 7777"
 	"tests/probe/team_match_probe.tscn|B 真链路:六人;自当大厅(池外 29200)+ 拉子进程"
-	"tests/probe/bot_1v1_probe.tscn|B 真链路:bot 1v1 探针(自当大厅 + 拉子进程);由 tests/probe/bot_1v1_probe.sh 编排"
 	"tests/smoke/pvp_match_smoke.gd|B 真链路客户端:要 --role、且要 7777 上有大厅;由 tests/smoke/pvp_match_smoke.sh 编排"
 )
 

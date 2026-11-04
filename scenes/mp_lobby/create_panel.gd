@@ -91,6 +91,6 @@ func build_payload(mode: String) -> Dictionary:
 
 
 # 报到选项(player_options)的组装:键集由 ModeDefs.OPTION_KEYS 决定(2026-10-22 统一)—— 3v3 不再上发禁用武器/回合回血,大乱斗不再上发回合回血(它没有回合),1v1 不再上发 match_time。
-# ★★ 取值仍在页里(scenes/mp_lobby.gd 的 _options_snapshot):`"match_time": int(Settings.royale_match_min * 60.0)` 那一行是 ROYALE_MATCH_TIME_CEILING 上界链的第二环,tools/room_sweep_lint.gd 钉着它必须住在页的源码里 ⇒ 快照由页读 Settings / time_rules 后传进来,本函数只做 ModeOptions.build 的组装。
+# ★★ 取值仍在页里(scenes/mp_lobby.gd 的 _options_snapshot):`"match_time": int(Settings.royale_match_min * 60.0)` 那一行是 ROYALE_MATCH_TIME_CEILING 上界链的第二环(现零守卫)⇒ 快照由页读 Settings / time_rules 后传进来,本函数只做 ModeOptions.build 的组装。
 func player_options(mode: String, snapshot: Dictionary) -> Dictionary:
 	return ModeOptions.build(mode, snapshot)
