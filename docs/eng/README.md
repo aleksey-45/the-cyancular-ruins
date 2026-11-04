@@ -15,7 +15,7 @@
 | Level0 渲染管线、图集、后处理、补间形变 | [`render.md`](render.md) |
 | 调色板与 UiFactory、菜单语汇、HUD、小地图、大厅版式 | [`ui.md`](ui.md) |
 | 大厅 / worker、匹配进图、房间与回合、回到大厅、重连、RPC 归属 | [`netplay.md`](netplay.md)；重连 → [`netplay-reconnect.md`](netplay-reconnect.md)、房间寿命与回局 → [`netplay-rooms.md`](netplay-rooms.md)、RPC 通道号单一来源 → [`netplay-rpc-channels.md`](netplay-rpc-channels.md) |
-| 快照管线、输入上行、插值与输入、增量与量化、16 人局读数、tick 率、playout 时钟、抖动缓冲 | `netcode-*.md`（快照那份：[`netcode-snapshots.md`](netcode-snapshots.md)） |
+| 快照管线、输入上行、插值与输入、增量与量化、16 人局读数 | `netcode-*.md`（快照那份：[`netcode-snapshots.md`](netcode-snapshots.md)） |
 | 对抗（原 3v3）、结算页、大乱斗及其已知差异 | [`modes.md`](modes.md) |
 | 时间玩法（回溯 / 加速 / 颗粒账户 / 怀表 / 世界重绕）、它的不变量与常量来源 | [`time.md`](time.md) |
 | 探针怎么跑 / 怎么判、真链路纪律、守卫边界；测试该不该写、写哪一档（桶划分与不写清单） | [`tests.md`](tests.md)、[`test-economy.md`](test-economy.md) |

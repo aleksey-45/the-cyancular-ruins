@@ -124,7 +124,7 @@ NetBus.rpc_id(peer, "snapshot_own",
 - **事件重放**：注入的 callable 存进 `_events[seq]`，之后任何一次回滚重放跨过该 seq 时会重新应用（否则迟到旧 ack 的 restore 会把这一发抹掉）。同 seq 多发的第二发只应用"新来的那一发"（`_captures[seq]` 已含该 seq 更早事件的效果，避免重复扣血）。
 - **物理帧注入**：网络回调跑在 idle 帧，而注入的重放内部是 `move_and_slide()` —— 物理帧外它按**渲染帧 delta** 缩放（实测同一速度跨 idle 帧位移 0.01~2px 不等；首帧前才是 0）⇒ 帧外重放随帧率变、会算错轨迹。故回调只把事件压进 `_pending_hit_events`，由下一个物理帧开头的 `_drain_hit_events()` 注入（排在 `note_post_step` 之前）。代价：受击反馈最多晚 1 帧（≈16.7ms）。重连重建 C2 时队列一起清空（旧 seq 空间作废）。
 - **兜底**：`seq` 不可注入（来自未来 / 已 ack / 环外 / 乱序 / callable 失效）⇒ 只播反馈 `take_hit(..., feedback_only=true)`（白闪 / 震屏 / 音效 / 挤压），**不**扣血 / 不击退 / 不设无敌帧：权威 c2 可能已包含这一发，二次应用会在下一个 ack 再判一次分歧。
-- **读数**：`-- --netstat` 打印 `事件对齐=累计(+N/s) 拒绝=累计(+N/s)`（`rollback_count()` 之外的独立计数）；`royale_soak` 的每端结果行打 `C2:回滚=… 事件对齐=… 拒绝=…(ack/future/missing/order 分解)` —— 真链路里唯一能证明"注入真的生效了 vs 一直走兜底"的读数。
+- **读数**：`-- --netstat` 打印 `事件对齐=累计(+N/s) 拒绝=累计(+N/s)`（`rollback_count()` 之外的独立计数）；`royale_soak`（该支已删，2026-11-04）的每端结果行打 `C2:回滚=… 事件对齐=… 拒绝=…(ack/future/missing/order 分解)` —— 它曾是"真链路里唯一能证明注入真的生效了 vs 一直走兜底"的读数；今天没有替代读数。
 - **边界**（照实）：① `_captures` 环 256 tick（4.3s），超出只能走兜底；② 服务器饥饿 k tick 时玩家状态比 `_stepped_seq` 前进 k 步（held 输入），注入会**早** k 步（不是保守方向，只是近似）；③ 落水窒息是客户端已预测的伤害 ⇒ 服务端**不**为它广播 `hit_event`（`take_hit(..., cause="water")` → `_on_player_hit` 跳过），客户端因此不会二次应用（2026-10-29 修，见 [`registered-debt.md`](registered-debt.md) §二十三）；④ 事件按 seq 递增到达是契约（reliable 保序），seq 回退一律拒绝。
 - **守卫**：[`tests/probe/rollback_fidelity_probe.tscn`](../../tests/probe/rollback_fidelity_probe.tscn) 的 D 组（注入 / **真实服务器顺序**的黄金轨迹 / 越界 / 同 seq 双发 / 乱序 / 注入后 reconcile 对独立黄金权威 / 迟到旧 ack 重放带回事件 / 计数）与 E 组（反馈-only），外加源码守卫（**代理判据，不是行为**）：客户端 5 条（入队 / 物理帧消费 / 物理帧接线 / 注入唯一 / 兜底第 5 参）+ 服务器 3 条（`_stepped_seq` 锚点【取数点 = `_event_seq_for`】/ 帧末记录调度 / 记录写入）。
 
@@ -191,7 +191,7 @@ NetBus.rpc_id(peer, "snapshot_own",
 - ★ 2026-10-24 **U1 上行去锁存**：输入记录 = 1 tick（60Hz 采样），30Hz 包内装两条（流水线），服务器每 tick 消费一条 ⇒ 本地手感不再有 30Hz 锁存延迟。**S1** 把本人包挪到"消费并步进完当帧"发（③ 固定回带已消）；客户端 U1 起本来就每 tick 对账（④ 已消）。**剩下的**只是 30Hz 发包/广播节拍的量化（`--netstat` 的 `gap` 仍有 1~2 条 ×16.7ms 的偏置），不是"等一拍广播"。见 `netcode-input-uplink.md` §5。
 - 上行 `st` / `ct`：`ct`（客户端物理帧号）仍**无消费者**；`st` 自 2026-10-26 起是**命中回放的时间基准**（`match_combat._replay_hurt_rect`），不再是"只落位"。
 - 没有丢包 / 抖动注入路径 ⇒ 队头阻塞、丢弃率、手感都没有真对局读数。
-- 探针量的是**载荷**字节，不含 ENet 分片头 / RPC 方法名 / IP·UDP 头。`royale_soak_probe` 的 KB/s 是解码后 `Dictionary` 的 `var_to_bytes`，不是线上字节，对线格式改动不可见。
+- 探针量的是**载荷**字节，不含 ENet 分片头 / RPC 方法名 / IP·UDP 头。`royale_soak_probe`（该支已删，2026-11-04）的 KB/s 是解码后 `Dictionary` 的 `var_to_bytes`，不是线上字节，对线格式改动不可见。
 - `snapshot_size_probe` 的每秒折算列按 `SNAP_HZ := 60` 算，下行也是 60Hz(v7) ⇒ 单包字节与每秒列都可引用。
 - 应用层没有拥塞控制；ENet 自带 throttle 会主动丢 `unreliable` 包（见 [`netcode-delta-and-quantization-details.md`](netcode-delta-and-quantization-details.md)）。
 - 人数上限 `ROYALE_MAX_PLAYERS := 16`（`server/lobby/lobby_rooms.gd`）。

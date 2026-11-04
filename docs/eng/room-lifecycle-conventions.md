@@ -2,22 +2,20 @@
 
 > 房间从建到拆的**约定清单**——每条 = 一个不变量 + 违反后的**症状**。返回索引：[`README.md`](README.md)。
 >
-> ★★ **现状**:① 这些约定有一层源码文本检查器 [`tools/room_sweep_lint.gd`](../../tools/room_sweep_lint.gd)，
-> 按需跑:`"$GODOT" --headless --path . -s res://tools/room_sweep_lint.gd`，判词 `SMOKE_ROOM_SWEEP OK`，
-> **不进任何默认批、不碰端口**；它判的是「某人有没有写这段字」，**不算行为守卫**。
-> ② 原**行为**替代 `pvp_room_smoke.sh`（建房 → 配对 → `go_match`；**唯一碰 7777** 的那支）已于 2026-10-30 删除
-> （结构性恒红、挂死并毒化真链路批，见 [`registered-debt.md`](registered-debt.md) §二十七）⇒ 房间回收这一带
-> **今天没有行为守卫**：`pvp_match_smoke.sh` 只跑到 1v1 建房 → 开始 → 对局，不断言端口归还 / 超龄房收掉
-> （缺口即审查 G-03）。③ ⇒ **第 3 节的人工自查仍要照做** ——
-> 它管那层检查器判不了的部分:调用链有没有真的接上、行为对不对。
+> ★★ **现状**:① 本页约定**今天零自动守卫** —— 原先那层源码文本检查器
+> `tools/room_sweep_lint.gd`(判「某人有没有写这段字」,本身不算行为守卫)已删(2026-11-04,`test-economy` D6a/D8)。
+> ② 原**行为**替代 `pvp_room_smoke.sh`(建房 → 配对 → `go_match`;**唯一碰 7777** 的那支)已于 2026-10-30 删除
+> (结构性恒红、挂死并毒化真链路批,见 [`registered-debt.md`](registered-debt.md))⇒ 房间回收这一带
+> **今天没有行为守卫**:`pvp_match_smoke.sh` 只跑到 1v1 建房 → 开始 → 对局,不断言端口归还 / 超龄房收掉
+> (缺口即审查 G-03)。③ ⇒ **第 3 节的人工自查必须照做**。
 
 ## 1. 约定清单
 
 ### A. 拆除必须走单一收口
 
 **A1** 端口归还、注册表删除、杀 worker，**只许**出现在 `LobbyRooms.teardown_room(...)` 体内。注册表删除的
-唯一原语是 `RoomRegistry.erase(room)`，由 `teardown_room` 独占调用；`room_sweep_lint._check_registry_funnel`
-同时钉「表内 `.erase(` 只许在 `erase()`」与「路由只经 `teardown_room`」。
+唯一原语是 `RoomRegistry.erase(room)`，由 `teardown_room` 独占调用(原先由已删的 `room_sweep_lint` 机械检查
+「表内 `.erase(` 只许在 `erase()`」与「路由只经 `teardown_room`」;现在只看第 3 节人工自查)。
 → *症状*：新加一条拆除路径时漏掉其中一步 ⇒ **静默端口泄漏**（房看着没了，worker 还占着端口）。
 
 **A2** `room_manager.gd`(编排层)里**不许**出现 `rejoin.drop_port(` / `rejoin.drop_room(`。
@@ -59,7 +57,7 @@
 未终局 ⇒ 宽限（60s 重连窗）；终局且还有人 ⇒ 继续跑；**终局且一个不剩 ⇒ 立刻退进程**（≠ 再等宽限/滞留）
 → *症状*：全员回大厅后房与端口还要多占 60~90s（用户实见「游戏结束后房间不会关闭」）；
 反向写坏（未终局就按「走光即退」）⇒ **对局中掉线再也回不来**。回收梯周期 `MATCH_SWEEP_INTERVAL = 1s`
-（2026-11-01 30s → 10s → **1s**，用户要求「所有人退出以后房间应该秒删」；`tools/room_sweep_lint.gd` 钉这个常量）。
+（2026-11-01 30s → 10s → **1s**，用户要求「所有人退出以后房间应该秒删」；该常量已无自动守卫）。
 
 ### F. 启动协议
 

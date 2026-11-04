@@ -13,7 +13,7 @@
 ## 列表与拒绝入房
 
 - 房记录与列表载荷各带 `in_match`;载荷由纯函数 `LobbyRooms.room_list_payload()` / `royale_list_payload()` / `team_list_payload()` 构造。
-- 三模式对局中统一拒绝文案「该房间的对局已进行中,无法加入」;`tools/room_sweep_lint.gd` 用源码级断言钉住三条文案。
+- 三模式对局中统一拒绝文案「该房间的对局已进行中,无法加入」。★ **零守卫**:原先用源码级断言钉三条文案的 `tools/room_sweep_lint.gd` 已删(2026-11-04,`test-economy` D6a/D8)。
 - 私密房只对持凭据的本人列出(判据 `RejoinRegistry.owns(token, code, now_ms)`);`royale_list` / `team_list` 的 `token` 形参有默认值。
 
 ## 端口到 pid

@@ -21,7 +21,7 @@
 
 - 端口池单一来源 `server/lobby/worker_launcher.gd`:`WORKER_PORT_BASE = 7800`、`WORKER_PORT_SPAN = 500` ⇒ `[7800, 8300)`;分配用递增游标 + 占用集合(`pick_port()`)。
 - 拆除唯一收口 `LobbyRooms.teardown_room`;形态 `TEARDOWN_DELAYED`(默认)/ `TEARDOWN_ABORT` / `TEARDOWN_KILL`。端口归还延迟由 `ModeRoomRules.port_return_seconds(mode)` 给三档:`WORKER_PORT_REUSE_DELAY` = 120s,`ROYALE_PORT_REUSE_DELAY` / `TEAM_PORT_REUSE_DELAY` = 360s。
-- `tools/room_sweep_lint.gd` 钉住:端口归还、注册表删除、凭据作废只出现在 `teardown_room` / `_release_port_later` 内。
+- 端口归还、注册表删除、凭据作废只许出现在 `teardown_room` / `_release_port_later` 内。★ **零守卫**:原先的源码文本检查器 `tools/room_sweep_lint.gd` 已删(2026-11-04,`test-economy` D6a/D8),人工自查清单见 [`room-lifecycle-conventions.md`](room-lifecycle-conventions.md) §3。
 
 ## 开局链路
 
@@ -37,6 +37,21 @@
 - 回合:`MatchState.RoundState` COUNTDOWN → PLAYING → ROUND_OVER → MATCH_OVER;`KILLS_TO_WIN = 5`、`ROUNDS_TO_WIN = 2`、`COUNTDOWN_TIME = 3.0`、`ROUND_OVER_TIME = 4.0`、`RESPAWN_DELAY = 2.0`。击杀记给对方(倒地边沿,不分死因);换局换边:1v1 的 `_side_swap` 决定 role1 这局在左半还是右半(地图 `# respawn 1|2` 按侧列表重随机),对抗整队换到另一侧的 `# respawn` 列表(旧图的几何回退仍用 `_side_swap` 翻点集)。COUNTDOWN 双端禁移动 / 开火:服务器清输入队列并 `reset_state()`,客户端 `InputSource.frozen`。
 - ★★ 开局倒计时(三模式同一条):服务器等客户端场景就绪(`mark_client_ready`,上限 `COUNTDOWN_HOLD_MAX=2.0s`)才开始走时钟,并在 COUNTDOWN 期间**每 0.5s 重播一次当前剩余**(`MatchRound._countdown_resync_tick`;大乱斗原就有,1v1/3v3 2026-11-01 补上)。客户端走秒器 = 纯逻辑 `CountdownClock`(`ui/hud/countdown_clock.gd`):重复 `start` **只采纳更短的剩余、绝不回拨**,显示 `ceil(剩余)` 且钳到 ≥1 ⇒ 数字单调不增、`3→2→1` 一个不落。守卫 = `tests/smoke/countdown_clock_smoke.gd`(9 条)。
 - 换局:服务器 `_reset_world_and_clear_dynamics()` 还原可破坏砖与子格 HP 基线、清子弹、重置地面武器;客户端同刻 `Level0.reset_destructibles()`。
+
+## 权威宿主的继承链
+
+`Node ← MatchState ← MatchGround ← MatchSnapshot ← MatchCombat ← MatchRound ← MatchHost ← (TeamHost | RoyaleHost)`。
+
+链上 6 个文件是**同一个对象按域切成的 6 片**,不是 is-a 分类;只有 `TeamHost` / `RoyaleHost` 是真子类。`extends` 是 GDScript 没有 partial class 时跨文件共享 `self` 的唯一廉价手段(`0ae93a3e`,2026-09-15:原 `match_host.gd` 626 行 / 35 函数 / 最长 48 行,形状是"宽"不是"深",故按域分文件)。`3c8dc8f0` 把地面武器域插进链中间,`726a4008` 加第三个模式宿主。
+
+改这 6 个文件前必读四条:
+
+1. **共享字段住最底层**:父类方法在编译期解析不了子类符号,所以每层都读的字段只能放 `MatchState`。
+2. **被调用者在下、调用者在上**:层序 = 调用图的线性拓扑序,不是抽象序;`MatchHost._physics_process` 是唯一总编排点。
+3. **中间层不得定义生命周期钩子**(`_init` / `_ready` / `_enter_tree` / `_exit_tree` / `_physics_process`):`MatchHost._init` 会虚调 `_spawn_cell`,两个模式子类必须先算散点再 `super._init`;中间层插钩子会打断这个顺序契约。
+4. **新域走组合,不进链**:`MatchHost` 已组合 `InputIntake` / `TickTiming`,纯逻辑用 `RefCounted` + 显式传参。加层要改无关文件的 `extends` 和 `tests/probe/allscript_probe.gd` 的脚本数,并且按文件路径读源码的测试会静默失明。
+
+★ 规则 1~3 **零守卫**:唯一守过"基类不得泄漏子类方法"的 `kh_l5_probe` 已随 2026-10-09 测试面削减删除(见 [`registered-debt.md`](registered-debt.md) 的零守卫面)。
 
 ## 频率与载荷
 
