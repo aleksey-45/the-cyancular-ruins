@@ -116,6 +116,18 @@ TeamHost | RoyaleHost（薄子类，只覆写壳的虚钩子）     pvp_game | r
 - O0 tick 分段计时（`--diag` 的 `adjudicate/own_snap/world_snap/rewind`）：**待 M1 真链路窗口采集**；采集后贴进本节，S1~S4 每步对比，单段 Δ > 5% 视为回归。
 - 拆解后自检口径不变：默认批 48 支全绿、`snapshot_size_probe` 字节不变、`rollback_fidelity_probe` 34 条不断言少跑、真链路判词 `SMOKE PASS` / `TEAM MATCH PROBE: ALL-OK`。
 
+### 执行记录（2026-11-05）
+
+| 步 | 提交 | 验证 |
+|---|---|---|
+| T1.3/T1.4/T1.5 + S0.5 端口层 | `baa60c9b` | `RUN_ALL OK(48 runs / 402 assertions)` |
+| S1 快照域 → `SnapshotSystem` | `0a06b9aa` | `RUN_ALL OK`；快照字段表逐字未变 |
+| S2 裁决域 → `CombatSystem` | `89c65af3` | `RUN_ALL OK`；**M1 真链路**：`run_real.sh --yes --only pvp_match` → `SMOKE PASS` / `RUN_REAL OK(1 entries)` |
+| S3 地面武器域 → `GroundSystem` | `be07848f` | `RUN_ALL OK`；真链路随 M2 一起跑 |
+| 待做 | S4（RoundSystem）/ S4b（砍 `MatchState` 链根）/ M2 真链路 / S5 客户端 / S6 收口 | — |
+
+> M1 真链路前置条件实测：`lobby_alive=false`、Godot 进程 0、run_all summary 静默 ≥240s ⇒ 闸放行；跑后无残留进程。
+
 ## 附录 B：GDScript 语言特性实证（2026-11-04，Godot 4.7.1 本机实测）
 
 > 探针脚本放 `tests/_gdtest/`，跑完即删，不进任何批。
