@@ -40,7 +40,7 @@
 
 ## 权威宿主的继承链
 
-> ★ **2026-11-04 裁定:拆。** 目标形态 = 宿主基类 + 组合件(与客户端 `PvpMatchClient` + `scenes/mp_client/` 六件套同构),`extends` 只保留"模式子类"这一条轴;迁移步骤见下方计划指针。本节四条定律描述的是**当前(迁移中)状态**,S4 完成后改写成「宿主 + 组合件」六条对齐规则。
+> ★ **2026-11-04 裁定:拆。** 目标形态 = **薄壳宿主(Node)+ 状态/端口(RefCounted)+ 域系统(RefCounted,只依赖状态与端口)**,与客户端 `PvpMatchClient` + `ClientState/ClientPorts` + `scenes/mp_client/` 六件套同构;`extends` 只保留"模式子类"这一条轴。迁移步骤见下方计划指针。本节四条定律描述的是**当前(迁移中)状态**,M2 后改写成「壳 + 状态/端口 + 系统」七条规则。
 
 `Node ← MatchState ← MatchGround ← MatchSnapshot ← MatchCombat ← MatchRound ← MatchHost ← (TeamHost | RoyaleHost)`。
 
@@ -57,7 +57,7 @@
 
 5. **新增基类必须 ≥2 个真子类,或有明确在飞计划**:单实现不为将来"可能"抽基类。
 
-拆解与对齐的完整计划(目标结构 / 六条对齐规则 / S0~S6 迁移步骤 / 性能红线 / 真链路窗口)= [`docs/superpowers/plans/2026-11-04-inheritance-remediation.md`](../superpowers/plans/2026-11-04-inheritance-remediation.md)。
+拆解与对齐的完整计划(C 方案:目标结构 / 七条规则 / S0~S6 迁移步骤 / 性能红线 / 真链路窗口)= [`docs/superpowers/plans/2026-11-04-inheritance-remediation.md`](../superpowers/plans/2026-11-04-inheritance-remediation.md)。
 
 ## 频率与载荷
 
