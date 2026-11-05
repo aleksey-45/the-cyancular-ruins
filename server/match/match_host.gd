@@ -2,7 +2,7 @@ class_name MatchHost
 extends MatchRound
 
 # 对局权威核心:生命周期、输入 FIFO 消费、每物理帧编排、出生点。快照在 snapshot_system.gd,裁决在
-# match_combat / 回合在 match_round / 共享状态在 match_state;输入队列的入队/丢包/抖动包络/1Hz 诊断在 input_intake.gd。★ C2 四条不变量仍在
+# combat_system / 回合在 match_round / 共享状态在 match_state;输入队列的入队/丢包/抖动包络/1Hz 诊断在 input_intake.gd。★ C2 四条不变量仍在
 # _physics_process 与 _on_input 的编排里,原样未动。
 
 const TIME_SYNC_INTERVAL := 0.1   # Beta:颗粒状态下发节律(10Hz;怀表数字平滑够了)
@@ -20,6 +20,8 @@ var _rw_t0: Dictionary = {}        # role -> float(环缓零点;回放按 t-t0 �
 var _ports: MatchPorts = null
 # C 方案(S1):快照系统。
 var _snapshot: SnapshotSystem = null
+# C 方案(S2):裁决系统。
+var _combat: CombatSystem = null
 
 func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 		ai_roles: Array = [], teams: Dictionary = {}, spawns: Dictionary = {}) -> void:
@@ -47,6 +49,12 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 		push_error("MatchHost: 地图加载失败")
 		return
 	_base_grid = MazeGenerator.copy_grid(grid)
+	# C 方案:端口 + 系统先建好,再挂 TileDefs 回调(回调会落到 _combat)。
+	_bind_ports()
+	_snapshot = SnapshotSystem.new()
+	_snapshot.bind(self, _ports)
+	_combat = CombatSystem.new()
+	_combat.bind(self, _ports)
 	TileDefs.on_destroyed = Callable(self, "_on_tile_destroyed")
 # cyrm v4(B18):破坏已下沉 16px 子格 —— worker 必须连子格回调(TileDefs.on_sub_destroyed),否则客户端永远收不到拆砖事件(幽灵墙:服务器碰撞已消、客户端还在渲染/预测碰撞)。
 	TileDefs.on_sub_destroyed = Callable(self, "_on_sub_destroyed")
@@ -64,10 +72,6 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 	for ai_role in _ai_roles:
 		_add_player(int(ai_role), AiInputSource.new(), AiNavigator.new())
 
-	_bind_ports()
-	_snapshot = SnapshotSystem.new()
-	_snapshot.bind(self, _ports)
-
 
 # C 方案(S0.5):端口层。所有 Callable 都按**方法名**绑定 ⇒ 虚分派到 TeamHost/RoyaleHost 的覆写照旧生效。
 func _bind_ports() -> void:
@@ -77,6 +81,7 @@ func _bind_ports() -> void:
 	_ports.net_broadcast = Callable(self, "_port_broadcast")
 	_ports.net_peers_sendable = Callable(self, "_port_net_peers_sendable")
 	_ports.net_peer_count = Callable(self, "_port_net_peer_count")
+	_ports.scene_bullets = Callable(self, "_port_scene_bullets")
 	_ports.send_round_state = Callable(self, "_send_round_state")
 	_ports.on_bullet_hit = Callable(self, "_on_bullet_hit")
 	_ports.broadcast_round_state = Callable(self, "_broadcast_round_state")
@@ -126,6 +131,46 @@ func _port_net_peers_sendable() -> bool:
 
 func _port_net_peer_count() -> int:
 	return multiplayer.get_peers().size()
+
+
+func _port_scene_bullets() -> Array:
+	return get_tree().get_nodes_in_group("bullet")
+
+
+# ── 裁决域转发(S2):TileDefs 回调 / 玩家信号 / 外部 API 仍只认宿主,宿主转给 CombatSystem。
+func _on_tile_destroyed(cell: Vector2i) -> void:
+	_combat.on_tile_destroyed(cell)
+
+
+func _on_sub_destroyed(sub: Vector2i, pre_hp: int, owner: Node) -> void:
+	_combat.on_sub_destroyed(sub, pre_hp, owner)
+
+
+func _on_player_hit(source_pos: Vector2, damage: int, cause: String, role: int) -> void:
+	_combat.on_player_hit(source_pos, damage, cause, role)
+
+
+func _adjudicate_bullets() -> void:
+	_combat.adjudicate()
+
+
+func _broadcast_pending_beams() -> void:
+	_combat.broadcast_pending_beams()
+
+
+func notify_direct_hit(shooter: Node, victim: Node) -> void:
+	_combat.notify_direct_hit(shooter, victim)
+
+
+# 子弹直击的基类实现(叶子覆写 + super;1v1 直接实例化 MatchHost ⇒ 这里是 1v1 的唯一归因写端)。
+func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, _victim_role: int) -> void:
+	CombatFeedback.attribute(victim, bullet.shooter)
+	var pl := victim as Player
+	if pl != null:
+		pl.take_hit(bullet.global_position, bullet.hit_damage, false, bullet.hit_impact)
+	var shooter_role := _role_of(bullet.shooter)
+	_port_rpc_role(shooter_role, "hit_confirm", [shooter_role, _victim_role], true)
+	bullet.queue_free()
 
 
 # 出生:建一个玩家节点并摆到出生点。★ 原先这里是两个逐行同构的循环(网络玩家 / AI 补位),现在只有这一份。

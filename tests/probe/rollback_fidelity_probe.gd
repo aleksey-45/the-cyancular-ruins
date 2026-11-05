@@ -259,8 +259,8 @@ func _check_source_guard() -> void:
 			"兜底路径必须存在且只播反馈(take_hit 第 5 参 = true;实得 %d 处)" % fallback)
 
 	# ④ 服务器事件锚点(2026-10-28 评审 C2;2026-11-01 R2 起取数点跟到 `_event_seq_for()`):必须用 `_stepped_seq`
-	var lines4 := FileAccess.get_file_as_string("res://server/match/match_combat.gd").split("\n")
-	var anchor_block := _func_block(lines4, "func _event_seq_for(")
+	var lines4 := FileAccess.get_file_as_string("res://server/match/combat_system.gd").split("\n")
+	var anchor_block := _func_block(lines4, "func event_seq_for(")
 	var stepped_uses := 0
 	var ack_uses := 0
 	var srv_tick_uses := 0
@@ -301,8 +301,8 @@ func _check_source_guard() -> void:
 
 	# ⑤ 落水窒息不回显(2026-10-29):服务端必须跳过 cause=="water" 的 hit_event,客户端溺水调用必须带 cause ——
 	#    漏任一处 = 客户端二次扣血(每次窒息多一次回滚)。删掉不报错,只能靠源码守卫。
-	var lines6 := FileAccess.get_file_as_string("res://server/match/match_combat.gd").split("\n")
-	var hit_fn := _func_block(lines6, "func _on_player_hit(")
+	var lines6 := FileAccess.get_file_as_string("res://server/match/combat_system.gd").split("\n")
+	var hit_fn := _func_block(lines6, "func on_player_hit(")
 	var water_skip := 0
 	for i in range(hit_fn[0] + 1, hit_fn[1]):
 		if lines6[i].strip_edges().begins_with("#"):

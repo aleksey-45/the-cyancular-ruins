@@ -2,7 +2,7 @@ class_name MatchState
 extends Node
 
 # 对局权威的共享状态底座:链上每一层都要读同一批状态,而 GDScript 的父类方法/字段在编译期解析不了子类声明的符号 ⇒ 它们只能住在
-# 共同祖先里。链:RoyaleHost → MatchHost(生命周期/输入/物理编排) → MatchRound(回合机) → MatchCombat(裁决) → MatchGround(地面武器)
+# 共同祖先里。链:RoyaleHost → MatchHost(生命周期/输入/物理编排) → MatchRound(回合机) → MatchGround(地面武器)
 # → MatchState(本文件) → Node。★ 中间层不得定义 _init/_ready/_enter_tree/_exit_tree/_physics_process:RoyaleHost 的 _init 契约是「先 plan_spawns 再 super._init」,插钩子会打断它。
 
 const HitLagHistory := preload("res://core/sim/hit_lag_history.gd")   # 命中回放历史环(纯逻辑)
@@ -38,6 +38,14 @@ func same_team(a_role: int, b_role: int) -> bool:
 	return a > 0 and a == b
 
 
+# 对端 role(1v1 专用;找不到返回 0)。纯查询,裁决/回合都用它。
+func _opponent_of(role: int) -> int:
+	for r in players:
+		if int(r) != role:
+			return int(r)
+	return 0
+
+
 # 与建局基线(_base_grid)不同的格,给「重连后补破坏态」用:客户端重连只拿 match_path 重建初始地图,不补这一份会留
 # 幻影墙(→ 本地预测分歧,可能回滚循环)。★ 判据是「与基线不同」、不是「当前为空」;顺序确定(y 升序、同 y 升序 x);只由 match_sync 应答投递,空数组连键都不带。
 func destroyed_cells() -> Array[Vector2i]:
@@ -67,7 +75,7 @@ var _snapshot_tick_phase := 0   # 物理 tick 相位:每 SNAPSHOT_STRIDE 个 tic
 const SNAPSHOT_HZ := 60
 const SNAPSHOT_INTERVAL := 1.0 / SNAPSHOT_HZ
 const SNAPSHOT_STRIDE := 60 / SNAPSHOT_HZ
-var _seen_bullets: Dictionary = {}  # bullet instance_id -> true(只广播一次);每帧按在场子弹剪枝(见 _adjudicate_bullets)
+var _seen_bullets: Dictionary = {}  # bullet instance_id -> true(只广播一次);每帧按在场子弹剪枝(见 CombatSystem.adjudicate)
 var _snap_tick := 0   # 快照 tick(60Hz 物理 tick 域;= _srv_tick,客户端靠它丢乱序旧快照 + playout 插值)
 var _srv_tick := 0    # 服务器物理 tick 计数(MatchHost 每物理 tick 起始 +1;快照 tick 与命中回放共用这条时间轴)
 var _lag_hist := HitLagHistory.new()   # 命中回放受击面历史(每 tick 推;24 tick ≈ 400ms)

@@ -199,7 +199,7 @@ func _physics_process(delta: float) -> void:
 		velocity_vec.y += GameParameters.gravity0 * gravity_factor * delta
 		if not velocity_vec.is_zero_approx():
 			rotation = velocity_vec.angle()
-	# 爆炸弹的「碰到玩家 → 短引信」:两端同源(权威结算在 MatchHost._adjudicate_grenade),这里只管引信时机;引信一旦启动就不再改时长。
+	# 爆炸弹的「碰到玩家 → 短引信」:两端同源(权威结算在 CombatSystem._adjudicate_grenade),这里只管引信时机;引信一旦启动就不再改时长。
 	if explodes and not _fuse_active:
 		_check_player_contact()
 	if explodes and _fuse_active:
@@ -241,7 +241,7 @@ func _physics_process(delta: float) -> void:
 
 
 # 线段扫掠:groups 内最早被穿过的受击面(t 最小;起点在框内 = 0)。exclude = 射手(自己不打自己)。
-# ★ 玩家实体的伤害不在这里结算:PvP 的权威单一来源是 MatchHost._adjudicate_bullets(客户端是 _cull_bullet_contacts);
+# ★ 玩家实体的伤害不在这里结算:PvP 的权威单一来源是 CombatSystem.adjudicate(客户端是 _cull_bullet_contacts);
 #   这里再扫 player 组会让同一发子弹在服务器上被裁决两次。
 func first_hurt_on_segment(from: Vector2, to: Vector2, groups: Array, exclude: Node = null) -> Dictionary:
 	var best: Dictionary = {}
@@ -423,7 +423,7 @@ func _direct_hit(hit: Node) -> void:
 # 命中标记对所有端都调:headless 服务器进程无 CombatFeedback 实例 ⇒ hit_marker 是空操作,无副作用。
 
 # 爆炸弹「碰到玩家」判定(引信时机的单一来源):候选 = CONTACT_GROUPS 里的玩家实体与对手副本,排除 shooter(否则自己的榴弹一出膛就在自己身上起短引信)。
-# ★ 判据 = 爆弹点是否落在目标受击面内(与子弹/激光同一套 hurt_rect);命中只起短引信、不改轨迹,直接伤由 MatchHost._adjudicate_grenade 结算。
+# ★ 判据 = 爆弹点是否落在目标受击面内(与子弹/激光同一套 hurt_rect);命中只起短引信、不改轨迹,直接伤由 CombatSystem._adjudicate_grenade 结算。
 func _check_player_contact() -> void:
 	var tree := get_tree()
 	if tree == null:
@@ -439,7 +439,7 @@ func _check_player_contact() -> void:
 				start_player_fuse()
 				return
 
-# 起「命中玩家」的短引信(hit_fuse_time):权威侧由 MatchHost._adjudicate_grenade 调,客户端视觉副本由 _check_player_contact 自行调;纪律与 _start_fuse 一致 —— 首次碰撞决定时长、之后不刷新。
+# 起「命中玩家」的短引信(hit_fuse_time):权威侧由 CombatSystem._adjudicate_grenade 调,客户端视觉副本由 _check_player_contact 自行调;纪律与 _start_fuse 一致 —— 首次碰撞决定时长、之后不刷新。
 func start_player_fuse() -> void:
 	if explodes:
 		_start_fuse(hit_fuse_time)

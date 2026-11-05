@@ -18,9 +18,9 @@
 - 启动契约(`server_main.gd` 文件头):`--worker --team --port P --roles r,… --teams t,…`。`roles` 与 `teams` 同序等长(第 i 个 role 的队号 = `teams[i]`);收齐判据 = `_claims.size() >= _team_of_role.size()`(催收不齐时 30s 超时梯 `quit(0)` 释放端口,不降级);`--royale` 与 `--team` 同时为真直接拒启动。
 - 队伍表经 `match_sync` 的 `teams`(`TeamHost.team_map()` 的只读副本)下发,只在非空时带该键,不进 `round_state`(目标/补贴另走 `target` / `handicap`)。`MatchState._team_of` 就是这张表,不从 role 号推导。
 - `same_team()`:任一方 0 → false(0 = 查不到队伍),`same_team(0, 0)` 也是 false。
-- 子弹穿透队友、爆炸对队友满效(爆炸走 `_explode()` → `Explosion.apply_aoe`,玩家分支不看队伍)。`same_team` 在 `server/match/match_combat.gd` 的 `_adjudicate_bullets` / `_adjudicate_grenade` 两处;`_check_player_contact` 只排除射手、不看队伍。
+- 子弹穿透队友、爆炸对队友满效(爆炸走 `_explode()` → `Explosion.apply_aoe`,玩家分支不看队伍)。`same_team` 在 `server/match/combat_system.gd` 的 `adjudicate` / `_adjudicate_grenade` 两处;`_check_player_contact` 只排除射手、不看队伍。
 - 激光也穿透队友:`MatchState.is_friendly(a, b)` + `LaserWeaponBase._damage_path_targets` 玩家循环里一条 `continue`(不是 `break`,队友身后的敌人照打)。只改权威侧。
-- 助攻与惩罚计数(`assists` / `team_damage` / `self_damage` / `team_kills`)只影响 `kscore`,不进 `dealt` / `taken`。助攻表 `MatchState._assist_times` = `victim_role -> {attacker_role: 时刻ms}`;写入口 `_note_hit`(由 `MatchCombat._on_player_hit` 调);判定在 `_record_down`(除击杀者外、窗口内、且 `same_team(attacker, killer)`);清空在 `MatchRound._respawn_player`;窗口复用 `ATTRIB_WINDOW`(3s)。队伍表为空 ⇒ 1v1 / 大乱斗拿不到助攻。
+- 助攻与惩罚计数(`assists` / `team_damage` / `self_damage` / `team_kills`)只影响 `kscore`,不进 `dealt` / `taken`。助攻表 `MatchState._assist_times` = `victim_role -> {attacker_role: 时刻ms}`;写入口 `_note_hit`(由 `CombatSystem.on_player_hit` 调);判定在 `_record_down`(除击杀者外、窗口内、且 `same_team(attacker, killer)`);清空在 `MatchRound._respawn_player`;窗口复用 `ATTRIB_WINDOW`(3s)。队伍表为空 ⇒ 1v1 / 大乱斗拿不到助攻。
 - 惩罚 = `(team_damage + self_damage) ÷ 5 + team_kills × 100`(`ScoreRules.penalty`),记在肇事者行上。
 - 自伤专用通道:`CombatFeedback.note_self_hit` / `is_fresh_self_hit`,由 `Explosion.apply_aoe` 在 `shooter == victim` 时写;窗口 8ms;落地一笔真实归因时在 `attribute()` 里 `remove_meta("last_self_hit_time")`。
 - 对抗模式击杀后不复位任何人。1v1 的 `_reset_survivor` 与大乱斗保留。
@@ -33,7 +33,7 @@
 - `player_p2_hue.gdshader` 已无代码引用(个人色相随大厅改色控件一起移除,文件暂留);`_apply_tint` 只剩 modulate 比值一条路。
 - 换边后客户端在**新一轮 COUNTDOWN** 重拉一次 `match_sync`,先置 `_resync_pull_pending = true` 再发;与重连补态共用同一个标志,不新立标志。换边 = 每局 `_side_swap_round` 取反,`TeamHost._start_next_round` 用它重算 `_round_spawns = plan_team_spawns(_team_of, _round_spawns, _side_swap_round)`(**队 1 = 侧 1 左半、队 2 = 侧 2 右半**,取反后两队互换侧;每局在那一侧的 `# respawn` 列表里重随机并排除本 role 上一局点位)。`TeamHost.compute_swap_spawns` 仍保留旧语义的名字(探针/手工路径引用),但**不再是生产换边路径** —— `team_match_probe` 相④ 用"第 1 局点集精确对调"算的期望已过期(登记在债单)。
 - 出生/复活点:自 2026-11 起由**地图文件的数据**决定(`.cyrm` 的 `# respawn 1|2` meta,**按阵营半区**:队 1 侧 1 左半 / 队 2 侧 2 右半、每侧 ≥5 且 3×3 桶覆盖;缺数据 / 人数超过该侧列表时 `TeamSpawn` 回退几何生成)。`TeamHost` 只管 `_round_spawns` / `_side_swap_round` / `_spawned_once` / `_last_spawn` 与 `_spawn_cell` / `role_spawns` / `_respawn_cell_for` 覆写;**局内复活也走本队这一局所在侧的列表**(`TeamSpawn.respawn_cell`,缺数据才回退 `SpawnPicker` 池)。每队 1~5 人都要各有一格(布局由出生点数据负责)。方位与完整规则见 [world.md](world.md)「出生/复活点:按阵营半区的地图数据」。
-- `TeamHost._on_bullet_hit` 覆写先 `CombatFeedback.attribute(victim, bullet.shooter)` 再 `super`;基类 `MatchCombat._on_bullet_hit` 也写同一笔(幂等)。基类那行是 1v1 的唯一子弹归因写端,不可删。
+- `TeamHost._on_bullet_hit` 覆写先 `CombatFeedback.attribute(victim, bullet.shooter)` 再 `super`;基类 `MatchHost._on_bullet_hit` 也写同一笔(幂等)。基类那行是 1v1 的唯一子弹归因写端,不可删。
 - 逐人数据:离开者用 `MatchState.note_disconnect_round(role)`(`_enter_grace` 掉线那一刻记录);MATCH_OVER 之后倒地不进 `_stats`,ROUND_OVER 期间照旧入账。
 
 ## 结算页

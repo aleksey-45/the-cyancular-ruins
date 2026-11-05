@@ -2,7 +2,7 @@ class_name CollisionBuilder
 extends RefCounted
 
 # 碰撞层构建(独立于场景,便于 -s 探针直接调用;不引用 autoload GameParameters)。从 64px 格展开成 16px 子格(每格 4×4),只保留有实体碰撞的格。
-# ★ 这是 cyrm v4 口径:旧注释写的"32px 子格 2×2"是 v3 时代的口径,而 match_combat 曾照它清子格 ⇒ 清到别处、真砖一格没清(已修为 4×4)。
+# ★ 这是 cyrm v4 口径:旧注释写的"32px 子格 2×2"是 v3 时代的口径,而 combat_system 曾照它清子格 ⇒ 清到别处、真砖一格没清(已修为 4×4)。
 # 永久墙整图贪心合并、建一次不动;可破坏层按块存(块边长 = 地图边长开根号),摧毁时只重建所在块;每块按 9 个环面副本实例化,共享同一 shape。
 
 const SUB_TS: int = 16        # 16px 子格(cyrm v4:64px 格 → 4×4 子格;交接文档 §4.2)

@@ -1,5 +1,5 @@
 class_name MatchRound
-extends MatchCombat
+extends MatchGround
 
 # 回合状态机 + 复活 + 每局世界复位域;round_state / kill 广播也在这里(它们是回合事件,不是逐帧快照)。
 

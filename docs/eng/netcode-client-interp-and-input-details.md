@@ -1,6 +1,6 @@
 # 副本插值与输入上行的细节：一手来源调研（增量）
 
-> 现行实现：远端玩家副本走 **playout 缓冲插值**（渲染「最新快照 − `PLAYOUT_TICKS`」那一刻的夹逼插值位置）；幽灵碰撞体仍直出最新快照。服务器命中裁决按**射手观看时刻**回放受击面（见 §1.1）。相关文件：`scenes/player/player_replica.gd`、`core/net/playout_clock.gd`、`core/net/lag_comp.gd`、`core/sim/hit_lag_history.gd`、`core/net/packet_input_source.gd`、`server/match/match_combat.gd`、`server/match/match_host.gd`。
+> 现行实现：远端玩家副本走 **playout 缓冲插值**（渲染「最新快照 − `PLAYOUT_TICKS`」那一刻的夹逼插值位置）；幽灵碰撞体仍直出最新快照。服务器命中裁决按**射手观看时刻**回放受击面（见 §1.1）。相关文件：`scenes/player/player_replica.gd`、`core/net/playout_clock.gd`、`core/net/lag_comp.gd`、`core/sim/hit_lag_history.gd`、`core/net/packet_input_source.gd`、`server/match/combat_system.gd`、`server/match/match_host.gd`。
 
 ## 1. 副本：playout 缓冲插值
 

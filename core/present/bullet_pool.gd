@@ -53,7 +53,7 @@ func release(b: BulletBase) -> void:
 		_idle[path] = arr
 	if arr.has(b):
 		return   # 双 release 幂等:同一实例不许在池里排两次,否则会被两个调用方同时拿到
-	# 本帧归还的实例压一帧再借:服务器 MatchHost._adjudicate_bullets 用**节点实例 id** 判"这颗弹广播过没有"
+	# 本帧归还的实例压一帧再借:服务器 CombatSystem.adjudicate 用**节点实例 id** 判"这颗弹广播过没有"
 	# (_seen_bullets),而它每帧在子节点步进之前扫一次 —— 同一帧内"这颗弹死了、下一发又借到同一个实例"
 	# 会被判成同一颗、**不再广播**(客户端少看见一发,服务器不报错)。压一帧即可让旧 id 在下次扫描里被剪掉。
 	_released_frame[b.get_instance_id()] = Engine.get_physics_frames()

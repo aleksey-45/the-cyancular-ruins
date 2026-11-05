@@ -113,7 +113,7 @@ NetBus.rpc_id(peer, "snapshot_own",
 
 - 同一个 `PLAYOUT_TICKS` 用在两处：客户端**渲染**远端副本时的延迟，和服务器**裁决命中**时的回放深度（`core/net/lag_comp.gd` 单一来源）。
 - 服务器 tick 域对齐：`MatchHost._physics_process` 每 tick 起始 `_srv_tick += 1`；`SnapshotSystem.broadcast` 里 `_snap_tick = _srv_tick`（2026-10-30 起每 tick 都广播 ⇒ tick 数值序列连续）。客户端输入包里的 `st` 从此与服务器 tick **同一刻度**。
-- 裁决路径（`server/match/match_combat.gd`）：`st = _client_snap_tick[shooter]`（射手最近解码的快照 tick）⇒ `want = clamp(st - PLAYOUT_TICKS, _srv_tick - MAX_REWIND_TICKS, _srv_tick)` ⇒ 用 `HitLagHistory.rect_for(victim, want)` 取**射手观看时刻**的对手受击面，再走 `HitShape` 线段扫掠（含子弹体积 grow）。榴弹直击同一路径。
+- 裁决路径（`server/match/combat_system.gd`）：`st = _client_snap_tick[shooter]`（射手最近解码的快照 tick）⇒ `want = clamp(st - PLAYOUT_TICKS, _srv_tick - MAX_REWIND_TICKS, _srv_tick)` ⇒ 用 `HitLagHistory.rect_for(victim, want)` 取**射手观看时刻**的对手受击面，再走 `HitShape` 线段扫掠（含子弹体积 grow）。榴弹直击同一路径。
 - 历史环 `core/sim/hit_lag_history.gd`：每 tick 存 `role → {p: canonical 位置, r: 相对受击面的 Rect2}`，容量 24 tick（400ms），超限丢最老；无该 tick/该 role 时回退现时受击面。
 - **不动的部分**：移动预测继续吃最新态（幽灵体不接插值、位置照旧）；爆炸 AoE **不回放**（现时位置，见 registered-debt §十五）。协议字节零改动。
 
@@ -126,13 +126,13 @@ NetBus.rpc_id(peer, "snapshot_own",
 - **兜底**：`seq` 不可注入（来自未来 / 已 ack / 环外 / 乱序 / callable 失效）⇒ 只播反馈 `take_hit(..., feedback_only=true)`（白闪 / 震屏 / 音效 / 挤压），**不**扣血 / 不击退 / 不设无敌帧：权威 c2 可能已包含这一发，二次应用会在下一个 ack 再判一次分歧。
 - **读数**：`-- --netstat` 打印 `事件对齐=累计(+N/s) 拒绝=累计(+N/s)`（`rollback_count()` 之外的独立计数）；`royale_soak`（该支已删，2026-11-04）的每端结果行打 `C2:回滚=… 事件对齐=… 拒绝=…(ack/future/missing/order 分解)` —— 它曾是"真链路里唯一能证明注入真的生效了 vs 一直走兜底"的读数；今天没有替代读数。
 - **边界**（照实）：① `_captures` 环 256 tick（4.3s），超出只能走兜底；② 服务器饥饿 k tick 时玩家状态比 `_stepped_seq` 前进 k 步（held 输入），注入会**早** k 步（不是保守方向，只是近似）；③ 落水窒息是客户端已预测的伤害 ⇒ 服务端**不**为它广播 `hit_event`（`take_hit(..., cause="water")` → `_on_player_hit` 跳过），客户端因此不会二次应用（2026-10-29 修，见 [`registered-debt.md`](registered-debt.md) §二十三）；④ 事件按 seq 递增到达是契约（reliable 保序），seq 回退一律拒绝。
-- **守卫**：[`tests/probe/rollback_fidelity_probe.tscn`](../../tests/probe/rollback_fidelity_probe.tscn) 的 D 组（注入 / **真实服务器顺序**的黄金轨迹 / 越界 / 同 seq 双发 / 乱序 / 注入后 reconcile 对独立黄金权威 / 迟到旧 ack 重放带回事件 / 计数）与 E 组（反馈-only），外加源码守卫（**代理判据，不是行为**）：客户端 5 条（入队 / 物理帧消费 / 物理帧接线 / 注入唯一 / 兜底第 5 参）+ 服务器 3 条（`_stepped_seq` 锚点【取数点 = `_event_seq_for`】/ 帧末记录调度 / 记录写入）。
+- **守卫**：[`tests/probe/rollback_fidelity_probe.tscn`](../../tests/probe/rollback_fidelity_probe.tscn) 的 D 组（注入 / **真实服务器顺序**的黄金轨迹 / 越界 / 同 seq 双发 / 乱序 / 注入后 reconcile 对独立黄金权威 / 迟到旧 ack 重放带回事件 / 计数）与 E 组（反馈-only），外加源码守卫（**代理判据，不是行为**）：客户端 5 条（入队 / 物理帧消费 / 物理帧接线 / 注入唯一 / 兜底第 5 参）+ 服务器 3 条（`_stepped_seq` 锚点【取数点 = `event_seq_for`】/ 帧末记录调度 / 记录写入）。
 
 ### 2.3 拆砖事件时刻对齐（2026-11-01，R2）
 
 - **缺陷**：`tile_destroyed(cell)` / `sub_destroyed(sub)`（通道 3，reliable）过去只带坐标，客户端 `TileSync` **到达即改地形**。
   回滚重放时地形已是"拆完之后"的，而客户端当初预测那几帧时墙还在 ⇒ 重放结果 ≠ 原预测 ⇒ 在刚打穿的砖/掩体附近连环回滚（幽灵墙循环）。
-- **锚点**：与 §2.2 **同一个** `MatchCombat._event_seq_for(role)`（服务器 `_stepped_seq`，单源）。
+- **锚点**：与 §2.2 **同一个** `CombatSystem.event_seq_for(role)`（服务器 `_stepped_seq`，单源）。
   ★ 锚点**逐 peer 不同** ⇒ 拆砖必须**点对点发**（`NetBus.rpc_id(peer_by_role[r], "tile_destroyed", cell, seq)` /
   `NetBusExt.rpc_id(..., "sub_destroyed", sub, seq)`），**不能**再 `_rpc_all`（广播发不出"每个人自己的" seq）。
   代价：16 人局 = 16 次/事件（与 `hit_event` 同量级；拆砖事件本身稀）。
@@ -189,7 +189,7 @@ NetBus.rpc_id(peer, "snapshot_own",
   - **不要把世界包挪到 reliable**（队头阻塞会让整局滞后）。
   - trail 量化误差 ≤0.25px（纯表现，残像点），与 pos/vel 同 Q_SCALE；往返容差见 `net_wire_smoke` / `snapshot_size_probe`。
 - ★ 2026-10-24 **U1 上行去锁存**：输入记录 = 1 tick（60Hz 采样），30Hz 包内装两条（流水线），服务器每 tick 消费一条 ⇒ 本地手感不再有 30Hz 锁存延迟。**S1** 把本人包挪到"消费并步进完当帧"发（③ 固定回带已消）；客户端 U1 起本来就每 tick 对账（④ 已消）。**剩下的**只是 30Hz 发包/广播节拍的量化（`--netstat` 的 `gap` 仍有 1~2 条 ×16.7ms 的偏置），不是"等一拍广播"。见 `netcode-input-uplink.md` §5。
-- 上行 `st` / `ct`：`ct`（客户端物理帧号）仍**无消费者**；`st` 自 2026-10-26 起是**命中回放的时间基准**（`match_combat._replay_hurt_rect`），不再是"只落位"。
+- 上行 `st` / `ct`：`ct`（客户端物理帧号）仍**无消费者**；`st` 自 2026-10-26 起是**命中回放的时间基准**（`combat_system._replay_hurt_rect`），不再是"只落位"。
 - 没有丢包 / 抖动注入路径 ⇒ 队头阻塞、丢弃率、手感都没有真对局读数。
 - 探针量的是**载荷**字节，不含 ENet 分片头 / RPC 方法名 / IP·UDP 头。`royale_soak_probe`（该支已删，2026-11-04）的 KB/s 是解码后 `Dictionary` 的 `var_to_bytes`，不是线上字节，对线格式改动不可见。
 - `snapshot_size_probe` 的每秒折算列按 `SNAP_HZ := 60` 算，下行也是 60Hz(v7) ⇒ 单包字节与每秒列都可引用。

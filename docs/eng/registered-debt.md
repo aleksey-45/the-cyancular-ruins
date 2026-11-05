@@ -26,7 +26,7 @@
 - **`CombatComponent.restore_alive_state()`**（`revive()` 减去 `hp=max_hp`）：C2 回滚 / 权威态 / 回溯三条恢复路径的"倒地→活着"都走它 ⇒ 跨"死亡→活着"的恢复现在按快照 hp，**旧行为是满血**（修 bug，但属可感知变化，headless 够不到、无断言）。
 - **服务器 Beta 回溯只寻帧**（[`server/match/match_host.gd`](../../server/match/match_host.gd) `_apply_rw_frame` 调 `Player.rewind_restore`）：它依赖帧 schema `p/v/hp/facing/downed/widx/wmags/wlive`；改了 `_record_rw_frame` 的键就必须同步 `rewind_restore`，**没有前置编译提示**。
 - **客户端出生即落稳**（[`scenes/pvp_match_client.gd`](../../scenes/pvp_match_client.gd) `_settle_local_spawn`，三模式共用）：在 `_boot_world()` 里把"从格子中心落到地面"这段物理**提前跑完**（≤8 步，超了放弃）。**未跑验证**（用户当轮要求别测 + 另一会话占着 Godot 进程）⇒ 若出现"出生卡在墙里 / 悬空不动 / 落点比服务器高"，第一嫌疑是这里；正常表现应是首条 ack 时两端 `pos` 差 < 2px（原先实测差 9.6px，每局固定一次开局回滚）。
-- **服务器按实例 id 判"这颗弹广播过没有"**（[`server/match/match_combat.gd`](../../server/match/match_combat.gd) 的 `_seen_bullets`）——子弹池化（[`core/present/bullet_pool.gd`](../../core/present/bullet_pool.gd)）之后，"同一帧内死一颗 → 池把它借给下一发"会被判成同一颗 ⇒ **不再广播**（客户端少看见一发、服务器不报错）。池已加"同一物理帧归还的实例不借出"（`_released_frame`）缓解；**结构修复未做**：把广播判据改成每发一个 use generation，或广播后清 meta 改按 `use_id` 记账（动 `server/match/**`，要单独评审）。
+- **服务器按实例 id 判"这颗弹广播过没有"**（[`server/match/combat_system.gd`](../../server/match/combat_system.gd) 的 `_seen_bullets`）——子弹池化（[`core/present/bullet_pool.gd`](../../core/present/bullet_pool.gd)）之后，"同一帧内死一颗 → 池把它借给下一发"会被判成同一颗 ⇒ **不再广播**（客户端少看见一发、服务器不报错）。池已加"同一物理帧归还的实例不借出"（`_released_frame`）缓解；**结构修复未做**：把广播判据改成每发一个 use generation，或广播后清 meta 改按 `use_id` 记账（动 `server/match/**`，要单独评审）。
 - [`docs/eng/registered-debt.md`](registered-debt.md) 本身**不是**逐项待办:它只登记"现在仍成立"的边界;任务清单在 `docs/superpowers/plans/`。
 
 ## 零守卫面（按面列出;只统计 2026-10-24 与 2026-11-04 两轮削减后仍无替代守卫的）
@@ -45,7 +45,7 @@
 | 可破坏砖碰撞逐 16px 子格与游戏规则一致(`tile_collision`) | 碰撞/渲染不一致 | **零守卫** |
 | 地图目录/选图路径校验；cyrm v4 编解码 CRC 往返(`map_catalog` / `map_format_v4`) | 存档 / 地图格式面 | **零守卫** |
 | 鸟跟随玩家跨接缝回绕(`wrap_probe`) | 接缝露馅 | **零守卫**（原支本就零断言,删掉不减少保证) |
-| 拆砖事件的时间锚点（`MatchCombat._event_seq_for` 用 `_stepped_seq`、受击/整格/子格三条事件都走它、拆砖逐 peer 发） | 锚点晚一 tick / 广播发不出每人自己的 seq ⇒ 注入错 seq、幽灵墙循环 | **零守卫**（源码文本守卫按 `test-economy` D6a 砍掉）；行为面只有 `net_tile_fx_probe` 的注入/兜底两条 + 真链路间接反映 |
+| 拆砖事件的时间锚点（`CombatSystem.event_seq_for` 用 `_stepped_seq`、受击/整格/子格三条事件都走它、拆砖逐 peer 发） | 锚点晚一 tick / 广播发不出每人自己的 seq ⇒ 注入错 seq、幽灵墙循环 | **零守卫**（源码文本守卫按 `test-economy` D6a 砍掉）；行为面只有 `net_tile_fx_probe` 的注入/兜底两条 + 真链路间接反映 |
 | 对局宿主的层规则（共享字段住 `MatchState` / 中间层禁生命周期钩子 / 新域不进链） | 把方法或字段搬错层 ⇒ 整条链编译失败（`99a34d6`、`605d1f5b`）；中间层插钩子 ⇒ 打断子类 `_init` 顺序；覆写只写子类 ⇒ 1v1 走基类时丢整段行为（`3524e992`） | **零守卫**，规则只写在 [`netplay.md`](netplay.md) 与本表；按文件路径读源码的探针只会因"方法不在这份文件"变红，判词与规则无关 |
 | 回溯/权威态的状态恢复（`Player.rewind_restore` / `restore_state` / `apply_authoritative_state` 的 hp·倒地·击退·武器残弹） | 两份抄写漂移（服务器不清 `knock_velocity`、`revive()` 把 hp 顶成满血） | **零守卫**（headless 够不到端到端）；2026-11-01 已合并成单一实现，漂移源消失 |
 | 房间生命周期约定（[`room-lifecycle-conventions.md`](room-lifecycle-conventions.md) A–I：端口归还/注册表删除/凭据作废收口 · 三表清扫 · pid 账 · 回收梯 · 启动协议 · 宽限分派 · 3v3 开局三律 · 一局限时上界链） | 新加拆除路径漏一步 ⇒ **静默端口泄漏**；清扫漏一张表 ⇒ 房与端口永不回收；启动参数静默跑错分支 | **零守卫**（源码文本检查器 `tools/room_sweep_lint.gd` 已删，2026-11-04 `test-economy` D6a/D8；行为面 `pvp_room_smoke.sh` 更早已删）⇒ 只剩该页 §3 人工自查 + 真链路间接反映 |

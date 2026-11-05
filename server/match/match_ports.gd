@@ -9,6 +9,7 @@ var net_rpc_role_all: Callable      # (method: String, args: Array, except_role:
 var net_broadcast: Callable         # (method: String, args: Array) → void
 var net_peers_sendable: Callable    # () → bool
 var net_peer_count: Callable        # () → int
+var scene_bullets: Callable         # () → Array(场景树 "bullet" 组) 
 var send_round_state: Callable      # (data: Dictionary) → void
 
 var on_bullet_hit: Callable         # (bullet, victim, victim_role) → void
@@ -25,8 +26,8 @@ var reset_time_rewind_state: Callable  # () → void
 
 func is_ready() -> bool:
 	var required := [net_rpc_role, net_rpc_role_all, net_broadcast, net_peers_sendable, net_peer_count,
-			send_round_state, on_bullet_hit, broadcast_round_state, match_winner, spawn_cell,
-			respawn_player, down_killer_of, award_down, finish_match, start_next_round,
+			scene_bullets, send_round_state, on_bullet_hit, broadcast_round_state, match_winner,
+			spawn_cell, respawn_player, down_killer_of, award_down, finish_match, start_next_round,
 			reset_time_rewind_state]
 	for c in required:
 		if not (c as Callable).is_valid():

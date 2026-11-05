@@ -22,8 +22,8 @@
 
 ## 2. 命中补偿：已落地（2026-10-26，时间域解耦）
 
-- 伤害全走服务器模拟的实体子弹：`server/match/match_combat.gd::_adjudicate_bullets()` 用子弹上一位置→当前位置的线段与玩家受击面（`Player.hurt_rect()`，经 `core/sim/hit_shape.gd`）判命中。
-- ★ **命中盒按射手观看时刻回放**：`core/sim/hit_lag_history.gd` 每 tick 存 `role → {位置, 相对受击面}`（24 tick ≈400ms 环）；`MatchCombat._replay_hurt_rect()` 用 `want = clamp(st − PLAYOUT_TICKS, _srv_tick − MAX_REWIND_TICKS, _srv_tick)` 取那一帧的受击面（`st` = 射手客户端最近应用的世界快照 tick，走输入包字段；`cfg` 常量单一来源 = `core/net/lag_comp.gd`：`PLAYOUT_TICKS = 2`、`MAX_REWIND_TICKS = 8`）。普通弹与榴弹直击同一条路径；无历史/非网络射手回退现时受击面。
+- 伤害全走服务器模拟的实体子弹：`server/match/combat_system.gd::adjudicate()` 用子弹上一位置→当前位置的线段与玩家受击面（`Player.hurt_rect()`，经 `core/sim/hit_shape.gd`）判命中。
+- ★ **命中盒按射手观看时刻回放**：`core/sim/hit_lag_history.gd` 每 tick 存 `role → {位置, 相对受击面}`（24 tick ≈400ms 环）；`CombatSystem._replay_hurt_rect()` 用 `want = clamp(st − PLAYOUT_TICKS, _srv_tick − MAX_REWIND_TICKS, _srv_tick)` 取那一帧的受击面（`st` = 射手客户端最近应用的世界快照 tick，走输入包字段；`cfg` 常量单一来源 = `core/net/lag_comp.gd`：`PLAYOUT_TICKS = 2`、`MAX_REWIND_TICKS = 8`）。普通弹与榴弹直击同一条路径；无历史/非网络射手回退现时受击面。
 - `beam_fired` 只 `_rpc_all` 广播视觉，不裁决伤害；没有 hitscan 路径（激光伤害也是服务器实体扫掠）。
 - 客户端看到的对手位置是 playout 后的历史位置（比权威晚 ≈33ms，`PLAYOUT_TICKS = 2`）—— 命中回放补偿的正是这一段。**爆炸 AoE 不回放**（现时位置，见 registered-debt §十五）。
 
