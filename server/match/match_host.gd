@@ -1,8 +1,8 @@
 class_name MatchHost
-extends MatchRound
+extends MatchState
 
 # 对局权威核心:生命周期、输入 FIFO 消费、每物理帧编排、出生点。快照在 snapshot_system.gd,裁决在
-# combat_system / 回合在 match_round / 共享状态在 match_state;输入队列的入队/丢包/抖动包络/1Hz 诊断在 input_intake.gd。★ C2 四条不变量仍在
+# combat_system / 回合在 round_system / 共享状态在 match_state;输入队列的入队/丢包/抖动包络/1Hz 诊断在 input_intake.gd。★ C2 四条不变量仍在
 # _physics_process 与 _on_input 的编排里,原样未动。
 
 const TIME_SYNC_INTERVAL := 0.1   # Beta:颗粒状态下发节律(10Hz;怀表数字平滑够了)
@@ -24,6 +24,8 @@ var _snapshot: SnapshotSystem = null
 var _combat: CombatSystem = null
 # C 方案(S3):地面武器系统。
 var _ground: GroundSystem = null
+# C 方案(S4):回合系统。
+var _round: RoundSystem = null
 
 func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 		ai_roles: Array = [], teams: Dictionary = {}, spawns: Dictionary = {}) -> void:
@@ -59,6 +61,8 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 	_combat.bind(self, _ports)
 	_ground = GroundSystem.new()
 	_ground.bind(self, _ports)
+	_round = RoundSystem.new()
+	_round.bind(self, _ports, _ground)
 	TileDefs.on_destroyed = Callable(self, "_on_tile_destroyed")
 # cyrm v4(B18):破坏已下沉 16px 子格 —— worker 必须连子格回调(TileDefs.on_sub_destroyed),否则客户端永远收不到拆砖事件(幽灵墙:服务器碰撞已消、客户端还在渲染/预测碰撞)。
 	TileDefs.on_sub_destroyed = Callable(self, "_on_sub_destroyed")
@@ -87,6 +91,7 @@ func _bind_ports() -> void:
 	_ports.net_peer_count = Callable(self, "_port_net_peer_count")
 	_ports.scene_bullets = Callable(self, "_port_scene_bullets")
 	_ports.scene_add_child = Callable(self, "_port_scene_add_child")
+	_ports.scene_rebuild_chunk = Callable(self, "_port_scene_rebuild_chunk")
 	_ports.send_round_state = Callable(self, "_send_round_state")
 	_ports.on_bullet_hit = Callable(self, "_on_bullet_hit")
 	_ports.broadcast_round_state = Callable(self, "_broadcast_round_state")
@@ -146,6 +151,10 @@ func _port_scene_add_child(node: Node) -> void:
 	add_child(node)
 
 
+func _port_scene_rebuild_chunk(chunk: Vector2i) -> void:
+	CollisionBuilder.rebuild_chunk(destructible_sub, chunk, self)
+
+
 # ── 裁决域转发(S2):TileDefs 回调 / 玩家信号 / 外部 API 仍只认宿主,宿主转给 CombatSystem。
 func _on_tile_destroyed(cell: Vector2i) -> void:
 	_combat.on_tile_destroyed(cell)
@@ -192,12 +201,73 @@ func ground_weapons_payload() -> Array:
 	return _ground.payload()
 
 
-func _drop_all_but_one(p: Node2D, role: int) -> void:
-	_ground.drop_all_but_one(p, role)
+# ── 回合域转发(S4):叶子覆写与外部调用仍走宿主,宿主转给 RoundSystem。
+func _match_round_tick(delta: float) -> void:
+	_round.tick(delta)
 
 
-func _reset_ground_weapons() -> void:
-	_ground.reset()
+func _broadcast_round_state() -> void:
+	_round.broadcast_round_state()
+
+
+func _match_winner() -> int:
+	return int(_round.match_winner())
+
+
+func _down_killer_of(role: int) -> int:
+	return int(_round.down_killer_of(role))
+
+
+func _award_down(victim_role: int, killer_role: int) -> void:
+	_round.award_down(victim_role, killer_role)
+
+
+func _respawn_player(role: int) -> void:
+	_round.respawn_player(role)
+
+
+func _start_next_round() -> void:
+	_round.start_next_round()
+
+
+func _round_over(winner: int) -> void:
+	_round.round_over(winner)
+
+
+func _on_down_edge(role: int) -> void:
+	_round.on_down_edge(role)
+
+
+func _handle_respawns(delta: float) -> void:
+	_round.handle_respawns(delta)
+
+
+func _countdown_can_start(delta: float) -> bool:
+	return bool(_round.countdown_can_start(delta))
+
+
+func _countdown_resync_tick(delta: float) -> void:
+	_round.countdown_resync_tick(delta)
+
+
+func _reset_world_and_clear_dynamics() -> void:
+	_round.reset_world_and_clear_dynamics()
+
+
+func _round_state_base() -> Dictionary:
+	return _round.round_state_base()
+
+
+func _broadcast_kill(killer: int, victim: int) -> void:
+	_round.broadcast_kill(killer, victim)
+
+
+func is_match_over() -> bool:
+	return bool(_round.is_match_over())
+
+
+func mark_client_ready(role: int) -> void:
+	_round.mark_client_ready(role)
 
 
 # 子弹直击的基类实现(叶子覆写 + super;1v1 直接实例化 MatchHost ⇒ 这里是 1v1 的唯一归因写端)。
@@ -245,7 +315,7 @@ func _ready() -> void:
 
 	_round_state = RoundState.COUNTDOWN
 	_round_timer = COUNTDOWN_TIME
-	# 开局 COUNTDOWN 广播此刻还没有订阅方(客户端在切场景)⇒ 先挂起,等 match_sync 报到后补发(见 MatchRound 就绪闸)。
+	# 开局 COUNTDOWN 广播此刻还没有订阅方(客户端在切场景)⇒ 先挂起,等 match_sync 报到后补发(见 RoundSystem 就绪闸)。
 	_countdown_hold = COUNTDOWN_HOLD_MAX
 	_countdown_bcast_done = false
 	_countdown_resync = COUNTDOWN_RESYNC
@@ -644,7 +714,7 @@ func _finish_match() -> void:
 
 # 「这次倒地算谁的击杀」的归因读端(3v3 与大乱斗共用):上一个打 victim 的人;归因年龄 > ATTRIB_WINDOW(3s)、
 # 无归因、自伤 ⇒ 0。★ 唯一实现是 MatchState._attributed_role_within;大乱斗原先把它那 14 行函数体整段抄了一份。
-# ★ 1v1 不用它(MatchRound._down_killer_of 走 _opponent_of),故上提不改变 1v1 行为。
+# ★ 1v1 不用它(RoundSystem.down_killer_of 走 _opponent_of),故上提不改变 1v1 行为。
 func _attributed_killer(victim: Node2D) -> int:
 	return _attributed_role_within(victim, ATTRIB_WINDOW)
 

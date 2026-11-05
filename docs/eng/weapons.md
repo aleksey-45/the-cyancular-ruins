@@ -56,9 +56,9 @@
 - 布点:**出生/复活点已经是按阵营半区的地图数据**(`.cyrm` meta 的 `# respawn <1|2>`,见 [`world.md`](world.md));`RoyaleSpawn.plan_spawns` 现在优先从两侧 `# respawn` 列表的并集随机取(缺数据才回退 `SpawnPicker` 几何)。旧的 `GridPathfinder.spread_cells(cells, count, clearance, cols, rows)` 仍用于单机布枪与老图回退;它内部有 `shuffle()`,不得在广播之后再调一次。开阔地板格扫描在 `EnemySpawner.open_floor_cells`。
 - 联机权威 `server/match/ground_system.gd`(`GroundSystem`,只依赖 state + ports;由 `MatchHost._physics_process` 每帧经宿主转发调 `_sync_ground_positions()` + `_handle_ground_actions(role, src)`)。
 - `weapon_spawned` / `weapon_removed` 只走 `NetBus`,不在 `NetBusExt` 里加同名;开局那批走 `match_sync` 进场拉取。`_build_collision` 把 Visual 反向平移,让画出来的枪中心落在 body 原点上;`vel` 必须保持生成时那一份。权威位置 `canonical_pos` 恒在 `[0,MAP)`,每帧由 `set_anchor(玩家位置)` + `sync_render_from_canonical()` 锚到最近副本。
-- 换局 `_reset_ground_weapons` 清的与铺的都必须广播,`_next_ground_inst` 不得重置;客户端不要在 `round_state` 里自己清空。
+- 换局 `GroundSystem.reset()` 清的与铺的都必须广播,`_next_ground_inst` 不得重置;客户端不要在 `round_state` 里自己清空。
 - 不做客户端预测:按 F/Q 只上行(`BIT_PICKUP = 32` / `BIT_DROP = 64`),服务器裁决后广播;落体视觉由客户端用事件带的 `pos` + `vel` 本地模拟。背包进 `capture_state("inv")`;`restore_state` 必须先读 `wslot`、再 `restore_inventory`、最后 equip;`inv` 不进 `_close_enough`。
-- 服务器玩家必须有枪:`MatchHost._ready` 的 `_setup_ground_weapons()`(铺 12 把 + 每人随机拿 1)是唯一来源。掉落发生在「倒地边沿」(`_drop_all_but_one`,除随机一把外全丢在倒地位置;`MatchRound` / `RoyaleHost` / `TeamHost` 各一处);换局 = 清空重铺 + 各人背包重置为随机一把。
+- 服务器玩家必须有枪:`MatchHost._ready` 的 `_setup_ground_weapons()`(铺 12 把 + 每人随机拿 1)是唯一来源。掉落发生在「倒地边沿」(`GroundSystem.drop_all_but_one`,除随机一把外全丢在倒地位置;`RoundSystem` / `RoyaleHost` / `TeamHost` 各一处);换局 = 清空重铺 + 各人背包重置为随机一把。
 - 初始状态:单机开局玩家带手枪(`Level0._give_starting_weapon`,必须排在 `set_enabled_types` 之后,用 `default_type()`),12 把(每种 2 把)随机散落;按 R = 完全重开。`player.restart_at()` 不动背包;`player.tscn` 的 `_ready` 是空背包。`RunOptions.disabled_weapons` 不出现在分布里。
 - 武器精灵必须显式设 `texture_filter = 1`(nearest)。
 - 键位:数字键 1-4 = 背包位置(`5`-`0` 的输入动作不存在);滚轮在背包位置间循环,`Settings.wheel_switch` 默认 true;`F` / `Q` 在 `Settings.REMAPPABLE_ACTIONS` 里。上行切枪 = `winst`。容量 > 4 时第 5 把只能靠滚轮;要开数字键得同时改 `project.godot` 的 `[input]`、`LocalInputSource._switch_index_raw()` 的 `range(1, 5)` 与动作表。

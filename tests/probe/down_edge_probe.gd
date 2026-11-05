@@ -1,5 +1,5 @@
 extends Node
-# 三模式「倒地边沿」记分口径守卫(S-15:把 ~20 行×3 的倒地边沿收成 MatchRound._on_down_edge 模板之后,
+# 三模式「倒地边沿」记分口径守卫(S-15:把 ~20 行×3 的倒地边沿收成 RoundSystem.on_down_edge 模板之后,
 
 const MAP := "res://maps/demo.cyrm"
 const DT := 1.0 / 60.0

@@ -233,7 +233,7 @@ func _match_round_tick(delta: float) -> void:
 # ★ 代价照实记录:那条规则本是为反「反复活点蹲守」而立,删后对抗不再有这条性质;将来若要找回,正确的形状是「复活点选点避开存活敌人」(TeamSpawn.respawn_cell 的 RESPAWN_CLEARANCE 已做一半),而不是把击杀者瞬移走。
 	match _round_state:
 		RoundState.COUNTDOWN:
-			# ★ 与基类 MatchRound 同一条就绪闸:客户端场景建好(发过 match_sync)后倒计时才开始、并补发一次。
+			# ★ 与 RoundSystem 同一条就绪闸:客户端场景建好(发过 match_sync)后倒计时才开始、并补发一次。
 			#   本类整段覆写了 _match_round_tick ⇒ 不抄这道闸,对抗开局那一局的倒计时会从"客户端还在切场景"时起算,
 			#   本地时钟比服务器慢 1~2s ⇒ 最后 1 秒被 PLAYING 转变截掉(2026-11-01 用户实见)。
 			if not _countdown_can_start(delta):
@@ -268,7 +268,7 @@ func _match_round_tick(delta: float) -> void:
 			pass
 
 
-# ★ _round_over 不再覆写:本模式要的「记局胜(键 = 队号)+ 置 ROUND_OVER + 广播」与 MatchRound._round_over 逐字相同
+# ★ _round_over 不再覆写:本模式要的「记局胜(键 = 队号)+ 置 ROUND_OVER + 广播」与 RoundSystem.round_over 逐字相同
 func _start_next_round() -> void:
 	if _threshold_team() != 0:
 		_round_state = RoundState.MATCH_OVER

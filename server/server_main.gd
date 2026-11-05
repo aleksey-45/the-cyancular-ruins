@@ -299,7 +299,7 @@ func _process(delta: float) -> void:
 			print("worker: 1v1 报到超时(%d/2),退出释放端口" % _claims.size())
 			NetDiag.audit("abort", {"mode": ModeDefs.MODE_PVP, "reason": "report_timeout"})
 			get_tree().quit(0)
-	# ★ 终局滞留到点收场:MATCH_OVER 之后 worker 不主动退(见 MatchRound 的 pass),而大厅回收梯只认 worker 死亡
+	# ★ 终局滞留到点收场:MATCH_OVER 之后 worker 不主动退(见 RoundSystem.tick 的 MATCH_OVER 分支),而大厅回收梯只认 worker 死亡
 	#   ⇒ 结算页赖着不走时房/端口永久占用。这里给固定滞留期,到点主动退(先让结算数据早已送达;客户端已 _match_ended,
 	#   断开不会触发重连)。★ 只对 worker 生效,大厅没有 _host。
 	if _worker and _match_started and _host != null and _host.has_method("is_match_over") and bool(_host.call("is_match_over")):

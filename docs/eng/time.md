@@ -73,7 +73,7 @@
 11. **单机录制期保留尸体**：`WorldRewind.hold_corpses` 由 `Level0._tick_rewind` 每帧同步（录制 = true / 回放 = false）；保留下来的尸体隐藏时必须同时摘碰撞层（还原走 `_rw_held_layer`），否则是虚空碰撞箱；过期由 `WorldRewind.expire_corpses()` 按 `rw_death_ms` 清理。精英不保留。
 12. **进/出回溯必须读同一个输入源**：单机状态沿是 `WorldRewind.was_rewinding`，PvP 是 `_rw_on[role]`；置 `src.frozen = true` 与解冻必须是宿主自己那一个 `input_source` 对象（换对象 ⇒ `want` 恒假、回溯出不来）。
 13. **PvP 数值权威在服务器，客户端只做预测**：客户端拿 10Hz `TimeState` 镜像（`TimeEconomy.state_payload()`），本地不扣颗粒；本地加速只写 `pvp_haste_mult`，本地回溯只做冻结输入源 + 免伤 + 底片，位置由快照权威写回。建房参数走 `TimeRules.from_dict()`，其内部调 `clamp_self()`。
-14. **瓦片回溯的粒度是「子格死亡事件」，不是 HP 变化量**：记账点在 `Level0._on_sub_destroyed`，不按破坏来源过滤；同一格可多次入账，还原必须 t 降序（最新破坏先还原 = LIFO）。PvP 开局复位必须同时还两套表：`Level0.reset_destructibles()`（客户端）与 `MatchRound._reset_world_and_clear_dynamics`（服务器）都要复位格级 HP 表与子格 HP 表；漏一套 ⇒ 下一局客户端有墙、服务器没有。
+14. **瓦片回溯的粒度是「子格死亡事件」，不是 HP 变化量**：记账点在 `Level0._on_sub_destroyed`，不按破坏来源过滤；同一格可多次入账，还原必须 t 降序（最新破坏先还原 = LIFO）。PvP 开局复位必须同时还两套表：`Level0.reset_destructibles()`（客户端）与 `RoundSystem.reset_world_and_clear_dynamics`（服务器）都要复位格级 HP 表与子格 HP 表；漏一套 ⇒ 下一局客户端有墙、服务器没有。
 
 ## 3. 关键常量与唯一来源
 

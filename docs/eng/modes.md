@@ -20,7 +20,7 @@
 - `same_team()`:任一方 0 → false(0 = 查不到队伍),`same_team(0, 0)` 也是 false。
 - 子弹穿透队友、爆炸对队友满效(爆炸走 `_explode()` → `Explosion.apply_aoe`,玩家分支不看队伍)。`same_team` 在 `server/match/combat_system.gd` 的 `adjudicate` / `_adjudicate_grenade` 两处;`_check_player_contact` 只排除射手、不看队伍。
 - 激光也穿透队友:`MatchState.is_friendly(a, b)` + `LaserWeaponBase._damage_path_targets` 玩家循环里一条 `continue`(不是 `break`,队友身后的敌人照打)。只改权威侧。
-- 助攻与惩罚计数(`assists` / `team_damage` / `self_damage` / `team_kills`)只影响 `kscore`,不进 `dealt` / `taken`。助攻表 `MatchState._assist_times` = `victim_role -> {attacker_role: 时刻ms}`;写入口 `_note_hit`(由 `CombatSystem.on_player_hit` 调);判定在 `_record_down`(除击杀者外、窗口内、且 `same_team(attacker, killer)`);清空在 `MatchRound._respawn_player`;窗口复用 `ATTRIB_WINDOW`(3s)。队伍表为空 ⇒ 1v1 / 大乱斗拿不到助攻。
+- 助攻与惩罚计数(`assists` / `team_damage` / `self_damage` / `team_kills`)只影响 `kscore`,不进 `dealt` / `taken`。助攻表 `MatchState._assist_times` = `victim_role -> {attacker_role: 时刻ms}`;写入口 `_note_hit`(由 `CombatSystem.on_player_hit` 调);判定在 `_record_down`(除击杀者外、窗口内、且 `same_team(attacker, killer)`);清空在 `RoundSystem.respawn_player`;窗口复用 `ATTRIB_WINDOW`(3s)。队伍表为空 ⇒ 1v1 / 大乱斗拿不到助攻。
 - 惩罚 = `(team_damage + self_damage) ÷ 5 + team_kills × 100`(`ScoreRules.penalty`),记在肇事者行上。
 - 自伤专用通道:`CombatFeedback.note_self_hit` / `is_fresh_self_hit`,由 `Explosion.apply_aoe` 在 `shooter == victim` 时写;窗口 8ms;落地一笔真实归因时在 `attribute()` 里 `remove_meta("last_self_hit_time")`。
 - 对抗模式击杀后不复位任何人。1v1 的 `_reset_survivor` 与大乱斗保留。
@@ -41,7 +41,7 @@
 - `ui/screens/match_result.gd`(`MatchResult`,CanvasLayer)模式无关;模式差异全部由 `ui/screens/match_result_payload.gd` 的三个适配器(`for_duel` / `for_royale` / `for_team`)折成一个载荷字典。`columns` 由数据决定。
 - 列:`C_DUEL = [kills, deaths, dealt, taken, acs]` / `C_ROYALE = [kills, deaths, dealt, taken]` / `C_TEAM = [kills, deaths, assists, dealt, taken, acs]`;标题在 `ui/screens/match_result.gd::COLUMN_TITLES`。
 - 载荷字段集 `{kills, deaths, assists, dealt, taken, kscore, acs}`;口径收在 `core/sim/score_rules.gd`(`ScoreRules`,纯静态):`kscore = 击杀×100 + 助攻×50 + 伤害÷5 − 死亡×50 − 惩罚`,`acs = kscore ÷ 局数`;读端不得再加伤害。
-- 投递点:`1v1 server/match/match_round.gd` / 大乱斗 `server/hosts/royale_host.gd` / 对抗 `server/hosts/team_host.gd`。1v1 的击杀记给对手且不看归因;大乱斗是归因制,无归因的死亡不计任何人的击杀。
+- 投递点:`1v1 server/match/round_system.gd` / 大乱斗 `server/hosts/royale_host.gd` / 对抗 `server/hosts/team_host.gd`。1v1 的击杀记给对手且不看归因;大乱斗是归因制,无归因的死亡不计任何人的击杀。
 - `leave_requested` 只发一次(`_leaving` 防重入);离场走 `Level0.safe_change_scene`,不裸 `change_scene_to_file`。
 - ESC:对局中 = 暂停菜单,结算页 = 返回主菜单。三个客户端的 MATCH_OVER 块都 `_pause_menu.queue_free()`;删掉这两行会让 ESC 在结算页同时触发两件事。
 - 层位 150 只写在 `ui/screens/match_result.tscn` 里,只能从场景实例化,不 `MatchResult.new()`。

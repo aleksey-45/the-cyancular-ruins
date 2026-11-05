@@ -200,7 +200,7 @@ func _broadcast_round_state() -> void:
 	data["names"] = names
 	data["alive"] = alive
 	data["left"] = _left.keys()
-# match_winner / stats 由 _round_state_base 并进(与 MatchRound 同一份构造)⇒ 本模式不再各拼一份。
+# match_winner / stats 由 _round_state_base 并进(与 RoundSystem 同一份构造)⇒ 本模式不再各拼一份。
 # ★ 大乱斗不带 mvp(spec §3.6/§4 都没要求,结算页也不列 ACS)—— 骨架也不发,别在这里补:加了它就是一个没有读者的键。
 # 基类的广播样板,只多一个「只发在线 peer」;样板本身收在 MatchHost._rpc_all,这里走 _send_round_state(它内部仍调它,并多并一个 grace 字段)。
 	_send_round_state(data)

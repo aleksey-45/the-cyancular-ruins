@@ -35,14 +35,14 @@
 - 地图:默认 `MatchBootstrap.PVP_MAP = res://maps/newfactory.cyrm`;房主上报的 `player_options.map` 经 `MapCatalog.resolve_pvp_map()` 校验(只认 `res://maps/*.cyrm`、拒 `..`、须有双出生点),不合规回落默认图。
 - `MatchHost` 建世界(只碰撞不渲染)+ 每 role 一份 `player.tscn`,注入 `PacketInputSource`。
 - 回合:`MatchState.RoundState` COUNTDOWN → PLAYING → ROUND_OVER → MATCH_OVER;`KILLS_TO_WIN = 5`、`ROUNDS_TO_WIN = 2`、`COUNTDOWN_TIME = 3.0`、`ROUND_OVER_TIME = 4.0`、`RESPAWN_DELAY = 2.0`。击杀记给对方(倒地边沿,不分死因);换局换边:1v1 的 `_side_swap` 决定 role1 这局在左半还是右半(地图 `# respawn 1|2` 按侧列表重随机),对抗整队换到另一侧的 `# respawn` 列表(旧图的几何回退仍用 `_side_swap` 翻点集)。COUNTDOWN 双端禁移动 / 开火:服务器清输入队列并 `reset_state()`,客户端 `InputSource.frozen`。
-- ★★ 开局倒计时(三模式同一条):服务器等客户端场景就绪(`mark_client_ready`,上限 `COUNTDOWN_HOLD_MAX=2.0s`)才开始走时钟,并在 COUNTDOWN 期间**每 0.5s 重播一次当前剩余**(`MatchRound._countdown_resync_tick`;大乱斗原就有,1v1/3v3 2026-11-01 补上)。客户端走秒器 = 纯逻辑 `CountdownClock`(`ui/hud/countdown_clock.gd`):重复 `start` **只采纳更短的剩余、绝不回拨**,显示 `ceil(剩余)` 且钳到 ≥1 ⇒ 数字单调不增、`3→2→1` 一个不落。守卫 = `tests/smoke/countdown_clock_smoke.gd`(9 条)。
+- ★★ 开局倒计时(三模式同一条):服务器等客户端场景就绪(`mark_client_ready`,上限 `COUNTDOWN_HOLD_MAX=2.0s`)才开始走时钟,并在 COUNTDOWN 期间**每 0.5s 重播一次当前剩余**(`RoundSystem.countdown_resync_tick`;大乱斗原就有,1v1/3v3 2026-11-01 补上)。客户端走秒器 = 纯逻辑 `CountdownClock`(`ui/hud/countdown_clock.gd`):重复 `start` **只采纳更短的剩余、绝不回拨**,显示 `ceil(剩余)` 且钳到 ≥1 ⇒ 数字单调不增、`3→2→1` 一个不落。守卫 = `tests/smoke/countdown_clock_smoke.gd`(9 条)。
 - 换局:服务器 `_reset_world_and_clear_dynamics()` 还原可破坏砖与子格 HP 基线、清子弹、重置地面武器;客户端同刻 `Level0.reset_destructibles()`。
 
 ## 权威宿主的继承链
 
 > ★ **2026-11-04 裁定:拆。** 目标形态 = **薄壳宿主(Node)+ 状态/端口(RefCounted)+ 域系统(RefCounted,只依赖状态与端口)**,与客户端 `PvpMatchClient` + `ClientState/ClientPorts` + `scenes/mp_client/` 六件套同构;`extends` 只保留"模式子类"这一条轴。迁移步骤见下方计划指针。本节四条定律描述的是**当前(迁移中)状态**,M2 后改写成「壳 + 状态/端口 + 系统」七条规则。
 
-`Node ← MatchState ← MatchRound ← MatchHost ← (TeamHost | RoyaleHost)`(快照/裁决/地面武器三个域已抽成 `snapshot_system.gd` / `combat_system.gd` / `ground_system.gd`,只依赖 state + ports)。
+`Node ← MatchState ← MatchHost ← (TeamHost | RoyaleHost)`(快照/裁决/地面武器/回合四个域已抽成 `snapshot_system.gd` / `combat_system.gd` / `ground_system.gd` / `round_system.gd`,只依赖 state + ports)。
 
 链上 6 个文件是**同一个对象按域切成的 6 片**,不是 is-a 分类;只有 `TeamHost` / `RoyaleHost` 是真子类。`extends` 是 GDScript 没有 partial class 时跨文件共享 `self` 的唯一廉价手段(`0ae93a3e`,2026-09-15:原 `match_host.gd` 626 行 / 35 函数 / 最长 48 行,形状是"宽"不是"深",故按域分文件)。`3c8dc8f0` 把地面武器域插进链中间,`726a4008` 加第三个模式宿主。
 
