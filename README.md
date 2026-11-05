@@ -23,7 +23,7 @@
 git clone https://github.com/aleksey-45/the-cyancular-ruins.git
 ```
 
-先按[构建说明](RELEASE.md)安装 C++ 工具链与 Python 构建依赖，依次执行 `python tools/build_process_group.py`、`python tools/build_gns.py` 和 `python tools/build_simulation.py`。然后使用 Godot 编辑器导入项目根目录的 `project.godot`，按 `F5` 即可运行。角色与弹丸场景依赖模拟扩展；架构边界见[场景内原生模拟](docs/eng/native_scene_simulation.md)。
+先按[构建说明](RELEASE.md)安装 C++ 工具链与 Python 构建依赖，依次执行 `python tools/build_process_group.py` 和 `python tools/build_gns.py`。然后使用 Godot 编辑器导入项目根目录的 `project.godot`，按 `F5` 即可运行。模拟逻辑位于 `core/sim/`；架构边界见[场景内模拟](docs/eng/simulation.md)。
 
 ### 打包发布
 

@@ -33,7 +33,6 @@ The-Cyancular-Ruins.zip
     ├── The Cyancular Ruins.exe
     ├── process_group.windows.x86_64.dll
     ├── gns.windows.x86_64.dll
-    ├── simulation.windows.x86_64.dll
     ├── THIRD_PARTY_NOTICES.txt
     └── easytier/
         ├── easytier-core.exe

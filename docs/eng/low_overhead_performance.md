@@ -1,6 +1,6 @@
 # 性能观测
 
-[PerfMonitor](../../core/config/perf_monitor.gd) 管理 [NativePerformanceStats](../../native/simulation/performance_stats.h) 的固定容量统计。默认采集阶段耗时与计数，每秒发布一个窗口；每个样本只更新标量，不构造世界、角色、数据包或逐帧记录。
+[PerfMonitor](../../core/config/perf_monitor.gd) 管理 [PerformanceStats](../../core/config/performance_stats.gd) 的固定容量统计。统计默认关闭，只有显式传入测量参数时才采集；开启后每秒发布一个窗口，每个样本只更新标量，不构造世界、角色、数据包或逐帧记录。
 
 ## 使用
 
@@ -12,13 +12,13 @@ godot --headless --path . res://server/server_main.tscn -- --perf-summary /path/
 godot --path . -- --no-perf
 ```
 
-`--perf` 每秒打印一次窗口时长、样本数、均值及最大值，时间单位为 us。`--perf-summary <path>` 在正常退出时写一次聚合 JSON；每个进程使用独立路径，异常退出不保证有汇总。`--no-perf` 停用原生采样和监视节点回调，调用点保留关闭检查。
+`--perf` 每秒打印一次窗口时长、样本数、均值及最大值，时间单位为 us，并输出一行预测校正摘要。统计开启期间每秒还会输出 `PERF correction_samples=...`，包含当前窗口的原始样本；需要 p50/p95/p99 时由外部对这些样本排序计算。`--corr-trace <path>` 把同样的样本逐行写成 JSONL，避免大样本刷控制台；每条包含权威 tick、本地 `sim`/`clk`、历史范围与缺口类型、恢复原因、位置差、速度、`skip`（当前世界推进始终为 false）、物理帧，以及最近角色距离和 64/128/256px 内人数。`--perf-summary <path>` 在正常退出时写一次聚合 JSON，其中 `correction` 段给出校正次数、最大偏差、缺口类型与失效原因分布，不保留分位；每个进程使用独立路径，异常退出不保证有汇总。`--perf`、`--perf-summary`、`--corr-trace` 任一出现即开启采样，都不出现则不采集。`--no-perf` 优先于三者，用于显式停用。
 
-调试构建提供 Godot `Game/` 自定义监视值。原生 `snapshot(false)` 读取最近发布窗口，`snapshot(true)` 读取累计值；`reset()` 清空统计。数据不包含玩法状态，可用于观察趋势和定位需要进一步分析的阶段。
+调试构建提供 Godot `Game/` 自定义监视值。`snapshot(false)` 读取最近发布窗口，`snapshot(true)` 读取累计值；`reset()` 清空统计。数据不包含玩法状态，可用于观察趋势和定位需要进一步分析的阶段。
 
 ## 容量与统计
 
-21 个指标在主线程聚合，包含样本数、总量、最大值、最大值发生时间、超阈值数和固定直方图。原生聚合 Storage 以静态断言限制在 16 KiB 内；该预算不含引擎监视回调、导出临时数据或游戏本身。
+25 个指标在主线程聚合，包含样本数、总量、最大值、最大值发生时间、超阈值数和固定直方图。除 tick 计数外全部是微秒耗时，物理查询单独记为 `physics_motion`、`physics_ray`、`physics_shape`，角色代理同步记为 `proxy_sync`。聚合 Storage 以静态断言限制在 16 KiB 内；该预算不含引擎监视回调、导出临时数据或游戏本身。预测校正的原始样本只保留当前发布窗口，由 `PerfMonitor` 每秒取走并清空；累计次数、最大偏差、缺口类型和原因分布使用固定大小的计数，不随运行时间增长。
 
 时间桶上界为 100、250、500、1000、2000、4000、8000、16667、33334、66667 us，另有溢出桶。分桶只能提供范围，不能生成精确 p95/p99。计数指标以 tick 为单位，不能套用 us。
 
@@ -31,12 +31,12 @@ godot --path . -- --no-perf
 | network_poll / network_dispatch | 拉包及积压过滤，以及同步解码和事件消费者；派发时间包含业务工作 |
 | client_authority / client_tick / client_present | 权威接纳（含空批次）、客户端物理回调、脚本表现准备；最后一项排除 GPU 与显示 |
 | replay | 恢复与后缀重放；零步恢复也可能有样本，正常向前预测不计入 |
-| actor_step / projectile_step / combat_step | 角色（含武器）、弹道物理、预测战斗；存在嵌套，不能直接相加 |
+| actor_step / projectile_step / combat_step | 本地角色（含武器）及远端单步运动、弹道物理、预测战斗；存在嵌套，不能直接相加 |
 | history_save / terrain_commit | 历史保存、实际脏地形碰撞提交；没有脏地形不记录提交 |
 | callback_interval | 连续普通回调的墙钟间隔，包含等待及其他工作，不是 CPU 用时或实际显示间隔 |
 | physics_ticks_per_frame / replay_ticks_per_frame | 相邻普通回调间累计的物理 tick 和重放步数 |
 
-单 peer 均值不能当整批耗时。`state_encode_peer.sum / state_fanout.samples` 可计算平均每批编码总量，不能得出最大批次。窗口均值的 p95 也不能当作单次调用 p95。包含子调用的指标不能与子指标重复累计。
+单 peer 均值不能当整批耗时。`state_encode_peer.sum / state_fanout.samples` 可计算平均每批编码总量，不能得出最大批次。窗口均值的 p95 也不能当作单次调用 p95。包含子调用的指标不能与子指标重复累计。需要校正分位时，解析 `--corr-trace` 的 JSONL（或 `PERF correction_samples` 行）并在外部排序；summary 的 `correction` 段不提供分位。
 
 ## 定位流程
 

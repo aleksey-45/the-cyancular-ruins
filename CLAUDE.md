@@ -13,7 +13,7 @@
 - **渲染规格**：视口分辨率 1920×1440，使用 `rendering/mobile` 渲染后端。
 - **空间几何**：**环形世界（环面几何）**，地图在水平与垂直方向均首尾相连循环连通，实体、子弹与摄像机平滑跨越边界。
 - **单人模式**：核心关卡 `Level0`，加载 `.cyrm` 格式地图，支持时间控制系统（时空回溯与时间加速机制）。
-- **多人对战**：包含 1v1 回合死斗、3v3 团队对抗以及多人大乱斗模式。采用专用服务端权威架构，支持客户端预测与回滚、断线重连保护，以及基于 EasyTier 的免驱动应用层 P2P 网络隧道。
+- **多人对战**：包含 1v1 回合死斗、2–10 人团队对抗以及多人大乱斗模式。采用专用服务端权威架构，支持客户端预测与回滚、断线重连保护，以及基于 EasyTier 的免驱动应用层 P2P 网络隧道。
 
 ---
 
@@ -45,15 +45,15 @@ godot --headless --path . --export-release "Windows Desktop" "The Cyancular Ruin
 
 ---
 
-少量关键行为检查见 [验证说明](docs/eng/tests.md)，原生固定容量统计与开销口径见 [低开销性能观测](docs/eng/low_overhead_performance.md)。地形状态和计算归属见 [原生地形](docs/eng/native_terrain.md)。
+少量关键行为检查见 [验证说明](docs/eng/tests.md)，固定容量统计与开销口径见 [低开销性能观测](docs/eng/low_overhead_performance.md)。地形状态和计算归属见 [地形](docs/eng/terrain.md)。
 
 ## 三、 架构文档索引
 
 | 主题 | 当前实现 |
 |---|---|
-| 世界、地形、地图与水体 | [世界](docs/eng/world.md)、[原生地形](docs/eng/native_terrain.md) |
+| 世界、地形、地图与水体 | [世界](docs/eng/world.md)、[地形](docs/eng/terrain.md) |
 | 角色、武器、敌人 | [玩家](docs/eng/player.md)、[武器](docs/eng/weapons.md)、[敌人](docs/eng/enemies.md) |
-| 高频模拟与表现边界 | [原生模拟](docs/eng/native_scene_simulation.md)、[原生战斗](docs/eng/native_combat_simulation.md) |
+| 高频模拟与表现边界 | [场景内模拟](docs/eng/simulation.md)、[战斗模拟](docs/eng/combat_simulation.md) |
 | 联机、模式与预测 | [联机](docs/eng/netplay.md)、[模式](docs/eng/modes.md)、[本地预测](docs/eng/local_prediction_design.md)、[历史复用](docs/eng/prediction_reuse.md) |
 | 画面与界面 | [渲染](docs/eng/render.md)、[UI](docs/eng/ui.md) |
 | 开发与验证 | [工具](docs/eng/tools.md)、[关键行为检查](docs/eng/tests.md)、[性能观测](docs/eng/low_overhead_performance.md) |

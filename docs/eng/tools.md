@@ -63,12 +63,9 @@
   - 基于 godot-cpp（分支 `godot-4.5-stable`，commit `e83fd09`），通过 SCons 4.9.1 编译 Windows x64 DLL。默认使用 MSVC，亦支持 `--mingw` 参数或 `MINGW_PREFIX` 环境变量指定 LLVM MinGW 工具链。产物位于 `native/process_group/bin/`。
   - macOS 使用 `--platform macos`，以 Xcode Clang 编译 arm64 + x86_64 通用动态库，部署目标为 macOS 12。
 - **macOS 发布 (`tools/build_macos.py`)**：
-  - 编译通用进程、GNS 与场景模拟扩展，合并官方 EasyTier 两种架构，将可执行组件与 `relay.txt` 放入 `Contents/Helpers`，导出、签名并归档 `.app`。`tools/fetch_easytier.py --platform macos` 可单独安装通用 EasyTier。产物和双架构 CI 验证见[发布手册](../../RELEASE.md)。
+  - 编译通用进程与 GNS 扩展，合并官方 EasyTier 两种架构，将可执行组件与 `relay.txt` 放入 `Contents/Helpers`，导出、签名并归档 `.app`。`tools/fetch_easytier.py --platform macos` 可单独安装通用 EasyTier。产物和双架构 CI 验证见[发布手册](../../RELEASE.md)。
 - **GNS 扩展构建 (`tools/build_gns.py`)**：
   - 使用 CMake 3.31.6 与 Ninja 1.11.1.4，固定 GNS v1.6.1、Protobuf v21.12 与 godot-cpp 4.5 的源码提交。依赖缓存位于 `.test_logs/native/`，运行库静态链接进扩展。
   - Windows 使用 MSVC 或 `MINGW_PREFIX` 指定的 LLVM MinGW，密码库采用系统 BCrypt。macOS 使用 `--platform macos`，静态链接 OpenSSL 3.5.9，分别编译 arm64 与 x86_64 后合成通用动态库。产物位于 `native/gns/bin/`。
 - **发布包归档 (`tools/archive_build.py`)**：
-  - 打包生成 `The-Cyancular-Ruins.zip`，内部根目录格式为 `The-Cyancular-Ruins-YYYYMMDDHHMM/`（时间戳使用 UTC+8）。包含统一游戏 EXE、同级进程、GNS 与场景模拟扩展 DLL 及开源声明 `THIRD_PARTY_NOTICES.txt`。
-- **场景模拟扩展构建 (`tools/build_simulation.py`)**：
-  - 使用同一份固定 godot-cpp SDK，以 CMake/Ninja 编译 Release C++17 原生类；Windows 支持 MSVC 或 LLVM MinGW，macOS 合并 arm64 与 x86_64。产物位于 `native/simulation/bin/`。
-  - 热点循环直接读取原生成员并调用 Godot 物理 API；GDScript 在边界传递配置、输入与结果。职责与调用边界见[原生模拟](native_scene_simulation.md)。
+  - 打包生成 `The-Cyancular-Ruins.zip`，内部根目录格式为 `The-Cyancular-Ruins-YYYYMMDDHHMM/`（时间戳使用 UTC+8）。包含统一游戏 EXE、同级进程与 GNS DLL 及开源声明 `THIRD_PARTY_NOTICES.txt`。
