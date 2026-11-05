@@ -53,6 +53,10 @@
 
 ★ 规则 1~3 **零守卫**:唯一守过"基类不得泄漏子类方法"的 `kh_l5_probe` 已随 2026-10-09 测试面削减删除(见 [`registered-debt.md`](registered-debt.md) 的零守卫面)。
 
+5. **新增基类必须 ≥2 个真子类,或有明确在飞计划**:单实现不为将来"可能"抽基类。
+
+改法与分阶段任务(清错 / 去重 / 单叶基类 / 为什么裁定不推平)= [`docs/superpowers/plans/2026-11-04-inheritance-remediation.md`](../superpowers/plans/2026-11-04-inheritance-remediation.md)。
+
 ## 频率与载荷
 
 | 项 | 值 |
