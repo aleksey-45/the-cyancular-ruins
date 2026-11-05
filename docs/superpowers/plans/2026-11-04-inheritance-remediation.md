@@ -1,84 +1,120 @@
-# 继承链治理实施计划（2026-11-04）
+# 继承链拆解 + 服务端/客户端结构对齐 实施计划（2026-11-04）
 
-> 对象：① `MatchState → MatchGround → MatchSnapshot → MatchCombat → MatchRound → MatchHost`（6 个域文件的一条链）+ `TeamHost` / `RoyaleHost`；② `LobbyPage ← MpLobby`（单叶基类，8 个 `push_error` 抽象桩）；③ `EnemyFlyBase ← EnemyFlyBird`（单叶基类，预支抽象）。
-> 背景与四条物理定律 = [`docs/eng/netplay.md`](../../eng/netplay.md) 的「权威宿主的继承链」；零守卫登记 = [`registered-debt.md`](../../eng/registered-debt.md)。
-> **结论先行**：这条链的角色是**文件拆分器**，不是抽象阶梯。本轮目标是**消除它造成的具体错误 + 禁止再长层**，不是推平它——推平在 GDScript 里没有干净解（§5，已裁定不做）。
+> 对象：① `MatchState → MatchGround → MatchSnapshot → MatchCombat → MatchRound → MatchHost`（6 个域文件的一条链）+ `TeamHost` / `RoyaleHost`；② `LobbyPage ← MpLobby`（单叶基类）；③ `EnemyFlyBase ← EnemyFlyBird`（单叶基类）。
+> 背景 = [`docs/eng/netplay.md`](../../eng/netplay.md) 的「权威宿主的继承链」；零守卫登记 = [`registered-debt.md`](../../eng/registered-debt.md)。
+> **裁定（2026-11-04，用户）：大改也拆，并且服务端与客户端结构对齐。**
+> 结论：**域逻辑一律组合件（RefCounted + `bind(host)`），继承只留"模式子类"这一条真轴**；服务端链 `7 项目层 → 2 项目层`（`Node ← MatchHost ← TeamHost|RoyaleHost`），与客户端 `Node2D ← PvpMatchClient ← pvp_game|royale_game|team_game` 同构。
 
-## 1. 判定口径（什么才值得改）
+## 1. 目标结构（两侧同构）
 
-| 判定 | 特征 | 处置 |
-|---|---|---|
-| **伪继承（域切片）** | 中间层零生命周期钩子、零 `is` 判别、从不被单独实例化 | 不动结构；只修它造成的具体错误（§2/§3） |
-| **真类型** | ≥2 个真子类、有虚钩子覆写、`super` 协作 | 保留（`MatchHost ← TeamHost\|RoyaleHost`、`PlayerInput ← Local\|Packet\|Ai`） |
-| **单叶基类** | 只有 1 个真子类 + 抽象桩 / 预支抽象 | **合并或冻结**（§4） |
-| **纯方法袋** | 无自有业务状态（`MatchSnapshot` 6 字段全是 diag 计数） | 不改位置；只按 §2 修错 |
+```
+客户端（现状，作为对齐基准）                     服务端（本次目标）
+Node2D PvpMatchClient                            Node MatchHost
+  ├ 共享状态（_local/_world/_replicas…）            ├ 共享状态（players/input_sources/grid/_ack_seq/_stats…）
+  ├ 编排（_physics_process/_ready…）                ├ 编排（_init/_ready/_physics_process）
+  ├ 虚钩子（7 个，三模式覆写）                       ├ 虚钩子（模式差异，TeamHost/RoyaleHost 覆写）
+  └ 组合件（RefCounted + bind）                     └ 组合件（RefCounted + bind）
+      TileSync / PickupSync / ResultScreen               GroundSync / SnapshotTx
+      ReconnectDriver / ReplicaSet / TimeFx              CombatArbiter / RoundFlow
+     （+ InputUplink 等 core 侧件）                      （+ InputIntake / TickTiming 已有）
 
-## 2. 阶段 1：清错（P0，全部档 2，可并行，每项一个提交）
+pvp_game | royale_game | team_game               TeamHost | RoyaleHost
+  （薄子类：只覆写宿主钩子）                          （薄子类：只覆写宿主钩子）
+```
 
-| ID | 改法 | 文件 | 验收 | 预估 |
+**六条对齐规则**（拆完后写进 `docs/eng/netplay.md`，替代今天"链的四条物理定律"）：
+
+1. **模式差异只许出现在薄子类**：`TeamHost` / `RoyaleHost`（以及客户端的三个 game 场景）只覆写宿主虚钩子，不放域逻辑。
+2. **域逻辑一律组合件**：新增/迁移的域 = 新文件 `XxxSync`（`class_name` 蛇形 = 文件名，`extends RefCounted`），**不许再靠 `extends` 分文件**。
+3. **组合件契约与客户端逐字同款**：`var _host: Node = null` + `func bind(host: Node, 显式依赖…)`；跨域共享引用以参数交进来（如 `bind(host, replicas: Dictionary, tint_of: Callable)`），宿主与组件都不新造单例。
+4. **状态归属**：跨域状态留在宿主（玩家表 / 输入表 / 网格 / 统计 / tick 账本）；域内状态放组件（地面武器表 / 快照 diag 计数 / 仲裁缓存 / 回合闸）。
+5. **创建方式一致**：宿主 `_ensure_xxx()` 懒建或 `_ready` 建一次 + `bind(self)`（客户端现有写法）；组件不自己找宿主。
+6. **调用方向**：宿主 → 组件 = 静态调用；组件 → 宿主 = 动态成员访问（与客户端 `_client._apply_tint(...)` 完全同款）。**热循环必须把数据以类型化局部量/参数取到组件内再用**（见 §4 性能红线），不许在逐子弹循环里做动态属性访问。
+
+## 2. 阶段 1/2：先清链造成的错（不阻塞拆解，可与阶段 3 并行）
+
+**阶段 1 清错（档 2，T1.1~T1.6）** 与 **阶段 2 去重（T2.1~T2.3）**：
+
+| ID | 改法 | 文件 | 验收 | 档 |
 |---|---|---|---|---|
-| **T1.1** | `_host` 类型化：`var _host: Node` → `MatchHost`；三个 `start_on` 返回类型 `-> Node` 改 `-> MatchHost`。删 8 处**恒真** `has_method`（`_broadcast_round_state` / `is_match_over` / `role_spawns` / `mark_client_ready` / `ground_weapons_payload` / `destroyed_cells` / `damaged_partial_subs`）；4 处真模式判别改 `is TeamHost` / `is RoyaleHost`（`mark_disconnected` / `team_map` / `request_suicide_role` / `set_display_names`） | `server/server_main.gd:5`、`server/match/match_bootstrap.gd`、`server/hosts/team_host.gd`、`royale_host.gd` | 默认批全绿；`pvp_match_smoke`（真链路，需认领） | S |
-| **T1.2** | 下沉空实现：`MatchState` 加 `func reset_time_rewind_state() -> void: pass`，`MatchHost` 覆写；删 `match_round.gd:182-183` 唯一的反向 `has_method`+`call` | `server/match/match_state.gd`、`match_round.gd`、`match_host.gd` | 默认批 + 换局后回溯环复位（真链路回溯支需认领） | S |
-| **T1.3** | 删死开关 `adjudicate_exact_only`（全仓只声明 + 一处读取、零写入），连带去掉 `HitShape.candidate_hits` 的那个实参 | `server/match/match_combat.gd:9,109` | 默认批（`bullet_sweep_probe` 等价性） | S |
-| **T1.4** | 端口延迟三常量搬 `core/mp/mode_defs.gd`，`worker_launcher.gd` 反向引 core，删 `mode_room_rules.gd` 这层包装（core 不再反向依赖 server） | `core/mp/mode_room_rules.gd`、`core/mp/mode_defs.gd`、`server/lobby/worker_launcher.gd` | 默认批（`room_view_smoke`）+ 真链路建房 | S |
-| **T1.5** | 删死字段 `MatchState._options`（仅 `match_host.gd:21` 赋值、全仓零读取） | `server/match/match_state.gd:86`、`match_host.gd:21` | 默认批 | XS |
-| **T1.6** | 去掉冗余覆写：`TeamHost._on_bullet_hit` / `RoyaleHost._on_bullet_hit` 与基类逐字同写（幂等），删两份叶子覆写；**先**把基类写点注释改成"三模式唯一写端"防误删 | `server/hosts/team_host.gd:430`、`royale_host.gd:230`、`match_combat.gd:271` | **档 3**：结算页 `dealt/taken` 三模式各一条（真链路需认领） | S |
+| T1.1 | `_host: Node` → `MatchHost`；三个 `start_on` 返回类型改 `-> MatchHost`；删 8 处恒真 `has_method`；4 处真模式判别改 `is TeamHost`/`is RoyaleHost` | `server/server_main.gd:5`、`server/match/match_bootstrap.gd`、`server/hosts/{team,royale}_host.gd` | 默认批 + `pvp_match_smoke` | 2 |
+| T1.2 | `MatchState` 加 `reset_time_rewind_state()` 空实现、`MatchHost` 覆写；删 `match_round.gd:182-183` 反向 `has_method`+`call` | `server/match/{match_state,match_round,match_host}.gd` | 默认批 + 换局重置真链路 | 2 |
+| T1.3 | 删死开关 `adjudicate_exact_only`（零写入）及其实参 | `server/match/match_combat.gd:9,109` | 默认批（`bullet_sweep_probe`） | 2 |
+| T1.4 | 端口延迟三常量搬 `core/mp/mode_defs.gd`，`worker_launcher` 反向引 core，删 `mode_room_rules.gd` 包装 | `core/mp/{mode_room_rules,mode_defs}.gd`、`server/lobby/worker_launcher.gd` | 默认批 + 真链路建房 | 2 |
+| T1.5 | 删死字段 `_options`（仅赋值无读取） | `server/match/{match_state,match_host}.gd` | 默认批 | 2 |
+| T1.6 | 删两个叶子冗余 `_on_bullet_hit` 覆写（幂等）；**先**把基类写点注释改成"三模式唯一写端" | `server/hosts/{team,royale}_host.gd`、`server/match/match_combat.gd` | 结算页 `dealt/taken` 三模式各一条（真链路） | 3 |
+| T2.1 | COUNTDOWN 分支（`match_round.gd:65-90` ↔ `team_host.gd:234-257`，约 28 行逐字）提成 `MatchRound._countdown_step()` | `server/match/match_round.gd`、`server/hosts/team_host.gd` | `down_edge_probe` + `countdown_clock_smoke` + `team_match_probe` | 2 |
+| T2.2 | `_respawn_player` 的 6 行 meta 清理、`request_suicide_role` 13 行上提；自杀用虚钩子 `_suicide_enabled()`（默认 false，两模式 true）保 1v1 不响应 K | `server/match/{match_round,match_host}.gd`、两个模式宿主 | `down_edge_probe` + 真链路 | 3 |
+| T2.3 | 上提纪律落纸：剔除注释后逐字相同 ⇒ 上提；只多 1-2 行或语义不同 ⇒ 留两份并注原因 | 本文 + `docs/eng/netplay.md` | 文档评审 | 1 |
 
-> 建议顺序：T1.3/T1.4/T1.5（零行为）→ T1.2 → T1.1 → T1.6（承重，最后做）。
+> 顺序：T1.3/T1.4/T1.5（零行为）→ T1.2 → T1.1 → T2.x。**T1.6 和 T2.x 若与拆解步骤撞同一函数，合并进对应 S 步做，避免两次重写。**
 
-## 3. 阶段 2：去重（P1，档 2/3，同一 bug 只该修一次）
+## 3. 阶段 3：拆解（每步一个提交、可单独 revert、每步跑默认批）
 
-| ID | 改法 | 挡什么 | 验收 |
+| 步 | 动作 | 验收 | 档 | 依赖 |
+|---|---|---|---|---|
+| **S0** | 基线：默认批判词 + `--diag` 的 O0 tick 分段计时（`adjudicate/own_snap/world_snap/rewind`）+ `--list` 形状 + `EXPECTED_SCRIPTS=243` 记进计划附录 | 全部数值留档，供 S1~S4 对比 | — | — |
+| **S1** | `MatchSnapshot`(113 行/3 函数/6 diag 字段) → 组件：`extends MatchState` → `extends RefCounted`；`var _host: Node` + `bind(host)`；`_tx_*` 字段留下；方法内直读宿主状态改 `_host.players` 等动态访问（方法体逻辑不动）。`MatchCombat extends MatchSnapshot` → `extends MatchState`。`MatchHost` 加 `_snapshot`、`_init` 里 bind、两处调用点改 `_snapshot.broadcast()/send_own()` | 默认批 48 支全绿 + `snapshot_size_probe` + O0 对比（Δ≤5%）；真链路里程碑 M1 时补 | 3 | S0 |
+| **S2** | `MatchCombat`(342 行/18 函数) → 组件：同上；`_on_bullet_hit` 基类实现移到 `MatchHost` 成为虚方法（叶子覆写 + `super` 行为不变）；State helper 调用改 `_host._role_of(...)` 等动态调用。`MatchRound extends MatchCombat` → `extends MatchState`。`MatchHost` 加 `_combat`、替换调用点、`TileDefs.on_destroyed` 回调注册改 `_combat._on_tile_destroyed` | 默认批 + `rollback_fidelity_probe` + `bullet_sweep_probe` + **真链路 M1：`pvp_match_smoke`（需认领 7777）** + O0 | 3 | S1 |
+| **S3** | `MatchGround`(363 行/21 函数，含 6 域字段) → 组件：字段整体搬进组件；`_host` 动态访问宿主（`_rpc_all`/`grid`/`players`/`_disabled_weapons`）；`MatchHost` 加 `_ground`、替换 4 处调用点；`RoundFlow` 拆分前先让 `MatchRound` 里对 Ground 的两处调用改 `_host._ground.xxx` | 默认批 + `ground_weapon_field_smoke` + 真链路（拾取/落定，随 M1） | 3 | S2 |
+| **S4** | `MatchRound`(307 行/19 函数) → `RoundFlow` 组件 + **合并 `MatchState` 进 `MatchHost`**（全部共享字段/方法搬入，`MatchHost extends Node`；`_spawn_cell`/`role_spawns` 等钩子成为 `MatchHost` 虚方法）。模式钩子仍定义在 `MatchHost`、叶子覆写；`_physics_process` 依次调 4 个组件 | 默认批 + `down_edge_probe` + **真链路 M2：`pvp_match_smoke` + `team_match_probe`（需认领）** + O0 + 两种模式手工冒烟 | 3 | S3 |
+| **S5** | 客户端侧对齐核查（不改大结构）：确认三模式场景只覆写 `PvpMatchClient` 虚钩子、无域逻辑残留；把客户端 6 件套与 `_ensure_*` 接线方式写成 `docs/eng/netplay.md` 的对齐表；若发现客户端仍在用 `extends` 塞域逻辑（如时间玩法块），登记为后续独立任务，不塞进本计划 | 对齐表 + `menu_autotest`/`pvp_match_smoke` 不回归 | 1 | S4 |
+| **S6** | 命名与文档收口：组件改名为对齐客户端风格（`ground_sync.gd`/`snapshot_tx.gd`/`combat_arbiter.gd`/`round_flow.gd`，`class_name` 蛇形），同批更新所有 docs/eng 引用与按路径读源码的探针（`rollback_fidelity_probe` 读 `match_combat.gd`/`match_host.gd` 的取数点）；`netplay.md` 链一节改写成「宿主 + 组合件」；`registered-debt` 零守卫面更新；删本计划 §1 的旧四条定律 | `check_naming` 全绿 + 默认批 + **真链路 M3：`pvp_match_smoke` + `team_match_probe`（认领）** + 全仓 grep 零悬空 | 3 | S4 |
+
+**里程碑与off-ramp**：M1 = S2 后（链剩 `Node←State←Ground←Round←Host←leaves`），M2 = S4 后（目标形态达成），M3 = S6 后（命名/文档收口）。任一 S 步失败 → 单独 revert 该提交；S4 失败回退到 M1 形态也仍比现状浅 3 层。
+
+## 4. 性能红线（拆解最大的真实风险）
+
+- **热路径**（`_adjudicate_bullets` 逐子弹、`_replay_hurt_rect` 回放、快照打包逐玩家）**不许在循环里做动态属性访问**：宿主把 `players`/子弹数组/受击面缓存以**类型化参数**传给组件的 tick 方法，组件内用局部类型化变量。
+- 每次拆步后跑一次 **O0 tick 分段计时**（`--diag`，同图同人数同子弹量）并与 S0 基线比：单段 Δ > 5% 即视为回归，先优化到 ≤5% 再提交。
+- `perf_probe` 与导出批的服务端 tick 预算（60Hz 16.67ms）同为参考线。
+- 快照包长/编码字节数必须逐字节不变（`snapshot_size_probe` 钉着），组件化不许顺手改线格式。
+
+## 5. 验收与纪律
+
+- 档 3：每条承重断言**逐条变异**（改坏某条必须红）+ 真链路跑批（**占 7777 / 拉子进程，跑前必须让用户认领**）+ 逐任务评审；默认批每步全绿。
+- 判据一律 grep 该支自打的 `OK`/`ALL-OK`；退出码不算。
+- 不新增"读源码文本判形态"守卫（`test-economy` §4 已裁定）；组件化后的结构靠 §1 六条规则 + 评审，零守卫面登记进 `registered-debt`。
+- 每步独立提交、逐文件点名 `git add`、不 `git add -A`（多会话共用工作树）；提交前逐 hunk 认领。
+- 不改 `PROTO_VERSION`、不改端口常量、不改线格式、不顺手改 `PvpMatchClient` 上帝对象与 `Level0` 静态全局（另案）。
+
+## 6. 单叶基类（与拆解并行，纯搬移）
+
+| ID | 对象 | 方案 A（推荐） | 方案 B（冻结） |
 |---|---|---|---|
-| **T2.1** | `_match_round_tick` 的 COUNTDOWN 分支（`match_round.gd:65-90` 与 `team_host.gd:234-257` 逐字约 28 行）提成 `MatchRound._countdown_step(delta) -> bool`；`TeamHost` 覆写里改调用，不再抄一遍 | 2026-11-01 用户实见：漏抄就绪闸 ⇒ 对抗开局倒计时从"客户端还在切场景"起算、最后 1 秒被截掉 | `down_edge_probe` + `countdown_clock_smoke` + `team_match_probe`（认领） |
-| **T2.2** | 上提两段叶子逐字重复：`_respawn_player` 的 6 行 meta 清理（`team_host.gd:200-206` / `royale_host.gd:238-243`）→ `MatchRound._respawn_player`；`request_suicide_role` 13 行（:396 / :247）→ `MatchHost`，但用虚钩子 `_suicide_enabled()`（默认 false，两模式 true）保住 1v1 不响应 K 键 | 改归因规则/自杀规则要改两个文件；同批已上提的 `_detach_role`/`_finish_match` 与未上提的两段并存（纪律随机） | `down_edge_probe` + `team_match_probe` + `royale` 相关真链路（认领） |
-| **T2.3** | 上提纪律落纸（不新增守卫）：判据 = "剔除注释后逐字相同 ⇒ 上提；只多 1-2 行或语义不同 ⇒ 留两份 + 注释说明为什么不合" | 下一次"该不该上提"的临时判断 | 写进本题 + `docs/eng/netplay.md`（如已有则合并） |
+| T3.1 | `LobbyPage ← MpLobby`（496 行基类 + 8 抽象桩，仅 1 子类） | 合并回 `mp_lobby.gd`，删 `lobby_page.gd` | 保留拆分，抽象桩改默认空实现 + 标"单实现" |
+| T3.2 | `EnemyFlyBase ← EnemyFlyBird`（181 行，仅 1 子类） | 合并：`EnemyFlyBird extends EnemyBase` | 保留 + 删"预支抽象"注释 |
+| T3.3 | 规则 | 新增基类必须 ≥2 真子类或有明确在飞计划（写进 `netplay.md`） | — |
 
-## 4. 阶段 3：单叶基类（P1/P2，二选一，砍掉"为 1 个实现抽的基类"）
+## 7. 不做（明确排除）
 
-| ID | 对象 | 方案 A（推荐） | 方案 B（冻结） | 验收 |
-|---|---|---|---|---|
-| **T3.1** | `scenes/lobby_page.gd`（496 行基类 + 8 个 `push_error("子类必须覆写")` 抽象桩）← 只 `MpLobby` 1 个子类（`9016e0dc` 起另两个大厅页退役） | **合并回 `mp_lobby.gd`**：基类方法/字段整体搬入子类，删 `lobby_page.gd`；`extends Control` 直连 | 保留拆分，但把 8 个抽象桩改成默认空实现，文件头标"当前仅 1 个实现，不构成抽象" | `menu_autotest` + `lobby` 手工冒烟（大厅页无自动行为守卫） |
-| **T3.2** | `scenes/enemies/enemy_fly_base.gd`（181 行，覆盖 `_ready` + 10 个方法）← 只 `EnemyFlyBird` 1 个子类 | **合并**：`EnemyFlyBird extends EnemyBase`，基类方法内联；与 `enemy_base.gd` 的 3 个真子类（fly/black/jump）区分开 | 保留，但把"新增飞行敌人再改虚 getter"的预支注释删掉，标"单实现" | `enemy_logic_smoke` + `kh_*` 场景探针 |
-| **T3.3** | 规则 | 新增基类必须满足：**≥2 个真子类，或有明确在飞计划**；否则不抽。写进 `docs/eng/netplay.md`「权威宿主的继承链」末段（一行） | — | — |
+- 不推倒重写 `MatchHost` 以外的系统；不顺手重排目录。
+- 不给单叶基类补第二个"假子类"。
+- 不把客户端 `PvpMatchClient`（937 行）与 `Level0` 静态全局塞进本计划——它们是"上帝对象 / 全局状态"，另案。
+- 不动真链路 3 支与 K3 承重守卫（上一轮刚削过）；不在拆解中改玩法/数值/协议。
 
-> T3.1/T3.2 都是**纯搬移**（不改逻辑），但合并后单文件变大；若评审认为"文件过大"优先，则走方案 B。两者都允许只做前半（先删注释/抽象桩），合并留作独立提交。
+## 8. 任务汇总与窗口需求
 
-## 5. 阶段 4：链降维（**裁定不做**，翻案条件见下）
-
-两个方案都评估过：
-
-| 方案 | 做法 | 硬阻塞 | 结论 |
+| 阶段 | 任务 | 档 | 真链路认领 |
 |---|---|---|---|
-| A 组件化（客户端式） | `Ground/Snapshot/Combat/Round` 降为 `RefCounted` 组件 + 宿主组合 | GDScript 无接口/前向声明 ⇒ 宿主与组件互相引用**不能静态化**；组件只能 `host: Node` + 鸭子调用（= 今天 `has_method` 同样的信息损失），或退化成内联类（不能跨文件） | 不做：收益只是文件数，代价是静态类型全失 + 3 条机械冻结（`EXPECTED_SCRIPTS`、`check_naming` 规则 B、按路径读源码的探针）全部要改判据 |
-| B 合并中间层 | 如 `MatchSnapshot`（113 行/3 函数）并入 `MatchCombat`，链 6→5 | 纯搬移但破坏"按域分文件"的初衷；`extends` 指向要改，按路径读源码的探针会静默失明 | 不做：收益≈0，风险≠0 |
+| 1 清错 | T1.1~T1.5 | 2 | T1.1 需要一次窗口 |
+| 1 清错 | T1.6 | 3 | 是 |
+| 2 去重 | T2.1 / T2.2 / T2.3 | 2/3/1 | T2.1/T2.2 需要 |
+| 3 拆解 | S0（基线） | — | 否 |
+| 3 拆解 | S1 | 3 | 否（默认批 + O0） |
+| 3 拆解 | S2（M1） | 3 | 是（`pvp_match_smoke`） |
+| 3 拆解 | S3 | 3 | 是（随 M1 一起） |
+| 3 拆解 | S4（M2） | 3 | 是（`pvp_match_smoke` + `team_match_probe`） |
+| 3 拆解 | S5 | 1 | 否 |
+| 3 拆解 | S6（M3） | 3 | 是（同 M2） |
+| 6 单叶 | T3.1~T3.3 | 1 | 否（默认批 + 手工冒烟） |
 
-**翻案条件**：① 出现第二个"对局宿主家族"（需要复用这些域）；② GDScript 支持 partial class / mixin / 接口；③ 某个域大到必须独立测试且能给出行为观测面。任一出现再单独立计划（档 3）。
+**建议执行顺序**：S0 →（T1.3/T1.4/T1.5 零行为小手术）→ S1 → T1.2/T1.1 → S2/T1.6 → S3 → S4/T2.1/T2.2 → S5 → S6；单叶基类 T3.x 可随时并行。
 
-## 6. 守卫与验证纪律（本计划不新增源码文本守卫）
+## 附录 A：S0 基线（2026-11-04 捕获）
 
-- `test-economy` §4 + 2026-11-02 结构审查已裁定：**不再新增"读源码文本判形态"的守卫**。所以"中间层不得有生命周期钩子"这条规则**只靠文档 + 评审**，不写探针（登记在 `registered-debt` 零守卫面）。
-- 档 2：默认批全绿 + **≥1 条承重断言变异**（改坏它必须红）；档 3：逐条变异 + 真链路跑批（**占 7777 / 拉子进程，跑前必须让用户认领**）+ 逐任务评审。
-- 判据一律 grep 该支自打的 `OK`/`ALL-OK`，退出码不算。
-- 每项独立提交、可单独 revert；提交逐文件点名 `git add`，不 `git add -A`（多会话共用工作树，逐 hunk 认领）。
-
-## 7. 不做（明确排除，防被当漏项）
-
-- 不推平 6 域链（§5）。
-- 不给单叶基类补第二个"假子类"，也不为将来"可能"再抽基类。
-- 不重排 `server/` 目录、不改 `extends` 指向（会弄瞎按路径读源码的探针）。
-- 不顺手改 `PvpMatchClient`（937 行）与 `Level0` 静态全局——它们是另一类问题（上帝对象 / 全局状态），不属于继承链治理。
-- 不动真链路 3 支与默认批的 K3 承重守卫（上一轮刚削过）。
-
-## 8. 任务汇总
-
-| 阶段 | 任务 | 档 | 依赖 | 需用户认领 |
-|---|---|---|---|---|
-| 1 清错 | T1.3 / T1.4 / T1.5 | 2 | 无 | 否 |
-| 1 清错 | T1.2 | 2 | T1.3 之后（同文件） | 否 |
-| 1 清错 | T1.1 | 2 | 无 | 真链路窗口 |
-| 1 清错 | T1.6 | 3 | T1.1 之后（同文件） | 是（真链路） |
-| 2 去重 | T2.1 / T2.2 | 2/3 | T1.1 | 是（team/royale 真链路） |
-| 2 去重 | T2.3 | 1 | 无 | 否 |
-| 3 单叶 | T3.1 / T3.2 | 1（纯搬移） | 无 | 否（走默认批 + 手工冒烟） |
-| 3 单叶 | T3.3 | 1 | 无 | 否 |
+- 默认批：`RUN_ALL OK(48 runs / 402 gated-assertions)`，known-red 基线 0 条；枚举 51 = `smoke/*.gd` 32 + `probe/*.tscn` 16 + 无 tscn 的 `probe/*.gd` 3；排除 3 支真链路（`pvp_match_smoke.gd` / `rejoin_probe.tscn` / `team_match_probe.tscn`）。
+- `tracked .gd = 243`（`EXPECTED_SCRIPTS` 同值）。
+- 链文件 LOC：`match_state` 432 · `match_ground` 363 · `match_snapshot` 113 · `match_combat` 342 · `match_round` 307 · `match_host` 517 · `team_host` 432 · `royale_host` 258；链上 6 域文件合计 2,074 行，加两宿主 2,764 行。
+- O0 tick 分段计时（`--diag` 的 `adjudicate/own_snap/world_snap/rewind`）：**待 M1 真链路窗口采集**（需认领 7777 + 对局）；采集后贴进本节，S1~S4 每步对比，单段 Δ > 5% 视为回归。
+- 拆解后自检口径不变：默认批 48 支全绿、`snapshot_size_probe` 字节数不变、`rollback_fidelity_probe` 34 条不断言少跑、真链路里程碑判词 `SMOKE PASS` / `TEAM MATCH PROBE: ALL-OK`。
