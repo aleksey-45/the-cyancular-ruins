@@ -43,7 +43,7 @@ func _ready() -> void:
 	_player.global_position = Vector2(1234.567, -678.901)
 	_player.velocity = Vector2(-120.37, 0.4321)
 
-	# ── 真实字段表(与 server/match/match_snapshot.gd 的 dict 逐字对齐)──
+	# ── 真实字段表(与 server/match/snapshot_system.gd 的 dict 逐字对齐)──
 	var trail_pts: Array = [[100.0, 200.0], [101.5, 201.5]]
 	var entry := _entry_world(trail_pts)
 	var entry_no_trail := _entry_world([])
@@ -163,7 +163,7 @@ func _trail_pts(n: int) -> Array:
 	return out
 
 
-# ── 真实字段表(逐字对照 match_snapshot._broadcast_snapshot 的 world["players"][role])──
+# ── 真实字段表(逐字对照 SnapshotSystem.broadcast 的 world["players"][role])──
 
 func _entry_world(trail: Array) -> Dictionary:
 	var p := _player

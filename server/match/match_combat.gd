@@ -1,5 +1,5 @@
 class_name MatchCombat
-extends MatchSnapshot
+extends MatchGround
 
 const HitShape := preload("res://core/sim/hit_shape.gd")   # 受击判定几何唯一入口
 const LagComp := preload("res://core/net/lag_comp.gd")     # playout / 回放深度常量(与客户端副本同源)

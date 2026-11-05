@@ -1,8 +1,8 @@
 class_name MatchHost
 extends MatchRound
 
-# 对局权威核心:生命周期、输入 FIFO 消费、每物理帧编排、出生点。四个域在 match_snapshot / match_combat /
-# match_round / match_state 里;输入队列的入队/丢包/抖动包络/1Hz 诊断在 input_intake.gd。★ C2 四条不变量仍在
+# 对局权威核心:生命周期、输入 FIFO 消费、每物理帧编排、出生点。快照在 snapshot_system.gd,裁决在
+# match_combat / 回合在 match_round / 共享状态在 match_state;输入队列的入队/丢包/抖动包络/1Hz 诊断在 input_intake.gd。★ C2 四条不变量仍在
 # _physics_process 与 _on_input 的编排里,原样未动。
 
 const TIME_SYNC_INTERVAL := 0.1   # Beta:颗粒状态下发节律(10Hz;怀表数字平滑够了)
@@ -18,6 +18,8 @@ var _rw_t0: Dictionary = {}        # role -> float(环缓零点;回放按 t-t0 �
 
 # C 方案(S0.5):系统 → 宿主/网络 的唯一通道;绑定见 _bind_ports()。
 var _ports: MatchPorts = null
+# C 方案(S1):快照系统。
+var _snapshot: SnapshotSystem = null
 
 func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 		ai_roles: Array = [], teams: Dictionary = {}, spawns: Dictionary = {}) -> void:
@@ -63,6 +65,8 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 		_add_player(int(ai_role), AiInputSource.new(), AiNavigator.new())
 
 	_bind_ports()
+	_snapshot = SnapshotSystem.new()
+	_snapshot.bind(self, _ports)
 
 
 # C 方案(S0.5):端口层。所有 Callable 都按**方法名**绑定 ⇒ 虚分派到 TeamHost/RoyaleHost 的覆写照旧生效。
@@ -71,6 +75,8 @@ func _bind_ports() -> void:
 	_ports.net_rpc_role = Callable(self, "_port_rpc_role")
 	_ports.net_rpc_role_all = Callable(self, "_port_rpc_role_all")
 	_ports.net_broadcast = Callable(self, "_port_broadcast")
+	_ports.net_peers_sendable = Callable(self, "_port_net_peers_sendable")
+	_ports.net_peer_count = Callable(self, "_port_net_peer_count")
 	_ports.send_round_state = Callable(self, "_send_round_state")
 	_ports.on_bullet_hit = Callable(self, "_on_bullet_hit")
 	_ports.broadcast_round_state = Callable(self, "_broadcast_round_state")
@@ -112,6 +118,14 @@ func _port_broadcast(method: String, args: Array = []) -> void:
 	if not NetBus.all_peers_sendable():
 		return
 	NetBus.callv("rpc", [method] + args)
+
+
+func _port_net_peers_sendable() -> bool:
+	return NetBus.all_peers_sendable()
+
+
+func _port_net_peer_count() -> int:
+	return multiplayer.get_peers().size()
 
 
 # 出生:建一个玩家节点并摆到出生点。★ 原先这里是两个逐行同构的循环(网络玩家 / AI 补位),现在只有这一份。
@@ -188,7 +202,7 @@ func _wire_hit_feedback() -> void:
 
 
 # 输入队列(入队 / 有界丢包 / 抖动包络 / 1Hz 诊断)整段已在 server/match/input_intake.gd;本文件只留「谁调、调在流程哪一步」。
-# ★ 队列本体 _pending_input 仍住 MatchState(match_snapshot 要按 role 读深度),故每次调用传的是同一个字典引用。
+# ★ 队列本体 _pending_input 仍住 MatchState(SnapshotSystem 要按 role 读深度),故每次调用传的是同一个字典引用。
 var _intake := InputIntake.new()
 # ★ S1:本人包(ack + c2)改到玩家步进之后发。本标志防"同一帧多次 physics 追赶"时重复调度。
 var _own_flush_pending := false
@@ -258,7 +272,7 @@ func _physics_process(delta: float) -> void:
 		_snapshot_tick_phase = 0
 		snapshot_tick = true
 		var _t_world: int = _tick_timing.begin()
-		_broadcast_snapshot()
+		_snapshot.broadcast()
 		_tick_timing.end(&"world_snap", _t_world)   # O0:含 encode_world + 单次广播 rpc
 
 	if time_economy != null:
@@ -320,7 +334,7 @@ func _physics_process(delta: float) -> void:
 
 
 # ★ S1:本人包发送点。由 `_physics_process` 在消费完本 tick 输入后 call_deferred 进来 ——
-#   此刻所有 Player 子节点已经步进完,c2/ack 是同一 tick 的权威态(详见 match_snapshot.send_own_snapshots 的头注)。
+#   此刻所有 Player 子节点已经步进完,c2/ack 是同一 tick 的权威态(详见 snapshot_system.send_own 的头注)。
 # ★ 别改成在 `_physics_process` 里直接发:那时子节点还没步进,c2 会退回落后一拍。
 func _flush_own_snapshots() -> void:
 	if not _own_flush_pending:
@@ -331,7 +345,7 @@ func _flush_own_snapshots() -> void:
 	# O0:本人包段 = capture_state + encode_own + 逐 peer rpc_id。★ 它在帧末 deferred 跑,不在 `_t_all` 的
 	# 窗口里 ⇒ 读 `own_snap_*` 时要单独看,别拿它去和 tick_avg_us 相加对账。
 	var _t_own: int = _tick_timing.begin()
-	send_own_snapshots()
+	_snapshot.send_own()
 	_tick_timing.end(&"own_snap", _t_own)
 
 

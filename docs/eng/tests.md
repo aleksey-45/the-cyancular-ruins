@@ -102,7 +102,7 @@ bash tests/smoke/<名>.sh
 | `session_start` | `net_diag.gd` 自己 | 版本 / 引擎 / OS / 文件路径 |
 | `server_boot` | [`server/server_main.gd`](../../server/server_main.gd) | 服务端启动参数（worker / port / 模式 / role 集合）|
 | `snap_gap` | [`core/net/net_bus.gd`](../../core/net/net_bus.gd) 的 `snapshot_world` | 世界包断流 >150ms |
-| `snap_rx` / `snapshot_tx` | `net_bus.gd` / [`server/match/match_snapshot.gd`](../../server/match/match_snapshot.gd) | 按 1Hz 对账「没发出」与「发了没收到」;`snap_rx` 另有 `world_lost` / `world_loss_pct` / `own_lost` / `own_loss_pct` / `step`（**下行丢包估计**:相邻快照 tick 缺口按学到的步长折算,口径见 `NetMetrics.snapshot_loss`）|
+| `snap_rx` / `snapshot_tx` | `net_bus.gd` / [`server/match/snapshot_system.gd`](../../server/match/snapshot_system.gd) | 按 1Hz 对账「没发出」与「发了没收到」;`snap_rx` 另有 `world_lost` / `world_loss_pct` / `own_lost` / `own_loss_pct` / `step`（**下行丢包估计**:相邻快照 tick 缺口按学到的步长折算,口径见 `NetMetrics.snapshot_loss`）|
 | `rollback` | [`core/net/prediction_rollback.gd`](../../core/net/prediction_rollback.gd) 的 `_handle_ack` | 位置 / 速度误差、是否贴身、重放条数 |
 | `queue` / `queue_drop` | [`server/match/input_intake.gd`](../../server/match/input_intake.gd) | 服务器输入队列深度 / 上限 / 累计丢弃 |
 | `pickup_try` | [`server/match/match_ground.gd`](../../server/match/match_ground.gd) | `none` / `range` / `denied` / `taken` 四种成因 |

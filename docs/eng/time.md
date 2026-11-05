@@ -20,7 +20,7 @@
 | 落点 | 职责 |
 |---|---|
 | `server/time_economy.gd` | `TimeEconomy`：服务器权威颗粒经济 —— 每 role 一份 `GrainAccount` + 四条结算缝（击杀/伤害/拆砖/回复）+ 10Hz 镜像载荷 |
-| `server/match/match_host.gd` | `_tick_beta_rewind()` 每 role 各自的回溯机（环缓/倒放/免伤/轨迹）；`_record_rw_frame`（20Hz）；`_apply_rw_frame`（★ 2026-11-01 R3 起**只做寻帧，逐字段恢复委托 `Player.rewind_restore`**，不再自带一份抄写）；`_finish_rw`（松手 / 颗粒耗尽共用）；加速态在快照之前定格。线上三件（`match_snapshot.gd`）:`haste` 布尔 / `rewind` 布尔 / `trail`（回溯轨迹点） |
+| `server/match/match_host.gd` | `_tick_beta_rewind()` 每 role 各自的回溯机（环缓/倒放/免伤/轨迹）；`_record_rw_frame`（20Hz）；`_apply_rw_frame`（★ 2026-11-01 R3 起**只做寻帧，逐字段恢复委托 `Player.rewind_restore`**，不再自带一份抄写）；`_finish_rw`（松手 / 颗粒耗尽共用）；加速态在快照之前定格。线上三件（`snapshot_system.gd`）:`haste` 布尔 / `rewind` 布尔 / `trail`（回溯轨迹点） |
 | `scenes/pvp_match_client.gd` | `_setup_beta_time_hud()` 挂 `WatchHud` + 订阅 `NetBusExt.local_time_state`；`_on_time_state` 挂镜像账户并点亮怀表；`_tick_beta_time` 本地预测加速（写 `player.pvp_haste_mult`，不本地扣颗粒）；`_tick_beta_rewind` 本地预测回溯（冻结 `input_source`、置免伤 meta `time_rewinding`、世界 + 自己上底片，位置不本地预测）；`_apply_own_film` 只作用于世界图层 + 自己；`TimeFx.tick` 双侧视效(S-19 后实现已到 `scenes/mp_client/time_fx.gd`,宿主只留委托) |
 | `scenes/lobby_page.gd` | 建房页时间参数滑条（`TimeRules` 实例；`_beta_payload()` 先 `clamp_self()` 再上报 `{"beta":true,"time":…}`） |
 

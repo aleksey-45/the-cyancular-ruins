@@ -2,7 +2,7 @@ class_name MatchGround
 extends MatchState
 
 # 地面武器域(服务器权威):表 + 拾取/丢弃裁决 + 事件广播 + 初始分布/换局重置。★ 本文件是继承链的中间层
-# (→ MatchSnapshot → MatchGround → MatchState):按 match_state.gd 的规矩不得定义 _init/_ready/_enter_tree/
+# (→ MatchCombat → MatchRound → MatchHost → TeamHost|RoyaleHost;父 = MatchState):按 match_state.gd 的规矩不得定义 _init/_ready/_enter_tree/
 # _exit_tree/_physics_process。★ 服务器真的实例化 WeaponPickup:落点由物理决定、而它决定「够不够得着」。
 
 # ★ 仅测试用(默认关,只由 worker 的 --test-ground-teleport 打开,生产路径不可达):每帧保证每个站着的玩家

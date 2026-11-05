@@ -23,7 +23,7 @@
 
 ### 1.2 世界包：一次广播，13 字段
 
-`server/match/match_snapshot.gd::_broadcast_snapshot()`：
+`server/match/snapshot_system.gd::broadcast()`：
 
 ```gdscript
 var world := {"tick": _snap_tick, "players": {}}
@@ -50,7 +50,7 @@ NetBus.rpc_id(peer, "snapshot_own",
 - `q` = 该 role 已到达但未消费的输入**记录**数。
 - `c2` = `player.capture_state()`：**25 个标量 + 武器块 10 个（仅手持非空时）+ 整个背包表**。字段表在 `core/net/net_codec.gd` 的 `C2_SCHEMA` / `WEAPON_SCHEMA` / `INV_SCHEMA`。
 - `c2` 是 C2 回滚的锚点：客户端 `restore_state()` 后用未确认输入重放。
-- ★ **S1（2026-10-24）发送时机**：本人包不在世界包广播里发，而是 MatchHost 在**消费完本 tick 输入后 call_deferred**、由 `send_own_snapshots()` 在帧末（Player 子节点步进完之后）发。⇒ `ack` 与 `c2` 是同一 tick 的最新权威态（旧实现落后一拍且要等下一次 30Hz 广播）；代价是**世界包里自己那份比本人包旧 1 tick**（客户端本来就不消费世界包的自己那份）。
+- ★ **S1（2026-10-24）发送时机**：本人包不在世界包广播里发，而是 MatchHost 在**消费完本 tick 输入后 call_deferred**、由 `SnapshotSystem.send_own()` 在帧末（Player 子节点步进完之后）发。⇒ `ack` 与 `c2` 是同一 tick 的最新权威态（旧实现落后一拍且要等下一次 30Hz 广播）；代价是**世界包里自己那份比本人包旧 1 tick**（客户端本来就不消费世界包的自己那份）。
 - 传输：`snapshot_own` 是 `unreliable`、`transfer_channel = 0`（ENet 道 1）。
 
 ### 1.4 线格式与载荷
@@ -112,7 +112,7 @@ NetBus.rpc_id(peer, "snapshot_own",
 ### 2.1 时间域解耦：服务器命中回放（2026-10-26）
 
 - 同一个 `PLAYOUT_TICKS` 用在两处：客户端**渲染**远端副本时的延迟，和服务器**裁决命中**时的回放深度（`core/net/lag_comp.gd` 单一来源）。
-- 服务器 tick 域对齐：`MatchHost._physics_process` 每 tick 起始 `_srv_tick += 1`；`_broadcast_snapshot` 里 `_snap_tick = _srv_tick`（2026-10-30 起每 tick 都广播 ⇒ tick 数值序列连续）。客户端输入包里的 `st` 从此与服务器 tick **同一刻度**。
+- 服务器 tick 域对齐：`MatchHost._physics_process` 每 tick 起始 `_srv_tick += 1`；`SnapshotSystem.broadcast` 里 `_snap_tick = _srv_tick`（2026-10-30 起每 tick 都广播 ⇒ tick 数值序列连续）。客户端输入包里的 `st` 从此与服务器 tick **同一刻度**。
 - 裁决路径（`server/match/match_combat.gd`）：`st = _client_snap_tick[shooter]`（射手最近解码的快照 tick）⇒ `want = clamp(st - PLAYOUT_TICKS, _srv_tick - MAX_REWIND_TICKS, _srv_tick)` ⇒ 用 `HitLagHistory.rect_for(victim, want)` 取**射手观看时刻**的对手受击面，再走 `HitShape` 线段扫掠（含子弹体积 grow）。榴弹直击同一路径。
 - 历史环 `core/sim/hit_lag_history.gd`：每 tick 存 `role → {p: canonical 位置, r: 相对受击面的 Rect2}`，容量 24 tick（400ms），超限丢最老；无该 tick/该 role 时回退现时受击面。
 - **不动的部分**：移动预测继续吃最新态（幽灵体不接插值、位置照旧）；爆炸 AoE **不回放**（现时位置，见 registered-debt §十五）。协议字节零改动。
