@@ -80,14 +80,23 @@ func collision_path(role: int) -> Array:
 	var cursor: float = cursors[role]
 	var index := history.size() - 1
 	var result: Array = []
+	var player: Player = world.players[role]
+	var previous_pos := player.global_position
+	var previous_flags := (int(player.is_squat) | (int(player.sim_downed) << 1)
+			| (int(player.facing_direction < 0) << 2))
 	for offset in range(1, PredictionRollback.MAX_REPLAY + 1):
 		cursor = advance_cursor(cursor, ActorStep.DT)
 		var target: float = history[-1]["tick"] - cursor * 60.0
 		while index > 0 and history[index]["tick"] > target: index -= 1
-		var state: Dictionary = history[index]["player"]
-		var knot := {"pos": state["pos"], "squat": state["squat"], "down": state["down"], "facing": state["facing"]}
-		if result.is_empty() or knot != result[-1]["body"]:
-			result.append({"tick": world._snap_tick + offset, "body": knot})
+		var state: Array = history[index]["player"]
+		var pos: Vector2 = state[PlayerStateSchema.slot("pos")]
+		var flags := (int(state[PlayerStateSchema.slot("squat")])
+				| (int(state[PlayerStateSchema.slot("down")]) << 1)
+				| (int(int(state[PlayerStateSchema.slot("facing")]) < 0) << 2))
+		if previous_pos != pos or previous_flags != flags:
+			result.append([world._snap_tick + offset, pos, flags])
+			previous_pos = pos
+			previous_flags = flags
 	return result
 
 static func advance_cursor(cursor: float, delta: float) -> float:
@@ -97,7 +106,7 @@ func _sync_bullets(role: int, rewind: bool, owned: Array) -> void:
 	var bullets := {}
 	for bullet: BulletBase in owned:
 		if not bullet.finished:
-			bullets[bullet.entity_id] = world.projectile_state(bullet)
+			bullets[bullet.entity_id] = bullet.motion_state()
 	world.broadcast(NetEvent.Kind.BULLET_REWIND, {"role": role, "tick": world._snap_tick - 1,
 			"rewind": rewind, "projectiles": bullets})
 
