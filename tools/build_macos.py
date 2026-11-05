@@ -25,7 +25,6 @@ def main():
     args = parser.parse_args()
     run(sys.executable, ROOT / 'tools/build_process_group.py', '--platform', 'macos')
     run(sys.executable, ROOT / 'tools/build_gns.py', '--platform', 'macos')
-    run(sys.executable, ROOT / 'tools/build_simulation.py', '--platform', 'macos')
     run(sys.executable, ROOT / 'tools/fetch_easytier.py', '--platform', 'macos')
     builds = ROOT / 'builds/macos'
     builds.mkdir(parents=True, exist_ok=True)
@@ -47,7 +46,7 @@ def main():
             shutil.copy2(ROOT / 'easytier' / name, target)
             run('lipo', target, '-verify_arch', 'arm64', 'x86_64')
             run('codesign', '--force', '--sign', '-', '--timestamp=none', target)
-        for name in ('process_group', 'gns', 'simulation'):
+        for name in ('process_group', 'gns'):
             extension = next(app.rglob(name + '.macos.universal.dylib'))
             run('lipo', extension, '-verify_arch', 'arm64', 'x86_64')
             run('codesign', '--force', '--sign', '-', '--timestamp=none', extension)

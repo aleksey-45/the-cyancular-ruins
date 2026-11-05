@@ -79,25 +79,17 @@ function serveStatic(res, resolved, headOnly) {
   });
 }
 
-const MAP_NAME_RE = /^[A-Za-z0-9_\-]+\.cyrm$/;
-// 地图文件名最大长度限制（防御性限制，正常文件名长度一般小于 37）
-const MAX_MAP_NAME_LEN = 64;
+// 地图文件名：裸文件名，1-64 个 ASCII 安全字符加 .cyrm 后缀。
+const MAP_NAME_RE = /^[A-Za-z0-9_-]{1,64}\.cyrm$/;
 
 function isValidMapName(name) {
-  if (typeof name !== 'string') return false;
-  if (name.length === 0 || name.length > MAX_MAP_NAME_LEN) return false;
-  // 防御空字节截断
-  if (name.indexOf('\0') >= 0) return false;
   return MAP_NAME_RE.test(name);
 }
 
+// 名字已限定为裸文件名，resolve 结果必然在 mapsDir 下；符号链接越界只在写盘前检查。
 function mapPathFor(mapsDir, name) {
   if (!isValidMapName(name)) throw new Error('地图名非法:' + JSON.stringify(name));
-  const dir = path.resolve(mapsDir);
-  const target = path.resolve(dir, name);
-  // 校验目标路径必须位于 mapsDir 目录内
-  if (target.indexOf(dir + path.sep) !== 0) throw new Error('地图名越出 maps 目录:' + name);
-  return target;
+  return path.resolve(mapsDir, name);
 }
 
 function listMaps(mapsDir, logger) {
@@ -467,7 +459,7 @@ module.exports = {
   DEFAULT_INDEX: DEFAULT_INDEX, MAX_MAP_BYTES: MAX_MAP_BYTES,
   MIME: MIME, mimeOf: mimeOf, sendText: sendText, sendJson: sendJson,
   staticFileFor: staticFileFor, serveStatic: serveStatic, handleApi: handleApi,
-  MAP_NAME_RE: MAP_NAME_RE, MAX_MAP_NAME_LEN: MAX_MAP_NAME_LEN,
+  MAP_NAME_RE: MAP_NAME_RE,
   isValidMapName: isValidMapName, mapPathFor: mapPathFor, listMaps: listMaps,
   serveMapFile: serveMapFile,
   WRITE_CONTENT_TYPE: WRITE_CONTENT_TYPE, writeGuardReject: writeGuardReject,

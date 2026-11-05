@@ -49,7 +49,7 @@ def release_prefix() -> str:
     return (m.group(1).strip() if m else "") or RELEASE_PREFIX_FALLBACK
 
 GAME_FILES = ["The Cyancular Ruins.exe",
-              "process_group.windows.x86_64.dll", "gns.windows.x86_64.dll", "simulation.windows.x86_64.dll", "THIRD_PARTY_NOTICES.txt"]
+              "process_group.windows.x86_64.dll", "gns.windows.x86_64.dll", "THIRD_PARTY_NOTICES.txt"]
 EASYTIER_FILES = ["easytier-core.exe", "easytier-cli.exe", "Packet.dll",
                  "wintun.dll", "WinDivert64.sys"]
 EASYTIER_SRC_DIR = os.path.join(PROJECT, "easytier")

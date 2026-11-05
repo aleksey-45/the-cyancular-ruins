@@ -86,7 +86,6 @@ def main() -> None:
 
     subprocess.run([sys.executable, os.path.join(TOOLS, "build_process_group.py")], check=True)
     subprocess.run([sys.executable, os.path.join(TOOLS, "build_gns.py")], check=True)
-    subprocess.run([sys.executable, os.path.join(TOOLS, "build_simulation.py")], check=True)
     subprocess.run([EDITOR, "--headless", "--editor", "--path", PROJECT, "--import"], check=True)
 
     original = stamp_build_info(release_version(version), stamp)

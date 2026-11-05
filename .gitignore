@@ -22,6 +22,9 @@ builds/
 releases/
 backup/
 
+# 工作区归档不进库
+/the-cyancular-ruins-test.7z
+
 local_ip.txt
 
 __pycache__/
