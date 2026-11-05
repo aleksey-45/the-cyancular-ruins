@@ -7,11 +7,10 @@ const Tunnel := preload("res://core/net/tunnel.gd")
 enum Phase { LOADING, ONLINE, RECONNECTING, OFFLINE }
 var phase := Phase.LOADING
 var _post: PostProcess
-var _local: CharacterBody2D
+var _local: Player
 var _world: SubViewport
 var _level0: Level0
 var _replicas: Dictionary = {}
-var _collision_anchor: ActorCollider
 var _bullets: Dictionary = {}
 var _bullet_rewind_visuals: Dictionary = {}
 var _bullet_rewind_events: Dictionary = {}
@@ -22,6 +21,7 @@ var _hp_bars: Dictionary = {}
 var _names: Dictionary = {}
 var _hues: Dictionary = {}
 var _teams: Dictionary = {}
+var _team_counts: Dictionary = {}
 var _hud: CanvasLayer
 var _pause_menu: PauseMenu
 var _banner: StatusBanner
@@ -46,7 +46,7 @@ var _latest_players: Dictionary = {}
 var _menu_open := false
 var _retry_started := 0
 var _attempt_started := 0
-var _terrain: NativeTerrain
+var _terrain: Terrain
 
 func _ready() -> void:
 	process_priority = 1 # 场景准备之后更新角色表现，摄像机最后跟随。
@@ -68,11 +68,9 @@ func _ready() -> void:
 	camera.target = _local.visuals
 	camera.process_priority = 100
 	_local.role = PvpSession.role
-	_collision_anchor = ActorCollider.new(_local, 32)
-	_rollback.bind(_local, _replicas, _collision_anchor)
+	_rollback.bind(_local)
 	_bind_prediction_terrain()
 	_rollback.combat_prediction.detonated.connect(_present_explosion)
-	_rollback.tick_finished.connect(_level0.flush_terrain_collision)
 	_playback.map_px = Vector2(GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 	_post = PostProcess.new()
 	_post.world_viewport = _world
@@ -115,6 +113,8 @@ func apply_baseline(payload: Dictionary) -> void:
 	_names = payload["names"]
 	_hues = payload["hues"]
 	_teams = payload["teams"]
+	# 阵容在基线到达时冻结，人数只计算一次，供预测、血条与 HUD 复用。
+	_team_counts = TeamRules.team_counts(_teams) if PvpSession.room_mode == PvpSession.MODE_TEAM else {}
 	_tint(_local.animator, PvpSession.role)
 	if payload["round_state"]["round"] != _terrain_round:
 		_level0.reset_destructibles()
@@ -125,11 +125,17 @@ func apply_baseline(payload: Dictionary) -> void:
 	for type_id in payload["options"].get("disabled_weapons", []):
 		disabled.append(type_id)
 	_local.weapons.set_enabled_types(disabled)
-	_local.collision_layer = 16 if _teams.get(PvpSession.role, 0) == 2 else 2
-	_local.team = _teams.get(PvpSession.role, 0)
-	_local.collision_mask = 1 | (16 if _teams.get(PvpSession.role, 0) == 1 else 2)
+	var my_team := int(_teams.get(PvpSession.role, 0))
+	_local.collision_layer = CollisionWorld.team_layer(my_team)
+	_local.team = my_team
+	_local.collision_mask = CollisionWorld.LAYER_TERRAIN | CollisionWorld.team_layer(3 - my_team)
+	_local._apply_layers()
 	if _hud is TeamHud:
 		_hud.set_my_team(_teams[PvpSession.role])
+		_hud.set_team_counts(_team_counts)
+	# 团队规则在恢复基线前固定；重连按基线恢复剩余 HP，不重置满血。
+	_rollback.combat_prediction.set_team_counts(_team_counts)
+	_local.sim_max_hp = _max_hp_for(PvpSession.role)
 	_clear_dynamics()
 	var frame: Dictionary = payload["frame"]
 	_local.restore_state(frame["own"]["state"])
@@ -148,12 +154,15 @@ func apply_baseline(payload: Dictionary) -> void:
 	_process(0.0)
 	for id in payload["projectiles"]:
 		var data: Dictionary = payload["projectiles"][id]
+		var rewinding: bool = frame["world"]["players"][id >> 48][PlayerStateSchema.slot("rewind")]
 		_restore_bullet(_create_bullet(id, data), data)
-		_bullets[id].set_physics_process(not frame["world"]["players"][id >> 48]["rewind"])
-		if not frame["world"]["players"][id >> 48]["rewind"]:
+		_bullets[id].set_physics_process(not rewinding)
+		if not rewinding:
 			_seed_projectile(id, data, frame["tick"])
-		if data["fuse_active"] and not frame["world"]["players"][id >> 48]["rewind"]:
-			_rollback.combat_prediction.checkpoint_projectile(id, data, frame["tick"], _bullets[id].shooter)
+		if data["fuse_active"] and not rewinding:
+			# 与 BULLET_FUSE 同一 owner 语义：远端弹丸绑定其预测体（真实碰撞体），而非显示壳。
+			var owner := _projectile_owner(id >> 48)
+			_rollback.combat_prediction.checkpoint_projectile(id, data, frame["tick"], owner)
 	_local.correct_visual(_local.global_position, true)
 	_refresh_input_lock()
 	NetBus.send_event(NetEvent.Kind.READY, payload["round_state"]["round"])
@@ -177,13 +186,10 @@ func _on_event(_peer: int, kind: int, data: Variant) -> void:
 			_on_beam_fired(data)
 		NetEvent.Kind.BULLET_SPAWN:
 			if not _bullets.has(data["id"]): _create_bullet(data["id"], data)
-			var new_identity := not _rollback.combat_prediction.projectiles.has(data["id"])
 			var changed := _seed_projectile(data["id"], data.merged({"traveled": 0.0,
 					"fuse_active": false, "fuse_elapsed": 0.0, "fuse_duration": 0.0, "direct_hit": false}), data["tick"] - 1)
-			# STATE 已覆盖出生时，只补身份元数据；不能把快照锚点误当成较晚的预测出生。
-			if data["tick"] > _own_tick:
-				changed = _rollback.review_projectile_spawn(data["id"], changed, new_identity)
-				if changed != Vector2i.ZERO: _request_event_replay(changed.x, changed.y)
+			if data["tick"] > _own_tick and changed != Vector2i.ZERO:
+				_request_event_replay(changed.x, changed.y)
 		NetEvent.Kind.BULLET_REWIND: _on_bullet_rewind(data)
 		NetEvent.Kind.BULLET_END:
 			var span := _rollback.combat_prediction.end_projectiles(data)
@@ -197,7 +203,7 @@ func _on_event(_peer: int, kind: int, data: Variant) -> void:
 			for id in data["projectiles"]:
 				var role: int = id >> 48
 				if role != PvpSession.role: _ensure_replica(role)
-				var owner: Node2D = _local if role == PvpSession.role else _replicas[role]._forecast
+				var owner := _projectile_owner(role)
 				changed = _rollback.confirm_projectile(id, data["projectiles"][id], data["tick"], owner) or changed
 			if changed: _request_event_replay(data["tick"])
 		NetEvent.Kind.TIME_REWARD:
@@ -282,7 +288,7 @@ func _accept_confirmation(span: Vector2i) -> void:
 	if span != Vector2i.ZERO: _request_event_replay(span.x, span.y)
 
 func _queue_replay(tick: int, reason: String, through: int = 0) -> void:
-	if _own_tick < tick and tick <= _rollback._sim_tick:
+	if _own_tick < tick and tick <= _rollback.world.tick:
 		if _pending_replay.is_empty() or reason == "event": _pending_replay = reason
 		_pending_replay_tick = tick if _pending_replay_tick == 0 else mini(_pending_replay_tick, tick)
 		_pending_replay_last_tick = maxi(_pending_replay_last_tick, maxi(tick, through))
@@ -296,7 +302,7 @@ func _apply_pending_authority() -> void:
 			_on_state(message["frame"])
 		else:
 			_on_event(message["peer"], message["kind"], message["data"])
-	# 远端输入不拥有本地预测状态；这里只审核本地账户和权威事件。
+	# 同一批事件合并最早失效 tick，随后只恢复、重放一次。
 	var reward_tick := _rollback.review_rewards()
 	if reward_tick > 0: _request_event_replay(reward_tick)
 	_level0.flush_terrain_collision()
@@ -314,16 +320,16 @@ func _apply_pending_authority() -> void:
 
 func _apply_authority(frame: Dictionary, trigger: String = "state") -> void:
 	_bind_prediction_terrain()
-	# 新加入的代理也必须参与原先空查询的复核。
+	# 先装配稳定槽，接纳权威状态时才改变参与模拟的角色集合。
 	for role in frame["world"]["players"]:
 		if role != PvpSession.role:
+			_rollback.world.ensure_actor(role, int(_teams.get(role, 0)))
 			_ensure_replica(role)
-			_replicas[role].set_ghost_layer(16 if _teams.get(role, 0) == 2 else 2)
 	var dirty_tick := _pending_replay_tick
 	var checkpoint: bool = trigger != "state" and _rollback.can_replay_from(dirty_tick)
 	var reuse := false
 	if trigger == "state":
-		# 先比较本地锚点，再复核命令及实际依赖；远端完整状态不拥有本地历史。
+		# 比较同 tick 的完整预测域；比较期间物理世界保持在预测末端。
 		var invalid_from := maxi(dirty_tick, frame["tick"] + 1) if _pending_replay == "event" and _pending_replay_last_tick > frame["tick"] else 0
 		reuse = _rollback.reusable_tick(frame, invalid_from) >= 0
 	_prediction_frame = frame
@@ -331,42 +337,36 @@ func _apply_authority(frame: Dictionary, trigger: String = "state") -> void:
 	_pending_replay_tick = 0
 	_pending_replay_last_tick = 0
 	_own_tick = frame["tick"]
-	_local.rewinding = frame["own"]["rewind"]
 	_local.input_buffer.epoch = frame["own"]["epoch"]
 	_latest_players = frame["world"]["players"]
-	for role in _latest_players:
-		if role != PvpSession.role:
-			_ensure_replica(role)
-			_replicas[role].set_ghost_layer(16 if _teams.get(role, 0) == 2 else 2)
-			if trigger != "state": _replicas[role].apply_snapshot(_latest_players[role], _local.position, frame["tick"])
-	for role in _replicas:
-		if not _latest_players.has(role):
-			_replicas[role].set_ghost_layer(0)
 	if PvpSession.beta_mode:
 		for role in frame["time"]:
-			if role != PvpSession.role or (not reuse and not checkpoint):
+			if role != PvpSession.role:
 				_rollback.time_economy.restore_account(role, frame["time"][role])
 	var previous: Vector2 = _local.corrected_position()
-	_rollback.terrain_revision = _map_revision
+
 	# 显示先恢复锚点，后续预测中的爆炸回调才能最终结束弹丸。
 	_sync_bullet_rewind_state(frame)
 	var snap := false
 	if checkpoint:
 		_rollback.replay_from(dirty_tick)
 	else:
-		snap = _rollback.reconcile(frame["own"], frame["tick"], NetBus.ping_ms, reuse, frame["world"]["projectiles"])
+		snap = _rollback.reconcile(frame, NetBus.ping_ms, reuse, trigger)
 	if not reuse or _rollback.replay_ticks > 0: _local.correct_visual(previous, snap)
 	_make_label(PvpSession.role)
+
+func _max_hp_for(role: int) -> int:
+	if _team_counts.is_empty():
+		return PlayerParams.player_max_hp
+	return TeamRules.max_hp(int(_teams.get(role, 0)), _team_counts)
 
 func _ensure_replica(role: int) -> void:
 	if _replicas.has(role):
 		return
-	var replica: Node2D = preload("res://scenes/player/player_replica.tscn").instantiate()
+	var replica: PlayerReplica = preload("res://scenes/player/player_replica.tscn").instantiate()
 	replica.team = _teams.get(role, 0)
 	replica.role = role
 	_world.add_child(replica)
-	replica.bind_local(_local)
-	replica._forecast.weapons.projectile_count = _rollback.combat_prediction.count_projectiles.bind(role)
 	if PvpSession.beta_mode:
 		_rollback.time_economy.add_role(role)
 	replica.process_priority = 2
@@ -379,6 +379,11 @@ func _ensure_replica(role: int) -> void:
 		_world.add_child(bar)
 		_hp_bars[role] = bar
 
+func _projectile_owner(role: int) -> ActorBody:
+	if role != PvpSession.role:
+		_rollback.world.ensure_actor(role, int(_teams.get(role, 0)))
+	return _rollback.world.actor(role)
+
 func _create_bullet(id: int, data: Dictionary) -> BulletBase:
 	var role := id >> 48
 	if role != PvpSession.role:
@@ -390,24 +395,34 @@ func _create_bullet(id: int, data: Dictionary) -> BulletBase:
 	bullet.setup(data["vel"].normalized(), data["vel"].length(), profile["range"], profile["size"], profile["color"], null)
 	bullet.gravity_factor = profile["gravity"]
 	bullet.apply_damage = false
-	bullet.position = GridPathfinder.anchor_to_nearest(data["pos"], _local.position,
+	# 逻辑位置始终是规范坐标；可视副本由弹丸自身的视觉投影给出。
+	bullet.position = GridPathfinder.wrap_to_range(data["pos"],
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
-	bullet.shooter = _local if role == PvpSession.role else _replicas[role]
+	bullet.shooter = _projectile_owner(role)
 	bullet.adjudicated_pos = bullet.position
 	_world.add_child(bullet)
 	_register_bullet(bullet)
 	return bullet
 
 func _restore_bullet(bullet: BulletBase, data: Dictionary) -> void:
-	var anchored := GridPathfinder.anchor_to_nearest(data["pos"], _local.position,
+	var canonical := GridPathfinder.wrap_to_range(data["pos"],
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
-	bullet.restore_motion(data.merged({"pos": anchored}, true))
+	bullet.restore_motion(data.merged({"pos": canonical}, true))
 
 func _seed_projectile(id: int, data: Dictionary, tick: int) -> Vector2i:
 	var role := id >> 48
 	if role != PvpSession.role: _ensure_replica(role)
-	var owner: Node2D = _local if role == PvpSession.role else _replicas[role]._forecast
-	return _rollback.combat_prediction.seed_projectile(id, data, tick, owner)
+	var owner := _projectile_owner(role)
+	var span := _rollback.combat_prediction.seed_projectile(id, data, tick, owner)
+	_bind_bullet_visual(id)
+	return span
+
+# 显示弹只做视觉：把外壳挂到同一颗预测弹上逐帧跟随，客户端不再有第二份弹道碰撞。
+func _bind_bullet_visual(id: int) -> void:
+	var entry: ProjectileEntry = _rollback.combat_prediction.projectiles.get(id)
+	var shell: BulletBase = _bullets.get(id)
+	if entry != null and shell != null:
+		shell.follow_target = entry.get_bullet()
 
 func _on_explosion(data: Dictionary) -> void:
 	var span := _rollback.combat_prediction.confirm(data)
@@ -424,6 +439,13 @@ func _present_explosion(data: Dictionary) -> void:
 	var pos := GridPathfinder.anchor_to_nearest(data["pos"], _local.position,
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 	BulletBase.present_explosion(_world, pos, profile["explosion_visual"], profile["explosion_radius"])
+	var distance := GridPathfinder.toroidal_delta_px(data["pos"], _local.position,
+			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT).length()
+	var reach := maxf(float(profile["explosion_radius"]) * 2.5, 400.0)
+	var camera := _world.get_camera_2d()
+	if distance <= reach and camera != null:
+		camera.shake(PlayerParams.explosion_cam_shake * (1.0 - distance / reach),
+				PlayerParams.explosion_cam_shake_time)
 
 func _on_bullet_rewind(data: Dictionary) -> void:
 	# 事件 tick 是弹丸恢复锚点，实际变化发生在下一 tick；相等时尚未被 STATE 覆盖。
@@ -434,15 +456,14 @@ func _on_bullet_rewind(data: Dictionary) -> void:
 	_bullet_rewind_events[data["role"]] = data.duplicate(true)
 	if _rollback.bullet_rewind_matches(data):
 		for id in data["projectiles"]:
-			var owner: Node2D = _local if data["role"] == PvpSession.role else _replicas[data["role"]]._forecast
+			var owner := _projectile_owner(data["role"])
 			_rollback.combat_prediction.checkpoint_projectile(id, data["projectiles"][id], data["tick"], owner)
 		_bullet_rewind_visuals[data["role"]] = {"tick": data["tick"] + 1, "rewind": data["rewind"]}
 		return
-	_rollback.combat_prediction.cancel_role(data["role"])
 	_sync_bullet_rewind_visuals(data["role"], data["tick"] + 1, data["rewind"], data["projectiles"])
-	if not data["rewind"]:
-		for id in data["projectiles"]:
-			_seed_projectile(id, data["projectiles"][id], data["tick"])
+	for id in data["projectiles"]:
+		_seed_projectile(id, data["projectiles"][id], data["tick"])
+	_rollback.world.confirm_rewind(data)
 	_request_event_replay(data["tick"] + 1)
 
 func _sync_bullet_rewind_state(frame: Dictionary) -> void:
@@ -451,7 +472,7 @@ func _sync_bullet_rewind_state(frame: Dictionary) -> void:
 		var previous: Dictionary = _bullet_rewind_visuals.get(role, {})
 		# 已收到更新的回溯事件时，旧 STATE 不能改写其显示状态。
 		if frame["tick"] < previous.get("tick", -1): continue
-		var rewind: bool = players[role]["rewind"]
+		var rewind: bool = players[role][PlayerStateSchema.slot("rewind")]
 		if rewind or previous.get("rewind", false):
 			_sync_bullet_rewind_visuals(role, frame["tick"], rewind, frame["world"]["projectiles"])
 		else:
@@ -477,39 +498,21 @@ func _sync_bullet_rewind_visuals(role: int, tick: int, rewind: bool, projectiles
 			bullet = _create_bullet(id, state)
 		_restore_bullet(bullet, state)
 		bullet.set_physics_process(not rewind)
+		_bind_bullet_visual(id)
 	_bullet_rewind_visuals[role] = {"tick": tick, "rewind": rewind}
 
 func _track_local_bullets() -> void:
 	for bullet: BulletBase in get_tree().get_nodes_in_group("bullet"):
 		if bullet.shooter == _local and not bullet.is_queued_for_deletion() and not _bullets.has(bullet.entity_id):
 			_register_bullet(bullet)
-
-func _cull_bullet_contacts() -> void:
-	for bullet: BulletBase in _bullets.values():
-		if bullet.explodes or bullet.is_queued_for_deletion() or not bullet.is_physics_processing():
-			continue
-		var shooter_role := bullet.entity_id >> 48
-		var from := bullet.adjudicated_pos
-		var to := from + GridPathfinder.toroidal_delta_px(from, bullet.position,
-				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
-		bullet.adjudicated_pos = bullet.position
-		for role in _latest_players:
-			if role == shooter_role or _latest_players[role]["downed"]:
-				continue
-			if _teams.get(shooter_role, 0) != 0 and _teams[shooter_role] == _teams.get(role, 0):
-				continue
-			var pos: Vector2 = _local.position if role == PvpSession.role else _replicas[role].position
-			var center := GridPathfinder.anchor_to_nearest(pos, from, GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
-			if Geometry2D.get_closest_point_to_segment(center, from, to).distance_to(center) < BulletBase.PLAYER_HIT_RADIUS:
-				bullet.queue_free()
-				break
+			_bind_bullet_visual(bullet.entity_id)
 
 func _sync_pickups(world: Dictionary) -> void:
 	for id in world["pickups"]:
-		var data: Dictionary = world["pickups"][id]
+		var data: Array = world["pickups"][id]
 		if not _pickup_nodes.has(id):
 			var pickup: WeaponPickup = preload("res://scenes/weapons/weapon_pickup.tscn").instantiate()
-			pickup.configure(data["type_id"], id, data["mag"], data["vel"])
+			pickup.configure(data[PickupState.TYPE_ID], id, data[PickupState.MAG], data[PickupState.VEL])
 			_world.add_child(pickup)
 			pickup.set_physics_process(false)
 			_pickup_nodes[id] = pickup
@@ -537,46 +540,46 @@ func _apply_frame_authority() -> void:
 		_level0.flush_terrain_collision()
 		return
 	_authority_process_frame = frame
-	var perf_started := NativePerformanceStats.begin()
+	var perf_started := PerformanceStats.begin()
 	_apply_pending_authority()
-	NativePerformanceStats.end(NativePerformanceStats.CLIENT_AUTHORITY, perf_started)
+	PerformanceStats.end(PerformanceStats.CLIENT_AUTHORITY, perf_started)
 
 func _physics_process(delta: float) -> void:
 	if phase != Phase.ONLINE:
 		_local.begin_visual_step()
 		return
-	var perf_started := NativePerformanceStats.begin()
+	var perf_started := PerformanceStats.begin()
 	_apply_frame_authority()
 	_local._poll_pickup_drop(delta)
 	var src: PlayerInput = _local.input_source
-	_rollback.capture(src, _local.get_current_aim_dir(), int(_playback.render_tick),
+	_rollback.capture(src, _local.get_current_aim_dir(),
 			_local.weapons.take_uplink_switch(src.get_switch_index_pressed()))
 	NetBus.send_input(_rollback.packet())
 	_rollback.advance(delta)
-	NativePerformanceStats.end(NativePerformanceStats.CLIENT_TICK, perf_started)
+	_track_local_bullets()
+	PerformanceStats.end(PerformanceStats.CLIENT_TICK, perf_started)
 
 func _process(delta: float) -> void:
 	if phase != Phase.ONLINE:
 		return
 	# 和物理回调共用接纳点，不能在表现前再次重放同一窗口。
 	_apply_frame_authority()
-	var perf_started := NativePerformanceStats.begin()
+	var perf_started := PerformanceStats.begin()
 	_level0.flush_terrain_visuals()
 	_track_local_bullets()
-	_cull_bullet_contacts()
 	_local.present_tick(delta)
-	if _post != null: _post.set_downed(_local.is_downed())
+	if _post != null:
+		_post.set_downed(_local.is_downed())
+		_post.set_health_ratio(_local.hp, _local.max_hp)
 	var render_tick := _rollback._clock - _rollback._rate * (1.0 - Engine.get_physics_interpolation_fraction())
-	_local.present_prediction(delta, render_tick - _rollback._sim_tick)
+	_local.present_prediction(delta, render_tick - _rollback.world.tick)
 	if _playback.frames.is_empty():
-		NativePerformanceStats.end(NativePerformanceStats.CLIENT_PRESENT, perf_started)
+		PerformanceStats.end(PerformanceStats.CLIENT_PRESENT, perf_started)
 		return
 	var world := _playback.advance(delta)
 	for role in world["players"]:
 		if role != PvpSession.role:
 			_ensure_replica(role)
-			if not _latest_players.has(role):
-				_replicas[role].set_ghost_layer(0)
 	for role in _replicas.keys():
 		var shown: bool = world["players"].has(role)
 		_replicas[role].visible = shown
@@ -597,13 +600,13 @@ func _process(delta: float) -> void:
 			continue
 		_replicas[role].render_snapshot(world["players"][role], _local.position)
 		if _hp_bars.has(role):
-			_hp_bars[role].ratio = float(world["players"][role]["hp"]) / PlayerParams.player_max_hp
+			_hp_bars[role].ratio = float(world["players"][role][PlayerStateSchema.slot("hp")]) / maxf(float(_max_hp_for(role)), 1.0)
 			_hp_bars[role].position = _replicas[role].position + Vector2(0, -108)
 	_sync_pickups(world)
 	for id in world["pickups"]:
 		if _pickup_nodes.has(id):
 			var pickup: WeaponPickup = _pickup_nodes[id]
-			pickup.canonical_pos = world["pickups"][id]["pos"]
+			pickup.canonical_pos = world["pickups"][id][PickupState.POS]
 			pickup.set_anchor(_local.position)
 			pickup.sync_render_from_canonical()
 			pickup.set_prompt_visible(GridPathfinder.toroidal_delta_px(_local.position, pickup.canonical_pos, GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT).length() <= PlayerParams.weapon_pickup_radius)
@@ -611,7 +614,7 @@ func _process(delta: float) -> void:
 	for role in _id_labels:
 		var point: Vector2 = _local.visuals.global_position if role == PvpSession.role else _replicas[role].global_position
 		_id_labels[role].position = point + Vector2(0, -78)
-	NativePerformanceStats.end(NativePerformanceStats.CLIENT_PRESENT, perf_started)
+	PerformanceStats.end(PerformanceStats.CLIENT_PRESENT, perf_started)
 
 func _make_label(role: int) -> void:
 	if not _id_labels.has(role):
@@ -689,7 +692,7 @@ func _clear_dynamics() -> void:
 	_pending_replay_last_tick = 0
 	_authority_process_frame = -1
 	_deferred_authority.clear()
-	_rollback.combat_prediction.clear()
+	_rollback.world.clear()
 	_bullet_rewind_visuals.clear()
 	_bullet_rewind_events.clear()
 	_explosions_shown.clear()
@@ -747,6 +750,7 @@ func _on_protocol_error(message: String) -> void:
 
 func _exit_tree() -> void:
 	phase = Phase.OFFLINE
+	_replicas.clear()
 	NetBus.state_received.disconnect(_on_state)
 	NetBus.event_received.disconnect(_on_event)
 	NetBus.server_disconnected.disconnect(_begin_reconnect)
@@ -812,8 +816,10 @@ func _tick_beta_time(delta: float, world: Dictionary) -> void:
 			continue
 		if not _time_glows.has(role):
 			_time_glows[role] = TimeGlow.attach(_replicas[role], Level0.GLOW_ENEMY)
-		var state: Dictionary = world["players"][role]
-		_time_glows[role].visible = state["haste"] and not state["rewind"]
-		_replicas[role].material = _time_remote_film if state["rewind"] else null
-		if trail and (state["haste"] or state["rewind"]):
-			AfterImage.spawn(_world, _replicas[role].animator, UiFactory.C_TEAM_B if state["haste"] else UiFactory.C_TEXT_DIM)
+		var state: Array = world["players"][role]
+		var remote_haste: bool = state[PlayerStateSchema.slot("haste")]
+		var rewinding: bool = state[PlayerStateSchema.slot("rewind")]
+		_time_glows[role].visible = remote_haste and not rewinding
+		_replicas[role].material = _time_remote_film if rewinding else null
+		if trail and (remote_haste or rewinding):
+			AfterImage.spawn(_world, _replicas[role].animator, UiFactory.C_TEAM_B if remote_haste else UiFactory.C_TEXT_DIM)

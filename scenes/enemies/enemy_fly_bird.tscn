@@ -165,12 +165,11 @@ animations = [{
 "speed": 6.0
 }]
 
-[node name="EnemyFlyBird" type="CharacterBody2D" unique_id=1702711534]
+[node name="EnemyFlyBird" type="Node2D" unique_id=1702711534]
 scale = Vector2(2, 2)
-collision_layer = 4
-collision_mask = 7
-motion_mode = 1
 script = ExtResource("2_script")
+collision_layer = 4
+collision_mask = 23
 hp = 25
 contact_damage = 0
 knockback_strength = 200.0

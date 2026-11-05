@@ -60,6 +60,8 @@ func _on_round_state(data: Dictionary) -> void:
 			s1, s2, w1, w2, round]
 	var me: int = PvpSession.role
 	match state:
+		NetEvent.RoundState.WAITING:
+			_broadcast.set_broadcast(true, "等待玩家加载", "")
 		NetEvent.RoundState.COUNTDOWN:
 			var sub := "对战开始" if round <= 1 else "第 %d 局" % round
 			_broadcast.start_countdown(float(data["timer"]), sub)

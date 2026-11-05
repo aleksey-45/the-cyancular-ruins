@@ -9,6 +9,8 @@ uniform vec2 crop_scale = vec2(1.0);
 uniform float desat : hint_range(0.0, 1.0) = 0.0;
 // 受击红闪:0=无,1=纯红罩。由 PostProcess.flash_hit() 置峰后每帧衰减。
 uniform float hit_red : hint_range(0.0, 1.0) = 0.0;
+// 低血暗角强度:0=无,1=最深。按实际最大 HP 归一化后由 PostProcess 平滑更新。
+uniform float low_hp : hint_range(0.0, 1.0) = 0.0;
 // ── 怀表时间系统·第一阶段(时间玩法)三个全屏效果 ──
 uniform float rewind_film : hint_range(0.0, 1.0) = 0.0;   // 回溯底片化覆盖度(0→1:由内而外铺满)
 uniform float loan_depth : hint_range(0.0, 1.0) = 0.0;    // 透支深度:变亮 + 红蓝色差
@@ -58,6 +60,13 @@ void fragment() {
 		float amt = smoothstep(0.0, 0.28, haste_dim - rt);
 		vec3 target = COLOR.rgb * 0.55 + vec3(0.02, 0.035, 0.07);
 		COLOR.rgb = mix(COLOR.rgb, target, amt);
+	}
+	// 低血:屏幕边缘暗角
+	if (low_hp > 0.0) {
+		// 屏幕边缘压暗并轻微染红，中心保持可读。
+		float edge = smoothstep(0.30, 0.78, distance(SCREEN_UV, vec2(0.5)) / 0.75);
+		vec3 shade = COLOR.rgb * vec3(0.32, 0.22, 0.24);
+		COLOR.rgb = mix(COLOR.rgb, shade, edge * low_hp * 0.85);
 	}
 	// 透支:整体变亮 + 红蓝色影分离(深度越深越明显)
 	if (loan_depth > 0.0) {

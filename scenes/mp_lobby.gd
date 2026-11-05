@@ -1,6 +1,6 @@
 extends LobbyPage
 
-# 统一联机大厅：集成 1v1、大乱斗与 3v3 三种对战模式的房间浏览、创建、加入与等待逻辑。
+# 统一联机大厅：集成 1v1、大乱斗与团队对抗三种对战模式的房间浏览、创建、加入与等待逻辑。
 # 界面自上而下包含顶栏（玩家昵称）、模式筛选与操作按钮、房间卡片网格以及底部状态栏。
 # 服务端各模式房间注册表通过并发查询在前端合并汇总显示。
 
@@ -577,8 +577,8 @@ func _show_wait_room(state: Dictionary, mode: String) -> void:
 	elif mode == PvpSession.MODE_ROYALE:
 		_wait_start.visible = is_host
 	else:
-		_wait_start.visible = is_host and _both_teams_full(
-				state, int(state.get("team_size", 3)))
+		_wait_start.visible = is_host and _teams_can_start(
+				state, int(state.get("team_size", TeamRules.MAX_TEAM)))
 
 
 # 隐藏等待室面板并恢复入口按钮
@@ -619,7 +619,7 @@ func _fill_team_roster(state: Dictionary, plist: Array, my_role: int, host_role:
 	for p: Dictionary in plist:
 		var t := int(p["team"])
 		(buckets[t] as Array).append(p)
-	var team_size: int = state["team_size"]
+	var team_size: int = mini(int(state.get("team_size", TeamRules.MAX_TEAM)), TeamRules.MAX_TEAM)
 	var shown := 0
 	for t in [1, 2]:
 		var tag := "A 队" if t == 1 else "B 队"
@@ -652,23 +652,24 @@ func _team_of_role(state: Dictionary, role: int) -> int:
 	return 0
 
 
-func _both_teams_full(state: Dictionary, size: int) -> bool:
+func _teams_can_start(state: Dictionary, size: int) -> bool:
 	var counts := {1: 0, 2: 0}
 	for p: Dictionary in state["players"]:
 		var t := int(p["team"])
 		if counts.has(t):
 			counts[t] += 1
-	return counts[1] == size and counts[2] == size
+	return counts[1] >= 1 and counts[2] >= 1 and counts[1] <= size and counts[2] <= size
 
 
 func _team_count_text(state: Dictionary, plist: Array) -> String:
-	var picked := 0
+	var counts := {1: 0, 2: 0}
 	for p: Dictionary in plist:
-		if p["team"] != 0:
-			picked += 1
-	return "%d / %d 人(已选边 %d 人;两队各 %d 人才可开局)" % [
-			plist.size(), 6, picked,
-			state["team_size"]]
+		var t := int(p["team"])
+		if counts.has(t):
+			counts[t] += 1
+	return "A %d/%d、B %d/%d，共 %d/%d" % [
+			counts[1], TeamRules.MAX_TEAM, counts[2], TeamRules.MAX_TEAM,
+			plist.size(), TeamRules.MAX_TOTAL]
 
 
 
@@ -691,7 +692,7 @@ func _lobby_action_allowed() -> bool:
 		if _current_mode == PvpSession.MODE_ROYALE:
 			_status.text = "已在大乱斗房间中(先退出房间再操作)"
 		elif _current_mode == PvpSession.MODE_TEAM:
-			_status.text = "已在 3v3 房间中(先退出房间再操作)"
+			_status.text = "已在团队对抗房间中(先退出房间再操作)"
 		else:
 			_status.text = "已在 1v1 房间中(先退出房间再操作)"
 		return false

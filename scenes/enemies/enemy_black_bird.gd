@@ -24,6 +24,7 @@ var _charge_timer: float = 0.0       # 冲锋超时计时器
 var _back_hop_cd: float = 0.0        # 后跳落地后的冷却时间
 var _body_min: Vector2 = Vector2.ZERO   # 碰撞盒 AABB 最小顶点（经 scale 变换后）
 var _body_max: Vector2 = Vector2.ZERO   # 碰撞盒 AABB 最大顶点（经 scale 变换后）
+var _body_shape: RectangleShape2D = null  # 落点净空查询复用的形状
 var _teleport_flash_timer: float = 0.0  # 传送闪白特效计时器（纯白剪影着色，结束后复原）
 var _silhouette_mat: ShaderMaterial = null  # 纯白剪影着色器材质
 var _appear_timer: float = 0.0         # 传送后显现动画播放剩余时长（期间空中悬停）
@@ -33,7 +34,6 @@ func _ready() -> void:
 	# 精英实体标记：免疫时空回溯（不计入快照）、时间加速倍率与玩家同步、被击杀后掉落 300 单位时间颗粒
 	set_meta("elite", true)
 	super._ready()
-	_anim = $AnimatedSprite2D
 	wake_radius = EnemyParams.BlackBird.wake_radius
 	# 纯白剪影材质：每个实例独立创建，避免跨实例共享材质导致闪白表现相互干扰
 	var bb_shader := load("res://scenes/enemies/black_bird_silhouette.gdshader") as Shader
@@ -146,7 +146,7 @@ func _tick_wander(delta: float, dist: float) -> void:
 		else:
 			velocity.x = _wander_dir * EnemyParams.BlackBird.wander_speed
 			# 游走撞墙不卡死:小跳翻越矮墙(与冲锋自动跳相同机制判定)
-			if is_on_wall():
+			if _hit_wall():
 				velocity.y = EnemyParams.BlackBird.wander_jump_velocity
 	_teleport_cooldown = maxf(_teleport_cooldown - delta, 0.0)
 	_flank_check_timer -= delta
@@ -165,8 +165,8 @@ func _tick_wander(delta: float, dist: float) -> void:
 func _tick_take_off(delta: float) -> void:
 	if _wait_land:
 		_anim.play("take_off")
-		# 进状态那帧 is_on_floor 是旧的(上帧在地面),要求先离地再落地才算数
-		if is_on_floor():
+		# 进状态那帧着地状态是旧的(上帧在地面),要求先离地再落地才算数
+		if _grounded:
 			if _left_ground:
 				_wait_land = false
 				# 落地瞬间:播 disappear(消散),停顿等它播完再闪
@@ -179,7 +179,9 @@ func _tick_take_off(delta: float) -> void:
 		_anim.play("disappear")
 	else:
 		if _flank_cell == Vector2i(-1, -1):
-			_set_state(State.WANDER)  # 保底处理:无落点不该进 TAKE_OFF
+			# TAKE_OFF 只在 _find_flank_cell() 成功后进入；走到这里说明状态机被外部破坏，显式暴露并回到游走。
+			push_error("BlackBird: TAKE_OFF 无传送落点(状态机不一致) pf=%d" % Engine.get_physics_frames())
+			_set_state(State.WANDER)
 			return
 		_teleport_to_flank()  # 白闪在 _teleport_to_flank 内触发(传送瞬间)
 		_set_state(State.CHARGE)
@@ -202,7 +204,7 @@ func _tick_charge(delta: float) -> void:
 	_anim.play("run")
 	# appear 落地 → 停顿 charge_prep_time → 才冲锋
 	if _wait_land:
-		if is_on_floor():
+		if _grounded:
 			if _left_ground:
 				_wait_land = false
 				_prep_timer = EnemyParams.BlackBird.charge_prep_time
@@ -218,7 +220,7 @@ func _tick_charge(delta: float) -> void:
 		_prep_timer -= delta
 		velocity.x = 0.0
 		return
-	if _player_overlapping or toroidal_dist_to_player() <= CONTACT_RADIUS:
+	if _touching_player() or toroidal_dist_to_player() <= CONTACT_RADIUS:
 		_on_charge_hit_player()
 		return
 	_charge_timer -= delta
@@ -227,13 +229,13 @@ func _tick_charge(delta: float) -> void:
 		return
 	var dir := toroidal_dir_to_player()
 	velocity.x = dir.x * EnemyParams.BlackBird.charge_speed
-	if is_on_wall():
+	if _hit_wall():
 		velocity.x = 0.0  # 越障跳纯上跳,不叠加水平分量
 		velocity.y = EnemyParams.BlackBird.charge_jump_velocity
 
 
 func _tick_back_hop() -> void:
-	if is_on_floor() and _back_hop_cd <= 0.0:
+	if _grounded and _back_hop_cd <= 0.0:
 		_set_state(State.WANDER)
 		_wander_timer = 0.2
 		_wander_idle_timer = 0.0
@@ -243,7 +245,7 @@ func _tick_back_hop() -> void:
 # 游走中瞬移判定:在「距玩家 3~8 格(随机)、且位于玩家相对鸟的另一侧」的环形带
 # (环面取模)搜地板格(EMPTY 且正下方非 EMPTY),且该格到玩家格 LOS 通 → 可瞬移冲锋。
 func _find_flank_cell() -> bool:
-	var p := _nearest_player() as Node2D
+	var p := _nearest_player()
 	var grid: Array[Array] = TileDefs.terrain.get_grid_snapshot()
 	if p == null or grid.is_empty():
 		return false
@@ -288,7 +290,8 @@ func _find_flank_cell() -> bool:
 			var drop_pos := Vector2(c.x * ts + ts * 0.5, c.y * ts + ts * 0.5 - EnemyParams.BlackBird.teleport_drop)
 			if not _body_clear_at(drop_pos):
 				continue
-			if not TileDefs.terrain.line_of_sight_cells(c, player_cell):
+			if not TileDefs.terrain.line_of_sight(TileDefs.terrain.cell_center(c),
+					TileDefs.terrain.cell_center(player_cell)):
 				continue
 			valid.append(c)
 	if valid.is_empty():
@@ -297,10 +300,14 @@ func _find_flank_cell() -> bool:
 	return true
 
 
+# 落点净空由引擎形状重叠判定，避免在传送点压进地形。
 func _body_clear_at(pos: Vector2) -> bool:
-	var ts := GameParameters.TILE_SIZE
-	var rect := Rect2(pos + _body_min, _body_max - _body_min)
-	return not TileQuery.rect_overlaps_solid(rect, ts)
+	if _body_shape == null:
+		_body_shape = RectangleShape2D.new()
+		_body_shape.size = _body_max - _body_min
+	var center := pos + (_body_min + _body_max) * 0.5
+	var world := CollisionWorld.acquire(self)
+	return world.shape_overlaps(_body_shape, Transform2D(0.0, center), CollisionWorld.LAYER_TERRAIN).is_empty()
 
 
 func _teleport_to_flank() -> void:
@@ -310,7 +317,7 @@ func _teleport_to_flank() -> void:
 	velocity = Vector2.ZERO
 	_teleport_flash_timer = EnemyParams.BlackBird.teleport_flash_time  # 传送白闪(覆盖消散→到达),闪完播 appear
 	_flank_cell = Vector2i(-1, -1)
-	_wrap()  # 锚定到玩家最近副本(环面)
+	_wrap()  # 物理保持规范坐标，只把渲染投影到玩家最近副本
 	# 传送后朝向玩家(appear 出现即面向目标;后续冲锋 _update_facing 也会跟方向)
 	_anim.flip_h = toroidal_dir_to_player().x < 0.0
 

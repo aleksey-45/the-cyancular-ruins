@@ -69,10 +69,18 @@ static func _build(kind: String) -> PackedFloat32Array:
 		"kill":         return _arp([620.0, 440.0, 300.0], 0.07, 0.5)
 		"switch":       return _arp([500.0, 820.0], 0.05, 0.5)
 		"deny":         return _sweep_square(150.0, 110.0, 0.12, 0.25, 0.0)
+		"heartbeat":    return _heartbeat()
 		"reload":       return _arp([180.0, 320.0], 0.06, 0.4)   # 换弹:两段机械咔哒
 		"ui":           return _arp([700.0, 1050.0], 0.04, 0.5)
 	push_warning("Sfx: 未知音效 \"%s\"" % kind)
 	return PackedFloat32Array()
+
+
+# 心跳:两记低频闷响，第二记略弱，整体留短间隔。
+static func _heartbeat() -> PackedFloat32Array:
+	var out := _sweep_square(96.0, 52.0, 0.12, 0.5, 0.0)
+	out.append_array(_sweep_square(82.0, 44.0, 0.10, 0.5, 0.0))
+	return out
 
 
 # 方波滑音:freq0→freq1 指数过渡,duty 占空比,noise_mix 开头混入的噪声比例。

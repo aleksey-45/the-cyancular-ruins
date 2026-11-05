@@ -7,16 +7,14 @@
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_ofh50"]
 size = Vector2(12, 8)
 
-[node name="GrenadeBullet" type="NativeBulletBody" unique_id=1428620016]
+[node name="GrenadeBullet" type="Node2D" unique_id=1428620016]
+script = ExtResource("1_bl")
 collision_layer = 0
 collision_mask = 5
-motion_mode = 1
-wall_min_slide_angle = 0.5235988
-script = ExtResource("1_bl")
 explodes = true
 direct_hit_damage = 5
-fuse_time = 0.4
-hit_fuse_time = 0.15
+fuse_time = 0.3
+hit_fuse_time = 0.1
 explosion_radius = 350.0
 explosion_knockback = 3000.0
 explosion_visual = ExtResource("2_fx")

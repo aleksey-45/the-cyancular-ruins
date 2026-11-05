@@ -10,10 +10,6 @@ static var TYPES: Dictionary = {}           # id → scene 路径
 
 # 从 res://data/enemies.json 加载注册表;缺文件/格式错 → push_error,表保持空。
 static func load_types() -> void:
-	_load_registry()
-
-
-static func _load_registry() -> void:
 	TYPES = {}
 	var json_text := FileAccess.get_file_as_string("res://data/enemies.json")
 	if json_text.is_empty():

@@ -1,7 +1,7 @@
 class_name TeamHud
 extends CanvasLayer
 
-# 3v3 团队对抗 HUD 界面：
+# 团队对抗 HUD 界面：
 # 包含顶部记分栏、网络延迟指示器与中央广播提示。
 # 记分与胜负结算基于队伍阵营而非单个玩家序号。
 
@@ -11,16 +11,28 @@ extends CanvasLayer
 @onready var _ping_label: Label = $PingWrap/PingLabel
 
 var _my_team := 0   # 本地玩家所属队伍编号，由对局初始化时注入
+var _counts: Dictionary = {}   # 基线冻结的团队人数，由客户端计算一次后注入
 
 
 func set_my_team(t: int) -> void:
 	_my_team = t
 
 
+func set_team_counts(counts: Dictionary) -> void:
+	_counts = counts
+
+
+# 单局击杀目标由团队规则按总人数给出，不在 HUD 复制公式。
+func _kills_to_win() -> int:
+	if _counts.is_empty():
+		return 0
+	return TeamRules.kills_to_win(TeamRules.total_players(_counts))
+
+
 func _ready() -> void:
 	PixelFont.shared()
 	NetBus.ping_updated.connect(_on_ping)
-	_broadcast.set_broadcast(true, "对战开始", "第 1 局")
+	_broadcast.set_broadcast(true, "等待玩家加载", "")
 
 
 # 外部通知直接显示广播内容
@@ -38,6 +50,10 @@ func _on_ping(ms: int) -> void:
 
 
 func _on_round_state(data: Dictionary) -> void:
+	if _counts.is_empty():
+		_score_label.text = "等待玩家加载"
+		_broadcast.set_broadcast(true, "等待玩家加载", "")
+		return
 	var state: int = data["state"]
 	var round: int = data["round"]
 	var scores: Dictionary = data["scores"]
@@ -50,6 +66,8 @@ func _on_round_state(data: Dictionary) -> void:
 	_score_label.text = "A 队击杀 %d        B 队击杀 %d        局胜 %d - %d        第 %d 局" % [
 			s1, s2, w1, w2, round]
 	match state:
+		NetEvent.RoundState.WAITING:
+			_broadcast.set_broadcast(true, "等待玩家加载", "")
 		NetEvent.RoundState.COUNTDOWN:
 			var sub := "对战开始" if round <= 1 else "第 %d 局" % round
 			_broadcast.start_countdown(float(data["timer"]), sub)
@@ -61,7 +79,7 @@ func _on_round_state(data: Dictionary) -> void:
 				var mine := winner == _my_team
 				# 胜利条件为单局达到目标击杀数
 				_broadcast.set_broadcast(true, "本局胜利!" if mine else "本局落败",
-						("A 队" if winner == 1 else "B 队") + " 先到 9 杀")
+						("A 队" if winner == 1 else "B 队") + " 先到 %d 杀" % _kills_to_win())
 			else:
 				_broadcast.set_broadcast(true, "本局结束", "局胜 %d - %d" % [w1, w2])
 		NetEvent.RoundState.MATCH_OVER:

@@ -39,7 +39,6 @@ var _spawn_captured: bool = false   # 出生点是否已抓取(等 spawner 设�
 
 func _ready() -> void:
 	super._ready()
-	_anim = $AnimatedSprite2D
 	# spawner 在 add_child 后才设置位置，出生点延至首帧记录。
 	_max_hp = hp
 	wake_radius = EnemyParams.FlyBird.wake_radius
@@ -58,8 +57,8 @@ func _physics_process(delta: float) -> void:
 		_spawn_captured = true
 	# 死亡白闪/销毁由基类统一处理(物理与生前一致走 super 同一套)。
 	super._physics_process(delta)
-	# 冲撞撞到东西(super 已执行 move_and_slide)
-	if state == State.CHARGE and get_slide_collision_count() > 0:
+	# 冲撞撞到东西(super 已执行主移动)
+	if state == State.CHARGE and not _move_hits.is_empty():
 		_on_charge_impact()
 
 
@@ -177,7 +176,7 @@ func _tick_shoot(delta: float, dist: float) -> void:
 func _tick_charge(delta: float) -> void:
 	_state_timer += delta
 	# 接触区/贴脸距离命中玩家直接结算(弥补 slide 碰撞偶尔穿过的情形)。
-	if _player_overlapping or toroidal_dist_to_player() <= CONTACT_RADIUS:
+	if _touching_player() or toroidal_dist_to_player() <= CONTACT_RADIUS:
 		_on_charge_hit_player()
 	elif _state_timer >= EnemyParams.FlyBird.charge_timeout:
 		_die_self()
@@ -212,7 +211,7 @@ func _die_self() -> void:
 
 
 # 死亡瞬间:冲撞中死(含被打死/超时)清冲撞速度,尸体不再续冲。撞墙/撞玩家的死亡已由
-# move_and_slide 抵消速度,归零无副作用;普通受击仍保留击退滑出感。
+# 主移动命中即停抵消速度,归零无副作用;普通受击仍保留击退滑出感。
 # 其余死亡保留击退速度 + 开重力,带白闪飞出后消失(不像 JumpBird 清速度定格)。
 func _on_death() -> void:
 	if state == State.CHARGE:
@@ -246,7 +245,7 @@ func _shoot_side_compute() -> float:
 				-EnemyParams.FlyBird.hover_offset_y)
 		if _cell_is_solid(_cell_of(pos)):
 			continue
-		if TileDefs.terrain.line_of_sight_cells(_cell_of(pos), _cell_of(p)):
+		if TileDefs.terrain.line_of_sight(pos, p):
 			return side
 	return geo
 
@@ -332,13 +331,13 @@ func _shot_clear() -> bool:
 		_shot_clear_from = from
 		_shot_clear_to = to
 		_shot_clear_at_frame = now
-		_shot_clear_ok = TileDefs.terrain.line_of_sight_cells(from, to)
+		_shot_clear_ok = TileDefs.terrain.line_of_sight(global_position, _player_pos())
 	return _shot_clear_ok
 
 
 # 攻击水里玩家的伤害:自爆冲击/子弹对水中玩家 ×1.5(FlyBird 独有)。
 func _water_boosted_damage(base: int) -> int:
-	var p := _nearest_player() as Node2D
+	var p := _nearest_player()
 	if p != null and Water.is_in_water(p.global_position):
 		return roundi(base * WATER_DAMAGE_MULT)
 	return base
@@ -402,12 +401,13 @@ func _start_charge() -> void:
 func _on_charge_impact() -> void:
 	if is_dead:  # 本帧若已由接触判定自毁,避免二次结算
 		return
-	for i in range(get_slide_collision_count()):
-		var collider := get_slide_collision(i).get_collider()
-		if collider != null and collider.is_in_group("player"):
+	for hit: Dictionary in _move_hits:
+		var collider: Node = null if int(hit["id"]) == 0 else instance_from_id(int(hit["id"]))
+		if collider is Player:
 			# 冲撞穿透无敌帧,命中必受到伤害(自杀攻击的威慑)
-			collider.take_hit(global_position, _water_boosted_damage(EnemyParams.FlyBird.charge_damage), true)
-			_apply_charge_impact(collider)
+			var p := collider as Player
+			p.take_hit(global_position, _water_boosted_damage(EnemyParams.FlyBird.charge_damage), true)
+			_apply_charge_impact(p)
 			break
 	_die_self()
 
@@ -425,7 +425,7 @@ func _on_charge_hit_player() -> void:
 
 
 # 冲撞冲击力:沿远离鸟的方向猛推玩家(实现收在 EnemyBase,同黑鸟)。
-func _apply_charge_impact(p: Node) -> void:
+func _apply_charge_impact(p: Player) -> void:
 	_smash_player(p, EnemyParams.FlyBird.charge_impact, EnemyParams.FlyBird.charge_impact_up)
 
 

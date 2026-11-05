@@ -3,11 +3,11 @@
 [ext_resource type="Script" uid="uid://knjsw64jktvh" path="res://scenes/weapons/weapon_base.gd" id="1_wb"]
 [ext_resource type="Texture2D" uid="uid://b0cphfvl3wqnj" path="res://assets/textures/weapons.png" id="2_wpn"]
 
-[node name="PistolTest" type="NativeWeaponBody" unique_id=1099092741]
+[node name="PistolTest" type="Node2D" unique_id=1099092741]
 script = ExtResource("1_wb")
 weapon_name = "Pistol"
 fire_cooldown = 0.3
-bullet_speed = 1400.0
+bullet_speed = 1750.0
 bullet_range = 1400.0
 spread_deg = 0.6
 damage = 10

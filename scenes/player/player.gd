@@ -1,14 +1,8 @@
 class_name Player
-extends NativeActorBody
+extends ActorBody
 
-# 预测历史使用连续值；只在恢复、协议比较时展开字段名。
-const PREDICTION_FIELDS := ["pos", "floor", "haste_mult", "vel", "facing", "slock", "coyote", "jbuf", "jcut",
-		"squat", "charge", "ct", "lmv_d", "lmv_t", "clatch", "swim", "knock", "shot_serial",
-		"wp_t", "wp_s", "wp_d", "ifr", "locked", "winst", "inv", "state", "wp", "hp", "down",
-		"fire_cd", "aiming", "fire_buf", "aim_f", "aim_cf", "mag", "rld", "rld_t"]
-const PRESENTATION_FIELDS := ["slock", "state"]
+# 预测历史使用连续值；字段定义集中在 PlayerStateSchema。
 
-var authority_world: Node
 var input_buffer := InputBuffer.new()
 var respawn_tick := 0
 var last_attacker := 0
@@ -86,9 +80,6 @@ const POSE_ANIM: Dictionary = {
 	Pose.CHARGE: "charge", Pose.SQUAT: "squat",
 }
 
-# 姿态切换锁：进入新姿态后保持最短停留时间，防止物理状态抖动导致高频状态切换。
-const STATE_LOCK_TIME := 0.15   # 切换后的最短停留时长（秒）
-
 # 输入锁定控制：在倒计时或回合冻结阶段锁定本地移动与武器开火，保证预测状态与服务端快照一致。
 func set_controls_locked(locked: bool) -> void:
 	_controls_locked = locked
@@ -96,66 +87,17 @@ func set_controls_locked(locked: bool) -> void:
 		input_source.frozen = locked
 
 
-# 原生基类持有高频状态；配置仍取自现有唯一来源。
 func _init() -> void:
-	step_input = ActorInput.new()
-	configure_motion({
-		"gravity": GameParameters.gravity0,
-		"jump_velocity": PlayerParams.jump_velocity,
-		"charge_down_velocity": PlayerParams.charge_down_velocity,
-		"charge_velocity": PlayerParams.charge_velocity,
-		"charge_duration": PlayerParams.charge_duration,
-		"charge_air_gravity_mult": PlayerParams.charge_air_gravity_mult,
-		"move_speed": PlayerParams.move_speed,
-		"crouch_walk_speed": PlayerParams.crouch_walk_speed,
-		"accel_ground": PlayerParams.accel_ground,
-		"accel_air": PlayerParams.accel_air,
-		"brake_ground": PlayerParams.brake_ground,
-		"brake_air": PlayerParams.brake_air,
-		"coyote_time": PlayerParams.coyote_time,
-		"jump_buffer_time": PlayerParams.jump_buffer_time,
-		"jump_cut_factor": PlayerParams.jump_cut_factor,
-		"waterproof": PlayerParams.player_waterproof_max,
-		"max_waterproof": PlayerParams.player_waterproof_max,
-		"sim_hp": PlayerParams.player_max_hp,
-		"sim_max_hp": PlayerParams.player_max_hp,
-		"stop_snap": PlayerParams.stop_snap,
-		"charge_dir_window": PlayerParams.charge_dir_window,
-		"swim_speed": PlayerParams.player_swim_speed,
-		"swim_up": PlayerParams.player_swim_up,
-		"swim_down": PlayerParams.player_swim_down,
-		"swim_accel": PlayerParams.player_swim_accel,
-		"climb_speed": PlayerParams.climb_speed,
-		"climb_vertical_mult": PlayerParams.climb_vertical_mult,
-		"elastic_bounce": PlayerParams.elastic_bounce,
-		"knock_decay_rate": PlayerParams.player_knock_decay_rate,
-		"breath_line_offset": PlayerParams.water_breath_line_offset,
-		"water_drain_interval": GameParameters.water_drain_interval,
-		"water_recover_interval": GameParameters.water_recover_interval,
-		"water_drown_damage_interval": GameParameters.water_drown_damage_interval,
-		"water_damage": PlayerParams.player_waterproof_damage,
-		"state_lock_time": STATE_LOCK_TIME,
-		"climb_foot_offset": PlayerParams.climb_foot_offset,
-		"swim_foot_min": PlayerParams.swim_foot_min,
-		"map_dimensions": Vector2(GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT),
-		"jump_impulse": SquashStretch.Impulse.JUMP,
-		"dash_impulse": SquashStretch.Impulse.DASH,
-		"hit_iframes": PlayerParams.iframes_time,
-		"hit_knockback": PlayerParams.player_hit_knockback,
-		"hit_knockback_up": PlayerParams.player_hit_knockback_up,
-		"climb_recoil_mult": PlayerParams.climb_recoil_mult
-	})
+	super()
 
 func _ready() -> void:
+	super()
 	simulation_visuals = visuals
 	add_to_group("player")
 	set_process(false)
 
-	hulls = [$CollisionShape2D_stand, $CollisionShape2D_squat]
 	# 倒地时取消当前武器瞄准。
 	combat.went_down.connect(func() -> void: weapons.cancel_aim())
-
-	apply_collision_pose()
 
 	# 初始化背包：单人模式开局为空手，多人模式由服务端分配初始武器
 	weapons.set_initial_inventory([])
@@ -181,12 +123,13 @@ func enable_manual_simulation() -> void:
 # 多人模式时间加速倍率：由服务端权威与客户端预测根据颗粒余额和输入状态写入
 var _ghost_t := 0.0     # 残影生成计时器
 var _ghost_flip := false  # 残影颜色交替标记
+var _charge_ghost_t := 0.0  # 冲刺残影生成计时器
+const CHARGE_GHOST_INTERVAL := 0.06
 
 func _physics_process(delta: float) -> void:
 	if not Level0.pvp_mode:
 		_poll_pickup_drop(delta)
 	var record := PacketInputSource.pack_record(input_source, 0, get_current_aim_dir())
-	record["view_tick"] = 0
 	record["winst"] = weapons.take_uplink_switch(input_source.get_switch_index_pressed())
 	execute_actions(ActorStep.step(self, record, delta))
 	present_tick(delta)
@@ -233,6 +176,7 @@ func present_tick(delta: float) -> void:
 		var pp := get_tree().get_first_node_in_group("post_process")
 		if pp != null:
 			pp.set_downed(combat.downed)
+			pp.set_health_ratio(combat.hp, combat.max_hp)
 	if _shown_hp != combat.hp:
 		_shown_hp = combat.hp
 		hp_changed.emit(combat.hp, combat.max_hp)
@@ -247,13 +191,22 @@ func present_tick(delta: float) -> void:
 			var tint := Color(1.0, 0.25, 0.25, 0.55) if _ghost_flip else Color(0.3, 0.4, 1.0, 0.55)
 			_ghost_flip = not _ghost_flip
 			AfterImage.spawn(get_parent(), animator, tint)
+	else:
+		_ghost_t = 0.0
+	# 冲刺残影：本地按 is_charge 生成，约每 0.06s 一次；冲刺结束立即停止。
+	if is_charge and not combat.is_downed():
+		_charge_ghost_t -= delta
+		if _charge_ghost_t <= 0.0:
+			_charge_ghost_t = CHARGE_GHOST_INTERVAL
+			AfterImage.spawn(get_parent(), animator, UiFactory.C_TEAM_A if team != 2 else UiFactory.C_TEAM_B)
+	else:
+		_charge_ghost_t = 0.0
 	squash.tick(delta, _pre_move_vy, _grounded, combat.is_downed())
 	_update_reload_ring()
 	var weapon := weapons.current_weapon()
 	if weapon != null:
 		weapon._update_laser()
-		weapon._recoil_recover(delta)
-		weapon._update_reload_pose()
+		weapon.present_step(delta)
 
 func execute_actions(actions: Array) -> void:
 	for action: Dictionary in actions:
@@ -288,49 +241,25 @@ func get_facing() -> int:
 func is_downed() -> bool:
 	return combat.downed
 
-# 查询当前是否处于冲刺状态，武器据此决定枪口朝向是否受限于角色身体朝向
-func apply_recoil(push: float) -> void:
-	native_apply_recoil(push)
-
-func apply_authoritative_state(hp_val: int, waterproof_val: int, downed_val: bool) -> void:
-	native_apply_authoritative_state(hp_val, waterproof_val, downed_val)
-
 # 记录决定下一物理帧模拟所需的全部关键变量，用于服务端权威快照生成与客户端预测回滚重放。
-func capture_state(shared_inventory: bool = false) -> Dictionary:
-	return capture_state_native(weapons.current_inst(), weapons.snapshot_inventory(shared_inventory))
+func capture_state() -> Array:
+	return capture_prediction_state(weapons.current_inst(), weapons.snapshot_inventory())
 
-static func expand_prediction_state(values: Array) -> Dictionary:
-	var result := {}
-	for index in values.size(): result[PREDICTION_FIELDS[index]] = values[index]
-	return result
+static func prediction_difference(values: Array, authoritative: Array) -> String:
+	return PlayerStateSchema.difference(values, authoritative)
 
-static func prediction_difference(values: Array, authoritative: Dictionary) -> String:
-	if values.is_empty(): return "missing"
-	for index in values.size():
-		var field: String = PREDICTION_FIELDS[index]
-		# 动画姿态和停留计时仍随快照保存恢复，但不决定碰撞、武器或玩法结果。
-		if field in PRESENTATION_FIELDS: continue
-		if values[index] != authoritative.get(field): return field
-	return ""
-
-# 本地完整预测需要武器计时、反冲和控制锁；远端运动代理不执行这些字段。
-func capture_driver_state(shared_inventory: bool = false) -> Dictionary:
-	var st := {}
-	write_driver_state_native(st, weapons.current_inst(), weapons.snapshot_inventory(shared_inventory))
-	return st
-
-func restore_state(st: Dictionary) -> void:
-	restore_logic_state(st)
+func restore_state(values: Array) -> void:
+	restore_logic_state(values)
 	# 恢复武器背包、手持装备及弹药状态
-	_apply_weapon_state(st)
+	_apply_weapon_state(values)
 
 
 # 应用服务端的武器与弹药状态，先同步背包列表，再恢复手持装备与弹药量
-func _apply_weapon_state(st: Dictionary) -> void:
-	weapons.restore_inventory(st["inv"], st["winst"])
+func _apply_weapon_state(values: Array) -> void:
+	weapons.restore_inventory(values[PlayerStateSchema.slot("inv")], values[PlayerStateSchema.slot("winst")])
 	var w: WeaponBase = weapons._weapon
 	if w != null:
-		w.native_restore_driver_state(st)
+		w.restore_state_values(values)
 
 # 单人模式倒地重启。
 func restart_at(spawn_cell: Vector2i) -> void:
@@ -455,20 +384,21 @@ func _update_reload_ring() -> void:
 const RELOAD_RING_OFFSET := Vector2(58.0, -44.0)   # 换弹圆环局部坐标偏移向量
 
 # 单人回放同一份 capture_state 快照；世界回溯的运动/生命语义由此处理，武器复用公共入口。
-func rewind_restore(d: Dictionary) -> void:
-	global_position = d["pos"]
+func rewind_restore(values: Array) -> void:
+	global_position = values[PlayerStateSchema.slot("pos")]
 	_grounded = false
-	velocity = d["vel"]
+	velocity = values[PlayerStateSchema.slot("vel")]
 	combat.knock_velocity = Vector2.ZERO
-	combat.hp = clampi(int(d["hp"]), 0, combat.max_hp)
-	facing_direction = int(d["facing"])
+	combat.hp = clampi(int(values[PlayerStateSchema.slot("hp")]), 0, combat.max_hp)
+	facing_direction = int(values[PlayerStateSchema.slot("facing")])
 	var downed_now := is_downed()
-	_apply_weapon_state(d)
-	if bool(d["down"]) and not downed_now:
+	_apply_weapon_state(values)
+	if bool(values[PlayerStateSchema.slot("down")]) and not downed_now:
 		combat.set_downed_by_rewind(true)
-	elif not bool(d["down"]) and downed_now:
+	elif not bool(values[PlayerStateSchema.slot("down")]) and downed_now:
 		combat.revive()
 	rotation = -PI / 2.0 * facing_direction if is_downed() else 0.0
+	apply_collision_pose()
 # 单人受击和联机 HIT 共用反馈；此处不修改 HP、倒地或击退。
 func play_hit_feedback(damage: int) -> void:
 	Sfx.play("hurt")

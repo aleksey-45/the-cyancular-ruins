@@ -33,18 +33,20 @@ func _ready() -> void:
 
 func _apply_flight_collision(in_air: bool) -> void:
 	# 站立用 CollisionPolygon2D,空中用 CollisionPolygon2D_fly。
+	# 节点 disabled 供 BFS 障碍读取；物理槽位由 _active_stance 驱动。
+	_active_stance = 1 if in_air else 0
 	if _ground_polygon != null:
 		_ground_polygon.disabled = in_air
 	if _fly_polygon != null:
 		_fly_polygon.disabled = not in_air
+	_sync_collision()
 
 
 func _waypoint_world(cell: Vector2i) -> Vector2:
 	var ts := GameParameters.TILE_SIZE
 	var p := Vector2(cell.x * ts + ts / 2.0, cell.y * ts + ts / 2.0)
 	p.y -= EnemyParams.FlyBird.hover_altitude
-	return GridPathfinder.anchor_to_nearest(p, _player_pos(),
-			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+	return p
 
 
 func _follow_path(delta: float, fallback_target: Vector2 = Vector2.INF) -> void:
@@ -116,8 +118,8 @@ func _bird_can_pass(cell: Vector2i) -> bool:
 	var ox := cell.x * ts + ts * 0.5
 	var oy := cell.y * ts + ts * 0.5 - EnemyParams.FlyBird.hover_altitude
 	# 环面瓦片通行检测（实心瓦片与水域均不可通行）
-	if TileQuery.rect_overlaps_solid_or_liquid(
-			Rect2(Vector2(ox, oy) + _fly_box_min, _fly_box_max - _fly_box_min), ts):
+	if TileDefs.terrain.rect_overlaps(
+			Rect2(Vector2(ox, oy) + _fly_box_min, _fly_box_max - _fly_box_min), ts, true):
 		return false
 	if _obstacle_boxes.size() > 0:
 		# 箱体锚到本鸟坐标的环面副本(与 _collect_obstacles 同帧),否则地图接缝处
@@ -135,28 +137,46 @@ func _collect_obstacles() -> void:
 	_obstacle_boxes.clear()
 	# PvP 有两个玩家:两人都当飞行障碍物(寻路别从对方身上/头顶穿)。走帧缓存去 group 分配。
 	for p in _players_frame():
-		var p2 := p as Node2D
+		var p2 := p as Player
 		if p2 != null and _toroidal_dist_to(p2.global_position) <= 600.0:
 			_obstacle_boxes.append(_collision_rect_of(p2))
 	for e in get_tree().get_nodes_in_group("enemies"):
-		if e == self or not (e is Node2D):
+		if e == self or not (e is EnemyBase):
 			continue
 		# 已隐藏或失去碰撞的尸体实体不再作为避障障碍物
-		if int((e as CollisionObject2D).collision_layer) == 0:
+		if (e as EnemyBase).collision_layer == 0:
 			continue
 		var epos := (e as Node2D).global_position
 		if _toroidal_dist_to(epos) <= 600.0:
 			_obstacle_boxes.append(_collision_rect_of(e))
 
 
-# 获取目标节点在世界坐标系下的激活碰撞盒 AABB
+# 获取目标节点在世界坐标系下的激活碰撞盒包围矩形（只用于 BFS 可走性估算）
 # 返回前把矩形中心锚到本鸟坐标的环面副本,与 BFS 候选格同帧(见 _bird_can_pass)。
 func _collision_rect_of(n: Node2D) -> Rect2:
-	var rect: Rect2
-	if CollisionAabb.has_any(n):
-		rect = CollisionAabb.world_rect(n)
-	else:
-		rect = Rect2(n.global_position - Vector2(20, 20), Vector2(40, 40))
+	var rect := Rect2(n.global_position - Vector2(20, 20), Vector2(40, 40))
+	var has := false
+	for child in n.get_children():
+		if child is CollisionShape2D:
+			var cs := child as CollisionShape2D
+			if cs.disabled or cs.shape == null:
+				continue
+			var box: Rect2 = cs.global_transform * cs.shape.get_rect()
+			rect = box if not has else rect.merge(box)
+			has = true
+		elif child is CollisionPolygon2D:
+			var cp := child as CollisionPolygon2D
+			if cp.disabled or cp.polygon.is_empty():
+				continue
+			var mn := cp.to_global(cp.polygon[0])
+			var mx := mn
+			for point in cp.polygon:
+				var wp := cp.to_global(point)
+				mn = mn.min(wp)
+				mx = mx.max(wp)
+			var poly := Rect2(mn, mx - mn)
+			rect = poly if not has else rect.merge(poly)
+			has = true
 	var center := rect.get_center()
 	var anchored := GridPathfinder.anchor_to_nearest(center, global_position,
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
@@ -171,7 +191,7 @@ func _repath_to(cell: Vector2i) -> void:
 	# 按鸟自身碰撞箱能否通过 + 场上实体碰撞箱是否挡路判定可走性(见 _bird_can_pass)。
 	# 目标格不可达(墙/挤不进/预算超限)时 astar_path_nearest 返回最近可达格的路径,
 	# 避免空路径后直线硬冲卡墙。A* 启发式直扑目标,空旷区展开节点远少于 BFS。
-	# 目标格变化或路径耗尽时重新寻路，移动碰撞由 move_and_slide 处理。
+	# 目标格变化或路径耗尽时重新寻路，移动碰撞由基类 _move_slide 处理。
 	if cell == _path_target and not _path.is_empty():
 		return
 	_path_target = cell

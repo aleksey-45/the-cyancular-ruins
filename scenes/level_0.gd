@@ -1,12 +1,12 @@
 class_name Level0
 extends Node2D
 
-# 地形由 NativeTerrain 统一维护；场景负责装载、时间轴和表现提交。
+# 地形由 Terrain 统一维护；场景负责装载、时间轴和表现提交。
 static var wall_layer: TileMapLayer = null
 static var water_layer: TileMapLayer = null
 static var surface_texture: Texture2D = null
 static var water_surface_layer: Node2D = null
-var terrain: NativeTerrain
+var terrain: Terrain
 var _grid_ref: Array[Array]:
 	get: return terrain.get_grid_snapshot() if terrain != null else []
 
@@ -154,6 +154,15 @@ func _ready() -> void:
 
 func _exit_tree() -> void:
 	if terrain != null: terrain.set_rewind_enabled(false)
+	# 关卡拥有该视口的物理空间：适配层只在这里归还，子节点退出时只释放自己的代理。
+	var viewport := get_node_or_null("WorldViewport") as Viewport
+	if viewport != null:
+		CollisionWorld.release_space(viewport.world_2d.space)
+	# 时间场静态字段由本关创建、随本关销毁；不清空会残留到下个模式
+	# （如带着 REWIND 模式进 PvP，会把那边的模拟整体冻结）。
+	TimeField.current = null
+	time_field = null
+	grain_account = null
 
 
 # 瓦片图集由 TerrainAtlas 统一构建
@@ -162,9 +171,10 @@ func _create_wall_tileset() -> TileSet:
 
 func _create_water_tileset() -> TileSet:
 	var ts := GameParameters.TILE_SIZE
-	# 水面合批 shader 的采样源(= 水体纹理放大到 ts×ts)
-	Level0.surface_texture = ImageTexture.create_from_image(TerrainAtlas.water_brick_image(ts))
-	return TerrainAtlas.make_water_tileset(ts)
+	# 水面合批 shader 的采样源(= 水面纹理放大到 ts×ts)；水体瓦片使用水砖索引。
+	Level0.surface_texture = ImageTexture.create_from_image(
+			TerrainAtlas.water_brick_image(ts, TerrainAtlas.WATER_SURFACE_BRICK))
+	return TerrainAtlas.make_water_tileset(ts, TerrainAtlas.WATER_BODY_BRICK)
 
 func _paint_maze(layer: TileMapLayer) -> void:
 	# cyrm v4：绘制 16px 子格图层（跳过空气与液体瓦片）
@@ -185,9 +195,9 @@ func _paint_maze(layer: TileMapLayer) -> void:
 					layer.set_cell(Vector2i(x + tx * sc, y + ty * sr), source_id, atlas)
 
 
-# 水格铺图:水体格铺水体瓦片(纹理 21,水体专用 64px 图集的 atlas 行 0);水面格(上方非 liquid)只放 Sprite 亮线,不铺瓦片(避免双层半透明叠加变深)。
+# 水格铺图:水体格铺水体瓦片(索引 20,水体专用 64px 图集的 atlas 行 0);水面格(上方非 liquid)只放 Sprite 亮线,不铺瓦片(避免双层半透明叠加变深)。
 func _paint_water(grid: Array[Array]) -> void:
-	const BODY_ROW := 0   # 水体专用图集只有一行(纹理 21)
+	const BODY_ROW := 0   # 水体专用图集只有一行(索引 20)
 	var ts := GameParameters.TILE_SIZE
 	var cols := grid[0].size()
 	var rows := grid.size()
@@ -245,30 +255,31 @@ func _rewind_elite_hits() -> void:
 		return
 	var elites: Array = []
 	for e in get_tree().get_nodes_in_group("enemies"):
-		if is_instance_valid(e) and e.has_meta("elite") and not bool(e.get("is_dead")):
+		if e is EnemyBase and (e as EnemyBase).has_meta("elite") and not (e as EnemyBase).is_dead:
 			elites.append(e)
 	if elites.is_empty():
 		return
+	var world := CollisionWorld.acquire($WorldViewport)
 	for b in _rewind.replay_bullets():
-		if not is_instance_valid(b):
+		if not is_instance_valid(b) or b.shape == null:
 			continue
 		var dmg := int(b.get("hit_damage"))
 		if dmg <= 0:
 			continue
-		var bp: Vector2 = (b as Node2D).global_position
-		for e in elites:
-			var ep: Vector2 = (e as Node2D).global_position
-			var d := GridPathfinder.toroidal_delta_px(bp, ep,
-					GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
-			if d.length() > 42.0:
+		var bullet := b as Node2D
+		for entry: Dictionary in world.shape_overlaps(bullet.shape, bullet.global_transform, CollisionWorld.LAYER_ENEMY):
+			var elite := entry["collider"] as EnemyBase
+			if elite == null or not elites.has(elite) or elite.is_dead:
 				continue
 			var hit_ids: Array = b.get_meta("rw_hit_ids", [])
-			if hit_ids.has(e.get_instance_id()):
+			if hit_ids.has(elite.get_instance_id()):
 				continue
-			hit_ids.append(e.get_instance_id())
+			hit_ids.append(elite.get_instance_id())
 			b.set_meta("rw_hit_ids", hit_ids)
+			var d := GridPathfinder.toroidal_delta_px(bullet.global_position, elite.global_position,
+					GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 			var dir := d.normalized() if not d.is_zero_approx() else Vector2.RIGHT
-			e.call("hurt", dmg, dir, float(b.get("hit_impact")))
+			elite.hurt(dmg, dir, float(b.get("hit_impact")))
 
 func _flush_terrain_history() -> void:
 	if terrain != null and _rewind != null:
@@ -289,7 +300,7 @@ func _build_wall_collision(_grid: Array[Array]) -> void:
 func restart_single() -> void:
 	if terrain == null or terrain.empty():
 		return
-	var player: CharacterBody2D = $WorldViewport/Player
+	var player: Player = $WorldViewport/Player
 	# 瓦片/碰撞整层还原为建图基线;顺手清掉本帧的破坏瓦片重建队列(基线已是最新)
 	reset_destructibles()
 	# 重开是新时间线，旧地图的 HP 和实体历史不能带入新开局。
@@ -317,7 +328,7 @@ func restart_single() -> void:
 	scatter_weapons.call_deferred(_default_weapon_types())
 
 func _place_player(_grid: Array[Array], spawn_cell: Vector2i) -> void:
-	var player: CharacterBody2D = $WorldViewport/Player
+	var player: Player = $WorldViewport/Player
 	var ts: int = GameParameters.TILE_SIZE
 	var pos := Vector2i(-1, -1)
 	if spawn_cell.x >= 0 and spawn_cell.y >= 0:
@@ -353,7 +364,7 @@ const PICKUP_SCENE := preload("res://scenes/weapons/weapon_pickup.tscn")
 
 
 # 单人模式开局默认装备第一把可用武器
-func _give_starting_weapon(p: Node) -> void:
+func _give_starting_weapon(p: Player) -> void:
 	if p == null or p.weapons == null:
 		return
 	p.weapons.set_initial_inventory([int(p.weapons.default_type())])
@@ -431,7 +442,7 @@ func scatter_weapons(types: Array) -> void:
 
 
 # 拾取判定：优先拾取距离角色最近的地面武器
-func try_pickup_for(p: Node2D) -> void:
+func try_pickup_for(p: Player) -> void:
 	if p == null or p.weapons == null:
 		return
 	var e: Dictionary = ground_weapons.nearest_within(
@@ -586,15 +597,6 @@ func _update_pickup_prompt() -> void:
 	var pl := $WorldViewport.get_node_or_null("Player") as Node2D
 	# 地面武器拾取判定与渲染坐标映射到距离本地玩家最近的可视副本
 	var anchor: Vector2 = pl.global_position if pl != null else Vector2.ZERO
-	for inst in _pickup_nodes:
-		var n0 = _pickup_nodes.get(inst, null)
-		if n0 != null and is_instance_valid(n0):
-			var pk0 := n0 as WeaponPickup
-			pk0.set_anchor(anchor)
-			pk0.sync_render_from_canonical()
-			var e0: Dictionary = ground_weapons.get_entry(int(inst))
-			if not e0.is_empty():
-				e0["pos"] = pk0.canonical_pos
 	var self_drops := _live_self_drops()
 	var w := float(GameParameters.MAP_WIDTH)
 	var h := float(GameParameters.MAP_HEIGHT)
@@ -603,12 +605,18 @@ func _update_pickup_prompt() -> void:
 		if n == null or not is_instance_valid(n):
 			continue
 		var pk := n as WeaponPickup
+		pk.set_anchor(anchor)
+		pk.sync_render_from_canonical()
+		var e0: Dictionary = ground_weapons.get_entry(int(inst))
+		if not e0.is_empty():
+			e0["pos"] = pk.canonical_pos
+		# 凡满足拾取条件的武器才显示按键交互提示
 		var can := false
-		if pl != null and not self_drops.has(int(inst)):
-			if pl.weapons.is_type_enabled(int(pk.type_id)):
-				var d := GridPathfinder.toroidal_delta_px(
-						pk.canonical_pos, pl.global_position, w, h).length()
-				can = d <= PlayerParams.weapon_pickup_radius
+		if pl != null and not self_drops.has(int(inst)) \
+				and pl.weapons.is_type_enabled(int(pk.type_id)):
+			var d := GridPathfinder.toroidal_delta_px(
+					pk.canonical_pos, pl.global_position, w, h).length()
+			can = d <= PlayerParams.weapon_pickup_radius
 		pk.set_prompt_visible(can)
 # 网络物理步进前按块完成本批地形碰撞更新。
 func flush_terrain_collision() -> void:

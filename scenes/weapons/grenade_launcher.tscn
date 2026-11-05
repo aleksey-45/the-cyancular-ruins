@@ -5,14 +5,14 @@
 
 [ext_resource type="Texture2D" uid="uid://b0cphfvl3wqnj" path="res://assets/textures/weapons.png" id="2_wpn"]
 
-[node name="GrenadeLauncher" type="NativeWeaponBody" unique_id=1484159833]
+[node name="GrenadeLauncher" type="Node2D" unique_id=1484159833]
 script = ExtResource("1_wb")
 bullet_scene = ExtResource("2_gb")
 tier = 2
 weapon_name = "Grenade Launcher"
 fire_cooldown = 1.4
 heavy_aim = true
-bullet_speed = 1100.0
+bullet_speed = 1375.0
 bullet_range = 2500.0
 bullet_size = 1.5
 damage = 5

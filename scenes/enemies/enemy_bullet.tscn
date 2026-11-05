@@ -6,11 +6,10 @@
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_8bitv"]
 size = Vector2(10, 10)
 
-[node name="EnemyBullet" type="NativeBulletBody" unique_id=23499240]
+[node name="EnemyBullet" type="Node2D" unique_id=23499240]
+script = ExtResource("1_bl")
 collision_layer = 0
 collision_mask = 3
-motion_mode = 1
-script = ExtResource("1_bl")
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="." unique_id=1796540343]
 shape = SubResource("RectangleShape2D_8bitv")

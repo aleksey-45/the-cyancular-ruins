@@ -10,23 +10,22 @@ static var pvp_arena := false
 
 
 signal went_down   # 倒地瞬间触发，根节点接收后调用 weapons.cancel_aim 取消瞄准
-signal took_hit(source_pos: Vector2, damage: int)
 
 var max_hp: int:
-	get: return (get_parent() as NativeActorBody).sim_max_hp
-	set(value): (get_parent() as NativeActorBody).sim_max_hp = value
+	get: return (get_parent() as ActorBody).sim_max_hp
+	set(value): (get_parent() as ActorBody).sim_max_hp = value
 var hp: int:
-	get: return (get_parent() as NativeActorBody).sim_hp
-	set(value): (get_parent() as NativeActorBody).sim_hp = value
+	get: return (get_parent() as ActorBody).sim_hp
+	set(value): (get_parent() as ActorBody).sim_hp = value
 var iframes: float:
-	get: return (get_parent() as NativeActorBody).sim_iframes
-	set(value): (get_parent() as NativeActorBody).sim_iframes = value
+	get: return (get_parent() as ActorBody).sim_iframes
+	set(value): (get_parent() as ActorBody).sim_iframes = value
 var downed: bool:
-	get: return (get_parent() as NativeActorBody).sim_downed
-	set(value): (get_parent() as NativeActorBody).sim_downed = value
+	get: return (get_parent() as ActorBody).sim_downed
+	set(value): (get_parent() as ActorBody).sim_downed = value
 var knock_velocity: Vector2:
-	get: return (get_parent() as NativeActorBody).motion_knock_velocity
-	set(value): (get_parent() as NativeActorBody).motion_knock_velocity = value
+	get: return (get_parent() as ActorBody).motion_knock_velocity
+	set(value): (get_parent() as ActorBody).motion_knock_velocity = value
 
 var body: Player
 
@@ -51,11 +50,10 @@ func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, kn
 	if downed or (not pvp_arena and iframes > 0.0 and not ignore_iframes):
 		return
 	simulate_hit(source_pos, damage, knockback)
-	took_hit.emit(source_pos, damage)
 
 # 权威模拟与预测共用受击状态更新；事件和音画由外层处理。
 func simulate_hit(source_pos: Vector2, damage: int, knockback: float) -> void:
-	if body.native_simulate_hit(source_pos, damage, knockback): went_down.emit()
+	if body.simulate_hit(source_pos, damage, knockback): went_down.emit()
 
 func force_down() -> void:
 	if not downed:
@@ -82,4 +80,4 @@ func revive() -> void:
 	body.apply_collision_pose()
 
 func _downed() -> void:
-	if body.native_force_down(): went_down.emit()
+	if body.force_down(): went_down.emit()

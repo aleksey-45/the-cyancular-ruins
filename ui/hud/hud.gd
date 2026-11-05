@@ -154,10 +154,10 @@ func _refresh_weapon_boxes() -> void:
 	_ammo_label = null
 	_weapon_icon = null
 	_weapon_name = null
-	var held_index := 0
+	var inv: WeaponInventory = _player.weapons.inventory
 	var cur_index: int = _player.weapons._current_index
-	for e in _player.weapons.inventory.held:
-		var t := int(e["type"])
+	for held_index in inv.count():
+		var t := inv.type_at(held_index)
 		# 依据背包槽位下标匹配当前选中的手持武器
 		var sel := held_index == cur_index
 		var box := PanelContainer.new()
@@ -213,7 +213,6 @@ func _refresh_weapon_boxes() -> void:
 			UiFactory.style_control(_ammo_label, WEAPON_FONT_SIZE)
 			_ammo_label.add_theme_color_override("font_color", UiFactory.C_TEXT)
 			info.add_child(_ammo_label)
-		held_index += 1
 	_weapon_box.move_child(_drop_bar, _weapon_box.get_child_count() - 1)
 
 

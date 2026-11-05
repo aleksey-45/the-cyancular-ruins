@@ -2,7 +2,7 @@ class_name WaterFx
 extends Node2D
 
 # 水体粒子特效控制器：实体在水中移动时生成水面水花与水下气泡特效。运行时动态挂载于玩家与敌人实体。
-# 在 _process 中读取父级 CharacterBody2D 节点的速度与坐标，将生成的粒子节点添加至其父级视图中。
+# 在 _process 中读取父级实体的速度与坐标，将生成的粒子节点添加至其父级视图中。
 
 static var _tex: Texture2D = null
 
@@ -18,7 +18,7 @@ var _next_emit: float = 0.0
 
 
 func _process(delta: float) -> void:
-	var parent := get_parent() as CharacterBody2D
+	var parent := get_parent() as Node2D
 	if parent == null:
 		return
 	if TileDefs.terrain.empty():

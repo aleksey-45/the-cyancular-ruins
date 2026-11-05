@@ -14,7 +14,6 @@ var _sleep_anim_timer: float = 0.0  # 入睡动画剩余时间(播完定格 slee
 func _ready() -> void:
 	super._ready()
 	# 战斗参数来自场景。
-	_anim = $AnimatedSprite2D
 	wake_radius = EnemyParams.JumpBird.wake_radius
 	_set_state(State.SLEEP)
 	_anim.play("sleeping")  # 睡觉是常态;入睡动画在靠近时触发
@@ -88,7 +87,7 @@ func _tick_chase(delta: float, dist: float) -> void:
 		_set_state(State.LUNGE_WINDUP)
 		_lunge_dir = toroidal_dir_to_player()
 		_state_timer = EnemyParams.JumpBird.lunge_windup
-	elif is_on_floor():
+	elif _grounded:
 		# 鸟非冲刺状态下只能跳跃移动,不能滑行
 		_hop_timer -= delta
 		if _hop_timer <= 0.0:
@@ -119,8 +118,8 @@ func _tick_lunge_dash(delta: float) -> void:
 			_anim.play("dashing")
 	_dash_timer -= delta
 	_lunge_traveled += (velocity * delta).length()
-	# 冲刺超时保险:即使方向异常(0/NaN)也不至于永久卡在冲刺
-	if _dash_timer <= 0.0 or _lunge_traveled >= EnemyParams.JumpBird.lunge_max_dist or is_on_wall():
+	# 冲刺总时长保险:速度被外力(爆炸击退等)改动或主移动异常时,防止永久卡在冲刺状态。
+	if _dash_timer <= 0.0 or _lunge_traveled >= EnemyParams.JumpBird.lunge_max_dist or _hit_wall():
 		_set_state(State.BACK_HOP)
 		use_gravity = true
 		velocity = Vector2(-_lunge_dir.x * EnemyParams.JumpBird.back_hop_away,
@@ -129,7 +128,7 @@ func _tick_lunge_dash(delta: float) -> void:
 
 
 func _tick_back_hop() -> void:
-	if is_on_floor() and _back_hop_cd <= 0.0:
+	if _grounded and _back_hop_cd <= 0.0:
 		_set_state(State.CHASE)
 		_hop_timer = 0.15
 

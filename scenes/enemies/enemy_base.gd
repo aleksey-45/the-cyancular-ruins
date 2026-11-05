@@ -1,5 +1,8 @@
 class_name EnemyBase
-extends CharacterBody2D
+extends ServerBody
+
+# 敌人是自管 RID 物理体：移动统一走 CollisionWorld.move_body()，X/Y 两轴依次推进、
+# 命中即停；本节点承载 AI、动画与接触判定，节点变换就是权威数据位姿。
 
 # 进入死亡状态时发射一次(用于击杀计数等 UI;撞人自毁同算,见 FlyBird._die_self)
 signal died
@@ -30,14 +33,12 @@ var _rewind_hold: bool = false   # 录制期死亡保留的尸体(隐藏待复�
 var _rw_held_layer: int = -1
 var _hit_flash_time: float = 0.0
 var _death_timer: float = -1.0   # 死亡白闪剩余;<0 未死亡(受击/死亡白闪统一在基类)
-var _player_overlapping: bool = false
 var _overlapping_players: Array = []  # 当前接触到的玩家节点(1v1 PvP 里可能同时撞到两人,受击取最近者)
 var _turn_cooldown: float = 0.0  # 转向冷却:两次翻转朝向至少间隔 turn_min_interval
 # 玩家组每帧缓存:同一物理帧内 _players_frame() 只建一次数组,砍掉每帧每敌多次 get_nodes_in_group 分配。
 var _players_frame_cache: Array = []
 var _players_frame_id: int = -1
 var wake_radius: float = 1000.0  # 远处睡眠优化:距玩家超此值且落地静止 → 跳过物理
-var _in_water: bool = false
 var _waterproof: int = 6                 # 防水值(氧气),完全没入水中每 0.5s 掉 1
 var waterproof_max: int = 6              # 上限:black/jump 6,fly 10
 var _waterproof_drain_timer: float = 0.0
@@ -47,10 +48,61 @@ var _drown_tick: float = 0.0     # 扣除生命值倒计时
 var state: int = 0
 var _state_timer: float = 0.0
 var _anim: AnimatedSprite2D
+var _anim_base := Vector2.ZERO
+# 逻辑与物理位置保持规范坐标；渲染按最近环面副本平移。
+var _visual_offset := Vector2.ZERO
 # 补间形变(squash & stretch)。纯表现层,不进任何网络同步、不碰碰撞箱。
 var squash: SquashStretch = null
-# 执行 move_and_slide 前记录的垂直速度，用于落地形变判定
+# 记录主移动前的垂直速度，用于落地形变判定
 var _pre_move_vy: float = 0.0
+# 自管 RID 体生命周期在 ServerBody；这里只补充形状槽与运动策略。
+var velocity := Vector2.ZERO
+var _grounded := false
+# 姿态壳载体（CollisionShape2D/CollisionPolygon2D 直接子节点）；_active_stance 指向当前启用槽。
+var hulls: Array = []
+var _active_stance := 0
+# 主移动本帧的接触：{"rid", "id", "normal", "point"}；冲撞判定等子类逻辑读取。
+var _move_hits: Array = []
+
+
+func _enter_tree() -> void:
+	super()   # 空间挂接、层掩码提交与归属挂载
+	# 此时 hulls 还没填充（_ready 才收集），只提交当前位姿。
+	CollisionWorld.sync_body_pose(_rid, global_transform)
+
+## 形状槽同步：载体给出形状与局部变换，位姿取当前节点变换。
+func _sync_collision() -> void:
+	if _world_space.is_valid():
+		CollisionWorld.sync_body_shapes(_rid, hulls, global_transform, _active_stance)
+
+## 击退位移：命中即停，不滑行（与引擎 move_and_collide 同语义）。
+func _move_knock(motion: Vector2) -> void:
+	if motion == Vector2.ZERO:
+		return
+	var out := CollisionWorld.move_body(_rid, global_transform, motion)
+	global_position += (out[1] as PhysicsTestMotionResult2D).get_travel()
+
+## 主移动：两轴推进、命中即停；瓦片地形全是轴对齐矩形，
+## 不需要引擎的坡度/吸附/平台逻辑。向下被挡且法线朝上即着地。
+func _move_slide(motion: Vector2) -> void:
+	var out := axis_move(motion)
+	_move_hits = out["hits"]
+	var blocked: Vector2 = out["blocked"]
+	_grounded = false
+	if blocked.x != 0.0:
+		velocity.x = 0.0
+	if blocked.y > 0.0:
+		velocity.y = 0.0
+		_grounded = float(out["ground"]) < -0.5
+
+## 本帧主移动被侧向挡住（原 CharacterBody2D.is_on_wall 的等价判定）。
+## _move_hits 是最近一次 _move_slide 的接触；轴对齐瓦片的法线非横即纵，
+## |normal.y| < 0.5 即竖直墙面（着地/天花板法线朝上下，被排除）。
+func _hit_wall() -> bool:
+	for hit: Dictionary in _move_hits:
+		if absf((hit["normal"] as Vector2).y) < 0.5:
+			return true
+	return false
 
 func _ai(_delta: float) -> void:
 	pass
@@ -65,16 +117,24 @@ func _water_swim_dir() -> Vector2:
 func _ready() -> void:
 	add_to_group("enemies")
 	_setup_contact_area()
+	# 姿态壳载体：直接子节点里的形状节点（ContactArea 内部的形状不算）。
+	for child in get_children():
+		if child is CollisionShape2D or child is CollisionPolygon2D:
+			hulls.append(child)
 	call_deferred("add_child", WaterFx.new())
 	# 初始化挤压拉伸形变组件
 	squash = SquashStretch.new()
 	add_child(squash)
 	# 校验动画节点有效性
 	var anim := get_node_or_null("AnimatedSprite2D") as AnimatedSprite2D
-	if anim == null:
+	_anim = anim
+	if anim != null:
+		_anim_base = anim.position
+	else:
 		push_error("EnemyBase: 找不到 AnimatedSprite2D 节点,补间形变将静默失效(节点名 = %s)"
 				% name)
 	squash.setup(anim, SquashStretch.Profile.ENEMY)
+	_sync_collision()
 
 func _setup_contact_area() -> void:
 	var area := Area2D.new()
@@ -90,35 +150,40 @@ func _setup_contact_area() -> void:
 	area.body_entered.connect(_on_contact_body_entered)
 	area.body_exited.connect(_on_contact_body_exited)
 
+# 接触判定只由重叠列表决定，不再单独维护一份布尔量。
+func _touching_player() -> bool:
+	return not _overlapping_players.is_empty()
+
 func _on_contact_body_entered(body: Node) -> void:
 	if body.is_in_group("player"):
-		_player_overlapping = true
 		if not _overlapping_players.has(body):
 			_overlapping_players.append(body)
 
 func _on_contact_body_exited(body: Node) -> void:
 	if body.is_in_group("player"):
 		_overlapping_players.erase(body)
-		_player_overlapping = not _overlapping_players.is_empty()
 
 func _physics_process(delta: float) -> void:
 	delta = TimeField.enemy_delta(delta, self)   # 时间场:回溯冻结/加速/透支(精英例外)
+	# 出生摆位/回放摆位等外部直写先同步进物理空间，再进入本帧逻辑；槽位不变，只写位姿。
+	CollisionWorld.sync_body_pose(_rid, global_transform)
 	# 回溯中普通敌人整帧跳过(位置由回放器摆;接触伤害/白闪/AI 全不结算);精英照常
 	if TimeField.current != null and TimeField.current.is_rewinding() and not has_meta("elite"):
 		return
 	# 睡眠状态重置垂直速度缓存，避免苏醒首帧因旧速度缓存触发意外挤压形变
 	var sleeping := _is_far_sleeping()
-	squash.tick(delta, _pre_move_vy, is_on_floor(), is_dead)
+	squash.tick(delta, _pre_move_vy, _grounded, is_dead)
 	if sleeping:
 		_pre_move_vy = 0.0
 		_ai(delta)
 		_wrap()
+		CollisionWorld.sync_body_pose(_rid, global_transform)
 		return
 	_turn_cooldown = maxf(_turn_cooldown - delta, 0.0)
-	if use_gravity and not is_on_floor():
+	if use_gravity and not _grounded:
 		velocity.y += GameParameters.gravity0 * delta
 	# 摩擦先于 AI，避免削弱本帧刚设定的跳跃和冲刺速度。
-	if use_gravity and is_on_floor():
+	if use_gravity and _grounded:
 		velocity.x *= GROUND_FRICTION
 		if absf(velocity.x) < STOP_EPSILON:
 			velocity.x = 0.0
@@ -128,7 +193,7 @@ func _physics_process(delta: float) -> void:
 		_anim_update()
 		# 接触伤害:物理 Area 覆盖常规情况;环面接缝处欧氏距离不重叠,用环面距离保底处理
 		# contact_damage<=0 时跳过:零伤也会触发玩家 take_hit 消耗 iframe 并击退。
-		if contact_damage > 0 and (_player_overlapping or toroidal_dist_to_player() <= CONTACT_RADIUS):
+		if contact_damage > 0 and (_touching_player() or toroidal_dist_to_player() <= CONTACT_RADIUS):
 			var p := _contact_victim()
 			if p != null:
 				p.take_hit(global_position, contact_damage)
@@ -144,6 +209,7 @@ func _physics_process(delta: float) -> void:
 				set_physics_process(false)
 				_rw_held_layer = collision_layer
 				collision_layer = 0
+				_apply_layers()
 				_death_timer = -1.0
 			else:
 				queue_free()
@@ -154,15 +220,17 @@ func _physics_process(delta: float) -> void:
 		velocity *= exp(-knock_decay_rate * delta)
 	_apply_water(delta)
 	# 击退独立碰撞，避免落地冲量污染移动速度；主移动最后更新地面状态。
-	move_and_collide(knock_velocity * delta)
+	_move_knock(knock_velocity * delta)
 	knock_velocity *= exp(-knock_decay_rate * delta)
 	# 记录移动前的垂直速度供落地形变计算
 	_pre_move_vy = velocity.y
-	# 时间场:水平运动走速度域(move_and_slide 用引擎 delta,缩放 delta 不改变位移);
+	# 时间场:水平运动走速度域(引擎帧长与 delta 缩放的差异由倍率吸收);
 	# 计时器/动画/重力仍走上面的 delta 缩放。精英与玩家同步,普通敌放慢。
 	velocity.x *= TimeField.enemy_speed_mult(self)
-	move_and_slide()
+	_move_slide(velocity * delta)
 	_wrap()
+	# AI 可能直接摆位（寻路到点、滑翔到位）；槽位不变，帧末只补位姿。
+	CollisionWorld.sync_body_pose(_rid, global_transform)
 
 func hurt(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, set_velocity: bool = false) -> void:
 	if is_dead:
@@ -207,7 +275,7 @@ func _is_far_sleeping() -> bool:
 		return false
 	if not _is_asleep():
 		return false
-	if not is_on_floor():
+	if not _grounded:
 		return false
 	if absf(velocity.x) > 5.0 or absf(velocity.y) > 5.0:
 		return false
@@ -217,9 +285,9 @@ func _is_far_sleeping() -> bool:
 # 落水浮力:弹簧把身体中心拉回水面线(半没入);水平朝 _water_swim_dir 游;完全没入水中累计溺水。
 func _apply_water(delta: float) -> void:
 	var feet := Vector2(global_position.x, global_position.y + Water.feet_offset(self))
-	_in_water = Water.is_in_water(feet)
+	var in_water := Water.is_in_water(feet)
 	var submerged := false
-	if _in_water:
+	if in_water:
 		var surface_y := Water.surface_y_at(global_position)
 		submerged = Water.submerged(global_position, surface_y)
 		var target_vy := clampf((surface_y - global_position.y) * EnemyParams.shared.bird_buoyancy_k,
@@ -265,7 +333,7 @@ func _on_death() -> void:
 	pass
 
 
-func _smash_player(p: Node2D, impact: float, impact_up: float) -> void:
+func _smash_player(p: Player, impact: float, impact_up: float) -> void:
 	var away := (p.global_position - global_position).normalized()
 	if away == Vector2.ZERO:
 		away = Vector2(-float(p.get_facing()), 0.0)
@@ -319,11 +387,11 @@ func _players_frame() -> Array:
 
 
 # 多玩家目标:取组里距自己最近的玩家(单机唯一玩家 → 行为不变)。无玩家返回 null。
-func _nearest_player() -> Node2D:
-	var best: Node2D = null
+func _nearest_player() -> Player:
+	var best: Player = null
 	var best_d := INF
 	for p in _players_frame():
-		var n := p as Node2D
+		var n := p as Player
 		if n == null:
 			continue
 		var d := _toroidal_dist_to(n.global_position)
@@ -333,11 +401,11 @@ func _nearest_player() -> Node2D:
 	return best
 
 # 接触受击目标:重叠的玩家里取最近者;无重叠时若环面距离保底处理内(接缝 Area 不重叠)→ 全局最近玩家。
-func _contact_victim() -> Node2D:
-	var best: Node2D = null
+func _contact_victim() -> Player:
+	var best: Player = null
 	var best_d := INF
 	for b in _overlapping_players:
-		var n := b as Node2D
+		var n := b as Player
 		if n == null or not is_instance_valid(n):
 			continue
 		var d := _toroidal_dist_to(n.global_position)
@@ -349,15 +417,13 @@ func _contact_victim() -> Node2D:
 	return _nearest_player() if toroidal_dist_to_player() <= CONTACT_RADIUS else null
 
 func _player_pos() -> Vector2:
-	var p := _nearest_player() as Node2D
+	var p := _nearest_player()
 	return p.global_position if p != null else global_position
 
 
 func _player_velocity() -> Vector2:
 	var p := _nearest_player()
-	if p != null and "velocity" in p:
-		return p.velocity
-	return Vector2.ZERO
+	return p.velocity if p != null else Vector2.ZERO
 
 
 func _cell_of(pos: Vector2) -> Vector2i:
@@ -386,26 +452,29 @@ func toroidal_delta_to_player() -> Vector2:
 	var p := _nearest_player()
 	if p == null:
 		return Vector2.INF
-	return GridPathfinder.toroidal_delta_px(global_position, (p as Node2D).global_position,
+	return GridPathfinder.toroidal_delta_px(global_position, p.global_position,
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 
+# 物理位置始终落在规范区间；只有渲染按最近环面副本平移，绝不影响碰撞查询。
 func _wrap() -> void:
-	# 映射到离玩家最近的环面副本，保持接缝处显示连续。
-	var p := _nearest_player() as Node2D
-	if p == null:
-		# 无玩家(场景切换/加载中)时退回绝对取模,防止敌人无限漂移
-		global_position = GridPathfinder.wrap_to_range(global_position,
-				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
-		return
-	global_position = GridPathfinder.anchor_to_nearest(global_position, p.global_position,
+	var canonical := GridPathfinder.wrap_to_range(global_position,
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+	var p := _nearest_player() as Node2D
+	var shown := canonical
+	if p != null:
+		shown = GridPathfinder.anchor_to_nearest(canonical, p.global_position,
+				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+	if global_position != canonical:
+		global_position = canonical
+	_visual_offset = shown - canonical
+	if _anim != null:
+		_anim.position = _anim_base + _visual_offset
 
 # 回溯状态恢复（WorldRewind 调用）：将敌人重置为快照帧的状态（包含存活与复活处理）
 func rewind_restore(d: Dictionary) -> void:
 	var was_dead := is_dead
 	global_position = d["p"]
-	if d["v"] != null:
-		velocity = d["v"]
+	velocity = d["v"]
 	hp = int(d["hp"])
 	is_dead = bool(d["dead"])
 	if was_dead and not is_dead:
@@ -415,6 +484,7 @@ func rewind_restore(d: Dictionary) -> void:
 		# 恢复隐藏时摘掉的碰撞层
 		if _rw_held_layer >= 0:
 			collision_layer = _rw_held_layer
+			_apply_layers()
 			_rw_held_layer = -1
 		_rewind_hold = false
 		if has_meta("rw_death_ms"):
@@ -425,3 +495,5 @@ func rewind_restore(d: Dictionary) -> void:
 	elif not was_dead and is_dead:
 		# 倒回"将死未死"帧:按快照的可见性处理(通常在白闪中点)
 		visible = bool(d["vis"])
+	# 回放只摆位姿，不切姿态槽。
+	CollisionWorld.sync_body_pose(_rid, global_transform)

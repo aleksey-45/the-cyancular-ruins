@@ -29,7 +29,6 @@ var big: Label = null
 var sub: Label = null
 
 # 是否启用数字跳动微缩放动效
-var punch_enabled := true
 
 var _center: CenterContainer = null
 var _panel: PanelContainer = null
@@ -127,7 +126,7 @@ func _set_big_text(t: String) -> void:
 
 # 以面板中心为原点应用缩放动效
 func _apply_punch() -> void:
-	if not punch_enabled or _panel == null:
+	if _panel == null:
 		return
 	if _panel.size.x <= 0.0:
 		return

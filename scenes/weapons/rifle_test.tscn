@@ -3,13 +3,13 @@
 [ext_resource type="Script" uid="uid://knjsw64jktvh" path="res://scenes/weapons/weapon_base.gd" id="1_wb"]
 [ext_resource type="Texture2D" uid="uid://b0cphfvl3wqnj" path="res://assets/textures/weapons.png" id="2_wpn"]
 
-[node name="RifleTest" type="NativeWeaponBody" unique_id=77899377]
+[node name="RifleTest" type="Node2D" unique_id=77899377]
 script = ExtResource("1_wb")
 tier = 1
 weapon_name = "Rifle"
 full_auto = true
 fire_cooldown = 0.1
-bullet_speed = 1600.0
+bullet_speed = 2000.0
 bullet_range = 1600.0
 spread_deg = 0.8
 damage = 4

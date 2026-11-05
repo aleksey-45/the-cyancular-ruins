@@ -151,6 +151,9 @@ func _refresh_board(names: Dictionary, scores: Dictionary, deaths: Dictionary,
 # 刷新中央广播提示内容
 func _refresh_broadcast(state: int, data: Dictionary, names: Dictionary, rows: Array) -> void:
 	match state:
+		NetEvent.RoundState.WAITING:
+			_timer_label.text = "等待玩家加载"
+			_broadcast.set_broadcast(true, "等待玩家加载", "")
 		NetEvent.RoundState.COUNTDOWN:
 			_timer_label.text = "准备…"
 			_broadcast.start_countdown(float(data["timer"]), "大乱斗开始")

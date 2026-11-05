@@ -55,7 +55,7 @@ static func for_royale(round: Dictionary, names: Dictionary, my_role: int) -> Di
 	}
 
 
-# 生成 3v3 团队对抗模式结算数据
+# 生成团队对抗模式结算数据
 static func for_team(round: Dictionary, names: Dictionary, teams: Dictionary, my_team: int) -> Dictionary:
 	var stats: Dictionary = round.get("stats", {})
 	var mvp_role: int = int(round.get("mvp", 0))
@@ -121,7 +121,7 @@ static func _verdict(match_winner: int, my_role: int) -> String:
 	return "胜利!" if match_winner == my_role else "失败"
 
 
-# 3v3 团队对抗胜负判定
+# 团队对抗胜负判定
 static func _verdict_team(match_winner: int, my_team: int) -> String:
 	if match_winner == 0:
 		return "平局"

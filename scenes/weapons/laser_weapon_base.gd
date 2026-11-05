@@ -1,16 +1,15 @@
 class_name LaserWeaponBase
 extends WeaponBase
 
-# 即时光束类武器基类。开火瞬间执行几何追踪并一次性结算伤害与视觉效果。
+# 即时光束类武器基类。开火瞬间由统一射线求几何、由形状扫描求目标，一次性结算伤害与视觉效果。
 #
 # 扩展接口设计：
-# - _emit_beam(origin, dir) -> Dictionary：光束几何计算（直线、反射、穿透等）
+# - _emit_beam(origin, dir) -> Dictionary：光束几何（直线、反射、穿透等）
 # - _apply_beam_damage(pts, contacts, hit_points)：伤害与地形破坏结算
 # - _spawn_beam_visual(pts) / _beam_style()：视觉光束渲染风格
 #
 # 多人对战的已知光束参与客户端击退预测，伤害由服务端结算。
 
-const BeamTrace := preload("res://core/sim/beam_trace.gd")
 const TileHitFx := preload("res://scenes/effects/tile_hit_fx.gd")
 const LaserVisual := preload("res://core/present/laser_visual.gd")
 
@@ -50,7 +49,7 @@ func _authoritative() -> bool:
 
 # 计算光束几何折线（默认单段直线，碰撞障碍物即停止）
 func _emit_beam(origin: Vector2, dir: Vector2) -> Dictionary:
-	return BeamTrace.trace(origin, dir, bullet_range, 0)
+	return TileDefs.terrain.trace_beam(origin, dir, bullet_range, 0)
 
 # 生成光束视觉特效
 func _spawn_beam_visual(pts: PackedVector2Array) -> void:
@@ -92,88 +91,43 @@ func collect_pending_beam_report() -> Dictionary:
 	pending_beam_report = {}
 	return rep
 
-# 检测折线路径上的目标并结算伤害
+# 光束走廊与实体的接触由 CollisionWorld 一次采完；这里只按目标身份结算。
 func _damage_path_targets(pts: PackedVector2Array) -> void:
-	var targets: Array = []
-	for target: EnemyBase in get_tree().get_nodes_in_group("enemies"):
-		targets.append([target, true])
-	var host: Node = player.authority_world
-	for p: Player in get_tree().get_nodes_in_group("player"):
-		if p == player:
-			continue
-		if p.is_downed():
-			continue
-		if host != null and host.is_friendly(player, p):
-			continue
-		targets.append([p, false])
-
-	var w := GameParameters.MAP_WIDTH
-	var h := GameParameters.MAP_HEIGHT
+	if pts.size() < 2 or player == null:
+		return
 	var corridor := beam_half_width * HIT_MULT
-	for tg in targets:
-		var target: Node2D = tg[0]
-		var rect := _body_rect(target, pts[0], w, h)
-		var near := path_contact(pts, rect, corridor)
-		if near.x == INF: continue
-		if tg[1]:
-			_apply_to_enemy(target, rect.get_center(), near)
-		else:
-			_apply_to_player(target, rect.get_center(), near)
+	var world := CollisionWorld.acquire(self)
+	# 自己打出的光束不命中自己（本体含镜像槽一起排除）。
+	var exclude: Array = [player.get_rid()]
+	var mask := CollisionWorld.LAYER_ENEMY | CollisionWorld.LAYER_TEAM_A \
+			| CollisionWorld.LAYER_TEAM_B
+	var host: Node = player.authority_world
+	var seen := {}
+	for contact: Dictionary in world.beam_contacts(pts, corridor, mask, exclude):
+		var target := _contact_node(contact)
+		if target == null or seen.has(target.get_instance_id()):
+			continue
+		seen[target.get_instance_id()] = true
+		var hit: Vector2 = contact["point"]
+		if target is EnemyBase:
+			_apply_to_enemy(target, hit)
+		elif target is Player:
+			if target == player or (host != null and host.is_friendly(player, target)) \
+					or (target as Player).is_downed():
+				continue
+			_apply_to_player(target, hit)
 
-static func path_contact(points: PackedVector2Array, rect: Rect2, corridor: float) -> Vector2:
-	for i in range(points.size() - 1):
-		var center := GridPathfinder.anchor_to_nearest(rect.get_center(), points[i],
-				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
-		var anchored := Rect2(center - rect.size * 0.5, rect.size)
-		var near := _segment_rect_hit(points[i], points[i + 1], anchored.grow(corridor))
-		if near.x != INF: return near
-	return Vector2(INF, 0.0)
+# 目标都是真实物理体，碰撞节点直接给出。
+func _contact_node(contact: Dictionary) -> Node2D:
+	return contact["collider"] as Node2D
 
-# 获取目标在环面世界中的 AABB 包围盒（锚定至距起点最近的副本位置）
-func _body_rect(n: Node2D, near_to: Vector2, w: float, h: float) -> Rect2:
-	var r := Rect2(n.global_position - Vector2(18, 18), Vector2(36, 36))
-	if CollisionAabb.has_any(n):
-		r = CollisionAabb.world_rect(n)
-	if n.is_in_group("player") and player.authority_world != null:
-		r = player.authority_world.target_rect_at(n, player)
-	var c := GridPathfinder.anchor_to_nearest(r.get_center(), near_to, w, h)
-	return Rect2(c - r.size * 0.5, r.size)
-
-# 线段与矩形相交检测（Liang-Barsky 算法），返回线段上的交点或最近点
-static func _segment_rect_hit(a: Vector2, b: Vector2, rect: Rect2) -> Vector2:
-	var d := b - a
-	var t0 := 0.0
-	var t1 := 1.0
-	var pmin := rect.position
-	var pmax := rect.position + rect.size
-	# 逐轴 Liang-Barsky:更新 t0/t1
-	for axis in range(2):
-		var p := a[axis]
-		var dd := d[axis]
-		var lo := pmin[axis]
-		var hi := pmax[axis]
-		if absf(dd) < 1e-9:
-			if p < lo or p > hi:
-				return Vector2(INF, 0.0)
-		else:
-			var ta := (lo - p) / dd
-			var tb := (hi - p) / dd
-			if ta > tb:
-				var tmp := ta
-				ta = tb
-				tb = tmp
-			t0 = maxf(t0, ta)
-			t1 = minf(t1, tb)
-			if t0 > t1:
-				return Vector2(INF, 0.0)
-	return a + d * t0
-
-func _apply_to_enemy(t: Node, pos: Vector2, near: Vector2) -> void:
+func _apply_to_enemy(t: Node, near: Vector2) -> void:
 	CombatFeedback.hit_marker()
+	var pos: Vector2 = (t as Node2D).global_position
 	var dir := (pos - near).normalized() if pos.distance_to(near) > 1.0 else Vector2.RIGHT
 	t.hurt(damage, dir, impact)
 
-func _apply_to_player(target: Node, _pos: Vector2, hit: Vector2) -> void:
+func _apply_to_player(target: Node, hit: Vector2) -> void:
 	if player.authority_world != null:
 		player.authority_world.damage(player.role, target.role, hit, damage, false, impact,
 				(player.role << 48) | (player.shot_serial << 8), 1)

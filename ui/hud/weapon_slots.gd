@@ -86,8 +86,7 @@ func _draw() -> void:
 		return
 
 	var inv: WeaponInventory = _weapons.inventory
-	var held: Array = inv.held
-	if held.is_empty():
+	if inv.count() == 0:
 		_draw_empty_cells()
 		return
 
@@ -95,8 +94,8 @@ func _draw() -> void:
 	var owner_of: Array[int] = []
 	owner_of.resize(capacity)
 	owner_of.fill(-1)
-	for i in held.size():
-		var cost: int = inv.cost_of(int(held[i]["type"]))
+	for i in inv.count():
+		var cost: int = inv.cost_of(inv.type_at(i))
 		var start: int = inv.cell_start(i)
 		for c in range(start, start + cost):
 			if c >= 0 and c < capacity:

@@ -38,31 +38,18 @@ func _physics_process(delta: float) -> void:
 	delta = TimeField.bullet_delta(delta, self)
 	if TimeField.current != null and TimeField.current.is_rewinding():
 		return
-	velocity_vec.y += GameParameters.gravity0 * gravity_factor * delta
-	rotation = velocity_vec.angle()
-	_apply_water_drag(delta)
-	var step := velocity_vec * delta
-	traveled += step.length()
-	var col := move_and_collide(step)
-	if col:
-		var hit := col.get_collider()
-		# 客户端视觉副本仅做飞行与消失表现，伤害由服务端权威判定
-		if apply_damage and hit != null and hit.is_in_group("player"):
-			var dmg: int = damage
-			if water_mult > 1.0 and Water.is_in_water((hit as Node2D).global_position):
-				dmg = roundi(damage * water_mult)
-			hit.take_hit(global_position, dmg)
-		queue_free()
-		return
-	if traveled >= max_range:
-		queue_free()
-		return
-	_wrap()
-
-# 多人对战服务端将子弹坐标约束在地图区间内，单人模式与客户端映射至最近可视副本
-func _wrap() -> void:
-	if get_tree().get_nodes_in_group("player").size() >= 2:
-		global_position = GridPathfinder.wrap_to_range(global_position,
-				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
-		return
-	super._wrap()
+	var result := advance_physics(delta)
+	present_projection()
+	match result:
+		BulletBody.AdvanceResult.ACTOR_HIT:
+			var hit: Node = impact_node()
+			# 客户端视觉副本仅做飞行与消失表现，伤害由服务端权威判定。
+			if apply_damage and hit is Player:
+				var target := hit as Player
+				var dmg := damage
+				if water_mult > 1.0 and Water.is_in_water(target.global_position):
+					dmg = roundi(damage * water_mult)
+				target.take_hit(global_position, dmg)
+			queue_free()
+		BulletBody.AdvanceResult.TERRAIN_HIT, BulletBody.AdvanceResult.RANGE_END, BulletBody.AdvanceResult.FUSE_END:
+			queue_free()

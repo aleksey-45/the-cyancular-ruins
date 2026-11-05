@@ -1,9 +1,7 @@
 class_name WeaponPickup
-extends CharacterBody2D
+extends ServerBody
 
-# 地面可拾取武器实体
-
-const GROUP := "weapon_pickup"
+# 地面可拾取武器实体：自管 RID 物理体，掉落与静止由显式逐步移动求解。
 
 # 掉落物碰撞层：层 4（值 8），掩码包含地形（1）与其他掉落物（8）
 const LAYER_GROUND := 8
@@ -19,7 +17,23 @@ var inst: int = 0
 var mag: int = 0
 var drop_velocity: Vector2 = Vector2.ZERO
 var _settled: bool = false
+# 未实现机制的预留状态：掉落物存在时长（拾取优先级/限时消失等待接入），勿删。
 var _age: float = 0.0
+# 自管 RID 体生命周期在 ServerBody；着地状态与形状槽在此补充。
+var velocity := Vector2.ZERO
+var _grounded := false
+# 形状载体（_build_collision 建出的 "Shape" 节点）
+var hulls: Array = []
+
+
+func _enter_tree() -> void:
+	super()   # 空间挂接、层掩码提交与归属挂载
+	# 此时 hulls 还没填充（_ready 才建形状），只提交当前位姿。
+	CollisionWorld.sync_body_pose(_rid, global_transform)
+
+func _sync_collision() -> void:
+	if _world_space.is_valid():
+		CollisionWorld.sync_body_shapes(_rid, hulls, global_transform)
 
 # 逻辑坐标与渲染坐标：
 # canonical_pos 保持在 [0, MAP) 逻辑区间内，供服务端物理模拟与拾取判定使用；
@@ -34,20 +48,22 @@ func set_anchor(p: Vector2) -> void:
 	_has_anchor = true
 
 
-# 根据逻辑坐标更新最近可视副本的渲染位置
+# 根据逻辑坐标更新最近可视副本的渲染位置；每帧渲染路径，槽位不变只写位姿。
 func sync_render_from_canonical() -> void:
 	if not _has_anchor:
 		global_position = canonical_pos
+		CollisionWorld.sync_body_pose(_rid, global_transform)
 		return
 	var w := float(GameParameters.MAP_WIDTH)
 	var h := float(GameParameters.MAP_HEIGHT)
 	global_position = GridPathfinder.anchor_to_nearest(canonical_pos, _anchor, w, h) if (w > 0.0 and h > 0.0) else canonical_pos
+	CollisionWorld.sync_body_pose(_rid, global_transform)
 
 
 func _ready() -> void:
-	add_to_group(GROUP)
 	collision_layer = LAYER_GROUND
 	collision_mask = MASK_GROUND
+	_apply_layers()
 	scale = Vector2(WORLD_SCALE, WORLD_SCALE)
 	rotation = 0.0
 	if canonical_pos == Vector2.ZERO:
@@ -56,6 +72,7 @@ func _ready() -> void:
 		_build_visual()
 		_build_collision()
 	velocity = drop_velocity
+	_sync_collision()
 
 
 # 配置地面武器属性（必须在加入场景树前调用，或加入后动态重建）
@@ -73,6 +90,7 @@ func configure(p_type_id: int, p_inst: int, p_mag: int, p_vel: Vector2) -> void:
 		c.queue_free()
 	_build_visual()
 	_build_collision()
+	_sync_collision()
 
 
 func _build_visual() -> void:
@@ -108,6 +126,7 @@ func _build_collision() -> void:
 	cs.shape = rect
 	cs.position = Vector2.ZERO
 	add_child(cs)
+	hulls = [cs]
 
 
 func _physics_process(delta: float) -> void:
@@ -121,17 +140,29 @@ func simulate_tick(delta: float) -> void:
 		sync_render_from_canonical()
 		return
 	velocity.y += PlayerParams.weapon_fall_gravity * delta
-	if is_on_floor():
+	if _grounded:
 		velocity.x *= exp(-PlayerParams.weapon_ground_friction * delta)
 	else:
 		velocity.x *= exp(-PlayerParams.weapon_air_drag * delta)
-	move_and_slide()
+	_move(velocity * delta)
 	_recompute_canonical()
 	_unstick_up()
 	sync_render_from_canonical()
-	if is_on_floor() and absf(velocity.x) < PlayerParams.weapon_stop_eps:
+	if _grounded and absf(velocity.x) < PlayerParams.weapon_stop_eps:
 		velocity = Vector2.ZERO
 		_settled = true
+
+
+# 两轴推进、命中即停；向下被挡且法线朝上即着地。axis_move 已写回位姿，槽位不动。
+func _move(motion: Vector2) -> void:
+	var out := axis_move(motion)
+	var blocked: Vector2 = out["blocked"]
+	_grounded = false
+	if blocked.x != 0.0:
+		velocity.x = 0.0
+	if blocked.y > 0.0:
+		velocity.y = 0.0
+		_grounded = float(out["ground"]) < -0.5
 
 
 # 将物理位置约束折叠至环面规范坐标区间
@@ -144,18 +175,20 @@ func _recompute_canonical() -> void:
 		canonical_pos = global_position
 
 
-# 若陷入实心瓦片中则向上弹出
+# 生成或重建时若与实心地形重叠：零位移重叠检测，逐格向上推出。
 func _unstick_up() -> bool:
-	if not CollisionAabb.has_any(self):
+	if not CollisionWorld.probe_body(_rid, global_transform, Vector2.ZERO, 0.0, true):
 		return false
-	var dy := Unstick.push_up_dy(CollisionAabb.world_rect(self), GameParameters.TILE_SIZE)
-	if dy <= 0.0:
-		return false
-	global_position.y -= dy
-	velocity.y = 0.0
-	_settled = false
-	_recompute_canonical()
-	return true
+	for i in 8:
+		global_position.y -= float(GameParameters.TILE_SIZE)
+		# 顶起过程只挪位姿；形状槽不变。
+		CollisionWorld.sync_body_pose(_rid, global_transform)
+		if not CollisionWorld.probe_body(_rid, global_transform, Vector2.ZERO, 0.0, true):
+			velocity.y = 0.0
+			_settled = false
+			_recompute_canonical()
+			return true
+	return false
 
 
 var _prompt: PickupPrompt = null
