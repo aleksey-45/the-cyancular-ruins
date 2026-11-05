@@ -16,9 +16,11 @@ var _rw_cursor: Dictionary = {}    # role -> float(已倒退秒数)
 var _rw_snap_t: Dictionary = {}    # role -> float(采样节拍)
 var _rw_t0: Dictionary = {}        # role -> float(环缓零点;回放按 t-t0 寻帧)
 
+# C 方案(S0.5):系统 → 宿主/网络 的唯一通道;绑定见 _bind_ports()。
+var _ports: MatchPorts = null
+
 func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 		ai_roles: Array = [], teams: Dictionary = {}, spawns: Dictionary = {}) -> void:
-	_options = options
 	_team_of = teams.duplicate()
 # 1v1 出生点:start_on 算好的那一份(与 match_start / match_sync 广播同源)。空 = 手工/测试路径(基类 _spawn_cell 自己随机)。
 # ★ 子类(RoyaleHost / TeamHost)覆写了 _spawn_cell 与 role_spawns,本表对它们无效(它们各自持有自己的点表)。
@@ -59,6 +61,57 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 # (不入 input_sources —— 它不走网络包)。★ 代码就位,但界面未接(客户端按钮已删)。
 	for ai_role in _ai_roles:
 		_add_player(int(ai_role), AiInputSource.new(), AiNavigator.new())
+
+	_bind_ports()
+
+
+# C 方案(S0.5):端口层。所有 Callable 都按**方法名**绑定 ⇒ 虚分派到 TeamHost/RoyaleHost 的覆写照旧生效。
+func _bind_ports() -> void:
+	_ports = MatchPorts.new()
+	_ports.net_rpc_role = Callable(self, "_port_rpc_role")
+	_ports.net_rpc_role_all = Callable(self, "_port_rpc_role_all")
+	_ports.net_broadcast = Callable(self, "_port_broadcast")
+	_ports.send_round_state = Callable(self, "_send_round_state")
+	_ports.on_bullet_hit = Callable(self, "_on_bullet_hit")
+	_ports.broadcast_round_state = Callable(self, "_broadcast_round_state")
+	_ports.match_winner = Callable(self, "_match_winner")
+	_ports.spawn_cell = Callable(self, "_spawn_cell")
+	_ports.respawn_player = Callable(self, "_respawn_player")
+	_ports.down_killer_of = Callable(self, "_down_killer_of")
+	_ports.award_down = Callable(self, "_award_down")
+	_ports.finish_match = Callable(self, "_finish_match")
+	_ports.start_next_round = Callable(self, "_start_next_round")
+	_ports.reset_time_rewind_state = Callable(self, "reset_time_rewind_state")
+	assert(_ports.is_ready(), "MatchPorts 未绑全")
+
+
+func ports() -> MatchPorts:
+	return _ports
+
+
+# 网络效果落地:系统不直接碰 NetBus/NetBusExt。
+func _port_rpc_role(role: int, method: String, args: Array, via_ext: bool = false) -> void:
+	var peer: int = int(peer_by_role.get(role, -1))
+	if peer < 0 or not NetBus.is_peer_live(peer):
+		return
+	if via_ext:
+		NetBusExt.callv("rpc_id", [peer, method] + args)
+	else:
+		NetBus.callv("rpc_id", [peer, method] + args)
+
+
+func _port_rpc_role_all(method: String, args: Array = [], except_role: int = -1,
+		live_only: bool = true, via_ext: bool = false) -> void:
+	if via_ext:
+		_rpc_all_ext(method, args, except_role, live_only)
+	else:
+		_rpc_all(method, args, except_role, live_only)
+
+
+func _port_broadcast(method: String, args: Array = []) -> void:
+	if not NetBus.all_peers_sendable():
+		return
+	NetBus.callv("rpc", [method] + args)
 
 
 # 出生:建一个玩家节点并摆到出生点。★ 原先这里是两个逐行同构的循环(网络玩家 / AI 补位),现在只有这一份。

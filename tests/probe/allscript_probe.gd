@@ -4,13 +4,13 @@ extends Node
 # 场景模式跑(autoload 可用);对"大回退/大合并后的第一件事"特别有用。
 #   godot --headless --path . res://tests/probe/allscript_probe.tscn
 
-const SKIP_DIRS := ["res://.godot", "res://builds", "res://releases", "res://gamelogs",
+const SKIP_DIRS := ["res://.godot", "res://.tmp", "res://builds", "res://releases", "res://gamelogs",
 		"res://crashlogs", "res://maps", "res://map", "res://backup", "res://editor/_build",
 		"res://_crashtest", "res://docs"]
 # ★ 为什么要收 `res://_crashtest`(与 `tools/check_naming.py` 里同名的根同因):它是 gitignore 的
 
 # ★ 为什么必须有一条数闸:一个过宽的 `SKIP_DIRS` 项、一个 `.gdignore`、一次 `DirAccess.open`
-const EXPECTED_SCRIPTS := 243
+const EXPECTED_SCRIPTS := 244
 
 var _fails: Array[String] = []
 var _total := 0
@@ -66,3 +66,5 @@ func _collect(dir_path: String) -> Array[String]:
 # ★ 2026-10-27:187→188 —— 其他会话新增 1 个 tracked .gd(本任务无新增);同时 `res://audit_shots` 进 SKIP_DIRS
 #   (该目录是 UI 审计会话的临时截图驱动草稿,不属于编译面/导出面,与 `res://docs` 同理)。
 # ★ 2026-11-04:249→243(删 6 个 .gd:bot 链 3 + soak 输入 + room_sweep_lint + royale_soak)。
+# ★ 2026-11-05:243→242(删 core/mp/mode_room_rules.gd)→244(新增 server/match/match_ports.gd;
+#   另一会话的未跟踪 core/present/sprite_frames_io.gd 也在扫描面里 → 它提交时本数不变)。

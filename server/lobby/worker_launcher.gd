@@ -8,15 +8,7 @@ extends RefCounted
 
 const WORKER_PORT_BASE := 7800
 const WORKER_PORT_SPAN := 500
-# ★★ 今天承重的不是这个延迟,而是「worker 进程活着 ⇒ 房对象与它占的端口都还在」:房活到 worker 退出、
-# 端口只在 teardown_room 归还 ⇒ 宽限期一定落在 worker 存活期内。本常量只兜「worker 刚退出、别立刻把它
-# 的端口发给新 worker」;30 → 120 的教训是「30 == 30 是相等、同样不安全」。⚠ 零守卫:grace_window_smoke 已删(2026-10-09)。
-const WORKER_PORT_REUSE_DELAY := 120.0
-# 大乱斗 worker 的端口归还延迟:按默认一局时长(RoyaleHost.MATCH_TIME)+ 收尾估;★ 已知边界(登记不修):
-# 房主可用建房页把一局配到 30 分钟。今天它不再是「端口会不会被提前复用」的界 —— 房活到 worker 退出。
-const ROYALE_PORT_REUSE_DELAY := 360.0
-# 3v3 worker 的端口归还延迟:一局最长 = 三局两胜 × 9 杀,与大乱斗同档。★ 三档一起动、一起复核,别单独把它并回一个更小的数。
-const TEAM_PORT_REUSE_DELAY := 360.0
+# 端口归还延迟三档 = ModeDefs.PORT_REUSE_DELAY_*(单一来源;延迟本身不承重,承重的是 worker 进程还活着)。
 var _next_port := WORKER_PORT_BASE
 var _worker_ports: Dictionary = {}   # 正在使用(未释放)的 worker 端口
 var _worker_pids: Dictionary = {}   # port(int) -> pid(int):回收要判"这一局还在不在"
@@ -287,7 +279,7 @@ func kill_worker(port: int) -> void:
 # 给旧 worker 留足退出时间,防止端口被立刻复用导致串线。delay 由 teardown_room 按房型给三档。
 # ★ 本类仍是 RefCounted(不能 get_tree)⇒ 由调用方(大厅 Node)传 host 来拿 SceneTree 定时器。
 static func release_port_later(host: Node, launcher: WorkerLauncher, port: int,
-		delay: float = WORKER_PORT_REUSE_DELAY) -> void:
+		delay: float = ModeDefs.PORT_REUSE_DELAY_PVP) -> void:
 	if port <= 0:
 		return
 	await host.get_tree().create_timer(delay).timeout

@@ -84,10 +84,10 @@ func freeze_roster(room: RoomTypes.Room) -> void:
 	room.roster = out
 
 
-# 端口在拆除后多久才可复用(秒)。★ 唯一来源 = ModeRoomRules → WorkerLauncher.*_PORT_REUSE_DELAY
+# 端口在拆除后多久才可复用(秒)。★ 唯一来源 = ModeDefs.port_return_seconds / PORT_REUSE_DELAY_*
 # (1v1 120 / 大乱斗 360 / 3v3 360);这里**不写第二份数** —— 写一份就会与 worker 侧漂。
 func port_return_delay(mode: String) -> float:
-	return ModeRoomRules.port_return_seconds(mode)
+	return ModeDefs.port_return_seconds(mode)
 
 
 # 按模式构造房间列表载荷。协议字段逐字不变:1v1 / 大乱斗 / 3v3 各自带哪些键见下面两个分支。

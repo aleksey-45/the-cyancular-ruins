@@ -83,7 +83,6 @@ var _client_snap_tick: Dictionary = {}   # role(int) -> 该 role 最近**成功�
 var _client_tick: Dictionary = {}        # role(int) -> 该 role 最近一包里的客户端物理帧号(ct)
 
 
-var _options: Dictionary = {}
 var _round_full_heal := false        # 每回合开始双方回满血
 var _disabled_weapons: Array[int] = []   # 禁用的武器槽位(双方一致)
 var _ai_roles: Array = []            # AI 补位的 role 列表;这些 role 无网络 peer

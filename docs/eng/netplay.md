@@ -20,7 +20,7 @@
 ## 端口池与拆除
 
 - 端口池单一来源 `server/lobby/worker_launcher.gd`:`WORKER_PORT_BASE = 7800`、`WORKER_PORT_SPAN = 500` ⇒ `[7800, 8300)`;分配用递增游标 + 占用集合(`pick_port()`)。
-- 拆除唯一收口 `LobbyRooms.teardown_room`;形态 `TEARDOWN_DELAYED`(默认)/ `TEARDOWN_ABORT` / `TEARDOWN_KILL`。端口归还延迟由 `ModeRoomRules.port_return_seconds(mode)` 给三档:`WORKER_PORT_REUSE_DELAY` = 120s,`ROYALE_PORT_REUSE_DELAY` / `TEAM_PORT_REUSE_DELAY` = 360s。
+- 拆除唯一收口 `LobbyRooms.teardown_room`;形态 `TEARDOWN_DELAYED`(默认)/ `TEARDOWN_ABORT` / `TEARDOWN_KILL`。端口归还延迟由 `ModeDefs.port_return_seconds(mode)` 给三档:`PORT_REUSE_DELAY_PVP` = 120s,`PORT_REUSE_DELAY_ROYALE` / `PORT_REUSE_DELAY_TEAM` = 360s。
 - 端口归还、注册表删除、凭据作废只许出现在 `teardown_room` / `_release_port_later` 内。★ **零守卫**:原先的源码文本检查器 `tools/room_sweep_lint.gd` 已删(2026-11-04,`test-economy` D6a/D8),人工自查清单见 [`room-lifecycle-conventions.md`](room-lifecycle-conventions.md) §3。
 
 ## 开局链路

@@ -350,7 +350,7 @@ func _sweep_stale_rooms() -> void:
 			MAX_ROOM_AGE + SWEEP_INTERVAL + ROYALE_MATCH_TIME_CEILING,
 			stale_team.size(), MAX_ROOM_AGE,
 			MAX_ROOM_AGE + SWEEP_INTERVAL + TEAM_MATCH_ESTIMATE])
-# 三张注册表共用同一条拆除(worker 已被杀 ⇒ 端口直接回收,不经 ROYALE/TEAM_PORT_REUSE_DELAY:那条延迟是给「没被杀、还在跑」的 worker 的)。
+# 三张注册表共用同一条拆除(worker 已被杀 ⇒ 端口直接回收,不经大乱斗/对抗档延迟:那条延迟是给「没被杀、还在跑」的 worker 的)。
 	for room in stale + stale_royale + stale_team:
 		lobby.teardown_room(room, LobbyRooms.TEARDOWN_KILL, "房间超时(>2h),已关闭", true, "sweep_timeout")
 

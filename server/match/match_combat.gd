@@ -4,9 +4,6 @@ extends MatchSnapshot
 const HitShape := preload("res://core/sim/hit_shape.gd")   # 受击判定几何唯一入口
 const LagComp := preload("res://core/net/lag_comp.gd")     # playout / 回放深度常量(与客户端副本同源)
 
-# 裁决宽相位开关:false(生产默认)= 先 AABB 粗筛再精确;true = 直接精确(旧路径)。
-# ★ 只给 tests/probe/bullet_sweep_probe 做新旧等价对比用;改它只影响算力,不影响任何命中结果(见 hit_shape.candidate_hits)。
-var adjudicate_exact_only := false
 # 每 tick 的回放受击面缓存:shooter_role -> {victim_role: Rect2};所属 tick 见 _hurt_rect_cache_tick。
 var _hurt_rect_cache: Dictionary = {}
 var _hurt_rect_cache_tick := -1
@@ -106,7 +103,7 @@ func _segment_hits_player(bullet: BulletBase, p: Node2D, prev: Vector2, cur: Vec
 	if not HitShape.hurtable(p):
 		return false
 	var rect := _replay_hurt_rect(bullet, p)
-	return HitShape.candidate_hits(prev, cur, rect, w, h, grow, adjudicate_exact_only)
+	return HitShape.candidate_hits(prev, cur, rect, w, h, grow)
 
 
 # 射手观看时刻的受击面:st − PLAYOUT_TICKS(夹在 srv−MAX_REWIND..srv);无有效 st(非网络射手/尚未收到快照)或

@@ -14,6 +14,20 @@ const ROLE_MAX := 16
 const TEAM_SIZE := 5
 const TEAM_COUNT := 2
 
+# 端口在 teardown 后多久才可复用(秒);三档唯一来源(大厅/worker 都读这里,别抄第二份)。
+# 承重的不是这个延迟,而是「worker 进程活着 ⇒ 房与端口都还在」;本表只兜「worker 刚退出、别立刻复用它」。
+const PORT_REUSE_DELAY_PVP := 120.0
+# 大乱斗/对抗:按默认一局时长 + 收尾估。★ 三档一起动、一起复核(改一档要看另外两档)。
+const PORT_REUSE_DELAY_ROYALE := 360.0
+const PORT_REUSE_DELAY_TEAM := 360.0
+
+
+static func port_return_seconds(mode: String) -> float:
+	match mode:
+		MODE_ROYALE: return PORT_REUSE_DELAY_ROYALE
+		MODE_TEAM: return PORT_REUSE_DELAY_TEAM
+	return PORT_REUSE_DELAY_PVP
+
 # 选项下发的键:**只列该模式真的有这一项**的(UI 按同一份表显隐 —— 藏了控件却仍生效是明确缺陷)。
 const OPTION_KEYS: Dictionary = {
 	MODE_PVP: ["round_full_heal", "disabled_weapons", "map"],

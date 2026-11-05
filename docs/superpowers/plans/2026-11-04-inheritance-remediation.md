@@ -111,7 +111,7 @@ TeamHost | RoyaleHost（薄子类，只覆写壳的虚钩子）     pvp_game | r
 ## 附录 A：S0 基线（2026-11-04 捕获）
 
 - 默认批：`RUN_ALL OK(48 runs / 402 gated-assertions)`，known-red 0 条；枚举 51 = `smoke/*.gd` 32 + `probe/*.tscn` 16 + 无 tscn 的 `probe/*.gd` 3；排除 3 支真链路（`pvp_match_smoke.gd` / `rejoin_probe.tscn` / `team_match_probe.tscn`）。
-- `tracked .gd = 243`（`EXPECTED_SCRIPTS` 同值）；拆解会新增 `match_ports.gd`（+1）与客户端两个 `client_*.gd`（+2）⇒ S6 时把 `EXPECTED_SCRIPTS` 更新到 **246**，并在 `allscript_probe.gd` 的注释里记一行。
+- `tracked .gd = 243`（`EXPECTED_SCRIPTS` 同值）。执行中的计数：T1.4 删 `mode_room_rules.gd` → 242；S0.5 新增 `match_ports.gd` → 243（+ 另一会话未跟踪的 `core/present/sprite_frames_io.gd` ⇒ 当前扫描面 244）；S5 客户端新增 `client_state.gd` / `client_ports.gd` → 245（若那两份跟踪后为 246）。S6 时按 `git ls-files '*.gd'` 实测值更新 `EXPECTED_SCRIPTS`，并在 `allscript_probe.gd` 注释里记一行。
 - 链文件 LOC：`match_state` 432 · `match_ground` 363 · `match_snapshot` 113 · `match_combat` 342 · `match_round` 307 · `match_host` 517 · `team_host` 432 · `royale_host` 258；6 域文件合计 2,074 行，加两宿主 2,764 行。
 - O0 tick 分段计时（`--diag` 的 `adjudicate/own_snap/world_snap/rewind`）：**待 M1 真链路窗口采集**；采集后贴进本节，S1~S4 每步对比，单段 Δ > 5% 视为回归。
 - 拆解后自检口径不变：默认批 48 支全绿、`snapshot_size_probe` 字节不变、`rollback_fidelity_probe` 34 条不断言少跑、真链路判词 `SMOKE PASS` / `TEAM MATCH PROBE: ALL-OK`。
