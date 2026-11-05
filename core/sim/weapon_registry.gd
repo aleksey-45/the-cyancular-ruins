@@ -37,7 +37,7 @@ static func projectile_profile(type_id: int) -> Dictionary:
 
 
 # 原生战斗核使用同一份场景参数；初始化时一次读取，热循环不实例化场景或回调脚本。
-static func native_profiles() -> Dictionary:
+static func combat_profiles() -> Dictionary:
 	for type_id: int in all_ids(): projectile_profile(type_id)
 	return _projectile_profiles
 

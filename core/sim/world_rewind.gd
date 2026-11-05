@@ -3,7 +3,7 @@ extends RefCounted
 
 # 世界时空回溯系统：定频快照环形缓冲区与状态回放器，负责关键实体状态的定频记录与倒流回放。
 #
-# 架构设计：与 NativeTerrain 的地形历史协同工作，本模块负责实体状态回溯：
+# 架构设计：与 Terrain 的地形历史协同工作，本模块负责实体状态回溯：
 #   - record()：常态下以定频（TimeParams.SNAP_HZ）记录关键实体状态（玩家、普通敌人、子弹）。
 #   - step()：回溯激活时沿时间轴逆序回放，一次性还原实体的物理状态与子弹位置。
 #   - 精英敌人豁免：精英单位不受回溯影响，保持自主行为。
@@ -53,7 +53,7 @@ func record(delta: float, player: Player, enemies: Array, bullets: Array) -> voi
 		})
 	_frames.append({
 		"t": _t,
-		"player": player.capture_state(true),
+		"player": player.capture_state(),
 		"enemies": pe,
 		"bullets": pb,
 	})

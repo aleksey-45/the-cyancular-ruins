@@ -22,8 +22,8 @@ const jump_cut_factor: float = 0.5  # 上升中松键时向上速度的衰减比
 const crouch_walk_speed: float = 245.0   # 蹲走水平速度(≈0.35×move_speed)
 
 const charge_down_velocity: float = 2000.0
-const charge_velocity: float = 1900.0   # 冲刺速度(1500→1900)
-const charge_duration: float = 0.4    # 0.6→0.4(600px,保留长距离但可跳/墙打断)
+const charge_velocity: float = 3000.0   # 冲刺速度
+const charge_duration: float = 256.0 / 3000.0   # 固定 256px 冲刺距离
 const charge_air_gravity_mult: float = 0.35   # 空中冲刺重力倍率(<1=变平)
 const charge_dir_window: float = 0.3  # 冲刺方向沿用最近移动方向的窗口(秒)
 
@@ -54,6 +54,7 @@ const climb_vertical_mult: float = 1.2
 const climb_recoil_mult: float = 0.1  # 攀爬状态的后坐力倍率
 const climb_foot_offset: float = 57.0    # 攀爬通道脚底探测点
 const elastic_bounce: float = 150.0  # 弹性表面的法向反弹速度（px/s）
+const step_max_height: float = 64.0   # 自动上台阶最大高度(px)；候选依次为 16/32/48/64
 
 const player_max_hp: int = 50
 const iframes_time: float = 0.25

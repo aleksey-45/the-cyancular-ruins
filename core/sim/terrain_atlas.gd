@@ -14,11 +14,12 @@ const QUAD_SRC: int = 8        # 源砖拆成 4×4 个 8×8 象限
 const QUAD_TILE: int = 16      # 每个象限最近邻放大 2× → 16×16
 const QUAD_COLS: int = 16      # 图集列数 = 4×4 象限
 const SUB_PER_CELL: int = 4    # 一个 64px 格 = 4×4 个 16px 子格(与 cyrm v4 网格一致)
-# 水体层引用的源砖瓦片索引（从 0 开始计数，21 对应源砖表第 22 块）。
-const WATER_LAYER_BRICK: int = 21
+# 水体与水面的源砖索引（0-based 图集索引）：20 = 水，21 = 水面。
+const WATER_BODY_BRICK: int = 20
+const WATER_SURFACE_BRICK: int = 21
 
 static var _src_cache: Image = null
-static var _brick_cache: Dictionary = {}    # ts → ts×ts 水砖 Image
+static var _brick_cache: Dictionary = {}    # (ts, brick) → ts×ts 水砖 Image
 static var _tex_cache: Dictionary = {}      # "path|cell_px|air" → ImageTexture
 
 
@@ -81,21 +82,22 @@ static func make_wall_tileset() -> TileSet:
 
 
 
-# 水体层那块源砖放大到 ts×ts——水面合批 shader 的采样源,也是水体图集的源图。
-static func water_brick_image(ts: int) -> Image:
-	if _brick_cache.has(ts):
-		return _brick_cache[ts]
+# 指定源砖放大到 ts×ts——水体与水面各自使用用途对应的索引，缓存按 (ts, brick) 分离。
+static func water_brick_image(ts: int, brick: int) -> Image:
+	var key := Vector2i(ts, brick)
+	if _brick_cache.has(key):
+		return _brick_cache[key]
 	var src_img := source_image()
 	var img := Image.create(SRC_TILE, SRC_TILE, false, Image.FORMAT_RGBA8)
-	img.blit_rect(src_img, source_rect(WATER_LAYER_BRICK), Vector2i.ZERO)
+	img.blit_rect(src_img, source_rect(brick), Vector2i.ZERO)
 	img.resize(ts, ts, Image.INTERPOLATE_NEAREST)
-	_brick_cache[ts] = img
+	_brick_cache[key] = img
 	return img
 
 
 # 构建水体专用的 TileSet 图集（包含 16 种 2x2 掩码形态）。
-static func make_water_tileset(ts: int) -> TileSet:
-	var img := water_brick_image(ts)
+static func make_water_tileset(ts: int, brick: int) -> TileSet:
+	var img := water_brick_image(ts, brick)
 	var half: int = ts / 2
 	var atlas_img := Image.create(16 * ts, ts, false, Image.FORMAT_RGBA8)
 	atlas_img.fill(Color(0, 0, 0, 0))

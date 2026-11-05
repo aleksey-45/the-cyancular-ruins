@@ -14,10 +14,9 @@ extends RefCounted
 #   - 消耗：同时扣除总余额与短期额度；超出短期额度后计入透支；透支达上限时锁定。
 #   - 恢复：以固定速率恢复，优先偿还透支额度，还清透支后解除锁定并恢复短期额度。
 #   - 吸收结晶：结晶吸收增加总余额（不超过上限）。
+# 信号只保留离散事件钩子（锁定/解锁）；余额与窗口数据由 HUD 每帧轮询直读，
+# 逐帧发数据信号没有接收方（watch_hud 每帧重绘指针，不依赖变更通知）。
 
-signal balance_changed(balance: float)
-signal window_changed(short_used: float, loan_used: float)
-signal loan_depth_changed(depth: float)
 signal loan_locked
 signal loan_unlocked
 
@@ -68,12 +67,9 @@ func spend(delta: float, rate: float) -> float:
 		loan_used += over
 		if loan_used >= loan_max:
 			loan_used = loan_max
-			_emit_window()
 			if not locked:
 				locked = true
 				loan_locked.emit()
-	_emit_window()
-	balance_changed.emit(balance)
 	return got
 
 
@@ -90,14 +86,9 @@ func regen(delta: float) -> void:
 			loan_used = 0.0
 	if pay > 0.0:
 		short_used = maxf(short_used - pay, 0.0)
-	var was_locked := locked
 	if locked and loan_used <= 0.0:
 		locked = false
-		_emit_window()
-		loan_unlocked.emit()
-		was_locked = false
-	if not is_equal_approx(pay, 0.0) or was_locked:
-		_emit_window()
+		loan_unlocked.emit()   # 预留钩子:解锁时刻的 UI 反馈尚未实现(对应 flash_locked)
 
 
 ## 结晶入账(乌鸫击杀 300 等):只进总余额,夹上限。返回实际入账量。
@@ -107,10 +98,4 @@ func deposit(amount: int) -> int:
 	var room: int = int(cap) - int(ceil(balance))
 	var got: int = mini(amount, maxi(room, 0))
 	balance += got
-	balance_changed.emit(balance)
 	return got
-
-
-func _emit_window() -> void:
-	window_changed.emit(short_used, loan_used)
-	loan_depth_changed.emit(loan_depth())

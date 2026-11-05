@@ -54,11 +54,34 @@ static func _feet_signature(body: Node) -> int:
 		if child is CollisionShape2D:
 			var id := int(child.get_instance_id())
 			sig += id if not (child as CollisionShape2D).disabled else -id
+		elif child is CollisionPolygon2D:
+			var pid := int(child.get_instance_id())
+			sig += pid if not (child as CollisionPolygon2D).disabled else -pid
 	return sig
 
 
+# 展示边界：只读当前启用碰撞体的形状，不参与任何命中判定。
 static func _feet_offset_compute(body: Node) -> float:
 	var b := body as Node2D
-	if b == null or not CollisionAabb.has_any(b):
+	if b == null:
 		return 24.0
-	return maxf(24.0, CollisionAabb.world_rect(b).end.y - b.global_position.y)
+	var bottom := b.global_position.y
+	var found := false
+	var inverse := b.global_transform.affine_inverse()
+	for child in b.get_children():
+		if child is CollisionShape2D:
+			var cs := child as CollisionShape2D
+			if cs.disabled or cs.shape == null:
+				continue
+			bottom = maxf(bottom, (inverse * (cs.global_transform * cs.shape.get_rect())).end.y)
+			found = true
+		elif child is CollisionPolygon2D:
+			var cp := child as CollisionPolygon2D
+			if cp.disabled or cp.polygon.is_empty():
+				continue
+			for point in cp.polygon:
+				bottom = maxf(bottom, (inverse * cp.transform * point).y)
+			found = true
+	if not found:
+		return 24.0
+	return maxf(24.0, bottom)

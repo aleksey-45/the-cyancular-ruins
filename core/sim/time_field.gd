@@ -17,7 +17,6 @@ static var current: TimeField = null   # 单机世界场实例;null = 全域恒 
 
 var mode: int = Mode.NONE
 var account: GrainAccount = null
-var rewind_time: float = 0.0
 
 func _init(acc: GrainAccount) -> void:
 	account = acc
@@ -37,15 +36,11 @@ func update(delta: float, want_rewind: bool, want_haste: bool) -> void:
 			want = Mode.HASTE
 	if want == Mode.REWIND:
 		account.spend(delta, TimeParams.COST_REWIND)
-		rewind_time += delta
-	else:
-		rewind_time = 0.0
-		if want == Mode.HASTE:
-			account.spend(delta, TimeParams.COST_HASTE)
+	elif want == Mode.HASTE:
+		account.spend(delta, TimeParams.COST_HASTE)
 	# 颗粒余额当帧耗尽时立即终止效果，防止出现无余额仍继续回溯的异常帧
 	if want != Mode.NONE and account.balance <= 0.0:
 		want = Mode.NONE
-		rewind_time = 0.0
 	mode = want
 
 func loan_depth() -> float:
@@ -71,7 +66,7 @@ static func enemy_delta(d: float, node: Node) -> float:
 		mult *= 1.0 + TimeParams.LOAN_ENEMY_SPEED_BONUS * f.loan_depth()
 	return d * mult
 
-static func bullet_delta(d: float, bullet: NativeBulletBody) -> float:
+static func bullet_delta(d: float, bullet: BulletBody) -> float:
 	var f := current
 	if f == null:
 		return d

@@ -88,7 +88,7 @@ static func display_name(path: String) -> String:
 				break                    # 注释块结束 → 不再往下找
 			var t := s.substr(1).strip_edges()
 			if t == "" or t.begins_with("cyrm") or t.begins_with("player") \
-					or t.begins_with("enemy"):
+					or t.begins_with("enemy") or t.begins_with("respawn"):
 				continue
 			return t
 	return path.get_file().get_basename()

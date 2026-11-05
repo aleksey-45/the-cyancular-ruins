@@ -121,7 +121,7 @@ static func parse(data: PackedByteArray) -> Dictionary:
 
 
 ## 将场景层描述符解包为 16px 子格纹理表（Array[Array]，下标 [y][x] 为纹理 ID，0 为空气）。
-## 装载时交给 NativeTerrain，供碰撞、破坏和渲染读取。
+## 装载时交给 Terrain，供碰撞、破坏和渲染读取。
 static func scene_to_subgrid(scene: PackedInt32Array, sc: int, sr: int) -> Array[Array]:
 	var out: Array[Array] = []
 	for y in sr:

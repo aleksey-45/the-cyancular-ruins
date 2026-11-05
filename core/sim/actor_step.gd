@@ -3,11 +3,7 @@ extends RefCounted
 const DT := 1.0 / 60.0
 
 static func step(actor: Player, record: Dictionary, delta: float = DT) -> Array:
-	actor.actor_queries.clear()
 	actor.step_input.prepare(record, actor._controls_locked)
-	actor.input_seq = record["seq"]
-	actor.view_tick = record["view_tick"]
-	actor.input_epoch = actor.input_buffer.epoch
 	actor.step_actions.clear()
 	actor.stepping = true
 	simulate(actor, delta)
@@ -31,4 +27,4 @@ static func simulate(actor: Player, delta: float) -> void:
 				actor.step_input.raw_held &= ~ActorInput.BIT_ATTACK
 	var tm: float = TimeField.player_speed_mult() if TimeField.current != null else actor.pvp_haste_mult
 	var geometry := TileDefs.terrain
-	actor.native_step_actor(delta, tm, Level0.pvp_mode, geometry)
+	actor.step_actor(delta, tm, Level0.pvp_mode, geometry)

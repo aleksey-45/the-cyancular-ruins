@@ -1,10 +1,10 @@
 class_name TileDefs
 extends RefCounted
 
-# 配置由脚本装载；运行时地形和物理属性由 NativeTerrain 持有。
+# 配置由脚本装载；运行时地形与物理属性由 Terrain 唯一持有。
 const PATH := "res://data/tile_defs.json"
 const MAX_TEXTURE := 22
-const BLAST_INNER_FRACTION := 0.4
+const BLAST_INNER_FRACTION := BlastCurve.INNER_FRACTION
 const TYPE_WALL := 0
 const TYPE_PASSAGE := 1
 const TYPE_LIQUID := 2
@@ -13,7 +13,7 @@ static var _defs: Dictionary = {}
 static var _loaded := false
 static var _type := PackedByteArray()
 static var _explosion_destroyable := PackedByteArray()
-static var terrain := NativeTerrain.new()
+static var terrain := Terrain.new()
 
 static func load_defs() -> void:
 	if _loaded: return
@@ -38,12 +38,14 @@ static func load_defs() -> void:
 
 static func load_terrain(grid: Array, subgrid: Array) -> void:
 	load_defs()
-	var next := NativeTerrain.new()
-	next.configure(grid, subgrid, _defs, {"tile_size": CollisionBuilder.TILE_TS,
-			"sub_size": CollisionBuilder.SUB_TS, "chunk_cells": CollisionBuilder.CHUNK_CELLS,
-			"cache_states": CollisionBuilder.CHUNK_CACHE_STATES, "solid_code": MapFormat.SOLID,
+	var next := Terrain.new()
+	next.configure(grid, subgrid, _defs, {"tile_size": Terrain.TILE_SIZE,
+			"sub_size": Terrain.SUB_SIZE, "chunk_cells": Terrain.CHUNK_CELLS,
+			"cache_states": Terrain.CACHE_STATES,
 			"wall_type": TYPE_WALL, "liquid_type": TYPE_LIQUID,
-			"ledge_thickness": CollisionBuilder.LEDGE_THICKNESS, "blast_inner": BLAST_INNER_FRACTION})
+			"ledge_thickness": Terrain.LEDGE_THICKNESS, "blast_inner": BLAST_INNER_FRACTION})
+	if terrain != null:
+		terrain.close()
 	terrain = next
 
 static func type_id_of(texture: int) -> int:
@@ -61,7 +63,7 @@ static func is_blocked(value: int) -> bool:
 	return value != 0 and type_id_of(MapFormat.texture_of(value)) == TYPE_WALL
 
 static func owner_role(owner: Node) -> int:
-	return owner.role if owner is NativeActorBody else 0
+	return owner.role if owner is ActorBody else 0
 
 static func damage_tile(cell: Vector2i, amount: int, owner: Node = null) -> bool:
 	return terrain.damage_tile(cell, amount, 1, owner_role(owner))

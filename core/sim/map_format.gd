@@ -3,7 +3,6 @@ extends RefCounted
 
 # 游戏与编辑器统一使用 v4。
 const EMPTY: int = 0
-const SOLID: int = 31
 
 # 64px 格的纹理编号和 2×2 象限掩码；0 表示空气。
 static func pack(texture: int, shape: int) -> int:
@@ -54,9 +53,13 @@ static func load_map_info(path: String, include_subgrid: bool = false) -> Dictio
 	var parsed := _read_map(path)
 	if parsed.is_empty(): return info
 	var meta: Array = Array(parsed["meta_lines"])
-	info["grid"] = MapFormatV4.flatten_scene(parsed["scene"], parsed["sub_cols"], parsed["sub_rows"])
+	var macro: Array = MapFormatV4.flatten_scene(parsed["scene"], parsed["sub_cols"], parsed["sub_rows"])
+	info["grid"] = macro
 	info["meta_lines"] = meta
-	info["spawns"] = parse_spawn_metadata(meta)
+	var dims := Vector2i(-1, -1)
+	if not macro.is_empty():
+		dims = Vector2i((macro[0] as Array).size(), macro.size())
+	info["spawns"] = parse_spawn_metadata(meta, dims)
 	if include_subgrid:
 		info["subgrid"] = MapFormatV4.scene_to_subgrid(parsed["scene"], parsed["sub_cols"], parsed["sub_rows"])
 	return info
@@ -66,11 +69,17 @@ static func load_subgrid(path: String) -> Array[Array]:
 	if parsed.is_empty(): return []
 	return MapFormatV4.scene_to_subgrid(parsed["scene"], parsed["sub_cols"], parsed["sub_rows"])
 
-static func parse_spawn_metadata(lines: Array) -> Dictionary:
+## 解析出生点注释。respawn 行为 `# respawn 1 X Y`（坐标为 64px 地图格），
+## 严格校验字段数、整数格式与坐标范围；格式错误记录源行号与内容。
+static func parse_spawn_metadata(lines: Array, dims: Vector2i = Vector2i(-1, -1)) -> Dictionary:
 	var result := {}
 	var enemies: Array = []
-	for line in lines:
-		var text := String(line).strip_edges()
+	var team_one: Array[Vector2i] = []
+	var team_two: Array[Vector2i] = []
+	var respawn: Dictionary = {1: team_one, 2: team_two}
+	var respawn_errors: Array[String] = []
+	for index in lines.size():
+		var text := String(lines[index]).strip_edges()
 		if not text.begins_with("#"):
 			continue
 		var parts := text.substr(1).strip_edges().split(" ", false)
@@ -102,8 +111,35 @@ static func parse_spawn_metadata(lines: Array) -> Dictionary:
 						enemies.append({"type": type_id, "cell": Vector2i(x, y)})
 					else:
 						push_warning("MapFormat: 非法 enemy 行 %s" % text)
+			"respawn":
+				var problem := _parse_respawn(parts, dims, respawn)
+				if not problem.is_empty():
+					respawn_errors.append("第 %d 行：%s（%s）" % [index + 1, problem, text])
 			_:
 				pass  # 普通 # 注释,忽略
 	if enemies.size() > 0:
 		result["enemies"] = enemies
+	if not respawn[1].is_empty() or not respawn[2].is_empty() or not respawn_errors.is_empty():
+		result["respawn"] = respawn
+	if not respawn_errors.is_empty():
+		result["respawn_errors"] = respawn_errors
 	return result
+
+static func _parse_respawn(parts: PackedStringArray, dims: Vector2i, respawn: Dictionary) -> String:
+	if parts.size() != 4:
+		return "respawn 需要 3 个字段（队伍 X Y），实际 %d 个" % (parts.size() - 1)
+	if not parts[1].is_valid_int():
+		return "队伍编号不是整数"
+	if not parts[2].is_valid_int() or not parts[3].is_valid_int():
+		return "坐标不是整数"
+	var team := int(parts[1])
+	if team != 1 and team != 2:
+		return "队伍只能是 1 或 2"
+	var cell := Vector2i(int(parts[2]), int(parts[3]))
+	if dims.x > 0 and dims.y > 0:
+		if cell.x < 0 or cell.y < 0 or cell.x >= dims.x or cell.y >= dims.y:
+			return "坐标超出地图范围（%dx%d）" % [dims.x, dims.y]
+	elif cell.x < 0 or cell.y < 0:
+		return "坐标不能为负数"
+	respawn[team].append(cell)
+	return ""

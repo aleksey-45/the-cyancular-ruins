@@ -1,7 +1,7 @@
 class_name MazeGenerator
 extends RefCounted
 
-# 会话地图选择与出生点元数据；地形由 NativeTerrain 持有。
+# 会话地图选择与出生点元数据；地形由 Terrain 持有。
 
 const MAP_DIR: String = "res://maps"
 

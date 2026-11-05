@@ -1,57 +1,109 @@
 class_name Explosion
 extends RefCounted
 
-# 爆炸 AoE 判定:分段衰减 + 遮挡检测 + 友伤。
+# 爆炸 AoE 判定：引擎形状查询取候选、引擎射线判遮挡，衰减与友伤仍是玩法规则。
 const INNER_FRACTION: float = TileDefs.BLAST_INNER_FRACTION  # 内圈半径比例,内圈内满伤
 const BLOCKED_FRACTION: float = 0.75  # 墙后(LOS 遮挡)伤害/击退保留比例
 
-static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knockback: float, shooter: Node = null, impact_id: int = 0) -> void:
+## authority 不为空时目标集合已确定（联机权威端），直接按环面中心距离结算；
+## 单人仍用物理候选，避免在权威端重复一次形状查询与 RID 反查。
+static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knockback: float,
+		shooter: Node = null, impact_id: int = 0, authority: AuthorityWorld = null) -> void:
 	var tree := _tree()
 	var has_grid := not TileDefs.terrain.empty()
-	for e: EnemyBase in tree.get_nodes_in_group("enemies"):
-		var d := _dist(center, (e as Node2D).global_position)
-		if d > radius:
+	if authority != null:
+		var roles := authority.players.keys()
+		roles.sort()
+		for role in roles:
+			var body := authority.players[role] as Player
+			if body == null:
+				continue
+			_damage_player(tree, center, radius, max_damage, max_knockback, shooter, impact_id, body, has_grid)
+		if has_grid:
+			_damage_tiles(center, radius, max_damage, shooter)
+		return
+	var seen := {}
+	var candidates := _candidates(center, radius)
+	for entry: Dictionary in candidates:
+		var body := _owner_of(entry)
+		if body == null or seen.has(body.get_instance_id()):
 			continue
-		# 遮挡(墙后)= 部分掩体;内圈免疫遮挡(见 cover_multiplier 注释)
-		var blocked := has_grid and not _has_los(center, e as Node2D)
-		var cover := cover_multiplier(d, radius, blocked)
-		var wmult := Water.water_mult((e as Node2D).global_position)  # 目标在水里:×水格 decay
-		var dmg := _falloff(d, radius, max_damage) * cover * wmult
-		if dmg <= 0:
-			continue
-		# 屏幕中心准星命中反馈
-		CombatFeedback.hit_marker()
-		# 爆炸击退覆盖原速度，严格沿爆心到目标的径向方向
-		e.hurt(int(dmg), _outward_dir(center, (e as Node2D).global_position),
-				_falloff(d, radius, max_knockback) * cover * wmult, true)
-	# 共享爆炸入口；玩家组只包含实际角色，不包含远端表现节点。
-	var first_player: Node2D = null
-	for pp: Player in tree.get_nodes_in_group("player"):
-		if first_player == null and pp.authority_world == null:
-			first_player = pp
-			_cam_shake(center, radius, pp)
-		if pp.is_downed():
-			continue
-		var effect := player_effect(center, radius, max_damage, max_knockback, pp)
-		if not effect.is_empty():
-			var amount: int = effect["damage"]
-			var knock: float = effect["knock"]
-			if pp.authority_world != null:
-				pp.authority_world.damage(shooter.role if shooter != null else 0, pp.role, center, amount, true, knock, impact_id, 2)
-			else:
-				CombatFeedback.attribute(pp, shooter)
-				pp.take_hit(center, amount, true, knock)
+		seen[body.get_instance_id()] = true
+		if body is EnemyBase:
+			_damage_enemy(center, radius, max_damage, max_knockback, body as EnemyBase, has_grid)
+		elif body is Player:
+			_damage_player(tree, center, radius, max_damage, max_knockback, shooter, impact_id, body as Player, has_grid)
 	# 可破坏瓦片(树叶/树干):按 tile_defs 爆炸衰减(75%)扣除生命值,破坏后变空气
 	if has_grid:
 		_damage_tiles(center, radius, max_damage, shooter)
 
-static func player_effect(center: Vector2, radius: float, damage: int, knockback: float, player: Node2D) -> Dictionary:
+# 候选只来自物理形状：真实形状触到爆炸圈才结算。
+# 爆心贴接缝时同时查询镜像位置，否则接缝另一侧的角色会漏检。
+static func _candidates(center: Vector2, radius: float) -> Array:
+	var space := TileDefs.terrain.space_rid()
+	if radius <= 0.0 or not space.is_valid():
+		return []
+	var world := CollisionWorld.for_space(space)
+	var mask := CollisionWorld.LAYER_ENEMY | CollisionWorld.LAYER_TEAM_A | CollisionWorld.LAYER_TEAM_B
+	var out: Array = []
+	var seen := {}
+	for at in CollisionWorld.toroidal_centers(center, radius):
+		for entry: Dictionary in world.circle_overlaps(at, radius, mask):
+			var key: int = entry["rid"].get_id()
+			if seen.has(key):
+				continue
+			seen[key] = true
+			out.append(entry)
+	return out
+
+static func _owner_of(entry: Dictionary) -> Node2D:
+	return entry["collider"] as Node2D
+
+static func _damage_enemy(center: Vector2, radius: float, max_damage: int, max_knockback: float,
+		enemy: EnemyBase, has_grid: bool) -> void:
+	var d := _dist(center, enemy.global_position)
+	if d > radius:
+		return
+	# 遮挡(墙后)= 部分掩体;内圈免疫遮挡(见 cover_multiplier 注释)
+	var blocked := has_grid and not _has_los(center, enemy.global_position)
+	var cover := cover_multiplier(d, radius, blocked)
+	var wmult := Water.water_mult(enemy.global_position)  # 目标在水里:×水格 decay
+	var dmg := BlastCurve.falloff(d, radius, radius * INNER_FRACTION, max_damage) * cover * wmult
+	if dmg <= 0:
+		return
+	# 屏幕中心准星命中反馈
+	CombatFeedback.hit_marker()
+	# 爆炸击退覆盖原速度，严格沿爆心到目标的径向方向
+	enemy.hurt(int(dmg), _outward_dir(center, enemy.global_position),
+			BlastCurve.falloff(d, radius, radius * INNER_FRACTION, max_knockback) * cover * wmult, true)
+
+# 玩家分支只服务真实 Player（本地角色/权威端角色/远端 forecast）；伤害与归属经权威或本地结算。
+static func _damage_player(tree: SceneTree, center: Vector2, radius: float, max_damage: int, max_knockback: float,
+		shooter: Node, impact_id: int, player: Player, has_grid: bool) -> void:
+	if player.authority_world == null:
+		_cam_shake(center, radius, tree.get_first_node_in_group("player") as Node2D)
+	if player.is_downed():
+		return
+	var effect := player_effect(center, radius, max_damage, max_knockback, player, has_grid)
+	if effect.is_empty():
+		return
+	var amount: int = effect["damage"]
+	var knock: float = effect["knock"]
+	if player.authority_world != null:
+		player.authority_world.damage(shooter.role if shooter != null else 0, player.role, center, amount, true, knock, impact_id, 2)
+	else:
+		CombatFeedback.attribute(player, shooter)
+		player.take_hit(center, amount, true, knock)
+
+static func player_effect(center: Vector2, radius: float, damage: int, knockback: float, player: Node2D, has_grid := true) -> Dictionary:
 	var d := _dist(center, player.global_position)
 	if d > radius:
 		return {}
-	var blocked := not TileDefs.terrain.empty() and not _has_los(center, player)
+	var blocked := has_grid and not _has_los(center, player.global_position)
 	var mult := cover_multiplier(d, radius, blocked) * Water.water_mult(player.global_position)
-	return {"damage": int(_falloff(d, radius, damage) * mult), "knock": _falloff(d, radius, knockback) * mult}
+	var inner := radius * INNER_FRACTION
+	return {"damage": int(BlastCurve.falloff(d, radius, inner, damage) * mult),
+		"knock": BlastCurve.falloff(d, radius, inner, knockback) * mult}
 
 # 扫描爆炸范围内存活的可破坏子格，供伤害结算与碎屑发射点共用。
 static func destructible_subs(center: Vector2, radius: float, include_destroyed: bool = false) -> Array:
@@ -100,19 +152,8 @@ static func _outward_dir(center: Vector2, target: Vector2) -> Vector2:
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 	return delta.normalized() if not delta.is_zero_approx() else Vector2.RIGHT
 
-static func _has_los(center: Vector2, target: Node2D) -> bool:
-	var terrain := TileDefs.terrain
-	return terrain.line_of_sight_cells(terrain.cell(center), terrain.cell(target.global_position))
-
-# 平缓衰减:内圈满值,二次方(1-t²)渐变到 0——比 smoothstep 平缓,中远距离保留更多伤害/击退
-static func _falloff(d: float, radius: float, max_val: float) -> float:
-	var inner := radius * INNER_FRACTION
-	if d < inner:
-		return max_val
-	if d >= radius:
-		return 0.0
-	var t := (d - inner) / (radius - inner)
-	return max_val * (1.0 - t * t)
+static func _has_los(center: Vector2, target: Vector2) -> bool:
+	return TileDefs.terrain.line_of_sight(center, target)
 
 
 # 掩护衰减系数:内圈(≤INNER_FRACTION 半径)免疫遮挡——贴脸目标被墙棱角判"无视线"

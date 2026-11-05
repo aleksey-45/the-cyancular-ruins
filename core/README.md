@@ -13,8 +13,8 @@ present/  视听表现与特效：像素字体适配、音效播放、贴图边�
 
 - `sim/`（物理模拟与空间几何）
   - 维护 16px 子格地形破坏、射线检测、环形世界寻路与碰撞判定。
-  - `actor_collider` 为服务端与客户端提供站立、蹲伏矩形阻挡，按模拟顺序映射到最近环面位置。
-  - 包含 v4 地图读取（`map_format`、`map_format_v4`）、时间控制（`time_field`、`grain_account`、`world_rewind`）；地形历史由 `NativeTerrain` 持有。
+  - `actor_collider` 为服务端与客户端提供站立、蹲伏的 RID 碰撞代理，按模拟顺序同步规范位姿并补齐接缝镜像。
+  - 包含 v4 地图读取（`map_format`、`map_format_v4`）、时间控制（`time_field`、`grain_account`、`world_rewind`）；地形历史由 `Terrain` 持有。
 - `net/`（网络同步与联机）
   - 负责网络数据传输（`net_bus`、`net_codec`）、输入缓冲与调度（`input_buffer`）、客户端预测回滚（`prediction_rollback`）与远端快照播放（`snapshot_buffer`）。
   - 提供统一的玩家输入源抽象（`player_input`），支持本地键鼠输入（`local_input_source`）和网络数据包输入（`packet_input_source`）。
@@ -30,7 +30,7 @@ present/  视听表现与特效：像素字体适配、音效播放、贴图边�
 在 `project.godot` 中配置的 Autoload 单例：
 
 - `GameParameters` (`core/config/game_parameters.gd`)：全局共享常量与世界边界尺寸。
-- `PerfMonitor` (`core/config/perf_monitor.gd`)：原生固定容量性能聚合，每秒发布标量；默认不写日志。
+- `PerfMonitor` (`core/config/perf_monitor.gd`)：固定容量性能聚合，每秒发布标量；默认不写日志。
 - `NetBus` (`core/net/net_bus.gd`)：基于 GNS 的网络通信核心接口。
 - `NetSession` (`core/net/net_session.gd`)：联机会话与子进程生命周期管理；Windows 使用 Job，macOS 使用生命期管道与进程组。
 - `Settings` (`core/config/settings.gd`)：用户本地配置管理，持久化存储于 `user://settings.cfg`。
