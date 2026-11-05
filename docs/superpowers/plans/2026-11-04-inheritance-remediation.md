@@ -124,6 +124,8 @@ TeamHost | RoyaleHost（薄子类，只覆写壳的虚钩子）     pvp_game | r
 | S1 快照域 → `SnapshotSystem` | `0a06b9aa` | `RUN_ALL OK`；快照字段表逐字未变 |
 | S2 裁决域 → `CombatSystem` | `89c65af3` | `RUN_ALL OK`；**M1 真链路**：`run_real.sh --yes --only pvp_match` → `SMOKE PASS` / `RUN_REAL OK(1 entries)` |
 | S3 地面武器域 → `GroundSystem` | `be07848f` | `RUN_ALL OK`；真链路随 M2 一起跑 |
+| S4 回合域 → `RoundSystem` | `ee5f80f6` | `RUN_ALL OK`；**M2 真链路**：`run_real.sh --yes --only match` → `pvp_match_smoke` `SMOKE PASS` + `team_match_probe` `ALL-OK`(274s) |
+| 早到 `match_sync` 竞态修复 | 随本批 `fix(server)` | 3v3 探针曾报部分端 `team=0` + 空队伍表（早期报到时宿主未建）；改为排队到宿主建好再回，修复后 M2 复跑 `RUN_REAL OK(2 entries)` |
 | 待做 | S4（RoundSystem）/ S4b（砍 `MatchState` 链根）/ M2 真链路 / S5 客户端 / S6 收口 | — |
 
 > M1 真链路前置条件实测：`lobby_alive=false`、Godot 进程 0、run_all summary 静默 ≥240s ⇒ 闸放行；跑后无残留进程。

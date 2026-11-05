@@ -3,6 +3,9 @@ extends Node2D
 
 var _room_manager: RoomManager = null   # 大厅侧:留引用给控制台面板读房间账本(以前是匿名 add_child)
 var _host: Node = null
+# 早到的 match_sync:客户端可能比宿主更早进场景报到(那时 _host 还没建)⇒ 载荷会空(队伍表/出生点全缺)。
+# 先排队,等 _on_all_claimed 建完宿主后补发。
+var _pending_match_sync: Array[int] = []
 var _claims: Dictionary = {}   # role(int) -> peer_id(worker 视角)
 var _claim_names: Dictionary = {}   # role(int) -> 昵称(开局 peer_info 回传两端)
 var _claim_opts: Dictionary = {}   # role(int) -> 本端选项(颜色/规则偏好)
@@ -388,6 +391,11 @@ func _on_match_sync(caller: int) -> void:
 				str(NetBus.role_claimed.is_connected(_on_role_claimed))])
 	if role == 0:
 		return
+	# 早到的报到:宿主还没建 ⇒ 先排队(_on_all_claimed 建完宿主后补发);否则队伍表/出生点会以空载荷下发。
+	if _host == null:
+		if not _pending_match_sync.has(caller):
+			_pending_match_sync.append(caller)
+		return
 	# 客户端场景已就绪(它 _ready 才发 match_sync)⇒ 通知对局宿主:开局倒计时的就绪闸可以放行。
 	if _host != null and _host.has_method("mark_client_ready"):
 		_host.mark_client_ready(role)
@@ -514,6 +522,10 @@ func _begin_match() -> void:
 		_claim_names[int(ai_r)] = "电脑玩家%d-computer" % int(ai_r)
 	if _royale and _host.has_method("set_display_names"):
 		_host.set_display_names(_claim_names)   # 排行榜昵称表
+	# 宿主已建:补发早到的 match_sync(否则那些端停在空队伍表 / 空出生点)。
+	for pending_caller in _pending_match_sync:
+		_on_match_sync(int(pending_caller))
+	_pending_match_sync.clear()
 	var mode_note := ""
 	if _royale:
 		mode_note = "(大乱斗 %d 人,其中 AI %d)" % [_claims.size() + _ai_roles.size(), _ai_roles.size()]
