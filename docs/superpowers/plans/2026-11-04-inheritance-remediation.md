@@ -26,10 +26,10 @@ pvp_game | royale_game | team_game               TeamHost | RoyaleHost
 
 1. **模式差异只许出现在薄子类**：`TeamHost` / `RoyaleHost`（以及客户端的三个 game 场景）只覆写宿主虚钩子，不放域逻辑。
 2. **域逻辑一律组合件**：新增/迁移的域 = 新文件 `XxxSync`（`class_name` 蛇形 = 文件名，`extends RefCounted`），**不许再靠 `extends` 分文件**。
-3. **组合件契约与客户端逐字同款**：`var _host: Node = null` + `func bind(host: Node, 显式依赖…)`；跨域共享引用以参数交进来（如 `bind(host, replicas: Dictionary, tint_of: Callable)`），宿主与组件都不新造单例。
+3. **组合件契约（4.7.1 实测：GDScript 类之间允许循环引用）**：`var host: MatchHost = null` + `func bind(host: MatchHost, 显式依赖…)` —— 宿主与组件互相持**类型化**引用合法（本地实测 `HostCycle ↔ CompCycle` 互相 typed 引用+跨类读私有成员通过）；共享引用仍以参数交进来，不造单例。
 4. **状态归属**：跨域状态留在宿主（玩家表 / 输入表 / 网格 / 统计 / tick 账本）；域内状态放组件（地面武器表 / 快照 diag 计数 / 仲裁缓存 / 回合闸）。
 5. **创建方式一致**：宿主 `_ensure_xxx()` 懒建或 `_ready` 建一次 + `bind(self)`（客户端现有写法）；组件不自己找宿主。
-6. **调用方向**：宿主 → 组件 = 静态调用；组件 → 宿主 = 动态成员访问（与客户端 `_client._apply_tint(...)` 完全同款）。**热循环必须把数据以类型化局部量/参数取到组件内再用**（见 §4 性能红线），不许在逐子弹循环里做动态属性访问。
+6. **调用方向**：宿主 → 组件、组件 → 宿主都是**静态调用**（typed 引用），模式差异仍走宿主虚钩子（`TeamHost`/`RoyaleHost` 覆写）；热循环把数据以类型化参数取到组件内再用（见 §4）。
 
 ## 2. 阶段 1/2：先清链造成的错（不阻塞拆解，可与阶段 3 并行）
 
@@ -58,14 +58,14 @@ pvp_game | royale_game | team_game               TeamHost | RoyaleHost
 | **S2** | `MatchCombat`(342 行/18 函数) → 组件：同上；`_on_bullet_hit` 基类实现移到 `MatchHost` 成为虚方法（叶子覆写 + `super` 行为不变）；State helper 调用改 `_host._role_of(...)` 等动态调用。`MatchRound extends MatchCombat` → `extends MatchState`。`MatchHost` 加 `_combat`、替换调用点、`TileDefs.on_destroyed` 回调注册改 `_combat._on_tile_destroyed` | 默认批 + `rollback_fidelity_probe` + `bullet_sweep_probe` + **真链路 M1：`pvp_match_smoke`（需认领 7777）** + O0 | 3 | S1 |
 | **S3** | `MatchGround`(363 行/21 函数，含 6 域字段) → 组件：字段整体搬进组件；`_host` 动态访问宿主（`_rpc_all`/`grid`/`players`/`_disabled_weapons`）；`MatchHost` 加 `_ground`、替换 4 处调用点；`RoundFlow` 拆分前先让 `MatchRound` 里对 Ground 的两处调用改 `_host._ground.xxx` | 默认批 + `ground_weapon_field_smoke` + 真链路（拾取/落定，随 M1） | 3 | S2 |
 | **S4** | `MatchRound`(307 行/19 函数) → `RoundFlow` 组件 + **合并 `MatchState` 进 `MatchHost`**（全部共享字段/方法搬入，`MatchHost extends Node`；`_spawn_cell`/`role_spawns` 等钩子成为 `MatchHost` 虚方法）。模式钩子仍定义在 `MatchHost`、叶子覆写；`_physics_process` 依次调 4 个组件 | 默认批 + `down_edge_probe` + **真链路 M2：`pvp_match_smoke` + `team_match_probe`（需认领）** + O0 + 两种模式手工冒烟 | 3 | S3 |
-| **S5** | 客户端侧对齐核查（不改大结构）：确认三模式场景只覆写 `PvpMatchClient` 虚钩子、无域逻辑残留；把客户端 6 件套与 `_ensure_*` 接线方式写成 `docs/eng/netplay.md` 的对齐表；若发现客户端仍在用 `extends` 塞域逻辑（如时间玩法块），登记为后续独立任务，不塞进本计划 | 对齐表 + `menu_autotest`/`pvp_match_smoke` 不回归 | 1 | S4 |
+| **S5** | 客户端侧对齐（typed 绑定）：把 `scenes/mp_client/` 六件套与 `core/net/input_uplink.gd` 的 `var _client: Node` + `bind(client: Node)` 改成 typed `PvpMatchClient`（循环引用已实测可行），顺带消掉 `_client.get("_rollback")` 这类字符串访问；三模式场景确认只覆写 `PvpMatchClient` 虚钩子、无域逻辑残留；客户端 6 件套与 `_ensure_*` 接线写成 `docs/eng/netplay.md` 的对齐表。若发现客户端仍用 `extends` 塞域逻辑（如时间玩法块），登记为后续独立任务 | 对齐表 + `menu_autotest` / `pvp_match_smoke` 不回归 | 2 | S4 |
 | **S6** | 命名与文档收口：组件改名为对齐客户端风格（`ground_sync.gd`/`snapshot_tx.gd`/`combat_arbiter.gd`/`round_flow.gd`，`class_name` 蛇形），同批更新所有 docs/eng 引用与按路径读源码的探针（`rollback_fidelity_probe` 读 `match_combat.gd`/`match_host.gd` 的取数点）；`netplay.md` 链一节改写成「宿主 + 组合件」；`registered-debt` 零守卫面更新；删本计划 §1 的旧四条定律 | `check_naming` 全绿 + 默认批 + **真链路 M3：`pvp_match_smoke` + `team_match_probe`（认领）** + 全仓 grep 零悬空 | 3 | S4 |
 
 **里程碑与off-ramp**：M1 = S2 后（链剩 `Node←State←Ground←Round←Host←leaves`），M2 = S4 后（目标形态达成），M3 = S6 后（命名/文档收口）。任一 S 步失败 → 单独 revert 该提交；S4 失败回退到 M1 形态也仍比现状浅 3 层。
 
 ## 4. 性能红线（拆解最大的真实风险）
 
-- **热路径**（`_adjudicate_bullets` 逐子弹、`_replay_hurt_rect` 回放、快照打包逐玩家）**不许在循环里做动态属性访问**：宿主把 `players`/子弹数组/受击面缓存以**类型化参数**传给组件的 tick 方法，组件内用局部类型化变量。
+- **热路径**（`_adjudicate_bullets` 逐子弹、`_replay_hurt_rect` 回放、快照打包逐玩家）：组件化后调用仍是"静态 + 一次虚分派"（与现状相同），但热循环仍应把 `players` / 子弹数组 / 受击面缓存以**类型化参数**传进组件（别在循环里反复走宿主成员查找），组件内用局部类型化变量。
 - 每次拆步后跑一次 **O0 tick 分段计时**（`--diag`，同图同人数同子弹量）并与 S0 基线比：单段 Δ > 5% 即视为回归，先优化到 ≤5% 再提交。
 - `perf_probe` 与导出批的服务端 tick 预算（60Hz 16.67ms）同为参考线。
 - 快照包长/编码字节数必须逐字节不变（`snapshot_size_probe` 钉着），组件化不许顺手改线格式。
@@ -105,7 +105,7 @@ pvp_game | royale_game | team_game               TeamHost | RoyaleHost
 | 3 拆解 | S2（M1） | 3 | 是（`pvp_match_smoke`） |
 | 3 拆解 | S3 | 3 | 是（随 M1 一起） |
 | 3 拆解 | S4（M2） | 3 | 是（`pvp_match_smoke` + `team_match_probe`） |
-| 3 拆解 | S5 | 1 | 否 |
+| 3 拆解 | S5 | 2 | 否（默认批 + `menu_autotest`；客户端不改协议） |
 | 3 拆解 | S6（M3） | 3 | 是（同 M2） |
 | 6 单叶 | T3.1~T3.3 | 1 | 否（默认批 + 手工冒烟） |
 
@@ -118,3 +118,26 @@ pvp_game | royale_game | team_game               TeamHost | RoyaleHost
 - 链文件 LOC：`match_state` 432 · `match_ground` 363 · `match_snapshot` 113 · `match_combat` 342 · `match_round` 307 · `match_host` 517 · `team_host` 432 · `royale_host` 258；链上 6 域文件合计 2,074 行，加两宿主 2,764 行。
 - O0 tick 分段计时（`--diag` 的 `adjudicate/own_snap/world_snap/rewind`）：**待 M1 真链路窗口采集**（需认领 7777 + 对局）；采集后贴进本节，S1~S4 每步对比，单段 Δ > 5% 视为回归。
 - 拆解后自检口径不变：默认批 48 支全绿、`snapshot_size_probe` 字节数不变、`rollback_fidelity_probe` 34 条不断言少跑、真链路里程碑判词 `SMOKE PASS` / `TEAM MATCH PROBE: ALL-OK`。
+
+## 附录 B：GDScript 语言特性实证（2026-11-04，Godot 4.7.1 本机实测）
+
+> 一次性的探针脚本放在 `tests/_gdtest/`，跑完即删；`tests/_gdtest/` 不进任何批。
+
+| # | 问题 | 实测 | 结论 |
+|---|---|---|---|
+| L1 | 两个 `class_name` 类互相持有类型引用 | `CycleA`(`var b: CycleB`) ↔ `CycleB`(`var a: CycleA`) 加载并运行 OK | **允许**（循环引用限制主要针对 `.tscn` 场景；脚本/类可以） |
+| L2 | 宿主 `Node` ↔ 组件 `RefCounted` 互相 typed 引用，且组件读宿主私有成员 | `HostCycle`(`var comp: CompCycle`) ↔ `CompCycle`(`var host: HostCycle`) 运行 OK，跨类读 `host._secret` = 7 | **允许** ⇒ 组件可直接持 typed 宿主，不需要"`Node` + 动态访问"方案 |
+| L3 | `Node` 类型变量上访问未声明成员 | `--check-only` 通过；客户端现有 `_client._world` 在生产运行 | 允许（unsafe access，warning 级），但**没有拼写保护** |
+| L4 | typed 类上访问不存在成员是否编译期报错 | `h.no_such_member` 的 `--check-only` 通过，运行期才报错 | **不能靠 typed 抓拼写**；组件契约靠默认批 + 探针 + 评审 |
+| L5 | `@abstract` 抽象类 / 抽象方法（Godot 4.5+） | `@abstract class_name` / `@abstract func` 可解析；实例化 = `Parse Error: Cannot construct abstract class` | **可用**；但 `MatchHost` 1v1 要实例化 ⇒ 整类不能 abstract（要"必须覆写"的钩子只能加一层 abstract 基类，不采用） |
+| L6 | GDScript 接口 / 协议 | 无（proposals 仍开放） | 组合 + typed 循环引用是当前语言下的正统解 |
+| L7 | 新增 `class_name` 的全局类缓存 | 新类要先 `--import` 扫一遍，否则别的脚本报 `Could not find type` | 本仓已有此约定（`Player` 加 class_name 时同款）；拆解每步跑默认批即可 |
+
+**对计划的影响（已合并进 §1/§3/§4）**：
+
+- 组件契约从"`Node` + 动态访问"升级为"**typed `MatchHost`**"：静态调用、无 unsafe 警告；客户端 S5 同步改成 typed 绑定，两侧同一套写法。
+- 因为 L4（typed 也抓不住拼写错误），每条拆步不能只靠类型系统，必须真跑默认批 + 承重探针；`rollback_fidelity_probe` 等按路径读源码的取数点在同批更新。
+- 场景 ↔ 脚本的循环依赖仍是禁区：`MatchHost` 由代码 `new()`（不是 `.tscn`）；若某个组件 preload 了含宿主脚本的场景，需单独确认——每步的 `--import` + `allscript_probe` 会暴露加载失败。
+- 备选记录（不采用）：用 `@abstract` 中间基类强制模式钩子覆写 —— 会让链多一层，与"缩到 2 层"目标冲突。
+
+参考：[cyclic dependencies 讨论（脚本/类可循环）](https://forum.godotengine.org/t/understanding-unsupported-cyclic-dependencies/142828/3)、[unsafe property/method access 警告提案](https://github.com/godotengine/godot-proposals/issues/13316)、[抽象类 4.5+ 说明](https://github.com/jame581/godotprompter/blob/main/skills/gdscript-patterns/references/abstract-classes.md)、[GDScript 接口提案（未实现）](https://github.com/godotengine/godot-proposals/issues/8943)。
