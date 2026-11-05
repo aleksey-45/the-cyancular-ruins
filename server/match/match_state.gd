@@ -2,7 +2,7 @@ class_name MatchState
 extends Node
 
 # 对局权威的共享状态底座:链上每一层都要读同一批状态,而 GDScript 的父类方法/字段在编译期解析不了子类声明的符号 ⇒ 它们只能住在
-# 共同祖先里。链:RoyaleHost → MatchHost(生命周期/输入/物理编排) → MatchRound(回合机) → MatchGround(地面武器)
+# 共同祖先里。链:RoyaleHost → MatchHost(生命周期/输入/物理编排) → MatchRound(回合机) → MatchState(状态底座)
 # → MatchState(本文件) → Node。★ 中间层不得定义 _init/_ready/_enter_tree/_exit_tree/_physics_process:RoyaleHost 的 _init 契约是「先 plan_spawns 再 super._init」,插钩子会打断它。
 
 const HitLagHistory := preload("res://core/sim/hit_lag_history.gd")   # 命中回放历史环(纯逻辑)
@@ -44,6 +44,15 @@ func _opponent_of(role: int) -> int:
 		if int(r) != role:
 			return int(r)
 	return 0
+
+
+# 迁移期钩子(S3):MatchRound 调 Ground 的两处;MatchHost 覆写转发到 GroundSystem。S4 抽 RoundSystem 后删。
+func _drop_all_but_one(_p: Node2D, _role: int) -> void:
+	pass
+
+
+func _reset_ground_weapons() -> void:
+	pass
 
 
 # 与建局基线(_base_grid)不同的格,给「重连后补破坏态」用:客户端重连只拿 match_path 重建初始地图,不补这一份会留

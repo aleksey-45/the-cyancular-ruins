@@ -91,13 +91,13 @@ func _ready() -> void:
 	#   ★ ⚠ 位置守卫 duel_spawn_timeout_smoke 已删(2026-10-09)⇒ 今天零守卫:本行须在 _ready 体内、add_child(RoomManager.new()) 之后,且两者之间没有早退。
 	set_process(false)
 
-# 仅测试用开关:不属于"模式/角色"解析(它们改的是 MatchGround/MatchState 的静态钩子),故不进 ModeContext。
+# 仅测试用开关:不属于"模式/角色"解析(它们改的是 GroundSystem/MatchState 的静态钩子),故不进 ModeContext。
 # ★ 语义与旧版逐字一致;`--test-destroy-tile` 缺省 after=3.0 是承重的(留 0.0 会在第一帧就拆)。
 func _apply_test_flags(args: PackedStringArray) -> void:
 	for i in args.size():
 		match args[i]:
 			"--test-ground-teleport":
-				MatchGround.test_ground_teleport = true
+				GroundSystem.test_ground_teleport = true
 			"--test-destroy-tile":
 				if i + 1 < args.size():
 					var parts := str(args[i + 1]).split(",")

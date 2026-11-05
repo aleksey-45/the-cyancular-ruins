@@ -105,7 +105,7 @@ bash tests/smoke/<名>.sh
 | `snap_rx` / `snapshot_tx` | `net_bus.gd` / [`server/match/snapshot_system.gd`](../../server/match/snapshot_system.gd) | 按 1Hz 对账「没发出」与「发了没收到」;`snap_rx` 另有 `world_lost` / `world_loss_pct` / `own_lost` / `own_loss_pct` / `step`（**下行丢包估计**:相邻快照 tick 缺口按学到的步长折算,口径见 `NetMetrics.snapshot_loss`）|
 | `rollback` | [`core/net/prediction_rollback.gd`](../../core/net/prediction_rollback.gd) 的 `_handle_ack` | 位置 / 速度误差、是否贴身、重放条数 |
 | `queue` / `queue_drop` | [`server/match/input_intake.gd`](../../server/match/input_intake.gd) | 服务器输入队列深度 / 上限 / 累计丢弃 |
-| `pickup_try` | [`server/match/match_ground.gd`](../../server/match/match_ground.gd) | `none` / `range` / `denied` / `taken` 四种成因 |
+| `pickup_try` | [`server/match/ground_system.gd`](../../server/match/ground_system.gd) | `none` / `range` / `denied` / `taken` 四种成因 |
 | `pickup_anchor` | [`scenes/mp_client/pickup_sync.gd`](../../scenes/mp_client/pickup_sync.gd) | 收到服务器的**落定重锚**(落定那一刻重播的权威位置);没它 = 两端落点发散会永久留着 |
 | `pickup_add` / `pickup_remove` / `pickup_skip` | [`scenes/mp_client/pickup_sync.gd`](../../scenes/mp_client/pickup_sync.gd) | 客户端是否建出那把枪、早退原因 |
 | `tile_cell` / `tile_sub` | [`scenes/mp_client/tile_sync.gd`](../../scenes/mp_client/tile_sync.gd) | 拆砖事件是否到达、是否静默补态 |

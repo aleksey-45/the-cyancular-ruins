@@ -22,6 +22,8 @@ var _ports: MatchPorts = null
 var _snapshot: SnapshotSystem = null
 # C 方案(S2):裁决系统。
 var _combat: CombatSystem = null
+# C 方案(S3):地面武器系统。
+var _ground: GroundSystem = null
 
 func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 		ai_roles: Array = [], teams: Dictionary = {}, spawns: Dictionary = {}) -> void:
@@ -55,6 +57,8 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 	_snapshot.bind(self, _ports)
 	_combat = CombatSystem.new()
 	_combat.bind(self, _ports)
+	_ground = GroundSystem.new()
+	_ground.bind(self, _ports)
 	TileDefs.on_destroyed = Callable(self, "_on_tile_destroyed")
 # cyrm v4(B18):破坏已下沉 16px 子格 —— worker 必须连子格回调(TileDefs.on_sub_destroyed),否则客户端永远收不到拆砖事件(幽灵墙:服务器碰撞已消、客户端还在渲染/预测碰撞)。
 	TileDefs.on_sub_destroyed = Callable(self, "_on_sub_destroyed")
@@ -82,6 +86,7 @@ func _bind_ports() -> void:
 	_ports.net_peers_sendable = Callable(self, "_port_net_peers_sendable")
 	_ports.net_peer_count = Callable(self, "_port_net_peer_count")
 	_ports.scene_bullets = Callable(self, "_port_scene_bullets")
+	_ports.scene_add_child = Callable(self, "_port_scene_add_child")
 	_ports.send_round_state = Callable(self, "_send_round_state")
 	_ports.on_bullet_hit = Callable(self, "_on_bullet_hit")
 	_ports.broadcast_round_state = Callable(self, "_broadcast_round_state")
@@ -137,6 +142,10 @@ func _port_scene_bullets() -> Array:
 	return get_tree().get_nodes_in_group("bullet")
 
 
+func _port_scene_add_child(node: Node) -> void:
+	add_child(node)
+
+
 # ── 裁决域转发(S2):TileDefs 回调 / 玩家信号 / 外部 API 仍只认宿主,宿主转给 CombatSystem。
 func _on_tile_destroyed(cell: Vector2i) -> void:
 	_combat.on_tile_destroyed(cell)
@@ -160,6 +169,35 @@ func _broadcast_pending_beams() -> void:
 
 func notify_direct_hit(shooter: Node, victim: Node) -> void:
 	_combat.notify_direct_hit(shooter, victim)
+
+
+# ── 地面武器域转发(S3):调用点仍只认宿主,宿主转给 GroundSystem。
+func _sync_ground_positions() -> void:
+	_ground.sync_positions()
+
+
+func _debug_keep_weapon_within_reach() -> void:
+	_ground.debug_keep_weapon_within_reach()
+
+
+func _handle_ground_actions(role: int, src: PacketInputSource) -> void:
+	_ground.handle_actions(role, src)
+
+
+func _setup_ground_weapons() -> void:
+	_ground.setup()
+
+
+func ground_weapons_payload() -> Array:
+	return _ground.payload()
+
+
+func _drop_all_but_one(p: Node2D, role: int) -> void:
+	_ground.drop_all_but_one(p, role)
+
+
+func _reset_ground_weapons() -> void:
+	_ground.reset()
 
 
 # 子弹直击的基类实现(叶子覆写 + super;1v1 直接实例化 MatchHost ⇒ 这里是 1v1 的唯一归因写端)。

@@ -42,7 +42,7 @@
 
 > ★ **2026-11-04 裁定:拆。** 目标形态 = **薄壳宿主(Node)+ 状态/端口(RefCounted)+ 域系统(RefCounted,只依赖状态与端口)**,与客户端 `PvpMatchClient` + `ClientState/ClientPorts` + `scenes/mp_client/` 六件套同构;`extends` 只保留"模式子类"这一条轴。迁移步骤见下方计划指针。本节四条定律描述的是**当前(迁移中)状态**,M2 后改写成「壳 + 状态/端口 + 系统」七条规则。
 
-`Node ← MatchState ← MatchGround ← MatchRound ← MatchHost ← (TeamHost | RoyaleHost)`(快照域与裁决域已抽成 `snapshot_system.gd` / `combat_system.gd`,只依赖 state + ports)。
+`Node ← MatchState ← MatchRound ← MatchHost ← (TeamHost | RoyaleHost)`(快照/裁决/地面武器三个域已抽成 `snapshot_system.gd` / `combat_system.gd` / `ground_system.gd`,只依赖 state + ports)。
 
 链上 6 个文件是**同一个对象按域切成的 6 片**,不是 is-a 分类;只有 `TeamHost` / `RoyaleHost` 是真子类。`extends` 是 GDScript 没有 partial class 时跨文件共享 `self` 的唯一廉价手段(`0ae93a3e`,2026-09-15:原 `match_host.gd` 626 行 / 35 函数 / 最长 48 行,形状是"宽"不是"深",故按域分文件)。`3c8dc8f0` 把地面武器域插进链中间,`726a4008` 加第三个模式宿主。
 

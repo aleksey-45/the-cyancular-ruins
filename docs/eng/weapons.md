@@ -54,7 +54,7 @@
 - 诊断补充:客户端新增 `pickup_anchor` 事件(收到重锚),`pickup_skip` 多一个 `reason: "reanchor_missing"`(重播过期:那件已被捡走)。
 - `core/sim/ground_weapon_field.gd`(`GroundWeaponField`):场上地面武器的纯逻辑表;距离与半径走环面最短,并列按 `inst` 升序。
 - 布点:**出生/复活点已经是按阵营半区的地图数据**(`.cyrm` meta 的 `# respawn <1|2>`,见 [`world.md`](world.md));`RoyaleSpawn.plan_spawns` 现在优先从两侧 `# respawn` 列表的并集随机取(缺数据才回退 `SpawnPicker` 几何)。旧的 `GridPathfinder.spread_cells(cells, count, clearance, cols, rows)` 仍用于单机布枪与老图回退;它内部有 `shuffle()`,不得在广播之后再调一次。开阔地板格扫描在 `EnemySpawner.open_floor_cells`。
-- 联机权威 `server/match/match_ground.gd`(`MatchGround`,继承链中间层,不得定义生命周期钩子;由 `MatchHost._physics_process` 每帧显式调 `_sync_ground_positions()` + `_handle_ground_actions(role, src)`)。
+- 联机权威 `server/match/ground_system.gd`(`GroundSystem`,只依赖 state + ports;由 `MatchHost._physics_process` 每帧经宿主转发调 `_sync_ground_positions()` + `_handle_ground_actions(role, src)`)。
 - `weapon_spawned` / `weapon_removed` 只走 `NetBus`,不在 `NetBusExt` 里加同名;开局那批走 `match_sync` 进场拉取。`_build_collision` 把 Visual 反向平移,让画出来的枪中心落在 body 原点上;`vel` 必须保持生成时那一份。权威位置 `canonical_pos` 恒在 `[0,MAP)`,每帧由 `set_anchor(玩家位置)` + `sync_render_from_canonical()` 锚到最近副本。
 - 换局 `_reset_ground_weapons` 清的与铺的都必须广播,`_next_ground_inst` 不得重置;客户端不要在 `round_state` 里自己清空。
 - 不做客户端预测:按 F/Q 只上行(`BIT_PICKUP = 32` / `BIT_DROP = 64`),服务器裁决后广播;落体视觉由客户端用事件带的 `pos` + `vel` 本地模拟。背包进 `capture_state("inv")`;`restore_state` 必须先读 `wslot`、再 `restore_inventory`、最后 equip;`inv` 不进 `_close_enough`。
