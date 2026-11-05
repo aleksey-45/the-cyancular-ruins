@@ -167,10 +167,6 @@ func _drop_pressed_raw() -> bool:
 func get_aim_dir_override() -> Vector2:
 	return _aim
 
-# 网络输入源驱动的角色瞄准不读取宿主机鼠标。
-func is_network_driven() -> bool:
-	return true
-
 static func _bit(action: String) -> int:
 	match action:
 		"up": return BIT_UP

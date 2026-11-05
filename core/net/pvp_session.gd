@@ -5,8 +5,8 @@ const DEFAULT_PORT := 7777
 const MODE_PVP := "pvp"
 const MODE_ROYALE := "royale"
 const MODE_TEAM := "team"
-const MODE_NAMES := {MODE_PVP: "1v1", MODE_TEAM: "3v3", MODE_ROYALE: "大乱斗"}
-const BETA_MODE_NAMES := {MODE_PVP: "Beta 1v1", MODE_TEAM: "时空3v3", MODE_ROYALE: "错乱大乱斗"}
+const MODE_NAMES := {MODE_PVP: "1v1", MODE_TEAM: "团队对抗", MODE_ROYALE: "大乱斗"}
+const BETA_MODE_NAMES := {MODE_PVP: "Beta 1v1", MODE_TEAM: "时空团队对抗", MODE_ROYALE: "错乱大乱斗"}
 
 static var server_address := "127.0.0.1"
 static var server_port := DEFAULT_PORT

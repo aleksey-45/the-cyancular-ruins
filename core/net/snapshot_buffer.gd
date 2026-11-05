@@ -19,15 +19,8 @@ func reset() -> void:
 func push(tick: int, world: Dictionary) -> void:
 	if not frames.is_empty() and tick <= frames[-1]["tick"]:
 		return
-	# 播放缓冲只保存表现数据，避免每个渲染帧深拷贝武器驱动状态和弹丸回滚锚点。
-	var shown := {"players": {}, "pickups": world["pickups"]}
-	for role in world["players"]:
-		var actor: Dictionary = world["players"][role].duplicate()
-		actor.erase("driver")
-		actor.erase("input")
-		actor.erase("rewind_path")
-		shown["players"][role] = actor
-	frames.append({"tick": tick, "world": shown})
+	# 记录在解码后只读，缓冲与解码帧共用同一份槽数组，插值时再复制要改动的那一条。
+	frames.append({"tick": tick, "world": world})
 	if frames.size() == 1:
 		render_tick = tick - DELAY_TICKS
 	while frames.size() > KEEP:
@@ -52,18 +45,22 @@ func sample(tick: float) -> Dictionary:
 	var source: Dictionary = from["world"] if weight < 1.0 else to["world"]
 	var result := {"players": {}, "pickups": {}}
 	for group in ["players", "pickups"]:
+		# 玩家与掉落物都是槽记录，位置、速度与纪元各占固定下标。
+		var pos_slot: int = PlayerStateSchema.slot("pos") if group == "players" else PickupState.POS
+		var vel_slot: int = PlayerStateSchema.slot("vel") if group == "players" else PickupState.VEL
+		var epoch_slot: int = PlayerStateSchema.slot("epoch") if group == "players" else -1
 		for id in source[group]:
-			# 只改位置与速度；嵌套表现数据保持只读，不递归复制。
-			var state: Dictionary = source[group][id].duplicate()
+			# 只改位置与速度；其余槽保持只读，不递归复制。
+			var state: Array = source[group][id].duplicate()
 			result[group][id] = state
 			if from["world"][group].has(id) and to["world"][group].has(id):
-				var a: Dictionary = from["world"][group][id]
-				var b: Dictionary = to["world"][group][id]
-				var movement := GridPathfinder.toroidal_delta_px(a["pos"], b["pos"], map_px.x, map_px.y)
-				if (group != "players" or a["epoch"] == b["epoch"]) and movement.length() < 256.0:
-					state["pos"] = a["pos"] + movement * weight
-					state["vel"] = a["vel"].lerp(b["vel"], weight)
+				var a: Array = from["world"][group][id]
+				var b: Array = to["world"][group][id]
+				var movement := GridPathfinder.toroidal_delta_px(a[pos_slot], b[pos_slot], map_px.x, map_px.y)
+				if (epoch_slot < 0 or a[epoch_slot] == b[epoch_slot]) and movement.length() < 256.0:
+					state[pos_slot] = a[pos_slot] + movement * weight
+					state[vel_slot] = a[vel_slot].lerp(b[vel_slot], weight)
 			if tick > to["tick"]:
-				state["pos"] += state["vel"] * minf(tick - to["tick"], MAX_EXTRAPOLATION) / 60.0
-			state["pos"] = GridPathfinder.wrap_to_range(state["pos"], map_px.x, map_px.y)
+				state[pos_slot] += state[vel_slot] * minf(tick - to["tick"], MAX_EXTRAPOLATION) / 60.0
+			state[pos_slot] = GridPathfinder.wrap_to_range(state[pos_slot], map_px.x, map_px.y)
 	return result

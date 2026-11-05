@@ -14,7 +14,7 @@ var actions: Dictionary = {}
 var _last := neutral()
 
 static func neutral() -> Dictionary:
-	return {"seq": 0, "epoch": 1, "target_tick": 0, "view_tick": 0, "ax": 0.0, "held": 0, "pressed": 0, "released": 0, "winst": 0, "aim": Vector2.RIGHT}
+	return {"seq": 0, "epoch": 1, "target_tick": 0, "ax": 0.0, "held": 0, "pressed": 0, "released": 0, "winst": 0, "aim": Vector2.RIGHT}
 
 func reset(new_epoch: int) -> void:
 	epoch = new_epoch
@@ -30,17 +30,28 @@ func seed(record: Dictionary, known_tick: int = -1) -> void:
 	_last = _expire_frame(record, known_tick) if known_tick >= 0 else record
 
 func restore_authority(new_epoch: int, frame_ack: int, confirmed_action: int, record: Dictionary, tick: int) -> void:
+	# 重置前保留本地尚未消耗的动作。随后的重推以权威 tick 为基准计算可用时机
+	# （max(target, tick+1)），会把"目标 tick 恰好被这批权威状态追上"的边沿推迟
+	# 一 tick，服务器已确认时甚至按 seq > action_ack 整体丢弃——本地预测因此比
+	# 服务器晚一拍应用跳跃等边沿，产生 jbuf/pos 校正。epoch 变更的旧动作照常丢弃。
+	var pending: Dictionary = {}
+	for seq: int in actions.keys():
+		if seq > action_ack:
+			pending[seq] = actions[seq]
 	reset(new_epoch)
 	ack = frame_ack
 	action_ack = confirmed_action
 	self.seed(record, tick)
+	for seq: int in pending:
+		if pending[seq]["epoch"] == epoch:
+			actions[seq] = pending[seq]
 
 static func _expire_frame(record: Dictionary, known_tick: int) -> Dictionary:
 	if known_tick - record["target_tick"] <= HOLD_TICKS: return record
 	return record.merged({"ax": 0.0, "held": 0}, true)
 
 func capture_cursor() -> Array:
-	return [epoch, ack, action_ack, _last["seq"], _last["target_tick"], _last["view_tick"],
+	return [epoch, ack, action_ack, _last["seq"], _last["target_tick"],
 			_last["ax"], _last["held"], _last["aim"]]
 
 # 输入队列可从模拟游标和保留的命令重建；不复制仍在变化的网络接收队列。
@@ -49,7 +60,7 @@ func restore_cursor(cursor: Array) -> void:
 	ack = cursor[1]
 	action_ack = cursor[2]
 	_last = neutral().merged({"epoch": cursor[0], "seq": cursor[3], "target_tick": cursor[4],
-			"view_tick": cursor[5], "ax": cursor[6], "held": cursor[7], "aim": cursor[8]}, true)
+			"ax": cursor[5], "held": cursor[6], "aim": cursor[7]}, true)
 
 func push(packet: Dictionary, tick: int) -> void:
 	for record: Dictionary in packet["frames"]:
@@ -100,7 +111,7 @@ func take(tick: int) -> Dictionary:
 		actions.erase(seq)
 		if tick - action["target_tick"] > ACTION_TICKS:
 			continue
-		for key in ["seq", "pressed", "released", "winst", "aim", "view_tick"]:
+		for key in ["seq", "pressed", "released", "winst", "aim"]:
 			record[key] = action[key]
 		break
 	return record
