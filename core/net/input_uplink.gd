@@ -2,7 +2,7 @@ class_name InputUplink
 extends RefCounted
 
 
-var _client: Node = null
+var _state: ClientState = null
 
 var seq := 0
 var have_prev_seq := false
@@ -19,8 +19,8 @@ var _last_ack := 0
 var _netstat_steps := 0
 
 
-func bind(client: Node) -> void:
-	_client = client
+func bind(state: ClientState) -> void:
+	_state = state
 
 
 func begin_tick() -> void:
@@ -28,8 +28,8 @@ func begin_tick() -> void:
 
 
 func submit(tick_rec: Dictionary, aim: Vector2) -> void:
-	if _client._rollback != null:
-		_client._rollback.note_input(seq, tick_rec)
+	if _state._rollback != null:
+		_state._rollback.note_input(seq, tick_rec)
 	prev_sent_seq = seq
 	have_prev_seq = true
 	_pending_pkt = tick_rec
@@ -82,13 +82,13 @@ func netstat_tick(delta: float) -> void:
 	var rb := 0
 	var ea := 0
 	var er := 0
-	if _client._rollback != null:
-		rb = int(_client._rollback.rollback_count())
-		ea = int(_client._rollback.event_aligns())
-		er = int(_client._rollback.event_rejects())
+	if _state._rollback != null:
+		rb = int(_state._rollback.rollback_count())
+		ea = int(_state._rollback.event_aligns())
+		er = int(_state._rollback.event_rejects())
 	var where := Vector2.ZERO
-	if _client._local != null and is_instance_valid(_client._local):
-		where = (_client._local as Node2D).global_position
+	if _state._local != null and is_instance_valid(_state._local):
+		where = (_state._local as Node2D).global_position
 	var snap := NetBus.snap_stats()
 	var wl := int(snap["world_lost"])
 	var ol := int(snap["own_lost"])

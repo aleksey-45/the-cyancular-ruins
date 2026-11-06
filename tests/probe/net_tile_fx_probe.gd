@@ -1,5 +1,6 @@
 extends ProbeBase
 
+# 联机拆砖粒子探针(2026-10-26 修"服务器事件 → 粒子"表现层)。
 
 const EXPECTED_CHECKS := 11
 
@@ -12,18 +13,32 @@ const MAP_W := COLS * TILE
 const MAP_H := ROWS * TILE
 const LEAF_TEX := 15
 
+# 格级事件目标:贴着右接缝那格(canonical 中心 x=480,锚到本地玩家后应变成 -32)。
 const CELL_EVENT := Vector2i(7, 2)
+# 独立子格事件目标格(0,4)、取它的子格 (1,18)。
 const SUB_CELL := Vector2i(0, 4)
 const SUB_EVENT := Vector2i(1, 18)
+# 已死/重复事件用格(2,1)的左上子格。
 const REPEAT_SUB := Vector2i(8, 4)
+# 去重用格(3,1)的左上子格。
 const DEDUP_SUB := Vector2i(12, 4)
+# silent 形态用格(0,0)。
 const SILENT_CELL := Vector2i(0, 0)
+# R2(注入)用格:⑩ 有预测环 ⇒ 走注入;⑪ 注入被拒 ⇒ 兜底立即应用。
 const INJECT_CELL := Vector2i(5, 2)
 const REJECT_CELL := Vector2i(1, 2)
 
+# 本地玩家位置:贴左接缝(所以 canonical 右侧的粒子必须被搬过来)。
 const LOCAL_POS := Vector2(10.0, 192.0)
 
 
+class StubClient extends Node:
+	var _world: Node2D = null
+	var _local: Node2D = null
+	var _rollback = null      # ⑩⑪ 用:R2 注入路径的替身(见 StubRollback)
+
+
+# 预测环替身:只实现 TileSync 用到的那一个方法。`reject=true` = 模拟"环外/已 ack"的拒绝路径。
 class StubRollback extends RefCounted:
 	var seqs: Array[int] = []
 	var calls := 0
@@ -38,8 +53,7 @@ class StubRollback extends RefCounted:
 		return 0
 
 
-var _cstate: ClientState = null
-var _cports: ClientPorts = null
+var _client: StubClient = null
 var _world: Node2D = null
 var _sync: TileSync = null
 var _checks := 0
@@ -57,15 +71,18 @@ func _run() -> void:
 	_build_world()
 	_build_sync()
 
+	# ① 起始 0 簇
 	_check(_particle_count() == 0, "起始世界应无粒子(实得 %d)" % _particle_count())
 	_checks += 1
 
+	# ② 格级事件只播 1 簇,不再展开成 16+1
 	var fails_before := _failures.size()
 	_sync.on_cell(CELL_EVENT, false)
 	_check(_particle_count() == 1, "格级事件应只新增 1 簇粒子,实得 %d(旧实现 17 簇)" % _particle_count())
 	_summary(fails_before, "格级事件只播 1 簇粒子")
 	_checks += 1
 
+	# ③ 粒子坐标锚到本地玩家附近的环面副本
 	var expect_cell := _anchored(Vector2(CELL_EVENT.x * TILE + TILE * 0.5, CELL_EVENT.y * TILE + TILE * 0.5))
 	var got_cell := _last_particle_pos()
 	_check(got_cell.distance_to(expect_cell) <= 1.0,
@@ -81,6 +98,7 @@ func _run() -> void:
 	_check(subs_cleared, "格级事件后该格 16 个子格应全部为死(否则客户端留幽灵墙)")
 	_checks += 1
 
+	# ⑤ 独立子格事件新增 1 簇,坐标同样锚定
 	_sync.on_sub(SUB_EVENT, false)
 	_check(_particle_count() == 2, "子格事件应新增 1 簇,实得 %d" % _particle_count())
 	_checks += 1
@@ -90,14 +108,17 @@ func _run() -> void:
 			"子格粒子坐标应为 %s(锚定后),实得 %s" % [str(expect_sub), str(got_sub)])
 	_checks += 1
 
+	# ⑥ 重复/已死子格事件不播(否则 17 簇里会混进"早就没了"的子格)
 	_sync.on_sub(SUB_EVENT, false)
 	_check(_particle_count() == 2, "已死子格的重复事件不应再播粒子,实得 %d" % _particle_count())
 	_checks += 1
 
+	# ⑦ silent(重连补态):清状态但不播
 	_sync.on_cell(SILENT_CELL, true)
 	_check(_particle_count() == 2, "silent 事件不应播粒子,实得 %d" % _particle_count())
 	_checks += 1
 
+	# ⑧ 去重:本端刚在这块砖播过命中碎片 ⇒ 破坏事件不再叠一簇
 	var dedup_pos := _anchored(Vector2(DEDUP_SUB.x * 16 + 8, DEDUP_SUB.y * 16 + 8))
 	TileHitFx.clear_recent_hits()
 	TileHitFx.mark_hit(dedup_pos)
@@ -105,8 +126,10 @@ func _run() -> void:
 	_check(_particle_count() == 2, "刚播过命中碎片的砖,破坏事件应被去重,实得 %d" % _particle_count())
 	_checks += 1
 
+	# ⑩ R2:有预测环 ⇒ 变更必须走 `apply_external_event(seq, cb)` 注入(seq 透传、地形照拆、粒子仍只 1 簇)。
+	#    ★ 这里走 RPC 入口 `_rpc_on_cell`(带锚点),而 `on_cell` 是"无锚点 ⇒ 立即应用"的老入口。
 	var rb := StubRollback.new()
-	_cstate._rollback = rb
+	_client._rollback = rb
 	var particles_before := _particle_count()
 	_sync._rpc_on_cell(INJECT_CELL, 42)
 	var cleared_inject := true
@@ -138,8 +161,10 @@ func _run() -> void:
 	_finish()
 
 
+# ── 夹具 ─────────────────────────────────────────────────────────────
 
 func _build_world() -> void:
+	# 5 块可破坏树叶格(其余空气):每格 16 个子格都是纹理 15。
 	var alive_cells := [CELL_EVENT, SUB_CELL, REPEAT_SUB / 4, DEDUP_SUB / 4, SILENT_CELL, INJECT_CELL, REJECT_CELL]
 	var grid: Array[Array] = []
 	for y in ROWS:
@@ -166,19 +191,20 @@ func _build_world() -> void:
 	_world = Node2D.new()
 	_world.name = "StubWorld"
 	add_child(_world)
-	_cstate = ClientState.new()
-	_cports = ClientPorts.new()
+	_client = StubClient.new()
+	_client.name = "StubClient"
+	add_child(_client)
 	var local := Node2D.new()
 	local.name = "Local"
 	local.position = LOCAL_POS
-	add_child(local)
-	_cstate._world = _world
-	_cstate._local = local
+	_client.add_child(local)
+	_client._world = _world
+	_client._local = local
 
 
 func _build_sync() -> void:
 	_sync = TileSync.new()
-	_sync.bind(_cstate, _cports)
+	_sync.bind(_client)
 
 
 func _anchored(at: Vector2) -> Vector2:

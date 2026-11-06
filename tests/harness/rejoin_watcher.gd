@@ -349,7 +349,7 @@ func _refresh_game() -> void:
 	if cs == null or not _is_game(cs):
 		_game = null
 		return
-	if cs.get("_local") == null:
+	if cs.get("state") == null or cs.get("state")._local == null:
 		return
 	if _game != cs:
 		_log("进入对局场景(role=%d)" % PvpSession.role)
@@ -381,7 +381,7 @@ func _tick_c1(delta: float) -> void:
 			return
 		1:
 			if _game != null and _playing_seen and _phase_t > PLAY_SETTLE:
-				_body_id_before = int(_game.get("_local").get_instance_id())
+				_body_id_before = int(_game.get("state")._local.get_instance_id())
 				_playing_at_leave = _playing_count
 				_role_before = int(PvpSession.role)
 				_log("PLAYING 就位(role=%d,PLAYING 计数=%d);按 ESC 回主菜单" % [_role_before, _playing_at_leave])

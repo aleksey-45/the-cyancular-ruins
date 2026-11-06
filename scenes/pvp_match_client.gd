@@ -54,7 +54,7 @@ var _input_uplink: InputUplink = null
 func _ensure_input_uplink() -> InputUplink:
 	if _input_uplink == null:
 		_input_uplink = InputUplink.new()
-		_input_uplink.bind(self)
+		_input_uplink.bind(state)
 	return _input_uplink
 
 

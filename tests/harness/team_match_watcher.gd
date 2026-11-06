@@ -418,7 +418,8 @@ func _try_enter_game() -> void:
 	var cs := get_tree().current_scene
 	if cs == null or not _is_game(cs):
 		return
-	var local = cs.get("_local")
+	var st = cs.get("state")
+	var local = st._local if st != null else null
 	if local == null:
 		return
 	_game = cs
@@ -511,7 +512,8 @@ func _check_team_visual_layer() -> void:
 	var tints_bad := 0
 	var n := 0
 	var want_reps: int = REPLICA_COUNT
-	var reps: Dictionary = _game.get("_replicas")
+	var st = _game.get("state")
+	var reps: Dictionary = st._replicas if st != null else {}
 	for role in reps:
 		var r = reps[role]
 		if r == null or not is_instance_valid(r):
@@ -908,7 +910,8 @@ func _tick_observe() -> void:
 	var gone := _gone_from_snapshot()
 	if not gone.is_empty():
 		var r := int(gone[0])
-		_left_in_replica = 0 if _game.get("_replicas").has(r) else 1
+		var st = _game.get("state")
+		_left_in_replica = 0 if st != null and st._replicas.has(r) else 1
 		if _left_in_replica == 1 and _phase_t > LEAVE_AT + 1.0:
 			_rec("LEFT gone=%s obsmax=%.0fms sessionmax=%.0fms(sessionmax_phase=%d) playing=%d replica_gone=1"
 					% [str(gone), _obs_max_gap, _snap_max_gap, _snap_max_phase,

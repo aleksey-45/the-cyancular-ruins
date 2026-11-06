@@ -125,10 +125,11 @@ TeamHost | RoyaleHost（薄子类，只覆写壳的虚钩子）     pvp_game | r
 | S2 裁决域 → `CombatSystem` | `89c65af3` | `RUN_ALL OK`；**M1 真链路**：`run_real.sh --yes --only pvp_match` → `SMOKE PASS` / `RUN_REAL OK(1 entries)` |
 | S3 地面武器域 → `GroundSystem` | `be07848f` | `RUN_ALL OK`；真链路随 M2 一起跑 |
 | S4 回合域 → `RoundSystem` | `ee5f80f6` | `RUN_ALL OK`；**M2 真链路**：`run_real.sh --yes --only match` → `pvp_match_smoke` `SMOKE PASS` + `team_match_probe` `ALL-OK`(274s) |
-| S4b 链根摘下（`MatchState`→`RefCounted`，宿主 has-a 上下文） | 本批提交 | `RUN_ALL OK(48/402)`；系统 `bind(state, ports)`、探针改 `h.state.*`；真链路：team `ALL-OK` 多次(274~282s)、pvp `SMOKE PASS`（偶发 flake 见 registered-debt） |
+| S4b 链根摘下（`MatchState`→`RefCounted`，宿主 has-a 上下文） | `bed6c7e6` | `RUN_ALL OK(48/402)`；系统 `bind(state, ports)`、探针改 `h.state.*`；真链路：team `ALL-OK` 多次(274~282s)、pvp `SMOKE PASS`（偶发 flake 见 registered-debt） |
 | 早到 `match_sync`：宿主未建 + claim 前丢失 | `a51be14a` + 同批 | 先排队到宿主建好；再补"claim 前到达按 peer 排队、claim 成功后重试"；诊断确认 6 端均收到非空 `teams` |
-| S5 客户端对齐 | 本批提交 | RUN_ALL OK(48/402)；PvpMatchClient 退壳 + ClientState/ClientPorts + 六件套 ind(state,ports)；真链路随 M3 |
-| 待做 | S6 收口 | — |
+| S5 客户端对齐 | `35e95c01`（+ `InputUplink.bind(state)` 随本批） | `RUN_ALL OK(48/402)`；`PvpMatchClient` 退壳 + `ClientState`/`ClientPorts` + 六件套 `bind(state, ports)`；真链路 M3 见下 |
+| 仓库注释清理（子代理） | `25d56693` | 242 个 `.gd/.gdshader`：整行注释删 4,004 行 / 留 629 行（≤2 行陷阱/怪癖/真相源指针）；`RUN_ALL OK`；`check_naming OK` |
+| S6 收口 | 本批提交 | 结构规则/零守卫面/计划收口；clean tree 上 M3 = `pvp_match_smoke` `SMOKE PASS` + `team_match_probe` `ALL-OK` |
 
 > M1 真链路前置条件实测：`lobby_alive=false`、Godot 进程 0、run_all summary 静默 ≥240s ⇒ 闸放行；跑后无残留进程。
 
