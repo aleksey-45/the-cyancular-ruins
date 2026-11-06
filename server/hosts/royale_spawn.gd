@@ -1,12 +1,10 @@
 class_name RoyaleSpawn
 extends RefCounted
 
-# 大乱斗的散点选格 / 复活选格:只有静态计算,不持有状态、不碰生命周期。
 
-const SPAWN_CLEARANCE := 15      # 开局散点两两最小距离(格)
-const RESPAWN_CLEARANCE := 8     # 复活点与存活敌人的最小环面距离(格)
+const SPAWN_CLEARANCE := 15
+const RESPAWN_CLEARANCE := 8
 
-# 回退告警只打一次(静态闩;每进程一局,足够)。
 static var _warned_legacy_spawn := false
 
 
@@ -26,7 +24,6 @@ static func _respawn_pools() -> Array:
 	return SpawnPicker.respawn_pools()
 
 
-# 大乱斗的候选 = 两侧 `# respawn` 列表的并集(无阵营 ⇒ 全图散布;不可达点在此剔除 + warning 一次)。
 static func map_spawn_points() -> Array:
 	var sides: Dictionary = MazeGenerator.load_spawns().get("respawns", {})
 	var out: Array = []
@@ -54,8 +51,6 @@ static func plan_spawns(roles: Array) -> Dictionary:
 		picked = SpawnChooser.pick_many(_spawn_candidates().duplicate(), n, null, SPAWN_CLEARANCE, d)
 	else:
 		picked = SpawnChooser.pick_many(points, n, null, SPAWN_CLEARANCE, d)
-	# 地图数据不够 N 人(或回退几何池也不够):回退任意地板格补足,免得塞 (-1,-1) 出生到墙角。
-	# ★ 这层回退与数据层的优先级必须留在本函数里(并成一个池子 = 取消优先级,会优先选到死角格)。
 	if picked.size() < n:
 		var rest: Array = _floor_cells().duplicate()
 		for c in picked:
@@ -71,7 +66,6 @@ static func plan_spawns(roles: Array) -> Dictionary:
 	return out
 
 
-# 复活选格:池内离所有存活玩家 ≥ RESPAWN_CLEARANCE、且不是本 role 上一次出生点的格,随机取一个。
 static func respawn_cell(role: int, players: Dictionary, left: Dictionary,
 		last: Dictionary = {}, points: Array = []) -> Vector2i:
 	var d := _grid_dims()

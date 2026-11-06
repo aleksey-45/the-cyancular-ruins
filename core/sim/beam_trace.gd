@@ -1,11 +1,8 @@
 extends RefCounted
 
-# 激光光束几何追踪(纯静态、可 -s 冒烟、不引 autoload):开火瞬间沿方向逐格走 32px 子格,遇墙翻对应轴反射,
 
-const SUB_TS: float = 32.0  # 子格边长(px)
+const SUB_TS: float = 32.0
 
-# origin 枪口世界坐标 / dir 单位方向 / max_len 总射程 / max_bounces 上限;返回 points(折线含起点拐点终点)、
-# contacts(每次碰墙的 64px 规范格,可破坏砖扣血用)、hit_points(平行于 contacts 的表面点,播粒子落点)。
 static func trace(origin: Vector2, dir: Vector2, max_len: float, max_bounces: int) -> Dictionary:
 	var grid := MazeGenerator.current_grid
 	var pts := PackedVector2Array([origin])
@@ -30,10 +27,8 @@ static func trace(origin: Vector2, dir: Vector2, max_len: float, max_bounces: in
 		var remaining := max_len - traveled
 		if remaining <= 0.0:
 			break
-		# 当前所在 32px 子格(可越界,跨接缝靠 posmod 判实)
 		var sx := floori(p.x / SUB_TS)
 		var sy := floori(p.y / SUB_TS)
-		# 到下一个 x/y 子格边界(沿行进方向)的距离
 		var tx := INF
 		var ty := INF
 		if d.x > 0.0:
@@ -49,21 +44,19 @@ static func trace(origin: Vector2, dir: Vector2, max_len: float, max_bounces: in
 			pts.append(p + d * remaining)
 			break
 		if t <= 1e-9:
-			# 起点恰在某 32px 子格线上:正对边界 t=0 会原地空转,朝行进方向推一点再判
 			p += d * 0.25
 			continue
 		if t > remaining:
 			pts.append(p + d * remaining)
 			break
 		var q := p + d * t
-		var cross_x := tx <= ty  # 越过竖线(翻 x)还是横线(翻 y)
+		var cross_x := tx <= ty
 		var nsx := sx
 		var nsy := sy
 		if cross_x:
 			nsx = sx + (1 if d.x > 0.0 else -1)
 		else:
 			nsy = sy + (1 if d.y > 0.0 else -1)
-		# 进入格是否实心(规范副本 + 形状位)
 		var gx := posmod(nsx, sub_cols)
 		var gy := posmod(nsy, sub_rows)
 		var cell := Vector2i(gx / 2, gy / 2)
@@ -77,7 +70,6 @@ static func trace(origin: Vector2, dir: Vector2, max_len: float, max_bounces: in
 			p = q
 			traveled += t
 			continue
-		# 碰墙:记录拐点 + 触格 + 触面点;仍在反射额度内 → 翻对应轴反射,超额度 → 被吸收终止
 		pts.append(q)
 		cells.append(cell)
 		hit_pts.append(q)
@@ -88,7 +80,7 @@ static func trace(origin: Vector2, dir: Vector2, max_len: float, max_bounces: in
 				d.x = -d.x
 			else:
 				d.y = -d.y
-			p = q + d * 0.5  # 稍微离开墙面,避免下一轮立即判定原地实心
+			p = q + d * 0.5
 		else:
 			break
 	return {"points": pts, "contacts": cells, "hit_points": hit_pts}

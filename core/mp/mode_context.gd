@@ -1,7 +1,6 @@
 class_name ModeContext
 extends RefCounted
 
-# worker argv 解析 + 校验(纯函数、不引 autoload ⇒ `-s` 可测)。
 
 const FLAG_WORKER := "--worker"
 const FLAG_ROYALE := "--royale"
@@ -53,10 +52,8 @@ static func from_args(args: PackedStringArray, default_port: int = 7777) -> Dict
 	ctx["teams"] = teams
 
 	if not bool(ctx["worker"]):
-		return ctx   # 大厅不校验这些(它不参战)
+		return ctx
 
-	# ★ 模式开关互斥:两边同时为真手敲会走 royale 那支开局,而 _team_of_role 永不填充、
-	#   _begin_match 却按 _team_mode 去建 TeamHost → 空 teams → spawns[role] 全员缺键。
 	if bool(ctx["royale"]) and bool(ctx["team"]):
 		_fail(ctx, "--royale 与 --team 不能同时为真(模式开关互斥)")
 		return ctx
@@ -76,15 +73,11 @@ static func from_args(args: PackedStringArray, default_port: int = 7777) -> Dict
 			team_of[roles[idx]] = teams[idx]
 		ctx["team_of"] = team_of
 		return ctx
-	# 1v1:手工调用兜底(大厅路径不带 --roles)。
 	if roles.is_empty():
 		ctx["roles"] = [1, 2] as Array[int]
 	return ctx
 
 
-# --port 值校验(与 --roles/--teams 同口径:非法 token / 越界一律拒绝启动)。
-# ★ 旧写法直接 `int(args[i + 1])`:`--port abc` 得 0 ⇒ ENet `create_server(0)` 绑**随机端口**并成功 ⇒
-#   worker 打印"就绪"、活着,却占一个外面找不到的端口,靠 30 秒报到梯才退出(用户侧 = 房永远连不上)。
 const PORT_MIN := 1
 const PORT_MAX := 65535
 

@@ -1,33 +1,31 @@
 class_name PickupPrompt
 extends Node2D
 
-# 拾取提示:靠近武器时在**武器上方**浮现的"加粗小 F"(用户 2026-09-15 指定:
 
-const BOX := Vector2(50.0, 50.0)   # 外框尺寸(世界单位)(用户 2026-09-16「放大一点」:34→50)
-const INNER_INSET := 7.0           # 内框相对外框的内缩 → 形成"两层方框"
+const BOX := Vector2(50.0, 50.0)
+const INNER_INSET := 7.0
 const BORDER := 3.0
-const FONT_SIZE := 32              # 16 的倍数(项目硬约定)(放大一档:16→32)
-const GAP_ABOVE := 64.0            # 浮在武器上方多高(世界单位)
+const FONT_SIZE := 32
+const GAP_ABOVE := 64.0
 
-const C_BG := Color(0.24, 0.42, 0.46, 0.72)      # 底(用户 2026-09-16「太黑了」→ 提亮压透)
-const C_OUTER := Color(0.35, 0.85, 0.90, 1.0)    # 亮青外框
-const C_INNER := Color(0.20, 0.55, 0.62, 1.0)    # 稍暗的内框
+const C_BG := Color(0.24, 0.42, 0.46, 0.72)
+const C_OUTER := Color(0.35, 0.85, 0.90, 1.0)
+const C_INNER := Color(0.20, 0.55, 0.62, 1.0)
 const C_TEXT := Color(0.92, 0.97, 1.0, 1.0)
 
 
 func _ready() -> void:
-	z_index = 100   # 压在武器/角色之上
+	z_index = 100
 
 
 func _draw() -> void:
 	var half := BOX * 0.5
 	var outer := Rect2(-half, BOX)
-	draw_rect(outer, C_BG, true)          # 深青底
-	_stroke(outer, C_OUTER)               # 外层框
+	draw_rect(outer, C_BG, true)
+	_stroke(outer, C_OUTER)
 	var ins := Vector2(INNER_INSET, INNER_INSET)
-	_stroke(Rect2(-half + ins, BOX - ins * 2.0), C_INNER)   # 内层框
+	_stroke(Rect2(-half + ins, BOX - ins * 2.0), C_INNER)
 
-	# 加粗的 F:像素字体没有粗体,同一字符串按 (0,0)/(1,0)/(0,1)/(1,1) 画四遍凑出加粗。
 	var f := PixelFont.shared()
 	var w := f.get_string_size("F", HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE).x
 	var baseline := (f.get_ascent(FONT_SIZE) - f.get_descent(FONT_SIZE)) * 0.5
@@ -36,7 +34,6 @@ func _draw() -> void:
 		draw_string(f, pos + off, "F", HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE, C_TEXT)
 
 
-# 只描边不填充的矩形(四边各一条实心细条)
 func _stroke(r: Rect2, c: Color) -> void:
 	draw_rect(Rect2(r.position, Vector2(r.size.x, BORDER)), c, true)
 	draw_rect(Rect2(r.position + Vector2(0.0, r.size.y - BORDER), Vector2(r.size.x, BORDER)), c, true)

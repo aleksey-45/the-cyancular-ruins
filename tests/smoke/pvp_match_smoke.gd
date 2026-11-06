@@ -1,26 +1,21 @@
 extends Node
-# B2 loopback 冒烟客户端:建房后发送固定输入(移动 + 开火),断言:
 
 var role: String = ""
 var code: String = ""
 var my_role: int = 0
-var _match_started := false   # 收到对局 worker 的 match_start 后才算开局(此前只连大厅)
+var _match_started := false
 var _frames := 0
 var _last_pos := Vector2(-999999, -999999)
 var _moved := false
 var _got_snapshot := false
-var _world_pos := Vector2.INF   # 世界包里的本端 pos(与本人包的 c2.pos 跨包比对)
+var _world_pos := Vector2.INF
 var _got_bullet_spawn := false
-var _got_round_state := false   # 回合制:收到 round_state(初始 COUNTDOWN 广播)
-# C2 rollback(阶段3):create 端发带 seq 的输入包,断言服务器 1/tick 消费、ack 随 tick 前进、
-# 快照带权威整态(c2)且其 pos 与散字段 pos 一致(证明全态快照在链路上可用)。
+var _got_round_state := false
 var _sent_seq := 0
 var _max_ack := -1
-var _ack_sane := false     # create:ack 已推进到 ≥30
-var _full_state_ok := false  # create:快照 c2 整态携带且 pos 与散字段一致
-var _start_sent := false   # create:1v1 开局改由房主点「开始游戏」(2026-10-24),本探针代按一次
-# 最近一次**成功解码并应用**的世界快照 tick(输入包 st 字段 = 命中回放的时间基准,见 combat_system._replay_hurt_rect)。
-# ★ 没有快照之前保持 0(协议 st=0 的既有口径);收到第一个世界包起就是真 tick —— 别写死 0(G-04)。
+var _ack_sane := false
+var _full_state_ok := false
+var _start_sent := false
 var _last_snap_tick := 0
 
 func _ready() -> void:
@@ -36,7 +31,7 @@ func _ready() -> void:
 	NetBus.local_match_start.connect(func(r: int, _s: Vector2i, _m: String) -> void:
 		my_role = r
 		_match_started = true
-		_frames = 0   # 计数从开局(worker 的 match_start)起算
+		_frames = 0
 	)
 	NetBus.local_go_match.connect(_on_go_match)
 	NetBus.local_snapshot_world.connect(_on_snapshot_world)
@@ -63,10 +58,9 @@ func _on_connected() -> void:
 			printerr("SMOKE_MATCH FAIL: 非法 role %s" % role)
 			get_tree().quit(1)
 
-# 1v1 从 2026-10-24 起由房主点「开始游戏」:create 端看到 2/2 且自己是房主就代按一次(join 端不动)。
 func _on_pvp_room_state(state: Dictionary) -> void:
 	if role == "create" and not _start_sent:
-		print("SMOKE_ROOM_CODE=%s" % str(state.get("code", "")))   # 编排脚本(ps1/sh)从这里取房间号
+		print("SMOKE_ROOM_CODE=%s" % str(state.get("code", "")))
 	if role != "create" or _start_sent:
 		return
 	var players: Array = state.get("players", [])
@@ -83,13 +77,11 @@ func _on_snapshot_world(world: Dictionary) -> void:
 	var me: Dictionary = players_snap.get(str(PvpSession.role), {})
 	if not me.is_empty():
 		var pos_now: Vector2 = me.get("pos", Vector2.ZERO)
-		# 位移跟踪:相邻世界包之间位置变了 = 服务器确实在模拟我们这一端
 		if _world_pos != Vector2.INF and pos_now.distance_to(_world_pos) > 1.0:
 			_moved = true
 		_world_pos = pos_now
 
 
-# 本人包:只有自己需要的 ack_seq + 权威整态 c2。
 func _on_snapshot_own(own: Dictionary) -> void:
 	var ack: int = int(own.get("ack_seq", -1))
 	if ack > _max_ack:
@@ -120,16 +112,14 @@ func _claim_worker(role_assign: int) -> void:
 
 func _physics_process(_delta: float) -> void:
 	if not _match_started:
-		return   # 连大厅阶段不发输入、不计帧
+		return
 	_frames += 1
-	# create:先右移(1..240帧),再开火(241帧起)。join:站着不动。
 	if role == "create":
 		var held := 0
 		var pressed := 0
 		var released := 0
 		var ax := 1.0
 		if _frames > 240:
-			# ★ 开火必须能覆盖**任何**武器。服务器发给这个角色的是**随机**一把,而
 			var cyc := (_frames - 240) % 30
 			if cyc < 20:
 				held = PacketInputSource.BIT_ATTACK
@@ -139,22 +129,17 @@ func _physics_process(_delta: float) -> void:
 				released = PacketInputSource.BIT_ATTACK
 		_sent_seq += 1
 		var rec := {
-			"seq": _sent_seq,   # C2:单调输入序号(服务器 ack 依据;一条记录 = 1 tick)
+			"seq": _sent_seq,
 			"ax": ax,
 			"held": held,
 			"pressed": pressed,
 			"released": released,
 			"winst": 0,
 			"aim": Vector2(1, 0),
-			# ★ G-04:st = 最近一次成功解码的世界快照 tick(命中回放的时间基准);写死 0 会让真链路
-			#   跑在假基准上(combat_system 的 clampi(st - PLAYOUT_TICKS, ...) 被夹到 0)。没有快照前是 0。
-			#   ct(客户端物理帧号)仍是"只落位"字段,保持 0。
 			"st": _last_snap_tick,
 			"ct": 0,
 		}
-		# 60Hz:每 tick 一包一条记录(与真客户端同口径;rec 里的 st/ct 直接进包)。
 		NetBus.rpc_id(1, "send_input", NetCodec.encode_input(rec))
-	# 成功判定
 	if role == "create":
 		# 多打一会儿(到 ~480 帧)再退:帧>240 只够开火但不够 bullet 广播到 join 端,提前 quit 会触发「中途断线拆房」→ join 永远等不到 bullet_spawn。
 		if _got_snapshot and _got_round_state and _moved and _ack_sane and _full_state_ok and _frames > 480:
@@ -164,7 +149,6 @@ func _physics_process(_delta: float) -> void:
 		if _got_snapshot and _got_round_state and _got_bullet_spawn and _frames > 240:
 			print("SMOKE_MATCH OK join: snapshot+round_state+bullet_spawn received")
 			get_tree().quit(0)
-	# 超时
 	if _frames > 600:
 		printerr("SMOKE_MATCH FAIL: 超时 role=%s snapshot=%s round=%s moved=%s bullet_spawn=%s" % [
 			role, _got_snapshot, _got_round_state, _moved, _got_bullet_spawn])

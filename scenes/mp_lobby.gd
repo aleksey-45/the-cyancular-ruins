@@ -1,26 +1,21 @@
 class_name MpLobby
 extends LobbyPage
 
-# 统一联机大厅:1v1 / 大乱斗 / 对抗 三套协议在本页合并。顶栏(昵称/地址/启服) → 模式筛选 + 创建/加入 → 房卡网格 → 状态栏。
 
-var _mode := ""                    # 当前筛选:"" = 全部;否则 PvpSession.MODE_*
+var _mode := ""
 var _grid: GridContainer = null
 var _create_btn: Button = null
 var _join_btn: Button = null
 
-# 等待室的面板句柄(行为在 wait_room.gd;句柄留本页,理由见文件头)。
 var _wait_panel: PanelContainer = null
-var _wait_title: HeaderStripPanel = null  # 标题带组件(房间号写在它的 title 上)
-var _wait_body: VBoxContainer = null      # 名单/分队容器:每次重填前整批清空
+var _wait_title: HeaderStripPanel = null
+var _wait_body: VBoxContainer = null
 var _wait_count: Label = null
 var _wait_start: Button = null
 var _wait_pick_a: Button = null
 var _wait_pick_b: Button = null
 var _wait_leave: Button = null
-# 面板当前画的是哪个模式 —— 「开始游戏」/「退出房间」按它分派。
-# ★ 与 _current_mode 分开:后者是"我所在那间房"的模式(转连选场景用),这里是"面板上画的形态"。两者通常相等,但语义不同,别合并。
 var _wait_mode := ""
-# 我当前是否在某间房里(等待室亮着):wait_room.show 置真、hide 置假、_lobby_action_allowed 读 —— 与面板可见性同一生命周期,分两处写状态就是漂的成因。
 var _in_room := false
 
 # 建房弹层当前选中的模式(模式切换状态)。★ 弹层本体 / 压暗罩 / 三颗分段按钮的行为在 scenes/mp_lobby/create_panel.gd,
@@ -38,21 +33,14 @@ var _sent_ms := 0
 # ★★ 漏了给它赋值 = 两条真缺陷:① _current_mode 停在空串 ⇒ _enter_match_scene() 落进 else ⇒ 1v1 的加入者被送进错场景;② note_room() 从不被调用 ⇒ 自己那间房永远是灰的。
 var _join_pending := ""
 
-# 「模式未知 ⇒ 三张表都问一次」这一次尝试还没返回。★ 三张表里只有一间存在,另两张必然回「房间不存在」/「房间已满」—— 那是预期噪音:既不显示、也不花掉那次自动刷新额度(_auto_refreshed)。
-# ★★ 关闸只能靠 _multi_left 数应答条数,不能靠"任一正向应答就收尾":1v1 的 join_room 成功是立即回的,而 royale/team 是 call_deferred + await ⇒ 正向一到就关闸,
-# 那两张表稍后到的 absent 会漏出去触发一次刷新 —— 后果不是"多一条提示",而是那一次性额度被花掉:之后第一张真陈旧卡片被拒时反而不会自动刷新了。
 var _probe_multi_join := false
-var _multi_left := 0               # 这一次尝试里还没被认领的应答数(起手 = 3 个请求)
+var _multi_left := 0
 
 var _auto_refreshed := false
 
-# ★★ 列表静默自动刷新(2026-11-01,用户报「游戏结束后房间不会关闭」):房卡是**拉**出来的(服务端不推),
-#   而一局结束后房要等回收梯判到 worker 死亡才被拆 —— 不轮询的话那行房卡会一直挂在屏幕上,像是房没关。
-#   "静默" = 不写状态栏、不清空已有列表(应答到达时按模式整体替换)⇒ 不会闪、也不会打断玩家正在看的行。
 const AUTO_REFRESH_S := 1.0
 var _auto_refresh_t := 0.0
 
-# ── 四块面板(纯搬移;见文件头)──
 var _rooms: RoomList = null
 var _form: OptionsForm = null
 var _create_dialog: CreatePanel = null
@@ -74,15 +62,11 @@ func _ready() -> void:
 
 	_finish_lobby_ready()
 
-	# Beta 页预选的筛选模式(从主菜单直接进来时为 "")。
 	if PvpSession.entry_mode != "":
 		_set_filter(PvpSession.entry_mode)
 
 
 
-# 把骨架接上代码:①顶栏控件按语义名接上本页 ②四块面板各自 register(按语义名取节点 + 接自己的信号 + 建自己的动态块)。
-# ★★ 版式一律改 .tscn。★ 本方法只做 UI:NetBus / NetBusExt 的 connect 与 _finish_lobby_ready() 留在 _ready 里 —— 树外实例化本页的夹具故意不入树(不入树 ⇒ _ready 不跑 ⇒ 不建 socket),别把接线并进来。零守卫:那两个 lobby_* 夹具探针已删(2026-10-09)。
-# ★ 控件的信号在各面板 register 里接(不挪进 _ready):"按钮画在屏上、按下去毫无反应"没有任何运行时信号可观测。
 func _build_ui() -> void:
 	var name_le: LineEdit = %NameEdit
 	name_le.text = PvpSession.player_name
@@ -90,14 +74,11 @@ func _build_ui() -> void:
 		PvpSession.player_name = t.strip_edges() if not t.strip_edges().is_empty() else "Anon"
 		_push_lobby_name())
 	_addr_edit = %AddrEdit
-	# 默认地址 = 项目自己的服务器(用户裁定硬编码 120.53.107.140);局域网联机时玩家手动改成服务端那台电脑的局域网 IP。
 	_addr_edit.text = PvpSession.server_address
 	%RefreshBtn.pressed.connect(_on_refresh_pressed)
 	%LocalServerBtn.pressed.connect(_on_local_server_pressed)
 	%LocalServerBtn.tooltip_text = "关闭旧的本机大厅,重新拉起同目录的 Cyancular Ruins Server.exe,并自动连 127.0.0.1 刷新列表"
-	# 右上那条 IP 提示:右对齐靠锚点 + GROW_DIRECTION_BEGIN(已在骨架里定死 —— 写死宽度会让它向右长、被屏幕右缘裁掉);文案随本机 LAN IP 变,故每次建页重灌。
 	_ip_label = %IpLabel
-	# 局域网 IP 提示:同机服务端已写好 local_ip.txt 时毫秒级;没有时先显示"检测中",下一帧再算(避免开大厅时同步查路由表卡一下)。
 	_ip_label.text = "本机局域网 IP: 检测中…"
 	_apply_lan_hint.call_deferred()
 
@@ -106,11 +87,9 @@ func _build_ui() -> void:
 	_join_btn = %JoinBtn
 
 	_grid = %CardGrid
-	# ★ 状态栏文本是 room_list.redraw() 的输出,骨架里它是空的(清运行时字面量那一步把它清回了中性)⇒ 这里不需要、也不该再灌一个初值。
 	_status = %StatusLabel
 	%BackBtn.pressed.connect(_on_back_pressed)
 
-	# 四块面板:先建再接线(本页只做编排;面板的行为在 scenes/mp_lobby/)。
 	_rooms = RoomList.new()
 	_rooms.setup(self)
 	_form = OptionsForm.new()
@@ -130,7 +109,6 @@ func _on_back_pressed() -> void:
 	get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
 
 
-# 手动刷新 = 用户明确要重来 ⇒ 放开「只自动刷新一次」的闸门(否则下一次「房间已满」不会自动刷新)。
 func _on_refresh_pressed() -> void:
 	_auto_refreshed = false
 	_request_list("刷新房间列表…")
@@ -140,14 +118,12 @@ func _on_local_server_ready() -> void:
 	_auto_refreshed = false
 
 
-# LAN IP 提示的延迟填值(见 _build_ui 里 call_deferred 那段):取到后写标签;页面已释放就跳过。
 func _apply_lan_hint() -> void:
 	if is_instance_valid(_ip_label):
 		_ip_label.text = LocalServer.lan_ip_hint()
 
 
 
-# 切筛选模式。★ 三颗分段按钮的选中态与 _mode 是同一件事的两半,收在这里刷新 —— 在按钮 handler 里各写一遍的话,"程序改了 _mode"这条路就漏了。
 func _set_filter(mode: String) -> void:
 	_mode = mode
 	_rooms.set_filter_selected(mode)
@@ -155,10 +131,8 @@ func _set_filter(mode: String) -> void:
 
 
 
-# 三个载荷入口各自把条目并入同一张表,再统一重绘。★ 每条都打上 mode 标 —— 卡片要显示模式、筛选器也按它过滤,而服务端载荷里没有这个键。
 func _ingest_rooms(mode: String, rooms: Array) -> void:
 	var changed := _rooms.ingest(mode, rooms)
-	# ★ 不无条件清 _ack / _sent_ms:它们是加入的 8s 兜底,而一次列房应答并不能证明那次加入有应答 —— 无条件下会刚好在"加入请求丢了、用户又点了一次刷新"时把兜底拆掉;只有"没有待应答的加入"时清才安全。
 	if _join_pending.is_empty():
 		_ack = true
 		_sent_ms = 0
@@ -171,7 +145,6 @@ func _on_room_list(rooms: Array) -> void:
 
 
 func _on_royale_rooms(rooms: Array) -> void:
-	# Beta 房与普通房互不可见(客户端侧;服务器侧 join 守卫是第二道)。
 	_ingest_rooms(PvpSession.MODE_ROYALE, rooms.filter(func(r) -> bool:
 		return typeof(r) == TYPE_DICTIONARY and bool(r.get("beta", false)) == PvpSession.beta_mode))
 
@@ -200,17 +173,14 @@ func _on_room_created(code: String) -> void:
 	_ack = true
 	_sent_ms = 0
 	_claim_multi_reply()
-	# 补发地图:1v1 的 create_room 签名冻结,塞不进 payload。★ 这里无条件下发 —— 走到本 handler 的就是建房者,也就是房主。
 	NetBusExt.rpc_id(1, "room_map", code, Settings.mp_map_path)
 	_status.text = "房间号 %s —— 等对手加入(可叫对方刷新列表点进来)" % code
-	# 先摆一个本侧占位(房主 = 自己 / 1 人);服务器 pvp_room_state 一到就用真名单刷新。
 	_wait.show(_wait.pvp_wait_state(code, 1, 1, 1), PvpSession.MODE_PVP)
 
 
 # 服务端答"加进去了"。★ 房号从 _join_pending 取(room_joined 载荷只有 role)—— 这里同时是唯一记 1v1 加入房号的地方:
 # 失败的加入不得留下 room_code,否则 can_rejoin_to(我自己的房) 恒 false,自己那间房永远是灰的。
 func _on_room_joined(role: int) -> void:
-	# ★★ 模式直接定死,不从别处推 —— 触发的是这条 handler,就只可能是 1v1。
 	_current_mode = PvpSession.MODE_PVP
 	var code := _join_pending
 	if not _join_pending.is_empty():
@@ -218,16 +188,12 @@ func _on_room_joined(role: int) -> void:
 		_join_pending = ""
 	_ack = true
 	_sent_ms = 0
-	# ★ 只是认领一格,不是"多表尝试到此为止" —— 另两张表的 absent 还在路上(join_room 立即回,royale/team 是 call_deferred + await)。
 	_claim_multi_reply()
 	_status.text = "已加入,等待开战……"
 	if not code.is_empty():
-		# 占位:加入者不知道谁是房主(服务器按 peer 下发 your_role/host_role)⇒ host_role 填 0,真状态下一帧到。
 		_wait.show(_wait.pvp_wait_state(code, role, 0, 2), PvpSession.MODE_PVP)
 
 
-# 1v1 等待室实时状态(2026-10-24:开局改由房主点「开始游戏」)。载荷 = {code, players, host_role, your_role, in_match}。
-# ★ 与 _on_room_state_royale 同款:房号/模式都以服务器载荷为准;1v1 没有地图补发(房主建房时已发过 room_map)。
 func _on_pvp_room_state(state: Dictionary) -> void:
 	_current_mode = PvpSession.MODE_PVP
 	PvpSession.note_room(str(state.get("code", "")), _current_mode)
@@ -264,8 +230,6 @@ func _on_room_state_team(state: Dictionary) -> void:
 	_wait.show(state, PvpSession.MODE_TEAM)
 
 
-# 大厅文本播报。
-# ★ 「模式未知的三连发」里的拒绝是预期噪音(三张表只有一间存在):吞掉、不显示也不刷新(刷新额度是一次性的)。非多表时「房间已满 / 房间不存在」仍走旧 1v1 的行为:提示并自动刷新一次(闸门由 _auto_refreshed 把着)。
 func _on_server_message(t: String) -> void:
 	if LocalServer.restarting:
 		return
@@ -273,15 +237,12 @@ func _on_server_message(t: String) -> void:
 	_sent_ms = 0
 	if _swallow_absent(t):
 		_claim_multi_reply()
-		# ★★ 闸门在这一条上关掉、而三张表一张都没接受(_join_pending 没被任何 success handler 清过)⇒ 这一次加入是失败,必须显式收尾(见 _settle_multi_fail):少了这一支,手敲房号写错 / 房间已满时三条应答全被吞、8s 兜底又被上面两行解除,状态栏就永远停在「加入房间 X,等待配对…」而一行报错都没有。
 		if not _probe_multi_join and not _join_pending.is_empty():
 			_settle_multi_fail(t)
 		return
 	if t == "房间已满" or t == "房间不存在":
-		# 服务端已明确应答 ⇒ 那间房与我无关,别留给下一次的成功信号。
 		_join_pending = ""
 		if not _auto_refreshed:
-			# ★ 推迟到帧末:server_message 在大厅 peer 的 poll 调用栈内到达,栈内立刻 NetBus.stop()(重连)会把正在 poll 的 peer 提前 free → 原生段错误。
 			_auto_refreshed = true
 			_request_list.call_deferred("%s → 已自动刷新列表" % t)
 		else:
@@ -293,12 +254,10 @@ func _on_server_message(t: String) -> void:
 		_status.text = t
 
 
-# 「模式未知的三连发」回来的应答是不是预期噪音?(三张表只有一间存在。)★ 调用方吞掉它之后还要认领一格(_claim_multi_reply)—— 顺序不能反:认领可能当场关掉闸门,那时这一句就不该再被吞。
 func _swallow_absent(t: String) -> bool:
 	return _probe_multi_join and (t == "房间不存在" or t == "房间已满")
 
 
-# 「模式未知的三连发」一张表都没接受时的收尾。
 func _settle_multi_fail(t: String) -> void:
 	_join_pending = ""
 	if not _auto_refreshed:
@@ -308,8 +267,6 @@ func _settle_multi_fail(t: String) -> void:
 		_status.text = t
 
 
-# 多表尝试期间:每收到一条服务端应答就认领一格,认领完即关闸。
-# 正向一到就关闸,那两张表稍后到的 absent 会漏出去、误触发一次自动刷新(一次性额度被噪音花掉)。★ 另两条关闸路径:8s 一个字都没回(见 _process)、以及下一次加入开始时重设。
 func _claim_multi_reply() -> void:
 	if not _probe_multi_join:
 		return
@@ -319,9 +276,6 @@ func _claim_multi_reply() -> void:
 
 
 
-# 加入某房间号。★ 模式未知(从"全部"列表点的、或手敲房号)时,三张表都试一次:三张里只有一间存在,另外那两张表的「房间不存在 / 房间已满」是预期噪音 ——
-# 由 _on_server_message 经 _swallow_absent 吞掉(不显示、也不花掉自动刷新额度),每吞一条认领一格(_claim_multi_reply),认领满三格才关闸;★ 1v1 那条成功应答不会提前关闸。
-# ★ invite 是可选第三参:私密房不在列表里,邀请码是加入它的唯一途径;卡片按下那条路只传前两参(它本来就不该带邀请码)。
 func _join_code(code: String, mode: String, invite: String = "") -> void:
 	if code.is_empty():
 		_status.text = "请填房间号"
@@ -332,9 +286,6 @@ func _join_code(code: String, mode: String, invite: String = "") -> void:
 		# ★★ 三件事一件都不能少,否则 1v1 的加入者会被送进错场景(见字段声明处那段):① 暂存房号(1v1 的 room_joined 载荷只有 role,拿不到房号);
 		# ② 模式未知时三张表都问一次;③ invite 必须真的传下去(私密房的唯一途径)。
 		_join_pending = code
-		# ★★ 模式已知 ⇒ 在发起加入这一刻就把 _current_mode 置上。卡片点击那条路总是知道模式,本来就该在此记;而 mode == ""(在"全部"筛选下手敲房号)时不设 —— 那种情况本来就要等应答才知道是哪张表。
-		# ★ 为什么不能只靠 _on_room_state_*:等待室广播是 call_deferred + 再等一帧,且发送前 if rr.in_match: return ⇒ 房主若在"有人加入"的同一两帧内开局,那次广播会被静默吞掉,响应式的 handler 永远不会来
-		# ⇒ _current_mode 恒空 ⇒ _enter_match_scene 落进 else(push_error、不切场景)⇒ 加入者卡在大厅。★ 加入失败时它留着旧值无害:_enter_match_scene 只在 match_start 到达时才跑。
 		if mode != "":
 			_current_mode = mode
 		_probe_multi_join = mode == ""
@@ -352,21 +303,18 @@ func _join_code(code: String, mode: String, invite: String = "") -> void:
 			NetBusExt.rpc_id(1, "team_join", code, invite, PvpSession.beta_mode))
 
 
-# 点「＋ 创建房间」只显示弹层。★ 每次打开都重刷模式相关行显隐(create_panel.open → apply),不挪进 _ready —— 面板建好之后玩家仍可能改筛选模式,那时这条链必须再跑一次。
 func _open_create_dialog() -> void:
 	_create_dialog.open()
 
 
-# 建房:按模式分派 RPC。1v1 的 create_room 是原版 NetBus 的 RPC、签名冻结(不带 payload),它的 map / disabled_weapons 都从 player_options 走。
 func _on_create_pressed() -> void:
-	# ★ 按下即收起弹层(不等应答 —— _with_lobby 的行动可能是异步的:没连上时它会先建连接、连上后才跑 action)。结果一律走状态栏(成功 = 房间号;失败 = 服务端那句文案),玩家要改选项再按「＋ 创建房间」重开即可。
 	_create_dialog.set_visible(false)
 	var mode := _create_mode
 	_with_lobby(func() -> void:
 		_ack = false
 		_sent_ms = Time.get_ticks_msec()
 		var payload := _create_dialog.build_payload(mode)
-		payload.merge(_beta_payload())   # Beta 态追加 {"beta":true,"time":{…}};普通态空合入
+		payload.merge(_beta_payload())
 		if mode == PvpSession.MODE_ROYALE:
 			NetBusExt.rpc_id(1, "royale_create", payload)
 		elif mode == PvpSession.MODE_TEAM:
@@ -376,7 +324,6 @@ func _on_create_pressed() -> void:
 		_status.text = "建房中…(拿到房间号后可叫对方刷新列表点进来)")
 
 
-# ESC 关弹层。★ 弹层不可见时一律不处理 —— 大厅页自己的返回语义(回主菜单)不能被这里抢掉;只有弹层挡着页面时才吞掉这一次 ESC。★ 弹层启动即建(骨架里就有)⇒ 没有 null 可判。
 func _unhandled_input(ev: InputEvent) -> void:
 	if not _create_dialog.is_open():
 		return
@@ -385,7 +332,6 @@ func _unhandled_input(ev: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 
 
-# 选边(仅对抗)。★ 按 team 号上行,服务端"先拦后分"。
 func _on_wait_pick(team: int) -> void:
 	NetBusExt.rpc_id(1, "team_pick", team)
 
@@ -393,15 +339,13 @@ func _on_wait_pick(team: int) -> void:
 func _on_wait_start_pressed() -> void:
 	_status.text = "开局中…"
 	if _wait_mode == PvpSession.MODE_PVP:
-		NetBusExt.rpc_id(1, "pvp_start")   # 1v1(2026-10-24):两人齐后由房主触发
+		NetBusExt.rpc_id(1, "pvp_start")
 	elif _wait_mode == PvpSession.MODE_ROYALE:
 		NetBusExt.rpc_id(1, "royale_start")
 	elif _wait_mode == PvpSession.MODE_TEAM:
 		NetBusExt.rpc_id(1, "team_start")
 
 
-# 「退出房间」。
-# ★ 大乱斗 / 对抗有 leave RPC,且不能断大厅 peer:断开会走 on_peer_left 那条另一条路径去关房,同一件事就有两个实现 ⇒ 只发 leave,然后走共用的页面清理(_on_return_to_lobby)+ 重拉列表 —— 不重连,大厅 peer 还在。
 func _on_wait_leave_pressed() -> void:
 	if _wait_mode == PvpSession.MODE_ROYALE:
 		NetBusExt.rpc_id(1, "royale_leave")
@@ -416,9 +360,6 @@ func _on_wait_leave_pressed() -> void:
 
 
 
-# ★★ 判据必须是本页的 _current_mode(我当前所在那间房的模式),不是 PvpSession.room_mode —— 后者是凭据的模式,它在"建了房但 note_room 还没跑到"那一档上是空串。
-# ★ 两页刻意不同的那条纪律现在按 _current_mode 分派:1v1 直切;大乱斗 / 对抗必须 call_deferred —— 它们的 match_start 在 NetBus.poll 调用栈内到达,栈内切场景会在这个栈里 free 大厅 / 重建大物理世界 → 偶发原生段错误(曾实测)。
-# ★★ else 那一支刻意什么都不做、只 push_error,不默认切任何一个场景:本函数有三条进入路径(建房 / 加入 / 回局),任何一条漏记 _current_mode 都会落到这里 —— 切一个默认场景是静默的错值(玩家进了错的对局场景,只是看起来怪),而"留在原地 + 一条红"是响的。
 func _enter_match_scene() -> void:
 	if _current_mode == PvpSession.MODE_PVP:
 		get_tree().change_scene_to_file("res://scenes/pvp_game.tscn")
@@ -431,7 +372,6 @@ func _enter_match_scene() -> void:
 		push_error(msg % _current_mode)
 
 
-# 梯顺序 = worker → claim → 大厅 → ack(合并后唯一的一条;见文件头)。★ 别重排:1v1 旧页那条 join 梯的职责由末尾的 ack 梯覆盖(建房 / 加入 8s 无应答)。
 func _process(delta: float) -> void:
 	if _tick_rejoin_timeout():
 		return
@@ -467,8 +407,6 @@ func _lobby_fallback_addr() -> String:
 	return PvpSession.server_address
 
 
-# 已在房间中(先退出房间再操作):_with_lobby 在 _in_room 时拒绝一切操作(列房 / 建房 / 加入)—— 不清房间态,玩家就再也刷不出列表、建不了房(两个旧页同款)。
-# ★ 三个模式的文案各自点名:本页三模式共用一张列表,一句通用的"已在房间里"会让玩家看不出自己卡在哪个模式的房里。★ 这道闸门只挡得住最后那一次 RPC —— 两颗入口按钮由 wait_room.show 直接收起(见 _create_btn 上方那段),两半缺一不可。
 func _lobby_action_allowed() -> bool:
 	if _in_room:
 		if _current_mode == PvpSession.MODE_ROYALE:
@@ -503,9 +441,6 @@ func _on_worker_connect_failed() -> void:
 
 
 func _worker_timeout_msg() -> String:
-	# ★ 三种模式的 worker 都跑在服务端那台电脑上(RoomManager._start_match → spawn_worker)⇒ 局域网联机同样要放行 worker 端口段。
-	# 旧文案说「1v1 走云服」是错的 —— 只放行 7777 的话:大厅能进、房间能建,但点开始后对局连不上,看起来就像"1v1 连不上"。
-	# 端口段引 WorkerLauncher 的常量,不手写数字(旧页手写过 7800~7999,与实际池不符)。
 	return "对局服务器无响应——请确认对局端口(%s UDP)已放行、两端为同一版本;已返回大厅并刷新" % _worker_port_span()
 
 

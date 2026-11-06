@@ -1,18 +1,15 @@
 class_name AiNavigator
 extends Node
 
-# AI 玩家控制器(实验性补位):服务端权威视角,每物理帧写 AiInputSource 驱动对应 player ——
-# 与真人输入包同一条消费路径。行为:黏滞锁目标、瞄准抖动、有视线且距离合适就节奏点射、远追/近拉/中距横移。
-# ★ 每个 AI 的内部时钟与开火节奏在 _ready 随机错开,否则多个 AI 同频抽搐。
 
-const FIRE_RANGE := 620.0        # 开火距离上限(px)
-const APPROACH_DIST := 300.0     # 追击距离阈值
-const BACKOFF_DIST := 140.0      # 过近拉扯阈值
-const AIM_JITTER := 0.10         # 瞄准抖动弧度(给玩家留活路)
-const TARGET_STICKY := 0.6       # 换目标条件:新目标距离 < 当前目标 × 0.6(防来回切)
-const STUCK_JUMP_TIME := 0.4     # 卡墙持续此时长才跳(防原地连跳颤抖)
+const FIRE_RANGE := 620.0
+const APPROACH_DIST := 300.0
+const BACKOFF_DIST := 140.0
+const AIM_JITTER := 0.10
+const TARGET_STICKY := 0.6
+const STUCK_JUMP_TIME := 0.4
 
-var host: Node            # MatchHost / RoyaleHost(读 players/_round_state)
+var host: Node
 var role := 0
 var src: AiInputSource
 
@@ -21,12 +18,11 @@ var _next_fire := 0.0
 var _fire_left := 0.0
 var _next_decide := 0.0
 var _strafe := 1.0
-var _target_role := 0     # 黏滞目标(0=未锁定)
-var _stuck_t := 0.0       # 卡墙累计时长
+var _target_role := 0
+var _stuck_t := 0.0
 
 
 func _ready() -> void:
-	# 随机相位:错开所有 AI 的决策/开火节奏(原同频抽搐问题)
 	_t = randf_range(0.0, 10.0)
 	_next_fire = _t + randf_range(0.3, 1.2)
 	_next_decide = _t + randf_range(0.5, 1.5)
@@ -35,7 +31,6 @@ func _ready() -> void:
 func _physics_process(delta: float) -> void:
 	if src == null or host == null or not is_instance_valid(host):
 		return
-	# COUNTDOWN / MATCH_OVER:待机(服务器权威冻结,与真人同款)
 	if int(host._round_state) != int(host.RoundState.PLAYING):
 		src.fire = false
 		src.axis = 0.0
@@ -69,7 +64,7 @@ func _pick_target(p: Node2D) -> Dictionary:
 	if cur != null:
 		var d := MazeGenerator.toroidal_delta_px(cur.global_position, p.global_position,
 				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
-		return {"node": cur, "dist": cur_dist, "dir": -d}   # -d:对手→我 取负 = 我→对手
+		return {"node": cur, "dist": cur_dist, "dir": -d}
 	# 当前目标失效 → 找最近的
 	var best_role := 0
 	var best_node: Node2D = null
@@ -87,16 +82,14 @@ func _pick_target(p: Node2D) -> Dictionary:
 			best_role = int(r)
 			best_node = o
 			best_dist = dd.length()
-			best_dir = dd   # 对手 → 我
+			best_dir = dd
 	if best_node != null:
 		_target_role = best_role
-	return {"node": best_node, "dist": best_dist, "dir": -best_dir}   # -dir:我 → 对手
+	return {"node": best_node, "dist": best_dist, "dir": -best_dir}
 
 
 func _aim_and_fire(p: Node2D, target: Node2D, dist: float, dir_to: Vector2, delta: float) -> void:
-	# 瞄准:指向对手 + 轻微抖动
 	src.aim = dir_to.normalized().rotated(randf_range(-AIM_JITTER, AIM_JITTER) * 0.4)
-	# 开火:有视线且在射程内 → 节奏点射(打 0.4s 停 0.5~0.9s)
 	var in_range := dist < FIRE_RANGE
 	var los := false
 	if in_range:
@@ -113,7 +106,6 @@ func _aim_and_fire(p: Node2D, target: Node2D, dist: float, dir_to: Vector2, delt
 
 
 func _move(p: Node2D, dist: float, dir_to: Vector2, delta: float) -> void:
-	# 决策间隔内保持横移方向(不逐帧翻转)
 	if _t >= _next_decide:
 		_next_decide = _t + randf_range(1.0, 2.0)
 		_strafe = 1.0 if randf() < 0.5 else -1.0
@@ -124,7 +116,6 @@ func _move(p: Node2D, dist: float, dir_to: Vector2, delta: float) -> void:
 		move = -signf(dir_to.x) if absf(dir_to.x) > 0.15 else _strafe
 	else:
 		move = _strafe
-	# 卡墙检测:想动但水平速度≈0 → 累计 0.4s 才跳一次(原每帧 25% 概率跳=原地颤抖)
 	if move != 0.0 and absf(p.velocity.x) < 12.0:
 		_stuck_t += delta
 	else:

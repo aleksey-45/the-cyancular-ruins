@@ -1,14 +1,12 @@
 class_name TeamSpawn
 extends RefCounted
 
-# 团队模式的散点选格 / 队层契约 / 复活选格:只有静态计算与配层写入,不持有状态、不碰生命周期。
 
-const SPAWN_CLEARANCE := 15      # 两个基座的最小环面距离(格)
-const TEAMMATE_CLEARANCE := 3    # 队内三人最小间距(格):够散开,又不至于走出"队形"
-const SPAWN_BASE_RADIUS := 30    # 基座附近取点半径(格);池子不够会退回全量候选
-const SPAWN_MAX_TRIES := 12      # 散点重试次数(见 plan_team_spawns 的说明;每份只要 ~几十微秒)
-const RESPAWN_CLEARANCE := 8     # 复活点离**存活敌人**的最小环面距离(格)
-# ★ 队 B 的身体层(层位 5,值 16);全仓层位占用:1 地形 / 2 玩家 / 4 敌人 / 8 掉落物,第 5 位此前无人占用。
+const SPAWN_CLEARANCE := 15
+const TEAMMATE_CLEARANCE := 3
+const SPAWN_BASE_RADIUS := 30
+const SPAWN_MAX_TRIES := 12
+const RESPAWN_CLEARANCE := 8
 const TEAM_ENEMY_LAYER := 16
 
 
@@ -32,7 +30,6 @@ static func apply_team_layers(players: Dictionary, teams: Dictionary) -> void:
 				p.collision_layer = TEAM_ENEMY_LAYER
 
 
-# 团队出生点(每局调用一次):用地图 meta 的 `# respawn 1|2` 列表(按阵营半区写死)——队 1 取侧 1、队 2 取侧 2,
 static func plan_team_spawns(teams: Dictionary, last: Dictionary = {}, side_swap := false) -> Dictionary:
 	var by_team := {1: [], 2: []}
 	for role in teams:
@@ -51,7 +48,7 @@ static func plan_team_spawns(teams: Dictionary, last: Dictionary = {}, side_swap
 	var out := {}
 	for t in [1, 2]:
 		var roles_t: Array = by_team[t]
-		roles_t.sort()   # 确定性:同队的 role 按号升序拿点
+		roles_t.sort()
 		var side: int = (3 - t) if side_swap else t
 		var pts: Array = sides.get(side, [])
 		var picked: Array = []
@@ -60,7 +57,7 @@ static func plan_team_spawns(teams: Dictionary, last: Dictionary = {}, side_swap
 			if last.has(int(role)):
 				exclude.append(last[int(role)])
 			var cell := SpawnChooser.pick(pts, exclude, null, TEAMMATE_CLEARANCE, picked, d)
-			if cell.x < 0:   # 自己的上一局点位 + 已占点把候选筛空:放弃"不与上一局同位"这一条,先保证不撞人
+			if cell.x < 0:
 				cell = SpawnChooser.pick(pts, picked, null, TEAMMATE_CLEARANCE, picked, d)
 			if cell.x < 0:
 				_warn_legacy_spawn()
@@ -70,7 +67,6 @@ static func plan_team_spawns(teams: Dictionary, last: Dictionary = {}, side_swap
 	return out
 
 
-# 地图两侧的复活点列表(顺带按 SpawnChooser 的 side 常量取键;缺数据时返回两个空数组。不可达点在此剔除 + warning 一次)。
 static func _map_sides() -> Dictionary:
 	var raw: Dictionary = MazeGenerator.load_spawns().get("respawns", {})
 	var out := {SpawnChooser.SIDE_LEFT: [], SpawnChooser.SIDE_RIGHT: []}
@@ -90,12 +86,9 @@ static func _warn_legacy_spawn(why := "") -> void:
 			"" if why.is_empty() else "(%s)" % why))
 
 
-# 改造前的几何生成(无 `# respawn` 时的回退):多试几份、挑「队间最小距 − 队内最大距」最大的一份,绝不返回空表。
-# ★★ 为什么外面套一层重试循环:上面那两句并不蕴含「队间远」—— 半径 30 的点云在环面上重叠得很厉害,而基座只保证相距 ≥ 15 格
-# (实测 200 次里 123 次「队间最小距 ≤ 队内最大距」,最坏两队有人同格):多试几份、挑最好的一份,但绝不返回空表(start_on 会缺键)。
 static func _plan_team_spawns_geometry(teams: Dictionary) -> Dictionary:
 	var best := {}
-	var best_margin := -(1 << 30)   # ★ GDScript 不接受 `-1 << 30`(移位只收正操作数)
+	var best_margin := -(1 << 30)
 	for _attempt in SPAWN_MAX_TRIES:
 		var cand := _plan_team_spawns_once(teams)
 		var margin := _spawn_margin(cand, teams)
@@ -119,7 +112,7 @@ static func _plan_team_spawns_once(teams: Dictionary) -> Dictionary:
 			by_team[t].append(int(role))
 	var out := {}
 	for t in [1, 2]:
-		(by_team[t] as Array).sort()   # 确定性:同队的 role 按号升序拿点
+		(by_team[t] as Array).sort()
 		var base: Vector2i = bases[t - 1] if t - 1 < bases.size() else Vector2i(-1, -1)
 		var pts: Array = GridPathfinder.spread_cells(
 				SpawnPicker.cells_within(base, SPAWN_BASE_RADIUS), (by_team[t] as Array).size(),
@@ -132,7 +125,7 @@ static func _plan_team_spawns_once(teams: Dictionary) -> Dictionary:
 
 static func _spawn_margin(spawns: Dictionary, teams: Dictionary) -> int:
 	if spawns.size() < 2:
-		return 1   # 不足两人 = 没有"队间/队内"可言,视为满足(别让空表把重试跑满)
+		return 1
 	var d := SpawnPicker.grid_dims()
 	var max_in := 0
 	var min_cross := 1 << 30
@@ -168,7 +161,6 @@ static func compute_swap_spawns(spawns: Dictionary, teams: Dictionary) -> Dictio
 	return out
 
 
-# 局内复活点:用**本队这一局所在侧**的 `# respawn` 列表(不跨侧、不回退几何),筛「离所有存活敌人 ≥ RESPAWN_CLEARANCE」
 static func respawn_cell(role: int, players: Dictionary, teams: Dictionary, last: Dictionary = {},
 		sides: Dictionary = {}, side_swap := false) -> Vector2i:
 	var t := int(teams.get(int(role), 0))
@@ -183,7 +175,7 @@ static func respawn_cell(role: int, players: Dictionary, teams: Dictionary, last
 	var anchors: Array = []
 	for other in players:
 		if int(other) == int(role) or _same_team(teams, int(role), int(other)):
-			continue   # 队友不用躲(语义与 royale 那条"离所有存活玩家远"不同,见上面注释)
+			continue
 		var op: Node2D = players[other]
 		if op == null or not is_instance_valid(op) or op.is_downed():
 			continue
@@ -211,7 +203,6 @@ static func respawn_cell(role: int, players: Dictionary, teams: Dictionary, last
 	return _respawn_cell_geometry(role, players, teams)
 
 
-# 改造前的几何复活(无 `# respawn` 数据时的回退):SpawnPicker.respawn_pools() 逐档随机,保留"离敌人远"判据。
 static func _respawn_cell_geometry(role: int, players: Dictionary, teams: Dictionary) -> Vector2i:
 	for pool: Array in SpawnPicker.respawn_pools():
 		var cells := pool.duplicate()
@@ -235,8 +226,6 @@ static func _respawn_cell_geometry(role: int, players: Dictionary, teams: Dictio
 	return Vector2i(-1, -1)
 
 
-# MatchState.same_team 的本地等价(MatchState 读 _team_of,本模块只拿得到那张表):任一方为 0 一律 false —— 0 == 0
-# 若算同队,1v1/无队伍局里两个玩家会被判成队友。
 static func _same_team(teams: Dictionary, a_role: int, b_role: int) -> bool:
 	var a := int(teams.get(a_role, 0))
 	var b := int(teams.get(b_role, 0))

@@ -1,11 +1,9 @@
 extends Node
 
-# 【一次性工具】把「代码里建的菜单屏」导出成 .tscn 骨架。
 
 const THEME_PATH := "res://ui/theme/menu_theme.tres"
 const OUT_DIR := "res://.superpowers/sdd/_gen"
 
-# 候选变体表:节点类 -> 候选名(按优先次序;末尾那个是「基础类本身」= 不挂变体)。取值照抄 tools/gen_menu_theme.gd 建出来的那套,加了新变体要在这里补一行。
 const VARIANTS := {
 	"Label": ["H1", "Body", "Small", "Dim", "HeaderTitle", "Label"],
 	# ★ 没有「基础类型 Button」这一档:本 Theme 刻意不设 Button(否则 CheckButton 会沿类链穿上按钮的皮,见 gen_menu_theme.gd 的 _button_variants())。
@@ -18,18 +16,13 @@ const VARIANTS := {
 	"HSlider": ["HSlider"],
 }
 
-# 屏名 -> { scene, strip: [定位谓词名] }:strip 里每一项都是本文件的一个 _strip_<名字>(),返回要从骨架里剥掉的子树根(动态行:每个玩家的 / 每次开局的 / 随设置变的);列表为空 = 该屏全是静态骨架。
 const SCREENS := {
 	"settings_menu": {"scene": "res://scenes/settings_menu.tscn", "strip": ["bind_grid"]},
-	# 信息页:三块都得剥(提交历史 / 开发团队 / 致谢)—— 后两块虽是常量,但「名单行留代码」是本屏的边界;剥空后编辑器里那两块面板是空的,这条代价照实接受。
 	"info_menu": {"scene": "res://scenes/info_menu.tscn",
 			"strip": ["commit_list", "info_team", "info_credits"]},
-	# Beta 页:两张卡片是数据驱动的(CARDS 常量)且图标是运行时生成的贴图 ⇒ 卡片留在代码里,骨架只留页面框架。
 	"beta_menu": {"scene": "res://scenes/beta_menu.tscn", "strip": ["beta_cards"]},
-	# 结算页:_ready() 建的全是静态的(压暗罩 / 面板 / 标题 / 副题 / 空的 Sections / 返回键),名次表要等 show_result() 拿到载荷才建 ⇒ 这一屏没有可剥的东西。
 	"match_result": {"scene": "res://ui/screens/match_result.tscn", "strip": []},
 	"main_menu": {"scene": "res://scenes/main_menu.tscn", "strip": []},
-	# 大厅:T1 起三个弹层启动即建(默认隐藏),故这棵树里有三处动态容器要剥(房卡格 / 禁用武器网格 / 地图选择器)。
 	"mp_lobby": {"scene": "res://scenes/mp_lobby.tscn",
 			"strip": ["lobby_dynamic", "lobby_weapon_grid", "lobby_map_picker"]},
 }
@@ -38,7 +31,6 @@ var _fails: Array[String] = []
 var _converted := 0
 var _kept := 0
 var _fonts_dropped := 0
-# ★★ 必须显式持有 theme:Control.theme 是本节点的局部 theme,子节点上它是 null(生效值靠父链回退)。
 var _theme: Theme = null
 
 
@@ -63,13 +55,11 @@ func _ready() -> void:
 		get_tree().quit(1)
 		return
 
-	# 1) 让现有代码把树建出来(等价于真跑一次这一屏);★ 根不一定是 Control —— 结算页的根是 CanvasLayer,用 Node,别写死。
 	var root: Node = packed.instantiate()
 	add_child(root)
 	await get_tree().process_frame
 	await get_tree().process_frame
 
-	# 2) 挂上 Theme(变体才解析得到值),再把可换的 override 换成变体。
 	_theme = theme
 	var theme_owner: Control = root as Control
 	if theme_owner == null:
@@ -81,7 +71,6 @@ func _ready() -> void:
 	theme_owner.theme = theme
 	_convert(root)
 
-	# 2b) --full:不剥动态行,导一份「完整骨架」—— 它是与改前截图逐像素比对用的(剥了动态行就没法直接比:那部分本来就该空着,等 .gd 填)。
 	var full := OS.get_cmdline_user_args().has("--full")
 	var out_name := name + ("_full" if full else "")
 
@@ -100,13 +89,10 @@ func _ready() -> void:
 			box.remove_child(c)
 			c.queue_free()
 
-	# 3b) ★★ 清掉所有 material:材质里挂的是运行时资源(主菜单背景那张 TerrainAtlas.terrain_texture() 烘出来的 4800×3200 贴图),PackedScene.pack 会把它整张内嵌进 .tscn;这类资源本来就得由代码在 _ready 里重建,清掉只是让 .tscn 不背死重量。
 	_clear_materials(root)
 
-	# 4) 起名 + 设 owner(没 owner 的节点不会被 pack 收进去)。
 	_name_nodes(root)
 	_set_owner(root, root)
-	# 去掉脚本:导出的是一份纯骨架,实例化它不会再有代码去建第二遍(生产 .tscn 由调用方在文本上补回 script = ExtResource(...))。
 	root.set_script(null)
 
 	var out := "%s/%s.tscn" % [OUT_DIR, out_name]
@@ -131,7 +117,6 @@ func _ready() -> void:
 	get_tree().quit(0 if _fails.is_empty() else 1)
 
 
-# ── 把 theme_override_* 换成 theme_type_variation ── 判据:这个节点显式设的每一样,都恰好等于某个候选变体在同名槽上的取值 ⇒ 换;任何一样对不上就整节点不动(宁可留 override,也不猜)。
 func _convert(n: Node) -> void:
 	if n is Control:
 		_try_variation(n as Control)
@@ -158,7 +143,7 @@ func _try_variation(c: Control) -> void:
 		var vname := str(v)
 		if _matches(c, overrides, vname):
 			for p in overrides:
-				c.set(p, null)   # 清掉全部 override(*/font 除外,见下)
+				c.set(p, null)
 			if vname != c.get_class():
 				c.theme_type_variation = StringName(vname)
 			_converted += 1
@@ -183,7 +168,7 @@ func _matches(c: Control, overrides: Array[String], vname: String) -> bool:
 		var parts := pn.split("/", false, 1)
 		if parts.size() != 2:
 			return false
-		var kind := parts[0].trim_prefix("theme_override_")   # styles / fonts / font_sizes / …
+		var kind := parts[0].trim_prefix("theme_override_")
 		var slot := StringName(parts[1])
 		var have = c.get(pn)
 		match kind:
@@ -203,13 +188,12 @@ func _matches(c: Control, overrides: Array[String], vname: String) -> bool:
 				if not _tex_eq(have, theme.get_icon(slot, vname)):
 					return false
 			"fonts":
-				return false   # 已在 `_try_variation` 里无条件丢掉,不该再走到这
+				return false
 			_:
 				return false
 	return true
 
 
-# 纹理按像素比。
 func _tex_eq(a, b) -> bool:
 	if a == null or b == null:
 		return a == null and b == null
@@ -226,7 +210,6 @@ func _tex_eq(a, b) -> bool:
 	return ia.get_size() == ib.get_size() and ia.get_data() == ib.get_data()
 
 
-# StyleBoxFlat 逐属性比,不用 ==(Resource 的 == 是同一性,不是值)。
 func _sb_eq(a, b) -> bool:
 	if a == null or b == null:
 		return a == null and b == null
@@ -252,7 +235,6 @@ func _strip_bind_grid(root: Node) -> Node:
 		return n is GridContainer and (n as GridContainer).columns == 2)
 
 
-# 信息页:左栏滚动区里那棵提交历史 VBox(行随 AppInfo.commit_log() 变)。★ 剥的是 VBox 的子节点,VBox 自己留着 —— 它带 custom_minimum_size = (ROW_W, 0)。
 func _strip_commit_list(root: Node) -> Node:
 	var scroll := _find(root, func(n: Node) -> bool: return n is ScrollContainer)
 	if scroll == null:
@@ -260,7 +242,6 @@ func _strip_commit_list(root: Node) -> Node:
 	return _find(scroll, func(n: Node) -> bool: return n is VBoxContainer)
 
 
-# 信息页右栏两节(开发团队 / 致谢):按标题带的文字定位(比按层级稳 —— 换了嵌套也找得到),返回标题带所在的那个内容 VBox(要清空的就是它)。
 func _strip_info_team(root: Node) -> Node:
 	return _section_body(root, "开 发 团 队")
 
@@ -288,7 +269,6 @@ func _first_label_text(n: Node) -> String:
 	return ""
 
 
-# Beta 页:卡片行(整行剥掉 —— 卡片本身由 CARDS 在代码里建)。判据:第一个孩子是 PanelContainer 的那个 HBox —— 返回行也是 HBox,但它的孩子是 Button。
 func _strip_beta_cards(root: Node) -> Node:
 	return _find(root, func(n: Node) -> bool:
 		return n is HBoxContainer and n.get_child_count() > 0 and n.get_child(0) is PanelContainer)
@@ -298,16 +278,12 @@ func _strip_result_grid(root: Node) -> Node:
 	return _find(root, func(n: Node) -> bool: return n is GridContainer)
 
 
-# 大厅房卡格:mp_lobby._grid。容器留着(columns / 两个间距 / 位置都是静态版式),剥的是它的行(房卡由 _make_card 一族按载荷画,「暂无房间」那句同理)。
-# ★★ 这个谓词原先写的是「第一个 ScrollContainer」,T1 让三个弹层启动即建之后,弹层子树里也有 ScrollContainer(地图选择器内部的)⇒ 它静默命中错了:该剥的房卡格没剥、
-#   不该剥的地图列表被剥成空盒,两边都不报错,只有取图看得出来。故改成结构上无歧义的定位:根下面那个 4 列 GridContainer(唯一),且必须在根下(不在任何弹层里)。
 func _strip_lobby_dynamic(root: Node) -> Node:
 	var box := _unique(root, func(n: Node) -> bool:
 		return n is GridContainer and (n as GridContainer).columns == 4,
 		"大厅房卡格(4 列 GridContainer)")
 	if box == null:
 		return null
-	# 这条断言是「打到弹层里去」那道闸:根的孩子 ⇒ 必定不是三个弹层的后代。★ 只判 columns == 4 不足以挡住「弹层里将来也出现一个 4 列格」这种漂移。
 	if box.get_parent() != root:
 		_fails.append("大厅房卡格定位到了非根节点之下(parent=%s)⇒ 谓词有歧义(可能是弹层子树)"
 				% str((box.get_parent() as Node).name))
@@ -315,17 +291,12 @@ func _strip_lobby_dynamic(root: Node) -> Node:
 	return box
 
 
-# 创建弹层右列的「禁用武器」整块(LobbyPage._add_weapon_grid 在代码里 new 一个 ScrollContainer + 2 列 GridContainer 填进去,行 = WeaponRegistry,勾选态与 type_id 记账都要在代码里重接)⇒ 剥整块的孩子(连那块滚动区一起剥,代码运行时会自己重建)。
-# ★★ 返回「禁用武器块」这个大 VBox 而不是里面的网格:骨架里既不能留网格、也不能留滚动区;_add_weapon_grid 自己 new 两者,留了就会变成两份。
-# ★ 判据 = 结构形状(标题带 + 滚动区两个直接孩子)+ 排除 MapPicker:地图选择器是同一个形状,只按形状会命中两个候选。
 func _strip_lobby_weapon_grid(root: Node) -> Node:
 	return _unique(root, func(n: Node) -> bool:
 		return n is VBoxContainer and not (n is MapPicker) and _looks_like_titled_scroll_block(n),
 		"禁用武器块(不是 MapPicker 的「标题带 + 滚动区」VBox)")
 
 
-# 「标题带 + 滚动区」两块共用的形状:2 个直接孩子、首子是标题带、次子是滚动区。
-# ★ 只断形状不断内容 —— 区块里装的是武器格还是地图卡片由调用方的类别/排除条件区分。
 func _looks_like_titled_scroll_block(n: Node) -> bool:
 	if n.get_child_count() != 2:
 		return false
@@ -334,9 +305,6 @@ func _looks_like_titled_scroll_block(n: Node) -> bool:
 			and n.get_child(1) is ScrollContainer
 
 
-# 创建弹层右列的「地图选择器」整块(LobbyPage._add_map_picker 在代码里 new 一个 MapPicker 并 setup() 出缩略图网格)⇒ 剥宿主容器(MapBlock)的孩子 = 把整块选择器从骨架拿走。
-# ★★ 返回的不是 MapPicker 自己的父节点:那一层是 MapPicker 本人(setup() 里 add_child(scroll)),而代码会 new 一个 ⇒ 骨架里连选择器节点都不能留,否则运行时是两个选择器。
-# ★ 定位靠 MapPicker 本人 + 形状断言(两个直接孩子、首子是标题带),不靠「唯一的 ScrollContainer」——禁用武器块现在也有一个 ScrollContainer,按数量定位会直接炸掉。
 func _strip_lobby_map_picker(root: Node) -> Node:
 	var picker := _unique(root, func(n: Node) -> bool:
 		return n is MapPicker and _looks_like_titled_scroll_block(n),
@@ -377,7 +345,6 @@ func _find(root: Node, pred: Callable) -> Node:
 	return null
 
 
-# 定位一个唯一的结构候选:0 个(结构改了)或 ≥2 个(谓词有歧义)都算失败。
 func _unique(root: Node, pred: Callable, label: String) -> Node:
 	var hits: Array[Node] = []
 	_collect(root, pred, hits)
@@ -395,7 +362,6 @@ func _collect(root: Node, pred: Callable, out: Array[Node]) -> void:
 		_collect(c, pred, out)
 
 
-# ── 起名 + owner ── 代码建的节点名是 @VBoxContainer@12 这种,进 .tscn 之后在编辑器里没法读 ⇒ 按「类型 + 同类序号」重起一个稳定的名字。★ 只影响可读性,不影响任何取值。
 func _name_nodes(root: Node) -> void:
 	_name_children(root)
 

@@ -1,5 +1,4 @@
 extends SceneTree
-# 下行接收逻辑守卫(S-03:把 net_bus.gd 里"解码 → tick 去重 → 坏包只警告一次 → 丢包/诊断计数"抽成 SnapshotRx 之后,
 
 const EXPECTED_CHECKS := 7
 
@@ -14,7 +13,6 @@ func _chk(ok: bool, msg: String) -> void:
 
 
 func _initialize() -> void:
-	# ★ 空载守卫(仓规):load() 失败还往下走会在 null 上抛错,而 `-s` 抛错走不到 quit() ⇒ 进程永久挂起。
 	if load("res://core/net/snapshot_rx.gd") == null:
 		print("SNAPSHOT RX FAILED: load(snapshot_rx.gd) 返回 null(-s 空载守卫:不 quit 会挂死)")
 		quit(1)
@@ -27,7 +25,6 @@ func _initialize() -> void:
 	var ob := NetCodec.encode_own(own)
 	var ib := NetCodec.encode_input(inp)
 
-	# ① 同 tick 幂等:同一世界包连收两次只 emit 一次(去掉什么才红:删 `tick <= _last_world_tick` 去重)
 	var rx := SnapshotRx.new()
 	var d1 := rx.accept_world(wb, 1000)
 	var d2 := rx.accept_world(wb, 2000)
@@ -35,15 +32,13 @@ func _initialize() -> void:
 			"同 tick 世界包只接受一次(实得 d1 空=%s d2 空=%s rx=%d)" % [
 				str(d1.is_empty()), str(d2.is_empty()), int(rx.stats().get("world_rx", 0))])
 
-	# ② 乱序旧包丢弃、新 tick 接受(去掉什么才红:去重判据改成 `tick != _last_world_tick` ⇒ 旧包也会被收)
 	var old_wb := NetCodec.encode_world(_with_tick(world, int(world["tick"]) - 1))
 	var new_wb := NetCodec.encode_world(_with_tick(world, int(world["tick"]) + 1))
 	_chk(rx.accept_world(old_wb, 3000).is_empty() and not rx.accept_world(new_wb, 4000).is_empty(),
 			"乱序/迟到旧包丢弃、更新的 tick 接受")
 
-	# ③ 坏包只警告一次(world/own 共用一面旗;输入包另一面):删旗或每包都报 ⇒ 红
 	var bad := wb.duplicate()
-	bad[0] = (int(bad[0]) + 1) & 0xFF   # 版本字节改坏 ⇒ 解码必空
+	bad[0] = (int(bad[0]) + 1) & 0xFF
 	var bad_rx := SnapshotRx.new()
 	var b1 := bad_rx.accept_world(bad, 1000)
 	var b2 := bad_rx.accept_world(bad, 2000)
@@ -55,14 +50,12 @@ func _initialize() -> void:
 			and int(bad_rx.stats().get("world_rx", -1)) == 0,
 			"坏包一律丢弃、计数不动,且快照/输入各只警告一次(世界与本人共用快照旗)")
 
-	# ④ reset 后旧 tick 重新被接受(去掉什么才红:reset() 漏清 _last_world_tick)
 	var again := rx.accept_world(wb, 5000)
 	rx.reset()
 	var after := rx.accept_world(wb, 6000)
 	_chk(again.is_empty() and not after.is_empty() and rx.world_tick() == int(world["tick"]),
 			"reset() 后同 tick 重新接受(重连/换局靠它,否则新纪元包全被当旧包丢)")
 
-	# ⑤ tick 缺口丢包估计 + 步长学习(去掉什么才红:把 lost 计算挪到基线更新之后 ⇒ 永远 0;删步长学习 ⇒ 步长停在 1)
 	var gap_rx := SnapshotRx.new()
 	for t in [10, 11, 12, 15]:
 		gap_rx.accept_world(NetCodec.encode_world(_with_tick(world, t)), 1000000 + t)
@@ -71,7 +64,6 @@ func _initialize() -> void:
 			"tick 缺口估计:10,11,12,15 中间丢 2 包、步长学到 1(实得 lost=%d step=%d)" % [
 				int(gs.get("world_lost", -1)), int(gs.get("step", -1))])
 
-	# ⑥ 本人包:同 tick 幂等 + 返回形状与下游 emit 契约一致({ack_seq, q, c2})
 	var own_rx := SnapshotRx.new()
 	var o1 := own_rx.accept_own(ob)
 	var o2 := own_rx.accept_own(ob)
@@ -82,7 +74,6 @@ func _initialize() -> void:
 			and (o1.get("c2", {}) as Dictionary).has("inv"),
 			"本人包同 tick 幂等且返回 {ack_seq,q,c2} 形状(下游 rollback 锚点零改动的契约)")
 
-	# ⑦ 1Hz 诊断读数键集(--diag 的 snap_rx 载荷;口径要和服务器 snapshot_tx 的 world_msgs 对得上)
 	var diag := _diag_after_accept(wb)
 	_chk(diag.size() == 8 and diag.has("interval_ms") and diag.has("world_msgs")
 			and diag.has("world_lost") and diag.has("world_loss_pct") and diag.has("own_msgs")

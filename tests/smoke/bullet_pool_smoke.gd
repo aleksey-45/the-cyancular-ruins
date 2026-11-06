@@ -1,12 +1,10 @@
 extends SceneTree
 
-# 子弹对象池冒烟(纯逻辑 -s,不实例化场景树、不引 autoload):池的账本 + 复用复位清单。
 
 const EXPECTED_CHECKS := 5
 const BULLET_PATH := "res://scenes/weapons/bullet.tscn"
 const GRENADE_PATH := "res://scenes/weapons/grenade_bullet.tscn"
 const POOL_PATH := "res://core/present/bullet_pool.gd"
-# 复位清单(tests 侧独立抄一份:从 BulletBase 里读字段名 = 让被测方自己出题,漏一项永远测不出来)。
 const RESET_FIELDS: Array[String] = [
 	"global_position", "prev_pos", "velocity_vec", "speed", "traveled", "max_range", "size",
 	"rotation", "gravity_factor", "breaks_terrain", "has_aoe", "bullet_color",
@@ -19,11 +17,10 @@ const RESET_FIELDS: Array[String] = [
 
 var _fails: Array[String] = []
 var _checks := 0
-var _stub := Node.new()   # source / shooter 的类型是 Node:脏化时得给它一个真节点(SceneTree 本身不是 Node)
+var _stub := Node.new()
 
 
 func _initialize() -> void:
-	# 空载守卫:任何一项 load 失败都立刻 quit —— 否则下面抛错走不到 quit(),进程永久挂起。
 	var pool_script: GDScript = load(POOL_PATH) as GDScript
 	var bullet_scene: PackedScene = load(BULLET_PATH) as PackedScene
 	var grenade_scene: PackedScene = load(GRENADE_PATH) as PackedScene
@@ -34,7 +31,6 @@ func _initialize() -> void:
 	var pool = pool_script.new()
 	var cap: int = pool.MAX_PER_SCENE
 
-	# ① 复用后的状态与"新建一颗"逐字段等价(每轮先把每个字段写成垃圾值:漏复位的那一项就对不上)
 	var fresh = bullet_scene.instantiate()
 	var reused = pool.acquire(BULLET_PATH)
 	var reused_id: int = reused.get_instance_id()
@@ -47,14 +43,13 @@ func _initialize() -> void:
 	for f in RESET_FIELDS:
 		if not _same(fresh.get(f), reused.get(f)):
 			bad.append("%s(新建 %s / 复用 %s)" % [f, str(fresh.get(f)), str(reused.get(f))])
-	# ★ 稳定性判据:必须是**同一个实例**走过 3 轮 —— 否则"与新建等价"对一颗真新建的实例恒真(空转)
+	# ★ 稳定性判据:必须是同一个实例走过 3 轮 —— 否则"与新建等价"对一颗真新建的实例恒真(空转)
 	var same_instance: bool = reused.get_instance_id() == reused_id
 	if bad.is_empty() and same_instance:
 		_chk(true, "同一实例复用 3 次后与新建一颗逐字段等价(逐项 %d 字段)" % RESET_FIELDS.size())
 	else:
 		_chk(false, "复用后与新建一颗不等价(同一实例=%s / 不等价字段:%s)" % [same_instance, ", ".join(bad)])
 
-	# ② 场景 @export 初值还原的是 .tscn 那份,不是代码默认值(榴弹写回默认值 = 不爆炸的直弹)
 	var grenade = pool.acquire(GRENADE_PATH)
 	var grenade_id: int = grenade.get_instance_id()
 	grenade.explodes = false
@@ -71,7 +66,6 @@ func _initialize() -> void:
 					% [grenade.explodes, grenade.fuse_time, grenade.explosion_radius, grenade.tile_break_unit,
 					grenade.get_instance_id() == grenade_id])
 
-	# ③ meta 清零(它们是跨发累积的玩法闩,不是缓存):grenade_direct_hit 留着 = 复用后的榴弹永不结算直击
 	var m = pool.acquire(BULLET_PATH)
 	var m_id: int = m.get_instance_id()
 	m.set_meta("grenade_direct_hit", true)
@@ -100,7 +94,6 @@ func _initialize() -> void:
 	_chk(d2 != d3 and (d2 == dup or d3 == dup),
 			"双 release 幂等:两次借出拿到不同实例,且其中一个是刚归还的那颗")
 
-	# ⑤ 池上限:超出的闲置实例被销毁(不攒节点),借出时回落 instantiate 且每次拿到不同实例
 	var held: Array = []
 	var ids: Dictionary = {}
 	for i in cap + 1:
@@ -109,7 +102,6 @@ func _initialize() -> void:
 		ids[b.get_instance_id()] = true
 	for b in held:
 		pool.release(b)
-	# 归还 cap+1 个而闲置仍是 cap ⇒ 多出来的那个真的被销毁了(不是攒在池里)
 	_chk(ids.size() == cap + 1 and pool.idle_count(BULLET_PATH) == cap,
 			"池上限 %d:超出的回落 instantiate(实得 %d 个不同实例)且闲置封顶(实得 %d)"
 					% [cap, ids.size(), pool.idle_count(BULLET_PATH)])
@@ -134,7 +126,6 @@ func _drain(pool) -> void:
 			b.free()
 
 
-# 把每一个复位项都写成"不可能来自场景初值"的值:漏复位的那一项就会和新建的那颗对不上。
 func _dirty(b) -> void:
 	b.global_position = Vector2(777, 888)
 	b.prev_pos = Vector2(-1, -2)
@@ -173,7 +164,7 @@ func _dirty(b) -> void:
 
 func _same(a: Variant, b: Variant) -> bool:
 	if a is float and b is float:
-		return is_equal_approx(a, b)   # 复位写的是字面量,容差只为吃掉 -0.0 这类表示噪声
+		return is_equal_approx(a, b)
 	return a == b
 
 

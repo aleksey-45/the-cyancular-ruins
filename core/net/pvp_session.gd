@@ -1,10 +1,7 @@
 class_name PvpSession
 extends RefCounted
 
-# 会话配置(菜单→匹配→对局 间传递),静态 RefCounted、非 autoload。加字段前先 grep 确认有读者。
 
-# ★ 默认连本项目自己的服务器(用户 2026-10-24 明确要求硬编码);局域网联机由玩家在大厅把地址改成服务端那台电脑的局域网 IP
-# (服务端窗口会打印"朋友在服务器地址里填这个",已按默认路由网卡优先、排除虚拟网卡)。
 static var server_address: String = "120.53.107.140"
 static var role: int = 1
 static var player_name: String = "Anon"
@@ -37,8 +34,6 @@ static func clear_rejoin() -> void:
 	rejoin = false
 
 
-# 三页记房号的唯一入口。换房号或换模式 ⇒ 上一间的凭据到此为止;**房号没变时不清** —— 等待室每收一次
-# 房间状态都会走这里,清了会把"回局"在本局开局后弄坏。
 static func note_room(code: String, mode: String) -> void:
 	if code != room_code or mode != room_mode:
 		clear_rejoin()

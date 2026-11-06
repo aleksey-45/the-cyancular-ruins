@@ -1,6 +1,5 @@
 extends SceneTree
 
-# Bot 纯逻辑守卫(观察 + 决策)。跑法:"$GODOT" --headless --path . -s res://tests/smoke/bot_brain_smoke.gd
 
 const EXPECTED_CHECKS := 25
 const Obs := preload("res://tests/harness/bot/bot_observation.gd")
@@ -74,9 +73,9 @@ func _ctx(now: float) -> Dictionary:
 func _check_build() -> void:
 	var mem := {}
 	var cands := [
-		{"role": 2, "pos": Vector2(100, 0)},       # 主画面
-		{"role": 3, "pos": Vector2(1000, 0)},      # 雷达内、画面外
-		{"role": 4, "pos": Vector2(5000, 0)},      # 都不可见,无记忆 ⇒ 丢弃
+		{"role": 2, "pos": Vector2(100, 0)},
+		{"role": 3, "pos": Vector2(1000, 0)},
+		{"role": 4, "pos": Vector2(5000, 0)},
 	]
 	var o1: Array = Obs.build(cands, _ctx(10.0), mem)
 	_chk(o1.size() == 2, "build:看不见且无记忆的角色不产出观察")
@@ -84,7 +83,6 @@ func _check_build() -> void:
 	_chk(_find(o1, 3).get("source", "") == Obs.SOURCE_RADAR, "build:画面外雷达内走雷达来源")
 	_chk(float(_find(o1, 3).get("uncertainty", 0.0)) > 0.0, "build:雷达来源必须带位置不确定性")
 
-	# 角色仍在快照里(候选里还有它)但已离开画面/雷达 ⇒ 只能走记忆来源。
 	var o2: Array = Obs.build([
 		{"role": 2, "pos": Vector2(100, 0)},
 		{"role": 3, "pos": Vector2(5000, 0)},

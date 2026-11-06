@@ -4,24 +4,22 @@ extends RefCounted
 # 对局权威的共享状态(C 方案 S4b):纯数据 + 纯查询;由 MatchHost 持有(state),不再在继承链上。
 # 原「为什么共享字段要住共同祖先」的链式说明已随拆解失效;现行结构见 docs/eng/netplay.md「权威宿主的结构」。
 
-const HitLagHistory := preload("res://core/sim/hit_lag_history.gd")   # 命中回放历史环(纯逻辑)
+const HitLagHistory := preload("res://core/sim/hit_lag_history.gd")
 
-var players: Dictionary = {}        # role(int) -> Player
-var input_sources: Dictionary = {}  # role -> PacketInputSource
-var peer_by_role: Dictionary = {}   # role -> peer_id
-var _pending_input: Dictionary = {} # role -> Array[输入记录队列](一条记录 = 一个物理 tick),按序消费不丢 just_pressed 边沿
+var players: Dictionary = {}
+var input_sources: Dictionary = {}
+var peer_by_role: Dictionary = {}
+var _pending_input: Dictionary = {}
 var grid: Array = []
-var _base_grid: Array = []   # 建局原始(未破坏)网格深拷贝:每局复位重铺,防客户端/服务器砖状态漂移
+var _base_grid: Array = []
 
-# 队伍表 role -> 队号(1/2):唯一权威,由大厅经 worker 命令行 --teams 显式传入。
 var _team_of: Dictionary = {}
 
-# Beta 时间玩法(B21)的服务器权威颗粒经济;★ 普通局恒 null(一切结算/广播短路),由 MatchHost._init 按房主 options 建。
 var time_economy = null
 
 
-var _rw_on: Dictionary = {}        # role -> bool(回溯中)
-var _rw_trail: Dictionary = {}     # role -> Array(回溯中每 3 帧一个 [x,y],快照带下去给残像)
+var _rw_on: Dictionary = {}
+var _rw_trail: Dictionary = {}
 
 
 
@@ -37,7 +35,6 @@ func same_team(a_role: int, b_role: int) -> bool:
 	return a > 0 and a == b
 
 
-# 对端 role(1v1 专用;找不到返回 0)。纯查询,裁决/回合都用它。
 func _opponent_of(role: int) -> int:
 	for r in players:
 		if int(r) != role:
@@ -45,8 +42,6 @@ func _opponent_of(role: int) -> int:
 	return 0
 
 
-# 与建局基线(_base_grid)不同的格,给「重连后补破坏态」用:客户端重连只拿 match_path 重建初始地图,不补这一份会留
-# 幻影墙(→ 本地预测分歧,可能回滚循环)。★ 判据是「与基线不同」、不是「当前为空」;顺序确定(y 升序、同 y 升序 x);只由 match_sync 应答投递,空数组连键都不带。
 func destroyed_cells() -> Array[Vector2i]:
 	var out: Array[Vector2i] = []
 	var rows := mini(grid.size(), _base_grid.size())
@@ -60,8 +55,6 @@ func destroyed_cells() -> Array[Vector2i]:
 	return out
 
 
-# 重连补态的子格列表(16px/32px 洞):实现收在纯逻辑模块 core/sim/tile_resync.gd(不引 autoload ⇒ `-s` 可测)。
-# ★ 只报「所在 64px 格仍与基线相同」的死子格;整格已消失的由 destroyed_cells() 覆盖,不重复发。
 func damaged_partial_subs() -> Array[Vector2i]:
 	return TileResync.partial_damaged_subs(damaged_subs, grid, _base_grid)
 
@@ -69,75 +62,60 @@ var destructible_sub: Array = []
 var _dirty_chunks: Dictionary = {}
 # 本局被摧毁过的 16px 子格(Vector2i → true):换局增量复位只还这些格(全量 build_sim 实测 ~0.48s ⇒ 每局卡顿)。
 var damaged_subs: Dictionary = {}
-var _snapshot_tick_phase := 0   # 物理 tick 相位:每 SNAPSHOT_STRIDE 个 tick 发一次
-# 下行快照 60Hz(所有人数)。快照 tick 用 60Hz 物理 tick 计,客户端 playout/历史环按 tick 域工作。
+var _snapshot_tick_phase := 0
 const SNAPSHOT_HZ := 60
 const SNAPSHOT_INTERVAL := 1.0 / SNAPSHOT_HZ
 const SNAPSHOT_STRIDE := 60 / SNAPSHOT_HZ
-var _seen_bullets: Dictionary = {}  # bullet instance_id -> true(只广播一次);每帧按在场子弹剪枝(见 CombatSystem.adjudicate)
-var _snap_tick := 0   # 快照 tick(60Hz 物理 tick 域;= _srv_tick,客户端靠它丢乱序旧快照 + playout 插值)
-var _srv_tick := 0    # 服务器物理 tick 计数(MatchHost 每物理 tick 起始 +1;快照 tick 与命中回放共用这条时间轴)
-var _lag_hist := HitLagHistory.new()   # 命中回放受击面历史(每 tick 推;24 tick ≈ 400ms)
-# C2 rollback:每物理 tick 消费一条输入记录(FIFO),ack 让客户端重放 seq > ack 的本地输入 —— 1:1 同序,无 tick 映射漂移。
-var _ack_seq: Dictionary = {}   # role(int) -> 已消费输入记录的 seq
-# role(int) -> 上一次**完成步进**时的已消费 seq。★ 受击事件的时间锚点:命中裁决在 MatchHost._physics_process 回调里跑,
-# 而玩家是**子节点**、本帧步进在父回调返回之后(父先于子)⇒ 被击中的是 ack−1 那一步之后的状态。这个值由 MatchHost 在
-# 帧末 call_deferred 记录(那时子节点已步进),下一帧裁决读到它。传当帧 ack 会让注入晚一步(实测差 3.03px / 43px·s⁻¹ ⇒ 仍回滚)。
+var _seen_bullets: Dictionary = {}
+var _snap_tick := 0
+var _srv_tick := 0
+var _lag_hist := HitLagHistory.new()
+var _ack_seq: Dictionary = {}
 var _stepped_seq: Dictionary = {}
-var _stepped_seq_pending := false   # 本帧已排队一次帧末记录(每 tick 一次就够)
+var _stepped_seq_pending := false
 # ★ 上行扩展字段:st 是命中回放的时间基准(2026-10-26 起有消费者);ct(客户端物理帧号)仍只落位。
-var _client_snap_tick: Dictionary = {}   # role(int) -> 该 role 最近**成功解码**的服务器快照 tick(st)
-var _client_tick: Dictionary = {}        # role(int) -> 该 role 最近一包里的客户端物理帧号(ct)
+var _client_snap_tick: Dictionary = {}
+var _client_tick: Dictionary = {}
 
 
-var _round_full_heal := false        # 每回合开始双方回满血
-var _disabled_weapons: Array[int] = []   # 禁用的武器槽位(双方一致)
-var _ai_roles: Array = []            # AI 补位的 role 列表;这些 role 无网络 peer
+var _round_full_heal := false
+var _disabled_weapons: Array[int] = []
+var _ai_roles: Array = []
 
 
 enum RoundState { COUNTDOWN, PLAYING, ROUND_OVER, MATCH_OVER }
-const KILLS_TO_WIN := 5      # 每局先到 5 击杀赢
-const ROUNDS_TO_WIN := 2     # 三局两胜
+const KILLS_TO_WIN := 5
+const ROUNDS_TO_WIN := 2
 const COUNTDOWN_TIME := 3.0
 const ROUND_OVER_TIME := 4.0
-const RESPAWN_DELAY := 2.0   # 局内死亡后复活延迟
-# 开局就绪闸与倒计时重播(原 MatchRound;迁到 RoundSystem 后仍由叶子直接写这些状态)。
+const RESPAWN_DELAY := 2.0
 const COUNTDOWN_HOLD_MAX := 2.0
 const COUNTDOWN_RESYNC := 0.5
 var _countdown_hold := COUNTDOWN_HOLD_MAX
-var _client_ready: Dictionary = {}       # role(int) -> true:该客户端场景已就绪
+var _client_ready: Dictionary = {}
 var _countdown_bcast_done := false
 var _countdown_resync := 0.0
 var _round_state := RoundState.COUNTDOWN
 var _round_num := 1
-var _scores: Dictionary = {}     # role -> 本局击杀
-var _rounds_won: Dictionary = {} # 局胜数(键:1v1 = role;TeamHost = **队号**)—— 下一个人别按 role 查
+var _scores: Dictionary = {}
+var _rounds_won: Dictionary = {}
 var _round_timer := 0.0
-var _side_swap := false          # 1v1 每局换边:true 时 role1 在右半区、role2 在左半区;老图回退路径也用它选 # player/# player2
-# ── 出生/复活点数据(地图 meta 的 # respawn 行)与 1v1 的落点状态 ──
-# ★ RoyaleHost / TeamHost 覆写了 _spawn_cell / role_spawns(各按自己的侧规则取点),下面这几张只服务基类 = 1v1。
-var _map_spawn_data: Dictionary = {}     # 懒加载:MazeGenerator.load_spawns() 的整份解析结果(# respawn / 旧键)
+var _side_swap := false
+var _map_spawn_data: Dictionary = {}
 var _map_spawn_data_loaded := false
-var _duel_spawns: Dictionary = {}        # role -> 最近一次落点(role_spawns() 的来源;也是"上一次位置"的排除项)
-var _duel_placed: Dictionary = {}        # role -> true(本局已摆过位:首次用 start_on 预算好的同一份)
-var _respawn_pending: Dictionary = {}  # role -> 剩余复活秒
-var _down_counted: Dictionary = {}     # role -> 本次倒地是否已计分/已入复活流程
-var _last_round_winner := 0            # 最近一局的胜者 role(客户端播报"本局胜利/落败"用)
+var _duel_spawns: Dictionary = {}
+var _duel_placed: Dictionary = {}
+var _respawn_pending: Dictionary = {}
+var _down_counted: Dictionary = {}
+var _last_round_winner := 0
 
 # ── 逐人统计(三模式共用)── ★ 条目只存原始计数,kscore / acs 一律读时推导:存一份算好的 kscore 就等于「加了新惩罚却
 # 忘了同步」这种不报错的静默缺陷。★ 载荷才用 spec §3.1 的七个字段(kills/deaths/assists/dealt/taken/kscore/acs)。
-var _stats: Dictionary = {}          # role -> 原始计数(整场累计,不随局清零)
-var _left_round: Dictionary = {}     # role -> 离开时所处的局号(ACS 的"实际参与局数"口径)
-# role -> 掉线那一刻所处的局号(与 _left_round 是两件事:后者是移出时写下的最终值)。★ 必须分开:掉线与宽限期到点之间
-# 隔着 60s、可能换过局,而 ACS 分母要的是「他实际参与了几局」。⚠ 已知边界(不修):_round_num 在新一局 COUNTDOWN 期间就已 +1 ⇒ 那 ~3s 窗口里掉线的人被记上一局没打过的局号。
+var _stats: Dictionary = {}
+var _left_round: Dictionary = {}
 var _leave_round: Dictionary = {}
-# 助攻表:每受害者一张小表 victim_role -> {attacker_role: 最后命中时刻(ms)}。
 var _assist_times: Dictionary = {}
-# role -> true(已移出对局)。★ 必须住底座(_roster / mvp_role 都要读);子类重复声明基类成员是硬 Parse Error,故 RoyaleHost / TeamHost 那两行必须一起删。
 var _left: Dictionary = {}
-# ── 断线宽限期读数 ── {role -> 剩余秒},由 worker 进程的 server_main 写入(它是宽限期表的持有者),三个 round_state 生产者
-# 只负责并进载荷。★ 用「推」而不是让宿主反向持有引用(避免 back-reference);★ 每实例字段、不是 static;空 = 没人掉线(载荷里连 grace 键都不带)。
-# 归因时效(3s)。★ 三个读者原先各抄一份同名常量,故收在底座(子类那两行必须删:同名遮蔽报错)。
 const ATTRIB_WINDOW := CombatFeedback.ATTRIB_WINDOW_MS
 # 「这一下伤害是谁打的」的新鲜度阈值(ms)。
 # took_hit 是同一调用栈(年龄 ≈ 0~1ms),而上一物理帧留下的归因至少 ~16.7ms 之前。★★ 前提就是「归因与伤害同一调用栈」:将来新增延迟扣血型伤害必须自己每帧重写归因,否则被静默判成无攻击者(ACS 偏低)。
@@ -145,7 +123,7 @@ const ATTRIB_FRESH_MS := 8
 
 # ── 仅测试用:定时拆一格 ── 由 --test-destroy-tile <col>,<row>[,<delay>] 写入,到点拆一次后置回 (-1,-1);★ 必须住基类:worker 是独立进程、探针拿不到 _host,只能让 worker 自己制造「世界变了」,而钩子由 MatchHost._physics_process 每帧调,兄弟域互相看不见。
 static var test_destroy_cell := Vector2i(-1, -1)
-static var test_destroy_after := 0.0     # 秒;从对局开始(_ready)起算
+static var test_destroy_after := 0.0
 
 
 func _role_of(node: Node) -> int:
@@ -155,7 +133,6 @@ func _role_of(node: Node) -> int:
 	return -1
 
 
-# 两名玩家是否同队(给只拿得到节点的武器用)。
 func is_friendly(a: Node, b: Node) -> bool:
 	if a == null or b == null:
 		return false
@@ -182,12 +159,10 @@ func _kscore_of(role: int) -> int:
 			int(s.get("team_kills", 0)))
 
 
-# ACS = kscore ÷ 局数。★ 不得再加伤害 —— 它已经在 kscore 里了;kscore 是伤害的唯一推导点(spec §1.4)。
 func _acs_of(role: int) -> float:
 	return ScoreRules.acs(_kscore_of(int(role)), _rounds_for(int(role)))
 
 
-# ACS 的局数口径:全场已进行的局数;中途离开者冻结在他离开时所处的局号(= 实际参与局数),分母更小、ACS 偏高是有意口径。★ 卡在 MATCH_OVER 时 _round_num 恰好等于打过的局数。
 func _rounds_for(role: int) -> int:
 	return int(_left_round.get(int(role), _round_num))
 
@@ -227,7 +202,6 @@ func stats_payload() -> Dictionary:
 	return out
 
 
-# MVP = 整场 ACS 最高者;并列 → 击杀多者 → 阵亡少者 → role 号升序。★ 比较与并列规则收在
 func mvp_role(candidates: Array = []) -> int:
 	var table := {}
 	for r in _roster():
@@ -252,13 +226,9 @@ func _clear_assist_table(victim_role: int) -> void:
 	_assist_times.erase(int(victim_role))
 
 
-# 逐人数据的唯一写入口(每次倒地边沿调一次)。★ deaths 一律 +1(队友误炸/自杀/溺水全算死);★ kills 只在「归因到
-# 且异队」时记给杀手 —— 无归因与同队误炸不计任何人的击杀(与「那一分照样给对方队」是两件事)。
 func _record_down(victim_role: int, killer_role: int) -> void:
 	victim_role = int(victim_role)
 	killer_role = int(killer_role)
-# ★ 「查不到」的哨兵是 -1(_role_of):放进去会给 _stat_entry(-1) 造出一行 role=-1 的统计行,
-#   并让 award_kill 拿到一个假 sender。受害者查不到 = 这一行根本不存在 ⇒ 不记;杀手查不到 = 与「无归因」同档(0)。
 	if victim_role < 0:
 		return
 	if killer_role < 0:
@@ -266,9 +236,8 @@ func _record_down(victim_role: int, killer_role: int) -> void:
 	var v := _stat_entry(victim_role)
 	v["deaths"] = int(v["deaths"]) + 1
 	if killer_role == 0:
-		return          # 无归因:不计任何人的击杀,**也不计任何人的助攻**
+		return
 	if same_team(killer_role, victim_role):
-# ★ 队友击杀:不记 kills、也不记助攻(没有「自己队的击杀」这回事);代价记在肇事者行上(team_kills)。
 		var tm := _stat_entry(killer_role)
 		tm["team_kills"] = int(tm["team_kills"]) + 1
 		return
@@ -277,8 +246,6 @@ func _record_down(victim_role: int, killer_role: int) -> void:
 		time_economy.award_kill(killer_role, victim_role)
 	var k := _stat_entry(killer_role)
 	k["kills"] = int(k["kills"]) + 1
-# ── 助攻:表里除击杀者之外、在归因窗口内、且与击杀者同队的 attacker ── ★★ 规则只有这一条:原先还挂着的
-# or same_team(attacker, victim_role) 是死代码(上面那道同队早退已保证击杀者与受害者异队)。★★ 前提是「那道早退还在」且「same_team 是等价比对」—— 它一旦变成非传递关系(如引入联盟),那个 or 就不再是死代码。⚠ 零守卫:team_host_probe (k4) 已删(2026-10-09)。
 	var now := Time.get_ticks_msec()
 	var table: Dictionary = _assist_times.get(victim_role, {})
 	for a in table:
@@ -302,7 +269,6 @@ func _fresh_attacker_role(victim_role: int) -> int:
 	return _attributed_role_within(victim, ATTRIB_FRESH_MS)
 
 
-# 「上一个打 victim 的人」,归因年龄 ≤ window_ms(超窗/无归因/自伤 → 0)。
 func _attributed_role_within(victim: Node2D, window_ms: int) -> int:
 	if not victim.has_meta("last_damager"):
 		return 0
@@ -321,7 +287,6 @@ func _attributed_role_within(victim: Node2D, window_ms: int) -> int:
 
 
 
-# ── 出生/复活点 ── 数据来源 = 地图 meta 的 `# respawn <1|2> <col> <row>` 行(按阵营半区写死;语法见 MapFormat)。
 func map_spawn_data() -> Dictionary:
 	if not _map_spawn_data_loaded:
 		_map_spawn_data_loaded = true
@@ -329,12 +294,10 @@ func map_spawn_data() -> Dictionary:
 	return _map_spawn_data
 
 
-# 某侧的复活点列表(空 = 该侧无数据 / 老图)。不可达点(数据写错/地图被改)在这里被剔掉 + push_warning 一次。
 func map_respawn_points(side: int) -> Array:
 	return SpawnPicker.filter_reachable((map_spawn_data().get("respawns", {}) as Dictionary).get(int(side), []))
 
 
-# 两侧并集:大乱斗无阵营,用它保证全图散布。
 func map_all_respawn_points() -> Array:
 	var sides: Dictionary = map_spawn_data().get("respawns", {})
 	var out: Array = []
@@ -343,7 +306,6 @@ func map_all_respawn_points() -> Array:
 	return SpawnPicker.filter_reachable(out)
 
 
-# 老图回退告警:只打一次(每进程一局,足够)。
 static var _warned_legacy_spawn := false
 
 
@@ -354,8 +316,6 @@ func _warn_legacy_spawn() -> void:
 	push_warning("MatchState: 地图没有 # respawn 行 —— 出生/复活回退 # player/# player2 旧两点;要按侧数据驱动请用 tools/map_spawn_meta.gd 写入地图")
 
 
-# 1v1 的侧:role1 默认侧 1(左半)、role2 侧 2(右半);每局换边(_side_swap)时互换。
-# ★ role > 2(1v1 AI 补位)沿用旧代码"非 1 即第二点"的口径 ⇒ 走侧 2。
 func _duel_side(role: int) -> int:
 	return SpawnChooser.SIDE_LEFT if (int(role) == 1) != _side_swap else SpawnChooser.SIDE_RIGHT
 

@@ -3,7 +3,6 @@ extends Node
 # 【一次性校验工具】把任意 .tscn 当子节点挂上、跑几帧、存一张图:把 tools/gen_menu_scene 导出的骨架画出来,与改前的基线图逐像素比对 —— 这是「迁移 = 外观不变」的唯一判据(静态检查看不出渲染差异)。
 # 用法与指令表见下面的 USAGE 常量;★ 不带 --headless(headless 下 root 视口纹理是空壳,取图静默为空)。输出固定落在 res://.superpowers/sdd/_gen/<名>.png(gitignored 的 scratch,不是持久记录)。
 
-# ★ 为什么要有「调方法」这半:大厅那三个弹层是启动即建、默认隐藏的,要取「打开态」的图只能像玩家那样先调一次打开方法;按顺序调、每个之间等 2 帧(同帧连调会读到中间态)。
 
 const OUT_DIR := "res://.superpowers/sdd/_gen/"
 
@@ -29,9 +28,8 @@ func _ready() -> void:
 	var src := str(argv[0])
 	var out := str(argv[1])
 
-	# ── 先扫全表:addr= 必须在实例化之前生效,故调用表与地址分两趟收 ──
 	var addr := ""
-	var calls: Array = []          # [{ "name": String, "args": Array }]
+	var calls: Array = []
 	var ai := 2
 	while ai < argv.size():
 		var tok := str(argv[ai])
@@ -63,11 +61,9 @@ func _ready() -> void:
 				return
 			last["args"] = parsed
 		elif tok.contains("="):
-			# 认不出来的 k=v 一律判失败:若当成方法名去调,判词会是「无此方法 a=b」(误导)。
 			_fail("不认识的参数 `%s`(只认 addr= / call= / args=;方法名里不会含 `=`)" % tok)
 			return
 		else:
-			# ★ 裸方法名 = 无实参的 call=(同一个代码路径,不是第二套语法)。
 			calls.append({"name": tok, "args": []})
 		ai += 1
 
@@ -80,7 +76,6 @@ func _ready() -> void:
 		return
 	var root: Node = ps.instantiate()
 	add_child(root)
-	# 实例化即 add_child:下面这些方法都假定自己已入树(锚点/尺寸依赖父级尺寸)。
 	for c in calls:
 		var m := str(c["name"])
 		var cargs: Array = c["args"]
@@ -108,19 +103,16 @@ func _ready() -> void:
 	get_tree().quit(0 if err == OK else 1)
 
 
-# args= 的 JSON 解析。返回实参数组;任何坏输入都打一句可读的判词并返回 null(调用方立刻退出 ⇒ 不会走到存图那一步)。
 func _parse_args(text: String) -> Variant:
 	if text.strip_edges().is_empty():
 		_fail("`args=` 后面没有 JSON")
 		return null
 	var j := JSON.new()
 	if j.parse(text) != OK:
-		# get_error_line() 对单行输入返回 0 ⇒ 只在 >0 时报行号(报「第 0 行」像 bug)。
 		var where := "" if j.get_error_line() <= 0 else "第 %d 行:" % j.get_error_line()
 		_fail("`args=` 不是合法 JSON(%s%s):%s" % [where, j.get_error_message(), text])
 		return null
 	if not (j.data is Array):
-		# 单给一个 object/标量是最容易犯的错(callv 要的是实参表)⇒ 判词里说清。
 		_fail("`args=` 必须是 JSON **数组**(= 实参表),实得 %s" % str(j.data))
 		return null
 	return j.data

@@ -1,32 +1,26 @@
 class_name WorldRewind
 extends RefCounted
 
-# 世界回溯:定频快照环缓(record)+ 反向应用器(step)。纯数据/编排,不碰 UI 与 shader。
-# 快照含玩家(位置/速度/HP/朝向/倒地/武器弹量)、非精英敌人、子弹;精英不入快照、不回放(策划案)。
-# 回放按快照重建子弹(不足则实例化)、把实体置回目标帧;回放期间不结算伤害(实体靠 TimeField.is_rewinding() 早退)。
 
-static var hold_corpses := false   # 由 Level0 每帧同步:录制中=true(击杀保留尸体待复活)
+static var hold_corpses := false
 
-var was_rewinding := false         # 状态沿(Level0 用它判进入/退出回溯)
-var _frames: Array = []            # [{t, player:{...}, enemies:[...], bullets:[...]}]
-var _t := 0.0                      # 世界已录制时间(秒)
+var was_rewinding := false
+var _frames: Array = []
+var _t := 0.0
 var _acc := 0.0
-var _cursor := 0.0                 # 本次回溯已倒退的秒数
-var _replay_bullets: Array = []    # 回放用子弹节点(与当前应用帧的 bullets 下标对应)
-var _parent: Node = null           # 回放子弹的挂载父节点(通常 WorldViewport)
-# ★ 完成度观测量:判据是"分子 == 分母"(见 replay_completion_error()),不是 freed 引用数 == 0 —— 带子上留着
-#   freed 实体是改动前就存在的条件,恒红的守卫与恒绿的一样没用;invalid_refs 只是登记用的观测量。
+var _cursor := 0.0
+var _replay_bullets: Array = []
+var _parent: Node = null
 var _apply_started := 0
 var _apply_completed := 0
-var _bullets_completed := 0        # `_apply_bullets()` 自己的分子(见该函数末尾;评审 N-1)
-var _invalid_refs := 0             # 带子上出现过的 freed / 非节点引用(观测)
+var _bullets_completed := 0
+var _invalid_refs := 0
 
 
 func _init(parent: Node = null) -> void:
 	_parent = parent
 
 
-# ── 录制(正常流逝)────────────────────────────────────────────
 
 func record(delta: float, player: Node, enemies: Array, bullets: Array) -> void:
 	if player == null or not is_instance_valid(player):
@@ -58,14 +52,12 @@ func record(delta: float, player: Node, enemies: Array, bullets: Array) -> void:
 	for node in bullets:
 		if not is_instance_valid(node):
 			continue
-# ★ 子弹段同理类型化;引信/射程状态必须逐帧带,rewind_state() 不再是"按名猜有没有"。
 		var b := node as BulletBase
 		if b == null:
 			push_error("WorldRewind: bullets 里出现非 BulletBase 节点(%s)—— 本帧不为它入快照"
 					% str(node))
 			continue
 		var sh := b.shooter
-		# 进快照 → 回溯重建的榴弹不会退回未点燃(见 BulletBase.rewind_state 的注释)。
 		var fuse_state: Dictionary = b.rewind_state()
 		pb.append({
 			"sp": str(b.get_meta("scene_path", "")),
@@ -87,10 +79,7 @@ func record(delta: float, player: Node, enemies: Array, bullets: Array) -> void:
 		_frames.pop_front()
 
 
-# ── 回放(回溯中)──────────────────────────────────────────────
 
-## 进入回溯:清空场上活弹(状态改由快照重建),游标归零。
-# 玩家状态快照:位置/速度/HP/朝向/倒地 + 武器弹量(武器类型与下标、背包各格残弹、手持实弹数)。
 func _snapshot_player(player: Node) -> Dictionary:
 	var p := player as Player
 	var d := {
@@ -101,13 +90,10 @@ func _snapshot_player(player: Node) -> Dictionary:
 		"downed": p.is_downed(),
 		"wslot": 0, "widx": -1, "wmags": [], "wlive": -1,
 	}
-# ★ 取组件仍用 as + 点名报错(而不是直接赋给带类型的变量):后者在 weapons 不是 WeaponComponent 时会抛错并中止整个函数
-#   ⇒ 退化成空字典(连同位置/HP 一起丢);现在武器四键停在初值,已收集的部分照旧返回。
 	var wc := p.weapons as WeaponComponent
 	if wc == null:
 		push_error("WorldRewind: player.weapons 不是 WeaponComponent —— 武器段无法回溯;本帧返回已收集的部分")
 		return d
-# ★ 反射改真类型访问买到的不是编译期红:4.7.1 对 class_name 上的未知成员只按警告级 UNSAFE_* 处理,拼错同样是运行期报错。
 	d["wslot"] = wc._current_type
 	d["widx"] = wc._current_index
 	var inv: WeaponInventory = wc.inventory
@@ -132,7 +118,6 @@ func begin() -> void:
 				(b as Node).queue_free()
 
 
-# 退出回溯(录像带模型):把"过去的将来"从磁带上裁掉,磁带钟退回出口,之后 record() 从这里续录 ⇒ 两次回溯互不串带。
 func finish() -> float:
 	var exit_t := _t - _cursor
 	var kept := 0
@@ -140,7 +125,7 @@ func finish() -> float:
 		if float(_frames[i]["t"]) <= exit_t:
 			kept = i + 1
 	if kept == 0 and not _frames.is_empty():
-		kept = 1   # 倒到了磁带最老处:世界就停在那帧上,磁带从它重新起算
+		kept = 1
 	if kept > 0:
 		_frames.resize(kept)
 		_t = maxf(exit_t, float(_frames[kept - 1]["t"]))
@@ -154,11 +139,10 @@ func step(delta: float, player: Node) -> void:
 		return
 	_cursor += delta * _mult()
 	var target := _t - _cursor
-	_apply_started += 1     # 完成度分母(见 `apply_started_count()`)
+	_apply_started += 1
 	_apply(_frame_at(target), player)
 
 
-# ★ 断言口径:两条分子各配一个分母(apply_completed / apply_bullets_completed),不是 freed 引用数 == 0(那会恒红)。
 func apply_started_count() -> int:
 	return _apply_started
 
@@ -167,7 +151,6 @@ func apply_completed_count() -> int:
 	return _apply_completed
 
 
-# 回放完成度的唯一判据:正常返回空串,否则返回一句可直接当探针判词的错话(只读、无副作用;无样本也在这里报)。
 func replay_completion_error() -> String:
 	if _apply_started <= 0:
 		return "完成度观测量没有样本(回溯期 step() 一次都没被调到)—— 本条会空转"
@@ -189,7 +172,6 @@ func replay_completion_error() -> String:
 	return ""
 
 
-## 起步快放 → 1×(用已倒退量做 ramp;越倒越接近 1×)
 func _mult() -> float:
 	var k := clampf(_cursor / maxf(TimeParams.REWIND_RAMP_TIME, 0.001), 0.0, 1.0)
 	return lerpf(TimeParams.REWIND_START_MULT, 1.0, k)
@@ -204,21 +186,14 @@ func _frame_at(target: float) -> Dictionary:
 
 func _apply(f: Dictionary, player: Node) -> void:
 	if f.is_empty():
-# 空帧 = 无事可做,不是中止;这里把 _bullets_completed 一起 +1 只为保住两条分子形态一致(今天不可达,死防御)。
 		_apply_completed += 1
 		_bullets_completed += 1
 		return
-	# ★★ 类型化:原先 `player.has_method("rewind_restore")` + 按名 call 是第 6 处玩家根按名访问 —— 函数一改名,
-	#   玩家态整段静默不回放(且零守卫)。★ 顺序不可反:is_instance_valid() 必须先于 as 收窄 —— 对真 freed 实例做
-	#   `as Player` 会抛错并中止整个 _apply()(同帧 _apply_bullets 整段被跳过),故 var p 的类型收窄留在守卫之后。
 	if is_instance_valid(player):
 		var p := player as Player
 		if p != null:
 			p.rewind_restore(f["player"])
 	for d in f["enemies"]:
-# ★★ is_instance_valid() 必须先于类型收窄:对真 freed 实例做 as EnemyBase 会抛错并中止整个 _apply() ⇒ 同帧
-#   _apply_bullets() 整段被跳过。故 var raw 故意不加类型(带类型的赋值本身就会碰 freed 实例)。freed/非节点 ⇒
-#   计数 + 静默跳过;有效但非 EnemyBase ⇒ 点名报错并跳过这一件。
 		var raw = d["n"]
 		if not is_instance_valid(raw):
 			_invalid_refs += 1
@@ -229,11 +204,9 @@ func _apply(f: Dictionary, player: Node) -> void:
 			continue
 		en.rewind_restore(d)
 	_apply_bullets(f["bullets"], player)
-# ★ 这一行只证明 _apply() 自己的函数体走到末尾,看不见 _apply_bullets() 体内的中止(脚本错误只中止出错的那个函数)。
 	_apply_completed += 1
 
 
-# 子弹按快照帧重建(不足则实例化,多余则隐藏);回放期间由本函数摆位,实体侧靠 TimeField 冻结。
 func _apply_bullets(list: Array, player: Node) -> void:
 	while _replay_bullets.size() < list.size():
 		var meta: Dictionary = list[_replay_bullets.size()]
@@ -264,8 +237,6 @@ func _apply_bullets(list: Array, player: Node) -> void:
 #   重建弹绕过它 ⇒ 再录进快照时 sp 是空串 ⇒ 下次不实例化、子弹凭空消失(单次回溯的探针照不到)。
 				nb.set_meta("scene_path", sp)
 		_replay_bullets.append(nb)
-# 循环二/三:同样先判有效性、再类型收窄(对真 freed 做 as 会中止整个函数)。今天取到 freed 引用不可达
-# (_replay_bullets 只由本函数填、begin/finish 都 clear、回溯期子弹自毁路径全早退)—— 顺序本身就是不变量。
 	for i in list.size():
 		var raw2 = _replay_bullets[i]
 		if not is_instance_valid(raw2):
@@ -275,7 +246,6 @@ func _apply_bullets(list: Array, player: Node) -> void:
 			continue
 		nb2.global_position = list[i]["p"]
 		nb2.velocity_vec = list[i]["v"]
-		# 引信每帧写回:倒退时引信跟着退(否则它会冻结在按下那一刻的剩余量)
 		nb2.apply_rewind_state(list[i].get("fuse", {}))
 		nb2.visible = true
 	for i in range(list.size(), _replay_bullets.size()):
@@ -286,18 +256,14 @@ func _apply_bullets(list: Array, player: Node) -> void:
 		if nb3 == null:
 			continue
 		nb3.visible = false
-# ★ 本函数自己的完成度分子:_apply() 末尾那次递增看不见本函数体内的中止(脚本错误只中止出错的那个函数)。
 	_bullets_completed += 1
 
 
-# ── 查询/维护 ───────────────────────────────────────────────
 
-## 当前回放目标时间(秒):瓦片账本按同一时间轴取区间还原。
 func current_target() -> float:
 	return _t - _cursor
 
 
-## 回放中的子弹节点(回溯期 Level0 用它们对精英做二次伤害判定)。
 func replay_bullets() -> Array:
 	return _replay_bullets
 
@@ -306,7 +272,6 @@ func recorded_seconds() -> float:
 	return _t
 
 
-# 尸体过期清理:录制中被保留(隐藏)的尸体,死亡时刻(meta rw_death_ms)超出缓冲窗口才真正释放。
 static func expire_corpses(tree: SceneTree) -> void:
 	if tree == null:
 		return

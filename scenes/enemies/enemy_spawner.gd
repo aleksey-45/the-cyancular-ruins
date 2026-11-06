@@ -1,16 +1,11 @@
 class_name EnemySpawner
 extends Node2D
 
-# 每生成一个敌人发射一次(HUD 等接上去监听 enemy.died 做击杀计数)
 signal enemy_spawned(enemy: Node)
 
 # 敌人注册表。唯一来源 data/enemies.json(与 HTML 编辑器共享)。
-static var TYPES: Dictionary = {}           # id → scene 路径
-# ★ `DISPLAY_NAMES`(场景路径 → 中文显示名)与 `display_name_of()` 已于 2026-09-17 删除:
-#   它们是**单机击杀播报**专用(「击杀 飞鸟」那行字),播报删除后无人调用。
-#   随之 `data/enemies.json` 也去掉了 `display_name` 字段 —— 加新敌人只需 id/name/scene/color。
+static var TYPES: Dictionary = {}
 
-# 从 res://data/enemies.json 加载注册表;缺文件/格式错 → push_error,表保持空。
 static func load_types() -> void:
 	_load_registry()
 
@@ -55,7 +50,6 @@ func spawn_all(spawns: Dictionary = {}) -> void:
 	print("[EnemySpawner] spawned %d enemies from map" % enemies_meta.size())
 
 
-# 全图"头顶 2 格净空"的开阔地板格,供地面武器布点用(2026-09-15)。
 func open_floor_cells(grid: Array) -> Array:
 	var out: Array = []
 	if grid.is_empty():

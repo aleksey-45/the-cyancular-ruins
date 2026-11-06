@@ -1,9 +1,6 @@
 class_name WeaponInventory
 extends RefCounted
 
-# 武器背包的纯逻辑:持有表 + 容量预算。无 autoload 依赖、可 -s 测。
-# ★ tier 数值刻意与 WeaponBase.Tier 对齐(0/1/2)但不 import weapon_base.gd(它的 @export 默认值 preload 了 bullet.tscn,会把 autoload 拖进 -s);对齐关系今天零守卫(enemy_logic_smoke 已删·2026-10-09),改这里必须人工核对两边。
-# ★ 容量(默认 8 格)与把数上限(默认 4 把)是两条闸门:按今天 cost 表已被容量蕴含,但轻武器改 1 格后"最多 4 把"就只剩这条在守(原守卫 weapon_inventory_smoke 已删·2026-10-09)。两条都是实例字段(将来按能力/模式分叉,协议零改动)。
 
 const TIER_LIGHT := 0
 const TIER_MEDIUM := 1
@@ -17,20 +14,18 @@ const DEFAULT_CAPACITY := 8
 var max_weapons: int = DEFAULT_MAX_WEAPONS
 var capacity: int = DEFAULT_CAPACITY
 
-# 条目里的 mag == MAG_FULL 表示「满弹」:入树后不覆盖武器 _ready 设的满弹。
 const MAG_FULL := -1
 
 # 背包条目,按获得顺序:{"type", "inst", "mag"}。★ inst 是必需的:允许同类型两把,残弹必须按具体那把记 —— 按类型记会让"丢一把空弹、捡一把满弹"变成免费换弹且不报错。
 var held: Array[Dictionary] = []
 
-var _tiers: Dictionary         # type_id -> tier
+var _tiers: Dictionary
 var _next_inst: int = 1
 
 
 func _init(tiers: Dictionary, new_capacity: int = DEFAULT_CAPACITY,
 		new_max_weapons: int = DEFAULT_MAX_WEAPONS) -> void:
 	_tiers = tiers
-# ★ 钳到 >= 1:0 格 / 0 把会让 can_hold() 恒假 ⇒ 玩家永远捡不起任何枪(死锁),而实机上只表现为"拾取没反应"。
 	capacity = maxi(1, new_capacity)
 	max_weapons = maxi(1, new_max_weapons)
 
@@ -84,7 +79,6 @@ func first_index_of_type(type_id: int) -> int:
 	return -1
 
 
-# 紧凑排布:第 index 把占据 [cell_start(index), +cost);删中间一条、其后整体左移 ⇒ HUD 上看到的是整段移动(格子永不空洞)。
 func cell_start(index: int) -> int:
 	var n := 0
 	for i in range(0, mini(index, held.size())):

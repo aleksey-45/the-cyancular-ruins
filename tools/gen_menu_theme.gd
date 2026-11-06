@@ -1,6 +1,5 @@
 extends SceneTree
 
-# 从 UiFactory 的现有取值生成 ui/theme/menu_theme.tres(+ 两个开关图标 PNG)。
 
 const OUT_THEME := "res://ui/theme/menu_theme.tres"
 const OUT_SWITCH_OFF := "res://ui/theme/switch_off.png"
@@ -44,7 +43,6 @@ func _initialize() -> void:
 		print("GEN THEME: FAIL(保存 %s 返回 %d)" % [OUT_THEME, err])
 		quit(1)
 		return
-	# 每次重跑都重导一次图标:改了胶囊尺寸(SWITCH_W/SWITCH_H)时它必须跟着变。
 	_export_switch_icons(F)
 
 	if _fails.is_empty():
@@ -65,7 +63,6 @@ func _c(C: Dictionary, name: String) -> Color:
 	return C[name] as Color
 
 
-# ── 字号三档(Type Variation)── 三档全是 16 的倍数(零守卫:`kh_l5_probe` 已删·2026-10-09,人眼核对)。
 func _label_variants(t: Theme, C: Dictionary) -> void:
 	t.set_color("font_color", "Label", _c(C, "C_TEXT"))
 	t.set_font_size("font_size", "Label", 32)
@@ -81,13 +78,11 @@ func _label_variants(t: Theme, C: Dictionary) -> void:
 	t.set_type_variation("HeaderTitle", "Label")
 	t.set_font_size("font_size", "HeaderTitle", 32)
 	t.set_color("font_color", "HeaderTitle", _c(C, "C_GOLD"))
-	# 次要说明文字(占位/说明),与 C_TEXT_DIM 同款。
 	t.set_type_variation("Dim", "Label")
 	t.set_font_size("font_size", "Dim", 32)
 	t.set_color("font_color", "Dim", _c(C, "C_TEXT_DIM"))
 
 
-# ── 按钮 ── BtnPrimary = menu_button("primary")(菜单系的新语汇);另四个变体覆盖 menu_button 的其余档;两个 BtnLegacy* 覆盖旧的 style_button() —— 暂停菜单/结算页那一族还在用,迁移期要让它们能落成同一外观。
 func _button_variants(t: Theme, F: GDScript, C: Dictionary) -> void:
 	_menu_btn(t, F, C, "BtnPrimary", _c(C, "C_EDGE"), _c(C, "C_TEXT"))
 	_menu_btn(t, F, C, "BtnQuiet", _c(C, "C_BORDER_DIM"), _c(C, "C_TEXT_DIM"))
@@ -109,7 +104,6 @@ func _menu_btn(t: Theme, F: GDScript, C: Dictionary, name: String, edge: Color, 
 	t.set_color("font_hover_color", name, _c(C, "C_ACCENT"))
 	t.set_color("font_focus_color", name, fg)
 	t.set_color("font_pressed_color", name, _c(C, "C_ACCENT"))
-	# ★ 菜单系的禁用字用 C_TEXT_MUTE(更弱一档);旧那族用 C_TEXT_DIM —— 两者不同款,别「统一」。
 	t.set_color("font_disabled_color", name, _c(C, "C_TEXT_MUTE"))
 
 
@@ -130,9 +124,6 @@ func _legacy_btn(t: Theme, F: GDScript, C: Dictionary, name: String, dim: bool) 
 	t.set_color("font_disabled_color", name, _c(C, "C_TEXT_DIM"))
 
 
-# ── 面板 ── 默认 PanelContainer = panel_box()(不透明 C_SURFACE + 2px C_BORDER + 28/20);PanelCarved / PanelCarvedBody = menu_panel() 的两层(外:1px C_BORDER、不设 content_margin;内:透明底 + 1px C_INNER + 64/46)。
-# ★ 内层那条「不设 content_margin」是承重的:留默认 -1 时 StyleBox::get_margin() 回落成 border width ⇒ 子节点内缩 1px、两条线落在不同像素环上;显式写 0 会让内层铺满外层、两条线重合、画面上只剩一条(零守卫:menu_style_probe 已删·2026-10-09)。
-# ★ PanelCarvedBody 的 64/46 只是 menu_panel() 的默认 padding —— 传了别的值的调用方在 .tscn 里表达不了,仍走代码(见文件头「覆盖上限」)。
 func _panel_variants(t: Theme, F: GDScript, C: Dictionary) -> void:
 	t.set_stylebox("panel", "PanelContainer", F.call("panel_box", true))
 
@@ -147,12 +138,9 @@ func _panel_variants(t: Theme, F: GDScript, C: Dictionary) -> void:
 	t.set_type_variation("PanelCarvedBody", "PanelContainer")
 	t.set_stylebox("panel", "PanelCarvedBody", _carved_body(C, Vector2(64, 46)))
 
-	# P1/2026-10-27:暂停菜单与广播的标题面板用 menu_panel(Vector2(72,44)) 的非默认内边距 ——
-	# .tscn 表达不了 padding 参数,故单独落一个变体(值抄自那两个调用点,别再手抄第三份)。
 	t.set_type_variation("PanelCarvedBodyInset72", "PanelContainer")
 	t.set_stylebox("panel", "PanelCarvedBodyInset72", _carved_body(C, Vector2(72, 44)))
 
-	# 标题带:header_strip() 的形状(只有下边一条线)。
 	t.set_type_variation("HeaderStrip", "PanelContainer")
 	var hs := StyleBoxFlat.new()
 	hs.bg_color = _c(C, "C_HEADER")
@@ -162,15 +150,12 @@ func _panel_variants(t: Theme, F: GDScript, C: Dictionary) -> void:
 	hs.border_width_top = 0
 	hs.border_width_bottom = 1
 	hs.border_color = _c(C, "C_BORDER")
-	# ★ 与 UiFactory.header_strip() 逐值一致:左右对称 HEADER_INSET=24、上下 HEADER_PAD_Y=20(2026-10-27 用户裁定:汉字不许顶格;旧档是左 0 / 右 40)。
-	#   改一处必须改两处 —— 原守卫 `menu_theme_mirror_smoke` 已删·2026-10-09,零守卫;改完还要同步 15 条 .tscn 的 HeaderStrip 和 Label.horizontal_alignment。
 	hs.content_margin_left = 24.0
 	hs.content_margin_right = 24.0
 	hs.content_margin_top = 20.0
 	hs.content_margin_bottom = 20.0
 	t.set_stylebox("panel", "HeaderStrip", hs)
 
-	# 列表行底(row_box():无边框)与整行可点按钮(style_row_button():悬停才浮描边)。
 	t.set_type_variation("RowPanel", "PanelContainer")
 	t.set_stylebox("panel", "RowPanel", F.call("row_box"))
 
@@ -187,7 +172,6 @@ func _panel_variants(t: Theme, F: GDScript, C: Dictionary) -> void:
 	t.set_color("font_focus_color", "RowButton", _c(C, "C_TEXT"))
 
 
-# 凿刻面板内层(透明底 + 1px C_INNER 线 + 指定内边距);外层与内层的边线错位规则见文件头。
 func _carved_body(C: Dictionary, pad: Vector2) -> StyleBoxFlat:
 	var body := StyleBoxFlat.new()
 	body.bg_color = _c(C, "C_TRANSPARENT")
@@ -201,10 +185,7 @@ func _carved_body(C: Dictionary, pad: Vector2) -> StyleBoxFlat:
 	return body
 
 
-# ── 输入框 / 开关 / 滑条 ──
 func _other_controls(t: Theme, F: GDScript, C: Dictionary) -> void:
-	# LineEdit:style_line_edit() 的两态 + 三个颜色。字号 16(与它的既有调用点一致)。
-	# ★ 左右内边距 10 → 16(2026-10-27):32 号字下 10px 只剩一个字的呼吸位,汉字贴框;.tscn 里手写的 LineEdit SubResource 必须同步(见 grep content_margin_left = 16.0)。
 	var le := StyleBoxFlat.new()
 	le.bg_color = _c(C, "C_FIELD")
 	le.border_color = _c(C, "C_BORDER_DIM")
@@ -221,7 +202,6 @@ func _other_controls(t: Theme, F: GDScript, C: Dictionary) -> void:
 	t.set_color("font_placeholder_color", "LineEdit", _c(C, "C_TEXT_DIM"))
 	t.set_color("caret_color", "LineEdit", _c(C, "C_ACCENT"))
 
-	# CheckButton:style_check() 的四个字色 + 自绘胶囊图标(由 _make_switch 导出的 PNG)。★ 这里刻意一个样式盒都不设 —— 理由见 _button_variants() 顶上那段。
 	t.set_font_size("font_size", "CheckButton", 32)
 	t.set_color("font_color", "CheckButton", _c(C, "C_TEXT"))
 	t.set_color("font_hover_color", "CheckButton", _c(C, "C_ACCENT"))
@@ -236,7 +216,6 @@ func _other_controls(t: Theme, F: GDScript, C: Dictionary) -> void:
 		t.set_icon("unchecked", "CheckButton", off)
 		t.set_icon("checked", "CheckButton", on)
 
-	# HSlider:style_slider() 的轨道 + 已填充段(两者同款,见那个函数)。
 	var track := StyleBoxFlat.new()
 	track.bg_color = _c(C, "C_BORDER_DIM")
 	track.set_corner_radius_all(0)
@@ -248,12 +227,10 @@ func _other_controls(t: Theme, F: GDScript, C: Dictionary) -> void:
 			F.call("_row_sb", _c(C, "C_ACCENT"), _c(C, "C_ACCENT")))
 
 
-# 两个 PNG 是否已经导入过(能 load() 到)。第一趟必然为假 —— 那时它们还不存在。
 func _switch_icons_ready() -> bool:
 	return load(OUT_SWITCH_OFF) != null and load(OUT_SWITCH_ON) != null
 
 
-# 把 UiFactory._make_switch() 程序化画的胶囊落盘成 PNG —— Theme 引用不到运行时生成的 ImageTexture,只能引用文件。★ 改了胶囊尺寸(SWITCH_W/SWITCH_H)要重跑本工具。
 func _export_switch_icons(F: GDScript) -> void:
 	var icons: Array = F.call("switch_icons")
 	if icons.size() != 2:

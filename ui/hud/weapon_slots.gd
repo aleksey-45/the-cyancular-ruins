@@ -1,20 +1,14 @@
 class_name WeaponSlots
 extends Control
 
-# 4 列 × N 行的武器槽位格子(左下角):每格 = 1 格容量,武器按紧凑排布占据连续格(见 WeaponInventory.cell_start);三态:未占据=淡灰 / 已占据=淡青 / 手持那把=深青。
-# ★ 自包含(能自己 new() 挂到任意节点下):PvpHud 与 RoyaleHud 是没有继承关系的两个 CanvasLayer,故定位常量放在本文件、三处引用同一组值。
-# ★ 字号必须是 16 的倍数(项目像素字体硬约定);本文件不画字,格子像素尺寸不受该约定限制。
 
 const COLS := 4
-const CELL := 22.0        # 格子边长(用户 2026-09-16「缩小一点」:32 → 22)
-const GAP := 3.0          # 格间距
-const PAD := 6.0          # 底板内边距
+const CELL := 22.0
+const GAP := 3.0
+const PAD := 6.0
 
-# ★ PANEL_W 只跟列数有关 ⇒ 仍是常量(容量长大时格阵向下长,不换行宽)。
-const PANEL_W := COLS * CELL + (COLS - 1) * GAP + PAD * 2.0   # 109.0
+const PANEL_W := COLS * CELL + (COLS - 1) * GAP + PAD * 2.0
 
-# 本实例的容量(= 背包容量,_derive_layout 里取)与由它派生的行数/面板高。★ 三个初始化式的声明顺序是承重的:rows/panel_h 读上面那个 capacity。
-# ★ ROWS := 2 / PANEL_H := 59.0 两个常量已删(2026-09-25):它们现在由容量派生 —— 留着常量名会让"静态读一个失效的值"编得过(静默),删掉之后每一处漏改都是解析期的错。
 var capacity: int = WeaponInventory.DEFAULT_CAPACITY
 var rows: int = rows_for(capacity)
 var panel_h: float = panel_h_for(capacity)
@@ -29,13 +23,11 @@ static func rows_for(cap: int) -> int:
 	return maxi(1, ceili(float(cap) / float(COLS)))
 
 
-# 容量 → 面板高(与 PANEL_W 同一套 PAD/GAP)。默认容量 8 ⇒ 2 行 ⇒ 59.0(与改动前逐字相同)。
 static func panel_h_for(cap: int) -> float:
 	var r := rows_for(cap)
 	return r * CELL + (r - 1) * GAP + PAD * 2.0
 
 
-# 从背包重取容量并重算行数/面板高。`setup()` 与 `refresh()` 都调它。
 func _derive_layout() -> void:
 	var cap := WeaponInventory.DEFAULT_CAPACITY
 	if _weapons != null and _weapons.inventory != null:
@@ -45,7 +37,6 @@ func _derive_layout() -> void:
 	panel_h = panel_h_for(capacity)
 
 
-# 便捷挂载:建实例 + 接线 + 定位到左下角(三处 HUD 都用它,保证位置一致);★ 只设锚点与尺寸,调用方可以之后自己微调 offset。
 static func attach_to(parent: Node, weapons: WeaponComponent) -> WeaponSlots:
 	var s := WeaponSlots.new()
 	s.setup(weapons)
@@ -55,8 +46,7 @@ static func attach_to(parent: Node, weapons: WeaponComponent) -> WeaponSlots:
 	s.anchor_top = 1.0
 	s.anchor_bottom = 1.0
 	s.offset_left = 16.0
-	# ★ 这三行必须排在 s.setup(weapons) 之后 —— panel_h 是实例字段、由 setup 里的 _derive_layout() 填;顺序反了会拿默认值算位置(容量非默认时格子面板错位)。
-	s.offset_top = -112.0 - s.panel_h - 8.0   # 落在既有武器区(offset_top=-112)正上方
+	s.offset_top = -112.0 - s.panel_h - 8.0
 	s.offset_right = s.offset_left + PANEL_W
 	s.offset_bottom = s.offset_top + s.panel_h
 	return s
@@ -78,7 +68,6 @@ func _on_changed(_type_id: int) -> void:
 
 
 func refresh() -> void:
-	# ★ 每次重取容量:容量/把数现在是实例字段(将来按能力分叉),改了之后格子阵要跟着长;今天生产路径上没有运行时改容量的地方 ⇒ 这一步恒等于 no-op。
 	_derive_layout()
 	queue_redraw()
 
@@ -96,7 +85,6 @@ func _draw() -> void:
 		_draw_empty_cells()
 		return
 
-	# 容量格 → 归属的背包下标(-1 = 未占)。紧凑排布保证是连续段。
 	var owner_of: Array[int] = []
 	owner_of.resize(capacity)
 	owner_of.fill(-1)
@@ -109,7 +97,6 @@ func _draw() -> void:
 
 	for cell in capacity:
 		var col := cell % COLS
-		# ★ 整数除法(`cell` 与 `COLS` 都是 int):3 行的格阵靠它算出行号,别改成 float 除法。
 		var row := cell / COLS
 		var p := Vector2(PAD + col * (CELL + GAP), PAD + row * (CELL + GAP))
 		var oi: int = owner_of[cell]

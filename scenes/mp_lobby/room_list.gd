@@ -1,14 +1,12 @@
 class_name RoomList
 extends RefCounted
 
-# 大厅页的「房间列表」面板(2026-10-22 Task 10 纯搬移自 scenes/mp_lobby.gd):模式筛选 / 三个载荷归并 / 房卡绘制 / 加入弹层(房号 + 邀请码)。
 
 # ★ 只有这三个版式常量留在代码里:房卡是运行时按载荷建的(_make_card),而它的宽必须与 .tscn 里 CardGrid 的 offset_left/right + h_separation 一致 —— 同一件事有两个来源,改一个就要改另一个,否则卡片与网格错位(而不报错)。
 # ★ 其余版式常量(各行 / 各块的 y 与空档、按钮尺寸)已随迁移进 .tscn,代码里不再有副本。
 const PAGE_MARGIN := 76.0
 const CARD_COLUMNS := 4
 const CARD_GAP := 24.0
-# 房卡高度:容纳「标题带 + 房号 48 + 副标题 32 + 缩略图/人数 120 + 名单 32×3 + …等 N 人」;★ 名单字号 16→32 后旧 440 会挤爆,改高度而不是把名单压回过小。
 const CARD_H := 520.0
 
 # 模式色(与对局无关的一套,只在菜单系用)。
@@ -26,9 +24,9 @@ const MODE_LABEL := {
 
 var page: MpLobby = null
 
-var _rooms_by_mode := {}           # mode -> Array(载荷条目,已打 "mode" 键)
+var _rooms_by_mode := {}
 var _got := {"pvp": false, "royale": false, "team": false}
-var _filter_btns := {}             # mode -> Button(含 "" = 全部)
+var _filter_btns := {}
 var _join_panel: PanelContainer = null
 var _join_code_edit: LineEdit = null
 var _join_invite_edit: LineEdit = null
@@ -38,9 +36,6 @@ func setup(p: MpLobby) -> void:
 	page = p
 
 
-# 接骨架:四颗筛选按钮 + 加入弹层。★ 控件的信号在这里接(不挪进页 _ready):"按钮画在屏上、按下去毫无反应"没有任何运行时信号可观测。
-# ★ 模式名只有一处真相 = MODE_LABEL(房卡标题、等待室标题、筛选按钮、建房弹层的模式分段按钮全从它取):
-#   骨架 `.tscn` 里那几颗按钮的默认 `text` 只是编辑器里的占位,进树后被这里覆盖 —— 加新模式/改叫法不用再改两处文案。
 func register(root: Node) -> void:
 	_filter_btns = {}
 	for f in [["", root.get_node("%FilterAll")], [PvpSession.MODE_PVP, root.get_node("%FilterPvp")],
@@ -63,7 +58,6 @@ func register(root: Node) -> void:
 	(root.get_node("%JoinCancelBtn") as Button).pressed.connect(func() -> void: _join_panel.visible = false)
 
 
-# 三颗筛选按钮的选中态与页的 _mode 是同一件事的两半,收在这里刷新 —— 由页的 _set_filter 统一调(在按钮 handler 里各写一遍的话,"程序改了 _mode"这条路就漏了)。
 func set_filter_selected(mode: String) -> void:
 	for m in _filter_btns:
 		(_filter_btns[m] as Button).button_pressed = (m == mode)
@@ -77,9 +71,6 @@ func hide_join_panel() -> void:
 	_join_panel.visible = false
 
 
-# 三个载荷入口各自把条目并入同一张表(打完 mode 标),再统一重绘。★ 每条都打上 mode 标 —— 卡片要显示模式、筛选器也按它过滤,而服务端载荷里没有这个键。
-# 返回值 = 这份载荷是否**变了**(页据此决定要不要重绘):静默轮询每 3s 来一轮,载荷没变就没必要重建整张网格
-# (重建会清掉悬停/按下态,还白白 free 建一遍节点)。
 func ingest(mode: String, rooms: Array) -> bool:
 	var tagged: Array = []
 	for r in rooms:
@@ -95,12 +86,10 @@ func ingest(mode: String, rooms: Array) -> bool:
 	return changed
 
 
-# 三张表都回来了才重绘(页在收齐那一刻调 redraw)。
 func all_got() -> bool:
 	return _got.values().all(func(v: bool) -> bool: return v)
 
 
-# 发列房请求前复位(三条 RPC 各自的应答算"到了"的记账)。
 func reset_got() -> void:
 	_got = {"pvp": false, "royale": false, "team": false}
 
@@ -109,8 +98,6 @@ func clear_rooms() -> void:
 	_rooms_by_mode.clear()
 
 
-# 重绘整张网格。
-# 生产里三条 RPC 应答确实可能落在同一帧(ingest 每收到一条就可能触发一次重绘)。本仓在"热重建视觉"那处踩过同款(WeaponPickup.configure)。
 func redraw() -> void:
 	for c in page._grid.get_children():
 		page._grid.remove_child(c)
@@ -118,8 +105,6 @@ func redraw() -> void:
 	var shown := 0
 	var total := 0
 	for mode in [PvpSession.MODE_PVP, PvpSession.MODE_ROYALE, PvpSession.MODE_TEAM]:
-		# 未满优先、满房排最后 —— 在每个模式内部排。★★ sort_custom 的比较函数返回 true = a 排在 b 前面(不是"a 该往后挪"):要"未满的在前",就必须在 a 未满而 b 满时返回 true。
-		# 写反(a 满时返回 true)= 满房排到了前面,与状态栏文案相反;而断言全按 meta 找卡、对顺序不敏感 ⇒ 零守卫(顺序断言随 lobby_* 探针已删·2026-10-09)。1v1 载荷没有 max_players ⇒ 默认 2,与卡片那处同一个默认值。
 		var rows: Array = _rooms_by_mode.get(mode, []).duplicate()
 		rows.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 			var a_full := int(a.get("players", 0)) >= int(a.get("max_players", 2))
@@ -151,9 +136,8 @@ func _make_card(r: Dictionary) -> Button:
 	btn.size = Vector2(_card_width(), CARD_H)
 	btn.set_meta("code", code)
 	btn.set_meta("mode", mode)
-	btn.text = ""   # 内容全部自绘
+	btn.text = ""
 
-	# ★ 卡底:外层 C_BORDER 线由 Button 自己的 stylebox 画,内层 C_INNER 线由这块内缩 1px 的透明底 PanelContainer 画(与 UiFactory.menu_panel() 同一个形状)。
 	var frame := PanelContainer.new()
 	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	frame.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -162,7 +146,7 @@ func _make_card(r: Dictionary) -> Button:
 	frame.offset_right = -1.0
 	frame.offset_bottom = -1.0
 	var fsb := StyleBoxFlat.new()
-	fsb.bg_color = Color(0, 0, 0, 0)   # 只画线、不画底(底在外层 Button 上)
+	fsb.bg_color = Color(0, 0, 0, 0)
 	fsb.border_color = UiFactory.C_INNER
 	fsb.set_border_width_all(1)
 	fsb.set_corner_radius_all(0)
@@ -181,18 +165,14 @@ func _make_card(r: Dictionary) -> Button:
 	col.add_child(_card_header(mode, r))
 	col.add_child(_card_body(r))
 
-	# ★★ 次序是承重的:先问「这是我的房吗 + 凭据还在吗」(can_rejoin_to 已在上面算好),这一档可点(点了走回局);不是我的房,才轮到「对局中 ⇒ 禁用」那一档。
-	# 反过来写 = 回局这一档连点都点不到,而一行报错都没有。
 	btn.disabled = in_match and not mine
 	if btn.disabled:
 		btn.focus_mode = Control.FOCUS_NONE
-		btn.modulate = Color(1, 1, 1, 0.55)   # 整体压暗:一眼看出这间进不去
+		btn.modulate = Color(1, 1, 1, 0.55)
 	else:
 		btn.focus_mode = Control.FOCUS_ALL
 		btn.pressed.connect(func() -> void:
 			Sfx.play("ui")
-			# ★★ 回局那条路也要记下模式 —— 与"加入"那条同款。
-			# 没有这一行,_enter_match_scene 的 else(push_error)就是唯一能把它喊出来的地方。
 			page._current_mode = mode
 			if not page.try_rejoin_row(code, in_match, mode):
 				page._join_code(code, mode))
@@ -204,8 +184,6 @@ func _card_width() -> float:
 	return floor(usable / float(CARD_COLUMNS))
 
 
-# 卡头 = 一条标题带(方向 B):C_HEADER 底 + 只有下边一条 C_BORDER 线;左 = 模式名(模式色),右 = 状态角标。
-# ★ 角标三档次序:对局中 优先于 私密 · 我的 —— 一间对局中的私密房对别人根本不列出,能同时满足两条的只有"我的房且已开局",那时"对局中"是更有用的信息。
 func _card_header(mode: String, r: Dictionary) -> Control:
 	var strip := PanelContainer.new()
 	strip.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -217,9 +195,6 @@ func _card_header(mode: String, r: Dictionary) -> Control:
 	sb.border_width_top = 0
 	sb.border_width_bottom = 1
 	sb.border_color = UiFactory.C_BORDER
-	# ★ 左右内边距 0(2026-10-27):卡头住在卡体里,卡体内容左缘 = 卡 + 26(frame)+1(边框);卡头带也落在那条线上,
-	#   所以卡头左右 0 才能让「模式名」与下面的「房号 / 地图 / 名单」左缘对齐(旧档 20 → 多缩进 22px,同卡内两条文字错开)。
-	#   上下 12 是卡的版式(比工厂的 20 窄);★ 这两处刻意与 UiFactory.header_strip() 不同 —— 不是漂移。
 	sb.content_margin_left = 0.0
 	sb.content_margin_right = 0.0
 	sb.content_margin_top = 12.0
@@ -240,7 +215,6 @@ func _card_header(mode: String, r: Dictionary) -> Control:
 	var is_public := bool(r.get("is_public", true))
 	var mine := PvpSession.can_rejoin_to(str(r.get("code", "")), mode)
 	var badge := "对局中" if in_match else ("私密 · 我的" if (not is_public and mine) else "等待中")
-	# ★ 三档取色刻意避开 C_WARN —— 它在调色板里被钉死为「弹夹见底」单一语义(ui_factory.gd 明写只用于「低弹量/耗尽」);拿它表"私密"会让那个金色在大厅与 HUD 里指两件事。
 	var badge_col := UiFactory.C_TEXT_DIM if in_match \
 			else (UiFactory.C_TEXT if not is_public else UiFactory.C_ACCENT)
 	var badge_l := UiFactory.label(badge, 16, badge_col)
@@ -249,7 +223,6 @@ func _card_header(mode: String, r: Dictionary) -> Control:
 	return strip
 
 
-# 房卡底(方向 B 的凿刻感):外层一条 C_BORDER(常态)/ C_ACCENT(悬停/焦点),填充走 C_SURFACE;内层那条 C_INNER 线由子节点那块 frame 画。
 func _style_card(b: Button) -> void:
 	b.add_theme_stylebox_override("normal", _card_box(UiFactory.C_BORDER))
 	b.add_theme_stylebox_override("hover", _card_box(UiFactory.C_ACCENT))
@@ -282,7 +255,6 @@ func _card_body(r: Dictionary) -> Control:
 	mid.add_child(_card_map_thumb(mode, str(r.get("map", ""))))
 	var meta := VBoxContainer.new()
 	meta.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	# ★ 1v1 的载荷没有 max_players(1v1 恒 2 人)—— 前端补,而不是去动那三个载荷的形状。
 	var maxp := int(r.get("max_players", 2))
 	meta.add_child(UiFactory.label("人数 %d / %d" % [int(r.get("players", 0)), maxp], 32, UiFactory.C_TEXT_DIM))
 	meta.add_child(UiFactory.label("房主 %s" % str(r.get("host", "玩家")), 32, UiFactory.C_TEXT_DIM))
@@ -331,8 +303,6 @@ func _card_map_thumb(mode: String, map_path: String) -> Control:
 	return frame
 
 
-# ★ 名字走 UiFactory.fit_name(名字, 14) 定宽截断(与结算页同款)—— 不截的话长昵称会把卡顶宽(卡宽是 4 列网格算出来的固定值,顶宽 = 整行错位);名单最多 3 行,超出显示 …等 N 人。
-# ★ 字号 16 → 32(2026-10-24):16 号在 1920 宽屏卡上小到读不清,与同卡 48/32 的房号/副标题差了两档。
 func _card_names(names_raw: Variant) -> Control:
 	var box := VBoxContainer.new()
 	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -348,7 +318,6 @@ func _card_names(names_raw: Variant) -> Control:
 	return box
 
 
-# 进「等待室」时收起列表与筛选(2026-10-24):等待室是独立面板,底下再露着房卡/筛选既脏又会误点。与 wait_room.hide() 成对恢复。
 func set_list_visible(v: bool) -> void:
 	page._grid.visible = v
 	for b in _filter_btns.values():

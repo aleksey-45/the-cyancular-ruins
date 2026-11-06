@@ -1,7 +1,6 @@
 class_name TileResync
 extends RefCounted
 
-# 重连补态的子格列表(BUG-03,2026-10-30)。纯逻辑、不引 autoload / 不碰 SceneTree ⇒ `-s` 冒烟可直接驱动。
 
 static func partial_damaged_subs(damaged: Dictionary, cur: Array, base: Array) -> Array[Vector2i]:
 	var out: Array[Vector2i] = []

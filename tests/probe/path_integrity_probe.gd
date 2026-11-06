@@ -1,15 +1,13 @@
 extends SceneTree
 
-# 路径一致性守卫:全仓 .gd / .tscn / .sh 里出现的每个 res:// 字面量都必须指向真实存在的文件或目录(目录重构期间每搬一步跑一次)。
 
 const SCAN_ROOTS := ["res://core", "res://scenes", "res://server", "res://ui",
 	"res://tests"]
 const ALLOW_PATH := "res://tests/path_integrity_allow.txt"
 const SCAN_UTIL_PATH := "res://tests/lib/scan_util.gd"
-# ★ .sh 的扫描根:tests/ 下这批脚本是最大的搬动对象,而 ScanUtil.collect 看不见它们,故单独收(递归)。
 const SH_ROOT := "res://tests"
 
-var _su: GDScript = null      # ★ 显式 load,不用全局类名 —— 本仓所有 -s 冒烟都走这条路
+var _su: GDScript = null
 
 func _collect_sh(dir_path: String, out: Array[String]) -> void:
 	var d := DirAccess.open(dir_path)
@@ -75,9 +73,6 @@ func _load_allow() -> Dictionary:
 	return allow
 
 func _exists_any(p: String) -> bool:
-	# res:// 裸串与 res://dir/ 这类是目录;用 DirAccess.open 而不是 dir_exists_absolute(后者对 res:// 前缀不保证成立)。
-	# ★ 必须先查 FileAccess.file_exists:ResourceLoader.exists 只认已导入的资源,而本仓有大量不算资源的普通文件被 GDScript 字符串引用(maps/*.cyrm、tests/*.txt、探针 save_png 出来的 .png)⇒ 只查 RL/DirAccess 会把它们全判成「不存在」(实测 28 条假红)。
-	# ⚠ 已知边界:Windows 文件系统不区分大小写,大小写写错的路径在这里会通过(导出成 .pck 后是区分大小写的)。本守卫只回答「有没有」,不回答「大小写对不对」。
 	if FileAccess.file_exists(p):
 		return true
 	if ResourceLoader.exists(p):
@@ -89,7 +84,6 @@ func _exists_any(p: String) -> bool:
 	return true
 
 func _initialize() -> void:
-	# ★ 空载守卫:load() 失败还往下走会在 null 上抛错,而 -s 抛错走不到 quit() → 永久挂起
 	_su = load(SCAN_UTIL_PATH)
 	if _su == null:
 		print("PATH INTEGRITY: FAILED: 找不到 ", SCAN_UTIL_PATH)
@@ -120,7 +114,6 @@ func _initialize() -> void:
 		return
 
 	for f in files:
-		# .sh 走 FileAccess(见 _read_sh 的注释);.gd/.tscn 仍走 ScanUtil.read。
 		var src: String = _read_sh(f) if f.ends_with(".sh") else _su.read(f)
 		if src.is_empty():
 			# ★ 不许静默跳过(sc_util 文件头明写「调用方必须自己判空并报红 —— 静默返回 "" 是这类探针最典型的失明方式」):ScanUtil.read 在「文件不存在」与「打不开/内容为空」时都返回 ""。

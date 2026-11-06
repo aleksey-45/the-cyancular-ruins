@@ -1,6 +1,5 @@
 extends SceneTree
 
-# legacy 纹理迁移工具:旧图集废弃槽位(tex 2-5 / 16-18,新图集里全透明)改写成 base + hue 辅码。
 
 const MAP_DIR := "res://maps"
 
@@ -57,8 +56,6 @@ func _list_maps() -> Array[String]:
 	return out
 
 
-# 原始读取(**不做**迁移 —— MapFormatV4.parse 会在读时迁移,本工具必须看得到迁移前的字节)。
-# 成功:{ok, data, body(解压后), compression, header, scene:{pal_off, pc, idx_off, iw, n}};失败 {ok:false, error}。
 func _read_raw(path: String) -> Dictionary:
 	var f := FileAccess.open(path, FileAccess.READ)
 	if f == null:
@@ -189,7 +186,6 @@ func _write_one(path: String) -> void:
 	_verify(path, body, expected_pal, before_tex, raw)
 
 
-# 意图 body → 完整文件字节:compression 位沿用原文件;压不动(compress 回读校验失败)才退回裸 body(§3.5 两条都合法)。
 func _rebuild(raw: Dictionary, body: PackedByteArray) -> PackedByteArray:
 	var payload := body
 	var compression := int(raw["compression"])
@@ -211,7 +207,7 @@ func _rebuild(raw: Dictionary, body: PackedByteArray) -> PackedByteArray:
 	MapFormatV4.write_u16(out, int(h["sub_cols"]))
 	MapFormatV4.write_u16(out, int(h["sub_rows"]))
 	out.append(int(h["layer_flags"]))
-	out.append(data[19])                 # reserved 原样
+	out.append(data[19])
 	out.append_array(payload)
 	return out
 
@@ -223,7 +219,6 @@ func _verify(path: String, want_body: PackedByteArray, expected_pal: PackedInt32
 		_fails.append("%s: 回读失败 %s" % [path, str(raw.get("error", "?"))])
 		return
 	var after: PackedByteArray = raw["body"]
-	# ① 除调色板改写外逐字节无损(meta / 索引流 / 其余层)
 	if after != want_body:
 		_fails.append("%s: 回读 body 与意图 body 不一致(层块被动过?)" % path)
 		return
@@ -234,13 +229,11 @@ func _verify(path: String, want_body: PackedByteArray, expected_pal: PackedInt32
 		if d != int(expected_pal[i]):
 			_fails.append("%s: 调色板[%d] = 0x%X,期望 0x%X" % [path, i, d, int(expected_pal[i])])
 			return
-		# ② 迁移后不再有 legacy 纹理
 		if TileDefs.legacy_base_of((d >> 12) & 0xFFF) != 0:
 			legacy_left += 1
 	if legacy_left > 0:
 		_fails.append("%s: 迁移后仍有 %d 个 legacy 调色板项" % [path, legacy_left])
 		return
-	# ③ 逐格纹理与迁移前映射一致(索引流未动 ⇒ 逐格对调色板)
 	var n := int((raw["scene"] as Dictionary)["n"])
 	var idx_before := PackedInt32Array()
 	idx_before.resize(n)

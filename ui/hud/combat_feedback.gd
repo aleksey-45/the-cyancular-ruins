@@ -1,23 +1,18 @@
 class_name CombatFeedback
 extends CanvasLayer
 
-# 打击反馈层:屏幕中心 FPS 式命中 X 标记 +「击杀 XXX」像素播报;受击侧的微红/震屏在 PostProcess.flash_hit + 相机 shake,不在此层。
-# 实例由各对局场景挂载(单机 Level0 / pvp_client / royale_game);静态入口在无实例时(服务器 headless 进程 / 主菜单)静默空操作,调用方(子弹/爆炸/敌死)无需判空。
 
-const LAYER := 131        # PostProcess(128) < 单机 HUD(129) < PvpHud/RoyaleHud(130) 之上
-const HIT_LIFE := 0.22    # X 标记存活时长(秒)
+const LAYER := 131
+const HIT_LIFE := 0.22
 const KILL_FADE_IN := 0.08
-const KILL_HOLD := 0.9    # 击杀文字停留时长(秒)
+const KILL_HOLD := 0.9
 const KILL_FADE_OUT := 0.35
-const STREAK_RESET := 6.0 # 连杀窗口:隔此秒数没有新击杀则连杀清零(秒)
-const ATTRIB_WINDOW_MS := 3000 # 归因时效:距最后一次受击超过此毫秒数的死亡不再归因给该射手
+const STREAK_RESET := 6.0
+const ATTRIB_WINDOW_MS := 3000
 
-static var current: CombatFeedback = null   # 当前对局的反馈层;null = 非对局/服务器,静态入口空转
+static var current: CombatFeedback = null
 
 
-# 由对局场景挂载(重复调用安全;换局由 _exit_tree 自清)。★ 幂等判据不能只看 current 是否存在:换场时新场景先 add_child、旧世界后 remove_child,
-# 旧实例仍在树上且仍是 current ⇒ 只看存在性会让新世界提前 return、反馈层静默消失。故须满足「current 有效且已是本 host 的后代」。
-# ★ 用 load 而非 preload:本场景的 ext_resource 指回本脚本,preload 会构成「脚本 → 场景 → 脚本」的循环引用、解析期直接报错;运行期 load 不参与解析且引擎只载一次。
 static func spawn(host: Node) -> void:
 	if current != null and is_instance_valid(current) and host.is_ancestor_of(current):
 		return
@@ -25,14 +20,11 @@ static func spawn(host: Node) -> void:
 	host.add_child.call_deferred(fx)
 
 
-## 命中反馈:屏幕中心 X 标记(玩家子弹/爆炸命中实体时调用)
 static func hit_marker() -> void:
 	if current != null:
 		current._show_hit()
 
 
-# 击杀播报:屏幕中心「击杀 XXX」+ 音效(who = 被击杀者显示名,由 PvP 的 kill_event 载荷给出);内部维护连杀计数(STREAK_RESET 秒内有新击杀则 +1,否则清零重计),
-# 同时闪现像素骷髅头 + 连杀数。PvP 专用(单机播报已删)。
 static func kill(who: String) -> void:
 	if current != null:
 		current._show_kill(who)
@@ -44,9 +36,6 @@ static func reset_streak() -> void:
 		current._last_kill_ms = -1
 
 
-# 击杀归因(写端统一入口):记下"谁打的"与"何时打的",供 RoyaleHost._attributed_killer 读(大乱斗计分)。
-# ★ 必须写在伤害调用之前 —— 被击者同帧倒地,大乱斗的倒地边沿当场读 meta 判分,写在 take_hit 之后则 meta 尚不存在、那一分静默丢失。
-# 只做元数据写入、不做判定;victim == attacker 不写(自伤不归因给自己)。★ 敌人一侧不再写:那个 meta 的唯一读者(单机击杀播报)已删。
 static func attribute(victim: Node, attacker: Node) -> void:
 	if victim == null or not is_instance_valid(victim):
 		return
@@ -54,15 +43,9 @@ static func attribute(victim: Node, attacker: Node) -> void:
 		return
 	victim.set_meta("last_damager", attacker)
 	victim.set_meta("last_damager_time", Time.get_ticks_msec())
-	# ★★ 真实(非自伤)归因落地 ⇒ 上一响留下的自伤标记当场作废。不作的后果:自伤标记是窗口 8ms 的时刻标量,而同一物理帧里两次 apply_aoe 之间隔 0ms ⇒
-	#   "自己那颗先炸、敌人那颗后炸"时第二下会同时看见两个标记、惩罚那一支按自伤记 —— 玩家因为被敌人打中而扣自己的分(实测 self_damage +40 而非 +20)。
-	#   ★ 必须清在这里而不是读端:读端"自伤优先于同队"的优先级是计划明文选择的语义;在 attribute() 里清则两种顺序各自正确。零守卫(team_host_probe 已删·2026-10-09)。★ remove_meta 对不存在的键是安全的。
 	victim.remove_meta("last_self_hit_time")
 
 
-# 自伤标记:爆炸的投掷者本人在爆区里时,由 Explosion.apply_aoe 写一笔。★ 为什么必须新增这条通道:attribute() 在 attacker == victim 时静默跳过(那是对的,
-# 否则"自己炸自己"会被记成自己的击杀),但它让自伤在 _on_player_hit 里与"归因不到"完全不可区分,而惩罚要扣"对自己造成的伤害"就必须有一条只表示自伤的通道。
-# ★ 它是时刻标量而不是"谁";★ 与 attribute 同款:只写元数据、不做判定、headless 服务器下同样安全(不碰 current、不碰任何 UI 节点)。
 static func note_self_hit(victim: Node) -> void:
 	if victim == null or not is_instance_valid(victim):
 		return
@@ -77,8 +60,6 @@ static func is_fresh_self_hit(victim: Node, window_ms: int) -> bool:
 	return Time.get_ticks_msec() - int(victim.get_meta("last_self_hit_time")) <= window_ms
 
 
-# 归因 + 命中标记的一体入口:武器命中玩家时的统一收尾(PvP 的爆炸/激光玩家分支共用)。★ 归因必须在伤害调用之前完成(take_hit 可能同帧判死);散写成两行极易漏掉先后顺序。
-# ★ 命中敌人不再走这里:单机播报删除后敌人的 last_damager 无读者,敌人分支直接调 hit_marker()。headless 服务器无实例 ⇒ 空操作、无副作用。
 static func attribute_hit(victim: Node, attacker: Node) -> void:
 	attribute(victim, attacker)
 	hit_marker()
@@ -87,16 +68,13 @@ static func attribute_hit(victim: Node, attacker: Node) -> void:
 
 
 var _marker: HitMarker = null
-var _skull: KillSkull = null       # 击杀像素骷髅(与击杀播报同窗闪现)
-var _streak := 0                   # 当前连杀数
-var _last_kill_ms := -1            # 上次击杀时刻(连杀窗口判定;-1=无)
-var _hit_age := -1.0    # <0 = 隐藏
+var _skull: KillSkull = null
+var _streak := 0
+var _last_kill_ms := -1
+var _hit_age := -1.0
 var _kill_age := -1.0
 
 
-# 两个自绘控件(HitMarker / KillSkull)由代码建,故是普通成员;两个文本节点从场景取(@onready 在下面)。
-# 布局段(root / 击杀播报 RichTextLabel / 连杀数 Label 的锚点与全部 theme override)已迁进 ui/combat_feedback.tscn;自绘控件挂进场景预留的槽位。
-# ★ 槽位的声明顺序 = z 序,必须与搬迁前的 add_child 顺序一致:HitMarkerSlot(X 标记,最下) → KillLabel → SkullSlot → StreakLabel;往槽位里 add_child 不走 move_child,顺序天然对齐。
 @onready var _kill_label: RichTextLabel = $Root/KillLabel
 @onready var _streak_label: Label = $Root/StreakLabel
 
@@ -104,9 +82,7 @@ var _kill_age := -1.0
 func _ready() -> void:
 	layer = LAYER
 	current = self
-	process_mode = Node.PROCESS_MODE_ALWAYS   # 暂停时动画也能收尾
-	# ★ 一次:共享字体关抗锯齿/微调/子像素并挂 CJK 回退链。场景里两个 Label 引用的就是同一个共享 FontFile 实例 ——
-	#   不调这句,它们带抗锯齿、且汉字没有回退字形(本层必画中文:「击杀 测试鸟」)。
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	PixelFont.shared()
 	_marker = HitMarker.new()
 	_marker.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -138,7 +114,6 @@ func _show_kill(who: String) -> void:
 		_streak = 0
 	_last_kill_ms = now
 	_streak += 1
-	# 击杀名里的 "[" 去掉,防止用户昵称拼进 BBCode
 	_kill_label.text = "击杀 [color=#ffd76e]%s[/color]" % who.replace("[", "")
 	_skull.visible = true
 	_streak_label.text = "x%d" % _streak
@@ -158,7 +133,7 @@ func _process(delta: float) -> void:
 		_kill_age += delta
 		var a := 1.0
 		if _kill_age < KILL_FADE_IN:
-			a = _kill_age / KILL_FADE_IN   # 快速浮现
+			a = _kill_age / KILL_FADE_IN
 		elif _kill_age > KILL_HOLD:
 			a = maxf(1.0 - (_kill_age - KILL_HOLD) / KILL_FADE_OUT, 0.0)
 		_kill_label.modulate.a = a
@@ -177,9 +152,8 @@ func _process(delta: float) -> void:
 				fx.visible = false
 
 
-# 命中 X 标记:四段斜线(中心留缺口),生命周期内缺口外扩 + 线段微收 + 淡出;白芯 + 深色描边,任意背景下可见。
 class HitMarker extends Control:
-	var t := 0.0   # 0..1
+	var t := 0.0
 
 	func _draw() -> void:
 		var c := size * 0.5
@@ -194,7 +168,6 @@ class HitMarker extends Control:
 			draw_line(p0, p1, Color(1, 1, 1, a), 3.0)
 
 
-# 击杀骷髅:8×8 像素画(' #'骨白 / 'o'暗部)逐格绘制,深色描边垫底;纯视觉,随播报同窗显隐。
 class KillSkull extends Control:
 	const PX := 8.0
 	const BONE := Color(0.96, 0.96, 0.92)

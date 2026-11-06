@@ -1,6 +1,5 @@
 extends Node
 
-# 「回大厅后回局」的真链路端到端探针(场景模式,autoload 必须已实例化)。
 
 const PREFIX := "rejoin_probe_"
 const LOBBY_PORT := 29300
@@ -11,7 +10,6 @@ const CHILD_QUIT_AFTER := "36000"
 const BOOT_TIMEOUT := 40.0
 const FINAL_TIMEOUT := 180.0
 const RESULT_WAIT := 90.0
-# 一条绿的跑至少要跑到的断言数:相① 端口 1 条 + 相② 4 条(行在不在 / in_match / 名单 / pid);三端结果不合格时走 _check(false, …),那本来就已经是红的。
 const MIN_CHECKS := 5
 
 var _role := "lobby"
@@ -47,9 +45,7 @@ func _run_orchestrator() -> void:
 		return
 	_rm = RoomManager.new()
 	add_child(_rm)
-	# ★ worker 起投拨到池外(理由同 team_match_probe:本机可能同时跑着用户自己的大厅,它往池 7800~8299 里发端口,而本探针收尾会按端口杀 worker —— 撞上就是误杀别人的对局)。
 	_rm.get("_launcher").set("_next_port", WORKER_PORT_OUT)
-	# ★★ 清理失败**必须整段收工**(brief 忽略了返回值):残留的 `.result` 会被当成本跑的读数下判决。
 	if not _clean():
 		print("PROBE: 清理失败(多半是上一跑的进程还活着)—— 不拉起客户端,直接退出")
 		get_tree().quit(1)
@@ -87,7 +83,6 @@ func _process(delta: float) -> void:
 			_stage_collect()
 
 
-# 相① 房建起来了(c1 建房),并且配对完成
 func _stage_room() -> void:
 	if _rm == null or _rm.lobby.rooms.is_empty():
 		if _t > BOOT_TIMEOUT:
@@ -107,7 +102,6 @@ func _stage_room() -> void:
 	_stage = 1
 
 
-# 相② 房开局后仍然在列表里、且带 in_match(这是「C 看得见」的服务端那一半;客户端那一半由 c3 自己断言)。★ 这一相同时是显示方案的回归(房活过转连)。
 func _stage_started() -> void:
 	if _room_code == "" or not _rm.lobby.rooms.has(_room_code):
 		_finish("房 %s 消失了(开局那一刻不该被拆 —— 那正是显示方案要改掉的旧行为)" % _room_code)
@@ -124,7 +118,6 @@ func _stage_started() -> void:
 		_check(not row.is_empty(), "相② ★ 开局后房**仍在**房间列表里(旧实现此刻已拆房 → C 什么都看不见)")
 		if not row.is_empty():
 			_check(bool(row.get("in_match", false)), "相② 列表行带 in_match=true")
-			# ★ 名单取冻结的那份(成员转连 worker 后会全部断开大厅:players 会空、_peer_names 会被擦 → 只有快照还在;不是快照就会退化成「玩家, 玩家」)。
 			_check(row.get("names", []) == ["BOT1", "BOT2"],
 					"相② ★ 名单取自冻结的那份(实得 %s)" % str(row.get("names", [])))
 			_check(int(room.worker_pid) > 0, "相② ★ spawn 成功后登记了 worker pid(回收判据的输入)")
@@ -153,7 +146,6 @@ func _finish(why: String) -> void:
 			_check(false, "%s: %s" % [who, txt.split("\n")[0]])
 	if why != "":
 		_check(false, why)
-	# ★★ 计数守卫只对「否则会打印 ALL-OK」的那一跑生效(已经有红时不叠加噪音)。
 	if _failures.is_empty() and _checks < MIN_CHECKS:
 		_check(false, "只跑了 %d 条断言(期望 ≥ %d)—— 有阶段没跑到,这个 ALL-OK 不算数"
 				% [_checks, MIN_CHECKS])
@@ -171,7 +163,6 @@ func _finish(why: String) -> void:
 	get_tree().quit(0 if _failures.is_empty() else 1)
 
 
-# ── 小组手(与 team_match_probe 同款)──
 func _check(ok: bool, msg: String) -> void:
 	_checks += 1
 	if ok:
@@ -204,9 +195,6 @@ func _kill_children() -> void:
 			killed += 1
 	print("PROBE: 按 PID 收尾 %d/%d 个子进程" % [killed, _child_pids.size()])
 	_child_pids.clear()
-	# ★ 兜底按端口杀:worker 不是本进程记过 pid 的子进程(它由 WorkerLauncher 拉起,pid 只在 launcher 的表里),故 PID 那一轮杀不到它;杀的是本跑真正分配到的那个端口(_worker_port,来自 pick_port()),不是起投点。
-	# ★★ 绝不许杀 LOBBY_PORT:大厅就在本进程里(NetBus.start_server(LOBBY_PORT)),ProcUtil.kill_udp_port 按 UDP 端口找属主 = 找到本进程的 pid → 自杀。
-	#   症状极具迷惑性:探针在 _finish 里打完「按 PID 收尾」就当场消失,后面几行明细与 REJOIN PROBE: … 一个字都打不出来(退出码 255),而三端 .result 全是 OK。大厅端口由 tests/probe/rejoin_probe.sh 在探针退出之后兜底清理。
 	if _worker_port > 0:
 		ProcUtil.kill_udp_port(_worker_port)
 
@@ -266,7 +254,6 @@ func _clean() -> bool:
 	return ok
 
 
-# 观察者挂 root(不是本场景):大厅页 → pvp_game → 主菜单 → 再进 pvp_game 这一串换场都不会把它带走。
 func _run_client() -> void:
 	var w: Node = load("res://tests/harness/rejoin_watcher.gd").new()
 	w.set("who", _role)

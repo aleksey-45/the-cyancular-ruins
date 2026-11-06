@@ -3,23 +3,22 @@ extends Node
 
 # 战斗子系统:生命/无敌帧/爆炸击退向量/倒地;由根 player.gd 驱动(take_hit 经根转发、apply_knock/update_iframe_blink 每物理帧),hp_changed 由根转发给 HUD。
 
-# PvP 取消命中无敌帧(否则霰弹只算第一丸),帧伤防范靠「每发弹丸命中即销毁、只结算一次」由服务器裁决保证。
 static var pvp_arena := false
 
 
 signal hp_changed(current: int, max: int)
-signal went_down   # 倒地瞬间触发,根连到 weapons.cancel_aim(保持旧 _downed 里的取消瞄准)
-signal took_hit(source_pos: Vector2, damage: int, cause: String)  # 实际造成一次伤害(服务器 MatchHost 接它广播受击反馈;cause="water" = 客户端已预测的窒息伤害)
+signal went_down
+signal took_hit(source_pos: Vector2, damage: int, cause: String)
 
 var max_hp: int = PlayerParams.player_max_hp
 var hp: int = PlayerParams.player_max_hp
 var iframes: float = 0.0
 var downed: bool = false
-var knock_velocity: Vector2 = Vector2.ZERO  # 爆炸专属击退向量(独立于移动速度,指数衰减)
+var knock_velocity: Vector2 = Vector2.ZERO
 
 var body: CharacterBody2D
 
-const IFRAME_BLINK_RATE := 20.0   # 无敌帧闪烁频率(每秒明暗切换次数)
+const IFRAME_BLINK_RATE := 20.0
 
 func _ready() -> void:
 	body = get_parent() as CharacterBody2D
@@ -36,22 +35,16 @@ func update_iframe_blink(delta: float) -> void:
 
 func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, knockback: float = -1.0,
 		feedback_only: bool = false, cause: String = "") -> void:
-	# ignore_iframes:特殊攻击(如冲撞)穿透无敌帧但照常刷新;PvP 取消无敌帧阻挡,仍每发只结算一次。
 	if downed or (not pvp_arena and iframes > 0.0 and not ignore_iframes):
 		return
-	# feedback_only:只播受击反馈,不碰 hp / 击退 / 无敌帧 / took_hit —— 供"权威 c2 可能已包含这一发"的客户端兜底路径用
-	# (二次扣血会让下一个 ack 再判一次分歧)。判据见 docs/eng/netcode-snapshots.md §2.2。
-	# ★ 只有 PvP 客户端用它(那里 pvp_arena=true)⇒ 它前面的 iframes 门在 PvP 下是惰性的;非 PvP 调用方要先确认门别把反馈挡掉。
 	if feedback_only:
 		play_hit_feedback(source_pos, damage)
 		return
-	# 冲刺被打断:否则下一帧 is_charge 分支会用冲刺速度覆盖本次击退
 	body.cancel_charge()
 	hp -= damage
 	took_hit.emit(source_pos, damage, cause)
 	play_hit_feedback(source_pos, damage)
 	iframes = PlayerParams.iframes_time
-	# ★ 击退方向必须用环面最短向量,不能绝对相减:服务器权威下命中源坐标(服务器子弹/爆心)锚在射手副本上,可能与本玩家 canonical 相差约整幅地图(跨接缝对枪),绝对相减会得出反向击退。
 	var away := (body.global_position - source_pos).normalized()
 	if GameParameters.MAP_WIDTH > 0.0 and GameParameters.MAP_HEIGHT > 0.0:
 		var short_vec := MazeGenerator.toroidal_delta_px(source_pos, body.global_position,
@@ -70,10 +63,8 @@ func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, kn
 		_downed()
 
 
-# 受击的**纯表现**部分(音效 + 小红闪 + 震屏)。take_hit 与 feedback_only 两条路径共用 ⇒ 正常受击的观感逐字不变。
 func play_hit_feedback(_source_pos: Vector2, damage: int) -> void:
 	Sfx.play("hurt")
-	# 受击反馈:每次命中小红闪 + 小幅震动;大伤害(扣血 >25% 最大血)的强震。
 	var tree := body.get_tree()
 	if tree != null:
 		var pp := tree.get_first_node_in_group("post_process")
@@ -85,19 +76,16 @@ func play_hit_feedback(_source_pos: Vector2, damage: int) -> void:
 		if hit_ratio > 0.25:
 			cam.shake(PlayerParams.hit_cam_shake * (hit_ratio / 0.25), PlayerParams.hit_cam_shake_time)
 		else:
-			cam.shake(6.0, 0.15)   # 小伤害也给一点震感
+			cam.shake(6.0, 0.15)
 
-# 爆炸击退位移:单独 move_and_collide 结算,不污染 velocity —— 地面吃掉向下击退后再减回去会把玩家弹起。
 func apply_knock(delta: float) -> void:
 	body.move_and_collide(knock_velocity * delta)
 	knock_velocity *= exp(-PlayerParams.player_knock_decay_rate * delta)
 
-# 服务器权威倒地/复活(PvP 用;单人按 R 重载场景不涉及)。
 func force_down() -> void:
 	if not downed:
 		_downed()
 
-## 回溯专用:把倒地态置为 v,不扣血、不发 went_down、不再触发死亡流程 —— 供 Player.rewind_restore 精确复原。
 func set_downed_by_rewind(v: bool) -> void:
 	if downed == v:
 		return
@@ -109,16 +97,11 @@ func set_downed_by_rewind(v: bool) -> void:
 		went_down.emit()
 
 
-## 回溯专用(2026-11-01 R3):把倒地态恢复成"活着"的状态与表现 —— 与 `revive()` 的唯一区别是**不动 `hp`**。
-## ★ 为什么必须分开:调用方(`Player.rewind_restore`)刚从快照恢复过 `hp`,再走 `revive()` 会把 hp 顶成满血、
-##   把快照值冲掉(旧实现正是这样:单机回溯从倒地回到死前,血量变成满血)。而服务器那份旧实现又只置 downed、
-##   不恢复旋转/灰屏 ⇒ 两端口径相反。现在 `revive()` = 本函数 + `hp = max_hp`,两边都只有这一份实现。
 func restore_alive_state() -> void:
 	if not downed:
 		return
-	set_downed_by_rewind(false)   # downed=false + 动画切 idle(不扣血、不发 went_down)
+	set_downed_by_rewind(false)
 	body.rotation = 0.0
-	# 复位倒地变灰:_downed() 只 set_downed(true),不复位则复活后屏幕一直灰。
 	var tree := body.get_tree()
 	if tree != null:
 		var pp := tree.get_first_node_in_group("post_process")
@@ -134,7 +117,6 @@ func revive() -> void:
 
 func _downed() -> void:
 	downed = true
-	# 不取消物理:保留当前速度/击退,尸体继续受重力/冲击(与敌人统一)
 	body.rotation = -PI / 2.0 * float(body.get_facing())
 	var animator: AnimatedSprite2D = body.animator
 	if animator != null:

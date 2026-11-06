@@ -1,32 +1,24 @@
 class_name WorkerLauncher
 extends RefCounted
 
-# 每局 worker 子进程的端口池 + 进程管理:分配端口、拉起 headless worker、按端口杀、日志落盘(与「房间」无关,故独立于 RoomManager)。
-# ★ 端口分配必须是「唯一递增 + 占用集合」:不要改成在大厅本进程 bind 探测空闲 —— worker 是独立进程,大厅
-# 探测看不到别的进程已占的端口,并发时会把同一端口发给两个 worker(后者绑定失败退出)。
 
 
 const WORKER_PORT_BASE := 7800
 const WORKER_PORT_SPAN := 500
 # 端口归还延迟三档 = ModeDefs.PORT_REUSE_DELAY_*(单一来源;延迟本身不承重,承重的是 worker 进程还活着)。
 var _next_port := WORKER_PORT_BASE
-var _worker_ports: Dictionary = {}   # 正在使用(未释放)的 worker 端口
-var _worker_pids: Dictionary = {}   # port(int) -> pid(int):回收要判"这一局还在不在"
-var _worker_started: Dictionary = {}   # port(int) -> unix 秒:worker 自己的存活时长(worker_lost.alive_sec 用它,不是房龄)
-# ★ BUG-09(2026-10-30):房已摘除、worker 还在跑的端口(ai_duel 局)。与 _worker_ports 并存 —— 端口**继续占着**
-#   (pick_port 不会再发它、面板看得见),等进程退出后由 reap_orphans() 一并归还;差异只在"谁负责归还"。
-var _orphan_pids: Dictionary = {}      # port(int) -> pid(int)
+var _worker_ports: Dictionary = {}
+var _worker_pids: Dictionary = {}
+var _worker_started: Dictionary = {}
+var _orphan_pids: Dictionary = {}
 
 
-# 把「房已摘除、worker 还在跑」的端口登记为孤儿:端口不归还,pid 留着给 reap_orphans 判死活。
 func adopt_orphan(port: int) -> void:
 	if port <= 0 or not _worker_ports.has(port):
 		return
 	_orphan_pids[port] = int(_worker_pids.get(port, 0))
 
 
-# 孤儿梯(由 RoomManager._process 每 tick 调):pid 已退 ⇒ 端口归还。★ 必须判 pid>0:
-#   「还没登记 pid」的窗口里判成死会立刻归还一个正在被 worker 绑定的端口。
 func reap_orphans() -> int:
 	var n := 0
 	for port in _orphan_pids.keys():
@@ -46,7 +38,6 @@ static func port_span_text() -> String:
 	return "%d~%d" % [WORKER_PORT_BASE, WORKER_PORT_BASE + WORKER_PORT_SPAN - 1]
 
 
-# 立刻把端口还给池子(不等 worker 退出);调用方语义见 room_manager 的 TEARDOWN_* 三档。
 func release_now(port: int) -> void:
 	if port <= 0:
 		return
@@ -73,7 +64,6 @@ func pid_of(port: int) -> int:
 	return int(_worker_pids.get(port, 0))
 
 
-# ★ pid <= 0 一律 false(「不在」):pid 登记在 OS.create_process 成功之后,而 started/in_match 在它之前 —— 那个窗口里判「活着」会让开局一瞬被自己的回收梯拆掉。
 static func pid_alive(pid: int) -> bool:
 	return pid > 0 and OS.is_process_running(pid)
 
@@ -82,7 +72,6 @@ func started_at(port: int) -> float:
 	return float(_worker_started.get(port, 0.0))
 
 
-# 端口池快照:三种占法可区分。★ 活着必须走 pid_alive(别另写一份);按端口升序(面板 0.5s 刷新,无序会跳)。
 static func classify(ports: Array, pids: Dictionary) -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
 	for p in ports:
@@ -101,15 +90,11 @@ func busy_ports() -> Array[Dictionary]:
 # ── worker 的引擎日志落盘(两个 spawn 共用)── worker 是独立进程,stdout 父进程看不到(Windows CreateProcess
 # 不继承句柄)⇒ 它崩了/报错/提前退出,大厅这边一个字都收不到。⚠ --log-file 是引擎选项,必须排在 -- 之前(之后会被当用户参数吞掉)。
 func log_path(port: int) -> String:
-	# ★ 目录口径与 NetDiag 同源(别在这里另判一次是否导出):打包后的服务端 = exe 同目录 `log/`,
-	#   开发态 = user://logs。worker 的引擎日志(--log-file)与它自己的 diag/ops jsonl 落在同一个文件夹里,
-	#   出问题时"一个目录 = 一整场对局的全部日志",不用去 user:// 里翻。
 	var dir := NetDiag.log_dir()
 	DirAccess.make_dir_recursive_absolute(dir)
 	return dir.path_join("worker_%d.log" % port)
 
 
-# ── 每局归档(端口复用不许覆盖上一局崩溃现场)────────────────────────────────
 const WORKER_LOG_KEEP := 20
 
 
@@ -185,7 +170,6 @@ func spawn_worker(port: int, ai_roles: Array = []) -> bool:
 	return pid > 0
 
 
-# 拉起大乱斗 worker:roles = 本局全部参战 role(真人已分配号 + AI 补位号)。
 func spawn_royale_worker(port: int, roles: Array, ai_roles: Array = []) -> bool:
 	_archive_log(port)
 	var role_strs := []
@@ -226,8 +210,6 @@ func spawn_royale_worker(port: int, roles: Array, ai_roles: Array = []) -> bool:
 	return pid > 0
 
 
-# 拉起 3v3 worker(--team --roles r,r,... --teams t,t,...):roles 与 teams 同序、等长,第 i 个 role 的队号就是 teams[i]。
-# ★ 队号必须显式传、不能从 role 号推(同上:编号留空洞);与 server_main.gd 的 argv 逐字对应(现零守卫)。
 func spawn_team_worker(port: int, roles: Array, teams: Array) -> bool:
 	_archive_log(port)
 	if roles.size() != teams.size():
@@ -269,15 +251,10 @@ func spawn_team_worker(port: int, roles: Array, teams: Array) -> bool:
 	return pid > 0
 
 
-# 杀指定 UDP 端口的进程(worker)。
 func kill_worker(port: int) -> void:
-	# ★ BUG-10(2026-10-30):异步 —— 主线程不再被 PowerShell 阻塞几百 ms。
 	ProcUtil.kill_udp_port_async(port)
 
 
-# 延迟归还 worker 端口(2026-10-30 S-09:从 `LobbyRooms` 挪来 —— 端口生命周期属于这里,不属于 RPC handler)。
-# 给旧 worker 留足退出时间,防止端口被立刻复用导致串线。delay 由 teardown_room 按房型给三档。
-# ★ 本类仍是 RefCounted(不能 get_tree)⇒ 由调用方(大厅 Node)传 host 来拿 SceneTree 定时器。
 static func release_port_later(host: Node, launcher: WorkerLauncher, port: int,
 		delay: float = ModeDefs.PORT_REUSE_DELAY_PVP) -> void:
 	if port <= 0:

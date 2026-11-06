@@ -1,10 +1,9 @@
 extends Node
-# 水体/水面砖映射守卫(2026-11-01 用户报「把水体都变成水面了」)。
 
 const MARKER := "WATER ATLAS PROBE: ALL-OK"
 const EXPECTED_CHECKS := 6
-const TS := 64          # GameParameters.TILE_SIZE(水体永远按 64px 整格渲染)
-const SRC := 32         # 源砖边长 TerrainAtlas.SRC_TILE
+const TS := 64
+const SRC := 32
 
 var _fails: Array[String] = []
 var _checks := 0
@@ -21,7 +20,6 @@ func _ready() -> void:
 
 
 func _run() -> void:
-	# ① 常量 = 0-based 下标与纹理 id 的对应(纹理 id = 下标 + 1)
 	_chk(TerrainAtlas.WATER_BODY_BRICK == 20 and TerrainAtlas.WATER_SURFACE_BRICK == 21,
 			"★ 水砖下标必须是 20/21(0-based ⇒ 纹理 21 水 / 22 水面),实得 %d/%d" % [
 				TerrainAtlas.WATER_BODY_BRICK, TerrainAtlas.WATER_SURFACE_BRICK])
@@ -29,25 +27,22 @@ func _run() -> void:
 	var body := _brick_stats(TerrainAtlas.WATER_BODY_BRICK)
 	var surface := _brick_stats(TerrainAtlas.WATER_SURFACE_BRICK)
 
-	# ② 水面砖的顶带必须比其余部分更亮(证明 22 是"带亮线的水面",不是纯色填充)
 	_chk(float(surface["top_lum"]) >= float(surface["rest_lum"]) + 12.0,
 			"★ 水面砖(纹理 22)顶带必须更亮:顶 %d 行亮度 %.1f,其余 %.1f" % [
 				surface["top_rows"], surface["top_lum"], surface["rest_lum"]])
 
-	# ③ 水体砖必须**没有亮带**且 alpha 恒定(深水里不该出现水面的亮线;把它画成水面正是用户报的症状)
+	# ③ 水体砖必须没有亮带且 alpha 恒定(深水里不该出现水面的亮线;把它画成水面正是用户报的症状)
 	#   ★ 不判"逐像素同色":源砖本身带一点噪声(实测通道差 ≈58),真正的区别是"顶带是否更亮"。
 	_chk(int(body["alpha_min"]) == int(body["alpha_max"])
 			and float(body["top_lum"]) < float(body["rest_lum"]) + 8.0,
 			"★ 水体砖(纹理 21)必须无亮带且 alpha 恒定:顶带-其余亮度差 %.1f、alpha %d..%d" % [
 				float(body["top_lum"]) - float(body["rest_lum"]), body["alpha_min"], body["alpha_max"]])
 
-	# ④ 两张放大图必须不同(合并成一个常量 = 同图 ⇒ 整片水一个观感)
 	var body_img := TerrainAtlas.water_brick_image(TS, TerrainAtlas.WATER_BODY_BRICK)
 	var surf_img := TerrainAtlas.water_brick_image(TS, TerrainAtlas.WATER_SURFACE_BRICK)
 	_chk(_images_differ(body_img, surf_img),
 			"★ 水体图与水面图必须是两张不同的图(实得同一张 = 两常量合并/缓存串味)")
 
-	# ⑤ 水体图集必须由 BODY 砖构成(取 shape=15 那一列的中心像素与 BODY 砖中心比对)
 	var tileset := TerrainAtlas.make_water_tileset(TS)
 	var ts_img := _tileset_image(tileset)
 	if ts_img == null:
@@ -58,7 +53,6 @@ func _run() -> void:
 		_chk(_channels_close(px, body_px, 2.0),
 				"★ 水体图集必须用 BODY 砖:A16 图集中心 %s vs BODY 中心 %s" % [str(px), str(body_px)])
 
-	# ⑥ 缓存键必须带 idx:先取 BODY 再取 SURFACE,两者不同;再取一次 BODY 仍等于第一次
 	var body_again := TerrainAtlas.water_brick_image(TS, TerrainAtlas.WATER_BODY_BRICK)
 	_chk(_images_differ(body_again, surf_img) and not _images_differ(body_again, body_img),
 			"★ 水砖缓存必须按 idx 分开(否则水面会把水体那张图顶掉)")
@@ -72,12 +66,10 @@ func _run() -> void:
 	else:
 		for f in _fails:
 			print("  [FAIL] ", f)
-		# ★ 失败行绝不能含 "ALL-OK"(判据是 grep 那三个字;写成 "ALL-OK: FAIL" 等于让红变绿)。
 		print("WATER ATLAS PROBE: FAIL(%d 处)" % _fails.size())
 		get_tree().quit(1)
 
 
-# 统计一块源砖:整体通道最大差(均匀性)、alpha 范围、顶部 TOP_ROWS 行与其余行的平均亮度。
 func _brick_stats(idx: int) -> Dictionary:
 	const TOP_ROWS := 8
 	var src := TerrainAtlas.source_image()

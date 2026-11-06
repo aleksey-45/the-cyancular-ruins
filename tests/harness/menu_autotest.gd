@@ -1,10 +1,8 @@
 extends Node
 
-# 菜单流转自动探针(挂 root,穿越 change_scene 存活):模拟 主菜单→(单人面板→开始探索 / 多人 / 设置) 的真实按钮点击流转,验证场景切换、渲染链与暂停层;带窗口运行时把玩家所见截图存到 user://。
 
-var mode := ""   # sp / mp / royale / team / set / level / ver / switch / play(由 main_menu 经 cmdline 参数注入)
+var mode := ""
 
-# sp 模式用:选图控件里点的是哪张图(进关后要断言"真的建了这张图")
 const PICK_MAP := "res://maps/newfactory.cyrm"
 var _picked_map_expected := ""
 
@@ -14,7 +12,7 @@ func _ready() -> void:
 
 func _run() -> void:
 	var tree := get_tree()
-	await tree.create_timer(1.2).timeout   # 等浮现动画
+	await tree.create_timer(1.2).timeout
 	if mode == "beta":
 		await _run_beta_flow(tree)
 		tree.quit(0)
@@ -46,8 +44,6 @@ func _run() -> void:
 		_verify_map_picker(tree)
 		_press_by_text(tree.current_scene, "开 始 探 索")
 	elif mode == "mp" or mode == "royale" or mode == "team":
-		# 2026-10-03:三个联机模式的入口收成主菜单上唯一一颗「多 人 模 式」,都进统一大厅
-		# `mp_lobby`。三个 mode 仍**分开**走(到达断言按各自的名字判,见 must_reach)。
 		_press_by_text(tree.current_scene, "多 人 模 式")
 	elif mode == "set":
 		_press_by_text(tree.current_scene, "设 置")
@@ -57,8 +53,6 @@ func _run() -> void:
 	var cur := tree.current_scene
 	print("AUTOTEST[%s]: 当前场景 = %s" % [mode, cur.scene_file_path if cur != null else "<null>"])
 	_dump_render_chain(tree, cur)
-	# ★ 硬断言:每个会切场景的模式都必须真的抵达目标场景。
-	# ★ ver 自 2026-10-03 起也是整页、会切场景(「版 本 信 息」弹层已删除):原先「弹层不切场景 ⇒ 断言 scene 路径是同义反复」那条论证随之作废,故它与 sp/mp/set 同列。
 	var must_reach := {
 		"sp": "level_0.tscn",
 		"mp": "mp_lobby.tscn",
@@ -78,8 +72,6 @@ func _run() -> void:
 	tree.quit(0)
 
 
-# ── 选图控件(单机开局面板)── 为什么必须在场景级验:数据层探针只能证明「目录/缩略图/校验函数对」,证明不了「面板上选中的值有没有真的走到建图」。
-# 少了这条,「摆了两张缩略图、进关还是随机图」这种假功能照样通过(末尾的场景断言只看「到了 level_0.tscn」)。
 func _verify_map_picker(tree: SceneTree) -> void:
 	var picker := _find_picker(tree.current_scene)
 	if picker == null:
@@ -100,8 +92,6 @@ func _verify_map_picker(tree: SceneTree) -> void:
 	print("AUTOTEST[sp]: 已在面板里选中 %s" % PICK_MAP)
 
 
-# 进关后:钉住的图 + 世界像素尺寸都要按选中的图算
-# (后者是**真的坑**:启动时算的是随机图的尺寸,选了别的尺寸的图不重算 → 环面回绕按错边界)
 func _verify_picked_map(tree: SceneTree) -> void:
 	if _picked_map_expected == "":
 		return
@@ -131,9 +121,6 @@ func _find_picker(n: Node) -> MapPicker:
 	return null
 
 
-# ── beta 模式:主菜单 → Beta 页(两张卡)→ 错乱大乱斗卡 → beta 态统一大厅 mp_lobby(时间参数面板)──
-# ★ 为什么场景级:独立房间池的客户端侧一半(beta 标的创建/过滤/上报)都长在大厅页里,
-#   不真开一次页,「beta 态建面板 + 9 行参数 + player_options 带 time」这些全是纸面推断。
 func _run_beta_flow(tree: SceneTree) -> void:
 	_press_by_text(tree.current_scene, "Beta")
 	await tree.create_timer(1.5).timeout
@@ -144,7 +131,6 @@ func _run_beta_flow(tree: SceneTree) -> void:
 		print("AUTOTEST[beta]: 未进入 beta_menu(实际 %s)——按钮文案变了?" % path0)
 		tree.quit(1)
 		return
-	# 两张卡的名字与版本号都必须在
 	var texts := _collect_texts(beta)
 	for want in ["错乱大乱斗", "时空对抗", "Royale", "Team", "beta_0.0"]:
 		if texts.find(want) < 0:
@@ -152,7 +138,6 @@ func _run_beta_flow(tree: SceneTree) -> void:
 			tree.quit(1)
 			return
 	print("AUTOTEST[beta]: 两张卡与版本号齐全")
-	# 点第一张卡(错乱大乱斗)→ 应以 beta 态进入**统一大厅** mp_lobby,且筛选预选成大乱斗
 	(beta as Node).call("_enter_card", (beta as Node).get("CARDS")[0])
 	await tree.create_timer(1.5).timeout
 	var lobby := tree.current_scene
@@ -167,11 +152,8 @@ func _run_beta_flow(tree: SceneTree) -> void:
 		print("AUTOTEST[beta]: 卡片没把筛选预选成大乱斗(entry_mode=%s)" % PvpSession.entry_mode)
 		tree.quit(1)
 		return
-	# 建房弹层启动即建、默认隐藏(骨架里的 %CreatePanel;_build_ui() 只登记 + 收起)。
-	#   这里先开一次不是为了把滑条建出来,而是让这一相走玩家那条路 —— 点开弹层,再数玩家能看到的那 9 行。
 	(lobby as Node).call("_open_create_dialog")
 	await tree.create_timer(0.2).timeout
-	# 建房面板必须带 9 行时间参数(滑条),报到选项必须带 time 规则
 	var sliders := 0
 	for n in _walk(lobby, func(x: Node) -> bool: return x is HSlider):
 		sliders += 1
@@ -209,9 +191,6 @@ func _walk(n: Node, pred: Callable) -> Array:
 	return out
 
 
-# ── switch 模式:两趟「进单机 → 回主菜单」,把 safe_change_scene 的两条路径都走到 ──
-# 为什么要两趟:Level0.safe_change_scene 的收尾有两个动作,付账时机不同 —— remove_child(old)(整棵旧世界递归摘树)每趟都付,第 1 趟也付;_retired.free()(同步销毁上一整具世界)第 2 趟起才付(第 1 趟 _retired 还是空)。
-# 用户报的「有些时候才卡」正指向后者,而项目自己的 recon 把这条列为从未实测((l4 recon 曾把这条列为从未实测)),本模式就是把它变成可测的。数字由 level_0.gd 的 _perf_log 打,需同带 -- --perf-switch(不带则只有流程、没有数字)。
 func _run_switch_roundtrips(tree: SceneTree) -> void:
 	for i in range(2):
 		_press_by_text(tree.current_scene, "单 人 模 式")
@@ -228,9 +207,6 @@ func _run_switch_roundtrips(tree: SceneTree) -> void:
 		_press_esc()
 		await tree.create_timer(0.4).timeout
 		_press_by_text(tree.current_scene, "回到主菜单")
-		# ★ 量**用户看得见的东西**:换场后 90 帧的**帧间隔**,而不是 safe_change_scene 内部
-		#   各步骤的耗时 —— 内部步骤加起来只有几十毫秒,而"卡不卡"取决于有没有一帧被拖长。
-		#   逐帧打点还顺带回答"分帧拆除器本身会不会把卡顿摊成一串小顿"(预算 3ms/帧)。
 		var worst := 0.0
 		var total := 0.0
 		var worst_at := -1
@@ -255,8 +231,6 @@ func _run_switch_roundtrips(tree: SceneTree) -> void:
 		print("AUTOTEST[switch]: 第 %d 趟已回主菜单" % [i + 1])
 
 
-# ── play 模式:真的打一局再退 —— 这是用户的复现路径 ── 为什么必须有它:switch 模式只做菜单往返,一枪没开;而真实游玩后世界状态完全不同(场上有子弹、explosion 动画节点、TileHitFx 粒子、被炸碎并重建过碰撞分块的砖、敌人尸体)。
-# 退役那一刻要拆的东西比一具干净世界多得多。用户报的正是「玩好一局以后」才卡,所以量它的必须是一个打过的世界。
 func _run_play_session(tree: SceneTree) -> void:
 	_press_by_text(tree.current_scene, "单 人 模 式")
 	await tree.create_timer(0.4).timeout
@@ -273,11 +247,9 @@ func _run_play_session(tree: SceneTree) -> void:
 		tree.quit(1)
 		return
 	print("AUTOTEST[play]: 已进单机,开始打枪")
-	# 打枪:手枪连点(直接驱动武器,确定性 —— 不走 Input 注入,免得受全局输入状态影响)
 	for _i in range(6):
 		_fire_once(player)
 		await tree.create_timer(0.12).timeout
-	# 打炮:拿到第 5 槽(榴弹发射器)轰两发,等引信炸开 + 碎砖落定。
 	player.weapons.pick_up(5, WeaponInventory.MAG_FULL)
 	await tree.create_timer(0.4).timeout
 	for _i in range(2):
@@ -286,10 +258,9 @@ func _run_play_session(tree: SceneTree) -> void:
 	await tree.create_timer(1.2).timeout
 	print("AUTOTEST[play]: 打枪打炮完毕(场上子弹 %d / 敌人 %d)" % [
 			tree.get_nodes_in_group("bullet").size(), tree.get_nodes_in_group("enemies").size()])
-	# ── 榴弹自杀:把注入瞄准压成「朝正下方」,让榴弹在脚下炸开。用 AiInputSource 而不是直接 take_hit:要的就是真的走一遍榴弹那条路(出膛→撞地→引信→AoE→玩家掉血→倒地),它才会留下爆炸动画/碎砖/废墟。──
 	var prev_src = player.input_source
 	var suicide_src := AiInputSource.new()
-	suicide_src.aim = Vector2(0.0, 1.0)   # 正下方
+	suicide_src.aim = Vector2(0.0, 1.0)
 	player.set_input_source(suicide_src)
 	player.weapons.equip_type(5)
 	await tree.create_timer(0.4).timeout
@@ -301,8 +272,6 @@ func _run_play_session(tree: SceneTree) -> void:
 	await tree.create_timer(0.6).timeout
 	print("AUTOTEST[play]: 榴弹自杀 → 倒地=%s(hp=%d)" % [str(player.is_downed()), player.hp])
 	player.set_input_source(prev_src)
-	# ── 倒地按 R:单机原地复位(restart_single = 还原砖/碰撞 + 清弹 + 重刷敌人)──
-	# 这条路径本身就重建过整层碰撞,是"玩好一局"里状态最重的一步。
 	_press_key("R")
 	await tree.create_timer(2.0).timeout
 	player = tree.get_first_node_in_group("player")
@@ -313,7 +282,6 @@ func _run_play_session(tree: SceneTree) -> void:
 	print("AUTOTEST[play]: 按 R 复位后 倒地=%s,敌 %d,场上子弹 %d" % [
 			str(player.is_downed()), tree.get_nodes_in_group("enemies").size(),
 			tree.get_nodes_in_group("bullet").size()])
-	# ── 再开两枪(用户指定的最后一段操作)──
 	player.weapons.equip_type(1)
 	await tree.create_timer(0.4).timeout
 	for _i in range(2):
@@ -330,7 +298,6 @@ func _run_play_session(tree: SceneTree) -> void:
 			await tree.process_frame
 		print("AUTOTEST[play]: quit() 后 180 帧进程仍在")
 		return
-	# 回主菜单:量帧间隔(用户看得见的东西)
 	_press_esc()
 	await tree.create_timer(0.4).timeout
 	_press_by_text(tree.current_scene, "回到主菜单")
@@ -341,7 +308,6 @@ func _run_play_session(tree: SceneTree) -> void:
 				str(cur.scene_file_path) if cur != null else "<null>"))
 		tree.quit(1)
 		return
-	# 退出游戏:打点后点「退 出」,进程随即结束 —— 这段尾巴的耗时由外部计时得到
 	print("AUTOTEST[play]: MARK-QUIT %d ms" % Time.get_ticks_msec())
 	await tree.create_timer(0.3).timeout
 	_press_by_text(tree.current_scene, "退 出")
@@ -377,8 +343,6 @@ func _measure_frames(tree: SceneTree, tag: String, n: int) -> void:
 			tag, n, worst, worst_at, total / float(n)])
 
 
-# ★ 硬断言:点了按钮必须**真的换了场景**(sp=「开始探索」→Level0、mp/set=直接跳页)。
-# 返回 false 时本函数已 quit(1),调用方只需 return —— 不能继续走到末尾的「DONE」。
 func _require_scene(tree: SceneTree, want: String) -> bool:
 	var cur := tree.current_scene
 	var actual: String = cur.scene_file_path if cur != null else "<null>"
@@ -389,7 +353,6 @@ func _require_scene(tree: SceneTree, want: String) -> bool:
 	return false
 
 
-# 渲染链诊断:WorldViewport 尺寸/子节点、PostProcess、WallLayer 单元数
 func _dump_render_chain(tree: SceneTree, cur: Node) -> void:
 	if cur != null and cur.get_node_or_null("WorldViewport") != null:
 		var wv: SubViewport = cur.get_node("WorldViewport")
@@ -402,7 +365,6 @@ func _dump_render_chain(tree: SceneTree, cur: Node) -> void:
 	print("AUTOTEST: post_process=", pp)
 
 
-# 暂停层验证:注入 Esc → 树应暂停;再 Esc → 恢复
 func _verify_pause(tree: SceneTree) -> void:
 	_press_esc()
 	await tree.create_timer(0.5).timeout
@@ -415,7 +377,6 @@ func _verify_pause(tree: SceneTree) -> void:
 	print("AUTOTEST: 再Esc后 paused=", tree.paused, "(应为 false)")
 
 
-# 回主菜单验证(safe_change_scene 路径):开暂停层点「回 到 主 菜 单」,场景应回到 main_menu
 func _verify_go_menu(tree: SceneTree) -> void:
 	_press_esc()
 	await tree.create_timer(0.4).timeout
@@ -429,12 +390,10 @@ func _verify_go_menu(tree: SceneTree) -> void:
 		tree.quit(1)
 
 
-# 注入一次 Esc(ui_cancel)
 func _press_esc() -> void:
 	_press_key("ui_cancel")
 
 
-# 注入一次按键动作(与 _press_esc 同款,供倒地后的 R 复位等用)
 func _press_key(action: String) -> void:
 	var ev := InputEventAction.new()
 	ev.action = action
@@ -442,11 +401,9 @@ func _press_key(action: String) -> void:
 	Input.parse_input_event(ev)
 
 
-# 截取玩家所见(root 视口)存档;headless 无视口纹理,安全跳过
 func _shot(tree: SceneTree, file: String) -> void:
 	await tree.process_frame
 	await tree.process_frame
-	# 只有真的存下去了才报「已存」——headless 跳过时不该声称存了(原实现无条件打印)
 	if _save_root_png(tree, "user://" + file):
 		print("AUTOTEST: 截图已存 user://" + file)
 
@@ -467,7 +424,6 @@ func _save_root_png(tree: SceneTree, path: String) -> bool:
 	return true
 
 
-# 按文字前缀找按钮并触发(去空格匹配;浮现动画不阻塞 pressed)
 func _press_by_text(n: Node, prefix: String) -> void:
 	if n == null or not is_instance_valid(n):
 		return

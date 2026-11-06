@@ -1,8 +1,5 @@
 extends RefCounted
 
-# 伤害数字(世界系):命中时在目标身上飘一个数字;挂世界 viewport ⇒ 相机 / 环面 / 后处理自动一致。
-# ★ 命中 X **不在这里**:X 由屏幕中心的 CombatFeedback.hit_marker() 画(用户裁定,别再把 X 搬到目标上)。
-# ★ 纯静态辅助、无 autoload;parent 为 null 静默返回,headless 服务器由调用方先判 CombatFeedback.current。
 
 const DAMAGE_LIFE := 0.5
 const DAMAGE_RISE := 26.0

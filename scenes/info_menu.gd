@@ -1,8 +1,5 @@
 extends Control
 
-# 信息整页:三块 = 版本信息(AppInfo)/ 开发团队 / 致谢。
-# 静态骨架在 info_menu.tscn 里(见 tools/gen_menu_scene.gd),本脚本只灌动态文本 + 接信号,样式走 menu_theme.tres 的 theme_type_variation;三块内容区(CommitList / TeamBox / CreditsBox)在骨架里是空的 —— 行由本脚本填,编辑器里看不到动态行。
-# ★ 名单与致谢是用户给定、逐字照抄:别改写措辞、别补全称、别加版本号、别调次序。零守卫(info_page_probe 已删·2026-10-09)。
 
 const DEV_TEAM := ["RoFtaCD", "KikuchiH", "Lord Nahiz Waugh", "siri2048",
 	"ofbwyx", "Lycoris Max", "hsk"]
@@ -70,7 +67,6 @@ func _commit_row(text: String, color: Color) -> Label:
 	return row
 
 
-# ★ 切场景必须延迟到帧末:change_scene_to_file 会同步 memdelete 当前场景,而本函数两条调用路径(ESC 与返回按钮)在切换之后还会碰 self/get_tree()。
 func _go_back() -> void:
 	Sfx.play("ui")
 	get_tree().change_scene_to_file.call_deferred("res://scenes/main_menu.tscn")
@@ -78,6 +74,5 @@ func _go_back() -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("ui_cancel"):
-		# ★ 顺序不能反:先标记已处理,再决定去向(切换之后本节点已被移出树)。
 		get_viewport().set_input_as_handled()
 		_go_back()

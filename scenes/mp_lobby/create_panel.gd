@@ -1,13 +1,11 @@
 class_name CreatePanel
 extends RefCounted
 
-# 大厅页的「建房弹层」面板(2026-10-22 Task 10 纯搬移自 scenes/mp_lobby.gd)。
 
 var page: MpLobby = null
 var form: OptionsForm = null
 var panel: PanelContainer = null
 var mask: ColorRect = null
-# 三颗模式分段按钮(mode -> Button;ButtonGroup 互斥,模式色在骨架里)。★ 必须登记:apply() 靠它把当前项置灰。
 var mode_btns := {}
 
 
@@ -16,8 +14,6 @@ func setup(p: MpLobby, f: OptionsForm) -> void:
 	form = f
 
 
-# 接骨架:压暗罩 / 弹层本体 / 三颗模式按钮 / 关闭·取消·确定,并建出动态的三块(禁用武器网格 / 地图选择器 / Beta 时间参数行)。
-# ★ 控件的信号在这里接(不挪进页 _ready):"按钮画在屏上、按下去毫无反应"没有任何运行时信号可观测。
 func register(root: Node) -> void:
 	# ★ 压暗罩铺满整页 + mouse_filter = STOP(拦下背后的点击 = 点弹层外不会误触房卡)在骨架里;它的颜色是调色板纪律的已知例外(全屏遮罩不属于 C_PLATE 那条「HUD 底板 0.1」家族,见 docs/eng/ui.md):Color(0,0,0,0.55) 与 ui/screens/ma。
 	mask = root.get_node("%CreateMask") as ColorRect
@@ -37,21 +33,16 @@ func register(root: Node) -> void:
 			(mode_btns[m] as Button).text = str(RoomList.MODE_LABEL[m])
 		(mode_btns[m] as Button).pressed.connect(func() -> void: apply(m))
 
-	# 「禁用武器」网格:行 = WeaponRegistry(每台武器一颗勾选框),故留代码。★ 回调把 cb 与 type_id 都收进 form.weapon_checks。
 	page._add_weapon_grid(root.get_node("%WeaponsBlock"), 20, form.on_weapon_cell)
-	# 地图选择器(基类 _add_map_picker 写 Settings.mp_map_path):整块在代码里建 —— 缩略图是 MapCatalog 现烘的,放进骨架只会是一份死重量(且运行时会变成两个选择器)。
 	page._add_map_picker(root.get_node("%MapBlock") as VBoxContainer)
-	# Beta 时间参数行(仅 Beta 会话;块显隐在 form.register)。
 	page._add_time_params(root.get_node("%BetaBlock") as VBoxContainer)
 
 
-# 点「＋ 创建房间」只显示弹层。★ 每次打开都重刷模式相关行显隐(apply),不挪进页 _ready —— 面板建好之后玩家仍可能改筛选模式,那时这条链必须再跑一次。
 func open() -> void:
 	apply(page._mode if page._mode != "" else PvpSession.MODE_PVP)
 	set_visible(true)
 
 
-# 弹层与压暗罩一起显隐(罩子单独隐藏会留下一层吃掉点击的全屏黑)。★ 两个节点都启动即建(骨架里就有)⇒ 这里没有 null 可判。
 func set_visible(v: bool) -> void:
 	panel.visible = v
 	mask.visible = v
@@ -61,9 +52,6 @@ func is_open() -> bool:
 	return panel.visible
 
 
-# 按模式变形 —— 本弹层唯一的分支。★★ 选中态用 toggle 的 pressed 态表达(骨架里三颗按钮是 toggle_mode + ButtonGroup):
-# 之前把当前模式 `disabled = true`,于是「平时白字、选中反而变灰」—— 2026-10-24 用户点名这批反直觉配色,改为按下态(按钮自己的模式色描边/字色)。
-# ★ 模式值同时记在页上(_create_mode):页的「确定」那条 RPC 分派读它(测试注释与页里都按这个名字认状态),本文件不另存一份。
 func apply(mode: String) -> void:
 	page._create_mode = mode
 	form.apply_rows(mode)
@@ -73,7 +61,6 @@ func apply(mode: String) -> void:
 		b.button_pressed = m == mode
 
 
-# 按模式给三套 payload 的公共部分 + 各自的私有键。
 func build_payload(mode: String) -> Dictionary:
 	var d := {
 		"is_public": form.is_public(),
@@ -90,7 +77,5 @@ func build_payload(mode: String) -> Dictionary:
 	return d
 
 
-# 报到选项(player_options)的组装:键集由 ModeDefs.OPTION_KEYS 决定(2026-10-22 统一)—— 3v3 不再上发禁用武器/回合回血,大乱斗不再上发回合回血(它没有回合),1v1 不再上发 match_time。
-# ★★ 取值仍在页里(scenes/mp_lobby.gd 的 _options_snapshot):`"match_time": int(Settings.royale_match_min * 60.0)` 那一行是 ROYALE_MATCH_TIME_CEILING 上界链的第二环(现零守卫)⇒ 快照由页读 Settings / time_rules 后传进来,本函数只做 ModeOptions.build 的组装。
 func player_options(mode: String, snapshot: Dictionary) -> Dictionary:
 	return ModeOptions.build(mode, snapshot)

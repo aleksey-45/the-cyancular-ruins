@@ -1,16 +1,12 @@
 class_name Explosion
 extends RefCounted
 
-# 爆炸 AoE 判定:分段衰减 + 遮挡检测 + 友伤。纯静态,冒烟测试可直接调用。
-const INNER_FRACTION: float = 0.4  # 内圈半径比例,内圈内满伤
-const BLOCKED_FRACTION: float = 0.75  # 墙后(LOS 遮挡)伤害/击退保留比例
-const HitShape := preload("res://core/sim/hit_shape.gd")   # 受击判定几何唯一入口
-# ★ 不引 autoload(`-s` 冒烟会预加载本文件,autoload 标识符在那一刻不存在):
-#   地图像素尺寸从 current_grid 现算(与 GameParameters.MAP_* 同口径 —— 都是"格数 × 64")。
+const INNER_FRACTION: float = 0.4
+const BLOCKED_FRACTION: float = 0.75
+const HitShape := preload("res://core/sim/hit_shape.gd")
 const TILE_TS: int = 64
 
 
-# 当前地图像素尺寸;网格未建时为 ZERO(调用方退化为不环面回绕的点距)。
 static func _map_px() -> Vector2:
 	var grid := MazeGenerator.current_grid
 	if grid.is_empty():
@@ -25,23 +21,19 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 		if not (e is Node2D):
 			continue
 		if not HitShape.hurtable(e):
-			continue   # 死亡白闪中的尸体 / 回溯隐藏尸体不再吃 AoE:与子弹同口径
+			continue
 		var d := _hurt_dist(center, e as Node2D)
 		if d > radius:
 			continue
-		# 遮挡(墙后)= 部分掩体;内圈免疫遮挡(见 cover_multiplier 注释)
 		var blocked := has_grid and not _has_los(center, e as Node2D, grid)
 		var cover := cover_multiplier(d, radius, blocked)
-		var wmult := Water.water_mult((e as Node2D).global_position, grid)  # 目标在水里:×水格 decay
+		var wmult := Water.water_mult((e as Node2D).global_position, grid)
 		var dmg := _falloff(d, radius, max_damage) * cover * wmult
 		if dmg <= 0:
 			continue
-# ★ 敌人侧不写 last_damager 归因:那个 meta 的唯一读者(单机击杀播报)已删,写入即死数据;玩家分支的 attribute() 保留(大乱斗靠它判击杀分)。
 		CombatFeedback.hit_marker()
-		# set_velocity=true:爆炸击退覆盖原速度,严格沿爆心→目标径向(不叠加鸟自身飞行速度带偏)
 		e.hurt(int(dmg), _outward_dir(center, (e as Node2D).global_position),
 				_falloff(d, radius, max_knockback) * cover * wmult, true)
-	# 遍历所有玩家(PvP 服务器两个玩家;单机组里只有一个 → 行为不变)
 	var first_player: Node2D = null
 	for p in tree.get_nodes_in_group("player"):
 		if not (p is Node2D):
@@ -56,25 +48,20 @@ static func apply_aoe(center: Vector2, radius: float, max_damage: int, max_knock
 			continue
 		var d := _hurt_dist(center, pp)
 		if d <= radius:
-			# 同敌人:内圈免疫遮挡衰减
 			var blocked := has_grid and not _has_los(center, pp, grid)
 			var mult := cover_multiplier(d, radius, blocked)
-			mult *= Water.water_mult(pp.global_position, grid)  # 目标在水里:×0.25
+			mult *= Water.water_mult(pp.global_position, grid)
 # ★ 自伤标记必须在 take_hit 之前(attribute 对 attacker == victim 静默跳过,自伤没有归因通道);只有投掷者本人在爆区里才写;本函数只写标记,伤害/击退一个数都不动。
 			if shooter == pp:
 				CombatFeedback.note_self_hit(pp)
-# 击杀归因:必须在 take_hit 之前写,倒地同帧的读者才看得到(1v1 MatchHost 不读,无行为变化);缺的 is_instance_valid 守卫已在统一入口补上。
-			CombatFeedback.attribute(pp, shooter)   # 归因写端统一入口
-			# 击退随距离衰减传入玩家(独立击退向量结算);ignore_iframes=true 穿透无敌帧
+			CombatFeedback.attribute(pp, shooter)
 			pp.take_hit(center, int(_falloff(d, radius, max_damage) * mult), true,
 					_falloff(d, radius, max_knockback) * mult)
-	# 可破坏瓦片(树叶/树干):按 tile_defs 爆炸衰减(75%)扣血,粒度由调用方的最小破坏单位决定(榴弹 = 1/2 格 = 32px;2026-10-30 用户裁定)
 	if has_grid:
 		damage_tiles(center, radius, max_damage, shooter, tile_unit_cells)
 
 # 爆区内的可破坏瓦片扫描(纯几何查询、不改状态):权威侧扣血与表现层碎片共用同一份扫描 ⇒ 两端同源。
 static func destructible_subs(center: Vector2, radius: float) -> Array:
-# cyrm v4:爆炸按 16px 子格扫描;返回 [{sub,pos,tex,d}],与 damage_tiles / bullet_base._explode 共用(整格单位在分派里再按格去重)。
 	var out: Array = []
 	var sgrid := MazeGenerator.current_subgrid
 	if sgrid.is_empty():
@@ -90,9 +77,6 @@ static func destructible_subs(center: Vector2, radius: float) -> Array:
 			var tex: int = sgrid[sy][sx]
 			if tex == 0 or not TileDefs.explosion_destroyable(tex):
 				continue
-			# ★ 已打碎的子格必须跳过:current_subgrid 的纹理在摧毁后**不变**(摧毁只写 sub_hp)⇒
-			#   只查 tex 会让爆炸给"已经被破坏的树叶"再播一遍碎片/再走一遍去重(用户实见)。
-			#   sub_hp 未初始化(纯逻辑 -s / 建格前)时保持旧行为,不把整片爆区误判成空。
 			if TileDefs.sub_cols > 0 and not TileDefs.sub_hp.is_empty() \
 					and TileDefs.sub_hp_at(Vector2i(sx, sy)) <= 0:
 				continue
@@ -104,9 +88,6 @@ static func destructible_subs(center: Vector2, radius: float) -> Array:
 	return out
 
 
-# 可破坏瓦片的扣血分派(纯静态、不碰 SceneTree ⇒ -s 冒烟可直接调)。单位 = 格(64px),按 tile_unit_cells 分三档:
-#   >=1.0 → 整 64px 格(格级账,damage_tile);>=0.5 → **32px 块**(2×2 子格,整块同一伤害)†;其余 → 逐 16px 子格。
-# † 2026-10-30 用户裁定:榴弹最多破坏到 32px —— 块内 4 个子格按同一伤害结算,洞口边缘对齐 32px(不再是 16px 锯齿)。
 static func damage_tiles(center: Vector2, radius: float, max_damage: int, owner: Node = null, tile_unit_cells: float = 1.0) -> void:
 	if tile_unit_cells >= 1.0:
 		_damage_tiles_per_cell(center, radius, max_damage)
@@ -116,7 +97,6 @@ static func damage_tiles(center: Vector2, radius: float, max_damage: int, owner:
 		_damage_tiles_per_sub(center, radius, max_damage, owner)
 
 
-# 把爆区内的可破坏子格聚成「破坏单位」(16px 子格 / 32px 块 / 64px 格),每个单位返回一个代表点:
 static func destructible_units(center: Vector2, radius: float, tile_unit_cells: float) -> Array:
 	var unit_px := 16
 	if tile_unit_cells >= 1.0:
@@ -151,7 +131,6 @@ static func destructible_units(center: Vector2, radius: float, tile_unit_cells: 
 	return out
 
 
-# 32px 单位:同一块只结算一次(取块内最近子格的衰减值),再对该块所有活子格按同一伤害扣 ⇒ 洞边 32px 对齐。
 static func _damage_tiles_per_block(center: Vector2, radius: float, max_damage: int, owner: Node = null) -> void:
 	for u in destructible_units(center, radius, 0.5):
 		var dmg := int(_falloff(float(u["d"]), radius, max_damage) * TileDefs.explosion_decay())
@@ -171,7 +150,7 @@ static func _damage_tiles_per_sub(center: Vector2, radius: float, max_damage: in
 
 # 整格单位:同一格会被多个子格扫到 ⇒ 必须去重,否则一爆扣 N 次(表现上等同"多打了 N 发")。
 static func _damage_tiles_per_cell(center: Vector2, radius: float, max_damage: int) -> void:
-	var nearest: Dictionary = {}   # cell(Vector2i) -> 该格最近子格的爆心距离
+	var nearest: Dictionary = {}
 	for e in destructible_subs(center, radius):
 		var sub: Vector2i = e["sub"]
 		var cell := Vector2i(int(sub.x) / 4, int(sub.y) / 4)
@@ -185,8 +164,6 @@ static func _damage_tiles_per_cell(center: Vector2, radius: float, max_damage: i
 		TileDefs.damage_tile(cell, dmg, "explosion")
 
 
-# 静态函数取场景树:全局 get_tree() 在 static 上下文不可用,走主循环。
-# 相机震动与伤害分支独立:爆心越近震得越猛、线性衰减;玩家倒地/在爆区外也看得到。
 static func _cam_shake(center: Vector2, radius: float, p: Node2D) -> void:
 	if p == null:
 		return
@@ -200,8 +177,6 @@ static func _cam_shake(center: Vector2, radius: float, p: Node2D) -> void:
 	var amt := PlayerParams.explosion_cam_shake * (1.0 - d / reach)
 	cam.shake(amt, PlayerParams.explosion_cam_shake_time)
 
-# 客户端表现层专用:视觉副本爆炸(`BulletBase.apply_damage == false`)不走 apply_aoe,震屏在这里单独补。
-# 只取 `player` 组里的本地玩家(PvP 客户端的 player 组只有自己),距离衰减与权威路径共用 _cam_shake 同一条公式。
 static func client_cam_shake(center: Vector2, radius: float) -> void:
 	var tree := _tree()
 	if tree == null:
@@ -214,7 +189,6 @@ static func client_cam_shake(center: Vector2, radius: float) -> void:
 static func _tree() -> SceneTree:
 	return Engine.get_main_loop() as SceneTree
 
-# 软圆白贴图:占位爆炸/榴弹占位/预瞄爆点标记共用。
 static func make_circle_texture(size: int) -> ImageTexture:
 	var img := Image.create(size, size, false, Image.FORMAT_RGBA8)
 	img.fill(Color(0, 0, 0, 0))
@@ -253,7 +227,6 @@ static func _has_los(center: Vector2, target: Node2D, grid: Array[Array]) -> boo
 	var target_cell := MazeGenerator.cell_of(target.global_position, TILE_TS, grid[0].size(), grid.size())
 	return MazeGenerator.has_line_of_sight(center_cell, target_cell)
 
-# 平缓衰减:内圈满值,二次方(1-t²)渐变到 0——比 smoothstep 平缓,中远距离保留更多伤害/击退
 static func _falloff(d: float, radius: float, max_val: float) -> float:
 	var inner := radius * INNER_FRACTION
 	if d < inner:

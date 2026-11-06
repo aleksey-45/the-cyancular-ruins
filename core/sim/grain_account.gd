@@ -1,7 +1,6 @@
 class_name GrainAccount
 extends RefCounted
 
-# 时间颗粒账户(个人钟的记账芯):总余额 + 短时限额 + 贷款状态机,纯逻辑零场景依赖(-s 可测)。
 
 signal balance_changed(balance: float)
 signal window_changed(short_used: float, loan_used: float)
@@ -9,8 +8,6 @@ signal loan_depth_changed(depth: float)
 signal loan_locked
 signal loan_unlocked
 
-# ── 参数(参数化:单机用 TimeParams 默认值 → 行为逐位不变;
-#    PvP 走 TimeRules.make_account(),贷款上限 = 短时额度、每局可调)──
 var initial := TimeParams.GRAIN_INITIAL
 var cap := TimeParams.GRAIN_CAP
 var window := TimeParams.SHORT_WINDOW
@@ -44,13 +41,11 @@ func loan_depth() -> float:
 	return loan_used / loan_max
 
 
-## 消耗 delta 秒 × rate 颗粒/秒。返回实际扣掉的颗粒数(余额/锁定不足时 < rate·delta)。
 func spend(delta: float, rate: float) -> float:
 	if locked or balance <= 0.0 or delta <= 0.0 or rate <= 0.0:
 		return 0.0
 	var got: float = minf(rate * delta, balance)
 	balance -= got
-	# 指针推进与消耗同额:短时窗满 → 溢出进贷款;贷满 → 强制锁定
 	short_used += got
 	if short_used > window:
 		var over: float = short_used - window
@@ -67,7 +62,6 @@ func spend(delta: float, rate: float) -> float:
 	return got
 
 
-## 每帧恢复(无论是否在消耗都照走):50/s,先还贷后回窗;锁定中还清贷款 → 解锁。
 func regen(delta: float) -> void:
 	if delta <= 0.0:
 		return
@@ -90,7 +84,6 @@ func regen(delta: float) -> void:
 		_emit_window()
 
 
-## 结晶入账(乌鸫击杀 300 等):只进总余额,夹上限。返回实际入账量。
 func deposit(amount: int) -> int:
 	if amount <= 0:
 		return 0

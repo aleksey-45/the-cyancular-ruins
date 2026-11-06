@@ -1,28 +1,23 @@
 class_name WeaponRegistry
 extends RefCounted
 
-# 武器注册表:唯一来源 data/weapons.json。★ 纯静态、无 autoload、-s 可测。
-# ★★ 绝不 load() 武器场景,tier_of() 返回裸 int 而不是 WeaponBase.Tier(那个类会把 autoload 拖进 -s)。
-# ★ 只装身份(id/name/tier/scene);数值留在各枪 .tscn 的 @export 里(保住编辑器可视化调参)。★ json 数组顺序 = 菜单顺序 = 散落顺序,重排 json 会改顺序(无守卫拦误排,已登记)。
 
 const PATH := "res://data/weapons.json"
 
-# tier 字符串 → 数值:直接取 WeaponInventory.TIER_*,不另立一套整数(与 WeaponBase.Tier 的对齐是约定、不是编译器保证)。
 const TIER_NAMES: Dictionary = {
 	"light": WeaponInventory.TIER_LIGHT,
 	"medium": WeaponInventory.TIER_MEDIUM,
 	"heavy": WeaponInventory.TIER_HEAVY,
 }
 
-static var _entries: Array[Dictionary] = []   # [{id, name, tier, scene}],json 顺序
+static var _entries: Array[Dictionary] = []
 static var _loaded := false
 
 
-# 懒加载:首次查询时读一次 —— 6 处调用点分散在 _ready 的很早阶段,漏一处就是"菜单少一把枪"。
 static func _ensure_loaded() -> void:
 	if _loaded:
 		return
-	_loaded = true   # ★ 先置位:解析失败时不要每次查询都重读+重报一遍
+	_loaded = true
 	_entries = []
 	var text := FileAccess.get_file_as_string(PATH)
 	if text.is_empty():
@@ -58,7 +53,6 @@ static func _ensure_loaded() -> void:
 			push_error("WeaponRegistry: id %d 缺 name,已跳过" % id)
 			continue
 		var scene := str(e.get("scene", ""))
-# ★ 只查"路径存在"、不 load(load 会把武器场景连它 preload 的 bullet.tscn 一起拖进 -s);ResourceLoader.exists() 内部走 _path_remap,导出包改名不影响它。
 		if scene.is_empty() or not ResourceLoader.exists(scene):
 			push_error("WeaponRegistry: id %d 的 scene 不存在(%s),已跳过" % [id, scene])
 			continue
@@ -103,7 +97,6 @@ static func name_of(type_id: int) -> String:
 	return ""
 
 
-# ★ 返回裸 int(与 `WeaponInventory.TIER_*` 同值)。别改成返回 `WeaponBase.Tier`。
 static func tier_of(type_id: int) -> int:
 	_ensure_loaded()
 	for e in _entries:
@@ -112,7 +105,6 @@ static func tier_of(type_id: int) -> int:
 	return WeaponInventory.TIER_LIGHT
 
 
-# {type_id: tier} —— 供 `WeaponInventory.new(...)` 注入(它刻意不 import 任何武器类)。
 static func tiers_map() -> Dictionary:
 	_ensure_loaded()
 	var out := {}
@@ -121,7 +113,6 @@ static func tiers_map() -> Dictionary:
 	return out
 
 
-# 只给测试:重读 json(改了 json 后不必重启进程)。
 static func reload() -> void:
 	_loaded = false
 	_entries = []

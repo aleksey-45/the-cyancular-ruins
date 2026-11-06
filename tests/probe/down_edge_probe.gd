@@ -1,5 +1,4 @@
 extends Node
-# 三模式「倒地边沿」记分口径守卫(S-15:把 ~20 行×3 的倒地边沿收成 RoundSystem.on_down_edge 模板之后,
 
 const MAP := "res://maps/demo.cyrm"
 const DT := 1.0 / 60.0
@@ -40,7 +39,6 @@ func _ready() -> void:
 		get_tree().quit(1)
 
 
-# ── ① 1v1:5 杀取胜,记分条 == 逐人 kills == 5 ──
 func _test_duel_five_kills() -> void:
 	var h: MatchHost = MatchHost.new(MAP, {1: 19001, 2: 19002})
 	add_child(h)
@@ -62,12 +60,11 @@ func _test_duel_five_kills() -> void:
 	h.queue_free()
 
 
-# ── ② 大乱斗:无归因死亡不记任何人的 kills、不加分 ──
 func _test_royale_unattributed() -> void:
 	var h: RoyaleHost = RoyaleHost.new(MAP, {1: 19001, 2: 19002})
 	add_child(h)
 	h.state._round_state = MatchState.RoundState.PLAYING
-	h.state.players[1].combat.force_down()   # 无 last_damager meta = 无归因(溺水/坠落/自杀那条路径)
+	h.state.players[1].combat.force_down()
 	h._match_round_tick(DT)
 	var stats: Dictionary = h.state.stats_payload()
 	var kills2 := int((stats.get(2, {}) as Dictionary).get("kills", -1))
@@ -78,17 +75,14 @@ func _test_royale_unattributed() -> void:
 	h.queue_free()
 
 
-# ── ③ 3v3:队友误炸只给对方队加分,不记任何人的 kills ──
-# ★ 本夹具是 1v2(teams = {1:1, 2:1, 3:2})⇒ 人数差 1,2026-11 起少人方(2 队)开局带 TeamRules 的比分补贴
-#   (score_bonus = min(差, 目标-1) = 1)。所以这里判的是**增量**而不是绝对值 —— 判绝对 1 会被那笔开局补贴顶红。
 func _test_team_friendly_fire() -> void:
 	var teams := {1: 1, 2: 1, 3: 2}
 	var h: TeamHost = TeamHost.new(MAP, {1: 19001, 2: 19002, 3: 19003}, {}, [], {}, teams)
 	add_child(h)
 	h.state._round_state = MatchState.RoundState.PLAYING
 	var score_before := int(h.state._scores.get(2, 0))
-	var attacker = h.state.players[1]   # 1 队
-	var victim = h.state.players[2]     # 也是 1 队(队友)
+	var attacker = h.state.players[1]
+	var victim = h.state.players[2]
 	victim.set_meta("last_damager", attacker)
 	victim.set_meta("last_damager_time", Time.get_ticks_msec())
 	victim.combat.force_down()
@@ -96,7 +90,7 @@ func _test_team_friendly_fire() -> void:
 	var stats: Dictionary = h.state.stats_payload()
 	var atk: Dictionary = stats.get(1, {})
 	var vic: Dictionary = stats.get(2, {})
-	var raw_atk: Dictionary = h.state._stats.get(1, {})   # team_kills 是原始计数,不在 stats_payload 的 7 个载荷字段里
+	var raw_atk: Dictionary = h.state._stats.get(1, {})
 	_chk(int(h.state._scores.get(2, 0)) == score_before + 1 and int(atk.get("kills", -1)) == 0
 			and int(raw_atk.get("team_kills", -1)) == 1 and int(vic.get("deaths", 0)) == 1,
 			"③ 3v3 队友误炸:对方队 +1(%d→%d)、肇事者 kills=%d team_kills=%d、死者 deaths=%d(期望 +1/0/1/1)"

@@ -1,62 +1,48 @@
 extends Node
 
-# 3v3 真链路探针(tests/probe/team_match_probe.*)的观察者(客户端子进程用)。
 
 const BotHandle := preload("res://tests/harness/team_bot_input.gd")
 
 const RESULT_PREFIX := "team_match_probe_"
 const LOBBY_ADDR := "127.0.0.1"
 const TILE := 64
-const REPLICA_COUNT := 5          # 3v3:自己以外 5 个角色(副本数是**断言**,见 _check_team_visual_layer)
+const REPLICA_COUNT := 5
 
-# ── 时间预算(逐条都有理由;改前先读相位注释)──
-const ENTER_TIMEOUT := 90.0      # 从挂页到"进 team_game 且拿到队伍表"的兜底
-const TEAMS_TIMEOUT := 25.0      # 进局后等 match_sync 应答
-const ROUND_STATE_TIMEOUT := 30.0 # ★ TEAMS 到手后还要等 round_state 进 1(开局广播);原来这一段是**无界**的
-                                  #   (唯一的安全网是子进程的 --quit-after)⇒ 卡住时症状变成"6 份结果文件都没有",
-                                  #   而不是一条点名的客户端失败。与 TEAMS_TIMEOUT 累加 ≈55s < ENTER_TIMEOUT 90。
-const SETTLE := 1.2              # PLAYING 后静置多久再采样(COUNTDOWN 期间输入冻结,人不会动)
-const POS_TOL := 100.0           # C2 收敛判据(px):快照滞后一 tick ≈ 11.7px,100 留足余量
-# 相③ 的「到位」判据。★ 子弹那一半与榴弹那一半不同:任务书对子弹只说「朝队友开一枪」,对榴弹才要求「贴脸」。把子弹也卡在 170px 会让整相挂在走位上(留存的 6 份判决日志里,甲一次都没进过 170px),
-#   而子弹的证据链(乙端数「从我身边 ≤45px 飞过的非自己子弹」)在 400px 上照样成立 —— 目标站着不动,子弹飞过去必然要掠过它。榴弹仍要 170px(爆炸半径 350px,170 稳在内圈附近)。
-const CLOSE_PX := 400.0          # 甲进入这个距离且有视线即开火(子弹那半边)
-const GRENADE_PX := 170.0        # 榴弹那半边的"贴脸"判据
-const RENDEZVOUS_MAX := 100.0    # 相③ 走位 + 连射 + 榴弹的总窗口(平台跳跃图上走位很慢)
-const VOLLEY := 2.6              # 对队友的连射时长
-const NEAR_PX := 45.0            # (乙端)"子弹从我身边飞过"的判定半径。★ 2026-10-26 起权威受击面由 40px 圆换成当前姿态 AABB(半宽≈40/半高≈53)⇒ 45 变成保守门限(本可放到 ~55);刻意不动数值:team_match 仍登记为不可信,改它要连同判词一起重验
-const BRAWL_MAX := 210.0         # 相④ 打到 9 杀的上限(脚本机器人互射)
-const FIGHT_PX := 520.0          # 混战:进入这个距离且视线通畅就开火
-const LEAVE_AT := 2.5            # 第 2 局 PLAYING 后多久按 ESC(相⑤)
-# 相⑤ 观察窗。
-#   取 110 = 60 + 50(旧值 60 = 30 + 30,同形:盖住宽限期后余下 ~50s 给负载与轮询粒度)。★ 改 GraceWindow.DEFAULT_SECONDS 必须重算这里;它同时进 team_match_probe.RESULT_WAIT 的求和。
-#   ★ 改 `GraceWindow.DEFAULT_SECONDS` 必须重算这里;它同时进 `team_match_probe.RESULT_WAIT` 的求和。
+const ENTER_TIMEOUT := 90.0
+const TEAMS_TIMEOUT := 25.0
+const ROUND_STATE_TIMEOUT := 30.0
+const SETTLE := 1.2
+const POS_TOL := 100.0
+const CLOSE_PX := 400.0
+const GRENADE_PX := 170.0
+const RENDEZVOUS_MAX := 100.0
+const VOLLEY := 2.6
+const NEAR_PX := 45.0
+const BRAWL_MAX := 210.0
+const FIGHT_PX := 520.0
+const LEAVE_AT := 2.5
 const OBSERVE_MAX := 110.0
-const PEER_WAIT := 120.0         # 等其它 5 端写结果的上限(本端最后一个走)
-# 开火脉冲:三类武器(全自动按住连发 / 半自动按下单发 / heavy_aim 松开发射)在**脉冲**下都能开火。
+const PEER_WAIT := 120.0
 const PULSE_ON := 0.30
 const PULSE_OFF := 0.25
 
-# ── 相位 ──
 enum {
-	PH_LOBBY,      # 驱动大厅页(建房/加入/选边/开局)
-	PH_ENTER,      # 等换场 + 队伍表(相①前半)
-	PH_PLAY,       # 第 1 局 PLAYING:采样 + 收敛(相①后半、相②)
-	PH_MEET,       # 相③:走近队友 → 连射(穿透)/ 榴弹(满效)
-	PH_BRAWL,      # 相④:混战到 ROUND_OVER
-	PH_SWAP,       # 相④后半:第 2 局 PLAYING 采样(换边)+ 6 号离场
-	PH_OBSERVE,    # 相⑤:观察窗
+	PH_LOBBY,
+	PH_ENTER,
+	PH_PLAY,
+	PH_MEET,
+	PH_BRAWL,
+	PH_SWAP,
+	PH_OBSERVE,
 	PH_DONE,
 }
-# 相③ 的子状态
 enum { MEET_SEEK, MEET_SWITCH_BULLET, MEET_VOLLEY, MEET_GL_SWITCH, MEET_GL_FIRE, MEET_SETTLE, MEET_OVER }
 
-# ── 注入(探针进程给)──
 var who := "c1"
 var idx := 1
 var lobby_port := 29200
 
-# ── 大厅阶段 ──
-var lobby: Node = null           # 真 mp_lobby 页(探针把它挂在**探针场景**下 → 换场时被自然 free)
+var lobby: Node = null
 var _lobby_attached := false
 var _created := false
 var _joined := false
@@ -64,24 +50,20 @@ var _pick_emitted := false
 var _picked := false
 var _started := false
 var _rooms: Array = []
-var _room_states := 0            # 收到几份 team_room_state(等待室渲染路径的证据)
-var _list_rows := 0              # 房间列表渲染出的行数
-var _wait_rows := 0              # 等待室名单行数(含两队标题行)
-var _wait_count_text := ""       # 等待室计数文案
-var _room_team_counts := {1: 0, 2: 0}   # 最近一份 team_room_state 的两队人数(见 _tick_start:产品闸门放宽后要自己等 3+3)
-# ★ 2026-11:对抗模式的开局闸门从「两队各 3 人」放宽成「两队各 ≥1 人」⇒ 「开始游戏」按钮在 2 人时就亮了。
-#   本探针验的是 **6 人局**(相②/相④/相⑤ 都按 6 人写死:3+3 分队、换边点集、副本数 5),所以必须自己等到
-#   3+3 才点,否则会在第 2 个人进房时就把对局开成 2 人局,后面所有相位都会红在"没收到 N/6 份结果"上。
+var _room_states := 0
+var _list_rows := 0
+var _wait_rows := 0
+var _wait_count_text := ""
+var _room_team_counts := {1: 0, 2: 0}
 const PROBE_TEAM_SIZE := 3
 
-# ── 对局阶段 ──
 var _game: Node = null
 var _local: Node2D = null
 var _bot = null
 var _entered := false
 var _phase := PH_LOBBY
 var _phase_t := 0.0
-var _round_state_t := -1.0       # ★ 见 ROUND_STATE_TIMEOUT:从 TEAMS 到手那一刻起算(与 _phase_t 分开)
+var _round_state_t := -1.0
 var _t := 0.0
 var _role := 0
 var _team := 0
@@ -89,9 +71,9 @@ var _teams: Dictionary = {}
 var _snap_world: Dictionary = {}
 var _snap_gaps: Array[float] = []
 var _last_snap_us := 0
-var _snap_max_gap := 0.0          # 全会话最大快照间隔(含进对局建世界那段 —— 见 _on_snap_world)
-var _snap_max_phase := -1         # 它发生在哪个相位
-var _obs_max_gap := 0.0           # ★ **观察窗内**的最大间隔(相⑤ 的判据用这个)
+var _snap_max_gap := 0.0
+var _snap_max_phase := -1
+var _obs_max_gap := 0.0
 var _round_state := -1
 var _round := 0
 var _scores: Dictionary = {}
@@ -99,16 +81,15 @@ var _rounds_won: Dictionary = {}
 var _match_over := false
 var _played_rounds: Array[int] = []
 
-# ── 相③ ──
 var _shooter := false
 var _shooter_role := 0
 var _victim_role := 0
 var _meet_sub := MEET_SEEK
 var _sub_t := 0.0
-var _shots := 0                  # 本端朝队友开火的**本地子弹生成数**(证据:枪真的响了)
+var _shots := 0
 var _seen_bullet_ids: Dictionary = {}
 var _near_ids: Dictionary = {}
-var _near_count := 0             # (乙端)从身边飞过的**非自己**子弹数
+var _near_count := 0
 var _hp_before := -1
 var _hp_after_bullet := -1
 var _hp_after_grenade := -1
@@ -121,32 +102,28 @@ var _vic_pos_before := Vector2.INF
 var _vic_knock := 0.0
 var _pulse_t := 0.0
 
-# ── 采样 / 观察 ──
 var _pos_r1 := Vector2i(-1, -1)
 var _pos_r2 := Vector2i(-1, -1)
 var _conv_px := -1.0
 var _r1_winner := 0
 var _esc_done := false
 var _leave_t := -1.0
-var _gone_roles: Array[int] = []   # 快照里消失的 role(= 已被服务器移出对局)
-var _left_in_replica := -1         # 观察窗结束时,掉线者的副本是否已拆(-1 = 未判)
-var _obs_playing := true          # 观察窗内 round_state 是否恒为 PLAYING
+var _gone_roles: Array[int] = []
+var _left_in_replica := -1
+var _obs_playing := true
 var _obs_playing_bad := false
 
-# ── 收尾 ──
 var _done := false
 var _quitting := false
 var _lines: Array[String] = []
 var _fails: Array[String] = []
 
 
-# ════════════════════ 生命周期 ════════════════════
 
 func _ready() -> void:
 	NetBus.local_snapshot_world.connect(_on_snap_world)
 	NetBus.local_round_state.connect(_on_round_state)
 	NetBus.local_kill_event.connect(_on_kill_event)
-	# match_sync 应答计数:换边后客户端必须重拉一次(A 册/B 册约定,见 team_game._on_round_state)—— 只数次数,内容比对在相④ 的出生点断言里。
 	NetBus.local_match_sync.connect(func(_p: Dictionary) -> void: _msync += 1)
 	NetBusExt.local_team_rooms.connect(_on_team_rooms)
 	NetBusExt.local_team_room_state.connect(_on_room_state)
@@ -179,16 +156,10 @@ func _attach_lobby() -> void:
 	if cs == null:
 		return
 	lobby = load("res://scenes/mp_lobby.tscn").instantiate()
-	# ★★ _with_lobby 的快路判据是两个字符串相等(_connected_addr == 地址框),故只预置已连不够:页的地址框初值取的就是 PvpSession.server_address,而它的生产默认是云服(core/net/pvp_session.gd 初值)。
-	#   不拨这一行,下面两个 set 白设 —— 一帧后页发现「已连地址(127.0.0.1)≠ 地址框(云服)」⇒ NetBus.stop() + 按默认端口 7777 去连公网生产服(还会在它上面真的建房),而本探针的大厅(池外端口)被晾着。
-	#   ★ 这个坑静默:日志里满是本端自己的「已连接服务器」,看着像连上了(实测症状是探针侧「一条 玩家连入 都没有 + 45s 后没有 3v3 房」)。范本:tests/harness/rejoin_watcher.gd::_on_node_added / tests/probe/royale_c2_probe.gd::_run_client;守卫:_tick_lobby 首段(连错地址当场点名)。
 	PvpSession.server_address = LOBBY_ADDR
-	# ★ 本进程已经连上大厅(上面 start_client),而页的 _ready 会 deferred 跑一次 _request_list → _with_lobby:只有「已连同地址」那一支会复用现有连接,否则它会 NetBus.stop() 再按默认端口 7777 重连 —— 而本探针的大厅在池外端口。
-	#   故先置位再入树,让页走「已连」分支。
 	lobby.set("_connected", true)
 	lobby.set("_connected_addr", LOBBY_ADDR)
 	cs.add_child(lobby)
-	# 统一大厅:筛选到 3v3(建房弹层按 `_mode` 选默认模式 ⇒ 建房走 team_create)。
 	lobby.call("_set_filter", PvpSession.MODE_TEAM)
 	_lobby_attached = true
 	_log("真大厅页已挂载(current_scene=%s)" % cs.name)
@@ -233,9 +204,6 @@ func _physics_process(delta: float) -> void:
 			pass
 
 
-# 心跳(诊断用):每 5s 一行。探针挂住/超时时,这三样一起看就能定位到底卡在哪:
-#   相位 + 目标距离 + 视线 —— "机器人走不到人"与"走到了但打不死"是两种完全不同的故障,
-#   只看"没打出 9 杀"分辨不出来。也顺带把"到底有没有交战"记下来(比分/局号)。
 var _hb_t := 5.0
 
 
@@ -248,7 +216,6 @@ func _heartbeat(delta: float) -> void:
 		return
 	var tgt := Vector2.INF
 	if _phase == PH_MEET:
-		# 甲的目标是乙、乙的目标是甲(两个分支必须不同 —— 早先写成同一个表达式时,乙的心跳一直在报「到自己」的距离,读数看起来像「两边距离对不上」,排查时白绕了一圈)。
 		tgt = _pos_of(_victim_role) if _shooter else _pos_of(_shooter_role)
 	elif _phase == PH_BRAWL:
 		tgt = _nearest_enemy()
@@ -262,7 +229,6 @@ func _heartbeat(delta: float) -> void:
 			_round_state, 1 if _shooter else 0])
 
 
-# ════════════════════ 大厅阶段 ════════════════════
 
 # ★★ 本函数只读页的 UI 状态、只按真按钮,而页自己的信号处理(_on_room_state 里建等待室)与我的处理同帧竞争:我只在 _ready 里连信号(比页早 → 我的处理器先跑),所以「读页的等待室控件」不能放在信号处理器里。
 #   实测:team_room_state 刚到那一帧 _wait_pick_a 还是 null,当场 _fail 并永久卡住(选边永不发出 → 全流程停摆)。故:信号处理器只登记原始数据,页的 UI 状态一律在这里(下一帧起)轮询取用。
@@ -275,14 +241,11 @@ func _tick_lobby() -> void:
 			_fail("大厅页没挂上(%.0fs)" % ENTER_TIMEOUT)
 			_finish()
 		return
-	# ★★ 守卫(照 royale_c2_watcher._stage_lobby):本端连的必须是本探针的大厅,不能是云服。
-	#   (_attach_lobby 预置的 _connected_addr 是我们自己写的值,它单独证明不了什么 —— 真正会露馅的是 PvpSession.server_address。)当场点名,别让下一个人再从「45s 后没有 3v3 房」逆推。★ 漏了 _attach_lobby 那行预置就是这个守卫拦的。
 	if PvpSession.server_address != LOBBY_ADDR or String(lobby.get("_connected_addr")) != LOBBY_ADDR:
 		_fail("本端连的是 %s,不是本探针大厅 %s —— 检查 _attach_lobby 里 PvpSession.server_address 的预置"
 				% [PvpSession.server_address, LOBBY_ADDR])
 		_finish()
 		return
-	# 房间列表渲染路径:页把每个房间画成**一行按钮**(空态画的是一个 Label,不算行)
 	if _list_rows == 0:
 		var n := _list_button_count()
 		if n > 0:
@@ -292,7 +255,6 @@ func _tick_lobby() -> void:
 		if not _created and _phase_t > 0.6:
 			_created = true
 			_log("点「创 建 房 间」")
-			# 统一大厅的弹层启动即建、默认隐藏(骨架里的 %CreatePanel;_build_ui() 只登记 + 收起)⇒ 先开再按不是因为「它是 null」(T1 起没有 null 可判了),而是要让这次「创建」走玩家那条链:_create_mode 只在 _open_create_dialog 里从当前筛选模式取。
 			lobby.call("_open_create_dialog")
 			lobby.call("_on_create_pressed")
 	else:
@@ -300,8 +262,6 @@ func _tick_lobby() -> void:
 	_tick_pick()
 
 
-# c2..c6:点公开列表里的房间行(真按钮回调)。
-# ★ 首份列表必然是空的(c2 挂页时 c1 还没建房),而 team_list 是请求/响应式 —— 不重问就永远是空。故这里按 1.5s 周期点一次「刷新列表」(真按钮),直到进房。
 func _tick_lobby_join() -> void:
 	if _joined or lobby == null or not is_instance_valid(lobby):
 		return
@@ -345,14 +305,12 @@ func _on_team_rooms(rooms: Array) -> void:
 	_rooms = rooms
 
 
-# 等待室渲染(team_room_state)—— A 册自检里「从没收到过 team_room_state」的那条路径。本处理器只登记(理由见 _tick_lobby 上方那段);读页控件在 _tick_pick。
 func _on_room_state(state: Dictionary) -> void:
 	_room_states += 1
 	if _room_states == 1:
 		_log("等待室:收到第 1 份 team_room_state(your_role=%d players=%d team_size=%s)"
 				% [int(state.get("your_role", 0)), (state.get("players", []) as Array).size(),
 				str(state.get("team_size", -1))])
-	# 选边是否已经生效(服务器回了"该队已满"时状态不变 → 由 `_tick_pick` 重试)
 	var my_role := int(state.get("your_role", 0))
 	var want := 1 if idx <= 3 else 2
 	_room_team_counts = {1: 0, 2: 0}
@@ -366,17 +324,14 @@ func _on_room_state(state: Dictionary) -> void:
 			_picked = true
 
 
-# 选边(真按钮回调 → team_pick)。等页把等待室建出来(见 `_tick_lobby` 上方那段)。
 func _tick_pick() -> void:
 	if _picked or _room_states <= 0 or lobby == null or not is_instance_valid(lobby):
 		return
-	# 已发过但没生效(服务器回过"该队已满")→ 每 2s 重试
 	if _pick_emitted:
 		_pick_retry_t -= 1.0 / 60.0
 		if _pick_retry_t > 0.0:
 			return
 		_pick_retry_t = 2.0
-	# 顺手登记等待室的渲染结果(此刻页的 `_on_room_state` 一定已经跑过了)
 	if _wait_rows == 0:
 		var wp = lobby.get("_wait_body")
 		if wp != null:
@@ -387,7 +342,7 @@ func _tick_pick() -> void:
 	var want := 1 if idx <= 3 else 2
 	var btn = lobby.get("_wait_pick_a" if want == 1 else "_wait_pick_b")
 	if btn == null:
-		return     # 等待室还没建出来 → 下一帧再看(这里**不能** _fail)
+		return
 	if _wait_rows > 0 and not _pick_logged:
 		_pick_logged = true
 		_log("等待室已渲染(名单行 %d,计数 %s)" % [_wait_rows, _wait_count_text])
@@ -421,35 +376,31 @@ func _tick_k2(delta: float) -> void:
 		_rec("K2 downed=1 revived=1 secs=%.1f" % _k2_t)
 		_log("★ 相⑤ 补:K 自杀 → 倒地 → 复活(%.1fs)" % _k2_t)
 	elif _k2_t > 8.0:
-		_k2_revived = true      # 只报一次
+		_k2_revived = true
 		_rec("K2 downed=0 revived=0")
 		_fail("按 K 后 8s 内权威快照始终没有 downed=true(3v3 的 K 端到端没走通)")
 
 
-var _backoff := false                # 相④ 回退模式(见 _tick_backoff)
+var _backoff := false
 var _backoff_t := 0.0
 var _backoff_n := 0
 var _since_kill := 0.0
 var _last_score_total := -1
-var _msync := 0                      # 收到几份 match_sync 应答(进场 1 次 + 每局 COUNTDOWN 重拉)
-var _k2_pressed := false             # 相⑤ 补:第 2 局按 K(3v3 的 K 端到端)
+var _msync := 0
+var _k2_pressed := false
 var _k2_downed := false
 var _k2_revived := false
 var _k2_t := 0.0
 
 
-# c1:两队各 3 人(本探针的 6 人局)→ 「开始游戏」按钮可见 → 点它(真按钮回调 → team_start)
 func _tick_start() -> void:
 	if idx != 1 or _started or not _lobby_attached:
 		return
 	if lobby == null or not is_instance_valid(lobby):
 		return
 	var b = lobby.get("_wait_start")
-	# ★★ 判据必须是 `is_visible_in_tree()` 而**不是** `Button.visible`:`visible` 只管**节点自身**,
 	if b == null or not (b as Button).is_visible_in_tree():
 		return
-	# ★ 产品闸门(2026-11)已放宽成「两队各 ≥1 人」⇒ 光看按钮可见会在 2 人时就开局。本探针是 **6 人局**,
-	#   故在这里自己等到 3+3(判据来自服务器下发的 team_room_state,不是猜)。
 	if int(_room_team_counts[1]) < PROBE_TEAM_SIZE or int(_room_team_counts[2]) < PROBE_TEAM_SIZE:
 		return
 	_started = true
@@ -457,7 +408,6 @@ func _tick_start() -> void:
 	(b as Button).pressed.emit()
 
 
-# ════════════════════ 对局阶段 ════════════════════
 
 func _is_game(n: Node) -> bool:
 	var s = n.get_script()
@@ -470,7 +420,7 @@ func _try_enter_game() -> void:
 		return
 	var local = cs.get("_local")
 	if local == null:
-		return     # 场景 `_ready` 还没跑完(局部玩家未就位)
+		return
 	_game = cs
 	_local = local
 	_role = PvpSession.role
@@ -488,7 +438,6 @@ func _try_enter_game() -> void:
 	_log("已进入 team_game(role=%d spawn=%s)" % [_role, str(PvpSession.spawn)])
 
 
-# ── 相①(前半):队伍表 ──
 
 func _tick_enter() -> void:
 	if _teams.is_empty():
@@ -496,11 +445,9 @@ func _tick_enter() -> void:
 		if t is Dictionary and not (t as Dictionary).is_empty():
 			_teams = (t as Dictionary).duplicate()
 			_team = int(_teams.get(_role, 0))
-			_round_state_t = _phase_t    # ★ 起点:接下来等 round_state 的那一段单独计时
+			_round_state_t = _phase_t
 			_rec("TEAMS role=%d team=%d map=%s" % [_role, _team, _teams_str()])
 			_log("队伍表:role=%d team=%d %s" % [_role, _team, _teams_str()])
-			# 相③ 角色指派(全端各自独立算出同一结果,不需要协调):
-			#   "甲" = 1 队里 role 最小者,"乙" = 1 队里 role 次小者。
 			var a: Array = []
 			for r in _teams:
 				if int(_teams[r]) == 1:
@@ -516,8 +463,6 @@ func _tick_enter() -> void:
 			_finish()
 			return
 	if _round_state != 1:
-		# ★★ 有界(见 ROUND_STATE_TIMEOUT):没有这条,本端会一直停在 PH_ENTER,而**探针那边看不见**
-		#   —— 症状退化成"某几端没有结果文件",整条 3v3 链路的失败信息就指不到"进局广播没来"。
 		if _round_state_t >= 0.0 and _phase_t - _round_state_t > ROUND_STATE_TIMEOUT:
 			_fail("TEAMS 到手后 %.0fs 没等到 round_state=1(进局广播没来)" % ROUND_STATE_TIMEOUT)
 			_finish()
@@ -526,7 +471,6 @@ func _tick_enter() -> void:
 	_phase_t = 0.0
 
 
-# ── 相②(采样)+ 相①(收敛)──
 
 func _tick_play() -> void:
 	if _phase_t < SETTLE:
@@ -553,7 +497,6 @@ func _tick_play() -> void:
 	_hp_before = _hp_of(_victim_role)
 
 
-# ── 队色 + 分队碰撞层:**两端是否真的对齐**(A 册定的契约,客户端这一半在 team_game)──
 func _check_team_visual_layer() -> void:
 	var want_layer := 2 if _team == 1 else TeamHost.TEAM_ENEMY_LAYER
 	var layer_ok: bool = _local.collision_layer == want_layer
@@ -561,14 +504,12 @@ func _check_team_visual_layer() -> void:
 	if _team == 1:
 		mask_ok = (_local.collision_mask & 2) == 0 \
 				and (_local.collision_mask & TeamHost.TEAM_ENEMY_LAYER) != 0 \
-				and (_local.collision_mask & 1) != 0     # 地形位不能丢(丢了会穿墙)
+				and (_local.collision_mask & 1) != 0
 	elif _team == 2:
 		mask_ok = (_local.collision_mask & 2) != 0 and (_local.collision_mask & 1) != 0
 	var ghosts_bad := 0
 	var tints_bad := 0
 	var n := 0
-	# ★★ 副本数**必须断言**:`ghosts_bad`/`tints_bad` 数的是"副本里有多少个错的",副本**一个都没建**
-	#    时两个计数天然是 0 ⇒ 全绿而**什么都没验**(恒真空位 —— 评审点名的那个)。
 	var want_reps: int = REPLICA_COUNT
 	var reps: Dictionary = _game.get("_replicas")
 	for role in reps:
@@ -609,15 +550,11 @@ func _color_close(a: Color, b: Color) -> bool:
 	return absf(a.r - b.r) < 0.06 and absf(a.g - b.g) < 0.06 and absf(a.b - b.b) < 0.06
 
 
-# ── 相③:队友弹穿透(负)+ 榴弹满效(正)──
 
 func _tick_meet(delta: float) -> void:
 	if _shooter:
 		_tick_meet_shooter(delta)
 		return
-	# 乙:**也朝甲走**(相向而行 —— 平台跳跃图上单向走位成功率太低,留存的日志里单侧走一整个
-# 窗口都还没贴合(见报告 §7)。
-	# 1800px)。走到 CLOSE_PX*1.5 内就站住不动:射击要打的是**静止靶**,两边一起飘会打不中。
 	if _role == _victim_role:
 		var sp := _pos_of(_shooter_role)
 		if sp != Vector2.INF:
@@ -630,7 +567,6 @@ func _tick_meet(delta: float) -> void:
 				_bot.hold_down = false
 		_count_near_bullets()
 	else:
-		# 其余四人:站着不动,别干扰读数
 		_bot.axis = 0.0
 		_bot.attack = false
 	if _phase_t > RENDEZVOUS_MAX:
@@ -639,14 +575,10 @@ func _tick_meet(delta: float) -> void:
 
 
 func _tick_meet_shooter(delta: float) -> void:
-	# ★ 甲的**超时兜底**:走位窗口用完就带着手上有的读数进混战 —— 早先这个超时只写在不走位的
 	if _phase_t > RENDEZVOUS_MAX:
 		_bot.axis = 0.0
 		_bot.attack = false
 		if _bullet_rec == "":
-			# ★★ `dist` / `los` **必须是真读数**(超时那一刻的实测值):早先这里写死 `-1.0` 与 `0`,
-			#   而裁判的判词却把它们当成"读数"念出来 —— 那等于在报告里放了一个永远是假的数。
-			#   没有目标快照(乙那份还没到)时才留 `-1`(那是"没有读数",不是"距离是 -1")。
 			var d_to := -1.0
 			var los_now := 0
 			var vp_to := _pos_of(_victim_role)
@@ -669,7 +601,6 @@ func _tick_meet_shooter(delta: float) -> void:
 		MEET_SEEK:
 			var d := _delta(_local.global_position, vp).length()
 			if d <= CLOSE_PX and _los_to(vp):
-				# ★ 到位后**站住**:射击要打的是静止靶(两边一起飘必然打不中)
 				_bot.axis = 0.0
 				_bot.hold_up = false
 				_bot.hold_down = false
@@ -682,9 +613,6 @@ func _tick_meet_shooter(delta: float) -> void:
 				_nav_to(vp, CLOSE_PX * 0.6, delta)
 				_bot.attack = false
 		MEET_SWITCH_BULLET:
-			# ★★ "子弹穿透队友"这一半**必须用出弹类武器测**:5 号榴弹(打出去的是榴弹)与
-			#   6 号激光(即时光束、不产生子弹)都会让这条断言变成**假红/空绿**。手上是这两种
-			#   就换到背包里的出弹枪(1~4);换不了就**照实标未覆盖(枪种)**,不硬判。
 			_bot.axis = 0.0
 			_bot.attack = false
 			var t := _weapon_type()
@@ -714,15 +642,10 @@ func _tick_meet_shooter(delta: float) -> void:
 			_bot.axis = 0.0
 			_bot.aim = _delta(_local.global_position, vp).normalized()
 			_pulse_attack(delta)
-			# 取**峰值并发数**(不是"这一轮生成了多少发"):子弹会飞出去消失,瞬时值可能正好
-			# 落在两发之间(=0);而霰弹枪一发就是 8 丸 ⇒ `shots=8` 只等价于"**至少响过一枪**"。
 			_shots = maxi(_shots, _local_bullet_count())
 			if _sub_t >= VOLLEY:
 				_bot.attack = false
 				_hp_after_bullet = _hp_of(_victim_role)
-				# ★ 记下**手上的武器类型**(1..6):6=激光枪是**即时光束、不产生子弹** ——
-				#   此时 `shots=0` 是**正确行为**而不是"枪没响",而"乙 hp 不变"也就成了空断言。
-				#   裁判据此把那一半判成**未覆盖**(而不是留一条空的绿,也不是假红)。
 				_bullet_rec = "BULLET shots=%d dist=%.0f los=%d before=%d after=%d hit=%d wtype=%d" % [
 						_shots, _dist_at_fire, 1 if _los_to(vp) else 0, _hp_before, _hp_after_bullet,
 						1 if _hp_after_bullet != _hp_before else 0, _weapon_type()]
@@ -783,14 +706,11 @@ func _tick_meet_shooter(delta: float) -> void:
 			_phase_t = 0.0
 
 
-# 开火脉冲:三类武器(全自动/半自动/heavy_aim 松开发射)在脉冲下都能开火。
 func _pulse_attack(delta: float) -> void:
 	_pulse_t += delta
 	var period := PULSE_ON + PULSE_OFF
 	var ph := fmod(_pulse_t, period)
 	var on := ph < PULSE_ON
-	# ★ **两个边沿都要显式报给手柄**(见 handle 的注释):半自动只在 just_pressed 那一帧开火,
-	#   而 `heavy_aim`(m82a1/榴弹发射器)只在 **just_released** 那一帧开火。
 	if on and not _bot.attack:
 		_bot.press_attack_edge()
 	elif not on and _bot.attack:
@@ -798,7 +718,6 @@ func _pulse_attack(delta: float) -> void:
 	_bot.attack = on
 
 
-# 找背包里的榴弹发射器(类型 id 5)并切到它。返回 "ok" / "switching" / 失败原因。
 func _gl_equip() -> String:
 	var w = _current_weapon()
 	if w == null:
@@ -818,8 +737,6 @@ func _gl_equip() -> String:
 	return "switching"
 
 
-# 乙端:数"从身边飞过"的**非自己**子弹(服务器广播给非射手端的视觉副本)。
-# 这是"子弹真的到达了乙的位置"的证据 —— 没有它,"乙 hp 不变"可以靠"子弹根本没飞到"骗过。
 func _count_near_bullets() -> void:
 	var me := _local.global_position
 	for b in get_tree().get_nodes_in_group("bullet"):
@@ -835,14 +752,12 @@ func _count_near_bullets() -> void:
 			_near_count += 1
 
 
-# ── 相④:混战到 ROUND_OVER ──
 
 func _tick_brawl_phase(delta: float) -> void:
 	_tick_backoff(delta)
 	_tick_brawl(delta)
 
 
-# ★★ 回退模式(照实登记,报告里要写明占比):脚本机器人在平台跳跃图上无法可靠接近对手(全部留存日志里 killA=0:至今没有一次有归因击杀;真正的障碍看起来是「走位到达」而不是「开火」,但这一点本探针没有独立验证过)。
 func _tick_backoff(delta: float) -> void:
 	if _backoff:
 		_backoff_t -= delta
@@ -853,15 +768,12 @@ func _tick_backoff(delta: float) -> void:
 			_k_suicide()
 		return
 	_since_kill += delta
-	# 判据用"**比分多久没动**"而不是"多久没收到 kill_event":两者大多同源,但比分会因为
+	# 判据用"比分多久没动"而不是"多久没收到 kill_event":两者大多同源,但比分会因为
 	# 任何一端的击杀而前进,而"离收局还差多少"才是这里要问的事。
 	var total := int(_scores.get(1, 0)) + int(_scores.get(2, 0))
 	if total != _last_score_total:
 		_last_score_total = total
 		_since_kill = 0.0
-	# ★★ **第 2 局不启动回退模式**:相⑤ 的观察窗要求"对局仍在 PLAYING",而回退模式的 K 会
-	#   把第 2 局也推到收局 → 两局胜 = MATCH_OVER → 六端 6s 后自动退场,观察窗被截断
-	#   (实测 run14)。第 1 局的回退只为了"让 9 杀能到达、从而验到回合机与换边"。
 	if _round >= 2:
 		return
 	if _phase_t > 75.0 and _since_kill > 12.0:
@@ -875,9 +787,6 @@ func _tick_brawl(delta: float) -> void:
 		_fail("相④ %.0fs 内没打到 9 杀(ROUND_OVER 未出现;脚本机器人互射未收敛)" % BRAWL_MAX)
 		_finish()
 		return
-	# 最近的那个敌人**可能到不了**(BFS 无路:它在空中/在一个小连通区里)—— 那就换下一个:
-	# 不换的话机器人会抱着一个够不到的目标原地卡到 K 用光(实测:c1 在 t=35 连按两次 K
-	# 都是"路径空"造成的,而它当时离**别的**敌人只有 2000px 出头)。
 	if _path.is_empty():
 		_brawl_skip += 1
 		_path_to = Vector2i(-99, -99)
@@ -890,11 +799,9 @@ func _tick_brawl(delta: float) -> void:
 		_bot.attack = false
 		return
 	var d := _delta(_local.global_position, tgt)
-	# ★ **提前量**:两边都在动,照当前位置开火等于每发都打在敌人身后(理论上;本探针未能
 	var t_lead: float = clampf(d.length() / 1000.0, 0.0, 0.5)
 	var aim_at := tgt + _vel_of(_nearest_enemy_role()) * t_lead
 	_bot.aim = _delta(_local.global_position, aim_at).normalized()
-	# ★ **一律逼近到 ~100px 再打**:远距离对射在本探针里从未产生击杀(两边都在动 +
 	if d.length() <= 140.0:
 		_bot.axis = 0.0
 		_pulse_attack(delta)
@@ -912,7 +819,6 @@ func _vel_of(role: int) -> Vector2:
 	return dd.get("vel", Vector2.ZERO)
 
 
-# 最近的敌人;`_brawl_skip` 用于"最近那个够不到时退而求其次"(见 _tick_brawl)
 func _nearest_enemy() -> Vector2:
 	var arr: Array = []
 	var ps: Dictionary = _snap_world.get("players", {})
@@ -932,12 +838,10 @@ func _nearest_enemy() -> Vector2:
 	return arr[i][1]
 
 
-# 当前选中的敌人 role(供提前量读 `vel` 用;与 `_nearest_enemy()` 同一次排序取同一个)
 func _nearest_enemy_role() -> int:
 	return _brawl_pick
 
 
-# ── 相④后半:第 2 局 PLAYING 采样(换边)+ 6 号离场 ──
 
 func _tick_swap(delta: float) -> void:
 	_bot.axis = 0.0
@@ -951,8 +855,6 @@ func _tick_swap(delta: float) -> void:
 	_rec("R2POS role=%d team=%d cell=%d,%d round=%d msync=%d" % [_role, _team, cell.x, cell.y,
 			_round, _msync])
 	_log("相④ 第 2 局出生格 %s(team=%d;match_sync 应答累计 %d 次)" % [str(cell), _team, _msync])
-	# ★ 第 2 局**不再开火**:相⑤ 的观察窗要在"对局仍在 PLAYING"下才有意义,而再打满 9 杀
-	#   会让第 2 局也结束(两局胜 = MATCH_OVER → 客户端 6s 后自动退场,观察窗被截断)。
 	if idx == 6:
 		_esc_leave()
 		return
@@ -961,7 +863,6 @@ func _tick_swap(delta: float) -> void:
 	_phase_t = 0.0
 
 
-# 局内按 ESC → 回主菜单(唯一走 `Level0.safe_change_scene` 的**局内**退出路径)。
 func _esc_leave() -> void:
 	if _esc_done:
 		return
@@ -975,26 +876,21 @@ func _esc_leave() -> void:
 		_fail("对局场景里没找到 PauseMenu")
 		_finish()
 		return
-	# 真 ESC:走 PauseMenu 自己的 `_unhandled_input`(ui_cancel → 开菜单)
 	var ev := InputEventKey.new()
 	ev.pressed = true
 	ev.keycode = KEY_ESCAPE
 	ev.physical_keycode = KEY_ESCAPE
 	pm.call("_unhandled_input", ev)
 	var opened := bool(pm.get("_open"))
-	# ★ 标签**不能**写成退役类名那种拼法(`esc`+`menu`):`kh_l4_probe` 会把
-	#   "退役 EscMenu 仍有代码引用"判红 —— 它按**去注释后的全文小写**扫,日志字面量也在扫描面上
-	#   (本仓的源码级守卫就是这么设计的:宁可误报,不给退役符号留活口)。故用中性标签。
 	_rec("PAUSE_MENU opened=%d" % (1 if opened else 0))
 	if not opened:
 		_fail("按 ESC 没打开暂停菜单(_open 仍为 false)")
 	_log("已按 ESC 打开菜单 → 点「回 到 主 菜 单」(t=%.1fs)" % _t)
-	_finish()                      # 先落盘读数(离场会把本端的世界退役掉)
+	_finish()
 	pm.call("go_menu")
 	get_tree().create_timer(0.4).timeout.connect(func() -> void: get_tree().quit(0))
 
 
-# ── 相⑤:观察窗(其余 5 端)──
 
 func _tick_observe() -> void:
 	_bot.axis = 0.0
@@ -1002,7 +898,6 @@ func _tick_observe() -> void:
 	if _round_state != 1 and not _match_over:
 		_obs_playing_bad = true
 	if _match_over:
-		# MATCH_OVER = 服务器终局了 —— 那是相⑤ 要证的**反面**
 		_fail("相⑤:6 号离场后服务器终局了(MATCH_OVER)—— 该队还有 2 人,不该终局")
 		_finish()
 		return
@@ -1010,7 +905,6 @@ func _tick_observe() -> void:
 		_fail("相⑤ 观察窗 %.0fs 内没观察到掉线者被移出对局(快照里仍没有 role 消失)" % OBSERVE_MAX)
 		_finish()
 		return
-	# 观测点(全部满足即收工):掉线者的 role 已从快照消失 + 副本已拆
 	var gone := _gone_from_snapshot()
 	if not gone.is_empty():
 		var r := int(gone[0])
@@ -1019,14 +913,11 @@ func _tick_observe() -> void:
 			_rec("LEFT gone=%s obsmax=%.0fms sessionmax=%.0fms(sessionmax_phase=%d) playing=%d replica_gone=1"
 					% [str(gone), _obs_max_gap, _snap_max_gap, _snap_max_phase,
 					1 if not _obs_playing_bad else 0])
-			# ★ 这里打的是**两个不同的数**,别混:抽样窗口(观察窗)内的是 `_obs_max_gap`,
-			#   全会话的是 `_snap_max_gap`(它含"进对局建世界"那一大段)。判据只用前者。
 			_log("相⑤ 已观察到 role %s 被移出对局(副本已拆);观察窗 %.1fs(窗内最大间隔 %.0fms;"
 					% [str(gone), _phase_t, _obs_max_gap]
 					+ "全会话最大 %.0fms,发生于相位 %d)" % [_snap_max_gap, _snap_max_phase])
 			if _obs_playing_bad:
 				_fail("相⑤ 观察窗内 round_state 离开过 PLAYING(服务器不该因少人改状态)")
-			# ★ 判据只用**观察窗内**的最大间隔(理由见 `_on_snap_world`:全会话最大值包含
 			if _obs_max_gap > 1000.0:
 				_fail("相⑤ 观察窗内快照间隔 %.0fms > 1s(可能是本进程停顿,也可能是服务器对本 peer 的定向投递异常 —— 无法区分,保守判红)"
 						% _obs_max_gap)
@@ -1034,7 +925,6 @@ func _tick_observe() -> void:
 			return
 
 
-# 快照里曾经出现、现在消失的 role(排除自己)
 func _gone_from_snapshot() -> Array[int]:
 	var out: Array[int] = []
 	var ps: Dictionary = _snap_world.get("players", {})
@@ -1047,7 +937,6 @@ func _gone_from_snapshot() -> Array[int]:
 	return out
 
 
-# ════════════════════ 信号 ════════════════════
 
 func _on_snap_world(snap: Dictionary) -> void:
 	var now := Time.get_ticks_usec()
@@ -1056,9 +945,6 @@ func _on_snap_world(snap: Dictionary) -> void:
 		_snap_gaps.append(gap)
 		if gap > _snap_max_gap:
 			_snap_max_gap = gap
-			# ★ 记下**最大间隔发生在哪个相位**:整个会话的最大值会把"进对局建世界/建导航图"
-			#   那一大段(实测 1~2s)算进去 —— 那一段本来就没有快照可收,是**测量窗口伪影**,
-			#   不是"服务器停了"。相⑤ 要判的是**观察窗内**快照连不连,故两者分开记。
 			_snap_max_phase = _phase
 		if _phase == PH_OBSERVE and gap > _obs_max_gap:
 			_obs_max_gap = gap
@@ -1066,9 +952,6 @@ func _on_snap_world(snap: Dictionary) -> void:
 	_snap_world = snap
 
 
-# 击杀播报:分成**有归因**(真实交火:枪/爆炸,射手身份可查)与**无归因**(自杀 K / 溺水 /
-# 坠落 —— `_attributed_killer` 返回 0)。★ 这个分栏是相④ 的"非空转"证据:如果 ROUND_OVER
-# 全靠脚本机器人**自杀脱困**推出来的,那"打满一局"就名不副实 —— 报告要照实分开写。
 func _on_kill_event(killer: int, _victim: int) -> void:
 	_since_kill = 0.0
 	if killer == 0:
@@ -1096,7 +979,6 @@ func _on_round_state(data: Dictionary) -> void:
 		_match_over = true
 
 
-# ════════════════════ 工具 ════════════════════
 
 func _dims() -> Vector2i:
 	var g: Array = MazeGenerator.current_grid
@@ -1128,8 +1010,6 @@ func _los_to(target: Vector2) -> bool:
 	return MazeGenerator.has_line_of_sight(a, b)
 
 
-# 背包里**出弹类**武器的下标(1~4 号:手枪/步枪/重狙/霰弹;0 = 没有)。
-# ★ 排除 5 号榴弹(打出的是榴弹,不是子弹)与 6 号激光(即时光束、不产生子弹)。
 func _bullet_weapon_index() -> int:
 	if _local == null or _local.weapons == null:
 		return -1
@@ -1161,8 +1041,7 @@ func _local_bullet_count() -> int:
 	return n
 
 
-# ════════ 机器人导航(相③ 走位 / 相④ 接近共用)════════
-var _nav_adj: Dictionary = {}       # cell -> Array[Vector2i](邻居表)
+var _nav_adj: Dictionary = {}
 var _nav_built := false
 var _path: Array = []
 var _path_to := Vector2i(-99, -99)
@@ -1172,10 +1051,10 @@ var _best_dist := INF
 var _stuck_to := Vector2i(-99, -99)
 var _brawl_skip := 0
 var _brawl_pick := 0
-var _last_node := Vector2i(-99, -99)   # 最近一次真正站在图节点上的格(BFS 起点,见 _nav_to)
-var _k_used := 0                    # 本端用了几次 K 脱困(上限见 K_MAX)
+var _last_node := Vector2i(-99, -99)
+var _k_used := 0
 const K_MAX := 2
-const STUCK_K := 8.0                # 离目标最近距离 8s 没被刷新(<80px)且仍离得远 → 见 _nav_to
+const STUCK_K := 8.0
 
 
 func _build_nav_graph() -> void:
@@ -1187,7 +1066,6 @@ func _build_nav_graph() -> void:
 			var c := Vector2i(x, y)
 			if _standable(c):
 				nodes.append(c)
-	# ★★ 邻居必须**先按环面归一化再入表**:`_nav_cell_solid` 读格是 `posmod` 的,而键不是 ——
 	for c in nodes:
 		var keep: Array = []
 		for n in _nav_neighbors(c):
@@ -1214,7 +1092,6 @@ func _nav_climbable(c: Vector2i) -> bool:
 	return TileDefs.climb_speed(MazeGenerator.texture_of(_nav_cell_solid(c))) > 0.0
 
 
-# 可站:通道格(梯/链)**或**地板格(空 + 下方实心 + 上方净空)
 func _standable(c: Vector2i) -> bool:
 	if _nav_climbable(c):
 		return true
@@ -1224,16 +1101,16 @@ func _standable(c: Vector2i) -> bool:
 
 func _nav_neighbors(c: Vector2i) -> Array:
 	var out: Array = []
-	for dx in [-1, 1]:                                   # 走
+	for dx in [-1, 1]:
 		var n := c + Vector2i(dx, 0)
 		if _standable(n):
 			out.append(n)
-	if _nav_climbable(c):                                # 爬
+	if _nav_climbable(c):
 		for dy in [-1, 1]:
 			var n2 := c + Vector2i(0, dy)
 			if _standable(n2) or _nav_climbable(n2):
 				out.append(n2)
-	for dx2 in [0, -1, 1]:                               # 落(同列/左右列,落到第一个可站格)
+	for dx2 in [0, -1, 1]:
 		if _nav_blocked(c + Vector2i(dx2, 1)):
 			continue
 		for k in range(1, 30):
@@ -1243,7 +1120,7 @@ func _nav_neighbors(c: Vector2i) -> Array:
 			if _standable(n3):
 				out.append(n3)
 				break
-	for dy2 in [1, 2, 3]:                                # 跳(上 1~3,横 -6~6,通道净空)
+	for dy2 in [1, 2, 3]:
 		var ok := true
 		for k in range(1, dy2 + 1):
 			if _nav_blocked(c + Vector2i(0, -k)):
@@ -1286,7 +1163,6 @@ func _nearest_nav_node(c: Vector2i) -> Vector2i:
 	return c
 
 
-# BFS(节点 ~2000:A* 那套堆在这里换不来可感收益;图小,广度优先已足够)
 func _find_path(from_cell: Vector2i, to_cell: Vector2i) -> Array:
 	if not _nav_built:
 		return []
@@ -1332,13 +1208,11 @@ func _nav_to(target: Vector2, stop_px: float, delta: float) -> void:
 		_bot.hold_down = false
 		return
 	var tc := GridPathfinder.cell_of(target, TILE, _dims().x, _dims().y)
-	# ★★ BFS 的**起点**用"最近一次真正站在图节点上的格",不是"当前格":
 	_repath_t -= delta
 	if _path_to != tc or _path.is_empty() or _repath_t <= 0.0:
 		_path = _find_path(_last_node, tc)
 		_path_to = tc
 		_repath_t = 0.7
-	# 卡住检测:★ 判据是「**离目标**的最近距离有没有被刷新」,不是"有没有动" ——
 	var dist := to_t.length()
 	if dist <= stop_px * 2.0:
 		_stuck_to = tc
@@ -1359,8 +1233,6 @@ func _nav_to(target: Vector2, stop_px: float, delta: float) -> void:
 	var wp := _delta(me, Vector2(wp_cell.x * TILE + TILE * 0.5, wp_cell.y * TILE + TILE * 0.5))
 	var ax := signf(wp.x) if absf(wp.x) > 8.0 else 0.0
 	var my_cell := GridPathfinder.cell_of(me, TILE, _dims().x, _dims().y)
-	# ★ 记住"最近一次真正站在图节点上的格":下一帧的 BFS **从它出发**(见文件上方那段注释)。
-	#   放在这里(而不是 BFS 之前)是因为 `my_cell` 在这一行才声明;晚一帧无所谓。
 	if _nav_adj.has(my_cell):
 		_last_node = my_cell
 	var foot_cell := GridPathfinder.cell_of(Vector2(me.x, me.y + TILE * 0.5),
@@ -1368,7 +1240,6 @@ func _nav_to(target: Vector2, stop_px: float, delta: float) -> void:
 	var on_ladder := _nav_climbable(my_cell) or _nav_climbable(foot_cell)
 	var latched := bool(_local.climb.is_latched())
 	var want_vert := absf(wp.y) > TILE * 1.2
-	# ★ 卡死兜底:梯子上的死锁(爬到顶被挡/挂在梯顶)也在这一档里 —— 卡够久就按 K 脱困
 	if _phase == PH_BRAWL and _stuck_t > STUCK_K and _k_used < K_MAX and _phase_t > 20.0 \
 			and (_path.is_empty() or _stuck_t > STUCK_K * 2.0):
 		_k_used += 1
@@ -1388,7 +1259,6 @@ func _nav_to(target: Vector2, stop_px: float, delta: float) -> void:
 			_bot.press_jump()
 		return
 	if on_ladder and latched:
-		# 想脱离梯子:按住上爬到顶,到顶那一帧的"按上"= 跳离(见 climb_component)
 		_bot.hold_up = true
 		_bot.hold_down = false
 		_bot.axis = ax
@@ -1397,15 +1267,12 @@ func _nav_to(target: Vector2, stop_px: float, delta: float) -> void:
 	_bot.hold_up = false
 	_bot.hold_down = false
 	_bot.axis = ax
-	# 平台图:赶路就跳(跨空隙);被挡也跳;目标在头顶也跳
 	if _local.is_on_floor() and (want_vert or absf(wp.x) > TILE * 0.6):
 		_bot.press_jump()
 	elif absf(_local.velocity.x) < 30.0 and absf(wp.x) > TILE * 0.5 and _local.is_on_floor():
 		_bot.press_jump()
 
 
-# 按 K 走**游戏自己的** `_unhandled_input`(与 c2 探针按 K 同款),不直接发 RPC:
-# 顺带把「3v3 里 K 分支还在」(A 册收尾批接的那条线)也验了。
 func _k_suicide() -> void:
 	if _game == null or not is_instance_valid(_game):
 		return
@@ -1433,7 +1300,6 @@ func _dict_str(d: Dictionary) -> String:
 	return ",".join(parts)
 
 
-# ════════════════════ 结果 ════════════════════
 
 func _rec(line: String) -> void:
 	_lines.append("REC " + line)
@@ -1453,7 +1319,6 @@ func _finish() -> void:
 	var text := head + "\n" + "\n".join(_lines)
 	if not _fails.is_empty():
 		text += "\nFAILS " + " | ".join(_fails)
-	# 跨端断言要的原始读数(裁判读这几行)
 	text += "\nINFO room_states=%d list_rows=%d wait_rows=%d wait_count=%s played=%s match_over=%d" % [
 			_room_states, _list_rows, _wait_rows, _wait_count_text, str(_played_rounds),
 			1 if _match_over else 0]
@@ -1469,9 +1334,6 @@ func _finish() -> void:
 		_wait_peers_then_quit()
 
 
-# 6 端是**同一局**里的六个进程:谁都不能先退 —— 任一端退出都会让服务器进宽限期,
-# 若它是最后一个人还会直接收场。故所有端写完结果后**互相等**,到齐(或超时)再一起退
-# (与 royale_c2_watcher 的 `_wait_peer_then_quit` 同款纪律)。
 func _wait_peers_then_quit() -> void:
 	var waited := 0.0
 	while waited < PEER_WAIT:

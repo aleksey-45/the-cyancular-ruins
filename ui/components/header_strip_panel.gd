@@ -1,7 +1,6 @@
 class_name HeaderStripPanel
 extends PanelContainer
 
-# 标题带组件(P1/2026-10-27):版式(左右 24 / 上下 20 内边距、只有下边一条线)由 Theme 变体
 
 @export var title: String = "":
 	set(v):
@@ -27,7 +26,6 @@ func _ready() -> void:
 	_apply_size()
 
 
-# 代码里替换 UiFactory.header_strip(text, size, centered) 的调用点用这个入口。
 func apply(title_text: String, size: int, center: bool) -> void:
 	title = title_text
 	title_size = size

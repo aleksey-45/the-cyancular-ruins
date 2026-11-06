@@ -1,5 +1,4 @@
 extends SceneTree
-# 宽限到点分派守卫(G-02:到点分派写反不会红 ⇒ 3v3 第一个到点的人带走整局 / 1v1 该收场却只移出)。
 
 const EXPECTED_CHECKS := 6
 
@@ -14,25 +13,20 @@ func _chk(ok: bool, msg: String) -> void:
 
 
 func _initialize() -> void:
-	# ★ 空载守卫(仓规):load() 失败还往下走会在 null 上抛错,而 `-s` 抛错走不到 quit() ⇒ 进程永久挂起。
 	if load("res://core/net/grace_window.gd") == null:
 		print("GRACE DISPATCH FAILED: load(grace_window.gd) 返回 null(-s 空载守卫:不 quit 会挂死)")
 		quit(1)
 		return
 
-	# ① 1v1(二者皆 false)= 收场:对手不会回来了,worker 退进程把房与端口交回回收梯
 	_chk(GraceWindow.expire_action(false, false) == GraceWindow.ACTION_TEARDOWN,
 			"1v1 宽限到点必须收场(ACTION_TEARDOWN;实得 %d)" % GraceWindow.expire_action(false, false))
 
-	# ② 大乱斗 = 只移出该 role,整局继续
 	_chk(GraceWindow.expire_action(true, false) == GraceWindow.ACTION_REMOVE,
 			"大乱斗到点只移出该 role(ACTION_REMOVE;实得 %d)" % GraceWindow.expire_action(true, false))
 
-	# ③ 3v3 = 只移出该 role(★ 分派写反的现场:第一个到点的人带走整局)
 	_chk(GraceWindow.expire_action(false, true) == GraceWindow.ACTION_REMOVE,
 			"3v3 到点只移出该 role(ACTION_REMOVE;实得 %d)" % GraceWindow.expire_action(false, true))
 
-	# ④ 边界:enter(2, t=1000ms, 1s) ⇒ until=2000;1999 未到期(不含),2000 到期(含等号)
 	var g := GraceWindow.new()
 	g.enter(2, 1000, 1.0)
 	var at_before := g.expired(1999)
@@ -40,14 +34,12 @@ func _initialize() -> void:
 	_chk(at_before.is_empty() and at_exact == [2],
 			"expired 边界:早 1ms 不算到期(实得 %s)、恰到期算(实得 %s)" % [str(at_before), str(at_exact)])
 
-	# ⑤ 按 role 升序(乱序 enter 也要升序返回;调用方按返回顺序 leave / 打印,顺序漂了日志就不可对账)
 	var g2 := GraceWindow.new()
 	for r in [9, 2, 5]:
 		g2.enter(r, 1000, 1.0)
 	_chk(g2.expired(2000) == [2, 5, 9],
 			"expired 按 role 升序(实得 %s)" % str(g2.expired(2000)))
 
-	# ⑥ 到期后 remaining 报 0.0 且**键还在**(已到期的 role 不能被省略成「无掉线」)
 	var rem := g2.remaining(2000)
 	_chk(rem.has(2) and is_equal_approx(float(rem[2]), 0.0)
 			and is_equal_approx(float(rem.get(5, -1.0)), 0.0),

@@ -1,9 +1,6 @@
 class_name MazeGenerator
 extends RefCounted
 
-# 地图会话的入口:只放"选哪份地图 + 当前网格/子格表"这两件会话级状态,其余逐条一行转发 ——
-# 格式(`.cyrm` 编解码/解析/序列化/spawn)→ `MapFormat`;环面几何与寻路 → `GridPathfinder`。
-# 保留 `MazeGenerator.xxx` 的调用面(生产 ~57 个文件引用)是**刻意**的:新逻辑进那两个类,别在这里写实现。
 
 const MAP_DIR: String = "res://maps"
 
@@ -17,7 +14,6 @@ static func map_file_path() -> String:
 	_picked_map = ext if ext != "" else _random_cyrm(MAP_DIR)
 	return _picked_map
 
-# 钉住地图文件(PvP:服务器定图,客户端加载同名文件;覆盖会话随机读的缓存)。
 static func set_map_file(path: String) -> void:
 	_picked_map = path
 
@@ -37,20 +33,17 @@ static func _random_cyrm(dir: String) -> String:
 		return ""
 	return maps[randi() % maps.size()]
 
-# 当前关卡网格(level_0._ready 赋值;空网格时寻路一律视为无路)。
 static var current_grid: Array[Array] = []
 
 # 当前关卡的 16px 子格纹理表(cyrm v4):逻辑读格级 `current_grid`,碰撞/破坏/渲染读这张表
 # (见 docs/eng/world.md 的 v4 / 子格一节);空 = 调用方自行从格级展开。
 static var current_subgrid: Array[Array] = []
 
-# 当前关卡的 16px 子格 u32 描述符表(与 current_subgrid 同尺寸同来源,0 = 空气;渲染按它取图集行)。
 static var current_subdesc: Array[Array] = []
 
 
-# ── 转发:格子值编解码与文件读取(MapFormat)──
 const EMPTY: int = MapFormat.EMPTY
-const SOLID: int = MapFormat.SOLID  # pack(1, 15) = 纹理1 全砖
+const SOLID: int = MapFormat.SOLID
 
 static func pack(texture: int, shape: int) -> int:
 	return MapFormat.pack(texture, shape)
@@ -74,7 +67,6 @@ static func load_spawns() -> Dictionary:
 	return MapFormat.load_spawns(map_file_path())
 
 
-# ── 转发:环面几何 / 地板格 / 寻路(GridPathfinder)──
 static func toroidal_dist(a: Vector2i, b: Vector2i, cols: int, rows: int) -> int:
 	return GridPathfinder.toroidal_dist(a, b, cols, rows)
 

@@ -1,17 +1,16 @@
 class_name RoyaleHost
 extends MatchHost
 
-# 大乱斗权威对局(N 人限时死斗):roles 1..N 散点出生,死亡 2s 复活,复活点动态选「离所有存活敌人 ≥ 若干格」的地板格。
 
-const MATCH_TIME := 300.0        # 一局时长(秒)
-const HUD_SYNC_INTERVAL := 1.0   # 倒计时/比分周期广播
+const MATCH_TIME := 300.0
+const HUD_SYNC_INTERVAL := 1.0
 
 var _match_time := MATCH_TIME
-var _cfg_match_time := 0.0             # 房主自定义时长(秒;0=默认 MATCH_TIME)
+var _cfg_match_time := 0.0
 var _hud_sync := 0.0
-var _round_spawns: Dictionary = {}    # role -> Vector2i(开局散点,_init 摆位用;也是 match_sync 广播的那份)
-var _spawned_once: Dictionary = {}    # role -> true(首次摆位走散点,之后动态选复活点)
-var _last_spawn: Dictionary = {}      # role -> Vector2i(最近一次出生/复活格:复活时排除上一次位置用)
+var _round_spawns: Dictionary = {}
+var _spawned_once: Dictionary = {}
+var _last_spawn: Dictionary = {}
 
 
 func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
@@ -20,15 +19,11 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 # ★ 散点必须在 super._init() 之前就绪:父类 _init 摆位会虚调 _spawn_cell(role),那时 _round_spawns 若还空,首次摆位会拿到
 # (-1,-1) 并被 _spawned_once 闩死 ⇒ 全体玩家挤到地图回卷角落,散点/复活设计失效。
 	MatchHost.ensure_spawn_grid(map_path)
-# ★ 出生点单一来源:常规路径由 start_on 算好传进来(它同时把同一份经 match_start 广播给客户端);传空 = 手工/测试路径才自己算。
-# 这里不得再调一次 plan_spawns —— 它是随机的(SpawnChooser),重算出的是另一份散点,而实际摆位读的是这一份,事后覆盖
-# _round_spawns 也改不回任何人的位置(_spawned_once 已闩)⇒ 广播给客户端的那份从不生效、两端位置不一致,且完全不报错。
 	_round_spawns = spawns if not spawns.is_empty() else plan_spawns(role_peers.keys() + ai_roles)
 	_cfg_match_time = float(options.get("match_time", 0.0))
 	super._init(map_path, role_peers, options, ai_roles)
 
 
-# ── 开局(在 worker 进程调用):算散点出生 → 逐角色 match_start → 建 RoyaleHost。ai_roles = AI 补位 role 列表(由服务端 AI 驱动,不发 match_start)。──
 static func start_on(role_peers: Dictionary, map_path: String, options: Dictionary = {},
 		ai_roles: Array = []) -> Node:
 	MatchHost.prepare_map(map_path)
@@ -45,21 +40,14 @@ static func start_on(role_peers: Dictionary, map_path: String, options: Dictiona
 
 
 
-# ── 散点 ── 实现(SPAWN_CLEARANCE / 候选层回退的逐条「为什么」)在 RoyaleSpawn.plan_spawns。
-# ★ 保留静态转发而不是让调用点直接引 RoyaleSpawn:start_on 与 _init 的调用面零 diff,搬运不牵连调用方。
 static func plan_spawns(roles: Array) -> Dictionary:
 	return RoyaleSpawn.plan_spawns(roles)
 
 
-# 出生点:首次 = 开局散点(权威是 _round_spawns);复活 = 地图 `# respawn` 两侧并集里离所有存活敌人 ≥ RESPAWN_CLEARANCE
-# 且不是本 role 上一次位置的随机格(缺数据的老图走 SpawnPicker.respawn_pools() 的旧池序列)。
-# ★ role_spawns 覆写不可省 —— 基类走 _spawn_cell,而本类的 _spawn_cell 第二次起返回动态复活点且带 _spawned_once 副作用。
 func role_spawns() -> Dictionary:
 	return _round_spawns.duplicate()
 
 
-# ★ _spawned_once 的「首次」闩与 _round_spawns / _last_spawn 的状态留在宿主;选格计算在 RoyaleSpawn。
-# 出生点数据 = 地图 `# respawn` 两侧并集(大乱斗无阵营);复活点额外排除本 role 上一次落点(=该 role 的上一次位置)。
 func _spawn_cell(role: int) -> Vector2i:
 	role = int(role)
 	var cell: Vector2i
@@ -91,8 +79,6 @@ func _match_round_tick(delta: float) -> void:
 				state._round_state = MatchState.RoundState.PLAYING
 				_broadcast_round_state()
 			else:
-				# 倒计时每 0.5s 重播(与 1v1/3v3 同一实现):客户端切场景/建 HUD 有延迟,_ready 只广播一次会漏收;
-				# 重播同时是「把本地时钟锚到服务器剩余」的唯一手段(客户端 CountdownClock 只采纳更短的值)。
 				_countdown_resync_tick(delta)
 		MatchState.RoundState.PLAYING:
 			_match_time = maxf(_match_time - delta, 0.0)
@@ -109,7 +95,6 @@ func _match_round_tick(delta: float) -> void:
 					continue
 				state._down_counted[role] = true
 				_on_down_edge(int(role))
-			# 周期广播(倒计时/比分同步)
 			_hud_sync -= delta
 			if _hud_sync <= 0.0:
 				_hud_sync = HUD_SYNC_INTERVAL
@@ -117,12 +102,9 @@ func _match_round_tick(delta: float) -> void:
 			if _match_time <= 0.0:
 				_finish_match()
 		MatchState.RoundState.MATCH_OVER:
-			pass   # 结果展示阶段:客户端弹结算页,**玩家自己退**(不再有 N 秒自动回菜单)
+			pass
 
 
-# 击杀归因:读受害者 meta 里的射手节点(子弹直击/爆炸在命中时写入),映射回 role;带时效(超 ATTRIB_WINDOW 不归因)。
-# ★ 函数本体与 team_host 那份逐字同款 ⇒ 已上提到 MatchHost._attributed_killer(3s 窗口 = ATTRIB_WINDOW);
-# 本类只留「大乱斗口径」的覆写:_down_killer_of 走归因(1v1 走对手、无归因死亡不计分)。
 func _down_killer_of(role: int) -> int:
 	return _attributed_killer(state.players[int(role)])
 
@@ -135,7 +117,6 @@ func _award_down(victim_role: int, killer_role: int) -> void:
 	_broadcast_round_state()
 
 
-# ★ 置态 + 广播两条已上提到 MatchHost._finish_match(与 TeamHost 逐字同款);这里只留收场文案。
 func _finish_match() -> void:
 	super._finish_match()
 	print("RoyaleHost: 对局结束,胜者 role %d" % _match_winner())
@@ -146,16 +127,11 @@ func _match_winner() -> int:
 	var best_role := 0
 	var best_n := -1
 	var tie := false
-# ★ 候选 = 还在场的 ∪ 计过分的(含已离开者)。★ 原实现只遍历 players,而 mark_disconnected 会先把退出者 erase 掉 ⇒ 剩 1 人时
-# 独行者必胜、与比分无关(现已按分判胜;分平含全场 0 杀则平局)。_scores 不在清理范围内,离开者的分天然还在。
 	var candidates := {}
 	for role in state.players:
 		candidates[int(role)] = true
 	for role in state._scores:
 		candidates[int(role)] = true
-# ★ 已移出但对局仍在继续的人(_left)也必须进候选:0 杀离开者的分不在 _scores 里,他又已被移出 players ⇒ 两边都不在,
-# 于是少了一个并列候选 —— 幸存者只剩一个时他是唯一候选、tie 永远不成立,明明全场 0 杀却判成他独胜。_left 是这种离开者
-# 唯一的痕迹。★ 只在「幸存者 ≤ 1」这一档改变结果。⚠ 零守卫:late_match_probe ④/⑤/⑤b 已删(2026-10-09)。
 	for role in state._left:
 		candidates[int(role)] = true
 	for role in candidates:
@@ -173,7 +149,6 @@ func _match_winner() -> int:
 func _broadcast_round_state() -> void:
 	var names := {}
 	var alive := {}
-# 昵称行覆盖:真人(peer_by_role)+ 已离开者 + AI 补位(players 里没有 peer 的 role)—— 只遍历 peer_by_role 会让 AI 不进排行榜。
 	for role in state.peer_by_role:
 		names[int(role)] = _display_names.get(int(role), "玩家%d" % int(role))
 	for role in state.players:
@@ -193,17 +168,13 @@ func _broadcast_round_state() -> void:
 		var s: Dictionary = state._stats.get(int(role), {})
 		deaths[int(role)] = int(s.get("deaths", 0))
 	var data := _round_state_base()
-# ★ 下面三行是**覆盖**共有键、不是追加:大乱斗的口径与回合制逐条不同,取值逐字沿用拆前的硬写值。
-	data["round"] = 1        # 大乱斗无局号,占位(客户端 HUD 按这个键读;★ 别改成 _round_num)
-	data["rounds_won"] = {}  # 大乱斗无局胜,占位空(客户端 HUD 兼容读取)
+	data["round"] = 1
+	data["rounds_won"] = {}
 	data["timer"] = ceilf(_match_time) if state._round_state == MatchState.RoundState.PLAYING else state._round_timer
 	data["deaths"] = deaths
 	data["names"] = names
 	data["alive"] = alive
 	data["left"] = state._left.keys()
-# match_winner / stats 由 _round_state_base 并进(与 RoundSystem 同一份构造)⇒ 本模式不再各拼一份。
-# ★ 大乱斗不带 mvp(spec §3.6/§4 都没要求,结算页也不列 ACS)—— 骨架也不发,别在这里补:加了它就是一个没有读者的键。
-# 基类的广播样板,只多一个「只发在线 peer」;样板本身收在 MatchHost._rpc_all,这里走 _send_round_state(它内部仍调它,并多并一个 grace 字段)。
 	_send_round_state(data)
 
 
@@ -221,21 +192,16 @@ func mark_disconnected(role: int) -> void:
 	if not _detach_role(role):
 		return
 	_broadcast_round_state()
-# 剩余玩家 < 2 → 直接终局(独行者判胜)。★ 判据必须是 players(真人 + AI 补位),不是 peer_by_role:AI 补位由服务端驱动、
-# 没有 peer,按 peer 数会在「2 真人 + 2 AI 掉 1 真人」时把剩下 1 真人 + 2 AI 当场判终局。
 	if state.players.size() < 2 and state._round_state != MatchState.RoundState.MATCH_OVER:
 		_finish_match()
 
 
 
 func _on_bullet_hit(bullet: CharacterBody2D, victim: Node2D, victim_role: int) -> void:
-# 归因写入统一走 CombatFeedback 的单一入口(它同时写 last_damager + last_damager_time)。★ 基类自 2026-09-27 起也写同一笔
-# ⇒ 本覆写是冗余的重复写(attribute 幂等),保留只为留下写点;★★ 别据此把基类那行删掉 —— 1v1 直接建 MatchHost,基类那行是它唯一的子弹归因写端。
 	CombatFeedback.attribute(victim, bullet.shooter)
 	super._on_bullet_hit(bullet, victim, victim_role)
 
 
-# 复活时清空归因 meta:复活后的环境死亡(溺水等)不再记到复活前最后射手头上(与 TeamHost 那份对等)。
 func _respawn_player(role: int) -> void:
 	super._respawn_player(role)
 	var p: Node2D = state.players.get(role)
@@ -243,8 +209,6 @@ func _respawn_player(role: int) -> void:
 		p.remove_meta("last_damager")
 		p.remove_meta("last_damager_time")
 
-# ── 自杀脱困(K 键:royale_game 客户端 → NetBusExt.suicide_request → server_main 转发)── 异常卡死时主动放弃生命:
-# 走正常倒地边沿 → 2s 复活;先清 last_damager 归因 ⇒ 自杀不计入任何人击杀(哪怕刚被人打过),只累积自己的阵亡数。
 func request_suicide_role(role: int) -> void:
 	if state._round_state != MatchState.RoundState.PLAYING:
 		return

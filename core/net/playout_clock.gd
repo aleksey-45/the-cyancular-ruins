@@ -1,23 +1,20 @@
 extends RefCounted
-# ★ 刻意不写 class_name:它只被 player_replica 用 `preload(...)` 取一个常量。写成全局类名要多一次编辑器扫描才注册得进
-# 全局类缓存(运行 / 导出两面都要那份缓存),而 preload 不受缓存状态影响 —— 导出后不会突然「找不到类型 PlayoutClock」。
 
-# 客户端播放时钟(按服务器 tick 计):回答"此刻该渲染服务器历史的哪一 tick"。
-const TICKS_PER_SEC := 60.0          # = 物理 tick 域(快照 tick 的刻度)
-const TICK_MS := 1000.0 / 60.0       # 一个 tick 多少毫秒(观测换算用)
-const WINDOW := 8                    # NTP §10 的窗口大小(8 级移位寄存器)
-const DRIFT_SLACK := 1.5             # tick:误差死区(落在这里面不纠偏)—— 挡住残余抖动
-const DRIFT_MAX := 0.10              # 每秒最多快/慢 10%(time dilation 的上限)
-const DRIFT_GAIN := 0.25             # 死区外按比例纠偏的增益
-const DEPTH_COMP_MAX := 4.0          # 深度补偿的上限(tick)
+const TICKS_PER_SEC := 60.0
+const TICK_MS := 1000.0 / 60.0
+const WINDOW := 8
+const DRIFT_SLACK := 1.5
+const DRIFT_MAX := 0.10
+const DRIFT_GAIN := 0.25
+const DEPTH_COMP_MAX := 4.0
 
-var render_tick := 0.0               # 本帧要渲染的历史时刻(服务器 tick 域,可为小数 = 夹在两条快照之间)
+var render_tick := 0.0
 
 var _playout := 0
-var _local_ms := 0.0                 # 本地单调毫秒(模拟时间;见文件头)
-var _offsets: Array[float] = []      # 最近 WINDOW 个观测 `local_ms - tick * TICK_MS`
-var _o_min := 0.0                    # 窗口内最小观测(= 延迟最小那条路径)
-var _o_max := 0.0                    # 窗口内最大观测(诊断 + 深度补偿用)
+var _local_ms := 0.0
+var _offsets: Array[float] = []
+var _o_min := 0.0
+var _o_max := 0.0
 var _started := false
 
 

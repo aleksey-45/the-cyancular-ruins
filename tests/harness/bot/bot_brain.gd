@@ -1,6 +1,5 @@
 extends RefCounted
 
-# 纯决策:Observation[] + 上下文 / 状态 → Intent。不碰节点、不读全局。
 
 const Geo := preload("res://core/sim/grid_pathfinder.gd")
 
@@ -8,9 +7,9 @@ const REL_ENEMY := "enemy"
 const SOURCE_VIEW := "view"
 const SOURCE_MEMORY := "memory"
 
-const SWITCH_MARGIN := 80.0     # 新目标必须比当前好这么多才换(防来回切)
-const STUCK_SPEED := 12.0       # 想动但水平速度低于它 = 可能卡住
-const STUCK_JUMP_TIME := 0.4    # 卡住累计这么久才跳一次(防原地连跳)
+const SWITCH_MARGIN := 80.0
+const STUCK_SPEED := 12.0
+const STUCK_JUMP_TIME := 0.4
 const STRAFE_FLIP := 1.5
 const ROAM_FLIP := 2.5
 
@@ -51,7 +50,6 @@ static func _enemies(obs: Array) -> Array:
 	return out
 
 
-# 评分 = 越近越好 + 主画面来源加成;滞回:当前目标仍可选且新目标没有明显更好就不换。
 static func _choose_target(enemies: Array, state: Dictionary, self_pos: Vector2,
 		map_size: Vector2) -> Dictionary:
 	var best: Dictionary = enemies[0]
@@ -71,7 +69,6 @@ static func _choose_target(enemies: Array, state: Dictionary, self_pos: Vector2,
 	return best
 
 
-# _choose_target 需要自身位置与地图尺寸,由 decide 通过参数传入(不改 state 形状)。
 static func _score(e: Dictionary, self_pos: Vector2, map_size: Vector2) -> float:
 	var d := Geo.toroidal_delta_px(self_pos, e.get("pos", self_pos), map_size.x, map_size.y)
 	var s := -d.length()
@@ -99,7 +96,6 @@ static func _with_move(intent: Dictionary, ctx: Dictionary, state: Dictionary,
 		axis = state.get("strafe", 1.0)
 	intent["axis"] = axis
 	intent["fire"] = fire_ok and dist <= float(ctx.get("fire_range_px", 620.0))
-	# 卡住:想动但没速度 ⇒ 累计够久跳一次(≤1 格台阶已由 StepJump 自动处理,这里只兜高台/边缘)
 	if axis != 0.0 and absf(float(ctx.get("self_vx", 0.0))) < STUCK_SPEED:
 		state["stuck_t"] = float(state.get("stuck_t", 0.0)) + delta
 		if float(state["stuck_t"]) >= STUCK_JUMP_TIME:

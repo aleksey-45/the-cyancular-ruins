@@ -1,10 +1,7 @@
 class_name GroundSystem
 extends RefCounted
 
-# 地面武器域(C 方案 S3):表 + 拾取/丢弃裁决 + 事件广播 + 初始分布/换局重置。只依赖 state + ports。
-# ★ 服务器真的实例化 WeaponPickup:落点由物理决定、而它决定「够不够得着」。
 
-# ★ 仅测试用(默认关,只由 worker 的 --test-ground-teleport 打开,生产路径不可达)。
 static var test_ground_teleport := false
 
 var _state: MatchState = null
@@ -12,11 +9,11 @@ var _ports: MatchPorts = null
 
 var ground_weapons := GroundWeaponField.new()
 var _next_ground_inst := 1
-var _ground_nodes: Dictionary = {}     # inst -> WeaponPickup
-var _self_drop_until: Dictionary = {}  # role -> {inst: 解禁时刻(ms)},防"丢完立刻捡回"
-var _settled_seen: Dictionary = {}     # inst -> 上一次看到的 _settled
+var _ground_nodes: Dictionary = {}
+var _self_drop_until: Dictionary = {}
+var _settled_seen: Dictionary = {}
 const PICKUP_INTENT_S := 0.4
-var _pickup_intent: Dictionary = {}    # role -> 过期时刻(ms)
+var _pickup_intent: Dictionary = {}
 
 
 func bind(state: MatchState, ports: MatchPorts) -> void:
@@ -49,7 +46,7 @@ func _spawn_ground_weapon(type_id: int, mag: int, pos: Vector2, vel: Vector2,
 		_next_ground_inst = maxi(_next_ground_inst, inst + 1)
 	var node: WeaponPickup = preload("res://scenes/weapons/weapon_pickup.tscn").instantiate()
 	node.configure(type_id, inst, mag, vel)
-	_ports.scene_add_child.call(node)   # 与 WorldBuilder.build_sim 的碰撞体同级 → 落体才撞得到地形
+	_ports.scene_add_child.call(node)
 	node.global_position = pos
 	node.canonical_pos = pos
 	ground_weapons.map_size = Vector2(float(GameParameters.MAP_WIDTH), float(GameParameters.MAP_HEIGHT))
@@ -74,7 +71,6 @@ func _remove_ground_weapon(inst: int) -> void:
 		(_self_drop_until[role] as Dictionary).erase(inst)
 
 
-# 每 tick 的地面武器维护:位置同步 / 落定重锚 / 拾取意图重试(唯一每帧入口)。
 func sync_positions() -> void:
 	for inst in _ground_nodes:
 		var n = _ground_nodes[inst]
@@ -83,14 +79,12 @@ func sync_positions() -> void:
 			var e: Dictionary = ground_weapons.get_entry(int(inst))
 			if not e.is_empty():
 				e["pos"] = pk.canonical_pos
-			# 落定那一刻重播一次「它现在在这儿」(客户端也在本地模拟落体,而它那份地形可能不同)。
 			if pk._settled and not bool(_settled_seen.get(int(inst), false)):
 				_broadcast_weapon_spawned(int(inst), -1, true)
 			_settled_seen[int(inst)] = pk._settled
 	_tick_pickup_intents()
 
 
-# ★ 仅测试用:把最近的一把挪到脚下;判据直接用 PlayerParams.weapon_pickup_radius。
 func debug_keep_weapon_within_reach() -> void:
 	if not test_ground_teleport or ground_weapons.entries.is_empty():
 		return
@@ -125,7 +119,6 @@ func _canonical_of(inst: int) -> Vector2:
 	return e.get("pos", Vector2.ZERO)
 
 
-# 给 match_sync_data 的载荷(客户端进场拉取时一并拿到开局那批)。
 func payload() -> Array:
 	var out: Array = []
 	for e in ground_weapons.entries:
@@ -145,7 +138,6 @@ func _live_velocity_of(inst: int) -> Vector2:
 	return e.get("vel", Vector2.ZERO)
 
 
-# by_role = 这把是谁刚丢下的(-1 = 开局铺的/无主);settled = 原地重锚(不是新生成)。
 func _broadcast_weapon_spawned(inst: int, by_role: int = -1, settled: bool = false) -> void:
 	var e: Dictionary = ground_weapons.get_entry(inst)
 	if e.is_empty():
@@ -190,7 +182,6 @@ func handle_actions(role: int, src: PacketInputSource) -> void:
 		_try_server_drop(p, role)
 
 
-# 拾取意图的每 tick 重试(由 sync_positions 调)。
 func _tick_pickup_intents() -> void:
 	if _pickup_intent.is_empty():
 		return
@@ -208,7 +199,6 @@ func _tick_pickup_intents() -> void:
 			_pickup_intent.erase(r)
 
 
-# 拾取:一次只捡最近的一把(与单机同规则)。返回 true = 这次按 F 已有结果;false = 够不着(保留重试)。
 func _try_server_pickup(p: Node2D, role: int, log_miss: bool = true) -> bool:
 	var e: Dictionary = ground_weapons.nearest_within(
 			p.global_position, PlayerParams.weapon_pickup_radius, _live_self_drops(role))
@@ -229,7 +219,7 @@ func _try_server_pickup(p: Node2D, role: int, log_miss: bool = true) -> bool:
 	if dropped < 0:
 		NetDiag.log_event("pickup_try", {"role": role, "result": "denied",
 				"type": int(e["type_id"]), "inst": inst})
-		return true   # 被禁用闸门拒绝:重试也没用
+		return true
 	NetDiag.log_event("pickup_try", {"role": role, "result": "taken", "type": int(e["type_id"]),
 			"inst": inst, "replaced": dropped})
 	_remove_ground_weapon(inst)
@@ -257,7 +247,6 @@ func _try_server_drop(p: Node2D, role: int) -> void:
 	_broadcast_weapon_spawned(ni, role)
 
 
-# 从背包随机保留一条(并 equip),其余在当前位置散开掉出。唯一调用时机 = 倒地边沿。
 func drop_all_but_one(p: Node2D, role: int) -> void:
 	if p.weapons == null:
 		return
@@ -304,14 +293,13 @@ func _scatter_ground_weapons(types: Array) -> void:
 		_spawn_ground_weapon(int(types[i]), WeaponInventory.MAG_FULL, pos, Vector2.ZERO)
 
 
-# 开局:铺 12 把(每种 2 把、跳过禁用),再让每个玩家(含 AI 补位)从池子里随机拿 1 把。
 func setup() -> void:
 	_scatter_ground_weapons(_server_weapon_types())
 	for role in _state.players:
 		var p: Node = _state.players[role]
 		if p.weapons == null:
 			continue
-		var t := 1   # 兜底:池子空时至少给手枪
+		var t := 1
 		if not ground_weapons.entries.is_empty():
 			var idx := randi() % ground_weapons.entries.size()
 			var e: Dictionary = ground_weapons.remove(int(ground_weapons.entries[idx]["inst"]))
@@ -320,7 +308,6 @@ func setup() -> void:
 		p.weapons.set_initial_inventory([t])
 
 
-# 换局:清空重铺 + 每人背包重置为随机一把;清的与铺的都必须广播。★ _next_ground_inst 不重置。
 func reset() -> void:
 	var cleared: Array = _ground_nodes.keys().duplicate()
 	for inst in cleared:

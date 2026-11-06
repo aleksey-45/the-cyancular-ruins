@@ -1,15 +1,10 @@
 extends Node
 
-# 全仓脚本加载自检:递归扫 res:// 下全部 .gd 逐个 load(),抓悬空引用/解析错误。
-# 场景模式跑(autoload 可用);对"大回退/大合并后的第一件事"特别有用。
-#   godot --headless --path . res://tests/probe/allscript_probe.tscn
 
 const SKIP_DIRS := ["res://.godot", "res://.tmp", "res://builds", "res://releases", "res://gamelogs",
 		"res://crashlogs", "res://maps", "res://map", "res://backup", "res://editor/_build",
 		"res://_crashtest", "res://docs"]
-# ★ 为什么要收 `res://_crashtest`(与 `tools/check_naming.py` 里同名的根同因):它是 gitignore 的
 
-# ★ 为什么必须有一条数闸:一个过宽的 `SKIP_DIRS` 项、一个 `.gdignore`、一次 `DirAccess.open`
 const EXPECTED_SCRIPTS := 247
 
 var _fails: Array[String] = []
@@ -30,9 +25,6 @@ func _run() -> void:
 		if s == null or broken:
 			_fails.append(p)
 			print("LOAD[FAIL]: %s(%s)" % [p, "解析失败/不可实例化" if broken else "load() 返回 null"])
-	# 收尾两道(同 `tests/lib/probe_base.gd` 的 `_checks >= EXPECTED_CHECKS` 那条纪律,只是这里
-	# 的"条数"是被扫的脚本数):① 脚本数 `!= EXPECTED_SCRIPTS` ⇒ 红(少了是缺口,多了是覆盖变了);
-	# ② 有加载失败 ⇒ 红。判词点名条数,否则"闸红了"与"扫描面塌了"在输出上分不出来。
 	var count_ok := _total == EXPECTED_SCRIPTS
 	if not count_ok:
 		print("ALLSCRIPT: 条数闸 FAIL —— 实扫 %d 个脚本,期望 %d(覆盖面对不上;见本文件头部)"
@@ -41,7 +33,6 @@ func _run() -> void:
 		print("ALLSCRIPT: OK(%d 个脚本全部加载)" % _total)
 		get_tree().quit(0)
 	else:
-		# 条数闸红时把原因并进裁决行 —— 否则会打出一行像"零失败"的 `FAIL(0/131 失败)`。
 		print("ALLSCRIPT: FAIL(%d/%d 失败%s)" % [_fails.size(), _total,
 				("" if count_ok else " · 条数闸红(期望 %d)" % EXPECTED_SCRIPTS)])
 		get_tree().quit(1)
@@ -63,8 +54,3 @@ func _collect(dir_path: String) -> Array[String]:
 			out.append(p)
 		name = dir.get_next()
 	return out
-# ★ 2026-10-27:187→188 —— 其他会话新增 1 个 tracked .gd(本任务无新增);同时 `res://audit_shots` 进 SKIP_DIRS
-#   (该目录是 UI 审计会话的临时截图驱动草稿,不属于编译面/导出面,与 `res://docs` 同理)。
-# ★ 2026-11-04:249→243(删 6 个 .gd:bot 链 3 + soak 输入 + room_sweep_lint + royale_soak)。
-# ★ 2026-11-05:243→242(删 core/mp/mode_room_rules.gd)→245(新增 server/match/match_ports.gd 与另一会话的未跟踪 .gd;S5 新增 scenes/mp_client/client_state.gd / client_ports.gd → 247;
-#   另一会话的未跟踪 core/present/sprite_frames_io.gd 也在扫描面里 → 它提交时本数不变)。

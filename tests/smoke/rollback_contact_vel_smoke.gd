@@ -18,7 +18,6 @@ func _state(pos: Vector2, vel: Vector2, hp := 50, down := false) -> Dictionary:
 
 
 func _initialize() -> void:
-	# ★ 空载守卫(仓规):load() 失败还往下走会在 null 上抛错,而 `-s` 抛错走不到 quit() ⇒ 进程永久挂起。
 	if load("res://core/net/prediction_rollback.gd") == null:
 		print("ROLLBACK CONTACT VEL FAILED: load(prediction_rollback.gd) 返回 null(-s 空载守卫:不 quit 会挂死)")
 		quit(1)
@@ -27,27 +26,23 @@ func _initialize() -> void:
 	var c := PredictionRollback.new()
 	var base := _state(Vector2(100, 100), Vector2(300, 0))
 
-	# ① 非接触期:严格 20(不因本次改动放宽)
 	c.in_contact = false
 	_chk(not c._within("vel", base, _state(Vector2(100, 100), Vector2(400, 0)))
 			and c._within("vel", base, _state(Vector2(100, 100), Vector2(310, 0))),
 			"非接触期 vel 容差仍是 20(300 vs 400 判分歧 / 300 vs 310 判一致)")
 
-	# ② 贴身期:vel 容差 = contact_vel_tol(400) —— 常规碰撞噪声不再判分歧,>400 仍判
 	c.in_contact = true
 	_chk(c._within("vel", base, _state(Vector2(100, 100), Vector2(400, 0)))
 			and c._within("vel", base, _state(Vector2(100, 100), Vector2(699, 0)))
 			and not c._within("vel", base, _state(Vector2(100, 100), Vector2(701, 0))),
 			"贴身期 vel 容差 400(300 vs 400/699 判一致,300 vs 701 判分歧)")
 
-	# ③ 贴身期位置容差**不受**速度放宽影响:仍由 contact_pos_tol 决定
 	c.contact_pos_tol = 8.0
 	var pos8 := c._within("pos", _state(Vector2(100, 100), Vector2.ZERO), _state(Vector2(120, 100), Vector2.ZERO))
 	c.contact_pos_tol = 24.0
 	var pos24 := c._within("pos", _state(Vector2(100, 100), Vector2.ZERO), _state(Vector2(120, 100), Vector2.ZERO))
 	_chk(not pos8 and pos24, "贴身期位置容差与速度容差解耦(20px 在 tol=8 判分歧、tol=24 判一致)")
 
-	# ④ 整态判定:贴身 + hp/down/pos 一致 + vel 差 300 ⇒ 预测被证实(不再白回滚);hp 不同仍判分歧
 	c.contact_pos_tol = 8.0
 	var claimed := c._close_enough(base, _state(Vector2(100, 100), Vector2(600, 0)))
 	var hp_bad := c._close_enough(base, _state(Vector2(100, 100), Vector2(600, 0), 40))

@@ -1,25 +1,21 @@
 class_name LanIp
 extends RefCounted
 
-# 本机局域网候选 IP 发现(只用于「朋友填哪个地址」的提示,不承载联机逻辑)。纯静态、无 autoload 依赖。
 
 const SYS32 := "C:/Windows/System32"
 
 static var _cache: Array = []
 
 
-## 局域网候选 IP(第一个最可能是朋友能连上的地址)。Web 版返回空;结果缓存到进程结束。
 static func lan_ip_candidates() -> Array:
 	if OS.has_feature("web"):
 		return []
 	if not _cache.is_empty():
 		return _cache.duplicate()
 	var out: Array = []
-	# ⓪ 服务端刚落盘的 local_ip.txt 已按默认路由算好 ⇒ 秒回,免得每次开大厅都查一次路由表。
 	var from_file := _read_ip_file_best()
 	if from_file != "":
 		out.append(from_file)
-	# ① 默认路由网卡:netstat -rn 里 0.0.0.0 0.0.0.0 <网关> <本机IP> <metric> 的行,按 metric 升序。
 	if out.is_empty():
 		var raw: Array = []
 		OS.execute(SYS32 + "/netstat.exe", PackedStringArray(["-rn"]), raw, false, false)
@@ -29,7 +25,6 @@ static func lan_ip_candidates() -> Array:
 		for s in parse_default_routes("\n".join(parts)):
 			if _priv_score(s) >= 2 and not out.has(s):
 				out.append(s)
-	# ② 补充其余私有地址(只用于第一候选不通时换一个试)
 	var rest: Array = []
 	for a in IP.get_local_addresses():
 		var s := str(a)
@@ -42,10 +37,8 @@ static func lan_ip_candidates() -> Array:
 	return out.duplicate()
 
 
-## 解析 netstat -rn 文本里的默认路由行:只留点分 IPv4 网卡地址、同网卡去重(留首次出现的 metric)、按 metric 升序。
-## 行形如 `0.0.0.0 0.0.0.0 <网关> <本机IP> <metric>`;多播 / on-link / 表头等噪行一律跳过。
 static func parse_default_routes(text: String) -> Array[String]:
-	var hits: Array = []   # [metric:int, iface:String]
+	var hits: Array = []
 	for line in text.split("\n"):
 		var cols := line.strip_edges().split(" ", false)
 		if cols.size() < 5 or cols[0] != "0.0.0.0" or cols[1] != "0.0.0.0":
@@ -67,7 +60,6 @@ static func parse_default_routes(text: String) -> Array[String]:
 	return out
 
 
-## 按私有网段优先级稳定排序:192.168.* > 10.* > 172.16~31.* > 其它,同档保持输入顺序。
 static func rank_private(ips: Array) -> Array[String]:
 	var out: Array[String] = []
 	for score in [4, 3, 2, 1]:
@@ -78,9 +70,6 @@ static func rank_private(ips: Array) -> Array[String]:
 	return out
 
 
-## 从 local_ip.txt 首行(如「本机局域网 IP: 10.0.0.5(其它候选: …)」)抽出点分 IPv4;没有 IP: 前缀或值非法 ⇒ 返回 ""。
-## ★ 旧实现从 IP: 后直接按分隔符截断,而 server_main 落盘是「IP: 10.0.0.5」(冒号后一个空格)⇒ 每次都在第 0 个空格
-##   截成空串、local_ip.txt 快回路径从未命中 —— 所以这里先 strip 再截分隔符。
 static func parse_ip_file_line(line: String) -> String:
 	var idx := line.find("IP:")
 	if idx < 0:
@@ -116,7 +105,6 @@ static func _read_ip_file_best() -> String:
 	return ""
 
 
-# 点分十进制 IPv4 判定(不用 RegEx:本文件会进导出包,裁剪模板删掉了 RegEx 模块)。
 static func _is_dotted_ipv4(s: String) -> bool:
 	var parts := s.split(".")
 	if parts.size() != 4:
@@ -130,7 +118,6 @@ static func _is_dotted_ipv4(s: String) -> bool:
 	return true
 
 
-# 本机 IP 提示(服务器与客户端同机):直接展示客户端自己的地址,免手动 ipconfig;多个候选时把"不通就换"也印出来。
 static func lan_ip_hint() -> String:
 	var ips := lan_ip_candidates()
 	if ips.is_empty():
@@ -141,7 +128,6 @@ static func lan_ip_hint() -> String:
 	return text
 
 
-# 私有网段分档(排序与"是否私有"共用):192.168.*=4 > 10.*=3 > 172.16~31.*=2 > 其它=1。
 static func _priv_score(ip: String) -> int:
 	if ip.begins_with("192.168."):
 		return 4

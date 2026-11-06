@@ -1,5 +1,4 @@
 extends SceneTree
-# 房列表「房主 + 名单」守卫(01 审查 S-12:同一段判据原先在 RoomRegistry.list_payload 与
 
 const EXPECTED_CHECKS := 7
 
@@ -17,41 +16,34 @@ func _initialize() -> void:
 	var names := {10: "A", 11: "B"}
 	var frozen: Array = [{"role": 1, "name": "A"}, {"role": 2, "name": "B"}]
 
-	# ① 1v1 等待中:房主 = players[0];名单 = players 顺序
 	var r1 := ServerStatus.host_and_roster(true, false, 0, 0, [], [10, 11], {10: 1, 11: 2}, names)
 	_chk(str(r1["host"]) == "A" and (r1["names"] as Array) == ["A", "B"],
 			"1v1 等待中:房主 = players[0](实得 %s / %s)" % [str(r1["host"]), str(r1["names"])])
 
-	# ② 1v1 局中:players 已空 ⇒ 房主退回冻结名单第一条
 	var r2 := ServerStatus.host_and_roster(true, true, 0, 0, frozen, [], {10: 1, 11: 2}, names)
 	_chk(str(r2["host"]) == "A" and (r2["names"] as Array) == ["A", "B"],
 			"1v1 局中:房主取冻结名单第一条(实得 %s)" % str(r2["host"]))
 
-	# ③ 大乱斗等待中:房主 = host_peer 的昵称
 	var r3 := ServerStatus.host_and_roster(false, false, 11, 2, [], [10, 11], {10: 1, 11: 2}, names)
 	_chk(str(r3["host"]) == "B" and (r3["names"] as Array) == ["A", "B"],
 			"大乱斗等待中:房主 = host_peer(实得 %s)" % str(r3["host"]))
 
-	# ④ 大乱斗局中:host_peer 的 role 命中冻结名单
 	var r4 := ServerStatus.host_and_roster(false, true, 11, 2, frozen, [], {10: 1, 11: 2}, names)
 	_chk(str(r4["host"]) == "B" and (r4["names"] as Array) == ["A", "B"],
 			"大乱斗局中:房主按 host_role 查冻结名单(实得 %s)" % str(r4["host"]))
 
-	# ⑤ 对抗分组(S-09:从 LobbyRooms 挪进 RoomTypes.static 后的纯函数)
 	var room: RoomTypes.Room = RoomTypes.Room.new()
 	room.team_of = {1: 1, 2: 2, 3: 1, 6: 2}
 	var bt := RoomTypes.by_team(room)
 	_chk((bt[1] as Array) == [1, 3] and (bt[2] as Array) == [2, 6],
 			"RoomTypes.by_team 按队号分组(实得 %s)" % str(bt))
 
-	# ⑥ 开局闸门:两队**各 ≥1 人**即可开(2026-11 由「两队各满 3」改成对抗语义);单边空不可开
 	_chk(RoomTypes.team_ready({1: [1, 2, 3], 2: [4, 5, 6]})
 			and RoomTypes.team_ready({1: [1], 2: [4]})
 			and RoomTypes.team_ready({1: [1, 2, 3, 4], 2: [5]})
 			and not RoomTypes.team_ready({1: [1, 2, 3], 2: []}),
 			"team_ready 认「两队各 ≥1」,单边空不算(3v3 的满员语义已废止)")
 
-	# ⑦ 最小空闲号(空洞复用) + 可加入(每队上限 = ModeDefs.TEAM_SIZE = 5) + 三档人数(字符串键)
 	var cnt_room: RoomTypes.Room = RoomTypes.Room.new()
 	cnt_room.player_role = {10: 1, 11: 2, 12: 6, 13: 3}
 	cnt_room.team_of = {1: 1, 2: 2, 6: 1, 3: 0}
@@ -62,7 +54,6 @@ func _initialize() -> void:
 			and cts["1"] == 2 and cts["2"] == 1 and cts["0"] == 1,
 			"最小空闲号/可加入(每队上限 5)/三档人数(实得 %s)" % str(cts))
 
-	# 判词:计数闸(条数不符也红)
 	if _checks != EXPECTED_CHECKS:
 		_fails.append("★ 实跑 %d 条断言,与 EXPECTED_CHECKS=%d 对不上(有断言被静默跳过?)" % [_checks, EXPECTED_CHECKS])
 	if _fails.is_empty():

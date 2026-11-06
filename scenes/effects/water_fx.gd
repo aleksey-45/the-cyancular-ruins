@@ -1,8 +1,6 @@
 class_name WaterFx
 extends Node2D
 
-# 水粒子:实体在水里移动时,水面溅水花 / 水体上浮气泡。运行期挂到主角与敌人。
-# 自驱动 _process,读父实体(CharacterBody2D)速度+位置;粒子播进父实体所在视图。
 
 static var _tex: Texture2D = null
 
@@ -23,13 +21,11 @@ func _process(delta: float) -> void:
 		return
 	if MazeGenerator.current_grid.is_empty():
 		return
-	# fx 不维护滞回状态:每次现查(was_in_water=false),只看"此刻是否按在水里处理"
 	var water := Water.sample_body(parent, false)
 	if not water.in_water:
 		return
 	if parent.velocity.length() < GameParameters.water_fx_move_threshold:
-		return  # 静止漂着不喷
-	# 按脚底在水面线下的深度分模式:贴水面 → 溅水花;没入深 → 上浮气泡
+		return
 	var depth := water.feet_depth
 	_next_emit -= delta
 	if _next_emit > 0.0:

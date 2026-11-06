@@ -7,27 +7,25 @@ var _hop_timer: float = 0.0
 var _back_hop_cd: float = 0.0
 var _lunge_dir: Vector2 = Vector2.RIGHT
 var _lunge_traveled: float = 0.0
-var _turn_timer: float = 0.0    # 冲刺启动动画剩余时间(播完切 dashing 常态)
-var _dash_timer: float = 0.0    # 冲刺总超时保险(防止永久卡在冲刺)
-var _sleep_anim_timer: float = 0.0  # 入睡动画剩余时间(播完定格 sleeping)
+var _turn_timer: float = 0.0
+var _dash_timer: float = 0.0
+var _sleep_anim_timer: float = 0.0
 
 func _ready() -> void:
 	super._ready()
-	# 战斗数值(hp/击退/接触伤害)由场景 @export 提供,检查器可直接改,不再从 EnemyParams 覆盖(与武器场景同风格)。
 	_anim = $AnimatedSprite2D
 	wake_radius = EnemyParams.JumpBird.wake_radius
 	_set_state(State.SLEEP)
-	_anim.play("sleeping")  # 睡觉是常态;入睡动画在靠近时触发
+	_anim.play("sleeping")
 	_align_contact_area()
 
-# 接触伤害范围与精灵身体对齐:鸟内容占格子 46x39、中心在格子中心下方 4.5px;ContactArea 由 EnemyBase 代码创建,这里把形状节点下移对齐(身体碰撞箱由场景配置,代码不碰)。
 func _align_contact_area() -> void:
 	var area := get_node_or_null("ContactArea") as Area2D
 	if area != null:
 		for child in area.get_children():
 			if child is CollisionShape2D:
 				var area_shape := RectangleShape2D.new()
-				area_shape.size = Vector2(44, 36)  # 世界 110x90,略大于身体轮廓保证接触判定
+				area_shape.size = Vector2(44, 36)
 				child.shape = area_shape
 				child.position = Vector2(0, 4.5)
 				break
@@ -35,7 +33,6 @@ func _align_contact_area() -> void:
 func _ai(delta: float) -> void:
 	var dist := toroidal_dist_to_player()
 	_back_hop_cd = maxf(_back_hop_cd - delta, 0.0)
-	# 面朝玩家:所有精灵帧朝右,玩家在左时翻转(经 _set_facing 锁转向频率)
 	var dir_to_player := toroidal_dir_to_player()
 	if state != State.SLEEP and absf(dir_to_player.x) > 0.05:
 		_set_facing(dir_to_player.x < 0.0)
@@ -55,11 +52,8 @@ func _ai(delta: float) -> void:
 			_tick_back_hop()
 
 
-# 每个状态一个 _tick_*,本函数只留派发。
-# 状态机各段的注释随各自函数走,改动某个状态时不必再在整段 match 里找它。
 
 func _tick_sleep(delta: float, dist: float) -> void:
-	# 入睡动画(一次性)优先:播完定格 sleeping
 	if _sleep_anim_timer > 0.0:
 		_sleep_anim_timer -= delta
 		if _sleep_anim_timer <= 0.0:
@@ -68,7 +62,7 @@ func _tick_sleep(delta: float, dist: float) -> void:
 		_anim.play("sleeping")
 	if dist <= EnemyParams.JumpBird.wake_radius:
 		_set_state(State.WAKE)
-		_anim.play("wake_up")  # 醒来(一次性)
+		_anim.play("wake_up")
 		_state_timer = _anim_duration("wake_up")
 
 
@@ -83,14 +77,13 @@ func _tick_chase(delta: float, dist: float) -> void:
 	_anim.play("jump")
 	if dist > EnemyParams.JumpBird.give_up_radius:
 		_set_state(State.SLEEP)
-		_anim.play("fall_asleep")  # 放弃追逐→入睡(一次性)
+		_anim.play("fall_asleep")
 		_sleep_anim_timer = _anim_duration("fall_asleep")
 	elif dist <= EnemyParams.JumpBird.lunge_range:
 		_set_state(State.LUNGE_WINDUP)
 		_lunge_dir = toroidal_dir_to_player()
 		_state_timer = EnemyParams.JumpBird.lunge_windup
 	elif is_on_floor():
-		# 鸟非冲刺状态下只能跳跃移动,不能滑行
 		_hop_timer -= delta
 		if _hop_timer <= 0.0:
 			_hop_timer = EnemyParams.JumpBird.hop_interval
@@ -105,7 +98,6 @@ func _tick_lunge_windup(delta: float) -> void:
 		_set_state(State.LUNGE_DASH)
 		use_gravity = false
 		_lunge_traveled = 0.0
-		# 冲刺启动动作(一次性),播完切 dashing 常态
 		_anim.play("turn_dash")
 		_turn_timer = _anim_duration("turn_dash")
 		_dash_timer = EnemyParams.JumpBird.lunge_max_dist / EnemyParams.JumpBird.lunge_speed + 0.2
@@ -113,14 +105,12 @@ func _tick_lunge_windup(delta: float) -> void:
 
 
 func _tick_lunge_dash(delta: float) -> void:
-	# 启动动画倒计时;播完切 dashing 常态
 	if _turn_timer > 0.0:
 		_turn_timer -= delta
 		if _turn_timer <= 0.0:
 			_anim.play("dashing")
 	_dash_timer -= delta
 	_lunge_traveled += (velocity * delta).length()
-	# 冲刺超时保险:即使方向异常(0/NaN)也不至于永久卡在冲刺
 	if _dash_timer <= 0.0 or _lunge_traveled >= EnemyParams.JumpBird.lunge_max_dist or is_on_wall():
 		_set_state(State.BACK_HOP)
 		use_gravity = true
@@ -134,25 +124,17 @@ func _tick_back_hop() -> void:
 		_set_state(State.CHASE)
 		_hop_timer = 0.15
 
-# 死亡:基类 _begin_death → 本虚钩;播一次性死亡动画。
-# 死亡不清击退速度、保留碰撞箱、物理与生前一致(重力/摩擦照常);
-# is_dead 后基类 hurt 直接返回,尸体虽可被子弹命中但不重复扣血。
 func _on_death() -> void:
 	_anim.play("dead")
 
-# 落水:朝玩家水平游(不朝岸边,保持追击感)。
 func _water_swim_dir() -> Vector2:
 	return toroidal_dir_to_player()
 
 
-# 睡眠态判定(基类 _is_far_sleeping 用)。★ 显式写出来而不是靠"SLEEP 恰好是枚举第一个":
-# 加新敌人时照抄本方法 —— 详见 EnemyBase._is_asleep 的注释。
 func _is_asleep() -> bool:
 	return state == State.SLEEP
 
 
-# 状态进入 → 形变事件。enum State { SLEEP, WAKE, CHASE, LUNGE_WINDUP, LUNGE_DASH, BACK_HOP }
-# ★ _tick_chase 里的小跳刻意不挂钩:它直接设 velocity、不经过 _set_state,状态虚钩接不到,不为它另加钩子。那一下的 hop_jump_velocity = -750 会让空中连续项直接给出拉伸,只是没有事件那一下「脆感」。
 func _on_state_entered(s: int) -> void:
 	match s:
 		State.LUNGE_DASH:

@@ -1,7 +1,6 @@
 class_name PanelInsetAudit
 extends RefCounted
 
-# 设计期仪器(不是守卫):把每个文字控件到最近一层 PanelContainer 的四向内缩打出来。
 
 const ARG := "--panel-audit"
 
@@ -10,7 +9,6 @@ static func requested() -> bool:
 	return OS.get_cmdline_user_args().has(ARG)
 
 
-# 等 3 帧让版式落定再量(容器 min_size 传播在第一帧后)。调用方用 `run.call_deferred(self)` 起。
 static func run(root: Node) -> void:
 	for _i in 3:
 		await root.get_tree().process_frame
@@ -18,7 +16,6 @@ static func run(root: Node) -> void:
 
 
 static func _walk(n: Node, box: Rect2) -> void:
-	# ★ 隐藏节点没有布局(rect 退化),量出来是 L0 这种假读数 ⇒ 直接跳过整棵子树。
 	if n is CanvasItem and not (n as CanvasItem).visible:
 		return
 	if n is PanelContainer:

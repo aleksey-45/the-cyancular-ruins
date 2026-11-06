@@ -1,10 +1,8 @@
 class_name CollisionAabb
 extends RefCounted
 
-# 从任意节点求「启用中的碰撞体」在世界系的几何。纯静态、不引 autoload(-s 可空跑),
 
 
-# ★ `CollisionPolygon2D` 与 `CollisionShape2D` 是**并列类**(都直接继承 Node2D),不是父子 ——
 static func has_any(n: Node2D) -> bool:
 	for child in n.get_children():
 		if child is CollisionPolygon2D:
@@ -16,13 +14,10 @@ static func has_any(n: Node2D) -> bool:
 	return false
 
 
-# 启用中碰撞体的世界 AABB(多边形顶点 / 矩形角 / 圆的外接方框)。无启用碰撞体时返回
-# 以 n.global_position 为中心的 0 尺寸矩形(调用方据此用 has_any 走自己的兜底)。
 static func world_rect(n: Node2D) -> Rect2:
 	var rect := Rect2(n.global_position, Vector2.ZERO)
 	var has := false
 	for child in n.get_children():
-		# ★ 多边形与形状**分开判**(并列类,见 has_any 的注释)。
 		var r: Rect2
 		if child is CollisionPolygon2D:
 			var cp := child as CollisionPolygon2D

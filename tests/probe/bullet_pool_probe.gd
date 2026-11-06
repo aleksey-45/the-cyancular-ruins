@@ -11,7 +11,6 @@ var _fails: Array[String] = []
 var _checks := 0
 
 
-# 受击面替身:只提供 HitShape 需要的三件(hurt_rect / is_hurtable / 在 enemies 组),不结算伤害。
 class _StubEnemy extends Node2D:
 	func hurt_rect() -> Rect2:
 		return Rect2(global_position - Vector2(10, 20), Vector2(20, 40))
@@ -26,7 +25,6 @@ func _ready() -> void:
 
 func _run() -> void:
 	var pool := BulletPool.shared()
-	# ① 客户端出弹路径(weapon._spawn_projectiles,Level0.pvp_mode=true 即"本地视觉弹"):
 	var weapon: WeaponBase = (load(RIFLE_PATH) as PackedScene).instantiate() as WeaponBase
 	add_child(weapon)
 	Level0.pvp_mode = true
@@ -37,7 +35,7 @@ func _run() -> void:
 	var from_pool := b1 != null and String(b1.get_meta("scene_path", "")) == BULLET_PATH
 	if b1 != null:
 		b1.despawn()
-	await _ticks(1)   # 池对"本帧刚归还"的实例压一帧不借(见 ⑨),所以复用至少隔一帧
+	await _ticks(1)
 	weapon._spawn_projectiles(Vector2.RIGHT)
 	var b2 := _only_bullet()
 	var reused_same := b2 != null and b2.get_instance_id() == b1_id
@@ -47,13 +45,12 @@ func _run() -> void:
 			"武器出弹走池(第二发复用同一实例=%s)且武器侧 _laser/_explosion_marker 不增长(%d→%d)"
 					% [reused_same, laser_before, _weapon_fx_count(weapon)])
 
-	# ② 客户端"他人子弹"入口(PvpMatchClient._take_visual_bullet):借出未进树,且池外被 free 的陈旧条目不借出
 	var client := PvpMatchClient.new()
 	var v1: BulletBase = client._take_visual_bullet(BULLET_PATH)
 	var v1_ok := v1 != null and v1.get_parent() == null
 	var v1_id := v1.get_instance_id() if v1 != null else 0
 	if v1 != null:
-		v1.free()   # 没进树就直接 free = 模拟"池外的某个持有者把闲置实例弄没了"
+		v1.free()
 	var v2: BulletBase = client._take_visual_bullet(BULLET_PATH)
 	_chk(v1_ok and v1_id != 0 and v2 != null and v2.get_parent() == null
 			and v2.get_instance_id() != v1_id,
@@ -62,13 +59,12 @@ func _run() -> void:
 		v2.free()
 	client.free()
 
-	# ③ 归还后:离树 / 不在 bullet 组 / 物理关 / 不再移动
 	var r: BulletBase = pool.acquire(BULLET_PATH)
 	r.setup(Vector2.RIGHT, 600.0, 5000.0, 1.0, Color.WHITE, null)
 	r.apply_damage = false
 	r.global_position = Vector2(300, 300)
 	add_child(r)
-	await _ticks(2)   # 先真的动起来(证明下面"不动"不是恒真)
+	await _ticks(2)
 	var moved_before := r.global_position != Vector2(300, 300)
 	r.despawn()
 	var pos_after := r.global_position
@@ -79,25 +75,23 @@ func _run() -> void:
 			"归还后离树 / 不在 bullet 组 / 物理关 / 5 帧不移动(实得 parent=%s physics=%s moved=%s)"
 					% [str(r.get_parent()), r.is_physics_processing(), r.global_position != pos_after])
 
-	# ④ 撞墙延迟销毁的旧定时器不许误伤"已被复用的一发"
 	var d: BulletBase = pool.acquire(BULLET_PATH)
 	d.setup(Vector2.ZERO, 0.0, 5000.0, 1.0, Color.WHITE, null)
 	d.apply_damage = false
 	d.global_position = Vector2(500, 500)
 	add_child(d)
-	d._despawn_after(0.05)   # 撞地形分支排的那个延迟销毁
-	d.despawn()              # 立刻归还(= 50ms 内被复用)
+	d._despawn_after(0.05)
+	d.despawn()
 	var d2: BulletBase = pool.acquire(BULLET_PATH)
 	d2.setup(Vector2.ZERO, 0.0, 5000.0, 1.0, Color.WHITE, null)
 	d2.apply_damage = false
 	d2.global_position = Vector2(700, 700)
 	add_child(d2)
-	await _ticks(12)   # 0.2s > 0.05s:旧定时器早该到点了
+	await _ticks(12)
 	_chk(is_instance_valid(d2) and d2.is_inside_tree() and d2.global_position == Vector2(700, 700),
 			"复用后旧定时器不误伤新的一发(0.2s 后仍在树:%s)" % [is_instance_valid(d2) and d2.is_inside_tree()])
 	d2.despawn()
 
-	# ⑤ 复用 3 次后子节点不增长(拖尾只建一次;Sprite2D / CollisionShape2D 来自场景,也不该多)
 	var counts: Array[String] = []
 	for i in 3:
 		var c: BulletBase = pool.acquire(BULLET_PATH)
@@ -110,11 +104,10 @@ func _run() -> void:
 			counts.append("%d/%d/%d" % [_count_of(c, "Sprite2D"), _count_of(c, "CollisionShape2D"), _count_of(c, "trail")])
 			c.despawn()
 		else:
-			counts.append("gone")   # 被上一次使用的延迟回调收掉了:直接点名,别让下面抛类型错把整支探针带停
+			counts.append("gone")
 	_chk(counts[0] == "1/1/1" and counts[0] == counts[2],
 			"复用 3 次后子节点不增长(Sprite2D/CollisionShape2D/拖尾 = %s → %s)" % [counts[0], counts[2]])
 
-	# ⑥ 复用后拖尾点集被清、颜色跟上新一发(不同弹色跨枪复用)
 	var t: BulletBase = pool.acquire(BULLET_PATH)
 	t.setup(Vector2.RIGHT, 600.0, 5000.0, 1.0, Color.RED, null)
 	t.apply_damage = false
@@ -139,8 +132,6 @@ func _run() -> void:
 					str(trail.get_point_position(0)) if trail != null and trail.get_point_count() > 0 else "n/a", color_ok])
 	t2.despawn()
 
-	# ⑦ 复用后首帧的扫掠起点 = 出膛位置(_ready 只在首次入树时跑;不 request_ready 就会停在上一次的值,
-	#    服务器拿 prev_pos→global_position 这条线段裁决 = 凭空横穿全图的一枪)
 	var p: BulletBase = pool.acquire(BULLET_PATH)
 	p.setup(Vector2.RIGHT, 600.0, 5000.0, 1.0, Color.WHITE, null)
 	p.apply_damage = false
@@ -150,7 +141,6 @@ func _run() -> void:
 	_chk(prev_ok, "复用后首帧扫掠起点 = 出膛位置(prev_pos=%s)" % str(p.prev_pos))
 	p.despawn()
 
-	# ⑧ 池化弹在自己的 _physics_process 里命中目标 → despawn 回池(离树发生在物理回调内,最容易踩"节点正忙")
 	var enemy := _stub_enemy(Vector2(600, 400))
 	var hitb: BulletBase = pool.acquire(BULLET_PATH)
 	hitb.setup(Vector2.RIGHT, 6000.0, 5000.0, 1.0, Color.WHITE, null)
@@ -186,12 +176,11 @@ func _run() -> void:
 	_finish()
 
 
-# 池里留下的闲置实例会变成退出时的 RID 泄漏噪声,而噪声行落在判词之后会被聚合入口读成 NO-VERDICT。
 func _cleanup(pool: BulletPool) -> void:
 	var guard := 0
 	while pool.idle_count(BULLET_PATH) > 0 and guard < 200:
 		guard += 1
-		await _ticks(1)   # 跨一帧,免得撞上"压一帧不借"把新实例借出来
+		await _ticks(1)
 		var b: BulletBase = pool.acquire(BULLET_PATH)
 		if b == null:
 			return

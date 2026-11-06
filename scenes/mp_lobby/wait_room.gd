@@ -1,7 +1,6 @@
 class_name WaitRoom
 extends RefCounted
 
-# 大厅页的「等待室」面板(2026-10-22 Task 10 纯搬移自 scenes/mp_lobby.gd):选边 / 开始按钮 / 满员文案 / 房主判断 / 名单行 / 角色颜色行。
 
 var page: MpLobby = null
 
@@ -10,8 +9,6 @@ func setup(p: MpLobby) -> void:
 	page = p
 
 
-# 接骨架 + 信号。
-# 零守卫:读绑实参的那条断言随 lobby_* 探针一起删了(2026-10-09)。
 func register(root: Node) -> void:
 	page._wait_panel = root.get_node("%WaitPanel") as PanelContainer
 	page._wait_panel.visible = false
@@ -33,15 +30,13 @@ func show(state: Dictionary, mode: String) -> void:
 	page._wait_mode = mode
 	page._create_dialog.set_visible(false)
 	page._wait_panel.visible = true
-	# 进房 = 收起两颗入口按钮 + 关掉可能开着的加入弹层(见页的 _create_btn 上方那段:闸门拦不住直接绑定的弹层,层级会翻过来)。
 	page._in_room = true
 	page._create_btn.visible = false
 	page._join_btn.visible = false
 	page._rooms.hide_join_panel()
-	page._rooms.set_list_visible(false)   # 等位时收起房卡/筛选,避免在等待室底下露出列表
+	page._rooms.set_list_visible(false)
 	page._wait_title.title = _wait_title_text(state, mode)
 
-	# ★ 必须 remove_child 再 queue_free:只 queue_free 的话旧行要到帧末才没,同帧重填会两批名单叠着(与列表侧 redraw 同款纪律)。
 	for c in page._wait_body.get_children():
 		page._wait_body.remove_child(c)
 		c.queue_free()
@@ -54,7 +49,6 @@ func show(state: Dictionary, mode: String) -> void:
 	var is_team := mode == PvpSession.MODE_TEAM
 
 	if is_pvp:
-		# 1v1(2026-10-24):两人齐后由房主点「开始游戏」;名单/房主都由服务器 pvp_room_state 下发(首帧用本侧占位的 count)。
 		_fill_flat_roster(plist, my_role, host_role)
 		var n := maxi(plist.size(), int(state.get("count", 1)))
 		if n >= 2:
@@ -69,12 +63,9 @@ func show(state: Dictionary, mode: String) -> void:
 		_fill_team_roster(state, plist, my_role, host_role)
 		page._wait_count.text = _team_count_text(state, plist)
 
-	# 选边按钮(仅对抗)。★ 自己那支的按钮置灰:既少一次无意义的上行,也让「已在该队时再点该队」那条幂等 wart(服务器回"该队已满"、状态不变)不可达。
 	var my_team := _team_of_role(state, my_role) if is_team else 0
 	page._wait_pick_a.visible = is_team and my_team != 1
 	page._wait_pick_b.visible = is_team and my_team != 2
-	# 「开始游戏」:1v1 从 2026-10-24 起也有这颗按钮(两人齐后由房主点);对抗要求**两队各 ≥1 人**
-	# (不再要求每队满 3:2026-11 起 2~10 人都能开,少人方的补贴由 TeamRules 负责)。
 	if is_pvp:
 		page._wait_start.visible = is_host and maxi(plist.size(), int(state.get("count", 1))) >= 2
 	elif mode == PvpSession.MODE_ROYALE:
@@ -83,7 +74,6 @@ func show(state: Dictionary, mode: String) -> void:
 		page._wait_start.visible = is_host and _both_teams_ready(state)
 
 
-# 收起等待室。★ 唯一调用点是页的 _on_return_to_lobby()。不恢复创建弹层 —— 玩家要建房会自己再点「＋ 创建房间」。★★ 两颗入口按钮在这里恢复,与 show() 的收起成对。
 func hide() -> void:
 	page._wait_panel.visible = false
 	page._in_room = false
@@ -92,7 +82,6 @@ func hide() -> void:
 	page._rooms.set_list_visible(true)
 
 
-# 标题:—— {模式名}房间 {code} ——。★ 邀请码只在私密时印:公开房的载荷里 invite_code 可能是空串、也可能带着房主随手填的值 —— 印出来会让玩家以为"这房要码"。
 func _wait_title_text(state: Dictionary, mode: String) -> String:
 	var code := str(state.get("code", ""))
 	var invite := ""
@@ -110,7 +99,6 @@ func _fill_flat_roster(plist: Array, my_role: int, host_role: int) -> void:
 		page._wait_body.add_child(_roster_row(shown, p, my_role, host_role))
 
 
-# 名单行(对抗:两队 + 未选边三档)。★ 两队标题恒出(哪怕 0 人):"这局有 A、B 两队"是规则、不是当前人数;缺了空队的标题,新来的玩家看不出该往哪边站。
 func _fill_team_roster(state: Dictionary, plist: Array, my_role: int, host_role: int) -> void:
 	var buckets := {0: [], 1: [], 2: []}
 	for p in plist:
@@ -118,7 +106,7 @@ func _fill_team_roster(state: Dictionary, plist: Array, my_role: int, host_role:
 			continue
 		var t := int(p.get("team", 0))
 		if not buckets.has(t):
-			t = 0   # 未知队号归"未选边"(客户端侧口径,与服务端"先拦后分"同向)
+			t = 0
 		(buckets[t] as Array).append(p)
 	var team_size := int(state.get("team_size", LobbyRooms.TEAM_SIZE))
 	var shown := 0
@@ -136,8 +124,6 @@ func _fill_team_roster(state: Dictionary, plist: Array, my_role: int, host_role:
 			page._wait_body.add_child(_roster_row(shown, p, my_role, host_role))
 
 
-# 一行名单。★ 编号印行序(n)而不是 role —— role 是「最小空闲号」分配、有人退出后不重排,印 role 会出现 1、3(两个旧页都在这里踩过)。
-# ★★ set_meta("roster_row", true) 本是探针数名单行的唯一据点 —— 零守卫:那个探针已删(2026-10-09),今天没有读者;标题 / 人数行 / 分队标题全是 Label,靠遍历猜极易假绿。
 func _roster_row(n: int, p: Dictionary, my_role: int, host_role: int) -> Label:
 	var role := int(p.get("role", 0))
 	var l := UiFactory.label("%d. %s%s%s" % [n, str(p.get("name", "玩家")),
@@ -148,7 +134,6 @@ func _roster_row(n: int, p: Dictionary, my_role: int, host_role: int) -> Label:
 	return l
 
 
-# 我在这个房间里在哪一队。★ 判据来自服务器按 peer 单独下发的 your_role:按昵称在名单里反查时,两人同名会命中先出现的那个 → 高亮错行、_host 判错 → 真房主看不到开局按钮。
 func _team_of_role(state: Dictionary, role: int) -> int:
 	for p in state.get("players", []):
 		if typeof(p) == TYPE_DICTIONARY and int(p.get("role", 0)) == role:
@@ -180,13 +165,11 @@ func _team_count_text(state: Dictionary, plist: Array) -> String:
 			int(state.get("team_size", LobbyRooms.TEAM_SIZE))]
 
 
-# 1v1 创建/加入瞬间的本侧占位(服务器 pvp_room_state 下一帧就会用真名单覆盖)。
-# count:已知人数(房主建房 = 1,加入成功 = 2);host_role:房主 role(加入者此刻还不知道 ⇒ 传 0,不能填自己)。
 func pvp_wait_state(code: String, role: int, host_role: int, count: int) -> Dictionary:
 	return {
 		"code": code,
-		"is_public": true,   # 1v1 没有私密房这条路径
-		"players": [],       # 真名单由 pvp_room_state 下发;占位只给人数
+		"is_public": true,
+		"players": [],
 		"your_role": role,
 		"host_role": host_role,
 		"count": count,

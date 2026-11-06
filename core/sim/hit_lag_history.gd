@@ -1,16 +1,12 @@
 extends RefCounted
 
-# 命中回放用的受击面历史环:服务器每物理 tick 记一条 role -> {p: canonical 位置, r: 相对 p 的受击面 Rect2}。
-# ★ 纯逻辑、无 autoload、不碰 SceneTree:-s 冒烟可直接 new() 驱动。
-# ★ 只存受击面的几何(位置 + 相对偏移/尺寸),不存姿态/朝向:回放取的是"射手当时看到的那个矩形"。
 
-const CAPACITY := 24   # 24 tick @60Hz = 400ms,远大于命中回放上限(8 tick),再多只是浪费内存
+const CAPACITY := 24
 
 var _ticks: Array[int] = []
-var _frames: Dictionary = {}   # tick(int) -> {role(int): {"p": Vector2, "r": Rect2}}
+var _frames: Dictionary = {}
 
 
-# 记录一个 tick 的全员受击面。同 tick 重复 push = 覆盖(物理追赶/重入时以最后一次为准)。
 func push(tick: int, entries: Dictionary) -> void:
 	var frame: Dictionary = {}
 	for role in entries:
@@ -36,7 +32,6 @@ func latest_tick() -> int:
 	return _ticks[_ticks.size() - 1] if not _ticks.is_empty() else 0
 
 
-# 目标 tick 向下取整到历史里已有的最近一条;低于最老夹到最老、高于最新夹到最新。空历史返回 -1。
 func nearest_tick(t: int) -> int:
 	if _ticks.is_empty():
 		return -1
@@ -64,7 +59,6 @@ func pos_for(role: int, t: int) -> Vector2:
 	return p
 
 
-# 世界系受击面 = 历史位置 p + 相对偏移 r;无该 role / 无历史时返回空 Rect2(调用方回退现时受击面)。
 func rect_for(role: int, t: int) -> Rect2:
 	var frame := _frame_at(t)
 	if frame.is_empty() or not frame.has(int(role)):

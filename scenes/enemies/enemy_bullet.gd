@@ -1,14 +1,10 @@
 class_name EnemyBullet
 extends BulletBase
 
-# 敌方投弹:由发射者给定初速向量与重力倍率,重力抛物线飞行,命中玩家造成 damage。
-# 场景 collision_mask=1(只撞地形):打玩家走 hurt_rect 线段扫掠(见 _physics_process),不再靠物理碰撞层。
 var damage: int = 2
-var water_mult: float = 1.0  # FlyBird 子弹独有:攻击水里的玩家伤害 ×1.5
+var water_mult: float = 1.0
 
 
-# 抛物线初速版 setup:直接设初速向量(平抛/投掷用)。不染色,子弹用贴图本底色。
-# siz 是放大倍数(默认 1.0 不动),与 BulletBase.setup() 一样作用于整颗子弹。
 func launch(vel: Vector2, rng: float, dmg: int, grav: float, siz: float = 1.0) -> void:
 	velocity_vec = vel
 	speed = vel.length()
@@ -20,7 +16,6 @@ func launch(vel: Vector2, rng: float, dmg: int, grav: float, siz: float = 1.0) -
 	scale = Vector2(size, size)
 
 
-# 时间回溯状态:除基类那些,再带上 launch() 给的本类字段(重建后伤害/水中加成不能丢)。
 func rewind_state() -> Dictionary:
 	var d := super()
 	d["emd"] = damage
@@ -37,7 +32,6 @@ func apply_rewind_state(d: Dictionary) -> void:
 
 
 func _physics_process(delta: float) -> void:
-	# 时间场(B13):加速 = 主角时间被加快 ⇒ **除主角外一切实体变慢**,敌方弹也不例外
 	delta = TimeField.bullet_delta(delta, self)
 	if TimeField.current != null and TimeField.current.is_rewinding():
 		return
@@ -58,7 +52,6 @@ func _physics_process(delta: float) -> void:
 	var hit := first_hurt_on_segment(from, to, ["player"])
 	if not hit.is_empty() and float(hit["t"]) <= t_wall:
 		global_position = from + (to - from) * float(hit["t"])
-		# 视觉副本(apply_damage=false):只飞,碰到目标直接消失,不裁决伤害(伤害服务器裁决)。
 		if apply_damage:
 			var victim := hit["node"] as Node
 			var victim2 := victim as Node2D
@@ -76,11 +69,8 @@ func _physics_process(delta: float) -> void:
 		queue_free()
 		return
 	_wrap()
-	# 环面 wrap 会把 global_position 整幅平移;扫掠起点跟着平移,下一帧的线段才不横穿整图。
 	prev_pos = from + (global_position - to)
 
-# 服务器权威世界有 2 玩家且敌方子弹无射手 → 位置存 canonical(别锚到某个玩家副本漂走);
-# 单机/客户端(=1 玩家)回落 BulletBase:锚本地玩家副本渲染,接缝不消失。
 func _wrap() -> void:
 	if get_tree().get_nodes_in_group("player").size() >= 2:
 		global_position = MazeGenerator.wrap_to_range(global_position,

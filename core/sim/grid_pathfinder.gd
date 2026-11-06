@@ -1,11 +1,7 @@
 class_name GridPathfinder
 extends RefCounted
 
-# 环面网格的几何与寻路:格级/像素级环面距离、副本锚定、格子定位、地板格判定、A* 与 LOS。
-# ★ 本类无会话状态(网格一律由调用方传入,current_grid 在 MazeGenerator);A* 的静态暂存缓冲是本文件自有的可复用 scratch。
-# ★ 改这里 = 改环面数学/寻路;改 MapFormat = 改磁盘格式。两者不搭界。
 
-# 环面曼哈顿距离(格子级):cols/rows 由调用方按实际地图传入,不依赖全局常量(地图文件变更后距离计算不会失真)。
 static func toroidal_dist(a: Vector2i, b: Vector2i, cols: int, rows: int) -> int:
 	var dx := absi(a.x - b.x)
 	dx = mini(dx, cols - dx)
@@ -14,7 +10,6 @@ static func toroidal_dist(a: Vector2i, b: Vector2i, cols: int, rows: int) -> int
 	return dx + dy
 
 
-# 像素级环面最短向量:从 a 指向 b(跨接缝取最短)。
 static func toroidal_delta_px(a: Vector2, b: Vector2, w: float, h: float) -> Vector2:
 	var dx := b.x - a.x
 	if absf(dx) > w * 0.5:
@@ -25,13 +20,10 @@ static func toroidal_delta_px(a: Vector2, b: Vector2, w: float, h: float) -> Vec
 	return Vector2(dx, dy)
 
 
-# 环面线性插值:沿 a→b 的最短向量按 alpha 取点再取模回 [0,w)x[0,h) —— 相邻快照在环面上可能跨接缝,直接 lerp 会横穿整幅地图。
 static func toroidal_lerp(a: Vector2, b: Vector2, alpha: float, w: float, h: float) -> Vector2:
 	return wrap_to_range(a + toroidal_delta_px(a, b, w, h) * alpha, w, h)
 
 
-# 把 pos 锚定到 anchor 最近的环面副本(与 anchor 各轴差 <= 半地图):墙体按 3x3 铺贴、相机在接缝处能看到另一侧副本,
-# 实体若仍取模到 [0,MAP) 会渲染到远副本而消失。
 static func anchor_to_nearest(pos: Vector2, anchor: Vector2, w: float, h: float) -> Vector2:
 	var p := pos
 	if p.x - anchor.x > w * 0.5:
@@ -45,7 +37,6 @@ static func anchor_to_nearest(pos: Vector2, anchor: Vector2, w: float, h: float)
 	return p
 
 
-# 把点取模回 [0,w)×[0,h) 绝对区间(玩家锚点自身用;实体锚定玩家副本见 anchor_to_nearest)。
 static func wrap_to_range(pos: Vector2, w: float, h: float) -> Vector2:
 	var p := pos
 	if p.x >= w:
@@ -59,7 +50,6 @@ static func wrap_to_range(pos: Vector2, w: float, h: float) -> Vector2:
 	return p
 
 
-# 深拷贝网格(每行复制 int);返回强类型 Array[Array],以便赋回 current_grid / Level0._grid_ref 等强类型成员(普通 Array 赋过去会运行时报错)。
 static func copy_grid(grid: Array) -> Array[Array]:
 	var out: Array[Array] = []
 	for row in grid:
@@ -70,14 +60,11 @@ static func copy_grid(grid: Array) -> Array[Array]:
 	return out
 
 
-# 像素坐标 → 环面格子坐标(取模回 [0,cols)×[0,rows))。
 static func cell_of(pos: Vector2, ts: int, cols: int, rows: int) -> Vector2i:
 	var c := Vector2i(floori(pos.x / ts), floori(pos.y / ts))
 	return Vector2i(posmod(c.x, cols), posmod(c.y, rows))
 
 
-# ── 地板格(可站立表面)── 基本判据:本格 EMPTY 且正下方(y+1,环面)是实心 —— 否则落地时没有 is_on_floor() 的地面,会坠穿空洞(FlyBird 回家入睡 bug 的根因)。
-# ★ 格坐标由本函数统一 posmod 回环面,调用方不必预先规整;★ 只做基本判据,"头上要留净空"见下面那条。原 5 处同名谓词已收敛到本函数。
 static func is_floor_cell(grid: Array, cell: Vector2i) -> bool:
 	if grid.is_empty():
 		return false
@@ -89,7 +76,6 @@ static func is_floor_cell(grid: Array, cell: Vector2i) -> bool:
 	return TileDefs.is_blocked(grid[posmod(cell.y + 1, rows)][x])
 
 
-# 地板格 + 头上留一格净空(出生点、瞬移落点用);构建在上面那条之上,不重复基本判据。
 static func is_floor_cell_with_headroom(grid: Array, cell: Vector2i) -> bool:
 	if not is_floor_cell(grid, cell):
 		return false
@@ -98,12 +84,11 @@ static func is_floor_cell_with_headroom(grid: Array, cell: Vector2i) -> bool:
 	return grid[posmod(cell.y - 1, rows)][posmod(cell.x, cols)] == MapFormat.EMPTY
 
 
-# ── A* 寻路:环面 4 邻域,启发式 = 环面曼哈顿距离(可采纳且一致);预算 max_visit 是弹出(展开)节点数上限,
 static var _g_cost: PackedInt32Array = PackedInt32Array()
 static var _prev: PackedInt32Array = PackedInt32Array()
 static var _heap_f: PackedInt32Array = PackedInt32Array()
 static var _heap_c: PackedInt32Array = PackedInt32Array()
-static var astar_calls: int = 0  # A* 调用计数(冒烟测试验证路径缓存命中用)
+static var astar_calls: int = 0
 
 static func astar_path_nearest(grid: Array[Array], from_cell: Vector2i, to_cell: Vector2i, max_visit: int = 4000,
 		passable_pred: Callable = Callable(), max_search_dist: int = -1) -> Array[Vector2i]:
@@ -137,7 +122,6 @@ static func astar_path_nearest(grid: Array[Array], from_cell: Vector2i, to_cell:
 		var g_cur: int = _g_cost[cur_idx]
 		var cx := cur_idx % cols
 		var cy := cur_idx / cols
-		# 惰性删除:该格后来被更优路径更新过,旧堆项作废。
 		if f > g_cur + toroidal_dist(Vector2i(cx, cy), to_cell, cols, rows):
 			continue
 		expanded += 1
@@ -155,11 +139,9 @@ static func astar_path_nearest(grid: Array[Array], from_cell: Vector2i, to_cell:
 	return _rebuild_path_flat(start_idx, best_idx, cols, rows)
 
 
-# 4 邻域偏移(右/左/下/上)。顺序会影响平局时的路径形态,勿随意调整。
 const _DIRS4: Array = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
 
 
-# 展开当前格:对每个邻居做「可走 + 更优」判定,通过则更新 g/prev 并入堆。
 static func _astar_relax(cx: int, cy: int, cols: int, rows: int, grid: Array[Array],
 		passable_pred: Callable, to_cell: Vector2i, ng: int, cur_idx: int,
 		from_cell: Vector2i, max_search_dist: int) -> void:
@@ -174,7 +156,6 @@ static func _astar_relax(cx: int, cy: int, cols: int, rows: int, grid: Array[Arr
 			ny = 0
 		elif ny < 0:
 			ny = rows - 1
-		# 搜索范围上限:不展开超出 from_cell 半径的节点(鸟的寻路不搜太远)
 		if max_search_dist > 0 and toroidal_dist(from_cell, Vector2i(nx, ny), cols, rows) > max_search_dist:
 			continue
 		if passable_pred.is_valid():
@@ -191,7 +172,6 @@ static func _astar_relax(cx: int, cy: int, cols: int, rows: int, grid: Array[Arr
 		_astar_heap_push(ng + toroidal_dist(Vector2i(nx, ny), to_cell, cols, rows), ni)
 
 
-# 隐式二叉堆(小根堆,按 f 排序;两条并行 PackedInt32Array 一起交换)。
 static func _astar_heap_push(f: int, c: int) -> void:
 	_heap_f.append(f)
 	_heap_c.append(c)
@@ -241,7 +221,6 @@ static func _astar_heap_pop() -> Vector2i:
 	return top
 
 
-# 从 prev 扁平链重建格序列(不含起点含终点)。
 static func _rebuild_path_flat(start_idx: int, goal_idx: int, cols: int, rows: int) -> Array[Vector2i]:
 	var path: Array[Vector2i] = []
 	var idx := goal_idx
@@ -251,7 +230,6 @@ static func _rebuild_path_flat(start_idx: int, goal_idx: int, cols: int, rows: i
 	return path
 
 
-# 环面网格 LOS:整数 Bresenham 沿直线采样两格之间的格子,途中任一 SOLID 即阻断;不能用「每步双轴各进一」的斜对角走法 —— |dx| != |dy| 时会越过目标行/列、采样到线外的格子。
 static func has_line_of_sight(grid: Array[Array], from_cell: Vector2i, to_cell: Vector2i) -> bool:
 	if grid.is_empty():
 		return false
@@ -296,9 +274,6 @@ static func _toroidal_step(a: Vector2i, b: Vector2i, cols: int, rows: int) -> Ve
 	return Vector2i(dx, dy)
 
 
-# 从候选格里挑 count 个互相尽量远离的格(环面距离贪心):洗牌后逐个取,要求两两环面距离 >= clearance;不足则 clearance 逐级 -5 放宽,
-# 放宽到头仍不够就直接补任意剩余的格(宁可挤,不可少 —— 调用方按 count 布点,少了会缺)。
-# ★ 内部有 shuffle():同一组输入两次调用结果不同 ⇒ 不得在广播之后再调一次(每局的开局散点只能算一次)。★ 宽高传 cols/rows 两个 int 而不引 GameParameters(autoload),保持可 -s 测。
 static func spread_cells(cells: Array, count: int, clearance: int, cols: int, rows: int) -> Array:
 	var picked: Array = []
 	if count <= 0 or cells.is_empty():
@@ -320,7 +295,6 @@ static func spread_cells(cells: Array, count: int, clearance: int, cols: int, ro
 			if ok:
 				picked.append(c)
 		cl -= 5
-	# 兜底:放宽到头仍不够,补任意剩余的格
 	if picked.size() < count:
 		for c in pool:
 			if picked.size() >= count:

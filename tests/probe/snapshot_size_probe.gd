@@ -2,22 +2,19 @@ extends Node
 
 # 快照体积/线格式探针(场景模式):把「一份快照到底多少字节、随人数怎么长」从估算变成实测,并同时量两种线格式(Dictionary 直发 → NetCodec 手打包)。
 
-const MTU := 1400          # ENet 默认 MTU
-const FRAG_HEADER := 8     # 分片包每片大致头部开销(粗估,用于折算片数)
-const SNAP_HZ := 60        # SNAPSHOT_INTERVAL = 1/60
+const MTU := 1400
+const FRAG_HEADER := 8
+const SNAP_HZ := 60
 
 const EXPECTED_CHECKS := 5
 
-# ④ 用到的两个常量。★ 人数上限不抄一份:直接读产品侧的单一来源(LobbyRooms.ROYALE_MAX_PLAYERS)。
-# ★ TRAIL_PHYSICAL_MAX 是生产者的 trail 上限(match_host 的回溯录像每 3 帧一点、最多 10 点),它是个字面量、没有名字 ⇒ 只能在这里抄一份并点名来源;线上真正发多少由 NetCodec.TRAIL_WIRE_MAX 决定(那一个才是判据真正盯的东西)。
-# ★ WORLD_PACKET_BUDGET = ENet MTU:超了就被分片,而快照是 unreliable ⇒ 丢一片 = 整帧丢。
 const WORLD_PACKET_BUDGET := 1400
 const TRAIL_PHYSICAL_MAX := 10
 
 var _failures: Array[String] = []
 var _checks := 0
 var _player: Node = null
-var _entry_seq := 0   # _entry_world() 的调用序号:给 bool 组喂混合值(见该函数注释)
+var _entry_seq := 0
 
 
 func _check(ok: bool, msg: String) -> void:
@@ -32,7 +29,7 @@ func _check(ok: bool, msg: String) -> void:
 func _ready() -> void:
 	var ts: PackedScene = load("res://scenes/player/player.tscn")
 	_player = ts.instantiate()
-	add_child(_player)          # _ready 跑完再取 capture_state
+	add_child(_player)
 	# ★ 必须显式装一把枪:capture_state() 的武器块(8 个字段)只有手持非空时才存在(player.gd 的 if w != null)—— 不装的话本探针量到的本人包少 14 B,而且那 8 个字段的往返保真一条都没验到(实测:不装枪时 present = 0/8)。
 	#   ★ 先 inventory.add 再 equip_type:equip_type 只从已有背包里找,不会凭空加枪。
 	_player.weapons.inventory.add(1, 30)
@@ -43,12 +40,11 @@ func _ready() -> void:
 	_player.global_position = Vector2(1234.567, -678.901)
 	_player.velocity = Vector2(-120.37, 0.4321)
 
-	# ── 真实字段表(与 server/match/snapshot_system.gd 的 dict 逐字对齐)──
 	var trail_pts: Array = [[100.0, 200.0], [101.5, 201.5]]
 	var entry := _entry_world(trail_pts)
 	var entry_no_trail := _entry_world([])
 	var c2: Dictionary = _player.capture_state()
-	# ★★ bool 组必须喂**混合值**(2026-10-24 加):全 false 的夹具下,标志字节的位映射写错也照样"往返一致"(实测 M4 变异抓不住)。
+	# ★★ bool 组必须喂混合值(2026-10-24 加):全 false 的夹具下,标志字节的位映射写错也照样"往返一致"(实测 M4 变异抓不住)。
 	for bk in ["jcut", "squat", "charge", "wp_s", "clatch", "swim", "down"]:
 		if c2.has(bk):
 			c2[bk] = true
@@ -60,7 +56,7 @@ func _ready() -> void:
 	var sz_old_own := var_to_bytes({"ack_seq": 12345, "c2": c2}).size()
 	var wb := NetCodec.encode_world({"tick": 12345, "players": {"1": entry, "2": entry, "3": entry}})
 	var ob := NetCodec.encode_own({"ack_seq": 12345, "q": 2, "c2": c2})
-	var sz_new_entry := (wb.size() - 8) / 3        # 头 = 版本1 + 种类1 + flags1 + tick4 + 人数1 = 8 B(v7;flags 恒 FULL)
+	var sz_new_entry := (wb.size() - 8) / 3
 	var sz_new_entry_nt := NetCodec.encode_world(
 			{"tick": 1, "players": {"1": entry_no_trail}}).size() - 8
 	var sz_new_own := ob.size()
@@ -84,7 +80,6 @@ func _ready() -> void:
 			missing.append(k)
 	_check(missing.is_empty() and extra.is_empty(),
 			"schema 与 capture_state() 逐键对齐(表外未覆盖 %s / 表内多余 %s)" % [str(missing), str(extra)])
-	# ② 武器块是整体存在/整体缺席的(capture_state 里 w != null 才加那 8 个字段):半截存在 = 解码端按 flags 位读、读出来的字段对不上 → 必须红。
 	var present := 0
 	for k in weapon_keys:
 		if c2.has(k):
@@ -92,7 +87,6 @@ func _ready() -> void:
 	_check(present == 0 or present == weapon_keys.size(),
 			"武器块必须整体存在或整体缺席(实得 %d/%d)" % [present, weapon_keys.size()])
 
-	# ③ 往返保真:**用真实 producer 的输出**过一遍编解码,键集与值都必须回来
 	var od := NetCodec.decode_own(ob)
 	var wd := NetCodec.decode_world(wb)
 	var d2: Dictionary = od.get("c2", {})
@@ -101,10 +95,7 @@ func _ready() -> void:
 	_check(rt_ok, "真实产出的往返逐字段一致(定点字段用容差:pos/vel ≤0.25、aim 点积 ≥0.9999;c2 %d/%d 键 · 世界 %d/%d 键 · ack=%s)" % [
 			d2.size(), c2.size(), we.size(), entry.size(), str(od.get("ack_seq"))])
 
-	# ④ 最坏情况的世界包必须装进一个 ENet 包(配 16 人上限)。
-	# ★ 为什么量的是真的 encode_world 产出、而不是 8 + N * _schema_bytes(...) 那种算术:算术式是镜像守卫 —— 发送侧到底截没截根本没进判据(改 TRAIL_SEND_MAX 它纹丝不动),而且常量一变两边一起变;量真实产出,「忘了截断」与「表里加了字段」两种都会红。
-	# ★ 最坏 = 人数上限(ROYALE_MAX_PLAYERS=16)× 全员回溯(trail 取满,match_host 里是 10 点)。★ 预算取 1400 B = ENet MTU:快照走 unreliable,超了就被分片,而分片是 UNSEQUENCED|UNRELIABLE_FRAGMENT ⇒ 丢一片 = 整帧丢(见 docs/eng/netcode-snapshots.md §2.3)。
-	var cap: int = LobbyRooms.ROYALE_MAX_PLAYERS   # 单一来源:不在这里再抄一个 16
+	var cap: int = LobbyRooms.ROYALE_MAX_PLAYERS
 	var worst_players := {}
 	for i in cap:
 		worst_players[str(i + 1)] = _entry_world(_trail_pts(TRAIL_PHYSICAL_MAX))
@@ -113,7 +104,6 @@ func _ready() -> void:
 	_check(worst_bytes <= WORLD_PACKET_BUDGET,
 			"最坏世界包(N=%d × trail %d 点)必须 ≤ %d B(实得 %d B = %d 片)" % [
 					cap, TRAIL_PHYSICAL_MAX, WORLD_PACKET_BUDGET, worst_bytes, _frags(worst_bytes)])
-	# ⑤ 2026-10-24 加(编码器改「预分配 + 下标写」后才有这条风险):最坏包必须能**逐字段解码回来**。
 	var worst_dec := NetCodec.decode_world(worst_packet)
 	var expected := worst_players.duplicate(true)
 	var last_pts := _trail_pts(TRAIL_PHYSICAL_MAX).slice(TRAIL_PHYSICAL_MAX - NetCodec.TRAIL_WIRE_MAX)
@@ -133,11 +123,9 @@ func _ready() -> void:
 
 	print("[size] ── N 折算(单帧载荷 / 每秒单端下行 / 服务器每秒上行)──")
 	print("[size]  N |        旧(dict):单帧  单端下行  服务器上行 |        新(codec):单帧  单端下行  服务器上行")
-	# ★ 带上 12/16/24:royale 规模。世界包的分片悬崖现在在 N≈42(v7 每人 33 B:8+42×33=1394 < 1400)⇒ 只出这一张表。
 	for n in [2, 4, 6, 8, 12, 16, 24]:
 		_report(n, sz_old_own, sz_old_entry, sz_new_own, sz_new_entry)
 
-	# ── 量化 / 体量的**上限测算**(★ 这是**算术测算**,不是已实现的代码;字段表直接取自 schema)──
 	_report_headroom(trail_pts.size(), c2, entry)
 
 	_report_mtu(sz_old_entry, sz_new_entry)
@@ -155,7 +143,6 @@ func _ready() -> void:
 		get_tree().quit(1)
 
 
-# 造 n 个回溯轨迹点(形状与 match_host 的 _rw_trail 一致:[[x, y], …])。★ 值取「丑数」没有意义(量的是字节);这里只保证 n 个点都在。
 func _trail_pts(n: int) -> Array:
 	var out: Array = []
 	for i in n:
@@ -163,14 +150,11 @@ func _trail_pts(n: int) -> Array:
 	return out
 
 
-# ── 真实字段表(逐字对照 SnapshotSystem.broadcast 的 world["players"][role])──
 
 func _entry_world(trail: Array) -> Dictionary:
 	var p := _player
-	# ★ bool 组喂混合值(见 _ready 里 c2 那段注释):每个 fixture 的 4 个 bool 各不相同 ⇒ 标志字节的位序/位映射写错必红。
 	_entry_seq += 1
 	var s := _entry_seq
-	# 是否正在预瞄(heavy_aim 蓄力)。★ 服务端仍带此字段,但客户端刻意不消费(用户裁定:预瞄线只有使用者本人可见);留着是日后换提示形式的接点。
 	var previewing := false
 	if p.weapons != null and p.weapons.current_weapon() != null:
 		previewing = p.weapons.current_weapon().is_previewing()
@@ -191,19 +175,14 @@ func _entry_world(trail: Array) -> Dictionary:
 	}
 
 
-# ★★ vel 不是「可以去掉」的字段 —— 它现在是承重的,别照「瘦身版」去削包。
-#   player_replica 的补间形变(squash & stretch)整条链都读它:空中连续项直接取 vel.y,落地推导还要「上一帧 vel.y 大 + 这一帧 vel.y ≈ 0」这一对值(见 player_replica.gd 的 _prev_vel_y / LAND_VEL_EPS)。
-#   把 vel 从载荷里去掉 ⇒ 对手的形变与落地效果一起静默失效(空中项恒 0、落地项永不触发),不报错、也不会让本探针变红 —— 本探针只打印、不断言 vel 的去留(它量的是体积,不是行为)。⚠ 那条「唯一消费 vel 的 player.apply_server_snapshot 已随 C2 删除」的旧理由已反转:想削包先读 player_replica.gd,不要只读本文件。
 
 
-# ── 折算 ──
 
 func _kb(b: int) -> String:
 	return "%.2fKB" % (float(b) / 1024.0)
 
 
 func _report(n: int, old_own: int, old_entry: int, new_own: int, new_entry: int) -> void:
-	# 两种格式都是同一个拆包结构(世界包一次广播 + 本人包逐 peer 定向):服务器上行 = N × 本人包 + 1 × 世界包;单端下行 = 本人包 + 世界包。
 	var old_world := n * old_entry
 	var new_world := 8 + n * new_entry
 	var old_up := float((n * old_own + old_world) * SNAP_HZ)
@@ -246,14 +225,14 @@ func _t_bytes(t: String, trail_n: int) -> int:
 		NetCodec.T_I32:
 			return 4
 		NetCodec.T_QV2:
-			return 4      # P1:2×int16 定点(0.5 步长)
+			return 4
 		NetCodec.T_QAIM:
-			return 1      # P1:u8 角度
+			return 1
 		NetCodec.T_FAIM:
-			return 4      # P1:2×int16(1e-4)
+			return 4
 		NetCodec.T_TRAIL:
 			return 1 + 4 * trail_n
-	return 1   # U8 / I8 / T_BOOLS(整组仍占 1 B)
+	return 1
 
 
 func _schema_bytes(schema: Array, trail_n: int) -> int:
@@ -263,7 +242,6 @@ func _schema_bytes(schema: Array, trail_n: int) -> int:
 	return n
 
 
-## 按字段名取字节(找不到返回 0)—— 让"某个字段组多少字节"始终跟着 schema 走。
 func _field_bytes(schema: Array, name: String, trail_n: int) -> int:
 	for f in schema:
 		if f[0] == name:
@@ -276,7 +254,7 @@ func _report_headroom(trail_n: int, c2: Dictionary, entry: Dictionary) -> void:
 	var c2s := _schema_bytes(NetCodec.C2_SCHEMA, 0)
 	var wpn := _schema_bytes(NetCodec.WEAPON_SCHEMA, 0)
 	var inv := 1 + 6 * (c2.get("inv", []) as Array).size()
-	var own := 13 + c2s + wpn + inv          # 13 = 版本+种类+flags+tick+ack+q + 武器标志
+	var own := 13 + c2s + wpn + inv
 	print("[size] ── 上限测算(算术;世界侧 P1 已落地、本人侧未落地)──")
 	var w_pv := _field_bytes(NetCodec.WORLD_SCHEMA, "pos", trail_n) \
 			+ _field_bytes(NetCodec.WORLD_SCHEMA, "vel", trail_n)
@@ -288,14 +266,12 @@ func _report_headroom(trail_n: int, c2: Dictionary, entry: Dictionary) -> void:
 			w - w_pv - w_aim - w_tr])
 	print("[size] 本人包 %d B = 头 13 + 核心 %d + 武器 %d + 背包 %d" % [own, c2s, wpn, inv])
 
-	# ① 世界侧 P1 定点化已落地(2026-10-26):pos/vel→2×i16(0.5 步长)、aim→u8 角度。这里只回算相对 v4 的节省。
 	var saved := (8 - _field_bytes(NetCodec.WORLD_SCHEMA, "pos", trail_n)) \
 			+ (8 - _field_bytes(NetCodec.WORLD_SCHEMA, "vel", trail_n)) \
 			+ (8 - _field_bytes(NetCodec.WORLD_SCHEMA, "aim", trail_n))
 	print("[size] 量化(世界,**已落地**):pos %d B / vel %d B / aim %d B ⇒ 每条比 v4 省 %d B(方案与误差见 netcode-delta-and-quantization-details.md §6)" % [
 			_field_bytes(NetCodec.WORLD_SCHEMA, "pos", trail_n),
 			_field_bytes(NetCodec.WORLD_SCHEMA, "vel", trail_n), w_aim, saved])
-	# c2 侧未量化(它是 C2 回滚锚点,单方面量化 ⇒ 每次对账都判分歧);下面只是"若两端一起量化"的上限测算,本批不落地。
 	var c2_q := c2s - (_field_bytes(NetCodec.C2_SCHEMA, "pos", 0) - 4) \
 			- (_field_bytes(NetCodec.C2_SCHEMA, "vel", 0) - 4) \
 			- (_field_bytes(NetCodec.C2_SCHEMA, "knock", 0) - 4)
@@ -303,12 +279,10 @@ func _report_headroom(trail_n: int, c2: Dictionary, entry: Dictionary) -> void:
 			c2s + wpn + inv, c2_q + wpn + inv,
 			int(round(100.0 * (c2s + wpn + inv - c2_q - wpn - inv) / float(c2s + wpn + inv)))])
 
-# ── 比对工具 ──
 
 func _schema_keys(schema: Array) -> Array:
 	var out: Array = []
 	for f in schema:
-		# T_BOOLS 组(1 B 标志字节)的**逻辑字段**在第三元素里;组名(`_flags`)本身不是线上字段名。
 		if f.size() > 2:
 			for sub in f[2]:
 				out.append(sub)
@@ -317,9 +291,6 @@ func _schema_keys(schema: Array) -> Array:
 	return out
 
 
-# 逐键比:float 只求**近似相等**(GDScript 的 float 是 double,上线收成 float32 后展回来会差
-# ~1e-7;这是**今天线上本来就有的**损失,不是本次改动引入的),其余类型求精确相等。
-# ★ 世界条目走 _world_same:pos/vel 有 0.5px 定点步长(误差 ≤0.25)、aim 是 u8 角度(比点积);不能再用 float 容差。
 func _world_same(a: Dictionary, b: Dictionary) -> bool:
 	if a.size() != b.size():
 		return false
@@ -337,7 +308,6 @@ func _world_field_same(k: String, a: Variant, b: Variant) -> bool:
 		var vb: Vector2 = b
 		return absf(va.x - vb.x) <= 0.2501 and absf(va.y - vb.y) <= 0.2501
 	if k == "trail":
-		# 2026-10-30 起 trail 也是 i16 定点(0.5px 步长)⇒ 与 pos/vel 同容差;元素形态保持 [x, y] 数组。
 		if not (a is Array) or not (b is Array):
 			return false
 		var ta: Array = a

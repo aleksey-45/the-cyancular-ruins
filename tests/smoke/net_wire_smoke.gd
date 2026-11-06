@@ -1,5 +1,4 @@
 extends SceneTree
-# 线格式守卫(NetCodec,三 kind:world / own / input)。存在理由逐条对应真实缺陷:
 
 const EXPECTED_CHECKS := 6
 
@@ -21,7 +20,6 @@ func _initialize() -> void:
 	var ob := NetCodec.encode_own(own)
 	var ib := NetCodec.encode_input(inp)
 
-	# ① 版本/种类头(去掉什么才红:某个 encode_* 把版本写成字面量 1/2,或 kind 写错)
 	_chk(wb[0] == NetCodec.PROTO_VERSION and ob[0] == NetCodec.PROTO_VERSION and ib[0] == NetCodec.PROTO_VERSION
 			and wb[1] == NetCodec.KIND_WORLD and ob[1] == NetCodec.KIND_OWN and ib[1] == NetCodec.KIND_INPUT,
 			"三 kind 版本字节必须同为 PROTO_VERSION(%d),种类字节分别为 WORLD/OWN/INPUT" % NetCodec.PROTO_VERSION)
@@ -41,7 +39,6 @@ func _initialize() -> void:
 			and NetCodec.decode_input(wb).is_empty() and NetCodec.decode_input(ob).is_empty()
 	_chk(bad, "三 kind 坏包必须一律解码为空(翻版本 / 截断 1 B / 串种)")
 
-	# ③ 三 kind 往返逐字段一致(去掉什么才红:字段顺序/宽度/位打包错位、丢字段;输入还要逐 tick 拆包正确)
 	var wd := NetCodec.decode_world(wb)
 	var od := NetCodec.decode_own(ob)
 	var id := NetCodec.decode_input(ib)
@@ -57,8 +54,6 @@ func _initialize() -> void:
 			and int(id.get("st", 0)) == 987654321
 	_chk(rt, "三 kind 往返逐字段一致(世界含混合 bool;本人整态;输入单记录 held u16/seq/st/ct)")
 
-	# ⑤ 字段槽位独立验证:另造一条已知 seq/st/ct 的记录,独立 encode→decode,钉死"每个字段落在自己的槽位"
-	#   (去掉什么才红:encode_input 字段顺序/宽度写错 —— 上一组往返是同一个 fixture 自洽,可能两边一起偏)。
 	var s5 := PacketInputSource.new()
 	var hi5 := PacketInputSource.pack_record(s5, 7001, Vector2(1, 0), 111, 222)
 	var d5 := NetCodec.decode_input(NetCodec.encode_input(hi5))
@@ -77,8 +72,6 @@ func _initialize() -> void:
 	_chk(missing.is_empty() and extra.is_empty(),
 			"INPUT_SCHEMA 与 pack_record() 逐键对齐(表外未覆盖 %s / 表内多余 %s)" % [str(missing), str(extra)])
 
-	# ⑤ 负 hp(倒地瞬间的合法中间态)必须钳成 0:直接 & 0xFF 会回绕成 251 ⇒ 客户端血条 251/50 被钳成满
-	#   (真实 bug:敌方玩家倒地后血条变满)。去掉什么才红:把 clamp 改回 & 0xFF。
 	var neg_world: Dictionary = (world as Dictionary).duplicate(true)
 	var first_role: String = str((neg_world["players"] as Dictionary).keys()[0])
 	(neg_world["players"][first_role] as Dictionary)["hp"] = -5
@@ -86,7 +79,6 @@ func _initialize() -> void:
 	_chk(int((((neg_rt.get("players", {}) as Dictionary).get(first_role, {}) as Dictionary).get("hp", -1))) == 0,
 			"负 hp 编码钳到 0(不回绕 251 → 倒地血条不会变满)")
 
-	# 读数(不是断言):协议尺寸
 	print("[readout] 输入 %d B/包(一条 tick 记录,60Hz);世界 2 人共 %d B;本人包 %d B" % [
 			ib.size(), wb.size(), ob.size()])
 
@@ -103,7 +95,6 @@ func _initialize() -> void:
 		quit(1)
 
 
-# ── 夹具(硬编码的"丑数"+混合 bool:防止全 0/全 false 掩盖错位)──
 
 func _fixture_world() -> Dictionary:
 	var e1 := {
@@ -123,7 +114,6 @@ func _fixture_world() -> Dictionary:
 
 
 func _fixture_own() -> Dictionary:
-	# 25 个 c2 标量 + 武器块 10 个 + inv(与 capture_state() 键集逐字对齐;不含 inv 的其余字段由 schema 决定)。
 	var c2 := {
 		"pos": Vector2(1234.567, -678.901), "vel": Vector2(-120.37, 0.4321),
 		"facing": -1, "state": 4,
@@ -143,12 +133,11 @@ func _fixture_own() -> Dictionary:
 
 
 func _fixture_input() -> Dictionary:
-	# 一条 tick 记录(值故意"丑":held 含 BIT_REWIND=256 ⇒ 必须 u16;ax/边沿/winst 全非零 ⇒ 字段错位必红)。
 	var src := PacketInputSource.new()
 	var rec := PacketInputSource.pack_record(src, 123456, Vector2(0.6, -0.8), 987654321, 12345678)
 	rec["held"] = PacketInputSource.BIT_UP | PacketInputSource.BIT_DOWN | PacketInputSource.BIT_CHARGE \
 			| PacketInputSource.BIT_ATTACK | PacketInputSource.BIT_RELOAD \
-			| PacketInputSource.BIT_HASTE | PacketInputSource.BIT_REWIND   # 415
+			| PacketInputSource.BIT_HASTE | PacketInputSource.BIT_REWIND
 	rec["ax"] = -0.5
 	rec["pressed"] = 3
 	rec["released"] = 1
@@ -168,7 +157,6 @@ func _cut(buf: PackedByteArray) -> PackedByteArray:
 	return b
 
 
-# ── 比对工具(schema 的 T_BOOLS 组:逻辑字段在第三元素里)──
 
 func _schema_keys(schema: Array) -> Array:
 	var out: Array = []
@@ -194,8 +182,6 @@ func _dict_same(a: Variant, b: Variant) -> bool:
 	return true
 
 
-# ── P1 定点字段的容差比对(世界:pos/vel 0.5 步长、aim u8 角度;输入:aim 1e-4 定点)──
-# ★ 必须比"解码后的语义值":世界 aim 只存方向 ⇒ 用单位向量点积 + 长度≈1 证明 decode 做了 normalize(漏 normalize 时长度≠1 必红)。
 func _world_same(a: Variant, b: Variant) -> bool:
 	if not (a is Dictionary) or not (b is Dictionary):
 		return false
@@ -217,7 +203,6 @@ func _world_field_same(k: String, a: Variant, b: Variant) -> bool:
 		var vb: Vector2 = b
 		return absf(va.x - vb.x) <= 0.2501 and absf(va.y - vb.y) <= 0.2501
 	if k == "trail":
-		# 2026-10-30 起 trail 也是 i16 定点(0.5px 步长)⇒ 与 pos/vel 同容差;元素形态保持 [x, y] 数组。
 		if not (a is Array) or not (b is Array):
 			return false
 		var ta: Array = a
@@ -238,7 +223,7 @@ func _world_field_same(k: String, a: Variant, b: Variant) -> bool:
 		var ua := pa.normalized() if not pa.is_zero_approx() else Vector2.RIGHT
 		return absf(pb.length() - 1.0) <= 0.001 and ua.dot(pb) >= 0.9999
 	if a is Dictionary and b is Dictionary:
-		return _world_same(a, b)   # 递归:players 字典的元素是单条 player 条目
+		return _world_same(a, b)
 	return _same(a, b)
 
 

@@ -1,8 +1,6 @@
 class_name ScanUtil
 extends RefCounted
 
-# 源码级探针的扫描算法:读文件、走目录、剥注释视图、括号/实参切分、取函数体。
-# ★ 纯静态、纯函数(入参进、结果出),不碰 Node / autoload —— 所以它在 -s 阶段也能用,也便于单独验。断言账本在 ProbeBase(那个必须 extends Node,因为要 get_tree())。
 
 # 读 res:// 下的源文本;不存在(或打不开)返回 ""。调用方必须自己判空并报红 —— 静默返回 "" 是这类探针最典型的失明方式(读不到源文件 → 所有 contains 断言恒假/恒真)。
 static func read(path: String) -> String:
@@ -38,16 +36,14 @@ static func walk(dir_path: String, out: Array[String]) -> void:
 	d.list_dir_end()
 
 
-# 删掉一行里字符串字面量之外的 # 起、到行尾的注释(引号/反斜杠转义的处理与 match_paren 同法)。行尾注释不是代码,却能把被删掉的调用名重新「喂」给按源码文本判在位的断言。
-# ⚠ 已知边界:"""…""" 多行字符串不跨行带状态(本函数逐行调用)—— 它第 2 行起若出现 #,会被当成注释起点截断。本仓唯一的多行字符串是 GLSL 着色器正文(水面板),里面没有 #,暂无影响。
 static func strip_line_comment(line: String) -> String:
-	var quote := ""            # 当前所处字符串的引号类型("" = 不在字符串里)
+	var quote := ""
 	var j := 0
 	while j < line.length():
 		var ch := line[j]
 		if quote != "":
 			if ch == "\\":
-				j += 1        # 转义:连同下一字符一起跳过,免得 \" 被当成字符串结束
+				j += 1
 			elif ch == quote:
 				quote = ""
 		elif ch == "\"" or ch == "'":
@@ -70,8 +66,6 @@ static func code_only(src: String) -> String:
 	return "\n".join(out)
 
 
-# 同上,但保留行首缩进(只 rstrip 行尾空白;丢掉只剩空白的行)。给需要按缩进做位置分析的探针用。
-# 为什么不能只看裸文本:一句提到被删调用的注释能把「在位」类断言喂绿,反过来也能把「零引用」类断言弄红 —— 注释不是代码。
 static func code_view(src: String) -> String:
 	var out: Array[String] = []
 	for raw in src.split("\n"):
@@ -102,7 +96,6 @@ static func top_func_body(code: String, name: String) -> String:
 	return code.substr(i, (j - i) if j > 0 else code.length() - i)
 
 
-# 与 open 处 '(' 配对的 ')' 下标(跳过字符串内的括号;找不到返回 -1)
 static func match_paren(src: String, open: int) -> int:
 	var depth := 0
 	var in_str := false
@@ -125,7 +118,6 @@ static func match_paren(src: String, open: int) -> int:
 	return -1
 
 
-# 顶层逗号切分实参(括号/方括号/花括号内、字符串内的逗号不算分隔符)
 static func split_args(s: String) -> Array[String]:
 	var out: Array[String] = []
 	var depth := 0
@@ -161,8 +153,6 @@ static func split_args(s: String) -> Array[String]:
 	return out
 
 
-# 脚本方法表里找方法(返回 null = 没有)。用方法表而非文本 contains:函数名出现在注释/字符串里时文本法会假绿;
-#   而 has_method() 对脚本资源看不见它自己的实例方法,故一律走 get_script_method_list()。
 static func method_info(gs: GDScript, name: String) -> Variant:
 	for m in gs.get_script_method_list():
 		if str(m.get("name", "")) == name:

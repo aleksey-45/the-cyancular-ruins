@@ -1,11 +1,10 @@
 extends SceneTree
 
-# 最小破坏单位(tile_break_unit)冒烟(纯逻辑 -s:合成 grid/subgrid,不读地图、不引 autoload)。
 
 const EXPECTED_CHECKS := 11
-const CELLS := 16          # 16×16 格 = 1024×1024 px(半径 350 内不会有环面重复副本)
-const LEAF := 15           # 树叶:hp 8,子弹/爆炸都可破坏
-const CENTER := Vector2(504, 504)   # 一个子格中心,距四周都 > radius,扫掠结果可预测
+const CELLS := 16
+const LEAF := 15
+const CENTER := Vector2(504, 504)
 
 var _fails: Array[String] = []
 var _checks := 0
@@ -15,7 +14,6 @@ var _destroyed_cells: Array[Vector2i] = []
 func _initialize() -> void:
 	TileDefs.load_defs()
 
-	# ① 默认单位 = 1 格;helper 的边界(1.0 整格 / 0.25 子格)
 	var script: GDScript = load("res://scenes/weapons/bullet_base.gd")
 	if script == null:
 		_chk(false, "load bullet_base.gd 失败(-s 空载守卫:不 quit 会挂死)")
@@ -31,20 +29,17 @@ func _initialize() -> void:
 	probe_bullet.free()
 	_chk(default_ok and quarter_ok and half_ok, "默认 1.0 走整格;0.25/0.5 走子格(_tile_break_is_cell 边界)")
 
-	# ② 场景值:榴弹显式 0.25,其余枪用的 bullet.tscn 不覆盖(= 默认 1.0)
 	var grenade_txt := FileAccess.get_file_as_string("res://scenes/weapons/grenade_bullet.tscn")
 	var bullet_txt := FileAccess.get_file_as_string("res://scenes/weapons/bullet.tscn")
 	_chk(grenade_txt.contains("tile_break_unit = 0.5") and not bullet_txt.contains("tile_break_unit"),
 			"场景:grenade_bullet=0.5(32px) / bullet.tscn 未覆盖(其余枪 = 1.0)")
 
-	# ③ 整格单位一次命中:格级账扣到 0 ⇒ 整格 16 子格全清 + 格级/子格账同时归 0
 	_reset_world()
 	var cell := Vector2i(7, 7)
 	var destroyed := TileDefs.damage_tile(cell, 8, "bullet")
 	_chk(destroyed and MazeGenerator.current_grid[cell.y][cell.x] == 0 \
 			and TileDefs.hp_grid_at(cell) == 0 and _alive_subs(cell) == 0, "整格一次命中:16 子格全清、两本账归 0")
 
-	# ④ 1/2 格单位(32px 块):整块 2×2 子格按同一伤害清掉,格级账原样
 	_reset_world()
 	var sub := Vector2i(cell.x * 4, cell.y * 4)
 	var block := Vector2i(cell.x * 2, cell.y * 2)
@@ -53,17 +48,14 @@ func _initialize() -> void:
 			and TileDefs.hp_grid_at(cell) == 8 and _alive_subs(cell) == 12,
 			"1/2 格一次命中:清 2×2 子格(4 个)、格级账不动(8)、余 12")
 
-	# ⑤ 未致死:扣血但不回调、不触发任何销毁
 	_reset_world()
 	var survived := not TileDefs.damage_sub(sub, 3, "bullet")
 	_chk(survived and _sub_hp(sub) == 5 and _destroyed_cells.is_empty(), "未致死:子格 8→5,无销毁回调")
 
-	# ⑥ 溢出:一次大伤害把子格打到 0(钳位,不出现负血)
 	_reset_world()
 	TileDefs.damage_sub(sub, 99, "bullet")
 	_chk(_sub_hp(sub) == 0, "溢出:子格血量钳到 0")
 
-	# ⑦ 两本账对齐:16 个子格逐个磨死 ⇒ current_grid 与 hp_grid 同一帧都归 0(旧实现只清 grid)
 	_reset_world()
 	for sy in 4:
 		for sx in 4:
@@ -71,7 +63,6 @@ func _initialize() -> void:
 	_chk(MazeGenerator.current_grid[cell.y][cell.x] == 0 and TileDefs.hp_grid_at(cell) == 0,
 			"两本账对齐:子格路径清空整格时 hp_grid 同步归 0")
 
-	# ⑧ 爆炸整格分派:每个 64px 格去重后只扣一次(格级账),子格全清
 	_reset_world()
 	var subs_before := Explosion.destructible_subs(CENTER, 100.0)
 	var covered_cells := _unique_cells(subs_before)
@@ -93,8 +84,6 @@ func _initialize() -> void:
 	_chk(before2.size() > after2.size() and all_alive,
 			"已摧毁子格不进爆炸可破坏集(炸过的树叶不再出第二遍碎片)")
 
-	# ⑨ 爆炸 32px 单位(unit=0.5):块内 4 子格必须**同生共死**(要么全死要么全活)⇒ 洞口对齐 32px;
-	#    死亡子格数 = 4×块数;格级账只能在整格 16 子格全灭时才归 0(块灭一半不许提前清格)。
 	_reset_world()
 	var alive_before := _alive_subs_all()
 	Explosion.damage_tiles(CENTER, 60.0, 1000, null, 0.5)
@@ -103,7 +92,6 @@ func _initialize() -> void:
 	_chk(_block_uniform() and dead > 0 and dead % 4 == 0 and grid_ok,
 			"爆炸 1/2 格(32px):块内 4 子格同生共死、死亡子格 %d = 4×块数、格级账只在整格全灭时归 0" % dead)
 
-	# ⑩ 爆炸整格分派的部分损伤:只动 hp_grid(格级账),sub_hp 不动
 	_reset_world()
 	Explosion.damage_tiles(CENTER, 100.0, 4, null, 1.0)
 	_chk(TileDefs.hp_grid_at(cell) == 5 and _min_sub_hp() == 8 and _destroyed_cells.is_empty(),
@@ -134,7 +122,6 @@ func _reset_world() -> void:
 	_destroyed_cells.clear()
 
 
-# 32px 块口径的"同生共死":任何 32px 块里死掉的子格必须是 0 或 4(0<dead<4 ⇒ 破坏粒度退回 16px,红)。
 func _block_uniform() -> bool:
 	for by in CELLS * 2:
 		for bx in CELLS * 2:
@@ -148,7 +135,6 @@ func _block_uniform() -> bool:
 	return true
 
 
-# 全图仍活着的子格数(32px 块口径的"死了几个"要能整除 4)。
 func _alive_subs_all() -> int:
 	var n := 0
 	for sy in CELLS * 4:
@@ -158,7 +144,6 @@ func _alive_subs_all() -> int:
 	return n
 
 
-# 单机 level_0._on_tile_destroyed 的同一收口:清该格 16 个子格(服务器侧走 zero_cell_sub_hp,效果同)。
 func _on_cell_destroyed(c: Vector2i) -> void:
 	_destroyed_cells.append(c)
 	TileDefs.destroy_cell(c)

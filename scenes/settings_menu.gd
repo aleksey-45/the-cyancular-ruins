@@ -1,25 +1,19 @@
 extends Control
-# 设置菜单:键鼠重映射 / 音量 / 滚轮切枪 / 联机显示。全部改动即时生效并经 Settings 持久化(user://settings.cfg),Esc 返回。
-# ★ 静态骨架在 settings_menu.tscn 里(见 tools/gen_menu_scene.gd),本脚本只填动态部分(键位表每一行)与接信号:版式全在 .tscn 里,改版式去编辑器拖、别回来加常量;样式走 menu_theme.tres 的 theme_type_variation,不再调 UiFactory 的套皮函数。
-# ★ 键位表 / 开关 / 滑条的取值仍由本脚本从 Settings 灌进去(骨架里存的是导出那一刻的值)。
 
 const ACTION_NAMES := {
 	"left": "左移", "right": "右移", "up": "跳跃/上爬", "down": "下蹲/下落",
 	"attack": "开火", "R": "重开(单机)",
 	"F": "拾取", "Q": "丢弃(长按)",
-	# ★ ACTION_NAMES 与 Settings.REMAPPABLE_ACTIONS 必须逐条对齐:漏一条就退化成 ACTION_NAMES.get(action, action)、界面显示英文键名。
-	# ★ 冲刺没有独立键(双击左/右走触发),因此不在这张表里。
 	"rewind": "时间回溯", "haste": "时间加速",
 }
 
-# 32 号字按钮的最低高度 = 字号 32 + UiFactory._btn_box 的上下内边距(20×2);迁移后只有键位表那几个按钮还用得上它。
 const ROW_H := 72
 const BIND_NAME_W := 200.0
 const BIND_BTN_W := 220.0
 
-var _capturing_action := ""      # 正在等待捕获新键位的动作(""=不在捕获态)
+var _capturing_action := ""
 var _capture_btn: Button = null
-var _bind_buttons: Dictionary = {}   # action -> Button
+var _bind_buttons: Dictionary = {}
 
 @onready var _master: HSlider = %MasterSlider
 @onready var _sfx: HSlider = %SfxSlider
@@ -34,7 +28,6 @@ var _bind_buttons: Dictionary = {}   # action -> Button
 
 
 func _ready() -> void:
-	# 音量滑条不出声:本文件的 _slider() 只灌值 + 接 value_changed,不播 Sfx —— 别顺手给滑条补一个点击音。
 	_slider(_master, Settings.master_volume, func(v: float) -> void:
 		Settings.master_volume = v
 		Settings.save())
@@ -42,11 +35,9 @@ func _ready() -> void:
 		Settings.sfx_volume = v
 		Settings.save())
 
-	# ★ 先灌值再接信号:button_pressed = x 会发 toggled,顺序反了会在建控件那一刻就把值写回 Settings 并播一次开关音(见 _check():它也是先值后连)。
 	_check(_wheel, Settings.wheel_switch, func(on: bool) -> void:
 		Settings.wheel_switch = on
 		Settings.save())
-	# ★ 这四个开关原先只长在 1v1 大厅页的右侧面板上,那页在「大厅合一」里被删了 ⇒ 键与读者都还在、界面上却改不了,这里放回来;它们只写本机 Settings、不上报服务器(与对局的房主规则项不是一回事)。
 	_check(_traj, Settings.pvp_show_trajectories, func(on: bool) -> void:
 		Settings.pvp_show_trajectories = on
 		Settings.save())
@@ -65,13 +56,11 @@ func _ready() -> void:
 	_res.clear()
 	for size in Settings.DISPLAY_RESOLUTIONS:
 		_res.add_item("%d×%d" % [size.x, size.y])
-	# ★ 与 _check() 同一口径:先灌值再连信号 —— selected 赋值与 select() 都不发 item_selected,这里不会在建控件时误写回 Settings。
 	_res.selected = Settings.display_res_index
 	_res.item_selected.connect(func(i: int) -> void:
 		Settings.display_res_index = i
 		Settings.save()
 		Settings.apply_display())
-	# ★ 全屏走既有 _check() 包一层,与其它开关同款:只在 toggled 里写 Settings(自带 Sfx 与先值后连)。
 	_check(_fullscreen, Settings.display_fullscreen, func(on: bool) -> void:
 		Settings.display_fullscreen = on
 		Settings.save()
@@ -79,9 +68,8 @@ func _ready() -> void:
 
 	_fill_bind_grid()
 
-	# ── 底部动作 ── 恢复默认键位是有破坏性的动作(丢掉玩家自己绑的键)⇒ quiet 档(在骨架里已定)。
 	%ResetBtn.pressed.connect(func() -> void:
-		Sfx.play("ui")   # 点击音由各 handler 自己出(UiFactory.button 不代挂,防同帧双响)
+		Sfx.play("ui")
 		Settings.reset_bindings()
 		for a in _bind_buttons:
 			_refresh_bind_label(a))
@@ -111,9 +99,8 @@ func _fill_bind_grid() -> void:
 		name_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		name_l.custom_minimum_size = Vector2(BIND_NAME_W, 0)
 		_bind_grid.add_child(name_l)
-		# 键位按钮是网格单元(不是主菜单按钮列);★ 高度 40 会被按钮内边距顶到 72,这里写 ROW_H 让源码与画面一致。
 		var bind_btn := Button.new()
-		bind_btn.theme_type_variation = &"BtnLegacy"   # = 旧的 `button(…, "primary")` 那一档
+		bind_btn.theme_type_variation = &"BtnLegacy"
 		bind_btn.custom_minimum_size = Vector2(BIND_BTN_W, ROW_H)
 		bind_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		bind_btn.pressed.connect(func() -> void: _begin_capture(action, bind_btn))
@@ -156,8 +143,6 @@ func _cancel_capture() -> void:
 	_refresh_bind_label(action)
 
 
-# 捕获态:这个事件该怎么处理。Shift / Ctrl / Alt / Tab 都是合法键位(玩家会拿它们当跳跃 / 技能键);
-# Esc 只用来取消;鼠标键也能绑。纯判定,UI 只负责分发 —— 故收成 static,可单独验。
 const CAPTURE_IGNORE := 0
 const CAPTURE_ACCEPT := 1
 const CAPTURE_CANCEL := 2
@@ -181,12 +166,9 @@ func _input(event: InputEvent) -> void:
 		CAPTURE_IGNORE:
 			return
 		CAPTURE_CANCEL:
-			# ★ 顺序不能反:先标记事件已处理,再收尾 —— _cancel_capture() 只是刷新按钮文案,但约定在前更安全。
 			get_viewport().set_input_as_handled()
 			_cancel_capture()
 			return
-	# 键位 API 的既有语义(设计如此,非缺陷):set_binding 先 action_erase_events 再只写这一个 ⇒ 用户主动重绑 = 该动作从此按单键(默认本来就是单键)。
-	# 而显示(get_binding_names)与持久化(save/load_settings)都遍历全部事件,故存档往返不丢键。
 	Settings.set_binding(_capturing_action, event)
 	Sfx.play("switch")
 	_capturing_action = ""

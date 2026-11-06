@@ -1,59 +1,42 @@
 extends Node2D
 # 服务器入口(headless)。角色由命令行 user args 决定 —— ★ 开关必须写在 -- 之后(写在前面会被 Godot 丢掉、静默跑错分支):
 
-var _room_manager: RoomManager = null   # 大厅侧:留引用给控制台面板读房间账本(以前是匿名 add_child)
+var _room_manager: RoomManager = null
 var _host: Node = null
-# 早到的 match_sync:客户端可能比宿主更早进场景报到(那时 _host 还没建)⇒ 载荷会空(队伍表/出生点全缺)。
-# 先排队,等 _on_all_claimed 建完宿主后补发。
 var _pending_match_sync: Array[int] = []
-var _claims: Dictionary = {}   # role(int) -> peer_id(worker 视角)
-var _claim_names: Dictionary = {}   # role(int) -> 昵称(开局 peer_info 回传两端)
-var _claim_opts: Dictionary = {}   # role(int) -> 本端选项(颜色/规则偏好)
+var _claims: Dictionary = {}
+var _claim_names: Dictionary = {}
+var _claim_opts: Dictionary = {}
 var _wait_timer := 0.0
 var _royale := false
-# 本局全部参战 role(含 AI 补位号),由大厅经 --roles 显式传入 —— 从人数推导必然出错(编号会留空洞,持 3 号的真客户端会被当串线踢掉)。
 var _role_set: Array[int] = []
-var _ai_roles: Array = []    # AI 补位的 role 列表(实验性;这些 role 不等 claim,由服务端 AI 驱动)
+var _ai_roles: Array = []
 var _claim_wait := 0.0
-var _understaffed_wait := 0.0   # 开局前可用玩家 <2(大乱斗)/未满员(3v3)的持续时长(超时退出释放端口)
+var _understaffed_wait := 0.0
 var _team_mode := false
-var _team_of_role: Dictionary = {}   # role(int) -> 队号(1/2);由 --teams 与 --roles 同序解析
+var _team_of_role: Dictionary = {}
 var _team_teams_raw: Array[int] = []
-var _lan_ip_text := ""          # 局域网 IP 串(写 local_ip.txt 用;公网 IP 到手后一并补写)
-# ★★ _worker 是唯一可靠的我是不是 worker 标志:本脚本一个入口兼两种角色,而 _ready 里的 is_worker 只是局部量、出不了函数。
-#   报到梯必须以正的它为门 —— 写成 worker-only 标志的否定时,大厅里那些合取项全部成立,大厅会在开机 30 秒后自己 quit(0),7777 上的建房/配对/转连全死(实测发生过)。
-#   ★ 自大厅分支末尾落了 set_process(false) 起,非 worker 进程进梯整类封死(与各条梯的极性无关)。
+var _lan_ip_text := ""
 var _worker := false
 var _match_started := false
-# 断线宽限期:掉线的 role 先进 _grace,不立刻移出(大乱斗)/ 不立刻退进程(1v1),宽限内可被 reclaim_role 认领回来;
-# 到点仍未回来 → 走既有的移出对局 / 收场退出语义。★ 时长唯一入口是 GraceWindow.DEFAULT_SECONDS。
 var _grace := GraceWindow.new()
 var _grace_check_timer := 0.0
-# ★ 终局滞留(2026-10-30):MATCH_OVER 之后 worker 原设计不主动退(只等客户端断线/全员走光),而大厅回收梯
-#   只认「worker 进程已死」⇒ 客户端赖在结算页不退时,房与端口永久占着(唯一兜底是 2h 超龄清扫)。
-#   给一段固定滞留期:到点无论客户端在不在都收场退出,把房与端口交回回收梯。
 const MATCH_OVER_LINGER := 60.0
 var _mo_linger := 0.0
-var _tokens: Dictionary = {}   # role(int) -> token(String),客户端经 report_token 报来
-var _stop_logged := false      # lobby_stop 只许写一条(_notification 与 _exit_tree 都会到)
+var _tokens: Dictionary = {}
+var _stop_logged := false
 
 func _ready() -> void:
 	print("[server] 版本 %s  pid=%d" % [preload("res://core/config/build_info.gd").display(), OS.get_process_id()])
 	var args := OS.get_cmdline_user_args()
-	# 解析与三条启动校验(模式互斥 / --roles 与 --teams 等长 / role 上界)收在 ModeContext(纯函数,`-s` 可测)。
-	# ★ role 上界从旧字面量 8 改为 ModeDefs.ROLE_MAX(16):大厅把上限提到 16 时只改了 UI/色板,worker 仍卡 8
-	#   ⇒ 16 人房第 9 人起被当串线踢(X1)。越界现在**拒绝启动**而不静默丢(静默丢正是 X1 活到今天的原因)。
 	var ctx := ModeContext.from_args(args, NetBus.DEFAULT_PORT)
 	if not bool(ctx["ok"]):
 		push_error("worker: 启动参数无效 —— %s" % str(ctx["error"]))
 		get_tree().quit(1)
 		return
 	var is_worker := bool(ctx["worker"])
-	# ★ 解析完立刻落进实例标志(报到梯读它);位置紧跟校验、不进任何分支 —— 写进某条分支里迟早会漏掉另一种形态。
 	_worker = is_worker
-	NetDiag.set_role("server")   # 导出标记已换成 serverui ⇒ role() 推断不出服务端,必须显式声明
-	# ★ 打包后的服务端默认落盘(exe 同目录 log/);开发态落 user://logs。启动就打出路径 ——
-	#   "日志在哪"不该靠人从源码里翻(运维第一句话永远是这个)。
+	NetDiag.set_role("server")
 	print("[server] 日志目录: %s" % NetDiag.log_dir())
 	_royale = bool(ctx["royale"])
 	_team_mode = bool(ctx["team"])
@@ -63,16 +46,12 @@ func _ready() -> void:
 	_team_of_role = ctx["team_of"]
 	var port := int(ctx["port"])
 	_apply_test_flags(args)
-	# 启动即落一条:打包后的服务端"一定有日志文件"这件事就靠它兜底(不必等第一条对局事件)。
-	# diag 走 `--diag`/CYR_DIAG=1/导出构建默认开;ops 审计本来就只有服务端写。
 	NetDiag.log_event("server_boot", {"worker": is_worker, "port": port,
 			"royale": _royale, "team": _team_mode, "roles": _role_set})
 	NetDiag.audit("server_boot", {"worker": is_worker, "port": port})
 	if is_worker:
 		_run_worker(port)
 		return
-	# ── 大厅 ──
-	# 先杀掉还占着 7777 的旧服务端(上次没关干净会 bind 失败→闪退),再监听。
 	ProcUtil.kill_udp_port(NetBus.DEFAULT_PORT)
 	var err := NetBus.start_server()
 	if err != OK:
@@ -83,19 +62,12 @@ func _ready() -> void:
 	add_child(_room_manager)
 	print("服务器就绪,等待玩家……(大厅 7777;配对后自动拉起对局 worker)")
 	NetDiag.audit("lobby_start", {"version": preload("res://core/config/build_info.gd").display(), "port": NetBus.DEFAULT_PORT})
-	get_tree().auto_accept_quit = false   # 关窗先走 _notification 优雅拆房,不许被直接杀掉
+	get_tree().auto_accept_quit = false
 	_print_local_ips()
-	# ★ 面板排在 _print_local_ips() 之后(它填 _lan_ip_text),但仍在本函数体内、
-	#   add_child(RoomManager) 之后、set_process(false) 之前,中间无早退 —— 那把位置是承重的。
 	_add_console_panel()
 	_fetch_public_ip()
-	# ★★ 大厅不跑 _process:报到梯与宽限轮询全是 worker 语义,让大厅也 tick 只是敞着一个口子 —— 实测栽过一次(专用大厅开机 30s 后 quit(0) 自杀,7777 上的建房/配对/转连全死)。
-	#   ★ 必须用 set_process(false),不能改成 process_mode(后者会沿继承关掉子节点的 _process,而大厅的全部实际工作都在 RoomManager 里);⚠ 这一行同时停掉了 _expire_graces 的唯一调用点 —— 将来大厅一旦自己有了 _grace 条目,那条轮询必须搬出 _process。
-	#   ★ ⚠ 位置守卫 duel_spawn_timeout_smoke 已删(2026-10-09)⇒ 今天零守卫:本行须在 _ready 体内、add_child(RoomManager.new()) 之后,且两者之间没有早退。
 	set_process(false)
 
-# 仅测试用开关:不属于"模式/角色"解析(它们改的是 GroundSystem/MatchState 的静态钩子),故不进 ModeContext。
-# ★ 语义与旧版逐字一致;`--test-destroy-tile` 缺省 after=3.0 是承重的(留 0.0 会在第一帧就拆)。
 func _apply_test_flags(args: PackedStringArray) -> void:
 	for i in args.size():
 		match args[i]:
@@ -113,8 +85,6 @@ func _apply_test_flags(args: PackedStringArray) -> void:
 
 
 func _print_local_ips() -> void:
-	# ★ 候选排序收在 LocalServer.lan_ip_candidates():默认路由网卡优先(排除 WSL/Hyper-V/Docker 等虚拟网卡)。
-	# 2026-10-24 实测教训:旧实现按私有网段排序,把 192.168.227.1(WSL/Hyper-V)排在真实网卡前,朋友照"第一个"填必然连不上。
 	var ips: Array = LocalServer.lan_ip_candidates()
 	if ips.is_empty():
 		print("本机 IP: 未检测到(网络未连接?)")
@@ -132,7 +102,7 @@ func _print_local_ips() -> void:
 func _write_ip_file(text: String) -> void:
 	var dir := OS.get_executable_path().get_base_dir()
 	if not OS.has_feature("template"):
-		dir = ProjectSettings.globalize_path("res://")   # 开发态别往引擎目录写
+		dir = ProjectSettings.globalize_path("res://")
 	var f := FileAccess.open(dir + "/local_ip.txt", FileAccess.WRITE)
 	if f == null:
 		f = FileAccess.open("user://local_ip.txt", FileAccess.WRITE)
@@ -140,15 +110,11 @@ func _write_ip_file(text: String) -> void:
 		f.store_string(text)
 		f.close()
 
-# 服务端控制台面板:只在有真显示后端时挂载。★ --headless 下必须一个节点都不建 ——
-# 产物冒烟(tools/build_release.py)与所有测试跑批都在 headless 下起服务端,实例化面板会让它们一起红。
 func _add_console_panel() -> void:
 	if DisplayServer.get_name() == "headless":
 		return
 	# ★ 面板 2Hz 刷新,不需要 60fps:实测 60fps 稳态 17.4% 单核 → 15fps 7.2%(headless 1.0%);代价 = 大厅 RPC 最坏 +67ms(worker 是 headless 进程,不受影响)。
 	Engine.max_fps = 15
-	# ★ 尺寸/全屏都不在服务端写死:Settings.apply_display() 已按玩家档位开好窗(默认 1920×1440 = 逻辑视口,放不下时退档)⇒ 服务端窗口就是客户端窗口,一行都不覆盖;早先手写的 1280×960 是第二份真相。
-	# 不带静态类型:setup() 是面板自己的方法,标成 CanvasLayer 会在解析期报"无此函数"。
 	var panel = preload("res://server/gui/server_panel.tscn").instantiate()
 	add_child(panel)
 	panel.setup(_room_manager, _lan_ip_text)
@@ -193,7 +159,6 @@ func _run_worker(port: int) -> void:
 		print("大乱斗 worker 就绪,等待 %d 名玩家……(port %d,role 集合 %s)" % [
 				_human_role_count(), port, str(_role_set)])
 	elif _team_mode:
-		# ★ 提示串里同时打 role 集合与队伍表:这两者同序配对是 3v3 最容易被改坏的一处,联调时一眼能看出谁是哪一队。
 		print("3v3 worker 就绪,等待 %d 名玩家……(port %d,role 集合 %s,队伍 %s)" % [
 				_human_role_count(), port, str(_role_set), str(_team_of_role)])
 	else:
@@ -210,24 +175,18 @@ func _human_role_count() -> int:
 	return n
 
 
-# 把宽限期读数推给宿主(它是 round_state 的生产者,见 MatchState.grace_snapshot);★ 只在 _host 存在时写,且不广播(广播由调用方决定)。
 func _sync_grace_snapshot() -> void:
 	if _host != null:
 		_host.grace_snapshot = _grace.remaining(Time.get_ticks_msec())
 
 
-# 把一个 role 放进宽限期。★ 必须置空它的输入源 + 清掉它的待消费输入队列(两件缺一不可):
-# PacketInputSource 在队列空时沿用上一包,不置空的话掉线者的身体会保持他断开前最后一帧的输入 —— 一直朝那个方向跑、或一直开枪。
 func _enter_grace(role: int) -> void:
 	_grace.enter(role, Time.get_ticks_msec())
 	if _host != null:
 		var src = _host.state.input_sources.get(role, null)
 		if src != null and src.has_method("reset_state"):
 			src.reset_state()
-		# ★★ 清输入源不够,必须连队列一起清:掉线瞬间队列里可能还压着一条已经到达的包,而 apply_packet() 是整体覆盖 _held/_axis ⇒
-		#   那条包会在 reset_state() 之后被执行,把按着的键重新武装并保持整个宽限期(clear_edges() 不含 _held)。这一行是掉线者的身体留在场上不动的全部内容,别删。
 		_host.reset_input_queue(role)
-		# ACS 分母口径:必须记掉线这一刻的局号 —— 宽限期有 60s,到点的 mark_disconnected 读到的 _round_num 可能已因换局 +1,那会把离开者的 ACS 压低。
 		_host.note_disconnect_round(role)
 		_host.state.peer_by_role.erase(role)
 		if _host.has_method("_broadcast_round_state"):
@@ -239,28 +198,22 @@ func _expire_graces(now_ms: int) -> void:
 	for role in _grace.expired(now_ms):
 		_grace.leave(role)
 		_sync_grace_snapshot()
-		# ★ 到点做什么 = 纯分派(GraceWindow.expire_action),别在这里再写一遍 if/else:原先的 else 把 1v1 与 team 一起吞了,3v3 第一个宽限到期的人会带着整局退进程(用户裁定是该队少人继续打)。
 		if GraceWindow.expire_action(_royale, _team_mode) == GraceWindow.ACTION_REMOVE:
 			if _host != null and _host.has_method("mark_disconnected"):
 				_host.mark_disconnected(role)
 		else:
-			# ★ 先通知还连着的人,顺序不能反 —— 反了先 quit(0),那条可靠的定向包就永远发不出去。
 			_notify_opponent_left()
 			if is_instance_valid(_host):
 				_host.queue_free()
 			print("worker: 1v1 宽限期到,对手未归,对局结束")
 			NetDiag.audit("match_over", {"mode": ModeDefs.MODE_PVP, "reason": "grace_expired"})
 			get_tree().quit(0)
-	# 大乱斗/3v3:全员走光且宽限期已空(一个都没回来)→ 收场退出。★ 这是大乱斗/3v3 worker 唯一的正常退出口(丢了会让每局都留下僵尸进程永驻占端口)。
-	# ★ _match_started 不能省(本函数由 _process 每秒无条件调用,开机等玩家同样满足 _claims 空 + 宽限空 ⇒ 少了它 worker 一开机就判全员离开自杀);★ _team_mode 必须一起收进来(与上面那条 else 是两条判据)。
 	if (_royale or _team_mode) and _match_started and _claims.is_empty() and _grace.size() == 0:
 		print("worker: 全员离开,%s结束" % ("大乱斗" if _royale else "3v3"))
 		NetDiag.audit("match_over", {"mode": _mode_id(), "reason": "all_left"})
 		get_tree().quit(0)
 
 
-# 1v1 收场之前通知还连着的人(对手不会回来了)。★★ 为什么必须有:NetBus.opponent_left 全仓此前零调用点,而客户端「对手已离开 → 2.5s 回主菜单」一直挂在它上面。
-#   不发的话幸存者只看到 server_disconnected、启动重连、耗尽 60s 预算才回主菜单(在已死的静止世界里干等一分钟)。★ 只在 1v1 收场这一处发(宽限期是给对手回来用的窗口);发送走 NetBus.reply(体内首行判活;钉这条的 rpc_liveness_probe 已删 2026-10-09 ⇒ 零守卫)。
 func _notify_opponent_left() -> void:
 	for role in _claims:
 		var peer := int(_claims[role])
@@ -273,9 +226,7 @@ func _process(delta: float) -> void:
 	if _grace_check_timer >= 1.0:
 		_grace_check_timer = 0.0
 		_expire_graces(Time.get_ticks_msec())
-		# ★ 读数每秒保鲜一次:客户端在两次 round_state 之间自己走秒,不刷的话宽限期里任何一次别的广播都会带上旧值 ⇒ 客户端本地倒计时被拨回(最多 60 秒,看着像重来一轮);本函数不额外广播。
 		_sync_grace_snapshot()
-	# 3v3:人没到齐就干等没有意义(满 6 人才开)→ 超时退出释放端口,绝不降级开局(与 --royale 的 20s 按已到人数开局方向相反,别顺手统一);★ 计时从 worker 启动起算,不因有人报到/离开而复位。
 	if _team_mode and not _match_started and _host == null:
 		_understaffed_wait += delta
 		if _understaffed_wait > 30.0:
@@ -293,18 +244,12 @@ func _process(delta: float) -> void:
 			print("worker: 可用玩家 %d/2,超时退出释放端口" % _claims.size())
 			NetDiag.audit("abort", {"mode": ModeDefs.MODE_ROYALE, "reason": "understaffed_timeout"})
 			get_tree().quit(0)
-	# 1v1:一个 claim_role 都没到就干等没有意义(配对早已在大厅完成,报到应在秒级到达);这是三种模式里唯一原先没有报到梯的一支,少了它两个客户端都消失时 worker 永驻、端口白占到 2h 超龄兜底。
-	# ★ 30s 是承重的:客户端侧内建兜底是 12s 转连 / 25s claim ⇒ worker 必须晚于它们退,否则客户端还在重试、端口已经没了。判据也覆盖只到一个 claim(1v1 要 2 人齐才开)。
-	# ★★ 门控必须是正的 _worker,不能写成 worker-only 标志的否定(大厅里那些合取项全部成立 ⇒ 大厅开机 30s 自杀,实测的回归)。
 	elif _worker and not _match_started and _host == null:
 		_understaffed_wait += delta
 		if _understaffed_wait > 30.0:
 			print("worker: 1v1 报到超时(%d/2),退出释放端口" % _claims.size())
 			NetDiag.audit("abort", {"mode": ModeDefs.MODE_PVP, "reason": "report_timeout"})
 			get_tree().quit(0)
-	# ★ 终局滞留到点收场:MATCH_OVER 之后 worker 不主动退(见 RoundSystem.tick 的 MATCH_OVER 分支),而大厅回收梯只认 worker 死亡
-	#   ⇒ 结算页赖着不走时房/端口永久占用。这里给固定滞留期,到点主动退(先让结算数据早已送达;客户端已 _match_ended,
-	#   断开不会触发重连)。★ 只对 worker 生效,大厅没有 _host。
 	if _worker and _match_started and _host != null and _host.has_method("is_match_over") and bool(_host.call("is_match_over")):
 		_mo_linger += delta
 		if _mo_linger > MATCH_OVER_LINGER:
@@ -320,15 +265,12 @@ func _on_player_options(caller: int, opts: Dictionary) -> void:
 			_claim_opts[r] = opts
 			return
 
-# 客户端 claim 之后立刻报来的一次性令牌(与 claim 同一次 poll 到达),按 caller 反查 role 归档;★ 只归档不校验 —— 校验发生在宽限期里的 reclaim_role。
 func _on_token_reported(caller: int, token: String) -> void:
 	for r in _claims:
 		if _claims[r] == caller:
 			_tokens[int(r)] = token
 			return
 
-# 版本握手(2026-10-30,PROTO_VERSION 7):两端必须同一个发布包 —— 线格式删除差分 / trail 改定点 / claim RPC 参数都变了。
-# 版本不符 ⇒ 回一条用户可见的 server_message 再踢连接;旧行为是"比赛照开、双方各自解不出包、画面静默冻结"(只有 push_error)。
 func _proto_matches(caller: int, proto: int, stage: String) -> bool:
 	if proto == NetCodec.PROTO_VERSION:
 		return true
@@ -340,9 +282,6 @@ func _proto_matches(caller: int, proto: int, stage: String) -> bool:
 	return false
 
 
-# 宽限期内重新认领 role(断线重连)。三条拒绝条件一条都不能少:没开局 / 该 role 不在宽限期 / token 不匹配;任何一条不满足都踢连接,不能让它静默留在局里收快照。
-# ★ 判据收在 ReclaimRules(纯逻辑,`-s` 冒烟 reclaim_rules_smoke 钉住);本函数只负责**取四个布尔 + 执行行为**(踢人 / 换源 / 复位),
-#   别在这里再写一遍 if/elif 链 —— 抄两遍就会有一条分支静默漂掉,而这条路径零真链路覆盖(路径乙的 rejoin_probe 走的是回大厅重连)。
 func _on_reclaim(caller: int, role: int, token: String, proto: int) -> void:
 	if not _proto_matches(caller, proto, "reclaim"):
 		return
@@ -356,14 +295,12 @@ func _on_reclaim(caller: int, role: int, token: String, proto: int) -> void:
 		return
 	_claims[role] = caller
 	_host.state.peer_by_role[role] = caller
-	# ★ 换输入源不是 PacketInputSource.new(role, caller) —— 它不收参数;必须把新源挂回那个还活着的玩家节点,只换表里的引用不够(玩家手里仍攥着旧源)。
-	# ★ 直取 players[role] 依赖 _expire_graces 里的次序:只有它会调 mark_disconnected(那里才 erase),且它先 _grace.leave 再 mark。
 	var src := PacketInputSource.new()
 	(_host.state.players[role] as Node2D).set_input_source(src)
 	_host.state.input_sources[role] = src
 	_host.reset_input_queue(role)
-	_host.state._ack_seq[role] = 0      # C2 锚点重协商:客户端 rollback ring 已失(见 spec §3.4)
-	_host.state._stepped_seq[role] = 0  # 受击事件锚点同源重置(否则旧纪元 seq 会让新纪元的注入晚/早一步)
+	_host.state._ack_seq[role] = 0
+	_host.state._stepped_seq[role] = 0
 	_grace.leave(role)
 	# 回一条 match_start 让客户端重进对局场景(载荷与首次开局同源);★ 走 NetBus.reply 而不是 rpc_id —— 它是答复 caller 的收口,内部先判活。
 	#   这个窗口可达:客户端发完 reclaim_role 是等这条应答,被踢/链路断时下一拍会 _retry_connect() → NetBus.stop(),那个 stop 与本次应答可能挤在同一次 poll,ENet 当场把通道数清零 ⇒ 不判活必打 max channels: 0。
@@ -371,7 +308,6 @@ func _on_reclaim(caller: int, role: int, token: String, proto: int) -> void:
 			if _host.has_method("role_spawns") else Vector2i(-1, -1)
 	NetBus.reply(caller, "match_start", role, sp, MazeGenerator.map_file_path())
 	if _host.has_method("_broadcast_round_state"):
-		# ★★ 读数必须跟着上面那行 _grace.leave(role) 一起变:不刷新的话这一发载荷恰好把这个刚回来的人继续列成「掉线中」;而 1v1/3v3 的 round_state 只在状态跃迁时才发 ⇒ 错值会一直挂到下一次击杀/换局。
 		_sync_grace_snapshot()
 		_host._broadcast_round_state()
 	print("worker: role %d 重连成功(peer=%d)" % [role, caller])
@@ -383,7 +319,6 @@ func _on_match_sync(caller: int) -> void:
 		if _claims[r] == caller:
 			role = int(r)
 			break
-	# ── 诊断开关(默认关):-- --matchsync-diag —— 只是诊断,开关关着时本块一行都不打(生产行为逐字不变)。
 	if OS.get_cmdline_user_args().has("--matchsync-diag"):
 		print("[matchsync-diag] 收到 match_sync: caller=%d role=%d _claims.has(caller)=%s _claims 键=%s 值=%s is_peer_live(caller)=%s role_claimed 已连=%s" % [
 				caller, role, str(_claims.has(caller)), str(_claims.keys()), str(_claims.values()),
@@ -394,12 +329,10 @@ func _on_match_sync(caller: int) -> void:
 		if not _pending_match_sync.has(caller):
 			_pending_match_sync.append(caller)
 		return
-	# 早到的报到:宿主还没建 ⇒ 先排队(_on_all_claimed 建完宿主后补发);否则队伍表/出生点会以空载荷下发。
 	if _host == null:
 		if not _pending_match_sync.has(caller):
 			_pending_match_sync.append(caller)
 		return
-	# 客户端场景已就绪(它 _ready 才发 match_sync)⇒ 通知对局宿主:开局倒计时的就绪闸可以放行。
 	if _host != null and _host.has_method("mark_client_ready"):
 		_host.mark_client_ready(role)
 	var spawns := {}
@@ -409,25 +342,18 @@ func _on_match_sync(caller: int) -> void:
 		ground = _host.ground_weapons_payload()
 	if _host != null and _host.has_method("role_spawns"):
 		spawns = _host.role_spawns()
-		# ★ 换边之后这份表会过期,而这里不补发(控制者裁定,别当 bug 修):出生点表只用于进场那一刻的初始摆放,之后一律由权威快照 + C2 reconcile() 驱动;新鲜度由客户端在「新一轮 COUNTDOWN」时重拉一次 match_sync 解决。
 	else:
 		# 理论上到不了(match_start 与 _host 赋值在同一帧,报文往返只可能更晚);真到这说明时序变了 —— 不静默,留一条痕。
 		push_warning("match_sync: role %d 报到时对局宿主还没建好,spawns 回空" % role)
-	# 掉线窗口内被拆的墙:与基线不同才带(空数组不带该键,避免每局固定多几 KB);★ 复用 match_sync 而不新开 RPC = 不碰 NetBus 的方法表,让重连后补态与进场建态走同一条路。
 	var destroyed: Array = []
 	if _host != null and _host.has_method("destroyed_cells"):
 		destroyed = _host.destroyed_cells()
-	# ★★ BUG-03(2026-10-30):destroyed 只表达「整格与基线不同」;只被打掉部分子格的砖(榴弹 32px 洞)
-	#   那一份里根本没有 ⇒ 重连后客户端比服务器多出这些砖的贴图与碰撞(幽灵墙 ⇒ 每帧回滚/橡皮筋/子弹被挡)。
-	#   补态必须连 16px 子格一起给;空数组同样不带键(进场第一次多半是空的)。
 	var destroyed_subs: Array = []
 	if _host != null and _host.has_method("damaged_partial_subs"):
 		destroyed_subs = _host.damaged_partial_subs()
-	# 队伍表:必须显式下发(role 号由大厅最小空闲号分配、会留空洞,从 roles 推导必然出错);★ 不进 round_state —— 开局载荷只留一条投递路径。
 	var teams: Dictionary = {}
 	if _host != null and _host.has_method("team_map"):
 		teams = _host.team_map()
-	# ★ 判活再回:客户端一进对局场景就发 match_sync,进场景 → 请求 → 退出可能挤在同一两帧里,往 ENet 已拆掉的 peer 发就是 max channels: 0(判据见 NetBus.is_peer_live)。
 	if not NetBus.is_peer_live(caller):
 		return
 	var data := {
@@ -450,8 +376,6 @@ func _on_match_sync(caller: int) -> void:
 				caller, str(data.keys()), _rpc_err, str(multiplayer.get_peers())])
 
 
-# 自杀脱困(大乱斗 / 3v3):caller → role → 宿主(存活/对局中校验在那边)。
-# ★★ 闸里必须有 _team_mode:只认 _royale 时 3v3 worker 把 suicide_request 静默丢掉(K 键毫无反应、一个字日志都没有)。⚠ 守卫 tests/probe/team_host_probe 的 ⑫ 已删(2026-10-09)⇒ 今天零守卫。
 func _on_suicide_request(caller: int) -> void:
 	if not (_royale or _team_mode) or _host == null:
 		return
@@ -464,7 +388,6 @@ func _on_suicide_request(caller: int) -> void:
 func _on_role_claimed(caller: int, role: int, player_name: String, proto: int) -> void:
 	if not _proto_matches(caller, proto, "claim"):
 		return
-	# 防串线:对局已开始、role 越界、或该 role 已被其他 peer 占用 → 这个连接不属于本局,直接踢(端口复用竞态下迟到的客户端可能连到旧 worker);★ 越界判据 = role 是否在本局参战集合内,不是任何从人数推导出来的界(房内有人退出会留 role 空洞,拿人数当上界会踢掉真客户端)。
 	if _host != null or _match_started \
 			or not _role_set.has(role) \
 			or (_claims.has(role) and _claims[role] != caller):
@@ -480,7 +403,6 @@ func _on_role_claimed(caller: int, role: int, player_name: String, proto: int) -
 	if _team_mode:
 		print("worker: 3v3 角色 %d = peer %d (%d/%d 人)" % [role, caller,
 				_claims.size(), _team_of_role.size()])
-		# ★ 满员才开(用户裁定满 6 人才开,没有降级开局这一档);判据取 _team_of_role.size() 而不是 _role_set.size() —— 前者按 role 去重,而 --roles 1,1,2,2,3,3 这种输入长度校验能过、队伍表却只有 3 键 ⇒ 拿 6 当满员界永远到不了(干等 30s 超时退出)。
 		if _claims.size() >= _team_of_role.size():
 			_defer_begin_match()
 	elif _royale:
@@ -493,8 +415,6 @@ func _on_role_claimed(caller: int, role: int, player_name: String, proto: int) -
 		if _claims.size() >= 2 - _ai_roles.size():
 			_defer_begin_match()
 
-# 开局延到帧末再执行,不在 _on_role_claimed 里同步开:每个客户端都是「claim_role 紧接 player_options」两条包(同一次 poll 到达),
-#   同步开局会在同一次 poll 里抢先建局,那个客户端的本端选项(角色颜色 / 禁武器规则)还没归档。重入由 _begin_match 自身的守卫兜住。
 func _retry_pending_match_sync() -> void:
 	for pending_caller in _pending_match_sync.duplicate():
 		_on_match_sync(int(pending_caller))
@@ -506,8 +426,6 @@ func _defer_begin_match() -> void:
 func _begin_match() -> void:
 	if _match_started or _host != null or _claims.size() + _ai_roles.size() < 2:
 		return
-	# ★ 3v3:帧末再核一次满员 —— 收齐判据由最后一个 claim 满足,而这一帧里 claim 集可能缩小(有人刚 claim 完就掉线);不核的话 5 个人也能开,而本模式的纪律是满员才开、不降级。
-	# ★ 位置必须在 _match_started = true 之前:早退的函数因此不写 _match_started,30s 超时梯照旧从 worker 启动起算;写在之后会卡死 worker(梯子进不去,而它已置真、从不复位)。
 	if _team_mode and _claims.size() < _team_of_role.size():
 		print("worker: 3v3 帧末复核未满员(%d/%d),不开局 —— 交 30s 超时梯"
 				% [_claims.size(), _team_of_role.size()])
@@ -515,14 +433,12 @@ func _begin_match() -> void:
 	_match_started = true
 	if NetBus.role_claimed.is_connected(_on_role_claimed):
 		NetBus.role_claimed.disconnect(_on_role_claimed)
-	# 房主选的地图(随 player_options 上报)客户端路径不可信 → 过 MapCatalog 校验(只认仓内 res://maps/*.cyrm、拒绝 ..、必须有双出生点),不合规一律回落默认 PvP 图。
 	var match_map := MapCatalog.resolve_pvp_map(str(_claim_opts.get(1, {}).get("map", "")))
 	if match_map == "":
 		match_map = MatchBootstrap.PVP_MAP
 	NetDiag.audit("match_begin", {"mode": _mode_id(), "map": match_map,
 			"players": _claims.size(), "ai": _ai_roles.size()})
 	if _team_mode:
-		# 房主(role1)规则项随 claim 上报生效;TeamHost.start_on 负责按队散点出生 + 逐角色 match_start(★ 第 4 个实参是 teams = role→队号,不是 spawns)。
 		_host = TeamHost.start_on(_claims, match_map, _claim_opts.get(1, {}), _team_of_role)
 	elif _royale:
 		_host = RoyaleHost.start_on(_claims, match_map, _claim_opts.get(1, {}), _ai_roles)
@@ -532,8 +448,7 @@ func _begin_match() -> void:
 	for ai_r in _ai_roles:
 		_claim_names[int(ai_r)] = "电脑玩家%d-computer" % int(ai_r)
 	if _royale and _host.has_method("set_display_names"):
-		_host.set_display_names(_claim_names)   # 排行榜昵称表
-	# 宿主已建:补发早到的 match_sync(否则那些端停在空队伍表 / 空出生点)。
+		_host.set_display_names(_claim_names)
 	_retry_pending_match_sync()
 	var mode_note := ""
 	if _royale:
@@ -546,8 +461,7 @@ func _on_peer_left(peer_id: int) -> void:
 	var is_participant := _claims.values().has(peer_id)
 	if _host != null:
 		if not is_participant:
-			return   # 被踢的串线连接断开不影响对局
-		# ★★ 2026-11-01(用户报「游戏结束后房间不会关闭」):终局之后**没有重连语义** —— 结算数据早已送达、
+			return
 		if _host_match_over():
 			var mo_role := _role_of_peer(peer_id)
 			if mo_role == 0:
@@ -559,20 +473,16 @@ func _on_peer_left(peer_id: int) -> void:
 				get_tree().quit(0)
 			return
 		if _royale or _team_mode:
-			# 大乱斗/3v3:单个参与者掉线 = 先进宽限期(不立刻移出,身体留在场上),宽限内可被 reclaim_role 认领回来;到点仍未回来才走 mark_disconnected(3v3 由 TeamHost 判整队走光才终局)。
-			# ★ 身体不销毁是本设计最省的一处:分数/阵亡/血量/背包/位置/世界破坏/地面武器全在活着的节点与进程内存里,一条都不用恢复。
 			var role := _role_of_peer(peer_id)
 			if role == 0:
 				return
 			_claims.erase(role)
 			_enter_grace(role)
 			if _claims.is_empty():
-				# 最后一个真人也走了:仍先给宽限(最后一人掉线同样该有机会回来),到点没人回来才由 _expire_graces 末尾收场退出。
 				print("worker: 全员离开,进宽限等待重连")
 			else:
 				print("worker: 玩家掉线进宽限(剩 %d 人在线)" % _claims.size())
 			return
-		# 1v1:一方掉线不再拆局退进程 —— 进宽限期等它回来(这是 1v1 能做重连的前提:原实现的 queue_free() + quit(0) 会让对局状态随之蒸发)。
 		var role1 := _role_of_peer(peer_id)
 		if role1 == 0:
 			return
@@ -599,7 +509,6 @@ func _on_peer_left(peer_id: int) -> void:
 			get_tree().quit(0)
 
 
-# 本局参与者 role(按 peer 反查;0 = 不是参与者)。★ 三个模式的分支原先各抄了一份同样的循环 —— 判定只许有一处。
 func _role_of_peer(peer_id: int) -> int:
 	for r in _claims:
 		if _claims[r] == peer_id:
@@ -607,7 +516,6 @@ func _role_of_peer(peer_id: int) -> int:
 	return 0
 
 
-# 宿主是否已进终局(MATCH_OVER)。★ 先判有效:宽限到点那一路会 queue_free 宿主,而 peer_left 与它可能同帧。
 func _host_match_over() -> bool:
 	return _host != null and is_instance_valid(_host) and _host.has_method("is_match_over") \
 			and bool(_host.call("is_match_over"))
@@ -626,7 +534,6 @@ func _exit_tree() -> void:
 	_stop_lobby("quit")
 
 
-# 关服收口:先按三张只读视图逐个拆房(worker 不留孤儿),再写唯一一条 lobby_stop。
 func _stop_lobby(reason: String) -> void:
 	if _stop_logged:
 		return

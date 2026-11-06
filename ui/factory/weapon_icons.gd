@@ -1,11 +1,8 @@
 class_name WeaponIcons
 extends RefCounted
 
-# 武器图标与选择格(纯 UI):纯白剪影切片 + 「勾选框 + 剪影 + 名称」格子。
 
 
-# 纯白像素剪影缓存(type_id → Texture2D):从武器场景的 Sprite2D 图集切片,
-# 全像素刷白保留 alpha,3× 最近邻放大(与瓦片/8bit 音效同风格,零美术素材)。
 static var _silhouette_cache: Dictionary = {}
 
 static func silhouette(type_id: int) -> Texture2D:
@@ -36,19 +33,14 @@ static func silhouette(type_id: int) -> Texture2D:
 	_silhouette_cache[type_id] = tex
 	return tex
 
-# 武器选择格(共用):勾选框 + 固定尺寸白剪影 + 名称。
-# 剪影原始宽度可达 252px,直接挂 CheckButton.icon 会把横排面板撑出屏幕(实测),
-# 这里用固定尺寸 TextureRect 约束。CheckButton 引用存 meta("cb") 供调用方读取状态。
 static func make_weapon_check(type_id: int, checked: bool, font_size: int, on_toggle: Callable) -> HBoxContainer:
 	var cell := HBoxContainer.new()
 	cell.add_theme_constant_override("separation", 6)
 	var cb := CheckButton.new()
 	cb.button_pressed = checked
-	# 走 UiFactory.style_check:默认主题的 CheckButton 在「关」态没有可见轨道,只剩一个
-	# 小灰点 —— 本函数同时给主菜单单人面板与匹配页对战选项用,两处一起修。
 	UiFactory.style_check(cb, font_size)
 	cb.toggled.connect(func(on: bool) -> void: on_toggle.call(on))
-	cell.set_meta("cb", cb)   # 挂 cell 上(调用方统一 cell.get_meta("cb") 取勾选框)
+	cell.set_meta("cb", cb)
 	cell.add_child(cb)
 	var icon := TextureRect.new()
 	icon.texture = silhouette(type_id)
@@ -57,9 +49,6 @@ static func make_weapon_check(type_id: int, checked: bool, font_size: int, on_to
 	icon.custom_minimum_size = Vector2(96, 30)
 	icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	cell.add_child(icon)
-	# 走 UiFactory:它同时写 font 与 font_size 两个 override。原先只写字号 → 本行文字
-	# 落回默认主题字体,与同页面其它 Label(像素字体)不一致。
-	# ★ 不带编号(理由同上)。`font_size` 的**实参位置不动** —— kh_l4_probe 按下标 1 取它。
 	var l := UiFactory.label(WeaponRegistry.name_of(type_id), font_size)
 	cell.add_child(l)
 	return cell

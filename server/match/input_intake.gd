@@ -1,27 +1,24 @@
 class_name InputIntake
 extends RefCounted
 
-# 服务器输入队列(纯搬移自 MatchHost,行为零变化):入队 + 有界丢包 + 抖动包络 + 1Hz 队列诊断。
 
-var _q_peak: Dictionary = {}   # role -> 最近「一次轮询到过几条输入记录」的原始深度(丢记录之前),每 tick 衰减 1
-var _q_drops: Dictionary = {}  # role -> 累计被丢弃的**陈旧**记录数(诊断;丢一条=服务器跳过一格输入)
-var _diag_acc := 0.0           # 结构化诊断(--diag)的 1Hz 采样累加;默认关时下面整段直接返回
+var _q_peak: Dictionary = {}
+var _q_drops: Dictionary = {}
+var _diag_acc := 0.0
 
 var _netstat := false
 var _netstat_checked := false
 var _netstat_acc := 0.0
-var _netstat_trace := false     # 逐帧队列追踪(`--netstat-trace`,前 600 tick)
+var _netstat_trace := false
 var _netstat_trace_f := 0
 
 
-# ★ 清队列与复位抖动包络必须一起做:只清队列 ⇒ 旧包络把上限继续顶在高位,新纪元开局就白带一层陈旧延迟。
 func reset(pending: Dictionary, role: int) -> void:
 	pending[role] = []
 	_q_peak.erase(role)
 	_q_drops.erase(role)
 
 
-# 缓冲本帧到达的记录,按 seq 序 FIFO,**每物理 tick 消费一条**(U1:一条记录 = 1 个 tick;30Hz 包一次到两条)⇒ 服务器权威模拟
 func intake(pending: Dictionary, role: int, pkt: Dictionary) -> void:
 	if not pending.has(role):
 		pending[role] = []
@@ -69,15 +66,11 @@ func tick(pending: Dictionary, delta: float, round_state: int, st_map: Dictionar
 		parts.append("%d=%d" % [role, (pending[role] as Array).size()])
 		caps.append("%d=%d" % [role, PacketInputSource.adapted_cap(int(_q_peak.get(role, 0)))])
 		drops.append("%d=%d" % [role, int(_q_drops.get(role, 0))])
-		# st/ct = 上行只落位的两个扩展字段(本批无消费者;增量批的基线来源)。读数用,判趋势:st 应跟着快照 tick 涨、ct 应单调。
 		peers.append("%d=%d/%d" % [role, int(st_map.get(role, 0)), int(ct_map.get(role, 0))])
 	print("[netstat-srv] 待消费队列(条记录) %s | 抖动上限 %s | 累计丢弃 %s | 客户端 st/ct %s" % [
 			", ".join(parts), ", ".join(caps), ", ".join(drops), ", ".join(peers)])
 
 
-# 结构化诊断(--diag,默认关):1Hz 采样每 role 的队列深度 / 抖动上限 / 累计丢弃。
-# ★ 与 --netstat 同源但**不依赖它**:--netstat 是人读的一行,这里要的是可解析、可与客户端 snap_gap/rollback
-#   按事件对齐的时间轴。两处读数必须同源(_q_peak/_q_drops),别各算一份。默认关时首行即返回,零开销。
 func _diag_tick(pending: Dictionary, delta: float) -> void:
 	if not NetDiag.enabled():
 		return

@@ -1,7 +1,6 @@
 class_name PickupSync
 extends RefCounted
 
-# 地面武器(拾取)组合件(2026-10-22 从 PvpMatchClient 拆出;Task 7):事件订阅 + 节点表 + F 提示 + 诊断。
 
 var _state: ClientState = null
 var _ports: ClientPorts = null
@@ -11,12 +10,9 @@ var _pickup_diag := false
 var _pickup_diag_checked := false
 var _pickup_diag_frame := 0
 
-# ── 地面武器:服务器权威,本端只渲染 + 等事件(不做客户端预测)──
 var ground_weapons := GroundWeaponField.new()
-var _pickup_nodes: Dictionary = {}    # inst -> WeaponPickup
-var _self_drop_until: Dictionary = {} # inst -> 解禁时刻(ms):自己刚丢下的那把,
-                                      # 冷却期内不提示(与服务器 _live_self_drops 同口径;
-                                      # 不排的话刚丢下的枪会显示 F 却捡不起来)
+var _pickup_nodes: Dictionary = {}
+var _self_drop_until: Dictionary = {}
 
 const PICKUP_SCENE := preload("res://scenes/weapons/weapon_pickup.tscn")
 
@@ -33,7 +29,6 @@ func _pickup_diag_on() -> bool:
 	return _pickup_diag
 
 
-# 订阅服务器的两条地面武器事件。
 func subscribe() -> void:
 	NetBus.local_weapon_spawned.connect(on_spawned)
 	NetBus.local_weapon_removed.connect(on_removed)
@@ -62,7 +57,6 @@ func _spawn_pickup_node(data: Dictionary) -> void:
 	if inst <= 0:
 		NetDiag.log_event("pickup_skip", {"reason": "bad_inst", "inst": inst})
 		return
-	# ★★ 重复 inst = 服务器的**原地重锚**(武器落定那一刻重播一次权威位置),不是"又生成了一件":
 	if _pickup_nodes.has(inst):
 		_reanchor_existing(inst, data)
 		return
@@ -70,7 +64,6 @@ func _spawn_pickup_node(data: Dictionary) -> void:
 	var node: WeaponPickup = PICKUP_SCENE.instantiate()
 	node.configure(type_id, inst, int(data.get("mag", 0)), data.get("vel", Vector2.ZERO))
 	_state._world.add_child(node)
-	# 权威位置与渲染位置分开(见 WeaponPickup 的字段注释):事件里的 pos 是 canonical。
 	node.canonical_pos = data.get("pos", Vector2.ZERO)
 	node.set_anchor((_state._local as Node2D).global_position if _state._local != null else Vector2.ZERO)
 	node.sync_render_from_canonical()
@@ -85,8 +78,6 @@ func _spawn_pickup_node(data: Dictionary) -> void:
 		_self_drop_until[inst] = Time.get_ticks_msec() 				+ int(PlayerParams.weapon_pickup_self_delay * 1000.0)
 
 
-# 服务器说"这件枪现在在这儿"(落定重播):把本地副本搬过去并停稳,别让它继续按本端那份地形往下滚。
-# ★ settled=true 时连 _settled 一起置:本端若还在模拟落体,重锚之后不该再纠正回旧落点。
 func _reanchor_existing(inst: int, data: Dictionary) -> void:
 	var n = _pickup_nodes.get(inst, null)
 	if n == null or not is_instance_valid(n):
@@ -100,11 +91,9 @@ func _reanchor_existing(inst: int, data: Dictionary) -> void:
 	if not ground_weapons.reanchor(inst, node.canonical_pos, node.velocity):
 		NetDiag.log_event("pickup_skip", {"reason": "reanchor_missing", "inst": inst})
 		return
-	# ★ 重锚会把玩家眼里的枪"挪一下"(最多几十 px)。这不是表现瑕疵:它换来的是「看到的和捡到的是同一把」。
 	NetDiag.log_event("pickup_anchor", {"inst": inst, "settled": bool(data.get("settled", false))})
 
 
-# 清空本端的地面武器表与全部拾取物节点(_on_match_sync 的"先清后灌"用)。
 func clear() -> void:
 	for inst in _pickup_nodes:
 		var n = _pickup_nodes[inst]
@@ -127,7 +116,6 @@ func remove(inst: int) -> void:
 		print("[pkd] ← removed inst=%d" % inst)
 
 
-# 每帧:① 把锚点推给所有地面武器(接缝另一侧的枪要画在身边那一份上);② 把落体的实际位置同步回本地表(提示的"最近一把"要跟着落点走);③ 更新 F 提示。
 func tick() -> void:
 	if _state._local == null:
 		return
@@ -146,7 +134,6 @@ func tick() -> void:
 	_update_pickup_prompt(lp)
 
 
-# F 提示:贴到"按 F 会捡到的那一把"上方,每把能捡的各自一个。
 func _update_pickup_prompt(lp: Vector2) -> void:
 	var self_drops := _live_self_drops()
 	var w := float(GameParameters.MAP_WIDTH)
@@ -161,7 +148,6 @@ func _update_pickup_prompt(lp: Vector2) -> void:
 			var d := GridPathfinder.toroidal_delta_px(pk.canonical_pos, lp, w, h).length()
 			can = d <= PlayerParams.weapon_pickup_radius
 		pk.set_prompt_visible(can)
-		# 诊断:玩家附近的枪逐条打;can=否 时把三条闸门各是真是假分开打(合成一个 false 就看不出是哪一条挡的);canon 与 render 两栏是重点 —— 两者本应只差整数个地图宽 / 高。
 		if _pickup_diag_on() and _pickup_diag_frame % 30 == 0:
 			var dd := GridPathfinder.toroidal_delta_px(pk.canonical_pos, lp, w, h).length()
 			if dd <= 400.0:

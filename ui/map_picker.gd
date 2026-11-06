@@ -1,7 +1,6 @@
 class_name MapPicker
 extends VBoxContainer
 
-# 选图控件(单机开局面板 / 三个联机建房面板**共用**):每个地图一张卡 —— 开局地形简略图 +
 
 signal picked(path: String)
 
@@ -10,21 +9,17 @@ const HEADER_STRIP_PANEL := preload("res://ui/components/header_strip_panel.tscn
 const CARD_W := 244.0
 const THUMB_H := 132.0
 
-var selected: String = ""      # "" = 随机
+var selected: String = ""
 
 var _grid: GridContainer
-var _cards: Dictionary = {}    # path → PanelContainer
+var _cards: Dictionary = {}
 var _box_off: StyleBoxFlat
 var _box_on: StyleBoxFlat
 
 
-## 建 UI 并做初始选中。columns/max_h 是版式参(联机页比单机页窄)。
 func setup(initial: String = "", columns := 2, max_h := 320.0,
 		title := "地　图(点选;缩略图 = 开局地形简略图)") -> void:
 	add_theme_constant_override("separation", 8)
-	# 标题 = 同款标题带(与各页面 / 面板里的区块标题同一个味道)。
-	# ★ 原先是一条裸的 `C_ACCENT` Label ⇒ 三处用到它的面板(单人开局/1v1/大乱斗/3v3 建房)
-	#   里,别的区块标题都是金色标题带、只有它是青色裸字,一屏里两套标题风格。
 	var h := HEADER_STRIP_PANEL.instantiate() as HeaderStripPanel
 	h.apply(title, 32, false)
 	add_child(h)
@@ -76,7 +71,6 @@ func select_path(path: String, from_click := true) -> void:
 		picked.emit(path)
 
 
-# ── 内部 ───────────────────────────────────────────────────────────
 
 func _add_card(path: String, title: String, sub: String, tex: Texture2D) -> void:
 	var card := PanelContainer.new()
@@ -99,7 +93,7 @@ func _add_card(path: String, title: String, sub: String, tex: Texture2D) -> void
 	tr.custom_minimum_size = Vector2(CARD_W - 16.0, THUMB_H)
 	tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	tr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST   # 像素风:禁止线性糊图
+	tr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	vb.add_child(tr)
 
 	vb.add_child(UiFactory.label(title, 32))

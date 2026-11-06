@@ -1,6 +1,5 @@
 extends RefCounted
 
-# 纯感知规则(不碰节点 / 会话态):输入是候选角色与相机 / 雷达参数,输出固定形状的 Observation 数组。
 
 const Geo := preload("res://core/sim/grid_pathfinder.gd")
 
@@ -18,7 +17,6 @@ const MODE_ROYALE := "royale"
 const MODE_TEAM := "team"
 
 
-# 敌我关系只从模式 + 队伍表判;队伍表缺(任一方 0)一律 unknown,不猜。
 static func relation_of(role: int, my_role: int, mode: String, teams: Dictionary) -> String:
 	if role == my_role:
 		return REL_SELF
@@ -34,14 +32,12 @@ static func relation_of(role: int, my_role: int, mode: String, teams: Dictionary
 	return REL_UNKNOWN
 
 
-# 主画面:世界视口(窗口 / zoom)按环面最短向量判入画,不以玩家为中心画矩形。
 static func in_view(pos: Vector2, cam_center: Vector2, view_size: Vector2,
 		map_size: Vector2) -> bool:
 	var d := Geo.toroidal_delta_px(cam_center, pos, map_size.x, map_size.y)
 	return absf(d.x) <= view_size.x * 0.5 and absf(d.y) <= view_size.y * 0.5
 
 
-# 雷达:圆形范围 + 环面最短距离,不查墙体遮挡(与 Minimap 同一条规则)。
 static func in_radar(pos: Vector2, self_pos: Vector2, radius_px: float,
 		map_size: Vector2) -> bool:
 	if radius_px <= 0.0:
@@ -49,7 +45,6 @@ static func in_radar(pos: Vector2, self_pos: Vector2, radius_px: float,
 	return Geo.toroidal_delta_px(self_pos, pos, map_size.x, map_size.y).length() <= radius_px
 
 
-# candidates: [{role:int, pos:Vector2, action?:String}]。
 static func build(candidates: Array, ctx: Dictionary, memory: Dictionary) -> Array:
 	var out: Array = []
 	var now := float(ctx.get("now", 0.0))
@@ -96,7 +91,6 @@ static func build(candidates: Array, ctx: Dictionary, memory: Dictionary) -> Arr
 	return out
 
 
-# 清掉过期记忆;调用方每帧或低频调用都可。
 static func prune(memory: Dictionary, now: float, ttl: float) -> void:
 	for role in memory.keys():
 		var mem: Dictionary = memory[role]

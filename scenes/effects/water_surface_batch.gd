@@ -1,7 +1,6 @@
 class_name WaterSurfaceBatch
 extends Node2D
 
-# 水面单格伸缩合批(静态网格 + GPU 波):所有水面格在一个 Mesh2D 里,setup 期提交一次几何,
 
 const SHADER_CODE := """
 shader_type canvas_item;
@@ -38,7 +37,6 @@ func setup(cells: Array, tex: Texture2D, ts: int) -> void:
 	var vi := 0
 	for c in cells:
 		var pos: Vector2 = c["pos"]
-		# 相位归一化到 [0,1) 进 r;g=0 给底边两顶点(锚定)、g=1 给顶边两顶点
 		var ph := fposmod(float(c["phase"]), TAU) / TAU
 		var tint_bottom := Color(ph, 0.0, 0.0, 1.0)
 		var tint_top := Color(ph, 1.0, 0.0, 1.0)
@@ -87,7 +85,5 @@ func setup(cells: Array, tex: Texture2D, ts: int) -> void:
 
 
 func _process(_delta: float) -> void:
-	# TIME 参与 vertex 的 shader 本应自动逐帧刷新;queue_redraw 兜底保证动画一定更新。
-	# 开销恒定(单个 canvas item,静态网格,无 GDScript 几何循环)。
 	if _mesh != null:
 		_mesh.queue_redraw()

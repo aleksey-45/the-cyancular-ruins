@@ -1,20 +1,17 @@
 extends Node
 
-# 回局真链路探针的观察者(每端一个,挂在 root 上;换场不会把它带走)。三端各跑一条剧本:
 
 const LOBBY_ADDR := "127.0.0.1"
-const ENTER_TIMEOUT := 60.0      # 从挂页到"进 pvp_game 且到 PLAYING"
-const MENU_TIMEOUT := 25.0       # 按下主菜单那颗模式按钮 → 生产路径把大厅页建出来
-const MENU_BTN_TEXT := "多 人 模 式"   # 与 main_menu.gd 的文案逐字一致(2026-10-03 三合一)
-const PLAY_SETTLE := 3.0         # PLAYING 后静置(让快照跑起来,身体有个明确的位置读数)
-const REJOIN_TIMEOUT := 30.0     # 点了自己那行之后等回到 pvp_game
-const RESULT_WAIT := 40.0        # c3 等"一个不会来的 room_joined"的上限
-const REFRESH_EVERY := 1.5       # 大厅页列表刷新节拍(见文件头偏离②)
-const C2_OBSERVE := 40.0         # c2 的观察窗(PLAYING 之后;覆盖 c1 的离场 + 回局)
+const ENTER_TIMEOUT := 60.0
+const MENU_TIMEOUT := 25.0
+const MENU_BTN_TEXT := "多 人 模 式"
+const PLAY_SETTLE := 3.0
+const REJOIN_TIMEOUT := 30.0
+const RESULT_WAIT := 40.0
+const REFRESH_EVERY := 1.5
+const C2_OBSERVE := 40.0
 const C2_SNAP_GAP_MAX_MS := 1500.0
 
-# 一条绿的跑至少要跑到的断言数(只对「否则会打印 OK」的那一跑生效,见 _finish):c1 = 4(行可点 / 进了对局 / role 一致 / 广播恢复);
-#   c2 = 4(在场见 PLAYING / 对手身体一直在 / 局没变 / 快照连续);c3 = 3(看得见 / 同一行对第三人仍禁用 / 加入被拒)。
 const MIN_CHECKS := {"c1": 4, "c2": 4, "c3": 3}
 
 var who := ""
@@ -30,23 +27,22 @@ var _fails: Array[String] = []
 var _recs: Array[String] = []
 var _checks := 0
 var _body_id_before := 0
-var _playing_seen := false        # 已收到服务器广播的 PLAYING(state==1)
-var _playing_count := 0           # PLAYING 广播的累计条数(回局后必须严格增长)
-var _playing_at_leave := 0        # 离场那一刻的计数(回局后拿它比对)
-var _role_before := 0             # 离场前的 role(回局后不许变)
-var _joins := 0                   # c3:收到 room_joined 的次数
-var _go_match := 0                # c3:收到 go_match 的次数
+var _playing_seen := false
+var _playing_count := 0
+var _playing_at_leave := 0
+var _role_before := 0
+var _joins := 0
+var _go_match := 0
 var _server_msgs: Array[String] = []
-var _room_rows := -1              # c3:最近一次列表里"对局中"的行数
+var _room_rows := -1
 var _room_code := ""
-var _row_seen := false            # c1:自己那间房那一行已经出现在列表里
-var _row_disabled := true         # c1:那一行的 `disabled`(新入口的断言:必须是 false)
-var _c3_row_disabled := true      # c3:同一行的 `disabled`(反向对照:必须是 true)
-var _c3_row_read := false        # ★ 2026-10-08:**到底读没读到**那一行 —— 没读到不许空过
+var _row_seen := false
+var _row_disabled := true
+var _c3_row_disabled := true
+var _c3_row_read := false
 var _refresh_t := 0.0
-# c2 的观察读数(PLAYING 那一刻清零,窗口结束时统一判定)
 var _obs_started := false
-var _start_rpc_t := 0.0   # c1:代按「开始游戏」的 1s 节拍(2026-10-24 起 1v1 需房主主动开局)
+var _start_rpc_t := 0.0
 var _obs_t := 0.0
 var _obs_round := -1
 var _obs_state_bad := false
@@ -54,18 +50,12 @@ var _snap_last_ms := 0
 var _snap_max_gap := 0.0
 var _snap_total := 0
 var _snap_with_opp := 0
-# c2/c3 的兜底计时(等不到该等的东西时要**自己判红**,而不是让裁判只收到 2/3 份结果)
 var _hard_t := 0.0
-# c2/c3 落盘后**保持在线**(见 _finish:裁判还要继续观察这一局),只有 c1(actor)自己退。
 var hold_alive := false
-# c1:本端正在连大厅(页不许自己连,见文件头偏离③)。
-# ★ 判据一律用 NetBus.can_send_to_server(),不用「曾经连上过」的闩:ESC 回主菜单那条路会 NetBus.stop()(PauseMenu.go_menu 对 PvP 无条件断连),闩会停在 true 而连接已经没了。
 var _lobby_back_connecting := false
-# c1:主菜单那颗模式按钮按过了吗 / 页一就位要调的那个动作(首次=建房,回局=刷新)
 var _menu_clicked := false
 var _page_action: Callable = Callable()
 var _page_action_done := false
-# c1:`_on_node_added` 预置钩子命中了几次(读数:0 = 页是走上树**之后**才被接管的,走了兜底修复)
 var _hook_hits := 0
 var _repairs := 0
 
@@ -73,9 +63,8 @@ var _repairs := 0
 func _ready() -> void:
 	hold_alive = who != "c1"
 	if who == "c1":
-		# ★ 生产入口那条路要靠这个钩子(理由见 `_on_node_added` / 文件头偏离③)
 		get_tree().node_added.connect(_on_node_added)
-		_lobby_back_connecting = true   # 下面的 start_client 正在连,别让重连路径插一脚
+		_lobby_back_connecting = true
 	NetBus.local_room_created.connect(func(code: String) -> void:
 		_room_code = code
 		_log("建房成功:%s" % code))
@@ -87,14 +76,13 @@ func _ready() -> void:
 		_log("收到 go_match(第 %d 次,port=%d)" % [_go_match, port]))
 	NetBus.local_room_list.connect(_on_room_list)
 	NetBus.local_round_state.connect(_on_round_state)
-	# c2 的"这一局还在"读数(见文件头 c2 那一段)
 	NetBus.local_snapshot_world.connect(_on_snapshot_world)
 	NetBus.local_server_message.connect(func(t: String) -> void:
 		_server_msgs.append(t)
 		_log("server_message: %s" % t))
 	multiplayer.connected_to_server.connect(_on_lobby_connected, CONNECT_ONE_SHOT)
 	multiplayer.connection_failed.connect(func() -> void:
-		_lobby_back_connecting = false   # 放开重连路径(否则 `_reconnect_lobby` 永远早退)
+		_lobby_back_connecting = false
 		_fail("连大厅失败(%s:%d)" % [LOBBY_ADDR, lobby_port]))
 	NetBus.start_client(LOBBY_ADDR, lobby_port)
 
@@ -104,7 +92,6 @@ func _on_lobby_connected() -> void:
 	if NetBus.can_send_to_server():
 		NetBus.rpc_id(1, "lobby_name", "BOT%d" % (1 if who == "c1" else (2 if who == "c2" else 3)))
 	if who == "c1":
-		# ★ c1 **不直接挂页**:走生产入口(主菜单那颗模式按钮)—— 理由见文件头。
 		_enter_main_menu.call_deferred()
 		return
 	_attach_page.call_deferred()
@@ -115,14 +102,11 @@ func _attach_page() -> void:
 			(on_create if who == "c1" else on_refresh))
 
 
-# ── c1:生产入口那两步(与 main_menu.gd 那颗「多 人 模 式」按钮逐字同路)──
-# 换到主菜单。★ 生产里玩家从对局退出来就落在这里(Level0.safe_change_scene → scenes/main_menu.tscn),本端第一次进场也照这条路走(而不是把页挂进探针场景)。
 func _enter_main_menu() -> void:
 	_log("换到主菜单(生产入口从这里开始)")
 	get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
 
 
-# 大厅页入树时(生产那条 change_scene_to_file 建出来的)在它 _ready 之前把三件事摆好:
 func _on_node_added(n: Node) -> void:
 	if not (n is LobbyPage) or not n.has_method("_on_room_list"):
 		return
@@ -136,19 +120,16 @@ func _on_node_added(n: Node) -> void:
 	_log("大厅页入树(生产路径)→ 预置『已连着 %s:%d』=%s" % [LOBBY_ADDR, lobby_port, str(preset)])
 
 
-# 把玩家带到一份真的、已连上大厅的大厅页前 —— 两次进场(开局前 / 回局前)共用,且两次都走生产入口。返回 true = _page 已就位且大厅连接可用。
-# ★ 它不实例化也不 add_child 页面:页由主菜单那颗按钮里的 change_scene_to_file 建出来(get_tree().current_scene),本端只是等它出现。
 func _drive_to_lobby_page(first: bool) -> bool:
 	if is_instance_valid(_page):
 		return true
 	if not NetBus.can_send_to_server():
-		# ★ 必须先连上再让页入树:页的 _with_lobby 快路判据里有 can_send_to_server(),不成立时它会 NetBus.stop() + 按默认端口 7777 去连(用户自己的服务端)。
 		_reconnect_lobby("先把大厅接回来再放页进来")
 		return false
 	var cs := get_tree().current_scene
 	if not _menu_clicked:
 		if not _is_main_menu(cs):
-			return false       # 换场还没落到主菜单(第一次由 _on_lobby_connected 触发)
+			return false
 		_menu_clicked = true
 		_page_action = (on_create if first else on_refresh)
 		_page_action_done = false
@@ -157,7 +138,6 @@ func _drive_to_lobby_page(first: bool) -> bool:
 	var p := _current_lobby_page(cs)
 	if p == null:
 		if _phase_t > MENU_TIMEOUT:
-			# ★ 判词把现场一起带上(「卡在哪一步」只能靠它 —— 本探针的失败读数只有 _dump() 的尾部 20 行,别指望从别处反推)。
 			_fail("c1 ★ 按下主菜单「%s」后 %.0fs 没等到大厅页(生产那条 change_scene 没落地?)"
 					% [MENU_BTN_TEXT, MENU_TIMEOUT]
 					+ ";现场:阶段 %d / 当前场景 %s / 页 %s / 连大厅=%s / 按过按钮=%s"
@@ -175,7 +155,6 @@ func _drive_to_lobby_page(first: bool) -> bool:
 	return true
 
 
-# 按主菜单上那颗「多 人 模 式」(真按钮回调 = PvpSession.reset() + change_scene_to_file)。★ 文案与 main_menu.gd 里逐字一致;找不到即判红(与「回局坏了」分得开)。
 func _press_menu_mode_button() -> bool:
 	var menu := get_tree().current_scene
 	var btn := _find_button_text(menu, MENU_BTN_TEXT)
@@ -206,7 +185,6 @@ func _is_main_menu(n: Node) -> bool:
 
 
 func _current_lobby_page(n: Node) -> Node:
-	# 统一大厅 extends LobbyPage,自己定义 `_on_room_list`(1v1 的列房应答 handler)
 	if n is LobbyPage and n.has_method("_on_room_list"):
 		return n
 	return null
@@ -221,7 +199,6 @@ func _script_path(n: Node) -> String:
 	return str((s as Script).resource_path)
 
 
-# 把 _page 与换场对齐:页随旧场景一起被 free 掉之后,下一次进场要重新按按钮(生产入口)。
 var _page_bound := false
 
 func _sync_page() -> void:
@@ -230,12 +207,9 @@ func _sync_page() -> void:
 	_page = null
 	if _page_bound:
 		_page_bound = false
-		_menu_clicked = false   # 页是被换场带走的 ⇒ 下一次进场要重新按按钮(生产入口)
+		_menu_clicked = false
 
 
-# 把一份真大厅页挂进当前场景(首次进场与 c1 回局前各一次,同一份实现)。★ 三行「先置位再入树」缺一不可:
-#   ① PvpSession.server_address = LOBBY_ADDR —— 统一大厅的地址框默认值取的就是它(ui_factory.line_edit(..., PvpSession.server_address)),而 _with_lobby 的快路判据是 _connected_addr == _addr_edit.text;不拨它,页 _ready 那次 deferred _request_list 会判「地址变了」→ NetBus.stop() + 按默认端口 7777 重连:本进程与探针大厅(29300)的连接当场拆掉(症状是「c1 从这一刻起什么都收不到」)。
-#   ② 同一行对转连 worker 也是必需的:_do_go_match 用 PvpSession.server_address 连 worker,而 worker 就在 127.0.0.1 —— 不拨它,c1/c2 会去连云地址上的 29350(必失败)。③ _connected / _connected_addr:让页走「已连」的快路。
 func _attach_page_in(cs: Node, action: Callable) -> void:
 	if cs == null or _page != null:
 		return
@@ -249,8 +223,6 @@ func _attach_page_in(cs: Node, action: Callable) -> void:
 
 
 func on_create() -> void:
-	# ★ mp_lobby 的建房弹层启动即建、默认隐藏(骨架里的 %CreatePanel;_build_ui() 只登记 + 收起)⇒ T1 起这里不再有 null 可判,直接调 _on_create_pressed 也能跑完。
-	#   仍要先开一次,是因为模式那一半:那次「从当前筛选模式取初值」只发生在 _open_create_dialog 里(筛选为空 ⇒ 落 MODE_PVP,即 1v1);此后 _create_mode 只还会被 CreatePanel.apply(scenes/mp_lobby/create_panel.gd)改写,而那条路从三颗模式分段按钮可达 —— 本探针从不点它们。本探针要的正是「走玩家那条链」,而不是绕开它自己塞一个模式。
 	_page.call("_open_create_dialog")
 	_page.call("_on_create_pressed")
 
@@ -259,8 +231,6 @@ func on_refresh() -> void:
 	_page.call("_on_refresh_pressed")
 
 
-# 周期性点一次「刷新列表」(真按钮回调)。★ 见文件头偏离②:列表是请求/响应式的,挂页那 1~2 次请求常常落在「房还没建 / 对局还没开」之前;不补这一梯,c2 与 c3 会永远停在空列表上。
-# ★ can_send_to_server() 那道闸不是可选的:页的 _with_lobby 在未连时会落到 NetBus.start_client(addr)(默认端口 7777)—— 那是用户自己的服务端,本探针不碰。
 func _tick_refresh(delta: float, done: bool) -> void:
 	if done or not is_instance_valid(_page) or not NetBus.can_send_to_server():
 		return
@@ -285,7 +255,6 @@ func _find_row_button(code: String) -> Button:
 	return null
 
 
-# 网格里第一个**可点的**卡(房号未知时的退路;c2 用 —— 大厅是本进程起的,只有 c1 那一间房)。
 func _first_row_button() -> Button:
 	if not is_instance_valid(_page):
 		return null
@@ -299,10 +268,8 @@ func _first_row_button() -> Button:
 
 
 func _on_room_list(rooms: Array) -> void:
-	# ★ 刷新梯的节拍**在收到列表这一拍重置**:下一拍再问是"这份是新的吗",不是"到点了吗"。
 	_refresh_t = REFRESH_EVERY
 	if who == "c1":
-		# ★ c1 读的是那一行的可点性:手里的凭据就是「这一行是我的」的证明 ⇒ 必须可点。它只能在这里取 —— disabled 是客户端渲染出来的 Button 上的状态,载荷里没有这个字段。
 		var mine := _find_row_button(_room_code)
 		if mine != null:
 			_row_seen = true
@@ -319,26 +286,21 @@ func _on_room_list(rooms: Array) -> void:
 			_rec("ROW code=%s in_match=1 names=%s" % [_room_code, str(r.get("names", []))])
 	_room_rows = in_match
 	if in_match == 1:
-		# ★ c3 读的是同一行的另一半:它没有凭据 ⇒ 必须不可点。c1 与 c3 这两条合起来才说明「可点性」是按人判的,而不是「一律可点」。
 		var row := _find_row_button(_room_code)
 		if row != null:
 			_c3_row_disabled = row.disabled
 			_c3_row_read = true
 		if _phase == 0:
-			# 看见了 → 立刻试图进去(必须被拒)
 			_phase = 1
 			_phase_t = 0.0
 			_log("列表里看到对局中的房 %s → 试图加入(应当被拒)" % _room_code)
-			# 模式未知(空串)= 三张表都问一次 —— c3 只是想"试着进去",被谁拒都行。
 			_page.call("_join_code", _room_code, "")
 
 
-# 服务器广播的回合状态。
 func _on_round_state(data: Dictionary) -> void:
 	var st := int(data.get("state", -1))
 	if st == 1:
 		if not _playing_seen and who == "c2":
-			# c2 的观察窗从**它自己**看到的第一条 PLAYING 起算(之前的窗口含建场景那一大段)
 			_obs_started = true
 			_obs_round = int(data.get("round", 0))
 			_obs_t = 0.0
@@ -349,12 +311,10 @@ func _on_round_state(data: Dictionary) -> void:
 		_playing_seen = true
 		_playing_count += 1
 		return
-	# 非 PLAYING 的广播:观察窗内出现任何一条(换局 COUNTDOWN / 本局收场)就是「这一局变了」(换局与收局都先广播 COUNTDOWN/ROUND_OVER,故判据只在这一条上)。
 	if who == "c2" and _obs_started:
 		_obs_state_bad = true
 
 
-# c2 的"这一局还在"读数:权威快照的频率 + 掉线者的身体还在不在。
 func _on_snapshot_world(world: Dictionary) -> void:
 	if who != "c2" or not _obs_started:
 		return
@@ -371,7 +331,7 @@ func _on_snapshot_world(world: Dictionary) -> void:
 func _physics_process(delta: float) -> void:
 	if _done:
 		return
-	_refresh_game()          # ★ 每帧重认对局场景(离场再进 = 一具**全新**的节点树)
+	_refresh_game()
 	_t += delta
 	_phase_t += delta
 	_hard_t += delta
@@ -384,39 +344,31 @@ func _physics_process(delta: float) -> void:
 			_tick_c3(delta)
 
 
-# 每帧重认对局场景。
 func _refresh_game() -> void:
 	var cs := get_tree().current_scene
 	if cs == null or not _is_game(cs):
 		_game = null
 		return
 	if cs.get("_local") == null:
-		return     # 场景 `_ready` 还没跑完(局部玩家未就位)
+		return
 	if _game != cs:
 		_log("进入对局场景(role=%d)" % PvpSession.role)
 	_game = cs
 
 
-# 与 team_match_watcher._is_game 同款:按**脚本类型**认(名字会随场景改,类型不会)
 func _is_game(n: Node) -> bool:
 	return n is PvpMatchClient
 
 
-# ── c1(actor)──
-var _c1_sub := 0      # 0 建房/等开局 1 打一会 2 已按 ESC 回主菜单 3 已点自己那间房那一行
+var _c1_sub := 0
 func _tick_c1(delta: float) -> void:
-	# ★ 只看总预算,不看 _page 的死活:相 2 里本端故意要经历「页被换场带走 → 再走一次生产入口」,把 not is_instance_valid(_page) 写进这条守卫会让相 2 永远进不去。
 	if _phase_t > ENTER_TIMEOUT + MENU_TIMEOUT + REJOIN_TIMEOUT + RESULT_WAIT:
 		_finish("c1 超时(阶段 %d)" % _c1_sub)
 		return
 	_sync_page()
 	match _c1_sub:
 		0:
-			# 进对局前那一份大厅页也走生产入口(理由见文件头:两次进场同一条路)。
 			_drive_to_lobby_page(true)
-			# ★ 2026-10-24 起 1v1 **不再自动开局**:房主必须点「开始游戏」。本探针走生产入口但没人去点 ⇒
-			#   房停在 players=2 port=0(rejoin_probe 自 2026-10-24 起的已知红)。这里以 1s 节拍代按同一 RPC
-			#   (1 人时服务器会拒,重试到真进对局为止;进对局后本相结束,不再发)。
 			if _page != null and NetBus.can_send_to_server():
 				_start_rpc_t += delta
 				if _start_rpc_t >= 1.0:
@@ -441,7 +393,7 @@ func _tick_c1(delta: float) -> void:
 		2:
 			# ★★ 回到主菜单之后再走一次生产入口(按那颗「多 人 模 式」按钮)—— 这一步就是 C1 的现场:从前本端在这里直接挂页,恰好绕过了「按钮 → PvpSession.reset() → 凭据还在不在」这一问 ⇒ 拿着生产里根本拿不到的凭据全绿(见文件头那条纠正)。
 			if _game != null:
-				return                    # 还在对局场景里(换场还没发生)
+				return
 			if not _drive_to_lobby_page(false):
 				return
 			_tick_refresh(delta, _row_seen)
@@ -449,7 +401,7 @@ func _tick_c1(delta: float) -> void:
 				if _phase_t > ENTER_TIMEOUT:
 					_fail("c1 ★ 回到大厅页后 %.0fs 没在列表里看到自己那间房(%s)" % [ENTER_TIMEOUT, _room_code])
 					_finish("")
-				return                    # 列表还没到
+				return
 			var row := _find_row_button(_room_code)
 			if row == null:
 				# ★ 立刻 FAIL,不静默等超时(那种失败与"回局坏了"长得一样)
@@ -472,7 +424,6 @@ func _tick_c1(delta: float) -> void:
 			return
 		3:
 			if _phase_t > REJOIN_TIMEOUT:
-				# ★ 自己判红(不靠总超时):判词要点明**卡在哪一步**,否则与"回局坏了"分不开。
 				_fail("c1 ★ 点了自己那间房后 %.0fs 没回到对局(进 pvp_game=%s / PLAYING 计数 %d→%d)"
 						% [REJOIN_TIMEOUT, str(_game != null), _playing_at_leave, _playing_count])
 				_finish("")
@@ -480,14 +431,13 @@ func _tick_c1(delta: float) -> void:
 			if _game == null:
 				return
 			if not _playing_seen or _playing_count <= _playing_at_leave:
-				return    # 还没重新收到服务器的广播
+				return
 			_ok("c1 回到对局并进入 pvp_game")
 			if int(PvpSession.role) != _role_before:
 				_fail("c1 ★ 回局后 role 变了(%d → %d):大厅把凭据里的 role 发错了" %
 						[_role_before, int(PvpSession.role)])
 			else:
 				_ok("c1 ★ 回局后 role 与离开前一致(%d)" % _role_before)
-			# ★ 这一条才是「真的回到那一局」的证据:离场期间没有任何 round_state 到达(客户端断着),回来之后又开始收 —— 计数必须严格增长。
 			_ok("c1 ★ 回局后重新收到服务器广播(PLAYING 计数 %d → %d)" % [_playing_at_leave, _playing_count])
 			_rec("BACK id_before=%d role=%d plays=%d→%d" % [_body_id_before, _role_before,
 					_playing_at_leave, _playing_count])
@@ -495,8 +445,6 @@ func _tick_c1(delta: float) -> void:
 			return
 
 
-# 把大厅连接接回本探针的大厅(偏离③:页自己的重连路径永远按默认端口 7777 走,那是用户自己的服务端,本探针不碰)。★ 可重入:开局前要接一次,回主菜单后若页还是走了慢路还要再接一次 —— 故这里不设一次性闸。
-# ★ 判据是当下的连接(can_send_to_server()),不是 _lobby_back 那个「曾经连上过」的闩:ESC 回主菜单那条路会 NetBus.stop()(PauseMenu.go_menu 对 PvP 无条件断连 —— 那正是 worker 把身体送进宽限期的方式),而 _lobby_back 还停在 true。
 func _reconnect_lobby(tag: String) -> void:
 	if NetBus.can_send_to_server():
 		return
@@ -541,7 +489,6 @@ func _esc_and_menu() -> void:
 		_fail("对局场景里没找到 PauseMenu")
 		_finish("")
 		return
-	# 真 ESC(理由见 team_match_watcher._esc_leave:keycode 与 physical_keycode 都要给)
 	var ev := InputEventKey.new()
 	ev.pressed = true
 	ev.keycode = KEY_ESCAPE
@@ -552,11 +499,9 @@ func _esc_and_menu() -> void:
 	pm.call("go_menu")
 
 
-# ── c2(对手:这一局还在的见证)──
 var _c2_joined := false
 func _tick_c2(delta: float) -> void:
 	if _game == null:
-		# ── 还在大厅:等列表里出现那间房 → 点它(真按钮回调,与真人加入逐字同一条路)──
 		if not is_instance_valid(_page):
 			if _hard_t > ENTER_TIMEOUT:
 				_fail("c2 ★ %.0fs 没能经大厅进入对局(页没挂上/建房没成功?)" % ENTER_TIMEOUT)
@@ -577,7 +522,6 @@ func _tick_c2(delta: float) -> void:
 		_log("点房间列表第一行加入(真按钮回调):%s" % row.text)
 		row.pressed.emit()
 		return
-	# ── 已在场:留满一个观察窗再落盘(见文件头 c2 那一段)──
 	if not _obs_started:
 		if _hard_t > ENTER_TIMEOUT + 20.0:
 			_fail("c2 ★ 进了对局但 %.0fs 内没收到 PLAYING 广播" % (ENTER_TIMEOUT + 20.0))
@@ -608,25 +552,19 @@ func _tick_c2(delta: float) -> void:
 	_finish("")
 
 
-# ── c3(第三人)──
 func _tick_c3(delta: float) -> void:
 	_tick_refresh(delta, _phase == 1)
 	if _phase == 0:
-		# ★ 兜底:等不到「对局中」那一行时自己判红并落盘 —— 否则裁判只会收到 2/3 份结果,读起来像「探针坏了」,而真正的问题是「c3 什么都没看到」。
 		if _hard_t > ENTER_TIMEOUT:
 			_fail("c3 ★ %.0fs 内没在列表里看到那个对局中的房(实得 %d 行;server_message=%s)"
 					% [ENTER_TIMEOUT, _room_rows, str(_server_msgs)])
 			_finish("")
 		return
 	if _phase_t > RESULT_WAIT:
-		# 等够了:这才是 c3 的结论时刻
 		if _room_rows != 1:
 			_fail("c3 ★ 没在列表里看到那个对局中的房(实得 %d 行)" % _room_rows)
 		else:
 			_ok("c3 ★ 第三人能看到对局中的房(1 行,code=%s)" % _room_code)
-		# ★ 反向对照(c1 那条断言的另一半):同一行、同一份载荷,手里没有凭据的人看到的必须是「点不动」。两条合起来才说明可点性是按人判的,而不是「那一刻所有人都能进」。
-		# ★★ 结论时刻要重读一次:原实现只在「第一次看到那一行」的那个 tick 读 row.disabled,而结论在 RESULT_WAIT(40s)之后 —— 那一 tick 里 mp_lobby 可能还没按新载荷重建按钮(watcher 与它各收一次 room_list,先后不定)⇒ 读到的是上一版构建的状态 ⇒ 假红(实测:两遍同配置一红一绿)。
-		# ★★ 没读到就不许空过:_c3_row_disabled 默认 true(恰好等于期望值)⇒ 一次都没读到那一行时,下面那句 _ok 照样会打「同一行对第三人仍是 disabled」—— 断言读起来比它给的多。现在用 _c3_row_read 把它顶住。
 		var fresh := _find_row_button(_room_code)
 		if fresh != null:
 			_c3_row_disabled = fresh.disabled
@@ -652,7 +590,6 @@ func _tick_c3(delta: float) -> void:
 		_finish("")
 
 
-# ── 结果与日志 ──
 func _log(s: String) -> void:
 	print("WATCHER[%s] t=%.1f %s" % [who, _t, s])
 
@@ -681,7 +618,6 @@ func _finish(why: String) -> void:
 	_done = true
 	if why != "" and _fails.is_empty():
 		_fail(why)
-	# ★★ 计数守卫(只对「否则会打印 OK」的那一跑生效):本探针是回局这条路唯一的观测者,一段被截断的跑(阶段梯没走到、客户端早退、--quit-after 到期)不许读成通过。
 	var min_checks := int(MIN_CHECKS.get(who, 1))
 	if _fails.is_empty() and _checks < min_checks:
 		_fail("只跑了 %d 条断言(期望 ≥ %d)—— 有阶段没跑到,这个 OK 不算数" % [_checks, min_checks])
@@ -694,8 +630,6 @@ func _finish(why: String) -> void:
 		for e in _fails:
 			f.store_line("  - %s" % e)
 		f.close()
-	# ★★ c2 / c3 落盘后不退出(hold_alive):它们的结果只是「我这边的读数」,而对局必须继续活着 —— c2 是对手,它一退,worker 就把 role 2 送进宽限期(相② 的前提「这一局还在」就变了味);c3 虽然不在局里,留着也不花任何代价。
-	#   真正的收尾是裁判按 PID 杀(_kill_children),子进程另有一条 --quit-after 兜底;c1 是 actor,剧本跑完就该退,退出不改变任何结论。
 	if hold_alive:
 		print("WATCHER[%s] 结果已落盘,保持在线等裁判收尾" % who)
 		return

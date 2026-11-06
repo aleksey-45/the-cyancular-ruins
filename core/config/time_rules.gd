@@ -1,21 +1,18 @@
 class_name TimeRules
 extends RefCounted
 
-# PvP 时间玩法参数总表:建房页可自定义的全部数值 + 服务器侧钳制。
 
-# ── 默认值(用户裁定)──
 const DEF_INITIAL := 1000.0
 const DEF_CAP := 1800.0
-const DEF_REWIND_BURN := 150.0     # 回溯:颗粒/秒
-const DEF_HASTE_BURN := 70.0       # 加速:颗粒/秒
-const DEF_WINDOW := 250.0          # 短时额度
-const DEF_REGEN := 50.0            # 短时回复:颗粒/秒
-const DEF_KILL_RATIO := 0.5        # 击杀获取 = 被击杀者账户总额度 × 此比例(被击杀者不减少)
-const DEF_BLOCK_GAIN := 10         # 每摧毁一个 16px 子格
-const DEF_DAMAGE_GAIN := 4         # 每造成 1 点伤害(仅对敌方;自杀/自伤不产颗粒)
-const DEF_HASTE_MULT := 3.0        # 加速倍率(用户裁定固定 ×3,不进建房页)
+const DEF_REWIND_BURN := 150.0
+const DEF_HASTE_BURN := 70.0
+const DEF_WINDOW := 250.0
+const DEF_REGEN := 50.0
+const DEF_KILL_RATIO := 0.5
+const DEF_BLOCK_GAIN := 10
+const DEF_DAMAGE_GAIN := 4
+const DEF_HASTE_MULT := 3.0
 
-# ── 钳制范围(服务器侧防越界;建房页滑条也用同一套)──
 const R_INITIAL := Vector2(0.0, 5000.0)
 const R_CAP := Vector2(100.0, 9999.0)
 const R_BURN := Vector2(10.0, 500.0)
@@ -38,12 +35,10 @@ var damage_gain := DEF_DAMAGE_GAIN
 var haste_mult := DEF_HASTE_MULT
 
 
-## 贷款上限 = 短时额度(用户裁定:启用贷款,但仅限短时限额,账户本身不透支)。
 func loan_limit() -> float:
 	return window
 
 
-## 服务器/建房页共用的钳制。★ 顺序有讲究:先钳 window(贷款上限由它推出),再钳 cap ≥ initial。
 func clamp_self() -> void:
 	window = clampf(window, R_WINDOW.x, R_WINDOW.y)
 	initial = clampf(initial, R_INITIAL.x, R_INITIAL.y)
@@ -68,7 +63,6 @@ static func from_dict(d: Dictionary) -> TimeRules:
 	r.kill_ratio = float(d.get("kill_ratio", DEF_KILL_RATIO))
 	r.block_gain = int(d.get("block_gain", DEF_BLOCK_GAIN))
 	r.damage_gain = int(d.get("damage_gain", DEF_DAMAGE_GAIN))
-	# ★★ 2026-10-15:服务器**不听**载荷里的 `haste_mult`。加速倍率是**用户裁定固定 ×3**、且**不进建房页**
 	r.haste_mult = DEF_HASTE_MULT
 	r.clamp_self()
 	return r
@@ -89,12 +83,10 @@ func to_dict() -> Dictionary:
 	}
 
 
-## 本规则下的颗粒账户(初始/上限/短时窗/回复/贷款额全部按规则走)。
 func make_account() -> GrainAccount:
 	return GrainAccount.new(initial, cap, window, regen, loan_limit())
 
 
-## 回溯环缓需要覆盖的秒数 = 从满额烧到空(上限 / 回溯速率),上限 15s。
 func rewind_buffer_seconds() -> float:
 	if rewind_burn <= 0.0:
 		return 0.0

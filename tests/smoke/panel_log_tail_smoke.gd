@@ -1,5 +1,4 @@
 extends SceneTree
-# 服务端面板日志 tail 守卫(01 审查 S-13①:tail 是面板里唯一有纯逻辑可测价值的一段,
 
 const EXPECTED_CHECKS := 6
 const TMP := "user://panel_log_tail_smoke.log"
@@ -33,30 +32,25 @@ func _initialize() -> void:
 	var abs := ProjectSettings.globalize_path(TMP)
 	var t := PanelLogTail.new()
 
-	# ① 首次读:全部完整行
 	_write("a\nb\n")
 	var r1 := t.read_delta(abs)
 	_chk(str(r1["new_text"]) == "a\nb\n" and not bool(r1["rebuild"]) and not bool(r1["rotated"]),
 			"首次读返回全部完整行(实得 %s)" % str(r1["new_text"]))
 
-	# ② 半行不消费:offset 不前进、什么都不吐
 	_append("c")
 	var r2 := t.read_delta(abs)
 	_chk(str(r2["new_text"]) == "" and t.offset == 4 and t.text == "a\nb\n",
 			"半行不消费(offset 仍 4、text 不变;实得 off=%d)" % t.offset)
 
-	# ③ 补上换行后只返回新增那一行
 	_append("\n")
 	var r3 := t.read_delta(abs)
 	_chk(str(r3["new_text"]) == "c\n" and t.text == "a\nb\nc\n", "补全半行后只吐新增行(实得 %s)" % str(r3["new_text"]))
 
-	# ④ 轮转/重建:文件比 offset 短 ⇒ 归零重读 + rotated
 	_write("x\n")
 	var r4 := t.read_delta(abs)
 	_chk(bool(r4["rotated"]) and str(r4["new_text"]) == "x\n" and t.offset == 2 and t.text == "x\n",
 			"文件重建必须归零重读(rotated / 实得 %s / off=%d)" % [str(r4["new_text"]), t.offset])
 
-	# ⑤ 超上限截断:切在行边界,首行不能是半截
 	t.reset()
 	t.max_chars = 7
 	_write("aaa\nbbb\nccc\n")
@@ -65,7 +59,6 @@ func _initialize() -> void:
 			and not t.text.begins_with("bb") and t.text.ends_with("\n"),
 			"超上限从头部截断且切在行边界(实得 %s)" % str(t.text))
 
-	# ⑥ reset 清状态;默认上限下重读得到全文
 	t.reset()
 	t.max_chars = PanelLogTail.DEFAULT_MAX_CHARS
 	var r6 := t.read_delta(abs)

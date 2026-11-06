@@ -1,18 +1,15 @@
 class_name LocalServer
 extends RefCounted
 
-# 本机服务器一键启动/重启(客户端大乱斗大厅 / 1v1 页的按钮用):按映像名强杀旧服务端 + 清掉占用大厅端口的
 
 const SERVER_EXE := "Cyancular Ruins Server.exe"
 const LOBBY_PORT := 7777
 const SYS32 := "C:/Windows/System32"
 
-static var restarting := false   # 重启进行中:客户端吞掉期间「服务器断开」等预期噪音
+static var restarting := false
 
 
 static func find_server_exe() -> String:
-	# ★ Web:浏览器里没有"同目录 exe",也没有子进程 ⇒ 明确返回空(调用方的提示文案会显示"未找到…")。
-	# Web 版本身不暴露联机入口(见 main_menu),这里只是防止任何意外调用去碰 OS 文件系统。
 	if OS.has_feature("web"):
 		return ""
 	var p := OS.get_executable_path().get_base_dir().path_join(SERVER_EXE)
@@ -31,7 +28,6 @@ static func restart() -> String:
 	return msg
 
 static func _restart_impl() -> String:
-	# Web:浏览器不允许启动本地进程(taskkill/netstat/create_process 全不可用)。
 	if OS.has_feature("web"):
 		return "Web 版不支持本机服务器(浏览器里无法启动进程)"
 	var exe := find_server_exe()
@@ -44,7 +40,6 @@ static func _restart_impl() -> String:
 	for pid in ProcUtil.pids_on_udp_port(LOBBY_PORT):
 		if pid != OS.get_process_id():
 			OS.execute(SYS32 + "/taskkill.exe", PackedStringArray(["/F", "/PID", str(pid)]))
-	# 等端口释放(强杀后立刻复用偶发失败)
 	await _sleep(0.8)
 	var pid := OS.create_process(exe, PackedStringArray())
 	if pid <= 0:
@@ -68,8 +63,6 @@ static func _restart_impl() -> String:
 	return "服务器进程已启动,但 %d 端口 45 秒未就绪(检查安全软件/防火墙,或稍后手动刷新列表);%s" % [LOBBY_PORT, lan_ip_hint()]
 
 
-# 局域网候选 IP / 提示:实现收在 core/net/lan_ip.gd(纯解析 + netstat 默认路由探测),这里只转发 ——
-# 调用点(server_main.gd / scenes/lobby_page.gd / scenes/mp_lobby.gd)一律不用改。
 static func lan_ip_candidates() -> Array:
 	return LanIp.lan_ip_candidates()
 
@@ -78,9 +71,6 @@ static func lan_ip_hint() -> String:
 	return LanIp.lan_ip_hint()
 
 
-# ★ `_pids_on_port()` 已删(2026-10-30):它按 `cols.size() >= 5` 判 UDP 行,而 netstat 的 UDP 行只有 4 列
-#   ⇒ 残留清理是空操作、就绪轮询恒不成立。实现收进 `ProcUtil.pids_on_udp_port()`(UDP 4 列/端口按冒号后整段解析),
-#   与 `ProcUtil.kill_udp_port` 同住一处 —— 别再在这里抄第三份。
 
 
 static func _sleep(sec: float) -> void:

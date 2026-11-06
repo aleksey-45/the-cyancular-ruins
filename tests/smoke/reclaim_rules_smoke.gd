@@ -1,5 +1,4 @@
 extends SceneTree
-# 局内闪断重连(reclaim)拒绝判据守卫(G-01:`_on_reclaim` 的三条拒绝分支零自动断言)。
 
 const EXPECTED_CHECKS := 5
 
@@ -14,30 +13,25 @@ func _chk(ok: bool, msg: String) -> void:
 
 
 func _initialize() -> void:
-	# ★ 空载守卫(仓规):load() 失败还往下走会在 null 上抛错,而 `-s` 抛错走不到 quit() ⇒ 进程永久挂起。
 	if load("res://core/net/reclaim_rules.gd") == null:
 		print("RECLAIM RULES FAILED: load(reclaim_rules.gd) 返回 null(-s 空载守卫:不 quit 会挂死)")
 		quit(1)
 		return
 
-	# ① 没开局:match_started=false ⇒ 拒;且「多处不满足」时理由仍是这条(链序:开局 → 宽限 → 令牌)
 	_chk(ReclaimRules.reject_reason(false, true, true, true) == "尚未开局"
 			and ReclaimRules.reject_reason(false, false, false, false) == "尚未开局",
 			"没开局必须拒绝,且理由优先级最高(实得 %s)" % ReclaimRules.reject_reason(false, true, true, true))
 
-	# ② 没开局 + host 未就绪:旧的 `_host == null` 独立拒绝分支(与 ① 合并成同一条理由)
 	_chk(ReclaimRules.reject_reason(true, false, true, true) == "尚未开局",
 			"host 未就绪必须拒绝(旧的 _host == null 分支;实得 %s)"
 			% ReclaimRules.reject_reason(true, false, true, true))
 
-	# ③ 该 role 不在宽限期:拒;且它排在令牌之前(若先判令牌,没报 token 的人会拿到错理由)
 	_chk(ReclaimRules.reject_reason(true, true, false, true) == "该 role 不在宽限期"
 			and ReclaimRules.reject_reason(true, true, false, false) == "该 role 不在宽限期",
 			"不在宽限期必须拒绝且理由排在令牌之前(实得 %s / %s)" % [
 				ReclaimRules.reject_reason(true, true, false, true),
 				ReclaimRules.reject_reason(true, true, false, false)])
 
-	# ④ 令牌空或不符必须拒绝(空串不能当成"两边都空 ⇒ 对上";这是免检通行证)
 	_chk(ReclaimRules.reject_reason(true, true, true, false) == "令牌不匹配"
 			and not ReclaimRules.token_matches("", "")
 			and not ReclaimRules.token_matches("tok", "")
@@ -45,7 +39,6 @@ func _initialize() -> void:
 			and ReclaimRules.token_matches("tok", "tok"),
 			"令牌空 / 不符必须拒绝,只有非空且相等才匹配")
 
-	# ⑤ 四条全满足 ⇒ 放行(返回空串)
 	_chk(ReclaimRules.reject_reason(true, true, true, true) == "",
 			"四条全满足必须放行(实得「%s」)" % ReclaimRules.reject_reason(true, true, true, true))
 

@@ -1,64 +1,54 @@
 class_name EnemyBase
 extends CharacterBody2D
 
-const HitShape := preload("res://core/sim/hit_shape.gd")   # 受击判定几何唯一入口(不做 class_name:新全局类名要等编辑器重扫缓存)
+const HitShape := preload("res://core/sim/hit_shape.gd")
 
-# 进入死亡状态时发射一次(用于击杀计数等 UI;撞人自毁同算,见 FlyBird._die_self)。
 signal died
 
 var use_gravity: bool = true
 
-# 战斗数值(可在检查器调,场景值优先)。
 @export var hp: int = 3
 @export var contact_damage: int = 1
 @export var knockback_strength: float = 150.0
-# 爆炸专属击退向量:独立于 AI 移动速度,每帧叠加后指数衰减(大冲击+迅速衰减)。
 var knock_velocity: Vector2 = Vector2.ZERO
-# 击退向量指数衰减率(越大停得越快;约 0.23s 衰减到约 10%)。
 @export var knock_decay_rate: float = 10.0
 
-# 环面接缝兜底:物理 Area 用欧氏距离、跨接缝不重叠,这里用环面距离补(略大于 ContactArea 半对角线)。
 const CONTACT_RADIUS: float = 40.0
 
-const GROUND_FRICTION: float = 0.85  # 落地时水平速度衰减系数
-const STOP_EPSILON: float = 5.0      # 水平速度低于此值直接归零,避免贴地滑行
+const GROUND_FRICTION: float = 0.85
+const STOP_EPSILON: float = 5.0
 
 var is_dead: bool = false
-var _rewind_hold: bool = false   # 录制期死亡保留的尸体(隐藏待复活;非精英)
-# 隐藏期间被摘掉的碰撞层(见 _physics_process 的保留尸体分支);-1 = 层未被摘、无需还原。
+var _rewind_hold: bool = false
 var _rw_held_layer: int = -1
 var _hit_flash_time: float = 0.0
-var _death_timer: float = -1.0   # 死亡白闪剩余;<0 未死亡(受击/死亡白闪统一在基类)
+var _death_timer: float = -1.0
 var _player_overlapping: bool = false
-var _overlapping_players: Array = []  # 当前接触到的玩家节点(1v1 PvP 里可能同时撞到两人,受击取最近者)
-var _turn_cooldown: float = 0.0  # 转向冷却:两次翻转朝向至少间隔 turn_min_interval
+var _overlapping_players: Array = []
+var _turn_cooldown: float = 0.0
 # 玩家组每帧缓存:同一物理帧内 _players_frame() 只建一次数组,砍掉每帧每敌多次 get_nodes_in_group 分配。
 var _players_frame_cache: Array = []
 var _players_frame_id: int = -1
-var wake_radius: float = 1000.0  # 远处睡眠优化:距玩家超此值且落地静止 → 跳过物理
-var network_canonical: bool = false  # PvP 服务器权威:敌人位置存 canonical [0,MAP)(_wrap 取模);单机/客户端 false=锚玩家副本渲染
+var wake_radius: float = 1000.0
+var network_canonical: bool = false
 var _in_water: bool = false
-var _waterproof: int = 6                 # 防水值(氧气),没顶每 0.5s 掉 1
-var waterproof_max: int = 6              # 上限:black/jump 6,fly 10
+var _waterproof: int = 6
+var waterproof_max: int = 6
 var _waterproof_drain_timer: float = 0.0
 var _waterproof_recover_timer: float = 0.0
-var _drown_tick: float = 0.0     # 扣血倒计时
-# 状态机与动画(子类共用)。state 用 int 承载各子类自己的 enum 常量(见 JumpBird/FlyBird 的 enum State)。
+var _drown_tick: float = 0.0
 var state: int = 0
 var _state_timer: float = 0.0
 var _anim: AnimatedSprite2D
 var squash: SquashStretch = null
-# move_and_slide() 之前的 velocity.y,与帧首 is_on_floor() 配对。
 var _pre_move_vy: float = 0.0
 
-# ── 行为钩子(子类覆写)──
 func _ai(_delta: float) -> void:
 	pass
 
 func _anim_update() -> void:
 	pass
 
-# 落水时水平游泳方向(基类默认零 = 漂着;JumpBird/BlackBird 覆写为朝玩家)。
 func _water_swim_dir() -> Vector2:
 	return Vector2.ZERO
 
@@ -66,7 +56,6 @@ func _ready() -> void:
 	add_to_group("enemies")
 	_setup_contact_area()
 	add_child.call_deferred(WaterFx.new())
-	# 补间形变。★ 用 $AnimatedSprite2D 而不是 _anim:子类 _ready 是先 super._ready() 后才给 _anim 赋值,此处它还是 null。
 	squash = SquashStretch.new()
 	add_child(squash)
 	# ★ 查不到 animator 就当场报错,不让它静默降级:组件容忍 null animator,于是查表失败的表现是「这只鸟永远不变形」、一个字都不打 —— 三个 .tscn 里该节点都叫 AnimatedSprite2D,改名必须响。
@@ -80,7 +69,7 @@ func _setup_contact_area() -> void:
 	var area := Area2D.new()
 	area.name = "ContactArea"
 	area.collision_layer = 0
-	area.collision_mask = 2  # 检测玩家(layer 2)
+	area.collision_mask = 2
 	var shape := CollisionShape2D.new()
 	var rect := RectangleShape2D.new()
 	rect.size = Vector2(44, 40)
@@ -102,17 +91,12 @@ func _on_contact_body_exited(body: Node) -> void:
 		_player_overlapping = not _overlapping_players.is_empty()
 
 func _physics_process(delta: float) -> void:
-	delta = TimeField.enemy_delta(delta, self)   # 时间场:回溯冻结/加速/贷款(精英例外)
-	# 回溯中普通敌人整帧跳过(位置由回放器摆;接触伤害/白闪/AI 全不结算);精英照常。
+	delta = TimeField.enemy_delta(delta, self)
 	if TimeField.current != null and TimeField.current.is_rewinding() and not has_meta("elite"):
 		return
-	# squash 放在最首行(_is_far_sleeping 早退之前):睡眠时也走 tick ⇒ 回中性,否则睡眠中的鸟会卡在最后一个形变值上。
-	# ★ 睡眠那一支必须归零 _pre_move_vy 本身,不是临时喂个 0:睡眠期间不跑 move_and_slide ⇒ 缓存永不刷新(是上一次非睡眠帧的陈旧值),落地项每帧重触发、指数恢复每帧只回约 14% ⇒ 睡着的远鸟永久保持形变。
-	# ★ 醒来首帧才是真正的洞:那时 _is_far_sleeping() 已是 false,走醒着那条路却拿到陈旧落速 ⇒ 同一个满幅落地项在醒来那一刻重触发,TAKE_OFF 的拉伸被抵消甚至反向成压扁,故必须清缓存本身;睡眠态 vel_y 本就该是 0(地面不施重力),这个 0 是事实不是特判。
 	var sleeping := _is_far_sleeping()
 	squash.tick(delta, _pre_move_vy, is_on_floor(), is_dead)
 	if sleeping:
-		# 醒来首帧那一半的解法(见上):清的是缓存,不是这一次调用的实参。
 		_pre_move_vy = 0.0
 		_ai(delta)
 		_wrap()
@@ -120,30 +104,23 @@ func _physics_process(delta: float) -> void:
 	_turn_cooldown = maxf(_turn_cooldown - delta, 0.0)
 	if use_gravity and not is_on_floor():
 		velocity.y += GameParameters.gravity0 * delta
-	# 地面摩擦:落地且非冲刺(use_gravity=true)时水平速度平滑衰减,避免跳跃/冲刺/击飞的残留速度让敌人在地面滑行;放在 _ai 之前,这样 _ai 里新设的跳跃/冲刺初速不受当帧摩擦影响。
 	if use_gravity and is_on_floor():
 		velocity.x *= GROUND_FRICTION
 		if absf(velocity.x) < STOP_EPSILON:
 			velocity.x = 0.0
-	# 死亡:AI 不行动,但物理(重力/摩擦/击退/碰撞)与生前完全一致。
 	if not is_dead:
 		_ai(delta)
 		_anim_update()
-		# 接触伤害:物理 Area 覆盖常规情况;环面接缝处欧氏距离不重叠,用环面距离兜底。contact_damage<=0 时跳过:零伤也会触发玩家 take_hit 消耗 iframe 并击退。
 		if contact_damage > 0 and (_player_overlapping or toroidal_dist_to_player() <= CONTACT_RADIUS):
 			var p := _contact_victim()
 			if p != null and p.has_method("take_hit"):
 				p.take_hit(global_position, contact_damage)
-	# 受击/死亡白闪统一:计时 + 渲染(子类可覆写 _flash_update 换渲染方式,如黑鸟 silhouette)。
 	if _hit_flash_time > 0.0:
 		_hit_flash_time = maxf(_hit_flash_time - delta, 0.0)
 	if _death_timer > 0.0:
 		_death_timer -= delta
 		if _death_timer <= 0.0:
 			if _rewind_hold:
-				# 保留尸体:隐藏 + 停物理,等回放复活;过期由 WorldRewind.expire_corpses 清理。
-				# ★ 隐藏的同时必须摘掉碰撞层:玩家 mask=5 里含敌人层(值 4),一具看不见却仍在层 4 的实体就是玩家眼里的虚空碰撞箱 —— 撞在空气上。
-				# ★ 改碰撞层而不是禁用碰撞多边形:飞鸟自己管站/飞两个多边形的 disabled,基类插手会打架;层是纯「谁能撞我」的量,与多边形启停正交。还原走 _rw_held_layer。时机:白闪那 0.5s 不摘(尸体还看得见,挡人合理),只摘隐藏待复活这一支。
 				visible = false
 				set_physics_process(false)
 				_rw_held_layer = collision_layer
@@ -154,10 +131,8 @@ func _physics_process(delta: float) -> void:
 			return
 	_flash_update()
 	if is_dead:
-		# 尸体:基础速度也按击退速率指数衰减,滑行逐渐停住、下落也随之慢到终端速度,更接近失去意识的尸体。
 		velocity *= exp(-knock_decay_rate * delta)
 	_apply_water(delta)
-	# 爆炸击退位移:单独 move_and_collide(带碰撞),不污染 velocity(地面把向下击退吃掉后再减回去会把身体弹起);主移动 move_and_slide 最后跑,地面状态以它为准。
 	move_and_collide(knock_velocity * delta)
 	knock_velocity *= exp(-knock_decay_rate * delta)
 	# ★ 必须在 move_and_slide() 之前:落地那一帧它在调用后就被清零了。★ 敌人侧不做任何过滤,就是裸值 —— 这是实测后的裁定。
@@ -170,21 +145,18 @@ func _physics_process(delta: float) -> void:
 
 func hurt(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, set_velocity: bool = false) -> void:
 	if is_dead:
-		# 尸体:不再扣血/触发死亡,但冲击波仍能推动(不吞冲击波)。
 		_apply_knock_only(knock_dir, knock_strength, set_velocity)
 		return
 	_apply_hit(damage, knock_dir, knock_strength, set_velocity)
 	if hp <= 0:
 		_begin_death()
 
-## 受击面:活动碰撞箱的世界 AABB(飞鸟站/飞箱随姿态切换),伤害判定统一经 core/sim/hit_shape.gd 查它。
 func hurt_rect() -> Rect2:
 	return HitShape.hurt_rect_of(self)
 
 func is_hurtable() -> bool:
 	return not is_dead and collision_layer != 0
 
-# 受击通用逻辑:扣血、击退、白闪(子类覆写 hurt() 时也应调用本方法,避免逻辑分叉)。
 func _apply_hit(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, set_velocity: bool = false) -> void:
 	hp -= damage
 	var ks := knockback_strength if knock_strength <= 0.0 else knock_strength
@@ -192,12 +164,10 @@ func _apply_hit(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, se
 		knock_velocity = knock_dir.normalized() * ks
 	else:
 		velocity += knock_dir.normalized() * ks
-	# 死亡:击退不折入,尸体与生前一致 —— knock_velocity 继续独立衰减,由 _physics_process 统一结算。
-	modulate = Color(3.0, 3.0, 3.0, 1.0)  # 受击白闪
+	modulate = Color(3.0, 3.0, 3.0, 1.0)
 	_hit_flash_time = EnemyParams.shared.hit_flash
 	squash.impulse(SquashStretch.Impulse.HURT)
 
-# 尸体专用:只施加击退(爆炸=设独立向量、枪击=叠加速度),不扣血、不触发死亡/白闪。
 func _apply_knock_only(knock_dir: Vector2, knock_strength: float, set_velocity: bool) -> void:
 	var ks := knockback_strength if knock_strength <= 0.0 else knock_strength
 	if set_velocity:
@@ -206,13 +176,10 @@ func _apply_knock_only(knock_dir: Vector2, knock_strength: float, set_velocity: 
 		velocity += knock_dir.normalized() * ks
 
 
-# 当前是否处于 SLEEP 态。
-# 现在每个子类自己写 state == State.SLEEP,加新敌人时照抄一行即可;默认实现的 state == 0 只是兜底,别依赖它。
 func _is_asleep() -> bool:
 	return state == 0
 
 
-# 远处睡眠判定:距玩家超唤醒半径、落地静止、非受击/死亡/非 SLEEP ⇒ true。
 func _is_far_sleeping() -> bool:
 	if is_dead or _hit_flash_time > 0.0 or _death_timer > 0.0:
 		return false
@@ -225,7 +192,6 @@ func _is_far_sleeping() -> bool:
 	return toroidal_dist_to_player() > wake_radius
 
 
-# 落水浮力:弹簧把中心拉回水面线(已归一最近环面副本,跨接缝也朝"上"浮);水平朝 _water_swim_dir 游。
 func _apply_water(delta: float) -> void:
 	var water := Water.sample_body(self, _in_water)
 	_in_water = water.in_water
@@ -236,7 +202,6 @@ func _apply_water(delta: float) -> void:
 		var dir := _water_swim_dir()
 		velocity.x = MathUtil.approach(velocity.x, dir.x * EnemyParams.shared.bird_swim_speed,
 			EnemyParams.shared.bird_water_damp, delta)
-	# 防水值(氧气):没顶掉,暴露空气回;空后每秒扣血。
 	if water.head_under:
 		_waterproof_recover_timer = 0.0
 		_waterproof_drain_timer += delta
@@ -254,22 +219,18 @@ func _apply_water(delta: float) -> void:
 		if _drown_tick <= 0.0:
 			_drown_tick = EnemyParams.shared.drown_interval
 			hurt(EnemyParams.shared.drown_damage, Vector2.ZERO)
-# 死亡白闪统一入口:置死亡状态、发信号、起白闪计时(渲染由 _flash_update 处理,到期在基类 _physics_process 销毁);子类可在调用后追加专属处理。
 func _begin_death() -> void:
 	if is_dead:
 		return
 	is_dead = true
 	died.emit()
-	# 单机击杀播报已删(这里原先调 CombatFeedback.notify_enemy_killed,那是它唯一的触发点);PvP 的播报走 NetBus.kill_event,不经过本函数。
 	_death_timer = EnemyParams.shared.death_flash_time
-	# 录制期保留尸体:不 queue_free,白闪结束后隐藏待复活(精英除外 —— 杀了就是杀了)。
 	if WorldRewind.hold_corpses and not has_meta("elite"):
 		_rewind_hold = true
 		set_meta("rw_death_ms", Time.get_ticks_msec())
 	_on_death()
 
 
-# 死亡瞬间的附加动作虚钩(基类空实现):子类在此追加专属处理(JumpBird 播 dead、FlyBird 清冲撞速度并开重力),不必整份覆写 hurt();调用点在 _death_timer 赋值之后,子类改 velocity/use_gravity 不影响它。
 func _on_death() -> void:
 	pass
 
@@ -294,7 +255,6 @@ func _flash_update() -> void:
 	modulate = Color(3.0, 3.0, 3.0, 1.0) if _hit_flash_time > 0.0 or _death_timer > 0.0 else Color.WHITE
 
 
-# 统一转向:两次翻转朝向至少间隔 turn_min_interval(防止敌人来回抖);朝向未变时不消耗冷却。
 func _set_facing(facing_left: bool) -> void:
 	if _turn_cooldown > 0.0 or _anim.flip_h == facing_left:
 		return
@@ -309,7 +269,6 @@ func _set_state(s: int) -> void:
 	_on_state_entered(s)
 
 
-# 状态进入虚钩:基类默认空实现。三个子类各有自己的 enum State(JumpBird 根本没有 TAKE_OFF),故基类不能硬编码状态名,只能往下派发由子类映射。
 func _on_state_entered(_s: int) -> void:
 	pass
 
@@ -332,7 +291,6 @@ func _players_frame() -> Array:
 	return get_tree().get_nodes_in_group("player")
 
 
-# 多玩家目标:取组里距自己最近的玩家(单机唯一玩家 ⇒ 行为不变);无玩家返回 null。
 func _nearest_player() -> Node2D:
 	var best: Node2D = null
 	var best_d := INF
@@ -346,7 +304,6 @@ func _nearest_player() -> Node2D:
 			best = n
 	return best
 
-# 接触受击目标:重叠的玩家里取最近者;无重叠时若在环面距离兜底内(接缝 Area 不重叠)⇒ 全局最近玩家。
 func _contact_victim() -> Node2D:
 	var best: Node2D = null
 	var best_d := INF
@@ -399,7 +356,7 @@ func toroidal_dist_to_player() -> float:
 func toroidal_dir_to_player() -> Vector2:
 	var delta := toroidal_delta_to_player()
 	if delta == Vector2.INF or delta.is_zero_approx():
-		return Vector2.RIGHT  # 无玩家或与玩家重叠时回退水平方向,避免 0/NaN 方向
+		return Vector2.RIGHT
 	return delta.normalized()
 
 func toroidal_delta_to_player() -> Vector2:
@@ -410,22 +367,18 @@ func toroidal_delta_to_player() -> Vector2:
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 
 func _wrap() -> void:
-	# PvP 服务器权威:位置存 canonical [0,MAP),不做玩家副本锚定(副本归各端渲染)。
 	if network_canonical:
 		global_position = MazeGenerator.wrap_to_range(global_position,
 				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 		return
-	# 环面渲染回绕:把自己锚定到离玩家最近的副本(跟着主角一起取模)。否则接缝附近会渲染到远副本而「消失」;每次按玩家当前位置重算,玩家跨接缝时敌人相对位置连续,不像相机方案那样累计漂移。
 	var p := _nearest_player() as Node2D
 	if p == null:
-		# 无玩家(场景切换/加载中)时退回绝对取模,防止敌人无限漂移。
 		global_position = MazeGenerator.wrap_to_range(global_position,
 				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 		return
 	global_position = MazeGenerator.anchor_to_nearest(global_position, p.global_position,
 			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
 
-## 回溯还原(WorldRewind 调用):把本敌置回快照帧的状态(含复活)。
 func rewind_restore(d: Dictionary) -> void:
 	var was_dead := is_dead
 	global_position = d["p"]
@@ -436,7 +389,6 @@ func rewind_restore(d: Dictionary) -> void:
 	if was_dead and not is_dead:
 		visible = true
 		set_physics_process(true)
-		# ★ 还原隐藏时摘掉的碰撞层(见 _physics_process 的保留尸体分支):必须在复活这一支还原,漏了的话复活的怪看不见地穿人 —— 与虚空碰撞箱是同一个量、反方向。
 		if _rw_held_layer >= 0:
 			collision_layer = _rw_held_layer
 			_rw_held_layer = -1
@@ -447,5 +399,4 @@ func rewind_restore(d: Dictionary) -> void:
 		_hit_flash_time = 0.0
 		_flash_update()
 	elif not was_dead and is_dead:
-		# 倒回「将死未死」帧:按快照的可见性处理(通常在白闪中点)。
 		visible = bool(d["vis"])

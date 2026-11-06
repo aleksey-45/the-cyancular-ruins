@@ -1,29 +1,27 @@
 class_name MatchPorts
 extends RefCounted
 
-# C 方案(S0.5):系统 → 宿主/网络 的唯一通道。全部是 Callable,由 MatchHost 绑定。
-# 约定:系统不持有宿主引用;需要宿主行为(网络效果 / 模式钩子)时只许走这里。
 
-var net_rpc_role: Callable          # (role: int, method: String, args: Array, via_ext: bool) → void
-var net_rpc_role_all: Callable      # (method: String, args: Array, except_role: int, live_only: bool, via_ext: bool) → void
-var net_broadcast: Callable         # (method: String, args: Array) → void
-var net_peers_sendable: Callable    # () → bool
-var net_peer_count: Callable        # () → int
-var scene_bullets: Callable         # () → Array(场景树 "bullet" 组)
-var scene_add_child: Callable       # (node: Node) → void(挂到宿主节点下)
-var scene_rebuild_chunk: Callable   # (chunk: Vector2i) → void(重建可破坏砖分块碰撞)
-var send_round_state: Callable      # (data: Dictionary) → void
+var net_rpc_role: Callable
+var net_rpc_role_all: Callable
+var net_broadcast: Callable
+var net_peers_sendable: Callable
+var net_peer_count: Callable
+var scene_bullets: Callable
+var scene_add_child: Callable
+var scene_rebuild_chunk: Callable
+var send_round_state: Callable
 
-var on_bullet_hit: Callable         # (bullet, victim, victim_role) → void
-var broadcast_round_state: Callable # () → void
-var match_winner: Callable          # () → int
-var spawn_cell: Callable            # (role: int) → Vector2i
-var respawn_player: Callable        # (role: int) → void
-var down_killer_of: Callable        # (role: int) → int
-var award_down: Callable            # (victim_role: int, killer_role: int) → void
-var finish_match: Callable          # () → void
-var start_next_round: Callable      # () → void
-var reset_time_rewind_state: Callable  # () → void
+var on_bullet_hit: Callable
+var broadcast_round_state: Callable
+var match_winner: Callable
+var spawn_cell: Callable
+var respawn_player: Callable
+var down_killer_of: Callable
+var award_down: Callable
+var finish_match: Callable
+var start_next_round: Callable
+var reset_time_rewind_state: Callable
 
 
 func is_ready() -> bool:

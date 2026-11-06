@@ -1,8 +1,6 @@
 class_name RoyaleHud
 extends CanvasLayer
 
-# 大乱斗 HUD(CanvasLayer layer=130):右上角击杀排行榜(名次/昵称/击杀数/存活状态,自己高亮)+ 下方剩余时间;广播层(全屏遮罩 + 居中巨字:开局倒计时/终局胜败)由三个对局 HUD 共用 ui/hud/broadcast.tscn,本类只喂文案与时机;延迟在右下角。
-# 数据全部来自 round_state 载荷 {state, scores, timer, names, alive, left, match_winner};字体统一走 UiFactory.style_control,字号必须是 16 的倍数(像素字体硬约定),本文件全部字号已按 16 归一。
 
 const LAYER := 130
 # 颜色一律取 UiFactory 的调色板(单一来源,见 ui/ui_factory.gd 的 token 段)。
@@ -15,7 +13,6 @@ const COLOR_GRACE := UiFactory.C_GRACE
 
 # 排行榜面板宽(原 480):一行要塞「名次 + 昵称 + 击杀 + 阵亡 + 状态」五段,480 时只要昵称稍长,末段就被顶出面板(实测 9 字昵称那行约 690px vs 面板 480)。
 const BOARD_W := 720.0
-# 昵称列的显示宽度上限(半角单位;汉字算 2)。超出按 … 截断 —— 状态段必须留在面板内。
 const NAME_UNITS := 14
 
 const ST_COUNTDOWN := 0
@@ -23,7 +20,6 @@ const ST_PLAYING := 1
 const ST_ROUND_OVER := 2
 const ST_MATCH_OVER := 3
 
-# 节点句柄一律从 royale_hud.tscn 取;★ 排行榜的行不在这里(行数随人数变,由 _refresh_board 建/复用)。
 @onready var _board_bg: ColorRect = $BoardBg
 @onready var _board_vbox: VBoxContainer = $BoardBox
 @onready var _timer_label: Label = $BoardBox/TimerLabel
@@ -32,7 +28,6 @@ const ST_MATCH_OVER := 3
 @onready var _ping_label: Label = $PingWrap/PingLabel
 @onready var _hint_wrap: PanelContainer = $HintWrap
 
-# 探针兼容访问口:广播节点已搬进 Broadcast 组件,本转发保住既有读点。零守卫(combat_hud_visual_probe 已删·2026-10-09)。
 var _big: Label:
 	get:
 		return _broadcast.big if _broadcast != null else null
@@ -40,13 +35,11 @@ var _big: Label:
 var _rows: Array[Label] = []
 var _last_row_count := -1
 var _state := ST_COUNTDOWN
-# role(int) -> 剩余秒(只由服务器下发)。
 var _grace: Dictionary = {}
 var _my_name := "Anon"
 
 func _ready() -> void:
 	layer = LAYER
-	# ★ 一次:共享字体关抗锯齿/微调/子像素并挂 CJK 回退链。场景里那些 Label 引用的就是同一个共享 FontFile 实例 —— 不调这句它们会带抗锯齿、且汉字没有回退字形(本 HUD 的字几乎全是中文)。
 	PixelFont.shared()
 	_my_name = PvpSession.player_name
 	# 两块底板样式仍由代码给:颜色 token(C_*)的唯一来源是 UiFactory,抄进 .tscn 就是第二处真值。
@@ -54,7 +47,6 @@ func _ready() -> void:
 	_hint_wrap.add_theme_stylebox_override("panel", _plate_box(10.0, 4.0))
 	NetBus.local_round_state.connect(_on_round_state)
 	NetBus.ping_updated.connect(_on_ping)
-	# ★ 倒计时数字走完那一拍:PLAYING 态要收起广播(1v1/3v3 不接这条 —— 它们的 PLAYING 广播由服务器下发的状态切换收起)。
 	_broadcast.countdown_finished.connect(_on_countdown_finished)
 	_broadcast.set_broadcast(true, "大乱斗", "等待开局…")
 
@@ -64,9 +56,6 @@ func _on_countdown_finished() -> void:
 		_broadcast.set_broadcast(false, "", "")
 
 
-# ── 布局说明(节点树已迁进 ui/royale_hud.tscn)── 四个静态区块原先由 _build_* 现建,现由场景声明、上面 @onready 取回:
-# BoardBg + BoardBox(排行榜底与内容,右锚) / Broadcast(共享广播层,含 Mask) / PingWrap(右下延迟) / HintWrap(左下按键提示,下锚)。
-# ★ 子节点顺序 = 绘制顺序,必须与当年的 add_child 顺序一致:BoardBg → BoardBox → Broadcast → PingWrap → HintWrap(Broadcast 的 Mask 盖在排行榜之上是现状,别顺手改进)。
 
 # HUD 元素底板(与单机 HUD 同一套做法):唯一源是 UiFactory.C_PLATE,本处直接引用、不再有内联字面量。★ 本文件的 _board_bg(排行榜)不在其中 —— 那张玩家栏被用户点名排除,单独是 0.25。
 static func _plate_box(pad_x: float, pad_y: float) -> StyleBoxFlat:
@@ -119,8 +108,6 @@ func _on_round_state(data: Dictionary) -> void:
 	_refresh_broadcast(state, data, names, rows, alive)
 
 
-# ── 排行榜:按击杀降序 ── ★ 复用行、只改文字,不要每次 queue_free 后重建 N 个 Label:本函数每秒被调一次(阵亡再加一次),重建 N 个 Label 实测 2.6 / 3.8 / 4.7 ms(4/6/8 行),是纯粹的每秒浪费;行数只在人数变化时才增删。
-# 返回排好序的行数据 —— 中央广播还要用它判"我是否还在场"。零守卫(royale_hud_cost_probe 已删·2026-10-09)。
 func _refresh_board(names: Dictionary, scores: Dictionary, deaths: Dictionary,
 		alive: Dictionary, left: Array, grace: Dictionary, state: int) -> Array:
 	var rows: Array = []
@@ -136,7 +123,6 @@ func _refresh_board(names: Dictionary, scores: Dictionary, deaths: Dictionary,
 		(_rows.pop_back() as Label).queue_free()
 	while _rows.size() < rows.size():
 		var nl := _make_label(32, COLOR_BOARD)
-		# 钉死行宽 + 兜底裁剪:文本宽度不再由内容决定(昵称长短不一把整行撑出面板)。
 		nl.custom_minimum_size = Vector2(BOARD_W - 8.0, 0)
 		nl.size_flags_horizontal = Control.SIZE_FILL
 		nl.clip_text = true
@@ -144,7 +130,6 @@ func _refresh_board(names: Dictionary, scores: Dictionary, deaths: Dictionary,
 		_rows.append(nl)
 	if _rows.size() != _last_row_count:
 		_last_row_count = _rows.size()
-		# 底板高度随行数自适应(标题 + 计时 + N 行 + 内边距)。★ 末尾那个 34 = 原来的 14 + 用户 2026-09-15 要求的"底部再多留 20px";改行数自适应时别把它顺手改回 14。
 		_board_bg.size.y = _board_vbox.get_combined_minimum_size().y + 34
 	for i in range(rows.size()):
 		var e: Dictionary = rows[i]
@@ -169,7 +154,6 @@ func _refresh_board(names: Dictionary, scores: Dictionary, deaths: Dictionary,
 	return rows
 
 
-# ── 中央广播 ──
 func _refresh_broadcast(state: int, data: Dictionary, names: Dictionary, rows: Array,
 		alive: Dictionary) -> void:
 	match state:

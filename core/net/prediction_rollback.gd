@@ -1,35 +1,29 @@
 class_name PredictionRollback
 extends RefCounted
-# C2 rollback 控制器(与引擎解耦,纯逻辑):驱动方式由接入方决定 —— 手动步进(每帧 advance)或引擎自步进(note_post_step + note_input)。
-# 收到权威(ack=C, 整态 S):ring[C] ≈ S → 预测被证实,trim <= C;ring[C] != S → 真性分歧(服务器外部事件:命中/传送/换边/墙/漂移),
-# restore(S) 后按序重放 (C, last_applied] 的本地输入 —— 「重放 = 错在哪补哪」,绝不做橡皮筋位置拉拢。
 
-const KEEP := 256           # ring 保留窗口(条记录;U1 后一条 = 1 tick ⇒ 4.3 秒)
-const PHYS_DT := 1.0 / 60.0 # 回滚重放一律按固定物理步(确定性)
-# 每条输入记录覆盖几个物理步:**1**(U1:一条记录 = 1 tick,60Hz 真输入,服务器每 tick 消费一条)。
-# 保留这个 var 是因为纯逻辑探针/旧语义仍可显式设 2;PvP 客户端不再改它。
+const KEEP := 256
+const PHYS_DT := 1.0 / 60.0
 var ticks_per_record := 1
 
-var _p = null               # 被预测 Player(动态)
-var _scratch: PacketInputSource = PacketInputSource.new()   # 步进/重放喂入源
+var _p = null
+var _scratch: PacketInputSource = PacketInputSource.new()
 
-var _inputs: Dictionary = {}   # seq(int) -> 输入包记录(重放用)
-var _captures: Dictionary = {} # seq(int) -> 步进后 capture_state()(比对/锚点)
-var _seqs: Array[int] = []     # _captures 键升序
+var _inputs: Dictionary = {}
+var _captures: Dictionary = {}
+var _seqs: Array[int] = []
 var _last_applied := 0
 var _acked := 0
-var _pending: Array = []       # [[ack, state], ...] 待 reconcile
+var _pending: Array = []
 var _rollbacks := 0
-var _last_event_seq := 0       # 已按历史注入过的最大事件 seq(乱序事件拒绝用)
-var _event_aligns := 0         # 事件对齐次数(诊断量;不计入 _rollbacks)
-var _event_rejects := 0        # 事件拒绝次数(诊断量;兜底路径频率)
-var _rej_ack := 0              # 拒绝原因:已被权威 ack 覆盖(seq <= _acked)
-var _rej_future := 0           # 拒绝原因:来自未来(seq > _last_applied)
-var _rej_missing := 0          # 拒绝原因:环里没有该 seq
-var _rej_order := 0            # 拒绝原因:乱序 / callable 失效
-var _events: Dictionary = {}   # seq(int) -> Array[Callable] 已注入的外部事件(重放/回滚时按 seq 重放,见 _apply_events_at)
+var _last_event_seq := 0
+var _event_aligns := 0
+var _event_rejects := 0
+var _rej_ack := 0
+var _rej_future := 0
+var _rej_missing := 0
+var _rej_order := 0
+var _events: Dictionary = {}
 
-# 环面地图尺寸(像素)。ZERO = 不做环面处理(退回裸距离比较);刻意不引 autoload,由接入方显式设,-s 下也能空跑。
 var map_px: Vector2 = Vector2.ZERO
 
 # 「预测被证实」的位置容差(px),回滚频率的闸门:贴身时对手在客户端眼里恒有滞后(实测 8 tick ≈ 93px),1px 容差会每帧 restore+重放。
@@ -37,25 +31,19 @@ var map_px: Vector2 = Vector2.ZERO
 const DEFAULT_POS_TOL := 2.0
 var pos_tol: float = DEFAULT_POS_TOL
 
-# 接触期(与远端玩家身体贴身)的位置容差 8.0:贴身的位置分歧由接触几何决定、回滚纠正不动(实测 1/2/4/8px 四档接触期偏差逐项相同)。
-# ★ 这是扫描结论、不是随手可调的旋钮:要动它得重跑 CONTACT 族扫描并复核三条读数(偏差不恶化 / 8 与 16/32 频率同档 / 软接触只占体宽 1/10)。零守卫(brawl_rollback_probe 已删·2026-10-09)。
 const DEFAULT_CONTACT_POS_TOL := 8.0
 var contact_pos_tol: float = DEFAULT_CONTACT_POS_TOL
 # ★ 2026-10-28:客户端在贴身区按"相对速度 × 幽灵滞后"动态覆盖它(8~48px,见 core/net/prediction_contact.gd);
 #   本常量现在只是下限/默认值,别再以为它恒是 8。
 
-# 接触期**速度**容差(px/s)。★ 2026-10-31:同一台机器 3 客户端 soak 实测,回滚里 **83~98% 是"纯速度分歧"**
+# 接触期速度容差(px/s)。★ 2026-10-31:同一台机器 3 客户端 soak 实测,回滚里 83~98% 是"纯速度分歧"
 const DEFAULT_CONTACT_VEL_TOL := 400.0
 var contact_vel_tol: float = DEFAULT_CONTACT_VEL_TOL
-# ★ 边界:贴身判据 `in_contact` 是客户端启发式(幽灵 AABB 间隙 ≤ CONTACT_GAP),不是精确碰撞 ⇒ 容差放宽
-#   期间若真的漏掉一次"只改了速度、位置几乎没动"的权威修正(理论上只有击退初速),要等下一次位置分歧或
-#   hit_event 才会纠正。观感/命中仍由 hit_event/快照兜底,不是静默错下去。
 const VEL_TOL := 20.0
 
 # 「预测被证实」要比对的字段集合(单一来源):S-06 —— 原先这 4 个字段的判据散在 _close_enough 函数体里,
 const PREDICTED_FIELDS := ["down", "hp", "pos", "vel"]
 
-# 接入方每物理步写一次:本帧是否正在贴身(Player.touching_player())。★ 默认 false = 改动前的行为;它不进 capture_state/restore_state、不上行(纯客户端本地量)。
 var in_contact: bool = false
 
 func bind(p) -> void:
@@ -102,7 +90,7 @@ func note_post_step(seq: int, capture: Dictionary) -> void:
 	_seqs.append(seq)
 	while _seqs.size() > KEEP:
 		var old: int = _seqs.pop_front()
-		_inputs.erase(old)   # ★ 与 advance() 的淘汰同款三清;旧写法漏这一行 ⇒ ack 断流时 _inputs 以 60/s 无界增长(重连/本人包停摆期间)
+		_inputs.erase(old)
 		_captures.erase(old)
 		_events.erase(old)
 
@@ -118,7 +106,6 @@ func on_authoritative(ack: int, state: Dictionary) -> void:
 # 拒绝路径若被写坏(越界访问)会返回默认值 —— 让它落在 APPLIED 上,探针的"必须 REJECTED"断言才会红,而不是静默假绿。
 enum EventApply { APPLIED, REJECTED }
 
-# 把一次服务器外部事件(受击)注入预测历史:恢复 _captures[seq] → apply() → 重放 (seq, last_applied]。
 func apply_external_event(seq: int, apply: Callable) -> int:
 	if _p == null or not apply.is_valid():
 		_event_rejects += 1
@@ -143,7 +130,6 @@ func apply_external_event(seq: int, apply: Callable) -> int:
 	if not _events.has(seq):
 		_events[seq] = []
 	(_events[seq] as Array).append(apply)
-	# ★ 只应用"这一发新事件":_captures[seq] 里已经含该 seq 上更早事件的效果(同 tick 多发),再全量重放会重复扣。
 	_p.restore_state(_captures[seq])
 	apply.call()
 	_captures[seq] = _p.capture_state()
@@ -153,7 +139,6 @@ func apply_external_event(seq: int, apply: Callable) -> int:
 	return EventApply.APPLIED
 
 
-# 重放 anchor 之后的每一步;每步之后按 seq 重放该 seq 上注入过的事件(与注入时的顺序一致:步进完再挨打)。
 func _replay_steps_after(anchor: int) -> void:
 	for s in _seqs:
 		if s > anchor and s <= _last_applied:
@@ -177,8 +162,6 @@ func reconcile() -> void:
 		var pk: Array = _pending.pop_front()
 		_handle_ack(int(pk[0]), pk[1])
 
-# 用记录步进一次:临时把玩家输入源换成 scratch(喂入该记录),步进后换回 —— 被预测玩家平时读真实输入(真机手感不变),重放才切历史输入。
-# ★ 一条记录按 ticks_per_record 连跑(U1 下 = 1 步):与服务器逐 tick 同序。
 func _step(record: Dictionary) -> void:
 	if _p == null:
 		return
@@ -188,12 +171,12 @@ func _step(record: Dictionary) -> void:
 	_scratch.apply_packet(record)
 	for i in maxi(1, ticks_per_record):
 		if i > 0:
-			_scratch.clear_edges()   # 第二 tick 起只保留 held(边沿只在该记录第一个 tick 生效)
+			_scratch.clear_edges()
 		_manual_sim_step()
 	_p.set_input_source(prev)
 
 
-# ★★ 重放用的**手动物理步**。这里是「双驱动」的控制器那一半 —— 引擎也在步进同一个节点,时序契约:
+# ★★ 重放用的手动物理步。这里是「双驱动」的控制器那一半 —— 引擎也在步进同一个节点,时序契约:
 func _manual_sim_step() -> void:
 	_p._physics_process(PHYS_DT)
 
@@ -206,15 +189,10 @@ func _handle_ack(ack: int, S: Dictionary) -> void:
 		return
 	var predicted: Dictionary = _captures[ack]
 	if _close_enough(predicted, S):
-# ★ "预测被证实"只说明 down/hp/pos/vel 对得上:背包(inv/wslot)与残弹是非预测字段(拾取/丢弃/复活/换局全由服务器裁决),
-#   不在这里补一次,客户端就只会在碰巧发生回滚时才看见自己捡了枪(表现为地上的枪没了、手上也没多、还开不了火,一条报错都没有)。
 		if _p.has_method("sync_soft_state"):
 			_p.sync_soft_state(S)
-		_trim(ack)          # 预测被证实:确认丢弃 ≤ ack
+		_trim(ack)
 		return
-	# 真性分歧 → 权威锚定 + 重放未确认输入(错在哪补哪,非拉拢)
-	# 诊断(--diag,默认关):这一行就是「本地被拉回」的那一帧。位置/速度误差、是否贴身、重放条数分开记,
-	# 用来区分「服务器少模拟 tick」与「拆砖/传送这类外部事件」(判据见 docs/eng/tests.md)。
 	if NetDiag.enabled():
 		NetDiag.log_event("rollback", {
 			"ack": ack,
@@ -230,7 +208,7 @@ func _handle_ack(ack: int, S: Dictionary) -> void:
 		}, true)
 	_rollbacks += 1
 	_p.restore_state(S)
-	_apply_events_at(ack)      # 权威 S 是注入前锚点的状态时(ack == 事件 seq),先把该 seq 的事件补上,否则重放会把它抹掉
+	_apply_events_at(ack)
 	_replay_steps_after(ack)
 	_trim(ack)
 
@@ -241,9 +219,6 @@ func _trim(below: int) -> void:
 		_captures.erase(s)
 		_events.erase(s)
 
-# 两整态是否"预测被证实":只比影响判定的关键量,避免过度回滚;超出 = 服务器外部事件或漂移 → 走 rollback。
-# ★ 比对集 = PREDICTED_FIELDS(单一来源);容差与判据按字段分派在 _within(位置容差是接触与否二选一,不能简化)。
-# ★ `last_fail_field` 只为诊断(--diag 的 rollback 行):告诉读日志的人"这次到底哪个字段判了分歧",不用再猜。
 var last_fail_field := ""
 
 func _close_enough(a: Dictionary, b: Dictionary) -> bool:

@@ -1,21 +1,16 @@
 class_name Sfx
 extends RefCounted
 
-# 8-bit 程序合成音效:零音频素材,全部运行时生成 AudioStreamWAV(22050Hz 单声道 8bit;方波 + 白噪声 + 包络)。
-# 静态类不引 autoload(-s 可测);播放节点挂树根、播完自毁;音量走 Settings 的 SFX 总线(没有该总线时回落 Master)。
 
 const RATE := 22050
 
 static var _cache: Dictionary = {}
 
-# 轻微随机音高的音效(开枪类,避免每次一模一样的机械感)
 const PITCH_VARIATION := ["shoot", "shoot_heavy", "shotgun", "hit"]
 
-# 全局音调系数(时间玩法驱动:贷款深度→升高、加速→略升、回溯→略降;1.0 = 无效果),只影响播放瞬间的 pitch_scale。
 static var pitch_mult: float = 1.0
 
 
-## 播放一个音效。kind 见 _build;pitch 缩放音调;volume_db 附加增益(负值更轻)。
 static func play(kind: String, pitch: float = 1.0, volume_db: float = 0.0) -> void:
 	var tree := Engine.get_main_loop() as SceneTree
 	if tree == null or tree.root == null:
@@ -26,10 +21,9 @@ static func play(kind: String, pitch: float = 1.0, volume_db: float = 0.0) -> vo
 	var p := AudioStreamPlayer.new()
 	p.stream = stream
 	p.bus = "SFX" if AudioServer.get_bus_index("SFX") >= 0 else "Master"
-	p.process_mode = Node.PROCESS_MODE_ALWAYS   # 单机暂停树时 UI 音效仍可播
+	p.process_mode = Node.PROCESS_MODE_ALWAYS
 	p.volume_db = volume_db
 	p.pitch_scale = pitch * pitch_mult * (randf_range(0.94, 1.06) if kind in PITCH_VARIATION else 1.0)
-# 游戏启动链里树正在建子节点,直接 add_child 会被拒 ⇒ 延迟到帧末入树,再依序延迟播放。
 	tree.root.add_child.call_deferred(p)
 	p.play.call_deferred()
 	p.finished.connect(p.queue_free)
@@ -54,7 +48,6 @@ static func _stream(kind: String) -> AudioStreamWAV:
 	return w
 
 
-# ── 音效定义:每 kind 一段逐样本合成 ──
 static func _build(kind: String) -> PackedFloat32Array:
 	match kind:
 		"shoot":        return _sweep_square(900.0, 240.0, 0.09, 0.5, 0.10)
@@ -66,13 +59,12 @@ static func _build(kind: String) -> PackedFloat32Array:
 		"kill":         return _arp([620.0, 440.0, 300.0], 0.07, 0.5)
 		"switch":       return _arp([500.0, 820.0], 0.05, 0.5)
 		"deny":         return _sweep_square(150.0, 110.0, 0.12, 0.25, 0.0)
-		"reload":       return _arp([180.0, 320.0], 0.06, 0.4)   # 换弹:两段机械咔哒
+		"reload":       return _arp([180.0, 320.0], 0.06, 0.4)
 		"ui":           return _arp([700.0, 1050.0], 0.04, 0.5)
 	push_warning("Sfx: 未知音效 \"%s\"" % kind)
 	return PackedFloat32Array()
 
 
-# 方波滑音:freq0→freq1 指数过渡,duty 占空比,noise_mix 开头混入的噪声比例。
 static func _sweep_square(freq0: float, freq1: float, dur: float, duty: float,
 		noise_mix: float) -> PackedFloat32Array:
 	var n := int(dur * RATE)
@@ -92,9 +84,6 @@ static func _sweep_square(freq0: float, freq1: float, dur: float, duty: float,
 	return out
 
 
-# 白噪声爆发:state = lerp(state, 白噪声, clampf(lp * (1 - t * 0.7), 0.05, 1.0)) —— lp 是插值的原始系数,
-# 不是"0-1 低通系数";lp >= 1/0.3 ≈ 3.34 时全部采样点恒为 1.0(参数彻底空转)。
-# ⚠ 现存两处调用 1400.0 / 900.0 都远超 3.34 ⇒ 两段都是纯白噪声、实际等价(要它们不同 = 一次听感改动,须先试听)。
 static func _noise_burst(dur: float, lp: float, amp0: float, decay: float) -> PackedFloat32Array:
 	var n := int(dur * RATE)
 	var out := PackedFloat32Array()
@@ -107,7 +96,6 @@ static func _noise_burst(dur: float, lp: float, amp0: float, decay: float) -> Pa
 	return out
 
 
-# 短音阶:依次播放每个频率 note_dur 秒的方波,结尾快速衰减。
 static func _arp(freqs: Array, note_dur: float, duty: float) -> PackedFloat32Array:
 	var note_n := int(note_dur * RATE)
 	var out := PackedFloat32Array()

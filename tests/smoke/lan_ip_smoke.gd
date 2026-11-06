@@ -1,5 +1,4 @@
 extends SceneTree
-# LAN IP 纯解析守卫:S-07 把局域网 IP 发现从 local_server.gd 拆到 core/net/lan_ip.gd。
 
 const EXPECTED_CHECKS := 5
 
@@ -14,7 +13,6 @@ func _chk(ok: bool, msg: String) -> void:
 
 
 func _initialize() -> void:
-	# ★ 空载守卫(仓规):load() 失败还往下走会在 null 上抛错,而 `-s` 抛错走不到 quit() ⇒ 进程永久挂起。
 	if load("res://core/net/lan_ip.gd") == null:
 		print("LAN IP FAILED: load(lan_ip.gd) 返回 null(-s 空载守卫:不 quit 会挂死)")
 		quit(1)
@@ -24,7 +22,6 @@ func _initialize() -> void:
 		quit(1)
 		return
 
-	# ① 默认路由行:只认 0.0.0.0 双列 + 5 列以上 + 点分 IPv4 网卡,同卡去重。去掉任一条 ⇒ 噪行/重复行被收进来 ⇒ 红;带一条 26.* 证明 parse 不按私有段过滤。
 	var netstat_text := (
 			"IPv4 Route Table\n"
 			+ "Network Destination   Netmask   Gateway   Interface   Metric\n"
@@ -41,7 +38,6 @@ func _initialize() -> void:
 			and routes.has("26.26.26.2"),
 			"默认路由行只留 0.0.0.0/0.0.0.0 + 点分 IPv4 + 去重(实得 %s)" % [routes])
 
-	# ② metric 升序:三行故意按 50,10,30 的顺序写。去掉排序 / 把比较方向反过来 ⇒ 实得行序 50,10,30 ⇒ 红。
 	var order := LanIp.parse_default_routes(
 			"0.0.0.0 0.0.0.0 10.0.0.1 10.0.0.5 50\n"
 			+ "0.0.0.0 0.0.0.0 10.0.0.1 10.0.0.7 10\n"
@@ -49,7 +45,6 @@ func _initialize() -> void:
 	_chk(order == ["10.0.0.7", "10.0.0.9", "10.0.0.5"],
 			"默认路由没按 metric 升序(实得 %s)" % [order])
 
-	# ③ local_ip.txt 首行(样例 = server_main 实际落盘格式「本机局域网 IP: <ip><其它候选…>」):括号 / 英文逗号 / 中文逗号 / 空格都要抽出 IP,缺 IP: 前缀 / 非 IPv4 / 空行 ⇒ ""。
 	_chk(LanIp.parse_ip_file_line("本机局域网 IP: 10.10.10.166(其它候选: 192.168.1.5,第一候选不通就换)") == "10.10.10.166"
 			and LanIp.parse_ip_file_line("IP: 192.168.1.7,第一候选不通就换") == "192.168.1.7"
 			and LanIp.parse_ip_file_line("IP: 172.16.3.9，中文逗号") == "172.16.3.9"
@@ -59,7 +54,6 @@ func _initialize() -> void:
 			and LanIp.parse_ip_file_line("") == "",
 			"local_ip.txt 行解析错(合法 / 分隔符 / 非法 / 空)")
 
-	# ④ 私有网段 192.168 > 10 > 172.16~31 > 其它,同档保序。把 10.* 与 172.* 并成一档 / 去掉同档保序 ⇒ 顺序错 ⇒ 红。
 	var ranked := LanIp.rank_private(["26.26.26.2", "172.20.1.1", "10.2.2.2", "192.168.0.3",
 			"172.32.0.1", "10.2.2.9"])
 	_chk(ranked == ["192.168.0.3", "10.2.2.2", "10.2.2.9", "172.20.1.1", "26.26.26.2",

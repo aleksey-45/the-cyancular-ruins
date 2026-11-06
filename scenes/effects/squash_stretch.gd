@@ -1,17 +1,13 @@
 class_name SquashStretch
 extends Node
-# 补间形变(squash & stretch):按物理状态对 AnimatedSprite2D 做程序化缩放,挂到任意有 AnimatedSprite2D 的角色上,纯表现层。
-# ★ 只写 animator.scale,不写 self.scale(玩家根 scale=2.5 是世界缩放)与 flip_h(朝向归 _set_facing);不自建 _physics_process,由宿主每帧调 tick();参数走静态 const,保住 -s 可测。
 
 enum Profile { PLAYER, ENEMY }
 
-# 外部事件。落地的挤压不在这里 —— 它由 tick() 从 vel_y 无状态推导。
 enum Impulse { JUMP, HURT, DASH, TAKE_OFF, CHARGE }
 
 var _animator: AnimatedSprite2D = null
-var _gain: Dictionary = {}          # Impulse -> 带符号增益(正=拉伸/负=挤压)
+var _gain: Dictionary = {}
 
-# 计算模型 = 两个标量相加:_air 每帧由 vel_y 重算(无状态,回滚重放一致),_impulse 事件累加 + 指数回归(有状态,回滚重放会重播一次)。
 var _air: float = 0.0
 var _impulse: float = 0.0
 
@@ -59,10 +55,8 @@ func impulse(kind: int) -> void:
 	_impulse = clampf(_impulse + float(_gain.get(kind, 0.0)), -1.0, 1.0)
 
 
-# 宿主每帧调一次;vel_y / on_floor 必须来自同一次 move_and_slide(传那次之前的 velocity.y),二者配对才能无状态推导落地。
 func tick(delta: float, vel_y: float, on_floor: bool, suppressed: bool) -> void:
 	if suppressed:
-		# 倒地:强制中性。副本侧给根节点设了 rotation,本节点是其子节点,写 scale 会沿转过的轴挤压。
 		_air = 0.0
 		_impulse = 0.0
 		_apply()
@@ -72,11 +66,9 @@ func tick(delta: float, vel_y: float, on_floor: bool, suppressed: bool) -> void:
 	if not on_floor:
 		_air = clampf(absf(vel_y) / maxf(_air_ref_vy, 1.0), 0.0, 1.0) * _air_gain
 
-	# 站立时宿主不施重力(玩家与敌人同理)⇒ 地面上 vel_y 恒为 0,本条只在落地那一帧成立,不需要跨帧边沿变量。
 	if on_floor and vel_y > _land_min_vy:
 		var k := clampf((vel_y - _land_min_vy) / maxf(_land_ref_vy - _land_min_vy, 1.0), 0.0, 1.0)
 		_impulse -= _land_gain * k
-		# ★ 减法之后必须自己再钳一次:impulse() 里那个 clampf 管不到这里,宿主违约每帧减满幅值时 _impulse 会收敛到 -k*d/(1-d) 的定点而非 -1。
 		_impulse = clampf(_impulse, -1.0, 1.0)
 
 	_impulse = MathUtil.approach(_impulse, 0.0, _recover, delta)
@@ -87,6 +79,4 @@ func _apply() -> void:
 	if _animator == null:
 		return
 	var v := clampf(_air + _impulse, -1.0, 1.0)
-	# ★ 符号:正 v = 拉伸(窄高),负 v = 挤压(宽矮),x 与 y 反向;别翻成 1.0 + _amount * v 配 1.0 - ...,那会让每个事件都反过来。
-	#   x 与 y 反向变化。增益表跟着这条走:jump/dash/take_off/charge 为正(拉伸),
 	_animator.scale = Vector2(1.0 - _amount * v, 1.0 + _amount * v)

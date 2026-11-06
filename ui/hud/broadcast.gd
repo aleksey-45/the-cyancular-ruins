@@ -1,7 +1,6 @@
 class_name Broadcast
 extends Control
 
-# 中央广播(三个对局 HUD 共用):压暗遮罩 + 凿刻面板 + 大字/副文案;三个模式真正不同的只有"显示什么文案",那部分留在各自 HUD。
 
 # 巨大数字 / 主文案。字号必须是 16 的倍数(本项目像素字体硬约定,见 ui/factory/ui_factory.gd 文件头)。
 const BIG_FONT := 144
@@ -11,10 +10,9 @@ const MASK_COLOR := Color(0, 0, 0, 0.3)
 
 const STRIP_MIN_W := 640.0
 
-const PUNCH_SCALE := 0.06    # 峰值放大 6%(与 squash_stretch 的幅度同量级)
-const PUNCH_DECAY := 4.0     # 每秒衰减 ⇒ 约 0.25s 回到平静
+const PUNCH_SCALE := 0.06
+const PUNCH_DECAY := 4.0
 
-# 倒计时数字走完时发一次 —— 大乱斗的 PLAYING 态要据此收起广播(1v1/3v3 不接)。
 signal countdown_finished
 
 var mask: ColorRect = null
@@ -25,7 +23,6 @@ var punch_enabled := true
 
 var _center: CenterContainer = null
 var _panel: PanelContainer = null
-# 倒计时走秒器(纯逻辑,单一实现 = `ui/hud/countdown_clock.gd`;本组件只管"什么时候开始/把数字画出来/走完通知")。
 var _clock := CountdownClock.new()
 var _punch := 0.0
 
@@ -37,7 +34,6 @@ func _ready() -> void:
 	mask.name = "Mask"
 	mask.color = MASK_COLOR
 	mask.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	# IGNORE:广播只给人看,绝不能吃掉点击(菜单/按钮得照常可点)。
 	mask.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	mask.visible = false
 	add_child(mask)
@@ -59,7 +55,6 @@ func _ready() -> void:
 	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	(_panel.get_node("Body") as Container).add_child(box)
 
-# 大字 = 一条标题带里的琥珀字(C_HEADER 底 + 只有下边一条线)。★ 复用 header_strip 而不是手搓 StyleBox:配色与形状由工厂单点定义(改它 = 同时改菜单,见文件头的边界登记)。
 	var strip := UiFactory.header_strip("", BIG_FONT)
 	strip.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	big = strip.get_child(0) as Label
@@ -72,7 +67,6 @@ func _ready() -> void:
 	box.add_child(sub)
 
 
-# 显示 / 收起广播:show == false 时同时停掉倒计时 —— 三个 HUD 原先每一个"收起"调用点都顺手置了标志,这里把那条口径收进组件(少一处漏改的机会)。
 func set_broadcast(show: bool, big_text: String, sub_text: String) -> void:
 	_clock.stop()
 	mask.visible = show
@@ -83,8 +77,6 @@ func set_broadcast(show: bool, big_text: String, sub_text: String) -> void:
 	_apply_punch()
 
 
-# 收到 COUNTDOWN 就调一次(每 0.5s 会重播一条)。★ "重复调用不得回拨"由 CountdownClock.start 的 min 规则保证 ——
-# 那正是「最后一秒被旧时间重新盖回去」那个缺陷的守卫点,别在这里再判一次 _clock.running()。
 func start_countdown(seconds: float, sub_text: String) -> void:
 	_clock.start(seconds)
 	mask.visible = true
@@ -97,8 +89,6 @@ func is_counting() -> bool:
 	return _clock.running()
 
 
-# 倒计时本地走秒(服务器只在状态切换时广播一次 round_state,两次之间由本端自己走)。★ 与 1v1 的"对手掉线中"共用同一口径(GraceWindow.tick_display),
-# 但那条住在 PvpHud 里 —— 掉线可能发生在倒计时中,两者各自走各自的。★ 脉冲衰减不受走秒早退影响(否则数字走完后画面会卡在放大态)。
 func tick(delta: float) -> void:
 	if _punch > 0.0:
 		_punch = maxf(0.0, _punch - delta * PUNCH_DECAY)
@@ -110,7 +100,6 @@ func tick(delta: float) -> void:
 		countdown_finished.emit()
 
 
-# 改大字文本,变了才重建字符串并发一次脉冲(倒计时期间每帧都会调到 —— 这层判重同时避免了每帧的字符串分配与每帧的脉冲触发)。
 func _set_big_text(t: String) -> void:
 	if big.text == t:
 		return
@@ -119,7 +108,6 @@ func _set_big_text(t: String) -> void:
 	_apply_punch()
 
 
-# 缩放脉冲:围绕面板中心放大(不是绕左上角)。★ 布局未定时(size == 0)直接跳过 —— 那时 pivot 还是原点,缩放会把面板从左上角甩出去。
 func _apply_punch() -> void:
 	if not punch_enabled or _panel == null:
 		return

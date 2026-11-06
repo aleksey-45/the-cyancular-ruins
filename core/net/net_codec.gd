@@ -1,47 +1,33 @@
 class_name NetCodec
 extends RefCounted
 
-# 线格式:把载荷从 Dictionary 换成手打包的 PackedByteArray(快照 + 输入共用一套版本字节与 schema 表)。原先每个字段都要在线上带键名字符串(每帧重复)+ 4 字节类型标签 ——
 
-const PROTO_VERSION := 9   # 2026-11-03:武器块加 chg/trg(复合弓蓄力、M249 扳机延迟可回滚)
+const PROTO_VERSION := 9
 const KIND_WORLD := 1
 const KIND_OWN := 2
 const KIND_INPUT := 3
 
-# flags 字节:世界包 / 本人包各占 1 B,**今天恒 = FULL**(1)。★ 2026-10-30 删掉 DELTA 之后它不再有第二种取值;
-# 仍保留这 1 B 是为了不动已稳定的头部布局(v6 的 FULL 包逐字节形状不变),将来要用再定义位(现在**不许**按位读)。
 const W_FULL := 1
 const OW_FULL := 1
 
 
-# ── 类型字母 ──
-const T_F := "f"      # float32,4 B(见文件头:与旧线上字节一致)
-const T_V2 := "v2"    # 向量 = 2×float32,8 B
-const T_U8 := "b"     # 0..255
-const T_I8 := "c"     # -128..127(朝向这类 ±1 量)
-# T_BOOLS:按记录把一组 bool 打包成 **1 B 标志字节**(bit0..bitN;第三元素 = 子字段名数组)。
-# ★ 为什么不是跨字段位流:两者收益等价(世界条目 51→48 B、本人包 102→94 B),但标志字节不需要 bit 游标与 padding 校验,
-#   解码也不会因为"尾部 padding 判据"制造误红/误绿;代价只是组内对齐浪费 ≤7 bit。
+const T_F := "f"
+const T_V2 := "v2"
+const T_U8 := "b"
+const T_I8 := "c"
 const T_BOOLS := "flag"
-const T_I32 := "i"    # 32 位有符号(inst / seq / tick)
-const T_U16 := "h"    # 0..65535(输入 held 位掩码:BIT_REWIND = 256 装不进 u8)
-const T_TRAIL := "trail"   # 回溯点序列:1 B 点数 + n × 2×i16(Q_SCALE 定点;2026-10-30 从 2×float32 换掉)
-# P1 定点类型(尺寸进 _schema_bytes,编解码见 encode_world / encode_input / _unpack)。
-const T_QV2 := "qv2"    # 定点向量:2×int16,步长 0.5 px(世界 pos/vel,4 B)
-const T_QAIM := "qaim"  # 瞄准方向角:u8(0..255 → 0..2π,世界 aim,1 B)
-const T_FAIM := "faim"  # 单位向量定点:2×int16(/10000,输入 aim,4 B)
+const T_I32 := "i"
+const T_U16 := "h"
+const T_TRAIL := "trail"
+const T_QV2 := "qv2"
+const T_QAIM := "qaim"
+const T_FAIM := "faim"
 
-# ── 定点量化常量(单一来源;真相源 = docs/eng/netcode-delta-and-quantization-details.md §6)──
-# ★ 位置/速度的步长不是 0.1px:i16 只有 ±32767,而最宽地图 9600px ×10 = 96000 装不下 ⇒ 取 0.5px(9600×2 = 19200,留 2.4× 余量到 16383px)。
-#   两者共用同一步长:速度的视觉敏感度远低于位置,0.25px/s 的误差不可见。★ trail(纯表现)复用同一步长。
-const Q_SCALE := 2.0          # 世界 pos/vel/trail:1 单位 = 0.5 px(0.5 px/s);量化误差 ≤0.25
-const Q_VEL_CLAMP := 6000.0   # 速度钳 ±6000 px/s(×2 = ±12000,仍在 i16 内;超界钳位不 wrap)
-const Q_AIM_STEPS := 256.0    # 世界 aim:u8 角度(方向误差 ≤π/256 ≈0.70°)
-const AIM_FP := 10000.0       # 输入 aim:单位向量的 1e-4 定点(误差 ≤1e-4,解码后 normalize)
+const Q_SCALE := 2.0
+const Q_VEL_CLAMP := 6000.0
+const Q_AIM_STEPS := 256.0
+const AIM_FP := 10000.0
 
-# 世界包每人一份(13 字段,顺序 = 线上顺序)。范围按产品常量钳:hp ≤ 50、waterproof ≤ 10、pose ≤ 4。
-# ★ v7 线上 = role(1)+flag(1)+pos4+vel4+facing1+pose1+type_id1+hp1+waterproof1+aim1+trail(1+4n)
-#   ⇒ trail 2 点 = **25 B**(v6 = 33 B)、不在回溯 = 17 B。pos/vel/trail = i16 定点(Q_SCALE)、aim = u8 角度。
 const WORLD_SCHEMA: Array = [
 	["_flags", T_BOOLS, ["downed", "previewing", "haste", "rewind"]],
 	["pos", T_QV2], ["vel", T_QV2], ["facing", T_I8], ["pose", T_U8],
@@ -49,8 +35,6 @@ const WORLD_SCHEMA: Array = [
 	["aim", T_QAIM], ["trail", T_TRAIL],
 ]
 
-# 本人包的核心整态 = player.capture_state() 的 25 个标量字段(inv 另走 INV_SCHEMA,武器块另走 WEAPON_SCHEMA —— 后者可能不存在,靠 flags 位声明)。
-# ★ c2 的 7 个 bool 打包成首字节标志 ⇒ 核心 67 B(改前 73 B)。
 const C2_SCHEMA: Array = [
 	["_flags", T_BOOLS, ["jcut", "squat", "charge", "wp_s", "clatch", "swim", "down"]],
 	["pos", T_V2], ["vel", T_V2], ["facing", T_I8], ["state", T_U8],
@@ -60,9 +44,6 @@ const C2_SCHEMA: Array = [
 	["winst", T_I32],
 ]
 
-# 当前武器的字段(仅 `capture_state()` 里 `w != null` 时存在)。★ 3 个 bool 打包成首字节标志 ⇒ 20 B(加蓄力/起转后)。
-# ★ 武器块"整体存在/整体缺席":存在性由本人包头的 FLAG_WEAPON 位声明(包恒为 FULL,不存在"字段消失"的差分包问题)。
-# ★ chg(蓄力比)/ trg(扳机延迟已累计时长)是弓与机枪的跨 tick 开火状态:漏一个,重放就会在错误的 tick 出弹。
 const WEAPON_SCHEMA: Array = [
 	["_flags", T_BOOLS, ["aiming", "fire_buf", "rld"]],
 	["fire_cd", T_F], ["aim_f", T_I8], ["aim_cf", T_I8], ["mag", T_U8], ["rld_t", T_F],
@@ -85,34 +66,21 @@ const INPUT_SCHEMA: Array = [
 
 const FLAG_WEAPON := 1
 
-# 解码侧硬顶:载荷里的长度是不可信输入(一个坏字节不该让解码端循环 255 次分配)。★ 它与发送侧上限 TRAIL_WIRE_MAX 不是同一个东西 —— 那个是"线上只带几点"的取舍。
 const TRAIL_MAX := 16
 
-# 线上最多带几个回溯点(取最近的;多余的截断、不报错):世界包必须装进一个 ENet 包,而 trail 是这个包里唯一的变长字段 ——
-# 16 人 × 物理上限(10 点)在 v7 是 8 + 16×73 = 1176 B ⇒ 1 片;v6(float32 trail)同形是 1559 B ⇒ 2 片(分片是 unreliable ⇒ 丢一片 = 整帧丢)。
-# 4 点 ⇒ 8 + 16×33 = 536 B(v6 791 B、P1 前 1031 B;留 62% 余量),残像只少最老的几个点。★ 判据在 tests/probe/snapshot_size_probe.gd ④,改这个数必须先跑它。
 const TRAIL_WIRE_MAX := 4
 
-# 编码容量预算(类加载时算一次,不每包遍历 schema):仍是 `_schema_bytes()` 派生 ⇒ 改 schema 自动跟上,不手抄数字。
 static var _INV_ENTRY_BYTES := _schema_bytes(INV_SCHEMA)
 static var _INPUT_BYTES := 2 + _schema_bytes(INPUT_SCHEMA)
-# ★ S-24(2026-10-30):世界/本人包的容量预算也缓存一次。原先 `_schema_bytes(WORLD_SCHEMA)` 每包现算(遍历 schema 字典),
-#   而它只随 schema 变化 ⇒ 与 _INV_ENTRY_BYTES 同款在类加载时算。
 static var _WORLD_ENTRY_BYTES := _schema_bytes(WORLD_SCHEMA)
 static var _OWN_BYTES := 12 + 1 + _schema_bytes(C2_SCHEMA) + _schema_bytes(WEAPON_SCHEMA) + 1
 
 
-# ── 编码(2026-10-24:手写内联)── ★ 一次性按 `_schema_bytes()` 预算容量 `resize`,然后全部就地写(`encode_s16`/`encode_float`/`encode_u32`/下标),
-# 末尾 `resize(i)` 收尾。实测 304 → 47 µs/包(N=16)。★ 定点字段的判据是 snapshot_size_probe 的尺寸 + 往返容差 + 最坏包。
-# ★ v7 起**没有差分包**了:世界包/本人包都只有一个 encode 路径;flags 字节恒 = FULL。
 
-## 世界包:`{"tick": int, "players": {"role": {…13 字段}}}`。pos/vel/trail 走定点(常量见 Q_*)、aim 走 u8 角度。
-## ★ 字段顺序/宽度必须与 WORLD_SCHEMA 一致(解码按 schema 读;漂移由 snapshot_size_probe ③ 抓)。
 static func encode_world(world: Dictionary) -> PackedByteArray:
 	var players: Dictionary = world.get("players", {})
 	var n: int = mini(players.size(), 200)
 	var out := PackedByteArray()
-	# 头 = 版本1+kind1+flags1+tick4+人数1 = 8(flags 恒 FULL);每人 role1 + 条目体。
 	out.resize(8 + n * (1 + _WORLD_ENTRY_BYTES))
 	var i := 0
 	out[i] = PROTO_VERSION
@@ -127,8 +95,6 @@ static func encode_world(world: Dictionary) -> PackedByteArray:
 	i += 1
 	var emitted := 0
 	for key in players:
-		# ★ 与容量预算对齐:`resize` 按 `mini(players.size(), 200)` 算,循环**必须**同顶 ——
-		#   旧写法只约束 resize、循环不封顶,玩家数 >200 时下标写越界 ⇒ 包被截断、解码端 `o != size` 判死(整帧丢)。
 		if emitted >= 200:
 			break
 		var e: Dictionary = players[key]
@@ -141,9 +107,7 @@ static func encode_world(world: Dictionary) -> PackedByteArray:
 	return out
 
 
-# 世界条目全字段(FULL 唯一形态)。返回新游标。
 static func _write_world_entry_body(out: PackedByteArray, i: int, e: Dictionary) -> int:
-	# bool 组(bit0 downed / bit1 previewing / bit2 haste / bit3 rewind)—— 见 WORLD_SCHEMA 的 T_BOOLS。
 	out[i] = (1 if bool(e.get("downed", false)) else 0) \
 			| (2 if bool(e.get("previewing", false)) else 0) \
 			| (4 if bool(e.get("haste", false)) else 0) \
@@ -173,17 +137,13 @@ static func _write_world_entry_body(out: PackedByteArray, i: int, e: Dictionary)
 	i += 1
 	out[i] = int(e.get("type_id", 0)) & 0xFF
 	i += 1
-	# ★ hp 必须钳到 [0,255]:倒地瞬间 hp 可为负(如 -5),& 0xFF 会回绕成 251 ⇒ 血条被钳成满(真实 bug)。
 	out[i] = clampi(int(e.get("hp", 0)), 0, 255)
 	i += 1
 	out[i] = int(e.get("waterproof", 0)) & 0xFF
 	i += 1
-	# aim 是方向 ⇒ 只存角度(u8):零向量按 RIGHT(atan2(0,0)=0)处理,语义上"无瞄准"本来就会回落到朝向。
 	var aim: Vector2 = e.get("aim", Vector2.ZERO)
 	out[i] = int(roundf(atan2(aim.y, aim.x) / TAU * Q_AIM_STEPS)) & 0xFF
 	i += 1
-	# trail:纯表现(他人回溯残像)⇒ 复用 Q_SCALE 定点(0.5px 步长、误差 ≤0.25,视觉不可辨);
-	# ★ 2026-10-30 起不再是 float32 —— 它是世界包里最大的一坨变长字段,量化后最坏包 791→536 B。
 	var trail: Array = e.get("trail", [])
 	var tn: int = mini(trail.size(), TRAIL_WIRE_MAX)
 	out[i] = tn
@@ -210,15 +170,11 @@ static func _write_world_entry_body(out: PackedByteArray, i: int, e: Dictionary)
 	return i
 
 
-## 本人包:`{"ack_seq": int, "q": int, "c2": capture_state(), "tick": int}`。
-## 头 12 B(版本/kind/flags/tick/ack/q)+ 1 B 武器标志 + c2 全字段 + 武器块(可选)+ inv。
-## ★ 字段顺序/宽度必须与 C2_SCHEMA / WEAPON_SCHEMA / INV_SCHEMA 一致(漂移由 snapshot_size_probe ③ 抓)。
 static func encode_own(own: Dictionary) -> PackedByteArray:
 	var c2: Dictionary = own.get("c2", {})
 	var inv: Array = c2.get("inv", [])
 	var n_inv: int = mini(inv.size(), 200)
 	var out := PackedByteArray()
-	# 容量按最坏算(头 12 + 武器标志 1 + 全字段 + inv);末尾 resize(i) 裁尾。
 	out.resize(_OWN_BYTES + n_inv * _INV_ENTRY_BYTES)
 	var i := 0
 	out[i] = PROTO_VERSION
@@ -239,12 +195,10 @@ static func encode_own(own: Dictionary) -> PackedByteArray:
 	return out
 
 
-# 本人包体(武器标志 + c2 全字段 + inv,布局 = C2_SCHEMA / WEAPON_SCHEMA / INV_SCHEMA)。
 static func _write_own_body(out: PackedByteArray, i: int, c2: Dictionary) -> int:
 	var flags := FLAG_WEAPON if c2.has("fire_cd") else 0
 	out[i] = flags
 	i += 1
-	# c2 的 bool 组(bit0 jcut / 1 squat / 2 charge / 3 wp_s / 4 clatch / 5 swim / 6 down)。
 	out[i] = (1 if bool(c2.get("jcut", false)) else 0) \
 			| (2 if bool(c2.get("squat", false)) else 0) \
 			| (4 if bool(c2.get("charge", false)) else 0) \
@@ -285,7 +239,6 @@ static func _write_own_body(out: PackedByteArray, i: int, c2: Dictionary) -> int
 	i += 4
 	out.encode_float(i, float(c2.get("wp_d", 0.0)))
 	i += 4
-	# 同 world.hp:倒地后 hp 可能为负,& 0xFF 会回绕 ⇒ c2 重放/血条读到 251。钳到 0。
 	out[i] = clampi(int(c2.get("hp", 0)), 0, 255)
 	i += 1
 	out.encode_float(i, float(c2.get("ifr", 0.0)))
@@ -300,7 +253,6 @@ static func _write_own_body(out: PackedByteArray, i: int, c2: Dictionary) -> int
 	out.encode_u32(i, int(c2.get("winst", 0)))
 	i += 4
 	if flags & FLAG_WEAPON != 0:
-		# 武器块 bool 组(bit0 aiming / bit1 fire_buf / bit2 rld),后面是其余字段。
 		out[i] = (1 if bool(c2.get("aiming", false)) else 0) \
 				| (2 if bool(c2.get("fire_buf", false)) else 0) \
 				| (4 if bool(c2.get("rld", false)) else 0)
@@ -345,12 +297,7 @@ static func _read_inv(r: Dictionary) -> Array:
 	return inv
 
 
-## 输入包:60Hz 一包一条 tick 记录(seq/held/ax/pressed/released/winst/aim/st/ct)。
-## `{"seq","held0","held1","ax0","ax1","pressed0","pressed1","released0","released1","winst0","winst1","aim","st","ct"}`
-## 头 2 B + 记录 40 B = **42 B**(P1 前 46 B;7 键 Dictionary 时代 164 B/包)。
-## ★ aim = 单位向量 1e-4 定点(2×i16);顺序/宽度必须与 INPUT_SCHEMA 一致(漂移由 net_wire_smoke 的往返抓)。
 static func encode_input(pkt: Dictionary) -> PackedByteArray:
-	# 一条 tick 记录 = 2 B 头 + 26 B(PROTO_VERSION 8);60Hz 发包 ⇒ ≈1.68 KB/s/客户端。
 	var out := PackedByteArray()
 	out.resize(_INPUT_BYTES)
 	var i := 0
@@ -360,7 +307,7 @@ static func encode_input(pkt: Dictionary) -> PackedByteArray:
 	i += 1
 	out.encode_u32(i, int(pkt.get("seq", 0)))
 	i += 4
-	var held := int(pkt.get("held", 0))   # u16:BIT_REWIND=256 必须留高位
+	var held := int(pkt.get("held", 0))
 	out[i] = held & 0xFF
 	i += 1
 	out[i] = (held >> 8) & 0xFF
@@ -392,13 +339,12 @@ static func encode_input(pkt: Dictionary) -> PackedByteArray:
 
 
 # ── 解码 ── 任一字段越界 ⇒ 返回 {}(调用方据此不 emit):宁可这一帧没有快照,也不要把错位的值喂进预测面。
-# ★ 解码保持**表驱动**(`_unpack`):解码侧是不可信输入,逐字段守边界;且 schema 是"字段集合"的单一来源(probe 的逐键对齐判据也读它)。
+# ★ 解码保持表驱动(`_unpack`):解码侧是不可信输入,逐字段守边界;且 schema 是"字段集合"的单一来源(probe 的逐键对齐判据也读它)。
 
 static func decode_world(data: PackedByteArray) -> Dictionary:
 	if not _header_ok(data, KIND_WORLD):
 		return {}
 	var r := {"d": data, "o": 2, "bad": false}
-	# flags 必须恰为 FULL(v7 没有第二种取值;别的位 = 不是本版本载荷 ⇒ 拒)。
 	if _rd_u8(r) != W_FULL:
 		return {}
 	var tick := _rd_u32(r)
@@ -406,7 +352,6 @@ static func decode_world(data: PackedByteArray) -> Dictionary:
 	var players := {}
 	for i in n:
 		var role := _rd_u8(r)
-		# ★ 不往条目里塞 role:它就是 players 的键(消费方一律 players.get(str(role))),塞进去会让解码结果比原 dict 多一个键。
 		players[str(role)] = _unpack(r, WORLD_SCHEMA)
 	if bool(r["bad"]) or int(r["o"]) != data.size():
 		return {}
@@ -444,7 +389,6 @@ static func decode_input(data: PackedByteArray) -> Dictionary:
 	return pkt
 
 
-# ── 表驱动解包(读侧;写侧见各 encode_*)──
 
 static func _unpack(r: Dictionary, schema: Array) -> Dictionary:
 	var d := {}
@@ -469,7 +413,6 @@ static func _unpack(r: Dictionary, schema: Array) -> Dictionary:
 			T_I8:
 				d[key] = _rd_i8(r)
 			T_BOOLS:
-				# 一组 bool 共用一个标志字节(bit0..bitN;子字段名在 schema 第三元素)。
 				var fb := _rd_u8(r)
 				var subs: Array = f[2]
 				for bi in subs.size():
@@ -487,12 +430,11 @@ static func _rd_trail(r: Dictionary) -> Array:
 	var n := mini(_rd_u8(r), TRAIL_MAX)
 	var out: Array = []
 	for i in n:
-		# 保持 [x, y] 数组形态(客户端按 pt[0]/pt[1] 下标读);值 = i16/Q_SCALE(0.5px 网格)。
 		out.append([_rd_i16(r) / Q_SCALE, _rd_i16(r) / Q_SCALE])
 	return out
 
 
-# 每条 schema 记录的线上字节数 —— 编码容量预算的**唯一来源**(改 schema 自动跟着变,不会另抄一份数字漂掉)。
+# 每条 schema 记录的线上字节数 —— 编码容量预算的唯一来源(改 schema 自动跟着变,不会另抄一份数字漂掉)。
 static func _schema_bytes(schema: Array) -> int:
 	var n := 0
 	for f in schema:
@@ -514,9 +456,7 @@ static func _schema_bytes(schema: Array) -> int:
 	return n
 
 
-# ── 定长读(小端,游标 + 越界守卫)──
 
-# 统一长度守卫:吃掉 n 字节并返回字段起始下标;越界 ⇒ bad=true + 返 -1(调用方据此返 0)。
 static func _take(r: Dictionary, n: int) -> int:
 	var o: int = r["o"]
 	var d: PackedByteArray = r["d"]

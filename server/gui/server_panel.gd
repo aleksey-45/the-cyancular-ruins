@@ -1,13 +1,11 @@
 extends CanvasLayer
 
-# 服务端控制台:大厅进程内的只读运维面板。唯一的写操作是「关闭房间」,且走 teardown_room 单一收口。
 
 const LAYER := 100
 
 const THEME_MENU := preload("res://ui/theme/menu_theme.tres")
 const BUILD_INFO := preload("res://core/config/build_info.gd")
 
-# 版面账(spec §5.1):1920x1440 逻辑空间,margin 76 ⇒ 1768x1288;中段 = 左 1080 + 40 + 右 648。
 const PAGE_MARGIN := 76
 const SEP := 24
 const PAD := Vector2(32, 20)
@@ -15,7 +13,6 @@ const LEFT_W := 1080
 const RIGHT_W := 648
 const MID_GAP := 40
 
-# 房间表:行高/间隔/可见行数上限(MAXIMIZE_FIRST 靠 custom_maximum_size 限高)。
 const ROW_H := 60
 const ROW_GAP := 8
 const ROOM_ROWS_MAX := 6
@@ -29,19 +26,15 @@ const COL_TITLES := ["房号", "模式", "人数", "状态", "端口", "房龄",
 const COL_WIDTHS := [104, 152, 88, 168, 104, 104, 0]
 
 const REFRESH_SEC := 0.5
-# 破坏性动作的二次确认窗口:超时自动回退(不弹 AcceptDialog —— 省一个控件的可用性风险)。
-const CONFIRM_SEC := 3.0      # 关闭房间的二次确认窗口
-const HINT_SEC := 4.0         # 一次性提示(「房间已不存在」这类)停留多久
+const CONFIRM_SEC := 3.0
+const HINT_SEC := 4.0
 
-# 日志区(spec §8):正文 16(密度档),滚动条可见,增量 tail worker_<端口>.log。
 const LOG_FONT := preload("res://assets/fonts/menu_font.tres")
-const LOG_MAX_CHARS := PanelLogTail.DEFAULT_MAX_CHARS   # 单一来源在 PanelLogTail(纯逻辑);这里只是面板侧别名
+const LOG_MAX_CHARS := PanelLogTail.DEFAULT_MAX_CHARS
 
-# ★ 三态的颜色语义(spec §5.6):等待中退后、对局中金、worker 已退出红。
 const STATE_TEXT := {ServerStatus.STATE_WAITING: "等待中",
 		ServerStatus.STATE_IN_MATCH: "对局中", ServerStatus.STATE_STALE: "worker 已退出"}
 
-# 房种 → 显示名 / 颜色。★ 一处定义,行与「所选房间」都用它:分两处抄迟早漂(改一处漏另一处)。
 const KIND_TEXT := {"1v1": "1v1", "royale": "大乱斗", "team": "对抗"}
 
 var _rm: RoomManager = null
@@ -52,13 +45,12 @@ var _acc := 0.0
 var _overview: Label = null
 var _footnote: Label = null
 var _rooms_meta: Label = null
-var _hint_left := 0.0           # 一次性提示剩余秒数(见 _set_hint / HINT_SEC)
+var _hint_left := 0.0
 var _rows_col: VBoxContainer = null
-var _rows: Dictionary = {}      # row_key(kind, code) -> {panel, cells, code, kind}
+var _rows: Dictionary = {}
 # ★ 初值必须与"空房集合"不同:否则首次刷新判定"集合没变"⇒ 跳过重建 ⇒ 空态那一行永远不建。
 var _codes: Array = [""]
 
-# 右列(所选房间 + 名单):选中哪间房就显示哪间的,没选中时两块一起隐藏。
 var _sel_block: PanelContainer = null
 var _roster_block: PanelContainer = null
 var _sel_code_lbl: Label = null
@@ -68,25 +60,23 @@ var _sel_host_lbl: Label = null
 var _close_btn: Button = null
 var _roster_meta: Label = null
 var _roster_col: VBoxContainer = null
-var _roster_sig: Array = []     # 名单内容签名:没变就不重建(否则每 0.5s 丢掉滚动位置)
+var _roster_sig: Array = []
 var _selected_code := ""
-var _selected_kind := ""        # 与 code 一起用来精确定位房对象(三张表房号空间重叠)
-var _armed_code := ""           # 二次确认武装时的目标;执行时必须与当前选中完全相同
+var _selected_kind := ""
+var _armed_code := ""
 var _armed_kind := ""
 var _confirming := false
 var _confirm_left := 0.0
 
-# 日志区:跟随所选房间的 worker 日志。offset 增量读 + 跟随/暂停。
 var _log_meta: Label = null
 var _log_rtl: RichTextLabel = null
 var _log_scroll: ScrollContainer = null
 var _log_path := ""
-var _log_tail := PanelLogTail.new()   # 增量读 / 半行 / 有界截断的纯逻辑(S-13① 抽出)
+var _log_tail := PanelLogTail.new()
 var _log_follow := true
-var _scroll_bottom_pending := false   # 延到下一帧再滚到底(I1:同帧 max_value 还是旧值)
+var _scroll_bottom_pending := false
 
 
-# 面板唯一入口:由 server_main.gd 注入。★ 在 _ready 之后调用(add_child 已触发过 _ready)。
 func setup(room_manager: RoomManager, lan_ip_text: String) -> void:
 	_rm = room_manager
 	_lan_ip = lan_ip_text
@@ -123,12 +113,9 @@ func _ready() -> void:
 	_audit_if_requested()
 
 
-# ── 标题带:身份(版本 / pid / 端口) ─────────────────────────────────────────
 
 func _build_header() -> Control:
 	var strip := UiFactory.header_strip("服 务 器 控 制 台")
-	# ★ header_strip 的左内边距是刻意的 0(菜单页里让金色标题与正文同列),搬到本页就顶格了。
-	#   这里只在本页把左右内边距覆盖成 PAD.x,与下面各面板的文字列对齐 —— 不动工厂。
 	var sb := (strip.get_theme_stylebox("panel") as StyleBoxFlat).duplicate() as StyleBoxFlat
 	sb.content_margin_left = PAD.x
 	sb.content_margin_right = PAD.x
@@ -147,7 +134,6 @@ func _build_header() -> Control:
 	return strip
 
 
-# ── 概览条:同一件事只在这一处说(spec §5.2) ────────────────────────────────
 
 func _build_overview() -> Control:
 	var panel := UiFactory.menu_panel(Vector2(PAD.x, 14))
@@ -159,14 +145,11 @@ func _build_overview() -> Control:
 	_overview = UiFactory.label("", 32, UiFactory.C_TEXT)
 	col.add_child(_overview)
 
-	# ★ 脚注 16 号:它是脚注(机器读数/一次性须知),不是表头也不是数据。
-	#   判断依据是「读者要不要用它做决定」,不是大小好看。
 	_footnote = UiFactory.label("", 16, UiFactory.C_TEXT_MUTE)
 	col.add_child(_footnote)
 	return panel
 
 
-# ── 中段:左房间表 / 右(所选房间 + 名单,后续 task) ──────────────────────────
 
 func _build_middle() -> Control:
 	var row := HBoxContainer.new()
@@ -200,7 +183,6 @@ func _build_selected_block() -> PanelContainer:
 
 	var head := HBoxContainer.new()
 	head.add_theme_constant_override("separation", 24)
-	# 房号 48 = 全屏唯一的主角(spec §5.3)
 	_sel_code_lbl = UiFactory.label("", 48, UiFactory.C_WHITE)
 	_sel_mode_lbl = UiFactory.label("", 32, UiFactory.C_TEXT)
 	head.add_child(_sel_code_lbl)
@@ -212,7 +194,6 @@ func _build_selected_block() -> PanelContainer:
 	_sel_host_lbl = UiFactory.label("", 32, UiFactory.C_TEXT_DIM)
 	col.add_child(_sel_host_lbl)
 
-	# 破坏性且低频的动作:尺寸降档(560x72 → 420x64),只给受害者颜色 C_DANGER。
 	_close_btn = UiFactory.menu_button("关 闭 房 间", 32, Vector2(420, 64), "quiet")
 	_close_btn.add_theme_color_override("font_color", UiFactory.C_DANGER)
 	_close_btn.add_theme_color_override("font_hover_color", UiFactory.C_DANGER)
@@ -258,7 +239,6 @@ func _build_rooms_block() -> PanelContainer:
 
 	var head := HBoxContainer.new()
 	head.add_theme_constant_override("separation", 16)
-	# ★ 分区标题要与表格列文字对齐:row_box 有 16px 左内边距 ⇒ 标题跟着缩 16(见 mock 的内缩审计)。
 	head.add_child(_inset_left(UiFactory.label("房 间", 32, UiFactory.C_GOLD), 16))
 	head.add_child(_spacer())
 	_rooms_meta = UiFactory.label("", 32, UiFactory.C_TEXT_DIM)
@@ -269,7 +249,6 @@ func _build_rooms_block() -> PanelContainer:
 
 	var scroll := ScrollContainer.new()
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	# ★ MAXIMIZE_FIRST:房间少则收缩、超过 ROOM_ROWS_MAX 行才滚(原生行为,不必手写高度上限)。
 	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_MAXIMIZE_FIRST
 	scroll.custom_maximum_size.y = ROOM_ROWS_MAX * ROW_H + (ROOM_ROWS_MAX - 1) * ROW_GAP
 	_style_vbar(scroll.get_v_scroll_bar())
@@ -286,24 +265,18 @@ func _build_rooms_header() -> Control:
 	row.add_theme_constant_override("separation", 0)
 	for i in COL_TITLES.size():
 		row.add_child(_cell(str(COL_TITLES[i]), int(COL_WIDTHS[i]), 32, UiFactory.C_TEXT_DIM))
-	# ★ 数据行的 row_box 有 16px 左右内边距,列头没有 ⇒ 不补这 16 会整列错位。
 	return _inset(row, 16)
 
 
-# ── 刷新 ────────────────────────────────────────────────────────────────────
 
 func _process(delta: float) -> void:
-	# 二次确认倒计时:走每一帧(不跟 0.5s 刷新节流),超时自动回退。
 	if _confirming:
 		_confirm_left -= delta
 		if _confirm_left <= 0.0:
 			_reset_confirm()
-	# 日志跟随的"滚到底"必须晚一帧才生效(I1):append 当帧的 max_value 还没被布局更新,
-	# 同帧设 scroll_vertical 会被钳在旧底部,下一帧就判成"用户往上滚了"⇒ 跟随自己关掉。
 	if _scroll_bottom_pending:
 		_scroll_bottom_pending = false
 		_scroll_log_to_bottom()
-	# 一次性提示的倒计时(房间已不存在这类结果):到点自己清掉,别留一行过期文字在屏上。
 	if _hint_left > 0.0:
 		_hint_left -= delta
 		if _hint_left <= 0.0 and _rooms_meta != null:
@@ -317,8 +290,6 @@ func _process(delta: float) -> void:
 	_refresh()
 
 
-# 取一次快照。★ 一次刷新只读一次:计数 / 房间 / 名单全从同一个 snap 出来 ——
-# 分两次读会被两次读之间的房间增删穿过,渲染出「(3 间) + 现在没有房间」这种自相矛盾的屏。
 func _snapshot() -> Dictionary:
 	if _rm == null or _rm.lobby == null:
 		return {}
@@ -350,8 +321,6 @@ func _render_overview(counts: Dictionary) -> void:
 func _update_footnote() -> void:
 	if _footnote == null:
 		return
-	# ★ 只取第一个网卡:控制台打的是"把第一个填进去",而这里原先会把整串逗号列表塞进脚注
-	#   (多网卡的机器上那行读不出可用地址,还会顶破 1768 的横向预算)。
 	var ip := "未检测到"
 	if not _lan_ip.is_empty():
 		ip = _lan_ip.split(",")[0].strip_edges()
@@ -377,7 +346,6 @@ func _rebuild_rows(rooms: Array[Dictionary]) -> void:
 		c.queue_free()
 	_rows.clear()
 	if rooms.is_empty():
-		# 空态:不能让表看起来"渲染失败"。★ 概览/右列也要一起变 0(由各自的刷新负责)。
 		_rows_col.add_child(UiFactory.label("现在没有房间。玩家建房后会出现在这里。", 32, UiFactory.C_TEXT_MUTE))
 		return
 	for r in rooms:
@@ -395,9 +363,6 @@ func _rebuild_rows(rooms: Array[Dictionary]) -> void:
 			row.add_child(l)
 			cells.append(l)
 		panel.custom_minimum_size.y = ROW_H
-		# 点行 = 选中。★ 行是 PanelContainer(不是 Button):用 gui_input 收点击 ——
-		#   若为可点把 7 个 Label 塞进 Button 再手工排版,行会比现在脆得多。
-		# ★ 必须把 (code, kind) 一起绑上:三张表房号空间重叠,只绑房号会选中错表的那间。
 		panel.mouse_filter = Control.MOUSE_FILTER_STOP
 		panel.gui_input.connect(_on_row_input.bind(code, kind))
 		_rows_col.add_child(panel)
@@ -433,13 +398,9 @@ func _apply_row(cells: Array[Label], r: Dictionary) -> void:
 	cells[6].add_theme_color_override("font_color", UiFactory.C_TEXT_DIM)
 
 
-# ── 选中态 + 右列 ───────────────────────────────────────────────────────────
 
-# 每 0.5s 跟着快照走:选中的房还在就刷新右列,没了就退回空态。
-# ★ 不退回第一行 —— 那会让人以为系统自动替他选了另一间房。
 func _sync_selection(rooms: Array[Dictionary]) -> void:
 	var found: Dictionary = {}
-	# ★ 必须同时比对 (code, kind):三张表房号空间重叠,只比房号会挂到另一张表的同号房。
 	for r in rooms:
 		if str(r["code"]) == _selected_code and str(r["kind"]) == _selected_kind:
 			found = r
@@ -474,7 +435,6 @@ func _render_selected(r: Dictionary) -> void:
 		_sel_info_lbl.text = "端口 %d · 进程 %d 在" % [port, pid]
 		_sel_info_lbl.add_theme_color_override("font_color", UiFactory.C_TEXT_DIM)
 	else:
-		# ★ 与表里那一行的红字同色:异常必须在两个面上看起来一样,别让明细用暗色稀释它。
 		_sel_info_lbl.text = "端口 %d · 进程 %d 已退出" % [port, pid]
 		_sel_info_lbl.add_theme_color_override("font_color", UiFactory.C_DANGER)
 	_sel_host_lbl.text = "房主 %s" % str(r["host"])
@@ -482,8 +442,6 @@ func _render_selected(r: Dictionary) -> void:
 
 func _render_roster(r: Dictionary) -> void:
 	var roster: Array = r["roster"]
-	# ★ online_known=false 表示这间房在打(成员已转连 worker)⇒ 名单是开局冻结的快照,
-	#   面板不许声称谁在线。标题上直接写清楚。
 	var frozen := not bool(r["online_known"])
 	_roster_meta.text = ("局中快照 · %d 人" % roster.size()) if frozen else ("%d 人" % roster.size())
 
@@ -507,7 +465,6 @@ func _render_roster(r: Dictionary) -> void:
 		row.add_theme_constant_override("separation", 0)
 		panel.add_child(row)
 		row.add_child(_cell(str(int(e["role"])), 56, 32, UiFactory.C_TEXT_DIM))
-		# ★ 名字按 ui.md 的 HUD 节口径定宽截断(14 单位 @ 32 号),不截会顶宽、不补会错列。
 		row.add_child(_cell(UiFactory.fit_name(str(e["name"]), ROSTER_UNITS), 0, 32, UiFactory.C_TEXT))
 		panel.custom_minimum_size.y = ROSTER_ROW_H
 		_roster_col.add_child(panel)
@@ -560,8 +517,6 @@ static func _kind_color(kind: String) -> Color:
 	return UiFactory.C_TEXT
 
 
-# 房间区标题右侧那一行:平时空着,只在关房失败这类"一次性结果"上写一句,几秒后自动消失。
-# ★ 复用它而不是新开一行:页面横向预算正好 1768(无余量),多一行文字随时会顶破。
 func _set_hint(text: String) -> void:
 	if _rooms_meta == null:
 		return
@@ -574,13 +529,10 @@ func _show_right(v: bool) -> void:
 	_roster_block.visible = v
 
 
-# ── 关闭房间(唯一的写操作) ─────────────────────────────────────────────────
-# 两步:第一次点变「确认关闭 X?」并起 3s 倒计时,第二次点才真执行。
 func _on_close_pressed() -> void:
 	if _selected_code.is_empty():
 		return
 	if not _confirming:
-		# ★ 武装时把目标一起记下来;执行时必须比对(C1:中途改选不能误关)。
 		_confirming = true
 		_confirm_left = CONFIRM_SEC
 		_armed_code = _selected_code
@@ -601,7 +553,6 @@ func _reset_confirm() -> void:
 		_close_btn.add_theme_color_override("font_color", UiFactory.C_DANGER)
 
 
-# ★★ 执行时重新解析房对象,绝不拿快照里的对象直接操作:
 func _close_room() -> void:
 	# ★★ C1:武装的目标必须仍是当前选中的目标,否则一律不执行(判据 = ServerStatus.can_close)。
 	#   武装后改选别行 ⇒ 这一次点击只是取消武装,不会关掉任何房。
@@ -615,7 +566,6 @@ func _close_room() -> void:
 		return
 	var room = LobbySnapshot.room_for_panel(_rm.lobby, code, kind)
 	if room == null:
-		# 从渲染到点击之间房已经没了:no-op + 说一句(计划 Task 6 Step 1 要求)。
 		_set_hint("房间 %s 已不存在" % code)
 		_refresh()
 		return
@@ -623,9 +573,6 @@ func _close_room() -> void:
 	_refresh()
 
 
-# ── 日志区 ──────────────────────────────────────────────────────────────────
-# ★ RichTextLabel 即便 scroll_active=true 也不画滚动条(设计期实测:只给一个"无从判断位置的死盒子")
-#   ⇒ 用 ScrollContainer(可见滚动条 + 滚轮)+ fit_content 的 RichTextLabel。
 
 func _build_log_block() -> Control:
 	var panel := UiFactory.menu_panel(PAD)
@@ -639,7 +586,6 @@ func _build_log_block() -> Control:
 	head.add_child(UiFactory.label("日 志", 32, UiFactory.C_GOLD))
 	head.add_child(_spacer())
 	_log_meta = UiFactory.label("未选中房间", 32, UiFactory.C_TEXT_DIM)
-	# 点标题 = 回到底部(暂停跟随后的恢复口)
 	_log_meta.mouse_filter = Control.MOUSE_FILTER_STOP
 	_log_meta.gui_input.connect(_on_log_meta_input)
 	head.add_child(_log_meta)
@@ -647,14 +593,13 @@ func _build_log_block() -> Control:
 
 	_log_scroll = ScrollContainer.new()
 	_log_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	# ★ AUTO:ScrollContainer 的 min_size.y 恒为 0(spec §2.2)⇒ 高度完全由下面的 EXPAND 决定。
 	_log_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	_log_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_style_vbar(_log_scroll.get_v_scroll_bar())
 
 	_log_rtl = RichTextLabel.new()
 	_log_rtl.bbcode_enabled = false
-	_log_rtl.fit_content = true          # 高度随内容 ⇒ 由 ScrollContainer 滚
+	_log_rtl.fit_content = true
 	_log_rtl.scroll_active = false
 	_log_rtl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_log_rtl.add_theme_font_override("normal_font", LOG_FONT)
@@ -677,18 +622,15 @@ func _on_log_meta_input(event: InputEvent) -> void:
 		_update_log_meta()
 
 
-# 跟随所选房间:没选中 ⇒ 「未选中房间」;选中了但还没开局 ⇒ 「尚未开局(无 worker 日志)」。
 func _refresh_log(room: Dictionary) -> void:
 	var port := int(room["worker_port"]) if not room.is_empty() else 0
 	if port <= 0 or _rm == null or _rm.lobby == null or _rm.lobby.launcher == null:
 		_clear_log()
-		# ★ 右列明明选着一间房,日志区却写"未选中房间"会自相矛盾 —— 分开说。
 		if not room.is_empty() and port <= 0:
 			_log_meta.text = "尚未开局(无 worker 日志)"
 		return
 	var path := _rm.lobby.launcher.log_path(port)
 	if path != _log_path:
-		# 换房间/换 worker:重置 offset 与跟随状态
 		_log_path = path
 		_log_tail.reset()
 		_log_rtl.text = ""
@@ -699,7 +641,6 @@ func _refresh_log(room: Dictionary) -> void:
 	if _log_follow and not was_at_bottom:
 		_log_follow = false
 	elif not _log_follow and was_at_bottom:
-		# I2:用户自己滚回了底部 ⇒ 恢复跟随(spec §8 要求:点标题或滚到底部)
 		_log_follow = true
 	_append_log_delta()
 	if _log_follow:
@@ -709,9 +650,6 @@ func _refresh_log(room: Dictionary) -> void:
 	_update_log_meta()
 
 
-# 增量读(口径见 PanelLogTail 文件头):半行留给下一轮;轮转归零;超上限整段重建。
-# ★ 用 add_text 而不是 append_text:后者即使 bbcode_enabled=false 也会解析 BBCode,
-#   日志里出现 [b] 这类片段会被吞掉或改样式(实测)。
 func _append_log_delta() -> void:
 	var res := _log_tail.read_delta(_log_path)
 	if bool(res["rotated"]):
@@ -752,7 +690,6 @@ func _scroll_log_to_bottom() -> void:
 	_log_scroll.scroll_vertical = int(_log_scroll.get_v_scroll_bar().max_value)
 
 
-# ── 小件 ────────────────────────────────────────────────────────────────────
 
 func _cell(text: String, w: int, size: int, color: Color) -> Label:
 	var l := UiFactory.label(text, size, color)
@@ -811,9 +748,6 @@ func _mmss(sec: float) -> String:
 	return "%02d:%02d" % [s / 60, s % 60]
 
 
-# ── 设计期仪器(不是守卫)已挪到 `server/gui/panel_inset_audit.gd`(S-13② 2026-10-30;2026-10-31 从
-# `tools/` 挪回 `server/gui/` —— 导出包排除 `tools/*`,否则服务端 exe 解析这个类名失败):面板是 Node,
-# 仪器与版式构造缠在一起不可单独跑。这里只剩开关:开关关着时一行都不打。
 func _audit_if_requested() -> void:
 	if not PanelInsetAudit.requested():
 		return

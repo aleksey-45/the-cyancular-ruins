@@ -1,10 +1,9 @@
 extends SceneTree
 
-# 地图「按阵营半区的复活点」数据(`# respawn <1|2> <col> <row>`)的校验 / 建议 / 写盘工具。
 
-const MIN_PER_SIDE := 5      # 每侧最少点数(对抗每队最多 5 人 ⇒ 够 5 人取点且不重复的前提)
-const BUCKETS := 9           # 半区内 3 列 × 3 行
-const MIN_SIDE_GAP := 5      # 同侧两两最小环面距离(格)
+const MIN_PER_SIDE := 5
+const BUCKETS := 9
+const MIN_SIDE_GAP := 5
 
 var _fails: Array[String] = []
 
@@ -18,7 +17,6 @@ func _initialize() -> void:
 		return
 	var map_path := str(opt.get("map", ""))
 	MazeGenerator.set_map_file(map_path)
-	# 不用 WorldBuilder.load_grid():它静态引用 GameParameters(autoload),在 `-s` 下编译不过。本工具只需要格级网格。
 	var grid := MazeGenerator.load_map_file()
 	if grid.is_empty():
 		print("MAP SPAWN META: FAIL —— 地图加载失败 %s" % map_path)
@@ -119,9 +117,6 @@ func _parse_cells(text: String) -> Array:
 	return out
 
 
-# 合格判据的唯一实现(校验 / 建议共用):返回失败原因;空串 = 合格。
-# 判据全部来自 SpawnPicker(不另造几何):地板格(本格空 + 正下方挡路 + 头顶 1 格净空)+ 头顶 2 格净空
-# + **可抵达**(跳跃感知图的主连通分量,防四面是墙的小密室 —— 上一轮"连通区 ≥2"挡不住它)。
 func _bad_reason(c: Vector2i) -> String:
 	var d := SpawnPicker.grid_dims()
 	if c.x < 0 or c.y < 0 or c.x >= d.x or c.y >= d.y:
@@ -158,7 +153,6 @@ func _check_side(side: int, arr: Array, dims: Vector2i, is_pvp: bool) -> void:
 			bad += 1
 			continue
 		buckets[SpawnChooser.bucket_of(c, side, dims)] = true
-	# 3×3 桶覆盖只对 PvP 图(有 # player2)强制:单机 demo 图的多房间主可达区只覆盖部分桶,无法满足也无法用于 PvP。
 	if bad == 0 and is_pvp:
 		for b in BUCKETS:
 			if not buckets.has(b):
@@ -199,8 +193,6 @@ func _side_pool(side: int, dims: Vector2i) -> Array:
 	return out
 
 
-# 均匀撒点建议:每个 3×3 桶挑 1 个「离已选点最远」的合格格(贪心最远点、确定性)——天然均匀且互不靠近。
-# ★ 只打印、不写盘:确认后用同一串坐标 `--respawn1/--respawn2` 写死进地图(数据仍是人手确认的固定值)。
 func _suggest(dims: Vector2i, only_side: int) -> void:
 	for side in [1, 2]:
 		if only_side != 0 and only_side != side:
@@ -261,7 +253,7 @@ func _write(map_path: String, r1: Array, r2: Array) -> void:
 	for line in lines:
 		var parts := String(line).strip_edges().substr(1).strip_edges().split(" ", false)
 		var kw := parts[0] if not parts.is_empty() else ""
-		if kw in ["respawn", "spawn", "teamspawn"]:   # 本轮管理的关键字(旧两轮的 # spawn / # teamspawn 一并清掉)
+		if kw in ["respawn", "spawn", "teamspawn"]:
 			continue
 		kept.append(line)
 	for c in r1:

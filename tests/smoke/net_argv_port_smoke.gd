@@ -1,9 +1,7 @@
 extends SceneTree
-# 端口解析守卫(netstat 行解析 + `--port` 启动参数校验)。存在理由(逐条对应真实缺陷):
 
 const EXPECTED_CHECKS := 5
 
-# 与真机 `netstat -ano` 逐字同形(空格数不必精确 —— 解析用 split 空白的写法)。
 const UDP_LINE := "  UDP    0.0.0.0:7777         *:*                                    1234  "
 const UDP_LINE_V6 := "  UDP    [::]:7777            *:*                                    4321  "
 const TCP_LINE := "  TCP    0.0.0.0:7777        0.0.0.0:0       LISTENING       5678  "
@@ -20,8 +18,6 @@ func _chk(ok: bool, msg: String) -> void:
 
 
 func _initialize() -> void:
-	# ── ① UDP 行(含 IPv4/IPv6):必须取到最后一列的 pid ──
-	# 去掉什么才红:把 `_pid_of_udp_line` 的列数判据改回 `>= 5`(UDP 只有 4 列)⇒ 这条红。
 	_chk(ProcUtil._pid_of_udp_line(UDP_LINE, 7777) == 1234
 			and ProcUtil._pid_of_udp_line(UDP_LINE_V6, 7777) == 4321,
 			"netstat 的 UDP 行(4 列,IPv4/IPv6)必须解析出属主 pid")
@@ -32,14 +28,10 @@ func _initialize() -> void:
 			and ProcUtil._pid_of_udp_line(TCP_REMOTE, 7777) == -1,
 			"TCP 行(TCP LISTENING / 对端 7777)不算 UDP 端口属主")
 
-	# ── ③ 端口必须按"冒号后整段"比,不能前缀匹配 ──
-	# 去掉什么才红:把 `_addr_has_port` 改回 `addr.contains(":" + str(port))` ⇒ `:17777` 会命中 ⇒ 这条红。
 	var addr_line := "  UDP    0.0.0.0:17777        *:*                                    9999  "
 	_chk(ProcUtil._pid_of_udp_line(addr_line, 7777) == -1,
 			":17777 不得被当成 :7777(端口按冒号后整段解析,不做前缀匹配)")
 
-	# ── ④ `--port` 非法值一律拒绝启动(非法 token / 缺值 / 越界)──
-	# 去掉什么才红:把 `_parse_port` 换回 `ctx["port"] = int(args[i + 1])` ⇒ `--port abc` 的 ok 变 true ⇒ 这条红。
 	var c_bad := ModeContext.from_args(PackedStringArray(["--worker", "--port", "abc"]), 7777)
 	var c_missing := ModeContext.from_args(PackedStringArray(["--worker", "--port"]), 7777)
 	var c_zero := ModeContext.from_args(PackedStringArray(["--worker", "--port", "0"]), 7777)
@@ -48,8 +40,6 @@ func _initialize() -> void:
 			and not bool(c_zero["ok"]) and not bool(c_big["ok"]),
 			"--port 非整数 / 缺值 / 0 / 70000 都必须 ok=false(拒绝启动)")
 
-	# ── ⑤ 合法 `--port` 原样进 ctx,且不误伤 1v1 的默认 role 兜底 ──
-	# 去掉什么才红:改 `_parse_port` 不写 ctx["port"] ⇒ 端口回落 7777 ⇒ 这条红。
 	var c_ok := ModeContext.from_args(PackedStringArray(["--worker", "--port", "8123"]), 7777)
 	_chk(bool(c_ok["ok"]) and int(c_ok["port"]) == 8123 and (c_ok["roles"] as Array) == [1, 2],
 			"合法 --port 8123 原样进 ctx,且 1v1 的 role 兜底 [1, 2] 不受影响")

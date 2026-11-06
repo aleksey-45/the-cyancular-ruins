@@ -1,32 +1,24 @@
 class_name TimeFx
 extends RefCounted
 
-## PvP beta 时间玩法的他人视效状态(组合件):自己残影节拍 + 以副本节点为键的三张表(加速重影节拍 / 回溯底片材质 / 轨迹残像)。
-## 宿主 bind(client) 后每帧 tick();副本被拆时**先 detach(rep) 再 queue_free** —— 残影宿主挂在 _world、不在副本子树里,
-## 节点释放后这些键再也碰不到,漏 detach 就是永久节点泄漏(BUG-19)。
-## ★ 1v1 不覆写 _all_replicas()(基类恒空)⇒ tick 的他人段是空集合 no-op;beta 也不在 1v1 开。
 
-const TIME_GLOW_SELF := Color(0.30, 0.62, 1.0)    # 自己加速:冷白蓝(与单机主角同色)
-const TIME_GLOW_OTHER := Color(1.0, 0.94, 0.86)   # 他人加速:暖白(与单机敌人同色)
+const TIME_GLOW_SELF := Color(0.30, 0.62, 1.0)
+const TIME_GLOW_OTHER := Color(1.0, 0.94, 0.86)
 
 var _state: ClientState = null
 var _ports: ClientPorts = null
-var _fx_self_t := 0.0                # 自己的残影节拍(0.03s)
-var _fx_other_t: Dictionary = {}     # replica(Node2D) -> 他人重影节拍剩余秒(0.06s 一对)。★ 必须 per-副本:
-#  单 float 会让 k 个加速者每帧各减它一次 ⇒ 触发 ≈ k/0.06 对/秒(16 人 ≈500 张 AfterImage/s)。
-var _rw_film_mats: Dictionary = {}   # replica -> ShaderMaterial(满覆盖度)
-var _rw_ghosts: Dictionary = {}      # replica -> Array[{node, t}](生成时刻,1s 渐隐)
+var _fx_self_t := 0.0
+var _fx_other_t: Dictionary = {}
+var _rw_film_mats: Dictionary = {}
+var _rw_ghosts: Dictionary = {}
 
 
-## 绑定宿主(只存引用、无副作用;宿主第一次用到时懒建,与 ReplicaSet 同款)。
 func bind(state: ClientState, ports: ClientPorts) -> void:
 	_state = state
 	_ports = ports
 
 
-## 每帧入口(物理 delta)。调用方已保证 _local 非空且 beta_mode 为真,见 PvpMatchClient._tick_beta_time。
 func tick(delta: float, self_hasting: bool) -> void:
-	# 自己:加色高亮 + 红蓝交替残影(与单机同款节拍)。
 	var local: Node2D = _state._local
 	if self_hasting:
 		if TimeGlow.on(local) == null:
@@ -43,7 +35,6 @@ func tick(delta: float, self_hasting: bool) -> void:
 		var g := TimeGlow.on(local)
 		if g != null:
 			g.queue_free()
-	# 他人:回溯优先(底片色 + 轨迹残像,不叠加速高亮);否则加速高亮 + 红蓝重影 + ▶▶3x。
 	var any_hasting := false
 	for rep_node in _ports.all_replicas.call():
 		if not is_instance_valid(rep_node) or not (rep_node is Node2D):
@@ -62,14 +53,13 @@ func tick(delta: float, self_hasting: bool) -> void:
 		_fx_other_t.clear()
 
 
-## 副本被拆前的清理(**必须先于 queue_free**,顺序见文件头 BUG-19)。
 func detach(rep: Node2D) -> void:
 	_time_fx_replica_rewind_off(rep)
-	_fx_other_t.erase(rep)   # 拆掉的副本不会再被 tick 遍历 ⇒ 节拍键只能在这里清
+	_fx_other_t.erase(rep)
 
 
 func _time_fx_replica_off(rep: Node2D) -> void:
-	_fx_other_t.erase(rep)   # 不再加速 ⇒ 清掉该副本的节拍表,免得键泄漏/下次加速还接着走
+	_fx_other_t.erase(rep)
 	var glow := TimeGlow.on(rep)
 	if glow != null:
 		glow.queue_free()
@@ -89,7 +79,6 @@ func _time_fx_replica_on(rep: Node2D, delta: float) -> void:
 		rep.add_child(label)
 	label.text = "▶▶ %dx" % int(round(_state._time_haste_mult))
 	label.visible = true
-	# 红蓝重影:同一帧贴红 / 蓝两张淡副本(加色叠加读作色差重影;与自己的交替残影区分)。节拍 per-副本、用物理 delta。
 	var t := float(_fx_other_t.get(rep, 0.0))
 	t -= delta
 	if t <= 0.0:
@@ -102,7 +91,6 @@ func _time_fx_replica_on(rep: Node2D, delta: float) -> void:
 		_fx_other_t[rep] = t
 
 
-# 他人回溯视效:副本自身底片色(满覆盖度)+ 沿服务器轨迹的时间切片残像(1 秒渐隐)。轨迹点来自快照 trail(每 3 帧一个 [x,y])。
 func _time_fx_replica_rewind(rep: Node2D, delta: float) -> void:
 	if not bool(rep.get_meta("rewind", false)):
 		_time_fx_replica_rewind_off(rep)
@@ -113,8 +101,6 @@ func _time_fx_replica_rewind(rep: Node2D, delta: float) -> void:
 		m.set_shader_parameter("coverage", 1.0)
 		rep.material = m
 		_rw_film_mats[rep] = m
-	# 轨迹残像:快照 trail 里**新出现**的点 → 每点一张淡副本(挂在副本父级,位置即轨迹点)。
-	# 判据不能用数组变长:线上 trail 只带最近 4 点、很快就饱和(理由见 BUG-13)。
 	var trail: Array = rep.get_meta("trail_last", [])
 	var new_trail: Array = rep.get_meta("trail", [])
 	var anim := rep.get_node_or_null("AnimatedSprite2D") as AnimatedSprite2D
@@ -134,7 +120,6 @@ func _time_fx_replica_rewind(rep: Node2D, delta: float) -> void:
 		g["t"] = float(g["t"]) + delta
 		var host: Node2D = g["node"]
 		if float(g["t"]) < 1.0 and is_instance_valid(host):
-			# 淡出按 CanvasItem 取(AfterImage 是 Node2D,旧写法 as Sprite2D 恒 null);过期即 free,否则每次回溯漏 20+ 个空节点。
 			if host.get_child_count() > 0:
 				var vis := host.get_child(0) as CanvasItem
 				if vis != null:
@@ -145,8 +130,6 @@ func _time_fx_replica_rewind(rep: Node2D, delta: float) -> void:
 	_rw_ghosts[rep] = alive
 
 
-# 新旧两条 trail 之间「新出现的点」:两条都是线上截断后的最近 N 点(旧的在先、新的在后),
-# 找最大的 k 使 old 的后缀(k) == new 的前缀(k),new[k..] 就是新点。k ≤ 4,类 O(k²)。
 static func _fresh_trail_points(old_trail: Array, new_trail: Array) -> Array:
 	var max_k := mini(old_trail.size(), new_trail.size())
 	var k := max_k
@@ -162,7 +145,6 @@ static func _fresh_trail_points(old_trail: Array, new_trail: Array) -> Array:
 	return new_trail.slice(k)
 
 
-# 两个 trail 点是否同一点(线上是 [x, y] 浮点数组;往返/量化后可能差一个 eps,故用 is_equal_approx)。
 static func _same_trail_pt(a: Variant, b: Variant) -> bool:
 	if not (a is Array) or not (b is Array):
 		return false

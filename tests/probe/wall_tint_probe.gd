@@ -1,10 +1,9 @@
 extends Node
-# 墙体图集「按描述符行烘」守卫:make_wall_tileset_for / build_atlas_image_for 的行 = 描述符序列,
 
 const MARKER := "WALL TINT PROBE: ALL-OK"
 const EXPECTED_CHECKS := 4
-const QUAD := 16        # TerrainAtlas.QUAD_TILE(图集每格 16px)
-const QSRC := 8         # TerrainAtlas.QUAD_SRC(源象限 8px)
+const QUAD := 16
+const QSRC := 8
 
 var _fails: Array[String] = []
 var _checks := 0
@@ -22,7 +21,7 @@ func _ready() -> void:
 
 func _run() -> void:
 	var d_neutral := MapFormatV4.neutral_descriptor(1)
-	var d_hue3 := _desc(1, 3, 4, 4, 7)            # 迁移后 tex2 的落点(base1 + hue 档 3)
+	var d_hue3 := _desc(1, 3, 4, 4, 7)
 	var descs: Array = [d_neutral, d_hue3]
 	descs.sort()
 	var built := TerrainAtlas.make_wall_tileset_for(descs)
@@ -30,7 +29,6 @@ func _run() -> void:
 	var tileset: TileSet = built["tileset"]
 	var img := _tileset_image(tileset)
 
-	# ① row_of = 传入序列的行号;图集尺寸 = 16 列 × descs.size() 行;瓦片都建出来了
 	var ok: bool = img != null and row_of.size() == 2 \
 			and int(row_of.get(descs[0], -1)) == 0 and int(row_of.get(descs[1], -1)) == 1
 	if img != null:
@@ -45,7 +43,6 @@ func _run() -> void:
 		_finish_rest(false)
 		return
 
-	# ② 两行像素必须不同(hue 档 3 对纹理 1 有效;烘培漏 tint = 两行同图)
 	var differ := false
 	for y in QUAD:
 		for x in img.get_width():
@@ -56,7 +53,6 @@ func _run() -> void:
 			break
 	_chk(differ, "中性行与 hue3 行像素必须不同(相同 = 烘培没消费描述符)")
 
-	# ③ 逐像素 = tint_color(源象限像素, 该行描述符):列 = qy*4+qx、2× 最近邻(px/2)
 	var src_img := TerrainAtlas.source_image()
 	var bad: Array[String] = []
 	for r in descs.size():
@@ -77,7 +73,6 @@ func _run() -> void:
 	_chk(bad.is_empty(), "图集逐像素 = 源砖象限 tint_color(象限列映射 + 2× 最近邻)%s"
 			% ["" if bad.is_empty() else ":" + "; ".join(bad)])
 
-	# ④ 行号回落:命中直接给行;缺失回落**同纹理中性行**;中性也没有 → 0
 	var d_missing := _desc(1, 5, 4, 4, 7)
 	var d_missing_other := _desc(7, 5, 4, 4, 7)
 	var ok4 := TerrainAtlas.fallback_row(row_of, d_hue3) == int(row_of[d_hue3]) \
@@ -91,7 +86,7 @@ func _run() -> void:
 
 func _finish_rest(ran: bool) -> void:
 	if not ran:
-		_checks += 2   # ②③ 没跑:补计数让条数闸红,而不是静默 ALL-OK
+		_checks += 2
 		_fails.append("图集纹理读不到,②③ 未跑")
 	if _checks != EXPECTED_CHECKS:
 		_fails.append("★ 实跑 %d 条断言,与 EXPECTED_CHECKS=%d 对不上(有断言被静默跳过?)" % [_checks, EXPECTED_CHECKS])
@@ -101,7 +96,6 @@ func _finish_rest(ran: bool) -> void:
 	else:
 		for f in _fails:
 			print("  [FAIL] ", f)
-		# ★ 失败行绝不能含 "ALL-OK"(判据是 grep 那三个字)。
 		print("WALL TINT PROBE: FAIL(%d 处)" % _fails.size())
 		get_tree().quit(1)
 

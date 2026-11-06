@@ -1,5 +1,4 @@
 extends SceneTree
-# 输入队列守卫(PacketInputSource 纯逻辑;`-s` 可跑,不碰服务器/7777)。四个判定类别各一条:
 
 const EXPECTED_CHECKS := 6
 
@@ -18,7 +17,6 @@ func _pkt(seq: int, pressed: int = 0, winst: int = 0) -> Dictionary:
 
 
 func _initialize() -> void:
-	# ① 轴收口(去掉什么才红:删 clampf ⇒ 越界穿过;删有限性判断 ⇒ NaN 原样穿过)
 	var ax_ok := PacketInputSource.sanitize_axis(-1.0) == -1.0 \
 			and PacketInputSource.sanitize_axis(0.5) == 0.5 \
 			and PacketInputSource.sanitize_axis(50.0) == 1.0 \
@@ -27,7 +25,6 @@ func _initialize() -> void:
 			and PacketInputSource.sanitize_axis(INF) == 0.0
 	_chk(ax_ok, "轴收口:合法值原样、越界钳 ±1、NaN/INF → 0")
 
-	# ② 有界/丢最旧/保边沿(去掉什么才红:删 while 上限 ⇒ 灌 200 变 200;删边沿合并 ⇒ 偶发丢一跳/丢换枪)
 	var q: Array = []
 	var raw := 0
 	for i in 200:
@@ -41,7 +38,6 @@ func _initialize() -> void:
 	_chk(bounded and edges,
 			"有界:灌 200 后 ≤ 上限且返回值是丢前深度(实得 %d/%d);边沿:被丢包的 pressed/winst 必须活到队首" % [q.size(), raw])
 
-	# ③ 回复力(去掉什么才红:退回写死 cap 8 ⇒ 积压永远不释放)。U1 后队列单位 = 1 tick 记录,MIN=4。
 	var q3: Array = []
 	for i in 6:
 		PacketInputSource.push_pending(q3, _pkt(i), 8)
@@ -49,15 +45,12 @@ func _initialize() -> void:
 	_chk(q3.size() == 4 and released == 7,
 			"回复力:上限收到 4 时 7 条积压必须一次释放到 4(队内 %d,丢前 %d)" % [q3.size(), released])
 
-	# ④ 上限钳位(去掉什么才红:删下界 ⇒ cap=1 一 tick 到两条就丢;删上界 ⇒ 突刺把上限顶到无界)
-	# U1 后:MIN=4 / MAX=16 / MARGIN=2(一条记录 = 1 tick,翻倍以保住同样的时间缓冲)。
 	_chk(PacketInputSource.adapted_cap(0) == PacketInputSource.QUEUE_CAP_MIN
 			and PacketInputSource.adapted_cap(3) == 5
 			and PacketInputSource.adapted_cap(99) == PacketInputSource.QUEUE_CAP_MAX,
 			"上限钳位:0→%d、3→5、99→%d(包络+MARGIN 且夹在 [MIN,MAX])" % [
 					PacketInputSource.adapted_cap(0), PacketInputSource.adapted_cap(99)])
 
-	# ⑤ apply_packet:边沿按位**累积**、winst>0 才覆盖(2026-10-30,输入批:S-05 变异暴露的两个缺口)
 	var s5 := PacketInputSource.new()
 	s5.apply_packet({"pressed": 8, "held": 1, "ax": 0.5, "aim": Vector2(1, 0), "winst": 5})
 	s5.apply_packet({"pressed": 32, "held": 2, "winst": 0})
@@ -66,7 +59,6 @@ func _initialize() -> void:
 	_chk(edge_ok, "apply_packet:两包 pressed 必须按位累积、winst>0 才覆盖(实得 attack=%s pickup=%s winst=%d)"
 			% [str(s5._attack_just_pressed_raw()), str(s5._pickup_pressed_raw()), s5._switch_inst_raw()])
 
-	# ⑥ clear_edges:边沿与切枪清零(**held 保留**给缺包沿用)
 	s5.clear_edges()
 	var clear_ok := not s5._attack_just_pressed_raw() and not s5._pickup_pressed_raw() \
 			and s5._switch_inst_raw() == 0 and s5.rewind_held() == false

@@ -1,9 +1,7 @@
 class_name WaitRoomBroadcast
 extends RefCounted
 
-# 等待室状态广播的三种「同一件事」(2026-10-30 S-09 第三片:从 `LobbyRooms` 挪出;那里是 Node、引 NetBus,
 
-# 大乱斗等待室:{code, is_public, invite_code, max_players, host_role, players, in_match} + 每人一份 your_role。
 static func flush_royale(lobby: LobbyRooms, rr: RoomTypes.Room) -> void:
 	await lobby.get_tree().process_frame
 	if rr.in_match:
@@ -18,14 +16,11 @@ static func flush_royale(lobby: LobbyRooms, rr: RoomTypes.Room) -> void:
 	}
 	for peer_id in rr.players:
 		if NetBus.is_peer_online(peer_id):
-			# ★ 每个 peer 送他自己那一份(多带 your_role):等待室 UI 靠它判「(我)/(房主)」—— 原先让客户端按昵称反查,
-			# 两人同名(默认都叫 Anon)时必然匹配到先出现的那个 → 高亮错行、房主看不到开局按钮。
 			var mine := state.duplicate()
 			mine["your_role"] = rr.player_role[peer_id]
 			NetBusExt.rpc_id(peer_id, "royale_room_state", mine)
 
 
-# 1v1 等待室:{code, players:[{role,name}], host_role, in_match} + 每人一份 your_role。
 static func flush_pvp(lobby: LobbyRooms, room: RoomTypes.Room) -> void:
 	await lobby.get_tree().process_frame
 	if room.in_match or room.started:
@@ -44,8 +39,6 @@ static func flush_pvp(lobby: LobbyRooms, room: RoomTypes.Room) -> void:
 			NetBusExt.rpc_id(peer_id, "pvp_room_state", mine)
 
 
-# 3v3 等待室/选边:{code, is_public, invite_code, host_role, team_size, players:[{role,name,team}], in_match} +
-# 每人一份 your_role(与 royale 同款:同名玩家不能靠昵称反查)。
 static func flush_team(lobby: LobbyRooms, tr: RoomTypes.Room) -> void:
 	await lobby.get_tree().process_frame
 	if tr.in_match:

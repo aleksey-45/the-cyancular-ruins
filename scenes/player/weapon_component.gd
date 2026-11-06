@@ -1,32 +1,24 @@
 class_name WeaponComponent
 extends Node
 
-# 武器子系统:注册表 / 背包 / 换枪 / 移动惩罚 / 后坐;枪实例挂在 body.weapon_slot 下,由根 player.gd 驱动(equip_type 在 _ready/换枪输入,movement_multiplier 每物理帧,apply_recoil 经根转发)。
-# ★ 是背包模型:8 格容量预算(轻 2/中 3/重 4)与 4 把上限两条独立闸门(见 WeaponInventory),不再是按类型 id 直接切枪。
-# ★ _current_type 刻意仍是武器类型 id(1-6),不是背包位置:快照的 weapon 字段、capture_state 的 wslot、PlayerReplica._swap_weapon 全按类型 id 走,协议与副本因此零改动;背包位置只用于本地按键/滚轮。
 
 # ★ 场景路径 / 显示名 / 重量档三张常量表已整体删除:唯一来源是 data/weapons.json,由 core/sim/weapon_registry.gd(WeaponRegistry)读;这里不留任何副本,留一张就会与 json 分家。
 
-signal weapon_changed(type_id: int)    # equip_type 成功后发射(菜单图标/HUD 武器显示跟随);0 = 空手
-signal inventory_changed()          # 背包内容变化(格子 UI 跟随)
+signal weapon_changed(type_id: int)
+signal inventory_changed()
 
 var _current_type: int = 0
-var _current_index: int = -1        # 在 inventory.held 里的下标;-1 = 空手
+var _current_index: int = -1
 var _weapon: WeaponBase = null
 var inventory: WeaponInventory
 var body: CharacterBody2D
 
-# 启用的武器类型 id,默认全开 = 注册表里全部 id;单机由 Level0 按 RunOptions 设置,PvP 由客户端按服务器下发的 match_options 设置;数字键/滚轮切枪都会跳过被禁的类型。
-# ★ 从前这里是硬编码的 [1,2,3,4,5,6]:加第 7 把枪时漏改它,新枪永远拿不到也开不了且完全不报错 —— 所以赋值必须在 _init 的函数体里(ScanUtil.func_body 断言不了 class 级的 var)。零守卫(enemy_logic_smoke 已删·2026-10-09)。
 var enabled_types: Array = []
 
-# ★ 武器图标与选择格(silhouette / make_weapon_check)是纯 UI,已搬到 ui/weapon_icons.gd(WeaponIcons);本文件只留武器子系统本身。
 
 
 func _init() -> void:
-	# 在 _init 而不是 _ready 建:探针会 new() 出组件直接调方法,不一定入树。
 	inventory = WeaponInventory.new(WeaponRegistry.tiers_map())
-	# ★★ 默认启用表必须在构造期就填好、且必须走 all_ids():它读的是刚 new() 出来的组件,而 ScanUtil.func_body 锚在函数体上 ⇒ 上面那条 var 必须先是空表、再由这一行填。
 	enabled_types = WeaponRegistry.all_ids()
 
 
@@ -63,7 +55,6 @@ func default_type() -> String:
 	return str(enabled_types[0]) if enabled_types.size() > 0 else "1"
 
 
-# ── 初始背包 ── 单机 = 空表(开局空手,枪散落在地图上),联机 = 一条随机武器;★ 必须排在 _ready(Player 会在这里调它)里的任何 equip_type 之前。
 func set_initial_inventory(types: Array) -> void:
 	inventory.clear()
 	_unequip()
@@ -79,7 +70,6 @@ func set_initial_inventory(types: Array) -> void:
 func cycle_index(dir: int) -> void:
 	var next := _peek_cycle(dir)
 	if next < 0 or next == _current_index:
-		# 无槽可切(只有一把 / 目标即当前)⇒ 早退;否则会白重建一次武器实例 + 响一声 switch(equip_type 每次都 instantiate)。
 		return
 	_equip_index(next)
 
@@ -100,12 +90,7 @@ func _peek_cycle(dir: int) -> int:
 	return order[(idx + dir + order.size() * 2) % order.size()]
 
 
-# ── PvP 切枪:本地立即切(即时反馈),再把目标那一把的 inst 打包进输入包由服务器权威同步(滚轮事件不在输入包协议里,只本地切会被快照的防脱同步切回旧槽位 ⇒ 只有音效)。
-# ★★ 上行的是 inst 而不是背包位置:「第 N 把」的含义由本端背包决定,而拾取/丢弃是服务器裁决、客户端不预测,那约 1 RTT 的窗口里同一个下标在两端会解出不同的枪;inst 逐把唯一,与两端 held 的顺序无关。
-# 历史代价:这里曾发 inventory.held[next][type](类型 id)而消费端按位置读 ⇒ 背包 [步枪2, 手枪1] 从步枪滚一下发 1 会切回步枪,[手枪1, 重狙3] 发 3 越界早退;两条都只表现为滚轮切不动,代码里没有任何一处会红。
-var _switch_inst := 0   # 待发切枪的目标 **inst**(>0 = 待发,打包后清零)
-# 当前武器实例对应的那一把的 inst(0 = 空手/未记录)。★ 与 _current_index 是两回事:_current_index 回答"背包里选中的是哪一条",
-# 它可能被权威整表/_apply_weapon_state 改指另一条(同型号两把时类型判据完全看不出差别),而实例还是旧那把 ⇒ 开火扣错枪的弹。
+var _switch_inst := 0
 var _equipped_inst := 0
 
 func request_net_cycle(dir: int) -> void:
@@ -116,7 +101,6 @@ func request_net_cycle(dir: int) -> void:
 	_equip_index(next)
 
 
-# 入参 = 目标那一把的 inst;由 pvp_match_client 的组包处取走塞进输入包的 winst 字段。
 func push_switch_inst(inst: int) -> void:
 	_switch_inst = inst
 
@@ -127,8 +111,6 @@ func consume_switch_inst() -> int:
 	return v
 
 
-# 上行前把「玩家想切到哪一把」解析成 inst(上行传解析结果,不传寻址方式)。
-# ★ 数字键优先;滚轮那条无论如何都取走(读一次即清,别让它漏到下一帧变成一次迟到的切枪)。返回 0 = 本次没有切枪请求。
 func take_uplink_switch(key_index: int) -> int:
 	var wheel_inst := consume_switch_inst()
 	if key_index > 0:
@@ -174,7 +156,6 @@ func equip_index(i: int) -> void:
 func _equip_index(index: int, flush_current: bool = true) -> void:
 	if index < 0 or index >= inventory.held.size():
 		return
-	# 切枪继承旧武器剩余冷却:后摇不能被切枪取消(queue_free 前先捕获)。
 	var inherit_cd := 0.0
 	if _weapon != null and is_instance_valid(_weapon):
 		inherit_cd = _weapon.fire_cd_timer
@@ -196,7 +177,6 @@ func _equip_index(index: int, flush_current: bool = true) -> void:
 	_current_type = type_id
 	_equipped_inst = int(inventory.held[index]["inst"])
 	_weapon = scene.instantiate() as WeaponBase
-	# ★ 必须在 add_child 之前写:入树前直接写 mag_ammo 会被 _ready 冲掉,故把条目残弹塞进 pending_mag 由 _ready 消费;MAG_FULL(-1) 语义是满弹,不设 pending。
 	if int(inventory.held[index]["mag"]) != WeaponInventory.MAG_FULL:
 		_weapon.pending_mag = clampi(int(inventory.held[index]["mag"]), 0, _weapon.mag_size)
 	body.weapon_slot.add_child.call_deferred(_weapon)
@@ -219,7 +199,6 @@ func _unequip() -> void:
 	inventory_changed.emit()
 
 
-# 把权威/条目里的弹数写到武器实例上(同步,不排 deferred)。
 static func apply_mag(w: WeaponBase, mag: int) -> void:
 	if w == null or not is_instance_valid(w):
 		return
@@ -230,7 +209,6 @@ static func apply_mag(w: WeaponBase, mag: int) -> void:
 
 
 
-# pick_up() 换下的那把枪的残弹(返回值只带得回类型 id,残弹走这里)。
 var _last_dropped: Dictionary = {}
 
 
@@ -247,7 +225,6 @@ func pick_up(type_id: int, mag: int) -> int:
 		inventory_changed.emit()
 		_equip_index(inventory.held.size() - 1)
 		return 0
-	# 放不下 ⇒ 与手上那把交换;手上空着(背包空)时容量必然够,所以这条分支只在「背包非空但全被禁用 ⇒ _current_index < 0」时才可能走到,直接拒绝。
 	if _current_index < 0:
 		Sfx.play("deny")
 		return PICKUP_DENIED
@@ -256,9 +233,6 @@ func pick_up(type_id: int, mag: int) -> int:
 	var dropped_mag := int(entry["mag"])
 	if _weapon != null and is_instance_valid(_weapon) and _weapon.is_inside_tree():
 		dropped_mag = _weapon.mag_ammo
-	# ★★ 这里已经把旧枪实弹收进 dropped_mag 了,随后 `held[_current_index]` 被换成**新枪**的条目;
-	#   ⇒ 调 _equip_index 时必须 flush_current=false:否则它会把旧枪实弹写回新条目,新枪残弹变成旧枪残弹
-	#   (2026-10-30 BUG-01:背包满时捡枪 = "每把枪的子弹不独立"的现场)。
 	inventory.held[_current_index] = {"type": type_id, "inst": int(entry["inst"]), "mag": mag}
 	_equip_index(_current_index, false)
 	_last_dropped = {"type": dropped, "mag": dropped_mag}
@@ -294,7 +268,6 @@ func drop_current() -> Dictionary:
 	return out
 
 
-# 复活用:从背包随机保留一条,返回其余(供调用方在死亡点生成掉落物);背包为空时返回空表。
 func random_keep_one() -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
 	if inventory.held.is_empty():
@@ -311,7 +284,6 @@ func random_keep_one() -> Array[Dictionary]:
 	return out
 
 
-# ── 快照 / 恢复(rollback 用)── ★ 与 mag_ammo/_reloading/_reload_t 同口径:进 capture/restore,不进 _close_enough 的比对(否则每帧判分歧,变成无限回滚循环)。
 
 func snapshot_inventory() -> Array:
 	_flush_current_mag()
@@ -321,9 +293,6 @@ func snapshot_inventory() -> Array:
 # 用权威整态重建背包。★ 必须先于 equip_type(wslot):否则重放时可能切到客户端背包里没有的类型,而 equip_type 只 push_error、不加入。
 # 返回值 = 是否按 want_inst 解析成功(手持下标来自权威的 winst);调用方靠它决定重建实例时走下标还是走类型 —— 返回 false 表示走的是按类型兜底(老载荷无 winst、或权威那把不在表里),此时下标只代表旧类型那把,拿它去重建会把权威的 wslot 顶掉。
 func restore_inventory(entries: Array, want_inst: int = 0) -> bool:
-	# ★ 类型还在就保持手持那把不重建:restore_state 每次 reconcile 都会调到这里,而无脑重建 = 每帧 queue_free 旧枪 + 新建一把 + deferred 入树,入树前那一帧 tick()/fire() 全是空转(该帧的开火边沿直接丢掉),还白烧一次 instantiate。
-	# ★★ want_inst = 权威说手持的是哪一把(capture_state 的 winst),必须先按 inst 找:inst 逐把唯一而同型号两把类型相同 ⇒ 按类型找只能拿到第 0 把 ⇒ _current_index 与手上真正那把分家,残弹写进错的那把、丢弃丢错把、左上角武器框高亮错。
-	# 找不到(老载荷没带 winst、或权威那把不在表里)时退回按类型,行为与改动前逐字相同。
 	var keep_type := _current_type
 	inventory.restore(entries)
 	var idx := inventory.index_of_inst(want_inst) if want_inst > 0 else -1
@@ -337,7 +306,6 @@ func restore_inventory(entries: Array, want_inst: int = 0) -> bool:
 		_current_type = keep_type
 		inventory_changed.emit()
 		return by_inst
-	# 权威说手上那把没了(或本来空手)⇒ 清空手持,让调用方按 wslot 重新 equip_type。
 	if _weapon != null and is_instance_valid(_weapon):
 		_weapon.queue_free()
 	_weapon = null
@@ -347,14 +315,12 @@ func restore_inventory(entries: Array, want_inst: int = 0) -> bool:
 	return false
 
 
-# 手持实例是否**就是** _current_index 指向的那一把。同型号两把时 type 相同、下标也可能被权威改指,
-# 只有 inst 能区分;返回 false 表示"该重建实例"(否则开火/写残弹会落到另一把枪上)。
 func instance_matched() -> bool:
 	return _weapon != null and is_instance_valid(_weapon) and _equipped_inst == inst_at_index(_current_index) \
 			and _equipped_inst > 0
 
 
-# 权威同步专用:按当前下标重建手持实例,**不**把旧实例残弹写回条目 —— 条目刚被权威整表覆盖过,
+# 权威同步专用:按当前下标重建手持实例,不把旧实例残弹写回条目 —— 条目刚被权威整表覆盖过,
 # 写回就是"把上一把枪的残弹盖到这一把上"(用户实测:两把狙击枪切枪后弹数/开火异常)。
 func equip_index_authoritative(index: int) -> void:
 	_equip_index(index, false)
@@ -368,7 +334,6 @@ func _flush_current_mag() -> void:
 
 
 
-# 把当前武器的残弹同步进背包条目(旧的 _mag_state 残弹记忆表已删 —— 残弹直接存在背包条目里,保留本方法是为了调用方 player.restart_at 的边界不变)。
 func reset_mag_state() -> void:
 	_flush_current_mag()
 
@@ -385,7 +350,6 @@ func current_type_id() -> int:
 	return _current_type
 
 
-# 手持那一条的 inst(逐把唯一);空手 / 下标越界返回 0。
 func current_inst() -> int:
 	return inst_at_index(_current_index)
 
@@ -406,7 +370,7 @@ func apply_recoil(push: float, is_squat: bool, is_latched: bool) -> void:
 	if is_squat:
 		return
 	if is_latched:
-		push *= 0.1  # 攀爬时后坐力降到 0.1(在梯/锁链上开火基本不后推)
+		push *= 0.1
 	body.velocity.x -= body.facing_direction * push
 
 

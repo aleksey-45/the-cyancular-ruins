@@ -1,23 +1,20 @@
 extends Node
 
-# 3v3 团队模式的六人真链路端到端探针(场景模式,autoload 必须已实例化)。
 
 const RESULT_PREFIX := "team_match_probe_"
 # ★ 端口纪律(与 reconnect_probe 的常量区同源):全仓对局 worker 的池 = WorkerLauncher.WORKER_PORT_BASE(7800)~ +SPAN(500)= 8300 开区间;本探针的大厅与 worker 都取池外(29xxx),同时远离 7777 与常见服务端口。
 const LOBBY_PORT := 29200
-const WORKER_PORT_OUT := 29250     # `RoomManager` 的 `pick_port` 起投点(见 _run_orchestrator)
+const WORKER_PORT_OUT := 29250
 const POOL_LOW := 7800
 const POOL_HIGH := 8300
 const CLIENT_COUNT := 6
 # 本探针是「六人 3v3」用例:产品闸门已放宽成两队各 ≥1 即可开局(`RoomTypes.team_ready`),
 # 探针必须自己等每队 3 人全选完才点开始,否则 worker 侧会被 `team_autofill` 补人(相① 的"端 == 厅"会假红)。
 const PROBE_TEAM_SIZE := 3
-const CHILD_QUIT_AFTER := "54000"  # 子进程兜底(60fps ≈ 900s);正常由本进程收尾/按 PID 杀
-const BOOT_TIMEOUT := 45.0         # 等"6 人进房并选边完毕"的上限
-const FINAL_TIMEOUT := 800.0       # ★ 收工上限。必须 > (boot 三段的**绝对**上限 105s = BOOT_TIMEOUT+60) + RESULT_WAIT(680)
-                                   #   —— 两条预算**不同钟**:RESULT_WAIT 从 `_start_t` 算,而 `_start_t` 最晚能取到 105s;
+const CHILD_QUIT_AFTER := "54000"
+const BOOT_TIMEOUT := 45.0
+const FINAL_TIMEOUT := 800.0
 const RESULT_WAIT := 680.0
-# ★★ 条数闸的**下界**(不是精确数)。为什么只能是下界:相③ 的断言条数随"抽到什么武器"**合法浮动**
 const MIN_CHECKS := 24
 
 var _role := "lobby"
@@ -32,11 +29,11 @@ var _ready_seen := false
 var _start_t := -1.0
 var _child_pids: Array[int] = []
 var _hb := 30.0
-var _lobby_teams: Dictionary = {}   # 选边完毕那一刻大厅的队伍表(房在开局后被消费掉,不能再读)
+var _lobby_teams: Dictionary = {}
 var _failures: Array[String] = []
 var _notes: Array[String] = []
-var _checks := 0                     # ★ 条数闸用:成功也要记账(见 `_finish` 的那道闸)
-var _dims_failed := false           # 地图尺寸读不到的 FAIL 只记一次(见 _grid_dims)
+var _checks := 0
+var _dims_failed := false
 var _done := false
 
 
@@ -47,7 +44,7 @@ func _ready() -> void:
 		elif a.begins_with("--who="):
 			_who = a.trim_prefix("--who=")
 		elif a.begins_with("--lobby-port="):
-			pass   # 端口是常量(池外);argv 里带着只为人工单起客户端时清楚
+			pass
 	_idx = int(_who.trim_prefix("c")) if _who.begins_with("c") else 1
 	if _role == "lobby":
 		_run_orchestrator()
@@ -55,7 +52,6 @@ func _ready() -> void:
 		_run_client()
 
 
-# ════════════════════ 裁判(大厅)════════════════════
 
 func _run_orchestrator() -> void:
 	var err := NetBus.start_server(LOBBY_PORT)
@@ -66,8 +62,6 @@ func _run_orchestrator() -> void:
 		return
 	_rm = RoomManager.new()
 	add_child(_rm)
-	# ★★ 把 worker 的端口起投点拨到池外(见文件头「端口纪律」)。
-	#   拨到池外即从根上避开(pick_port 会立刻回卷 _next_port,故这只影响第一发)。
 	_rm.get("_launcher").set("_next_port", WORKER_PORT_OUT)
 	# ★ _clean() 失败(上一跑的进程还活着)时必须整段收工:只 push 一条然后继续拉起客户端的话,6 个新客户端与那批残留进程会互相覆盖 .result,而且本进程退出后 _kill_children() 再也不跑 ⇒ 留下一堆孤儿进程攥着文件,把下一跑也逼进这一支(实测复现过)。
 	if not _clean():
@@ -123,7 +117,6 @@ func _room():
 		return null
 	if _code != "" and _rm.lobby.team_rooms.has(_code):
 		return _rm.lobby.team_rooms[_code]
-	# 只会有我们这一间(大厅是本进程起的,外面的人连不进来)
 	_code = str(_rm.lobby.team_rooms.keys()[0])
 	return _rm.lobby.team_rooms[_code]
 
@@ -147,7 +140,6 @@ func _stage_wait_full() -> void:
 		if _t > BOOT_TIMEOUT + 30.0:
 			_finish("只有 %d/%d 人进了房(选边前)\n%s" % [tr.players.size(), CLIENT_COUNT, _dump()])
 		return
-	# ★★ 2026-11-01:产品闸门放宽成「两队各 ≥1 即可开局」(`RoomTypes.team_ready`),所以**不能**再用它判
 	var by := {1: 0, 2: 0}
 	for r in tr.team_of:
 		var t := int(tr.team_of[r])
@@ -159,7 +151,7 @@ func _stage_wait_full() -> void:
 		return
 	print("PROBE: 6 人已到齐并选边完毕 → 队号表 %s(每队 %s)" % [str(tr.team_of), str(by)])
 	# ★ 立刻存档:成员转连 worker 后会陆续断开大厅,on_peer_left 把它们从 player_role 摘掉,并连带把 team_of 里已无人持有的 role 逐个 erase(见 lobby_rooms.on_peer_left 的 3v3 那一段)—— 到收尾时再读 _room() 拿到的是空队伍表。
-	#   ★ 订正本条的**理由**(代码与结论都不变):原先写的是「房在开局那一刻就被对局消费掉了」—— 对局中的房现在刻意不拆(它要活到 worker 退出,否则「看得见 / 回局」都无从谈起),所以收尾时房还在,只是表已经空了。故「必须在这里存档」照旧成立,变的只是原因。
+	#   ★ 订正本条的理由(代码与结论都不变):原先写的是「房在开局那一刻就被对局消费掉了」—— 对局中的房现在刻意不拆(它要活到 worker 退出,否则「看得见 / 回局」都无从谈起),所以收尾时房还在,只是表已经空了。故「必须在这里存档」照旧成立,变的只是原因。
 	for r in tr.team_of:
 		_lobby_teams[int(r)] = int(tr.team_of[r])
 	_notes.append("大厅队伍表 %s" % str(tr.team_of))
@@ -200,14 +192,11 @@ func _stage_collect() -> void:
 		_finish("" if n >= CLIENT_COUNT else "只收到 %d/%d 份客户端结果" % [n, CLIENT_COUNT])
 
 
-# ════════════════════ 跨端断言(裁判侧)════════════════════
 
 func _finish(why: String) -> void:
 	if _done:
 		return
 	_done = true
-	# ★★ 没拉起过子进程 = 一条跨端断言都没跑:相①~⑤ 的全部跨端断言都住在 _assert_stage3() 里,而它此前只在「_child_pids 非空」时才被调 ⇒ --nospawn(人工另起 6 个客户端排障用)恒跳过全部跨端断言、_failures 为空 ⇒ 打出一行全空的 TEAM MATCH PROBE: ALL-OK,而此刻只跑过大厅那三个「房间存在吗」的阶段。
-	#   那正是本册重点扫查的那一类(「还在跑、还是绿的、但已经什么都不验了」)—— 且出现在本册唯一的头条证据上。故这一支记失败:--nospawn 是排障模式,不是可判通过的一跑。
 	if _child_pids.is_empty():
 		_check(false, "没有子进程 → 跨端断言一条都没跑(--nospawn 只用于人工排障;这一跑不判通过)")
 	else:
@@ -215,9 +204,6 @@ func _finish(why: String) -> void:
 	_kill_children()
 	if why != "":
 		_check(false, why)
-	# ★★ 条数闸:上面「`_failures` 为空 ⇒ ALL-OK」只等于**没有失败输出**,不证明每条断言都跑过 ——
-	#   脚本错误只结束**出错的那个函数**、调用方继续 ⇒ 后面整段静默跳过、判词照打 ALL-OK。
-	#   (这一支是全仓 3v3 的唯一条真链路证据,所以它自己更要有这道闸。)
 	if _checks < MIN_CHECKS:
 		_check(false, "★ 只跑了 %d 条断言(< MIN_CHECKS=%d)—— 有断言被静默跳过?" % [_checks, MIN_CHECKS])
 	print("═══ 探针明细 ═══")
@@ -234,15 +220,13 @@ func _finish(why: String) -> void:
 
 
 func _assert_stage3() -> void:
-	# ★ 队伍表取开工时存下的那份(理由见上面那条:收尾时 _room() 里的 team_of 已经空了);早先在这里现读它,结果是「收尾时读到空房 + 一条假 FAIL」。
 	var lobby_teams := _lobby_teams
 	if lobby_teams.is_empty():
 		_check(false, "大厅队伍表是空的(选边那一刻没存到)")
 		return
-	# ── 每端的原始读数 ──
-	var teams_of := {}      # tag -> {role: team}
-	var r1 := {}            # role(int) -> Vector2i
-	var r1_team := {}       # role(int) -> team
+	var teams_of := {}
+	var r1 := {}
+	var r1_team := {}
 	var r2 := {}
 	var conv_ok := {}
 	var bullet := {}
@@ -282,7 +266,6 @@ func _assert_stage3() -> void:
 		var r2l := _rec_line(text, "R2POS")
 		if r2l != "":
 			r2[role] = _parse_cell(_tok(r2l, "cell", ""))
-			# 相④ 的另一半:换边后客户端重拉了一次 match_sync(进场那次之后必须再有 —— 换边后六端手里那份出生点是旧侧的,重拉那一拍就是把新一侧拿回来)。
 			msync_min = mini(msync_min, int(_tok(r2l, "msync", "0")))
 			msync_seen += 1
 		var k2l := _rec_line(text, "K2")
@@ -310,7 +293,6 @@ func _assert_stage3() -> void:
 		if _tok(inf, "esc", "0") == "1":
 			esc_tag = tag
 			esc_role = role
-		# 相①/"等待室渲染路径"(A 册从没跑到过的那条):每端都必须真收到 team_room_state
 		var room_states := int(_tok(inf, "room_states", "0"))
 		if room_states <= 0:
 			_check(false, "%s 没收到过 team_room_state(等待室渲染路径没跑到)" % tag)
@@ -325,7 +307,6 @@ func _assert_stage3() -> void:
 			pass
 	_check(client_rows == CLIENT_COUNT, "6 端都写出了结果(实得 %d)" % client_rows)
 
-	# ── 相① 队伍表:每端拿到的 teams 必须与大厅下发的**逐值一致** ──
 	for tag in teams_of:
 		_check(_same_pairs(teams_of[tag], lobby_teams),
 				"相① %s 的 match_sync.teams == 大厅队伍表(端 %s / 厅 %s)"
@@ -335,7 +316,6 @@ func _assert_stage3() -> void:
 		tcount[int(lobby_teams[r])] = int(tcount.get(int(lobby_teams[r]), 0)) + 1
 	_check(tcount[1] == 3 and tcount[2] == 3, "相① 大厅队伍表是 3+3(实得 %s)" % str(tcount))
 
-	# ── 相① 队色 + 分队碰撞层(客户端 TEAMFMT 读数;成功也打一行,便于回溯)──
 	if teamfmt.size() == CLIENT_COUNT:
 		var bad_l := 0
 		var bad_m := 0
@@ -356,9 +336,6 @@ func _assert_stage3() -> void:
 		_check(false, "相① 只有 %d/%d 端写出了 TEAMFMT 读数(队色/分层没验到)"
 				% [teamfmt.size(), CLIENT_COUNT])
 
-	# ── 相① 收敛(C2)──
-	# ★ 一条判定类别 = 一条守卫:逐端一条会退化成 6 条;而**空表**(一端的 CONV 行都没解析出来)
-	#   会让整个循环**一次不跑** ⇒ 静默通过。⇒ 先判"六端都写了",再判"六端都对"。
 	_check(conv_ok.size() == CLIENT_COUNT, "相① 六端都写出了 CONV(收敛)读数(实得 %d)" % conv_ok.size())
 	var conv_bad := 0
 	for r in conv_ok:
@@ -367,13 +344,10 @@ func _assert_stage3() -> void:
 	_check(conv_ok.size() == CLIENT_COUNT and conv_bad == 0,
 			"相① 六端本地玩家与权威快照收敛(不符 %d 端)" % conv_bad)
 
-	# ── 相② 每人在自己队那半边出生(2026-11-01 新契约:出生点 = 地图 `# respawn <side>` 数据)──
-	# ★ 旧判据「队内最大距离 < 队间最小距离」是几何散点时代的产物:现在每队占**一整侧**、点在该侧均匀散布
-	#   ⇒ 队内跨度本就可能大于跨侧最小距(环面接缝与半区中线两处天然相邻)。现在钉用户要的那条:**每人都在本队那侧**。
 	if r1.size() == CLIENT_COUNT:
 		var d := _grid_dims()
 		if d == Vector2i.ZERO:
-			pass   # 地图尺寸读不到 —— `_grid_dims()` 已记 FAIL;没有尺寸就判不了半区
+			pass
 		else:
 			var wrong_side := 0
 			var side_counts := {1: 0, 2: 0}
@@ -390,7 +364,6 @@ func _assert_stage3() -> void:
 	else:
 		_check(false, "相② 只收到 %d/6 个出生点读数" % r1.size())
 
-	# ── 相③ 子弹穿透(负控制)+ 榴弹满效(正控制)──
 	var shooter_role := 0
 	var victim_role := 0
 	var a_roles: Array = []
@@ -418,23 +391,15 @@ func _assert_stage3() -> void:
 			_check(false, "相③ 甲(role %d)是**空手**(wtype=0)却进了连射子状态 —— 「服务器玩家必须有枪」这条生产前提没成立(空手 = PvP 静默哑火),不是抽签"
 					% shooter_role)
 		elif why == "no_bullet_weapon":
-			# 背包里没有出弹类武器(抽到榴弹/激光,且没有第二把)—— 断言在这里无法成立。★ 只进 _notes,不占断言账本:一句恒真的 _check(true, …) 是「恒绿空断言」,而它还会把「这一相没验到」伪装成「这一相过了」。
 			_notes.append("相③ 子弹那一半**未覆盖**:甲手上是 %d 号(非出弹类)且无第二把武器 —— 枪种抽签" % wtype)
 		elif why == "bullet_switch_timeout":
-			# ★ 这一档必须保持红(与榴弹那半边口径对齐):背包里有出弹枪却 2s 没切过去 = 产品/协议异常(本仓有「滚轮切枪被权威 wslot 拉回」的前科),不是抽签。
 			_check(false, "相③ 背包里有出弹类武器却切不过去(bullet_switch_timeout)—— 不是抽签,是缺陷")
 		elif why == "rendezvous_timeout" or _tok(bl, "timeout", "0") == "1":
-			# ★ 这一相没验到,而不是「枪坏了」—— 判词只许写「未覆盖」,否则读日志的人(评审也踩过)会把它当成产品缺陷。★ 成因照实写「未验证」:早先这里断言「不是开火/伤害链路的问题」,而那条因果本探针从未验证过。
-			#   team_bot_input.gd 自己写着「输入链丢边沿会产生恰好这个症状且不报错」,两者在读数上分不开。★ 只进 _notes,不占断言账本(理由同上一条);dist/los 是真读数(取自超时那一刻)。
-			#   见 watcher 的 `_tick_meet_shooter`),不再是写死的 -1/0。
 			_notes.append(("相③ 子弹那一半**未覆盖**:甲未能在走位窗口内走到乙身边"
 					+ "(超时读数 dist=%s los=%s)★ **成因未验证** —— 「输入边沿丢失」症状与「走位没到位」相同"
 					+ "(见 team_bot_input.gd),本探针分不清")
 					% [_tok(bl, "dist", "?"), los])
 		elif shots == 0 and wtype == 6:
-			# ★★ 甲手上是**激光枪**(即时光束、不产生子弹)⇒ `shots=0` 是**正确行为**,而
-			#    "乙 hp 不变"这时是**空断言**。**不能把它算成绿**(那正是"恒绿空断言")也不能算红
-			#    (枪没坏)—— 照实标未覆盖,只进 `_notes`。
 			_notes.append("相③ 子弹那一半**未覆盖**:甲手上是激光枪(光束武器不产生子弹)—— 枪种抽签")
 		else:
 			_check(shots > 0,
@@ -454,21 +419,14 @@ func _assert_stage3() -> void:
 				% [dmg, _tok(gl, "before", "?"), _tok(gl, "after", "?")])
 		_check(moved > 8.0, "相③ ★ 乙被推飞(%.0fpx)" % moved)
 	else:
-		# ★ 照实分栏,两种情形**判据不同**(理由见下):
 		var why := _tok(gl, "reason", "?")
 		if why == "rendezvous_timeout":
-			# ★ 与子弹那半边**同口径**:判词只写"未覆盖",且不把未经证实的因果写成结论 ——
-			#   「输入边沿丢失」与「走位慢」在读数上分不开(见 team_bot_input.gd 文件头)。
-			# ★ 只进 `_notes`,不占断言账本(恒真的 `_check(true, …)` 是"恒绿空断言")。
 			_notes.append("相③ 榴弹那一半**未覆盖**:甲没能走到乙的贴脸距离内 ★ 成因未验证(同子弹那半边)")
 		elif why == "no_grenade_launcher":
-			# ★ 判词照实:那是**甲自己的背包**里没有 5 号武器(初始/复活只随机发一把),
-			#   不等于"本局无人持榴弹发射器" —— 早先那句是过度断言。
 			_notes.append("相③ 榴弹那一半**未覆盖**:甲背包里没有榴弹发射器(初始武器随机发一把)—— 枪种抽签")
 		else:
 			_check(false, "相③ 榴弹没投出去:%s" % why)
 
-	# ── 相④ ROUND_OVER:比分键是队号、局胜六端一致 ──
 	if round1.is_empty():
 		_check(false, "相④ 没有任何端观察到 ROUND_OVER(9 杀没打满)")
 	else:
@@ -487,15 +445,11 @@ func _assert_stage3() -> void:
 			if k != "1" and k != "2":
 				bad = k
 		_check(bad == "", "相④ scores 的键是队号 1/2(实得 %s)" % sc)
-		# ★ **非空转**:ROUND_OVER 不能全靠"脚本机器人自杀脱困(K)"推出来 —— `kill_event` 的
-		#   射手为 0 就是无归因(自杀/溺水/坠落),非 0 才是**真实交火**打死的。`kill_event` 是
-		#   广播的 → 每个客户端看到同一批,故取**各端最大值**而不是求和。
 		var ka := 0
 		var ku := 0
 		for r in kill_attr:
 			ka = maxi(ka, int(kill_attr[r]))
 			ku = maxi(ku, int(kill_unattr[r]))
-		# ★ 这一条**记读数、不当红**(理由见 watcher 的 `_tick_backoff`):脚本机器人能不能
 		var bo_tags: Array = []
 		var bo_max := 0
 		for i in range(1, CLIENT_COUNT + 1):
@@ -505,8 +459,6 @@ func _assert_stage3() -> void:
 			bo_tags.append(i)
 			bo_max = maxi(bo_max, int(_tok(bkl, "n", "0")))
 		if ka >= 1:
-			# ★ 读数,不是断言:恒真的 `_check(true, …)` 是**恒绿空断言**(把"没验到"伪装成"验过了"),
-			#   而且它还会算进条数闸、稀释闸的语义。⇒ 只进 `_notes`。
 			_notes.append("相④ 真实交火击杀 %d 次(读数;这一栏**不是**「非空转」的证明 —— 见回退模式读数)" % ka)
 		var bo_txt := ("**无端报告启用回退模式(REC BACKOFF)**" if bo_tags.is_empty()
 				else "**回退模式(REC BACKOFF)被 %d 端启用(最大 n=%d),回合有一部分是它推的**"
@@ -517,14 +469,11 @@ func _assert_stage3() -> void:
 			_notes.append("相④ **真实交火击杀 0 次** —— 这一半未覆盖")
 		_notes.append("相④ 第 1 局:%s" % round1[round1.keys()[0]])
 
-	# ── 相④ 换边(2026-11-01 新语义:第 2 局换到**另一侧**的出生点列表并重随机,不再是精确对调)──
 	if r2.size() == CLIENT_COUNT and r1.size() == CLIENT_COUNT:
 		var d := _grid_dims()
 		if d == Vector2i.ZERO:
-			pass   # 地图尺寸读不到 —— `_grid_dims()` 已记 FAIL(同相②)
+			pass
 		else:
-			# 换边判据 = 直接看**半区**:第 2 局每人的出生侧必须与第 1 局相反。比「离对手队落点更近」的距离判据本质
-			# (后者在半区均匀散布下可能出现「对手侧的点恰好离我更远」的随机抖动)。
 			var same_cell := 0
 			var not_swapped := 0
 			for r in r1:
@@ -536,7 +485,6 @@ func _assert_stage3() -> void:
 					not_swapped += 1
 			_check(same_cell == 0, "相④ ★ 第 2 局每人的出生点都不与第 1 局同处(实得 %d 人重复)" % same_cell)
 			_check(not_swapped == 0, "相④ ★ 换边:第 2 局每人都换到了另一侧(没换侧 %d 人)" % not_swapped)
-			# 换边那一拍客户端**重拉 match_sync**:每端都应 ≥2 次应答(进场 1 + 换局 1)
 			_check(msync_seen == CLIENT_COUNT and msync_min >= 2,
 					"相④ ★ 换边后各端都重拉了 match_sync(六端最少应答次数 %d,应 ≥2)" % msync_min)
 	else:
@@ -546,7 +494,6 @@ func _assert_stage3() -> void:
 	_check(k2_ok >= 1, "相⑤ 补 ★ K 键自杀在 3v3 走通(倒地 → 2s 复活;实得 %d 端报告读数 / %d 端走通)"
 			% [k2_seen, k2_ok])
 
-	# ── 相⑤ 少人继续 ──
 	_check(esc_tag != "", "相⑤ 有一个客户端按 ESC 离场(实得 %s)" % esc_tag)
 	if esc_tag != "":
 		_check(esc_role != 0, "相⑤ 离场者的 role 已知(%d)" % esc_role)
@@ -571,15 +518,11 @@ func _assert_stage3() -> void:
 		var gap_txt := ""
 		for pair in obs_gaps:
 			gap_txt += "%s=%.0fms " % [pair[0], float(pair[1])]
-		# ★★ 判据是每一端各自零容忍(与观察者侧同一条:_obs_max_gap > 1000 即红),不做「≥2 端才红」的容忍 ——
-		#   单端超 1s 有两种可能:(甲) 该客户端进程自己卡了一下(本机同时跑 8 个 Godot);(乙) 服务器对那一个 peer 的定向投递异常(snapshot_own 是逐 peer 定向发的,只卡一端恰恰是那条路的可疑症状)。
-		#   探针分不清这两者,故保守判红;要放宽得先有能区分它们的证据。
 		_check(obs_gaps.is_empty() or gap_max(obs_gaps) <= 1000.0,
 				"相⑤ ★ 观察窗内快照连续(被观察的 %d 端最大间隔: %s;单端超 1s 也判红 —— 可能是该客户端自身停顿,也可能是服务器对**该 peer** 的定向投递异常,探针无法区分)"
 				% [obs_gaps.size(), gap_txt])
 
 
-# ════════════════════ 子进程 / 文件 ════════════════════
 
 func _kill_children() -> void:
 	# ① 按 PID 杀全部子进程(首选):六个客户端是从临时端口连出去的,不占 worker 端口,只按端口杀根本杀不到它们 —— 留下的残留进程会敲下一跑、并攥着自己的 --log-file 让下一跑的清理静默失败(reconnect_probe 的 _kill_children 记过这两条后果)。
@@ -590,7 +533,6 @@ func _kill_children() -> void:
 			killed += 1
 	print("PROBE: 按 PID 收尾 %d/%d 个子进程" % [killed, _child_pids.size()])
 	_child_pids.clear()
-	# ② worker 按 UDP 端口补一刀(它才是真 bind 端口那一侧;兜住"PID 记录漏了"这一档)
 	if _worker_port > 0:
 		ProcUtil.kill_udp_port(_worker_port)
 
@@ -632,8 +574,6 @@ func _tail(path: String, n: int) -> String:
 	return "…(前 %d 行省略)\n" % (lines.size() - n) + "\n".join(lines.slice(lines.size() - n))
 
 
-# 开工前清掉上一跑的产物。★ 删除**必须看返回值**:上一跑的客户端若还活着(它攥着自己的
-# `.result`/`.log`),删除会失败,新进程会与之混写 → 人会照着混了旧内容的文件做错误归因。
 func _clean() -> bool:
 	for i in range(1, CLIENT_COUNT + 1):
 		for tag in ["c%d" % i]:
@@ -643,13 +583,9 @@ func _clean() -> bool:
 					continue
 				var err := DirAccess.remove_absolute(ProjectSettings.globalize_path(p))
 				if err != OK:
-					# ★★ 当场退出,不能只警告:_results_ready() 数的是「存在且以 OK/FAIL 开头」的文件 —— 上一跑的残留会被当成这一跑的结果下判决(而且看不出是旧的)。
 					print("PROBE: 删不掉上一跑的 %s(错误 %d)—— 多半是上一跑的进程还活着;"
 							% [p, err] + "残留文件会被当成本跑的读数下判决,故直接退出")
 					return false
-	# ★★ 还要清 **worker 自己的日志**:`_stage_collect` 判"3v3 worker 就绪"靠 grep 它
-	#   (`user://logs/worker_<port>.log`)—— 不清的话,在"新 worker 还没打开该文件"的启动窗口里
-	#   会读到**上一跑**那一行,把"30s 内没报就绪"这条能指路的提示压掉。只扫池外那一段端口。
 	var wdir := DirAccess.open("user://logs")
 	if wdir != null:
 		for fn in wdir.get_files():
@@ -675,7 +611,6 @@ func _dump() -> String:
 	return out
 
 
-# ════════════════════ 读数解析小工具 ════════════════════
 
 func _head_line(text: String) -> String:
 	var ls := text.split("\n")
@@ -689,9 +624,6 @@ func _rec_line(text: String, key: String) -> String:
 	return ""
 
 
-# 客户端把读数分成**两行** INFO(一行业务读数、一行质量读数)→ 这里必须**两行都并起来**再取键。
-# ★ 早先只取 `INFO snapmax` 那一行 ⇒ `room_states`/`wait_rows` 永远读不到 0 以外的值 ⇒
-#   "等待室渲染路径"那两条断言**恒红**(实测 run9:六端全红,而客户端日志里 `room_states=1` 明明在)。
 func _info_line(text: String) -> String:
 	var out := ""
 	for l in text.split("\n"):
@@ -704,7 +636,6 @@ func _tok(line: String, key: String, def: String) -> String:
 	for part in line.split(" ", false):
 		if part.begins_with(key + "="):
 			return part.substr(key.length() + 1)
-	# 头行的 role=/team= 也在 token 里(head 形如 "OK c1 role=3 team=1")
 	return def
 
 
@@ -733,7 +664,6 @@ func _same_pairs(a: Dictionary, b: Dictionary) -> bool:
 	return true
 
 
-# 环面回绕尺寸(相②/相④ 的格距离要用)。★ **必须来自地图文件本身**,不能回落硬编码:
 func _grid_dims() -> Vector2i:
 	var d := MapFormat.map_size(MatchBootstrap.PVP_MAP)
 	if d.x <= 0 or d.y <= 0:
@@ -761,13 +691,11 @@ func _check(ok: bool, msg: String) -> void:
 		print("  FAIL %s" % msg)
 
 
-# ════════════════════ 客户端(子进程)════════════════════
 
 func _run_client() -> void:
 	var w: Node = load("res://tests/harness/team_match_watcher.gd").new()
 	w.set("who", _who)
 	w.set("idx", _idx)
 	w.set("lobby_port", LOBBY_PORT)
-	# 观察者挂 `root`(不是本场景):真大厅页 → 真 team_game 的那次换场不会把它带走
 	get_tree().root.add_child.call_deferred(w)
 	print("PROBE[%s]: 客户端就绪,等观察者连大厅 %d" % [_who, LOBBY_PORT])

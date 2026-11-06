@@ -1,8 +1,5 @@
 extends Control
 
-# Beta 入口页:所有实验性玩法都从这里进;页面 = 标题带 + 副题 + 若干画框型选项卡片(画框图标 + 模式名栏 + 简介栏 + 版本栏)。
-# ★ 页面框架在 beta_menu.tscn 里(见 tools/gen_menu_scene.gd);卡片本身仍由代码建 —— 图标是运行时生成的贴图,进不了 .tscn,卡内边距 28/24 也是 Theme 表达不了的那一档,代价是编辑器里那一行是空的。
-# ★ beta 态传给大厅页的顺序:先 PvpSession.reset()(它会把 beta_mode 清成 false),再置 beta_mode = true,然后切场景;预选筛选走 entry_mode(不是凭据的 room_mode),大厅页 _ready 末尾按它调 _set_filter。
 
 const HEADER_STRIP_PANEL := preload("res://ui/components/header_strip_panel.tscn")
 
@@ -27,8 +24,8 @@ const CARDS := [
 	},
 ]
 
-const CARD_W := 440.0        # 卡片宽度(两张 + 间距远小于页面宽)
-const CARD_PAD := Vector2(28, 24)   # 卡内边距(卡比整页面板窄,故不取 64/46 那一档)
+const CARD_W := 440.0
+const CARD_PAD := Vector2(28, 24)
 
 @onready var _cards_row: HBoxContainer = %CardsRow
 
@@ -41,18 +38,14 @@ func _ready() -> void:
 		get_tree().change_scene_to_file("res://scenes/main_menu.tscn"))
 
 
-# 画框型选项 = menu_panel 凿刻面板 + 画框(图标)+ 模式名栏(标题带)+ 简介栏 + 版本栏;整卡可点,hover 时外线转金。
 func _make_card(c: Dictionary) -> Control:
-	# ★ menu_panel() 的皮与内容契约:内容一律加进 Body(只有它承载内边距)。
 	var card := UiFactory.menu_panel(CARD_PAD)
 	card.custom_minimum_size = Vector2(CARD_W, 0)
-	# 只有外层卡吃鼠标,整棵内容子树设 IGNORE —— 否则点在内层控件上时 gui_input 落在它那儿,卡的点击/悬停全都不触发。
 	card.mouse_filter = Control.MOUSE_FILTER_STOP
 	card.gui_input.connect(func(ev: InputEvent) -> void:
 		if ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed \
 				and (ev as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
 			_enter_card(c))
-	# hover:外线转金(内亮线不动 —— 凿刻感保留)。duplicate() 免得改到共享样式。
 	var outer := card.get_theme_stylebox("panel") as StyleBoxFlat
 	var hot := outer.duplicate() as StyleBoxFlat
 	hot.border_color = UiFactory.C_GOLD
@@ -80,7 +73,6 @@ func _make_card(c: Dictionary) -> Control:
 	tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	icon_box.add_child(tag)
 
-	# 卡片标题居中:卡内的 tag / 简介 / 版本行本来就居中(见上下的 horizontal_alignment),标题带没理由单独左对齐。
 	var h := HEADER_STRIP_PANEL.instantiate() as HeaderStripPanel
 	h.apply(str(c["name"]), 32, true)
 	vb.add_child(h)
@@ -105,11 +97,9 @@ func _ignore_mouse_recursive(node: Node) -> void:
 		_ignore_mouse_recursive(ch)
 
 
-## 进入某张卡的模式(点击与 autotest 共用同一入口;CARDS[i] 传整张卡的字典)。
 func _enter_card(c: Dictionary) -> void:
 	Sfx.play("ui")
 	PvpSession.reset()
 	PvpSession.beta_mode = true
-	# ★ 预选筛选模式(不是凭据的模式):大厅页 _ready 末尾读它调 _set_filter;CARDS[i][mode] 不是死字段,读者就是这一行。
 	PvpSession.entry_mode = str(c["mode"])
 	get_tree().change_scene_to_file(str(c["scene"]))

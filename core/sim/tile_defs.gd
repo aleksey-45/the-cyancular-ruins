@@ -10,28 +10,25 @@ const MAX_TEXTURE: int = 22
 static var _defs: Dictionary = {}
 static var _loaded := false
 
-# 纹理类型 id(避免每格一次字符串比较)。
 const TYPE_WALL: int = 0
 const TYPE_PASSAGE: int = 1
 const TYPE_LIQUID: int = 2
 const TYPE_GAS: int = 3
 const _TYPE_NAMES: Array = ["wall", "passage", "liquid", "gas"]
 
-# ── 预计算属性表(索引 = 纹理 0..MAX_TEXTURE)──
-static var _type: PackedByteArray = PackedByteArray()          # 类型 id
+static var _type: PackedByteArray = PackedByteArray()
 static var _hp: PackedInt32Array = PackedInt32Array()
 static var _bullet_destroyable: PackedByteArray = PackedByteArray()
 static var _explosion_destroyable: PackedByteArray = PackedByteArray()
 static var _elastic: PackedByteArray = PackedByteArray()
 static var _climb_speed: PackedFloat32Array = PackedFloat32Array()
 static var _climb_descent: PackedFloat32Array = PackedFloat32Array()
-static var _decay: PackedFloat32Array = PackedFloat32Array()   # 逐格爆炸衰减(缺省回落全局)
+static var _decay: PackedFloat32Array = PackedFloat32Array()
 # 旧图集废弃槽位 → (base 纹理, hue 档) 的读时迁移表(data/tile_defs.json 的 legacy_texture_map 单一来源;0 = 非 legacy)。
 static var _legacy_base: PackedInt32Array = PackedInt32Array()
 static var _legacy_hue: PackedInt32Array = PackedInt32Array()
 static var _tables_built := false
 
-# 未加载 defs 时的缺省,须与旧 tile(tex).get(..., 缺省) 完全一致:type=wall、hp 1、各开关 false、climb 0、衰减回落全局 0.75。
 static func _ensure_tables() -> void:
 	if _tables_built:
 		return
@@ -116,7 +113,6 @@ static func load_defs() -> void:
 	else:
 		push_error("TileDefs: %s 解析失败" % PATH)
 	_loaded = true
-	# defs 改变 → 重建属性表(把先前可能的"未加载缺省表"覆盖成真实值)
 	_tables_built = false
 	_ensure_tables()
 
@@ -125,7 +121,6 @@ static func explosion_decay() -> float:
 	return float(_defs.get("explosion_decay", 0.75))
 
 
-# 逐格爆炸衰减(水 0.25);缺省回落全局 explosion_decay()。
 static func explosion_decay_of(texture: int) -> float:
 	_ensure_tables()
 	if texture < 0 or texture > MAX_TEXTURE:
@@ -133,7 +128,6 @@ static func explosion_decay_of(texture: int) -> float:
 	return _decay[texture]
 
 
-# 类型 id(热点:寻路/LOS/水判定),省去字符串比较。
 static func type_id_of(texture: int) -> int:
 	_ensure_tables()
 	if texture < 0 or texture > MAX_TEXTURE:
@@ -180,7 +174,6 @@ static func climb_speed(texture: int) -> float:
 	return _climb_speed[texture]
 
 
-# 攀爬下降速度倍率(梯子 2.0;锁链无此字段 → 0,玩家下降走自由落体)。
 static func climb_descent_speed(texture: int) -> float:
 	_ensure_tables()
 	if texture < 0 or texture > MAX_TEXTURE:
@@ -188,17 +181,13 @@ static func climb_descent_speed(texture: int) -> float:
 	return _climb_descent[texture]
 
 
-# packed 格值 → 是否挡路:非 0 且 type=wall。
 static func is_blocked(v: int) -> bool:
 	if v == 0:
 		return false
 	return type_id_of(MazeGenerator.texture_of(v)) == TYPE_WALL
 
 
-# ── 运行时破坏(与 MazeGenerator.current_grid 同尺寸的当前 HP 表)──
 static var hp_grid: Array[Array] = []
-# 瓦片被破坏(变空气)后的回调,两处注册、各管一摊:单机 = level_0._on_tile_destroyed(清 16 子格并逐子格发回调,渲染/碰撞/账本由此收口);
-# 服务器 = match_host._on_tile_destroyed(广播 + 清子格 HP)。用 Callable 而不是硬引用 Level0,避免场景脚本依赖 autoload 导致 -s 测试编译失败。
 static var on_destroyed: Callable = Callable()
 
 static func init_hp(grid: Array) -> void:
@@ -210,7 +199,6 @@ static func init_hp(grid: Array) -> void:
 		hp_grid.append(r)
 
 
-# 格级 HP 的读取端(越界返回 0):此前两张 HP 表只有写没有读回来的口 ⇒ 回溯复原时"把格级 HP 补回满血"在调用方没有合法写法。
 static func hp_grid_at(cell: Vector2i) -> int:
 	if cell.y < 0 or cell.y >= hp_grid.size() or cell.x < 0 or cell.x >= hp_grid[cell.y].size():
 		return 0
@@ -224,12 +212,9 @@ static func set_hp_grid(cell: Vector2i, hp: int) -> void:
 	hp_grid[cell.y][cell.x] = hp
 
 
-# ── cyrm v4 子格破坏(选项 A:破坏按 16px 子格算,格级 current_grid 在整格死光时才清零)──
-# sub_hp 下标 = sub_y * sub_cols + sub_x;0 = 空气或已摧毁。纹理永远读 MazeGenerator.current_subgrid(它不变,摧毁改的是 hp)。
 static var sub_hp: PackedInt32Array = PackedInt32Array()
 static var sub_cols: int = 0
 static var sub_rows: int = 0
-# 子格被摧毁的回调(level_0 与 worker 分别注册):参数 (sub, pre_hp, owner) —— pre_hp 供回溯账本记"改前值";owner = 造成破坏的射手节点(worker 用它映射 role 结算拆砖得颗粒)。
 static var on_sub_destroyed: Callable = Callable()
 
 
@@ -263,9 +248,6 @@ static func sub_alive(sub: Vector2i) -> bool:
 	return sub_hp[sub.y * sub_cols + sub.x] > 0
 
 
-# 对单个 16px 子格扣血(source = bullet/explosion):扣到 <= 0 即死亡(回调 level_0 清渲染/记账本/重建碰撞块);所属 64px 格全部子格死光时把格级 current_grid 清零。
-# 子格 HP 的只读口(0 = 空气/已摧毁)。★ 纹理不会因为摧毁而变 0(摧毁只写 sub_hp),所以
-#   "这块砖还在不在"只能问这里 —— 拿 current_subgrid 的 tex 判存活会把已打碎的树叶当成活砖。
 static func sub_hp_at(sub: Vector2i) -> int:
 	if sub_cols == 0 or sub.x < 0 or sub.y < 0 or sub.x >= sub_cols or sub.y >= sub_rows:
 		return 0
@@ -275,9 +257,6 @@ static func sub_hp_at(sub: Vector2i) -> int:
 	return int(sub_hp[idx])
 
 
-# 32px 块 = 2×2 个 16px 子格(block 坐标 = 子格坐标 / 2)。★ 2026-10-30 用户裁定:榴弹最小破坏单位 = 32px
-# ⇒ 同一伤害对块内 4 个子格各结算一次(与 Explosion._damage_tiles_per_block / BulletBase 直击共用这一处)。
-# 返回真正被扣到的子格数(整块已空/纹理不可破时可能 < 4)。
 static func damage_block32(block: Vector2i, amount: int, source: String, owner: Node = null) -> int:
 	var n := 0
 	for sy in 2:
@@ -304,7 +283,6 @@ static func damage_sub(sub: Vector2i, amount: int, source: String, owner: Node =
 	sub_hp[idx] = pre_hp - amount
 	if sub_hp[idx] <= 0:
 		sub_hp[idx] = 0
-		# 所属 64px 格全部子格死光 → 格级网格清零(选项 A:逻辑层只看格)
 		var grid := MazeGenerator.current_grid
 		if not grid.is_empty():
 			var cell := Vector2i(sub.x / 4, sub.y / 4)
@@ -330,16 +308,12 @@ static func damage_sub(sub: Vector2i, amount: int, source: String, owner: Node =
 	return false
 
 
-## 回溯还原:把子格 HP 写回(渲染/碰撞由 level_0 的还原路径做)。
 static func restore_sub(sub: Vector2i, hp: int) -> void:
 	if sub_cols == 0 or sub.x < 0 or sub.y < 0 or sub.x >= sub_cols or sub.y >= sub_rows:
 		return
 	sub_hp[sub.y * sub_cols + sub.x] = hp
 
 
-# 格级销毁的"子格 HP 侧":把该格 16 个子格的 sub_hp 清零,静默 —— 不触发 on_sub_destroyed(服务器侧那个回调每格都发 RPC,
-# 逐子格回调会把 1 条 tile_destroyed 广播变成 17 条)。★ 为什么必须有它:子格碰撞的真相源是 sub_hp 而不是调用方的碰撞数组 ——
-# 只清调用方那份,那 16 格"还活着"的记录会让墙在下一局复位时按基线重算时长回来。
 static func zero_cell_sub_hp(cell: Vector2i) -> void:
 	if sub_cols == 0:
 		return
@@ -348,9 +322,6 @@ static func zero_cell_sub_hp(cell: Vector2i) -> void:
 			restore_sub(Vector2i(cell.x * 4 + sx, cell.y * 4 + sy), 0)
 
 
-# 格级销毁的子格侧收口:清该格 16 个子格的 sub_hp,并逐子格发 on_sub_destroyed(渲染 9 环面副本/脏块/瓦片回溯账本一律由回调处理)。
-# ★ 存在理由:格级回调此前只有服务器接了 ⇒ 单机激光打光整格后 16 个子格仍 sub_alive ⇒ 幽灵砖(光束穿过去了,子弹/玩家仍撞上)。
-# ★ 必须先读 pre_hp 再清(on_sub_destroyed 的第二个参数是改前值,瓦片账本拿它做回溯);★ 复用 zero_cell_sub_hp,别照抄清零循环(第二份真相源)。
 static func destroy_cell(cell: Vector2i) -> void:
 	if sub_cols == 0 or sub_rows == 0:
 		return
@@ -362,7 +333,7 @@ static func destroy_cell(cell: Vector2i) -> void:
 			if sub.x < 0 or sub.y < 0 or sub.x >= sub_cols or sub.y >= sub_rows:
 				continue
 			if not sub_alive(sub):
-				continue   # 已死的子格不重复回调(否则账本会多出 pre_hp=0 的假条目)
+				continue
 			subs.append(sub)
 			pre_hp.append(sub_hp[sub.y * sub_cols + sub.x])
 	zero_cell_sub_hp(cell)
@@ -372,7 +343,6 @@ static func destroy_cell(cell: Vector2i) -> void:
 		on_sub_destroyed.call(subs[i], pre_hp[i], null)
 
 
-# 对某格瓦片扣血(source = bullet/explosion):扣到 <= 0 → 变空气(改 current_grid + 回调 on_destroyed;单机侧那条回调再走 destroy_cell 把 16 个子格一起收口)。
 static func damage_tile(cell: Vector2i, amount: int, source: String) -> bool:
 	var grid := MazeGenerator.current_grid
 	if grid.is_empty():

@@ -1,19 +1,18 @@
 class_name WorldLabel
 extends Node2D
-# 玩家头上 ID 文字:世界空间 Node2D,用 draw_string 居中画(压在黑色薄底板上)。
 
 const FONT_PATH := "res://assets/fonts/less_perfect_dos_vga.ttf"
-const FONT_SIZE := 32   # 16 的整数倍(像素字体锐利;全仓字号规范的最后一处违例)
+const FONT_SIZE := 32
 const WIDTH := 344.0
-const ALPHA := 0.85   # 文字透明度
-# 底板(黑 0.1)。★ 唯一源是 `UiFactory.C_PLATE` —— 本处是**别名**,不存字面量。
-# **不乘文字 alpha**:它是垫在字下面的静态底,不是文字的一部分。
+const ALPHA := 0.85
+# 底板(黑 0.1)。★ 唯一源是 `UiFactory.C_PLATE` —— 本处是别名,不存字面量。
+# 不乘文字 alpha:它是垫在字下面的静态底,不是文字的一部分。
 const PLATE_COLOR := UiFactory.C_PLATE
-const PLATE_PAD := Vector2(6, 2)   # 底板比文字每边外扩多少(横向多留一点才衬得住字形)
+const PLATE_PAD := Vector2(6, 2)
 
 # ── 头顶挂件的锚点(单一来源:1v1 / 大乱斗 / 3v3 三个宿主都问这里,别在场景根上再各写一份)──
-const HEAD_OFFSET := Vector2(0.0, -78.0)      # 头顶 ID 文字相对玩家原点的偏移(-100 略高,现往下压一点)
-const HP_BAR_OFFSET := Vector2(0.0, -116.0)   # 头顶血条中心相对玩家原点的偏移
+const HEAD_OFFSET := Vector2(0.0, -78.0)
+const HP_BAR_OFFSET := Vector2(0.0, -116.0)
 
 var _text := ""
 var _color := Color(1, 1, 1, 1)
@@ -22,7 +21,6 @@ var _font: FontFile = null
 func _ready() -> void:
 	_font = load(FONT_PATH) as FontFile
 	if _font != null:
-		# 像素字体:关反锯齿/微调/子像素,字形保持硬边像素
 		_font.antialiasing = TextServer.FONT_ANTIALIASING_NONE
 		_font.hinting = TextServer.HINTING_NONE
 		_font.subpixel_positioning = TextServer.SUBPIXEL_POSITIONING_DISABLED
@@ -35,8 +33,6 @@ func set_label(t: String, c: Color) -> void:
 func _draw() -> void:
 	if _text.is_empty() or _font == null:
 		return
-	# 底板宽度按**实际文字**量,不能用 WIDTH(= 344 是居中排版用的行宽,拿它铺底会宽出一大截)。
-	# 基线在 y=0:文字上沿 -ascent、下沿 +descent(draw_string 的 pos 是**基线**起点)。
 	var tw := _font.get_string_size(_text, HORIZONTAL_ALIGNMENT_LEFT, -1, FONT_SIZE).x
 	var asc := _font.get_ascent(FONT_SIZE)
 	var desc := _font.get_descent(FONT_SIZE)

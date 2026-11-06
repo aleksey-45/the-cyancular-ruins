@@ -1,6 +1,5 @@
 extends SceneTree
 
-# 水判定冒烟(纯逻辑 -s,合成网格,不读地图文件、不引 autoload)。
 
 const EXPECTED_CHECKS := 13
 const ROWS := 12
@@ -17,56 +16,46 @@ func _initialize() -> void:
 	TileDefs.load_defs()
 	MazeGenerator.current_grid = _make_grid()
 
-	# ① 干地:整条竖线没有液体 ⇒ 不湿、无水面
-	var b := _make_body(544.0, 400.0, 64.0)   # 第 8 列全空气
+	var b := _make_body(544.0, 400.0, 64.0)
 	var s := Water.sample_body(b, false)
 	_chk(not s.in_water and s.surface_kind == WS.SURFACE_NONE, "干地:in_water=false 且 surface_kind=NONE")
 
-	# ② 单格水:脚在水格中段 ⇒ 自由液面 + 深度 32 + 半没入
-	b = _make_body(96.0, 352.0, 64.0)          # 第 1 列 row5 水、row6 墙
+	b = _make_body(96.0, 352.0, 64.0)
 	s = Water.sample_body(b, false)
 	_chk(s.in_water and s.surface_kind == WS.SURFACE_FREE and _eq(s.surface_y, 320.0)
 			and _eq(s.feet_depth, 32.0) and _eq(s.submersion_ratio, 0.5) and not s.head_under,
 			"单格水:软/硬字段 —— in_water / FREE / surface=320 / depth=32 / ratio=0.5 / 头在水上")
 
-	# ③ 浅水站立:脚正好压在实心底边界(旧点查询会把脚判成"墙格 ⇒ 不在水里")
-	b = _make_body(160.0, 384.0, 96.0)         # 第 2 列 row5 水、row6 墙;脚=row6 顶边
+	b = _make_body(160.0, 384.0, 96.0)
 	s = Water.sample_body(b, false)
 	_chk(s.in_water and _eq(s.surface_y, 320.0), "浅水站立:脚落在实心格边界仍算在水中(按活动箱底边采样)")
 
-	# ④ 2 格深池底:头没入水面线 ⇒ head_under=true(呼吸的唯一判据)
-	b = _make_body(224.0, 448.0, 107.0)        # 第 3 列 row5/6 水、row7 墙;头顶=341,在水面 320 下方 21px
+	b = _make_body(224.0, 448.0, 107.0)
 	s = Water.sample_body(b, false)
 	_chk(s.in_water and s.head_under and _eq(s.feet_depth, 128.0) and _eq(s.submersion_ratio, 1.0),
 			"2 格深池底:in_water + head_under + depth=128 + ratio=1")
 
-	# ⑤ 多段水柱:取身体所在段的顶边,不是整列最顶
-	b = _make_body(288.0, 576.0, 64.0)         # 第 4 列 row3 水、row8 水、row9 墙
+	b = _make_body(288.0, 576.0, 64.0)
 	s = Water.sample_body(b, false)
 	_chk(s.in_water and _eq(s.surface_y, 512.0), "多段水柱:水面线取所在段顶边(512 = row8 顶),不是 row3")
 
-	# ⑥ 墙封顶:surface_kind=CEILING(水袋被天花板压住,没有自由面)
-	b = _make_body(352.0, 384.0, 64.0)         # 第 5 列 row4 墙、row5 水、row6 墙
+	b = _make_body(352.0, 384.0, 64.0)
 	s = Water.sample_body(b, false)
 	_chk(s.surface_kind == WS.SURFACE_CEILING and _eq(s.surface_y, 320.0), "墙封顶:CEILING + 水面线=row5 顶")
 
-	# ⑦ 全液列:标 FULL、仍算在水里,且向上扫有上限(旧实现 while(true) 会挂死)
-	b = _make_body(416.0, 400.0, 64.0)         # 第 6 列整列液体
+	b = _make_body(416.0, 400.0, 64.0)
 	s = Water.sample_body(b, false)
 	_chk(s.surface_kind == WS.SURFACE_FULL and s.in_water and s.head_under, "全液列:FULL/in_water/head_under 且不挂")
 
-	# ⑧ 跨上下 seam:水面线归一到最近环面副本(-128),深度 = 168
-	b = _make_body(480.0, 40.0, 64.0)          # 第 7 列 row10/11/0/1 水
+	b = _make_body(480.0, 40.0, 64.0)
 	s = Water.sample_body(b, false)
 	_chk(s.in_water and _eq(s.surface_y, -128.0) and _eq(s.feet_depth, 168.0),
 			"跨上下 seam:surface_y 归一最近副本(-128)、depth=168(旧实现返回 canonical 640 ⇒ 永不没顶)")
 
-	# ⑨ 左右 seam:负 x 取模到最后一列,判定不受影响
-	b = _make_body(-5.0, 384.0, 96.0)          # 第 19 列 row5 水、row6 墙
+	b = _make_body(-5.0, 384.0, 96.0)
 	s = Water.sample_body(b, false)
 	_chk(s.in_water and _eq(s.surface_y, 320.0), "左右 seam:负 x 落到最后一列照常判水")
 
-	# ⑩ 滞回:深度 5px 从外不进水、从里保持;在线(深度 0)从里保持、从外不进;线上方 1px 退出
 	b = _make_body(96.0, 325.0, 64.0)
 	var from_out := Water.sample_body(b, false).in_water
 	var stay_in := Water.sample_body(b, true).in_water
@@ -86,12 +75,10 @@ func _initialize() -> void:
 	_chk(_eq(off_before, 40.0) and _eq(off_after, 60.0),
 			"feet_offset:混合 CollisionShape2D+CollisionPolygon2D,只切多边形时缓存也失效(40→60)")
 
-	# ⑫ 没顶判定严格性:头正好在水面线不算没顶,再往下 1px 才算(y 向下,> = 更低)
-	var at_surface := Water.sample_body(_make_body(224.0, 448.0, 128.0), false)   # 头顶=320=水面
-	var below_surface := Water.sample_body(_make_body(224.0, 448.0, 127.0), false)  # 头顶=321
+	var at_surface := Water.sample_body(_make_body(224.0, 448.0, 128.0), false)
+	var below_surface := Water.sample_body(_make_body(224.0, 448.0, 127.0), false)
 	_chk(not at_surface.head_under and below_surface.head_under, "head_under:头=水面线不算没顶,低 1px 才算")
 
-	# ⑬ 未迁移面保活:is_in_water/surface_y_at/submerged 与阈值来源
 	var compat := Water.is_in_water(Vector2(96.0, 352.0)) and not Water.is_in_water(Vector2(96.0, 256.0)) \
 			and _eq(Water.surface_y_at(Vector2(480.0, 40.0)), -128.0) \
 			and is_finite(Water.surface_y_at(Vector2(416.0, 400.0))) \
@@ -125,7 +112,6 @@ func _eq(a: float, b: float) -> bool:
 	return absf(a - b) <= 0.001
 
 
-# 合成网格:20×12 格,按断言各自造一段水域(其余全空气)。
 func _make_grid() -> Array[Array]:
 	var grid: Array[Array] = []
 	for y in ROWS:
@@ -159,7 +145,6 @@ func _make_grid() -> Array[Array]:
 	return grid
 
 
-# 测试身体:原点在几何中心,碰撞箱底边 = feet_y、顶边 = feet_y - height。
 func _make_body(x: float, feet_y: float, height: float) -> CharacterBody2D:
 	var body := CharacterBody2D.new()
 	var cs := CollisionShape2D.new()
@@ -173,7 +158,6 @@ func _make_body(x: float, feet_y: float, height: float) -> CharacterBody2D:
 	return body
 
 
-# 混合碰撞体:矩形箱底 30;多边形 A 底 40(启用)、多边形 B 底 60(禁用)。
 func _make_mixed_body() -> CharacterBody2D:
 	var body := CharacterBody2D.new()
 	var cs := CollisionShape2D.new()

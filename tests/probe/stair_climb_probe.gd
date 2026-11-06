@@ -1,14 +1,13 @@
 extends ProbeBase
 
-# 上台阶卡顿探针(用户 2026-11-01 第四轮:「为什么我还是感觉上台阶卡顿」)。
 const EXPECTED_CHECKS := 7
 
-const CELL := 16                      # 子格像素(与游戏一致:TILE_SIZE 64 / SUB_PER_CELL 4)
+const CELL := 16
 const COLS := 160
 const ROWS := 120
-const FLOOR_ROW := 110                # 地板顶面所在子格行(px = 1760)
-const STAIR_X0 := 40                  # 第一级台阶起点(子格列)
-const STAIR_W := 8                    # 每级台阶宽(子格)= 128px
+const FLOOR_ROW := 110
+const STAIR_X0 := 40
+const STAIR_W := 8
 const STAIRS := 10
 
 var _player: Node = null
@@ -30,7 +29,6 @@ func _ready() -> void:
 		_chk(false, "★ 空载守卫:load(player.tscn) 为 null")
 		_finish()
 		return
-	# 世界尺寸(px):小图、不触发环面回绕
 	GameParameters.MAP_WIDTH = COLS * CELL
 	GameParameters.MAP_HEIGHT = ROWS * CELL
 	var sub: Array[Array] = []
@@ -39,11 +37,9 @@ func _ready() -> void:
 		row.resize(COLS)
 		row.fill(0)
 		sub.append(row)
-	# 地板
 	for y in range(FLOOR_ROW, ROWS):
 		for x in COLS:
 			sub[y][x] = 1
-	# 台阶:第 i 级顶面在 FLOOR_ROW - (i+1) 行,从 STAIR_X0 + i*STAIR_W 往右都是它
 	for i in STAIRS:
 		var top := FLOOR_ROW - (i + 1)
 		var x0 := STAIR_X0 + i * STAIR_W
@@ -51,7 +47,6 @@ func _ready() -> void:
 			for x in range(x0, COLS):
 				sub[y][x] = 1
 	MazeGenerator.current_subgrid = sub
-	# 格级网格(64px):4×4 子格全实 ⇒ 该格是实体(其它逻辑如水/姿态会读它)
 	var grid: Array[Array] = []
 	for cy in ROWS / 4:
 		var crow: Array[int] = []
@@ -68,7 +63,6 @@ func _ready() -> void:
 
 	_build_collision()
 
-	# 玩家:放在第一级台阶左边的地板上,一直按住右
 	var ts: PackedScene = load("res://scenes/player/player.tscn")
 	_player = ts.instantiate()
 	add_child(_player)
@@ -76,7 +70,7 @@ func _ready() -> void:
 	pn.global_position = Vector2(STAIR_X0 * CELL - 200.0, (FLOOR_ROW - 1) * CELL)
 	var src := PacketInputSource.new()
 	_player.set_input_source(src)
-	for _i in 20:   # 先落稳
+	for _i in 20:
 		await get_tree().physics_frame
 	var floor_y: float = pn.global_position.y
 	var vx_by_frame: Array[float] = []
@@ -101,38 +95,32 @@ func _ready() -> void:
 	var want_climb := float(STAIRS) * CELL
 	_chk(climbed >= want_climb - 2.0,
 			"① 爬完 %d 级台阶:上升 %.1fpx(至少 %.1f)" % [STAIRS, climbed, want_climb])
-	# ② 卡顿的直接判据:climb 期间不能出现"水平速度被打到 ≈0"的帧(旧实现每级台阶一帧)
 	var slow := 0
 	for i in vx_by_frame.size():
 		if i < 12:
-			continue   # 起步加速段:0 → 满速是 _tick_horizontal 的正常缓动,不算台阶卡顿
+			continue
 		if vx_by_frame[i] < 0.5 * PlayerParams.move_speed:
 			slow += 1
 	_chk(slow == 0, "② ★ 爬台阶期间没有一帧水平速度被吃(0.5×move_speed 以下 %d 帧)" % slow)
-	# ③ 每帧位移不能掉出"一帧正常位移"的 90% 以下(顿一下 = 某几帧位移接近 0)
 	var dt := 1.0 / 60.0
 	var expect_dx := PlayerParams.move_speed * dt
 	var poor := 0
 	for i in dy_by_frame.size():
 		if i < 3:
-			continue   # 起步加速段不算
+			continue
 		var p_now: float = vx_by_frame[i] * dt
 		if p_now < expect_dx * 0.9:
 			poor += 1
 	_chk(poor <= 2, "③ ★ 正常帧位移占 90%%+:掉速帧 %d(≤2;起步/落地各允许 1 帧)" % poor)
-	# ④ 不腾空:爬台阶期间应始终踩地(旧实现抬完离地 1px ⇒ is_on_floor 抖动)
 	_chk(on_floor_frames >= frames - 3,
 			"④ 爬台阶期间踩地 %d/%d 帧(≥ 总帧-3)" % [on_floor_frames, frames])
-	# ⑤ 不掉回去:每帧竖直位移只有"抬升/1px 吸地",不允许明显下坠
 	var big_drop := 0
 	for d in dy_by_frame:
 		if float(d) > 2.0:
 			big_drop += 1
 	_chk(big_drop == 0, "⑤ 没有明显下坠帧(>2px 的下移 %d 帧)" % big_drop)
 
-	# ── ⑥⑦ 回放确定性:一格高的墙 ⇒ 自动跳 ⇒ 空中窗口 capture/restore/重放 ──
-	# 刻意排在 ①~⑤ 之后:自动跳必然腾空一段,混进上面那段测量会让 ④ 恒不成立。
-	var wall_x := STAIR_X0 + STAIRS * STAIR_W + 22          # 子格列:台阶终点右侧 22 子格(352px)
+	var wall_x := STAIR_X0 + STAIRS * STAIR_W + 22
 	var wall_top := FLOOR_ROW - STAIRS - StepJump.MAX_STEP_SUBCELLS
 	_add_wall(Vector2i(wall_x, wall_top), StepJump.MAX_STEP_SUBCELLS, 8)
 	var walk := {"ax": 1.0, "held": 0, "pressed": 0, "released": 0}
@@ -144,7 +132,6 @@ func _ready() -> void:
 		if not (pn as CharacterBody2D).is_on_floor():
 			got_air = true
 			break
-	# 离地那一帧的接触解算让过去,再 capture(整段窗口都在空中 ⇒ is_on_floor 缓存两遍一致)
 	for _i in 3:
 		src.clear_edges()
 		src.apply_packet(walk)
@@ -183,7 +170,6 @@ func _ready() -> void:
 	_finish()
 
 
-# 一格高的墙:同时写进 16px 子格数据(自动跳判据读它)与真实碰撞(物理读它)。
 func _add_wall(top_left: Vector2i, cells_high: int, cells_wide: int) -> void:
 	var sub := MazeGenerator.current_subgrid as Array
 	for y in range(top_left.y, top_left.y + cells_high):
@@ -199,14 +185,12 @@ func _add_wall(top_left: Vector2i, cells_high: int, cells_wide: int) -> void:
 	_body.add_child(cs)
 
 
-# 回放比对的采样:位置 + 速度(精确相等,不做容差 —— 这里的差异由"整态漏字段"造成,量级远大于浮点噪声)
 func _pose4(p: Node) -> Vector4:
 	var body := p as CharacterBody2D
 	var n := p as Node2D
 	return Vector4(n.global_position.x, n.global_position.y, body.velocity.x, body.velocity.y)
 
 
-# 混凝土碰撞:地板 + 每级台阶各一个矩形(与子格几何一致),碰撞层 1 = 玩家 mask 覆盖的层。
 func _build_collision() -> void:
 	var body := StaticBody2D.new()
 	body.collision_layer = 1

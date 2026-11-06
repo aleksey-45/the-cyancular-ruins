@@ -1,6 +1,5 @@
 extends CanvasLayer
 
-# 跨场景「载入中」遮罩(2026-10-24)。用途 = Web 上 Level0 的建图被拆成多帧(9 份环面瓦片/水面/整层碰撞),
 
 var _dim: ColorRect = null
 var _title: Label = null
@@ -17,7 +16,6 @@ func _ready() -> void:
 func _build() -> void:
 	var root := Control.new()
 	root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	# 吃鼠标/键盘:载入期间别让玩家点到底下的按钮(桌面虽然一闪而过,Web 上要几秒)
 	root.mouse_filter = Control.MOUSE_FILTER_STOP
 	root.process_mode = Node.PROCESS_MODE_ALWAYS
 	add_child(root)
@@ -36,7 +34,6 @@ func _build() -> void:
 	vb.add_theme_constant_override("separation", 24)
 	center.add_child(vb)
 
-	# 标题带用工厂的 header_strip(与暂停/结算同一个味道);居中档保证窄面板里不贴边。
 	var strip := UiFactory.header_strip("载 入 中", 48, true)
 	strip.custom_minimum_size = Vector2(720, 0)
 	vb.add_child(strip)
@@ -45,17 +42,15 @@ func _build() -> void:
 	_pct.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_pct.custom_minimum_size = Vector2(720, 0)
 	vb.add_child(_pct)
-	_title = _pct   # 同一行兼作"当前阶段"文字(进度百分比由 set_progress 一起写)
+	_title = _pct
 
 
-# 亮起遮罩;text 是阶段说明(空 = 保持原样)。
 func show_loading(text: String = "正在构建世界…") -> void:
 	if _pct != null and text != "":
 		_pct.text = text
 	visible = true
 
 
-# 更新进度。p 只在有实际进度时给(0..1);text 覆盖当前阶段文字。
 func set_progress(p: float, text: String = "") -> void:
 	if not visible:
 		visible = true

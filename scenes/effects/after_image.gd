@@ -1,7 +1,6 @@
 class_name AfterImage
 extends Node2D
 
-# 残影(纯表现):复制角色当前帧贴图,短促淡出。两处消费:加速残影(红/蓝交替,host=玩家父节点)、
 
 static func spawn(host: Node, animator: AnimatedSprite2D, tint: Color,
 		duration: float = 0.26, z: int = 0) -> void:

@@ -1,7 +1,6 @@
 class_name ProbeBase
 extends Node
 
-# 源码级探针的运行环境:断言账本 + 汇总/收尾 + 扫描词汇(实现在 `ScanUtil`;这里保留同名转发,让探针正文
 
 var _failures: Array[String] = []
 
@@ -11,13 +10,11 @@ func probe_id() -> String:
 	return ""
 
 
-# 记一条断言失败。第二条实参写**人话**:断言在守什么、坏了会怎样。
 func _check(ok: bool, msg: String) -> void:
 	if not ok:
 		_failures.append(msg)
 
 
-# 每条断言的汇总行:本次**没有新增失败**才打 ✓(参数 = 该条断言开始前的 `_failures.size()`)。
 func _summary(fails_before: int, msg: String) -> void:
 	print("[%s] " % probe_id() + ("✓ " if _failures.size() == fails_before else "✗ ") + msg)
 
@@ -52,7 +49,6 @@ func _code_view(src: String) -> String:
 func _func_body(code: String, name: String) -> String:
 	return ScanUtil.func_body(code, name)
 
-# 只认行首的顶层函数定义(内部类会同名骗过 `func_body`);`code` 必须来自 `_code_view`(保留缩进),不能用 `_code_only`。
 func _top_func_body(code: String, name: String) -> String:
 	return ScanUtil.top_func_body(code, name)
 

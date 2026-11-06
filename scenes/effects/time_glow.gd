@@ -1,9 +1,8 @@
 class_name TimeGlow
 extends Node2D
 
-# 时间状态高亮(B13):在实体身上叠一层**加色混合**的贴图副本。
 
-static var total_created := 0   # 累计创建数(探针用:检测"每帧 free+attach"的抖动)
+static var total_created := 0
 
 var color := Color.WHITE
 var src: Node2D = null
@@ -14,7 +13,6 @@ var _ov_anim: Array[AnimatedSprite2D] = []
 var _ov_spr: Array[Sprite2D] = []
 
 
-## 给 target 挂上高亮(已有视觉节点才挂得上;找不到返回 null,调用方当"这帧没高亮"处理)。
 static func attach(target: Node2D, c: Color, passes: int = 1) -> TimeGlow:
 	var vis := find_visual(target)
 	if vis == null:
@@ -52,7 +50,6 @@ static func attach(target: Node2D, c: Color, passes: int = 1) -> TimeGlow:
 	return g
 
 
-## 找 target 身上的视觉节点(敌人/玩家的 .tscn 里都叫 AnimatedSprite2D;找不到再递归找 Sprite2D)。
 static func find_visual(target: Node) -> Node2D:
 	if target == null:
 		return null
@@ -71,7 +68,6 @@ static func find_visual(target: Node) -> Node2D:
 	return null
 
 
-## 探针用:取 target 身上已挂的高亮(没有则 null)。
 static func on(target: Node) -> TimeGlow:
 	var vis := find_visual(target)
 	if vis == null:
@@ -105,7 +101,7 @@ func _sync() -> void:
 			o.animation = _anim.animation
 			o.frame = _anim.frame
 			o.position = Vector2.ZERO
-			o.scale = Vector2.ONE        # 父的 scale(挤压/镜像)已经继承下来了
+			o.scale = Vector2.ONE
 			o.offset = _anim.offset
 			o.centered = _anim.centered
 			o.flip_h = _anim.flip_h

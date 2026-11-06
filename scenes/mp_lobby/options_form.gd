@@ -1,19 +1,15 @@
 class_name OptionsForm
 extends RefCounted
 
-# 大厅页建房弹层的「选项表单」面板(2026-10-22 Task 10 纯搬移自 scenes/mp_lobby.gd)。
 
-# ★ 键名固定:_apply_create_form 按这几个键显隐,max_players / match_time / weapons / privacy 按模式显隐,map 三模式都可见,beta 由 PvpSession.beta_mode 在建面板那一刻定。
 var rows := {}
 var public_check: CheckButton = null
 var invite_edit: LineEdit = null
 var max_slider: HSlider = null
 var time_slider: HSlider = null
-var weapon_checks: Array[CheckButton] = []   # 建房时读勾选态(与旧大乱斗页同款)
+var weapon_checks: Array[CheckButton] = []
 
 
-# 接骨架:按语义名取到表单行与控件 + 接信号 + 灌初值。★ 控件的信号在这里接(不挪进页 _ready):"按钮画在屏上、按下去毫无反应"没有任何运行时信号可观测。
-# ★ 先灌值再 connect(别调换):button_pressed / value 赋值都会发信号,先连上就会在建树那一刻把值写回 Settings 并播一次音效。
 func register(root: Node) -> void:
 	rows = {
 		"privacy": root.get_node("%PrivacyRow"), "max_players": root.get_node("%MaxPlayersRow"),
@@ -33,7 +29,6 @@ func register(root: Node) -> void:
 	max_slider.value_changed.connect(func(v: float) -> void:
 		(root.get_node("%MaxPlayersLabel") as Label).text = "%d 人" % int(v))
 
-	# 一局限时(分钟;仅大乱斗可见)。
 	time_slider = root.get_node("%MatchTimeSlider") as HSlider
 	time_slider.value = Settings.royale_match_min
 	(root.get_node("%MatchTimeLabel") as Label).text = "%d 分钟" % int(Settings.royale_match_min)
@@ -42,19 +37,15 @@ func register(root: Node) -> void:
 		Settings.save()
 		(root.get_node("%MatchTimeLabel") as Label).text = "%d 分钟" % int(v))
 
-	# 「每回合开始回满血」房主选项(仅 1v1 可见)。
-	# ★ 它是房主 / 服务器规则(大乱斗恒 false、3v3 压根不发),故归属创建弹层。
 	var full_heal: CheckButton = root.get_node("%FullHealCheck") as CheckButton
 	full_heal.button_pressed = Settings.pvp_round_full_heal
 	full_heal.toggled.connect(func(on: bool) -> void:
 		Settings.pvp_round_full_heal = on
 		Settings.save())
 
-	# Beta 时间参数块只在 Beta 会话里出现(建面板那一刻定,不随后续切换变)。
 	(rows["beta"] as Node).visible = PvpSession.beta_mode
 
 
-# 按模式显隐表单行 —— 本弹层唯一的分支(模式层那一半在 create_panel.apply)。
 func apply_rows(mode: String) -> void:
 	var is_royale := mode == PvpSession.MODE_ROYALE
 	var is_team := mode == PvpSession.MODE_TEAM
@@ -63,12 +54,9 @@ func apply_rows(mode: String) -> void:
 	rows["match_time"].visible = is_royale
 	rows["full_heal"].visible = is_pvp
 	rows["weapons"].visible = not is_team
-	# ★ 1v1 下那一行是骗人的控件:create_room(caller) 是原版 NetBus 的冻结签名、收不了 opts ⇒ 服务端永远建公开房(1v1 载荷里 is_public 恒 true)。
-	# 让玩家取消勾选"公开"、填了邀请码,建出来仍是人人可见、无需码就能进的房 —— 比不给这个选项更坏。
 	rows["privacy"].visible = not is_pvp
 
 
-# ── 值读取(建房载荷用)──
 
 func is_public() -> bool:
 	return public_check.button_pressed
@@ -82,12 +70,10 @@ func max_players() -> int:
 	return int(max_slider.value)
 
 
-# 建房载荷里的 match_time 是秒(滑块是分钟)。
 func match_time() -> int:
 	return int(time_slider.value) * 60
 
 
-# 禁用武器网格的勾选结果 → type_id 数组。
 func checked_weapons() -> Array:
 	var out: Array = []
 	for cb in weapon_checks:
