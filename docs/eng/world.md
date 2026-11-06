@@ -50,7 +50,7 @@
 - 浏览器编辑器(`level_editor/`)认识这些行(2026-11-01 起):`parseMeta` 解析进 `map.respawns`、`buildMeta` 按侧分组回写;画面按侧画 `R1`/`R2` 标记,右栏有「放侧1/放侧2/删最近/清空侧1/清空侧2」,顶栏「标线」叠加半区中线与 3×3 桶网格,校验会报"每侧 <5 / 越半区 / 离边界太近 / 空桶 / 同侧挨太近"。认不出的行仍按旧规则归入注释原样保留。v1/v2/v3 老图**不新增**这些行,也不会报错(空列表 → 各模式回退路径)。
 - 运行时选点(唯一随机实现 = [`core/sim/spawn_chooser.gd`](../../core/sim/spawn_chooser.gd) 的 `SpawnChooser.pick` / `pick_many`):
   - **排除上一次位置 = 硬约束**(若整张列表都被排除,才让位 —— 宁可重选自己的旧点,也不与对手同格);**最小间距 = 软约束**,按 `RELAX_STEP = 5` 逐级放宽到 0(点不够是地图数据的边界,不该把人甩到 (-1,-1) 的墙角)。
-  - **1v1**:`MatchBootstrap.plan_spawns` 让每个 role 从**自己半区**的列表随机取一格(并广播同一份);`MatchState._spawn_cell` 在**本 role 自己的半区**里重选(复活 / 换局 / 击杀后复位),排除自己上一次落点,并与对手尽量保持 `FAR_CELLS`;`role_spawns()` 只读不重算(match_sync 会重复拉)。**缺 `# respawn` 的老图**逐字回退改造前行为:`# player` / `# player2` 两点 + `_side_swap` 换边(role2 缺失时 `far_spawn_from` 现挑),并 `push_warning` 一次。
+  - **1v1**:`MatchBootstrap.plan_spawns` 让每个 role 从**自己半区**的列表随机取一格(并广播同一份);`MatchHost._spawn_cell` 在**本 role 自己的半区**里重选(复活 / 换局 / 击杀后复位),排除自己上一次落点,并与对手尽量保持 `FAR_CELLS`;`role_spawns()` 只读不重算(match_sync 会重复拉)。**缺 `# respawn` 的老图**逐字回退改造前行为:`# player` / `# player2` 两点 + `_side_swap` 换边(role2 缺失时 `far_spawn_from` 现挑),并 `push_warning` 一次。
   - **对抗**:`TeamSpawn.plan_team_spawns(teams, last, side_swap)` 每局按队取侧,每人随机、排除本 role 上一局点位、队内尽量拉开;**局内复活** `TeamSpawn.respawn_cell` 也用**本队这一局所在侧**的数据(不跨侧、不回退几何),筛「离存活敌人 ≥ `RESPAWN_CLEARANCE`」且排除自己上一次落点。缺数据 / 某队人数超过该侧列表 ⇒ 回退改造前的几何生成(重试循环原样保留)并 `push_warning` 一次。
   - **大乱斗**:`RoyaleSpawn.plan_spawns` 从**两侧并集**取 N 人(两两尽量 ≥ `SPAWN_CLEARANCE`);`respawn_cell` 用同一并集,筛「距所有存活玩家 ≥ `RESPAWN_CLEARANCE`」且 `≠ _last_spawn[role]`,全筛空时退化为同池随机(不再回 (-1,-1) 角落)。**缺数据时回退现有 `SpawnPicker` 几何生成并 `push_warning` 一次**;数据点不够 N 人时用地板格补足(与改造前同一条兜底)。
 - 已知边界(照实):

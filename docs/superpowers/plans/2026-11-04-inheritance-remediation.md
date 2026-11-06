@@ -125,8 +125,9 @@ TeamHost | RoyaleHost（薄子类，只覆写壳的虚钩子）     pvp_game | r
 | S2 裁决域 → `CombatSystem` | `89c65af3` | `RUN_ALL OK`；**M1 真链路**：`run_real.sh --yes --only pvp_match` → `SMOKE PASS` / `RUN_REAL OK(1 entries)` |
 | S3 地面武器域 → `GroundSystem` | `be07848f` | `RUN_ALL OK`；真链路随 M2 一起跑 |
 | S4 回合域 → `RoundSystem` | `ee5f80f6` | `RUN_ALL OK`；**M2 真链路**：`run_real.sh --yes --only match` → `pvp_match_smoke` `SMOKE PASS` + `team_match_probe` `ALL-OK`(274s) |
-| 早到 `match_sync` 竞态修复 | 随本批 `fix(server)` | 3v3 探针曾报部分端 `team=0` + 空队伍表（早期报到时宿主未建）；改为排队到宿主建好再回，修复后 M2 复跑 `RUN_REAL OK(2 entries)` |
-| 待做 | S4（RoundSystem）/ S4b（砍 `MatchState` 链根）/ M2 真链路 / S5 客户端 / S6 收口 | — |
+| S4b 链根摘下（`MatchState`→`RefCounted`，宿主 has-a 上下文） | 本批提交 | `RUN_ALL OK(48/402)`；系统 `bind(state, ports)`、探针改 `h.state.*`；真链路：team `ALL-OK` 多次(274~282s)、pvp `SMOKE PASS`（偶发 flake 见 registered-debt） |
+| 早到 `match_sync`：宿主未建 + claim 前丢失 | `a51be14a` + 同批 | 先排队到宿主建好；再补"claim 前到达按 peer 排队、claim 成功后重试"；诊断确认 6 端均收到非空 `teams` |
+| 待做 | S5 客户端对齐 / S6 收口 | — |
 
 > M1 真链路前置条件实测：`lobby_alive=false`、Godot 进程 0、run_all summary 静默 ≥240s ⇒ 闸放行；跑后无残留进程。
 

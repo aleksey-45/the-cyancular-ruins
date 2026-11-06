@@ -188,8 +188,8 @@ func _checks_duel(pvp_map: String) -> void:
 	var sides := _sides()
 	var h := MatchHost.new(pvp_map, {1: 20001, 2: 20002})
 	add_child(h)
-	var p1 := _cell_of(h.players[1])
-	var p2 := _cell_of(h.players[2])
+	var p1 := _cell_of(h.state.players[1])
+	var p2 := _cell_of(h.state.players[2])
 	# 去掉什么才红:1v1 从全图/固定两点取 ⇒ 两人不一定各在自己半区 / 不在数据里 ⇒ 本条红。
 	_chk(SpawnChooser.side_of(p1, d) == 1 and SpawnChooser.side_of(p2, d) == 2
 			and (sides[1] as Array).has(p1) and (sides[2] as Array).has(p2) and p1 != p2,
@@ -202,7 +202,7 @@ func _checks_duel(pvp_map: String) -> void:
 			"⑦ 1v1 复活:仍在本方半区且排除上一次位置(%s→%s / %s→%s)" % [
 					str(p1), str(new1), str(p2), str(new2)])
 	# 换边:role1 去侧 2、role2 去侧 1(去掉 _side_swap 对侧判定的影响 ⇒ 本条红)。
-	h._side_swap = true
+	h.state._side_swap = true
 	var swap1 := h._spawn_cell(1)
 	var swap2 := h._spawn_cell(2)
 	_chk(SpawnChooser.side_of(swap1, d) == 2 and (sides[2] as Array).has(swap1)

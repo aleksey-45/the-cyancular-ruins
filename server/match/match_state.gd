@@ -1,9 +1,8 @@
 class_name MatchState
-extends Node
+extends RefCounted
 
-# 对局权威的共享状态底座:链上每一层都要读同一批状态,而 GDScript 的父类方法/字段在编译期解析不了子类声明的符号 ⇒ 它们只能住在
-# 共同祖先里。链:RoyaleHost → MatchHost(生命周期/输入/物理编排) → MatchState(状态底座)
-# → MatchState(本文件) → Node。★ 中间层不得定义 _init/_ready/_enter_tree/_exit_tree/_physics_process:RoyaleHost 的 _init 契约是「先 plan_spawns 再 super._init」,插钩子会打断它。
+# 对局权威的共享状态(C 方案 S4b):纯数据 + 纯查询;由 MatchHost 持有(state),不再在继承链上。
+# 原「为什么共享字段要住共同祖先」的链式说明已随拆解失效;现行结构见 docs/eng/netplay.md「权威宿主的结构」。
 
 const HitLagHistory := preload("res://core/sim/hit_lag_history.gd")   # 命中回放历史环(纯逻辑)
 
@@ -138,7 +137,6 @@ var _assist_times: Dictionary = {}
 var _left: Dictionary = {}
 # ── 断线宽限期读数 ── {role -> 剩余秒},由 worker 进程的 server_main 写入(它是宽限期表的持有者),三个 round_state 生产者
 # 只负责并进载荷。★ 用「推」而不是让宿主反向持有引用(避免 back-reference);★ 每实例字段、不是 static;空 = 没人掉线(载荷里连 grace 键都不带)。
-var grace_snapshot: Dictionary = {}
 # 归因时效(3s)。★ 三个读者原先各抄一份同名常量,故收在底座(子类那两行必须删:同名遮蔽报错)。
 const ATTRIB_WINDOW := CombatFeedback.ATTRIB_WINDOW_MS
 # 「这一下伤害是谁打的」的新鲜度阈值(ms)。
@@ -150,41 +148,6 @@ static var test_destroy_cell := Vector2i(-1, -1)
 static var test_destroy_after := 0.0     # 秒;从对局开始(_ready)起算
 
 
-func _rpc_all(method: String, args: Array = [], except_role: int = -1,
-		live_only: bool = true) -> void:
-	for role in peer_by_role:
-		if role == except_role or not players.has(role):
-			continue
-		var peer: int = peer_by_role[role]
-# ★ 判活走 NetBus.is_peer_live(读 ENet peer 自己的 state),不是 get_peers():后者晚于真实状态,挡不住「往已拆掉的 peer 发定向包」→ 那句 channel 0 错误。
-		if live_only and not NetBus.is_peer_live(peer):
-			continue
-
-		NetBus.callv("rpc_id", [peer, method] + args)
-
-# Beta 时间玩法的广播走 NetBusExt(NetBus 纪律:原方法表不动)。
-func _rpc_all_ext(method: String, args: Array = [], except_role: int = -1,
-		live_only: bool = true) -> void:
-	for role in peer_by_role:
-		if role == except_role or not players.has(role):
-			continue
-		var peer: int = peer_by_role[role]
-
-		if live_only and not NetBus.is_peer_live(peer):
-			continue
-
-		NetBusExt.callv("rpc_id", [peer, method] + args)
-
-
-# round_state 的唯一出口:三个生产者拼完 data 后都必须调它,宽限期读数只在这里并进去一次。
-func _send_round_state(data: Dictionary) -> void:
-	GraceWindow.merge_into(data, grace_snapshot)
-	_rpc_all("round_state", [data])
-
-
-
-
-# 「节点 → role」的**唯一判据**(全仓只此一份;原先 _role_of_node 与两段内联循环另抄了三份,哨兵还不一致)。
 func _role_of(node: Node) -> int:
 	for role in players:
 		if players[role] == node:
@@ -397,50 +360,8 @@ func _duel_side(role: int) -> int:
 	return SpawnChooser.SIDE_LEFT if (int(role) == 1) != _side_swap else SpawnChooser.SIDE_RIGHT
 
 
-# 1v1 出生格。首次 = MatchBootstrap.start_on 预算好的那一份(与 match_start 同源);之后(复活 / 换局 / 击杀后复位)
-# 在**本 role 自己的半区**里重新随机:排除自己上一次落点,并与其它 role 的落点尽量保持 FAR_CELLS(点不够时逐级放宽)。
-# ★ 副作用(写 _duel_spawns)是刻意的:它就是"上一次位置"的唯一记录;role_spawns() 只读不调。
-func _spawn_cell(role: int) -> Vector2i:
-	var r := int(role)
-	var points := map_respawn_points(_duel_side(r))
-	if points.is_empty():
-		_warn_legacy_spawn()
-		return _legacy_spawn_cell(r)
-	if not _duel_placed.has(r) and _duel_spawns.has(r):
-		_duel_placed[r] = true
-		return _duel_spawns[r]
-	_duel_placed[r] = true
-	var anchors: Array = []
-	for other in _duel_spawns:
-		if int(other) != r:
-			anchors.append(_duel_spawns[other])
-	var exclude: Array = []
-	if _duel_spawns.has(r):
-		exclude.append(_duel_spawns[r])
-	var cell := SpawnChooser.pick(points, exclude, null, SpawnPicker.FAR_CELLS, anchors,
-			SpawnPicker.grid_dims())
-	if cell.x < 0:
-		_warn_legacy_spawn()
-		cell = _legacy_spawn_cell(r)
-	_duel_spawns[r] = cell
-	return cell
-
-
-# 老地图回退(逐字等同改造前的 _spawn_cell):地图两固定点 + 每局换边。网格/地图没加载时同样回 (-1,-1)。
 func _legacy_spawn_cell(role: int) -> Vector2i:
 	var spawns := MazeGenerator.load_spawns()
 	var key := "player" if (role == 1) != _side_swap else "player2"
 	return spawns.get(key, Vector2i(-1, -1))
-
-
-# 出生点表(match_sync 的只读取法):= 最近一次落位结果,绝不重算 —— 重算会与客户端手里那份不一致。
-# ★ 老地图路径没有落点状态,仍按旧行为现算(纯函数、无副作用)。
-func role_spawns() -> Dictionary:
-	if map_respawn_points(1).is_empty() and map_respawn_points(2).is_empty():
-		var out := {}
-		for role in players:
-			out[int(role)] = _legacy_spawn_cell(int(role))
-		return out
-	return _duel_spawns.duplicate()
-
 

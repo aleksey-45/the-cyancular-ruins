@@ -26,6 +26,6 @@
 
 ## 状态与横幅
 
-- 服务器把宽限读数经 `_sync_grace_snapshot()` 推进宿主 `grace_snapshot`;`round_state` 的 `grace` 字段(`{role: 剩余秒}`)只在 `MatchState._send_round_state` 并入一次,空表不带键;客户端本地走秒(`GraceWindow.tick_display`)。1v1 / 3v3 不每秒广播 `round_state`;3v3 刻意不消费 `grace`。
+- 服务器把宽限读数经 `_sync_grace_snapshot()` 推进宿主 `grace_snapshot`;`round_state` 的 `grace` 字段(`{role: 剩余秒}`)只在 `MatchHost._send_round_state` 并入一次,空表不带键;客户端本地走秒(`GraceWindow.tick_display`)。1v1 / 3v3 不每秒广播 `round_state`;3v3 刻意不消费 `grace`。
 - 本地横幅 `ui/hud/status_banner.tscn`(layer 140)由宿主 `_subscribe_reconnect()` 实例化(S-17 后状态机在 `scenes/mp_client/reconnect_driver.gd`);五个转折点:`ReconnectDriver._begin_reconnect` / `_on_reconnect_retry_tick` / `_on_resumed` / `cancel` / `abort`。
 - `opponent_left` 在 1v1 收场分支、`quit(0)` 之前发,只发给 `_claims` 里还在的人,走 `NetBus.reply`。通知先到由 `_match_ended` 挡住重连;断开先到由 `_cancel_reconnect()` 叫停。

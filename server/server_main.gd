@@ -221,7 +221,7 @@ func _sync_grace_snapshot() -> void:
 func _enter_grace(role: int) -> void:
 	_grace.enter(role, Time.get_ticks_msec())
 	if _host != null:
-		var src = _host.input_sources.get(role, null)
+		var src = _host.state.input_sources.get(role, null)
 		if src != null and src.has_method("reset_state"):
 			src.reset_state()
 		# ★★ 清输入源不够,必须连队列一起清:掉线瞬间队列里可能还压着一条已经到达的包,而 apply_packet() 是整体覆盖 _held/_axis ⇒
@@ -229,7 +229,7 @@ func _enter_grace(role: int) -> void:
 		_host.reset_input_queue(role)
 		# ACS 分母口径:必须记掉线这一刻的局号 —— 宽限期有 60s,到点的 mark_disconnected 读到的 _round_num 可能已因换局 +1,那会把离开者的 ACS 压低。
 		_host.note_disconnect_round(role)
-		_host.peer_by_role.erase(role)
+		_host.state.peer_by_role.erase(role)
 		if _host.has_method("_broadcast_round_state"):
 			_sync_grace_snapshot()
 			_host._broadcast_round_state()
@@ -355,15 +355,15 @@ func _on_reclaim(caller: int, role: int, token: String, proto: int) -> void:
 		multiplayer.multiplayer_peer.disconnect_peer(caller)
 		return
 	_claims[role] = caller
-	_host.peer_by_role[role] = caller
+	_host.state.peer_by_role[role] = caller
 	# ★ 换输入源不是 PacketInputSource.new(role, caller) —— 它不收参数;必须把新源挂回那个还活着的玩家节点,只换表里的引用不够(玩家手里仍攥着旧源)。
 	# ★ 直取 players[role] 依赖 _expire_graces 里的次序:只有它会调 mark_disconnected(那里才 erase),且它先 _grace.leave 再 mark。
 	var src := PacketInputSource.new()
-	(_host.players[role] as Node2D).set_input_source(src)
-	_host.input_sources[role] = src
+	(_host.state.players[role] as Node2D).set_input_source(src)
+	_host.state.input_sources[role] = src
 	_host.reset_input_queue(role)
-	_host._ack_seq[role] = 0      # C2 锚点重协商:客户端 rollback ring 已失(见 spec §3.4)
-	_host._stepped_seq[role] = 0  # 受击事件锚点同源重置(否则旧纪元 seq 会让新纪元的注入晚/早一步)
+	_host.state._ack_seq[role] = 0      # C2 锚点重协商:客户端 rollback ring 已失(见 spec §3.4)
+	_host.state._stepped_seq[role] = 0  # 受击事件锚点同源重置(否则旧纪元 seq 会让新纪元的注入晚/早一步)
 	_grace.leave(role)
 	# 回一条 match_start 让客户端重进对局场景(载荷与首次开局同源);★ 走 NetBus.reply 而不是 rpc_id —— 它是答复 caller 的收口,内部先判活。
 	#   这个窗口可达:客户端发完 reclaim_role 是等这条应答,被踢/链路断时下一拍会 _retry_connect() → NetBus.stop(),那个 stop 与本次应答可能挤在同一次 poll,ENet 当场把通道数清零 ⇒ 不判活必打 max channels: 0。
@@ -390,6 +390,9 @@ func _on_match_sync(caller: int) -> void:
 				str(NetBus.is_peer_live(caller)),
 				str(NetBus.role_claimed.is_connected(_on_role_claimed))])
 	if role == 0:
+		# 报到可能早于 claim 归档:按 peer 排队,claim 成功/宿主建好后重试(静默丢掉 ⇒ 该端整局没队伍表/出生点)。
+		if not _pending_match_sync.has(caller):
+			_pending_match_sync.append(caller)
 		return
 	# 早到的报到:宿主还没建 ⇒ 先排队(_on_all_claimed 建完宿主后补发);否则队伍表/出生点会以空载荷下发。
 	if _host == null:
@@ -440,6 +443,7 @@ func _on_match_sync(caller: int) -> void:
 		data["destroyed_subs"] = destroyed_subs
 	if not teams.is_empty():
 		data["teams"] = teams
+	_pending_match_sync.erase(caller)
 	var _rpc_err := NetBus.rpc_id(caller, "match_sync_data", data)
 	if OS.get_cmdline_user_args().has("--matchsync-diag"):
 		print("[matchsync-diag] 已发 match_sync_data → caller=%d data 键=%s rpc_id 返回=%d 在线 peers=%s" % [
@@ -471,6 +475,8 @@ func _on_role_claimed(caller: int, role: int, player_name: String, proto: int) -
 		return
 	_claims[role] = caller
 	_claim_names[role] = player_name
+	if _pending_match_sync.has(caller):
+		_retry_pending_match_sync()
 	if _team_mode:
 		print("worker: 3v3 角色 %d = peer %d (%d/%d 人)" % [role, caller,
 				_claims.size(), _team_of_role.size()])
@@ -489,6 +495,11 @@ func _on_role_claimed(caller: int, role: int, player_name: String, proto: int) -
 
 # 开局延到帧末再执行,不在 _on_role_claimed 里同步开:每个客户端都是「claim_role 紧接 player_options」两条包(同一次 poll 到达),
 #   同步开局会在同一次 poll 里抢先建局,那个客户端的本端选项(角色颜色 / 禁武器规则)还没归档。重入由 _begin_match 自身的守卫兜住。
+func _retry_pending_match_sync() -> void:
+	for pending_caller in _pending_match_sync.duplicate():
+		_on_match_sync(int(pending_caller))
+
+
 func _defer_begin_match() -> void:
 	_begin_match.call_deferred()
 
@@ -523,9 +534,7 @@ func _begin_match() -> void:
 	if _royale and _host.has_method("set_display_names"):
 		_host.set_display_names(_claim_names)   # 排行榜昵称表
 	# 宿主已建:补发早到的 match_sync(否则那些端停在空队伍表 / 空出生点)。
-	for pending_caller in _pending_match_sync:
-		_on_match_sync(int(pending_caller))
-	_pending_match_sync.clear()
+	_retry_pending_match_sync()
 	var mode_note := ""
 	if _royale:
 		mode_note = "(大乱斗 %d 人,其中 AI %d)" % [_claims.size() + _ai_roles.size(), _ai_roles.size()]

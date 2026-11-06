@@ -28,12 +28,13 @@ var _kills_to_win: int = TeamRules.KILLS_MIN
 
 func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 		ai_roles: Array = [], spawns: Dictionary = {}, teams: Dictionary = {}) -> void:
+	_ensure_state()
 
 	MatchHost.ensure_spawn_grid(map_path)
-	_team_of = teams.duplicate()
+	state._team_of = teams.duplicate()
 # ★ spawns 传空只在手工/测试路径才自己算一份:plan_team_spawns 是随机的(SpawnChooser),重算会得到另一份散点,
 #   而广播给客户端的是 start_on 那一份。出生点数据 = 地图 `# respawn 1|2` 两侧列表(缺则 TeamSpawn 回退几何生成)。
-	_round_spawns = spawns if not spawns.is_empty() else plan_team_spawns(_team_of)
+	_round_spawns = spawns if not spawns.is_empty() else plan_team_spawns(state._team_of)
 # ★ 第 5 个实参是 teams、不是 spawns(两者在 RoyaleHost 里同名易混):传错不是崩溃,而是整局队伍判定全错 —— _team_of 被塞成 {role: Vector2i} ⇒ team_of() 返回 0 ⇒ 子弹不穿队友、队伍表下发为空。
 	super._init(map_path, role_peers, options, ai_roles, teams)
 	_apply_team_layers()
@@ -43,9 +44,9 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 # 规则快照 + 开局比分补贴(血量补贴要等玩家节点的 @onready 落地,见 _ready)。
 # ★ 队伍表在这里已经是最终值:大厅侧先把「未选边」补好(RoomTypes.team_autofill)再下发 --teams。
 func _init_team_rules() -> void:
-	_rules = TeamRules.subsidy(_team_of)
+	_rules = TeamRules.subsidy(state._team_of)
 	_kills_to_win = int(_rules["kills_target"])
-	_scores = _initial_scores()
+	state._scores = _initial_scores()
 
 
 # 每局开局的比分:少人方带 `score_bonus` 分;势均(差 0)⇒ **空表**,与改造前的 6 人 3v3 逐字一致。
@@ -63,8 +64,8 @@ func _ready() -> void:
 	if int(_rules.get("hp_bonus", 0)) > 0:
 		_apply_health_subsidy()
 	if float(_rules.get("damage_mult", 1.0)) > 1.0:
-		for role in players:
-			var wc = (players[role] as Node).get("weapons")
+		for role in state.players:
+			var wc = (state.players[role] as Node).get("weapons")
 			if wc != null and wc.has_signal("weapon_changed"):
 				wc.weapon_changed.connect(_on_team_weapon_changed.bind(int(role)))
 	super._ready()
@@ -77,10 +78,10 @@ func _apply_health_subsidy() -> void:
 	var small := int(_rules.get("smaller_team", 0))
 	if bonus <= 0 or small == 0:
 		return
-	for role in players:
-		if team_of(int(role)) != small:
+	for role in state.players:
+		if state.team_of(int(role)) != small:
 			continue
-		var c := (players[role] as Node).get("combat") as CombatComponent
+		var c := (state.players[role] as Node).get("combat") as CombatComponent
 		if c == null:
 			continue
 		c.max_hp = PlayerParams.player_max_hp + bonus
@@ -94,7 +95,7 @@ func _on_team_weapon_changed(_type_id: int, role: int) -> void:
 	var mult := float(_rules.get("damage_mult", 1.0))
 	if mult <= 1.0:
 		return
-	var p: Node2D = players.get(int(role))
+	var p: Node2D = state.players.get(int(role))
 	if p == null or not is_instance_valid(p):
 		return
 	var w = p.get("weapons")
@@ -120,8 +121,8 @@ func _adjudicate_bullets() -> void:
 			var bullet := b as BulletBase
 			if bullet.has_meta(META_DAMAGE_SUBSIDY):
 				continue
-			var shooter_role := _role_of(bullet.shooter)
-			if shooter_role < 0 or team_of(shooter_role) != small:
+			var shooter_role := state._role_of(bullet.shooter)
+			if shooter_role < 0 or state.team_of(shooter_role) != small:
 				continue
 			bullet.set_meta(META_DAMAGE_SUBSIDY, true)
 			bullet.direct_hit_damage = maxi(1, roundi(float(bullet.direct_hit_damage) * mult))
@@ -133,7 +134,7 @@ func _adjudicate_bullets() -> void:
 # 「什么时候调」(必须在 super._init 之后),并让「手工摆位」路径还能补调一次(幂等、直接赋值不叠加)。
 # ★ 队号 1/2 的穷举、表外 role push_error、1 队 mask=21 / 2 队 mask=7 的逐条理由全在那份实现里。
 func _apply_team_layers() -> void:
-	TeamSpawn.apply_team_layers(players, _team_of)
+	TeamSpawn.apply_team_layers(state.players, state._team_of)
 
 
 
@@ -172,8 +173,8 @@ func role_spawns() -> Dictionary:
 
 func team_map() -> Dictionary:
 	var out := {}
-	for role in _team_of:
-		out[int(role)] = int(_team_of[role])
+	for role in state._team_of:
+		out[int(role)] = int(state._team_of[role])
 	return out
 
 
@@ -192,14 +193,14 @@ func _spawn_cell(role: int) -> Vector2i:
 # 复活点:选格计算(本队这一局所在侧的 `# respawn` 列表 / 「躲敌人不躲队友」/ 排除上一次位置)在 TeamSpawn.respawn_cell;
 # 本函数只留虚方法覆写与状态读取(数据缺失时 TeamSpawn 自己回退几何并 warning 一次)。
 func _respawn_cell_for(role: int) -> Vector2i:
-	return TeamSpawn.respawn_cell(int(role), players, _team_of, _last_spawn,
-			map_spawn_data().get("respawns", {}), _side_swap_round)
+	return TeamSpawn.respawn_cell(int(role), state.players, state._team_of, _last_spawn,
+			state.map_spawn_data().get("respawns", {}), _side_swap_round)
 
 
 # ★ 复活时清 last_damager / last_damager_time:meta 在受击瞬间写下、跨倒地保留,而归因窗口是 ATTRIB_WINDOW(3s)⇒ 复活后 3s 内的
 func _respawn_player(role: int) -> void:
 	super._respawn_player(role)
-	var p: Node2D = players.get(role)
+	var p: Node2D = state.players.get(role)
 	if p != null and is_instance_valid(p):
 		p.remove_meta("last_damager")
 		p.remove_meta("last_damager_time")
@@ -207,7 +208,7 @@ func _respawn_player(role: int) -> void:
 
 
 func _enemy_team_of(role: int) -> int:
-	var t := team_of(role)
+	var t := state.team_of(role)
 	if t == 0:
 		return 0
 	return 2 if t == 1 else 1
@@ -215,85 +216,85 @@ func _enemy_team_of(role: int) -> int:
 
 # ★ 整段覆写而不是改基类:基类的计分键、胜负判据、复位对象三方都绑在 role 上,逐处插分支会让 1v1 那条路长出团队语义。
 func _match_round_tick(delta: float) -> void:
-	for role in players:
+	for role in state.players:
 
-		if _round_state == RoundState.MATCH_OVER:
+		if state._round_state == MatchState.RoundState.MATCH_OVER:
 			continue
-		var p: Node2D = players[role]
+		var p: Node2D = state.players[role]
 		if not p.is_downed():
 			continue
 
-		if _round_state == RoundState.PLAYING and not _respawn_pending.has(role):
-			_respawn_pending[role] = RESPAWN_DELAY
-		if _down_counted.get(role, false):
+		if state._round_state == MatchState.RoundState.PLAYING and not state._respawn_pending.has(role):
+			state._respawn_pending[role] = MatchState.RESPAWN_DELAY
+		if state._down_counted.get(role, false):
 			continue
-		_down_counted[role] = true
+		state._down_counted[role] = true
 		_on_down_edge(int(role))
 # ★★ 击杀者复位已按用户要求删除(2026-09-21,那个函数已整体删掉):击杀者原地不动,受害者 2s 后回本方出生点复活。
 # ★ 代价照实记录:那条规则本是为反「反复活点蹲守」而立,删后对抗不再有这条性质;将来若要找回,正确的形状是「复活点选点避开存活敌人」(TeamSpawn.respawn_cell 的 RESPAWN_CLEARANCE 已做一半),而不是把击杀者瞬移走。
-	match _round_state:
-		RoundState.COUNTDOWN:
+	match state._round_state:
+		MatchState.RoundState.COUNTDOWN:
 			# ★ 与 RoundSystem 同一条就绪闸:客户端场景建好(发过 match_sync)后倒计时才开始、并补发一次。
 			#   本类整段覆写了 _match_round_tick ⇒ 不抄这道闸,对抗开局那一局的倒计时会从"客户端还在切场景"时起算,
 			#   本地时钟比服务器慢 1~2s ⇒ 最后 1 秒被 PLAYING 转变截掉(2026-11-01 用户实见)。
 			if not _countdown_can_start(delta):
 				return
-			if not _countdown_bcast_done:
-				_countdown_bcast_done = true
+			if not state._countdown_bcast_done:
+				state._countdown_bcast_done = true
 				_broadcast_round_state()
-			_round_timer -= delta
-			if _round_timer <= 0.0:
-				_round_state = RoundState.PLAYING
-				if _round_full_heal:
-					for heal_role in players:
-						(players[heal_role] as Node).apply_authoritative_state(
-								(players[heal_role] as Node).max_hp,
-								(players[heal_role] as Node).max_waterproof, false)
+			state._round_timer -= delta
+			if state._round_timer <= 0.0:
+				state._round_state = MatchState.RoundState.PLAYING
+				if state._round_full_heal:
+					for heal_role in state.players:
+						(state.players[heal_role] as Node).apply_authoritative_state(
+								(state.players[heal_role] as Node).max_hp,
+								(state.players[heal_role] as Node).max_waterproof, false)
 				_broadcast_round_state()
 			else:
 				_countdown_resync_tick(delta)
-		RoundState.PLAYING:
+		MatchState.RoundState.PLAYING:
 			_handle_respawns(delta)
 			for t in [1, 2]:
 				# 目标随人数缩放(TeamRules):6 人 = 9(与改造前逐字一致),2 人 = 5,10 人 = 13。
 				# ★ 比分里含少人方的开局补贴,但补贴上限是「目标 - 1」⇒ 不可能靠补贴开局即胜。
-				if int(_scores.get(t, 0)) >= _kills_to_win:
+				if int(state._scores.get(t, 0)) >= _kills_to_win:
 					_round_over(t)
 					break
-		RoundState.ROUND_OVER:
-			_round_timer -= delta
-			if _round_timer <= 0.0:
+		MatchState.RoundState.ROUND_OVER:
+			state._round_timer -= delta
+			if state._round_timer <= 0.0:
 				_start_next_round()
-		RoundState.MATCH_OVER:
+		MatchState.RoundState.MATCH_OVER:
 			pass
 
 
 # ★ _round_over 不再覆写:本模式要的「记局胜(键 = 队号)+ 置 ROUND_OVER + 广播」与 RoundSystem.round_over 逐字相同
 func _start_next_round() -> void:
 	if _threshold_team() != 0:
-		_round_state = RoundState.MATCH_OVER
+		state._round_state = MatchState.RoundState.MATCH_OVER
 		_broadcast_round_state()
 		return
 	_reset_world_and_clear_dynamics()
 
 	_side_swap_round = not _side_swap_round
-	_round_spawns = plan_team_spawns(_team_of, _round_spawns, _side_swap_round)
+	_round_spawns = plan_team_spawns(state._team_of, _round_spawns, _side_swap_round)
 
 	_spawned_once.clear()
-	_round_num += 1
+	state._round_num += 1
 	# 每局重给少人方开局比分补贴;势均时是**空表**(与改造前逐字一致)。别写成"整场只给一次":_scores 每局清零,
 	# 只给一次的话第 2 局起补贴就消失了,而补的是"这一局开局"的劣势。
-	_scores = _initial_scores()
+	state._scores = _initial_scores()
 # ★ 整场累计的 _stats 不清零:ACS 是整场口径,与每局清零的 _scores(队伍比分)是两份不同的东西。
-	_respawn_pending = {}
-	_down_counted = {}
-	for role in players:
+	state._respawn_pending = {}
+	state._down_counted = {}
+	for role in state.players:
 		_respawn_player(role)
-	_round_state = RoundState.COUNTDOWN
-	_round_timer = COUNTDOWN_TIME
-	_countdown_hold = COUNTDOWN_HOLD_MAX
-	_countdown_bcast_done = false
-	_countdown_resync = COUNTDOWN_RESYNC
+	state._round_state = MatchState.RoundState.COUNTDOWN
+	state._round_timer = MatchState.COUNTDOWN_TIME
+	state._countdown_hold = MatchState.COUNTDOWN_HOLD_MAX
+	state._countdown_bcast_done = false
+	state._countdown_resync = MatchState.COUNTDOWN_RESYNC
 	_broadcast_round_state()
 
 
@@ -306,14 +307,14 @@ func _match_winner() -> int:
 	var decided := _threshold_team()
 	if decided != 0:
 		return decided
-	return 1 if int(_rounds_won.get(1, 0)) >= int(_rounds_won.get(2, 0)) else 2
+	return 1 if int(state._rounds_won.get(1, 0)) >= int(state._rounds_won.get(2, 0)) else 2
 
 
 # 「局胜阈值」谓词的单一来源:先到 TEAM_ROUNDS_TO_WIN 局的那一队,都还没到 → 0。★ 三个读者问的是同一个谓词的三种问法
 # (_start_next_round 问要不要进、_match_winner 问报哪队、_decided_by_rounds 问是否已决出)。★ 返回的 0 不是队号(本模式没有 0 队)。
 func _threshold_team() -> int:
 	for t in [1, 2]:
-		if int(_rounds_won.get(t, 0)) >= TEAM_ROUNDS_TO_WIN:
+		if int(state._rounds_won.get(t, 0)) >= TEAM_ROUNDS_TO_WIN:
 			return t
 	return 0
 
@@ -332,12 +333,12 @@ func _broadcast_round_state() -> void:
 			"hp": int(_rules["hp_bonus"]),
 			"damage_pct": roundi((float(_rules["damage_mult"]) - 1.0) * 100.0),
 		}
-	if _round_state == RoundState.ROUND_OVER and _last_round_winner != 0:
-		data["winner"] = _last_round_winner
-	if _round_state == RoundState.MATCH_OVER:
+	if state._round_state == MatchState.RoundState.ROUND_OVER and state._last_round_winner != 0:
+		data["winner"] = state._last_round_winner
+	if state._round_state == MatchState.RoundState.MATCH_OVER:
 		# ★★ 2026-10-30 用户裁定「全场最佳必须出自胜方」:候选 = 胜队全部 role(平局 / 队号未知 ⇒ 空表 = 不限队)。
 		# match_winner 已由 _round_state_base 并进载荷(同一份构造,不再各拼一份)。
-		data["mvp"] = mvp_role(_roles_of_team(int(data["match_winner"])))
+		data["mvp"] = state.mvp_role(_roles_of_team(int(data["match_winner"])))
 	_send_round_state(data)
 
 
@@ -347,8 +348,8 @@ func _roles_of_team(team: int) -> Array:
 	var out: Array = []
 	if team <= 0:
 		return out
-	for role in _roster():
-		if team_of(int(role)) == team:
+	for role in state._roster():
+		if state.team_of(int(role)) == team:
 			out.append(int(role))
 	return out
 
@@ -362,11 +363,11 @@ func mark_disconnected(role: int) -> void:
 	role = int(role)
 	if not _detach_role(role):
 		return
-	_left_round[role] = int(_leave_round.get(role, _round_num))
+	state._left_round[role] = int(state._leave_round.get(role, state._round_num))
 
 	var alive_teams := {}
-	for r in players:
-		var t := team_of(int(r))
+	for r in state.players:
+		var t := state.team_of(int(r))
 		if t != 0:
 			alive_teams[t] = true
 	if alive_teams.size() < 2 and not _decided_by_rounds():
@@ -374,7 +375,7 @@ func mark_disconnected(role: int) -> void:
 # ⇒ 少了它,「六个人在同一批宽限期里走光」的胜者取决于遍历顺序;收缩是单调的。★★ _decided_by_rounds() 那道闸不能省。
 		var survivors: Array = alive_teams.keys()
 		_endgame_winner = int(survivors[0]) if survivors.size() == 1 else 0
-		if _round_state != RoundState.MATCH_OVER:
+		if state._round_state != MatchState.RoundState.MATCH_OVER:
 			_finish_match()
 			return      # `_finish_match` 内部自会广播(载荷里的 match_winner 已读新值)
 
@@ -394,9 +395,9 @@ func _finish_match() -> void:
 
 # ── 自杀脱困(K 键:客户端 → NetBusExt.suicide_request → server_main._on_suicide_request)── 异常卡死时主动放弃生命,先清归因 ⇒
 func request_suicide_role(role: int) -> void:
-	if _round_state != RoundState.PLAYING:
+	if state._round_state != MatchState.RoundState.PLAYING:
 		return
-	var p: Node2D = players.get(int(role))
+	var p: Node2D = state.players.get(int(role))
 	if p == null or not is_instance_valid(p) or p.is_downed():
 		return
 	for m in ["last_damager", "last_damager_time"]:
@@ -413,14 +414,14 @@ func request_suicide_role(role: int) -> void:
 # 对抗口径:击杀定义沿用 1v1 的「不分死因」(任一玩家倒地 → 对方队 +1;队友误炸也照此,乱扔雷 = 给对面送分);
 # 逐人 kills 仍只在「归因到且异队」时由基类 _record_down 记(队分与逐人 kills 是两条账,见 docs/eng/modes.md)。
 func _down_killer_of(role: int) -> int:
-	return _attributed_killer(players[int(role)])
+	return _attributed_killer(state.players[int(role)])
 
 
 func _award_down(victim_role: int, killer_role: int) -> void:
 	var scorer := _enemy_team_of(victim_role)
 	if scorer == 0:
 		return
-	_scores[scorer] = int(_scores.get(scorer, 0)) + 1
+	state._scores[scorer] = int(state._scores.get(scorer, 0)) + 1
 	_broadcast_kill(killer_role, victim_role)
 	_broadcast_round_state()
 
