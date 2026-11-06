@@ -218,6 +218,9 @@ static var sub_rows: int = 0
 static var on_sub_destroyed: Callable = Callable()
 
 
+static var _sub_hp_cache: Dictionary = {}
+
+
 static func init_sub_hp(sgrid: Array) -> void:
 	sub_cols = 0
 	sub_rows = 0
@@ -226,12 +229,32 @@ static func init_sub_hp(sgrid: Array) -> void:
 		return
 	sub_rows = sgrid.size()
 	sub_cols = (sgrid[0] as Array).size()
-	sub_hp.resize(sub_cols * sub_rows)
+	var n := sub_cols * sub_rows
+	var hit: PackedInt32Array = _sub_hp_cache.get(MazeGenerator.map_file_path(), PackedInt32Array())
+	if hit.size() == n and _hp_sample_matches(hit, sgrid):
+		sub_hp = hit.duplicate()
+		return
+	sub_hp.resize(n)
 	for y in sub_rows:
 		var row: Array = sgrid[y]
 		for x in sub_cols:
 			var tex := int(row[x])
 			sub_hp[y * sub_cols + x] = hp_of(tex) if tex != 0 else 0
+	_sub_hp_cache[MazeGenerator.map_file_path()] = sub_hp.duplicate()
+
+
+static func _hp_sample_matches(hit: PackedInt32Array, sgrid: Array) -> bool:
+	var rows := sgrid.size()
+	var cols: int = (sgrid[0] as Array).size()
+	var n := rows * cols
+	var probes := [[0, 0], [rows / 2, cols / 2], [rows - 1, cols - 1]]
+	for pr in probes:
+		var y: int = pr[0]
+		var x: int = pr[1]
+		var tex := int((sgrid[y] as Array)[x])
+		if int(hit[y * cols + x]) != (hp_of(tex) if tex != 0 else 0):
+			return false
+	return n > 0
 
 
 static func sub_texture(sub: Vector2i) -> int:

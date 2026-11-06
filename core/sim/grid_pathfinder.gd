@@ -52,11 +52,9 @@ static func wrap_to_range(pos: Vector2, w: float, h: float) -> Vector2:
 
 static func copy_grid(grid: Array) -> Array[Array]:
 	var out: Array[Array] = []
-	for row in grid:
-		var r: Array = []
-		for v in row:
-			r.append(v)
-		out.append(r)
+	out.resize(grid.size())
+	for y in grid.size():
+		out[y] = (grid[y] as Array).duplicate()
 	return out
 
 
