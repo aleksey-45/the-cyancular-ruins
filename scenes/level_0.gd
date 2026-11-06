@@ -20,6 +20,11 @@ static var _damaged_subs: Dictionary = {}
 
 static var pvp_mode: bool = false
 
+# 图集只随地图变:同一进程里重开/换模式时直接复用,重建一次 ~130ms(墙体 87 + 水体 42)。
+static var _wall_ts_cache: Dictionary = {}
+static var _water_ts_cache: Dictionary = {}
+static var _surface_tex_key := ""
+
 
 static var _switching: bool = false
 
@@ -156,13 +161,17 @@ func _unhandled_input(event: InputEvent) -> void:
 	$WorldViewport.push_input(event)
 
 func _ready() -> void:
+	LoadingScreen.show_loading("正在构建世界…")
+	LoadingScreen.set_progress(0.02, "读取地图…")
 	# 清屏色 = 世界的「空气」色。★ 单一来源放在 TerrainAtlas:主菜单背景的底色也读同一个常量,两处不许各写一份。
 	RenderingServer.set_default_clear_color(TerrainAtlas.SKY_COLOR)
 	CombatFeedback.spawn(self)
 
 	var grid := WorldBuilder.load_grid()
+	LoadingScreen.set_progress(0.10, "初始化砖块…")
 	if grid.is_empty():
 		push_error("Level0: 地图加载失败，跳过建图")
+		LoadingScreen.hide_loading()
 		return
 	_grid_ref = grid
 	_pristine_grid = MazeGenerator.copy_grid(grid)
@@ -176,17 +185,21 @@ func _ready() -> void:
 	_pristine_subgrid = MazeGenerator.copy_grid(MazeGenerator.current_subgrid)
 	_pristine_subdesc = MazeGenerator.copy_grid(MazeGenerator.current_subdesc)
 	_damaged_subs.clear()
+	LoadingScreen.set_progress(0.18, "烘焙墙体图集…")
 
 	var built := _create_wall_tileset()
 	var wl: TileMapLayer = $WorldViewport/WallLayer
 	wl.tile_set = built["tileset"]
-	_paint_maze_copies(wl, _ring_copies())
+	LoadingScreen.set_progress(0.30, "铺设墙体…")
+	_paint_maze_copies(wl)
+	LoadingScreen.set_progress(0.45, "烘焙水体图集…")
 	Level0.water_layer = $WorldViewport/WaterLayer
 	Level0.water_surface_layer = $WorldViewport/WaterSurfaceLayer
 	Level0.water_layer.tile_set = _create_water_tileset()
-	_paint_water_copies(grid, _ring_copies())
+	LoadingScreen.set_progress(0.55, "铺设水体…")
+	_paint_water_copies(grid)
 
-	LoadingScreen.show_loading("正在构建世界…")
+	LoadingScreen.set_progress(0.65, "构建碰撞…")
 	get_tree().paused = true
 	_build_world_progressive.call_deferred(grid)
 	if pvp_mode:
@@ -219,7 +232,11 @@ func _ready() -> void:
 # 墙体/所有非空气砖的图集(16px 象限制,按描述符行烘:行 = 本图去重描述符,辅码颜色烘进像素)。
 # 构造在 TerrainAtlas —— 主菜单背景要「真实的那个世界」,必须与这里用同一份映射(见 terrain_atlas.gd 文件头)。
 func _create_wall_tileset() -> Dictionary:
-	var built := TerrainAtlas.make_wall_tileset_for(_collect_wall_descs())
+	var key := MazeGenerator.map_file_path()
+	var built: Dictionary = _wall_ts_cache.get(key, {})
+	if built.is_empty():
+		built = TerrainAtlas.make_wall_tileset_for(_collect_wall_descs())
+		_wall_ts_cache[key] = built
 	_desc_row = built["row_of"]
 	return built
 
@@ -244,25 +261,31 @@ func _collect_wall_descs() -> Array:
 
 func _create_water_tileset() -> TileSet:
 	var ts := GameParameters.TILE_SIZE
-	Level0.surface_texture = ImageTexture.create_from_image(
-			TerrainAtlas.water_brick_image(ts, TerrainAtlas.WATER_SURFACE_BRICK))
-	var uniq := {}
-	uniq[MapFormatV4.neutral_descriptor(TerrainAtlas.WATER_BODY_BRICK + 1)] = true
-	var sd := MazeGenerator.current_subdesc
-	if sd.is_empty():
-		for row in MazeGenerator.current_subgrid:
-			for t in row:
-				if Water.is_liquid(int(t)):
-					uniq[MapFormatV4.neutral_descriptor(int(t))] = true
-	else:
-		for row in sd:
-			for d in row:
-				if int(d) != 0 and Water.is_liquid((int(d) >> 12) & 0xFFF):
-					uniq[int(d)] = true
-	var descs: Array = uniq.keys()
-	descs.sort()
-	var built := TerrainAtlas.make_water_tileset_for(ts, descs)
+	var key := "%s|%d" % [MazeGenerator.map_file_path(), ts]
+	var built: Dictionary = _water_ts_cache.get(key, {})
+	if built.is_empty():
+		var uniq := {}
+		uniq[MapFormatV4.neutral_descriptor(TerrainAtlas.WATER_BODY_BRICK + 1)] = true
+		var sd := MazeGenerator.current_subdesc
+		if sd.is_empty():
+			for row in MazeGenerator.current_subgrid:
+				for t in row:
+					if Water.is_liquid(int(t)):
+						uniq[MapFormatV4.neutral_descriptor(int(t))] = true
+		else:
+			for row in sd:
+				for d in row:
+					if int(d) != 0 and Water.is_liquid((int(d) >> 12) & 0xFFF):
+						uniq[int(d)] = true
+		var descs: Array = uniq.keys()
+		descs.sort()
+		built = TerrainAtlas.make_water_tileset_for(ts, descs)
+		_water_ts_cache[key] = built
 	_water_row = built["row_of"]
+	if _surface_tex_key != key:
+		_surface_tex_key = key
+		Level0.surface_texture = ImageTexture.create_from_image(
+				TerrainAtlas.water_brick_image(ts, TerrainAtlas.WATER_SURFACE_BRICK))
 	return built["tileset"]
 
 
@@ -356,41 +379,90 @@ func _paint_cache_for_current_map() -> Dictionary:
 	return out
 
 
-func _paint_maze_copies(layer: TileMapLayer, copies: Array) -> void:
+# 只画真正可能出现在视口里的环带:视口 2208x1728 远小于地图,整圈 9 份全画是 5~6 倍浪费
+# (贴图 24 万格 -> 4 万级;碰撞环带不在此列,见 CollisionBuilder)。中心份全画,其余按"该副本在源图里的可见条带"画。
+const RING_VIEW_MARGIN_SUB := 8
+
+func _ring_visible_sub_rects() -> Array:
+	var sc: int = MazeGenerator.current_subgrid[0].size()
+	var sr: int = MazeGenerator.current_subgrid.size()
+	var zoom := maxf(0.01, PlayerParams.cam_zoom)
+	var wsub := mini(sc, ceili(float(($WorldViewport as SubViewport).size.x) / (16.0 * zoom)) + RING_VIEW_MARGIN_SUB * 2)
+	var hsub := mini(sr, ceili(float(($WorldViewport as SubViewport).size.y) / (16.0 * zoom)) + RING_VIEW_MARGIN_SUB * 2)
+	var out: Array = []
+	for c: Vector2i in _ring_copies():
+		var x0 := 0
+		var y0 := 0
+		var x1 := sc
+		var y1 := sr
+		if c.x < 0:
+			x0 = maxi(0, sc - wsub)
+		elif c.x > 0:
+			x1 = mini(sc, wsub)
+		if c.y < 0:
+			y0 = maxi(0, sr - hsub)
+		elif c.y > 0:
+			y1 = mini(sr, hsub)
+		out.append([c, x0, y0, x1, y1])
+	return out
+
+
+func _paint_maze_copies(layer: TileMapLayer) -> void:
 	var cache := _paint_cache_for_current_map()
 	var xs: PackedInt32Array = cache["x"]
 	var ys: PackedInt32Array = cache["y"]
 	var row_any: PackedByteArray = cache["rows"]
 	var sc: int = cache["sc"]
 	var sr: int = cache["sr"]
-	for c: Vector2i in copies:
+	for entry in _ring_visible_sub_rects():
+		var c: Vector2i = entry[0]
+		var x0: int = entry[1]
+		var y0: int = entry[2]
+		var x1: int = entry[3]
+		var y1: int = entry[4]
 		var offset_x = c.x * sc
 		var offset_y = c.y * sr
-		for y in sr:
+		for y in range(y0, y1):
 			if row_any[y] == 0:
 				continue
 			var base := y * sc
 			var oy: int = y + offset_y
-			for x in sc:
+			for x in range(x0, x1):
 				var tx := xs[base + x]
 				if tx < 0:
 					continue
 				layer.set_cell(Vector2i(x + offset_x, oy), 0, Vector2i(tx, ys[base + x]))
 
 
-func _paint_water_copies(grid: Array[Array], copies: Array) -> void:
+func _paint_water_copies(grid: Array[Array]) -> void:
 	var ts := GameParameters.TILE_SIZE
 	var cols := grid[0].size()
 	var rows := grid.size()
 	var wl: TileMapLayer = Level0.water_layer
 	var surf: Node2D = Level0.water_surface_layer
 	var surface_cells: Array = []
-	for c: Vector2i in copies:
+	var wzoom := maxf(0.01, PlayerParams.cam_zoom)
+	var x_limit := mini(cols, ceili(float(($WorldViewport as SubViewport).size.x) / (float(ts) * wzoom)) + RING_VIEW_MARGIN_SUB / 4 + 1)
+	var y_limit := mini(rows, ceili(float(($WorldViewport as SubViewport).size.y) / (float(ts) * wzoom)) + RING_VIEW_MARGIN_SUB / 4 + 1)
+	for entry in _ring_visible_sub_rects():
+		var c: Vector2i = entry[0]
+		var x0: int = entry[1] / 4
+		var y0: int = entry[2] / 4
+		var x1: int = mini(cols, ceili(float(entry[3]) / 4.0))
+		var y1: int = mini(rows, ceili(float(entry[4]) / 4.0))
+		if c.x < 0:
+			x0 = maxi(x0, cols - x_limit)
+		elif c.x > 0:
+			x1 = mini(x1, x_limit)
+		if c.y < 0:
+			y0 = maxi(y0, rows - y_limit)
+		elif c.y > 0:
+			y1 = mini(y1, y_limit)
 		var ox := c.x * cols
 		var oy := c.y * rows
-		for y in rows:
+		for y in range(y0, y1):
 			var row: Array = grid[y]
-			for x in cols:
+			for x in range(x0, x1):
 				var v: int = row[x]
 				if v == MazeGenerator.EMPTY:
 					continue
@@ -417,12 +489,12 @@ const BOOT_BUDGET_US := 8000
 
 func _build_world_progressive(grid: Array[Array]) -> void:
 	var t := Time.get_ticks_usec()
-	LoadingScreen.set_progress(0.10, "碰撞:永久墙")
+	LoadingScreen.set_progress(0.68, "碰撞:永久墙")
 	var perm := CollisionBuilder.build_sub(grid, false)
 	CollisionBuilder.build_permanent(perm, $WorldViewport, "WallCollision")
 	await get_tree().process_frame
 	t = Time.get_ticks_usec()
-	LoadingScreen.set_progress(0.35, "碰撞:可破坏层")
+	LoadingScreen.set_progress(0.72, "碰撞:可破坏层")
 	var sub := CollisionBuilder.build_sub(grid, true)
 	var cw := ceili(sub[0].size() / float(CollisionBuilder.CHUNK_CELLS * 4))
 	var ch := ceili(sub.size() / float(CollisionBuilder.CHUNK_CELLS * 4))
@@ -432,7 +504,7 @@ func _build_world_progressive(grid: Array[Array]) -> void:
 		for chx in cw:
 			CollisionBuilder.rebuild_chunk(sub, Vector2i(chx, chy), $WorldViewport)
 			n += 1
-			LoadingScreen.set_progress(0.35 + 0.60 * float(n) / float(maxi(total, 1)),
+			LoadingScreen.set_progress(0.72 + 0.26 * float(n) / float(maxi(total, 1)),
 					"碰撞块 %d/%d" % [n, total])
 			if Time.get_ticks_usec() - t >= BOOT_BUDGET_US:
 				await get_tree().process_frame

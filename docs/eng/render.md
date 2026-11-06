@@ -9,16 +9,24 @@
 
 - 图集构造 `core/sim/terrain_atlas.gd`(`TerrainAtlas`):源砖 → 图集 → TileSet;`Level0._create_wall_tileset()` / `_create_water_tileset()` 只剩转发。**图集按描述符行烘**(行 = 去重排序后的 v4 描述符,颜色辅码烘进像素),不再按"每纹理一行"。
   - **像素数学 `TerrainAtlas.tint_color(c, desc)`** = `level_editor/tint.js` 的移植(唯一规范):HSV(不是 HSL)、色相偏移 (hue档−4)×15°(fposmod 360)、bri/sat 是**乘法**乘数 (档+6)/10、alpha = a×档/7、8 位落地只有一条规则 round(clamp01(x)×255)。跨语言 parity 守卫 = `tests/probe/tint_parity_probe.gd`(内嵌 JS 端 golden 向量)。
-  - **墙体 = 16px 象限**:`make_wall_tileset_for(descs)` / `build_atlas_image_for(descs)` 把每块 32px 源砖拆成 4×4 个 8×8 象限、逐像素 tint、各最近邻 2× 放大成 16×16,拼成 16 列(4×4 象限)× descs.size() 行的 TileSet(`tile_size = 16`);`_paint_maze` 铺 16px 子格,瓦片坐标 = `Vector2i((y%4)*4 + (x%4), _desc_row[desc])`(desc 取 `MazeGenerator.current_subdesc`,3×3 环面)。缺失描述符走 `TerrainAtlas.fallback_row` 回落**该纹理的中性行**并 push_warning 一次;合成网格路径(subdesc 为空,探针直写 current_subgrid)行号语义退回"每纹理一行中性"。回溯 `_restore_sub` / 换局 `reset_destructibles` 的瓦片行号同走 `_desc_row`(后者取 `_pristine_subdesc`,与 `_pristine_subgrid` 同点保存)。守卫:`tests/probe/wall_tint_probe.tscn`。
+  - **墙体 = 16px 象限**:`make_wall_tileset_for(descs)` / `build_atlas_image_for(descs)` 把每块 32px 源砖拆成 4×4 个 8×8 象限、逐像素 tint、各最近邻 2× 放大成 16×16,拼成 16 列(4×4 象限)× descs.size() 行的 TileSet(`tile_size = 16`);`_paint_maze` 铺 16px 子格,瓦片坐标 = `Vector2i((y%4)*4 + (x%4), _desc_row[desc])`(desc 取 `MazeGenerator.current_subdesc`;**只铺视口可见环带**——中心整图 + 其余 8 份按 `视口尺寸 / cam_zoom` 裁条带,整圈全铺是 5~6 倍浪费:newfactory 实测 559,728 → 176,024 格)。缺失描述符走 `TerrainAtlas.fallback_row` 回落**该纹理的中性行**并 push_warning 一次;合成网格路径(subdesc 为空,探针直写 current_subgrid)行号语义退回"每纹理一行中性"。回溯 `_restore_sub` / 换局 `reset_destructibles` 的瓦片行号同走 `_desc_row`(后者取 `_pristine_subdesc`,与 `_pristine_subgrid` 同点保存)。守卫:`tests/probe/wall_tint_probe.tscn`。
   - **水体 = 64px 整格,同样按描述符行**:`make_water_tileset_for(ts, descs)` 每行 = 水体砖 tint × 16 形状列(2×2 shape 掩码挖象限);`_paint_water_copies` 行号 = `_water_row[格级描述符]`,格级描述符 = 该格 16 子格的**多数描述符**(平票取小,与 `flatten_scene` 的多数纹理同口径)。`make_water_tileset(ts)` = 中性单行包装(历史调用面)。
   - ★ **水面合批不消费辅码**:`WaterSurfaceBatch` 的采样源 `Level0.surface_texture` 恒为**中性**水面砖(`WATER_SURFACE_BRICK`)—— 水体带 hue/bri 辅码时深水格有色、水面亮带仍原色(登记 [`registered-debt.md`](registered-debt.md))。
   - 主菜单背景 `bake_map_image(path, cell_px, air)` 同样吃描述符(`MapFormat.load_subgrid_with_descs` 的 descs,内部自建 row_of)⇒ 辅码颜色一并烘进背景,与对局是同一套像素。
 - ★★ **两块水砖各用各的**(2026-11-01 修「水体被画成水面」):`TerrainAtlas.WATER_BODY_BRICK = 20`(0-based ⇒ 纹理 21「水」,均匀半透明填充)给水体图集;`TerrainAtlas.WATER_SURFACE_BRICK = 21`(纹理 22「水面」,顶边亮带)给 `WaterSurfaceBatch` 的 shader 采样源(`Level0.surface_texture`)。此前两者共用 idx 21(= 纹理 22)⇒ 深水也带亮线、整片水一个观感。守卫:`tests/probe/water_atlas_probe.tscn`(6 条)。
   - `TerrainAtlas.SKY_COLOR`(`b0e5f6`)是「空气格 / 清屏色」的唯一来源:`Level0` 的 `RenderingServer.set_default_clear_color()` 与主菜单背景底色都读它。它是世界底色,不是 UI token,也别改 `MapCatalog.BG`(选图缩略图底色,语义不同)。
-- 碰撞 `core/sim/collision_builder.gd`(`CollisionBuilder`,静态可测):形状掩码展开成 16px 子格(每 64px 格 → 4×4),贪心合并矩形后按 9 环面副本偏移实例化(每块矩形 ×9,共享同一 shape)。永久墙建一个整图节点、建一次不动;可破坏层按分块存节点(块边长 12 格),摧毁时只重建所在块。只有 type=wall 产生碰撞。
+- 碰撞 `core/sim/collision_builder.gd`(`CollisionBuilder`,静态可测):形状掩码展开成 16px 子格(每 64px 格 → 4×4),贪心合并矩形后按 9 环面副本偏移实例化(每块矩形 ×9,共享同一 shape)。永久墙建一个整图节点(9 环面副本各一份,物理跨接缝必需)、建一次不动;可破坏层按分块存节点(块边长 12 格),摧毁时只重建所在块。只有 type=wall 产生碰撞。
 - `core/sim/collision_aabb.gd`(`CollisionAabb`:从任意节点求**启用中**碰撞体的世界 AABB)是激光命中、water 脚底偏移、飞鸟避障矩形的共同几何来源;三者各带兜底值,只在目标真没有碰撞体时生效。多边形与形状必须分开判(`CollisionPolygon2D` 与 `CollisionShape2D` 是并列类);本作所有身体(三敌人 + 玩家 5 个姿态箱)都只用多边形。
 - `core/sim/unstick.gd`(`Unstick`):`push_up_dy(rect, ts, max_cells) -> float` 逐格向上找第一个整框清空的位置(0 = 没卡住),不是整格跳。探测矩形四边内缩 `PROBE_INSET`(0.5px):`floori(rect.end / ts)` 含端点,不收会多算一格。唯一调用方 `WeaponPickup._physics_process`(`move_and_slide` 之后 + `_settled` 早退分支里)。几何走 `CollisionAabb.world_rect`。
 - 世界构建 `core/sim/world_builder.gd`(`WorldBuilder`,静态):`load_grid()`(地图 → current_grid / TileDefs / 地图像素尺寸)、`build_sim(parent, grid)`(碰撞:永久墙 + 可破坏分块 + 攀爬基座条)。单人 Level0 与 PvP 客户端 / 服务器共用。
+
+## 背景四层景深(`core/present/parallax_bg.gd`)
+
+- 地图的四个背景层(层 3-6,`layer_flags` bit3-6)是**颜色层**(每子格 `u32 0xRRGGBBAA`),景深系数 f = **1.0 / 0.75 / 0.5 / 0.25**(层 3 最近、层 6 最远)。编辑器右栏四个「背景 xx%」行就是它们。
+- `Level0._ready` 用 `MapFormat.load_bg_layers()` 取图;`ParallaxBg.setup(layers, 地图格数)` 只在**有相机的渲染路径**建(服务器 / headless 跳过),层缺失不建节点。给 `WorldViewport` 的最底层(z_index = −100+i)。
+- 视差数学只有两式(纯静态函数,`-s` 可测):**节点世界坐标 = cam × (1 − f)**、**采样起点 = cam × f**,配 `texture_repeat` 做环面回绕 ⇒ 相机位移 Δ 时该层屏幕位移 = −f·Δ。
+- 烘图:`bake_layer_image()` 每 64px 格烘 4px(`CELL_PX = 4`)并对 4×4 子格做 **alpha 加权**均值(直接平均透明格会把黑混进来,背景边缘发暗)。颜色层只画渐变/底色,降采样观感无损;`150×100` 格 → `600×400`,四层显存可忽略。
+- 不进快照 / 回滚 / 网络包:纯视觉,两端都从同一张地图文件现算 ⇒ 天然一致。守卫 `tests/smoke/bg_parallax_smoke.gd`(19 条:档位 / 两式 / 位移比 / v4 解析 / 缺层 / 烘焙加权)。人眼项:与天空 shader、光照投影的合成次序。
 
 ## 补间形变(squash & stretch)
 
@@ -32,6 +40,14 @@
 - 已知表现副产物:缩放绕精灵中心,挤压时画出的底边上抬 ~4~5px、拉伸下沉 ~3.5px。`animator.offset` 必须保持 `Vector2.ZERO`。
 - `_impulse` 有两个写入口,各自钳一次 `[-1,1]`:`impulse()` 的加法,以及 `tick()` 里 `_impulse -= _land_gain * k` 之后紧跟的 `clampf`。
 - 残影 `scenes/effects/after_image.gd`(`AfterImage`):复制 `AnimatedSprite2D` 当前帧贴图成一张 `Node2D + Sprite2D`,淡出后自毁。两个消费点:加速残影(`player.gd`,红/蓝交替,物理 tick 发射)、冲刺残影(`player.gd` / `player_replica.gd`,淡蓝白 alpha 0.30、0.20s、0.02s 间隔,**渲染帧发射**,服务器/无相机路径跳过;本体除了冲刺态,下冲后还有 `DOWN_DASH_GHOST_TIME = 0.06s` 的发射窗口 —— 副本只认 `POSE_CHARGE`,故对手的下冲没有残影,已知差异)。纯表现,不进 `capture_state()` / 快照。
+
+## 载入
+
+- **所有模式同一条载入路径**:`Level0._ready` **第一行**就 `LoadingScreen.show_loading`,进度覆盖 读图 → 图集烘焙 → 墙/水铺设 → 碰撞(逐块);单机由 `main_menu._enter_level0`、联机由 `MpLobby._enter_match_scene` + `PvpMatchClient._boot_world` 提前挂载入屏,覆盖 `change_scene`/建场景那段黑屏。
+- 图集按地图路径缓存(`_wall_ts_cache` / `_water_ts_cache`,static):同进程重开(重连/换模式/单机重载)复用,省 ~130ms;首开仍重建。
+- 铺贴只画可见环带(见上),碰撞仍逐块建(渐进,`BOOT_BUDGET_US = 8ms/帧`);载入期间 `get_tree().paused = true`,完成才解。
+- 实测(demo/headless):`coll_chunks` 阶段 CPU ~30ms、其余时间主要在首帧与铺图;整段配置从 ~1.5s 级降到 ~1.1s 级,铺图格数降 68%(newfactory)。
+
 
 ## 远端玩家副本的表现层(`scenes/player/player_replica.gd`)
 

@@ -87,6 +87,7 @@ func _correct_local_spawn() -> void:
 
 
 func _boot_world() -> void:
+	LoadingScreen.show_loading("正在构建世界…")
 	CombatComponent.pvp_arena = true
 	MazeGenerator.set_map_file(PvpSession.map_path)
 	GameParameters.refresh_map_size()
