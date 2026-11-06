@@ -253,7 +253,7 @@ function buildPanels() {
 
 // 背景层时把"纹理调色板 + 辅码"换成"颜色选择器"(规格 §4.5)。★ 只切显示,不动任何数据。
 function syncPanelForLayer() {
-  var isBg = (app.r.layer() === Core.LAYER_BG);
+  var isBg = Core.isColorLayer(app.r.layer());
   var show = function (id, on) { var el = $(id); if (el) el.style.display = on ? '' : 'none'; };
   // ★★ 藏的是整行,不是控件的直接父节点:四个档位 select 的父节点就是 .desc-row,而「只改辅码」那个
   //    input 外面还包着一层 label ⇒ 直接写 parentNode 的话后者只藏掉 label,那一行仍占着位置。

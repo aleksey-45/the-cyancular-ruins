@@ -199,7 +199,7 @@ function paintCells(map, L, idx, valueOf) {
            before: Uint32Array.from(before), after: Uint32Array.from(after) };
 }
 function valueFor(st, L) {
-  if (L === Core.LAYER_BG) return function () { return st.rgba >>> 0; };
+  if (Core.isColorLayer(L)) return function () { return st.rgba >>> 0; };
   if (st.descOnly) {
     // ★ "只改辅码":空气仍是空气(不能凭空长出纹理),有纹理的保留原纹理、只换辅码 ——
     //   少了这一支,整片墙"变暗"的操作会把墙换成画笔当前选的那个纹理。
@@ -294,8 +294,8 @@ function lerpRGBA(v0, v1, t) {
 function createGradientJob(map, a, b, rgba0, rgba1, opts) {
   opts = opts || {};
   var L = (opts.layer === undefined) ? Core.LAYER_BG : opts.layer;
-  if (L !== Core.LAYER_BG) {
-    throw new Error('渐变只能用在背景层(规格 §4.4):实得图层 ' + L);
+  if (!Core.isColorLayer(L)) {
+    throw new Error('渐变只能用在颜色层(背景 100%/75%/50%/25%,规格 §4.4):实得图层 ' + L);
   }
   if (!Render.layerArray(map, L)) {
     throw new Error('这张图的背景层不存在(layer_flags 缺位),渐变无处可写');

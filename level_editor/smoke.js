@@ -17,7 +17,8 @@ setTimeout(function () {
   await require('./tests/format/50_v3_text.js');
   await require('./tests/format/60_migrate_and_validate.js');
   await require('./tests/format/70_legacy_migration.js');
-  harness.finish('SMOKE OK', 318);
+  await require('./tests/format/80_bg_layers.js');
+  harness.finish('SMOKE OK', 339);
 })().catch(function (err) {
   console.error('FAIL: 未捕获异常(后面的断言一行都没跑):');
   console.error(err && err.stack ? err.stack : String(err));

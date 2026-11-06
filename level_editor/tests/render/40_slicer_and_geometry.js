@@ -36,7 +36,7 @@ const Render = globalThis.Render;
         const th = r.thumbCanvas(Core.LAYER_SCENE);
         const offs = offsNew();
         if (th && th !== thumbOld && countOps(th.ctx, 'op', 'drawImage') > 0 &&
-            offs.length === Core.LAYER_COUNT &&
+            offs.length === 4 &&
             offs.some(function (c) { return c.ctx.ops.length > 0; })) break;
         await tick3c();
       }
@@ -52,7 +52,7 @@ const Render = globalThis.Render;
       const offDraws = [];
       offsN.forEach(function (c) { drawnImages(c.ctx).forEach(function (t) { offDraws.push(t); }); });
       const offOldBricks = offDraws.filter(function (t) { return t.n <= nOld; }).length;
-      ok(offsN.length === Core.LAYER_COUNT && offDraws.length > 0 && offOldBricks === 0,
+      ok(offsN.length === 4 && offDraws.length > 0 && offOldBricks === 0,
          '★★★ ② 同样按新图集整片重铺(实得 ' + offsN.length + ' 张新离屏层 / ' + offDraws.length +
          ' 笔,其中旧图集的 ' + offOldBricks + ' 笔)。' +
          '★ 少了它,`layersClean` 不被碰 ⇒ ≥8 下平移会自拷贝旧像素、只给新露出的边条补新砖');

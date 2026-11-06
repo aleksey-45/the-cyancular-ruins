@@ -30,12 +30,12 @@ try {
       await rSw.setView({ x: 0, y: 0, zoom: ZD });
       const offSw = layerCanvasesSince(made4, sinceSw, 640, 400);      // 下标 = 层号
       const opsOf = function (L) { return offSw[L].ctx.ops.length; };
-      for (let Lz = 0; Lz < Core.LAYER_COUNT; Lz++) offSw[Lz].ctx.ops.length = 0;
+      for (let Lz = 0; Lz < offSw.length; Lz++) { if (offSw[Lz]) offSw[Lz].ctx.ops.length = 0; }
       dragOn(rSw, { x: 1 * SB, y: 1 * SB, w: SB, h: SB }, 3 * SB, 0);   // 格 1 → 格 4
       ok(opsOf(Core.LAYER_SCENE) > 0 && opsOf(Core.LAYER_BACK) === 0,
          '★★★ ① 拖动预览只烤**活动层**(场景层):后景层一个 op 都没有(实得 场景 ' +
          opsOf(Core.LAYER_SCENE) + ' / 后景 ' + opsOf(Core.LAYER_BACK) + ')');
-      for (let Lz = 0; Lz < Core.LAYER_COUNT; Lz++) offSw[Lz].ctx.ops.length = 0;
+      for (let Lz = 0; Lz < offSw.length; Lz++) { if (offSw[Lz]) offSw[Lz].ctx.ops.length = 0; }
       rSw.setLayer(Core.LAYER_BACK);                        // ← 用户按了 4
       const erased = someOp(offSw[Core.LAYER_SCENE].ctx, function (o) {
         return o.op === 'clearRect' && o.x === 4 * SB * ZD;    // 场景层上"目标格"那块被擦掉
@@ -44,7 +44,7 @@ try {
          '★★★ ② 拖动途中切层:偏移**烤到新层**且旧层上那批**被擦掉**(实得 后景 ' +
          opsOf(Core.LAYER_BACK) + ' 个 op / 场景层擦了目标格 ' + erased +
          ';不擦 = 旧层留着一次拖动预览的残影,直到有别的东西标脏它)');
-      for (let Lz = 0; Lz < Core.LAYER_COUNT; Lz++) offSw[Lz].ctx.ops.length = 0;
+      for (let Lz = 0; Lz < offSw.length; Lz++) { if (offSw[Lz]) offSw[Lz].ctx.ops.length = 0; }
       dragOn(rSw, { x: 1 * SB, y: 1 * SB, w: SB, h: SB }, 3 * SB, 0);
       ok(opsOf(Core.LAYER_BACK) > 0 && opsOf(Core.LAYER_SCENE) === 0,
          '★★★ ③ 切层之后继续拖:动的是**后景层**、场景层一个 op 都没有(实得 后景 ' +
@@ -193,7 +193,7 @@ try {
       // 那一条路得先存在(否则"零个 op"是空转)。
       await rBig.setView({ x: 0, y: 0, zoom: 16 });
       const offsBig = layerCanvasesSince(made4, sinceBig, 1600, 1200);
-      ok(offsBig.length === Core.LAYER_COUNT,
+      ok(offsBig.length === 4,
          '⑬i 前提:② 的四张离屏层建出来了(实得 ' + offsBig.length + ' 张)');
       const opsOnBig = function (which) {
         let n = 0;

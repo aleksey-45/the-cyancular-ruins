@@ -219,7 +219,7 @@ module.exports = (async function () {
      '★ 中点是插值出来的灰(实得 ' + ((mid >>> 8) & 255) + ',应在 100~160)');
   throws(function () {
     Editor.createGradientJob(mg, { x: 0, y: 0 }, { x: 3, y: 0 }, 0, 0, { layer: Core.LAYER_SCENE });
-  }, '★ 渐变用在纹理层 → 抛错(规格 §4.4:渐变**仅背景层**)', '背景层');
+  }, '★ 渐变用在纹理层 → 抛错(规格 §4.4:渐变**仅颜色层**)', '颜色层');
 
   // ── 相位 ⑦ 改尺寸(A8/A10)──
   const mr = Core.createMap('t', 2, 1);

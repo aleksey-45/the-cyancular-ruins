@@ -28,8 +28,9 @@ try {
       //    四张就是它,创建顺序 = 层号递增),同时另判"那张离屏层确实被合成到主画布上"。
       const bgLayerCvs = layerCanvasesSince(made, madeBeforeBg, 200, 200);
       const bgOff = bgLayerCvs[Core.LAYER_BG];
-      ok(bgLayerCvs.length === Core.LAYER_COUNT && !!bgOff,
-         '⑩h 前提:② 的离屏层按层各建了一张(实得 ' + bgLayerCvs.length + ' 张,尺寸 = 主画布)');
+      // ★ 本图只有 4 层在位(背景 75%/50%/25% 是新建图的 null 层)⇒ 只为在位的层建离屏层(7 张就说明替缺席层付了钱)。
+      ok(bgLayerCvs.length === 4 && !!bgOff,
+         '⑩h 前提:② 只为**在位的层**各建一张离屏层(实得 ' + bgLayerCvs.length + ' 张;本图 4 层在位)');
       const origTexOf = Core.texOf;
       const texOfArgs = [];
       Core.texOf = function (d) { texOfArgs.push(d >>> 0); return origTexOf(d); };

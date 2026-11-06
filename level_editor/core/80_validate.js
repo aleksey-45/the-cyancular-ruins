@@ -100,7 +100,7 @@ function validateMap(map) {
     var a = layer.kind === 'tex' ? layer.desc : layer.rgba;
     for (var k = 0; k < a.length; k++) if (a[k] !== 0) { allEmpty = false; break; }
   }
-  if (allEmpty) warnings.push('四个图层全是空的');
+  if (allEmpty) warnings.push('所有图层全是空的');
 
   // 按阵营半区的复活点(`# respawn <1|2>`)
   warnings = warnings.concat(_checkRespawns(map, cellsW, cellsH, scene));

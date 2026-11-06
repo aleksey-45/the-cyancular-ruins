@@ -89,7 +89,7 @@ function copyRegion(map, L, sel) {
   if (!sel) return null;
   var arr = Render.layerArray(map, L);
   var n = sel.w * sel.h, x, y;
-  if (L === Core.LAYER_BG) {
+  if (Core.isColorLayer(L)) {
     var rgba = new Uint32Array(n);
     for (y = 0; y < sel.h; y++) {
       for (x = 0; x < sel.w; x++) rgba[y * sel.w + x] = arr ? arr[idxOf(map, sel.x + x, sel.y + y)] : 0;
@@ -107,7 +107,7 @@ function clipSize(clip) { return clip ? { w: clip.w, h: clip.h } : { w: 0, h: 0 
 function pasteRegion(map, L, clip, X, Y) {
   if (!canEditLayer(L, map)) return { ok: false, why: '这一层不可编辑(不存在或已锁定)' };
   if (!clip) return { ok: false, why: '剪贴板是空的' };
-  var isColorLayer = (L === Core.LAYER_BG);
+  var isColorLayer = Core.isColorLayer(L);
   if (isColorLayer && clip.kind !== 'color') {
     return { ok: false, why: '剪贴板是纹理层内容,不能粘到背景层(两种数据类型不互转)' };
   }

@@ -103,7 +103,7 @@ function installInteraction() {
         var rect0 = cv.getBoundingClientRect();
         var p = app.r.screenToSub(ev.clientX - rect0.left, ev.clientY - rect0.top);
         var v = pickAt(app.map, app.r.layer(), p.X, p.Y);
-        if (app.r.layer() === Core.LAYER_BG) app.st.rgba = v >>> 0;
+        if (Core.isColorLayer(app.r.layer())) app.st.rgba = v >>> 0;
         else if (Core.texOf(v) !== 0) app.st.desc = v >>> 0;   // ★ 空气不吸(会吸出一个空纹理)
         status('吸管:0x' + (v >>> 0).toString(16) + (Core.texOf(v) === 0 ? '(空气,未采用)' : ''));
         statusLine();
@@ -124,7 +124,7 @@ function installInteraction() {
       if (app.st.tool === 'gradient') {
         // ★ 规格 §4.4:渐变仅背景层。工具按钮只是压暗(视觉提示),真正的闸在这里 —— 少了它,在纹理层
         //   拖渐变会悄悄改掉背景层(屏幕上看不出,因为背景在最底下)。
-        if (app.r.layer() !== Core.LAYER_BG) { status('渐变只能用在背景层(它改的是颜色,不是纹理)'); return; }
+        if (!Core.isColorLayer(app.r.layer())) { status('渐变只能用在颜色层(背景 100%/75%/50%/25%,它改的是颜色,不是纹理)'); return; }
         app.st.gradStart = hit;
         return;
       }
@@ -213,7 +213,8 @@ function installInteraction() {
           return runJob(gj, function () {
             var res = gj.result(), targets = [], values = [], n = 0;
             for (var i = 0; i < res.length; i++) { targets.push(res[i].i); values.push(res[i].rgba); }
-            pushAndShow(paintCells(app.map, Core.LAYER_BG, targets, function () { return values[n++]; }));
+            // ★ 落到**拖拽时那一层**(s1.layer),不是写死背景100%:四层景深背景各画各的。
+            pushAndShow(paintCells(app.map, s1.layer, targets, function () { return values[n++]; }));
           }, '渐变');
         });
         return;

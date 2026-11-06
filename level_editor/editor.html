@@ -175,14 +175,17 @@ select { background:var(--panel2); color:var(--text); border:1px solid var(--bor
       </div></div>
       <div class="opt" data-for="bucket"><span class="hint">油漆桶:同值连通填充(跨环面),受选区约束</span></div>
       <div class="opt" data-for="picker"><span class="hint">吸管:吸取当前层的纹理 + 辅码(空气不吸)</span></div>
-      <div class="opt" data-for="gradient"><span class="hint">渐变:从拖拽起点到终点,用下方两个颜色槽(仅背景层)</span></div>
+      <div class="opt" data-for="gradient"><span class="hint">渐变:从拖拽起点到终点,用下方两个颜色槽(仅颜色层:背景 100%/75%/50%/25%)</span></div>
     </div>
     <h2>图层</h2>
     <div id="layers">
       <div class="layer-row" data-layer="0"><span class="name">前景</span><button class="vis" title="显示/隐藏">👁</button><button class="lock" title="锁定/解锁">🔓</button></div>
       <div class="layer-row cur" data-layer="1"><span class="name">场景</span><button class="vis" title="显示/隐藏">👁</button><button class="lock" title="锁定/解锁">🔓</button></div>
       <div class="layer-row" data-layer="2"><span class="name">后景</span><button class="vis" title="显示/隐藏">👁</button><button class="lock" title="锁定/解锁">🔓</button></div>
-      <div class="layer-row" data-layer="3"><span class="name">背景</span><button class="vis" title="显示/隐藏">👁</button><button class="lock" title="锁定/解锁">🔓</button></div>
+      <div class="layer-row" data-layer="3"><span class="name">背景 100%</span><button class="vis" title="显示/隐藏">👁</button><button class="lock" title="锁定/解锁">🔓</button></div>
+      <div class="layer-row" data-layer="4"><span class="name">背景 75%</span><button class="vis" title="显示/隐藏">👁</button><button class="lock" title="锁定/解锁">🔓</button></div>
+      <div class="layer-row" data-layer="5"><span class="name">背景 50%</span><button class="vis" title="显示/隐藏">👁</button><button class="lock" title="锁定/解锁">🔓</button></div>
+      <div class="layer-row" data-layer="6"><span class="name">背景 25%</span><button class="vis" title="显示/隐藏">👁</button><button class="lock" title="锁定/解锁">🔓</button></div>
     </div>
     <div class="desc-row"><label><input id="dim-others" type="checkbox" checked> 非当前层压暗 60%</label></div>
     <h2>纹理调色板</h2>
@@ -193,7 +196,7 @@ select { background:var(--panel2); color:var(--text); border:1px solid var(--bor
     <div class="desc-row"><span>饱和</span><select id="desc-sat"></select></div>
     <div class="desc-row"><span>透明</span><select id="desc-alp"></select></div>
     <div class="desc-row"><label><input id="desc-only" type="checkbox"> 只改辅码(保留原纹理,只改色相/亮度/饱和/透明)</label></div>
-    <h2 id="bg-color-title">颜色(背景层)</h2>
+    <h2 id="bg-color-title">颜色(景深背景层)</h2>
     <div class="desc-row" id="bg-color-row">
       <span>起点</span>
       <input id="bg-color" type="color" value="#b0e5f6">

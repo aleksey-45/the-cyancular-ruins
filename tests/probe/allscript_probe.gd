@@ -5,7 +5,7 @@ const SKIP_DIRS := ["res://.godot", "res://.tmp", "res://builds", "res://release
 		"res://crashlogs", "res://maps", "res://map", "res://backup", "res://editor/_build",
 		"res://_crashtest", "res://docs"]
 
-const EXPECTED_SCRIPTS := 247
+const EXPECTED_SCRIPTS := 250
 
 var _fails: Array[String] = []
 var _total := 0

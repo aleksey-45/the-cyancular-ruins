@@ -20,8 +20,8 @@ const Render = globalThis.Render;
       const r = Render.mount(cv, SLICE);
       await r.setMap(mM);
       const offs = layerCanvasesSince(made2, since, 200, 150);
-      ok(offs.length === Core.LAYER_COUNT && !!offs[Core.LAYER_SCENE],
-         '⑪ 前提:② 为四层各建了一张离屏层(尺寸 = 主画布;实得 ' + offs.length + ' 张)');
+      ok(offs.length === 4 && !!offs[Core.LAYER_SCENE],
+         '⑪ 前提:② 只为在位层各建一张离屏层(实得 ' + offs.length + ' 张;本图 4 层在位,layer_flags 之外的 3 个颜色层不出画布)');
       const offScene = offs[Core.LAYER_SCENE];
 
       // ── ⑪a 三条路径各画各的:缩略图(< 8)与离屏层(≥ 8)是两套完全不同的实现 ──
@@ -202,11 +202,11 @@ const Render = globalThis.Render;
       // 而 layersClean 此刻已经(或马上会)变成真 ⇒ 画面永久错位、没有任何报错。
       await rF.setView({ x: 0, y: 0, zoom: 16 });        // ★ 整数 zoom:条带不会退化,基线才可比
       const offF = layerCanvasesSince(made2, sinceF, 200, 150);
-      ok(offF.length === Core.LAYER_COUNT,
-         '⑪g 前提:rF 的四张离屏层都在(实得 ' + offF.length + ' 张,尺寸 = 主画布)');
+      ok(offF.length === 4,
+         '⑪g 前提:rF 的在位四层离屏层都在(实得 ' + offF.length + ' 张)');
       const sumClears = function () {
         let n = 0;
-        for (let i = 0; i < Core.LAYER_COUNT; i++) n += countOps(offF[i].ctx, 'op', 'clearRect');
+        for (let i = 0; i < offF.length; i++) { if (offF[i]) n += countOps(offF[i].ctx, 'op', 'clearRect'); }
         return n;
       };
       let cF0 = sumClears();

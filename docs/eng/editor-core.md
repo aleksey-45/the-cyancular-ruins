@@ -178,3 +178,11 @@ descriptor (u32)
 | `isAir` 的两种收口方式（加归一化 / 改判据为 `texOf`） | **未定**，要动公开接口（§6） |
 | 「0 ≡ 空气」在解码侧成立 | **不成立**，编码端义务，解码端不代偿（§4、§6） |
 | `MAX_BODY_SIZE` 之外的炸弹面 | 两道闸都不可省（§3） |
+
+## 12. 图层模型（7 层：3 纹理 + 4 景深背景）
+
+- `LAYER_COUNT = 7`：`0 前景` / `1 场景` / `2 后景`（纹理层）、`3 背景100%` / `4 背景75%` / `5 背景50%` / `6 背景25%`（**颜色层**，`u32 0xRRGGBBAA`/子格）。层号 = `layer_flags` 位号（`bit0-6`），`bit7` 保留写 0。
+- 绘制顺序 = `DRAW_ORDER`（由 `LAYER_COUNT` 派生，层号倒序）：背景 25% 最先画、前景最后画。
+- ★ **颜色层按需分配**：`createMap` 只分配层 0-3（历史文件恒有 bit3），层 4-6 默认 `null` —— 不落笔就不占内存、也不出 `layer_flags` 位；第一次要往里画时由 `Core.ensureLayer(map, L)` 建出。`ensureLayer` 只补颜色层，纹理层缺席（旧文件）绝不凭空补。
+- 判据唯一来源 = `Core.isColorLayer(L)`（=`LAYER_BG_FIRST..LAYER_BG_LAST`）；UI / render 里别再写 `L === LAYER_BG`（那是"只有一层背景"时代的写法）。
+- 旧文件（只有 bit0-3）解出层 4-6 = `null`，不报错；旧读取器忽略 `bit4-6` ⇒ 只看到背景100%（可接受降级，见 [`registered-debt.md`](registered-debt.md)）。

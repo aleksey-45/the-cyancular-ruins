@@ -187,6 +187,17 @@ func _ready() -> void:
 	_damaged_subs.clear()
 	LoadingScreen.set_progress(0.18, "烘焙墙体图集…")
 
+	# 背景四层景深(层 3-6 = 100%/75%/50%/25%,契约见 ParallaxBg):纯视觉、**有相机才建**,
+	# 服务器/headless 不建;不进快照/回滚(两端都从同一张地图文件现算)。
+	if DisplayServer.get_name() != "headless":
+		var bg := ParallaxBg.new()
+		bg.name = "ParallaxBg"
+		if bg.setup(MapFormat.load_bg_layers(MazeGenerator.map_file_path()), MazeGenerator.map_size()) > 0:
+			$WorldViewport.add_child(bg)
+			$WorldViewport.move_child(bg, 0)
+		else:
+			bg.free()
+
 	var built := _create_wall_tileset()
 	var wl: TileMapLayer = $WorldViewport/WallLayer
 	wl.tile_set = built["tileset"]

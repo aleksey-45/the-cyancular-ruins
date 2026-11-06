@@ -10,8 +10,8 @@ const SLICE = { slicer: { nextFrame: function () { return Promise.resolve(); } }
 try {
     ok(typeof Render.mount === 'function', 'Render.mount 存在(画布挂载的入口,T3 的交付面)');
     if (typeof Render.mount !== 'function') return;
-    eq(Render.DRAW_ORDER, [3, 2, 1, 0],
-       '★★ DRAW_ORDER 从内到外:背景(3)最先画、前景(0)最后画(盖在最上面)');
+    eq(Render.DRAW_ORDER, [6, 5, 4, 3, 2, 1, 0],
+       '★★ DRAW_ORDER 从内到外:背景 25%(6)最先画、前景(0)最后画(盖在最上面;长度随 LAYER_COUNT 派生)');
     // ★ 本相位要画真的 tile,所以图集必须先就位(Tint.get 在 setSource 之前会抛;
     Render.setAtlas(makeAtlas(), ATLAS_W, ATLAS_H, { backend: spyBackend() });
 

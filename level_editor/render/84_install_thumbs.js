@@ -19,6 +19,9 @@ function installThumbs(S) {
     }
     S.thumbPx = px;
     for (var L = 0; L < RenderCore.LAYER_COUNT; L++) {
+      // ★ 缺席层(旧文件只有 bit0-3 / 背景 75%/50%/25% 还没落笔)不建缩略图:省一张整图缩略图,
+      //   也免得 drawThumbPath 替"不存在的一层"记一次 drawImage。
+      if (!layerArray(map, L)) { thumbs[L] = null; continue; }
       thumbs[L] = document.createElement('canvas');
       thumbs[L].width = map.subCols * px;
       thumbs[L].height = map.subRows * px;

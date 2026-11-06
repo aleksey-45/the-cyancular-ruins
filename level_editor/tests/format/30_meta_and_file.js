@@ -110,7 +110,7 @@ await (async function () {
   var back = await Core.decodeMap(bytes);
   eq(back.subCols, src.subCols, 'decodeMap: subCols');
   eq(back.subRows, src.subRows, 'decodeMap: subRows');
-  eq(back.layers.length, 4, 'decodeMap: 四层');
+  eq(back.layers.length, Core.LAYER_COUNT, 'decodeMap: 层位数 = LAYER_COUNT(7)');
   for (var L = 0; L < 4; L++) {
     var key = L === 3 ? 'rgba' : 'desc';
     eq(Array.prototype.slice.call(back.layers[L][key]), Array.prototype.slice.call(src.layers[L][key]),

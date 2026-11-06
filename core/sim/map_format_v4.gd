@@ -74,9 +74,12 @@ static func parse(data: PackedByteArray) -> Dictionary:
 		"sub_rows": sub_rows,
 		"layer_flags": int(h["layer_flags"]),
 		"scene": PackedInt32Array(),
+		"bgs": [null, null, null, null],   # 背景四层景深(bit3-6 → 下标 0-3):u32 RGBA/子格,缺层 null
 	}
 	var off := 2 + meta_len
-	for bit in 4:   # bit0 前景 / bit1 场景 / bit2 后景 / bit3 背景
+	# ★ bit0-6 = 层 0-6:前景 / 场景 / 后景 / 背景100% / 75% / 50% / 25%。bit3-6 是颜色层(kind=2),
+	#   游戏侧要"按景深视差画"才存下它们;bit7 是保留位(旧端写 0、读端不判)。
+	for bit in 7:
 		if int(h["layer_flags"]) & (1 << bit) == 0:
 			continue
 		if off >= body.size():
@@ -111,7 +114,16 @@ static func parse(data: PackedByteArray) -> Dictionary:
 				out["scene"] = descs
 			off += n * iw
 		elif kind == 2:
-			off += n * 4   # 背景层:整块 RGBA,游戏侧暂不消费
+			if off + n * 4 > body.size():
+				return {"ok": false, "error": "颜色层截断(bit%d)" % bit}
+			if bit >= 3:
+				# 背景景深层:整块 u32 RGBA/子格(层号 3-6 → bgs[0..3])。前景/后景是纹理层,颜色块只读掉。
+				var rgba := PackedInt32Array()
+				rgba.resize(n)
+				for i in n:
+					rgba[i] = body.decode_u32(off + i * 4)
+				(out["bgs"] as Array)[bit - 3] = rgba
+			off += n * 4
 		else:
 			return {"ok": false, "error": "未知层类型 %d" % kind}
 	return out

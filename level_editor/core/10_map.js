@@ -19,7 +19,8 @@ function createMap(name, cellsW, cellsH) {
       { kind: 'tex', desc: new Uint32Array(n) },
       { kind: 'tex', desc: new Uint32Array(n) },
       { kind: 'tex', desc: new Uint32Array(n) },
-      { kind: 'color', rgba: new Uint32Array(n) },
+      { kind: 'color', rgba: new Uint32Array(n) },   // 背景100%(历史文件恒有这一层,保留默认分配)
+      null, null, null,                              // 背景 75%/50%/25%:按需分配,见 ensureLayer
     ],
     players: [],
     enemies: [],
@@ -32,3 +33,13 @@ function createMap(name, cellsW, cellsH) {
 function cellsWOf(map) { return map.subCols / SUB_PER_CELL; }
 function cellsHOf(map) { return map.subRows / SUB_PER_CELL; }
 function subIndex(subCols, X, Y) { return Y * subCols + X; }
+
+// 按需建颜色层:背景 75%/50%/25% 默认 null(不占内存、不置 layer_flags 位),第一次要往里画时才分配。
+// ★ 只对颜色层生效;纹理层缺席是"这张图没有这一层"(旧文件),绝不凭空补一层空的。
+function ensureLayer(map, L) {
+  if (!map || !map.layers) return null;
+  if (map.layers[L]) return map.layers[L];
+  if (LAYER_KINDS[L] !== 'color') return null;
+  map.layers[L] = { kind: 'color', rgba: new Uint32Array(map.subCols * map.subRows) };
+  return map.layers[L];
+}

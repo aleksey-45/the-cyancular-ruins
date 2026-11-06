@@ -47,6 +47,9 @@ function existingLayerNames() {
 function canEditLayer(L, map) {
   var m = map || app.map;
   if (!m) { status('先打开一张地图'); return false; }
+  // ★ 背景 75%/50%/25% 默认不存在(按需分配):落笔这一层时先建出来,否则「本图无此层」会把
+  //   用户的第一次落笔当成非法操作拒掉(而它恰恰是这三层唯一的创建入口)。
+  if (Core.isColorLayer(L)) Core.ensureLayer(m, L);
   if (!Render.layerArray(m, L)) {
     status('「' + Core.LAYER_NAMES[L] + '」这一层在这张图里不存在(layer_flags 缺位):本图只有 ' +
            existingLayerNames() + '。要四层齐全请用顶部「新建」。');

@@ -182,14 +182,17 @@ window.__CYRM_WORKER_SRC__ = "// worker.js —— 闸 3:二进制编解码 + CRC
       </div></div>
       <div class="opt" data-for="bucket"><span class="hint">油漆桶:同值连通填充(跨环面),受选区约束</span></div>
       <div class="opt" data-for="picker"><span class="hint">吸管:吸取当前层的纹理 + 辅码(空气不吸)</span></div>
-      <div class="opt" data-for="gradient"><span class="hint">渐变:从拖拽起点到终点,用下方两个颜色槽(仅背景层)</span></div>
+      <div class="opt" data-for="gradient"><span class="hint">渐变:从拖拽起点到终点,用下方两个颜色槽(仅颜色层:背景 100%/75%/50%/25%)</span></div>
     </div>
     <h2>图层</h2>
     <div id="layers">
       <div class="layer-row" data-layer="0"><span class="name">前景</span><button class="vis" title="显示/隐藏">👁</button><button class="lock" title="锁定/解锁">🔓</button></div>
       <div class="layer-row cur" data-layer="1"><span class="name">场景</span><button class="vis" title="显示/隐藏">👁</button><button class="lock" title="锁定/解锁">🔓</button></div>
       <div class="layer-row" data-layer="2"><span class="name">后景</span><button class="vis" title="显示/隐藏">👁</button><button class="lock" title="锁定/解锁">🔓</button></div>
-      <div class="layer-row" data-layer="3"><span class="name">背景</span><button class="vis" title="显示/隐藏">👁</button><button class="lock" title="锁定/解锁">🔓</button></div>
+      <div class="layer-row" data-layer="3"><span class="name">背景 100%</span><button class="vis" title="显示/隐藏">👁</button><button class="lock" title="锁定/解锁">🔓</button></div>
+      <div class="layer-row" data-layer="4"><span class="name">背景 75%</span><button class="vis" title="显示/隐藏">👁</button><button class="lock" title="锁定/解锁">🔓</button></div>
+      <div class="layer-row" data-layer="5"><span class="name">背景 50%</span><button class="vis" title="显示/隐藏">👁</button><button class="lock" title="锁定/解锁">🔓</button></div>
+      <div class="layer-row" data-layer="6"><span class="name">背景 25%</span><button class="vis" title="显示/隐藏">👁</button><button class="lock" title="锁定/解锁">🔓</button></div>
     </div>
     <div class="desc-row"><label><input id="dim-others" type="checkbox" checked> 非当前层压暗 60%</label></div>
     <h2>纹理调色板</h2>
@@ -200,7 +203,7 @@ window.__CYRM_WORKER_SRC__ = "// worker.js —— 闸 3:二进制编解码 + CRC
     <div class="desc-row"><span>饱和</span><select id="desc-sat"></select></div>
     <div class="desc-row"><span>透明</span><select id="desc-alp"></select></div>
     <div class="desc-row"><label><input id="desc-only" type="checkbox"> 只改辅码(保留原纹理,只改色相/亮度/饱和/透明)</label></div>
-    <h2 id="bg-color-title">颜色(背景层)</h2>
+    <h2 id="bg-color-title">颜色(景深背景层)</h2>
     <div class="desc-row" id="bg-color-row">
       <span>起点</span>
       <input id="bg-color" type="color" value="#b0e5f6">
@@ -281,10 +284,16 @@ const SUB_PER_CELL = 4;          // 每 64px 格细分成 4×4 个 16px 子格(�
 const SUB_PX = 16;               // 子格边长(世界像素)
 const CELL_PX = 64;              // 格边长(世界像素)
 
-const LAYER_COUNT = 4;           // 顺序从外到内:前景 / 场景 / 后景 / 背景;只有「场景」参与碰撞
+const LAYER_COUNT = 7;           // 顺序从外到内:前景 / 场景 / 后景 / 背景100% / 75% / 50% / 25%;只有「场景」参与碰撞
 const LAYER_FRONT = 0, LAYER_SCENE = 1, LAYER_BACK = 2, LAYER_BG = 3;
-const LAYER_NAMES = ['前景', '场景', '后景', '背景'];
-const LAYER_KINDS = ['tex', 'tex', 'tex', 'color'];
+// ★ 背景是**四层景深颜色平面**(层号 = layer_flags 位 3..6)。景深系数 f:100% = 与场景同速(最近)、25% 最远。
+//   旧文件只有 bit0-3 ⇒ 层 4-6 为 null(不存在),不报错;旧读取器忽略 bit4-6 ⇒ 只看到背景100%。
+const LAYER_BG_FIRST = 3, LAYER_BG_LAST = 6;
+const LAYER_BG_DEPTH = [1.0, 0.75, 0.5, 0.25];   // 下标 = 层号 - LAYER_BG_FIRST
+const LAYER_NAMES = ['前景', '场景', '后景', '背景 100%', '背景 75%', '背景 50%', '背景 25%'];
+const LAYER_KINDS = ['tex', 'tex', 'tex', 'color', 'color', 'color', 'color'];
+// 颜色层判据的唯一来源(别在 UI/render 里再抄一份"L === LAYER_BG")。
+function isColorLayer(L) { return L >= LAYER_BG_FIRST && L <= LAYER_BG_LAST; }
 </script>
 <script>
 /* == core/10_map.js == */
@@ -309,7 +318,8 @@ function createMap(name, cellsW, cellsH) {
       { kind: 'tex', desc: new Uint32Array(n) },
       { kind: 'tex', desc: new Uint32Array(n) },
       { kind: 'tex', desc: new Uint32Array(n) },
-      { kind: 'color', rgba: new Uint32Array(n) },
+      { kind: 'color', rgba: new Uint32Array(n) },   // 背景100%(历史文件恒有这一层,保留默认分配)
+      null, null, null,                              // 背景 75%/50%/25%:按需分配,见 ensureLayer
     ],
     players: [],
     enemies: [],
@@ -322,6 +332,16 @@ function createMap(name, cellsW, cellsH) {
 function cellsWOf(map) { return map.subCols / SUB_PER_CELL; }
 function cellsHOf(map) { return map.subRows / SUB_PER_CELL; }
 function subIndex(subCols, X, Y) { return Y * subCols + X; }
+
+// 按需建颜色层:背景 75%/50%/25% 默认 null(不占内存、不置 layer_flags 位),第一次要往里画时才分配。
+// ★ 只对颜色层生效;纹理层缺席是"这张图没有这一层"(旧文件),绝不凭空补一层空的。
+function ensureLayer(map, L) {
+  if (!map || !map.layers) return null;
+  if (map.layers[L]) return map.layers[L];
+  if (LAYER_KINDS[L] !== 'color') return null;
+  map.layers[L] = { kind: 'color', rgba: new Uint32Array(map.subCols * map.subRows) };
+  return map.layers[L];
+}
 </script>
 <script>
 /* == core/20_bytes.js == */
@@ -1061,7 +1081,7 @@ function validateMap(map) {
     var a = layer.kind === 'tex' ? layer.desc : layer.rgba;
     for (var k = 0; k < a.length; k++) if (a[k] !== 0) { allEmpty = false; break; }
   }
-  if (allEmpty) warnings.push('四个图层全是空的');
+  if (allEmpty) warnings.push('所有图层全是空的');
 
   // 按阵营半区的复活点(`# respawn <1|2>`)
   warnings = warnings.concat(_checkRespawns(map, cellsW, cellsH, scene));
@@ -1315,6 +1335,8 @@ globalThis.Core = {
   LAYER_COUNT: LAYER_COUNT,
   LAYER_FRONT: LAYER_FRONT, LAYER_SCENE: LAYER_SCENE,
   LAYER_BACK: LAYER_BACK, LAYER_BG: LAYER_BG,
+  LAYER_BG_FIRST: LAYER_BG_FIRST, LAYER_BG_LAST: LAYER_BG_LAST,
+  LAYER_BG_DEPTH: LAYER_BG_DEPTH, isColorLayer: isColorLayer, ensureLayer: ensureLayer,
   LAYER_NAMES: LAYER_NAMES, LAYER_KINDS: LAYER_KINDS,
   createMap: createMap, cellsWOf: cellsWOf, cellsHOf: cellsHOf, subIndex: subIndex,
   sanitizeName: sanitizeName, brushOffsets: brushOffsets,
@@ -2082,7 +2104,14 @@ function canonRects(r, W, H) {
 </script>
 <script>
 /* == render/70_layer_kind.js == */
-var DRAW_ORDER = [3, 2, 1, 0];                 // render/70_layer_kind.js —— 图层绘制顺序与层种类:前景(0)是"从外到内"的第一层 ⇒ 最后画(盖在最上面),背景(3)最先画
+// render/70_layer_kind.js —— 图层绘制顺序与层种类:前景(0)是"从外到内"的第一层 ⇒ 最后画(盖在最上面),
+// 背景 25%(6)最先画。顺序 = 层号倒序,长度从 Core.LAYER_COUNT 派生(7 层:3 纹理 + 4 景深背景)。
+function buildDrawOrder() {
+  var a = [];
+  for (var L = RenderCore.LAYER_COUNT - 1; L >= 0; L--) a.push(L);
+  return a;
+}
+var DRAW_ORDER = buildDrawOrder();
 
 function layerIsColor(L) { return RenderCore.LAYER_KINDS[L] === 'color'; }   // ★★ 纹理层是描述符(走 Core.texOf / Tint),背景层是 RGBA 0xRRGGBBAA(走 cssOfRGBA / fillRect):两者都是 32 位无符号数、长得一模一样,把 RGBA 喂给 texOf 不抛只是结论无意义(#FF0000FF 的纹理位是 0 ⇒ 整层当空气 ⇒ 看不见;#00FFFFFF 的纹理位是 4095 ⇒ 当场抛 Tint 越界)。判据取 core 的单一来源 LAYER_KINDS,别在渲染层再抄一份(权威见 docs/eng/editor-render.md §6)
 </script>
@@ -2140,26 +2169,29 @@ function createMountState(canvas, opts) {
   opts = opts || {};
   var ctx = canvas.getContext('2d');
   ctx.imageSmoothingEnabled = false;      // ★ 主 ctx 不关插值 ⇒ 放大后砖块是糊的(离屏层同此)
+  // ★ 层数组长度一律从 Core.LAYER_COUNT 派生(7 层:3 纹理 + 4 景深背景),别再写死 4 份。
+  var nL = RenderCore.LAYER_COUNT;
+  var fillN = function (v) { var a = []; for (var i = 0; i < nL; i++) a.push(v); return a; };
   var S = {
     canvas: canvas, opts: opts, ctx: ctx,
     s: {
       map: null, layer: RenderCore.LAYER_SCENE,
       view: { x: 0, y: 0, zoom: 8 },
       grid: true, subGrid: false, torus: true, dimOthers: true, guides: false,
-      layerVisible: [true, true, true, true],
-      layerLocked: [false, false, false, false],
+      layerVisible: fillN(true),
+      layerLocked: fillN(false),
       selection: null,
       preview: null,       // 拖矩形/直线时的预览框(子格单位)
       selDrag: null,       // {sel, dx, dy}:选区拖动中(拖动只记偏移,松手才提交)
     },
-    thumbs: [null, null, null, null],
+    thumbs: fillN(null),
     thumbPx: THUMB_PX,
     slicer: createSlicer(opts.slicer || {}),
     stat: { thumbMs: 0, renders: 0, lastRenderMs: 0, thumbsBuilt: 0 },
     atlasSync: false,                  // 换图之后 ①② 需要整片重来
     errorSink: null,                   // 由 installErrors 装上(默认 = defaultErrorSink)
-    layerCv: [null, null, null, null],
-    layerDirty: [null, null, null, null],      // 每层一个子格矩形(null = 干净)
+    layerCv: fillN(null),
+    layerDirty: fillN(null),      // 每层一个子格矩形(null = 干净)
     cellCache: null,                            // ③
     layersClean: false,                         // 四张离屏层是否与当前视图一致
     stat2: { cellsHits: 0, cellsMisses: 0, cellsSize: 0,
@@ -2244,6 +2276,9 @@ function installThumbs(S) {
     }
     S.thumbPx = px;
     for (var L = 0; L < RenderCore.LAYER_COUNT; L++) {
+      // ★ 缺席层(旧文件只有 bit0-3 / 背景 75%/50%/25% 还没落笔)不建缩略图:省一张整图缩略图,
+      //   也免得 drawThumbPath 替"不存在的一层"记一次 drawImage。
+      if (!layerArray(map, L)) { thumbs[L] = null; continue; }
       thumbs[L] = document.createElement('canvas');
       thumbs[L].width = map.subCols * px;
       thumbs[L].height = map.subRows * px;
@@ -2424,6 +2459,9 @@ function installLayerPath(S) {
     var h = Math.max(1, Math.ceil((r.y1 - r.y0) / bands));
     for (var L = 0; L < RenderCore.LAYER_COUNT; L++) {
       layerDirty[L] = null;
+      // ★ 缺席层(旧文件只有 bit0-3、或背景 75%/50%/25% 还没落笔)不建离屏层:
+      //   画布与合成次数都不该替"不存在的一层"付钱(否则每张旧图白付 3 张全屏离屏层)。
+      if (!layerArray(s.map, L)) continue;
       ensureLayerCanvas(L);
       for (var y = r.y0; y < r.y1; y += h) {
         tasks.push({ L: L, rect: { x: r.x0, y: y, w: r.x1 - r.x0, h: Math.min(h, r.y1 - y) } });
@@ -2452,7 +2490,7 @@ function installLayerPath(S) {
       if (!s.layerVisible[L] || !layerCv[L]) continue;
       // ★ 尺寸对不上的离屏层(改窗口之后、重建还没跑到)一路都不许画:它的像素刻度属于上一块画布,画出去是"整层错位",而空白会被下一次重建补上(resize 已经把它丢掉)。
       if (layerCv[L].width !== W || layerCv[L].height !== H) continue;
-      ctx.globalAlpha = (s.dimOthers && L !== s.layer && L !== RenderCore.LAYER_BG) ? 0.4 : 1;
+      ctx.globalAlpha = (s.dimOthers && L !== s.layer && !layerIsColor(L)) ? 0.4 : 1;
       for (var i = 0; i < offs.length; i++) {
         ctx.drawImage(layerCv[L], offs[i][0] * z, offs[i][1] * z);
       }
@@ -2511,7 +2549,7 @@ function installDraw(S) {
       for (var oi = 0; oi < DRAW_ORDER.length; oi++) {
         L = DRAW_ORDER[oi];
         if (!s.layerVisible[L] || !thumbs[L]) continue;
-        ctx.globalAlpha = (s.dimOthers && L !== s.layer && L !== RenderCore.LAYER_BG) ? 0.4 : 1;
+        ctx.globalAlpha = (s.dimOthers && L !== s.layer && !layerIsColor(L)) ? 0.4 : 1;
         ctx.drawImage(thumbs[L],
                       (offs[i][0] - s.view.x) * s.view.zoom,
                       (offs[i][1] - s.view.y) * s.view.zoom,
@@ -3530,7 +3568,7 @@ function paintCells(map, L, idx, valueOf) {
            before: Uint32Array.from(before), after: Uint32Array.from(after) };
 }
 function valueFor(st, L) {
-  if (L === Core.LAYER_BG) return function () { return st.rgba >>> 0; };
+  if (Core.isColorLayer(L)) return function () { return st.rgba >>> 0; };
   if (st.descOnly) {
     // ★ "只改辅码":空气仍是空气(不能凭空长出纹理),有纹理的保留原纹理、只换辅码 ——
     //   少了这一支,整片墙"变暗"的操作会把墙换成画笔当前选的那个纹理。
@@ -3625,8 +3663,8 @@ function lerpRGBA(v0, v1, t) {
 function createGradientJob(map, a, b, rgba0, rgba1, opts) {
   opts = opts || {};
   var L = (opts.layer === undefined) ? Core.LAYER_BG : opts.layer;
-  if (L !== Core.LAYER_BG) {
-    throw new Error('渐变只能用在背景层(规格 §4.4):实得图层 ' + L);
+  if (!Core.isColorLayer(L)) {
+    throw new Error('渐变只能用在颜色层(背景 100%/75%/50%/25%,规格 §4.4):实得图层 ' + L);
   }
   if (!Render.layerArray(map, L)) {
     throw new Error('这张图的背景层不存在(layer_flags 缺位),渐变无处可写');
@@ -4095,7 +4133,7 @@ function copyRegion(map, L, sel) {
   if (!sel) return null;
   var arr = Render.layerArray(map, L);
   var n = sel.w * sel.h, x, y;
-  if (L === Core.LAYER_BG) {
+  if (Core.isColorLayer(L)) {
     var rgba = new Uint32Array(n);
     for (y = 0; y < sel.h; y++) {
       for (x = 0; x < sel.w; x++) rgba[y * sel.w + x] = arr ? arr[idxOf(map, sel.x + x, sel.y + y)] : 0;
@@ -4113,7 +4151,7 @@ function clipSize(clip) { return clip ? { w: clip.w, h: clip.h } : { w: 0, h: 0 
 function pasteRegion(map, L, clip, X, Y) {
   if (!canEditLayer(L, map)) return { ok: false, why: '这一层不可编辑(不存在或已锁定)' };
   if (!clip) return { ok: false, why: '剪贴板是空的' };
-  var isColorLayer = (L === Core.LAYER_BG);
+  var isColorLayer = Core.isColorLayer(L);
   if (isColorLayer && clip.kind !== 'color') {
     return { ok: false, why: '剪贴板是纹理层内容,不能粘到背景层(两种数据类型不互转)' };
   }
@@ -4467,7 +4505,7 @@ function installInteraction() {
         var rect0 = cv.getBoundingClientRect();
         var p = app.r.screenToSub(ev.clientX - rect0.left, ev.clientY - rect0.top);
         var v = pickAt(app.map, app.r.layer(), p.X, p.Y);
-        if (app.r.layer() === Core.LAYER_BG) app.st.rgba = v >>> 0;
+        if (Core.isColorLayer(app.r.layer())) app.st.rgba = v >>> 0;
         else if (Core.texOf(v) !== 0) app.st.desc = v >>> 0;   // ★ 空气不吸(会吸出一个空纹理)
         status('吸管:0x' + (v >>> 0).toString(16) + (Core.texOf(v) === 0 ? '(空气,未采用)' : ''));
         statusLine();
@@ -4488,7 +4526,7 @@ function installInteraction() {
       if (app.st.tool === 'gradient') {
         // ★ 规格 §4.4:渐变仅背景层。工具按钮只是压暗(视觉提示),真正的闸在这里 —— 少了它,在纹理层
         //   拖渐变会悄悄改掉背景层(屏幕上看不出,因为背景在最底下)。
-        if (app.r.layer() !== Core.LAYER_BG) { status('渐变只能用在背景层(它改的是颜色,不是纹理)'); return; }
+        if (!Core.isColorLayer(app.r.layer())) { status('渐变只能用在颜色层(背景 100%/75%/50%/25%,它改的是颜色,不是纹理)'); return; }
         app.st.gradStart = hit;
         return;
       }
@@ -4577,7 +4615,8 @@ function installInteraction() {
           return runJob(gj, function () {
             var res = gj.result(), targets = [], values = [], n = 0;
             for (var i = 0; i < res.length; i++) { targets.push(res[i].i); values.push(res[i].rgba); }
-            pushAndShow(paintCells(app.map, Core.LAYER_BG, targets, function () { return values[n++]; }));
+            // ★ 落到**拖拽时那一层**(s1.layer),不是写死背景100%:四层景深背景各画各的。
+            pushAndShow(paintCells(app.map, s1.layer, targets, function () { return values[n++]; }));
           }, '渐变');
         });
         return;
@@ -4720,6 +4759,9 @@ function existingLayerNames() {
 function canEditLayer(L, map) {
   var m = map || app.map;
   if (!m) { status('先打开一张地图'); return false; }
+  // ★ 背景 75%/50%/25% 默认不存在(按需分配):落笔这一层时先建出来,否则「本图无此层」会把
+  //   用户的第一次落笔当成非法操作拒掉(而它恰恰是这三层唯一的创建入口)。
+  if (Core.isColorLayer(L)) Core.ensureLayer(m, L);
   if (!Render.layerArray(m, L)) {
     status('「' + Core.LAYER_NAMES[L] + '」这一层在这张图里不存在(layer_flags 缺位):本图只有 ' +
            existingLayerNames() + '。要四层齐全请用顶部「新建」。');
@@ -5730,7 +5772,7 @@ function buildPanels() {
 
 // 背景层时把"纹理调色板 + 辅码"换成"颜色选择器"(规格 §4.5)。★ 只切显示,不动任何数据。
 function syncPanelForLayer() {
-  var isBg = (app.r.layer() === Core.LAYER_BG);
+  var isBg = Core.isColorLayer(app.r.layer());
   var show = function (id, on) { var el = $(id); if (el) el.style.display = on ? '' : 'none'; };
   // ★★ 藏的是整行,不是控件的直接父节点:四个档位 select 的父节点就是 .desc-row,而「只改辅码」那个
   //    input 外面还包着一层 label ⇒ 直接写 parentNode 的话后者只藏掉 label,那一行仍占着位置。

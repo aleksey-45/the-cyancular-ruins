@@ -336,3 +336,10 @@ applySize → resizeMap → createEmptyMap → Core.clampMapSize
   判据的对照物；状态存 `cyrm.ui.v1` 的 `guides` 字段。
 - ★ 新面板的每一颗按钮都走 `guard(...)`；`refreshRespawnCount()` 由 `statusLine()` 统一刷（任何一次换图 /
   撤销 / 改尺寸之后计数都不会停在旧值）。
+
+## 13. 图层行 = 7 行（背景四层景深）
+
+- 右栏 `#layers` 有 **7 行**（`data-layer=0..6`）：前景 / 场景 / 后景 / 背景 100% / 75% / 50% / 25%。行名里的百分比就是游戏侧视差系数（`f = 1.0 / 0.75 / 0.5 / 0.25`，见 [`render.md`](render.md)）。
+- 切到**任意颜色层**（3-6）时面板换成颜色选择器/渐变，纹理调色板 + 辅码跟着藏（`syncPanelForLayer` 用 `Core.isColorLayer`，不是只认层 3）。
+- 新建图里 4-6 三层默认不存在 ⇒ 行上标「本图无此层」；第一次落笔时自动建出（`ensureLayer`），`layer_flags` 位随之出现。
+- 「非当前层压暗 60%」对**颜色层一律不压暗**（`!layerIsColor(L)`）：背景是参照物，压暗会让颜色判断失真。

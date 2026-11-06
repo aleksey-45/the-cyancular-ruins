@@ -105,6 +105,9 @@ function installLayerPath(S) {
     var h = Math.max(1, Math.ceil((r.y1 - r.y0) / bands));
     for (var L = 0; L < RenderCore.LAYER_COUNT; L++) {
       layerDirty[L] = null;
+      // ★ 缺席层(旧文件只有 bit0-3、或背景 75%/50%/25% 还没落笔)不建离屏层:
+      //   画布与合成次数都不该替"不存在的一层"付钱(否则每张旧图白付 3 张全屏离屏层)。
+      if (!layerArray(s.map, L)) continue;
       ensureLayerCanvas(L);
       for (var y = r.y0; y < r.y1; y += h) {
         tasks.push({ L: L, rect: { x: r.x0, y: y, w: r.x1 - r.x0, h: Math.min(h, r.y1 - y) } });
@@ -133,7 +136,7 @@ function installLayerPath(S) {
       if (!s.layerVisible[L] || !layerCv[L]) continue;
       // ★ 尺寸对不上的离屏层(改窗口之后、重建还没跑到)一路都不许画:它的像素刻度属于上一块画布,画出去是"整层错位",而空白会被下一次重建补上(resize 已经把它丢掉)。
       if (layerCv[L].width !== W || layerCv[L].height !== H) continue;
-      ctx.globalAlpha = (s.dimOthers && L !== s.layer && L !== RenderCore.LAYER_BG) ? 0.4 : 1;
+      ctx.globalAlpha = (s.dimOthers && L !== s.layer && !layerIsColor(L)) ? 0.4 : 1;
       for (var i = 0; i < offs.length; i++) {
         ctx.drawImage(layerCv[L], offs[i][0] * z, offs[i][1] * z);
       }

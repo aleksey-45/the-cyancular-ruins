@@ -31,21 +31,32 @@ ok(Core.texOf(n9) === 9 && Core.hueOf(n9) === 4 && Core.brightOf(n9) === 4 &&
 ok(Core.isAir(0) && !Core.isAir(n9), 'isAir: 只对 0 为真');
 
 // ---- 图层常量与地图对象 ----
-ok(Core.LAYER_COUNT === 4, 'LAYER_COUNT === 4');
-eq(Core.LAYER_NAMES, ['前景', '场景', '后景', '背景'], 'LAYER_NAMES 顺序:前/场/后/背景');
-eq(Core.LAYER_KINDS, ['tex', 'tex', 'tex', 'color'], 'LAYER_KINDS:背景层是颜色层');
+ok(Core.LAYER_COUNT === 7, 'LAYER_COUNT === 7(3 纹理层 + 4 景深背景层)');
+eq(Core.LAYER_NAMES, ['前景', '场景', '后景', '背景 100%', '背景 75%', '背景 50%', '背景 25%'],
+   'LAYER_NAMES 顺序:前/场/后 + 背景 100/75/50/25');
+eq(Core.LAYER_KINDS, ['tex', 'tex', 'tex', 'color', 'color', 'color', 'color'],
+   'LAYER_KINDS:3 纹理层 + 4 颜色层');
 ok(Core.LAYER_FRONT === 0 && Core.LAYER_SCENE === 1 && Core.LAYER_BACK === 2 && Core.LAYER_BG === 3,
    '图层索引常量');
+eq(Core.LAYER_BG_DEPTH, [1.0, 0.75, 0.5, 0.25], '景深系数:100%/75%/50%/25%');
+ok(Core.isColorLayer(3) && Core.isColorLayer(6) && !Core.isColorLayer(2) && !Core.isColorLayer(7),
+   'isColorLayer:只认 3..6');
 
 var m = Core.createMap('demo', 125, 75);
 eq(m.subCols, 500, 'createMap: subCols = 格数×4');
 eq(m.subRows, 300, 'createMap: subRows = 格数×4');
-eq(m.layers.length, 4, 'createMap: 四个图层');
-eq(m.layers.map(function (L) { return L.kind; }), ['tex', 'tex', 'tex', 'color'], 'createMap: 图层种类');
+eq(m.layers.length, 7, 'createMap: 七个图层位');
+eq(m.layers.slice(0, 4).map(function (L) { return L.kind; }), ['tex', 'tex', 'tex', 'color'],
+   'createMap: 前四层种类');
+ok(m.layers[4] === null && m.layers[5] === null && m.layers[6] === null,
+   '★ createMap: 背景 75%/50%/25% 默认 null(按需分配,不占内存也不置 flag)');
 ok(m.layers[0].desc instanceof Uint32Array, 'createMap: 前景层是 Uint32Array');
 eq(m.layers[0].desc.length, 500 * 300, 'createMap: 前景层长度 = subCols×subRows');
-ok(m.layers[3].rgba instanceof Uint32Array, 'createMap: 背景层是 rgba 数组');
-eq(m.layers[3].rgba.length, 500 * 300, 'createMap: 背景层长度');
+ok(m.layers[3].rgba instanceof Uint32Array, 'createMap: 背景100% 是 rgba 数组');
+eq(m.layers[3].rgba.length, 500 * 300, 'createMap: 背景100% 长度');
+eq(Core.ensureLayer(m, 5).rgba.length, 500 * 300, 'ensureLayer: 颜色层按需建出全尺寸 rgba 数组');
+ok(Core.ensureLayer(m, 0) === m.layers[0], 'ensureLayer: 已存在的层原样返回');
+ok(Core.ensureLayer(m, 2) !== null && m.layers[2] !== null, 'ensureLayer: 纹理层本来就存在');
 eq(m.players, [], 'createMap: players 初始为空数组');
 eq(m.enemies, [], 'createMap: enemies 初始为空数组');
 eq(m.comments, [], 'createMap: comments 初始为空数组');

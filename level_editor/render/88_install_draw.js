@@ -40,7 +40,7 @@ function installDraw(S) {
       for (var oi = 0; oi < DRAW_ORDER.length; oi++) {
         L = DRAW_ORDER[oi];
         if (!s.layerVisible[L] || !thumbs[L]) continue;
-        ctx.globalAlpha = (s.dimOthers && L !== s.layer && L !== RenderCore.LAYER_BG) ? 0.4 : 1;
+        ctx.globalAlpha = (s.dimOthers && L !== s.layer && !layerIsColor(L)) ? 0.4 : 1;
         ctx.drawImage(thumbs[L],
                       (offs[i][0] - s.view.x) * s.view.zoom,
                       (offs[i][1] - s.view.y) * s.view.zoom,

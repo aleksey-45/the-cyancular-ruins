@@ -10,6 +10,8 @@ globalThis.Core = {
   LAYER_COUNT: LAYER_COUNT,
   LAYER_FRONT: LAYER_FRONT, LAYER_SCENE: LAYER_SCENE,
   LAYER_BACK: LAYER_BACK, LAYER_BG: LAYER_BG,
+  LAYER_BG_FIRST: LAYER_BG_FIRST, LAYER_BG_LAST: LAYER_BG_LAST,
+  LAYER_BG_DEPTH: LAYER_BG_DEPTH, isColorLayer: isColorLayer, ensureLayer: ensureLayer,
   LAYER_NAMES: LAYER_NAMES, LAYER_KINDS: LAYER_KINDS,
   createMap: createMap, cellsWOf: cellsWOf, cellsHOf: cellsHOf, subIndex: subIndex,
   sanitizeName: sanitizeName, brushOffsets: brushOffsets,

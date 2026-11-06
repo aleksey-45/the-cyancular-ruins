@@ -38,9 +38,9 @@ try {
       const imgsD = drawnImages(cvD.ctx);
       for (let i = 0; i < imgsD.length; i++) if (composed.indexOf(imgsD[i]) < 0) composed.push(imgsD[i]);
       const orderD = [Core.LAYER_BG, Core.LAYER_BACK, Core.LAYER_SCENE, Core.LAYER_FRONT];
-      let mapD = (composed.length === Core.LAYER_COUNT);
+      let mapD = (composed.length === 4);
       for (let i = 0; mapD && i < orderD.length; i++) if (composed[i] !== offsAll[orderD[i]]) mapD = false;
-      ok(offsAll.length === Core.LAYER_COUNT && mapD,
+      ok(offsAll.length === 4 && mapD,
          '⑬ 前提:四层的离屏层都在**且下标 = 层号**(实得 ' + offsAll.length + ' 张;' +
          '合成顺序里首次出现的画布数 = ' + composed.length + ',逐位对上 DRAW_ORDER 的 ' +
          '[3,2,1,0] = ' + mapD + '。★ 这一条不是"offsAll[L] === offD"那种同义反复:' +
@@ -86,7 +86,7 @@ try {
       //    逐块重画(其余三层一个像素都不许碰 —— 落笔 moveRegion 也只搬活动层)──
       const rb0 = rD.stats().layerRebuilds;
       offD.ctx.ops.length = 0;
-      for (let Lz = 0; Lz < Core.LAYER_COUNT; Lz++) offsAll[Lz].ctx.ops.length = 0;
+      for (let Lz = 0; Lz < offsAll.length; Lz++) { if (offsAll[Lz]) offsAll[Lz].ctx.ops.length = 0; }
       dragOn(rD, { x: 4 * SB, y: 1 * SB, w: SB, h: SB }, SB, 0);   // 偏移改到 +1 格
       eq(rD.stats().layerRebuilds - rb0, 1,
          '★★★ 偏移一变:脏区只在**活动层**上重画一次(实得 ' +
@@ -94,8 +94,8 @@ try {
          '(`moveRegion`)只搬活动层 ⇒ 另外三层的像素在拖动时跟着走、松手又弹回去,' +
          '预览 ≠ 落笔且代价翻四倍)');
       const touchedL = [];
-      for (let Lt = 0; Lt < Core.LAYER_COUNT; Lt++) {
-        if (Lt !== Core.LAYER_SCENE && offsAll[Lt].ctx.ops.length > 0) touchedL.push(Lt);
+      for (let Lt = 0; Lt < offsAll.length; Lt++) {
+        if (Lt !== Core.LAYER_SCENE && offsAll[Lt] && offsAll[Lt].ctx.ops.length > 0) touchedL.push(Lt);
       }
       eq(touchedL, [],
          '★★★ 而**其余三层一个 op 都没有**(实得被碰过的层 ' + JSON.stringify(touchedL) + '):' +

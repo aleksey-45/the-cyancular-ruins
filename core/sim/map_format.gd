@@ -116,6 +116,20 @@ static func load_subgrid(path: String) -> Array[Array]:
 	return load_subgrid_with_descs(path)["textures"]
 
 
+## 背景四层景深(layer_flags bit3-6)的 RGBA 表:返回**恒 4 项**的 Array,缺层为 null,
+## 每项 = PackedInt32Array(sub_cols × sub_rows 个 0xRRGGBBAA)。景深系数见 ParallaxBg.DEPTH。
+## ★ 文本格式(v3/旧字母)没有颜色层 ⇒ 恒 4 个 null(不是错误)。
+static func load_bg_layers(path: String) -> Array:
+	var out: Array = [null, null, null, null]
+	var v := _v4(path)
+	if v.is_empty() or not bool(v.get("ok", false)):
+		return out
+	var bgs: Array = v.get("bgs", [])
+	for i in mini(bgs.size(), 4):
+		out[i] = bgs[i]
+	return out
+
+
 ## 16px 子格的纹理表 + u32 描述符表:{"textures": Array[Array], "descs": Array[Array]}(空气都是 0)。
 ##   v4 → 场景层直读(parse 已做 legacy 读时迁移);v3/旧字母格式 → 2×2 形状掩码展开成 4×4,
 ##   legacy 纹理改写成 base、描述符按迁移规则合成(见 expand_cells_to_subdescgrid)。

@@ -7,26 +7,29 @@ function createMountState(canvas, opts) {
   opts = opts || {};
   var ctx = canvas.getContext('2d');
   ctx.imageSmoothingEnabled = false;      // ★ 主 ctx 不关插值 ⇒ 放大后砖块是糊的(离屏层同此)
+  // ★ 层数组长度一律从 Core.LAYER_COUNT 派生(7 层:3 纹理 + 4 景深背景),别再写死 4 份。
+  var nL = RenderCore.LAYER_COUNT;
+  var fillN = function (v) { var a = []; for (var i = 0; i < nL; i++) a.push(v); return a; };
   var S = {
     canvas: canvas, opts: opts, ctx: ctx,
     s: {
       map: null, layer: RenderCore.LAYER_SCENE,
       view: { x: 0, y: 0, zoom: 8 },
       grid: true, subGrid: false, torus: true, dimOthers: true, guides: false,
-      layerVisible: [true, true, true, true],
-      layerLocked: [false, false, false, false],
+      layerVisible: fillN(true),
+      layerLocked: fillN(false),
       selection: null,
       preview: null,       // 拖矩形/直线时的预览框(子格单位)
       selDrag: null,       // {sel, dx, dy}:选区拖动中(拖动只记偏移,松手才提交)
     },
-    thumbs: [null, null, null, null],
+    thumbs: fillN(null),
     thumbPx: THUMB_PX,
     slicer: createSlicer(opts.slicer || {}),
     stat: { thumbMs: 0, renders: 0, lastRenderMs: 0, thumbsBuilt: 0 },
     atlasSync: false,                  // 换图之后 ①② 需要整片重来
     errorSink: null,                   // 由 installErrors 装上(默认 = defaultErrorSink)
-    layerCv: [null, null, null, null],
-    layerDirty: [null, null, null, null],      // 每层一个子格矩形(null = 干净)
+    layerCv: fillN(null),
+    layerDirty: fillN(null),      // 每层一个子格矩形(null = 干净)
     cellCache: null,                            // ③
     layersClean: false,                         // 四张离屏层是否与当前视图一致
     stat2: { cellsHits: 0, cellsMisses: 0, cellsSize: 0,
