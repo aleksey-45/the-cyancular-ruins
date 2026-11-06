@@ -47,6 +47,7 @@
 - 图集按地图路径缓存(`_wall_ts_cache` / `_water_ts_cache`,static):同进程重开(重连/换模式/单机重载)复用,省 ~130ms;首开仍重建。
 - 铺贴只画可见环带(见上),碰撞仍逐块建(渐进,`BOOT_BUDGET_US = 8ms/帧`);载入期间 `get_tree().paused = true`,完成才解。
 - 实测(demo/headless):`coll_chunks` 阶段 CPU ~30ms、其余时间主要在首帧与铺图;整段配置从 ~1.5s 级降到 ~1.1s 级,铺图格数降 68%(newfactory)。
+- 地图数据深拷贝 `GridPathfinder.copy_grid` 改成逐行 `duplicate()`(C++);`TileDefs.init_sub_hp` 按地图路径缓存 pristine `PackedInt32Array`(抽样校验,命中 bulk duplicate)⇒ newfactory 首次加载 `load_grid` 134→86ms、`tile_defs+copy` 104→56ms;同进程重开(缓存命中)再省图集与这两段。
 
 
 ## 远端玩家副本的表现层(`scenes/player/player_replica.gd`)
