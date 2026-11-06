@@ -1,6 +1,6 @@
 extends RefCounted
 
-# O0(bullet-perf 计划 `docs/superpowers/plans/2026-11-01-bullet-perf.md` §O0)· 服务器 tick 分段计时。
+# O0(bullet-perf 那一轮的 O0 段;细节见 git log)· 服务器 tick 分段计时。
 
 const SECTIONS: Array[StringName] = [&"adjudicate", &"own_snap", &"world_snap", &"rewind"]
 

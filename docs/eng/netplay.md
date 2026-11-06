@@ -53,7 +53,7 @@
 
 ★ 结构规则**零守卫**(唯一守过"基类不得泄漏子类方法"的 `kh_l5_probe` 已随 2026-10-09 测试面削减删除;见 [`registered-debt.md`](registered-debt.md) 零守卫面)。
 
-历史(为什么曾是一条 7 层继承链,以及拆解过程)= [`docs/superpowers/plans/2026-11-04-inheritance-remediation.md`](../superpowers/plans/2026-11-04-inheritance-remediation.md) 与 git log(`0ae93a3e` / `3c8dc8f0` / `726a4008` / `baa60c9b`~`S4b` 提交)。
+历史(为什么曾是一条 7 层继承链,以及拆解过程)= git log(`0ae93a3e` / `3c8dc8f0` / `726a4008` / `baa60c9b`~`S4b` 提交);本仓不设归档目录。
 
 ## 频率与载荷
 

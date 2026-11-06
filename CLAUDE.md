@@ -60,4 +60,3 @@ python tools/check_naming.py     # 目录 / 类名 / 文档链接 / EOL + CLAUDE
 | 发布 / 裁剪模板 / 产品冒烟 | [`RELEASE.md`](RELEASE.md) |
 | 目录分层 / 操作 / PvP 规则要点 | [`README.md`](README.md) |
 | 追溯"当时为什么这么定"(旧计划 / 旧审计) | `git log` / `git log -p -- <path>` —— **本仓不设归档目录**,历史不入库 |
-| 在飞的计划 / 设计 spec | [`docs/superpowers/`](docs/superpowers) |
