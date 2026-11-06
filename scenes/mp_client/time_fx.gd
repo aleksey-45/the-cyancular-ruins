@@ -9,7 +9,8 @@ extends RefCounted
 const TIME_GLOW_SELF := Color(0.30, 0.62, 1.0)    # 自己加速:冷白蓝(与单机主角同色)
 const TIME_GLOW_OTHER := Color(1.0, 0.94, 0.86)   # 他人加速:暖白(与单机敌人同色)
 
-var _client: Node = null
+var _state: ClientState = null
+var _ports: ClientPorts = null
 var _fx_self_t := 0.0                # 自己的残影节拍(0.03s)
 var _fx_other_t: Dictionary = {}     # replica(Node2D) -> 他人重影节拍剩余秒(0.06s 一对)。★ 必须 per-副本:
 #  单 float 会让 k 个加速者每帧各减它一次 ⇒ 触发 ≈ k/0.06 对/秒(16 人 ≈500 张 AfterImage/s)。
@@ -18,14 +19,15 @@ var _rw_ghosts: Dictionary = {}      # replica -> Array[{node, t}](生成时刻,
 
 
 ## 绑定宿主(只存引用、无副作用;宿主第一次用到时懒建,与 ReplicaSet 同款)。
-func bind(client: Node) -> void:
-	_client = client
+func bind(state: ClientState, ports: ClientPorts) -> void:
+	_state = state
+	_ports = ports
 
 
 ## 每帧入口(物理 delta)。调用方已保证 _local 非空且 beta_mode 为真,见 PvpMatchClient._tick_beta_time。
 func tick(delta: float, self_hasting: bool) -> void:
 	# 自己:加色高亮 + 红蓝交替残影(与单机同款节拍)。
-	var local: Node2D = _client._local
+	var local: Node2D = _state._local
 	if self_hasting:
 		if TimeGlow.on(local) == null:
 			TimeGlow.attach(local, TIME_GLOW_SELF)
@@ -43,7 +45,7 @@ func tick(delta: float, self_hasting: bool) -> void:
 			g.queue_free()
 	# 他人:回溯优先(底片色 + 轨迹残像,不叠加速高亮);否则加速高亮 + 红蓝重影 + ▶▶3x。
 	var any_hasting := false
-	for rep_node in _client._all_replicas():
+	for rep_node in _ports.all_replicas.call():
 		if not is_instance_valid(rep_node) or not (rep_node is Node2D):
 			continue
 		var rep := rep_node as Node2D
@@ -85,7 +87,7 @@ func _time_fx_replica_on(rep: Node2D, delta: float) -> void:
 		label.name = "HasteTag"
 		label.position = Vector2(-26, -92)
 		rep.add_child(label)
-	label.text = "▶▶ %dx" % int(round(_client._time_haste_mult))
+	label.text = "▶▶ %dx" % int(round(_state._time_haste_mult))
 	label.visible = true
 	# 红蓝重影:同一帧贴红 / 蓝两张淡副本(加色叠加读作色差重影;与自己的交替残影区分)。节拍 per-副本、用物理 delta。
 	var t := float(_fx_other_t.get(rep, 0.0))

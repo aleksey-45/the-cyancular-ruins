@@ -4,16 +4,18 @@ extends RefCounted
 # 结算页组合件(2026-10-22 从 PvpMatchClient 拆出;Task 6):挂载 / 每次刷新 / 离场接线。
 const RESULT_SCENE := preload("res://ui/screens/match_result.tscn")
 
-var _client: Node = null
+var _state: ClientState = null
+var _ports: ClientPorts = null
 var _payload_builder: Callable = Callable()
 var _leave_scene: Callable = Callable()
 var _result: MatchResult = null             # 结算页(挂载一次,由 show() 建)
 
 
-func bind(client: Node, payload_builder: Callable, leave_scene: Callable) -> void:
-	_client = client
-	_payload_builder = payload_builder
-	_leave_scene = leave_scene
+func bind(state: ClientState, ports: ClientPorts) -> void:
+	_state = state
+	_ports = ports
+	_payload_builder = ports.build_result_payload
+	_leave_scene = ports.leave_scene
 
 
 # 结算页:玩家自己退(不再是 N 秒后自动回主菜单);三个模式共用,各自只覆写 _build_result_payload()。
@@ -22,7 +24,7 @@ func bind(client: Node, payload_builder: Callable, leave_scene: Callable) -> voi
 func show(payload: Variant = null) -> void:
 	if _result == null:
 		_result = RESULT_SCENE.instantiate()
-		_client.add_child(_result)
+		_ports.add_child.call(_result)
 		_result.leave_requested.connect(_leave_scene)
 		# ★★ 挂载那一刻先用空载荷亮出来,再填真载荷 —— 顺序不可换,这是"MATCH_OVER 之后永远有出路"那条不变量的安全网。
 		# ★ 空载荷抛不出错("空载荷不崩"是本页硬要求,且它只做赋文案 + 清场建节 + visible = true 三件事)⇒ 可见、ESC 生效、按钮可用,三样退路当场到手;正常路径看不到这个空态(两句之间没有 await,布局与绘制都在帧末)。

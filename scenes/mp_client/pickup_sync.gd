@@ -3,7 +3,8 @@ extends RefCounted
 
 # 地面武器(拾取)组合件(2026-10-22 从 PvpMatchClient 拆出;Task 7):事件订阅 + 节点表 + F 提示 + 诊断。
 
-var _client: Node = null
+var _state: ClientState = null
+var _ports: ClientPorts = null
 
 # ── 拾取诊断插桩(★ 默认关;开关 -- --pickup-diag,必须写在 -- 之后,写在前面会被 Godot 丢掉)── 用来回答「地上的枪看得见、走过去却没有 F 提示」:那种症状只有两种成因 —— ① 客户端压根没建出这把枪(on_spawned 的早退是静默 return);② 建出来了但 canonical_pos(提示判据读的值)与画出来的位置不在一处。
 var _pickup_diag := false
@@ -20,8 +21,9 @@ var _self_drop_until: Dictionary = {} # inst -> 解禁时刻(ms):自己刚丢下
 const PICKUP_SCENE := preload("res://scenes/weapons/weapon_pickup.tscn")
 
 
-func bind(client: Node) -> void:
-	_client = client
+func bind(state: ClientState, ports: ClientPorts) -> void:
+	_state = state
+	_ports = ports
 
 
 func _pickup_diag_on() -> bool:
@@ -51,9 +53,9 @@ func _spawn_pickup_node(data: Dictionary) -> void:
 		print("[pkd] ← spawned inst=%s type=%s by_role=%s pos=%s vel=%s | world=%s local=%s 已有=%s" % [
 				str(data.get("inst", -1)), str(data.get("type_id", -1)), str(data.get("by_role", -1)),
 				str(data.get("pos", Vector2.ZERO)), str(data.get("vel", Vector2.ZERO)),
-				"有" if _client._world != null else "空", "有" if _client._local != null else "空",
+				"有" if _state._world != null else "空", "有" if _state._local != null else "空",
 				"是" if _pickup_nodes.has(int(data.get("inst", 0))) else "否"])
-	if _client._world == null:
+	if _state._world == null:
 		NetDiag.log_event("pickup_skip", {"reason": "no_world", "inst": int(data.get("inst", 0))})
 		return
 	var inst := int(data.get("inst", 0))
@@ -67,10 +69,10 @@ func _spawn_pickup_node(data: Dictionary) -> void:
 	var type_id := int(data.get("type_id", 1))
 	var node: WeaponPickup = PICKUP_SCENE.instantiate()
 	node.configure(type_id, inst, int(data.get("mag", 0)), data.get("vel", Vector2.ZERO))
-	_client._world.add_child(node)
+	_state._world.add_child(node)
 	# 权威位置与渲染位置分开(见 WeaponPickup 的字段注释):事件里的 pos 是 canonical。
 	node.canonical_pos = data.get("pos", Vector2.ZERO)
-	node.set_anchor((_client._local as Node2D).global_position if _client._local != null else Vector2.ZERO)
+	node.set_anchor((_state._local as Node2D).global_position if _state._local != null else Vector2.ZERO)
 	node.sync_render_from_canonical()
 	ground_weapons.map_size = Vector2(float(GameParameters.MAP_WIDTH), float(GameParameters.MAP_HEIGHT))
 	ground_weapons.add({"inst": inst, "type_id": type_id, "mag": int(data.get("mag", 0)),
@@ -127,9 +129,9 @@ func remove(inst: int) -> void:
 
 # 每帧:① 把锚点推给所有地面武器(接缝另一侧的枪要画在身边那一份上);② 把落体的实际位置同步回本地表(提示的"最近一把"要跟着落点走);③ 更新 F 提示。
 func tick() -> void:
-	if _client._local == null:
+	if _state._local == null:
 		return
-	var lp: Vector2 = (_client._local as Node2D).global_position
+	var lp: Vector2 = (_state._local as Node2D).global_position
 	for inst in _pickup_nodes:
 		var n = _pickup_nodes[inst]
 		if n == null or not is_instance_valid(n):
@@ -155,7 +157,7 @@ func _update_pickup_prompt(lp: Vector2) -> void:
 			continue
 		var pk := n as WeaponPickup
 		var can := false
-		if _client._local != null and not _live_self_drops().has(int(inst)) 				and _client._local.weapons.is_type_enabled(int(pk.type_id)):
+		if _state._local != null and not _live_self_drops().has(int(inst)) 				and _state._local.weapons.is_type_enabled(int(pk.type_id)):
 			var d := GridPathfinder.toroidal_delta_px(pk.canonical_pos, lp, w, h).length()
 			can = d <= PlayerParams.weapon_pickup_radius
 		pk.set_prompt_visible(can)
@@ -166,7 +168,7 @@ func _update_pickup_prompt(lp: Vector2) -> void:
 				print("[pkd]   inst=%d type=%d d=%.1f can=%s | 冷却=%s 启用=%s | canon=(%.0f,%.0f) render=(%.0f,%.0f) 玩家=(%.0f,%.0f) settled=%s" % [
 						int(inst), int(pk.type_id), dd, "是" if can else "否",
 						"是" if _live_self_drops().has(int(inst)) else "否",
-						"是" if _client._local.weapons.is_type_enabled(int(pk.type_id)) else "否",
+						"是" if _state._local.weapons.is_type_enabled(int(pk.type_id)) else "否",
 						pk.canonical_pos.x, pk.canonical_pos.y,
 						pk.global_position.x, pk.global_position.y, lp.x, lp.y,
 						"是" if pk._settled else "否"])

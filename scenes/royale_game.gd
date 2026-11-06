@@ -31,12 +31,12 @@ func _ready() -> void:
 	# 血条(他人,设置开启时;具体 role 的实例随副本在快照里懒建)。
 	# 副本集合 / 快照消费 / 头顶标签收进组合件(与 3v3 同一份);取色 Callable = role_color(大乱斗不区分队)。
 	_replica_set = ReplicaSet.new()
-	_replica_set.bind(self, _replicas, func(r: int) -> Color: return role_color(r))
+	_replica_set.bind(state, ports, func(r: int) -> Color: return role_color(r))
 	if Settings.pvp_show_minimap:
 		var minimap := Minimap.new()
 		# 四个提供器全部显式传(setup_multi 没有默认值)。★ 最后那个空 Callable() 是故意的:大乱斗没有「队色可与自己撞」的问题,自己那个点保持 SELF_COLOR、白描边不出现 —— 别把它当漏传。
 		minimap.setup_multi(
-			func() -> Vector2: return _local.global_position if _local != null else Vector2.INF,
+			func() -> Vector2: return state._local.global_position if state._local != null else Vector2.INF,
 			Callable(self, "_minimap_others"),
 			Callable(self, "_minimap_colors"),
 			Callable())
@@ -49,11 +49,11 @@ func _ready() -> void:
 	_pause_menu.is_pvp = true
 	# 本地输入锁必须宿主接线:PvP 不暂停树,不锁就是「菜单开着还能边跑边开枪」(这条曾被 set_server_rendered 掩盖,接 C2 后不补就是真的能)。
 	_pause_menu.toggled.connect(func(open: bool) -> void:
-		_menu_open = open
+		state._menu_open = open
 		_refresh_input_lock()
 		_recheck_disconnect())   # 菜单开着时收到的"服务器断开"在这里补(见 ReconnectDriver._begin_reconnect(S-17 后重连状态机在 scenes/mp_client/reconnect_driver.gd))
 	add_child(_pause_menu)
-	_apply_tint(_local.get_node_or_null("AnimatedSprite2D"), role_color(PvpSession.role))
+	_apply_tint(state._local.get_node_or_null("AnimatedSprite2D"), role_color(PvpSession.role))
 	# ★ 进场拉取的 match_sync 已由基类 _boot_world() 末尾发出(本场景在它返回后建 HUD / 小地图;应答要走网络 poll,最早下一帧)。
 	print("进入大乱斗:角色 %d 出生点 %s" % [PvpSession.role, PvpSession.spawn])
 
@@ -70,7 +70,7 @@ func _ready() -> void:
 # 击杀播报:我击杀对手 ⇒ 屏幕中央「击杀 XXX」+ 音效(被击杀的是自己则不播)。
 func _on_kill_event(killer: int, victim: int) -> void:
 	if killer == PvpSession.role and victim != PvpSession.role:
-		CombatFeedback.kill(str(_names.get(victim, "玩家%d" % victim)))
+		CombatFeedback.kill(str(state._names.get(victim, "玩家%d" % victim)))
 	elif victim == PvpSession.role:
 		CombatFeedback.reset_streak()   # 自己被击杀 → 连杀清零
 
@@ -84,12 +84,12 @@ func _supports_k_suicide() -> bool:
 # 大乱斗只覆写这一处差异:**第二条 MATCH_OVER 不再重复消费**(它把 _match_ended 当幂等闩,
 # 门内只做一次挂载;而 1v1/3v3 的第二条载荷必须刷新结算页,故基类默认是"每次都消费")。
 func _should_handle_match_over() -> bool:
-	return not _match_ended
+	return not state._match_ended
 
 
 # 结算页载荷的唯一来源。★ 只读状态、不碰节点树(适配器是纯函数);_last_round_state 是基类成员,本文件不再声明。
 func _build_result_payload() -> Dictionary:
-	return MatchResultPayload.for_royale(_last_round_state, _names, PvpSession.role)
+	return MatchResultPayload.for_royale(_last_round_state, state._names, PvpSession.role)
 
 
 # _apply_peer_names() / _names 已上提到基类(2026-11-02,与 3v3 逐字同一份):本文件不再覆写/声明。
@@ -99,8 +99,8 @@ func _apply_role_colors() -> void:
 	for role in _replicas:
 		if is_instance_valid(_replicas[role]):
 			_apply_tint(_replicas[role].get_node_or_null("AnimatedSprite2D"), role_color(int(role)))
-	if _local != null:
-		_apply_tint(_local.get_node_or_null("AnimatedSprite2D"), role_color(PvpSession.role))
+	if state._local != null:
+		_apply_tint(state._local.get_node_or_null("AnimatedSprite2D"), role_color(PvpSession.role))
 
 
 # 服务器下发生效选项:同步禁用武器。应用函数(不是信号回调):唯一入口 = _on_match_sync;★ 不要连回 NetBusExt.local_match_options,同 _apply_peer_names 的告警。

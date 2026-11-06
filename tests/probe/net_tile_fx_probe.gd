@@ -32,12 +32,6 @@ const REJECT_CELL := Vector2i(1, 2)
 const LOCAL_POS := Vector2(10.0, 192.0)
 
 
-class StubClient extends Node:
-	var _world: Node2D = null
-	var _local: Node2D = null
-	var _rollback = null      # ⑩⑪ 用:R2 注入路径的替身(见 StubRollback)
-
-
 # 预测环替身:只实现 TileSync 用到的那一个方法。`reject=true` = 模拟"环外/已 ack"的拒绝路径。
 class StubRollback extends RefCounted:
 	var seqs: Array[int] = []
@@ -53,7 +47,8 @@ class StubRollback extends RefCounted:
 		return 0
 
 
-var _client: StubClient = null
+var _cstate: ClientState = null
+var _cports: ClientPorts = null
 var _world: Node2D = null
 var _sync: TileSync = null
 var _checks := 0
@@ -129,7 +124,7 @@ func _run() -> void:
 	# ⑩ R2:有预测环 ⇒ 变更必须走 `apply_external_event(seq, cb)` 注入(seq 透传、地形照拆、粒子仍只 1 簇)。
 	#    ★ 这里走 RPC 入口 `_rpc_on_cell`(带锚点),而 `on_cell` 是"无锚点 ⇒ 立即应用"的老入口。
 	var rb := StubRollback.new()
-	_client._rollback = rb
+	_cstate._rollback = rb
 	var particles_before := _particle_count()
 	_sync._rpc_on_cell(INJECT_CELL, 42)
 	var cleared_inject := true
@@ -191,20 +186,19 @@ func _build_world() -> void:
 	_world = Node2D.new()
 	_world.name = "StubWorld"
 	add_child(_world)
-	_client = StubClient.new()
-	_client.name = "StubClient"
-	add_child(_client)
+	_cstate = ClientState.new()
+	_cports = ClientPorts.new()
 	var local := Node2D.new()
 	local.name = "Local"
 	local.position = LOCAL_POS
-	_client.add_child(local)
-	_client._world = _world
-	_client._local = local
+	add_child(local)
+	_cstate._world = _world
+	_cstate._local = local
 
 
 func _build_sync() -> void:
 	_sync = TileSync.new()
-	_sync.bind(_client)
+	_sync.bind(_cstate, _cports)
 
 
 func _anchored(at: Vector2) -> Vector2:

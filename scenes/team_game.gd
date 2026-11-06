@@ -18,14 +18,14 @@ func _ready() -> void:
 	_boot_world()
 	# 副本集合 / 快照消费 / 头顶标签收进组合件(与大乱斗同一份);取色 Callable = _team_color,新建后按队补配幽灵层。
 	_replica_set = ReplicaSet.new()
-	_replica_set.bind(self, _replicas,
+	_replica_set.bind(state, ports,
 			func(r: int) -> Color: return _team_color(r), Callable(self, "_on_replica_created"))
 	_setup_beta_time_hud()   # Beta 时间玩法:怀表镜像(普通局内部自短路)
 	# 小地图(多目标 + 队色):四个提供器同序一一对应(错位 = 队友点画成敌人色,不报错只误导人)。★ 后三个用具名方法而不是内联 lambda —— lambda 要以 return arr, 结尾才能带出数组,那是本仓没写过的形状。
 	if Settings.pvp_show_minimap:
 		var minimap := Minimap.new()
 		minimap.setup_multi(
-			func() -> Vector2: return _local.global_position if _local != null else Vector2.INF,
+			func() -> Vector2: return state._local.global_position if state._local != null else Vector2.INF,
 			Callable(self, "_minimap_others"),
 			Callable(self, "_minimap_colors"),
 			Callable(self, "_minimap_self_color"))
@@ -36,7 +36,7 @@ func _ready() -> void:
 	_pause_menu = preload("res://ui/screens/pause_menu.tscn").instantiate() as PauseMenu
 	_pause_menu.is_pvp = true
 	_pause_menu.toggled.connect(func(open: bool) -> void:
-		_menu_open = open
+		state._menu_open = open
 		_refresh_input_lock()
 		_recheck_disconnect())   # 菜单开着时收到的"服务器断开"在这里补(见 ReconnectDriver._begin_reconnect(S-17 后重连状态机在 scenes/mp_client/reconnect_driver.gd))
 	add_child(_pause_menu)
@@ -69,14 +69,14 @@ func _apply_teams(teams: Dictionary) -> void:
 
 # 血量补贴的**客户端镜像**:服务端给少人方抬 max_hp(TeamHost._apply_health_subsidy),客户端必须算出同一个数 ——
 func _apply_team_health_subsidy(teams: Dictionary) -> void:
-	if _local == null or not is_instance_valid(_local):
+	if state._local == null or not is_instance_valid(state._local):
 		return
 	var rules := TeamRules.subsidy(teams)
 	var my_team := _team_of_role(PvpSession.role)
 	var want := PlayerParams.player_max_hp
 	if int(rules["hp_bonus"]) > 0 and int(rules["smaller_team"]) == my_team:
 		want = PlayerParams.player_max_hp + int(rules["hp_bonus"])
-	var c := _local.get("combat") as CombatComponent
+	var c := state._local.get("combat") as CombatComponent
 	if c == null or c.max_hp == want:
 		return
 	c.max_hp = want
@@ -91,7 +91,7 @@ func _team_of_role(role: int) -> int:
 func _role_of_node(n: Node) -> int:
 	if n == null:
 		return 0
-	if n == _local:
+	if n == state._local:
 		return int(PvpSession.role)
 	for role in _replicas:
 		if _replicas[role] == n:
@@ -122,8 +122,8 @@ func _team_color(role: int) -> Color:
 # ★★ 自己那具与副本走逐字同一条路:队色的单一来源只有 _team_color(_team_of_role(role)) 一处(颜色不可自选;3v3 固定蓝/青队色)。
 # ★ 队号 0(队伍表还没到)时不染自己:_team_color(0) 返回中性亮白,糊在自己身上比保持本体蓝更糟;表一个 RTT 就到。
 func _refresh_team_colors() -> void:
-	if _local != null and _team_of_role(PvpSession.role) != 0:
-		_apply_tint(_local.get_node_or_null("AnimatedSprite2D"), _team_color(PvpSession.role))
+	if state._local != null and _team_of_role(PvpSession.role) != 0:
+		_apply_tint(state._local.get_node_or_null("AnimatedSprite2D"), _team_color(PvpSession.role))
 	for role in _replicas:
 		if is_instance_valid(_replicas[role]):
 			_apply_tint(_replicas[role].get_node_or_null("AnimatedSprite2D"),
@@ -145,17 +145,17 @@ func _ghost_layer_of(role: int) -> int:
 # ── 队友不互挡:客户端那一半(服务端那一半在 TeamHost._apply_team_layers)── 契约(两边逐值对齐):1 队玩家 layer = 2、mask = 21(地形 1 | 敌人层 4 | 队 B 层 16);2 队玩家 layer = 16(TeamHost.TEAM_ENEMY_LAYE。
 # ★ 为什么必须分队位而不是改掩码:Godot 的碰撞按节点配,没有「按对」的开关。★ 两边 layer/mask 必须逐值相同:服务器是权威模拟、客户端是 C2 预测,掩码不同 = 同一帧两边可走空间不同 = 每帧分歧回滚(不是调参能缓解的)。★ 用常量不用字面量 16:层位是全局资源,将来可能挪。
 func _apply_team_collision() -> void:
-	if _local == null:
+	if state._local == null:
 		return
 	var my_team := _team_of_role(PvpSession.role)
 	if my_team == 0:
 		return   # 队伍表还没到 → 保持 `_ready` 里那句 `|= 2` 的临时态
 	if my_team == 1:
-		_local.collision_layer = 2
-		_local.collision_mask = (_local.collision_mask & ~2) | TeamHost.TEAM_ENEMY_LAYER
+		state._local.collision_layer = 2
+		state._local.collision_mask = (state._local.collision_mask & ~2) | TeamHost.TEAM_ENEMY_LAYER
 	else:
-		_local.collision_layer = TeamHost.TEAM_ENEMY_LAYER
-		_local.collision_mask |= 2
+		state._local.collision_layer = TeamHost.TEAM_ENEMY_LAYER
+		state._local.collision_mask |= 2
 	for role in _replicas:
 		var r = _replicas[role]
 		if r != null and is_instance_valid(r) and r.has_method("set_ghost_layer"):
@@ -194,7 +194,7 @@ func _on_kill_event(killer: int, victim: int) -> void:
 	if victim == PvpSession.role:
 		CombatFeedback.reset_streak()   # 自己被击杀 → 连杀清零
 	elif killer == PvpSession.role and victim != PvpSession.role:
-		CombatFeedback.kill(str(_names.get(victim, "玩家%d" % victim)))
+		CombatFeedback.kill(str(state._names.get(victim, "玩家%d" % victim)))
 
 
 # K = 自杀脱困:卡进墙/夹缝时主动放弃生命,走服务器权威 2s 复活(不计入任何人击杀,但按「不分死因」给对方队 +1);★ worker 侧闸门认 _team_mode。
@@ -218,7 +218,7 @@ func _on_countdown_round() -> void:
 # 结算页载荷的唯一来源。★ 只读状态、不碰节点树(适配器是纯函数);_last_round_state 是基类成员,本文件不再声明。
 func _build_result_payload() -> Dictionary:
 	# ★ my_team 取自 _team_of_role(PvpSession.role) —— 队伍表从 match_sync 来;队号 0(表还没到)时 _verdict_team 念「失败」而不是谎报胜利。
-	return MatchResultPayload.for_team(_last_round_state, _names, _teams,
+	return MatchResultPayload.for_team(_last_round_state, state._names, _teams,
 			_team_of_role(PvpSession.role))
 
 

@@ -24,18 +24,18 @@ func _ready() -> void:
 	# 1v1 只有一个固定副本(大乱斗 / 3v3 是 N 个按 role 懒建,见 ReplicaSet)。
 	var replica := preload("res://scenes/player/player_replica.tscn").instantiate()
 	replica.name = "RemoteReplica"
-	_world.add_child(replica)
+	state._world.add_child(replica)
 	_remote_replica = replica
 	if Settings.pvp_show_enemy_hp:
 		_hp_bar = EnemyHpBar.new()
-		_world.add_child(_hp_bar)
+		state._world.add_child(_hp_bar)
 		_attach_opp_overheads()
 	# 1v1 独有:对手离开这条终局信号(大乱斗 / 3v3 走 round_state 的「走光即弃权」,没有这条)。
 	NetBus.local_opponent_left.connect(_on_opponent_left)
 	if Settings.pvp_show_minimap:
 		_minimap = Minimap.new()
 		_minimap.setup(
-			func() -> Vector2: return _local.global_position if _local != null else Vector2.INF,
+			func() -> Vector2: return state._local.global_position if state._local != null else Vector2.INF,
 			func() -> Vector2:
 				if _remote_replica != null and is_instance_valid(_remote_replica):
 					return (_remote_replica as Node2D).global_position
@@ -50,7 +50,7 @@ func _ready() -> void:
 	_pause_menu = preload("res://ui/screens/pause_menu.tscn").instantiate() as PauseMenu
 	_pause_menu.is_pvp = true
 	_pause_menu.toggled.connect(func(open: bool) -> void:
-		_menu_open = open
+		state._menu_open = open
 		_refresh_input_lock()
 		_recheck_disconnect())   # 菜单开着时收到的"服务器断开"在这里补(见 ReconnectDriver._begin_reconnect(S-17 后重连状态机在 scenes/mp_client/reconnect_driver.gd))
 	add_child(_pause_menu)
@@ -63,20 +63,20 @@ func _ready() -> void:
 
 
 func _on_snapshot_world(world: Dictionary) -> void:
-	if _local == null:
+	if state._local == null:
 		return
 	# 丢弃乱序旧快照(unreliable 通道可能乱序;应用旧快照会把玩家拉回过去位置)。
 	var tier := int(world.get("tick", 0))
-	if tier < _last_snap_tick:
+	if tier < state._last_snap_tick:
 		return
-	_last_snap_tick = tier   # P1.5:DELTA 已在 NetBus 解码边界合并成完整 players(形状与增量前一致)
+	state._last_snap_tick = tier   # P1.5:DELTA 已在 NetBus 解码边界合并成完整 players(形状与增量前一致)
 	var players_snap: Dictionary = world["players"]
 	# ★ 自己那一份刻意不消费:C2 下本地玩家自步进,权威整态走本人包(见 _on_snapshot_own);把世界包里自己那份写进玩家 = 每帧把权威位置强写进正在预测的玩家 = 橡皮筋。
 	var opp_role := 3 - PvpSession.role
 	if _remote_replica != null and _remote_replica.has_method("apply_snapshot"):
 		var opp: Dictionary = players_snap.get(str(opp_role), {})
 		if not opp.is_empty():
-			_remote_replica.apply_snapshot(opp, _local.global_position, tier)
+			_remote_replica.apply_snapshot(opp, state._local.global_position, tier)
 			if _hp_bar != null:
 				_hp_bar.ratio = float(opp.get("hp", PlayerParams.player_max_hp)) 						/ float(PlayerParams.player_max_hp)
 				# 倒地尸体不显示血条(线上 hp 已钳到 0,见 NetCodec;否则会读成"还活着")。
@@ -90,7 +90,7 @@ func _on_snapshot_world(world: Dictionary) -> void:
 
 func _on_kill_event(killer: int, victim: int) -> void:
 	if killer == PvpSession.role and victim != PvpSession.role:
-		CombatFeedback.kill(str(_names.get(victim, "对手")))
+		CombatFeedback.kill(str(state._names.get(victim, "对手")))
 	elif victim == PvpSession.role:
 		CombatFeedback.reset_streak()   # 自己被击杀 → 连杀清零
 
@@ -101,13 +101,13 @@ func _on_kill_event(killer: int, victim: int) -> void:
 # 1v1 不需要任何钩子 —— 默认行为就是「新一局清子弹 + 复位砖」+「每次 MATCH_OVER 都刷新结算页」。
 
 func _build_result_payload() -> Dictionary:
-	return MatchResultPayload.for_duel(_last_round_state, _names, PvpSession.role)
+	return MatchResultPayload.for_duel(_last_round_state, state._names, PvpSession.role)
 
 
 func _on_opponent_left() -> void:
-	if _match_ended or _local == null:
+	if state._match_ended or state._local == null:
 		return
-	_match_ended = true
+	state._match_ended = true
 	# ★ 与到达顺序无关的收口:若「服务器断开」先到(worker 收场两条消息同拍),重连循环已经在跑 —— 这里把它停掉,否则它会继续跑满 60 秒。
 	_cancel_reconnect()
 	print("[pvp] 对手已离开(2.5s 后回主菜单)")
@@ -125,8 +125,8 @@ func _on_opponent_left() -> void:
 # ★ 颜色不可自选(2026-10-24 用户裁定):大厅不再有改色控件;1v1 固定蓝/青,3v3 固定队色,大乱斗按 role 自动取色。
 func _apply_p2_tint() -> void:
 	var body: Node = null
-	if PvpSession.role == 2 and _local != null:
-		body = _local.get_node_or_null("AnimatedSprite2D")
+	if PvpSession.role == 2 and state._local != null:
+		body = state._local.get_node_or_null("AnimatedSprite2D")
 	elif PvpSession.role == 1 and _remote_replica != null:
 		body = _remote_replica.get_node_or_null("AnimatedSprite2D")
 	if body == null:
@@ -141,7 +141,7 @@ func _apply_role_colors() -> void:
 # 服务器下发的生效选项:同步禁用武器。
 
 func _apply_peer_names(names: Dictionary) -> void:
-	_names = names
+	state._names = names
 	_ensure_id_labels()
 	if _id_self == null or _id_opp == null:
 		return
@@ -153,14 +153,14 @@ func _apply_peer_names(names: Dictionary) -> void:
 	_id_opp.set_label(nm_opp, NAME_COLOR)
 
 func _ensure_id_labels() -> void:
-	if _world == null:
+	if state._world == null:
 		return
 	if _id_self == null:
 		_id_self = WorldLabel.new()
-		_world.add_child(_id_self)
+		state._world.add_child(_id_self)
 	if _id_opp == null:
 		_id_opp = WorldLabel.new()
-		_world.add_child(_id_opp)
+		state._world.add_child(_id_opp)
 	_attach_opp_overheads()
 
 # 对手的头顶 ID / 血条交给副本自己每帧贴位(player_replica.attach_overhead):跟随逻辑属副本,不属对局场景根。
@@ -175,7 +175,7 @@ func _attach_opp_overheads() -> void:
 
 func _process(_delta: float) -> void:
 	# 自己那颗头顶 ID 跟本地玩家;对手的 ID / 血条由副本自己贴(见 _attach_opp_overheads)。
-	WorldLabel.follow(_id_self, _local, WorldLabel.HEAD_OFFSET)
+	WorldLabel.follow(_id_self, state._local, WorldLabel.HEAD_OFFSET)
 
 func _replica_for(role: int) -> Node2D:
 	return _remote_replica if int(role) != int(PvpSession.role) else null

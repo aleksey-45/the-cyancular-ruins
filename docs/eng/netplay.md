@@ -40,7 +40,7 @@
 
 ## 权威宿主的结构
 
-`Node MatchHost(壳) ← TeamHost | RoyaleHost(模式子类)`。共享状态 = `MatchState`(`RefCounted` 上下文:数据 + 纯查询);网络/模式钩子 = `MatchPorts`(Callable 端口);四个域 = `snapshot_system.gd` / `combat_system.gd` / `ground_system.gd` / `round_system.gd`(`RefCounted`,`bind(state, ports)`,只依赖状态与端口)。客户端同构:`PvpMatchClient`(壳)← 三个 game 场景 + 六件套(S5 起改成 `ClientState`/`ClientPorts`)。
+`Node MatchHost(壳) ← TeamHost | RoyaleHost(模式子类)`。共享状态 = `MatchState`(`RefCounted` 上下文:数据 + 纯查询);网络/模式钩子 = `MatchPorts`(Callable 端口);四个域 = `snapshot_system.gd` / `combat_system.gd` / `ground_system.gd` / `round_system.gd`(`RefCounted`,`bind(state, ports)`,只依赖状态与端口)。客户端同构:`Node2D PvpMatchClient`(壳)← 三个 game 场景;共享状态 = `ClientState`(RefCounted),效果端口 = `ClientPorts`(Callable),六件套 = `scenes/mp_client/` 的 `tile_sync / pickup_sync / result_screen / reconnect_driver / replica_set / time_fx`(RefCounted,`bind(state, ports)`)。
 
 改这几个文件前必读:
 

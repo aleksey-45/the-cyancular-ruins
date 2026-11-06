@@ -127,7 +127,8 @@ TeamHost | RoyaleHost（薄子类，只覆写壳的虚钩子）     pvp_game | r
 | S4 回合域 → `RoundSystem` | `ee5f80f6` | `RUN_ALL OK`；**M2 真链路**：`run_real.sh --yes --only match` → `pvp_match_smoke` `SMOKE PASS` + `team_match_probe` `ALL-OK`(274s) |
 | S4b 链根摘下（`MatchState`→`RefCounted`，宿主 has-a 上下文） | 本批提交 | `RUN_ALL OK(48/402)`；系统 `bind(state, ports)`、探针改 `h.state.*`；真链路：team `ALL-OK` 多次(274~282s)、pvp `SMOKE PASS`（偶发 flake 见 registered-debt） |
 | 早到 `match_sync`：宿主未建 + claim 前丢失 | `a51be14a` + 同批 | 先排队到宿主建好；再补"claim 前到达按 peer 排队、claim 成功后重试"；诊断确认 6 端均收到非空 `teams` |
-| 待做 | S5 客户端对齐 / S6 收口 | — |
+| S5 客户端对齐 | 本批提交 | RUN_ALL OK(48/402)；PvpMatchClient 退壳 + ClientState/ClientPorts + 六件套 ind(state,ports)；真链路随 M3 |
+| 待做 | S6 收口 | — |
 
 > M1 真链路前置条件实测：`lobby_alive=false`、Godot 进程 0、run_all summary 静默 ≥240s ⇒ 闸放行；跑后无残留进程。
 
