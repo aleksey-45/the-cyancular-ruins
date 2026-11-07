@@ -16,7 +16,6 @@ var _glow_cam: Camera2D = null      # 发光通道相机,每帧与世界相机�
 var _ui_vp: SubViewport = null      # UI 通道(不吃光照的辅助层)
 var _ui_cam: Camera2D = null        # UI 通道相机,同样每帧同步
 var _mask_grid := Vector2(1.0, 1.0)  # 地形掩码的格数(cols, rows)
-var _mask_tex: Texture2D = null     # 掩码纹理(水体材质要用它画水线)
 var _hit_red: float = 0.0   # 受击红闪当前强度(每帧衰减,见 flash_hit)
 var _film: float = 0.0             # 回溯底片化强度(Level0 每帧推)
 var _loan: float = 0.0
@@ -175,25 +174,15 @@ func _bind_terrain_mask() -> void:
 	for y in rows:
 		var row: Array = grid[y]
 		for x in cols:
-			# R=1 表示"这里不是空气"(地形或水);G=材质类(5=水);B/A 水格专用(水深/离岸)。
-			var v: int = row[x] if row[x] is int else 0
-			if TileDefs.is_blocked(v):
-				img.set_pixel(x, y, Color(1.0, TileDefs.material_id(v) / 255.0, 0.0, 1.0))
-			elif v != 0 and Water.is_liquid(MazeGenerator.texture_of(v)):
-				# B=1 表示"这一格的水面上方是空气" ⇒ 只有真正的上表面画亮线。
-				# ★ 上方不是**墙**就算露头(空气/梯子/锁链都算)——之前只认空气,
-				#   于是 passage 格(梯子、锁链)上面的水面就没有水线。
-				var above: int = grid[posmod(y - 1, rows)][x]
-				var above_open := not TileDefs.is_blocked(above) and not Water.is_liquid(MazeGenerator.texture_of(above))
-				var top_exposed := 1.0 if above_open else 0.0
-				img.set_pixel(x, y, Color(1.0, 5.0 / 255.0, top_exposed, 0.0))
+			# G 通道存材质类(0=stone 1=metal 2=foliage 3=wood),着色器按它取不同的受光强度。
+			var tex_id: int = row[x] if row[x] is int else 0
+			var mat_id := TileDefs.material_id(tex_id) / 255.0
+			if TileDefs.is_blocked(row[x]):
+				img.set_pixel(x, y, Color(1.0, mat_id, 0.0, 1.0))
 			else:
 				img.set_pixel(x, y, air)
 	_mask_grid = Vector2(float(cols), float(rows))
-	var tex := ImageTexture.create_from_image(img)
-	_mask_tex = tex
-	_mat.set_shader_parameter("terrain_mask", tex)
-	_mat.set_shader_parameter("water_tex", tex)
+	_mat.set_shader_parameter("terrain_mask", ImageTexture.create_from_image(img))
 	_mat.set_shader_parameter("mask_grid", _mask_grid)
 	_mat.set_shader_parameter("mask_gain", 1.0)
 
@@ -537,13 +526,3 @@ func _tick_low_hp(delta: float) -> void:
 	_low_hp_pulse += delta * lerpf(LOW_HP_BPM_LOW, LOW_HP_BPM_HIGH, _low_hp) / 60.0 * TAU
 	_mat.set_shader_parameter("low_hp", _low_hp)
 	_mat.set_shader_parameter("low_hp_pulse", _low_hp_pulse)
-
-
-## 供水体材质使用的掩码纹理与格数(水线在**世界坐标**里画,不能在 post-process 里画:
-#  post-process 的 uv 已经被桶形畸变+裁剪,反推世界坐标不是仿射变换,相机动一下格子就错位)。
-func water_mask() -> Texture2D:
-	return _mask_tex
-
-
-func mask_grid_size() -> Vector2:
-	return _mask_grid

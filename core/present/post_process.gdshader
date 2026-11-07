@@ -84,9 +84,7 @@ uniform float ui_gain = 0.0;
 
 // ── 地形掩码 ── 烘好的数据纹理(不是视图通道):r > 0.5 = 这个像素是地形。
 // ★ 地形受光必须只作用在地形上,否则精灵会被地形那套"向上找顶面"的算法误伤(实测 10% 变暗)。
-uniform sampler2D terrain_mask : filter_nearest, repeat_disable;   // 地形分类:最近邻
-// 同一张掩码再绑一个**线性**采样器:水体深度/离岸要的是平滑场,不是逐格块。
-uniform sampler2D water_tex : filter_linear, repeat_disable;   // ★ 最近邻:逐格数据不该被插值糊
+uniform sampler2D terrain_mask : filter_linear, repeat_disable;
 uniform float mask_gain = 0.0;
 uniform vec2 mask_grid = vec2(1.0);     // 掩码的格数(cols, rows)
 // 世界坐标 → 格坐标要用相机的原点与缩放,由 PostProcess 每帧推。
@@ -151,10 +149,6 @@ float _terrain_lit(vec2 suv) {
 		if (m.r < 0.5) {
 			return 1.0;
 		}
-		// 水格(m.g=5):不参与地形受光,走 _water_shade 的深度/岸边处理。
-		if (m.g * 255.0 > 4.5) {
-			return 1.0;
-		}
 		// G 通道 = 材质类:不同材质对同一束光的响应不同。
 		// 金属对比更强(硬、反光),树叶最软(透光、不该有硬阴影),木头居中。
 		float mid = m.g * 255.0;
@@ -192,27 +186,6 @@ float _terrain_lit(vec2 suv) {
 	return 1.0 - terrain_gain * mat_gain_mul * t;
 }
 
-
-// ── 水体着色:深度色阶 + 岸边泡沫 ──
-// ★ 数据来自地形掩码的 B/A 通道(水深 / 离岸),由 PostProcess 烘图时算好。
-// ★ 深水做**乘性**压暗偏蓝(不破「世界层乘性链」);岸边泡沫是**加算高光**,
-//   属于已登记的例外(见 docs/eng/render.md「准确的不变量」)。
-vec3 _water_shade(vec2 suv, vec3 col) {
-	if (mask_gain < 0.5) {
-		return col;
-	}
-	vec2 wp = cam_origin + (suv * viewport_size - viewport_size * 0.5) / max(cam_zoom, 0.0001);
-	vec2 g = floor(wp / TILE_PX);
-	vec2 muv = (mod(g, mask_grid) + 0.5) / mask_grid;
-	vec4 m = texture(terrain_mask, muv);
-	vec4 wdat = texture(water_tex, muv);   // 线性采样 ⇒ 深度是连续场
-	if (m.r < 0.5 || m.g * 255.0 < 4.5) {
-		return col;
-	}
-	// 水线已移到水体材质里画(那里有真正的世界坐标)。
-	return col;
-}
-
 void fragment() {
 	vec2 uv = SCREEN_UV;
 
@@ -244,7 +217,6 @@ void fragment() {
 	// ★ 已删除旧的屏幕空间压暗(atmo_depth):它按屏幕高度压暗,同一面墙在屏幕上方就亮、
 	//   移到下方就暗 —— 那是滤镜不是光照,和"一切都很黑"是同一类问题。
 	vec3 lit_world = world.rgb * ambient_color * _terrain_lit(uv);
-	lit_world = _water_shade(uv, lit_world);
 	// 色相拉拢:保持亮度不变,只把色调拉向当前光源色(黄昏暖、夜里蓝)。
 	// ★ 权重必须随"光源偏离白色多远"缩放:正午光源是白的,hue_w 就是同亮度的灰,
 	//   无条件混 50% 等于把饱和度砍半 —— 整屏发灰(用户:现在好灰啊)。

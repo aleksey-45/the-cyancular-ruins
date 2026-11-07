@@ -3,6 +3,7 @@ extends Node2D
 
 static var wall_layer: TileMapLayer = null
 static var water_layer: TileMapLayer = null
+static var surface_texture: Texture2D = null
 static var water_surface_layer: Node2D = null
 static var _grid_ref: Array[Array] = []
 static var _pristine_grid: Array[Array] = []
@@ -22,6 +23,7 @@ static var pvp_mode: bool = false
 # 图集只随地图变:同一进程里重开/换模式时直接复用,重建一次 ~130ms(墙体 87 + 水体 42)。
 static var _wall_ts_cache: Dictionary = {}
 static var _water_ts_cache: Dictionary = {}
+static var _surface_tex_key := ""
 
 
 static var _switching: bool = false
@@ -205,8 +207,6 @@ func _ready() -> void:
 	Level0.water_layer = $WorldViewport/WaterLayer
 	Level0.water_surface_layer = $WorldViewport/WaterSurfaceLayer
 	Level0.water_layer.tile_set = _create_water_tileset()
-	_water_body_mat = _make_water_body_material()
-	Level0.water_layer.material = _water_body_mat
 	LoadingScreen.set_progress(0.55, "铺设水体…")
 	_paint_water_copies(grid)
 
@@ -293,6 +293,10 @@ func _create_water_tileset() -> TileSet:
 		built = TerrainAtlas.make_water_tileset_for(ts, descs)
 		_water_ts_cache[key] = built
 	_water_row = built["row_of"]
+	if _surface_tex_key != key:
+		_surface_tex_key = key
+		Level0.surface_texture = ImageTexture.create_from_image(
+				TerrainAtlas.water_brick_image(ts, TerrainAtlas.WATER_SURFACE_BRICK))
 	return built["tileset"]
 
 
@@ -447,7 +451,7 @@ func _paint_water_copies(grid: Array[Array]) -> void:
 	var rows := grid.size()
 	var wl: TileMapLayer = Level0.water_layer
 	var surf: Node2D = Level0.water_surface_layer
-	var surface_by_desc: Dictionary = {}   # 描述符 → 该行的水面格(合批必须按 tint 行分桶)
+	var surface_cells: Array = []
 	var wzoom := maxf(0.01, PlayerParams.cam_zoom)
 	var x_limit := mini(cols, ceili(float(($WorldViewport as SubViewport).size.x) / (float(ts) * wzoom)) + RING_VIEW_MARGIN_SUB / 4 + 1)
 	var y_limit := mini(rows, ceili(float(($WorldViewport as SubViewport).size.y) / (float(ts) * wzoom)) + RING_VIEW_MARGIN_SUB / 4 + 1)
@@ -478,10 +482,7 @@ func _paint_water_copies(grid: Array[Array]) -> void:
 				var above: int = grid[posmod(y - 1, rows)][x]
 				var is_surface := above == 0 or not Water.is_liquid(MazeGenerator.texture_of(above))
 				if is_surface:
-					var d: int = _water_desc_of(v, x, y)
-					if not surface_by_desc.has(d):
-						surface_by_desc[d] = []
-					(surface_by_desc[d] as Array).append({
+					surface_cells.append({
 						"pos": Vector2((x + ox) * ts + ts * 0.5, (y + oy) * ts + ts),
 						"phase": (x + ox) * 1.7 + (y + oy) * 2.3,
 					})
@@ -489,15 +490,9 @@ func _paint_water_copies(grid: Array[Array]) -> void:
 					wl.set_cell(Vector2i(x + ox, y + oy), 0,
 						Vector2i(MazeGenerator.shape_of(v), _water_row_of(_water_desc_of(v, x, y))))
 
-	# ★ 水面合批按**描述符分桶**:每桶用自己的 tint 砖 → 水面与水体颜色一致
-	#   (此前水面恒采样中性砖,地图给水格上辅码时会和水体产生色差 = 已登记的债)。
-	for d in surface_by_desc:
-		var cells: Array = surface_by_desc[d]
-		if cells.is_empty():
-			continue
-		var tex := ImageTexture.create_from_image(TerrainAtlas._tinted_water_brick(ts, int(d)))
+	if not surface_cells.is_empty():
 		var batch := WaterSurfaceBatch.new()
-		batch.setup(cells, tex, ts)
+		batch.setup(surface_cells, Level0.surface_texture, ts)
 		surf.add_child.call_deferred(batch)
 
 
@@ -535,7 +530,6 @@ func _build_world_progressive(grid: Array[Array]) -> void:
 
 
 func _process(_delta: float) -> void:
-	_sync_water_mask()
 	# 时间场驱动(单机;先于实体各自的物理帧让模式生效——实体在 _physics_process 里查询)
 	if time_field != null and not pvp_mode:
 		_drive_time(_delta, Input.is_action_pressed("rewind"), Input.is_action_pressed("haste"))
@@ -986,60 +980,3 @@ func _update_pickup_prompt() -> void:
 						pk.canonical_pos, pl.global_position, w, h).length()
 				can = d <= PlayerParams.weapon_pickup_radius
 		pk.set_prompt_visible(can)
-
-## 水体层的流动条纹:和水面用同一套横向双速条纹(3 档量化),但锚在**世界坐标**,
-#  锚屏幕的话相机一动图案就会在墙上"爬"。只做乘性压暗(0.88~1.0),不破「只压不抬」。
-const WATER_BODY_SHADER := """
-shader_type canvas_item;
-
-uniform sampler2D water_mask : filter_nearest, repeat_disable;
-uniform vec2 mask_grid = vec2(1.0);
-const float TILE_PX = 64.0;
-
-void fragment() {
-	vec4 t = texture(TEXTURE, UV) * COLOR;
-	// 横向流动条纹(第一版):两层不同速度叠加,量化 3 档,只做乘性压暗。
-	float band = floor(VERTEX.y / 16.0);
-	float s1 = sin(VERTEX.x * 0.020 + TIME * 1.10 + band * 0.7);
-	float s2 = sin(VERTEX.x * 0.035 - TIME * 1.70 + band * 1.3);
-	float st = clamp(0.5 + 0.25 * s1 + 0.25 * s2, 0.0, 1.0);
-	st = floor(st * 3.0 + 0.5) / 3.0;
-	t.rgb *= mix(0.88, 1.0, st);
-	// 水线:世界坐标里画,逐格相位起伏。
-	vec2 cell = floor(VERTEX / TILE_PX);
-	vec2 muv = (mod(cell, mask_grid) + 0.5) / mask_grid;
-	if (texture(water_mask, muv).b > 0.5) {
-		float fy = fract(VERTEX.y / TILE_PX);
-		float phase = cell.x * 1.7 + cell.y * 2.3;
-		float lift = sin(TIME * 1.6 + phase) * (2.0 / TILE_PX);
-		if (fy < 0.15 + lift) {
-			t.rgb += vec3(0.28, 0.40, 0.45) * 0.35;
-		}
-	}
-	COLOR = t;
-}
-"""
-
-
-var _water_body_mat: ShaderMaterial = null
-
-
-func _make_water_body_material() -> ShaderMaterial:
-	var sh := Shader.new()
-	sh.code = WATER_BODY_SHADER
-	var mat := ShaderMaterial.new()
-	mat.shader = sh
-	return mat
-
-
-func _sync_water_mask() -> void:
-	if _water_body_mat == null:
-		return
-	var pp := get_tree().get_first_node_in_group("post_process")
-	if pp == null or not pp.has_method("water_mask"):
-		return
-	var tex: Texture2D = pp.water_mask()
-	if tex == null:
-		return
-	_water_body_mat.set_shader_parameter("water_mask", tex)
-	_water_body_mat.set_shader_parameter("mask_grid", pp.mask_grid_size())
