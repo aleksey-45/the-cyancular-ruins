@@ -5,7 +5,6 @@
 [ext_resource type="Script" path="res://scenes/player/weapon_component.gd" id="4_wpn"]
 [ext_resource type="Script" path="res://scenes/player/combat_component.gd" id="5_cmb"]
 [ext_resource type="Script" path="res://scenes/player/swim_component.gd" id="6_swim"]
-[ext_resource type="SpriteFrames" path="res://scenes/player/player_frames.tres" id="2_frames"]
 
 [node name="Player" type="CharacterBody2D" unique_id=722796191 node_paths=PackedStringArray("animator", "weapon_slot")]
 scale = Vector2(2.5, 2.5)
@@ -17,9 +16,6 @@ weapon_slot = NodePath("WeaponSlot")
 
 [node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="." unique_id=29481906]
 texture_filter = 1
-sprite_frames = ExtResource("2_frames")
-animation = &"move"
-autoplay = "idle"
 
 [node name="CollisionShape2D_charge" type="CollisionPolygon2D" parent="." unique_id=1281605673]
 visible = false

@@ -1,0 +1,38 @@
+{
+  "_note": "帧尺寸/网格只在这里写一次；cells 用 [列, 行] 定位格子，加动画只改本文件",
+  "image": "player.png",
+  "light_image": "player_light.png",
+  "light_halo_px": 6,
+  "light_halo_strength": 0.28,
+  "frame_size": [48, 48],
+  "grid_origin": [0, 1],
+  "grid_pitch": [48, 48],
+  "animations": {
+    "idle": {
+      "fps": 2.0,
+      "loop": true,
+      "cells": [[0, 0], [1, 0]]
+    },
+    "move": {
+      "fps": 16.0,
+      "loop": true,
+      "cells": [[0, 1], [0, 3], [1, 1], [1, 3], [2, 1], [2, 3], [3, 1], [3, 3]]
+    },
+    "squat": {
+      "fps": 1.5,
+      "loop": true,
+      "cells": [[0, 2], [1, 2], [2, 2], [3, 2]],
+      "durations": [1.0, 0.5, 1.0, 0.5]
+    },
+    "fly": {
+      "fps": 5.0,
+      "loop": true,
+      "cells": [[2, 0]]
+    },
+    "charge": {
+      "fps": 5.0,
+      "loop": true,
+      "cells": [[3, 0]]
+    }
+  }
+}

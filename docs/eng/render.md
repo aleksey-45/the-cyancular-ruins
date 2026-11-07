@@ -4,7 +4,10 @@
 
 ## 渲染管线(`scenes/level_0.tscn`)
 
-- 根节点把未处理输入手动转发进 `WorldViewport`(SubViewport);世界(墙体 / 玩家 / 敌人)渲染进 SubViewport,`PostProcess`(`post_process.gd`)做像素缩放裁切 + 倒地暗角 + 残血边缘暗角(低于 35% 起、10% 满;**只在屏幕边缘**,中心保持干净,纯客户端、不挡 HUD)。
+- 根节点把未处理输入手动转发进 `WorldViewport`(SubViewport);世界(墙体 / 玩家 / 敌人)渲染进 SubViewport,`PostProcess`(`post_process.gd`)把世界纹理合成到屏幕:鱼眼 + 中心裁剪 + **天空合成 + 昼夜光照(环境光 / 斜投影影)+ 屏幕空间大气压暗 + 发光通道叠加** + 受击/低血/时间玩法视效(倒地暗角、残血边缘暗角只在屏幕边缘,中心保持干净,纯客户端、不挡 HUD)。
+- **世界里的一切都会被乘 `ambient`** —— 这是理解渲染层的第一句话:UI 辅助层(换弹读条 / 预瞄线)挂在世界子树里就会一起被压暗;发光体想"夜里更亮"就必须走发光通道(见下)。
+- 渲染材料分三层:`core/present/day_cycle.gd`(纯函数:一整天怎么亮)→ `post_process.gd`(把结果喂 shader)→ `core/present/form_light.gd`(逐精灵的形体光)。shader 里只有合成。
+
 - 相机 `core/present/camera_2d.gd` 在 `_process` 里直贴目标位置(加 `cam_y_bias`),另有 `shake(amount, duration)`:无前瞻、无死区、无平滑;包络 = `amount * (剩余/时长)^0.7`(尾段比线性长),且**不降级**——比当前剩余包络弱的震动被忽略,否则开火/受击的小震会把爆炸大震顶掉。联机里爆炸震由 `Explosion.client_cam_shake()` 在视觉副本爆炸时补(客户端 bullet 是 `apply_damage=false`)。`PlayerParams.cam_lookahead_x` / `cam_lookahead_y` / `cam_deadzone` 全仓无人读,别按它们改行为。
 
 - 图集构造 `core/sim/terrain_atlas.gd`(`TerrainAtlas`):源砖 → 图集 → TileSet;`Level0._create_wall_tileset()` / `_create_water_tileset()` 只剩转发。**图集按描述符行烘**(行 = 去重排序后的 v4 描述符,颜色辅码烘进像素),不再按"每纹理一行"。
@@ -14,11 +17,51 @@
   - ★ **水面合批不消费辅码**:`WaterSurfaceBatch` 的采样源 `Level0.surface_texture` 恒为**中性**水面砖(`WATER_SURFACE_BRICK`)—— 水体带 hue/bri 辅码时深水格有色、水面亮带仍原色(登记 [`registered-debt.md`](registered-debt.md))。
   - 主菜单背景 `bake_map_image(path, cell_px, air)` 同样吃描述符(`MapFormat.load_subgrid_with_descs` 的 descs,内部自建 row_of)⇒ 辅码颜色一并烘进背景,与对局是同一套像素。
 - ★★ **两块水砖各用各的**(2026-11-01 修「水体被画成水面」):`TerrainAtlas.WATER_BODY_BRICK = 20`(0-based ⇒ 纹理 21「水」,均匀半透明填充)给水体图集;`TerrainAtlas.WATER_SURFACE_BRICK = 21`(纹理 22「水面」,顶边亮带)给 `WaterSurfaceBatch` 的 shader 采样源(`Level0.surface_texture`)。此前两者共用 idx 21(= 纹理 22)⇒ 深水也带亮线、整片水一个观感。守卫:`tests/probe/water_atlas_probe.tscn`(6 条)。
-  - `TerrainAtlas.SKY_COLOR`(`b0e5f6`)是「空气格 / 清屏色」的唯一来源:`Level0` 的 `RenderingServer.set_default_clear_color()` 与主菜单背景底色都读它。它是世界底色,不是 UI token,也别改 `MapCatalog.BG`(选图缩略图底色,语义不同)。
+  - `TerrainAtlas.SKY_COLOR`(`2f4256`)只做「空气格 / 清屏色」:主菜单背景底色与 `Level0` 的 `RenderingServer.set_default_clear_color()` 读它。★ **对局里的天空不在这一层** —— 世界视口是 `transparent_bg`,空气 alpha=0,天空由 `post_process.gdshader` 按昼夜合成(见「昼夜与光照」)。别把它当对局天空色去调,也别改 `MapCatalog.BG`(选图缩略图底色,语义不同)。
 - 碰撞 `core/sim/collision_builder.gd`(`CollisionBuilder`,静态可测):形状掩码展开成 16px 子格(每 64px 格 → 4×4),贪心合并矩形后按 9 环面副本偏移实例化(每块矩形 ×9,共享同一 shape)。永久墙建一个整图节点(9 环面副本各一份,物理跨接缝必需)、建一次不动;可破坏层按分块存节点(块边长 12 格),摧毁时只重建所在块。只有 type=wall 产生碰撞。
 - `core/sim/collision_aabb.gd`(`CollisionAabb`:从任意节点求**启用中**碰撞体的世界 AABB)是激光命中、water 脚底偏移、飞鸟避障矩形的共同几何来源;三者各带兜底值,只在目标真没有碰撞体时生效。多边形与形状必须分开判(`CollisionPolygon2D` 与 `CollisionShape2D` 是并列类);本作所有身体(三敌人 + 玩家 5 个姿态箱)都只用多边形。
 - `core/sim/unstick.gd`(`Unstick`):`push_up_dy(rect, ts, max_cells) -> float` 逐格向上找第一个整框清空的位置(0 = 没卡住),不是整格跳。探测矩形四边内缩 `PROBE_INSET`(0.5px):`floori(rect.end / ts)` 含端点,不收会多算一格。唯一调用方 `WeaponPickup._physics_process`(`move_and_slide` 之后 + `_settled` 早退分支里)。几何走 `CollisionAabb.world_rect`。
 - 世界构建 `core/sim/world_builder.gd`(`WorldBuilder`,静态):`load_grid()`(地图 → current_grid / TileDefs / 地图像素尺寸)、`build_sim(parent, grid)`(碰撞:永久墙 + 可破坏分块 + 攀爬基座条)。单人 Level0 与 PvP 客户端 / 服务器共用。
+
+## 昼夜与光照
+
+数据流:`DayCycle`(纯函数,无节点依赖)→ `PostProcess` 写 shader uniforms → `post_process.gdshader` 合成。
+
+- **时钟**:`DayCycle.DAY_CYCLE_SECONDS = 60`(现实 60s = 游戏 24h,1s = 24 分钟),开局 `DAY_START_HOUR = 6.0`。`PostProcess.day_hour` 是唯一当前时刻;加速/倒流由 `PostProcess._time_rate()` 乘进推进速率(只影响时钟,不影响物理)。
+- **太阳高度角是三角波,不是正弦**:`DayCycle.sun_at(h)` = `elev = 90 − |15·(h−12)|`(二分点/赤道的化简式),`azim = ∓1` 以正午为界。所以影子方向一天里**自己翻面**。月亮与之反相(18:00 升、00:00 天顶)。
+- **环境光** `DayCycle.ambient_for(hour, moon_amt)` ∈ [0,1],乘性、只压不抬 ⇒ 实体亮度 ≤ 贴图原值(**永不发光**是结构保证)。白天 = 辐照 ∝ sin(高度角);太阳项把有效高度抬高 18°(民用晨昏),否则黎明/黄昏会掉到天光底、比半夜还黑。月光峰值 `MOON_SCALE = 0.26` 必须低于晨昏的太阳项。**正午恰为 1.0 ⇒ 12:00 精确等于原版亮度**。
+- **天空色** = `DayCycle.sky_base(hour)`,14 个关键帧按时刻插值。★ 插值走 **RGB 直线**,不走 HSV 色轮:最短弧从橙到蓝会经过品红/紫、黄昏"各种颜色乱窜"(实测)。★ 直线插值的坑是中点掉饱和(橙→夜蓝中点只有 0.31),所以黄昏→夜手工插了玫红/紫罗兰/靛蓝三帧把路径"拱"起来 —— **单纯增加采样点无效**(直线上的点还在直线上)。
+- **天空纵向渐变**:shader 用屏幕纵坐标做一个弯曲坐标(`sky_curve` + `sky_band_pow`)在 `sky_top`/`sky_bottom` 之间插值,上亮下暗。**不做量化**(曾试过 8/16 条带,量化就是"像素风条带",用户否决)。
+- **斜投影影**:遮挡体就是世界纹理自己的 alpha,`SOLID_A = 0.90` —— 只有不透明才算遮挡体,半透明(水、子弹曳尾 alpha 0.55、预瞄线 0.6)不投影。判据是"先沿光方向穿出自己,再撞到的东西才挡我",少了穿出自我的那步会让整面墙均匀变暗。影长是**像素常量**(`CAST_PX_DUSK`,晨昏最长 8px),不是 `1/tan(高度角)` —— 世界是薄 z 横切面,没有厚度可投。影子落在空气与实体上;深浅按"最近一次被挡"的位置衰减(`SHADOW_FAR`)。
+- **环境光是颜色不是标量**:`ambient_color = (天光色相 × amb_tint_strength 混白) × 强度`。天光色相取当前 `sky_base` 归一化到最大通道 1(丢掉亮度),所以黄昏偏暖橙、夜里偏蓝、正午近白;三通道恒 ≤ 1,只染色不提亮。参数 `amb_tint_strength`(默认 0.35,0 = 纯白)。
+- **地形受光**:TileMap 没有逐格法线,所以对每个实心像素**向上走 8 步 × 6px**找顶面,`1 − terrain_gain × clamp(d/terrain_depth_px)` —— 离顶面越远越暗。★ 这是**几何**,所以同一面墙无论移到屏幕哪里亮度都一样。**已删除**旧的"屏幕空间大气压暗"(`atmo_depth`):它按屏幕高度压暗,是滤镜不是光照,也是"一切都黑"的来源之一。
+- **光照像素化(色阶 + 抖动)**:量化的是**光照系数**(地形深度比值 / 精灵 `ndl`),不是最终屏幕色 —— 后者会毁掉美术调色板、让天空重新出色带、破坏"只压不抬"。色阶数默认 4(`form_steps` / `terrain_steps`),配 **2×2** 有序 Bayer(`_bayer2`,值 {0, 0.5, 0.75, 0.25})。★ 抖动必须**锚在精灵本地坐标 / 世界纹理坐标**,锚屏幕的话相机一动图案就会在物体上"爬"。量化后 `clamp(x, 0, 1)`,所以仍 ≤ 1。
+- **暗部颜色** `TINT_*` 是影子乘数,按时段在正午/晨昏/夜里之间插值;规则同上:压红留蓝,不用中性灰。
+
+## 发光通道(GlowViewport)
+
+- `level_0.tscn` 里有第二个 SubViewport:`GlowViewport`(同尺寸、`transparent_bg`)+ `GlowCamera`。`PostProcess._sync_glow_camera()` 每帧把世界相机的 `global_position/zoom/rotation` 抄过去(用实际位置,跟着震屏动)。
+- 发光体必须挂在 `PostProcess.glow_root()` 返回的通道里,由 shader 在**整个光照之后**用 `COLOR.rgb += gl.rgb` 叠加。★ 为什么不能画在世界里:世界里的一切都被乘过 `ambient`,发光体会跟着变暗 —— 与"夜里更亮"正好相反。
+- 发光资产是**美术遮罩**:`<name>_light.png` 与主图集同布局,白色标记 + **A 通道装强度**;帧数据里用 `light_image` 字段指过去,`SpriteFramesIO` 用同一套 cells 构帧 ⇒ 帧索引天然同步。
+- 需要"很弱的边缘光"时不用重画遮罩:`light_halo_px` / `light_halo_strength` 让 `SpriteFramesIO` 在加载时按 smoothstep 径向衰减生成光晕(只增不减,原标记的 alpha 保留)。
+- `glow_gain = 0` 表示没有通道(其它场景/测试),整段跳过。
+
+## 形体光(`core/present/form_light.gd`)
+
+- 目的:让玩家/武器/敌人有体积。环境光只是**全局乘一个标量**,不区分朝向,所以精灵会读成平贴纸。
+- **TAG 驱动渲染策略**:`light_model` = `flat`(默认,不做形体光)/ `ellipsoid`(玩家、鸟)/ `cylinder`(枪)/ `sdf`(距离场法线图)。
+  挂载时显式传参:`FormLight.attach(animator, "ellipsoid")`;敌人走 `@export var light_model`。
+- **解析形状,不用距离场**:椭球法线 `p = v_local / light_size`(clamp ±1)、`z = sqrt(1 − p·p)`。
+  ★ 距离场的梯度在"最近边切换"处**不连续**,一定留下宝石切面(实测玩家被读成圆锥/棱锥);解析形状的法线是连续函数,没这个问题。
+- **`v_local` 必须来自 `vertex()` 的 varying**:`fragment()` 里的 `VERTEX` 是**世界坐标**,直接除以半尺寸会被 clamp 到 ±1 ⇒ 法线恒定、明暗完全消失。
+- **半尺寸走剪影包围盒**:按每个帧区域算内容包围盒,再对所有帧取最大 ⇒ 一个尺寸全帧共用(逐帧算会让动画中明暗跳动)。
+- **先提亮、再只压暗面**:`COLOR *= (1 + boost) × mix(1−gain, 1, ndl)`。`boost` 让亮面可高于贴图原值(默认 0.15 ⇒ 正午最亮 1.15×),
+  这是**有意**破例,别按"最终像素 ≤ 贴图"去校验;`形式光` 只保证"光照系数"这一层是乘性的。
+- **量化 + 抖动**:`ndl` 先 `smoothstep(0.20, 0.80)` 收窄交界,再量化 `form_steps`(默认 4)档,配 2×2 Bayer(`form_dither`,锚精灵本地坐标)。
+- 材质按 `(图集, 模型, 半尺寸)` 缓存;**每帧一次 `FormLight.push(sun_dir, gain)` 推给所有材质**,成本与精灵数量无关。
+- ⚠ **fragment() 不允许 `return`**:写一个 return 会让整个材质编译失败,精灵**静默**降级成无光照 —— 这是排查"形体光没生效"要看的第一个地方。
+- ⚠ **零守卫**:以上全部观感项,只能人眼验收;改法线/色阶/天色时必须出图对比。
+
 
 ## 背景四层景深(`core/present/parallax_bg.gd`)
 

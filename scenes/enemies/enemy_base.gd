@@ -39,6 +39,7 @@ var _waterproof_recover_timer: float = 0.0
 var _drown_tick: float = 0.0
 var state: int = 0
 var _state_timer: float = 0.0
+@export var light_model: String = "ellipsoid"   # 形体光策略(TAG):ellipsoid / cylinder / flat / sdf
 var _anim: AnimatedSprite2D
 var squash: SquashStretch = null
 var _pre_move_vy: float = 0.0
@@ -64,6 +65,8 @@ func _ready() -> void:
 		push_error("EnemyBase: 找不到 AnimatedSprite2D 节点,补间形变将静默失效(节点名 = %s)"
 				% name)
 	squash.setup(anim, SquashStretch.Profile.ENEMY)
+	# 形体光:敌人与玩家/武器共用同一份材质,由 PostProcess 每帧统一推方向。
+	FormLight.attach(anim, light_model)
 
 func _setup_contact_area() -> void:
 	var area := Area2D.new()

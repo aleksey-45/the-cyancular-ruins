@@ -85,7 +85,7 @@ var _trigger_t: float = 0.0
 
 # ── 换弹(固定玩法,无开关可关;全模式开放)── PvP(1v1/大乱斗)一并开放:此前那道 reload_active() 闸门在 Level0.pvp_mode 与网络输入源下恒 false ⇒ PvP 两端一致地不换弹;开放后两端跑同一套(按下的边沿经输入包上行 BIT_RELOAD,弹药与装填进度进 Player.capture_state())。
 @export var mag_size: int = 12        # 弹夹容量
-@export var reload_time: float = 1.2  # 换弹全程耗时(秒)
+@export var reload_time: float   = 1.2  # 换弹全程耗时(秒)
 var mag_ammo: int = 0                 # 弹夹内残弹
 # 入树前的待生效残弹。
 const MAG_UNSET := -2
@@ -140,11 +140,46 @@ func _apply_sprite_pose() -> void:
 
 
 # 只移动箭,弓身不动;ChargeArrow 的 z_index 让箭画在弓身后。
+# ★ 抖动是纯表现:出膛点按 _charge_pull_px() 算,不吃抖动(见 fire 的 b.global_position);放大在入树时一次性施加。
+const CHARGE_ARROW_SHOW_SCALE := 1.5      # 蓄力箭相对**飞行箭**的倍数(飞行箭世界缩放 = bullet_size)
+const CHARGE_ARROW_JITTER_PX := 0.5       # 上下抖动幅度(px);★ 只有蓄满(charge_ratio>=1)才抖
+const CHARGE_ARROW_JITTER_PERIOD := 0.2   # 抖动周期(秒)
+
+# 让蓄力箭与飞行箭同一标尺:飞行箭挂在视口根 ⇒ 世界缩放 = bullet_size;
+# 蓄力箭在玩家子树里(玩家根 scale 2.5)⇒ 局部缩放 = bullet_size × 本倍数 / 继承缩放。
+# ★ 直接写死局部缩放会错:玩家根是 2.5 倍,写 1.5 实际放大成 3.75。
+func _sync_charge_arrow_scale() -> void:
+	if _charge_arrow == null or _arrow_scale_synced:
+		return
+	var inherited := 1.0
+	var par := _charge_arrow.get_parent() as Node2D
+	if par != null:
+		var s := absf(par.get_global_transform().get_scale().x)
+		if s > 0.0001:
+			inherited = s
+	_charge_arrow.scale = Vector2.ONE * (bullet_size * CHARGE_ARROW_SHOW_SCALE / inherited)
+	_arrow_scale_synced = true
+
+
+# 拉弓后移量(0→charge_arrow_pull 线性):显示与出膛点共用这一个量,不另加显示偏移。
+func _charge_pull_px() -> float:
+	return charge_arrow_pull * charge_ratio
+
 func _apply_charge_arrow_pose() -> void:
 	if _charge_arrow == null:
 		return
-	_charge_arrow.visible = charge_time > 0.0 and _aiming
-	_charge_arrow.position = _base_arrow_pos + Vector2(-charge_arrow_pull * charge_ratio, 0.0)
+	_sync_charge_arrow_scale()
+	var on := charge_time > 0.0 and _aiming
+	_charge_arrow.visible = on
+	if not on:
+		_charge_arrow.position = _base_arrow_pos
+		return
+	var jitter := 0.0
+	if charge_ratio >= 1.0:   # ★ 蓄满才抖:蓄力过程中箭是稳的,拉满那一刻开始微颤
+		var period_ms := maxf(CHARGE_ARROW_JITTER_PERIOD, 0.001) * 1000.0
+		var phase := float(Time.get_ticks_msec() % int(period_ms)) / period_ms * TAU   # 0..TAU 一个周期
+		jitter = sin(phase) * CHARGE_ARROW_JITTER_PX
+	_charge_arrow.position = _base_arrow_pos + Vector2(-_charge_pull_px(), jitter)
 
 # ★ 走路 bob 的相位取自**宿主模型的走路动画帧**(move 的 frame + frame_progress),不是独立计时器:
 #   模型换一帧 = 枪跟着换一次;单帧姿态(蹲/冲刺/飞行)没有帧进度 ⇒ 自然不抖,不为它们加代码。
@@ -186,12 +221,14 @@ var fire_cd_timer: float = 0.0
 var _recoil_timer: float = 0.0
 var _base_sprite_pos: Vector2 = Vector2.ZERO
 var _base_arrow_pos: Vector2 = Vector2.ZERO   # 蓄力箭的"未拉弓"位置(_ready 抓一次)
+var _arrow_scale_synced: bool = false        # 蓄力箭缩放是否已按继承缩放推导过
 var _aiming: bool = false
 var _fire_buffered: bool = false
 var _aim_facing: int = 1          # 最近一次明确的瞄准侧(近垂直瞄时用,不随走路翻侧)
 var _current_aim_facing: int = 1  # 本帧实际生效的朝向(含冲刺锁定回落),弹道与枪口共用
 var _laser: Line2D = null
 var _explosion_marker: Sprite2D = null
+var _overlay_host: Node2D = null   # UI 通道里跟随武器变换的宿主(预瞄线/爆炸标记挂在它下面)
 
 static func clamp_pitch(dir: Vector2, facing: int, limit_deg: float = 45.0) -> float:
 	var local := Vector2(dir.x * float(facing), dir.y)
@@ -206,21 +243,52 @@ func _ready() -> void:
 		pending_mag = MAG_UNSET
 	_mag_ready = true
 	_base_sprite_pos = sprite.position
+	# 形体光:枪也有体积(与玩家/敌人共用同一份材质)
+	FormLight.attach(sprite, "cylinder")
 	# 蓄力箭的基准位置只抓一次:之后每帧只写 position(不读回),重复抓会把已后移的位置当成基准、越蓄越靠后。
 	if _charge_arrow != null:
 		_base_arrow_pos = _charge_arrow.position
 		_charge_arrow.visible = false
-	# ★ 预瞄线与爆炸预览标记是**武器**的子节点(武器实例从不进出对象池),只在入树时建一次就够;子弹侧对应的是拖尾。
+	# ★ 预瞄线与爆炸预览标记是**辅助层**(UI),不是世界物件:留在世界里会被 ambient 压暗、
+	#   还会被影子压暗。它们有各自的局部坐标算法(points 用武器局部坐标),所以做成
+	#   「UI 通道里一个跟随武器变换的宿主 + 原来的子节点」—— 点位代码一行不用改。
+	#   没有 UI 通道时退回挂在武器身上(旧行为)。
 	_laser = Line2D.new()
 	_laser.width = 1.0  # 细激光(经玩家 2.5x 缩放渲染约 2.5px)
 	_laser.default_color = laser_color
 	_laser.visible = false
-	add_child.call_deferred(_laser)
 	_explosion_marker = Sprite2D.new()
 	_explosion_marker.texture = Explosion.make_circle_texture(16)
 	_explosion_marker.modulate = Color(1.0, 0.4, 0.2, 0.9)
 	_explosion_marker.visible = false
-	add_child.call_deferred(_explosion_marker)
+	_attach_overlay_host.call_deferred()
+
+
+# 把预瞄线 / 爆炸标记挂进 UI 通道(惰性:PostProcess 可能比武器晚 _ready)。
+func _attach_overlay_host() -> void:
+	if _overlay_host != null and is_instance_valid(_overlay_host):
+		return
+	var pp := get_tree().get_first_node_in_group("post_process")
+	var root: Node = null
+	if pp != null and pp.has_method("ui_root"):
+		root = pp.ui_root()
+	_overlay_host = Node2D.new()
+	_overlay_host.name = "WeaponOverlay"
+	if root != null:
+		root.add_child(_overlay_host)   # UI 通道:1 单位 = 1 世界像素,宿主补上武器的变换
+	else:
+		add_child(_overlay_host)        # 降级:仍在世界里
+	_overlay_host.add_child(_laser)
+	_overlay_host.add_child(_explosion_marker)
+
+
+# 每帧让宿主跟上武器在世界里的位置/缩放/旋转(UI 通道有独立相机,世界坐标直接对齐)。
+func _sync_overlay_host() -> void:
+	if _overlay_host == null or not is_instance_valid(_overlay_host):
+		return
+	_overlay_host.global_position = global_position
+	_overlay_host.global_scale = global_scale
+	_overlay_host.global_rotation = global_rotation
 
 func _player_ok() -> bool:
 	# ★ 旧写法是 `has_method("is_downed")` 兜容非 Player 宿主;宿主恒为 Player ⇒ 直接判。
@@ -409,7 +477,10 @@ func _spawn_projectiles(base_dir: Vector2) -> void:
 		b.gravity_factor = bullet_gravity
 		b.hit_damage = shot_damage
 		b.hit_impact = impact
-		b.global_position = _charge_arrow.global_position if _charge_arrow != null else muzzle.global_position
+		# ★ 出膛点按"基准位置 + 真实拉弓量"算,不吃蓄力箭的显示偏移(放大/额外后移/抖动)。
+		b.global_position = _charge_arrow.to_global(
+				_base_arrow_pos + Vector2(-_charge_pull_px(), 0.0)) \
+				if _charge_arrow != null else muzzle.global_position
 		# PvP:本地生成的子弹只做视觉(不裁决伤害);服务器权威子弹(Level0.pvp_mode=false)照常裁决。
 		b.apply_damage = not Level0.pvp_mode
 		# 服务器广播 bullet_spawn 时用(场景路径在运行期实例上可能为空)。
@@ -494,6 +565,7 @@ func _auto_aim() -> void:
 	scale.x = float(facing)
 
 func _update_laser() -> void:
+	_sync_overlay_host()
 	if _laser == null or muzzle == null:
 		return
 	_laser.visible = _aiming and show_aim_laser
@@ -503,7 +575,7 @@ func _update_laser() -> void:
 	if preview_arc or not is_zero_approx(bullet_gravity):
 		# ★ 有下坠的武器默认走真实弹道(与 fire 同源),不再要求逐个武器手动开 preview_arc。
 		_laser.points = _sample_arc_points()
-		_update_explosion_marker(true)
+		_update_explosion_marker(preview_arc)   # 爆炸球只跟 preview_arc:有下坠但没开弧线预览的武器不画球
 	else:
 		_laser.points = PackedVector2Array([muzzle.position, muzzle.position + Vector2(laser_length, 0.0)])
 		_update_explosion_marker(false)

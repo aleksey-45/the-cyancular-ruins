@@ -5,8 +5,10 @@ extends RefCounted
 # ★ 主菜单背景要"真实的那个世界",必须与对局共用同一份映射 —— 复制一份就是第二个真相源(源砖换了/象限映射改了就对不上,且不报错)。
 # ★ 零 autoload 依赖(TILE_SIZE 由调用方传参),可被 -s 冒烟直接加载;源砖/水砖/纹理都是会话级静态缓存,而 bake_map_image 返回的 Image 不缓存。
 
-# ★ 世界底色(空气格/清屏色):菜单背景与对局必须同源(对局读本常量);它不是 UI 调色板 token(不归 UiFactory 管),也别拿它改 MapCatalog.BG(那是选图面板缩略图底色)。
-const SKY_COLOR: Color = Color("b0e5f6")
+# ★ 世界底色(空气格):主菜单背景的烘焙底与本场景的清屏色都读它。
+# ★ 对局里的天空已不在这一层 —— PostProcess 用 shader 按昼夜自己合成(视口 transparent_bg,
+#   空气 alpha=0),所以这个常量**只管菜单背景与清屏兜底**。别把它当成对局的天空色去调。
+const SKY_COLOR: Color = Color("2f4256")
 
 const SOURCE_PATH: String = "res://assets/textures/structure.png"
 const TEX_COUNT: int = 22      # 源砖 22 块(10 列 × 3 行,每块 32×32);纹理 id 1..22

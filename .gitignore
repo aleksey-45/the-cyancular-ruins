@@ -81,3 +81,6 @@ gamelogs/
 _crashtest/
 # 服务端默认日志目录(2026-10-30):导出服务端在 exe 同目录建 log/,start_server.bat 在仓库根跑时也用它
 log/
+# 录屏输出目录(2026-11-06):仅 F5 普通录屏写 exe 同目录 record/（只忽略仓库根的 record/；
+# 生产代码目录 core/present/record/ 必须照样入库 —— 因此这里用 `/record/` 锚定根目录）
+/record/

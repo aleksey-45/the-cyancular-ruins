@@ -6,6 +6,9 @@ extends CharacterBody2D
 #   一次重建全局类缓存(否则别的脚本报 Could not find type Player)—— 本地跑批与 CI 都已显式 import。
 const HitShape := preload("res://core/sim/hit_shape.gd")   # 受击判定几何唯一入口
 const DashRule := preload("res://core/sim/dash_rule.gd")   # 冲刺倍率/准入判据唯一入口(两端同一份算式)
+# 帧数据:网格 + 每帧 [列, 行] 写在 JSON 里,由网格推导 Rect2(不再手写 .tres)。
+# ★ 本体与 PvP 副本都走这一份,且 SpriteFramesIO 有缓存 ⇒ 仍是"只有一处帧数据"。
+const FRAMES_JSON := "res://assets/textures/player.frames.json"
 
 @export var animator : AnimatedSprite2D
 
@@ -134,6 +137,18 @@ func set_controls_locked(locked: bool) -> void:
 func _ready() -> void:
 	add_to_group("player")
 
+	# 帧数据来自 JSON(网格推导 Rect2)。★ 必须在任何 play() 之前:换掉 sprite_frames 会把当前
+	# 动画复位,后设的 play 才有效。构建失败返回 null 时保持场景原样,不静默半成品。
+	# ★ 场景里不能再写 animation/autoplay:载入瞬间还没有 sprite_frames,写动画名会报
+	#   "There is no animation with name ...",所以入门动画由这里 play。
+	var frames := SpriteFramesIO.load_json(FRAMES_JSON)
+	if frames != null:
+		animator.sprite_frames = frames
+		animator.play(&"idle")
+	# 形体光:按精灵本地 UV 造假法线,让角色有体积(方向随昼夜转)。
+	# ★ 与武器/敌人共用同一份材质,uniforms 由 PostProcess 每帧统一推。
+	FormLight.attach(animator, "ellipsoid")
+
 	combat.hp_changed.connect(func(cur: int, mx: int) -> void: hp_changed.emit(cur, mx))
 	combat.went_down.connect(func() -> void: weapons.cancel_aim())
 	hp_changed.emit(combat.hp, combat.max_hp)
@@ -146,11 +161,8 @@ func _ready() -> void:
 
 	# 单机开局空手:武器全部散落在地图上,由 Level0._ready 铺;联机由 MatchHost 调 set_initial_inventory 发随机一把。
 	weapons.set_initial_inventory([])
-	# 换弹圆环挂在玩家自己身上(一个接入点覆盖单机/PvP/大乱斗):反向缩放抵消玩家根的 scale,位置每帧按朝向贴到后侧。
-	_reload_ring = ReloadRing.new()
-	_reload_ring.scale = Vector2.ONE / scale.x
-	_reload_ring.visible = false
-	add_child(_reload_ring)
+	# 换弹圆环在**第一次需要显示时**才建:它要挂进 PostProcess 的 UI 通道(不吃光照),
+	# 而 PostProcess 可能比玩家晚 _ready ⇒ 延迟到 _update_reload_ring 里惰性创建。
 	add_child.call_deferred(WaterFx.new())
 	# 补间形变:挂在玩家自己身上(与 _reload_ring 同款的一个接入点覆盖单机/PvP/大乱斗);animator 是 @export 引用,场景实例化时就已就位。
 	squash = SquashStretch.new()
@@ -191,6 +203,7 @@ func _push_haste_mult(tm: float) -> void:
 
 
 func _process(delta: float) -> void:
+	_tick_eye_glow()   # 必须放在下面那条早退之前,否则平时不刷新
 	# 冲刺 / 下冲残影(纯表现):只在渲染帧发射 ⇒ C2 回滚重放不会把同一段冲刺再生成一遍;
 	# 服务器/无相机路径直接跳过(看不见的节点不花)。强度/间隔见 DASH_GHOST_* 常量。
 	if _down_dash_ghost_t > 0.0:
@@ -875,7 +888,8 @@ func restart_at(spawn_cell: Vector2i) -> void:
 	set_controls_locked(false)
 
 
-var _reload_ring: ReloadRing = null   # 换弹圆环(角色后侧)
+var _reload_ring: ReloadRing = null   # 换弹圆环(角色后侧);挂在 UI 通道里
+var _ring_in_ui: bool = false        # 圆环是否已挂进 UI 通道(决定用世界坐标还是局部坐标)
 var _drop_hold_t := 0.0     # Q 已按住多久
 var _drop_latched := false  # 本次长按是否已触发过(防按住不放连续丢)
 
@@ -968,8 +982,30 @@ func _unhandled_input(event: InputEvent) -> void:
 	# R 换弹已从这里迁走(改走 _physics_process 的 input_source 轮询):读原始 InputEvent 的话权威服务器永远收不到。倒地时 R 仍是重载/复活。
 
 
-# 换弹圆环显示在角色后侧(背对朝向那一侧),环心是带一位小数的倒计时;挂在玩家本体而不是 HUD:圆环要跟人走、要压在角色附近的世界层里,一个接入点覆盖所有模式。
+# 换弹圆环显示在角色后侧(背对朝向那一侧),环心是带一位小数的倒计时。
+# ★ 挂在 PostProcess 的 **UI 通道**(不吃 ambient、不吃影子):它是有暗色底环的 UI,
+#   留在世界里会被整体压暗,塞进加色的发光通道又会变亮。
+#   降级:没有 UI 通道时退回挂在玩家身上(旧的局部坐标算法)。
+func _ensure_reload_ring() -> void:
+	if _reload_ring != null and is_instance_valid(_reload_ring):
+		return
+	var pp := get_tree().get_first_node_in_group("post_process")
+	var root: Node = null
+	if pp != null and pp.has_method("ui_root"):
+		root = pp.ui_root()
+	_reload_ring = ReloadRing.new()
+	_reload_ring.visible = false
+	if root != null:
+		_ring_in_ui = true
+		root.add_child(_reload_ring)          # UI 通道里 1 单位 = 1 世界像素
+	else:
+		_ring_in_ui = false
+		_reload_ring.scale = Vector2.ONE / scale.x
+		add_child(_reload_ring)
+
+
 func _update_reload_ring() -> void:
+	_ensure_reload_ring()
 	if _reload_ring == null or not is_instance_valid(_reload_ring):
 		return
 	var w := weapons.current_weapon()
@@ -977,10 +1013,14 @@ func _update_reload_ring() -> void:
 	_reload_ring.visible = prog >= 0.0
 	if prog < 0.0:
 		return
-	var sc := maxf(absf(scale.x), 0.001)
-	# 世界单位偏移 ÷ 根缩放 = 本节点的局部偏移(环自己又反向缩放过,故视觉仍是世界单位)
-	_reload_ring.position = Vector2(-RELOAD_RING_OFFSET.x * float(facing_direction),
-			RELOAD_RING_OFFSET.y) / sc
+	var offset := Vector2(-RELOAD_RING_OFFSET.x * float(facing_direction), RELOAD_RING_OFFSET.y)
+	if _ring_in_ui:
+		# UI 通道有自己的一份同参数相机 ⇒ 直接用世界坐标即可,不需要投影换算。
+		_reload_ring.global_position = global_position + offset
+		_reload_ring.scale = Vector2.ONE
+	else:
+		var sc := maxf(absf(scale.x), 0.001)
+		_reload_ring.position = offset / sc
 	_reload_ring.set_progress(prog, w.reload_time * (1.0 - prog))
 
 
@@ -1034,3 +1074,59 @@ func rewind_restore(d: Dictionary) -> void:
 		# ★ 2026-11-01(R3):不能走 revive() —— 它会把 hp 顶成满血,冲掉上面刚从快照恢复的 hp。
 		#   restore_alive_state() = revive() 减去 hp(旋转/灰屏/动画照旧);三处**状态恢复**入口(权威态 / 整态回滚 / 回溯)共用同一份(见 plan §R3)。
 		combat.restore_alive_state()
+
+
+# ── 发光:由**美术遮罩**驱动(独立资产,像灯瓦片)──
+# 遮罩 = `player_light.png`,与 player.png **同布局**(同一份 cells)、白色标记、A 通道装强度。
+# ★ 为什么用遮罩而不是程序化:眼睛每帧位置都在变(实测跨帧 x 漂 4px、y 漂 6px),
+#   硬编码坐标跟不住;遮罩逐帧画,天然对齐。
+# ★ 为什么要单独的发光通道:世界整体在 PostProcess 里乘 ambient。发光体若画在世界里,会被
+#   一起压暗 —— 那不是"夜里更亮",而是"夜里跟着变暗",与需求相反。所以发光精灵挂在
+#   PostProcess 的 GlowViewport(相机逐帧同步),由 shader 在光照**之后**叠加。
+# ★ 纯表现:不碰逻辑、不进快照;拿不到遮罩或发光通道就不显示。
+const LIGHT_FIELD := "light_image"          # player.frames.json 里的遮罩字段名
+const LIGHT_K := 0.32                        # 强度上限(压低:核心与光晕一起变淡)
+const LIGHT_TINT := Color(0.86, 0.93, 1.0)   # 发光色(偏冷);白色标记只表示"这里发光",颜色在这里定
+var _light: AnimatedSprite2D = null
+var _light_root: Node2D = null   # 发光通道里的镜像根(承载玩家的位置/缩放)
+var _post: Node = null           # PostProcess(惰性获取)
+
+
+func _tick_eye_glow() -> void:
+	if animator == null:
+		return
+	if _light == null:
+		if _post == null or not is_instance_valid(_post):
+			_post = get_tree().get_first_node_in_group("post_process")
+		if _post == null or not _post.has_method("glow_root"):
+			return
+		var glow_parent: Node = _post.glow_root()
+		if glow_parent == null:
+			return                        # 没有发光通道(别的场景/测试)=> 本特性自隐
+		var lf := SpriteFramesIO.load_json(FRAMES_JSON, LIGHT_FIELD)
+		if lf == null:
+			return
+		_light_root = Node2D.new()
+		_light_root.name = "PlayerLight"
+		glow_parent.add_child(_light_root)
+		_light = AnimatedSprite2D.new()
+		_light.name = "LightMask"
+		_light.sprite_frames = lf
+		_light.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST   # 遮罩绝不能被过滤混色
+		_light.centered = animator.centered
+		_light.offset = animator.offset
+		_light_root.add_child(_light)
+	# 镜像本体变换:发光通道有自己的相机(同世界相机),所以世界坐标直接可用。
+	_light_root.global_position = global_position
+	_light_root.scale = scale
+	# 与本体严格同帧:同一个动画名 + 同一个帧号,遮罩不会和贴图错开。
+	_light.animation = animator.animation
+	_light.frame = animator.frame
+	_light.flip_h = animator.flip_h
+	_light.scale = animator.scale
+	var amb := 1.0
+	if _post != null and is_instance_valid(_post):
+		amb = clampf(_post.ambient_for(_post.get("day_hour"), _post.moon_amount(_post.get("day_hour"))), 0.05, 1.0)
+	# 强度:白天几乎为 0、夜里明显。遮罩自己的 A 通道仍是逐像素强度,两者相乘。
+	var gain := clampf(LIGHT_K * (1.0 - amb), 0.0, 1.0)
+	_light.modulate = Color(LIGHT_TINT.r, LIGHT_TINT.g, LIGHT_TINT.b, gain)

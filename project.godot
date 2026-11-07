@@ -31,6 +31,7 @@ NetBus="*res://core/net/net_bus.gd"
 NetBusExt="*res://core/net/net_bus_ext.gd"
 Settings="*res://core/config/settings.gd"
 LoadingScreen="*res://core/ui/loading_screen.gd"
+Recorder="*res://core/present/record/recorder.gd"
 
 [debug]
 

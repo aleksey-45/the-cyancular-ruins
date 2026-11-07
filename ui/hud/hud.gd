@@ -14,6 +14,9 @@ const LOW_RATIO := 0.25
 const KILL_COLOR := UiFactory.C_ACCENT
 const KILL_FONT_SIZE := 48      # 16 的整数倍才像素锐利(48 = 3×16)
 const WEAPON_FONT_SIZE := 32    # 武器名/残弹数;同上(32 = 2×16)
+# 顶部居中时钟:字号同样走 16 的倍数;只显示 "HH:MM",不加任何提示文字(用户硬要求)。
+const CLOCK_FONT_SIZE := 32
+const CLOCK_HALF_W := 120.0     # 居中 Label 的半宽(透明留白,只用于定居中框的左右界线)
 # 像素字体(Less Perfect DOS VGA,8×16 经典 VGA 计数器)与「关抗锯齿/微调/子像素」三件套的唯一来源是 UiFactory.style_control(内部走 PixelFont.shared())——
 # 本文件不再自己 load 字体、不自己设字号,字号规范才守得住(见 ui/factory/ui_factory.gd 文件头)。
 # HUD 底板:武器区 / 血条 / 氧条 / 右上角击杀数四处共用这一个值。★ 唯一源在 ui/factory/ui_factory.gd 的 C_PLATE(那里有各档 alpha 的 WCAG 对比度实测,以及两条例外),本处是别名、不存字面量。
@@ -32,6 +35,8 @@ var _ghost_tweens: Array[Tween] = []  # 与 _segments 并行:掉血段的淡出 
 var _last_cur := 0
 var _kill_label: Label
 var _kills := 0
+var _clock_label: Label = null
+var _post_process: Node = null   # 时钟数据源:按组名惰性获取,可能为 null ⇒ 时钟自隐
 var _wp_bar: ColorRect = null
 var _wp_back: ColorRect = null
 var _wp_plate: ColorRect = null      # 氧条底板:与条/空槽一同淡入淡出(用户 2026-09-15)
@@ -55,6 +60,7 @@ const KILL_COUNTER_SCENE := preload("res://ui/hud/kill_counter.tscn")
 func _ready() -> void:
 	layer = LAYER
 	_build_kill_label()
+	_build_clock()
 	# 个人钟怀表(第一阶段;数据源 Level0.grain_account,为空自隐)——摆血条/氧条下方
 	var watch := WatchHud.new()
 	watch.position = Vector2(MARGIN.x, MARGIN.y + 100.0)
@@ -81,6 +87,8 @@ func _ready() -> void:
 
 
 func _process(_delta: float) -> void:
+	# 时钟必须放在下面那条早退之前:残弹 Label 还没建好时也要照常走时钟。
+	_update_clock()
 	# 残弹数:剪影/名称右侧实时刷新;非单机(PvP 不换弹)时隐藏
 	if _ammo_label == null:
 		return
@@ -400,3 +408,43 @@ func _on_enemy_spawned(enemy: Node) -> void:
 func _on_enemy_died() -> void:
 	_kills += 1
 	_kill_label.text = "%03d" % _kills
+
+
+# 顶部居中时钟:只显示 "HH:MM"。字号 / 字体走 UiFactory.style_control(与其余 HUD Label 同一套),
+# 颜色走调色板 C_TEXT(不新引字体文件、不写 Color 字面量)。
+func _build_clock() -> void:
+	_clock_label = Label.new()
+	_clock_label.name = "ClockLabel"   # 名字只是探针 / 调试的访问口,不是显示文字
+	UiFactory.style_control(_clock_label, CLOCK_FONT_SIZE)
+	_clock_label.add_theme_color_override("font_color", UiFactory.C_TEXT)
+	# 居中:左右锚点都在 0.5,再用对称 offset 给出一个定宽框,文字在框内居中;grow_horizontal = BOTH 即居中生长。
+	_clock_label.anchor_left = 0.5
+	_clock_label.anchor_right = 0.5
+	_clock_label.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_clock_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_clock_label.offset_left = -CLOCK_HALF_W
+	_clock_label.offset_right = CLOCK_HALF_W
+	_clock_label.offset_top = MARGIN.y
+	_clock_label.offset_bottom = MARGIN.y
+	_clock_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_clock_label.visible = false   # 首帧还没拿到 PostProcess,先不显示空 Label
+	add_child(_clock_label)
+
+
+# 每帧更新时钟:数据源只有 PostProcess.clock_text(),不缓存、不自己插值 ——
+# 加速 / 回溯改的是 day_hour 的推进速率,这里跟着读就自然跟随。
+func _update_clock() -> void:
+	if _clock_label == null:
+		return
+	# PvP 的记分条本来就在顶部正中(层 130 压在本 HUD 之上),再挂时钟就是叠字 ⇒ 联机对局里自隐。
+	if Level0.pvp_mode:
+		_clock_label.visible = false
+		return
+	if _post_process == null or not is_instance_valid(_post_process):
+		_post_process = get_tree().get_first_node_in_group("post_process")
+	# 拿不到 PostProcess(PvP 早期帧 / 测试场景)就自隐:不报错、不刷屏。
+	if _post_process == null or not is_instance_valid(_post_process) or not _post_process.has_method("clock_text"):
+		_clock_label.visible = false
+		return
+	_clock_label.visible = true
+	_clock_label.text = _post_process.clock_text()

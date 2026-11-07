@@ -13,12 +13,13 @@ weapon_name = "Compound Bow"
 fire_cooldown = 0.15
 heavy_aim = true
 trigger_delay = 0.05
-charge_time = 0.8
+charge_time = 0.75
 charge_damage_min = 4
-charge_speed_min = 500.0
-charge_arrow_pull = 10.0
-bullet_speed = 1500.0
+charge_speed_min = 600.0
+charge_arrow_pull = 15.0
+bullet_speed = 2400.0
 bullet_range = 1600.0
+bullet_size = 1.3
 spread_deg = 0.5
 damage = 35
 impact = 800.0
@@ -33,7 +34,7 @@ laser_length = 1000.0
 pitch_clamp_deg = 50.0
 bullet_gravity = 0.2
 preview_time = 1.0
-reload_time = 1.25
+mag_size = 1
 
 [node name="Sprite2D" type="Sprite2D" parent="." unique_id=1473672675]
 texture_filter = 1
@@ -44,7 +45,7 @@ region_rect = Rect2(4, 60, 20, 44)
 
 [node name="ChargeArrow" type="Sprite2D" parent="." unique_id=1061227290]
 visible = false
-z_index = -1
+z_index = 1
 texture_filter = 1
 position = Vector2(24, 7)
 scale = Vector2(0.4, 0.4)

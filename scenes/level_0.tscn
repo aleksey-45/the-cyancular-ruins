@@ -10,6 +10,7 @@
 script = ExtResource("1_v3lif")
 
 [node name="WorldViewport" type="SubViewport" parent="." unique_id=1741884642]
+transparent_bg = true
 size = Vector2i(2208, 1728)
 render_target_update_mode = 4
 
@@ -28,6 +29,20 @@ z_index = 4
 
 [node name="WaterSurfaceLayer" type="Node2D" parent="WorldViewport" unique_id=191518326]
 z_index = 5
+
+[node name="GlowViewport" type="SubViewport" parent="." unique_id=1741884643]
+transparent_bg = true
+size = Vector2i(1104, 864)
+render_target_update_mode = 4
+
+[node name="GlowCamera" type="Camera2D" parent="GlowViewport" unique_id=212233194]
+
+[node name="UiViewport" type="SubViewport" parent="." unique_id=1741884644]
+transparent_bg = true
+size = Vector2i(2208, 1728)
+render_target_update_mode = 4
+
+[node name="UiCamera" type="Camera2D" parent="UiViewport" unique_id=212233195]
 
 [node name="EnemySpawner" type="Node2D" parent="." unique_id=604711374]
 script = ExtResource("4_spn")

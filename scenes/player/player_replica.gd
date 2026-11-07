@@ -25,11 +25,12 @@ const LAND_VEL_EPS := 1.0
 # 原先这里各写一份、值一字不差,改本体忘副本就会静默放错动画 / 用错箱子。
 const PlayerVisual := preload("res://scenes/player/player_visual.gd")
 
-# 本体精灵帧:从 player.tscn 抽成独立 .tres(2026-11-02)。此前副本在 _ready 里 instantiate 整只 player.tscn、
-# 只为抄 sprite_frames + 5 份碰撞多边形,再 free ⇒ 每个副本一次完整节点树实例化。
-# ★ 现在帧数据走本文件的 @export,而 player.tscn 的 AnimatedSprite2D 引用的也是同一份 .tres ⇒ 本体与副本仍只有一处帧数据,不会漂。
+# 本体精灵帧:帧数据现在由 `assets/textures/player.frames.json` 描述(网格推导 Rect2),
+# 本体与副本都走 SpriteFramesIO.load_json,且它有缓存 ⇒ 仍然是"只有一处帧数据",不会漂。
+# @export 留空即走 JSON;有外部注入(测试/特殊皮肤)时以注入的为准。
 const PlayerScene := preload("res://scenes/player/player.tscn")   # 只读它的 SceneState 取幽灵体多边形,不实例化
-@export var sprite_frames: SpriteFrames = preload("res://scenes/player/player_frames.tres")
+const FRAMES_JSON := "res://assets/textures/player.frames.json"
+@export var sprite_frames: SpriteFrames = null
 
 # 幽灵体所在组:榴弹「碰到玩家」判定要把对手副本也算进候选。
 const GROUP := "player_replica"
@@ -78,8 +79,15 @@ var _ghost_shapes: Dictionary = {}   # pose(int) -> CollisionPolygon2D
 
 func _ready() -> void:
 	add_to_group(GROUP)
-	# ★ 帧来自独立 .tres(与本体同一份),不再 instantiate player.tscn —— 见文件头 PlayerScene 那两条注释。
+	# ★ 帧来自 player.frames.json(与本体同一份 + SpriteFramesIO 缓存),不再 instantiate player.tscn。
+	if sprite_frames == null:
+		sprite_frames = SpriteFramesIO.load_json(FRAMES_JSON)
 	animator.sprite_frames = sprite_frames
+	# ★ 场景里不能再写 autoplay:载入瞬间还没有 sprite_frames,写动画名会报 "no animation"。
+	if sprite_frames != null:
+		animator.play(&"idle")
+	# 形体光:与本体共用同一份材质(场上所有精灵一起生效,成本与数量无关)。
+	FormLight.attach(animator, "ellipsoid")
 	_build_ghost_body()
 	_weapon_slot_node = Node2D.new()
 	_weapon_slot_node.name = "WeaponSlot"
