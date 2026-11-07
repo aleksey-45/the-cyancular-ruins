@@ -497,7 +497,7 @@ func _paint_water_copies(grid: Array[Array]) -> void:
 					"pos": Vector2((x + ox) * ts + ts * 0.5, (y + oy) * ts + ts),
 					"phase": (x + ox) * 1.7 + (y + oy) * 2.3,
 					"surface": is_surface,
-					"weight": maxf(0.0, 1.0 - float(depth) * 0.25),   # 越深越不动
+					"weight": 1.0 if is_surface else 0.0,   # ★ 只有水面格起伏
 				})
 
 	# ★ 按**描述符分桶**:每桶用自己的 tint 砖。水面若恒用中性砖,而水体按辅码 tint 过,
@@ -1007,6 +1007,11 @@ func _update_pickup_prompt() -> void:
 func _make_water_atlas(ts: int, desc: int) -> Image:
 	var img := Image.create(ts, ts * 2, false, Image.FORMAT_RGBA8)
 	img.blit_rect(TerrainAtlas._tinted_water_brick(ts, desc), Rect2i(0, 0, ts, ts), Vector2i(0, 0))
-	# ★ 水面行也用**同一块水体砖**:两层颜色必须完全一致(亮带交给后处理的水线)。
-	img.blit_rect(TerrainAtlas._tinted_water_brick(ts, desc), Rect2i(0, 0, ts, ts), Vector2i(0, ts))
+	# 下半行 = **水面砖**(自带顶边水线),按同一描述符 tint:
+	#   水面格用它,水线本来就画在贴图里,不需要后处理再画。
+	var surf := TerrainAtlas.water_brick_image(ts, TerrainAtlas.WATER_SURFACE_BRICK).duplicate()
+	for yy in ts:
+		for xx in ts:
+			surf.set_pixel(xx, yy, TerrainAtlas.tint_color(surf.get_pixel(xx, yy), desc))
+	img.blit_rect(surf, Rect2i(0, 0, ts, ts), Vector2i(0, ts))
 	return img

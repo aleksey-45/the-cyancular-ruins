@@ -30,7 +30,7 @@ void fragment() {
 	float s2 = sin(v_world.x * 0.035 - TIME * 1.70 + band * 1.3);
 	float st = clamp(0.5 + 0.25 * s1 + 0.25 * s2, 0.0, 1.0);
 	st = floor(st * 3.0 + 0.5) / 3.0;
-	t.rgb *= mix(0.88, 1.0, st);
+	t.rgb *= mix(0.95, 1.0, st);   // ★ 条纹减弱(0.88→0.95)
 	COLOR = t;
 }
 """
