@@ -21,8 +21,15 @@ func _ready() -> void:
 
 
 func _run() -> void:
-	GameParameters.MAP_WIDTH = int(MAP_W)
-	GameParameters.MAP_HEIGHT = int(MAP_H)
+	# 世界尺寸从网格派生(不再有可写的 MAP_WIDTH):按本探针要测的 9600×6400 造一个 150×100 格的空网格。
+	# ★ 造网格而不是写尺寸,是因为"尺寸 = 网格"现在是唯一来源;探针也不能绕过它。
+	var grid: Array[Array] = []
+	for y in int(MAP_H / GameParameters.TILE_SIZE):
+		var row: Array[int] = []
+		row.resize(int(MAP_W / GameParameters.TILE_SIZE))
+		row.fill(MazeGenerator.EMPTY)
+		grid.append(row)
+	MazeGenerator.current_grid = grid
 
 	var cam_script: Script = load("res://core/present/camera_2d.gd")
 	if cam_script == null:

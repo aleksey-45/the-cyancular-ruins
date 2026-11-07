@@ -670,7 +670,6 @@ func _attributed_killer(victim: Node2D) -> int:
 
 static func prepare_map(map_path: String) -> void:
 	MazeGenerator.set_map_file(map_path)
-	GameParameters.refresh_map_size()
 	if MazeGenerator.current_grid == null or MazeGenerator.current_grid.is_empty():
 		WorldBuilder.load_grid()
 

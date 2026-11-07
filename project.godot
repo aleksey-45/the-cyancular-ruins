@@ -26,7 +26,6 @@ run/main_scene.serverui="res://server/server_main.tscn"
 
 [autoload]
 
-GameParameters="*res://core/config/game_parameters.gd"
 NetBus="*res://core/net/net_bus.gd"
 NetBusExt="*res://core/net/net_bus_ext.gd"
 Settings="*res://core/config/settings.gd"

@@ -105,7 +105,7 @@ func _verify_picked_map(tree: SceneTree) -> void:
 		tree.quit(1)
 		return
 	if GameParameters.MAP_WIDTH != want_w:
-		print("AUTOTEST[sp]: 世界尺寸没按选中的图重算(refresh_map_size 漏了?)")
+		print("AUTOTEST[sp]: 世界尺寸没按选中的图重算(网格没换 / 世界尺寸不是从网格派生的?)")
 		tree.quit(1)
 
 

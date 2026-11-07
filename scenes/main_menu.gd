@@ -74,7 +74,6 @@ func _ready() -> void:
 
 func _enter_level0() -> void:
 	MazeGenerator.set_map_file(Settings.sp_map_path if MapCatalog.is_valid_map(Settings.sp_map_path) else "")
-	GameParameters.refresh_map_size()
 	Level0.pvp_mode = false
 	CombatComponent.pvp_arena = false
 	LoadingScreen.show_loading("正在构建世界…")

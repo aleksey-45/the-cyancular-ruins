@@ -3,7 +3,7 @@ extends RefCounted
 
 
 const SUB_TS: int = 16
-const TILE_TS: int = 64
+const TILE_TS: int = GameParameters.TILE_SIZE
 const CHUNK_CELLS: int = 12
 const LEDGE_THICKNESS: int = 6
 

@@ -29,8 +29,6 @@ func _ready() -> void:
 		_chk(false, "★ 空载守卫:load(player.tscn) 为 null")
 		_finish()
 		return
-	GameParameters.MAP_WIDTH = COLS * CELL
-	GameParameters.MAP_HEIGHT = ROWS * CELL
 	var sub: Array[Array] = []
 	for y in ROWS:
 		var row: Array[int] = []

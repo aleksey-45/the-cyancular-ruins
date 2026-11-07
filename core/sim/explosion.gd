@@ -4,7 +4,7 @@ extends RefCounted
 const INNER_FRACTION: float = 0.4
 const BLOCKED_FRACTION: float = 0.75
 const HitShape := preload("res://core/sim/hit_shape.gd")
-const TILE_TS: int = 64
+const TILE_TS: int = GameParameters.TILE_SIZE
 
 
 static func _map_px() -> Vector2:

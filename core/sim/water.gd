@@ -2,7 +2,7 @@ class_name Water
 extends RefCounted
 
 
-const TILE_TS: int = 64
+const TILE_TS: int = GameParameters.TILE_SIZE
 const FALLBACK_HALF_HEIGHT: float = 24.0
 const HEAD_UNDER_MARGIN: float = 0.0
 

@@ -2,7 +2,7 @@ extends Node
 
 const MARKER := "WATER ATLAS PROBE: ALL-OK"
 const EXPECTED_CHECKS := 6
-const TS := 64
+const TS := GameParameters.TILE_SIZE
 const SRC := 32
 
 var _fails: Array[String] = []

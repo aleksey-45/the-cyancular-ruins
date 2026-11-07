@@ -12,8 +12,6 @@ static func load_grid() -> Array:
 		MazeGenerator.current_grid = grid0
 		MazeGenerator.current_subgrid = MazeGenerator.copy_grid(cached["subgrid"])
 		MazeGenerator.current_subdesc = MazeGenerator.copy_grid(cached["subdesc"])
-		GameParameters.MAP_WIDTH = grid0[0].size() * GameParameters.TILE_SIZE
-		GameParameters.MAP_HEIGHT = grid0.size() * GameParameters.TILE_SIZE
 		return grid0
 	var bundle := MapFormat.load_map_bundle(map_path)
 	var grid: Array[Array]
@@ -35,8 +33,6 @@ static func load_grid() -> Array:
 		MazeGenerator.current_subgrid = sd["textures"]
 		MazeGenerator.current_subdesc = sd["descs"]
 	TileDefs.load_defs()
-	GameParameters.MAP_WIDTH = grid[0].size() * GameParameters.TILE_SIZE
-	GameParameters.MAP_HEIGHT = grid.size() * GameParameters.TILE_SIZE
 	_grid_cache[map_path] = {
 		"grid": MazeGenerator.copy_grid(grid),
 		"subgrid": MazeGenerator.copy_grid(MazeGenerator.current_subgrid),

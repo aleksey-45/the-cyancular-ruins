@@ -42,7 +42,6 @@ static func legacy_plan_spawns(roles: Array, map_path: String) -> Dictionary:
 static func start_on(role_peers: Dictionary, map_path: String = PVP_MAP,
 		options: Dictionary = {}, ai_roles: Array = []) -> Node:
 	MazeGenerator.set_map_file(map_path)
-	GameParameters.refresh_map_size()
 	if MazeGenerator.current_grid == null or MazeGenerator.current_grid.is_empty():
 		WorldBuilder.load_grid()
 	SpawnPicker.reset_cache()

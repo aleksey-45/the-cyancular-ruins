@@ -159,9 +159,6 @@ func _build_world() -> void:
 	MazeGenerator.current_subgrid = sgrid
 	TileDefs.init_hp(grid)
 	TileDefs.init_sub_hp(sgrid)
-	# 锚定用的地图尺寸:探针里不读地图文件,直接按合成网格写 autoload 实例字段(与世界同源)。
-	GameParameters.MAP_WIDTH = MAP_W
-	GameParameters.MAP_HEIGHT = MAP_H
 
 	_world = Node2D.new()
 	_world.name = "StubWorld"
