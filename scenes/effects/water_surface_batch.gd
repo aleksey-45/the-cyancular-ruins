@@ -4,32 +4,18 @@ extends Node2D
 
 const SHADER_CODE := """
 shader_type canvas_item;
-
-// 水面合批 shader。
-// ★ 之前只有**竖直**平移(幅度 2 世界px),经相机 0.75 后 ≈1.5 屏幕px,而且没有横向分量
-//   ⇒ 肉眼完全看不出"水在动"。这里补三件事:横向位移、两层错速条纹、位移 snap 到 2 世界px。
-
-varying vec2 v_world;
-
-uniform sampler2D surf : filter_nearest;   // ★ 必须最近邻:线性插值会把色阶磨成渐变
+uniform sampler2D surf;
 uniform float sway_speed = 1.6;
 uniform float sway_amp = 2.0;
 uniform float tile_ts = 64.0;
-
 void vertex() {
 	// 相位烘在顶点色 r(0..1→0..TAU);格底相对高度 f 烘在 g(0=底边 1=顶边)。
+	// 位移 = f·sin·amp 纯平移:底边锚定不动,顶边 ±sway_amp(与原逐格缩放视觉一致)。
 	float f = COLOR.g;
-	float ph = COLOR.r * 6.2831853;
-	VERTEX.y += sin(TIME * sway_speed + ph) * (sway_amp * f);
-	// 横向:错相位、半幅度 —— 只有竖直位移时读不出流向。
-	VERTEX.x += sin(TIME * sway_speed * 0.6 + ph * 1.7) * (sway_amp * 0.5 * f);
-	// 像素化:位移 snap 到 2 世界px(1 美术像素 = 16 世界px 的 1/8,再细就是亚像素抖动)。
-	VERTEX = floor(VERTEX / 2.0 + 0.5) * 2.0;
-	v_world = VERTEX;
+	float lift = sin(TIME * sway_speed + COLOR.r * 6.2831853) * (sway_amp * f);
+	VERTEX.y += lift;
 }
-
 void fragment() {
-\t// ★ 合批只负责**顶点位移**(水面起伏);颜色/条纹交给水体材质,避免两套颜色互相打架。
 	COLOR = texture(surf, UV);
 }
 """
