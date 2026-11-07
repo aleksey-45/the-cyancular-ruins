@@ -454,8 +454,7 @@ func _paint_water_copies(grid: Array[Array]) -> void:
 	var rows := grid.size()
 	var wl: TileMapLayer = Level0.water_layer
 	var surf: Node2D = Level0.water_surface_layer
-	# ★ 水面合批(WaterSurfaceBatch)已移除:波纹/流动由**水体层材质**在着色器里做,
-	#   再保留一套逐格顶点位移的 sprite/网格动画就是冗余的两套实现。
+	var surface_cells: Array = []
 	var wzoom := maxf(0.01, PlayerParams.cam_zoom)
 	var x_limit := mini(cols, ceili(float(($WorldViewport as SubViewport).size.x) / (float(ts) * wzoom)) + RING_VIEW_MARGIN_SUB / 4 + 1)
 	var y_limit := mini(rows, ceili(float(($WorldViewport as SubViewport).size.y) / (float(ts) * wzoom)) + RING_VIEW_MARGIN_SUB / 4 + 1)
@@ -483,8 +482,21 @@ func _paint_water_copies(grid: Array[Array]) -> void:
 					continue
 				if not Water.is_liquid(MazeGenerator.texture_of(v)):
 					continue
-				wl.set_cell(Vector2i(x + ox, y + oy), 0,
-					Vector2i(MazeGenerator.shape_of(v), _water_row_of(_water_desc_of(v, x, y))))
+				var above: int = grid[posmod(y - 1, rows)][x]
+				var is_surface := above == 0 or not Water.is_liquid(MazeGenerator.texture_of(above))
+				if is_surface:
+					surface_cells.append({
+						"pos": Vector2((x + ox) * ts + ts * 0.5, (y + oy) * ts + ts),
+						"phase": (x + ox) * 1.7 + (y + oy) * 2.3,
+					})
+				else:
+					wl.set_cell(Vector2i(x + ox, y + oy), 0,
+						Vector2i(MazeGenerator.shape_of(v), _water_row_of(_water_desc_of(v, x, y))))
+
+	if not surface_cells.is_empty():
+		var batch := WaterSurfaceBatch.new()
+		batch.setup(surface_cells, Level0.surface_texture, ts)
+		surf.add_child.call_deferred(batch)
 
 
 const BOOT_BUDGET_US := 8000
@@ -978,25 +990,24 @@ func _update_pickup_prompt() -> void:
 const WATER_BODY_SHADER := """
 shader_type canvas_item;
 
-// 水线在**世界坐标**里画:材质里 VERTEX 就是世界坐标,相机动不会让线错位。
-// (放在 post-process 里画时,uv 已被桶形畸变+裁剪,反推世界坐标不是仿射变换,水线会随视角变。)
 uniform sampler2D water_mask : filter_nearest, repeat_disable;
 uniform vec2 mask_grid = vec2(1.0);
 const float TILE_PX = 64.0;
 
 void fragment() {
 	vec4 t = texture(TEXTURE, UV) * COLOR;
-	// 横向波带:给 y 加一个随 x 走的正弦偏移 ⇒ 每条水平带是一条波浪线。
-	float wave = sin(VERTEX.x * 0.012 + TIME * 1.4) * 6.0;
-	float w = sin((VERTEX.y + wave) * 0.25);
-	float st = clamp(0.5 + 0.5 * w, 0.0, 1.0);
+	// 横向流动条纹(第一版):两层不同速度叠加,量化 3 档,只做乘性压暗。
+	float band = floor(VERTEX.y / 16.0);
+	float s1 = sin(VERTEX.x * 0.020 + TIME * 1.10 + band * 0.7);
+	float s2 = sin(VERTEX.x * 0.035 - TIME * 1.70 + band * 1.3);
+	float st = clamp(0.5 + 0.25 * s1 + 0.25 * s2, 0.0, 1.0);
 	st = floor(st * 3.0 + 0.5) / 3.0;
-	t.rgb *= mix(0.86, 1.0, st);
-	// 水线:格子的"上方不是墙"才画;带逐格相位的上下起伏(复刻原合批的顶点位移)。
+	t.rgb *= mix(0.88, 1.0, st);
+	// 水线:世界坐标里画,逐格相位起伏。
 	vec2 cell = floor(VERTEX / TILE_PX);
 	vec2 muv = (mod(cell, mask_grid) + 0.5) / mask_grid;
 	if (texture(water_mask, muv).b > 0.5) {
-		float fy = fract(VERTEX.y / TILE_PX);   // 0 = 格子顶边
+		float fy = fract(VERTEX.y / TILE_PX);
 		float phase = cell.x * 1.7 + cell.y * 2.3;
 		float lift = sin(TIME * 1.6 + phase) * (2.0 / TILE_PX);
 		if (fy < 0.15 + lift) {

@@ -29,16 +29,8 @@ void vertex() {
 }
 
 void fragment() {
-	vec4 t = texture(surf, UV);
-	// 横向条纹:两层不同速度叠加,量化成 3 档 ⇒ 像素风的"水在流"。
-	// 只做**乘性压暗**(0.88~1.0),不越过「世界层乘性链」的约束。
-	float band = floor(v_world.y / 16.0);
-	float s1 = sin(v_world.x * 0.020 + TIME * 1.10 + band * 0.7);
-	float s2 = sin(v_world.x * 0.035 - TIME * 1.70 + band * 1.3);
-	float st = clamp(0.5 + 0.25 * s1 + 0.25 * s2, 0.0, 1.0);
-	st = floor(st * 3.0 + 0.5) / 3.0;
-	t.rgb *= mix(0.88, 1.0, st);
-	COLOR = t;
+\t// ★ 合批只负责**顶点位移**(水面起伏);颜色/条纹交给水体材质,避免两套颜色互相打架。
+	COLOR = texture(surf, UV);
 }
 """
 
