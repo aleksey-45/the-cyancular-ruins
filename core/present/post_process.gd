@@ -197,7 +197,9 @@ func _bind_terrain_mask() -> void:
 			else:
 				img.set_pixel(x, y, air)
 	_mask_grid = Vector2(float(cols), float(rows))
-	_mat.set_shader_parameter("terrain_mask", ImageTexture.create_from_image(img))
+	var tex := ImageTexture.create_from_image(img)
+	_mat.set_shader_parameter("terrain_mask", tex)
+	_mat.set_shader_parameter("water_tex", tex)
 	_mat.set_shader_parameter("mask_grid", _mask_grid)
 	_mat.set_shader_parameter("mask_gain", 1.0)
 

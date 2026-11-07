@@ -84,7 +84,9 @@ uniform float ui_gain = 0.0;
 
 // ── 地形掩码 ── 烘好的数据纹理(不是视图通道):r > 0.5 = 这个像素是地形。
 // ★ 地形受光必须只作用在地形上,否则精灵会被地形那套"向上找顶面"的算法误伤(实测 10% 变暗)。
-uniform sampler2D terrain_mask : filter_nearest, repeat_disable;   // ★ 最近邻:逐格数据不该被插值糊
+uniform sampler2D terrain_mask : filter_nearest, repeat_disable;   // 地形分类:最近邻
+// 同一张掩码再绑一个**线性**采样器:水体深度/离岸要的是平滑场,不是逐格块。
+uniform sampler2D water_tex : filter_linear, repeat_disable;   // ★ 最近邻:逐格数据不该被插值糊
 uniform float mask_gain = 0.0;
 uniform vec2 mask_grid = vec2(1.0);     // 掩码的格数(cols, rows)
 // 世界坐标 → 格坐标要用相机的原点与缩放,由 PostProcess 每帧推。
@@ -203,11 +205,12 @@ vec3 _water_shade(vec2 suv, vec3 col) {
 	vec2 g = floor(wp / TILE_PX);
 	vec2 muv = (mod(g, mask_grid) + 0.5) / mask_grid;
 	vec4 m = texture(terrain_mask, muv);
+	vec4 wdat = texture(water_tex, muv);   // 线性采样 ⇒ 深度是连续场
 	if (m.r < 0.5 || m.g * 255.0 < 4.5) {
 		return col;
 	}
-	float depth = m.b;   // 0 浅 → 1 深
-	float shore = m.a;   // 0 贴岸 → 1 远
+	float depth = wdat.b;   // 0 浅 → 1 深(线性插值 ⇒ 整个水体是渐变)
+	float shore = wdat.a;   // 0 贴岸 → 1 远
 	// 深度色阶:量化 3 档 + 4×4 Bayer 抖动(和精灵形体光同一套),
 	// ★ 锚在**世界格坐标**:相机移动时棋盘不会在物体上"爬"。
 	float dq = clamp(depth, 0.0, 1.0);
