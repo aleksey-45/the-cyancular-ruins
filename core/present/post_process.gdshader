@@ -84,7 +84,7 @@ uniform float ui_gain = 0.0;
 
 // ── 地形掩码 ── 烘好的数据纹理(不是视图通道):r > 0.5 = 这个像素是地形。
 // ★ 地形受光必须只作用在地形上,否则精灵会被地形那套"向上找顶面"的算法误伤(实测 10% 变暗)。
-uniform sampler2D terrain_mask : filter_linear, repeat_disable;
+uniform sampler2D terrain_mask : filter_nearest, repeat_disable;   // ★ 最近邻:逐格数据不该被插值糊
 uniform float mask_gain = 0.0;
 uniform vec2 mask_grid = vec2(1.0);     // 掩码的格数(cols, rows)
 // 世界坐标 → 格坐标要用相机的原点与缩放,由 PostProcess 每帧推。
@@ -208,12 +208,18 @@ vec3 _water_shade(vec2 suv, vec3 col) {
 	}
 	float depth = m.b;   // 0 浅 → 1 深
 	float shore = m.a;   // 0 贴岸 → 1 远
-	// 深水:更暗、更冷(乘性,≤1)
-	col *= mix(vec3(1.0), vec3(0.62, 0.74, 0.92), depth);
-	// 岸边泡沫:离岸越近越亮,量化成 2 档(像素风)
-	float foam = 1.0 - smoothstep(0.0, 0.34, shore);
+	// 深度色阶:量化 3 档 + 4×4 Bayer 抖动(和精灵形体光同一套),
+	// ★ 锚在**世界格坐标**:相机移动时棋盘不会在物体上"爬"。
+	float dq = clamp(depth, 0.0, 1.0);
+	float b = _bayer2(floor(g)) - 0.5;
+	dq = clamp(dq + b / 3.0, 0.0, 1.0);
+	dq = floor(dq * 3.0 + 0.5) / 3.0;
+	col *= mix(vec3(1.0), vec3(0.42, 0.56, 0.80), dq);
+	// 岸边泡沫:离岸越近越亮;阈值随 TIME 起伏 ⇒ 水面合批删掉后仍然"水在动"。
+	float wobble = sin(TIME * 1.7 + g.x * 0.7 + g.y * 0.9) * 0.06;
+	float foam = 1.0 - smoothstep(0.0, 0.16 + wobble, shore);
 	foam = floor(foam * 2.0 + 0.5) / 2.0;
-	col += vec3(0.30, 0.42, 0.46) * foam * 0.55;
+	col += vec3(0.22, 0.32, 0.36) * foam * 0.22;
 	return col;
 }
 
