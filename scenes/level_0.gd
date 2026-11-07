@@ -207,7 +207,8 @@ func _ready() -> void:
 	Level0.water_layer = $WorldViewport/WaterLayer
 	Level0.water_surface_layer = $WorldViewport/WaterSurfaceLayer
 	Level0.water_layer.tile_set = _create_water_tileset()
-	Level0.water_layer.material = _make_water_body_material()
+	_water_body_mat = _make_water_body_material()
+	Level0.water_layer.material = _water_body_mat
 	LoadingScreen.set_progress(0.55, "铺设水体…")
 	_paint_water_copies(grid)
 
@@ -520,6 +521,7 @@ func _build_world_progressive(grid: Array[Array]) -> void:
 
 
 func _process(_delta: float) -> void:
+	_sync_water_mask()
 	# 时间场驱动(单机;先于实体各自的物理帧让模式生效——实体在 _physics_process 里查询)
 	if time_field != null and not pvp_mode:
 		_drive_time(_delta, Input.is_action_pressed("rewind"), Input.is_action_pressed("haste"))
@@ -975,18 +977,38 @@ func _update_pickup_prompt() -> void:
 #  锚屏幕的话相机一动图案就会在墙上"爬"。只做乘性压暗(0.88~1.0),不破「只压不抬」。
 const WATER_BODY_SHADER := """
 shader_type canvas_item;
+
+// 水线在**世界坐标**里画:材质里 VERTEX 就是世界坐标,相机动不会让线错位。
+// (放在 post-process 里画时,uv 已被桶形畸变+裁剪,反推世界坐标不是仿射变换,水线会随视角变。)
+uniform sampler2D water_mask : filter_nearest, repeat_disable;
+uniform vec2 mask_grid = vec2(1.0);
+const float TILE_PX = 64.0;
+
 void fragment() {
 	vec4 t = texture(TEXTURE, UV) * COLOR;
-	// ★ 条纹形状:**沿 x 起伏的水平波带**。做法是给 y 加上一个随 x 走的正弦偏移,
-	//   于是每一条水平带都变成一条波浪线(不是直条,也不是竖条)。
+	// 横向波带:给 y 加一个随 x 走的正弦偏移 ⇒ 每条水平带是一条波浪线。
 	float wave = sin(VERTEX.x * 0.012 + TIME * 1.4) * 6.0;
 	float w = sin((VERTEX.y + wave) * 0.25);
 	float st = clamp(0.5 + 0.5 * w, 0.0, 1.0);
 	st = floor(st * 3.0 + 0.5) / 3.0;
 	t.rgb *= mix(0.86, 1.0, st);
+	// 水线:格子的"上方不是墙"才画;带逐格相位的上下起伏(复刻原合批的顶点位移)。
+	vec2 cell = floor(VERTEX / TILE_PX);
+	vec2 muv = (mod(cell, mask_grid) + 0.5) / mask_grid;
+	if (texture(water_mask, muv).b > 0.5) {
+		float fy = fract(VERTEX.y / TILE_PX);   // 0 = 格子顶边
+		float phase = cell.x * 1.7 + cell.y * 2.3;
+		float lift = sin(TIME * 1.6 + phase) * (2.0 / TILE_PX);
+		if (fy < 0.15 + lift) {
+			t.rgb += vec3(0.28, 0.40, 0.45) * 0.35;
+		}
+	}
 	COLOR = t;
 }
 """
+
+
+var _water_body_mat: ShaderMaterial = null
 
 
 func _make_water_body_material() -> ShaderMaterial:
@@ -995,3 +1017,16 @@ func _make_water_body_material() -> ShaderMaterial:
 	var mat := ShaderMaterial.new()
 	mat.shader = sh
 	return mat
+
+
+func _sync_water_mask() -> void:
+	if _water_body_mat == null:
+		return
+	var pp := get_tree().get_first_node_in_group("post_process")
+	if pp == null or not pp.has_method("water_mask"):
+		return
+	var tex: Texture2D = pp.water_mask()
+	if tex == null:
+		return
+	_water_body_mat.set_shader_parameter("water_mask", tex)
+	_water_body_mat.set_shader_parameter("mask_grid", pp.mask_grid_size())

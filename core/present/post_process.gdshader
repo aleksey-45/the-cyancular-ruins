@@ -209,19 +209,7 @@ vec3 _water_shade(vec2 suv, vec3 col) {
 	if (m.r < 0.5 || m.g * 255.0 < 4.5) {
 		return col;
 	}
-	// ★ 只在"水面上方是空气"的格子,画一条 0.1 格宽的上端亮线。
-	//   内部水格、被墙压住的水面都不出现 —— 不是沿岸一圈发亮。
-	if (m.b > 0.5) {
-		float fy = fract(wp.y / TILE_PX);   // 0 = 格子顶边
-		// ★ 水线**上下起伏**:逐格相位 + 正弦,复刻原来 WaterSurfaceBatch 的顶点位移
-		//   (lift = sin(TIME*speed + phase) * amp,底边锚定、顶边浮动)。
-		//   1 世界px = 1/64 格;amp 取 2 世界px ⇒ 0.031。
-		float phase = floor(wp.x / TILE_PX) * 1.7 + floor(wp.y / TILE_PX) * 2.3;
-		float lift = sin(TIME * 1.6 + phase) * 0.031;
-		if (fy < 0.15 + lift) {
-			col += vec3(0.28, 0.40, 0.45) * 0.35;
-		}
-	}
+	// 水线已移到水体材质里画(那里有真正的世界坐标)。
 	return col;
 }
 

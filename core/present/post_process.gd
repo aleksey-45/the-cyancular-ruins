@@ -16,6 +16,7 @@ var _glow_cam: Camera2D = null      # 发光通道相机,每帧与世界相机�
 var _ui_vp: SubViewport = null      # UI 通道(不吃光照的辅助层)
 var _ui_cam: Camera2D = null        # UI 通道相机,同样每帧同步
 var _mask_grid := Vector2(1.0, 1.0)  # 地形掩码的格数(cols, rows)
+var _mask_tex: Texture2D = null     # 掩码纹理(水体材质要用它画水线)
 var _hit_red: float = 0.0   # 受击红闪当前强度(每帧衰减,见 flash_hit)
 var _film: float = 0.0             # 回溯底片化强度(Level0 每帧推)
 var _loan: float = 0.0
@@ -190,6 +191,7 @@ func _bind_terrain_mask() -> void:
 				img.set_pixel(x, y, air)
 	_mask_grid = Vector2(float(cols), float(rows))
 	var tex := ImageTexture.create_from_image(img)
+	_mask_tex = tex
 	_mat.set_shader_parameter("terrain_mask", tex)
 	_mat.set_shader_parameter("water_tex", tex)
 	_mat.set_shader_parameter("mask_grid", _mask_grid)
@@ -535,3 +537,13 @@ func _tick_low_hp(delta: float) -> void:
 	_low_hp_pulse += delta * lerpf(LOW_HP_BPM_LOW, LOW_HP_BPM_HIGH, _low_hp) / 60.0 * TAU
 	_mat.set_shader_parameter("low_hp", _low_hp)
 	_mat.set_shader_parameter("low_hp_pulse", _low_hp_pulse)
+
+
+## 供水体材质使用的掩码纹理与格数(水线在**世界坐标**里画,不能在 post-process 里画:
+#  post-process 的 uv 已经被桶形畸变+裁剪,反推世界坐标不是仿射变换,相机动一下格子就错位)。
+func water_mask() -> Texture2D:
+	return _mask_tex
+
+
+func mask_grid_size() -> Vector2:
+	return _mask_grid
