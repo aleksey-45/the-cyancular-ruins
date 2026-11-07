@@ -4,20 +4,41 @@ extends Node2D
 
 const SHADER_CODE := """
 shader_type canvas_item;
-uniform sampler2D surf;
+
+// 水面合批 shader。
+// ★ 之前只有**竖直**平移(幅度 2 世界px),经相机 0.75 后 ≈1.5 屏幕px,而且没有横向分量
+//   ⇒ 肉眼完全看不出"水在动"。这里补三件事:横向位移、两层错速条纹、位移 snap 到 2 世界px。
+
+varying vec2 v_world;
+
+uniform sampler2D surf : filter_nearest;   // ★ 必须最近邻:线性插值会把色阶磨成渐变
 uniform float sway_speed = 1.6;
 uniform float sway_amp = 2.0;
 uniform float tile_ts = 64.0;
+
 void vertex() {
 	// 相位烘在顶点色 r(0..1→0..TAU);格底相对高度 f 烘在 g(0=底边 1=顶边)。
-	// 位移 = f·sin·amp 纯平移:底边锚定不动,顶边 ±sway_amp(与原逐格缩放视觉一致)。
 	float f = COLOR.g;
-	float lift = sin(TIME * sway_speed + COLOR.r * 6.2831853) * (sway_amp * f);
-	VERTEX.y += lift;
+	float ph = COLOR.r * 6.2831853;
+	VERTEX.y += sin(TIME * sway_speed + ph) * (sway_amp * f);
+	// 横向:错相位、半幅度 —— 只有竖直位移时读不出流向。
+	VERTEX.x += sin(TIME * sway_speed * 0.6 + ph * 1.7) * (sway_amp * 0.5 * f);
+	// 像素化:位移 snap 到 2 世界px(1 美术像素 = 16 世界px 的 1/8,再细就是亚像素抖动)。
+	VERTEX = floor(VERTEX / 2.0 + 0.5) * 2.0;
+	v_world = VERTEX;
 }
+
 void fragment() {
-	// 顶点色仅作数据通道(r=相位,g=高度),不参与着色(照常采样水面贴图)
-	COLOR = texture(surf, UV);
+	vec4 t = texture(surf, UV);
+	// 横向条纹:两层不同速度叠加,量化成 3 档 ⇒ 像素风的"水在流"。
+	// 只做**乘性压暗**(0.88~1.0),不越过「世界层乘性链」的约束。
+	float band = floor(v_world.y / 16.0);
+	float s1 = sin(v_world.x * 0.020 + TIME * 1.10 + band * 0.7);
+	float s2 = sin(v_world.x * 0.035 - TIME * 1.70 + band * 1.3);
+	float st = clamp(0.5 + 0.25 * s1 + 0.25 * s2, 0.0, 1.0);
+	st = floor(st * 3.0 + 0.5) / 3.0;
+	t.rgb *= mix(0.88, 1.0, st);
+	COLOR = t;
 }
 """
 
@@ -83,7 +104,3 @@ func setup(cells: Array, tex: Texture2D, ts: int) -> void:
 	_mesh.mesh = mesh
 	_mesh.material = mat
 
-
-func _process(_delta: float) -> void:
-	if _mesh != null:
-		_mesh.queue_redraw()

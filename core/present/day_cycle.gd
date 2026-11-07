@@ -42,16 +42,18 @@ const SKY_KEYS := [
 	[0.0, Color("0a1220ff")],   # 子夜:最深
 	[2.0, Color("0b1526ff")],   # 后半夜:略回蓝
 	[3.5, Color("131f36ff")],   # 将明:开始抬亮
-	[5.0, Color("7f7a9eff")],   # 黎明:淡紫(从 6:00 提前 ⇒ 黑夜不再拖长)
+	[5.0, Color("8a6f9aff")],   # 黎明:带紫的晨光
+	[5.8, Color("c08a92ff")],   # 日出前:暖粉(黎明自己的"颜色时刻",与黄昏对称)
 	[6.5, Color("9fb9ccff")],   # 清晨
 	[12.0, Color("a5d5e6ff")],  # 正午:原版晴空(必须精确)
-	[16.5, Color("a7c4bfff")],  # 下午:偏暖偏淡
-	[18.0, Color("b87a52ff")],  # 黄昏:暖琥珀
-	[18.7, Color("a8606aff")],  # 玫红:拱高饱和度,避开直线中点的灰
-	[19.3, Color("6e5a9aff")],  # 紫罗兰
-	[19.9, Color("34407cff")],  # 靛蓝
-	[20.5, Color("22304fff")],  # 入夜
-	[22.0, Color("101a2eff")],  # 夜
+	[16.8, Color("a7c4bfff")],  # 下午:偏暖偏淡
+	[17.7, Color("c49277ff")],  # 傍晚:开始暖(比原来的 18:00 推后)
+	[18.3, Color("b87a52ff")],  # 黄昏:暖琥珀(峰值)
+	[18.9, Color("96687aff")],  # 玫红:降饱和,带灰紫
+	[19.5, Color("6e5a9aff")],  # 紫罗兰
+	[20.3, Color("34407cff")],  # 靛蓝
+	[21.0, Color("22304fff")],  # 入夜
+	[22.5, Color("101a2eff")],  # 夜
 	[24.0, Color("0a1220ff")],  # 回到子夜(与 0.0 同值 ⇒ 首尾连续)
 ]
 
@@ -139,3 +141,40 @@ static func sky_base(hour: float) -> Color:
 			var t := 0.0 if is_equal_approx(h1, h0) else (h - h0) / (h1 - h0)
 			return (SKY_KEYS[i][1] as Color).lerp(SKY_KEYS[i + 1][1] as Color, smoothstep(0.0, 1.0, t))
 	return SKY_KEYS[n - 1][1]
+
+# ── 地面/天空亮度比:按时段给定,插值得到"此刻地面该比天空暗多少" ──
+# ★ 为什么用**比值**而不是单一路径的 ambient:天空是绝对值、地面是"贴图 × ambient"。
+#   只调 ambient 的话,黄昏(天空亮、环境光已掉)会把建筑压成黑剪影;只调 link 又会在正午过曝。
+#   给定"每个时段地面是天空的百分之几",再由砖色亮度反推 ambient 就两边都对得上。
+# 取值依据:正午地面自然就比天空暗(砖反射率 ~0.48),其余时段按"天越暗、地面越贴近天空"抬。
+const SKY_LINK_KEYS := [
+	[0.0, 2.60],    # 子夜:天空极暗但月光照着地面 ⇒ 比值 >1
+	[4.5, 1.20],    # 凌晨:天空还没亮,别把地面抬得比午夜还亮
+	[5.5, 0.55],    # 天开始亮,地面跟上
+	[6.5, 0.72],    # 清晨:直接抬到位,别拖到 9 点
+	[9.0, 0.66],
+	[12.0, 0.62],   # 正午:自然值(砖反射率)
+	[15.0, 0.60],
+	[18.0, 0.62],
+	[18.7, 0.80],   # 黄昏:天空仍亮,故意抬高 ⇒ 建筑不再是黑剪影
+	[19.3, 0.90],   # 蓝调
+	[20.5, 1.30],
+	[21.0, 1.70],
+	[24.0, 2.60],   # 回到子夜(与 0.0 同值 ⇒ 首尾连续)
+]
+
+
+const BRICK_LUMA := 0.48
+
+
+## 某时刻"地面亮度 / 天空亮度"的目标比值(关键帧之间 smoothstep 插值)。
+static func sky_link(hour: float) -> float:
+	var h := fposmod(hour, 24.0)
+	var n := SKY_LINK_KEYS.size()
+	for i in range(n - 1):
+		var h0: float = SKY_LINK_KEYS[i][0]
+		var h1: float = SKY_LINK_KEYS[i + 1][0]
+		if h >= h0 and h <= h1:
+			var t := 0.0 if is_equal_approx(h1, h0) else (h - h0) / (h1 - h0)
+			return lerpf(SKY_LINK_KEYS[i][1], SKY_LINK_KEYS[i + 1][1], smoothstep(0.0, 1.0, t))
+	return SKY_LINK_KEYS[n - 1][1]

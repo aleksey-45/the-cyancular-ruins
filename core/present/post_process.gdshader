@@ -86,8 +86,11 @@ uniform float ui_gain = 0.0;
 // ★ 地形受光必须只作用在地形上,否则精灵会被地形那套"向上找顶面"的算法误伤(实测 10% 变暗)。
 uniform sampler2D terrain_mask : filter_linear, repeat_disable;
 uniform float mask_gain = 0.0;
-uniform vec2 mask_origin = vec2(0.0);   // 世界纹理 uv 空间的掩码原点
-uniform vec2 mask_scale = vec2(1.0);    // 掩码覆盖多少世界 uv
+uniform vec2 mask_grid = vec2(1.0);     // 掩码的格数(cols, rows)
+// 世界坐标 → 格坐标要用相机的原点与缩放,由 PostProcess 每帧推。
+uniform vec2 cam_origin = vec2(0.0);
+uniform float cam_zoom = 1.0;
+const float TILE_PX = 64.0;             // 世界格边长(像素)
 
 // ── 地形受光参数 ── 数值来自 lighting_params.tres(不在 .gd 里写死)。
 uniform float terrain_gain : hint_range(0.0, 0.8) = 0.25;
@@ -115,26 +118,64 @@ float _occ(vec2 suv) {
 	return texture(occ_tex, suv).a;
 }
 
-// ── 地形受光 ── 离"顶面"越远的实心像素越暗。
-// ★ 为什么这么做:TileMap 没有逐格法线,但后处理手上有整张 alpha 图。往上走一小段,
-//   第一次撞到空气的位置就是这块实心的"顶面";距离直接当受光程度的代理。
-//   ⇒ 墙的下半会暗、贴顶沿最亮 —— 这是几何,不是"按屏幕高度压暗"那种滤镜。
-// ★ 先撞到空气 / 走出屏幕就停;步长 6px、最多 8 步 ⇒ 覆盖 48px 深度,约 8 次采样。
+// ── 地形受光:**三向探测**求朝向,再按 NdotL 压暗 ──
+// ★ 为什么不是"只向上找顶面":那只给出上/下,墙的左右脸完全没有区别,
+//   太阳从左边还是右边来对建筑毫无影响 ⇒ 用户:建筑还是没有光影效果。
+// ★ 做法:从当前实心像素向上/左/右各走一小段,哪一侧先撞到空气,就说明表面朝那一侧。
+//   三个方向的距离合成一个近似外法线,再和太阳方向做点积。
+//   成本:3 × 8 步 ≈ 24 次 alpha 采样(只在实心像素上做)。
+float _march_steps(vec2 suv, vec2 dir, float step_uv) {
+	for (int i = 0; i < 8; i++) {
+		vec2 q = suv + dir * step_uv;
+		if (q.x < 0.0 || q.x > 1.0 || q.y < 0.0 || q.y > 1.0 || _occ(q) < SOLID_A) {
+			return float(i);
+		}
+		suv = q;
+	}
+	return 8.0;
+}
+
 float _terrain_lit(vec2 suv) {
 	if (_occ(suv) < SOLID_A) {
 		return 1.0;   // 空气:不参与(天空走另一条分支)
 	}
-	float step_uv = TERRAIN_STEP_PX / max(viewport_size.y, 1.0);
-	float d = 0.0;
-	for (int i = 0; i < 8; i++) {
-		vec2 q = suv - vec2(0.0, step_uv);
-		if (q.y < 0.0 || _occ(q) < SOLID_A) {
-			break;   // 撞到空气 = 这就是顶面
+	// 地形掩码:只有"真的是地形"才做受光,否则精灵会被误伤(它有自己的形体光)。
+	float mat_gain_mul = 1.0;
+	if (mask_gain > 0.5) {
+		vec2 wp = cam_origin + (suv * viewport_size - viewport_size * 0.5) / max(cam_zoom, 0.0001);
+		vec2 g = floor(wp / TILE_PX);
+		vec2 muv = (mod(g, mask_grid) + 0.5) / mask_grid;
+		vec4 m = texture(terrain_mask, muv);
+		if (m.r < 0.5) {
+			return 1.0;
 		}
-		d += TERRAIN_STEP_PX;
-		suv = q;
+		// G 通道 = 材质类:不同材质对同一束光的响应不同。
+		// 金属对比更强(硬、反光),树叶最软(透光、不该有硬阴影),木头居中。
+		float mid = m.g * 255.0;
+		if (mid > 0.5 && mid < 1.5) {
+			mat_gain_mul = 1.6;      // metal
+		} else if (mid > 1.5 && mid < 2.5) {
+			mat_gain_mul = 0.45;     // foliage
+		} else if (mid > 2.5 && mid < 3.5) {
+			mat_gain_mul = 0.75;     // wood
+		}
 	}
-	float t = clamp(d / max(terrain_depth_px, 1.0), 0.0, 1.0);
+	float su = TERRAIN_STEP_PX / max(viewport_size.y, 1.0);
+	float sv = TERRAIN_STEP_PX / max(viewport_size.x, 1.0);
+	float du = _march_steps(suv, vec2(0.0, -1.0), su);   // 向上(uv.y 向下,所以 -1)
+	float dl = _march_steps(suv, vec2(-1.0, 0.0), sv);
+	float dr = _march_steps(suv, vec2( 1.0, 0.0), sv);
+	// 哪个方向离空气越近,法线越偏向那边(1 - d/8)。
+	vec2 n = vec2(0.0, -1.0) * max(0.0, 1.0 - du / 8.0)
+			+ vec2(-1.0, 0.0) * max(0.0, 1.0 - dl / 8.0)
+			+ vec2( 1.0, 0.0) * max(0.0, 1.0 - dr / 8.0);
+	if (length(n) < 0.001) {
+		n = vec2(0.0, -1.0);
+	}
+	n = normalize(n);
+	// 太阳方向在 uv 空间(y 向下)与 sun_dir 同向。
+	float ndl = clamp(dot(n, normalize(sun_dir)), 0.0, 1.0);
+	float t = 1.0 - ndl;
 	if (terrain_steps >= 1.5) {
 		if (terrain_dither > 0.001) {
 			float b = _bayer2(suv * viewport_size / max(dither_px, 1.0)) - 0.5;
@@ -142,7 +183,7 @@ float _terrain_lit(vec2 suv) {
 		}
 		t = floor(t * terrain_steps + 0.5) / terrain_steps;
 	}
-	return 1.0 - terrain_gain * t;
+	return 1.0 - terrain_gain * mat_gain_mul * t;
 }
 
 void fragment() {
@@ -176,10 +217,13 @@ void fragment() {
 	// ★ 已删除旧的屏幕空间压暗(atmo_depth):它按屏幕高度压暗,同一面墙在屏幕上方就亮、
 	//   移到下方就暗 —— 那是滤镜不是光照,和"一切都很黑"是同一类问题。
 	vec3 lit_world = world.rgb * ambient_color * _terrain_lit(uv);
-	// 色相拉拢:保持亮度不变,只把色调拉向当前光源色(黄昏暖、夜里蓝、正午近白)。
+	// 色相拉拢:保持亮度不变,只把色调拉向当前光源色(黄昏暖、夜里蓝)。
+	// ★ 权重必须随"光源偏离白色多远"缩放:正午光源是白的,hue_w 就是同亮度的灰,
+	//   无条件混 50% 等于把饱和度砍半 —— 整屏发灰(用户:现在好灰啊)。
+	float tint_dev = clamp(length(ambient_hue - vec3(1.0)) * 2.0, 0.0, 1.0);
 	float lum_w = dot(lit_world, vec3(0.299, 0.587, 0.114));
 	vec3 hue_w = ambient_hue * lum_w;
-	lit_world = mix(lit_world, hue_w, amb_hue_mix);
+	lit_world = mix(lit_world, hue_w, amb_hue_mix * tint_dev);
 	COLOR = vec4(sky * (1.0 - world.a) + lit_world, 1.0);
 	// ── 光照:环境光(全局) + 斜投影影(按时段) 两项;方向性的体积感交给逐精灵的 form_light ──
 	// ★ 薄 z 的斜投影影:先沿光的方向**穿出自己的实体**(那段是自己,不算遮挡),出体之后

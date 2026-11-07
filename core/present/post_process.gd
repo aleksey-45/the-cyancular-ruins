@@ -15,6 +15,7 @@ var _glow_vp: SubViewport = null    # 发光通道(自动发现同级 GlowViewpo
 var _glow_cam: Camera2D = null      # 发光通道相机,每帧与世界相机同步
 var _ui_vp: SubViewport = null      # UI 通道(不吃光照的辅助层)
 var _ui_cam: Camera2D = null        # UI 通道相机,同样每帧同步
+var _mask_grid := Vector2(1.0, 1.0)  # 地形掩码的格数(cols, rows)
 var _hit_red: float = 0.0   # 受击红闪当前强度(每帧衰减,见 flash_hit)
 var _film: float = 0.0             # 回溯底片化强度(Level0 每帧推)
 var _loan: float = 0.0
@@ -159,7 +160,43 @@ func _bind_ui(host: Node) -> void:
 # 地形掩码是**烘好的数据纹理**,不是通道:地形是静态数据,没必要每帧重渲染一遍。
 # 用一条独立通道反而要复制 TileMapLayer 并同步 17 万格。
 func _bind_terrain_mask() -> void:
-	_mat.set_shader_parameter("mask_gain", 0.0)
+	# ★ 从**地图格数据**烘一张 1 像素/格 的掩码,而不是复制 TileMapLayer 到独立视口 ——
+	#   复制要同步 17 万格,那是渲染管线混乱的来源。地图数据本来就在内存里。
+	var grid: Array = MazeGenerator.current_grid
+	if grid.is_empty() or grid[0].is_empty():
+		_mat.set_shader_parameter("mask_gain", 0.0)
+		return
+	var rows := grid.size()
+	var cols: int = (grid[0] as Array).size()
+	var img := Image.create(cols, rows, false, Image.FORMAT_RGBA8)
+	var solid := Color(1.0, 1.0, 1.0, 1.0)
+	var air := Color(0.0, 0.0, 0.0, 1.0)
+	for y in rows:
+		var row: Array = grid[y]
+		for x in cols:
+			# G 通道存材质类(0=stone 1=metal 2=foliage 3=wood),着色器按它取不同的受光强度。
+			var tex_id: int = row[x] if row[x] is int else 0
+			var mat_id := TileDefs.material_id(tex_id) / 255.0
+			if TileDefs.is_blocked(row[x]):
+				img.set_pixel(x, y, Color(1.0, mat_id, 0.0, 1.0))
+			else:
+				img.set_pixel(x, y, air)
+	_mask_grid = Vector2(float(cols), float(rows))
+	_mat.set_shader_parameter("terrain_mask", ImageTexture.create_from_image(img))
+	_mat.set_shader_parameter("mask_grid", _mask_grid)
+	_mat.set_shader_parameter("mask_gain", 1.0)
+
+
+# 掩码采样要用"世界坐标 → 格坐标":每帧把相机原点/缩放推给 shader。
+func _sync_mask() -> void:
+	if _mat == null or world_viewport == null:
+		return
+	var cam := world_viewport.get_camera_2d()
+	if cam == null:
+		return
+	var center := cam.get_screen_center_position()
+	_mat.set_shader_parameter("cam_origin", Vector2(center))
+	_mat.set_shader_parameter("cam_zoom", maxf(cam.zoom.x, 0.0001))
 
 
 
@@ -251,6 +288,16 @@ func _push_sun() -> void:
 	# ★★ ① 环境光:唯一的亮度驱动量,乘性、≤ 1。正午恰为 1.0 = 原版亮度。
 	var moon_amt := moon_amount(day_hour)
 	var amb_amt := ambient_for(day_hour, moon_amt)
+	# ★ 地面亮度跟随**天空亮度**(按时段给定的比值表):
+	#   天空是绝对值、地面是"贴图 × ambient",两者不同源。给定"此刻地面应是天空的百分之几",
+	#   再由砖色亮度反推 ambient ⇒ 黄昏不会变成黑剪影,正午也不会过曝。
+	#   amb_sky_link 是总开关(0 = 关闭,1 = 完全按表)。
+	var link := lighting.amb_sky_link if lighting != null else 1.0
+	if link > 0.001:
+		var sky_luma_ref := sky_base(day_hour).get_luminance()
+		var target_link := DayCycle.sky_link(day_hour)
+		var wanted := lerpf(amb_amt, target_link * sky_luma_ref / DayCycle.BRICK_LUMA, link)
+		amb_amt = clampf(maxf(amb_amt, wanted), 0.0, 1.0)
 	# ★ 环境光**有颜色**:物理上它就是"天光颜色 × 强度"。这里从当前天空色里取色相/饱和、
 	#   丢掉亮度,再按 amb_tint_strength 和白色混合 ⇒ 黄昏偏暖橙、夜里偏蓝、正午近白。
 	#   三通道恒 ≤ 1(先按最大通道归一化),所以只染色不提亮,不破坏"永不发光"。
@@ -386,6 +433,7 @@ func set_time_effects(film: float, loan: float, haste: float) -> void:
 
 func _process(delta: float) -> void:
 	_sync_glow_camera()
+	_sync_mask()
 	if _hit_red > 0.0:
 		_hit_red = maxf(_hit_red - delta * 4.0, 0.0)   # 衰减放慢:微红可感知地停留 ~0.25s
 		if _mat != null:

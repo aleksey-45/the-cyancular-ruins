@@ -14,7 +14,9 @@ extends Resource
 ## 环境光染色强度:0 = 纯白环境光,1 = 完全按天空色的色相染色。三通道恒 ≤ 1,只染色不提亮。
 @export_range(0.0, 1.0, 0.01) var amb_tint_strength: float = 0.35
 ## 地面色相拉向光源的权重:0 = 纯乘(蓝墙在暖光下仍发蓝),1 = 完全取光源色相(只剩明暗)。
-@export_range(0.0, 1.0, 0.01) var amb_hue_mix: float = 0.4
+@export_range(0.0, 1.0, 0.01) var amb_hue_mix: float = 0.5
+## 地面亮度跟随天空亮度的系数:ambient 至少 = 天空亮度 × 该值(0 = 关闭)。
+@export_range(0.0, 2.0, 0.01) var amb_sky_link: float = 1.3
 ## 白天环境地板:受光方向项把亮度从"地板"顶到 1.0,不是把整屏一起压暗。
 @export_range(0.1, 1.0, 0.01) var amb_floor_day: float = 0.55
 ## 夜里环境地板。

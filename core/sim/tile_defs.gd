@@ -24,6 +24,13 @@ static var _elastic: PackedByteArray = PackedByteArray()
 static var _climb_speed: PackedFloat32Array = PackedFloat32Array()
 static var _climb_descent: PackedFloat32Array = PackedFloat32Array()
 static var _decay: PackedFloat32Array = PackedFloat32Array()
+# 材质类(渲染用):0=stone 1=metal 2=foliage 3=wood 4=water。来自 data/tile_defs.json 的 material 字段。
+static var _material: PackedByteArray = PackedByteArray()
+const MAT_STONE: int = 0
+const MAT_METAL: int = 1
+const MAT_FOLIAGE: int = 2
+const MAT_WOOD: int = 3
+const MAT_WATER: int = 4
 # 旧图集废弃槽位 → (base 纹理, hue 档) 的读时迁移表(data/tile_defs.json 的 legacy_texture_map 单一来源;0 = 非 legacy)。
 static var _legacy_base: PackedInt32Array = PackedInt32Array()
 static var _legacy_hue: PackedInt32Array = PackedInt32Array()
@@ -42,6 +49,7 @@ static func _ensure_tables() -> void:
 	_climb_speed.resize(n)
 	_climb_descent.resize(n)
 	_decay.resize(n)
+	_material.resize(n)
 	_legacy_base.resize(n)
 	_legacy_hue.resize(n)
 	_type.fill(TYPE_WALL)
@@ -55,6 +63,7 @@ static func _ensure_tables() -> void:
 	_legacy_hue.fill(0)
 	var fallback := float(_defs.get("explosion_decay", 0.75))
 	_decay.fill(fallback)
+	_material.fill(MAT_STONE)
 	var legacy: Dictionary = _defs.get("legacy_texture_map", {})
 	for key in legacy:
 		var ltex := int(String(key))
@@ -76,6 +85,7 @@ static func _ensure_tables() -> void:
 			tid = TYPE_GAS
 		_type[tex] = tid
 		_hp[tex] = int(d.get("hp", 1))
+		_material[tex] = _material_id_of(String(d.get("material", "stone")))
 		_bullet_destroyable[tex] = 1 if bool(d.get("bullet_destroyable", false)) else 0
 		_explosion_destroyable[tex] = 1 if bool(d.get("explosion_destroyable", false)) else 0
 		_elastic[tex] = 1 if bool(d.get("elastic", false)) else 0
@@ -392,3 +402,25 @@ static func damage_tile(cell: Vector2i, amount: int, source: String) -> bool:
 			on_destroyed.call(cell)
 		return true
 	return false
+
+
+static func _material_id_of(name: String) -> int:
+	match name:
+		"metal":
+			return MAT_METAL
+		"foliage":
+			return MAT_FOLIAGE
+		"wood":
+			return MAT_WOOD
+		"water":
+			return MAT_WATER
+		_:
+			return MAT_STONE
+
+
+## 某纹理的材质类(渲染用)。未加载定义时一律 stone,保证旧行为。
+static func material_id(tex: int) -> int:
+	_ensure_tables()
+	if tex <= 0 or tex >= _material.size():
+		return MAT_STONE
+	return _material[tex]
