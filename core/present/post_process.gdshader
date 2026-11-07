@@ -213,10 +213,7 @@ vec3 _water_shade(vec2 suv, vec3 col) {
 	float shore = wdat.a;   // 0 贴岸 → 1 远
 	// 深度色阶:量化 3 档 + 4×4 Bayer 抖动(和精灵形体光同一套),
 	// ★ 锚在**世界格坐标**:相机移动时棋盘不会在物体上"爬"。
-	// 光线衰减(Beer–Lambert 的简化):越深、光越少 ⇒ **连续**变暗且偏蓝。
-	// ★ 不做色阶/抖动:水体是连续的介质,硬色阶会读成"一格一格"。
-	float atten = exp(-2.4 * clamp(depth, 0.0, 1.0));
-	col *= mix(vec3(0.50, 0.68, 1.00), vec3(1.0), atten);
+	// ★ 深度衰减已放弃(用户):水体颜色只由水砖自身 + 环境光决定,不再按深度压暗。
 	// 岸边泡沫:离岸越近越亮;阈值随 TIME 起伏 ⇒ 水面合批删掉后仍然"水在动"。
 	float wobble = sin(TIME * 1.7 + g.x * 0.7 + g.y * 0.9) * 0.06;
 	float foam = 1.0 - smoothstep(0.0, 0.16 + wobble, shore);
