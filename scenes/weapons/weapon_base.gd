@@ -614,11 +614,12 @@ func _disk_overlaps_solid(center: Vector2) -> bool:
 	return TileQuery.rect_overlaps_solid(
 			Rect2(center - Vector2(r, r), Vector2(r * 2.0, r * 2.0)), GameParameters.TILE_SIZE)
 
-func _update_explosion_marker(show: bool) -> void:
+func _update_explosion_marker(visible_on: bool) -> void:
+	# ★ 参数不能叫 show:CanvasItem 有同名方法,会触发 SHADOWED_VARIABLE_BASE_CLASS。
 	if _explosion_marker == null:
 		return
-	_explosion_marker.visible = show
-	if show and _laser.points.size() > 0:
+	_explosion_marker.visible = visible_on
+	if visible_on and _laser.points.size() > 0:
 		_explosion_marker.position = _laser.points[_laser.points.size() - 1]
 
 func _recoil_recover(delta: float) -> void:

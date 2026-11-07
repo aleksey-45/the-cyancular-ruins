@@ -67,13 +67,14 @@ func _ready() -> void:
 	box.add_child(sub)
 
 
-func set_broadcast(show: bool, big_text: String, sub_text: String) -> void:
+func set_broadcast(visible_on: bool, big_text: String, sub_text: String) -> void:
+	# ★ 参数不能叫 show:CanvasItem 有同名方法(触发 SHADOWED_VARIABLE_BASE_CLASS)。
 	_clock.stop()
-	mask.visible = show
-	_center.visible = show
+	mask.visible = visible_on
+	_center.visible = visible_on
 	big.text = big_text
 	sub.text = sub_text
-	_punch = 1.0 if show else 0.0
+	_punch = 1.0 if visible_on else 0.0
 	_apply_punch()
 
 
