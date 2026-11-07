@@ -976,14 +976,15 @@ func _update_pickup_prompt() -> void:
 const WATER_BODY_SHADER := """
 shader_type canvas_item;
 void fragment() {
-	// ★ 必须乘上 COLOR(顶点色/调制):默认管线是 纹理×COLOR,直接覆盖会丢掉 tile 的 tint。
-	vec4 t = texture(TEXTURE, UV) * COLOR;
-	float band = floor(VERTEX.y / 16.0);
-	float s1 = sin(VERTEX.x * 0.020 + TIME * 1.10 + band * 0.7);
-	float s2 = sin(VERTEX.x * 0.035 - TIME * 1.70 + band * 1.3);
-	float st = clamp(0.5 + 0.25 * s1 + 0.25 * s2, 0.0, 1.0);
+	// 轻微的横向 UV 扰动 ⇒ 水面"上下起伏"的观感(TileMap 顶点动不了,只能动采样)。
+	float wob = sin(TIME * 1.3 + VERTEX.x * 0.015) * 0.012;
+	vec4 t = texture(TEXTURE, UV + vec2(wob, 0.0)) * COLOR;
+	// ★ 横向波纹:亮度随 **y** 变化(水平条带),条带相位被 x 和时间推着走 ⇒ 像水在流。
+	//   之前的写法用 x 做频率,得到的是竖条纹,方向反了。
+	float w = sin(VERTEX.y * 0.22 + sin(TIME * 1.6 + VERTEX.x * 0.02) * 1.8);
+	float st = clamp(0.5 + 0.5 * w, 0.0, 1.0);
 	st = floor(st * 3.0 + 0.5) / 3.0;
-	t.rgb *= mix(0.88, 1.0, st);
+	t.rgb *= mix(0.86, 1.0, st);
 	COLOR = t;
 }
 """
