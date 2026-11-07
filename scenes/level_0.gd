@@ -453,7 +453,6 @@ func _paint_water_copies(grid: Array[Array]) -> void:
 	var rows := grid.size()
 	var wl: TileMapLayer = Level0.water_layer
 	var surf: Node2D = Level0.water_surface_layer
-	var surface_cells: Array = []
 	var wzoom := maxf(0.01, PlayerParams.cam_zoom)
 	var x_limit := mini(cols, ceili(float(($WorldViewport as SubViewport).size.x) / (float(ts) * wzoom)) + RING_VIEW_MARGIN_SUB / 4 + 1)
 	var y_limit := mini(rows, ceili(float(($WorldViewport as SubViewport).size.y) / (float(ts) * wzoom)) + RING_VIEW_MARGIN_SUB / 4 + 1)
@@ -481,21 +480,12 @@ func _paint_water_copies(grid: Array[Array]) -> void:
 					continue
 				if not Water.is_liquid(MazeGenerator.texture_of(v)):
 					continue
-				var above: int = grid[posmod(y - 1, rows)][x]
-				var is_surface := above == 0 or not Water.is_liquid(MazeGenerator.texture_of(above))
-				if is_surface:
-					surface_cells.append({
-						"pos": Vector2((x + ox) * ts + ts * 0.5, (y + oy) * ts + ts),
-						"phase": (x + ox) * 1.7 + (y + oy) * 2.3,
-					})
-				else:
-					wl.set_cell(Vector2i(x + ox, y + oy), 0,
-						Vector2i(MazeGenerator.shape_of(v), _water_row_of(_water_desc_of(v, x, y))))
+				# ★ 只留**一层**:所有液体格(含水面格)都铺同一块水体砖。
+				#   之前水面格由合批再画一次 ⇒ 双层 alpha(0.969) ⇒ 水面永远比水体亮,
+				#   靠叠层永远消不掉色差。波动改由水体材质的 UV 扰动承担。
+				wl.set_cell(Vector2i(x + ox, y + oy), 0,
+					Vector2i(MazeGenerator.shape_of(v), _water_row_of(_water_desc_of(v, x, y))))
 
-	if not surface_cells.is_empty():
-		var batch := WaterSurfaceBatch.new()
-		batch.setup(surface_cells, Level0.surface_texture, ts)
-		surf.add_child.call_deferred(batch)
 
 
 const BOOT_BUDGET_US := 8000
@@ -987,7 +977,9 @@ func _update_pickup_prompt() -> void:
 const WATER_BODY_SHADER := """
 shader_type canvas_item;
 void fragment() {
-	vec4 t = texture(TEXTURE, UV) * COLOR;
+	// 波动:UV 上下轻微扰动(TileMap 顶点动不了,只能动采样)。
+	float wob = sin(TIME * 1.6 + VERTEX.x * 0.02) * 0.015;
+	vec4 t = texture(TEXTURE, UV + vec2(0.0, wob)) * COLOR;
 	float band = floor(VERTEX.y / 16.0);
 	float s1 = sin(VERTEX.x * 0.020 + TIME * 1.10 + band * 0.7);
 	float s2 = sin(VERTEX.x * 0.035 - TIME * 1.70 + band * 1.3);
