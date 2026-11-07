@@ -454,7 +454,7 @@ func _paint_water_copies(grid: Array[Array]) -> void:
 	var rows := grid.size()
 	var wl: TileMapLayer = Level0.water_layer
 	var surf: Node2D = Level0.water_surface_layer
-	var surface_cells: Array = []
+	var surface_by_desc: Dictionary = {}   # 描述符 → 该行的水面格(合批必须按 tint 行分桶)
 	var wzoom := maxf(0.01, PlayerParams.cam_zoom)
 	var x_limit := mini(cols, ceili(float(($WorldViewport as SubViewport).size.x) / (float(ts) * wzoom)) + RING_VIEW_MARGIN_SUB / 4 + 1)
 	var y_limit := mini(rows, ceili(float(($WorldViewport as SubViewport).size.y) / (float(ts) * wzoom)) + RING_VIEW_MARGIN_SUB / 4 + 1)
@@ -485,7 +485,10 @@ func _paint_water_copies(grid: Array[Array]) -> void:
 				var above: int = grid[posmod(y - 1, rows)][x]
 				var is_surface := above == 0 or not Water.is_liquid(MazeGenerator.texture_of(above))
 				if is_surface:
-					surface_cells.append({
+					var d: int = _water_desc_of(v, x, y)
+					if not surface_by_desc.has(d):
+						surface_by_desc[d] = []
+					(surface_by_desc[d] as Array).append({
 						"pos": Vector2((x + ox) * ts + ts * 0.5, (y + oy) * ts + ts),
 						"phase": (x + ox) * 1.7 + (y + oy) * 2.3,
 					})
@@ -493,9 +496,15 @@ func _paint_water_copies(grid: Array[Array]) -> void:
 					wl.set_cell(Vector2i(x + ox, y + oy), 0,
 						Vector2i(MazeGenerator.shape_of(v), _water_row_of(_water_desc_of(v, x, y))))
 
-	if not surface_cells.is_empty():
+	# ★ 水面合批按**描述符分桶**:每桶用自己的 tint 砖 → 水面与水体颜色一致
+	#   (此前水面恒采样中性砖,地图给水格上辅码时会和水体产生色差 = 已登记的债)。
+	for d in surface_by_desc:
+		var cells: Array = surface_by_desc[d]
+		if cells.is_empty():
+			continue
+		var tex := ImageTexture.create_from_image(TerrainAtlas._tinted_water_brick(ts, int(d)))
 		var batch := WaterSurfaceBatch.new()
-		batch.setup(surface_cells, Level0.surface_texture, ts)
+		batch.setup(cells, tex, ts)
 		surf.add_child.call_deferred(batch)
 
 
