@@ -296,8 +296,9 @@ func _create_water_tileset() -> TileSet:
 	_water_row = built["row_of"]
 	if _surface_tex_key != key:
 		_surface_tex_key = key
+		# ★ 水面与水体用**同一张砖**:颜色必须一致,顶边的亮带改由后处理的上表面亮线提供。
 		Level0.surface_texture = ImageTexture.create_from_image(
-				TerrainAtlas.water_brick_image(ts, TerrainAtlas.WATER_SURFACE_BRICK))
+				TerrainAtlas.water_brick_image(ts, TerrainAtlas.WATER_BODY_BRICK))
 	return built["tileset"]
 
 
