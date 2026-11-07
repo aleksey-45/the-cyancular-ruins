@@ -453,7 +453,8 @@ func _paint_water_copies(grid: Array[Array]) -> void:
 	var rows := grid.size()
 	var wl: TileMapLayer = Level0.water_layer
 	var surf: Node2D = Level0.water_surface_layer
-	var surface_cells: Array = []
+	# ★ 水面合批(WaterSurfaceBatch)已移除:波纹/流动由**水体层材质**在着色器里做,
+	#   再保留一套逐格顶点位移的 sprite/网格动画就是冗余的两套实现。
 	var wzoom := maxf(0.01, PlayerParams.cam_zoom)
 	var x_limit := mini(cols, ceili(float(($WorldViewport as SubViewport).size.x) / (float(ts) * wzoom)) + RING_VIEW_MARGIN_SUB / 4 + 1)
 	var y_limit := mini(rows, ceili(float(($WorldViewport as SubViewport).size.y) / (float(ts) * wzoom)) + RING_VIEW_MARGIN_SUB / 4 + 1)
@@ -481,21 +482,8 @@ func _paint_water_copies(grid: Array[Array]) -> void:
 					continue
 				if not Water.is_liquid(MazeGenerator.texture_of(v)):
 					continue
-				var above: int = grid[posmod(y - 1, rows)][x]
-				var is_surface := above == 0 or not Water.is_liquid(MazeGenerator.texture_of(above))
-				if is_surface:
-					surface_cells.append({
-						"pos": Vector2((x + ox) * ts + ts * 0.5, (y + oy) * ts + ts),
-						"phase": (x + ox) * 1.7 + (y + oy) * 2.3,
-					})
-				else:
-					wl.set_cell(Vector2i(x + ox, y + oy), 0,
-						Vector2i(MazeGenerator.shape_of(v), _water_row_of(_water_desc_of(v, x, y))))
-
-	if not surface_cells.is_empty():
-		var batch := WaterSurfaceBatch.new()
-		batch.setup(surface_cells, Level0.surface_texture, ts)
-		surf.add_child.call_deferred(batch)
+				wl.set_cell(Vector2i(x + ox, y + oy), 0,
+					Vector2i(MazeGenerator.shape_of(v), _water_row_of(_water_desc_of(v, x, y))))
 
 
 const BOOT_BUDGET_US := 8000

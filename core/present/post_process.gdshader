@@ -213,7 +213,7 @@ vec3 _water_shade(vec2 suv, vec3 col) {
 	//   内部水格、被墙压住的水面都不出现 —— 不是沿岸一圈发亮。
 	if (m.b > 0.5) {
 		float fy = fract(wp.y / TILE_PX);   // 0 = 格子顶边
-		if (fy < 0.1) {
+		if (fy < 0.2) {
 			col += vec3(0.28, 0.40, 0.45) * 0.35;
 		}
 	}
