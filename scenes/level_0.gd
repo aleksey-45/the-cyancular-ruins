@@ -3,7 +3,6 @@ extends Node2D
 
 static var wall_layer: TileMapLayer = null
 static var water_layer: TileMapLayer = null
-static var surface_texture: Texture2D = null
 static var water_surface_layer: Node2D = null
 static var _grid_ref: Array[Array] = []
 static var _pristine_grid: Array[Array] = []
@@ -23,7 +22,6 @@ static var pvp_mode: bool = false
 # 图集只随地图变:同一进程里重开/换模式时直接复用,重建一次 ~130ms(墙体 87 + 水体 42)。
 static var _wall_ts_cache: Dictionary = {}
 static var _water_ts_cache: Dictionary = {}
-static var _surface_tex_key := ""
 
 
 static var _switching: bool = false
@@ -295,11 +293,6 @@ func _create_water_tileset() -> TileSet:
 		built = TerrainAtlas.make_water_tileset_for(ts, descs)
 		_water_ts_cache[key] = built
 	_water_row = built["row_of"]
-	if _surface_tex_key != key:
-		_surface_tex_key = key
-		# ★ 水面与水体用**同一张砖**:颜色必须一致,顶边的亮带改由后处理的上表面亮线提供。
-		Level0.surface_texture = ImageTexture.create_from_image(
-				TerrainAtlas.water_brick_image(ts, TerrainAtlas.WATER_BODY_BRICK))
 	return built["tileset"]
 
 
