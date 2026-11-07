@@ -207,6 +207,7 @@ func _ready() -> void:
 	Level0.water_layer = $WorldViewport/WaterLayer
 	Level0.water_surface_layer = $WorldViewport/WaterSurfaceLayer
 	Level0.water_layer.tile_set = _create_water_tileset()
+	Level0.water_layer.material = _make_water_body_material()
 	LoadingScreen.set_progress(0.55, "铺设水体…")
 	_paint_water_copies(grid)
 
@@ -295,8 +296,9 @@ func _create_water_tileset() -> TileSet:
 	_water_row = built["row_of"]
 	if _surface_tex_key != key:
 		_surface_tex_key = key
+		# ★ 水面与水体用**同一张砖**:两层颜色必须一致。
 		Level0.surface_texture = ImageTexture.create_from_image(
-				TerrainAtlas.water_brick_image(ts, TerrainAtlas.WATER_SURFACE_BRICK))
+				TerrainAtlas.water_brick_image(ts, TerrainAtlas.WATER_BODY_BRICK))
 	return built["tileset"]
 
 
@@ -980,3 +982,26 @@ func _update_pickup_prompt() -> void:
 						pk.canonical_pos, pl.global_position, w, h).length()
 				can = d <= PlayerParams.weapon_pickup_radius
 		pk.set_prompt_visible(can)
+
+## 水体层的横向流动条纹:与水面合批同一套公式(第一版),只做乘性压暗。
+const WATER_BODY_SHADER := """
+shader_type canvas_item;
+void fragment() {
+	vec4 t = texture(TEXTURE, UV) * COLOR;
+	float band = floor(VERTEX.y / 16.0);
+	float s1 = sin(VERTEX.x * 0.020 + TIME * 1.10 + band * 0.7);
+	float s2 = sin(VERTEX.x * 0.035 - TIME * 1.70 + band * 1.3);
+	float st = clamp(0.5 + 0.25 * s1 + 0.25 * s2, 0.0, 1.0);
+	st = floor(st * 3.0 + 0.5) / 3.0;
+	t.rgb *= mix(0.88, 1.0, st);
+	COLOR = t;
+}
+"""
+
+
+func _make_water_body_material() -> ShaderMaterial:
+	var sh := Shader.new()
+	sh.code = WATER_BODY_SHADER
+	var mat := ShaderMaterial.new()
+	mat.shader = sh
+	return mat
