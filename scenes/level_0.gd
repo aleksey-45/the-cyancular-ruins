@@ -976,12 +976,11 @@ func _update_pickup_prompt() -> void:
 const WATER_BODY_SHADER := """
 shader_type canvas_item;
 void fragment() {
-	// 轻微的横向 UV 扰动 ⇒ 水面"上下起伏"的观感(TileMap 顶点动不了,只能动采样)。
-	float wob = sin(TIME * 1.3 + VERTEX.x * 0.015) * 0.012;
-	vec4 t = texture(TEXTURE, UV + vec2(wob, 0.0)) * COLOR;
-	// ★ 横向波纹:亮度随 **y** 变化(水平条带),条带相位被 x 和时间推着走 ⇒ 像水在流。
-	//   之前的写法用 x 做频率,得到的是竖条纹,方向反了。
-	float w = sin(VERTEX.y * 0.22 + sin(TIME * 1.6 + VERTEX.x * 0.02) * 1.8);
+	vec4 t = texture(TEXTURE, UV) * COLOR;
+	// ★ 条纹形状:**沿 x 起伏的水平波带**。做法是给 y 加上一个随 x 走的正弦偏移,
+	//   于是每一条水平带都变成一条波浪线(不是直条,也不是竖条)。
+	float wave = sin(VERTEX.x * 0.012 + TIME * 1.4) * 6.0;
+	float w = sin((VERTEX.y + wave) * 0.25);
 	float st = clamp(0.5 + 0.5 * w, 0.0, 1.0);
 	st = floor(st * 3.0 + 0.5) / 3.0;
 	t.rgb *= mix(0.86, 1.0, st);

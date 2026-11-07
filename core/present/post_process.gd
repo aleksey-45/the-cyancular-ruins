@@ -180,8 +180,11 @@ func _bind_terrain_mask() -> void:
 				img.set_pixel(x, y, Color(1.0, TileDefs.material_id(v) / 255.0, 0.0, 1.0))
 			elif v != 0 and Water.is_liquid(MazeGenerator.texture_of(v)):
 				# B=1 表示"这一格的水面上方是空气" ⇒ 只有真正的上表面画亮线。
+				# ★ 上方不是**墙**就算露头(空气/梯子/锁链都算)——之前只认空气,
+				#   于是 passage 格(梯子、锁链)上面的水面就没有水线。
 				var above: int = grid[posmod(y - 1, rows)][x]
-				var top_exposed := 1.0 if above == 0 else 0.0
+				var above_open := not TileDefs.is_blocked(above) and not Water.is_liquid(MazeGenerator.texture_of(above))
+				var top_exposed := 1.0 if above_open else 0.0
 				img.set_pixel(x, y, Color(1.0, 5.0 / 255.0, top_exposed, 0.0))
 			else:
 				img.set_pixel(x, y, air)
