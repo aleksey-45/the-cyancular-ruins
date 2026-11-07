@@ -179,21 +179,10 @@ func _bind_terrain_mask() -> void:
 			if TileDefs.is_blocked(v):
 				img.set_pixel(x, y, Color(1.0, TileDefs.material_id(v) / 255.0, 0.0, 1.0))
 			elif v != 0 and Water.is_liquid(MazeGenerator.texture_of(v)):
-				# ★ 水深/离岸是**数据**:拿到它才能做深度色阶和岸边泡沫。
-				var depth := 0
-				for k in range(1, 13):
-					var vv: int = grid[posmod(y - k, rows)][x]
-					if vv == 0 or not Water.is_liquid(MazeGenerator.texture_of(vv)):
-						break
-					depth += 1
-				var shore := 6
-				for dir in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
-					for k in range(1, 7):
-						var vv2: int = grid[posmod(y + dir.y * k, rows)][posmod(x + dir.x * k, cols)]
-						if vv2 == 0 or not Water.is_liquid(MazeGenerator.texture_of(vv2)):
-							shore = mini(shore, k - 1)
-							break
-				img.set_pixel(x, y, Color(1.0, 5.0 / 255.0, float(depth) / 12.0, float(shore) / 6.0))
+				# B=1 表示"这一格的水面上方是空气" ⇒ 只有真正的上表面画亮线。
+				var above: int = grid[posmod(y - 1, rows)][x]
+				var top_exposed := 1.0 if above == 0 else 0.0
+				img.set_pixel(x, y, Color(1.0, 5.0 / 255.0, top_exposed, 0.0))
 			else:
 				img.set_pixel(x, y, air)
 	_mask_grid = Vector2(float(cols), float(rows))

@@ -209,16 +209,14 @@ vec3 _water_shade(vec2 suv, vec3 col) {
 	if (m.r < 0.5 || m.g * 255.0 < 4.5) {
 		return col;
 	}
-	float depth = wdat.b;   // 0 浅 → 1 深(线性插值 ⇒ 整个水体是渐变)
-	float shore = wdat.a;   // 0 贴岸 → 1 远
-	// 深度色阶:量化 3 档 + 4×4 Bayer 抖动(和精灵形体光同一套),
-	// ★ 锚在**世界格坐标**:相机移动时棋盘不会在物体上"爬"。
-	// ★ 深度衰减已放弃(用户):水体颜色只由水砖自身 + 环境光决定,不再按深度压暗。
-	// 岸边泡沫:离岸越近越亮;阈值随 TIME 起伏 ⇒ 水面合批删掉后仍然"水在动"。
-	float wobble = sin(TIME * 1.7 + g.x * 0.7 + g.y * 0.9) * 0.06;
-	float foam = 1.0 - smoothstep(0.0, 0.16 + wobble, shore);
-	foam = floor(foam * 2.0 + 0.5) / 2.0;
-	col += vec3(0.22, 0.32, 0.36) * foam * 0.22;
+	// ★ 只在"水面上方是空气"的格子,画一条 0.1 格宽的上端亮线。
+	//   内部水格、被墙压住的水面都不出现 —— 不是沿岸一圈发亮。
+	if (m.b > 0.5) {
+		float fy = fract(wp.y / TILE_PX);   // 0 = 格子顶边
+		if (fy < 0.1) {
+			col += vec3(0.28, 0.40, 0.45) * 0.35;
+		}
+	}
 	return col;
 }
 
