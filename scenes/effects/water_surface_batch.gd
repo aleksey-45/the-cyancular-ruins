@@ -5,33 +5,26 @@ extends Node2D
 const SHADER_CODE := """
 shader_type canvas_item;
 
-// 水面合批 shader。
-// ★ 之前只有**竖直**平移(幅度 2 世界px),经相机 0.75 后 ≈1.5 屏幕px,而且没有横向分量
-//   ⇒ 肉眼完全看不出"水在动"。这里补三件事:横向位移、两层错速条纹、位移 snap 到 2 世界px。
-
+// 水体合批:**所有**液体格都走这一条管线(水面砖/水体砖只是图集里不同的 UV 行)。
+// 这样同色、同 alpha、同条纹、同起伏,不存在"两条管线对不齐"的接缝。
 varying vec2 v_world;
 
-uniform sampler2D surf : filter_nearest;   // ★ 必须最近邻:线性插值会把色阶磨成渐变
+uniform sampler2D surf : filter_nearest;
 uniform float sway_speed = 1.6;
 uniform float sway_amp = 2.0;
 uniform float tile_ts = 64.0;
 
 void vertex() {
-	// 相位烘在顶点色 r(0..1→0..TAU);格底相对高度 f 烘在 g(0=底边 1=顶边)。
-	float f = COLOR.g;
-	float ph = COLOR.r * 6.2831853;
-	VERTEX.y += sin(TIME * sway_speed + ph) * (sway_amp * f);
-	// 横向:错相位、半幅度 —— 只有竖直位移时读不出流向。
-	VERTEX.x += sin(TIME * sway_speed * 0.6 + ph * 1.7) * (sway_amp * 0.5 * f);
-	// 像素化:位移 snap 到 2 世界px(1 美术像素 = 16 世界px 的 1/8,再细就是亚像素抖动)。
-	VERTEX = floor(VERTEX / 2.0 + 0.5) * 2.0;
+	// 顶点色:r=相位(0..1→0..TAU),g=本顶点的位移权重(底边 0 / 顶边随深度衰减)。
+	float w = COLOR.g;
+	float lift = sin(TIME * sway_speed + COLOR.r * 6.2831853) * (sway_amp * w);
+	VERTEX.y += lift;
 	v_world = VERTEX;
 }
 
 void fragment() {
 	vec4 t = texture(surf, UV);
-	// 横向条纹:两层不同速度叠加,量化成 3 档 ⇒ 像素风的"水在流"。
-	// 只做**乘性压暗**(0.88~1.0),不越过「世界层乘性链」的约束。
+	// 横向流动条纹:与水体材质同一套公式,锚世界坐标。
 	float band = floor(v_world.y / 16.0);
 	float s1 = sin(v_world.x * 0.020 + TIME * 1.10 + band * 0.7);
 	float s2 = sin(v_world.x * 0.035 - TIME * 1.70 + band * 1.3);
@@ -57,10 +50,13 @@ func setup(cells: Array, tex: Texture2D, ts: int) -> void:
 	var idx := PackedInt32Array()
 	var vi := 0
 	for c in cells:
-		var pos: Vector2 = c["pos"]
+		var pos: Vector2 = c["pos"]           # 格子底边中心
 		var ph := fposmod(float(c["phase"]), TAU) / TAU
-		var tint_bottom := Color(ph, 0.0, 0.0, 1.0)
-		var tint_top := Color(ph, 1.0, 0.0, 1.0)
+		var w := float(c.get("weight", 1.0))  # 位移权重(顶点色 g)
+		# 图集两行:上半(y 0..ts)= 水体砖,下半(y ts..2ts)= 水面砖。
+		var v0 := 0.5 if bool(c.get("surface", false)) else 0.0
+		var c_bottom := Color(ph, 0.0, 0.0, 1.0)
+		var c_top := Color(ph, w, 0.0, 1.0)
 		var bl := Vector2(pos.x - half, pos.y)
 		var br := Vector2(pos.x + half, pos.y)
 		var tr := Vector2(pos.x + half, pos.y - ts)
@@ -69,14 +65,14 @@ func setup(cells: Array, tex: Texture2D, ts: int) -> void:
 		verts.append(Vector3(br.x, br.y, 0))
 		verts.append(Vector3(tr.x, tr.y, 0))
 		verts.append(Vector3(tl.x, tl.y, 0))
-		uvs.append(Vector2(0, 1))
-		uvs.append(Vector2(1, 1))
-		uvs.append(Vector2(1, 0))
-		uvs.append(Vector2(0, 0))
-		cols.append(tint_bottom)
-		cols.append(tint_bottom)
-		cols.append(tint_top)
-		cols.append(tint_top)
+		uvs.append(Vector2(0, v0 + 0.5))
+		uvs.append(Vector2(1, v0 + 0.5))
+		uvs.append(Vector2(1, v0))
+		uvs.append(Vector2(0, v0))
+		cols.append(c_bottom)
+		cols.append(c_bottom)
+		cols.append(c_top)
+		cols.append(c_top)
 		idx.append(vi)
 		idx.append(vi + 1)
 		idx.append(vi + 2)
@@ -103,4 +99,3 @@ func setup(cells: Array, tex: Texture2D, ts: int) -> void:
 	mat.set_shader_parameter("tile_ts", float(ts))
 	_mesh.mesh = mesh
 	_mesh.material = mat
-

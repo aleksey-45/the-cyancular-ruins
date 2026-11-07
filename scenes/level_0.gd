@@ -207,7 +207,6 @@ func _ready() -> void:
 	Level0.water_layer = $WorldViewport/WaterLayer
 	Level0.water_surface_layer = $WorldViewport/WaterSurfaceLayer
 	Level0.water_layer.tile_set = _create_water_tileset()
-	Level0.water_layer.material = _make_water_body_material()
 	LoadingScreen.set_progress(0.55, "铺设水体…")
 	_paint_water_copies(grid)
 
@@ -451,8 +450,8 @@ func _paint_water_copies(grid: Array[Array]) -> void:
 	var ts := GameParameters.TILE_SIZE
 	var cols := grid[0].size()
 	var rows := grid.size()
-	var wl: TileMapLayer = Level0.water_layer
 	var surf: Node2D = Level0.water_surface_layer
+	var surface_by_desc: Dictionary = {}   # 描述符 → 该描述符下的所有液体格
 	var wzoom := maxf(0.01, PlayerParams.cam_zoom)
 	var x_limit := mini(cols, ceili(float(($WorldViewport as SubViewport).size.x) / (float(ts) * wzoom)) + RING_VIEW_MARGIN_SUB / 4 + 1)
 	var y_limit := mini(rows, ceili(float(($WorldViewport as SubViewport).size.y) / (float(ts) * wzoom)) + RING_VIEW_MARGIN_SUB / 4 + 1)
@@ -480,11 +479,37 @@ func _paint_water_copies(grid: Array[Array]) -> void:
 					continue
 				if not Water.is_liquid(MazeGenerator.texture_of(v)):
 					continue
-				# ★ 只留**一层**:所有液体格(含水面格)都铺同一块水体砖。
-				#   之前水面格由合批再画一次 ⇒ 双层 alpha(0.969) ⇒ 水面永远比水体亮,
-				#   靠叠层永远消不掉色差。波动改由水体材质的 UV 扰动承担。
-				wl.set_cell(Vector2i(x + ox, y + oy), 0,
-					Vector2i(MazeGenerator.shape_of(v), _water_row_of(_water_desc_of(v, x, y))))
+				# ★ 每格**只画一次**(单层 ⇒ 同色):水面格交给合批(它负责顶点起伏),
+				#   其余格铺进 TileMap(材质负责条纹)。两边用同一块砖、同一套条纹公式。
+				# ★ 所有液体格都进**同一条管线**(合批):水面砖/水体砖只是图集里不同的 UV 行。
+				var above: int = grid[posmod(y - 1, rows)][x]
+				var is_surface := above == 0 or not Water.is_liquid(MazeGenerator.texture_of(above))
+				var depth := 0
+				for k in range(1, 13):
+					var vv: int = grid[posmod(y - k, rows)][x]
+					if vv == 0 or not Water.is_liquid(MazeGenerator.texture_of(vv)):
+						break
+					depth += 1
+				var d: int = _water_desc_of(v, x, y)
+				if not surface_by_desc.has(d):
+					surface_by_desc[d] = []
+				(surface_by_desc[d] as Array).append({
+					"pos": Vector2((x + ox) * ts + ts * 0.5, (y + oy) * ts + ts),
+					"phase": (x + ox) * 1.7 + (y + oy) * 2.3,
+					"surface": is_surface,
+					"weight": maxf(0.0, 1.0 - float(depth) * 0.25),   # 越深越不动
+				})
+
+	# ★ 按**描述符分桶**:每桶用自己的 tint 砖。水面若恒用中性砖,而水体按辅码 tint 过,
+	#   两层就会有色差(registered-debt 里那条"水面合批不消费辅码")。
+	for d in surface_by_desc:
+		var cells: Array = surface_by_desc[d]
+		if cells.is_empty():
+			continue
+		var tex := ImageTexture.create_from_image(_make_water_atlas(ts, int(d)))
+		var batch := WaterSurfaceBatch.new()
+		batch.setup(cells, tex, ts)
+		surf.add_child.call_deferred(batch)
 
 
 
@@ -974,26 +999,14 @@ func _update_pickup_prompt() -> void:
 		pk.set_prompt_visible(can)
 
 ## 水体层的横向流动条纹:与水面合批同一套公式(第一版),只做乘性压暗。
-const WATER_BODY_SHADER := """
-shader_type canvas_item;
-void fragment() {
-	// 波动:UV 上下轻微扰动(TileMap 顶点动不了,只能动采样)。
-	float wob = sin(TIME * 1.6 + VERTEX.x * 0.02) * 0.015;
-	vec4 t = texture(TEXTURE, UV + vec2(0.0, wob)) * COLOR;
-	float band = floor(VERTEX.y / 16.0);
-	float s1 = sin(VERTEX.x * 0.020 + TIME * 1.10 + band * 0.7);
-	float s2 = sin(VERTEX.x * 0.035 - TIME * 1.70 + band * 1.3);
-	float st = clamp(0.5 + 0.25 * s1 + 0.25 * s2, 0.0, 1.0);
-	st = floor(st * 3.0 + 0.5) / 3.0;
-	t.rgb *= mix(0.88, 1.0, st);
-	COLOR = t;
-}
-"""
 
 
-func _make_water_body_material() -> ShaderMaterial:
-	var sh := Shader.new()
-	sh.code = WATER_BODY_SHADER
-	var mat := ShaderMaterial.new()
-	mat.shader = sh
-	return mat
+
+
+## 被合批用的两行图集:上半 = 水体砖,下半 = 水面砖,都按描述符 tint。
+func _make_water_atlas(ts: int, desc: int) -> Image:
+	var img := Image.create(ts, ts * 2, false, Image.FORMAT_RGBA8)
+	img.blit_rect(TerrainAtlas._tinted_water_brick(ts, desc), Rect2i(0, 0, ts, ts), Vector2i(0, 0))
+	# ★ 水面行也用**同一块水体砖**:两层颜色必须完全一致(亮带交给后处理的水线)。
+	img.blit_rect(TerrainAtlas._tinted_water_brick(ts, desc), Rect2i(0, 0, ts, ts), Vector2i(0, ts))
+	return img
