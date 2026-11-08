@@ -14,7 +14,6 @@
 
 ## 已知边界
 
-- **水面合批不消费辅码**（[`scenes/level_0.gd`](../../scenes/level_0.gd) `_create_water_tileset` 的 `surface_texture` + [`scenes/effects/water_surface_batch.gd`](../../scenes/effects/water_surface_batch.gd)）：水面亮带恒采样**中性**水面砖（`WATER_SURFACE_BRICK`），只有水体层按描述符行 tint —— 地图给水体上了 hue/bri 辅码时，深水格有色、水面亮带仍原色（症状 = 水面处颜色断层）。规避 = 别给水格上辅码；修 = 水面砖也按格级水体描述符 tint（合批要按行分桶）。
 - [`tests/harness/menu_autotest.gd`](../../tests/harness/menu_autotest.gd) 被产品代码 [`scenes/main_menu.gd`](../../scenes/main_menu.gd) `load()`(菜单的 `-- --autotest-*` 钩子)—— 改名 / 删除 / 移动它,必须同批改产品代码,否则钩子失效。
 - [`tools/gen_menu_theme.gd`](../../tools/gen_menu_theme.gd) 手抄 `UiFactory.menu_panel()` 的 64/46,镜像守卫用同一对字面量 —— 改 `menu_panel()` 默认值**不会红**,生成物与守卫一起静默用旧值;改默认值必须两处同改。
 - 默认批多数支没有 `EXPECTED_CHECKS` 条数闸(`run_all.sh` 表里 `GATE` 栏为 `-`)—— 单支 `OK` 只证明"没有失败输出",不证明每条断言都跑过。
@@ -52,4 +51,4 @@
 | 房间生命周期约定（[`room-lifecycle-conventions.md`](room-lifecycle-conventions.md) A–I：端口归还/注册表删除/凭据作废收口 · 三表清扫 · pid 账 · 回收梯 · 启动协议 · 宽限分派 · 3v3 开局三律 · 一局限时上界链） | 新加拆除路径漏一步 ⇒ **静默端口泄漏**；清扫漏一张表 ⇒ 房与端口永不回收；启动参数静默跑错分支 | **零守卫**（源码文本检查器 `tools/room_sweep_lint.gd` 已删，2026-11-04 `test-economy` D6a/D8；行为面 `pvp_room_smoke.sh` 更早已删）⇒ 只剩该页 §3 人工自查 + 真链路间接反映 |
 | 大乱斗多人端到端（8/9 人局、worker role 上界 16、多人编解码/负载读数） | 16 人上限只改大厅/UI、worker 仍卡 8 的洞；多人局端到端回归 | **零守卫**（`royale_soak_probe.*` 与 `royale_role_cap_probe.sh` 已删，2026-11-04 D2/D8）⇒ 只剩历史读数与人工试玩；回归入口 = git 历史 |
 | bot 端到端（观察 → 决策 → 输入全链 · 真对局表现） | 输入手柄只实现无参钩子、漏带参钩子 ⇒ 服务器侧从不跳/不开火且 C2 每帧回滚（`team_bot_input.gd` 文件头教训） | **零守卫**（`bot_1v1_probe` + `bot_watcher` + `bot_input` 已删，2026-11-04）；纯逻辑观察/决策仍有 `bot_brain_smoke`；回归入口 = git 历史 |
-| 背景四层景深的**旧端降级**(layer_flags bit4-6) | 旧编辑器/旧游戏版读新图时忽略 bit4-6 ⇒ 只看到「背景 100%」,另三层静默不画 | **契约性降级,不修**;新端行为由 	ests/smoke/bg_parallax_smoke.gd(19 条)守,旧端已不存在 ⇒ 无从测 |
+| 背景四层景深的**旧端降级**(layer_flags bit4-6) | 旧编辑器/旧游戏版读新图时忽略 bit4-6 ⇒ 只看到「背景 100%」,另三层静默不画 | **契约性降级,不修**;新端行为由 `tests/smoke/bg_parallax_smoke.gd`(20 条)守,旧端已不存在 ⇒ 无从测 |

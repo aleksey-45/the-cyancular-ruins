@@ -4,19 +4,18 @@
 
 ## 渲染管线(`scenes/level_0.tscn`)
 
-- 根节点把未处理输入手动转发进 `WorldViewport`(SubViewport);世界(墙体 / 玩家 / 敌人)渲染进 SubViewport,`PostProcess`(`post_process.gd`)把世界纹理合成到屏幕:鱼眼 + 中心裁剪 + **天空合成 + 昼夜光照(环境光 / 斜投影影)+ 屏幕空间大气压暗 + 发光通道叠加** + 受击/低血/时间玩法视效(倒地暗角、残血边缘暗角只在屏幕边缘,中心保持干净,纯客户端、不挡 HUD)。
+- 根节点把未处理输入手动转发进 `WorldViewport`(SubViewport);世界(墙体 / 玩家 / 敌人)渲染进 SubViewport,`PostProcess`(`post_process.gd`)把世界纹理合成到屏幕:鱼眼 + 中心裁剪 + **天空合成 + 昼夜光照(环境光 / 斜投影影)+ 发光通道叠加** + 受击/低血/时间玩法视效(倒地暗角、残血边缘暗角只在屏幕边缘,中心保持干净,纯客户端、不挡 HUD)。
 - **世界里的一切都会被乘 `ambient`** —— 这是理解渲染层的第一句话:UI 辅助层(换弹读条 / 预瞄线)挂在世界子树里就会一起被压暗;发光体想"夜里更亮"就必须走发光通道(见下)。
-- 渲染材料分三层:`core/present/day_cycle.gd`(纯函数:一整天怎么亮)→ `post_process.gd`(把结果喂 shader)→ `core/present/form_light.gd`(逐精灵的形体光)。shader 里只有合成。
+- 渲染材料分三层:`core/present/day_cycle.gd`(纯函数:一整天怎么亮)→ `post_process.gd`(把结果喂 shader)→ `core/present/form_light.gd`(逐精灵的形体光)。shader 只做合成与逐像素光照,不持有第二个真相源。
 
-- 相机 `core/present/camera_2d.gd` 在 `_process` 里直贴目标位置(加 `cam_y_bias`),另有 `shake(amount, duration)`:无前瞻、无死区、无平滑;包络 = `amount * (剩余/时长)^0.7`(尾段比线性长),且**不降级**——比当前剩余包络弱的震动被忽略,否则开火/受击的小震会把爆炸大震顶掉。联机里爆炸震由 `Explosion.client_cam_shake()` 在视觉副本爆炸时补(客户端 bullet 是 `apply_damage=false`)。`PlayerParams.cam_lookahead_x` / `cam_lookahead_y` / `cam_deadzone` 全仓无人读,别按它们改行为。
+- 相机 `core/present/camera_2d.gd` 在 `_process` 里跟随目标:死区(`PlayerParams.cam_deadzone`)+ 指数平滑(`cam_smooth_x/y`)+ 前瞻(`cam_lookahead_x`,按 `vx / move_speed` 归一)+ `cam_y_bias`;环面世界走连续空间跟随,单帧位移 > `SNAP_DIST = 400px` 视为真传送(复活 / 回退 / 换边)直接重锚、不做平滑。另有 `shake(amount, duration)`:包络 = `amount * (剩余/时长)^0.7`(尾段比线性长),且**不降级**——比当前剩余包络弱的震动被忽略,否则开火/受击的小震会把爆炸大震顶掉。联机里爆炸震由 `Explosion.client_cam_shake()` 在视觉副本爆炸时补(客户端 bullet 是 `apply_damage=false`)。`PlayerParams.cam_lookahead_y` 目前无人读,别按它改行为。守卫:`tests/probe/torus_camera_probe.gd`(8 条)。
 
-- 图集构造 `core/sim/terrain_atlas.gd`(`TerrainAtlas`):源砖 → 图集 → TileSet;`Level0._create_wall_tileset()` / `_create_water_tileset()` 只剩转发。**图集按描述符行烘**(行 = 去重排序后的 v4 描述符,颜色辅码烘进像素),不再按"每纹理一行"。
+- 图集构造 `core/sim/terrain_atlas.gd`(`TerrainAtlas`):源砖 → 图集 → TileSet;`Level0._create_wall_tileset()` 只剩转发。**图集按描述符行烘**(行 = 去重排序后的 v4 描述符,颜色辅码烘进像素),不再按"每纹理一行"。
   - **像素数学 `TerrainAtlas.tint_color(c, desc)`** = `level_editor/tint.js` 的移植(唯一规范):HSV(不是 HSL)、色相偏移 (hue档−4)×15°(fposmod 360)、bri/sat 是**乘法**乘数 (档+6)/10、alpha = a×档/7、8 位落地只有一条规则 round(clamp01(x)×255)。跨语言 parity 守卫 = `tests/probe/tint_parity_probe.gd`(内嵌 JS 端 golden 向量)。
-  - **墙体 = 16px 象限**:`make_wall_tileset_for(descs)` / `build_atlas_image_for(descs)` 把每块 32px 源砖拆成 4×4 个 8×8 象限、逐像素 tint、各最近邻 2× 放大成 16×16,拼成 16 列(4×4 象限)× descs.size() 行的 TileSet(`tile_size = 16`);`_paint_maze` 铺 16px 子格,瓦片坐标 = `Vector2i((y%4)*4 + (x%4), _desc_row[desc])`(desc 取 `MazeGenerator.current_subdesc`;**只铺视口可见环带**——中心整图 + 其余 8 份按 `视口尺寸 / cam_zoom` 裁条带,整圈全铺是 5~6 倍浪费:newfactory 实测 559,728 → 176,024 格)。缺失描述符走 `TerrainAtlas.fallback_row` 回落**该纹理的中性行**并 push_warning 一次;合成网格路径(subdesc 为空,探针直写 current_subgrid)行号语义退回"每纹理一行中性"。回溯 `_restore_sub` / 换局 `reset_destructibles` 的瓦片行号同走 `_desc_row`(后者取 `_pristine_subdesc`,与 `_pristine_subgrid` 同点保存)。守卫:`tests/probe/wall_tint_probe.tscn`。
-  - **水体 = 64px 整格,同样按描述符行**:`make_water_tileset_for(ts, descs)` 每行 = 水体砖 tint × 16 形状列(2×2 shape 掩码挖象限);`_paint_water_copies` 行号 = `_water_row[格级描述符]`,格级描述符 = 该格 16 子格的**多数描述符**(平票取小,与 `flatten_scene` 的多数纹理同口径)。`make_water_tileset(ts)` = 中性单行包装(历史调用面)。
-  - ★ **水面合批不消费辅码**:`WaterSurfaceBatch` 的采样源 `Level0.surface_texture` 恒为**中性**水面砖(`WATER_SURFACE_BRICK`)—— 水体带 hue/bri 辅码时深水格有色、水面亮带仍原色(登记 [`registered-debt.md`](registered-debt.md))。
+  - **墙体 = 16px 象限**:`make_wall_tileset_for(descs)` / `build_atlas_image_for(descs)` 把每块 32px 源砖拆成 4×4 个 8×8 象限、逐像素 tint、各最近邻 2× 放大成 16×16,拼成 16 列(4×4 象限)× descs.size() 行的 TileSet(`tile_size = 16`);`_paint_maze_copies` 铺 16px 子格,瓦片坐标 = `Vector2i((y%4)*4 + (x%4), _desc_row[desc])`(desc 取 `MazeGenerator.current_subdesc`;**只铺视口可见环带**——中心整图 + 其余 8 份按 `视口尺寸 / cam_zoom` 裁条带,整圈全铺是 5~6 倍浪费:newfactory 实测 559,728 → 176,024 格)。缺失描述符走 `TerrainAtlas.fallback_row` 回落**该纹理的中性行**并 push_warning 一次;合成网格路径(subdesc 为空,探针直写 current_subgrid)行号语义退回"每纹理一行中性"。回溯 `_restore_sub` / 换局 `reset_destructibles` 的瓦片行号同走 `_desc_row`(后者取 `_pristine_subdesc`,与 `_pristine_subgrid` 同点保存)。守卫:`tests/probe/wall_tint_probe.tscn`。
+  - **水体 = 单层合批,不走 TileMap**:`Level0._paint_water_copies` 把**所有液体格**按格级描述符(`_water_desc_of`,该格 16 子格的多数描述符,平票取小)分桶;每桶建一张两行图集(`_make_water_atlas`:上行水体砖 / 下行为水面砖,都按该描述符 tint),交给 `scenes/effects/water_surface_batch.gd`(`WaterSurfaceBatch`)画成一张静态网格——顶点起伏 + 横向流动条纹。水面与水体同色、同 alpha、同管线,所以没有"两层对不齐"的接缝。`TerrainAtlas.make_water_tileset_for()` 现只剩探针在用(生产不再铺水 TileMap)。
   - 主菜单背景 `bake_map_image(path, cell_px, air)` 同样吃描述符(`MapFormat.load_subgrid_with_descs` 的 descs,内部自建 row_of)⇒ 辅码颜色一并烘进背景,与对局是同一套像素。
-- ★★ **两块水砖各用各的**(2026-11-01 修「水体被画成水面」):`TerrainAtlas.WATER_BODY_BRICK = 20`(0-based ⇒ 纹理 21「水」,均匀半透明填充)给水体图集;`TerrainAtlas.WATER_SURFACE_BRICK = 21`(纹理 22「水面」,顶边亮带)给 `WaterSurfaceBatch` 的 shader 采样源(`Level0.surface_texture`)。此前两者共用 idx 21(= 纹理 22)⇒ 深水也带亮线、整片水一个观感。守卫:`tests/probe/water_atlas_probe.tscn`(6 条)。
+- ★★ **两块水砖是合批图集的两行**(不是两个 TileMapLayer):`TerrainAtlas.WATER_BODY_BRICK = 20`(0-based ⇒ 纹理 21「水」,均匀半透明填充)在上行;`WATER_SURFACE_BRICK = 21`(纹理 22「水面」,自带顶边水线)在下行。每行都按格级描述符 tint ⇒ 水面与水体同色。守卫:`tests/probe/water_atlas_probe.tscn`(6 条)。
   - `TerrainAtlas.SKY_COLOR`(`2f4256`)只做「空气格 / 清屏色」:主菜单背景底色与 `Level0` 的 `RenderingServer.set_default_clear_color()` 读它。★ **对局里的天空不在这一层** —— 世界视口是 `transparent_bg`,空气 alpha=0,天空由 `post_process.gdshader` 按昼夜合成(见「昼夜与光照」)。别把它当对局天空色去调,也别改 `MapCatalog.BG`(选图缩略图底色,语义不同)。
 - 碰撞 `core/sim/collision_builder.gd`(`CollisionBuilder`,静态可测):形状掩码展开成 16px 子格(每 64px 格 → 4×4),贪心合并矩形后按 9 环面副本偏移实例化(每块矩形 ×9,共享同一 shape)。永久墙建一个整图节点(9 环面副本各一份,物理跨接缝必需)、建一次不动;可破坏层按分块存节点(块边长 12 格),摧毁时只重建所在块。只有 type=wall 产生碰撞。
 - `core/sim/collision_aabb.gd`(`CollisionAabb`:从任意节点求**启用中**碰撞体的世界 AABB)是激光命中、water 脚底偏移、飞鸟避障矩形的共同几何来源;三者各带兜底值,只在目标真没有碰撞体时生效。多边形与形状必须分开判(`CollisionPolygon2D` 与 `CollisionShape2D` 是并列类);本作所有身体(三敌人 + 玩家 5 个姿态箱)都只用多边形。
@@ -30,13 +29,13 @@
 - **时钟**:`DayCycle.DAY_CYCLE_SECONDS = 60`(现实 60s = 游戏 24h,1s = 24 分钟),开局 `DAY_START_HOUR = 6.0`。`PostProcess.day_hour` 是唯一当前时刻;加速/倒流由 `PostProcess._time_rate()` 乘进推进速率(只影响时钟,不影响物理)。
 - **太阳高度角是三角波,不是正弦**:`DayCycle.sun_at(h)` = `elev = 90 − |15·(h−12)|`(二分点/赤道的化简式),`azim = ∓1` 以正午为界。所以影子方向一天里**自己翻面**。月亮与之反相(18:00 升、00:00 天顶)。
 - **环境光** `DayCycle.ambient_for(hour, moon_amt)` ∈ [0,1],乘性。★ **准确的不变量**:「世界层的乘性链」(ambient → 影子 → 地形受光)只压不抬,**最终像素不受此约束** —— 早先文档写成「永不发光是结构保证」,已经失真。现有例外(改动时别再把它们当违例):`form_light` 的 `boost`(亮面 1.15×)、天空是绝对值不经过 ambient、发光通道 `COLOR.rgb += gl`、受击红闪、回溯贷款 `+= `、`amb_sky_link` 把 ambient 抬到自然曲线之上(仍 ≤1)。真正的判据是「亮度变化是否跟随光源、幅度是否克制」,不是「是否 >1」。白天 = 辐照 ∝ sin(高度角);太阳项把有效高度抬高 18°(民用晨昏),否则黎明/黄昏会掉到天光底、比半夜还黑。月光峰值 `MOON_SCALE = 0.26` 必须低于晨昏的太阳项。**正午恰为 1.0 ⇒ 12:00 精确等于原版亮度**。
-- **天空色** = `DayCycle.sky_base(hour)`,14 个关键帧按时刻插值。★ 插值走 **RGB 直线**,不走 HSV 色轮:最短弧从橙到蓝会经过品红/紫、黄昏"各种颜色乱窜"(实测)。★ 直线插值的坑是中点掉饱和(橙→夜蓝中点只有 0.31),所以黄昏→夜手工插了玫红/紫罗兰/靛蓝三帧把路径"拱"起来 —— **单纯增加采样点无效**(直线上的点还在直线上)。
+- **天空色** = `DayCycle.sky_base(hour)`,17 个关键帧按时刻插值。★ 插值走 **RGB 直线**,不走 HSV 色轮:最短弧从橙到蓝会经过品红/紫、黄昏"各种颜色乱窜"(实测)。★ 直线插值的坑是中点掉饱和(橙→夜蓝中点只有 0.31),所以黄昏→夜手工插了玫红/紫罗兰/靛蓝三帧把路径"拱"起来 —— **单纯增加采样点无效**(直线上的点还在直线上)。
 - **天空纵向渐变**:shader 用屏幕纵坐标做一个弯曲坐标(`sky_curve` + `sky_band_pow`)在 `sky_top`/`sky_bottom` 之间插值,上亮下暗。**不做量化**(曾试过 8/16 条带,量化就是"像素风条带",用户否决)。
 - **斜投影影**:遮挡体就是世界纹理自己的 alpha,`SOLID_A = 0.90` —— 只有不透明才算遮挡体,半透明(水、子弹曳尾 alpha 0.55、预瞄线 0.6)不投影。判据是"先沿光方向穿出自己,再撞到的东西才挡我",少了穿出自我的那步会让整面墙均匀变暗。影长是**像素常量**(`CAST_PX_DUSK`,晨昏最长 8px),不是 `1/tan(高度角)` —— 世界是薄 z 横切面,没有厚度可投。影子落在空气与实体上;深浅按"最近一次被挡"的位置衰减(`SHADOW_FAR`)。
 - **环境光是颜色不是标量**:`ambient_color = (天光色相 × amb_tint_strength 混白) × 强度`。天光色相取当前 `sky_base` 归一化到最大通道 1(丢掉亮度),所以黄昏偏暖橙、夜里偏蓝、正午近白;三通道恒 ≤ 1,只染色不提亮。参数 `amb_tint_strength`(默认 0.35,0 = 纯白)。
-- **地形受光**:TileMap 没有逐格法线,所以对每个实心像素**向上走 8 步 × 6px**找顶面,`1 − terrain_gain × clamp(d/terrain_depth_px)` —— 离顶面越远越暗。★ 这是**几何**,所以同一面墙无论移到屏幕哪里亮度都一样。**已删除**旧的"屏幕空间大气压暗"(`atmo_depth`):它按屏幕高度压暗,是滤镜不是光照,也是"一切都黑"的来源之一。
-- **光照像素化(色阶 + 抖动)**:量化的是**光照系数**(地形深度比值 / 精灵 `ndl`),不是最终屏幕色 —— 后者会毁掉美术调色板、让天空重新出色带、破坏「世界层乘性链」。色阶数默认 4(`form_steps` / `terrain_steps`),配 **2×2** 有序 Bayer(`_bayer2`,值 {0, 0.5, 0.75, 0.25})。★ 抖动必须**锚在精灵本地坐标 / 世界纹理坐标**,锚屏幕的话相机一动图案就会在物体上"爬"。量化后 `clamp(x, 0, 1)`,所以仍 ≤ 1。
-- **暗部颜色** `TINT_*` 是影子乘数,按时段在正午/晨昏/夜里之间插值;规则同上:压红留蓝,不用中性灰。
+- **地形受光**:TileMap 没有逐格法线,所以对每个实心像素向上 / 左 / 右各走 8 步 × 6px 探测空气(`_march_steps`,三步距离合成近似外法线),再与 `sun_dir` 点积——墙的左右脸随太阳方向变化,不是"只向上找顶面"。★ 这是**几何**,所以同一面墙无论移到屏幕哪里亮度都一样。**已删除**旧的"屏幕空间大气压暗"(`atmo_depth`):它按屏幕高度压暗,是滤镜不是光照,也是"一切都黑"的来源之一。
+- **光照像素化(色阶 + 抖动)**:量化的是**光照系数**(地形深度比值 / 精灵 `ndl`),不是最终屏幕色 —— 后者会毁掉美术调色板、让天空重新出色带、破坏「世界层乘性链」。色阶数默认 4(`form_steps` / `terrain_steps`);地形配 **2×2** 有序 Bayer(`_bayer2`),精灵侧配 **4×4**(`_bayer4`,见 `form_light.gdshader`)。★ 抖动必须**锚在精灵本地坐标 / 世界纹理坐标**,锚屏幕的话相机一动图案就会在物体上"爬"。量化后 `clamp(x, 0, 1)`,所以仍 ≤ 1。
+- **暗部颜色**:影子乘数 = 当前**环境光色相再压暗**(月光下再压一档),不是写死的冷蓝——阴影是"这种光更少",不是"换了一种蓝光"。规则同上:压红留蓝,不用中性灰;乘性、三通道 ≤ 1。
 
 ## 发光通道(GlowViewport)
 
@@ -49,15 +48,15 @@
 ## 形体光(`core/present/form_light.gd`)
 
 - 目的:让玩家/武器/敌人有体积。环境光只是**全局乘一个标量**,不区分朝向,所以精灵会读成平贴纸。
-- **TAG 驱动渲染策略**:`light_model` = `flat`(默认,不做形体光)/ `ellipsoid`(玩家、鸟)/ `cylinder`(枪)/ `sdf`(距离场法线图)。
+- **TAG 驱动渲染策略**:`light_model` = `flat`(默认,不做形体光)/ `ellipsoid`(玩家、鸟)/ `cylinder`(枪)。`sdf` 分支(距离场法线图)与 `SpriteNormalMap.for_texture()` 现网**不可达**(没有任何宿主传 "sdf"),别按它改行为。
   挂载时显式传参:`FormLight.attach(animator, "ellipsoid")`;敌人走 `@export var light_model`。
 - **解析形状,不用距离场**:椭球法线 `p = v_local / light_size`(clamp ±1)、`z = sqrt(1 − p·p)`。
   ★ 距离场的梯度在"最近边切换"处**不连续**,一定留下宝石切面(实测玩家被读成圆锥/棱锥);解析形状的法线是连续函数,没这个问题。
 - **`v_local` 必须来自 `vertex()` 的 varying**:`fragment()` 里的 `VERTEX` 是**世界坐标**,直接除以半尺寸会被 clamp 到 ±1 ⇒ 法线恒定、明暗完全消失。
-- **半尺寸走剪影包围盒**:按每个帧区域算内容包围盒,再对所有帧取最大 ⇒ 一个尺寸全帧共用(逐帧算会让动画中明暗跳动)。
+- **半尺寸走质心椭圆拟合**:按图集 alpha 加权质心 + 二阶矩(`SpriteNormalMap.ellipse_fit`),不是逐帧包围盒——包围盒会被单帧凸起带偏;一个尺寸全帧共用(逐帧算会让动画中明暗跳动)。
 - **先提亮、再只压暗面**:`COLOR *= (1 + boost) × mix(1−gain, 1, ndl)`。`boost` 让亮面可高于贴图原值(默认 0.15 ⇒ 正午最亮 1.15×),
   这是**有意**破例,别按"最终像素 ≤ 贴图"去校验;`形式光` 只保证"光照系数"这一层是乘性的。
-- **量化 + 抖动**:`ndl` 先 `smoothstep(0.20, 0.80)` 收窄交界,再量化 `form_steps`(默认 4)档,配 2×2 Bayer(`form_dither`,锚精灵本地坐标)。
+- **量化 + 抖动**:`ndl` 先 `smoothstep(0.20, 0.80)` 收窄交界,再量化 `form_steps`(默认 4)档,配 4×4 Bayer(`_bayer4`,`form_dither`,锚精灵本地坐标)。
 - 材质按 `(图集, 模型, 半尺寸)` 缓存;**每帧一次 `FormLight.push(sun_dir, gain)` 推给所有材质**,成本与精灵数量无关。
 - ⚠ **fragment() 不允许 `return`**:写一个 return 会让整个材质编译失败,精灵**静默**降级成无光照 —— 这是排查"形体光没生效"要看的第一个地方。
 - ⚠ **零守卫**:以上全部观感项,只能人眼验收;改法线/色阶/天色时必须出图对比。
@@ -69,7 +68,7 @@
 - `Level0._ready` 用 `MapFormat.load_bg_layers()` 取图;`ParallaxBg.setup(layers, 地图格数)` 只在**有相机的渲染路径**建(服务器 / headless 跳过),层缺失不建节点。给 `WorldViewport` 的最底层(z_index = −100+i)。
 - 视差数学只有两式(纯静态函数,`-s` 可测):**节点世界坐标 = cam × (1 − f)**、**采样起点 = cam × f**,配 `texture_repeat` 做环面回绕 ⇒ 相机位移 Δ 时该层屏幕位移 = −f·Δ。
 - 烘图:`bake_layer_image()` 每 64px 格烘 4px(`CELL_PX = 4`)并对 4×4 子格做 **alpha 加权**均值(直接平均透明格会把黑混进来,背景边缘发暗)。颜色层只画渐变/底色,降采样观感无损;`150×100` 格 → `600×400`,四层显存可忽略。
-- 不进快照 / 回滚 / 网络包:纯视觉,两端都从同一张地图文件现算 ⇒ 天然一致。守卫 `tests/smoke/bg_parallax_smoke.gd`(19 条:档位 / 两式 / 位移比 / v4 解析 / 缺层 / 烘焙加权)。人眼项:与天空 shader、光照投影的合成次序。
+- 不进快照 / 回滚 / 网络包:纯视觉,两端都从同一张地图文件现算 ⇒ 天然一致。守卫 `tests/smoke/bg_parallax_smoke.gd`(20 条:档位 / 两式 / 位移比 / v4 解析 / 缺层 / 烘焙加权)。人眼项:与天空 shader、光照投影的合成次序。
 
 ## 补间形变(squash & stretch)
 
@@ -86,8 +85,8 @@
 
 ## 载入
 
-- **所有模式同一条载入路径**:`Level0._ready` **第一行**就 `LoadingScreen.show_loading`,进度覆盖 读图 → 图集烘焙 → 墙/水铺设 → 碰撞(逐块);单机由 `main_menu._enter_level0`、联机由 `MpLobby._enter_match_scene` + `PvpMatchClient._boot_world` 提前挂载入屏,覆盖 `change_scene`/建场景那段黑屏。
-- 图集按地图路径缓存(`_wall_ts_cache` / `_water_ts_cache`,static):同进程重开(重连/换模式/单机重载)复用,省 ~130ms;首开仍重建。
+- **所有模式同一条载入路径**:`Level0._ready` **第一行**就 `LoadingScreen.show_loading`,进度覆盖 读图 → 墙体图集烘焙 → 铺墙 → 水体合批 → 碰撞(逐块);单机由 `main_menu._enter_level0`、联机由 `MpLobby._enter_match_scene` + `PvpMatchClient._boot_world` 提前挂载入屏,覆盖 `change_scene`/建场景那段黑屏。
+- 墙体图集按地图路径缓存(`_wall_ts_cache`,static):同进程重开(重连/换模式/单机重载)复用,省 ~87ms;首开仍重建。水体合批图集按描述符每次现烘(量很小),不缓存。
 - 铺贴只画可见环带(见上),碰撞仍逐块建(渐进,`BOOT_BUDGET_US = 8ms/帧`);载入期间 `get_tree().paused = true`,完成才解。
 - 实测(demo/headless):`coll_chunks` 阶段 CPU ~30ms、其余时间主要在首帧与铺图;整段配置从 ~1.5s 级降到 ~1.1s 级,铺图格数降 68%(newfactory)。
 - 地图数据深拷贝 `GridPathfinder.copy_grid` 改成逐行 `duplicate()`(C++);`TileDefs.init_sub_hp` 按地图路径缓存 pristine `PackedInt32Array`(抽样校验,命中 bulk duplicate)⇒ newfactory 首次加载 `load_grid` 134→86ms、`tile_defs+copy` 104→56ms;同进程重开(缓存命中)再省图集与这两段。
@@ -95,7 +94,7 @@
 
 ## 远端玩家副本的表现层(`scenes/player/player_replica.gd`)
 
-- **渲染层带**:`level_0.tscn` 的子节点顺序是 `Camera2D → Player → WallLayer → WaterLayer(z 4) → WaterSurfaceLayer(z 5)`。所以本体被墙体 / 梯子 / 建筑(都铺在 `WallLayer`)盖住,却又被水层压住;而远端副本是运行时 `add_child` 到世界末尾的 ⇒ 默认盖住墙体 / 梯子 / 建筑(现状 = 只有别人的角色压在地形上)。副本在 `_ready` 里用 `Level0.wall_layer` 把自己挪到那一层之前(`_reorder_before_structures`),与本体同一条层带。★ 只动绘制顺序,不碰碰撞与位置。
+- **渲染层带**:`level_0.tscn` 的子节点顺序是 `Camera2D → Player → WallLayer → WaterSurfaceLayer(z 5)`。所以本体被墙体 / 梯子 / 建筑(都铺在 `WallLayer`)盖住,却又被水体合批(`WaterSurfaceLayer`,z 5)压住;而远端副本是运行时 `add_child` 到世界末尾的 ⇒ 默认盖住墙体 / 梯子 / 建筑(现状 = 只有别人的角色压在地形上)。副本在 `_ready` 里用 `Level0.wall_layer` 把自己挪到那一层之前(`_reorder_before_structures`),与本体同一条层带。★ 只动绘制顺序,不碰碰撞与位置。
 - **位置插值**:下行 60Hz ⇒ 直出最新快照就是「一格一格跳」(单步 = 移速 × 16.7ms,走速 ≈5px)。改成 playout 缓冲插值:渲染「最新快照 − `PLAYOUT_TICKS`」那一刻的两样本夹逼插值,`PLAYOUT_TICKS = 2`(60Hz tick 域)= 2 个发包间隔 ≈ **33ms**。样本之间用三次 Hermite(切线 = 快照里的权威速度 × 本段时长)⇒ 起跳 / 下落 / 急停转弯不再折线;这个延迟是选出来的常量(不是低通滤波器的涌现滞后)。
 - **两端**:比最老还老冻在最老、不倒退;比最新还新(underrun)时不再一律冻结,用最新权威速度**最多补 2 tick(≈33ms)、总位移 ≤60px**,超出即冻结(丢一个快照就停 16.7ms = 肉眼可见卡顿,所以加了这个有界外插)。跨接缝的那一对样本先锚进同一个副本空间再插。
 - **大跳变**:相邻两条权威样本的环面距离 > `SNAP_DIST = 128 px` ⇒ 清位置历史、一帧落位。依据:常态相邻包位置差 ≈ 10px(300px/s × 33ms)、丢包 200ms 也只有 ≈60px,而回溯 / 重生 / 换边是几百~几千 px ⇒ 128 落在两者之间,两侧各留约 2 倍余量。
