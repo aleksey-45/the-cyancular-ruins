@@ -24,31 +24,44 @@ static func layer_origin(cam: Vector2, f: float) -> Vector2:
 
 # u32 RGBA/子格(0xRRGGBBAA,透明 = 0) → 该层的小图(每格 4 texel)。颜色层只画渐变/底色 ⇒
 # 每格取 4×4 子格**按 alpha 加权**的均值:直接平均透明格会把黑混进来,背景边缘发暗。
-static func bake_layer_image(rgba: PackedInt32Array, world_cells: Vector2i) -> Image:
+static func bake_layer_image(rgba: PackedInt32Array, world_cells: Vector2i, f: float = 1.0) -> Image:
+	"""把一层的 u32 RGBA/子格直接烘成**目标分辨率**的小图(每像素 = 一块子格的 alpha 加权平均)。
+	目标宽高 = 子格数 × f(600x400 → 450x300 → 300x200 → 150x100):图本身就小,不是先大后缩。
+	显示时最近邻放大到世界尺寸 ⇒ 大像素块,不做任何插值。"""
 	var cols := maxi(world_cells.x, 1)
 	var rows := maxi(world_cells.y, 1)
-	var img := Image.create(cols * CELL_PX, rows * CELL_PX, false, Image.FORMAT_RGBA8)
-	for cy in rows:
-		for cx in cols:
-			var r := 0.0
-			var g := 0.0
-			var b := 0.0
-			var a := 0.0
-			for sy in 4:
-				for sx in 4:
-					var idx := (cy * 4 + sy) * (cols * 4) + (cx * 4 + sx)
-					if idx < 0 or idx >= rgba.size():
-						continue
-					var v := rgba[idx]
-					var av := float(v & 0xFF) / 255.0
-					r += float((v >> 24) & 0xFF) / 255.0 * av
-					g += float((v >> 16) & 0xFF) / 255.0 * av
-					b += float((v >> 8) & 0xFF) / 255.0 * av
-					a += av
-			var col := Color(0.0, 0.0, 0.0, 0.0)
-			if a > 0.0:
-				col = Color(r / a, g / a, b / a, a / 16.0)
-			img.fill_rect(Rect2i(cx * CELL_PX, cy * CELL_PX, CELL_PX, CELL_PX), col)
+	var sw := cols * 4
+	var sh := rows * 4
+	var iw := maxi(1, int(round(sw * f)))
+	var ih := maxi(1, int(round(sh * f)))
+	var n := iw * ih
+	var ar := PackedFloat32Array(); ar.resize(n)
+	var ag := PackedFloat32Array(); ag.resize(n)
+	var ab := PackedFloat32Array(); ab.resize(n)
+	var aa := PackedFloat32Array(); aa.resize(n)
+	var ac := PackedInt32Array(); ac.resize(n)
+	for sy in sh:
+		var oy := (sy * ih) / sh
+		for sx in sw:
+			var idx := sy * sw + sx
+			if idx < 0 or idx >= rgba.size():
+				continue
+			var v := rgba[idx]
+			var av := float(v & 0xFF) / 255.0
+			var o := oy * iw + (sx * iw) / sw
+			if av > 0.0:
+				ar[o] += float((v >> 24) & 0xFF) / 255.0 * av
+				ag[o] += float((v >> 16) & 0xFF) / 255.0 * av
+				ab[o] += float((v >> 8) & 0xFF) / 255.0 * av
+				aa[o] += av
+			ac[o] += 1
+	var img := Image.create(iw, ih, false, Image.FORMAT_RGBA8)
+	for o in n:
+		var col := Color(0, 0, 0, 0)
+		if aa[o] > 0.0:
+			# alpha = 该块内所有子格 alpha 的平均(透明格也算分母:整块越透明,输出越透明)
+			col = Color(ar[o] / aa[o], ag[o] / aa[o], ab[o] / aa[o], aa[o] / float(maxi(1, ac[o])))
+		img.set_pixel(o % iw, o / iw, col)
 	return img
 
 
@@ -73,11 +86,8 @@ func setup(layers: Array, world_cells: Vector2i, track_camera: Camera2D = null) 
 		if rgba == null:
 			continue
 		var f: float = DEPTH[i]
-		var img := bake_layer_image(rgba, world_cells)   # 600×400(1 texel = 1 子格)—— 最近的一份
-		if f < 0.999:
-			# ★ 远层图本身像素更少(600×400 → 450×300 → 300×200 → 150×100),显示时仍铺满世界
-			img.resize(maxi(1, int(round(img.get_width() * f))), maxi(1, int(round(img.get_height() * f))),
-					Image.INTERPOLATE_BILINEAR)
+		# ★ 图本身按 f 的低分辨率生成(600x400 → 450x300 → 300x200 → 150x100),没有"先大后缩"
+		var img := bake_layer_image(rgba, world_cells, f)
 		var tex := ImageTexture.create_from_image(img)
 		var sprites: Array = []
 		for oy in 3:
