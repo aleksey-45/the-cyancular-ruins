@@ -1,28 +1,33 @@
 class_name TimeParams
 extends RefCounted
 
-# 个人钟·第一阶段(v0.5.0)参数总表 —— 主策划案 §2.1「时间颗粒」经济的代码单一来源。
+# 单机时间玩法参数的访问入口。★ 数值不在本文件:唯一真相源是 core/config/time_config.tres。
+# 为什么不是逐次 getter→Resource:实测每次读比 const 慢 13.8×,这批值在 TimeField 各查询口被读
+# ⇒ 改为类加载时读一次(static var = _CFG.x);代价是改 .tres 后要重启进程生效。
+# ★ const _CFG := preload(...):缺文件 / 坏文件是加载期硬失败,不会静默退化成 0。
 
-const GRAIN_INITIAL := 1000
-const GRAIN_CAP := 5000
-const SHORT_WINDOW := 400.0
-const SHORT_REGEN := 50.0
-const LOAN_LIMIT := 100.0
+const _CFG: TimeConfig = preload("res://core/config/time_config.tres")
 
-const COST_REWIND := 120.0
-const COST_HASTE := 80.0
+static var GRAIN_INITIAL: int = _CFG.GRAIN_INITIAL
+static var GRAIN_CAP: int = _CFG.GRAIN_CAP
+static var SHORT_WINDOW: float = _CFG.SHORT_WINDOW
+static var SHORT_REGEN: float = _CFG.SHORT_REGEN
+static var LOAN_LIMIT: float = _CFG.LOAN_LIMIT
 
-const SNAP_HZ := 20
-const SNAP_SECONDS := 40.0
-const REWIND_START_MULT := 3.0
-const REWIND_RAMP_TIME := 0.35
+static var COST_REWIND: float = _CFG.COST_REWIND
+static var COST_HASTE: float = _CFG.COST_HASTE
 
-const HASTE_PLAYER := 2.0
-const HASTE_WORLD := 0.5
+static var SNAP_HZ: int = _CFG.SNAP_HZ
+static var SNAP_SECONDS: float = _CFG.SNAP_SECONDS
+static var REWIND_START_MULT: float = _CFG.REWIND_START_MULT
+static var REWIND_RAMP_TIME: float = _CFG.REWIND_RAMP_TIME
 
-const LOAN_ENEMY_SPEED_BONUS := 0.5
-const LOAN_PITCH_RANGE := 0.5
-const LOAN_BRIGHT_RANGE := 0.35
-const LOAN_ABERRATION_PX := 5.0
+static var HASTE_PLAYER: float = _CFG.HASTE_PLAYER
+static var HASTE_WORLD: float = _CFG.HASTE_WORLD
 
-const ELITE_GRAIN_DROP := 300
+static var LOAN_ENEMY_SPEED_BONUS: float = _CFG.LOAN_ENEMY_SPEED_BONUS
+static var LOAN_PITCH_RANGE: float = _CFG.LOAN_PITCH_RANGE
+static var LOAN_BRIGHT_RANGE: float = _CFG.LOAN_BRIGHT_RANGE
+static var LOAN_ABERRATION_PX: float = _CFG.LOAN_ABERRATION_PX
+
+static var ELITE_GRAIN_DROP: int = _CFG.ELITE_GRAIN_DROP

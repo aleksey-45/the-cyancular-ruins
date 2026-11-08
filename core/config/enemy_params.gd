@@ -1,104 +1,115 @@
 class_name EnemyParams
 extends RefCounted
 
-class shared:
-	const hit_flash: float = 0.1
-	const death_flash_time: float = 0.5
-	const turn_min_interval: float = 0.5
-	const bird_swim_speed: float = 260.0
-	const bird_buoyancy_k: float = 6.0
-	const bird_max_float: float = 260.0
-	const bird_max_sink: float = 160.0
-	const bird_water_damp: float = 5.0
-	const drown_interval: float = 1.5
-	const drown_damage: int = 5
+# 敌人参数的**访问入口**:数值在 `enemy_config.tres`,这里只做转发。
+# 访问方式不变:EnemyParams.JumpBird.wake_radius / EnemyParams.shared.hit_flash。
+#
+# ★ 内层类保留纯粹是为了**命名空间**:每个常量都是 `static var = _CFG.<扁平名>`。
+#   不用 getter —— 实测 getter→Resource 每次读比 const 慢 13.8×,而这些值在敌人 _physics_process
+#   里每帧读(enemy_fly_bird.gd 单文件 52 处)。类加载时读一次后成本与 const 同数量级。
+#   代价:改 .tres 要重启进程生效。
+# ★ 数据为什么是扁平的:内层类不能当 @export 类型,详见 enemy_config.gd 文件头。
 
-	const squash_amount: float = 0.06
-	const squash_recover: float = 16.0
-	const squash_take_off: float = 0.80
-	const squash_charge: float = 0.90
-	const squash_land_min_vy: float = 220.0
-	const squash_land_ref_vy: float = 900.0
-	const squash_land: float = 1.00
-	const squash_hurt: float = 0.50
-	const squash_air: float = 0.10
-	const squash_air_ref_vy: float = 700.0
+const _CFG: EnemyConfig = preload("res://core/config/enemy_config.tres")
+
+
+class shared:
+	static var hit_flash: float = _CFG.shared_hit_flash
+	static var death_flash_time: float = _CFG.shared_death_flash_time
+	static var turn_min_interval: float = _CFG.shared_turn_min_interval
+	static var bird_swim_speed: float = _CFG.shared_bird_swim_speed
+	static var bird_buoyancy_k: float = _CFG.shared_bird_buoyancy_k
+	static var bird_max_float: float = _CFG.shared_bird_max_float
+	static var bird_max_sink: float = _CFG.shared_bird_max_sink
+	static var bird_water_damp: float = _CFG.shared_bird_water_damp
+	static var drown_interval: float = _CFG.shared_drown_interval
+	static var drown_damage: int = _CFG.shared_drown_damage
+	static var squash_amount: float = _CFG.shared_squash_amount
+	static var squash_recover: float = _CFG.shared_squash_recover
+	static var squash_take_off: float = _CFG.shared_squash_take_off
+	static var squash_charge: float = _CFG.shared_squash_charge
+	static var squash_land_min_vy: float = _CFG.shared_squash_land_min_vy
+	static var squash_land_ref_vy: float = _CFG.shared_squash_land_ref_vy
+	static var squash_land: float = _CFG.shared_squash_land
+	static var squash_hurt: float = _CFG.shared_squash_hurt
+	static var squash_air: float = _CFG.shared_squash_air
+	static var squash_air_ref_vy: float = _CFG.shared_squash_air_ref_vy
 
 class JumpBird:
-	const wake_radius: float = 900.0
-	const give_up_radius: float = 1100.0
-	const lunge_range: float = 400.0
-	const lunge_max_dist: float = 450.0
-	const lunge_speed: float = 1100.0
-	const lunge_windup: float = 0.30
-	const hop_interval: float = 0.55
-	const hop_horizontal_speed: float = 240.0
-	const hop_jump_velocity: float = -750.0
-	const back_hop_up: float = -520.0
-	const back_hop_away: float = 320.0
+	static var wake_radius: float = _CFG.jump_bird_wake_radius
+	static var give_up_radius: float = _CFG.jump_bird_give_up_radius
+	static var lunge_range: float = _CFG.jump_bird_lunge_range
+	static var lunge_max_dist: float = _CFG.jump_bird_lunge_max_dist
+	static var lunge_speed: float = _CFG.jump_bird_lunge_speed
+	static var lunge_windup: float = _CFG.jump_bird_lunge_windup
+	static var hop_interval: float = _CFG.jump_bird_hop_interval
+	static var hop_horizontal_speed: float = _CFG.jump_bird_hop_horizontal_speed
+	static var hop_jump_velocity: float = _CFG.jump_bird_hop_jump_velocity
+	static var back_hop_up: float = _CFG.jump_bird_back_hop_up
+	static var back_hop_away: float = _CFG.jump_bird_back_hop_away
 
 class FlyBird:
-	const wake_radius: float = 1100.0
-	const max_chase_distance: float = 2000.0
-	const home_range: float = 2000.0
-	const hover_altitude: float = 40.0
-	const hover_offset_x: float = 260.0
-	const hover_offset_y: float = 240.0
-	const fly_speed: float = 320.0
-	const take_off_speed: float = 750.0
-	const take_off_time: float = 0.5
-	const shoot_range: float = 800.0
-	const shoot_reacquire_margin: float = 160.0
-	const shoot_position_radius: float = 120.0
-	const shoot_cooldown: float = 1.6
-	const strafe_range: float = 180.0
-	const strafe_duration: float = 0.3
-	const bullet_damage: int = 2
-	const bullet_range: float = 2000.0
-	const bullet_gravity: float = 0.85
-	const bullet_size: float = 1.2
-	const bullet_min_speed: float = 312.5
-	const bullet_max_speed: float = 2000.0
-	const bullet_min_drop: float = 30.0
-	const charge_hp_fraction: float = 0.25
-	const charge_range: float = 1300.0
-	const charge_speed: float = 1000.0
-	const charge_timeout: float = 2.5
-	const charge_damage: int = 5
-	const charge_impact: float = 1500.0
-	const charge_impact_up: float = 500.0
-	const shoot_recoil: float = 500.0
-	const repath_interval: float = 0.75
-	const arrival_radius: float = 50.0
-	const landing_time: float = 0.4
-	const path_max_visit: int = 600
-	const search_radius_cells: int = 45
-	const escape_search_range: int = 90
-	const escape_max_descent: int = 40
+	static var wake_radius: float = _CFG.fly_bird_wake_radius
+	static var max_chase_distance: float = _CFG.fly_bird_max_chase_distance
+	static var home_range: float = _CFG.fly_bird_home_range
+	static var hover_altitude: float = _CFG.fly_bird_hover_altitude
+	static var hover_offset_x: float = _CFG.fly_bird_hover_offset_x
+	static var hover_offset_y: float = _CFG.fly_bird_hover_offset_y
+	static var fly_speed: float = _CFG.fly_bird_fly_speed
+	static var take_off_speed: float = _CFG.fly_bird_take_off_speed
+	static var take_off_time: float = _CFG.fly_bird_take_off_time
+	static var shoot_range: float = _CFG.fly_bird_shoot_range
+	static var shoot_reacquire_margin: float = _CFG.fly_bird_shoot_reacquire_margin
+	static var shoot_position_radius: float = _CFG.fly_bird_shoot_position_radius
+	static var shoot_cooldown: float = _CFG.fly_bird_shoot_cooldown
+	static var strafe_range: float = _CFG.fly_bird_strafe_range
+	static var strafe_duration: float = _CFG.fly_bird_strafe_duration
+	static var bullet_damage: int = _CFG.fly_bird_bullet_damage
+	static var bullet_range: float = _CFG.fly_bird_bullet_range
+	static var bullet_gravity: float = _CFG.fly_bird_bullet_gravity
+	static var bullet_size: float = _CFG.fly_bird_bullet_size
+	static var bullet_min_speed: float = _CFG.fly_bird_bullet_min_speed
+	static var bullet_max_speed: float = _CFG.fly_bird_bullet_max_speed
+	static var bullet_min_drop: float = _CFG.fly_bird_bullet_min_drop
+	static var charge_hp_fraction: float = _CFG.fly_bird_charge_hp_fraction
+	static var charge_range: float = _CFG.fly_bird_charge_range
+	static var charge_speed: float = _CFG.fly_bird_charge_speed
+	static var charge_timeout: float = _CFG.fly_bird_charge_timeout
+	static var charge_damage: int = _CFG.fly_bird_charge_damage
+	static var charge_impact: float = _CFG.fly_bird_charge_impact
+	static var charge_impact_up: float = _CFG.fly_bird_charge_impact_up
+	static var shoot_recoil: float = _CFG.fly_bird_shoot_recoil
+	static var repath_interval: float = _CFG.fly_bird_repath_interval
+	static var arrival_radius: float = _CFG.fly_bird_arrival_radius
+	static var landing_time: float = _CFG.fly_bird_landing_time
+	static var path_max_visit: int = _CFG.fly_bird_path_max_visit
+	static var search_radius_cells: int = _CFG.fly_bird_search_radius_cells
+	static var escape_search_range: int = _CFG.fly_bird_escape_search_range
+	static var escape_max_descent: int = _CFG.fly_bird_escape_max_descent
 
 class BlackBird:
-	const wake_radius: float = 1000.0
-	const sleep_radius: float = 1200.0
-	const wander_speed: float = 300.0
-	const wander_min_t: float = 1.0
-	const wander_max_t: float = 3.0
-	const wander_idle_max: float = 1.5
-	const wander_jump_velocity: float = -500.0
-	const take_off_jump_velocity: float = -1000.0
-	const flank_check_interval: float = 1.0
-	const teleport_min_tiles: int = 2
-	const teleport_max_tiles: int = 6
-	const teleport_drop: float = 250.0
-	const landing_timeout: float = 0.3
-	const teleport_prep_time: float = 0.25
-	const charge_prep_time: float = 0.4
-	const teleport_cooldown: float = 3.0
-	const teleport_flash_time: float = 0.1
-	const charge_speed: float = 900.0
-	const charge_damage: int = 7
-	const charge_impact: float = 1500.0
-	const charge_impact_up: float = 500.0
-	const charge_timeout: float = 2.5
-	const charge_jump_velocity: float = -650.0
-	const back_hop_up: float = -500.0
-	const back_hop_away: float = 800.0
+	static var wake_radius: float = _CFG.black_bird_wake_radius
+	static var sleep_radius: float = _CFG.black_bird_sleep_radius
+	static var wander_speed: float = _CFG.black_bird_wander_speed
+	static var wander_min_t: float = _CFG.black_bird_wander_min_t
+	static var wander_max_t: float = _CFG.black_bird_wander_max_t
+	static var wander_idle_max: float = _CFG.black_bird_wander_idle_max
+	static var wander_jump_velocity: float = _CFG.black_bird_wander_jump_velocity
+	static var take_off_jump_velocity: float = _CFG.black_bird_take_off_jump_velocity
+	static var flank_check_interval: float = _CFG.black_bird_flank_check_interval
+	static var teleport_min_tiles: int = _CFG.black_bird_teleport_min_tiles
+	static var teleport_max_tiles: int = _CFG.black_bird_teleport_max_tiles
+	static var teleport_drop: float = _CFG.black_bird_teleport_drop
+	static var landing_timeout: float = _CFG.black_bird_landing_timeout
+	static var teleport_prep_time: float = _CFG.black_bird_teleport_prep_time
+	static var charge_prep_time: float = _CFG.black_bird_charge_prep_time
+	static var teleport_cooldown: float = _CFG.black_bird_teleport_cooldown
+	static var teleport_flash_time: float = _CFG.black_bird_teleport_flash_time
+	static var charge_speed: float = _CFG.black_bird_charge_speed
+	static var charge_damage: int = _CFG.black_bird_charge_damage
+	static var charge_impact: float = _CFG.black_bird_charge_impact
+	static var charge_impact_up: float = _CFG.black_bird_charge_impact_up
+	static var charge_timeout: float = _CFG.black_bird_charge_timeout
+	static var charge_jump_velocity: float = _CFG.black_bird_charge_jump_velocity
+	static var back_hop_up: float = _CFG.black_bird_back_hop_up
+	static var back_hop_away: float = _CFG.black_bird_back_hop_away

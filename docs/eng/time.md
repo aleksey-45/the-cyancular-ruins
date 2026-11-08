@@ -28,7 +28,7 @@
 
 | 文件 | 职责 |
 |---|---|
-| `core/config/time_params.gd` / `time_rules.gd` | 单机 `TimeParams`（全 `const`，时间玩法参数的代码单一来源）/ PvP `TimeRules`（每局可调的实例数据 + 服务器钳制 + `make_account()` / `rewind_buffer_seconds()`） |
+| `core/config/time_params.gd` / `time_rules.gd` | 单机 `TimeParams`（时间玩法参数的**访问入口**；数值唯一真相源 = [`time_config.tres`](../../core/config/time_config.tres)）/ PvP `TimeRules`（每局可调的实例数据 + 服务器钳制 + `make_account()` / `rewind_buffer_seconds()`） |
 | `core/sim/grain_account.gd` | `GrainAccount` 记账芯：总余额 / 短时窗 / 贷款 / 锁定，五个信号 |
 | `core/sim/time_field.gd` | `TimeField`：模式 → 各实体 delta / 速度倍率的唯一查询口（静态 `current`） |
 | `core/sim/world_rewind.gd` | `WorldRewind`：单机定频快照环缓 + 反向应用器 + 尸体保留（不碰 UI 与 shader） |
@@ -77,28 +77,33 @@
 
 ## 3. 关键常量与唯一来源
 
-### 3.1 单机 `TimeParams`（`core/config/time_params.gd`，全 `const`）
+### 3.1 单机 `TimeParams`（`core/config/time_params.gd`：访问入口，数值不在代码里）
 
-| 常量 | 值 | 含义 |
-|---|---|---|
-| `GRAIN_INITIAL` | `1000` | 初始颗粒 |
-| `GRAIN_CAP` | `5000` | 颗粒额度上限（怀表白短针一圈） |
-| `SHORT_WINDOW` | `400.0` | 短时间额度（红长针一圈） |
-| `SHORT_REGEN` | `50.0` | 短时额度恢复速率（先还贷后回窗） |
-| `LOAN_LIMIT` | `100.0` | 贷款限额 = 短时窗的 1/4 |
-| `COST_REWIND` | `120.0` | 回溯：颗粒/秒（按住 `rewind`） |
-| `COST_HASTE` | `80.0` | 加速：颗粒/秒（按住 `haste`） |
-| `SNAP_HZ` | `20` | 单机快照采样频率（Hz） |
-| `SNAP_SECONDS` | `40.0` | 单机环缓容量（秒） |
-| `REWIND_START_MULT` | `3.0` | 倒放起步倍速（随后落回 1×） |
-| `REWIND_RAMP_TIME` | `0.35` | 起步倍速 → 1× 的过渡时长（秒） |
-| `HASTE_PLAYER` | `2.0` | 玩家与精英的行动倍率 |
-| `HASTE_WORLD` | `0.5` | 其余实体（普通敌 / 敌弹 / 世界物件）的倍率 |
-| `LOAN_ENEMY_SPEED_BONUS` | `0.5` | 贷款深度给普通敌的表现速度加成上限 |
-| `LOAN_PITCH_RANGE` | `0.5` | `Sfx` 全局音调加成上限 |
-| `LOAN_BRIGHT_RANGE` | `0.35` | 画面变亮上限（shader 亮度叠加） |
-| `LOAN_ABERRATION_PX` | `5.0` | 色差偏移上限（像素） |
-| `ELITE_GRAIN_DROP` | `300` | 击杀一次精英掉落颗粒 |
+- 数值唯一真相源 = [`time_config.tres`](../../core/config/time_config.tres)；schema / 默认值在 [`time_config.gd`](../../core/config/time_config.gd)（`class_name TimeConfig extends Resource` + `@export_range`，检查器按「颗粒经济 / 回溯 / 加速 / 贷款」分组）。改 `.tres` 即可调参，不用改代码，diff 也能看清哪个数值被动了。
+- `TimeParams` 用 `static var X: T = _CFG.X` 在**类加载时读一次**，不是每次读都穿 Resource：逐次 getter→Resource 实测比 `const` 慢 **13.8×**（200 万次 319ms vs 23ms），而这批值在 `TimeField` 的每个查询口被读。代价：改 `.tres` 要重启进程生效。
+- 调用点写法不变：仍是 `TimeParams.GRAIN_INITIAL` 这类静态访问。18 个参数的**含义**见下表，数值不抄在文档里（唯一真相源是 `.tres`）。
+- 守卫：[`tests/smoke/time_params_source_smoke.gd`](../../tests/smoke/time_params_source_smoke.gd)（6 条：`.tres` 同一实例 / 从 `time_config.gd` 的 `@export` 列表反射枚举逐项一致 / 加速扣费 / 加速倍率 / 回溯扣费 / 贷款深度倍率）。
+
+| 参数 | 含义 |
+|---|---|
+| `GRAIN_INITIAL` | 初始颗粒 |
+| `GRAIN_CAP` | 颗粒额度上限（怀表白短针一圈） |
+| `SHORT_WINDOW` | 短时间额度（红长针一圈） |
+| `SHORT_REGEN` | 短时额度恢复速率（先还贷后回窗） |
+| `LOAN_LIMIT` | 贷款限额 = 短时窗的 1/4 |
+| `COST_REWIND` | 回溯：颗粒/秒（按住 `rewind`） |
+| `COST_HASTE` | 加速：颗粒/秒（按住 `haste`） |
+| `SNAP_HZ` | 单机快照采样频率（Hz） |
+| `SNAP_SECONDS` | 单机环缓容量（秒） |
+| `REWIND_START_MULT` | 倒放起步倍速（随后落回 1×） |
+| `REWIND_RAMP_TIME` | 起步倍速 → 1× 的过渡时长（秒） |
+| `HASTE_PLAYER` | 玩家与精英的行动倍率 |
+| `HASTE_WORLD` | 其余实体（普通敌 / 敌弹 / 世界物件）的倍率 |
+| `LOAN_ENEMY_SPEED_BONUS` | 贷款深度给普通敌的表现速度加成上限 |
+| `LOAN_PITCH_RANGE` | `Sfx` 全局音调加成上限 |
+| `LOAN_BRIGHT_RANGE` | 画面变亮上限（shader 亮度叠加） |
+| `LOAN_ABERRATION_PX` | 色差偏移上限（像素） |
+| `ELITE_GRAIN_DROP` | 击杀一次精英掉落颗粒 |
 
 - `GrainAccount` 五个字段初值与 `_init` 默认值、`WorldRewind` 的采样频率/容量/ramp、`TimeField` 的全部倍率与消耗速率、`GrainCrystalFx.amount` 初值都读 `TimeParams`;PvP 也读两个 ramp 常量(`REWIND_START_MULT` / `REWIND_RAMP_TIME`),但采样间隔与容量不读 `SNAP_HZ` / `SNAP_SECONDS`。
 
@@ -124,7 +129,7 @@
 ### 3.3 环缓窗口
 
 - **PvP**：`TimeRules.rewind_buffer_seconds() = minf(cap / rewind_burn, 15.0)`;`rewind_burn <= 0.0` 时返回 `0.0`。语义 = 从满额烧到空需要多少秒,硬顶 15 秒;唯一消费点是 `MatchHost._record_rw_frame()`。按 `DEF_*` 默认值算 = `min(1800/150, 15)` = **12.0 秒**。
-- **单机 / 采样**：容量是 `TimeParams.SNAP_SECONDS = 40.0` 秒，两处消费：`WorldRewind.record()` 裁 `_frames`、`Level0._tick_rewind` 调 `TileLedger.prune(recorded_seconds() - TimeParams.SNAP_SECONDS)`。采样间隔：单机 `SNAP_HZ = 20`；PvP `MatchHost.RW_SNAP_DT = 1.0 / 20.0`（同一个 20Hz 抄了两处）。
+- **单机 / 采样**：容量是 `TimeParams.SNAP_SECONDS` 秒（默认值见 `time_config.tres`），两处消费：`WorldRewind.record()` 裁 `_frames`、`Level0._tick_rewind` 调 `TileLedger.prune(recorded_seconds() - TimeParams.SNAP_SECONDS)`。采样间隔：单机 `TimeParams.SNAP_HZ`；PvP `MatchHost.RW_SNAP_DT = 1.0 / 20.0`（同一个 20Hz 抄了两处）。
 
 ### 3.4 其它落点（唯一来源 = 所处文件）
 
@@ -145,9 +150,9 @@
 | `short_used` | 红长针主圈(消耗顺时针推进、恢复逆时针拨回) | `0..SHORT_WINDOW` |
 | `loan_used` | 红长针额外 1/4 圈(窗满后继续消耗即借入) | `0..LOAN_LIMIT` |
 | `loan_depth` | `loan_used / loan_max` ∈ [0,1] | 世界反馈的驱动量:变亮 / 色差 / 敌加速 / 变调 |
-| `locked` | 贷满即锁:长针以 50/s 回拨、还清为止 | 期间任何技能都取不出颗粒(按了也空转) |
+| `locked` | 贷满即锁:长针以 `SHORT_REGEN` 回拨、还清为止 | 期间任何技能都取不出颗粒(按了也空转) |
 
-- 恢复 50/s，先还贷后回窗；还清瞬间解锁。`deposit` 只加总余额并夹上限（不动指针）；精英击杀 +300。
+- 恢复速率 = `SHORT_REGEN`，先还贷后回窗；还清瞬间解锁。`deposit` 只加总余额并夹上限（不动指针）；精英击杀 = `ELITE_GRAIN_DROP`。
 
 ## 5. 已知边界
 

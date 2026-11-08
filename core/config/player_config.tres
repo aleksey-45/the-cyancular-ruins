@@ -1,0 +1,70 @@
+[gd_resource type="Resource" script_class="PlayerConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://core/config/player_config.gd" id="1_pc"]
+
+[resource]
+script = ExtResource("1_pc")
+move_speed = 700.0
+accel_ground = 30.0
+accel_air = 9.0
+brake_ground = 16.0
+brake_air = 6.0
+stop_snap = 1.0
+jump_velocity = -1000.0
+coyote_time = 0.1
+jump_buffer_time = 0.12
+jump_cut_factor = 0.5
+crouch_walk_speed = 245.0
+charge_down_velocity = 2000.0
+charge_distance = 256.0
+charge_velocity = 3000.0
+charge_air_gravity_mult = 0.35
+charge_dir_window = 0.3
+player_swim_speed = 540.0
+player_swim_up = -400.0
+player_swim_down = 320.0
+player_swim_accel = 6.0
+player_waterproof_max = 10
+player_waterproof_damage = 5
+cam_lookahead_x = 100.0
+cam_lookahead_y = 80.0
+cam_y_bias = -100.0
+cam_smooth_x = 10.0
+cam_smooth_y = 8.0
+cam_deadzone = 32.0
+cam_zoom = 0.75
+climb_ladder_up_speed = 850.0
+climb_ladder_down_speed = 800.0
+climb_chain_up_speed = 800.0
+elastic_bounce = 150.0
+player_max_hp = 50
+iframes_time = 0.25
+player_hit_knockback = 400.0
+player_hit_knockback_up = 200.0
+player_knock_decay_rate = 10.0
+hit_cam_shake = 8.0
+hit_cam_shake_time = 0.25
+explosion_cam_shake = 30.0
+explosion_cam_shake_time = 0.5
+weapon_pickup_radius = 64.0
+weapon_drop_hold_time = 0.6
+weapon_drop_speed = 400.0
+weapon_drop_up = 220.0
+weapon_drop_offset = Vector2(24, -8)
+weapon_ground_friction = 12.0
+weapon_air_drag = 0.4
+weapon_fall_gravity = 1600.0
+weapon_stop_eps = 6.0
+weapon_pickup_self_delay = 0.5
+squash_amount = 0.06
+squash_recover = 16.0
+squash_jump = 0.75
+squash_land_min_vy = 220.0
+squash_land_ref_vy = 900.0
+squash_land = 1.0
+squash_hurt = 0.5
+squash_dash = 0.8
+squash_air = 0.1
+squash_air_ref_vy = 700.0
+
+
