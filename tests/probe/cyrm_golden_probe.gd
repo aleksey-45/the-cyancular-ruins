@@ -10,7 +10,7 @@ extends SceneTree
 #   ⑤ 真实地图(maps/*.cyrm)解不开或重编码不稳定 ⇒ ⑤ 组红。
 # ★ 它证明的是「GDScript 与 JS 的字节契约一致」,不证明编辑器 UI 能用(UI 见 tests/probe/editor_*)。
 
-const EXPECTED_CHECKS := 23
+const EXPECTED_CHECKS := 26
 const FIXTURES := "res://tests/fixtures/cyrm"
 
 var _fails: Array[String] = []
@@ -39,6 +39,7 @@ func _initialize() -> void:
 	_check_uncompressed_fixtures()
 	_check_deflate_fixture()
 	_check_legacy_fixture()
+	_check_max_fixture()
 	_check_v3_fixtures()
 	_check_real_maps()
 
@@ -148,6 +149,24 @@ func _check_legacy_fixture() -> void:
 	var enc := EditorCodec.encode_map(m, {"compress": false})
 	_chk(bool(enc["ok"]) and (enc["bytes"] as PackedByteArray) == _read_fixture("v4_legacy_migrated.cyrm"),
 			"⑤ legacy 迁移后重编码 == v4_legacy_migrated.cyrm")
+
+
+func _check_max_fixture() -> void:
+	# 最大尺寸边界:400×300 格 = 1600×1200 子格 = 1,920,000 子格/层(格式允许的上界)。空图 deflate 后很小。
+	var raw := _read_fixture("v4_max_400x300_empty.cyrm")
+	_chk(raw.size() > 20 and raw[5] == 1, "⑧ 最大尺寸夹具是 deflate 件(compression=%d)" % (raw[5] if raw.size() > 5 else -1))
+	var dec := EditorCodec.decode_map(raw)
+	_chk(bool(dec["ok"]), "⑧ 400×300 最大尺寸空图可解: %s" % dec.get("error", ""))
+	if bool(dec["ok"]):
+		var m: Dictionary = dec["map"]
+		var n := 1600 * 1200
+		var layers: Array = m["layers"]
+		_chk(int(m["sub_cols"]) == 1600 and int(m["sub_rows"]) == 1200
+				and layers.size() == 7
+				and (layers[0] as Dictionary)["desc"].size() == n
+				and (layers[3] as Dictionary)["rgba"].size() == n
+				and layers[4] == null,
+				"⑧ 400×300:sub 1600×1200、四层各 %d 子格、层 4-6 null" % n)
 
 
 func _check_v3_fixtures() -> void:

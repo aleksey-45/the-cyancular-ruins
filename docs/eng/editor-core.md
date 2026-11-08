@@ -242,10 +242,10 @@ GDScript 没有异常 ⇒ 可能失败的操作返回 `{ok:false, "error": Strin
 
 ### 13.4 跨语言黄金夹具（P0）
 
-`tests/fixtures/cyrm/`：9 项夹具 / 10 个文件，由 **JS 编辑器核心**产出（生成脚本 `.tmp/gen_golden.js`，
+`tests/fixtures/cyrm/`：10 项夹具 / 11 个文件，由 **JS 编辑器核心**产出（生成脚本 `.tmp/gen_golden.js`（1-9 号）+ `.tmp/gen_maxfix.js`（10 号最大尺寸），
 不入库）。构图、生产命令、每个夹具钉住的契约见 [`tests/fixtures/cyrm/README.md`](../../tests/fixtures/cyrm/README.md)。
 
-`tests/probe/cyrm_golden_probe.gd`（`-s`，23 条断言）钉：
+`tests/probe/cyrm_golden_probe.gd`（`-s`，26 条断言）钉：
 
 1. 无压缩夹具 `decode_map → encode_map(compress:false)` **逐字节相等**（调色板顺序 / 层块顺序 / 头字段全在内）；
 2. legacy 夹具：解码**不迁移** → 未迁移编码被 `validate_map` 拒（error 含「不在 tile_defs」）→
@@ -263,7 +263,7 @@ GDScript 没有异常 ⇒ 可能失败的操作返回 `{ok:false, "error": Strin
 | `tests/smoke/editor_codec_smoke.gd` | `EDITOR CODEC SMOKE: OK(56 条断言):…` | 56 | 层编解码 / 容器 / 压缩 / 稀疏 flags / 双字节索引 / 65535 上界 / 七类坏输入 |
 | `tests/smoke/editor_v3_smoke.gd` | `EDITOR V3 SMOKE: OK(41 条断言)` | 41 | v3 标记判定 / 解析报错 / 旧字母 2×2 / 迁移展开 / `subcell_render` |
 | `tests/smoke/editor_validate_smoke.gd` | `EDITOR VALIDATE SMOKE: OK(20 条断言)` | 20 | 尺寸钳制 / errors vs warnings / 复活点判据 |
-| `tests/probe/cyrm_golden_probe.gd` | `CYRM GOLDEN PROBE: ALL-OK(23 条断言)` | 23 | 见 §13.4 |
+| `tests/probe/cyrm_golden_probe.gd` | `CYRM GOLDEN PROBE: ALL-OK(26 条断言)` | 26 | 见 §13.4 |
 
 `EXPECTED_CHECKS` 都真用于比较（`run_all --list` 的 `GATE` 栏可见）；`bash tests/run_all.sh` 自动收录。
 

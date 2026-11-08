@@ -12,10 +12,10 @@ node .tmp/gen_golden.js
 ```
 
 - 脚本自己写运行日志 `/.tmp/js_baseline.log`（**每个文件的 size + sha256 + 逐条自检结论**，末尾
-  `GOLDEN GEN: OK(9 fixtures)`；任一条失败打 `FAIL` 并以退出码 1 结束）。
+  `GOLDEN GEN: OK(9 fixtures)`；任一条失败打 `FAIL` 并以退出码 1 结束）。10 号（最大尺寸）由另一个一次性脚本 `.tmp/gen_maxfix.js` 补生成，判词 `MAX FIXGEN: OK(...)`。
 - 脚本两跑输出稳定（sha256 一致）；只有 `v4_mixed_7layers_deflate.cyrm` 的压缩字节依赖运行时 zlib 实现，
   换 Node/zlib 版本可能变 —— 见 §4。
-- 生成后 `tests/fixtures/cyrm/` 应为 **9 项夹具 / 10 个文件**（3 号夹具额外带一份「迁移后期望字节」）。
+- 生成后 `tests/fixtures/cyrm/` 应为 **10 项夹具 / 11 个文件**（3 号夹具额外带一份「迁移后期望字节」，10 号由 `gen_maxfix.js` 生成）。
 
 ## 1. 夹具清单与它钉住的契约
 
@@ -31,8 +31,9 @@ node .tmp/gen_golden.js
 | 7 | `v4_from_v3_simple.cyrm` | 773 B | `parseV3Text(6 号) → migrateV3 → encodeMap(compress:false)` | v3→v4 单向迁移：形状掩码 bit `(qy*2+qx)` → 新网格 4 子格；前/后/背景三层留空；meta 原样带过。GDScript 解析 v3 后重编码必须等于它 | decode 出的 players/enemies/comments 与文本行一致 ✓、往返逐字节相等 ✓ |
 | 8 | `legacy_letters.txt` | 33 B | 旧字母格式（**无** v3 标记），4×4 偶数网格，字符只 `0-9/A`；meta `# player 4 2` | 旧格式自动识别（无标记 → 字母表）→ 2×2 折叠成 1 格（纹理取组内首个非零、形状 = 2×2 掩码）→ spawn 坐标 ÷2 | 非 v3 判定 ✓、解析 2×2 格 ✓、player (4,2)→(2,1) ✓ |
 | 9 | `v4_from_legacy_letters.cyrm` | 520 B | `parseV3Text(8 号) → migrateV3 → encodeMap(compress:false)` | 旧字母 → v4 迁移（`layer_flags=0x0F`）；经 `migrateV3` 时 legacy id 也逐条迁移（样本里字符 `3` → tex3 → tex1/hue1） | decode 出的 players=(2,1)、enemies/comments 为空 ✓、往返逐字节相等 ✓ |
+| 10 | `v4_max_400x300_empty.cyrm` | 13131 B | 400×300 格 = 1600×1200 子格 = 1,920,000 子格/层（格式允许上界）；四层全空、deflate 后 13 KB；`GDScript` 侧只钉「能解 + 尺寸/层长 1,920,000 + 4-6 层 null」，不钉压缩字节 | 最大尺寸边界：`sub_cols`/`sub_rows` 是 u16、层数组长度 = n，越界或按格数误分配会在解码期暴露 | `decodeMap` 回读 sub 1600×1200、四层各 1,920,000、层 4-6 null ✓（`.tmp/gen_maxfix.js`，判词 `MAX FIXGEN: OK(13131 bytes / sub 1600x1200 / n=1920000)`） |
 
-> size 是当前实现的稳定值（两跑一致）。sha256 只在 `.tmp/js_baseline.log`（含全部 10 个文件），
+> size 是当前实现的稳定值（两跑一致）。sha256 只在 `.tmp/js_baseline.log`（含全部 11 个文件），
 > **不入库**以免文档随 zlib 版本漂移。
 
 ## 2. 4 号（7 层）的确定性构图
