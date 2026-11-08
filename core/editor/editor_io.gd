@@ -116,9 +116,29 @@ static func list_maps() -> Array[String]:
 	return out
 
 
-# P3 的「复制到 exe 同目录」动作;契约允许先留空实现,这里显式返回未实现而不是静默成功。
-static func copy_to_exe_dir(_map: Dictionary, _base_name: String) -> Dictionary:
-	return _fail("copyToExeDir: 尚未实现(P3 导出动作)")
+# P3「导出」的目标目录动作:dir + <净化后的 base_name>.cyrm;校验/编码/写盘全走 save_path(只拒 errors)。
+# 成功 {ok:true, path, dir, bytes, warnings};失败给原因(目录空 / res:// 只读 / 权限)。
+static func export_to_dir(dir: String, map: Dictionary, base_name: String, opts: Dictionary = {}) -> Dictionary:
+	if dir.is_empty():
+		return _fail("exportToDir: 目标目录为空")
+	if dir.begins_with("res://"):
+		return _fail("exportToDir: 不能写 res://(导出后只读): %s —— 请选 user://maps 或 exe 同目录" % dir)
+	var target := dir.path_join(EditorGeometry.sanitize_name(base_name) + MAP_EXT)
+	var res := save_path(target, map, opts)
+	if bool(res.get("ok", false)):
+		res["dir"] = dir
+	return res
+
+
+# P3「复制到 exe 同目录」:写 exe 所在目录;只读位置写失败时把原因交回(绝不静默成功)。
+static func copy_to_exe_dir(map: Dictionary, base_name: String, opts: Dictionary = {}) -> Dictionary:
+	var exe_dir := OS.get_executable_path().get_base_dir()
+	if exe_dir.is_empty():
+		return _fail("copyToExeDir: 取不到 exe 所在目录")
+	var res := export_to_dir(exe_dir, map, base_name, opts)
+	if not bool(res.get("ok", false)):
+		res["error"] = "copyToExeDir: 写 exe 同目录失败(%s): %s" % [exe_dir, String(res.get("error", ""))]
+	return res
 
 
 # ── 内部 ──

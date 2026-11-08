@@ -128,13 +128,17 @@ func save_to(path: String) -> Dictionary:
 	return res
 
 
+func _map_name() -> String:
+	var n := ""
+	if not doc.map.is_empty():
+		n = String(doc.map.get("name", ""))
+	return "untitled" if n == "" else n
+
+
 func save_current() -> Dictionary:
 	if _path != "":
 		return save_to(_path)
-	var name := "untitled"
-	if not doc.map.is_empty():
-		name = String(doc.map.get("name", "untitled"))
-	return save_to(EditorIO.default_target(name))
+	return save_to(EditorIO.default_target(_map_name()))
 
 
 func validate() -> Dictionary:
@@ -204,7 +208,9 @@ func _build_top_bar() -> Control:
 	bar.add_child(_action_button("打开", _on_open_pressed))
 	bar.add_child(_action_button("保存", _on_save_pressed))
 	bar.add_child(_action_button("校验", _on_validate_pressed))
+	bar.add_child(_action_button("导出", _on_export_pressed))
 	bar.add_child(_action_button("导出并加载", _on_export_load_pressed))
+	bar.add_child(_action_button("返回", _on_back_pressed))
 
 	_path_label = UiFactory.label("未命名", 16, UiFactory.C_TEXT_DIM)
 	_path_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -558,10 +564,7 @@ func _on_save_pressed() -> void:
 
 func _on_save_as_pressed() -> void:
 	_open_popup("保存为", func(body: VBoxContainer) -> void:
-		var default_name := "untitled"
-		if not doc.map.is_empty():
-			default_name = String(doc.map.get("name", "untitled"))
-		var edit := _popup_line(body, "路径", EditorIO.default_target(default_name))
+		var edit := _popup_line(body, "路径", EditorIO.default_target(_map_name()))
 		var go := UiFactory.menu_button("保存", 16, Vector2(220, 44), "gold")
 		go.pressed.connect(func() -> void:
 			save_to(edit.text)
@@ -573,15 +576,80 @@ func _on_validate_pressed() -> void:
 	validate()
 
 
-func _on_export_load_pressed() -> void:
-	var res := save_current()
+# ── P3 导出两动作(公开 API;探针也走这里) ─────────────────────────────
+# 导出(只写文件):target = "user" 落 user://maps/;target = "exe" 复制到 exe 同目录。
+func export_to(target: String) -> Dictionary:
+	return _export_target(_map_name(), target == "exe")
+
+
+func _export_target(map_name: String, to_exe_dir: bool) -> Dictionary:
+	var res: Dictionary
+	if to_exe_dir:
+		res = EditorIO.copy_to_exe_dir(doc.map, map_name)
+	else:
+		res = EditorIO.save_path(EditorIO.default_target(map_name), doc.map)
 	if not bool(res.get("ok", false)):
+		_append_output("导出失败:%s" % String(res.get("error", "")))
+		_set_message("导出失败:%s" % String(res.get("error", "")), true)
+		return res
+	_path = String(res.get("path", _path))
+	doc.dirty = false
+	_append_output("已导出:%s(%d 字节)" % [_path, int(res.get("bytes", 0))])
+	_set_message("已导出:%s" % _path, false)
+	_update_status(Vector2i.ZERO, false)
+	return res
+
+
+# 导出并加载到游戏内:写文件 → Settings.sp_map_path → Settings.save() → MazeGenerator.set_map_file()。
+# ★ switch_scene=true 时回单人开局;persist=false 只改内存(场景探针用,避免动用户 settings.cfg)。
+func export_and_load(path: String, persist: bool = true, switch_scene: bool = true) -> Dictionary:
+	if path.is_empty():
+		return {"ok": false, "error": "exportAndLoad: 路径为空"}
+	var res := save_to(path)
+	if not bool(res.get("ok", false)):
+		return res
+	Settings.sp_map_path = path
+	if persist:
+		Settings.save()
+	MazeGenerator.set_map_file(path)
+	RunOptions.disabled_weapons = Settings.sp_disabled_weapons.duplicate()
+	Level0.pvp_mode = false
+	CombatComponent.pvp_arena = false
+	_set_message("已导出并设为单人地图:%s" % path, false)
+	_append_output("下一次单人开局将使用:%s(PvP 不受影响:联机地图由大厅/服务端下发的 path 覆盖)" % path)
+	if switch_scene:
+		get_tree().change_scene_to_file("res://scenes/level_0.tscn")
+	return res
+
+
+func _on_export_pressed() -> void:
+	_open_popup("导出到…", func(body: VBoxContainer) -> void:
+		var name_edit := _popup_line(body, "名字", _map_name())
+		var target := OptionButton.new()
+		target.add_item("user://maps(默认,可写)", 0)
+		target.add_item("exe 同目录(外置地图优先)", 1)
+		UiFactory.style_control(target, 16)
+		body.add_child(target)
+		var go := UiFactory.menu_button("导出", 16, Vector2(220, 44), "gold")
+		go.pressed.connect(func() -> void:
+			_export_named(name_edit.text, target.selected == 1)
+			_close_popup())
+		body.add_child(go))
+
+
+func _export_named(map_name: String, to_exe_dir: bool) -> void:
+	_export_target(map_name, to_exe_dir)
+
+
+func _on_export_load_pressed() -> void:
+	if _path == "":
+		export_and_load(EditorIO.default_target(_map_name()))
 		return
-	Settings.sp_map_path = _path
-	Settings.save()
-	MazeGenerator.set_map_file(_path)
-	_set_message("已导出并设为单人地图:%s" % _path, false)
-	_append_output("下一次单人开局将使用:%s" % _path)
+	export_and_load(_path)
+
+
+func _on_back_pressed() -> void:
+	get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
 
 
 # ── 弹层 ───────────────────────────────────────────────────────────────

@@ -3,7 +3,7 @@ extends SceneTree
 # P2 读写门面 EditorIO 冒烟守卫(`-s`,headless;可写 user://,结束时删自己造的文件)。
 # 覆盖:① v4 7 层夹具读入 ② v4 legacy 夹具读时迁移 ③ v3 / 旧字母文本读入
 #       ④ 坏文件失败给原因 ⑤ save→open→save 字节确定性 ⑥ validate errors 拒写且不落盘
-#       ⑦ list_maps 三处来源 ⑧ default_target 名字净化与目录。
+#       ⑦ list_maps 三处来源 ⑧ default_target 名字净化与目录 ⑨ export_to_dir / copy_to_exe_dir(P3 导出)。
 # 去掉什么会红(逐组):
 #   ① open_path 解码错位 / 层结构或 meta 四段回读错 ⇒ 红。
 #   ② open_path 不调 EditorLegacy.migrate_map ⇒ legacy id 残留在内存、保存字节 ≠ v4_legacy_migrated ⇒ 红。
@@ -13,9 +13,10 @@ extends SceneTree
 #   ⑥ save_path 不先 validate、或 errors 后仍写盘 ⇒ 目标文件存在 ⇒ 红。
 #   ⑦ list_maps 漏 res://maps / user://maps 来源、或不去重排序 ⇒ 红。
 #   ⑧ default_target 漏 sanitize_name / 落错目录 / 漏 .cyrm ⇒ 红。
+#   ⑨ export_to_dir 不落 user://maps、res:// 不被拒、copy_to_exe_dir 静默成功 ⇒ 红。
 # ★ 期望值来自 tests/fixtures/cyrm/README.md 的确定性构图与本文件手算,不复用被测函数的返回值。
 
-const EXPECTED_CHECKS := 47
+const EXPECTED_CHECKS := 53
 
 const FIXTURES := "res://tests/fixtures/cyrm"
 const PROBE_A := "user://maps/_editor_io_probe.cyrm"
@@ -24,6 +25,7 @@ const PROBE_LEGACY := "user://maps/_editor_io_legacy_probe.cyrm"
 const PROBE_BAD_BIN := "user://maps/_editor_io_bad_bin.cyrm"
 const PROBE_BAD_TEXT := "user://maps/_editor_io_bad_text.cyrm"
 const PROBE_REJECT := "user://maps/_editor_io_reject.cyrm"
+const PROBE_EXPORT := "user://maps/_editor_io_export_probe.cyrm"
 const LEGACY_TEX_IDS := [2, 3, 4, 5, 16, 17, 18]
 
 var _fails: Array[String] = []
@@ -64,9 +66,10 @@ func _initialize() -> void:
 	_check_validate_reject()
 	_check_list_maps()
 	_check_default_target()
+	_check_export_to_dir()
 
 	# 自清:只删本冒烟造的文件,user://maps 目录与其他地图不动。
-	for p in [PROBE_A, PROBE_B, PROBE_LEGACY, PROBE_BAD_BIN, PROBE_BAD_TEXT, PROBE_REJECT]:
+	for p in [PROBE_A, PROBE_B, PROBE_LEGACY, PROBE_BAD_BIN, PROBE_BAD_TEXT, PROBE_REJECT, PROBE_EXPORT]:
 		if FileAccess.file_exists(p):
 			DirAccess.remove_absolute(p)
 
@@ -288,6 +291,34 @@ func _check_list_maps() -> void:
 	var sorted_copy := maps.duplicate()
 	sorted_copy.sort()
 	_chk(maps == sorted_copy, "⑦ list_maps 应排序(实得 %s)" % str(maps))
+
+
+# ══ ⑨ P3 导出:export_to_dir 落到目录 / res:// 拒写 / copy_to_exe_dir 不静默成功 ══
+func _check_export_to_dir() -> void:
+	var opened := EditorIO.open_path(FIXTURES.path_join("v4_mixed_7layers.cyrm"))
+	if not bool(opened.get("ok", false)):
+		_chk(false, "⑨ 前置:打开 v4_mixed_7layers 失败:%s" % String(opened.get("error", "")))
+		return
+	var map: Dictionary = opened["map"]
+	var res := EditorIO.export_to_dir("user://maps", map, "_editor io export probe")
+	_chk(bool(res.get("ok", false)), "⑨ export_to_dir 应成功(实得 %s)" % String(res.get("error", "")))
+	if bool(res.get("ok", false)):
+		_chk(String(res.get("path", "")) == PROBE_EXPORT,
+				"⑨ 落点应是 user://maps/_editor_io_export_probe.cyrm(实得 %s)" % String(res.get("path", "")))
+		_chk(FileAccess.file_exists(PROBE_EXPORT) and _file_size(PROBE_EXPORT) > 0,
+				"⑨ 导出文件应存在且非空")
+		var reread := EditorIO.open_path(PROBE_EXPORT)
+		_chk(bool(reread.get("ok", false)), "⑨ 导出的文件应能重新打开:%s" % String(reread.get("error", "")))
+	var denied := EditorIO.export_to_dir("res://maps", map, "res_probe")
+	_chk(not bool(denied.get("ok", false)) and String(denied.get("error", "")).contains("res://"),
+			"⑨ res:// 目标必须拒写并点名只读(%s)" % String(denied.get("error", "")))
+	var exe_res := EditorIO.copy_to_exe_dir(map, "_editor_io_exe_probe")
+	_chk(exe_res.has("ok") and (bool(exe_res["ok"]) or String(exe_res.get("error", "")) != ""),
+			"⑨ copy_to_exe_dir 必须回 ok 或带原因的错误(不许静默成功):%s" % str(exe_res))
+	if bool(exe_res.get("ok", false)):
+		var exe_path := String(exe_res.get("path", ""))
+		if FileAccess.file_exists(exe_path):
+			DirAccess.remove_absolute(exe_path)
 
 
 # ══ ⑧ default_target("a b/c"):落 user://maps/ 且名字被 sanitize ══

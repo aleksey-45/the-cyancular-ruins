@@ -11,9 +11,11 @@ extends Node
 #   ⑥ 画布没建视口纹理 ⇒ ⑤ 组红。
 # 判据 = 未跑满条数 + 失败清单;退出码只是陪衬。
 
-const EXPECTED_CHECKS := 18
+const EXPECTED_CHECKS := 25
 const MAP := "res://maps/newfactory.cyrm"
 const A := "user://maps/_editor_scene_probe_a.cyrm"
+const EXPORT_C := "user://maps/_editor_scene_probe_export.cyrm"
+const USER_EXPORT := "user://maps/untitled.cyrm"
 const B := "user://maps/_editor_scene_probe_b.cyrm"
 const SUB := Vector2i(20, 20)
 
@@ -21,6 +23,13 @@ var _fails: Array[String] = []
 var _checks := 0
 var _editor: Control = null
 var _doc: EditorDoc = null
+var _sp_before := ""
+var _mp_before := ""
+var _map_before := ""
+var _settings_bytes := PackedByteArray()
+var _settings_existed := false
+var _untitled_existed := false
+var _user_export_created := false
 
 
 func _chk(ok: bool, msg: String) -> void:
@@ -33,6 +42,7 @@ func _chk(ok: bool, msg: String) -> void:
 func _ready() -> void:
 	await get_tree().process_frame
 	_cleanup()
+	_backup_settings()
 
 	var scene: PackedScene = load("res://scenes/editor/editor_root.tscn")
 	_chk(scene != null, "① 空载守卫:load(editor_root.tscn) 为 null")
@@ -104,14 +114,65 @@ func _ready() -> void:
 		_chk(tex != null and tex.get_width() > 0 and tex.get_height() > 0,
 				"⑤ 画布视口纹理为空(期望非空)")
 
+	_check_export_and_load()
+	_restore_settings()
 	_cleanup()
 	_finish()
 
 
+# ── P3 导出两动作:只写文件的 export_to + Export&Load 的 Settings/MazeGenerator 状态 ──
+func _check_export_and_load() -> void:
+	var res: Dictionary = _editor.export_and_load(EXPORT_C, true, false)
+	_chk(bool(res.get("ok", false)), "⑥ export_and_load 失败:%s" % String(res.get("error", "")))
+	_chk(Settings.sp_map_path == EXPORT_C,
+			"⑥ 导出并加载后 Settings.sp_map_path 应为 %s(实得 %s)" % [EXPORT_C, Settings.sp_map_path])
+	_chk(MazeGenerator.map_file_path() == EXPORT_C,
+			"⑥ 导出并加载后下一次 map_file_path() 应返回该文件(实得 %s)" % MazeGenerator.map_file_path())
+	_chk(Settings.mp_map_path == _mp_before,
+			"⑥ PvP 地图设置不该被「导出并加载」改动(%s → %s)" % [_mp_before, Settings.mp_map_path])
+	# persist=true ⇒ Settings.save() 必须把单人地图路径写进 user://settings.cfg(下次开局仍用它)。
+	var cf := ConfigFile.new()
+	var cfg_ok := cf.load("user://settings.cfg") == OK
+	_chk(cfg_ok and String(cf.get_value("single", "map_path", "")) == EXPORT_C,
+			"⑥ 导出并加载的持久化没写进 settings.cfg(single/map_path=「%s」)" % String(cf.get_value("single", "map_path", "")))
+	var exp: Dictionary = _editor.export_to("user")
+	_chk(bool(exp.get("ok", false)), "⑥ 导出(只写文件)失败:%s" % String(exp.get("error", "")))
+	_user_export_created = bool(exp.get("ok", false))
+	_chk(_user_export_created and FileAccess.file_exists(USER_EXPORT)
+			and FileAccess.get_file_as_bytes(USER_EXPORT).size() > 0,
+			"⑥ 导出后文件应存在且非空:%s" % USER_EXPORT)
+
+
+# 备份/恢复用户设置:探针跑 persist=true 的导出会写 user://settings.cfg,不能污染开发者的设置。
+func _backup_settings() -> void:
+	_sp_before = Settings.sp_map_path
+	_mp_before = Settings.mp_map_path
+	_map_before = MazeGenerator.map_file_path()
+	_settings_existed = FileAccess.file_exists("user://settings.cfg")
+	if _settings_existed:
+		_settings_bytes = FileAccess.get_file_as_bytes("user://settings.cfg")
+	_untitled_existed = FileAccess.file_exists(USER_EXPORT)
+
+
+func _restore_settings() -> void:
+	Settings.sp_map_path = _sp_before
+	Settings.mp_map_path = _mp_before
+	MazeGenerator.set_map_file(_map_before)
+	if _settings_existed:
+		var f := FileAccess.open("user://settings.cfg", FileAccess.WRITE)
+		if f != null:
+			f.store_buffer(_settings_bytes)
+			f.close()
+	elif FileAccess.file_exists("user://settings.cfg"):
+		DirAccess.remove_absolute("user://settings.cfg")
+
+
 func _cleanup() -> void:
-	for p in [A, B]:
+	for p in [A, B, EXPORT_C]:
 		if FileAccess.file_exists(p):
 			DirAccess.remove_absolute(p)
+	if _user_export_created and not _untitled_existed and FileAccess.file_exists(USER_EXPORT):
+		DirAccess.remove_absolute(USER_EXPORT)
 
 
 func _finish() -> void:
