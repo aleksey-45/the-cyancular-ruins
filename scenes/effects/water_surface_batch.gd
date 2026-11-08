@@ -2,38 +2,7 @@ class_name WaterSurfaceBatch
 extends Node2D
 
 
-const SHADER_CODE := """
-shader_type canvas_item;
-
-// 水体合批:**所有**液体格都走这一条管线(水面砖/水体砖只是图集里不同的 UV 行)。
-// 这样同色、同 alpha、同条纹、同起伏,不存在"两条管线对不齐"的接缝。
-varying vec2 v_world;
-
-uniform sampler2D surf : filter_nearest;
-uniform float sway_speed = 1.6;
-uniform float sway_amp = 2.0;
-uniform float tile_ts = 64.0;
-
-void vertex() {
-	// 顶点色:r=相位(0..1→0..TAU),g=本顶点的位移权重(底边 0 / 顶边随深度衰减)。
-	float w = COLOR.g;
-	float lift = sin(TIME * sway_speed + COLOR.r * 6.2831853) * (sway_amp * w);
-	VERTEX.y += lift;
-	v_world = VERTEX;
-}
-
-void fragment() {
-	vec4 t = texture(surf, UV);
-	// 横向流动条纹:与水体材质同一套公式,锚世界坐标。
-	float band = floor(v_world.y / 16.0);
-	float s1 = sin(v_world.x * 0.020 + TIME * 1.10 + band * 0.7);
-	float s2 = sin(v_world.x * 0.035 - TIME * 1.70 + band * 1.3);
-	float st = clamp(0.5 + 0.25 * s1 + 0.25 * s2, 0.0, 1.0);
-	st = floor(st * 3.0 + 0.5) / 3.0;
-	t.rgb *= mix(0.95, 1.0, st);   // ★ 条纹减弱(0.88→0.95)
-	COLOR = t;
-}
-"""
+const SHADER := preload("res://scenes/effects/water_surface_batch.gdshader")
 
 var _mesh: MeshInstance2D = null
 
@@ -90,12 +59,9 @@ func setup(cells: Array, tex: Texture2D, ts: int) -> void:
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
 
 	var mat := ShaderMaterial.new()
-	var sh := Shader.new()
-	sh.code = SHADER_CODE
-	mat.shader = sh
+	mat.shader = SHADER
 	mat.set_shader_parameter("surf", tex)
 	mat.set_shader_parameter("sway_speed", GameParameters.water_sway_speed)
 	mat.set_shader_parameter("sway_amp", GameParameters.water_sway_amp)
-	mat.set_shader_parameter("tile_ts", float(ts))
 	_mesh.mesh = mesh
 	_mesh.material = mat

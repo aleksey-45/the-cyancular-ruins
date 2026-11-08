@@ -300,7 +300,7 @@ func _apply_own_film(coverage: float) -> void:
 
 func _film_targets() -> Array:
 	var out: Array = []
-	for n in [Level0.wall_layer, Level0.water_layer, Level0.water_surface_layer, state._local]:
+	for n in [Level0.wall_layer, Level0.water_surface_layer, state._local]:
 		if n != null and is_instance_valid(n):
 			out.append(n)
 	return out

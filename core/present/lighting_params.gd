@@ -35,8 +35,6 @@ extends Resource
 @export_range(0.5, 3.0, 0.01) var form_bulge: float = 1.0
 
 @export_group("地形受光")
-## 离"顶面"多深就压到最暗(世界像素)。越大的墙越深。
-@export_range(8.0, 256.0, 1.0) var terrain_depth_px: float = 48.0
 ## 地形受光强度:0 = 关闭(墙只吃环境光),越大墙的竖向体积感越强。
 @export_range(0.0, 0.8, 0.01) var terrain_gain: float = 0.25
 ## 地形受光的色阶数(像素化):0/1 = 关闭。

@@ -4,7 +4,7 @@ extends RefCounted
 #
 # ★ 为什么需要 tag:不同资产该被当成不同形状 —— 玩家和鸟是团块(椭球),枪是长条(圆柱),
 #   贴图和 UI 根本不该有体积(flat)。用一套模型套所有资产必然别扭(枪被当成球、鸟被切面)。
-# ★ 半尺寸用**剪影包围盒**(所有帧取最大),保证动画里法线不抖。
+# ★ 半尺寸用**质心椭圆拟合**(SpriteNormalMap.ellipse_fit,按 alpha 质心 + 二阶矩),一个尺寸全帧共用。
 # ★ 已经有自定义材质的节点一律不碰(黑鸟的剪影 shader 会覆写 COLOR)。
 
 const SHADER_PATH := "res://core/present/form_light.gdshader"

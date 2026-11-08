@@ -2,15 +2,12 @@ class_name Level0
 extends Node2D
 
 static var wall_layer: TileMapLayer = null
-static var water_layer: TileMapLayer = null
-static var surface_texture: Texture2D = null
 static var water_surface_layer: Node2D = null
 static var _grid_ref: Array[Array] = []
 static var _pristine_grid: Array[Array] = []
 static var _pristine_subgrid: Array[Array] = []
 static var _pristine_subdesc: Array[Array] = []
 static var _desc_row: Dictionary = {}
-static var _water_row: Dictionary = {}
 static var _row_warned := false
 static var _destructible_sub: Array[Array] = []
 static var _dirty_chunks: Dictionary = {}
@@ -20,10 +17,8 @@ static var _damaged_subs: Dictionary = {}
 
 static var pvp_mode: bool = false
 
-# 图集只随地图变:同一进程里重开/换模式时直接复用,重建一次 ~130ms(墙体 87 + 水体 42)。
+# 图集只随地图变:同一进程里重开/换模式时直接复用,重建一次 ~87ms。
 static var _wall_ts_cache: Dictionary = {}
-static var _water_ts_cache: Dictionary = {}
-static var _surface_tex_key := ""
 
 
 static var _switching: bool = false
@@ -203,10 +198,8 @@ func _ready() -> void:
 	wl.tile_set = built["tileset"]
 	LoadingScreen.set_progress(0.30, "铺设墙体…")
 	_paint_maze_copies(wl)
-	LoadingScreen.set_progress(0.45, "烘焙水体图集…")
-	Level0.water_layer = $WorldViewport/WaterLayer
+	LoadingScreen.set_progress(0.45, "准备水体…")
 	Level0.water_surface_layer = $WorldViewport/WaterSurfaceLayer
-	Level0.water_layer.tile_set = _create_water_tileset()
 	LoadingScreen.set_progress(0.55, "铺设水体…")
 	_paint_water_copies(grid)
 
@@ -270,37 +263,6 @@ func _collect_wall_descs() -> Array:
 	return out
 
 
-func _create_water_tileset() -> TileSet:
-	var ts := GameParameters.TILE_SIZE
-	var key := "%s|%d" % [MazeGenerator.map_file_path(), ts]
-	var built: Dictionary = _water_ts_cache.get(key, {})
-	if built.is_empty():
-		var uniq := {}
-		uniq[MapFormatV4.neutral_descriptor(TerrainAtlas.WATER_BODY_BRICK + 1)] = true
-		var sd := MazeGenerator.current_subdesc
-		if sd.is_empty():
-			for row in MazeGenerator.current_subgrid:
-				for t in row:
-					if Water.is_liquid(int(t)):
-						uniq[MapFormatV4.neutral_descriptor(int(t))] = true
-		else:
-			for row in sd:
-				for d in row:
-					if int(d) != 0 and Water.is_liquid((int(d) >> 12) & 0xFFF):
-						uniq[int(d)] = true
-		var descs: Array = uniq.keys()
-		descs.sort()
-		built = TerrainAtlas.make_water_tileset_for(ts, descs)
-		_water_ts_cache[key] = built
-	_water_row = built["row_of"]
-	if _surface_tex_key != key:
-		_surface_tex_key = key
-		# ★ 水面与水体用**同一张砖**:两层颜色必须一致。
-		Level0.surface_texture = ImageTexture.create_from_image(
-				TerrainAtlas.water_brick_image(ts, TerrainAtlas.WATER_BODY_BRICK))
-	return built["tileset"]
-
-
 static func _desc_or_neutral(sd: Array, y: int, x: int, tex: int) -> int:
 	if y < sd.size():
 		var drow: Array = sd[y]
@@ -314,10 +276,6 @@ static func _wall_row(desc: int) -> int:
 		_row_warned = true
 		push_warning("Level0: 描述符 0x%X 不在墙体图集行表,回落中性行" % desc)
 	return TerrainAtlas.fallback_row(_desc_row, desc)
-
-
-static func _water_row_of(desc: int) -> int:
-	return TerrainAtlas.fallback_row(_water_row, desc)
 
 
 static func _water_desc_of(v: int, x: int, y: int) -> int:
@@ -479,17 +437,10 @@ func _paint_water_copies(grid: Array[Array]) -> void:
 					continue
 				if not Water.is_liquid(MazeGenerator.texture_of(v)):
 					continue
-				# ★ 每格**只画一次**(单层 ⇒ 同色):水面格交给合批(它负责顶点起伏),
-				#   其余格铺进 TileMap(材质负责条纹)。两边用同一块砖、同一套条纹公式。
-				# ★ 所有液体格都进**同一条管线**(合批):水面砖/水体砖只是图集里不同的 UV 行。
+				# ★ 所有液体格都进**同一条管线**(合批):水面砖 / 水体砖只是图集里不同的 UV 行,
+				#   同色、同 alpha、同条纹、同起伏 —— 不存在"两层对不齐"的接缝。
 				var above: int = grid[posmod(y - 1, rows)][x]
 				var is_surface := above == 0 or not Water.is_liquid(MazeGenerator.texture_of(above))
-				var depth := 0
-				for k in range(1, 13):
-					var vv: int = grid[posmod(y - k, rows)][x]
-					if vv == 0 or not Water.is_liquid(MazeGenerator.texture_of(vv)):
-						break
-					depth += 1
 				var d: int = _water_desc_of(v, x, y)
 				if not surface_by_desc.has(d):
 					surface_by_desc[d] = []
@@ -997,11 +948,6 @@ func _update_pickup_prompt() -> void:
 						pk.canonical_pos, pl.global_position, w, h).length()
 				can = d <= PlayerParams.weapon_pickup_radius
 		pk.set_prompt_visible(can)
-
-## 水体层的横向流动条纹:与水面合批同一套公式(第一版),只做乘性压暗。
-
-
-
 
 ## 被合批用的两行图集:上半 = 水体砖,下半 = 水面砖,都按描述符 tint。
 func _make_water_atlas(ts: int, desc: int) -> Image:

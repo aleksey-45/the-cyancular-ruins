@@ -205,7 +205,6 @@ func _push_lighting_params() -> void:
 	if _mat == null or lighting == null:
 		return
 	_mat.set_shader_parameter("terrain_gain", lighting.terrain_gain)
-	_mat.set_shader_parameter("terrain_depth_px", lighting.terrain_depth_px)
 	_mat.set_shader_parameter("terrain_steps", lighting.terrain_steps)
 	_mat.set_shader_parameter("terrain_dither", lighting.terrain_dither)
 	_mat.set_shader_parameter("shadow_far", lighting.shadow_far)

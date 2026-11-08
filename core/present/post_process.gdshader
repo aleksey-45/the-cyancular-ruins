@@ -94,7 +94,6 @@ const float TILE_PX = 64.0;             // 世界格边长(像素)
 
 // ── 地形受光参数 ── 数值来自 lighting_params.tres(不在 .gd 里写死)。
 uniform float terrain_gain : hint_range(0.0, 0.8) = 0.25;
-uniform float terrain_depth_px = 48.0;
 // 地形受光的色阶数(像素化):0/1 = 关闭。★ 量化的是**深度比值**,不是乘完 gain 的结果 ——
 // gain 只有 0.06,量化结果的话 3 档只差 4/255,肉眼看不出来。
 uniform float terrain_steps : hint_range(0.0, 6.0) = 4.0;
@@ -102,9 +101,8 @@ uniform float terrain_steps : hint_range(0.0, 6.0) = 4.0;
 uniform float terrain_dither : hint_range(0.0, 1.0) = 1.0;
 uniform float dither_px = 2.0;
 const float TERRAIN_STEP_PX = 6.0;   // 步长(世界像素):6×8 = 48px 覆盖深度
-// 2×2 Bayer:值 {0, 0.5, 0.75, 0.25}(经典矩阵 /4)。
-// ★ 顺序抖动会把平坦区打散成棋盘;而精灵只有 48px,不打散又会切出"等高线"。
-//   所以默认 `form_steps = 1`(精灵不量化),这函数留给地形/以后想开的人。
+// 2×2 Bayer(地形用;精灵侧是 4×4,见 form_light.gdshader)。
+// ★ 顺序抖动会把平坦区打散成棋盘;不打散又会切出"等高线"。
 float _bayer2(vec2 a) {
 	a = floor(a);
 	return fract(a.x * 0.5 + a.y * a.y * 0.75);

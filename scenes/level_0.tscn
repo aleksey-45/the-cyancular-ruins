@@ -24,9 +24,6 @@ position = Vector2(4, -20)
 
 [node name="WallLayer" type="TileMapLayer" parent="WorldViewport" unique_id=191518324]
 
-[node name="WaterLayer" type="TileMapLayer" parent="WorldViewport" unique_id=191518325]
-z_index = 4
-
 [node name="WaterSurfaceLayer" type="Node2D" parent="WorldViewport" unique_id=191518326]
 z_index = 5
 

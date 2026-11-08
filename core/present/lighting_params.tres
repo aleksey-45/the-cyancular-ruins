@@ -15,7 +15,6 @@ form_boost = 0.15
 form_steps = 4.0
 form_dither = 0.3
 form_bulge = 1.25
-terrain_depth_px = 48.0
 terrain_gain = 0.22
 terrain_steps = 4.0
 terrain_dither = 0.0
