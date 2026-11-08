@@ -281,6 +281,8 @@ GDScript 没有异常 ⇒ 可能失败的操作返回 `{ok:false, "error": Strin
 
 - **P2 编辑器场景已落地**（`scenes/editor/` + `EditorDoc` / `EditorIO`）：场景、坐标/环面、渲染、撤销、读写与守卫见
   [`editor-godot.md`](editor-godot.md)。
-- 还没做：P3 导出两个动作、P5 客户端 / 服务端两份导出的编辑器裁剪（含主菜单入口按 `OS.has_feature("editor")`）、
-  P6 `level_editor/` 退役。
+- **P3 导出两动作 / P5 两份导出已落地**：`EditorIO.export_to_dir / copy_to_exe_dir`、场景根 `export_to / export_and_load`；
+  客户端 `custom_features="editor"` 才有主菜单入口，服务端 pck 排除编辑器资源 —— 见 [`editor-godot.md`](editor-godot.md) §10
+  与 [`RELEASE.md`](../../RELEASE.md)。
+- 还没做：P6 `level_editor/` 退役（连同 `dist/cyrm-editor.html`、JS 守卫与四份 `editor-*.md` 旧文档）、档 3 逐条评审。
 - 在那之前别删 JS 编辑器，也别让 `core/editor` 反向依赖 `level_editor/`。

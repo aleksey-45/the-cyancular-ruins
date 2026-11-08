@@ -56,7 +56,7 @@
 
 ## 6. 场景与交互
 
-- 顶栏：新建（名字/宽/高，`EditorValidate.clamp_map_size` 钳制）· 打开（列出 `list_maps`）· 保存（有路径直接写，否则「保存为」）· 校验 · 导出并加载。
+- 顶栏：新建（名字/宽/高，`EditorValidate.clamp_map_size` 钳制）· 打开（列出 `list_maps`）· 保存（有路径直接写，否则「保存为」）· 校验 · 导出（选 `user://maps` 或 exe 同目录）· 导出并加载（写盘 + 设为单人地图 + 回单人开局）· 返回主菜单。
 - 右栏：7 层（点名字 = 当前编辑层；勾选框 = 显示/隐藏）· 工具（画笔/橡皮/直线/矩形/油漆桶/吸管）· 画刷格数 · 调色板（`data/tile_defs.json` 的 tiles，缩略图取 `TerrainAtlas.source_image()`）· 校验/消息输出。
 - 状态栏：消息 · 尺寸 · 当前层 · 工具 · 光标子格（环面归一化）· 当前值 · 缩放 · 未保存标记。
 - 快捷键走**独立 `editor_` 前缀 InputMap**（`editor_undo/redo/save/open/zoom_in/zoom_out`），不与游戏 action 混。
@@ -67,9 +67,11 @@
 | 支 | 判词 | 条数闸 | 钉什么 |
 |---|---|---|---|
 | `tests/smoke/editor_doc_smoke.gd` | `EDITOR DOC SMOKE: OK(93 条断言)` | 93 | 7 层建图 / 环面 / Bresenham / 4 邻接与接缝油漆桶 / 颜色层 u32 / undo 往返与合并 / 栈上限 / load_map 清栈 / validate+to_bytes |
-| `tests/smoke/editor_io_smoke.gd` | `EDITOR IO SMOKE: OK(47 条断言)` | 47 | v4 7 层读入 / legacy 读时迁移 / v3 与旧字母文本 / 坏文件 / 保存确定性 / 校验拒写 / 三处目录 / 默认落点 |
+| `tests/smoke/editor_io_smoke.gd` | `EDITOR IO SMOKE: OK(53 条断言)` | 53 | v4 7 层读入 / legacy 读时迁移 / v3 与旧字母文本 / 坏文件 / 保存确定性 / 校验拒写 / 三处目录 / 默认落点 / **P3 导出落点与 res:// 拒写** |
 | `tests/probe/editor_canvas_probe.tscn` | `EDITOR CANVAS PROBE: ALL-OK(27 条断言)` | 27 | 视口纹理尺寸 / `screen_to_subcell` 手算 / 鼠标锚缩放 / 层可见与压暗 / 颜色层与纹理层像素 / `pointer_down` / 新 desc 重建图集 / 空 doc 安全 |
-| `tests/probe/editor_scene_probe.tscn` | `EDITOR SCENE PROBE: ALL-OK(18 条断言)` | 18 | 真实例化场景：打开 `maps/newfactory.cyrm` → 改一格 → undo/redo → 保存 → 重开 → 再保存**逐字节相等**；校验形状；画布纹理非空 |
+| `tests/probe/editor_scene_probe.tscn` | `EDITOR SCENE PROBE: ALL-OK(25 条断言)` | 25 | 真实例化场景：打开 `maps/newfactory.cyrm` → 改一格 → undo/redo → 保存 → 重开 → 再保存**逐字节相等**；校验形状；画布纹理非空；**P3 导出并加载后 `Settings.sp_map_path`（含 settings.cfg 持久化）/ `MazeGenerator.map_file_path()` 指向该文件、PvP 地图设置不变** |
+
+- 产品侧另有两条**真导出**才能回答的检查（不在默认批里，跑在 `tools/build_release.py`，见 §10）。
 
 - 场景探针就是 P2 的验收口径（`editor_scene_probe` 的 ② 组）；判据一律 grep 判词，退出码不是判据。
 - 跑法：`bash .tmp/run_smoke.sh <res 路径>`（冒烟）、`bash .tmp/run_scene.sh <res .tscn>`（场景探针）；
@@ -77,10 +79,11 @@
 
 ## 8. 已知边界（照实写）
 
-- **入口还没进主菜单**：`scenes/main_menu.tscn` 没有编辑器按钮；计划 P5 按 `OS.has_feature("editor")` 加客户端专属入口。
-  在那之前只能直接加载 `res://scenes/editor/editor_root.tscn`（场景探针就是这么跑的）。
-- 「导出并加载」目前只做：保存 → 写 `Settings.sp_map_path` → `Settings.save()` → `MazeGenerator.set_map_file()`，
-  **不切场景回游戏**（P3 再决定流程）。
+- **入口只在导出的客户端里出现**（P5）：主菜单 `_wire_menu()` 用
+  `OS.has_feature("editor") and OS.has_feature("template")` 判定 —— 单用 `editor` 在编辑器二进制里恒真（Godot
+  `core/os/os.cpp` 的 `TOOLS_ENABLED` 分支），会把开发态菜单版式也改掉。开发态 / 服务端 / Web 都看不到按钮。
+- 「导出并加载」= 保存 → `Settings.sp_map_path` → `Settings.save()` → `MazeGenerator.set_map_file()` →
+  回 `level_0`（单人流程；PvP 地图仍由大厅/服务端下发的 path 覆盖，不受影响）。
 - **没有真渲染预览**：未接 `PostProcess` / `ParallaxBg`；画布用同一份地形图集 + `SKY_COLOR` 近似，背景四层按颜色层出（不是视差）。
 - 未做：选区/复制粘贴/镜像、渐变工具、出生点与敌人 meta 的可视化编辑、缩略图列表、脏区优化（当前每次 refresh 重建整张视口纹理，超大图连续笔画可能掉帧）。
 - v3 文本 / 旧字母格式打开后另存为写的是 **v4**（`EditorV3` 迁移是单向的，与计划一致）。
@@ -88,5 +91,23 @@
 
 ## 9. 还没做（计划后续阶段）
 
-P3 导出两动作（校验失败逐条列出 / 只读目录错误 / 导出并加载后下一次 `map_file_path()` 返回该文件）、
-P5 两份导出（客户端 `custom_features="editor"` + 服务端无编辑器入口）、P6 删 `level_editor/` 收尾。
+P6：删 `level_editor/`（JS 编辑器）与 `dist/cyrm-editor.html`、`sync-tiles.js` 的 JS 产物（保留 `data/tile_defs.json`），
+退役 JS 侧守卫，重写/收缩 `editor-*.md` 四份旧文档；然后做档 3 逐条评审（地图格式写盘路径、forced map 影响面、两份导出的裁剪面）。
+
+## 10. 两份导出（P5，2026-11-09）
+
+| 产物 | 预设 | `custom_features` | 编辑器入口 | 编辑器资源 |
+|---|---|---|---|---|
+| 客户端 | `Windows Desktop` / `macOS` | `editor` | 主菜单有（按钮在 Beta 之后） | 在 pck 里 |
+| 服务端 | `Dedicated Server` / `macOS Server` | `serverui` | 无 | `exclude_filter` 排除 `scenes/editor/*,core/editor/*` |
+| Web | `Web` | `""` | 无（计划明确不做 Godot 编辑器的 web 导出） | —— |
+
+- 入口判定 = `OS.has_feature("editor") and OS.has_feature("template")`（见 §8 第一条的坑）。
+- 产物自检（`tools/build_release.py` 内置两条；开关在 `--` 之后）：
+  - 客户端：`The Cyancular Ruins.exe --headless --quit-after 120 -- --editor-entry-report` ⇒ 必须打 `[editor] feature=true entry=true`；
+  - 服务端：主场景是 `server_main`，冒烟脚本在同目录写 `override.cfg` 把 `run/main_scene(.serverui/.dedicated_server)` 指回
+    `main_menu.tscn`（导出模板按 `disable_path_overrides=yes` 编译，**不认**命令行场景位置参数），⇒ 必须打
+    `[editor] feature=false entry=false`。
+- 资源层「服务端 pck 不含编辑器」只有真导出验得了（推理不可靠）：可用 `Godot --headless --export-pack <preset> <out.pck>`
+  后二进制 grep `scenes/editor/` / `core/editor/`（P5 落地时实测：客户端各 11/70 条，服务端 0 条）。
+- 构建/冒烟/归档的完整流程见 [`RELEASE.md`](../../RELEASE.md)「两份产物」块；版本号仍唯一来源 `project.godot`。

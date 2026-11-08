@@ -19,7 +19,7 @@
 | 对抗（原 3v3）、结算页、大乱斗及其已知差异 | [`modes.md`](modes.md) |
 | 时间玩法（回溯 / 加速 / 颗粒账户 / 怀表 / 世界重绕）、它的不变量与常量来源 | [`time.md`](time.md) |
 | 探针怎么跑 / 怎么判、真链路纪律、守卫边界；测试该不该写、写哪一档（桶划分与不写清单） | [`tests.md`](tests.md)、[`test-economy.md`](test-economy.md) |
-| 浏览器地图编辑器（怎么开、怎么打包成单文件）、sync-*.js、导入 / 导出工具、**GDScript 移植（`core/editor/`，P1 已落地）** | [`tools.md`](tools.md)；编辑器各层：[core](editor-core.md)（含 §13 移植）/ [ui](editor-ui.md) / [render](editor-render.md) / [io+worker](editor-io.md) / [server](editor-server.md)；**Godot 编辑器场景（P2 已落地）→ [editor-godot.md](editor-godot.md)** |
+| 浏览器地图编辑器（怎么开、怎么打包成单文件）、sync-*.js、导入 / 导出工具、**GDScript 移植（`core/editor/`，P1 已落地）** | [`tools.md`](tools.md)；编辑器各层：[core](editor-core.md)（含 §13 移植）/ [ui](editor-ui.md) / [render](editor-render.md) / [io+worker](editor-io.md) / [server](editor-server.md)；**Godot 编辑器场景 / 导出两动作 / 两份导出（P2/P3/P5 已落地）→ [editor-godot.md](editor-godot.md)** |
 | 注释怎么写（含**注释额度**：>100 行的 `.gd` ≤15%）、守卫幻觉怎么标 | [`comment-style.md`](comment-style.md) |
 | 房间 / 端口生命周期约定（回收梯、超龄扫、端口池） | [`room-lifecycle-conventions.md`](room-lifecycle-conventions.md) |
 | **动手前必看**：既有红 / 待还的债 / 已裁定不做 | [`registered-debt.md`](registered-debt.md) |

@@ -2,7 +2,26 @@ extends Control
 
 const PROBE_NODE_NAME := "MenuAutotestProbe"
 
+# ── 编辑器入口(客户端专属)──
+# ★ feature 由**导出预设**注入,不是运行期判断文件在不在:`export_presets.cfg` 里客户端预设
+#   (preset0 Windows Desktop / preset2 macOS)写 `custom_features="editor"`,服务端/Web 不写
+#   ⇒ 服务端与 Web 产物里这个入口根本不出现(计划 §5 不做编辑器 web 导出)。
+# ★ 纯函数、无副作用:产物检查(tools/build_release.py)直接调它来对账产物分支。
+const EDITOR_SCENE := "res://scenes/editor/editor_root.tscn"
+
+
+static func editor_entry_enabled() -> bool:
+	# ★ 为什么不是裸 `OS.has_feature("editor")`:Godot 源码 `core/os/os.cpp` 的 `TOOLS_ENABLED`
+	#   分支对 "editor" **直接返回 true** ⇒ 编辑器二进制(开发态直接跑工程 / 编辑器里 play)也恒真,
+	#   单靠它会让开发态主菜单长出按钮、破坏 P2「菜单版式逐像素不变」的验收。
+	#   "template" 只在**导出模板**里为真 ⇒ 两者相与 = **只有导出的客户端产物**才为真:
+	#   客户端预设带 `custom_features="editor"` ⇒ true;服务端/Web 预设不带 ⇒ false。
+	return OS.has_feature("editor") and OS.has_feature("template")
+
+
 var _sp_panel: PanelContainer = null
+# 只在带 editor feature 的客户端产物里被创建;产物自检靠它判断「按钮是否真的建出来了」。
+var _editor_btn: Button = null
 
 # ★★ 静态骨架在 scenes/main_menu.tscn 里(见 tools/gen_menu_scene.gd),迁移判据是外观逐像素不变。
 # ★ 背景(Bg)的材质仍由代码挂 —— 那张地形贴图是运行时烘的(TerrainAtlas),进不了 .tscn;bg 自己已经在 UIRoot 下,不再 add_child。
@@ -53,6 +72,13 @@ func _ready() -> void:
 	RunOptions.disabled_weapons = Settings.sp_disabled_weapons.duplicate()
 
 	_build_ui()
+
+	# ── 产物自检:编辑器入口到底在不在 ──
+	# 客户端产物必须 `feature=true entry=true`;服务端产物(强制跑 main_menu 场景)必须 `false false`。
+	# ★ entry = 按钮**是否真的建出来了**(不是"该不该建");判据由 tools/build_release.py 的产物冒烟 grep。
+	# ★ 开关同样写在 `--` 之后(与 --registry-report / --netstat 同款),默认关 ⇒ 生产行为一字不变。
+	if OS.get_cmdline_user_args().has("--editor-entry-report"):
+		print("[editor] feature=%s entry=%s" % [str(editor_entry_enabled()), str(_editor_btn != null)])
 
 	for arg in OS.get_cmdline_user_args():
 		if not arg.begins_with("--autotest-"):
@@ -112,6 +138,21 @@ func _wire_menu() -> void:
 	if OS.has_feature("web"):
 		%MultiBtn.visible = false
 		%BetaBtn.visible = false
+	# ★ 只在客户端产物(`custom_features="editor"`)里加这个按钮 ⇒ 开发构建/服务端/Web 的
+	#   静态骨架和版式**逐像素不变**(main_menu.tscn 是 tools/gen_menu_scene.gd 生成的骨架,别往里加节点)。
+	if editor_entry_enabled():
+		# 复制 %BetaBtn 的样式(BtnQuiet + 640×88),不新建第二套皮肤。
+		# ★ duplicate(0):默认 flags 会把 %BetaBtn 刚接好的 pressed 连接也复制过来 ⇒ 点编辑器会同时进 Beta。
+		var editor_btn := (%BetaBtn as Button).duplicate(0) as Button
+		editor_btn.name = "EditorBtn"
+		editor_btn.unique_name_in_owner = false
+		editor_btn.text = "地 图 编 辑 器"
+		editor_btn.pressed.connect(func() -> void:
+			Sfx.play("ui")
+			get_tree().change_scene_to_file(EDITOR_SCENE))
+		%PlayGroup.add_child(editor_btn)
+		%PlayGroup.move_child(editor_btn, %BetaBtn.get_index() + 1)
+		_editor_btn = editor_btn
 
 
 func _menu_sequence() -> Array:

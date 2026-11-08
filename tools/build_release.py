@@ -115,8 +115,21 @@ def _smoke_root() -> str:
     return root
 
 
-def smoke_check(exe: str, extra: list, expect: str = "", require_log_dir: bool = False) -> str:
-    print("== 冒烟 [%s] %s" % (os.path.basename(exe), " ".join(extra) or "(直接启动)"))
+def smoke_check(exe: str, extra: list, expect: str = "", require_log_dir: bool = False,
+                scene: str = "", why: str = "") -> str:
+    """`scene` 非空时把产物**主导场景**指向它(产物侧探针用,如服务端跑主菜单查编辑器入口)。
+
+    ★ 为什么不用「位置参数 = 覆盖 main scene」:导出模板默认按 `disable_path_overrides=yes`
+      编译(Godot SConstruct 的默认值;本仓自定义模板同样如此)⇒ 带场景路径启动会直接
+      `ERROR: Scene path was specified on the command line, but this Godot binary was compiled
+      without support for path overrides.` + exit 1(4.7.1 实测)。开发态编辑器二进制支持,
+      导出产物**不支持**。改用引擎支持的 `override.cfg`(与 exe 同目录,`OVERRIDE_ENABLED`
+      默认开):按 ProjectSettings 覆盖主场景;`*.serverui` / `*.dedicated_server` 两条特性
+      覆盖键也一并写 —— 服务端产物里真正生效的是 `run/main_scene.serverui`。
+    ★ `why`:expect 不命中时的可读提示,说清「去掉什么才会红」;不传则沿用 worker 那条老提示。
+    """
+    shown = " ".join(([scene] if scene else []) + list(extra)) or "(直接启动)"
+    print("== 冒烟 [%s] %s" % (os.path.basename(exe), shown))
     # ★ extra 里的开关**必须放在 `--` 之后**:server_main.gd 读的是 `OS.get_cmdline_user_args()`
     #   (分隔符之后的那截)。写在 `--` 之前 Godot 会把它当自己的参数丢掉,`--worker` 静默失效 →
     #   **起的是大厅、还在 7777 上 bind**,既没跑到 worker 分支、又和服主正在跑的大厅抢端口
@@ -134,6 +147,13 @@ def smoke_check(exe: str, extra: list, expect: str = "", require_log_dir: bool =
     try:
         run_exe = os.path.join(tmp, os.path.basename(exe))
         shutil.copy2(exe, run_exe)
+        if scene:
+            # 场景覆盖走 override.cfg(理由见 docstring):同目录 = 导出的 project data dir。
+            _write_text_lf(os.path.join(tmp, "override.cfg"),
+                           '[application]\nrun/main_scene="%s"\n'
+                           'run/main_scene.serverui="%s"\n'
+                           'run/main_scene.dedicated_server="%s"\n'
+                           % (scene, scene, scene))
         cmd = [run_exe, "--headless", "--quit-after", "120"]
         if extra:
             cmd += ["--", *extra]
@@ -165,8 +185,9 @@ def smoke_check(exe: str, extra: list, expect: str = "", require_log_dir: bool =
     # ★ 光"没报错"是不够的:上面那个 `--` 坑正是**零脚本错误地跑错分支**,门照样绿。
     #   故调用方传 expect 时,那段文本必须真的出现(如服务端必须打「worker 就绪」)。
     if expect and expect not in out:
-        sys.exit("冒烟失败:%s 起来了但**没走预期的分支**(输出里找不到「%s」)—— "
-                 "命令行参数大概又被当成引擎参数丢掉了" % (os.path.basename(exe), expect))
+        sys.exit("冒烟失败:%s 起来了但**没走预期的分支**(输出里找不到「%s」)—— %s"
+                 % (os.path.basename(exe), expect,
+                    why or "命令行参数大概又被当成引擎参数丢掉了"))
     print("    OK(退出码 0,无脚本级错误%s)" % (",且在预期分支「%s」" % expect if expect else ""))
     return out
 
@@ -332,8 +353,22 @@ def main() -> None:
         # 这里拿仓库那份 json 与它逐条对账(理由见 check_weapon_registry 上方)
         check_weapon_registry(smoke_check(CLIENT_OUT, ["--registry-report"],
                                           expect="[registry] weapons="))
+        # ── 两份产物差异:编辑器入口只随客户端走(2026-11-09 P5)──
+        # 客户端预设 `custom_features="editor"` ⇒ 产物里 OS.has_feature("editor") 为真、主菜单建按钮。
+        # ★ 这条只由一次真导出回答:开发态永远拿不到导出模板的 feature 组合。
+        smoke_check(CLIENT_OUT, ["--editor-entry-report"],
+                    expect="[editor] feature=true entry=true",
+                    why="去掉 export_presets.cfg 里 preset0/preset2 的 custom_features=\"editor\"、"
+                        "或主菜单 _wire_menu() 里建「地图编辑器」按钮的那一段,这条才会红")
         smoke_check(SERVER_OUT, ["--worker", "--port", "7999"], expect="worker 就绪",
                     require_log_dir=True)
+        # 服务端主场景是 server_main ⇒ 用 scene= 把它指回 main_menu,量「无入口」那一面。
+        # 红了的含义:服务端预设误带了 editor feature(custom_features 写回了 editor),
+        # 或主菜单 _wire_menu() 丢掉了 editor_entry_enabled() 判断(那样服务端也会长按钮)。
+        smoke_check(SERVER_OUT, ["--editor-entry-report"], scene="res://scenes/main_menu.tscn",
+                    expect="[editor] feature=false entry=false",
+                    why="服务端预设误带 editor feature、或主菜单 _wire_menu() 丢了 "
+                        "editor_entry_enabled() 判断(服务端也会长出编辑器按钮),这条才会红")
         # macOS:客户端 + 服务端(serverui 特征 ⇒ server_main)。不能在本机执行 ⇒ 只做结构/体积校验。
         # ★ 必须先删旧 zip:Godot 的 mac 导出**复用已存在的 zip 会静默产出空包**(实测 22 B 的 EOCD-only zip,
         #   导出仍报 OK)⇒ 先删再导 + verify_mac_zip 兜底。Windows exe 覆盖写没有这个问题。

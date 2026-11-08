@@ -45,6 +45,12 @@
 
 > **导出后自动冒烟**:脚本各跑一次两个 **Windows** 产物(客户端直接起;服务端走 `-- --worker --port 7999`,不碰 7777),出现 `SCRIPT ERROR` / `Parse Error` / `Failed to load script` 即中止发布。服务端还要**断言输出里有「worker 就绪」**(只"没报错"会漏掉"零错误地跑错分支")。★ `--worker` 这类开关**必须写在 `--` 之后**(`server_main.gd` 读 `OS.get_cmdline_user_args()`),写在前面会被 Godot 丢掉、静默起成大厅并在 7777 上 bind。mac 两个 zip 只做结构与体积校验(见上),**不执行**;Web 只做文件结构校验,**不启动浏览器**。
 
+> **两份产物:客户端含编辑器、服务端没有入口**。
+> - 客户端预设(`Windows Desktop` / `macOS`)`custom_features="editor"` ⇒ 导出产物里 `OS.has_feature("editor")` 为真,主菜单 `_wire_menu()` 才会追加「地图编辑器」按钮(点它进 `res://scenes/editor/editor_root.tscn`)。★ 注意 `editor` 在**编辑器二进制**(开发态直接跑工程 / 编辑器里 play)里也被引擎恒置为真(Godot 源码 `core/os/os.cpp` 的 `TOOLS_ENABLED` 分支),所以判定还要求 `OS.has_feature("template")` ⇒ 开发态菜单版式不变,只有**导出的客户端**才出现入口。
+> - 服务端预设(`Dedicated Server` / `macOS Server`)保持 `custom_features="serverui"`,并在 `exclude_filter` 末尾追加 `scenes/editor/*,core/editor/*` ⇒ 资源层与运行期都没有编辑器入口(资源层这一点只有真导出验得了,推理不可靠)。
+> - Web 预设保持 `custom_features=""` ⇒ Web 产物**不含**编辑器入口(计划明确不做 Godot 编辑器的 web 导出)。
+> - **产物自检**(开关必须在 `--` 之后):客户端 exe `--headless --quit-after 120 -- --editor-entry-report` 必须打 `[editor] feature=true entry=true`;服务端 exe 的主场景是 server_main,冒烟脚本靠同目录 `override.cfg` 把主场景指回 `main_menu.tscn`(导出模板按 `disable_path_overrides=yes` 编译,不认命令行场景覆盖)后必须打 `[editor] feature=false entry=false`。`build_release.py` 已内置这两条;红了先查对应预设的 `custom_features` / `exclude_filter` 与主菜单的 feature 判断。
+
 > 手动重导出按序做:① 导 Windows 客户端 → ② 导 Windows 服务端 → ③ 服务端打回 CONSOLE → ④ 导 macOS 客户端 → ⑤ 导 macOS Server → ⑥ 导 Web 客户端 → ⑦ 归档。
 > ```bash
 > "D:\Program Files\Godot_v4.7.1-stable_win64\Godot_v4.7.1-stable_win64.exe" --headless --path . --export-release "Windows Desktop" "The Cyancular Ruins.exe"
