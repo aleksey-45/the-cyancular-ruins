@@ -5,17 +5,17 @@
 [resource]
 script = ExtResource("1_lp")
 amb_base = 0.22
-amb_tint_strength = 0.55
+amb_tint_strength = 0.40
 amb_hue_mix = 0.5
 amb_sky_link = 1.0
-amb_floor_day = 0.30
-amb_floor_night = 0.18
+amb_floor_day = 0.12
+amb_floor_night = 0.10
 form_gain = 0.3
 form_boost = 0.15
 form_steps = 4.0
 form_dither = 0.3
 form_bulge = 1.25
-terrain_gain = 0.40
+terrain_gain = 0.62
 terrain_steps = 4.0
 terrain_dither = 0.0
 shadow_far = 0.32
