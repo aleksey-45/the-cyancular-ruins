@@ -87,7 +87,7 @@ func _ready() -> void:
 	if sprite_frames != null:
 		animator.play(&"idle")
 	# 形体光:与本体共用同一份材质(场上所有精灵一起生效,成本与数量无关)。
-	FormLight.attach(animator, "ellipsoid")
+	FormLight.attach(animator, "ellipsoid", 0.55)
 	_build_ghost_body()
 	_weapon_slot_node = Node2D.new()
 	_weapon_slot_node.name = "WeaponSlot"

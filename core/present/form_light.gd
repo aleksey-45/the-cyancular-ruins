@@ -15,6 +15,7 @@ const MODEL_CYLINDER := 2
 const MODEL_SDF := 3
 
 static var _mats: Dictionary = {}   # (atlas, model int, size) -> ShaderMaterial
+static var _gain_mul: Dictionary = {}   # material -> 该材质的 gain 倍率(玩家要更柔,枪械要更狠)
 static var _sh: Shader = null
 static var _tried: bool = false
 
@@ -64,7 +65,9 @@ static func push(sun_dir: Vector2, gain: float) -> void:
 	for k in _mats:
 		var mat: ShaderMaterial = _mats[k]
 		mat.set_shader_parameter("sun_dir", sun_dir)
-		mat.set_shader_parameter("gain", clampf(gain, 0.0, 1.0))
+		# 逐材质倍率:同一个全局 gain 下,玩家要柔一点、暗色小物件要更狠。
+		var mul := float(_gain_mul.get(mat, 1.0))
+		mat.set_shader_parameter("gain", clampf(gain * mul, 0.0, 1.0))
 
 
 static func set_steps(v: float) -> void:
@@ -135,7 +138,7 @@ static func regions_of(item: CanvasItem) -> Array:
 
 
 ## 给画布项挂形体光。`model_name` = flat / ellipsoid / cylinder / sdf。
-static func attach(item: CanvasItem, model_name: String = "flat") -> void:
+static func attach(item: CanvasItem, model_name: String = "flat", gain_mul: float = 1.0) -> void:
 	if item == null or item.material != null:
 		return
 	var mid := model_id(model_name)
@@ -153,4 +156,6 @@ static func attach(item: CanvasItem, model_name: String = "flat") -> void:
 	var mat := material_for(atlas, mid, half, center)
 	if mat == null:
 		return
+	if not is_equal_approx(gain_mul, 1.0):
+		_gain_mul[mat] = gain_mul
 	item.material = mat
