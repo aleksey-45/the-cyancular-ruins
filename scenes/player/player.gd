@@ -147,7 +147,7 @@ func _ready() -> void:
 		animator.play(&"idle")
 	# 形体光:按精灵本地 UV 造假法线,让角色有体积(方向随昼夜转)。
 	# ★ 与武器/敌人共用同一份材质,uniforms 由 PostProcess 每帧统一推。
-	FormLight.attach(animator, "ellipsoid", 0.55)   # 玩家明暗对比要弱于环境
+	FormLight.attach(animator, "ellipsoid", 0.30)   # 玩家明暗对比要弱于环境
 
 	combat.hp_changed.connect(func(cur: int, mx: int) -> void: hp_changed.emit(cur, mx))
 	combat.went_down.connect(func() -> void: weapons.cancel_aim())
