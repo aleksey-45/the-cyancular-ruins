@@ -1,7 +1,7 @@
 extends Node
 
 const MARKER := "WATER ATLAS PROBE: ALL-OK"
-const EXPECTED_CHECKS := 6
+const EXPECTED_CHECKS := 9
 const TS := GameParameters.TILE_SIZE
 const SRC := 32
 
@@ -57,10 +57,36 @@ func _run() -> void:
 	_chk(_images_differ(body_again, surf_img) and not _images_differ(body_again, body_img),
 			"★ 水砖缓存必须按 idx 分开(否则水面会把水体那张图顶掉)")
 
+	# ⑦ 格级描述符 = 该格 16 子格的多数票,平票取小(水面/水体按它分桶选 tint 行)。
+	var saved_sd: Array[Array] = MazeGenerator.current_subdesc
+	MazeGenerator.current_subdesc = _subdesc_with_counts(12, 0x1189, 4, 0x1411)
+	var majority: int = Level0._water_desc_of(0, 0, 0)
+	MazeGenerator.current_subdesc = _subdesc_with_counts(8, 0x1189, 8, 0x1411)
+	var tie: int = Level0._water_desc_of(0, 0, 0)
+	MazeGenerator.current_subdesc = saved_sd
+	_chk(majority == 0x1189,
+			"★ 格级描述符必须取多数票(12:4 ⇒ 0x1189),实得 0x%X" % majority)
+	_chk(tie == 0x1189,
+			"★ 平票(8:8)必须取小描述符(0x1189 < 0x1411),实得 0x%X" % tie)
+
+	# ⑧ 合批图集两行:上 = 水体砖、下 = 水面砖;中性描述符下两行逐像素等于源砖。
+	var batch_img := Level0._make_water_atlas(TS, MapFormatV4.neutral_descriptor(1))
+	var rows_ok := batch_img != null and batch_img.get_height() == TS * 2
+	if rows_ok:
+		for yy in TS:
+			for xx in TS:
+				if not _channels_close(batch_img.get_pixel(xx, yy), body_img.get_pixel(xx, yy), 1.0) \
+						or not _channels_close(batch_img.get_pixel(xx, yy + TS), surf_img.get_pixel(xx, yy), 1.0):
+					rows_ok = false
+					break
+			if not rows_ok:
+				break
+	_chk(rows_ok, "★ 合批图集必须两行(BODY 上 / SURFACE 下),中性描述符逐像素等于源砖")
+
 	if _checks != EXPECTED_CHECKS:
 		_fails.append("★ 实跑 %d 条断言,与 EXPECTED_CHECKS=%d 对不上(有断言被静默跳过?)" % [_checks, EXPECTED_CHECKS])
 	if _fails.is_empty():
-		print("%s(%d 条断言):下标映射 · 水面顶带更亮 · 水体均匀 · 两张图不同 · 图集用 BODY · 缓存按 idx 分开"
+		print("%s(%d 条断言):下标映射 · 水面顶带更亮 · 水体均匀 · 两张图不同 · 图集用 BODY · 缓存按 idx 分开 · 多数票/平票 · 合批两行"
 				% [MARKER, _checks])
 		get_tree().quit(0)
 	else:
@@ -134,3 +160,14 @@ func _images_differ(a: Image, b: Image) -> bool:
 func _channels_close(a: Color, b: Color, tol: float) -> bool:
 	return absf(a.r - b.r) * 255.0 <= tol and absf(a.g - b.g) * 255.0 <= tol \
 			and absf(a.b - b.b) * 255.0 <= tol and absf(a.a - b.a) * 255.0 <= tol
+
+
+func _subdesc_with_counts(a_n: int, a_desc: int, b_n: int, b_desc: int) -> Array[Array]:
+	var out: Array[Array] = []
+	for y in 4:
+		var row: Array = []
+		for x in 4:
+			var i := y * 4 + x
+			row.append(a_desc if i < a_n else (b_desc if i < a_n + b_n else 0))
+		out.append(row)
+	return out
