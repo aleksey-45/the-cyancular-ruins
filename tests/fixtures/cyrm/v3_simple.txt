@@ -1,0 +1,7 @@
+# cyrm-v3
+0010006F
+00900112
+015F0198
+# player 2 1
+# enemy slime 3 2
+# note
