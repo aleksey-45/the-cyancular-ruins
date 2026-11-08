@@ -5,11 +5,12 @@ extends SceneTree
 # 去掉什么会红:
 #   ① 给 MAP_WIDTH 加回 setter 或退回可写字段(尺寸与网格脱钩)⇒ 换网格后尺寸不变,红;
 #   ② world_cells() 不按 `set_map_file` 失效文件头缓存 ⇒ 换图后尺寸仍是上一张,红(靠 ④ 抓到);
-#   ③ TILE_SIZE 与网格换算写错(漏乘 / 乘两次)⇒ 红。
-# ★ 不是"拿实现验实现":四条断言只读**外部可观测的两个输入**(网格内容、被钉住的地图文件),
-#   期望值由测试自己算,不复用 world_cells() 的返回值。
+#   ③ TILE_SIZE 与网格换算写错(漏乘 / 乘两次)⇒ 红;
+#   ④ 可调参数不再来自 world_config.tres(有人搬回 .gd 常量)⇒ ⑤ 红。
+# ★ 不是"拿实现验实现":断言只读**外部可观测的输入**(网格内容、被钉住的地图文件、.tres 字段),
+#   期望值由测试自己算,不复用被测函数的返回值。
 
-const EXPECTED_CHECKS := 4
+const EXPECTED_CHECKS := 5
 
 var _fails: Array[String] = []
 var _checks := 0
@@ -67,6 +68,22 @@ func _initialize() -> void:
 					% [other_map, cells2.x * ts, cells2.y * ts,
 							GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT])
 
+	# ⑤ 可调参数确实走 world_config.tres:改 .tres 的值 ⇒ GameParameters 读到的必须跟着变。
+	#    做法:用 CACHE_MODE_IGNORE 另加载一份、就地改字段,再确认**默认那份**不受影响、
+	#    且 GameParameters 的值 = 默认那份 .tres 的值(不是别的来源)。
+	#    去掉什么会红:有人把数值搬回 .gd 当常量、或 GameParameters 不再转发 .tres ⇒ 两边对不上,红。
+	var cfg_path := "res://core/config/world_config.tres"
+	var cfg: Resource = load(cfg_path)
+	if cfg == null:
+		_chk(false, "⑤ 空载守卫:load(world_config.tres) 为 null")
+	else:
+		var fresh: Resource = ResourceLoader.load(cfg_path, "", ResourceLoader.CACHE_MODE_IGNORE)
+		fresh.gravity0 = cfg.gravity0 + 1234.0
+		_chk(GameParameters.gravity0 == cfg.gravity0
+				and fresh.gravity0 != GameParameters.gravity0,
+				"⑤ gravity0 应来自 %s(期望 %.2f;另加载一份改成 %.2f 后必须不同,实得 %.2f)"
+						% [cfg_path, cfg.gravity0, fresh.gravity0, GameParameters.gravity0])
+
 	if _checks < EXPECTED_CHECKS:
 		print("WORLD SIZE FAILED: 只跑了 %d 条 < %d(脚本中途中止)" % [_checks, EXPECTED_CHECKS])
 		quit(1)
@@ -77,7 +94,7 @@ func _initialize() -> void:
 			print("  - " + f)
 		quit(1)
 		return
-	print("WORLD SIZE OK(%d 条断言):网格→尺寸 · 换网格跟变 · 空网格回退地图文件头 · 换图跟变" % _checks)
+	print("WORLD SIZE OK(%d 条断言):网格→尺寸 · 换网格跟变 · 空网格回退地图文件头 · 换图跟变 · 参数来自 .tres" % _checks)
 	quit(0)
 
 

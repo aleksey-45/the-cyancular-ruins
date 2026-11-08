@@ -65,10 +65,13 @@
 ## 参数体系
 
 - autoload 五个(`project.godot`):`NetBus`(PvP RPC 唯一收口,`/root/NetBus` 跨场景常驻)、`NetBusExt`(旁路扩展:对局选项 / 角色色 / `hit_confirm` / 大乱斗房 RPC;未装扩展的 worker 上该节点不存在 ⇒ 扩展 RPC 静默丢弃)、`Settings`(音量 / 键位重映射 / 滚轮切枪 / 血条显示,落盘 `user://settings.cfg`)、`LoadingScreen`(载入遮罩)、`Recorder`(F5 录屏 / 死亡倒带,见 [`../录屏与死亡倒带设计.md`](../录屏与死亡倒带设计.md))。
-- `GameParameters` **不是 autoload**(`class_name` + `RefCounted`,纯常量 + 派生值):`gravity0` / `TILE_SIZE = 64` / 水的一整套阈值。
+- `GameParameters` **不是 autoload**(`class_name` + `RefCounted`):它只是**访问入口**,数值不写在代码里。
+  - **可调参数**(`gravity0` + 水的一整套阈值,共 13 项)唯一真相源 = [`world_config.tres`](../../core/config/world_config.tres);schema / 默认值在 [`world_config.gd`](../../core/config/world_config.gd)(`class_name WorldConfig extends Resource`,`@export_range`)。在检查器里改 `.tres` 即可调参,不用改代码。
+  - `GameParameters` 用 `static var gravity0: float = _CFG.gravity0` 在**类加载时读一次**,不是每次读都穿 Resource:实测逐次 getter→Resource 比 `const` 慢 **13.8×**(200 万次 319ms vs 23ms),而 `gravity0` 在每条子弹 / 每个敌人 / 每把枪的每一帧被读;一次性读回 static var 后成本与 `const` 同数量级。代价:改 `.tres` 要重启进程生效。
+  - `TILE_SIZE = 64` **仍是 `const`,不进 `.tres`**:它是地图格式 v4 的结构定义(16px 子格 × 4),且被 3 处 `const TILE_TS: int = GameParameters.TILE_SIZE` 当**编译期常量**引用 —— 改成运行时字段会直接编译失败。
   - `MAP_WIDTH` / `MAP_HEIGHT` **没有存储、没有写点**,是只读派生属性:`MazeGenerator.world_cells() × TILE_SIZE`。`world_cells()` 网格优先(这一局真正在跑的东西)、网格为空(菜单态)才回退到地图文件头(按路径缓存,`set_map_file` 换图即失效)。
-  - ★ 旧实现是两个可写字段:`_ready()` 按地图文件写一次、[`world_builder.gd`](../../core/sim/world_builder.gd) 加载网格后**再写一次**,两者之间没有一致性断言。现在唯一的"写"就是换网格本身。
-  - 守卫:[`tests/smoke/world_size_smoke.gd`](../../tests/smoke/world_size_smoke.gd)(4 条:网格→尺寸 / 换网格跟变 / 空网格回退文件头 / 换图跟变)。
+  - ★ 旧实现是世界尺寸两个可写字段:`_ready()` 按地图文件写一次、[`world_builder.gd`](../../core/sim/world_builder.gd) 加载网格后**再写一次**,两者之间没有一致性断言。现在唯一的"写"就是换网格本身。
+  - 守卫:[`tests/smoke/world_size_smoke.gd`](../../tests/smoke/world_size_smoke.gd)(5 条:网格→尺寸 / 换网格跟变 / 空网格回退文件头 / 换图跟变 / 可调参数确实来自 `.tres`)。
 - `PlayerParams`、`EnemyParams`、`TimeParams` 也不是 autoload:`RefCounted` + `const`,静态访问(如 `EnemyParams.FlyBird.wake_radius`)。★ 这几个能在 `-s` 冒烟里直接引用,是 `class_name` 而非单例 —— 此前 water / explosion / collision_builder 各自手抄一份 `TILE_TS = 64` 就是为了躲开"autoload 在 `-s` 里未实例化",现在统一引用 `GameParameters.TILE_SIZE`。
 
 ## 砖块属性与破坏(data/tile_defs.json)
