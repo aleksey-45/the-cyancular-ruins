@@ -62,7 +62,7 @@ var _view_cam: Camera2D = null
 # track_camera = 世界相机。返回建出来的层数。
 # ★★ 口径(2026-11-08 用户口径,已逐条对齐):
 #   ① 四个背景 = **四张不同的图**(各从自己那层的色层数据烘出,互不共用纹理);
-#   ② **显示尺寸一律铺满世界**;因景深不同,四张图的**像素尺寸不同**(f 越小,图越小 = 越是远景);
+#   ② 四张图**原生 1:1 显示、不缩放**(1 texel = 1 子格 ⇒ 恰好铺满世界);"远处更小"是画面内容,不是像素尺寸;
 #   ③ **平铺只为环面**:每张图随世界的 3×3 副本一起摆,与视口大小无关,没有 repeat / 没有内部再平铺。
 func setup(layers: Array, world_cells: Vector2i, track_camera: Camera2D = null) -> int:
 	_track = track_camera
@@ -73,11 +73,7 @@ func setup(layers: Array, world_cells: Vector2i, track_camera: Camera2D = null) 
 		if rgba == null:
 			continue
 		var f: float = DEPTH[i]
-		var img := bake_layer_image(rgba, world_cells)
-		if f < 0.999:
-			# ★ 景深越小,图越小(远景低分辨率),显示时再放大铺满世界
-			img.resize(maxi(1, int(round(img.get_width() * f))), maxi(1, int(round(img.get_height() * f))),
-					Image.INTERPOLATE_BILINEAR)
+		var img := bake_layer_image(rgba, world_cells)   # 原生尺寸:1 texel = 1 子格 ⇒ 恰好铺满世界
 		var tex := ImageTexture.create_from_image(img)
 		var sprites: Array = []
 		for oy in 3:
@@ -86,8 +82,8 @@ func setup(layers: Array, world_cells: Vector2i, track_camera: Camera2D = null) 
 				spr.texture = tex
 				spr.centered = false
 				spr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-				# 显示尺寸 = 世界(图按自己的像素尺寸放大到这个大小)
-				spr.scale = Vector2(_world.x / float(img.get_width()), _world.y / float(img.get_height()))
+				# ★ 1:1 原生显示(不缩放):1 texel = 16 世界像素 ⇒ 图恰好铺满世界
+				spr.scale = Vector2(float(SUB_PX), float(SUB_PX))
 				spr.z_index = -100 + i
 				add_child(spr)
 				sprites.append({"node": spr, "ring": Vector2(ox - 1, oy - 1) * _world})
