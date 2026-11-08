@@ -76,9 +76,9 @@
 ## 补间形变(squash & stretch)
 
 - `scenes/effects/squash_stretch.gd`(`SquashStretch extends Node`)是纯表现层组件,挂玩家 / 三只敌鸟 / 对手副本,只写 `animator.scale`。
-- 计算模型 = `_air`(每帧由 `vel_y` 重算,无状态)+ `_impulse`(事件累加 + `MathUtil.approach` 指数回归);单标量叠加,同时事件天然叠加。幅度上限 `squash_amount = 0.06`,`v` 钳在 `[-1,1]`。
-- 落地判据 `if on_floor and vel_y > squash_land_min_vy`;阈值不是字面量 —— 玩家侧 `PlayerParams.squash_land_min_vy`、敌人侧 `EnemyParams.squash_land_min_vy`(当前同值 220.0)。宿主必须在 `move_and_slide()` **之前**缓存 `_pre_move_vy`。
-- 宿主契约:传进 `tick()` 的 `vel_y` 必须是「地面真正吸收掉的」那个下坠速度,否则传 0。玩家侧 = `_pre_move_vy = 0.0 if (in_water or latched) else velocity.y`;敌人侧刻意用裸 `velocity.y`(水的写入钳在 −260/+160,下沉侧 160 < 阈值 220)。
+- 计算模型 = `_air`(每帧由 `vel_y` 重算,无状态)+ `_impulse`(事件累加 + `MathUtil.approach` 指数回归);单标量叠加,同时事件天然叠加。幅度上限来自 `squash_amount`(玩家侧 `PlayerParams.squash_amount`、敌人侧 `EnemyParams.squash_amount`,数值在各自 `.tres`,此处不抄),`v` 钳在 `[-1,1]`。
+- 落地判据 `if on_floor and vel_y > squash_land_min_vy`;阈值不是字面量 —— 玩家侧 `PlayerParams.squash_land_min_vy`、敌人侧 `EnemyParams.squash_land_min_vy`(两侧各由自己的 `.tres` 定,**不在此处抄数值**)。宿主必须在 `move_and_slide()` **之前**缓存 `_pre_move_vy`。
+- 宿主契约:传进 `tick()` 的 `vel_y` 必须是「地面真正吸收掉的」那个下坠速度,否则传 0。玩家侧 = `_pre_move_vy = 0.0 if (in_water or latched) else velocity.y`;敌人侧刻意用裸 `velocity.y`(水的写入钳在 `-EnemyParams.shared.bird_max_float` / `+EnemyParams.shared.bird_max_sink` 之间,下沉侧那个值小于落地阈值,故落水不会误判为落地 —— 两者的大小关系由 `.tres` 里的数值保证,改数值时要一并复核这条)。
 - `tick` 放 `_physics_process` 最首行(倒地早退之前),敌人侧同理(`_is_far_sleeping()` 早退之前);形变不进 `capture_state()` / `restore_state()`,不碰碰撞箱。
 - 倒地必须 `suppressed = true`:副本根节点 `rotation = -90°`,写 `scale` 会沿转过的轴挤压。
 - 副本:数据从快照的 `vel` / `pose` 本地推导;`on_floor = (not _downed) and _pose != POSE_FLY and absf(_vel.y) < LAND_VEL_EPS`;水项用客户端本地网格查询 `_in_water()`,不是协议字段;不做受击挤压;`tick` 放副本的 `_process`。
