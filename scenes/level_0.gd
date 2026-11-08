@@ -950,7 +950,7 @@ func _update_pickup_prompt() -> void:
 		pk.set_prompt_visible(can)
 
 ## 被合批用的两行图集:上半 = 水体砖,下半 = 水面砖,都按描述符 tint。
-static func _make_water_atlas(ts: int, desc: int) -> Image:
+func _make_water_atlas(ts: int, desc: int) -> Image:
 	var img := Image.create(ts, ts * 2, false, Image.FORMAT_RGBA8)
 	img.blit_rect(TerrainAtlas._tinted_water_brick(ts, desc), Rect2i(0, 0, ts, ts), Vector2i(0, 0))
 	# 下半行 = **水面砖**(自带顶边水线),按同一描述符 tint:
