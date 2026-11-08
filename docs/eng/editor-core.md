@@ -186,3 +186,98 @@ descriptor (u32)
 - ★ **颜色层按需分配**：`createMap` 只分配层 0-3（历史文件恒有 bit3），层 4-6 默认 `null` —— 不落笔就不占内存、也不出 `layer_flags` 位；第一次要往里画时由 `Core.ensureLayer(map, L)` 建出。`ensureLayer` 只补颜色层，纹理层缺席（旧文件）绝不凭空补。
 - 判据唯一来源 = `Core.isColorLayer(L)`（=`LAYER_BG_FIRST..LAYER_BG_LAST`）；UI / render 里别再写 `L === LAYER_BG`（那是"只有一层背景"时代的写法）。
 - 旧文件（只有 bit0-3）解出层 4-6 = `null`，不报错；旧读取器忽略 `bit4-6` ⇒ 只看到背景100%（可接受降级，见 [`registered-debt.md`](registered-debt.md)）。
+
+## 13. GDScript 移植（`core/editor/`；P0/P1，2026-11-08）
+
+> 计划是一次性的（`.tmp/editor-in-godot-plan.md`，不入库）；本节只记**已落地的事实**。
+> 在那之前 **JS 编辑器仍是唯一可用的编辑器**，`level_editor/core` 仍是 `.cyrm` 的第二份实现 ——
+> 改 `.cyrm` 仍必须两边同步（§2 的契约不变）。计划 P2 起才做编辑器场景 / 导出两动作 / 两份导出 / JS 退役。
+
+### 13.1 模块与镜像关系
+
+`core/editor/` 是 `level_editor/core/*.js` 的 1:1 移植。**`99_exports.js` 不移植**：GDScript 的
+`class_name` 就是全局符号表，再抄一份公开 API 表 = 两份真相源。
+
+| JS shard | GDScript | class_name |
+|---|---|---|
+| `00_constants.js` | `editor_constants.gd` | `EditorConstants` |
+| `20_bytes.js` | `editor_bytes.gd` | `EditorBytes` |
+| `90_desc.js` | `editor_desc.gd` | `EditorDesc` |
+| `85_geometry.js` | `editor_geometry.gd` | `EditorGeometry` |
+| `40_meta.js` | `editor_meta.gd` | `EditorMeta` |
+| `95_legacy.js` | `editor_legacy.gd` | `EditorLegacy` |
+| `10_map.js` | `editor_map.gd` | `EditorMap` |
+| `30_layers.js` | `editor_layers.gd` | `EditorLayers` |
+| `50_compress.js` | `editor_compress.gd` | `EditorCompress` |
+| `60_codec.js` | `editor_codec.gd` | `EditorCodec` |
+| `70_v3_text.js` | `editor_v3.gd` | `EditorV3` |
+| `80_validate.js` | `editor_validate.gd` | `EditorValidate` |
+
+- 全部 `extends RefCounted`，只用 `static func` / `const` / `static var`。
+- ★ **禁止 `RegEx`**（客户端导出走裁剪模板，`module_regex_enabled: false` ⇒ 整个脚本解析失败）：
+  JS 的三条正则（meta 整数字面量、v3 标记行、`sanitizeName`）全部手写成码点循环；
+  `EditorGeometry._is_js_space` 是 JS `\s` 集合的唯一实现（meta / v3 / clamp 共用）。
+- legacy 迁移表**不抄**：直接读 `core/sim/tile_defs.gd` 的 `legacy_base_of` / `legacy_hue_of`
+  （真相源仍是 `data/tile_defs.json`）。
+
+### 13.2 地图对象形状（对应 JS 的 plain object）
+
+```gdscript
+{ "name": String, "sub_cols": int, "sub_rows": int, "layers": Array,   # layers 恒 7 项
+  "players": [{x,int}], "enemies": [{type,x,y}], "respawns": [{side,x,y}], "comments": [String] }
+```
+
+层 = `{"kind":"tex","desc":PackedInt32Array}` | `{"kind":"color","rgba":PackedInt32Array}` | `null`。
+下标一律 `y * sub_cols + x`。
+
+- ★ `PackedInt32Array`（与游戏侧 `MapFormatV4` 同）：u32 超过 int32 会落成负数，**这是有意的** ——
+  字节掩码（`v & 0xFF` 等）对负数同样正确；需要无符号值时才 `v & 0xFFFFFFFF`。
+- 层 4-6 默认 `null`，由 `EditorMap.ensure_layer` 按需建；**纹理层缺席绝不凭空补**（旧文件就是没有那层）。
+
+### 13.3 错误约定
+
+GDScript 没有异常 ⇒ 可能失败的操作返回 `{ok:false, "error": String}`（文案照抄 JS 的 `throw`）。
+**不抛错、不拿 `push_error` 当失败路径**。`EditorBytes.Reader` 越界置 `failed` / `error`（不抛），
+`EditorLayers` / `EditorCodec` 每次读后必须判 `r.failed`。
+
+### 13.4 跨语言黄金夹具（P0）
+
+`tests/fixtures/cyrm/`：9 项夹具 / 10 个文件，由 **JS 编辑器核心**产出（生成脚本 `.tmp/gen_golden.js`，
+不入库）。构图、生产命令、每个夹具钉住的契约见 [`tests/fixtures/cyrm/README.md`](../../tests/fixtures/cyrm/README.md)。
+
+`tests/probe/cyrm_golden_probe.gd`（`-s`，23 条断言）钉：
+
+1. 无压缩夹具 `decode_map → encode_map(compress:false)` **逐字节相等**（调色板顺序 / 层块顺序 / 头字段全在内）；
+2. legacy 夹具：解码**不迁移** → 未迁移编码被 `validate_map` 拒（error 含「不在 tile_defs」）→
+   `EditorLegacy.migrate_map` 之后逐字节等于 `v4_legacy_migrated.cyrm`；
+3. v3 文本 / 旧字母格式 → `EditorV3.parse_v3_text` / `migrate_v3` → 逐字节等于 JS 迁出的 v4 夹具；
+4. `maps/*.cyrm` 全部可解、重编码稳定（解→编→解→编 字节相等）。
+
+★ 压缩夹具**不钉 deflate 字节**（zlib 输出依赖实现/版本），只钉「解 → 无压缩重编码 == 无压缩孪生夹具」。
+
+### 13.5 守卫
+
+| 支 | 判词 | 条数闸 | 钉什么 |
+|---|---|---|---|
+| `tests/smoke/editor_core_smoke.gd` | `EDITOR CORE SMOKE: OK(37 条断言)` | 37 | 常量 / 描述符位域 / 字节序 / CRC / meta / 几何 / legacy / 地图对象 |
+| `tests/smoke/editor_codec_smoke.gd` | `EDITOR CODEC SMOKE: OK(56 条断言):…` | 56 | 层编解码 / 容器 / 压缩 / 稀疏 flags / 双字节索引 / 65535 上界 / 七类坏输入 |
+| `tests/smoke/editor_v3_smoke.gd` | `EDITOR V3 SMOKE: OK(41 条断言)` | 41 | v3 标记判定 / 解析报错 / 旧字母 2×2 / 迁移展开 / `subcell_render` |
+| `tests/smoke/editor_validate_smoke.gd` | `EDITOR VALIDATE SMOKE: OK(20 条断言)` | 20 | 尺寸钳制 / errors vs warnings / 复活点判据 |
+| `tests/probe/cyrm_golden_probe.gd` | `CYRM GOLDEN PROBE: ALL-OK(23 条断言)` | 23 | 见 §13.4 |
+
+`EXPECTED_CHECKS` 都真用于比较（`run_all --list` 的 `GATE` 栏可见）；`bash tests/run_all.sh` 自动收录。
+
+### 13.6 已知差异 / 取舍（照实写）
+
+- `EditorCompress.inflate_bytes`：Godot `decompress` 无法区分「超上界」与「流损坏」（都返回空）⇒
+  合并成一条 error；`ok:false` 语义不变，文案与 JS 的两条不同。
+- `deflate_bytes` 空输入：Godot `compress()` 拒绝空输入（JS 会产出合法空流）；`encode_body` 的 body
+  恒 ≥2 字节，实际不可达。
+- `EditorMap.create_map` 尺寸非法返回空字典（不抛错）；调用方应先 `EditorValidate.clamp_map_size`。
+- `EditorV3.migrate_v3` 与 JS 一致地**不复制** `respawns`（parsed 里有、地图数据里丢）；要改必须两边同改。
+- UTF-16（JS `length` / `charAt`）vs UTF-32（GDScript `length`）：只影响含非 BMP 字符的**畸形**网格行的报错数字。
+
+### 13.7 还没做（计划 P2 起）
+
+编辑器场景（`scenes/editor/`）、导出两个动作、客户端 / 服务端两份导出的编辑器裁剪、`level_editor/` 退役。
+在那之前别删 JS 编辑器，也别让 `core/editor` 反向依赖 `level_editor/`。
