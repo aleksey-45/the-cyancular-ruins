@@ -71,7 +71,8 @@
 - `Level0._ready` 用 `MapFormat.load_bg_layers()` 取图;`ParallaxBg.setup(layers, 地图格数)` 只在**有相机的渲染路径**建(服务器 / headless 跳过),层缺失不建节点。给 `WorldViewport` 的最底层(z_index = −100+i)。
 - 视差数学只有两式(纯静态函数,`-s` 可测):**节点世界坐标 = cam × (1 − f)**、**采样起点 = cam × f**,配 `texture_repeat` 做环面回绕 ⇒ 相机位移 Δ 时该层屏幕位移 = −f·Δ。
 - 烘图:`bake_layer_image()` 每 64px 格烘 4px(`CELL_PX = 4`)并对 4×4 子格做 **alpha 加权**均值(直接平均透明格会把黑混进来,背景边缘发暗)。颜色层只画渐变/底色,降采样观感无损;`150×100` 格 → `600×400`,四层显存可忽略。
-- 不进快照 / 回滚 / 网络包:纯视觉,两端都从同一张地图文件现算 ⇒ 天然一致。零守卫(原 `bg_parallax_smoke` 已删):改视差两式/烘焙权重只能人工对拍。人眼项:与天空 shader、光照投影的合成次序。
+- **独立视口（2026-11-08 管线补丁）**：背景四层渲染进运行时建的 `BgViewport`（SubViewport、`transparent_bg`、自带相机每帧跟随世界相机），**不进 WorldViewport**。因此遮挡掩码 `occ_tex`（= 世界视口 alpha）与 `_terrain_lit` 都**看不到背景** ⇒ 背景不遮挡、不投假影、不吃地形明暗，只吃全局 `ambient_color`（昼夜变暗 / 色相）。**不透明剪影因此是安全的**（此前靠 α<0.90 的半透明绕开）。PostProcess 合成口径：`under = sky*(1-bg.a) + bg.rgb*ambient_color; COLOR = under*(1-world.a) + lit_world`（三者都是预乘 alpha）。
+- 不进快照 / 回滚 / 网络包：纯视觉，两端都从同一张地图文件现算 ⇒ 天然一致。零守卫（原 `bg_parallax_smoke` 已删）：改视差两式 / 烘焙权重只能人工对拍。人眼项：与天空 shader、光照投影的合成次序；**着色器编译只能真渲染验**（headless 不编译）。
 
 ## 补间形变(squash & stretch)
 

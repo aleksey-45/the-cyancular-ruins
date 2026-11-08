@@ -67,6 +67,7 @@ const int MAX_SUN_STEPS = 32;
 
 // 遮挡采样用**线性过滤**的同一张世界纹理:点采样会让斜射线从两个实心texel之间"漏"过去,
 // 影子里出现一片虚线状的破洞(实测)。线性过滤把边界摊成一个 texel 的过渡,配合 step() 仍是硬边。
+uniform sampler2D bg_tex : hint_default_transparent;   // 背景四层景深(独立视口,不参与遮挡/受光)
 uniform sampler2D occ_tex : filter_linear, repeat_disable;
 
 // ── 发光通道 ── 独立 GlowViewport(同尺寸、透明底、相机同步)。
@@ -199,6 +200,9 @@ void fragment() {
 	uv = (uv - 0.5) * crop_scale + 0.5;
 
 	vec4 world = texture(screen_tex, uv);
+	// ★ 背景层在**独立 SubViewport** 里渲染:它不污染 occ_tex(screen 的 alpha),因此既不遮挡、也不吃地形受光,
+	//   只跟着环境光/色相走。合成口径与 world 一致(两者都是预乘 alpha)。
+	vec4 bg = texture(bg_tex, uv);
 	// ★★ 合成口径:世界视口是 transparent_bg,而 Godot 画到透明目标的混合是
 	//   dst.rgb = src.rgb*src.a + dst.rgb*(1-src.a) ⇒ world.rgb **已是预乘**(rgb 里带了 alpha)。
 	//   所以正确合成 = sky*(1-a) + world.rgb,不是 mix(sky, world.rgb, a)。
@@ -222,7 +226,8 @@ void fragment() {
 	float lum_w = dot(lit_world, vec3(0.299, 0.587, 0.114));
 	vec3 hue_w = ambient_hue * lum_w;
 	lit_world = mix(lit_world, hue_w, amb_hue_mix * tint_dev);
-	COLOR = vec4(sky * (1.0 - world.a) + lit_world, 1.0);
+	vec3 under = sky * (1.0 - bg.a) + bg.rgb * ambient_color;
+	COLOR = vec4(under * (1.0 - world.a) + lit_world, 1.0);
 	// ── 光照:环境光(全局) + 斜投影影(按时段) 两项;方向性的体积感交给逐精灵的 form_light ──
 	// ★ 薄 z 的斜投影影:先沿光的方向**穿出自己的实体**(那段是自己,不算遮挡),出体之后
 	//   再撞到的实体才是"挡在我和太阳之间的东西" ⇒ 我在它影子里。

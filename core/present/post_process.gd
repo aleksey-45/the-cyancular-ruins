@@ -6,6 +6,8 @@ const LAYER := 128  # 世界后处理层,低于 HUD(129),不遮 HUD
 const glow_scale := 0.5
 
 @export var world_viewport: SubViewport = null
+# 背景四层景深的独立视口(由 Level0 运行时建;null = 没有背景层 ⇒ 走 hint_default_transparent)
+@export var bg_viewport: SubViewport = null
 @export var barrel_strength: float = 0.4
 # 光照参数表:**数值在 .tres 里**,这里只留引用。留空时自动加载默认那份。
 @export var lighting: LightingParams = null
@@ -94,6 +96,9 @@ func _ready() -> void:
 	# 遮挡采样另挂一份同一张纹理,只为拿线性过滤(点采样会让斜射线从两个实心 texel 之间漏过去)
 	_mat.set_shader_parameter("occ_tex", world_viewport.get_texture())
 
+	# ★ 背景层独立视口 ⇒ 不进世界视口的 alpha ⇒ 不遮挡、不吃地形受光(不透明剪影因此安全)。
+	_bind_bg(bg_viewport)
+
 	_bind_channels()
 
 	# crop_scale = 窗口 / 世界视口，让 shader 只在世界纹理的中心窗口区采样。
@@ -117,6 +122,12 @@ func _bind_channels() -> void:
 	_bind_glow(host)
 	_bind_ui(host)
 	_bind_terrain_mask()
+
+
+func _bind_bg(vp: SubViewport) -> void:
+	if vp == null:
+		return
+	_mat.set_shader_parameter("bg_tex", vp.get_texture())
 
 
 func _bind_glow(host: Node) -> void:

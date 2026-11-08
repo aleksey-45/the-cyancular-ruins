@@ -28,6 +28,8 @@ static var time_field: TimeField = null
 var _rewind: WorldRewind = null
 var _prev_time_mode: int = 0
 var _post_process: PostProcess = null
+# 背景四层景深的独立视口(纯视觉;不进 WorldViewport ⇒ 不污染遮挡/受光)
+var _bg_viewport: SubViewport = null
 var _tile_ledger: TileLedger = null
 var _tile_pending: Array = []
 var _tile_cursor: float = -1.0
@@ -185,13 +187,22 @@ func _ready() -> void:
 	# 背景四层景深(层 3-6 = 100%/75%/50%/25%,契约见 ParallaxBg):纯视觉、**有相机才建**,
 	# 服务器/headless 不建;不进快照/回滚(两端都从同一张地图文件现算)。
 	if DisplayServer.get_name() != "headless":
+		# ★★ 背景层放**独立 SubViewport**:它的像素不进世界视口的 alpha ⇒ 光照的遮挡/受光看不到背景,
+		#   所以**不透明剪影是安全的**(世界视口只剩地形/实体/水)。相机由 ParallaxBg 每帧跟随世界相机。
+		var bg_vp := SubViewport.new()
+		bg_vp.name = "BgViewport"
+		bg_vp.transparent_bg = true
+		bg_vp.size = ($WorldViewport as SubViewport).size
+		bg_vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 		var bg := ParallaxBg.new()
 		bg.name = "ParallaxBg"
-		if bg.setup(MapFormat.load_bg_layers(MazeGenerator.map_file_path()), MazeGenerator.map_size()) > 0:
-			$WorldViewport.add_child(bg)
-			$WorldViewport.move_child(bg, 0)
+		if bg.setup(MapFormat.load_bg_layers(MazeGenerator.map_file_path()), MazeGenerator.map_size(),
+				$WorldViewport/Camera2D as Camera2D) > 0:
+			bg_vp.add_child(bg)
+			add_child(bg_vp)
+			_bg_viewport = bg_vp
 		else:
-			bg.free()
+			bg_vp.free()
 
 	var built := _create_wall_tileset()
 	var wl: TileMapLayer = $WorldViewport/WallLayer
@@ -228,6 +239,7 @@ func _ready() -> void:
 
 	var pp := PostProcess.new()
 	pp.world_viewport = $WorldViewport
+	pp.bg_viewport = _bg_viewport
 	_post_process = pp
 	add_child.call_deferred(pp)
 	_build_pause_menu()

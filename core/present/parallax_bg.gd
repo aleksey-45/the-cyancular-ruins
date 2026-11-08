@@ -51,12 +51,16 @@ static func bake_layer_image(rgba: PackedInt32Array, world_cells: Vector2i) -> I
 
 
 var _sprites: Array = [null, null, null, null]   # 下标 0..3;缺层 = null
-var _camera: Camera2D = null
+var _track: Camera2D = null                      # 被跟踪的世界相机(对局里的那个)
+var _view_cam: Camera2D = null                   # 本视口自己的相机:每帧跟随世界相机
 
 
 # layers = MapFormat.load_bg_layers 的返回值(恒 4 项,缺层 null);world_cells = 地图格数。
+# track_camera = 世界相机(相机抖动/缩放都跟着它)。本节点**活在独立 SubViewport 里**:
+# 它画的像素不进世界视口的 alpha ⇒ 光照的遮挡/受光完全看不到背景(不透明剪影安全)。
 # 返回真正建出来的层数(0 = 这张图没有背景景深层,Level0 可直接跳过)。
-func setup(layers: Array, world_cells: Vector2i) -> int:
+func setup(layers: Array, world_cells: Vector2i, track_camera: Camera2D = null) -> int:
+	_track = track_camera
 	var built := 0
 	for i in mini(layers.size(), 4):
 		var rgba = layers[i]
@@ -73,6 +77,12 @@ func setup(layers: Array, world_cells: Vector2i) -> int:
 		add_child(spr)
 		_sprites[i] = spr
 		built += 1
+	if built > 0:
+		# 自己的相机(独立视口里必须有一个,否则什么都不画)。位置/缩放每帧跟世界相机。
+		_view_cam = Camera2D.new()
+		_view_cam.name = "BgCam"
+		_view_cam.position_smoothing_enabled = false
+		add_child(_view_cam)
 	return built
 
 
@@ -81,13 +91,19 @@ func _ready() -> void:
 
 
 func _process(_dt: float) -> void:
-	if _camera == null or not is_instance_valid(_camera):
-		_camera = get_viewport().get_camera_2d()
-		if _camera == null:
-			return                                 # 无相机(服务器/headless)= 不画,也不报错
-	var cam := _camera.get_screen_center_position()
-	var scale := get_viewport().get_canvas_transform().get_scale()
-	var view := get_viewport_rect().size / Vector2(maxf(scale.x, 0.0001), maxf(scale.y, 0.0001))
+	if _track == null or not is_instance_valid(_track):
+		return
+	# ① 视口尺寸跟世界视口(窗口缩放时两边必须同尺寸,否则 region 采样错位)
+	var host_vp := _track.get_viewport()
+	if host_vp != null and get_viewport() != null and get_viewport().size != host_vp.size:
+		get_viewport().size = host_vp.size
+	# ② 相机跟随:世界相机移多少,本视口相机就移多少 ⇒ 世界坐标的 sprites 出现在同样的屏幕位置
+	var cam := _track.get_screen_center_position()
+	if _view_cam != null:
+		_view_cam.global_position = cam
+		_view_cam.zoom = _track.zoom
+	var z := _track.zoom
+	var view := get_viewport_rect().size / Vector2(maxf(z.x, 0.0001), maxf(z.y, 0.0001))
 	# ★ region 比视口大 2px:亚像素取整时边缘不会露出 1px 的透明缝。
 	var region_view := view + Vector2(2.0, 2.0)
 	for i in 4:
