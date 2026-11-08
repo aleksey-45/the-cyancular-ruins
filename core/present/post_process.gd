@@ -31,12 +31,7 @@ var _low_hp_pulse: float = 0.0
 var _low_hp_player: Node = null
 
 # ── 天空与三套光照(纯渲染层) ── 世界视口那张图自己当遮挡体(alpha 判定)。
-# ★ 时间是**时钟驱动**的:60 秒 = 24 小时,开局 06:00。太阳沿一条半圆从左地平线升到天顶、
-#   再落到右地平线 —— 所以影子方向在一天里会**自己翻面**(上午向右、下午向左),
-#   不是"同一个方向换个角度"。
-# ★ 白天与夜晚是两套逻辑,不是同一套调暗:
-#     白天  太阳在地平线上 → 斜投影影(晨昏长、正午≈0)+ 暖光/rim + 亮天空
-#     夜    太阳在地平线下 → **没有方向影**(没有光源就没有影子)+ 整体压暗 + 冷月光 rim
+# ★ 时钟驱动(60 秒 = 24 小时,开局 06:00);太阳走到地平线下就没有方向影,夜里靠月光 rim。
 var sun_enabled: bool = true
 var sun_cycle_enabled: bool = true
 var sun_strength: float = 0.55          # 斜投影影的整体浓度(set_sun_strength 改它)
@@ -56,18 +51,15 @@ func clock_text() -> String:
 	var mm := int((h - float(hh)) * 60.0)
 	return "%02d:%02d" % [hh, mm]
 
-# 暗部色:只是"变暗",不是"变灰"。用接近中性的乘数保住砖本身的色相与饱和,
-# 掺太多冷紫/冷蓝会让整屏发灰(用户:灰蒙蒙)。
+# 暗部色:接近中性的乘数 —— 只变暗、不掺冷蓝,否则整屏发灰。
 
-# 斜影长度(世界像素):正午几乎为零,晨昏最长。
 const CAST_PX_DUSK := 8.0
 const CAST_STEP_PX := 2.0
 
 
 
 
-# 窗口尺寸 / 世界视口尺寸:把窗口映射到世界视口的中心裁剪区。
-# 枪的瞄准换算(weapon_base)与 shader 采样都用它,收敛到单一来源,改一处不偏。
+# 窗口/世界视口尺寸:枪的瞄准换算(weapon_base)与 shader 采样共用(单一来源)。
 static func crop_scale(win_size: Vector2, world_vp_size: Vector2) -> Vector2:
 	return Vector2(win_size.x / world_vp_size.x, win_size.y / world_vp_size.y)
 
@@ -75,8 +67,7 @@ static func crop_scale(win_size: Vector2, world_vp_size: Vector2) -> Vector2:
 func _ready() -> void:
 	add_to_group("post_process")
 	layer = LAYER
-	# 暂停(pause_menu 暂停整棵树)时本层仍要跑:受击红闪在 _process 里逐帧衰减,
-	# 若跟着树一起暂停,红色会凝固在暂停那一刻直到恢复。
+	# 暂停时本层仍要跑:受击红闪在 _process 里逐帧衰减,跟着树暂停会凝固在暂停那一刻。
 	process_mode = Node.PROCESS_MODE_ALWAYS
 
 	if world_viewport == null:
@@ -110,26 +101,17 @@ func _ready() -> void:
 	_mat.set_shader_parameter("crop_scale", crop_scale(vsize, world_viewport.size))
 
 	rect.material = _mat
-	# 太阳投影要用「世界视口像素 → uv」的换算;set_time_effects 也会写同一个值(单机每帧),
-	# 这里补一次让 PvP / 不跑时间玩法的场景也有正确值(否则会退化成 1920×1440 兜底)。
+	# 太阳投影要用「世界视口像素 → uv」的换算;这里补一次,让 PvP / 不跑时间玩法的场景也有正确值。
 	_mat.set_shader_parameter("viewport_size", Vector2(world_viewport.size))
-	# ★ Alpha 判定要求视口真的透明:场景里已设 transparent_bg,这里再兜一次底 ——
-	#   万一有人手改了 .tscn,判"实心"会退化成"整屏都是实体"。
+	# ★ Alpha 判遮挡要求视口真的透明:.tscn 若被手改成不透明,"实心"会退化成"整屏都是实体"。
 	if not world_viewport.transparent_bg:
 		push_warning("PostProcess: WorldViewport.transparent_bg 应为 true(太阳用 alpha 判遮挡)")
 	_push_lighting_params()
 	_push_sun()
 
 
-# ── 通道接线:所有"额外数据来源"都在这一个函数里发现 + 绑定 + 决定降级 ──
-# ★ 为什么集中:之前每条通道各写一段 if,散在 _ready 中间,加第三条就要改三处。
-#   现在**一条通道 = 一个 _bind_xxx**,缺哪个就把对应的 gain 置 0(整段跳过),不会崩。
-#
-#   通道清单(每条只回答一个问题):
-#     WorldViewport  SubViewport  场景本体长什么样
-#     GlowViewport   SubViewport  哪里在自发光        → 加色叠加
-#     UiViewport     SubViewport  哪些 UI 不吃光照    → 正常 alpha 合成
-#     TerrainMask    烘好的纹理    这个像素是不是地形   → 地形受光只在这里生效
+# ── 通道接线:所有"额外数据来源"都在这一个函数里发现 + 绑定 + 决定降级(一条通道 = 一个 _bind_xxx;缺哪个就把对应 gain 置 0)。
+#   通道:WorldViewport(世界本体)/ GlowViewport(自发光 → 加色)/ UiViewport(不吃光照的辅助层 → 正常 alpha)/ TerrainMask(烘好的地形掩码)。
 func _bind_channels() -> void:
 	var host := world_viewport.get_parent()
 	_bind_glow(host)
@@ -157,11 +139,9 @@ func _bind_ui(host: Node) -> void:
 	_mat.set_shader_parameter("ui_gain", 1.0)
 
 
-# 地形掩码是**烘好的数据纹理**,不是通道:地形是静态数据,没必要每帧重渲染一遍。
-# 用一条独立通道反而要复制 TileMapLayer 并同步 17 万格。
+# 地形掩码是**烘好的数据纹理**(1 像素/格),不是渲染通道 —— 地形静态,不必每帧重渲染,也不必复制并同步 17 万格 TileMapLayer。
 func _bind_terrain_mask() -> void:
-	# ★ 从**地图格数据**烘一张 1 像素/格 的掩码,而不是复制 TileMapLayer 到独立视口 ——
-	#   复制要同步 17 万格,那是渲染管线混乱的来源。地图数据本来就在内存里。
+	# ★ 从**地图格数据**烘,而不是复制 TileMapLayer 到独立视口(那是渲染管线混乱的来源)。
 	var grid: Array = MazeGenerator.current_grid
 	if grid.is_empty() or grid[0].is_empty():
 		_mat.set_shader_parameter("mask_gain", 0.0)
@@ -225,9 +205,7 @@ func _resolve_lighting() -> void:
 
 
 
-# ── 昼夜模型:实现全部在 DayCycle(纯函数、不依赖节点)──
-# ★ 这里只留**转发壳**:调用方(玩家发光、HUD 时钟、_push_sun)一行都不用改,
-#   而"一天的物理"不再和"怎么画到屏幕"混在同一个文件里。
+# ── 昼夜模型:实现全在 DayCycle(纯函数),这里只留转发壳(调用方一行不用改)。
 static func sun_at(hour: float) -> Vector2:
 	return DayCycle.sun_at(hour)
 
@@ -277,9 +255,7 @@ func _push_sun() -> void:
 	# 光的方向 = 指向光源(屏幕空间 y 向下)。★ 不是 (1,-1/tan):那给的是余角(踩过)。
 	var dir := Vector2(light_azim * cos(rad), -sin(rad)).normalized()
 
-	# 形体光:全场精灵共用材质,这里每帧推一次方向 ⇒ 同时有体积。
-	# ★ 强度必须读 lighting_params.tres 的 form_gain —— 早先这里写死 0.50,
-	#   于是 .tres 里怎么调都不生效(玩家一直是黑的,实测太阳 09:00 增益 0.42 而非 0.12)。
+	# 形体光:全场精灵共用材质,每帧推一次方向。★ 强度必须读 .tres 的 form_gain(写死会静默不生效)。
 	# ★ 随白天程度衰减:夜里本来就暗,再叠一层压暗会把暗部糊死。
 	var form_amp := lighting.form_gain if lighting != null else 0.12
 	FormLight.push(dir, form_amp * clampf(0.45 + 0.55 * day_arc(day_hour), 0.0, 1.0))
@@ -287,19 +263,14 @@ func _push_sun() -> void:
 	# ★★ ① 环境光:唯一的亮度驱动量,乘性、≤ 1。正午恰为 1.0 = 原版亮度。
 	var moon_amt := moon_amount(day_hour)
 	var amb_amt := ambient_for(day_hour, moon_amt)
-	# ★ 地面亮度跟随**天空亮度**(按时段给定的比值表):
-	#   天空是绝对值、地面是"贴图 × ambient",两者不同源。给定"此刻地面应是天空的百分之几",
-	#   再由砖色亮度反推 ambient ⇒ 黄昏不会变成黑剪影,正午也不会过曝。
-	#   amb_sky_link 是总开关(0 = 关闭,1 = 完全按表)。
+	# ★ 地面亮度跟随天空亮度(比值表,amb_sky_link 是总开关):由砖色亮度反推 ambient,黄昏不变黑剪影、正午不过曝。
 	var link := lighting.amb_sky_link if lighting != null else 1.0
 	if link > 0.001:
 		var sky_luma_ref := sky_base(day_hour).get_luminance()
 		var target_link := DayCycle.sky_link(day_hour)
 		var wanted := lerpf(amb_amt, target_link * sky_luma_ref / DayCycle.BRICK_LUMA, link)
 		amb_amt = clampf(maxf(amb_amt, wanted), 0.0, 1.0)
-	# ★ 环境光**有颜色**:物理上它就是"天光颜色 × 强度"。这里从当前天空色里取色相/饱和、
-	#   丢掉亮度,再按 amb_tint_strength 和白色混合 ⇒ 黄昏偏暖橙、夜里偏蓝、正午近白。
-	#   三通道恒 ≤ 1(先按最大通道归一化),所以只染色不提亮,不破坏"永不发光"。
+	# ★ 环境光**有颜色**(天光颜色 × 强度):从天空色取色相、丢亮度,按 amb_tint_strength 混白;三通道恒 ≤ 1,只染色不提亮。
 	var sky_for_tint := sky_base(day_hour)
 	var mx := maxf(sky_for_tint.r, maxf(sky_for_tint.g, sky_for_tint.b))
 	var amb_tint := Color.WHITE
@@ -308,8 +279,7 @@ func _push_sun() -> void:
 		var hue := Color(sky_for_tint.r / mx, sky_for_tint.g / mx, sky_for_tint.b / mx)
 		var strength := lighting.amb_tint_strength if lighting != null else 0.35
 		amb_tint = Color.WHITE.lerp(hue, clampf(strength, 0.0, 1.0))
-		# ★ 乘数用的染色要比"色相拉拢"更轻:两者共用一个高 strength 会把夜里压暗
-		#   (0.55 时夜里红/绿只剩 67%/80%)。这里单独用一半强度。
+		# ★ 乘数用的染色要比"色相拉拢"更轻:共用高 strength 会把夜里压暗,这里单独用一半强度。
 		amb_mul = Color.WHITE.lerp(hue, clampf(strength * 0.5, 0.0, 1.0))
 	_mat.set_shader_parameter("ambient_hue", Vector3(amb_tint.r, amb_tint.g, amb_tint.b))
 	_mat.set_shader_parameter("amb_hue_mix", lighting.amb_hue_mix if lighting != null else 0.4)
@@ -324,8 +294,7 @@ func _push_sun() -> void:
 	_mat.set_shader_parameter("sky_curve", 0.10)
 	_mat.set_shader_parameter("sky_band_pow", 1.75)
 
-	# ② 斜投影影:太阳/月亮都得"有方向"才投。太阳在头顶(正午)时投影≈0。
-	#   夜里月亮也是低角,同样会有很淡的斜影 —— 这就是"晚上的光照变化"。
+	# ② 斜投影影:太阳/月亮都得"有方向"才投,太阳在头顶时投影≈0;夜里月光也会投很淡的斜影。
 	var low := low_sun_amount(light_elev)
 	var is_moon := not sun_up
 	# 月光比日光弱、更冷:浓度按 0.35 折算。
@@ -343,11 +312,7 @@ func _push_sun() -> void:
 		floor_b = lighting.amb_floor_day
 	_mat.set_shader_parameter("amb_floor", lerpf(floor_a, floor_b, dayness))
 
-	# ③ 暗部颜色:**从环境光/天色派生**,不是写死的冷蓝。
-	# ★ 以前是 TINT_NOON/DUESK/NIGHT 三个固定冷色 —— 黄昏满屏长影全被染冷,
-	#   和暖橙的天空直接打架(用户:地形压暗和天色对不上,墙面变成灰绿)。
-	#   现在阴影色 = 当前环境光色相再压暗一点 ⇒ 阴影是"这种光更少",而不是"换了一种蓝光"。
-	#   乘性、三通道 ≤ 1。
+	# ③ 暗部颜色:从环境光色相派生再压暗(不是写死的冷蓝);阴影 = "这种光更少",乘性、三通道 ≤ 1。
 	var tint := amb_tint.darkened(0.10)
 	if is_moon:
 		tint = tint.darkened(0.05)
@@ -410,8 +375,7 @@ func set_downed(v: bool) -> void:
 		_mat.set_shader_parameter("desat", 1.0 if v else 0.0)
 
 
-# 受击红闪:strength 0-1(伤害越大越红),约 0.25s 衰减完。
-# combat.take_hit(单机)与 PvP hit_event→take_hit 都走这里,不用重复接线。
+# 受击红闪:0-1(伤害越大越红),约 0.25s 衰减完;单机与 PvP 都走这里。
 func flash_hit(strength: float = 1.0) -> void:
 	_hit_red = maxf(_hit_red, clampf(strength, 0.0, 1.0))
 
@@ -441,16 +405,14 @@ func _process(delta: float) -> void:
 	_tick_day_cycle(delta)
 
 
-# 发光通道的相机必须与世界相机**逐帧同步**(位置/缩放/旋转),否则发光体和世界错位。
-# ★ 用实际 global_position(不是 get_base_global_position):要跟着震屏一起动,否则发光会"漂"。
+# 发光通道的相机必须与世界相机逐帧同步,否则发光体和世界错位;★ 用实际 global_position(要跟着震屏动,不然发光会"漂")。
 func _sync_glow_camera() -> void:
 	if world_viewport == null:
 		return
 	var cam := world_viewport.get_camera_2d()
 	if cam == null:
 		return
-	# 发光通道是**半分辨率**:尺寸减半后要同时把 zoom 减半,才能覆盖同一片世界区域。
-	# 归一化 uv 与分辨率无关 ⇒ shader 里仍用同一个 uv 采样,不需要额外换算。
+	# 发光通道是半分辨率:zoom 也要减半才能覆盖同一片世界;uv 与分辨率无关,shader 不用换算。
 	if _glow_cam != null:
 		_glow_cam.global_position = cam.global_position
 		_glow_cam.zoom = cam.zoom * glow_scale
@@ -472,9 +434,7 @@ func ui_root() -> Node:
 
 
 
-# ── 时钟推进 ── 现实 60 秒 = 游戏内 24 小时(1 秒 = 24 分钟),从 06:00 起。
-# 暂停时不走(_process 是 ALWAYS,这里自己让路)。
-# ★ 纯表现:不碰 TimeField、不进快照、不影响任何逻辑;联机两端各自按本机时钟走即可。
+# ── 时钟推进:60 秒 = 24 小时,从 06:00 起;暂停时不走。★ 纯表现,不进快照、不影响逻辑。
 const _SUN_PUSH_EPS := 0.02   # 高度角变化小于这个就不重推(度数)
 
 func _tick_day_cycle(delta: float) -> void:
@@ -505,8 +465,7 @@ func _time_rate() -> float:
 	return 1.0
 
 
-# 残血红屏驱动:从 `player` 组取本地玩家(单机/PvP 都是这一个入口),按 hp/max_hp 映射到 0..1。
-# ★ 纯表现:不接信号、不需要服务器字段,也不碰 HUD;倒地时淡出(倒地有既有的灰化)。
+# 残血红屏驱动:从 `player` 组取本地玩家,按 hp/max_hp 映射 0..1;★ 纯表现,不接信号、不碰 HUD,倒地淡出。
 func _tick_low_hp(delta: float) -> void:
 	if _mat == null:
 		return

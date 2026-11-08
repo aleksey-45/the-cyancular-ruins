@@ -1,23 +1,12 @@
 class_name DayCycle
 extends RefCounted
-# 昼夜模型:**纯函数 + 常量**,不依赖任何节点。
-#
-# ★ 为什么单独一个文件:这套东西(太阳/月亮高度角、环境光、天空关键帧)是"一天的物理",
-#   和"怎么把它画到屏幕上"(PostProcess 的 shader 参数)是两件事。之前全塞在 PostProcess 里,
-#   一个 419 行的文件里混着着色器宿主 + 光照模型 + 天空数据 + 通道相机同步 + 各种视效。
-#   搬出来之后:这里可以单独推演/核对(全 static),PostProcess 只管把结果喂给 shader。
-#
-# ★ 数据流:时刻(hour) → sun_at/moon_at → sun_light/moon_amount → ambient_for(环境光)
-#                          → sky_base(天空基色)
-#   PostProcess 每帧读这几个量,写进 shader uniforms。
+# 昼夜模型:纯函数 + 常量,不依赖任何节点;PostProcess 每帧读 sun_at / ambient_for / sky_base 写 shader uniforms。
 
-# ── 时钟 ──
 const DAY_CYCLE_SECONDS := 60.0   # 现实 60 秒 = 游戏内 24 小时(1 秒 = 24 分钟)
 const DAY_START_HOUR := 6.0       # 开局时刻:早上六点
 const SUNRISE_HOUR := 6.0
 const SUNSET_HOUR := 18.0
 
-# ── 环境光:天光底 + 太阳/月亮取大 ──
 const AMB_BASE := 0.15       # 天光底的**默认值**;真值来自 lighting_params.tres(见 set_amb_base)
 static var _amb_base: float = AMB_BASE   # 运行时由 PostProcess 按 .tres 写入
 
@@ -26,18 +15,10 @@ static func set_amb_base(v: float) -> void:
 	_amb_base = clampf(v, 0.0, 1.0)
 const MOON_SCALE := 0.26     # 月光峰值(必须低于晨昏的太阳项,否则半夜比傍晚亮)
 
-# ── 由太阳高度角定义的分段阈值 ──
 const ELEV_NIGHT := -18.0    # 低于它 = 全夜(只剩天光底)
 const ELEV_DAY := 12.0       # 高于它 = 环境光拉满(= 原版亮度)
 
-# ── 天空关键帧 ──
-# ★ 插值走 **RGB 直线**,不走色轮:HSV 最短弧从橙(24°)到夜蓝(220°)会经过 351°→319°→
-#   286°→254°,黄昏会依次变粉变紫,读起来"各种颜色乱窜"(实测)。
-# ★ 直线插值的坑:两个高饱和色直接混,中点会掉饱和度(橙→夜蓝中点只有 0.31,两端 0.55/0.63)。
-#   所以黄昏→夜**手工插了 3 个关键帧**把路径"拱"起来 —— 每帧都是明确选定的颜色,不是算出来的灰。
-#   (单纯增加采样点没用:直线上的点还在直线上。)
-# ★ 夜晚不是一档颜色:蓝调→入夜→深夜→后半夜→将明,占了整轮 1/3。
-# ★ 12:00 那一帧 = 原版晴空,所以正午用 ambient=1 时精确等于原版。
+# ★ 插值走 RGB 直线(不走 HSV 色轮):色轮最短弧会让黄昏依次变粉变紫,读起来"颜色乱窜";直线中点掉饱和,所以黄昏→夜手工插 3 帧把路径拱起来。12:00 = 原版晴空(ambient=1 时精确等于原版)。
 const SKY_KEYS := [
 	[0.0, Color("0a1220ff")],   # 子夜:最深
 	[2.0, Color("0b1526ff")],   # 后半夜:略回蓝
@@ -65,10 +46,7 @@ static func _ss(a: float, b: float, x: float) -> float:
 	return t * t * (3.0 - 2.0 * t)
 
 
-## 太阳位置:(高度角°, 方位 ±1)。高度角 < 0 = 地平线下。
-## ★ 物理口径:高度角 = asin(sinδ·sinφ + cosδ·cosφ·cosH),H 是**小时角**(15°/小时)。
-##   取二分点、赤道(δ=φ=0)时化简为 elev = 90° − |H|,H = 15°·(h − 12)。
-##   所以一天的高度角是一条**三角波**,不是正弦(旧写法 86·sin(π(h−6)/12) 把小时角当成了高度角)。
+## 太阳位置:(高度角°, 方位 ±1)。★ 高度角 = 90° − |15°·(h−12)| 是三角波(不是正弦),夜里自动为负。
 static func sun_at(hour: float) -> Vector2:
 	var h := fposmod(hour, 24.0)
 	var hour_angle := (h - 12.0) * 15.0            # 度;正午 0、六点 −90、十八点 +90
@@ -95,9 +73,7 @@ static func low_sun_amount(elev_deg: float) -> float:
 	return _ss(-6.0, 10.0, elev_deg)
 
 
-## 白天的光强 0..1:辐照度 ∝ sin(高度角)。
-## ★ 不用"按时刻的余弦":余弦在峰谷导数趋零,实测正午要 2.35h 看起来不变、午夜 2.71h ——
-##   60 秒一天里就是好几秒完全静止。高度角是三角波,sin 升得快、峰值窄,平台自然短。
+## 白天的光强 0..1:辐照度 ∝ sin(高度角)。不用"按时刻的余弦"——余弦峰谷导数趋零,60 秒一天里会有好几秒画面完全静止。
 static func day_arc(hour: float) -> float:
 	return clampf(sin(deg_to_rad(maxf(sun_at(hour).x, 0.0))), 0.0, 1.0)
 
@@ -107,10 +83,7 @@ static func moon_amount(hour: float) -> float:
 	return clampf(sin(deg_to_rad(maxf(moon_at(hour), 0.0))), 0.0, 1.0)
 
 
-## 太阳的"有效高度"贡献。
-## ★ 太阳项**不能在地平线归零**:sin(0°)=0 ⇒ 黎明/黄昏只剩天光底,比半夜的月光还黑
-##   (实测:建筑物晚上比白天亮)。这里把有效高度抬高 18°,等价于民用晨昏,
-##   于是"傍晚 > 半夜"的顺序才对。归一到 90° 恰为 1.0(正午 = 原版亮度)。
+## 太阳的"有效高度":★ 不能在地平线归零(sin(0°)=0 ⇒ 黎明/黄昏只剩天光底,比半夜还黑);抬高 18° = 民用晨昏,归一到 90° 恰为 1.0(正午 = 原版亮度)。
 static func sun_light(sun_elev: float) -> float:
 	var raw := sin(deg_to_rad(sun_elev + 18.0)) / sin(deg_to_rad(108.0))
 	return pow(clampf(raw, 0.0, 1.0), 0.6)
@@ -122,8 +95,7 @@ static func _soft_take(a: float, b: float) -> float:
 	return lerpf(b, a, smoothstep(0.0, 1.0, t))
 
 
-## 环境光(恒 ∈ [0,1]):乘性、只压不抬 ⇒ 实体亮度 ≤ 贴图原值(永不发光)。
-## 正午恰为 1.0 ⇒ 12:00 就是原版光照。
+## 环境光(恒 ∈ [0,1]):乘性、只压不抬;正午恰为 1.0 ⇒ 12:00 就是原版光照。
 static func ambient_for(hour: float, moon_amt: float) -> float:
 	var sun_arc := sun_light(sun_at(hour).x)
 	var moon_arc := moon_amt * MOON_SCALE
@@ -142,11 +114,7 @@ static func sky_base(hour: float) -> Color:
 			return (SKY_KEYS[i][1] as Color).lerp(SKY_KEYS[i + 1][1] as Color, smoothstep(0.0, 1.0, t))
 	return SKY_KEYS[n - 1][1]
 
-# ── 地面/天空亮度比:按时段给定,插值得到"此刻地面该比天空暗多少" ──
-# ★ 为什么用**比值**而不是单一路径的 ambient:天空是绝对值、地面是"贴图 × ambient"。
-#   只调 ambient 的话,黄昏(天空亮、环境光已掉)会把建筑压成黑剪影;只调 link 又会在正午过曝。
-#   给定"每个时段地面是天空的百分之几",再由砖色亮度反推 ambient 就两边都对得上。
-# 取值依据:正午地面自然就比天空暗(砖反射率 ~0.48),其余时段按"天越暗、地面越贴近天空"抬。
+# ★ 地面/天空亮度比:只调 ambient 会让黄昏变黑剪影、正午过曝;给定"地面是天空的百分之几",再由砖色亮度反推 ambient。
 const SKY_LINK_KEYS := [
 	[0.0, 2.60],    # 子夜:天空极暗但月光照着地面 ⇒ 比值 >1
 	[4.5, 1.20],    # 凌晨:天空还没亮,别把地面抬得比午夜还亮
