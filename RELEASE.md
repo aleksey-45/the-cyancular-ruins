@@ -65,6 +65,10 @@
 > - `web/` = Web 客户端产物(`index.html` + `.wasm/.pck/.js`;仅单机)。
 > `builds/` 与 Web 暂存目录 `web_build/` 都不入库。
 
+> **★ 导出预设的 `exclude_filter` 必须逐个点名本地垃圾目录**(2026-11-08 修):`export_filter="all_resources"` 会扫**整个项目目录树** —— 它**不认 `.gitignore`,也不认 `.gdignore`**(后者只管编辑器导入)。所以任何躺在仓库根下的本地目录(历史发布 `releases/`、归档 `builds/`、Web 暂存 `web_build/`、崩溃复现 `_crashtest/`、结构备份 `backup/`、录屏输出 `record/`)都会被打进包。实测漏配时:导出包里混进了**旧发布产的 `index.png` 图标** + 崩溃复现截图 + `probe.gd`,包体积 3.20MB → 6.75MB(翻倍),且随历史发布越积越多。
+> - 现状:5 个预设都带 `_crashtest/*,builds/*,releases/*,web_build/*,backup/*,record/*`。**新增本地产物目录时必须同时补这里的 5 行**,否则会静默进包。
+> - 守卫方式:只有一次**真导出**能回答(推理不可靠) —— `--export-pack "<预设>" .tmp/probe.pck` 只导包不编译 exe,然后 grep 包内有没有 `res://<目录>/`。`tests/run_all.sh` 覆盖不到这一面。
+
 > **macOS 常见坑**:① 双击提示"无法验证开发者"是**未签名/未公证**的预期现象 —— 右键「打开」，或 `xattr -cr "xxx.app"`;② 从 zip 解压后若提示"已损坏"，先 `xattr -cr` 再试（zip 经浏览器下载会带 quarantine 属性）;③ mac 客户端的「启动/重启本机服务器」按钮**不可用**（`LocalServer` 是 Windows 专有实现），本机开房要手动从终端起 `Cyancular Ruins Server.app`;④ mac 与 Windows 可以互连（同一套 ENet 协议/`PROTO_VERSION`），但**两端必须同一次导出的构建**。
 > **PvP 服务端 = 大厅 + 每局 worker**:大厅只监听 7777 做配对,每局配对完成自动拉起一个 headless worker 子进程、独占 UDP **7800 起**的端口(worker 结束后自行退出)。云 / 防火墙需放行 **7777 与 7800~8299 的 UDP**(端口池 = 7800 起 500 个)。
 
