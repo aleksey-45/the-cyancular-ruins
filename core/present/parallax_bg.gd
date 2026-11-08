@@ -6,11 +6,13 @@ extends Node2D
 #
 # 视差口径(**唯一实现**,改动即改行为;零守卫,改动须人工对拍):
 #   · 层的节点世界坐标 = cam × (1 − f)  ⇒ 相机位移 Δ 时该层屏幕位移 = −f·Δ(f=1 与场景同速,25% 最远)
-#   · 采样起点(纹理空间)= cam × f,配 texture_repeat 做环面回绕(地图是环面,背景也要无缝)
+#   · **背景图与地图同大**(色层 1 texel/子格 × 16 = 世界像素),环面靠 **3×3 副本**(与墙体一致)
 # 这两个式子就是全部数学;别在 Level0 里再写第二份(那样"层挪了什么"只能靠肉眼)。
 
 const DEPTH: Array[float] = [1.0, 0.75, 0.5, 0.25]   # 下标 = 层号 − 3
-const CELL_PX: int = 4                                # 烘图分辨率:每 64px 格 4px(150×100 格 → 600×400)
+const CELL_PX: int = 4                                # 烘图:每 64px 格 4px ⇒ 1 texel = 1 子格
+const CELL: int = 64                                  # 世界像素/格
+const SUB_PX: int = 16                                # 世界像素/texel(= 子格边长)
 
 static func layer_origin(cam: Vector2, f: float) -> Vector2:
 	return cam * (1.0 - f)
@@ -50,35 +52,42 @@ static func bake_layer_image(rgba: PackedInt32Array, world_cells: Vector2i) -> I
 	return img
 
 
-var _sprites: Array = [null, null, null, null]   # 下标 0..3;缺层 = null
-var _track: Camera2D = null                      # 被跟踪的世界相机(对局里的那个)
-var _view_cam: Camera2D = null                   # 本视口自己的相机:每帧跟随世界相机
+var _layers: Array = []       # 每层:{f, sprites(9 个), offs(9 个副本偏移)}
+var _world := Vector2.ZERO    # 世界像素尺寸(= 背景图放大后的尺寸)
+var _track: Camera2D = null   # 被跟踪的世界相机(对局里的那个)
+var _view_cam: Camera2D = null
 
 
 # layers = MapFormat.load_bg_layers 的返回值(恒 4 项,缺层 null);world_cells = 地图格数。
-# track_camera = 世界相机(相机抖动/缩放都跟着它)。本节点**活在独立 SubViewport 里**:
-# 它画的像素不进世界视口的 alpha ⇒ 光照的遮挡/受光完全看不到背景(不透明剪影安全)。
-# 返回真正建出来的层数(0 = 这张图没有背景景深层,Level0 可直接跳过)。
+# ★★ 尺寸与平铺:**背景图与地图同大**(色层每子格 1 texel,放大 16 倍铺满世界),
+#    环面靠 **3×3 副本**(与墙体一致)——不是纹理 repeat:眼睛看到的那一份永远是"世界本身"那一张。
+# track_camera = 世界相机(抖动/缩放都跟着它)。本节点活在独立 SubViewport 里 ⇒ 不进世界视口 alpha。
 func setup(layers: Array, world_cells: Vector2i, track_camera: Camera2D = null) -> int:
 	_track = track_camera
+	_world = Vector2(world_cells) * float(CELL)
 	var built := 0
 	for i in mini(layers.size(), 4):
 		var rgba = layers[i]
 		if rgba == null:
 			continue
-		var spr := Sprite2D.new()
-		spr.name = "Depth%d" % int(round(DEPTH[i] * 100.0))
-		spr.texture = ImageTexture.create_from_image(bake_layer_image(rgba, world_cells))
-		spr.centered = false
-		spr.region_enabled = true
-		spr.region_filter_clip_enabled = false
-		spr.texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
-		spr.z_index = -100 + i                    # 远景(25%)最靠后;同层内按层号递增
-		add_child(spr)
-		_sprites[i] = spr
+		var img := bake_layer_image(rgba, world_cells)          # (世界像素 / 16) 见方
+		var tex := ImageTexture.create_from_image(img)
+		var sprites: Array = []
+		var offs: Array = []
+		for oy in 3:
+			for ox in 3:
+				var spr := Sprite2D.new()
+				spr.texture = tex
+				spr.centered = false
+				spr.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+				spr.scale = Vector2(float(SUB_PX), float(SUB_PX))   # 1 texel = 16 世界像素
+				spr.z_index = -100 + i                              # 远景(25%)最靠后
+				add_child(spr)
+				sprites.append(spr)
+				offs.append(Vector2(ox - 1, oy - 1) * _world)
+		_layers.append({"f": DEPTH[i], "sprites": sprites, "offs": offs})
 		built += 1
 	if built > 0:
-		# 自己的相机(独立视口里必须有一个,否则什么都不画)。位置/缩放每帧跟世界相机。
 		_view_cam = Camera2D.new()
 		_view_cam.name = "BgCam"
 		_view_cam.position_smoothing_enabled = false
@@ -93,23 +102,18 @@ func _ready() -> void:
 func _process(_dt: float) -> void:
 	if _track == null or not is_instance_valid(_track):
 		return
-	# ① 视口尺寸跟世界视口(窗口缩放时两边必须同尺寸,否则 region 采样错位)
 	var host_vp := _track.get_viewport()
 	if host_vp != null and get_viewport() != null and get_viewport().size != host_vp.size:
 		get_viewport().size = host_vp.size
-	# ② 相机跟随:世界相机移多少,本视口相机就移多少 ⇒ 世界坐标的 sprites 出现在同样的屏幕位置
 	var cam := _track.get_screen_center_position()
 	if _view_cam != null:
 		_view_cam.global_position = cam
 		_view_cam.zoom = _track.zoom
-	var z := _track.zoom
-	var view := get_viewport_rect().size / Vector2(maxf(z.x, 0.0001), maxf(z.y, 0.0001))
-	# ★ region 比视口大 2px:亚像素取整时边缘不会露出 1px 的透明缝。
-	var region_view := view + Vector2(2.0, 2.0)
-	for i in 4:
-		var spr: Sprite2D = _sprites[i]
-		if spr == null:
-			continue
-		var f: float = DEPTH[i]
-		spr.position = layer_origin(cam, f)
-		spr.region_rect = layer_region(cam, f, region_view)
+	for li in _layers.size():
+		var L: Dictionary = _layers[li]
+		var f: float = float(L["f"])
+		var base := layer_origin(cam, f)
+		var sprites: Array = L["sprites"]
+		var offs: Array = L["offs"]
+		for k in sprites.size():
+			(sprites[k] as Sprite2D).position = base + (offs[k] as Vector2)
