@@ -4,19 +4,21 @@
 
 ## 渲染管线(`scenes/level_0.tscn`)
 
+> ★ **守卫边界(2026-11-08 仓主裁定)**:渲染表现与数据细节**不写自动守卫**(见 [`test-economy.md`](test-economy.md) §1);渲染域唯一的自动守卫是启动结构探针 [`tests/probe/level0_boot_probe.tscn`](../../tests/probe/level0_boot_probe.tscn)(19 条:世界数据/三视口/墙体铺贴/水体合批/PostProcess 通道/地形掩码/相机与发光相机同步/形体光/碰撞/收尾状态)。原 water_atlas / wall_tint / tint_parity / bg_parallax / torus_camera 五支数据契约探针已删除。
+
 - 根节点把未处理输入手动转发进 `WorldViewport`(SubViewport);世界(墙体 / 玩家 / 敌人)渲染进 SubViewport,`PostProcess`(`post_process.gd`)把世界纹理合成到屏幕:鱼眼 + 中心裁剪 + **天空合成 + 昼夜光照(环境光 / 斜投影影)+ 发光通道叠加** + 受击/低血/时间玩法视效(倒地暗角、残血边缘暗角只在屏幕边缘,中心保持干净,纯客户端、不挡 HUD)。
 - **世界里的一切都会被乘 `ambient`** —— 这是理解渲染层的第一句话:UI 辅助层(换弹读条 / 预瞄线)挂在世界子树里就会一起被压暗;发光体想"夜里更亮"就必须走发光通道(见下)。
 - 渲染材料分三层:`core/present/day_cycle.gd`(纯函数:一整天怎么亮)→ `post_process.gd`(把结果喂 shader)→ `core/present/form_light.gd`(逐精灵的形体光)。shader 只做合成与逐像素光照,不持有第二个真相源。
 
-- 相机 `core/present/camera_2d.gd` 在 `_process` 里跟随目标:死区(`PlayerParams.cam_deadzone`)+ 指数平滑(`cam_smooth_x/y`)+ 前瞻(`cam_lookahead_x`,按 `vx / move_speed` 归一)+ `cam_y_bias`;环面世界走连续空间跟随,单帧位移 > `SNAP_DIST = 400px` 视为真传送(复活 / 回退 / 换边)直接重锚、不做平滑。另有 `shake(amount, duration)`:包络 = `amount * (剩余/时长)^0.7`(尾段比线性长),且**不降级**——比当前剩余包络弱的震动被忽略,否则开火/受击的小震会把爆炸大震顶掉。联机里爆炸震由 `Explosion.client_cam_shake()` 在视觉副本爆炸时补(客户端 bullet 是 `apply_damage=false`)。`PlayerParams.cam_lookahead_y` 目前无人读,别按它改行为。守卫:`tests/probe/torus_camera_probe.gd`(8 条)。
+- 相机 `core/present/camera_2d.gd` 在 `_process` 里跟随目标:死区(`PlayerParams.cam_deadzone`)+ 指数平滑(`cam_smooth_x/y`)+ 前瞻(`cam_lookahead_x`,按 `vx / move_speed` 归一)+ `cam_y_bias`;环面世界走连续空间跟随,单帧位移 > `SNAP_DIST = 400px` 视为真传送(复活 / 回退 / 换边)直接重锚、不做平滑。另有 `shake(amount, duration)`:包络 = `amount * (剩余/时长)^0.7`(尾段比线性长),且**不降级**——比当前剩余包络弱的震动被忽略,否则开火/受击的小震会把爆炸大震顶掉。联机里爆炸震由 `Explosion.client_cam_shake()` 在视觉副本爆炸时补(客户端 bullet 是 `apply_damage=false`)。`PlayerParams.cam_lookahead_y` 目前无人读,别按它改行为。零守卫(原 `torus_camera_probe` 已删):改跟随/死区/震屏只能人眼试玩。
 
 - 图集构造 `core/sim/terrain_atlas.gd`(`TerrainAtlas`):源砖 → 图集 → TileSet;`Level0._create_wall_tileset()` 只剩转发。**图集按描述符行烘**(行 = 去重排序后的 v4 描述符,颜色辅码烘进像素),不再按"每纹理一行"。
-  - **像素数学 `TerrainAtlas.tint_color(c, desc)`** = `level_editor/tint.js` 的移植(唯一规范):HSV(不是 HSL)、色相偏移 (hue档−4)×15°(fposmod 360)、bri/sat 是**乘法**乘数 (档+6)/10、alpha = a×档/7、8 位落地只有一条规则 round(clamp01(x)×255)。跨语言 parity 守卫 = `tests/probe/tint_parity_probe.gd`(内嵌 JS 端 golden 向量)。
-  - **墙体 = 16px 象限**:`make_wall_tileset_for(descs)` / `build_atlas_image_for(descs)` 把每块 32px 源砖拆成 4×4 个 8×8 象限、逐像素 tint、各最近邻 2× 放大成 16×16,拼成 16 列(4×4 象限)× descs.size() 行的 TileSet(`tile_size = 16`);`_paint_maze_copies` 铺 16px 子格,瓦片坐标 = `Vector2i((y%4)*4 + (x%4), _desc_row[desc])`(desc 取 `MazeGenerator.current_subdesc`;**只铺视口可见环带**——中心整图 + 其余 8 份按 `视口尺寸 / cam_zoom` 裁条带,整圈全铺是 5~6 倍浪费:newfactory 实测 559,728 → 176,024 格)。缺失描述符走 `TerrainAtlas.fallback_row` 回落**该纹理的中性行**并 push_warning 一次;合成网格路径(subdesc 为空,探针直写 current_subgrid)行号语义退回"每纹理一行中性"。回溯 `_restore_sub` / 换局 `reset_destructibles` 的瓦片行号同走 `_desc_row`(后者取 `_pristine_subdesc`,与 `_pristine_subgrid` 同点保存)。守卫:`tests/probe/wall_tint_probe.tscn`。
+  - **像素数学 `TerrainAtlas.tint_color(c, desc)`** = `level_editor/tint.js` 的移植(唯一规范):HSV(不是 HSL)、色相偏移 (hue档−4)×15°(fposmod 360)、bri/sat 是**乘法**乘数 (档+6)/10、alpha = a×档/7、8 位落地只有一条规则 round(clamp01(x)×255)。★ **跨语言 parity 零守卫**(原 `tint_parity_probe` 已删):改 `tint.js` 或 `tint_color` 必须人工对拍 golden 向量。
+  - **墙体 = 16px 象限**:`make_wall_tileset_for(descs)` / `build_atlas_image_for(descs)` 把每块 32px 源砖拆成 4×4 个 8×8 象限、逐像素 tint、各最近邻 2× 放大成 16×16,拼成 16 列(4×4 象限)× descs.size() 行的 TileSet(`tile_size = 16`);`_paint_maze_copies` 铺 16px 子格,瓦片坐标 = `Vector2i((y%4)*4 + (x%4), _desc_row[desc])`(desc 取 `MazeGenerator.current_subdesc`;**只铺视口可见环带**——中心整图 + 其余 8 份按 `视口尺寸 / cam_zoom` 裁条带,整圈全铺是 5~6 倍浪费:newfactory 实测 559,728 → 176,024 格)。缺失描述符走 `TerrainAtlas.fallback_row` 回落**该纹理的中性行**并 push_warning 一次;合成网格路径(subdesc 为空,探针直写 current_subgrid)行号语义退回"每纹理一行中性"。回溯 `_restore_sub` / 换局 `reset_destructibles` 的瓦片行号同走 `_desc_row`(后者取 `_pristine_subdesc`,与 `_pristine_subgrid` 同点保存)。零守卫(原 `wall_tint_probe` 已删):改图集行/tint 只能人眼。
   - **水体 = 单层合批,不走 TileMap**:`Level0._paint_water_copies` 把**所有液体格**按格级描述符(`_water_desc_of`,该格 16 子格的多数描述符,平票取小)分桶;每桶建一张两行图集(`_make_water_atlas`:上行水体砖 / 下行为水面砖,都按该描述符 tint),交给 `scenes/effects/water_surface_batch.gd`(`WaterSurfaceBatch`)画成一张静态网格——顶点起伏 + 横向流动条纹。水面与水体同色、同 alpha、同管线,所以没有"两层对不齐"的接缝。`TerrainAtlas.make_water_tileset_for()` 现只剩探针在用(生产不再铺水 TileMap)。
-    ⚠ **零守卫**:分桶规则(多数票 / 平票取小)与两行图集的行序都是**实现细节**,不写自动守卫(渲染观感按 [`test-economy.md`](test-economy.md) §1 只能人眼);守卫只到"两块水砖的 0-based 下标 / 缓存按 idx 分开"这一层数据契约(`water_atlas_probe` 6 条)。
+    ⚠ **零守卫**:分桶规则(多数票 / 平票取小)、两行图集的行序、两块水砖的 0-based 下标都是**实现细节**,不写自动守卫(渲染观感按 [`test-economy.md`](test-economy.md) §1 只能人眼;原 `water_atlas_probe` 已删)。
   - 主菜单背景 `bake_map_image(path, cell_px, air)` 同样吃描述符(`MapFormat.load_subgrid_with_descs` 的 descs,内部自建 row_of)⇒ 辅码颜色一并烘进背景,与对局是同一套像素。
-- ★★ **两块水砖是合批图集的两行**(不是两个 TileMapLayer):`TerrainAtlas.WATER_BODY_BRICK = 20`(0-based ⇒ 纹理 21「水」,均匀半透明填充)在上行;`WATER_SURFACE_BRICK = 21`(纹理 22「水面」,自带顶边水线)在下行。每行都按格级描述符 tint ⇒ 水面与水体同色。守卫:`tests/probe/water_atlas_probe.tscn`(6 条)。
+- ★★ **两块水砖是合批图集的两行**(不是两个 TileMapLayer):`TerrainAtlas.WATER_BODY_BRICK = 20`(0-based ⇒ 纹理 21「水」,均匀半透明填充)在上行;`WATER_SURFACE_BRICK = 21`(纹理 22「水面」,自带顶边水线)在下行。每行都按格级描述符 tint ⇒ 水面与水体同色。零守卫。
   - `TerrainAtlas.SKY_COLOR`(`2f4256`)只做「空气格 / 清屏色」:主菜单背景底色与 `Level0` 的 `RenderingServer.set_default_clear_color()` 读它。★ **对局里的天空不在这一层** —— 世界视口是 `transparent_bg`,空气 alpha=0,天空由 `post_process.gdshader` 按昼夜合成(见「昼夜与光照」)。别把它当对局天空色去调,也别改 `MapCatalog.BG`(选图缩略图底色,语义不同)。
 - 碰撞 `core/sim/collision_builder.gd`(`CollisionBuilder`,静态可测):形状掩码展开成 16px 子格(每 64px 格 → 4×4),贪心合并矩形后按 9 环面副本偏移实例化(每块矩形 ×9,共享同一 shape)。永久墙建一个整图节点(9 环面副本各一份,物理跨接缝必需)、建一次不动;可破坏层按分块存节点(块边长 12 格),摧毁时只重建所在块。只有 type=wall 产生碰撞。
 - `core/sim/collision_aabb.gd`(`CollisionAabb`:从任意节点求**启用中**碰撞体的世界 AABB)是激光命中、water 脚底偏移、飞鸟避障矩形的共同几何来源;三者各带兜底值,只在目标真没有碰撞体时生效。多边形与形状必须分开判(`CollisionPolygon2D` 与 `CollisionShape2D` 是并列类);本作所有身体(三敌人 + 玩家 5 个姿态箱)都只用多边形。
@@ -69,7 +71,7 @@
 - `Level0._ready` 用 `MapFormat.load_bg_layers()` 取图;`ParallaxBg.setup(layers, 地图格数)` 只在**有相机的渲染路径**建(服务器 / headless 跳过),层缺失不建节点。给 `WorldViewport` 的最底层(z_index = −100+i)。
 - 视差数学只有两式(纯静态函数,`-s` 可测):**节点世界坐标 = cam × (1 − f)**、**采样起点 = cam × f**,配 `texture_repeat` 做环面回绕 ⇒ 相机位移 Δ 时该层屏幕位移 = −f·Δ。
 - 烘图:`bake_layer_image()` 每 64px 格烘 4px(`CELL_PX = 4`)并对 4×4 子格做 **alpha 加权**均值(直接平均透明格会把黑混进来,背景边缘发暗)。颜色层只画渐变/底色,降采样观感无损;`150×100` 格 → `600×400`,四层显存可忽略。
-- 不进快照 / 回滚 / 网络包:纯视觉,两端都从同一张地图文件现算 ⇒ 天然一致。守卫 `tests/smoke/bg_parallax_smoke.gd`(20 条:档位 / 两式 / 位移比 / v4 解析 / 缺层 / 烘焙加权)。人眼项:与天空 shader、光照投影的合成次序。
+- 不进快照 / 回滚 / 网络包:纯视觉,两端都从同一张地图文件现算 ⇒ 天然一致。零守卫(原 `bg_parallax_smoke` 已删):改视差两式/烘焙权重只能人工对拍。人眼项:与天空 shader、光照投影的合成次序。
 
 ## 补间形变(squash & stretch)
 

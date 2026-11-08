@@ -51,7 +51,7 @@ static func source_rect(idx: int) -> Rect2i:
 	return Rect2i((idx % SRC_COLS) * SRC_TILE, (idx / SRC_COLS) * SRC_TILE, SRC_TILE, SRC_TILE)
 
 
-# ── 描述符像素数学(level_editor/tint.js 的移植 = 唯一规范;parity 守卫 = tests/probe/tint_parity_probe.gd)──
+# ── 描述符像素数学(level_editor/tint.js 的移植 = 唯一规范;跨语言 parity 零守卫)──
 # HSV 不是 HSL;色相偏移 = (hue档-4)*15 度(fposmod 360);亮度/饱和度是乘法,乘数 = (档+6)/10;alpha = a*档/7;取整只有一条:round(clamp01(x)*255)。
 
 ## 按描述符 tint 一个颜色(纯函数;通道先量化到字节再算,与 tint.js 的 tintBytes 逐字节一致)。
@@ -221,7 +221,7 @@ static func make_water_tileset_for(ts: int, descs: Array) -> Dictionary:
 	return {"tileset": tile_set, "row_of": row_of}
 
 
-# 按描述符 tint 过的水体砖(ts×ts)。中性描述符 = 逐字节恒等(tint_color 的恒等性由 tint_parity_probe 穷举守)。
+# 按描述符 tint 过的水体砖(ts×ts)。中性描述符 = 逐字节恒等(零守卫)。
 static func _tinted_water_brick(ts: int, desc: int) -> Image:
 	var img := water_brick_image(ts, WATER_BODY_BRICK).duplicate()
 	if desc == MapFormatV4.neutral_descriptor(WATER_BODY_BRICK + 1):
