@@ -277,7 +277,10 @@ GDScript 没有异常 ⇒ 可能失败的操作返回 `{ok:false, "error": Strin
 - `EditorV3.migrate_v3` 与 JS 一致地**不复制** `respawns`（parsed 里有、地图数据里丢）；要改必须两边同改。
 - UTF-16（JS `length` / `charAt`）vs UTF-32（GDScript `length`）：只影响含非 BMP 字符的**畸形**网格行的报错数字。
 
-### 13.7 还没做（计划 P2 起）
+### 13.7 后续阶段
 
-编辑器场景（`scenes/editor/`）、导出两个动作、客户端 / 服务端两份导出的编辑器裁剪、`level_editor/` 退役。
-在那之前别删 JS 编辑器，也别让 `core/editor` 反向依赖 `level_editor/`。
+- **P2 编辑器场景已落地**（`scenes/editor/` + `EditorDoc` / `EditorIO`）：场景、坐标/环面、渲染、撤销、读写与守卫见
+  [`editor-godot.md`](editor-godot.md)。
+- 还没做：P3 导出两个动作、P5 客户端 / 服务端两份导出的编辑器裁剪（含主菜单入口按 `OS.has_feature("editor")`）、
+  P6 `level_editor/` 退役。
+- 在那之前别删 JS 编辑器，也别让 `core/editor` 反向依赖 `level_editor/`。
