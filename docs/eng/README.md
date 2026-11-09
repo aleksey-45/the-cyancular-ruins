@@ -13,7 +13,7 @@
 | 加 / 改武器与子弹、弹道与命中、背包容量、地面拾取、武器注册表 | [`weapons.md`](weapons.md) |
 | 移动 / 跳跃 / 冲刺 / 下蹲、姿态碰撞箱、输入注入、残弹与换弹 | [`player.md`](player.md) |
 | Level0 渲染管线、图集、后处理、补间形变 | [`render.md`](render.md) |
-| 调色板与 UiFactory、菜单语汇、HUD、小地图、大厅版式 | [`ui.md`](ui.md) |
+| 调色板与 UiFactory、菜单语汇、HUD、小地图、大厅版式；**设计系统 v1（Token/Theme/组件/布局/适配规则）** | [`ui.md`](ui.md)（页面现状）、[`ui-design-system.md`](ui-design-system.md)（唯一入口） |
 | 大厅 / worker、匹配进图、房间与回合、回到大厅、重连、RPC 归属 | [`netplay.md`](netplay.md)；重连 → [`netplay-reconnect.md`](netplay-reconnect.md)、房间寿命与回局 → [`netplay-rooms.md`](netplay-rooms.md)、RPC 通道号单一来源 → [`netplay-rpc-channels.md`](netplay-rpc-channels.md) |
 | 快照管线、输入上行、插值与输入、增量与量化、16 人局读数 | `netcode-*.md`（快照那份：[`netcode-snapshots.md`](netcode-snapshots.md)） |
 | 对抗（原 3v3）、结算页、大乱斗及其已知差异 | [`modes.md`](modes.md) |

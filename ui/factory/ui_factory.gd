@@ -2,6 +2,43 @@ class_name UiFactory
 extends RefCounted
 
 
+# ── 设计系统 tokens(单一来源 = 本文件;页面只许引用,不许写字面量 —— 契约 .tmp/ui-system-contract.md §2)──
+# 间距档(像素;布局度量,8 的倍数)
+const SP_0 := 0
+const SP_1 := 4
+const SP_2 := 8
+const SP_3 := 12
+const SP_4 := 16
+const SP_5 := 24
+const SP_6 := 32
+const SP_7 := 40
+const SP_8 := 48
+const SP_9 := 64
+const SP_10 := 80
+# 字号档(像素字体只在 16 的倍数下锐利;新增档位必须同步 style_control 的 assert)
+const T_HUGE := 128
+const T_H1 := 48
+const T_H2 := 32
+const T_BODY := 16
+const T_LABEL := 16
+# 圆角 / 描边
+const R_SM := 3
+const R_MD := 4
+const R_LG := 6
+const BORDER_W := 2
+const BORDER_W_DIM := 1
+
+# Theme 2.0(type variations 全由 tools/gen_menu_theme.gd 生成;本文件只引用,不手工造样式)。
+# ★ 为什么把 Theme 挂在工厂控件自己身上:控件可能被加进**没挂 menu_theme 的树**(HUD / 载入屏 /
+#   服务端 GUI / 编辑器),只设 variation 在那种树里会退回 Godot 默认主题(灰皮)。挂的是**同一份**
+#   资源(单一真相源不变),variation 在任何调用树里都能解析;挂在已挂主题的树上也无害。
+const MENU_THEME := preload("res://ui/theme/menu_theme.tres")
+
+
+static func _apply_variation(c: Control, variation: StringName) -> void:
+	c.theme = MENU_THEME
+	c.theme_type_variation = variation
+
 
 static func pixel_font() -> FontFile:
 	return PixelFont.shared()
@@ -92,7 +129,7 @@ const C_SLOT_EMPTY  := Color(0.510, 0.600, 0.624, 0.5)
 const C_SLOT_FILLED := Color(0.360, 0.620, 0.920, 0.5)
 const C_SLOT_ACTIVE := Color(0.090, 0.300, 0.680, 0.5)
 
-const BTN_BORDER_W := 2
+const BTN_BORDER_W := BORDER_W   # 兼容旧引用;新代码用 BORDER_W
 
 
 static func _btn_box(fill: Color, border: Color) -> StyleBoxFlat:
@@ -131,30 +168,47 @@ static func menu_panel(padding: Vector2 = Vector2(64, 46)) -> PanelContainer:
 static func skin_menu_panel(outer: PanelContainer, padding: Vector2) -> void:
 	if outer.get_node_or_null("Body") != null:
 		return
-	var osb := StyleBoxFlat.new()
-	osb.bg_color = C_SURFACE
-	osb.border_color = C_BORDER
-	osb.set_border_width_all(1)
-	osb.set_corner_radius_all(0)
-	outer.add_theme_stylebox_override("panel", osb)
-
+	_apply_variation(outer, &"PanelCarved")
 	var body := PanelContainer.new()
 	body.name = "Body"
-	var isb := StyleBoxFlat.new()
-	isb.bg_color = Color(0, 0, 0, 0)
-	isb.border_color = C_INNER
-	isb.set_border_width_all(1)
-	isb.set_corner_radius_all(0)
-	isb.content_margin_left = padding.x
-	isb.content_margin_right = padding.x
-	isb.content_margin_top = padding.y
-	isb.content_margin_bottom = padding.y
-	body.add_theme_stylebox_override("panel", isb)
+	# 内衬 = 透明底 + C_INNER 亮线;padding 是**布局参数**不是样式 —— 能对上 Theme 现成档位的直接取变体,
+	# 对不上的从 Theme 的 PanelCarvedBody 复制一份、只改 content_margin(颜色/描边仍只有主题一份真相源)。
+	var body_var := _body_variation_for(padding)
+	if body_var != &"":
+		_apply_variation(body, body_var)
+	else:
+		body.theme = MENU_THEME
+		var isb := (MENU_THEME.get_stylebox("panel", "PanelCarvedBody") as StyleBoxFlat).duplicate() as StyleBoxFlat
+		isb.content_margin_left = padding.x
+		isb.content_margin_right = padding.x
+		isb.content_margin_top = padding.y
+		isb.content_margin_bottom = padding.y
+		body.add_theme_stylebox_override("panel", isb)
 	# 把外层已有的子节点搬进 Body(就地套皮的调用方:骨架来自 .tscn);★ 必须先 remove_child 再 add_child —— 同帧直接 add 会因已有父节点而静默换父失败。
 	for c in outer.get_children():
 		outer.remove_child(c)
 		body.add_child(c)
 	outer.add_child(body)
+
+
+# Theme 里已有的「抠槽内衬」档位(与 tools/gen_menu_theme.gd 的 _panel_variants 对应);其它 padding 走复制档。
+static func _body_variation_for(padding: Vector2) -> StringName:
+	if padding == Vector2(64, 46):
+		return &"PanelCarvedBody"
+	if padding == Vector2(72, 44):
+		return &"PanelCarvedBodyInset72"
+	return &""
+
+
+# 旧 API 的 variant 名 → Theme 里的旧 variation(样式值没变,只是从逐控件 override 换成主题)。
+const _MENU_BTN_VARIATIONS := {
+	"primary": &"BtnPrimary", "quiet": &"BtnQuiet",
+	"gold": &"BtnGold", "accent": &"BtnAccent",
+}
+# 新 API 的 variant 名 → Theme 2.0 的 Button variation(契约 §3)。
+const _UI_BTN_VARIATIONS := {
+	"primary": &"Primary", "quiet": &"Quiet", "danger": &"Danger", "icon": &"Icon",
+}
 
 
 static func menu_button(text: String, size: int, min_size: Vector2 = Vector2(640, 88),
@@ -163,28 +217,56 @@ static func menu_button(text: String, size: int, min_size: Vector2 = Vector2(640
 	b.text = text
 	style_control(b, size)
 	b.custom_minimum_size = min_size
-	var edge := C_EDGE
-	var fg := C_TEXT
-	if variant == "quiet":
-		edge = C_BORDER_DIM
-		fg = C_TEXT_DIM
-	elif variant == "gold":
-		edge = C_GOLD
-		fg = C_GOLD
-	elif variant == "accent":
-		edge = C_ACCENT
-		fg = C_TEXT
-	b.add_theme_stylebox_override("normal", _btn_box(C_HEADER, edge))
-	b.add_theme_stylebox_override("hover", _btn_box(C_BTN_FILL_HI, C_ACCENT))
-	b.add_theme_stylebox_override("pressed", _btn_box(C_BTN_FILL_DN, C_ACCENT))
-	b.add_theme_stylebox_override("focus", _btn_box(C_HEADER, C_ACCENT))
-	b.add_theme_stylebox_override("disabled", _btn_box(C_HEADER, C_BORDER_DIM))
-	b.add_theme_color_override("font_color", fg)
-	b.add_theme_color_override("font_hover_color", C_ACCENT)
-	b.add_theme_color_override("font_focus_color", fg)
-	b.add_theme_color_override("font_pressed_color", C_ACCENT)
-	b.add_theme_color_override("font_disabled_color", C_TEXT_MUTE)
+	_apply_variation(b, StringName(_MENU_BTN_VARIATIONS.get(variant, "BtnPrimary")))
 	return b
+
+
+# ── 组件化薄 API(契约 §4;新页面只用这些 + tokens,不再自己拼 StyleBox / 设字号)──
+static func ui_button(text: String, size: int = T_H2, min_size: Vector2 = Vector2.ZERO,
+		variant: String = "primary") -> Button:
+	var b := Button.new()
+	b.text = text
+	style_control(b, size)
+	if min_size != Vector2.ZERO:
+		b.custom_minimum_size = min_size
+	_apply_variation(b, StringName(_UI_BTN_VARIATIONS.get(variant, "Primary")))
+	return b
+
+
+const _LABEL_VARIATIONS := {
+	"h1": &"H1", "h2": &"H2", "body": &"Body", "dim": &"Dim", "field": &"Field",
+}
+
+
+static func ui_label(text: String, type_name: String = "body") -> Label:
+	var l := Label.new()
+	l.text = text
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_apply_variation(l, StringName(_LABEL_VARIATIONS.get(type_name.to_lower(), "Body")))
+	return l
+
+
+const _PANEL_VARIATIONS := {
+	"card": &"Card", "plain": &"Plain", "bar": &"Bar",
+}
+
+
+static func ui_panel(variant: String = "card") -> PanelContainer:
+	var p := PanelContainer.new()
+	_apply_variation(p, StringName(_PANEL_VARIATIONS.get(variant, "Card")))
+	return p
+
+
+static func ui_field() -> LineEdit:
+	var le := LineEdit.new()
+	_apply_variation(le, &"Field")
+	return le
+
+
+static func ui_check() -> CheckButton:
+	var cb := CheckButton.new()
+	_apply_variation(cb, &"Kit")
+	return cb
 
 
 const HEADER_INSET := 24.0
@@ -193,19 +275,7 @@ const HEADER_PAD_Y := 20.0
 
 static func header_strip(text: String, size: int = 32, centered := false) -> PanelContainer:
 	var p := PanelContainer.new()
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = C_HEADER
-	sb.set_corner_radius_all(0)
-	sb.border_width_left = 0
-	sb.border_width_right = 0
-	sb.border_width_top = 0
-	sb.border_width_bottom = 1
-	sb.border_color = C_BORDER
-	sb.content_margin_left = HEADER_INSET
-	sb.content_margin_right = HEADER_INSET
-	sb.content_margin_top = HEADER_PAD_Y
-	sb.content_margin_bottom = HEADER_PAD_Y
-	p.add_theme_stylebox_override("panel", sb)
+	_apply_variation(p, &"HeaderStrip")
 	var l := label(text, size, C_GOLD)
 	if centered:
 		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -236,15 +306,7 @@ static func _row_sb(fill: Color, border: Color) -> StyleBoxFlat:
 
 
 static func style_row_button(b: Button) -> void:
-	b.add_theme_stylebox_override("normal", _row_sb(C_ROW, C_ROW))
-	b.add_theme_stylebox_override("hover", _row_sb(C_BTN_FILL_HI, C_ACCENT))
-	b.add_theme_stylebox_override("pressed", _row_sb(C_BTN_FILL_DN, C_ACCENT))
-	b.add_theme_stylebox_override("focus", _row_sb(C_ROW, C_ROW))
-	b.add_theme_stylebox_override("disabled", _row_sb(C_ROW, C_ROW))
-	b.add_theme_color_override("font_color", C_TEXT)
-	b.add_theme_color_override("font_hover_color", C_ACCENT)
-	b.add_theme_color_override("font_pressed_color", C_ACCENT)
-	b.add_theme_color_override("font_focus_color", C_TEXT)
+	_apply_variation(b, &"RowButton")
 
 
 static func style_slider(s: Slider) -> void:
@@ -259,36 +321,14 @@ static func style_slider(s: Slider) -> void:
 
 
 static func style_line_edit(le: LineEdit) -> void:
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = C_FIELD
-	sb.border_color = C_BORDER_DIM
-	sb.set_border_width_all(2)
-	sb.set_corner_radius_all(0)
-	sb.content_margin_left = 10.0
-	sb.content_margin_right = 10.0
-	le.add_theme_stylebox_override("normal", sb)
-	var focus := sb.duplicate() as StyleBoxFlat
-	focus.border_color = C_ACCENT
-	le.add_theme_stylebox_override("focus", focus)
-	le.add_theme_color_override("font_color", C_TEXT)
-	le.add_theme_color_override("font_placeholder_color", C_TEXT_DIM)
-	le.add_theme_color_override("caret_color", C_ACCENT)
+	_apply_variation(le, &"Field")
 
 
 static func style_button(b: Button, variant: String = "primary") -> void:
-	var dim := variant == "quiet"
-	var base := C_BORDER_DIM if dim else C_BORDER
-	b.add_theme_stylebox_override("normal", _btn_box(C_BTN_FILL, base))
-	b.add_theme_stylebox_override("hover", _btn_box(C_BTN_FILL_HI, C_ACCENT))
-	b.add_theme_stylebox_override("pressed", _btn_box(C_BTN_FILL_DN, C_ACCENT))
-	b.add_theme_stylebox_override("focus", _btn_box(C_BTN_FILL, C_ACCENT))
-	b.add_theme_stylebox_override("disabled", _btn_box(C_BTN_FILL, C_BORDER_DIM))
-	var fg := C_TEXT_DIM if dim else C_TEXT
-	b.add_theme_color_override("font_color", fg)
-	b.add_theme_color_override("font_hover_color", C_ACCENT)
-	b.add_theme_color_override("font_focus_color", fg)
-	b.add_theme_color_override("font_pressed_color", C_ACCENT)
-	b.add_theme_color_override("font_disabled_color", C_TEXT_DIM)
+	# 旧 API 的两种皮 = Theme 里的 BtnLegacy / BtnLegacyQuiet(与改造前逐字段等值:填充 C_BTN_FILL、
+# 描边 C_BORDER / C_BORDER_DIM;menu_button 那套 C_HEADER 填充的是 BtnPrimary 家族)。
+	var v := &"BtnLegacyQuiet" if variant == "quiet" else &"BtnLegacy"
+	_apply_variation(b, v)
 
 
 # ── 开关图形:Godot 默认主题的 CheckButton 开 = 一条浅灰药丸,关 = 一个小灰点、轨道不可见(状态一变连形状都变了);自绘一对图标,开/关都是完整胶囊轨道,只有颜色与滑块位置不同 ──
@@ -331,13 +371,8 @@ static func switch_icons() -> Array:
 
 static func style_check(cb: CheckButton, size: int) -> void:
 	style_control(cb, size)
-	cb.add_theme_color_override("font_color", C_TEXT)
-	cb.add_theme_color_override("font_hover_color", C_ACCENT)
-	cb.add_theme_color_override("font_pressed_color", C_ACCENT)
-	cb.add_theme_color_override("font_focus_color", C_TEXT)
-	var ic := switch_icons()
-	cb.add_theme_icon_override("unchecked", ic[0])
-	cb.add_theme_icon_override("checked", ic[1])
+	# 图标(自绘胶囊开关)与文字色都在 Theme 的 Kit variation 里;不再逐控件挂 override。
+	_apply_variation(cb, &"Kit")
 
 
 static func button(text: String, size: int, min_size: Vector2 = Vector2(420, 64),

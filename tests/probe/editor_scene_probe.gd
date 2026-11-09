@@ -8,10 +8,12 @@ extends Node
 #   ③ EditorDoc.set_cells 没落到 map(改完读回不一致)⇒ ③ 组红;
 #   ④ 保存链 encode/write 丢数据 ⇒ ⑩ 组「重开再存字节相等」红;
 #   ⑤ undo/redo 不工作 ⇒ ④ 组红;
-#   ⑥ 画布没建视口纹理 ⇒ ⑤ 组红。
+#   ⑥ 画布没建视口纹理 ⇒ ⑤ 组红;
+#   ⑦ 没按设计系统重画(缺 HSplitContainer / TabContainer / 4 个 tab / 工具栏按钮 / 状态栏)⇒ ⑦ 组红;
+#   ⑧ 用了绝对坐标/固定宽度导致控件溢出父容器 ⇒ ⑦ 组「无溢出」红。
 # 判据 = 未跑满条数 + 失败清单;退出码只是陪衬。
 
-const EXPECTED_CHECKS := 36
+const EXPECTED_CHECKS := 50
 const MAP := "res://maps/newfactory.cyrm"
 const A := "user://maps/_editor_scene_probe_a.cyrm"
 const EXPORT_C := "user://maps/_editor_scene_probe_export.cyrm"
@@ -114,6 +116,7 @@ func _ready() -> void:
 		_chk(tex != null and tex.get_width() > 0 and tex.get_height() > 0,
 				"⑤ 画布视口纹理为空(期望非空)")
 
+	await _check_ui_layout()
 	_check_export_and_load()
 	_check_deferred_features()
 	_restore_settings()
@@ -145,6 +148,144 @@ func _check_export_and_load() -> void:
 
 
 # ── 后置项:选区/剪贴板/镜像/渐变/meta 可视化/真渲染预览(都在场景里真接一遍) ──
+# ── T3 设计系统重画:工具栏 / HSplitContainer / TabContainer(4 页)/ 状态栏 / 无溢出 ──
+# ★ 这里只查结构与几何(节点类型、可见性、尺寸、是否在父 rect 内),不查颜色字面量:
+#   去掉容器化或改回固定 400px 自绘右栏 ⇒ 溢出/尺寸断言红;删 tab 页 ⇒ 条数与标题红。
+const UI_TAB_TITLES := [["图层"], ["调色板"], ["选区", "meta"], ["校验", "消息"]]
+const UI_TOOLBAR_TEXTS := ["新建", "打开", "保存", "导出", "导出并加载",
+		"撤销", "重做", "复制", "剪切", "粘贴", "清除", "水平镜像", "垂直镜像", "返回", "预览"]
+
+
+func _check_ui_layout() -> void:
+	# 等布局结算(含 editor_root 的 _layout_split 延后一帧推右栏宽)
+	await get_tree().process_frame
+	await get_tree().process_frame
+
+	var split := _editor.find_child("Split", true, false) as HSplitContainer
+	_chk(split != null and split.is_visible_in_tree(),
+			"⑦ 找不到可见的 HSplitContainer(Split)")
+	var tabs := _editor.find_child("RightTabs", true, false) as TabContainer
+	_chk(tabs != null and tabs.is_visible_in_tree(),
+			"⑦ 找不到可见的 TabContainer(RightTabs)")
+	if split == null or tabs == null:
+		# 结构没建出来时补足条数,避免条数闸把后续所有断言算成「中途夭折」
+		for _i in 11:
+			_chk(false, "⑦ 结构缺失:跳过后续布局断言")
+		return
+
+	_chk(tabs.get_tab_count() == 4,
+			"⑦ 右栏 Tab 数期望 4(图层/调色板/选区&meta/校验·消息),实得 %d" % tabs.get_tab_count())
+	var titles_ok := tabs.get_tab_count() == 4
+	for i in tabs.get_tab_count():
+		var title := tabs.get_tab_title(i)
+		var wants: Array = UI_TAB_TITLES[i] if i < UI_TAB_TITLES.size() else []
+		for w: String in wants:
+			if title.find(w) < 0:
+				titles_ok = false
+	_chk(titles_ok, "⑦ Tab 标题应含 图层/调色板/选区·meta/校验·消息(实得 %s)" % str(_tab_titles(tabs)))
+
+	var hidden := 0
+	for i in tabs.get_tab_count():
+		if tabs.is_tab_hidden(i):
+			hidden += 1
+	_chk(hidden == 0, "⑦ 4 个 Tab 都应为可见状态,实得隐藏 %d 个" % hidden)
+
+	_chk(tabs.size.x >= 320.0,
+			"⑦ 右栏最小宽度应 >= 320px(实得 %.1f)" % tabs.size.x)
+	_chk(tabs.size.x >= 380.0 and tabs.size.x <= 420.0,
+			"⑦ 右栏初始宽度应 ≈ 400px(实得 %.1f)" % tabs.size.x)
+
+	# 分栏可拖拽:把 divider 往左拖 = 加宽右栏,右栏尺寸必须跟着变。
+	var before_w := tabs.size.x
+	split.split_offset -= 120
+	await get_tree().process_frame
+	var dragged_w := tabs.size.x
+	split.split_offset += 120
+	await get_tree().process_frame
+	_chk(dragged_w > before_w + 60.0 and absf(tabs.size.x - before_w) < 2.0,
+			"⑦ 拖拽分栏应改变右栏宽(前 %.1f / 拖后 %.1f / 复位 %.1f)" % [before_w, dragged_w, tabs.size.x])
+
+	# 工具栏按钮(文件 5 + 视图 2 + 编辑 8)
+	var toolbar := _editor.find_child("Toolbar", true, false) as Control
+	var bar_texts := {}
+	if toolbar != null:
+		for node in toolbar.find_children("*", "Button", true, false):
+			bar_texts[(node as Button).text] = true
+	var missing: Array[String] = []
+	for t: String in UI_TOOLBAR_TEXTS:
+		var hit := false
+		for got: String in bar_texts:
+			if got.begins_with(t):
+				hit = true
+				break
+		if not hit:
+			missing.append(t)
+	_chk(toolbar != null and toolbar.is_visible_in_tree() and missing.is_empty(),
+			"⑦ 工具栏应含「文件/编辑/视图」全部按钮(缺 %s)" % str(missing))
+
+	# 工具条(画笔/橡皮/…/渐变 8 个)
+	var strip := _editor.find_child("ToolStrip", true, false) as Control
+	var tool_n := 0
+	if strip != null:
+		tool_n = strip.find_children("*", "Button", true, false).size()
+	_chk(strip != null and strip.is_visible_in_tree() and tool_n == 8,
+			"⑦ 左栏工具条应有 8 个工具按钮(实得 %d)" % tool_n)
+
+	# 图层页:7 层按钮
+	var layer_btns := 0
+	for node in tabs.get_child(0).find_children("*", "Button", true, false):
+		if _is_layer_button((node as Button).text):
+			layer_btns += 1
+	_chk(layer_btns == 7, "⑦ 图层页应有 7 层按钮(实得 %d)" % layer_btns)
+
+	# 调色板页:缩略图按钮 > 0
+	var pal := tabs.get_child(1).find_child("PaletteGrid", true, false) as GridContainer
+	_chk(pal != null and pal.get_child_count() >= 10,
+			"⑦ 调色板页应铺纹理缩略图(实得 %d 个)" % (pal.get_child_count() if pal != null else 0))
+
+	# 状态栏:存在、可见、有高度,且状态文本/路径文本都在
+	var status := _editor.find_child("StatusBar", true, false) as Control
+	var status_text := _editor.find_child("StatusText", true, false) as Label
+	var path_text := _editor.find_child("PathText", true, false) as Label
+	_chk(status != null and status.is_visible_in_tree() and status.size.y > 0.0
+			and status_text != null and path_text != null,
+			"⑦ 状态栏应存在且含状态/路径文本(status=%s)" % str(status))
+
+	# 无溢出:每个可见 Control 都在父 Control 的 rect 内(容差 1px)。
+	var bad: Array[String] = []
+	_collect_overflow(_editor, bad)
+	_chk(bad.is_empty(), "⑦ 控件溢出父容器(应为 0 个):%s" % str(bad))
+
+
+func _tab_titles(tabs: TabContainer) -> Array[String]:
+	var out: Array[String] = []
+	for i in tabs.get_tab_count():
+		out.append(tabs.get_tab_title(i))
+	return out
+
+
+func _is_layer_button(text: String) -> bool:
+	for name in EditorConstants.LAYER_NAMES:
+		if text == String(name):
+			return true
+	return false
+
+
+func _collect_overflow(node: Node, bad: Array[String]) -> void:
+	for child in node.get_children():
+		if child is Window:
+			continue                                  # 标准弹层是独立窗口,不参与页面 rect 检查
+		if child is Control:
+			var c: Control = child
+			var p := c.get_parent() as Control
+			if p != null and c.is_visible_in_tree():
+				var pr := Rect2(Vector2.ZERO, p.size)
+				var cr := Rect2(c.position, c.size)
+				if cr.position.x < pr.position.x - 1.0 or cr.position.y < pr.position.y - 1.0 						or cr.end.x > pr.end.x + 1.0 or cr.end.y > pr.end.y + 1.0:
+					bad.append("%s(%s)" % [c.name, c.get_class()])
+		_collect_overflow(child, bad)
+
+
 func _check_deferred_features() -> void:
 	var sel := Rect2i(0, 0, 8, 8)
 	_doc.set_selection(sel)

@@ -30,10 +30,24 @@ var royale_match_min: float = 5.0
 var pvp_show_minimap: bool = true
 var pvp_minimap_show_enemy: bool = true
 
-# ★ 四档全是 4:3 —— 与 project.godot 的 viewport(1920×1440)同比例 ⇒ stretch/aspect="keep" 下窗口任意大小时都是等比缩放、无黑边(非 4:3 档必有黑边)。
-# ★ 这张表是单一来源:设置页的下拉读它,apply_display() 按它开窗,别再各抄一份尺寸表。
+# ★ 六档全是 4:3 —— 与 project.godot 的 viewport(1920×1440)同比例 ⇒ stretch/aspect="keep" 下窗口任意大小时都是等比缩放、无黑边(非 4:3 档必有黑边)。
+# ★ 这张表是单一来源:设置页的下拉读它,apply_display() / fit_resolution() 按它开窗,别再各抄一份尺寸表。
+# ★ 前两档(1024×768 / 1152×864)是给 1366×768 / 1280×720 这类小屏的:放得下就选能放下的最大档,
+#   一档都放不下时 fit_resolution() 会按可用区等比缩成 4:3 —— 绝不把窗口开到屏幕外。
 const DEFAULT_DISPLAY_RESOLUTION := Vector2i(1920, 1440)
 const DISPLAY_RESOLUTIONS: Array[Vector2i] = [
+	Vector2i(1024, 768),
+	Vector2i(1152, 864),
+	Vector2i(1280, 960),
+	Vector2i(1600, 1200),
+	Vector2i(1920, 1440),
+	Vector2i(2560, 1920),
+]
+
+# ★ 旧版持久化表的**历史冻结副本**(旧四档 = 现表去掉最前两个小屏档)。
+#   只用于 user://settings.cfg 旧存档迁移(见 _legacy_index_to_res / _res_index_from_config);
+#   现役开窗/下拉的真相源仍是 DISPLAY_RESOLUTIONS,**别**把两者混用。
+const LEGACY_DISPLAY_RESOLUTIONS: Array[Vector2i] = [
 	Vector2i(1280, 960),
 	Vector2i(1600, 1200),
 	Vector2i(1920, 1440),
@@ -75,18 +89,31 @@ func _apply_bus_volume(bus_name: String, linear: float) -> void:
 	AudioServer.set_bus_volume_db(idx, linear_to_db(maxf(linear, 0.0001)))
 	AudioServer.set_bus_mute(idx, linear <= 0.001)
 
+# 选窗口尺寸:优先「能放进可用区的最大 4:3 档」;一档都放不下时按可用区等比缩成 4:3 窗口。
+# ★ 返回值的硬约束 = **不超屏**(契约 §5):任何可用区下 r.x <= available.x 且 r.y <= available.y。
+# ★ 回退路径整数化到**宽为 4 的倍数** ⇒ 高恰为宽的 3/4,严格 4:3 —— 非 4:3 窗口在 stretch/aspect=keep 下会出黑边,
+#   这正是「窗口比可用区还高、被 OS 裁」之外的另一类 UI 不稳来源。
 func fit_resolution(available: Vector2i) -> Vector2i:
-	var smallest := DISPLAY_RESOLUTIONS[0]
-	for r in DISPLAY_RESOLUTIONS:
-		if r.x * r.y < smallest.x * smallest.y:
-			smallest = r
-	var best := smallest
+	# ① 档位优先:能放下的最大 4:3 档(表内全 4:3 ⇒ 按面积取最大等价于取最大宽高)。
+	var best := Vector2i.ZERO
 	var best_area := 0
 	for r in DISPLAY_RESOLUTIONS:
 		if r.x <= available.x and r.y <= available.y and r.x * r.y > best_area:
 			best = r
 			best_area = r.x * r.y
-	return best
+	if best_area > 0:
+		return best
+	# ② 一档都放不下:宽 = min(可用宽, 可用高*4/3),高 = 宽*3/4;先保不超屏,再整数化。
+	var w := mini(available.x, available.y * 4 / 3)
+	var h := w * 3 / 4
+	if h > available.y:                    # 防御:极端窄屏下按高重算(整数除法的兜底)
+		h = available.y
+		w = h * 4 / 3
+	w -= w % 4                             # 宽取 4 的倍数 ⇒ 高恰为 3/4,严格 4:3
+	h = w * 3 / 4
+	# ★ 640×480 下限由公式自然成立(可用区 ≥640×480 时,两个候选宽都 ≥640),不需要再夹;
+	#   可用区比 640×480 还小时「绝不超屏」优先,只能给更小的窗口。
+	return Vector2i(w, h)
 
 func apply_display() -> void:
 	if DisplayServer.get_name() == "headless":
@@ -146,6 +173,49 @@ func _event_display_name(ev: InputEvent) -> String:
 			_: return "鼠标键 %d" % (ev as InputEventMouseButton).button_index
 	return "?"
 
+# ── 显示设置持久化:表位移迁移(旧四档表 → 现役六档表)────────────────────────
+# 旧版 DISPLAY_RESOLUTIONS 是四档 [1280×960,1600×1200,1920×1440,2560×1920],settings.cfg 存的是**它的下标**;
+# 本版在表头插入 1024×768 / 1152×864 ⇒ 同一个数字指向另一档(旧 2 = 1920×1440 → 新 2 = 1280×960)。
+# 因此:读档先看新键 display/resolution(Vector2i);没有新键 = 旧存档 ⇒ 旧下标先按**冻结的旧四档表**
+# 还原成分辨率、再查现役表。存档同时写新键与旧键(旧键写旧四档表语义,供旧版本读)。
+# ★ 返回值恒是现役表 DISPLAY_RESOLUTIONS 的合法下标;解析失败一律回落 DEFAULT_DISPLAY_RESOLUTION。
+
+# 旧四档表下标 → 分辨率;越界/缺失 ⇒ 默认 1920×1440。
+func _legacy_index_to_res(old_index: int) -> Vector2i:
+	if old_index < 0 or old_index >= LEGACY_DISPLAY_RESOLUTIONS.size():
+		return DEFAULT_DISPLAY_RESOLUTION
+	return LEGACY_DISPLAY_RESOLUTIONS[old_index]
+
+
+# 分辨率 → 现役表下标;不在表内 ⇒ -1。
+func _res_to_index(res: Vector2i) -> int:
+	return DISPLAY_RESOLUTIONS.find(res)
+
+
+# 现役表分辨率 → 旧四档表可读下标(写旧键用):旧表里有的原样;新小屏档取旧表里最近的可容纳档;
+# 比旧表最大档还大 ⇒ 旧表最大档(越界由旧版本自己的 clampi 兜住)。
+func _res_to_legacy_index(res: Vector2i) -> int:
+	for i in LEGACY_DISPLAY_RESOLUTIONS.size():
+		var lr: Vector2i = LEGACY_DISPLAY_RESOLUTIONS[i]
+		if lr.x >= res.x and lr.y >= res.y:
+			return i
+	return LEGACY_DISPLAY_RESOLUTIONS.size() - 1
+
+
+# 从存档解析 display_res_index(纯函数:冒烟可注入内存 ConfigFile,不碰真文件)。
+# 新键存在 ⇒ 它是权威(值不在现役表内时回落默认,不猜);没有新键 ⇒ 按旧四档表映射旧下标。
+func _res_index_from_config(cf: ConfigFile) -> int:
+	var fallback := _res_to_index(DEFAULT_DISPLAY_RESOLUTION)
+	var res_v: Variant = cf.get_value("display", "resolution", "")   # 注意:Godot 的 get_value 默认值不能传 null(会报错)
+	if res_v is Vector2i:
+		var idx := _res_to_index(res_v)
+		return idx if idx >= 0 else fallback
+	if not cf.has_section_key("display", "res_index"):
+		return fallback
+	var old_index := int(cf.get_value("display", "res_index", -1))
+	return _res_to_index(_legacy_index_to_res(old_index))
+
+
 func save(path: String = SAVE_PATH) -> void:
 	var cf := ConfigFile.new()
 	cf.set_value("audio", "master_volume", master_volume)
@@ -162,7 +232,9 @@ func save(path: String = SAVE_PATH) -> void:
 	cf.set_value("royale", "match_min", royale_match_min)
 	cf.set_value("pvp", "show_minimap", pvp_show_minimap)
 	cf.set_value("pvp", "minimap_show_enemy", pvp_minimap_show_enemy)
-	cf.set_value("display", "res_index", display_res_index)
+	cf.set_value("display", "resolution", DISPLAY_RESOLUTIONS[display_res_index])   # 新键(优先)
+	# 旧键保留给旧版本读:写的是**旧四档表**语义的下标(不是新表下标)⇒ 降级后旧版本仍选中同一档/不会炸。
+	cf.set_value("display", "res_index", _res_to_legacy_index(DISPLAY_RESOLUTIONS[display_res_index]))
 	cf.set_value("display", "fullscreen", display_fullscreen)
 	for action in REMAPPABLE_ACTIONS:
 		var arr: Array = []
@@ -194,8 +266,8 @@ func load_settings(path: String = SAVE_PATH) -> void:
 	royale_match_min = clampf(float(cf.get_value("royale", "match_min", 5.0)), 1.0, 30.0)
 	pvp_show_minimap = bool(cf.get_value("pvp", "show_minimap", true))
 	pvp_minimap_show_enemy = bool(cf.get_value("pvp", "minimap_show_enemy", true))
-	display_res_index = int(cf.get_value("display", "res_index",
-			DISPLAY_RESOLUTIONS.find(DEFAULT_DISPLAY_RESOLUTION)))
+	# 新存档优先 display/resolution;旧存档只有 display/res_index(**旧四档表**下标)⇒ 走历史映射。
+	display_res_index = _res_index_from_config(cf)
 	display_fullscreen = bool(cf.get_value("display", "fullscreen", false))
 	for action in REMAPPABLE_ACTIONS:
 		var arr = cf.get_value("bindings", action, [])

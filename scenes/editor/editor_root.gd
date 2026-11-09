@@ -36,7 +36,13 @@ const META_LABELS := {
 	META_RESPAWN1: "放复活点侧1", META_RESPAWN2: "放复活点侧2", META_ENEMY: "放敌人",
 }
 
-const PANEL_W := 400.0
+# 布局尺寸(等 T1 的 SP_*/T_* token 合入后改为引用 token;集中一处,页面别处不再写魔法数)
+const FRAME_MARGIN := 8          # 根边距 ≈ SP_2
+const FRAME_GAP := 6             # 容器间距
+const TAB_MIN_W := 320.0         # 右栏 TabContainer 最小宽
+const TAB_DEFAULT_W := 400.0     # 右栏初始宽(可拖拽)
+const PALETTE_COLUMNS := 5       # 调色板列数(64px 缩略图 × 5 ≈ 336)
+const DIALOG_PAD := 24           # 标准弹层内容内边距
 
 var doc: EditorDoc = null
 var canvas: EditorCanvas = null
@@ -61,8 +67,9 @@ var _last_cell := Vector2i.ZERO
 var _has_last := false
 
 var _canvas_host: Control = null
-var _popup: PanelContainer = null
-var _popup_body: VBoxContainer = null
+var _split: HSplitContainer = null
+var _tabs: TabContainer = null
+var _popup: Window = null
 
 # 后置项:选区 / 剪贴板按钮 / meta 放置 / 颜色 / 真渲染预览
 var _meta_mode := META_NONE
@@ -191,118 +198,190 @@ func validate() -> Dictionary:
 	return report
 
 
-# ── UI 构建 ────────────────────────────────────────────────────────────
+# ── UI 构建(容器优先;T3 重画:工具栏 + HSplit + TabContainer + 状态栏)─────────
+# ★ 页面不写绝对坐标(position/size/offset):根 = MarginContainer → VBox → 工具栏 / HSplit /
+#   状态栏;左右分栏可拖拽,右侧 Tab 页各自滚动。等 T1 的 UiKit / SP_*·T_* token 合入后,
+#   下面标注「内容驱动」的尺寸常量改引 token;现在只用 UiFactory 现有公开 API(panel_box /
+#   menu_button / label / style_*),不自己拼 StyleBox。
 
 func _build_ui() -> void:
 	var bg := ColorRect.new()
+	bg.name = "Bg"
 	bg.color = UiFactory.C_BG
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(bg)
 
-	var root := VBoxContainer.new()
-	root.set_anchors_preset(Control.PRESET_FULL_RECT)
-	root.offset_left = 8
-	root.offset_top = 6
-	root.offset_right = -8
-	root.offset_bottom = -6
-	root.add_theme_constant_override("separation", 6)
-	add_child(root)
+	var frame := MarginContainer.new()
+	frame.name = "Frame"
+	frame.set_anchors_preset(Control.PRESET_FULL_RECT)
+	for side in ["margin_left", "margin_right", "margin_top", "margin_bottom"]:
+		frame.add_theme_constant_override(String(side), FRAME_MARGIN)
+	add_child(frame)
 
-	root.add_child(_build_top_bar())
+	var layout := VBoxContainer.new()
+	layout.name = "Layout"
+	layout.add_theme_constant_override("separation", FRAME_GAP)
+	frame.add_child(layout)
+
+	layout.add_child(_build_toolbar())
+
+	_split = HSplitContainer.new()
+	_split.name = "Split"
+	_split.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_split.add_theme_constant_override("separation", FRAME_GAP)
+	layout.add_child(_split)
+	_split.add_child(_build_canvas_side())
+	_split.add_child(_build_tabs())
+
+	layout.add_child(_build_status_bar())
+	_layout_split.call_deferred()
+
+
+# 顶部工具栏 = 两行 HBox/HFlow(窄屏不溢出):第一行标题 + 文件组 + 视图组,
+# 第二行编辑组(撤销/重做/复制/剪切/粘贴/清除/水平·垂直镜像)。
+func _build_toolbar() -> Control:
+	var bar := PanelContainer.new()
+	bar.name = "Toolbar"
+	bar.add_theme_stylebox_override("panel", UiFactory.panel_box(false))
+	var rows := VBoxContainer.new()
+	rows.name = "ToolbarRows"
+	rows.add_theme_constant_override("separation", 4)
+	bar.add_child(rows)
 
 	var main := HBoxContainer.new()
-	main.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	main.name = "ToolbarMain"
 	main.add_theme_constant_override("separation", 6)
-	root.add_child(main)
+	rows.add_child(main)
+	main.add_child(UiFactory.label("地图编辑器", 32, UiFactory.C_ACCENT))
+	main.add_child(_group_label("文件"))
+	main.add_child(_action_button("新建", _on_new_pressed))
+	main.add_child(_action_button("打开", _on_open_pressed))
+	main.add_child(_action_button("保存", _on_save_pressed))
+	main.add_child(_action_button("导出", _on_export_pressed))
+	main.add_child(_action_button("导出并加载", _on_export_load_pressed))
+	main.add_child(_group_label("视图"))
+	_preview_btn = _action_button("预览:关", _on_preview_toggled)
+	main.add_child(_preview_btn)
+	main.add_child(_action_button("返回", _on_back_pressed))
+
+	var actions := HFlowContainer.new()
+	actions.name = "ToolbarActions"
+	actions.add_theme_constant_override("h_separation", 6)
+	actions.add_theme_constant_override("v_separation", 4)
+	rows.add_child(actions)
+	actions.add_child(_group_label("编辑"))
+	actions.add_child(_action_button("撤销", _on_undo_pressed))
+	actions.add_child(_action_button("重做", _on_redo_pressed))
+	actions.add_child(_action_button("复制", _on_copy_pressed))
+	actions.add_child(_action_button("剪切", _on_cut_pressed))
+	actions.add_child(_action_button("粘贴", _on_paste_pressed))
+	actions.add_child(_action_button("清除", _on_clear_sel_pressed))
+	actions.add_child(_action_button("水平镜像", _on_mirror_h_pressed))
+	actions.add_child(_action_button("垂直镜像", _on_mirror_v_pressed))
+	return bar
+
+
+func _group_label(text: String) -> Label:
+	return UiFactory.label(text, 16, UiFactory.C_TEXT_MUTE)
+
+
+func _action_button(text: String, cb: Callable) -> Button:
+	# 96×36 = 内容驱动(16px 字 + UiFactory._btn_box 的 40/20 内容边距);不写绝对坐标。
+	var b := UiFactory.menu_button(text, 16, Vector2(96, 36), "quiet")
+	b.pressed.connect(cb)
+	return b
+
+
+# 左半:工具条 + 画布 host(画布 + 真渲染预览叠层)。工具条用 HFlow 自动换行,窄屏不溢出。
+func _build_canvas_side() -> Control:
+	var side := VBoxContainer.new()
+	side.name = "CanvasSide"
+	side.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	side.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	side.add_theme_constant_override("separation", FRAME_GAP)
+
+	var strip := HFlowContainer.new()
+	strip.name = "ToolStrip"
+	strip.add_theme_constant_override("h_separation", 4)
+	strip.add_theme_constant_override("v_separation", 4)
+	side.add_child(strip)
+	strip.add_child(_group_label("工具"))
+	for key in TOOL_LABELS:
+		var b := UiFactory.menu_button(String(TOOL_LABELS[key]), 16, Vector2(88, 36), "quiet")
+		b.pressed.connect(_select_tool.bind(key))
+		strip.add_child(b)
+		_tool_buttons[key] = b
 
 	_canvas_host = PanelContainer.new()
+	_canvas_host.name = "CanvasHost"
 	_canvas_host.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_canvas_host.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	var host_sb := StyleBoxFlat.new()
-	host_sb.bg_color = UiFactory.C_SURFACE
-	host_sb.border_color = UiFactory.C_BORDER_DIM
-	host_sb.set_border_width_all(1)
-	host_sb.set_corner_radius_all(4)
-	_canvas_host.add_theme_stylebox_override("panel", host_sb)
-	main.add_child(_canvas_host)
+	_canvas_host.add_theme_stylebox_override("panel", UiFactory.panel_box(false))
+	side.add_child(_canvas_host)
 
 	canvas = CANVAS_SCRIPT.new() as EditorCanvas
 	canvas.name = "Canvas"
 	canvas.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	canvas.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_canvas_host.add_child(canvas)
-
-	main.add_child(_build_right_panel())
-	root.add_child(_build_status_bar())
+	return side
 
 
-func _build_top_bar() -> Control:
-	var bar := HBoxContainer.new()
-	bar.add_theme_constant_override("separation", 8)
-
-	var title := UiFactory.label("地图编辑器", 32, UiFactory.C_ACCENT)
-	bar.add_child(title)
-
-	var gap := Control.new()
-	gap.custom_minimum_size = Vector2(16, 0)
-	bar.add_child(gap)
-
-	bar.add_child(_action_button("新建", _on_new_pressed))
-	bar.add_child(_action_button("打开", _on_open_pressed))
-	bar.add_child(_action_button("保存", _on_save_pressed))
-	bar.add_child(_action_button("校验", _on_validate_pressed))
-	bar.add_child(_action_button("导出", _on_export_pressed))
-	bar.add_child(_action_button("导出并加载", _on_export_load_pressed))
-	_preview_btn = _action_button("预览:关", _on_preview_toggled)
-	bar.add_child(_preview_btn)
-	bar.add_child(_action_button("返回", _on_back_pressed))
-
-	_path_label = UiFactory.label("未命名", 16, UiFactory.C_TEXT_DIM)
-	_path_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_path_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	bar.add_child(_path_label)
-	return bar
+# 右半:TabContainer(最小宽 320;默认宽 400 由 _layout_split 推 divider)。
+func _build_tabs() -> Control:
+	_tabs = TabContainer.new()
+	_tabs.name = "RightTabs"
+	_tabs.custom_minimum_size = Vector2(TAB_MIN_W, 0)
+	_tabs.size_flags_horizontal = Control.SIZE_FILL
+	_tabs.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_tabs.add_child(_build_layers_tab())
+	_tabs.add_child(_build_palette_tab())
+	_tabs.add_child(_build_selection_meta_tab())
+	_tabs.add_child(_build_report_tab())
+	_tabs.set_tab_title(0, "图层")
+	_tabs.set_tab_title(1, "调色板")
+	_tabs.set_tab_title(2, "选区 & meta")
+	_tabs.set_tab_title(3, "校验 / 消息")
+	return _tabs
 
 
-func _action_button(text: String, cb: Callable) -> Button:
-	var b := UiFactory.menu_button(text, 16, Vector2(104, 44), "quiet")
-	b.pressed.connect(cb)
-	return b
+# 让右侧初始宽度 = TAB_DEFAULT_W(可继续拖拽):SplitContainer 默认按子节点最小尺寸分。
+func _layout_split() -> void:
+	if _split == null or _tabs == null:
+		return
+	await get_tree().process_frame
+	# SplitContainer 的 divider 起始位置按子节点最小尺寸定;负 offset 把 divider 右移(加宽右栏),
+	# 正值会被钳回最小宽度 ⇒ 用 -TAB_DEFAULT_W 把右栏初始宽度设成 400(之后可自由拖拽)。
+	_split.split_offset = -int(TAB_DEFAULT_W)
 
 
-func _build_right_panel() -> Control:
-	var panel := PanelContainer.new()
-	panel.custom_minimum_size = Vector2(PANEL_W, 0)
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = UiFactory.C_SURFACE
-	sb.border_color = UiFactory.C_BORDER_DIM
-	sb.set_border_width_all(1)
-	sb.set_corner_radius_all(4)
-	sb.content_margin_left = 8
-	sb.content_margin_right = 8
-	sb.content_margin_top = 8
-	sb.content_margin_bottom = 8
-	panel.add_theme_stylebox_override("panel", sb)
-
+# Tab 页统一形态:ScrollContainer(只竖向滚) → VBoxContainer(内容)。返回 [scroll, body]。
+func _make_scroll_tab(node_name: String) -> Array:
 	var scroll := ScrollContainer.new()
+	scroll.name = node_name
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	panel.add_child(scroll)
-	var vb := VBoxContainer.new()
-	vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	vb.add_theme_constant_override("separation", 6)
-	scroll.add_child(vb)
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var body := VBoxContainer.new()
+	body.name = "Body"
+	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	body.add_theme_constant_override("separation", 6)
+	scroll.add_child(body)
+	return [scroll, body]
 
-	vb.add_child(_section_label("图层(点名字 = 当前编辑层)"))
-	var layer_box := VBoxContainer.new()
-	layer_box.add_theme_constant_override("separation", 2)
-	vb.add_child(layer_box)
+
+func _build_layers_tab() -> Control:
+	var pair := _make_scroll_tab("Layers")
+	var body: VBoxContainer = pair[1]
+	body.add_child(_section_label("图层(点名字 = 当前编辑层;勾选 = 显示)"))
 	for L in EditorConstants.LAYER_COUNT:
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 4)
 		var btn := UiFactory.menu_button(String(EditorConstants.LAYER_NAMES[L]), 16,
-				Vector2(PANEL_W - 96, 34), "quiet")
+				Vector2(0, 34), "quiet")
 		btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		btn.pressed.connect(_on_layer_selected.bind(L))
 		row.add_child(btn)
 		var vis := CheckButton.new()
@@ -311,21 +390,27 @@ func _build_right_panel() -> Control:
 		UiFactory.style_check(vis, 16)
 		vis.toggled.connect(_on_layer_visible_toggled.bind(L))
 		row.add_child(vis)
-		layer_box.add_child(row)
+		body.add_child(row)
 		_layer_rows.append({"button": btn, "visible": vis})
+	return pair[0]
 
-	vb.add_child(_section_label("工具"))
-	var tools := GridContainer.new()
-	tools.columns = 3
-	tools.add_theme_constant_override("h_separation", 4)
-	tools.add_theme_constant_override("v_separation", 4)
-	for key in TOOL_LABELS:
-		var b := UiFactory.menu_button(String(TOOL_LABELS[key]), 16, Vector2(112, 38), "quiet")
-		b.pressed.connect(_select_tool.bind(key))
-		tools.add_child(b)
-		_tool_buttons[key] = b
-	vb.add_child(tools)
+
+func _build_palette_tab() -> Control:
+	var pair := _make_scroll_tab("Palette")
+	var body: VBoxContainer = pair[1]
+
+	body.add_child(_section_label("调色板(点选 = 当前画笔纹理)"))
+	var pal := GridContainer.new()
+	pal.name = "PaletteGrid"
+	pal.columns = PALETTE_COLUMNS
+	pal.add_theme_constant_override("h_separation", 4)
+	pal.add_theme_constant_override("v_separation", 4)
+	body.add_child(pal)
+	_build_palette(pal)
+
+	body.add_child(_section_label("画刷"))
 	var size_row := HBoxContainer.new()
+	size_row.add_theme_constant_override("separation", 8)
 	size_row.add_child(UiFactory.label("画刷(格)", 16, UiFactory.C_TEXT_DIM))
 	var spin := SpinBox.new()
 	spin.min_value = 1
@@ -334,10 +419,10 @@ func _build_right_panel() -> Control:
 	spin.value = 1
 	spin.value_changed.connect(_on_brush_size_changed)
 	size_row.add_child(spin)
-	vb.add_child(size_row)
+	body.add_child(size_row)
 
-	# ── 颜色(只有背景颜色层 3-6 用得到;纹理层落笔仍用调色板)──
-	vb.add_child(_section_label("颜色(背景层 3-6:画笔 / 渐变终点)"))
+	# 颜色:只有背景颜色层 3-6 用得到;纹理层落笔仍用调色板。
+	body.add_child(_section_label("颜色(背景层 3-6:画笔 / 渐变终点)"))
 	var color_row := HBoxContainer.new()
 	color_row.add_theme_constant_override("separation", 8)
 	color_row.add_child(UiFactory.label("画笔", 16, UiFactory.C_TEXT_DIM))
@@ -352,12 +437,18 @@ func _build_right_panel() -> Control:
 	_gradient_end_btn.custom_minimum_size = Vector2(64, 32)
 	_gradient_end_btn.color_changed.connect(func(c: Color) -> void: _gradient_end = c)
 	color_row.add_child(_gradient_end_btn)
-	vb.add_child(color_row)
+	body.add_child(color_row)
+	return pair[0]
 
-	# ── 选区与剪贴板 ──
-	vb.add_child(_section_label("选区(选框工具拖矩形;Ctrl+C/X/V、Del、H/V)"))
+
+func _build_selection_meta_tab() -> Control:
+	var pair := _make_scroll_tab("SelectionMeta")
+	var body: VBoxContainer = pair[1]
+
+	body.add_child(_section_label("选区(选框工具拖矩形;Ctrl+C/X/V、Del、H/V)"))
 	_selection_info = UiFactory.label("无选区", 16, UiFactory.C_TEXT_DIM)
-	vb.add_child(_selection_info)
+	_selection_info.name = "SelectionInfo"
+	body.add_child(_selection_info)
 	var sel_grid := GridContainer.new()
 	sel_grid.columns = 3
 	sel_grid.add_theme_constant_override("h_separation", 4)
@@ -366,52 +457,69 @@ func _build_right_panel() -> Control:
 		["复制", _on_copy_pressed], ["剪切", _on_cut_pressed], ["粘贴", _on_paste_pressed],
 		["清除", _on_clear_sel_pressed], ["水平镜像", _on_mirror_h_pressed], ["垂直镜像", _on_mirror_v_pressed],
 	]
-	for pair in sel_actions:
-		var b := UiFactory.menu_button(String(pair[0]), 16, Vector2(112, 36), "quiet")
-		b.pressed.connect(pair[1])
+	for pair_action in sel_actions:
+		var b := UiFactory.menu_button(String(pair_action[0]), 16, Vector2(96, 34), "quiet")
+		b.pressed.connect(pair_action[1])
 		sel_grid.add_child(b)
-	vb.add_child(sel_grid)
+	body.add_child(sel_grid)
 
-	# ── meta 可视化编辑(出生点/复活点/敌人)──
-	vb.add_child(_section_label("出生点 / 复活点 / 敌人(点模式再点画布)"))
+	body.add_child(_section_label("出生点 / 复活点 / 敌人(点模式再点画布)"))
 	var meta_grid := GridContainer.new()
 	meta_grid.columns = 3
 	meta_grid.add_theme_constant_override("h_separation", 4)
 	meta_grid.add_theme_constant_override("v_separation", 4)
 	for key in META_LABELS:
-		var b := UiFactory.menu_button(String(META_LABELS[key]), 16, Vector2(112, 36), "quiet")
+		var b := UiFactory.menu_button(String(META_LABELS[key]), 16, Vector2(96, 34), "quiet")
 		b.pressed.connect(_set_meta_mode.bind(key))
 		meta_grid.add_child(b)
 		_meta_buttons[key] = b
-	vb.add_child(meta_grid)
+	body.add_child(meta_grid)
 	_meta_info = UiFactory.label("", 16, UiFactory.C_TEXT_DIM)
-	vb.add_child(_meta_info)
-	var clear_meta_btn := UiFactory.menu_button("清空全部 meta", 16, Vector2(240, 36), "quiet")
+	_meta_info.name = "MetaInfo"
+	body.add_child(_meta_info)
+	var clear_meta_btn := UiFactory.menu_button("清空全部 meta", 16, Vector2(200, 34), "quiet")
 	clear_meta_btn.pressed.connect(_on_clear_meta_pressed)
-	vb.add_child(clear_meta_btn)
+	body.add_child(clear_meta_btn)
+	return pair[0]
 
-	vb.add_child(_section_label("调色板(点选 = 当前画笔纹理)"))
-	var pal := GridContainer.new()
-	pal.columns = 5
-	pal.add_theme_constant_override("h_separation", 4)
-	pal.add_theme_constant_override("v_separation", 4)
-	vb.add_child(pal)
-	_build_palette(pal)
 
-	vb.add_child(_section_label("校验 / 消息"))
+func _build_report_tab() -> Control:
+	var body := VBoxContainer.new()
+	body.name = "Report"
+	body.add_theme_constant_override("separation", 6)
+	body.add_child(_section_label("校验 / 消息"))
+	var validate_btn := UiFactory.menu_button("校验地图", 16, Vector2(160, 34), "quiet")
+	validate_btn.pressed.connect(_on_validate_pressed)
+	body.add_child(validate_btn)
 	_output = RichTextLabel.new()
-	_output.custom_minimum_size = Vector2(0, 150)
+	_output.name = "Output"
+	_output.custom_minimum_size = Vector2(0, 180)
 	_output.bbcode_enabled = false
 	_output.scroll_following = true
 	_output.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	vb.add_child(_output)
-	return panel
+	_output.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body.add_child(_output)
+	return body
 
 
 func _build_status_bar() -> Control:
+	var bar := PanelContainer.new()
+	bar.name = "StatusBar"
+	bar.add_theme_stylebox_override("panel", UiFactory.panel_box(false))
+	var row := HBoxContainer.new()
+	row.name = "StatusRow"
+	row.add_theme_constant_override("separation", 8)
 	_status = UiFactory.label("", 16, UiFactory.C_TEXT_DIM)
+	_status.name = "StatusText"
 	_status.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	return _status
+	_status.clip_text = true
+	row.add_child(_status)
+	_path_label = UiFactory.label("未命名", 16, UiFactory.C_TEXT_DIM)
+	_path_label.name = "PathText"
+	_path_label.clip_text = true
+	row.add_child(_path_label)
+	bar.add_child(row)
+	return bar
 
 
 func _section_label(text: String) -> Label:
@@ -429,7 +537,7 @@ func _build_palette(container: GridContainer) -> void:
 	var src := TerrainAtlas.source_image()
 	for tid in ids:
 		var b := Button.new()
-		b.custom_minimum_size = Vector2(64, 64)
+		b.custom_minimum_size = Vector2(64, 64)      # 缩略图边长,内容驱动(等 SP_*/T_* token 后替换)
 		b.tooltip_text = "%d %s" % [tid, String((tiles[str(tid)] as Dictionary).get("name", ""))]
 		var img: Image = src.get_region(TerrainAtlas.source_rect(tid - 1))
 		b.icon = ImageTexture.create_from_image(img)
@@ -439,6 +547,7 @@ func _build_palette(container: GridContainer) -> void:
 		container.add_child(b)
 		_palette_buttons.append(b)
 	_on_palette_pressed(_texture_ids[0] if not _texture_ids.is_empty() else 1)
+
 
 
 func _refresh_palette_texture() -> void:
@@ -825,63 +934,44 @@ func _on_mirror_v_pressed() -> void:
 
 # ── 动作 ───────────────────────────────────────────────────────────────
 
+func _on_undo_pressed() -> void:
+	if not doc.undo():
+		_set_message("没有可撤销的操作", true)
+
+
+func _on_redo_pressed() -> void:
+	if not doc.redo():
+		_set_message("没有可重做的操作", true)
+
+
 func _on_new_pressed() -> void:
-	_open_popup("新建地图", func(body: VBoxContainer) -> void:
-		var name_edit := _popup_line(body, "名字", "untitled")
-		var w_edit := _popup_line(body, "宽(格)", "125")
-		var h_edit := _popup_line(body, "高(格)", "75")
-		var go := UiFactory.menu_button("新建", 16, Vector2(220, 44), "gold")
-		go.pressed.connect(func() -> void:
-			var size := EditorValidate.clamp_map_size(w_edit.text, h_edit.text)
-			new_map(int(size["w"]), int(size["h"]), name_edit.text)
-			_close_popup())
-		body.add_child(go))
+	var ctx := {}
+	var dlg := _open_dialog("新建地图", "新建", func(body: VBoxContainer) -> void:
+		ctx["name"] = _dialog_line(body, "名字", "untitled")
+		ctx["w"] = _dialog_line(body, "宽(格)", "125")
+		ctx["h"] = _dialog_line(body, "高(格)", "75"))
+	dlg.confirmed.connect(func() -> void:
+		var size := EditorValidate.clamp_map_size((ctx["w"] as LineEdit).text,
+				(ctx["h"] as LineEdit).text)
+		new_map(int(size["w"]), int(size["h"]), (ctx["name"] as LineEdit).text))
 
 
 func _on_open_pressed() -> void:
-	_open_popup("打开地图", func(body: VBoxContainer) -> void:
+	_open_dialog("打开地图", "关闭", func(body: VBoxContainer) -> void:
 		var maps := EditorIO.list_maps()
 		if maps.is_empty():
 			body.add_child(UiFactory.label("没有找到 .cyrm", 16, UiFactory.C_TEXT_DIM))
 			return
 		var scroll := ScrollContainer.new()
-		scroll.custom_minimum_size = Vector2(420, 360)
+		scroll.custom_minimum_size = Vector2(520, 400)      # 列表可视区 = 内容驱动
+		scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 		body.add_child(scroll)
 		var list := VBoxContainer.new()
+		list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		list.add_theme_constant_override("separation", 6)
 		scroll.add_child(list)
 		for path in maps:
-			# 缩略图复用 MapCatalog(与主菜单选图同一套简略图/缓存,不另做第二套缩略图管线)。
-			var card := PanelContainer.new()
-			var sb := StyleBoxFlat.new()
-			sb.bg_color = UiFactory.C_ROW
-			sb.border_color = UiFactory.C_BORDER_DIM
-			sb.set_border_width_all(1)
-			sb.set_content_margin_all(6)
-			card.add_theme_stylebox_override("panel", sb)
-			card.custom_minimum_size = Vector2(420, 0)
-			card.mouse_filter = Control.MOUSE_FILTER_STOP
-			card.gui_input.connect(func(ev: InputEvent) -> void:
-				if ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed \
-						and (ev as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
-					open_path(path)
-					_close_popup())
-			var row := HBoxContainer.new()
-			row.add_theme_constant_override("separation", 8)
-			card.add_child(row)
-			var thumb := TextureRect.new()
-			thumb.texture = MapCatalog.texture(path, 2)
-			thumb.custom_minimum_size = Vector2(120, 72)
-			thumb.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-			thumb.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-			thumb.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-			row.add_child(thumb)
-			var info := VBoxContainer.new()
-			info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			info.add_theme_constant_override("separation", 2)
-			row.add_child(info)
-			info.add_child(UiFactory.label(MapCatalog.display_name(path), 16, UiFactory.C_TEXT))
-			info.add_child(UiFactory.label(path, 16, UiFactory.C_TEXT_DIM))
-			list.add_child(card))
+			list.add_child(_map_card(path)))
 
 
 func _on_save_pressed() -> void:
@@ -892,13 +982,11 @@ func _on_save_pressed() -> void:
 
 
 func _on_save_as_pressed() -> void:
-	_open_popup("保存为", func(body: VBoxContainer) -> void:
-		var edit := _popup_line(body, "路径", EditorIO.default_target(_map_name()))
-		var go := UiFactory.menu_button("保存", 16, Vector2(220, 44), "gold")
-		go.pressed.connect(func() -> void:
-			save_to(edit.text)
-			_close_popup())
-		body.add_child(go))
+	var ctx := {}
+	var dlg := _open_dialog("保存为", "保存", func(body: VBoxContainer) -> void:
+		ctx["path"] = _dialog_line(body, "路径", EditorIO.default_target(_map_name())))
+	dlg.confirmed.connect(func() -> void:
+		save_to((ctx["path"] as LineEdit).text))
 
 
 func _on_validate_pressed() -> void:
@@ -952,18 +1040,17 @@ func export_and_load(path: String, persist: bool = true, switch_scene: bool = tr
 
 
 func _on_export_pressed() -> void:
-	_open_popup("导出到…", func(body: VBoxContainer) -> void:
-		var name_edit := _popup_line(body, "名字", _map_name())
+	var ctx := {}
+	var dlg := _open_dialog("导出到…", "导出", func(body: VBoxContainer) -> void:
+		ctx["name"] = _dialog_line(body, "名字", _map_name())
 		var target := OptionButton.new()
 		target.add_item("user://maps(默认,可写)", 0)
 		target.add_item("exe 同目录(外置地图优先)", 1)
 		UiFactory.style_control(target, 16)
 		body.add_child(target)
-		var go := UiFactory.menu_button("导出", 16, Vector2(220, 44), "gold")
-		go.pressed.connect(func() -> void:
-			_export_named(name_edit.text, target.selected == 1)
-			_close_popup())
-		body.add_child(go))
+		ctx["target"] = target)
+	dlg.confirmed.connect(func() -> void:
+		_export_named((ctx["name"] as LineEdit).text, (ctx["target"] as OptionButton).selected == 1))
 
 
 func _export_named(map_name: String, to_exe_dir: bool) -> void:
@@ -981,57 +1068,79 @@ func _on_back_pressed() -> void:
 	get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
 
 
-# ── 弹层 ───────────────────────────────────────────────────────────────
+# ── 弹层(标准 ConfirmationDialog / AcceptDialog;不再自绘居中 PanelContainer)──
+# ★ 内容 = dialog 的自定义子容器(VBoxContainer);窗口尺寸由内容最小尺寸推,不用 position/size 手摆。
+# ★ 取消/确认走标准按钮:确认回调只做动作,关窗由 dialog 自己收(dialog_hide_on_ok 默认 true)。
 
-func _open_popup(title_text: String, fill: Callable) -> void:
+func _open_dialog(title_text: String, ok_text: String, fill: Callable) -> ConfirmationDialog:
 	_close_popup()
-	_popup = PanelContainer.new()
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = UiFactory.C_SURFACE
-	sb.border_color = UiFactory.C_ACCENT
-	sb.set_border_width_all(2)
-	sb.set_corner_radius_all(6)
-	sb.content_margin_left = 16
-	sb.content_margin_right = 16
-	sb.content_margin_top = 16
-	sb.content_margin_bottom = 16
-	_popup.add_theme_stylebox_override("panel", sb)
-	_popup.set_anchors_preset(Control.PRESET_CENTER)
-	add_child(_popup)
-	var vb := VBoxContainer.new()
-	vb.add_theme_constant_override("separation", 10)
-	_popup.add_child(vb)
-	vb.add_child(UiFactory.label(title_text, 32, UiFactory.C_ACCENT))
-	_popup_body = VBoxContainer.new()
-	_popup_body.add_theme_constant_override("separation", 8)
-	vb.add_child(_popup_body)
-	fill.call(_popup_body)
-	var cancel := UiFactory.menu_button("取消", 16, Vector2(140, 36), "quiet")
-	cancel.pressed.connect(_close_popup)
-	vb.add_child(cancel)
-	_popup.position = (size - _popup.size) / 2.0
-	await get_tree().process_frame
-	if is_instance_valid(_popup):
-		_popup.position = ((size - _popup.get_combined_minimum_size()) / 2.0).floor()
+	var dlg := ConfirmationDialog.new()
+	dlg.name = "Dialog"
+	dlg.title = title_text
+	dlg.ok_button_text = ok_text
+	dlg.cancel_button_text = "取消"
+	var body := VBoxContainer.new()
+	body.name = "Body"
+	body.add_theme_constant_override("separation", 8)
+	dlg.add_child(body)
+	_popup = dlg
+	fill.call(body)
+	add_child(dlg)
+	# 尺寸 = 内容最小尺寸 + 弹层内边距(内容驱动;等 T1 的 SP_* token 合入后替换)。
+	var want := body.get_combined_minimum_size() + Vector2(DIALOG_PAD * 2, DIALOG_PAD * 3)
+	dlg.popup_centered(Vector2i(int(want.x), int(want.y)))
+	return dlg
 
 
 func _close_popup() -> void:
 	if is_instance_valid(_popup):
+		_popup.hide()
 		_popup.queue_free()
 	_popup = null
 
 
-func _popup_line(parent: VBoxContainer, label_text: String, default_text: String) -> LineEdit:
+func _dialog_line(parent: VBoxContainer, label_text: String, default_text: String) -> LineEdit:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 8)
 	row.add_child(UiFactory.label(label_text, 16, UiFactory.C_TEXT_DIM))
 	var edit := LineEdit.new()
 	edit.text = default_text
-	edit.custom_minimum_size = Vector2(320, 36)
+	edit.custom_minimum_size = Vector2(320, 36)      # 输入框宽度 = 内容驱动
 	UiFactory.style_line_edit(edit)
+	edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(edit)
 	parent.add_child(row)
 	return edit
+
+
+# 打开弹层里的地图卡片(缩略图复用 MapCatalog,与主菜单选图同一套缓存/显示名)。
+func _map_card(path: String) -> Control:
+	var card := PanelContainer.new()
+	card.add_theme_stylebox_override("panel", UiFactory.row_box())
+	card.custom_minimum_size = Vector2(420, 0)       # 卡片最小宽 = 内容驱动
+	card.mouse_filter = Control.MOUSE_FILTER_STOP
+	card.gui_input.connect(func(ev: InputEvent) -> void:
+		if ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed \
+				and (ev as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+			open_path(path)
+			_close_popup())
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	card.add_child(row)
+	var thumb := TextureRect.new()
+	thumb.texture = MapCatalog.texture(path, 2)
+	thumb.custom_minimum_size = Vector2(120, 72)      # 缩略图框 = 内容驱动
+	thumb.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	thumb.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	thumb.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	row.add_child(thumb)
+	var info := VBoxContainer.new()
+	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	info.add_theme_constant_override("separation", 2)
+	row.add_child(info)
+	info.add_child(UiFactory.label(MapCatalog.display_name(path), 16, UiFactory.C_TEXT))
+	info.add_child(UiFactory.label(path, 16, UiFactory.C_TEXT_DIM))
+	return card
 
 
 # ── 校验输出 / 状态 / 快捷键 ───────────────────────────────────────────

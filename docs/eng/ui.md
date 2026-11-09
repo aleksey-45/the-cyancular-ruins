@@ -56,9 +56,10 @@
 
 ## 显示设置
 
-- 基准 1920×1440 是逻辑空间;`window/stretch/aspect="keep"` + `mode="viewport"`(硬边)⇒ 窗口尺寸 ≠ 基准时逻辑空间仍是 1920×1440(等比缩放 + 黑边)。`mp_lobby.tscn` 的绝对定位、`minimap.gd` 的 `1920.0 - …`、`main_menu.gd` 的 `BG_VIEW_CELLS` 都不用改。
-- `Settings.DISPLAY_RESOLUTIONS` 四档:1280×960 / 1600×1200 / 1920×1440 / 2560×1920;`display_res_index` / `display_fullscreen` 由 `Settings.apply_display()` 应用(headless 早退);默认窗口在 2560×1600 屏上 1:1。
-- `apply_display()` 启动时按存档设窗口 ⇒ `--resolution` 会被它顶掉;要指定尺寸得先改 `user://settings.cfg` 的 `display/res_index`。
+- 基准 1920×1440 是逻辑空间;`window/stretch/aspect="keep"` + `mode="viewport"`(硬边)⇒ 窗口尺寸 ≠ 基准时逻辑空间仍是 1920×1440(等比缩放 + 黑边)。**UI 设计系统 v1 正在把这些页面容器化**(见 [`ui-design-system.md`](ui-design-system.md) §7 迁移表):迁移完成后不再依赖「逻辑空间 1920×1440 + 绝对定位」这套假设。
+- `Settings.DISPLAY_RESOLUTIONS` **六档(全 4:3)**:1024×768 / 1152×864 / 1280×960 / 1600×1200 / 1920×1440 / 2560×1920;`display_res_index` / `display_fullscreen` 由 `Settings.apply_display()` 应用(headless 早退);默认档仍是 1920×1440。
+- `fit_resolution(available)`:**在六档里选能放进可用区的最大档**;一档都放不下时按可用区等比缩成严格 4:3(宽取 4 的倍数)、**绝不超屏**(1366×768 / 1280×720 / 800×600 不再出现「窗口比屏幕还高」)。守卫:`tests/smoke/display_resolution_smoke.gd`(59 条)。
+- 存档:`display/resolution`(Vector2i,权威) + `display/res_index`(旧四档表语义,供降级)。只有旧键的老存档按 `LEGACY_DISPLAY_RESOLUTIONS`(1280/1600/1920/2560)迁移;`apply_display()` 启动时按存档设窗口 ⇒ `--resolution` 会被它顶掉,要指定尺寸得改 `user://settings.cfg`。
 
 ## 对局内状态横幅(`ui/hud/status_banner.gd`)
 

@@ -1,5 +1,18 @@
 extends SceneTree
 
+# 菜单 Theme(Theme 2.0)生成器 —— 生成物:`res://ui/theme/menu_theme.tres`。
+#
+# ★ 本 Theme **刻意不设基础类型 `Button` 的皮肤**:`CheckButton` / `CheckBox` 都继承 `Button`
+#   (`CheckButton → Button → BaseButton`),给基础类型 Button 挂皮会让开关沿类链穿上按钮皮
+#   (而 CheckButton 的开关外观是自绘胶囊图标,见 UiFactory.switch_icons)。按钮一律走 **type variation**。
+# ★ 颜色只从 `UiFactory` 的 `C_*` 取;字号/间距/圆角只从 `SP_* / T_* / R_* / BORDER_*` token 取 ——
+#   本文件里不写颜色字面量,也不写魔法数(旧 variation 的既有数值原样保留,只为不改动未迁移页面的像素)。
+# ★ Theme 的 variation 名是**全局唯一**的(名字 → base 只能一条,`set_type_variation` 是覆盖语义、不报错),
+#   所以契约里跨控件同名的 `Field` / `Kit` 各只建一条,用 base=Control 承载多个控件的主题项。
+# ★ 两趟:Theme 要引用两个开关 PNG,而 res:// 下的 PNG 必须先 `--import` 才 load() 得到(-s 不触发导入)
+#   ⇒ 第一趟写下 PNG 并以 exit 1 要求「先 --import 再重跑」,第二趟才真的建 Theme。
+# ★ 刻意不做「缺图标也照样存一份」:那会留下一份看着成功、其实少两个图标的 .tres,而「开关画成默认主题
+#   的小灰点」这种缺失不会报错。
 
 const OUT_THEME := "res://ui/theme/menu_theme.tres"
 const OUT_SWITCH_OFF := "res://ui/theme/switch_off.png"
@@ -22,8 +35,6 @@ func _initialize() -> void:
 		return
 	var C: Dictionary = F.get_script_constant_map()
 
-	# ★ 两趟:Theme 要引用两个开关 PNG,而 res:// 下的 PNG 必须先 --import 才 load() 得到(-s 不触发导入)⇒ 第一趟写下 PNG 并以 exit 1 要求「先 --import 再重跑」,第二趟才真的建 Theme。
-	# ★ 刻意不做「缺图标也照样存一份」:那会留下一份看着成功、其实少两个图标的 .tres,而「开关画成默认主题的小灰点」这种缺失不会报错。
 	if not _switch_icons_ready():
 		_export_switch_icons(F)
 		print("GEN THEME: 图标已导出 → 请先跑 `--import`,再重跑本工具")
@@ -34,8 +45,10 @@ func _initialize() -> void:
 	t.default_font = font
 
 	_label_variants(t, C)
+	_field_variants(t, C)
 	_button_variants(t, F, C)
 	_panel_variants(t, F, C)
+	_kit_variants(t, C)
 	_other_controls(t, F, C)
 
 	var err := ResourceSaver.save(t, OUT_THEME)
@@ -63,27 +76,74 @@ func _c(C: Dictionary, name: String) -> Color:
 	return C[name] as Color
 
 
+# 取数值 token(SP_* / T_* / R_* / BORDER_*);缺失同样记红,不静默填 0。
+func _n(C: Dictionary, name: String) -> int:
+	if not C.has(name):
+		_fails.append("token 里没有 `%s`(UiFactory 改名了?本工具要跟着改)" % name)
+		return 0
+	return int(C[name])
+
+
+# 通用 StyleBoxFlat:颜色/宽度/间距一律来自 token,不写颜色字面量。
+func _flat(C: Dictionary, bg: String, border: String, border_w: int,
+		pad_h: int, pad_v: int) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = _c(C, bg)
+	if border_w > 0 and border != "":
+		sb.border_color = _c(C, border)
+		sb.set_border_width_all(border_w)
+	sb.set_corner_radius_all(0)
+	sb.content_margin_left = float(pad_h)
+	sb.content_margin_right = float(pad_h)
+	sb.content_margin_top = float(pad_v)
+	sb.content_margin_bottom = float(pad_v)
+	return sb
+
+
 func _label_variants(t: Theme, C: Dictionary) -> void:
 	t.set_color("font_color", "Label", _c(C, "C_TEXT"))
-	t.set_font_size("font_size", "Label", 32)
+	t.set_font_size("font_size", "Label", _n(C, "T_H2"))
 	t.set_type_variation("H1", "Label")
-	t.set_font_size("font_size", "H1", 48)
+	t.set_font_size("font_size", "H1", _n(C, "T_H1"))
 	t.set_color("font_color", "H1", _c(C, "C_TEXT"))
+	t.set_type_variation("H2", "Label")
+	t.set_font_size("font_size", "H2", _n(C, "T_H2"))
+	t.set_color("font_color", "H2", _c(C, "C_TEXT"))
 	t.set_type_variation("Body", "Label")
-	t.set_font_size("font_size", "Body", 32)
+	t.set_font_size("font_size", "Body", _n(C, "T_H2"))
 	t.set_color("font_color", "Body", _c(C, "C_TEXT"))
 	t.set_type_variation("Small", "Label")
-	t.set_font_size("font_size", "Small", 16)
+	t.set_font_size("font_size", "Small", _n(C, "T_LABEL"))
 	t.set_color("font_color", "Small", _c(C, "C_TEXT"))
 	t.set_type_variation("HeaderTitle", "Label")
-	t.set_font_size("font_size", "HeaderTitle", 32)
+	t.set_font_size("font_size", "HeaderTitle", _n(C, "T_H2"))
 	t.set_color("font_color", "HeaderTitle", _c(C, "C_GOLD"))
 	t.set_type_variation("Dim", "Label")
-	t.set_font_size("font_size", "Dim", 32)
+	t.set_font_size("font_size", "Dim", _n(C, "T_H2"))
 	t.set_color("font_color", "Dim", _c(C, "C_TEXT_DIM"))
 
 
+# Field = Label(表单标签)与 LineEdit(输入框)共用的**唯一** variation(名字全局唯一,见文件头)。
+# Label 只吃 font_size;LineEdit 吃输入框样式 + font_size。颜色不写:两者各自从自己的基类继承
+# (Label=C_TEXT / LineEdit=C_TEXT);写在这里会把另一边的颜色一起改掉。
+func _field_variants(t: Theme, C: Dictionary) -> void:
+	t.set_type_variation("Field", "Control")
+	t.set_font_size("font_size", "Field", _n(C, "T_LABEL"))
+	t.set_color("caret_color", "Field", _c(C, "C_ACCENT"))
+	t.set_color("font_placeholder_color", "Field", _c(C, "C_TEXT_DIM"))
+	t.set_stylebox("normal", "Field",
+			_flat(C, "C_FIELD", "C_BORDER_DIM", _n(C, "BORDER_W"), _n(C, "SP_3"), 0))
+	t.set_stylebox("focus", "Field",
+			_flat(C, "C_FIELD", "C_ACCENT", _n(C, "BORDER_W"), _n(C, "SP_3"), 0))
+
+
 func _button_variants(t: Theme, F: GDScript, C: Dictionary) -> void:
+	# ── Theme 2.0 的四档(契约 §3)──
+	_menu_btn(t, F, C, "Primary", _c(C, "C_EDGE"), _c(C, "C_TEXT"))
+	_menu_btn(t, F, C, "Quiet", _c(C, "C_BORDER_DIM"), _c(C, "C_TEXT_DIM"))
+	_danger_btn(t, F, C)
+	_icon_btn(t, C)
+	# ── 旧 variation(未迁移的 .tscn 还在用;数值保持原样)──
 	_menu_btn(t, F, C, "BtnPrimary", _c(C, "C_EDGE"), _c(C, "C_TEXT"))
 	_menu_btn(t, F, C, "BtnQuiet", _c(C, "C_BORDER_DIM"), _c(C, "C_TEXT_DIM"))
 	_menu_btn(t, F, C, "BtnGold", _c(C, "C_GOLD"), _c(C, "C_GOLD"))
@@ -94,7 +154,7 @@ func _button_variants(t: Theme, F: GDScript, C: Dictionary) -> void:
 
 func _menu_btn(t: Theme, F: GDScript, C: Dictionary, name: String, edge: Color, fg: Color) -> void:
 	t.set_type_variation(name, "Button")
-	t.set_font_size("font_size", name, 32)
+	t.set_font_size("font_size", name, _n(C, "T_H2"))
 	t.set_stylebox("normal", name, F.call("_btn_box", _c(C, "C_HEADER"), edge))
 	t.set_stylebox("hover", name, F.call("_btn_box", _c(C, "C_BTN_FILL_HI"), _c(C, "C_ACCENT")))
 	t.set_stylebox("pressed", name, F.call("_btn_box", _c(C, "C_BTN_FILL_DN"), _c(C, "C_ACCENT")))
@@ -107,9 +167,42 @@ func _menu_btn(t: Theme, F: GDScript, C: Dictionary, name: String, edge: Color, 
 	t.set_color("font_disabled_color", name, _c(C, "C_TEXT_MUTE"))
 
 
+func _danger_btn(t: Theme, F: GDScript, C: Dictionary) -> void:
+	# 危险操作:描边/文字用 C_DANGER;hover/pressed 时文字转 C_TEXT(在亮填充上保持可读)。
+	t.set_type_variation("Danger", "Button")
+	t.set_font_size("font_size", "Danger", _n(C, "T_H2"))
+	t.set_stylebox("normal", "Danger", F.call("_btn_box", _c(C, "C_HEADER"), _c(C, "C_DANGER")))
+	t.set_stylebox("hover", "Danger", F.call("_btn_box", _c(C, "C_BTN_FILL_HI"), _c(C, "C_DANGER")))
+	t.set_stylebox("pressed", "Danger", F.call("_btn_box", _c(C, "C_BTN_FILL_DN"), _c(C, "C_DANGER")))
+	t.set_stylebox("focus", "Danger", F.call("_btn_box", _c(C, "C_HEADER"), _c(C, "C_DANGER")))
+	t.set_stylebox("disabled", "Danger", F.call("_btn_box", _c(C, "C_HEADER"), _c(C, "C_BORDER_DIM")))
+	t.set_color("font_color", "Danger", _c(C, "C_DANGER"))
+	t.set_color("font_hover_color", "Danger", _c(C, "C_TEXT"))
+	t.set_color("font_focus_color", "Danger", _c(C, "C_DANGER"))
+	t.set_color("font_pressed_color", "Danger", _c(C, "C_TEXT"))
+	t.set_color("font_disabled_color", "Danger", _c(C, "C_TEXT_MUTE"))
+
+
+func _icon_btn(t: Theme, C: Dictionary) -> void:
+	# 图标按钮:常态透明无框、hover 才亮;内容边距 SP_2(尺寸由图标 + 内容驱动的调用方给)。
+	var pad := _n(C, "SP_2")
+	t.set_type_variation("Icon", "Button")
+	t.set_font_size("font_size", "Icon", _n(C, "T_H2"))
+	t.set_stylebox("normal", "Icon", _flat(C, "C_TRANSPARENT", "", 0, pad, pad))
+	t.set_stylebox("hover", "Icon", _flat(C, "C_BTN_FILL_HI", "C_ACCENT", _n(C, "BORDER_W"), pad, pad))
+	t.set_stylebox("pressed", "Icon", _flat(C, "C_BTN_FILL_DN", "C_ACCENT", _n(C, "BORDER_W"), pad, pad))
+	t.set_stylebox("focus", "Icon", _flat(C, "C_TRANSPARENT", "C_ACCENT", _n(C, "BORDER_W_DIM"), pad, pad))
+	t.set_stylebox("disabled", "Icon", _flat(C, "C_TRANSPARENT", "C_BORDER_DIM", _n(C, "BORDER_W_DIM"), pad, pad))
+	t.set_color("font_color", "Icon", _c(C, "C_TEXT"))
+	t.set_color("font_hover_color", "Icon", _c(C, "C_ACCENT"))
+	t.set_color("font_focus_color", "Icon", _c(C, "C_TEXT"))
+	t.set_color("font_pressed_color", "Icon", _c(C, "C_ACCENT"))
+	t.set_color("font_disabled_color", "Icon", _c(C, "C_TEXT_MUTE"))
+
+
 func _legacy_btn(t: Theme, F: GDScript, C: Dictionary, name: String, dim: bool) -> void:
 	t.set_type_variation(name, "Button")
-	t.set_font_size("font_size", name, 32)
+	t.set_font_size("font_size", name, _n(C, "T_H2"))
 	var base := _c(C, "C_BORDER_DIM") if dim else _c(C, "C_BORDER")
 	t.set_stylebox("normal", name, F.call("_btn_box", _c(C, "C_BTN_FILL"), base))
 	t.set_stylebox("hover", name, F.call("_btn_box", _c(C, "C_BTN_FILL_HI"), _c(C, "C_ACCENT")))
@@ -125,6 +218,18 @@ func _legacy_btn(t: Theme, F: GDScript, C: Dictionary, name: String, dim: bool) 
 
 
 func _panel_variants(t: Theme, F: GDScript, C: Dictionary) -> void:
+	# ── Theme 2.0 的三档(契约 §3)──
+	t.set_type_variation("Card", "PanelContainer")
+	t.set_stylebox("panel", "Card",
+			_flat(C, "C_SURFACE", "C_BORDER", _n(C, "BORDER_W"), _n(C, "SP_5"), _n(C, "SP_4")))
+	t.set_type_variation("Plain", "PanelContainer")
+	t.set_stylebox("panel", "Plain",
+			_flat(C, "C_TRANSPARENT", "", 0, _n(C, "SP_4"), _n(C, "SP_4")))
+	t.set_type_variation("Bar", "PanelContainer")
+	t.set_stylebox("panel", "Bar",
+			_flat(C, "C_HEADER", "C_BORDER", _n(C, "BORDER_W_DIM"), _n(C, "SP_4"), _n(C, "SP_2")))
+
+	# ── 旧 variation(未迁移的 .tscn 还在用;数值保持原样)──
 	t.set_stylebox("panel", "PanelContainer", F.call("panel_box", true))
 
 	t.set_type_variation("PanelCarved", "PanelContainer")
@@ -160,7 +265,7 @@ func _panel_variants(t: Theme, F: GDScript, C: Dictionary) -> void:
 	t.set_stylebox("panel", "RowPanel", F.call("row_box"))
 
 	t.set_type_variation("RowButton", "Button")
-	t.set_font_size("font_size", "RowButton", 32)
+	t.set_font_size("font_size", "RowButton", _n(C, "T_H2"))
 	t.set_stylebox("normal", "RowButton", F.call("_row_sb", _c(C, "C_ROW"), _c(C, "C_ROW")))
 	t.set_stylebox("hover", "RowButton", F.call("_row_sb", _c(C, "C_BTN_FILL_HI"), _c(C, "C_ACCENT")))
 	t.set_stylebox("pressed", "RowButton", F.call("_row_sb", _c(C, "C_BTN_FILL_DN"), _c(C, "C_ACCENT")))
@@ -185,6 +290,86 @@ func _carved_body(C: Dictionary, pad: Vector2) -> StyleBoxFlat:
 	return body
 
 
+# ── Kit:契约要求 CheckButton / CheckBox、ScrollBar、TabContainer / HSplit / VSplit、各 Dialog 共用
+#    同名 variation。Godot 的 variation 名**全局唯一**(一个名字只能绑一个 base),所以这里只用一条
+#    `Kit`(base=Control)承载这些控件各自的主题项:每个控件只会去查它自己用到的 slot 名,互不冲突;
+#    仅有 "panel" 被 TabContainer(内容底板)与 AcceptDialog(窗口面板)共用 —— 两者都用同一种面板块,
+#    正是"统一皮肤"想要的。Dialog 是 Window 派生(不是 Control),但 variation 链会先走 Kit 再落到
+#    AcceptDialog/Window 的原生类型,所以照样命中。
+func _kit_variants(t: Theme, C: Dictionary) -> void:
+	t.set_type_variation("Kit", "Control")
+
+	# 开关 / 勾选框:文字与自绘胶囊图标(与旧 CheckButton 基础类型同一套素材)。
+	t.set_font_size("font_size", "Kit", _n(C, "T_H2"))
+	t.set_color("font_color", "Kit", _c(C, "C_TEXT"))
+	t.set_color("font_hover_color", "Kit", _c(C, "C_ACCENT"))
+	t.set_color("font_pressed_color", "Kit", _c(C, "C_ACCENT"))
+	t.set_color("font_focus_color", "Kit", _c(C, "C_TEXT"))
+	var off: Texture2D = load(OUT_SWITCH_OFF)
+	var on: Texture2D = load(OUT_SWITCH_ON)
+	if off == null or on == null:
+		_fails.append("读不到开关图标 %s / %s —— 先跑本工具导出 PNG,再 --import,然后重跑"
+				% [OUT_SWITCH_OFF, OUT_SWITCH_ON])
+	else:
+		t.set_icon("unchecked", "Kit", off)
+		t.set_icon("checked", "Kit", on)
+
+	# 滚动条:轨道暗、滑块按状态上色。
+	var sb_pad := _n(C, "SP_1")
+	t.set_stylebox("scroll", "Kit", _flat(C, "C_BTN_FILL_DN", "", 0, sb_pad, sb_pad))
+	t.set_stylebox("scroll_focus", "Kit", _flat(C, "C_BTN_FILL_DN", "", 0, sb_pad, sb_pad))
+	t.set_stylebox("grabber", "Kit", _flat(C, "C_BORDER_DIM", "", 0, sb_pad, sb_pad))
+	t.set_stylebox("grabber_highlight", "Kit", _flat(C, "C_ACCENT", "", 0, sb_pad, sb_pad))
+	t.set_stylebox("grabber_pressed", "Kit", _flat(C, "C_ACCENT", "", 0, sb_pad, sb_pad))
+
+	# TabContainer:内容板 + 标签条 + 五种 tab 态 + 文字色/间距(它会把这些同名项覆盖给内部 TabBar)。
+	t.set_stylebox("panel", "Kit",
+			_flat(C, "C_SURFACE", "C_BORDER", _n(C, "BORDER_W"), _n(C, "SP_4"), _n(C, "SP_4")))
+	t.set_stylebox("tabbar_background", "Kit",
+			_flat(C, "C_HEADER", "", 0, _n(C, "SP_1"), _n(C, "SP_1")))
+	t.set_stylebox("tab_selected", "Kit",
+			_flat(C, "C_SURFACE", "C_ACCENT", _n(C, "BORDER_W"), _n(C, "SP_4"), _n(C, "SP_2")))
+	t.set_stylebox("tab_hovered", "Kit",
+			_flat(C, "C_BTN_FILL_HI", "C_BORDER_DIM", _n(C, "BORDER_W_DIM"), _n(C, "SP_4"), _n(C, "SP_2")))
+	t.set_stylebox("tab_unselected", "Kit",
+			_flat(C, "C_HEADER", "C_BORDER_DIM", _n(C, "BORDER_W_DIM"), _n(C, "SP_4"), _n(C, "SP_2")))
+	t.set_stylebox("tab_disabled", "Kit",
+			_flat(C, "C_BTN_FILL_DN", "C_BORDER_DIM", _n(C, "BORDER_W_DIM"), _n(C, "SP_4"), _n(C, "SP_2")))
+	t.set_stylebox("tab_focus", "Kit",
+			_flat(C, "C_TRANSPARENT", "C_ACCENT", _n(C, "BORDER_W_DIM"), _n(C, "SP_4"), _n(C, "SP_2")))
+	t.set_color("font_selected_color", "Kit", _c(C, "C_TEXT"))
+	t.set_color("font_unselected_color", "Kit", _c(C, "C_TEXT_DIM"))
+	t.set_color("font_hovered_color", "Kit", _c(C, "C_ACCENT"))
+	t.set_color("font_disabled_color", "Kit", _c(C, "C_TEXT_MUTE"))
+	t.set_color("drop_mark_color", "Kit", _c(C, "C_ACCENT"))
+	t.set_constant("side_margin", "Kit", _n(C, "SP_2"))
+	t.set_constant("tab_separation", "Kit", 0)
+	t.set_constant("icon_separation", "Kit", _n(C, "SP_1"))
+	t.set_constant("outline_size", "Kit", 0)
+
+	# HSplitContainer / VSplitContainer(主题项定义在 SplitContainer 基类上)。
+	t.set_stylebox("split_bar_background", "Kit",
+			_flat(C, "C_BTN_FILL_DN", "C_BORDER_DIM", _n(C, "BORDER_W_DIM"), _n(C, "SP_1"), _n(C, "SP_1")))
+	t.set_constant("separation", "Kit", _n(C, "SP_2"))
+	t.set_constant("minimum_grab_thickness", "Kit", _n(C, "SP_3"))
+	t.set_constant("autohide", "Kit", 0)
+
+	# AcceptDialog / ConfirmationDialog / FileDialog:窗口面板 + 标题行 + 按钮区间距。
+	# (内嵌子窗口走 Window 的 embedded_border;独立窗口走 title_*。)
+	t.set_stylebox("embedded_border", "Kit",
+			_flat(C, "C_SURFACE", "C_BORDER", _n(C, "BORDER_W"), _n(C, "SP_1"), _n(C, "SP_1")))
+	t.set_stylebox("embedded_unfocused_border", "Kit",
+			_flat(C, "C_SURFACE", "C_BORDER_DIM", _n(C, "BORDER_W_DIM"), _n(C, "SP_1"), _n(C, "SP_1")))
+	t.set_color("title_color", "Kit", _c(C, "C_TEXT"))
+	t.set_font_size("title_font_size", "Kit", _n(C, "T_H2"))
+	t.set_constant("title_height", "Kit", _n(C, "SP_7"))
+	t.set_constant("close_h_offset", "Kit", _n(C, "SP_2"))
+	t.set_constant("close_v_offset", "Kit", _n(C, "SP_2"))
+	t.set_constant("buttons_separation", "Kit", _n(C, "SP_2"))
+	t.set_constant("buttons_min_width", "Kit", _n(C, "SP_9"))
+	t.set_constant("buttons_min_height", "Kit", _n(C, "SP_7"))
+
+
 func _other_controls(t: Theme, F: GDScript, C: Dictionary) -> void:
 	var le := StyleBoxFlat.new()
 	le.bg_color = _c(C, "C_FIELD")
@@ -197,12 +382,12 @@ func _other_controls(t: Theme, F: GDScript, C: Dictionary) -> void:
 	var lef := le.duplicate() as StyleBoxFlat
 	lef.border_color = _c(C, "C_ACCENT")
 	t.set_stylebox("focus", "LineEdit", lef)
-	t.set_font_size("font_size", "LineEdit", 16)
+	t.set_font_size("font_size", "LineEdit", _n(C, "T_LABEL"))
 	t.set_color("font_color", "LineEdit", _c(C, "C_TEXT"))
 	t.set_color("font_placeholder_color", "LineEdit", _c(C, "C_TEXT_DIM"))
 	t.set_color("caret_color", "LineEdit", _c(C, "C_ACCENT"))
 
-	t.set_font_size("font_size", "CheckButton", 32)
+	t.set_font_size("font_size", "CheckButton", _n(C, "T_H2"))
 	t.set_color("font_color", "CheckButton", _c(C, "C_TEXT"))
 	t.set_color("font_hover_color", "CheckButton", _c(C, "C_ACCENT"))
 	t.set_color("font_pressed_color", "CheckButton", _c(C, "C_ACCENT"))
