@@ -3,7 +3,7 @@ extends LobbyPage
 
 
 var _mode := ""
-var _grid: GridContainer = null
+var _grid: VBoxContainer = null     # 房间列表是纵向容器(T3/M2:不再用 4 列网格 + 固定卡宽)
 var _create_btn: Button = null
 var _join_btn: Button = null
 

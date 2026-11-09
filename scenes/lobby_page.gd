@@ -50,22 +50,27 @@ func _finish_lobby_ready() -> void:
 	multiplayer.connection_failed.connect(_on_lobby_connect_failed)
 	NetBusExt.local_rejoin_denied.connect(_on_rejoin_denied)
 	UiFactory.apply_font_recursive(self)
+	# ★ headless(CI / 冒烟 / ui_shots 的 --headless 分支)不发起真实 UDP 连接:大厅状态机与版式
+	#   不需要真服务器,若照常 _request_list 会向配置里的公网地址 create_client(不占端口,但仍是真连接)。
+	#   非 headless(真玩家)行为不变。
+	if DisplayServer.get_name() == "headless":
+		_status.text = "headless:跳过自动连接(不发真实连接请求)"
+		return
 	_request_list.call_deferred("正在连接服务器获取房间列表…")
 
 
 
 # 禁用武器网格(2 列 + 定尺寸剪影,横排会溢出屏幕)。
 # ★★ 间距键名分两层,别混:GridContainer 认 h_separation / v_separation,而 HBoxContainer / VBoxContainer 只认 separation —— 把 h_separation 写在 HBox 上会被存下来但永不读取(静默无效覆盖,合一前的旧大厅页里就有写错过的一份)。
-const WEAPON_GRID_MAX_H := 144.0
-
+# 可视区高度 = 内容驱动下限(约 3 行 32px 剪影),用 token 表达而不是魔法数 144。
 func _add_weapon_grid(parent: Node, h_sep: int, on_cell: Callable = Callable()) -> void:
 	var wgrid := GridContainer.new()
 	wgrid.columns = 2
 	wgrid.add_theme_constant_override("h_separation", h_sep)
-	wgrid.add_theme_constant_override("v_separation", 6)
+	wgrid.add_theme_constant_override("v_separation", UiFactory.SP_2)
 	wgrid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size = Vector2(0, WEAPON_GRID_MAX_H)
+	scroll.custom_minimum_size = Vector2(0, UiFactory.SP_9 * 2 + UiFactory.SP_4)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	scroll.add_child(wgrid)
@@ -346,7 +351,9 @@ var time_rules := TimeRules.new()
 func _add_time_params(vb: VBoxContainer) -> void:
 	if not PvpSession.beta_mode:
 		return
-	vb.add_child(UiFactory.label("时间颗粒规则(房主可调,开局生效):", 32, UiFactory.C_ACCENT))
+	var tp_label := UiFactory.ui_label("时间颗粒规则(房主可调,开局生效):", "h2")
+	tp_label.add_theme_color_override("font_color", UiFactory.C_ACCENT)
+	vb.add_child(tp_label)
 	_trow(vb, "初始颗粒", 1000.0, "initial", TimeRules.R_INITIAL, 50.0, false)
 	_trow(vb, "颗粒上限", 1800.0, "cap", TimeRules.R_CAP, 100.0, false)
 	_trow(vb, "回溯燃烧/秒", 150.0, "rewind_burn", TimeRules.R_BURN, 5.0, false)
@@ -361,9 +368,9 @@ func _add_time_params(vb: VBoxContainer) -> void:
 func _trow(vb: VBoxContainer, text: String, initial: float, field: String,
 		rng: Vector2, step: float, as_percent: bool) -> void:
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 12)
-	var l := UiFactory.label(text, 32)
-	l.custom_minimum_size = Vector2(300, 0)
+	row.add_theme_constant_override("separation", UiFactory.SP_3)
+	var l := UiFactory.ui_label(text, "body")
+	l.custom_minimum_size = Vector2(UiFactory.SP_10 * 4 - UiFactory.SP_4, 0)   # 参数名列宽(内容驱动)
 	row.add_child(l)
 	var sl := HSlider.new()
 	sl.min_value = rng.x
@@ -371,11 +378,11 @@ func _trow(vb: VBoxContainer, text: String, initial: float, field: String,
 	sl.step = step
 	sl.value = initial
 	sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	sl.custom_minimum_size = Vector2(220, 28)
 	UiFactory.style_slider(sl)
 	row.add_child(sl)
-	var val := UiFactory.label(_fmt_param(initial, as_percent), 32, UiFactory.C_ACCENT)
-	val.custom_minimum_size = Vector2(110, 0)
+	var val := UiFactory.ui_label(_fmt_param(initial, as_percent), "h2")
+	val.add_theme_color_override("font_color", UiFactory.C_ACCENT)
+	val.custom_minimum_size = Vector2(UiFactory.SP_9 + UiFactory.SP_8 + UiFactory.SP_1, 0)
 	row.add_child(val)
 	sl.value_changed.connect(func(v: float) -> void:
 		time_rules.set(field, v / 100.0 if as_percent else v)
@@ -397,7 +404,9 @@ func _beta_payload() -> Dictionary:
 func _add_map_picker(vb: VBoxContainer) -> void:
 	var picker := MapPicker.new()
 	vb.add_child(picker)
-	picker.setup(Settings.mp_map_path, 2, 470.0, "地　图(房主选;缩略图 = 开局地形简略图)")
+	# 可视高 ≈ 3 行卡片(内容驱动);用 token 组合,不写 470 这类魔法数。
+	picker.setup(Settings.mp_map_path, 2, float(UiFactory.SP_9 * 7 + UiFactory.SP_4),
+			"地　图(房主选;缩略图 = 开局地形简略图)")
 	Settings.mp_map_path = picker.selected
 	picker.picked.connect(func(p: String) -> void:
 		Settings.mp_map_path = p
