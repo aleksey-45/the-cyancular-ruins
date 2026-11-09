@@ -4,30 +4,24 @@
 [ext_resource type="FontFile" path="res://assets/fonts/less_perfect_dos_vga.ttf" id="2"]
 [ext_resource type="PackedScene" path="res://ui/hud/broadcast.tscn" id="3"]
 
+; ★ HUD 例外 = anchors + offset + token(docs/eng/ui-design-system.md §5):
+;   排行榜/延迟条/提示全部用锚点表达,偏移由 ui/hud/royale_hud.gd 的 _ready 按
+;   BOARD_W / UiFactory.MARGIN / SP_* 计算 —— 本场景不再有 -736 / -716 / 96 / 102 这批
+;   从版式反推的魔法数(本文件也不再有 StyleBoxFlat:底板走 UiFactory.hud_plate)。
+;   排行板底色 0.25 是 docs/eng/ui.md「HUD」里登记的唯一例外(玩家栏,被用户点名排除)。
+
 [node name="RoyaleHud" type="CanvasLayer"]
 layer = 130
 script = ExtResource("1")
 
+; 右上角排行榜底板:锚点/偏移/尺寸全部由 royale_hud.gd 的 _ready + _refresh_board 设置
+; (底色是登记过的 0.25 例外;节点顺序仍在 Broadcast 之前 ⇒ Mask 盖在排行榜之上,现状照搬)。
 [node name="BoardBg" type="ColorRect" parent="."]
-anchor_left = 1.0
-anchor_right = 1.0
-offset_left = -736.0
-offset_top = 96.0
-offset_right = -16.0
-offset_bottom = 160.0
-grow_horizontal = 0
 mouse_filter = 2
 color = Color(0, 0, 0, 0.25)
 
+; 排行榜内容列(标题 / 剩余时间 / 每行一名玩家):锚点/偏移同样由 royale_hud.gd 设置。
 [node name="BoardBox" type="VBoxContainer" parent="."]
-anchor_left = 1.0
-anchor_right = 1.0
-offset_left = -716.0
-offset_top = 102.0
-offset_right = -4.0
-offset_bottom = 102.0
-grow_horizontal = 0
-grow_vertical = 1
 mouse_filter = 2
 theme_override_constants/separation = 4
 
@@ -47,6 +41,7 @@ theme_override_font_sizes/font_size = 32
 ;   (节点顺序 = 绘制顺序)是现状,别顺手改进。组件的层位随本 HUD(layer 130)。
 [node name="Broadcast" parent="." instance=ExtResource("3")]
 
+; 右下角延迟条:锚 bottom-right + 偏移 -24(-UiFactory.MARGIN),由内容撑开、向左上生长。
 [node name="PingWrap" type="PanelContainer" parent="."]
 anchor_left = 1.0
 anchor_top = 1.0
@@ -66,6 +61,8 @@ theme_override_fonts/font = ExtResource("2")
 theme_override_font_sizes/font_size = 32
 text = "--ms"
 
+; 左下角提示条:锚 bottom-left(anchor_top/bottom = 1),offset_left = 16(SP_4),
+; 离底 -54/-30 是量出来的像素档;内容由 PanelContainer 撑开。
 [node name="HintWrap" type="PanelContainer" parent="."]
 anchor_top = 1.0
 anchor_bottom = 1.0

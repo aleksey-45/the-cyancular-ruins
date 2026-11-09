@@ -1,11 +1,13 @@
 class_name WeaponSlots
 extends Control
 
+# 左下角容量格子(4×2,三态色)。HUD 例外:用 anchors + UiFactory.MARGIN / SP_* 表达位置,
+# 不再从逻辑分辨率反推坐标(契约 .tmp/ui-system-contract.md §5 / docs/eng/ui-design-system.md §5)。
 
 const COLS := 4
-const CELL := 22.0
-const GAP := 3.0
-const PAD := 6.0
+const CELL := 22.0   # 格子边长(像素档;4×2 布局与格子大小是设计尺寸,不 token 化)
+const GAP := 3.0     # 格子间距
+const PAD := 6.0     # 面板四周留白
 
 const PANEL_W := COLS * CELL + (COLS - 1) * GAP + PAD * 2.0
 
@@ -41,12 +43,14 @@ static func attach_to(parent: Node, weapons: WeaponComponent) -> WeaponSlots:
 	var s := WeaponSlots.new()
 	s.setup(weapons)
 	parent.add_child(s)
+	# 左下角:锚 bottom-left + token(16 = SP_4;112 = SP_9+SP_8;8 = SP_2)。
+	# 生产里 hud.gd 随后会用 _place_weapon_slots() 按武器面板实际顶边再贴一次(内容驱动)。
 	s.anchor_left = 0.0
 	s.anchor_right = 0.0
 	s.anchor_top = 1.0
 	s.anchor_bottom = 1.0
-	s.offset_left = 16.0
-	s.offset_top = -112.0 - s.panel_h - 8.0
+	s.offset_left = UiFactory.SP_4
+	s.offset_top = -(UiFactory.SP_9 + UiFactory.SP_8) - s.panel_h - UiFactory.SP_2
 	s.offset_right = s.offset_left + PANEL_W
 	s.offset_bottom = s.offset_top + s.panel_h
 	return s

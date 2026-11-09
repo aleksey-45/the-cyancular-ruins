@@ -8,7 +8,9 @@ const ST_ROUND_OVER := 2
 const ST_MATCH_OVER := 3
 
 @onready var _broadcast: Broadcast = $Broadcast
+@onready var _score_wrap: PanelContainer = $ScoreWrap
 @onready var _score_label: Label = $ScoreWrap/ScoreLabel
+@onready var _ping_wrap: PanelContainer = $PingWrap
 @onready var _ping_label: Label = $PingWrap/PingLabel
 @onready var _grace_wrap: PanelContainer = $GraceWrap
 @onready var _grace_label: Label = $GraceWrap/GraceLabel
@@ -17,6 +19,10 @@ var _grace: Dictionary = {}
 
 func _ready() -> void:
 	PixelFont.shared()
+	# 底板样式走 UiFactory 的 HUD 底板工厂(原先 .tscn 里的 StyleBoxFlat 副本已删):
+	# C_PLATE + content margin 24/8,三块面板共用同一样式(颜色语义不变)。
+	for wrap: PanelContainer in [_score_wrap, _grace_wrap, _ping_wrap]:
+		UiFactory.hud_plate(wrap, UiFactory.MARGIN, UiFactory.SP_2)
 	NetBus.local_round_state.connect(_on_round_state)
 	NetBus.ping_updated.connect(_on_ping)
 	# 颜色只从调色板取(本次新增的第四种语义色,见 UiFactory.C_GRACE 那段的对比度实测)

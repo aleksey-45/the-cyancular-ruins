@@ -1,17 +1,15 @@
-[gd_scene load_steps=5 format=3 uid="uid://pvphud000000a1"]
+[gd_scene load_steps=4 format=3 uid="uid://pvphud000000a1"]
 
 [ext_resource type="Script" path="res://ui/hud/pvp_hud.gd" id="1"]
 [ext_resource type="FontFile" path="res://assets/fonts/less_perfect_dos_vga.ttf" id="2"]
 [ext_resource type="PackedScene" path="res://ui/hud/broadcast.tscn" id="3"]
 
-[sub_resource type="StyleBoxFlat" id="Plate"]
-; ★ 这是**副本**:唯一源是 ui/ui_factory.gd 的 C_PLATE(`.tscn` 引用不到 GDScript 的 const)。
-;   改底板色必须同步这一行 —— tests/smoke/ui_palette_single_source_smoke.gd 会钉住两者相等。
-bg_color = Color(0, 0, 0, 0.1)
-content_margin_left = 24.0
-content_margin_right = 24.0
-content_margin_top = 8.0
-content_margin_bottom = 8.0
+; ★ 底板样式不再写在场景里(原先的 StyleBoxFlat 副本已删):由 ui/hud/pvp_hud.gd 的 _ready
+;   调 UiFactory.hud_plate 统一给(C_PLATE + content margin 24/8)。C_PLATE 的唯一源仍只有
+;   ui/factory/ui_factory.gd —— 场景结构上引用不到 GDScript const,所以样式不下沉进 .tscn。
+; ★ 版式 = HUD 例外(anchors + offset,token 口径见 docs/eng/ui-design-system.md §5):
+;   居顶元素锚 top-center(anchor 0.5)、右下延迟条锚 bottom-right;偏移全是锚点相对值
+;   (16 = SP_4、72 = SP_9+SP_2、-24 = -MARGIN),禁止从 1920×1440 反推坐标。
 
 [node name="PvpHud" type="CanvasLayer"]
 layer = 130
@@ -24,15 +22,8 @@ script = ExtResource("1")
 [node name="Broadcast" parent="." instance=ExtResource("3")]
 
 ; 记分条垫深底板:它对局中直接压在地图上,地图开阔区是浅灰蓝 —— 浅色文字压上去读不清。
-; 底板由 PanelContainer 按内容撑开(不是把 Label 拉成一条 1240 宽的横条),故包一层 wrapper。
-; ★ 上面那份 Plate 的 0.1 与 ui/ui_factory.gd 的 C_PLATE **同值**（用户 2026-09-15 统一下调）。
-;   场景里是字面量 —— `.tscn` **结构上引用不到** GDScript 的 const ⇒ 派生不了。
-;   **不再靠人工对齐**：tests/smoke/ui_palette_single_source_smoke.gd 的 ④ 会读本行、断言它与
-;   C_PLATE **逐位相等**；改漏了它**响亮地红**，不是静默。
-;   其余落点（ui/hud.gd / ui/weapon_slots.gd / ui/world_label.gd 的 PLATE_COLOR、
-;   ui/royale_hud.gd 的 _plate_box）都是 C_PLATE 的**别名/引用**，不存字面量。
-;   本 Plate 由 ScoreWrap（记分条）与下面的 PingWrap（延迟条）**共用**（改一个要改两个节点）。
-;   ★ 大乱斗排行榜（royale_hud 的 _board_bg）是例外，单独是 0.25。
+; 底板由 PanelContainer 按内容撑开(不是把 Label 拉成一条 1240 宽的横条),故包一层 wrapper;
+; 底板样式由 pvp_hud.gd 的 _ready 调 UiFactory.hud_plate 给(本节点不写 theme_override_styles)。
 [node name="ScoreWrap" type="PanelContainer" parent="."]
 anchor_left = 0.5
 anchor_right = 0.5
@@ -40,7 +31,6 @@ offset_top = 16.0
 grow_horizontal = 2
 grow_vertical = 1
 mouse_filter = 2
-theme_override_styles/panel = SubResource("Plate")
 
 [node name="ScoreLabel" type="Label" parent="ScoreWrap"]
 theme_override_colors/font_color = Color(0.9, 0.95, 1.0, 1.0)
@@ -49,15 +39,14 @@ theme_override_fonts/font = ExtResource("2")
 text = ""
 horizontal_alignment = 1
 
-; 「对手掉线中」(阶段 3,spec §4 的 3.1)。★ 与记分条**共用**同一个 Plate SubResource
-;   ⇒ **不新增任何 bg_color 字面量**, ui_palette_single_source_smoke 的 ④(读第一条 bg_color)
-;   与 ⑤(零游离字面量)都不受影响。
+; 「对手掉线中」(阶段 3,spec §4 的 3.1)。★ 与记分条共用**同一个** UiFactory.hud_plate 样式
+;   ⇒ 场景里零 bg_color 字面量。
 ;   ★ 颜色**不在这里写**:由 ui/pvp_hud.gd 的 _ready 从 UiFactory.C_GRACE 取(调色板单一来源)。
-;   ★ 位置:记分条(offset_top 16,实测高 52、占 y ∈ [16, 68])之下,offset_top = 72 —— 本条
-;     自占 y ∈ [72, 124](高 52 = 标签 36 + 上面那个 Plate 的上下各 8);状态横幅(layer 140)在 128。
+;   ★ 位置:记分条(offset_top 16 = SP_4,实测高 52、占 y ∈ [16, 68])之下,offset_top = 72 = SP_9+SP_2
+;     —— 本条自占 y ∈ [72, 124](高 52 = 标签 36 + 底板上下各 8);状态横幅(layer 140)在 128。
 ;     ★ 那个 36 是"本条含 CJK 的文案"量出来的,不是"本项目字体在 32 下的行高":Label 行高 =
 ;     max(字体在该字号的 get_height, 整形 ascent+descent),两半都随内容变 —— 纯拉丁那行实测 33,
-;     所以共用同一份 Plate 的 PingWrap(只有 "24ms")实得 49 而不是 52,同一张图里就差这 3px。
+;     所以共用同款底板的 PingWrap(只有 "24ms")实得 49 而不是 52,同一张图里就差这 3px。
 ;     ★ 读数出处与 128 的推导(含大乱斗排行榜那 60px 侵入的登记)在 docs/eng/ui.md
 ;     「状态横幅的几何与层位」;代码侧只留 status_banner.gd 的 TOP_OFFSET 常量本身。
 [node name="GraceWrap" type="PanelContainer" parent="."]
@@ -68,7 +57,6 @@ offset_top = 72.0
 grow_horizontal = 2
 grow_vertical = 1
 mouse_filter = 2
-theme_override_styles/panel = SubResource("Plate")
 
 [node name="GraceLabel" type="Label" parent="GraceWrap"]
 mouse_filter = 2
@@ -77,6 +65,7 @@ theme_override_font_sizes/font_size = 32
 theme_override_fonts/font = ExtResource("2")
 text = ""
 
+; 右下角延迟条:锚 bottom-right + 偏移 -24(-UiFactory.MARGIN),由内容撑开、向左上生长。
 [node name="PingWrap" type="PanelContainer" parent="."]
 anchor_left = 1.0
 anchor_top = 1.0
@@ -89,7 +78,6 @@ offset_bottom = -24.0
 grow_horizontal = 0
 grow_vertical = 0
 mouse_filter = 2
-theme_override_styles/panel = SubResource("Plate")
 
 [node name="PingLabel" type="Label" parent="PingWrap"]
 mouse_filter = 2

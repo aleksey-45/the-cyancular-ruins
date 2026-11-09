@@ -8,7 +8,9 @@ const ST_ROUND_OVER := 2
 const ST_MATCH_OVER := 3
 
 @onready var _broadcast: Broadcast = $Broadcast
+@onready var _score_wrap: PanelContainer = $ScoreWrap
 @onready var _score_label: Label = $ScoreWrap/ScoreLabel
+@onready var _ping_wrap: PanelContainer = $PingWrap
 @onready var _ping_label: Label = $PingWrap/PingLabel
 
 var _my_team := 0
@@ -21,6 +23,10 @@ func set_my_team(t: int) -> void:
 
 func _ready() -> void:
 	PixelFont.shared()
+	# 底板样式走 UiFactory 的 HUD 底板工厂(原先 .tscn 里的 StyleBoxFlat 副本已删):
+	# C_PLATE + content margin 24/8;3v3 的三个面板版式与 1v1 共用同一样式。
+	for wrap: PanelContainer in [_score_wrap, _ping_wrap]:
+		UiFactory.hud_plate(wrap, UiFactory.MARGIN, UiFactory.SP_2)
 	NetBus.local_round_state.connect(_on_round_state)
 	NetBus.ping_updated.connect(_on_ping)
 	_broadcast.set_broadcast(true, "对抗开始", "第 1 局")

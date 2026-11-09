@@ -1,12 +1,16 @@
 class_name Minimap
 extends CanvasLayer
 
+# 右下角圆形小地图。HUD 例外:用 anchors + UiFactory.MARGIN / SP_* 表达位置,禁止从逻辑分辨率
+# 反推坐标(原先从 1920×1440 减留白反推,已删;契约 .tmp/ui-system-contract.md §5)。
 
 const RADIUS_PX := 140.0
 const RANGE_CELLS := 50.0
 const PX_PER_CELL := RADIUS_PX / RANGE_CELLS
-const EDGE := 24.0
-const EDGE_BOTTOM := 72.0
+# 留白 token:EDGE = 屏幕边距 MARGIN(24);EDGE_BOTTOM 再让出底部 48(SP_8)= 72 ——
+# 右下角是延迟条(font_size 32),小地图 layer 131 画在 PvpHud(130)之上,不可盖住它。
+const EDGE := float(UiFactory.MARGIN)
+const EDGE_BOTTOM := EDGE + UiFactory.SP_8
 const RING_PX := 4.0
 const RING_SELF_PX := 4.0
 
@@ -21,7 +25,7 @@ var _color_provider: Callable = Callable()
 var _self_color_provider: Callable = Callable()
 var _ring_self: ColorRect
 var _mat: ShaderMaterial = null
-var _rect_pos := Vector2.ZERO
+var _view: ColorRect = null       # 圆形视野(右下角锚点 + offset;圆心由它派生)
 var _dot_self: ColorRect
 var _dot_enemy: ColorRect
 var _other_dots: Array[ColorRect] = []
@@ -60,8 +64,6 @@ func _ready() -> void:
 			else:
 				img.set_pixel(x, y, Color(0.62, 0.68, 0.75, 0.95))
 
-	_rect_pos = Vector2(1920.0 - EDGE - RADIUS_PX * 2.0, 1440.0 - EDGE_BOTTOM - RADIUS_PX * 2.0)
-
 	_mat = ShaderMaterial.new()
 	_mat.shader = load(SHADER_PATH)
 	_mat.set_shader_parameter("map_tex", ImageTexture.create_from_image(img))
@@ -73,10 +75,19 @@ func _ready() -> void:
 	var view := ColorRect.new()
 	view.name = "Circle"
 	view.material = _mat
-	view.position = _rect_pos
-	view.size = Vector2(RADIUS_PX, RADIUS_PX) * 2.0
+	# 右下角:锚 bottom-right + offset(-EDGE-R 直径 / -EDGE_BOTTOM);位置只由 MARGIN/SP_* token
+	# 与固定像素半径决定,与逻辑分辨率无关(原先的 1920×1440 反推已删)。
+	view.anchor_left = 1.0
+	view.anchor_right = 1.0
+	view.anchor_top = 1.0
+	view.anchor_bottom = 1.0
+	view.offset_left = -EDGE - RADIUS_PX * 2.0
+	view.offset_right = -EDGE
+	view.offset_top = -EDGE_BOTTOM - RADIUS_PX * 2.0
+	view.offset_bottom = -EDGE_BOTTOM
 	view.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(view)
+	_view = view
 
 	# ★ 描边先建、点后建:Godot 的绘制顺序 = 子节点顺序,后建的在上层 ⇒ 点压在框上。
 	_ring_self = _make_dot(Color(1.0, 1.0, 1.0, 1.0))
@@ -140,7 +151,10 @@ func _process(_delta: float) -> void:
 
 
 func _circle_center() -> Vector2:
-	return _rect_pos + Vector2(RADIUS_PX, RADIUS_PX)
+	# 圆心 = 视野 Control 的实际矩形中心(锚点解析后的屏幕坐标);删掉 _rect_pos 后由布局本身给出。
+	if _view == null or not is_instance_valid(_view):
+		return Vector2.ZERO
+	return _view.get_global_rect().get_center()
 
 
 func _place_enemy_dot(dot: ColorRect, enemy: Vector2, player: Vector2, w: float, h: float) -> void:

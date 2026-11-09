@@ -3,8 +3,10 @@ extends CanvasLayer
 
 # 对局内本地状态横幅。唯一数据源:宿主 `_set_status`(S-17 后由 `scenes/mp_client/reconnect_driver.gd` 的断线重连状态机驱动)。
 
-const FONT_SIZE := 32
-const TOP_OFFSET := 128.0
+const FONT_SIZE := UiFactory.T_H2
+# 纵向位置 = 记分条(16..68)+ GraceWrap(72..124)之下;128 = SP_9 × 2(几何推导见 docs/eng/ui.md
+# 「对局内状态横幅」)。横向/高度由内容撑开(_center_panel),不写绝对坐标。
+const TOP_OFFSET := float(UiFactory.SP_9 * 2)
 
 var _panel: PanelContainer = null
 var _label: Label = null

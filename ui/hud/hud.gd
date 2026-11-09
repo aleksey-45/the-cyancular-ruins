@@ -2,7 +2,8 @@ class_name Hud
 extends CanvasLayer
 
 const LAYER := 129  # 在 post-process(128)之上,不受桶形/CRT/变灰影响
-const MARGIN := Vector2(24, 24)
+# ★ HUD 坐标纪律(docs/eng/ui-design-system.md §5):左上元素锚 top-left、底部元素锚 bottom-left、
+#   居顶元素锚 top-center;像素边距一律 UiFactory.MARGIN / SP_* —— 禁止用 1920/1440 反推坐标。
 const SEG_W := 5        # 每根竖条宽
 const SEG_H := 32       # 竖条高
 const SEG_GAP := 1      # 竖条之间的间隔
@@ -48,10 +49,14 @@ var _ammo_label: Label = null
 var _slots: WeaponSlots = null
 var _weapon_box: VBoxContainer = null  # 左下角:每把持有武器一个方框(上下并列)
 var _drop_bar: ColorRect = null   # 长按 Q 的丢弃进度条(与换弹条共用槽位、互斥显示)
+var _stats_root: Control = null   # 左上角血条/氧条群的锚点父节点(anchors 0,0 + MARGIN)
 var _player: Node = null
 var _ammo_low := false              # 残弹是否已进入「低弹量」金态(只在跨阈值时改色)
 
 const WEAPON_ICON_W := 96.0   # 左下角剪影/进度条宽度
+# 武器面板固定宽 = 每行方框 320 + 左右 content margin 12×2(像素档;高度由内容驱动,见 _build_weapon_display)。
+const WEAPON_PANEL_W := 344.0
+const WEAPON_ROW_W := 320.0   # 每把武器一行方框的固定宽(用户 2026-09-16「把框更长一些」)
 
 # 右上角击杀计数器的骨架在场景里(右上锚点/生长方向看得见);字体与底色仍由本文件给 —— 写进 .tscn 就绕开 UiFactory 的字号纪律(16 的倍数那条闸门),
 # 且 PLATE_COLOR 会在场景里变成又一份调色板字面量。本场景无脚本,故 hud.gd preload 它不构成循环引用。
@@ -63,7 +68,13 @@ func _ready() -> void:
 	_build_clock()
 	# 个人钟怀表(第一阶段;数据源 Level0.grain_account,为空自隐)——摆血条/氧条下方
 	var watch := WatchHud.new()
-	watch.position = Vector2(MARGIN.x, MARGIN.y + 100.0)
+	# 左上角:锚 top-left + token 组合(100 = MARGIN + SP_9 + SP_3)
+	watch.anchor_left = 0.0
+	watch.anchor_top = 0.0
+	watch.anchor_right = 0.0
+	watch.anchor_bottom = 0.0
+	watch.offset_left = UiFactory.MARGIN
+	watch.offset_top = UiFactory.MARGIN + UiFactory.SP_9 + UiFactory.SP_3
 	add_child(watch)
 	# 时间模式中心标志(回溯 ◁◁ / 加速 ▶▶;常态自隐)
 	add_child(TimeSymbolHud.new())
@@ -127,21 +138,15 @@ func _process(_delta: float) -> void:
 func _build_weapon_display(p: Node) -> void:
 	# 左下角:每把持有武器一个方框、上下并列。未选中 → 只有剪影(灰);选中 → 剪影(白) + 名称 + 残弹。容量格子贴在武器面板正上方,见 _build_weapon_slots。
 	var wrap := PanelContainer.new()
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = PLATE_COLOR
-	sb.set_corner_radius_all(0)
-	sb.content_margin_left = 12.0
-	sb.content_margin_right = 12.0
-	sb.content_margin_top = 8.0
-	sb.content_margin_bottom = 8.0
-	wrap.add_theme_stylebox_override("panel", sb)
+	# 底板走 UiFactory 的 HUD 底板工厂(原先手写 StyleBoxFlat):C_PLATE、content margin 12/8。
+	UiFactory.hud_plate(wrap, UiFactory.SP_3, UiFactory.SP_2)
 	wrap.anchor_left = 0.0
 	wrap.anchor_right = 0.0
 	wrap.anchor_top = 1.0
 	wrap.anchor_bottom = 1.0
-	wrap.offset_left = MARGIN.x
-	wrap.offset_right = MARGIN.x + 344
-	wrap.offset_bottom = -MARGIN.y
+	wrap.offset_left = UiFactory.MARGIN
+	wrap.offset_right = UiFactory.MARGIN + WEAPON_PANEL_W
+	wrap.offset_bottom = -UiFactory.MARGIN
 	# ★ 高度收缩到内容:offset_top 与底边齐平(零高),再由控件的最小尺寸撑到正好装下那几个方框,配合 GROW_DIRECTION_BEGIN 向上长 ——
 	#   原先写死 -260 ⇒ 只有一把枪时也顶着一个巨大的空框。
 	wrap.offset_top = wrap.offset_bottom
@@ -189,21 +194,16 @@ func _refresh_weapon_boxes() -> void:
 		#   拿它去比 e["type"] 在同型号两把时对两行同时成立 ⇒ 两个框一起变成选中态。★ 与 ui/hud/weapon_slots.gd 的格子高亮同源(那条一直是按下标比 _current_index)。
 		var sel := held_index == cur_index
 		var box := PanelContainer.new()
-		var bs := StyleBoxFlat.new()
-		bs.bg_color = Color(0, 0, 0, 0.28) if sel else Color(0, 0, 0, 0)   # 选中的底更深(用户 2026-09-16)
-		bs.set_corner_radius_all(0)
-		bs.content_margin_left = 8.0
-		bs.content_margin_right = 8.0
-		bs.content_margin_top = 4.0
-		bs.content_margin_bottom = 4.0
-		box.add_theme_stylebox_override("panel", bs)
+		# 选中态 = 更深一档底板(C_PLATE_DEEP),未选中 = 透明;颜色全部来自 UiFactory token。
+		UiFactory.hud_plate(box, UiFactory.SP_2, UiFactory.SP_1, true,
+				UiFactory.C_PLATE_DEEP if sel else UiFactory.C_TRANSPARENT)
 		# 用户 2026-09-16「把框更长一些」:给定宽,别随内容缩(短名字的框会明显更短)
 		box.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-		box.custom_minimum_size = Vector2(320, 0)
+		box.custom_minimum_size = Vector2(WEAPON_ROW_W, 0)
 		_weapon_box.add_child(box)
 
 		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 14)
+		row.add_theme_constant_override("separation", 14)   # 14px 视觉间距(像素档,非 8 倍数 token)
 		box.add_child(row)
 
 		# 键位数字(最左):与数字键 1-4 一一对应,顺序 = 背包顺序
@@ -212,7 +212,7 @@ func _refresh_weapon_boxes() -> void:
 		UiFactory.style_control(key_lbl, WEAPON_FONT_SIZE)
 		key_lbl.add_theme_color_override("font_color",
 				UiFactory.C_TEXT if sel else UiFactory.C_TEXT_DIM)
-		key_lbl.custom_minimum_size = Vector2(48, 0)
+		key_lbl.custom_minimum_size = Vector2(UiFactory.SP_8, 0)
 		key_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		key_lbl.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		key_lbl.text = str(held_index + 1)
@@ -224,7 +224,7 @@ func _refresh_weapon_boxes() -> void:
 		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-		icon.modulate = Color(1, 1, 1, 1) if sel else Color(0.45, 0.45, 0.50, 1.0)
+		icon.modulate = Color(1, 1, 1, 1) if sel else Color(0.45, 0.45, 0.50, 1.0)   # 未选中压暗(动态状态色)
 		row.add_child(icon)
 
 		if sel:
@@ -270,8 +270,8 @@ func _place_weapon_slots() -> void:
 	_slots.anchor_right = 0.0
 	_slots.anchor_top = 0.0
 	_slots.anchor_bottom = 0.0
-	_slots.offset_left = MARGIN.x
-	_slots.offset_right = MARGIN.x + WeaponSlots.PANEL_W
+	_slots.offset_left = UiFactory.MARGIN
+	_slots.offset_right = UiFactory.MARGIN + WeaponSlots.PANEL_W
 	_slots.offset_bottom = _weapon_wrap.position.y - WEAPON_SLOTS_GAP
 	# ★ `panel_h` 是实例字段(由容量派生,见 WeaponSlots._derive_layout);`PANEL_W` 仍是常量。
 	_slots.offset_top = _slots.offset_bottom - _slots.panel_h
@@ -283,22 +283,41 @@ func _on_weapon_changed(_type_id: int) -> void:
 	_refresh_weapon_boxes()
 
 
+# 左上角血条/氧条群的**锚点父节点**:anchors(0,0) + UiFactory.MARGIN。条/底板相对它定位,
+# 于是 HUD 左上角只由「锚点 + 边距 token」决定,不再把 24 这种绝对坐标散落在每个子控件上。
+func _ensure_stats_root() -> Control:
+	if _stats_root == null or not is_instance_valid(_stats_root):
+		_stats_root = Control.new()
+		_stats_root.name = "StatsRoot"
+		_stats_root.anchor_left = 0.0
+		_stats_root.anchor_top = 0.0
+		_stats_root.anchor_right = 0.0
+		_stats_root.anchor_bottom = 0.0
+		_stats_root.offset_left = UiFactory.MARGIN
+		_stats_root.offset_top = UiFactory.MARGIN
+		_stats_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(_stats_root)
+	return _stats_root
+
+
 # 每个 HP 一根竖条,按最大血量排成一排,竖条之间留一点间隔;条本身无边框。底板(PLATE_COLOR)铺在整排下面 ——
 # 竖条之间那 1px 缝于是透出底板而不是地图,整排读成一条「压在薄板上的条」(0.1 很淡,缝里与缝外的差别是刻意做小的)。
 func _build_segments(count: int) -> void:
 	# ★ 底板先入队:入树顺序即绘制顺序,后加的条才画在它上面
 	var bar_w := count * (SEG_W + SEG_GAP) - SEG_GAP
+	var root := _ensure_stats_root()
 	var plate := ColorRect.new()
 	plate.color = PLATE_COLOR
-	plate.position = Vector2(MARGIN.x - BAR_PLATE_PAD.x, MARGIN.y - BAR_PLATE_PAD.y)
+	# 相对左上角锚点:底板比条每边外扩 BAR_PLATE_PAD
+	plate.position = Vector2(-BAR_PLATE_PAD.x, -BAR_PLATE_PAD.y)
 	plate.size = Vector2(bar_w + BAR_PLATE_PAD.x * 2.0, SEG_H + BAR_PLATE_PAD.y * 2.0)
-	add_child.call_deferred(plate)
+	root.add_child.call_deferred(plate)
 	for i in count:
 		var seg := ColorRect.new()
-		seg.position = Vector2(MARGIN.x + i * (SEG_W + SEG_GAP), MARGIN.y)
+		seg.position = Vector2(i * (SEG_W + SEG_GAP), 0)
 		seg.size = Vector2(SEG_W, SEG_H)
 		seg.color = COLOR_NORMAL
-		add_child.call_deferred(seg)
+		root.add_child.call_deferred(seg)
 		_segments.append(seg)
 		_ghost_tweens.append(null)
 
@@ -322,25 +341,26 @@ func _on_hp(cur: int, max_hp: int) -> void:
 # 防水值(氧气)条:血条下方深蓝细长条,长度按防水值/上限;底板 + 空槽 + 实条三件套,初始 alpha 全是 0 —— 满氧时整组不该出现(见 _on_waterproof)。
 func _build_waterproof(wp_max: int) -> void:
 	_wp_w = WATERPROOF_W * wp_max
-	var y := MARGIN.y + SEG_H + WATERPROOF_GAP
+	var root := _ensure_stats_root()
+	var y := SEG_H + WATERPROOF_GAP   # 相对左上角锚点(血条底边 + 间距)
 	_wp_plate = ColorRect.new()
-	_wp_plate.position = Vector2(MARGIN.x - BAR_PLATE_PAD.x, y - BAR_PLATE_PAD.y)
+	_wp_plate.position = Vector2(-BAR_PLATE_PAD.x, y - BAR_PLATE_PAD.y)
 	_wp_plate.size = Vector2(_wp_w + BAR_PLATE_PAD.x * 2.0, WATERPROOF_H + BAR_PLATE_PAD.y * 2.0)
 	_wp_plate.color = PLATE_COLOR
 	_wp_plate.modulate.a = 0.0
-	add_child.call_deferred(_wp_plate)
+	root.add_child.call_deferred(_wp_plate)
 	_wp_back = ColorRect.new()
-	_wp_back.position = Vector2(MARGIN.x, y)
+	_wp_back.position = Vector2(0, y)
 	_wp_back.size = Vector2(_wp_w, WATERPROOF_H)
 	_wp_back.color = WATERPROOF_BACK
 	_wp_back.modulate.a = 0.0
-	add_child.call_deferred(_wp_back)
+	root.add_child.call_deferred(_wp_back)
 	_wp_bar = ColorRect.new()
-	_wp_bar.position = Vector2(MARGIN.x, y)
+	_wp_bar.position = Vector2(0, y)
 	_wp_bar.size = Vector2(_wp_w, WATERPROOF_H)
 	_wp_bar.color = WATERPROOF_COLOR
 	_wp_bar.modulate.a = 0.0
-	add_child.call_deferred(_wp_bar)
+	root.add_child.call_deferred(_wp_bar)
 
 func _on_waterproof(cur: int, max: int) -> void:
 	if _wp_bar != null:
@@ -383,16 +403,21 @@ func _kill_ghost(i: int) -> void:
 # 右上角击杀计数:初始 000,每死一个敌人 +1(三位零填充)。
 func _build_kill_label() -> void:
 	# 底板已按用户要求去掉(这是第 3 次动它了,故把踩过的坑写死在这):⚠ 去掉底色只能靠 draw_center = false,不能只删 bg_color 那一行 ——
+	# 骨架(kill_counter.tscn)只留 PanelContainer + KillLabel;样式与锚点/偏移全部按 token 在这里给
+	# (`.tscn` 结构上引用不到 GDScript const,写进去就是第二处真值)。
 	var wrap := KILL_COUNTER_SCENE.instantiate() as PanelContainer
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = PLATE_COLOR
-	sb.draw_center = false      # ★ 不画底色(见上面那段的坑:只删 bg_color 会变成实心灰板)
-	sb.set_corner_radius_all(0)
-	sb.content_margin_left = 16.0
-	sb.content_margin_right = 16.0
-	sb.content_margin_top = 6.0
-	sb.content_margin_bottom = 6.0
-	wrap.add_theme_stylebox_override("panel", sb)
+	UiFactory.hud_plate(wrap, UiFactory.SP_4, 6, false)   # 16/6 像素留白,不画底色
+	# 右上角:锚 right + 距边 SP_6(32px);生长方向 BEGIN(向左),尺寸由内容撑开。
+	wrap.anchor_left = 1.0
+	wrap.anchor_right = 1.0
+	wrap.anchor_top = 0.0
+	wrap.anchor_bottom = 0.0
+	wrap.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	wrap.grow_vertical = Control.GROW_DIRECTION_END
+	wrap.offset_left = -UiFactory.SP_6
+	wrap.offset_right = -UiFactory.SP_6
+	wrap.offset_top = UiFactory.SP_4
+	wrap.offset_bottom = UiFactory.SP_4
 
 	# instantiate() 返回时子节点已存在,get_node 不要求在树内 —— 这里在 add_child 之前取是安全的。
 	_kill_label = wrap.get_node("KillLabel") as Label
@@ -424,8 +449,8 @@ func _build_clock() -> void:
 	_clock_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_clock_label.offset_left = -CLOCK_HALF_W
 	_clock_label.offset_right = CLOCK_HALF_W
-	_clock_label.offset_top = MARGIN.y
-	_clock_label.offset_bottom = MARGIN.y
+	_clock_label.offset_top = UiFactory.MARGIN
+	_clock_label.offset_bottom = UiFactory.MARGIN
 	_clock_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_clock_label.visible = false   # 首帧还没拿到 PostProcess,先不显示空 Label
 	add_child(_clock_label)

@@ -13,6 +13,11 @@ const COLOR_GRACE := UiFactory.C_GRACE
 
 # 排行榜面板宽(原 480):一行要塞「名次 + 昵称 + 击杀 + 阵亡 + 状态」五段,480 时只要昵称稍长,末段就被顶出面板(实测 9 字昵称那行约 690px vs 面板 480)。
 const BOARD_W := 720.0
+# 排行榜几何(HUD 例外 = anchors + token):底板/内容列都锚 top-right,偏移全部由 BOARD_W / SP_* 算,
+# 不再在 .tscn 里写 -736 / -716 / 96 / 102 这批从版式反推的魔法数(原先还叠着 1920/1440 口径)。
+const BOARD_TOP := UiFactory.SP_9 + UiFactory.SP_6   # 96:离屏幕上沿
+const BOARD_INSET := 6.0                             # 内容列相对底板的内缩(像素档)
+const BOARD_BG_EXTRA := 34.0                         # 底板比内容多出的高度(上下留白;迁移不改像素)
 const NAME_UNITS := 14
 
 const ST_COUNTDOWN := 0
@@ -42,9 +47,22 @@ func _ready() -> void:
 	layer = LAYER
 	PixelFont.shared()
 	_my_name = PvpSession.player_name
-	# 两块底板样式仍由代码给:颜色 token(C_*)的唯一来源是 UiFactory,抄进 .tscn 就是第二处真值。
-	_ping_wrap.add_theme_stylebox_override("panel", _plate_box(14.0, 6.0))
-	_hint_wrap.add_theme_stylebox_override("panel", _plate_box(10.0, 4.0))
+	# 排行榜:右上角锚点 + token 偏移(替换 .tscn 里的魔法偏移;数值与迁移前逐像素相同)。
+	_board_bg.anchor_left = 1.0
+	_board_bg.anchor_right = 1.0
+	_board_bg.offset_left = -(BOARD_W + UiFactory.SP_4)
+	_board_bg.offset_right = -UiFactory.SP_4
+	_board_bg.offset_top = BOARD_TOP
+	_board_vbox.anchor_left = 1.0
+	_board_vbox.anchor_right = 1.0
+	_board_vbox.offset_left = -(BOARD_W - UiFactory.SP_1)
+	_board_vbox.offset_right = -UiFactory.SP_1
+	_board_vbox.offset_top = BOARD_TOP + BOARD_INSET
+	_board_vbox.offset_bottom = _board_vbox.offset_top
+	# 两块底板样式走 UiFactory 的 HUD 底板工厂(原先手写 StyleBoxFlat 的 _plate_box 已删):
+	# 内容留白 14/6 与 10/4 是像素档,颜色仍是 C_PLATE(单一源在 UiFactory)。
+	UiFactory.hud_plate(_ping_wrap, 14, 6)
+	UiFactory.hud_plate(_hint_wrap, 10, 4)
 	NetBus.local_round_state.connect(_on_round_state)
 	NetBus.ping_updated.connect(_on_ping)
 	_broadcast.countdown_finished.connect(_on_countdown_finished)
@@ -57,18 +75,7 @@ func _on_countdown_finished() -> void:
 
 
 
-# HUD 元素底板(与单机 HUD 同一套做法):唯一源是 UiFactory.C_PLATE,本处直接引用、不再有内联字面量。★ 本文件的 _board_bg(排行榜)不在其中 —— 那张玩家栏被用户点名排除,单独是 0.25。
-static func _plate_box(pad_x: float, pad_y: float) -> StyleBoxFlat:
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = UiFactory.C_PLATE
-	sb.set_corner_radius_all(0)
-	sb.content_margin_left = pad_x
-	sb.content_margin_right = pad_x
-	sb.content_margin_top = pad_y
-	sb.content_margin_bottom = pad_y
-	return sb
-
-
+# HUD 元素底板统一走 UiFactory.hud_plate(见 _ready);本文件不再有 StyleBox 构造。
 static func _fit_name(s: String, max_units: int) -> String:
 	return UiFactory.fit_name(s, max_units)
 
@@ -122,15 +129,15 @@ func _refresh_board(names: Dictionary, scores: Dictionary, deaths: Dictionary,
 	while _rows.size() > rows.size():
 		(_rows.pop_back() as Label).queue_free()
 	while _rows.size() < rows.size():
-		var nl := _make_label(32, COLOR_BOARD)
-		nl.custom_minimum_size = Vector2(BOARD_W - 8.0, 0)
+		var nl := _make_label(UiFactory.T_H2, COLOR_BOARD)
+		nl.custom_minimum_size = Vector2(BOARD_W - UiFactory.SP_2, 0)
 		nl.size_flags_horizontal = Control.SIZE_FILL
 		nl.clip_text = true
 		_board_vbox.add_child(nl)
 		_rows.append(nl)
 	if _rows.size() != _last_row_count:
 		_last_row_count = _rows.size()
-		_board_bg.size.y = _board_vbox.get_combined_minimum_size().y + 34
+		_board_bg.size.y = _board_vbox.get_combined_minimum_size().y + BOARD_BG_EXTRA
 	for i in range(rows.size()):
 		var e: Dictionary = rows[i]
 		var is_me: bool = e["name"] == _my_name
