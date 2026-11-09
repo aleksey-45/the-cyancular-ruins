@@ -37,12 +37,12 @@ const META_LABELS := {
 }
 
 # 布局尺寸(等 T1 的 SP_*/T_* token 合入后改为引用 token;集中一处,页面别处不再写魔法数)
-const FRAME_MARGIN := 8          # 根边距 ≈ SP_2
-const FRAME_GAP := 6             # 容器间距
+const FRAME_MARGIN := UiFactory.SP_2   # 根边距 = 8(SP_2)
+const FRAME_GAP := 6             # 容器间距(6 无对应 token;视觉上等距 4/8 之间)
 const TAB_MIN_W := 320.0         # 右栏 TabContainer 最小宽
 const TAB_DEFAULT_W := 400.0     # 右栏初始宽(可拖拽)
 const PALETTE_COLUMNS := 5       # 调色板列数(64px 缩略图 × 5 ≈ 336)
-const DIALOG_PAD := 24           # 标准弹层内容内边距
+const DIALOG_PAD := UiFactory.SP_5     # 标准弹层内容内边距 = 24
 
 var doc: EditorDoc = null
 var canvas: EditorCanvas = null
@@ -508,7 +508,7 @@ func _build_status_bar() -> Control:
 	bar.add_theme_stylebox_override("panel", UiFactory.panel_box(false))
 	var row := HBoxContainer.new()
 	row.name = "StatusRow"
-	row.add_theme_constant_override("separation", 8)
+	row.add_theme_constant_override("separation", UiFactory.SP_2)
 	_status = UiFactory.label("", 16, UiFactory.C_TEXT_DIM)
 	_status.name = "StatusText"
 	_status.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1079,9 +1079,10 @@ func _open_dialog(title_text: String, ok_text: String, fill: Callable) -> Confir
 	dlg.title = title_text
 	dlg.ok_button_text = ok_text
 	dlg.cancel_button_text = "取消"
+	dlg.theme_type_variation = &"Kit"
 	var body := VBoxContainer.new()
 	body.name = "Body"
-	body.add_theme_constant_override("separation", 8)
+	body.add_theme_constant_override("separation", UiFactory.SP_2)
 	dlg.add_child(body)
 	_popup = dlg
 	fill.call(body)
@@ -1101,7 +1102,7 @@ func _close_popup() -> void:
 
 func _dialog_line(parent: VBoxContainer, label_text: String, default_text: String) -> LineEdit:
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 8)
+	row.add_theme_constant_override("separation", UiFactory.SP_2)
 	row.add_child(UiFactory.label(label_text, 16, UiFactory.C_TEXT_DIM))
 	var edit := LineEdit.new()
 	edit.text = default_text
@@ -1125,7 +1126,7 @@ func _map_card(path: String) -> Control:
 			open_path(path)
 			_close_popup())
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 8)
+	row.add_theme_constant_override("separation", UiFactory.SP_2)
 	card.add_child(row)
 	var thumb := TextureRect.new()
 	thumb.texture = MapCatalog.texture(path, 2)

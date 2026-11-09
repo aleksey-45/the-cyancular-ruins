@@ -8,7 +8,7 @@
 - token:基础 `C_BG` / `C_SURFACE` / `C_ROW` / `C_FIELD` / `C_BTN_FILL(_HI/_DN)` / `C_BORDER(_DIM)` / `C_ACCENT` / `C_DANGER` / `C_TEXT(_DIM)` / `C_WHITE` / `C_WARN`;HUD `C_PLATE` / `C_SLOT_EMPTY` / `C_SLOT_FILLED` / `C_SLOT_ACTIVE` / `C_TEAM_A` / `C_TEAM_B` / `C_GRACE` / `C_MODE_TEAM` / `C_MODE_ROYALE`;菜单 `C_HEADER` / `C_INNER` / `C_EDGE` / `C_GOLD` / `C_TEXT_MUTE`。
 - 字号必须是 16 的倍数(16 / 32 / 48 / 128…),`style_control` 会 assert;`separation` / `custom_minimum_size` 这类布局度量不要求 16 对齐。
 - 字体:拉丁 `assets/fonts/less_perfect_dos_vga.ttf`(8×16 DOS 位图);汉字 `assets/fonts/unifont-17.0.05.otf`(Unifont,SIL OFL 1.1)。两者都套 `PixelFont.shared()`(关抗锯齿 / 微调 / 子像素);换字体只改 `core/present/pixel_font.gd` 的 `CJK_FONT_PATH`,并重算 `max_units` / `BOARD_W` / `NAME_UNITS`。
-- 菜单语汇:`menu_panel()`(两层嵌套 PanelContainer:外深线 + 内亮线,内容加进 `Body`,默认 padding 64/46)、`menu_button()`、`header_strip()`。**标题带版式规则(2026-10-27 用户裁定)**:左右内边距一律对称 `HEADER_INSET = 24`、上下 `HEADER_PAD_Y = 20`;`centered=true` 用于页首标题 / 弹层标题 / 暂停菜单 / 结算页分区 / 卡片标题(Label `horizontal_alignment = CENTER`),`centered=false` 用于表单内分区标题(音量 / 地图 / 禁用武器 …)。15 条 `.tscn` 里的 `HeaderStrip` 是它的镜像,`Label.horizontal_alignment` 必须与语义档一致;唯一刻意不同的一处是房卡卡头(`room_list._card_header`,左右 0 以对齐卡体)。`_btn_box` 内容边距 40/20 ⇒ 32 号字按钮最低高度 72,绝对定位的调用方(`scenes/mp_lobby/room_list.gd`)必须自己把行高抬到 72;大厅页左右留白 `PAGE_MARGIN = 76`;`LineEdit` 左右内边距 16。
+- 菜单语汇:`menu_panel()`(两层嵌套 PanelContainer:外深线 + 内亮线,默认 padding 64/46)、`menu_button()`、`header_strip()` 保留给未迁移页兼容;**迁移后的页面一律用 `UiKit` + `UiFactory.ui_button/ui_label/ui_panel` + Theme variations**(见 [`ui-design-system.md`](ui-design-system.md))。标题带版式规则(2026-10-27 用户裁定)仍适用:左右 `HEADER_INSET = 24`、上下 `HEADER_PAD_Y = 20`;`centered=true` 用于页首标题 / 弹层标题 / 暂停菜单 / 结算页分区 / 卡片标题。**迁移后不再要求在 `.tscn` 里镜像 HeaderStrip**:`info/beta/pause/match_result` 已改为代码构建的 H1/H2 标题,`main_menu` 由生成器产出 HeaderStrip。`_btn_box` 内容边距 40/20 ⇒ 32 号字按钮最低高度 72 只约束仍走旧工厂的页面;`room_list` 已容器化,行高由内容决定,不再手工抬 72;大厅页留白改用 `UiKit.page` 的 `SP_6`。`LineEdit` 左右内边距 16。
 - 菜单 token 只给菜单系(主菜单 / 设置 / 信息 / 统一大厅 / Beta / 结算页 / 暂停菜单)用;HUD 读的 `C_ACCENT` / `C_TEXT` / `C_TEXT_DIM` / `C_SURFACE` / `C_BORDER` / `C_PLATE` / `C_SLOT_*` / `C_TEAM_*` / `C_GRACE` / `C_MODE_*` 不许改。
 - 按钮 = 暗填充 + 2px 亮描边、直角(`style_button(b, variant)`,`variant="quiet"` 是弱化项);描边对页面底与对填充都 ≥ 3:1。其余工厂方法:`panel_box()`(**不透明**)、`row_box()` / `style_row_button()`、`style_line_edit()`、`style_check()`(自绘开关图标)、`style_slider()`。
 - 开关 / 勾选框行 = 定宽标签列 + 紧邻开关(`HBoxContainer`,标签 `custom_minimum_size.x` 固定);裸 `CheckButton` 塞进宽容器会被拉到全宽。
@@ -17,7 +17,7 @@
 
 ## HUD
 
-- 对局内 HUD 元素一律垫半透明深底板,源 = `UiFactory.C_PLATE`(黑 0.1)。四个 `.gd` 落点是别名 / 引用:`ui/hud/hud.gd`、`ui/hud/weapon_slots.gd`、`ui/factory/world_label.gd` 的 `PLATE_COLOR`,`ui/hud/royale_hud.gd` 的 `_plate_box()`。两个 `.tscn`(`pvp_hud.tscn` / `team_hud.tscn` 的 `Plate`)结构上引用不到 GDScript const,保留字面量,必须与 `C_PLATE` 逐位相等;改底板色 = 调色板 + 两处 `.tscn`。
+- 对局内 HUD 元素一律垫半透明深底板,源 = `UiFactory.C_PLATE`(黑 0.1);2026-11-09 起**唯一构造点 = `UiFactory.hud_plate(c, pad_x, pad_y, draw_center, fill)`**(`ui/hud/**` 已无手写 `StyleBoxFlat`)。锚点化后位置由 anchors + offset(token) 表达:左上血条/氧条群、左下武器面板、右下小地图、右上击杀计数;`pvp_hud` / `team_hud` 的底板样式也走同一工厂。
 - 例外一:大乱斗排行榜 `royale_hud._board_bg` = 0.25。例外二:右上角击杀计数器(青色 `000`)不垫底板,三个模式一起生效。
 - 不垫底板只能靠 `draw_center = false`:`StyleBoxFlat` 默认底色是不透明灰 (0.6, 0.6, 0.6, 1),只删 `bg_color` 会变成实心灰板。氧条那组底板与条 / 空槽同一 tween 淡入淡出,满氧时整组不出现。
 - `C_WARN` 只表「弹夹见底」一个语义:满弹用中性色、装填进度用强调青、丢弃进度用 `C_DANGER`。
@@ -34,11 +34,12 @@
 - 开关:`Settings.pvp_show_minimap`(是否挂载)、`pvp_minimap_show_enemy`(是否显示他人点;3v3 下连队友点一起关)。
 - 两个颜色提供器必须共用同一套过滤 `_minimap_entries()`:按下标取色,各写一份 `for` 会在副本 `queue_free` 窗口错位一格。
 - 大乱斗他人点走头顶 ID 同源的 `ROLE_COLORS[(role - 1) % size]`。「我」那个点:1v1 / 大乱斗用 `SELF_COLOR`(无描边);3v3 用队色 + 一圈白描边(`RING_SELF_PX = 4`);队色必须每帧求值(由 `match_sync` 下发,比小地图建立晚)。
-- 留白 `EDGE = 24` / `EDGE_BOTTOM = 72`:右下角是延迟条(`font_size` 32,矩形上沿 y = 1367、左沿 x = 1784),小地图 layer 131 画在 PvpHud(130)之上,不可盖住它。
+- 留白 `EDGE = UiFactory.MARGIN(24)` / `EDGE_BOTTOM = EDGE + SP_8(72)`:圆形视野 `Circle` 锚 bottom-right + offsets,圆心由 `get_global_rect().get_center()` 派生(实测 view=(1616,1088,280,280)、圆心=(1756,1228),与迁移前逐像素一致);右下延迟条仍在同一位置(上沿 1367 / 左沿 1784,现由锚点 + token 表达)。小地图 layer 131 画在 PvpHud(130)之上,不可盖住它。
 - `_ready` 时 `current_grid` 为空会 `set_process(false)`,没有重建路径。
 
 ## 大厅与菜单
 
+- 版式(2026-11-09 设计系统 v1):`MpLobby → Margin(SP_6) → VBox`;主体 `HBox`(左 `ScrollContainer→VBox` 单列房卡 | 右 400px 筛选/操作/状态卡);创建/加入/等待室三弹层容器化,**0 绝对 offset**。房卡是 `Button`(RowButton variation)+ `meta("code")`(rejoin_watcher 依赖);`_grid` 字段名保留但类型已是 `VBoxContainer`。headless 下 `_finish_lobby_ready` 不自动连大厅(避免默认批占端口/连外网)。
 - 主菜单只有一颗「多 人 模 式」→ `scenes/mp_lobby.tscn`。`LobbyPage`(`scenes/lobby_page.gd`)是统一大厅基类:`mp_lobby` 只留版式与三模式分派,「连大厅 → 列房间 → 配对了转连 worker」的状态机、字段、两个设置区块、回局路径、超时梯都在基类。
 - 模式差异收在 `_mode`(筛选)与 `_current_mode`(所在房)两个量上;页内按 `全部 / 1v1 / 3v3 / 大乱斗` 筛选,建房时才选模式。
 - 列表并发调三次现有列房入口(`on_list_rooms` / `royale_list` / `team_list`),前端合并打标;载荷扩 5 个键 `is_public` / `host` / `map` / `match_time`(大乱斗)/ `team_counts`(3v3),另有 `NetBusExt.room_map`(仅列表展示)。`map` 与 `player_options.map` 是两个真值。
@@ -46,6 +47,10 @@
 - 创建弹层:1v1 隐藏「公开/私密 + 邀请码」整行(`create_room` 是冻结签名、服务端永远建公开房);3v3 隐藏禁用武器行(那两个勾选框写 `Settings.pvp_disabled_weapons`,会影响另两个模式)。
 - 等待室一个面板按模式渲染三种形态(1v1 名单+退出 / 大乱斗 名单+开始+退出 / 3v3 两队+未选边+选边+开始+退出);进房置 `_in_room` 并收起「＋创建房间」「加入房间」两颗入口。
 - 1v1 不上报 `time`:`PvpSession.beta_mode` 是会话级,而 1v1 房无法被 beta 隔离。
+
+## 主菜单版式与背景
+
+- 版式(2026-11-09):`scenes/main_menu.tscn` 由 `tools/gen_menu_scene.gd` 的**构建模式**生成 —— `Bg(全屏) + CenterContainer → Margin(SP_6) → VBox(SP_5)`:标题 HeaderStrip(128)/ 按钮列(max 宽 720、行高 SP_10=80)/ 版本号;`UILayer`/`UIRoot` 仍是运行期弹层宿主。0 绝对 offset;改版式 = 改生成器再重跑 + 前后截图。
 
 ## 主菜单背景
 

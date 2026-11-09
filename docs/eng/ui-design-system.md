@@ -85,27 +85,28 @@ static func dialog(parent: Node, title: String, ok_text := "确定") -> AcceptDi
 - `DISPLAY_RESOLUTIONS` 增补小屏档 `1024×768` / `1152×864`；仍是 4:3。
 - UI 的「响应式」在本项目 = **内容驱动**（容器 + min size + scroll），不是随窗口改逻辑分辨率；窗口尺寸变化只做等比缩放。
 
-## 7. 迁移状态
+## 7. 迁移状态（2026-11-09 全部完成）
 
-| 页面 | 现状 | 目标 | 状态 |
-|---|---|---|---|
-| `scenes/editor/editor_root` | 固定 400px 右栏、自绘弹层、内容超高只滚 | 工具栏 + HSplit + TabContainer + 状态栏 + AcceptDialog | ✅ 2026-11-09（`EDITOR SCENE PROBE` 36→50 条；新增 14 条布局/结构断言） |
-| `scenes/main_menu` | 生成骨架 + 绝对 offset | 容器化 + Theme variations | 待迁移 |
-| `scenes/settings_menu` | 绝对 offset / 手写样式 | 容器化 | 待迁移 |
-| `scenes/info_menu` / `beta_menu` | 绝对 offset | 容器化 | 待迁移 |
-| `scenes/mp_lobby`（74 节点）+ `room_list` | 全绝对定位、行高手工抬 72 | 容器化 + `UiKit.list_row` | 待迁移 |
-| HUD（`ui/hud/*`） | 1920/1440 反推坐标 | anchors + token | 待迁移 |
-| 结算 / 暂停 / 大厅弹层 | 自绘 popup | 标准 Dialog | 待迁移 |
+| 页面 | 结果 |
+|---|---|
+| `scenes/editor/editor_root` | ✅ 工具栏 + HSplit + TabContainer(4 页) + 状态栏 + AcceptDialog；`EDITOR SCENE PROBE` 36→50 条 |
+| `scenes/main_menu` | ✅ 生成器改**构建模式**输出容器树（标题 HeaderStrip / 按钮列 720 / 版本号）；21 节点 16 unique name、0 offset |
+| `scenes/settings_menu` | ✅ 运行时 `UiKit.page` 构建；5 张卡 + 两列 + 滚动；12 个 unique name 运行时登记（`%` 12/12 命中） |
+| `scenes/info_menu` / `beta_menu` | ✅ root-only `.tscn` + 代码构建；H1/H2 标题 + 卡片；unique name 运行时登记 |
+| `scenes/mp_lobby`（74 节点）+ `room_list` | ✅ 整文件重写：0 offset；单列房卡（Button + RowButton variation + meta）；49 个旧 unique name 全保留 |
+| HUD（`ui/hud/*`） | ✅ anchors + `UiFactory.MARGIN/SP_*`；`hud_plate()` 唯一底板构造点；**前后截图逐像素 diff=0** |
+| 结算 / 暂停 / 大厅弹层 | ✅ pause = Control 叠加层（契约例外）、match_result = CenterContainer + Card 状态屏；弹层统一 Theme 2.0 皮肤 |
 
-迁移每页的完成判据：**改前/改后截图 + 布局探针绿 + `run_all` 绿 + 逐页提交**。
+- 迁移完成判据（逐页）：改前/改后截图 + 布局探针绿 + `run_all` 绿；全部页面 0 新增绝对 offset。
+- 视觉变化属预期：标题带统一 HeaderStrip / H2、按钮统一 80 高、卡片化分组；文本/按钮顺序/信号/协议/存档语义全部未变。
 
 ## 8. 守卫
 
-- `tests/probe/ui_layout_probe.tscn`（布局探针）：实例化页面，断言关键节点存在/可见、所有 Control 在父容器 rect 内（容差 1px）、根在 1920×1440 内、关键文本宽度 ≥ 最小宽度。判词 `UI LAYOUT PROBE: ALL-OK(N 条断言)` + 条数闸。
+- `tests/probe/ui_layout_probe.tscn`（布局探针，54 条）：9 个页面 × 6 条 —— 场景可加载/可实例化/根拿到 1920×1440/有子节点/关键节点或 API 在/**可见 Control 的 global_rect 都在逻辑屏幕内**（ScrollContainer 内容区不查，本来就会被裁）。判词 `UI LAYOUT PROBE: ALL-OK(54 条断言)` + 条数闸。
 - `tools/ui_shots.py`（非 headless，人工触发）：按页面 × 分辨率出截图到 `.tmp/ui_shots/`，供迁移前后评审；不进默认批。
 - `python tools/check_naming.py` 与 `bash tests/run_all.sh` 每步必跑；判据一律 grep 判词。
 - 不在默认批里加「源码里禁止 offset_*」这类形态守卫（D6）：先靠布局探针的行为判据，等迁移完再评估是否值得加。
 
 ## 9. 历史
 
-- 2026-11-09：本文件建立；调研与现状审计（见提交信息）。旧 `ui.md` 继续记录页面级现状，迁移完成后逐步瘦身。
+- 2026-11-09：本文件建立；同日完成全仓迁移（编辑器 + 主菜单 + 设置 + 信息/Beta + 大厅/房间列表 + HUD + 暂停/结算/启动面板），布局探针 54 条、`run_all` 62 支全绿；旧 `ui.md` 的页面级现状已同步为迁移后口径。

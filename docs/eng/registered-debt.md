@@ -16,6 +16,13 @@
 
 - [`tests/harness/menu_autotest.gd`](../../tests/harness/menu_autotest.gd) 被产品代码 [`scenes/main_menu.gd`](../../scenes/main_menu.gd) `load()`(菜单的 `-- --autotest-*` 钩子)—— 改名 / 删除 / 移动它,必须同批改产品代码,否则钩子失效。
 - [`tools/gen_menu_theme.gd`](../../tools/gen_menu_theme.gd) 手抄 `UiFactory.menu_panel()` 的 64/46,镜像守卫用同一对字面量 —— 改 `menu_panel()` 默认值**不会红**,生成物与守卫一起静默用旧值;改默认值必须两处同改。
+- **UI 设计系统 v1 的遗留边界（2026-11-09）**：
+  - `UiKit.add_tab()` 里的 `ScrollContainer` 滚动条不会自动继承 `Kit` variation（动态滚动条需显式 `get_v_scroll_bar().theme_type_variation = &"Kit"`）。
+  - `settings_menu` / `info_menu` / `beta_menu` 现在是**运行时构建**页面：unique name 由 `_ready` 里补 `owner` 登记，`.tscn` 里没有子节点；外部工具别解析 `.tscn` 找这些节点，要实例化后 `%Name`/`find_child`。
+  - `tools/gen_menu_scene.gd` 里 info/beta/match_result 的旧结构转换路径已失效（三页改成 root-only/代码构建）；工具不在默认批，仅影响手工重生成。
+  - `scenes/lobby_page.gd` 有 `DisplayServer.get_name() == "headless"` 早退：headless 实例化大厅不自动连服务器（默认批不占端口/不连外网）；真链路不受影响，但 headless 冒烟覆盖不到「_ready 自动连接」。
+  - `ui/screens/pause_menu.*` / `match_result.*` 是 Control 叠加层 / 全屏状态屏，**不是** `AcceptDialog`（契约 §5 明确例外）；改弹层语义要连 Esc/toggled/leave_requested 一起评审。
+  - `UiFactory.ui_label(..., "dim")` 仍是 32px（Label `Dim` variation 维持旧值以不静默缩小未迁移页）；16px 弱化文字走 `UiFactory.label(text, T_LABEL, C_TEXT_DIM)` 动态色 API。
 - 默认批多数支没有 `EXPECTED_CHECKS` 条数闸(`run_all.sh` 表里 `GATE` 栏为 `-`)—— 单支 `OK` 只证明"没有失败输出",不证明每条断言都跑过。
 - [`tests/run_all.sh`](../../tests/run_all.sh) 的承重安全检查只读整行注释以外的文本,看不见经 helper 间接开端口 / 拉子进程的形状 —— 新增这类支必须手工进 `EXCLUDED`。
 - [`tests/run_real.sh`](../../tests/run_real.sh) 的 R20 锁心跳只在**支间**刷新(`LOCK_STALE_SECS` = 600s)—— 单支预算调到 >600s 会把正在跑的批判成陈旧、锁失效。

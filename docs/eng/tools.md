@@ -41,9 +41,11 @@
 
 ## 4. 场景生成
 
-- [`tools/gen_menu_scene.gd`](../../tools/gen_menu_scene.gd)：主菜单静态骨架（`scenes/main_menu.tscn`）的生成器 ——
-  ★ 菜单版式以 `main_menu.tscn` 为准，改骨架要重跑并做逐像素 diff；编辑器入口是**运行期**按 feature 追加的，不在骨架里。
-- [`tools/gen_menu_theme.gd`](../../tools/gen_menu_theme.gd)：菜单主题资源生成器。
+- [`tools/gen_menu_scene.gd`](../../tools/gen_menu_scene.gd)：主菜单骨架（`scenes/main_menu.tscn`）的生成器，双模式 ——
+  `-- main_menu` 是**构建模式**（从零搭容器树并写盘，产物自检 unique name/按钮顺序/0 绝对 offset，不过就 FAIL 不写）；其它屏名保留旧的 `.tscn` 转换路径（只用于 `.superpowers/sdd/_gen/` 手工对照，info/beta/match_result 迁移后该路径已失效，不在默认批）。
+  ★ 改菜单版式 = 改生成器再重跑 + 改前/改后截图；编辑器入口仍是**运行期**按 feature 追加，不在骨架里。
+- [`tools/gen_menu_theme.gd`](../../tools/gen_menu_theme.gd)：菜单主题资源生成器（Theme 2.0：Button Primary/Quiet/Danger/Icon、Panel Card/Plain/Bar、Label H1/H2/Body/Dim/Field、Kit 承载 CheckButton/ScrollBar/Tab/Split/Dialog）。改样式只改生成器再重跑。
+- [`tools/ui_shots.py`](../../tools/ui_shots.py)：**非 headless** 页面截图工具（`python tools/ui_shots.py [页面名] [--size WxH]`），出图到 `.tmp/ui_shots/`；只给迁移/评审对比用，不进默认批。
 
 ## 5. 抓现场 / 一次性
 

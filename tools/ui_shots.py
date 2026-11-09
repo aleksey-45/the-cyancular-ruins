@@ -72,8 +72,10 @@ func _ready() -> void:
 	if inst is Control:
 		var c := inst as Control
 		c.set_anchors_preset(Control.PRESET_TOP_LEFT)
-		c.size = Vector2(size)
-	for i in 6:
+		# 逻辑视口是 1920×1440(stretch=viewport):窗口尺寸只影响缩放,页面根必须铺满逻辑视口,
+		# 否则会截出右/下灰带(2026-11-09 发现,原实现误把窗口尺寸当逻辑尺寸)。
+		c.size = get_viewport().get_visible_rect().size
+	for i in 90:
 		await get_tree().process_frame
 	await RenderingServer.frame_post_draw
 	var img := get_viewport().get_texture().get_image()
