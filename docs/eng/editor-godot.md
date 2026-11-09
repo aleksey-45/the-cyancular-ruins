@@ -12,6 +12,7 @@
 | 文档模型 | [`core/editor/editor_doc.gd`](../../core/editor/editor_doc.gd) | 地图字典 + 当前层 + 稀疏 cells 撤销栈 + 环面归一化 + `changed`/`structure_changed` 信号；纯逻辑、可 `-s` 测 |
 | 读写门面 | [`core/editor/editor_io.gd`](../../core/editor/editor_io.gd) | `open_path`（v4 二进制 / v3 文本 / 旧字母格式 + 读时 legacy 迁移）、`save_path`（校验 + 编码 + 写盘）、`default_target`、`list_maps` |
 | 画布 | [`scenes/editor/editor_canvas.gd`](../../scenes/editor/editor_canvas.gd) | 视口离屏层合成、相机（origin/zoom）、`screen_to_subcell`、层可见/压暗、网格与画刷框、`pointer_*` 信号 |
+| 真渲染预览 | [`scenes/editor/editor_preview.gd`](../../scenes/editor/editor_preview.gd) | 复用游戏管线（TerrainAtlas tileset + ParallaxBg + PostProcess）的预览；三个 SubViewport 合成后贴回画布区域 |
 | 场景根 | [`scenes/editor/editor_root.gd`](../../scenes/editor/editor_root.gd) / [`.tscn`](../../scenes/editor/editor_root.tscn) | 顶栏 / 7 层面板 / 工具 / 调色板 / 校验输出 / 状态栏；把画布事件接到 `EditorDoc`；公开 `open_path` / `save_to` / `validate` / `get_doc` / `get_editor_canvas` |
 
 ★ 纯逻辑（编解码 / 校验 / 文档 / 读写）全在 `core/editor/`；`scenes/editor/` 只做 UI 与接线 —— 场景探针不需要点按钮就能验完整链路。
@@ -56,20 +57,21 @@
 
 ## 6. 场景与交互
 
-- 顶栏：新建（名字/宽/高，`EditorValidate.clamp_map_size` 钳制）· 打开（列出 `list_maps`）· 保存（有路径直接写，否则「保存为」）· 校验 · 导出（选 `user://maps` 或 exe 同目录）· 导出并加载（写盘 + 设为单人地图 + 回单人开局）· 返回主菜单。
-- 右栏：7 层（点名字 = 当前编辑层；勾选框 = 显示/隐藏）· 工具（画笔/橡皮/直线/矩形/油漆桶/吸管）· 画刷格数 · 调色板（`data/tile_defs.json` 的 tiles，缩略图取 `TerrainAtlas.source_image()`）· 校验/消息输出。
+- 顶栏：新建（名字/宽/高，`EditorValidate.clamp_map_size` 钳制）· 打开（列出 `list_maps`，卡片带 `MapCatalog` 缩略图与显示名）· 保存（有路径直接写，否则「保存为」）· 校验 · 导出（选 `user://maps` 或 exe 同目录）· 导出并加载（写盘 + 设为单人地图 + 回单人开局）· **预览开关** · 返回主菜单。
+- 右栏：7 层（点名字 = 当前编辑层；勾选框 = 显示/隐藏）· 工具（画笔/橡皮/直线/矩形/油漆桶/吸管/**选框**/**渐变**）· 画刷格数 · **颜色（画笔 / 渐变终点，只对背景颜色层生效）** · **选区与剪贴板（复制/剪切/粘贴/清除/水平镜像/垂直镜像）** · **meta 面板（放出生点 / 放复活点侧1 / 侧2 / 放敌人 + 计数 + 清空）** · 调色板（`data/tile_defs.json` 的 tiles，缩略图取 `TerrainAtlas.source_image()`）· 校验/消息输出。
 - 状态栏：消息 · 尺寸 · 当前层 · 工具 · 光标子格（环面归一化）· 当前值 · 缩放 · 未保存标记。
-- 快捷键走**独立 `editor_` 前缀 InputMap**（`editor_undo/redo/save/open/zoom_in/zoom_out`），不与游戏 action 混。
+- 快捷键走**独立 `editor_` 前缀 InputMap**（`editor_undo/redo/save/open/zoom_in/zoom_out/copy/cut/paste/delete/mirror_h/mirror_v`），不与游戏 action 混：`Ctrl+Z/Y/S/O/C/X/V`、`Delete`、`H`/`V`、`+`/`-`。
 - 左键落笔；中键或空格拖动只平移（不发 `pointer_*`）；滚轮以鼠标为锚缩放。
 
 ## 7. 守卫
 
 | 支 | 判词 | 条数闸 | 钉什么 |
 |---|---|---|---|
-| `tests/smoke/editor_doc_smoke.gd` | `EDITOR DOC SMOKE: OK(93 条断言)` | 93 | 7 层建图 / 环面 / Bresenham / 4 邻接与接缝油漆桶 / 颜色层 u32 / undo 往返与合并 / 栈上限 / load_map 清栈 / validate+to_bytes |
+| `tests/smoke/editor_doc_smoke.gd` | `EDITOR DOC SMOKE: OK(183 条断言)` | 183 | 7 层建图 / 环面 / Bresenham / 4 邻接与接缝油漆桶 / 颜色层 u32 / undo 往返与合并 / 栈上限 / load_map 清栈 / validate+to_bytes / **选区剪贴板镜像渐变 / meta 快照与 undo** |
 | `tests/smoke/editor_io_smoke.gd` | `EDITOR IO SMOKE: OK(53 条断言)` | 53 | v4 7 层读入 / legacy 读时迁移 / v3 与旧字母文本 / 坏文件 / 保存确定性 / 校验拒写 / 三处目录 / 默认落点 / **P3 导出落点与 res:// 拒写** |
-| `tests/probe/editor_canvas_probe.tscn` | `EDITOR CANVAS PROBE: ALL-OK(27 条断言)` | 27 | 视口纹理尺寸 / `screen_to_subcell` 手算 / 鼠标锚缩放 / 层可见与压暗 / 颜色层与纹理层像素 / `pointer_down` / 新 desc 重建图集 / 空 doc 安全 |
-| `tests/probe/editor_scene_probe.tscn` | `EDITOR SCENE PROBE: ALL-OK(25 条断言)` | 25 | 真实例化场景：打开 `maps/newfactory.cyrm` → 改一格 → undo/redo → 保存 → 重开 → 再保存**逐字节相等**；校验形状；画布纹理非空；**P3 导出并加载后 `Settings.sp_map_path`（含 settings.cfg 持久化）/ `MazeGenerator.map_file_path()` 指向该文件、PvP 地图设置不变** |
+| `tests/probe/editor_canvas_probe.tscn` | `EDITOR CANVAS PROBE: ALL-OK(48 条断言)` | 48 | 上述 + **脏区刷新与全量 refresh 逐像素一致（单格/颜色层/跨接缝/小图多环面副本）** + 选区框几何 + meta 标记锚点 + `_draw` 真跑 |
+| `tests/probe/editor_scene_probe.tscn` | `EDITOR SCENE PROBE: ALL-OK(36 条断言)` | 36 | 真实例化场景：打开 `maps/newfactory.cyrm` → 改一格 → undo/redo → 保存 → 重开 → 再保存**逐字节相等**；P3 导出并加载的 `Settings.sp_map_path`/`map_file_path()`；**后置项：选区/复制/粘贴/镜像/渐变/meta/预览开关** |
+| `tests/probe/editor_preview_probe.tscn` | `EDITOR PREVIEW PROBE: ALL-OK(21 条断言)` | 21 | 真渲染预览的结构统计（773 瓦片 / 背景 1 层 / post 存在）/ 相机口径 / 显隐切换 / refresh 幂等 / doc 信号接线 |
 
 - 产品侧另有两条**真导出**才能回答的检查（不在默认批里，跑在 `tools/build_release.py`，见 §10）。
 
@@ -85,15 +87,15 @@
   `core/os/os.cpp` 的 `TOOLS_ENABLED` 分支），会把开发态菜单版式也改掉。开发态 / 服务端 / Web 都看不到按钮。
 - 「导出并加载」= 保存 → `Settings.sp_map_path` → `Settings.save()` → `MazeGenerator.set_map_file()` →
   回 `level_0`（单人流程；PvP 地图仍由大厅/服务端下发的 path 覆盖，不受影响）。
-- **没有真渲染预览**：未接 `PostProcess` / `ParallaxBg`；画布用同一份地形图集 + `SKY_COLOR` 近似，背景四层按颜色层出（不是视差）。
-- 未做：选区/复制粘贴/镜像、渐变工具、出生点与敌人 meta 的可视化编辑、缩略图列表、脏区优化（当前每次 refresh 重建整张视口纹理，超大图连续笔画可能掉帧）。
+- **真渲染预览**（`editor_preview.gd`）：复用游戏管线（`TerrainAtlas` 图集/TileSet + `ParallaxBg` 背景四层 + `PostProcess`），世界/背景/合成三个 SubViewport 串起来把合成图贴回画布区域。**headless（dummy 渲染）只验结构/相机/信号，像素要非 headless 人眼**。
+- 其余边界：画布脏区只重画变化的子格（图集因出现新 desc 需要平移行号时退回全量）；缩略图复用 `MapCatalog` 的低分辨率格级图（不是 16px 实拍）；预览不摆 3×3 环面副本（相机出地图边界会看到空区）。
 - v3 文本 / 旧字母格式打开后另存为写的是 **v4**（`EditorV3` 迁移是单向的，与计划一致）。
 - 画布的图集行数 = 本图去重描述符数；一张图里出现大量 hue/bri 变体会让图集体积线性增长（16×16/行），极端图可能吃显存。
 
 ## 9. 计划 P6 已执行（2026-11-09）
 
 `level_editor/`（浏览器编辑器 146 个跟踪文件）与其四份旧文档（`editor-ui/render/io/server.md`）已删除；
-`.cyrm` 只剩 GDScript 一份实现。仍待补的编辑器功能见 §8「未做」那一行；P6 的档 3 评审
+`.cyrm` 只剩 GDScript 一份实现。编辑器后置项已在 §11 补齐；P6 的档 3 评审
 （地图格式写盘路径 / forced map 影响面 / 两份导出的裁剪面）结论写在当次提交信息与 `docs/eng/editor-core.md`。
 
 ## 10. 两份导出（P5，2026-11-09）
@@ -113,3 +115,19 @@
 - 资源层「服务端 pck 不含编辑器」只有真导出验得了（推理不可靠）：可用 `Godot --headless --export-pack <preset> <out.pck>`
   后二进制 grep `scenes/editor/` / `core/editor/`（P5 落地时实测：客户端各 11/70 条，服务端 0 条）。
 - 构建/冒烟/归档的完整流程见 [`RELEASE.md`](../../RELEASE.md)「两份产物」块；版本号仍唯一来源 `project.godot`。
+
+## 11. 后置项补全（2026-11-09）
+
+| 项 | 实现 | 口径 / 边界 |
+|---|---|---|
+| 选区 | `EditorDoc.selection`（子格 `Rect2i`，越界裁剪不回绕）+ 画布虚线框 | 只在 `_draw` 叠加层，不影响 `view_image()`；根在 `doc.set_selection` 后自己喂 `canvas.set_selection` |
+| 剪贴板 | `copy_selection` / `cut_selection` / `paste_clipboard(at_cell)` / `clear_selection_cells` | 与旧 JS 同语义：类型互斥（纹理↔颜色不互转）、粘贴以**格**为左上角、环面回绕；粘贴/剪切/清除各一条 undo |
+| 镜像 | `mirror_selection("h"|"v")` | **只翻选区**（不是整层）；无变化不产生 undo；非法轴返回 `{ok:false}` |
+| 渐变 | `paint_gradient(a_sub, b_sub, rgba0, rgba1, clip_selection=false)` | 只对颜色层 3-6；t = 子格在 a→b 上的投影/|b−a|²（夹 0..1），逐通道四舍五入；旧 JS `createGradientJob` 同口径 |
+| meta 可视化编辑 | `add_player/remove_player_at/add_respawn(side)/remove_respawn_at/add_enemy/remove_enemy_at/clear_meta/meta_snapshot` | 坐标是**格**；快照式 undo 条目（`kind:"meta"`）、只发 `meta_changed`；画布画 P1/P2、R1/R2、敌人红点+首字母 |
+| 真渲染预览 | `EditorPreview`（`setup/refresh/set_camera/set_active/stats`，无 class_name） | 3 个 SubViewport（世界/背景/合成）+ `TileMapLayer`×3 + `ParallaxBg` + `PostProcess`；相机公式 `Camera2D.zoom = zoom/16`、`position = origin*16 + viewport_size*0.5/(zoom/16)`；隐藏时 `set_active(false)` 停渲染 |
+| 缩略图列表 | 打开弹层每张图 `MapCatalog.texture(path, 2)` + `display_name` | 复用主菜单选图同一套简图/缓存，不另做管线；不覆盖的图（如 user:// 未在 catalog 目录里）仍可打开，只是缩略图为 `MapCatalog` 的兜底图 |
+| 脏区优化 | `EditorCanvas.refresh_region(sub_rect)` + `_on_doc_changed` 按 bbox 局部重画 | 环面副本 k 范围按可见世界动态算；与全量 `refresh()` **逐像素一致**由探针钉住；出现新 desc（图集行号会整体平移）时退回全量 |
+
+- meta 编辑**不进** `changed`（没有 cells 变更），面板/标记靠 `doc.meta_changed` 刷新；保存按钮看 `doc.dirty`。
+- 本次没有新增「浏览器编辑器对照」：预览/脏区/选区框都是 Godot 侧新写，headless 判据只到结构/像素一致性，观感仍需非 headless 人眼。

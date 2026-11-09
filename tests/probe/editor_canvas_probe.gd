@@ -2,7 +2,8 @@ extends Node
 
 # P2 画布场景探针:真实例化 editor_canvas_probe.tscn 里的 EditorCanvas(Control,800×600),
 # 造一张 8×8 格小图(场景层放 3 个不同描述符、背景色层放一块纯红),断言画布离屏视口、
-# 相机、层可见/压暗、鼠标→子格与新描述符刷新。
+# 相机、层可见/压暗、鼠标→子格与新描述符刷新;以及 T2 后置项:脏区刷新必须与全量逐像素一致
+#(含跨接缝的环面副本)、view_image() 副本语义、选区框与 meta 标记几何。
 # 去掉什么它才会红:
 #   ① 不建离屏纹理 / 尺寸 != canvas ⇒ 纹理断言红;
 #   ② screen_to_subcell 不 floor 或漏 origin ⇒ 手算 3 点红;
@@ -10,10 +11,16 @@ extends Node
 #   ④ 不判 layer_visible / active 不恒可见 ⇒ 层可见断言红;
 #   ⑤ 非 active 层不压暗到 0.45 ⇒ 混合像素期望值红;
 #   ⑥ 新 desc 不重建图集 ⇒ descs() 缺新描述符 + 该格仍是底色红;
-#   ⑦ 纹理层没 blit 图集 ⇒ 纹理格像素全是底色红。
-# 判据 = 判词行 + 条数闸;退出码只是陪衬。
+#   ⑦ 纹理层没 blit 图集 ⇒ 纹理格像素全是底色红;
+#   ⑧ 无 doc / 空图 refresh() 崩 ⇒ 条数闸/纹理断言红;
+#   ⑨ 脏区刷新漏环面副本或与全量不一致 ⇒ get_data() 逐字节比较红(⑪/⑪b/⑫);
+#   ⑩ view_image() 不返回副本 ⇒ 改返回值污染画布断言红;
+#   ⑪ 选区屏幕矩形算错/清不掉 ⇒ ⑬ 组红;
+#   ⑫ meta 标记漏类型/标签/锚点错/开关无效 ⇒ ⑭ 组红。
+# 判据 = 判词行 + 条数闸;退出码只是陪衬。像素判据统一走 view_image()(纹理走 update() 上传,
+# view_texture().get_image() 是旧的)。
 
-const EXPECTED_CHECKS := 27
+const EXPECTED_CHECKS := 48
 const CANVAS_W := 800
 const CANVAS_H := 600
 const SUB := 32                     # 8 格 × 4 子格 = 32
@@ -188,6 +195,160 @@ func _ready() -> void:
 			"⑩ 空图(无任何描述符)refresh() 应安全且尺寸不变(实得 %s / descs=%d)"
 			% [str(bare_tex.get_size()) if bare_tex != null else "null", bare.descs().size()])
 
+	# ⑪ 脏区刷新:doc.changed 只刷变更子格的 bbox,结果必须与全量 refresh() 逐像素一致
+	_canvas.set_camera(Vector2.ZERO, float(SUB_PX))
+	_canvas.set_active_layer(1)
+	_doc.active_layer = 1
+	_canvas.refresh()
+	var img_a := _view_image()
+	var paint_desc: int = _canvas.descs()[0]      # 已在图集里的 desc ⇒ 不触发图集重建,走 refresh_region
+	var stats_before := _canvas.refresh_counters()
+	var changed_cells := _doc.set_cells([Vector2i(30, 30)], paint_desc)
+	var img_b := _view_image()
+	var stats_after := _canvas.refresh_counters()
+	_canvas.refresh()
+	var img_c := _view_image()
+	_chk(changed_cells > 0 and img_b != null and img_c != null and img_b.get_data() == img_c.get_data(),
+			"⑪ changed 后的脏区刷新必须与全量 refresh() 逐像素一致(改动数 %d)" % changed_cells)
+	_chk(int(stats_after["region"]) == int(stats_before["region"]) + 1
+			and int(stats_after["full"]) == int(stats_before["full"]),
+			"⑪ doc.changed 必须走 refresh_region 而非退回全量 refresh(region %d→%d / full %d→%d)"
+			% [int(stats_before["region"]), int(stats_after["region"]),
+			int(stats_before["full"]), int(stats_after["full"])])
+	_chk(img_b != null and img_a != null and not _near(img_b.get_pixel(488, 488), img_a.get_pixel(488, 488), 0),
+			"⑪ 变过的子格(30,30)像素必须变化")
+	_chk(img_b != null and img_a != null and _near(img_b.get_pixel(8, 8), img_a.get_pixel(8, 8), 0),
+			"⑪ 未变格子的像素必须保持原样(脏区不能乱刷)")
+	var copy_img := _canvas.view_image()
+	if copy_img != null:
+		copy_img.set_pixel(0, 0, Color8(255, 0, 255, 255))
+	_chk(not _near(_canvas.view_image().get_pixel(0, 0), Color8(255, 0, 255, 255), 0),
+			"⑪ view_image() 必须返回副本(改它不能污染画布内部视口图)")
+
+	# ⑪b 颜色层脏区刷新(走颜色层的脏块重放路径)
+	_canvas.set_active_layer(3)
+	_doc.active_layer = 3
+	_canvas.refresh()
+	var img_ac := _view_image()
+	_doc.set_cells([Vector2i(24, 24)], 0x7F00FFFF)      # 半透明青
+	var img_bc := _view_image()
+	_canvas.refresh()
+	var img_cc := _view_image()
+	_chk(img_bc != null and img_cc != null and img_bc.get_data() == img_cc.get_data(),
+			"⑪b 颜色层 changed 的脏区刷新也必须与全量 refresh() 逐像素一致")
+	_chk(img_bc != null and img_ac != null and not _near(img_bc.get_pixel(392, 392), img_ac.get_pixel(392, 392), 0),
+			"⑪b 颜色层变过的子格(24,24)像素必须变化")
+
+	# ⑫ 跨接缝:改 x=0 一整列 —— 地图 32 子格 = 512px < 画布 800px,右侧还有一份环面副本
+	_doc.active_layer = 1
+	_canvas.set_active_layer(1)
+	_canvas.refresh()
+	var img_a2 := _view_image()
+	var col_cells: Array[Vector2i] = []
+	for cy in range(0, SUB):
+		col_cells.append(Vector2i(0, cy))
+	_doc.set_cells(col_cells, paint_desc)
+	var img_b2 := _view_image()
+	_canvas.refresh()
+	var img_c2 := _view_image()
+	_chk(img_b2 != null and img_c2 != null and img_b2.get_data() == img_c2.get_data(),
+			"⑫ 跨接缝 dirty 的脏区刷新必须与全量 refresh() 逐像素一致")
+	var seam_shift := SUB * SUB_PX                     # 512px:第二份环面副本的 x 偏移
+	_chk(img_b2 != null and img_a2 != null
+			and not _near(img_b2.get_pixel(8, 24), img_a2.get_pixel(8, 24), 0)
+			and not _near(img_b2.get_pixel(8 + seam_shift, 24), img_a2.get_pixel(8 + seam_shift, 24), 0),
+			"⑫ x=0 列在两份环面副本(x=8 与 x=%d,子格 y=1)都必须被重画" % (8 + seam_shift))
+
+	# ⑬ 选区:屏幕矩形几何 + 幂等 + 清空(只画在 _draw 叠加层,不动视口像素)
+	_canvas.set_camera(Vector2.ZERO, float(SUB_PX))
+	_canvas.set_selection(Rect2i(2, 2, 4, 3))
+	_chk(_canvas.selection_screen_rect() == Rect2(Vector2(32, 32), Vector2(64, 48)),
+			"⑬ 选区屏幕矩形期望 pos(32,32) size(64,48)(实得 %s)" % str(_canvas.selection_screen_rect()))
+	_canvas.refresh()
+	var sel_view_a := _view_image()
+	_canvas.set_selection(Rect2i(2, 2, 4, 3))
+	_canvas.refresh()
+	var sel_view_b := _view_image()
+	_chk(sel_view_a != null and sel_view_b != null and sel_view_a.get_data() == sel_view_b.get_data(),
+			"⑬ set_selection 必须幂等:重复设置 + refresh 后视口像素不变")
+	_canvas.set_selection(Rect2i())
+	_chk(_canvas.selection_screen_rect().size == Vector2.ZERO,
+			"⑬ set_selection(Rect2i()) 必须清空选区")
+
+	# ⑭ meta 标记:1 player / 2 respawn(side1,side2) / 1 enemy 的标签与锚点
+	#   T1(EditorDoc meta API)已落地就用 doc API;没落地就直接写 map(画布只读 map,口径同契约 §2)。
+	var meta_api := _doc.has_method("add_player") and _doc.has_method("add_respawn") \
+			and _doc.has_method("add_enemy") and _doc.has_method("clear_meta")
+	if meta_api:
+		_doc.clear_meta("all")
+		_doc.add_player(Vector2i(1, 1))
+		_doc.add_respawn(1, Vector2i(2, 2))
+		_doc.add_respawn(2, Vector2i(3, 2))
+		_doc.add_enemy("slime", Vector2i(4, 4))
+	else:
+		var mp: Dictionary = _doc.map
+		(mp["players"] as Array).clear()
+		(mp["respawns"] as Array).clear()
+		(mp["enemies"] as Array).clear()
+		(mp["players"] as Array).append({"x": 1, "y": 1})
+		(mp["respawns"] as Array).append({"side": 1, "x": 2, "y": 2})
+		(mp["respawns"] as Array).append({"side": 2, "x": 3, "y": 2})
+		(mp["enemies"] as Array).append({"type": "slime", "x": 4, "y": 4})
+	_canvas.refresh()
+	var markers := _canvas.meta_markers()
+	_chk(markers.size() == 4, "⑭ 1 player + 2 respawn + 1 enemy 应有 4 个标记(实得 %d)" % markers.size())
+	var labels := {}
+	for m: Dictionary in markers:
+		labels[String(m["kind"]) + ":" + String(m["label"])] = true
+	_chk(labels.has("player:P1") and labels.has("respawn:R1") and labels.has("respawn:R2")
+			and labels.has("enemy:S"), "⑭ 标记标签期望 P1/R1/R2/S(实得 %s)" % str(labels.keys()))
+	var player_pos := Vector2.ZERO
+	for m: Dictionary in markers:
+		if String(m["kind"]) == "player":
+			player_pos = m["pos"]
+	_chk(player_pos == Vector2(96, 96), "⑭ 出生点标记锚点 = 格 (1,1) 中心 → 屏幕 (96,96)(实得 %s)" % str(player_pos))
+	var meta_tex := _canvas.view_texture()
+	_chk(meta_tex != null and meta_tex.get_size() == Vector2(CANVAS_W, CANVAS_H),
+			"⑭ 加 meta 后视口纹理尺寸不变(实得 %s)" % [str(meta_tex.get_size()) if meta_tex != null else "null"])
+	_canvas.set_meta_visible(false)
+	_chk(_canvas.meta_markers().is_empty(), "⑭ set_meta_visible(false) 后标记列表应为空")
+	_canvas.set_meta_visible(true)
+	_chk(_canvas.meta_markers().size() == 4, "⑭ set_meta_visible(true) 后标记恢复")
+
+	# ⑮ 叠加层 _draw(网格+选区虚线框+meta 标记)必须在 headless 下真跑通且可重跑
+	_canvas.set_selection(Rect2i(1, 1, 3, 3))
+	_canvas.queue_redraw()
+	await get_tree().process_frame
+	var draws_1 := _canvas.get_draw_calls()
+	_canvas.set_selection(Rect2i(0, 0, 2, 4))
+	_canvas.queue_redraw()
+	await get_tree().process_frame
+	_chk(draws_1 >= 1 and _canvas.get_draw_calls() > draws_1,
+			"⑮ 选区+meta 叠加层 _draw 必须真跑且可重跑(draw calls %d→%d)"
+			% [draws_1, _canvas.get_draw_calls()])
+
+	# ⑯ 小图(1 格 = 64px)在 256px 画布上会平铺出多份环面副本:脏区必须逐份重画
+	#   用颜色层(整格不透明)做变更,保证每份副本的像素都真的变了(纹理象限可能自带透明)。
+	bare.size = Vector2(256, 192)
+	var ring_doc := EditorDoc.new()
+	ring_doc.new_map("ring", 1, 1)
+	ring_doc.active_layer = 3
+	bare.set_doc(ring_doc)
+	bare.set_camera(Vector2.ZERO, float(SUB_PX))
+	bare.set_active_layer(3)
+	bare.refresh()
+	var ring_a := bare.view_image()
+	var ring_changed := ring_doc.set_cells([Vector2i(1, 1)], 0xFF00FFAA)   # 不透明品红
+	var ring_b := bare.view_image()
+	bare.refresh()
+	var ring_c := bare.view_image()
+	_chk(ring_changed > 0 and ring_b != null and ring_c != null and ring_b.get_data() == ring_c.get_data(),
+			"⑯ 小图脏区在屏幕上平铺多份环面副本时,脏区刷新必须与全量 refresh() 逐像素一致")
+	# 子格 (1,1) 中心 = 屏幕 (24,24);kx=ky=2 的副本在 (24+2*64, 24+2*64) = (152,152)
+	_chk(ring_b != null and ring_a != null
+			and not _near(ring_b.get_pixel(152, 152), ring_a.get_pixel(152, 152), 0),
+			"⑯ kx=ky=2 的环面副本(屏幕 152,152)也必须被重画")
+
 	_finish()
 
 
@@ -196,10 +357,7 @@ func _on_pointer_down(sub: Vector2i, _button: int, _shift: bool, _ctrl: bool) ->
 
 
 func _view_image() -> Image:
-	var tex := _canvas.view_texture()
-	if tex == null:
-		return null
-	return tex.get_image()
+	return _canvas.view_image()
 
 
 func _near(c: Color, want: Color, tol: int) -> bool:

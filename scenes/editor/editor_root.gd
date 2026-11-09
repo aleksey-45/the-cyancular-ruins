@@ -7,6 +7,7 @@ extends Control
 # ★ 坐标:画布内部世界坐标 = 子格(16px);格 = 子格/4;环面归一化由 EditorDoc 兜底。
 
 const CANVAS_SCRIPT := preload("res://scenes/editor/editor_canvas.gd")
+const PREVIEW_SCRIPT := preload("res://scenes/editor/editor_preview.gd")
 const TILE_DEFS_PATH := "res://data/tile_defs.json"
 
 const TOOL_BRUSH := "brush"
@@ -15,10 +16,24 @@ const TOOL_LINE := "line"
 const TOOL_RECT := "rect"
 const TOOL_BUCKET := "bucket"
 const TOOL_EYEDROP := "eyedrop"
+const TOOL_SELECT := "select"
+const TOOL_GRADIENT := "gradient"
 
 const TOOL_LABELS := {
 	TOOL_BRUSH: "画笔", TOOL_ERASER: "橡皮", TOOL_LINE: "直线",
 	TOOL_RECT: "矩形", TOOL_BUCKET: "油漆桶", TOOL_EYEDROP: "吸管",
+	TOOL_SELECT: "选框", TOOL_GRADIENT: "渐变",
+}
+
+# meta 放置模式(点画布 = 在当前格放一个;不改地形)。
+const META_NONE := "none"
+const META_PLAYER := "player"
+const META_RESPAWN1 := "respawn1"
+const META_RESPAWN2 := "respawn2"
+const META_ENEMY := "enemy"
+const META_LABELS := {
+	META_NONE: "编辑地形", META_PLAYER: "放出生点",
+	META_RESPAWN1: "放复活点侧1", META_RESPAWN2: "放复活点侧2", META_ENEMY: "放敌人",
 }
 
 const PANEL_W := 400.0
@@ -49,22 +64,51 @@ var _canvas_host: Control = null
 var _popup: PanelContainer = null
 var _popup_body: VBoxContainer = null
 
+# 后置项:选区 / 剪贴板按钮 / meta 放置 / 颜色 / 真渲染预览
+var _meta_mode := META_NONE
+var _meta_buttons: Dictionary = {}
+var _meta_info: Label = null
+var _selection_info: Label = null
+var _color_btn: ColorPickerButton = null
+var _gradient_end := Color(1.0, 1.0, 1.0, 0.0)
+var _gradient_end_btn: ColorPickerButton = null
+var _selecting := false
+var _select_start := Vector2i.ZERO
+var _preview: Control = null
+var _preview_on := false
+var _preview_btn: Button = null
+var _preview_last_origin := Vector2.INF
+var _preview_last_zoom := -1.0
+
 
 func _ready() -> void:
 	doc = EditorDoc.new()
 	_register_editor_actions()
 	_build_ui()
 	canvas.set_doc(doc)
+	_build_preview()
 	doc.changed.connect(_on_doc_changed)
 	doc.structure_changed.connect(_on_doc_structure_changed)
+	doc.meta_changed.connect(_on_doc_meta_changed)
 	canvas.pointer_down.connect(_on_pointer_down)
 	canvas.pointer_drag.connect(_on_pointer_drag)
 	canvas.pointer_up.connect(_on_pointer_up)
 	canvas.cursor_moved.connect(_on_cursor_moved)
 	canvas.zoom_changed.connect(_on_zoom_changed)
 	_select_tool(TOOL_BRUSH)
-	_set_message("新图默认 125×75 格;Ctrl+O 打开、Ctrl+S 保存", false)
+	_set_message("新图默认 125×75 格;Ctrl+O 打开、Ctrl+S 保存、H/V 镜像选区", false)
 	_update_status(Vector2i.ZERO, false)
+
+
+func _process(_dt: float) -> void:
+	if not _preview_on or _preview == null or canvas == null:
+		return
+	var origin := canvas.origin
+	var zoom := canvas.zoom
+	if origin != _preview_last_origin or zoom != _preview_last_zoom:
+		_preview_last_origin = origin
+		_preview_last_zoom = zoom
+		_preview.set_camera(origin, zoom)
 
 
 # ── 公开 API(场景探针用;也是按钮的落点)──────────────────────────────
@@ -210,6 +254,8 @@ func _build_top_bar() -> Control:
 	bar.add_child(_action_button("校验", _on_validate_pressed))
 	bar.add_child(_action_button("导出", _on_export_pressed))
 	bar.add_child(_action_button("导出并加载", _on_export_load_pressed))
+	_preview_btn = _action_button("预览:关", _on_preview_toggled)
+	bar.add_child(_preview_btn)
 	bar.add_child(_action_button("返回", _on_back_pressed))
 
 	_path_label = UiFactory.label("未命名", 16, UiFactory.C_TEXT_DIM)
@@ -289,6 +335,60 @@ func _build_right_panel() -> Control:
 	spin.value_changed.connect(_on_brush_size_changed)
 	size_row.add_child(spin)
 	vb.add_child(size_row)
+
+	# ── 颜色(只有背景颜色层 3-6 用得到;纹理层落笔仍用调色板)──
+	vb.add_child(_section_label("颜色(背景层 3-6:画笔 / 渐变终点)"))
+	var color_row := HBoxContainer.new()
+	color_row.add_theme_constant_override("separation", 8)
+	color_row.add_child(UiFactory.label("画笔", 16, UiFactory.C_TEXT_DIM))
+	_color_btn = ColorPickerButton.new()
+	_color_btn.color = _color_value
+	_color_btn.custom_minimum_size = Vector2(64, 32)
+	_color_btn.color_changed.connect(func(c: Color) -> void: _color_value = c)
+	color_row.add_child(_color_btn)
+	color_row.add_child(UiFactory.label("渐变终点", 16, UiFactory.C_TEXT_DIM))
+	_gradient_end_btn = ColorPickerButton.new()
+	_gradient_end_btn.color = _gradient_end
+	_gradient_end_btn.custom_minimum_size = Vector2(64, 32)
+	_gradient_end_btn.color_changed.connect(func(c: Color) -> void: _gradient_end = c)
+	color_row.add_child(_gradient_end_btn)
+	vb.add_child(color_row)
+
+	# ── 选区与剪贴板 ──
+	vb.add_child(_section_label("选区(选框工具拖矩形;Ctrl+C/X/V、Del、H/V)"))
+	_selection_info = UiFactory.label("无选区", 16, UiFactory.C_TEXT_DIM)
+	vb.add_child(_selection_info)
+	var sel_grid := GridContainer.new()
+	sel_grid.columns = 3
+	sel_grid.add_theme_constant_override("h_separation", 4)
+	sel_grid.add_theme_constant_override("v_separation", 4)
+	var sel_actions := [
+		["复制", _on_copy_pressed], ["剪切", _on_cut_pressed], ["粘贴", _on_paste_pressed],
+		["清除", _on_clear_sel_pressed], ["水平镜像", _on_mirror_h_pressed], ["垂直镜像", _on_mirror_v_pressed],
+	]
+	for pair in sel_actions:
+		var b := UiFactory.menu_button(String(pair[0]), 16, Vector2(112, 36), "quiet")
+		b.pressed.connect(pair[1])
+		sel_grid.add_child(b)
+	vb.add_child(sel_grid)
+
+	# ── meta 可视化编辑(出生点/复活点/敌人)──
+	vb.add_child(_section_label("出生点 / 复活点 / 敌人(点模式再点画布)"))
+	var meta_grid := GridContainer.new()
+	meta_grid.columns = 3
+	meta_grid.add_theme_constant_override("h_separation", 4)
+	meta_grid.add_theme_constant_override("v_separation", 4)
+	for key in META_LABELS:
+		var b := UiFactory.menu_button(String(META_LABELS[key]), 16, Vector2(112, 36), "quiet")
+		b.pressed.connect(_set_meta_mode.bind(key))
+		meta_grid.add_child(b)
+		_meta_buttons[key] = b
+	vb.add_child(meta_grid)
+	_meta_info = UiFactory.label("", 16, UiFactory.C_TEXT_DIM)
+	vb.add_child(_meta_info)
+	var clear_meta_btn := UiFactory.menu_button("清空全部 meta", 16, Vector2(240, 36), "quiet")
+	clear_meta_btn.pressed.connect(_on_clear_meta_pressed)
+	vb.add_child(clear_meta_btn)
 
 	vb.add_child(_section_label("调色板(点选 = 当前画笔纹理)"))
 	var pal := GridContainer.new()
@@ -373,6 +473,10 @@ func _select_tool(key: String) -> void:
 		var b: Button = _tool_buttons[k]
 		b.modulate = UiFactory.C_WHITE if k == key else Color(1, 1, 1, 0.6)
 	canvas.set_preview_desc(0 if key == TOOL_ERASER else _paint_desc)
+	if key == TOOL_SELECT:
+		_set_message("选框:在画布上拖出矩形", false)
+	elif key == TOOL_GRADIENT:
+		_set_message("渐变:在颜色层(3-6)从起点拖到终点(两端颜色见右栏「颜色」)", false)
 
 
 func _on_brush_size_changed(v: float) -> void:
@@ -401,10 +505,21 @@ func _sync_layer_rows() -> void:
 func _on_pointer_down(sub: Vector2i, button: int, _shift: bool, _ctrl: bool) -> void:
 	if button != MOUSE_BUTTON_LEFT:
 		return
+	if _meta_mode != META_NONE:
+		_place_meta_at(sub)
+		return
 	_painting = true
 	_stroke_begin = sub
 	_has_last = false
 	match _tool:
+		TOOL_SELECT:
+			_selecting = true
+			_select_start = _cell_of(sub)
+			doc.set_selection(_sub_rect_cells(_select_start, _select_start))
+			canvas.set_selection(doc.selection)
+			_update_selection_info()
+		TOOL_GRADIENT:
+			pass                              # 渐变在 pointer_up 时按起点/终点落笔
 		TOOL_BRUSH, TOOL_ERASER:
 			doc.begin_stroke()
 			_stamp(sub)
@@ -427,6 +542,12 @@ func _on_pointer_down(sub: Vector2i, button: int, _shift: bool, _ctrl: bool) -> 
 func _on_pointer_drag(sub: Vector2i) -> void:
 	if not _painting:
 		return
+	if _tool == TOOL_SELECT:
+		doc.set_selection(_sub_rect_cells(_select_start, _cell_of(sub)))
+		canvas.set_selection(doc.selection)
+		canvas.queue_redraw()
+		_update_selection_info()
+		return
 	if _tool == TOOL_BRUSH or _tool == TOOL_ERASER:
 		if _has_last:
 			var from := _last_cell
@@ -444,6 +565,18 @@ func _on_pointer_up(sub: Vector2i) -> void:
 	if not _painting:
 		return
 	match _tool:
+		TOOL_SELECT:
+			_selecting = false
+			doc.set_selection(_sub_rect_cells(_select_start, _cell_of(sub)))
+			canvas.set_selection(doc.selection)
+			_update_selection_info()
+		TOOL_GRADIENT:
+			var res := doc.paint_gradient(_stroke_begin, sub,
+					_color_u32(_color_value), _color_u32(_gradient_end))
+			if bool(res.get("ok", false)):
+				_set_message("渐变已应用(%d 个子格)" % int(res.get("count", 0)), false)
+			else:
+				_set_message("渐变失败:%s" % String(res.get("error", "")), true)
 		TOOL_LINE:
 			for c in EditorGeometry.line_cells(
 					_cell_of(_stroke_begin).x, _cell_of(_stroke_begin).y,
@@ -459,6 +592,13 @@ func _on_pointer_up(sub: Vector2i) -> void:
 	doc.end_stroke()
 	_painting = false
 	_has_last = false
+
+
+# 格矩形(含两端)→ 子格矩形(选区单位是子格)。
+func _sub_rect_cells(a: Vector2i, b: Vector2i) -> Rect2i:
+	var r := EditorGeometry.norm_region(a.x, a.y, b.x, b.y)
+	var s := EditorConstants.SUB_PER_CELL
+	return Rect2i(int(r["x"]) * s, int(r["y"]) * s, int(r["w"]) * s, int(r["h"]) * s)
 
 
 func _stamp(sub: Vector2i) -> void:
@@ -520,6 +660,169 @@ func _on_zoom_changed(_zoom: float) -> void:
 	_update_status(Vector2i.ZERO, false)
 
 
+func _on_doc_meta_changed() -> void:
+	# meta 改动不发 changed(没有 cells 变更):标记画在 _draw 里,重画即可。
+	canvas.queue_redraw()
+	_sync_meta_info()
+	_update_status(Vector2i.ZERO, false)
+
+
+# ── 后置项:选区 / 剪贴板 / meta / 预览 ───────────────────────────────
+
+func get_preview() -> Control:
+	return _preview
+
+
+func is_preview_on() -> bool:
+	return _preview_on
+
+
+func set_preview(on: bool) -> void:
+	if _preview == null:
+		return
+	_preview_on = on
+	_preview.visible = on
+	_preview.set_active(on)
+	if _preview_btn != null:
+		_preview_btn.text = "预览:开" if on else "预览:关"
+	if on:
+		_preview_last_origin = canvas.origin
+		_preview_last_zoom = canvas.zoom
+		_preview.set_camera(canvas.origin, canvas.zoom)
+	_set_message("预览:%s" % ("开(复用游戏渲染管线)" if on else "关(快速画布)"), false)
+
+
+func _on_preview_toggled() -> void:
+	set_preview(not _preview_on)
+
+
+func _build_preview() -> void:
+	if _preview != null:
+		return
+	_preview = PREVIEW_SCRIPT.new()
+	_preview.name = "Preview"
+	_preview.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_preview.mouse_filter = Control.MOUSE_FILTER_IGNORE     # 让画布继续收鼠标(预览是只读层)
+	_canvas_host.add_child(_preview)
+	_preview.setup(doc)
+	_preview.set_active(false)
+	_preview.visible = false
+
+
+func _set_meta_mode(key: String) -> void:
+	_meta_mode = key
+	for k in _meta_buttons:
+		var b: Button = _meta_buttons[k]
+		b.modulate = UiFactory.C_WHITE if k == key else Color(1, 1, 1, 0.6)
+	if key != META_NONE:
+		_set_message("放置模式:%s(点画布放置;再点一次「编辑地形」退出)" % String(META_LABELS.get(key, key)), false)
+
+
+func _place_meta_at(sub: Vector2i) -> void:
+	var cell := _cell_of(sub)
+	var placed := -1
+	match _meta_mode:
+		META_PLAYER:
+			placed = doc.add_player(cell)
+		META_RESPAWN1:
+			placed = doc.add_respawn(1, cell)
+		META_RESPAWN2:
+			placed = doc.add_respawn(2, cell)
+		META_ENEMY:
+			placed = doc.add_enemy("slime", cell)
+	if placed >= 0:
+		_set_message("已放置%s @ (%d,%d)" % [String(META_LABELS.get(_meta_mode, _meta_mode)), cell.x, cell.y], false)
+	else:
+		_set_message("放置失败:%s" % String(META_LABELS.get(_meta_mode, _meta_mode)), true)
+
+
+func _sync_meta_info() -> void:
+	if _meta_info == null or doc == null or doc.map.is_empty():
+		return
+	var players: Array = doc.map.get("players", [])
+	var respawns: Array = doc.map.get("respawns", [])
+	var enemies: Array = doc.map.get("enemies", [])
+	var side1 := 0
+	var side2 := 0
+	for r in respawns:
+		if int((r as Dictionary).get("side", 0)) == 1:
+			side1 += 1
+		else:
+			side2 += 1
+	_meta_info.text = "出生点 %d · 复活点 侧1 %d / 侧2 %d · 敌人 %d" % [
+		players.size(), side1, side2, enemies.size()]
+
+
+func _on_clear_meta_pressed() -> void:
+	var n := doc.clear_meta("all")
+	_set_message("已清空 meta(%d 条)" % n, false)
+	_sync_meta_info()
+
+
+func _update_selection_info() -> void:
+	if _selection_info == null:
+		return
+	if doc == null or not doc.has_selection():
+		_selection_info.text = "无选区"
+		return
+	var r := doc.selection
+	_selection_info.text = "%d×%d 子格 @ (%d,%d)" % [r.size.x, r.size.y, r.position.x, r.position.y]
+
+
+func _on_copy_pressed() -> void:
+	var res := doc.copy_selection()
+	if bool(res.get("ok", false)):
+		_set_message("已复制 %d 个子格" % int(res.get("count", 0)), false)
+	else:
+		_set_message("复制失败:%s" % String(res.get("error", "")), true)
+
+
+func _on_cut_pressed() -> void:
+	var res := doc.cut_selection()
+	if bool(res.get("ok", false)):
+		_set_message("已剪切到剪贴板", false)
+	else:
+		_set_message("剪切失败:%s" % String(res.get("error", "")), true)
+
+
+func _on_paste_pressed() -> void:
+	if doc.clipboard.is_empty():
+		_set_message("剪贴板是空的(先复制或剪切一块)", true)
+		return
+	var at := Vector2i.ZERO
+	if doc.has_selection():
+		at = doc.selection.position / EditorConstants.SUB_PER_CELL
+	var res := doc.paste_clipboard(at)
+	if bool(res.get("ok", false)):
+		_set_message("已粘贴到格 %s" % str(at), false)
+	else:
+		_set_message("粘贴失败:%s" % String(res.get("error", "")), true)
+
+
+func _on_clear_sel_pressed() -> void:
+	var n := doc.clear_selection_cells()
+	_set_message("已清除选区(%d 个子格)" % n, false)
+
+
+func _mirror(axis: String) -> void:
+	if not doc.has_selection():
+		_set_message("先框选一块,再镜像", false)
+		return
+	var res := doc.mirror_selection(axis)
+	if bool(res.get("ok", false)):
+		_set_message("镜像 %s:改动 %d 个子格" % ["水平" if axis == "h" else "垂直", int(res.get("count", 0))], false)
+	else:
+		_set_message("镜像失败:%s" % String(res.get("error", "")), true)
+
+
+func _on_mirror_h_pressed() -> void:
+	_mirror("h")
+
+
+func _on_mirror_v_pressed() -> void:
+	_mirror("v")
+
+
 # ── 动作 ───────────────────────────────────────────────────────────────
 
 func _on_new_pressed() -> void:
@@ -547,12 +850,38 @@ func _on_open_pressed() -> void:
 		var list := VBoxContainer.new()
 		scroll.add_child(list)
 		for path in maps:
-			var b := UiFactory.menu_button(path, 16, Vector2(420, 36), "quiet")
-			b.alignment = HORIZONTAL_ALIGNMENT_LEFT
-			b.pressed.connect(func() -> void:
-				open_path(path)
-				_close_popup())
-			list.add_child(b))
+			# 缩略图复用 MapCatalog(与主菜单选图同一套简略图/缓存,不另做第二套缩略图管线)。
+			var card := PanelContainer.new()
+			var sb := StyleBoxFlat.new()
+			sb.bg_color = UiFactory.C_ROW
+			sb.border_color = UiFactory.C_BORDER_DIM
+			sb.set_border_width_all(1)
+			sb.set_content_margin_all(6)
+			card.add_theme_stylebox_override("panel", sb)
+			card.custom_minimum_size = Vector2(420, 0)
+			card.mouse_filter = Control.MOUSE_FILTER_STOP
+			card.gui_input.connect(func(ev: InputEvent) -> void:
+				if ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed \
+						and (ev as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+					open_path(path)
+					_close_popup())
+			var row := HBoxContainer.new()
+			row.add_theme_constant_override("separation", 8)
+			card.add_child(row)
+			var thumb := TextureRect.new()
+			thumb.texture = MapCatalog.texture(path, 2)
+			thumb.custom_minimum_size = Vector2(120, 72)
+			thumb.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			thumb.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			thumb.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+			row.add_child(thumb)
+			var info := VBoxContainer.new()
+			info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			info.add_theme_constant_override("separation", 2)
+			row.add_child(info)
+			info.add_child(UiFactory.label(MapCatalog.display_name(path), 16, UiFactory.C_TEXT))
+			info.add_child(UiFactory.label(path, 16, UiFactory.C_TEXT_DIM))
+			list.add_child(card))
 
 
 func _on_save_pressed() -> void:
@@ -760,6 +1089,12 @@ func _register_editor_actions() -> void:
 	_action("editor_open", [KEY_O], true)
 	_action("editor_zoom_in", [KEY_EQUAL, KEY_KP_ADD], true)
 	_action("editor_zoom_out", [KEY_MINUS, KEY_KP_SUBTRACT], true)
+	_action("editor_copy", [KEY_C], true)
+	_action("editor_cut", [KEY_X], true)
+	_action("editor_paste", [KEY_V], true)
+	_action("editor_delete", [KEY_DELETE], false)
+	_action("editor_mirror_h", [KEY_H], false)
+	_action("editor_mirror_v", [KEY_V], false)
 
 
 func _action(name: String, keys: Array, ctrl: bool) -> void:
@@ -788,3 +1123,15 @@ func _unhandled_input(event: InputEvent) -> void:
 		canvas.zoom_in()
 	elif event.is_action_pressed("editor_zoom_out"):
 		canvas.zoom_out()
+	elif event.is_action_pressed("editor_copy"):
+		_on_copy_pressed()
+	elif event.is_action_pressed("editor_cut"):
+		_on_cut_pressed()
+	elif event.is_action_pressed("editor_paste"):
+		_on_paste_pressed()
+	elif event.is_action_pressed("editor_delete"):
+		_on_clear_sel_pressed()
+	elif event.is_action_pressed("editor_mirror_h"):
+		_mirror("h")
+	elif event.is_action_pressed("editor_mirror_v"):
+		_mirror("v")

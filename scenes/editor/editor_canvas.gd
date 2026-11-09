@@ -12,6 +12,13 @@ extends Control
 # 相机:origin = 画布左上角对应的世界子格坐标(可负/小数;渲染按 posmod 取环面样本),
 #   zoom = 每子格屏幕像素(默认 16,档位 ZOOM_STEPS)。滚轮以鼠标为锚缩放,中键/空格拖动平移。
 #
+# 脏区刷新(T2 后置项):doc.changed 只把变更子格的包围盒交给 refresh_region —— 它把 bbox
+#   按 ±sub_cols/±sub_rows 平移到各环面副本、与画布求交,只重画这些屏幕块(块内仍按全量
+#   的层序/坐标公式重放),结果与整张 refresh() 逐像素一致(场景探针逐字节比较)。bbox 面积
+#   超过半图或图集因新 desc 重建(图集行号全变)时退回全量 refresh()。
+# 叠加层(不进视口图):选区虚线框 + meta 标记(出生点 P1/P2…、复活点 R1 深绿 / R2 深橙、
+#   敌人红点+类型首字母);标记按屏幕像素大小画,不随 zoom 变大。
+#
 # 去掉什么它才会红(tests/probe/editor_canvas_probe.gd 逐条守):
 #   ① 不建离屏纹理 / 尺寸错 ⇒ view_texture 断言红;
 #   ② screen_to_subcell 不用 floor 或漏 origin ⇒ 手算 3 点红;
@@ -21,7 +28,9 @@ extends Control
 #   ⑥ 纹理层不 blit 图集 ⇒ 纹理格全是底色红;
 #   ⑦ 左键没翻译成子格事件 ⇒ pointer_down 断言红;
 #   ⑧ 新 desc 不重建图集 / blit 回落中性行 ⇒ descs() 缺项或变体像素同色红;
-#   ⑨ 无 doc / 空图 refresh() 崩或产不出纹理 ⇒ 条数闸 + 纹理断言红。
+#   ⑨ 无 doc / 空图 refresh() 崩或产不出纹理 ⇒ 条数闸 + 纹理断言红;
+#   ⑩ 脏区刷新漏环面副本 / 与全量不一致 ⇒ 逐字节比较红(跨接缝组);
+#   ⑪ 选区/meta 标记几何错或 view_image 不返回副本 ⇒ 对应断言红。
 # class_name 行已由 Lead 预注册:别改(全局类缓存按名字解析)。
 
 const ZOOM_STEPS := [4.0, 8.0, 12.0, 16.0, 24.0, 32.0, 48.0, 64.0]
@@ -35,6 +44,17 @@ const GRID_COLOR := Color(1.0, 1.0, 1.0, 0.07)
 const SEAM_COLOR := Color(0.35, 0.95, 1.0, 0.35)   # 环面接缝(地图 0 边)高亮
 const ERASER_COLOR := Color(1.0, 0.35, 0.35, 1.0)
 const BRUSH_MAX_CELLS := 32
+
+# 叠加层(选区 / meta 标记)一律屏幕像素尺寸,不随 zoom 变。
+const SELECTION_LINE_COLOR := Color(0.85, 0.98, 1.0, 0.95)
+const SELECTION_FILL_COLOR := Color(0.30, 0.90, 1.0, 0.12)
+const META_PLAYER_COLOR := Color(0.20, 0.90, 1.0, 1.0)      # 出生点 = 青方块
+const META_RESPAWN1_COLOR := Color(0.06, 0.35, 0.08, 1.0)   # 复活点侧 1 = 深绿
+const META_RESPAWN2_COLOR := Color(0.55, 0.30, 0.02, 1.0)   # 复活点侧 2 = 深橙
+const META_ENEMY_COLOR := Color(1.0, 0.25, 0.25, 1.0)       # 敌人 = 红点
+const META_FONT_SIZE := 10
+const META_ENEMY_RADIUS := 6.0
+const META_SQUARE := 10.0
 
 signal pointer_down(sub: Vector2i, button: int, shift: bool, ctrl: bool)
 signal pointer_drag(sub: Vector2i)
@@ -65,6 +85,13 @@ var _panning := false
 var _space_held := false
 
 var _view_tex: ImageTexture = null
+var _view_img: Image = null                     # 视口图唯一真源(view_image() 拷贝它,脏区就地改它)
+var _full_refreshes := 0                        # 刷新计数器:场景探针守「changed 必须走脏区」
+var _region_refreshes := 0
+var _draw_calls := 0                            # _draw 完成次数(探针守叠加层真跑通且幂等)
+
+var _selection := Rect2i()                      # 子格矩形;size<=0 = 无选区(只画在 _draw 叠加层)
+var _meta_visible := true                       # meta 标记开关(默认显示)
 
 var _atlas_img: Image = null
 var _atlas_row_of := {}
@@ -92,7 +119,10 @@ func set_doc(doc: EditorDoc) -> void:
 			_doc.changed.disconnect(_on_doc_changed)
 		if _doc.structure_changed.is_connected(_on_doc_structure_changed):
 			_doc.structure_changed.disconnect(_on_doc_structure_changed)
+		if _doc.has_signal("meta_changed") and _doc.is_connected("meta_changed", _on_doc_meta_changed):
+			_doc.disconnect("meta_changed", _on_doc_meta_changed)
 	_doc = doc
+	_selection = Rect2i()
 	_atlas_img = null
 	_atlas_row_of = {}
 	_atlas_descs.clear()
@@ -102,6 +132,9 @@ func set_doc(doc: EditorDoc) -> void:
 	if _doc != null:
 		_doc.changed.connect(_on_doc_changed)
 		_doc.structure_changed.connect(_on_doc_structure_changed)
+		# meta_changed 由 T1(EditorDoc 后置项)提供;老版本 doc 没有该信号时降级为「刷新画布即重绘」。
+		if _doc.has_signal("meta_changed"):
+			_doc.connect("meta_changed", _on_doc_meta_changed)
 		_active_layer = clampi(int(_doc.active_layer), 0, EditorConstants.LAYER_COUNT - 1)
 		_ensure_atlas(true)
 	refresh()
@@ -155,6 +188,86 @@ func set_brush_preview(size_cells: int) -> void:
 func set_preview_desc(desc: int) -> void:
 	_preview_desc = desc
 	queue_redraw()
+
+
+# ── 选区 / meta 标记 / 视口图读取(叠加层,都不进视口图)────────────────
+
+## 设置选区(子格矩形;w/h<=0 或空 Rect2i() = 清空)。只影响 _draw 叠加层。
+func set_selection(sub_rect: Rect2i) -> void:
+	_selection = _norm_rect(sub_rect)
+	queue_redraw()
+
+
+func get_selection() -> Rect2i:
+	return _selection
+
+
+## 选区在屏幕上的矩形(px);无选区返回 size 为 0 的 Rect2。
+func selection_screen_rect() -> Rect2:
+	if _selection.size.x <= 0 or _selection.size.y <= 0:
+		return Rect2()
+	return Rect2(subcell_to_screen(_selection.position), Vector2(_selection.size) * _zoom)
+
+
+## 显示/隐藏 meta 标记(默认显示)。
+func set_meta_visible(on: bool) -> void:
+	_meta_visible = on
+	queue_redraw()
+
+
+func get_meta_visible() -> bool:
+	return _meta_visible
+
+
+## 当前视口图的一份拷贝(像素判据/截图用;改它不影响画布内部状态)。
+## ★ 用这个而不是 view_texture().get_image():纹理走 update() 上传后 CPU 侧 image_storage 是旧的。
+func view_image() -> Image:
+	if _view_img == null:
+		return null
+	return _view_img.duplicate()
+
+
+## meta 标记列表(屏幕 px,固定像素大小)。空数组 = 没有 meta 或标记被隐藏。
+## 元素:{kind:"player"|"respawn"|"enemy", label:String, pos:Vector2, side:int}
+func meta_markers() -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	if not _meta_visible or _doc == null:
+		return out
+	var map: Dictionary = _doc.map
+	if map.is_empty():
+		return out
+	var players: Array = map.get("players", [])
+	for i in players.size():
+		var p: Variant = players[i]
+		if not (p is Dictionary):
+			continue
+		var pd: Dictionary = p
+		out.append({"kind": "player", "label": "P%d" % (i + 1), "side": 0,
+				"pos": _cell_center_screen(Vector2i(int(pd.get("x", 0)), int(pd.get("y", 0))))})
+	var respawns: Array = map.get("respawns", [])
+	for r: Variant in respawns:
+		if not (r is Dictionary):
+			continue
+		var rd: Dictionary = r
+		var side := int(rd.get("side", 0))
+		out.append({"kind": "respawn", "label": "R%d" % side, "side": side,
+				"pos": _cell_center_screen(Vector2i(int(rd.get("x", 0)), int(rd.get("y", 0))))})
+	var enemies: Array = map.get("enemies", [])
+	for e: Variant in enemies:
+		if not (e is Dictionary):
+			continue
+		var ed: Dictionary = e
+		var t := String(ed.get("type", ""))
+		out.append({"kind": "enemy", "label": t.substr(0, 1).to_upper() if t != "" else "?", "side": 0,
+				"pos": _cell_center_screen(Vector2i(int(ed.get("x", 0)), int(ed.get("y", 0))))})
+	return out
+
+
+## 格坐标 → 格中心在屏幕上的像素位置(标记锚点)。
+func _cell_center_screen(cell: Vector2i) -> Vector2:
+	return Vector2(
+			(float(cell.x) * SUB_PER_CELL + SUB_PER_CELL * 0.5 - _origin.x) * _zoom,
+			(float(cell.y) * SUB_PER_CELL + SUB_PER_CELL * 0.5 - _origin.y) * _zoom)
 
 
 # ── 相机 ──────────────────────────────────────────────────────────────
@@ -234,44 +347,131 @@ func fit_to_map() -> void:
 	zoom_changed.emit(_zoom)
 
 
-# ── 刷新:重建离屏视口层 ─────────────────────────────────────────────
+# ── 刷新:全量 / 脏区 ─────────────────────────────────────────────────
 
 func refresh() -> void:
-	_rebuild_view()
-	queue_redraw()
+	_full_refreshes += 1
+	_render_full()
+	_publish_view()
 
 
-func _rebuild_view() -> void:
+## 刷新计数器(场景探针守「doc.changed 必须走脏区刷新」;正常 UI 不使用)。
+func refresh_counters() -> Dictionary:
+	return {"full": _full_refreshes, "region": _region_refreshes}
+
+
+## _draw 完成次数(场景探针守叠加层绘制路径真跑通;正常 UI 不使用)。
+func get_draw_calls() -> int:
+	return _draw_calls
+
+
+## 只重画该子格矩形在**可见屏幕**上的部分(含环面副本)。结果必须与整张 refresh() 逐像素一致:
+## 块内仍按「填底色 → 层号倒序重放」的同一套公式,只是限制在脏块上。
+func refresh_region(sub_rect: Rect2i) -> void:
+	var sub := _sub_size()
+	if _doc == null or _view_img == null or sub.x <= 0 or sub.y <= 0:
+		refresh()
+		return
+	var r := _norm_rect(sub_rect)
+	if r.size.x <= 0 or r.size.y <= 0:
+		return
+	var regions := _region_screen_rects(r, sub)
+	if regions.is_empty():
+		return
+	if _atlas_img == null:
+		_ensure_atlas(true)
+	_ensure_scaled_atlas()
+	_color_stamps.clear()
+	_region_refreshes += 1
+	for reg in regions:
+		_redraw_screen_region(reg, sub)
+	_publish_view()
+
+
+## 脏矩形在世界坐标里的所有环面副本(按 sub_cols/sub_rows 平移),各自投影到屏幕后与画布求交。
+## ★ k 的上下界按「画布可见世界范围」动态算,不能写死 ±1:小图(地图比画布小)时同一份脏区
+##   会在屏幕上平铺出很多份(例如 1 格图 64px 在 256px 画布上有 4 份),漏一份就与全量不一致。
+func _region_screen_rects(r: Rect2i, sub: Vector2i) -> Array[Rect2i]:
+	var out: Array[Rect2i] = []
+	var w := _view_img.get_width()
+	var h := _view_img.get_height()
+	var kx_lo := floori((_origin.x - float(r.position.x) - float(r.size.x)) / float(sub.x))
+	var kx_hi := ceili((_origin.x + float(w) / _zoom - float(r.position.x)) / float(sub.x))
+	var ky_lo := floori((_origin.y - float(r.position.y) - float(r.size.y)) / float(sub.y))
+	var ky_hi := ceili((_origin.y + float(h) / _zoom - float(r.position.y)) / float(sub.y))
+	for ky: int in range(ky_lo, ky_hi + 1):
+		for kx: int in range(kx_lo, kx_hi + 1):
+			var wx := r.position.x + kx * sub.x
+			var wy := r.position.y + ky * sub.y
+			var x0 := clampi(roundi((float(wx) - _origin.x) * _zoom), 0, w)
+			var y0 := clampi(roundi((float(wy) - _origin.y) * _zoom), 0, h)
+			var x1 := clampi(roundi((float(wx + r.size.x) - _origin.x) * _zoom), 0, w)
+			var y1 := clampi(roundi((float(wy + r.size.y) - _origin.y) * _zoom), 0, h)
+			if x1 > x0 and y1 > y0:
+				out.append(Rect2i(x0, y0, x1 - x0, y1 - y0))
+	return out
+
+
+## 重画一块屏幕矩形:建同尺寸临时图(填底色),按全量同款公式重放覆盖它的子格,再拷回视口图。
+func _redraw_screen_region(reg: Rect2i, sub: Vector2i) -> void:
+	var temp := Image.create(reg.size.x, reg.size.y, false, Image.FORMAT_RGBA8)
+	temp.fill(BG_COLOR)
+	# 屏幕像素 → 世界子格;round 与 floor 在块边界可能差 1 格 ⇒ 四周各扩 1 格保证覆盖。
+	var wx0 := floori(_origin.x + float(reg.position.x) / _zoom) - 1
+	var wy0 := floori(_origin.y + float(reg.position.y) / _zoom) - 1
+	var wx1 := floori(_origin.x + float(reg.position.x + reg.size.x) / _zoom) + 1
+	var wy1 := floori(_origin.y + float(reg.position.y + reg.size.y) / _zoom) + 1
+	_paint_layers(temp, sub, Rect2i(wx0, wy0, wx1 - wx0 + 1, wy1 - wy0 + 1), -reg.position)
+	_view_img.blit_rect(temp, Rect2i(Vector2i.ZERO, reg.size), reg.position)
+
+
+func _render_full() -> void:
 	var w := maxi(1, int(round(size.x)))
 	var h := maxi(1, int(round(size.y)))
 	var img := Image.create(w, h, false, Image.FORMAT_RGBA8)
 	img.fill(BG_COLOR)
-	if _doc != null:
-		var sub := _sub_size()
-		if sub.x > 0 and sub.y > 0:
-			if _atlas_img == null:
-				_ensure_atlas(true)
-			_ensure_scaled_atlas()
-			var vis := _visible_sub_rect()
-			var layers: Array = _doc.map.get("layers", [])
-			_color_stamps.clear()
-			# 层号倒序:背景 25%(6) → … → 前景(0)。
-			for li in range(EditorConstants.LAYER_COUNT - 1, -1, -1):
-				if li >= layers.size():
-					continue
-				var ld: Variant = layers[li]
-				if ld == null:
-					continue
-				if not layer_visible(li):
-					continue
-				var alpha_mul := 1.0 if li == _active_layer else INACTIVE_ALPHA
-				if EditorConstants.is_color_layer(li):
-					_blit_color_layer(img, ld, sub, vis, alpha_mul)
-				else:
-					_blit_tex_layer(img, ld, sub, vis, alpha_mul)
-	# ★ 每次重建 ImageTexture(不用 update()):update() 不刷新 CPU 侧 image_storage,
-	#   外部 get_image() 会读到旧像素(场景探针要按像素断言渲染结果,会假绿/假红)。
-	_view_tex = ImageTexture.create_from_image(img)
+	var sub := _sub_size()
+	if _doc != null and sub.x > 0 and sub.y > 0:
+		if _atlas_img == null:
+			_ensure_atlas(true)
+		_ensure_scaled_atlas()
+		_color_stamps.clear()
+		_paint_layers(img, sub, _visible_sub_rect(), Vector2i.ZERO)
+	_view_img = img
+
+
+## 把视口图发布成纹理。★ 用 update() 而不是每次重建 RID:像素判据请走 view_image()
+## (update() 不刷新 ImageTexture 的 CPU 侧 image_storage,get_image() 会读到旧像素)。
+func _publish_view() -> void:
+	if _view_img == null:
+		return
+	var want := Vector2(_view_img.get_width(), _view_img.get_height())
+	if _view_tex == null or _view_tex.get_size() != want:
+		_view_tex = ImageTexture.create_from_image(_view_img)
+	else:
+		_view_tex.update(_view_img)
+	queue_redraw()
+
+
+## 层号倒序(背景 25% → 前景)把 world 矩形内的子格重放到 dst;shift 是屏幕平移量
+## (全量 = 0;脏块 = -块左上角)。子格→屏幕像素公式与相机严格一致。
+func _paint_layers(dst: Image, sub: Vector2i, world: Rect2i, shift: Vector2i) -> void:
+	if _doc == null:
+		return
+	var layers: Array = _doc.map.get("layers", [])
+	for li in range(EditorConstants.LAYER_COUNT - 1, -1, -1):
+		if li >= layers.size():
+			continue
+		var ld: Variant = layers[li]
+		if ld == null:
+			continue
+		if not layer_visible(li):
+			continue
+		var alpha_mul := 1.0 if li == _active_layer else INACTIVE_ALPHA
+		if EditorConstants.is_color_layer(li):
+			_blit_color_layer(dst, ld, sub, world, alpha_mul, shift)
+		else:
+			_blit_tex_layer(dst, ld, sub, world, alpha_mul, shift)
 
 
 func _sub_size() -> Vector2i:
@@ -289,7 +489,15 @@ func _visible_sub_rect() -> Rect2i:
 	return Rect2i(floori(_origin.x), floori(_origin.y), maxi(cols, 1), maxi(rows, 1))
 
 
-func _blit_tex_layer(img: Image, ld: Dictionary, sub: Vector2i, vis: Rect2i, alpha_mul: float) -> void:
+## 负宽/负高的 Rect2i 归一成「左上角 + 正尺寸」;0 尺寸保持 0(调用方按无选区/无脏区处理)。
+static func _norm_rect(r: Rect2i) -> Rect2i:
+	var x0 := mini(r.position.x, r.position.x + r.size.x)
+	var y0 := mini(r.position.y, r.position.y + r.size.y)
+	return Rect2i(x0, y0, absi(r.size.x), absi(r.size.y))
+
+
+func _blit_tex_layer(img: Image, ld: Dictionary, sub: Vector2i, vis: Rect2i, alpha_mul: float,
+		shift: Vector2i) -> void:
 	if _atlas_scaled == null:
 		return
 	var cells: PackedInt32Array = ld.get("desc", PackedInt32Array())
@@ -320,10 +528,12 @@ func _blit_tex_layer(img: Image, ld: Dictionary, sub: Vector2i, vis: Rect2i, alp
 			if row < 0 or (row + 1) * z > atlas_h:
 				continue
 			var src := Rect2i((qy4 + (sx % SUB_PER_CELL)) * z, row * z, z, z)
-			img.blend_rect(src_img, src, Vector2i(roundi((float(wx) - _origin.x) * _zoom), dst_y))
+			img.blend_rect(src_img, src,
+					Vector2i(roundi((float(wx) - _origin.x) * _zoom) + shift.x, dst_y + shift.y))
 
 
-func _blit_color_layer(img: Image, ld: Dictionary, sub: Vector2i, vis: Rect2i, alpha_mul: float) -> void:
+func _blit_color_layer(img: Image, ld: Dictionary, sub: Vector2i, vis: Rect2i, alpha_mul: float,
+		shift: Vector2i) -> void:
 	var cells: PackedInt32Array = ld.get("rgba", PackedInt32Array())
 	if cells.is_empty():
 		return
@@ -345,7 +555,7 @@ func _blit_color_layer(img: Image, ld: Dictionary, sub: Vector2i, vis: Rect2i, a
 				continue
 			var c := Color8((u >> 24) & 0xFF, (u >> 16) & 0xFF, (u >> 8) & 0xFF, clampi(roundi(a * 255.0), 0, 255))
 			img.blend_rect(_stamp_for(c), Rect2i(0, 0, z, z),
-					Vector2i(roundi((float(wx) - _origin.x) * _zoom), dst_y))
+					Vector2i(roundi((float(wx) - _origin.x) * _zoom) + shift.x, dst_y + shift.y))
 
 
 func _stamp_for(c: Color) -> Image:
@@ -430,25 +640,68 @@ func _multiply_alpha(img: Image, mul: float) -> void:
 # ── doc 信号 ─────────────────────────────────────────────────────────
 
 func _on_doc_changed(layer: int, subcells: PackedInt32Array) -> void:
-	# 只按变更子格判新 desc(整图扫描在大图上会拖慢每一笔)。
-	if _doc != null and not EditorConstants.is_color_layer(layer):
-		var layers: Array = _doc.map.get("layers", [])
-		if layer >= 0 and layer < layers.size() and layers[layer] != null:
-			var cells: PackedInt32Array = (layers[layer] as Dictionary).get("desc", PackedInt32Array())
-			for raw_idx in subcells:
-				var idx := int(raw_idx)
-				if idx < 0 or idx >= cells.size():
-					continue
-				var d := int(cells[idx])
-				if EditorDesc.tex_of(d) != 0 and not _atlas_row_of.has(d):
-					_ensure_atlas(true)
-					break
-	refresh()
+	var sub := _sub_size()
+	if _doc == null or sub.x <= 0 or sub.y <= 0:
+		refresh()
+		return
+	# 出现新 desc ⇒ 图集重建后**所有行号都可能平移** ⇒ 必须全量刷新(不能只刷脏区)。
+	if _refresh_atlas_for(layer, subcells):
+		refresh()
+		return
+	# changed 的 subcells 是已归一化 idx ⇒ 直接 min/max 得包围盒(环面绕回由 refresh_region 平移副本处理)。
+	var min_x := sub.x
+	var min_y := sub.y
+	var max_x := -1
+	var max_y := -1
+	var n := sub.x * sub.y
+	for raw_idx in subcells:
+		var idx := int(raw_idx)
+		if idx < 0 or idx >= n:
+			continue
+		var cx := idx % sub.x
+		var cy := idx / sub.x
+		min_x = mini(min_x, cx)
+		max_x = maxi(max_x, cx)
+		min_y = mini(min_y, cy)
+		max_y = maxi(max_y, cy)
+	if max_x < 0 or max_y < 0:
+		refresh()
+		return
+	var bbox := Rect2i(min_x, min_y, max_x - min_x + 1, max_y - min_y + 1)
+	# bbox 面积 > 整图 1/2(跨接缝的大笔画/全选清除)⇒ 区域重画不比全量便宜,退回全量。
+	if bbox.size.x * bbox.size.y * 2 > sub.x * sub.y:
+		refresh()
+	else:
+		refresh_region(bbox)
+
+
+## 只在 changed 子格里判有没有图集里没有的新 desc;有则重建图集并返回 true。
+func _refresh_atlas_for(layer: int, subcells: PackedInt32Array) -> bool:
+	if _doc == null or EditorConstants.is_color_layer(layer):
+		return false
+	var layers: Array = _doc.map.get("layers", [])
+	if layer < 0 or layer >= layers.size() or layers[layer] == null:
+		return false
+	var cells: PackedInt32Array = (layers[layer] as Dictionary).get("desc", PackedInt32Array())
+	for raw_idx in subcells:
+		var idx := int(raw_idx)
+		if idx < 0 or idx >= cells.size():
+			continue
+		var d := int(cells[idx])
+		if EditorDesc.tex_of(d) != 0 and not _atlas_row_of.has(d):
+			_ensure_atlas(true)
+			return true
+	return false
 
 
 func _on_doc_structure_changed() -> void:
 	_ensure_atlas(true)
 	refresh()
+
+
+## meta(出生点/复活点/敌人)只影响 _draw 叠加层,视口图不变 ⇒ 只请求重绘。
+func _on_doc_meta_changed() -> void:
+	queue_redraw()
 
 
 func _on_resized() -> void:
@@ -461,7 +714,10 @@ func _draw() -> void:
 	if _view_tex != null and size.x > 0.0 and size.y > 0.0:
 		draw_texture_rect(_view_tex, Rect2(Vector2.ZERO, size), false)
 	_draw_grid()
+	_draw_selection()
+	_draw_meta()
 	_draw_brush()
+	_draw_calls += 1
 
 
 func _draw_grid() -> void:
@@ -486,6 +742,60 @@ func _draw_grid() -> void:
 			draw_line(Vector2(0.0, py), Vector2(size.x, py), SEAM_COLOR, 2.0)
 		elif posmod(wy, SUB_PER_CELL) == 0:
 			draw_line(Vector2(0.0, py), Vector2(size.x, py), GRID_COLOR, 1.0)
+
+
+## 选区:半透明填充 + 虚线框(屏幕像素,不随 zoom 变粗)。
+func _draw_selection() -> void:
+	var r := selection_screen_rect()
+	if r.size.x <= 0.0 or r.size.y <= 0.0:
+		return
+	draw_rect(r, SELECTION_FILL_COLOR)
+	var tl := r.position
+	var tr := Vector2(r.end.x, r.position.y)
+	var bl := Vector2(r.position.x, r.end.y)
+	var br := r.end
+	draw_dashed_line(tl, tr, SELECTION_LINE_COLOR, 1.5, 6.0)
+	draw_dashed_line(tr, br, SELECTION_LINE_COLOR, 1.5, 6.0)
+	draw_dashed_line(br, bl, SELECTION_LINE_COLOR, 1.5, 6.0)
+	draw_dashed_line(bl, tl, SELECTION_LINE_COLOR, 1.5, 6.0)
+
+
+## meta 标记:出生点青方块 P1/P2…、复活点 R1 深绿 / R2 深橙、敌人红点+类型首字母。
+## 全部按屏幕像素画(方块 10px / 红点半径 6px),缩放只改变标记位置,不改变标记大小。
+func _draw_meta() -> void:
+	var markers := meta_markers()
+	if markers.is_empty():
+		return
+	var font: Font = ThemeDB.fallback_font
+	for m: Dictionary in markers:
+		var pos: Vector2 = m["pos"]
+		var label := String(m["label"])
+		match String(m["kind"]):
+			"player":
+				var c := META_PLAYER_COLOR
+				var box := Rect2(pos - Vector2(META_SQUARE, META_SQUARE) * 0.5,
+						Vector2(META_SQUARE, META_SQUARE))
+				draw_rect(box, c)
+				draw_rect(box, Color(0.0, 0.0, 0.0, 0.75), false, 1.0)
+				_draw_marker_text(font, pos + Vector2(META_SQUARE * 0.7, 4.0), label, c)
+			"respawn":
+				var c2 := META_RESPAWN1_COLOR if int(m["side"]) == 1 else META_RESPAWN2_COLOR
+				var box2 := Rect2(pos - Vector2(META_SQUARE, META_SQUARE) * 0.5,
+						Vector2(META_SQUARE, META_SQUARE))
+				draw_rect(box2, c2)
+				draw_rect(box2, Color(0.0, 0.0, 0.0, 0.75), false, 1.0)
+				_draw_marker_text(font, pos + Vector2(META_SQUARE * 0.7, 4.0), label, c2)
+			"enemy":
+				draw_circle(pos, META_ENEMY_RADIUS, META_ENEMY_COLOR)
+				draw_circle(pos, META_ENEMY_RADIUS, Color(0.0, 0.0, 0.0, 0.6), false, 1.0)
+				_draw_marker_text(font, pos + Vector2(-META_ENEMY_RADIUS * 0.45, 4.0), label,
+						Color(1.0, 1.0, 1.0, 1.0))
+
+
+func _draw_marker_text(font: Font, at: Vector2, text: String, color: Color) -> void:
+	if font == null or text == "":
+		return
+	draw_string(font, at, text, HORIZONTAL_ALIGNMENT_LEFT, -1, META_FONT_SIZE, color)
 
 
 func _draw_brush() -> void:

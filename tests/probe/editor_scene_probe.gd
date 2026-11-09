@@ -11,7 +11,7 @@ extends Node
 #   ⑥ 画布没建视口纹理 ⇒ ⑤ 组红。
 # 判据 = 未跑满条数 + 失败清单;退出码只是陪衬。
 
-const EXPECTED_CHECKS := 25
+const EXPECTED_CHECKS := 36
 const MAP := "res://maps/newfactory.cyrm"
 const A := "user://maps/_editor_scene_probe_a.cyrm"
 const EXPORT_C := "user://maps/_editor_scene_probe_export.cyrm"
@@ -115,6 +115,7 @@ func _ready() -> void:
 				"⑤ 画布视口纹理为空(期望非空)")
 
 	_check_export_and_load()
+	_check_deferred_features()
 	_restore_settings()
 	_cleanup()
 	_finish()
@@ -143,7 +144,86 @@ func _check_export_and_load() -> void:
 			"⑥ 导出后文件应存在且非空:%s" % USER_EXPORT)
 
 
-# 备份/恢复用户设置:探针跑 persist=true 的导出会写 user://settings.cfg,不能污染开发者的设置。
+# ── 后置项:选区/剪贴板/镜像/渐变/meta 可视化/真渲染预览(都在场景里真接一遍) ──
+func _check_deferred_features() -> void:
+	var sel := Rect2i(0, 0, 8, 8)
+	_doc.set_selection(sel)
+	_chk(_doc.has_selection() and _doc.selection == sel, "⑨ 选区设置/回读:%s" % str(_doc.selection))
+
+	var d := EditorDesc.neutral_desc(6)
+	_doc.active_layer = 1
+	var cells: Array[Vector2i] = []
+	for sy in 2:
+		for sx in 2:
+			cells.append(Vector2i(SUB.x + sx, SUB.y + sy))
+	_doc.set_cells(cells, d)
+	_doc.set_selection(Rect2i(SUB.x, SUB.y, 2, 2))
+	var copied := _doc.copy_selection()
+	_chk(bool(copied.get("ok", false)) and int(copied.get("w", 0)) == 2 and int(copied.get("h", 0)) == 2,
+			"⑨ 复制 2×2 选区:%s" % str(copied))
+
+	var at := Vector2i(60, 60)
+	_doc.set_selection(Rect2i())
+	var pasted := _doc.paste_clipboard(at)
+	_chk(bool(pasted.get("ok", false)) and _doc.get_subcell(at.x * 4, at.y * 4) == d,
+			"⑨ 粘贴到格 (60,60) 未落到 map(实得 0x%08X)" % _doc.get_subcell(at.x * 4, at.y * 4))
+
+	# 真图在 (80,80) 附近本来就有地形 ⇒ 先把 4×4 选区清成空气再摆左两列,期望值不依赖原图内容。
+	var d2 := EditorDesc.neutral_desc(7)
+	var clear_cells: Array[Vector2i] = []
+	var left: Array[Vector2i] = []
+	for sy in 4:
+		for sx in 4:
+			clear_cells.append(Vector2i(80 + sx, 80 + sy))
+			if sx < 2:
+				left.append(Vector2i(80 + sx, 80 + sy))
+	_doc.set_cells(clear_cells, 0)
+	_doc.set_cells(left, d2)
+	_doc.set_selection(Rect2i(80, 80, 4, 4))
+	var mirrored := _doc.mirror_selection("h")
+	_chk(bool(mirrored.get("ok", false)) and _doc.get_subcell(83, 80) == d2 and _doc.get_subcell(80, 80) == 0,
+			"⑨ 水平镜像选区未翻转到右列")
+
+	_doc.active_layer = 3
+	var grad := _doc.paint_gradient(Vector2i(0, 0),
+			Vector2i(_doc.sub_size().x - 1, _doc.sub_size().y - 1), 0xFF0000FF, 0x0000FFFF)
+	var g0 := _doc.get_subcell(0, 0) & 0xFFFFFFFF
+	_chk(bool(grad.get("ok", false)) and g0 == 0xFF0000FF,
+			"⑨ 颜色层渐变起点应= rgba0(实得 0x%08X)" % g0)
+
+	# 真图本来就可能带 PvP 出生点/复活点 ⇒ 全部用「加之前 vs 加之后」的差来断言。
+	var players_before := (_doc.map["players"] as Array).size()
+	var respawns_before := (_doc.map["respawns"] as Array).size()
+	var enemies_before := (_doc.map["enemies"] as Array).size()
+	_doc.add_player(Vector2i(3, 3))
+	_doc.add_respawn(1, Vector2i(4, 4))
+	_doc.add_enemy("slime", Vector2i(5, 5))
+	_chk((_doc.map["players"] as Array).size() == players_before + 1
+			and (_doc.map["respawns"] as Array).size() == respawns_before + 1
+			and (_doc.map["enemies"] as Array).size() == enemies_before + 1,
+			"⑨ meta add_player/add_respawn/add_enemy 数量不对")
+	_chk(_doc.remove_player_at(Vector2i(3, 3)) and (_doc.map["players"] as Array).size() == players_before,
+			"⑨ remove_player_at 未删掉")
+	var expected_clear := players_before + (respawns_before + 1) + (enemies_before + 1)
+	var cleared := _doc.clear_meta("all")
+	_chk(cleared == expected_clear
+			and (_doc.map["players"] as Array).is_empty()
+			and (_doc.map["respawns"] as Array).is_empty()
+			and (_doc.map["enemies"] as Array).is_empty(),
+			"⑨ clear_meta(all) 应删 %d 条并清空(实得 %d)" % [expected_clear, cleared])
+
+	_editor.set_preview(true)
+	var preview: Control = _editor.get_preview()
+	_chk(bool(_editor.is_preview_on()) and preview != null, "⑨ 打开预览失败")
+	if preview != null:
+		var st: Dictionary = preview.stats()
+		_chk(bool(st.get("ready", false)) and int(st.get("tiles", 0)) > 0,
+				"⑨ 预览应已建好并铺了瓦片:%s" % str(st))
+	_editor.set_preview(false)
+	_chk(not bool(_editor.is_preview_on()), "⑨ 关闭预览失败")
+
+
+
 func _backup_settings() -> void:
 	_sp_before = Settings.sp_map_path
 	_mp_before = Settings.mp_map_path
