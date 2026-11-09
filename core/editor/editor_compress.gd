@@ -1,7 +1,7 @@
 class_name EditorCompress
 extends RefCounted
 
-# 镜像 level_editor/core/50_compress.js —— zlib(deflate)进出,走引擎原生实现。
+# 移植自已退役的浏览器编辑器 core/50_compress.js(2026-11-09 删除,历史见 git)—— zlib(deflate)进出,走引擎原生实现。
 # ★ Godot COMPRESSION_DEFLATE = zlib RFC1950 = 浏览器 CompressionStream('deflate'),三种实现互通
 #   (互操作已在仓内实测,见 core/sim/map_format_v4.gd 头注释)。
 # ★ 输出上界必须作用在**实际输出**上:Godot decompress 的 buffer_size 就是它,等价 JS 的流式闸

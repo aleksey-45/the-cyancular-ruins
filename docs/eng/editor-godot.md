@@ -1,8 +1,8 @@
 # Godot 编辑器场景（`core/editor` + `scenes/editor`，P2）
 
-> P0/P1 把 `.cyrm` 编解码移植进 `core/editor/`（契约见 [`editor-core.md`](editor-core.md) §13）。
+> P0/P1 把 `.cyrm` 编解码移植进 `core/editor/`（格式契约与模块表见 [`editor-core.md`](editor-core.md) §12）。
 > 本文件记 **P2 编辑器场景**（2026-11-08 落地）：分层、坐标、渲染、撤销、读写、守卫、已知边界。
-> 计划原文 `.tmp/editor-in-godot-plan.md`（一次性）；进度见 `.tmp/editor-progress.md`。
+> 迁移过程与取舍见 [`editor-core.md`](editor-core.md) §14；历史（含已删的浏览器编辑器）一律看 `git log`。
 > ★ 冲突以源码为准。
 
 ## 1. 分层与文件
@@ -74,8 +74,9 @@
 - 产品侧另有两条**真导出**才能回答的检查（不在默认批里，跑在 `tools/build_release.py`，见 §10）。
 
 - 场景探针就是 P2 的验收口径（`editor_scene_probe` 的 ② 组）；判据一律 grep 判词，退出码不是判据。
-- 跑法：`bash .tmp/run_smoke.sh <res 路径>`（冒烟）、`bash .tmp/run_scene.sh <res .tscn>`（场景探针）；
-  默认批 `bash tests/run_all.sh` 会自动收录（`tests/smoke/*.gd` 与 `tests/probe/*.tscn` 两个 glob）。
+- 跑法：`Godot --headless --path . -s res://tests/smoke/<支>.gd`（冒烟）、
+  `Godot --headless --path . --quit-after 3600 res://tests/probe/<支>.tscn`（场景探针）；
+  默认批 `bash tests/run_all.sh` 会自动收录（`tests/smoke/*.gd` 与 `tests/probe/*.tscn` 两个 glob），跑批纪律见 [`tests/README.md`](../../tests/README.md)。
 
 ## 8. 已知边界（照实写）
 
@@ -89,10 +90,11 @@
 - v3 文本 / 旧字母格式打开后另存为写的是 **v4**（`EditorV3` 迁移是单向的，与计划一致）。
 - 画布的图集行数 = 本图去重描述符数；一张图里出现大量 hue/bri 变体会让图集体积线性增长（16×16/行），极端图可能吃显存。
 
-## 9. 还没做（计划后续阶段）
+## 9. 计划 P6 已执行（2026-11-09）
 
-P6：删 `level_editor/`（JS 编辑器）与 `dist/cyrm-editor.html`、`sync-tiles.js` 的 JS 产物（保留 `data/tile_defs.json`），
-退役 JS 侧守卫，重写/收缩 `editor-*.md` 四份旧文档；然后做档 3 逐条评审（地图格式写盘路径、forced map 影响面、两份导出的裁剪面）。
+`level_editor/`（浏览器编辑器 146 个跟踪文件）与其四份旧文档（`editor-ui/render/io/server.md`）已删除；
+`.cyrm` 只剩 GDScript 一份实现。仍待补的编辑器功能见 §8「未做」那一行；P6 的档 3 评审
+（地图格式写盘路径 / forced map 影响面 / 两份导出的裁剪面）结论写在当次提交信息与 `docs/eng/editor-core.md`。
 
 ## 10. 两份导出（P5，2026-11-09）
 

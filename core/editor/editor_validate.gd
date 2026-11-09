@@ -1,7 +1,7 @@
 class_name EditorValidate
 extends RefCounted
 
-# 镜像 level_editor/core/80_validate.js —— 尺寸钳制与整图校验。
+# 移植自已退役的浏览器编辑器 core/80_validate.js(2026-11-09 删除,历史见 git)—— 尺寸钳制与整图校验。
 # ★ 只报告、不阻止导出:errors = 真正非法(encodeMap 只拒 errors);warnings = 能导出但游戏里可能不按预期跑。
 # ★ 纹理合法性判据的单一真相源 = data/tile_defs.json 的 tiles 键集(本模块只读那份 JSON,不抄表)。
 

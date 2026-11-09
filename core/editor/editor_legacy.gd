@@ -1,7 +1,7 @@
 class_name EditorLegacy
 extends RefCounted
 
-# 镜像 level_editor/core/95_legacy.js —— legacy 纹理 id 的读时迁移(新图集里 7 个全透明槽)。
+# 移植自已退役的浏览器编辑器 core/95_legacy.js(2026-11-09 删除,历史见 git)—— legacy 纹理 id 的读时迁移(新图集里 7 个全透明槽)。
 # ★ 纹理 id 空间稳定 1..22 不重编号、文件格式保持 v4:迁移只发生在**读时**,内存即干净。
 # ★ 迁移表 = TileDefs(读 data/tile_defs.json,单一真相源);表缺席时 TileDefs 自己返回 0 ⇒ 本模块 no-op。
 

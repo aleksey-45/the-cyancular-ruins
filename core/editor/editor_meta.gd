@@ -1,7 +1,7 @@
 class_name EditorMeta
 extends RefCounted
 
-# 镜像 level_editor/core/40_meta.js —— 元数据段文本编解码。
+# 移植自已退役的浏览器编辑器 core/40_meta.js(2026-11-09 删除,历史见 git)—— 元数据段文本编解码。
 # 文本形状与游戏侧 MapFormat.parse_spawn_metadata() 对齐:先注释、再出生点、再按侧复活点、最后敌人。
 # ★ respawn 行按侧分组写(侧 1 全部在前、侧 2 在后):游戏侧按文件顺序去重,顺序变了「生效的那条」也会变。
 

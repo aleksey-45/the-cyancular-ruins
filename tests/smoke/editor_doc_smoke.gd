@@ -2,7 +2,7 @@ extends SceneTree
 
 # 编辑器文档模型 EditorDoc 守卫(`-s`,headless,不实例化 autoload)。
 # 守护 core/editor/editor_doc.gd:环面归一化 / Bresenham / 4 邻接油漆桶 / 稀疏撤销栈 / 颜色层 u32 路径 /
-# 信号 / 校验与编码接线。契约 = .tmp/editor-p2-contract.md §2。
+# 信号 / 校验与编码接线。契约 = docs/eng/editor-godot.md §4。
 #
 # 去掉什么会红:
 #   ① new_map 建出的 7 层形状(0-2 tex、3 color、4-6 null)或尺寸不对 ⇒ 红。

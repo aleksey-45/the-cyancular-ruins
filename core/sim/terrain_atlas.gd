@@ -51,7 +51,7 @@ static func source_rect(idx: int) -> Rect2i:
 	return Rect2i((idx % SRC_COLS) * SRC_TILE, (idx / SRC_COLS) * SRC_TILE, SRC_TILE, SRC_TILE)
 
 
-# ── 描述符像素数学(level_editor/tint.js 的移植 = 唯一规范;跨语言 parity 零守卫)──
+# ── 描述符像素数学(旧浏览器编辑器 tint 数学的移植 = 唯一规范;源已退役,历史见 git;跨语言 parity 零守卫)──
 # HSV 不是 HSL;色相偏移 = (hue档-4)*15 度(fposmod 360);亮度/饱和度是乘法,乘数 = (档+6)/10;alpha = a*档/7;取整只有一条:round(clamp01(x)*255)。
 
 ## 按描述符 tint 一个颜色(纯函数;通道先量化到字节再算,与 tint.js 的 tintBytes 逐字节一致)。

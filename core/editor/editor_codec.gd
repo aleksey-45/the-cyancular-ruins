@@ -1,7 +1,7 @@
 class_name EditorCodec
 extends RefCounted
 
-# 镜像 level_editor/core/60_codec.js —— v4 容器:头 + body_size 闸 + 分层读写。
+# 移植自已退役的浏览器编辑器 core/60_codec.js(2026-11-09 删除,历史见 git)—— v4 容器:头 + body_size 闸 + 分层读写。
 # ★ MAX_BODY_SIZE 是**解压后** body 的硬上限(堵 deflate 炸弹,压比 ≈1032:1),用在两道闸上、两道都不可省:
 #   ① decode_map 的头部声明(判在任何解压动作之前);② EditorCompress.inflate_bytes 的输出上界。
 # ★ 闸门顺序照 JS:头部声明 body_size ≤ 64MB → 尺寸合法 → 解压 → 实际输出 == 声明 → CRC(只覆盖 body)

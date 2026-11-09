@@ -1,8 +1,8 @@
 class_name EditorBytes
 extends RefCounted
 
-# 镜像 level_editor/core/20_bytes.js —— 小端字节读写器与 CRC32。
-# ★ 不抛错:Reader 越界时置 failed/error 并返回 0,上层每次读后必须判 failed(见 .tmp/editor-port-contract.md)。
+# 移植自已退役的浏览器编辑器 core/20_bytes.js(2026-11-09 删除,历史见 git)—— 小端字节读写器与 CRC32。
+# ★ 不抛错:Reader 越界时置 failed/error 并返回 0,上层每次读后必须判 failed(见 docs/eng/editor-core.md §12)。
 
 
 class Writer:

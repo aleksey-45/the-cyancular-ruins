@@ -1,7 +1,7 @@
 class_name EditorV3
 extends RefCounted
 
-# 镜像 level_editor/core/70_v3_text.js —— v3 文本 / 旧字母格式的解析与一次性迁移。
+# 移植自已退役的浏览器编辑器 core/70_v3_text.js(2026-11-09 删除,历史见 git)—— v3 文本 / 旧字母格式的解析与一次性迁移。
 # ★ v3 的 packed = texture*16 + shape 是 v3 编码,与 v4 的 descriptor 毫无关系(规格 §3.6):
 #   一律走 _v3_pack / _v3_tex_of / _v3_shape_of,不可与 EditorDesc.pack_desc / tex_of 混用。
 # ★ 禁止 RegEx(客户端导出裁剪了 regex 模块):版本标记行的谓词、纹理位「3 位数字」校验、

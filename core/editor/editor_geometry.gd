@@ -1,7 +1,7 @@
 class_name EditorGeometry
 extends RefCounted
 
-# 镜像 level_editor/core/85_geometry.js —— 名字净化与画笔几何。
+# 移植自已退役的浏览器编辑器 core/85_geometry.js(2026-11-09 删除,历史见 git)—— 名字净化与画笔几何。
 # ★ 禁止 RegEx(客户端导出裁剪了 regex 模块):JS 的三条正则在这里全部手写。
 
 

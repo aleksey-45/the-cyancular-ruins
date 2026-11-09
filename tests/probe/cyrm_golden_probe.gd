@@ -1,7 +1,7 @@
 extends SceneTree
 
 # 跨语言黄金夹具探针(`-s`,headless):JS 编辑器产出的字节 → GDScript 解 → 重编码必须**逐字节相等**。
-# 夹具与生产命令见 tests/fixtures/cyrm/README.md(JS 侧生成脚本 .tmp/gen_golden.js)。
+# 夹具与生产命令见 tests/fixtures/cyrm/README.md(生成脚本已随浏览器编辑器退役;夹具冻结)。
 # 去掉什么它才会红:
 #   ① 调色板顺序不再按「描述符首次出现」⇒ 无压缩夹具的字节相等断言红;
 #   ② 头部字段/层块顺序/压缩位写错 ⇒ 字节相等或 compression 断言红;

@@ -63,7 +63,8 @@ core/     autoload + 静态工具(参数 / 地图格式 / 寻路 / 砖块 / 水 
 server/   服务端:大厅 + 房间(lobby/)+ 每局权威(match/ · hosts/)+ AI 补位(ai/)
 ui/       跨场景 UI(factory/ 工厂与唯一调色板、hud/ HUD、screens/ 结算页等页面)
 tests/    冒烟 / 探针 / 真链路(smoke/ · probe/ · harness/ · scripts/,分层见 tests/README.md)
-level_editor/  浏览器地图编辑器(editor.html + smoke.js + sync-*.js)
+scenes/editor/  地图编辑器场景(画布/7 层/工具/导出);入口只在导出的客户端里出现
+core/editor/    .cyrm 编辑器纯逻辑(编解码/校验/v3 迁移;游戏侧格式层在 core/sim/)
 maps/     .cyrm 地图(v4 二进制)
 data/     tile_defs.json / enemies.json / weapons.json(与编辑器共享的属性表、敌人注册表与武器注册表)
 assets/   字体(含中文像素字体 unifont)与纹理

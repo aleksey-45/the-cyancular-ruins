@@ -1,6 +1,6 @@
 extends SceneTree
 
-# 编辑器 v3 文本 / 旧字母格式冒烟(`-s`,headless):EditorV3(镜像 level_editor/core/70_v3_text.js)。
+# 编辑器 v3 文本 / 旧字母格式冒烟(`-s`,headless):EditorV3(移植自已退役的浏览器编辑器 70_v3_text.js)。
 # 去掉什么它才会红:
 #   ① 版本标记谓词少认一种写法("#cyrm-v3" / "# cyrm-v3 (demo)"),或 parseV3Text 不跳过标记行
 #      ⇒ ① 组红(标记落进 comments / is_v3_text 漏认);

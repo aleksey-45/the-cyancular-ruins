@@ -1,7 +1,7 @@
 class_name EditorDesc
 extends RefCounted
 
-# 镜像 level_editor/core/90_desc.js —— descriptor 位域(辅码)。
+# 移植自已退役的浏览器编辑器 core/90_desc.js(2026-11-09 删除,历史见 git)—— descriptor 位域(辅码)。
 # 位域:hue/bright/sat/alpha 各 3 位(bit0-11),texture 位 12-23(1-4095,0 = 空气),bit24-31 保留 0。
 
 const DESC_AIR: int = 0

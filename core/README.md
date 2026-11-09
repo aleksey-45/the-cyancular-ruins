@@ -41,8 +41,7 @@ present/  表现:字体、音效、视觉特效(与玩法无关的"给人看/听
 ★ 移动 autoload 文件时 `project.godot` 的 `[autoload]` 路径必须同步改 —— 改漏的表现是"整个游戏起不来"。
 
 数据文件不在此目录:砖块属性在 `data/tile_defs.json`(`tile_defs.gd` 读它),敌人注册在
-`data/enemies.json`(`EnemySpawner` 读它);`level_editor/` 里的 `tile_defs.js` 是给浏览器编辑器
-用的生成副本。
+`data/enemies.json`(`EnemySpawner` 读它);编辑器(`core/editor/`)与游戏侧 `TileDefs` 读同一份 json。
 
 约定:文件 snake_case(类名 Pascal,名字 = 类名转 snake);新增"跨场景但要常驻的东西"先定它属于
 哪个子目录、是 autoload、静态助手还是数据。

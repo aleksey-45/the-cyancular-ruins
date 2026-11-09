@@ -4,7 +4,7 @@
 # 为什么需要它:`docs/eng/netplay-rpc-channels.md` 那张通道表是**手抄 markdown**,刷新靠人眼。
 # 历史上已经漂过:DD-01 记录「代码 61 条 / 文档 60 条,通道 3 漏 explosion」;而 2026-10-24 的
 # 默认批削减把唯一一条文本对账 -s 守卫(`rpc_channel_contract_smoke`)删掉后,漂移彻底没人报了。
-# 本工具按同款口径(`level_editor/sync-enemies.js --check` / `tools/gen_menu_theme.gd`:只校验不写盘、
+# 本工具按同款口径(`tools/gen_menu_theme.gd`:只校验不写盘、
 # 漂移退 1)把「文档表 ↔ 两个 autoload 的 @rpc 声明」变成生成式对账。
 #
 # 用法:

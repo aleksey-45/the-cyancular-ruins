@@ -1,7 +1,7 @@
 class_name EditorLayers
 extends RefCounted
 
-# 镜像 level_editor/core/30_layers.js —— 单层编解码(纹理层 / 颜色层)。
+# 移植自已退役的浏览器编辑器 core/30_layers.js(2026-11-09 删除,历史见 git)—— 单层编解码(纹理层 / 颜色层)。
 # ★ 索引 0 恒为空气:即使本层一个空气格都没有也要占住第 0 位,于是"空图 = 调色板 [0] + 全 0 索引流"无条件成立。
 # ★ 调色板上界判在 push 之前且必须用 >=:此刻 p 是加入前的 pal.size(),合法条件是 p ≤ 65534(加入后 ≤ 65535 = u16 上限)。
 # ★ 失败一律返回 {ok:false, error}(文案照抄 JS 的 throw,中文原样);ByteReader 越界不算异常,每次读后判 r.failed。

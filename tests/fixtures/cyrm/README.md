@@ -1,27 +1,23 @@
 # 跨语言黄金夹具（`.cyrm` v4 / v3 文本）
 
-> 用途：把 **JS 编辑器核心**（`level_editor/core/*.js`）现在产出的字节冻结成夹具。
+> 用途：把（已退役的）浏览器编辑器核心当时产出的字节冻结成夹具。
 > 以后 GDScript 侧（`core/sim/map_format_v4.gd` / 移植后的 `core/editor/*`）**解 → 重编码必须与这里的字节逐字节相等**。
-> 这是 `.tmp/editor-in-godot-plan.md` P0 的验收物；计划里「`.cyrm` 只有一份编解码实现」的对照基准就是这批文件。
+> 这是 P0 移植期的验收物；「`.cyrm` 只有一份编解码实现」的对照基准就是这批文件。
 
 ## 生成 / 复现
 
-```bash
-# 仓库根目录执行（生成脚本不入库：.tmp/ 整目录被 .gitignore 的 `*.tmp` 挡掉）
-node .tmp/gen_golden.js
-```
+夹具**已冻结**：生成脚本随浏览器编辑器一起退役（当时是两个一次性脚本，不入库）。
 
-- 脚本自己写运行日志 `/.tmp/js_baseline.log`（**每个文件的 size + sha256 + 逐条自检结论**，末尾
-  `GOLDEN GEN: OK(9 fixtures)`；任一条失败打 `FAIL` 并以退出码 1 结束）。10 号（最大尺寸）由另一个一次性脚本 `.tmp/gen_maxfix.js` 补生成，判词 `MAX FIXGEN: OK(...)`。
-- 脚本两跑输出稳定（sha256 一致）；只有 `v4_mixed_7layers_deflate.cyrm` 的压缩字节依赖运行时 zlib 实现，
-  换 Node/zlib 版本可能变 —— 见 §4。
-- 生成后 `tests/fixtures/cyrm/` 应为 **10 项夹具 / 11 个文件**（3 号夹具额外带一份「迁移后期望字节」，10 号由 `gen_maxfix.js` 生成）。
+- 要重生成或新增夹具：先从 git 历史取回 `level_editor/` 与对应脚本（`git log -- level_editor`），按当时的构图重跑；
+  **不要**在 GDScript 侧改期望值来迁就实现。
+- 生成后 `tests/fixtures/cyrm/` 应为 **10 项夹具 / 11 个文件**（3 号夹具额外带一份「迁移后期望字节」，10 号是 400×300 最大尺寸）。
+- 压缩字节不冻结（zlib 实现可异），只钉「解 → 无压缩重编码 == 无压缩孪生夹具」—— 见 §4。
 
 ## 1. 夹具清单与它钉住的契约
 
 | # | 文件 | size | 构图摘要 | 钉住的契约 | JS 侧自检结论 |
 |---|---|---|---|---|---|
-| 1 | `v4_golden_1x1.cyrm` | 181 B | 1×1 格（4×4 子格）；场景层前 8 子格 `neutralDesc(1)`、后 8 空；背景 16 子格偶 `0x11223344` / 奇 `0xAABBCCDD`；`comments=['hi']`、`players=[{x:1,y:2}]` | **v4 编码器输出的完整字节向量**（20 头 + 161 body）：小端字段、调色板 `[0]` 恒空气、索引流、CRC32、层顺序、meta 文本顺序。头字段 = `body_size 161` / `crc 0x3FF579A9` / `sub 4×4` / `layer_flags 0x0F`。构图与 `level_editor/tests/format/40_golden_and_limits.js` 手推的 golden 向量同源 | 总长 181 ✓、body_size/crc 与手推一致 ✓、decode→encode(compress:false) 逐字节相等 ✓ |
+| 1 | `v4_golden_1x1.cyrm` | 181 B | 1×1 格（4×4 子格）；场景层前 8 子格 `neutralDesc(1)`、后 8 空；背景 16 子格偶 `0x11223344` / 奇 `0xAABBCCDD`；`comments=['hi']`、`players=[{x:1,y:2}]` | **v4 编码器输出的完整字节向量**（20 头 + 161 body）：小端字段、调色板 `[0]` 恒空气、索引流、CRC32、层顺序、meta 文本顺序。头字段 = `body_size 161` / `crc 0x3FF579A9` / `sub 4×4` / `layer_flags 0x0F`。构图与当时 JS 套件里手推的 golden 向量同源 | 总长 181 ✓、body_size/crc 与手推一致 ✓、decode→encode(compress:false) 逐字节相等 ✓ |
 | 2 | `v4_sparse_scene_only.cyrm` | 147 B | 3×2 格（12×8 子格）；**只留层 1**，层 0/2/3 全 `null`；`comments=[]`、`players=[{x:1,y:1}]` | 稀疏 `layer_flags`（`0x02`）：缺席层不写块、解码回到 `null`、重编码顺序稳定；历史文件「没有 bit3」也要能读 | `layer_flags=0b0010` ✓、回读层 0/2/3 为 null ✓、往返逐字节相等 ✓ |
 | 3a | `v4_legacy_tex.cyrm` | 212 B | 4×2 格（16×8 子格）；层 1 调色板含 **legacy 纹理 id 2,3,4,5,16,17,18**（hue 各异）；`comments=['legacy tex']`、`players=[{x:1,y:1}]` | ① 格式层必须**原样读出再原样写回** legacy id（`layer_flags=0x02`）；② `decodeMap` / `MapFormatV4.parse` 都**不做迁移**（迁移是编辑器读入口的事，不是格式契约） | 手拼容器校验通过 ✓、回读 7 个 legacy 描述符与构图一致 ✓、未迁移地图 `encodeMap` 被拒且 error 含「不在 tile_defs」✓ |
 | 3b | `v4_legacy_migrated.cyrm` | 212 B | 3a 经 `decodeMap → migrateMap → encodeMap(compress:false)` 的**期望字节**：legacy 7 条迁成 `(tex1,hue3/1/6/0)` 与 `(tex15,hue2/7/6)` | 读时迁移的确定输出（`new_hue = clamp(hue + legacy_hue − 4, 0, 7)`、bri/sat/alpha 原样、color 层不动）；GDScript 迁移层重编码必须逐字节等于它 | decode→migrateMap→encode 与文件逐字节相等 ✓、迁移后往返逐字节相等 ✓ |
@@ -100,8 +96,7 @@ OK  8/9) legacy_letters.txt(无 v3 标记/4×4 偶数网格) → parseV3Text(旧
 GOLDEN GEN: OK(9 fixtures)
 ```
 
-自检一律**逐字节比较**（不是只比长度）；JS 核心套件基线同轮 `node level_editor/smoke.js` 为
-`结果: 339 通过, 0 失败 / SMOKE OK`（1 号夹具与该套件里手推的 181 字节向量同源，故两边互为证明）。
+自检一律**逐字节比较**（不是只比长度）；1 号夹具与当时 JS 核心套件里**手推的 181 字节向量**同源，故两边互为证明。
 
 ## 6. 文本夹具原文
 

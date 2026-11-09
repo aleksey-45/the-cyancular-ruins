@@ -2,7 +2,7 @@ class_name EditorDoc
 extends RefCounted
 
 # P2 文档模型:一张编辑器地图 + 稀疏 cells 撤销栈。纯逻辑、`-s` headless 可测;不碰磁盘、不依赖场景树。
-# 契约 = .tmp/editor-p2-contract.md §2;地图字典形状 = EditorMap.create_map()(7 层,0-2 tex / 3-6 color,4-6 可 null)。
+# 契约见 docs/eng/editor-godot.md §4;地图字典形状 = EditorMap.create_map()(7 层,0-2 tex / 3-6 color,4-6 可 null)。
 #
 # ★ 撤销条目 = {layer:int, idxs:PackedInt32Array, before:PackedInt32Array, after:PackedInt32Array, color:bool}:
 #   只记**真正变过的子格**(idxs = sy*sub_cols+sx),一个笔画也只有变动格的内存,不存整图快照。
@@ -135,7 +135,7 @@ func set_cells(cells: Array[Vector2i], desc: int) -> int:
 	return _apply_change(layer, store, idxs, before, new_val)
 
 
-# 直线 = Bresenham(含两端,与 level_editor/core/85_geometry.js 的 lineCells 同算法);
+# 直线 = Bresenham(含两端,与旧浏览器编辑器 lineCells 同算法;源已退役,历史见 git);
 # 两端坐标可越界/为负,写入时逐格环面归一化。
 func paint_line(a: Vector2i, b: Vector2i, desc: int) -> int:
 	var cells: Array[Vector2i] = []

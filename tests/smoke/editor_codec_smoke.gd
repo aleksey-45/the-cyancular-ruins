@@ -2,7 +2,7 @@ extends SceneTree
 
 # 编辑器 v4 容器 / 分层 / 压缩移植守卫(`-s`,headless,不实例化 autoload)。
 # 守护 core/editor/{editor_layers,editor_compress,editor_codec}.gd 对
-# level_editor/core/{30_layers,50_compress,60_codec}.js 的忠实移植。
+# 已退役的浏览器编辑器 core/{30_layers,50_compress,60_codec}.js 的忠实移植(历史见 git)。
 #
 # 去掉什么会红:
 #   ① 无压缩整文件往返(encode→decode→再 encode)字节不等;或 palette 不再按"首次出现顺序"、空气不在 [0] 位 ⇒ 红。

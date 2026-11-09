@@ -1,7 +1,7 @@
 class_name EditorMap
 extends RefCounted
 
-# 镜像 level_editor/core/10_map.js —— 地图对象与下标。
+# 移植自已退役的浏览器编辑器 core/10_map.js(2026-11-09 删除,历史见 git)—— 地图对象与下标。
 # ★ 全部用 PackedInt32Array:7 层 × 大图若用嵌套 Array 会到几十 MB 且 GC 压力巨大。
 # ★ 下标一律 = y * sub_cols + x(行主序),与文件里的排布一致。
 
