@@ -23,11 +23,13 @@ var _sp_panel: PanelContainer = null
 # 只在带 editor feature 的客户端产物里被创建;产物自检靠它判断「按钮是否真的建出来了」。
 var _editor_btn: Button = null
 
-# ★★ 静态骨架在 scenes/main_menu.tscn 里(见 tools/gen_menu_scene.gd),迁移判据是外观逐像素不变。
-# ★ 背景(Bg)的材质仍由代码挂 —— 那张地形贴图是运行时烘的(TerrainAtlas),进不了 .tscn;bg 自己已经在 UIRoot 下,不再 add_child。
+# ★★ 静态骨架在 scenes/main_menu.tscn 里,由 tools/gen_menu_scene.gd 的**构建模式**(`-- main_menu`)生成:
+#   容器化(0 绝对 offset,详见生成器头注释)。改版式 = 改生成器重跑 + 前后截图对比;别手改 .tscn。
+# ★ 背景(Bg)的材质仍由代码挂 —— 那张地形贴图是运行时烘的(TerrainAtlas),进不了 .tscn;bg 是骨架里的全屏 ColorRect。
 @onready var _ui_layer: CanvasLayer = %UILayer
 @onready var _bg: ColorRect = %Bg
-@onready var _title: Label = %Title
+# %Title 是 HeaderStrip 面板(整条标题带一起淡入);_play_emerge 只要求 CanvasItem。
+@onready var _title: Control = %Title
 @onready var _ver: Label = %Version
 @onready var _menu_box: VBoxContainer = %MenuBox
 
@@ -138,10 +140,10 @@ func _wire_menu() -> void:
 	if OS.has_feature("web"):
 		%MultiBtn.visible = false
 		%BetaBtn.visible = false
-	# ★ 只在客户端产物(`custom_features="editor"`)里加这个按钮 ⇒ 开发构建/服务端/Web 的
-	#   静态骨架和版式**逐像素不变**(main_menu.tscn 是 tools/gen_menu_scene.gd 生成的骨架,别往里加节点)。
+	# ★ 只在客户端产物(`custom_features="editor"`)里加这个按钮 ⇒ 开发构建/服务端/Web 的主菜单
+	#   与骨架**完全一致**(不追加任何节点;版式由 scenes/main_menu.tscn 的容器树决定)。
 	if editor_entry_enabled():
-		# 复制 %BetaBtn 的样式(BtnQuiet + 640×88),不新建第二套皮肤。
+		# 复制 %BetaBtn 的样式(Quiet variation + 列宽/行高 flags),不新建第二套皮肤。
 		# ★ duplicate(0):默认 flags 会把 %BetaBtn 刚接好的 pressed 连接也复制过来 ⇒ 点编辑器会同时进 Beta。
 		var editor_btn := (%BetaBtn as Button).duplicate(0) as Button
 		editor_btn.name = "EditorBtn"
@@ -229,7 +231,7 @@ static func _trapezoid(u: float) -> float:
 	return v * (a * 0.5 + (u - a))
 
 
-func _play_emerge(title: Label, ver: Label, sequence: Array) -> void:
+func _play_emerge(title: Control, ver: Label, sequence: Array) -> void:
 	var tw := create_tween()
 	tw.tween_interval(0.1)
 	tw.tween_property(title, "modulate:a", 1.0, 0.6).set_trans(Tween.TRANS_SINE)
