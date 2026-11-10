@@ -188,6 +188,16 @@ func set_terrain_mask_image(img: Image, cols: int, rows: int) -> void:
 	_mat.set_shader_parameter("mask_grid", _mask_grid)
 	_mat.set_shader_parameter("mask_gain", 1.0)
 
+## 外部在主循环之外改了视口尺寸(主菜单实时光影背景、编辑器预览)时调用:
+## 重算 crop_scale(窗口/世界视口)与 viewport_size(太阳投影用世界视口像素)。
+## 游戏内窗口尺寸固定,_ready 里算一次就够;外部视口是运行时建的、_ready 时还是默认 2×2。
+func refresh_viewport_bindings() -> void:
+	if _mat == null or world_viewport == null:
+		return
+	var vsize := get_viewport().get_visible_rect().size
+	_mat.set_shader_parameter("crop_scale", crop_scale(vsize, world_viewport.size))
+	_mat.set_shader_parameter("viewport_size", Vector2(world_viewport.size))
+
 # 掩码采样要用"世界坐标 → 格坐标":每帧把相机原点/缩放推给 shader。
 func _sync_mask() -> void:
 	if _mat == null or world_viewport == null:

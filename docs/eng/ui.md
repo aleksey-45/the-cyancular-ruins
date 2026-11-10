@@ -50,7 +50,7 @@
 
 ## 主菜单版式与背景
 
-- 版式(2026-11-09):`scenes/main_menu.tscn` 由 `tools/gen_menu_scene.gd` 的**构建模式**生成 —— `Bg(兜底底色) + Backdrop(实时光影背景) + CenterContainer → Margin(SP_6) → VBox(SP_5)`:标题(160 号青色 Label、**无背景带**、固定顶部 `TITLE_TOP=144`)/ 按钮列(max 宽 880、行高 112、48 号字;整体在居中基础上再**下移 40px**,`DropSpacer=80`)/ 版本号;`UILayer`/`UIRoot` 仍是运行期弹层宿主。0 绝对 offset;改版式 = 改生成器再重跑 + 前后截图。
+- 版式(2026-11-09):`scenes/main_menu.tscn` 由 `tools/gen_menu_scene.gd` 的**构建模式**生成 —— `Bg(兜底底色) + Backdrop(实时光影背景) + CenterContainer → Margin(SP_6) → VBox(SP_5)`:标题(160 号青色 Label、**无背景带**、固定顶部 `TITLE_TOP=144`)/ 按钮列(max 宽 880、行高 112、48 号字;整体在居中基础上**下移 120px**,`DropSpacer=240`,标题底→首个按钮间距 112px)/ 版本号;`UILayer`/`UIRoot` 仍是运行期弹层宿主。0 绝对 offset;改版式 = 改生成器再重跑 + 前后截图。
 - 标题口径(2026-11-09 用户裁定):**放大到 160 号(`UiFactory.T_TITLE`)、青色(`C_ACCENT`)、不要标题带背景、固定在屏幕顶部**(`TitleHost` top-wide + theme margin `TITLE_TOP = 144 = SP_10+SP_9`,不跟菜单列一起垂直居中;**按钮字号 T_H1=48、行高 112、列宽 880**);生成器自检会验「Title 是 Label / 文本 / 字号 / 颜色」。
 
 ## 主菜单背景

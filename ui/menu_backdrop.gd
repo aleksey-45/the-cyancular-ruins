@@ -109,6 +109,10 @@ func _sync_sizes() -> void:
 			(vp as SubViewport).size = s
 	if _display != null:
 		_display.texture = _preview_vp.get_texture()
+	# 视口尺寸是运行时才定的:PostProcess 在 _ready 里按默认 2×2 算过 crop_scale/viewport_size,
+	# 不重算会让地形受光/影子与镜头移动错位(2026-11-10 用户报"光影没和镜头移动对齐")。
+	if _post != null:
+		_post.refresh_viewport_bindings()
 	_camera.zoom = Vector2(CAM_ZOOM, CAM_ZOOM)
 	_camera.position = _map_world * 0.5
 

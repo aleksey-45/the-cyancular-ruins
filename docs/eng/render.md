@@ -29,7 +29,7 @@
 
 数据流:`DayCycle`(纯函数,无节点依赖)→ `PostProcess` 写 shader uniforms → `post_process.gdshader` 合成。
 
-- **时钟**:`DayCycle.DAY_CYCLE_SECONDS = 120`(现实 120s = 游戏 24h,1s = 12 分钟;2026-11-09 用户口径),开局 `DAY_START_HOUR = 6.0`。`PostProcess.day_hour` 是唯一当前时刻;加速/倒流由 `PostProcess._time_rate()` 乘进推进速率(只影响时钟,不影响物理)。主菜单的实时光影背景也走这条时钟(`ui/menu_backdrop.gd` 的 PostProcess)。
+- **外部视口**:主菜单背景/编辑器预览这类运行时才建视口的调用方,在设完 `WorldViewport/BgViewport/PreviewViewport` 尺寸后必须调 `PostProcess.refresh_viewport_bindings()`(重算 `crop_scale`/`viewport_size`)。`PostProcess._ready` 里按默认 2×2 算的那份值,不重算会让地形受光/影子和镜头移动错位。\n- **时钟**:`DayCycle.DAY_CYCLE_SECONDS = 120`(现实 120s = 游戏 24h,1s = 12 分钟;2026-11-09 用户口径),开局 `DAY_START_HOUR = 6.0`。`PostProcess.day_hour` 是唯一当前时刻;加速/倒流由 `PostProcess._time_rate()` 乘进推进速率(只影响时钟,不影响物理)。主菜单的实时光影背景也走这条时钟(`ui/menu_backdrop.gd` 的 PostProcess)。
 - **太阳高度角是三角波,不是正弦**:`DayCycle.sun_at(h)` = `elev = 90 − |15·(h−12)|`(二分点/赤道的化简式),`azim = ∓1` 以正午为界。所以影子方向一天里**自己翻面**。月亮与之反相(18:00 升、00:00 天顶)。
 - **环境光** `DayCycle.ambient_for(hour, moon_amt)` ∈ [0,1],乘性。★ **准确的不变量**:「世界层的乘性链」(ambient → 影子 → 地形受光)只压不抬,**最终像素不受此约束** —— 早先文档写成「永不发光是结构保证」,已经失真。现有例外(改动时别再把它们当违例):`form_light` 的 `boost`(亮面 1.15×)、天空是绝对值不经过 ambient、发光通道 `COLOR.rgb += gl`、受击红闪、回溯贷款 `+= `、`amb_sky_link` 把 ambient 抬到自然曲线之上(仍 ≤1)。真正的判据是「亮度变化是否跟随光源、幅度是否克制」,不是「是否 >1」。白天 = 辐照 ∝ sin(高度角);太阳项把有效高度抬高 18°(民用晨昏),否则黎明/黄昏会掉到天光底、比半夜还黑。月光峰值 `MOON_SCALE = 0.26` 必须低于晨昏的太阳项。**正午环境光恰为 1.0(全天最亮的一帧)**。
 - **天空色** = `DayCycle.sky_base(hour)`,17 个关键帧按时刻插值。★ 插值走 **RGB 直线**,不走 HSV 色轮:最短弧从橙到蓝会经过品红/紫、黄昏"各种颜色乱窜"(实测)。★ 直线插值的坑是中点掉饱和(橙→夜蓝中点只有 0.31),所以黄昏→夜手工插了玫红/紫罗兰/靛蓝三帧把路径"拱"起来 —— **单纯增加采样点无效**(直线上的点还在直线上)。

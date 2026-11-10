@@ -161,7 +161,7 @@ const TITLE_TEXT := "The Cyancular Ruins"
 const MENU_COL_W := 880   # 菜单按钮列宽 = min(880, 可用):min-x + SHRINK_CENTER,按钮 EXPAND_FILL
 const MENU_BTN_H := UiFactory.SP_10 + UiFactory.SP_6   # 按钮行高 = 112(用户口径:按钮再大一点)
 const TITLE_TOP := UiFactory.SP_10 + UiFactory.SP_9   # 标题距屏幕顶 = 144(用户口径:比"贴顶"低一档)
-const MENU_DROP_SPACER := UiFactory.SP_10              # 80 = 2×40:居中容器里加上方的 80 空白 ⇒ 内容整体下移 40px
+const MENU_DROP_SPACER := UiFactory.SP_10 * 3          # 240 = 2×120:居中基础上整体下移 120px ⇒ 标题底与首个按钮留 ~70px
 # 主菜单脚本 / 布局探针按 % 取的名字(与迁移前一致;少一个 = main_menu.gd 或探针红)。
 const MAIN_MENU_UNIQUE := [
 	"UILayer", "UIRoot", "Bg", "Backdrop", "Title", "MenuBox", "PlayGroup", "SepA", "SepB", "OptGroup",
@@ -229,11 +229,22 @@ func _build_main_menu() -> void:
 	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	root.add_child(center)
 
+	# 菜单整体下移(用户口径):居中容器里加 S 高空白,S=240 ⇒ 内容中心 +S/2 = +120px。
+	var drop := VBoxContainer.new()
+	drop.name = "Drop"
+	drop.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	center.add_child(drop)
+	var drop_spacer := Control.new()
+	drop_spacer.name = "DropSpacer"
+	drop_spacer.custom_minimum_size = Vector2(0, MENU_DROP_SPACER)
+	drop_spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	drop.add_child(drop_spacer)
+
 	var margin := MarginContainer.new()
 	margin.name = "Margin"
 	for side in ["left", "right", "top", "bottom"]:
 		margin.add_theme_constant_override("margin_" + side, UiFactory.SP_6)
-	center.add_child(margin)
+	drop.add_child(margin)
 
 	var content := VBoxContainer.new()
 	content.name = "Content"

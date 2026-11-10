@@ -4,7 +4,7 @@
 [ext_resource type="Script" path="res://scenes/main_menu.gd" id="2_wu84c"]
 [ext_resource type="Script" path="res://ui/menu_backdrop.gd" id="3_8ln24"]
 
-[node name="MainMenu" type="Control" unique_id=656841224]
+[node name="MainMenu" type="Control" unique_id=498477887]
 layout_mode = 3
 anchors_preset = 0
 anchor_right = 1.0
@@ -12,7 +12,7 @@ anchor_bottom = 1.0
 theme = ExtResource("1_bqqt6")
 script = ExtResource("2_wu84c")
 
-[node name="Bg" type="ColorRect" parent="." unique_id=208061994]
+[node name="Bg" type="ColorRect" parent="." unique_id=575234867]
 unique_name_in_owner = true
 layout_mode = 0
 anchor_right = 1.0
@@ -20,7 +20,7 @@ anchor_bottom = 1.0
 mouse_filter = 2
 color = Color(0.039, 0.059, 0.094, 1)
 
-[node name="Backdrop" type="Control" parent="." unique_id=1494209967]
+[node name="Backdrop" type="Control" parent="." unique_id=1200826897]
 unique_name_in_owner = true
 anchors_preset = 0
 anchor_right = 1.0
@@ -28,7 +28,7 @@ anchor_bottom = 1.0
 mouse_filter = 2
 script = ExtResource("3_8ln24")
 
-[node name="TitleHost" type="MarginContainer" parent="." unique_id=804136939]
+[node name="TitleHost" type="MarginContainer" parent="." unique_id=1956830294]
 layout_mode = 0
 anchor_right = 1.0
 mouse_filter = 2
@@ -36,7 +36,7 @@ theme_override_constants/margin_left = 0
 theme_override_constants/margin_top = 144
 theme_override_constants/margin_right = 0
 
-[node name="Title" type="Label" parent="TitleHost" unique_id=994397539]
+[node name="Title" type="Label" parent="TitleHost" unique_id=1506326870]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
@@ -45,37 +45,46 @@ theme_override_colors/font_color = Color(0.349, 0.851, 0.902, 1)
 text = "The Cyancular Ruins"
 horizontal_alignment = 1
 
-[node name="Center" type="CenterContainer" parent="." unique_id=1220662967]
+[node name="Center" type="CenterContainer" parent="." unique_id=341534341]
 layout_mode = 0
 anchor_right = 1.0
 anchor_bottom = 1.0
 mouse_filter = 2
 
-[node name="Margin" type="MarginContainer" parent="Center" unique_id=1744663072]
+[node name="Drop" type="VBoxContainer" parent="Center" unique_id=1768926478]
+layout_mode = 2
+mouse_filter = 2
+
+[node name="DropSpacer" type="Control" parent="Center/Drop" unique_id=1666322013]
+custom_minimum_size = Vector2(0, 240)
+layout_mode = 2
+mouse_filter = 2
+
+[node name="Margin" type="MarginContainer" parent="Center/Drop" unique_id=1239422043]
 layout_mode = 2
 theme_override_constants/margin_left = 32
 theme_override_constants/margin_top = 32
 theme_override_constants/margin_right = 32
 theme_override_constants/margin_bottom = 32
 
-[node name="Content" type="VBoxContainer" parent="Center/Margin" unique_id=1807999784]
+[node name="Content" type="VBoxContainer" parent="Center/Drop/Margin" unique_id=1267800751]
 layout_mode = 2
 theme_override_constants/separation = 24
 alignment = 1
 
-[node name="MenuBox" type="VBoxContainer" parent="Center/Margin/Content" unique_id=2038285091]
+[node name="MenuBox" type="VBoxContainer" parent="Center/Drop/Margin/Content" unique_id=1779397265]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(880, 0)
 layout_mode = 2
 size_flags_horizontal = 4
 theme_override_constants/separation = 24
 
-[node name="PlayGroup" type="VBoxContainer" parent="Center/Margin/Content/MenuBox" unique_id=1627561325]
+[node name="PlayGroup" type="VBoxContainer" parent="Center/Drop/Margin/Content/MenuBox" unique_id=745735039]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_constants/separation = 12
 
-[node name="StartBtn" type="Button" parent="Center/Margin/Content/MenuBox/PlayGroup" unique_id=1643823757]
+[node name="StartBtn" type="Button" parent="Center/Drop/Margin/Content/MenuBox/PlayGroup" unique_id=169835851]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 112)
 layout_mode = 2
@@ -83,7 +92,7 @@ size_flags_horizontal = 3
 theme_type_variation = &"Primary"
 text = "单 人 模 式"
 
-[node name="MultiBtn" type="Button" parent="Center/Margin/Content/MenuBox/PlayGroup" unique_id=1092554065]
+[node name="MultiBtn" type="Button" parent="Center/Drop/Margin/Content/MenuBox/PlayGroup" unique_id=1310299190]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 112)
 layout_mode = 2
@@ -91,7 +100,7 @@ size_flags_horizontal = 3
 theme_type_variation = &"Primary"
 text = "多 人 模 式"
 
-[node name="BetaBtn" type="Button" parent="Center/Margin/Content/MenuBox/PlayGroup" unique_id=1253323209]
+[node name="BetaBtn" type="Button" parent="Center/Drop/Margin/Content/MenuBox/PlayGroup" unique_id=829462449]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 112)
 layout_mode = 2
@@ -99,19 +108,19 @@ size_flags_horizontal = 3
 theme_type_variation = &"Quiet"
 text = "Beta"
 
-[node name="SepA" type="ColorRect" parent="Center/Margin/Content/MenuBox" unique_id=570236287]
+[node name="SepA" type="ColorRect" parent="Center/Drop/Margin/Content/MenuBox" unique_id=92368680]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 2)
 layout_mode = 2
 mouse_filter = 2
 color = Color(0.25, 0.31, 0.4, 1)
 
-[node name="OptGroup" type="VBoxContainer" parent="Center/Margin/Content/MenuBox" unique_id=1378647847]
+[node name="OptGroup" type="VBoxContainer" parent="Center/Drop/Margin/Content/MenuBox" unique_id=1173669799]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_constants/separation = 12
 
-[node name="SettingsBtn" type="Button" parent="Center/Margin/Content/MenuBox/OptGroup" unique_id=1241509079]
+[node name="SettingsBtn" type="Button" parent="Center/Drop/Margin/Content/MenuBox/OptGroup" unique_id=1955420626]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 112)
 layout_mode = 2
@@ -119,7 +128,7 @@ size_flags_horizontal = 3
 theme_type_variation = &"Quiet"
 text = "设 置"
 
-[node name="VerBtn" type="Button" parent="Center/Margin/Content/MenuBox/OptGroup" unique_id=284414566]
+[node name="VerBtn" type="Button" parent="Center/Drop/Margin/Content/MenuBox/OptGroup" unique_id=920684279]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 112)
 layout_mode = 2
@@ -127,14 +136,14 @@ size_flags_horizontal = 3
 theme_type_variation = &"Quiet"
 text = "信 息"
 
-[node name="SepB" type="ColorRect" parent="Center/Margin/Content/MenuBox" unique_id=624721984]
+[node name="SepB" type="ColorRect" parent="Center/Drop/Margin/Content/MenuBox" unique_id=1260989518]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 2)
 layout_mode = 2
 mouse_filter = 2
 color = Color(0.25, 0.31, 0.4, 1)
 
-[node name="QuitBtn" type="Button" parent="Center/Margin/Content/MenuBox" unique_id=1716804456]
+[node name="QuitBtn" type="Button" parent="Center/Drop/Margin/Content/MenuBox" unique_id=167063530]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 112)
 layout_mode = 2
@@ -142,18 +151,18 @@ size_flags_horizontal = 3
 theme_type_variation = &"Quiet"
 text = "退 出"
 
-[node name="Version" type="Label" parent="Center/Margin/Content" unique_id=640897935]
+[node name="Version" type="Label" parent="Center/Drop/Margin/Content" unique_id=1125793963]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_font_sizes/font_size = 16
 theme_override_colors/font_color = Color(0.51, 0.573, 0.639, 1)
 horizontal_alignment = 1
 
-[node name="UILayer" type="CanvasLayer" parent="." unique_id=1251133579]
+[node name="UILayer" type="CanvasLayer" parent="." unique_id=1144782202]
 unique_name_in_owner = true
 layer = 140
 
-[node name="UIRoot" type="Control" parent="UILayer" unique_id=1144182830]
+[node name="UIRoot" type="Control" parent="UILayer" unique_id=1537130005]
 unique_name_in_owner = true
 layout_mode = 3
 anchors_preset = 15
