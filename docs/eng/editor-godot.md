@@ -13,7 +13,10 @@
 | 读写门面 | [`core/editor/editor_io.gd`](../../core/editor/editor_io.gd) | `open_path`（v4 二进制 / v3 文本 / 旧字母格式 + 读时 legacy 迁移）、`save_path`（校验 + 编码 + 写盘）、`default_target`、`list_maps` |
 | 画布 | [`scenes/editor/editor_canvas.gd`](../../scenes/editor/editor_canvas.gd) | 视口离屏层合成、相机（origin/zoom）、`screen_to_subcell`、层可见/压暗、网格与画刷框、`pointer_*` 信号 |
 | 真渲染预览 | [`scenes/editor/editor_preview.gd`](../../scenes/editor/editor_preview.gd) | 复用游戏管线（TerrainAtlas tileset + ParallaxBg + PostProcess）的预览；三个 SubViewport 合成后贴回画布区域 |
-| 场景根 | [`scenes/editor/editor_root.gd`](../../scenes/editor/editor_root.gd) / [`.tscn`](../../scenes/editor/editor_root.tscn) | 顶栏 / 7 层面板 / 工具 / 调色板 / 校验输出 / 状态栏；把画布事件接到 `EditorDoc`；公开 `open_path` / `save_to` / `validate` / `get_doc` / `get_editor_canvas` |
+| UI 场景 | [`scenes/editor/editor_root.tscn`](../../scenes/editor/editor_root.tscn) | **全部静态 UI**：工具栏/`FileMenu`·`EditMenu` 下拉/8 工具列/`CanvasHost`+`EditorCanvas`/右栏 4 Tab（含 7 图层行、选区 6 按钮、meta 5 模式、校验按钮、画刷下拉、两个取色器）/状态栏；根挂 `ui/theme/menu_theme.tres`，功能节点 `unique_name_in_owner` |
+| 场景根逻辑 | [`scenes/editor/editor_root.gd`](../../scenes/editor/editor_root.gd) | 装配 + 接线 + 公开 API（`open_path`/`save_to`/`validate`/`export_to`/`export_and_load`/`get_doc`/`get_editor_canvas`/`set_preview`/`current_path`/`new_map`）；不建静态控件 |
+| 工具层 | [`scenes/editor/editor_tools.gd`](../../scenes/editor/editor_tools.gd) | 工具状态 + 画布指针 → `EditorDoc` 写入 + 选区拖拽 + meta 放置；只发信号（`message`/`tool_changed`/`paint_desc_changed`/`meta_mode_changed`/`selection_changed`） |
+| 命令层 | [`scenes/editor/editor_actions.gd`](../../scenes/editor/editor_actions.gd) | 文件/编辑命令 + `ConfirmationDialog` 弹层内容（新建/打开/保存为/导出）；读写仍走 `EditorIO` 与 root 公开 API |
 
 ★ 纯逻辑（编解码 / 校验 / 文档 / 读写）全在 `core/editor/`；`scenes/editor/` 只做 UI 与接线 —— 场景探针不需要点按钮就能验完整链路。
 
@@ -57,7 +60,7 @@
 
 ## 6. 场景与交互
 
-- 顶栏：新建（名字/宽/高，`EditorValidate.clamp_map_size` 钳制）· 打开（列出 `list_maps`，卡片带 `MapCatalog` 缩略图与显示名）· 保存（有路径直接写，否则「保存为」）· 校验 · 导出（选 `user://maps` 或 exe 同目录）· 导出并加载（写盘 + 设为单人地图 + 回单人开局）· **预览开关** · 返回主菜单。
+- 顶栏 = **单行菜单栏**：`文件 ▾`（新建 · 打开 · 保存 · 导出 · 导出并加载）· `编辑 ▾`（撤销 · 重做 · 复制 · 剪切 · 粘贴 · 清除 · 水平/垂直镜像）· 右侧「视图」预览开关 · 返回主菜单。命令全部在 `.tscn` 的菜单节点里，下拉项是动态内容。校验按钮在右栏「校验消息」Tab。
 - 左栏：**竖直工具列**（画笔/橡皮/直线/矩形/油漆桶/吸管/选框/渐变；2026-11-10 从横条改成 Photoshop/Inkscape/Aseprite 式 tool palette，选中态用 `BtnAccent` 边框）。右栏 4 个 Tab：**图层**（7 层 + 显示开关）· **调色板**（纹理缩略图 · 画刷格数下拉 · 颜色：画笔/渐变终点）· **选区 & meta**（选区信息 + 6 剪贴板按钮 + 5 个 meta 模式 + 计数 + 清空）· **校验消息**（校验 + 输出）。\n- 编辑器根挂 `ui/theme/menu_theme.tres`：Tab、下拉（OptionButton/SpinBox 已换 OptionButton）、滚动条、工具提示、`ConfirmationDialog` 全部走同一套像素字体与 16 号字（2026-11-10 字体统一）。
 - 状态栏：消息 · 尺寸 · 当前层 · 工具 · 光标子格（环面归一化）· 当前值 · 缩放 · 未保存标记。
 - 快捷键走**独立 `editor_` 前缀 InputMap**（`editor_undo/redo/save/open/zoom_in/zoom_out/copy/cut/paste/delete/mirror_h/mirror_v`），不与游戏 action 混：`Ctrl+Z/Y/S/O/C/X/V`、`Delete`、`H`/`V`、`+`/`-`。
@@ -70,7 +73,7 @@
 | `tests/smoke/editor_doc_smoke.gd` | `EDITOR DOC SMOKE: OK(183 条断言)` | 183 | 7 层建图 / 环面 / Bresenham / 4 邻接与接缝油漆桶 / 颜色层 u32 / undo 往返与合并 / 栈上限 / load_map 清栈 / validate+to_bytes / **选区剪贴板镜像渐变 / meta 快照与 undo** |
 | `tests/smoke/editor_io_smoke.gd` | `EDITOR IO SMOKE: OK(53 条断言)` | 53 | v4 7 层读入 / legacy 读时迁移 / v3 与旧字母文本 / 坏文件 / 保存确定性 / 校验拒写 / 三处目录 / 默认落点 / **P3 导出落点与 res:// 拒写** |
 | `tests/probe/editor_canvas_probe.tscn` | `EDITOR CANVAS PROBE: ALL-OK(48 条断言)` | 48 | 上述 + **脏区刷新与全量 refresh 逐像素一致（单格/颜色层/跨接缝/小图多环面副本）** + 选区框几何 + meta 标记锚点 + `_draw` 真跑 |
-| `tests/probe/editor_scene_probe.tscn` | `EDITOR SCENE PROBE: ALL-OK(36 条断言)` | 36 | 真实例化场景：打开 `maps/newfactory.cyrm` → 改一格 → undo/redo → 保存 → 重开 → 再保存**逐字节相等**；P3 导出并加载的 `Settings.sp_map_path`/`map_file_path()`；**后置项：选区/复制/粘贴/镜像/渐变/meta/预览开关** |
+| `tests/probe/editor_scene_probe.tscn` | `EDITOR SCENE PROBE: ALL-OK(50 条断言)` | 50 | 真实例化场景：打开 `maps/newfactory.cyrm` → 改一格 → undo/redo → 保存 → 重开 → 再保存**逐字节相等**；P3 导出并加载的 `Settings.sp_map_path`/`map_file_path()`；后置项：选区/复制/粘贴/镜像/渐变/meta/预览开关；**⑦ UI 结构组（14 条）：HSplit 可拖、菜单栏 文件 5 项/编辑 8 项、工具列 8 键、4 Tab、7 图层、调色板、状态栏、无溢出** |
 | `tests/probe/editor_preview_probe.tscn` | `EDITOR PREVIEW PROBE: ALL-OK(21 条断言)` | 21 | 真渲染预览的结构统计（773 瓦片 / 背景 1 层 / post 存在）/ 相机口径 / 显隐切换 / refresh 幂等 / doc 信号接线 |
 
 - 产品侧另有两条**真导出**才能回答的检查（不在默认批里，跑在 `tools/build_release.py`，见 §10）。
@@ -131,3 +134,13 @@
 
 - meta 编辑**不进** `changed`（没有 cells 变更），面板/标记靠 `doc.meta_changed` 刷新；保存按钮看 `doc.dirty`。
 - 本次没有新增「浏览器编辑器对照」：预览/脏区/选区框都是 Godot 侧新写，headless 判据只到结构/像素一致性，观感仍需非 headless 人眼。
+
+## 12. UI 场景化（T3，2026-11-10）
+
+用户裁定「要用 .tscn 和 .tres，别再在 GDScript 里动态搭 UI」。落地形态：
+
+- `scenes/editor/editor_root.tscn` = **真实场景树**（根挂 `ui/theme/menu_theme.tres`）：`Toolbar`（标题 + `FileMenu`/`EditMenu` + 视图标签 + 预览/返回）· 竖排 8 工具 `ToolStrip` · `CanvasHost`（内含 `EditorCanvas` 节点）· `RightTabs`（4 Tab：图层 7 行静态 / 调色板 / 选区 & meta / 校验消息）· `StatusBar`；功能节点全部 `unique_name_in_owner=true`，root 用 `%Name` 取。
+- `editor_root.gd` **只做装配/接线/公开 API**（1270 → **597** 行）：静态控件不再 `new`；代码里只保留动态内容（调色板缩略图、菜单下拉项、弹层内容、预览节点）。
+- 拆出两个无 `class_name` 的小组件（root `preload`）：`editor_tools.gd`（工具状态 + 画布指针 → `EditorDoc` 写入 + 选区拖拽 + meta 放置；只发信号）、`editor_actions.gd`（文件/编辑命令 + `ConfirmationDialog` 弹层）。两者都不持有控件。
+- 判据：`EDITOR SCENE PROBE: ALL-OK(50)`（含 ⑦ UI 结构组 14 条）/ `UI LAYOUT PROBE: ALL-OK(54)` / `RUN_ALL OK` / `check_naming.py` 绿；改前/改后截图 `.tmp/ui_shots/editor_before*.png` ↔ `editor_after*.png`（非 headless 人工对比）。
+- 边界：`.tscn` 无法引用 `UiFactory.C_*`，所以全屏底色 `Bg` 在 tscn 里留一处字面量（全屏装饰例外），少数标签强调/弱化色由 root 在 `_ready` 按 `C_*` 覆盖 —— 不在 tscn 里另抄一套调色板。
