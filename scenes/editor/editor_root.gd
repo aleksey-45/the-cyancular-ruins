@@ -37,6 +37,7 @@ const META_LABELS := {
 }
 
 # 布局尺寸(等 T1 的 SP_*/T_* token 合入后改为引用 token;集中一处,页面别处不再写魔法数)
+const THEME := preload("res://ui/theme/menu_theme.tres")   # 与游戏 UI 同一份主题(字体/下拉/提示)
 const FRAME_MARGIN := UiFactory.SP_2   # 根边距 = 8(SP_2)
 const FRAME_GAP := 6             # 容器间距(6 无对应 token;视觉上等距 4/8 之间)
 const TAB_MIN_W := 320.0         # 右栏 TabContainer 最小宽
@@ -205,6 +206,7 @@ func validate() -> Dictionary:
 #   menu_button / label / style_*),不自己拼 StyleBox。
 
 func _build_ui() -> void:
+	theme = THEME
 	var bg := ColorRect.new()
 	bg.name = "Bg"
 	bg.color = UiFactory.C_BG
@@ -293,24 +295,27 @@ func _action_button(text: String, cb: Callable) -> Button:
 	return b
 
 
-# 左半:工具条 + 画布 host(画布 + 真渲染预览叠层)。工具条用 HFlow 自动换行,窄屏不溢出。
+# 左半:**竖直工具列**(Photoshop/Inkscape/Aseprite 的 tool palette)+ 画布 host。
+# 工具不再横铺一整行:竖向排布把"操作栏/工具/画布"的视觉重量分开,画布占回主导。
 func _build_canvas_side() -> Control:
-	var side := VBoxContainer.new()
+	var side := HBoxContainer.new()
 	side.name = "CanvasSide"
 	side.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	side.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	side.add_theme_constant_override("separation", FRAME_GAP)
 
-	var strip := HFlowContainer.new()
-	strip.name = "ToolStrip"
-	strip.add_theme_constant_override("h_separation", 4)
-	strip.add_theme_constant_override("v_separation", 4)
-	side.add_child(strip)
-	strip.add_child(_group_label("工具"))
+	var tool_col := VBoxContainer.new()
+	tool_col.name = "ToolStrip"
+	tool_col.custom_minimum_size = Vector2(96, 0)
+	tool_col.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	tool_col.add_theme_constant_override("separation", 4)
+	side.add_child(tool_col)
+	tool_col.add_child(_group_label("工具"))
 	for key in TOOL_LABELS:
-		var b := UiFactory.menu_button(String(TOOL_LABELS[key]), 16, Vector2(88, 36), "quiet")
+		var b := UiFactory.menu_button(String(TOOL_LABELS[key]), 16, Vector2(96, 40), "quiet")
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		b.pressed.connect(_select_tool.bind(key))
-		strip.add_child(b)
+		tool_col.add_child(b)
 		_tool_buttons[key] = b
 
 	_canvas_host = PanelContainer.new()
@@ -342,7 +347,7 @@ func _build_tabs() -> Control:
 	_tabs.set_tab_title(0, "图层")
 	_tabs.set_tab_title(1, "调色板")
 	_tabs.set_tab_title(2, "选区 & meta")
-	_tabs.set_tab_title(3, "校验 / 消息")
+	_tabs.set_tab_title(3, "校验消息")
 	return _tabs
 
 
@@ -368,6 +373,7 @@ func _make_scroll_tab(node_name: String) -> Array:
 	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	body.add_theme_constant_override("separation", 6)
 	scroll.add_child(body)
+	scroll.get_v_scroll_bar().theme_type_variation = &"Kit"
 	return [scroll, body]
 
 
@@ -412,13 +418,17 @@ func _build_palette_tab() -> Control:
 	var size_row := HBoxContainer.new()
 	size_row.add_theme_constant_override("separation", 8)
 	size_row.add_child(UiFactory.label("画刷(格)", 16, UiFactory.C_TEXT_DIM))
-	var spin := SpinBox.new()
-	spin.min_value = 1
-	spin.max_value = 9
-	spin.step = 2
-	spin.value = 1
-	spin.value_changed.connect(_on_brush_size_changed)
-	size_row.add_child(spin)
+	var brush_opt := OptionButton.new()
+	brush_opt.name = "BrushSizeOption"
+	brush_opt.tooltip_text = "画刷格数(1 格 = 4 子格)"
+	for n in [1, 3, 5, 7, 9]:
+		var idx := brush_opt.item_count
+		brush_opt.add_item(str(n))
+		brush_opt.set_item_metadata(idx, n)
+	brush_opt.selected = 0
+	brush_opt.item_selected.connect(func(i: int) -> void:
+		_on_brush_size_changed(float(brush_opt.get_item_metadata(i))))
+	size_row.add_child(brush_opt)
 	body.add_child(size_row)
 
 	# 颜色:只有背景颜色层 3-6 用得到;纹理层落笔仍用调色板。
@@ -427,14 +437,18 @@ func _build_palette_tab() -> Control:
 	color_row.add_theme_constant_override("separation", 8)
 	color_row.add_child(UiFactory.label("画笔", 16, UiFactory.C_TEXT_DIM))
 	_color_btn = ColorPickerButton.new()
+	_color_btn.name = "BrushColor"
 	_color_btn.color = _color_value
 	_color_btn.custom_minimum_size = Vector2(64, 32)
+	_color_btn.tooltip_text = "画笔颜色(只作用于颜色层 3-6)"
 	_color_btn.color_changed.connect(func(c: Color) -> void: _color_value = c)
 	color_row.add_child(_color_btn)
 	color_row.add_child(UiFactory.label("渐变终点", 16, UiFactory.C_TEXT_DIM))
 	_gradient_end_btn = ColorPickerButton.new()
+	_gradient_end_btn.name = "GradientEndColor"
 	_gradient_end_btn.color = _gradient_end
 	_gradient_end_btn.custom_minimum_size = Vector2(64, 32)
+	_gradient_end_btn.tooltip_text = "渐变终点颜色(只作用于颜色层 3-6)"
 	_gradient_end_btn.color_changed.connect(func(c: Color) -> void: _gradient_end = c)
 	color_row.add_child(_gradient_end_btn)
 	body.add_child(color_row)
@@ -580,7 +594,8 @@ func _select_tool(key: String) -> void:
 	_tool = key
 	for k in _tool_buttons:
 		var b: Button = _tool_buttons[k]
-		b.modulate = UiFactory.C_WHITE if k == key else Color(1, 1, 1, 0.6)
+		b.theme_type_variation = &"BtnAccent" if k == key else &"BtnQuiet"
+		b.modulate = UiFactory.C_WHITE
 	canvas.set_preview_desc(0 if key == TOOL_ERASER else _paint_desc)
 	if key == TOOL_SELECT:
 		_set_message("选框:在画布上拖出矩形", false)
@@ -1079,6 +1094,7 @@ func _open_dialog(title_text: String, ok_text: String, fill: Callable) -> Confir
 	dlg.title = title_text
 	dlg.ok_button_text = ok_text
 	dlg.cancel_button_text = "取消"
+	dlg.theme = THEME
 	dlg.theme_type_variation = &"Kit"
 	var body := VBoxContainer.new()
 	body.name = "Body"

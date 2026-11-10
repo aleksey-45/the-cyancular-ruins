@@ -13,7 +13,7 @@
 - 按钮 = 暗填充 + 2px 亮描边、直角(`style_button(b, variant)`,`variant="quiet"` 是弱化项);描边对页面底与对填充都 ≥ 3:1。其余工厂方法:`panel_box()`(**不透明**)、`row_box()` / `style_row_button()`、`style_line_edit()`、`style_check()`(自绘开关图标)、`style_slider()`。
 - 开关 / 勾选框行 = 定宽标签列 + 紧邻开关(`HBoxContainer`,标签 `custom_minimum_size.x` 固定);裸 `CheckButton` 塞进宽容器会被拉到全宽。
 - 禁用武器区:单人开局 `CheckList` 与大厅建房两列网格各放在限高 `ScrollContainer` 中,只纵向滚动,超出内容时显示右侧滚动条;标题、开始/确定按钮不随列表滚动。
-- 生成物:改过 `UiFactory` 的菜单系样式后必须重跑 `tools/gen_menu_theme.gd` 重建 `ui/theme/menu_theme.tres`。
+- 生成物:改过 `UiFactory` 的菜单系样式后必须重跑 `tools/gen_menu_theme.gd` 重建 `ui/theme/menu_theme.tres`。\n- **下拉/弹出/提示/Tab（2026-11-10）**:Theme 2.0 补了 `OptionButton` / `PopupMenu` / `MenuButton` / `TooltipPanel`+`TooltipLabel` / `TabBar`+`TabContainer` 的基础条目(之前回落到 Godot 默认主题 ⇒ Noto Sans 字体);字体族仍走 `Theme.default_font`(像素字体链),字号 16。编辑器根节点挂同一份主题,所以编辑器的 tab/下拉/弹层与游戏菜单字体一致。
 
 ## HUD
 

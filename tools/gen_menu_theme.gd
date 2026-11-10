@@ -412,6 +412,72 @@ func _other_controls(t: Theme, F: GDScript, C: Dictionary) -> void:
 			F.call("_row_sb", _c(C, "C_ACCENT"), _c(C, "C_ACCENT")))
 
 
+	# ── 下拉 / 弹出菜单 / 提示 / Tab(2026-11-10)───────────────────────────────
+	# 之前只有 Button/LineEdit/CheckButton 有皮肤,OptionButton/PopupMenu/菜单下拉/工具提示/Tab
+	# 全部回落到 Godot 默认主题(Noto Sans 字体)⇒ 编辑器与设置页的"字体不统一"就从这里来。
+	# 这里只加"基础类型"条目(不是 variation):字体族仍走 Theme.default_font(像素字体链),
+	# 字号用 T_LABEL=16,和紧凑工具栏同一档。
+	var ob := _flat(C, "C_FIELD", "C_BORDER_DIM", 1, _n(C, "SP_3"), _n(C, "SP_2"))
+	t.set_stylebox("normal", "OptionButton", ob)
+	var ob_hi := _flat(C, "C_BTN_FILL_HI", "C_BORDER", 1, _n(C, "SP_3"), _n(C, "SP_2"))
+	t.set_stylebox("hover", "OptionButton", ob_hi)
+	t.set_stylebox("pressed", "OptionButton", ob_hi)
+	var ob_focus := ob.duplicate() as StyleBoxFlat
+	ob_focus.border_color = _c(C, "C_ACCENT")
+	t.set_stylebox("focus", "OptionButton", ob_focus)
+	t.set_stylebox("disabled", "OptionButton",
+			_flat(C, "C_BTN_FILL_DN", "C_BORDER_DIM", 1, _n(C, "SP_3"), _n(C, "SP_2")))
+	t.set_font_size("font_size", "OptionButton", _n(C, "T_LABEL"))
+	t.set_color("font_color", "OptionButton", _c(C, "C_TEXT"))
+	t.set_color("font_hover_color", "OptionButton", _c(C, "C_ACCENT"))
+	t.set_color("font_pressed_color", "OptionButton", _c(C, "C_ACCENT"))
+	t.set_color("font_focus_color", "OptionButton", _c(C, "C_TEXT"))
+	t.set_color("font_disabled_color", "OptionButton", _c(C, "C_TEXT_DIM"))
+
+	t.set_stylebox("panel", "PopupMenu",
+			_flat(C, "C_SURFACE", "C_BORDER", 1, _n(C, "SP_2"), _n(C, "SP_2")))
+	t.set_stylebox("hover", "PopupMenu",
+			_flat(C, "C_BTN_FILL_HI", "", 0, _n(C, "SP_3"), _n(C, "SP_2")))
+	t.set_font_size("font_size", "PopupMenu", _n(C, "T_LABEL"))
+	t.set_color("font_color", "PopupMenu", _c(C, "C_TEXT"))
+	t.set_color("font_hover_color", "PopupMenu", _c(C, "C_ACCENT"))
+	t.set_color("font_disabled_color", "PopupMenu", _c(C, "C_TEXT_DIM"))
+	t.set_color("font_separator_color", "PopupMenu", _c(C, "C_TEXT_DIM"))
+
+	# MenuButton 是 Button 的子类;仍不设基础 Button(避免 CheckButton 穿衣),只给 MenuButton。
+	var mb := _flat(C, "C_BTN_FILL", "C_BORDER_DIM", 1, _n(C, "SP_3"), _n(C, "SP_2"))
+	t.set_stylebox("normal", "MenuButton", mb)
+	var mb_hi := _flat(C, "C_BTN_FILL_HI", "C_BORDER", 1, _n(C, "SP_3"), _n(C, "SP_2"))
+	t.set_stylebox("hover", "MenuButton", mb_hi)
+	t.set_stylebox("pressed", "MenuButton",
+			_flat(C, "C_BTN_FILL_DN", "C_ACCENT", 1, _n(C, "SP_3"), _n(C, "SP_2")))
+	t.set_stylebox("focus", "MenuButton", mb_hi)
+	t.set_stylebox("disabled", "MenuButton",
+			_flat(C, "C_BTN_FILL_DN", "C_BORDER_DIM", 1, _n(C, "SP_3"), _n(C, "SP_2")))
+	t.set_font_size("font_size", "MenuButton", _n(C, "T_LABEL"))
+	t.set_color("font_color", "MenuButton", _c(C, "C_TEXT"))
+	t.set_color("font_hover_color", "MenuButton", _c(C, "C_ACCENT"))
+
+	t.set_stylebox("panel", "TooltipPanel",
+			_flat(C, "C_BG", "C_BORDER", 1, _n(C, "SP_2"), _n(C, "SP_1")))
+	t.set_font_size("font_size", "TooltipLabel", _n(C, "T_LABEL"))
+	t.set_color("font_color", "TooltipLabel", _c(C, "C_TEXT"))
+
+	# TabBar / TabContainer:全仓只有编辑器用 Tab;基础类型条目让 tab 也走像素字体 + 16 号。
+	t.set_font_size("font_size", "TabBar", _n(C, "T_LABEL"))
+	t.set_color("font_selected_color", "TabBar", _c(C, "C_TEXT"))
+	t.set_color("font_unselected_color", "TabBar", _c(C, "C_TEXT_DIM"))
+	t.set_color("font_hovered_color", "TabBar", _c(C, "C_ACCENT"))
+	t.set_color("font_disabled_color", "TabBar", _c(C, "C_TEXT_DIM"))
+	t.set_stylebox("tab_selected", "TabBar",
+			_flat(C, "C_SURFACE", "C_ACCENT", 1, _n(C, "SP_3"), _n(C, "SP_2")))
+	t.set_stylebox("tab_unselected", "TabBar",
+			_flat(C, "C_BG", "C_BORDER_DIM", 1, _n(C, "SP_3"), _n(C, "SP_2")))
+	t.set_stylebox("tab_hovered", "TabBar",
+			_flat(C, "C_ROW", "C_BORDER", 1, _n(C, "SP_3"), _n(C, "SP_2")))
+	t.set_stylebox("panel", "TabContainer", _flat(C, "C_SURFACE", "", 0, 0, 0))
+
+
 func _switch_icons_ready() -> bool:
 	return load(OUT_SWITCH_OFF) != null and load(OUT_SWITCH_ON) != null
 

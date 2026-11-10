@@ -58,7 +58,7 @@
 ## 6. 场景与交互
 
 - 顶栏：新建（名字/宽/高，`EditorValidate.clamp_map_size` 钳制）· 打开（列出 `list_maps`，卡片带 `MapCatalog` 缩略图与显示名）· 保存（有路径直接写，否则「保存为」）· 校验 · 导出（选 `user://maps` 或 exe 同目录）· 导出并加载（写盘 + 设为单人地图 + 回单人开局）· **预览开关** · 返回主菜单。
-- 右栏：7 层（点名字 = 当前编辑层；勾选框 = 显示/隐藏）· 工具（画笔/橡皮/直线/矩形/油漆桶/吸管/**选框**/**渐变**）· 画刷格数 · **颜色（画笔 / 渐变终点，只对背景颜色层生效）** · **选区与剪贴板（复制/剪切/粘贴/清除/水平镜像/垂直镜像）** · **meta 面板（放出生点 / 放复活点侧1 / 侧2 / 放敌人 + 计数 + 清空）** · 调色板（`data/tile_defs.json` 的 tiles，缩略图取 `TerrainAtlas.source_image()`）· 校验/消息输出。
+- 左栏：**竖直工具列**（画笔/橡皮/直线/矩形/油漆桶/吸管/选框/渐变；2026-11-10 从横条改成 Photoshop/Inkscape/Aseprite 式 tool palette，选中态用 `BtnAccent` 边框）。右栏 4 个 Tab：**图层**（7 层 + 显示开关）· **调色板**（纹理缩略图 · 画刷格数下拉 · 颜色：画笔/渐变终点）· **选区 & meta**（选区信息 + 6 剪贴板按钮 + 5 个 meta 模式 + 计数 + 清空）· **校验消息**（校验 + 输出）。\n- 编辑器根挂 `ui/theme/menu_theme.tres`：Tab、下拉（OptionButton/SpinBox 已换 OptionButton）、滚动条、工具提示、`ConfirmationDialog` 全部走同一套像素字体与 16 号字（2026-11-10 字体统一）。
 - 状态栏：消息 · 尺寸 · 当前层 · 工具 · 光标子格（环面归一化）· 当前值 · 缩放 · 未保存标记。
 - 快捷键走**独立 `editor_` 前缀 InputMap**（`editor_undo/redo/save/open/zoom_in/zoom_out/copy/cut/paste/delete/mirror_h/mirror_v`），不与游戏 action 混：`Ctrl+Z/Y/S/O/C/X/V`、`Delete`、`H`/`V`、`+`/`-`。
 - 左键落笔；中键或空格拖动只平移（不发 `pointer_*`）；滚轮以鼠标为锚缩放。
