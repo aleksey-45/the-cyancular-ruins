@@ -224,7 +224,8 @@ func _wire_ui() -> void:
 	_tabs = %RightTabs
 
 	# 少数颜色 token 不在 tscn 里重复写值(single source = UiFactory.C_*)。
-	(%TitleLabel as Label).add_theme_color_override("font_color", UiFactory.C_ACCENT)
+	# 标题从 32 号亮青降成 16 号弱化:菜单栏是"窗口标题"语气,不跟画布抢焦点。
+	(%TitleLabel as Label).theme_type_variation = &"SmallDim"
 	for name: String in ["ViewLabel", "ToolLabel", "StatusText", "PathText", "LayersHint",
 			"PaletteHint", "BrushHint", "ColorHint", "SelHint", "MetaHint", "ReportHint",
 			"SelectionInfo", "MetaInfo"]:
@@ -242,6 +243,7 @@ func _wire_ui() -> void:
 		var row := (%LayerRows as VBoxContainer).get_child(i) as HBoxContainer
 		var btn := row.get_child(0) as Button
 		var vis := row.get_child(1) as CheckButton
+		btn.theme_type_variation = &"LayerRow"
 		btn.pressed.connect(_on_layer_selected.bind(i))
 		vis.toggled.connect(_on_layer_visible_toggled.bind(i))
 		_layer_rows.append({"button": btn, "visible": vis})
@@ -249,6 +251,7 @@ func _wire_ui() -> void:
 	# 工具列(左竖直 8 键)
 	for key: String in TOOL_BUTTONS:
 		var b := get_node("%" + String(TOOL_BUTTONS[key])) as Button
+		b.theme_type_variation = &"ToolButton"
 		b.pressed.connect(_tools.set_tool.bind(key))
 		_tool_buttons[key] = b
 
@@ -261,9 +264,22 @@ func _wire_ui() -> void:
 		["撤销", _actions.undo], ["重做", _actions.redo], ["复制", _actions.copy],
 		["剪切", _actions.cut], ["粘贴", _actions.paste], ["清除", _actions.clear_selection],
 		["水平镜像", _actions.mirror.bind("h")], ["垂直镜像", _actions.mirror.bind("v")]])
+	# 顶栏命令:菜单用 MenuButton 基础扁平皮,视图按钮用 FlatButton(透明底,hover 才出底)。
+	(%FileMenu as MenuButton).theme_type_variation = &""
+	(%EditMenu as MenuButton).theme_type_variation = &""
+	(%PreviewBtn as Button).theme_type_variation = &"FlatButton"
+	(%BackBtn as Button).theme_type_variation = &"FlatButton"
 	_preview_btn = %PreviewBtn
 	_preview_btn.pressed.connect(_on_preview_toggled)
 	(%BackBtn as Button).pressed.connect(_actions.back)
+
+	# 右栏的次级按钮(选区 6 / meta 5 / 校验)统一扁平;当前态由 _on_*_changed 换 variation。
+	for nm: String in ["SelCopy", "SelCut", "SelPaste", "SelClear", "SelMirrorH", "SelMirrorV",
+			"MetaEdit", "MetaPlayer", "MetaRespawn1", "MetaRespawn2", "MetaEnemy",
+			"ClearMetaBtn", "ValidateBtn"]:
+		var b := get_node_or_null("%" + nm) as Button
+		if b != null:
+			b.theme_type_variation = &"FlatButton"
 
 	# 调色板缩略图是动态内容(图集按 tile_defs 生成);按钮列表本身也在 tscn 之外生成。
 	_build_palette(%PaletteGrid as GridContainer)
@@ -368,7 +384,7 @@ func _mark_palette(tex: int) -> void:
 func _on_tool_changed(key: String) -> void:
 	for k: String in _tool_buttons:
 		var b: Button = _tool_buttons[k]
-		b.theme_type_variation = &"BtnAccent" if k == key else &"BtnCompact"
+		b.theme_type_variation = &"ToolActive" if k == key else &"ToolButton"
 	_update_status(Vector2i.ZERO, false)
 
 
@@ -379,7 +395,8 @@ func _on_paint_desc_changed(desc: int) -> void:
 func _on_meta_mode_changed(key: String) -> void:
 	for k: String in _meta_buttons:
 		var b: Button = _meta_buttons[k]
-		b.modulate = UiFactory.C_WHITE if k == key else Color(1, 1, 1, 0.6)
+		b.theme_type_variation = &"ToolActive" if k == key else &"FlatButton"
+		b.modulate = UiFactory.C_WHITE
 
 
 func _on_layer_selected(L: int) -> void:
@@ -396,7 +413,10 @@ func _on_layer_visible_toggled(on: bool, L: int) -> void:
 func _sync_layer_rows() -> void:
 	for L in _layer_rows.size():
 		var b: Button = (_layer_rows[L] as Dictionary)["button"]
-		b.modulate = UiFactory.C_WHITE if L == doc.active_layer else Color(1, 1, 1, 0.6)
+		b.theme_type_variation = &"LayerActive" if L == doc.active_layer else &"LayerRow"
+		var vis: CheckButton = (_layer_rows[L] as Dictionary)["visible"]
+		# 眼睛开关:开=亮一档(0.8),关=压暗(0.35);不再 7 个高亮青胶囊同时抢眼。
+		vis.modulate = Color(1, 1, 1, 0.8 if vis.button_pressed else 0.35)
 
 
 # ── doc / 画布 回调 ─────────────────────────────────────────────────────

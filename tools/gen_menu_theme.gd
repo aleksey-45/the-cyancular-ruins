@@ -49,6 +49,7 @@ func _initialize() -> void:
 	_button_variants(t, F, C)
 	_panel_variants(t, F, C)
 	_kit_variants(t, C)
+	_flat_editor_variants(t, C)
 	_other_controls(t, F, C)
 
 	var err := ResourceSaver.save(t, OUT_THEME)
@@ -118,6 +119,9 @@ func _label_variants(t: Theme, C: Dictionary) -> void:
 	t.set_type_variation("HeaderTitle", "Label")
 	t.set_font_size("font_size", "HeaderTitle", _n(C, "T_H2"))
 	t.set_color("font_color", "HeaderTitle", _c(C, "C_GOLD"))
+	t.set_type_variation("SmallDim", "Label")
+	t.set_font_size("font_size", "SmallDim", _n(C, "T_LABEL"))
+	t.set_color("font_color", "SmallDim", _c(C, "C_TEXT_MUTE"))
 	t.set_type_variation("Dim", "Label")
 	t.set_font_size("font_size", "Dim", _n(C, "T_H2"))
 	t.set_color("font_color", "Dim", _c(C, "C_TEXT_DIM"))
@@ -393,6 +397,50 @@ func _kit_variants(t: Theme, C: Dictionary) -> void:
 	t.set_constant("buttons_min_height", "Kit", _n(C, "SP_7"))
 
 
+func _flat_editor_variants(t: Theme, C: Dictionary) -> void:
+	# 编辑器"去盒子化"档(2026-11-10):工具栏命令、工具列、图层行都改成**透明底 + hover 才出底**;
+	# 边框只留给输入/面板/焦点,强调色只给"当前工具/当前图层/焦点"——避免每个控件都是同权重的实心盒子。
+	for name in ["FlatButton", "ToolButton"]:
+		t.set_type_variation(name, "Button")
+		t.set_font_size("font_size", name, _n(C, "T_LABEL"))
+		t.set_stylebox("normal", name, _flat(C, "C_TRANSPARENT", "", 0, _n(C, "SP_2"), _n(C, "SP_1")))
+		t.set_stylebox("hover", name, _flat(C, "C_BTN_FILL_HI", "", 0, _n(C, "SP_2"), _n(C, "SP_1")))
+		t.set_stylebox("pressed", name, _flat(C, "C_BTN_FILL_DN", "C_ACCENT", 1, _n(C, "SP_2"), _n(C, "SP_1")))
+		t.set_stylebox("focus", name, _flat(C, "C_TRANSPARENT", "C_ACCENT", 1, _n(C, "SP_2"), _n(C, "SP_1")))
+		t.set_stylebox("disabled", name, _flat(C, "C_TRANSPARENT", "", 0, _n(C, "SP_2"), _n(C, "SP_1")))
+		t.set_color("font_color", name, _c(C, "C_TEXT_DIM"))
+		t.set_color("font_hover_color", name, _c(C, "C_TEXT"))
+		t.set_color("font_focus_color", name, _c(C, "C_TEXT"))
+		t.set_color("font_pressed_color", name, _c(C, "C_ACCENT"))
+		t.set_color("font_disabled_color", name, _c(C, "C_TEXT_MUTE"))
+
+	# 当前工具/当前图层:左缘 2px 强调条 + 轻底;不靠整块亮色抢画布。
+	var active_left := _flat(C, "C_ROW", "", 0, _n(C, "SP_2"), _n(C, "SP_1"))
+	active_left.border_width_left = 2
+	active_left.border_color = _c(C, "C_ACCENT")
+	for name in ["ToolActive", "LayerActive"]:
+		t.set_type_variation(name, "Button")
+		t.set_font_size("font_size", name, _n(C, "T_LABEL"))
+		t.set_stylebox("normal", name, active_left)
+		t.set_stylebox("hover", name, active_left)
+		t.set_stylebox("pressed", name, active_left)
+		t.set_stylebox("focus", name, active_left)
+		t.set_stylebox("disabled", name, active_left)
+		t.set_color("font_color", name, _c(C, "C_ACCENT"))
+		t.set_color("font_hover_color", name, _c(C, "C_ACCENT"))
+		t.set_color("font_focus_color", name, _c(C, "C_ACCENT"))
+
+	# 普通图层行:只有 hover 才出底,和工具列的 FlatButton 同族。
+	t.set_type_variation("LayerRow", "Button")
+	t.set_font_size("font_size", "LayerRow", _n(C, "T_LABEL"))
+	t.set_stylebox("normal", "LayerRow", _flat(C, "C_TRANSPARENT", "", 0, _n(C, "SP_2"), _n(C, "SP_1")))
+	t.set_stylebox("hover", "LayerRow", _flat(C, "C_ROW", "", 0, _n(C, "SP_2"), _n(C, "SP_1")))
+	t.set_stylebox("pressed", "LayerRow", _flat(C, "C_ROW", "C_ACCENT", 1, _n(C, "SP_2"), _n(C, "SP_1")))
+	t.set_stylebox("focus", "LayerRow", _flat(C, "C_ROW", "", 0, _n(C, "SP_2"), _n(C, "SP_1")))
+	t.set_color("font_color", "LayerRow", _c(C, "C_TEXT_DIM"))
+	t.set_color("font_hover_color", "LayerRow", _c(C, "C_TEXT"))
+
+
 func _other_controls(t: Theme, F: GDScript, C: Dictionary) -> void:
 	var le := StyleBoxFlat.new()
 	le.bg_color = _c(C, "C_FIELD")
@@ -468,36 +516,44 @@ func _other_controls(t: Theme, F: GDScript, C: Dictionary) -> void:
 	t.set_color("font_separator_color", "PopupMenu", _c(C, "C_TEXT_DIM"))
 
 	# MenuButton 是 Button 的子类;仍不设基础 Button(避免 CheckButton 穿衣),只给 MenuButton。
-	var mb := _flat(C, "C_BTN_FILL", "C_BORDER_DIM", 1, _n(C, "SP_3"), _n(C, "SP_2"))
-	t.set_stylebox("normal", "MenuButton", mb)
-	var mb_hi := _flat(C, "C_BTN_FILL_HI", "C_BORDER", 1, _n(C, "SP_3"), _n(C, "SP_2"))
-	t.set_stylebox("hover", "MenuButton", mb_hi)
+	# 菜单栏文字按钮:透明底,hover 才出轻底;不再是"实心盒子排在标题旁边"。
+	t.set_stylebox("normal", "MenuButton",
+			_flat(C, "C_TRANSPARENT", "", 0, _n(C, "SP_2"), _n(C, "SP_1")))
+	t.set_stylebox("hover", "MenuButton",
+			_flat(C, "C_BTN_FILL_HI", "", 0, _n(C, "SP_2"), _n(C, "SP_1")))
 	t.set_stylebox("pressed", "MenuButton",
-			_flat(C, "C_BTN_FILL_DN", "C_ACCENT", 1, _n(C, "SP_3"), _n(C, "SP_2")))
-	t.set_stylebox("focus", "MenuButton", mb_hi)
+			_flat(C, "C_BTN_FILL_DN", "C_ACCENT", 1, _n(C, "SP_2"), _n(C, "SP_1")))
+	t.set_stylebox("focus", "MenuButton",
+			_flat(C, "C_TRANSPARENT", "C_ACCENT", 1, _n(C, "SP_2"), _n(C, "SP_1")))
 	t.set_stylebox("disabled", "MenuButton",
-			_flat(C, "C_BTN_FILL_DN", "C_BORDER_DIM", 1, _n(C, "SP_3"), _n(C, "SP_2")))
+			_flat(C, "C_TRANSPARENT", "", 0, _n(C, "SP_2"), _n(C, "SP_1")))
 	t.set_font_size("font_size", "MenuButton", _n(C, "T_LABEL"))
 	t.set_color("font_color", "MenuButton", _c(C, "C_TEXT"))
-	t.set_color("font_hover_color", "MenuButton", _c(C, "C_ACCENT"))
+	t.set_color("font_hover_color", "MenuButton", _c(C, "C_TEXT"))
+	t.set_color("font_focus_color", "MenuButton", _c(C, "C_TEXT"))
 
 	t.set_stylebox("panel", "TooltipPanel",
 			_flat(C, "C_BG", "C_BORDER", 1, _n(C, "SP_2"), _n(C, "SP_1")))
 	t.set_font_size("font_size", "TooltipLabel", _n(C, "T_LABEL"))
 	t.set_color("font_color", "TooltipLabel", _c(C, "C_TEXT"))
 
-	# TabBar / TabContainer:全仓只有编辑器用 Tab;基础类型条目让 tab 也走像素字体 + 16 号。
+	# TabBar / TabContainer:下划线式(2026-11-10):透明 tab + 选中 2px 青色底线,
+	# 不再给每个 tab 套四边框盒子;Tab 区与右栏同底,视觉上像"分段标题"而不是按钮。
 	t.set_font_size("font_size", "TabBar", _n(C, "T_LABEL"))
 	t.set_color("font_selected_color", "TabBar", _c(C, "C_TEXT"))
 	t.set_color("font_unselected_color", "TabBar", _c(C, "C_TEXT_DIM"))
-	t.set_color("font_hovered_color", "TabBar", _c(C, "C_ACCENT"))
-	t.set_color("font_disabled_color", "TabBar", _c(C, "C_TEXT_DIM"))
-	t.set_stylebox("tab_selected", "TabBar",
-			_flat(C, "C_SURFACE", "C_ACCENT", 1, _n(C, "SP_3"), _n(C, "SP_2")))
-	t.set_stylebox("tab_unselected", "TabBar",
-			_flat(C, "C_BG", "C_BORDER_DIM", 1, _n(C, "SP_3"), _n(C, "SP_2")))
-	t.set_stylebox("tab_hovered", "TabBar",
-			_flat(C, "C_ROW", "C_BORDER", 1, _n(C, "SP_3"), _n(C, "SP_2")))
+	t.set_color("font_hovered_color", "TabBar", _c(C, "C_TEXT"))
+	t.set_color("font_disabled_color", "TabBar", _c(C, "C_TEXT_MUTE"))
+	var tab_on := _flat(C, "C_TRANSPARENT", "", 0, _n(C, "SP_3"), _n(C, "SP_2"))
+	tab_on.border_width_bottom = 2
+	tab_on.border_color = _c(C, "C_ACCENT")
+	var tab_off := _flat(C, "C_TRANSPARENT", "", 0, _n(C, "SP_3"), _n(C, "SP_2"))
+	tab_off.border_width_bottom = 2
+	tab_off.border_color = _c(C, "C_TRANSPARENT")
+	t.set_stylebox("tab_selected", "TabBar", tab_on)
+	t.set_stylebox("tab_unselected", "TabBar", tab_off)
+	t.set_stylebox("tab_hovered", "TabBar", tab_off)
+	t.set_stylebox("tab_hovered_pressed", "TabBar", tab_off)
 	t.set_stylebox("panel", "TabContainer", _flat(C, "C_SURFACE", "", 0, 0, 0))
 
 
