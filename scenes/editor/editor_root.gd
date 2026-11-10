@@ -240,48 +240,50 @@ func _build_ui() -> void:
 	_layout_split.call_deferred()
 
 
-# 顶部工具栏 = 两行 HBox/HFlow(窄屏不溢出):第一行标题 + 文件组 + 视图组,
-# 第二行编辑组(撤销/重做/复制/剪切/粘贴/清除/水平·垂直镜像)。
+# 顶部 = **单行菜单栏**(文件/编辑下拉 + 视图按钮),对齐 Inkscape/Aseprite 的 menu bar;
+# 不再把 15 个命令平铺成两行等权按钮(2026-11-10 排版收口:命令进下拉,画布占回高度)。
 func _build_toolbar() -> Control:
 	var bar := PanelContainer.new()
 	bar.name = "Toolbar"
 	bar.add_theme_stylebox_override("panel", UiFactory.panel_box(false))
-	var rows := VBoxContainer.new()
-	rows.name = "ToolbarRows"
-	rows.add_theme_constant_override("separation", 4)
-	bar.add_child(rows)
-
-	var main := HBoxContainer.new()
-	main.name = "ToolbarMain"
-	main.add_theme_constant_override("separation", 6)
-	rows.add_child(main)
-	main.add_child(UiFactory.label("地图编辑器", 32, UiFactory.C_ACCENT))
-	main.add_child(_group_label("文件"))
-	main.add_child(_action_button("新建", _on_new_pressed))
-	main.add_child(_action_button("打开", _on_open_pressed))
-	main.add_child(_action_button("保存", _on_save_pressed))
-	main.add_child(_action_button("导出", _on_export_pressed))
-	main.add_child(_action_button("导出并加载", _on_export_load_pressed))
-	main.add_child(_group_label("视图"))
+	var row := HBoxContainer.new()
+	row.name = "ToolbarMain"
+	row.add_theme_constant_override("separation", UiFactory.SP_3)
+	bar.add_child(row)
+	row.add_child(UiFactory.label("地图编辑器", 32, UiFactory.C_ACCENT))
+	row.add_child(_menu_button("文件 ▾", [
+		["新建", _on_new_pressed], ["打开", _on_open_pressed], ["保存", _on_save_pressed],
+		["导出", _on_export_pressed], ["导出并加载", _on_export_load_pressed]]))
+	row.add_child(_menu_button("编辑 ▾", [
+		["撤销", _on_undo_pressed], ["重做", _on_redo_pressed], ["复制", _on_copy_pressed],
+		["剪切", _on_cut_pressed], ["粘贴", _on_paste_pressed], ["清除", _on_clear_sel_pressed],
+		["水平镜像", _on_mirror_h_pressed], ["垂直镜像", _on_mirror_v_pressed]]))
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(spacer)
+	row.add_child(_group_label("视图"))
 	_preview_btn = _action_button("预览:关", _on_preview_toggled)
-	main.add_child(_preview_btn)
-	main.add_child(_action_button("返回", _on_back_pressed))
-
-	var actions := HFlowContainer.new()
-	actions.name = "ToolbarActions"
-	actions.add_theme_constant_override("h_separation", 6)
-	actions.add_theme_constant_override("v_separation", 4)
-	rows.add_child(actions)
-	actions.add_child(_group_label("编辑"))
-	actions.add_child(_action_button("撤销", _on_undo_pressed))
-	actions.add_child(_action_button("重做", _on_redo_pressed))
-	actions.add_child(_action_button("复制", _on_copy_pressed))
-	actions.add_child(_action_button("剪切", _on_cut_pressed))
-	actions.add_child(_action_button("粘贴", _on_paste_pressed))
-	actions.add_child(_action_button("清除", _on_clear_sel_pressed))
-	actions.add_child(_action_button("水平镜像", _on_mirror_h_pressed))
-	actions.add_child(_action_button("垂直镜像", _on_mirror_v_pressed))
+	row.add_child(_preview_btn)
+	row.add_child(_action_button("返回", _on_back_pressed))
 	return bar
+
+
+func _menu_button(label: String, items: Array) -> MenuButton:
+	var mb := MenuButton.new()
+	mb.name = "FileMenu" if label.begins_with("文件") else "EditMenu"
+	mb.text = label
+	mb.custom_minimum_size = Vector2(84, 32)
+	mb.add_theme_font_size_override("font_size", 16)
+	var pop := mb.get_popup()
+	pop.name = mb.name.trim_suffix("Menu") + "Popup"
+	pop.theme = THEME
+	for i in items.size():
+		pop.add_item(String((items[i] as Array)[0]), i)
+	pop.id_pressed.connect(func(id: int) -> void:
+		var cb: Callable = (items[id] as Array)[1]
+		cb.call())
+	return mb
 
 
 func _group_label(text: String) -> Label:
@@ -290,7 +292,7 @@ func _group_label(text: String) -> Label:
 
 func _action_button(text: String, cb: Callable) -> Button:
 	# 96×36 = 内容驱动(16px 字 + UiFactory._btn_box 的 40/20 内容边距);不写绝对坐标。
-	var b := UiFactory.menu_button(text, 16, Vector2(96, 36), "quiet")
+	var b := UiFactory.menu_button(text, 16, Vector2(96, 32), "compact")
 	b.pressed.connect(cb)
 	return b
 
@@ -306,13 +308,13 @@ func _build_canvas_side() -> Control:
 
 	var tool_col := VBoxContainer.new()
 	tool_col.name = "ToolStrip"
-	tool_col.custom_minimum_size = Vector2(96, 0)
+	tool_col.custom_minimum_size = Vector2(84, 0)
 	tool_col.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	tool_col.add_theme_constant_override("separation", 4)
 	side.add_child(tool_col)
 	tool_col.add_child(_group_label("工具"))
 	for key in TOOL_LABELS:
-		var b := UiFactory.menu_button(String(TOOL_LABELS[key]), 16, Vector2(96, 40), "quiet")
+		var b := UiFactory.menu_button(String(TOOL_LABELS[key]), 16, Vector2(84, 32), "compact")
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		b.pressed.connect(_select_tool.bind(key))
 		tool_col.add_child(b)
@@ -368,11 +370,16 @@ func _make_scroll_tab(node_name: String) -> Array:
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var margin := MarginContainer.new()
+	margin.name = "TabMargin"
+	for side in ["left", "right", "top", "bottom"]:
+		margin.add_theme_constant_override("margin_" + side, UiFactory.SP_2)
+	scroll.add_child(margin)
 	var body := VBoxContainer.new()
 	body.name = "Body"
 	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	body.add_theme_constant_override("separation", 6)
-	scroll.add_child(body)
+	margin.add_child(body)
 	scroll.get_v_scroll_bar().theme_type_variation = &"Kit"
 	return [scroll, body]
 
@@ -385,7 +392,7 @@ func _build_layers_tab() -> Control:
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 4)
 		var btn := UiFactory.menu_button(String(EditorConstants.LAYER_NAMES[L]), 16,
-				Vector2(0, 34), "quiet")
+				Vector2(0, 30), "compact")
 		btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		btn.pressed.connect(_on_layer_selected.bind(L))

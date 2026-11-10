@@ -234,6 +234,7 @@ static func _body_variation_for(padding: Vector2) -> StringName:
 const _MENU_BTN_VARIATIONS := {
 	"primary": &"BtnPrimary", "quiet": &"BtnQuiet",
 	"gold": &"BtnGold", "accent": &"BtnAccent",
+	"compact": &"BtnCompact",
 }
 # 新 API 的 variant 名 → Theme 2.0 的 Button variation(契约 §3)。
 const _UI_BTN_VARIATIONS := {

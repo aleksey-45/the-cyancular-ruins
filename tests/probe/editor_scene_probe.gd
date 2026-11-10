@@ -152,8 +152,7 @@ func _check_export_and_load() -> void:
 # ★ 这里只查结构与几何(节点类型、可见性、尺寸、是否在父 rect 内),不查颜色字面量:
 #   去掉容器化或改回固定 400px 自绘右栏 ⇒ 溢出/尺寸断言红;删 tab 页 ⇒ 条数与标题红。
 const UI_TAB_TITLES := [["图层"], ["调色板"], ["选区", "meta"], ["校验", "消息"]]
-const UI_TOOLBAR_TEXTS := ["新建", "打开", "保存", "导出", "导出并加载",
-		"撤销", "重做", "复制", "剪切", "粘贴", "清除", "水平镜像", "垂直镜像", "返回", "预览"]
+const UI_MENU_ITEMS := {"文件": 5, "编辑": 8}
 
 
 func _check_ui_layout() -> void:
@@ -205,23 +204,20 @@ func _check_ui_layout() -> void:
 	_chk(dragged_w > before_w + 60.0 and absf(tabs.size.x - before_w) < 2.0,
 			"⑦ 拖拽分栏应改变右栏宽(前 %.1f / 拖后 %.1f / 复位 %.1f)" % [before_w, dragged_w, tabs.size.x])
 
-	# 工具栏按钮(文件 5 + 视图 2 + 编辑 8)
+	# 顶部菜单栏:文件/编辑两个 MenuButton(下拉项 5/8) + 视图按钮(预览/返回)
 	var toolbar := _editor.find_child("Toolbar", true, false) as Control
-	var bar_texts := {}
-	if toolbar != null:
-		for node in toolbar.find_children("*", "Button", true, false):
-			bar_texts[(node as Button).text] = true
-	var missing: Array[String] = []
-	for t: String in UI_TOOLBAR_TEXTS:
-		var hit := false
-		for got: String in bar_texts:
-			if got.begins_with(t):
-				hit = true
-				break
-		if not hit:
-			missing.append(t)
-	_chk(toolbar != null and toolbar.is_visible_in_tree() and missing.is_empty(),
-			"⑦ 工具栏应含「文件/编辑/视图」全部按钮(缺 %s)" % str(missing))
+	var file_menu := _editor.find_child("FileMenu", true, false) as MenuButton
+	var edit_menu := _editor.find_child("EditMenu", true, false) as MenuButton
+	var file_items := 0
+	var edit_items := 0
+	if file_menu != null:
+		file_items = file_menu.get_popup().item_count
+	if edit_menu != null:
+		edit_items = edit_menu.get_popup().item_count
+	var has_preview := toolbar != null and _has_button_text(toolbar, "预览")
+	var has_back := toolbar != null and _has_button_text(toolbar, "返回")
+	_chk(toolbar != null and toolbar.is_visible_in_tree() and file_menu != null and edit_menu != null 			and file_items == 5 and edit_items == 8 and has_preview and has_back,
+			"⑦ 菜单栏应为「文件(5 项)/编辑(8 项)/预览/返回」(实得 %d/%d)" % [file_items, edit_items])
 
 	# 工具条(画笔/橡皮/…/渐变 8 个)
 	var strip := _editor.find_child("ToolStrip", true, false) as Control
@@ -255,6 +251,13 @@ func _check_ui_layout() -> void:
 	var bad: Array[String] = []
 	_collect_overflow(_editor, bad)
 	_chk(bad.is_empty(), "⑦ 控件溢出父容器(应为 0 个):%s" % str(bad))
+
+
+func _has_button_text(root: Control, needle: String) -> bool:
+	for node in root.find_children("*", "Button", true, false):
+		if (node as Button).text.begins_with(needle):
+			return true
+	return false
 
 
 func _tab_titles(tabs: TabContainer) -> Array[String]:

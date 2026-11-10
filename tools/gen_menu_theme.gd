@@ -143,6 +143,9 @@ func _button_variants(t: Theme, F: GDScript, C: Dictionary) -> void:
 	_menu_btn(t, F, C, "Quiet", _c(C, "C_BORDER_DIM"), _c(C, "C_TEXT_DIM"))
 	_danger_btn(t, F, C)
 	_icon_btn(t, C)
+	# 紧凑档(2026-11-10):编辑器的高密度工具栏/图层行/工具列用,16 号字 + 8/4 内边距,
+	# 比 _btn_box 的 40/20 内容边距矮 ~24px;只影响显式用 "compact" 的控件。
+	_compact_btn(t, C)
 	# ── 旧 variation(未迁移的 .tscn 还在用;数值保持原样)──
 	_menu_btn(t, F, C, "BtnPrimary", _c(C, "C_EDGE"), _c(C, "C_TEXT"))
 	_menu_btn(t, F, C, "BtnQuiet", _c(C, "C_BORDER_DIM"), _c(C, "C_TEXT_DIM"))
@@ -165,6 +168,26 @@ func _menu_btn(t: Theme, F: GDScript, C: Dictionary, name: String, edge: Color, 
 	t.set_color("font_focus_color", name, fg)
 	t.set_color("font_pressed_color", name, _c(C, "C_ACCENT"))
 	t.set_color("font_disabled_color", name, _c(C, "C_TEXT_MUTE"))
+
+
+func _compact_btn(t: Theme, C: Dictionary) -> void:
+	t.set_type_variation("BtnCompact", "Button")
+	t.set_font_size("font_size", "BtnCompact", _n(C, "T_LABEL"))
+	t.set_stylebox("normal", "BtnCompact",
+			_flat(C, "C_HEADER", "C_BORDER_DIM", 1, _n(C, "SP_2"), _n(C, "SP_1")))
+	t.set_stylebox("hover", "BtnCompact",
+			_flat(C, "C_BTN_FILL_HI", "C_BORDER", 1, _n(C, "SP_2"), _n(C, "SP_1")))
+	t.set_stylebox("pressed", "BtnCompact",
+			_flat(C, "C_BTN_FILL_DN", "C_ACCENT", 1, _n(C, "SP_2"), _n(C, "SP_1")))
+	t.set_stylebox("focus", "BtnCompact",
+			_flat(C, "C_HEADER", "C_ACCENT", 1, _n(C, "SP_2"), _n(C, "SP_1")))
+	t.set_stylebox("disabled", "BtnCompact",
+			_flat(C, "C_HEADER", "C_BORDER_DIM", 1, _n(C, "SP_2"), _n(C, "SP_1")))
+	t.set_color("font_color", "BtnCompact", _c(C, "C_TEXT_DIM"))
+	t.set_color("font_hover_color", "BtnCompact", _c(C, "C_ACCENT"))
+	t.set_color("font_focus_color", "BtnCompact", _c(C, "C_TEXT"))
+	t.set_color("font_pressed_color", "BtnCompact", _c(C, "C_ACCENT"))
+	t.set_color("font_disabled_color", "BtnCompact", _c(C, "C_TEXT_MUTE"))
 
 
 func _danger_btn(t: Theme, F: GDScript, C: Dictionary) -> void:
