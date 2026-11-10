@@ -2,7 +2,7 @@ class_name DayCycle
 extends RefCounted
 # 昼夜模型:纯函数 + 常量,不依赖任何节点;PostProcess 每帧读 sun_at / ambient_for / sky_base 写 shader uniforms。
 
-const DAY_CYCLE_SECONDS := 60.0   # 现实 60 秒 = 游戏内 24 小时(1 秒 = 24 分钟)
+const DAY_CYCLE_SECONDS := 120.0  # 现实 120 秒 = 游戏内 24 小时(1 秒 = 12 分钟;2026-11-09 用户口径)
 const DAY_START_HOUR := 6.0       # 开局时刻:早上六点
 const SUNRISE_HOUR := 6.0
 const SUNSET_HOUR := 18.0

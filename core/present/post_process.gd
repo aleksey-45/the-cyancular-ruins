@@ -33,7 +33,7 @@ var _low_hp_pulse: float = 0.0
 var _low_hp_player: Node = null
 
 # ── 天空与三套光照(纯渲染层) ── 世界视口那张图自己当遮挡体(alpha 判定)。
-# ★ 时钟驱动(60 秒 = 24 小时,开局 06:00);太阳走到地平线下就没有方向影,夜里靠月光 rim。
+# ★ 时钟驱动(120 秒 = 24 小时,开局 06:00;常量在 DayCycle);太阳走到地平线下就没有方向影,夜里靠月光 rim。
 var sun_enabled: bool = true
 var sun_cycle_enabled: bool = true
 var sun_strength: float = 0.55          # 斜投影影的整体浓度(set_sun_strength 改它)
@@ -177,6 +177,16 @@ func _bind_terrain_mask() -> void:
 	_mat.set_shader_parameter("mask_grid", _mask_grid)
 	_mat.set_shader_parameter("mask_gain", 1.0)
 
+
+## 外部背景(主菜单实时光影)直接喂一张地形掩码(1 像素 = 1 格;R=实心,G=材质类/255,A=1)。
+## 与 _bind_terrain_mask 的格式/着色器参数完全一致;游戏内仍走 MazeGenerator.current_grid。
+func set_terrain_mask_image(img: Image, cols: int, rows: int) -> void:
+	if _mat == null or img == null:
+		return
+	_mask_grid = Vector2(float(cols), float(rows))
+	_mat.set_shader_parameter("terrain_mask", ImageTexture.create_from_image(img))
+	_mat.set_shader_parameter("mask_grid", _mask_grid)
+	_mat.set_shader_parameter("mask_gain", 1.0)
 
 # 掩码采样要用"世界坐标 → 格坐标":每帧把相机原点/缩放推给 shader。
 func _sync_mask() -> void:
@@ -445,7 +455,7 @@ func ui_root() -> Node:
 
 
 
-# ── 时钟推进:60 秒 = 24 小时,从 06:00 起;暂停时不走。★ 纯表现,不进快照、不影响逻辑。
+# ── 时钟推进:120 秒 = 24 小时,从 06:00 起;暂停时不走。★ 纯表现,不进快照、不影响逻辑。
 const _SUN_PUSH_EPS := 0.02   # 高度角变化小于这个就不重推(度数)
 
 func _tick_day_cycle(delta: float) -> void:

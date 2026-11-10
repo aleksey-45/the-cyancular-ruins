@@ -20,6 +20,7 @@ const SP_10 := 80
 # (契约 .tmp/ui-system-contract.md §5 / docs/eng/ui-design-system.md §5)。
 const MARGIN := 24
 # 字号档(像素字体只在 16 的倍数下锐利;新增档位必须同步 style_control 的 assert)
+const T_TITLE := 160
 const T_HUGE := 128
 const T_H1 := 48
 const T_H2 := 32
@@ -115,6 +116,8 @@ const C_TRANSPARENT := Color(0, 0, 0, 0)
 const C_GRACE       := Color(0.72, 0.62, 0.90)
 
 const C_PLATE       := Color(0, 0, 0, 0.1)
+# 主菜单实时光影背景上的压暗层(可读性;不是 HUD 底板,单独一个 token)。
+const C_MENU_DIM    := Color(0, 0, 0, 0.22)
 # HUD 里「选中的武器行」底板:比通用 C_PLATE 深一档(原先 hud.gd 在调用点写 Color(0,0,0,0.28));
 # 颜色定义只许住在本文件 —— 页面引用本 token,不许写字面量。
 const C_PLATE_DEEP  := Color(0, 0, 0, 0.28)

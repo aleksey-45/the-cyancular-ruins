@@ -50,14 +50,15 @@
 
 ## 主菜单版式与背景
 
-- 版式(2026-11-09):`scenes/main_menu.tscn` 由 `tools/gen_menu_scene.gd` 的**构建模式**生成 —— `Bg(全屏) + CenterContainer → Margin(SP_6) → VBox(SP_5)`:标题 HeaderStrip(128)/ 按钮列(max 宽 720、行高 SP_10=80)/ 版本号;`UILayer`/`UIRoot` 仍是运行期弹层宿主。0 绝对 offset;改版式 = 改生成器再重跑 + 前后截图。
+- 版式(2026-11-09):`scenes/main_menu.tscn` 由 `tools/gen_menu_scene.gd` 的**构建模式**生成 —— `Bg(兜底底色) + Backdrop(实时光影背景) + CenterContainer → Margin(SP_6) → VBox(SP_5)`:标题(160 号青色 Label、**无背景带**、固定顶部 `TITLE_TOP=144`)/ 按钮列(max 宽 880、行高 112、48 号字;整体在居中基础上再**下移 40px**,`DropSpacer=80`)/ 版本号;`UILayer`/`UIRoot` 仍是运行期弹层宿主。0 绝对 offset;改版式 = 改生成器再重跑 + 前后截图。
+- 标题口径(2026-11-09 用户裁定):**放大到 160 号(`UiFactory.T_TITLE`)、青色(`C_ACCENT`)、不要标题带背景、固定在屏幕顶部**(`TitleHost` top-wide + theme margin `TITLE_TOP = 144 = SP_10+SP_9`,不跟菜单列一起垂直居中;**按钮字号 T_H1=48、行高 112、列宽 880**);生成器自检会验「Title 是 Label / 文本 / 字号 / 颜色」。
 
 ## 主菜单背景
 
-- 背景 = `TerrainAtlas.bake_map_image()` 烘出的真实地形图(`BG_CELL_PX = 32`,与 `Level0` 同一份图集)+ `core/present/menu_fisheye.gdshader` 的逐像素鱼眼重映射(`repeat_enable` 让采样越界绕到地图另一头)。运动学在脚本里,每帧喂 `view_center` / `rot_angle`:随机路径段 + 缓入缓出 + 0°↔`SEG_TURN_DEG`(120°)来回摆。`SEGMENT_SEC = 48.0`。
-- 取景 `BG_VIEW_CELLS = 26.6667`(1920 宽 ⇒ 72 屏幕像素/格,玩家镜头是 48px/格);`blur_radius = BG_BLUR_RADIUS_PX`(4.0)。
-- shader 默认值:`fisheye = 0.85` / `dim = 0.60` / `vignette = 0.30` / `desat = 0.20` / `breathe_amp = 0.012` / `aberration = 0.020`。`dim` 的语义是「压暗多少」(`col = mix(col, vec3(0.0), dim)`),0 = 不压、1 = 全黑;脚本不覆盖它。
-- 本 shader 只服务主菜单背景,改它不碰任何一局游戏的一个像素。
+- 背景(2026-11-09)= **实时光影场景**,`ui/menu_backdrop.gd` 复用游戏渲染管线:场景层 `TileMapLayer`(TerrainAtlas 图集)+ `ParallaxBg` + `PostProcess` 三个 SubViewport 合成,全屏 `TextureRect` 显示;相机只做缓慢漂移(无鱼眼/无旋转)。昼夜由 PostProcess 自己推进(`DayCycle.DAY_CYCLE_SECONDS = 120`,即 120s = 24h),所以菜单里能看到晨昏/夜晚的光影变化;起始 `set_hour(20.3)`(靛蓝暮色)。
+- 地形掩码:菜单里没有 `MazeGenerator.current_grid`,由 backdrop 从地图子格数据烘 1px/格掩码后调 `PostProcess.set_terrain_mask_image()`;不喂的话太阳遮挡/受光会整体失效(画面变灰片)。
+- 可读性压暗层 = `UiFactory.C_MENU_DIM`(黑 0.22),盖在背景上、菜单下。
+- 地图固定 `res://maps/newfactory.cyrm`;读不到时只露 `Bg` 兜底色(黑)。旧的 `menu_fisheye.gdshader` 烘焙背景方案已随本次改动删除。
 
 ## 显示设置
 

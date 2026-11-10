@@ -139,9 +139,10 @@ func _ready() -> void:
 # ── ① 主菜单容器化骨架(构建模式;入口 `-- main_menu`)─────────────────────────────
 # 结构(0 绝对 offset,全由容器 + token 决定):
 #   MainMenu(Control,full-rect,theme)
-#   ├ Bg(ColorRect,full-rect)                                      %Bg
+#   ├ Bg(ColorRect,full-rect)                                      %Bg(兜底底色;地图读不到时可见)
+#   ├ Backdrop(Control,full-rect,script=ui/menu_backdrop.gd)       %Backdrop(实时光影场景)
+#   ├ TitleHost(MarginContainer,top-wide;边距 TITLE_TOP) → Title    %Title(160 号青色、无背景;固定顶部)
 #   ├ CenterContainer(full-rect) → MarginContainer(SP_6) → Content VBox(SP_5)
-#   │   ├ Title(PanelContainer,HeaderStrip variation,128 号标题)    %Title
 #   │   ├ MenuBox(VBox,SP_5,min-x=MENU_COL_W,SHRINK_CENTER)        %MenuBox
 #   │   │   ├ PlayGroup(VBox,SP_3)      %StartBtn/%MultiBtn/%BetaBtn
 #   │   │   ├ SepA(ColorRect,BORDER_W)  %SepA
@@ -154,10 +155,16 @@ func _ready() -> void:
 # ★ 编辑器入口是**运行期**按 feature 追加进 PlayGroup 的(见 scenes/main_menu.gd 的 _wire_menu),不在骨架里。
 
 const MAIN_MENU_OUT := "res://scenes/main_menu.tscn"
-const MENU_COL_W := 720   # 菜单按钮列宽 = min(720, 可用):min-x + SHRINK_CENTER,按钮 EXPAND_FILL
+const BACKDROP_SCRIPT := "res://ui/menu_backdrop.gd"
+# 标题字号/颜色是用户裁定口径(160 号 / 青色 / 无背景):改了就是版式回归,生成器自检会红。
+const TITLE_TEXT := "The Cyancular Ruins"
+const MENU_COL_W := 880   # 菜单按钮列宽 = min(880, 可用):min-x + SHRINK_CENTER,按钮 EXPAND_FILL
+const MENU_BTN_H := UiFactory.SP_10 + UiFactory.SP_6   # 按钮行高 = 112(用户口径:按钮再大一点)
+const TITLE_TOP := UiFactory.SP_10 + UiFactory.SP_9   # 标题距屏幕顶 = 144(用户口径:比"贴顶"低一档)
+const MENU_DROP_SPACER := UiFactory.SP_10              # 80 = 2×40:居中容器里加上方的 80 空白 ⇒ 内容整体下移 40px
 # 主菜单脚本 / 布局探针按 % 取的名字(与迁移前一致;少一个 = main_menu.gd 或探针红)。
 const MAIN_MENU_UNIQUE := [
-	"UILayer", "UIRoot", "Bg", "Title", "MenuBox", "PlayGroup", "SepA", "SepB", "OptGroup",
+	"UILayer", "UIRoot", "Bg", "Backdrop", "Title", "MenuBox", "PlayGroup", "SepA", "SepB", "OptGroup",
 	"StartBtn", "MultiBtn", "BetaBtn", "SettingsBtn", "VerBtn", "QuitBtn", "Version",
 ]
 # 按钮文本(menu_autotest 按文本点击,改文案会让真链路批静默找不到按钮)。
@@ -190,6 +197,31 @@ func _build_main_menu() -> void:
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	root.add_child(bg)
 
+	# 实时光影背景:游戏渲染管线(场景 TileMapLayer + ParallaxBg + PostProcess)+ 缓慢漂移;
+	# 昼夜 120s = 24h 由 PostProcess 自己推进。地图读不到时它自己 push_warning,露出 Bg 兜底色。
+	var backdrop := Control.new()
+	backdrop.name = "Backdrop"
+	backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	backdrop.set_script(load(BACKDROP_SCRIPT))
+	root.add_child(backdrop)
+
+	# 标题:固定屏幕顶部(不跟菜单一起垂直居中),160 号青色、无背景。
+	# TitleHost 用 top-wide 锚点(offset 全 0)+ MarginContainer 的 theme margin 表达"距顶 TITLE_TOP"。
+	var title_host := MarginContainer.new()
+	title_host.name = "TitleHost"
+	title_host.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	title_host.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+	title_host.add_theme_constant_override("margin_top", TITLE_TOP)
+	title_host.add_theme_constant_override("margin_left", 0)
+	title_host.add_theme_constant_override("margin_right", 0)
+	root.add_child(title_host)
+	var title := UiFactory.label("The Cyancular Ruins", UiFactory.T_TITLE, UiFactory.C_ACCENT)
+	title.name = "Title"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title_host.add_child(title)
+
 	# 内容:居中 → 四周留白(SP_6) → 垂直一列(SP_5)。
 	var center := CenterContainer.new()
 	center.name = "Center"
@@ -208,11 +240,6 @@ func _build_main_menu() -> void:
 	content.alignment = BoxContainer.ALIGNMENT_CENTER
 	content.add_theme_constant_override("separation", UiFactory.SP_5)
 	margin.add_child(content)
-
-	# 标题:HeaderStrip 面板 + 128 号标题(UiFactory.header_strip 单点构造,不手写 StyleBox)。
-	var title := UiFactory.header_strip("The Cyancular Ruins", UiFactory.T_HUGE, true)
-	title.name = "Title"
-	content.add_child(title)
 
 	# 菜单按钮列:列宽上限 MENU_COL_W,自己按内容定高。
 	var menu_box := VBoxContainer.new()
@@ -275,8 +302,8 @@ func _build_main_menu() -> void:
 
 
 func _menu_btn(node_name: String, text: String, variant: String) -> Button:
-	var b: Button = UiFactory.ui_button(text, UiFactory.T_H2,
-			Vector2(0, UiFactory.SP_10), variant)
+	var b: Button = UiFactory.ui_button(text, UiFactory.T_H1,
+			Vector2(0, MENU_BTN_H), variant)
 	b.name = node_name
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	# variation 已给字号(T_H2);去掉逐按钮字号 override ⇒ 以后改 token 按钮会跟着变。
@@ -330,6 +357,17 @@ func _verify_main_menu(root: Node) -> void:
 			_fails.append("缺少节点 %s" % nm)
 		elif not n.unique_name_in_owner:
 			_fails.append("%s 没设 unique_name_in_owner" % nm)
+	var title := _find_named(root, "Title")
+	if title == null or not (title is Label):
+		_fails.append("Title 不是 Label(用户口径:无背景标题)")
+	else:
+		var tl := title as Label
+		if tl.text != TITLE_TEXT:
+			_fails.append("Title 文本不对:实得「%s」" % tl.text)
+		if tl.get_theme_font_size("font_size") != UiFactory.T_TITLE:
+			_fails.append("Title 字号不是 T_TITLE(160)")
+		if tl.get_theme_color("font_color") != UiFactory.C_ACCENT:
+			_fails.append("Title 颜色不是 C_ACCENT(青色)")
 	var play := _find_named(root, "PlayGroup")
 	var menu_box := _find_named(root, "MenuBox")
 	if play == null or menu_box == null:

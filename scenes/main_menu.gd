@@ -25,42 +25,16 @@ var _editor_btn: Button = null
 
 # ★★ 静态骨架在 scenes/main_menu.tscn 里,由 tools/gen_menu_scene.gd 的**构建模式**(`-- main_menu`)生成:
 #   容器化(0 绝对 offset,详见生成器头注释)。改版式 = 改生成器重跑 + 前后截图对比;别手改 .tscn。
-# ★ 背景(Bg)的材质仍由代码挂 —— 那张地形贴图是运行时烘的(TerrainAtlas),进不了 .tscn;bg 是骨架里的全屏 ColorRect。
+# ★ 背景已换成**实时光影场景**(ui/menu_backdrop.gd:场景 TileMapLayer + ParallaxBg + PostProcess,
+#   昼夜 120s = 24h);%Bg 只剩兜底底色,地图读不到时才看得见。
 @onready var _ui_layer: CanvasLayer = %UILayer
-@onready var _bg: ColorRect = %Bg
-# %Title 是 HeaderStrip 面板(整条标题带一起淡入);_play_emerge 只要求 CanvasItem。
+# %Title 现在是 160 号青色 Label(无背景);_play_emerge 只要求 CanvasItem。
 @onready var _title: Control = %Title
 @onready var _ver: Label = %Version
 @onready var _menu_box: VBoxContainer = %MenuBox
 
-var _bg_mat: ShaderMaterial = null
-var _bg_cells := Vector2(150.0, 100.0)
-var _rng := RandomNumberGenerator.new()
-var _seg_t := 0.0
-var _seg_from := Vector2.ZERO
-var _seg_to := Vector2.ZERO
-var _seg_index := 0
-
 const SP_PANEL_SCENE := preload("res://ui/screens/sp_launch_panel.tscn")
 const HEADER_STRIP_PANEL := preload("res://ui/components/header_strip_panel.tscn")
-
-# ── 背景:真实地形(与游戏同一份图集)+ 鱼眼漂移(没有任何实体)── 背景必须是真实地形:砖是 structure.png 的砖、水是水、树叶是树叶,像「透过一扇窗看进那个世界」。
-const BG_MAP := "res://maps/newfactory.cyrm"
-const BG_CELL_PX := 32
-static func bg_cell_px() -> int:
-	return 16 if OS.has_feature("web") else BG_CELL_PX
-
-const BG_VIEW_CELLS := 26.6667
-const BG_SHADER := "res://core/present/menu_fisheye.gdshader"
-const BG_BLUR_RADIUS_PX := 4.0
-
-const SEG_MIN_FRAC := 0.20
-const SEG_MAX_FRAC := 0.80
-const SEGMENT_SEC := 48.0
-const SEG_TURN_DEG := 120.0
-const SEG_TURN_EDGE_FRAC := 0.25
-const SEG_MOVE_BIAS := 0.8
-const SEG_PATH_SEED := 20261003
 func _ready() -> void:
 	# ── 发布产物自检:武器注册表到底从包里读到了几条 ── ★ 为什么必须在产物侧量:data/weapons.json 进不进 .pck 只由一次真导出回答 —— 真没进包时 WeaponRegistry._ensure_loaded() 只打一条 push_error、只在 stderr、不影响退出码 ⇒ 光看「游戏起得来」是看不出来的。
 	# ★ 开关写在 -- 之后(与 --netstat / --pickup-diag 同款;写在前面会被 Godot 当自己的参数丢掉、静默失效),且默认关 ⇒ 生产行为一字不变。★ 消费者是 tools/build_release.py 的产物冒烟(check_weapon_registry):它拿仓库里那份 json 当期望值对账,判据是文本 grep,不看退出码。
@@ -111,7 +85,6 @@ func _enter_level0() -> void:
 
 
 func _build_ui() -> void:
-	_build_background()
 	_ver.text = AppInfo.version_string()
 	_wire_menu()
 	_title.modulate.a = 0.0
@@ -166,69 +139,6 @@ func _menu_sequence() -> Array:
 		else:
 			seq.append(c)
 	return seq
-
-
-func _build_background() -> void:
-	var bg := _bg
-	var sh: Shader = load(BG_SHADER)
-	if sh != null:
-		# 真实地形图:地图子格纹理 × TerrainAtlas 的图集(= Level0 生成 TileSet 的同一份)。
-		var cell_px := bg_cell_px()
-		var tex := TerrainAtlas.terrain_texture(BG_MAP, cell_px, TerrainAtlas.SKY_COLOR)
-		var mat := ShaderMaterial.new()
-		mat.shader = sh
-		mat.set_shader_parameter("map_tex", tex)
-		mat.set_shader_parameter("map_size",
-				Vector2(tex.get_width(), tex.get_height()) / float(cell_px))
-		mat.set_shader_parameter("view_w_cells", BG_VIEW_CELLS)
-		mat.set_shader_parameter("blur_radius", BG_BLUR_RADIUS_PX)
-		_bg_cells = Vector2(tex.get_width(), tex.get_height()) / float(cell_px)
-		_bg_mat = mat
-		bg.material = mat
-		_init_motion()
-
-
-func _init_motion() -> void:
-	_rng.seed = SEG_PATH_SEED
-	_seg_t = 0.0
-	_seg_index = 0
-	_seg_from = _random_target()
-	_seg_to = _random_target()
-	_bg_mat.set_shader_parameter("view_center", _seg_from)
-	_bg_mat.set_shader_parameter("rot_angle", 0.0)
-
-
-func _random_target() -> Vector2:
-	return Vector2(
-			_rng.randf_range(SEG_MIN_FRAC, SEG_MAX_FRAC) * _bg_cells.x,
-			_rng.randf_range(SEG_MIN_FRAC, SEG_MAX_FRAC) * _bg_cells.y)
-
-
-func _process(delta: float) -> void:
-	if _bg_mat == null:
-		return
-	_seg_t += delta
-	while _seg_t >= SEGMENT_SEC:
-		_seg_t -= SEGMENT_SEC
-		_seg_index += 1
-		_seg_from = _seg_to
-		_seg_to = _random_target()
-	var u := clampf(_seg_t / SEGMENT_SEC, 0.0, 1.0)
-	var s: float = pow(smoothstep(0.0, 1.0, u), SEG_MOVE_BIAS)
-	var e := _trapezoid(u)
-	var turn: float = e if (_seg_index % 2) == 0 else 1.0 - e
-	_bg_mat.set_shader_parameter("view_center", _seg_from.lerp(_seg_to, s))
-	_bg_mat.set_shader_parameter("rot_angle", deg_to_rad(SEG_TURN_DEG * turn))
-
-
-static func _trapezoid(u: float) -> float:
-	var a := SEG_TURN_EDGE_FRAC
-	var v: float = 1.0 / (1.0 - a)
-	if u < a:
-		return v * u * u / (2.0 * a)
-	if u > 1.0 - a:
-		return 1.0 - v * (1.0 - u) * (1.0 - u) / (2.0 * a)
-	return v * (a * 0.5 + (u - a))
 
 
 func _play_emerge(title: Control, ver: Label, sequence: Array) -> void:
