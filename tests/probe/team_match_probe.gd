@@ -319,19 +319,19 @@ func _assert_stage3() -> void:
 	if teamfmt.size() == CLIENT_COUNT:
 		var bad_l := 0
 		var bad_m := 0
-		var bad_g := 0
+		var bad_p := 0
 		var bad_t := 0
 		var bad_n := 0
 		for r in teamfmt:
 			var tl2: String = teamfmt[r]
 			bad_l += 0 if _tok(tl2, "ok_layer", "0") == "1" else 1
 			bad_m += 0 if _tok(tl2, "ok_mask", "0") == "1" else 1
-			bad_g += int(_tok(tl2, "ghosts_bad", "0"))
+			bad_p += int(_tok(tl2, "probes_bad", "0"))
 			bad_t += int(_tok(tl2, "tints_bad", "0"))
 			bad_n += 0 if int(_tok(tl2, "reps", "0")) == CLIENT_COUNT - 1 else 1
-		_check(bad_l == 0 and bad_m == 0 and bad_g == 0 and bad_t == 0 and bad_n == 0,
-				"相① ★ 队色 + 分队碰撞层六端逐值对齐(层错 %d / 掩码错 %d / 幽灵层错 %d / 队色错 %d / 副本数不对 %d)"
-				% [bad_l, bad_m, bad_g, bad_t, bad_n])
+		_check(bad_l == 0 and bad_m == 0 and bad_p == 0 and bad_t == 0 and bad_n == 0,
+				"相① ★ 队色 + 玩家不互挡契约六端逐值对齐(层错 %d / 掩码错 %d / 副本几何探针非零碰撞 %d / 队色错 %d / 副本数不对 %d)"
+				% [bad_l, bad_m, bad_p, bad_t, bad_n])
 	else:
 		_check(false, "相① 只有 %d/%d 端写出了 TEAMFMT 读数(队色/分层没验到)"
 				% [teamfmt.size(), CLIENT_COUNT])

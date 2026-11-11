@@ -106,7 +106,7 @@ NetBus.rpc_id(peer, "snapshot_own",
 
 ## 2. 远端副本：playout 缓冲插值
 
-> **实现细节的权威**:[`netcode-client-interp-and-input-details.md`](netcode-client-interp-and-input-details.md)(playout 缓冲、夹逼/Hermite、`SNAP_DIST`、幽灵体、锚定)。本节只留下面的服务器侧命中回放时间域(本文件独有)。
+> **实现细节的权威**:[`netcode-client-interp-and-input-details.md`](netcode-client-interp-and-input-details.md)(playout 缓冲、夹逼/Hermite、`SNAP_DIST`、锚定)。本节只留下面的服务器侧命中回放时间域(本文件独有)。
 
 
 ### 2.1 时间域解耦：服务器命中回放（2026-10-26）
@@ -115,7 +115,7 @@ NetBus.rpc_id(peer, "snapshot_own",
 - 服务器 tick 域对齐：`MatchHost._physics_process` 每 tick 起始 `_srv_tick += 1`；`SnapshotSystem.broadcast` 里 `_snap_tick = _srv_tick`（2026-10-30 起每 tick 都广播 ⇒ tick 数值序列连续）。客户端输入包里的 `st` 从此与服务器 tick **同一刻度**。
 - 裁决路径（`server/match/combat_system.gd`）：`st = _client_snap_tick[shooter]`（射手最近解码的快照 tick）⇒ `want = clamp(st - PLAYOUT_TICKS, _srv_tick - MAX_REWIND_TICKS, _srv_tick)` ⇒ 用 `HitLagHistory.rect_for(victim, want)` 取**射手观看时刻**的对手受击面，再走 `HitShape` 线段扫掠（含子弹体积 grow）。榴弹直击同一路径。
 - 历史环 `core/sim/hit_lag_history.gd`：每 tick 存 `role → {p: canonical 位置, r: 相对受击面的 Rect2}`，容量 24 tick（400ms），超限丢最老；无该 tick/该 role 时回退现时受击面。
-- **不动的部分**：移动预测继续吃最新态（幽灵体不接插值、位置照旧）；爆炸 AoE **不回放**（现时位置，见 registered-debt §十五）。协议字节零改动。
+- **不动的部分**：移动预测只预测本地玩家（副本不参与碰撞 —— 2026-11-10「玩家之间不物理互挡」后无对手身体可挡）；爆炸 AoE **不回放**（现时位置，见 registered-debt §十五）。协议字节零改动。
 
 ### 2.2 受击事件时刻对齐（2026-10-28）
 

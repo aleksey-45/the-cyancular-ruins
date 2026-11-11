@@ -103,7 +103,7 @@ bash tests/smoke/<名>.sh
 | `server_boot` | [`server/server_main.gd`](../../server/server_main.gd) | 服务端启动参数（worker / port / 模式 / role 集合）|
 | `snap_gap` | [`core/net/net_bus.gd`](../../core/net/net_bus.gd) 的 `snapshot_world` | 世界包断流 >150ms |
 | `snap_rx` / `snapshot_tx` | `net_bus.gd` / [`server/match/snapshot_system.gd`](../../server/match/snapshot_system.gd) | 按 1Hz 对账「没发出」与「发了没收到」;`snap_rx` 另有 `world_lost` / `world_loss_pct` / `own_lost` / `own_loss_pct` / `step`（**下行丢包估计**:相邻快照 tick 缺口按学到的步长折算,口径见 `NetMetrics.snapshot_loss`）|
-| `rollback` | [`core/net/prediction_rollback.gd`](../../core/net/prediction_rollback.gd) 的 `_handle_ack` | 位置 / 速度误差、是否贴身、重放条数 |
+| `rollback` | [`core/net/prediction_rollback.gd`](../../core/net/prediction_rollback.gd) 的 `_handle_ack` | 位置 / 速度误差、重放条数（贴身容差字段随 2026-11-10「玩家之间不互挡」一起删除）|
 | `queue` / `queue_drop` | [`server/match/input_intake.gd`](../../server/match/input_intake.gd) | 服务器输入队列深度 / 上限 / 累计丢弃 |
 | `pickup_try` | [`server/match/ground_system.gd`](../../server/match/ground_system.gd) | `none` / `range` / `denied` / `taken` 四种成因 |
 | `pickup_anchor` | [`scenes/mp_client/pickup_sync.gd`](../../scenes/mp_client/pickup_sync.gd) | 收到服务器的**落定重锚**(落定那一刻重播的权威位置);没它 = 两端落点发散会永久留着 |

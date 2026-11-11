@@ -26,7 +26,7 @@
 - 对抗模式击杀后不复位任何人。1v1 的 `_reset_survivor` 与大乱斗保留。
 - 掉线判据:整队走光才终局(`TeamHost.mark_disconnected`)。`server_main._expire_graces` 两处判据都必须带 `_team_mode`:分派 `GraceWindow.expire_action(_royale, _team_mode)` 必须与 `ACTION_REMOVE` 比较;末尾全员走光退出是 `(_royale or _team_mode) and …`。
 - 对抗模式有 K 键自杀:`TeamHost.request_suicide_role`;闸在 `server_main._on_suicide_request` 首行 `if not (_royale or _team_mode) or _host == null: return`;覆写必须留在 `TeamHost`。
-- 分队碰撞层:队 B 身体层 = `TeamHost.TEAM_ENEMY_LAYER := 16`(不许写死);副本幽灵体 `mask` 恒 0,`layer` 按代表玩家的队;服务端 `TeamHost._apply_team_layers` 与客户端 `team_game._apply_team_collision` 逐值对齐。掩码必须保留地形(1)与敌人(4);未知队号客户端落层 2、服务端什么都不配;副本懒建:`ReplicaSet.ensure`(S-18 后,`scenes/mp_client/replica_set.gd`)建完在 `ensure` 末尾自己 `refresh_labels()`,宿主不用再刷一遍。
+- 玩家之间**不互挡**(2026-11-10 用户裁定,三模式同一条口径):服务器与客户端都不给玩家叠「对手身体」碰撞位 —— 玩家 `layer = 2`(player.tscn 默认)、`mask` 只剩地形位 1,副本的零碰撞几何探针 layer/mask 恒 0。原「3v3 分队碰撞层」(队 B 层 16 / `TeamHost._apply_team_layers` / 客户端 `team_game._apply_team_collision`)随之整体删除。副本懒建:`ReplicaSet.ensure`(S-18 后,`scenes/mp_client/replica_set.gd`)建完在 `ensure` 末尾自己 `refresh_labels()`,宿主不用再刷一遍。
 - 平局:`match_winner == 0` 在对抗里可达(两队都走光)。`ui/hud/team_hud.gd` 念「平 局」;`pvp_hud.gd` 的 1v1 兜底不能照抄过来。
 - 输赢文案由 `set_my_team()` 驱动:`_apply_teams` 在队伍表到达后必须调 `_hud.set_my_team(_team_of_role(PvpSession.role))`;队号只能从队伍表读,不是 role。
 - 队色 = `modulate = 队色 / 本体主色`(`_apply_tint` 的 `color_override` 唯一参数);`BODY_BASE_COLOR = #639BFF`(`player.png` 的不透明众数色);队 1 的比值恰为 (1,1,1)(`C_TEAM_A` 就是它),队 2 有分量 > 1。换 sprite 素材要重测 `BODY_BASE_COLOR`。对抗模式颜色不可自选(2026-10-24 起):`_apply_peer_hues_or_team` 覆写基类钩子、只消费载荷里的 `teams`;自己那具也走队色。

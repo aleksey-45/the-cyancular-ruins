@@ -499,16 +499,11 @@ func _tick_play() -> void:
 
 
 func _check_team_visual_layer() -> void:
-	var want_layer := 2 if _team == 1 else TeamHost.TEAM_ENEMY_LAYER
-	var layer_ok: bool = _local.collision_layer == want_layer
-	var mask_ok := false
-	if _team == 1:
-		mask_ok = (_local.collision_mask & 2) == 0 \
-				and (_local.collision_mask & TeamHost.TEAM_ENEMY_LAYER) != 0 \
-				and (_local.collision_mask & 1) != 0
-	elif _team == 2:
-		mask_ok = (_local.collision_mask & 2) != 0 and (_local.collision_mask & 1) != 0
-	var ghosts_bad := 0
+	# 2026-11-10 用户裁定:玩家之间不再物理互挡 ⇒ 三模式同一条口径:玩家层 = 2(player.tscn 默认)、mask 只剩地形位 1;
+	# 副本的几何探针零碰撞(layer/mask = 0)⇒ 本地玩家的 move_and_slide 不会撞到任何对手身体。
+	var layer_ok: bool = _local.collision_layer == 2
+	var mask_ok: bool = _local.collision_mask == 1
+	var probes_bad := 0
 	var tints_bad := 0
 	var n := 0
 	var want_reps: int = REPLICA_COUNT
@@ -520,30 +515,29 @@ func _check_team_visual_layer() -> void:
 			continue
 		n += 1
 		var ot := int(_teams.get(int(role), 0))
-		var g = r.get_node_or_null("GhostBody")
-		var want_g := 2 if ot == 1 else TeamHost.TEAM_ENEMY_LAYER
-		if g != null and (int(g.collision_layer) != want_g or int(g.collision_mask) != 0):
-			ghosts_bad += 1
+		var g = r.get_node_or_null("HurtProbe")
+		if g == null or int(g.collision_layer) != 0 or int(g.collision_mask) != 0:
+			probes_bad += 1
 		var spr = r.get_node_or_null("AnimatedSprite2D")
 		if spr != null:
 			var want_c: Color = UiFactory.C_TEAM_A if ot == 1 else UiFactory.C_TEAM_B
 			var got: Color = (spr as CanvasItem).modulate * PvpMatchClient.BODY_BASE_COLOR
 			if not _color_close(got, want_c):
 				tints_bad += 1
-	_rec("TEAMFMT layer=%d mask=%d ok_layer=%d ok_mask=%d reps=%d ghosts_bad=%d tints_bad=%d"
+	_rec("TEAMFMT layer=%d mask=%d ok_layer=%d ok_mask=%d reps=%d probes_bad=%d tints_bad=%d"
 			% [_local.collision_layer, _local.collision_mask, 1 if layer_ok else 0,
-			1 if mask_ok else 0, n, ghosts_bad, tints_bad])
-	_log("队色/分队层:自己 layer=%d mask=%d(层对=%s 掩码对=%s);副本 %d 个(幽灵层错 %d,队色错 %d)"
+			1 if mask_ok else 0, n, probes_bad, tints_bad])
+	_log("队色/不互挡:自己 layer=%d mask=%d(层对=%s 掩码对=%s);副本 %d 个(几何探针非零碰撞 %d,队色错 %d)"
 			% [_local.collision_layer, _local.collision_mask, str(layer_ok), str(mask_ok),
-			n, ghosts_bad, tints_bad])
+			n, probes_bad, tints_bad])
 	if n != want_reps:
-		_fail("副本数 %d != %d(队友的队色/幽灵层**一个都没验到** —— 计数天然为 0 的恒真空位)"
+		_fail("副本数 %d != %d(队友的队色/无碰撞探针**一个都没验到** —— 计数天然为 0 的恒真空位)"
 				% [n, want_reps])
 	if not layer_ok or not mask_ok:
-		_fail("自己那一半的分队碰撞层与 A 册契约不符(layer=%d mask=%d team=%d)"
+		_fail("玩家的碰撞层/掩码与契约不符(layer=%d mask=%d team=%d;期望 layer=2、mask 只剩地形位 1)"
 				% [_local.collision_layer, _local.collision_mask, _team])
-	if ghosts_bad > 0:
-		_fail("有 %d 个副本的幽灵体层与队不符(队友会互挡 → C2 每帧回滚)" % ghosts_bad)
+	if probes_bad > 0:
+		_fail("有 %d 个副本的几何探针参与了碰撞(layer/mask 必须恒 0;非零 = 又变回挡你的对手)" % probes_bad)
 	if tints_bad > 0:
 		_fail("有 %d 个副本的身体色不是队色(6 人局里认不出队友)" % tints_bad)
 

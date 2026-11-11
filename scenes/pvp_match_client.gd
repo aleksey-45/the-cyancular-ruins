@@ -45,9 +45,6 @@ var _ping_acc := 0.0
 # 受击事件队列:网络回调跑在 idle 帧,而注入要重放(内部 move_and_slide)—— 物理帧外 move_and_slide 位移恒 0(实测),
 # 故回调只入队,统一在下一个物理帧开头注入(反馈最多晚 1 帧 ≈16.7ms)。
 var _pending_hit_events: Array = []
-const PredictionContact := preload("res://core/net/prediction_contact.gd")
-const ReplicaScript := preload("res://scenes/player/player_replica.gd")
-var _contact_grace_left := 0.0
 var _input_uplink: InputUplink = null
 
 
@@ -99,8 +96,8 @@ func _boot_world() -> void:
 	var ts := GameParameters.TILE_SIZE
 	local.position = Vector2(PvpSession.spawn.x * ts + ts / 2.0, PvpSession.spawn.y * ts + ts / 2.0)
 	_settle_local_spawn(local)
-	# 与对手(层 2)物理碰撞:服务器侧已给每个玩家 mask |= 2,客户端本地玩家也必须,否则本地预测直接穿过对手副本、服务器却挡住 ⇒ 每帧分歧回滚(C2 的无限回滚循环);对手那侧由 player_replica 的幽灵碰撞体提供。
-	local.collision_mask |= 2
+	# 玩家之间不互挡(2026-11-10 用户裁定):客户端与服务器都不给玩家叠「对手身体」那一位 ⇒ 本地玩家只撞地形,
+	# 对手副本也不再有碰撞体(见 player_replica.gd 的零碰撞几何探针)。两边掩码一致,C2 才有同一个可走空间。
 	state._local = local
 	state._rollback = PredictionRollback.new()
 	state._rollback.bind(state._local)
@@ -418,8 +415,6 @@ func _physics_process(delta: float) -> void:
 			NetBus.send_ping()
 	var uplink := _ensure_input_uplink()
 	if uplink.have_prev_seq and state._rollback != null:
-		# 贴身提示:只在接触期放宽容差(见 core/prediction_rollback.gd 的 contact_pos_tol)。★ 必须在 reconcile() 之前 —— 它是消费方。
-		state._rollback.in_contact = _update_contact_state()
 		state._rollback.note_post_step(uplink.prev_sent_seq, state._local.capture_state())
 		state._rollback.reconcile()
 	uplink.begin_tick()
@@ -530,36 +525,6 @@ func _bullet_hurt_rect(n: Node2D) -> Rect2:
 # 这颗视觉子弹能不能停在那个实体上。默认能(1v1 / 大乱斗:除了射手谁都能挡);3v3 覆写:与射手同队的排掉(规则:队友不互挡 + 子弹穿透队友)—— 不覆写的话队友副本会把自己的子弹吃掉(与服务器裁决相反,且不报错)。
 func _bullet_hits_entity(_b: BulletBase, _ent: Node2D) -> bool:
 	return true
-
-
-func _update_contact_state() -> bool:
-	if state._rollback == null or state._local == null:
-		return false
-	var lr: Rect2 = state._local.hurt_rect()
-	var w := float(GameParameters.MAP_WIDTH)
-	var h := float(GameParameters.MAP_HEIGHT)
-	var best_gap := INF
-	var rel_speed := 0.0
-	var anchor_speed := 0.0
-	for n in get_tree().get_nodes_in_group(ReplicaScript.GROUP):
-		var rep := n as Node2D
-		if rep == null or not is_instance_valid(rep) or not rep.has_method("ghost_rect"):
-			continue
-		var gr: Rect2 = rep.ghost_rect()
-		var center := MazeGenerator.anchor_to_nearest(gr.get_center(), state._local.global_position, w, h)
-		gr = Rect2(center - gr.size * 0.5, gr.size)
-		var gap := PredictionContact.rect_gap(lr, gr)
-		if gap < best_gap:
-			best_gap = gap
-			var gv: Vector2 = rep.ghost_velocity() if rep.has_method("ghost_velocity") else Vector2.ZERO
-			rel_speed = (state._local.velocity - gv).length()
-			anchor_speed = gv.length()
-	var horizon := PredictionContact.ghost_horizon_s(NetBus.ping_ms)
-	state._rollback.contact_pos_tol = PredictionContact.contact_tol(rel_speed, anchor_speed, horizon)
-	var now_contact: bool = state._local.touching_player() or PredictionContact.is_contact(best_gap)
-	_contact_grace_left = PredictionContact.grace_after(_contact_grace_left,
-			get_physics_process_delta_time(), now_contact)
-	return now_contact or _contact_grace_left > 0.0
 
 
 func _on_round_state(data: Dictionary) -> void:

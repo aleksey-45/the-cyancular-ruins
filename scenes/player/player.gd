@@ -147,7 +147,7 @@ func _ready() -> void:
 		animator.play(&"idle")
 	# 形体光:按精灵本地 UV 造假法线,让角色有体积(方向随昼夜转)。
 	# ★ 与武器/敌人共用同一份材质,uniforms 由 PostProcess 每帧统一推。
-	FormLight.attach(animator, "ellipsoid", 0.70)   # 玩家明暗对比要弱于环境
+	FormLight.attach(animator, "ellipsoid", 0.90, 1.0)   # 玩家明暗对比要弱于环境
 
 	combat.hp_changed.connect(func(cur: int, mx: int) -> void: hp_changed.emit(cur, mx))
 	combat.went_down.connect(func() -> void: weapons.cancel_aim())
@@ -629,19 +629,6 @@ func is_downed() -> bool:
 # 是否冲刺中(武器判断用):冲刺锁身体朝向,但枪口应保持鼠标瞄准侧不跟随翻转。
 func is_charging() -> bool:
 	return is_charge
-
-# 本物理步的滑动碰撞里有没有非地形碰撞体(= 远端玩家身体所在的层)。
-# ★ 地形恒为层 1 ⇒ 与 ~1 相与就是非地形;本地玩家的 mask 里除地形外只有对手幽灵体(3v3 队友在层 2、本地 mask 不含 2 ⇒ 队友不算接触)。
-# ★ 写成函数而不是每帧刷新的字段:本文件 move_and_slide() 有 3 个调用点,做字段必然漏刷一处,而漏了不报错。用途:C2 预测只在贴身时放宽容差。
-func touching_player() -> bool:
-	for i in range(get_slide_collision_count()):
-		var col := get_slide_collision(i)
-		if col == null:
-			continue
-		var co := col.get_collider() as CollisionObject2D
-		if co != null and (co.collision_layer & ~1) != 0:
-			return true
-	return false
 
 func apply_recoil(push: float) -> void:
 	weapons.apply_recoil(push, is_squat, climb.is_latched())

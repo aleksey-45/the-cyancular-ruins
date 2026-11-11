@@ -290,7 +290,6 @@ func _add_player(role: int, src: PlayerInput, nav: AiNavigator) -> Node2D:
 	var p: Node2D = preload("res://scenes/player/player.tscn").instantiate()
 	p.set_input_source(src)
 	add_child(p)
-	p.collision_mask |= 2
 	state.players[role] = p
 	if nav == null:
 		state.input_sources[role] = src

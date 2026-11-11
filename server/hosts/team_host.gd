@@ -4,7 +4,6 @@ extends MatchHost
 
 const TEAM_ROUNDS_TO_WIN := 2
 const ENDGAME_NONE := -1
-const TEAM_ENEMY_LAYER := TeamSpawn.TEAM_ENEMY_LAYER
 const META_DAMAGE_SUBSIDY := "team_damage_subsidy"
 
 var _round_spawns: Dictionary = {}
@@ -26,7 +25,6 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 	state._team_of = teams.duplicate()
 	_round_spawns = spawns if not spawns.is_empty() else plan_team_spawns(state._team_of)
 	super._init(map_path, role_peers, options, ai_roles, teams)
-	_apply_team_layers()
 	_init_team_rules()
 
 
@@ -108,11 +106,6 @@ func _adjudicate_bullets() -> void:
 			bullet.direct_hit_damage = maxi(1, roundi(float(bullet.direct_hit_damage) * mult))
 			bullet.explosion_damage = maxi(1, roundi(float(bullet.explosion_damage) * mult))
 	super._adjudicate_bullets()
-
-
-func _apply_team_layers() -> void:
-	TeamSpawn.apply_team_layers(state.players, state._team_of)
-
 
 
 static func start_on(role_peers: Dictionary, map_path: String, options: Dictionary = {},

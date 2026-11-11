@@ -7,27 +7,6 @@ const TEAMMATE_CLEARANCE := 3
 const SPAWN_BASE_RADIUS := 30
 const SPAWN_MAX_TRIES := 12
 const RESPAWN_CLEARANCE := 8
-const TEAM_ENEMY_LAYER := 16
-
-
-# 队友不互挡(用户裁定「完全穿透」)── ★ 必须「分队位」而不是改掩码:Godot 的碰撞按节点配,没有「按对」的开关,
-static func apply_team_layers(players: Dictionary, teams: Dictionary) -> void:
-	for role in players:
-		var p: Node2D = players[role]
-		if p == null or not is_instance_valid(p):
-			continue
-# ★ 队号必须穷举 1/2,不能写成 if t == 1 … else …:表外 role 的队号是 0,else 会把它静默划进 2 队 → 非对称碰撞且不报错(与
-# 1 队互挡、与 2 队互穿);未知队号什么都不配 + push_error。★ 先 if 拦再 match:实测 match 体内 continue 在非末臂里会「落到下一个 pattern」。
-		var t := int(teams.get(int(role), 0))
-		if t != 1 and t != 2:
-			push_error("TeamHost: role %d 的队号是 %d(不在 {1,2} 里),不配分队碰撞层" % [int(role), t])
-			continue
-		match t:
-			1:
-				p.collision_layer = 2
-				p.collision_mask = (p.collision_mask & ~2) | TEAM_ENEMY_LAYER
-			2:
-				p.collision_layer = TEAM_ENEMY_LAYER
 
 
 static func plan_team_spawns(teams: Dictionary, last: Dictionary = {}, side_swap := false) -> Dictionary:

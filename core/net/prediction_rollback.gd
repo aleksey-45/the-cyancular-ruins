@@ -26,25 +26,16 @@ var _events: Dictionary = {}
 
 var map_px: Vector2 = Vector2.ZERO
 
-# 「预测被证实」的位置容差(px),回滚频率的闸门:贴身时对手在客户端眼里恒有滞后(实测 8 tick ≈ 93px),1px 容差会每帧 restore+重放。
-# 实测 2px 砍掉 ~95% 频率而接触期偏差一行没动(那每帧一次的回滚本来就没买到精度)。代价:容差内的位置误差不再纠正;down/hp 仍精确比较。
+# 「预测被证实」的位置容差(px),回滚频率的闸门:1px 容差会把重放时序 / 输入饥饿造成的亚像素差也判成分歧、每帧 restore+重放。
+# 实测 2px 砍掉 ~95% 频率而误差一行没动(那每帧一次的回滚本来就没买到精度)。代价:容差内的位置误差不再纠正;down/hp 仍精确比较。
+# ★ 2026-11-10「玩家之间不互挡」后不再有接触期动态容差:位置与速度容差都是静态单一口径。
 const DEFAULT_POS_TOL := 2.0
 var pos_tol: float = DEFAULT_POS_TOL
 
-const DEFAULT_CONTACT_POS_TOL := 8.0
-var contact_pos_tol: float = DEFAULT_CONTACT_POS_TOL
-# ★ 2026-10-28:客户端在贴身区按"相对速度 × 幽灵滞后"动态覆盖它(8~48px,见 core/net/prediction_contact.gd);
-#   本常量现在只是下限/默认值,别再以为它恒是 8。
-
-# 接触期速度容差(px/s)。★ 2026-10-31:同一台机器 3 客户端 soak 实测,回滚里 83~98% 是"纯速度分歧"
-const DEFAULT_CONTACT_VEL_TOL := 400.0
-var contact_vel_tol: float = DEFAULT_CONTACT_VEL_TOL
 const VEL_TOL := 20.0
 
 # 「预测被证实」要比对的字段集合(单一来源):S-06 —— 原先这 4 个字段的判据散在 _close_enough 函数体里,
 const PREDICTED_FIELDS := ["down", "hp", "pos", "vel"]
-
-var in_contact: bool = false
 
 func bind(p) -> void:
 	_p = p
@@ -199,9 +190,8 @@ func _handle_ack(ack: int, S: Dictionary) -> void:
 			"field": last_fail_field,
 			"pos_err": snappedf(_pos_dist(predicted.get("pos", Vector2.ZERO), S.get("pos", Vector2.ZERO)), 0.01),
 			"vel_err": snappedf(Vector2(predicted.get("vel", Vector2.ZERO)).distance_to(Vector2(S.get("vel", Vector2.ZERO))), 0.01),
-			"in_contact": in_contact,
-			"pos_tol": snappedf(contact_pos_tol if in_contact else pos_tol, 0.01),
-			"vel_tol": snappedf(contact_vel_tol if in_contact else VEL_TOL, 0.01),
+			"pos_tol": snappedf(pos_tol, 0.01),
+			"vel_tol": snappedf(VEL_TOL, 0.01),
 			"hp_before": int(predicted.get("hp", 0)),
 			"hp_after": int(S.get("hp", 0)),
 			"replay": _last_applied - ack,
@@ -238,13 +228,11 @@ func _within(field: String, a: Dictionary, b: Dictionary) -> bool:
 		"hp":
 			return int(a.get("hp", 0)) == int(b.get("hp", 0))
 		"pos":
-			var tol: float = contact_pos_tol if in_contact else pos_tol
-			return _pos_dist(a.get("pos", Vector2.ZERO), b.get("pos", Vector2.ZERO)) <= tol
+			return _pos_dist(a.get("pos", Vector2.ZERO), b.get("pos", Vector2.ZERO)) <= pos_tol
 		"vel":
 			var va: Vector2 = a.get("vel", Vector2.ZERO)
 			var vb: Vector2 = b.get("vel", Vector2.ZERO)
-			var vtol: float = contact_vel_tol if in_contact else VEL_TOL
-			return va.distance_to(vb) < vtol
+			return va.distance_to(vb) < VEL_TOL
 		_:
 			return false
 

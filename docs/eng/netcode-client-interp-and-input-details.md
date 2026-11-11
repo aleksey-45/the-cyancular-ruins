@@ -1,6 +1,6 @@
 # 副本插值与输入上行的细节：一手来源调研（增量）
 
-> 现行实现：远端玩家副本走 **playout 缓冲插值**（渲染「最新快照 − `PLAYOUT_TICKS`」那一刻的夹逼插值位置）；幽灵碰撞体仍直出最新快照。服务器命中裁决按**射手观看时刻**回放受击面（见 §1.1）。相关文件：`scenes/player/player_replica.gd`、`core/net/playout_clock.gd`、`core/net/lag_comp.gd`、`core/sim/hit_lag_history.gd`、`core/net/packet_input_source.gd`、`server/match/combat_system.gd`、`server/match/match_host.gd`。
+> 现行实现：远端玩家副本走 **playout 缓冲插值**（渲染「最新快照 − `PLAYOUT_TICKS`」那一刻的夹逼插值位置）；副本**不参与碰撞**（2026-11-10「玩家之间不物理互挡」后幽灵碰撞体 / 贴身容差整套已删），只留一个零碰撞几何探针给受击面 / 脚底提供几何。服务器命中裁决按**射手观看时刻**回放受击面（见 §1.1）。相关文件：`scenes/player/player_replica.gd`、`core/net/playout_clock.gd`、`core/net/lag_comp.gd`、`core/sim/hit_lag_history.gd`、`core/net/packet_input_source.gd`、`server/match/combat_system.gd`、`server/match/match_host.gd`。
 
 ## 1. 副本：playout 缓冲插值
 
@@ -9,10 +9,10 @@
 - `apply_snapshot(data, local_anchor, tick)` 的第三参参与计算：喂 `PlayoutClock.on_snapshot(tick)` 与 `_push_history(tick, pos)`。
 - 取样:比最老还老冻在最老、不倒退;比最新还新(underrun)**有界外插**(最新权威速度,最多 2 tick / 60px,超出冻结);中间用三次 Hermite(切线 = 快照 `vel` × 本段时长)。跨接缝的那一对样本必须**先锚进同一个副本空间再插**,否则差量是一整幅地图。
 - 相邻样本的环面距离 > `SNAP_DIST`（128 px）⇒ 清历史、一帧落位（回溯 / 重生 / 换边本来就是瞬移）。
-- 幽灵体 `_ghost` **不跟渲染插值**，但自 2026-10-28 起也**不直接吃最新快照**：位置 = 最新快照 + 权威速度 × 滞后估计（`core/net/prediction_contact.gd` 的 `ghost_horizon_s` = RTT/2 + 半个 60Hz 间隔，封顶 50ms），再锚回本地玩家最近副本。δ 匀速期≈0；急停/变向最坏 ≈ 速度×滞后（700px/s ⇒ 35px）。`_ghost.global_rotation = 0.0` 抵消倒地转体。
-- **贴身容差**（2026-10-28 起，2026-10-31 补两处）：客户端 `PvpMatchClient._update_contact_state()` 每物理帧用"预测身位到幽灵 AABB 的间隙"判贴身（不再只靠 `touching_player()`，否则追人时幽灵滞后会让预测穿过去、判不到贴身），并按 `contact_tol(rel_speed, anchor_speed, horizon)` 把 `contact_pos_tol` 从 8px 抬到 ≤48px：drift 取**相对速度与幽灵锚点速度的大者**（两人同速同向时锚点位移仍会差 |v_ghost|×horizon）×2 模型系数（实测残差 p90≈1.7~2.0）；离开贴身区后 **150ms 迟滞**内仍按贴身容差（脱离瞬间速度差还没收敛，否则每个 ack 回滚一次）。配套 `PredictionRollback.contact_vel_tol = 400`（接触期速度容差；非接触仍 20）。
+- 几何探针 `_probe`（`StaticBody2D`，但 `collision_layer = collision_mask = 0` ⇒ 物理上谁也撞不到它）**只提供几何**，不参与碰撞、不参与预测：位置直接跟**最新快照锚点**（不接 playout 平滑、也不再按权威速度外推），姿态箱按最新快照 `pose` 切，`_probe.global_rotation = 0.0` 抵消倒地转体。`hurt_rect_rendered()` 取它的尺寸/中心偏移 + 渲染位置给视觉子弹 cull；`_in_water()` 取 `Water.feet_offset(_probe)`。
+- **接触期容差已删除**（2026-11-10「玩家之间不物理互挡」）：预测侧不存在「被对手挡住」的分歧源（2026-10-31 三客户端 soak：424 次回滚里 394 次发生在接触期，92.9%），故客户端每物理帧判贴身 / 动态抬容差 / 150ms 迟滞 / 触碰检测函数整套下线，`PredictionRollback` 只剩静态 `pos_tol = 2` / `VEL_TOL = 20`。
 - **外观态也按同一个渲染时刻取样**:`pose` / `facing` / `aim` / `aim_facing` / `downed` / `type_id` / `vel` 与位置一起进历史环,渲染时取「`tick <= render_tick` 的最后一条」刷到画面上。★ 别退回「逐包瞬跳」:那会让动画 / 朝向 / 枪口比身体早一拍多 —— 对手停下后腿还在走(滑步)。
-- 幽灵碰撞体是唯一吃**最新**快照的东西：姿态箱按最新 `pose` 切、位置跟最新锚点 —— 预测面要最小陈旧（观感面才要平滑）。
+- 几何探针是唯一吃**最新**快照的东西：姿态箱按最新 `pose` 切、位置跟最新锚点 —— 受击面几何要最小陈旧（观感面才要平滑）。
 - `aim` / `pose` / `facing` 的取值规则不变;2026-10-29 起连续量(`aim` 用 `slerp`、`vel` 用 `lerp`)在相邻两条历史之间插值,离散态(`pose` / `facing` / `downed` / `type_id`)本身不插值、只延迟。
 - 丢弃：`pvp_game.gd` 里 `tick < _last_snap_tick` ⇒ 丢。
 
@@ -20,7 +20,7 @@
 
 - 客户端把「最近解码的快照 tick」放进输入包的 `st`；服务器据此算 `want = clamp(st − PLAYOUT_TICKS, _srv_tick − MAX_REWIND_TICKS, _srv_tick)`，用 `HitLagHistory.rect_for(victim, want)` 取**射手当时看到的**对手受击面，再走 `HitShape` 线段扫掠（含子弹体积 grow）。
 - 服务器 tick 与快照 tick 同域：`MatchHost` 每物理 tick `_srv_tick += 1`，广播时 `_snap_tick = _srv_tick`（2026-10-30 起 `SNAPSHOT_STRIDE = 1` ⇒ 每 tick 一包，tick 序列连续）。
-- **只有裁决回放**：渲染（副本插值）与移动预测（幽灵体）都仍吃最新/playout 各自原有口径；爆炸 AoE 不回放（现时位置）。协议零改动。
+- **只有裁决回放**：渲染（副本插值）照旧走 playout；客户端只有本地玩家一个被预测的身体（副本不参与碰撞，预测侧没有第二个世界），爆炸 AoE 不回放（现时位置）。协议零改动。
 
 ## 2. 输入上行
 
@@ -63,5 +63,4 @@
 | 一次性输入"取后不清" ⇒ 被 tick loop 每个 tick 用一遍 | 边沿由 `MatchHost.clear_edges()` 每 tick 末清；`held` 保留 |
 | 只压上行量化 ⇒ 重放对不上 | 量化必须两端同口径（`c2` 是回滚锚点） |
 | 欧拉角 / 单位向量线性插值 | 角度走 `lerp_angle`，方向向量走 `slerp` |
-| 幽灵体跟平滑值 ⇒ 预测面被污染 | 幽灵体跟未平滑的 `target` |
 | 跨接缝时最短向量为 0 ⇒ 副本留在远副本 | 两个 `anchor_to_nearest` 不许简化 |

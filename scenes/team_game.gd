@@ -8,10 +8,10 @@ var _teams: Dictionary = {}
 
 func _ready() -> void:
 	_boot_world()
-	# 副本集合 / 快照消费 / 头顶标签收进组合件(与大乱斗同一份);取色 Callable = _team_color,新建后按队补配幽灵层。
+	# 副本集合 / 快照消费 / 头顶标签收进组合件(与大乱斗同一份);取色 Callable = _team_color(玩家之间不互挡,不再需要按队配碰撞层)。
 	_replica_set = ReplicaSet.new()
 	_replica_set.bind(state, ports,
-			func(r: int) -> Color: return _team_color(r), Callable(self, "_on_replica_created"))
+			func(r: int) -> Color: return _team_color(r))
 	_setup_beta_time_hud()
 	# 小地图(多目标 + 队色):四个提供器同序一一对应(错位 = 队友点画成敌人色,不报错只误导人)。★ 后三个用具名方法而不是内联 lambda —— lambda 要以 return arr, 结尾才能带出数组,那是本仓没写过的形状。
 	if Settings.pvp_show_minimap:
@@ -49,7 +49,6 @@ func _apply_teams(teams: Dictionary) -> void:
 		# ★★ 这一行漏了不报错,后果是赢的局报成输的:_my_team 恒 0 ⇒ TeamHud 的 mwinner == _my_team and _my_team != 0 恒假 ⇒ 「本局胜利!」/「胜利!」两条文案一次都不会出现。
 		_hud.set_my_team(_team_of_role(PvpSession.role))
 	_refresh_team_colors()
-	_apply_team_collision()
 	_apply_team_health_subsidy(teams)
 
 
@@ -110,37 +109,6 @@ func _refresh_team_colors() -> void:
 	_replica_set.refresh_labels()
 
 
-# 副本幽灵体代表的那名玩家,其队号 → 幽灵体该放的碰撞层。
-# 旧实现是 return 2 if _team_of_role(role) == 1 else TeamHost.TEAM_ENEMY_LAYER —— 它把「未知」当成了队 2,于是两端对同一具身体放不同的层,两队掩码不同 ⇒ 队 2 玩家在服务端会被挡住、在客户端不会 ⇒ C2 每帧分歧。今天生产路径到不了这里(worker 的 team_map() 恒非空),修它是消除一个静默不对称。
-func _ghost_layer_of(role: int) -> int:
-	match _team_of_role(role):
-		1:
-			return 2
-		2:
-			return TeamHost.TEAM_ENEMY_LAYER
-	return 2
-
-
-# ── 队友不互挡:客户端那一半(服务端那一半在 TeamHost._apply_team_layers)── 契约(两边逐值对齐):1 队玩家 layer = 2、mask = 21(地形 1 | 敌人层 4 | 队 B 层 16);2 队玩家 layer = 16(TeamHost.TEAM_ENEMY_LAYE。
-# ★ 为什么必须分队位而不是改掩码:Godot 的碰撞按节点配,没有「按对」的开关。★ 两边 layer/mask 必须逐值相同:服务器是权威模拟、客户端是 C2 预测,掩码不同 = 同一帧两边可走空间不同 = 每帧分歧回滚(不是调参能缓解的)。★ 用常量不用字面量 16:层位是全局资源,将来可能挪。
-func _apply_team_collision() -> void:
-	if state._local == null:
-		return
-	var my_team := _team_of_role(PvpSession.role)
-	if my_team == 0:
-		return
-	if my_team == 1:
-		state._local.collision_layer = 2
-		state._local.collision_mask = (state._local.collision_mask & ~2) | TeamHost.TEAM_ENEMY_LAYER
-	else:
-		state._local.collision_layer = TeamHost.TEAM_ENEMY_LAYER
-		state._local.collision_mask |= 2
-	for role in _replicas:
-		var r = _replicas[role]
-		if r != null and is_instance_valid(r) and r.has_method("set_ghost_layer"):
-			r.set_ghost_layer(_ghost_layer_of(int(role)))
-
-
 func _minimap_colors() -> Array:
 	var arr: Array = []
 	for e in _minimap_entries():
@@ -153,12 +121,6 @@ func _minimap_self_color() -> Color:
 	return _team_color(PvpSession.role)
 
 
-
-
-# 副本新建后的 3v3 专属补配:幽灵体层必须在这里也补一次 —— 副本是懒建的,而队伍表早在 match_sync 就到了;_apply_teams() 那一刻 _replicas 还是空的,只在那时刷的话,晚建的副本幽灵体恒在层 2(= 队友也挡我)⇒ 每帧回滚,不报错。
-func _on_replica_created(replica: Node, role: int) -> void:
-	if replica.has_method("set_ghost_layer"):
-		replica.set_ghost_layer(_ghost_layer_of(role))
 
 
 func _on_kill_event(killer: int, victim: int) -> void:

@@ -1,7 +1,9 @@
 extends Node2D
-# PvP 远端玩家副本:视觉(Player 的 SpriteFrames / 动画 + 各武器外观),由快照驱动。★ 它不是纯视觉:还带一个只参与碰撞的
-# 幽灵体(见 _build_ghost_body)—— C2 客户端预测只步进自己的玩家,客户端世界里没有对手身体 ⇒「对手挡住我」在预测侧不存在
-# ⇒ 每帧分歧回滚(幽灵体只减小分歧不消除)。★ 观感不变量:位置与外观态都按 playout 取样、渲染层带排在世界结构层之前(见 docs/eng/render.md)。
+# PvP 远端玩家副本:视觉(Player 的 SpriteFrames / 动画 + 各武器外观),由快照驱动。★ 它**不参与碰撞**:2026-11-10 用户裁定
+# 玩家之间不物理互挡 ⇒ 客户端世界里没有「挡住我」的对手身体,为此服务的幽灵碰撞体 / 贴身容差整套已删。
+# 副本只做 playout 插值渲染;另带一个**零碰撞的几何探针**(见 _build_hurt_probe),只给 hurt_rect_rendered()(视觉子弹 cull)
+# 与 _in_water()(Water.feet_offset)提供受击面几何,不会被任何 move_and_slide 撞到。
+# ★ 观感不变量:位置与外观态都按 playout 取样、渲染层带排在世界结构层之前(见 docs/eng/render.md)。
 
 # 大跳变阈值:相邻两条权威快照的环面距离超过它 ⇒ 清历史、一帧落位(回溯 / 重生 / 换边本来就是瞬移,插值会演成「滑过去」;128px 的依据见 docs/eng/render.md)。
 const SNAP_DIST := 128.0
@@ -13,7 +15,6 @@ const UNDERRUN_EXTRAP_MAX_PX := 60.0
 const PlayoutClock := preload("res://core/net/playout_clock.gd")
 const LagComp := preload("res://core/net/lag_comp.gd")
 const HitShape := preload("res://core/sim/hit_shape.gd")   # 受击判定几何唯一入口(cull 用)
-const PredictionContact := preload("res://core/net/prediction_contact.gd")   # 幽灵体外推的滞后/接触判据(纯函数)
 
 # ── playout 缓冲插值 ── 延迟量 = LagComp.PLAYOUT_TICKS(60Hz tick 域;2 tick ≈ 33ms):1 个发包间隔是夹逼插值下限,
 # 第 2 个吸收抖动;改大更抗抖但对手更迟。★ 服务器命中回放与这里共用同一常量(时间域解耦),别在副本里另写一个数。
@@ -28,11 +29,11 @@ const PlayerVisual := preload("res://scenes/player/player_visual.gd")
 # 本体精灵帧:帧数据现在由 `assets/textures/player.frames.json` 描述(网格推导 Rect2),
 # 本体与副本都走 SpriteFramesIO.load_json,且它有缓存 ⇒ 仍然是"只有一处帧数据",不会漂。
 # @export 留空即走 JSON;有外部注入(测试/特殊皮肤)时以注入的为准。
-const PlayerScene := preload("res://scenes/player/player.tscn")   # 只读它的 SceneState 取幽灵体多边形,不实例化
+const PlayerScene := preload("res://scenes/player/player.tscn")   # 只读它的 SceneState 取几何探针的多边形,不实例化
 const FRAMES_JSON := "res://assets/textures/player.frames.json"
 @export var sprite_frames: SpriteFrames = null
 
-# 幽灵体所在组:榴弹「碰到玩家」判定要把对手副本也算进候选。
+# 副本所在组:榴弹「碰到玩家」判定要把对手副本也算进候选。
 const GROUP := "player_replica"
 
 const HIT_FLASH_TIME := 0.35   # 受击闪烁时长(秒),闪烁频率对齐本地 iframe 眨眼感
@@ -51,12 +52,11 @@ var _weapon_slot_node: Node2D        # 武器挂点(运行时加,排在 Animated
 var _weapon: Node2D = null           # 当前武器场景实例(惰性:未 equip,仅外观)
 var _weapon_type_int := 0            # 服务器权威槽位
 var _opponent_canonical := Vector2.ZERO
-var _snap_vel := Vector2.ZERO   # 最新快照的权威速度(幽灵体外推用;不是渲染用的 _vel)
 var _local_anchor := Vector2.ZERO         # 本地玩家(相机)位置,每帧跟随
 var _have_data := false
 var _clock: PlayoutClock = null
 var place_history: Array = []
-# 首帧是否已直落:第一帧历史里还没有样本,走插值会从原点滑过去;幽灵体也必须立刻落到权威位置,否则白分歧一次。
+# 首帧是否已直落:第一帧历史里还没有样本,走插值会从原点滑过去。
 var _placed := false
 var _facing := 1
 # ★★ 瞄准侧(与 _facing 不是同一个量,枪口外观只认这一个)。
@@ -73,9 +73,9 @@ var _hit_flash_t := 0.0
 # 宿主建好挂件后 attach_overhead(),本副本在 _process 里贴位 —— 三个对局场景不再各抄一份跟随即。
 var _overheads: Array[Dictionary] = []   # [{node: Node2D, offset: Vector2}]
 
-# ── 幽灵碰撞体(只碰撞、不参与任何逻辑)──
-var _ghost: StaticBody2D = null
-var _ghost_shapes: Dictionary = {}   # pose(int) -> CollisionPolygon2D
+# ── 零碰撞几何探针(纯几何来源,不参与任何物理)──
+var _probe: StaticBody2D = null
+var _probe_shapes: Dictionary = {}   # pose(int) -> CollisionPolygon2D
 
 func _ready() -> void:
 	add_to_group(GROUP)
@@ -87,8 +87,8 @@ func _ready() -> void:
 	if sprite_frames != null:
 		animator.play(&"idle")
 	# 形体光:与本体共用同一份材质(场上所有精灵一起生效,成本与数量无关)。
-	FormLight.attach(animator, "ellipsoid", 0.70)
-	_build_ghost_body()
+	FormLight.attach(animator, "ellipsoid", 0.90, 1.0)
+	_build_hurt_probe()
 	_weapon_slot_node = Node2D.new()
 	_weapon_slot_node.name = "WeaponSlot"
 	add_child(_weapon_slot_node)
@@ -113,15 +113,16 @@ func _reorder_before_structures() -> void:
 		return
 	host.move_child(self, structures.get_index())
 
-# 幽灵碰撞体:StaticBody2D(layer 2 = 玩家层,与 player.tscn 一致;mask 0 = 它不需要感知任何东西,只被本地玩家的 move_and_slide 撞到)挂 5 份姿态多边形,形状从 player.tscn 的打包数据(SceneState)现读。
+# 零碰撞几何探针:StaticBody2D 但 collision_layer = mask = 0 ⇒ 物理上谁也撞不到它、它也感知不到任何东西(不再挡路、不参与碰撞);
+# 只借它的 5 份姿态多边形给 hurt_rect_rendered() / _in_water() 当几何来源。形状从 player.tscn 的打包数据(SceneState)现读。
 # ★ 为什么不 instantiate:只为抄数据把整只 Player 建出来再 free,每建一个副本就一份完整节点树(还要实例化 4 个组件脚本)。SceneState 只读打包值:零节点、零 _ready、零 free。
-# ★ 单一真相源仍是 player.tscn(改本体的箱子,副本自动跟上);读不到(节点改名 / 多边形恰好等于默认值而未被存进打包)⇒ 少一份形状,不是致命(但 PlayerVisual.COLLISION_NODE 必须同步改),与旧实现 get_node_or_null()==null 那条分支同款。
-func _build_ghost_body() -> void:
-	_ghost = StaticBody2D.new()
-	_ghost.name = "GhostBody"
-	_ghost.collision_layer = 2
-	_ghost.collision_mask = 0
-	add_child(_ghost)
+# ★ 单一真相源仍是 player.tscn(改本体的箱子,副本自动跟上);读不到(节点改名 / 多边形恰好等于默认值而未被存进打包)⇒ 少一份形状,不是致命(但 PlayerVisual.COLLISION_NODE 必须同步改)。
+func _build_hurt_probe() -> void:
+	_probe = StaticBody2D.new()
+	_probe.name = "HurtProbe"
+	_probe.collision_layer = 0   # 不参与碰撞:层 0 = 没有任何 move_and_slide 会撞到它
+	_probe.collision_mask = 0
+	add_child(_probe)
 	var st := PlayerScene.get_state()
 	for pose in PlayerVisual.COLLISION_NODE:
 		var node_name: String = PlayerVisual.COLLISION_NODE[pose]
@@ -134,8 +135,8 @@ func _build_ghost_body() -> void:
 		if shape.has("position"):
 			poly.position = shape["position"]
 		poly.disabled = pose != 0
-		_ghost.add_child(poly)
-		_ghost_shapes[pose] = poly
+		_probe.add_child(poly)
+		_probe_shapes[pose] = poly
 
 
 # 从 PackedScene 的 SceneState 里读一个子节点的若干**已存储**属性(不实例化节点树)。
@@ -154,37 +155,20 @@ func _scene_node_props(st: SceneState, node_name: String, wanted: Array) -> Dict
 		return out
 	return {"found": false}
 
-# 幽灵体所在碰撞层。
-# ★ 为什么必须跟着队走:幽灵体的全部用途是让「预测所依据的世界」与权威一致。队友之间是完全穿透(服务器侧两队掩码互指对方的位),副本若恒在层 2,本地预测就会被队友挡下 —— 而服务器上他穿过去了 ⇒ 每帧分歧、每帧回滚(与「幽灵体缺失」同一个形状)。
-func set_ghost_layer(n: int) -> void:
-	if _ghost != null and is_instance_valid(_ghost):
-		_ghost.collision_layer = n
+# 探针按姿态切换受击箱(与 player.gd 的 _coll_by_pose 同款)。形状必须跟姿态走:视觉子弹 cull 用的受击面要与服务器裁决那一份同姿态
+# (蹲在矮通道里的对手不能按站姿吃子弹)。
+func _set_probe_pose(pose: int) -> void:
+	for p in _probe_shapes:
+		(_probe_shapes[p] as CollisionPolygon2D).disabled = p != pose
 
 
-# 幽灵体按姿态切换碰撞箱(与 player.gd 的 _coll_by_pose 同款)。形状必须跟姿态走:否则蹲下躲进矮通道的对手仍按站姿挡路,预测侧又会与权威不一致。
-func _set_ghost_pose(pose: int) -> void:
-	for p in _ghost_shapes:
-		(_ghost_shapes[p] as CollisionPolygon2D).disabled = p != pose
-
-## 预测接触用:幽灵体的世界受击面(位置=外推后的"现在",形状=最新姿态)。
-func ghost_rect() -> Rect2:
-	if _ghost == null or not is_instance_valid(_ghost):
-		return Rect2(global_position - Vector2(18.0, 18.0), Vector2(36.0, 36.0))
-	return HitShape.hurt_rect_of(_ghost)
-
-
-## 预测接触用:幽灵体所用的权威速度(最新快照)。调用方算相对速度。
-func ghost_velocity() -> Vector2:
-	return _snap_vel
-
-
-## 客户端 cull 用的受击面:尺寸/中心偏移取幽灵体(最新姿态+最新权威位置),位置取渲染位置(插值)。
+## 客户端 cull 用的受击面:尺寸/中心偏移取探针(最新姿态+最新快照锚点),位置取渲染位置(插值)。
 ## 两个量分开取的理由:形状要与服务器裁决同源,位置要与玩家眼睛看到的同源;这是已知 67ms 时差的观测点。
 func hurt_rect_rendered() -> Rect2:
-	if _ghost == null or not is_instance_valid(_ghost):
+	if _probe == null or not is_instance_valid(_probe):
 		return Rect2(global_position - Vector2(18.0, 18.0), Vector2(36.0, 36.0))
-	var r := HitShape.hurt_rect_of(_ghost)
-	var off := r.get_center() - _ghost.global_position
+	var r := HitShape.hurt_rect_of(_probe)
+	var off := r.get_center() - _probe.global_position
 	return Rect2(global_position + off - r.size * 0.5, r.size)
 
 func is_hurtable() -> bool:
@@ -267,7 +251,6 @@ func _push_history(tick: int, canon: Vector2, st: Dictionary) -> void:
 # ★ tick 参与计算(播放时钟 + 位置历史,见文件头),三参签名是三个生产调用点与探针的既定调用面,别改成两参。
 func apply_snapshot(data: Dictionary, local_anchor: Vector2, tick: int) -> void:
 	_opponent_canonical = data["pos"]
-	_snap_vel = data.get("vel", Vector2.ZERO)
 	_local_anchor = local_anchor
 	_have_data = true
 	if _clock == null:
@@ -277,12 +260,12 @@ func apply_snapshot(data: Dictionary, local_anchor: Vector2, tick: int) -> void:
 	_push_history(tick, _opponent_canonical, st)
 	_previewing = bool(data.get("previewing", false))
 	# ★★ 离散外观态不在这里落地:它随位置一起按 playout 延迟渲染(见 _apply_visual_state),否则动画 / 朝向 / 枪口比身体
-	# 早一拍多 —— 对手看起来会「滑步」(已经停下,腿还在走)。★ 唯一例外是幽灵碰撞体:它吃**最新**快照的最省陈旧。
+	# 早一拍多 —— 对手看起来会「滑步」(已经停下,腿还在走)。★ 唯一例外是几何探针:受击面要与服务器裁决同姿态,吃**最新**快照的 pose。
 	if not bool(st["downed"]):
-		_set_ghost_pose(int(st["pose"]))   # 倒地不切形状,与服务器一致(尸体停在最后姿态的箱子上)
-	# ★ 幽灵体不随副本根节点的视觉转体而动(倒地转体只作用于身体精灵;服务器侧 player.gd 的倒地分支不旋转)。
-	if _ghost != null:
-		_ghost.global_rotation = 0.0
+		_set_probe_pose(int(st["pose"]))   # 倒地不切形状,与服务器一致(尸体停在最后姿态的箱子上)
+	# ★ 探针不随副本根节点的视觉转体而动(倒地转体只作用于身体精灵;服务器侧 player.gd 的倒地分支不旋转)。
+	if _probe != null:
+		_probe.global_rotation = 0.0
 
 
 ## 从一条快照折出「外观态」(离散 + 连续),存进历史环,渲染时按 playout 取样。★ aim_facing 是包域链式状态:有明确水平分量才更新,近垂直瞄沿用上次。
@@ -392,12 +375,12 @@ func _drive_weapon_visual() -> void:
 		return
 	_weapon.drive_remote_visual(_aim, _aim_facing, animator, absf(_vel.x))
 
-# 对手此刻是否在水中(脚底探针,与本体同口径 —— 本体同样按活动碰撞箱的脚底采样;偏移走 Water.feet_offset,幽灵体换姿态会自动失效重算)。
+# 对手此刻是否在水中(脚底探针,与本体同口径 —— 本体同样按活动碰撞箱的脚底采样;偏移走 Water.feet_offset,探针换姿态会自动失效重算)。
 func _in_water() -> bool:
-	if _ghost == null or not is_instance_valid(_ghost):
+	if _probe == null or not is_instance_valid(_probe):
 		return false
 	var gp := global_position
-	return Water.is_in_water(Vector2(gp.x, gp.y + Water.feet_offset(_ghost)))
+	return Water.is_in_water(Vector2(gp.x, gp.y + Water.feet_offset(_probe)))
 
 
 ## 让 node 每帧贴在本副本头顶 offset 处(幂等:同一节点重复 attach 只更新偏移)。
@@ -445,12 +428,9 @@ func _process(delta: float) -> void:
 			global_position = _sample_history(_clock.render_tick)
 			global_position = MazeGenerator.anchor_to_nearest(global_position, _local_anchor,
 					GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
-		# 幽灵体不跟渲染插值,但也不能直接吃最新快照(那样滞后 = 单程 + 0~1 tick;跑速 700 时 0~12px,
-		if _ghost != null:
-			var horizon := PredictionContact.ghost_horizon_s(NetBus.ping_ms)
-			var ghost_pos := _opponent_canonical + _snap_vel * horizon
-			_ghost.global_position = MazeGenerator.anchor_to_nearest(ghost_pos, _local_anchor,
-					GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+		# 几何探针不参与碰撞,只提供受击面 / 脚底:位置直接跟最新快照锚点(playout 平滑只影响画面,不影响几何)。
+		if _probe != null:
+			_probe.global_position = target
 	if _hit_flash_t > 0.0:
 		_hit_flash_t = maxf(_hit_flash_t - delta, 0.0)
 		var on := int(_hit_flash_t * HIT_FLASH_RATE) % 2 == 0

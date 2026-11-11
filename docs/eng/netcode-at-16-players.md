@@ -29,7 +29,7 @@
 
 ## 3. 远端副本：playout 缓冲插值
 
-> playout 机制(缓冲 / 夹逼 / `SNAP_DIST` / 幽灵体 / 锚定)的权威见 [`netcode-client-interp-and-input-details.md`](netcode-client-interp-and-input-details.md);本节只留 16 人规模与代价读数。
+> playout 机制(缓冲 / 夹逼 / `SNAP_DIST` / 锚定)的权威见 [`netcode-client-interp-and-input-details.md`](netcode-client-interp-and-input-details.md);本节只留 16 人规模与代价读数。
 
 - 16 人下每个客户端各跑 15 份历史环 + 15 个播放时钟。历史环是定长（`PlayerReplica.HISTORY_MAX = 12`），但**不是零分配**：每条快照每个副本会新建 2 个小 Dictionary（`_push_history` 的 `{tick,pos,st}` 与 `_state_from` 的外观态）；每帧每副本还要 1 次环内取样扫描 + `_in_water()` 网格查询。实测 8 人局这把客户端主循环压在 avg 16.7ms / p95 17.4~17.9ms（§5）。
 - ★ 2026-10-30 全 60Hz + playout 2 的代价：16 人局服务端上行 ≈487 KB/s（trail 2 点；§1 表）；好处是样本间隔与画面滞后都只有 16.7/33ms，对手观感最接近本地玩家。
