@@ -23,13 +23,14 @@ static var _gain_mul: Dictionary = {}   # material -> 该材质的 gain 倍率(�
 static var _override: Dictionary = {}   # material -> 覆盖全局 form 参数的键值(玩家专属调参走这里)
 static var _sh: Shader = null
 static var _tried: bool = false
-# 每帧 push 的方向光快照:投影层(脚下影子)读它,避免自己再推一遍昼夜。
-static var last_gain: float = 0.0
-# 晚创建的材质(敌人/子弹/武器)也要拿到同一套参数:set_* 只存这里,建材质时再补推。
-static var _cur := {
-	"steps": 0.0, "dither": 1.0, "boost": 0.15, "bulge": 1.0,
-	"edge_lo": 0.20, "edge_hi": 0.80,
-}
+static var _unique_seq := 0
+# 晚创建的材质(敌人/子弹/武器)也要拿到同一套参数:set_* 只更新这里,建材质时再补推。
+static var _steps_cur := 0.0
+static var _dither_cur := 1.0
+static var _boost_cur := 0.15
+static var _bulge_cur := 1.0
+static var _edge_lo_cur := 0.20
+static var _edge_hi_cur := 0.80
 
 
 static func model_id(name: String) -> int:
@@ -59,8 +60,6 @@ static func _shader() -> Shader:
 
 
 ## 取(或建)材质:key = 图集 + 模型 + 半尺寸。
-static var _unique_seq := 0
-
 static func material_for(atlas: Texture2D, model_id: int, half: Vector2, center: Vector2 = Vector2.ZERO, round_mix: float = 0.0, overrides: Dictionary = {}, part_tex: Texture2D = null, unique: bool = false, shade_tex: Texture2D = null) -> ShaderMaterial:
 	var part_id := part_tex.get_instance_id() if part_tex != null else 0
 	var shade_id := shade_tex.get_instance_id() if shade_tex != null else 0
@@ -79,12 +78,12 @@ static func material_for(atlas: Texture2D, model_id: int, half: Vector2, center:
 	mat.set_shader_parameter("light_size", half)
 	mat.set_shader_parameter("light_center", center)
 	mat.set_shader_parameter("shape_round", clampf(round_mix, 0.0, 1.0))
-	mat.set_shader_parameter("steps", _cur["steps"])
-	mat.set_shader_parameter("dither", _cur["dither"])
-	mat.set_shader_parameter("boost", _cur["boost"])
-	mat.set_shader_parameter("bulge", _cur["bulge"])
-	mat.set_shader_parameter("edge_lo", _cur["edge_lo"])
-	mat.set_shader_parameter("edge_hi", _cur["edge_hi"])
+	mat.set_shader_parameter("steps", _steps_cur)
+	mat.set_shader_parameter("dither", _dither_cur)
+	mat.set_shader_parameter("boost", _boost_cur)
+	mat.set_shader_parameter("bulge", _bulge_cur)
+	mat.set_shader_parameter("edge_lo", _edge_lo_cur)
+	mat.set_shader_parameter("edge_hi", _edge_hi_cur)
 	_apply_overrides(mat, overrides)
 	if atlas != null and model_id == MODEL_SDF:
 		mat.set_shader_parameter("normal_tex", SpriteNormalMap.for_texture(atlas))
@@ -97,7 +96,6 @@ static func material_for(atlas: Texture2D, model_id: int, half: Vector2, center:
 
 
 static func push(sun_dir: Vector2, gain: float) -> void:
-	last_gain = gain
 	for k in _mats:
 		var mat: ShaderMaterial = _mats[k]
 		mat.set_shader_parameter("sun_dir", sun_dir)
@@ -108,7 +106,7 @@ static func push(sun_dir: Vector2, gain: float) -> void:
 
 static func set_steps(v: float) -> void:
 	var s := clampf(v, 0.0, 6.0)
-	_cur["steps"] = s
+	_steps_cur = s
 	for k in _mats:
 		var m: ShaderMaterial = _mats[k]
 		m.set_shader_parameter("steps", float(_override.get(m, {}).get("steps", s)))
@@ -116,7 +114,7 @@ static func set_steps(v: float) -> void:
 
 static func set_bulge(v: float) -> void:
 	var b := clampf(v, 0.5, 3.0)
-	_cur["bulge"] = b
+	_bulge_cur = b
 	for k in _mats:
 		var m: ShaderMaterial = _mats[k]
 		m.set_shader_parameter("bulge", float(_override.get(m, {}).get("bulge", b)))
@@ -124,7 +122,7 @@ static func set_bulge(v: float) -> void:
 
 static func set_dither(v: float) -> void:
 	var d := clampf(v, 0.0, 1.0)
-	_cur["dither"] = d
+	_dither_cur = d
 	for k in _mats:
 		var m: ShaderMaterial = _mats[k]
 		m.set_shader_parameter("dither", float(_override.get(m, {}).get("dither", d)))
@@ -133,8 +131,8 @@ static func set_dither(v: float) -> void:
 static func set_edge(lo: float, hi: float) -> void:
 	var l := clampf(lo, -0.5, 1.0)
 	var h := clampf(hi, -0.5, 1.5)
-	_cur["edge_lo"] = l
-	_cur["edge_hi"] = h
+	_edge_lo_cur = l
+	_edge_hi_cur = h
 	for k in _mats:
 		var m: ShaderMaterial = _mats[k]
 		var ov: Dictionary = _override.get(m, {})
@@ -142,15 +140,9 @@ static func set_edge(lo: float, hi: float) -> void:
 		m.set_shader_parameter("edge_hi", float(ov.get("edge_hi", h)))
 
 
-static func set_round(v: float) -> void:
-	var r := clampf(v, 0.0, 1.0)
-	for k in _mats:
-		(_mats[k] as ShaderMaterial).set_shader_parameter("shape_round", r)
-
-
 static func set_boost(v: float) -> void:
 	var b := clampf(v, 0.0, 0.5)
-	_cur["boost"] = b
+	_boost_cur = b
 	for k in _mats:
 		var m: ShaderMaterial = _mats[k]
 		m.set_shader_parameter("boost", float(_override.get(m, {}).get("boost", b)))
