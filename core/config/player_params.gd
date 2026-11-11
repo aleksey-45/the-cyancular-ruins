@@ -55,7 +55,7 @@ static var cam_lookahead_y: float = _CFG.cam_lookahead_y
 static var cam_y_bias: float = _CFG.cam_y_bias
 static var cam_smooth_x: float = _CFG.cam_smooth_x
 static var cam_smooth_y: float = _CFG.cam_smooth_y
-static var cam_deadzone: float = _CFG.cam_deadzone
+static var cam_deadzone: Vector2 = _CFG.cam_deadzone
 static var cam_zoom: float = _CFG.cam_zoom
 
 # ── 攀爬 / 弹跳 ──

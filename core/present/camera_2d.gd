@@ -58,9 +58,10 @@ func _process(delta: float) -> void:
 		else:
 			_target_cont += d
 
-	var dz := PlayerParams.cam_deadzone
-	_cam_cont.x = _follow_axis(_cam_cont.x, _target_cont.x + want_off.x, PlayerParams.cam_smooth_x, dz, delta)
-	_cam_cont.y = _follow_axis(_cam_cont.y, _target_cont.y + want_off.y, PlayerParams.cam_smooth_y, dz, delta)
+	# 死区配置是"总尺寸"(屏幕比例口径),跟随判定用 ±半区。
+	var dz := PlayerParams.cam_deadzone * 0.5
+	_cam_cont.x = _follow_axis(_cam_cont.x, _target_cont.x + want_off.x, PlayerParams.cam_smooth_x, dz.x, delta)
+	_cam_cont.y = _follow_axis(_cam_cont.y, _target_cont.y + want_off.y, PlayerParams.cam_smooth_y, dz.y, delta)
 
 	_base_pos = t + (_cam_cont - _target_cont)
 	global_position = _base_pos
