@@ -8,6 +8,9 @@ const HitFeedbackFx := preload("res://scenes/effects/hit_feedback_fx.gd")
 
 const CONTACT_GROUPS: Array[String] = ["player", "player_replica"]
 
+# ★ 像素契约:根节点 scale 仍 = size(只服务碰撞/弹道),子弹视觉由 Sprite2D 局部缩放补到 1 美术像素 = ART_WORLD_PX 世界像素。
+const ART_WORLD_PX: float = 2.0
+
 var velocity_vec: Vector2 = Vector2.ZERO
 var speed: float = 0.0
 var size: float = 1.0
@@ -57,6 +60,15 @@ func setup(dir: Vector2, spd: float, rng: float, siz: float, col: Color, src: No
 	source = src
 	rotation = velocity_vec.angle()
 	scale = Vector2(size, size)
+	_apply_pixel_scale()
+
+
+func _apply_pixel_scale() -> void:
+	if size <= 0.0001:
+		return
+	var sp := get_node_or_null("Sprite2D") as Sprite2D
+	if sp != null:
+		sp.scale = Vector2.ONE * (ART_WORLD_PX / size)
 
 func _ready() -> void:
 	prev_pos = global_position
@@ -155,6 +167,7 @@ func reset_for_pool() -> void:
 		var sp := get_node_or_null("Sprite2D") as Sprite2D
 		if sp != null:
 			sp.modulate = bullet_color
+			sp.scale = Vector2.ONE
 
 
 func _despawn_after(sec: float) -> void:

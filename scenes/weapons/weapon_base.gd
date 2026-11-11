@@ -7,9 +7,9 @@ enum PenaltyMode { NONE, WHILE_FIRING, WHILE_AIM_OR_COOLDOWN }
 @export var bullet_scene: PackedScene = preload("res://scenes/weapons/bullet.tscn")
 const RECOIL_TIME: float = 0.06  # 枪口后坐复位时长(秒),旧 recoil_time 内联
 const PREVIEW_COLLISION_RADIUS: float = 4.0
-# ── 走路 bob(纯表现)── 相位**取宿主模型的走路动画帧**(move 的 frame+frame_progress),不是自己的计时器;
+# ── 走路 bob(纯表现)── 相位取宿主模型的走路动画帧(move 的 frame+frame_progress),不是自己的计时器;
 #    单帧姿态(蹲/冲刺/飞行)没有帧进度 ⇒ 自然不抖,不为它们加代码。幅度随水平速度线性淡入。
-const WALK_BOB_Y: float = 0.55             # local px(玩家根 2.5× 缩放 ⇒ 屏幕 ≈1.4px)
+const WALK_BOB_Y: float = 0.55             # local px(武器根继承玩家 2.0× 缩放、cam_zoom 1.0 ⇒ 屏幕 ≈1.1px)
 const WALK_BOB_X: float = 0.22
 const WALK_BOB_ROT_DEG: float = 0.5
 const WALK_BOB_REF_SPEED: float = 700.0    # px/s:达到此速度时满幅
@@ -83,7 +83,7 @@ var _trigger_t: float = 0.0
 # preview_time:预瞄参考时长(秒),仅供画弧;真实爆炸时机由子弹 fuse_time 决定。
 @export var preview_time: float = 0.5
 
-# ── 换弹(固定玩法,无开关可关;全模式开放)── PvP(1v1/大乱斗)一并开放:此前那道 reload_active() 闸门在 Level0.pvp_mode 与网络输入源下恒 false ⇒ PvP 两端一致地不换弹;开放后两端跑同一套(按下的边沿经输入包上行 BIT_RELOAD,弹药与装填进度进 Player.capture_state())。
+# ── 换弹(固定玩法,无开关可关;全模式开放)── PvP(1v1/大乱斗)一并开放:两端跑同一套(按下的边沿经输入包上行 BIT_RELOAD,弹药与装填进度进 Player.capture_state())。
 @export var mag_size: int = 12        # 弹夹容量
 @export var reload_time: float   = 1.2  # 换弹全程耗时(秒)
 var mag_ammo: int = 0                 # 弹夹内残弹
@@ -119,7 +119,7 @@ func start_reload() -> void:
 	_reload_t = reload_time
 	Sfx.play("reload")
 
-# 把「换弹 > 后坐 > 走路 bob」合成为精灵 pose —— **唯一**写 sprite.position/rotation 的地方(以后加表现只改这里)。
+# 把「换弹 > 后坐 > 走路 bob」合成为精灵 pose —— 唯一写 sprite.position/rotation 的地方(以后加表现只改这里)。
 # 换弹姿态压过其他(与旧实现同优先);bob 始终叠加:走路/换弹/后坐同时发生时只有它是连续的。
 func _apply_sprite_pose() -> void:
 	if sprite == null:
@@ -141,13 +141,12 @@ func _apply_sprite_pose() -> void:
 
 # 只移动箭,弓身不动;ChargeArrow 的 z_index 让箭画在弓身后。
 # ★ 抖动是纯表现:出膛点按 _charge_pull_px() 算,不吃抖动(见 fire 的 b.global_position);放大在入树时一次性施加。
-const CHARGE_ARROW_SHOW_SCALE := 1.5      # 蓄力箭相对**飞行箭**的倍数(飞行箭世界缩放 = bullet_size)
+const CHARGE_ARROW_SHOW_SCALE := 1.5      # 蓄力箭相对飞行箭的倍数(飞行箭世界缩放 = bullet_size)
 const CHARGE_ARROW_JITTER_PX := 0.5       # 上下抖动幅度(px);★ 只有蓄满(charge_ratio>=1)才抖
 const CHARGE_ARROW_JITTER_PERIOD := 0.2   # 抖动周期(秒)
 
-# 让蓄力箭与飞行箭同一标尺:飞行箭挂在视口根 ⇒ 世界缩放 = bullet_size;
-# 蓄力箭在玩家子树里(玩家根 scale 2.5)⇒ 局部缩放 = bullet_size × 本倍数 / 继承缩放。
-# ★ 直接写死局部缩放会错:玩家根是 2.5 倍,写 1.5 实际放大成 3.75。
+# 让蓄力箭与飞行箭同一标尺:飞行箭挂在视口根 ⇒ 世界缩放 = bullet_size;蓄力箭在玩家子树里(玩家根 scale 2.0),
+# 局部缩放 = bullet_size × 本倍数 / 继承缩放。★ 直接写死局部缩放会错:玩家根是 2.0 倍,写 1.5 实际放大成 3.0。
 func _sync_charge_arrow_scale() -> void:
 	if _charge_arrow == null or _arrow_scale_synced:
 		return
@@ -181,7 +180,7 @@ func _apply_charge_arrow_pose() -> void:
 		jitter = sin(phase) * CHARGE_ARROW_JITTER_PX
 	_charge_arrow.position = _base_arrow_pos + Vector2(-_charge_pull_px(), jitter)
 
-# ★ 走路 bob 的相位取自**宿主模型的走路动画帧**(move 的 frame + frame_progress),不是独立计时器:
+# ★ 走路 bob 的相位取自宿主模型的走路动画帧(move 的 frame + frame_progress),不是独立计时器:
 #   模型换一帧 = 枪跟着换一次;单帧姿态(蹲/冲刺/飞行)没有帧进度 ⇒ 自然不抖,不为它们加代码。
 #   幅度按水平速度淡入(停下即回中);一个 move 循环(8 帧)≈ 两步 ⇒ 纵向两次起伏。
 func _sample_walk_bob(anim: AnimatedSprite2D, speed_x: float) -> void:
@@ -200,7 +199,7 @@ func _sample_walk_bob(anim: AnimatedSprite2D, speed_x: float) -> void:
 	_walk_bob = Vector2(cos(prog * TAU) * WALK_BOB_X, sin(step) * WALK_BOB_Y) * ratio
 	_walk_bob_rot = sin(step) * deg_to_rad(WALK_BOB_ROT_DEG) * ratio
 
-# ── 玩家按名访问 → `as Player` + 直接访问(2026-11-02)──
+# ── 玩家按名访问 → `as Player` + 直接访问 ──
 func _host_walk_anim() -> AnimatedSprite2D:
 	var p := player as Player
 	return p.animator if p != null else null
@@ -214,7 +213,7 @@ func _host_speed_x() -> float:
 @onready var _charge_arrow: Sprite2D = get_node_or_null("ChargeArrow") as Sprite2D
 var player: Node2D
 # 加速倍率(PvP):由宿主每物理帧推入(player.gd 的 _push_haste_mult → 当前那把枪)。
-# ★ 覆盖上限(照实):默认 1.0 ⇒ 宿主忘推 = 静默回到 1×(不报错)。零守卫(rewind_weapon_probe 已删·2026-10-09 的 S10)。
+# ★ 覆盖上限(照实):默认 1.0 ⇒ 宿主忘推 = 静默回到 1×(不报错)。零守卫(原 rewind_weapon_probe 已删)。
 var haste_mult: float = 1.0
 var fire_cd_timer: float = 0.0
 
@@ -249,12 +248,12 @@ func _ready() -> void:
 	if _charge_arrow != null:
 		_base_arrow_pos = _charge_arrow.position
 		_charge_arrow.visible = false
-	# ★ 预瞄线与爆炸预览标记是**辅助层**(UI),不是世界物件:留在世界里会被 ambient 压暗、
+	# ★ 预瞄线与爆炸预览标记是辅助层(UI),不是世界物件:留在世界里会被 ambient 压暗、
 	#   还会被影子压暗。它们有各自的局部坐标算法(points 用武器局部坐标),所以做成
 	#   「UI 通道里一个跟随武器变换的宿主 + 原来的子节点」—— 点位代码一行不用改。
 	#   没有 UI 通道时退回挂在武器身上(旧行为)。
 	_laser = Line2D.new()
-	_laser.width = 1.0  # 细激光(经玩家 2.5x 缩放渲染约 2.5px)
+	_laser.width = 1.0  # local px(经玩家 2.0x 缩放、cam_zoom 1.0 ⇒ 屏幕 2px)
 	_laser.default_color = laser_color
 	_laser.visible = false
 	_explosion_marker = Sprite2D.new()

@@ -64,7 +64,7 @@ extends Resource
 ## 死区半径(px):小于它的位移不推画面。
 @export_range(0.0, 500.0, 1.0) var cam_deadzone: float = 32.0
 ## 镜头缩放。
-@export_range(0.1, 4.0, 0.01) var cam_zoom: float = 0.75
+@export_range(0.1, 4.0, 0.01) var cam_zoom: float = 1.0
 
 @export_group("攀爬 / 弹跳")
 ## 梯子上 / 下与锁链上的攀爬速度(px/s,绝对值)。

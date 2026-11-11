@@ -3,7 +3,7 @@ extends Camera2D
 @export var target: Node2D = null
 
 const SHAKE_TAIL := 0.7
-# 一帧内的"最短取模位移"超过这个量 ⇒ 不是走动/坠落,而是真传送(复活/回退/换边):直接重锚、不做平滑。
+# 一帧内的"最短取模位移"超过这个量 ⇒ 不是走动/坠落,而是真传送(复活/回溯/换边):直接重锚、不做平滑。
 # (跨接缝的取模差 ≈ 0,不会误判成传送;正常走动一帧 ≤ ~30px。)
 const SNAP_DIST := 400.0
 
@@ -68,6 +68,10 @@ func _process(delta: float) -> void:
 		_shake_time = maxf(_shake_time - delta, 0.0)
 		var amt := _shake_amt * pow(_shake_time / maxf(_shake_dur, 0.0001), SHAKE_TAIL)
 		global_position += Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0)) * amt
+	# ★ 像素契约:相机落点吸附到整数屏幕像素(世界位置 × zoom 取整再除回)。缩放可由 PlayerParams 调,
+	#   不吸附时平滑/前瞻/震屏逐帧落在新的亚像素相位上,像素栅格会蠕动。
+	var z := maxf(zoom.x, 0.0001)
+	global_position = (global_position * z).round() / z
 
 
 func _follow_axis(cur: float, want: float, k: float, deadzone: float, delta: float) -> float:

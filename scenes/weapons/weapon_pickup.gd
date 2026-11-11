@@ -7,7 +7,7 @@ const GROUP := "weapon_pickup"
 const LAYER_GROUND := 8
 const MASK_GROUND := 9
 
-const WORLD_SCALE := 2.5
+const WORLD_SCALE := 2.0   # 像素契约:1 美术像素 = 2 世界像素(与玩家根 scale 一致)
 
 @export var type_id: int = 1
 var inst: int = 0

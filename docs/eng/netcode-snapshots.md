@@ -59,7 +59,7 @@ NetBus.rpc_id(peer, "snapshot_own",
 - ★ 2026-10-24 bool 打包：bool 按**记录**打包成 1 B 标志字节（`T_BOOLS`；世界 4 个 / `c2` 7 个 / 武器块 3 个）。**不是跨字段位流** —— 收益等价（世界条目当时 51→48 B、本人包 102→94 B）但不需要 bit 游标与 padding 校验，解码也不会因尾部 padding 判据制造误红/误绿；代价是组内对齐浪费 ≤7 bit。小整数位宽 / 真位流留给后续（要先登记每字段值域）。
 - ★ 2026-10-26 **P1 字段定点化**（`PROTO_VERSION 4→5`）：世界包 `pos` / `vel` → 2×i16（**0.5px** / 0.5px·s⁻¹ 步长；i16 只有 ±32767，0.1px 步长装不下 9600px 地图）、`aim` → u8 角度（256 向）；输入包 `aim` → 2×i16（1e-4 定点，解码后 normalize）。★ `c2` / 本人包**不动** —— 它是 C2 回滚锚点，单方面量化会让每次重放判分歧；世界包字段都是渲染量，量化是两端同版一起换。误差与方案见 [`netcode-delta-and-quantization-details.md`](netcode-delta-and-quantization-details.md) §6。
 - ★ 2026-10-30 **DELTA 删除 + trail 定点化**（`PROTO_VERSION 6→7`）：生产 2026-10-28 已回退全量，差分只剩探针在养 ⇒ 这次把差分编解码**整体删除**（线格式真相从 3 份回到 1 份）；`trail` 从 2×float32 改 2×i16（0.5px 步长，与 pos/vel 同 Q_SCALE）⇒ 世界条目 33→25 B、最坏世界包 791→536 B。
-- ★ 2026-10-24 编码侧性能：解码仍表驱动（`_unpack` 逐字段守边界），**编码侧手写内联**（`out.encode_float(i, v)` + 下标写，一次性按 `_schema_bytes()` 预算容量、末尾 `resize(i)` 收尾）。实测 `encode_world`（N=16）**304 → 40~49 µs/包**（一次性量具 `.superpowers/net/encode_timing.gd`；同文件的剖面实测「只 resize」= 0.2 µs ⇒ 瓶颈是**逐字段 GDScript 调用**，不是分配）。代价：编码顺序/宽度与 schema 成了两份 —— 漂移由 `snapshot_size_probe` 的往返判据抓（解码按 schema 读，顺序/宽度错 = 值必不对）。★ v7 起只剩 FULL 一条路径，编码与解码各只有一种形状。
+- ★ 2026-10-24 编码侧性能：解码仍表驱动（`_unpack` 逐字段守边界），**编码侧手写内联**（`out.encode_float(i, v)` + 下标写，一次性按 `_schema_bytes()` 预算容量、末尾 `resize(i)` 收尾）。实测 `encode_world`（N=16）**304 → 40~49 µs/包**（一次性量具已删；当时同文件的剖面实测「只 resize」= 0.2 µs ⇒ 瓶颈是**逐字段 GDScript 调用**，不是分配）。代价：编码顺序/宽度与 schema 成了两份 —— 漂移由 `snapshot_size_probe` 的往返判据抓（解码按 schema 读，顺序/宽度错 = 值必不对）。★ v7 起只剩 FULL 一条路径，编码与解码各只有一种形状。
 - 两端版本不一致 ⇒ 解码返回空字典、调用方不 emit，`net_bus.gd` 的输入解码口只报一次错。
 - v7 之后：世界包 `pos`/`vel`/`trail` 定点（2×i16，0.5px 步长）、`aim` u8 角度；`c2` 仍 float32 全量。
 

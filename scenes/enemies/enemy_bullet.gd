@@ -14,6 +14,7 @@ func launch(vel: Vector2, rng: float, dmg: int, grav: float, siz: float = 1.0) -
 	size = siz
 	rotation = vel.angle()
 	scale = Vector2(size, size)
+	_apply_pixel_scale()
 
 
 func rewind_state() -> Dictionary:
