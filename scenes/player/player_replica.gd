@@ -86,8 +86,11 @@ func _ready() -> void:
 	# ★ 场景里不能再写 autoplay:载入瞬间还没有 sprite_frames,写动画名会报 "no animation"。
 	if sprite_frames != null:
 		animator.play(&"idle")
-	# 形体光:与本体共用同一份材质(场上所有精灵一起生效,成本与数量无关)。
-	FormLight.attach(animator, "ellipsoid", 0.90, 1.0)
+	# 形体光:与本体共用同一套「打光辅助图」材质(场上所有精灵一起生效,成本与数量无关)。
+	FormLight.attach(animator, "guide", 1.10, 1.0, {
+		"steps": 5.0, "dither": 0.25, "bulge": 2.0, "edge_lo": -0.20, "edge_hi": 0.80,
+		"part_flat": 0.45, "ao_strength": 0.35,
+	}, true)
 	_build_hurt_probe()
 	_weapon_slot_node = Node2D.new()
 	_weapon_slot_node.name = "WeaponSlot"
@@ -333,6 +336,13 @@ func _sampled_state_blended() -> Dictionary:
 	return out
 
 
+func _sync_form_flip() -> void:
+	var mat := animator.material as ShaderMaterial if animator != null else null
+	if mat != null:
+		mat.set_shader_parameter("flip_x", 1.0 if animator.flip_h else 0.0)
+
+
+
 ## 把一条外观态刷到画面上。★ 必须幂等(每帧都调):同姿态的 animator.play 不会重启动画,换枪由 _weapon_type_int 挡重复重建。
 func _apply_visual_state(st: Dictionary) -> void:
 	_pose = int(st["pose"])
@@ -342,6 +352,7 @@ func _apply_visual_state(st: Dictionary) -> void:
 	_downed = bool(st["downed"])
 	_vel = st["vel"]
 	animator.flip_h = _facing < 0
+	_sync_form_flip()
 	if _downed:
 		animator.stop()
 		rotation = -PI / 2.0 * float(_facing)   # 倒地转体(与 player._downed 一致)
@@ -410,6 +421,7 @@ func _follow_overheads() -> void:
 
 
 func _process(delta: float) -> void:
+	_sync_form_flip()
 	if _have_data:
 		if _clock != null:
 			_clock.advance(delta)

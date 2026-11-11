@@ -1,6 +1,6 @@
 class_name FormLight
 extends RefCounted
-# 形体光:**渲染策略由 TAG 决定**(flat / ellipsoid / cylinder / sdf)。
+# 形体光:**渲染策略由 TAG 决定**(flat / ellipsoid / cylinder / sdf / parts / guide)。
 #
 # ★ 为什么需要 tag:不同资产该被当成不同形状 —— 玩家和鸟是团块(椭球),枪是长条(圆柱),
 #   贴图和 UI 根本不该有体积(flat)。用一套模型套所有资产必然别扭(枪被当成球、鸟被切面)。
@@ -13,11 +13,23 @@ const MODEL_FLAT := 0
 const MODEL_ELLIPSOID := 1
 const MODEL_CYLINDER := 2
 const MODEL_SDF := 3
+const MODEL_PARTS := 4
+const MODEL_GUIDE := 5
+# 打光辅助图约定:与主图集同目录、同布局的 `<atlas 主名>_shade.png`;缺失时 guide 回退 parts。
+const GUIDE_SUFFIX := "_shade.png"
 
 static var _mats: Dictionary = {}   # (atlas, model int, size) -> ShaderMaterial
 static var _gain_mul: Dictionary = {}   # material -> 该材质的 gain 倍率(玩家要更柔,枪械要更狠)
+static var _override: Dictionary = {}   # material -> 覆盖全局 form 参数的键值(玩家专属调参走这里)
 static var _sh: Shader = null
 static var _tried: bool = false
+# 每帧 push 的方向光快照:投影层(脚下影子)读它,避免自己再推一遍昼夜。
+static var last_gain: float = 0.0
+# 晚创建的材质(敌人/子弹/武器)也要拿到同一套参数:set_* 只存这里,建材质时再补推。
+static var _cur := {
+	"steps": 0.0, "dither": 1.0, "boost": 0.15, "bulge": 1.0,
+	"edge_lo": 0.20, "edge_hi": 0.80,
+}
 
 
 static func model_id(name: String) -> int:
@@ -28,6 +40,10 @@ static func model_id(name: String) -> int:
 			return MODEL_CYLINDER
 		"sdf":
 			return MODEL_SDF
+		"parts":
+			return MODEL_PARTS
+		"guide":
+			return MODEL_GUIDE
 		_:
 			return MODEL_FLAT
 
@@ -43,8 +59,15 @@ static func _shader() -> Shader:
 
 
 ## 取(或建)材质:key = 图集 + 模型 + 半尺寸。
-static func material_for(atlas: Texture2D, model_id: int, half: Vector2, center: Vector2 = Vector2.ZERO) -> ShaderMaterial:
-	var key := "%s|%d|%s|%s" % [atlas.resource_path if atlas != null else "", model_id, str(half), str(center)]
+static var _unique_seq := 0
+
+static func material_for(atlas: Texture2D, model_id: int, half: Vector2, center: Vector2 = Vector2.ZERO, round_mix: float = 0.0, overrides: Dictionary = {}, part_tex: Texture2D = null, unique: bool = false, shade_tex: Texture2D = null) -> ShaderMaterial:
+	var part_id := part_tex.get_instance_id() if part_tex != null else 0
+	var shade_id := shade_tex.get_instance_id() if shade_tex != null else 0
+	var key := "%s|%d|%s|%s|%.2f|%s|%d|%d" % [atlas.resource_path if atlas != null else "", model_id, str(half), str(center), round_mix, str(overrides), part_id, shade_id]
+	if unique:
+		_unique_seq += 1
+		key = "u%d|%s" % [_unique_seq, key]
 	if _mats.has(key):
 		return _mats[key]
 	var sh := _shader()
@@ -55,13 +78,26 @@ static func material_for(atlas: Texture2D, model_id: int, half: Vector2, center:
 	mat.set_shader_parameter("light_model", model_id)
 	mat.set_shader_parameter("light_size", half)
 	mat.set_shader_parameter("light_center", center)
+	mat.set_shader_parameter("shape_round", clampf(round_mix, 0.0, 1.0))
+	mat.set_shader_parameter("steps", _cur["steps"])
+	mat.set_shader_parameter("dither", _cur["dither"])
+	mat.set_shader_parameter("boost", _cur["boost"])
+	mat.set_shader_parameter("bulge", _cur["bulge"])
+	mat.set_shader_parameter("edge_lo", _cur["edge_lo"])
+	mat.set_shader_parameter("edge_hi", _cur["edge_hi"])
+	_apply_overrides(mat, overrides)
 	if atlas != null and model_id == MODEL_SDF:
 		mat.set_shader_parameter("normal_tex", SpriteNormalMap.for_texture(atlas))
+	if part_tex != null:
+		mat.set_shader_parameter("part_tex", part_tex)
+	if shade_tex != null:
+		mat.set_shader_parameter("shade_tex", shade_tex)
 	_mats[key] = mat
 	return mat
 
 
 static func push(sun_dir: Vector2, gain: float) -> void:
+	last_gain = gain
 	for k in _mats:
 		var mat: ShaderMaterial = _mats[k]
 		mat.set_shader_parameter("sun_dir", sun_dir)
@@ -72,26 +108,60 @@ static func push(sun_dir: Vector2, gain: float) -> void:
 
 static func set_steps(v: float) -> void:
 	var s := clampf(v, 0.0, 6.0)
+	_cur["steps"] = s
 	for k in _mats:
-		(_mats[k] as ShaderMaterial).set_shader_parameter("steps", s)
+		var m: ShaderMaterial = _mats[k]
+		m.set_shader_parameter("steps", float(_override.get(m, {}).get("steps", s)))
 
 
 static func set_bulge(v: float) -> void:
 	var b := clampf(v, 0.5, 3.0)
+	_cur["bulge"] = b
 	for k in _mats:
-		(_mats[k] as ShaderMaterial).set_shader_parameter("bulge", b)
+		var m: ShaderMaterial = _mats[k]
+		m.set_shader_parameter("bulge", float(_override.get(m, {}).get("bulge", b)))
 
 
 static func set_dither(v: float) -> void:
 	var d := clampf(v, 0.0, 1.0)
+	_cur["dither"] = d
 	for k in _mats:
-		(_mats[k] as ShaderMaterial).set_shader_parameter("dither", d)
+		var m: ShaderMaterial = _mats[k]
+		m.set_shader_parameter("dither", float(_override.get(m, {}).get("dither", d)))
+
+
+static func set_edge(lo: float, hi: float) -> void:
+	var l := clampf(lo, -0.5, 1.0)
+	var h := clampf(hi, -0.5, 1.5)
+	_cur["edge_lo"] = l
+	_cur["edge_hi"] = h
+	for k in _mats:
+		var m: ShaderMaterial = _mats[k]
+		var ov: Dictionary = _override.get(m, {})
+		m.set_shader_parameter("edge_lo", float(ov.get("edge_lo", l)))
+		m.set_shader_parameter("edge_hi", float(ov.get("edge_hi", h)))
+
+
+static func set_round(v: float) -> void:
+	var r := clampf(v, 0.0, 1.0)
+	for k in _mats:
+		(_mats[k] as ShaderMaterial).set_shader_parameter("shape_round", r)
 
 
 static func set_boost(v: float) -> void:
 	var b := clampf(v, 0.0, 0.5)
+	_cur["boost"] = b
 	for k in _mats:
-		(_mats[k] as ShaderMaterial).set_shader_parameter("boost", b)
+		var m: ShaderMaterial = _mats[k]
+		m.set_shader_parameter("boost", float(_override.get(m, {}).get("boost", b)))
+
+
+static func _apply_overrides(mat: ShaderMaterial, overrides: Dictionary) -> void:
+	if overrides.is_empty():
+		return
+	_override[mat] = overrides.duplicate()
+	for key in overrides:
+		mat.set_shader_parameter(str(key), float(overrides[key]))
 
 
 ## 取图集(用于算剪影包围盒)。
@@ -137,8 +207,24 @@ static func regions_of(item: CanvasItem) -> Array:
 	return out
 
 
-## 给画布项挂形体光。`model_name` = flat / ellipsoid / cylinder / sdf。
-static func attach(item: CanvasItem, model_name: String = "flat", gain_mul: float = 1.0) -> void:
+## guide 模型的打光辅助图:图集同目录的 `<主名>_shade.png`,尺寸必须与图集一致;取不到返回 null。
+static func guide_texture(atlas: Texture2D) -> Texture2D:
+	if atlas == null:
+		return null
+	var path := atlas.resource_path
+	if path.is_empty():
+		return null
+	var shade_path := path.get_basename() + GUIDE_SUFFIX
+	if not ResourceLoader.exists(shade_path):
+		return null
+	var tex := load(shade_path) as Texture2D
+	if tex == null or tex.get_width() != atlas.get_width() or tex.get_height() != atlas.get_height():
+		return null
+	return tex
+
+
+## 给画布项挂形体光。`model_name` = flat / ellipsoid / cylinder / sdf / parts / guide(辅助图缺失时回退 parts)。
+static func attach(item: CanvasItem, model_name: String = "flat", gain_mul: float = 1.0, round_mix: float = 0.0, overrides: Dictionary = {}, unique: bool = false) -> void:
 	if item == null or item.material != null:
 		return
 	var mid := model_id(model_name)
@@ -153,7 +239,15 @@ static func attach(item: CanvasItem, model_name: String = "flat", gain_mul: floa
 			var fit := SpriteNormalMap.ellipse_fit(img, regions_of(item))
 			center = fit["center"]
 			half = fit["size"]
-	var mat := material_for(atlas, mid, half, center)
+	var part_tex: Texture2D = null
+	var shade_tex: Texture2D = null
+	if mid == MODEL_GUIDE:
+		shade_tex = guide_texture(atlas)
+		if shade_tex == null:
+			mid = MODEL_PARTS
+	if mid == MODEL_PARTS:
+		part_tex = SpriteNormalMap.for_parts(regions_of(item), atlas)
+	var mat := material_for(atlas, mid, half, center, round_mix, overrides, part_tex, unique, shade_tex)
 	if mat == null:
 		return
 	if not is_equal_approx(gain_mul, 1.0):

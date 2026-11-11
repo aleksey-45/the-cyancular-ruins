@@ -147,3 +147,195 @@ static func ellipse_fit(atlas_img: Image, regions: Array) -> Dictionary:
 				max_x = maxf(max_x, absf(float(x) - cx - center.x))
 				max_y = maxf(max_y, absf(float(y) - cy - center.y))
 	return {"center": center, "size": Vector2(max_x, max_y)}
+
+# ── 玩家分部光照:逐帧把剪影分成"身体/左右手/左右腿"5 块,烘成与图集同布局的坐标图
+#    (RG = 该块内部的归一化坐标),供 form_light 的 parts 模型逐块算球面法线。
+#    ★ 分割以"连通块"为单位:一整块剪影只能属于一个部位,避免最近邻在身体上切出 V 形缝。
+#    ★ 手脚与身体粘连的帧(fly/charge)不切块,整身一个椭圆。
+static var _parts_cache: Dictionary = {}
+
+# 每块的法线"铺展":手/腿放大归一化尺寸 ⇒ 渐变更缓,不会各自变成一颗小球/一根管。
+const _PART_SPREAD := [Vector2(1.15, 1.15), Vector2(1.7, 1.7), Vector2(1.7, 1.7), Vector2(1.25, 2.4), Vector2(1.25, 2.4)]
+
+static func for_parts(regions: Array, atlas: Texture2D) -> ImageTexture:
+	if atlas == null:
+		return null
+	var key := "%d|%s|%s" % [atlas.get_instance_id(), str(regions), str(_PART_SPREAD)]
+	if _parts_cache.has(key):
+		return _parts_cache[key]
+	var img := atlas.get_image()
+	if img == null or img.is_empty():
+		return null
+	if img.is_compressed():
+		img.decompress()
+	var baked := bake_parts(img, regions)
+	_parts_cache[key] = baked
+	return baked
+
+
+static func bake_parts(img: Image, regions: Array) -> ImageTexture:
+	var w := img.get_width()
+	var h := img.get_height()
+	var out := Image.create(w, h, false, Image.FORMAT_RGBA8)
+	var prev: Array = []
+	for r in regions:
+		var rect := Rect2i(r).intersection(Rect2i(0, 0, w, h))
+		if rect.size.x < 4 or rect.size.y < 4:
+			continue
+		var pts: Array[Vector2i] = []
+		var comp_of := PackedInt32Array()
+		comp_of.resize(rect.size.x * rect.size.y)
+		for i in comp_of.size():
+			comp_of[i] = -1
+		for y in range(rect.position.y, rect.end.y):
+			for x in range(rect.position.x, rect.end.x):
+				if img.get_pixel(x, y).a > 0.5:
+					pts.append(Vector2i(x, y))
+		if pts.size() < 24:
+			continue
+		var comps := _components(img, rect)
+		if comps.size() <= 2:
+			_bake_single_body(out, pts)
+			prev = []
+			continue
+		# 点 → 连通块编号
+		var ci := 0
+		for comp in comps:
+			for p in comp:
+				comp_of[(p.y - rect.position.y) * rect.size.x + (p.x - rect.position.x)] = ci
+			ci += 1
+		var labels := _label_components(comps, prev)
+		var ids := PackedInt32Array()
+		ids.resize(pts.size())
+		for i in pts.size():
+			var p := pts[i]
+			var c := comp_of[(p.y - rect.position.y) * rect.size.x + (p.x - rect.position.x)]
+			ids[i] = labels[c] if c >= 0 and labels[c] >= 0 else 0
+		var acc: Array = [Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO]
+		var cnt := PackedInt32Array([0, 0, 0, 0, 0])
+		for i in pts.size():
+			acc[ids[i]] += Vector2(pts[i])
+			cnt[ids[i]] += 1
+		var new_centers: Array = []
+		for s in 5:
+			if cnt[s] > 0:
+				new_centers.append(acc[s] / float(cnt[s]))
+			elif prev.size() == 5:
+				new_centers.append(prev[s])
+			else:
+				new_centers.append(Vector2(rect.get_center()))
+		var halves: Array = [Vector2(2.0, 2.0), Vector2(2.0, 2.0), Vector2(2.0, 2.0), Vector2(2.0, 2.0), Vector2(2.0, 2.0)]
+		for i in pts.size():
+			var p := Vector2(pts[i])
+			var pid := ids[i]
+			var c: Vector2 = new_centers[pid]
+			halves[pid] = Vector2(maxf(halves[pid].x, absf(p.x - c.x)), maxf(halves[pid].y, absf(p.y - c.y)))
+		for i in pts.size():
+			var p := Vector2(pts[i])
+			var pid := ids[i]
+			var c: Vector2 = new_centers[pid]
+			var spread: Vector2 = _PART_SPREAD[pid]
+			var hv: Vector2 = halves[pid] * spread
+			var q := Vector2((p.x - c.x) / maxf(hv.x, 2.0), (p.y - c.y) / maxf(hv.y, 2.0))
+			out.set_pixel(p.x, p.y,
+					Color(clampf(q.x, -1.0, 1.0) * 0.5 + 0.5, clampf(q.y, -1.0, 1.0) * 0.5 + 0.5, 1.0, 1.0))
+		prev = new_centers
+	return ImageTexture.create_from_image(out)
+
+
+# 连通块 → 部位编号(0 身体,1/2 左手/右手,3/4 左腿/右腿)。最大块=身体;其余按上一帧中心或
+# 位置(靠上=手,靠下=腿;左右按 x)归类。整块归一,所以不会把身体切出斜缝。
+static func _label_components(comps: Array, prev: Array) -> Array:
+	var order: Array = []
+	for i in comps.size():
+		order.append(i)
+	order.sort_custom(func(a: int, b: int) -> bool: return comps[a].size() > comps[b].size())
+	var labels: Array = []
+	labels.resize(comps.size())
+	for i in comps.size():
+		labels[i] = -1
+	labels[order[0]] = 0
+	var rest: Array = []
+	for i in range(1, order.size()):
+		rest.append(order[i])
+	if rest.size() > 4:
+		rest = rest.slice(0, 4)
+	if prev.size() == 5:
+		for ci in rest:
+			var cc := _centroid(comps[ci])
+			var best := 1
+			var bd := INF
+			for s in range(1, 5):
+				var d := cc.distance_squared_to(prev[s])
+				if d < bd:
+					bd = d
+					best = s
+			labels[ci] = best
+	else:
+		var body_c := _centroid(comps[order[0]])
+		var items: Array = []
+		for ci in rest:
+			var cc := _centroid(comps[ci])
+			items.append({"ci": ci, "c": cc})
+		items.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return (a["c"] as Vector2).y < (b["c"] as Vector2).y)
+		var n := items.size()
+		for k in n:
+			var side := 1 if (items[k]["c"] as Vector2).x < body_c.x else 2
+			var part := side if k < mini(n, 2) else side + 2
+			labels[items[k]["ci"]] = part
+	return labels
+
+
+# 合并帧(手脚与身体连成一片):整身当一个椭球,避免把身体切出 V 形明暗缝。
+static func _bake_single_body(out: Image, pts: Array[Vector2i]) -> void:
+	var c := _centroid(pts)
+	var hv := Vector2(2.0, 2.0)
+	for p in pts:
+		hv = Vector2(maxf(hv.x, absf(float(p.x) - c.x)), maxf(hv.y, absf(float(p.y) - c.y)))
+	hv *= _PART_SPREAD[0]
+	for p in pts:
+		var q := Vector2((float(p.x) - c.x) / maxf(hv.x, 2.0), (float(p.y) - c.y) / maxf(hv.y, 2.0))
+		out.set_pixel(p.x, p.y,
+				Color(clampf(q.x, -1.0, 1.0) * 0.5 + 0.5, clampf(q.y, -1.0, 1.0) * 0.5 + 0.5, 1.0, 1.0))
+
+
+static func _centroid(pts: Array) -> Vector2:
+	var acc := Vector2.ZERO
+	for p in pts:
+		acc += Vector2(p)
+	return acc / float(maxi(pts.size(), 1))
+
+
+static func _components(img: Image, rect: Rect2i) -> Array:
+	var w := rect.size.x
+	var h := rect.size.y
+	var seen := PackedByteArray()
+	seen.resize(w * h)
+	var comps: Array = []
+	for y in h:
+		for x in w:
+			var idx := y * w + x
+			if seen[idx] == 1:
+				continue
+			seen[idx] = 1
+			if img.get_pixel(rect.position.x + x, rect.position.y + y).a <= 0.5:
+				continue
+			var stack: Array[Vector2i] = [Vector2i(x, y)]
+			var comp: Array = []
+			while not stack.is_empty():
+				var c: Vector2i = stack.pop_back()
+				comp.append(Vector2i(c.x + rect.position.x, c.y + rect.position.y))
+				for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+					var dv: Vector2i = d
+					var nx: int = c.x + dv.x
+					var ny: int = c.y + dv.y
+					if nx < 0 or ny < 0 or nx >= w or ny >= h:
+						continue
+					var ni := ny * w + nx
+					if seen[ni] == 1:
+						continue
+					seen[ni] = 1
+					if img.get_pixel(rect.position.x + nx, rect.position.y + ny).a > 0.5:
+						stack.append(Vector2i(nx, ny))
+			comps.append(comp)
+	return comps

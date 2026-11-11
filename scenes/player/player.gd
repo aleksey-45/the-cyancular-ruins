@@ -145,9 +145,12 @@ func _ready() -> void:
 	if frames != null:
 		animator.sprite_frames = frames
 		animator.play(&"idle")
-	# 形体光:按精灵本地 UV 造假法线,让角色有体积(方向随昼夜转)。
-	# ★ 与武器/敌人共用同一份材质,uniforms 由 PostProcess 每帧统一推。
-	FormLight.attach(animator, "ellipsoid", 0.90, 1.0)   # 玩家明暗对比要弱于环境
+	# 形体光:打光辅助图(RG=部位局部坐标 / B=贴体 AO);缺 player_shade.png 时 FormLight 自动回退 parts。
+	# ★ 与武器/敌人共用同一份材质,uniforms 由 PostProcess 每帧统一推;独特材质 = 每帧写 flip_x
+	FormLight.attach(animator, "guide", 1.10, 1.0, {
+		"steps": 5.0, "dither": 0.25, "bulge": 2.0, "edge_lo": -0.20, "edge_hi": 0.80,
+		"part_flat": 0.45, "ao_strength": 0.35,
+	}, true)
 
 	combat.hp_changed.connect(func(cur: int, mx: int) -> void: hp_changed.emit(cur, mx))
 	combat.went_down.connect(func() -> void: weapons.cancel_aim())
@@ -203,7 +206,8 @@ func _push_haste_mult(tm: float) -> void:
 
 
 func _process(delta: float) -> void:
-	_tick_eye_glow()   # 必须放在下面那条早退之前,否则平时不刷新
+	_tick_eye_glow()
+	_sync_form_flip()   # 必须放在下面那条早退之前,否则平时不刷新
 	# 冲刺 / 下冲残影(纯表现):只在渲染帧发射 ⇒ C2 回滚重放不会把同一段冲刺再生成一遍;
 	# 服务器/无相机路径直接跳过(看不见的节点不花)。强度/间隔见 DASH_GHOST_* 常量。
 	if _down_dash_ghost_t > 0.0:
@@ -511,6 +515,7 @@ func _tick_facing(delta: float, horizontal_input: float) -> void:
 # 期望姿态由输入/接触状态决定;每个姿态对应一个 CollisionPolygon2D(多边形可在编辑器里分别调整),运行时只启用当前姿态对应的那个。
 func _tick_pose_and_collision(delta: float, in_water: bool) -> void:
 	animator.flip_h = facing_direction < 0
+	_sync_form_flip()
 
 	var desired: Pose = Pose.STAND
 	if in_water:
@@ -740,6 +745,7 @@ func restore_state(st: Dictionary) -> void:
 	for pose in _coll_by_pose:
 		_coll_by_pose[pose].disabled = pose != state
 	animator.flip_h = facing_direction < 0
+	_sync_form_flip()
 	# CharacterBody2D 的 is_on_floor 是上次 move_and_slide 的内部结果、无法直接赋值 ⇒ 恢复位置后做一次向下 0.001px 的微位移 move_and_slide,让它在恢复位置重判接触。
 	var saved := velocity
 	velocity = Vector2(0.0, 0.001)
@@ -1077,6 +1083,13 @@ const LIGHT_TINT := Color(0.86, 0.93, 1.0)   # 发光色(偏冷);白色标记只
 var _light: AnimatedSprite2D = null
 var _light_root: Node2D = null   # 发光通道里的镜像根(承载玩家的位置/缩放)
 var _post: Node = null           # PostProcess(惰性获取)
+
+
+func _sync_form_flip() -> void:
+	var mat := animator.material as ShaderMaterial if animator != null else null
+	if mat != null:
+		mat.set_shader_parameter("flip_x", 1.0 if animator.flip_h else 0.0)
+
 
 
 func _tick_eye_glow() -> void:
