@@ -8,11 +8,13 @@ signal died
 var use_gravity: bool = true
 
 @export var hp: int = 3
-@export var contact_damage: int = 1
+## 冲击攻击伤害:只被冲击攻击消费(跳鸟扑击读本字段;黑鸟/飞鸟冲锋读 EnemyParams 的 charge_damage)。
+@export var impact_damage: int = 0
 @export var knockback_strength: float = 150.0
 var knock_velocity: Vector2 = Vector2.ZERO
 @export var knock_decay_rate: float = 10.0
 
+# 贴身感知半径:ContactArea 重叠或环面距离进入本半径,只喂冲锋/扑击判定,不产生伤害。
 const CONTACT_RADIUS: float = 40.0
 
 const GROUND_FRICTION: float = 0.85
@@ -114,10 +116,6 @@ func _physics_process(delta: float) -> void:
 	if not is_dead:
 		_ai(delta)
 		_anim_update()
-		if contact_damage > 0 and (_player_overlapping or toroidal_dist_to_player() <= CONTACT_RADIUS):
-			var p := _contact_victim()
-			if p != null and p.has_method("take_hit"):
-				p.take_hit(global_position, contact_damage)
 	if _hit_flash_time > 0.0:
 		_hit_flash_time = maxf(_hit_flash_time - delta, 0.0)
 	if _death_timer > 0.0:

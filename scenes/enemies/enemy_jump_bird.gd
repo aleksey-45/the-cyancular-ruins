@@ -9,6 +9,7 @@ var _lunge_dir: Vector2 = Vector2.RIGHT
 var _lunge_traveled: float = 0.0
 var _turn_timer: float = 0.0
 var _dash_timer: float = 0.0
+var _lunge_hit: bool = false
 var _sleep_anim_timer: float = 0.0
 
 func _ready() -> void:
@@ -105,6 +106,13 @@ func _tick_lunge_windup(delta: float) -> void:
 
 
 func _tick_lunge_dash(delta: float) -> void:
+	if not _lunge_hit and (_player_overlapping or toroidal_dist_to_player() <= CONTACT_RADIUS):
+		_lunge_hit = true
+		var p := _contact_victim()
+		if p != null and p.has_method("take_hit"):
+			p.take_hit(global_position, impact_damage, true)
+		_end_lunge()
+		return
 	if _turn_timer > 0.0:
 		_turn_timer -= delta
 		if _turn_timer <= 0.0:
@@ -112,11 +120,15 @@ func _tick_lunge_dash(delta: float) -> void:
 	_dash_timer -= delta
 	_lunge_traveled += (velocity * delta).length()
 	if _dash_timer <= 0.0 or _lunge_traveled >= EnemyParams.JumpBird.lunge_max_dist or is_on_wall():
-		_set_state(State.BACK_HOP)
-		use_gravity = true
-		velocity = Vector2(-_lunge_dir.x * EnemyParams.JumpBird.back_hop_away,
-				EnemyParams.JumpBird.back_hop_up)
-		_back_hop_cd = 0.4
+		_end_lunge()
+
+
+func _end_lunge() -> void:
+	_set_state(State.BACK_HOP)
+	use_gravity = true
+	velocity = Vector2(-_lunge_dir.x * EnemyParams.JumpBird.back_hop_away,
+			EnemyParams.JumpBird.back_hop_up)
+	_back_hop_cd = 0.4
 
 
 func _tick_back_hop() -> void:
@@ -138,6 +150,7 @@ func _is_asleep() -> bool:
 func _on_state_entered(s: int) -> void:
 	match s:
 		State.LUNGE_DASH:
+			_lunge_hit = false
 			squash.impulse(SquashStretch.Impulse.CHARGE)
 		State.BACK_HOP:
 			squash.impulse(SquashStretch.Impulse.CHARGE)

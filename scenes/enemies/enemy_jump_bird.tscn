@@ -156,10 +156,10 @@ animations = [{
 [node name="EnemyJumpBird" type="CharacterBody2D" unique_id=1399832467]
 scale = Vector2(2.5, 2.5)
 collision_layer = 4
-collision_mask = 7
+collision_mask = 5
 script = ExtResource("1_ej")
 hp = 30
-contact_damage = 4
+impact_damage = 4
 knockback_strength = 200.0
 
 [node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="." unique_id=1953313436]
