@@ -8,7 +8,8 @@ const HitFeedbackFx := preload("res://scenes/effects/hit_feedback_fx.gd")
 
 const CONTACT_GROUPS: Array[String] = ["player", "player_replica"]
 
-# ★ 像素契约:根节点 scale 仍 = size(只服务碰撞/弹道),子弹视觉由 Sprite2D 局部缩放补到 1 美术像素 = ART_WORLD_PX 世界像素。
+# ★ 像素契约:根节点 scale = size(碰撞/弹道);Sprite2D 局部 scale = ART_WORLD_PX ⇒
+#   视觉 = size × ART_WORLD_PX 世界px/美术px,与碰撞箱(同样 × size)保持固定比例。
 const ART_WORLD_PX: float = 1.0
 
 var velocity_vec: Vector2 = Vector2.ZERO
@@ -68,7 +69,7 @@ func _apply_pixel_scale() -> void:
 		return
 	var sp := get_node_or_null("Sprite2D") as Sprite2D
 	if sp != null:
-		sp.scale = Vector2.ONE * (ART_WORLD_PX / size)
+		sp.scale = Vector2.ONE * ART_WORLD_PX
 
 func _ready() -> void:
 	prev_pos = global_position
