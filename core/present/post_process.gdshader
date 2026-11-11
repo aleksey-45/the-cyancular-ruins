@@ -9,19 +9,19 @@ uniform vec2 crop_scale = vec2(1.0);
 uniform float desat : hint_range(0.0, 1.0) = 0.0;
 // 受击红闪:0=无,1=纯红罩。由 PostProcess.flash_hit() 置峰后每帧衰减。
 uniform float hit_red : hint_range(0.0, 1.0) = 0.0;
-// 残血红屏:0=无(血量高于阈值),1=最低血。只在**屏幕边缘**压暗+去饱和+暗红,中心保持干净(不挡索敌/准星)。
+// 残血红屏:0=无(血量高于阈值),1=最低血。只在屏幕边缘压暗+去饱和+暗红,中心保持干净(不挡索敌/准星)。
 uniform float low_hp : hint_range(0.0, 1.0) = 0.0;
 uniform float low_hp_pulse = 0.0;   // 心跳相位(弧度),PostProcess 里按血量加速
 // ── 个人钟·第一阶段(时间玩法)三个全屏效果 ──
 uniform float rewind_film : hint_range(0.0, 1.0) = 0.0;   // 回溯底片化覆盖度(0→1:由内而外铺满)
 uniform float loan_depth : hint_range(0.0, 1.0) = 0.0;    // 贷款深度:变亮 + 红蓝色差
 uniform float haste_dim : hint_range(0.0, 1.0) = 0.0;     // 加速压暗覆盖度(0→1:由内而外铺满)
-uniform vec2 viewport_size = vec2(1920.0, 1440.0);        // ★ 仅供运行时覆盖的**兜底默认值**:它写的是**窗口**尺寸,不是世界视口(2208×1728)。真值由 `post_process.gd:84` 每帧 `set_shader_parameter("viewport_size", Vector2(world_viewport.size))` 写入;本默认值只在"没人设过"时生效。用途:`:64` 色差偏移的分母。
+uniform vec2 viewport_size = vec2(1920.0, 1440.0);        // ★ 兜底默认值(窗口尺寸,非世界视口);真值由 PostProcess 每帧写入,没人设过时用本值。
 uniform float loan_aberration = 5.0;                      // 色差偏移上限(像素)
 
 // ── 天空 + 光照(纯渲染层)──
-// ★ 不同时段**不是同一套阴影换角度**,而是三套权重混合(由 PostProcess 按高度角算):
-//   · 斜投影影 cast_*:只属于**有太阳**的时段。正午几乎为零(只剩台沿下一条接触影),
+// ★ 不同时段不是同一套阴影换角度,而是三套权重混合(由 PostProcess 按高度角算):
+//   · 斜投影影 cast_*:只属于有太阳的时段。正午几乎为零(只剩台沿下一条接触影),
 //     晨昏最长。夜里 cast_strength = 0 —— 没有太阳就没有方向影。
 //   · 整体压暗 dim:夜里主要靠它(没有太阳 ⇒ 全场暗),
 //   · 迎光边 rim:正午朝上(顶边)、晨昏朝太阳侧、夜里是月光(冷、弱)。
@@ -30,10 +30,10 @@ uniform float loan_aberration = 5.0;                      // 色差偏移上限(
 // ★★ 天空由本 shader 合成,不用清屏色:世界视口是 transparent_bg,空气的 alpha = 0。
 uniform bool sun_on = false;
 uniform vec2 sun_dir = vec2(0.45, -0.89);   // 指向太阳的单位向量(屏幕空间,y 向下)
-// 环境光**颜色**(= 强度 × 色相):实体内容统一乘它,三通道恒 ≤ 1。
+// 环境光颜色(= 强度 × 色相):实体内容统一乘它,三通道恒 ≤ 1。
 // ★ 用 vec3 而不是标量:环境光本来就该带颜色(黄昏偏暖、夜里偏蓝),见 PostProcess._push_sun。
 uniform vec3 ambient_color = vec3(1.0);
-// 环境光**色相**(归一化到最大通道 1,只含颜色不含强度)与"色相拉拢权重"。
+// 环境光色相(归一化到最大通道 1,只含颜色不含强度)与"色相拉拢权重"。
 // ★ 为什么需要:纯乘法只能压低通道 —— 蓝色砖在暖光下乘完还是蓝灰,而天空是暖橙,
 //   于是"地形压暗和天色对不上"。按权重把颜色拉向 light_hue 并保持亮度,才能真的变暖。
 uniform vec3 ambient_hue = vec3(1.0);
@@ -44,13 +44,13 @@ uniform vec3 sky_bottom = vec3(0.69, 0.90, 0.96);   // 天空(下):地平线附�
 uniform float sky_curve = 0.10;      // 横带弯曲量:0 = 纯横线,越大越弯(仍是横带,不是圆)
 // 屏幕空间压暗幅度(大气深度):0 = 关闭。★ 别调大 —— 超过 0.08 就会读成滤镜而不是深度。
 uniform float sky_band_pow = 1.7;   // 半径幂:>1 = 上疏下密
-// ★ 像素风:把渐变**量化成有限条带**,不做连续插值(连续插值一缩小就是"糊")。
+// ★ 像素风:把渐变量化成有限条带,不做连续插值(连续插值一缩小就是"糊")。
 uniform float cast_strength : hint_range(0.0, 1.0) = 0.5;  // 斜投影影浓度(无太阳时段 = 0)
 uniform float cast_steps = 4.0;            // 影长 = steps × cast_step_px
 uniform float cast_step_px = 2.0;          // 单步长度(世界像素)
 uniform vec3 cast_tint = vec3(0.74, 0.81, 0.93);   // 暗部色(相乘):按时段给,不是恒定蓝
 uniform float sun_warm : hint_range(0.0, 1.0) = 0.0;       // 受光侧暖色(晨昏才有)
-// ★ 暖色 tint 的三通道必须**都 ≤ 1**:任何 >1 的乘数都会把砖的某个通道推过原值 ⇒ 看起来在发光。
+// ★ 暖色 tint 的三通道必须都 ≤ 1:任何 >1 的乘数都会把砖的某个通道推过原值 ⇒ 看起来在发光。
 uniform vec3 sun_warm_tint = vec3(1.0, 0.93, 0.82);
 uniform float sun_debug : hint_range(0.0, 1.0) = 0.0;      // 1 = 输出遮挡掩码,调试用
 // 影子深浅:紧贴遮挡体的一侧 = 1(最深),最远一侧衰减到这个比例。别调到 0(那就没边了)。
@@ -59,27 +59,32 @@ uniform float shadow_far : hint_range(0.0, 1.0) = 0.32;   // 影子远端残留(
 // ★ 纯乘性模型里最暗 = ambient × (1-cast) × …,夜里会压到接近 0(用户:一切都黑)。
 //   地板把 [0,1] 的 lit 重映射到 [floor, 1] —— 仍然 ≤ 1,不破坏「只压不抬」。
 uniform float amb_floor : hint_range(0.0, 0.9) = 0.3;
-// ★ 实心判定阈值:必须**只在这里定义一次**。曾经着色判定用 0.90、挡光判定仍用 0.5,
+// ★ 实心判定阈值:必须只在这里定义一次。曾经着色判定用 0.90、挡光判定仍用 0.5,
 //   结果半透明的东西(子弹曳尾 alpha 0.55、预瞄线 0.6)照样挡光投假影。
 //   半透明不该是遮挡体:水、曳尾、预瞄线都在这条线以下。
 const float SOLID_A = 0.90;
 const int MAX_SUN_STEPS = 32;
 
-// 遮挡采样用**线性过滤**的同一张世界纹理:点采样会让斜射线从两个实心texel之间"漏"过去,
+// 遮挡采样(没有地形剪影通道时的降级路径)用线性过滤的同一张世界纹理:点采样会让斜射线从两个实心texel之间"漏"过去,
 // 影子里出现一片虚线状的破洞(实测)。线性过滤把边界摊成一个 texel 的过渡,配合 step() 仍是硬边。
 uniform sampler2D bg_tex : hint_default_transparent;   // 背景四层景深(独立视口,不参与遮挡/受光)
 uniform sampler2D occ_tex : filter_linear, repeat_disable;
 
+// ── 地形剪影 ── 独立 TerrainViewport(半分辨率、透明底、相机同步)只画墙体层。
+// ★ 世界纹理里精灵也是不透明像素,直接拿它判遮挡会把地形受光/斜影刷到实体上。
+uniform sampler2D terrain_tex : filter_nearest, repeat_disable;
+uniform float terrain_occ_gain = 0.0;   // 0 = 没有地形剪影通道,退回世界纹理 alpha(旧行为)
+
 // ── 发光通道 ── 独立 GlowViewport(同尺寸、透明底、相机同步)。
-// ★ 必须在这里叠(**整个光照之后**):世界里的一切都被乘过 ambient,发光体若画在世界里
+// ★ 必须在这里叠(整个光照之后):世界里的一切都被乘过 ambient,发光体若画在世界里
 //   会被一起压暗 —— 那就不是"夜里更亮",而是"夜里跟着变暗",与需求正好相反。
-// ★ 采样用**最近邻**:遮罩是标记图,插值会把相邻像素混出不存在的强度。
+// ★ 采样用最近邻:遮罩是标记图,插值会把相邻像素混出不存在的强度。
 uniform sampler2D glow_tex : filter_nearest, repeat_disable;
 uniform float glow_gain = 0.0;   // 0 = 没有发光通道(自动发现失败时),整段跳过
 
 // ── UI 通道 ── 第三只 SubViewport(同尺寸、透明底、相机同步),里面只放"不该吃光照"的辅助层:
 //   换弹读条、预瞄线。它们在世界里会被乘 ambient、被影子压暗,但又不是发光体(有暗色底环),
-//   所以既不能留在世界、也不能塞进加色的发光通道 —— 必须单独一条**正常混合**的通道。
+//   所以既不能留在世界、也不能塞进加色的发光通道 —— 必须单独一条正常混合的通道。
 uniform sampler2D ui_tex : filter_nearest, repeat_disable;
 uniform float ui_gain = 0.0;
 
@@ -95,18 +100,23 @@ const float TILE_PX = 64.0;             // 世界格边长(像素)
 
 // ── 地形受光参数 ── 数值来自 lighting_params.tres(不在 .gd 里写死)。
 uniform float terrain_gain : hint_range(0.0, 0.8) = 0.25;
-// 地形受光的色阶数(像素化):0/1 = 关闭。★ 量化的是**深度比值**,不是乘完 gain 的结果 ——
-// gain 只有 0.06,量化结果的话 3 档只差 4/255,肉眼看不出来。
-uniform float terrain_steps : hint_range(0.0, 6.0) = 4.0;
-// 地形受光抖动(0 = 硬色阶;1 = 满强度 Bayer)。锚世界纹理坐标,相机移动时图案跟着墙走。
+// 地形受光的色阶数。★ 0/1 = 连续光照(按美术像素块取整、块内均匀,不量化成台阶);
+// ≥1.5 = 量化模式,配合 dither 做棋盘过渡。
+uniform float terrain_steps : hint_range(0.0, 16.0) = 0.0;
+// 地形受光抖动强度。★ 只在 terrain_steps ≥ 1.5 时生效,抖动格 = 1 美术像素。
 uniform float terrain_dither : hint_range(0.0, 1.0) = 1.0;
-uniform float dither_px = 2.0;
+// 抖动格边长,单位 = 美术像素(1 = 每个美术像素一个 dither 阈值)。
+uniform float dither_px = 1.0;
 const float TERRAIN_STEP_PX = 6.0;   // 步长(世界像素):6×8 = 48px 覆盖深度
-// 2×2 Bayer(地形用;精灵侧是 4×4,见 form_light.gdshader)。
-// ★ 顺序抖动会把平坦区打散成棋盘;不打散又会切出"等高线"。
+// 2×2 Bayer(嵌套成 4×4 用,见下)。
 float _bayer2(vec2 a) {
 	a = floor(a);
 	return fract(a.x * 0.5 + a.y * a.y * 0.75);
+}
+// 4×4 Bayer(N 阶递归):16 个阈值。★ 棋盘过渡必须用 4×4:2×2 只有 4 个阈值,
+// 在平滑渐变上会聚成规则条纹,而不是均匀散点。
+float _bayer4(vec2 a) {
+	return _bayer2(a * 0.5) * 0.25 + _bayer2(a);
 }
 
 // 该点是不是实体(alpha 判定)。越界一律当空气(不知道就当作挡不住)。
@@ -114,10 +124,25 @@ float _occ(vec2 suv) {
 	if (suv.x < 0.0 || suv.x > 1.0 || suv.y < 0.0 || suv.y > 1.0) {
 		return 0.0;
 	}
+	if (terrain_occ_gain > 0.5) {
+		return texture(terrain_tex, suv).a;
+	}
 	return texture(occ_tex, suv).a;
 }
 
-// ── 地形受光:**三向探测**求朝向,再按 NdotL 压暗 ──
+// 投影遮挡源:地形像素用「地形+实体」的世界 alpha(实体能投影到地形上);实体/空气像素只用
+// 地形剪影(否则玩家/子弹会在空气里拖出浮空的影子)。
+float _occ_shadow(vec2 suv, float allow_world) {
+	if (suv.x < 0.0 || suv.x > 1.0 || suv.y < 0.0 || suv.y > 1.0) {
+		return 0.0;
+	}
+	if (allow_world > 0.5) {
+		return texture(occ_tex, suv).a;
+	}
+	return _occ(suv);
+}
+
+// ── 地形受光:三向探测求朝向,再按 NdotL 压暗 ──
 // ★ 为什么不是"只向上找顶面":那只给出上/下,墙的左右脸完全没有区别,
 //   太阳从左边还是右边来对建筑毫无影响 ⇒ 用户:建筑还是没有光影效果。
 // ★ 做法:从当前实心像素向上/左/右各走一小段,哪一侧先撞到空气,就说明表面朝那一侧。
@@ -176,8 +201,11 @@ float _terrain_lit(vec2 suv) {
 	float ndl = clamp(dot(n, normalize(sun_dir)), 0.0, 1.0);
 	float t = 1.0 - ndl;
 	if (terrain_steps >= 1.5) {
+		// 量化模式:4×4 Bayer,格 = 1 美术像素。suv 已吸附到美术像素中心,故图案锚在美术像素上、跟墙走。
 		if (terrain_dither > 0.001) {
-			float b = _bayer2(suv * viewport_size / max(dither_px, 1.0)) - 0.5;
+			float art = max(2.0 * cam_zoom, 1.0);
+			vec2 cell = floor(suv * viewport_size / (max(dither_px, 1.0) * art));
+			float b = _bayer4(cell) - 0.5;
 			t = clamp(t + b * terrain_dither / terrain_steps, 0.0, 1.0);
 		}
 		t = floor(t * terrain_steps + 0.5) / terrain_steps;
@@ -199,15 +227,21 @@ void fragment() {
 	// 因此去掉 clamp，鱼眼边缘不再有黑边。
 	uv = (uv - 0.5) * crop_scale + 0.5;
 
+	// ★ 像素契约:受光/斜影按美术像素块取整采样。1 美术像素 = 2 世界像素、屏幕 = 2 × cam_zoom,
+	//   块内只有一个光照值,块与块之间连续渐变。
+	float art_px = max(2.0 * cam_zoom, 1.0);
+	vec2 vp_px = max(viewport_size, vec2(1.0));
+	vec2 art_uv = (floor(uv * vp_px / art_px) + 0.5) * art_px / vp_px;
+
 	vec4 world = texture(screen_tex, uv);
-	// ★ 背景层在**独立 SubViewport** 里渲染:它不污染 occ_tex(screen 的 alpha),因此既不遮挡、也不吃地形受光,
+	// ★ 背景层在独立 SubViewport 里渲染:它不污染 occ_tex(screen 的 alpha),因此既不遮挡、也不吃地形受光,
 	//   只跟着环境光/色相走。合成口径与 world 一致(两者都是预乘 alpha)。
 	vec4 bg = texture(bg_tex, uv);
 	// ★★ 合成口径:世界视口是 transparent_bg,而 Godot 画到透明目标的混合是
-	//   dst.rgb = src.rgb*src.a + dst.rgb*(1-src.a) ⇒ world.rgb **已是预乘**(rgb 里带了 alpha)。
+	//   dst.rgb = src.rgb*src.a + dst.rgb*(1-src.a) ⇒ world.rgb 已是预乘(rgb 里带了 alpha)。
 	//   所以正确合成 = sky*(1-a) + world.rgb,不是 mix(sky, world.rgb, a)。
-	//   ★ 用错口径会把所有**半透明**的东西算暗:预瞄线(alpha 0.6)、水、发光都会被压掉一大截。
-	// ★★ 天空色带:**略微弯曲的横带**,不是同心圆。
+	//   ★ 用错口径会把所有半透明的东西算暗:预瞄线(alpha 0.6)、水、发光都会被压掉一大截。
+	// ★★ 天空色带:略微弯曲的横带,不是同心圆。
 	//   用半径算会读成"一个圆"(用户:不能是圆)。这里只给纵坐标加一点随 x 的抛物线偏移,
 	//   带子像地平线那样轻轻弯一下,整体仍是横条。
 	//   量化前对纵坐标做幂压缩(pow>1)⇒ 上方带厚、下方带薄 = 上疏下密。
@@ -218,7 +252,7 @@ void fragment() {
 	// ── 地形受光 ── 墙的竖向体积感来自"离顶面多远",不是"在屏幕多低"。
 	// ★ 已删除旧的屏幕空间压暗(atmo_depth):它按屏幕高度压暗,同一面墙在屏幕上方就亮、
 	//   移到下方就暗 —— 那是滤镜不是光照,和"一切都很黑"是同一类问题。
-	vec3 lit_world = world.rgb * ambient_color * _terrain_lit(uv);
+	vec3 lit_world = world.rgb * ambient_color * _terrain_lit(art_uv);
 	// 色相拉拢:保持亮度不变,只把色调拉向当前光源色(黄昏暖、夜里蓝)。
 	// ★ 权重必须随"光源偏离白色多远"缩放:正午光源是白的,hue_w 就是同亮度的灰,
 	//   无条件混 50% 等于把饱和度砍半 —— 整屏发灰(用户:现在好灰啊)。
@@ -229,16 +263,15 @@ void fragment() {
 	vec3 under = sky * (1.0 - bg.a) + bg.rgb * ambient_color;
 	COLOR = vec4(under * (1.0 - world.a) + lit_world, 1.0);
 	// ── 光照:环境光(全局) + 斜投影影(按时段) 两项;方向性的体积感交给逐精灵的 form_light ──
-	// ★ 薄 z 的斜投影影:先沿光的方向**穿出自己的实体**(那段是自己,不算遮挡),出体之后
+	// ★ 薄 z 的斜投影影:先沿光的方向穿出自己的实体(那段是自己,不算遮挡),出体之后
 	//   再撞到的实体才是"挡在我和太阳之间的东西" ⇒ 我在它影子里。
 	//   少了"穿出自己"这一步,每面墙都会撞到自己 ⇒ 整面墙均匀变暗(实测)。
 	if (sun_on) {
-		vec2 vp = max(viewport_size, vec2(1.0));
-		vec2 base = floor(uv * vp) + vec2(0.5);
-		float solid = step(SOLID_A, _occ(uv));
+		vec2 base = floor(art_uv * vp_px) + vec2(0.5);
+		float solid = step(SOLID_A, _occ(art_uv));
 
 		// ① 斜投影影:正午 cast_strength≈0 ⇒ 这一项自动消失(不画斜影),夜里同样为 0。
-		// ★ 影子有**深浅**:紧贴遮挡体那一侧最深,越往外越淡(线性衰减到 shadow_far)。
+		// ★ 影子有深浅:紧贴遮挡体那一侧最深,越往外越淡(线性衰减到 shadow_far)。
 		//   一刀切的等深色带看着像贴图描边,不像光被挡住。
 		float shadow = 0.0;
 		if (cast_strength > 0.001) {
@@ -254,7 +287,7 @@ void fragment() {
 						break;
 					}
 					p += sun_dir * cast_step_px;
-					if (_occ(p / vp) < SOLID_A) {
+					if (_occ_shadow(p / vp_px, solid) < SOLID_A) {
 						exited = true;
 						break;
 					}
@@ -266,8 +299,8 @@ void fragment() {
 						break;
 					}
 					p += sun_dir * cast_step_px;
-					if (hit_step < 0.0 && _occ(p / vp) >= SOLID_A) {
-						hit_step = float(j);   // 只记**最近**那一次,用来定深浅
+					if (hit_step < 0.0 && _occ_shadow(p / vp_px, solid) >= SOLID_A) {
+						hit_step = float(j);   // 只记最近那一次,用来定深浅
 					}
 				}
 			}
@@ -276,17 +309,17 @@ void fragment() {
 				shadow = cast_strength * mix(1.0, shadow_far, t);
 			}
 		}
-		// ★ 影子同时落在**实体和空气**上:侧视里台沿下方的暗带是玩家读"光从上面来"的主要线索,
-		//   只画在实体上会导致**几乎看不见影子**(实测)。真正让它显假的是影子太长、
+		// ★ 影子同时落在实体和空气上:侧视里台沿下方的暗带是玩家读"光从上面来"的主要线索,
+		//   只画在实体上会导致几乎看不见影子(实测)。真正让它显假的是影子太长、
 		//   边缘和后头平行 —— 靠"短"和"贴着遮挡体"解决,而不是靠砍掉它。
 
-		// ── 亮度不变量:下面每一步都只在 [0,1] 之间做**乘法**,没有加法 ──
+		// ── 亮度不变量:下面每一步都只在 [0,1] 之间做乘法,没有加法 ──
 		// 于是最终 COLOR.rgb ≤ ambient × 贴图原值(逐通道),结构上不可能"比环境光更亮" ⇒ 永不发光。
 		vec3 lit = vec3(1.0);
 		lit *= mix(cast_tint, vec3(1.0), 1.0 - shadow);         // ≤ 1
 		lit *= mix(vec3(1.0), sun_warm_tint, sun_warm * (1.0 - shadow) * solid);   // tint ≤ 1
 		// ★ 去掉"整面背光压暗":它把墙压成一片均匀灰块(用户:灰蒙蒙)。
-		//   光的来向交给**影子**表达就够了,不靠给整面刷灰。
+		//   光的来向交给影子表达就够了,不靠给整面刷灰。
 		lit = min(lit, vec3(1.0));
 		// 环境地板:最暗处抬到 amb_floor,最亮处仍是 1.0。
 	lit = vec3(amb_floor) + (1.0 - amb_floor) * lit;
@@ -297,7 +330,7 @@ void fragment() {
 		}
 	}
 	// ── 发光叠加:在 ambient / 影子之后加,所以发光体既不被压暗也不吃影 ──
-	// glow 通道是 transparent_bg,画进去的颜色按 Godot 的混合已是**预乘**(rgb 带了 alpha),
+	// glow 通道是 transparent_bg,画进去的颜色按 Godot 的混合已是预乘(rgb 带了 alpha),
 	// 直接加即可;强度(遮罩的 A)已经乘在 rgb 里。
 	if (glow_gain > 0.5) {
 		vec4 gl = texture(glow_tex, uv);
@@ -319,7 +352,7 @@ void fragment() {
 	}
 	// ── 时间玩法视效:覆盖度模型 ──
 	// cov=覆盖度(0→1)。逐像素半径 t(中心0→边缘1)与 cov 比较:cov 超过 t 的区域先被覆盖,
-	// 过渡由内而外推进;cov=1 时全图覆盖 —— **最终效果是全图统一的**(底特律变人导航模式那种切换感)。
+	// 过渡由内而外推进;cov=1 时全图覆盖 —— 最终效果是全图统一的(底特律变人导航模式那种切换感)。
 	float rt = clamp(distance(SCREEN_UV, vec2(0.5)) / 0.75, 0.0, 1.0);
 
 	// 回溯:全图统一底片色调(反色 + 轻去饱和)

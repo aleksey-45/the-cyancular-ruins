@@ -4,17 +4,21 @@ extends CanvasLayer
 const LAYER := 128  # 世界后处理层,低于 HUD(129),不遮 HUD
 # 发光通道相对世界视口的分辨率倍数:0.5 = 半分辨率(显存 1/4)。发光是柔和的东西,半分辨率够用。
 const glow_scale := 0.5
+# 地形剪影通道相对世界视口的分辨率倍数(与发光通道同尺寸;数值同 0.5 但两者独立)。
+const terrain_scale := 0.5
 
 @export var world_viewport: SubViewport = null
 # 背景四层景深的独立视口(由 Level0 运行时建;null = 没有背景层 ⇒ 走 hint_default_transparent)
 @export var bg_viewport: SubViewport = null
 @export var barrel_strength: float = 0.4
-# 光照参数表:**数值在 .tres 里**,这里只留引用。留空时自动加载默认那份。
+# 光照参数表:数值在 .tres 里,这里只留引用。留空时自动加载默认那份。
 @export var lighting: LightingParams = null
 
 var _mat: ShaderMaterial = null
 var _glow_vp: SubViewport = null    # 发光通道(自动发现同级 GlowViewport;没有则该特性自动关闭)
 var _glow_cam: Camera2D = null      # 发光通道相机,每帧与世界相机同步
+var _terrain_vp: SubViewport = null # 地形剪影通道(自动发现同级 TerrainViewport;没有则退回世界纹理 alpha)
+var _terrain_cam: Camera2D = null   # 地形剪影通道相机,同样每帧同步
 var _ui_vp: SubViewport = null      # UI 通道(不吃光照的辅助层)
 var _ui_cam: Camera2D = null        # UI 通道相机,同样每帧同步
 var _mask_grid := Vector2(1.0, 1.0)  # 地形掩码的格数(cols, rows)
@@ -90,7 +94,8 @@ func _ready() -> void:
 		return
 	_mat = ShaderMaterial.new()
 	_mat.shader = shader
-	_mat.set_shader_parameter("barrel_enabled", true)
+	# ★ 像素契约:鱼眼按半径连续重采样,颗粒度随屏幕位置漂移 ⇒ 默认关(toggle_barrel 可临时开)。
+	_mat.set_shader_parameter("barrel_enabled", false)
 	_mat.set_shader_parameter("barrel_strength", barrel_strength)
 	_mat.set_shader_parameter("screen_tex", world_viewport.get_texture())
 	# 遮挡采样另挂一份同一张纹理,只为拿线性过滤(点采样会让斜射线从两个实心 texel 之间漏过去)
@@ -116,11 +121,12 @@ func _ready() -> void:
 
 
 # ── 通道接线:所有"额外数据来源"都在这一个函数里发现 + 绑定 + 决定降级(一条通道 = 一个 _bind_xxx;缺哪个就把对应 gain 置 0)。
-#   通道:WorldViewport(世界本体)/ GlowViewport(自发光 → 加色)/ UiViewport(不吃光照的辅助层 → 正常 alpha)/ TerrainMask(烘好的地形掩码)。
+#   通道:WorldViewport(世界本体)/ GlowViewport(自发光 → 加色)/ UiViewport(不吃光照的辅助层 → 正常 alpha)/ TerrainViewport(只含地形的剪影 → 遮挡判定)/ TerrainMask(烘好的地形掩码)。
 func _bind_channels() -> void:
 	var host := world_viewport.get_parent()
 	_bind_glow(host)
 	_bind_ui(host)
+	_bind_terrain(host)
 	_bind_terrain_mask()
 
 
@@ -140,6 +146,16 @@ func _bind_glow(host: Node) -> void:
 	_mat.set_shader_parameter("glow_gain", 1.0)
 
 
+func _bind_terrain(host: Node) -> void:
+	_terrain_vp = host.get_node_or_null("TerrainViewport") as SubViewport if host != null else null
+	if _terrain_vp == null:
+		_mat.set_shader_parameter("terrain_occ_gain", 0.0)
+		return
+	_terrain_cam = _terrain_vp.get_node_or_null("TerrainCamera") as Camera2D
+	_mat.set_shader_parameter("terrain_tex", _terrain_vp.get_texture())
+	_mat.set_shader_parameter("terrain_occ_gain", 1.0)
+
+
 func _bind_ui(host: Node) -> void:
 	_ui_vp = host.get_node_or_null("UiViewport") as SubViewport if host != null else null
 	if _ui_vp == null:
@@ -150,9 +166,8 @@ func _bind_ui(host: Node) -> void:
 	_mat.set_shader_parameter("ui_gain", 1.0)
 
 
-# 地形掩码是**烘好的数据纹理**(1 像素/格),不是渲染通道 —— 地形静态,不必每帧重渲染,也不必复制并同步 17 万格 TileMapLayer。
+# 地形掩码是烘好的数据纹理(1 像素/格,给受光挑材质类 + 挡住精灵像素)—— 与 TerrainViewport 的 alpha 遮挡源各司其职。
 func _bind_terrain_mask() -> void:
-	# ★ 从**地图格数据**烘,而不是复制 TileMapLayer 到独立视口(那是渲染管线混乱的来源)。
 	var grid: Array = MazeGenerator.current_grid
 	if grid.is_empty() or grid[0].is_empty():
 		_mat.set_shader_parameter("mask_gain", 0.0)
@@ -224,6 +239,7 @@ func _push_lighting_params() -> void:
 	FormLight.set_steps(lighting.form_steps)
 	FormLight.set_dither(lighting.form_dither)
 	FormLight.set_bulge(lighting.form_bulge)
+	FormLight.set_edge(lighting.form_edge_lo, lighting.form_edge_hi)
 
 
 # 解析参数资源:优先用检查器里挂的,否则加载默认那份 .tres。
@@ -301,7 +317,7 @@ func _push_sun() -> void:
 		var target_link := DayCycle.sky_link(day_hour)
 		var wanted := lerpf(amb_amt, target_link * sky_luma_ref / DayCycle.BRICK_LUMA, link)
 		amb_amt = clampf(maxf(amb_amt, wanted), 0.0, 1.0)
-	# ★ 环境光**有颜色**(天光颜色 × 强度):从天空色取色相、丢亮度,按 amb_tint_strength 混白;三通道恒 ≤ 1,只染色不提亮。
+	# ★ 环境光有颜色(天光颜色 × 强度):从天空色取色相、丢亮度,按 amb_tint_strength 混白;三通道恒 ≤ 1,只染色不提亮。
 	var sky_for_tint := sky_base(day_hour)
 	var mx := maxf(sky_for_tint.r, maxf(sky_for_tint.g, sky_for_tint.b))
 	var amb_tint := Color.WHITE
@@ -437,6 +453,7 @@ func _process(delta: float) -> void:
 
 
 # 发光通道的相机必须与世界相机逐帧同步,否则发光体和世界错位;★ 用实际 global_position(要跟着震屏动,不然发光会"漂")。
+# 地形剪影通道同理:它决定"哪里是地形",错一帧就会把光照刷到实体上。
 func _sync_glow_camera() -> void:
 	if world_viewport == null:
 		return
@@ -448,6 +465,10 @@ func _sync_glow_camera() -> void:
 		_glow_cam.global_position = cam.global_position
 		_glow_cam.zoom = cam.zoom * glow_scale
 		_glow_cam.rotation = cam.rotation
+	if _terrain_cam != null:
+		_terrain_cam.global_position = cam.global_position
+		_terrain_cam.zoom = cam.zoom * terrain_scale
+		_terrain_cam.rotation = cam.rotation
 	if _ui_cam != null:
 		_ui_cam.global_position = cam.global_position
 		_ui_cam.zoom = cam.zoom
@@ -481,7 +502,7 @@ func _tick_day_cycle(delta: float) -> void:
 
 
 ## 时间倍率:加速 = 时钟快进,倒流 = 时钟倒着走。没在玩时间玩法时恒为 1。
-## ★ 只影响**时钟**(昼夜推进),不影响物理/逻辑 —— 逻辑时间由 TimeField 自己管。
+## ★ 只影响时钟(昼夜推进),不影响物理/逻辑 —— 逻辑时间由 TimeField 自己管。
 const TIME_RATE_HASTE := 6.0
 const TIME_RATE_REWIND := -4.0
 

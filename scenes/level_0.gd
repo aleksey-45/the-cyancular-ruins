@@ -2,6 +2,8 @@ class_name Level0
 extends Node2D
 
 static var wall_layer: TileMapLayer = null
+# 地形剪影层(TerrainViewport 内):与墙层同一份 cells,供后处理的地形受光/斜影当遮挡源。
+static var terrain_layer: TileMapLayer = null
 static var water_surface_layer: Node2D = null
 static var _grid_ref: Array[Array] = []
 static var _pristine_grid: Array[Array] = []
@@ -175,6 +177,7 @@ func _ready() -> void:
 	_pristine_subgrid = []
 	_pristine_subdesc = []
 	Level0.wall_layer = $WorldViewport/WallLayer
+	Level0.terrain_layer = $TerrainViewport/TerrainLayer
 	TileDefs.on_sub_destroyed = Callable(self, "_on_sub_destroyed")
 	TileDefs.on_destroyed = Callable(self, "_on_tile_destroyed")
 	TileDefs.init_hp(grid)
@@ -207,8 +210,9 @@ func _ready() -> void:
 	var built := _create_wall_tileset()
 	var wl: TileMapLayer = $WorldViewport/WallLayer
 	wl.tile_set = built["tileset"]
+	terrain_layer.tile_set = wl.tile_set
 	LoadingScreen.set_progress(0.30, "铺设墙体…")
-	_paint_maze_copies(wl)
+	_paint_maze_copies()
 	LoadingScreen.set_progress(0.45, "准备水体…")
 	Level0.water_surface_layer = $WorldViewport/WaterSurfaceLayer
 	LoadingScreen.set_progress(0.55, "铺设水体…")
@@ -389,7 +393,22 @@ func _ring_visible_sub_rects() -> Array:
 	return out
 
 
-func _paint_maze_copies(layer: TileMapLayer) -> void:
+# ★ 墙层与地形剪影层的唯一写点:漏镜像不会报错,只会让实体重新被地形受光/斜影误伤。
+static func _set_wall_cell(cell: Vector2i, atlas: Vector2i) -> void:
+	if wall_layer != null:
+		wall_layer.set_cell(cell, 0, atlas)
+	if terrain_layer != null:
+		terrain_layer.set_cell(cell, 0, atlas)
+
+
+static func _erase_wall_cell(cell: Vector2i) -> void:
+	if wall_layer != null:
+		wall_layer.set_cell(cell, -1)
+	if terrain_layer != null:
+		terrain_layer.set_cell(cell, -1)
+
+
+func _paint_maze_copies() -> void:
 	var cache := _paint_cache_for_current_map()
 	var xs: PackedInt32Array = cache["x"]
 	var ys: PackedInt32Array = cache["y"]
@@ -413,7 +432,7 @@ func _paint_maze_copies(layer: TileMapLayer) -> void:
 				var tx := xs[base + x]
 				if tx < 0:
 					continue
-				layer.set_cell(Vector2i(x + offset_x, oy), 0, Vector2i(tx, ys[base + x]))
+				_set_wall_cell(Vector2i(x + offset_x, oy), Vector2i(tx, ys[base + x]))
 
 
 func _paint_water_copies(grid: Array[Array]) -> void:
@@ -577,7 +596,7 @@ func _restore_sub(e: Dictionary) -> void:
 	var atlas_row := _wall_row(_desc_or_neutral(MazeGenerator.current_subdesc, sub.y, sub.x, tex))
 	for ty in range(-1, 2):
 		for tx in range(-1, 2):
-			wall_layer.set_cell(Vector2i(sub.x + tx * sc, sub.y + ty * sr), 0,
+			_set_wall_cell(Vector2i(sub.x + tx * sc, sub.y + ty * sr),
 					Vector2i((sub.y % 4) * 4 + (sub.x % 4), atlas_row))
 	if not _destructible_sub.is_empty():
 		_destructible_sub[sub.y][sub.x] = MazeGenerator.SOLID
@@ -601,7 +620,7 @@ func _on_sub_destroyed(sub: Vector2i, pre_hp: int, _owner: Node = null) -> void:
 		var sr: int = MazeGenerator.current_subgrid.size()
 		for ty in range(-1, 2):
 			for tx in range(-1, 2):
-				wall_layer.set_cell(Vector2i(sub.x + tx * sc, sub.y + ty * sr), -1)
+				_erase_wall_cell(Vector2i(sub.x + tx * sc, sub.y + ty * sr))
 	if not _destructible_sub.is_empty():
 		_destructible_sub[sub.y][sub.x] = MazeGenerator.EMPTY
 		_dirty_chunks[CollisionBuilder.chunk_of(Vector2i(sub.x / 4, sub.y / 4))] = true
@@ -625,7 +644,6 @@ func reset_destructibles() -> void:
 			for sy in 4:
 				for sx in 4:
 					subs[Vector2i(cx * 4 + sx, cy * 4 + sy)] = true
-	var wl := Level0.wall_layer
 	var chunks: Dictionary = {}
 	var cells: Dictionary = {}
 	for key in subs:
@@ -636,12 +654,12 @@ func reset_destructibles() -> void:
 		TileDefs.restore_sub(sub, TileDefs.hp_of(tex) if tex != 0 else 0)
 		if not _destructible_sub.is_empty():
 			_destructible_sub[sub.y][sub.x] = CollisionBuilder.destructible_value(tex)
-		if wl != null and tex != 0:
+		if tex != 0:
 			var atlas := Vector2i((sub.y % 4) * 4 + (sub.x % 4),
 					_wall_row(_desc_or_neutral(_pristine_subdesc, sub.y, sub.x, tex)))
 			for ty in range(-1, 2):
 				for tx in range(-1, 2):
-					wl.set_cell(Vector2i(sub.x + tx * sc, sub.y + ty * sr), 0, atlas)
+					_set_wall_cell(Vector2i(sub.x + tx * sc, sub.y + ty * sr), atlas)
 		var cell := Vector2i(sub.x / 4, sub.y / 4)
 		chunks[CollisionBuilder.chunk_of(cell)] = true
 		cells[cell] = true

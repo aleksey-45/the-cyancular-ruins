@@ -23,6 +23,7 @@ texture_filter = 1
 position = Vector2(4, -20)
 
 [node name="WallLayer" type="TileMapLayer" parent="WorldViewport" unique_id=191518324]
+texture_filter = 1
 
 [node name="WaterSurfaceLayer" type="Node2D" parent="WorldViewport" unique_id=191518326]
 z_index = 5
@@ -40,6 +41,16 @@ size = Vector2i(2208, 1728)
 render_target_update_mode = 4
 
 [node name="UiCamera" type="Camera2D" parent="UiViewport" unique_id=212233195]
+
+[node name="TerrainViewport" type="SubViewport" parent="." unique_id=1741884645]
+transparent_bg = true
+size = Vector2i(1104, 864)
+render_target_update_mode = 4
+
+[node name="TerrainCamera" type="Camera2D" parent="TerrainViewport" unique_id=212233196]
+
+[node name="TerrainLayer" type="TileMapLayer" parent="TerrainViewport" unique_id=191518327]
+texture_filter = 1
 
 [node name="EnemySpawner" type="Node2D" parent="." unique_id=604711374]
 script = ExtResource("4_spn")

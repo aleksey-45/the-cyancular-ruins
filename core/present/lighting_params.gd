@@ -33,6 +33,9 @@ extends Resource
 @export_range(0.0, 1.0, 0.01) var form_dither: float = 0.3
 ## 椭球鼓起系数:>1 = 球面感更强(1.0 = 包围盒原始椭球)。
 @export_range(0.5, 3.0, 0.01) var form_bulge: float = 1.0
+# 形体光 ndl 的重映射窗口(明暗交界位置):下移 lo ⇒ 亮面更大;两者越接近 ⇒ 交界越硬。
+@export_range(-0.5, 1.0, 0.01) var form_edge_lo: float = 0.20
+@export_range(-0.5, 1.5, 0.01) var form_edge_hi: float = 0.80
 
 @export_group("地形受光")
 ## 地形受光强度:0 = 关闭(墙只吃环境光),越大墙的竖向体积感越强。

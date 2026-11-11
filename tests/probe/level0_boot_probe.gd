@@ -1,7 +1,7 @@
 extends Node
 
 const MARKER := "LEVEL0 BOOT PROBE: ALL-OK"
-const EXPECTED_CHECKS := 19
+const EXPECTED_CHECKS := 23
 const MAP := "res://maps/newfactory.cyrm"
 const WATER_SHADER := "res://scenes/effects/water_surface_batch.gdshader"
 const FORM_SHADER := "res://core/present/form_light.gdshader"
@@ -61,10 +61,20 @@ func _run() -> void:
 	var ui_vp := level.get_node_or_null("UiViewport") as SubViewport
 	_chk(ui_vp != null and ui_vp.transparent_bg and ui_vp.size == vp.size,
 			"★ UiViewport 缺失,或尺寸与世界视口不一致")
+	var terrain_vp := level.get_node_or_null("TerrainViewport") as SubViewport
+	var terrain_layer := level.get_node_or_null("TerrainViewport/TerrainLayer") as TileMapLayer
+	_chk(terrain_vp != null and terrain_vp.transparent_bg
+			and terrain_vp.size == vp.size / 2
+			and terrain_vp.render_target_update_mode == SubViewport.UPDATE_ALWAYS,
+			"★ TerrainViewport 缺失/不是透明底半分辨率/不是每帧更新(地形剪影通道)")
 
 	var wall := Level0.wall_layer
 	_chk(wall != null and wall.tile_set != null and wall.get_used_cells().size() > 0,
 			"★ 墙体没铺出来(WallLayer 无 tile_set 或 used_cells=0)")
+	var mirror_ok: bool = wall != null and terrain_layer != null \
+			and terrain_layer.tile_set == wall.tile_set \
+			and terrain_layer.get_used_cells().size() == wall.get_used_cells().size()
+	_chk(mirror_ok, "★ 地形剪影层与墙层不一致(TileSet 或格数):铺贴写点漏镜像")
 	var batches: Array = []
 	if Level0.water_surface_layer != null:
 		for n in Level0.water_surface_layer.get_children():
@@ -122,6 +132,9 @@ func _run() -> void:
 			and float(mat.get_shader_parameter("cam_zoom")) > 0.0
 	_chk(mask_ok, "★ 地形掩码没烘/尺寸与世界格数不一致(mask_grid=%s, 期望 %s)" % [
 			str(mask_grid), str(Vector2(cells))])
+	_chk(mat.get_shader_parameter("terrain_occ_gain") == 1.0
+			and mat.get_shader_parameter("terrain_tex") is Texture2D,
+			"★ 地形剪影通道没接上(terrain_occ_gain/terrain_tex)")
 
 	var cam := vp.get_node_or_null("Camera2D") as Camera2D
 	var player := vp.get_node_or_null("Player") as Node2D
@@ -133,6 +146,12 @@ func _run() -> void:
 			and glow_cam.global_position == cam.global_position \
 			and glow_cam.zoom == cam.zoom * 0.5
 	_chk(sync_ok, "★ 发光相机没跟世界相机同步(位置或半分辨率 zoom)")
+	var terrain_cam := level.get_node_or_null("TerrainViewport/TerrainCamera") as Camera2D
+	var terrain_sync: bool = terrain_cam != null and cam != null \
+			and terrain_cam.global_position == cam.global_position \
+			and terrain_cam.zoom == cam.zoom * 0.5 \
+			and terrain_cam.rotation == cam.rotation
+	_chk(terrain_sync, "★ 地形剪影相机没跟世界相机同步(位置/半分辨率 zoom/rotation)")
 	_chk(_has_form_light(player), "★ 玩家形体光没挂上(没有 animator 用 form_light.gdshader 的材质)")
 
 	var walls := vp.get_node_or_null("WallCollision") as StaticBody2D
@@ -175,7 +194,7 @@ func _finish() -> void:
 	if _checks != EXPECTED_CHECKS:
 		_fails.append("★ 实跑 %d 条断言,与 EXPECTED_CHECKS=%d 对不上(有断言被静默跳过?)" % [_checks, EXPECTED_CHECKS])
 	if _fails.is_empty():
-		print("%s(%d 条断言):世界数据 · 三视口 · 墙体铺贴 · 水体合批 · PostProcess 通道 · 地形掩码 · 相机/发光相机同步 · 形体光 · 碰撞 · 收尾状态"
+		print("%s(%d 条断言):世界数据 · 四视口 · 墙体铺贴 · 地形剪影镜像 · 水体合批 · PostProcess 通道 · 地形掩码与剪影通道 · 相机与通道相机同步 · 形体光 · 碰撞 · 收尾状态"
 				% [MARKER, _checks])
 		get_tree().quit(0)
 	else:
