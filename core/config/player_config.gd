@@ -63,7 +63,7 @@ extends Resource
 @export_range(0.1, 60.0, 0.1) var cam_smooth_y: float = 8.0
 ## 死区半径(px):小于它的位移不推画面。
 # 死区总尺寸(世界px,x/y 分开):1920×1440 屏的 20%×20%;camera_2d 内部取一半当 ±半区。
-@export var cam_deadzone: Vector2 = Vector2(384.0, 288.0)
+@export var cam_deadzone: Vector2 = Vector2(576.0, 432.0)
 ## 镜头缩放。
 @export_range(0.1, 4.0, 0.01) var cam_zoom: float = 1.0
 
