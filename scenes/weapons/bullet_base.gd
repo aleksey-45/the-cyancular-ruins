@@ -9,7 +9,7 @@ const HitFeedbackFx := preload("res://scenes/effects/hit_feedback_fx.gd")
 const CONTACT_GROUPS: Array[String] = ["player", "player_replica"]
 
 # ★ 像素契约:根节点 scale 仍 = size(只服务碰撞/弹道),子弹视觉由 Sprite2D 局部缩放补到 1 美术像素 = ART_WORLD_PX 世界像素。
-const ART_WORLD_PX: float = 2.0
+const ART_WORLD_PX: float = 1.0
 
 var velocity_vec: Vector2 = Vector2.ZERO
 var speed: float = 0.0

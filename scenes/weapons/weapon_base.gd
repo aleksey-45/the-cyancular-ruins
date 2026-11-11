@@ -141,12 +141,12 @@ func _apply_sprite_pose() -> void:
 
 # 只移动箭,弓身不动;ChargeArrow 的 z_index 让箭画在弓身后。
 # ★ 抖动是纯表现:出膛点按 _charge_pull_px() 算,不吃抖动(见 fire 的 b.global_position);放大在入树时一次性施加。
-const CHARGE_ARROW_SHOW_SCALE := 1.5      # 蓄力箭相对飞行箭的倍数(飞行箭世界缩放 = bullet_size)
+const CHARGE_ARROW_SHOW_SCALE := 1.5      # 蓄力箭相对飞行箭的倍数(飞行箭世界缩放 = BulletBase.ART_WORLD_PX)
 const CHARGE_ARROW_JITTER_PX := 0.5       # 上下抖动幅度(px);★ 只有蓄满(charge_ratio>=1)才抖
 const CHARGE_ARROW_JITTER_PERIOD := 0.2   # 抖动周期(秒)
 
-# 让蓄力箭与飞行箭同一标尺:飞行箭挂在视口根 ⇒ 世界缩放 = bullet_size;蓄力箭在玩家子树里(玩家根 scale 2.0),
-# 局部缩放 = bullet_size × 本倍数 / 继承缩放。★ 直接写死局部缩放会错:玩家根是 2.0 倍,写 1.5 实际放大成 3.0。
+# 让蓄力箭与飞行箭同一标尺:飞行箭视觉 = BulletBase.ART_WORLD_PX;蓄力箭在玩家子树里(玩家根 scale 2.5),
+# 局部缩放 = ART_WORLD_PX × 本倍数 / 继承缩放。★ 别写死:玩家根是 2.5 倍,写死会再乘一次。
 func _sync_charge_arrow_scale() -> void:
 	if _charge_arrow == null or _arrow_scale_synced:
 		return
@@ -156,7 +156,7 @@ func _sync_charge_arrow_scale() -> void:
 		var s := absf(par.get_global_transform().get_scale().x)
 		if s > 0.0001:
 			inherited = s
-	_charge_arrow.scale = Vector2.ONE * (bullet_size * CHARGE_ARROW_SHOW_SCALE / inherited)
+	_charge_arrow.scale = Vector2.ONE * (BulletBase.ART_WORLD_PX * CHARGE_ARROW_SHOW_SCALE / inherited)
 	_arrow_scale_synced = true
 
 

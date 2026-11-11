@@ -7,7 +7,7 @@
 [ext_resource type="Script" path="res://scenes/player/swim_component.gd" id="6_swim"]
 
 [node name="Player" type="CharacterBody2D" unique_id=722796191 node_paths=PackedStringArray("animator", "weapon_slot")]
-scale = Vector2(2, 2)
+scale = Vector2(2.5, 2.5)
 collision_layer = 2
 collision_mask = 1
 script = ExtResource("1_kyqiw")
