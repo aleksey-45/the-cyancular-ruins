@@ -2,15 +2,29 @@
 
 > 与源码冲突时以源码为准,读前先 `grep` 复核。
 
+## 像素契约(2026-11-10,阶段 0 + 方案 A)
+
+> 单一口径:**1 美术像素 = 2 世界像素**;`cam_zoom = 1.0` ⇒ 1 世界像素 = 1 屏幕像素 ⇒ **1 美术像素 = 2 屏幕像素**。
+> 这是"场景/敌人/武器/主角看起来是不是同一款游戏"的总闸;改任何 scale / zoom 前先读这一节。
+
+- **统一密度**:地形/水由图集管线固定(32px 源砖 → 8×8 象限 → 最近邻 2× → 16px tile ⇒ 2 世界px/美术px);玩家、玩家副本、黑鸟、跳鸟、武器、地面拾取的根 `scale = 2.0`(飞鸟本来就是 2.0)。子弹根 scale 仍是 `bullet_size`(物理口径不变),由 Sprite2D 局部缩放补到 `2/size` ⇒ 视觉 2 世界px/美术px,碰撞体不随视觉放大。
+- **相机**:`PlayerParams.cam_zoom = 1.0`;相机每帧末尾把 `global_position` 吸附到整数屏幕像素(`round(pos × zoom) / zoom`)。平滑/前瞻/震屏都是连续浮点,不吸附的话栅格逐帧落在新的亚像素相位上。
+- **过滤**:世界内一律 NEAREST。项目默认 `rendering/textures/canvas_textures/default_texture_filter = 0`;`WallLayer`(TileMapLayer)另显式 `texture_filter = 1` —— 它此前继承引擎默认 Linear,是全画面"场景糊、精灵锐"的唯一来源(实测砖纹理内部同值率 78%→84%)。
+- **鱼眼默认关**:`PostProcess` 的 `barrel_enabled = false`(`toggle_barrel` 仍可临时开)。桶形是逐半径连续重采样:中心 1:1、边缘 ≈0.78×,颗粒度随屏幕位置漂移 20~30%,与固定像素栅格不可兼得。
+- **像素化光照(色阶 + 抖动)**:地形受光/斜影/精灵形体光的采样坐标吸附到美术像素块(`art_px = 2 * cam_zoom` 视口像素);`lighting_params.tres` 全局默认 `terrain_steps = 4` / `terrain_dither = 0.35`、`form_steps = 3` / `form_dither = 0.3`;玩家/副本用各自 attach 里的 override(`steps 5` / `dither 0.25`)⇒ 明暗是几档硬层、层边用 4×4 Bayer(格 = 1 美术像素)打散成细点。把 steps 设 0/1 = 连续亮度(可选)。★ 2×2 Bayer 只有 4 阈值会成规则格纹;抖动格与美术像素不对齐会变成屏幕噪点。精灵侧 `form_light` 的 ndl 重映射窗口 = `form_edge_lo/edge_hi`(默认 0.00/0.70,下移 = 亮面更大),圆度 = `shape_round`(玩家/副本 1 = 正圆,鸟/枪 0 = 拟合椭圆)。
+- **已知例外(有意保留,改前先想清楚)**:① 爆炸 `scale = 13`(≈13 屏幕px/美术px;要统一得把 48px 帧重画到 ~312px);② 背景四层 texel = 12/16/24/48 屏幕px(景深设计;层 4 的 f=0.75 在 zoom=1 下是 21.33px,非整数);③ squash & stretch 把 `animator.scale` 写成 0.94~1.06 非均匀值(落地/起跳瞬间短暂破坏栅格);④ 武器/子弹按角度连续旋转 + 枪口 bob —— 旋转本身不可能轴对齐。
+- **代价(方案 A 落地时已知)**:可视世界从 2560×1920 缩到 1920×1440 世界px(边长 −25%、面积 −44%);根 scale 2.5→2.0 让玩家/敌鸟碰撞体一起缩小 20%(手感/受击判定需试玩确认;要保住旧尺寸得把碰撞多边形坐标 ×1.25)。
+- **验收**:渲染域零自动守卫(见 [`test-economy.md`](test-economy.md) §1),以上观感项只能人眼 + 同机位截图对比。
+
 ## 渲染管线(`scenes/level_0.tscn`)
 
-> ★ **守卫边界(2026-11-08 仓主裁定)**:渲染表现与数据细节**不写自动守卫**(见 [`test-economy.md`](test-economy.md) §1);渲染域唯一的自动守卫是启动结构探针 [`tests/probe/level0_boot_probe.tscn`](../../tests/probe/level0_boot_probe.tscn)(19 条:世界数据/三视口/墙体铺贴/水体合批/PostProcess 通道/地形掩码/相机与发光相机同步/形体光/碰撞/收尾状态)。原 water_atlas / wall_tint / tint_parity / bg_parallax / torus_camera 五支数据契约探针已删除。
+> ★ **守卫边界(2026-11-08 仓主裁定)**:渲染表现与数据细节**不写自动守卫**(见 [`test-economy.md`](test-economy.md) §1);渲染域唯一的自动守卫是启动结构探针 [`tests/probe/level0_boot_probe.tscn`](../../tests/probe/level0_boot_probe.tscn)(23 条:世界数据/四视口/墙体铺贴/地形剪影镜像/水体合批/PostProcess 通道/地形掩码与剪影通道/相机与通道相机同步/形体光/碰撞/收尾状态)。原 water_atlas / wall_tint / tint_parity / bg_parallax / torus_camera 五支数据契约探针已删除。
 
-- 根节点把未处理输入手动转发进 `WorldViewport`(SubViewport);世界(墙体 / 玩家 / 敌人)渲染进 SubViewport,`PostProcess`(`post_process.gd`)把世界纹理合成到屏幕:鱼眼 + 中心裁剪 + **天空合成 + 昼夜光照(环境光 / 斜投影影)+ 发光通道叠加** + 受击/低血/时间玩法视效(倒地暗角、残血边缘暗角只在屏幕边缘,中心保持干净,纯客户端、不挡 HUD)。
+- 根节点把未处理输入手动转发进 `WorldViewport`(SubViewport);世界(墙体 / 玩家 / 敌人)渲染进 SubViewport,`PostProcess`(`post_process.gd`)把世界纹理合成到屏幕:中心裁剪(鱼眼默认关,见上)+ **天空合成 + 昼夜光照(环境光 / 斜投影影)+ 发光通道叠加** + 受击/低血/时间玩法视效(倒地暗角、残血边缘暗角只在屏幕边缘,中心保持干净,纯客户端、不挡 HUD)。
 - **世界里的一切都会被乘 `ambient`** —— 这是理解渲染层的第一句话:UI 辅助层(换弹读条 / 预瞄线)挂在世界子树里就会一起被压暗;发光体想"夜里更亮"就必须走发光通道(见下)。
 - 渲染材料分三层:`core/present/day_cycle.gd`(纯函数:一整天怎么亮)→ `post_process.gd`(把结果喂 shader)→ `core/present/form_light.gd`(逐精灵的形体光)。shader 只做合成与逐像素光照,不持有第二个真相源。
 
-- 相机 `core/present/camera_2d.gd` 在 `_process` 里跟随目标:死区(`PlayerParams.cam_deadzone`)+ 指数平滑(`cam_smooth_x/y`)+ 前瞻(`cam_lookahead_x`,按 `vx / move_speed` 归一)+ `cam_y_bias`;环面世界走连续空间跟随,单帧位移 > `SNAP_DIST = 400px` 视为真传送(复活 / 回退 / 换边)直接重锚、不做平滑。另有 `shake(amount, duration)`:包络 = `amount * (剩余/时长)^0.7`(尾段比线性长),且**不降级**——比当前剩余包络弱的震动被忽略,否则开火/受击的小震会把爆炸大震顶掉。联机里爆炸震由 `Explosion.client_cam_shake()` 在视觉副本爆炸时补(客户端 bullet 是 `apply_damage=false`)。`PlayerParams.cam_lookahead_y` 目前无人读,别按它改行为。零守卫(原 `torus_camera_probe` 已删):改跟随/死区/震屏只能人眼试玩。
+- 相机 `core/present/camera_2d.gd` 在 `_process` 里跟随目标:死区(`PlayerParams.cam_deadzone`)+ 指数平滑(`cam_smooth_x/y`)+ 前瞻(`cam_lookahead_x`,按 `vx / move_speed` 归一)+ `cam_y_bias`;**末尾统一吸附到整数屏幕像素**(像素契约,见上节);环面世界走连续空间跟随,单帧位移 > `SNAP_DIST = 400px` 视为真传送(复活 / 回退 / 换边)直接重锚、不做平滑。另有 `shake(amount, duration)`:包络 = `amount * (剩余/时长)^0.7`(尾段比线性长),且**不降级**——比当前剩余包络弱的震动被忽略,否则开火/受击的小震会把爆炸大震顶掉。联机里爆炸震由 `Explosion.client_cam_shake()` 在视觉副本爆炸时补(客户端 bullet 是 `apply_damage=false`)。`PlayerParams.cam_lookahead_y` 目前无人读,别按它改行为。零守卫(原 `torus_camera_probe` 已删):改跟随/死区/震屏只能人眼试玩。
 
 - 图集构造 `core/sim/terrain_atlas.gd`(`TerrainAtlas`):源砖 → 图集 → TileSet;`Level0._create_wall_tileset()` 只剩转发。**图集按描述符行烘**(行 = 去重排序后的 v4 描述符,颜色辅码烘进像素),不再按"每纹理一行"。
   - **像素数学 `TerrainAtlas.tint_color(c, desc)`** = 旧浏览器编辑器 tint 数学的移植(唯一规范;源已退役,历史见 git):HSV(不是 HSL)、色相偏移 (hue档−4)×15°(fposmod 360)、bri/sat 是**乘法**乘数 (档+6)/10、alpha = a×档/7、8 位落地只有一条规则 round(clamp01(x)×255)。★ **零守卫**(原 `tint_parity_probe` 已删):改 `tint_color` 只能人工对拍 golden 向量。
@@ -34,15 +48,24 @@
 - **环境光** `DayCycle.ambient_for(hour, moon_amt)` ∈ [0,1],乘性。★ **准确的不变量**:「世界层的乘性链」(ambient → 影子 → 地形受光)只压不抬,**最终像素不受此约束** —— 早先文档写成「永不发光是结构保证」,已经失真。现有例外(改动时别再把它们当违例):`form_light` 的 `boost`(亮面 1.15×)、天空是绝对值不经过 ambient、发光通道 `COLOR.rgb += gl`、受击红闪、回溯贷款 `+= `、`amb_sky_link` 把 ambient 抬到自然曲线之上(仍 ≤1)。真正的判据是「亮度变化是否跟随光源、幅度是否克制」,不是「是否 >1」。白天 = 辐照 ∝ sin(高度角);太阳项把有效高度抬高 18°(民用晨昏),否则黎明/黄昏会掉到天光底、比半夜还黑。月光峰值 `MOON_SCALE = 0.26` 必须低于晨昏的太阳项。**正午环境光恰为 1.0(全天最亮的一帧)**。
 - **天空色** = `DayCycle.sky_base(hour)`,17 个关键帧按时刻插值。★ 插值走 **RGB 直线**,不走 HSV 色轮:最短弧从橙到蓝会经过品红/紫、黄昏"各种颜色乱窜"(实测)。★ 直线插值的坑是中点掉饱和(橙→夜蓝中点只有 0.31),所以黄昏→夜手工插了玫红/紫罗兰/靛蓝三帧把路径"拱"起来 —— **单纯增加采样点无效**(直线上的点还在直线上)。
 - **天空纵向渐变**:shader 用屏幕纵坐标做一个弯曲坐标(`sky_curve` + `sky_band_pow`)在 `sky_top`/`sky_bottom` 之间插值,上亮下暗。**不做量化**(曾试过 8/16 条带,量化就是"像素风条带",用户否决)。
-- **斜投影影**:遮挡体就是世界纹理自己的 alpha,`SOLID_A = 0.90` —— 只有不透明才算遮挡体,半透明(水、子弹曳尾 alpha 0.55、预瞄线 0.6)不投影。判据是"先沿光方向穿出自己,再撞到的东西才挡我",少了穿出自我的那步会让整面墙均匀变暗。影长是**像素常量**(`CAST_PX_DUSK`,晨昏最长 8px),不是 `1/tan(高度角)` —— 世界是薄 z 横切面,没有厚度可投。影子落在空气与实体上;深浅按"最近一次被挡"的位置衰减(`SHADOW_FAR`)。
+- **斜投影影**:遮挡源分两种(见 `_occ_shadow`):**地形像素**的投影用世界纹理 alpha(地形+实体,玩家/敌人能像环境物体一样把影子投到墙面/地面);**实体/空气像素**只用 `TerrainViewport` 的地形剪影(否则实体会在空气里拖出浮空影子)。`SOLID_A = 0.90` —— 只有不透明才算遮挡体,半透明(水、子弹曳尾 alpha 0.55、预瞄线 0.6)不投影。★ 地形受光(`_terrain_lit`)仍只用地形剪影。判据是"先沿光方向穿出自己,再撞到的东西才挡我",少了穿出自我的那步会让整面墙均匀变暗。影长是**像素常量**(`CAST_PX_DUSK`,晨昏最长 8px),不是 `1/tan(高度角)` —— 世界是薄 z 横切面,没有厚度可投。影子落在空气与实体上;深浅按"最近一次被挡"的位置衰减(`SHADOW_FAR`)。
 - **环境光是颜色不是标量**:`ambient_color = (天光色相 × amb_tint_strength 混白) × 强度`。天光色相取当前 `sky_base` 归一化到最大通道 1(丢掉亮度),所以黄昏偏暖橙、夜里偏蓝、正午近白;三通道恒 ≤ 1,只染色不提亮。参数 `amb_tint_strength`(默认 0.35,0 = 纯白)。
-- **地形受光**:TileMap 没有逐格法线,所以对每个实心像素向上 / 左 / 右各走 8 步 × 6px 探测空气(`_march_steps`,三步距离合成近似外法线),再与 `sun_dir` 点积——墙的左右脸随太阳方向变化,不是"只向上找顶面"。★ 这是**几何**,所以同一面墙无论移到屏幕哪里亮度都一样。**已删除**旧的"屏幕空间大气压暗"(`atmo_depth`):它按屏幕高度压暗,是滤镜不是光照,也是"一切都黑"的来源之一。
-- **光照像素化(色阶 + 抖动)**:量化的是**光照系数**(地形深度比值 / 精灵 `ndl`),不是最终屏幕色 —— 后者会毁掉美术调色板、让天空重新出色带、破坏「世界层乘性链」。色阶数默认 4(`form_steps` / `terrain_steps`);地形配 **2×2** 有序 Bayer(`_bayer2`),精灵侧配 **4×4**(`_bayer4`,见 `form_light.gdshader`)。★ 抖动必须**锚在精灵本地坐标 / 世界纹理坐标**,锚屏幕的话相机一动图案就会在物体上"爬"。量化后 `clamp(x, 0, 1)`,所以仍 ≤ 1。
+- **地形受光**:TileMap 没有逐格法线,所以对每个实心像素向上 / 左 / 右各走 8 步 × 6px 探测空气(`_march_steps`,三步距离合成近似外法线),再与 `sun_dir` 点积——墙的左右脸随太阳方向变化,不是"只向上找顶面"。★ 这是**几何**,所以同一面墙无论移到屏幕哪里亮度都一样。★「实心」的判据来自 `TerrainViewport` 的地形剪影,不是世界纹理 alpha(否则精灵像素会被当成地形、再乘一次地形受光,即玩家下半身硬边黑块)。**已删除**旧的"屏幕空间大气压暗"(`atmo_depth`):它按屏幕高度压暗,是滤镜不是光照,也是"一切都黑"的来源之一。
+- **光照像素化(色阶 + 抖动)**:量化的是**光照系数**(地形深度比值 / 精灵 `ndl`),不是最终屏幕色 —— 后者会毁掉美术调色板、让天空重新出色带、破坏「世界层乘性链」。色阶数默认 6(`form_steps` / `terrain_steps`);地形用 **4×4** 有序 Bayer(格 = 1 美术像素),精灵侧也是 **4×4**(`form_light.gdshader`)。★ 抖动必须**锚在精灵本地坐标 / 世界纹理坐标**,锚屏幕的话相机一动图案就会在物体上"爬"。量化后 `clamp(x, 0, 1)`,所以仍 ≤ 1。
 - **暗部颜色**:影子乘数 = 当前**环境光色相再压暗**(月光下再压一档),不是写死的冷蓝——阴影是"这种光更少",不是"换了一种蓝光"。规则同上:压红留蓝,不用中性灰;乘性、三通道 ≤ 1。
+
+## 地形剪影通道(TerrainViewport)
+
+- 世界纹理的 alpha 不能当地形遮挡用:地形与精灵在里面都是不透明像素。`level_0.tscn` 另有一个 SubViewport `TerrainViewport`(`transparent_bg`、半分辨率、自带 `TerrainCamera`),里面只放 `TerrainLayer`(与 `WallLayer` 同一份 TileSet、同一份 cells)⇒ 渲染出**只含地形**的剪影图。`PostProcess._bind_terrain()` 发现同级 `TerrainViewport` 后,把纹理与 `terrain_occ_gain = 1` 推给 shader。
+- shader 的地形判定入口 `_occ()`:有剪影通道时采 `terrain_tex`(`filter_nearest`),否则退回 `occ_tex`(= 世界纹理 alpha,旧行为)。因此精灵像素落在空气/地形洞里时 `_occ = 0`,地形受光不再被刷到实体上。斜投影影走 `_occ_shadow(suv, allow_world)`:地形像素允许世界 alpha 参与(实体可投影),实体/空气像素只用地形剪影。**其余光照公式一行未改。**
+- 铺贴必须镜像:`Level0` 的墙层写点全部走 `_set_wall_cell` / `_erase_wall_cell`(整图铺贴、砖被摧毁、回溯复原、换局复位),两层 cells 一致是硬约束。★ 漏镜像不报错,只会让实体重新被地形光误伤 —— 承重判据 = 探针里「两层 TileSet 相同且 used_cells 数一致」。
+- 相机同步在 `_sync_glow_camera()` 里:`global_position` / `rotation` 与世界相机相同,`zoom = 世界 zoom × 0.5`(半分辨率覆盖同一片世界;shader 按 uv 采样,与分辨率无关)。
+- **降级**:找不到 `TerrainViewport`(主菜单实时光影背景、编辑器预览这类运行时自建视口的调用方)⇒ `terrain_occ_gain = 0` ⇒ 退回世界纹理 alpha,行为与加通道之前完全一致,调用方不用改接线。
+- 代价:铺墙多写一份 cells(加载时间略增);遮挡判定降到半分辨率(1 texel = 2 世界像素 = 1 美术像素),地形边缘的受光 / 影子最多差 1~2 世界像素。观感(实体不再被地形光误伤、地形亮度不变)零自动守卫,只能同机位截图 + 人眼对比。
 
 ## 发光通道(GlowViewport)
 
-- `level_0.tscn` 里有第二个 SubViewport:`GlowViewport`(同尺寸、`transparent_bg`)+ `GlowCamera`。`PostProcess._sync_glow_camera()` 每帧把世界相机的 `global_position/zoom/rotation` 抄过去(用实际位置,跟着震屏动)。
+- 发光通道用独立的 SubViewport:`GlowViewport`(半分辨率、`transparent_bg`)+ `GlowCamera`。`PostProcess._sync_glow_camera()` 每帧把世界相机的 `global_position/zoom/rotation` 抄过去(用实际位置,跟着震屏动)。
 - 发光体必须挂在 `PostProcess.glow_root()` 返回的通道里,由 shader 在**整个光照之后**用 `COLOR.rgb += gl.rgb` 叠加。★ 为什么不能画在世界里:世界里的一切都被乘过 `ambient`,发光体会跟着变暗 —— 与"夜里更亮"正好相反。
 - 发光资产是**美术遮罩**:`<name>_light.png` 与主图集同布局,白色标记 + **A 通道装强度**;帧数据里用 `light_image` 字段指过去,`SpriteFramesIO` 用同一套 cells 构帧 ⇒ 帧索引天然同步。
 - 需要"很弱的边缘光"时不用重画遮罩:`light_halo_px` / `light_halo_strength` 让 `SpriteFramesIO` 在加载时按 smoothstep 径向衰减生成光晕(只增不减,原标记的 alpha 保留)。
@@ -51,7 +74,7 @@
 ## 形体光(`core/present/form_light.gd`)
 
 - 目的:让玩家/武器/敌人有体积。环境光只是**全局乘一个标量**,不区分朝向,所以精灵会读成平贴纸。
-- **TAG 驱动渲染策略**:`light_model` = `flat`(默认,不做形体光)/ `ellipsoid`(玩家、鸟)/ `cylinder`(枪)。`sdf` 分支(距离场法线图)与 `SpriteNormalMap.for_texture()` 现网**不可达**(没有任何宿主传 "sdf"),别按它改行为。
+- **TAG 驱动渲染策略**:`light_model` = `flat`(默认,不做形体光)/ `ellipsoid`(鸟)/ `cylinder`(枪)/ `parts`(运行时按连通块切 5 块的兜底)/ `guide`(玩家:读打光辅助图)。`sdf` 分支(距离场法线图)与 `SpriteNormalMap.for_texture()` 现网**不可达**,别按它改行为。
   挂载时显式传参:`FormLight.attach(animator, "ellipsoid")`;敌人走 `@export var light_model`。
 - **解析形状,不用距离场**:椭球法线 `p = v_local / light_size`(clamp ±1)、`z = sqrt(1 − p·p)`。
   ★ 距离场的梯度在"最近边切换"处**不连续**,一定留下宝石切面(实测玩家被读成圆锥/棱锥);解析形状的法线是连续函数,没这个问题。
@@ -59,7 +82,9 @@
 - **半尺寸走质心椭圆拟合**:按图集 alpha 加权质心 + 二阶矩(`SpriteNormalMap.ellipse_fit`),不是逐帧包围盒——包围盒会被单帧凸起带偏;一个尺寸全帧共用(逐帧算会让动画中明暗跳动)。
 - **先提亮、再只压暗面**:`COLOR *= (1 + boost) × mix(1−gain, 1, ndl)`。`boost` 让亮面可高于贴图原值(默认 0.15 ⇒ 正午最亮 1.15×),
   这是**有意**破例,别按"最终像素 ≤ 贴图"去校验;`形式光` 只保证"光照系数"这一层是乘性的。
-- **量化 + 抖动**:`ndl` 先 `smoothstep(0.20, 0.80)` 收窄交界,再量化 `form_steps`(默认 4)档,配 4×4 Bayer(`_bayer4`,`form_dither`,锚精灵本地坐标)。
+- **量化 + 抖动**:`ndl` 先按 `edge_lo/edge_hi` 重映射(默认 0.00/0.70),再量化 `form_steps`(默认 6)档,配 4×4 Bayer(`_bayer4`,`form_dither`,锚精灵本地坐标)。
+- **打光辅助图(玩家专属,`assets/textures/player_shade.png`)**:与 `player.png` 同布局(200×200、48px 网格);**R/G = 该像素所属部位的局部受光坐标**(0.5=部位中心),**B = 贴体 AO**(手/腿贴住处压暗),A = 不透明掩码。`guide` 模型采它算明暗并乘 `1 - ao * ao_strength`;文件缺失时自动回退 `parts`(运行时连通块切 5 块)。工具:`gen_player_shade.gd`(见 git 历史/一次性脚本),改受光与接触暗部直接改这张图。
+- **玩家专属 override**:玩家/副本 `FormLight.attach(..., "guide", 1.10, 1.0, {...})` 里给 `steps 5 / dither 0.25 / bulge 2.0 / edge(-0.20, 0.80) / part_flat 0.45 / ao_strength 0.35`;`part_flat` 压平分部球面(1=按部位椭球,0=全平),`flip_x` 由玩家每帧写入(朝向翻转时 UV 镜像,不补偿会让亮面跟着朝向跑)。鸟/枪仍用全局 `form_gain` 参数。
 - 材质按 `(图集, 模型, 半尺寸)` 缓存;**每帧一次 `FormLight.push(sun_dir, gain)` 推给所有材质**,成本与精灵数量无关。
 - ⚠ **fragment() 不允许 `return`**:写一个 return 会让整个材质编译失败,精灵**静默**降级成无光照 —— 这是排查"形体光没生效"要看的第一个地方。
 - ⚠ **零守卫**:以上全部观感项,只能人眼验收;改法线/色阶/天色时必须出图对比。
