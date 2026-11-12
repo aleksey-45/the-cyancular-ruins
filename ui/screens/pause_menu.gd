@@ -44,7 +44,7 @@ func _ready() -> void:
 	(panel.get_node("Body") as Container).add_child(vb)
 
 	# 标题栏：单人模式显示「—— 已暂停 ——」，对战模式显示「—— 菜单 ——」
-	vb.add_child(UiFactory.header_strip("—— 已暂停 ——" if not is_pvp else "—— 菜单 ——", 64))
+	vb.add_child(UiFactory.header_strip("—— 已暂停 ——" if not is_pvp else "—— 菜单 ——", 64, true))
 
 	var resume := UiFactory.menu_button("继续游戏", 32, Vector2(480, 72), "gold")
 	resume.pressed.connect(close)

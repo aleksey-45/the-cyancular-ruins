@@ -78,7 +78,7 @@ func _make_card(c: Dictionary) -> PanelContainer:
 	icon_box.add_child(tag)
 
 	# 卡内标题 = 相同标题栏(与页面标题、区块标题保持统一视觉风格)。
-	vb.add_child(UiFactory.header_strip(str(c["name"]), 32))
+	vb.add_child(UiFactory.header_strip(str(c["name"]), 32, true))
 
 	var desc := UiFactory.label(str(c["desc"]), 16, UiFactory.C_TEXT_DIM)
 	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART

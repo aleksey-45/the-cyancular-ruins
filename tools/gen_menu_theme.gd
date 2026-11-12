@@ -175,10 +175,10 @@ func _panel_variants(t: Theme, F: GDScript, C: Dictionary) -> void:
 	hs.border_width_top = 0
 	hs.border_width_bottom = 1
 	hs.border_color = _c(C, "C_BORDER")
-	hs.content_margin_left = 0.0
-	hs.content_margin_right = 40.0
-	hs.content_margin_top = 20.0
-	hs.content_margin_bottom = 20.0
+	hs.content_margin_left = C["HEADER_INSET"]
+	hs.content_margin_right = C["HEADER_INSET"]
+	hs.content_margin_top = C["HEADER_PAD_Y"]
+	hs.content_margin_bottom = C["HEADER_PAD_Y"]
 	t.set_stylebox("panel", "HeaderStrip", hs)
 
 	# 列表项底板与整行可点击按钮
@@ -205,8 +205,8 @@ func _other_controls(t: Theme, F: GDScript, C: Dictionary) -> void:
 	le.border_color = _c(C, "C_BORDER_DIM")
 	le.set_border_width_all(2)
 	le.set_corner_radius_all(0)
-	le.content_margin_left = 10.0
-	le.content_margin_right = 10.0
+	le.content_margin_left = 16.0
+	le.content_margin_right = 16.0
 	t.set_stylebox("normal", "LineEdit", le)
 	var lef := le.duplicate() as StyleBoxFlat
 	lef.border_color = _c(C, "C_ACCENT")

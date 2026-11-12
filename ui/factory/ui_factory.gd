@@ -203,8 +203,11 @@ static func menu_button(text: String, size: int, min_size: Vector2 = Vector2(640
 	return b
 
 
+const HEADER_INSET := 24.0
+const HEADER_PAD_Y := 20.0
+
 # 仅带底部分界线的标题条。
-static func header_strip(text: String, size: int = 32) -> PanelContainer:
+static func header_strip(text: String, size: int = 32, centered := false) -> PanelContainer:
 	var p := PanelContainer.new()
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = C_HEADER
@@ -214,15 +217,25 @@ static func header_strip(text: String, size: int = 32) -> PanelContainer:
 	sb.border_width_top = 0
 	sb.border_width_bottom = 1
 	sb.border_color = C_BORDER
-	# 左内边距设为 0，使标题文本与正文内容左对齐；右内边距 40，上下各 20 像素维持呼吸感
-	sb.content_margin_left = 0.0
-	sb.content_margin_right = 40.0
-	sb.content_margin_top = 20.0
-	sb.content_margin_bottom = 20.0
+	sb.content_margin_left = HEADER_INSET
+	sb.content_margin_right = HEADER_INSET
+	sb.content_margin_top = HEADER_PAD_Y
+	sb.content_margin_bottom = HEADER_PAD_Y
 	p.add_theme_stylebox_override("panel", sb)
-	p.add_child(label(text, size, C_GOLD))
+	var title := label(text, size, C_GOLD)
+	if centered:
+		title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	p.add_child(title)
 	return p
 
+static func scroll_list(content: Control, height: float) -> ScrollContainer:
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size.y = height
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.follow_focus = true
+	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(content)
+	return scroll
 
 # 列表行底板样式：略高于主背景明度，提供清晰的列表项视觉区隔。
 static func row_box() -> StyleBoxFlat:

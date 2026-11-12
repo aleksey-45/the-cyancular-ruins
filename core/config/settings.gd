@@ -159,8 +159,10 @@ func save() -> void:
 
 func load_settings() -> void:
 	var cf := ConfigFile.new()
-	if cf.load(SAVE_PATH) != OK:
-		save()   # 首次运行:把当前值(=代码默认)写下去
+	var error := cf.load(SAVE_PATH)
+	if error != OK:
+		if error == ERR_FILE_NOT_FOUND:
+			save()
 		return
 	master_volume = float(cf.get_value("audio", "master_volume", 0.8))
 	sfx_volume = float(cf.get_value("audio", "sfx_volume", 1.0))
@@ -181,15 +183,23 @@ func load_settings() -> void:
 	pvp_show_minimap = bool(cf.get_value("pvp", "show_minimap", true))
 	pvp_minimap_show_enemy = bool(cf.get_value("pvp", "minimap_show_enemy", true))
 	for action in REMAPPABLE_ACTIONS:
-		var arr = cf.get_value("bindings", action, [])
-		if arr is Array and not (arr as Array).is_empty():
+		var saved: Variant = cf.get_value("bindings", action, [])
+		if not saved is Array:
+			continue
+		var events: Array[InputEvent] = []
+		for item in saved:
+			if not item is Dictionary:
+				continue
+			var key: Variant = item.get("k")
+			var mouse: Variant = item.get("m")
+			if key is int and key > 0:
+				events.append(_make_key(key))
+			elif mouse is int and mouse > 0:
+				events.append(_make_mouse(mouse))
+		if not events.is_empty():
 			InputMap.action_erase_events(action)
-			for item in arr:
-				if item is Dictionary:
-					if item.has("k"):
-						InputMap.action_add_event(action, _make_key(int(item["k"])))
-					elif item.has("m"):
-						InputMap.action_add_event(action, _make_mouse(int(item["m"])))
+			for event in events:
+				InputMap.action_add_event(action, event)
 
 func _make_key(keycode: int) -> InputEventKey:
 	var ev := InputEventKey.new()
