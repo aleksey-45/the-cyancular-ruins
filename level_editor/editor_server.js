@@ -3,7 +3,7 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const { spawn, execFileSync } = require('child_process');
+const { spawn } = require('child_process');
 
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_PORT = 8777;
@@ -59,19 +59,17 @@ function staticFileFor(rootDir, urlPath, indexName) {
   return { status: 200, file: target };
 }
 
-function serveStatic(res, resolved, headOnly) {
-  if (resolved.status !== 200) return sendText(res, resolved.status, resolved.message);
-  fs.stat(resolved.file, function (err, st) {
-    if (err || !st.isFile()) return sendText(res, 404, '找不到 ' + path.basename(resolved.file));
+function serveFile(res, target, headOnly) {
+  fs.stat(target, function (error, stat) {
+    if (error && error.code !== 'ENOENT') return sendFileError(res, error);
+    if (error || !stat.isFile()) return sendText(res, 404, '找不到 ' + path.basename(target));
     res.writeHead(200, {
-      'Content-Type': mimeOf(resolved.file),
-      'Content-Length': st.size,
+      'Content-Type': mimeOf(target),
+      'Content-Length': stat.size,
       'Cache-Control': 'no-store',
     });
     if (headOnly) return res.end();
-    let stream;
-    try { stream = fs.createReadStream(resolved.file); }
-    catch (e) { return res.destroy(); }
+    const stream = fs.createReadStream(target);
     stream.on('error', function () { res.destroy(); });
     // 客户端提前断开连接时销毁可读流，防止文件句柄泄露
     res.on('close', function () { stream.destroy(); });
@@ -80,7 +78,7 @@ function serveStatic(res, resolved, headOnly) {
 }
 
 // 地图文件名：裸文件名，1-64 个 ASCII 安全字符加 .cyrm 后缀。
-const MAP_NAME_RE = /^[A-Za-z0-9_-]{1,64}\.cyrm$/;
+const {NAME_PATTERN: MAP_NAME_RE, backupName} = require('./map_files.js');
 
 function isValidMapName(name) {
   return MAP_NAME_RE.test(name);
@@ -96,7 +94,10 @@ function listMaps(mapsDir, logger) {
   const out = [];
   let names = [];
   try { names = fs.readdirSync(mapsDir); }
-  catch (e) { return out; }                     // 目录不存在视为空列表
+  catch (error) {
+    if (error.code === 'ENOENT') return out;
+    throw error;
+  }
   names.sort();
   for (const n of names) {
     if (!isValidMapName(n)) { if (logger) logger('跳过不可打开的文件:' + n); continue; }
@@ -110,25 +111,6 @@ function listMaps(mapsDir, logger) {
     out.push({ name: n, size: st.size, mtime: st.mtimeMs });
   }
   return out;
-}
-
-function serveMapFile(res, target, name, headOnly) {
-  fs.stat(target, function (err, st) {
-    if (err || !st.isFile()) return sendText(res, 404, '找不到地图 ' + name);
-    res.writeHead(200, {
-      'Content-Type': 'application/octet-stream',
-      'Content-Length': st.size,
-      'Cache-Control': 'no-store',
-    });
-    if (headOnly) return res.end();
-    let stream;
-    try { stream = fs.createReadStream(target); }
-    catch (e) { return res.destroy(); }
-    stream.on('error', function () { res.destroy(); });
-    // 客户端提前断开连接时销毁可读流，防止文件句柄泄露
-    res.on('close', function () { stream.destroy(); });
-    stream.pipe(res);
-  });
 }
 
 // 请求体超限错误：带有 tooLarge 标记，便于将超限（413）与其他错误区分
@@ -198,78 +180,66 @@ function assertWriteTargetInside(mapsDir, target, name) {
   }
 }
 
-// 文件重命名重试错误码（Windows 环境下文件被并发占用或防病毒扫描时常报 EPERM/EBUSY/EACCES）
-const RENAME_RETRY_CODES = ['EPERM', 'EBUSY', 'EACCES'];
-// 重命名重试配置：最大重试 12 次，基础退避 20ms，最大退避上限 50ms
-const RENAME_MAX_ATTEMPTS = 12;
-const RENAME_RETRY_BASE_MS = 20;
-// 单次退避时间上限（50ms）
-const RENAME_RETRY_MAX_MS = 50;
-
-function defaultSleep(ms) {
-  return new Promise(function (r) { setTimeout(r, ms); });
+// 同步保留目标名并提交，服务端在一次操作中完成改名。
+function installNewFile(source, target) {
+  fs.closeSync(fs.openSync(target, 'wx'));
+  try { fs.renameSync(source, target); }
+  catch (error) { fs.unlinkSync(target); throw error; }
 }
 
-function renameWithRetry(tmpPath, target, renameFn, sleepFn) {
-  const rename = renameFn || function (a, b) { return fs.promises.rename(a, b); };
-  const sleep = sleepFn || defaultSleep;
-  let attempts = 0;
-  function attempt() {
-    attempts++;
-    // 兼容同步与异步 rename 实现
-    return Promise.resolve().then(function () { return rename(tmpPath, target); })
-      .then(function () { return attempts; })
-      .catch(function (e) {
-        const code = e && e.code !== undefined ? String(e.code) : '';
-        if (RENAME_RETRY_CODES.indexOf(code) < 0) throw e;          // 不在重试名单中立即抛出
-        if (attempts >= RENAME_MAX_ATTEMPTS) throw e;               // 达到最大重试次数抛出
-        // 计算退避间隔：min(RENAME_RETRY_MAX_MS, RENAME_RETRY_BASE_MS * 2^(attempts-1))
-        const backoff = Math.min(RENAME_RETRY_MAX_MS,
-                                 RENAME_RETRY_BASE_MS * Math.pow(2, attempts - 1));
-        return Promise.resolve(sleep(backoff)).then(attempt);
-      });
-  }
-  return attempt();
-}
-
-let tmpSeq = 0;
-// 原子写入地图文件：先写入同目录临时文件，再原子替换目标文件
-async function writeMapAtomic(mapsDir, name, bytes, renameFn, sleepFn) {
+async function writeMapAtomic(mapsDir, name, bytes, {create, backup} = {}) {
   const target = mapPathFor(mapsDir, name);
   fs.mkdirSync(mapsDir, { recursive: true });
-  // 写入前校验目标路径是否合法，未通过校验时禁止落盘
   assertWriteTargetInside(mapsDir, target, name);
-  const tmp = target + '.' + process.pid + '.' + (++tmpSeq) + '.tmp';
+  const tmp = target + '.' + require('node:crypto').randomUUID() + '.tmp';
+  const original = backup ? backupName(name) : null;
+  fs.writeFileSync(tmp, bytes, {flag: 'wx'});
   try {
-    fs.writeFileSync(tmp, bytes);
-    await renameWithRetry(tmp, target, renameFn, sleepFn);
-  } catch (e) {
-    try { fs.unlinkSync(tmp); } catch (e2) { /* 清理失败不改写主错误 */ }
-    throw e;
+    if (original) fs.copyFileSync(target, path.join(mapsDir, original), fs.constants.COPYFILE_EXCL);
+    if (create) installNewFile(tmp, target);
+    else await fs.promises.rename(tmp, target);
+  } finally {
+    fs.rmSync(tmp, {force: true});
   }
-  return { name: name, size: bytes.length };
+  return {name, size: bytes.length, backup: original};
 }
 
-function receiveMapFile(req, res, name, ctx) {
-  readBody(req, ctx.maxMapBytes).then(function (buf) {
-    // 拒绝空请求体，防止误操作清空已有地图
-    if (buf.length === 0) {
-      sendText(res, 400, '空请求体:拒绝用空内容覆盖地图');
-      return;
-    }
-    // 返回 Promise 链，确保异步写入结果或异常正常处理
-    return writeMapAtomic(ctx.mapsDir, name, buf).then(function (out) {
-      ctx.logger('写入 ' + name + ' ' + out.size + ' 字节');
-      sendJson(res, 200, out);
-    });
-  }).catch(function (err) {
-    const msg = (err && err.message) ? err.message : String(err);
-    // 按错误标记区分状态码：超限为 413，安全校验拦截为 403，其余为 500
-    if (err && err.tooLarge === true) { sendText(res, 413, msg); return; }
-    // 安全校验拦截统一返回 403
-    if (err && err.writeRejected === true) { sendText(res, 403, msg); return; }
-    sendText(res, 500, '写入失败:' + msg);
-  });
+function queueWrite(ctx, write) {
+  const done = ctx.writes.then(write);
+  ctx.writes = done.catch(() => {});
+  return done;
+}
+
+function sendFileError(res, error) {
+  if (error.tooLarge) return sendText(res, 413, error.message);
+  if (error.writeRejected) return sendText(res, 403, error.message);
+  if (error.code === 'EEXIST') return sendText(res, 409, '同名文件已存在');
+  if (error.code === 'ENOENT') return sendText(res, 404, '地图文件不存在');
+  return sendText(res, 500, error.message);
+}
+
+async function receiveMapFile(req, res, name, ctx, options) {
+  try {
+    const bytes = await readBody(req, ctx.maxMapBytes);
+    if (bytes.length === 0) return sendText(res, 400, '地图内容为空');
+    const out = await queueWrite(ctx, () => writeMapAtomic(ctx.mapsDir, name, bytes, options));
+    ctx.logger('写入 ' + name + ' ' + out.size + ' 字节');
+    return sendJson(res, 200, out);
+  } catch (error) { return sendFileError(res, error); }
+}
+
+function changeMapFile(mapsDir, name, newName) {
+  const source = mapPathFor(mapsDir, name);
+  assertWriteTargetInside(mapsDir, source, name);
+  if (!fs.lstatSync(source).isFile()) throw rejectWrite('地图必须是普通文件');
+  if (!newName) {
+    fs.unlinkSync(source);
+    return {name};
+  }
+  const target = mapPathFor(mapsDir, newName);
+  assertWriteTargetInside(mapsDir, target, newName);
+  installNewFile(source, target);
+  return {name: newName};
 }
 
 // Host 请求头白名单检查，防御 DNS 重绑定攻击
@@ -322,9 +292,11 @@ function writeGuardReject(req) {
 function handleApi(req, res, parsed, ctx) {
   if (parsed.pathname === '/api/maps') {
     if (req.method !== 'GET' && req.method !== 'HEAD') return sendText(res, 405, '只接受 GET');
-    const maps = listMaps(ctx.mapsDir, ctx.logger);
-    ctx.logger('列出 ' + maps.length + ' 张地图');
-    return sendJson(res, 200, { maps: maps });
+    try {
+      const maps = listMaps(ctx.mapsDir, ctx.logger);
+      ctx.logger('列出 ' + maps.length + ' 张地图');
+      return sendJson(res, 200, {maps});
+    } catch (error) { return sendFileError(res, error); }
   }
   if (parsed.pathname === '/api/map') {
     const name = parsed.searchParams.get('p');
@@ -335,15 +307,20 @@ function handleApi(req, res, parsed, ctx) {
     }
     const target = mapPathFor(ctx.mapsDir, name);
     if (req.method === 'GET' || req.method === 'HEAD') {
-      return serveMapFile(res, target, name, req.method === 'HEAD');
+      return serveFile(res, target, req.method === 'HEAD');
     }
+    if (!['PUT', 'POST', 'DELETE'].includes(req.method)) return sendText(res, 405, '只接受 GET / PUT / POST / DELETE');
+    const bad = writeGuardReject(req);
+    if (bad) return sendText(res, bad.status, bad.message);
     if (req.method === 'PUT') {
-      // 写入前先执行 CSRF 安全校验
-      const bad = writeGuardReject(req);
-      if (bad) return sendText(res, bad.status, bad.message);
-      return receiveMapFile(req, res, name, ctx);
+      const create = parsed.searchParams.get('create') === '1';
+      const backup = !create && parsed.searchParams.get('backup') === '1';
+      return receiveMapFile(req, res, name, ctx, {create, backup});
     }
-    return sendText(res, 405, '只接受 GET / PUT');
+    const newName = parsed.searchParams.get('to');
+    if (req.method === 'POST' && !isValidMapName(newName)) return sendText(res, 400, '新地图名非法');
+    return queueWrite(ctx, () => changeMapFile(ctx.mapsDir, name, req.method === 'POST' ? newName : null))
+      .then(out => sendJson(res, 200, out), error => sendFileError(res, error));
   }
   return sendText(res, 404, '未知接口 ' + parsed.pathname);
 }
@@ -356,6 +333,7 @@ function createServer(opts) {
     indexName: opts.index || DEFAULT_INDEX,
     maxMapBytes: opts.maxMapBytes === undefined ? MAX_MAP_BYTES : opts.maxMapBytes,
     logger: opts.logger || function () {},
+    writes: Promise.resolve(),
   };
   return http.createServer(function (req, res) {
     // 全局 Host 白名单校验
@@ -370,23 +348,10 @@ function createServer(opts) {
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       return sendText(res, 405, '静态路径只接受 GET/HEAD,收到 ' + req.method);
     }
-    serveStatic(res, staticFileFor(ctx.rootDir, parsed.pathname, ctx.indexName), req.method === 'HEAD');
+    const resolved = staticFileFor(ctx.rootDir, parsed.pathname, ctx.indexName);
+    if (resolved.status !== 200) return sendText(res, resolved.status, resolved.message);
+    serveFile(res, resolved.file, req.method === 'HEAD');
   });
-}
-
-function describePortOwner(port) {
-  const hint = '  查占用者:netstat -ano | findstr :' + port + '(最后一列是 PID),再 taskkill /PID <PID> /F';
-  if (process.platform !== 'win32') return hint;
-  try {
-    const out = execFileSync('netstat', ['-ano'], { encoding: 'utf8' });
-    const lines = out.split(/\r?\n/).filter(function (l) {
-      return l.indexOf(':' + port) >= 0 && /LISTENING/i.test(l);
-    });
-    if (lines.length) {
-      return '  占用者:\n' + lines.map(function (l) { return '    ' + l.trim(); }).join('\n') + '\n' + hint;
-    }
-  } catch (e) { /* 拿不到就只给 hint */ }
-  return hint;
 }
 
 function openBrowser(url) {
@@ -410,13 +375,7 @@ function startServer(opts) {
   const port = opts.port === undefined ? DEFAULT_PORT : opts.port;
   const server = createServer(opts);
   return new Promise(function (resolve, reject) {
-    server.once('error', function (err) {
-      if (err && err.code === 'EADDRINUSE') {
-        return reject(new Error('端口 ' + port + ' 已被占用 —— 编辑器服务器起不来。\n' +
-                                describePortOwner(port)));
-      }
-      reject(err);
-    });
+    server.once('error', reject);
     server.listen(port, host, function () {
       const addr = server.address();
       const url = 'http://' + host + ':' + addr.port + '/';
@@ -454,21 +413,5 @@ if (require.main === module) {
 }
 
 module.exports = {
-  DEFAULT_HOST: DEFAULT_HOST, DEFAULT_PORT: DEFAULT_PORT,
-  DEFAULT_ROOT_DIR: DEFAULT_ROOT_DIR, DEFAULT_MAPS_DIR: DEFAULT_MAPS_DIR,
-  DEFAULT_INDEX: DEFAULT_INDEX, MAX_MAP_BYTES: MAX_MAP_BYTES,
-  MIME: MIME, mimeOf: mimeOf, sendText: sendText, sendJson: sendJson,
-  staticFileFor: staticFileFor, serveStatic: serveStatic, handleApi: handleApi,
-  MAP_NAME_RE: MAP_NAME_RE,
-  isValidMapName: isValidMapName, mapPathFor: mapPathFor, listMaps: listMaps,
-  serveMapFile: serveMapFile,
-  WRITE_CONTENT_TYPE: WRITE_CONTENT_TYPE, writeGuardReject: writeGuardReject,
-  readBody: readBody, rejectWrite: rejectWrite,
-  RENAME_RETRY_CODES: RENAME_RETRY_CODES, RENAME_MAX_ATTEMPTS: RENAME_MAX_ATTEMPTS,
-  RENAME_RETRY_BASE_MS: RENAME_RETRY_BASE_MS, RENAME_RETRY_MAX_MS: RENAME_RETRY_MAX_MS,
-  renameWithRetry: renameWithRetry,
-  assertWriteTargetInside: assertWriteTargetInside, writeMapAtomic: writeMapAtomic,
-  receiveMapFile: receiveMapFile,
-  createServer: createServer, startServer: startServer,
-  describePortOwner: describePortOwner, openBrowser: openBrowser, parseArgs: parseArgs,
+  isValidMapName, writeMapAtomic, startServer,
 };

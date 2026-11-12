@@ -7,16 +7,15 @@ globalThis.Editor = (function () {
   if (!Io) throw new Error('ui.js: 必须先加载 io.js');
 
   var DEFAULT_CELLS_W = 125, DEFAULT_CELLS_H = 75;
+  var homeFiles = globalThis.CYRM_OFFLINE ? MapFiles.downloads() : MapFiles.server();
 
   var app = {
     r: null, canvas: null, map: null, name: null,
-    raw: null, tileDefs: null,
+    raw: null, tileDefs: null, files: homeFiles, inLibrary: false, fileBusy: false,
+    sourceFormat: 'v4', documentKey: '', drawing: false,
   };
 
   function $(id) { return document.getElementById(id); }
-  function mapRequest(url, options) {
-    return globalThis.CYRM_OFFLINE ? globalThis.CYRM_OFFLINE.request(url, options) : fetch(url, options);
-  }
   function nowMs() {
     return (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
   }
@@ -51,18 +50,13 @@ globalThis.Editor = (function () {
   }
 
   function nameFromFile(fileName) {
-    return String(fileName == null ? '' : fileName).replace(/\.cyrm$/i, '');
+    return String(fileName == null ? '' : fileName).replace(/\.(?:cyrm|txt)$/i, '');
   }
-  function mapFromBytes(fileName, bytes) {
-    return Io.decodeMap(bytes).then(function (map) {
-      map.name = nameFromFile(fileName);
-      return { map: map };
-    });
-  }
-
-  var TOOLS = ['brush', 'rect', 'bucket', 'eraser', 'line', 'select', 'picker', 'gradient'];
   var TOOL_LABELS = { brush: '画笔', rect: '矩形', bucket: '油漆桶', eraser: '橡皮',
-                      line: '直线', select: '选框', picker: '吸管', gradient: '渐变' };
+                      line: '直线', select: '选框', picker: '吸管', gradient: '渐变',
+                      'respawn-1': '放侧 1 复活点', 'respawn-2': '放侧 2 复活点' };
+  var TOOLS = Object.keys(TOOL_LABELS);
+  var RESPAWN_SIDES = { 'respawn-1': 1, 'respawn-2': 2 };
   var DERIVED_TEXTURES = [22];
 
   // ── 尺寸与纹理的硬上限(闸 1:一律钳制,不报错回滚)──
@@ -113,19 +107,20 @@ globalThis.Editor = (function () {
     return Render.wrapIdx(Y, map.subRows) * map.subCols + Render.wrapIdx(X, map.subCols);
   }
   // 两种单位(格 / 子格)的换算只此一处:region.unit === 'cell' ⇒ 每格 16 个子格。
-  function regionCells(map, region, clip) {
+  function regionCells(map, region, clip, outline = false) {
     var out = [], seen = new Set();
     function add(X, Y) {
       var wx = Render.wrapIdx(X, map.subCols), wy = Render.wrapIdx(Y, map.subRows);
       if (!inRect(clip, wx, wy, map.subCols, map.subRows)) return;   // C12:选区约束绘制(环面)
       var i = wy * map.subCols + wx;
-      if (seen.has(i)) return;                           // 环面下 3×3 会重复命中,去重
+      if (seen.has(i)) return;
       seen.add(i); out.push(i);
     }
     var k = Core.SUB_PER_CELL;
     if (region.unit === 'cell') {
       for (var cy = region.y0; cy <= region.y1; cy++) {
         for (var cx = region.x0; cx <= region.x1; cx++) {
+          if (outline && cx !== region.x0 && cx !== region.x1 && cy !== region.y0 && cy !== region.y1) continue;
           for (var qy = 0; qy < k; qy++) {
             for (var qx = 0; qx < k; qx++) add(cx * k + qx, cy * k + qy);
           }
@@ -133,7 +128,9 @@ globalThis.Editor = (function () {
       }
     } else {
       for (var y = region.y0; y <= region.y1; y++) {
-        for (var x = region.x0; x <= region.x1; x++) add(x, y);
+        for (var x = region.x0; x <= region.x1; x++) {
+          if (!outline || x === region.x0 || x === region.x1 || y === region.y0 || y === region.y1) add(x, y);
+        }
       }
     }
     return out;
@@ -146,17 +143,14 @@ globalThis.Editor = (function () {
     for (var i = 0; i < cells.length; i++) pts.push({ kind: from.kind, x: cells[i][0], y: cells[i][1] });
     return pts;
   }
-  function lineTargets(map, a, b, clip) {
-    var pts = strokePoints({ kind: 'sub', x: a.x, y: a.y }, { kind: 'sub', x: b.x, y: b.y });
-    var out = [], seen = new Set();
-    for (var i = 0; i < pts.length; i++) {
-      var wx = Render.wrapIdx(pts[i].x, map.subCols), wy = Render.wrapIdx(pts[i].y, map.subRows);
-      if (!inRect(clip, wx, wy, map.subCols, map.subRows)) continue;
-      var idx = wy * map.subCols + wx;
-      if (seen.has(idx)) continue;
-      seen.add(idx); out.push(idx);
+  function lineTargets(map, a, b, clip, width) {
+    var {lo, hi} = Core.brushOffsets(width);
+    var out = new Set();
+    for (var [x, y] of Core.lineCells(a.x, a.y, b.x, b.y)) {
+      var region = {unit: 'sub', x0: x - lo, y0: y - lo, x1: x + hi, y1: y + hi};
+      for (var cell of regionCells(map, region, clip)) out.add(cell);
     }
-    return out;
+    return Array.from(out);
   }
   function toSub(hit) {
     var k = Core.SUB_PER_CELL;
@@ -238,9 +232,9 @@ globalThis.Editor = (function () {
         unit: from.kind,
         x0: Math.min(from.x, to.x), y0: Math.min(from.y, to.y),
         x1: Math.max(from.x, to.x), y1: Math.max(from.y, to.y),
-      }, clip);
+      }, clip, st.outline);
     } else if (tool === 'line') {
-      idx = lineTargets(map, toSub(from), toSub(to), clip);
+      idx = lineTargets(map, toSub(from), toSub(to), clip, st.lineWidth);
     }
     if (!idx) return null;
     return paintCells(map, L, idx, valueFor(st, L));
@@ -324,11 +318,12 @@ globalThis.Editor = (function () {
     return { runChunk: runChunk, result: function () { return out.slice(); } };
   }
 
-  // ── 出生点与敌人(A9:它们的增删也要进历史)──
+  // ── 出生点、敌人与团队复活点──
   function snapshotSpawns(map) {
     return {
-      players: map.players.map(function (p) { return { x: p.x, y: p.y }; }),
+      players: map.players.map(p => ({...p})),
       enemies: map.enemies.map(function (e) { return { type: e.type, x: e.x, y: e.y }; }),
+      respawns: map.respawns.map(function (r) { return { side: r.side, x: r.x, y: r.y }; }),
     };
   }
   function spawnDiff(before, after) {
@@ -350,14 +345,6 @@ globalThis.Editor = (function () {
     }
     return null;
   }
-  function addSpawn(map, kind, cellX, cellY, enemyType) {
-    var before = snapshotSpawns(map);
-    var x = Render.wrapIdx(Math.floor(cellX), Core.cellsWOf(map));
-    var y = Render.wrapIdx(Math.floor(cellY), Core.cellsHOf(map));
-    if (kind === 'enemy') map.enemies.push({ type: String(enemyType || 'fly_bird'), x: x, y: y });
-    else map.players.push({ x: x, y: y });
-    return spawnDiff(before, snapshotSpawns(map));
-  }
   function removeSpawn(map, kind, index) {
     var before = snapshotSpawns(map);
     if (kind === 'enemy') { if (index < 0 || index >= map.enemies.length) return null; map.enemies.splice(index, 1); }
@@ -367,6 +354,23 @@ globalThis.Editor = (function () {
   function clearSpawns(map) {
     var before = snapshotSpawns(map);
     map.players = []; map.enemies = [];
+    return spawnDiff(before, snapshotSpawns(map));
+  }
+  function toggleRespawn(map, side, hit) {
+    var p = toSub(hit), k = Core.SUB_PER_CELL;
+    var x = Math.floor(p.x / k), y = Math.floor(p.y / k);
+    var before = snapshotSpawns(map);
+    var atCell = r => r.x === x && r.y === y;
+    var remove = map.respawns.some(r => r.side === side && atCell(r));
+    map.respawns = map.respawns.filter(r => !atCell(r));
+    if (!remove) map.respawns.push({ side: side, x: x, y: y });
+    return spawnDiff(before, snapshotSpawns(map));
+  }
+  function clearRespawns(map, side) {
+    var keep = map.respawns.filter(r => r.side !== side);
+    if (keep.length === map.respawns.length) return null;
+    var before = snapshotSpawns(map);
+    map.respawns = keep;
     return spawnDiff(before, snapshotSpawns(map));
   }
 
@@ -387,7 +391,7 @@ globalThis.Editor = (function () {
     var inRange = function (p) { return p.x >= 0 && p.y >= 0 && p.x < cellsW && p.y < cellsH; };
     var i;
     for (i = 0; i < map.players.length; i++) {
-      if (inRange(map.players[i])) out.players.push({ x: map.players[i].x, y: map.players[i].y });
+      if (inRange(map.players[i])) out.players.push({...map.players[i]});
       else dropped.push({ kind: 'player', x: map.players[i].x, y: map.players[i].y });
     }
     for (i = 0; i < map.enemies.length; i++) {
@@ -395,14 +399,19 @@ globalThis.Editor = (function () {
       if (inRange(e)) out.enemies.push({ type: e.type, x: e.x, y: e.y });
       else dropped.push({ kind: 'enemy', type: e.type, x: e.x, y: e.y });
     }
+    for (var r of map.respawns) {
+      if (inRange(r)) out.respawns.push({ side: r.side, x: r.x, y: r.y });
+      else dropped.push({ kind: 'respawn', side: r.side, x: r.x, y: r.y });
+    }
     return { map: out, dropped: dropped, size: { w: cellsW, h: cellsH } };
   }
   // A10 要求的是"提示并清理"而不是"静默清理" —— 这一行就是那个提示的文案。
   function resizeReportLines(dropped) {
     return (dropped || []).map(function (d) {
-      return d.kind === 'enemy'
-        ? ('敌人 ' + d.type + ' 落在图外 (' + d.x + ',' + d.y + '),已移除')
-        : ('出生点落在图外 (' + d.x + ',' + d.y + '),已移除');
+      var label = '出生点';
+      if (d.kind === 'enemy') label = '敌人 ' + d.type;
+      if (d.kind === 'respawn') label = '侧 ' + d.side + ' 复活点';
+      return label + '落在图外 (' + d.x + ',' + d.y + ')，已移除';
     });
   }
   // 尺寸统一经 resizeMap 钳制，输入框回显实际地图尺寸。
@@ -426,6 +435,7 @@ globalThis.Editor = (function () {
     return true;
   }
   function applySize() {
+    if (app.fileBusy || app.drawing) return;
     if (!app.map) { status('先打开一张地图'); return null; }
     var wEl = $('size-w'), hEl = $('size-h');
     var curW = Core.cellsWOf(app.map), curH = Core.cellsHOf(app.map);
@@ -441,31 +451,19 @@ globalThis.Editor = (function () {
       status('尺寸没变(' + c.w + '×' + c.h + '),没有改动地图' + igTxt);
       return null;
     }
-    // before 快照必须取在改之前,而 wholeDiff 的 seal() 快照的是建它时抓的那个
-    //    对象 ⇒ 中间不许换 app.map 的引用,只能把新尺寸原地装进去(adoptMapInto)。
-    //    直接 app.map = out.map 的话 before === after:撤销/重做都无效,且一个字都不报。
-    var wd = wholeDiff(app.map, 'resize');
+    var before = snapshotMap(app.map);
     var out = resizeMap(app.map, c.w, c.h);
     adoptMapInto(app.map, out.map);
-    // 走既有的落笔出口:kind:'whole' ⇒ pushAndShow 会派到 invalidateAll(画布按新尺寸
-    //   重新挂)并把这一条推进历史。
-    pushAndShow(wd.seal());
-    // 状态栏那一格与两个输入框都要跟着翻 —— pushAndShow 只调 statusLine()(它管的是
-    //   工具/纹理/选区/撤销深度那一排),不含尺寸,也不碰输入框。少了这一句,改完尺寸之后
-    //   状态栏仍写着旧尺寸、框里也仍是刚输的那个数(与"DOM 必须与状态一致"同一条纪律)。
-    refreshStatus();
-    // 选区装不下新尺寸就清掉(Important 1;理由见 dropStaleSelection)。排在
-    //    adoptMapInto 之后(app.map.subCols 此刻才是新尺寸)。
+    var after = snapshotMap(app.map);
     var selDropped = dropStaleSelection();
-    // A10:越界项要报出来。resizeMap 只丢不钳(钳一个出生点到边界上是替用户做决定),
-    //    所以这里报的就是它丢掉的那几项 —— 静默清理等于"导出去游戏读到网格外坐标"。
+    var paint = pushAndShow({kind: 'whole', before, after,
+      bytes: bytesOfSnapshot(before) + bytesOfSnapshot(after)});
     var lines = resizeReportLines(out.dropped);
     status('尺寸改为 ' + out.size.w + '×' + out.size.h + ' 格' +
-           (lines.length ? (';A10 越界项已清理 ' + lines.length + ' 项:' + lines.join(';'))
-                         : ';没有越界项') +
+           (lines.length ? '，已清理越界项 ' + lines.join('，') : '') +
            igTxt +
-           (selDropped ? ';选区超出新尺寸,已清掉' : ''));
-    return null;
+           (selDropped ? '，已清除越界选区' : ''));
+    return paint;
   }
 
   var KEY_TOOLS = { b: 'brush', e: 'eraser', g: 'bucket', l: 'line', m: 'select', i: 'picker' };
@@ -481,17 +479,18 @@ globalThis.Editor = (function () {
   function commandFor(ev) {
     var e = ev || {};
     var k = String(e.key == null ? '' : e.key).toLowerCase();
-    var mod = !!(e.ctrl || e.meta);
+    var mod = e.ctrlKey || e.metaKey;
     if (mod) {
-      if (k === 'z') return e.shift ? 'redo' : 'undo';
+      if (k === 'z') return e.shiftKey ? 'redo' : 'undo';
       if (k === 'y') return 'redo';
       if (k === 'c') return 'copy';
       if (k === 'x') return 'cut';
       if (k === 'v') return 'paste';
-      if (k === 's') return e.shift ? 'save-as' : 'save';
+      if (k === 's') return e.shiftKey ? 'save-as' : 'save';
       return null;
     }
     if (KEY_TOOLS[k]) return 'tool:' + KEY_TOOLS[k];
+    if (k === 'r') return 'guides';
     if (k === 'h') return 'mirror:h';
     if (k === 'v') return 'mirror:v';
     if (k === '[') return 'brush-smaller';
@@ -513,13 +512,13 @@ globalThis.Editor = (function () {
   var MAX_UNDO = 200;
   var MAX_UNDO_BYTES = 64 * 1024 * 1024;
 
+  function spawnCount(s) { return s.players.length + s.enemies.length + s.respawns.length; }
+
   function bytesOfEntry(e) {
     if (!e) return 0;
     if (e.kind === 'cells') return 12 + e.idx.length * 4 + e.before.length * 4 + e.after.length * 4;
     if (e.kind === 'spawn') {
-      var n = (e.before ? e.before.players.length + e.before.enemies.length : 0) +
-              (e.after ? e.after.players.length + e.after.enemies.length : 0);
-      return 64 + 32 * n;
+      return 64 + 32 * (spawnCount(e.before) + spawnCount(e.after));
     }
     if (e.kind === 'whole') return 64 + (e.bytes || 0);
     return 64;
@@ -571,12 +570,11 @@ globalThis.Editor = (function () {
       layers.push(lay.kind === 'tex' ? { kind: 'tex', desc: new Uint32Array(lay.desc) }
                                      : { kind: 'color', rgba: new Uint32Array(lay.rgba) });
     }
-    var sp = snapshotSpawns(map);
     return { subCols: map.subCols, subRows: map.subRows, layers: layers,
-             players: sp.players, enemies: sp.enemies, comments: map.comments.slice() };
+             spawns: snapshotSpawns(map), comments: map.comments.slice() };
   }
   function bytesOfSnapshot(s) {
-    var n = 0;
+    var n = 32 * spawnCount(s.spawns);
     for (var L = 0; L < s.layers.length; L++) {
       var lay = s.layers[L];
       if (!lay) continue;
@@ -584,67 +582,37 @@ globalThis.Editor = (function () {
     }
     return n;
   }
-  // 用法:var wd = wholeDiff(map, 'resize'); …做完改动…; wd.seal(); history.push(wd.entry);
-  function wholeDiff(map, tag) {
-    var entry = { kind: 'whole', tag: tag || '', before: snapshotMap(map), bytes: 0 };
-    entry.bytes = bytesOfSnapshot(entry.before);
-    return {
-      entry: entry,
-      seal: function () {
-        entry.after = snapshotMap(map);
-        entry.bytes += bytesOfSnapshot(entry.after);
-        return entry;
-      },
-    };
-  }
-  // 把 src 的六个字段原地装进 dst(不换引用、不做拷贝)。
-  // 为什么必须是"原地"而不是 app.map = out.map:改尺寸那条路要的差量是
-  //    wholeDiff(app.map, …) → 改 → seal(),而 seal() 快照的是它建时抓的那个对象
-  //    (闭包参数,不是"当时的 app.map")。中间换了引用 ⇒ after 拿到的仍是改前那份
-  //    (before === after):撤销/重做双双无效,而一个字都不报(条目在历史里、深度也涨了)。
-  // 字段表与 applyEntry 的 whole 分支同一份(它那边是防御性拷贝,因为快照与
-  //    地图会长期共存;这里相反 —— out.map 是刚造出来的、只有本函数一个持有者,
-  //    照搬那六个字段之后它就该被丢掉)。
+  // 改尺寸原地替换内容，整图历史持有同一个地图引用。
   function adoptMapInto(dst, src) {
     dst.subCols = src.subCols; dst.subRows = src.subRows;
     dst.layers = src.layers;
     dst.players = src.players; dst.enemies = src.enemies;
+    dst.respawns = src.respawns;
     dst.comments = src.comments;
     return dst;
   }
   function applyEntry(map, e, dir) {
-    if (!e) return;
     var i;
     if (e.kind === 'cells') {
       var arr = Render.layerArray(map, e.layer);
-      if (!arr) return;
       var src = dir < 0 ? e.before : e.after;
       for (i = 0; i < e.idx.length; i++) arr[e.idx[i]] = src[i];
       return;
     }
     if (e.kind === 'spawn') {
-      var v = dir < 0 ? e.before : e.after;
-      map.players = v.players.map(function (p) { return { x: p.x, y: p.y }; });
-      map.enemies = v.enemies.map(function (q) { return { type: q.type, x: q.x, y: q.y }; });
+      Object.assign(map, snapshotSpawns(dir < 0 ? e.before : e.after));
       return;
     }
     if (e.kind === 'whole') {
       var s = dir < 0 ? e.before : e.after;
-      if (!s) {
-        reportError('重做无效:这条整图级历史没有 after 快照(wholeDiff 的 seal() 还没调用,条目就进了历史)');
-        return;
-      }
       map.subCols = s.subCols; map.subRows = s.subRows;
-      // 必须防御性拷贝:直接 alias 快照数组的话,撤销之后地图与 entry.before
-      //   共用同一份 TypedArray —— 用户再落一笔就写进了历史条目里,下一次撤销恢复的是
-      //   被污染的 before(「撤销没撤干净」且一个字都不报;字节数也不变,字节闸发现不了)。
+      // 恢复成可编辑的数组，保留撤销和重做所需的快照。
       map.layers = s.layers.map(function (lay) {
         if (!lay) return null;
         return lay.kind === 'tex' ? { kind: 'tex', desc: new Uint32Array(lay.desc) }
                                   : { kind: 'color', rgba: new Uint32Array(lay.rgba) };
       });
-      map.players = s.players.map(function (p) { return { x: p.x, y: p.y }; });
-      map.enemies = s.enemies.map(function (q) { return { type: q.type, x: q.x, y: q.y }; });
+      Object.assign(map, snapshotSpawns(s.spawns));
       map.comments = s.comments.slice();
     }
   }
@@ -817,18 +785,9 @@ globalThis.Editor = (function () {
   }
 
   function pushAndShow(diff) {
-    if (!diff) return false;
+    if (!diff) return;
     undoHistory.push(diff);
-    markDirty();                      // 落了笔 ⇒ 磁盘上那份已经不等于屏幕上这一份了(+ 排草稿)
-    // 两条路都要走:kind:'whole'(改尺寸/换图)改的是尺寸本身,diffCells 对它是
-    //   空数组 ⇒ 只 render() 的话整张图停在旧尺寸/旧内容上(画面错了、一个字都不报)。
-    //   invalidateAll 会把缩略图与 ② 一起整片重建(它自己带尺寸对齐,见那边的注释)。
-    if (diff.kind === 'whole') { Promise.resolve(app.r.invalidateAll()); statusLine(); return true; }
-    var cells = diffCells(app.map, diff);
-    if (cells.length) app.r.editCells(diff.layer, cells);
-    else app.r.render();
-    statusLine();
-    return true;
+    return afterStateChange(diff);
   }
   function doUndo() {
     var e = undoHistory.undo();
@@ -843,29 +802,21 @@ globalThis.Editor = (function () {
     return afterStateChange(e);
   }
   function afterStateChange(e) {
-    var out = null;
+    var paint;
     markDirty();
     if (e.kind === 'whole') {
-      // 尺寸可能变了 ⇒ 整片重来。不是 setMap:那个会把视图重新"适配"并清掉选区,
-      //   而撤销一次尺寸变化不该把视野和选区一起重置(而且它建的是"新图"语义)。
-      out = Promise.resolve(app.r.invalidateAll());
-      // 但装不下的选区必须清掉(Important 1;理由见 dropStaleSelection)。这两条不矛盾:
-      //    "别无条件重置视野与选区"是不要每次都清,而这是"这一条框在新尺寸下已经没有
-      //    对应的格了"。撤销/重做都要(顺序:撤销把图放大 ⇒ 框还在;重做又缩小 ⇒ 那时
-      //    才轮到清),而"谁在什么时候把它框小了"与用户下一次框选之间隔着任意多步操作 ⇒
-      //    只能每次整片重来时判一遍。
-      if (dropStaleSelection()) status('选区超出新尺寸,已清掉');
-      // 还有那两处不在画布上的尺寸显示:状态栏的 #st-size 与尺寸面板的两个框。
-      //   invalidateAll 只管渲染,statusLine 只管工具/纹理/选区/撤销深度 ⇒ 少了这一句,
-      //   撤销一次改尺寸之后画布已经回到 4×3,而框里仍写着 400×75 —— 再按一次「应用尺寸」
-      //   就把图又改回 400×75(用户以为"尺寸没变")。与 applySize 里那一句同一条纪律。
+      if (dropStaleSelection()) status('已清除越界选区');
+      paint = app.r.invalidateAll();
       refreshStatus();
     } else if (e.kind === 'cells') {
       var cells = diffCells(app.map, e);
       if (cells.length) app.r.editCells(e.layer, cells); else app.r.render();
-    } else app.r.render();
+    } else {
+      app.r.render();
+      refreshStatus();
+    }
     statusLine();
-    return out;
+    return paint;
   }
   // 长作业(油漆桶 / 渐变):分帧驱动(闸 2)。让出帧的判据是时间预算
   //   (Render.createSlicer,默认 8ms/帧),不是固定条数 —— 固定条数在慢机器上照样能把
@@ -888,12 +839,17 @@ globalThis.Editor = (function () {
       if (done) return Promise.resolve();
       return slicer.run(new Array(JOB_QUANTA), quantum).then(pass);
     }
-    return pass().then(function () { onApply(total); });
+    app.drawing = true;
+    return pass().then(function () { onApply(total); }).finally(() => { app.drawing = false; });
   }
   function statusLine() {
     if (!app.map) return;
     var set = function (id, txt) { var el = $(id); if (el) el.textContent = txt; };
-    set('st-tool', '工具 ' + (TOOL_LABELS[app.st.tool] || app.st.tool) + ' × ' + app.st.brushSize);
+    var tool = app.st.tool, detail = '';
+    if (tool === 'line') detail = ' · ' + $('line-width').value + ' 子格';
+    if (tool === 'rect') detail = ' · ' + $('rect-mode').selectedOptions[0].textContent;
+    if (tool === 'brush' || tool === 'eraser') detail = ' × ' + app.st.brushSize;
+    set('st-tool', '工具 ' + TOOL_LABELS[tool] + detail);
     set('st-tex', '纹理 ' + Core.texOf(app.st.desc));
     set('st-desc', '辅码 ' + Core.hueOf(app.st.desc) + '/' + Core.brightOf(app.st.desc) + '/' +
                    Core.satOf(app.st.desc) + '/' + Core.alphaOf(app.st.desc));
@@ -903,10 +859,12 @@ globalThis.Editor = (function () {
     renderSaveState();                // 每落一笔都要跟着翻(状态栏是"现在"的样子)
   }
 
-  function hitOf(ev) {
+  function hitOf(ev, inside = false) {
     var cv = app.canvas;
     var rect = cv.getBoundingClientRect();
-    var p = app.r.screenToSub(ev.clientX - rect.left, ev.clientY - rect.top);
+    var x = ev.clientX - rect.left, y = ev.clientY - rect.top;
+    if (inside && !app.r.containsPoint(x, y)) return null;
+    var p = app.r.screenToSub(x, y);
     // 两种单位的吸附只在 hitOf 里决定一次:整数画笔吸附到格、小数画笔吸附到子格
     var unit = Render.brushSpan(app.st.brushSize).unit;
     var k = Core.SUB_PER_CELL;
@@ -917,7 +875,8 @@ globalThis.Editor = (function () {
   function stNow() {
     return { map: app.map, layer: app.r.layer(), desc: app.st.desc, rgba: app.st.rgba,
              rgba2: app.st.rgba2, brushSize: app.st.brushSize, selection: app.r.selection(),
-             descOnly: app.st.descOnly };
+             descOnly: app.st.descOnly, outline: $('rect-mode').value === 'outline',
+             lineWidth: Number($('line-width').value) };
   }
   function subRectOf(from, to) {
     var k = Core.SUB_PER_CELL;
@@ -935,6 +894,48 @@ globalThis.Editor = (function () {
     return { kind: 'sub', x: c.x, y: c.y };
   }
 
+  function runCommand(cmd) {
+    if (app.fileBusy || app.drawing) return;
+    if (cmd === 'guides') return $('tg-guides').click();
+    if (cmd.startsWith('tool:')) {
+      app.st.tool = cmd.slice(5);
+      return selectToolButton();
+    }
+    if (cmd === 'brush-smaller' || cmd === 'brush-bigger') {
+      return setBrush(bumpBrush(app.st.brushSize, cmd === 'brush-smaller' ? -1 : 1));
+    }
+    if (cmd.startsWith('layer:')) return setLayer(Number(cmd.slice(6)));
+    if (!app.map) return;
+    if (cmd === 'save' || cmd === 'save-as') return fileAction('保存', () => saveCurrent(cmd === 'save-as'));
+    if (cmd === 'undo') return doUndo();
+    if (cmd === 'redo') return doRedo();
+    if (cmd.startsWith('pan:')) return arrowPan(cmd.slice(4));
+    if (cmd === 'cancel-selection') {
+      app.st.selDrag = null;
+      app.r.setSelDrag(null, 0, 0);
+      app.r.setSelection(null);
+      return statusLine();
+    }
+    var L = app.r.layer(), sel = app.r.selection();
+    if (cmd !== 'copy' && !canEditLayer(L)) return;
+    if (cmd.startsWith('mirror:')) return mirrorSelection(cmd.slice(7));
+    if (cmd === 'paste') {
+      var at = sel || { x: 0, y: 0 };
+      var out = pasteRegion(app.map, L, clipboard, at.x, at.y);
+      if (!out.ok) return status('粘贴失败：' + out.why);
+      pushAndShow(out.diff);
+      if (sel) app.r.setSelection({x: at.x, y: at.y, w: clipSize(clipboard).w, h: clipSize(clipboard).h});
+      return statusLine();
+    }
+    if (!sel) return status('先框选一块');
+    if (cmd === 'copy' || cmd === 'cut') {
+      clipboard = copyRegion(app.map, L, sel);
+      if (!clipboard) return status('当前图层没有可复制的内容');
+      if (cmd === 'copy') return status('已复制 ' + clipSize(clipboard).w + '×' + clipSize(clipboard).h);
+    }
+    return pushAndShow(applyTool({map: app.map, layer: L, desc: 0, rgba: 0, brushSize: 0.25, selection: sel},
+      'rect', {kind: 'sub', x: sel.x, y: sel.y}, {kind: 'sub', x: sel.x + sel.w - 1, y: sel.y + sel.h - 1}));
+  }
   function installInteraction() {
     var cv = app.canvas;
     undoHistory = createHistory({});
@@ -947,6 +948,7 @@ globalThis.Editor = (function () {
     cv.addEventListener('contextmenu', function (e) { e.preventDefault(); });
 
     cv.addEventListener('pointerdown', function (ev) {
+      if (app.fileBusy || app.drawing || !app.map) return;
       if (cv.setPointerCapture) cv.setPointerCapture(ev.pointerId);
       guard('pointerdown', function () {
         if (ev.button === 1 || ev.altKey || (spaceDown && ev.button === 0)) {   // 中键 / Alt / 空格+左键 = 平移
@@ -954,7 +956,13 @@ globalThis.Editor = (function () {
           return;
         }
         if (ev.button !== 0) return;
-        var hit = hitOf(ev);
+        var hit = hitOf(ev, true);
+        if (!hit) return;
+        var respawnSide = RESPAWN_SIDES[app.st.tool];
+        if (respawnSide) {
+          pushAndShow(toggleRespawn(app.map, respawnSide, hit));
+          return;
+        }
         var sel = app.r.selection();
         // 没打开地图时退回线性口径(与 Render.inSel 的 W/H 缺省同款)——指针事件比 setMap
         //   早到是可能的(闸 1:钳制,不报错)
@@ -978,6 +986,7 @@ globalThis.Editor = (function () {
           statusLine();
           return;
         }
+        if (!canEditLayer(app.r.layer())) return;
         if (app.st.tool === 'bucket') {
           var s0 = stNow();
           var job = createBucketJob(app.map, s0.layer, hit.x * k2of(hit), hit.y * k2of(hit),
@@ -1009,7 +1018,7 @@ globalThis.Editor = (function () {
           var dxp = ev.clientX - app.st.panning.x, dyp = ev.clientY - app.st.panning.y;
           app.st.panning.x = ev.clientX; app.st.panning.y = ev.clientY;
           // 将异步重建交给 guard 处理拒绝。
-          return Promise.resolve(app.r.panBy(dxp, dyp));
+          return app.r.panBy(dxp, dyp);
         }
         var hit = hitOf(ev);
         if (app.st.selDrag) {                          // 拖动只记偏移(不碰数据)
@@ -1023,6 +1032,7 @@ globalThis.Editor = (function () {
         if (app.st.selStart) { app.r.setPreview(subRectOf(app.st.selStart, squareHit(app.st.selStart, hit, ev.shiftKey))); return; }
         if (app.st.gradStart) { app.r.setPreview(subRectOf(app.st.gradStart, hit)); return; }
         if (app.st.stroke) {
+          if (!canEditLayer(app.r.layer())) return;
           if (app.st.tool === 'brush' || app.st.tool === 'eraser') {
             pushAndShow(applyTool(stNow(), app.st.tool, app.st.stroke.last, hit));
             app.st.stroke.last = hit;
@@ -1047,7 +1057,7 @@ globalThis.Editor = (function () {
           // 选区可能已经没有了(Esc 走 cancel-selection,而左键还按着)⇒ 没有可搬的
           //   东西。少了这层判,下面那句 cur.x 会抛 TypeError(同款后果)。
           var cur = app.r.selection();
-          if (cur && (sd.dx !== 0 || sd.dy !== 0)) {
+          if (cur && (sd.dx !== 0 || sd.dy !== 0) && canEditLayer(app.r.layer())) {
             pushAndShow(moveRegion(app.map, app.r.layer(), cur, sd.dx, sd.dy));
             // 存回去的选区必须折算(评审发现 3):拖动跨过接缝时 cur.x + sd.dx 会
             //    落到 [0, subCols) 之外,而 regionCells 是"先折算每一格、再 inRect(clip, wx, wy)"
@@ -1093,6 +1103,7 @@ globalThis.Editor = (function () {
           var st0 = app.st.stroke;
           app.st.stroke = null;
           app.r.setPreview(null);
+          if (!canEditLayer(app.r.layer())) { app.st.gradStart = null; return; }
           if (app.st.tool === 'rect') {
             pushAndShow(applyTool(stNow(), 'rect', st0.from, hit));
           } else if (app.st.tool === 'line') {
@@ -1114,8 +1125,8 @@ globalThis.Editor = (function () {
         ev.preventDefault();
         var rect = cv.getBoundingClientRect();
         // 视图入口的 promise 同样收口(见上面 pointermove 的说明)
-        var zp = Promise.resolve(app.r.setZoomAt(ev.clientX - rect.left, ev.clientY - rect.top,
-                                                 ev.deltaY < 0 ? 1.25 : 0.8));
+        var zp = app.r.setZoomAt(ev.clientX - rect.left, ev.clientY - rect.top,
+                                ev.deltaY < 0 ? 1.25 : 0.8);
         statusLine();
         return zp;
       });
@@ -1125,58 +1136,10 @@ globalThis.Editor = (function () {
       if (isTypingTarget(ev.target)) return;
       if (ev.key === ' ') { spaceDown = true; ev.preventDefault(); return; }
       var cmd = commandFor(ev);
-      if (!cmd) return;                                  // 表外的键一律不拦
-      guard('keydown', function () {
-        ev.preventDefault();
-        var pend = null;                                 // 视图入口交回的 promise(交给 guard 收口)
-        if (cmd.indexOf('tool:') === 0) { app.st.tool = cmd.slice(5); selectToolButton(); }
-        else if (cmd === 'brush-smaller') { setBrush(bumpBrush(app.st.brushSize, -1)); }
-        else if (cmd === 'brush-bigger') { setBrush(bumpBrush(app.st.brushSize, 1)); }
-        else if (cmd.indexOf('layer:') === 0) { setLayer(parseInt(cmd.slice(6), 10)); }
-        else if (cmd === 'undo') pend = doUndo();
-        else if (cmd === 'redo') pend = doRedo();
-        else if (cmd === 'copy') {
-          clipboard = copyRegion(app.map, app.r.layer(), app.r.selection());
-          status(clipboard ? '已复制 ' + clipSize(clipboard).w + '×' + clipSize(clipboard).h : '先框选一块');
-        }
-        else if (cmd === 'cut') {
-          var s2 = app.r.selection();
-          if (!s2) { status('先框选一块'); return; }
-          clipboard = copyRegion(app.map, app.r.layer(), s2);
-          pushAndShow(applyTool({ map: app.map, layer: app.r.layer(), desc: 0, rgba: 0,
-                                  brushSize: 0.25, selection: s2 },
-                                'rect', { kind: 'sub', x: s2.x, y: s2.y },
-                                { kind: 'sub', x: s2.x + s2.w - 1, y: s2.y + s2.h - 1 }));
-        }
-        else if (cmd === 'paste') {
-          var sel = app.r.selection();
-          var at = sel ? { x: sel.x, y: sel.y } : { x: 0, y: 0 };
-          var out = pasteRegion(app.map, app.r.layer(), clipboard, at.x, at.y);
-          if (!out.ok) { status('粘贴失败:' + out.why); return; }
-          pushAndShow(out.diff);
-          if (sel) app.r.setSelection({ x: at.x, y: at.y, w: clipSize(clipboard).w, h: clipSize(clipboard).h });
-        }
-        else if (cmd.indexOf('mirror:') === 0) { pend = mirrorSelection(cmd.slice(7)); }
-        else if (cmd === 'clear-selection') {
-          var s3 = app.r.selection();
-          if (!s3) { status('先框选一块'); return; }
-          pushAndShow(applyTool({ map: app.map, layer: app.r.layer(), desc: 0, rgba: 0,
-                                  brushSize: 0.25, selection: s3 },
-                                'rect', { kind: 'sub', x: s3.x, y: s3.y },
-                                { kind: 'sub', x: s3.x + s3.w - 1, y: s3.y + s3.h - 1 }));
-        }
-        else if (cmd === 'cancel-selection') {
-          app.st.selDrag = null;
-          app.r.setSelDrag(null, 0, 0);
-          app.r.setSelection(null);
-        }
-        else if (cmd.indexOf('pan:') === 0) { pend = arrowPan(cmd.slice(4)); }
-        else if (cmd === 'save' || cmd === 'save-as') { pend = saveCurrent(cmd === 'save-as'); }
-        statusLine();
-        return pend;
-      });
+      if (!cmd) return;
+      ev.preventDefault();
+      guard('编辑操作', () => runCommand(cmd));
     });
-
     window.addEventListener('keyup', function (ev) {
       if (ev.key !== ' ') return;
       spaceDown = false;                  // 清位与"认不认领"无关:键已经抬起来了
@@ -1204,12 +1167,17 @@ globalThis.Editor = (function () {
     var step = 64;
     var d = { left: [-step, 0], right: [step, 0], up: [0, -step], down: [0, step] }[dir];
     if (!d) return null;
-    return Promise.resolve(app.r.panBy(d[0], d[1]));      // 视图入口:promise 交给 guard
+    return app.r.panBy(d[0], d[1]);
   }
   function selectToolButton() {
-    document.querySelectorAll('#toolbar .tool').forEach(function (b) {
-      b.classList.toggle('on', b.dataset.tool === app.st.tool);
+    document.querySelectorAll('.tool[data-tool]').forEach(function (b) {
+      var selected = b.dataset.tool === app.st.tool;
+      b.classList.toggle('on', selected);
+      b.setAttribute('aria-pressed', String(selected));
     });
+    for (var options of document.querySelectorAll('[data-tool-options]')) {
+      options.hidden = options.dataset.toolOptions !== app.st.tool;
+    }
     statusLine();
   }
   function setLayer(L) {
@@ -1222,80 +1190,188 @@ globalThis.Editor = (function () {
     statusLine();
   }
 
-  function freshName(base) { return Core.sanitizeName(base) + '.cyrm'; }
-  function saveTargetName(asNew) {
-    if (!app.map) return null;
-    return asNew ? freshName((app.map.name || 'map') + '_copy') : app.name;
-  }
-  function saveCurrent(asNew) {
-    if (!app.map) { status('先打开一张地图'); return Promise.resolve(); }
-    var name = saveTargetName(asNew);
-    if (!name) return Promise.resolve();
-    status('保存 ' + name + ' …');
-    // 草稿盘那条记录挂在存盘前那个键上("另存为"会换名字,存完再问键就找不到了
-    //   —— 于是旧名字下那条脏草稿会留着,下次打开那张旧图时弹一次假的恢复提示)。
-    var draftAt = currentDraftKey();
-    // 写盘只走 putMapBytes 这一个出口(页面上唯一发 PUT 的地方):PUT 的
-    //    Content-Type: application/json 与"body 是裸字节"这两条纪律都钉在那里
-    //    (不设头 = 浏览器给 Blob 的默认类型 ⇒ 服务器 415 ⇒ "点了保存、磁盘上那份没变",
-    //    而且不报错回滚)。这里再拼一份 fetch 就是第二个出口,迟早只改一处。
-    return encodeForWrite(app.map).then(function (bytes) {
-      return putMapBytes(name, bytes)
-                .then(function (out) {
-        app.name = name;
-        app.raw = bytes;
-
-        dirty = false;                 // 只有真的写成功了才清(见 dirty 那段的纪律)
-        // 草稿盘那条也标干净(同一个"真的成功了"):它与磁盘上那份现在同源,
-        //   下次打开不该再问一次 —— 与上面那行同一条纪律、同一处。
-        markDraftSaved(draftAt);
-        refreshStatus();
-        statusLine();
-        // 库列表刷新排在说结果之前:那条 GET 失败时 guard 会往同一条状态栏
-        //    写一行错误 —— 先写「已保存 …」再被它盖掉的话,用户看到的是"刷新失败了",
-        //    而保存其实成功了(人眼验收清单恰恰是叫用户去看那一行)。故:先把刷新
-        //    (无论成败)走完,最后才把保存结果写在最上面那一行。
-        //    代价照实说:刷新失败那行于是只在控制台(reportError 的 console.error)里
-        //      留痕、状态栏上是一句「已保存」。刷新只是"列表里的字节数/时间",不影响落盘。
-        // Promise.resolve(...) 不是装饰:guard 在同步抛时返回的是 null(见它的
-        //   实现),直接 .then 会在这里炸成一次 TypeError —— 那会被外层 catch 说成
-        //   「保存失败」,而保存其实成功了(徽标已经翻成已保存,两句话又打起来)。
-        return Promise.resolve(guard('库列表刷新', function () { return refreshLibrary(); }))
-               .then(function () {
-                 status('已保存 ' + out.name + '(' + out.size + ' 字节)');
-               });
-      });
-    }).catch(function (e) {
-      // 保存失败要说出来;磁盘上那份没被动过(服务器是原子写)
-      status('保存失败:' + msgOf(e));
+  function fileAction(label, action) {
+    if (app.fileBusy || app.drawing || app.st.stroke || app.st.selStart || app.st.selDrag) return;
+    return guard(label, async () => {
+      app.fileBusy = true;
+      syncFileControls();
+      try { return await action(); }
+      finally {
+        app.fileBusy = false;
+        syncFileControls();
+      }
     });
   }
 
-  // ── 敌人类型(来自页面里的注册表 —— 不写死清单)──
-  function importEnemyTypes() {
-    var reg = globalThis.ENEMY_REGISTRY;
-    if (!reg || !reg.length) return [];
-    return reg.map(function (e) { return String(e.id); });
+  function fileStem(name) {
+    return nameFromFile(name).replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 64) || 'map';
   }
 
-  function exportReport() {
-    if (!app.map) return { lines: ['还没打开地图'], ok: false };
-    var rep = Core.validateMap(app.map);
-    var lines = validateLines(rep);
-    if (!lines.length) lines = ['校验通过:没有发现问题'];
-    lines.push('尺寸 ' + Core.cellsWOf(app.map) + '×' + Core.cellsHOf(app.map) + ' 格 · 出生点 ' +
-               app.map.players.length + ' · 敌人 ' + app.map.enemies.length);
-    if (app.map.players.length > 2) {
-      lines.push('⚠ 第 3 个及以后的出生点游戏侧读不到(map_format.gd 只认 player/player2)');
+  function askName(title, stem, newMap = false) {
+    var dialog = $('file-dialog'), size = $('new-size'), input = $('file-stem');
+    $('file-dialog-title').textContent = title;
+    size.hidden = size.disabled = !newMap;
+    $('new-width').value = $('size-w').value || DEFAULT_CELLS_W;
+    $('new-height').value = $('size-h').value || DEFAULT_CELLS_H;
+    input.value = stem;
+    dialog.returnValue = '';
+    return new Promise(resolve => {
+      dialog.addEventListener('close', () => {
+        resolve(dialog.returnValue === 'ok' ? {
+          name: input.value + '.cyrm', w: Number($('new-width').value), h: Number($('new-height').value),
+        } : null);
+      }, {once: true});
+      dialog.showModal();
+      input.select();
+    });
+  }
+
+  function showReport(title, lines) {
+    $('report-title').textContent = title;
+    $('report-text').textContent = lines.join('\n');
+    $('report-dialog').showModal();
+  }
+
+  function identifyDocument(name, bytes, format, inLibrary) {
+    app.name = name;
+    app.raw = bytes;
+    app.sourceFormat = format;
+    app.inLibrary = inLibrary;
+    app.map.name = nameFromFile(name);
+    app.documentKey = app.files.scope +
+      (inLibrary ? '' : 'import:' + Core.crc32(bytes) + ':') + app.map.name;
+  }
+
+  async function showDocument(map, name, bytes, format, inLibrary, draft = null) {
+    var report = Core.validateMap(map);
+    if (report.errors.length) throw new Error(report.errors.join('，'));
+    app.map = map;
+    identifyDocument(name, bytes, format, inLibrary);
+    if (draft) app.documentKey = draft.key;
+    undoHistory.clear();
+    draftSavedRev = draftRev;
+    lastAutoSaveAt = draft ? draft.savedAt : 0;
+    dirty = !!draft;
+    await app.r.setMap(map);
+    if (!inLibrary && !draft) markDirty();
+    refreshStatus(report);
+    statusLine();
+  }
+
+  function closeDocument() {
+    app.map = app.name = app.raw = null;
+    app.inLibrary = dirty = false;
+    app.documentKey = '';
+    undoHistory.clear();
+    draftSavedRev = draftRev;
+    lastAutoSaveAt = 0;
+    app.r.setMap(null);
+    refreshStatus();
+    statusLine();
+  }
+
+  async function newMap() {
+    var input = await askName('新建地图', 'new_map', true);
+    if (!input) return;
+    var map = createEmptyMap(nameFromFile(input.name), input.w, input.h);
+    var bytes = await encodeForWrite(map);
+    await flushDraft();
+    var out = await app.files.write(input.name, bytes, {create: true});
+    await showDocument(map, input.name, bytes, 'v4', true);
+    await refreshLibrary();
+    status((out.download ? '已下载 ' : '已新建 ') + input.name);
+  }
+
+  async function saveCurrent(asNew) {
+    var name = app.name, create = asNew || !app.inLibrary;
+    if (asNew || !MapFiles.NAME_PATTERN.test(name)) {
+      var input = await askName('另存为', fileStem(name));
+      if (!input) return;
+      name = input.name;
+      create = true;
     }
-    return { lines: lines, ok: rep.errors.length === 0 };
-  }
-  function showExportReport() {
-    var rep = exportReport();
-    window.alert(rep.lines.join('\n'));
-    status(rep.ok ? '导出校验:没有 error' : '导出校验:有 error(encodeMap 会拒绝导出)');
+    var backup = !create && app.sourceFormat !== 'v4';
+    if (backup && !window.confirm('将 ' + name + ' 转成 CYRM v4 并备份原文。继续保存？')) return;
+    var key = app.documentKey;
+    var bytes = await encodeForWrite(app.map);
+    var out = await app.files.write(name, bytes, {create, backup});
+    identifyDocument(name, bytes, 'v4', true);
+    dirty = false;
+    await markDraftSaved(key);
+    refreshStatus();
+    await refreshLibrary();
+    status((out.download ? '已下载 ' : '已保存 ') + name + (out.backup ? ' · 原文备份 ' + out.backup : ''));
   }
 
+  async function duplicateMap() {
+    var names = new Set((await app.files.list()).map(file => file.name.toLowerCase()));
+    var stem = fileStem(app.name), name, i = 1;
+    do {
+      var suffix = i === 1 ? '_copy' : '_copy_' + i;
+      name = stem.slice(0, 64 - suffix.length) + suffix + '.cyrm';
+      i++;
+    } while (names.has(name.toLowerCase()));
+    var map = structuredClone(app.map);
+    var bytes = await encodeForWrite(map);
+    await flushDraft();
+    var out = await app.files.write(name, bytes, {create: true});
+    await showDocument(map, name, bytes, 'v4', true);
+    await refreshLibrary();
+    status((out.download ? '已下载 ' : '已复制为 ') + name);
+  }
+
+  async function renameCurrent() {
+    var input = await askName('重命名', fileStem(app.name));
+    if (!input || input.name === app.name) return;
+    var key = app.documentKey;
+    await app.files.rename(app.name, input.name);
+    identifyDocument(input.name, app.raw, app.sourceFormat, true);
+    await markDraftSaved(key);
+    if (dirty) markDirty();
+    refreshStatus();
+    await refreshLibrary();
+    status('已重命名为 ' + app.name);
+  }
+
+  async function deleteCurrent() {
+    var name = app.name;
+    if (!window.confirm('从' + app.files.label + '删除 ' + name + '？')) return;
+    await app.files.remove(name);
+    await markDraftSaved(app.documentKey);
+    closeDocument();
+    await refreshLibrary();
+    status('已删除 ' + name);
+  }
+
+  async function exportCurrent() {
+    var name = fileStem(app.name) + '.cyrm';
+    MapFiles.download(name, await encodeForWrite(app.map));
+    status('已导出 ' + name);
+  }
+
+  async function checkCurrent() {
+    var report = Core.validateMap(app.map), lines = validateLines(report);
+    if (!MapFiles.NAME_PATTERN.test(app.name)) lines.push('当前文件名需要通过「另存为」调整');
+    if (!report.errors.length) {
+      try {
+        var bytes = await encodeForWrite(app.map);
+        lines.push('CYRM v4 编码成功，' + bytes.length + ' 字节');
+      } catch (e) { lines.push('编码失败：' + msgOf(e)); }
+    }
+    showReport('地图校验', lines);
+  }
+
+  async function selfTest() {
+    var map = Core.createMap('selftest', 1, 1);
+    map.layers[Core.LAYER_SCENE].desc[0] = Core.neutralDesc(1);
+    await Io.ping();
+    var reopened = await Io.decodeMap(await encodeForWrite(map));
+    if (reopened.layers[Core.LAYER_SCENE].desc[0] !== map.layers[Core.LAYER_SCENE].desc[0]) {
+      throw new Error('Worker 编解码结果不一致');
+    }
+    showReport('编辑器自检', ['Worker 编解码通过', '草稿盘：' + (app.db ? '已连接' : '不可用'),
+                             '当前地图库：' + app.files.label]);
+  }
   var DRAFT_DB = 'cyrm-editor';
   var DRAFT_STORE = 'draft';
   var CRASH_STORE = 'crash';
@@ -1306,46 +1382,11 @@ globalThis.Editor = (function () {
   var DRAFT_DEBOUNCE_MS = 1500;          // 最后一笔之后多久落盘(不是每笔都写)
   var UI_SAVE_THROTTLE_MS = 500;
   function draftKey(name) { return Core.sanitizeName(nameFromFile(name)); }
-  // "当前这张图"的键只有这一处:写进去的与读出来的必须是同一个键,
-  //   否则症状是"草稿盘里明明有一条,恢复时说什么都没有"(而且不报错)。
-  //   app.name 是带 .cyrm 的文件名;新建还没写盘的图只有 app.map.name(不带后缀)——
-  //   draftKey 对两者归一(先去掉后缀、再 sanitizeName)。
-  function currentDraftKey() {
-    return draftKey(app.name || (app.map ? app.map.name : '') || '');
-  }
-
-  // 闸 4 的判据(纯函数,便于断言):崩溃槽位比主槽位新 ⇒ 上次是异常退出。
-  // declined = 这条快照已经问过、用户说不要 ⇒ 不再拿它反复问:不记的话一次偶发
-  //   页面异常会把每一次打开都变成「上次异常退出」(直到用户碰巧 Ctrl+S 把草稿写新,
-  //   才靠"比主草稿旧"压下去)—— 一次性的异常变成一个永久的开机弹窗。
-  //   新的一次崩溃会重写这条记录(不带 declined)⇒ 照问,所以它挡不住真正的下一次。
-  function crashIsNewer(crashRec, mainRec) {
-    if (!crashRec) return false;
-    if (crashRec.declined) return false;
-    if (!mainRec) return true;
-    return (crashRec.savedAt || 0) > (mainRec.savedAt || 0);
-  }
-
-  // 库条目上限(闸 1:60)。先丢"已保存且最老"的 —— 脏的那份是用户还没写盘的劳动。
-  function evictPlan(records, maxEntries) {
-    var list = (records || []).slice();
-    var cap = (maxEntries === undefined) ? MAX_LIB : maxEntries;
-    if (list.length <= cap) return { keep: list.map(function (r) { return r.key; }), drop: [] };
-    var sorted = list.slice().sort(function (a, b) {
-      var ad = a.dirty ? 1 : 0, bd = b.dirty ? 1 : 0;
-      if (ad !== bd) return ad - bd;                 // 干净的排前面(先被丢)
-      return (a.savedAt || 0) - (b.savedAt || 0);     // 同样干净时,最老的先丢
-    });
-    var drop = sorted.slice(0, list.length - cap).map(function (r) { return r.key; });
-    var keep = [];
-    list.forEach(function (r) { if (drop.indexOf(r.key) < 0) keep.push(r.key); });
-    return { keep: keep, drop: drop };
-  }
-
   // ── 第 3 层:localStorage 小状态(读损坏值一律回落默认:编辑器要能开)──
   function uiStateDefaults() {
     return { layer: Core.LAYER_SCENE, zoom: 0, tool: 'brush', brushSize: 1,
-             grid: true, subGrid: false, torus: true, dimOthers: true,
+             grid: true, subGrid: false, torus: true, dimOthers: true, guides: false,
+             visible: [true, true, true, true], locked: [false, false, false, false],
              compress: DEFAULT_COMPRESS,
              panelOpen: { lib: true, right: true },
              playerRef: { cx: 0, cy: 0, visible: false }, selectedTexture: 1 };
@@ -1369,9 +1410,14 @@ globalThis.Editor = (function () {
     if (isFinite(obj.brushSize) && obj.brushSize > 0) {
       out.brushSize = Math.max(0.25, Math.min(Render.MAX_BRUSH_CELLS, obj.brushSize));
     }
-    ['grid', 'subGrid', 'torus', 'dimOthers', 'compress'].forEach(function (k) {
+    ['grid', 'subGrid', 'torus', 'dimOthers', 'guides', 'compress'].forEach(function (k) {
       if (typeof obj[k] === 'boolean') out[k] = obj[k];
     });
+    for (var key of ['visible', 'locked']) {
+      if (Array.isArray(obj[key]) && obj[key].length === Core.LAYER_COUNT) {
+        out[key] = obj[key].map((value, i) => typeof value === 'boolean' ? value : def[key][i]);
+      }
+    }
     if (obj.panelOpen && typeof obj.panelOpen === 'object') {
       if (typeof obj.panelOpen.lib === 'boolean') out.panelOpen.lib = obj.panelOpen.lib;
       if (typeof obj.panelOpen.right === 'boolean') out.panelOpen.right = obj.panelOpen.right;
@@ -1420,23 +1466,17 @@ globalThis.Editor = (function () {
       try { req = indexedDB.open(DRAFT_DB, DRAFT_DB_VERSION); } catch (e) { resolve(null); return; }
       req.onupgradeneeded = function () {
         var db = req.result;
-        // 新建和已有对象仓库都必须具有 savedAt 索引，供恢复查询和过期清理使用。
+        // 按保存时间清理最旧的草稿。
         var st = db.objectStoreNames.contains(DRAFT_STORE)
           ? req.transaction.objectStore(DRAFT_STORE)
           : db.createObjectStore(DRAFT_STORE, { keyPath: 'key' });
-        if (st && st.indexNames && !st.indexNames.contains(DRAFT_TIME_INDEX)) {
+        if (!st.indexNames.contains(DRAFT_TIME_INDEX)) {
           st.createIndex(DRAFT_TIME_INDEX, 'savedAt');
         }
         if (!db.objectStoreNames.contains(CRASH_STORE)) db.createObjectStore(CRASH_STORE, { keyPath: 'key' });
       };
       req.onsuccess = function () { resolve(req.result); };
-      req.onerror = function () { resolve(null); };      // 配额/私密模式:草稿盘不可用也要能用编辑器
-      // 版本 2 带来的一种新情形:另一个标签页还按版本 1 开着这张库 ⇒ 升级被阻塞
-      //    (浏览器等它关闭,期间既不 success 也不 error)。不接这一下的话这条 promise
-      //    永远不 settle,而 bootLoad 正 await 着它 —— 症状是"编辑器白屏 / 永远停在启动",
-      //    连面板都不建。这里按同一条口径收场:交回 null(草稿盘这一局不可用,状态栏那句话
-      //    照旧会说),编辑器照常打开 —— 与"开不出草稿盘"逐字同一个退化方向。
-      //    同一份文件里的 selfTest() 早就这么接了(它给的是 2 秒兜底),这不是新花样。
+      req.onerror = function () { resolve(null); };
       req.onblocked = function () { resolve(null); };
     });
   }
@@ -1449,63 +1489,13 @@ globalThis.Editor = (function () {
       tx.onabort = function () { reject(tx.error || new Error('IndexedDB 写被中止')); };
     });
   }
-  function idbCount(db, store) {
-    return new Promise(function (resolve) {
-      var tx, rq;
-      try { tx = db.transaction(store, 'readonly'); rq = tx.objectStore(store).count(); }
-      catch (e) { resolve(null); return; }
-      rq.onsuccess = function () { resolve(typeof rq.result === 'number' ? rq.result : 0); };
-      rq.onerror = function () { resolve(null); };    // null = 读不到(不是"0 条")
-    });
-  }
   function idbGetOne(db, store, key) {
-    return new Promise(function (resolve) {
-      var tx, rq;
-      try { tx = db.transaction(store, 'readonly'); rq = tx.objectStore(store).get(key); }
-      catch (e) { resolve({ ok: false, rec: null }); return; }
-      rq.onsuccess = function () { resolve({ ok: true, rec: rq.result || null }); };
-      rq.onerror = function () { resolve({ ok: false, rec: null }); };
-      // 事务级的失败(配额/被中止)不一定冒泡到请求上,这里兜住同一件事;已经 resolve 过
-      //   的那一次不受影响(promise 只认第一个)。
-      if (tx) tx.onabort = function () { resolve({ ok: false, rec: null }); };
-    });
-  }
-  function idbNewestSavedAt(db) {
-    return new Promise(function (resolve) {
-      var tx, rq;
-      try {
-        tx = db.transaction(DRAFT_STORE, 'readonly');
-        rq = tx.objectStore(DRAFT_STORE).index(DRAFT_TIME_INDEX).openKeyCursor(null, 'prev');
-      } catch (e) { resolve({ ok: false, savedAt: null }); return; }
-      rq.onsuccess = function () {
-        var cur = rq.result;
-        resolve({ ok: true, savedAt: (cur && typeof cur.key === 'number') ? cur.key : null });
-      };
-      rq.onerror = function () { resolve({ ok: false, savedAt: null }); };
-      if (tx) tx.onabort = function () { resolve({ ok: false, savedAt: null }); };
-    });
-  }
-  function idbWalkDraftVictims(db, need) {
-    return new Promise(function (resolve) {
-      var tx, rq;
-      try {
-        tx = db.transaction(DRAFT_STORE, 'readonly');
-        rq = tx.objectStore(DRAFT_STORE).index(DRAFT_TIME_INDEX).openCursor(null, 'next');
-      } catch (e) { resolve(null); return; }
-      var entries = [], clean = 0, done = false;
-      var finish = function (out) { if (done) return; done = true; resolve(out); };
-      rq.onsuccess = function () {
-        if (done) return;
-        var cur = rq.result;
-        if (!cur) { finish({ entries: entries, clean: clean }); return; }   // 走完了
-        var rec = cur.value || {};
-        if (!rec.dirty) clean++;
-        entries.push({ key: cur.primaryKey, savedAt: cur.key, dirty: !!rec.dirty });
-        if (clean >= need) { finish({ entries: entries, clean: clean }); return; }
-        cur['continue']();                            // 不调它,游标就停在第一条上
-      };
-      rq.onerror = function () { finish(null); };
-      if (tx) tx.onabort = function () { finish(null); };
+    return new Promise((resolve, reject) => {
+      var tx = db.transaction(store, 'readonly');
+      var request = tx.objectStore(store).get(key);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+      tx.onabort = () => reject(tx.error);
     });
   }
   var draftTimer = null;
@@ -1513,152 +1503,122 @@ globalThis.Editor = (function () {
   var draftSavedRev = -1;        // 上一次草稿落盘时的 rev
   var lastAutoSaveAt = 0;        // 状态栏那一格要显示的自动保存时刻(0 = 本局还没自动存过)
 
-  // 唯一一处"地图变了"的落笔:设脏标记 + 排一次防抖落盘。全项目五个改动点
-  //   (落一笔 / 撤销重做 / 新建 / 复制 / 改名)都走这里 —— 散开写 dirty = true 的话,
-  //   新加一个改动点只会忘掉草稿那一半,而那是不报错的(草稿盘悄悄少一条)。
   function markDirty() {
     dirty = true;
     draftRev++;
     scheduleDraftSave();
   }
-  // 最后一笔之后延迟 DRAFT_DEBOUNCE_MS 保存，避免每笔都调用编码 worker。
+  var draftWrite = Promise.resolve();
+
   function scheduleDraftSave() {
-    if (!app.map || !app.db) return;             // 草稿盘不可用:连定时器都不排
-    if (draftTimer) clearTimeout(draftTimer);
-    draftTimer = setTimeout(function () { draftTimer = null; return saveDraft(false); }, DRAFT_DEBOUNCE_MS);
+    if (!app.db) return;
+    clearTimeout(draftTimer);
+    draftTimer = setTimeout(() => {
+      draftTimer = null;
+      saveDraft().catch(error => reportError('草稿保存失败：' + msgOf(error), error));
+    }, DRAFT_DEBOUNCE_MS);
   }
-  // 离开页面/刷新前的那次补刀:防抖可能还没到点 —— 不补的话"刚画完就 F5"丢掉最后 1.5 秒的活。
-  // 判据用 dirty(磁盘那一侧)而不是 rev:刚 Ctrl+S 过的图不该因为一次刷新又被标成脏草稿
-  //   (那会让下次打开弹一次假的恢复提示)。
-  function flushDraft() {
-    if (draftTimer) { clearTimeout(draftTimer); draftTimer = null; }
-    if (!dirty) return Promise.resolve();
-    return saveDraft(true);                      // force:绕过节流(见 saveDraft)
+
+  async function flushDraft(recover = false) {
+    clearTimeout(draftTimer);
+    draftTimer = null;
+    if (!app.db || !dirty) return;
+    var key = app.documentKey;
+    await saveDraft();
+    if (recover && dirty && key === app.documentKey) {
+      await idbPut(app.db, CRASH_STORE, {key: 'crash', draftKey: key});
+    }
   }
-  // 落盘一份草稿(含字节:草图以编码后的字节存,恢复时走同一条解码路)
-  // force = 不因为"这一版写过"就跳过(离开页面前那一刀要的是此刻的一份)。
-  //   不带 force 时那道判据挡的是:落了笔 → Ctrl+S(markDraftSaved 把 rev 记下)→ 那个
-  //   还在飞的防抖定时器到点又把同内容写回脏草稿(下次打开于是弹一次假的恢复提示)。
-  // 但 force 越不过编码之后那道判据 —— 那一条不是"省点活",是正确性(见下)。
-  // 一条记录的两半(它是谁 / 它是什么内容)必须在同一个瞬间取:编码是异步的
-  //    (codec 是 Worker,400×300 的图 × 4 层 ≈ 30MB ⇒ 几百毫秒到几秒),而这段时间里用户
-  //    完全可能换一张图(点库里的另一张 —— 见 openMap,它不问有没有没写盘的活)。
-  //    编码之后再读 currentDraftKey()/app.name 的话:写出来的是 {key:'B', name:'B.cyrm',
-  //    bytes: <A 的内容>} —— 下次打开 B、字节比不过 B 的文件 ⇒ 弹一次恢复 ⇒ 用户一按
-  //    Ctrl+S 就把 A 的地形写进 maps/B.cyrm。字节相等那道闸让这件事更糟,不是更好:
-  //    它把"一次假提示"换成了"静默的内容掉包"。
-  function saveDraft(force) {
-    if (!app.map || !app.db) return Promise.resolve();
-    var rev = draftRev;
-    if (!force && rev <= draftSavedRev) return Promise.resolve();
-    // 进编码之前取:内容的来源,以及这份内容属于谁
-    var mapAtEntry = app.map;
-    var key = currentDraftKey();
-    var name = app.name, name2 = app.map.name;
-    return encodeForWrite(mapAtEntry).then(function (bytes) {
-      // 编码期间可能已经有了一次 Ctrl+S:它把这一版(或更新的一版)写进了真文件,
-      //    并把草稿标干净 —— 这时再写回一份 dirty 的草稿,下次打开就会弹一次假的
-      //    恢复提示(而且不报错)。故落盘前再看一眼。这一条 force 也要过:
-      //    离开页面前那一刀同样不该把"已经进真文件的那一版"写回成脏草稿。
-      if (rev <= draftSavedRev) return null;
-      // 另一半:这一版字节属于哪张图(身份,不是名字)。编码期间 app.map 被换过
-      //    (openMap / 新建 / 复制 / 崩溃恢复)⇒ 这条记录没有任何意义:它的 key 是新的
-      //    那张、字节是旧的那张。此时唯一正确的动作是整笔放弃 —— 新的那张图自己那一版
-      //    会由它自己的防抖定时器落盘(openMap 已经把 draftSavedRev 推到当前 rev,所以
-      //    "刚打开、一笔没画"的那张图连一条脏记录都不会留下 ⇒ 也不会在下一次开机弹提示)。
-      if (app.map !== mapAtEntry) return null;
-      var rec = { key: key, name: name, name2: name2, bytes: bytes,
-                  savedAt: Date.now(), dirty: true };
-      return idbPut(app.db, DRAFT_STORE, rec).then(function () {
-        draftSavedRev = rev;             // 能走到这里 ⇒ 上面那道判据刚过,故这一定是推进
-        lastAutoSaveAt = rec.savedAt;
-      });
-    }).then(function () {
+
+  function saveDraft() {
+    var job = draftWrite.then(async () => {
+      if (!dirty || draftRev <= draftSavedRev) return;
+      var rev = draftRev, map = app.map, key = app.documentKey, name = app.name;
+      var bytes = await encodeForWrite(map);
+      if (!dirty || app.map !== map || app.documentKey !== key) return;
+      var savedAt = Date.now();
+      await idbPut(app.db, DRAFT_STORE, {key, name, bytes, savedAt, dirty: true});
+      draftSavedRev = rev;
+      lastAutoSaveAt = savedAt;
       renderSaveState();
-      return pruneDrafts();
-    }).catch(function (e) {
-      status('草稿盘写入失败:' + msgOf(e) + '(作品仍在,请尽快 Ctrl+S 写盘)');
+      await pruneDrafts().catch(error => reportError('草稿已保存，清理失败：' + msgOf(error), error));
     });
+    // 后续草稿仍可保存，当前调用者收到本次写入的错误。
+    draftWrite = job.catch(() => {});
+    return job;
   }
-  // Ctrl+S 成功之后:磁盘上那份就是屏幕上这份 ⇒ 草稿盘里那条标干净(不删:留着它,
-  // 既是"上次停在哪"的记录,也让 evictPlan 优先淘汰它)。
-  // 与 dirty = false 同一处、同一条纪律:只有真的写成功了才调它。
-  function markDraftSaved(key) {
-    if (!app.db) return Promise.resolve(false);
+
+  async function markDraftSaved(key) {
+    await draftWrite;
     draftSavedRev = draftRev;
     lastAutoSaveAt = 0;
-    return loadDraft(key || currentDraftKey()).then(function (rec) {
-      if (!rec) return false;
-      rec.dirty = false;
-      return idbPut(app.db, DRAFT_STORE, rec).then(function () { return true; });
-    }).catch(function () { return false; });   // 标不干净不影响"已经存盘了"这个事实
+    if (!app.db) return;
+    try {
+      var rec = await idbGetOne(app.db, DRAFT_STORE, key);
+      if (rec) await idbPut(app.db, DRAFT_STORE, {...rec, dirty: false});
+    } catch (error) {
+      reportError('文件操作已完成，更新草稿状态失败：' + msgOf(error), error);
+    }
   }
   function pruneDrafts() {
-    var didNotRun = '(这次的草稿已存下,但 ' + MAX_LIB + ' 条上限这次没生效)';
-    return idbCount(app.db, DRAFT_STORE).then(function (n) {
-      if (n === null) { status('草稿盘清理失败:读不到条目数 ' + didNotRun); return null; }
-      if (n <= MAX_LIB) return null;                  // 常态:只数一次,一条都不读
-      var need = n - MAX_LIB;
-      return idbWalkDraftVictims(app.db, need).then(function (walk) {
-        if (walk === null) { status('草稿盘清理失败:读不到草稿列表 ' + didNotRun); return null; }
-        // cap 取 entries.length - need:走的这一批要么恰好含 need 条干净的
-        //    (这时 evictPlan 丢掉的就是它们),要么就是全库(干净的凑不够 ⇒ 一直走完),
-        //    那时 entries.length - need 正好还原成 MAX_LIB —— 两种情形同一条公式,
-        //    淘汰口径仍然只有 evictPlan 这一处。
-        var plan = evictPlan(walk.entries, walk.entries.length - need);
-        if (!plan.drop.length) return null;
-        var tx;
-        try { tx = app.db.transaction(DRAFT_STORE, 'readwrite'); }
-        catch (e) { status('草稿盘清理失败:' + msgOf(e) + ' ' + didNotRun); return null; }
-        plan.drop.forEach(function (k) { tx.objectStore(DRAFT_STORE).delete(k); });
-        return new Promise(function (resolve) {
-          tx.oncomplete = function () { status('草稿盘超过 ' + MAX_LIB + ' 条,已清掉 ' + plan.drop.length + ' 条最老的'); resolve(true); };
-          tx.onerror = function () { status('草稿盘清理失败:删不掉那 ' + plan.drop.length + ' 条 ' + didNotRun); resolve(false); };
-          tx.onabort = function () { status('草稿盘清理失败:删除事务被中止 ' + didNotRun); resolve(false); };
-        });
-      });
-    }).catch(function (e) {
-      status('草稿盘清理失败:' + msgOf(e) + ' ' + didNotRun);
-      return null;
+    return new Promise((resolve, reject) => {
+      var tx = app.db.transaction(DRAFT_STORE, 'readwrite');
+      var store = tx.objectStore(DRAFT_STORE);
+      var count = store.count();
+      var removed = 0;
+      count.onsuccess = () => {
+        var excess = count.result - MAX_LIB;
+        if (excess <= 0) return;
+        removed = excess;
+        var oldestUnsaved = [];
+        var request = store.index(DRAFT_TIME_INDEX).openCursor();
+        request.onsuccess = () => {
+          var cursor = request.result;
+          if (!cursor) {
+            for (var key of oldestUnsaved.slice(0, excess)) store.delete(key);
+            return;
+          }
+          if (!cursor.value.dirty) {
+            cursor.delete();
+            if (--excess === 0) return;
+          } else if (oldestUnsaved.length < excess) {
+            oldestUnsaved.push(cursor.primaryKey);
+          }
+          cursor.continue();
+        };
+      };
+      tx.oncomplete = () => {
+        if (removed) status('已清理 ' + removed + ' 条最旧草稿');
+        resolve();
+      };
+      tx.onabort = () => reject(tx.error);
     });
   }
-  function loadDraft(key) {
-    if (!app.db) return Promise.resolve(null);
-    return new Promise(function (resolve) {
-      var tx = app.db.transaction(DRAFT_STORE, 'readonly');
-      var rq = tx.objectStore(DRAFT_STORE).get(key);
-      rq.onsuccess = function () { resolve(rq.result || null); };
-      rq.onerror = function () { resolve(null); };
-    });
+  async function offerDraft() {
+    if (!app.db || !app.map) return;
+    var key = app.documentKey;
+    var rec = await idbGetOne(app.db, DRAFT_STORE, key);
+    var oldKey = draftKey(app.name);
+    if (!rec && app.inLibrary && app.files === homeFiles && oldKey !== key) {
+      var old = await idbGetOne(app.db, DRAFT_STORE, oldKey);
+      if (old && old.name === app.name) {
+        rec = {...old, key};
+        await idbPut(app.db, DRAFT_STORE, rec);
+        await idbPut(app.db, DRAFT_STORE, {...old, dirty: false});
+      }
+    }
+    if (!rec || !rec.dirty || sameBytes(rec.bytes, app.raw)) return;
+    if (window.confirm('发现未保存的草稿（' + new Date(rec.savedAt).toLocaleString() + '），要恢复吗？')) {
+      await restoreDraft(rec);
+    }
   }
-  // ── 草稿盘的读侧:启动时那份"没写盘的活"要不要恢复 ──
-  // 判据是记录自己的 dirty(Ctrl+S 成功会把它标干净)—— 存过盘的下次不再问。
-  // 不静默恢复:画布上突然换成一份与真文件不同的图,而用户以为它就是文件里那份,
-  //   接下来一按 Ctrl+S 就把草稿盖回文件上 —— 那是这一层最坏的一种失败。故一律问一次。
-  function offerDraft() {
-    if (!app.db || !app.map) return Promise.resolve(false);
-    var key = currentDraftKey();
-    return loadDraft(key).then(function (rec) {
-      if (!rec || !rec.dirty || !rec.bytes) return false;
-      // 再判一道(挡"假提示"那一类):草稿那份与刚从真文件读进来的字节逐字节相同
-      //    ⇒ 那一版已经在文件里了,只是"标干净"那一步没落地(页面关得太快,或者走了"另存为")。
-      //    问它就是一次假恢复提示 —— 而这层的承诺是"存的活不丢",不是"每次都问一遍"。
-      //    退化的方向是安全的:万一编码哪天不再确定,这里只是问得多一点。
-      if (sameBytes(rec.bytes, app.raw)) return false;
-      var yes = window.confirm('发现一份还没写盘的草稿(' +
-                               new Date(rec.savedAt || 0).toLocaleString() + '),要恢复吗?');
-      if (!yes) { status('草稿仍在草稿盘里(屏幕上的图没被动过)'); return false; }
-      return Io.decodeMap(rec.bytes).then(function (map) {
-        map.name = rec.name2 || map.name || '';
-        app.map = map;
-        if (rec.name) app.name = rec.name;
-        dirty = true;                       // 屏幕上这份 ≠ 磁盘上那份 ⇒ 必须说「未保存」
-        guard('草稿恢复', function () { return app.r.setMap(map); });
-        refreshStatus(); statusLine();
-        status('已从草稿恢复:' + (rec.name2 || key));
-        return true;
-      });
-    }).catch(function (e) { status('草稿恢复失败:' + msgOf(e)); return false; });
+
+  async function restoreDraft(rec) {
+    var sameDocument = app.documentKey === rec.key;
+    var map = await Io.decodeMap(rec.bytes);
+    await showDocument(map, rec.name, sameDocument ? app.raw : rec.bytes,
+      sameDocument ? app.sourceFormat : 'v4', sameDocument && app.inLibrary, rec);
+    status('已恢复草稿 ' + rec.name);
   }
   // 逐字节相同(长度先过;两边都可能是 Uint8Array,也可能有一个是 null —— 那就不相同)
   function sameBytes(a, b) {
@@ -1668,30 +1628,41 @@ globalThis.Editor = (function () {
   }
 
   // ── UI 小状态(第 3 层):恢复与落盘 ──
-  function applyUiState() {
+  async function applyUiState() {
     var u = app.uist;
     if (!u) return;
     // 缩放必须在地图打开之后恢复:setMap 自己会 fit(),先设会被它覆盖掉。
     //   u.zoom === 0 是"没存过缩放"的哨兵 ⇒ 保持 setMap 的 fit。
     var cur = app.r.view().zoom;
-    if (u.zoom > 0 && cur > 0 && Math.abs(u.zoom - cur) > 1e-6) {
-      // 分帧重建的错误以 Promise 拒绝返回，由 guard 处理。
-      guard('恢复缩放', function () { return app.r.setZoomAt(app.canvas.width / 2, app.canvas.height / 2, u.zoom / cur); });
+    if (app.map && u.zoom > 0 && cur > 0 && Math.abs(u.zoom - cur) > 1e-6) {
+      await app.r.setZoomAt(app.canvas.width / 2, app.canvas.height / 2, u.zoom / cur);
     }
     setLayer(u.layer);
     app.r.setGrid(u.grid); app.r.setSubGrid(u.subGrid);
-    app.r.setTorus(u.torus); app.r.setDimOthers(u.dimOthers);
+    await app.r.setTorus(u.torus);
+    app.r.setDimOthers(u.dimOthers);
+    app.r.setGuides(u.guides);
+    for (var L = 0; L < Core.LAYER_COUNT; L++) {
+      app.r.setLayerVisible(L, u.visible[L]);
+      app.r.setLayerLocked(L, u.locked[L]);
+    }
+    syncLayerButtons();
     app.st.tool = u.tool;
     app.st.brushSize = u.brushSize;
     // 恢复工具状态后同步按钮高亮。
     selectToolButton();
     if (u.selectedTexture > 0) {
-      app.st.desc = Core.packDesc(clampTexture(u.selectedTexture, Render.atlasCapacity()),
+      app.st.desc = Core.migrateDescriptor(Core.packDesc(clampTexture(u.selectedTexture, Render.atlasCapacity()),
                                   Core.hueOf(app.st.desc), Core.brightOf(app.st.desc),
-                                  Core.satOf(app.st.desc), Core.alphaOf(app.st.desc));
+                                  Core.satOf(app.st.desc), Core.alphaOf(app.st.desc)));
+      if (!app.tileDefs.tiles[Core.texOf(app.st.desc)]) app.st.desc = Core.neutralDesc(1);
+      $('desc-hue').value = String(Core.hueOf(app.st.desc));
+      document.querySelectorAll('#palette .sw').forEach(function (b) {
+        b.classList.toggle('on', Number(b.textContent) === Core.texOf(app.st.desc));
+      });
     }
     // DOM 必须与上面保持一致:否则"页面显示的"与"实际用的"是两回事(开关显示关着、其实开着)
-    [['tg-grid', u.grid], ['tg-subgrid', u.subGrid], ['tg-torus', u.torus]].forEach(function (pair) {
+    [['tg-grid', u.grid], ['tg-subgrid', u.subGrid], ['tg-torus', u.torus], ['tg-guides', u.guides]].forEach(function (pair) {
       var el = $(pair[0]);
       if (el) el.classList.toggle('on', !!pair[1]);
     });
@@ -1708,16 +1679,19 @@ globalThis.Editor = (function () {
   }
   var uiSaveTimer = null;
   function persistUi() {
-    if (uiSaveTimer || !app.map || !app.st) return;
+    if (uiSaveTimer || !app.st) return;
     uiSaveTimer = setTimeout(function () {
       uiSaveTimer = null;
       var prev = app.uist || uiStateDefaults();
       app.uist = {
-        layer: app.r.layer(), zoom: app.r.view().zoom, tool: app.st.tool,
+        layer: app.r.layer(), zoom: app.map ? app.r.view().zoom : prev.zoom, tool: app.st.tool,
         brushSize: app.st.brushSize,
         grid: $('tg-grid') ? $('tg-grid').classList.contains('on') : true,
         subGrid: $('tg-subgrid') ? $('tg-subgrid').classList.contains('on') : false,
         torus: $('tg-torus') ? $('tg-torus').classList.contains('on') : true,
+        guides: $('tg-guides').classList.contains('on'),
+        visible: Array.from({length: Core.LAYER_COUNT}, (_, L) => app.r.layerVisible(L)),
+        locked: Array.from({length: Core.LAYER_COUNT}, (_, L) => app.r.layerLocked(L)),
         dimOthers: $('dim-others') ? !!$('dim-others').checked : true,
         compress: optCompress(),
         panelOpen: prev.panelOpen, playerRef: prev.playerRef,
@@ -1738,87 +1712,91 @@ globalThis.Editor = (function () {
     ['click', 'change', 'wheel', 'keyup', 'pointerup'].forEach(function (evt) {
       onWin(evt, persistUi, { passive: true });
     });
-    onWin('pagehide', function () { persistUi(); flushDraft(); });
+    onWin('pagehide', () => {
+      persistUi();
+      flushDraft().catch(error => reportError('草稿保存失败：' + msgOf(error), error));
+    });
   }
 
-  function installCrashFence() {
-    function snapshot(why) {
-      if (!app.map || !app.db) return;
-      encodeForWrite(app.map).then(function (bytes) {
-        return idbPut(app.db, CRASH_STORE, {
-          key: 'crash', name: app.name, name2: app.map.name, bytes: bytes,
-          savedAt: Date.now(), why: String(why || '').slice(0, 200),
-        });
-      }).catch(function () { /* 崩溃路径上什么都不该再抛 */ });
+  function installCrashRecovery() {
+    function saveAfterError(error) {
+      reportError('页面异常：' + msgOf(error), error);
+      flushDraft(true).catch(failure => reportError('草稿保存失败：' + msgOf(failure), failure));
     }
-    onWin('error', function (ev) {
-      status('页面异常:' + (ev && ev.message ? ev.message : '未知'));
-      snapshot(ev && ev.message);
-    });
-    onWin('unhandledrejection', function (ev) {
-      status('未处理的 promise 拒绝:' + msgOf(ev && ev.reason));
-      snapshot('unhandledrejection');
-    });
+    onWin('error', event => saveAfterError(event.error || event.message));
+    onWin('unhandledrejection', event => saveAfterError(event.reason));
   }
-  // 下次打开时看一眼崩溃槽位:比主草稿新 ⇒ 上次是异常退出 ⇒ 问一次要不要恢复。
-  // 它排在 openFromUrl() 之后(bootLoad 的顺序):恢复出来的图要压住文件里那份,
-  //   否则用户点了"确定"、屏幕上却是刚从文件打开的那张(人眼清单第 3 条正是看这个)。
-  // 两处读取都是点读,不是整库 getAll(启动路径上每一次物化整库 = 几十 MB):
-  //   崩溃槽位是一条记录(get('crash')),而"主草稿有多新"只要一个时刻 —— 走索引键游标。
-  // 读失败不许折成"没有崩溃快照":那是这一层最后一次兜底,静默消失 = 作品丢了而
-  //   没人知道。故两条点读都交回 ok:false,这里把它变成状态栏上的一句话。
-  function checkCrashSlot() {
-    if (!app.db) return Promise.resolve(false);
-    return Promise.all([idbGetOne(app.db, CRASH_STORE, 'crash'),
-                        idbNewestSavedAt(app.db)]).then(function (both) {
-      var cre = both[0], newest = both[1];
-      if (!cre.ok || !newest.ok) {
-        status('崩溃槽位读取失败:草稿盘读不到(这一次的「上次异常退出」没有检查到)');
-        return false;
-      }
-      var crash = cre.rec;
-      // crashIsNewer 只读 savedAt ⇒ 这里按同一个形状交一个"记录"给它(索引键游标
-      //   拿到的就是那个时刻,记录本体一个字节都没读)。
-      var main = (newest.savedAt === null) ? null : { savedAt: newest.savedAt };
-      if (!crashIsNewer(crash, main)) return false;
-      var yes = window.confirm('上次异常退出,已恢复到崩溃前(草稿:' + (crash.name2 || crash.name || '?') +
-                               ')。要打开它吗?');
-      if (!yes) {
-        // 记下"问过、用户不要":不记的话下一次打开又弹同一个框(crashIsNewer 读这个字段)。
-        //   记录本身留着 —— 那是没写盘的活,不能因为点了一次"不要"就删掉。
-        crash.declined = true;
-        return idbPut(app.db, CRASH_STORE, crash).then(function () { return false; })
-                 .catch(function () { return false; })      // 记不住只是下次再问一次
-                 .then(function () {
-                   status('崩溃快照仍在崩溃槽位里(屏幕上的图没被动过)');
-                   return false;
-                 });
-      }
-      return Io.decodeMap(crash.bytes).then(function (map) {
-        map.name = crash.name2 || '';
-        app.map = map; app.name = crash.name;
-        dirty = true;                  // 屏幕上这份 ≠ 磁盘上那份(不回血:该 Ctrl+S 了)
-        guard('崩溃恢复', function () { return app.r.setMap(map); });
-        refreshStatus(); statusLine();
-        status('已从崩溃前快照恢复:' + (crash.name || ''));
-        return consumeCrashSlot().then(function () { return true; });
-      }).catch(function (e) { status('崩溃快照解码失败:' + msgOf(e)); return false; });
-    }).catch(function (e) { status('崩溃槽位读取失败:' + msgOf(e)); return false; });
+
+  async function offerCrashDraft() {
+    if (!app.db) return false;
+    var marker = await idbGetOne(app.db, CRASH_STORE, 'crash');
+    if (!marker || marker.declined) return false;
+    var rec;
+    if (marker.draftKey) {
+      rec = await idbGetOne(app.db, DRAFT_STORE, marker.draftKey);
+    } else {
+      // 旧版快照自带字节。恢复时迁入草稿库，避免覆盖同名文件的草稿。
+      rec = {key: 'recovery:' + marker.scope + marker.name, name: marker.name,
+        bytes: marker.bytes, savedAt: marker.savedAt, dirty: true};
+    }
+    if (!rec || !rec.dirty) return false;
+    var sameDocument = app.documentKey === rec.key;
+    if (sameDocument && sameBytes(rec.bytes, app.raw)) return false;
+    var confirmed = window.confirm('上次异常退出时保存了 ' + rec.name + ' 的草稿，要恢复吗？');
+    if (confirmed) {
+      if (!marker.draftKey) await idbPut(app.db, DRAFT_STORE, rec);
+      await restoreDraft(rec);
+    }
+    await idbPut(app.db, CRASH_STORE, {key: 'crash', declined: true});
+    return confirmed || sameDocument;
   }
-  // 恢复成功 ⇒ 消费掉这条快照:留着的话每一次打开都会再弹一次「上次异常退出」
-  //   (一次偶发页面异常 = 一个永久的开机弹窗 —— 用户每次开编辑器都看得见)。清不掉不是致命的
-  //   (下一次打开还会问,而那时用户点"不要"会被 declined 记住),故这一处失败不打扰用户
-  //   —— 它是报告里"静默清单"的一条(有意的静默:退化方向是安全的)。
-  function consumeCrashSlot() {
-    return new Promise(function (resolve) {
-      var tx;
-      try { tx = app.db.transaction(CRASH_STORE, 'readwrite'); }
-      catch (e) { resolve(false); return; }
-      tx.objectStore(CRASH_STORE).delete('crash');
-      tx.oncomplete = function () { resolve(true); };
-      tx.onerror = function () { resolve(false); };
-      tx.onabort = function () { resolve(false); };
+
+  function canEditLayer(L) {
+    if (app.r.layerLocked(L)) { status('当前图层已锁定'); return false; }
+    if (!app.map.layers[L]) { status('当前地图缺少这一层'); return false; }
+    return true;
+  }
+
+  function syncLayerButtons() {
+    for (var row of document.querySelectorAll('#layers .layer-row')) {
+      var L = Number(row.dataset.layer);
+      var visible = app.r.layerVisible(L), locked = app.r.layerLocked(L);
+      var vis = row.querySelector('.vis'), lock = row.querySelector('.lock');
+      row.classList.toggle('absent', !!app.map && !app.map.layers[L]);
+      vis.style.opacity = visible ? '1' : '0.35';
+      vis.setAttribute('aria-pressed', String(visible));
+      lock.textContent = locked ? '🔒' : '🔓';
+      lock.setAttribute('aria-pressed', String(locked));
+    }
+  }
+
+  function bindFileActions() {
+    var actions = {
+      'btn-new': newMap, 'btn-open-folder': openFolder, 'btn-server': () => switchLibrary(homeFiles),
+      'btn-save': () => saveCurrent(false), 'btn-save-as': () => saveCurrent(true),
+      'btn-dup': duplicateMap, 'btn-rename': renameCurrent, 'btn-del': deleteCurrent,
+      'btn-export': exportCurrent, 'btn-check': checkCurrent, 'btn-selftest': selfTest,
+    };
+    for (const [id, action] of Object.entries(actions)) {
+      var button = $(id);
+      button.addEventListener('click', () => fileAction($(id).textContent, action));
+    }
+    for (const button of document.querySelectorAll('[data-command]')) {
+      button.addEventListener('click', () => guard('编辑操作', () => runCommand(button.dataset.command)));
+    }
+    $('lib-list').addEventListener('click', ev => {
+      var row = ev.target.closest('.lib-row');
+      if (row) fileAction('打开地图', () => openMap(row.dataset.name));
     });
+    var input = $('map-file');
+    $('btn-open-file').addEventListener('click', () => input.click());
+    input.addEventListener('change', () => {
+      var file = input.files[0];
+      input.value = '';
+      if (file) fileAction('导入地图', () => openLocalFile(file));
+    });
+    $('cancel-file-dialog').addEventListener('click', () => $('file-dialog').close());
+    syncFileControls();
   }
 
   function buildPanels() {
@@ -1829,22 +1807,26 @@ globalThis.Editor = (function () {
         ev.stopPropagation();
         var on = !app.r.layerVisible(L);
         app.r.setLayerVisible(L, on);
-        this.style.opacity = on ? '1' : '0.35';
+        syncLayerButtons();
       });
       row.querySelector('.lock').addEventListener('click', function (ev) {
         ev.stopPropagation();
         var on = !app.r.layerLocked(L);
         app.r.setLayerLocked(L, on);
-        this.style.opacity = on ? '0.35' : '1';
+        syncLayerButtons();
       });
     });
     var pal = texturePalette(app.tileDefs);
     var box = $('palette');
+    var cols = Render.atlasInfo().width / Tint.BLOCK_PX;
     pal.forEach(function (e) {
       var b = document.createElement('button');
       b.className = 'sw';
       b.title = e.tex + ' ' + e.name + (e.type ? '(' + e.type + ')' : '');
       b.textContent = String(e.tex);
+      var tile = e.tex - 1, size = Tint.BLOCK_PX;
+      b.style.backgroundImage = 'url(' + JSON.stringify(atlasUrl()) + ')';
+      b.style.backgroundPosition = -(tile % cols) * size + 'px ' + -Math.floor(tile / cols) * size + 'px';
       b.addEventListener('click', function () {
         app.st.desc = Core.packDesc(e.tex, Core.hueOf(app.st.desc), Core.brightOf(app.st.desc),
                                     Core.satOf(app.st.desc), Core.alphaOf(app.st.desc));
@@ -1886,7 +1868,7 @@ globalThis.Editor = (function () {
     if (bs) {
       bs.addEventListener('change', function () { setBrush(parseFloat(bs.value) || 1); });
     }
-    document.querySelectorAll('#toolbar .tool').forEach(function (b) {
+    document.querySelectorAll('.tool[data-tool]').forEach(function (b) {
       b.addEventListener('click', function () { app.st.tool = b.dataset.tool; selectToolButton(); });
     });
     $('tg-grid').addEventListener('click', function () {
@@ -1896,14 +1878,20 @@ globalThis.Editor = (function () {
       this.classList.toggle('on'); app.r.setSubGrid(this.classList.contains('on'));
     });
     $('tg-torus').addEventListener('click', function () {
-      this.classList.toggle('on'); app.r.setTorus(this.classList.contains('on'));
+      var on = this.classList.toggle('on');
+      guard('环面预览', () => app.r.setTorus(on));
     });
+    $('tg-guides').addEventListener('click', function () {
+      app.r.setGuides(this.classList.toggle('on'));
+    });
+    for (var id of ['rect-mode', 'line-width']) $(id).addEventListener('change', statusLine);
+    for (var type of globalThis.ENEMY_REGISTRY) $('spawn-enemy-type').add(new Option(type.name, type.id));
     var dim = $('dim-others');
     if (dim) dim.addEventListener('change', function () { app.r.setDimOthers(dim.checked); });
     var p1 = $('spawn-p1'), p2 = $('spawn-p2'), en = $('spawn-enemy'), cl = $('spawn-clear');
-    if (p1) p1.addEventListener('click', function () { spawnAt('player', 0); });
-    if (p2) p2.addEventListener('click', function () { spawnAt('player', 1); });
-    if (en) en.addEventListener('click', function () { spawnAt('enemy', 0); });
+    if (p1) p1.addEventListener('click', () => spawnAt(1));
+    if (p2) p2.addEventListener('click', () => spawnAt(2));
+    if (en) en.addEventListener('click', () => spawnAt());
     // 与它三个兄弟(spawn-p1/spawn-p2/spawn-enemy,都走 spawnAt)对齐:没打开地图时
     //    说「先打开一张地图」,而不是把 clearSpawns(null) 的 TypeError 抛进 click 处理器 ——
     //    后者经 window.onerror 变成「页面异常:…」,同一个面板里四个按钮两种说法。
@@ -1911,6 +1899,12 @@ globalThis.Editor = (function () {
       guard('清空出生点', function () {
         if (!app.map) { status('先打开一张地图'); return null; }
         return pushAndShow(clearSpawns(app.map));
+      });
+    });
+    document.querySelectorAll('[data-clear-respawn]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        if (!app.map) { status('先打开一张地图'); return; }
+        pushAndShow(clearRespawns(app.map, Number(button.dataset.clearRespawn)));
       });
     });
     // ── 画布尺寸面板(规格 A10)──
@@ -1933,63 +1927,7 @@ globalThis.Editor = (function () {
       status(cpBox.checked ? '导出/保存:压缩(deflate)'
                            : '导出/保存:裸 body(compression=0;浏览器与 Godot 的 deflate 万一对不上,这条是退路)');
     });
-    var libList = $('lib-list');
-    if (libList) {
-      libList.addEventListener('click', function (ev) {          // 委托一次,不给每行挂监听
-        var row = ev.target.closest ? ev.target.closest('.lib-row') : null;
-        // 必须经 guard 收口:openMap 的失败是常态(点到一个陈旧/写错的名字 ⇒ HTTP 404),
-        //    而丢掉这个 promise 会让拒绝逃到全局围栏 —— 围栏会 snapshot(),于是
-        //    "一次普通的打开失败"把当前这张图写进崩溃槽位,下次开机弹假的
-        //    「上次异常退出,要恢复吗?」。这正是账本已经打过两次的那类假提示。
-        //    guard 是终点:失败变成状态栏上一行「出错了(打开地图):HTTP 404」(看得见),
-        //      且一个字节都不进崩溃槽位。
-        if (row && row.dataset.name) {
-          guard('打开地图', function () { return openMap(row.dataset.name); });
-        }
-      });
-    }
-    var bn = $('btn-new'), bd = $('btn-dup'), br = $('btn-rename'), bx = $('btn-del');
-    if (bn) bn.addEventListener('click', function () {
-      var name = window.prompt('新地图名字(不含 .cyrm)', 'new_map');
-      if (!name) return;
-      var m = createEmptyMap(name, 125, 75);       // 尺寸只经这一个闸
-      app.map = m; app.name = freshName(name);
-
-      undoHistory = createHistory({});
-      markDirty();
-      guard('新建地图', function () { return app.r.setMap(m); });
-      status('新建 ' + app.name + '(还没写盘 —— Ctrl+S 才落盘)');
-      refreshStatus(); statusLine();
-    });
-    if (bd) bd.addEventListener('click', function () {
-      if (!app.map) { status('先打开一张地图'); return; }
-      var copy = resizeMap(app.map, Core.cellsWOf(app.map), Core.cellsHOf(app.map)).map;
-      copy.name = (app.map.name || 'map') + '_copy';
-      app.map = copy;
-      app.name = freshName(copy.name);
-
-      undoHistory = createHistory({});
-      markDirty();                    // 同上:副本也只活在内存里(还没写盘)
-      guard('复制地图', function () { return app.r.setMap(copy); });   // 同上:分帧重建的 promise
-      status('已复制为 ' + app.name + '(还没写盘)');
-      refreshStatus();
-    });
-    if (br) br.addEventListener('click', function () {
-      if (!app.map) { status('先打开一张地图'); return; }
-      var n = window.prompt('新的名字(不含 .cyrm)', app.map.name);
-      if (!n) return;
-      app.map.name = Core.sanitizeName(n);
-      app.name = app.map.name + '.cyrm';
-      markDirty();                    // 改名只改内存里那份(磁盘上还是旧名字,要 Ctrl+S 才落盘)
-      status('改名为 ' + app.name + '(还要 Ctrl+S 才写盘)');
-      refreshStatus();
-    });
-    if (bx) bx.addEventListener('click', function () {
-      status('删除地图请直接在磁盘上删 maps/ 下的文件(编辑器不做删除动作 —— 这是故意的)');
-    });
-    var exp = $('btn-export');
-    if (exp) exp.addEventListener('click', showExportReport);
-    [['bg-color', 'rgba'], ['bg-color2', 'rgba2']].forEach(function (spec) {
+    bindFileActions();    [['bg-color', 'rgba'], ['bg-color2', 'rgba2']].forEach(function (spec) {
       var inp = $(spec[0]), lab = $(spec[0] + '-val');
       if (!inp) return;
       var m0 = /^#([0-9a-f]{6})$/i.exec(inp.value);
@@ -2035,40 +1973,30 @@ globalThis.Editor = (function () {
       if (titles[i].textContent === '辅码') titles[i].style.display = isBg ? 'none' : '';
     }
     // 工具条上"渐变只在背景层可用":其余工具照旧(纹理层没有颜色可插值,故渐变只在背景层)
-    var g = document.querySelector('#toolbar .tool[data-tool="gradient"]');
+    var g = document.querySelector('.tool[data-tool="gradient"]');
     if (g) g.style.opacity = isBg ? '1' : '0.45';
   }
 
-  function spawnAt(kind, playerIndex) {
+  function spawnAt(slot) {
     if (!app.map) { status('先打开一张地图'); return; }
-    var v = app.r.view();
-    // 视图中心那一格(不猜鼠标位置:按下按钮时鼠标在按钮上)
-    var cx = Math.round((v.x + app.canvas.width / v.zoom / 2) / Core.SUB_PER_CELL);
-    var cy = Math.round((v.y + app.canvas.height / v.zoom / 2) / Core.SUB_PER_CELL);
-    var types = importEnemyTypes();
-    if (kind === 'player') {
-      // P1/P2 是位置语义、不是"第几条记录":游戏侧 map_format.gd 按顺序读
-      //    player / player2。故放 P1 = 写第 0 条,放 P2 = 写第 1 条。
-      //    缺号一律显式拒绝并说明理由 —— 绝不 push 出一条位置不对的记录:在零出生点的
-      //      图上放 P2 而 push 出去,磁盘上那条会被游戏读成 P1(状态栏刚说"P2 放到 …",
-      //      数据却是 P1),而且一个字都不报。同理,"放 P1"若也走 push,图上只有 P1 时
-      //      再点一次就会长出第 2 条 —— 那条位置正好是 P2,于是 P2 被悄悄换掉。
-      if (app.map.players.length < playerIndex) {
-        status('先放 P' + playerIndex + ':出生点按位置读(player / player2),P' + (playerIndex + 1) +
-               ' 之前必须有 P' + playerIndex);
-        return;
-      }
-      var before = snapshotSpawns(app.map);
-      var px = Render.wrapIdx(Math.floor(cx), Core.cellsWOf(app.map));
-      var py = Render.wrapIdx(Math.floor(cy), Core.cellsHOf(app.map));
-      if (app.map.players.length === playerIndex) app.map.players.push({ x: px, y: py });
-      else app.map.players[playerIndex] = { x: px, y: py };
-      pushAndShow(spawnDiff(before, snapshotSpawns(app.map)));
-      status('P' + (playerIndex + 1) + ' 放到 (' + px + ',' + py + ')');
-      return;
+    const v = app.r.view();
+    const x = Render.wrapIdx(Math.round((v.x + app.canvas.width / v.zoom / 2) / Core.SUB_PER_CELL), Core.cellsWOf(app.map));
+    const y = Render.wrapIdx(Math.round((v.y + app.canvas.height / v.zoom / 2) / Core.SUB_PER_CELL), Core.cellsHOf(app.map));
+    const before = snapshotSpawns(app.map);
+    if (slot) {
+      const at = app.map.players.findIndex(p => p.slot === slot);
+      const point = { slot, x, y };
+      if (at < 0) app.map.players.push(point);
+      else app.map.players[at] = point;
+    } else {
+      app.map.enemies.push({ type: $('spawn-enemy-type').value, x, y });
     }
-    pushAndShow(addSpawn(app.map, 'enemy', cx, cy, types[0] || 'fly_bird'));
-    status('敌人放到 (' + cx + ',' + cy + ')');
+    pushAndShow(spawnDiff(before, snapshotSpawns(app.map)));
+    status((slot ? 'P' + slot : '敌人') + ' 放到 (' + x + ',' + y + ')');
+  }
+
+  function atlasUrl() {
+    return globalThis.CYRM_OFFLINE ? globalThis.CYRM_OFFLINE.atlasUrl : 'structure.png';
   }
 
   function loadAtlas() {
@@ -2084,105 +2012,133 @@ globalThis.Editor = (function () {
         resolve({ width: img.width, height: img.height });
       };
       img.onerror = function () { reject(new Error('structure.png 加载失败')); };
-      img.src = globalThis.CYRM_OFFLINE ? globalThis.CYRM_OFFLINE.atlasUrl : 'structure.png';
+      img.src = atlasUrl();
     });
   }
 
-  // ── 打开地图(拉字节 → 解码 → 挂到渲染器)──
-  function openMap(name) {
-    status('打开 ' + name + ' …');
-    return mapRequest('/api/map?p=' + encodeURIComponent(name))
-      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
-      .then(function (buf) {
-        // 字节先落在局部量里:解码成功之后才认领成 app.raw(见下一条注释)。
-        var bytes = new Uint8Array(buf);
-        return mapFromBytes(name, bytes).then(function (out) {
-          return { out: out, bytes: bytes };
-        });
-      })
-      .then(function (got) {
-        var out = got.out;
-        app.raw = got.bytes;
-        app.map = out.map; app.name = name;
-        dirty = false;                 // 打开 = 屏幕上这份与磁盘上那份同源(见 dirty 那段)
-        // 同一个纪律的另两笔账也要一起归位,漏了哪一笔都是"不报错但看得见":
-        //   ① draftSavedRev 推到当前 rev —— 上一张图留下的那个还在飞的防抖定时器到点
-        //      时会走 saveDraft 顶部那道判据,于是不会给这张"刚从文件打开、一笔都没画过"
-        //      的图写出一条 dirty:true 的草稿。不推的话:下次开机打开这张图会弹一次假的
-        //      恢复提示(而且草稿里那份与文件里那份逐字节相同 —— 全靠 offerDraft 的字节闸兜住,
-        //      那是第二道防线,不该当第一道用)。与 Ctrl+S 的收尾 markDraftSaved 推的是
-        //      同一个变量、同一条理由。
-        //   ② lastAutoSaveAt 归零 —— 否则状态栏那一格显示的是上一张图的「已自动保存
-        //      12:34」,而这张图这一局还没自动存过(人眼读到的是"这张图存过了")。
-        draftSavedRev = draftRev;
-        lastAutoSaveAt = 0;
-        return Promise.resolve(app.r.setMap(app.map)).then(function () {
-          refreshStatus();
-          status('已打开 ' + name);
-        });
-      });
+  async function openBytes(name, bytes, inLibrary, restore) {
+    var out = await Io.importMap(bytes);
+    await flushDraft();
+    await showDocument(out.map, name, bytes, out.format, inLibrary);
+    status((inLibrary ? '已打开 ' : '已导入 ') + name + (out.format === 'v4' ? '' : ' · 旧文本'));
+    if (restore) await offerDraft();
   }
 
-  function putMapBytes(name, bytes) {
-    return mapRequest('/api/map?p=' + encodeURIComponent(name), {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: new Blob([bytes]),
-    }).then(function (r) {
-      if (!r.ok) throw new Error('HTTP ' + r.status + (r.status === 415 ? '(内容类型不对)' : ''));
-      return r.json();
+  async function openMap(name, restore = true) {
+    await openBytes(name, await app.files.read(name), true, restore);
+  }
+
+  async function openLocalFile(file) {
+    await openBytes(file.name, new Uint8Array(await file.arrayBuffer()), false, true);
+  }
+
+  async function directoryScope(handle) {
+    var id = 'dir:' + crypto.randomUUID() + ':';
+    if (!app.db) return id;
+    // 浏览器只暴露目录名，通过句柄识别同名目录。
+    var key = 'directories:' + handle.name;
+    var record = await idbGetOne(app.db, CRASH_STORE, key);
+    var entries = record ? record.entries : [];
+    for (var entry of entries) {
+      if (await handle.isSameEntry(entry.handle)) return entry.id;
+    }
+    entries.push({id, handle});
+    await idbPut(app.db, CRASH_STORE, {key, entries});
+    return id;
+  }
+
+  async function switchLibrary(files) {
+    var rows = await files.list();
+    await flushDraft();
+    app.files = files;
+    if (app.map) {
+      identifyDocument(app.name, app.raw, app.sourceFormat, false);
+      markDirty();
+    }
+    renderLibrary(rows);
+    refreshStatus();
+    status('地图库 · ' + files.label);
+  }
+
+  async function openFolder() {
+    var handle;
+    try { handle = await window.showDirectoryPicker({mode: 'readwrite'}); }
+    catch (e) { if (e.name === 'AbortError') return; throw e; }
+    await switchLibrary(MapFiles.directory(handle, await directoryScope(handle)));
+  }
+
+  function syncLibrarySelection() {
+    document.querySelectorAll('#lib-list .lib-row').forEach(row => {
+      row.classList.toggle('cur', app.inLibrary && row.dataset.name === app.name);
     });
   }
 
-  function refreshStatus() {
+  function syncFileControls() {
+    for (var button of document.querySelectorAll('[data-document]')) {
+      button.disabled = app.fileBusy || !app.map;
+    }
+    $('btn-new').disabled = $('btn-open-file').disabled = app.fileBusy;
+    $('btn-open-folder').disabled = app.fileBusy || typeof window.showDirectoryPicker !== 'function';
+    $('btn-rename').disabled = app.fileBusy || !app.inLibrary || !app.files.rename;
+    $('btn-del').disabled = app.fileBusy || !app.inLibrary || !app.files.remove;
+    $('btn-server').hidden = !!globalThis.CYRM_OFFLINE || app.files === homeFiles;
+    $('btn-server').disabled = app.fileBusy;
+    $('right').inert = app.fileBusy;
+    $('lib-list').inert = app.fileBusy;
+  }
+
+  function refreshStatus(report) {
     var m = app.map;
-    if (!m) return;
-    var set = function (id, txt) { var el = $(id); if (el) el.textContent = txt; };
-    set('st-name', (m.name || '(无名)') + (app.name ? ' · ' + app.name : ''));
-    set('st-size', Core.cellsWOf(m) + '×' + Core.cellsHOf(m) + ' 格');
-    // 尺寸面板的两个框也要跟着走 —— 与 renderSaveState 同一条纪律("DOM 必须与状态一致"):
-    //    打开/新建/复制/改尺寸/草稿恢复每一条换图的路上,框里都必须是这张图的尺寸。
-    //    这里挂(而不是在每一条路上各写一次):refreshStatus 就是那几条路的公共收口,
-    //      漏一处就是"框里写着上一张图的尺寸,一按应用尺寸把当前这张改了"。
+    $('empty-hint').hidden = !!m;
+    syncLayerButtons();
+    syncFileControls();
+    syncLibrarySelection();
+    if (!m) {
+      $('st-name').textContent = '未打开地图';
+      for (var id of ['st-size', 'st-tool', 'st-tex', 'st-desc', 'st-sel', 'st-undo', 'st-valid', 'st-save']) {
+        $(id).textContent = '';
+      }
+      $('respawn-count').textContent = '侧 1 0 · 侧 2 0';
+      return;
+    }
+    $('st-name').textContent = app.name;
+    $('st-size').textContent = Core.cellsWOf(m) + '×' + Core.cellsHOf(m) + ' 格';
+    var counts = [0, 0];
+    for (var r of m.respawns) counts[r.side - 1]++;
+    $('respawn-count').textContent = '侧 1 ' + counts[0] + ' · 侧 2 ' + counts[1];
     sizeInputsSync();
-    var rep = Core.validateMap(m);
-    set('st-valid', rep.errors.length ? ('error ' + rep.errors.length)
-                                      : (rep.warnings.length ? ('⚠ ' + rep.warnings.length) : '校验 OK'));
-    renderSaveState();                // 打开/新建/复制/改名/保存后都要跟着翻
+    var rep = report || Core.validateMap(m);
+    $('st-valid').textContent = rep.errors.length ? '错误 ' + rep.errors.length
+      : rep.warnings.length ? '⚠ ' + rep.warnings.length : '校验 OK';
+    renderSaveState();
   }
 
-  // ── 库列表 ──
-  function refreshLibrary() {
-    return mapRequest('/api/maps').then(function (r) {
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      return r.json();
-    }).then(function (data) {
-      var ul = $('lib-list');
-      if (!ul) return;
-      ul.innerHTML = '';
-      var rows = (data.maps || []);
-      if (!rows.length) { ul.textContent = globalThis.CYRM_OFFLINE ? '打开地图文件或选择地图目录' : 'maps/ 下没有 .cyrm'; return; }
-      rows.forEach(function (mm) {
-        var li = document.createElement('li');
-        li.className = 'lib-row';
-        li.dataset.name = mm.name;
-        li.textContent = mm.name + '  ' + Math.round(mm.size / 1024) + 'KB';
-        li.title = new Date(mm.mtime).toLocaleString();
-        ul.appendChild(li);
-      });
-    });
+  function renderLibrary(rows) {
+    $('lib-backend').textContent = app.files.label;
+    var list = $('lib-list');
+    list.replaceChildren();
+    if (!rows.length) { list.textContent = '库里没有地图'; return; }
+    for (var file of rows) {
+      var item = document.createElement('li');
+      var button = document.createElement('button');
+      button.className = 'lib-row';
+      button.dataset.name = file.name;
+      button.textContent = file.name;
+      button.title = file.name + ' · ' + Math.ceil(file.size / 1024) + ' KiB';
+      item.appendChild(button);
+      list.appendChild(item);
+    }
+    syncLibrarySelection();
   }
 
-  // ── 启动 ──
-  function openFromUrl() {
-    var p = new URLSearchParams(location.search).get('p');
-    if (p) return openMap(p);
-    return refreshLibrary().then(function () {
-      var first = document.querySelector('#lib-list .lib-row');
-      return first ? openMap(first.dataset.name) : null;
-    });
-  }
+  async function refreshLibrary() { renderLibrary(await app.files.list()); }
 
+  async function openFromUrl() {
+    await refreshLibrary();
+    var name = new URLSearchParams(location.search).get('p');
+    if (name) await openMap(name, false);
+    else refreshStatus();
+  }
   function boot() {
     app.canvas = $('map-canvas');
     if (!app.canvas) return;
@@ -2193,9 +2149,7 @@ globalThis.Editor = (function () {
       if (b) { b.hidden = false; b.textContent = '浏览器不支持 Web Worker，请换用支持 Worker 的浏览器。源码版请通过 serve.bat 打开；离线版请打开 cyrm-editor.html。'; }
       return;
     }
-    // onError 指到 ui 的 sink:渲染侧那条观察者(resize/fit/setView/… 的拒绝)与
-    //    guard 的报告写同一条通道,不靠 render 自己去摸 Editor.status。
-    app.r = Render.mount(app.canvas, { onError: reportError });
+    app.r = Render.mount(app.canvas);
     installInteraction();
     var ro = new ResizeObserver(function () { guard('resize', function () { return app.r.resize(); }); });
     ro.observe(app.canvas.parentElement);
@@ -2203,35 +2157,24 @@ globalThis.Editor = (function () {
     if (fitBtn) fitBtn.addEventListener('click', function () { guard('fit', function () { return app.r.fit(); }); });
 
     // 图集必须先就位(渲染第一帧就要它);失败要说出来,而不是画一片黑。
-    bootLoad();
+    bootLoad().catch(error => reportError('启动失败：' + msgOf(error), error));
   }
 
-  function bootLoad() {
-    installCrashFence();
+  async function bootLoad() {
+    installCrashRecovery();
     app.uist = readUiState(localStore());
-    app.db = null;
-    return openDraftStore().then(function (db) {
-      app.db = db;
-      if (!db) status('草稿盘不可用(私密模式?)—— 编辑器仍可用,但请及时 Ctrl+S 存盘');
-    }).then(function () {
-      return loadAtlas();
-    }).then(function () {
-      buildPanels();
-      return openFromUrl();
-    }).then(function () {
-      return checkCrashSlot();
-    }).then(function (recovered) {
-      // 崩溃快照比草稿新时才轮到草稿盘(两个都问一遍会连弹两个"要不要恢复" ——
-      //   而崩溃那份本来就是更新的那一份)。
-      if (recovered) return false;
-      return offerDraft();
-    }).then(function () {
-      applyUiState();
-      installUiStateSave();
-      return null;
-    }).catch(function (e) {
-      status('启动失败:' + msgOf(e));
-    });
+    app.db = await openDraftStore();
+    if (!app.db) status('草稿盘不可用，请手动保存地图');
+    await loadAtlas();
+    buildPanels();
+    await openFromUrl();
+    try {
+      if (!await offerCrashDraft()) await offerDraft();
+    } catch (error) {
+      reportError('恢复草稿失败：' + msgOf(error), error);
+    }
+    await applyUiState();
+    installUiStateSave();
   }
 
   return {

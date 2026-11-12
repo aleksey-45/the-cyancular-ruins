@@ -1,41 +1,19 @@
 'use strict';
 
-importScripts('core.js');
+importScripts('tile_defs.js', 'core.js');
 
-function errText(e) {
-  if (!e) return '未知错误';
-  var m = (e.message !== undefined) ? String(e.message) : String(e);
-  if (m === '' && e.cause && e.cause.message) m = String(e.cause.message);
-  return m === '' ? String(e) : m;
-}
-
-// 避免使用 transfer 转移 Uint8Array 所有权，保持结构化克隆以确保环境兼容性
-function reply(id, payload) {
-  var msg = { id: id };
-  for (var k in payload) msg[k] = payload[k];
-  self.postMessage(msg);
-}
-
-self.onmessage = function (ev) {
-  var msg = ev.data || {};
-  var id = msg.id;
-  var op = msg.op;
-  if (op === 'ping') { reply(id, { ok: true, pong: true }); return; }
-  if (op === 'encode') {
-    Core.encodeMap(msg.map, { compress: msg.compress !== false }).then(function (bytes) {
-      reply(id, { ok: true, bytes: bytes });
-    }).catch(function (e) {
-      reply(id, { ok: false, error: errText(e) });
-    });
-    return;
+self.onmessage = async ({data: {id, op, map, bytes, compress}}) => {
+  try {
+    let result;
+    switch (op) {
+      case 'ping': result = {pong: true}; break;
+      case 'encode': result = {bytes: await Core.encodeMap(map, {compress})}; break;
+      case 'decode': result = {map: await Core.decodeMap(bytes)}; break;
+      case 'import': result = await Core.importMap(bytes); break;
+      default: throw new Error('未知的编解码操作 ' + op);
+    }
+    self.postMessage({id, ok: true, ...result});
+  } catch (error) {
+    self.postMessage({id, ok: false, error: error.message});
   }
-  if (op === 'decode') {
-    Core.decodeMap(msg.bytes).then(function (map) {
-      reply(id, { ok: true, map: map });
-    }).catch(function (e) {
-      reply(id, { ok: false, error: errText(e) });
-    });
-    return;
-  }
-  reply(id, { ok: false, error: 'worker: 未知操作 ' + op });
 };

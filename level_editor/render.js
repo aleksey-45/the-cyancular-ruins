@@ -195,7 +195,7 @@ globalThis.Render = (function () {
   }
 
   // ── 可见区裁剪 ──
-  // 返回的是未折算的坐标(3×3 副本要的正是它):调用方按格自己 wrapIdx。
+  // 可见区域使用连续的世界坐标，采样地图时折算回主网格。
   function visibleSubRange(view, viewW, viewH, subCols, subRows) {
     var x0 = Math.floor(view.x), y0 = Math.floor(view.y);
     var x1 = Math.ceil(view.x + viewW / view.zoom), y1 = Math.ceil(view.y + viewH / view.zoom);
@@ -206,10 +206,10 @@ globalThis.Render = (function () {
   function torusOffsets(view, viewW, viewH, mapW, mapH) {
     var r = visibleSubRange(view, viewW, viewH, mapW, mapH);
     var out = [];
-    for (var ky = -1; ky <= 1; ky++) {
+    for (var ky = 0; ky < 2; ky++) {
       var lo = ky * mapH, hi = lo + mapH;
       if (!intersects(r.y0, r.y1, lo, hi)) continue;
-      for (var kx = -1; kx <= 1; kx++) {
+      for (var kx = 0; kx < 2; kx++) {
         var lox = kx * mapW, hix = lox + mapW;
         if (!intersects(r.x0, r.x1, lox, hix)) continue;
         out.push([lox, lo]);
@@ -309,6 +309,7 @@ globalThis.Render = (function () {
   // ── 图层绘制顺序 ──
   // 前景(0)是"从外到内"的第一层 ⇒ 最后画(盖在最上面);背景(3)最先画。
   var DRAW_ORDER = [3, 2, 1, 0];
+  var SKY_COLOR = '#b0e5f6';
 
   // ── 层的种类:决定那一格怎么读 ──
   // 纹理层是描述符(走 Core.texOf / Tint),背景层是 RGBA 0xRRGGBBAA
@@ -322,14 +323,13 @@ globalThis.Render = (function () {
   //    那就是第二份实现,而两份实现迟早漂、且漂了不报错。
   function layerIsColor(L) { return Core.LAYER_KINDS[L] === 'color'; }
 
-  function mount(canvas, opts) {
-    opts = opts || {};
+  function mount(canvas) {
     var ctx = canvas.getContext('2d');
     ctx.imageSmoothingEnabled = false;
     var s = {
       map: null, layer: Core.LAYER_SCENE,
       view: { x: 0, y: 0, zoom: 8 },
-      grid: true, subGrid: false, torus: true, dimOthers: true,
+      grid: true, subGrid: false, torus: true, dimOthers: true, guides: false,
       layerVisible: [true, true, true, true],
       layerLocked: [false, false, false, false],
       selection: null,
@@ -338,7 +338,8 @@ globalThis.Render = (function () {
     };
     var thumbs = [null, null, null, null];
     var thumbPx = THUMB_PX;
-    var slicer = createSlicer(opts.slicer || {});
+    var thumbWork = 0;
+    var slicer = createSlicer({});
     var stat = { thumbMs: 0, renders: 0, lastRenderMs: 0, thumbsBuilt: 0 };
 
     // 换图(setAtlas)必须把 ① 与 ② 也一起作废 —— 那两层的 state 全住在这个闭包里,
@@ -350,47 +351,6 @@ globalThis.Render = (function () {
     //      当场同步做就等于把闸 2 取消了,而那时候屏幕上还什么都没变。
     var atlasSync = false;                          // 换图之后 ①② 需要整片重来
     attachViewInvalidator(function () { atlasSync = !!s.map; return null; });
-
-    function msgOf(e) {
-      if (!e) return '未知错误';
-      var m = (e.message !== undefined) ? String(e.message) : String(e);
-      if (m === '' && e.cause && e.cause.message) m = String(e.cause.message);
-      return m === '' ? String(e) : m;
-    }
-    function defaultErrorSink(text, err) {
-      // 走页面已经在用的那条通道:ui.js 的 status()(= 状态栏 #status-msg)。
-      //   运行时查找,不在模块顶层引 ui.js —— 依赖顺序是 core → tint → render → io → ui,
-      //   加载期 ui.js 还不存在，需在报错时查找。
-      var shown = false;
-      try {
-        var E = globalThis.Editor;
-        if (E && typeof E.status === 'function') { E.status(text); shown = true; }
-      } catch (e1) { shown = false; }
-      if (!shown) {
-        try {
-          var el = (typeof document !== 'undefined' && document.getElementById)
-            ? document.getElementById('status-msg') : null;
-          if (el) { el.textContent = String(text); shown = true; }
-        } catch (e2) { shown = false; }
-      }
-      if (typeof console !== 'undefined' && console.error) console.error(text, err);
-    }
-    var errorSink = (typeof opts.onError === 'function') ? opts.onError : defaultErrorSink;
-    function reportViewError(label, err) {
-      var text = '出错了(' + label + '):' + msgOf(err);
-      try { errorSink(text, err); }
-      catch (e) {
-        // 报错通道自己坏了也不许把异常扔回调用方(那就成了第二处"看得见才怪")。
-        if (typeof console !== 'undefined' && console.error) console.error(text, e);
-      }
-    }
-    // 给"会拒绝的入口"挂观察者,并原样返回那个 promise(见上面两条契约)。
-    function observed(label, p) {
-      if (p && typeof p.then === 'function') {
-        p.then(null, function (e) { reportViewError(label, e); });
-      }
-      return p;
-    }
 
     function ensureThumbs(map) {
       var px = thumbScale(map.subCols, map.subRows);
@@ -471,8 +431,9 @@ globalThis.Render = (function () {
       if (!s.map) return Promise.resolve();
       var t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
       var tasks = thumbTasks(s.map);
+      var work = ++thumbWork;
       stat.thumbsBuilt++;
-      return slicer.run(tasks, function (t) { paintThumbRect(t.L, t.rect); }).then(function () {
+      return slicer.run(tasks, function (t) { if (work === thumbWork) paintThumbRect(t.L, t.rect); }).then(function () {
         stat.thumbMs = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0;
       });
     }
@@ -495,6 +456,24 @@ globalThis.Render = (function () {
     }
     function subToScreen(X, Y) {
       return { x: (X - s.view.x) * s.view.zoom, y: (Y - s.view.y) * s.view.zoom };
+    }
+
+    function copies() { return s.torus ? 2 : 1; }
+
+    function containsPoint(px, py) {
+      if (!s.map) return false;
+      var x = s.view.x + px / s.view.zoom, y = s.view.y + py / s.view.zoom;
+      return x >= 0 && y >= 0 && x < s.map.subCols * copies() && y < s.map.subRows * copies();
+    }
+
+    function limitView(view) {
+      if (!s.map) return view;
+      var halfX = canvas.width / (2 * view.zoom), halfY = canvas.height / (2 * view.zoom);
+      return {
+        x: Math.max(-halfX, Math.min(s.map.subCols * copies() - halfX, view.x)),
+        y: Math.max(-halfY, Math.min(s.map.subRows * copies() - halfY, view.y)),
+        zoom: view.zoom,
+      };
     }
 
     function torusList(W, H) {
@@ -525,7 +504,7 @@ globalThis.Render = (function () {
     // 像素坐标系的定义(整个 ② 都靠它):离屏层像素 (px,py) ↔ 世界子格
     //    (view.x + px/zoom, view.y + py/zoom) —— 与屏幕同一套坐标。于是
     //    · 平移 = 像素级自拷贝搬移 + 只补新露出的边条;
-    //    · 3×3 副本 = 把这同一张图按「副本世界偏移 × zoom」平移后再画一次。
+    //    · 环面副本通过采样坐标折算铺进同一个视口。
     var layerCv = [null, null, null, null];
     var layerDirty = [null, null, null, null];      // 每层一个子格矩形(null = 干净)
     var cellCache = null;                            // ③
@@ -578,7 +557,7 @@ globalThis.Render = (function () {
     // 重画某一层的离屏上的一块矩形(单位 = 子格;矩形允许越出画布与主网格,内部裁剪)
     // 越出主网格是常态:离屏层的像素系与屏幕同一套,视图越过接缝时那半边像素只有
     //   靠折算后的格才填得上(descAt 本来就环面折算)。绝不许按"主网格"裁剪 —— 裁了就是
-    //   视图拖过边界时的一整条空白(而 3×3 副本填不上它,理由见 buildLayers 的注释)。
+    //   视图经过接缝时的两侧内容。
     function paintLayerRect(L, rect) {
       var cv = ensureLayerCanvas(L);
       var c = cv.getContext('2d');
@@ -591,6 +570,10 @@ globalThis.Render = (function () {
       if (px1 <= px0 || py1 <= py0) return;
       c.clearRect(px0, py0, px1 - px0, py1 - py0);
       if (!layerArray(s.map, L)) return;                 // 缺席层 = 全空气(已清干净)
+      c.save();
+      c.beginPath();
+      c.rect(px0, py0, px1 - px0, py1 - py0);
+      c.clip();
       var cell0x = Math.floor((s.view.x + px0 / z) / SUB), cell1x = Math.ceil((s.view.x + px1 / z) / SUB);
       var cell0y = Math.floor((s.view.y + py0 / z) / SUB), cell1y = Math.ceil((s.view.y + py1 / z) / SUB);
       // 按层种类分派(判据取一次,不在逐格循环里重算)—— 这就是 F1 那道闸门。
@@ -633,6 +616,14 @@ globalThis.Render = (function () {
           }
         }
       }
+      c.restore();
+    }
+
+    function repaintCopies(L, rect) {
+      var offsets = torusOffsets(s.view, canvas.width, canvas.height, s.map.subCols, s.map.subRows);
+      for (var [x, y] of offsets) {
+        paintLayerRect(L, {x: rect.x + x, y: rect.y + y, w: rect.w, h: rect.h});
+      }
     }
 
     // 重建所有"脏"的离屏层。编辑之后只重画脏矩形 ⇒ 成本 O(脏区),不是 O(全屏)。
@@ -644,18 +635,13 @@ globalThis.Render = (function () {
         var d = layerDirty[L];
         layerDirty[L] = null;
         if (!layerArray(s.map, L)) { ensureLayerCanvas(L).getContext('2d').clearRect(0, 0, canvas.width, canvas.height); continue; }
-        paintLayerRect(L, d);
+        repaintCopies(L, d);
         stat2.layerRebuilds++;
       }
     }
 
     // 全屏重建(闸 2「全屏重建 → 分帧」):四层各切成若干条,交给分帧器。
-    // 重画的世界范围就是可见范围本身(visibleSubRange),不裁到主网格 ——
-    //    离屏层的像素系与屏幕同一套,所以"可见范围"里落在主网格之外的像素(视图越过接缝
-    //    时必然出现)必须用折算后的格去填。裁了会留一整条空白,而 3×3 的副本填不上:
-    //    副本的贴图偏移是「副本世界偏移 × zoom」,对"视口 12.5 格宽、地图 500 格"这种常态,
-    //    隔壁副本被平移 −8000px、整个落在画布外,根本进不到屏幕。
-    //    ⇒ 裁 = 视图拖过边界时左边一条黑带(人眼清单第 4 条会当场看到)。
+    // 离屏层与屏幕同坐标，按视口连续采样，合成阶段再裁到可见副本。
     function buildLayers() {
       if (!s.map) return Promise.resolve();
       layersClean = false;
@@ -682,76 +668,119 @@ globalThis.Render = (function () {
       });
     }
 
-    // 3×3 的合成:每份副本都是把同一张离屏层按「副本世界偏移 × zoom」平移后再画一次。
-    //    偏移是 subCols/subRows 的整数倍,而 paintLayerRect 读格时本来就环面折算
-    //    ⇒ 每份副本在任意位置画出来的内容都等于"该处应有的内容"(折算前后是同一格),
-    //    副本之间不会互相画错。
-    // 但别把"多份副本"读成承重(评审发现 8;报告 §9.1):离屏层的像素系 = 屏幕系,
-    //    它上面已经按可见范围本身把每一处应有的内容都铺好了 —— 越出主网格的那些像素由
-    //    paintLayerRect 的环面折算补上。所以 ±subCols/±subRows 那几份副本画的是
-    //    同一批像素,在当前坐标系下是冗余的;"屏幕每一处都有一份盖上去"这个保证
-    //    来自 paintLayerRect 的折算,不是来自这里。
-    //    留着它们的两个理由:① 环面 N×N 铺贴是计划明列的交付面;② setTorus 开关的可见
-    //    行为就是它(⑩d 钉住的 [8,4])。真要省这几笔全画布 drawImage/层/帧,把 offs 收成
-    //    [[0,0]] 即可(⑩d 的期望值要同改)—— 那是省冗余,不是拆保证。
-    // 切层 ≠ 重画:压暗/可见性只在合成这一层做(4 次 drawImage),不碰任何一层的离屏内容。
+    // 离屏层已经按环面坐标铺满视口，合成时裁到预览区域。
     function drawLayerPath(W, H) {
       flushDirty();
-      var offs = torusList(W, H);
-      var z = s.view.zoom;
-      for (var oi = 0; oi < DRAW_ORDER.length; oi++) {
-        var L = DRAW_ORDER[oi];
-        if (!s.layerVisible[L] || !layerCv[L]) continue;
-        // 尺寸对不上的离屏层(改窗口之后、重建还没跑到)一路都不许画:它的像素刻度属于
-        //   上一块画布,画出去是"整层错位",而空白会被下一次重建补上(resize 已经把它丢掉)。
-        if (layerCv[L].width !== W || layerCv[L].height !== H) continue;
-        ctx.globalAlpha = (s.dimOthers && L !== s.layer && L !== Core.LAYER_BG) ? 0.4 : 1;
-        for (var i = 0; i < offs.length; i++) {
-          ctx.drawImage(layerCv[L], offs[i][0] * z, offs[i][1] * z);
-        }
+      var origin = subToScreen(0, 0), z = s.view.zoom;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(origin.x, origin.y, s.map.subCols * z * copies(), s.map.subRows * z * copies());
+      ctx.clip();
+      for (var L of DRAW_ORDER) {
+        var layer = layerCv[L];
+        if (!s.layerVisible[L] || !layer || layer.width !== W || layer.height !== H) continue;
+        ctx.globalAlpha = s.dimOthers && L !== s.layer && L !== Core.LAYER_BG ? 0.4 : 1;
+        ctx.drawImage(layer, 0, 0);
       }
-      ctx.globalAlpha = 1;
+      ctx.restore();
     }
 
-    // 网格线:格线恒画,子格线只在 zoom ≥ 4 时画。规格 C15 只要求"有子格开关 + 子格级
-    //   命中",没有规定阈值 ⇒ 这个 4 是本文件自己的选择(取 4 的理由:4 px/子格
-    //   时一个子格还有 4 个屏幕像素、线还分得开;再稀就只是给画面加噪点),不是规格里的数字。
-    // 只绘制可见区网格线。
+    var quadrant = new Uint16Array(4);
+    function quadrantTexture(arr, start, stride) {
+      quadrant[0] = Core.texOf(arr[start]);
+      quadrant[1] = Core.texOf(arr[start + 1]);
+      quadrant[2] = Core.texOf(arr[start + stride]);
+      quadrant[3] = Core.texOf(arr[start + stride + 1]);
+      var best = 0, count = 0;
+      for (var tex of quadrant) {
+        if (!tex) continue;
+        var matches = 0;
+        for (var other of quadrant) if (other === tex) matches++;
+        if (matches > count || (matches === count && tex < best)) { best = tex; count = matches; }
+      }
+      return best;
+    }
+
+    function splitCell(arr, x, y, stride) {
+      var start = y * stride + x;
+      var first = quadrantTexture(arr, start, stride);
+      return first !== quadrantTexture(arr, start + 2, stride) ||
+             first !== quadrantTexture(arr, start + 2 * stride, stride) ||
+             first !== quadrantTexture(arr, start + 2 * stride + 2, stride);
+    }
+
     function drawGrid(W, H) {
-      var r = visibleSubRange(s.view, W, H, s.map.subCols, s.map.subRows);
-      var z = s.view.zoom;
+      var z = s.view.zoom, cols = s.map.subCols, rows = s.map.subRows;
+      var range = visibleSubRange(s.view, W, H, cols, rows);
+      var x0 = Math.max(0, range.x0), x1 = Math.min(cols, range.x1);
+      var y0 = Math.max(0, range.y0), y1 = Math.min(rows, range.y1);
+      if (x1 <= x0 || y1 <= y0) return;
+      var left = subToScreen(x0, y0), right = subToScreen(x1, y1);
+      var origin = subToScreen(0, 0);
+      function vertical(x, a, b) {
+        var sx = Math.round(origin.x + x * z) + 0.5;
+        ctx.moveTo(sx, a); ctx.lineTo(sx, b);
+      }
+      function horizontal(y, a, b) {
+        var sy = Math.round(origin.y + y * z) + 0.5;
+        ctx.moveTo(a, sy); ctx.lineTo(b, sy);
+      }
       ctx.lineWidth = 1;
-      ctx.strokeStyle = 'rgba(255,255,255,0.16)';
-      ctx.beginPath();
-      if (s.subGrid && z >= 4) {
-        for (var X = Math.floor(r.x0 / 1); X <= r.x1; X++) {
-          var sx = Math.round((X - s.view.x) * z) + 0.5;
-          if (sx < -1 || sx > W + 1) continue;
-          ctx.moveTo(sx, 0); ctx.lineTo(sx, H);
+      var arr = s.subGrid && z >= 4 && !layerIsColor(s.layer) ? layerArray(s.map, s.layer) : null;
+      if (arr) {
+        ctx.strokeStyle = 'rgba(0,0,0,.14)';
+        ctx.beginPath();
+        for (var y = Math.floor(y0 / SUB) * SUB; y < y1; y += SUB) {
+          for (var x = Math.floor(x0 / SUB) * SUB; x < x1; x += SUB) {
+            if (!splitCell(arr, x, y, cols)) continue;
+            for (var i = 1; i < SUB; i++) {
+              vertical(x + i, origin.y + y * z, origin.y + (y + SUB) * z);
+              horizontal(y + i, origin.x + x * z, origin.x + (x + SUB) * z);
+            }
+          }
         }
-        for (var Y = r.y0; Y <= r.y1; Y++) {
-          var sy = Math.round((Y - s.view.y) * z) + 0.5;
-          if (sy < -1 || sy > H + 1) continue;
-          ctx.moveTo(0, sy); ctx.lineTo(W, sy);
-        }
+        ctx.stroke();
       }
-      ctx.stroke();
-      // 格线(64px = 4 个子格)
-      ctx.strokeStyle = 'rgba(255,255,255,0.30)';
+      ctx.strokeStyle = 'rgba(0,0,0,.26)';
       ctx.beginPath();
-      for (var X2 = Math.floor(r.x0 / SUB) * SUB; X2 <= r.x1; X2 += SUB) {
-        var sx2 = Math.round((X2 - s.view.x) * z) + 0.5;
-        if (sx2 < -1 || sx2 > W + 1) continue;
-        ctx.moveTo(sx2, 0); ctx.lineTo(sx2, H);
-      }
-      for (var Y2 = Math.floor(r.y0 / SUB) * SUB; Y2 <= r.y1; Y2 += SUB) {
-        var sy2 = Math.round((Y2 - s.view.y) * z) + 0.5;
-        if (sy2 < -1 || sy2 > H + 1) continue;
-        ctx.moveTo(0, sy2); ctx.lineTo(W, sy2);
-      }
+      for (var x = Math.ceil(x0 / SUB) * SUB; x <= x1; x += SUB) vertical(x, left.y, right.y);
+      for (var y = Math.ceil(y0 / SUB) * SUB; y <= y1; y += SUB) horizontal(y, left.x, right.x);
       ctx.stroke();
     }
 
+    function drawMapFrames(W, H) {
+      var z = s.view.zoom, w = s.map.subCols * z, h = s.map.subRows * z;
+      ctx.save();
+      for (var [ox, oy] of torusList(W, H)) {
+        var {x, y} = subToScreen(ox, oy), primary = ox === 0 && oy === 0;
+        ctx.lineWidth = primary ? 2 : 1;
+        ctx.strokeStyle = primary ? 'rgba(84,160,255,.9)' : 'rgba(84,160,255,.55)';
+        ctx.strokeRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h));
+        if (!s.guides) continue;
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = 'rgba(0,0,0,.22)';
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        var sections = Core.RESPAWN_GUIDE_DIVISIONS;
+        for (var j = 1; j < sections * 2; j++) {
+          if (j === sections) continue;
+          var px = x + w * j / (sections * 2);
+          ctx.moveTo(px, y); ctx.lineTo(px, y + h);
+        }
+        for (var j = 1; j < sections; j++) {
+          var py = y + h * j / sections;
+          ctx.moveTo(x, py); ctx.lineTo(x + w, py);
+        }
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = 'rgba(0,0,0,.45)';
+        ctx.beginPath();
+        ctx.moveTo(x + w / 2, y); ctx.lineTo(x + w / 2, y + h);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
     // spawn 标记与选区框共用字体和对齐设置。
     function drawOverlay(W, H) {
       if (!s.map) return;
@@ -760,31 +789,48 @@ globalThis.Render = (function () {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       var offs = torusList(W, H);
-      var mark = function (cellX, cellY, color, label) {
+      var mark = function (cellX, cellY, color, label, outline) {
         for (var i = 0; i < offs.length; i++) {
-          var X = cellX * SUB - offs[i][0], Y = cellY * SUB - offs[i][1];
+          var X = cellX * SUB + offs[i][0], Y = cellY * SUB + offs[i][1];
           var p = subToScreen(X, Y);
           if (p.x < -64 || p.y < -64 || p.x > W + 64 || p.y > H + 64) continue;
-          ctx.fillStyle = color;
-          ctx.globalAlpha = 0.75;
-          ctx.fillRect(p.x, p.y, 4 * s.view.zoom, 4 * s.view.zoom);
-          ctx.globalAlpha = 1;
-          ctx.fillStyle = '#000';
-          ctx.fillText(label, p.x + 2 * s.view.zoom, p.y + 2 * s.view.zoom);
+          var size = SUB * s.view.zoom;
+          if (outline) {
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(p.x, p.y, size, size);
+            ctx.fillStyle = color;
+            ctx.fillText(label, p.x + size / 2, p.y - 7);
+          } else {
+            ctx.fillStyle = color;
+            ctx.globalAlpha = 0.75;
+            ctx.fillRect(p.x, p.y, size, size);
+            ctx.globalAlpha = 1;
+            ctx.fillStyle = '#fff';
+            ctx.fillText(label, p.x + size / 2, p.y + size / 2);
+          }
         }
       };
       for (var i = 0; i < s.map.players.length; i++) {
-        mark(s.map.players[i].x, s.map.players[i].y, '#54a0ff', 'P' + (i + 1));
+        mark(s.map.players[i].x, s.map.players[i].y, '#1f6feb', 'P' + s.map.players[i].slot);
       }
       for (var j = 0; j < s.map.enemies.length; j++) {
-        mark(s.map.enemies[j].x, s.map.enemies[j].y, '#c96fb0', 'E');
+        mark(s.map.enemies[j].x, s.map.enemies[j].y, '#8a2f6b', 'E');
+      }
+      for (var r of s.map.respawns) {
+        mark(r.x, r.y, r.side === 1 ? '#1a7f37' : '#b45309', 'R' + r.side, true);
+      }
+      function drawOutline(rect) {
+        for (var [x, y] of offs) {
+          var p = subToScreen(rect.x + x, rect.y + y);
+          ctx.strokeRect(p.x, p.y, rect.w * s.view.zoom, rect.h * s.view.zoom);
+        }
       }
       if (s.preview) {
-        var pv = subToScreen(s.preview.x, s.preview.y);
         ctx.setLineDash([6, 4]);
         ctx.strokeStyle = '#54a0ff';
         ctx.lineWidth = 1;
-        ctx.strokeRect(pv.x, pv.y, s.preview.w * s.view.zoom, s.preview.h * s.view.zoom);
+        drawOutline(s.preview);
         ctx.setLineDash([]);
       }
       if (s.selection) {
@@ -793,10 +839,9 @@ globalThis.Render = (function () {
           ? { x: base.x + s.selDrag.dx, y: base.y + s.selDrag.dy, w: base.w, h: base.h }
           : base;
         if (sel) {
-          var a = subToScreen(sel.x, sel.y);
           ctx.strokeStyle = '#e0b34a';
           ctx.lineWidth = 2;
-          ctx.strokeRect(a.x, a.y, sel.w * s.view.zoom, sel.h * s.view.zoom);
+          drawOutline(sel);
         }
       }
       ctx.restore();
@@ -804,15 +849,16 @@ globalThis.Render = (function () {
 
     function render() {
       if (!s.map) return;
-      if (atlasSync) { syncAtlas(); return; }
+      if (atlasSync) return syncAtlas();
       var W = canvas.width, H = canvas.height;
       var t0 = nowMs();
       ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.globalAlpha = 1;
-      ctx.fillStyle = '#0e1013';
+      ctx.fillStyle = SKY_COLOR;
       ctx.fillRect(0, 0, W, H);
       if (zoomPath(s.view.zoom) === 'thumb') drawThumbPath(W, H); else drawLayerPath(W, H);
       if (s.grid) drawGrid(W, H);
+      drawMapFrames(W, H);
       drawOverlay(W, H);
       stat.renders++;
       stat.lastRenderMs = nowMs() - t0;
@@ -829,13 +875,14 @@ globalThis.Render = (function () {
       var h = Math.max(1, wrap ? wrap.clientHeight : canvas.height);
       if (canvas.width === w && canvas.height === h) return;
       canvas.width = w; canvas.height = h;
+      s.view = limitView(s.view);
       ctx.imageSmoothingEnabled = false;            // 改尺寸会重置 ctx 状态,必须重设
       // 离屏层的像素是按旧画布尺寸铺的 ⇒ 尺寸一改整片失效,旧画布必须丢掉:
       //    留着的话 drawLayerPath 会把它按新目标框画出去(整层错位),而"只标脏"也不行
       //    (脏矩形只补一小块,其余留白)。丢掉之后由 buildLayers 分帧重来一遍。
       for (var L = 0; L < Core.LAYER_COUNT; L++) { layerCv[L] = null; layerDirty[L] = null; }
       viewChanged();
-      if (s.map && zoomPath(s.view.zoom) === 'layers') return observed('resize', buildLayers().then(render));
+      if (s.map && zoomPath(s.view.zoom) === 'layers') return buildLayers().then(render);
       render();
     }
 
@@ -846,7 +893,7 @@ globalThis.Render = (function () {
       s.view.y = -(canvas.height / s.view.zoom - s.map.subRows) / 2;
       // 适配改的是 zoom ⇒ 每个子格多少像素都变了,离屏层整片失效(全屏重建,闸 2 分帧)
       viewChanged();
-      if (zoomPath(s.view.zoom) === 'layers') return observed('fit', buildLayers().then(render));
+      if (zoomPath(s.view.zoom) === 'layers') return buildLayers().then(render);
       render();
     }
 
@@ -947,7 +994,7 @@ globalThis.Render = (function () {
     function repaintDrag(L, rects) {
       if (!rects.length || !layerArray(s.map, L)) return;
       if (zoomPath(s.view.zoom) === 'layers') {
-        for (var i = 0; i < rects.length; i++) paintLayerRect(L, rects[i]);
+        for (var i = 0; i < rects.length; i++) repaintCopies(L, rects[i]);
         stat2.layerRebuilds++;
         if (!dragBakedThumb) return;
       } else {
@@ -974,9 +1021,9 @@ globalThis.Render = (function () {
       ensureThumbs(s.map);
       for (var L = 0; L < Core.LAYER_COUNT; L++) { layerCv[L] = null; layerDirty[L] = null; }
       viewChanged();
-      return observed('invalidateAll', buildThumbs().then(function () {
+      return buildThumbs().then(function () {
         return (zoomPath(s.view.zoom) === 'layers') ? buildLayers() : null;
-      }).then(render));
+      }).then(render);
     }
 
     // 换图之后 ①② 的整片重来(在下一次 render() 里落地,见 render 的头一段)。
@@ -996,29 +1043,36 @@ globalThis.Render = (function () {
       }
       viewChanged();
       ensureThumbs(s.map);
-      return observed('setAtlas', buildThumbs().then(function () {
+      return buildThumbs().then(function () {
         return (zoomPath(s.view.zoom) === 'layers') ? buildLayers() : null;
-      }).then(render));
+      }).then(render);
     }
 
     function setMap(map) {
       s.map = map;
-      s.selection = null;
-      ensureThumbs(map);
+      s.selection = s.preview = s.selDrag = null;
+      atlasSync = false;
       // 换图 = 内容全变:③ 必须整片重建(旧的格位图属于上一张图,连键都可能相同)
       cellCache = createCellCache({ maxCells: DEFAULT_CELL_MAX, build: buildCell });
       attachCells(cellCache);
       // ② 同理:旧离屏层画的是上一张图,连尺寸都可能不同 ⇒ 丢掉重来(见 resize 的注释)。
       for (var L = 0; L < Core.LAYER_COUNT; L++) { layerCv[L] = null; layerDirty[L] = null; }
       viewChanged();                                  // 在飞的那一轮重建画的是上一张图 ⇒ 作废
-      return observed('setMap', buildThumbs().then(function () {
+      if (!map) {
+        thumbWork++;
+        thumbs.fill(null);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        return Promise.resolve();
+      }
+      ensureThumbs(map);
+      return buildThumbs().then(function () {
         s.view.zoom = fitZoom(map.subCols, map.subRows, canvas.width, canvas.height, 24);
         s.view.x = -(canvas.width / s.view.zoom - map.subCols) / 2;
         s.view.y = -(canvas.height / s.view.zoom - map.subRows) / 2;
         // 适配之后落在缩略图路径(< 8)时不建离屏层:大图一上来就白画一屏(它是分帧的,
         //   但那几帧白费);等真放大到 ≥8 时 setZoomAt 会建。③ 与 ① 不受影响。
         return (zoomPath(s.view.zoom) === 'layers') ? buildLayers() : null;
-      }).then(render));
+      }).then(render);
     }
 
     function clipped(r) {
@@ -1067,17 +1121,20 @@ globalThis.Render = (function () {
       //      上面那条累积照样发生。故在这里一次量化,后面三处全用这个值。
       //    代价(照实):不足 1px 的平移被丢弃(0.4px 走十次 = 一步都不动)。这是刻意的
       //      ——"不动"比"越拖越歪"好,而且它与闸 1 的口径一致(钳制,不报错、不回滚)。
-      dxPx = Math.round(dxPx); dyPx = Math.round(dyPx);
-      if (dxPx === 0 && dyPx === 0) return;
       var W = canvas.width, H = canvas.height;
+      var z = s.view.zoom;
+      var next = limitView({x: s.view.x + dxPx / z, y: s.view.y + dyPx / z, zoom: z});
+      dxPx = Math.round((next.x - s.view.x) * z);
+      dyPx = Math.round((next.y - s.view.y) * z);
+      if (dxPx === 0 && dyPx === 0) return;
       s.view.x += dxPx / s.view.zoom;
       s.view.y += dyPx / s.view.zoom;
       if (zoomPath(s.view.zoom) !== 'layers') { render(); return; }
       // 视图一动,在飞的那一轮重建(条带按旧视图算的)就不能再往这些画布上写 ——
       //    而"自拷贝搬移"又要求整张图属于同一次视图。不干净时老实走整片重建(分帧)。
-      if (!layersClean) return observed('panBy', buildLayers().then(render));
+      if (!layersClean) return buildLayers().then(render);
       // 位移大到整块都被换掉时,自拷贝已经没有意义 ⇒ 也走分帧重建(而不是一帧画满屏)
-      if (Math.abs(dxPx) >= W || Math.abs(dyPx) >= H) { viewChanged(); return observed('panBy', buildLayers().then(render)); }
+      if (Math.abs(dxPx) >= W || Math.abs(dyPx) >= H) { viewChanged(); return buildLayers().then(render); }
       var strips = panStrips(W, H, dxPx, dyPx);
       for (var L = 0; L < Core.LAYER_COUNT; L++) {
         var cv = layerCv[L];
@@ -1099,32 +1156,32 @@ globalThis.Render = (function () {
 
     // 以光标为锚缩放(滚轮):缩放改变的是"每个子格多少像素" ⇒ 离屏层所有内容失效,
     // 只能整片重建(闸 2 分帧 —— 大图上是"慢慢画出来",不是"页面死掉")。
-    function setZoomAt(px, py, factor) {
-      var v = zoomAround(s.view, px, py, factor);
-      s.view.x = v.x; s.view.y = v.y; s.view.zoom = v.zoom;
+    function setView(view) {
+      s.view = limitView({x: view.x, y: view.y, zoom: clampZoom(view.zoom ?? s.view.zoom)});
       viewChanged();
       if (!s.map || zoomPath(s.view.zoom) !== 'layers') { render(); return Promise.resolve(); }
-      return observed('setZoomAt', buildLayers().then(render));
+      return buildLayers().then(render);
     }
+
+    function setZoomAt(px, py, factor) { return setView(zoomAround(s.view, px, py, factor)); }
 
     return {
       setMap: setMap, map: function () { return s.map; },
       // 切层 = 拖动预览的烤点换了一层(偏移只烤在活动层上,见 dragSource/markDragDirty):
       //   旧层那批偏移像素要擦、新层要烤。数字键 1-4 在拖动途中照样按得下去。
       setLayer: function (L) { s.layer = L; markDragDirty(); render(); }, layer: function () { return s.layer; },
-      setView: function (v) {
-        s.view.x = v.x; s.view.y = v.y;
-        s.view.zoom = clampZoom(v.zoom === undefined ? s.view.zoom : v.zoom);
-        // 换视图 = 离屏层整片失效(见 buildLayers 的坐标系说明);平移请走 panBy(它是
-        //   像素级搬移,只补边条)。本方法留给"跳到某个视图"这种整片换的场合。
-        viewChanged();
-        if (s.map && zoomPath(s.view.zoom) === 'layers') return observed('setView', buildLayers().then(render));
-        render();
-      },
+      setView: setView,
       view: function () { return { x: s.view.x, y: s.view.y, zoom: s.view.zoom }; },
       setGrid: function (b) { s.grid = !!b; render(); },
       setSubGrid: function (b) { s.subGrid = !!b; render(); },
-      setTorus: function (b) { s.torus = !!b; render(); },
+      setTorus: function (b) {
+        s.torus = !!b;
+        var v = limitView(s.view);
+        if (v.x !== s.view.x || v.y !== s.view.y) return setView(v);
+        render();
+      },
+      setGuides: function (b) { s.guides = !!b; render(); },
+      containsPoint: containsPoint,
       setDimOthers: function (b) { s.dimOthers = !!b; render(); },
       // 可见性只影响合成(离屏内容照旧保留)⇒ 开关是 4 次 drawImage 的事,不重画任何一层。
       setLayerVisible: function (L, b) { s.layerVisible[L] = !!b; render(); },

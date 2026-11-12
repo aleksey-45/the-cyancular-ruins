@@ -14,80 +14,149 @@ body { background:var(--bg); color:var(--text); font-size:13px;
        display:flex; flex-direction:column; overflow:hidden; }
 button { background:var(--panel2); color:var(--text); border:1px solid var(--border);
          border-radius:4px; padding:5px 9px; font-size:13px; cursor:pointer; }
-button:hover { border-color:var(--accent); }
+button:hover:not(:disabled) { border-color:var(--accent); }
 button.on { border-color:var(--accent); background:#243040; }
-input[type=number] { width:64px; background:var(--panel2); color:var(--text);
+button:disabled { opacity:.45; cursor:default; }
+button:focus-visible, input:focus-visible, select:focus-visible { outline:2px solid var(--accent); outline-offset:1px; }
+input[type=number], input[type=text] { background:var(--panel2); color:var(--text);
                      border:1px solid var(--border); border-radius:4px; padding:3px 6px; }
+input[type=number] { width:62px; }
 select { background:var(--panel2); color:var(--text); border:1px solid var(--border); border-radius:4px; padding:3px; }
-#toolbar { display:flex; align-items:center; gap:6px; padding:6px 10px;
+#toolbar { display:flex; align-items:center; gap:5px 10px; padding:6px 8px;
            background:var(--panel); border-bottom:1px solid var(--border); flex-wrap:wrap; }
-#toolbar .sep { width:1px; height:20px; background:var(--border); margin:0 4px; }
-#toolbar label { color:var(--dim); }
+#toolbar .group { display:flex; align-items:center; gap:4px; }
+#toolbar .group + .group { padding-left:8px; border-left:1px solid var(--border); }
+#toolbar button { padding:4px 7px; }
 #mid { flex:1; display:flex; min-height:0; }
-#lib { width:200px; background:var(--panel); border-right:1px solid var(--border);
+#lib { flex:0 0 210px; background:var(--panel); border-right:1px solid var(--border);
        display:flex; flex-direction:column; }
 #lib h2 { font-size:13px; margin:8px 10px 4px; color:var(--accent); }
-#lib-list { list-style:none; margin:0; padding:0 6px; overflow:auto; flex:1; }
-#lib-list .lib-row { padding:4px 6px; border-radius:3px; cursor:pointer; color:var(--dim); }
-#lib-list .lib-row:hover { background:var(--panel2); color:var(--text); }
-#lib-btns { display:flex; flex-wrap:wrap; gap:4px; padding:6px; border-top:1px solid var(--border); }
+#lib-list { list-style:none; margin:0; padding:4px 6px; overflow:auto; flex:1; color:var(--dim); }
+#lib-list .lib-row { display:block; width:100%; border:0; background:none; text-align:left;
+                     overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+#lib-list .lib-row:hover, #lib-list .lib-row.cur { background:var(--panel2); color:var(--accent); }
+#lib-btns { display:flex; flex-wrap:wrap; gap:4px; padding:5px 8px; }
+#lib-backend { padding:5px 10px; color:var(--dim); overflow-wrap:anywhere; border-bottom:1px solid var(--border); }
 #canvas-wrap { flex:1; min-width:0; position:relative; background:#0e1013; }
 #map-canvas { display:block; width:100%; height:100%; image-rendering:pixelated; }
-#right { width:240px; background:var(--panel); border-left:1px solid var(--border);
+#empty-hint { position:absolute; inset:0; display:grid; place-content:center; padding:18px;
+              text-align:center; color:var(--dim); line-height:1.9; pointer-events:none; }
+#empty-hint strong { color:var(--text); font-size:15px; }
+#right { flex:0 0 250px; background:var(--panel); border-left:1px solid var(--border);
          overflow:auto; }
 #right h2 { font-size:13px; margin:8px 10px 4px; color:var(--accent); }
+#tools { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:4px; padding:3px 10px 6px; }
+#tools button { padding:5px 0; font-size:12px; }
+#selection-actions { flex-wrap:wrap; }
+#selection-actions button { padding:3px 6px; font-size:12px; }
 .layer-row { display:flex; align-items:center; gap:6px; padding:3px 10px; cursor:pointer; }
 .layer-row .name { flex:1; }
 .layer-row.cur { background:var(--panel2); color:var(--accent); }
+.layer-row.absent .name::after { content:" · 缺席"; color:var(--dim); font-size:11px; }
 .layer-row button { padding:2px 6px; font-size:12px; }
 #palette { display:flex; flex-wrap:wrap; gap:4px; padding:4px 10px; }
-#palette .sw { width:26px; height:26px; border:1px solid var(--border); cursor:pointer;
-               image-rendering:pixelated; }
-#palette .sw.on { border-color:var(--accent); border-width:2px; }
+#palette .sw { width:34px; height:34px; border:1px solid var(--border); padding:0;
+               image-rendering:pixelated; color:#fff; font-size:10px; text-shadow:0 1px 2px #000, 0 0 3px #000; }
+#palette .sw.on { border-color:var(--accent); box-shadow:inset 0 0 0 1px var(--accent); }
 .desc-row { display:flex; align-items:center; gap:6px; padding:2px 10px; color:var(--dim); }
 .desc-row select { flex:1; }
 #statusbar { display:flex; gap:14px; align-items:center; padding:4px 10px;
-             background:var(--panel); border-top:1px solid var(--border); color:var(--dim); }
+             background:var(--panel); border-top:1px solid var(--border); color:var(--dim); flex-wrap:wrap; }
 #status-msg { color:var(--warn); }
 #boot-error { background:#3a2320; color:#ffd9d0; padding:8px 12px; border-bottom:1px solid var(--danger); }
+[hidden] { display:none !important; }
+dialog { width:min(420px,calc(100vw - 32px)); color:var(--text); background:var(--panel);
+         border:1px solid var(--border); border-radius:6px; padding:16px; }
+dialog::backdrop { background:#0009; }
+dialog h2 { margin:0 0 12px; font-size:16px; }
+dialog label, dialog fieldset { display:flex; align-items:center; gap:8px; margin:8px 0; }
+dialog input[type=text] { flex:1; min-width:0; }
+dialog fieldset { border:0; padding:0; }
+dialog menu { display:flex; justify-content:flex-end; gap:6px; margin:12px 0 0; padding:0; }
+#report-text { margin:0; max-height:55vh; overflow:auto; white-space:pre-wrap; font:inherit; }
+@media (max-width:880px) {
+  #lib { flex-basis:152px; }
+  #right { flex-basis:212px; }
+}
 </style>
 </head>
 <body>
 <div id="boot-error" hidden></div>
 
 <div id="toolbar">
-  <button class="tool" data-tool="brush" title="画笔 (B)">画笔</button>
-  <button class="tool" data-tool="rect" title="矩形">矩形</button>
-  <button class="tool" data-tool="bucket" title="油漆桶 (G)">油漆桶</button>
-  <button class="tool" data-tool="eraser" title="橡皮 (E)">橡皮</button>
-  <button class="tool" data-tool="line" title="直线 (L)">直线</button>
-  <button class="tool" data-tool="select" title="选框 (M)">选框</button>
-  <button class="tool" data-tool="picker" title="吸管 (I)">吸管</button>
-  <button class="tool" data-tool="gradient" title="渐变(仅背景层)">渐变</button>
-  <span class="sep"></span>
-  <label>画笔</label><input id="brush-size" type="number" min="0.25" max="15" step="0.25" value="1">
-  <span class="sep"></span>
-  <button id="tg-grid" class="on">网格</button>
-  <button id="tg-subgrid">子格</button>
-  <button id="tg-torus" class="on">环面</button>
-  <span class="sep"></span>
-  <button id="btn-fit">适配</button>
+  <div class="group" aria-label="文件">
+    <button id="btn-new">新建</button>
+    <button id="btn-open-file">打开文件…</button>
+    <button id="btn-open-folder">打开目录…</button>
+    <input id="map-file" type="file" accept=".cyrm,.txt" hidden>
+    <button id="btn-save" data-document title="Ctrl+S">保存</button>
+    <button id="btn-save-as" data-document title="Ctrl+Shift+S">另存为…</button>
+    <button id="btn-export" data-document title="下载 CYRM v4 文件">导出</button>
+  </div>
+  <div class="group" aria-label="编辑">
+    <button data-command="undo" data-document title="Ctrl+Z">撤销</button>
+    <button data-command="redo" data-document title="Ctrl+Shift+Z / Ctrl+Y">重做</button>
+  </div>
+  <div class="group" aria-label="视图">
+    <button id="tg-grid" class="on">网格</button>
+    <button id="tg-subgrid" title="在混合材质的格内显示 16px 子格线">子格</button>
+    <button id="tg-torus" class="on" title="预览当前图与右、下、右下相邻副本">环面</button>
+    <button id="tg-guides" title="地图中线与两侧 3×3 分布标线 (R)">标线</button>
+    <button id="btn-fit" data-document>适配</button>
+  </div>
+  <div class="group" aria-label="画布">
+    <input id="size-w" type="number" min="1" max="400" step="1" value="125" aria-label="画布宽度">
+    <span>×</span>
+    <input id="size-h" type="number" min="1" max="300" step="1" value="75" aria-label="画布高度">
+    <button id="btn-resize" data-document title="缩小时移除越界点位">应用尺寸</button>
+    <label title="Deflate 压缩"><input id="opt-compress" type="checkbox" checked>压缩</label>
+  </div>
+  <div class="group" aria-label="检查">
+    <button id="btn-check" data-document>校验</button>
+    <button id="btn-selftest">自检</button>
+  </div>
 </div>
 
 <div id="mid">
   <div id="lib">
-    <h2>库(maps/*.cyrm)</h2>
-    <ul id="lib-list"><li class="lib-row">加载中 …</li></ul>
+    <h2>地图库</h2>
     <div id="lib-btns">
-      <button id="btn-new">新建</button>
-      <button id="btn-dup">复制</button>
-      <button id="btn-rename">重命名</button>
+      <button id="btn-dup" data-document>复制</button>
+      <button id="btn-rename">重命名…</button>
       <button id="btn-del">删除</button>
-      <button id="btn-export">导出校验</button>
+      <button id="btn-server" hidden>服务器库</button>
     </div>
+    <div id="lib-backend"></div>
+    <ul id="lib-list"></ul>
   </div>
-  <div id="canvas-wrap"><canvas id="map-canvas"></canvas></div>
+  <div id="canvas-wrap">
+    <canvas id="map-canvas"></canvas>
+    <div id="empty-hint"><strong>还没有打开地图</strong><span>从地图库选择地图，或使用顶栏新建、打开文件或目录。</span></div>
+  </div>
   <div id="right">
+    <h2>工具</h2>
+    <div id="tools">
+      <button class="tool" data-tool="brush" title="B">画笔</button>
+      <button class="tool" data-tool="rect">矩形</button>
+      <button class="tool" data-tool="bucket" title="G">油漆桶</button>
+      <button class="tool" data-tool="eraser" title="E">橡皮</button>
+      <button class="tool" data-tool="line" title="L">直线</button>
+      <button class="tool" data-tool="select" title="M">选框</button>
+      <button class="tool" data-tool="picker" title="I">吸管</button>
+      <button class="tool" data-tool="gradient" title="背景渐变">渐变</button>
+    </div>
+    <label class="desc-row">画笔 <input id="brush-size" type="number" min="0.25" max="15" step="0.25" value="1"></label>
+    <label class="desc-row" data-tool-options="rect">矩形
+      <select id="rect-mode"><option value="fill">填充</option><option value="outline">描边</option></select>
+    </label>
+    <label class="desc-row" data-tool-options="line">直线宽度
+      <select id="line-width"><option value="1">1 子格</option><option value="2">2 子格</option><option value="4">1 格</option></select>
+    </label>
+    <div class="desc-row" id="selection-actions" data-tool-options="select">
+      <button data-command="copy" data-document>复制</button><button data-command="cut" data-document>剪切</button>
+      <button data-command="paste" data-document>粘贴</button><button data-command="clear-selection" data-document>清除</button>
+      <button data-command="mirror:h" data-document>水平镜像</button><button data-command="mirror:v" data-document>垂直镜像</button>
+    </div>
     <h2>图层</h2>
     <div id="layers">
       <div class="layer-row" data-layer="0"><span class="name">前景</span><button class="vis" title="显示/隐藏">👁</button><button class="lock" title="锁定">🔒</button></div>
@@ -116,21 +185,22 @@ select { background:var(--panel2); color:var(--text); border:1px solid var(--bor
       <span id="bg-color2-val">#101820</span>
     </div>
     <h2>出生点工具</h2>
+    <label class="desc-row">敌人类型 <select id="spawn-enemy-type"></select></label>
     <div class="desc-row">
       <button id="spawn-p1">放 P1</button>
       <button id="spawn-p2">放 P2</button>
       <button id="spawn-enemy">放敌人</button>
     </div>
     <div class="desc-row"><button id="spawn-clear">清空出生点</button></div>
-    <h2>画布尺寸</h2>
-    <div class="desc-row"><span>宽</span><input id="size-w" type="number" min="1" max="400" step="1" value="125"><span>格</span></div>
-    <div class="desc-row"><span>高</span><input id="size-h" type="number" min="1" max="300" step="1" value="75"><span>格</span></div>
+    <h2>团队复活点</h2>
+    <div class="desc-row" id="respawn-count" aria-live="polite" title="团队赛每侧至少需要 5 个合法复活点">侧 1 0 · 侧 2 0</div>
     <div class="desc-row">
-      <button id="btn-resize" title="重叠区的内容保留;落在新图之外的出生点/敌人会被移除并在状态栏报出来(审计 A10)">应用尺寸</button>
+      <button class="tool" data-tool="respawn-1" title="点击画布放置，再点同侧复活点删除">放侧 1</button>
+      <button data-clear-respawn="1">清空侧 1</button>
     </div>
-    <h2>导出</h2>
     <div class="desc-row">
-      <label><input id="opt-compress" type="checkbox" checked title="取消 = 导裸 body(compression=0)。浏览器 deflate 与 Godot COMPRESSION_DEFLATE 的兼容性未实测,这条是退路(规格 §3.5)"> 压缩(deflate)</label>
+      <button class="tool" data-tool="respawn-2" title="点击画布放置，再点同侧复活点删除">放侧 2</button>
+      <button data-clear-respawn="2">清空侧 2</button>
     </div>
   </div>
 </div>
@@ -147,6 +217,22 @@ select { background:var(--panel2); color:var(--text); border:1px solid var(--bor
   <span id="st-save">未保存</span>
   <span id="status-msg">就绪</span>
 </div>
+
+<dialog id="file-dialog" aria-labelledby="file-dialog-title">
+  <form method="dialog">
+    <h2 id="file-dialog-title"></h2>
+    <label>文件名 <input id="file-stem" type="text" maxlength="64" pattern="[A-Za-z0-9_\-]{1,64}" required> .cyrm</label>
+    <fieldset id="new-size">
+      <label>宽 <input id="new-width" type="number" min="1" max="400" required></label>
+      <label>高 <input id="new-height" type="number" min="1" max="300" required></label>
+    </fieldset>
+    <menu><button value="ok">确定</button><button id="cancel-file-dialog" type="button">取消</button></menu>
+  </form>
+</dialog>
+<dialog id="report-dialog" aria-labelledby="report-title">
+  <h2 id="report-title"></h2><pre id="report-text"></pre>
+  <form method="dialog"><menu><button>关闭</button></menu></form>
+</dialog>
 
 <script>
   /*__ENEMY_REGISTRY_BEGIN__*/
@@ -173,11 +259,12 @@ window.ENEMY_REGISTRY = [
 /*__ENEMY_REGISTRY_END__*/
 </script>
 
-<script src="core.js"></script>
 <script src="tile_defs.js"></script>
+<script src="core.js"></script>
 <script src="tint.js"></script>
 <script src="render.js"></script>
 <script src="io.js"></script>
+<script src="map_files.js"></script>
 <script src="ui.js"></script>
 <script>
 'use strict';
