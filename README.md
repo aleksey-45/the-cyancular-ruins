@@ -8,45 +8,9 @@
 
 像素风 2D 横版平台动作射击游戏演示项目，基于 Godot 引擎开发，内置 P2P 联机支持。
 
-- [架构文档与索引](CLAUDE.md)
-- [网络架构文档](docs/eng/netplay.md)
-- [模拟、预测与网络波动的架构参考](docs/eng/architecture_references.md)
-- [编译与发布手册](RELEASE.md)
-
----
-
-## 快速开始
-
-开发与测试环境需要 [Godot Engine 4.7.1](https://godotengine.org/download)（标准版，64 位）。
-
-```bash
-git clone https://github.com/aleksey-45/the-cyancular-ruins.git
-```
-
-先按[构建说明](RELEASE.md)安装 C++ 工具链与 Python 构建依赖，依次执行 `python tools/build_process_group.py` 和 `python tools/build_gns.py`。然后使用 Godot 编辑器导入项目根目录的 `project.godot`，按 `F5` 即可运行。模拟逻辑位于 `core/sim/`；架构边界见[场景内模拟](docs/eng/simulation.md)。
-
-### 打包发布
-
-```bash
-python tools/build_release.py
-```
-
-macOS 使用 `python tools/build_macos.py`，生成同时支持 M 系列与 Intel 的通用应用包。GitHub Actions 同时提供 Windows 和 macOS 产物，具体用法见[编译与发布手册](RELEASE.md)。
-
-### 启动专用服务端
-
-```bash
-"The Cyancular Ruins.exe" --headless -- --server --port 7777
-```
-
-### 工程检查
-
-```bash
-python tools/check_naming.py
-godot --headless --editor --path . --import
-```
-
-关键行为测试见 [验证说明](docs/eng/tests.md)，固定容量统计和运行参数见 [低开销性能观测](docs/eng/low_overhead_performance.md)。
+- [源码启动、专用服务端与关卡编辑器](docs/tools.md)
+- [游戏行为与系统索引](AGENTS.md)
+- [Windows 与 macOS 发布](RELEASE.md)
 
 ---
 

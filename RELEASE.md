@@ -1,92 +1,36 @@
-# 构建与发布指南
+# 构建与发布
 
-发布压缩包名称为 **The-Cyancular-Ruins.zip**，内部目录为 **The-Cyancular-Ruins-YYYYMMDDHHMM/**（时间戳使用 UTC+8）。版本号读取自 `project.godot` 中的 `application/config/version`，供游戏界面展示。
+发布脚本使用 Godot 4.7.1 标准编辑器和同版本导出模板。原生工具链见 [运行与工具](docs/tools.md#从源码运行)。当前项目版本为 `1.0.0`，发布标识为 `siri_v1`。前缀和版本取自 [project.godot](project.godot) 的 `application/config/release_prefix` 和 `application/config/version`。次版本和补丁版本均为 0 时，发布标识只显示主版本。Windows 和 macOS 构建入口均支持 `--version`、`--stamp`，默认时间戳为 UTC+8。
 
-## 一、 一键构建
-
-构建环境依赖 Godot 4.7.1 标准编辑器及同版本 Windows 导出模板、Python、SCons 4.9.1、CMake 3.31.6、Ninja 1.11.1.4 和 MSVC 编译工具链，也支持通过 `MINGW_PREFIX` 指定 LLVM MinGW。
+## Windows
 
 ```powershell
-$env:GODOT_EDITOR = "D:/Codes/ChatGPT/cyr/godot-build/editor/Godot_v4.7.1-stable_win64.exe"
-python -m pip install scons==4.9.1 cmake==3.31.6 ninja==1.11.1.4
-python tools/fetch_easytier.py
+$env:GODOT_EDITOR = "C:/path/to/Godot_v4.7.1-stable_win64.exe"
+python tools/fetch_easytier.py --platform windows
 python tools/build_release.py
 ```
 
-`build_release.py` 支持 `--version` 与 `--stamp` 参数，默认读取工程版本并自动生成当前时间戳。构建步骤如下：
+`fetch_easytier.py` 使用官方 nightly 组件，也可用 `--source` 指定本地 Windows 官方包目录。发布脚本编译进程管理与 GNS 扩展，导入资源并导出 `The Cyancular Ruins.exe`。运行目录含两个原生 DLL、许可证和 `easytier/`。归档脚本生成 `builds/The-Cyancular-Ruins-YYYYMMDDHHMM/` 和 `releases/The-Cyancular-Ruins.zip`。
 
-1. 编译 Windows Job、GNS 与场景模拟原生扩展。
-2. 导入项目资源。原生编译和导入统一由构建脚本执行。
-3. 将版本号与时间戳写入 `core/config/build_info.gd`。
-4. 导出 Windows Desktop 统一程序，客户端与 `--headless -- --server` 服务端共用。
-5. 还原 `core/config/build_info.gd`，将构建目录归档并生成发布 ZIP 压缩包。
+发布包内的程序可作为专用服务端运行。
 
-构建脚本负责产物；CI 在每个平台构建后运行一次[关键行为检查](docs/eng/tests.md)。自定义游戏启动参数请统一置于 `--` 之后传递。
-
-`fetch_easytier.py` 默认读取官方 `nightly` 发布的最新资产，不固定版本，也不比对校验和；构建日志记录发布提交和实际下载地址。Windows 可显式使用 `--source <本地官方包目录>` 代替下载。
-
-## 二、 发布产物结构
-
-```text
-The-Cyancular-Ruins.zip
-└── The-Cyancular-Ruins-YYYYMMDDHHMM/
-    ├── The Cyancular Ruins.exe
-    ├── process_group.windows.x86_64.dll
-    ├── gns.windows.x86_64.dll
-    ├── THIRD_PARTY_NOTICES.txt
-    └── easytier/
-        ├── easytier-core.exe
-        ├── easytier-cli.exe
-        ├── Packet.dll
-        ├── wintun.dll
-        ├── WinDivert64.sys
-        └── relay.txt
+```powershell
+& ".\The Cyancular Ruins.exe" --headless -- --server --port 7777
 ```
 
-归档脚本会在构建产物目录保存当前版本，并在 releases 归档目录保存带时间戳的副本及最新的 `The-Cyancular-Ruins.zip`。`tools/archive_build.py` 可单独执行，支持 `--stamp` 参数。
+## macOS
 
-第三方组件的开源许可证与版权声明统一整合于发布包根目录下的 `THIRD_PARTY_NOTICES.txt`。
-
-运行环境最低要求为 Windows 10 64位操作系统。分发时需提供完整的压缩包；客户端建房时启动当前游戏 EXE 的无头服务端子进程，网络隧道位于 `easytier/`。原生扩展的编译说明见 [开发工具](docs/eng/tools.md)，网络会话与进程管理细节见 [联机系统](docs/eng/netplay.md)。
-
-## 三、 macOS 通用包
-
-在 macOS 上安装 Xcode 命令行工具、Python、SCons 4.9.1、Godot 4.7.1 标准编辑器及同版本导出模板：
-
-```bash
+```sh
 export GODOT_EDITOR="/Applications/Godot.app/Contents/MacOS/Godot"
-python -m pip install scons==4.9.1 cmake==3.31.6 ninja==1.11.1.4
 python tools/build_macos.py
 ```
 
-`tools/build_macos.py` 编译通用进程与 GNS 扩展，从官方 EasyTier 最新 nightly 下载 arm64 与 x86_64 包并合并内核和 CLI，导出通用 `.app`，执行 ad-hoc 签名并用 `ditto` 保存权限和符号链接。产物为 `builds/macos/The-Cyancular-Ruins.zip`，内部目录沿用 UTC+8 时间戳，包含 `The Cyancular Ruins.app` 与统一许可 `THIRD_PARTY_NOTICES.txt`。
+脚本构建 arm64 与 x86_64 通用扩展，获取两种架构的 EasyTier，导出并以 ad-hoc 签名打包。`builds/macos/The-Cyancular-Ruins.zip` 包含通用 `The Cyancular Ruins.app`。原生扩展位于 `Contents/Frameworks`，EasyTier 可执行文件位于 `Contents/Helpers`，默认中继配置位于 `Contents/Resources/relay.txt`。
 
-游戏、进程扩展、GNS、场景模拟扩展和 EasyTier 都包含 arm64 与 x86_64，可分别在 M 系列和 Intel Mac 原生运行；最低系统版本设为 macOS 12。EasyTier 位于 `.app/Contents/Helpers/`，三项原生扩展位于 `.app/Contents/Frameworks/`。应用包可整体移动到 Applications。
-
-客户端建房时启动同一应用包的可执行文件，使用无头服务端入口：
-
-```bash
-"The Cyancular Ruins.app/Contents/MacOS/The Cyancular Ruins" --headless -- --server --port 7777
+```sh
+"./The Cyancular Ruins.app/Contents/MacOS/The Cyancular Ruins" --headless -- --server --port 7777
 ```
 
-macOS 发布版 `relay.txt` 位于 `~/Library/Application Support/Godot/app_userdata/The Cyancular Ruins/`。开发态中继列表位于工程 `easytier/relay.txt`。
+## GitHub Actions
 
-当前使用 ad-hoc 签名，未进行 Apple 公证。从网络下载后，首次运行按 macOS「系统设置 → 隐私与安全性 → 仍要打开」允许应用。
-
-## 四、 GitHub Actions 持续集成
-
-代码推送到 `siri_v*` 分支或在 GitHub Actions 页面手动触发 [Build game](.github/workflows/build.yml) 工作流即可自动执行打包。`Build Windows` 与 `Build macOS` 分别生成两个平台的发布包，均使用官方 EasyTier 最新 nightly。Windows 使用 Godot 4.7.1 与 MSVC，原生编译和资源导入统一由 `build_release.py` 各调用一次。
-
-Windows 产物名为 `The-Cyancular-Ruins-Windows`，可在对应运行记录的 Artifacts 区域下载 `The-Cyancular-Ruins-Windows.zip`。
-
-macOS 产物名为 `The-Cyancular-Ruins-macOS`，包含保留可执行权限的 `The-Cyancular-Ruins.zip`；下载后解开外层 artifact，再解开该 ZIP。CI 在 `macos-15` 构建通用包，并运行关键行为检查。
-
-## 五、 自定义导出模板编译
-
-`cyancular_build_profile.gdbuild` 定义了引擎功能裁剪配置。使用 Godot 4.7.1 源码与 SCons 编译自定义模板的命令示例：
-
-```bat
-python -m SCons platform=windows target=template_release production=yes optimize=size arch=x86_64 accesskit=no d3d12=no build_profile="D:/Codes/ChatGPT/cyr/the-cyancular-ruins/cyancular_build_profile.gdbuild" -j 8
-```
-
-将编译生成的 Windows release 模板安装至 `%APPDATA%/Godot/export_templates/4.7.1.stable/` 目录下（包含 `windows_release_x86_64.exe`、对应的 `console.exe` 以及记录版本号 `4.7.1.stable` 的 `version.txt`）。若项目后续新增了引擎核心类型，需同步更新裁剪配置文件并重新编译模板。
+[Build game](.github/workflows/build.yml) 在推送到 `siri_v*` 分支或手动触发时构建 Windows 与 macOS，并运行 [行为检查](docs/tests.md)。产物名称为 `The-Cyancular-Ruins-Windows` 和 `The-Cyancular-Ruins-macOS`。
