@@ -38,9 +38,9 @@ def main():
             run(args.godot, '--headless', '--path', ROOT, '--export-release', 'macOS', app)
         finally:
             Path(BUILD_INFO).write_text(original, encoding='utf-8', newline='\n')
+        shutil.copy2(ROOT / 'easytier/relay.txt', app / 'Contents/Resources/relay.txt')
         helpers = app / 'Contents/Helpers'
         helpers.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(ROOT / 'easytier/relay.txt', helpers / 'relay.txt')
         for name in ('easytier-core', 'easytier-cli'):
             target = helpers / name
             shutil.copy2(ROOT / 'easytier' / name, target)

@@ -70,6 +70,7 @@ def read_project_version() -> str:
 def release_version(raw: str) -> str:
     """生成带有版本前缀的规范版本号字符串。"""
     v = (raw or "").strip().lstrip("vV.")
+    v = re.sub(r"^([0-9]+)\.0\.0$", r"\1", v)
     return ("%s_v%s" % (release_prefix(), v)) if v else release_prefix()
 
 
