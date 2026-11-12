@@ -1,23 +1,24 @@
 extends Node
 
 # 录屏 / 死亡倒带服务（autoload: Recorder）。
-#  - F5：960×720 抓帧视口 → worker JPEG q0.80 → 单文件 MJPEG AVI，落盘 exe 同目录 record/。
-#  - 死亡倒带：常驻内存环形缓冲（640×480 JPEG，不落盘）；倒地按 R 时播放倒带到本局起点，
-#    播完调 Level0.restart_single()。回放是纯表现，不改世界状态。
-#
-# 抓帧目标不是 1920 主视口：实测主视口 get_image() 26 ms/帧，必掉帧；960×720 视口读回约 4 ms。
-# headless / Web 直接禁用（headless 视口纹理为空、Web 无 exe 伴随目录）。
+# F5：读主视口纹理（1920×1440 原生 1:1）→ worker JPEG q0.95 → AVI 临时文件 + 同录 WAV → 停录后 worker 转 H.264/AAC MP4（无 ffmpeg 回退 AVI+WAV）。规格见 docs/录屏与死亡倒带设计.md。
+# 录制用 30 fps 槽位时钟（Time.get_ticks_usec），缺帧重复同一帧补齐 ⇒ 视频时长恒等于真实时长，死亡重开不打断。
+# 死亡倒带：内存 640×480 环形缓冲，倒地按 R 回放到本局起点后调 Level0.restart_single()，纯表现不改世界状态。
+# headless / Web 直接禁用。
 
 const AviMjpegWriter := preload("res://core/present/record/avi_writer.gd")
+const FfmpegTranscode := preload("res://core/present/record/ffmpeg_transcode.gd")
+const WavWriter := preload("res://core/present/record/wav_writer.gd")
 const RewindTape := preload("res://core/present/record/rewind_tape.gd")
 const REWIND_SHADER := preload("res://core/present/record/rewind_tape.gdshader")
 
-const CAP_W := 960
-const CAP_H := 720
-const CAP_FPS := 60
-const JPG_QUALITY := 0.80
+const CAP_FPS := 30
+const JPG_QUALITY := 0.95
 const MAX_PENDING := 4
+const AUDIO_BUFFER := 1.5
 
+const TAPE_CAP_W := 960
+const TAPE_CAP_H := 720
 const TAPE_W := 640
 const TAPE_H := 480
 const TAPE_HZ := 30.0
@@ -32,27 +33,41 @@ const REWIND_HALF_W := 240.0
 const REWIND_FONT := 64          # 16 的倍数（UiFactory.style_control 会 assert）
 const REC_FONT := 32             # 与 HUD 时钟同号
 # 击杀计数器的 PanelContainer 右边缘是 -32，但它的文字还有 16px 右 content margin；
-# REC 没有底板，要对齐的是**文字右缘**，所以取 32+16=48。
+# REC 没有底板，要对齐的是文字右缘，所以取 32+16=48。
 const REC_RIGHT := 48.0
 const REC_TOP := 16.0 + 48.0 + 12.0 + 8.0   # 击杀计数器 top16 + 48 字 + 上下 margin 12 + 间距 8
 
 var _enabled := true
 var _cap: SubViewport = null
+var _cap_spr: Sprite2D = null
 var _dir_root := ""
 
 # ── F5 录制 ──
 var _recording := false
 var _draining := false
 var _writer = null
+var _wav = null
 var _path := ""
-var _seq := 0
-var _flushed_seq := -1
+var _wav_path := ""
 var _pending := 0
 var _results: Array = []
 var _mutex := Mutex.new()
 var _last_path := ""
+var _rec_start_usec := 0
+var _rec_capture_slot := -1
+var _rec_written_slots := 0
+var _rec_final_slots := 0
+var _rec_last_blob := PackedByteArray()
+var _audio_cap: AudioEffectCapture = null
+var _audio_bus := -1
+var _audio_fx := -1
 var _indicator: CanvasLayer = null
 var _indicator_label: Label = null
+
+# ── MP4 后编码（worker 线程；主线程每帧轮询完成） ──
+var _ffmpeg := ""
+var _transcodes: Array = []
+var _tc_mutex := Mutex.new()
 
 # ── 死亡倒带 ──
 var _tape = RewindTape.new()
@@ -96,6 +111,11 @@ func _ready() -> void:
 		push_warning("Recorder: 无法创建录屏目录 %s (err=%d)，回退 user://record" % [_dir_root, err])
 		_dir_root = "user://record"
 		DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(_dir_root))
+	_ffmpeg = FfmpegTranscode.resolve(OS.get_environment(FfmpegTranscode.FFMPEG_ENV))
+	if _ffmpeg == "":
+		print("[Recorder] 未检测到 ffmpeg：F5 录屏保留 MJPEG AVI + WAV")
+	else:
+		print("[Recorder] ffmpeg: %s（录屏停止后后台转 H.264 + AAC 的 MP4）" % _ffmpeg)
 	set_process_input(true)
 
 
@@ -108,7 +128,13 @@ func _record_dir() -> String:
 func _input(event: InputEvent) -> void:
 	if not _enabled:
 		return
+	var k := event as InputEventKey
 	if _replaying:
+		if k != null and k.pressed and not k.echo and k.physical_keycode == KEY_F5:
+			if _recording:
+				stop_recording()
+			get_viewport().set_input_as_handled()
+			return
 		# 演出中任意“跳过”键：R / 空格 / Esc / 左键
 		if event.is_action_pressed("R") or event.is_action_pressed("ui_accept") \
 				or event.is_action_pressed("ui_cancel") \
@@ -117,7 +143,6 @@ func _input(event: InputEvent) -> void:
 			_finish_replay(true)
 			get_viewport().set_input_as_handled()
 		return
-	var k := event as InputEventKey
 	if k != null and k.pressed and not k.echo and k.physical_keycode == KEY_F5:
 		if _active_level() != null:
 			if _recording:
@@ -135,11 +160,13 @@ func _input(event: InputEvent) -> void:
 func _process(delta: float) -> void:
 	if not _enabled:
 		return
+	_poll_transcodes()
 	var lvl := _active_level()
 	if lvl == null:
 		if _recording:
 			stop_recording()
-		if _draining:
+		_tick_capture(false)
+		if _draining and _pending == 0:
 			_finish_drain()
 		if _replaying:
 			_finish_replay(false)
@@ -150,27 +177,43 @@ func _process(delta: float) -> void:
 		_reset_run()
 		_player = lvl.get_node_or_null("WorldViewport/Player")
 	if _replaying:
+		_tick_capture(false)
+		if _draining and _pending == 0:
+			_finish_drain()
 		_tick_replay(delta, lvl)
 		return
 
 	_run_t += delta
-	# 死亡带采样：F5 录制时每帧都抓（60Hz），否则按 TAPE_HZ 抽（30Hz）。
 	var tape_due := _last_tape_t < 0.0 or (_run_t - _last_tape_t) >= (1.0 / TAPE_HZ)
-	if _recording or tape_due:
-		_ensure_capture()
-		if _cap != null:
-			var img: Image = _cap.get_texture().get_image()
-			if img != null:
-				if _recording:
-					_submit_record(img)
-				if tape_due:
-					_last_tape_t = _run_t
-					_submit_tape(img)
-	_flush_record()
+	_tick_capture(tape_due)
 	_flush_tape()
 	_flush_decodes()
 	if _draining and _pending == 0:
 		_finish_drain()
+
+
+func _tick_capture(tape_due: bool) -> void:
+	if _recording:
+		var elapsed := float(Time.get_ticks_usec() - _rec_start_usec) / 1000000.0
+		var slot := int(floor(elapsed * float(CAP_FPS)))
+		if slot > _rec_capture_slot:
+			var img: Image = get_viewport().get_texture().get_image()
+			if img != null:
+				_rec_capture_slot = slot
+				_submit_record(img, slot)
+				# ★ 录制期死亡带复用同一张整帧，在 worker 里 resize，不额外读回第二张图。
+				if tape_due:
+					_last_tape_t = _run_t
+					_submit_tape(img)
+	elif tape_due:
+		_ensure_capture()
+		var img: Image = _cap.get_texture().get_image()
+		if img != null:
+			_last_tape_t = _run_t
+			_submit_tape(img)
+	if _recording or _draining:
+		_drain_audio()
+		_flush_record()
 
 
 func _active_level() -> Level0:
@@ -199,32 +242,56 @@ func start_recording() -> void:
 	var dir := _dir_root.path_join("rec_" + _stamp())
 	DirAccess.make_dir_recursive_absolute(dir)
 	_path = dir.path_join("clip.avi")
+	_wav_path = dir.path_join("clip.wav")
+	var root_size := get_viewport().get_visible_rect().size
 	_writer = AviMjpegWriter.new()
-	var err: Error = _writer.open(_path, CAP_W, CAP_H, CAP_FPS)
+	var err: Error = _writer.open(_path, int(root_size.x), int(root_size.y), CAP_FPS)
 	if err != OK:
 		push_error("Recorder: 打开 AVI 失败 %s (err=%d)" % [_path, err])
 		_writer = null
 		return
+	_wav = WavWriter.new()
+	var aerr: Error = _wav.open(_wav_path, AudioServer.get_mix_rate())
+	if aerr != OK:
+		push_warning("Recorder: 打开 WAV 失败 %s (err=%d)，本次只录视频" % [_wav_path, aerr])
+		_wav = null
+	_attach_audio()
 	_recording = true
 	_draining = false
-	_seq = 0
-	_flushed_seq = -1
+	_rec_start_usec = Time.get_ticks_usec()
+	_rec_capture_slot = -1
+	_rec_written_slots = 0
+	_rec_final_slots = 0
+	_rec_last_blob = PackedByteArray()
 	_results.clear()
 	_pending = 0
-	_ensure_capture()
+	if _audio_cap != null:
+		_audio_cap.clear_buffer()
 	_show_indicator(true)
 
 
 func stop_recording() -> void:
 	if not _recording:
 		return
+	var elapsed := float(Time.get_ticks_usec() - _rec_start_usec) / 1000000.0
+	if _rec_capture_slot < 0:
+		var img: Image = get_viewport().get_texture().get_image()
+		if img != null:
+			_rec_capture_slot = 0
+			_submit_record(img, 0)
+	_rec_final_slots = maxi(_rec_written_slots, int(round(elapsed * float(CAP_FPS))))
 	_recording = false
 	_draining = true
+	_drain_audio()
 	_show_indicator(false)
 
 
 func is_recording() -> bool:
 	return _recording or _draining
+
+
+func is_transcoding() -> bool:
+	return not _transcodes.is_empty()
 
 
 func is_replaying() -> bool:
@@ -243,31 +310,140 @@ func _finish_drain() -> void:
 	_flush_record()
 	if _pending > 0:
 		return
-	if _writer != null:
-		_writer.close()
-		_last_path = _path
-		print("[Recorder] 录屏结束: %s (%d 帧)" % [_path, _flushed_seq + 1])
+	if _writer == null:
+		if _wav != null:
+			_wav.close()
+			_wav = null
+		_detach_audio()
+		_draining = false
+		return
+	var total := maxi(_rec_final_slots, _rec_written_slots)
+	if total <= 0:
+		total = 1
+	while _rec_written_slots < total and not _rec_last_blob.is_empty():
+		_writer.add_frame(_rec_last_blob)
+		_rec_written_slots += 1
+	var frames: int = _writer.frame_count()
+	_writer.close()
 	_writer = null
+	_drain_audio()
+	var wav_frames := 0
+	if _wav != null:
+		wav_frames = _wav.frame_count()
+		_wav.close()
+		_wav = null
+	_detach_audio()
+	var avi := _path
+	var wav := _wav_path
 	_draining = false
-	_recording = false
+	if _ffmpeg == "":
+		_last_path = avi
+		print("[Recorder] 录屏结束: %s (%d 帧, MJPEG AVI；未检测到 ffmpeg，保留 AVI+WAV)" % [avi, frames])
+		return
+	var mp4 := avi.get_base_dir().path_join(avi.get_file().get_basename() + ".mp4")
+	var job := {"avi": avi, "wav": wav, "mp4": mp4, "frames": frames, "wav_frames": wav_frames,
+			"done": false, "ok": false, "log": "", "audio": false}
+	_tc_mutex.lock()
+	_transcodes.append(job)
+	_tc_mutex.unlock()
+	print("[Recorder] 录屏写好: %s (%d 帧, %d 音频帧)，后台转码 MP4…" % [avi, frames, wav_frames])
+	WorkerThreadPool.add_task(_transcode_task.bind(job), false)
 
 
-func _submit_record(img: Image) -> void:
-	var seq := _seq
-	_seq += 1
+func _transcode_task(job: Dictionary) -> void:
+	var r: Dictionary = FfmpegTranscode.transcode(
+			_ffmpeg, String(job["avi"]), String(job["wav"]), String(job["mp4"]))
+	_tc_mutex.lock()
+	job["ok"] = bool(r.get("ok", false))
+	job["log"] = String(r.get("log", ""))
+	job["audio"] = bool(r.get("audio", false))
+	job["done"] = true
+	_tc_mutex.unlock()
+
+
+func _poll_transcodes() -> void:
+	if _transcodes.is_empty():
+		return
+	var finished: Array = []
+	_tc_mutex.lock()
+	for job in _transcodes:
+		if bool(job["done"]):
+			finished.append(job)
+	for job in finished:
+		_transcodes.erase(job)
+	_tc_mutex.unlock()
+	for job in finished:
+		_finish_transcode(job)
+
+
+func _finish_transcode(job: Dictionary) -> void:
+	var avi := String(job["avi"])
+	var wav := String(job["wav"])
+	var mp4 := String(job["mp4"])
+	var frames := int(job["frames"])
+	if bool(job["ok"]):
+		var del_avi := DirAccess.remove_absolute(avi)
+		var del_wav := OK
+		if FileAccess.file_exists(wav):
+			del_wav = DirAccess.remove_absolute(wav)
+		_last_path = mp4
+		var extra := "" if (del_avi == OK and del_wav == OK) else "；AVI/WAV 删除失败，两版并存"
+		var audio := "" if bool(job["audio"]) else "（无音频流）"
+		print("[Recorder] 录屏结束: %s (%d 帧, H.264%s MP4%s)" % [mp4, frames, audio, extra])
+		return
+	_last_path = avi
+	var log := String(job["log"]).replace("\n", " ").strip_edges()
+	if log.length() > 300:
+		log = log.substr(0, 300) + "…"
+	print("[Recorder] 录屏结束: %s (%d 帧, MJPEG AVI；ffmpeg 转码失败: %s)" % [avi, frames, log])
+
+
+func _attach_audio() -> void:
+	if _audio_cap != null:
+		return
+	_audio_bus = AudioServer.get_bus_index("Master")
+	_audio_cap = AudioEffectCapture.new()
+	_audio_cap.buffer_length = AUDIO_BUFFER
+	_audio_fx = AudioServer.get_bus_effect_count(_audio_bus)
+	AudioServer.add_bus_effect(_audio_bus, _audio_cap)
+	_audio_cap.clear_buffer()
+
+
+func _detach_audio() -> void:
+	if _audio_cap == null:
+		return
+	if _audio_bus >= 0 and _audio_fx >= 0:
+		AudioServer.remove_bus_effect(_audio_bus, _audio_fx)
+	_audio_cap = null
+	_audio_bus = -1
+	_audio_fx = -1
+
+
+func _drain_audio() -> void:
+	if _audio_cap == null:
+		return
+	var n := _audio_cap.get_frames_available()
+	if n <= 0:
+		return
+	var buf: PackedVector2Array = _audio_cap.get_buffer(n)
+	if _wav != null:
+		_wav.add_frames(buf)
+
+
+func _submit_record(img: Image, slot: int) -> void:
 	_mutex.lock()
 	var can := _pending < MAX_PENDING
 	if can:
 		_pending += 1
 	_mutex.unlock()
 	if can:
-		WorkerThreadPool.add_task(_encode_record.bind(img, seq), false)
+		WorkerThreadPool.add_task(_encode_record.bind(img, slot), false)
 
 
-func _encode_record(img: Image, seq: int) -> void:
+func _encode_record(img: Image, slot: int) -> void:
 	var blob: PackedByteArray = img.save_jpg_to_buffer(JPG_QUALITY)
 	_mutex.lock()
-	_results.append({"seq": seq, "blob": blob})
+	_results.append({"slot": slot, "blob": blob})
 	_pending -= 1
 	_mutex.unlock()
 
@@ -280,14 +456,17 @@ func _flush_record() -> void:
 	var batch := _results
 	_results = []
 	_mutex.unlock()
-	batch.sort_custom(func(a, b): return int(a["seq"]) < int(b["seq"]))
+	batch.sort_custom(func(a, b): return int(a["slot"]) < int(b["slot"]))
 	for item in batch:
-		var seq := int(item["seq"])
-		if seq <= _flushed_seq:
+		var slot := int(item["slot"])
+		var count := slot - _rec_written_slots + 1
+		if count < 1 or _writer == null:
 			continue
-		if _writer != null:
-			_writer.add_frame(item["blob"])
-		_flushed_seq = seq
+		var blob: PackedByteArray = item["blob"]
+		for _i in count:
+			_writer.add_frame(blob)
+		_rec_written_slots += count
+		_rec_last_blob = blob
 
 
 # ══════════════════════════ 死亡带（内存） ══════════════════════════
@@ -342,8 +521,6 @@ func start_rewind() -> bool:
 	var sched := RewindTape.schedule(float(frozen["run_seconds"]))
 	if sched.is_empty():
 		return false
-	if _recording:
-		stop_recording()
 	_replaying = true
 	_replay_elapsed = 0.0
 	_sched = sched
@@ -520,23 +697,23 @@ func _flush_decodes() -> void:
 # ══════════════════════════ 抓帧视口 / UI ══════════════════════════
 
 func _ensure_capture() -> void:
-	if _cap != null:
-		return
-	_cap = SubViewport.new()
-	_cap.name = "RecordCaptureViewport"
-	_cap.size = Vector2i(CAP_W, CAP_H)
-	_cap.render_target_update_mode = SubViewport.UPDATE_ALWAYS
-	_cap.transparent_bg = false
-	var spr := Sprite2D.new()
-	spr.name = "ScreenCopy"
-	spr.texture = get_viewport().get_texture()
-	spr.centered = false
-	spr.position = Vector2.ZERO
-	var root_size := get_viewport().get_visible_rect().size
-	spr.scale = Vector2(float(CAP_W), float(CAP_H)) / root_size
-	spr.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
-	_cap.add_child(spr)
-	add_child(_cap)
+	if _cap == null:
+		_cap = SubViewport.new()
+		_cap.name = "RecordCaptureViewport"
+		_cap.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+		_cap.transparent_bg = false
+		_cap_spr = Sprite2D.new()
+		_cap_spr.name = "ScreenCopy"
+		_cap_spr.texture = get_viewport().get_texture()
+		_cap_spr.centered = false
+		_cap_spr.position = Vector2.ZERO
+		_cap_spr.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
+		_cap.add_child(_cap_spr)
+		add_child(_cap)
+	var size := Vector2i(TAPE_CAP_W, TAPE_CAP_H)
+	if _cap.size != size:
+		_cap.size = size
+	_cap_spr.scale = Vector2(TAPE_CAP_W, TAPE_CAP_H) / get_viewport().get_visible_rect().size
 
 
 func _stamp() -> String:
