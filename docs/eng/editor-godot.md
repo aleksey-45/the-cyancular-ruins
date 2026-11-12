@@ -81,6 +81,11 @@
 - **移动工具（`V`）**：拖**选区内容**（选区框跟随；拖出图外由画布 clamp，doc 端再校验，不环面回绕）或拖
   **meta 标记**（出生点/复活点/敌人，命中半径 14px，拖动时标记跟鼠标、松手才按格落点）；两者各自一条 undo，
   拖动过程只画预览、不写 doc。
+- **按当前层决定工具/面板适用性（2026-11-12）**：
+  - 纹理层 0-2：纹理调色板可用；**渐变与两个颜色选择器置灰**；吸管吸 `desc`（换画笔纹理）。
+  - 颜色层 3-6：渐变与颜色选择器可用；**纹理调色板置灰**；吸管吸 `RGBA`（换画笔颜色，并回写取色器）。
+  - 切层后当前工具若变得不适用（渐变 → 纹理层）**自动切回画笔**并提示；快捷键 `T` 在纹理层被拒。
+  - 画刷框颜色跟着当前层走：颜色层用当前画笔色（橡皮仍是红框），纹理层仍按描述符 tint。
 - **未保存拦截**：`doc.dirty` 时「新建 / 打开 / 返回 / **关窗（Alt+F4 或窗口 X，`NOTIFICATION_WM_CLOSE_REQUEST`）**」都先弹
   「有未保存的改动」确认（取消 = 什么都不做，确认才继续）；干净时不弹。编辑器根在 `_ready` 把 `auto_accept_quit`
   置 false、`_exit_tree` 还原（否则主菜单也关不掉窗口）。弹层是 `exclusive` 模态：开着时画布不能再改（避免确认后
@@ -101,7 +106,7 @@
 | `tests/smoke/editor_doc_smoke.gd` | `EDITOR DOC SMOKE: OK(229 条断言)` | 229 | 7 层建图 / 环面 / Bresenham / 4 邻接与接缝油漆桶 / 颜色层 u32 / undo 往返与合并 / 栈上限 / load_map 清栈 / validate+to_bytes / **选区剪贴板镜像渐变 / meta 快照与 undo / 选区整块移动（重叠·越界·缺席层·一条 undo） / meta 单条改位置（side/type 保留·原地不动不入栈） / history_changed（笔画收尾才发）** |
 | `tests/smoke/editor_io_smoke.gd` | `EDITOR IO SMOKE: OK(53 条断言)` | 53 | v4 7 层读入 / legacy 读时迁移 / v3 与旧字母文本 / 坏文件 / 保存确定性 / 校验拒写 / 三处目录 / 默认落点 / **P3 导出落点与 res:// 拒写** |
 | `tests/probe/editor_canvas_probe.tscn` | `EDITOR CANVAS PROBE: ALL-OK(63 条断言)` | 63 | 上述 + **脏区刷新与全量 refresh 逐像素一致（单格/颜色层/跨接缝/小图多环面副本）** + 选区框几何 + meta 标记锚点 + `_draw` 真跑 + **手形平移（不发 pointer_*）/ 移动工具 delta 与边界 clamp / meta 命中·非 0 下标·respawn side 保留** |
-| `tests/probe/editor_scene_probe.tscn` | `EDITOR SCENE PROBE: ALL-OK(84 条断言)` | 84 | 真实例化场景：打开 `maps/newfactory.cyrm` → 改一格 → undo/redo → 保存 → 重开 → 再保存**逐字节相等**；P3 导出并加载的 `Settings.sp_map_path`/`map_file_path()`；后置项：选区/复制/粘贴/镜像/渐变/meta/预览开关；**⑦ UI 结构组：左栏工具/画刷/调色板、右栏图层常驻 + 2 Tab、顶栏撤销重做（禁用态 + 点击真回退/重做 + 笔画收尾后立即可用）、状态栏缩放（含点「−」）、工具快捷键（含 Ctrl+V / Shift+H 不被单键吃掉）、校验自动切 Tab、无溢出**；**⑧ 未保存拦截（新建/打开/返回/关窗 4 条路径 + 确认/干净 2 种走向）**；**⑨ 移动工具端到端（选区 + meta 各一条 undo）** |
+| `tests/probe/editor_scene_probe.tscn` | `EDITOR SCENE PROBE: ALL-OK(93 条断言)` | 93 | 真实例化场景：打开 `maps/newfactory.cyrm` → 改一格 → undo/redo → 保存 → 重开 → 再保存**逐字节相等**；P3 导出并加载的 `Settings.sp_map_path`/`map_file_path()`；后置项：选区/复制/粘贴/镜像/渐变/meta/预览开关；**⑦ UI 结构组：左栏工具/画刷/调色板、右栏图层常驻 + 2 Tab、顶栏撤销重做（禁用态 + 点击真回退/重做 + 笔画收尾后立即可用）、状态栏缩放（含点「−」）、工具快捷键（含 Ctrl+V / Shift+H 不被单键吃掉）、**按层适用性（纹理层置灰渐变/颜色、颜色层置灰纹理调色板、切层自动回画笔、颜色层吸管吸 RGBA）**、校验自动切 Tab、无溢出**；**⑧ 未保存拦截（新建/打开/返回/关窗 4 条路径 + 确认/干净 2 种走向）**；**⑨ 移动工具端到端（选区 + meta 各一条 undo）** |
 | `tests/probe/editor_preview_probe.tscn` | `EDITOR PREVIEW PROBE: ALL-OK(21 条断言)` | 21 | 真渲染预览的结构统计（773 瓦片 / 背景 1 层 / post 存在）/ 相机口径 / 显隐切换 / refresh 幂等 / doc 信号接线 |
 
 - 产品侧另有两条**真导出**才能回答的检查（不在默认批里，跑在 `tools/build_release.py`，见 §10）。
@@ -125,6 +130,8 @@
   被其它进程 kill（任务管理器）不在此列。
 - 未保存确认弹层是 `exclusive` 模态：弹层开着时画布不可改 —— 这就是「确认后不再复核 dirty」的替代（关闭 TOCTOU）。
 - 预览开着时切移动/手形会自动关预览（叠加层画在画布上、会被预览图盖住）；要边看真渲染边拖目前不支持。
+- 按层适用性只是**置灰**，不是删按钮：纹理层仍能选中「渐变」位置以外的其他工具；颜色层的纹理调色板按钮 `disabled`
+  且整体压到 0.45。渐变在纹理层被拒时给一行错误消息，不产生任何写入。
 - 调色板缩略图缩到 56px（源砖 64px，`INTERPOLATE_NEAREST`）以便 3 列塞进 268px 左栏；图标本身不是 16px 实拍。
 - v3 文本 / 旧字母格式打开后另存为写的是 **v4**（`EditorV3` 迁移是单向的，与计划一致）。
 - 画布的图集行数 = 本图去重描述符数；一张图里出现大量 hue/bri 变体会让图集体积线性增长（16×16/行），极端图可能吃显存。
@@ -176,7 +183,7 @@
 - `scenes/editor/editor_root.tscn` = **真实场景树**（根挂 `ui/theme/menu_theme.tres`）：`Toolbar`（标题 + `FileMenu`/`EditMenu` + 撤销/重做 + 视图 + 预览/返回）· **左栏** `LeftPanel`（2×5 工具网格 `ToolStrip` + 画刷 + 颜色 + `PaletteScroll`/`PaletteGrid` + 操作提示）· 中 `CanvasHost`（内含 `EditorCanvas` 节点）· **右栏** `RightSide`（`LayersCard` 7 层常驻 + `RightTabs` 2 Tab：选区 & meta / 校验消息）· `StatusBar`（含缩放控件）；功能节点全部 `unique_name_in_owner=true`，root 用 `%Name` 取。
 - `editor_root.gd` **只做装配/接线/公开 API**（1270 → **581** 行）：静态控件不再 `new`；代码里只保留动态内容（调色板缩略图、菜单下拉项、弹层内容、预览节点、撤销/重做可用态、缩放标签）。
 - 拆出两个无 `class_name` 的小组件（root `preload`）：`editor_tools.gd`（工具状态 + 画布指针 → `EditorDoc` 写入 + 选区拖拽 + meta 放置/拖动落点；只发信号）、`editor_actions.gd`（文件/编辑命令 + `ConfirmationDialog` 弹层 + 未保存拦截）。两者都不持有控件。
-- 判据：`EDITOR SCENE PROBE: ALL-OK(84)`（⑦ UI 结构组 / ⑧ 未保存拦截 4 路径 / ⑨ 移动工具端到端）/ `UI LAYOUT PROBE: ALL-OK(54)` / `RUN_ALL OK` / `check_naming.py` 绿；改前/改后截图 `.tmp/ui_shots/`（非 headless 人工对比）。
+- 判据：`EDITOR SCENE PROBE: ALL-OK(93)`（⑦ UI 结构组 / ⑧ 未保存拦截 4 路径 / ⑨ 移动工具端到端）/ `UI LAYOUT PROBE: ALL-OK(54)` / `RUN_ALL OK` / `check_naming.py` 绿；改前/改后截图 `.tmp/ui_shots/`（非 headless 人工对比）。
 - 边界：`.tscn` 无法引用 `UiFactory.C_*`，所以全屏底色 `Bg` 在 tscn 里留一处字面量（全屏装饰例外），少数标签强调/弱化色由 root 在 `_ready` 按 `C_*` 覆盖 —— 不在 tscn 里另抄一套调色板。
 
 ## 13. UX 重排（2026-11-12）
@@ -189,8 +196,10 @@
 - **拖拽**：新增手形工具（H，左键平移）与移动工具（V，拖选区内容 / 拖 meta 标记）；空格/中键平移对任何工具保留。
   三处拖拽都只有一条 undo（移动落点由 `editor_tools` 写 doc），拖动过程只画预览。
 - **发现性**：工具按钮悬停提示带单键快捷键；左栏底部常驻操作提示；状态栏加 `− / % / + / 适应`；校验/保存失败自动切到「校验消息」Tab。
+- **按层适用性**：纹理层置灰渐变/颜色（调色板可用），颜色层置灰纹理调色板（渐变/颜色可用）；吸管在两层分别吸 desc / RGBA；
+  切层后渐变自动回画笔。守卫在 `editor_scene_probe` ⑦ 组（颜色层启用、纹理层禁用、自动回画笔、T 被拒、颜色层吸管回写）。
 - **安全网**：`doc.dirty` 时「新建 / 打开 / 返回」先弹确认，不再静默丢改动。
 - **守卫**：`editor_doc_smoke 183→229`（选区整块移动 / meta 单条改位置 / history_changed）、`editor_canvas_probe 48→63`
-  （手形 / 移动 delta 与边界 clamp / meta 非 0 下标与 respawn side）、`editor_scene_probe 50→84`（UI 结构 +
+  （手形 / 移动 delta 与边界 clamp / meta 非 0 下标与 respawn side）、`editor_scene_probe 50→93`（UI 结构 + 按层适用性 +
   未保存拦截 4 路径 + 移动工具端到端 + 快捷键冲突）；`ui_layout_probe` 54 不变（编辑器页在 1920×1440 仍无溢出）。
 - **非 headless 人工验收**：`python tools/ui_shots.py editor_root --size 1920x1440`（只截编辑器页，弹窗；不入默认批）。

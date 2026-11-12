@@ -16,7 +16,7 @@ extends Node
 #   ⑩ 用了绝对坐标/固定宽度导致控件溢出父容器 ⇒ ⑦ 组「无溢出」红。
 # 判据 = 未跑满条数 + 失败清单;退出码只是陪衬。
 
-const EXPECTED_CHECKS := 84
+const EXPECTED_CHECKS := 93
 const MAP := "res://maps/newfactory.cyrm"
 const A := "user://maps/_editor_scene_probe_a.cyrm"
 const EXPORT_C := "user://maps/_editor_scene_probe_export.cyrm"
@@ -315,7 +315,7 @@ func _check_ui_layout() -> void:
 	var tool_strip := _editor.find_child("ToolStrip", true, false) as GridContainer
 	if split == null or tabs == null or left == null or tool_strip == null:
 		# 结构没建出来时补足条数,避免条数闸把后续所有断言算成「中途夭折」
-		for _i in 36:
+		for _i in 45:
 			_chk(false, "⑦ 结构缺失:跳过后续布局断言")
 		return
 
@@ -478,6 +478,51 @@ func _check_ui_layout() -> void:
 	_chk(not canvas.is_move_tool(), "⑦ Ctrl+V 不应被 V(移动工具)吃掉")
 	_press_editor_key(KEY_H, false, true)
 	_chk(not canvas.is_pan_tool(), "⑦ Shift+H 不应被 H(手形)吃掉")
+
+	# 工具/面板按当前层类型适用性:纹理层(0-2) vs 颜色层(3-6)
+	var grad_btn := _editor.find_child("ToolGradient", true, false) as Button
+	var brush_color_btn := _editor.find_child("BrushColor", true, false) as ColorPickerButton
+	var gradient_end_btn := _editor.find_child("GradientEndColor", true, false) as ColorPickerButton
+	var pal_first := pal.get_child(0) as Button
+	var layer1_btn := _editor.find_child("Layer1", true, false) as Button
+	var layer3_btn := _editor.find_child("Layer3", true, false) as Button
+	layer3_btn.pressed.emit()                       # 切到颜色层(背景 100%)
+	await get_tree().process_frame
+	_chk(grad_btn != null and not grad_btn.disabled and brush_color_btn != null
+			and not brush_color_btn.disabled and not gradient_end_btn.disabled,
+			"⑦ 颜色层(3-6)应启用渐变与两个颜色选择器")
+	_chk(pal_first != null and pal_first.disabled and pal.get_child_count() > 0,
+			"⑦ 颜色层应禁用纹理调色板(画笔用颜色,不用纹理)")
+	grad_btn.pressed.emit()
+	await get_tree().process_frame
+	_chk(grad_btn.theme_type_variation == &"ToolActive", "⑦ 颜色层上渐变工具应可选中")
+	layer1_btn.pressed.emit()                       # 切回纹理层(场景)
+	await get_tree().process_frame
+	_chk(grad_btn.disabled and brush_color_btn.disabled and gradient_end_btn.disabled,
+			"⑦ 纹理层(0-2)应禁用渐变与颜色选择器")
+	_chk(_editor.find_child("ToolBrush", true, false).theme_type_variation == &"ToolActive",
+			"⑦ 从颜色层(渐变选中)切回纹理层应自动回到画笔")
+	_chk(pal_first != null and not pal_first.disabled,
+			"⑦ 纹理层应恢复纹理调色板")
+	_press_editor_key(KEY_T)
+	_chk(_editor.find_child("ToolBrush", true, false).theme_type_variation == &"ToolActive",
+			"⑦ 纹理层按 T 不应进入渐变工具")
+	# 颜色层吸管:吸的是 rgba 并回写取色器(纹理层吸的是 desc)
+	layer3_btn.pressed.emit()
+	await get_tree().process_frame
+	var eyedrop_color := 0x336699FF
+	_doc.set_cells([Vector2i(5, 5)], eyedrop_color)
+	canvas.set_camera(Vector2.ZERO, 16.0)
+	(_editor.find_child("ToolEyedrop", true, false) as Button).pressed.emit()
+	await get_tree().process_frame
+	_canvas_click(canvas, Vector2(88, 88), true)
+	await get_tree().process_frame
+	_chk(brush_color_btn.color.is_equal_approx(Color8(0x33, 0x66, 0x99, 0xFF)),
+			"⑦ 颜色层吸管应把 0x336699FF 写回取色器(实得 %s)" % str(brush_color_btn.color))
+	_chk(_editor.find_child("ToolBrush", true, false).theme_type_variation == &"ToolActive",
+			"⑦ 吸管完成后应自动回到画笔")
+	layer1_btn.pressed.emit()                       # 收尾:回纹理层 + 画笔,后续检查不依赖层类型
+	await get_tree().process_frame
 
 	# 无溢出:每个可见 Control 都在父 Control 的 rect 内(容差 1px;ScrollContainer 内容不查)。
 	var bad: Array[String] = []

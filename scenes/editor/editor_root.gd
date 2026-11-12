@@ -150,6 +150,7 @@ func open_path(path: String) -> Dictionary:
 	canvas.set_active_layer(doc.active_layer)
 	canvas.fit_to_map()
 	_sync_layer_rows()
+	_sync_layer_tool_availability()
 	_refresh_palette_texture()
 	_set_message("已打开 %s(%s)" % [path, String(res.get("source", "v4"))], false)
 	if not (res.get("warnings", []) as Array).is_empty():
@@ -165,6 +166,7 @@ func new_map(cells_w: int, cells_h: int, map_name_arg: String = "untitled") -> v
 	_path = ""
 	canvas.fit_to_map()
 	_sync_layer_rows()
+	_sync_layer_tool_availability()
 	_set_message("已新建 %d×%d 格" % [cells_w, cells_h], false)
 	_update_zoom_label()
 	_update_history_buttons()
@@ -339,7 +341,11 @@ func _wire_ui() -> void:
 
 	var color_btn := %BrushColor as ColorPickerButton
 	color_btn.color = _tools.color_value
-	color_btn.color_changed.connect(func(c: Color) -> void: _tools.color_value = c)
+	color_btn.color_changed.connect(func(c: Color) -> void: _tools.set_color(c))
+	# 工具层改色(吸管/初始化)也要回写到取色器;相等时不回写,避免 set_color ↔ 取色器信号成环。
+	_tools.color_changed.connect(func(c: Color) -> void:
+		if not color_btn.color.is_equal_approx(c):
+			color_btn.color = c)
 	var grad_btn := %GradientEndColor as ColorPickerButton
 	grad_btn.color = _tools.gradient_end
 	grad_btn.color_changed.connect(func(c: Color) -> void: _tools.gradient_end = c)
@@ -377,6 +383,7 @@ func _wire_ui() -> void:
 	_tools.selection_changed.connect(_update_selection_info)
 	_on_tool_changed(_tools.tool)
 	_on_meta_mode_changed(_tools.meta_mode)
+	_sync_layer_tool_availability()
 	_update_history_buttons()
 	_update_zoom_label()
 	_layout_split.call_deferred()
@@ -468,11 +475,44 @@ func _on_layer_selected(L: int) -> void:
 	doc.active_layer = L
 	canvas.set_active_layer(L)
 	_sync_layer_rows()
+	_sync_layer_tool_availability()
 	_update_status(Vector2i.ZERO, false)
 
 
 func _on_layer_visible_toggled(on: bool, L: int) -> void:
 	canvas.set_layer_visible(L, on)
+
+
+# ── 按当前层的类型决定「工具/面板」可用性 ─────────────────────────────────
+# 纹理层 0-2:调色板/纹理解析适用,颜色选择器与渐变不适用;
+# 颜色层 3-6:颜色/渐变适用,纹理调色板不适用(画笔直接用颜色画)。
+# 切层后当前工具若变得不适用(渐变)⇒ 自动回画笔,避免下一次落笔才报错。
+func _sync_layer_tool_availability() -> void:
+	if doc == null or _tools == null:
+		return
+	var is_color := EditorConstants.is_color_layer(doc.active_layer)
+	var grad := _tool_buttons.get("gradient") as Button
+	if grad != null:
+		grad.disabled = not is_color
+		grad.tooltip_text = "渐变 (%s)%s" % [String(TOOL_KEYS.get("gradient", "")),
+				"" if is_color else " · 仅颜色层 3-6"]
+	for b in _palette_buttons:
+		b.disabled = is_color
+	var pal_grid := get_node_or_null("%PaletteGrid") as GridContainer
+	if pal_grid != null:
+		pal_grid.modulate = Color(1, 1, 1, 0.45 if is_color else 1.0)
+	var pal_hint := get_node_or_null("%PaletteHint") as Label
+	if pal_hint != null:
+		pal_hint.text = "调色板(颜色层用「颜色」画笔)" if is_color else "纹理调色板(点选 = 画笔纹理)"
+	var brush_color := get_node_or_null("%BrushColor") as ColorPickerButton
+	var grad_color := get_node_or_null("%GradientEndColor") as ColorPickerButton
+	if brush_color != null:
+		brush_color.disabled = not is_color
+	if grad_color != null:
+		grad_color.disabled = not is_color
+	if not is_color and _tools.tool == "gradient":
+		_tools.set_tool("brush")
+		_set_message("当前是纹理层:渐变不可用,已切回画笔", false)
 
 
 func _sync_layer_rows() -> void:
@@ -495,6 +535,7 @@ func _on_doc_structure_changed() -> void:
 	canvas.refresh()
 	canvas.set_selection(doc.selection)       # 换图/新建清了 doc.selection,别让旧选框留在画布上
 	_sync_layer_rows()
+	_sync_layer_tool_availability()
 	_update_selection_info()
 	_update_history_buttons()
 

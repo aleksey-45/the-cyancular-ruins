@@ -40,6 +40,7 @@ signal message(text: String, is_error: bool)
 signal tool_changed(key: String)
 signal meta_mode_changed(key: String)
 signal paint_desc_changed(desc: int)
+signal color_changed(c: Color)
 signal selection_changed()
 
 var doc: EditorDoc = null
@@ -63,9 +64,14 @@ var _select_start := Vector2i.ZERO
 func setup(p_doc: EditorDoc, p_canvas: EditorCanvas) -> void:
 	doc = p_doc
 	canvas = p_canvas
+	canvas.set_preview_color(color_value)
 
 
 func set_tool(key: String) -> void:
+	# 渐变只对颜色层有意义:纹理层上从快捷键/程序调用进来也直接拒绝(UI 按钮另有置灰)。
+	if key == TOOL_GRADIENT and not EditorConstants.is_color_layer(doc.active_layer):
+		message.emit("渐变只能用于颜色层(背景 100%/75%/50%/25%)", true)
+		return
 	tool = key
 	canvas.set_preview_desc(0 if key == TOOL_ERASER else paint_desc)
 	# 手形 = 左键直接平移;移动 = 拖选区内容 / meta 标记。画布自己处理这两类指针,不发 pointer_*。
@@ -99,6 +105,13 @@ func set_paint_desc(desc: int) -> void:
 	paint_desc = desc
 	canvas.set_preview_desc(desc)
 	paint_desc_changed.emit(desc)
+
+
+# 颜色层(3-6)的画笔颜色:同步画刷框颜色并让 root 更新取色器显示(吸管也走这里)。
+func set_color(c: Color) -> void:
+	color_value = c
+	canvas.set_preview_color(c)
+	color_changed.emit(c)
 
 
 func set_meta_mode(key: String) -> void:
@@ -150,8 +163,15 @@ func pointer_down(sub: Vector2i, button: int, _shift: bool, _ctrl: bool) -> void
 			doc.end_stroke()
 			_painting = false
 		TOOL_EYEDROP:
-			set_paint_desc(doc.sample(sub.x, sub.y))
-			set_tool(TOOL_BRUSH)
+			# 两层语义不同:纹理层吸 desc(换画笔纹理);颜色层吸 RGBA(换画笔颜色)。
+			var v := doc.sample(sub.x, sub.y)
+			if EditorConstants.is_color_layer(doc.active_layer):
+				set_color(color_of_u32(v))
+				set_tool(TOOL_BRUSH)
+				message.emit("已吸取颜色 #%08X" % (v & 0xFFFFFFFF), false)
+			else:
+				set_paint_desc(v)
+				set_tool(TOOL_BRUSH)
 			_painting = false
 		_:
 			doc.begin_stroke()
@@ -252,6 +272,12 @@ static func color_u32(c: Color) -> int:
 	var b := clampi(int(round(c.b * 255.0)), 0, 255)
 	var a := clampi(int(round(c.a * 255.0)), 0, 255)
 	return (r << 24) | (g << 16) | (b << 8) | a
+
+
+# 0xRRGGBBAA → Color(吸管在颜色层用;与 color_u32 互逆)。
+static func color_of_u32(v: int) -> Color:
+	var u := v & 0xFFFFFFFF
+	return Color8((u >> 24) & 0xFF, (u >> 16) & 0xFF, (u >> 8) & 0xFF, u & 0xFF)
 
 
 func _place_meta_at(sub: Vector2i) -> void:

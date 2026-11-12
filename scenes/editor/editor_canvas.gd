@@ -86,6 +86,7 @@ var _active_layer := 1
 var _layer_visible: Array[bool] = [true, true, true, true, true, true, true]
 var _brush_cells := 1
 var _preview_desc := 0
+var _preview_color := Color(1.0, 1.0, 1.0, 1.0)   # 颜色层(3-6)的画刷框颜色(工具层喂当前画笔色)
 var _hover_sub := Vector2i.ZERO
 var _has_hover := false
 
@@ -204,6 +205,12 @@ func set_brush_preview(size_cells: int) -> void:
 
 func set_preview_desc(desc: int) -> void:
 	_preview_desc = desc
+	queue_redraw()
+
+
+## 颜色层(3-6)的画刷框颜色:工具层喂当前画笔颜色(纹理层仍走 _preview_desc 的 tint)。
+func set_preview_color(c: Color) -> void:
+	_preview_color = c
 	queue_redraw()
 
 
@@ -916,7 +923,11 @@ func _draw_brush() -> void:
 	var rect := Rect2(subcell_to_screen(top_left * SUB_PER_CELL),
 			Vector2(float(_brush_cells) * SUB_PER_CELL, float(_brush_cells) * SUB_PER_CELL) * _zoom)
 	var tint := ERASER_COLOR
-	if _preview_desc != 0:
+	if EditorConstants.is_color_layer(_active_layer):
+		# 颜色层:橡皮(_preview_desc=0)保持红框;其余用工具层喂的当前画笔颜色。
+		if _preview_desc != 0:
+			tint = _preview_color
+	elif _preview_desc != 0:
 		tint = TerrainAtlas.tint_color(Color.WHITE, _preview_desc)
 	draw_rect(rect, Color(tint.r, tint.g, tint.b, 0.20))
 	draw_rect(rect, Color(tint.r, tint.g, tint.b, 0.95), false, 2.0)
