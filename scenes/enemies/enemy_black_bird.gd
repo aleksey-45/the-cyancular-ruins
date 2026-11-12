@@ -246,7 +246,7 @@ func _tick_back_hop() -> void:
 # (环面取模)搜地板格(EMPTY 且正下方非 EMPTY),且该格到玩家格 LOS 通 → 可瞬移冲锋。
 func _find_flank_cell() -> bool:
 	var p := _nearest_player()
-	var grid: Array[Array] = TileDefs.terrain.get_grid_snapshot()
+	var grid: Array[Array] = terrain.get_grid_snapshot()
 	if p == null or grid.is_empty():
 		return false
 	var cols := grid[0].size()
@@ -257,7 +257,7 @@ func _find_flank_cell() -> bool:
 	var player_px := Vector2(player_cell.x * ts + ts * 0.5, player_cell.y * ts + ts * 0.5)
 	var bird_px := Vector2(bird_cell.x * ts + ts * 0.5, bird_cell.y * ts + ts * 0.5)
 	# 目标侧 = 玩家相对鸟的另一侧:取「玩家→鸟」偏移的主轴,落点取该轴反号
-	var off := GridPathfinder.toroidal_delta_px(player_px, bird_px, cols * ts, rows * ts)
+	var off := GridPathfinder.toroidal_delta_px(player_px, bird_px, terrain.map_size)
 	var sx := signf(off.x)  # 鸟在玩家 +x 侧 → 目标 −x 侧
 	var sy := signf(off.y)
 	var use_x := absf(off.x) >= absf(off.y)
@@ -275,7 +275,7 @@ func _find_flank_cell() -> bool:
 			var c := Vector2i(posmod(player_cell.x + dx, cols), posmod(player_cell.y + dy, rows))
 			# 距离与侧向都用环面最短向量,避免跨接缝失真
 			var c_px := Vector2(c.x * ts + ts * 0.5, c.y * ts + ts * 0.5)
-			var rel := GridPathfinder.toroidal_delta_px(player_px, c_px, cols * ts, rows * ts)
+			var rel := GridPathfinder.toroidal_delta_px(player_px, c_px, terrain.map_size)
 			var dlen := rel.length()
 			if dlen < min_d or dlen > max_d:
 				continue
@@ -290,8 +290,8 @@ func _find_flank_cell() -> bool:
 			var drop_pos := Vector2(c.x * ts + ts * 0.5, c.y * ts + ts * 0.5 - EnemyParams.BlackBird.teleport_drop)
 			if not _body_clear_at(drop_pos):
 				continue
-			if not TileDefs.terrain.line_of_sight(TileDefs.terrain.cell_center(c),
-					TileDefs.terrain.cell_center(player_cell)):
+			if not terrain.line_of_sight(terrain.cell_center(c),
+					terrain.cell_center(player_cell)):
 				continue
 			valid.append(c)
 	if valid.is_empty():
@@ -325,7 +325,7 @@ func _teleport_to_flank() -> void:
 func _player_facing() -> int:
 	var p := _nearest_player()
 	if p != null:
-		return p.get_facing()
+		return p.facing_direction
 	return 1
 
 
@@ -339,8 +339,8 @@ func _update_facing() -> void:
 # 冲锋命中玩家:穿透无敌帧打伤 + 猛推飞玩家,随后大后跳。
 func _on_charge_hit_player() -> void:
 	var p := _nearest_player()
-	if p != null:
-		p.take_hit(global_position, EnemyParams.BlackBird.charge_damage, true)
+	if p != null and combat_rules.resolve_hit(self, p, CombatProfiles.SMASH,
+			global_position, EnemyParams.BlackBird.charge_damage, -1.0):
 		_apply_charge_impact(p)
 	_start_back_hop()
 
@@ -394,5 +394,4 @@ func _on_state_entered(s: int) -> void:
 
 ## 死亡:掉 300 颗粒结晶(碎裂→飞向怀表→吸收时入账+表体颤抖)。基类虚钩覆写。
 func _on_death() -> void:
-	super()
-	GrainCrystalFx.spawn(get_parent(), global_position, TimeParams.ELITE_GRAIN_DROP)
+	combat_rules.grain_dropped.emit(global_position, TimeParams.ELITE_GRAIN_DROP)

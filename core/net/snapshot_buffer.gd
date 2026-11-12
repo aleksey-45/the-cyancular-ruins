@@ -46,9 +46,9 @@ func sample(tick: float) -> Dictionary:
 	var result := {"players": {}, "pickups": {}}
 	for group in ["players", "pickups"]:
 		# 玩家与掉落物都是槽记录，位置、速度与纪元各占固定下标。
-		var pos_slot: int = PlayerStateSchema.slot("pos") if group == "players" else PickupState.POS
-		var vel_slot: int = PlayerStateSchema.slot("vel") if group == "players" else PickupState.VEL
-		var epoch_slot: int = PlayerStateSchema.slot("epoch") if group == "players" else -1
+		var pos_slot: int = PlayerStateSchema.REMOTE_POS if group == "players" else PickupState.POS
+		var vel_slot: int = PlayerStateSchema.REMOTE_VEL if group == "players" else PickupState.VEL
+		var epoch_slot: int = PlayerStateSchema.REMOTE_EPOCH if group == "players" else -1
 		for id in source[group]:
 			# 只改位置与速度；其余槽保持只读，不递归复制。
 			var state: Array = source[group][id].duplicate()
@@ -56,11 +56,11 @@ func sample(tick: float) -> Dictionary:
 			if from["world"][group].has(id) and to["world"][group].has(id):
 				var a: Array = from["world"][group][id]
 				var b: Array = to["world"][group][id]
-				var movement := GridPathfinder.toroidal_delta_px(a[pos_slot], b[pos_slot], map_px.x, map_px.y)
+				var movement := GridPathfinder.toroidal_delta_px(a[pos_slot], b[pos_slot], map_px)
 				if (epoch_slot < 0 or a[epoch_slot] == b[epoch_slot]) and movement.length() < 256.0:
 					state[pos_slot] = a[pos_slot] + movement * weight
 					state[vel_slot] = a[vel_slot].lerp(b[vel_slot], weight)
 			if tick > to["tick"]:
 				state[pos_slot] += state[vel_slot] * minf(tick - to["tick"], MAX_EXTRAPOLATION) / 60.0
-			state[pos_slot] = GridPathfinder.wrap_to_range(state[pos_slot], map_px.x, map_px.y)
+			state[pos_slot] = GridPathfinder.wrap_to_range(state[pos_slot], map_px)
 	return result

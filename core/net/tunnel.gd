@@ -1,22 +1,13 @@
 class_name Tunnel
 extends RefCounted
 
-# EasyTier P2P 网络隧道管理：基于 EasyTier 应用层协议栈，
-# 在对战双方之间建立虚拟网络，实现 UDP 数据包的应用层透明转发。
-#
-# 架构原理：
-# - 免驱动运行：采用应用层协议栈（--no-tun），无需安装虚拟网卡驱动或管理员权限。
-# - 服务端（房主）：EasyTier 自动映射端口，将虚拟网目标端口转发至本机服务端端口。
-# - 客户端（客机）：通过 CLI 工具添加出站转发规则，将本机动态分配端口映射至房主虚拟 IP 端口，
-#   客户端直接连接本地回环地址即可进行对局。
-# - 端口同步与房间凭据：房间码决定虚拟网络名称与通信密钥；端口号通过主机名在对等节点间同步。
-
+# EasyTier 在虚拟网络内转发 UDP；房主通过主机名公布游戏端口。
 const Meta := preload("res://core/config/tunnel_meta.gd")
 
 # 房间码规格：固定 8 位十进制数字，允许前导零
 const ROOM_DIGITS := 8
 # 客机等待房主在虚拟网络中就绪的超时时限（秒）
-const CLIENT_WAIT := 60.0
+const CLIENT_WAIT_MS := 60000
 # CLI 轮询间隔（秒）
 const POLL_INTERVAL := 1.0
 # 端口转发规则添加重试次数
@@ -24,12 +15,11 @@ const FORWARD_TRIES := 3
 
 static var _pid := 0            # 核心进程 PID，0 表示未启动
 static var _rpc_port := 0       # 本端 RPC 门户监听端口
-static var _role := ""          # 角色标识（host 或 guest）
+static var _config_dir: DirAccess
 static var _forward_host := ""
 static var _forward_target := 0
 static var _forward_port := 0   # 本端本地转发端口（客机使用，0 表示未转发或房主模式）
 static var _code := ""          # 当前加入的 8 位房间码
-static var _core_path := ""     # 核心程序可执行文件路径
 static var _cli_path := ""      # 命令行工具可执行文件路径
 
 
@@ -49,7 +39,7 @@ static func host_port_of(hostname: String) -> int:
 	if not hostname.begins_with(Meta.HOST_PREFIX):
 		return -1
 	var tail := hostname.substr(Meta.HOST_PREFIX.length())
-	if tail.is_empty() or not tail.is_valid_int():
+	if not tail.is_valid_int():
 		return -1
 	var p := int(tail)
 	return p if p > 0 and p < 65536 else -1
@@ -66,128 +56,92 @@ static func pick_host_peer(peers: Array) -> Dictionary:
 		if port <= 0:
 			continue
 		var ip := str(d.get("ipv4", "")).strip_edges()
-		if ip.is_empty():
+		if not ip.is_valid_ip_address():
 			continue
-		return {"ipv4": ip, "hostname": hn, "port": port}
+		return {"ipv4": ip, "port": port}
 	return {}
 
-static func _require_components() -> bool:
-	if available():
-		return true
-	push_error(missing_hint())
-	return false
+static func start_host(port: int, code: String) -> String:
+	if port <= 0 or port > 65535:
+		return "服务端端口无效"
+	return _launch(code, port)
 
 
-## 检查核心程序、命令行工具与依赖动态链接库是否完整就绪。
-static func available() -> bool:
-	var dir := AppPaths.easytier_dir()
-	for name in Meta.required_files():
-		if not FileAccess.file_exists(dir.path_join(name)):
-			return false
-	_core_path = dir.path_join(Meta.core_name())
-	_cli_path = dir.path_join(Meta.cli_name())
-	return true
-
-## 返回组件缺失时的界面提示文案。
-static func missing_hint() -> String:
-	return "未找到 EasyTier 组件(%s)，请将运行组件放入 %s" % [
-			" / ".join(Meta.required_files()), AppPaths.easytier_dir()]
-
-## 启动房主网络隧道进程，将游戏服务端端口暴露于虚拟网络中。
-static func start_host(port: int, code: String) -> bool:
-	if port <= 0 or not is_valid_room(code):
-		push_error("Tunnel: 房主参数不合法(port=%d code=%s)" % [port, code])
-		return false
-	if not _require_components():
-		return false
-	stop()
-	_rpc_port = _pick_rpc_port()
-	if _rpc_port <= 0:
-		push_error("Tunnel: RPC 门户分配不到本机端口(bind 127.0.0.1:0 失败)")
-		return false
-	_role = "host"
-	var args := _core_args("host", code, port)
-	var pid := NetSession.launch(_core_path, args)
-	if pid <= 0:
-		push_error("Tunnel: easytier-core 启动失败(%s)" % _core_path)
-		_role = ""
-		return false
-	_pid = pid
-	_code = code
-	return true
+static func start_client(code: String, deadline := 0) -> Dictionary:
+	var error := _launch(code, 0)
+	if not error.is_empty():
+		return {"error": error}
+	var pid := _pid
+	var found := await _await_host_peer(deadline if deadline > 0 else Time.get_ticks_msec() + CLIENT_WAIT_MS)
+	if pid != _pid:
+		return {}
+	error = found.get("error", "")
+	if error.is_empty():
+		error = await _forward_to(found["port"], found["ipv4"])
+	if pid != _pid:
+		return {}
+	if not error.is_empty():
+		stop()
+		return {"error": error}
+	return {"port": _forward_port, "host_ip": _forward_host}
 
 
-## 启动客机网络隧道并配置本地转发规则。
-## 成功返回包含 port 与 host_ip 的字典，失败返回空字典。
-static func start_client(code: String) -> Dictionary:
+static func _launch(code: String, host_port: int) -> String:
 	if not is_valid_room(code):
-		push_error("Tunnel: 房间码不合法(%s)" % code)
-		return {}
-	if not _require_components():
-		return {}
+		return "房间码须为 8 位数字"
+	var dir := AppPaths.easytier_dir()
+	var files := Meta.required_files()
+	for name in files:
+		if not FileAccess.file_exists(dir.path_join(name)):
+			return "未找到 EasyTier 组件 %s，请检查 %s" % [name, dir]
+	var relays := relay_list()
+	if relays.is_empty():
+		return "请在 %s 中按行填写房主与客机共用的初始节点" % relay_file()
+
+	if host_port == 0:
+		NetBus.stop()
+		LocalServer.stop_owned()
 	stop()
 	_rpc_port = _pick_rpc_port()
-	if _rpc_port <= 0:
-		push_error("Tunnel: RPC 门户分配不到本机端口(bind 127.0.0.1:0 失败)")
-		return {}
-	_role = "guest"
-	var args := _core_args("guest", code, 0)
-	var pid := NetSession.launch(_core_path, args)
-	if pid <= 0:
-		push_error("Tunnel: easytier-core 启动失败(%s)" % _core_path)
-		_role = ""
-		return {}
-	_pid = pid
+	if _rpc_port == 0:
+		return "无法分配 EasyTier 的本机 RPC 端口"
+	if not _write_config(code, host_port, relays):
+		reset()
+		return "无法写入 EasyTier 临时配置"
+	_cli_path = dir.path_join(Meta.cli_name())
+	var core := dir.path_join(Meta.core_name())
+	_pid = NetSession.launch(core, ["--config-dir", _config_dir.get_current_dir(), "--rpc-portal", _rpc_address()])
+	if _pid <= 0:
+		reset()
+		return "无法启动 EasyTier，程序路径为 %s" % core
 	_code = code
-	var found := await _await_host_peer()
-	if pid != _pid: return {}
-	if found.is_empty():
-		push_error("Tunnel: %d 秒内没在虚拟网络里发现房主(房间码 %s)" % [int(CLIENT_WAIT), code])
-		stop()
-		return {}
-	var host_ip := str(found["ipv4"])
-	var port := int(found["port"])
-	var forwarded := await add_udp_forward(port, host_ip)
-	if pid != _pid: return {}
-	if not forwarded:
-		push_error("Tunnel: 配置转发失败(%s:%d)" % [host_ip, port])
-		stop()
-		return {}
-	return {"port": port, "host_ip": host_ip}
+	return ""
 
 
-## 生成客机唯一主机名后缀。
-static func guest_suffix() -> String:
-	return "%08x" % randi()
-
-
-## 配置 UDP 出站端口转发规则：将本机动态回环端口映射至目标虚拟 IP 与端口。
-static func add_udp_forward(port: int, host_ip: String) -> bool:
+static func _forward_to(port: int, host_ip: String) -> String:
 	var pid := _pid
 	var bind_port := NetBus.pick_free_port()
 	if bind_port <= 0:
-		push_error("Tunnel: 找不到可用的本机绑定端口,port-forward 无法下发")
-		return false
+		return "已找到房主，无法分配本机 UDP 转发端口"
 	var bind := "127.0.0.1:%d" % bind_port
 	var dst := "%s:%d" % [host_ip, port]
 	var last := ""
 	for i in range(FORWARD_TRIES):
-		var r := await _cli_async(PackedStringArray([
-			"--rpc-portal", "127.0.0.1:%d" % _rpc_port,
-			"port-forward", "add", "udp", bind, dst]))
-		if pid != _pid: return false
+		if pid != _pid:
+			break
+		var r := await _cli(["port-forward", "add", "udp", bind, dst])
+		if pid != _pid:
+			break
 		if int(r[0]) == 0:
 			_forward_port = bind_port
 			_forward_host = host_ip
 			_forward_target = port
-			print("[tunnel] 已下发转发 udp %s → %s" % [bind, dst])
-			return true
-		last = str(r[1])
+			return ""
+		last = str(r[1]).strip_edges()
 		if i < FORWARD_TRIES - 1:
-			await _sleep(POLL_INTERVAL)
-	push_error("Tunnel: port-forward add 连续 %d 次失败(%s → %s):%s"
-			% [FORWARD_TRIES, bind, dst, last.strip_edges()])
-	return false
+			await _sleep()
+	var detail := "（%s）" % last if not last.is_empty() else ""
+	return "已找到房主，UDP 转发配置失败%s" % detail
 
 
 ## 获取客机本地转发绑定的端口号（0 表示当前为房主或未建立转发）。
@@ -199,12 +153,11 @@ static func forward_port() -> int:
 static func stop() -> void:
 	if _pid > 0:
 		NetSession.stop(_pid)
-		print("[tunnel] 已停止隧道 pid=%d(%s)" % [_pid, _role])
 	reset()
 
 static func reset() -> void:
+	_config_dir = null
 	_pid = 0
-	_role = ""
 	_rpc_port = 0
 	_code = ""
 	_forward_port = 0
@@ -225,53 +178,52 @@ static func is_running() -> bool:
 	return _pid > 0 and NetSession.running(_pid)
 
 
-## 轮询对端列表直到检测到房主条目。
-static func _await_host_peer() -> Dictionary:
+static func _await_host_peer(deadline: int) -> Dictionary:
 	var pid := _pid
-	var deadline := Time.get_ticks_msec() + int(CLIENT_WAIT * 1000.0)
-	var last_err := ""
+	var error := ""
 	while pid == _pid and NetSession.running(pid) and Time.get_ticks_msec() < deadline:
-		var r := await _cli_async(PackedStringArray([
-			"--rpc-portal", "127.0.0.1:%d" % _rpc_port, "-o", "json", "peer"]))
-		if pid != _pid: return {}
+		var r := await _cli(["-o", "json", "peer"])
+		if pid != _pid:
+			return {}
 		if int(r[0]) == 0:
-			var peers := parse_peers_json(str(r[1]))
-			var found := pick_host_peer(peers)
-			if not found.is_empty():
-				return found
+			var peers: Variant = parse_peers_json(str(r[1]))
+			if peers != null:
+				var found := pick_host_peer(peers)
+				if not found.is_empty():
+					return found
+			error = "EasyTier 返回了无效的节点列表" if peers == null else ""
 		else:
-			last_err = str(r[1])
-		await _sleep(POLL_INTERVAL)
-	if not last_err.is_empty():
-		push_warning("Tunnel: 最后一次 CLI 调用失败:%s" % last_err.strip_edges())
-	return {}
+			error = "无法查询 EasyTier 节点（%s）" % str(r[1]).strip_edges()
+		await _sleep()
+	if not NetSession.running(pid):
+		error = "EasyTier 进程已退出"
+	if error.is_empty():
+		error = "未发现房间 %s 的房主，请检查房间码和双方的初始节点" % _code
+	return {"error": error}
 
 
-## 官方固定版本的 CLI 直接返回 JSON 数组。
-static func parse_peers_json(text: String) -> Array:
-	return JSON.parse_string(text)
+static func parse_peers_json(text: String) -> Variant:
+	var json := JSON.new()
+	return json.data if json.parse(text) == OK and json.data is Array else null
 
 
-## CLI 和内核共用进程所有权，退出会话时一起回收。
-static func _cli_async(args: PackedStringArray) -> Array:
-	return await NetSession.execute(_cli_path, args)
+static func _rpc_address() -> String:
+	return "127.0.0.1:%d" % _rpc_port
 
-static func _sleep(sec: float) -> void:
-	var tree := Engine.get_main_loop() as SceneTree
-	if tree != null:
-		await tree.create_timer(sec).timeout
-	else:
-		OS.delay_msec(int(sec * 1000.0))
+
+static func _cli(args: PackedStringArray) -> Array:
+	var command := PackedStringArray(["--rpc-portal", _rpc_address()])
+	command.append_array(args)
+	return await NetSession.execute(_cli_path, command)
+
+
+static func _sleep() -> void:
+	await (Engine.get_main_loop() as SceneTree).create_timer(POLL_INTERVAL).timeout
 
 
 ## 读取公共初始节点配置文件中的节点列表。
 static func relay_list() -> Array[String]:
-	var f := FileAccess.open(relay_file(), FileAccess.READ)
-	if f == null:
-		return []
-	var text := f.get_as_text()
-	f.close()
-	return parse_relay_lines(text)
+	return parse_relay_lines(FileAccess.get_file_as_string(relay_file()))
 
 
 ## 解析公共节点文本行，忽略注释与空行，规范化协议前缀。
@@ -281,7 +233,7 @@ static func parse_relay_lines(text: String) -> Array[String]:
 		var line := raw.strip_edges()
 		if line.is_empty() or line.begins_with("#"):
 			continue
-		out.append(_normalize_relay(line))
+		out.append(line if line.contains("://") else "udp://" + line)
 	return out
 
 
@@ -303,41 +255,22 @@ static func ensure_relay_file() -> void:
 		return
 	var content := "\n".join(PackedStringArray(Meta.DEFAULT_RELAYS)) + "\n"
 	if OS.has_feature("macos") and OS.has_feature("template"):
-		var bundled := AppPaths.easytier_dir().path_join(Meta.RELAY_FILE_NAME)
+		var bundled := AppPaths.base_dir().get_base_dir().path_join("Resources/" + Meta.RELAY_FILE_NAME)
 		if FileAccess.file_exists(bundled): content = FileAccess.get_file_as_string(bundled)
 	f.store_string(content)
 	f.close()
 	print("[tunnel] 已生成公共节点列表 %s" % path)
 
 
-# 规范化节点地址协议头，无协议头时默认添加 udp:// 前缀。
-static func _normalize_relay(s: String) -> String:
-	var t := s.strip_edges()
-	if t.contains("://"):
-		return t
-	return "udp://" + t
-
-
-## 检查是否配置了可用的初始公共节点。
-static func has_initial_peers() -> bool:
-	return not relay_list().is_empty()
-
-
-## 未配置公共节点时的界面提示文案。
-static func no_relay_hint() -> String:
-	if has_initial_peers():
-		return ""
-	return "%s 里一个初始节点都没有 —— 别人远程进不来(每行一个地址,改完重进房间生效)" % relay_file()
-
-
-# 网络选项写入 TOML；RPC 与文件日志由进程启动参数设置。
-static func _core_args(role: String, code: String, port: int) -> PackedStringArray:
+static func _write_config(code: String, port: int, relays: Array[String]) -> bool:
+	var host := port > 0
+	var hostname := Meta.HOST_PREFIX + str(port) if host else Meta.GUEST_PREFIX + ("%08x" % randi())
 	var lines := PackedStringArray([
-		"hostname = " + JSON.stringify(Meta.HOST_PREFIX + str(port) if role == "host" else Meta.GUEST_PREFIX + guest_suffix()),
+		"hostname = " + JSON.stringify(hostname),
 		"listeners = [\"udp://0.0.0.0:0\"]",
+		"ipv4 = " + JSON.stringify(Meta.VIP_HOST) if host else "dhcp = true",
 	])
-	lines.append("ipv4 = " + JSON.stringify(Meta.VIP_HOST) if role == "host" else "dhcp = true")
-	for relay in relay_list():
+	for relay in relays:
 		lines.append("[[peer]]")
 		lines.append("uri = " + JSON.stringify(relay))
 	lines.append_array([
@@ -353,12 +286,14 @@ static func _core_args(role: String, code: String, port: int) -> PackedStringArr
 		"private_mode = true",
 		"data_compress_algo = \"None\"",
 	])
-	var path := OS.get_temp_dir().path_join("cyr-easytier-%d.toml" % _rpc_port)
+	# EasyTier 只允许 CLI 修改由 --config-dir 加载的实例。
+	_config_dir = DirAccess.create_temp("cyr-easytier")
+	if _config_dir == null:
+		return false
+	var path := _config_dir.get_current_dir().path_join("instance.toml")
 	var config := FileAccess.open(path, FileAccess.WRITE)
-	config.store_string("\n".join(lines) + "\n")
-	config.close()
-	var args := PackedStringArray(["--config-file", path, "--rpc-portal", "127.0.0.1:%d" % _rpc_port])
-	return args
+	return config != null and config.store_string("\n".join(lines) + "\n")
+
 
 # 动态分配一个本机空闲的 TCP 端口作为 RPC 门户监听端口。
 static func _pick_rpc_port() -> int:
@@ -368,12 +303,19 @@ static func _pick_rpc_port() -> int:
 	var port := srv.get_local_port()
 	srv.stop()
 	return port
-static func refresh_forward() -> bool:
-	var code := _code
-	if not NetSession.running(_pid):
-		return not (await start_client(code)).is_empty()
-	var host := _forward_host
-	var port := _forward_target
-	await _cli_async(PackedStringArray(["--rpc-portal", "127.0.0.1:%d" % _rpc_port,
-			"port-forward", "remove", "udp", "127.0.0.1:%d" % _forward_port]))
-	return await add_udp_forward(port, host)
+
+static func refresh_forward(code: String, deadline: int) -> int:
+	if _code != code or _forward_host.is_empty() or not is_running():
+		var route := await start_client(code, deadline)
+		return route.get("port", 0)
+	if _forward_port > 0:
+		var pid := _pid
+		var local_port := _forward_port
+		_forward_port = 0
+		var result := await _cli(["port-forward", "remove", "udp", "127.0.0.1:%d" % local_port])
+		if pid != _pid:
+			return 0
+		if result[0] != 0:
+			stop()
+			return 0
+	return _forward_port if (await _forward_to(_forward_target, _forward_host)).is_empty() else 0

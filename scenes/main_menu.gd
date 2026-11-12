@@ -1,5 +1,5 @@
 extends Control
-# 主菜单场景：包含标题、模式入口按钮、版本标识以及背景鱼眼镜头地图漫游视效。
+# 主菜单场景：包含标题、模式入口按钮以及背景鱼眼镜头地图漫游视效。
 # 单人模式支持弹出配置面板（选择地图与禁用武器）；多人入口进入统一联机大厅。
 # 控件风格与尺寸规范统一遵循 UiFactory。
 
@@ -8,7 +8,6 @@ var _sp_panel: PanelContainer = null
 @onready var _ui_layer: CanvasLayer = %UILayer
 @onready var _bg: ColorRect = %Bg
 @onready var _title: Label = %Title
-@onready var _ver: Label = %Version
 @onready var _menu_box: VBoxContainer = %MenuBox
 
 var _bg_mat: ShaderMaterial = null
@@ -40,31 +39,14 @@ func _ready() -> void:
 	if OS.get_cmdline_user_args().has("--server"):
 		get_tree().change_scene_to_file.call_deferred("res://server/server_main.tscn")
 		return
-	# 重置对局相关全局状态
-	Level0.pvp_mode = false
-	CombatComponent.pvp_arena = false
-	RunOptions.reset()
-	RunOptions.disabled_weapons = Settings.sp_disabled_weapons.duplicate()
-
 	_build_ui()
-
-
-# 启动单人模式并加载主关卡场景
-func _enter_level0() -> void:
-	MazeGenerator.set_map_file(Settings.sp_map_path if MapCatalog.is_valid_map(Settings.sp_map_path) else "")
-	GameParameters.refresh_map_size()
-	Level0.pvp_mode = false
-	CombatComponent.pvp_arena = false
-	get_tree().change_scene_to_file("res://scenes/level_0.tscn")
 
 
 func _build_ui() -> void:
 	_build_background()
-	_ver.text = AppInfo.version_string()
 	_wire_menu()
 	_title.modulate.a = 0.0
-	_ver.modulate.a = 0.0
-	_play_emerge(_title, _ver, _menu_sequence())
+	_play_emerge(_menu_sequence())
 
 
 # 连接菜单各功能按钮事件
@@ -166,11 +148,10 @@ static func _trapezoid(u: float) -> float:
 
 
 # 执行标题与按钮淡入动画
-func _play_emerge(title: Label, ver: Label, sequence: Array) -> void:
+func _play_emerge(sequence: Array) -> void:
 	var tw := create_tween()
 	tw.tween_interval(0.1)
-	tw.tween_property(title, "modulate:a", 1.0, 0.6).set_trans(Tween.TRANS_SINE)
-	tw.parallel().tween_property(ver, "modulate:a", 1.0, 0.6).set_trans(Tween.TRANS_SINE)
+	tw.tween_property(_title, "modulate:a", 1.0, 0.6).set_trans(Tween.TRANS_SINE)
 	var delay := 0.45
 	for c in sequence:
 		_emerge(c, delay, 0.28)
@@ -198,6 +179,7 @@ const SP_BLOCK_GAP := 28
 const SP_CHECK_GAP := 20
 const SP_BUTTON_GAP := 28
 const SP_PANEL_MIN_W := 560.0
+const SP_CHECK_LIST_HEIGHT := 320.0
 
 func _fill_sp_panel(panel: PanelContainer) -> PanelContainer:
 	UiFactory.skin_menu_panel(panel, SP_PANEL_PADDING)
@@ -207,7 +189,7 @@ func _fill_sp_panel(panel: PanelContainer) -> PanelContainer:
 	vb.add_theme_constant_override("separation", SP_BLOCK_GAP)
 	body.add_child(vb)
 
-	vb.add_child(UiFactory.header_strip("—— 单人开局 ——", 48))
+	vb.add_child(UiFactory.header_strip("—— 单人开局 ——", 48, true))
 
 	var picker := MapPicker.new()
 	vb.add_child(picker)
@@ -219,7 +201,7 @@ func _fill_sp_panel(panel: PanelContainer) -> PanelContainer:
 	var check_list := VBoxContainer.new()
 	check_list.name = "CheckList"
 	check_list.add_theme_constant_override("separation", SP_CHECK_GAP)
-	vb.add_child(check_list)
+	vb.add_child(UiFactory.scroll_list(check_list, SP_CHECK_LIST_HEIGHT))
 	var ids: Array[int] = WeaponRegistry.all_ids()
 	for type_id: int in ids:
 		var cb := CheckButton.new()
@@ -237,16 +219,39 @@ func _fill_sp_panel(panel: PanelContainer) -> PanelContainer:
 	vb.add_child(row)
 
 	var go := UiFactory.menu_button("开始探索", 32, Vector2(420, 88), "gold")
+	var status := UiFactory.label("", 32, UiFactory.C_TEXT_DIM)
+	status.hide()
+	vb.add_child(status)
 	go.pressed.connect(func() -> void:
 		Sfx.play("ui")
-		Settings.sp_disabled_weapons.clear()
+		var disabled: Array[int] = []
 		for i in checks.size():
 			if checks[i].button_pressed:
-				Settings.sp_disabled_weapons.append(int(ids[i]))
-		Settings.sp_map_path = picker.selected
+				disabled.append(ids[i])
+		var enabled := WeaponRegistry.enabled_ids(disabled)
+		if enabled.is_empty():
+			status.text = "请至少启用一种武器"
+			status.show()
+			return
+		var path := picker.selected
+		var map := MapCatalog.random_map() if path.is_empty() else MapFormat.load_map(path)
+		if map.is_empty():
+			status.text = "没有可用的地图" if path.is_empty() else "无法读取地图 %s" % path.get_file()
+			status.show()
+			return
+		var spawn := SpawnPicker.single_spawn(map)
+		if spawn == SpawnPicker.NO_CELL:
+			status.text = "地图没有可用的玩家出生点"
+			status.show()
+			return
+		Settings.sp_disabled_weapons = disabled
+		Settings.sp_map_path = path
 		Settings.save()
-		RunOptions.disabled_weapons = Settings.sp_disabled_weapons.duplicate()
-		_enter_level0())
+		var level: Level0 = preload("res://scenes/level_0.tscn").instantiate()
+		level.map_info = map
+		level.spawn_cell = spawn
+		level.enabled_weapons = enabled
+		get_tree().change_scene_to_node(level))
 	var back := UiFactory.menu_button("返回", 32, Vector2(420, 88), "quiet")
 	back.pressed.connect(func() -> void:
 		Sfx.play("ui")

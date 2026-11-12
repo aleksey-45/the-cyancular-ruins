@@ -1,55 +1,34 @@
 class_name TimeSymbolHud
 extends Control
 
-# 屏幕中心时间状态指示图标：回溯模式下显示浅色闪烁「◁ ◁」图标，加速模式下显示紫色「▶ ▶」图标。
-# 挂载于 HUD 节点，根据 TimeField.current 的当前模式动态显示呼吸动画，常规状态下自动隐藏。数据源来自单人模式下的 TimeField.current。
+const COLOR_REWIND := Color(0.86, 0.90, 0.95, 0.55)
+const COLOR_HASTE := Color8(168, 96, 216)
 
-const SYMBOL_FONT := 64
-const COLOR_REWIND := Color(0.86, 0.90, 0.95, 0.55)   # 浅色(回溯:像倒带的半透明符号)
-const COLOR_HASTE := Color8(168, 96, 216)             # 紫色(加速)
-
-var _rew: Label = null
-var _has: Label = null
+var _field: TimeField
+var _symbol: Label
 var _t := 0.0
 
+func _init(field: TimeField) -> void:
+	_field = field
 
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_rew = _mk("◁ ◁", COLOR_REWIND)
-	_has = _mk("▶ ▶", COLOR_HASTE)
-	visible = false
-
-
-func _mk(text: String, col: Color) -> Label:
-	var l := Label.new()
-	l.text = text
-	l.add_theme_font_override("font", PixelFont.shared())
-	l.add_theme_font_size_override("font_size", SYMBOL_FONT)
-	l.add_theme_color_override("font_color", col)
-	l.add_theme_constant_override("outline_size", 8)
-	l.add_theme_color_override("font_outline_color", Color8(10, 12, 16, 200))
-	l.set_anchors_preset(Control.PRESET_CENTER)
-	l.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	l.grow_vertical = Control.GROW_DIRECTION_BOTH
-	add_child(l)
-	return l
-
+	_symbol = UiFactory.label("◁ ◁", 64, COLOR_REWIND)
+	_symbol.add_theme_constant_override("outline_size", 8)
+	_symbol.add_theme_color_override("font_outline_color", Color8(10, 12, 16, 200))
+	_symbol.set_anchors_preset(Control.PRESET_CENTER)
+	_symbol.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_symbol.grow_vertical = Control.GROW_DIRECTION_BOTH
+	add_child(_symbol)
+	hide()
 
 func _process(delta: float) -> void:
-	var tf := TimeField.current
-	if tf == null:
-		visible = false
-		return
 	_t += delta
-	var rew := tf.is_rewinding()
-	var has := tf.is_hasting()
-	visible = rew or has
-	if _rew != null:
-		_rew.visible = rew
-		if rew:
-			_rew.modulate.a = 0.75 + 0.25 * sin(_t * 9.0)   # 倒带式快闪
-	if _has != null:
-		_has.visible = has
-		if has:
-			_has.modulate.a = 0.8 + 0.2 * sin(_t * 5.0)
+	var rewinding := _field.is_rewinding()
+	visible = rewinding or _field.is_hasting()
+	if not visible:
+		return
+	_symbol.text = "◁ ◁" if rewinding else "▶ ▶"
+	_symbol.add_theme_color_override("font_color", COLOR_REWIND if rewinding else COLOR_HASTE)
+	_symbol.modulate.a = 0.75 + 0.25 * sin(_t * 9.0) if rewinding else 0.8 + 0.2 * sin(_t * 5.0)

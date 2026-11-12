@@ -48,20 +48,6 @@ theme_override_font_sizes/font_size = 128
 text = "The Cyancular Ruins"
 horizontal_alignment = 1
 
-[node name="Version" type="Label" parent="UILayer/UIRoot"]
-unique_name_in_owner = true
-modulate = Color(1, 1, 1, 0.003959909)
-anchors_preset = 2
-anchor_top = 1.0
-anchor_bottom = 1.0
-offset_left = 24.0
-offset_top = -40.0
-offset_right = 900.0
-offset_bottom = -16.0
-theme_override_colors/font_color = Color(0.51, 0.573, 0.639, 1)
-theme_override_font_sizes/font_size = 16
-text = "main #1298"
-
 [node name="MenuBox" type="VBoxContainer" parent="UILayer/UIRoot"]
 unique_name_in_owner = true
 anchors_preset = 8

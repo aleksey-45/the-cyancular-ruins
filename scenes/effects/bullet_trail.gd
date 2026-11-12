@@ -14,13 +14,13 @@ static func attach(bullet: Node2D, color: Color) -> void:
 	t.top_level = true
 	t.z_index = -1
 	bullet.add_child(t)
-	t.add_point(bullet.visual_center())
+	t.add_point(bullet.global_position)
 
 
 func _process(_delta: float) -> void:
 	var owner_node := get_parent() as Node2D
 	if owner_node == null or not is_instance_valid(owner_node):
 		return
-	add_point(owner_node.visual_center())
+	add_point(owner_node.global_position)
 	while get_point_count() > KEEP_POINTS:
 		remove_point(0)

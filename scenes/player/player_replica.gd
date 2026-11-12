@@ -3,17 +3,10 @@ extends Node2D
 
 # 多人对战远端玩家副本节点：
 # 负责在客户端渲染远端玩家的外观动画、武器外观与受击特效，由服务端快照驱动。
-# 姿态到动画名称映射：唯一来源是 Player.POSE_ANIM（键为 Pose 枚举整数值）。
-const POSE_ANIM: Dictionary = Player.POSE_ANIM
-
-# 飞行姿态枚举值
-const POSE_FLY := 2
-
 # 判定着地时的垂直速度容差阈值
 const LAND_VEL_EPS := 1.0
 
-# 脚底检测点世界坐标偏移（用于水体检测）
-var _water_feet_off: float = 24.0
+const WATER_FEET_OFFSET := 24.0
 
 const HIT_FLASH_TIME := 0.35   # 受击闪白持续时间（秒）
 const HIT_FLASH_RATE := 20.0   # 受击闪白频率
@@ -24,6 +17,7 @@ const HIT_FLASH_RATE := 20.0   # 受击闪白频率
 var squash: SquashStretch = null
 var _vel: Vector2 = Vector2.ZERO
 var team := 0
+var terrain: Terrain
 var role := 0
 var _pose: int = 0
 var _prev_vel_y: float = 0.0
@@ -41,44 +35,37 @@ const CHARGE_GHOST_INTERVAL := 0.06
 
 func _ready() -> void:
 	animator.sprite_frames = preload("res://scenes/player/player_frames.tres")
-	_water_feet_off = Water.feet_offset(self)
 	_weapon_slot_node = Node2D.new()
 	_weapon_slot_node.name = "WeaponSlot"
 	add_child(_weapon_slot_node)
 	squash = SquashStretch.new()
 	squash.setup(animator, SquashStretch.Profile.PLAYER)
 	add_child(squash)
-	_align_draw_order.call_deferred()
-
-func _align_draw_order() -> void:
-	var terrain := Level0.wall_layer
-	if is_instance_valid(terrain) and terrain.get_parent() == get_parent():
-		get_parent().move_child(self, terrain.get_index())
 
 
 func _apply_visual(data: Array) -> void:
-	_vel = data[PlayerStateSchema.slot("vel")]
-	_facing = data[PlayerStateSchema.slot("facing")]
-	var aim: Vector2 = data[PlayerStateSchema.slot("aim")]
+	_vel = data[PlayerStateSchema.REMOTE_VEL]
+	_facing = data[PlayerStateSchema.REMOTE_FACING]
+	var aim: Vector2 = data[PlayerStateSchema.REMOTE_AIM]
 	_aim = aim if aim != Vector2.ZERO else Vector2(float(_facing), 0.0)
 	if absf(_aim.x) > 0.1:
 		_aim_facing = 1 if _aim.x > 0.0 else -1
 	animator.flip_h = _facing < 0
-	var type_id: int = data[PlayerStateSchema.slot("type_id")]
+	var type_id: int = data[PlayerStateSchema.REMOTE_WEAPON_TYPE]
 	if type_id != _weapon_type_int:
 		_swap_weapon(type_id)
-	_downed = data[PlayerStateSchema.slot("down")]
+	_downed = data[PlayerStateSchema.REMOTE_DOWNED]
 	if _downed:
 		animator.stop()
 		rotation = -PI / 2.0 * float(_facing)
 	else:
 		rotation = 0.0
-		var pose: int = data[PlayerStateSchema.slot("state")]
+		var pose: int = data[PlayerStateSchema.REMOTE_STATE]
 		_pose = pose
-		animator.play(POSE_ANIM[pose])
+		animator.play(Player.POSE_ANIM[pose])
 
 # 播放受击反馈闪烁动画
-func play_hit(_source_pos: Vector2) -> void:
+func play_hit() -> void:
 	_hit_flash_t = HIT_FLASH_TIME
 
 func play_fire(type_id: int) -> void:
@@ -93,8 +80,8 @@ func _swap_weapon(type_id: int) -> void:
 		_weapon = null
 	if type_id == 0:
 		return
-	var scene: PackedScene = load(WeaponRegistry.scene_of(type_id))
-	_weapon = scene.instantiate()
+	_weapon = WeaponBase.new()
+	_weapon.configure(type_id, animator)
 	_weapon_slot_node.add_child(_weapon)
 
 
@@ -108,17 +95,14 @@ func _drive_weapon_visual() -> void:
 # 查询远端玩家脚底是否浸入水中
 func _in_water() -> bool:
 	var gp := global_position
-	return Water.is_in_water(Vector2(gp.x, gp.y + _water_feet_off))
+	return terrain.water(gp + Vector2(0.0, WATER_FEET_OFFSET))
 
 func render_snapshot(data: Array, anchor: Vector2) -> void:
 	_apply_visual(data)
 	_drive_weapon_visual()
-	global_position = GridPathfinder.anchor_to_nearest(data[PlayerStateSchema.slot("pos")], anchor,
-			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+	global_position = GridPathfinder.anchor_to_nearest(data[PlayerStateSchema.REMOTE_POS], anchor, terrain.map_size)
 
 func _process(delta: float) -> void:
-	if _weapon != null:
-		_weapon.present_step(delta)
 	# 远端按同步姿态触发冲刺残影；冲刺结束停止生成。
 	if _pose == 3 and not _downed:
 		_charge_ghost_t -= delta
@@ -137,7 +121,7 @@ func _process(delta: float) -> void:
 	elif modulate.a != 1.0:
 		modulate.a = 1.0
 	# 挤压拉伸形变更新
-	var on_floor := (not _downed) and _pose != POSE_FLY and absf(_vel.y) < LAND_VEL_EPS
+	var on_floor := (not _downed) and _pose != ActorBody.FLY and absf(_vel.y) < LAND_VEL_EPS
 	var vel_y := _prev_vel_y
 	if _in_water():
 		vel_y = 0.0

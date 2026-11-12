@@ -12,8 +12,6 @@ const ET_RELEASE := "nightly"
 const CORE_EXE := "easytier-core.exe"
 const CLI_EXE := "easytier-cli.exe"
 const CORE_DLLS := ["Packet.dll", "wintun.dll"]
-const LICENSE_NAME := "LGPL-3.0"
-const LICENSE_URL := "https://github.com/EasyTier/EasyTier/blob/main/LICENSE"
 
 # 房间码直接映射为网络名与接入密钥；主机名携带端口信息供加入方解析。
 const NET_PREFIX := "cyr-"
@@ -21,7 +19,6 @@ const HOST_PREFIX := "cyr-host-"
 const GUEST_PREFIX := "cyr-guest-"
 
 # 房主固定分配 10.126.126.1，加入方通过 DHCP 动态分配。
-const VIP_CIDR := "10.126.126.0/24"
 const VIP_HOST := "10.126.126.1"
 
 # relay.txt 每行一个节点，支持 txt://、udp://、tcp:// 或无协议的 host:port。

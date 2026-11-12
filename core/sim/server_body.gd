@@ -9,7 +9,9 @@ extends Node2D
 @export var collision_mask := 0
 
 var _rid := RID()
-var _world_space := RID()
+var _physics: CollisionWorld
+var terrain: Terrain:
+	get: return _physics.terrain if _physics != null else null
 
 func _init() -> void:
 	_rid = CollisionWorld.create_body(collision_layer, collision_mask)
@@ -30,16 +32,14 @@ func axis_move(motion: Vector2) -> Dictionary:
 	return out
 
 func _enter_tree() -> void:
-	_world_space = CollisionWorld.world_of(self).space
-	if _world_space.is_valid():
-		PhysicsServer2D.body_set_space(_rid, _world_space)
-		# 进树前的赋值不经任何 setter，层掩码在此统一提交。
-		_apply_layers()
-		PhysicsServer2D.body_attach_object_instance_id(_rid, get_instance_id())
+	_physics = CollisionWorld.acquire(self)
+	PhysicsServer2D.body_set_space(_rid, _physics.space)
+	_apply_layers()
+	PhysicsServer2D.body_attach_object_instance_id(_rid, get_instance_id())
 
 func _exit_tree() -> void:
 	# free() 的 PREDELETE 先于离树触发；体已被析构时不再有 detach 的义务。
-	_world_space = RID()
+	_physics = null
 	if _rid.is_valid():
 		PhysicsServer2D.body_set_space(_rid, RID())
 

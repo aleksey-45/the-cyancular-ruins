@@ -25,7 +25,9 @@ const HASTE_WORLD := 0.5          # 其余实体（普通敌人、敌弹、世�
 
 const LOAN_ENEMY_SPEED_BONUS := 0.5    # 敌人表现速度加成上限(深度1 → ×1.5;实为自身变慢)
 const LOAN_PITCH_RANGE := 0.5          # Sfx 全局音调加成上限(深度1 → pitch×1.5)
-const LOAN_BRIGHT_RANGE := 0.35        # 画面变亮上限(shader 亮度叠加)
-const LOAN_ABERRATION_PX := 5.0        # 色差偏移上限(像素;红蓝影分离,深度1 达满)
 
 const ELITE_GRAIN_DROP := 300     # 击杀一次掉落颗粒
+
+static func advance_rewind(cursor: float, delta: float) -> float:
+	var ramp := clampf(cursor / REWIND_RAMP_TIME, 0.0, 1.0)
+	return cursor + delta * lerpf(REWIND_START_MULT, 1.0, ramp)

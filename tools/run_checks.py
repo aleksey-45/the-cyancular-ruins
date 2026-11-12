@@ -15,7 +15,7 @@ sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--godot', default=os.environ.get('GODOT') or os.environ.get('GODOT_EDITOR') or shutil.which('godot'))
-    parser.add_argument('--groups', default='net,terrain,simulation,monitor')
+    parser.add_argument('--groups', default='net,transport,terrain,simulation,prediction,monitor')
     args = parser.parse_args()
     if not args.godot:
         parser.error('set GODOT or pass --godot; build native extensions and import the project first')

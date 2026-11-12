@@ -24,28 +24,36 @@ func _on_event(peer: int, kind: int, data: Variant) -> void:
 			if not code.is_empty():
 				message(peer, "本进程已有房间")
 				return
+			if not guests.has(peer):
+				message(peer, "请先提交玩家资料")
+				return
 			mode = data["mode"]
-			options = data["options"]
+			options = data["options"].duplicate()
+			if mode == PvpSession.MODE_ROYALE:
+				options["max_players"] = clampi(options.get("max_players", 8), 2, 8)
+				options["match_time"] = clampi(options.get("match_time", 300), 60, 900)
+			if options.get("beta", false):
+				options["time"] = TimeRules.normalized(options.get("time", {}))
 			code = "%08d" % (randi() % 100000000)
 			add_seat(peer)
 			broadcast_room()
 		NetEvent.Kind.LIST:
-			var rooms: Array = []
-			if not code.is_empty() and options.get("beta", false) == data["beta"]:
-				var entry := room_data()
-				entry["joinable"] = world == null and seats.size() < max_players()
-				entry["rejoinable"] = seats.values().any(func(seat: Dictionary) -> bool: return seat["token"] == data["token"])
-				rooms.append(entry)
-			NetBus.send_event(NetEvent.Kind.ROOMS, rooms, peer)
+			var entry := room_data() if not code.is_empty() and options.get("beta", false) == data else {}
+			NetBus.send_event(NetEvent.Kind.ROOM_LIST, entry, peer)
 		NetEvent.Kind.JOIN:
+			var role := role_of(peer)
 			if data["code"] != code or code.is_empty():
 				message(peer, "房间不存在")
-			elif world != null or seats.size() >= max_players():
-				message(peer, "房间已满")
 			elif options.get("beta", false) != data["beta"]:
 				var beta: bool = options.get("beta", false)
 				message(peer, "该房间为「%s」，请从「%s」进入" % [
 						PvpSession.mode_name(mode, beta), "Beta" if beta else "多人模式"])
+			elif role != 0:
+				broadcast_room(role)
+			elif world != null or seats.size() >= max_players():
+				message(peer, "房间已满")
+			elif not guests.has(peer):
+				message(peer, "请先提交玩家资料")
 			else:
 				add_seat(peer)
 				broadcast_room()
@@ -55,44 +63,31 @@ func _on_event(peer: int, kind: int, data: Variant) -> void:
 				_pick_team(peer, role, int(data))
 		NetEvent.Kind.START:
 			if role_of(peer) == host_role and world == null:
-				if mode == PvpSession.MODE_PVP and online_count() != max_players():
-					message(peer, "1v1 需要两名在线玩家")
-				elif mode == PvpSession.MODE_TEAM and not team_ready():
-					message(peer, _team_start_message())
-				elif online_count() < 2:
-					message(peer, "至少需要两名在线玩家")
-				elif mode == PvpSession.MODE_TEAM:
-					var problem := MatchRules.validate_team_spawns(map_path(), _seat_teams())
-					if problem.is_empty():
-						start_match()
-					else:
-						message(peer, problem)
-				else:
+				var problem := _start_problem()
+				if problem.is_empty():
 					start_match()
-		NetEvent.Kind.MAP:
-			if role_of(peer) == host_role and world == null:
-				options["map"] = data
-				broadcast_room()
+				else:
+					message(peer, problem)
 		NetEvent.Kind.REJOIN:
 			rejoin(peer, data["code"], data["token"])
 		NetEvent.Kind.READY:
 			var role := role_of(peer)
-			if world == null or role == 0 or not seats.has(role) or not world.players.has(role):
+			if world == null or role == 0:
 				return
-			if int(data) != world._round_num or world._round_state == NetEvent.RoundState.MATCH_OVER:
+			if int(data) != world.rules.round_number or world.rules.phase == NetEvent.RoundState.MATCH_OVER:
 				return
 			seats[role]["ready"] = true
-			_start_countdown_if_ready()
+			if seats.values().all(func(seat: Dictionary) -> bool: return seat["ready"]):
+				world.start_countdown()
 		NetEvent.Kind.SUICIDE:
 			var role := role_of(peer)
-			if world != null and world._round_state == NetEvent.RoundState.PLAYING and world.players.has(role):
-				world.players[role].last_attacker = 0
-				world.players[role].combat.force_down()
+			if world != null and role != 0:
+				world.suicide(role)
 		NetEvent.Kind.LEAVE:
 			var role := role_of(peer)
 			if not seats.has(role):
 				return
-			if world != null and world._round_state == NetEvent.RoundState.MATCH_OVER:
+			if world != null and world.rules.phase == NetEvent.RoundState.MATCH_OVER:
 				_returned[role] = true
 				if _returned.size() == online_count():
 					return_to_room()
@@ -157,23 +152,23 @@ func _pick_team(peer: int, role: int, team: int) -> void:
 		seats[role]["team"] = team
 		broadcast_room()
 
-# 只产出线路会编码的字段；names、team_counts、host_name 等派生数据由客户端从 players 还原。
+# 只产出线路会编码的字段；team_counts、host_name 等派生数据由客户端从 players 还原。
 func room_data() -> Dictionary:
 	var roster: Array = []
 	for role in seats:
 		roster.append({"role": role, "name": seats[role]["name"], "team": seats[role]["team"]})
-	return {"code": code, "mode": mode, "map": options.get("map", "res://maps/newfactory.cyrm"), "players": roster,
+	return {"code": code, "mode": mode, "map": map_path(), "players": roster,
 			"max_players": max_players(), "match_time": options.get("match_time", 300),
-			"host_role": host_role, "in_match": world != null, "beta": options.get("beta", false)}
+			"host_role": host_role, "in_match": world != null, "beta": options.get("beta", false),
+			"can_start": world == null and _start_problem().is_empty()}
 
-func broadcast_room() -> void:
+func broadcast_room(only_role: int = 0) -> void:
 	var base := room_data()
-	for role in seats:
-		if seats[role]["peer"] != 0:
-			var payload := base.duplicate()
-			payload["your_role"] = role
-			payload["token"] = seats[role]["token"]
-			NetBus.send_event(NetEvent.Kind.ROOM, payload, seats[role]["peer"])
+	for role in seats.keys() if only_role == 0 else [only_role]:
+		var seat: Dictionary = seats[role]
+		if seat["peer"] != 0:
+			var payload := base.merged({"your_role": role, "token": seat["token"]})
+			NetBus.send_event(NetEvent.Kind.ROOM, payload, seat["peer"])
 
 ## 团队可开局：模式正确、所有席位在线，且唯一一次阵容校验通过。
 func team_ready() -> bool:
@@ -184,31 +179,32 @@ func team_ready() -> bool:
 			return false
 	return not TeamRules.team_counts(_seat_teams()).is_empty()
 
-func _team_start_message() -> String:
-	return "A 队 %d 人、B 队 %d 人；每队 1~%d 人且全部在线才能开始" % [
-			team_count(1), team_count(2), TeamRules.MAX_TEAM]
+func _start_problem() -> String:
+	if mode == PvpSession.MODE_TEAM:
+		return "" if team_ready() else "A 队 %d 人、B 队 %d 人，每队 1~%d 人且全部在线才能开始" % [
+				team_count(1), team_count(2), TeamRules.MAX_TEAM]
+	var online := online_count()
+	if mode == PvpSession.MODE_PVP and online != max_players():
+		return "1v1 需要两名在线玩家"
+	if online < 2:
+		return "至少需要两名在线玩家"
+	if online != seats.size():
+		return "所有席位在线后才能开始"
+	return ""
 
 func start_match() -> void:
-	var roles: Array = []
-	var teams := {}
-	for role in seats:
-		if seats[role]["peer"] != 0:
-			roles.append(role)
-			if mode == PvpSession.MODE_TEAM:
-				teams[role] = seats[role]["team"]
+	var teams := _seat_teams() if mode == PvpSession.MODE_TEAM else {}
 	world = AuthorityWorld.new()
 	add_child(world)
-	world.setup(mode, map_path(), roles, teams, options)
-	# 出生点规划失败时 setup 会在创建任何角色前退出；不能带着不完整阵容开始。
-	if world.players.size() != roles.size():
-		if seats.has(host_role):
-			message(int(seats[host_role]["peer"]), "出生点或对局初始化失败，无法开始")
+	var problem := world.setup(mode, map_path(), seats.keys(), teams, options)
+	if not problem.is_empty():
+		message(int(seats[host_role]["peer"]), problem)
 		_discard_world()
 		return
 	world.state_ready.connect(_send_state)
 	world.event.connect(_broadcast)
 	world.baseline_needed.connect(send_baselines)
-	send_baselines()
+	send_baselines(true)
 
 func _send_state(frame: Dictionary, targets: Array) -> void:
 	var perf_fanout := PerformanceStats.begin()
@@ -223,57 +219,34 @@ func _send_state(frame: Dictionary, targets: Array) -> void:
 	if batch != null: PerformanceStats.end(PerformanceStats.STATE_FANOUT, perf_fanout)
 
 func _broadcast(kind: int, data: Variant, except_role: int) -> void:
+	if kind == NetEvent.Kind.ROUND:
+		data = _with_grace(data)
 	var peers := PackedInt32Array()
 	for role in seats:
 		if role != except_role and seats[role]["peer"] != 0:
 			peers.append(seats[role]["peer"])
 	NetBus.broadcast_event(kind, data, peers)
 
-func send_baselines() -> void:
-	for role in seats:
-		if seats[role]["peer"] != 0:
-			send_baseline(role)
-
-func baseline_for(role: int) -> Dictionary:
+func send_baselines(include_map: bool = false, only_role: int = 0) -> void:
 	var names := {}
 	var hues := {}
 	for r in seats:
 		names[r] = seats[r]["name"]
 		hues[r] = seats[r]["hue"]
-	return {"code": code, "mode": mode, "role": role, "options": options, "names": names, "hues": hues,
-			"teams": world.rules.teams, "spawns": world.rules.spawns, "map": FileAccess.get_file_as_bytes(MazeGenerator.map_file_path()),
-			"sub_hp": world.terrain.get_modified(), "round_state": world.round_state(),
-			"frame": world.state_for(role, world.world_state()), "projectiles": world.projectile_states()}
+	var common := {"code": code, "mode": mode, "options": options, "names": names, "hues": hues,
+			"teams": world.rules.teams, "map": world.map_bytes if include_map else PackedByteArray(),
+			"sub_hp": world.terrain.get_modified(), "round_state": _with_grace(world.round_state())}
+	var frame := world.world_state()
+	var accounts := world.time_economy.state_payload() if world.time_economy != null else {}
+	var targets := seats.keys() if only_role == 0 else [only_role]
+	for role in targets:
+		var seat: Dictionary = seats[role]
+		if seat["peer"] != 0:
+			seat["ready"] = false
+			var payload := common.merged({"role": role, "frame": world.state_for(role, frame, accounts)})
+			NetBus.send_event(NetEvent.Kind.BASELINE, payload, seat["peer"])
 
-func send_baseline(role: int) -> void:
-	seats[role]["ready"] = false
-	var payload := baseline_for(role)
-	NetBus.send_event(NetEvent.Kind.BASELINE, payload, seats[role]["peer"])
-
-# 最后一个 READY 才把 WAITING 推进为 COUNTDOWN；重复 READY 不重启倒计时。
-func _start_countdown_if_ready() -> void:
-	if world == null or world._round_state != NetEvent.RoundState.WAITING:
-		return
-	if not _all_seats_ready():
-		return
-	assert(seats.size() == world.players.size(), "RoomSession: 席位与对局角色数量不一致")
-	for role in seats:
-		assert(world.players.has(role), "RoomSession: 席位角色 %d 不在对局中" % int(role))
-	world._round_state = NetEvent.RoundState.COUNTDOWN
-	world._round_timer = 3.0
-	world.broadcast_round()
-
-func _all_seats_ready() -> bool:
-	if world == null or seats.size() < 2:
-		return false
-	for role in seats:
-		if seats[role]["peer"] == 0 or not bool(seats[role]["ready"]):
-			return false
-		if not world.players.has(role):
-			return false
-	return true
-
-func _on_input(peer: int, packet: Dictionary) -> void:
+func _on_input(peer: int, packet: Array) -> void:
 	var role := role_of(peer)
 	if world != null and role != 0 and seats[role]["ready"]:
 		world.accept_input(role, packet)
@@ -287,35 +260,39 @@ func _on_left(peer: int) -> void:
 	seats[role]["deadline"] = Time.get_ticks_msec() / 1000.0 + GRACE_SECONDS
 	seats[role]["ready"] = false
 	_returned.erase(role)
-	if world != null:
-		world.players[role].input_buffer.frames.clear()
-		world.players[role].input_source.reset_state()
-		update_grace()
-		if world._round_state == NetEvent.RoundState.MATCH_OVER and _returned.size() == online_count():
-			return_to_room()
-	else:
+	if world == null:
 		broadcast_room.call_deferred()
+		return
+	world.clear_input(role)
+	if world.rules.phase == NetEvent.RoundState.MATCH_OVER and _returned.size() == online_count():
+		return_to_room()
+	else:
+		world.broadcast_round()
 
 func rejoin(peer: int, target_code: String, token: String) -> void:
+	var seated_role := role_of(peer)
 	for role in seats:
-		if code == target_code and seats[role]["token"] == token:
+		if code == target_code and seats[role]["token"] == token and (seated_role == 0 or seated_role == role):
 			seats[role]["peer"] = peer
 			seats[role]["deadline"] = 0.0
 			if world != null:
 				world.new_epoch(role)
-				send_baseline(role)
-				update_grace()
+				send_baselines(true, role)
+				world.broadcast_round()
 			else:
 				broadcast_room()
 			return
 	NetBus.send_event(NetEvent.Kind.REJOIN_DENIED, "席位已过期", peer)
 
-func update_grace() -> void:
-	world.grace_snapshot.clear()
+func _with_grace(state: Dictionary) -> Dictionary:
+	var grace := {}
+	var now := Time.get_ticks_msec() / 1000.0
 	for role in seats:
-		if seats[role]["deadline"] > 0:
-			world.grace_snapshot[role] = seats[role]["deadline"] - Time.get_ticks_msec() / 1000.0
-	world.broadcast_round.call_deferred()
+		var deadline: float = seats[role]["deadline"]
+		if deadline > 0.0:
+			grace[role] = deadline - now
+	state["grace"] = grace
+	return state
 
 func remove_seat(role: int) -> void:
 	if role == host_role:
@@ -325,14 +302,12 @@ func remove_seat(role: int) -> void:
 		_returned.clear()
 		code = ""
 		return
-	if world != null and world._round_state == NetEvent.RoundState.WAITING:
-		_cancel_waiting_match()
-	if world != null and world.players.has(role):
-		world.remove_role(role)
+	if world != null:
+		if world.rules.phase == NetEvent.RoundState.WAITING:
+			_discard_world()
+		else:
+			world.remove_role(role)
 	seats.erase(role)
-	if seats.is_empty():
-		_discard_world()
-		code = ""
 	broadcast_room()
 
 func online_count() -> int:
@@ -343,27 +318,17 @@ func return_to_room() -> void:
 	_returned.clear()
 	broadcast_room()
 
-## 释放当前对局节点；重复调用、已入队释放或已脱离父节点都安全。
 func _discard_world() -> void:
-	if world == null or not is_instance_valid(world) or world.is_queued_for_deletion():
-		world = null
+	if world == null:
 		return
-	if world.get_parent() == self:
-		remove_child(world)
+	remove_child(world)
 	world.queue_free()
 	world = null
-
-# WAITING 中席位到期离场：明确取消未开始的对局并返回房间。
-func _cancel_waiting_match() -> void:
-	if world == null or world._round_state != NetEvent.RoundState.WAITING:
-		return
-	_discard_world()
 
 func _process(_delta: float) -> void:
 	var now := Time.get_ticks_msec() / 1000.0
 	for role in seats.keys():
 		if seats[role]["deadline"] > 0 and now >= seats[role]["deadline"]:
-			# WAITING 对局只由 remove_seat() 取消，避免同一席位触发两次取消。
 			remove_seat(role)
 			if role == host_role:
 				return

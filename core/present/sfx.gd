@@ -63,6 +63,7 @@ static func _build(kind: String) -> PackedFloat32Array:
 		"shoot":        return _sweep_square(900.0, 240.0, 0.09, 0.5, 0.10)
 		"shoot_heavy":  return _sweep_square(240.0, 45.0, 0.30, 0.3, 0.10)
 		"shotgun":      return _noise_burst(0.20, 1400.0, 0.6, 0.35)
+		"bow":          return _sweep_square(520.0, 140.0, 0.11, 0.25, 0.02)
 		"hit":          return _sweep_square(210.0, 70.0, 0.07, 0.5, 0.12)
 		"hurt":         return _sweep_square(430.0, 110.0, 0.18, 0.4, 0.10)
 		"explosion":    return _noise_burst(0.55, 900.0, 1.0, 0.12)

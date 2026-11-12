@@ -1,42 +1,74 @@
 class_name PlayerStateSchema
 extends RefCounted
 
-# 玩家记录槽位定义：名字顺序即槽序。
-# 本地完整预测用前 37 槽；广播再追加 11 槽，提供远端运动控制与表现。
-# 线类型由编码器按同一槽序声明，两边都按下标读写。
+const Field := NetEvent.Field
 
-const NAMES := ["pos", "floor", "haste_mult", "vel", "facing", "slock", "coyote", "jbuf", "jcut",
-		"squat", "charge", "ct", "lmv_d", "lmv_t", "clatch", "swim", "knock", "shot_serial",
-		"wp_t", "wp_s", "wp_d", "ifr", "locked", "winst", "inv", "state", "wp", "hp", "down",
-		"fire_cd", "aiming", "fire_buf", "aim_f", "aim_cf", "mag", "rld", "rld_t",
-		"aim", "type_id", "epoch", "previewing", "haste", "rewind", "axis", "held", "move_mult",
-		"respawn_tick", "rewind_path"]
+# 槽号与排列顺序属于协议 19。空诊断名表示该槽不触发预测校正。
+enum {
+	POS, GROUNDED, HASTE_MULT, VEL, FACING, STATE_LOCK_TIMER, COYOTE_TIMER,
+	JUMP_BUFFER_TIMER, JUMP_CUT_APPLIED, SQUAT, CHARGE, CHARGE_TIMER, LAST_MOVE_DIR,
+	LAST_MOVE_TIMER, CLIMB_LATCHED, IN_WATER, KNOCK_VEL, SHOT_SERIAL, WATERPROOF_TIMER,
+	WAS_SUBMERGED, DROWN_TIMER, IFRAMES, CONTROLS_LOCKED, WEAPON_INST, INVENTORY, STATE,
+	WATERPROOF, HP, DOWNED, SIZE,
+}
+const ACTOR_FIELDS := {
+	POS: [Field.VEC, "pos"],
+	GROUNDED: [Field.BOOL, "floor"],
+	HASTE_MULT: [Field.F64, "haste_mult"],
+	VEL: [Field.VEC, "vel"],
+	FACING: [Field.I8, "facing"],
+	STATE_LOCK_TIMER: [Field.F64, ""],
+	COYOTE_TIMER: [Field.F64, "coyote"],
+	JUMP_BUFFER_TIMER: [Field.F64, "jbuf"],
+	JUMP_CUT_APPLIED: [Field.BOOL, "jcut"],
+	SQUAT: [Field.BOOL, "squat"],
+	CHARGE: [Field.BOOL, "charge"],
+	CHARGE_TIMER: [Field.F64, "ct"],
+	LAST_MOVE_DIR: [Field.I8, "lmv_d"],
+	LAST_MOVE_TIMER: [Field.F64, "lmv_t"],
+	CLIMB_LATCHED: [Field.BOOL, "clatch"],
+	IN_WATER: [Field.BOOL, "swim"],
+	KNOCK_VEL: [Field.VEC, "knock"],
+	SHOT_SERIAL: [Field.U32, "shot_serial"],
+	WATERPROOF_TIMER: [Field.F64, "wp_t"],
+	WAS_SUBMERGED: [Field.BOOL, "wp_s"],
+	DROWN_TIMER: [Field.F64, "wp_d"],
+	IFRAMES: [Field.F64, "ifr"],
+	CONTROLS_LOCKED: [Field.BOOL, "locked"],
+	WEAPON_INST: [Field.U32, "winst"],
+	INVENTORY: [Field.INVENTORY, "inv"],
+	STATE: [Field.U8, ""],
+	WATERPROOF: [Field.I32, "wp"],
+	HP: [Field.I32, "hp"],
+	DOWNED: [Field.BOOL, "down"],
+}
+static var ACTOR_TYPES := _actor_types()
 
-const SIZE := 37
-const MOTION_SIZE := 17
-const CHARACTER_SIZE := 29
-const ACTOR_SIZE := 48
+enum {
+	REMOTE_POS, REMOTE_VEL, REMOTE_FACING, REMOTE_SQUAT, REMOTE_STATE, REMOTE_HP,
+	REMOTE_DOWNED, REMOTE_AIM, REMOTE_WEAPON_TYPE, REMOTE_EPOCH, REMOTE_HASTE, REMOTE_REWIND, REMOTE_SIZE,
+}
+const REMOTE_TYPES := [
+	Field.VEC, Field.VEC, Field.I8, Field.BOOL, Field.U8, Field.I32,
+	Field.BOOL, Field.VEC, Field.U8, Field.U32, Field.BOOL, Field.BOOL,
+]
+enum Equipment { COOLDOWN, AIMING, BUFFERED, AIM_FACING, SHOT_FACING, RELOADING, RELOAD_LEFT, HOLD }
+const EQUIPMENT_TYPES := [Field.F64, Field.BOOL, Field.BOOL, Field.I8, Field.I8, Field.BOOL, Field.F64, Field.F64]
 
-# 动画姿态与停留计时仍随快照保存恢复，但不决定碰撞、武器或玩法结果。
-const PRESENTATION := ["slock", "state"]
+static func _actor_types() -> Array[int]:
+	var types: Array[int] = []
+	for slot in SIZE:
+		types.append(ACTOR_FIELDS[slot][0])
+	return types
 
-static var INDEX := _build_index()
-
-static func _build_index() -> Dictionary:
-	var map := {}
-	for index in NAMES.size():
-		map[NAMES[index]] = index
-	return map
-
-static func slot(field: String) -> int:
-	return int(INDEX[field])
-
-static func difference(values: Array, authoritative: Array) -> String:
-	if values.is_empty() or authoritative.size() != values.size():
+static func difference(snapshot: Dictionary, authority: Dictionary) -> String:
+	var values: Array = snapshot["actor"]
+	var authoritative: Array = authority["actor"]
+	if values.size() != SIZE or authoritative.size() != SIZE:
 		return "missing"
-	for index in values.size():
-		if NAMES[index] in PRESENTATION:
-			continue
-		if values[index] != authoritative[index]:
-			return NAMES[index]
-	return ""
+	for slot in SIZE:
+		if values[slot] != authoritative[slot]:
+			var field: String = ACTOR_FIELDS[slot][1]
+			if not field.is_empty():
+				return field
+	return "equipment" if snapshot["equipment"] != authority["equipment"] else ""

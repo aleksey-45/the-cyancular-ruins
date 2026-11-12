@@ -1,56 +1,42 @@
 class_name GroundWeaponField
 extends RefCounted
 
-# 地面掉落武器逻辑数据表。
-# 单人模式由 Level0 持有，多人模式由服务端 AuthorityWorld 权威维护、客户端维护镜像。
-# 不直接操作场景节点，仅维护武器元数据条目（唯一实例 ID、武器类型、弹药、位置及速度）。
-# 拾取时调用方优先获取最近的一把武器，连续按键可逐一拾取。
-
-var map_size: Vector2 = Vector2.ZERO
-var entries: Array[Dictionary] = []   # {inst, type_id, mag, pos, vel}
-
-
-func size() -> int:
-	return entries.size()
-
-
-func clear() -> void:
-	entries.clear()
-
-
-func add(entry: Dictionary) -> void:
-	entries.append(entry)
-
-
-func remove(inst: int) -> Dictionary:
-	for i in entries.size():
-		if int(entries[i]["inst"]) == inst:
-			return entries.pop_at(i)
-	return {}
-
-
-func get_entry(inst: int) -> Dictionary:
-	for e in entries:
-		if int(e["inst"]) == inst:
-			return e
-	return {}
-
-
-# 查询指定半径范围内距离 pos 最近的武器条目（按环面最短距离计算）。
-# 若距离相同则按 inst 升序决出确定性结果。
-func nearest_within(pos: Vector2, radius: float, exclude: Array = []) -> Dictionary:
-	var best: Dictionary = {}
-	var best_d := radius
-	for e in entries:
-		var inst := int(e["inst"])
-		if exclude.has(inst):
+## 两种权威模式都以掉落物的规范位置选最近的可拾取物品。同距取较小的实例 ID。
+static func nearest(pickups: Array, origin: Vector2, size: Vector2, available: Callable) -> WeaponPickup:
+	var best: WeaponPickup
+	var radius := PlayerParams.weapon_pickup_radius
+	var best_distance := radius
+	for item: WeaponPickup in pickups:
+		if not available.call(item):
 			continue
-		# 计算环面最短相对位移
-		var d := GridPathfinder.toroidal_delta_px(
-			e["pos"], pos, map_size.x, map_size.y).length()
-		if d > radius:
+		var distance := GridPathfinder.toroidal_delta_px(origin, item.canonical_pos, size).length()
+		if distance > radius:
 			continue
-		if best.is_empty() or d < best_d or (is_equal_approx(d, best_d) and inst < int(best["inst"])):
-			best = e
-			best_d = d
+		if best == null or distance < best_distance or (distance == best_distance and item.inst < best.inst):
+			best_distance = distance
+			best = item
 	return best
+
+static func pick_up(pickups: Dictionary, player: Player, size: Vector2, unlocked: Callable, spawn: Callable) -> void:
+	var item := nearest(pickups.values(), player.global_position, size, func(candidate: WeaponPickup) -> bool:
+		return unlocked.call(candidate) and player.weapons.is_type_enabled(candidate.type_id))
+	if item == null:
+		return
+	var result := player.weapons.pick_up(item.type_id, item.carried)
+	if result["ok"]:
+		pickups.erase(item.inst)
+		item.queue_free()
+		drop(player, result["dropped"], spawn)
+
+static func drop(player: Player, item: Dictionary, spawn: Callable) -> void:
+	if not item.is_empty():
+		spawn.call(item["type"], item["carried"],
+				player.global_position + PlayerParams.weapon_drop_offset * Vector2(player.facing_direction, 1),
+				Vector2(PlayerParams.weapon_drop_speed * player.facing_direction, -PlayerParams.weapon_drop_up))
+
+static func scatter(terrain: Terrain, floors: Array[Vector2i], types: Array[int], spawn: Callable) -> void:
+	var cells := GridPathfinder.spread_cells(floors, types.size() * 2, 10, terrain.columns, terrain.rows)
+	for i in cells.size():
+		var pickup: WeaponPickup = spawn.call(types[i / 2], WeaponInventory.DEFAULT_CARRIED,
+				terrain.cell_center(cells[i]), Vector2.ZERO)
+		pickup.settle_on_spawn_floor()

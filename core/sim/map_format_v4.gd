@@ -8,6 +8,22 @@ extends RefCounted
 
 const HEADER_SIZE := 20
 const SUB_PER_CELL := 4   # 一格 64px = 4×4 个 16px 子格
+const TEXTURE_SHIFT := 12
+const TINT_MASK := (1 << TEXTURE_SHIFT) - 1
+const NEUTRAL_TINT := 4 | (4 << 3) | (4 << 6) | (7 << 9)
+
+
+static func descriptor_texture(desc: int) -> int:
+	return (desc >> TEXTURE_SHIFT) & 0xFFF
+
+
+static func migrate_descriptor(desc: int, legacy: Dictionary) -> int:
+	var key := str(descriptor_texture(desc))
+	if not legacy.has(key):
+		return desc
+	var entry: Dictionary = legacy[key]
+	var hue := clampi((desc & 7) + int(entry["hue"]) - 4, 0, 7)
+	return (desc & ~((0xFFF << TEXTURE_SHIFT) | 7)) | (int(entry["base"]) << TEXTURE_SHIFT) | hue
 
 
 static func is_v4_data(data: PackedByteArray) -> bool:
@@ -93,10 +109,16 @@ static func parse(data: PackedByteArray) -> Dictionary:
 			if pc == 0 or off + pc * 4 + 1 > body.size():
 				return {"ok": false, "error": "调色板非法或截断(bit%d)" % bit}
 			var palette := PackedInt32Array()
-			palette.resize(pc)
-			for i in pc:
-				palette[i] = body.decode_u32(off)
-				off += 4
+			if bit == 1:
+				var legacy := TileDefs.legacy_textures()
+				palette.resize(pc)
+				for i in pc:
+					var desc := migrate_descriptor(body.decode_u32(off + i * 4), legacy)
+					var texture := descriptor_texture(desc)
+					if not TileDefs.has_texture(texture):
+						return {"ok": false, "error": "未定义的场景材质 %d" % texture}
+					palette[i] = desc
+			off += pc * 4
 			var iw := body[off]
 			off += 1
 			if iw not in [1, 2] or (iw == 1 and pc > 256) or off + n * iw > body.size():
@@ -117,19 +139,6 @@ static func parse(data: PackedByteArray) -> Dictionary:
 			off += n * 4   # 背景层:整块 RGBA,游戏侧暂不消费
 		else:
 			return {"ok": false, "error": "未知层类型 %d" % kind}
-	return out
-
-
-## 将场景层描述符解包为 16px 子格纹理表（Array[Array]，下标 [y][x] 为纹理 ID，0 为空气）。
-## 装载时交给 Terrain，供碰撞、破坏和渲染读取。
-static func scene_to_subgrid(scene: PackedInt32Array, sc: int, sr: int) -> Array[Array]:
-	var out: Array[Array] = []
-	for y in sr:
-		var row: Array[int] = []
-		row.resize(sc)
-		for x in sc:
-			row[x] = int((scene[y * sc + x] >> 12) & 0xFFF)
-		out.append(row)
 	return out
 
 
@@ -155,7 +164,7 @@ static func flatten_scene(scene: PackedInt32Array, sub_cols: int, sub_rows: int)
 						for sx in 2:
 							var x := c * SUB_PER_CELL + qx * 2 + sx
 							var y := r * SUB_PER_CELL + qy * 2 + sy
-							var tex := (scene[y * sub_cols + x] >> 12) & 0xFFF
+							var tex := descriptor_texture(scene[y * sub_cols + x])
 							if tex != 0:
 								any = true
 								counts[tex] = int(counts.get(tex, 0)) + 1

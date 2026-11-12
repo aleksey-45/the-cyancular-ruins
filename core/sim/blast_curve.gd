@@ -12,3 +12,6 @@ static func falloff(distance: float, radius: float, inner: float, maximum: float
 		return 0.0
 	var t := (distance - inner) / (radius - inner)
 	return maximum * (1.0 - t * t)
+
+static func cover_multiplier(distance: float, radius: float, blocked: bool) -> float:
+	return 0.75 if blocked and distance > radius * INNER_FRACTION else 1.0

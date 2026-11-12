@@ -6,7 +6,6 @@ extends Control
 # - 红长针：指示短期额度消耗与透支深度（一圈对应短期额度 window）
 # - 白短针：指示当前颗粒总余额相对上限的比例
 # - 右侧数字：当前时间颗粒总余额，伴随平滑滚动插值动画；右上角显示上限，表盘中央显示短期额度
-# 位置位于玩家生命条与氧气条下方。数据源绑定 Level0.grain_account。
 
 const DIAL := 84.0                 # 表盘直径（像素）
 const BIG_FONT := 96               # 大数字字号
@@ -30,13 +29,17 @@ var _disp: float = 0.0             # 大数字插值显示值
 var _anim_from: float = 0.0
 var _anim_target: float = 0.0
 var _anim_t: float = 1.0           # 动画进度（固定 0.2 秒平滑过渡）
-var _initialized := false
+var _account: GrainAccount
+var _field: TimeField
 var _tremble_t := 0.0              # 吸收结晶颤抖计时
 var _lock_flash_t := 0.0           # 透支锁定闪烁计时
 
+func _init(account: GrainAccount, field: TimeField = null) -> void:
+	_account = account
+	_field = field
+
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_to_group("watch_hud")
 	_dial_tex = build_dial_texture()
 	_big = _mk_label(BIG_FONT, COLOR_TEXT, Vector2(DIAL + 14, -16))
 	_cap = _mk_label(CAP_FONT, COLOR_TEXT_DIM, Vector2(DIAL + 14, BIG_FONT - 4))
@@ -44,10 +47,9 @@ func _ready() -> void:
 	_center.size = Vector2(DIAL, SMALL_FONT + 8)
 	_center.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_center.position = Vector2(0, DIAL * 0.5 - SMALL_FONT * 0.5 - 4)
-	var acc := Level0.grain_account
-	if acc != null:
-		_disp = acc.balance
-	visible = acc != null
+	_disp = _account.balance
+	_anim_from = _disp
+	_anim_target = _disp
 
 func _mk_label(size: int, color: Color, pos: Vector2) -> Label:
 	var l := Label.new()
@@ -99,17 +101,8 @@ static func build_dial_texture() -> ImageTexture:
 	return ImageTexture.create_from_image(img)
 
 func _process(delta: float) -> void:
-	var acc := Level0.grain_account
-	visible = acc != null
-	if acc == null:
-		return
+	var acc := _account
 	# 余额数字变化时触发 0.2 秒定长平滑过渡动画
-	if not _initialized:
-		_disp = acc.balance
-		_anim_from = acc.balance
-		_anim_target = acc.balance
-		_anim_t = 1.0
-		_initialized = true
 	if not is_equal_approx(acc.balance, _anim_target):
 		_anim_from = _disp
 		_anim_target = acc.balance
@@ -119,10 +112,10 @@ func _process(delta: float) -> void:
 	_big.text = str(int(round(_disp)))
 	# 余额数字颜色响应时间模式：回溯为红色，加速为紫色，常态为白色
 	var col := COLOR_TEXT
-	if TimeField.current != null:
-		if TimeField.current.is_rewinding():
+	if _field != null:
+		if _field.is_rewinding():
 			col = Color8(210, 62, 62)
-		elif TimeField.current.is_hasting():
+		elif _field.is_hasting():
 			col = Color8(168, 96, 216)
 	_big.add_theme_color_override("font_color", col)
 	_cap.text = "上限 %d" % int(acc.cap)
@@ -138,8 +131,8 @@ func _process(delta: float) -> void:
 	queue_redraw()
 
 func _draw() -> void:
-	var acc := Level0.grain_account
-	if acc == null or _dial_tex == null:
+	var acc := _account
+	if _dial_tex == null:
 		return
 	var shake := Vector2.ZERO
 	if _tremble_t > 0.0:
@@ -169,6 +162,3 @@ func tremble() -> void:
 # 透支达到上限触发锁定红闪警报
 func flash_locked() -> void:
 	_lock_flash_t = 1.2
-
-
-# 吸收结晶颗粒存入账户并触发颤抖动画

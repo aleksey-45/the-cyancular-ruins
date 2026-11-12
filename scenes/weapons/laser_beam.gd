@@ -12,9 +12,9 @@ var lifetime: float = 0.4
 func setup(points: PackedVector2Array, half_width: float, color: Color) -> void:
 	var glow: Line2D = $Glow
 	var core: Line2D = $Core
+	set_path(points)
 	# 关节与端帽采用圆角连接：保证反射折点处平滑衔接
 	for ln in [glow, core]:
-		ln.points = points
 		ln.begin_cap_mode = Line2D.LINE_CAP_ROUND
 		ln.end_cap_mode = Line2D.LINE_CAP_ROUND
 		ln.joint_mode = Line2D.LINE_JOINT_ROUND
@@ -28,3 +28,8 @@ func setup(points: PackedVector2Array, half_width: float, color: Color) -> void:
 	tw.tween_interval(maxf(lifetime - 0.12, 0.0))
 	tw.tween_property(self, "modulate:a", 0.0, minf(lifetime, 0.12))
 	tw.tween_callback(queue_free)
+
+func set_path(points: PackedVector2Array) -> void:
+	$Glow.points = points
+	$Core.points = points
+	$Muzzle.position = points[0]

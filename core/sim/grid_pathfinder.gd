@@ -15,42 +15,35 @@ static func toroidal_dist(a: Vector2i, b: Vector2i, cols: int, rows: int) -> int
 
 
 # 计算环形空间内的像素级最短位移向量：从 a 指向 b（考虑跨边界的最短路径）。
-static func toroidal_delta_px(a: Vector2, b: Vector2, w: float, h: float) -> Vector2:
+static func toroidal_delta_px(a: Vector2, b: Vector2, size: Vector2) -> Vector2:
 	var dx := b.x - a.x
-	if absf(dx) > w * 0.5:
-		dx = -signf(dx) * (w - absf(dx))
+	if absf(dx) > size.x * 0.5:
+		dx = -signf(dx) * (size.x - absf(dx))
 	var dy := b.y - a.y
-	if absf(dy) > h * 0.5:
-		dy = -signf(dy) * (h - absf(dy))
+	if absf(dy) > size.y * 0.5:
+		dy = -signf(dy) * (size.y - absf(dy))
 	return Vector2(dx, dy)
 
 
 # 将 pos 映射到距离 anchor 最近的可视镜像副本位置，使各轴差值不超过半个地图跨度。
-# 场景瓦片按 3×3 铺贴，摄像机在接缝处能看到对侧画面；远端实体若直接取模会导致越界闪烁或消失。
-static func anchor_to_nearest(pos: Vector2, anchor: Vector2, w: float, h: float) -> Vector2:
-	var p := pos
-	if p.x - anchor.x > w * 0.5:
-		p.x -= w
-	elif p.x - anchor.x < -w * 0.5:
-		p.x += w
-	if p.y - anchor.y > h * 0.5:
-		p.y -= h
-	elif p.y - anchor.y < -h * 0.5:
-		p.y += h
-	return p
+static func anchor_to_nearest(pos: Vector2, anchor: Vector2, size: Vector2) -> Vector2:
+	return anchor + toroidal_delta_px(anchor, pos, size)
+
+
+# 整图平移的索引范围。只保留与地图及其接缝带相交的副本，零偏移是原位。
+static func seam_copy_range(bounds: Rect2, period: Vector2, reach: Vector2) -> Rect2i:
+	var first := -Vector2i(((bounds.end + reach - period) / period).ceil())
+	var last := Vector2i(((reach - bounds.position) / period).ceil())
+	return Rect2i(first, last - first + Vector2i.ONE)
 
 
 # 将位置坐标规范化到 [0, w) × [0, h) 的世界逻辑区间内。
-static func wrap_to_range(pos: Vector2, w: float, h: float) -> Vector2:
+static func wrap_to_range(pos: Vector2, size: Vector2) -> Vector2:
 	var p := pos
-	if p.x >= w:
-		p.x -= w
-	elif p.x < 0.0:
-		p.x += w
-	if p.y >= h:
-		p.y -= h
-	elif p.y < 0.0:
-		p.y += h
+	if p.x >= size.x or p.x < 0.0:
+		p.x = fposmod(p.x, size.x)
+	if p.y >= size.y or p.y < 0.0:
+		p.y = fposmod(p.y, size.y)
 	return p
 
 
@@ -235,14 +228,13 @@ static func _rebuild_path_flat(start_idx: int, goal_idx: int, cols: int, rows: i
 # 从候选瓦片集合中贪心选取 count 个互相保持最大间距的点集（基于环面距离）。
 # 优先满足两两间距 >= clearance，若候选不足则逐步放宽间距限制。
 # 内部包含随机打乱逻辑，开局规划完成后应保存结果，避免二次调用导致不同步。
-static func spread_cells(cells: Array, count: int, clearance: int, cols: int, rows: int) -> Array:
-	var picked: Array = []
-	if count <= 0 or cells.is_empty():
-		return picked
+static func spread_cells(cells: Array[Vector2i], count: int, clearance: int, cols: int, rows: int) -> Array[Vector2i]:
+	var picked: Array[Vector2i] = []
+	count = mini(count, cells.size())
 	var pool := cells.duplicate()
 	pool.shuffle()
 	var cl := clearance
-	while picked.size() < count and cl >= 0:
+	while picked.size() < count:
 		for c in pool:
 			if picked.size() >= count:
 				break
@@ -255,12 +247,5 @@ static func spread_cells(cells: Array, count: int, clearance: int, cols: int, ro
 					break
 			if ok:
 				picked.append(c)
-		cl -= 5
-	# 保底处理:放宽到头仍不够,补任意剩余的格
-	if picked.size() < count:
-		for c in pool:
-			if picked.size() >= count:
-				break
-			if not picked.has(c):
-				picked.append(c)
+		cl = maxi(0, cl - 5)
 	return picked

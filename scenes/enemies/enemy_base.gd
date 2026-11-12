@@ -27,23 +27,35 @@ const CONTACT_RADIUS: float = 40.0
 const GROUND_FRICTION: float = 0.85  # 落地时水平速度衰减系数
 const STOP_EPSILON: float = 5.0      # 水平速度低于此值直接归零,避免贴地滑行
 
+const REWIND_NODE: int = 0
+const REWIND_POS: int = 1
+const REWIND_VEL: int = 2
+const REWIND_HP: int = 3
+const REWIND_DEAD: int = 4
+const REWIND_VISIBLE: int = 5
+
+var combat_rules: CombatSimulator
+var time_field: TimeField:
+	get: return combat_rules.time_field if combat_rules != null else null
 var is_dead: bool = false
 var _rewind_hold: bool = false   # 录制期死亡保留的尸体(隐藏待复活;非精英)
+var rewind_death_time := -1.0
 # 隐藏期间被摘掉的碰撞层(见 _physics_process 的保留尸体分支);-1 = 层未被摘、无需还原。
 var _rw_held_layer: int = -1
 var _hit_flash_time: float = 0.0
 var _death_timer: float = -1.0   # 死亡白闪剩余;<0 未死亡(受击/死亡白闪统一在基类)
 var _overlapping_players: Array = []  # 当前接触到的玩家节点(1v1 PvP 里可能同时撞到两人,受击取最近者)
 var _turn_cooldown: float = 0.0  # 转向冷却:两次翻转朝向至少间隔 turn_min_interval
-# 玩家组每帧缓存:同一物理帧内 _players_frame() 只建一次数组,砍掉每帧每敌多次 get_nodes_in_group 分配。
+# 每个敌人在同一物理帧内复用所在视口的玩家列表。
 var _players_frame_cache: Array = []
 var _players_frame_id: int = -1
 var wake_radius: float = 1000.0  # 远处睡眠优化:距玩家超此值且落地静止 → 跳过物理
-var _waterproof: int = 6                 # 防水值(氧气),完全没入水中每 0.5s 掉 1
+var _swimming := false
+var _waterproof: int = 6                 # 防水值(氧气)
 var waterproof_max: int = 6              # 上限:black/jump 6,fly 10
 var _waterproof_drain_timer: float = 0.0
 var _waterproof_recover_timer: float = 0.0
-var _drown_tick: float = 0.0     # 扣除生命值倒计时
+var _drown_timer: float = 0.0
 # 状态机与动画(子类共用)。state 用 int 承载各子类自己的 enum 常量(见 JumpBird/FlyBird 的 enum State)。
 var state: int = 0
 var _state_timer: float = 0.0
@@ -72,8 +84,12 @@ func _enter_tree() -> void:
 
 ## 形状槽同步：载体给出形状与局部变换，位姿取当前节点变换。
 func _sync_collision() -> void:
-	if _world_space.is_valid():
+	if _physics != null:
 		CollisionWorld.sync_body_shapes(_rid, hulls, global_transform, _active_stance)
+
+func collision_rect() -> Rect2:
+	var hull: Node2D = hulls[_active_stance]
+	return hull.global_transform * CollisionWorld.carrier_shape(hull).get_rect()
 
 ## 击退位移：命中即停，不滑行（与引擎 move_and_collide 同语义）。
 func _move_knock(motion: Vector2) -> void:
@@ -121,7 +137,7 @@ func _ready() -> void:
 	for child in get_children():
 		if child is CollisionShape2D or child is CollisionPolygon2D:
 			hulls.append(child)
-	call_deferred("add_child", WaterFx.new())
+	add_child(WaterFx.new())
 	# 初始化挤压拉伸形变组件
 	squash = SquashStretch.new()
 	add_child(squash)
@@ -164,12 +180,12 @@ func _on_contact_body_exited(body: Node) -> void:
 		_overlapping_players.erase(body)
 
 func _physics_process(delta: float) -> void:
-	delta = TimeField.enemy_delta(delta, self)   # 时间场:回溯冻结/加速/透支(精英例外)
-	# 出生摆位/回放摆位等外部直写先同步进物理空间，再进入本帧逻辑；槽位不变，只写位姿。
+	# 出生和回放可能直接写位姿，冻结时也要同步到物理空间。
 	CollisionWorld.sync_body_pose(_rid, global_transform)
-	# 回溯中普通敌人整帧跳过(位置由回放器摆;接触伤害/白闪/AI 全不结算);精英照常
-	if TimeField.current != null and TimeField.current.is_rewinding() and not has_meta("elite"):
-		return
+	if time_field != null:
+		delta = time_field.enemy_delta(delta, has_meta("elite"))
+		if delta == 0.0:
+			return
 	# 睡眠状态重置垂直速度缓存，避免苏醒首帧因旧速度缓存触发意外挤压形变
 	var sleeping := _is_far_sleeping()
 	squash.tick(delta, _pre_move_vy, _grounded, is_dead)
@@ -196,7 +212,7 @@ func _physics_process(delta: float) -> void:
 		if contact_damage > 0 and (_touching_player() or toroidal_dist_to_player() <= CONTACT_RADIUS):
 			var p := _contact_victim()
 			if p != null:
-				p.take_hit(global_position, contact_damage)
+				combat_rules.resolve_hit(self, p, CombatProfiles.ENEMY_HIT, global_position, contact_damage, -1.0)
 	# 受击/死亡白闪统一:计时 + 渲染(子类可覆写 _flash_update 换渲染方式,如黑鸟 silhouette)
 	if _hit_flash_time > 0.0:
 		_hit_flash_time = maxf(_hit_flash_time - delta, 0.0)
@@ -224,9 +240,6 @@ func _physics_process(delta: float) -> void:
 	knock_velocity *= exp(-knock_decay_rate * delta)
 	# 记录移动前的垂直速度供落地形变计算
 	_pre_move_vy = velocity.y
-	# 时间场:水平运动走速度域(引擎帧长与 delta 缩放的差异由倍率吸收);
-	# 计时器/动画/重力仍走上面的 delta 缩放。精英与玩家同步,普通敌放慢。
-	velocity.x *= TimeField.enemy_speed_mult(self)
 	_move_slide(velocity * delta)
 	_wrap()
 	# AI 可能直接摆位（寻路到点、滑翔到位）；槽位不变，帧末只补位姿。
@@ -282,21 +295,30 @@ func _is_far_sleeping() -> bool:
 	return toroidal_dist_to_player() > wake_radius
 
 
-# 落水浮力:弹簧把身体中心拉回水面线(半没入);水平朝 _water_swim_dir 游;完全没入水中累计溺水。
 func _apply_water(delta: float) -> void:
-	var feet := Vector2(global_position.x, global_position.y + Water.feet_offset(self))
-	var in_water := Water.is_in_water(feet)
-	var submerged := false
-	if in_water:
-		var surface_y := Water.surface_y_at(global_position)
-		submerged = Water.submerged(global_position, surface_y)
+	var bounds := collision_rect()
+	var feet := Water.feet(bounds)
+	var depth := Water.swim_depth(terrain, feet, _swimming)
+	_swimming = depth != -INF
+	if _swimming:
+		var surface_y := feet.y - depth
 		var target_vy := clampf((surface_y - global_position.y) * EnemyParams.shared.bird_buoyancy_k,
 			-EnemyParams.shared.bird_max_float, EnemyParams.shared.bird_max_sink)
 		velocity.y = MathUtil.approach(velocity.y, target_vy, EnemyParams.shared.bird_water_damp, delta)
 		var dir := _water_swim_dir()
 		velocity.x = MathUtil.approach(velocity.x, dir.x * EnemyParams.shared.bird_swim_speed,
 			EnemyParams.shared.bird_water_damp, delta)
-	# 防水值(氧气):没覆盖,暴露空气回;空后每秒扣除生命值
+	if is_dead:
+		return
+	var submerged := Water.head_submerged(terrain, bounds)
+	if submerged and _waterproof == 0:
+		_drown_timer += delta
+		if _drown_timer >= EnemyParams.shared.drown_interval:
+			_drown_timer = 0.0
+			combat_rules.resolve_hit(null, self, CombatProfiles.DROWN, global_position,
+					EnemyParams.shared.drown_damage, 0.0)
+		return
+	_drown_timer = 0.0
 	if submerged:
 		_waterproof_recover_timer = 0.0
 		_waterproof_drain_timer += delta
@@ -309,11 +331,6 @@ func _apply_water(delta: float) -> void:
 		if _waterproof_recover_timer >= GameParameters.water_recover_interval:
 			_waterproof_recover_timer = 0.0
 			_waterproof = mini(_waterproof + 1, waterproof_max)
-	if _waterproof <= 0:
-		_drown_tick -= delta
-		if _drown_tick <= 0.0:
-			_drown_tick = EnemyParams.shared.drown_interval
-			hurt(EnemyParams.shared.drown_damage, Vector2.ZERO)
 # 统一死亡状态、信号和白闪计时；附加动作由 _on_death 处理。
 func _begin_death() -> void:
 	if is_dead:
@@ -322,9 +339,8 @@ func _begin_death() -> void:
 	died.emit()
 	_death_timer = EnemyParams.shared.death_flash_time
 	# 录制期保留尸体:不 queue_free,白闪结束后隐藏待复活(精英除外——杀了就是杀了)
-	if WorldRewind.hold_corpses and not has_meta("elite"):
+	if time_field != null and not time_field.is_rewinding() and not has_meta("elite"):
 		_rewind_hold = true
-		set_meta("rw_death_ms", Time.get_ticks_msec())
 	_on_death()
 
 
@@ -334,9 +350,9 @@ func _on_death() -> void:
 
 
 func _smash_player(p: Player, impact: float, impact_up: float) -> void:
-	var away := (p.global_position - global_position).normalized()
+	var away := GridPathfinder.toroidal_delta_px(global_position, p.global_position, terrain.map_size).normalized()
 	if away == Vector2.ZERO:
-		away = Vector2(-float(p.get_facing()), 0.0)
+		away = Vector2(-float(p.facing_direction), 0.0)
 	p.velocity = away * impact
 	p.velocity.y -= impact_up
 
@@ -377,13 +393,16 @@ func _anim_duration(name: String) -> float:
 
 # 玩家列表仅在同一物理帧内缓存。
 func _players_frame() -> Array:
-	if Engine.is_in_physics_frame():
-		var fid := Engine.get_physics_frames()
-		if fid != _players_frame_id:
-			_players_frame_cache = get_tree().get_nodes_in_group("player")
-			_players_frame_id = fid
+	var frame := Engine.get_physics_frames() if Engine.is_in_physics_frame() else -1
+	if frame >= 0 and frame == _players_frame_id:
 		return _players_frame_cache
-	return get_tree().get_nodes_in_group("player")
+	var viewport := get_viewport()
+	var players := get_tree().get_nodes_in_group("player").filter(func(player: Node) -> bool:
+		return player.get_viewport() == viewport)
+	if frame >= 0:
+		_players_frame_id = frame
+		_players_frame_cache = players
+	return players
 
 
 # 多玩家目标:取组里距自己最近的玩家(单机唯一玩家 → 行为不变)。无玩家返回 null。
@@ -427,16 +446,15 @@ func _player_velocity() -> Vector2:
 
 
 func _cell_of(pos: Vector2) -> Vector2i:
-	return TileDefs.terrain.cell(pos)
+	return terrain.cell(pos)
 
 
 func _cell_is_solid(cell: Vector2i) -> bool:
-	return TileDefs.is_blocked(TileDefs.terrain.value(cell))
+	return TileDefs.is_blocked(terrain.value(cell))
 
 
 func _toroidal_dist_to(pos: Vector2) -> float:
-	return GridPathfinder.toroidal_delta_px(global_position, pos,
-			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT).length()
+	return GridPathfinder.toroidal_delta_px(global_position, pos, terrain.map_size).length()
 
 
 func toroidal_dist_to_player() -> float:
@@ -452,31 +470,30 @@ func toroidal_delta_to_player() -> Vector2:
 	var p := _nearest_player()
 	if p == null:
 		return Vector2.INF
-	return GridPathfinder.toroidal_delta_px(global_position, p.global_position,
-			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+	return GridPathfinder.toroidal_delta_px(global_position, p.global_position, terrain.map_size)
 
 # 物理位置始终落在规范区间；只有渲染按最近环面副本平移，绝不影响碰撞查询。
 func _wrap() -> void:
-	var canonical := GridPathfinder.wrap_to_range(global_position,
-			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+	var canonical := GridPathfinder.wrap_to_range(global_position, terrain.map_size)
 	var p := _nearest_player() as Node2D
 	var shown := canonical
 	if p != null:
-		shown = GridPathfinder.anchor_to_nearest(canonical, p.global_position,
-				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+		shown = GridPathfinder.anchor_to_nearest(canonical, p.global_position, terrain.map_size)
 	if global_position != canonical:
 		global_position = canonical
 	_visual_offset = shown - canonical
 	if _anim != null:
 		_anim.position = _anim_base + _visual_offset
 
-# 回溯状态恢复（WorldRewind 调用）：将敌人重置为快照帧的状态（包含存活与复活处理）
-func rewind_restore(d: Dictionary) -> void:
+func capture_rewind_state() -> Array:
+	return [self, global_position, velocity, hp, is_dead, visible]
+
+func rewind_restore(state_values: Array) -> void:
 	var was_dead := is_dead
-	global_position = d["p"]
-	velocity = d["v"]
-	hp = int(d["hp"])
-	is_dead = bool(d["dead"])
+	global_position = state_values[REWIND_POS]
+	velocity = state_values[REWIND_VEL]
+	hp = state_values[REWIND_HP]
+	is_dead = state_values[REWIND_DEAD]
 	if was_dead and not is_dead:
 		# 复活:重新入世(可见 + 物理 + 取消保留;白闪与计时清零)
 		visible = true
@@ -487,13 +504,12 @@ func rewind_restore(d: Dictionary) -> void:
 			_apply_layers()
 			_rw_held_layer = -1
 		_rewind_hold = false
-		if has_meta("rw_death_ms"):
-			remove_meta("rw_death_ms")
+		rewind_death_time = -1.0
 		_death_timer = -1.0
 		_hit_flash_time = 0.0
 		_flash_update()
 	elif not was_dead and is_dead:
 		# 倒回"将死未死"帧:按快照的可见性处理(通常在白闪中点)
-		visible = bool(d["vis"])
+		visible = state_values[REWIND_VISIBLE]
 	# 回放只摆位姿，不切姿态槽。
 	CollisionWorld.sync_body_pose(_rid, global_transform)

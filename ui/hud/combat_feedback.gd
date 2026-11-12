@@ -11,17 +11,8 @@ const KILL_FADE_IN := 0.08
 const KILL_HOLD := 0.9    # 击杀信息展示停留时间（秒）
 const KILL_FADE_OUT := 0.35
 const STREAK_RESET := 6.0 # 连杀重置超时窗口（秒）
-const ATTRIB_WINDOW_MS := 3000 # 击杀归因时效窗口（毫秒）
 
 static var current: CombatFeedback = null
-
-
-## 实例化并挂载至对局节点
-static func spawn(host: Node) -> void:
-	if current != null and is_instance_valid(current) and host.is_ancestor_of(current):
-		return
-	var fx: CombatFeedback = load("res://ui/hud/combat_feedback.tscn").instantiate() as CombatFeedback
-	host.add_child.call_deferred(fx)
 
 
 ## 触发屏幕中心命中标记动效
@@ -41,22 +32,6 @@ static func reset_streak() -> void:
 	if current != null:
 		current._streak = 0
 		current._last_kill_ms = -1
-
-
-## 记录击杀归因数据（写入攻击者元数据与命中时间戳）
-static func attribute(victim: Node, attacker: Node) -> void:
-	if victim == null or not is_instance_valid(victim):
-		return
-	if attacker == null or not is_instance_valid(attacker) or attacker == victim:
-		return
-	victim.set_meta("last_damager", attacker)
-	victim.set_meta("last_damager_time", Time.get_ticks_msec())
-
-
-## 统一执行伤害归因并播放命中反馈动效
-static func attribute_hit(victim: Node, attacker: Node) -> void:
-	attribute(victim, attacker)
-	hit_marker()
 
 
 var _marker: HitMarker = null

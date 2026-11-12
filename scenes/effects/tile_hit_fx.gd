@@ -26,16 +26,18 @@ static func spawn(parent: Node, at: Vector2, texture_id: int) -> void:
 	parent.add_child(p)
 	p.finished.connect(p.queue_free)
 
-static func spawn_explosion(parent: Node, center: Vector2, radius: float) -> void:
-	var cells := Explosion.destructible_subs(center, radius)
+static func spawn_explosion(parent: Node, terrain: Terrain, center: Vector2, radius: float) -> void:
+	var cells := terrain.blast_cells(center, radius)
 	if cells.is_empty():
 		return
 	var points := PackedVector2Array()
 	var colors := PackedColorArray()
-	for cell: Dictionary in cells:
-		points.append(GridPathfinder.toroidal_delta_px(center, cell["pos"],
-				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT))
-		colors.append(_color(cell["tex"]))
+	var size := terrain.map_size
+	for hit: Array in cells:
+		var sub := terrain.sub_position(hit[0])
+		var pos := (Vector2(sub) + Vector2(0.5, 0.5)) * Terrain.SUB_SIZE
+		points.append(GridPathfinder.toroidal_delta_px(center, pos, size))
+		colors.append(_color(terrain.sub_texture(sub)))
 	var p := _particles(center, cells.size() * 10)
 	p.emission_shape = CPUParticles2D.EMISSION_SHAPE_POINTS
 	p.emission_points = points

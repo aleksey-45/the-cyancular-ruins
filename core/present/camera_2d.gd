@@ -1,5 +1,7 @@
 extends Camera2D
 
+signal view_moved(center: Vector2)
+
 @export var target: Node2D = null
 
 const SHAKE_EPS := 0.0001
@@ -47,9 +49,8 @@ func _process(delta: float) -> void:
 	else:
 		var target_pos := target.global_position
 		# 以相机当前位置为锚点取目标的最近副本；两者跨接缝时把基准位置整体搬到同一副本，
-		# 3×3 平铺让这次整图宽的搬移在画面上不可见，角色不会留在对侧画面外。
-		var anchored := GridPathfinder.anchor_to_nearest(target_pos, _base_pos,
-				GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+		# 相机与角色始终在同一可视副本中。
+		var anchored := GridPathfinder.anchor_to_nearest(target_pos, _base_pos, CollisionWorld.acquire(self).terrain.map_size)
 		var shift := anchored - target_pos
 		if shift != Vector2.ZERO:
 			_base_pos -= shift
@@ -68,3 +69,4 @@ func _process(delta: float) -> void:
 		var amount := _shake_amt * (_shake_time / maxf(_shake_dur, SHAKE_EPS))
 		_shake_offset = Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0)) * amount
 	global_position = _base_pos + _shake_offset
+	view_moved.emit(global_position)

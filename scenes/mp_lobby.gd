@@ -1,28 +1,35 @@
-extends LobbyPage
+extends Control
 
 # 统一联机大厅：集成 1v1、大乱斗与团队对抗三种对战模式的房间浏览、创建、加入与等待逻辑。
-# 界面自上而下包含顶栏（玩家昵称）、模式筛选与操作按钮、房间卡片网格以及底部状态栏。
-# 服务端各模式房间注册表通过并发查询在前端合并汇总显示。
+# 界面自上而下包含顶栏（玩家昵称）、模式筛选与操作按钮、房间卡片以及底部状态栏。
 
-const PAGE_MARGIN := 76.0
-const CARD_COLUMNS := 4
-const CARD_GAP := 24.0
+var _status: Label
+var _code_edit: LineEdit
+var _requesting := false
 
-var _mode := ""                    # 当前模式筛选：空串表示全部，否则为 PvpSession.MODE_*
-var _rooms_by_mode := {}           # 模式到房间条目列表的映射
-var _grid: GridContainer = null
+var _mode := ""
+var _listed_room: Dictionary
+var _card: Button
+var _empty_card: Label
+var _card_mode: Label
+var _card_status: Label
+var _card_code: Label
+var _card_rules: Label
+var _card_thumbnail: TextureRect
+var _card_thumbnail_fill: ColorRect
+var _card_count: Label
+var _card_host: Label
+var _card_roster: Label
 var _filter_btns := {}             # 模式到筛选按钮的映射
 var _join_panel: PanelContainer = null
 var _join_code_edit: LineEdit = null
 
 var _create_panel: PanelContainer = null
 var _create_mask: ColorRect = null
-var _form_rows := {}
 var _create_mode := PvpSession.MODE_PVP
 var _create_mode_btns := {}
 var _max_slider: HSlider = null
 var _time_slider: HSlider = null
-var _weapon_checks: Array[CheckButton] = []
 
 var _wait_panel: PanelContainer = null
 var _wait_title: Button = null
@@ -32,17 +39,6 @@ var _wait_hue: Control = null
 var _wait_start: Button = null
 var _wait_pick_a: Button = null
 var _wait_pick_b: Button = null
-var _wait_leave: Button = null
-var _wait_mode := ""
-var _in_room := false
-var _create_btn: Button = null
-var _join_btn: Button = null
-
-var _current_mode := ""
-var _ack := true
-var _sent_ms := 0
-var _join_pending := ""
-
 
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -61,7 +57,7 @@ func _build_ui() -> void:
 	name_le.text = PvpSession.player_name
 	name_le.text_changed.connect(func(t: String) -> void:
 		PvpSession.player_name = t.strip_edges() if not t.strip_edges().is_empty() else "Anon"
-		_push_lobby_name())
+		NetSession.send_hello())
 
 	# 模式筛选按钮与加入/创建入口
 	_filter_btns = {}
@@ -73,15 +69,12 @@ func _build_ui() -> void:
 		b.pressed.connect(func() -> void: _set_filter(m))
 		_filter_btns[m] = b
 	_code_edit = %CodeEdit
-	_update_code_label()
-	if _code_edit != null:
-		_code_edit.text_submitted.connect(func(_t: String) -> void: _on_join_pressed())
-	_create_btn = %CreateBtn
-	_create_btn.pressed.connect(_open_create_dialog)
-	_join_btn = %JoinBtn
-	_join_btn.pressed.connect(_on_join_pressed)
+	_update_code_label("")
+	_code_edit.text_submitted.connect(func(_t: String) -> void: _on_join_pressed())
+	%CreateBtn.pressed.connect(_open_create_dialog)
+	%JoinBtn.pressed.connect(_on_join_pressed)
 
-	_grid = %CardGrid
+	_build_room_card()
 	_status = %StatusLabel
 	%BackBtn.pressed.connect(_on_back_pressed)
 
@@ -92,7 +85,7 @@ func _build_ui() -> void:
 	%JoinOkBtn.pressed.connect(func() -> void:
 		_join_panel.visible = false
 		var code := _join_code_edit.text.strip_edges()
-		if not code.is_empty() and _code_edit != null:
+		if not code.is_empty():
 			_code_edit.text = code
 		_join_code(code))
 	%JoinCancelBtn.pressed.connect(func() -> void: _join_panel.visible = false)
@@ -128,17 +121,8 @@ func _build_ui() -> void:
 		Settings.pvp_round_full_heal = on
 		Settings.save())
 
-	_form_rows = {
-		"max_players": %MaxPlayersRow, "match_time": %MatchTimeRow,
-		"full_heal": %FullHealRow, "weapons": %WeaponsBlock, "map": %MapBlock,
-		"beta": %BetaBlock,
-	}
-
 	# 禁用武器网格
-	_add_weapon_grid(%WeaponsBlock, 20, func(cell: Node, type_id: int) -> void:
-		var cb: CheckButton = cell.get_meta("cb")
-		cb.set_meta("type_id", type_id)
-		_weapon_checks.append(cb))
+	_add_weapon_grid(%WeaponsBlock)
 
 	# 地图选择器
 	_add_map_picker(%MapBlock)
@@ -158,12 +142,11 @@ func _build_ui() -> void:
 	_wait_pick_a = %WaitPickABtn
 	_wait_pick_b = %WaitPickBBtn
 	_wait_start = %WaitStartBtn
-	_wait_leave = %WaitLeaveBtn
 
 	_wait_pick_a.pressed.connect(_on_wait_pick.bind(1))
 	_wait_pick_b.pressed.connect(_on_wait_pick.bind(2))
 	_wait_start.pressed.connect(_on_wait_start_pressed)
-	_wait_leave.pressed.connect(_on_wait_leave_pressed)
+	%WaitLeaveBtn.pressed.connect(_on_wait_leave_pressed)
 
 	var hue_slider: HSlider = %WaitHueSlider
 	var hue_chip: ColorRect = %WaitHueChip
@@ -185,58 +168,19 @@ func _set_filter(mode: String) -> void:
 	_mode = mode
 	for m in _filter_btns:
 		(_filter_btns[m] as Button).button_pressed = (m == mode)
-	_redraw_cards()
+	_refresh_room_card()
 
-
-# 汇总各模式服务端下发的房间数据
-func _on_rooms(rooms: Array) -> void:
-	_rooms_by_mode = {"pvp": [], "team": [], "royale": []}
-	for room: Dictionary in rooms:
-		_rooms_by_mode[room["mode"]].append(room)
-	_ack = true
-	_sent_ms = 0
-	_redraw_cards()
 
 func _on_room(state: Dictionary) -> void:
-	PvpSession.note_room(state["code"], state["mode"])
-	PvpSession.role = state["your_role"]
-	PvpSession.token = state["token"]
 	PvpSession.room = state
-	_current_mode = state["mode"]
-	_room_code = state["code"]
-	_update_code_label()
-	_join_pending = ""
-	_ack = true
-	_sent_ms = 0
-	var is_host: bool = state["host_role"] == state["your_role"]
-	if is_host and not Tunnel.on_network(_room_code) and Tunnel.available():
-		Tunnel.start_host(PvpSession.server_port, _room_code)
-	_set_room_entered_status(_room_code, is_host)
-	_show_wait_room(state, _current_mode)
-
-func _redraw_cards() -> void:
-	for c in _grid.get_children():
-		_grid.remove_child(c)
-		c.queue_free()
-	var shown := 0
-	var total := 0
-	for mode in [PvpSession.MODE_PVP, PvpSession.MODE_ROYALE, PvpSession.MODE_TEAM]:
-		var rows: Array = _rooms_by_mode.get(mode, []).duplicate()
-		rows.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
-			var a_full := int(a.get("count", 0)) >= int(a.get("max_players", 2))
-			var b_full := int(b.get("count", 0)) >= int(b.get("max_players", 2))
-			return not a_full and b_full)
-		for r in rows:
-			total += 1
-			if _mode != "" and mode != _mode:
-				continue
-			_grid.add_child(_make_card(r))
-			shown += 1
-	if shown == 0:
-		var empty := UiFactory.label("暂无房间 —— 点「＋ 创建房间」开一局吧", 32, UiFactory.C_TEXT_DIM)
-		_grid.add_child(empty)
-	_status.text = "共 %d 个房间(显示 %d 个;未满优先,对局中的照列)" % [total, shown]
-
+	var code: String = state["code"]
+	if state["host_role"] == state["your_role"]:
+		var error := "" if Tunnel.on_network(code) else Tunnel.start_host(NetBus.server_port, code)
+		_status.text = "房间 %s 已创建" % code
+		_status.text += "，把房间号报给对手" if error.is_empty() else "。远程联机不可用，%s" % error
+	else:
+		_status.text = "已加入房间 %s" % code
+	_show_wait_room(state)
 
 const MODE_COLOR := {
 	PvpSession.MODE_PVP: UiFactory.C_ACCENT,
@@ -244,228 +188,145 @@ const MODE_COLOR := {
 	PvpSession.MODE_ROYALE: UiFactory.C_MODE_ROYALE,
 }
 
-# 创建单张房间卡片按钮
-func _make_card(r: Dictionary) -> Button:
-	var mode := str(r.get("mode", PvpSession.MODE_PVP))
-	var code := str(r.get("code", ""))
-	var in_match := bool(r.get("in_match", false))
-	var mine := PvpSession.can_rejoin_to(code, mode)
-
-	var btn := Button.new()
-	_style_card(btn)
-	btn.custom_minimum_size = Vector2(_card_width(), 440)
-	btn.size = Vector2(_card_width(), 440)
-	btn.set_meta("code", code)
-	btn.set_meta("mode", mode)
-	btn.text = ""
+func _build_room_card() -> void:
+	_empty_card = UiFactory.label("暂无房间", 32, UiFactory.C_TEXT_DIM)
+	%RoomBrowser.add_child(_empty_card)
+	_card = Button.new()
+	_card.custom_minimum_size = Vector2(420, 520)
+	_card.pressed.connect(_open_listed_room)
+	%RoomBrowser.add_child(_card)
+	var normal := UiFactory.panel_box()
+	normal.set_border_width_all(1)
+	var highlighted := normal.duplicate() as StyleBoxFlat
+	highlighted.border_color = UiFactory.C_ACCENT
+	for style in ["normal", "disabled"]:
+		_card.add_theme_stylebox_override(style, normal)
+	for style in ["hover", "pressed", "focus"]:
+		_card.add_theme_stylebox_override(style, highlighted)
 
 	var frame := PanelContainer.new()
 	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var inside := UiFactory.panel_box(false)
+	inside.draw_center = false
+	frame.add_theme_stylebox_override("panel", inside)
+	_card.add_child(frame)
 	frame.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	frame.offset_left = 1.0
-	frame.offset_top = 1.0
-	frame.offset_right = -1.0
-	frame.offset_bottom = -1.0
-	var fsb := StyleBoxFlat.new()
-	fsb.bg_color = Color(0, 0, 0, 0)
-	fsb.border_color = UiFactory.C_INNER
-	fsb.set_border_width_all(1)
-	fsb.set_corner_radius_all(0)
-	fsb.content_margin_left = 26.0
-	fsb.content_margin_right = 26.0
-	fsb.content_margin_top = 20.0
-	fsb.content_margin_bottom = 20.0
-	frame.add_theme_stylebox_override("panel", fsb)
-	btn.add_child(frame)
+	var content := VBoxContainer.new()
+	content.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	content.add_theme_constant_override("separation", 12)
+	frame.add_child(content)
 
-	var col := VBoxContainer.new()
-	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	col.add_theme_constant_override("separation", 12)
-	frame.add_child(col)
+	var header := HBoxContainer.new()
+	header.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_card_mode = UiFactory.label("", 32)
+	_card_mode.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_card_status = UiFactory.label("", 16)
+	header.add_child(_card_mode)
+	header.add_child(_card_status)
+	content.add_child(header)
+	_card_code = UiFactory.label("", 48, UiFactory.C_TEXT)
+	_card_rules = UiFactory.label("", 32, UiFactory.C_TEXT_DIM)
+	content.add_child(_card_code)
+	content.add_child(_card_rules)
 
-	col.add_child(_card_header(mode, r))
-	col.add_child(_card_body(r))
-
-	btn.disabled = in_match and not mine
-	if btn.disabled:
-		btn.focus_mode = Control.FOCUS_NONE
-		btn.modulate = Color(1, 1, 1, 0.55)
-	else:
-		btn.focus_mode = Control.FOCUS_ALL
-		btn.pressed.connect(func() -> void:
-			Sfx.play("ui")
-			_current_mode = mode
-			if not try_rejoin_row(code, in_match, mode):
-				_join_code(code))
-	return btn
-
-
-func _card_width() -> float:
-	var usable := 1920.0 - PAGE_MARGIN * 2.0 - CARD_GAP * float(CARD_COLUMNS - 1)
-	return floor(usable / float(CARD_COLUMNS))
-
-
-# 创建卡片顶部信息条
-func _card_header(mode: String, r: Dictionary) -> Control:
-	var strip := PanelContainer.new()
-	strip.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = UiFactory.C_HEADER
-	sb.set_corner_radius_all(0)
-	sb.border_width_left = 0
-	sb.border_width_right = 0
-	sb.border_width_top = 0
-	sb.border_width_bottom = 1
-	sb.border_color = UiFactory.C_BORDER
-	sb.content_margin_left = 20.0
-	sb.content_margin_right = 20.0
-	sb.content_margin_top = 12.0
-	sb.content_margin_bottom = 12.0
-	strip.add_theme_stylebox_override("panel", sb)
-
-	var row := HBoxContainer.new()
-	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	row.add_theme_constant_override("separation", 16)
-	strip.add_child(row)
-
-	var name_l := UiFactory.label(PvpSession.mode_name(mode, r["beta"]), 32, MODE_COLOR[mode])
-	name_l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	name_l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	row.add_child(name_l)
-
-	var in_match := bool(r.get("in_match", false))
-	var badge := "对局中" if in_match else "等待中"
-	var badge_col := UiFactory.C_TEXT_DIM if in_match else UiFactory.C_ACCENT
-	var badge_l := UiFactory.label(badge, 16, badge_col)
-	badge_l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	row.add_child(badge_l)
-	return strip
-
-
-func _style_card(b: Button) -> void:
-	b.add_theme_stylebox_override("normal", _card_box(UiFactory.C_BORDER))
-	b.add_theme_stylebox_override("hover", _card_box(UiFactory.C_ACCENT))
-	b.add_theme_stylebox_override("pressed", _card_box(UiFactory.C_ACCENT))
-	b.add_theme_stylebox_override("focus", _card_box(UiFactory.C_ACCENT))
-	b.add_theme_stylebox_override("disabled", _card_box(UiFactory.C_BORDER))
-
-
-func _card_box(border: Color) -> StyleBoxFlat:
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = UiFactory.C_SURFACE
-	sb.border_color = border
-	sb.set_border_width_all(1)
-	sb.set_corner_radius_all(0)
-	return sb
-
-
-# 创建卡片主体内容
-func _card_body(r: Dictionary) -> Control:
-	var mode := str(r.get("mode", PvpSession.MODE_PVP))
-	var box := VBoxContainer.new()
-	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	box.add_theme_constant_override("separation", 10)
-
-	box.add_child(UiFactory.label(str(r.get("code", "")), 48, UiFactory.C_TEXT))
-	box.add_child(UiFactory.label(_card_subtitle(mode, r), 32, UiFactory.C_TEXT_DIM))
-
-	var mid := HBoxContainer.new()
-	mid.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	mid.add_theme_constant_override("separation", 20)
-	mid.add_child(_card_map_thumb(mode, str(r.get("map", ""))))
+	var details := HBoxContainer.new()
+	details.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	details.add_theme_constant_override("separation", 20)
+	content.add_child(details)
+	_card_thumbnail_fill = ColorRect.new()
+	_card_thumbnail_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_card_thumbnail_fill.custom_minimum_size = Vector2(120, 120)
+	details.add_child(_card_thumbnail_fill)
+	_card_thumbnail = TextureRect.new()
+	_card_thumbnail.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_card_thumbnail.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_card_thumbnail.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_card_thumbnail_fill.add_child(_card_thumbnail)
+	_card_thumbnail.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	var meta := VBoxContainer.new()
 	meta.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var maxp := int(r.get("max_players", 2))
-	meta.add_child(UiFactory.label("人数 %d / %d" % [int(r.get("count", 0)), maxp], 32, UiFactory.C_TEXT_DIM))
-	meta.add_child(UiFactory.label("房主 %s" % str(r.get("host_name", "玩家")), 32, UiFactory.C_TEXT_DIM))
-	mid.add_child(meta)
-	box.add_child(mid)
+	meta.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_card_count = UiFactory.label("", 32, UiFactory.C_TEXT_DIM)
+	_card_host = UiFactory.label("", 32, UiFactory.C_TEXT_DIM)
+	_card_host.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	meta.add_child(_card_count)
+	meta.add_child(_card_host)
+	details.add_child(meta)
+	_card_roster = UiFactory.label("", 32, UiFactory.C_TEXT_DIM)
+	_card_roster.add_theme_constant_override("line_spacing", 4)
+	content.add_child(_card_roster)
+	_refresh_room_card()
 
-	box.add_child(_card_names(r["names"]))
-	return box
+func _refresh_room_card() -> void:
+	var room := _listed_room
+	_card.visible = not room.is_empty() and (_mode.is_empty() or room["mode"] == _mode)
+	_empty_card.visible = not _card.visible
+	if not _card.visible:
+		return
+	var mode: String = room["mode"]
+	var in_match: bool = room["in_match"]
+	_card.disabled = in_match and not PvpSession.can_rejoin_to(room["code"], mode)
+	_card.focus_mode = Control.FOCUS_NONE if _card.disabled else Control.FOCUS_ALL
+	_card.modulate.a = 0.55 if _card.disabled else 1.0
+	_card_mode.text = PvpSession.mode_name(mode, room["beta"])
+	_card_mode.add_theme_color_override("font_color", MODE_COLOR[mode])
+	_card_status.text = "对局中" if in_match else "等待中"
+	_card_status.add_theme_color_override("font_color", UiFactory.C_TEXT_DIM if in_match else UiFactory.C_ACCENT)
+	_card_code.text = room["code"]
+	_card_rules.text = _card_subtitle(mode, room)
+	_card_count.text = "人数 %d / %d" % [room["count"], room["max_players"]]
+	_card_host.text = "房主 %s" % room["host_name"]
+	var map := MapFormat.load_map(room["map"])
+	_card_thumbnail.texture = MapCatalog.texture(map) if not map.is_empty() else null
+	_card_thumbnail_fill.color = Color(MODE_COLOR[mode], 0.25) if map.is_empty() else UiFactory.C_SURFACE
+	var roster: Array = room["players"]
+	var names := PackedStringArray()
+	for i in mini(roster.size(), 3):
+		var player: Dictionary = roster[i]
+		names.append("· %s%s" % [UiFactory.fit_name(player["name"], 14),
+				"(房主)" if player["role"] == room["host_role"] else ""])
+	if roster.size() > 3:
+		names.append("…等 %d 人" % roster.size())
+	_card_roster.text = "\n".join(names)
 
+func _open_listed_room() -> void:
+	Sfx.play("ui")
+	if _listed_room["in_match"]:
+		_request_rejoin()
+	else:
+		_join_code(_listed_room["code"])
 
-func _card_subtitle(mode: String, r: Dictionary) -> String:
+func _card_subtitle(mode: String, room: Dictionary) -> String:
 	if mode == PvpSession.MODE_ROYALE:
-		var mins := int(r.get("match_time", 0)) / 60
+		var mins := int(room["match_time"]) / 60
 		return "限时 %d 分" % mins if mins > 0 else "不限时"
 	if mode == PvpSession.MODE_TEAM:
-		var tc: Dictionary = r.get("team_counts", {})
-		return "A%d / B%d / 未选%d" % [int(tc.get(1, 0)), int(tc.get(2, 0)), int(tc.get(0, 0))]
+		var counts: Dictionary = room["team_counts"]
+		return "A%d / B%d / 未选%d" % [counts[1], counts[2], counts[0]]
 	return "三局两胜"
 
-
-func _card_map_thumb(mode: String, map_path: String) -> Control:
-	var frame := PanelContainer.new()
-	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	frame.custom_minimum_size = Vector2(120, 120)
-	frame.add_theme_stylebox_override("panel", UiFactory.panel_box())
-	if map_path != "" and MapCatalog.is_valid_map(map_path):
-		var tex := TextureRect.new()
-		tex.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		tex.texture = MapCatalog.texture(map_path)
-		tex.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		frame.add_child(tex)
-	else:
-		var fill := ColorRect.new()
-		fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		fill.color = MODE_COLOR[mode]
-		fill.color.a = 0.25
-		frame.add_child(fill)
-	return frame
-
-
-func _card_names(names: Array) -> Control:
-	var box := VBoxContainer.new()
-	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var shown := mini(names.size(), 3)
-	for i in shown:
-		var is_host := i == 0
-		box.add_child(UiFactory.label("· %s%s" % [
-				UiFactory.fit_name(str(names[i]), 14), "(房主)" if is_host else ""],
-				16, UiFactory.C_TEXT_DIM))
-	if names.size() > shown:
-		box.add_child(UiFactory.label("…等 %d 人" % names.size(), 16, UiFactory.C_TEXT_DIM))
-	return box
-
-
-# 发送并发房间查询请求
-func _send_list_request() -> void:
-	NetBus.send_event(NetEvent.Kind.LIST, {"token": PvpSession.token, "beta": PvpSession.beta_mode})
-
-
-
-
-
-
-
-
-
-func _on_server_message(text: String) -> void:
-	_ack = true
-	_sent_ms = 0
-	_join_pending = ""
-	_status.text = text
 
 func _toggle_join_panel() -> void:
 	_join_panel.visible = not _join_panel.visible
 
 
 func _on_join_pressed() -> void:
-	var code := _code_edit.text.strip_edges() if _code_edit != null else ""
+	var code := _code_edit.text.strip_edges()
 	if not code.is_empty():
 		_join_code(code)
 	else:
 		_toggle_join_panel()
 
 
-# 根据房间号发起加入请求
 func _join_code(code: String) -> void:
-	_join_with_code(code, func() -> void:
-		_ack = false
-		_sent_ms = Time.get_ticks_msec()
-		_join_pending = code
-		NetBus.send_event(NetEvent.Kind.JOIN, {"code": code, "beta": PvpSession.beta_mode}))
+	if not Tunnel.is_valid_room(code):
+		_status.text = "房间码是 8 位数字(例 00048213)"
+		return
+	if not _begin_request("正在连接房间 %s 的网络…" % code):
+		return
+	_listed_room = {}
+	_refresh_room_card()
+	_finish_request(await NetSession.join_room(code))
 
 func _open_create_dialog() -> void:
 	_create_mode = _mode if _mode != "" else PvpSession.MODE_PVP
@@ -478,25 +339,16 @@ func _set_create_visible(v: bool) -> void:
 	_create_mask.visible = v
 
 
-# 收集当前勾选的禁用武器列表
-func _checked_weapons() -> Array:
-	var out: Array = []
-	for cb in _weapon_checks:
-		if cb.button_pressed:
-			out.append(int(cb.get_meta("type_id", 0)))
-	return out
-
-
 # 根据选择的模式动态展示相关设置项
 func _apply_create_form(mode: String) -> void:
 	_create_mode = mode
 	var is_royale := mode == PvpSession.MODE_ROYALE
 	var is_team := mode == PvpSession.MODE_TEAM
 	var is_pvp := mode == PvpSession.MODE_PVP
-	_form_rows["max_players"].visible = is_royale
-	_form_rows["match_time"].visible = is_royale
-	_form_rows["full_heal"].visible = is_pvp
-	_form_rows["weapons"].visible = not is_team
+	%MaxPlayersRow.visible = is_royale
+	%MatchTimeRow.visible = is_royale
+	%FullHealRow.visible = is_pvp
+	%WeaponsBlock.visible = not is_team
 	for m in _create_mode_btns:
 		(_create_mode_btns[m] as Button).disabled = false
 	(_create_mode_btns[mode] as Button).disabled = true
@@ -505,26 +357,31 @@ func _apply_create_form(mode: String) -> void:
 # 构建创建房间的配置载荷
 func _create_payload(mode: String) -> Dictionary:
 	var d := {"map": Settings.mp_map_path}
+	if mode != PvpSession.MODE_TEAM:
+		d["disabled_weapons"] = WeaponRegistry.all_ids().filter(
+				func(id: int) -> bool: return Settings.pvp_disabled_weapons.has(id))
 	if mode == PvpSession.MODE_ROYALE:
 		d["max_players"] = int(_max_slider.value)
 		d["match_time"] = int(_time_slider.value) * 60
-		d["round_full_heal"] = false
-		d["disabled_weapons"] = _checked_weapons()
 	elif mode == PvpSession.MODE_PVP:
-		d["disabled_weapons"] = _checked_weapons()
+		d["round_full_heal"] = Settings.pvp_round_full_heal
 	return d
 
 
 # 发送创建房间请求
 func _on_create_pressed() -> void:
-	_set_create_visible(false)
-	if not await _ensure_own_server():
+	var mode := _create_mode
+	var payload := _create_payload(mode)
+	if WeaponRegistry.enabled_ids(payload.get("disabled_weapons", [])).is_empty():
+		_status.text = "请至少启用一种武器"
 		return
-	var payload := _create_payload(_create_mode)
-	payload["round_full_heal"] = Settings.pvp_round_full_heal
+	if not _begin_request("正在创建房间…"):
+		return
 	payload.merge(_beta_payload())
-	NetBus.send_event(NetEvent.Kind.CREATE, {"mode": _create_mode, "options": payload})
-	_status.text = "正在创建房间…"
+	_set_create_visible(false)
+	_listed_room = {}
+	_refresh_room_card()
+	_finish_request(await NetSession.create_room({"mode": mode, "options": payload}))
 
 func _unhandled_input(ev: InputEvent) -> void:
 	if not _create_panel.visible:
@@ -535,15 +392,12 @@ func _unhandled_input(ev: InputEvent) -> void:
 
 
 # 刷新并展示等待室面板
-func _show_wait_room(state: Dictionary, mode: String) -> void:
-	_wait_mode = mode
+func _show_wait_room(state: Dictionary) -> void:
 	_set_create_visible(false)
-	_wait_panel.visible = true
-	_in_room = true
-	_create_btn.visible = false
-	_join_btn.visible = false
 	_join_panel.visible = false
-	_wait_title.text = _wait_title_text(state, mode)
+	_set_wait_room_visible(true)
+	var mode: String = state["mode"]
+	_wait_title.text = "%s房间 %s" % [PvpSession.mode_name(mode, state["beta"]), state["code"]]
 
 	for c in _wait_body.get_children():
 		_wait_body.remove_child(c)
@@ -565,29 +419,25 @@ func _show_wait_room(state: Dictionary, mode: String) -> void:
 		_wait_count.text = "%d / %d 人(至少 2 人可开局)" % [
 				plist.size(), int(state.get("max_players", 4))]
 	else:
-		_fill_team_roster(state, plist, my_role, host_role)
-		_wait_count.text = _team_count_text(state, plist)
+		_fill_team_roster(plist, my_role, host_role)
+		_wait_count.text = _team_count_text(state)
 
 	_wait_hue.visible = not is_team
 	var my_team := _team_of_role(state, my_role) if is_team else 0
 	_wait_pick_a.visible = is_team and my_team != 1
 	_wait_pick_b.visible = is_team and my_team != 2
-	if is_pvp:
-		_wait_start.visible = is_host and plist.size() == 2
-	elif mode == PvpSession.MODE_ROYALE:
-		_wait_start.visible = is_host
-	else:
-		_wait_start.visible = is_host and _teams_can_start(
-				state, int(state.get("team_size", TeamRules.MAX_TEAM)))
+	_wait_start.visible = is_host and state["can_start"]
 
 
-# 隐藏等待室面板并恢复入口按钮
-func _hide_wait_room() -> void:
-	_wait_panel.visible = false
-	_in_room = false
-	_create_btn.visible = true
-	_join_btn.visible = true
-
+func _set_wait_room_visible(show: bool) -> void:
+	_wait_panel.visible = show
+	%CreateBtn.visible = not show
+	%JoinBtn.visible = not show
+	%RoomBrowser.visible = not show
+	for button: Button in _filter_btns.values():
+		button.visible = not show
+	_update_code_label(PvpSession.room_code if show else "")
+	_refresh_room_card()
 
 func _on_wait_pick(team: int) -> void:
 	NetBus.send_event(NetEvent.Kind.PICK_TEAM, team)
@@ -596,16 +446,13 @@ func _on_wait_start_pressed() -> void:
 	NetBus.send_event(NetEvent.Kind.START)
 
 func _on_wait_leave_pressed() -> void:
-	_return_to_lobby("已退出房间")
-
-func _wait_title_text(state: Dictionary, mode: String) -> String:
-	var code := str(state.get("code", ""))
-	return "%s房间 %s" % [PvpSession.mode_name(mode, state["beta"]), code]
+	NetBus.send_event(NetEvent.Kind.LEAVE)
+	_close_wait_room("已退出房间")
 
 func _copy_room_code() -> void:
-	DisplayServer.clipboard_set(_room_code)
-	_status.text = "已复制房间号：%s" % _room_code
-
+	var code := PvpSession.room_code
+	DisplayServer.clipboard_set(code)
+	_status.text = "已复制房间号：%s" % code
 
 func _fill_flat_roster(plist: Array, my_role: int, host_role: int) -> void:
 	var shown := 0
@@ -614,23 +461,17 @@ func _fill_flat_roster(plist: Array, my_role: int, host_role: int) -> void:
 		_wait_body.add_child(_roster_row(shown, p, my_role, host_role))
 
 
-func _fill_team_roster(state: Dictionary, plist: Array, my_role: int, host_role: int) -> void:
-	var buckets := {0: [], 1: [], 2: []}
+func _fill_team_roster(plist: Array, my_role: int, host_role: int) -> void:
+	var buckets := {1: [], 2: []}
 	for p: Dictionary in plist:
 		var t := int(p["team"])
 		(buckets[t] as Array).append(p)
-	var team_size: int = mini(int(state.get("team_size", TeamRules.MAX_TEAM)), TeamRules.MAX_TEAM)
 	var shown := 0
 	for t in [1, 2]:
 		var tag := "A 队" if t == 1 else "B 队"
 		_wait_body.add_child(UiFactory.label("—— %s(%d/%d) ——" % [
-				tag, (buckets[t] as Array).size(), team_size], 32, UiFactory.C_ACCENT))
+				tag, (buckets[t] as Array).size(), TeamRules.MAX_TEAM], 32, UiFactory.C_ACCENT))
 		for p in buckets[t]:
-			shown += 1
-			_wait_body.add_child(_roster_row(shown, p, my_role, host_role))
-	if not (buckets[0] as Array).is_empty():
-		_wait_body.add_child(UiFactory.label("—— 未选边 ——", 32, UiFactory.C_TEXT_DIM))
-		for p in buckets[0]:
 			shown += 1
 			_wait_body.add_child(_roster_row(shown, p, my_role, host_role))
 
@@ -641,7 +482,6 @@ func _roster_row(n: int, p: Dictionary, my_role: int, host_role: int) -> Label:
 			"(我)" if role == my_role else "",
 			"(房主)" if role == host_role else ""],
 			32, UiFactory.C_ACCENT if role == my_role else UiFactory.C_TEXT)
-	l.set_meta("roster_row", true)
 	return l
 
 
@@ -652,85 +492,175 @@ func _team_of_role(state: Dictionary, role: int) -> int:
 	return 0
 
 
-func _teams_can_start(state: Dictionary, size: int) -> bool:
-	var counts := {1: 0, 2: 0}
-	for p: Dictionary in state["players"]:
-		var t := int(p["team"])
-		if counts.has(t):
-			counts[t] += 1
-	return counts[1] >= 1 and counts[2] >= 1 and counts[1] <= size and counts[2] <= size
-
-
-func _team_count_text(state: Dictionary, plist: Array) -> String:
-	var counts := {1: 0, 2: 0}
-	for p: Dictionary in plist:
-		var t := int(p["team"])
-		if counts.has(t):
-			counts[t] += 1
+func _team_count_text(state: Dictionary) -> String:
+	var counts: Dictionary = state["team_counts"]
 	return "A %d/%d、B %d/%d，共 %d/%d" % [
 			counts[1], TeamRules.MAX_TEAM, counts[2], TeamRules.MAX_TEAM,
-			plist.size(), TeamRules.MAX_TOTAL]
+			state["count"], TeamRules.MAX_TOTAL]
 
 
-
-
-func _enter_match_scene() -> void:
-	Level0.safe_change_scene(get_tree(), "res://scenes/pvp_game.tscn")
-
-func _process(_delta: float) -> void:
-	if _tick_rejoin_timeout():
-		return
-	_tick_lobby_connect_timeout()
-	if not _ack and _sent_ms > 0 and Time.get_ticks_msec() - _sent_ms > 8000:
-		_sent_ms = 0
-		_status.text = "8 秒无响应——地址不通,或该服务器不是最新版(开服方请用最新服务端)"
-
-
-# 房间状态操作门控
-func _lobby_action_allowed() -> bool:
-	if _in_room:
-		if _current_mode == PvpSession.MODE_ROYALE:
-			_status.text = "已在大乱斗房间中(先退出房间再操作)"
-		elif _current_mode == PvpSession.MODE_TEAM:
-			_status.text = "已在团队对抗房间中(先退出房间再操作)"
-		else:
-			_status.text = "已在 1v1 房间中(先退出房间再操作)"
+func _begin_request(message: String) -> bool:
+	if _requesting or _wait_panel.visible:
 		return false
+	_requesting = true
+	_status.text = message
 	return true
 
+func _finish_request(message: String) -> void:
+	_requesting = false
+	if is_inside_tree() and not message.is_empty():
+		_status.text = message
 
-# 收集玩家开局配置选项
-func _player_options() -> Dictionary:
-	return {
-		"hue": Settings.pvp_color_hue,
-		"round_full_heal": Settings.pvp_round_full_heal,
-		"disabled_weapons": Settings.pvp_disabled_weapons,
-		"match_time": int(Settings.royale_match_min * 60.0),
-		"map": Settings.mp_map_path,
-		"time": time_rules.to_dict() if (PvpSession.beta_mode
-				and _current_mode != PvpSession.MODE_PVP) else {},
-	}
+func _list_rooms() -> void:
+	var error := await NetSession.list_rooms()
+	if is_inside_tree() and not _requesting and not error.is_empty():
+		_status.text = error
+
+func _close_wait_room(message: String) -> void:
+	PvpSession.room = {}
+	_listed_room = {}
+	_set_wait_room_visible(false)
+	_status.text = message
+	_list_rooms()
+
+func _finish_lobby_ready() -> void:
+	Tunnel.ensure_relay_file()
+	NetBus.event_received.connect(_on_net_event)
+	NetBus.protocol_error.connect(_on_connection_error)
+	NetBus.server_disconnected.connect(_on_connection_error.bind("与房间的连接已断开"))
+	UiFactory.apply_font_recursive(self)
+	if NetBus.can_send_to_server() and not PvpSession.room.is_empty() and not PvpSession.room["in_match"]:
+		NetSession.send_hello()
+		_on_room(PvpSession.room)
+	else:
+		_list_rooms.call_deferred()
+
+func _on_net_event(_peer: int, kind: int, data: Variant) -> void:
+	if kind in NetEvent.MATCH_EVENTS:
+		if PvpSession.loading_match:
+			PvpSession.match_events.append([kind, data])
+		return
+	match kind:
+		NetEvent.Kind.MESSAGE: _status.text = data
+		NetEvent.Kind.ROOM: _on_room(data)
+		NetEvent.Kind.ROOM_LIST:
+			_listed_room = data
+			_refresh_room_card()
+		NetEvent.Kind.REJOIN_DENIED:
+			PvpSession.clear_rejoin()
+			_refresh_room_card()
+			_status.text = "无法回到对局：%s" % data
+			_list_rooms()
+		NetEvent.Kind.ROOM_CLOSED: _close_wait_room(data)
+		NetEvent.Kind.BASELINE:
+			var map := MapFormat.parse_map(data["map"], "房间 %s" % data["code"])
+			if map.is_empty():
+				_status.text = "对局地图无法读取"
+				return
+			PvpSession.begin_match(data, map)
+			Level0.safe_change_scene(get_tree(), "res://scenes/pvp_game.tscn")
+
+func _exit_tree() -> void:
+	NetBus.event_received.disconnect(_on_net_event)
+	NetBus.protocol_error.disconnect(_on_connection_error)
+	NetBus.server_disconnected.disconnect(_on_connection_error.bind("与房间的连接已断开"))
+
+func _on_connection_error(message: String) -> void:
+	_listed_room = {}
+	_set_wait_room_visible(false)
+	_status.text = message
+
+const WEAPON_GRID_HEIGHT := 144.0
+
+func _add_weapon_grid(parent: Node) -> void:
+	var wgrid := GridContainer.new()
+	wgrid.columns = 2
+	wgrid.add_theme_constant_override("h_separation", 20)
+	wgrid.add_theme_constant_override("v_separation", 6)
+	parent.add_child(UiFactory.scroll_list(wgrid, WEAPON_GRID_HEIGHT))
+	for type_id: int in WeaponRegistry.all_ids():
+		var cell := WeaponIcons.make_weapon_check(type_id, Settings.pvp_disabled_weapons.has(type_id),
+				32, func(on: bool) -> void:
+				if on and not Settings.pvp_disabled_weapons.has(type_id):
+					Settings.pvp_disabled_weapons.append(type_id)
+				elif not on:
+					Settings.pvp_disabled_weapons = Settings.pvp_disabled_weapons.filter(
+							func(id: int) -> bool: return id != type_id)
+				Settings.save())
+		wgrid.add_child(cell)
 
 
+func _request_rejoin() -> void:
+	if not _begin_request("正在回到对局…"):
+		return
+	_finish_request(NetSession.room_error(await NetSession.rejoin_room()))
+
+func _update_code_label(code: String) -> void:
+	_code_edit.text = code
+	_code_edit.editable = code.is_empty()
+	_code_edit.placeholder_text = "房间号" if code.is_empty() else "你的房间号(报给对手)"
 
 
+var time_rules := TimeRules.normalized()
+
+func _add_time_params(vb: VBoxContainer) -> void:
+	if not PvpSession.beta_mode:
+		return
+	vb.add_child(UiFactory.label("时间颗粒规则(房主可调,开局生效):", 32, UiFactory.C_ACCENT))
+	for slider in [
+		["initial", "初始颗粒", 50.0],
+		["cap", "颗粒上限", 100.0],
+		["rewind_burn", "回溯燃烧/秒", 5.0],
+		["haste_burn", "加速燃烧/秒", 5.0],
+		["window", "短时额度", 10.0],
+		["regen", "回复/秒", 5.0],
+		["kill_ratio", "击杀获取", 5.0],
+		["block_gain", "拆砖获取/子格", 1.0],
+		["damage_gain", "伤害获取/点", 1.0],
+	]:
+		_trow(vb, slider[0], slider[1], slider[2])
 
 
+func _trow(vb: VBoxContainer, field: String, text: String, step: float) -> void:
+	var as_percent := field == "kill_ratio"
+	var units := 100.0 if as_percent else 1.0
+	var range_spec: Array = TimeRules.FIELDS[field]
+	var initial: float = time_rules[field] * units
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 12)
+	var l := UiFactory.label(text, 32)
+	l.custom_minimum_size = Vector2(300, 0)
+	row.add_child(l)
+	var sl := HSlider.new()
+	sl.min_value = range_spec[TimeRules.MINIMUM] * units
+	sl.max_value = range_spec[TimeRules.MAXIMUM] * units
+	sl.step = step
+	sl.value = initial
+	sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sl.custom_minimum_size = Vector2(220, 28)
+	UiFactory.style_slider(sl)
+	row.add_child(sl)
+	var val := UiFactory.label(_fmt_param(initial, as_percent), 32, UiFactory.C_ACCENT)
+	val.custom_minimum_size = Vector2(110, 0)
+	row.add_child(val)
+	sl.value_changed.connect(func(v: float) -> void:
+		time_rules[field] = v / units
+		val.text = _fmt_param(v, as_percent))
+	vb.add_child(row)
 
+static func _fmt_param(v: float, as_percent: bool) -> String:
+	return ("%d%%" % int(round(v))) if as_percent else str(int(round(v)))
 
-func _on_return_to_lobby() -> void:
-	_sent_ms = 0
-	_room_code = ""
-	_update_code_label()
-	_hide_wait_room()
+func _beta_payload() -> Dictionary:
+	if not PvpSession.beta_mode:
+		return {}
+	return {"beta": true, "time": TimeRules.normalized(time_rules)}
 
-func _on_room_closed() -> void:
-	_on_return_to_lobby()
-	_send_list_request()
-
-
-func _on_lobby_reconnect() -> void:
-	_rooms_by_mode.clear()
-	_room_code = ""
-	_update_code_label()
-	_redraw_cards()
+func _add_map_picker(vb: VBoxContainer) -> void:
+	var picker := MapPicker.new()
+	vb.add_child(picker)
+	picker.setup(Settings.mp_map_path, 2, 260.0, "地图(房主选;缩略图 = 开局地形简略图)")
+	Settings.mp_map_path = picker.selected
+	picker.picked.connect(func(p: String) -> void:
+		Settings.mp_map_path = p
+		Settings.save())

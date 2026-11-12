@@ -17,6 +17,18 @@ const C_INNER := Color(0.20, 0.55, 0.62, 1.0)    # 暗青内边框
 const C_TEXT := Color(0.92, 0.97, 1.0, 1.0)
 
 
+static func show_over(target: Node2D, show: bool) -> void:
+	var prompt := target.get_node_or_null(^"PickupPrompt") as PickupPrompt
+	if prompt == null:
+		if not show:
+			return
+		prompt = PickupPrompt.new()
+		prompt.name = "PickupPrompt"
+		prompt.scale = Vector2.ONE / target.scale.x
+		prompt.position.y = -GAP_ABOVE / target.scale.x
+		target.add_child(prompt)
+	prompt.visible = show
+
 func _ready() -> void:
 	z_index = 100   # 确保渲染层级高于角色与地面武器
 

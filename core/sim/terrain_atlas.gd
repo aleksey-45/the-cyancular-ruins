@@ -1,164 +1,180 @@
 class_name TerrainAtlas
 extends RefCounted
 
-# 地形图集与菜单地形图烘焙。
+const SKY_COLOR := Color("b0e5f6")
+const SOURCE_PATH := "res://assets/textures/structure.png"
+const TEX_COUNT := 22
+const SRC_COLS := 10
+const SRC_TILE := 32
+const QUAD_SRC := 8
+const QUAD_TILE := 16
+const QUAD_COLS := 16
+const GROUPS_PER_ROW := 4
+const SUB_PER_CELL := MapFormatV4.SUB_PER_CELL
+const WATER_BODY_BRICK := 20
+const WATER_SURFACE_BRICK := 21
 
-# 世界天空气氛底色（空气瓦片底色），供关卡清屏色与菜单背景渲染共用。
-const SKY_COLOR: Color = Color("b0e5f6")
-
-const SOURCE_PATH: String = "res://assets/textures/structure.png"
-const TEX_COUNT: int = 22      # 源砖 22 块(10 列 × 3 行,每块 32×32);纹理 id 1..22
-const SRC_COLS: int = 10       # 源砖表列数
-const SRC_TILE: int = 32       # 源砖边长
-const QUAD_SRC: int = 8        # 源砖拆成 4×4 个 8×8 象限
-const QUAD_TILE: int = 16      # 每个象限最近邻放大 2× → 16×16
-const QUAD_COLS: int = 16      # 图集列数 = 4×4 象限
-const SUB_PER_CELL: int = 4    # 一个 64px 格 = 4×4 个 16px 子格(与 cyrm v4 网格一致)
-# 水体与水面的源砖索引（0-based 图集索引）：20 = 水，21 = 水面。
-const WATER_BODY_BRICK: int = 20
-const WATER_SURFACE_BRICK: int = 21
-
-static var _src_cache: Image = null
-static var _brick_cache: Dictionary = {}    # (ts, brick) → ts×ts 水砖 Image
-static var _tex_cache: Dictionary = {}      # "path|cell_px|air" → ImageTexture
-
+static var _src_cache: Image
+static var _brick_cache: Dictionary = {}
+static var _tex_cache: Dictionary = {}
 
 static func clear_cache() -> void:
 	_src_cache = null
 	_brick_cache.clear()
 	_tex_cache.clear()
 
-
-
 static func source_image() -> Image:
 	if _src_cache == null:
 		var tex: Texture2D = load(SOURCE_PATH)
-		if tex == null:
-			push_error("TerrainAtlas: 找不到源砖图 %s" % SOURCE_PATH)
-			_src_cache = Image.create(1, 1, false, Image.FORMAT_RGBA8)
-		else:
-			_src_cache = tex.get_image()
+		_src_cache = tex.get_image()
 	return _src_cache
 
-
-# 第 idx 块源砖(0-based,idx = 纹理 id - 1)在源砖表里的矩形。
+# 源砖使用从零开始的图集编号。
 static func source_rect(idx: int) -> Rect2i:
 	return Rect2i((idx % SRC_COLS) * SRC_TILE, (idx / SRC_COLS) * SRC_TILE, SRC_TILE, SRC_TILE)
 
+static func descriptor_rows(descriptors: PackedInt32Array) -> Dictionary:
+	var rows := {}
+	for desc in descriptors:
+		var tex := MapFormatV4.descriptor_texture(desc)
+		if tex > 0 and tex <= TEX_COUNT:
+			rows.get_or_add(desc, rows.size())
+	return rows
 
+static func atlas_coords(group: int, variant: int) -> Vector2i:
+	return Vector2i((group % GROUPS_PER_ROW) * QUAD_COLS + variant, group / GROUPS_PER_ROW)
 
-# 16 列（4x4 象限）x 22 行（纹理）图集：每块源砖的每个 8x8 象限最近邻放大为 16x16。
-static func build_atlas_image() -> Image:
-	var src_img := source_image()
-	var atlas := Image.create(QUAD_COLS * QUAD_TILE, TEX_COUNT * QUAD_TILE, false, Image.FORMAT_RGBA8)
-	atlas.fill(Color(0, 0, 0, 0))
-	for tex in range(TEX_COUNT):
-		var src := source_rect(tex)
-		for qy in range(4):
-			for qx in range(4):
-				# 每个象限独立创建图像并缩放，避免脏区域相互污染
-				var q := Image.create(QUAD_SRC, QUAD_SRC, false, Image.FORMAT_RGBA8)
-				q.blit_rect(src_img, Rect2i(src.position.x + qx * QUAD_SRC,
-						src.position.y + qy * QUAD_SRC, QUAD_SRC, QUAD_SRC), Vector2i.ZERO)
-				q.resize(QUAD_TILE, QUAD_TILE, Image.INTERPOLATE_NEAREST)
-				atlas.blit_rect(q, Rect2i(0, 0, QUAD_TILE, QUAD_TILE),
-						Vector2i((qy * 4 + qx) * QUAD_TILE, tex * QUAD_TILE))
+static func _atlas_image(tile: int, count: int) -> Image:
+	var groups := maxi(1, count)
+	return Image.create(mini(groups, GROUPS_PER_ROW) * QUAD_COLS * tile,
+			ceili(float(groups) / GROUPS_PER_ROW) * tile, false, Image.FORMAT_RGBA8)
+
+## 与编辑器 tint.js 使用相同的 HSV、透明度和字节取整规则。
+static func tint_color(color: Color, tint: int) -> Color:
+	if (tint & MapFormatV4.TINT_MASK) == MapFormatV4.NEUTRAL_TINT:
+		return color
+	var r := roundi(color.r * 255.0) / 255.0
+	var g := roundi(color.g * 255.0) / 255.0
+	var b := roundi(color.b * 255.0) / 255.0
+	var peak := maxf(r, maxf(g, b))
+	var chroma := peak - minf(r, minf(g, b))
+	var hue := 0.0
+	if chroma > 0.0:
+		if peak == r:
+			hue = 60.0 * fposmod((g - b) / chroma, 6.0)
+		elif peak == g:
+			hue = 60.0 * ((b - r) / chroma + 2.0)
+		else:
+			hue = 60.0 * ((r - g) / chroma + 4.0)
+	hue = fposmod(fposmod(hue, 360.0) + ((tint & 7) - 4) * 15.0, 360.0)
+	var saturation_scale := (((tint >> 6) & 7) + 6) / 10.0
+	var brightness_scale := (((tint >> 3) & 7) + 6) / 10.0
+	var saturation := 0.0 if peak == 0.0 else clampf(chroma / peak * saturation_scale, 0.0, 1.0)
+	var value := clampf(peak * brightness_scale, 0.0, 1.0)
+	var span := value * saturation
+	var offset := value - span
+	var mid := span * (1.0 - absf(fposmod(hue / 60.0, 2.0) - 1.0))
+	var hi := roundi((span + offset) * 255.0)
+	var lo := roundi(offset * 255.0)
+	var blend := roundi((mid + offset) * 255.0)
+	var alpha_scale := ((tint >> 9) & 7) / 7.0
+	var alpha := roundi((roundi(color.a * 255.0) / 255.0) * alpha_scale * 255.0)
+	match int(hue / 60.0):
+		0: return Color8(hi, blend, lo, alpha)
+		1: return Color8(blend, hi, lo, alpha)
+		2: return Color8(lo, hi, blend, alpha)
+		3: return Color8(lo, blend, hi, alpha)
+		4: return Color8(blend, lo, hi, alpha)
+		_: return Color8(hi, lo, blend, alpha)
+
+static func _colored_brick(brick: int, tint: int) -> Image:
+	var image := source_image().get_region(source_rect(brick))
+	if (tint & MapFormatV4.TINT_MASK) != MapFormatV4.NEUTRAL_TINT:
+		for y in SRC_TILE:
+			for x in SRC_TILE:
+				image.set_pixel(x, y, tint_color(image.get_pixel(x, y), tint))
+	return image
+
+static func build_atlas_image(rows: Dictionary) -> Image:
+	var atlas := _atlas_image(QUAD_TILE, rows.size())
+	for desc in rows:
+		var brick := _colored_brick(MapFormatV4.descriptor_texture(desc) - 1, desc)
+		for quad in QUAD_COLS:
+			var origin := Vector2i(quad % SUB_PER_CELL, quad / SUB_PER_CELL) * QUAD_SRC
+			var q := brick.get_region(Rect2i(origin, Vector2i.ONE * QUAD_SRC))
+			q.resize(QUAD_TILE, QUAD_TILE, Image.INTERPOLATE_NEAREST)
+			atlas.blit_rect(q, Rect2i(Vector2i.ZERO, q.get_size()), atlas_coords(rows[desc], quad) * QUAD_TILE)
 	return atlas
 
+static func make_wall_tileset(rows: Dictionary) -> TileSet:
+	return _tileset(build_atlas_image(rows), QUAD_TILE, rows.size())
 
-# 墙体/所有非空气砖的 TileSet(16×16,16 列象限 × 22 行纹理)。
-static func make_wall_tileset() -> TileSet:
-	var atlas_img := build_atlas_image()
+static func _tileset(image: Image, tile: int, groups: int) -> TileSet:
 	var tile_set := TileSet.new()
-	tile_set.tile_size = Vector2i(QUAD_TILE, QUAD_TILE)
+	tile_set.tile_size = Vector2i.ONE * tile
 	var atlas := TileSetAtlasSource.new()
-	atlas.texture_region_size = Vector2i(QUAD_TILE, QUAD_TILE)
-	atlas.texture = ImageTexture.create_from_image(atlas_img)
+	atlas.texture_region_size = tile_set.tile_size
+	atlas.texture = ImageTexture.create_from_image(image)
 	tile_set.add_source(atlas)
-	for q in range(QUAD_COLS):
-		for tex in range(TEX_COUNT):
-			atlas.create_tile(Vector2i(q, tex))
+	for group in groups:
+		for variant in QUAD_COLS:
+			atlas.create_tile(atlas_coords(group, variant))
 	return tile_set
 
-
-
-# 指定源砖放大到 ts×ts——水体与水面各自使用用途对应的索引，缓存按 (ts, brick) 分离。
-static func water_brick_image(ts: int, brick: int) -> Image:
-	var key := Vector2i(ts, brick)
+# 水体和水面共用辅码，分别取各自的源砖。
+static func water_brick_image(ts: int, brick: int, tint: int = MapFormatV4.NEUTRAL_TINT) -> Image:
+	var key := Vector3i(ts, brick, tint & MapFormatV4.TINT_MASK)
 	if _brick_cache.has(key):
 		return _brick_cache[key]
-	var src_img := source_image()
-	var img := Image.create(SRC_TILE, SRC_TILE, false, Image.FORMAT_RGBA8)
-	img.blit_rect(src_img, source_rect(brick), Vector2i.ZERO)
+	var img := _colored_brick(brick, tint)
 	img.resize(ts, ts, Image.INTERPOLATE_NEAREST)
 	_brick_cache[key] = img
 	return img
 
+static func make_water_tileset(ts: int, brick: int, rows: Dictionary) -> TileSet:
+	var half := ts / 2
+	var atlas := _atlas_image(ts, rows.size())
+	for tint in rows:
+		var img := water_brick_image(ts, brick, tint)
+		for shape in QUAD_COLS:
+			var at := atlas_coords(rows[tint], shape) * ts
+			for bit in 4:
+				if (shape & (1 << bit)) != 0:
+					var offset := Vector2i(bit % 2, bit / 2) * half
+					atlas.blit_rect(img, Rect2i(offset, Vector2i.ONE * half), at + offset)
+	return _tileset(atlas, ts, rows.size())
 
-# 构建水体专用的 TileSet 图集（包含 16 种 2x2 掩码形态）。
-static func make_water_tileset(ts: int, brick: int) -> TileSet:
-	var img := water_brick_image(ts, brick)
-	var half: int = ts / 2
-	var atlas_img := Image.create(16 * ts, ts, false, Image.FORMAT_RGBA8)
-	atlas_img.fill(Color(0, 0, 0, 0))
-	for shape in range(16):
-		var tile := img.duplicate()
-		for sy in range(2):
-			for sx in range(2):
-				if (shape & (1 << (sy * 2 + sx))) == 0:
-					tile.fill_rect(Rect2i(sx * half, sy * half, half, half), Color(0, 0, 0, 0))
-		atlas_img.blit_rect(tile, Rect2i(0, 0, ts, ts), Vector2i(shape * ts, 0))
-	var tile_set := TileSet.new()
-	tile_set.tile_size = Vector2i(ts, ts)
-	var atlas := TileSetAtlasSource.new()
-	atlas.texture_region_size = Vector2i(ts, ts)
-	atlas.texture = ImageTexture.create_from_image(atlas_img)
-	tile_set.add_source(atlas)
-	for shape in range(16):
-		atlas.create_tile(Vector2i(shape, 0))
-	return tile_set
-
-
-
-# 以关卡子格图集烘焙地图，并预合成空气底色。
-static func bake_map_image(path: String, cell_px: int, air: Color) -> Image:
-	var sp: int = maxi(1, cell_px / SUB_PER_CELL)      # 每个子格占几像素
-	# 图集先与空气色合成(得到一张不透明的全图集),再整体缩到 sp/象限 —— 只做一次
-	# 原生缩放,而不是对每个子格各缩一次。
-	var atlas := build_atlas_image()
-	var flat := Image.create(QUAD_COLS * QUAD_TILE, TEX_COUNT * QUAD_TILE, false, Image.FORMAT_RGBA8)
+# 菜单背景复用关卡的子格图集，先将图集合成到天空底色，再整体缩放。
+static func _bake_map_image(map: Dictionary, cell_px: int, air: Color) -> Image:
+	var sp := maxi(1, cell_px / SUB_PER_CELL)
+	var descriptors: PackedInt32Array = map["descriptors"]
+	var rows := descriptor_rows(descriptors)
+	var atlas := build_atlas_image(rows)
+	var flat := Image.create(atlas.get_width(), atlas.get_height(), false, Image.FORMAT_RGBA8)
 	flat.fill(air)
-	flat.blend_rect(atlas, Rect2i(0, 0, flat.get_width(), flat.get_height()), Vector2i.ZERO)
-	var small := flat.duplicate()
-	small.resize(QUAD_COLS * sp, TEX_COUNT * sp, Image.INTERPOLATE_NEAREST)
+	flat.blend_rect(atlas, Rect2i(Vector2i.ZERO, atlas.get_size()), Vector2i.ZERO)
+	flat.resize(atlas.get_width() / QUAD_TILE * sp, atlas.get_height() / QUAD_TILE * sp, Image.INTERPOLATE_NEAREST)
+	var sub_size: Vector2i = map["size"] * SUB_PER_CELL
+	var out := Image.create(sub_size.x * sp, sub_size.y * sp, false, Image.FORMAT_RGBA8)
+	out.fill(air)
+	for i in descriptors.size():
+		var desc := descriptors[i]
+		if not rows.has(desc):
+			continue
+		var sub := Vector2i(i % sub_size.x, i / sub_size.x)
+		var quad := (sub.y % SUB_PER_CELL) * SUB_PER_CELL + sub.x % SUB_PER_CELL
+		var at := atlas_coords(rows[desc], quad) * sp
+		out.blit_rect(flat, Rect2i(at, Vector2i.ONE * sp), sub * sp)
+	return out
 
-	var subgrid := MapFormat.load_subgrid(path)
-	if subgrid.is_empty():
+static func terrain_texture(path: String, cell_px: int, air: Color) -> ImageTexture:
+	var map := MapFormat.load_map(path)
+	if map.is_empty():
 		push_error("TerrainAtlas: 地图为空,无法烘背景 %s" % path)
 		var blank := Image.create(1, 1, false, Image.FORMAT_RGBA8)
 		blank.fill(air)
-		return blank
-	var rows := subgrid.size()
-	var cols: int = (subgrid[0] as Array).size()
-	var out := Image.create(cols * sp, rows * sp, false, Image.FORMAT_RGBA8)
-	out.fill(air)
-	for y in range(rows):
-		var row: Array = subgrid[y]
-		var qy := y % SUB_PER_CELL
-		for x in range(cols):
-			var tex := int(row[x])
-			if tex < 1 or tex > TEX_COUNT:
-				continue                                # 0 = 空气;越界纹理当空气
-			var col := qy * SUB_PER_CELL + (x % SUB_PER_CELL)
-			out.blit_rect(small, Rect2i(col * sp, (tex - 1) * sp, sp, sp), Vector2i(x * sp, y * sp))
-	return out
-
-
-# 缓存纹理；建成后释放临时 Image。
-static func terrain_texture(path: String, cell_px: int, air: Color) -> ImageTexture:
-	var key := "%s|%d|%s" % [path, cell_px, str(air)]
-	if _tex_cache.has(key):
-		return _tex_cache[key]
-	var tex := ImageTexture.create_from_image(bake_map_image(path, cell_px, air))
-	_tex_cache[key] = tex
-	return tex
+		return ImageTexture.create_from_image(blank)
+	var key := [map["bytes"], cell_px, air]
+	if not _tex_cache.has(key):
+		_tex_cache[key] = ImageTexture.create_from_image(_bake_map_image(map, cell_px, air))
+	return _tex_cache[key]

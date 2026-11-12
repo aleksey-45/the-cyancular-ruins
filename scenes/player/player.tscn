@@ -4,7 +4,6 @@
 [ext_resource type="PackedScene" path="res://core/sim/actor_hulls.tscn" id="actor"]
 [ext_resource type="SpriteFrames" path="res://scenes/player/player_frames.tres" id="frames"]
 [ext_resource type="Script" path="res://scenes/player/weapon_component.gd" id="4_wpn"]
-[ext_resource type="Script" path="res://scenes/player/combat_component.gd" id="5_cmb"]
 
 [node name="Player" node_paths=PackedStringArray("animator", "weapon_slot") instance=ExtResource("actor")]
 scale = Vector2(2.5, 2.5)
@@ -24,9 +23,5 @@ autoplay = "idle"
 
 [node name="WeaponSlot" type="Node2D" parent="Visuals" unique_id=1424965295]
 
-
 [node name="Weapons" type="Node" parent="."]
 script = ExtResource("4_wpn")
-
-[node name="Combat" type="Node" parent="."]
-script = ExtResource("5_cmb")

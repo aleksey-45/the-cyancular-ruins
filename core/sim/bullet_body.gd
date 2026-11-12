@@ -1,156 +1,125 @@
 class_name BulletBody
 extends ServerBody
 
-# 弹丸物理与生命周期。弹丸是自管 RID 物理体：地形与角色接触都由
-# CollisionWorld.move_body() 统一运动求解，命中归属经挂载实例反查；
-# 引信、反弹、水域阻力与射程仍是 GDScript 玩法规则。
+enum AdvanceResult { MOVED, TERRAIN_HIT, ACTOR_HIT, RANGE_END, FUSE_END }
 
-enum AdvanceResult { MOVED, BOUNCED, TERRAIN_HIT, ACTOR_HIT, RANGE_END, FUSE_END }
+const MOTION_POS: int = 0
+const MOTION_VEL: int = 1
+const MOTION_TRAVELED: int = 2
+const MOTION_FUSE_ELAPSED: int = 3
+const MOTION_FUSE_DURATION: int = 4
+const MOTION_SIZE: int = 5
 
-@export var explodes := false
-@export var direct_hit_damage := 10
-@export var fuse_time := 0.5
-@export var hit_fuse_time := 0.1
-@export var explosion_radius := 128.0
-@export var explosion_damage := 35
-@export var explosion_knockback := 900.0
+static var _shapes := {}
 
-var entity_id := 0
-var type_id := 0
-var hit_damage := 0
-var speed := 0.0
-var size := 1.0
-var gravity_factor := 0.0
-var max_range := 0.0
+var entity_id: int
+var type_id: int
+var definition: Dictionary
+var hit_damage: int
+var hit_impact: float
+var max_range: float
+var gravity_factor: float
+var size: float
+var shape: RectangleShape2D
 var traveled := 0.0
-var hit_impact := 0.0
-var _fuse_elapsed := 0.0
-var _fuse_duration := 0.0
-var adjudicated := false
-var apply_damage := true
-var prediction_only := false
-var fuse_started := false
-var finished := false
-var exploded := false
+var fuse_elapsed := 0.0
+var fuse_duration := 0.0
+# 联机直击已结算给其他角色，标记随弹丸实例保留。
 var direct_hit := false
-var _fuse_active := false
-var adjudicated_pos := Vector2.ZERO
+
 var velocity_vec := Vector2.ZERO
-var impact_velocity := Vector2.ZERO
-# 本 tick 命中的角色归属；0 表示命中地形或非角色实体。
-var impact_role := 0
-# 命中现场数据：服务器结果对象全局复用，接触时立即抄值；归属经挂载实例反查。
 var impact_point := Vector2.ZERO
 var impact_normal := Vector2.ZERO
 var impact_collider_id := 0
-# 视觉投影偏移：逻辑与物理坐标保持规范区间，渲染按最近环面副本平移。
-var visual_offset := Vector2.ZERO
-var shape: Shape2D = null
+var rewind_hits := {}
 
-var _terrain: Terrain = null
-var _shooter_id := 0
-var _source_node_id := 0
-var _world_gravity := 0.0
-var _water_drag := 0.0
-var _bounce_damping := 0.0
-
+var _source_id: int
+var _combat: CombatSimulator
 
 var shooter: Node:
-	get:
-		return null if _shooter_id == 0 else instance_from_id(_shooter_id)
-	set(value):
-		_shooter_id = value.get_instance_id() if value != null else 0
+	get: return instance_from_id(_source_id) if _source_id != 0 else null
+
+func configure(combat: CombatSimulator, id: int, type: int, profile: Dictionary, source_id: int,
+		pos: Vector2, vel: Vector2, projectile_size: float, gravity: float,
+		rng: float, damage: int, force: float) -> void:
+	_combat = combat
+	entity_id = id
+	type_id = type
+	definition = profile
+	_source_id = source_id
+	size = projectile_size
+	gravity_factor = gravity
+	max_range = rng
+	hit_damage = damage
+	hit_impact = force
+	var dimensions: Vector2 = profile["shape"]
+	if not _shapes.has(dimensions):
+		var rect := RectangleShape2D.new()
+		rect.size = dimensions
+		_shapes[dimensions] = rect
+	shape = _shapes[dimensions]
+	position = GridPathfinder.wrap_to_range(pos, combat.terrain.map_size)
+	velocity_vec = vel
+	rotation = vel.angle()
+	scale = Vector2.ONE * size
+	collision_mask = CollisionWorld.LAYER_TERRAIN
+	if profile.has("collision_layers"):
+		collision_mask |= int(profile["collision_layers"])
+	else:
+		var owner := shooter as ActorBody
+		collision_mask |= CollisionWorld.LAYER_ENEMY
+		collision_mask |= (CollisionWorld.LAYER_TEAM_A | CollisionWorld.LAYER_TEAM_B) if owner.team == 0 \
+				else CollisionWorld.team_layer(3 - owner.team)
 
 func _enter_tree() -> void:
-	super()   # 空间挂接、层掩码提交与归属挂载
-	sync_collision_shape()
+	super()
+	PhysicsServer2D.body_add_shape(_rid, shape.get_rid())
+	CollisionWorld.sync_body_pose(_rid, global_transform)
+	if shooter is ActorBody:
+		PhysicsServer2D.body_add_collision_exception(_rid, (shooter as ActorBody).get_rid())
 
-# 场景载体给出弹丸形状；形状固定，进树时同步一次即可，位姿由运动路径持续写。
-func sync_collision_shape() -> void:
-	if not _world_space.is_valid():
-		return
-	var carrier := find_child("CollisionShape2D", true, false) as CollisionShape2D
-	CollisionWorld.sync_body_shapes(_rid, [carrier] if carrier != null else [], global_transform)
-
-func bind_physics(terrain: Terrain, gravity: float, drag: float, damping: float) -> void:
-	_terrain = terrain
-	_world_gravity = gravity
-	_water_drag = drag
-	_bounce_damping = damping
-
-func get_shooter() -> Node:
-	return null if _shooter_id == 0 else instance_from_id(_shooter_id)
-
-func set_source_node(value: Node) -> void:
-	_source_node_id = value.get_instance_id() if value != null else 0
-
-func get_source_node() -> Node:
-	return null if _source_node_id == 0 else instance_from_id(_source_node_id)
-
-## 弹丸只与对手队伍的玩家、敌人和地形碰撞；射手与队友穿透由层与显式排除给出。
-func bind_actor_layers(owner: ActorBody) -> void:
-	if owner == null:
-		return
-	var mask := collision_mask | CollisionWorld.LAYER_ENEMY
-	if owner.team == 1:
-		mask |= CollisionWorld.LAYER_TEAM_B
-	elif owner.team == 2:
-		mask |= CollisionWorld.LAYER_TEAM_A
-	else:
-		mask |= CollisionWorld.LAYER_TEAM_A | CollisionWorld.LAYER_TEAM_B
-	collision_mask = mask
-	_apply_layers()
-	# 射手本体（含镜像槽）加入碰撞例外，避免弹丸命中自己。
-	PhysicsServer2D.body_add_collision_exception(_rid, owner.get_rid())
+func _physics_process(delta: float) -> void:
+	var field := _combat.time_field
+	if field != null:
+		if field.is_rewinding():
+			return
+		delta = delta * field.player_speed_mult() if shooter is Player else field.world_delta(delta)
+	_combat.step_projectile(self, delta)
 
 func start_fuse(duration: float) -> void:
-	if not _fuse_active:
-		_fuse_duration = duration
-		fuse_started = true
-	_fuse_active = true
+	if fuse_duration == 0.0:
+		fuse_duration = duration
 
-func start_player_fuse() -> void:
-	if explodes:
-		start_fuse(hit_fuse_time)
+func bounce(normal: Vector2) -> void:
+	velocity_vec = velocity_vec.bounce(normal) * 0.6
+	if velocity_vec != Vector2.ZERO:
+		rotation = velocity_vec.angle()
+	CollisionWorld.sync_body_pose(_rid, global_transform)
 
-func _end_step(started: int) -> void:
-	PerformanceStats.end(PerformanceStats.PROJECTILE_STEP, started)
-
-func advance_physics(delta: float) -> int:
+func advance_physics(delta: float) -> AdvanceResult:
 	var started := PerformanceStats.begin()
-	if _terrain == null:
-		_end_step(started)
-		return AdvanceResult.MOVED
-	_terrain.flush_collisions()
 	impact_collider_id = 0
-	impact_role = 0
-	if gravity_factor > 0.0:
-		velocity_vec.y = float(velocity_vec.y) + _world_gravity * gravity_factor * delta
-		if not velocity_vec.is_zero_approx():
-			rotation = velocity_vec.angle()
-			CollisionWorld.sync_body_pose(_rid, global_transform)
-	if explodes and _fuse_active:
-		_fuse_elapsed += delta
-		if _fuse_elapsed >= _fuse_duration:
-			_end_step(started)
+	velocity_vec = ShotRules.flight_velocity(terrain, global_position, velocity_vec, gravity_factor, delta)
+	if gravity_factor > 0.0 and velocity_vec != Vector2.ZERO:
+		rotation = velocity_vec.angle()
+		CollisionWorld.sync_body_pose(_rid, global_transform)
+	if fuse_duration > 0.0:
+		fuse_elapsed += delta
+		if fuse_elapsed >= fuse_duration:
+			PerformanceStats.end(PerformanceStats.PROJECTILE_STEP, started)
 			return AdvanceResult.FUSE_END
-	if _terrain.water(global_position):
-		var factor := exp(-_water_drag * delta)
-		if factor < 1.0:
-			velocity_vec *= factor
-	var step := velocity_vec * delta
-	traveled += step.length()
-	var result := _sweep(step)
-	# 所有出口都回到规范坐标：可视副本只由 present_projection() 平移渲染子节点。
+	var motion := velocity_vec * delta
+	traveled += motion.length()
+	var result := _sweep(motion)
 	_wrap_bounds()
 	if result == AdvanceResult.MOVED and traveled >= max_range:
 		result = AdvanceResult.RANGE_END
-	_end_step(started)
+	PerformanceStats.end(PerformanceStats.PROJECTILE_STEP, started)
 	return result
 
 ## 位移按接缝拆成不超过镜像覆盖带的有限段，每段仍由统一运动求解。
 ## 跨接缝的长位移若一次走完，会越过对侧空档、漏掉规范世界里的中部形状。
-func _sweep(step: Vector2) -> int:
+func _sweep(step: Vector2) -> AdvanceResult:
 	var length := step.length()
 	if length <= 0.0:
 		return AdvanceResult.MOVED
@@ -165,79 +134,42 @@ func _sweep(step: Vector2) -> int:
 	return AdvanceResult.MOVED
 
 func _wrap_bounds() -> void:
-	var size := _terrain.size()
-	if size.x <= 0.0 or size.y <= 0.0:
-		return
-	var wrapped := GridPathfinder.wrap_to_range(global_position, size.x, size.y)
+	var wrapped := GridPathfinder.wrap_to_range(global_position, terrain.map_size)
 	if wrapped != global_position:
 		global_position = wrapped
 	CollisionWorld.sync_body_pose(_rid, global_transform)
 
-## 命中结算：先定实体归属，再决定弹跳、短引信或终止。
-## 榴弹撞角色同样要留下 impact_role，否则权威端找不到直击目标。
-func _contact(result: PhysicsTestMotionResult2D) -> int:
-	impact_velocity = velocity_vec
-	var rid := result.get_collider_rid()
+
+func _contact(result: PhysicsTestMotionResult2D) -> AdvanceResult:
 	impact_point = result.get_collision_point()
 	impact_normal = result.get_collision_normal()
 	impact_collider_id = result.get_collider_id()
-	var actor_layer := PhysicsServer2D.body_get_collision_layer(rid) & ~CollisionWorld.LAYER_TERRAIN
-	var node := impact_node()
-	if node is ActorBody:
-		impact_role = (node as ActorBody).role
-	if explodes:
-		start_fuse(hit_fuse_time if actor_layer != 0 else fuse_time)
-		velocity_vec = velocity_vec.bounce(result.get_collision_normal()) * _bounce_damping
-		if not velocity_vec.is_zero_approx():
-			rotation = velocity_vec.angle()
-		return AdvanceResult.BOUNCED
-	velocity_vec = Vector2.ZERO
-	if actor_layer == 0:
-		finished = true
-		return AdvanceResult.TERRAIN_HIT
-	if impact_role == 0:
-		finished = true
-	return AdvanceResult.ACTOR_HIT
+	var layer := PhysicsServer2D.body_get_collision_layer(result.get_collider_rid())
+	return AdvanceResult.TERRAIN_HIT if layer & CollisionWorld.LAYER_TERRAIN else AdvanceResult.ACTOR_HIT
 
-## 命中实体的挂载节点；地形等无挂载体返回 null。
-func impact_node() -> Node:
-	return null if impact_collider_id == 0 else instance_from_id(impact_collider_id)
+func impact_node() -> Node2D:
+	return instance_from_id(impact_collider_id) as Node2D if impact_collider_id != 0 else null
 
-static func _motion_from_dictionary(state: Dictionary) -> Dictionary:
-	return {"type_id": int(state["type_id"]), "pos": state["pos"], "vel": state["vel"],
-		"traveled": float(state["traveled"]), "fuse_elapsed": float(state["fuse_elapsed"]),
-		"fuse_duration": float(state["fuse_duration"]), "fuse_active": bool(state["fuse_active"]),
-		"direct_hit": bool(state["direct_hit"])}
+func motion_state() -> Array:
+	var state: Array = []
+	append_motion_state(state)
+	return state
 
-func visual_center() -> Vector2:
-	return global_position + visual_offset
+func append_motion_state(state: Array) -> void:
+	var start := state.size()
+	state.resize(start + MOTION_SIZE)
+	state[start + MOTION_POS] = position
+	state[start + MOTION_VEL] = velocity_vec
+	state[start + MOTION_TRAVELED] = traveled
+	state[start + MOTION_FUSE_ELAPSED] = fuse_elapsed
+	state[start + MOTION_FUSE_DURATION] = fuse_duration
 
-func motion_state() -> Dictionary:
-	return {"type_id": type_id, "pos": position, "vel": velocity_vec, "traveled": traveled,
-		"fuse_elapsed": _fuse_elapsed, "fuse_duration": _fuse_duration,
-		"fuse_active": _fuse_active, "direct_hit": direct_hit}
-
-# 数据侧位姿写入：节点变换与服务器变换一起更新。
-func _set_pose(pos: Variant, rot: Variant) -> void:
-	position = pos
-	rotation = rot
-	if _world_space.is_valid():
-		CollisionWorld.sync_body_pose(_rid, global_transform)
-
-func restore_motion(state: Dictionary) -> void:
-	var st := _motion_from_dictionary(state)
-	var rot: float = st["vel"].angle() if not (st["vel"] as Vector2).is_zero_approx() else rotation
-	_set_pose(st["pos"], rot)
-	velocity_vec = st["vel"]
-	traveled = st["traveled"]
-	_fuse_active = st["fuse_active"]
-	_fuse_elapsed = st["fuse_elapsed"]
-	_fuse_duration = st["fuse_duration"]
-	adjudicated_pos = position
-	adjudicated = true
-	finished = false
-	exploded = false
-	direct_hit = st["direct_hit"]
-	fuse_started = false
-	impact_role = 0
-	visual_offset = Vector2.ZERO
+func restore_motion(state: Array, start: int = 0) -> void:
+	position = state[start + MOTION_POS]
+	velocity_vec = state[start + MOTION_VEL]
+	if velocity_vec != Vector2.ZERO:
+		rotation = velocity_vec.angle()
+	traveled = state[start + MOTION_TRAVELED]
+	fuse_elapsed = state[start + MOTION_FUSE_ELAPSED]
+	fuse_duration = state[start + MOTION_FUSE_DURATION]
+	CollisionWorld.sync_body_pose(_rid, global_transform)

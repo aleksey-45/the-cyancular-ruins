@@ -16,18 +16,3 @@ const water_fx_bubble_interval: float = 0.12
 const water_drain_interval: float = 1.0    # 完全浸水状态下防水值（氧气）每 1s 扣除 1 点
 const water_recover_interval: float = 0.3  # 脱离水面暴露在空气中时每 0.3s 恢复 1 点
 const water_drown_damage_interval: float = 1.5  # 防水值耗尽后的溺水扣除生命值间隔（秒）
-
-var MAP_WIDTH: int
-var MAP_HEIGHT: int
-
-func _ready() -> void:
-	# 地图尺寸以实际加载的地图规格为准动态刷新
-	refresh_map_size()
-
-# 根据当前选定的地图文件重新计算世界像素尺寸。
-# PvP 服务端与单人模式切换地图后必须调用此方法更新：
-# 避免不同尺寸地图（如 125×75 与 150×100）导致环面回绕与寻路边界错位产生错误的物理阻挡。
-func refresh_map_size() -> void:
-	var cells := MapFormat.map_size(MazeGenerator.map_file_path())
-	MAP_WIDTH = cells.x * TILE_SIZE
-	MAP_HEIGHT = cells.y * TILE_SIZE

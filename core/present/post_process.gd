@@ -26,28 +26,17 @@ static func crop_scale(win_size: Vector2, world_vp_size: Vector2) -> Vector2:
 
 
 func _ready() -> void:
-	add_to_group("post_process")
 	layer = LAYER
 	# 游戏暂停（暂停菜单暂停场景树）时本层仍持续更新：受击红闪在 _process 中逐帧衰减，
 	# 保持 PROCESS_MODE_ALWAYS 避免暂停时屏幕残留受击红色。
 	process_mode = Node.PROCESS_MODE_ALWAYS
 
-	if world_viewport == null:
-		push_error("PostProcess: no world viewport assigned!")
-		return
-
 	var rect := ColorRect.new()
 	rect.name = "ShaderRect"
 	rect.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	call_deferred("add_child", rect)
-
-	var shader := load("res://core/present/post_process.gdshader") as Shader
-	if shader == null:
-		push_error("PostProcess: failed to load shader!")
-		return
 	_mat = ShaderMaterial.new()
-	_mat.shader = shader
+	_mat.shader = preload("res://core/present/post_process.gdshader")
 	_mat.set_shader_parameter("barrel_enabled", true)
 	_mat.set_shader_parameter("barrel_strength", barrel_strength)
 	_mat.set_shader_parameter("screen_tex", world_viewport.get_texture())
@@ -57,6 +46,7 @@ func _ready() -> void:
 	_mat.set_shader_parameter("crop_scale", crop_scale(vsize, world_viewport.size))
 
 	rect.material = _mat
+	add_child(rect)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -78,8 +68,7 @@ func set_health_ratio(hp: int, max_hp: int) -> void:
 	_low_hp_target = clampf((LOW_HP_THRESHOLD - ratio) / LOW_HP_THRESHOLD, 0.0, 1.0)
 
 
-# 受击红闪:strength 0-1(伤害越大越红),约 0.25s 衰减完。
-# combat.take_hit(单机)与 PvP hit_event→take_hit 都走这里,不用重复接线。
+# 单人受击和联机命中共用红闪。
 func flash_hit(strength: float = 1.0) -> void:
 	_hit_red = maxf(_hit_red, clampf(strength, 0.0, 1.0))
 

@@ -14,28 +14,23 @@ extends RefCounted
 #   - 消耗：同时扣除总余额与短期额度；超出短期额度后计入透支；透支达上限时锁定。
 #   - 恢复：以固定速率恢复，优先偿还透支额度，还清透支后解除锁定并恢复短期额度。
 #   - 吸收结晶：结晶吸收增加总余额（不超过上限）。
-# 信号只保留离散事件钩子（锁定/解锁）；余额与窗口数据由 HUD 每帧轮询直读，
-# 逐帧发数据信号没有接收方（watch_hud 每帧重绘指针，不依赖变更通知）。
 
 signal loan_locked
-signal loan_unlocked
 
-var initial := TimeParams.GRAIN_INITIAL
-var cap := TimeParams.GRAIN_CAP
-var window := TimeParams.SHORT_WINDOW
-var regen_rate := TimeParams.SHORT_REGEN
-var loan_max := TimeParams.LOAN_LIMIT
+var cap: float
+var window: float
+var regen_rate: float
+var loan_max: float
 
-var balance: float = TimeParams.GRAIN_INITIAL
+var balance: float
 var short_used: float = 0.0
 var loan_used: float = 0.0
 var locked := false
 
 
-func _init(initial_ := TimeParams.GRAIN_INITIAL, cap_ := TimeParams.GRAIN_CAP,
+func _init(initial: float = TimeParams.GRAIN_INITIAL, cap_: float = TimeParams.GRAIN_CAP,
 		window_ := TimeParams.SHORT_WINDOW, regen_ := TimeParams.SHORT_REGEN,
 		loan_max_ := TimeParams.LOAN_LIMIT) -> void:
-	initial = initial_
 	cap = cap_
 	window = window_
 	regen_rate = regen_
@@ -67,9 +62,8 @@ func spend(delta: float, rate: float) -> float:
 		loan_used += over
 		if loan_used >= loan_max:
 			loan_used = loan_max
-			if not locked:
-				locked = true
-				loan_locked.emit()
+			locked = true
+			loan_locked.emit()
 	return got
 
 
@@ -88,7 +82,6 @@ func regen(delta: float) -> void:
 		short_used = maxf(short_used - pay, 0.0)
 	if locked and loan_used <= 0.0:
 		locked = false
-		loan_unlocked.emit()   # 预留钩子:解锁时刻的 UI 反馈尚未实现(对应 flash_locked)
 
 
 ## 结晶入账(乌鸫击杀 300 等):只进总余额,夹上限。返回实际入账量。

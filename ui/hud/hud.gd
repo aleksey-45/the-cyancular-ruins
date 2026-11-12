@@ -25,6 +25,7 @@ const WATERPROOF_W := 18            # 每点氧气宽度（像素）
 const WATERPROOF_COLOR := Color(0.45, 0.72, 1.0)
 const WATERPROOF_BACK := Color(1, 1, 1, 0.16)     # 空槽底槽颜色
 
+var watch: WatchHud
 var _segments: Array[ColorRect] = []
 var _ghost_tweens: Array[Tween] = []  # 扣血受击白闪渐变动画
 var _last_cur := 0
@@ -52,17 +53,18 @@ const KILL_COUNTER_SCENE := preload("res://ui/hud/kill_counter.tscn")
 func _ready() -> void:
 	layer = LAYER
 	_build_kill_label()
-	# 怀表 HUD 界面组件，布局于生命条与氧气条下方
-	var watch := WatchHud.new()
-	watch.position = Vector2(MARGIN.x, MARGIN.y + 100.0)
-	add_child(watch)
-	# 时间模式中心标志组件
-	add_child(TimeSymbolHud.new())
+	var field := (get_parent() as Level0).time_field
+	if field != null:
+		watch = WatchHud.new(field.account, field)
+		watch.position = Vector2(MARGIN.x, MARGIN.y + 100.0)
+		add_child(watch)
+		field.account.loan_locked.connect(watch.flash_locked)
+		add_child(TimeSymbolHud.new(field))
 	var spawner: EnemySpawner = $"../EnemySpawner"
 	spawner.enemy_spawned.connect(_on_enemy_spawned)
-	_build_segments(_player.max_hp)
+	_build_segments(_player.sim_max_hp)
 	_player.hp_changed.connect(_on_hp)
-	_on_hp(_player.hp, _player.max_hp)
+	_on_hp(_player.sim_hp, _player.sim_max_hp)
 	_build_waterproof(_player.max_waterproof)
 	_player.waterproof_changed.connect(_on_waterproof)
 	_on_waterproof(_player.waterproof, _player.max_waterproof)
@@ -75,11 +77,11 @@ func _process(_delta: float) -> void:
 	# 刷新手持武器残弹数
 	if _ammo_label == null:
 		return
-	var w: WeaponBase = null
+	var w: GunBody = null
 	if is_instance_valid(_player):
-		w = _player.weapons.current_weapon()
+		w = _player.equipped
 	var show := w != null
-	_ammo_label.visible = show
+	_ammo_label.visible = show and w.has_magazine()
 	var prog := w.reload_progress() if show else -1.0
 
 	# 刷新丢弃按键长按进度条
@@ -92,15 +94,15 @@ func _process(_delta: float) -> void:
 		if dropping:
 			_drop_bar.size.x = WEAPON_ICON_W * clampf(dp, 0.0, 1.0)
 
-	if not show:
+	if not _ammo_label.visible:
 		return
 	# 弹药量低于 25% 时切换为黄色警告色
-	var low := w.mag_ammo <= int(ceilf(w.mag_size * 0.25))
+	var low := w.carried <= int(ceilf(int(w.definition["mag"]) * 0.25))
 	if low != _ammo_low:
 		_ammo_low = low
 		_ammo_label.add_theme_color_override("font_color",
 				UiFactory.C_WARN if low else UiFactory.C_TEXT)
-	_ammo_label.text = "%d/%d" % [w.mag_ammo, w.mag_size]
+	_ammo_label.text = "%d/%d" % [w.carried, int(w.definition["mag"])]
 
 
 # 构建左下角武器栏
@@ -247,13 +249,13 @@ func _build_segments(count: int) -> void:
 	plate.color = PLATE_COLOR
 	plate.position = Vector2(MARGIN.x - BAR_PLATE_PAD.x, MARGIN.y - BAR_PLATE_PAD.y)
 	plate.size = Vector2(bar_w + BAR_PLATE_PAD.x * 2.0, SEG_H + BAR_PLATE_PAD.y * 2.0)
-	call_deferred("add_child", plate)
+	add_child(plate)
 	for i in range(count):
 		var seg := ColorRect.new()
 		seg.position = Vector2(MARGIN.x + i * (SEG_W + SEG_GAP), MARGIN.y)
 		seg.size = Vector2(SEG_W, SEG_H)
 		seg.color = COLOR_NORMAL
-		call_deferred("add_child", seg)
+		add_child(seg)
 		_segments.append(seg)
 		_ghost_tweens.append(null)
 
@@ -282,19 +284,19 @@ func _build_waterproof(wp_max: int) -> void:
 	_wp_plate.size = Vector2(_wp_w + BAR_PLATE_PAD.x * 2.0, WATERPROOF_H + BAR_PLATE_PAD.y * 2.0)
 	_wp_plate.color = PLATE_COLOR
 	_wp_plate.modulate.a = 0.0
-	call_deferred("add_child", _wp_plate)
+	add_child(_wp_plate)
 	_wp_back = ColorRect.new()
 	_wp_back.position = Vector2(MARGIN.x, y)
 	_wp_back.size = Vector2(_wp_w, WATERPROOF_H)
 	_wp_back.color = WATERPROOF_BACK
 	_wp_back.modulate.a = 0.0
-	call_deferred("add_child", _wp_back)
+	add_child(_wp_back)
 	_wp_bar = ColorRect.new()
 	_wp_bar.position = Vector2(MARGIN.x, y)
 	_wp_bar.size = Vector2(_wp_w, WATERPROOF_H)
 	_wp_bar.color = WATERPROOF_COLOR
 	_wp_bar.modulate.a = 0.0
-	call_deferred("add_child", _wp_bar)
+	add_child(_wp_bar)
 
 func _on_waterproof(cur: int, max: int) -> void:
 	if _wp_bar != null:
@@ -350,7 +352,7 @@ func _build_kill_label() -> void:
 	_kill_label.text = "%03d" % _kills
 	_kill_label.add_theme_color_override("font_color", KILL_COLOR)
 	UiFactory.style_control(_kill_label, KILL_FONT_SIZE)
-	call_deferred("add_child", wrap)
+	add_child(wrap)
 
 func _on_enemy_spawned(enemy: EnemyBase) -> void:
 	enemy.died.connect(_on_enemy_died)
@@ -358,4 +360,3 @@ func _on_enemy_spawned(enemy: EnemyBase) -> void:
 func _on_enemy_died() -> void:
 	_kills += 1
 	_kill_label.text = "%03d" % _kills
-

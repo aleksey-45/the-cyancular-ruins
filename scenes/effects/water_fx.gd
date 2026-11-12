@@ -18,32 +18,28 @@ var _next_emit: float = 0.0
 
 
 func _process(delta: float) -> void:
-	var parent := get_parent() as Node2D
+	var parent := get_parent()
 	if parent == null:
-		return
-	if TileDefs.terrain.empty():
-		return
-	var off := Water.feet_offset(parent)
-	var feet := Vector2(parent.global_position.x, parent.global_position.y + off)
-	if not Water.is_in_water(feet):
 		return
 	if parent.velocity.length() < GameParameters.water_fx_move_threshold:
 		return  # 静止漂浮状态下不发射粒子
-	var surface_y := Water.surface_y_at(parent.global_position)
-	# 根据实体中心相对水面的深度切换效果：中心贴近水面（半浸入/漂浮状态）生成水花；深入水下则生成上升气泡
-	var depth := parent.global_position.y - surface_y
+	var feet := Water.feet(parent.collision_rect())
+	var depth: float = parent.terrain.water_depth(feet)
+	if depth == -INF:
+		return
+	var surface_y := feet.y - depth
 	_next_emit -= delta
 	if _next_emit > 0.0:
 		return
 	var host := parent.get_parent()
 	if host == null:
 		return
-	if depth <= GameParameters.water_fx_splash_band:
+	if parent.global_position.y - surface_y <= GameParameters.water_fx_splash_band:
 		_next_emit = GameParameters.water_fx_splash_interval
-		_spawn(host, Vector2(parent.global_position.x, surface_y), true)
+		_spawn(host, Vector2(feet.x, surface_y), true)
 	else:
 		_next_emit = GameParameters.water_fx_bubble_interval
-		_spawn(host, Vector2(parent.global_position.x, parent.global_position.y + off), false)
+		_spawn(host, feet, false)
 
 
 func _spawn(host: Node, at: Vector2, splash: bool) -> void:

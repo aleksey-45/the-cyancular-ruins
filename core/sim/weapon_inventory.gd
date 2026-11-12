@@ -4,8 +4,6 @@ extends RefCounted
 # 武器背包逻辑实现：管理持有的武器列表与背包容量预算（纯逻辑，无 Autoload 依赖）。
 #
 # 设计说明：
-# - 武器量级数值与 WeaponBase.Tier 对齐（LIGHT=0, MEDIUM=1, HEAVY=2），但不直接引用
-#   WeaponBase，避免将场景预加载依赖引入背包数据层。
 # - 容量上限（默认 8 格）与武器数量上限（默认 4 把）为双重约束条件。
 # - 背包容量与数量上限作为实例属性维护，支持不同模式或角色特性动态调整。
 # - 武器按三元组扁平存放：快照就是整段整数复制，采集与恢复都不构造条目对象。
@@ -22,24 +20,20 @@ const DEFAULT_CAPACITY := 8
 var max_weapons: int = DEFAULT_MAX_WEAPONS
 var capacity: int = DEFAULT_CAPACITY
 
-# 条目中的 mag == MAG_FULL 表示满弹状态（加入场景树后不覆盖武器 _ready 初始化的弹药）
-const MAG_FULL := -1
+# 默认携带状态由装备类型解释。
+const DEFAULT_CARRIED := -1
 
 # 条目三元组布局：第 i 把武器的字段起点为 i * STRIDE
 const STRIDE := 3
 const TYPE := 0
 const INST := 1
-const MAG := 2
+const CARRIED := 2
 
 # 背包武器列表，按获得顺序排列，每 STRIDE 个整数为一把武器。
-# 每个武器实例分配唯一自增的 inst ID，用于精确追踪具体武器的剩余弹药。
+# 每个武器实例分配唯一自增的 inst ID，用于追踪具体装备的携带状态。
 var items: PackedInt32Array = []
 
-var _tiers: Dictionary         # type_id -> tier
 var _next_inst: int = 1
-
-func _init(tiers: Dictionary) -> void:
-	_tiers = tiers
 
 func count() -> int:
 	return items.size() / STRIDE
@@ -50,44 +44,37 @@ func type_at(index: int) -> int:
 func inst_at(index: int) -> int:
 	return items[index * STRIDE + INST]
 
-func mag_at(index: int) -> int:
-	return items[index * STRIDE + MAG]
+func carried_at(index: int) -> int:
+	return items[index * STRIDE + CARRIED]
 
-func set_mag(index: int, mag: int) -> void:
-	items[index * STRIDE + MAG] = mag
-
-func set_entry(index: int, type_id: int, inst: int, mag: int) -> void:
-	var base := index * STRIDE
-	items[base + TYPE] = type_id
-	items[base + INST] = inst
-	items[base + MAG] = mag
-
-func tier_of(type_id: int) -> int:
-	return _tiers[type_id]
+func set_carried(index: int, carried: int) -> void:
+	items[index * STRIDE + CARRIED] = carried
 
 func cost_of(type_id: int) -> int:
-	return CELL_COST[tier_of(type_id)]
+	return CELL_COST[WeaponRegistry.definition(type_id)["tier"]]
 
 func used_cell_count() -> int:
-	var n := 0
-	for i in count():
-		n += cost_of(type_at(i))
-	return n
+	return cell_start(count())
 
 
-## 检查背包是否能够容纳指定类型的武器（同时满足数量上限与格子容量上限）
-func can_hold(type_id: int) -> bool:
-	if count() >= max_weapons:
-		return false
-	return used_cell_count() + cost_of(type_id) <= capacity
-
-func add(type_id: int, mag: int) -> int:
-	var inst := _next_inst
+## 优先新增，放不下时尝试替换指定槽位。返回写入的槽位，失败返回 -1。
+func try_add(type_id: int, carried: int, replace_index: int = -1) -> int:
+	var index := count()
+	var used := used_cell_count() + cost_of(type_id)
+	if index < max_weapons and used <= capacity:
+		items.resize(items.size() + STRIDE)
+	else:
+		if replace_index < 0 or replace_index >= index or index > max_weapons:
+			return -1
+		if used - cost_of(type_at(replace_index)) > capacity:
+			return -1
+		index = replace_index
+	var base := index * STRIDE
+	items[base + TYPE] = type_id
+	items[base + INST] = _next_inst
+	items[base + CARRIED] = carried
 	_next_inst += 1
-	items.append(type_id)
-	items.append(inst)
-	items.append(mag)
-	return inst
+	return index
 
 func remove_at(index: int) -> void:
 	if index < 0 or index >= count():
@@ -113,7 +100,7 @@ func cell_start(index: int) -> int:
 
 ## 只保留指定槽位的武器，其余丢弃
 func keep_only(index: int) -> void:
-	items = PackedInt32Array([type_at(index), inst_at(index), mag_at(index)])
+	items = PackedInt32Array([type_at(index), inst_at(index), carried_at(index)])
 
 ## 背包快照。Packed 数组赋值共用缓冲区，快照必须显式复制成独立缓冲
 ## 否则发出后的快照会随后续换弹、丢弃一起变动。

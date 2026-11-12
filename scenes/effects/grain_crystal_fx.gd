@@ -15,19 +15,20 @@ const ABSORB_TAIL := 0.8            # 吸收后再留一点尾巴让其余碎片
 const SHARD_COLOR := Color8(18, 18, 22)        # 结晶外观颜色
 const CORE_COLOR := Color8(70, 70, 78)         # 黑结晶上的冷灰亮芯(保留体积感)
 
-var amount: int = TimeParams.ELITE_GRAIN_DROP
+var amount: int
+var _account: GrainAccount
+var _watch: WatchHud
 var _shards: Array = []             # [{p, v, size}]
 var _t := 0.0
 var _absorbed := false
 
 
-static func spawn(host: Node, world_pos: Vector2, amount_: int) -> void:
-	if host == null or not is_instance_valid(host):
-		return
+static func spawn(host: Node, world_pos: Vector2, amount_: int, account: GrainAccount, watch: WatchHud) -> void:
 	var fx := GrainCrystalFx.new()
 	fx.amount = amount_
+	fx._account = account
+	fx._watch = watch
 	fx.global_position = world_pos
-	fx.add_to_group("grain_crystal")
 	for i in SHARD_COUNT:
 		var ang := TAU * float(i) / float(SHARD_COUNT) + randf_range(-0.25, 0.25)
 		fx._shards.append({
@@ -55,10 +56,9 @@ func _process(delta: float) -> void:
 			var v: Vector2 = to * ARRIVE_RATE
 			if v.length() > MAX_FLY_SPEED:
 				v = v.normalized() * MAX_FLY_SPEED
-			s["v"] = v
 			var now: Vector2 = prev + v * delta
 			s["p"] = now - global_position
-			if (s["p"] as Vector2).length() > 8.0:
+			if now.distance_squared_to(target) > 64.0:
 				all_done = false
 			if not _absorbed and _segment_hits(prev, now, target, ABSORB_RADIUS):
 				_absorb()
@@ -82,14 +82,8 @@ static func _segment_hits(a: Vector2, b: Vector2, p: Vector2, r: float) -> bool:
 
 ## 计算怀表中心在世界空间中的目标位置
 func _watch_world_target() -> Vector2:
-	var tree := get_tree()
-	if tree == null:
-		return global_position
-	var watch: Control = tree.get_first_node_in_group("watch_hud") as Control
 	var cam := get_viewport().get_camera_2d()
-	if watch == null or cam == null:
-		return global_position
-	var screen_center: Vector2 = watch.get_global_rect().get_center()
+	var screen_center := _watch.get_global_rect().get_center()
 	var vp_size: Vector2 = get_viewport().get_visible_rect().size
 	return cam.get_screen_center_position() + (screen_center - vp_size * 0.5) / cam.zoom
 
@@ -98,11 +92,8 @@ func _absorb() -> void:
 	if _absorbed:
 		return
 	_absorbed = true
-	if Level0.grain_account != null:
-		Level0.grain_account.deposit(amount)
-	var watch := get_tree().get_first_node_in_group("watch_hud")
-	if watch != null:
-		watch.tremble()
+	_account.deposit(amount)
+	_watch.tremble()
 
 
 func _draw() -> void:

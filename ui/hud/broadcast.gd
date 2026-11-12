@@ -20,9 +20,6 @@ const STRIP_MIN_W := 640.0
 const PUNCH_SCALE := 0.06
 const PUNCH_DECAY := 4.0
 
-# 倒计时结束信号
-signal countdown_finished
-
 # 广播节点组件引用
 var mask: ColorRect = null
 var big: Label = null
@@ -96,9 +93,15 @@ func start_countdown(seconds: float, sub_text: String) -> void:
 	sub.text = sub_text
 	_set_big_text(str(maxi(ceili(_countdown), 1)))
 
-func is_counting() -> bool:
-	return _counting
-
+func show_series_phase(data: Dictionary) -> void:
+	match data["state"]:
+		NetEvent.RoundState.WAITING:
+			set_broadcast(true, "等待玩家加载", "")
+		NetEvent.RoundState.COUNTDOWN:
+			var round_number: int = data["round"]
+			start_countdown(data["timer"], "对战开始" if round_number == 1 else "第 %d 局" % round_number)
+		NetEvent.RoundState.PLAYING:
+			set_broadcast(false, "", "")
 
 # 驱动倒计时进度与动效衰减
 func tick(delta: float) -> void:
@@ -112,7 +115,6 @@ func tick(delta: float) -> void:
 		_set_big_text(str(maxi(ceili(_countdown), 1)))
 	else:
 		_counting = false
-		countdown_finished.emit()
 
 
 # 更新主文本并在内容发生变动时触发脉冲

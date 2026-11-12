@@ -6,5 +6,5 @@ extends RefCounted
 const POS := 0
 const VEL := 1
 const TYPE_ID := 2
-const MAG := 3
+const CARRIED := 3
 const SIZE := 4

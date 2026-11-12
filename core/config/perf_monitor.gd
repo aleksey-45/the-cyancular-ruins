@@ -83,8 +83,8 @@ func _process(_delta: float) -> void:
 				PerformanceStats.read(PerformanceStats.REPLAY, PerformanceStats.MEAN), PerformanceStats.read(PerformanceStats.REPLAY, PerformanceStats.MAXIMUM),
 				PerformanceStats.read(PerformanceStats.CALLBACK_INTERVAL, PerformanceStats.MAXIMUM)])
 		var corr := PredictionRollback.corr_stats()
-		print("PERF correction n=%.0f max=%.1f gap=%s reasons=%s" % [
-				corr["n"], corr["max"], JSON.stringify(corr["gap"]), JSON.stringify(corr["reasons"])])
+		print("PERF correction n=%.0f max=%.1f reasons=%s" % [
+				corr["n"], corr["max"], JSON.stringify(corr["reasons"])])
 
 func _exit_tree() -> void:
 	_flush_correction_samples()

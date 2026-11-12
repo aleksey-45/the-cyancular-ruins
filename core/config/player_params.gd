@@ -31,16 +31,9 @@ const player_swim_speed: float = 540.0    # 水中水平移速(≈0.77×700)
 const player_swim_up: float = -400.0      # 上浮速度
 const player_swim_down: float = 320.0     # 下沉速度
 const player_swim_accel: float = 6.0      # 水中水平缓动系数
-const swim_foot_min: float = 24.0        # 水体检测脚底偏移下限
 const player_waterproof_max: int = 10        # 防水值(氧气)上限
-const player_waterproof_damage: int = 5      # 防水值空后每秒扣除生命值
-# 呼吸扣减触发线:原判定「水面没过角色原点(≈胸口)才扣」;把参考线下移该像素到胸口下沿,
-# 使「大部分(约2/3)没入、头能露出」时就开始扣呼吸,且要浮到水面低于此线才回气。
-# (可调:越大=越早扣、要浮得越高才回气)
-const water_breath_line_offset: float = 10.0
+const player_waterproof_damage: int = 5      # 窒息每次扣除的生命值
 
-const cam_lookahead_x: float = 100.0   # 满速时的水平前瞻像素
-const cam_lookahead_y: float = 80.0    # 满速上升/下落时的垂直前瞻像素
 const cam_y_bias: float = -100.0       # 基础向上偏移(保留原 100px)
 const cam_smooth_x: float = 10.0       # X 平滑指数系数
 const cam_smooth_y: float = 8.0        # Y 平滑指数系数

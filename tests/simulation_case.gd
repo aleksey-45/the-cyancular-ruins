@@ -1,320 +1,764 @@
 extends "res://tests/case.gd"
 
-# 快照槽位由 PlayerStateSchema 唯一给出。
-static var POS := PlayerStateSchema.slot("pos")
-static var FLOOR := PlayerStateSchema.slot("floor")
-static var MAG := PlayerStateSchema.slot("mag")
-static var HP := PlayerStateSchema.slot("hp")
+const NEUTRAL_INPUT := [0.0, 0, 0, 0, 0, Vector2.RIGHT]
+const FORWARD_INPUT := [1.0, 0, 0, 0, 0, Vector2.RIGHT]
 
-class BetaWorld extends Node:
-	var players := {}
-	var bullets: Array = []
-	var time_economy := TimeEconomy.new(TimeRules.new())
-	var _round_state := NetEvent.RoundState.PLAYING
-	var _snap_tick := 0
-	var epoch_changes := 0
-	var events: Array = []
-	func live_bullets() -> Array: return bullets
-	func new_epoch(_role: int) -> void: epoch_changes += 1
-	func projectile_state(bullet: BulletBase) -> Dictionary: return bullet.motion_state()
-	func broadcast(kind: int, data: Variant) -> void: events.append([kind, data])
-
-# 团队复活测试用的最小世界：只需要玩家表。
-class FakeWorld extends Node:
-	var players: Dictionary = {}
-	var _round_num := 1
-
-# 只记录阶段顺序的模拟器；不执行弹丸物理或爆炸结算。
-class OrderSim extends CombatSimulator:
-	var order: Array = []
-	func _step_projectile(id: int) -> void:
-		order.append(["p", id])
-	func _step_blast(id: int) -> void:
-		order.append(["b", id])
+const POS: int = PlayerStateSchema.POS
+const FLOOR: int = PlayerStateSchema.GROUNDED
+const INV: int = PlayerStateSchema.INVENTORY
 
 func run(tree: SceneTree) -> void:
+	_equipment(tree)
+	_inventory_rewind(tree)
+	_compound_bow(tree)
+	_m249(tree)
+	_rounds(tree)
+	_water(tree)
 	_grenade(tree)
-	_terrain_contacts(tree)
-	_projectile_order(tree)
-	_downed_projectile(tree)
-	_blast_phase_order(tree)
-	var parent := world(tree)
-	var actor := player(parent)
-	var initial := actor.capture_state()
-	for tick in 32:
-		ActorStep.step(actor, InputBuffer.neutral())
-		if actor.capture_state()[FLOOR]: break
-	expect(actor.capture_state()[FLOOR] and actor.position.y < 192, "real terrain collision stops a falling actor")
-	actor.restore_state(initial)
-	ActorStep.step(actor, InputBuffer.neutral().merged({"ax": 1.0}, true))
-	expect(actor.position.x > initial[POS].x, "real actor/shape moves through the engine step")
-	actor.restore_state(initial)
-	var record := InputBuffer.neutral().merged({"ax": 1.0, "held": ActorInput.BIT_ATTACK, "pressed": ActorInput.BIT_ATTACK}, true)
-	var actions := ActorStep.step(actor, record)
-	expect(actions.any(func(action: Dictionary) -> bool: return action["kind"] == "fire"), "weapon produces a fire action")
-	expect(actor.capture_state()[MAG] == initial[MAG] - 1, "one shot consumes one round")
-	var simulated := actor.capture_state()
-	actor.present_tick(ActorStep.DT)
-	expect(actor.capture_state() == simulated, "presentation does not change simulation state")
-	actor.restore_state(initial)
-	ActorStep.step(actor, record)
-	expect(actor.capture_state() == simulated, "restoring actor and weapon reproduces the same tick")
-	actor.restore_state(initial)
-	_replay(actor)
-	_confirmed_lifecycle(actor, initial)
-	_world_rewind(parent, actor)
-	_beta_history(parent, actor)
+	_beam(tree)
+	_melee(tree)
+	_blast(tree)
+	_world_rewind(tree)
+	_rewind_window(tree)
+	_enemy_time(tree)
+	_beta_history(tree)
 	_dynamic_blocking(tree)
-	_swept_hit(tree)
-	_grenade_direct(tree)
-	_beam_targets(tree)
-	var prediction = preload("res://tests/prediction_case.gd").new()
-	prediction.run(tree)
-	prediction.cleanup()
-	checks += prediction.checks
-	failures.append_array(prediction.failures)
-	_authority_blast(tree)
-	_late_projectile(tree)
 	_team_rules()
 	_team_health(tree)
-	_blast_delay(tree)
+	_pickup_order()
+	_pickup_landing(tree)
 	_step_up(tree)
+	_step_side_landing(tree)
 	_mvp(tree)
 	_team_setup(tree)
 	_team_respawn(tree)
 	_camera(tree)
 
-func _terrain_contacts(tree: SceneTree) -> void:
+func _place(actor: Player, at: Vector2, team: int = 0) -> void:
+	actor.team = team
+	actor.global_position = at
+	collider(actor, CollisionWorld.team_layer(team))
+	actor.sync_collision_geometry()
+
+func _attack(held: int, pressed: int, released := 0) -> Array:
+	return [0.0, held, pressed, released, 0, Vector2.RIGHT]
+
+func _fires(actions: Array) -> Array:
+	return actions.filter(func(action: Dictionary) -> bool: return action["kind"] == "fire")
+
+func _water(tree: SceneTree) -> void:
+	var cells := {}
+	for y in range(4, 10):
+		cells[Vector2i(2, y)] = 21
+	for y in 16:
+		cells[Vector2i(5, y)] = 21
+	var parent := world_with_walls(tree, 8, 16, cells)
+	var actor := player(parent)
+	var step_at := func(y: float, delta: float) -> Array:
+		_place(actor, Vector2(160.0, y))
+		return ActorStep.step(actor, NEUTRAL_INPUT, delta)
+	var bank := 256.0 - (actor.collision_rect().end.y - actor.global_position.y)
+	step_at.call(bank + 7.0, ActorStep.DT)
+	expect(not actor.in_water, "shallow contact alone does not start swimming")
+	step_at.call(bank + 9.0, ActorStep.DT)
+	expect(actor.in_water, "feet below the entry depth start swimming")
+	step_at.call(bank - 1.0, ActorStep.DT)
+	expect(actor.in_water, "swimming holds just above the surface")
+	step_at.call(bank - 3.0, ActorStep.DT)
+	expect(not actor.in_water, "swimming ends beyond the exit margin")
+
+	# 水面在同一位置的站姿和蹲姿头顶之间。
+	var head_at_surface := 299.0
+	actor.waterproof = 1
+	step_at.call(head_at_surface, GameParameters.water_drain_interval)
+	expect(actor.in_water and actor.waterproof == 2, "a swimmer with their head out recovers oxygen")
+	actor.set_crouched(true)
+	step_at.call(head_at_surface, GameParameters.water_drain_interval)
+	expect(actor.waterproof == 1, "the same position drains oxygen with the crouched hull")
+
+	var sim := CombatSimulator.new(_terrain, parent, true)
+	var hits: Array = []
+	sim.player_hit.connect(func(source: int, _victim: Player, damage: int,
+			knock_changed: bool, _force: float) -> void:
+		hits.append([source, damage, knock_changed]))
+	var hp := actor.sim_hp
+	actor._controls_locked = true
+	sim.submit(actor, step_at.call(384.0, GameParameters.water_drain_interval))
+	expect(actor.sim_hp == hp and actor.waterproof == 1, "locked rounds pause water survival")
+	actor._controls_locked = false
+	sim.submit(actor, step_at.call(384.0, GameParameters.water_drain_interval))
+	sim.submit(actor, step_at.call(384.0, GameParameters.water_drown_damage_interval - 0.1))
+	expect(actor.waterproof == 0 and actor.sim_hp == hp, "exhausted oxygen starts the drowning interval")
+	sim.submit(actor, step_at.call(head_at_surface, 0.2))
+	expect(actor.sim_hp == hp and actor.waterproof == 0, "surfacing stops damage before oxygen recovers")
+	sim.submit(actor, step_at.call(384.0, GameParameters.water_drown_damage_interval - 0.1))
+	expect(actor.sim_hp == hp, "submerging again starts a fresh drowning interval")
+	var before := actor.capture_state()
+	var actions: Array = step_at.call(384.0, 0.2)
+	var after := actor.capture_state()
+	actor.restore_state(before)
+	expect(step_at.call(384.0, 0.2) == actions and actor.capture_state() == after and actor.sim_hp == hp,
+			"replayed drowning produces the same action without changing predicted HP")
+	actor.motion_knock_velocity = Vector2(20.0, 10.0)
+	var velocity := actor.velocity
+	sim.submit(actor, actions)
+	expect(actor.sim_hp == hp - PlayerParams.player_waterproof_damage and hits == [[0, PlayerParams.player_waterproof_damage, false]]
+			and actor.velocity == velocity and actor.motion_knock_velocity == Vector2(20.0, 10.0),
+			"PvP authority deducts drowning damage once without credit or knockback")
+
+	var bird: EnemyBase = preload("res://scenes/enemies/enemy_jump_bird.tscn").instantiate()
+	bird.combat_rules = sim
+	bird.position = Vector2(352.0, 8.0)
+	parent.add_child(bird)
+	bird._waterproof = 0
+	hp = bird.hp
+	bird._apply_water(EnemyParams.shared.drown_interval)
+	expect(bird.velocity.y < 0.0 and bird.velocity.y >= -EnemyParams.shared.bird_max_float
+			and bird.hp == hp - EnemyParams.shared.drown_damage,
+			"an enemy in a full water column ascends at a finite speed and takes drowning damage")
+	parent.remove_child(bird)
+	bird.queue_free()
+	cleanup()
+
+func _equipment(tree: SceneTree) -> void:
 	var parent := world(tree)
-	var bullet: BulletBase = preload("res://scenes/weapons/bullet.tscn").instantiate()
-	bullet.setup(Vector2.DOWN, 900.0, 600.0, 1.0, Color.WHITE, null)
-	bullet.hit_damage = 1
-	bullet.position = Vector2(136, 160)
-	parent.add_child(bullet)
+	var actor := player(parent)
+	var initial := actor.capture_state()
+	for tick in 32:
+		ActorStep.step(actor, NEUTRAL_INPUT)
+		if actor.capture_state()["actor"][FLOOR]: break
+	expect(actor.capture_state()["actor"][FLOOR] and actor.position.y < 192, "real terrain stops a falling actor")
+	actor.restore_state(initial)
+	ActorStep.step(actor, FORWARD_INPUT)
+	expect(actor.position.x > initial["actor"][POS].x, "movement still uses the real actor shape")
+	var attack := ActorInput.BIT_ATTACK
+	for type_id: int in WeaponRegistry.all_ids():
+		var spec := WeaponRegistry.definition(type_id)
+		actor.weapons.set_initial_inventory([type_id])
+		var sim := CombatSimulator.new(_terrain, parent, true)
+		actor.projectile_count = sim.count_projectiles.bind(actor)
+		var before := actor.capture_state()
+		var record := _attack(attack, attack)
+		if spec["trigger"] in [WeaponRegistry.Trigger.RELEASE, WeaponRegistry.Trigger.CHARGE_RELEASE]:
+			expect(_fires(ActorStep.step(actor, record)).is_empty() and (actor.equipped as GunBody).aiming,
+					"release weapon %d aims on press" % type_id)
+			record = _attack(0, 0, attack)
+			before = actor.capture_state()
+		elif spec["trigger_delay"] > 0.0:
+			var quiet := true
+			for tick in roundi(spec["trigger_delay"] / ActorStep.DT) - 1:
+				quiet = _fires(ActorStep.step(actor, record)).is_empty() and quiet
+				record = _attack(attack, 0)
+			expect(quiet, "delayed automatic weapon waits for its trigger time")
+			before = actor.capture_state()
+		var actions := ActorStep.step(actor, record)
+		var after := actor.capture_state()
+		expect(_fires(actions).size() == 1 and after["actor"][INV][WeaponInventory.CARRIED] == before["actor"][INV][WeaponInventory.CARRIED] - 1,
+				"equipped rule %d produces one shot and spends one round" % type_id)
+		actor.present_tick(ActorStep.DT)
+		expect(actor.capture_state() == after, "presentation leaves rule %d unchanged" % type_id)
+		actor.restore_state(before)
+		expect(ActorStep.step(actor, record) == actions and actor.capture_state() == after,
+				"restored rule %d reproduces both state and muzzle action" % type_id)
+		sim.submit(actor, actions)
+		var count := 0 if spec["attack"] == WeaponRegistry.Attack.BEAM else int(spec["count"])
+		expect(sim.projectiles.size() == count, "shot %d produces the configured number of projectiles" % type_id)
+		sim.clear()
+
+	var weapons := actor.weapons
+	weapons.set_initial_inventory([WeaponRegistry.Type.RIFLE, WeaponRegistry.Type.COMPOUND_BOW])
+	actor.equipped.carried = 3
+	var added := weapons.pick_up(WeaponRegistry.Type.PISTOL, 5)
+	expect(added == {"ok": true, "dropped": {}} and weapons.inventory.carried_at(0) == 3,
+			"pickup fills available space and saves the previous weapon's ammo")
+	actor.equipped.fire_cd_timer = 0.25
+	var full_loadout := actor.capture_state()
+	expect(not weapons.pick_up(WeaponRegistry.Type.M249, 7)["ok"] and actor.capture_state() == full_loadout,
+			"replacing a pistol with a heavy weapon at capacity leaves the loadout intact")
+	actor.equipped.carried = 4
+	var inst := weapons.current_inst()
+	var replaced := weapons.pick_up(WeaponRegistry.Type.PISTOL, 1)
+	var replacement_inst := weapons.current_inst()
+	expect(replaced == {"ok": true, "dropped": {"type": WeaponRegistry.Type.PISTOL, "carried": 4}}
+			and replacement_inst > inst and weapons.inst_at_index(2) == replacement_inst
+			and actor.equipped.carried == 1 and actor.equipped.fire_cd_timer == 0.25,
+			"a same-type replacement gets a fresh ID and keeps its slot, both ammo counts and cooldown")
+	actor.restore_state(full_loadout)
+	var restored_inst := weapons.current_inst()
+	weapons.pick_up(WeaponRegistry.Type.PISTOL, 1)
+	expect(restored_inst == inst and weapons.current_inst() > replacement_inst,
+			"restoring an earlier weapon preserves its ID and subsequent allocations keep increasing")
+	cleanup()
+
+func _inventory_rewind(tree: SceneTree) -> void:
+	var actor := player(world(tree))
+	var weapons := actor.weapons
+	weapons.set_initial_inventory([WeaponRegistry.Type.RIFLE, WeaponRegistry.Type.PISTOL])
+	var rifle := weapons.current_inst()
+	var pistol := weapons.inst_at_index(1)
+	weapons.equip_inst(pistol)
+	actor.equipped.carried = 5
+	weapons.equip_inst(rifle)
+	actor.equipped.carried = 3
+	var snapshot := actor.capture_rewind_state()
+	expect(weapons.inventory.carried_at(0) == 3, "equipped ammo is stored directly in its inventory slot")
+	actor.equipped.carried = 1
+	expect(snapshot.size() == 8 and snapshot[Player.RewindSlot.INVENTORY][WeaponInventory.CARRIED] == 3,
+			"solo rewind records only its own fields and captured ammo survives later mutations")
+	weapons.equip_inst(pistol)
+	actor.rewind_restore(snapshot)
+	expect(weapons.current_inst() == rifle and actor.equipped.carried == 3,
+			"solo rewind re-equips a still-owned weapon with its historical ammo")
+
+	var dropped := weapons.drop_current()
+	weapons.pick_up(dropped["type"], 9)
+	var picked_up := weapons.current_inst()
+	weapons.equip_inst(pistol)
+	actor.equipped.carried = 1
+	weapons.equip_inst(picked_up)
+	actor.rewind_restore(snapshot)
+	expect(weapons.inventory.index_of_inst(rifle) < 0 and picked_up > rifle
+			and weapons.current_inst() == picked_up and actor.equipped.carried == 9
+			and weapons.inventory.carried_at(0) == 5,
+			"solo rewind keeps ownership and restores ammo only to the same instance")
+
+	var seen := []
+	var ground_action := func(_player: Player, record: Array) -> void: seen.append(record[ActorInput.PRESSED])
+	var buttons := ActorInput.BIT_PICKUP | ActorInput.BIT_DROP
+	var record := _attack(0, buttons)
+	actor._controls_locked = true
+	actor.equipped.fire_cd_timer = ActorStep.DT
+	actor.equipped.fire_buffered = true
+	expect(_fires(ActorStep.step(actor, record, ActorStep.DT, ground_action)).is_empty()
+			and not actor.equipped.fire_buffered, "locked controls clear buffered attacks")
+	actor._controls_locked = false
+	actor.rewinding = true
+	ActorStep.step(actor, record, ActorStep.DT, ground_action)
+	actor.rewinding = false
+	actor.force_down()
+	ActorStep.step(actor, record, ActorStep.DT, ground_action)
+	actor.apply_authoritative_state(actor.sim_max_hp, actor.max_waterproof, false)
+	ActorStep.step(actor, record, ActorStep.DT, ground_action)
+	expect(seen == [buttons], "only an active actor can pick up or drop items")
+	cleanup()
+
+func _compound_bow(tree: SceneTree) -> void:
+	var parent := world_with_walls(tree, 32, 32, {})
+	var actor := player(parent)
+	_place(actor, Vector2(384, 384))
+	actor.weapons.set_initial_inventory([WeaponRegistry.Type.COMPOUND_BOW])
+	var attack := ActorInput.BIT_ATTACK
+	expect(_fires(ActorStep.step(actor, _attack(0, 0, attack))).is_empty(),
+			"a release on a newly equipped bow does not fire")
+	var tap := _fires(ActorStep.step(actor, _attack(0, attack, attack)))
+	expect(tap.size() == 1 and tap[0]["charge"] == 0.0, "a tap shoots at minimum charge")
+	actor.weapons.set_initial_inventory([WeaponRegistry.Type.COMPOUND_BOW])
+	var bow := actor.equipped as GunBody
+	var hold := _attack(attack, 0)
+	for tick in 36:
+		ActorStep.step(actor, hold)
+	var drawn := actor.capture_rewind_state()
+	var view := actor.weapons.weapon_view()
+	view.present_equipped(actor, bow, Vector2.RIGHT)
+	var guide := view._laser.points
+	var guide_next := view.to_global(guide[1])
+	var sim := CombatSimulator.new(_terrain, parent)
+	var release := ActorStep.step(actor, _attack(0, 0, attack))
+	sim.submit(actor, release)
+	var arrow: BulletBody = sim.projectiles.values()[0]
+	var id := arrow.entity_id
+	expect(arrow.hit_damage == 27 and is_equal_approx(arrow.velocity_vec.length(), 1250.0),
+			"the released arrow takes its speed and damage from the draw")
+	sim.step_projectile(arrow, ActorStep.DT)
+	expect(arrow.position.is_equal_approx(guide_next)
+			and view._explosion_marker == null,
+			"the bow guide uses arrow flight and has no explosion marker")
+
+	var rewind := WorldRewind.new(sim)
+	var dt := 1.0 / TimeParams.SNAP_HZ
+	rewind.record(dt, actor, [])
+	sim.erase_projectile(id)
+	rewind.record(dt, actor, [])
+	rewind.begin()
+	rewind.step(1.0, actor)
+	expect(sim.projectiles[id].hit_damage == 27, "rewinding restores the damage of an expired arrow")
+	rewind.finish()
+	actor.rewind_restore(drawn)
+	expect(is_equal_approx((actor.equipped as GunBody).charge_ratio(), 0.75),
+			"single-player rewind restores a partially drawn bow")
+	for tick in 20:
+		ActorStep.step(actor, hold)
+	expect((actor.equipped as GunBody).charge_ratio() == 1.0, "holding past full draw keeps charge capped")
+	cleanup()
+
+func _m249(tree: SceneTree) -> void:
+	var parent := world_with_walls(tree, 16, 16, {})
+	var actor := player(parent)
+	actor.weapons.set_initial_inventory([WeaponRegistry.Type.M249, WeaponRegistry.Type.PISTOL])
+	var attack := ActorInput.BIT_ATTACK
+	var hold := _attack(attack, 0)
+	var gun := actor.equipped as GunBody
+	expect(gun.carried == 100 and _fires(ActorStep.step(actor, hold, 0.2)).is_empty(),
+			"M249 starts with 100 rounds and waits while the trigger is held")
+	ActorStep.step(actor, _attack(0, 0, attack))
+	expect(gun.hold_elapsed == 0.0 and _fires(ActorStep.step(actor, hold, 0.2)).is_empty(),
+			"releasing the trigger starts a fresh delay")
+	var switch := hold.duplicate()
+	switch[ActorInput.WINST] = actor.weapons.inst_at_index(1)
+	ActorStep.step(actor, switch)
+	switch[ActorInput.WINST] = actor.weapons.inst_at_index(0)
+	ActorStep.step(actor, switch)
+	gun = actor.equipped as GunBody
+	expect(is_equal_approx(gun.hold_elapsed, ActorStep.DT), "switching equipment clears the previous trigger hold")
+	gun.carried = 1
+	expect(_fires(ActorStep.step(actor, hold, 0.3)).size() == 1 and gun.carried == 0 and gun.reloading,
+			"the last M249 round starts the normal reload")
+	expect(_fires(ActorStep.step(actor, hold)).is_empty(), "a held trigger cannot fire during reload")
+	gun.reload_left = ActorStep.DT
+	ActorStep.step(actor, NEUTRAL_INPUT)
+	expect(not gun.reloading and gun.carried == 100, "M249 reload fills its magazine")
+	cleanup()
+
+func _rounds(tree: SceneTree) -> void:
+	var parent := world(tree)
+	var actor := player(parent)
+	var sim := CombatSimulator.new(_terrain, parent, true)
+	var bullet := sim.spawn_projectile(1, WeaponRegistry.Type.PISTOL, actor.get_instance_id(),
+			Vector2(136, 160), Vector2.DOWN * 900.0)
 	var sub := Vector2i(8, 12)
-	var before := TileDefs.terrain.get_hp(sub)
+	var before := _terrain.get_hp(sub)
 	for i in 4:
-		bullet.simulate_tick(ActorStep.DT)
-		if bullet.finished: break
-	expect(bullet.finished and not bullet.is_physics_processing(), "ordinary terrain hit stops projectile simulation")
-	expect(TileDefs.terrain.get_hp(sub) == before - bullet.hit_damage, "ordinary projectile damages RID-backed terrain")
+		sim.step_projectiles(ActorStep.DT)
+		if sim.projectiles.is_empty(): break
+	expect(sim.projectiles.is_empty(), "an ordinary round ends on terrain contact")
+	expect(_terrain.get_hp(sub) == maxi(0, before - bullet.hit_damage),
+			"a projectile impact immediately damages the exact subcell")
 	cleanup()
 	var walls := {}
-	var texture := wall_texture(true)
-	for x in 8: walls[Vector2i(x, 3)] = texture
+	for x in 8: walls[Vector2i(x, 3)] = wall_texture(true)
 	parent = world_with_walls(tree, 8, 4, walls)
-	var actor := player(parent)
+	actor = player(parent)
 	for i in 40:
-		ActorStep.step(actor, InputBuffer.neutral())
+		ActorStep.step(actor, NEUTRAL_INPUT)
 		if not actor.motion_contacts.is_empty(): break
-	expect(not actor.motion_contacts.is_empty() and is_equal_approx(actor.velocity.y, -actor.elastic_bounce),
+	expect(not actor.motion_contacts.is_empty() and is_equal_approx(actor.velocity.y, -PlayerParams.elastic_bounce),
 			"actor bounces from elastic RID-backed terrain")
 	cleanup()
-
-## 同一 tick 的爆炸 ID 小于弹丸 ID 时，仍必须先推进全部弹丸，再结算到期爆炸。
-func _blast_phase_order(tree: SceneTree) -> void:
-	cleanup()
-	var parent := world(tree)
-	var local := player(parent, 1)
-	var type_id: int = WeaponRegistry.all_ids()[0]
-	var profile := WeaponRegistry.projectile_profile(type_id)
-	var bullet: BulletBase = profile["scene"].instantiate()
-	parent.add_child(bullet)
-	bullet.entity_id = 200
-	bullet.type_id = type_id
-	bullet.finished = false
-	var entry := ProjectileEntry.new()
-	entry.set_bullet(bullet)
-	entry.birth_tick = 100
-	entry.tick = 99
-	entry.active = true
-	var sim := OrderSim.new()
-	sim.projectiles = {200: entry}
-	sim.blasts = {100: {"id": 100, "tick": 97, "confirmed": true,
-			"type_id": type_id, "pos": Vector2.ZERO}}
-	sim.hits = {}
-	sim.ended = {}
-	sim.outcomes = {}
-	sim._keep = 4
-	sim._local_id = local.get_instance_id()
-	sim.step(100, [local], TileDefs.terrain, false)
-	expect(sim.order == [["p", 200], ["b", 100]],
-			"all projectiles advance before any due blast regardless of ID order")
-	bullet.free()
-	cleanup()
-
-func _projectile_order(tree: SceneTree) -> void:
-	var parent := world(tree)
+	parent = world_with_walls(tree, 16, 16, {})
 	var shooter := player(parent, 1)
 	var victim := player(parent, 2)
-	shooter.position = Vector2(64, 80)
-	victim.position = Vector2(256, 80)
-	victim.apply_collision_pose()
-	collider(victim, CollisionWorld.LAYER_TEAM_A)
-	var grenade_type := 0
-	for type_id in WeaponRegistry.all_ids():
-		if WeaponRegistry.scene_of(type_id) == "res://scenes/weapons/grenade_launcher.tscn": grenade_type = type_id
-	var grenade_profile := WeaponRegistry.projectile_profile(grenade_type)
-	victim.sim_hp = int(grenade_profile["explosion_damage"])
-	var initial := victim.capture_state()
-	var normal := {"type_id": WeaponRegistry.all_ids()[0], "pos": Vector2(180, 80), "vel": Vector2(3000, 0),
-			"traveled": 0.0, "fuse_active": false, "fuse_elapsed": 0.0, "fuse_duration": 0.0, "direct_hit": false}
-	var grenade := normal.merged({"type_id": grenade_type, "pos": Vector2(256, 120), "vel": Vector2(10, 0),
-			"fuse_active": true, "fuse_duration": 0.001}, true)
-	var id := (shooter.role << 48) | (1 << 8)
-	var combat := CombatPrediction.new()
-	combat.bind(victim)
-	combat.actors = {shooter.role: shooter, victim.role: victim}
-	for i in 2: combat.seed_projectile(id + i * 256, [normal, grenade][i], 99, shooter, false)
-	combat.step(100, [shooter, victim], false)
-	var predicted_hp := victim.sim_hp
-	var predicted_knock := victim.motion_knock_velocity
-	var normal_profile := WeaponRegistry.projectile_profile(normal["type_id"])
-	for i in 3:
-		combat.step(101 + i, [shooter, victim], false)
-	predicted_hp = victim.sim_hp
-	predicted_knock = victim.motion_knock_velocity
-	expect(predicted_hp == initial[HP] - int(normal_profile["damage"]) - int(grenade_profile["explosion_damage"]),
-			"the explosion settles three ticks after its trigger")
-	combat.clear()
-	victim.restore_state(initial)
-	combat.seed_projectile(id, normal, 99, shooter, false)
-	combat.projectiles[id].bullet.position = Vector2(60, 80)
-	combat.projectiles[id].bullet.max_range = 1.0
-	combat.step(100, [shooter, victim], false)
-	expect(victim.sim_hp == initial[HP], "range-ended projectile does not predict a contact the authority will skip")
-	combat.clear()
-	victim.restore_state(initial)
-	var authority := AuthorityWorld.new()
-	parent.add_child(authority)
-	authority.set_physics_process(false)
-	authority.players = {shooter.role: shooter, victim.role: victim}
-	authority.terrain = TileDefs.terrain
-	authority._snap_tick = 100
-	for actor in [shooter, victim]:
-		actor.authority_world = authority
-		authority._stats[actor.role] = {"dealt": 0, "taken": 0, "self_damage": 0, "team_damage": 0, "hits": {}}
-	for i in 2:
-		var state: Dictionary = [normal, grenade][i]
-		var profile := WeaponRegistry.projectile_profile(state["type_id"])
-		var bullet: BulletBase = profile["scene"].instantiate()
-		bullet.setup(state["vel"].normalized(), state["vel"].length(), profile["range"], profile["size"], profile["color"], null)
-		bullet.entity_id = id + i * 256
-		bullet.type_id = state["type_id"]
-		bullet.gravity_factor = profile["gravity"]
-		bullet.hit_damage = profile["damage"]
-		bullet.hit_impact = profile["impact"]
-		bullet.shooter = shooter
-		bullet.authority_world = authority
-		authority.add_projectile(bullet)
-		bullet.set_physics_process(false)
-		bullet.bind_actor_layers(shooter)
-		bullet.restore_motion(state)
-	authority._step_projectiles(ActorStep.DT)
-	for i in 3:
-		authority._snap_tick += 1
-		authority.settle_blasts()
-	expect(victim.sim_hp == predicted_hp and victim.motion_knock_velocity == predicted_knock,
-			"authority and prediction agree when direct contact and a delayed explosion overlap")
-	cleanup()
-
-# 倒地角色仍会被弹丸接触，但服务端已忽略伤害；预测端只消耗弹丸，不能继续扣血。
-func _downed_projectile(tree: SceneTree) -> void:
-	cleanup()
-	var parent := world_with_walls(tree, 16, 16, {})
-	var victim := player(parent, 1)
-	var shooter := player(parent, 2)
-	victim.team = 2
-	shooter.team = 1
-	victim.gravity = 0.0
-	shooter.gravity = 0.0
-	victim.global_position = Vector2(620, 544)
-	shooter.global_position = Vector2(300, 544)
-	victim.apply_collision_pose()
-	shooter.apply_collision_pose()
+	_place(shooter, Vector2(200, 512), 1)
+	_place(victim, Vector2(80, 512), 2)
+	sim = CombatSimulator.new(_terrain, parent, true)
+	var hp := victim.sim_hp
+	bullet = sim.spawn_projectile(1, WeaponRegistry.Type.PISTOL, shooter.get_instance_id(),
+			Vector2(1000, 512), Vector2.RIGHT * 30000.0)
+	sim.step_projectiles(ActorStep.DT)
+	expect(victim.sim_hp == hp - bullet.hit_damage and sim.projectiles.is_empty(),
+			"a fast round sweeps through the seam and settles its target hit")
+	expect(bullet.global_position.x >= 0.0 and bullet.global_position.x < _terrain.map_size.x,
+			"the swept impact also returns to canonical coordinates")
 	victim.force_down()
-	collider(victim, CollisionWorld.team_layer(victim.team))
-	var combat := CombatPrediction.new()
-	combat.bind(victim)
-	combat.actors = {victim.role: victim, shooter.role: shooter}
-	var type_id: int = WeaponRegistry.all_ids()[0]
-	var id: int = (shooter.role << 48) | (1 << 8)
-	var state := {"type_id": type_id, "pos": Vector2(560, 544), "vel": Vector2(3000, 0),
-			"traveled": 0.0, "fuse_active": false, "fuse_elapsed": 0.0, "fuse_duration": 0.0,
-			"direct_hit": false}
-	combat.seed_projectile(id, state, 99, shooter, true)
-	var before := victim.sim_hp
-	combat.step(100, [shooter, victim], false)
-	expect(victim.sim_hp == before, "a downed target does not take predicted projectile damage")
-	expect(combat.projectiles.has(id) and combat.projectiles[id].bullet.finished,
-			"a downed target still consumes the predicted projectile")
-	combat.clear()
+	victim.sync_collision_geometry()
+	hp = victim.sim_hp
+	sim.spawn_projectile(2, WeaponRegistry.Type.PISTOL, shooter.get_instance_id(),
+			Vector2(1000, 512), Vector2.RIGHT * 30000.0)
+	sim.step_projectiles(ActorStep.DT)
+	expect(victim.sim_hp == hp and sim.projectiles.is_empty(),
+			"the downed hull consumes the round without taking damage")
 	cleanup()
 
 func _grenade(tree: SceneTree) -> void:
-	var source: BulletBase = preload("res://scenes/weapons/grenade_bullet.tscn").instantiate()
-	expect(source.explodes, "grenade scene loads its explosive type")
-	var fields := ["explodes", "direct_hit_damage", "fuse_time", "hit_fuse_time",
-			"explosion_radius", "explosion_damage", "explosion_knockback"]
-	var expected := {}
-	for field in fields: expected[field] = source.get(field)
-	var packed := PackedScene.new()
-	expect(packed.pack(source) == OK, "grenade scene can be repacked for export")
-	var path := OS.get_temp_dir().path_join("cyr-grenade-%d.scn" % OS.get_process_id())
-	expect(ResourceSaver.save(packed, path) == OK, "grenade scene can be saved in binary format")
-	var binary := ResourceLoader.load(path, "PackedScene", ResourceLoader.CACHE_MODE_IGNORE) as PackedScene
-	var restored: BulletBase = binary.instantiate()
-	for field in fields:
-		expect(restored.get(field) == expected[field], "binary scene retains grenade %s" % field)
-	restored.free()
-	source.free()
-	DirAccess.remove_absolute(path)
+	var parent := world_with_walls(tree, 16, 16, {})
+	var shooter := player(parent, 1)
+	var victim := player(parent, 2)
+	_place(shooter, Vector2(200, 512), 1)
+	_place(victim, Vector2(600, 512), 2)
+	var sim := CombatSimulator.new(_terrain, parent, true)
+	sim.players = {1: shooter, 2: victim}
+	var type_id := WeaponRegistry.Type.GRENADE
+	var source := shooter.get_instance_id()
+	shooter.projectile_count = sim.count_projectiles.bind(shooter)
+	shooter.weapons.set_initial_inventory([type_id, WeaponRegistry.Type.PISTOL])
+	var bullet := sim.spawn_projectile(1, type_id, source, Vector2(500, 512), Vector2.RIGHT * 6000.0)
+	var blasts: Array = []
+	sim.detonated.connect(func(id: int, _at: Vector2, _radius: float) -> void: blasts.append(id))
+	var hp := victim.sim_hp
+	victim.rewinding = true
+	bullet.impact_collider_id = victim.get_instance_id()
+	ShotRules._projectile_hit(sim, bullet, Vector2.RIGHT, true)
+	expect(not bullet.direct_hit and victim.sim_hp == hp, "an immune player does not consume the grenade's direct hit")
+	victim.rewinding = false
+	sim.step_projectiles(ActorStep.DT)
+	expect(bullet.impact_node() == victim and victim.sim_hp == hp - bullet.hit_damage and bullet.direct_hit,
+			"a grenade bouncing off a player applies the direct hit once")
+	expect(bullet.velocity_vec.x < 0.0 and is_equal_approx(bullet.fuse_duration, 0.1),
+			"the direct hit arms the short fuse and reflects velocity")
+	var settled := victim.sim_hp
+	for tick in range(1, 12):
+		sim.tick = tick
+		sim.step_projectiles(ActorStep.DT)
+	expect(victim.sim_hp == settled and blasts == [1] and sim.projectiles.is_empty(),
+			"the grenade detonates once without repeating contact damage")
+	sim.clear_blasts()
+	for id in [2, 3, 4]:
+		sim.spawn_projectile(id, type_id, source, Vector2(50 + id, 100), Vector2.RIGHT)
+	var pistol: int = shooter.weapons.inst_at_index(1)
+	var grenade := shooter.weapons.current_inst()
+	shooter.weapons.equip_inst(pistol)
+	shooter.weapons.equip_inst(grenade)
+	var before := shooter.equipped.carried
+	var release := _attack(0, 0, ActorInput.BIT_ATTACK)
+	expect(_fires(ActorStep.step(shooter, release)).is_empty() and shooter.equipped.carried == before
+			and shooter.equipped.fire_cd_timer == 0.0,
+			"the cap counts live grenades across equipment switches without spending ammo or cooldown")
+	sim.erase_projectile(2)
+	expect(_fires(ActorStep.step(shooter, release)).size() == 1,
+			"removing a live grenade opens a slot for the next launch")
+	var ranged := sim.projectiles[3]
+	ranged.max_range = 0.0
+	sim.step_projectile(ranged, ActorStep.DT)
+	expect(blasts == [1, 3], "reaching maximum range detonates an unarmed grenade")
+	cleanup()
 
+func _beam(tree: SceneTree) -> void:
+	var texture := wall_texture()
+	var parent := world_with_walls(tree, 16, 16, {Vector2i(14, 8): texture})
+	var shooter := player(parent, 1)
+	var near := player(parent, 2)
+	var far := player(parent, 3)
+	var ally := player(parent, 4)
+	_place(shooter, Vector2(200, 544), 1)
+	_place(near, Vector2(480, 544), 2)
+	_place(far, Vector2(650, 544), 2)
+	_place(ally, Vector2(340, 544), 1)
+	shooter.weapons.set_initial_inventory([WeaponRegistry.Type.LASER])
+	var attack := ActorInput.BIT_ATTACK
+	var shots := ActorStep.step(shooter, _attack(attack, attack))
+	var before := near.sim_hp
+	var cell := Vector2i(14, 8)
+	_terrain.damage_tile(cell, _terrain.capture_cell(cell)["hp"] - 1, 1, 0)
+	var sim := CombatSimulator.new(_terrain, parent, true)
+	var beams: Array = []
+	sim.beam_fired.connect(func(_id: int, _shot: Dictionary, points: PackedVector2Array) -> void:
+		beams.append(points))
+	sim.submit(shooter, shots)
+	var damage: int = WeaponRegistry.definition(WeaponRegistry.Type.LASER)["damage"]
+	expect(near.sim_hp == before - damage and far.sim_hp == before - damage,
+			"the authoritative beam hits multiple targets, each once across reflections")
+	expect(ally.sim_hp == before and shooter.sim_hp == before, "the beam skips its shooter and allies")
+	expect(_terrain.value(cell) == 0, "the first beam destroys the wall in terrain data immediately")
+	ActorStep.step(ally, NEUTRAL_INPUT)
+	var bullet := sim.spawn_projectile(1, WeaponRegistry.Type.PISTOL, shooter.get_instance_id(),
+			Vector2(872, 544), Vector2.RIGHT * 3000.0)
+	sim.step_projectile(bullet, ActorStep.DT)
+	expect(sim.projectiles.is_empty(), "a projectile still collides with the broken wall in the same tick")
+	var next: Dictionary = shots[0].duplicate()
+	next["serial"] += 1
+	sim.fire(shooter, next)
+	expect(beams.size() == 2 and beams[0].size() >= 3 and beams[0] == beams[1],
+			"actor and projectile steps do not rebuild terrain collision between beams")
+	_terrain.flush_collisions()
+	next["serial"] += 1
+	sim.fire(shooter, next)
+	expect(beams.back().size() == 2, "the tick-end collision refresh removes the wall for the following beam")
+	var charged := WeaponRegistry.definition(WeaponRegistry.Type.LASER).merged({"min_damage": 2})
+	next["charge"] = 0.25
+	next["serial"] += 1
+	before = near.sim_hp
+	ShotRules.beam(sim, shooter, next, charged)
+	expect(near.sim_hp == before - 3, "a charged beam uses its interpolated damage")
+	cleanup()
+
+func _melee(tree: SceneTree) -> void:
+	const TYPE_ID := 9
+	WeaponRegistry._definitions[TYPE_ID] = WeaponRegistry.DEFAULTS.merged({
+		"tier": WeaponInventory.TIER_LIGHT, "attack": WeaponRegistry.Attack.MELEE,
+		"cooldown": 0.3, "damage": 7, "impact": 120.0, "range": 115.0, "hit_radius": 16.0,
+	}, true)
+	var parent := world_from_solid(tree, 8, 8, func(x: int, y: int) -> bool: return x == 3 and y == 8)
+	var shooter := player(parent, 1)
+	var target := player(parent, 2)
+	var ally := player(parent, 3)
+	var blocked := player(parent, 4)
+	_place(shooter, Vector2(470, 136), 1)
+	_place(target, Vector2(20, 136), 2)
+	_place(ally, Vector2(504, 136), 1)
+	_place(blocked, Vector2(68, 136), 2)
+	shooter.weapons.set_initial_inventory([TYPE_ID])
+	var sim := CombatSimulator.new(_terrain, parent, true)
+	var attack := ActorInput.BIT_ATTACK
+	var shots := ActorStep.step(shooter, _attack(attack, attack | ActorInput.BIT_RELOAD))
+	sim.submit(shooter, shots)
+	expect(_fires(shots).size() == 1 and not shooter.equipped.reloading and not shooter.equipped.has_magazine()
+			and shooter.equipped.carried == WeaponInventory.DEFAULT_CARRIED and sim.projectiles.is_empty(),
+			"melee uses the usual input and equip path without consuming ammo or spawning a projectile")
+	expect(target.sim_hp == target.sim_max_hp - 7 and blocked.sim_hp == blocked.sim_max_hp
+			and ally.sim_hp == ally.sim_max_hp and shooter.sim_hp == shooter.sim_max_hp,
+			"melee hits once across a seam and respects walls and teams")
+	expect(target.motion_knock_velocity.is_equal_approx(Vector2(120.0, 0.0)),
+			"melee pushes the target away from the attacker across the seam")
+	WeaponRegistry._definitions.erase(TYPE_ID)
+	cleanup()
+
+func _blast(tree: SceneTree) -> void:
+	for pvp in [false, true]:
+		var parent := world_with_walls(tree, 16, 16, {Vector2i(15, 8): wall_texture()})
+		var near := player(parent, 1)
+		var across := player(parent, 2)
+		var far := player(parent, 3)
+		_place(near, Vector2(900, 544), 1)
+		_place(across, Vector2(35, 544), 2)
+		_place(far, Vector2(360, 544), 2)
+		var sim := CombatSimulator.new(_terrain, parent, pvp)
+		sim.players = {1: near, 2: across, 3: far}
+		var cell := Vector2i(15, 8)
+		var terrain_before := _terrain.capture_cell(cell)
+		var hp := near.sim_hp
+		near.sim_iframes = 1.0
+		var center := Vector2(936, 544)
+		var spec := {"radius": 200.0, "damage": 30, "impact": 100.0}
+		sim.tick = 100
+		sim.submit_blast(1, center, spec, near)
+		if pvp:
+			for tick in [100, 101, 102]:
+				sim.tick = tick
+				sim.settle_blasts()
+			expect(near.sim_hp == hp and _terrain.capture_cell(cell) == terrain_before,
+					"PvP leaves HP and terrain unchanged before the blast deadline")
+			sim.tick = 103
+			sim.settle_blasts()
+		expect(near.sim_hp < hp and across.sim_hp < hp and far.sim_hp == hp,
+				"the blast ignores iframes, reaches across the seam and respects its radius (PvP=%s)" % pvp)
+		expect(_terrain.capture_cell(cell) != terrain_before, "blast settlement immediately damages terrain")
+		var after := near.sim_hp
+		sim.settle_blasts()
+		expect(near.sim_hp == after and sim._pending_blasts.is_empty(), "each blast settles only once")
+		cleanup()
+
+func _world_rewind(tree: SceneTree) -> void:
 	var parent := world(tree)
 	var actor := player(parent)
+	var sim := CombatSimulator.new(_terrain, parent)
+	sim.time_field = TimeField.new(GrainAccount.new())
+	var bird: EnemyBase = preload("res://scenes/enemies/enemy_jump_bird.tscn").instantiate()
+	bird.combat_rules = sim
+	bird.position = Vector2(300, 120)
+	parent.add_child(bird)
+	bird.velocity = Vector2(12, -7)
+	var bird_hp := bird.hp
+	var id := (actor.role << 48) | 256
+	var bullet := sim.spawn_projectile(id, WeaponRegistry.Type.GRENADE, actor.get_instance_id(),
+			Vector2(100, 128), Vector2.RIGHT * 200.0)
+	bullet.start_fuse(0.3)
+	bullet.fuse_elapsed = 0.1
+	bullet.traveled = 29.0
+	var before := bullet.motion_state()
+	var initial := actor.position
+	var rewind := WorldRewind.new(sim)
+	var dt := 1.0 / TimeParams.SNAP_HZ
+	rewind.record(dt, actor, [bird])
+	rewind.begin()
+	rewind.step(dt, actor)
+	expect(sim.projectiles.get(id) == bullet, "one recorded frame cannot start rewind or clear live projectiles")
+	sim.erase_projectile(id)
+	actor.position.x += 80.0
+	bird.position.x += 40.0
+	bird.velocity = Vector2.ZERO
+	bird.hp = 0
+	bird.is_dead = true
+	bird.visible = false
+	rewind.record(dt, actor, [bird])
+	rewind.begin()
+	rewind.step(1.0, actor)
+	expect(actor.position == initial, "single-player gameplay rewind restores the actor")
+	var restored: BulletBody = sim.projectiles[id]
+	expect(restored != bullet and restored.shooter == actor and restored.motion_state() == before,
+			"single-player rewind restores the same projectile identity, owner, motion and fuse")
+	expect(bird.position == Vector2(300, 120) and bird.velocity == Vector2(12, -7)
+			and bird.hp == bird_hp and not bird.is_dead and bird.visible,
+			"single-player rewind restores a recorded enemy and revives it")
+	rewind.finish()
+	bird.hurt(bird.hp, Vector2.ZERO)
+	rewind.record(dt, actor, [bird])
+	expect(is_equal_approx(bird.rewind_death_time, rewind.recorded_seconds()),
+			"a corpse is retained on the rewind timeline")
+	rewind.record(TimeParams.SNAP_SECONDS - dt, actor, [bird])
+	expect(not bird.is_queued_for_deletion(), "the corpse remains within the recorded window")
+	rewind.record(dt * 2, actor, [bird])
+	expect(bird.is_queued_for_deletion(), "the corpse expires once recording passes its retention window")
+	cleanup()
+
+func _rewind_window(tree: SceneTree) -> void:
+	var parent := world(tree)
+	var actor := player(parent)
+	var rewind := WorldRewind.new(CombatSimulator.new(_terrain, parent))
+	var dt := 0.0625
+	var window := int(TimeParams.SNAP_SECONDS / dt)
+	var samples := 2 * window + 4
+	for index in samples:
+		actor.position.x = 64.0 + index * 0.25
+		rewind.record(dt, actor, [])
+	var end := rewind.recorded_seconds()
+	var backwards := TimeParams.SNAP_SECONDS * 0.5 + dt * 0.5
+	var target := end - backwards
+	var expected_x := 64.0 + (floori(target / dt) - 1) * 0.25
+	rewind.begin()
+	rewind.step(backwards / TimeParams.REWIND_START_MULT, actor)
+	expect(actor.position.x == expected_x, "rewind finds the preceding frame across the wrapped buffer")
+	expect(is_equal_approx(rewind.finish(), target), "rewind exits at the target time between recorded frames")
+	actor.position.x = 480.0
+	rewind.record(dt, actor, [])
+	rewind.begin()
+	rewind.step(dt * 0.25 / TimeParams.REWIND_START_MULT, actor)
+	expect(actor.position.x == expected_x, "recording after rewind discards the former future")
+	rewind.step(TimeParams.SNAP_SECONDS + 1.0, actor)
+	expect(actor.position.x == 64.0 + (samples - 1 - window) * 0.25
+			and is_equal_approx(rewind.finish(), end - TimeParams.SNAP_SECONDS),
+			"rewinding beyond the window clamps to the oldest retained frame and its time")
+	cleanup()
+
+func _enemy_time(tree: SceneTree) -> void:
+	var parent := world(tree)
+	var bird: EnemyBase = preload("res://scenes/enemies/enemy_jump_bird.tscn").instantiate()
+	bird.combat_rules = CombatSimulator.new(_terrain, parent)
+	parent.add_child(bird)
+	bird.set_physics_process(false)
+	# 跳过 AI、重力和衰减，单独检查水平移动倍率。
+	bird.is_dead = true
+	bird.use_gravity = false
+	bird.knock_decay_rate = 0.0
+	bird.combat_rules.time_field = TimeField.new(GrainAccount.new())
+	bird.time_field.mode = TimeField.Mode.HASTE
+	for elite in [false, true]:
+		if elite:
+			bird.set_meta("elite", true)
+		bird.position = Vector2(200.0, 80.0)
+		bird.velocity = Vector2(60.0, 0.0)
+		bird._physics_process(ActorStep.DT)
+		var expected := TimeParams.HASTE_PLAYER if elite else TimeParams.HASTE_WORLD
+		expect(is_equal_approx(bird.position.x - 200.0, expected) and bird.velocity.x == 60.0,
+				"enemy horizontal displacement uses one time multiplier (elite=%s)" % elite)
+	var flyer: EnemyFlyBird = preload("res://scenes/enemies/enemy_fly_bird.tscn").instantiate()
+	parent.add_child(flyer)
+	flyer.set_physics_process(false)
+	flyer.global_position = Vector2(_terrain.map_size.x - 8, 80)
+	flyer._apply_flight_collision(true)
+	flyer._glide_to(Vector2(8, 80), ActorStep.DT)
+	expect(flyer._active_stance == 1 and flyer.velocity.x > 0.0,
+			"a flying bird uses its flight hull and glides along the short path across a seam")
+	cleanup()
+
+func _beta_history(tree: SceneTree) -> void:
+	var parent := world(tree)
+	var actor := player(parent, 1)
+	var other := player(parent, 2)
 	var authority := AuthorityWorld.new()
 	parent.add_child(authority)
 	authority.set_physics_process(false)
-	authority.terrain = TileDefs.terrain
-	authority.players = {actor.role: actor}
-	authority._stats = {actor.role: {"self_damage": 0}}
-	authority.time_economy = TimeEconomy.new(TimeRules.new())
-	authority.time_economy.add_role(actor.role)
-	authority.beta = BetaHistory.new(authority)
-	authority._round_state = NetEvent.RoundState.PLAYING
-	actor.authority_world = authority
-	for type_id in WeaponRegistry.all_ids():
-		if WeaponRegistry.scene_of(type_id) == "res://scenes/weapons/grenade_launcher.tscn":
-			actor.weapons.set_initial_inventory([type_id])
-	var weapon: WeaponBase = actor.weapons.current_weapon()
-	weapon.bullet_scene = binary
-	var events: Array = []
-	authority.event.connect(func(kind: int, data: Variant, _except: int) -> void: events.append([kind, data]))
-	weapon._spawn_projectiles({"serial": 1, "dir": Vector2.DOWN, "pos": Vector2(160, 150)})
-	var bullet: BulletBase = authority.live_bullets()[0]
-	expect(bullet.apply_damage, "authority grenade remains authoritative with the multiplayer display flag set")
-	var terrain_before := TileDefs.terrain.capture_cell(Vector2i(2, 3))
-	var hp_before := actor.hp
-	var fused := false
-	for tick in range(1, 61):
+	authority.players = {1: actor, 2: other}
+	authority.combat_rules = CombatSimulator.new(_terrain, parent, true)
+	authority.time_economy = TimeEconomy.new({}, [1, 2])
+	authority.rules.start_countdown()
+	authority.rules.advance(3.0)
+	var one := authority.combat_rules.spawn_projectile(1 << 48, WeaponRegistry.Type.GRENADE, actor.get_instance_id(),
+			Vector2(100, 128), Vector2.RIGHT)
+	var two := authority.combat_rules.spawn_projectile(2 << 48, WeaponRegistry.Type.PISTOL, other.get_instance_id(),
+			Vector2(100, 128), Vector2.RIGHT)
+	var history := BetaHistory.new(authority)
+	for tick in [3, 6, 9]:
 		authority._snap_tick = tick
-		authority.beta.tick(ActorStep.DT)
-		bullet.simulate_tick(ActorStep.DT)
-		fused = fused or bullet._fuse_active
-		if bullet.finished: break
-	for i in 3:
-		authority._snap_tick += 1
-		authority.settle_blasts()
-	var explosions := events.filter(func(event: Array) -> bool: return event[0] == NetEvent.Kind.EXPLOSION)
-	expect(fused and bullet.exploded and bullet.is_queued_for_deletion(), "Beta grenade bounces, starts its fuse and detonates")
-	expect(explosions.size() == 1 and explosions[0][1]["id"] == bullet.entity_id,
-			"authority broadcasts the grenade explosion once")
-	expect(actor.hp < hp_before and TileDefs.terrain.capture_cell(Vector2i(2, 3)) != terrain_before,
-			"grenade explosion damages players and terrain")
-	actor.authority_world = null
+		actor.position.x = tick * 10.0
+		one.position.x = tick * 12.0
+		two.position.x = tick * 15.0
+		history.tick(ActorStep.DT)
+	expect(history.frames[1][1]["bullets"].keys() == [1 << 48], "Beta history records only the shooter's projectiles")
+	ActorStep.step(actor, _attack(0, ActorInput.BIT_DROP), ActorStep.DT, authority._handle_ground_actions)
+	expect(actor.equipped == null and authority.pickups.size() == 1, "authority removes the dropped weapon from inventory")
+	var hp := other.sim_hp
+	one.impact_collider_id = other.get_instance_id()
+	ShotRules._projectile_hit(authority.combat_rules, one, Vector2.RIGHT, true)
+	expect(one.direct_hit and other.sim_hp == hp - one.hit_damage, "Beta grenade applies its first direct hit")
+	actor.shot_serial = 123
+	var both := _attack(ActorInput.BIT_REWIND | ActorInput.BIT_HASTE, 0)
+	var account: GrainAccount = authority.time_economy.accounts[1]
+	var balance := account.balance
+	var dt := 0.025 / TimeParams.REWIND_START_MULT
+	authority.time_economy.step_haste(actor, both, dt)
+	actor.step_input.prepare(both, false)
+	history.tick(dt)
+	expect(is_equal_approx(account.balance, balance - dt * authority.time_economy.rules["rewind_burn"])
+			and actor.pvp_haste_mult == 1.0, "simultaneous rewind and haste only spends rewind grains")
+	balance = account.balance
+	authority.time_economy.step_haste(actor, _attack(ActorInput.BIT_HASTE, 0), dt)
+	expect(account.balance == balance, "the exit tick cannot spend haste before a rewinding actor resumes")
+	expect(actor.position.x == 60.0 and actor.shot_serial == 123,
+			"Beta rewind restores the actor and preserves attack identity")
+	expect(one.position.x == 72.0 and two.position.x == 135.0, "Beta rewind only restores the owner's bullets")
+	expect(actor.equipped == null and authority.pickups.size() == 1, "Beta rewind preserves a drop without duplicating ownership")
+	history.finish(1)
+	ShotRules._projectile_hit(authority.combat_rules, one, Vector2.RIGHT, true)
+	expect(one.direct_hit and other.sim_hp == hp - one.hit_damage, "Beta rewind preserves settled direct-hit damage")
+	expect(history.frames[1].size() == 2 and actor.input_buffer.epoch == 2 and not actor.rewinding,
+			"ending Beta rewind trims the future and changes the control epoch")
 	cleanup()
 
-# 动态玩家阻挡：另一名角色的真实体挡住移动，其层清零后同一方向继续前进。
+func _team_health(tree: SceneTree) -> void:
+	var parent := world_with_walls(tree, 16, 16, {})
+	var attacker := player(parent, 1)
+	var victim := player(parent, 2)
+	var friendly := player(parent, 3)
+	_place(attacker, Vector2(300, 300), 2)
+	_place(victim, Vector2(400, 300), 1)
+	_place(friendly, Vector2(200, 300), 2)
+	var sim := CombatSimulator.new(_terrain, parent, true)
+	sim.team_counts = {1: 4, 2: 1}
+	var hp := victim.sim_hp
+	sim.resolve_hit(attacker, victim, CombatProfiles.DIRECT, victim.position, 10, 0.0)
+	expect(victim.sim_hp == hp - 11, "team compensation increases the disadvantaged player's hit once")
+	expect(not sim.resolve_hit(attacker, friendly, CombatProfiles.DIRECT, friendly.position, 10, 0.0)
+			and friendly.sim_hp == hp, "a direct hit excludes allies")
+	sim.resolve_hit(attacker, friendly, CombatProfiles.BLAST, friendly.position, 10, 0.0)
+	sim.resolve_hit(attacker, attacker, CombatProfiles.BLAST, attacker.position, 10, 0.0)
+	expect(friendly.sim_hp == hp - 10 and attacker.sim_hp == hp - 10,
+			"friendly and self blast damage are allowed without compensation")
+	cleanup()
+
+func _pickup_order() -> void:
+	var size := Vector2(512, 256)
+	var one := WeaponPickup.new()
+	one.inst = 1
+	one.canonical_pos = Vector2(506, 64)
+	var two := WeaponPickup.new()
+	two.inst = 2
+	two.canonical_pos = Vector2(6, 64)
+	expect(GroundWeaponField.nearest([two, one], Vector2(0, 64), size, func(_item: WeaponPickup) -> bool: return true) == one,
+			"pickup uses toroidal distance and breaks ties by smallest instance id")
+	expect(GroundWeaponField.nearest([two, one], Vector2(0, 64), size, func(item: WeaponPickup) -> bool: return item != one) == two,
+			"a locked pickup does not block the next eligible item")
+	one.free()
+	two.free()
+
+func _pickup_landing(tree: SceneTree) -> void:
+	var parent := world(tree)
+	var floor_y := 3.0 * GameParameters.TILE_SIZE
+	for preplaced in [true, false]:
+		var bow := WeaponPickup.new()
+		bow.configure(WeaponRegistry.Type.COMPOUND_BOW, 1 if preplaced else 2,
+				WeaponInventory.DEFAULT_CARRIED, Vector2.ZERO)
+		bow.position = Vector2(160.0 if preplaced else 352.0, floor_y - GameParameters.TILE_SIZE * 0.5)
+		parent.add_child(bow)
+		bow.set_physics_process(false)
+		if preplaced:
+			bow.settle_on_spawn_floor()
+		else:
+			for i in 60: bow.simulate_tick(ActorStep.DT)
+		var hull := bow.hulls[0] as CollisionShape2D
+		var bottom := hull.to_global(Vector2(0.0, (hull.shape as RectangleShape2D).size.y * 0.5)).y
+		expect(bow._settled and absf(bottom - floor_y) < 0.5,
+				"a map bow spawns on the floor" if preplaced else "a bow pushed out of terrain falls back to the floor")
+	cleanup()
+
 func _dynamic_blocking(tree: SceneTree) -> void:
 	cleanup()
 	var parent := world_with_walls(tree, 16, 16, {})
@@ -327,11 +771,11 @@ func _dynamic_blocking(tree: SceneTree) -> void:
 	mover._apply_layers()
 	mover.global_position = Vector2(200, 512)
 	blocker.global_position = Vector2(320, 512)
-	mover.apply_collision_pose()
-	blocker.apply_collision_pose()
+	mover.sync_collision_geometry()
+	blocker.sync_collision_geometry()
 	collider(blocker, CollisionWorld.LAYER_TEAM_A)
 	var start := mover.global_position.x
-	var record := InputBuffer.neutral().merged({"ax": 1.0, "held": 1}, true)
+	var record := [1.0, ActorInput.BIT_UP, 0, 0, 0, Vector2.RIGHT]
 	for i in 14:
 		ActorStep.step(mover, record)
 	expect(mover.global_position.x > start + 8.0, "the moving actor advances until the blocker stops it")
@@ -344,415 +788,6 @@ func _dynamic_blocking(tree: SceneTree) -> void:
 		ActorStep.step(mover, record)
 	expect(mover.global_position.x > blocked_at + 20.0, "clearing the blocker's layer lets the same input continue")
 
-# 连续扫掠：高速弹丸不会跳过路径上的角色代理。
-func _swept_hit(tree: SceneTree) -> void:
-	cleanup()
-	var parent := world_with_walls(tree, 16, 16, {})
-	var shooter := player(parent, 1)
-	shooter.global_position = Vector2(200, 512)
-	var victim := player(parent, 2)
-	# 目标贴左边接缝：跨接缝的一段位移必须连到对侧镜像上，命中后位置回到规范区间。
-	victim.global_position = Vector2(80, 512)
-	victim.apply_collision_pose()
-	collider(victim, CollisionWorld.LAYER_TEAM_A)
-	var bullet: BulletBase = preload("res://scenes/weapons/bullet.tscn").instantiate()
-	bullet.setup(Vector2.RIGHT, 30000.0, 4000.0, 1.0, Color.WHITE, shooter)
-	bullet.position = Vector2(1000, 512)
-	parent.add_child(bullet)
-	bullet.set_physics_process(false)
-	bullet.shooter = shooter
-	bullet.bind_actor_layers(shooter)
-	expect(bullet.advance_physics(ActorStep.DT) == BulletBody.AdvanceResult.ACTOR_HIT,
-			"a fast projectile is swept instead of sampling only its end position")
-	expect(bullet.impact_role == victim.role, "the swept hit reports the proxy's role")
-	expect(bullet.global_position.x >= 0.0 and bullet.global_position.x < GameParameters.MAP_WIDTH,
-			"an actor hit across the seam also returns to canonical coordinates")
-
-# 榴弹直接撞上角色代理：必须报出 impact_role，直击与爆炸各结算一次。
-func _grenade_direct(tree: SceneTree) -> void:
-	cleanup()
-	var parent := world_with_walls(tree, 16, 16, {})
-	var shooter := player(parent, 1)
-	var victim := player(parent, 2)
-	shooter.global_position = Vector2(200, 512)
-	victim.global_position = Vector2(600, 512)
-	victim.apply_collision_pose()
-	collider(victim, CollisionWorld.LAYER_TEAM_A)
-	var grenade_type := 0
-	for type_id in WeaponRegistry.all_ids():
-		if WeaponRegistry.scene_of(type_id) == "res://scenes/weapons/grenade_launcher.tscn": grenade_type = type_id
-	var profile := WeaponRegistry.projectile_profile(grenade_type)
-	var authority := AuthorityWorld.new()
-	parent.add_child(authority)
-	authority.set_physics_process(false)
-	authority.players = {shooter.role: shooter, victim.role: victim}
-	authority.terrain = TileDefs.terrain
-	authority._snap_tick = 100
-	for actor: Player in [shooter, victim]:
-		actor.authority_world = authority
-		authority._stats[actor.role] = {"dealt": 0, "taken": 0, "self_damage": 0, "team_damage": 0, "hits": {}}
-	var events: Array = []
-	authority.event.connect(func(kind: int, data: Variant, _except: int) -> void: events.append([kind, data]))
-	var bullet: BulletBase = profile["scene"].instantiate()
-	bullet.setup(Vector2.RIGHT, 6000.0, profile["range"], profile["size"], profile["color"], shooter)
-	bullet.entity_id = (shooter.role << 48) | (1 << 8)
-	bullet.type_id = grenade_type
-	bullet.gravity_factor = 0.0
-	bullet.hit_damage = profile["damage"]
-	bullet.hit_impact = profile["impact"]
-	bullet.shooter = shooter
-	bullet.authority_world = authority
-	bullet.position = Vector2(500, 512)
-	authority.add_projectile(bullet)
-	bullet.set_physics_process(false)
-	bullet.bind_actor_layers(shooter)
-	var hp_before := victim.sim_hp
-	authority._step_projectiles(ActorStep.DT)
-	expect(bullet.impact_role == victim.role, "a grenade that hits a player proxy reports the victim role")
-	expect(bullet.direct_hit, "the authority resolves the grenade direct hit")
-	expect(victim.sim_hp == hp_before - bullet.direct_hit_damage, "the direct hit applies its damage once")
-	expect(bullet.fuse_started and bullet._fuse_duration == bullet.hit_fuse_time,
-			"player contact starts the short fuse instead of the wall fuse")
-	var settled := victim.sim_hp
-	authority._snap_tick += 1
-	authority._step_projectiles(ActorStep.DT)
-	expect(victim.sim_hp == settled, "bouncing off the same player does not repeat the direct hit")
-	for i in 20:
-		authority._snap_tick += 1
-		authority._step_projectiles(ActorStep.DT)
-		if bullet.is_queued_for_deletion(): break
-	var explosions := events.filter(func(event: Array) -> bool: return event[0] == NetEvent.Kind.EXPLOSION)
-	expect(explosions.size() == 1, "the fuse detonates the grenade exactly once")
-	cleanup()
-
-# 光束走廊内的前后目标、起点已重叠的目标都要命中；预测端与采集端给出同一 role 与 point。
-func _beam_targets(tree: SceneTree) -> void:
-	cleanup()
-	var parent := world_with_walls(tree, 16, 16, {})
-	var mask := CollisionWorld.LAYER_TEAM_A
-	var local := player(parent, 1)
-	var near := player(parent, 2)
-	var far := player(parent, 3)
-	var overlapping := player(parent, 4)
-	var positions := {local: Vector2(520, 512), near: Vector2(700, 512),
-			far: Vector2(880, 512), overlapping: Vector2(420, 512)}
-	for actor: Player in positions:
-		actor.global_position = positions[actor]
-		actor.apply_collision_pose()
-		collider(actor, mask)
-	var world := CollisionWorld.acquire(local)
-	var corridor := 18.0
-	var points := PackedVector2Array([Vector2(400, 512), Vector2(960, 512)])
-	var roles := {}
-	for contact: Dictionary in world.beam_contacts(points, corridor, mask):
-		roles[int(contact["role"])] = contact["point"]
-	expect(roles.has(overlapping.role), "a target already overlapping the beam start is hit")
-	expect(roles.has(local.role) and roles.has(near.role) and roles.has(far.role),
-			"one corridor query reports every actor in front and behind")
-	expect((roles[far.role] as Vector2).x > (roles[near.role] as Vector2).x,
-			"each contact point comes from its own target geometry")
-	# 贴接缝的角色有物理镜像，但只应报告一次。
-	cleanup()
-	parent = world_with_walls(tree, 16, 16, {})
-	var edge := player(parent, 5)
-	edge.global_position = Vector2(10, 700)
-	edge.apply_collision_pose()
-	collider(edge, mask)
-	world = CollisionWorld.acquire(edge)
-	var crossing := world.beam_contacts(
-			PackedVector2Array([Vector2(1000, 700), Vector2(1040, 700)]), corridor, mask)
-	var copies := 0
-	for contact: Dictionary in crossing:
-		if int(contact["role"]) == edge.role: copies += 1
-	expect(copies == 1, "a mirrored actor is reported once instead of once per seam copy")
-	# 预测端消费同一份采集结果。
-	var shooter := player(parent, 6)
-	shooter.global_position = Vector2(300, 700)
-	shooter.apply_collision_pose()
-	edge.global_position = Vector2(500, 700)
-	edge.apply_collision_pose()
-	var pts := PackedVector2Array([Vector2(320, 700), Vector2(700, 700)])
-	var expected := Vector2.INF
-	for contact: Dictionary in world.beam_contacts(pts, corridor, mask):
-		if int(contact["role"]) == edge.role: expected = contact["point"]
-	expect(expected != Vector2.INF, "the shared collector finds the local actor")
-	var combat := CombatPrediction.new()
-	combat.bind(edge)
-	var id: int = (shooter.role << 48) | (1 << 8)
-	combat.beams[id] = {"id": id, "tick": 100, "type_id": WeaponRegistry.all_ids()[0],
-		"shooter_role": shooter.role, "pts": pts, "half_width": corridor / LaserWeaponBase.HIT_MULT}
-	combat.step_beams(100, shooter.role, [shooter, edge])
-	var record: Dictionary = combat.simulator.outcomes.get(100, {}).get(["beam", id], {})
-	var predicted: Dictionary = record.get("contacts", {})
-	expect(predicted.has(edge.role), "prediction reports the beam contact for its own role")
-	expect(predicted.get(edge.role, Vector2.ZERO) == expected,
-			"prediction and direct collection agree on the contact point")
-	combat.clear()
-	# 跨接缝：接触点必须落在连续光束坐标上。规范中心 (70,700) 沿光束是 x=1094。
-	cleanup()
-	parent = world_with_walls(tree, 16, 16, {})
-	var seam_actor := player(parent, 7)
-	seam_actor.global_position = Vector2(70, 700)
-	seam_actor.apply_collision_pose()
-	collider(seam_actor, mask)
-	world = CollisionWorld.acquire(seam_actor)
-	var seam_pts := PackedVector2Array([Vector2(1000, 700), Vector2(1120, 700)])
-	var seam_points: Array = []
-	for contact: Dictionary in world.beam_contacts(seam_pts, corridor, mask):
-		if int(contact["role"]) == seam_actor.role: seam_points.append(contact["point"])
-	expect(seam_points.size() == 1, "a cross-seam target is reported exactly once")
-	var seam_point: Vector2 = seam_points[0] if not seam_points.is_empty() else Vector2.ZERO
-	expect(seam_points.size() == 1 and absf(seam_point.x - 1094.0) < 32.0,
-			"the contact point stays on the continuous beam instead of the canonical origin")
-	# 预测端对同一束给出的接触点必须与直接采集一致。
-	shooter = player(parent, 8)
-	shooter.global_position = Vector2(300, 700)
-	shooter.apply_collision_pose()
-	var seam_combat := CombatPrediction.new()
-	seam_combat.bind(seam_actor)
-	var seam_id: int = (shooter.role << 48) | (2 << 8)
-	seam_combat.beams[seam_id] = {"id": seam_id, "tick": 100, "type_id": WeaponRegistry.all_ids()[0],
-		"shooter_role": shooter.role, "pts": seam_pts, "half_width": corridor / LaserWeaponBase.HIT_MULT}
-	seam_combat.step_beams(100, shooter.role, [shooter, seam_actor])
-	var seam_record: Dictionary = seam_combat.simulator.outcomes.get(100, {}).get(["beam", seam_id], {})
-	expect(seam_record.get("contacts", {}).get(seam_actor.role, Vector2.ZERO) == seam_point,
-			"prediction and direct collection agree across the seam")
-	seam_combat.clear()
-	cleanup()
-
-# 联机权威爆炸：目标集合来自玩家表，按环面中心距离结算，不需要注册角色代理。
-func _authority_blast(tree: SceneTree) -> void:
-	cleanup()
-	var parent := world_with_walls(tree, 16, 16, {})
-	var authority := AuthorityWorld.new()
-	parent.add_child(authority)
-	authority.set_physics_process(false)
-	authority.terrain = TileDefs.terrain
-	authority._snap_tick = 100
-	var near := player(parent, 1)
-	near.global_position = Vector2(1010, 500)
-	var edge := player(parent, 2)
-	edge.global_position = Vector2(20, 500)
-	var far := player(parent, 3)
-	far.global_position = Vector2(120, 500)
-	var downed := player(parent, 4)
-	downed.global_position = Vector2(1005, 500)
-	var actors: Array = [near, edge, far, downed]
-	for actor: Player in actors:
-		actor.apply_collision_pose()
-		actor.authority_world = authority
-		authority.players[actor.role] = actor
-		authority._stats[actor.role] = {"dealt": 0, "taken": 0, "self_damage": 0,
-				"team_damage": 0, "hits": {}}
-	downed.combat.set_downed_by_rewind(true)
-	var before := {}
-	for actor: Player in actors: before[actor.role] = actor.hp
-	# 没有任何角色代理注册：权威枚举只读玩家表。
-	Explosion.apply_aoe(Vector2(1000, 500), 64.0, 40, 100.0, near, 0, authority)
-	expect(near.hp < before[near.role], "the blast centre damages the player standing in it")
-	expect(far.hp == before[far.role], "a player outside the radius is untouched")
-	expect(edge.hp < before[edge.role], "the toroidal distance reaches a player across the seam")
-	expect(downed.hp == before[downed.role], "a downed player is skipped by the authority blast")
-	expect(authority.players.size() == 4 and near.hp == before[near.role] - (before[near.role] - near.hp),
-			"authority enumerates the player table itself")
-	cleanup()
-
-# 晚到事件统一重放世界；已发布检查点不作增量修补。
-func _late_projectile(tree: SceneTree) -> void:
-	for contact in [false, true]:
-		var timely := _projectile_arrival(tree, contact, false)
-		var late := _projectile_arrival(tree, contact, true)
-		expect(late == timely, "late projectile world replay equals timely arrival, contact=%s" % contact)
-	cleanup()
-
-func _projectile_arrival(tree: SceneTree, contact: bool, late: bool) -> Array:
-	cleanup()
-	var parent := world_with_walls(tree, 16, 16, {})
-	var victim := player(parent, 1)
-	victim.gravity = 0.0
-	victim.global_position = Vector2(512, 400)
-	victim.apply_collision_pose()
-	collider(victim, CollisionWorld.LAYER_TEAM_A)
-	var shooter := player(parent, 2)
-	shooter.gravity = 0.0
-	shooter.global_position = Vector2(200, 400)
-	shooter.apply_collision_pose()
-	var rollback := PredictionRollback.new()
-	rollback.bind(victim)
-	rollback.terrain = TileDefs.terrain
-	rollback.reset(1, 0, 100, 0)
-	rollback._clock = 100.0
-	rollback._input.seed(InputBuffer.neutral(), 100)
-	rollback._remember_state()
-	var id: int = (shooter.role << 48) | (1 << 8)
-	var state := {"type_id": WeaponRegistry.all_ids()[0],
-			"pos": Vector2(420, 398) if contact else Vector2(300, 200),
-			"vel": Vector2(3000, 0) if contact else Vector2(600, 0),
-			"traveled": 0.0, "fuse_active": false,
-			"fuse_elapsed": 0.0, "fuse_duration": 0.0, "direct_hit": false}
-	for at in range(101, 109):
-		if at == 104 and not late:
-			rollback.combat_prediction.seed_projectile(id, state, 103, shooter)
-		rollback._clock = at
-		rollback._step(rollback._input.take(at), true)
-	if late:
-		var old := rollback._states[104]
-		var changed := rollback.combat_prediction.seed_projectile(id, state, 103, shooter)
-		expect(changed.x == 104 and rollback.can_replay_from(104), "late birth invalidates its world suffix")
-		rollback.replay_from(104)
-		expect(not old.projectiles._values.has(id), "world replay replaces frames without mutating the published checkpoint")
-		expect(rollback.world.tick == 108 and rollback.replay_ticks == 5, "late arrival replays each world tick once")
-	var result: Array = [victim.capture_state(), _projectiles(rollback.combat_prediction)]
-	if contact:
-		expect(victim.sim_hp < victim.sim_max_hp, "historical contact damages the local actor at the actual tick")
-	rollback.combat_prediction.clear()
-	return result
-
-func _world_rewind(parent: Node, actor: Player) -> void:
-	var scene := preload("res://scenes/enemies/enemy_bullet.tscn")
-	var bullet: EnemyBullet = scene.instantiate()
-	bullet.launch(Vector2(40, 30), 500.0, 3, 0.5)
-	bullet.water_mult = 1.5
-	bullet.position = Vector2(120, 100)
-	bullet.set_meta("scene_path", scene.resource_path)
-	parent.add_child(bullet)
-	var state := bullet.rewind_state()
-	var position := actor.global_position
-	var rewind := WorldRewind.new(parent)
-	rewind.record(1.0 / TimeParams.SNAP_HZ, actor, [], [bullet])
-	bullet.position += Vector2(40, 0)
-	bullet.damage = 1
-	actor.position += Vector2(40, 0)
-	rewind.record(1.0 / TimeParams.SNAP_HZ, actor, [], [bullet])
-	rewind.begin()
-	rewind.step(1.0, actor)
-	var restored := rewind.replay_bullets()
-	expect(actor.global_position == position, "single-player rewind restores the actor")
-	expect(restored.size() == 1 and restored[0].rewind_state() == state,
-			"single-player rewind recreates an enemy projectile with its full motion and damage")
-	rewind.finish()
-
-func _replay(actor: Player) -> void:
-	var rollback := PredictionRollback.new()
-	rollback.bind(actor)
-	rollback.terrain = TileDefs.terrain
-	rollback.reset(1, 0, 100, 0)
-	rollback._clock = 100.0
-	rollback._input.seed(InputBuffer.neutral().merged({"target_tick": 100}, true), 100)
-	rollback._remember_state()
-	var source: PacketInputSource = actor.input_source
-	source.apply_packet(InputBuffer.neutral().merged({"ax": 1.0, "held": ActorInput.BIT_ATTACK, "pressed": ActorInput.BIT_ATTACK}, true))
-	var authority_projectiles := {}
-	for tick in range(101, 109):
-		rollback.capture(source, Vector2.RIGHT, 0)
-		rollback.advance(ActorStep.DT)
-		if tick == 104: authority_projectiles = _projectiles(rollback.combat_prediction)
-	var original := actor.capture_state()
-	var original_cursor := rollback._input.capture_cursor()
-	var original_projectiles := _projectiles(rollback.combat_prediction)
-	var saved: PredictionFrame = rollback._states[104]
-	expect(not authority_projectiles.is_empty(), "replay fixture has a live projectile")
-	var snapshot: ProjectileSnapshot = saved.projectiles
-	expect(snapshot.matches(authority_projectiles), "later simulation cannot mutate an earlier projectile frame")
-	var altered := authority_projectiles.duplicate(true)
-	for id in altered: altered[id]["fuse_elapsed"] += 0.25
-	expect(not snapshot.matches(altered) and snapshot.matches(authority_projectiles),
-			"projectile comparison detects changed timers without changing stored history")
-	var buffer := InputBuffer.new()
-	buffer.restore_cursor(saved.cursor)
-	var own := {"epoch": 1, "ack": buffer.ack, "action_ack": buffer.action_ack,
-			"timing_seq": 0, "lead": 2, "input": buffer._last, "rewind": false,
-			"state": saved.player}
-	var frame := {"tick": 104, "map_revision": TileDefs.terrain.revision, "own": own,
-			"time": {}, "world": {"players": {actor.role: preload("res://tests/prediction_case.gd").wire_state(saved.player)}, "projectiles": authority_projectiles}}
-	expect(rollback.reusable_tick(frame) == 108, "matching authority retains the full prediction suffix")
-	rollback.reconcile(frame, 0, true)
-	expect(rollback.replay_ticks == 0 and actor.capture_state() == original, "reuse executes no unnecessary replay")
-	expect(rollback._input.capture_cursor() == original_cursor, "reuse keeps the input cursor at the predicted future tick")
-	expect(rollback.can_replay_from(105), "short suffix has a usable checkpoint")
-	rollback.replay_from(105)
-	expect(rollback.replay_ticks == 4 and actor.capture_state() == original, "checkpoint suffix replay equals original simulation")
-	expect(_projectiles(rollback.combat_prediction) == original_projectiles, "checkpoint restores and replays projectile motion exactly")
-	rollback.reconcile(frame, 0, false)
-	expect(rollback.replay_ticks == 4 and actor.capture_state() == original, "full authority restore equals optimized replay")
-	expect(_projectiles(rollback.combat_prediction) == original_projectiles, "authority restore and projectile history produce the same future")
-	rollback.combat_prediction.clear()
-
-func _projectiles(combat: CombatPrediction) -> Dictionary:
-	var states := {}
-	for id in combat.projectiles:
-		var entry: ProjectileEntry = combat.projectiles[id]
-		if entry.active and not entry.bullet.finished: states[id] = entry.bullet.motion_state()
-	return states
-
-func _confirmed_lifecycle(actor: Player, initial: Array) -> void:
-	actor.restore_state(initial)
-
-	var combat := CombatPrediction.new()
-	combat.bind(actor)
-	var id: int = (2 << 48) | 1
-	combat.hits[id] = [{"tick": 200, "source": 2, "shooter": 2, "victim": actor.role,
-			"hp": initial[HP] - 1, "knock": Vector2.ZERO, "facing": 1, "pos": actor.position}]
-	combat.step(200, [actor], false)
-	expect(actor.sim_hp == initial[HP] - 1, "confirmed explosion applies after its projectile is gone")
-	combat.acknowledge(200)
-	for serial in [2, 1]:
-		combat.hits[(2 << 48) | serial] = [{"tick": 201, "source": 0, "shooter": 2, "victim": actor.role,
-				"hp": initial[HP] - serial - 1, "knock": Vector2.ZERO, "facing": 1, "pos": actor.position}]
-	combat.step(201, [actor], false)
-	expect(actor.sim_hp == initial[HP] - 3, "late direct hits retain stable attack order without live projectiles")
-	combat.beams[id] = {"tick": 200, "confirmed": true}
-	combat.beams[id + 1] = {"tick": 202, "confirmed": true}
-	combat.acknowledge(201)
-	expect(not combat.beams.has(id) and combat.beams.has(id + 1), "ACK prunes covered beams while keeping future confirmations")
-	combat.clear()
-	actor.restore_state(initial)
-
-func _beta_history(parent: Node, actor: Player) -> void:
-	var other := player(parent, 2)
-	var world := BetaWorld.new()
-	parent.add_child(world)
-	world.players = {actor.role: actor, other.role: other}
-	for owner: Player in [actor, other]:
-		world.time_economy.add_role(owner.role)
-		owner.input_source.apply_packet(InputBuffer.neutral())
-		var profile := WeaponRegistry.projectile_profile(WeaponRegistry.all_ids()[0])
-		var bullet: BulletBase = profile["scene"].instantiate()
-		bullet.shooter = owner
-		bullet.entity_id = owner.role << 48
-		parent.add_child(bullet)
-		bullet.set_physics_process(false)
-		world.bullets.append(bullet)
-	var history := BetaHistory.new(world)
-	for tick in [3, 6, 9]:
-		world._snap_tick = tick
-		actor.position.x = tick * 10.0
-		world.bullets[0].position.x = tick * 12.0
-		world.bullets[1].position.x = tick * 15.0
-		history.tick(ActorStep.DT)
-	expect(history.frames[actor.role][1]["bullets"].keys() == [actor.role << 48], "Beta history records only the shooter's projectiles")
-	actor.shot_serial = 123
-	actor.input_source.apply_packet(InputBuffer.neutral().merged({"held": ActorInput.BIT_REWIND}, true))
-	world._snap_tick = 10
-	history.tick(0.025 / TimeParams.REWIND_START_MULT)
-	expect(actor.position.x == 60.0 and actor.shot_serial == 123, "Beta rewind chooses the preceding sample and preserves attack identity")
-	expect(world.bullets[0].position.x == 72.0 and world.bullets[1].position.x == 135.0, "Beta rewind restores owned bullets without changing another player")
-	var path_history := BetaHistory.new(world)
-	var motion := actor.capture_state()
-	path_history.frames[actor.role] = [{"tick": 0, "player": motion.duplicate()}, {"tick": 3, "player": motion.duplicate()}]
-	path_history.cursors[actor.role] = 0.0
-	expect(path_history.collision_path(actor.role).is_empty(), "a stationary rewind path omits its redundant first knot")
-	path_history.frames[actor.role][0]["player"][PlayerStateSchema.slot("squat")] = not actor.is_squat
-	var path := path_history.collision_path(actor.role)
-	expect(path.size() == 1 and path[0][0] == world._snap_tick + 1 and bool(path[0][2] & 1) != actor.is_squat,
-			"a collision pose change keeps its first knot even at the same position")
-	expect(actor.capture_state() == motion and path_history.cursors[actor.role] == 0.0,
-			"building a future path does not advance the actor or rewind cursor")
-	history.finish(actor.role)
-	expect(history.frames[actor.role].size() == 2 and world.epoch_changes == 1, "ending Beta rewind trims the future and changes control epoch once")
-	expect(world.events.back()[1]["projectiles"].keys() == [actor.role << 48], "Beta rewind broadcast contains the shooter's current projectiles")
-
-# 团队规则数值表：击杀目标、少人方补贴、血量与伤害倍率。
 func _team_rules() -> void:
 	expect(TeamRules.kills_to_win(2) == 5 and TeamRules.kills_to_win(6) == 9,
 			"kills target follows total players (2->5, 6->9)")
@@ -784,161 +819,6 @@ func _team_rules() -> void:
 	expect(TeamRules.disadvantaged_team(even) == 0 and TeamRules.score_bonus(1, even) == 0,
 			"equal teams have no compensation")
 
-# 权威端团队血量与伤害倍率；预测端使用同一倍率，权威 HIT 不重复乘。
-func _team_health(tree: SceneTree) -> void:
-	cleanup()
-	var parent := world_with_walls(tree, 16, 16, {})
-	var authority := AuthorityWorld.new()
-	parent.add_child(authority)
-	authority.set_physics_process(false)
-	authority.terrain = TileDefs.terrain
-	authority.rules.mode = PvpSession.MODE_TEAM
-	authority.rules.teams = {1: 1, 2: 1, 3: 1, 4: 1, 5: 2}
-	authority.rules.team_counts = TeamRules.team_counts(authority.rules.teams)
-	for role: int in [1, 2, 3, 4, 5]:
-		var actor := player(parent, role)
-		actor.team = int(authority.rules.teams[role])
-		actor.global_position = Vector2(200 + role * 40, 300)
-		actor.apply_collision_pose()
-		authority.players[role] = actor
-		authority._stats[role] = {"kills": 0, "deaths": 0, "assists": 0, "dealt": 0, "taken": 0,
-				"team_damage": 0, "self_damage": 0, "team_kills": 0, "rounds": 1, "left": false, "hits": {}}
-	authority._apply_team_hp()
-	expect(authority.players[5].sim_max_hp == 65 and authority.players[1].sim_max_hp == 50,
-			"authority applies the 4v1 max HP split")
-	var victim: Player = authority.players[1]
-	var before := victim.sim_hp
-	authority.damage(5, 1, victim.global_position, 10)
-	expect(victim.sim_hp == before - 11, "the disadvantaged attacker deals 10 * 1.1")
-	var friendly: Player = authority.players[2]
-	before = friendly.sim_hp
-	authority.damage(1, 2, friendly.global_position, 10)
-	expect(friendly.sim_hp == before - 10, "friendly fire is not boosted")
-	before = victim.sim_hp
-	authority.damage(1, 1, victim.global_position, 10)
-	expect(victim.sim_hp == before - 10, "self damage is not boosted")
-	var other: Player = authority.players[5]
-	var other_before := other.sim_hp
-	authority.damage(1, 5, other.global_position, 10)
-	expect(other.sim_hp == other_before - 10, "the advantaged team keeps x1.0")
-	other_before = other.sim_hp
-	authority.damage(0, 5, other.global_position, 10)
-	expect(other.sim_hp == other_before - 10, "unowned damage keeps x1.0")
-	var combat := CombatSimulator.new()
-	combat.configure(victim, {"projectiles": {}, "blasts": {}, "beams": {}, "hits": {},
-			"ended": {}, "outcomes": {}}, WeaponRegistry.combat_profiles(),
-			{"keep": 4, "dt": ActorStep.DT, "inner_fraction": Explosion.INNER_FRACTION,
-			"blocked_fraction": Explosion.BLOCKED_FRACTION, "beam_hit_mult": LaserWeaponBase.HIT_MULT})
-	combat.set_team_counts(authority.rules.team_counts)
-	combat.players = [authority.players[5], victim]
-	var hit_id: int = (5 << 48) | 1
-	before = victim.sim_hp
-	combat._apply_hit(hit_id, 0, victim, victim.global_position, 0.0, 10)
-	expect(victim.sim_hp == before - 11, "prediction uses the same team damage factor")
-	victim.sim_hp = 30
-	combat._tick = 7
-	combat.hits[hit_id] = [{"tick": 7, "source": 0, "shooter": 5, "victim": victim.role,
-			"hp": 20, "knock": Vector2.ZERO, "facing": 1, "pos": victim.global_position}]
-	combat._apply_hit(hit_id, 0, victim, victim.global_position, 0.0, 10)
-	expect(victim.sim_hp == 20, "a confirmed authoritative HP delta is applied once without the multiplier")
-	cleanup()
-
-# 爆炸视觉 tick 只排队；伤害、击退与地形破坏在 t+3 结算一次。
-func _blast_delay(tree: SceneTree) -> void:
-	cleanup()
-	var texture := wall_texture()
-	var parent := world_with_walls(tree, 16, 16, {Vector2i(12, 8): texture})
-	var authority := AuthorityWorld.new()
-	parent.add_child(authority)
-	authority.set_physics_process(false)
-	authority.terrain = TileDefs.terrain
-	authority._snap_tick = 100
-	var victim := player(parent, 1)
-	victim.global_position = Vector2(650, 544)
-	victim.apply_collision_pose()
-	authority.players = {1: victim}
-	authority._stats = {1: {"kills": 0, "deaths": 0, "assists": 0, "dealt": 0, "taken": 0,
-			"team_damage": 0, "self_damage": 0, "team_kills": 0, "rounds": 1, "left": false, "hits": {}}}
-	var before_hp := victim.sim_hp
-	var before_cell := TileDefs.terrain.capture_cell(Vector2i(12, 8))
-	authority.submit_blast(77, Vector2(700, 544), 96.0, 40, 100.0, 0)
-	expect(authority._pending_blasts.size() == 1, "an explosion is queued for later settlement")
-	authority.settle_blasts()
-	expect(victim.sim_hp == before_hp and TileDefs.terrain.capture_cell(Vector2i(12, 8)) == before_cell,
-			"the explosion does not damage on its trigger tick")
-	for tick: int in [101, 102]:
-		authority._snap_tick = tick
-		authority.settle_blasts()
-	expect(victim.sim_hp == before_hp, "explosion damage waits for t+3")
-	authority._snap_tick = 103
-	authority.settle_blasts()
-	expect(victim.sim_hp < before_hp and TileDefs.terrain.capture_cell(Vector2i(12, 8)) != before_cell,
-			"damage and terrain destruction settle together at t+3")
-	expect(authority._pending_blasts.is_empty(), "a settled explosion is removed")
-	authority.submit_blast(88, Vector2(700, 544), 96.0, 40, 0.0, 0)
-	expect(authority._pending_blasts.size() == 1, "a pending explosion is queued once")
-	authority.clear_pending_blasts()
-	expect(authority._pending_blasts.is_empty(), "round reset clears unsettled explosions")
-	var grenade_type := 0
-	for type_id in WeaponRegistry.all_ids():
-		if WeaponRegistry.scene_of(type_id) == "res://scenes/weapons/grenade_launcher.tscn":
-			grenade_type = type_id
-	var local := player(parent, 2)
-	local.global_position = Vector2(650, 544)
-	local.apply_collision_pose()
-	var combat := CombatPrediction.new()
-	combat.bind(local)
-	combat.blasts[55] = {"id": 55, "type_id": grenade_type, "pos": Vector2(700, 544),
-			"tick": 100, "confirmed": true}
-	var predicted_before := local.sim_hp
-	for tick: int in [100, 101, 102]:
-		combat.step(tick, [local], false)
-	expect(local.sim_hp == predicted_before, "predicted blast damage waits for its due tick")
-	combat.step(103, [local], false)
-	expect(local.sim_hp < predicted_before, "predicted blast damage settles at tick+3")
-	# 回滚到 due tick 之前：已结算的预测爆炸必须重新允许结算，否则重放会丢掉伤害。
-	local.sim_hp = local.sim_max_hp
-	combat.prepare(101, {})
-	expect(not bool(combat.blasts[55].get("settled", false)), "rolling back before the due tick re-arms the blast")
-	for tick: int in [101, 102]:
-		combat.step(tick, [local], false)
-	combat.step(103, [local], false)
-	expect(local.sim_hp < local.sim_max_hp, "the replayed blast settles again at tick+3")
-	# 迟到的权威命中：事件 tick 仍为 103，本地已先按预测结算；回滚到 102 后重放 103 只应用权威 HP。
-	local.sim_hp = local.sim_max_hp
-	combat.blasts.erase(55)
-	combat.blasts[56] = {"id": 56, "type_id": grenade_type, "pos": Vector2(700, 544),
-			"tick": 100, "confirmed": true}
-	for tick: int in [100, 101, 102, 103]:
-		combat.step(tick, [local], false)
-	expect(local.sim_hp < local.sim_max_hp, "the prediction settles at 103 before the authority arrives")
-	combat.tick = 105
-	var late := {"id": 56, "tick": 103, "source": 2, "shooter": 1, "victim": local.role,
-			"hp": 30, "knock": Vector2.ZERO, "facing": 1, "pos": local.global_position}
-	var span := combat.confirm_hit(late)
-	expect(span == Vector2i(103, 103), "the late hit invalidates the settled 103 outcome")
-	local.sim_hp = local.sim_max_hp
-	combat.restore_checkpoint(102, ProjectileSnapshot.new())
-	combat.step(103, [local], false)
-	expect(local.sim_hp == 30, "replaying 103 applies the authoritative HP instead of predicting again")
-	combat.step(104, [local], false)
-	expect(local.sim_hp == 30, "the authoritative explosion HP is applied once")
-	# 未来 tick 的权威 HIT 不能取消更早 tick 的预测；它在自己的 tick 才应用。
-	combat.clear()
-	local.sim_hp = local.sim_max_hp
-	combat.blasts[57] = {"id": 57, "type_id": grenade_type, "pos": Vector2(700, 544),
-			"tick": 100, "confirmed": true}
-	combat.hits[57] = [{"tick": 104, "source": 2, "shooter": 1, "victim": local.role,
-			"hp": 30, "knock": Vector2.ZERO, "facing": 1, "pos": local.global_position}]
-	for tick: int in [100, 101, 102, 103]:
-		combat.step(tick, [local], false)
-	expect(local.sim_hp < local.sim_max_hp,
-			"a future authoritative hit does not suppress the earlier predicted damage")
-	combat.step(104, [local], false)
-	expect(local.sim_hp == 30, "the authoritative hit applies at its own tick")
-	combat.clear()
-	cleanup()
-
 func _step_world(tree: SceneTree, height: int, ceiling := false) -> Node2D:
 	return world_from_solid(tree, 16, 8, func(sx: int, sy: int) -> bool:
 		if sy >= 24:
@@ -959,12 +839,11 @@ func _step_up(tree: SceneTree) -> void:
 		mover.collision_mask = CollisionWorld.LAYER_TERRAIN
 		mover._apply_layers()
 		mover.global_position = Vector2(400, 384 - 57)
-		mover.apply_collision_pose()
-		var record := InputBuffer.neutral().merged({"ax": 1.0}, true)
-		ActorStep.step(mover, InputBuffer.neutral())
+		mover.sync_collision_geometry()
+		ActorStep.step(mover, NEUTRAL_INPUT)
 		var farthest := mover.global_position.x
 		for i in 60:
-			ActorStep.step(mover, record)
+			ActorStep.step(mover, FORWARD_INPUT)
 			farthest = maxf(farthest, mover.global_position.x)
 		expect(absf(mover.global_position.y - (384 - height - 57)) < 2.0,
 				"a %dpx step is climbed" % height)
@@ -977,10 +856,9 @@ func _step_up(tree: SceneTree) -> void:
 	blocked.collision_mask = CollisionWorld.LAYER_TERRAIN
 	blocked._apply_layers()
 	blocked.global_position = Vector2(400, 384 - 57)
-	blocked.apply_collision_pose()
-	var forward := InputBuffer.neutral().merged({"ax": 1.0}, true)
+	blocked.sync_collision_geometry()
 	for i in 40:
-		ActorStep.step(blocked, forward)
+		ActorStep.step(blocked, FORWARD_INPUT)
 	expect(absf(blocked.global_position.y - (384 - 57)) < 2.0 and blocked.global_position.x < 500.0,
 			"a step higher than 64px keeps the normal collision block")
 	cleanup()
@@ -991,9 +869,9 @@ func _step_up(tree: SceneTree) -> void:
 	ceiling_mover.collision_mask = CollisionWorld.LAYER_TERRAIN
 	ceiling_mover._apply_layers()
 	ceiling_mover.global_position = Vector2(400, 384 - 57)
-	ceiling_mover.apply_collision_pose()
+	ceiling_mover.sync_collision_geometry()
 	for i in 40:
-		ActorStep.step(ceiling_mover, forward)
+		ActorStep.step(ceiling_mover, FORWARD_INPUT)
 	expect(absf(ceiling_mover.global_position.y - (384 - 57)) < 2.0,
 			"a low ceiling blocks the whole step path")
 	cleanup()
@@ -1004,21 +882,52 @@ func _step_up(tree: SceneTree) -> void:
 	runner.collision_mask = CollisionWorld.LAYER_TERRAIN | CollisionWorld.LAYER_TEAM_A
 	runner._apply_layers()
 	runner.global_position = Vector2(400, 384 - 57)
-	runner.apply_collision_pose()
+	runner.sync_collision_geometry()
 	var blocker := player(dynamic, 2)
 	blocker.gravity = 0.0
 	# 只挡 16px 抬高后的路径，不挡地面水平路径。
 	blocker.global_position = Vector2(500, 213)
-	blocker.apply_collision_pose()
+	blocker.sync_collision_geometry()
 	collider(blocker, CollisionWorld.LAYER_TEAM_A)
 	for i in 40:
-		ActorStep.step(runner, forward)
+		ActorStep.step(runner, FORWARD_INPUT)
 	expect(absf(runner.global_position.y - (384 - 57)) < 2.0,
 			"a dynamic actor blocking the raised path prevents the step-up")
 	# 被拒绝的候选不能移动角色：候选是只读检测，回退到水平阻挡。
 	runner.move_by_internal(Vector2(10.0, 0.0))
 	expect(absf(runner.global_position.y - (384 - 57)) < 2.0,
 			"a rejected step candidate does not move the actor")
+	cleanup()
+
+func _step_side_landing(tree: SceneTree) -> void:
+	var parent := world_from_solid(tree, 16, 16, func(_sx: int, sy: int) -> bool: return sy >= 24)
+	var slope := StaticBody2D.new()
+	slope.position = Vector2(513, 375)
+	slope.rotation_degrees = -70.0
+	slope.collision_layer = CollisionWorld.LAYER_TERRAIN
+	slope.collision_mask = 0
+	var hull := CollisionShape2D.new()
+	var box := RectangleShape2D.new()
+	box.size = Vector2(44, 3)
+	hull.shape = box
+	slope.add_child(hull)
+	parent.add_child(slope)
+	var mover := player(parent)
+	mover.collision_layer = 0
+	mover.collision_mask = CollisionWorld.LAYER_TERRAIN
+	mover._apply_layers()
+	mover.global_position = Vector2(464, 326.98)
+	mover.sync_collision_geometry()
+	mover._grounded = true
+	mover.step_input = ActorInput.new()
+	mover.step_input.axis = 1.0
+	# 16px 抬高后能横移，但下落会先碰到斜面的侧面。
+	var blocked := mover.move_by_internal(Vector2(12, 0))
+	expect(blocked == Vector2(1, 0) and mover.global_position.x < 476.0
+			and absf(mover.global_position.y - 326.98) < 0.2,
+			"a steep contact on the downward sweep falls back to horizontal blocking")
+	var pose: Transform2D = PhysicsServer2D.body_get_state(mover.get_rid(), PhysicsServer2D.BODY_STATE_TRANSFORM)
+	expect(pose.origin.is_equal_approx(mover.global_position), "a rejected landing leaves the actor and RID in sync")
 	cleanup()
 
 # 团队 MVP 只从获胜队选；平局与缺失候选都返回 0。
@@ -1048,68 +957,103 @@ func _mvp(tree: SceneTree) -> void:
 # 团队对局初始化：固定阵容、初始比分、出生点规划与换边。
 func _team_setup(tree: SceneTree) -> void:
 	cleanup()
-	var parent := world(tree)
 	var authority := AuthorityWorld.new()
-	parent.add_child(authority)
-	authority.setup(PvpSession.MODE_TEAM, "res://maps/demo.cyrm", [1, 2, 3], {1: 1, 2: 1, 3: 2},
-			{"match_time": 300})
+	tree.root.add_child(authority)
+	_worlds.append(authority)
+	var disabled := WeaponRegistry.all_ids()
+	expect(not authority.setup(PvpSession.MODE_TEAM, "res://maps/demo.cyrm", [1, 2, 3], {1: 1, 2: 1, 3: 2},
+			{"disabled_weapons": disabled}).is_empty() and authority.players.is_empty(),
+			"all weapons disabled rejects the match before spawning players")
+	disabled.erase(WeaponRegistry.Type.PISTOL)
+	var problem := authority.setup(PvpSession.MODE_TEAM, "res://maps/demo.cyrm", [1, 2, 3], {1: 1, 2: 1, 3: 2},
+			{"match_time": 300, "disabled_weapons": disabled})
+	expect(problem.is_empty(), "the team match loads and validates its map")
+	for p: Player in authority.players.values():
+		expect(p.weapons.current_type_id() == WeaponRegistry.Type.PISTOL,
+				"each player starts equipped even when only one weapon type is enabled")
 	authority.set_physics_process(false)
-	expect(authority._round_state == NetEvent.RoundState.WAITING and is_zero_approx(authority._round_timer),
+	expect(authority.rules.phase == NetEvent.RoundState.WAITING and is_zero_approx(authority.rules.round_timer),
 			"setup starts in WAITING with a zero timer")
 	expect(authority.players[3].sim_max_hp == 55 and authority.players[1].sim_max_hp == 50,
 			"team max HP follows the fixed roster")
-	expect(int(authority._scores.get(2, 0)) == 1 and int(authority._scores.get(1, 0)) == 0,
+	expect(int(authority.rules.scores.get(2, 0)) == 1 and int(authority.rules.scores.get(1, 0)) == 0,
 			"the smaller team starts with its score bonus")
 	expect(authority.rules.team_counts == {1: 2, 2: 1}, "the roster counts are frozen at setup")
 	expect(authority.rules.spawns.size() == 3 and authority.rules.swapped.size() == 3,
 			"both side plans assign every role")
 	expect(authority.rules.spawns[1] == Vector2i(22, 30), "team A uses its first side point")
-	authority._round_state = NetEvent.RoundState.ROUND_OVER
-	authority._round_timer = 0.0
-	authority._rounds_won = {1: 1}
-	authority.rules.tick(authority, 0.016)
-	expect(authority._round_state == NetEvent.RoundState.WAITING,
+	var actor: Player = authority.players[1]
+	var drop := [1, actor.input_buffer.epoch, 0, ActorInput.BIT_DROP, 0, 0, Vector2.RIGHT]
+	authority.accept_input(1, [[], [drop]])
+	authority._physics_process(ActorStep.DT)
+	expect(actor.weapons.current_type_id() == WeaponRegistry.Type.PISTOL,
+			"WAITING blocks a queued drop even after the seat is ready")
+
+	authority.start_countdown()
+	authority._advance_round(3.0)
+	drop[InputBuffer.SEQ] = 2
+	authority.accept_input(1, [[], [drop]])
+	authority._physics_process(ActorStep.DT)
+	expect(actor.weapons.current_type_id() == 0, "PLAYING accepts the same drop")
+
+	_win_team_round(authority)
+	expect(authority.rules.phase == NetEvent.RoundState.WAITING,
 			"the next round returns to WAITING instead of counting down")
-	expect(authority._round_num == 2 and authority.rules.spawns[1] == Vector2i(79, 30),
+	expect(authority.rules.round_number == 2 and authority.rules.spawns[1] == Vector2i(79, 30),
 			"side swap follows the round number")
-	expect(int(authority._scores.get(2, 0)) == 1 and int(authority._scores.get(1, 0)) == 0,
+	expect(int(authority.rules.scores.get(2, 0)) == 1 and int(authority.rules.scores.get(1, 0)) == 0,
 			"the next round reapplies the initial score bonus")
+
+	authority.start_countdown()
+	authority._advance_round(3.0)
+	authority.set_physics_process(true)
+	_win_team_round(authority)
+	var result := authority.round_state()
+	expect(result["state"] == NetEvent.RoundState.MATCH_OVER and result["match_winner"] == 1,
+			"the second round win seals the match result")
+	expect(not authority.is_physics_processing(), "the final result stops authoritative combat")
+	drop[InputBuffer.EPOCH] = actor.input_buffer.epoch
+	drop[InputBuffer.TARGET_TICK] = authority._snap_tick + 1
+	authority.accept_input(1, [[], [drop]])
+	expect(actor.input_buffer.actions.is_empty(), "the final result stops accepting input")
+	authority.remove_role(3)
+	expect(authority.round_state() == result, "leaving after the match keeps the final result")
 	cleanup()
+
+func _win_team_round(authority: AuthorityWorld) -> void:
+	for kill in TeamRules.kills_to_win(3):
+		authority.rules.score_down(3, 1)
+	authority._advance_round(ActorStep.DT)
+	authority._advance_round(4.0)
+
 # 团队复活：只取当前阵营地图侧、避开存活角色占用点，并最大化与敌人的最小环面距离。
 func _team_respawn(tree: SceneTree) -> void:
 	cleanup()
 	var parent := world_from_solid(tree, 125, 75, func(sx: int, sy: int) -> bool: return sy >= 74 * 4)
-	var saved := MazeGenerator.current_spawns
-	var info := MapFormat.load_map_info("res://maps/demo.cyrm")
-	MazeGenerator.current_spawns = info["spawns"]
-	var respawn: Dictionary = MazeGenerator.current_spawns.get("respawn", {})
+	var info := MapFormat.load_map("res://maps/demo.cyrm")
+	var respawn: Dictionary = info["spawns"]["respawn"]
 	var rules := MatchRules.new()
-	rules.mode = PvpSession.MODE_TEAM
-	rules.teams = {1: 1, 2: 1, 3: 2}
-	var fake := FakeWorld.new()
-	fake._round_num = 1
-	parent.add_child(fake)
+	rules.setup(PvpSession.MODE_TEAM, [1, 2, 3], {1: 1, 2: 1, 3: 2}, info, {})
 	var ally := player(parent, 1)
 	ally.team = 1
 	ally.global_position = Vector2(respawn[1][0]) * 64 + Vector2(32, 32)
 	var enemy := player(parent, 3)
 	enemy.team = 2
 	enemy.global_position = Vector2(respawn[1][1]) * 64 + Vector2(32, 32)
-	fake.players = {1: ally, 3: enemy}
-	var point: Vector2i = rules.spawn_for(fake, 2)
+	var players := {1: ally, 3: enemy}
+	var point := rules.spawn_for(players, 2)
 	expect(respawn[1].has(point), "team respawn stays on the team's current map side")
 	expect(point != respawn[1][0] and point != respawn[1][1],
 			"occupied respawn points are excluded")
-	# 全部本方点被占用：返回无点，保持倒地，由 MatchRules.tick 在下一 tick 重试。
+	# 全部本方点被占用时保持倒地，下一 tick 重新选点。
 	for index in respawn[1].size():
 		var mate := player(parent, 10 + index)
 		mate.team = 1
 		mate.global_position = Vector2(respawn[1][index]) * 64 + Vector2(32, 32)
-		mate.apply_collision_pose()
-		fake.players[10 + index] = mate
-	expect(rules.spawn_for(fake, 2) == Vector2i(-1, -1),
+		mate.sync_collision_geometry()
+		players[10 + index] = mate
+	expect(rules.spawn_for(players, 2) == Vector2i(-1, -1),
 			"a fully occupied team side reports no point instead of overlapping")
-	MazeGenerator.current_spawns = saved
 	cleanup()
 # 相机：首次绑定、死区平滑、跨接缝副本对齐与震屏合成。
 func _camera(tree: SceneTree) -> void:
@@ -1142,18 +1086,18 @@ func _camera(tree: SceneTree) -> void:
 	expect(is_equal_approx(cam._shake_amt, 30.0) and cam._shake_time >= 0.49,
 			"a weak shake cannot replace a stronger amplitude or a longer duration")
 	cam._process(1.0 / 60.0)
-	expect((cam.global_position - cam.get_base_global_position()).is_equal_approx(cam._shake_offset),
+	expect(cam.global_position.is_equal_approx(cam.get_base_global_position() + cam._shake_offset),
 			"the rendered position is base + shake offset")
 	# 跨接缝：目标在右侧边缘、基准在左侧时，相机应整体对齐到目标所在副本。
 	cam._shake_amt = 0.0
 	cam._shake_time = 0.0
 	cam._shake_dur = 0.0
 	cam._shake_offset = Vector2.ZERO
-	target.global_position = Vector2(GameParameters.MAP_WIDTH - 4.0, 200)
+	target.global_position = Vector2(_terrain.map_size.x - 4.0, 200)
 	cam._base_pos = Vector2(4.0, 200 + PlayerParams.cam_y_bias)
 	cam._process(1.0 / 60.0)
 	var aligned := GridPathfinder.anchor_to_nearest(cam.get_base_global_position(),
-			target.global_position, GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+			target.global_position, _terrain.map_size)
 	expect(aligned.distance_to(target.global_position + bias) < 32.0,
 			"the camera base follows the nearest copy of the target across the seam")
 	cleanup()

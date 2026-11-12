@@ -10,62 +10,80 @@ extends RefCounted
 #   - 击败实体保留：在快照窗口内被击败的敌人隐藏其物理和渲染节点，回溯至击败时刻前则恢复存活。
 #   - 回溯期间伤害免疫：实体在 TimeField.is_rewinding() 期间免疫外部常规伤害，玩家输入被暂时挂起。
 
-static var hold_corpses := false   # 由 Level0 每帧同步:录制中=true(击杀保留尸体待复活)
+const FRAME_TIME: int = 0
+const FRAME_PLAYER: int = 1
+const FRAME_ENEMIES: int = 2
+const FRAME_BULLETS: int = 3
 
-var was_rewinding := false         # 状态沿(Level0 用它判进入/退出回溯)
-var _frames: Array = []            # [{t, player:{...}, enemies:[...], bullets:[...]}]
+const BULLET_ID: int = 0
+const BULLET_TYPE_ID: int = 1
+const BULLET_SOURCE: int = 2
+const BULLET_DAMAGE: int = 3
+const BULLET_MOTION: int = 4
+
+# 最老的有效帧在 _head，之后按时间顺序读取 _count 个槽。
+var _frames: Array = []
+var _head := 0
+var _count := 0
 var _t := 0.0                      # 世界已录制时间(秒)
 var _acc := 0.0
 var _cursor := 0.0
-var _replay_bullets: Dictionary = {}  # 历史 ID -> 回放对象，避免按下标串用不同弹丸
-var _parent: Node                 # 回放子弹的挂载父节点(通常 WorldViewport)
+var _combat: CombatSimulator
 
-func _init(parent: Node) -> void:
-	_parent = parent
+func _init(combat: CombatSimulator) -> void:
+	_combat = combat
 
-func record(delta: float, player: Player, enemies: Array, bullets: Array) -> void:
+func record(delta: float, player: Player, enemies: Array) -> void:
 	_t += delta
 	_acc += delta
 	if _acc < 1.0 / float(TimeParams.SNAP_HZ):
 		return
 	_acc = 0.0
-	var pe: Array = []
-	for e: EnemyBase in enemies:
-		if e.has_meta("elite"):
-			continue
-		pe.append({
-			"n": e,
-			"p": e.global_position,
-			"v": e.velocity,
-			"hp": e.hp,
-			"dead": e.is_dead,
-			"vis": e.visible,
-		})
-	var pb: Array = []
-	for bullet: BulletBase in bullets:
-		var sh := bullet.shooter
-		pb.append({
-			# 重建后继续携带原历史 ID，二次录制与回溯仍对应同一颗弹丸。
-			"id": int(bullet.get_meta("rewind_id", bullet.get_instance_id())),
-			"sp": bullet.get_meta("scene_path"),
-			"from_player": is_instance_valid(sh) and sh.is_in_group("player"),
-			"state": bullet.rewind_state(),
-		})
-	_frames.append({
-		"t": _t,
-		"player": player.capture_state(),
-		"enemies": pe,
-		"bullets": pb,
-	})
 	var cutoff := _t - TimeParams.SNAP_SECONDS
-	while _frames.size() > 1 and float(_frames[0]["t"]) < cutoff:
-		_frames.pop_front()
+	var enemy_states: Array[Array] = []
+	for enemy: EnemyBase in enemies:
+		if enemy.has_meta("elite"):
+			continue
+		# 尸体只在录制时间推进时过期，暂停和回放不会缩短保留期。
+		if enemy._rewind_hold:
+			if enemy.rewind_death_time < 0.0:
+				enemy.rewind_death_time = _t
+			if enemy.rewind_death_time < cutoff:
+				enemy.queue_free()
+				continue
+		enemy_states.append(enemy.capture_rewind_state())
+	var bullet_states: Array[Array] = []
+	for bullet: BulletBody in _combat.projectiles.values():
+		var state := [bullet.entity_id, bullet.type_id, bullet._source_id, bullet.hit_damage]
+		bullet.append_motion_state(state)
+		bullet_states.append(state)
+	while _count > 0 and float(_frames[_head][FRAME_TIME]) < cutoff:
+		_frames[_head] = null
+		_head = _frame_slot(1)
+		_count -= 1
+	_append_frame([_t, player.capture_rewind_state(), enemy_states, bullet_states])
+
+func _frame_slot(index: int) -> int:
+	return (_head + index) % _frames.size()
+
+func _append_frame(frame: Array) -> void:
+	if _count == _frames.size():
+		var grown: Array = []
+		grown.resize(maxi(1, _count * 2))
+		for index in _count:
+			grown[index] = _frames[_frame_slot(index)]
+		_frames = grown
+		_head = 0
+	_frames[_frame_slot(_count)] = frame
+	_count += 1
+
+func can_rewind() -> bool:
+	return _count >= 2
 
 func begin() -> void:
 	_cursor = 0.0
-	_replay_bullets.clear()
-	for bullet: BulletBase in _parent.get_tree().get_nodes_in_group("bullet"):
-		bullet.queue_free()
+	if can_rewind():
+		_combat.clear()
 
 
 ## 退出时空回溯：裁剪回溯出口之后的时间轴数据，保持时间线连续一致。
@@ -74,96 +92,63 @@ func begin() -> void:
 ## 返回出口时刻(磁带新末尾),Level0 用它把瓦片账本裁到同一位置。
 func finish() -> float:
 	var exit_t := _t - _cursor
-	var kept := 0
-	for i in range(_frames.size()):
-		if float(_frames[i]["t"]) <= exit_t:
-			kept = i + 1
-	if kept == 0 and not _frames.is_empty():
-		kept = 1   # 倒到了磁带最老处:世界就停在那帧上,磁带从它重新起算
-	if kept > 0:
-		_frames.resize(kept)
-		_t = maxf(exit_t, float(_frames[kept - 1]["t"]))
+	if _count > 0:
+		var last := _last_frame_index(exit_t)
+		while _count > last + 1:
+			_count -= 1
+			_frames[_frame_slot(_count)] = null
+		_t = maxf(exit_t, float(_frames[_frame_slot(last)][FRAME_TIME]))
 	_cursor = 0.0
-	_replay_bullets.clear()
 	return _t
 
 func step(delta: float, player: Player) -> void:
-	if _frames.size() < 2:
+	if not can_rewind():
 		return
-	_cursor += delta * _mult()
-	var target := _t - _cursor
-	_apply(_frame_at(target), player)
+	var oldest: float = _frames[_head][FRAME_TIME]
+	_cursor = minf(TimeParams.advance_rewind(_cursor, delta), _t - oldest)
+	_apply(_frames[_frame_slot(_last_frame_index(current_target()))], player)
 
 
-## 起步快放 → 1×(用已倒退量做 ramp;越倒越接近 1×)
-func _mult() -> float:
-	var k := clampf(_cursor / maxf(TimeParams.REWIND_RAMP_TIME, 0.001), 0.0, 1.0)
-	return lerpf(TimeParams.REWIND_START_MULT, 1.0, k)
-
-func _frame_at(target: float) -> Dictionary:
-	for i in range(_frames.size() - 1, -1, -1):
-		if float(_frames[i]["t"]) <= target:
-			return _frames[i]
-	return _frames[0]
-
-func _apply(f: Dictionary, player: Player) -> void:
-	if is_instance_valid(player):
-		player.rewind_restore(f["player"])
-	for d in f["enemies"]:
-		if is_instance_valid(d["n"]):
-			var enemy: EnemyBase = d["n"]
-			enemy.rewind_restore(d)
-	_apply_bullets(f["bullets"], player)
-
-
-## 单人以目标帧决定对象集合；创建/回收在管理器处理，状态恢复复用弹丸公共接口。
-func _apply_bullets(list: Array, player: Player) -> void:
-	var wanted := {}
-	for meta: Dictionary in list:
-		var id: int = meta["id"]
-		wanted[id] = true
-		var bullet: BulletBase = _replay_bullets.get(id)
-		if not is_instance_valid(bullet) or bullet.is_queued_for_deletion():
-			var sp := str(meta["sp"])
-			bullet = (load(sp) as PackedScene).instantiate()
-			bullet.shooter = player if meta["from_player"] else null
-			bullet.apply_damage = true
-			bullet.set_meta("scene_path", sp)
-			bullet.set_meta("rewind_id", id)
-			bullet.apply_rewind_state(meta["state"])
-			_parent.add_child(bullet)
-			_replay_bullets[id] = bullet
+func _last_frame_index(target: float) -> int:
+	var low := 0
+	var high := _count
+	while low < high:
+		var middle := (low + high) / 2
+		if float(_frames[_frame_slot(middle)][FRAME_TIME]) <= target:
+			low = middle + 1
 		else:
-			bullet.apply_rewind_state(meta["state"])
-	for id in _replay_bullets.keys():
+			high = middle
+	return maxi(0, low - 1)
+
+func _apply(frame: Array, player: Player) -> void:
+	if is_instance_valid(player):
+		player.rewind_restore(frame[FRAME_PLAYER])
+	for state: Array in frame[FRAME_ENEMIES]:
+		if is_instance_valid(state[EnemyBase.REWIND_NODE]):
+			var enemy: EnemyBase = state[EnemyBase.REWIND_NODE]
+			enemy.rewind_restore(state)
+	_apply_bullets(frame[FRAME_BULLETS])
+
+
+func _apply_bullets(states: Array) -> void:
+	var wanted := {}
+	for state: Array in states:
+		var id: int = state[BULLET_ID]
+		wanted[id] = true
+		var bullet: BulletBody = _combat.projectiles.get(id)
+		if bullet == null:
+			bullet = _combat.spawn_projectile(id, state[BULLET_TYPE_ID], state[BULLET_SOURCE],
+					state[BULLET_MOTION + BulletBody.MOTION_POS], state[BULLET_MOTION + BulletBody.MOTION_VEL],
+					state[BULLET_DAMAGE])
+		bullet.restore_motion(state, BULLET_MOTION)
+	for id: int in _combat.projectiles.keys():
 		if not wanted.has(id):
-			var bullet: BulletBase = _replay_bullets[id]
-			if is_instance_valid(bullet):
-				bullet.queue_free()
-			_replay_bullets.erase(id)
-
-
+			_combat.erase_projectile(id)
 
 ## 当前回放目标时间(秒):瓦片账本按同一时间轴取区间还原。
 func current_target() -> float:
 	return _t - _cursor
 
 
-## 回放中的子弹节点(回溯期 Level0 用它们对精英做二次伤害判定)。
-func replay_bullets() -> Array:
-	return _replay_bullets.values()
-
 func recorded_seconds() -> float:
 	return _t
-
-
-## 尸体过期清理:录制中被保留(隐藏)的尸体,死亡时间超出缓冲窗口 → 真正释放。
-## Level0 每帧调;用 meta "rw_death_ms" 记的死亡时刻判定。
-static func expire_corpses(tree: SceneTree) -> void:
-	var now := Time.get_ticks_msec()
-	var life_ms := int(TimeParams.SNAP_SECONDS * 1000.0)
-	for enemy: EnemyBase in tree.get_nodes_in_group("enemies"):
-		if not enemy.has_meta("rw_death_ms"):
-			continue
-		if now - int(enemy.get_meta("rw_death_ms")) > life_ms:
-			enemy.queue_free()

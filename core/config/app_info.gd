@@ -2,7 +2,7 @@ class_name AppInfo
 extends RefCounted
 
 # 版本号与提交历史提供类。
-# 供主菜单版本号标识及信息展示界面读取。
+# 供信息展示界面读取。
 # 无外部 Autoload 单例依赖，支持独立静态调用。
 
 

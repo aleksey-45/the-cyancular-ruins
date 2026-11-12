@@ -13,12 +13,11 @@ const WORLD_SCALE := 2.5
 @export var type_id: int = 1
 var locked_role := 0
 var unlock_tick := 0
+var solo_unlock_ms := 0
+var time_field: TimeField
 var inst: int = 0
-var mag: int = 0
-var drop_velocity: Vector2 = Vector2.ZERO
+var carried: int = 0
 var _settled: bool = false
-# 未实现机制的预留状态：掉落物存在时长（拾取优先级/限时消失等待接入），勿删。
-var _age: float = 0.0
 # 自管 RID 体生命周期在 ServerBody；着地状态与形状槽在此补充。
 var velocity := Vector2.ZERO
 var _grounded := false
@@ -32,7 +31,7 @@ func _enter_tree() -> void:
 	CollisionWorld.sync_body_pose(_rid, global_transform)
 
 func _sync_collision() -> void:
-	if _world_space.is_valid():
+	if _physics != null:
 		CollisionWorld.sync_body_shapes(_rid, hulls, global_transform)
 
 # 逻辑坐标与渲染坐标：
@@ -54,9 +53,7 @@ func sync_render_from_canonical() -> void:
 		global_position = canonical_pos
 		CollisionWorld.sync_body_pose(_rid, global_transform)
 		return
-	var w := float(GameParameters.MAP_WIDTH)
-	var h := float(GameParameters.MAP_HEIGHT)
-	global_position = GridPathfinder.anchor_to_nearest(canonical_pos, _anchor, w, h) if (w > 0.0 and h > 0.0) else canonical_pos
+	global_position = GridPathfinder.anchor_to_nearest(canonical_pos, _anchor, terrain.map_size)
 	CollisionWorld.sync_body_pose(_rid, global_transform)
 
 
@@ -68,73 +65,62 @@ func _ready() -> void:
 	rotation = 0.0
 	if canonical_pos == Vector2.ZERO:
 		canonical_pos = global_position
-	if get_child_count() == 0:
-		_build_visual()
-		_build_collision()
-	velocity = drop_velocity
+	var spec := WeaponRegistry.definition(type_id)
+	var bounds: Rect2 = spec["pickup_bounds"]
+	if DisplayServer.get_name() != "headless":
+		add_child(make_view(spec))
+	var hull := CollisionShape2D.new()
+	var rect := RectangleShape2D.new()
+	rect.size = bounds.size
+	hull.shape = rect
+	add_child(hull)
+	hulls = [hull]
 	_sync_collision()
 
+static func make_view(spec: Dictionary) -> Sprite2D:
+	var sprite := WeaponBase.make_sprite(spec["region"])
+	var bounds: Rect2 = spec["pickup_bounds"]
+	sprite.offset = -bounds.get_center()
+	return sprite
 
-# 配置地面武器属性（必须在加入场景树前调用，或加入后动态重建）
-func configure(p_type_id: int, p_inst: int, p_mag: int, p_vel: Vector2) -> void:
+func configure(p_type_id: int, p_inst: int, p_carried: int, p_vel: Vector2) -> void:
 	type_id = p_type_id
 	inst = p_inst
-	mag = p_mag
-	drop_velocity = p_vel
+	carried = p_carried
 	velocity = p_vel
-	_settled = false
-	if not is_inside_tree():
-		return
-	for c in get_children():
-		remove_child(c)
-		c.queue_free()
-	_build_visual()
-	_build_collision()
-	_sync_collision()
 
 
-func _build_visual() -> void:
-	var scene_path := WeaponRegistry.scene_of(type_id)
-	var scene: PackedScene = load(scene_path) if not scene_path.is_empty() else null
-	if scene == null:
-		push_warning("WeaponPickup: 槽 %d 没有武器场景,地面掉落物将是空壳" % type_id)
+## 地图散布点是地板上方的格心。让碰撞箱底部从下方格的上沿向下寻找落脚面。
+func settle_on_spawn_floor() -> void:
+	if hulls.is_empty():
 		return
-	var w: Node2D = scene.instantiate()
-	w.name = "Visual"
-	w.scale = Vector2.ONE
-	w.rotation = 0.0
-	add_child(w)
-
-
-func _build_collision() -> void:
-	var vis := get_node_or_null("Visual") as Node2D
-	if vis == null:
+	var hull := hulls[0] as CollisionShape2D
+	var height := (hull.shape as RectangleShape2D).size.y * global_transform.y.length()
+	var from := global_transform
+	from.origin.y += (GameParameters.TILE_SIZE - height) * 0.5 - CollisionWorld.MOTION_MARGIN
+	var result := PhysicsTestMotionResult2D.new()
+	# 换局时旧拾取物可能还在等待释放，预置武器以地形为支撑。
+	var previous_mask := collision_mask
+	collision_mask = CollisionWorld.LAYER_TERRAIN
+	_apply_layers()
+	var hit := CollisionWorld.probe_body(_rid, from, Vector2(0.0, GameParameters.TILE_SIZE),
+			CollisionWorld.MOTION_MARGIN, false, result)
+	collision_mask = previous_mask
+	_apply_layers()
+	if not hit or result.get_collision_normal().y >= -0.5:
 		return
-	var spr: Sprite2D = vis.get_node_or_null("Sprite2D")
-	if spr == null:
-		return
-	var r: Rect2 = SpriteBounds.from_sprite(spr)
-	if r.size == Vector2.ZERO:
-		return
-	# 将视觉中心居中对齐至原点，使碰撞体与交互判定中心重合
-	var gun_center := vis.position + spr.position + r.position + r.size * 0.5
-	vis.position -= gun_center
-	var cs := CollisionShape2D.new()
-	cs.name = "Shape"
-	var rect := RectangleShape2D.new()
-	rect.size = r.size
-	cs.shape = rect
-	cs.position = Vector2.ZERO
-	add_child(cs)
-	hulls = [cs]
+	global_position = from.origin + result.get_travel()
+	_recompute_canonical()
+	sync_render_from_canonical()
+	velocity = Vector2.ZERO
+	_grounded = true
+	_settled = true
 
 
 func _physics_process(delta: float) -> void:
-	simulate_tick(delta)
+	simulate_tick(time_field.world_delta(delta) if time_field != null else delta)
 
 func simulate_tick(delta: float) -> void:
-	delta = TimeField.world_delta(delta)
-	_age += delta
 	if _settled:
 		_unstick_up()
 		sync_render_from_canonical()
@@ -167,12 +153,7 @@ func _move(motion: Vector2) -> void:
 
 # 将物理位置约束折叠至环面规范坐标区间
 func _recompute_canonical() -> void:
-	var w := float(GameParameters.MAP_WIDTH)
-	var h := float(GameParameters.MAP_HEIGHT)
-	if w > 0.0 and h > 0.0:
-		canonical_pos = Vector2(fposmod(global_position.x, w), fposmod(global_position.y, h))
-	else:
-		canonical_pos = global_position
+	canonical_pos = GridPathfinder.wrap_to_range(global_position, terrain.map_size)
 
 
 # 生成或重建时若与实心地形重叠：零位移重叠检测，逐格向上推出。
@@ -185,20 +166,8 @@ func _unstick_up() -> bool:
 		CollisionWorld.sync_body_pose(_rid, global_transform)
 		if not CollisionWorld.probe_body(_rid, global_transform, Vector2.ZERO, 0.0, true):
 			velocity.y = 0.0
+			_grounded = false # 推出后要重新落地。
 			_settled = false
 			_recompute_canonical()
 			return true
 	return false
-
-
-var _prompt: PickupPrompt = null
-
-
-func set_prompt_visible(v: bool) -> void:
-	if v and _prompt == null:
-		_prompt = PickupPrompt.new()
-		_prompt.scale = Vector2.ONE / WORLD_SCALE
-		_prompt.position = Vector2(0.0, -PickupPrompt.GAP_ABOVE / WORLD_SCALE)
-		add_child(_prompt)
-	if _prompt != null and is_instance_valid(_prompt):
-		_prompt.visible = v

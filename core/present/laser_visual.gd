@@ -9,41 +9,48 @@ extends RefCounted
 # 光束节点挂载后其 global_position 置为 (0,0)，光束表现完成后自动淡出并释放。
 
 const BEAM_SCENE := preload("res://scenes/weapons/laser_beam.tscn")
+const HALF_WIDTH := 2.0
+const COLOR := Color(0.1, 0.35, 1, 1)
+const LIFETIME := 0.25
 
-# 折线光束(FLASH 风格)。style 预留视觉风格分支(现仅 0;未来 SUSTAINED 等在此加)。
-static func spawn_beam(parent: Node, points: PackedVector2Array, half_width: float,
-		color: Color, lifetime: float, _style: int = 0) -> void:
-	if points.size() < 2:
-		return
+static func play(parent: Node, path: PackedVector2Array, anchor: Vector2, size: Vector2) -> Node2D:
+	var points := _anchored(path, anchor, size)
 	var beam := BEAM_SCENE.instantiate()
 	parent.add_child(beam)
 	beam.global_position = Vector2.ZERO
-	beam.lifetime = lifetime
-	beam.setup(points, half_width, color)
+	beam.lifetime = LIFETIME
+	_add_muzzle_orb(beam, COLOR, HALF_WIDTH)
+	beam.setup(points, HALF_WIDTH, COLOR)
+	return beam
+
+static func correct(beam: Node2D, path: PackedVector2Array, anchor: Vector2, size: Vector2) -> void:
+	beam.set_path(_anchored(path, anchor, size))
+
+static func _anchored(path: PackedVector2Array, anchor: Vector2, size: Vector2) -> PackedVector2Array:
+	var points := path.duplicate()
+	var offset := GridPathfinder.anchor_to_nearest(points[0], anchor, size) - points[0]
+	for i in points.size():
+		points[i] += offset
+	return points
 
 # 开火时枪口"发射光源"圆球:配色/存续与激光光束相同机制 —— 外层光晕用 color(仿激光 Glow,
 # alpha=0.30)、内芯近白(仿激光 Core),挂满 lifetime、末尾与光束同步淡出。
 # 尺寸随光束粗细缩放(细光束时也给个下限保证可见)。挂 parent(世界系,不随枪 2.5x 缩放)。
-static func spawn_muzzle_orb(parent: Node, at: Vector2, color: Color, half_width: float, lifetime: float) -> void:
+static func _add_muzzle_orb(parent: Node, color: Color, half_width: float) -> void:
 	var holder := Node2D.new()
-	holder.global_position = at
+	holder.name = "Muzzle"
 	# 内芯半径（像素）约等于光束核心半径；下限 5 保证光束较细时枪口光球依然清晰可辨
 	var core_r := maxf(half_width * 0.7, 5.0)
 	var glow_r := core_r * 2.6
-	# Explosion.make_circle_texture(size):size px 贴图、圆心在中央,scale=半径/半贴图宽。
+	# ProjectileVisual.circle_texture(size):size px 贴图、圆心在中央,scale=半径/半贴图宽。
 	var glow := Sprite2D.new()
-	glow.texture = Explosion.make_circle_texture(32)
+	glow.texture = ProjectileVisual.circle_texture(32)
 	glow.modulate = Color(color.r, color.g, color.b, 0.30 * color.a)
 	glow.scale = Vector2.ONE * (glow_r / 16.0)
 	var core := Sprite2D.new()
-	core.texture = Explosion.make_circle_texture(16)
+	core.texture = ProjectileVisual.circle_texture(16)
 	core.modulate = Color(1.0, 1.0, 1.0, 0.95)
 	core.scale = Vector2.ONE * (core_r / 8.0)
 	holder.add_child(glow)
 	holder.add_child(core)
 	parent.add_child(holder)
-	# 与激光光束同步存续:满亮撑 lifetime,末尾 0.12s 一起淡出后自毁(同 laser_beam 节奏)。
-	var tw := holder.create_tween()
-	tw.tween_interval(maxf(lifetime - 0.12, 0.0))
-	tw.tween_property(holder, "modulate:a", 0.0, minf(lifetime, 0.12))
-	tw.tween_callback(holder.queue_free)

@@ -2,56 +2,69 @@ extends "res://tests/case.gd"
 
 func run(tree: SceneTree) -> void:
 	var node := world(tree)
-	var level := TileDefs.terrain
+	var level := _terrain
 	_seam(node)
 	_beam(level)
 	_queries(level)
 	var sub := Vector2i(8, 12)
+	var adjacent := sub + Vector2i.RIGHT
 	var original := level.get_hp(sub)
+	var adjacent_hp := level.get_hp(adjacent)
 	level.apply_hp(sub, original - 1, 1)
 	expect(level.get_hp(sub) == original - 1, "partial terrain damage preserves exact HP")
 	expect(level.flush_collisions() == 0, "HP-only damage does not rebuild geometry")
-	level.set_rewind_enabled(true)
+	level.rewind_enabled = true
 	level.seal_rewind(0.0)
 	level.apply_hp(sub, 0, 1)
+	level.apply_hp(adjacent, 0, 1)
 	level.seal_rewind(1.0)
-	expect(level.flush_collisions() > 0, "destroyed terrain commits collision changes")
+	expect(level.flush_collisions() == 1, "two destroyed subcells queue their shared chunk once")
 	level.rewind_between(0.0, 1.0)
 	expect(level.get_hp(sub) == original - 1, "rewind restores residual HP, not full health")
+	expect(level.get_hp(adjacent) == adjacent_hp, "rewind restores both subcells from the first saved macro state")
 	level.reset()
-	level.reset_prediction(100)
-	var generation := level.generation
-	level.predict_blast(1, WeaponRegistry.all_ids()[0], Vector2(136, 200), 101, 8.0, original)
-	var damaged := level.get_hp(sub)
-	expect(damaged < original, "predicted blast changes terrain")
-	expect(level.can_restore(100, generation), "prediction checkpoint is restorable")
-	level.restore_checkpoint(100)
-	expect(level.get_hp(sub) == original, "prediction restore recovers exact terrain")
-	level.predict_blast(1, WeaponRegistry.all_ids()[0], Vector2(136, 200), 101, 8.0, original)
-	expect(level.get_hp(sub) == damaged, "repeated blast after restore gives the same damage")
-	level.apply_authority({"tick": 101, "revision": 1, "cells": {sub: damaged}})
-	expect(level.difference(101, generation, 1).is_empty(), "matching authority confirms predicted terrain")
+	level.apply_values({sub: original - 2})
+	expect(level.get_hp(sub) == original - 2,
+			"an authority patch sets exact HP")
+	level.apply_values({sub: original - 2})
+	expect(level.flush_collisions() == 0 and level.get_hp(sub) == original - 2,
+			"the absolute HP patch is idempotent and keeps the same geometry")
 	_mirror_topology(tree)
 	_mirrored_collision(tree)
 	_beam_hole(tree)
 	_proxy_same_frame(tree)
-	_remote_layer(tree)
 	_lifecycle(tree)
 	_toroidal_sight(tree)
-	_visual_projection(tree)
 	_map_format()
 	_respawn_format()
 	_water_atlas()
+	_water_depth(tree)
+
+func _water_depth(tree: SceneTree) -> void:
+	var cells := {}
+	for y in [6, 7, 0, 1, 2]:
+		cells[Vector2i(0, y)] = 21
+	for y in 8:
+		cells[Vector2i(1, y)] = 22
+	world_with_walls(tree, 4, 8, cells)
+	var terrain := _terrain
+	expect(terrain.water_depth(Vector2(32, 2)) == 130.0
+			and terrain.water_depth(Vector2(32, 514)) == 130.0,
+			"water depth follows the same surface on both sides of the vertical seam")
+	expect(terrain.water_depth(Vector2(32, 178)) == 306.0,
+			"a deep column measures up through the water even beyond half the map height")
+	expect(terrain.water_depth(Vector2(96, 2)) == INF and terrain.water_depth(Vector2(160, 2)) == -INF,
+			"continuous water columns have no surface and dry columns have no depth")
 
 # 测试地图只有最下面一行宏格是实心的；从上方向下打，命中那一行。
 func _beam(terrain: Terrain) -> void:
 	var x := terrain.columns / 2
 	var wall_cell := Vector2i(x, terrain.rows - 1)
-	var start := Vector2((x + 0.5) * terrain.tile_size, (terrain.rows - 1.5) * terrain.tile_size)
+	var start := Vector2((x + 0.5) * Terrain.TILE_SIZE, (terrain.rows - 1.5) * Terrain.TILE_SIZE)
 	var packed := terrain.value(wall_cell)
 	expect(terrain.value(Vector2i(x, terrain.rows - 2)) == 0 and (packed & 15) == 15,
 			"test map has a solid row under an empty one")
-	var target := Vector2(start.x, start.y + terrain.tile_size)
+	var target := Vector2(start.x, start.y + Terrain.TILE_SIZE)
 	var direction := (target - start).normalized()
 	var beam := terrain.trace_beam(start, direction, 64.0, 0)
 	expect((beam["points"] as PackedVector2Array).size() == 2 and (beam["points"] as PackedVector2Array)[0] == start,
@@ -68,15 +81,16 @@ func _beam(terrain: Terrain) -> void:
 
 # 接缝镜像：底部一行在顶边之外必须还有一份，但不再复制整张地图。
 func _seam(node: Node2D) -> void:
-	var terrain := TileDefs.terrain
+	var terrain := _terrain
 	var centers := terrain.body_shapes(0)
 	expect(centers.has(Vector2(256.0, 224.0)), "bottom row is written into the world")
 	expect(centers.has(Vector2(768.0, 224.0)), "seam mirror repeats the bottom row across the left edge")
+	expect(centers.has(Vector2(-256.0, 224.0)), "a wall spanning both edges also repeats across the right edge")
 	expect(not centers.has(Vector2(256.0, 480.0)),
 			"the bottom edge does not repeat itself on the far side")
 	var plain := Node.new()
 	node.add_child(plain)
-	expect(Terrain._space_of(plain).is_valid(), "plain nodes resolve the world of their viewport")
+	expect(CollisionWorld.world_of(plain).space.is_valid(), "plain nodes resolve the world of their viewport")
 	plain.free()
 
 # 内部墙只有一份物理形状；贴边与角落只补必要副本。
@@ -84,10 +98,10 @@ func _mirror_topology(tree: SceneTree) -> void:
 	var texture := wall_texture()
 	world_with_walls(tree, 20, 20, {Vector2i(10, 10): texture, Vector2i(10, 19): texture,
 			Vector2i(0, 5): texture, Vector2i(0, 0): texture})
-	var terrain := TileDefs.terrain
+	var terrain := _terrain
 	var centers := {}
 	var total := 0
-	for key in terrain._chunks.keys():
+	for key in terrain._chunks.size():
 		var shapes := terrain.body_shapes(key)
 		total += shapes.size()
 		for center in shapes:
@@ -108,56 +122,39 @@ func _mirror_topology(tree: SceneTree) -> void:
 
 # 规范坐标的弹丸命中内部墙；同一位置在可视副本里没有碰撞。
 func _mirrored_collision(tree: SceneTree) -> void:
+	cleanup()
 	var texture := wall_texture()
 	var parent := world_with_walls(tree, 16, 16, {Vector2i(10, 8): texture})
-	var bullet: BulletBase = preload("res://scenes/weapons/bullet.tscn").instantiate()
-	bullet.prediction_only = true
-	bullet.setup(Vector2.LEFT, 600.0, 1000.0, 1.0, Color.WHITE, null)
-	bullet.position = Vector2(740, 544)
-	parent.add_child(bullet)
-	bullet.set_physics_process(false)
+	var actor := player(parent)
+	var sim := CombatSimulator.new(_terrain, parent, true)
+	var pistol := WeaponRegistry.Type.PISTOL
+	var source := actor.get_instance_id()
+	var bullet := sim.spawn_projectile(1, pistol, source, Vector2(740, 544), Vector2.LEFT * 600.0)
 	expect(bullet.advance_physics(0.1) == BulletBody.AdvanceResult.TERRAIN_HIT,
 			"canonical projectile hits the interior wall")
-	bullet.free()
-	var ghost: BulletBase = preload("res://scenes/weapons/bullet.tscn").instantiate()
-	ghost.prediction_only = true
-	ghost.setup(Vector2.LEFT, 600.0, 1000.0, 1.0, Color.WHITE, null)
-	ghost.position = Vector2(740 + 1024, 544)
-	parent.add_child(ghost)
-	ghost.set_physics_process(false)
+	var ghost := sim.spawn_projectile(2, pistol, source, Vector2(740, 544), Vector2.LEFT * 600.0)
+	ghost.global_position.x += 1024.0
 	expect(ghost.advance_physics(0.1) == BulletBody.AdvanceResult.MOVED,
 			"visual copies of interior walls carry no collision")
-	ghost.free()
-	# 规范世界运动跨接缝：右侧出门，撞到左侧贴边墙的镜像
 	cleanup()
-	var edge := wall_texture()
-	var seam_parent := world_with_walls(tree, 16, 16, {Vector2i(0, 8): edge, Vector2i(8, 0): edge})
-	var across := preload("res://scenes/weapons/bullet.tscn").instantiate() as BulletBase
-	across.prediction_only = true
-	across.setup(Vector2.RIGHT, 600.0, 2000.0, 1.0, Color.WHITE, null)
-	across.position = Vector2(1010, 544)
-	seam_parent.add_child(across)
-	across.set_physics_process(false)
+
+	parent = world_with_walls(tree, 16, 16, {Vector2i(0, 8): texture, Vector2i(8, 0): texture})
+	sim = CombatSimulator.new(_terrain, parent, true)
+	actor = player(parent)
+	source = actor.get_instance_id()
+	var across := sim.spawn_projectile(1, pistol, source, Vector2(1010, 544), Vector2.RIGHT * 600.0)
+	var vertical := sim.spawn_projectile(2, pistol, source, Vector2(544, 1010), Vector2.DOWN * 600.0)
 	expect(across.advance_physics(0.1) == BulletBody.AdvanceResult.TERRAIN_HIT,
 			"crossing the horizontal seam still hits the wall on the opposite edge")
-	across.free()
-	var vertical := preload("res://scenes/weapons/bullet.tscn").instantiate() as BulletBase
-	vertical.prediction_only = true
-	vertical.setup(Vector2.DOWN, 600.0, 2000.0, 1.0, Color.WHITE, null)
-	vertical.position = Vector2(544, 1010)
-	seam_parent.add_child(vertical)
-	vertical.set_physics_process(false)
 	expect(vertical.advance_physics(0.1) == BulletBody.AdvanceResult.TERRAIN_HIT,
 			"crossing the vertical seam still hits the wall on the opposite edge")
-	vertical.free()
-	# 单人弹丸同样只持有规范坐标：跨接缝后下一 tick 命中的是不在接缝附近的中部墙。
 	cleanup()
-	var interior := world_with_walls(tree, 16, 16, {Vector2i(2, 4): edge})
-	var single: BulletBase = preload("res://scenes/weapons/bullet.tscn").instantiate()
-	single.setup(Vector2.RIGHT, 600.0, 4000.0, 1.0, Color.WHITE, null)
-	single.position = Vector2(1010, 300)
-	interior.add_child(single)
-	single.set_physics_process(false)
+
+	parent = world_with_walls(tree, 16, 16, {Vector2i(2, 4): texture})
+	sim = CombatSimulator.new(_terrain, parent)
+	actor = player(parent)
+	source = actor.get_instance_id()
+	var single := sim.spawn_projectile(1, pistol, source, Vector2(1010, 300), Vector2.RIGHT * 600.0)
 	var steps: Array = []
 	for i in 3:
 		steps.append(single.advance_physics(0.1))
@@ -166,87 +163,43 @@ func _mirrored_collision(tree: SceneTree) -> void:
 	expect(steps == [BulletBody.AdvanceResult.MOVED, BulletBody.AdvanceResult.MOVED,
 			BulletBody.AdvanceResult.TERRAIN_HIT],
 			"a single-player projectile crosses the seam and hits an interior wall next tick")
-	single.free()
-	var ranged: BulletBase = preload("res://scenes/weapons/bullet.tscn").instantiate()
-	ranged.setup(Vector2.RIGHT, 600.0, 20.0, 1.0, Color.WHITE, null)
-	ranged.position = Vector2(1010, 300)
-	interior.add_child(ranged)
-	ranged.set_physics_process(false)
-	expect(ranged.advance_physics(0.1) == BulletBody.AdvanceResult.RANGE_END,
-			"range-ended projectiles leave through the same canonical exit")
-	expect(ranged.global_position.x >= 0.0 and ranged.global_position.x < 1024.0,
-			"range end still returns to canonical coordinates")
-	ranged.free()
-	var shell: BulletBase = preload("res://scenes/weapons/grenade_bullet.tscn").instantiate()
-	shell.setup(Vector2.RIGHT, 3000.0, 4000.0, 1.0, Color.WHITE, null)
-	shell.position = Vector2(1010, 300)
-	interior.add_child(shell)
-	shell.set_physics_process(false)
-	expect(shell.advance_physics(0.1) == BulletBody.AdvanceResult.BOUNCED,
-			"a grenade bounces off the mirrored interior wall")
-	expect(shell.global_position.x >= 0.0 and shell.global_position.x < 1024.0,
-			"bounced projectiles are also canonical")
-	shell.free()
+	var ranged := sim.spawn_projectile(2, pistol, source, Vector2(1010, 300), Vector2.RIGHT * 600.0)
+	ranged.max_range = 20.0
+	expect(ranged.advance_physics(0.1) == BulletBody.AdvanceResult.RANGE_END
+			and ranged.global_position.x >= 0.0 and ranged.global_position.x < 1024.0,
+			"range end uses the same canonical exit")
+	var shell := sim.spawn_projectile(3, WeaponRegistry.Type.GRENADE, source, Vector2(1010, 300), Vector2.RIGHT * 3000.0)
+	sim.step_projectile(shell, 0.1)
+	expect(shell.velocity_vec.x < 0.0 and is_equal_approx(shell.fuse_duration, 0.3)
+			and shell.global_position.x >= 0.0 and shell.global_position.x < 1024.0,
+			"a grenade bounces off the mirrored wall, starts its fuse and stays canonical")
 
-# 预测世界拥有真实远端体；检查点恢复与边界换层立即提交 RID。
-func _remote_layer(tree: SceneTree) -> void:
-	cleanup()
-	var parent := world_with_walls(tree, 16, 16, {})
-	var local := player(parent, 1)
-	var prediction := PredictionWorld.new()
-	prediction.bind(local)
-	prediction.terrain = TileDefs.terrain
-	prediction.ensure_actor(7, 2)
-	var remote := prediction.actor(7)
-	var record: Array = preload("res://tests/prediction_case.gd").wire_state(local.capture_state())
-	record[PlayerStateSchema.slot("pos")] = Vector2(512, 512)
-	record[PlayerStateSchema.slot("respawn_tick")] = 20
-	var frame := {"tick": 10, "own": {"state": local.capture_state(), "rewind": false},
-			"world": {"players": {1: preload("res://tests/prediction_case.gd").wire_state(local.capture_state()), 7: record},
-			"projectiles": {}}, "time": {}}
-	prediction.restore_authority(frame)
-	var checkpoint := prediction.capture([])
-	var physics := CollisionWorld.acquire(remote)
-	var circle := CircleShape2D.new()
-	circle.radius = 24.0
-	var probe := Transform2D(0.0, Vector2(512, 512))
-	expect(not physics.shape_overlaps(circle, probe, CollisionWorld.LAYER_TEAM_B).is_empty(),
-			"authority restore immediately exposes the remote RID on its team layer")
-	for at in range(11, 21): prediction.step_tick(InputBuffer.neutral(), true)
-	expect(remote.collision_layer == 0, "the rules phase at the known respawn tick removes the old body")
-	expect(physics.shape_overlaps(circle, probe, CollisionWorld.LAYER_TEAM_B).is_empty(),
-			"the expired remote layer is immediately absent from physics")
-	prediction.restore(checkpoint)
-	expect(remote.collision_layer == CollisionWorld.LAYER_TEAM_B,
-			"world checkpoint restores the remote collision layer")
-	remote.global_position = Vector2(10, 512)
-	remote.apply_collision_pose()
-	expect(not physics.shape_overlaps(circle, Transform2D(0.0, Vector2(10 + GameParameters.MAP_WIDTH, 512)),
-			CollisionWorld.LAYER_TEAM_B).is_empty(), "a seam actor mirrors its hull to the other side")
-	remote.global_position = Vector2(512, 512)
-	remote.apply_collision_pose()
-	expect(physics.shape_overlaps(circle, Transform2D(0.0, Vector2(512 + GameParameters.MAP_WIDTH, 512)),
-			CollisionWorld.LAYER_TEAM_B).is_empty(), "a mid-map actor has no mirror across the seam")
-
-# 空间适配层闭环：用例清理后不留残留空间。
 func _lifecycle(tree: SceneTree) -> void:
 	cleanup()
 	var parent := world_with_walls(tree, 16, 16, {})
-	var space: RID = parent.get_world_2d().space
 	var actor := player(parent)
-	collider(actor, CollisionWorld.LAYER_TEAM_A)
+	var space := parent.get_world_2d().space
 	var world := CollisionWorld.acquire(actor)
-	expect(world.space == space, "the adapter binds the fixture space")
+	var first := _terrain
+	var other := world_with_walls(tree, 6, 8, {})
+	var second := _terrain
+	expect(world.space == space and actor.terrain == first and CollisionWorld.acquire(other).terrain == second,
+			"simultaneous maps bind their own physics spaces")
+	expect(first.map_size == Vector2(1024, 1024) and second.map_size == Vector2(384, 512),
+			"map dimensions are independent")
+	_worlds.pop_back().free()
+	expect(actor.terrain == first and not second.space_rid().is_valid(),
+			"closing one map leaves the other adapter and actors bound")
 	cleanup()
 	expect(not CollisionWorld._by_space.has(space.get_id()),
-			"case cleanup returns the space adapter to the baseline")
+			"case cleanup releases the remaining space adapter")
 
 # 遮挡与爆炸候选都按环面最短位移处理，跨接缝的连线不会改判成穿过整张地图的直线。
 func _toroidal_sight(tree: SceneTree) -> void:
 	cleanup()
 	var texture := wall_texture()
 	var parent := world_with_walls(tree, 16, 16, {Vector2i(8, 8): texture})
-	var terrain := TileDefs.terrain
+	var terrain := _terrain
 	terrain.flush_collisions()
 	var from := Vector2(900, 544)
 	var to := Vector2(100, 544)
@@ -256,25 +209,26 @@ func _toroidal_sight(tree: SceneTree) -> void:
 			"the same middle wall still blocks a straight line")
 	cleanup()
 	parent = world_with_walls(tree, 16, 16, {Vector2i(15, 8): texture})
-	terrain = TileDefs.terrain
+	terrain = _terrain
 	terrain.flush_collisions()
 	expect(not terrain.line_of_sight(from, to), "a wall on the seam blocks the wrapping sight line")
 	var victim := player(parent, 3)
 	victim.global_position = Vector2(10, 544)
-	victim.apply_collision_pose()
+	victim.sync_collision_geometry()
 	collider(victim, CollisionWorld.LAYER_TEAM_A)
-	var world := CollisionWorld.acquire(victim)
-	var roles := {}
-	for entry: Dictionary in Explosion._candidates(Vector2(1010, 544), 128.0):
-		var node: Node2D = entry["collider"]
-		if node is ActorBody: roles[node.role] = true
-	expect(roles.has(victim.role), "an explosion at the seam still finds actors across it")
+	var sim := CombatSimulator.new(terrain, parent)
+	expect(sim._blast_targets(Vector2(1010, 544), 128.0) == [victim],
+			"an explosion at the seam finds the actor once across it")
+	cleanup()
+	world_from_solid(tree, 8, 6, func(sx: int, sy: int) -> bool: return sx == 2 and sy == 2)
+	expect(not _terrain.line_of_sight(Vector2(496, 360), Vector2(48, 48)),
+			"a wall beyond both seams still blocks the line of sight")
 
 func _beam_hole(tree: SceneTree) -> void:
 	var texture := wall_texture()
 	cleanup()
 	var parent := world_with_walls(tree, 16, 16, {Vector2i(10, 8): texture, Vector2i(11, 8): texture})
-	var terrain := TileDefs.terrain
+	var terrain := _terrain
 	terrain.flush_collisions()
 	var world := CollisionWorld.acquire(parent)
 	var down := [Vector2(704, 480), Vector2(704, 600)]
@@ -306,7 +260,7 @@ func _proxy_same_frame(tree: SceneTree) -> void:
 	var parent := world_with_walls(tree, 16, 16, {})
 	var actor := player(parent, 1)
 	actor.global_position = Vector2(512, 512)
-	actor.apply_collision_pose()
+	actor.sync_collision_geometry()
 	var mask := CollisionWorld.LAYER_TEAM_A
 	collider(actor, mask)
 	var world := CollisionWorld.acquire(actor)
@@ -317,26 +271,39 @@ func _proxy_same_frame(tree: SceneTree) -> void:
 			"the real actor body is queryable in the same frame")
 	expect(not world.shape_overlaps(circle, probe, mask).is_empty(),
 			"shape queries also see the same-frame body")
+	var displaced := actor.global_transform
+	displaced.origin.x += 200.0
+	CollisionWorld.sync_body_pose(actor.get_rid(), displaced)
+	expect(world.shape_overlaps(circle, probe, mask).is_empty(),
+			"changing the RID pose moves the live collision body")
+	actor.sync_collision_geometry()
+	expect(not world.shape_overlaps(circle, probe, mask).is_empty(),
+			"an unchanged scene pose still restores the live collision body")
 	actor.global_position = Vector2(200, 512)
-	actor.apply_collision_pose()
+	actor.sync_collision_geometry()
 	expect(world.ray_hit(Vector2(512, 380), Vector2(512, 700), mask).is_empty(),
 			"moving the body takes effect without waiting for a physics frame")
 	expect(world.shape_overlaps(circle, probe, mask).is_empty(),
 			"moving the body also clears same-frame shape queries")
 	actor.global_position = Vector2(512, 512)
-	actor.apply_collision_pose()
+	actor.sync_collision_geometry()
 	expect(not world.ray_hit(Vector2(512, 380), Vector2(512, 700), mask).is_empty(),
 			"moving the body back restores the original query result")
 	# 姿态切换：镜像槽的形状立即换成对应姿态壳。
 	actor.global_position = Vector2(10, 512)
-	actor.apply_collision_pose()
-	var stand_shape := PhysicsServer2D.body_get_shape(actor.get_rid(), actor.hulls.size())
+	actor.sync_collision_geometry()
+	var rid := actor.get_rid()
+	var stand_shape := PhysicsServer2D.body_get_shape(rid, 0)
+	expect(PhysicsServer2D.body_get_shape_count(rid) == 4
+			and PhysicsServer2D.body_get_shape(rid, 1) == stand_shape,
+			"one active hull and up to three mirrors share four slots")
 	actor.is_squat = true
-	actor.apply_collision_pose()
-	expect(PhysicsServer2D.body_get_shape(actor.get_rid(), actor.hulls.size()) != stand_shape,
-			"stance changes swap the mirror shape in the same frame")
+	actor.sync_collision_geometry()
+	var squat_shape := PhysicsServer2D.body_get_shape(rid, 0)
+	expect(squat_shape != stand_shape and PhysicsServer2D.body_get_shape(rid, 1) == squat_shape,
+			"stance changes swap the base and mirror shapes in the same frame")
 	actor.is_squat = false
-	actor.apply_collision_pose()
+	actor.sync_collision_geometry()
 	actor.collision_layer = 0
 	expect(world.ray_hit(Vector2(512, 380), Vector2(512, 700), mask).is_empty(),
 			"layer changes take effect immediately")
@@ -346,32 +313,12 @@ func _proxy_same_frame(tree: SceneTree) -> void:
 	var stable := true
 	for i in 32:
 		actor.global_position = Vector2(500 + i, 512)
-		actor.apply_collision_pose()
+		actor.sync_collision_geometry()
 		stable = stable and not world.ray_hit(Vector2(500 + i, 380), Vector2(500 + i, 700), mask).is_empty()
 	expect(stable, "the body stays queryable across 32 in-frame updates")
 
-# 弹丸的视觉投影不写回物理位置；逻辑坐标与渲染副本互相独立。
-func _visual_projection(tree: SceneTree) -> void:
-	cleanup()
-	var parent := world_with_walls(tree, 16, 16, {})
-	var actor := player(parent, 1)
-	actor.global_position = Vector2(64, 512)
-	var bullet: BulletBase = preload("res://scenes/weapons/bullet.tscn").instantiate()
-	bullet.setup(Vector2.RIGHT, 600.0, 1000.0, 1.0, Color.WHITE, null)
-	bullet.position = Vector2(960, 512)
-	parent.add_child(bullet)
-	bullet.set_physics_process(false)
-	bullet.shooter = actor
-	var canonical := bullet.global_position
-	bullet.present_projection()
-	expect(bullet.global_position == canonical, "visual projection never rewrites the physics position")
-	expect(bullet.visual_offset == Vector2(-1024, 0), "visual projection picks the copy nearest the local player")
-	bullet.present_projection()
-	expect(bullet.global_position == canonical and bullet.visual_offset == Vector2(-1024, 0),
-			"repeated projection is stable")
-
 func _queries(terrain: Terrain) -> void:
-	var ts := float(terrain.tile_size)
+	var ts := float(Terrain.TILE_SIZE)
 	var x := terrain.columns / 2
 	var solid := Rect2(Vector2(x * ts, (terrain.rows - 1) * ts), Vector2(ts, ts))
 	var empty := Rect2(Vector2(x * ts, 0.0), Vector2(ts, ts))
@@ -382,12 +329,50 @@ func _queries(terrain: Terrain) -> void:
 	expect(not path.is_empty(), "grid snapshot feeds the typed pathfinder directly")
 
 func _map_format() -> void:
-	var info := MapFormat.load_map_info("res://maps/newfactory.cyrm", true)
-	expect(not info["grid"].is_empty() and not info["subgrid"].is_empty(), "shipped v4 map loads macro and subgrid together")
+	var path := "res://maps/newfactory.cyrm"
+	var info := MapFormat.load_map(path)
+	expect(not info["grid"].is_empty() and not info["descriptors"].is_empty(), "shipped v4 map loads macro cells and subcell descriptors")
+	var received := MapFormat.parse_map(FileAccess.get_file_as_bytes(path), "network fixture")
+	expect(is_same(received, info), "received bytes reuse the same parsed map as the file")
 	var body := PackedByteArray([0, 0, 1, 1, 0, 0, 16, 0, 0, 1])
 	body.resize(26)
 	var bytes := _map_bytes(body)
 	expect(MapFormatV4.parse(bytes)["ok"], "minimal valid v4 scene")
+	var legacy := body.duplicate()
+	legacy.encode_u32(5, (16 << 12) | (2 << 9) | (5 << 6) | (6 << 3) | 3)
+	var colored := MapFormat.parse_map(_map_bytes(legacy), "legacy fixture")
+	var desc: int = colored["descriptors"][0]
+	expect(desc == 62833 and MapFormatV4.descriptor_texture(desc) == 15,
+			"loading a legacy leaf composes its hue and preserves brightness, saturation and alpha")
+	expect(TerrainAtlas.tint_color(Color8(82, 196, 144, 147), desc) == Color8(116, 235, 85, 42),
+			"game tint agrees with the editor's RGBA bytes")
+	var colored_terrain := Terrain.new(colored["grid"], colored["descriptors"])
+	var level := Level0.new()
+	level.terrain = colored_terrain
+	level._view_margin = Vector2(16.0, 16.0)
+	level._wall_rows = TerrainAtlas.descriptor_rows(colored_terrain.descriptors())
+	var layer := TileMapLayer.new()
+	level.wall_layer = layer
+	layer.tile_set = TerrainAtlas.make_wall_tileset(level._wall_rows)
+	var sub := Vector2i.ZERO
+	var corner := Vector2i(4, 4)
+	var atlas := TerrainAtlas.atlas_coords(level._wall_rows[desc], 0)
+	level._paint_maze()
+	expect(layer.get_used_cells().size() == 36 and layer.get_cell_atlas_coords(corner) == atlas,
+			"initial paint adds only the one-subcell seam bands around the 4x4 map")
+	colored_terrain.rewind_enabled = true
+	colored_terrain.apply_hp(sub, 0, 1)
+	colored_terrain.seal_rewind(1.0)
+	level.flush_terrain_visuals()
+	expect(layer.get_used_cells().size() == 32 and layer.get_cell_source_id(sub) == -1
+			and layer.get_cell_source_id(corner) == -1, "destroying a corner tile erases its four visual cells")
+	colored_terrain.rewind_between(0.0, 1.0)
+	level.flush_terrain_visuals()
+	expect(layer.get_used_cells().size() == 36 and layer.get_cell_atlas_coords(sub) == atlas
+			and layer.get_cell_atlas_coords(corner) == atlas,
+			"rewind restores the tinted tile and its seam copy")
+	layer.free()
+	level.free()
 	for size in [3, 4, 8, 9, 10, 25]:
 		expect(not MapFormatV4.parse(_map_bytes(body.slice(0, size)))["ok"], "truncated v4 block is rejected, length %d" % size)
 	var invalid := body.duplicate()
@@ -407,8 +392,13 @@ func _water_atlas() -> void:
 	var surface := TerrainAtlas.water_brick_image(64, TerrainAtlas.WATER_SURFACE_BRICK)
 	expect(body != surface, "water body and surface images come from different bricks")
 	expect(TerrainAtlas.water_brick_image(64, TerrainAtlas.WATER_BODY_BRICK) == body,
-			"the water brick cache is keyed by (ts, brick)")
-	var tiles := TerrainAtlas.make_water_tileset(64, TerrainAtlas.WATER_BODY_BRICK)
+			"the neutral water brick is cached")
+	var tint := MapFormatV4.NEUTRAL_TINT - 4
+	var colored_body := TerrainAtlas.water_brick_image(64, TerrainAtlas.WATER_BODY_BRICK, tint)
+	var colored_surface := TerrainAtlas.water_brick_image(64, TerrainAtlas.WATER_SURFACE_BRICK, tint)
+	expect(colored_body.get_data() != body.get_data() and colored_surface.get_data() != surface.get_data(),
+			"the same tint applies to both water textures")
+	var tiles := TerrainAtlas.make_water_tileset(64, TerrainAtlas.WATER_BODY_BRICK, {tint: 0})
 	expect(tiles != null and tiles.tile_size == Vector2i(64, 64), "the water tileset keeps its 64px cell size")
 
 
@@ -424,21 +414,17 @@ func _map_bytes(body: PackedByteArray) -> PackedByteArray:
 	return bytes
 # 出生点元数据：严格格式校验与两张内部地图的团队可开局性。
 func _respawn_format() -> void:
-	var demo := MapFormat.load_map_info("res://maps/demo.cyrm", true)
-	var factory := MapFormat.load_map_info("res://maps/newfactory.cyrm", true)
+	var demo := MapFormat.load_map("res://maps/demo.cyrm")
+	var factory := MapFormat.load_map("res://maps/newfactory.cyrm")
 	var demo_respawn: Dictionary = demo["spawns"].get("respawn", {})
 	var factory_respawn: Dictionary = factory["spawns"].get("respawn", {})
 	expect(demo_respawn.get(1, []).size() >= 5 and demo_respawn.get(2, []).size() >= 5,
 			"demo.cyrm defines at least five respawn points per side")
 	expect(factory_respawn.get(1, []).size() >= 5 and factory_respawn.get(2, []).size() >= 5,
 			"newfactory.cyrm defines at least five respawn points per side")
-	var teams_5v5 := {}
-	for i in 5:
-		teams_5v5[i + 1] = 1
-		teams_5v5[i + 6] = 2
-	expect(MatchRules.validate_team_spawns("res://maps/demo.cyrm", teams_5v5) == "",
+	expect(MatchRules.validate_team_spawns("res://maps/demo.cyrm", demo) == "",
 			"demo.cyrm 5v5 spawn validation passes")
-	expect(MatchRules.validate_team_spawns("res://maps/newfactory.cyrm", teams_5v5) == "",
+	expect(MatchRules.validate_team_spawns("res://maps/newfactory.cyrm", factory) == "",
 			"newfactory.cyrm 5v5 spawn validation passes")
 	var meta := ["# respawn 1 2 3", "# respawn 3 1 2", "# respawn 1 a 2",
 			"# respawn 1 1", "# respawn 1 200 200"]
@@ -448,11 +434,15 @@ func _respawn_format() -> void:
 	expect(str(parsed["respawn_errors"][0]).contains("第 2 行"),
 			"the respawn error names its source line")
 	expect(str(parsed["respawn_errors"][0]).contains("3"), "the respawn error includes the source content")
+	parsed = MapFormat.parse_spawn_metadata(["# player 1 2", "# player2 4294967296 2",
+			"# enemy jump_bird 10 2", "# enemy jump_bird x 2"], Vector2i(10, 10))
+	expect(parsed["player"] == Vector2i(1, 2) and parsed["errors"].size() == 3,
+			"bad coordinates and integer overflow are rejected before storing spawn cells")
 	var dims := Vector2i(125, 75)
-	var subgrid: Array = demo["subgrid"]
-	expect(MatchRules.spawn_cell_problem(subgrid, dims, Vector2i(-1, 0)) != "",
+	var descriptors: PackedInt32Array = demo["descriptors"]
+	expect(MatchRules.spawn_cell_problem(descriptors, dims, Vector2i(-1, 0)) != "",
 			"an out-of-bounds respawn cell is rejected")
-	expect(MatchRules.spawn_cell_problem(subgrid, dims, Vector2i(10, 10)) != "",
+	expect(MatchRules.spawn_cell_problem(descriptors, dims, Vector2i(10, 10)) != "",
 			"a cell without foot support is rejected")
-	expect(MatchRules.spawn_cell_problem(subgrid, dims, demo_respawn[1][0]) == "",
+	expect(MatchRules.spawn_cell_problem(descriptors, dims, demo_respawn[1][0]) == "",
 			"a configured respawn cell passes clearance and support checks")

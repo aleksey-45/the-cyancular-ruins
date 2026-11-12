@@ -90,5 +90,5 @@ func go_menu() -> void:
 	get_tree().paused = false
 	Sfx.play("ui")
 	if is_pvp:
-		NetBus.stop()
+		NetSession.disconnect_client()
 	Level0.safe_change_scene(get_tree(), "res://scenes/main_menu.tscn")

@@ -3,7 +3,7 @@ extends RefCounted
 var failures: Array[String] = []
 var checks := 0
 var _worlds: Array[Node] = []
-var _space := RID()
+var _terrain: Terrain
 
 ## 角色就是自己的碰撞体：把真实体放到指定层，测试之间无需清理物理代理。
 func collider(owner: ActorBody, layer: int) -> ActorBody:
@@ -34,7 +34,8 @@ func world(tree: SceneTree) -> Node2D:
 func world_with_walls(tree: SceneTree, columns: int, rows: int, walls: Dictionary) -> Node2D:
 	TileDefs.load_defs()
 	var grid: Array[Array] = []
-	var subs: Array[Array] = []
+	var descriptors := PackedInt32Array()
+	descriptors.resize(columns * rows * 16)
 	for y in rows:
 		var row: Array = []
 		for x in columns:
@@ -42,53 +43,49 @@ func world_with_walls(tree: SceneTree, columns: int, rows: int, walls: Dictionar
 			row.append(MapFormat.pack(texture, 15) if texture != 0 else 0)
 		grid.append(row)
 	for y in rows * 4:
-		var row: Array = []
-		for x in columns * 4: row.append(int(walls.get(Vector2i(x / 4, y / 4), 0)))
-		subs.append(row)
-	return _install_world(tree, columns, rows, grid, subs)
+		for x in columns * 4:
+			var texture: int = walls.get(Vector2i(x / 4, y / 4), 0)
+			if texture != 0:
+				descriptors[y * columns * 4 + x] = (texture << MapFormatV4.TEXTURE_SHIFT) | MapFormatV4.NEUTRAL_TINT
+	return _install_world(tree, grid, descriptors)
 
 ## 用 16px 子格判定构造测试地形；solid 接收子格坐标并返回是否实心。
 func world_from_solid(tree: SceneTree, columns: int, rows: int, solid: Callable) -> Node2D:
 	TileDefs.load_defs()
 	var texture := wall_texture(false)
 	var grid: Array[Array] = []
-	var subs: Array[Array] = []
+	var descriptors := PackedInt32Array()
+	descriptors.resize(columns * rows * 16)
 	for y in rows:
 		var row: Array = []
 		for x in columns:
 			row.append(0)
 		grid.append(row)
 	for y in rows * 4:
-		var row: Array = []
 		for x in columns * 4:
-			var filled: bool = solid.call(x, y)
-			row.append(texture if filled else 0)
-			if filled:
+			if solid.call(x, y):
+				descriptors[y * columns * 4 + x] = (texture << MapFormatV4.TEXTURE_SHIFT) | MapFormatV4.NEUTRAL_TINT
 				grid[y / 4][x / 4] = MapFormat.pack(texture, 15)
-		subs.append(row)
-	return _install_world(tree, columns, rows, grid, subs)
+	return _install_world(tree, grid, descriptors)
 
 ## 把测试网格装入当前物理空间，供两套地图构造共用。
-func _install_world(tree: SceneTree, columns: int, rows: int, grid: Array[Array], subs: Array[Array]) -> Node2D:
-	TileDefs.load_terrain(grid, subs)
-	GameParameters.MAP_WIDTH = columns * 64
-	GameParameters.MAP_HEIGHT = rows * 64
-	Level0.pvp_mode = true
-	CombatComponent.pvp_arena = true
+func _install_world(tree: SceneTree, grid: Array[Array], descriptors: PackedInt32Array) -> Node2D:
+	_terrain = Terrain.new(grid, descriptors)
+	var viewport := SubViewport.new()
+	viewport.world_2d = World2D.new()
+	tree.root.add_child(viewport)
 	var node := Node2D.new()
-	tree.root.add_child(node)
-	_space = node.get_world_2d().space
-	TileDefs.terrain.attach(node)
-	_worlds.append(node)
+	viewport.add_child(node)
+	_terrain.attach(node)
+	_worlds.append(viewport)
 	return node
 
 func player(parent: Node, role: int = 1) -> Player:
 	var actor: Player = preload("res://scenes/player/player.tscn").instantiate()
 	actor.role = role
-	actor.set_input_source(PacketInputSource.new())
+	actor.position = Vector2(96 + role * 64, 128)
 	parent.add_child(actor)
 	actor.enable_manual_simulation()
-	actor.position = Vector2(96 + role * 64, 128)
 	actor.weapons.set_initial_inventory([WeaponRegistry.all_ids()[0]])
 	return actor
 
@@ -96,5 +93,4 @@ func player(parent: Node, role: int = 1) -> Player:
 func cleanup() -> void:
 	for node in _worlds: node.free()
 	_worlds.clear()
-	CollisionWorld.release_space(_space)
-	_space = RID()
+	_terrain = null

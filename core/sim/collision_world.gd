@@ -10,7 +10,6 @@ extends RefCounted
 const LAYER_TERRAIN := 1
 const LAYER_TEAM_A := 2
 const LAYER_ENEMY := 4
-const LAYER_PICKUP := 8
 const LAYER_TEAM_B := 16
 
 ## 队伍对应的玩家层；0 表示无队伍，与 A 队共用中性层。
@@ -55,16 +54,17 @@ static func move_body(rid: RID, from: Transform2D, motion: Vector2, exclude: Arr
 	PhysicsServer2D.body_set_state(rid, PhysicsServer2D.BODY_STATE_TRANSFORM, from)
 	return [hit, _motion_result]
 
-## 只读探测（test_move 等价物）：不移动、不写变换；recovery_as_collision 默认开启，
-## 与 CharacterBody2D.test_move 的调用习惯一致，重叠即报命中。
+## 只读探测（test_move 等价物）：不移动、不写变换。传入 result 可取得实际位移与接触信息。
+## recovery_as_collision 默认开启，允许恢复推出产生的接触计为碰撞。
 static func probe_body(rid: RID, from: Transform2D, motion: Vector2,
-		margin: float = MOTION_MARGIN, recovery_as_collision := true) -> bool:
+		margin: float = MOTION_MARGIN, recovery_as_collision := true,
+		result: PhysicsTestMotionResult2D = null) -> bool:
 	_motion_params.from = from
 	_motion_params.motion = motion
 	_motion_params.margin = margin
 	_motion_params.exclude_bodies = []
 	_motion_params.recovery_as_collision = recovery_as_collision
-	return PhysicsServer2D.body_test_motion(rid, _motion_params, _motion_result)
+	return PhysicsServer2D.body_test_motion(rid, _motion_params, result)
 
 ## 轴向阻挡判定：行程明显缩短或命中法线逆向都算被挡；
 ## 0.001 容差吸收恢复推出量。move_body_axes 与角色台阶路径共用同一判据。
@@ -109,7 +109,7 @@ static func sync_body_shapes(rid: RID, carriers: Array, pose: Transform2D, activ
 		PhysicsServer2D.body_add_shape(rid, placeholder)
 	for i in count:
 		var carrier: Node2D = carriers[i]
-		var shape := _carrier_shape(carrier)
+		var shape := carrier_shape(carrier)
 		var disabled: bool = shape == null or (active >= 0 and i != active)
 		PhysicsServer2D.body_set_shape_disabled(rid, i, disabled)
 		if not disabled:
@@ -118,13 +118,12 @@ static func sync_body_shapes(rid: RID, carriers: Array, pose: Transform2D, activ
 	PhysicsServer2D.body_set_state(rid, PhysicsServer2D.BODY_STATE_TRANSFORM, pose)
 
 # 载体的物理形状：矩形/基础形状直接用；多边形凸包化后缓存到节点 meta，运行期不重建。
-static func _carrier_shape(carrier: Node2D) -> Shape2D:
+static func carrier_shape(carrier: Node2D) -> Shape2D:
 	if carrier is CollisionShape2D:
 		return (carrier as CollisionShape2D).shape
 	if carrier is CollisionPolygon2D:
-		var cached: Shape2D = carrier.get_meta("rid_shape", null)
-		if cached != null:
-			return cached
+		if carrier.has_meta("rid_shape"):
+			return carrier.get_meta("rid_shape")
 		var points := (carrier as CollisionPolygon2D).polygon
 		if points.size() < 3:
 			return null
@@ -141,29 +140,18 @@ static func sync_body_pose(rid: RID, pose: Transform2D) -> void:
 
 
 var space := RID()
+var terrain: Terrain
 
 var _ray := PhysicsRayQueryParameters2D.create(Vector2.ZERO, Vector2.ZERO, 0)
 var _shape := PhysicsShapeQueryParameters2D.new()
 var _circle := CircleShape2D.new()
 var _corridor := RectangleShape2D.new()
 
-static func map_size() -> Vector2:
-	return Vector2(GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
-
 static func world_of(node: Node) -> World2D:
-	# 视口（WorldViewport）、CanvasItem（实体节点）、以及挂在树上的普通 Node
-	# （AuthorityWorld 对局根）各取所在世界。
-	var view := node as Viewport
-	if view != null:
-		return view.world_2d
-	var canvas := node as CanvasItem
-	if canvas != null and canvas.is_inside_tree():
-		return canvas.get_world_2d()
-	if node.is_inside_tree():
-		var viewport := node.get_viewport()
-		if viewport != null:
-			return viewport.world_2d
-	return null
+	var viewport := node as Viewport
+	if viewport == null and node != null and node.is_inside_tree():
+		viewport = node.get_viewport()
+	return viewport.world_2d if viewport != null else null
 
 ## 取该节点所在物理空间的适配层；首次使用时创建并登记，场景树之外的节点由调用方保证已挂载。
 static func acquire(node: Node) -> CollisionWorld:
@@ -180,15 +168,11 @@ static func for_space(space_rid: RID) -> CollisionWorld:
 	_by_space[id] = created
 	return created
 
-## 空间所有者在场景退出时归还适配层；未登记过的空间不做任何事。
-static func release_space(space_rid: RID) -> void:
-	var existing: CollisionWorld = null if not space_rid.is_valid() else _by_space.get(space_rid.get_id())
-	if existing != null:
-		existing.release()
-
-func release() -> void:
-	if _by_space.get(space.get_id()) == self:
-		_by_space.erase(space.get_id())
+static func release_terrain(space_rid: RID, owner: Terrain) -> void:
+	var world: CollisionWorld = _by_space.get(space_rid.get_id())
+	if world != null and world.terrain == owner:
+		world.terrain = null
+		_by_space.erase(space_rid.get_id())
 
 # 直接空间状态必须在查询时取：跨物理帧缓存会拿到过期对象。
 func direct() -> PhysicsDirectSpaceState2D:
@@ -196,8 +180,10 @@ func direct() -> PhysicsDirectSpaceState2D:
 
 ## 规范位置在接缝覆盖带内时补出必要副本；中部位置只有一份。
 ## 索引 0 是本体，其余是 X/Y 镜像与角落镜像。
-static func mirror_offsets(position: Vector2) -> PackedVector2Array:
-	var size := map_size()
+func mirror_offsets(position: Vector2) -> PackedVector2Array:
+	if terrain == null:
+		return PackedVector2Array([Vector2.ZERO])
+	var size := terrain.map_size
 	var reach := SEAM_REACH + MIRROR_MARGIN
 	var x := 0.0
 	var y := 0.0
@@ -252,16 +238,14 @@ func shape_overlaps(shape: Shape2D, from: Transform2D, mask: int, exclude: Array
 	_shape.margin = 0.0
 	return direct().intersect_shape(_shape)
 
-## 光束走廊与实体的全部接触：每条线段用一个沿段旋转、宽度等于走廊的矩形一次取完，
-## 起点补一个圆帽覆盖已经重叠的目标；跨接缝的线段先拆段并映射回规范区间。
-## 返回按 RID 去重的 [{rid, role, collider, point}]，不结算伤害。
-func beam_contacts(points: PackedVector2Array, radius: float, mask: int, exclude: Array = []) -> Array:
+## 起点用圆形查询，线段用矩形查询，跨接缝先拆段。每个实体 RID 保留第一次接触。
+func corridor_contacts(points: PackedVector2Array, radius: float, mask: int, exclude: Array = []) -> Array:
 	var out: Array = []
 	if points.size() < 2 or radius <= 0.0:
 		return out
-	var size := map_size()
+	var size := terrain.map_size
 	var seen := {}
-	var first := GridPathfinder.wrap_to_range(points[0], size.x, size.y)
+	var first := GridPathfinder.wrap_to_range(points[0], size)
 	_corridor_at(first, first, radius, mask, exclude, points[0] - first, seen, out)
 	for i in range(points.size() - 1):
 		var a := points[i]
@@ -271,31 +255,16 @@ func beam_contacts(points: PackedVector2Array, radius: float, mask: int, exclude
 		if length <= 0.0:
 			continue
 		var dir := motion / length
-		var p := GridPathfinder.wrap_to_range(a, size.x, size.y)
+		var p := GridPathfinder.wrap_to_range(a, size)
 		var remaining := length
-		for guard in maxi(1, ceili(length / maxf(minf(size.x, size.y), 1.0)) + 1):
-			if remaining <= 1e-6:
-				break
-			var edge := seam_distance(p, dir, size)
-			var run := minf(remaining, edge)
-			if run <= 0.0:
-				run = minf(remaining, 1e-3)
+		while remaining > 0.0:
+			var run := seam_run(p, dir, size, remaining)
 			# 规范坐标只用于物理查询；接触点必须回到连续光束坐标，否则跨接缝会推到错误端点。
 			_corridor_at(p, p + dir * run, radius, mask, exclude,
 					a + dir * (length - remaining) - p, seen, out)
-			p = GridPathfinder.wrap_to_range(p + dir * run, size.x, size.y)
+			p = GridPathfinder.wrap_to_range(p + dir * run, size)
 			remaining -= run
 	return out
-
-## 光束覆盖的角色与实际接触点：每个角色只保留第一处命中，未归属角色的命中忽略。
-func beam_role_contacts(points: PackedVector2Array, radius: float,
-		mask: int, exclude: Array) -> Dictionary:
-	var result := {}
-	for hit: Dictionary in beam_contacts(points, radius, mask, exclude):
-		var role: int = hit["role"]
-		if role != 0 and not result.has(role):
-			result[role] = hit["point"]
-	return result
 
 func _corridor_at(from: Vector2, to: Vector2, radius: float, mask: int, exclude: Array,
 		offset: Vector2, seen: Dictionary, out: Array) -> void:
@@ -308,29 +277,24 @@ func _corridor_at(from: Vector2, to: Vector2, radius: float, mask: int, exclude:
 	_collect(shape_overlaps(_corridor, Transform2D(motion.angle(), (from + to) * 0.5), mask, exclude),
 			from, to, offset, seen, out)
 
-# 命中形状在规范空间里：先投影到本子段再加 offset，得到连续光束上的接触点。
-# 角色就是真实物理体，归属直接读节点的 role；地形与敌人没有 role，保持 0。
+# 把规范空间内的命中形状投影到连续的攻击路径上。
 func _collect(entries: Array, from: Vector2, to: Vector2, offset: Vector2,
 		seen: Dictionary, out: Array) -> void:
 	for entry: Dictionary in entries:
+		var target := entry["collider"] as Node2D
 		var rid: RID = entry["rid"]
-		var key := rid.get_id()
-		if seen.has(key):
+		if target == null or seen.has(rid):
 			continue
-		seen[key] = true
-		var node := entry["collider"] as Node2D
-		var role := 0
-		if node is ActorBody:
-			role = node.role
+		seen[rid] = true
 		var point := from + offset
 		if to.distance_squared_to(from) > 1e-6:
 			point = Geometry2D.get_closest_point_to_segment(
 					shape_origin(rid, int(entry["shape"])), from, to) + offset
-		out.append({"rid": rid, "role": role, "collider": node, "point": point})
+		out.append({"target": target, "point": point})
 
 ## 环面查询位置：本体加上查询半径够得着的镜像副本中心，避免接缝另一侧的实体漏检。
-static func toroidal_centers(center: Vector2, reach: float) -> PackedVector2Array:
-	var size := map_size()
+func toroidal_centers(center: Vector2, reach: float) -> PackedVector2Array:
+	var size := terrain.map_size
 	var xs: Array = []
 	if center.x < reach:
 		xs.append(size.x)
@@ -351,15 +315,15 @@ static func toroidal_centers(center: Vector2, reach: float) -> PackedVector2Arra
 			out.append(center + Vector2(x, y))
 	return out
 
-## 从 p 沿 d 到离开规范区间所需的距离；环面几何里一切分段都从这里取值。
-static func seam_distance(p: Vector2, d: Vector2, size: Vector2) -> float:
-	var best := INF
+## 当前位置就在接缝且朝外时，走一小段进入下一份地图。
+static func seam_run(p: Vector2, d: Vector2, size: Vector2, remaining: float) -> float:
+	var run := remaining
 	if d.x > 0.0:
-		best = minf(best, (size.x - p.x) / d.x)
+		run = minf(run, (size.x - p.x) / d.x)
 	elif d.x < 0.0:
-		best = minf(best, -p.x / d.x)
+		run = minf(run, -p.x / d.x)
 	if d.y > 0.0:
-		best = minf(best, (size.y - p.y) / d.y)
+		run = minf(run, (size.y - p.y) / d.y)
 	elif d.y < 0.0:
-		best = minf(best, -p.y / d.y)
-	return maxf(best, 0.0)
+		run = minf(run, -p.y / d.y)
+	return minf(remaining, maxf(run, 1e-3))

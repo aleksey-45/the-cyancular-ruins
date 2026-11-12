@@ -312,16 +312,14 @@ offset_bottom = 252.0
 theme_type_variation = &"BtnPrimary"
 text = "加入房间"
 
-[node name="CardGrid" type="GridContainer" parent="." unique_id=399935632]
+[node name="RoomBrowser" type="Control" parent="." unique_id=399935632]
 unique_name_in_owner = true
 layout_mode = 0
 offset_left = 76.0
 offset_top = 296.0
 offset_right = 1844.0
-offset_bottom = 296.0
-theme_override_constants/h_separation = 24
-theme_override_constants/v_separation = 24
-columns = 4
+offset_bottom = 1252.0
+mouse_filter = 2
 
 [node name="PanelContainer1" type="PanelContainer" parent="." unique_id=2049470985]
 layout_mode = 0

@@ -2,21 +2,15 @@ class_name ActorStep
 extends RefCounted
 const DT := 1.0 / 60.0
 
-static func step(actor: Player, record: Dictionary, delta: float = DT) -> Array:
+static func step(actor: Player, record: Array, delta: float = DT, ground_actions := Callable()) -> Array:
 	actor.step_input.prepare(record, actor._controls_locked)
 	actor.step_actions.clear()
-	actor.stepping = true
-	simulate(actor, delta)
-	actor.stepping = false
-	return actor.step_actions.duplicate()
-
-# 运动、武器和碰撞由原生角色执行。
-static func simulate(actor: Player, delta: float) -> void:
-	if actor.rewinding:
-		return
-	if TimeField.current != null and TimeField.current.is_rewinding():
-		return
+	var field := actor.time_field
+	if actor.rewinding or (field != null and field.is_rewinding()):
+		return []
 	if not actor.sim_downed:
+		if not actor._controls_locked and ground_actions.is_valid():
+			ground_actions.call(actor, record)
 		var winst := actor.step_input.weapon_inst
 		if winst > 0:
 			actor.weapons.equip_inst(winst)
@@ -24,7 +18,6 @@ static func simulate(actor: Player, delta: float) -> void:
 				actor.step_input.pressed &= ~(ActorInput.BIT_ATTACK | ActorInput.BIT_RELOAD)
 				actor.step_input.released &= ~ActorInput.BIT_ATTACK
 				actor.step_input.held &= ~ActorInput.BIT_ATTACK
-				actor.step_input.raw_held &= ~ActorInput.BIT_ATTACK
-	var tm: float = TimeField.player_speed_mult() if TimeField.current != null else actor.pvp_haste_mult
-	var geometry := TileDefs.terrain
-	actor.step_actor(delta, tm, Level0.pvp_mode, geometry)
+	var tm: float = field.player_speed_mult() if field != null else actor.pvp_haste_mult
+	actor.step_actor(delta, tm)
+	return actor.step_actions.duplicate()

@@ -1,4 +1,4 @@
-[gd_scene load_steps=5 format=3 uid="uid://pvphud000000a1"]
+[gd_scene load_steps=6 format=3 uid="uid://pvphud000000a1"]
 
 [ext_resource type="Script" path="res://ui/hud/pvp_hud.gd" id="1"]
 [ext_resource type="FontFile" path="res://assets/fonts/less_perfect_dos_vga.ttf" id="2"]
@@ -11,9 +11,53 @@ content_margin_right = 24.0
 content_margin_top = 8.0
 content_margin_bottom = 8.0
 
+[sub_resource type="StyleBoxFlat" id="RoyalePingPlate"]
+bg_color = Color(0, 0, 0, 0.10)
+content_margin_left = 14.0
+content_margin_right = 14.0
+content_margin_top = 6.0
+content_margin_bottom = 6.0
+
 [node name="PvpHud" type="CanvasLayer"]
 layer = 130
 script = ExtResource("1")
+royale_ping_plate = SubResource("RoyalePingPlate")
+
+[node name="BoardBg" type="ColorRect" parent="."]
+visible = false
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -736.0
+offset_top = 96.0
+offset_right = -16.0
+offset_bottom = 160.0
+grow_horizontal = 0
+mouse_filter = 2
+color = Color(0, 0, 0, 0.25)
+
+[node name="BoardBox" type="VBoxContainer" parent="."]
+visible = false
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -716.0
+offset_top = 102.0
+offset_right = -4.0
+offset_bottom = 102.0
+grow_horizontal = 0
+grow_vertical = 1
+mouse_filter = 2
+theme_override_constants/separation = 4
+
+[node name="BoardTitle" type="Label" parent="BoardBox"]
+theme_override_colors/font_color = Color(0.349, 0.851, 0.902, 1)
+theme_override_fonts/font = ExtResource("2")
+theme_override_font_sizes/font_size = 32
+text = "—— 击杀排行榜 ——"
+
+[node name="TimerLabel" type="Label" parent="BoardBox"]
+theme_override_colors/font_color = Color(0.878, 0.914, 0.949, 1)
+theme_override_fonts/font = ExtResource("2")
+theme_override_font_sizes/font_size = 32
 
 [node name="Broadcast" parent="." instance=ExtResource("3")]
 

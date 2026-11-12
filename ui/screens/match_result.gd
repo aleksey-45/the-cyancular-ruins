@@ -11,7 +11,6 @@ signal leave_requested
 const COLUMN_TITLES := {"kills": "击杀", "deaths": "阵亡", "assists": "助攻",
 		"dealt": "造成", "taken": "承受", "acs": "ACS"}
 const NAME_UNITS := 12                 # 昵称最大字符显示宽度
-const SIZE_TITLE := 48
 const SIZE_BODY := 32
 const MASK_COLOR := Color(0, 0, 0, 0.55)   # 背景半透明遮罩
 const MVP_MARK := "★ "                 # MVP 标识前缀
@@ -71,7 +70,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 # 构造队伍或分段标题栏
 func _section_band(text: String, color: Color) -> PanelContainer:
-	var strip := UiFactory.header_strip(text, SIZE_BODY)
+	var strip := UiFactory.header_strip(text, SIZE_BODY, true)
 	var l := strip.get_child(0) as Label
 	if l != null:
 		l.add_theme_color_override("font_color", color)

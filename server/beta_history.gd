@@ -10,23 +10,22 @@ func _init(owner_world: Node) -> void:
 
 func tick(delta: float) -> void:
 	var by_owner := {}
-	for bullet: BulletBase in world.live_bullets():
+	for bullet: BulletBody in world.combat_rules.projectiles.values():
 		by_owner.get_or_add(bullet.shooter, []).append(bullet)
 	for role in world.players:
-		var player: Node2D = world.players[role]
+		var player: Player = world.players[role]
 		var bullets: Array = by_owner.get(player, [])
-		var src: PlayerInput = player.input_source
 		var account: GrainAccount = world.time_economy.accounts[role]
-		var want: bool = src.rewind_held() and account.can_spend() and not player.is_downed() and world._round_state == NetEvent.RoundState.PLAYING
+		var want := (player.step_input.held & ActorInput.BIT_REWIND) != 0 \
+				and account.can_spend() and not player.sim_downed
 		if want and not cursors.has(role) and frames.has(role):
 			cursors[role] = 0.0
 			player.rewinding = true
-			_sync_bullets(role, true, bullets)
 		elif not want and cursors.has(role):
 			finish(role)
 		if cursors.has(role):
-			account.spend(delta, world.time_economy.rules.rewind_burn)
-			cursors[role] = advance_cursor(cursors[role], delta)
+			account.spend(delta, world.time_economy.rules["rewind_burn"])
+			cursors[role] = TimeParams.advance_rewind(cursors[role], delta)
 			var history: Array = frames[role]
 			var target: float = history[-1]["tick"] - cursors[role] * 60.0
 			var low := 0
@@ -37,25 +36,21 @@ func tick(delta: float) -> void:
 				else: high = middle
 			var frame: Dictionary = history[maxi(0, low - 1)]
 			var shot_serial: int = player.shot_serial
-			player.restore_state(frame["player"])
+			player.restore_state(frame["player"], true)
 			player.shot_serial = shot_serial
-			for bullet: BulletBase in bullets:
-				if not bullet.finished:
-					if frame["bullets"].has(bullet.entity_id):
-						bullet.apply_rewind_state(frame["bullets"][bullet.entity_id])
-			if world._snap_tick % 3 == 0 and not bullets.is_empty():
-				_sync_bullets(role, true, bullets)
+			for bullet: BulletBody in bullets:
+				if frame["bullets"].has(bullet.entity_id):
+					bullet.restore_motion(frame["bullets"][bullet.entity_id])
 			continue
 		if world._snap_tick % 3 == 0:
 			var states := {}
-			for bullet: BulletBase in bullets:
-				if not bullet.finished:
-					states[bullet.entity_id] = bullet.rewind_state()
+			for bullet: BulletBody in bullets:
+				states[bullet.entity_id] = bullet.motion_state()
 			if not frames.has(role):
 				frames[role] = []
 			var history: Array = frames[role]
 			history.append({"tick": world._snap_tick, "player": player.capture_state(), "bullets": states})
-			while history.size() > 20 * world.time_economy.rules.rewind_buffer_seconds():
+			while history.size() > world.time_economy.rewind_frame_limit:
 				history.pop_front()
 
 func finish(role: int) -> void:
@@ -66,49 +61,6 @@ func finish(role: int) -> void:
 	cursors.erase(role)
 	world.players[role].rewinding = false
 	world.new_epoch(role)
-	var bullets: Array = world.live_bullets().filter(func(bullet: BulletBase) -> bool: return bullet.shooter == world.players[role])
-	_sync_bullets(role, false, bullets)
-	for bullet: BulletBase in bullets:
-		if bullet._fuse_active:
-			bullet.fuse_started = true
-
-# 已开始的回溯在历史上移动；给预测窗口提供阻挡轨迹，不能把回溯者冻结在 STATE 位置。
-# 只发送位置/姿态发生变化的结点，历史记录仍只保留在服务端。
-func collision_path(role: int) -> Array:
-	if not cursors.has(role): return []
-	var history: Array = frames[role]
-	var cursor: float = cursors[role]
-	var index := history.size() - 1
-	var result: Array = []
-	var player: Player = world.players[role]
-	var previous_pos := player.global_position
-	var previous_flags := (int(player.is_squat) | (int(player.sim_downed) << 1)
-			| (int(player.facing_direction < 0) << 2))
-	for offset in range(1, PredictionRollback.MAX_REPLAY + 1):
-		cursor = advance_cursor(cursor, ActorStep.DT)
-		var target: float = history[-1]["tick"] - cursor * 60.0
-		while index > 0 and history[index]["tick"] > target: index -= 1
-		var state: Array = history[index]["player"]
-		var pos: Vector2 = state[PlayerStateSchema.slot("pos")]
-		var flags := (int(state[PlayerStateSchema.slot("squat")])
-				| (int(state[PlayerStateSchema.slot("down")]) << 1)
-				| (int(int(state[PlayerStateSchema.slot("facing")]) < 0) << 2))
-		if previous_pos != pos or previous_flags != flags:
-			result.append([world._snap_tick + offset, pos, flags])
-			previous_pos = pos
-			previous_flags = flags
-	return result
-
-static func advance_cursor(cursor: float, delta: float) -> float:
-	return cursor + delta * lerpf(TimeParams.REWIND_START_MULT, 1.0, clampf(cursor / TimeParams.REWIND_RAMP_TIME, 0.0, 1.0))
-
-func _sync_bullets(role: int, rewind: bool, owned: Array) -> void:
-	var bullets := {}
-	for bullet: BulletBase in owned:
-		if not bullet.finished:
-			bullets[bullet.entity_id] = bullet.motion_state()
-	world.broadcast(NetEvent.Kind.BULLET_REWIND, {"role": role, "tick": world._snap_tick - 1,
-			"rewind": rewind, "projectiles": bullets})
 
 func reset() -> void:
 	for role in cursors.keys():
