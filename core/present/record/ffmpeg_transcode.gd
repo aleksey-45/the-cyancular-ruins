@@ -5,6 +5,10 @@ extends RefCounted
 # 有 ffmpeg 才走 MP4;没有就由调用方保留 AVI+WAV,绝不让它变成硬依赖。
 
 const FFMPEG_ENV := "CYR_REC_FFMPEG"
+const CRF_ENV := "CYR_REC_CRF"
+const DEFAULT_CRF := 22
+const CRF_MIN := 14
+const CRF_MAX := 32
 
 
 # CYR_REC_FFMPEG:空/未设 = 按 PATH 查;"0" / "off" = 禁用转码;其它 = 直接当可执行文件路径。
@@ -23,8 +27,16 @@ static func resolve(env_override: String) -> String:
 	return ""
 
 
+# CYR_REC_CRF:空/非法 = 默认 22(视觉无损档);数字夹到 14..32,越小越清晰越大。
+static func resolve_crf(env_override: String) -> int:
+	var ov := env_override.strip_edges()
+	if ov == "" or not ov.is_valid_int():
+		return DEFAULT_CRF
+	return clampi(ov.to_int(), CRF_MIN, CRF_MAX)
+
+
 # ★ 只在 worker 线程调用:OS.execute 阻塞的是该线程,主线程不碰它。
-static func transcode(ffmpeg: String, avi: String, wav: String, output: String) -> Dictionary:
+static func transcode(ffmpeg: String, avi: String, wav: String, output: String, crf: int) -> Dictionary:
 	if ffmpeg == "" or not FileAccess.file_exists(avi):
 		return {"ok": false, "log": "ffmpeg 或输入文件不存在", "audio": false}
 	var has_audio := FileAccess.file_exists(wav) and _file_bytes(wav) > 44
@@ -35,7 +47,7 @@ static func transcode(ffmpeg: String, avi: String, wav: String, output: String) 
 	if has_audio:
 		args.append_array(["-i", wav])
 	args.append_array([
-		"-c:v", "libx264", "-preset", "medium", "-crf", "16",
+		"-c:v", "libx264", "-preset", "medium", "-crf", str(crf),
 		"-pix_fmt", "yuv420p", "-color_range", "tv"])
 	if has_audio:
 		args.append_array(["-c:a", "aac", "-b:a", "192k"])

@@ -66,6 +66,7 @@ var _indicator_label: Label = null
 
 # ── MP4 后编码（worker 线程；主线程每帧轮询完成） ──
 var _ffmpeg := ""
+var _rec_crf := 22
 var _transcodes: Array = []
 var _tc_mutex := Mutex.new()
 
@@ -112,10 +113,11 @@ func _ready() -> void:
 		_dir_root = "user://record"
 		DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(_dir_root))
 	_ffmpeg = FfmpegTranscode.resolve(OS.get_environment(FfmpegTranscode.FFMPEG_ENV))
+	_rec_crf = FfmpegTranscode.resolve_crf(OS.get_environment(FfmpegTranscode.CRF_ENV))
 	if _ffmpeg == "":
 		print("[Recorder] 未检测到 ffmpeg：F5 录屏保留 MJPEG AVI + WAV")
 	else:
-		print("[Recorder] ffmpeg: %s（录屏停止后后台转 H.264 + AAC 的 MP4）" % _ffmpeg)
+		print("[Recorder] ffmpeg: %s（录屏停止后后台转 H.264 CRF %d + AAC 的 MP4）" % [_ffmpeg, _rec_crf])
 	set_process_input(true)
 
 
@@ -352,7 +354,7 @@ func _finish_drain() -> void:
 
 func _transcode_task(job: Dictionary) -> void:
 	var r: Dictionary = FfmpegTranscode.transcode(
-			_ffmpeg, String(job["avi"]), String(job["wav"]), String(job["mp4"]))
+			_ffmpeg, String(job["avi"]), String(job["wav"]), String(job["mp4"]), _rec_crf)
 	_tc_mutex.lock()
 	job["ok"] = bool(r.get("ok", false))
 	job["log"] = String(r.get("log", ""))
