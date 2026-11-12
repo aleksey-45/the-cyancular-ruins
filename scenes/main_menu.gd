@@ -3,24 +3,21 @@ extends Control
 const PROBE_NODE_NAME := "MenuAutotestProbe"
 
 # ── 编辑器入口(客户端专属)──
-# ★ feature 由**导出预设**注入,不是运行期判断文件在不在:`export_presets.cfg` 里客户端预设
-#   (preset0 Windows Desktop / preset2 macOS)写 `custom_features="editor"`,服务端/Web 不写
+# ★ "editor" 由**导出预设**注入(export_presets.cfg 客户端预设写 custom_features="editor"),服务端/Web 不写
 #   ⇒ 服务端与 Web 产物里这个入口根本不出现(计划 §5 不做编辑器 web 导出)。
+# ★ 开发态(Godot 编辑器里跑 / 直接跑工程)也建入口(2026-11-12 仓主决定):编辑器二进制恒带 "editor";
+#   产物版式仍由生成器骨架决定,开发态只是多追加一个按钮。
 # ★ 纯函数、无副作用:产物检查(tools/build_release.py)直接调它来对账产物分支。
 const EDITOR_SCENE := "res://scenes/editor/editor_root.tscn"
 
 
 static func editor_entry_enabled() -> bool:
-	# ★ 为什么不是裸 `OS.has_feature("editor")`:Godot 源码 `core/os/os.cpp` 的 `TOOLS_ENABLED`
-	#   分支对 "editor" **直接返回 true** ⇒ 编辑器二进制(开发态直接跑工程 / 编辑器里 play)也恒真,
-	#   单靠它会让开发态主菜单长出按钮、破坏 P2「菜单版式逐像素不变」的验收。
-	#   "template" 只在**导出模板**里为真 ⇒ 两者相与 = **只有导出的客户端产物**才为真:
-	#   客户端预设带 `custom_features="editor"` ⇒ true;服务端/Web 预设不带 ⇒ false。
-	return OS.has_feature("editor") and OS.has_feature("template")
+	# 只看 "editor":编辑器二进制恒真、客户端产物按 custom_features 真;服务端/Web 没有该 feature ⇒ false。
+	return OS.has_feature("editor")
 
 
 var _sp_panel: PanelContainer = null
-# 只在带 editor feature 的客户端产物里被创建;产物自检靠它判断「按钮是否真的建出来了」。
+# 开发态与客户端产物里被创建;产物自检靠它判断「按钮是否真的建出来了」。
 var _editor_btn: Button = null
 
 # ★★ 静态骨架在 scenes/main_menu.tscn 里,由 tools/gen_menu_scene.gd 的**构建模式**(`-- main_menu`)生成:
@@ -113,8 +110,7 @@ func _wire_menu() -> void:
 	if OS.has_feature("web"):
 		%MultiBtn.visible = false
 		%BetaBtn.visible = false
-	# ★ 只在客户端产物(`custom_features="editor"`)里加这个按钮 ⇒ 开发构建/服务端/Web 的主菜单
-	#   与骨架**完全一致**(不追加任何节点;版式由 scenes/main_menu.tscn 的容器树决定)。
+	# ★ 开发态与客户端产物都会追加这个按钮;服务端/Web 没有 editor feature ⇒ 与骨架完全一致。
 	if editor_entry_enabled():
 		# 复制 %BetaBtn 的样式(Quiet variation + 列宽/行高 flags),不新建第二套皮肤。
 		# ★ duplicate(0):默认 flags 会把 %BetaBtn 刚接好的 pressed 连接也复制过来 ⇒ 点编辑器会同时进 Beta。

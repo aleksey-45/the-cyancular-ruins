@@ -61,5 +61,5 @@
 
 ## 7. 地图编辑器怎么打开
 
-客户端产物（`custom_features="editor"`）的主菜单里有「地图编辑器」按钮；开发态直接加载
+开发态与客户端产物（`custom_features="editor"`）的主菜单里都有「地图编辑器」按钮；也可以直接加载
 `res://scenes/editor/editor_root.tscn`。画布/工具/导出/校验的操作说明见 [`editor-godot.md`](editor-godot.md) §6。

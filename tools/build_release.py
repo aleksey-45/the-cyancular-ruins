@@ -355,7 +355,7 @@ def main() -> None:
                                           expect="[registry] weapons="))
         # ── 两份产物差异:编辑器入口只随客户端走(2026-11-09 P5)──
         # 客户端预设 `custom_features="editor"` ⇒ 产物里 OS.has_feature("editor") 为真、主菜单建按钮。
-        # ★ 这条只由一次真导出回答:开发态永远拿不到导出模板的 feature 组合。
+        # ★ 开发态(2026-11-12 起)也会建入口;产物判据仍以 feature/entry 为准(服务端必须 false false)。
         smoke_check(CLIENT_OUT, ["--editor-entry-report"],
                     expect="[editor] feature=true entry=true",
                     why="去掉 export_presets.cfg 里 preset0/preset2 的 custom_features=\"editor\"、"

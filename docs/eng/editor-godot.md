@@ -85,9 +85,7 @@
 
 ## 8. 已知边界（照实写）
 
-- **入口只在导出的客户端里出现**（P5）：主菜单 `_wire_menu()` 用
-  `OS.has_feature("editor") and OS.has_feature("template")` 判定 —— 单用 `editor` 在编辑器二进制里恒真（Godot
-  `core/os/os.cpp` 的 `TOOLS_ENABLED` 分支），会把开发态菜单版式也改掉。开发态 / 服务端 / Web 都看不到按钮。
+- **入口判定 = `OS.has_feature("editor")`（2026-11-12 仓主决定）**：开发态（编辑器二进制里跑/直接跑工程）与导出客户端（`custom_features="editor"`）都显示按钮；服务端 / Web 没有该 feature ⇒ 不显示。开发态菜单因此比骨架多一个按钮，版式骨架仍只由生成器决定。
 - 「导出并加载」= 保存 → `Settings.sp_map_path` → `Settings.save()` → `MazeGenerator.set_map_file()` →
   回 `level_0`（单人流程；PvP 地图仍由大厅/服务端下发的 path 覆盖，不受影响）。
 - **真渲染预览**（`editor_preview.gd`）：复用游戏管线（`TerrainAtlas` 图集/TileSet + `ParallaxBg` 背景四层 + `PostProcess`），世界/背景/合成三个 SubViewport 串起来把合成图贴回画布区域。**headless（dummy 渲染）只验结构/相机/信号，像素要非 headless 人眼**。
@@ -109,7 +107,7 @@
 | 服务端 | `Dedicated Server` / `macOS Server` | `serverui` | 无 | `exclude_filter` 排除 `scenes/editor/*,core/editor/*` |
 | Web | `Web` | `""` | 无（计划明确不做 Godot 编辑器的 web 导出） | —— |
 
-- 入口判定 = `OS.has_feature("editor") and OS.has_feature("template")`（见 §8 第一条的坑）。
+- 入口判定 = `OS.has_feature("editor")`：开发态（编辑器二进制）与客户端产物都建入口（2026-11-12 仓主决定）；服务端/Web 没有该 feature ⇒ 不建。
 - 产物自检（`tools/build_release.py` 内置两条；开关在 `--` 之后）：
   - 客户端：`The Cyancular Ruins.exe --headless --quit-after 120 -- --editor-entry-report` ⇒ 必须打 `[editor] feature=true entry=true`；
   - 服务端：主场景是 `server_main`，冒烟脚本在同目录写 `override.cfg` 把 `run/main_scene(.serverui/.dedicated_server)` 指回
