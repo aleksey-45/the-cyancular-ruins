@@ -18,18 +18,28 @@ extends RefCounted
 # ★ 撤销栈双上限:undo_capacity 条 + undo_cells_budget 累计 cells,超了丢最旧;
 #   单条就超 budget 时保留最新一条(与 JS 编辑器 createHistory 的 `undos.length > 1` 一致:全丢 = 没有撤销)。
 # ★ dirty 只在 load_map/new_map 清 false;undo/redo 不回退 dirty(撤销过的图依然没落盘)。
+# ★ history_changed 与 changed 分开发:笔画期间每条 changed 都发,但条目要到 end_stroke 的
+#   _flush_stroke_entry 才入栈 ⇒ 撤销/重做按钮的可用态只能听 history_changed(否则画第一笔后一直灰)。
 # ★ 选区/剪贴板/镜像/渐变(契约 .tmp/p2-extras-contract.md §1):
 #   selection 是**裁剪到图内**的子格矩形(w/h<=0 = 无选区);clipboard 形状
 #   {"kind":"tex"|"color","w":int,"h":int,"values":PackedInt32Array}(纹理↔颜色两种类型不互转)。
 #   这些操作各产生一条稀疏 cells 条目(无变化不产生);操作前若笔画未收尾会先 end_stroke。
+# ★ 选区整块移动 move_selection_content 是「移动」不是「复制」:源区置 0、目标区写回源值,重叠格
+#   以目标写的值为准;不环面回绕(目标矩形必须完整落在图内,否则 ok:false —— 回绕会让同一块内容
+#   在图里出现两份,撤销条目也说不清);缺席层没有内容可搬 ⇒ 选区照样平移、count=0、绝不建层。
 # ★ meta(出生点/复活点/敌人)编辑产生快照式条目 {"kind":"meta","before","after"}:
 #   只发 meta_changed、不发 changed,但 dirty 照样置位;undo/redo 走 _apply_meta_snapshot,
 #   永远深拷贝 —— 历史条目与 map 里的数组不许共用引用(JS applySpawns 同款纪律)。
+#   set_meta_position 只改一条的 x/y(保留 respawn.side / enemy.type),原地不动 ⇒ false、不入栈。
 
 
 signal changed(layer: int, subcells: PackedInt32Array)   # 子格索引 = sy * sub_cols + sx
 signal structure_changed()                               # 换图 / 尺寸变 / 层增删(画布要整体重建)
 signal meta_changed()                                    # 出生点/复活点/敌人改动(画布标记/面板刷新)
+# undo/redo 栈可用性变了(新条目入栈 / undo / redo / load_map 清栈)。★ 与 changed 分开:
+# 笔画期间 changed 每条都发,但条目要到 end_stroke 的 _flush_stroke_entry 才入栈 ——
+# 撤销/重做按钮只听 changed 会在「画完第一笔」后一直是灰的(2026-11-12 复核抓到的真 bug)。
+signal history_changed()
 
 var map: Dictionary = {}                # 契约 §1 形状;外部可读,别整体替换(用 load_map/new_map)
 var active_layer: int = 1               # 0..6;0-2 读写 desc,3-6 读写 rgba(u32)
@@ -61,6 +71,7 @@ func load_map(m: Dictionary) -> void:
 	selection = Rect2i()                 # 换图清选区;clipboard 故意保留(跨图粘贴是合理用法)
 	dirty = false
 	structure_changed.emit()
+	history_changed.emit()
 
 
 # 建一张空图;尺寸非法时无操作(不抛错)。meta 出生点不在这里加(调用方的事)。
@@ -395,6 +406,70 @@ func clear_selection_cells() -> int:
 	return idxs.size()
 
 
+# 选区整块平移(子格偏移):先读源值,再把源区置 0、目标区写回源值 —— 重叠格以目标写的值为准
+# (是「移动」而非「复制」,也不是「先清后写」的 0)。选区跟着平移,尺寸不变。
+# ★ 不环面回绕:目标矩形必须完整落在图内,越界 ⇒ ok:false(回绕会让同一块内容出现两份)。
+# ★ 缺席的纹理层/颜色层没有内容可搬:选区照样平移、返回 count=0、绝不凭空建层。
+# 成功且有改动 ⇒ 恰好一条多值稀疏条目(覆盖源∪目标中真正变过的格)+ 一次 changed + dirty=true。
+func move_selection_content(offset_sub: Vector2i) -> Dictionary:
+	var sz := sub_size()
+	if sz.x <= 0 or sz.y <= 0:
+		return _fail("地图还没建,无法移动选区内容")
+	var layer := active_layer
+	if layer < 0 or layer >= EditorConstants.LAYER_COUNT:
+		return _fail("图层号非法: %d" % layer)
+	if not has_selection():
+		return _fail("先框选一块,再移动")
+	var sel := _clipped_selection()
+	if sel.size.x <= 0 or sel.size.y <= 0:
+		return _fail("先框选一块,再移动")
+	if offset_sub == Vector2i.ZERO:
+		return {"ok": true, "count": 0}
+	# 目标矩形必须完整在图内(不环面回绕);失败时选区/图/历史一律不动。
+	var tx := sel.position.x + offset_sub.x
+	var ty := sel.position.y + offset_sub.y
+	if tx < 0 or ty < 0 or tx + sel.size.x > sz.x or ty + sel.size.y > sz.y:
+		return _fail("移动目标越界,选区不能移出图外(本操作不环面回绕)")
+	var new_sel := Rect2i(tx, ty, sel.size.x, sel.size.y)
+	var store_v: Variant = _read_array(layer)
+	if store_v == null:
+		selection = new_sel                # 缺席层没有内容可搬:选区照样平移,不建层、不入栈
+		return {"ok": true, "count": 0}
+	var store: PackedInt32Array = store_v
+	# ① 先读源值:后面要先清源再写目标,读晚了会被自己覆盖。
+	var w := sel.size.x
+	var h := sel.size.y
+	var src_vals := PackedInt32Array()
+	src_vals.resize(w * h)
+	for y in h:
+		for x in w:
+			src_vals[y * w + x] = store[(sel.position.y + y) * sz.x + sel.position.x + x]
+	# ② 每格最终值 = 源置 0 + 目标写源值;同一格既是源又是目标时,目标写覆盖 0(最终值为准)。
+	var final_vals := {}
+	for y in h:
+		for x in w:
+			final_vals[(sel.position.y + y) * sz.x + sel.position.x + x] = 0
+	for y in h:
+		for x in w:
+			final_vals[(ty + y) * sz.x + tx + x] = src_vals[y * w + x]
+	# ③ 只记真正变过的格(源区里本来就是空气的格不产生条目),一条多值稀疏条目。
+	var idxs := PackedInt32Array()
+	var before := PackedInt32Array()
+	var after := PackedInt32Array()
+	for idx in final_vals:
+		var nv := int(final_vals[idx])
+		if store[idx] == nv:
+			continue
+		idxs.append(idx)
+		before.append(store[idx])
+		after.append(nv)
+	selection = new_sel
+	if idxs.is_empty():
+		return {"ok": true, "count": 0}    # 搬了一块空气:无改动、不发信号、不 dirty
+	_apply_cells_atomic(layer, store, idxs, before, after)
+	return {"ok": true, "count": idxs.size()}
+
+
 # ── 镜像(只翻选区,不是整层)────────────────────────────────────────────────
 
 # JS mirrorRegion 语义:目标 (x,y) 写源 (w-1-x,y) / (x,h-1-y);先全部读、再统一写(同时镜像);
@@ -603,6 +678,43 @@ func remove_enemy_at(cell: Vector2i) -> bool:
 	return false
 
 
+# 移动一条 meta 条目到新格坐标(环面归一化)。kind 只认 "player"|"respawn"|"enemy";
+# 只改 x/y,保留 respawn.side / enemy.type(不重造条目字典)。
+# 越界索引 / 非法 kind / 原地不动 ⇒ false,不入栈、不发信号;成功 ⇒ 恰好一条 meta 快照条目
+# + 一次 meta_changed + dirty=true(与 add_*/remove_* 同口径)。
+func set_meta_position(kind: String, index: int, cell: Vector2i) -> bool:
+	if not _meta_ready():
+		return false
+	var list_name := ""
+	match kind:
+		"player":
+			list_name = "players"
+		"respawn":
+			list_name = "respawns"
+		"enemy":
+			list_name = "enemies"
+		_:
+			return false
+	var entries: Array = map.get(list_name, [])
+	if index < 0 or index >= entries.size():
+		return false
+	var raw: Variant = entries[index]
+	if not (raw is Dictionary):
+		return false
+	var d: Dictionary = raw
+	var c := _wrap_cell(cell)
+	# 判「原地不动」用的是快照归一化后的坐标口径(缺 x/y 时按 0),与新位置比较。
+	if int(d.get("x", 0)) == c.x and int(d.get("y", 0)) == c.y:
+		return false                       # 原地不动:不产生条目、不发信号
+	var before := meta_snapshot()
+	d["x"] = c.x
+	d["y"] = c.y
+	entries[index] = d
+	map[list_name] = entries
+	_commit_meta_change(before)
+	return true
+
+
 # kind 只认 "players"|"respawns"|"enemies"|"all";返回删除条数,非法 kind 返回 -1。
 func clear_meta(kind: String) -> int:
 	if not _meta_ready():
@@ -681,6 +793,7 @@ func undo() -> bool:
 		_redo.append(entry)
 		dirty = true                      # 撤销 ≠ 落盘,保持 dirty
 		meta_changed.emit()
+		history_changed.emit()
 		return true
 	var idxs: PackedInt32Array = entry["idxs"]
 	_undo_cells -= idxs.size()
@@ -694,6 +807,7 @@ func undo() -> bool:
 	_redo.append(entry)
 	dirty = true                          # 撤销 ≠ 落盘,保持 dirty
 	changed.emit(layer, idxs)
+	history_changed.emit()
 	return true
 
 
@@ -709,6 +823,7 @@ func redo() -> bool:
 		_trim_undo()
 		dirty = true
 		meta_changed.emit()
+		history_changed.emit()
 		return true
 	var idxs: PackedInt32Array = entry["idxs"]
 	var layer := int(entry["layer"])
@@ -722,6 +837,7 @@ func redo() -> bool:
 	_trim_undo()
 	dirty = true
 	changed.emit(layer, idxs)
+	history_changed.emit()
 	return true
 
 
@@ -836,6 +952,7 @@ func _commit_entry(entry: Dictionary) -> void:
 	_undo.append(entry)
 	_undo_cells += _entry_cells(entry)
 	_trim_undo()
+	history_changed.emit()
 
 
 func _trim_undo() -> void:

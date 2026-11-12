@@ -9,13 +9,22 @@ const ACTIONS_SCRIPT := preload("res://scenes/editor/editor_actions.gd")
 const PREVIEW_SCRIPT := preload("res://scenes/editor/editor_preview.gd")
 const TILE_DEFS_PATH := "res://data/tile_defs.json"
 const THEME := preload("res://ui/theme/menu_theme.tres")
-const TAB_DEFAULT_W := 400.0          # 右栏初始宽(tab 最小宽 320 写在 tscn 的 custom_minimum_size)
+const RIGHT_DEFAULT_W := 320.0        # 右栏初始宽(图层卡 + 2 Tab;最小宽写在 tscn 的 RightSide)
 
-# tscn 里的按钮节点名 ↔ 语义键(顺序即工具列/模式列顺序)。
+# tscn 里的按钮节点名 ↔ 语义键(顺序即工具网格顺序)。
 const TOOL_BUTTONS := {
 	"brush": "ToolBrush", "eraser": "ToolEraser", "line": "ToolLine", "rect": "ToolRect",
 	"bucket": "ToolBucket", "eyedrop": "ToolEyedrop", "select": "ToolSelect",
-	"gradient": "ToolGradient",
+	"move": "ToolMove", "hand": "ToolHand", "gradient": "ToolGradient",
+}
+# 工具快捷键(无 Ctrl;镜像改到 Shift+H / Shift+V 让位给 移动/手形)。
+const TOOL_KEYS := {
+	"brush": "B", "eraser": "E", "line": "L", "rect": "R", "bucket": "G",
+	"eyedrop": "I", "select": "M", "move": "V", "hand": "H", "gradient": "T",
+}
+const TOOL_KEYCODES := {
+	"brush": KEY_B, "eraser": KEY_E, "line": KEY_L, "rect": KEY_R, "bucket": KEY_G,
+	"eyedrop": KEY_I, "select": KEY_M, "move": KEY_V, "hand": KEY_H, "gradient": KEY_T,
 }
 const META_BUTTONS := {
 	"none": "MetaEdit", "player": "MetaPlayer", "respawn1": "MetaRespawn1",
@@ -49,6 +58,9 @@ var _preview_on := false
 var _preview_btn: Button = null
 var _preview_last_origin := Vector2.INF
 var _preview_last_zoom := -1.0
+var _undo_btn: Button = null
+var _redo_btn: Button = null
+var _zoom_text: Label = null
 
 
 func _ready() -> void:
@@ -63,12 +75,15 @@ func _ready() -> void:
 	doc.changed.connect(_on_doc_changed)
 	doc.structure_changed.connect(_on_doc_structure_changed)
 	doc.meta_changed.connect(_on_doc_meta_changed)
+	doc.history_changed.connect(_update_history_buttons)
+	# 关窗也要拦未保存改动:auto_accept_quit=false ⇒ 由本场景的 _notification 决定退不退。
+	get_tree().auto_accept_quit = false
 	canvas.pointer_down.connect(_tools.pointer_down)
 	canvas.pointer_drag.connect(_tools.pointer_drag)
 	canvas.pointer_up.connect(_tools.pointer_up)
 	canvas.cursor_moved.connect(_on_cursor_moved)
 	canvas.zoom_changed.connect(_on_zoom_changed)
-	_set_message("新图默认 125×75 格;Ctrl+O 打开、Ctrl+S 保存、H/V 镜像选区", false)
+	_set_message("新图默认 125×75 格;H 手形 / V 移动,空格或中键拖平移,滚轮缩放;Ctrl+O 打开、Ctrl+S 保存", false)
 	_update_status(Vector2i.ZERO, false)
 
 
@@ -81,6 +96,23 @@ func _process(_dt: float) -> void:
 		_preview_last_origin = origin
 		_preview_last_zoom = zoom
 		_preview.set_camera(origin, zoom)
+
+
+# 关窗(Alt+F4 / 窗口 X)也要拦未保存改动:_ready 里把 auto_accept_quit 置 false,
+# 这里收 NOTIFICATION_WM_CLOSE_REQUEST —— dirty 走确认弹层,干净才真退。
+func _notification(what: int) -> void:
+	if what != NOTIFICATION_WM_CLOSE_REQUEST:
+		return
+	if doc != null and doc.dirty:
+		_actions.confirm_quit()
+	else:
+		get_tree().quit()
+
+
+func _exit_tree() -> void:
+	# 离开编辑器(返回主菜单 / 导出并加载 / 被测例释放)必须还原,否则主菜单也关不掉窗口。
+	if get_tree() != null:
+		get_tree().auto_accept_quit = true
 
 
 # ── 公开 API(场景探针用;也是按钮/命令层的落点)──────────────────────────
@@ -122,6 +154,8 @@ func open_path(path: String) -> Dictionary:
 	_set_message("已打开 %s(%s)" % [path, String(res.get("source", "v4"))], false)
 	if not (res.get("warnings", []) as Array).is_empty():
 		_append_output("打开时校验提示:\n- " + "\n- ".join(res["warnings"]))
+	_update_zoom_label()
+	_update_history_buttons()
 	_update_status(Vector2i.ZERO, false)
 	return res
 
@@ -132,6 +166,8 @@ func new_map(cells_w: int, cells_h: int, map_name_arg: String = "untitled") -> v
 	canvas.fit_to_map()
 	_sync_layer_rows()
 	_set_message("已新建 %d×%d 格" % [cells_w, cells_h], false)
+	_update_zoom_label()
+	_update_history_buttons()
 	_update_status(Vector2i.ZERO, false)
 
 
@@ -145,6 +181,7 @@ func save_to(path: String) -> Dictionary:
 			lines.append("  warn: " + String(w))
 		_append_output("\n".join(lines))
 		_set_message("保存失败:%s" % String(res.get("error", "")), true)
+		_show_output_tab()
 		return res
 	_path = path
 	doc.dirty = false
@@ -226,19 +263,17 @@ func _wire_ui() -> void:
 	# 少数颜色 token 不在 tscn 里重复写值(single source = UiFactory.C_*)。
 	# 标题从 32 号亮青降成 16 号弱化:菜单栏是"窗口标题"语气,不跟画布抢焦点。
 	(%TitleLabel as Label).theme_type_variation = &"SmallDim"
-	for name: String in ["ViewLabel", "ToolLabel", "StatusText", "PathText", "LayersHint",
-			"PaletteHint", "BrushHint", "ColorHint", "SelHint", "MetaHint", "ReportHint",
-			"SelectionInfo", "MetaInfo"]:
+	for name: String in ["ViewLabel", "ToolsHint", "BrushHint", "ColorHint", "PaletteHint", "HelpHint",
+			"LayersHint", "StatusText", "PathText", "SelHint", "MetaHint", "ReportHint",
+			"SelectionInfo", "MetaInfo", "ZoomText"]:
 		var l := get_node_or_null("%" + name) as Label
 		if l != null:
 			l.add_theme_color_override("font_color", UiFactory.C_TEXT_DIM)
 
-	_tabs.set_tab_title(0, "图层")
-	_tabs.set_tab_title(1, "调色板")
-	_tabs.set_tab_title(2, "选区 & meta")
-	_tabs.set_tab_title(3, "校验消息")
+	_tabs.set_tab_title(0, "选区 & meta")
+	_tabs.set_tab_title(1, "校验消息")
 
-	# 图层:7 行静态在 tscn(LayerRow0-6 = Button + 眼睛 CheckButton)。
+	# 图层:7 行静态在 tscn(LayerRow0-6 = Button + 眼睛 CheckButton);卡片常驻,不随 Tab 切走。
 	for i in EditorConstants.LAYER_COUNT:
 		var row := (%LayerRows as VBoxContainer).get_child(i) as HBoxContainer
 		var btn := row.get_child(0) as Button
@@ -248,12 +283,21 @@ func _wire_ui() -> void:
 		vis.toggled.connect(_on_layer_visible_toggled.bind(i))
 		_layer_rows.append({"button": btn, "visible": vis})
 
-	# 工具列(左竖直 8 键)
+	# 工具网格(左栏 10 键;悬停提示带快捷键)
 	for key: String in TOOL_BUTTONS:
 		var b := get_node("%" + String(TOOL_BUTTONS[key])) as Button
 		b.theme_type_variation = &"ToolButton"
+		b.tooltip_text = "%s (%s)" % [_tools.label_of(key), String(TOOL_KEYS.get(key, ""))]
 		b.pressed.connect(_tools.set_tool.bind(key))
 		_tool_buttons[key] = b
+
+	# 顶栏撤销/重做:菜单的快捷入口,禁用态跟 undo/redo 栈走。
+	(%UndoBtn as Button).theme_type_variation = &"FlatButton"
+	(%RedoBtn as Button).theme_type_variation = &"FlatButton"
+	(%UndoBtn as Button).pressed.connect(_actions.undo)
+	(%RedoBtn as Button).pressed.connect(_actions.redo)
+	_undo_btn = %UndoBtn
+	_redo_btn = %RedoBtn
 
 	# 菜单栏(文件 5 项 / 编辑 8 项;popup 项是动态内容)
 	_fill_menu(%FileMenu as MenuButton, [
@@ -312,6 +356,20 @@ func _wire_ui() -> void:
 	(%ClearMetaBtn as Button).pressed.connect(_on_clear_meta_pressed)
 	(%ValidateBtn as Button).pressed.connect(_actions.validate)
 
+	# 状态栏缩放控件(与滚轮 / ± 快捷键同源;百分比 = zoom / 默认档)。
+	_zoom_text = %ZoomText
+	for nm: String in ["ZoomOutBtn", "ZoomInBtn", "FitBtn"]:
+		(get_node("%" + nm) as Button).theme_type_variation = &"FlatButton"
+	(%ZoomOutBtn as Button).pressed.connect(canvas.zoom_out)
+	(%ZoomInBtn as Button).pressed.connect(canvas.zoom_in)
+	(%FitBtn as Button).pressed.connect(_on_fit_pressed)
+
+	# 移动工具的画布拖拽落点:画布只发几何信号,doc 写入在工具层。
+	canvas.selection_move_started.connect(_on_selection_move_started)
+	canvas.selection_move_finished.connect(_tools.apply_selection_move)
+	canvas.meta_drag_started.connect(_on_meta_drag_started)
+	canvas.meta_drag_finished.connect(_tools.apply_meta_move)
+
 	_tools.message.connect(_set_message)
 	_tools.tool_changed.connect(_on_tool_changed)
 	_tools.paint_desc_changed.connect(_on_paint_desc_changed)
@@ -319,6 +377,8 @@ func _wire_ui() -> void:
 	_tools.selection_changed.connect(_update_selection_info)
 	_on_tool_changed(_tools.tool)
 	_on_meta_mode_changed(_tools.meta_mode)
+	_update_history_buttons()
+	_update_zoom_label()
 	_layout_split.call_deferred()
 
 
@@ -332,13 +392,13 @@ func _fill_menu(mb: MenuButton, items: Array) -> void:
 		cb.call())
 
 
-# 让右侧初始宽度 = TAB_DEFAULT_W(可继续拖拽):SplitContainer 默认按子节点最小尺寸分。
+# 让右侧初始宽度 = RIGHT_DEFAULT_W(可继续拖拽):SplitContainer 默认按子节点最小尺寸分。
 func _layout_split() -> void:
 	if _split == null or _tabs == null:
 		return
 	await get_tree().process_frame
-	# 负 offset 把 divider 右移(加宽右栏);正值会被钳回最小宽度 ⇒ -TAB_DEFAULT_W = 初始 400。
-	_split.split_offset = -int(TAB_DEFAULT_W)
+	# 负 offset 把 divider 右移(加宽右栏);正值会被钳回最小宽度 ⇒ -RIGHT_DEFAULT_W = 初始 320。
+	_split.split_offset = -int(RIGHT_DEFAULT_W)
 
 
 func _build_palette(container: GridContainer) -> void:
@@ -352,12 +412,14 @@ func _build_palette(container: GridContainer) -> void:
 	var src := TerrainAtlas.source_image()
 	for tid in ids:
 		var b := Button.new()
-		b.custom_minimum_size = Vector2(64, 64)              # 缩略图边长(内容驱动)
+		# 缩略图缩到 56px:图集源砖是 64px,但调色板要 3 列塞进 268px 左栏(64px + 按钮内边距会撑到 82)。
+		b.custom_minimum_size = Vector2(56, 56)              # 缩略图边长(内容驱动)
 		b.tooltip_text = "%d %s" % [tid, String((tiles[str(tid)] as Dictionary).get("name", ""))]
 		var img: Image = src.get_region(TerrainAtlas.source_rect(tid - 1))
+		img.resize(56, 56, Image.INTERPOLATE_NEAREST)
 		b.icon = ImageTexture.create_from_image(img)
 		b.expand_icon = false
-		UiFactory.style_button(b, "quiet")
+		b.theme_type_variation = &"BtnCompact"
 		b.pressed.connect(func() -> void: _tools.set_paint_desc(EditorDesc.neutral_desc(tid)))
 		container.add_child(b)
 		_palette_buttons.append(b)
@@ -385,6 +447,9 @@ func _on_tool_changed(key: String) -> void:
 	for k: String in _tool_buttons:
 		var b: Button = _tool_buttons[k]
 		b.theme_type_variation = &"ToolActive" if k == key else &"ToolButton"
+	# 预览是盖在画布上的一层:移动/手形要看到选区框与 meta 标记,开着预览就先把预览关掉。
+	if (key == "move" or key == "hand") and _preview_on:
+		set_preview(false)
 	_update_status(Vector2i.ZERO, false)
 
 
@@ -422,12 +487,16 @@ func _sync_layer_rows() -> void:
 # ── doc / 画布 回调 ─────────────────────────────────────────────────────
 
 func _on_doc_changed(_layer: int, _subcells: PackedInt32Array) -> void:
+	_update_history_buttons()
 	_update_status(Vector2i.ZERO, false)
 
 
 func _on_doc_structure_changed() -> void:
 	canvas.refresh()
+	canvas.set_selection(doc.selection)       # 换图/新建清了 doc.selection,别让旧选框留在画布上
 	_sync_layer_rows()
+	_update_selection_info()
+	_update_history_buttons()
 
 
 func _on_cursor_moved(sub: Vector2i) -> void:
@@ -435,13 +504,28 @@ func _on_cursor_moved(sub: Vector2i) -> void:
 
 
 func _on_zoom_changed(_zoom: float) -> void:
+	_update_zoom_label()
 	_update_status(Vector2i.ZERO, false)
 
 
 func _on_doc_meta_changed() -> void:
 	canvas.queue_redraw()
 	_sync_meta_info()
+	_update_history_buttons()
 	_update_status(Vector2i.ZERO, false)
+
+
+# 移动工具开始拖选区 / 拖 meta 标记时给一行提示(落点写入在工具层)。
+func _on_selection_move_started() -> void:
+	_set_message("移动选区:松开左键落位(Esc 不生效,可直接撤销)", false)
+
+
+func _on_meta_drag_started(kind: String, index: int) -> void:
+	_set_message("拖动%s#%d:松开左键落位" % [_tools.meta_label_of(kind), index], false)
+
+
+func _on_fit_pressed() -> void:
+	canvas.fit_to_map()
 
 
 func _on_clear_meta_pressed() -> void:
@@ -533,6 +617,28 @@ func _show_report(report: Dictionary) -> void:
 	else:
 		_set_message("校验通过(%d 条提示)" % warnings.size(), false)
 	_append_output("\n".join(lines))
+	_show_output_tab()
+
+
+# 校验/保存失败的结果藏在 Tab 里等于没给 ⇒ 自动切到「校验消息」。
+func _show_output_tab() -> void:
+	if _tabs != null and _tabs.get_tab_count() > 1:
+		_tabs.current_tab = 1
+
+
+# 撤销/重做按钮的可用态跟 doc 栈走(菜单项仍恒可点,点了给「没有可撤销的操作」)。
+func _update_history_buttons() -> void:
+	if _undo_btn != null:
+		_undo_btn.disabled = doc == null or not doc.can_undo()
+	if _redo_btn != null:
+		_redo_btn.disabled = doc == null or not doc.can_redo()
+
+
+# 状态栏缩放百分比:默认档 16 px/子格 = 100%。
+func _update_zoom_label() -> void:
+	if _zoom_text == null or canvas == null:
+		return
+	_zoom_text.text = "%d%%" % roundi(canvas.zoom / EditorCanvas.ZOOM_DEFAULT * 100.0)
 
 
 func _append_output(text: String) -> void:
@@ -556,9 +662,9 @@ func _update_status(sub: Vector2i, _has_cursor: bool) -> void:
 	var wrapped := Vector2i(posmod(sub.x, doc.sub_size().x), posmod(sub.y, doc.sub_size().y))
 	var desc := doc.get_subcell(wrapped.x, wrapped.y)
 	var dirty := "未保存" if doc.dirty else "已保存"
-	_status.text = "%s · 尺寸 %d×%d 格 · 层 %s · 工具 %s · 子格 (%d,%d) · 值 0x%08X · 缩放 %d px/子格 · %s" % [
+	_status.text = "%s · 尺寸 %d×%d 格 · 层 %s · 工具 %s · 子格 (%d,%d) · 值 0x%08X · %s" % [
 		_message, cells.x, cells.y, String(EditorConstants.LAYER_NAMES[doc.active_layer]),
-		_tools.tool_label(), wrapped.x, wrapped.y, desc, int(canvas.zoom), dirty]
+		_tools.tool_label(), wrapped.x, wrapped.y, desc, dirty]
 	_path_label.text = ("● " if doc.dirty else "") + (_path if _path != "" else "未命名")
 
 
@@ -567,17 +673,21 @@ func _register_editor_actions() -> void:
 	_action("editor_redo", [KEY_Y], true)
 	_action("editor_save", [KEY_S], true)
 	_action("editor_open", [KEY_O], true)
-	_action("editor_zoom_in", [KEY_EQUAL, KEY_KP_ADD], true)
-	_action("editor_zoom_out", [KEY_MINUS, KEY_KP_SUBTRACT], true)
+	_action("editor_zoom_in", [KEY_EQUAL, KEY_KP_ADD], false)
+	_action("editor_zoom_out", [KEY_MINUS, KEY_KP_SUBTRACT], false)
 	_action("editor_copy", [KEY_C], true)
 	_action("editor_cut", [KEY_X], true)
 	_action("editor_paste", [KEY_V], true)
 	_action("editor_delete", [KEY_DELETE], false)
-	_action("editor_mirror_h", [KEY_H], false)
-	_action("editor_mirror_v", [KEY_V], false)
+	_action("editor_fit", [KEY_F], false)
+	# 镜像让位给 移动(V)/ 手形(H):单键 H/V = 工具,Shift+H / Shift+V = 镜像。
+	_action("editor_mirror_h", [KEY_H], false, true)
+	_action("editor_mirror_v", [KEY_V], false, true)
+	for key: String in TOOL_KEYCODES:
+		_action("editor_tool_" + key, [int(TOOL_KEYCODES[key])], false)
 
 
-func _action(name: String, keys: Array, ctrl: bool) -> void:
+func _action(name: String, keys: Array, ctrl: bool, shift: bool = false) -> void:
 	if InputMap.has_action(name):
 		return
 	InputMap.add_action(name)
@@ -585,20 +695,25 @@ func _action(name: String, keys: Array, ctrl: bool) -> void:
 		var ev := InputEventKey.new()
 		ev.physical_keycode = k
 		ev.ctrl_pressed = ctrl
+		ev.shift_pressed = shift
 		InputMap.action_add_event(name, ev)
 
 
 func _unhandled_input(event: InputEvent) -> void:
 	if not (event is InputEventKey) or not event.pressed:
 		return
+	# ★ 先判带 Ctrl / Shift 的组合,再判单键工具:InputMap 的 action 匹配不要求「多出来的修饰键」为空,
+	#   否则 Ctrl+V(粘贴)会被裸 V(移动工具)吃掉、Shift+H/V(镜像)会被 H/V(工具)吃掉。
 	if event.is_action_pressed("editor_undo"):
-		doc.undo()
+		_actions.undo()
 	elif event.is_action_pressed("editor_redo"):
-		doc.redo()
+		_actions.redo()
 	elif event.is_action_pressed("editor_save"):
 		save_current()
 	elif event.is_action_pressed("editor_open"):
 		_actions.open_dialog()
+	elif event.is_action_pressed("editor_fit"):
+		canvas.fit_to_map()
 	elif event.is_action_pressed("editor_zoom_in"):
 		canvas.zoom_in()
 	elif event.is_action_pressed("editor_zoom_out"):
@@ -615,3 +730,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		_actions.mirror("h")
 	elif event.is_action_pressed("editor_mirror_v"):
 		_actions.mirror("v")
+	else:
+		# 工具切换(单键)是最后的兜底:没有修饰键组合命中才轮到它。
+		for key: String in TOOL_KEYS:
+			if event.is_action_pressed("editor_tool_" + key):
+				_tools.set_tool(key)
+				return

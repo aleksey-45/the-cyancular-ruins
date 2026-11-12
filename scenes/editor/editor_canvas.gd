@@ -31,6 +31,9 @@ extends Control
 #   ⑨ 无 doc / 空图 refresh() 崩或产不出纹理 ⇒ 条数闸 + 纹理断言红;
 #   ⑩ 脏区刷新漏环面副本 / 与全量不一致 ⇒ 逐字节比较红(跨接缝组);
 #   ⑪ 选区/meta 标记几何错或 view_image 不返回副本 ⇒ 对应断言红。
+#   ⑫ 手形工具/空格拖不平移,或平移时仍发 pointer_* ⇒ 手形断言红;
+#   ⑬ 移动工具拖选区不算 delta / 不夹地图边界 / 不发 finished ⇒ 移动断言红;
+#   ⑭ meta 标记命中测试错 / 拖拽不跟鼠标 / 落点不是格坐标 ⇒ meta 拖拽断言红。
 # class_name 行已由 Lead 预注册:别改(全局类缓存按名字解析)。
 
 const ZOOM_STEPS := [4.0, 8.0, 12.0, 16.0, 24.0, 32.0, 48.0, 64.0]
@@ -55,12 +58,18 @@ const META_ENEMY_COLOR := Color(1.0, 0.25, 0.25, 1.0)       # 敌人 = 红点
 const META_FONT_SIZE := 10
 const META_ENEMY_RADIUS := 6.0
 const META_SQUARE := 10.0
+const META_HIT_RADIUS := 14.0       # 移动工具命中 meta 标记的半径(屏幕 px;标记本身只有 10px)
 
 signal pointer_down(sub: Vector2i, button: int, shift: bool, ctrl: bool)
 signal pointer_drag(sub: Vector2i)
 signal pointer_up(sub: Vector2i)
 signal cursor_moved(sub: Vector2i)
 signal zoom_changed(zoom: float)
+# 移动工具:画布只负责「拖了几格」的几何与预览,真正写 doc 在 editor_tools(工具层)。
+signal selection_move_started()
+signal selection_move_finished(delta_sub: Vector2i)
+signal meta_drag_started(kind: String, index: int)
+signal meta_drag_finished(kind: String, index: int, cell: Vector2i)
 
 # 相机只读口(origin/zoom 由本文件维护;外部用 zoom_in/zoom_out/set_zoom/set_camera/fit_to_map/pan_pixels)。
 var zoom: float:
@@ -83,6 +92,13 @@ var _has_hover := false
 var _left_down := false
 var _panning := false
 var _space_held := false
+var _pan_tool := false                 # 手形工具:左键直接平移(不落笔、不发 pointer_*)
+var _move_tool := false                # 移动工具:拖选区内容 / 拖 meta 标记
+var _moving_selection := false
+var _move_origin_sub := Vector2i.ZERO
+var _move_delta := Vector2i.ZERO
+var _dragging_meta: Dictionary = {}    # 空 = 没在拖;否则 {kind, index, ...}
+var _mouse_pos := Vector2.ZERO
 
 var _view_tex: ImageTexture = null
 var _view_img: Image = null                     # 视口图唯一真源(view_image() 拷贝它,脏区就地改它)
@@ -105,6 +121,7 @@ var _color_stamps := {}
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	focus_mode = Control.FOCUS_ALL
+	mouse_default_cursor_shape = Control.CURSOR_CROSS
 	clip_contents = true
 	if not resized.is_connected(_on_resized):
 		resized.connect(_on_resized)
@@ -190,6 +207,43 @@ func set_preview_desc(desc: int) -> void:
 	queue_redraw()
 
 
+# 手形工具:左键+拖动 = 平移(任何工具下按住空格 / 中键拖也平移)。
+func set_pan_tool(on: bool) -> void:
+	_pan_tool = on
+	if not on:
+		_panning = false
+	_refresh_cursor()
+	queue_redraw()
+
+
+func is_pan_tool() -> bool:
+	return _pan_tool
+
+
+# 移动工具:拖选区内容 / 拖 meta 标记;松手才写 doc(由工具层落点)。
+func set_move_tool(on: bool) -> void:
+	_move_tool = on
+	if not on:
+		_moving_selection = false
+		_dragging_meta = {}
+		_move_delta = Vector2i.ZERO
+	_refresh_cursor()
+	queue_redraw()
+
+
+func is_move_tool() -> bool:
+	return _move_tool
+
+
+# 屏幕坐标命中的 meta 标记(空字典 = 没命中)。只有移动工具会用它做拖拽。
+func meta_marker_at(pos: Vector2) -> Dictionary:
+	for m: Dictionary in meta_markers():
+		var marker_pos: Vector2 = m["pos"]
+		if marker_pos.distance_to(pos) <= META_HIT_RADIUS:
+			return m
+	return {}
+
+
 # ── 选区 / meta 标记 / 视口图读取(叠加层,都不进视口图)────────────────
 
 ## 设置选区(子格矩形;w/h<=0 或空 Rect2i() = 清空)。只影响 _draw 叠加层。
@@ -228,7 +282,8 @@ func view_image() -> Image:
 
 
 ## meta 标记列表(屏幕 px,固定像素大小)。空数组 = 没有 meta 或标记被隐藏。
-## 元素:{kind:"player"|"respawn"|"enemy", label:String, pos:Vector2, side:int}
+## 元素:{kind:"player"|"respawn"|"enemy", index:int, label:String, pos:Vector2, side:int}
+## index = 该标记在对应 map 数组(players/respawns/enemies)里的下标 ⇒ 移动工具拖拽时能回写同一条。
 func meta_markers() -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
 	if not _meta_visible or _doc == null:
@@ -242,24 +297,26 @@ func meta_markers() -> Array[Dictionary]:
 		if not (p is Dictionary):
 			continue
 		var pd: Dictionary = p
-		out.append({"kind": "player", "label": "P%d" % (i + 1), "side": 0,
+		out.append({"kind": "player", "index": i, "label": "P%d" % (i + 1), "side": 0,
 				"pos": _cell_center_screen(Vector2i(int(pd.get("x", 0)), int(pd.get("y", 0))))})
 	var respawns: Array = map.get("respawns", [])
-	for r: Variant in respawns:
+	for i in respawns.size():
+		var r: Variant = respawns[i]
 		if not (r is Dictionary):
 			continue
 		var rd: Dictionary = r
 		var side := int(rd.get("side", 0))
-		out.append({"kind": "respawn", "label": "R%d" % side, "side": side,
+		out.append({"kind": "respawn", "index": i, "label": "R%d" % side, "side": side,
 				"pos": _cell_center_screen(Vector2i(int(rd.get("x", 0)), int(rd.get("y", 0))))})
 	var enemies: Array = map.get("enemies", [])
-	for e: Variant in enemies:
+	for i in enemies.size():
+		var e: Variant = enemies[i]
 		if not (e is Dictionary):
 			continue
 		var ed: Dictionary = e
 		var t := String(ed.get("type", ""))
-		out.append({"kind": "enemy", "label": t.substr(0, 1).to_upper() if t != "" else "?", "side": 0,
-				"pos": _cell_center_screen(Vector2i(int(ed.get("x", 0)), int(ed.get("y", 0))))})
+		out.append({"kind": "enemy", "index": i, "label": t.substr(0, 1).to_upper() if t != "" else "?",
+				"side": 0, "pos": _cell_center_screen(Vector2i(int(ed.get("x", 0)), int(ed.get("y", 0))))})
 	return out
 
 
@@ -715,6 +772,7 @@ func _draw() -> void:
 		draw_texture_rect(_view_tex, Rect2(Vector2.ZERO, size), false)
 	_draw_grid()
 	_draw_selection()
+	_draw_move_preview()
 	_draw_meta()
 	_draw_brush()
 	_draw_calls += 1
@@ -750,14 +808,28 @@ func _draw_selection() -> void:
 	if r.size.x <= 0.0 or r.size.y <= 0.0:
 		return
 	draw_rect(r, SELECTION_FILL_COLOR)
-	var tl := r.position
-	var tr := Vector2(r.end.x, r.position.y)
-	var bl := Vector2(r.position.x, r.end.y)
-	var br := r.end
-	draw_dashed_line(tl, tr, SELECTION_LINE_COLOR, 1.5, 6.0)
-	draw_dashed_line(tr, br, SELECTION_LINE_COLOR, 1.5, 6.0)
-	draw_dashed_line(br, bl, SELECTION_LINE_COLOR, 1.5, 6.0)
-	draw_dashed_line(bl, tl, SELECTION_LINE_COLOR, 1.5, 6.0)
+	_draw_dashed_rect(r, SELECTION_LINE_COLOR, 1.5)
+
+
+## 移动工具:拖动中的位移预览(半透明框 + 虚线 + 中心连线),松手才写 doc。
+func _draw_move_preview() -> void:
+	if not _moving_selection or _doc == null or not _doc.has_selection():
+		return
+	var r := selection_screen_rect()
+	if r.size.x <= 0.0 or r.size.y <= 0.0:
+		return
+	var moved := Rect2(r.position + Vector2(_move_delta) * _zoom, r.size)
+	draw_rect(moved, Color(0.35, 0.90, 1.0, 0.10))
+	var c := Color(1.0, 0.85, 0.35, 0.95)
+	_draw_dashed_rect(moved, c, 1.5)
+	draw_line(r.get_center(), moved.get_center(), Color(c.r, c.g, c.b, 0.35), 1.0)
+
+
+func _draw_dashed_rect(r: Rect2, color: Color, width: float) -> void:
+	draw_dashed_line(r.position, Vector2(r.end.x, r.position.y), color, width, 6.0)
+	draw_dashed_line(Vector2(r.end.x, r.position.y), r.end, color, width, 6.0)
+	draw_dashed_line(r.end, Vector2(r.position.x, r.end.y), color, width, 6.0)
+	draw_dashed_line(Vector2(r.position.x, r.end.y), r.position, color, width, 6.0)
 
 
 ## meta 标记:出生点青方块 P1/P2…、复活点 R1 深绿 / R2 深橙、敌人红点+类型首字母。
@@ -769,6 +841,10 @@ func _draw_meta() -> void:
 	var font: Font = ThemeDB.fallback_font
 	for m: Dictionary in markers:
 		var pos: Vector2 = m["pos"]
+		# 移动工具拖拽中:该标记跟鼠标走(屏幕像素),松手才落回格坐标。
+		var dragging := _is_dragging_marker(m)
+		if dragging:
+			pos = _mouse_pos
 		var label := String(m["label"])
 		match String(m["kind"]):
 			"player":
@@ -790,6 +866,35 @@ func _draw_meta() -> void:
 				draw_circle(pos, META_ENEMY_RADIUS, Color(0.0, 0.0, 0.0, 0.6), false, 1.0)
 				_draw_marker_text(font, pos + Vector2(-META_ENEMY_RADIUS * 0.45, 4.0), label,
 						Color(1.0, 1.0, 1.0, 1.0))
+		if dragging:
+			draw_circle(pos, META_HIT_RADIUS, Color(1.0, 1.0, 1.0, 0.9), false, 1.5)
+
+
+func _is_dragging_marker(m: Dictionary) -> bool:
+	if _dragging_meta.is_empty():
+		return false
+	return String(_dragging_meta.get("kind", "")) == String(m.get("kind", "")) \
+			and int(_dragging_meta.get("index", -1)) == int(m.get("index", -2))
+
+
+# 移动工具命中测试(鼠标是否悬在可拖目标上):meta 标记优先,其次选区内部。
+func _over_move_target(pos: Vector2) -> bool:
+	if not meta_marker_at(pos).is_empty():
+		return true
+	return _doc != null and _doc.has_selection() and selection_screen_rect().has_point(pos)
+
+
+# 光标:手形/空格 = 抓手;移动工具悬在可拖目标 = 移动十字;其余工具 = 十字准星。
+func _refresh_cursor() -> void:
+	if _pan_tool or _space_held:
+		mouse_default_cursor_shape = Control.CURSOR_DRAG
+	elif _move_tool:
+		if _moving_selection or not _dragging_meta.is_empty() or (_has_hover and _over_move_target(_mouse_pos)):
+			mouse_default_cursor_shape = Control.CURSOR_MOVE
+		else:
+			mouse_default_cursor_shape = Control.CURSOR_ARROW
+	else:
+		mouse_default_cursor_shape = Control.CURSOR_CROSS
 
 
 func _draw_marker_text(font: Font, at: Vector2, text: String, color: Color) -> void:
@@ -799,7 +904,7 @@ func _draw_marker_text(font: Font, at: Vector2, text: String, color: Color) -> v
 
 
 func _draw_brush() -> void:
-	if not _has_hover:
+	if not _has_hover or _pan_tool or _move_tool:
 		return
 	var sub := _sub_size()
 	if sub.x <= 0 or sub.y <= 0:
@@ -830,6 +935,8 @@ func _gui_input(event: InputEvent) -> void:
 			_space_held = k.pressed
 			if not _space_held:
 				_panning = false
+			_refresh_cursor()
+			queue_redraw()
 
 
 func _gui_mouse_button(mb: InputEventMouseButton) -> void:
@@ -844,24 +951,30 @@ func _gui_mouse_button(mb: InputEventMouseButton) -> void:
 			_update_hover(mb.position)
 			if mb.pressed:
 				grab_focus()
-				if _space_held:
+				if _space_held or _pan_tool:
 					_panning = true
+					_refresh_cursor()
+				elif _move_tool:
+					_begin_move(mb.position)
 				else:
 					_left_down = true
 					pointer_down.emit(screen_to_subcell(mb.position), mb.button_index,
 							mb.shift_pressed, mb.ctrl_pressed)
 			else:
-				if _left_down:
+				if _panning:
+					_panning = false
+				elif _move_tool and (_moving_selection or not _dragging_meta.is_empty()):
+					_end_move(mb.position)
+				elif _left_down:
 					_left_down = false
 					pointer_up.emit(screen_to_subcell(mb.position))
-				_panning = false
+				_refresh_cursor()
 		MOUSE_BUTTON_MIDDLE:
 			_update_hover(mb.position)
+			_panning = mb.pressed
 			if mb.pressed:
 				grab_focus()
-				_panning = true
-			else:
-				_panning = false
+			_refresh_cursor()
 	if not _panning:
 		queue_redraw()
 
@@ -873,6 +986,13 @@ func _gui_mouse_motion(mm: InputEventMouseMotion) -> void:
 		refresh()
 		return
 	var sub := screen_to_subcell(mm.position)
+	if _move_tool:
+		if _moving_selection:
+			_move_delta = _clamped_move_delta(sub)
+		cursor_moved.emit(sub)
+		_refresh_cursor()
+		queue_redraw()
+		return
 	if _left_down:
 		pointer_drag.emit(sub)
 	cursor_moved.emit(sub)
@@ -881,7 +1001,66 @@ func _gui_mouse_motion(mm: InputEventMouseMotion) -> void:
 
 func _update_hover(pos: Vector2) -> void:
 	_hover_sub = screen_to_subcell(pos)
+	_mouse_pos = pos
 	_has_hover = true
+
+
+# ── 移动工具:拖选区 / 拖 meta(画布只算几何,doc 写入在 editor_tools)─────────
+
+func _begin_move(pos: Vector2) -> void:
+	var marker := meta_marker_at(pos)
+	if not marker.is_empty():
+		_dragging_meta = marker
+		_refresh_cursor()
+		meta_drag_started.emit(String(marker["kind"]), int(marker["index"]))
+		queue_redraw()
+		return
+	if _doc == null or not _doc.has_selection():
+		return
+	if not selection_screen_rect().has_point(pos):
+		return
+	_moving_selection = true
+	_move_origin_sub = screen_to_subcell(pos)
+	_move_delta = Vector2i.ZERO
+	_refresh_cursor()
+	selection_move_started.emit()
+	queue_redraw()
+
+
+func _end_move(pos: Vector2) -> void:
+	if not _dragging_meta.is_empty():
+		var m := _dragging_meta
+		_dragging_meta = {}
+		var cell := _cell_at(pos)
+		_refresh_cursor()
+		queue_redraw()
+		meta_drag_finished.emit(String(m["kind"]), int(m["index"]), cell)
+		return
+	if _moving_selection:
+		_moving_selection = false
+		var delta := _clamped_move_delta(screen_to_subcell(pos))
+		_move_delta = Vector2i.ZERO
+		_refresh_cursor()
+		queue_redraw()
+		selection_move_finished.emit(delta)
+
+
+func _cell_at(pos: Vector2) -> Vector2i:
+	var sub := screen_to_subcell(pos)
+	return Vector2i(floori(float(sub.x) / EditorConstants.SUB_PER_CELL),
+			floori(float(sub.y) / EditorConstants.SUB_PER_CELL))
+
+
+# 拖动距离 clamp:选区块不许被拖出图外(画布先夹一次,doc 端仍会再校验)。
+func _clamped_move_delta(pointer_sub: Vector2i) -> Vector2i:
+	if _doc == null or not _doc.has_selection():
+		return Vector2i.ZERO
+	var raw := pointer_sub - _move_origin_sub
+	var sel := _doc.selection
+	var sz := _sub_size()
+	return Vector2i(
+			clampi(raw.x, -sel.position.x, sz.x - sel.position.x - sel.size.x),
+			clampi(raw.y, -sel.position.y, sz.y - sel.position.y - sel.size.y))
 
 
 # ── 档位小工具 ───────────────────────────────────────────────────────

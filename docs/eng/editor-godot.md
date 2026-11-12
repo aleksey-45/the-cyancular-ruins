@@ -11,12 +11,12 @@
 |---|---|---|
 | 文档模型 | [`core/editor/editor_doc.gd`](../../core/editor/editor_doc.gd) | 地图字典 + 当前层 + 稀疏 cells 撤销栈 + 环面归一化 + `changed`/`structure_changed` 信号；纯逻辑、可 `-s` 测 |
 | 读写门面 | [`core/editor/editor_io.gd`](../../core/editor/editor_io.gd) | `open_path`（v4 二进制 / v3 文本 / 旧字母格式 + 读时 legacy 迁移）、`save_path`（校验 + 编码 + 写盘）、`default_target`、`list_maps` |
-| 画布 | [`scenes/editor/editor_canvas.gd`](../../scenes/editor/editor_canvas.gd) | 视口离屏层合成、相机（origin/zoom）、`screen_to_subcell`、层可见/压暗、网格与画刷框、`pointer_*` 信号 |
+| 画布 | [`scenes/editor/editor_canvas.gd`](../../scenes/editor/editor_canvas.gd) | 视口离屏层合成、相机（origin/zoom）、`screen_to_subcell`、层可见/压暗、网格与画刷框、`pointer_*` 信号；**手形平移 / 移动工具**（拖选区发几何信号、meta 标记命中测试与拖拽预览）、光标形状 |
 | 真渲染预览 | [`scenes/editor/editor_preview.gd`](../../scenes/editor/editor_preview.gd) | 复用游戏管线（TerrainAtlas tileset + ParallaxBg + PostProcess）的预览；三个 SubViewport 合成后贴回画布区域 |
-| UI 场景 | [`scenes/editor/editor_root.tscn`](../../scenes/editor/editor_root.tscn) | **全部静态 UI**：工具栏/`FileMenu`·`EditMenu` 下拉/8 工具列/`CanvasHost`+`EditorCanvas`/右栏 4 Tab（含 7 图层行、选区 6 按钮、meta 5 模式、校验按钮、画刷下拉、两个取色器）/状态栏；根挂 `ui/theme/menu_theme.tres`，功能节点 `unique_name_in_owner` |
-| 场景根逻辑 | [`scenes/editor/editor_root.gd`](../../scenes/editor/editor_root.gd) | 装配 + 接线 + 公开 API（`open_path`/`save_to`/`validate`/`export_to`/`export_and_load`/`get_doc`/`get_editor_canvas`/`set_preview`/`current_path`/`new_map`）；不建静态控件 |
-| 工具层 | [`scenes/editor/editor_tools.gd`](../../scenes/editor/editor_tools.gd) | 工具状态 + 画布指针 → `EditorDoc` 写入 + 选区拖拽 + meta 放置；只发信号（`message`/`tool_changed`/`paint_desc_changed`/`meta_mode_changed`/`selection_changed`） |
-| 命令层 | [`scenes/editor/editor_actions.gd`](../../scenes/editor/editor_actions.gd) | 文件/编辑命令 + `ConfirmationDialog` 弹层内容（新建/打开/保存为/导出）；读写仍走 `EditorIO` 与 root 公开 API |
+| UI 场景 | [`scenes/editor/editor_root.tscn`](../../scenes/editor/editor_root.tscn) | **全部静态 UI**：顶栏（标题/`FileMenu`·`EditMenu`/撤销/重做/视图/预览/返回）· **左栏**（工具网格 10 键 + 画刷 + 颜色 + 纹理调色板 + 操作提示）· 中 `CanvasHost`+`EditorCanvas` · **右栏**（`LayersCard` 7 层常驻 + 2 Tab：选区·meta / 校验消息）· 状态栏（消息 + 缩放控件）；根挂 `ui/theme/menu_theme.tres`，功能节点 `unique_name_in_owner` |
+| 场景根逻辑 | [`scenes/editor/editor_root.gd`](../../scenes/editor/editor_root.gd) | 装配 + 接线 + 公开 API（`open_path`/`save_to`/`validate`/`export_to`/`export_and_load`/`get_doc`/`get_editor_canvas`/`set_preview`/`current_path`/`new_map`）；撤销/重做按钮可用态、工具快捷键、状态栏缩放、校验结果自动切 Tab；不建静态控件 |
+| 工具层 | [`scenes/editor/editor_tools.gd`](../../scenes/editor/editor_tools.gd) | 工具状态（含手形/移动）+ 画布指针 → `EditorDoc` 写入 + 选区拖拽 + meta 放置/拖动落点；只发信号（`message`/`tool_changed`/`paint_desc_changed`/`meta_mode_changed`/`selection_changed`） |
+| 命令层 | [`scenes/editor/editor_actions.gd`](../../scenes/editor/editor_actions.gd) | 文件/编辑命令 + `ConfirmationDialog` 弹层内容（新建/打开/保存为/导出）+ **未保存改动拦截**（新建/打开/返回前确认）；读写仍走 `EditorIO` 与 root 公开 API |
 
 ★ 纯逻辑（编解码 / 校验 / 文档 / 读写）全在 `core/editor/`；`scenes/editor/` 只做 UI 与接线 —— 场景探针不需要点按钮就能验完整链路。
 
@@ -47,7 +47,15 @@
 - `begin_stroke()/end_stroke()` 把连续鼠标拖动合并成一条；空笔画不产生条目；`undo()` 用**条目里的层**写回（不是 `active_layer`）。
 - 层 0-2 读写 `desc`（描述符）；层 3-6 读写 `rgba`（u32 `0xRRGGBBAA`，存 `PackedInt32Array` 会变负数是正常的）。
   颜色层缺席时由 `EditorMap.ensure_layer` 按需建并补 `layer_flags`；**纹理层缺席绝不补**（旧文件就是没有那层）。
+- `move_selection_content(offset_sub)`（移动工具落点）：选区整块平移，**不环面回绕**（目标矩形必须完整在图内），
+  先读源值再「源置 0、目标写源值」（重叠以目标值为准），恰好一条多值稀疏条目；缺席层 ⇒ 选区照移、`count=0`、不建层。
+- `set_meta_position(kind,index,cell)`（拖动 meta 标记落点）：三 kind 严格、按格环面归一化、只改 x/y（保留
+  `respawn.side` / `enemy.type`）、原地不动不入栈，一次拖动 = 一条 meta 快照条目。
 - `dirty`：任何成功改动置 true；`load_map/new_map` 清栈并置 false；undo 不回退 dirty（未落盘）。
+- `history_changed`（2026-11-12）：撤销条目**真正入栈**（`_commit_entry`，含笔画收尾）/ undo / redo / load_map 清栈时发；
+  撤销/重做按钮的可用态只听它 —— `changed` 在笔画期间每一格都发，而条目要到 `end_stroke` 才入栈，只听 `changed` 会
+  让「画完第一笔」后按钮一直是灰的。
+- ★ 撤销移动只还原**格子**：选区框不是历史条目，撤销后 `doc.selection` 停在移动后的位置（与镜像/粘贴一致）。
 
 ## 5. 读写门面（`EditorIO`）
 
@@ -60,20 +68,40 @@
 
 ## 6. 场景与交互
 
-- 顶栏 = **单行菜单栏**：`文件 ▾`（新建 · 打开 · 保存 · 导出 · 导出并加载）· `编辑 ▾`（撤销 · 重做 · 复制 · 剪切 · 粘贴 · 清除 · 水平/垂直镜像）· 右侧「视图」预览开关 · 返回主菜单。命令全部在 `.tscn` 的菜单节点里，下拉项是动态内容。校验按钮在右栏「校验消息」Tab。
-- 左栏：**竖直工具列**（画笔/橡皮/直线/矩形/油漆桶/吸管/选框/渐变；2026-11-10 从横条改成 Photoshop/Inkscape/Aseprite 式 tool palette，选中态用 `BtnAccent` 边框）。右栏 4 个 Tab：**图层**（7 层 + 显示开关）· **调色板**（纹理缩略图 · 画刷格数下拉 · 颜色：画笔/渐变终点）· **选区 & meta**（选区信息 + 6 剪贴板按钮 + 5 个 meta 模式 + 计数 + 清空）· **校验消息**（校验 + 输出）。\n- 编辑器根挂 `ui/theme/menu_theme.tres`：Tab、下拉（OptionButton/SpinBox 已换 OptionButton）、滚动条、工具提示、`ConfirmationDialog` 全部走同一套像素字体与 16 号字（2026-11-10 字体统一）。
-- 状态栏：消息 · 尺寸 · 当前层 · 工具 · 光标子格（环面归一化）· 当前值 · 缩放 · 未保存标记。
-- 快捷键走**独立 `editor_` 前缀 InputMap**（`editor_undo/redo/save/open/zoom_in/zoom_out/copy/cut/paste/delete/mirror_h/mirror_v`），不与游戏 action 混：`Ctrl+Z/Y/S/O/C/X/V`、`Delete`、`H`/`V`、`+`/`-`。
-- 左键落笔；中键或空格拖动只平移（不发 `pointer_*`）；滚轮以鼠标为锚缩放。
+- **布局（2026-11-12 UX 重排）**：顶栏（标题 · `文件 ▾` 5 项 · `编辑 ▾` 8 项 · 撤销/重做 · 视图·预览开关 · 返回）→
+  中段 `Split` = **左栏｜画布｜右栏** → 状态栏。
+  - **左栏** = 作画上下文常驻：工具网格（画笔/橡皮/直线/矩形/油漆桶/吸管/选框/**移动**/**手形**/渐变，2 列）+
+    画刷格数 + 颜色（画笔/渐变终点）+ 纹理调色板（`data/tile_defs.json` 驱动的 15 个缩略图，3 列滚动）+ 操作提示。
+  - **右栏** = 文档结构常驻：`LayersCard`（7 层 + 显示开关，**不随 Tab 切走**）+ `TabContainer` 2 页：
+    **选区 & meta**（选区信息 + 6 剪贴板按钮 + 5 个 meta 模式 + 计数 + 清空）、**校验消息**（校验 + 输出）。
+  - 为什么这么分：画图时要同时看「当前层」和「当前纹理/颜色」，旧的 4 Tab 布局把图层和画刷塞进同一块 Tab 区，
+    每次改画刷都要切走图层 —— 这是本轮返工的主因。
+- **导航**：手形工具（`H`）左键直接平移；任何工具下 `空格`+左键拖或中键拖也平移（不发 `pointer_*`，不会顺手画一笔）；
+  滚轮以鼠标为锚缩放；状态栏 `− / 百分比 / + / 适应` 四个控件与滚轮同源（百分比 = `zoom/16`）。
+- **移动工具（`V`）**：拖**选区内容**（选区框跟随；拖出图外由画布 clamp，doc 端再校验，不环面回绕）或拖
+  **meta 标记**（出生点/复活点/敌人，命中半径 14px，拖动时标记跟鼠标、松手才按格落点）；两者各自一条 undo，
+  拖动过程只画预览、不写 doc。
+- **未保存拦截**：`doc.dirty` 时「新建 / 打开 / 返回 / **关窗（Alt+F4 或窗口 X，`NOTIFICATION_WM_CLOSE_REQUEST`）**」都先弹
+  「有未保存的改动」确认（取消 = 什么都不做，确认才继续）；干净时不弹。编辑器根在 `_ready` 把 `auto_accept_quit`
+  置 false、`_exit_tree` 还原（否则主菜单也关不掉窗口）。弹层是 `exclusive` 模态：开着时画布不能再改（避免确认后
+  又变脏的 TOCTOU）。
+- **校验结果**：校验/保存失败自动切到「校验消息」Tab，不再把错误藏在一个看不见的页里。
+- **meta 放置模式**：若当前工具是手形/移动（画布接管指针），切换到放置模式时自动回到画笔，保证「点画布放置」可用。
+- **预览与拖拽**：预览是盖在画布上的只读层；切到移动/手形时自动关预览（否则选区框/meta 标记被预览图盖住，拖拽没有反馈）。
+- **快捷键**（独立 `editor_` 前缀 InputMap，不与游戏 action 混）：
+  工具 `B/E/L/R/G/I/M/V/H/T`；`Ctrl+Z/Y` 撤销重做、`Ctrl+S/O` 保存/打开、`Ctrl+C/X/V` 选区复制/剪切/粘贴、
+  `Delete` 清除选区、`Shift+H/V` 水平/垂直镜像、`+/-` 缩放、`F` 适应窗口。
+- 编辑器根挂 `ui/theme/menu_theme.tres`：Tab、下拉、滚动条、工具提示、`ConfirmationDialog` 全部走同一套像素字体与 16 号字。
+- 状态栏：消息 · 尺寸 · 当前层 · 工具 · 光标子格（环面归一化）· 当前值 · 缩放控件 · 未保存标记/路径。
 
 ## 7. 守卫
 
 | 支 | 判词 | 条数闸 | 钉什么 |
 |---|---|---|---|
-| `tests/smoke/editor_doc_smoke.gd` | `EDITOR DOC SMOKE: OK(183 条断言)` | 183 | 7 层建图 / 环面 / Bresenham / 4 邻接与接缝油漆桶 / 颜色层 u32 / undo 往返与合并 / 栈上限 / load_map 清栈 / validate+to_bytes / **选区剪贴板镜像渐变 / meta 快照与 undo** |
+| `tests/smoke/editor_doc_smoke.gd` | `EDITOR DOC SMOKE: OK(229 条断言)` | 229 | 7 层建图 / 环面 / Bresenham / 4 邻接与接缝油漆桶 / 颜色层 u32 / undo 往返与合并 / 栈上限 / load_map 清栈 / validate+to_bytes / **选区剪贴板镜像渐变 / meta 快照与 undo / 选区整块移动（重叠·越界·缺席层·一条 undo） / meta 单条改位置（side/type 保留·原地不动不入栈） / history_changed（笔画收尾才发）** |
 | `tests/smoke/editor_io_smoke.gd` | `EDITOR IO SMOKE: OK(53 条断言)` | 53 | v4 7 层读入 / legacy 读时迁移 / v3 与旧字母文本 / 坏文件 / 保存确定性 / 校验拒写 / 三处目录 / 默认落点 / **P3 导出落点与 res:// 拒写** |
-| `tests/probe/editor_canvas_probe.tscn` | `EDITOR CANVAS PROBE: ALL-OK(48 条断言)` | 48 | 上述 + **脏区刷新与全量 refresh 逐像素一致（单格/颜色层/跨接缝/小图多环面副本）** + 选区框几何 + meta 标记锚点 + `_draw` 真跑 |
-| `tests/probe/editor_scene_probe.tscn` | `EDITOR SCENE PROBE: ALL-OK(50 条断言)` | 50 | 真实例化场景：打开 `maps/newfactory.cyrm` → 改一格 → undo/redo → 保存 → 重开 → 再保存**逐字节相等**；P3 导出并加载的 `Settings.sp_map_path`/`map_file_path()`；后置项：选区/复制/粘贴/镜像/渐变/meta/预览开关；**⑦ UI 结构组（14 条）：HSplit 可拖、菜单栏 文件 5 项/编辑 8 项、工具列 8 键、4 Tab、7 图层、调色板、状态栏、无溢出** |
+| `tests/probe/editor_canvas_probe.tscn` | `EDITOR CANVAS PROBE: ALL-OK(63 条断言)` | 63 | 上述 + **脏区刷新与全量 refresh 逐像素一致（单格/颜色层/跨接缝/小图多环面副本）** + 选区框几何 + meta 标记锚点 + `_draw` 真跑 + **手形平移（不发 pointer_*）/ 移动工具 delta 与边界 clamp / meta 命中·非 0 下标·respawn side 保留** |
+| `tests/probe/editor_scene_probe.tscn` | `EDITOR SCENE PROBE: ALL-OK(84 条断言)` | 84 | 真实例化场景：打开 `maps/newfactory.cyrm` → 改一格 → undo/redo → 保存 → 重开 → 再保存**逐字节相等**；P3 导出并加载的 `Settings.sp_map_path`/`map_file_path()`；后置项：选区/复制/粘贴/镜像/渐变/meta/预览开关；**⑦ UI 结构组：左栏工具/画刷/调色板、右栏图层常驻 + 2 Tab、顶栏撤销重做（禁用态 + 点击真回退/重做 + 笔画收尾后立即可用）、状态栏缩放（含点「−」）、工具快捷键（含 Ctrl+V / Shift+H 不被单键吃掉）、校验自动切 Tab、无溢出**；**⑧ 未保存拦截（新建/打开/返回/关窗 4 条路径 + 确认/干净 2 种走向）**；**⑨ 移动工具端到端（选区 + meta 各一条 undo）** |
 | `tests/probe/editor_preview_probe.tscn` | `EDITOR PREVIEW PROBE: ALL-OK(21 条断言)` | 21 | 真渲染预览的结构统计（773 瓦片 / 背景 1 层 / post 存在）/ 相机口径 / 显隐切换 / refresh 幂等 / doc 信号接线 |
 
 - 产品侧另有两条**真导出**才能回答的检查（不在默认批里，跑在 `tools/build_release.py`，见 §10）。
@@ -90,6 +118,14 @@
   回 `level_0`（单人流程；PvP 地图仍由大厅/服务端下发的 path 覆盖，不受影响）。
 - **真渲染预览**（`editor_preview.gd`）：复用游戏管线（`TerrainAtlas` 图集/TileSet + `ParallaxBg` 背景四层 + `PostProcess`），世界/背景/合成三个 SubViewport 串起来把合成图贴回画布区域。**headless（dummy 渲染）只验结构/相机/信号，像素要非 headless 人眼**。
 - 其余边界：画布脏区只重画变化的子格（图集因出现新 desc 需要平移行号时退回全量）；缩略图复用 `MapCatalog` 的低分辨率格级图（不是 16px 实拍）；预览不摆 3×3 环面副本（相机出地图边界会看到空区）。
+- 移动工具：拖选区**不环面回绕**（贴边即停，doc 端越界返回 `ok:false`）；拖动过程只画预览框/标记，松手才写一条 undo；
+  撤销只还原格子，选区框停在移动后的位置（选区不是历史条目）。拖 meta 只在移动工具下生效（避免画图时误拖），命中半径 14px。
+- 手形/空格平移要求画布有焦点（先点一下画布）；空格由画布 `_gui_input` 自己跟踪，根节点不处理空格。
+- 关窗拦截只覆盖「编辑器场景在树里」的窗口关闭；`_exit_tree` 会把 `auto_accept_quit` 还原，避免污染主菜单。
+  被其它进程 kill（任务管理器）不在此列。
+- 未保存确认弹层是 `exclusive` 模态：弹层开着时画布不可改 —— 这就是「确认后不再复核 dirty」的替代（关闭 TOCTOU）。
+- 预览开着时切移动/手形会自动关预览（叠加层画在画布上、会被预览图盖住）；要边看真渲染边拖目前不支持。
+- 调色板缩略图缩到 56px（源砖 64px，`INTERPOLATE_NEAREST`）以便 3 列塞进 268px 左栏；图标本身不是 16px 实拍。
 - v3 文本 / 旧字母格式打开后另存为写的是 **v4**（`EditorV3` 迁移是单向的，与计划一致）。
 - 画布的图集行数 = 本图去重描述符数；一张图里出现大量 hue/bri 变体会让图集体积线性增长（16×16/行），极端图可能吃显存。
 
@@ -125,7 +161,7 @@
 | 剪贴板 | `copy_selection` / `cut_selection` / `paste_clipboard(at_cell)` / `clear_selection_cells` | 与旧 JS 同语义：类型互斥（纹理↔颜色不互转）、粘贴以**格**为左上角、环面回绕；粘贴/剪切/清除各一条 undo |
 | 镜像 | `mirror_selection("h"|"v")` | **只翻选区**（不是整层）；无变化不产生 undo；非法轴返回 `{ok:false}` |
 | 渐变 | `paint_gradient(a_sub, b_sub, rgba0, rgba1, clip_selection=false)` | 只对颜色层 3-6；t = 子格在 a→b 上的投影/|b−a|²（夹 0..1），逐通道四舍五入；旧 JS `createGradientJob` 同口径 |
-| meta 可视化编辑 | `add_player/remove_player_at/add_respawn(side)/remove_respawn_at/add_enemy/remove_enemy_at/clear_meta/meta_snapshot` | 坐标是**格**；快照式 undo 条目（`kind:"meta"`）、只发 `meta_changed`；画布画 P1/P2、R1/R2、敌人红点+首字母 |
+| meta 可视化编辑 | `add_player/remove_player_at/add_respawn(side)/remove_respawn_at/add_enemy/remove_enemy_at/clear_meta/meta_snapshot/set_meta_position` | 坐标是**格**；快照式 undo 条目（`kind:"meta"`）、只发 `meta_changed`；画布画 P1/P2、R1/R2、敌人红点+首字母；**移动工具可直接拖标记（2026-11-12）** |
 | 真渲染预览 | `EditorPreview`（`setup/refresh/set_camera/set_active/stats`，无 class_name） | 3 个 SubViewport（世界/背景/合成）+ `TileMapLayer`×3 + `ParallaxBg` + `PostProcess`；相机公式 `Camera2D.zoom = zoom/16`、`position = origin*16 + viewport_size*0.5/(zoom/16)`；隐藏时 `set_active(false)` 停渲染 |
 | 缩略图列表 | 打开弹层每张图 `MapCatalog.texture(path, 2)` + `display_name` | 复用主菜单选图同一套简图/缓存，不另做管线；不覆盖的图（如 user:// 未在 catalog 目录里）仍可打开，只是缩略图为 `MapCatalog` 的兜底图 |
 | 脏区优化 | `EditorCanvas.refresh_region(sub_rect)` + `_on_doc_changed` 按 bbox 局部重画 | 环面副本 k 范围按可见世界动态算；与全量 `refresh()` **逐像素一致**由探针钉住；出现新 desc（图集行号会整体平移）时退回全量 |
@@ -137,8 +173,24 @@
 
 用户裁定「要用 .tscn 和 .tres，别再在 GDScript 里动态搭 UI」。落地形态：
 
-- `scenes/editor/editor_root.tscn` = **真实场景树**（根挂 `ui/theme/menu_theme.tres`）：`Toolbar`（标题 + `FileMenu`/`EditMenu` + 视图标签 + 预览/返回）· 竖排 8 工具 `ToolStrip` · `CanvasHost`（内含 `EditorCanvas` 节点）· `RightTabs`（4 Tab：图层 7 行静态 / 调色板 / 选区 & meta / 校验消息）· `StatusBar`；功能节点全部 `unique_name_in_owner=true`，root 用 `%Name` 取。
-- `editor_root.gd` **只做装配/接线/公开 API**（1270 → **597** 行）：静态控件不再 `new`；代码里只保留动态内容（调色板缩略图、菜单下拉项、弹层内容、预览节点）。
-- 拆出两个无 `class_name` 的小组件（root `preload`）：`editor_tools.gd`（工具状态 + 画布指针 → `EditorDoc` 写入 + 选区拖拽 + meta 放置；只发信号）、`editor_actions.gd`（文件/编辑命令 + `ConfirmationDialog` 弹层）。两者都不持有控件。
-- 判据：`EDITOR SCENE PROBE: ALL-OK(50)`（含 ⑦ UI 结构组 14 条）/ `UI LAYOUT PROBE: ALL-OK(54)` / `RUN_ALL OK` / `check_naming.py` 绿；改前/改后截图 `.tmp/ui_shots/editor_before*.png` ↔ `editor_after*.png`（非 headless 人工对比）。
+- `scenes/editor/editor_root.tscn` = **真实场景树**（根挂 `ui/theme/menu_theme.tres`）：`Toolbar`（标题 + `FileMenu`/`EditMenu` + 撤销/重做 + 视图 + 预览/返回）· **左栏** `LeftPanel`（2×5 工具网格 `ToolStrip` + 画刷 + 颜色 + `PaletteScroll`/`PaletteGrid` + 操作提示）· 中 `CanvasHost`（内含 `EditorCanvas` 节点）· **右栏** `RightSide`（`LayersCard` 7 层常驻 + `RightTabs` 2 Tab：选区 & meta / 校验消息）· `StatusBar`（含缩放控件）；功能节点全部 `unique_name_in_owner=true`，root 用 `%Name` 取。
+- `editor_root.gd` **只做装配/接线/公开 API**（1270 → **581** 行）：静态控件不再 `new`；代码里只保留动态内容（调色板缩略图、菜单下拉项、弹层内容、预览节点、撤销/重做可用态、缩放标签）。
+- 拆出两个无 `class_name` 的小组件（root `preload`）：`editor_tools.gd`（工具状态 + 画布指针 → `EditorDoc` 写入 + 选区拖拽 + meta 放置/拖动落点；只发信号）、`editor_actions.gd`（文件/编辑命令 + `ConfirmationDialog` 弹层 + 未保存拦截）。两者都不持有控件。
+- 判据：`EDITOR SCENE PROBE: ALL-OK(84)`（⑦ UI 结构组 / ⑧ 未保存拦截 4 路径 / ⑨ 移动工具端到端）/ `UI LAYOUT PROBE: ALL-OK(54)` / `RUN_ALL OK` / `check_naming.py` 绿；改前/改后截图 `.tmp/ui_shots/`（非 headless 人工对比）。
 - 边界：`.tscn` 无法引用 `UiFactory.C_*`，所以全屏底色 `Bg` 在 tscn 里留一处字面量（全屏装饰例外），少数标签强调/弱化色由 root 在 `_ready` 按 `C_*` 覆盖 —— 不在 tscn 里另抄一套调色板。
+
+## 13. UX 重排（2026-11-12）
+
+用户反馈「图层和画笔放一起、没有移动拖拽」后做的一轮返工。改动面 = `scenes/editor/*` + `EditorDoc` 两个新 API + 三支守卫；
+`.cyrm` 格式 / 协议 / 联机权威零改动（黄金夹具与游戏侧 `map_format_v4` 未触碰）。
+
+- **信息架构**：旧的 4 Tab（图层 / 调色板 / 选区·meta / 校验消息）把「图层」和「画刷/纹理/颜色」塞进同一块 Tab 区，
+  画图时要来回切 ⇒ 拆成「左栏 = 作画上下文（工具/画刷/颜色/调色板/操作提示）」「右栏 = 文档结构（图层常驻 + 选区·meta / 校验 2 Tab）」。
+- **拖拽**：新增手形工具（H，左键平移）与移动工具（V，拖选区内容 / 拖 meta 标记）；空格/中键平移对任何工具保留。
+  三处拖拽都只有一条 undo（移动落点由 `editor_tools` 写 doc），拖动过程只画预览。
+- **发现性**：工具按钮悬停提示带单键快捷键；左栏底部常驻操作提示；状态栏加 `− / % / + / 适应`；校验/保存失败自动切到「校验消息」Tab。
+- **安全网**：`doc.dirty` 时「新建 / 打开 / 返回」先弹确认，不再静默丢改动。
+- **守卫**：`editor_doc_smoke 183→229`（选区整块移动 / meta 单条改位置 / history_changed）、`editor_canvas_probe 48→63`
+  （手形 / 移动 delta 与边界 clamp / meta 非 0 下标与 respawn side）、`editor_scene_probe 50→84`（UI 结构 +
+  未保存拦截 4 路径 + 移动工具端到端 + 快捷键冲突）；`ui_layout_probe` 54 不变（编辑器页在 1920×1440 仍无溢出）。
+- **非 headless 人工验收**：`python tools/ui_shots.py editor_root --size 1920x1440`（只截编辑器页，弹窗；不入默认批）。

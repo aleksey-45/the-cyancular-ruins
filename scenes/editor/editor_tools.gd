@@ -11,12 +11,14 @@ const TOOL_RECT := "rect"
 const TOOL_BUCKET := "bucket"
 const TOOL_EYEDROP := "eyedrop"
 const TOOL_SELECT := "select"
+const TOOL_MOVE := "move"
+const TOOL_HAND := "hand"
 const TOOL_GRADIENT := "gradient"
 
 const TOOL_LABELS := {
 	TOOL_BRUSH: "画笔", TOOL_ERASER: "橡皮", TOOL_LINE: "直线",
 	TOOL_RECT: "矩形", TOOL_BUCKET: "油漆桶", TOOL_EYEDROP: "吸管",
-	TOOL_SELECT: "选框", TOOL_GRADIENT: "渐变",
+	TOOL_SELECT: "选框", TOOL_MOVE: "移动", TOOL_HAND: "手形", TOOL_GRADIENT: "渐变",
 }
 
 # meta 放置模式(点画布 = 在当前格放一个;不改地形)。
@@ -28,6 +30,10 @@ const META_ENEMY := "enemy"
 const META_LABELS := {
 	META_NONE: "编辑地形", META_PLAYER: "放出生点",
 	META_RESPAWN1: "放复活点侧1", META_RESPAWN2: "放复活点侧2", META_ENEMY: "放敌人",
+}
+# doc 口径(kind 单数)↔ 中文名:拖拽消息用(与上面「放置模式」的键不同)。
+const META_KIND_LABELS := {
+	"player": "出生点", "respawn": "复活点", "enemy": "敌人",
 }
 
 signal message(text: String, is_error: bool)
@@ -62,11 +68,26 @@ func setup(p_doc: EditorDoc, p_canvas: EditorCanvas) -> void:
 func set_tool(key: String) -> void:
 	tool = key
 	canvas.set_preview_desc(0 if key == TOOL_ERASER else paint_desc)
+	# 手形 = 左键直接平移;移动 = 拖选区内容 / meta 标记。画布自己处理这两类指针,不发 pointer_*。
+	canvas.set_pan_tool(key == TOOL_HAND)
+	canvas.set_move_tool(key == TOOL_MOVE)
 	tool_changed.emit(key)
 	if key == TOOL_SELECT:
 		message.emit("选框:在画布上拖出矩形", false)
 	elif key == TOOL_GRADIENT:
-		message.emit("渐变:在颜色层(3-6)从起点拖到终点(两端颜色见右栏「颜色」)", false)
+		message.emit("渐变:在颜色层(3-6)从起点拖到终点(两端颜色见左栏「颜色」)", false)
+	elif key == TOOL_HAND:
+		message.emit("手形:左键拖动画布;任何工具下空格/中键拖也能平移", false)
+	elif key == TOOL_MOVE:
+		message.emit("移动:拖选区内容或 meta 标记(先框选一块再拖)", false)
+
+
+func label_of(key: String) -> String:
+	return String(TOOL_LABELS.get(key, key))
+
+
+func meta_label_of(kind: String) -> String:
+	return String(META_KIND_LABELS.get(kind, kind))
 
 
 func set_brush_cells(n: float) -> void:
@@ -81,6 +102,9 @@ func set_paint_desc(desc: int) -> void:
 
 
 func set_meta_mode(key: String) -> void:
+	# 手形/移动由画布接管指针,放置模式下点画布放不出 meta ⇒ 先自动回到画笔(放置要落笔)。
+	if key != META_NONE and (tool == TOOL_HAND or tool == TOOL_MOVE):
+		set_tool(TOOL_BRUSH)
 	meta_mode = key
 	meta_mode_changed.emit(key)
 	if key != META_NONE:
@@ -96,6 +120,9 @@ func tool_label() -> String:
 
 func pointer_down(sub: Vector2i, button: int, _shift: bool, _ctrl: bool) -> void:
 	if button != MOUSE_BUTTON_LEFT:
+		return
+	# 手形 / 移动由画布直接接管(平移、拖选区、拖 meta),工具层不落笔。
+	if tool == TOOL_HAND or tool == TOOL_MOVE:
 		return
 	if meta_mode != META_NONE:
 		_place_meta_at(sub)
@@ -243,3 +270,31 @@ func _place_meta_at(sub: Vector2i) -> void:
 		message.emit("已放置%s @ (%d,%d)" % [String(META_LABELS.get(meta_mode, meta_mode)), cell.x, cell.y], false)
 	else:
 		message.emit("放置失败:%s" % String(META_LABELS.get(meta_mode, meta_mode)), true)
+
+
+# ── 移动工具落点(画布只发几何信号;doc 写入集中在本层)────────────────────
+
+# 松开左键:把选区内容整块平移 delta(子格)。clamp 由画布按地图边界做过一次,
+# doc 端仍会再校验(目标矩形出界 ⇒ ok:false,不产生 undo)。
+func apply_selection_move(delta: Vector2i) -> void:
+	if delta == Vector2i.ZERO:
+		message.emit("移动:位置没变", false)
+		canvas.set_selection(doc.selection)
+		return
+	var res := doc.move_selection_content(delta)
+	canvas.set_selection(doc.selection)
+	selection_changed.emit()
+	if bool(res.get("ok", false)):
+		message.emit("已移动选区 %d 个子格(Δ %d,%d)" % [int(res.get("count", 0)), delta.x, delta.y], false)
+	else:
+		message.emit("移动失败:%s" % String(res.get("error", "")), true)
+
+
+# 松开左键:把拖到的 meta 标记改到新格(undo 是快照条目,一次拖动 = 一条)。
+func apply_meta_move(kind: String, index: int, cell: Vector2i) -> void:
+	var moved := doc.set_meta_position(kind, index, cell)
+	canvas.queue_redraw()
+	if moved:
+		message.emit("已移动%s到格 (%d,%d)" % [meta_label_of(kind), cell.x, cell.y], false)
+	else:
+		message.emit("%s未移动(位置没变或下标非法)" % meta_label_of(kind), true)

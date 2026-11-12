@@ -71,6 +71,22 @@ layout_mode = 2
 theme_type_variation = &"BtnCompact"
 text = "编辑 ▾"
 
+[node name="UndoBtn" type="Button" parent="Frame/Layout/Toolbar/ToolbarMain"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(64, 32)
+layout_mode = 2
+theme_type_variation = &"FlatButton"
+tooltip_text = "撤销(Ctrl+Z)"
+text = "撤销"
+
+[node name="RedoBtn" type="Button" parent="Frame/Layout/Toolbar/ToolbarMain"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(64, 32)
+layout_mode = 2
+theme_type_variation = &"FlatButton"
+tooltip_text = "重做(Ctrl+Y)"
+text = "重做"
+
 [node name="Spacer" type="Control" parent="Frame/Layout/Toolbar/ToolbarMain"]
 layout_mode = 2
 size_flags_horizontal = 3
@@ -103,142 +119,273 @@ layout_mode = 2
 size_flags_vertical = 3
 theme_override_constants/separation = 6
 
-[node name="CanvasSide" type="HBoxContainer" parent="Frame/Layout/Split"]
+[node name="WorkArea" type="HBoxContainer" parent="Frame/Layout/Split"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 theme_override_constants/separation = 6
 
-[node name="ToolStrip" type="VBoxContainer" parent="Frame/Layout/Split/CanvasSide"]
+[node name="LeftPanel" type="VBoxContainer" parent="Frame/Layout/Split/WorkArea"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(84, 0)
+custom_minimum_size = Vector2(268, 0)
 layout_mode = 2
-size_flags_vertical = 0
-theme_override_constants/separation = 4
+size_flags_vertical = 3
+theme_override_constants/separation = 6
 
-[node name="ToolLabel" type="Label" parent="Frame/Layout/Split/CanvasSide/ToolStrip"]
+[node name="LeftCard" type="PanelContainer" parent="Frame/Layout/Split/WorkArea/LeftPanel"]
+layout_mode = 2
+size_flags_vertical = 3
+theme_type_variation = &"Card"
+
+[node name="Body" type="VBoxContainer" parent="Frame/Layout/Split/WorkArea/LeftPanel/LeftCard"]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 6
+
+[node name="ToolsHint" type="Label" parent="Frame/Layout/Split/WorkArea/LeftPanel/LeftCard/Body"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_type_variation = &"Small"
-text = "工具"
+text = "工具 · 悬停看快捷键"
 
-[node name="ToolBrush" type="Button" parent="Frame/Layout/Split/CanvasSide/ToolStrip"]
+[node name="ToolStrip" type="GridContainer" parent="Frame/Layout/Split/WorkArea/LeftPanel/LeftCard/Body"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(84, 32)
+layout_mode = 2
+theme_override_constants/h_separation = 4
+theme_override_constants/v_separation = 4
+columns = 2
+
+[node name="ToolBrush" type="Button" parent="Frame/Layout/Split/WorkArea/LeftPanel/LeftCard/Body/ToolStrip"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 32)
 layout_mode = 2
 size_flags_horizontal = 3
-theme_type_variation = &"BtnCompact"
+theme_type_variation = &"ToolButton"
+alignment = 0
 text = "画笔"
 
-[node name="ToolEraser" type="Button" parent="Frame/Layout/Split/CanvasSide/ToolStrip"]
+[node name="ToolEraser" type="Button" parent="Frame/Layout/Split/WorkArea/LeftPanel/LeftCard/Body/ToolStrip"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(84, 32)
+custom_minimum_size = Vector2(0, 32)
 layout_mode = 2
 size_flags_horizontal = 3
-theme_type_variation = &"BtnCompact"
+theme_type_variation = &"ToolButton"
+alignment = 0
 text = "橡皮"
 
-[node name="ToolLine" type="Button" parent="Frame/Layout/Split/CanvasSide/ToolStrip"]
+[node name="ToolLine" type="Button" parent="Frame/Layout/Split/WorkArea/LeftPanel/LeftCard/Body/ToolStrip"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(84, 32)
+custom_minimum_size = Vector2(0, 32)
 layout_mode = 2
 size_flags_horizontal = 3
-theme_type_variation = &"BtnCompact"
+theme_type_variation = &"ToolButton"
+alignment = 0
 text = "直线"
 
-[node name="ToolRect" type="Button" parent="Frame/Layout/Split/CanvasSide/ToolStrip"]
+[node name="ToolRect" type="Button" parent="Frame/Layout/Split/WorkArea/LeftPanel/LeftCard/Body/ToolStrip"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(84, 32)
+custom_minimum_size = Vector2(0, 32)
 layout_mode = 2
 size_flags_horizontal = 3
-theme_type_variation = &"BtnCompact"
+theme_type_variation = &"ToolButton"
+alignment = 0
 text = "矩形"
 
-[node name="ToolBucket" type="Button" parent="Frame/Layout/Split/CanvasSide/ToolStrip"]
+[node name="ToolBucket" type="Button" parent="Frame/Layout/Split/WorkArea/LeftPanel/LeftCard/Body/ToolStrip"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(84, 32)
+custom_minimum_size = Vector2(0, 32)
 layout_mode = 2
 size_flags_horizontal = 3
-theme_type_variation = &"BtnCompact"
+theme_type_variation = &"ToolButton"
+alignment = 0
 text = "油漆桶"
 
-[node name="ToolEyedrop" type="Button" parent="Frame/Layout/Split/CanvasSide/ToolStrip"]
+[node name="ToolEyedrop" type="Button" parent="Frame/Layout/Split/WorkArea/LeftPanel/LeftCard/Body/ToolStrip"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(84, 32)
+custom_minimum_size = Vector2(0, 32)
 layout_mode = 2
 size_flags_horizontal = 3
-theme_type_variation = &"BtnCompact"
+theme_type_variation = &"ToolButton"
+alignment = 0
 text = "吸管"
 
-[node name="ToolSelect" type="Button" parent="Frame/Layout/Split/CanvasSide/ToolStrip"]
+[node name="ToolSelect" type="Button" parent="Frame/Layout/Split/WorkArea/LeftPanel/LeftCard/Body/ToolStrip"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(84, 32)
+custom_minimum_size = Vector2(0, 32)
 layout_mode = 2
 size_flags_horizontal = 3
-theme_type_variation = &"BtnCompact"
+theme_type_variation = &"ToolButton"
+alignment = 0
 text = "选框"
 
-[node name="ToolGradient" type="Button" parent="Frame/Layout/Split/CanvasSide/ToolStrip"]
+[node name="ToolMove" type="Button" parent="Frame/Layout/Split/WorkArea/LeftPanel/LeftCard/Body/ToolStrip"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(84, 32)
+custom_minimum_size = Vector2(0, 32)
 layout_mode = 2
 size_flags_horizontal = 3
-theme_type_variation = &"BtnCompact"
+theme_type_variation = &"ToolButton"
+alignment = 0
+text = "移动"
+
+[node name="ToolHand" type="Button" parent="Frame/Layout/Split/WorkArea/LeftPanel/LeftCard/Body/ToolStrip"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_type_variation = &"ToolButton"
+alignment = 0
+text = "手形"
+
+[node name="ToolGradient" type="Button" parent="Frame/Layout/Split/WorkArea/LeftPanel/LeftCard/Body/ToolStrip"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 32)
+layout_mode = 2
+size_flags_horizontal = 3
+theme_type_variation = &"ToolButton"
+alignment = 0
 text = "渐变"
 
-[node name="CanvasHost" type="PanelContainer" parent="Frame/Layout/Split/CanvasSide"]
+[node name="BrushHint" type="Label" parent="Frame/Layout/Split/WorkArea/LeftPanel/LeftCard/Body"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"Small"
+text = "画刷"
+
+[node name="BrushRow" type="HBoxContainer" parent="Frame/Layout/Split/WorkArea/LeftPanel/LeftCard/Body"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="BrushLabel" type="Label" parent="Frame/Layout/Split/WorkArea/LeftPanel/LeftCard/Body/BrushRow"]
+layout_mode = 2
+theme_type_variation = &"Small"
+text = "格数"
+vertical_alignment = 1
+
+[node name="BrushSizeOption" type="OptionButton" parent="Frame/Layout/Split/WorkArea/LeftPanel/LeftCard/Body/BrushRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"Kit"
+tooltip_text = "画刷格数(1 格 = 4 子格)"
+
+[node name="ColorHint" type="Label" parent="Frame/Layout/Split/WorkArea/LeftPanel/LeftCard/Body"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"Small"
+text = "颜色(只作用于颜色层 3-6)"
+
+[node name="BrushColorRow" type="HBoxContainer" parent="Frame/Layout/Split/WorkArea/LeftPanel/LeftCard/Body"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="BrushColorLabel" type="Label" parent="Frame/Layout/Split/WorkArea/LeftPanel/LeftCard/Body/BrushColorRow"]
+layout_mode = 2
+theme_type_variation = &"Small"
+text = "画笔"
+vertical_alignment = 1
+
+[node name="BrushColor" type="ColorPickerButton" parent="Frame/Layout/Split/WorkArea/LeftPanel/LeftCard/Body/BrushColorRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(64, 32)
+layout_mode = 2
+tooltip_text = "画笔颜色(只作用于颜色层 3-6)"
+
+[node name="GradientEndRow" type="HBoxContainer" parent="Frame/Layout/Split/WorkArea/LeftPanel/LeftCard/Body"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="GradientEndColorLabel" type="Label" parent="Frame/Layout/Split/WorkArea/LeftPanel/LeftCard/Body/GradientEndRow"]
+layout_mode = 2
+theme_type_variation = &"Small"
+text = "渐变终点"
+vertical_alignment = 1
+
+[node name="GradientEndColor" type="ColorPickerButton" parent="Frame/Layout/Split/WorkArea/LeftPanel/LeftCard/Body/GradientEndRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(64, 32)
+layout_mode = 2
+tooltip_text = "渐变终点颜色(只作用于颜色层 3-6)"
+
+[node name="PaletteHint" type="Label" parent="Frame/Layout/Split/WorkArea/LeftPanel/LeftCard/Body"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"Small"
+text = "纹理调色板(点选 = 画笔纹理)"
+
+[node name="PaletteScroll" type="ScrollContainer" parent="Frame/Layout/Split/WorkArea/LeftPanel/LeftCard/Body"]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="PaletteGrid" type="GridContainer" parent="Frame/Layout/Split/WorkArea/LeftPanel/LeftCard/Body/PaletteScroll"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/h_separation = 4
+theme_override_constants/v_separation = 4
+columns = 3
+
+[node name="HelpHint" type="Label" parent="Frame/Layout/Split/WorkArea/LeftPanel/LeftCard/Body"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"Small"
+text = "左键:当前工具
+空格/中键拖:平移
+滚轮:缩放 · H 手形 · V 移动
+Ctrl+Z/Y:撤销重做
+Ctrl+C/X/V:选区剪贴板
+Shift+H/V:镜像选区"
+autowrap_mode = 3
+
+[node name="CanvasHost" type="PanelContainer" parent="Frame/Layout/Split/WorkArea"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 theme_type_variation = &"Plain"
 
-[node name="Canvas" type="Control" parent="Frame/Layout/Split/CanvasSide/CanvasHost"]
+[node name="Canvas" type="Control" parent="Frame/Layout/Split/WorkArea/CanvasHost"]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 script = ExtResource("3_canvas")
 
-[node name="RightTabs" type="TabContainer" parent="Frame/Layout/Split"]
+[node name="RightSide" type="VBoxContainer" parent="Frame/Layout/Split"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(320, 0)
 layout_mode = 2
 size_flags_vertical = 3
-
-[node name="Layers" type="ScrollContainer" parent="Frame/Layout/Split/RightTabs"]
-layout_mode = 2
-horizontal_scroll_mode = 0
-
-[node name="TabMargin" type="MarginContainer" parent="Frame/Layout/Split/RightTabs/Layers"]
-layout_mode = 2
-size_flags_horizontal = 3
-theme_override_constants/margin_left = 8
-theme_override_constants/margin_top = 8
-theme_override_constants/margin_right = 8
-theme_override_constants/margin_bottom = 8
-
-[node name="Body" type="VBoxContainer" parent="Frame/Layout/Split/RightTabs/Layers/TabMargin"]
-layout_mode = 2
-size_flags_horizontal = 3
 theme_override_constants/separation = 6
 
-[node name="LayersHint" type="Label" parent="Frame/Layout/Split/RightTabs/Layers/TabMargin/Body"]
+[node name="LayersCard" type="PanelContainer" parent="Frame/Layout/Split/RightSide"]
+layout_mode = 2
+theme_type_variation = &"Card"
+
+[node name="Body" type="VBoxContainer" parent="Frame/Layout/Split/RightSide/LayersCard"]
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="LayersTitle" type="Label" parent="Frame/Layout/Split/RightSide/LayersCard/Body"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "图层"
+
+[node name="LayersHint" type="Label" parent="Frame/Layout/Split/RightSide/LayersCard/Body"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_type_variation = &"Small"
-text = "图层(点名字 = 当前编辑层;勾选 = 显示)"
+text = "点名字=当前层 · 勾选=显示"
 
-[node name="LayerRows" type="VBoxContainer" parent="Frame/Layout/Split/RightTabs/Layers/TabMargin/Body"]
+[node name="LayerRows" type="VBoxContainer" parent="Frame/Layout/Split/RightSide/LayersCard/Body"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_override_constants/separation = 2
 
-[node name="LayerRow0" type="HBoxContainer" parent="Frame/Layout/Split/RightTabs/Layers/TabMargin/Body/LayerRows"]
+[node name="LayerRow0" type="HBoxContainer" parent="Frame/Layout/Split/RightSide/LayersCard/Body/LayerRows"]
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="Layer0" type="Button" parent="Frame/Layout/Split/RightTabs/Layers/TabMargin/Body/LayerRows/LayerRow0"]
+[node name="Layer0" type="Button" parent="Frame/Layout/Split/RightSide/LayersCard/Body/LayerRows/LayerRow0"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 30)
 layout_mode = 2
@@ -247,18 +394,18 @@ theme_type_variation = &"BtnCompact"
 alignment = 0
 text = "前景"
 
-[node name="Layer0Vis" type="CheckButton" parent="Frame/Layout/Split/RightTabs/Layers/TabMargin/Body/LayerRows/LayerRow0"]
+[node name="Layer0Vis" type="CheckButton" parent="Frame/Layout/Split/RightSide/LayersCard/Body/LayerRows/LayerRow0"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_type_variation = &"Kit"
 button_pressed = true
 tooltip_text = "显示/隐藏该层"
 
-[node name="LayerRow1" type="HBoxContainer" parent="Frame/Layout/Split/RightTabs/Layers/TabMargin/Body/LayerRows"]
+[node name="LayerRow1" type="HBoxContainer" parent="Frame/Layout/Split/RightSide/LayersCard/Body/LayerRows"]
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="Layer1" type="Button" parent="Frame/Layout/Split/RightTabs/Layers/TabMargin/Body/LayerRows/LayerRow1"]
+[node name="Layer1" type="Button" parent="Frame/Layout/Split/RightSide/LayersCard/Body/LayerRows/LayerRow1"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 30)
 layout_mode = 2
@@ -267,18 +414,18 @@ theme_type_variation = &"BtnCompact"
 alignment = 0
 text = "场景"
 
-[node name="Layer1Vis" type="CheckButton" parent="Frame/Layout/Split/RightTabs/Layers/TabMargin/Body/LayerRows/LayerRow1"]
+[node name="Layer1Vis" type="CheckButton" parent="Frame/Layout/Split/RightSide/LayersCard/Body/LayerRows/LayerRow1"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_type_variation = &"Kit"
 button_pressed = true
 tooltip_text = "显示/隐藏该层"
 
-[node name="LayerRow2" type="HBoxContainer" parent="Frame/Layout/Split/RightTabs/Layers/TabMargin/Body/LayerRows"]
+[node name="LayerRow2" type="HBoxContainer" parent="Frame/Layout/Split/RightSide/LayersCard/Body/LayerRows"]
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="Layer2" type="Button" parent="Frame/Layout/Split/RightTabs/Layers/TabMargin/Body/LayerRows/LayerRow2"]
+[node name="Layer2" type="Button" parent="Frame/Layout/Split/RightSide/LayersCard/Body/LayerRows/LayerRow2"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 30)
 layout_mode = 2
@@ -287,18 +434,18 @@ theme_type_variation = &"BtnCompact"
 alignment = 0
 text = "后景"
 
-[node name="Layer2Vis" type="CheckButton" parent="Frame/Layout/Split/RightTabs/Layers/TabMargin/Body/LayerRows/LayerRow2"]
+[node name="Layer2Vis" type="CheckButton" parent="Frame/Layout/Split/RightSide/LayersCard/Body/LayerRows/LayerRow2"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_type_variation = &"Kit"
 button_pressed = true
 tooltip_text = "显示/隐藏该层"
 
-[node name="LayerRow3" type="HBoxContainer" parent="Frame/Layout/Split/RightTabs/Layers/TabMargin/Body/LayerRows"]
+[node name="LayerRow3" type="HBoxContainer" parent="Frame/Layout/Split/RightSide/LayersCard/Body/LayerRows"]
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="Layer3" type="Button" parent="Frame/Layout/Split/RightTabs/Layers/TabMargin/Body/LayerRows/LayerRow3"]
+[node name="Layer3" type="Button" parent="Frame/Layout/Split/RightSide/LayersCard/Body/LayerRows/LayerRow3"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 30)
 layout_mode = 2
@@ -307,18 +454,18 @@ theme_type_variation = &"BtnCompact"
 alignment = 0
 text = "背景 100%"
 
-[node name="Layer3Vis" type="CheckButton" parent="Frame/Layout/Split/RightTabs/Layers/TabMargin/Body/LayerRows/LayerRow3"]
+[node name="Layer3Vis" type="CheckButton" parent="Frame/Layout/Split/RightSide/LayersCard/Body/LayerRows/LayerRow3"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_type_variation = &"Kit"
 button_pressed = true
 tooltip_text = "显示/隐藏该层"
 
-[node name="LayerRow4" type="HBoxContainer" parent="Frame/Layout/Split/RightTabs/Layers/TabMargin/Body/LayerRows"]
+[node name="LayerRow4" type="HBoxContainer" parent="Frame/Layout/Split/RightSide/LayersCard/Body/LayerRows"]
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="Layer4" type="Button" parent="Frame/Layout/Split/RightTabs/Layers/TabMargin/Body/LayerRows/LayerRow4"]
+[node name="Layer4" type="Button" parent="Frame/Layout/Split/RightSide/LayersCard/Body/LayerRows/LayerRow4"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 30)
 layout_mode = 2
@@ -327,18 +474,18 @@ theme_type_variation = &"BtnCompact"
 alignment = 0
 text = "背景 75%"
 
-[node name="Layer4Vis" type="CheckButton" parent="Frame/Layout/Split/RightTabs/Layers/TabMargin/Body/LayerRows/LayerRow4"]
+[node name="Layer4Vis" type="CheckButton" parent="Frame/Layout/Split/RightSide/LayersCard/Body/LayerRows/LayerRow4"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_type_variation = &"Kit"
 button_pressed = true
 tooltip_text = "显示/隐藏该层"
 
-[node name="LayerRow5" type="HBoxContainer" parent="Frame/Layout/Split/RightTabs/Layers/TabMargin/Body/LayerRows"]
+[node name="LayerRow5" type="HBoxContainer" parent="Frame/Layout/Split/RightSide/LayersCard/Body/LayerRows"]
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="Layer5" type="Button" parent="Frame/Layout/Split/RightTabs/Layers/TabMargin/Body/LayerRows/LayerRow5"]
+[node name="Layer5" type="Button" parent="Frame/Layout/Split/RightSide/LayersCard/Body/LayerRows/LayerRow5"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 30)
 layout_mode = 2
@@ -347,18 +494,18 @@ theme_type_variation = &"BtnCompact"
 alignment = 0
 text = "背景 50%"
 
-[node name="Layer5Vis" type="CheckButton" parent="Frame/Layout/Split/RightTabs/Layers/TabMargin/Body/LayerRows/LayerRow5"]
+[node name="Layer5Vis" type="CheckButton" parent="Frame/Layout/Split/RightSide/LayersCard/Body/LayerRows/LayerRow5"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_type_variation = &"Kit"
 button_pressed = true
 tooltip_text = "显示/隐藏该层"
 
-[node name="LayerRow6" type="HBoxContainer" parent="Frame/Layout/Split/RightTabs/Layers/TabMargin/Body/LayerRows"]
+[node name="LayerRow6" type="HBoxContainer" parent="Frame/Layout/Split/RightSide/LayersCard/Body/LayerRows"]
 layout_mode = 2
 theme_override_constants/separation = 4
 
-[node name="Layer6" type="Button" parent="Frame/Layout/Split/RightTabs/Layers/TabMargin/Body/LayerRows/LayerRow6"]
+[node name="Layer6" type="Button" parent="Frame/Layout/Split/RightSide/LayersCard/Body/LayerRows/LayerRow6"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 30)
 layout_mode = 2
@@ -367,19 +514,23 @@ theme_type_variation = &"BtnCompact"
 alignment = 0
 text = "背景 25%"
 
-[node name="Layer6Vis" type="CheckButton" parent="Frame/Layout/Split/RightTabs/Layers/TabMargin/Body/LayerRows/LayerRow6"]
+[node name="Layer6Vis" type="CheckButton" parent="Frame/Layout/Split/RightSide/LayersCard/Body/LayerRows/LayerRow6"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_type_variation = &"Kit"
 button_pressed = true
 tooltip_text = "显示/隐藏该层"
 
-[node name="Palette" type="ScrollContainer" parent="Frame/Layout/Split/RightTabs"]
-visible = false
+[node name="RightTabs" type="TabContainer" parent="Frame/Layout/Split/RightSide"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="SelectionMeta" type="ScrollContainer" parent="Frame/Layout/Split/RightSide/RightTabs"]
 layout_mode = 2
 horizontal_scroll_mode = 0
 
-[node name="TabMargin" type="MarginContainer" parent="Frame/Layout/Split/RightTabs/Palette"]
+[node name="TabMargin" type="MarginContainer" parent="Frame/Layout/Split/RightSide/RightTabs/SelectionMeta"]
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/margin_left = 8
@@ -387,224 +538,139 @@ theme_override_constants/margin_top = 8
 theme_override_constants/margin_right = 8
 theme_override_constants/margin_bottom = 8
 
-[node name="Body" type="VBoxContainer" parent="Frame/Layout/Split/RightTabs/Palette/TabMargin"]
+[node name="Body" type="VBoxContainer" parent="Frame/Layout/Split/RightSide/RightTabs/SelectionMeta/TabMargin"]
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/separation = 6
 
-[node name="PaletteHint" type="Label" parent="Frame/Layout/Split/RightTabs/Palette/TabMargin/Body"]
+[node name="SelHint" type="Label" parent="Frame/Layout/Split/RightSide/RightTabs/SelectionMeta/TabMargin/Body"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_type_variation = &"Small"
-text = "调色板(点选 = 当前画笔纹理)"
+text = "选区(选框工具拖矩形;Ctrl+C/X/V、Del、Shift+H/V)"
+autowrap_mode = 3
 
-[node name="PaletteGrid" type="GridContainer" parent="Frame/Layout/Split/RightTabs/Palette/TabMargin/Body"]
-unique_name_in_owner = true
-layout_mode = 2
-theme_override_constants/h_separation = 4
-theme_override_constants/v_separation = 4
-columns = 5
-
-[node name="BrushHint" type="Label" parent="Frame/Layout/Split/RightTabs/Palette/TabMargin/Body"]
-unique_name_in_owner = true
-layout_mode = 2
-theme_type_variation = &"Small"
-text = "画刷"
-
-[node name="BrushRow" type="HBoxContainer" parent="Frame/Layout/Split/RightTabs/Palette/TabMargin/Body"]
-layout_mode = 2
-theme_override_constants/separation = 8
-
-[node name="BrushLabel" type="Label" parent="Frame/Layout/Split/RightTabs/Palette/TabMargin/Body/BrushRow"]
-layout_mode = 2
-theme_type_variation = &"Small"
-text = "画刷(格)"
-vertical_alignment = 1
-
-[node name="BrushSizeOption" type="OptionButton" parent="Frame/Layout/Split/RightTabs/Palette/TabMargin/Body/BrushRow"]
-unique_name_in_owner = true
-layout_mode = 2
-theme_type_variation = &"Kit"
-tooltip_text = "画刷格数(1 格 = 4 子格)"
-
-[node name="ColorHint" type="Label" parent="Frame/Layout/Split/RightTabs/Palette/TabMargin/Body"]
-unique_name_in_owner = true
-layout_mode = 2
-theme_type_variation = &"Small"
-text = "颜色(背景层 3-6:画笔 / 渐变终点)"
-
-[node name="ColorRow" type="HBoxContainer" parent="Frame/Layout/Split/RightTabs/Palette/TabMargin/Body"]
-layout_mode = 2
-theme_override_constants/separation = 8
-
-[node name="BrushColorLabel" type="Label" parent="Frame/Layout/Split/RightTabs/Palette/TabMargin/Body/ColorRow"]
-layout_mode = 2
-theme_type_variation = &"Small"
-text = "画笔"
-vertical_alignment = 1
-
-[node name="BrushColor" type="ColorPickerButton" parent="Frame/Layout/Split/RightTabs/Palette/TabMargin/Body/ColorRow"]
-unique_name_in_owner = true
-custom_minimum_size = Vector2(64, 32)
-layout_mode = 2
-tooltip_text = "画笔颜色(只作用于颜色层 3-6)"
-
-[node name="GradientEndColorLabel" type="Label" parent="Frame/Layout/Split/RightTabs/Palette/TabMargin/Body/ColorRow"]
-layout_mode = 2
-theme_type_variation = &"Small"
-text = "渐变终点"
-vertical_alignment = 1
-
-[node name="GradientEndColor" type="ColorPickerButton" parent="Frame/Layout/Split/RightTabs/Palette/TabMargin/Body/ColorRow"]
-unique_name_in_owner = true
-custom_minimum_size = Vector2(64, 32)
-layout_mode = 2
-tooltip_text = "渐变终点颜色(只作用于颜色层 3-6)"
-
-[node name="SelectionMeta" type="ScrollContainer" parent="Frame/Layout/Split/RightTabs"]
-visible = false
-layout_mode = 2
-horizontal_scroll_mode = 0
-
-[node name="TabMargin" type="MarginContainer" parent="Frame/Layout/Split/RightTabs/SelectionMeta"]
-layout_mode = 2
-size_flags_horizontal = 3
-theme_override_constants/margin_left = 8
-theme_override_constants/margin_top = 8
-theme_override_constants/margin_right = 8
-theme_override_constants/margin_bottom = 8
-
-[node name="Body" type="VBoxContainer" parent="Frame/Layout/Split/RightTabs/SelectionMeta/TabMargin"]
-layout_mode = 2
-size_flags_horizontal = 3
-theme_override_constants/separation = 6
-
-[node name="SelHint" type="Label" parent="Frame/Layout/Split/RightTabs/SelectionMeta/TabMargin/Body"]
-unique_name_in_owner = true
-layout_mode = 2
-theme_type_variation = &"Small"
-text = "选区(选框工具拖矩形;Ctrl+C/X/V、Del、H/V)"
-
-[node name="SelectionInfo" type="Label" parent="Frame/Layout/Split/RightTabs/SelectionMeta/TabMargin/Body"]
+[node name="SelectionInfo" type="Label" parent="Frame/Layout/Split/RightSide/RightTabs/SelectionMeta/TabMargin/Body"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_type_variation = &"Small"
 text = "无选区"
 
-[node name="SelGrid" type="GridContainer" parent="Frame/Layout/Split/RightTabs/SelectionMeta/TabMargin/Body"]
+[node name="SelGrid" type="GridContainer" parent="Frame/Layout/Split/RightSide/RightTabs/SelectionMeta/TabMargin/Body"]
 layout_mode = 2
 theme_override_constants/h_separation = 4
 theme_override_constants/v_separation = 4
 columns = 3
 
-[node name="SelCopy" type="Button" parent="Frame/Layout/Split/RightTabs/SelectionMeta/TabMargin/Body/SelGrid"]
+[node name="SelCopy" type="Button" parent="Frame/Layout/Split/RightSide/RightTabs/SelectionMeta/TabMargin/Body/SelGrid"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(96, 30)
 layout_mode = 2
 theme_type_variation = &"BtnCompact"
 text = "复制"
 
-[node name="SelCut" type="Button" parent="Frame/Layout/Split/RightTabs/SelectionMeta/TabMargin/Body/SelGrid"]
+[node name="SelCut" type="Button" parent="Frame/Layout/Split/RightSide/RightTabs/SelectionMeta/TabMargin/Body/SelGrid"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(96, 30)
 layout_mode = 2
 theme_type_variation = &"BtnCompact"
 text = "剪切"
 
-[node name="SelPaste" type="Button" parent="Frame/Layout/Split/RightTabs/SelectionMeta/TabMargin/Body/SelGrid"]
+[node name="SelPaste" type="Button" parent="Frame/Layout/Split/RightSide/RightTabs/SelectionMeta/TabMargin/Body/SelGrid"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(96, 30)
 layout_mode = 2
 theme_type_variation = &"BtnCompact"
 text = "粘贴"
 
-[node name="SelClear" type="Button" parent="Frame/Layout/Split/RightTabs/SelectionMeta/TabMargin/Body/SelGrid"]
+[node name="SelClear" type="Button" parent="Frame/Layout/Split/RightSide/RightTabs/SelectionMeta/TabMargin/Body/SelGrid"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(96, 30)
 layout_mode = 2
 theme_type_variation = &"BtnCompact"
 text = "清除"
 
-[node name="SelMirrorH" type="Button" parent="Frame/Layout/Split/RightTabs/SelectionMeta/TabMargin/Body/SelGrid"]
+[node name="SelMirrorH" type="Button" parent="Frame/Layout/Split/RightSide/RightTabs/SelectionMeta/TabMargin/Body/SelGrid"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(96, 30)
 layout_mode = 2
 theme_type_variation = &"BtnCompact"
 text = "水平镜像"
 
-[node name="SelMirrorV" type="Button" parent="Frame/Layout/Split/RightTabs/SelectionMeta/TabMargin/Body/SelGrid"]
+[node name="SelMirrorV" type="Button" parent="Frame/Layout/Split/RightSide/RightTabs/SelectionMeta/TabMargin/Body/SelGrid"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(96, 30)
 layout_mode = 2
 theme_type_variation = &"BtnCompact"
 text = "垂直镜像"
 
-[node name="MetaHint" type="Label" parent="Frame/Layout/Split/RightTabs/SelectionMeta/TabMargin/Body"]
+[node name="MetaHint" type="Label" parent="Frame/Layout/Split/RightSide/RightTabs/SelectionMeta/TabMargin/Body"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_type_variation = &"Small"
-text = "出生点 / 复活点 / 敌人(点模式再点画布)"
+text = "出生点 / 复活点 / 敌人(点模式再点画布;移动工具可拖)"
+autowrap_mode = 3
 
-[node name="MetaGrid" type="GridContainer" parent="Frame/Layout/Split/RightTabs/SelectionMeta/TabMargin/Body"]
+[node name="MetaGrid" type="GridContainer" parent="Frame/Layout/Split/RightSide/RightTabs/SelectionMeta/TabMargin/Body"]
 layout_mode = 2
 theme_override_constants/h_separation = 4
 theme_override_constants/v_separation = 4
 columns = 3
 
-[node name="MetaEdit" type="Button" parent="Frame/Layout/Split/RightTabs/SelectionMeta/TabMargin/Body/MetaGrid"]
+[node name="MetaEdit" type="Button" parent="Frame/Layout/Split/RightSide/RightTabs/SelectionMeta/TabMargin/Body/MetaGrid"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(96, 30)
 layout_mode = 2
 theme_type_variation = &"BtnCompact"
 text = "编辑地形"
 
-[node name="MetaPlayer" type="Button" parent="Frame/Layout/Split/RightTabs/SelectionMeta/TabMargin/Body/MetaGrid"]
+[node name="MetaPlayer" type="Button" parent="Frame/Layout/Split/RightSide/RightTabs/SelectionMeta/TabMargin/Body/MetaGrid"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(96, 30)
 layout_mode = 2
 theme_type_variation = &"BtnCompact"
 text = "放出生点"
 
-[node name="MetaRespawn1" type="Button" parent="Frame/Layout/Split/RightTabs/SelectionMeta/TabMargin/Body/MetaGrid"]
+[node name="MetaRespawn1" type="Button" parent="Frame/Layout/Split/RightSide/RightTabs/SelectionMeta/TabMargin/Body/MetaGrid"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(96, 30)
 layout_mode = 2
 theme_type_variation = &"BtnCompact"
 text = "放复活点侧1"
 
-[node name="MetaRespawn2" type="Button" parent="Frame/Layout/Split/RightTabs/SelectionMeta/TabMargin/Body/MetaGrid"]
+[node name="MetaRespawn2" type="Button" parent="Frame/Layout/Split/RightSide/RightTabs/SelectionMeta/TabMargin/Body/MetaGrid"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(96, 30)
 layout_mode = 2
 theme_type_variation = &"BtnCompact"
 text = "放复活点侧2"
 
-[node name="MetaEnemy" type="Button" parent="Frame/Layout/Split/RightTabs/SelectionMeta/TabMargin/Body/MetaGrid"]
+[node name="MetaEnemy" type="Button" parent="Frame/Layout/Split/RightSide/RightTabs/SelectionMeta/TabMargin/Body/MetaGrid"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(96, 30)
 layout_mode = 2
 theme_type_variation = &"BtnCompact"
 text = "放敌人"
 
-[node name="MetaInfo" type="Label" parent="Frame/Layout/Split/RightTabs/SelectionMeta/TabMargin/Body"]
+[node name="MetaInfo" type="Label" parent="Frame/Layout/Split/RightSide/RightTabs/SelectionMeta/TabMargin/Body"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_type_variation = &"Small"
 text = ""
 
-[node name="ClearMetaBtn" type="Button" parent="Frame/Layout/Split/RightTabs/SelectionMeta/TabMargin/Body"]
+[node name="ClearMetaBtn" type="Button" parent="Frame/Layout/Split/RightSide/RightTabs/SelectionMeta/TabMargin/Body"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(200, 30)
 layout_mode = 2
 theme_type_variation = &"BtnCompact"
 text = "清空全部 meta"
 
-[node name="Report" type="VBoxContainer" parent="Frame/Layout/Split/RightTabs"]
+[node name="Report" type="VBoxContainer" parent="Frame/Layout/Split/RightSide/RightTabs"]
 visible = false
 layout_mode = 2
 theme_override_constants/separation = 6
 
-[node name="ReportMargin" type="MarginContainer" parent="Frame/Layout/Split/RightTabs/Report"]
+[node name="ReportMargin" type="MarginContainer" parent="Frame/Layout/Split/RightSide/RightTabs/Report"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
@@ -613,26 +679,26 @@ theme_override_constants/margin_top = 8
 theme_override_constants/margin_right = 8
 theme_override_constants/margin_bottom = 8
 
-[node name="Body" type="VBoxContainer" parent="Frame/Layout/Split/RightTabs/Report/ReportMargin"]
+[node name="Body" type="VBoxContainer" parent="Frame/Layout/Split/RightSide/RightTabs/Report/ReportMargin"]
 layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 theme_override_constants/separation = 6
 
-[node name="ReportHint" type="Label" parent="Frame/Layout/Split/RightTabs/Report/ReportMargin/Body"]
+[node name="ReportHint" type="Label" parent="Frame/Layout/Split/RightSide/RightTabs/Report/ReportMargin/Body"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_type_variation = &"Small"
 text = "校验 / 消息"
 
-[node name="ValidateBtn" type="Button" parent="Frame/Layout/Split/RightTabs/Report/ReportMargin/Body"]
+[node name="ValidateBtn" type="Button" parent="Frame/Layout/Split/RightSide/RightTabs/Report/ReportMargin/Body"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(160, 30)
 layout_mode = 2
 theme_type_variation = &"BtnCompact"
 text = "校验地图"
 
-[node name="Output" type="RichTextLabel" parent="Frame/Layout/Split/RightTabs/Report/ReportMargin/Body"]
+[node name="Output" type="RichTextLabel" parent="Frame/Layout/Split/RightSide/RightTabs/Report/ReportMargin/Body"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 180)
 layout_mode = 2
@@ -657,6 +723,39 @@ layout_mode = 2
 size_flags_horizontal = 3
 theme_type_variation = &"Small"
 clip_text = true
+
+[node name="ZoomOutBtn" type="Button" parent="Frame/Layout/StatusBar/StatusRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(32, 28)
+layout_mode = 2
+theme_type_variation = &"FlatButton"
+tooltip_text = "缩小(-)"
+text = "−"
+
+[node name="ZoomText" type="Label" parent="Frame/Layout/StatusBar/StatusRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(64, 0)
+layout_mode = 2
+theme_type_variation = &"Small"
+text = "100%"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="ZoomInBtn" type="Button" parent="Frame/Layout/StatusBar/StatusRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(32, 28)
+layout_mode = 2
+theme_type_variation = &"FlatButton"
+tooltip_text = "放大(+)"
+text = "+"
+
+[node name="FitBtn" type="Button" parent="Frame/Layout/StatusBar/StatusRow"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(64, 28)
+layout_mode = 2
+theme_type_variation = &"FlatButton"
+tooltip_text = "适应窗口(F)"
+text = "适应"
 
 [node name="PathText" type="Label" parent="Frame/Layout/StatusBar/StatusRow"]
 unique_name_in_owner = true

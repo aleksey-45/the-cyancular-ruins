@@ -87,6 +87,10 @@ func validate() -> void:
 # ── 文件命令 ──────────────────────────────────────────────────────────
 
 func new_map_dialog() -> void:
+	_confirm_discard("新建地图", _new_map_dialog_now)
+
+
+func _new_map_dialog_now() -> void:
 	var ctx := {}
 	var dlg := _open_dialog("新建地图", "新建", func(body: VBoxContainer) -> void:
 		ctx["name"] = _dialog_line(body, "名字", "untitled")
@@ -99,6 +103,10 @@ func new_map_dialog() -> void:
 
 
 func open_dialog() -> void:
+	_confirm_discard("打开地图", _open_dialog_now)
+
+
+func _open_dialog_now() -> void:
 	_open_dialog("打开地图", "关闭", func(body: VBoxContainer) -> void:
 		var maps := EditorIO.list_maps()
 		if maps.is_empty():
@@ -153,7 +161,42 @@ func export_load_pressed() -> void:
 
 
 func back() -> void:
+	_confirm_discard("返回主菜单", _back_now)
+
+
+func _back_now() -> void:
 	page.get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
+
+
+# 关窗路径:editor_root 的 _notification(NOTIFICATION_WM_CLOSE_REQUEST) 调这里。
+func confirm_quit() -> void:
+	var tree := page.get_tree()
+	_confirm_discard("退出编辑器", func() -> void: tree.quit())
+
+
+# ── 未保存改动拦截(新建/打开/返回前)─────────────────────────────────────
+# dirty = 有未落盘的改动;静默换图/退场景 = 直接丢用户工作,必须先确认。
+func _confirm_discard(action_label: String, then: Callable) -> void:
+	var doc: EditorDoc = page.get_doc()
+	if doc == null or not doc.dirty:
+		then.call()
+		return
+	_close_popup()
+	var dlg := ConfirmationDialog.new()
+	dlg.name = "DiscardDialog"
+	dlg.title = "有未保存的改动"
+	dlg.dialog_text = "当前地图有未保存的改动。\n「%s」将丢弃这些改动,确定继续?" % action_label
+	dlg.ok_button_text = "放弃改动并继续"
+	dlg.cancel_button_text = "取消"
+	dlg.theme = THEME
+	dlg.theme_type_variation = &"Kit"
+	# 弹层是模态的:开着它时画布不能再被画/改,避免「确认后又 dirty」的 TOCTOU。
+	dlg.exclusive = true
+	# 延迟一帧再开下一个弹层:避免在「确认」信号里 queue_free 掉正在发信号的窗口。
+	dlg.confirmed.connect(func() -> void: then.call_deferred())
+	_popup = dlg
+	page.add_child(dlg)
+	dlg.popup_centered(Vector2i(560, 220))
 
 
 # ── 标准弹层(内容由调用方填;窗口尺寸 = 内容最小尺寸 + 内边距)────────────
@@ -167,6 +210,7 @@ func _open_dialog(title_text: String, ok_text: String, fill: Callable) -> Confir
 	dlg.cancel_button_text = "取消"
 	dlg.theme = THEME
 	dlg.theme_type_variation = &"Kit"
+	dlg.exclusive = true          # 模态:弹层开着时画布不许再改(TOCTOU)
 	var body := VBoxContainer.new()
 	body.name = "Body"
 	body.add_theme_constant_override("separation", UiFactory.SP_2)

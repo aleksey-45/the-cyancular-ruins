@@ -16,11 +16,14 @@ extends Node
 #   ⑨ 脏区刷新漏环面副本或与全量不一致 ⇒ get_data() 逐字节比较红(⑪/⑪b/⑫);
 #   ⑩ view_image() 不返回副本 ⇒ 改返回值污染画布断言红;
 #   ⑪ 选区屏幕矩形算错/清不掉 ⇒ ⑬ 组红;
-#   ⑫ meta 标记漏类型/标签/锚点错/开关无效 ⇒ ⑭ 组红。
+#   ⑫ meta 标记漏类型/标签/锚点错/开关无效 ⇒ ⑭ 组红;
+#   ⑬ 手形拖动不平移 / 平移时发 pointer_* ⇒ ⑰ 组红;
+#   ⑭ 移动工具不发 selection_move_finished 或 delta 算错 ⇒ ⑱ 组红;
+#   ⑮ meta 标记命中测试/拖拽落点(格坐标)错 ⇒ ⑲ 组红。
 # 判据 = 判词行 + 条数闸;退出码只是陪衬。像素判据统一走 view_image()(纹理走 update() 上传,
 # view_texture().get_image() 是旧的)。
 
-const EXPECTED_CHECKS := 48
+const EXPECTED_CHECKS := 63
 const CANVAS_W := 800
 const CANVAS_H := 600
 const SUB := 32                     # 8 格 × 4 子格 = 32
@@ -32,6 +35,9 @@ var _checks := 0
 var _canvas: EditorCanvas = null
 var _doc: EditorDoc = null
 var _pointer_sub := Vector2i(-9999, -9999)
+var _pointer_hits := 0
+var _last_sel_delta := Vector2i(999, 999)
+var _last_meta: Dictionary = {}
 
 
 func _chk(ok: bool, msg: String) -> void:
@@ -315,6 +321,115 @@ func _ready() -> void:
 	_canvas.set_meta_visible(true)
 	_chk(_canvas.meta_markers().size() == 4, "⑭ set_meta_visible(true) 后标记恢复")
 
+	# ⑰ 手形工具:左键拖动 = 平移,且**不发 pointer_*** (不然手形会顺手画一笔)
+	_canvas.set_camera(Vector2.ZERO, float(SUB_PX))
+	_canvas.set_pan_tool(true)
+	_chk(_canvas.is_pan_tool(), "⑰ set_pan_tool(true) 后 is_pan_tool 应为 true")
+	_pointer_hits = 0
+	_canvas.pointer_down.connect(_on_any_pointer)
+	var origin_before := _canvas.origin
+	_click_at(Vector2(100, 100), true)
+	_drag_to(Vector2(140, 120), Vector2(40, 20))
+	_click_at(Vector2(140, 120), false)
+	_canvas.pointer_down.disconnect(_on_any_pointer)
+	var origin_after := _canvas.origin
+	_chk(absf(origin_after.x - (origin_before.x - 40.0 / float(SUB_PX))) < 0.01
+			and absf(origin_after.y - (origin_before.y - 20.0 / float(SUB_PX))) < 0.01,
+			"⑰ 手形拖动平移量期望 origin -=(2.5,1.25),实得 Δ=%s(前 %s / 后 %s)"
+			% [str(origin_after - origin_before), str(origin_before), str(origin_after)])
+	_chk(_pointer_hits == 0, "⑰ 手形拖动不应发 pointer_down(实得 %d 次)" % _pointer_hits)
+	_canvas.set_pan_tool(false)
+	_chk(not _canvas.is_pan_tool() and _canvas.origin == origin_after,
+			"⑰ 退出平移模式后画布应保持新原点")
+
+	# ⑱ 移动工具:拖选区 → 发 selection_move_finished(delta);落点由工具层写 doc
+	_canvas.set_camera(Vector2.ZERO, float(SUB_PX))
+	_doc.active_layer = 1
+	_canvas.set_active_layer(1)
+	_doc.clear_meta("all")
+	var move_desc := EditorDesc.neutral_desc(6)
+	_doc.set_cells([Vector2i(3, 3)], move_desc)
+	_doc.set_selection(Rect2i(2, 2, 4, 4))
+	_canvas.set_selection(_doc.selection)
+	_canvas.set_move_tool(true)
+	_last_sel_delta = Vector2i(999, 999)
+	_canvas.selection_move_finished.connect(_on_sel_move)
+	# 选区屏幕矩形 = (32,32,64,64);按在 (64,64) 拖到 (96,80) ⇒ Δ 子格 (2,1)
+	_click_at(Vector2(64, 64), true)
+	_drag_to(Vector2(96, 80))
+	_click_at(Vector2(96, 80), false)
+	_canvas.selection_move_finished.disconnect(_on_sel_move)
+	_chk(_last_sel_delta == Vector2i(2, 1),
+			"⑱ 移动工具应发出 selection_move_finished((2,1))(实得 %s)" % str(_last_sel_delta))
+	_chk(_doc.get_subcell(3, 3) == 0 and _doc.get_subcell(5, 4) == move_desc,
+			"⑱ 移动落点未把内容从 (3,3) 搬到 (5,4)(实得 %d / %d)"
+			% [_doc.get_subcell(3, 3), _doc.get_subcell(5, 4)])
+	_chk(_doc.selection.position == Vector2i(4, 3),
+			"⑱ 移动后选区应跟到 (%d,%d)(实得 %s)" % [4, 3, str(_doc.selection.position)])
+	_doc.undo()
+	_chk(_doc.get_subcell(3, 3) == move_desc and _doc.get_subcell(5, 4) == 0,
+			"⑱ 移动应是一条 undo:撤销后内容必须回到 (3,3)")
+
+	# ⑱b 画布 clamp:选区贴右边界时继续往右拖 ⇒ 发出的 delta = 边界可移动量(选框不许出图)
+	_doc.set_selection(Rect2i(24, 20, 4, 4))
+	_canvas.set_selection(_doc.selection)
+	_last_sel_delta = Vector2i(999, 999)
+	_canvas.selection_move_finished.connect(_on_sel_move)
+	# 选区屏幕矩形 = (384,320,64,64);按 (416,352) 拖到 (700,360)(远超右边界)
+	_click_at(Vector2(416, 352), true)
+	_drag_to(Vector2(700, 360))
+	_click_at(Vector2(700, 360), false)
+	_canvas.selection_move_finished.disconnect(_on_sel_move)
+	_chk(_last_sel_delta == Vector2i(4, 0),
+			"⑱b 拖出右边界时 delta 应被夹到边界可移动量 (4,0)(实得 %s)" % str(_last_sel_delta))
+	_chk(_doc.selection.position == Vector2i(28, 20),
+			"⑱b 选区贴边后应停在 (28,20),不能拖出图(实得 %s)" % str(_doc.selection.position))
+	_canvas.set_move_tool(false)
+
+	# ⑲ 移动工具:拖 meta 标记 → 发 meta_drag_finished(kind,index,格坐标);落点写 doc
+	_canvas.set_camera(Vector2.ZERO, float(SUB_PX))
+	_doc.clear_meta("all")
+	_doc.add_player(Vector2i(1, 1))
+	_doc.add_player(Vector2i(6, 6))       # index 1:必须证明发的是这一条的 index
+	_doc.add_respawn(1, Vector2i(2, 2))
+	_doc.add_enemy("slime", Vector2i(4, 4))
+	_canvas.refresh()
+	_canvas.set_move_tool(true)
+	_last_meta = {}
+	_canvas.meta_drag_finished.connect(_on_meta_drag)
+	# 第 2 个出生点锚点 = 格 (6,6) 中心 → 屏幕 (416,416);拖到 (224,224) ⇒ 格 (3,3)
+	_click_at(Vector2(416, 416), true)
+	_drag_to(Vector2(224, 224))
+	_click_at(Vector2(224, 224), false)
+	_canvas.meta_drag_finished.disconnect(_on_meta_drag)
+	var players_after: Array = _doc.map["players"]
+	_chk(String(_last_meta.get("kind", "")) == "player" and int(_last_meta.get("index", -1)) == 1
+			and _last_meta.get("cell", Vector2i.ZERO) == Vector2i(3, 3),
+			"⑲ 拖第 2 个出生点应发 player#1 → 格(3,3)(实得 %s)" % str(_last_meta))
+	_chk(players_after.size() == 2 and int(players_after[1]["x"]) == 3 and int(players_after[1]["y"]) == 3
+			and int(players_after[0]["x"]) == 1 and int(players_after[0]["y"]) == 1,
+			"⑲ meta 落点应只改 index 1,不能串到 index 0(实得 %s)" % str(players_after))
+	_doc.undo()
+	_chk(int((_doc.map["players"] as Array)[1]["x"]) == 6,
+			"⑲ meta 拖动应是一条 undo:撤销后第 2 个出生点必须回 (6,6)")
+	# 复活点(2,2) 中心 = 屏幕 (160,160) → 拖到 (96,96) ⇒ 格 (1,1);side 必须保留
+	_last_meta = {}
+	_canvas.meta_drag_finished.connect(_on_meta_drag)
+	_click_at(Vector2(160, 160), true)
+	_drag_to(Vector2(96, 96))
+	_click_at(Vector2(96, 96), false)
+	_canvas.meta_drag_finished.disconnect(_on_meta_drag)
+	var respawns_after: Array = _doc.map["respawns"]
+	_chk(String(_last_meta.get("kind", "")) == "respawn" and int(_last_meta.get("index", -1)) == 0
+			and int(respawns_after[0]["x"]) == 1 and int(respawns_after[0]["y"]) == 1
+			and int(respawns_after[0]["side"]) == 1,
+			"⑲ 拖复活点应落格(1,1)且保留 side=1(实得 %s)" % str(respawns_after))
+	_doc.undo()
+	_chk(int((_doc.map["respawns"] as Array)[0]["x"]) == 2,
+			"⑲ 复活点拖动应是一条 undo:撤销后必须回格 (2,2)")
+	_canvas.set_move_tool(false)
+
+
 	# ⑮ 叠加层 _draw(网格+选区虚线框+meta 标记)必须在 headless 下真跑通且可重跑
 	_canvas.set_selection(Rect2i(1, 1, 3, 3))
 	_canvas.queue_redraw()
@@ -356,6 +471,40 @@ func _on_pointer_down(sub: Vector2i, _button: int, _shift: bool, _ctrl: bool) ->
 	_pointer_sub = sub
 
 
+# ── ⑰/⑱/⑲:手形平移 / 拖选区 / 拖 meta 的合成输入 ──────────────────────
+
+func _on_any_pointer(_sub: Vector2i, _button: int, _shift: bool, _ctrl: bool) -> void:
+	_pointer_hits += 1
+
+
+# 画布只发几何信号:这里模拟工具层的落点(真实 UI 里由 editor_tools.apply_* 做)。
+func _on_sel_move(delta: Vector2i) -> void:
+	_last_sel_delta = delta
+	_doc.move_selection_content(delta)
+	_canvas.set_selection(_doc.selection)
+
+
+func _on_meta_drag(kind: String, index: int, cell: Vector2i) -> void:
+	_last_meta = {"kind": kind, "index": index, "cell": cell}
+	_doc.set_meta_position(kind, index, cell)
+	_canvas.queue_redraw()
+
+
+func _click_at(pos: Vector2, pressed: bool) -> void:
+	var ev := InputEventMouseButton.new()
+	ev.button_index = MOUSE_BUTTON_LEFT
+	ev.pressed = pressed
+	ev.position = pos
+	_canvas._gui_input(ev)
+
+
+func _drag_to(pos: Vector2, relative: Vector2 = Vector2.ZERO) -> void:
+	var mm := InputEventMouseMotion.new()
+	mm.position = pos
+	mm.relative = relative
+	_canvas._gui_input(mm)
+
+
 func _view_image() -> Image:
 	return _canvas.view_image()
 
@@ -375,8 +524,14 @@ func _any_not_bg(img: Image, points: Array) -> bool:
 
 
 func _finish() -> void:
-	if _checks < EXPECTED_CHECKS:
-		print("EDITOR CANVAS PROBE: FAIL | 只跑了 %d 条 < %d(脚本中途中止)" % [_checks, EXPECTED_CHECKS])
+	# 条数闸 = 恰好相等:少了 = 脚本中途中止(断言被静默跳过);多了 = 忘更新 EXPECTED_CHECKS。
+	if _checks != EXPECTED_CHECKS:
+		if _checks < EXPECTED_CHECKS:
+			print("EDITOR CANVAS PROBE: FAIL | 只跑了 %d 条 < %d(脚本中途中止)"
+					% [_checks, EXPECTED_CHECKS])
+		else:
+			print("EDITOR CANVAS PROBE: FAIL | 跑了 %d 条 > %d(EXPECTED_CHECKS 忘了加)"
+					% [_checks, EXPECTED_CHECKS])
 		get_tree().quit(1)
 		return
 	if not _fails.is_empty():
