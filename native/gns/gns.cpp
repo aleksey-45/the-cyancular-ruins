@@ -1,254 +1,274 @@
-#include <steam/steamnetworkingsockets.h>
+#include <fast-lzma2.h>
 #include <steam/isteamnetworkingutils.h>
-#include <godot_cpp/classes/file_access.hpp>
+#include <steam/steamnetworkingsockets.h>
 #include <godot_cpp/classes/ref_counted.hpp>
 #include <godot_cpp/classes/time.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/godot.hpp>
 #include <godot_cpp/variant/array.hpp>
-#include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/packed_byte_array.hpp>
 #include <godot_cpp/variant/packed_int32_array.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 #include <algorithm>
+#include <cstdint>
 #include <cstring>
 #include <deque>
 #include <map>
+#include <memory>
+#include <set>
+#include <utility>
+#include <vector>
 
 using namespace godot;
 
+namespace gns {
+using Bytes = std::vector<uint8_t>;
+using Payload = std::shared_ptr<const Bytes>;
+constexpr uint32_t WIRE_TAG = 0x02534e47; // GNS, transport version 2, little endian.
+constexpr size_t HEADER = 8;
+constexpr size_t MAX_PAYLOAD = 64 * 1024 * 1024;
+
+uint32_t read_u32(const uint8_t *p) {
+    return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24;
+}
+void write_u32(uint8_t *p, uint32_t value) {
+    for (int i = 0; i < 4; ++i) p[i] = uint8_t(value >> (8 * i));
+}
+} // namespace gns
+
 class GnsEndpoint : public RefCounted {
     GDCLASS(GnsEndpoint, RefCounted)
-    enum { INPUT, STATE, EVENT };
+    enum { INPUT, STATE, EVENT, LANE_COUNT };
     enum { MESSAGE, CONNECTED, DISCONNECTED, FAILED };
-    static constexpr int SEND_RATE = 64 * 1024;
-    static constexpr int EVENT_CHUNK = 128 * 1024;
-    static constexpr int MAX_FRAME = 32 * 1024 * 1024;
-    static constexpr int MAX_REALTIME = 16 * 1024;
+    static constexpr int SERVER_PEER = 1;
     static constexpr int MAX_POLL_MESSAGES = 256;
     static constexpr int MAX_POLL_BYTES = 512 * 1024;
-    static constexpr int MAX_POLL_USEC = 2000;
+    static constexpr uint64_t MAX_POLL_USEC = 2000;
+
     struct Connection {
+        explicit Connection(HSteamNetConnection handle) : handle(handle) {}
         HSteamNetConnection handle;
-        PackedByteArray latest[2];
-        PackedByteArray event_buffer;
-        std::deque<PackedByteArray> reliable;
-        int send_offset = 0;
-        int event_size = 0;
-        int64_t event_queued = 0;
         bool connected = false;
+        gns::Payload latest[EVENT];
+        std::deque<gns::Payload> reliable;
+        size_t sent = 0;
+        gns::Bytes receiving;
+        size_t receiving_size = 0;
     };
-    static inline int instances = 0;
-    static inline bool initialized = false;
-    static inline std::map<HSteamNetConnection, GnsEndpoint *> owners;
-    static inline std::map<HSteamListenSocket, GnsEndpoint *> listeners;
+    using Connections = std::map<int, Connection>;
+
+    static inline ISteamNetworkingSockets *sockets = nullptr;
+    static inline std::set<GnsEndpoint *> endpoints;
     HSteamListenSocket listener = k_HSteamListenSocket_Invalid;
     HSteamNetPollGroup group = k_HSteamNetPollGroup_Invalid;
-    std::map<int, Connection> connections;
-    std::map<HSteamNetConnection, int> peers;
+    Connections connections;
+    std::unique_ptr<FL2_CCtx, decltype(&FL2_freeCCtx)> encoder{nullptr, FL2_freeCCtx};
+    std::unique_ptr<FL2_DCtx, decltype(&FL2_freeDCtx)> decoder{nullptr, FL2_freeDCtx};
+    int next_peer = SERVER_PEER + 1;
     Array events;
-    std::deque<SteamNetworkingMessage_t *> incoming;
-    int64_t poll_decoded_bytes = 0;
-    bool server = false;
-    int next_peer = 2;
-    int port = 0;
 
     static void status_changed(SteamNetConnectionStatusChangedCallback_t *change) {
-        auto found = owners.find(change->m_hConn);
-        if (found != owners.end()) {
-            found->second->on_status(*change);
-        } else {
-            auto listening = listeners.find(change->m_info.m_hListenSocket);
-            if (listening != listeners.end()) listening->second->on_status(*change);
-        }
-    }
-
-    void configure(HSteamNetConnection handle) {
-        const int priorities[3] = {1, 1, 1};
-        const uint16 weights[3] = {1, 1, 1};
-        SteamNetworkingSockets()->ConfigureConnectionLanes(handle, 3, priorities, weights);
-        SteamNetworkingSockets()->SetConnectionPollGroup(handle, group);
-    }
-
-    void on_status(const SteamNetConnectionStatusChangedCallback_t &change) {
-        auto api = SteamNetworkingSockets();
-        if (change.m_info.m_eState == k_ESteamNetworkingConnectionState_Connecting && server) {
-            if (connections.size() == 8) {
-                api->CloseConnection(change.m_hConn, 0, "Room full", false);
+        const auto handle = change->m_hConn;
+        const auto &info = change->m_info;
+        // Callback snapshots can contain stale user data; query the live connection instead.
+        const int peer = int(sockets->GetConnectionUserData(handle));
+        for (auto *endpoint : endpoints) {
+            auto found = endpoint->connections.find(peer);
+            if (found != endpoint->connections.end() && found->second.handle == handle) {
+                endpoint->update_peer(found, info);
                 return;
             }
-            int peer = next_peer++;
-            connections.emplace(peer, Connection{change.m_hConn});
-            peers[change.m_hConn] = peer;
-            owners[change.m_hConn] = this;
-            configure(change.m_hConn);
-            api->AcceptConnection(change.m_hConn);
-            return;
-        }
-        auto found = peers.find(change.m_hConn);
-        if (found == peers.end()) return;
-        int peer = found->second;
-        auto &connection = connections.at(peer);
-        if (change.m_info.m_eState == k_ESteamNetworkingConnectionState_Connected) {
-            connection.connected = true;
-            events.push_back(Array::make(CONNECTED, peer));
-        } else if (change.m_info.m_eState == k_ESteamNetworkingConnectionState_ClosedByPeer ||
-                   change.m_info.m_eState == k_ESteamNetworkingConnectionState_ProblemDetectedLocally) {
-            events.push_back(Array::make(connection.connected || server ? DISCONNECTED : FAILED,
-                peer, change.m_info.m_eEndReason, String::utf8(change.m_info.m_szEndDebug)));
-            api->CloseConnection(change.m_hConn, 0, nullptr, false);
-            owners.erase(change.m_hConn);
-            peers.erase(found);
-            connections.erase(peer);
+            if (info.m_eState == k_ESteamNetworkingConnectionState_Connecting &&
+                info.m_hListenSocket != k_HSteamListenSocket_Invalid && endpoint->listener == info.m_hListenSocket) {
+                const int peer = endpoint->next_peer++;
+                endpoint->add_peer(peer, handle);
+                if (sockets->AcceptConnection(handle) != k_EResultOK)
+                    endpoint->disconnect_peer(peer, "Connection acceptance failed");
+                return;
+            }
         }
     }
-
+    void update_peer(Connections::iterator peer, const SteamNetConnectionInfo_t &info) {
+        auto &[id, connection] = *peer;
+        if (info.m_eState == k_ESteamNetworkingConnectionState_Connected && !connection.connected) {
+            connection.connected = true;
+            events.push_back(Array::make(CONNECTED, id));
+        } else if (info.m_eState == k_ESteamNetworkingConnectionState_ClosedByPeer ||
+                   info.m_eState == k_ESteamNetworkingConnectionState_ProblemDetectedLocally) {
+            const int kind = id == SERVER_PEER && !connection.connected ? FAILED : DISCONNECTED;
+            events.push_back(Array::make(kind, id, info.m_eEndReason, String::utf8(info.m_szEndDebug)));
+            close_peer(peer);
+        }
+    }
+    void add_peer(int peer, HSteamNetConnection handle) {
+        connections.try_emplace(peer, handle);
+        sockets->SetConnectionUserData(handle, peer);
+        sockets->ConfigureConnectionLanes(handle, LANE_COUNT, nullptr, nullptr);
+        sockets->SetConnectionPollGroup(handle, group);
+    }
+    void close_peer(Connections::iterator peer, const char *reason = nullptr) {
+        sockets->CloseConnection(peer->second.handle, 0, reason, false);
+        connections.erase(peer);
+    }
     bool open_group() {
-        close();
-        if (!initialized) {
+        if (!encoder) {
+            encoder.reset(FL2_createCCtxMt(4));
+            if (encoder) {
+                FL2_CCtx_setParameter(encoder.get(), FL2_p_compressionLevel, 5);
+                FL2_CCtx_setParameter(encoder.get(), FL2_p_dictionarySize, 1024 * 1024);
+            }
+        }
+        if (!decoder) decoder.reset(FL2_createDCtx());
+        if (!encoder || !decoder) return false;
+        if (!sockets) {
             SteamNetworkingErrMsg error;
-            initialized = GameNetworkingSockets_Init(nullptr, error);
-            if (!initialized) {
+            if (!GameNetworkingSockets_Init(nullptr, error)) {
                 UtilityFunctions::push_error("GNS initialization: ", String::utf8(error));
                 return false;
             }
-            SteamNetworkingUtils()->SetDebugOutputFunction(k_ESteamNetworkingSocketsDebugOutputType_Warning,
+            sockets = SteamNetworkingSockets();
+            auto utils = SteamNetworkingUtils();
+            utils->SetGlobalCallback_SteamNetConnectionStatusChanged(status_changed);
+            utils->SetDebugOutputFunction(k_ESteamNetworkingSocketsDebugOutputType_Warning,
                 [](ESteamNetworkingSocketsDebugOutputType, const char *message) {
                     UtilityFunctions::printerr("GNS: ", String::utf8(message));
                 });
         }
-        group = SteamNetworkingSockets()->CreatePollGroup();
+        group = sockets->CreatePollGroup();
         return group != k_HSteamNetPollGroup_Invalid;
     }
-
-    int options(SteamNetworkingConfigValue_t *values) {
-        values[0].SetPtr(k_ESteamNetworkingConfig_Callback_ConnectionStatusChanged,
-                        reinterpret_cast<void *>(status_changed));
-        values[1].SetInt32(k_ESteamNetworkingConfig_IP_AllowWithoutAuth, 1);
-        values[2].SetInt32(k_ESteamNetworkingConfig_SendRateMin, SEND_RATE);
-        values[3].SetInt32(k_ESteamNetworkingConfig_SendRateMax, SEND_RATE);
-        values[4].SetInt32(k_ESteamNetworkingConfig_TimeoutInitial, 5000);
-        values[5].SetInt32(k_ESteamNetworkingConfig_TimeoutConnected, 5000);
-        values[6].SetInt32(k_ESteamNetworkingConfig_SendBufferSize, 1024 * 1024);
-        values[7].SetInt32(k_ESteamNetworkingConfig_RecvBufferSize, 4 * 1024 * 1024);
-        values[8].SetInt32(k_ESteamNetworkingConfig_RecvBufferMessages, 1024);
-        values[9].SetInt32(k_ESteamNetworkingConfig_RecvMaxMessageSize, EVENT_CHUNK + 4);
-        return 10;
-    }
-
-    PackedByteArray encode(const PackedByteArray &bytes) {
-        PackedByteArray body = bytes.compress(FileAccess::COMPRESSION_ZSTD);
-        bool compressed = body.size() < bytes.size();
-        if (!compressed) body = bytes;
-        PackedByteArray wire;
-        wire.resize(body.size() + 4);
-        wire.encode_u32(0, compressed ? bytes.size() : 0);
-        std::memcpy(wire.ptrw() + 4, body.ptr(), body.size());
-        return wire;
-    }
-
-    int enqueue(int peer, Connection &connection, int flow, const PackedByteArray &wire) {
-        if (flow != EVENT) {
-            if (wire.size() > MAX_REALTIME) return ERR_INVALID_PARAMETER;
-            connection.latest[flow] = wire;
-        } else {
-            connection.reliable.push_back(wire);
-            connection.event_queued += wire.size();
+    static EResult transmit(HSteamNetConnection handle, int lane, const uint8_t *bytes,
+                            size_t length, uint32_t frame_length = 0) {
+        const size_t header = lane == EVENT ? gns::HEADER : 0;
+        if (length + header > size_t(k_cbMaxSteamNetworkingSocketsMessageSizeSend)) return k_EResultInvalidParam;
+        auto *message = SteamNetworkingUtils()->AllocateMessage(int(length + header));
+        if (!message) return k_EResultFail;
+        auto *payload = static_cast<uint8_t *>(message->m_pData);
+        if (header) {
+            gns::write_u32(payload, gns::WIRE_TAG);
+            gns::write_u32(payload + 4, frame_length);
         }
-        // Keep each peer's existing lane, retry, fragmentation and flush behavior.
-        flush_latest(peer);
-        return OK;
+        std::memcpy(payload + header, bytes, length);
+        message->m_conn = handle;
+        message->m_idxLane = lane;
+        message->m_nFlags = lane == EVENT ? k_nSteamNetworkingSend_ReliableNoNagle : k_nSteamNetworkingSend_UnreliableNoNagle;
+        int64 result;
+        sockets->SendMessages(1, &message, &result, true);
+        return result > 0 ? k_EResultOK : result < 0 ? EResult(-result) : k_EResultFail;
     }
-
-    void deliver(int peer, const PackedByteArray &wire, int64_t received_us) {
-        if (wire.size() < 5) return;
-        uint32_t size = wire.decode_u32(0);
-        if (size > MAX_FRAME) return;
-        PackedByteArray bytes = wire.slice(4);
-        if (size) bytes = bytes.decompress(size, FileAccess::COMPRESSION_ZSTD);
-        if (!bytes.is_empty()) {
-            poll_decoded_bytes += bytes.size();
-            events.push_back(Array::make(MESSAGE, peer, bytes, received_us));
-        }
-    }
-
-    void receive(SteamNetworkingMessage_t *message) {
-        int64_t received_us = Time::get_singleton()->get_ticks_usec() -
-            (SteamNetworkingUtils()->GetLocalTimestamp() - message->m_usecTimeReceived);
-        int peer = peers.at(message->m_conn);
-        PackedByteArray bytes;
-        bytes.resize(message->m_cbSize);
-        std::memcpy(bytes.ptrw(), message->m_pData, message->m_cbSize);
-        if (message->m_idxLane != EVENT) {
-            deliver(peer, bytes, received_us);
-        } else if (bytes.size() >= 4) {
-            auto &connection = connections.at(peer);
-            int size = bytes.decode_u32(0);
-            if (size <= 0 || size > MAX_FRAME ||
-                (!connection.event_buffer.is_empty() && size != connection.event_size) ||
-                connection.event_buffer.size() + bytes.size() - 4 > size) {
-                disconnect_peer(peer, "Invalid reliable message length");
+    void service(int peer, Connection &connection) {
+        // A full-size EVENT fragment needs the default send buffer empty.
+        // Try it before adding new realtime data so small packets cannot starve it.
+        while (!connection.reliable.empty()) {
+            const auto &wire = *connection.reliable.front();
+            const size_t length = std::min(size_t(k_cbMaxSteamNetworkingSocketsMessageSizeSend) - gns::HEADER,
+                                           wire.size() - connection.sent);
+            const auto result = transmit(connection.handle, EVENT, wire.data() + connection.sent, length, uint32_t(wire.size()));
+            if (result == k_EResultLimitExceeded) break;
+            if (result != k_EResultOK) {
+                disconnect_peer(peer, "Reliable frame submission failed");
                 return;
             }
-            if (connection.event_buffer.is_empty()) connection.event_size = size;
-            connection.event_buffer.append_array(bytes.slice(4));
-            if (connection.event_buffer.size() == connection.event_size) {
-                deliver(peer, connection.event_buffer, received_us);
-                connection.event_buffer.clear();
+            connection.sent += length;
+            if (connection.sent == wire.size()) {
+                connection.reliable.pop_front();
+                connection.sent = 0;
             }
+        }
+        for (int lane = INPUT; lane < EVENT; ++lane) {
+            auto &pending = connection.latest[lane];
+            if (!pending) continue;
+            const auto result = transmit(connection.handle, lane, pending->data(), pending->size());
+            if (result == k_EResultLimitExceeded) continue;
+            if (result != k_EResultOK) {
+                disconnect_peer(peer, "Realtime frame submission failed");
+                return;
+            }
+            pending.reset();
         }
     }
-
-    void flush_latest(int target_peer = 0) {
-        for (auto &[peer, connection] : connections) {
-            if (target_peer && peer != target_peer) continue;
-            if (!connection.connected) continue;
-            SteamNetConnectionRealTimeLaneStatus_t lanes[3] = {};
-            auto api = SteamNetworkingSockets();
-            SteamNetConnectionRealTimeStatus_t status = {};
-            api->GetConnectionRealTimeStatus(connection.handle, &status, 0, nullptr);
-            if (status.m_eState != k_ESteamNetworkingConnectionState_Connected) continue;
-            api->GetConnectionRealTimeStatus(connection.handle, nullptr, 3, lanes);
-            for (int flow = INPUT; flow <= STATE; ++flow) {
-                auto &bytes = connection.latest[flow];
-                if (bytes.is_empty() || lanes[flow].m_cbPendingUnreliable ||
-                    lanes[flow].m_cbPendingReliable || lanes[flow].m_usecQueueTime > 16667) continue;
-                SteamNetworkingMessage_t *message = SteamNetworkingUtils()->AllocateMessage(bytes.size());
-                std::memcpy(message->m_pData, bytes.ptr(), bytes.size());
-                message->m_conn = connection.handle;
-                message->m_idxLane = flow;
-                message->m_nFlags = k_nSteamNetworkingSend_UnreliableNoNagle;
-                int64 result;
-                api->SendMessages(1, &message, &result, true);
-                bytes.clear();
-                if (result < 0) events.push_back(Array::make(4, peer, int(-result), "GNS send failed"));
-            }
-            while (!connection.reliable.empty() && lanes[EVENT].m_cbPendingReliable < 256 * 1024) {
-                const auto &wire = connection.reliable.front();
-                int length = std::min(EVENT_CHUNK, int(wire.size()) - connection.send_offset);
-                auto message = SteamNetworkingUtils()->AllocateMessage(length + 4);
-                uint32_t total = wire.size();
-                std::memcpy(message->m_pData, &total, 4);
-                std::memcpy(static_cast<uint8_t *>(message->m_pData) + 4,
-                    wire.ptr() + connection.send_offset, length);
-                message->m_conn = connection.handle;
-                message->m_idxLane = EVENT;
-                message->m_nFlags = k_nSteamNetworkingSend_ReliableNoNagle;
-                int64 result;
-                api->SendMessages(1, &message, &result, true);
-                if (result < 0) {
-                    events.push_back(Array::make(4, peer, int(-result), "GNS reliable send failed"));
-                    break;
-                }
-                lanes[EVENT].m_cbPendingReliable += length + 4;
-                connection.send_offset += length;
-                connection.event_queued -= length;
-                if (connection.send_offset == wire.size()) {
-                    connection.reliable.pop_front();
-                    connection.send_offset = 0;
-                }
-            }
+    gns::Bytes encode(const PackedByteArray &bytes) {
+        const size_t size = bytes.size();
+        gns::Bytes wire(gns::HEADER + FL2_compressBound(size));
+        const size_t compressed = FL2_compressCCtx(encoder.get(), wire.data() + gns::HEADER,
+            wire.size() - gns::HEADER, bytes.ptr(), size, 0);
+        if (FL2_isError(compressed)) return {};
+        gns::write_u32(wire.data(), gns::WIRE_TAG);
+        gns::write_u32(wire.data() + 4, compressed < size ? uint32_t(size) : 0);
+        if (compressed >= size) std::memcpy(wire.data() + gns::HEADER, bytes.ptr(), size);
+        wire.resize(gns::HEADER + std::min(compressed, size));
+        return wire;
+    }
+    int send_to(int peer, int flow, const PackedByteArray &bytes, gns::Payload &payload) {
+        if (flow < INPUT || flow >= LANE_COUNT || bytes.is_empty() || size_t(bytes.size()) > gns::MAX_PAYLOAD)
+            return ERR_INVALID_PARAMETER;
+        auto found = connections.find(peer);
+        if (found == connections.end() || !found->second.connected) return ERR_UNCONFIGURED;
+        auto &connection = found->second;
+        if (!payload) payload = std::make_shared<gns::Bytes>(encode(bytes));
+        if (payload->empty()) return godot::FAILED;
+        if (flow == EVENT) {
+            const bool waiting = !connection.reliable.empty();
+            connection.reliable.push_back(payload);
+            if (waiting) return OK;
+        } else {
+            connection.latest[flow] = payload;
         }
+        service(peer, connection);
+        return connections.count(peer) ? OK : ERR_CONNECTION_ERROR;
+    }
+    PackedByteArray decode(const uint8_t *wire, size_t size) {
+        if (size <= gns::HEADER || gns::read_u32(wire) != gns::WIRE_TAG) return {};
+        const size_t length = gns::read_u32(wire + 4);
+        wire += gns::HEADER;
+        size -= gns::HEADER;
+        if (length > gns::MAX_PAYLOAD || size > gns::MAX_PAYLOAD) return {};
+        PackedByteArray bytes;
+        if (bytes.resize(length ? length : size) != OK) return {};
+        if (length) {
+            if (FL2_decompressDCtx(decoder.get(), bytes.ptrw(), length, wire, size) != length) return {};
+        } else {
+            std::memcpy(bytes.ptrw(), wire, size);
+        }
+        return bytes;
+    }
+    size_t receive(const SteamNetworkingMessage_t &message) {
+        const int peer = int(message.m_nConnUserData);
+        auto found = connections.find(peer);
+        if (found == connections.end() || found->second.handle != message.m_conn) return 0;
+        const auto *data = static_cast<const uint8_t *>(message.m_pData);
+        if (message.m_idxLane >= LANE_COUNT || message.m_cbSize <= int(gns::HEADER) ||
+            gns::read_u32(data) != gns::WIRE_TAG) {
+            disconnect_peer(peer, "Invalid transport version or message header");
+            return 0;
+        }
+        PackedByteArray bytes;
+        if (message.m_idxLane == EVENT) {
+            auto &connection = found->second;
+            const size_t length = gns::read_u32(data + 4);
+            const size_t chunk = message.m_cbSize - gns::HEADER;
+            if (length <= gns::HEADER || length > gns::HEADER + gns::MAX_PAYLOAD ||
+                connection.receiving.size() + chunk > length ||
+                (!connection.receiving.empty() && length != connection.receiving_size)) {
+                disconnect_peer(peer, "Invalid reliable message length");
+                return 0;
+            }
+            connection.receiving_size = length;
+            connection.receiving.insert(connection.receiving.end(), data + gns::HEADER, data + message.m_cbSize);
+            if (connection.receiving.size() < length) return 0;
+            bytes = decode(connection.receiving.data(), length);
+            connection.receiving = gns::Bytes();
+        } else {
+            bytes = decode(data, message.m_cbSize);
+        }
+        if (bytes.is_empty()) {
+            disconnect_peer(peer, "Invalid compressed frame");
+            return 0;
+        }
+        const int64_t received_us = int64_t(Time::get_singleton()->get_ticks_usec()) -
+            (SteamNetworkingUtils()->GetLocalTimestamp() - message.m_usecTimeReceived);
+        events.push_back(Array::make(MESSAGE, peer, bytes, received_us));
+        return bytes.size();
     }
 
 protected:
@@ -257,6 +277,7 @@ protected:
         ClassDB::bind_method(D_METHOD("connect_to", "address", "port"), &GnsEndpoint::connect_to);
         ClassDB::bind_method(D_METHOD("send", "peer", "flow", "bytes"), &GnsEndpoint::send);
         ClassDB::bind_method(D_METHOD("send_many", "peers", "flow", "bytes"), &GnsEndpoint::send_many);
+        ClassDB::bind_method(D_METHOD("flush"), &GnsEndpoint::flush);
         ClassDB::bind_method(D_METHOD("poll", "max_messages"), &GnsEndpoint::poll, DEFVAL(MAX_POLL_MESSAGES));
         ClassDB::bind_method(D_METHOD("disconnect_peer", "peer", "reason"), &GnsEndpoint::disconnect_peer);
         ClassDB::bind_method(D_METHOD("close"), &GnsEndpoint::close);
@@ -264,168 +285,117 @@ protected:
         ClassDB::bind_method(D_METHOD("is_connected"), &GnsEndpoint::is_connected);
         ClassDB::bind_method(D_METHOD("get_ping"), &GnsEndpoint::get_ping);
     }
-
 public:
-    GnsEndpoint() { ++instances; }
+    GnsEndpoint() { endpoints.insert(this); }
     ~GnsEndpoint() {
         close();
-        if (--instances == 0 && initialized) {
+        endpoints.erase(this);
+        if (endpoints.empty() && sockets) {
             GameNetworkingSockets_Kill();
-            initialized = false;
+            sockets = nullptr;
         }
     }
-
     int listen(int requested_port) {
+        close();
+        if (requested_port < 0 || requested_port > 65535) return ERR_INVALID_PARAMETER;
         if (!open_group()) return ERR_CANT_CREATE;
-        server = true;
-        SteamNetworkingIPAddr address;
-        address.Clear();
+        SteamNetworkingIPAddr address{};
         address.m_port = requested_port;
-        SteamNetworkingConfigValue_t values[10];
-        int count = options(values);
-        listener = SteamNetworkingSockets()->CreateListenSocketIP(address, count, values);
-        if (listener == k_HSteamListenSocket_Invalid) return ERR_CANT_CREATE;
-        listeners[listener] = this;
-        SteamNetworkingSockets()->GetListenSocketAddress(listener, &address);
-        port = address.m_port;
-        return OK;
+        listener = sockets->CreateListenSocketIP(address, 0, nullptr);
+        if (listener != k_HSteamListenSocket_Invalid) return OK;
+        close();
+        return ERR_CANT_CREATE;
     }
-
     int connect_to(const String &host, int requested_port) {
-        if (!open_group()) return ERR_CANT_CREATE;
-        server = false;
+        close();
         SteamNetworkingIPAddr address;
-        if (!address.ParseString(host.utf8().get_data())) return ERR_INVALID_PARAMETER;
+        if (requested_port <= 0 || requested_port > 65535 || !address.ParseString(host.utf8().get_data())) return ERR_INVALID_PARAMETER;
         address.m_port = requested_port;
-        SteamNetworkingConfigValue_t values[10];
-        int count = options(values);
-        auto handle = SteamNetworkingSockets()->ConnectByIPAddress(address, count, values);
-        if (handle == k_HSteamNetConnection_Invalid) return ERR_CANT_CONNECT;
-        connections.emplace(1, Connection{handle});
-        peers[handle] = 1;
-        owners[handle] = this;
-        configure(handle);
+        if (!open_group()) return ERR_CANT_CREATE;
+        auto handle = sockets->ConnectByIPAddress(address, 0, nullptr);
+        if (handle == k_HSteamNetConnection_Invalid) {
+            close();
+            return ERR_CANT_CONNECT;
+        }
+        add_peer(SERVER_PEER, handle);
         return OK;
     }
-
     int send(int peer, int flow, const PackedByteArray &bytes) {
-        if (flow < INPUT || flow > EVENT || bytes.is_empty() || bytes.size() > MAX_FRAME - 4)
-            return ERR_INVALID_PARAMETER;
-        auto found = connections.find(peer);
-        if (found == connections.end() || !found->second.connected) return ERR_UNCONFIGURED;
-        return enqueue(peer, found->second, flow, encode(bytes));
+        gns::Payload payload;
+        return send_to(peer, flow, bytes, payload);
     }
-
     PackedInt32Array send_many(const PackedInt32Array &targets, int flow, const PackedByteArray &bytes) {
         PackedInt32Array errors;
         errors.resize(targets.size());
-        PackedByteArray wire;
-        for (int i = 0; i < targets.size(); ++i) {
-            if (flow < INPUT || flow > EVENT || bytes.is_empty() || bytes.size() > MAX_FRAME - 4) {
-                errors.set(i, ERR_INVALID_PARAMETER);
-                continue;
-            }
-            const int peer = targets[i];
-            auto found = connections.find(peer);
-            if (found == connections.end() || !found->second.connected) {
-                errors.set(i, ERR_UNCONFIGURED);
-                continue;
-            }
-            // PackedByteArray shares immutable storage across peer queues. Compress once per broadcast.
-            if (wire.is_empty()) wire = encode(bytes);
-            errors.set(i, enqueue(peer, found->second, flow, wire));
-        }
+        gns::Payload payload;
+        for (int64_t i = 0; i < targets.size(); ++i) errors.set(i, send_to(targets[i], flow, bytes, payload));
         return errors;
     }
-
+    void flush() {
+        for (auto next = connections.begin(); next != connections.end();) {
+            auto current = next++;
+            service(current->first, current->second);
+        }
+    }
     Array poll(int max_messages = MAX_POLL_MESSAGES) {
         if (group == k_HSteamNetPollGroup_Invalid) return {};
-        int64_t started = Time::get_singleton()->get_ticks_usec();
-        int64_t decoded_before = poll_decoded_bytes;
-        auto api = SteamNetworkingSockets();
-        api->RunCallbacks();
-        int limit = std::clamp(max_messages, 0, MAX_POLL_MESSAGES);
-        int processed = 0;
-        int64_t wire_bytes = 0;
-        while (processed < limit) {
-            // Yield only between complete messages. Prefetched messages keep their references.
-            if (processed && (wire_bytes >= MAX_POLL_BYTES || poll_decoded_bytes - decoded_before >= MAX_POLL_BYTES ||
-                int64_t(Time::get_singleton()->get_ticks_usec()) - started >= MAX_POLL_USEC)) {
-                break;
-            }
-            if (incoming.empty()) {
-                SteamNetworkingMessage_t *messages[64];
-                int count = api->ReceiveMessagesOnPollGroup(group, messages, std::min(64, limit - processed));
-                if (count <= 0) break;
-                for (int i = 0; i < count; ++i) incoming.push_back(messages[i]);
-            }
-            auto message = incoming.front();
-            incoming.pop_front();
+        const auto started = Time::get_singleton()->get_ticks_usec();
+        sockets->RunCallbacks();
+        const int limit = std::clamp(max_messages, 0, MAX_POLL_MESSAGES);
+        size_t wire_bytes = 0, payload_bytes = 0;
+        for (int processed = 0; processed < limit; ++processed) {
+            SteamNetworkingMessage_t *message;
+            if (sockets->ReceiveMessagesOnPollGroup(group, &message, 1) <= 0) break;
             wire_bytes += message->m_cbSize;
-            if (peers.count(message->m_conn)) receive(message);
+            payload_bytes += receive(*message);
             message->Release();
-            ++processed;
+            if (wire_bytes >= MAX_POLL_BYTES || payload_bytes >= MAX_POLL_BYTES ||
+                Time::get_singleton()->get_ticks_usec() - started >= MAX_POLL_USEC) break;
         }
-        flush_latest();
-        Array result = events;
-        events = Array();
-        return result;
+        flush();
+        return std::exchange(events, Array());
     }
-
     void disconnect_peer(int peer, const String &reason) {
         auto found = connections.find(peer);
         if (found == connections.end()) return;
-        auto handle = found->second.handle;
-        SteamNetworkingSockets()->CloseConnection(handle, 0, reason.utf8().get_data(), false);
-        owners.erase(handle);
-        peers.erase(handle);
-        connections.erase(found);
+        close_peer(found, reason.utf8().get_data());
         events.push_back(Array::make(DISCONNECTED, peer, 0, reason));
     }
-
     void close() {
-        if (!initialized) return;
-        for (auto message : incoming) message->Release();
-        incoming.clear();
-        auto api = SteamNetworkingSockets();
-        for (auto &[peer, connection] : connections) {
-            owners.erase(connection.handle);
-            api->CloseConnection(connection.handle, 0, nullptr, false);
-        }
-        connections.clear();
-        peers.clear();
+        while (!connections.empty()) close_peer(connections.begin());
         if (listener != k_HSteamListenSocket_Invalid) {
-            listeners.erase(listener);
-            api->CloseListenSocket(listener);
+            sockets->CloseListenSocket(listener);
             listener = k_HSteamListenSocket_Invalid;
         }
-        if (group != k_HSteamNetPollGroup_Invalid) {
-            api->DestroyPollGroup(group);
-            group = k_HSteamNetPollGroup_Invalid;
-        }
+        if (group != k_HSteamNetPollGroup_Invalid) sockets->DestroyPollGroup(group);
+        group = k_HSteamNetPollGroup_Invalid;
         events.clear();
     }
-
-    int get_port() const { return port; }
-    bool is_connected() const { return connections.count(1) && connections.at(1).connected; }
+    int get_port() const {
+        SteamNetworkingIPAddr address;
+        return listener != k_HSteamListenSocket_Invalid &&
+            sockets->GetListenSocketAddress(listener, &address) ? address.m_port : 0;
+    }
+    bool is_connected() const {
+        auto peer = connections.find(SERVER_PEER);
+        return peer != connections.end() && peer->second.connected;
+    }
     int get_ping() const {
-        const auto found = connections.find(1);
-        if (found == connections.end() || !found->second.connected) return -1;
-        SteamNetConnectionRealTimeStatus_t status = {};
-        SteamNetworkingSockets()->GetConnectionRealTimeStatus(found->second.handle, &status, 0, nullptr);
-        return status.m_eState == k_ESteamNetworkingConnectionState_Connected ? status.m_nPing : -1;
+        auto peer = connections.find(SERVER_PEER);
+        if (peer == connections.end() || !peer->second.connected) return -1;
+        SteamNetConnectionRealTimeStatus_t state;
+        return sockets->GetConnectionRealTimeStatus(peer->second.handle, &state, 0, nullptr) == k_EResultOK &&
+            state.m_eState == k_ESteamNetworkingConnectionState_Connected ? state.m_nPing : -1;
     }
 };
 
 static void initialize_gns(ModuleInitializationLevel level) {
     if (level == MODULE_INITIALIZATION_LEVEL_SCENE) ClassDB::register_class<GnsEndpoint>();
 }
-static void terminate_gns(ModuleInitializationLevel) {}
 extern "C" GDExtensionBool GDE_EXPORT gns_init(GDExtensionInterfaceGetProcAddress get_proc_address,
         GDExtensionClassLibraryPtr library, GDExtensionInitialization *initialization) {
     GDExtensionBinding::InitObject init(get_proc_address, library, initialization);
     init.register_initializer(initialize_gns);
-    init.register_terminator(terminate_gns);
     init.set_minimum_library_initialization_level(MODULE_INITIALIZATION_LEVEL_SCENE);
     return init.init();
 }

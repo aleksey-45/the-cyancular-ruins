@@ -10,10 +10,11 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 CACHE = ROOT / '.test_logs/native'
 SOURCES = {
-    'gns': ('ValveSoftware/GameNetworkingSockets', 'v1.6.1', 'd534c19aa760df3fb75fd20db13ba1932b8a5463'),
-    'protobuf': ('protocolbuffers/protobuf', 'v21.12', 'f0dc78d7e6e331b8c6bb2d5283e06aa26883ca7c'),
-    'godot-cpp': ('godotengine/godot-cpp', 'godot-4.5-stable', 'e83fd0904c13356ed1d4c3d09f8bb9132bdc6b77'),
-    'openssl': ('openssl/openssl', 'openssl-3.5.9', '45e844fa2a14ec92d146bd8f5778ac130b6625fb'),
+    'gns': ('ValveSoftware/GameNetworkingSockets', 'd534c19aa760df3fb75fd20db13ba1932b8a5463'),
+    'fast-lzma2': ('conor42/fast-lzma2', '967306d39daacf9a14ad923c86fa7f9c4552b59b'),
+    'protobuf': ('protocolbuffers/protobuf', 'f0dc78d7e6e331b8c6bb2d5283e06aa26883ca7c'),
+    'godot-cpp': ('godotengine/godot-cpp', 'e83fd0904c13356ed1d4c3d09f8bb9132bdc6b77'),
+    'openssl': ('openssl/openssl', '45e844fa2a14ec92d146bd8f5778ac130b6625fb'),
 }
 
 
@@ -22,12 +23,25 @@ def run(*command, cwd=ROOT, env=None):
 
 
 def source(name):
-    repo, tag, commit = SOURCES[name]
+    repo, commit = SOURCES[name]
     path = CACHE / name
     if not path.exists():
-        run('git', 'clone', '--depth', '1', '--branch', tag, 'https://github.com/' + repo + '.git', path)
+        run('git', 'init', path)
+        run('git', '-C', path, 'remote', 'add', 'origin', 'https://github.com/' + repo + '.git')
+    if not (path / '.git').exists():
+        raise RuntimeError(f'{path} is not a dependency Git checkout')
+    head = subprocess.run(['git', '-C', str(path), 'rev-parse', '--verify', 'HEAD'],
+                          capture_output=True, text=True)
+    if head.returncode != 0 or head.stdout.strip() != commit:
+        dirty = subprocess.check_output(['git', '-C', str(path), 'status', '--porcelain'], text=True)
+        if dirty.strip():
+            raise RuntimeError(f'{path} has local changes; cannot switch its pinned revision')
+        # Fetch the exact revision so a moving branch or tag cannot change the build.
+        run('git', '-C', path, 'fetch', '--depth', '1', 'origin', commit)
+        run('git', '-C', path, 'checkout', '--detach', commit)
     actual = subprocess.check_output(['git', '-C', str(path), 'rev-parse', 'HEAD'], text=True).strip()
-    assert actual == commit, (name, actual)
+    if actual != commit:
+        raise RuntimeError(f'{name}: expected {commit}, got {actual}')
     return path
 
 
@@ -38,7 +52,7 @@ def main():
     parser.add_argument('--mingw', type=Path, default=os.environ.get('MINGW_PREFIX'))
     args = parser.parse_args()
     CACHE.mkdir(parents=True, exist_ok=True)
-    gns, protobuf, sdk = (source(name) for name in ('gns', 'protobuf', 'godot-cpp'))
+    gns, fast_lzma2, protobuf, sdk = (source(name) for name in ('gns', 'fast-lzma2', 'protobuf', 'godot-cpp'))
     env = os.environ.copy()
     cmake = shutil.which('cmake') or str(CACHE / 'python/cmake/data/bin/cmake.exe')
     ninja = shutil.which('ninja') or str(CACHE / 'ninja_tool/bin/ninja.exe')
@@ -95,6 +109,7 @@ def main():
         build = CACHE / ('gns-extension-' + triplet)
         run(cmake, '-S', ROOT / 'native/gns', '-B', build, *arch_flags, *extra,
             '-DGODOT_CPP_DIR=' + sdk.as_posix(), '-DGNS_DIR=' + gns.as_posix(),
+            '-DFAST_LZMA2_DIR=' + fast_lzma2.as_posix(),
             '-DGNS_PLATFORM=' + args.platform, '-DGNS_ARCH=' + arch,
             '-DCMAKE_PREFIX_PATH=' + prefix.as_posix(),
             '-DProtobuf_PROTOC_EXECUTABLE=' + host_protoc.as_posix(),
