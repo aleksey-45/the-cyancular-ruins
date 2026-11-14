@@ -15,12 +15,11 @@ var last_hit_tick := 0
 
 @export var animator : AnimatedSprite2D
 @onready var visuals: Node2D = $Visuals
+@onready var pose_view: Node2D = $Visuals/Pose
 var _visual_error := Vector2.ZERO
 var _visual_left := 0.0
 var interpolate_prediction := false
 var _visual_from := Vector2.ZERO
-
-@export var weapon_slot: Node2D
 
 @onready var weapons: WeaponComponent = $Weapons
 
@@ -117,12 +116,18 @@ func present_prediction(delta: float, relative_tick: float) -> void:
 	# 使用最近一个模拟 tick 的位移，视觉外推最多一个 tick。
 	visuals.position = to_local(corrected_position() + motion * clampf(relative_tick, -1.0, 1.0))
 
-func present_tick(delta: float) -> void:
-	animator.flip_h = facing_direction < 0
-	if sim_downed:
-		animator.stop()
+static func present_pose(view: Node2D, sprite: AnimatedSprite2D, facing: int, pose: int, downed: bool) -> void:
+	sprite.flip_h = facing < 0
+	view.rotation = -PI / 2.0 * facing if downed else 0.0
+	# 蹲姿箱底 22.8，原倒地箱底 16 + 2 * facing。保持贴图相对地面的高度。
+	view.position.y = 6.8 - 2.0 * facing if downed else 0.0
+	if downed:
+		sprite.stop()
 	else:
-		animator.play(POSE_ANIM[state])
+		sprite.play(POSE_ANIM[pose])
+
+func present_tick(delta: float) -> void:
+	present_pose(pose_view, animator, facing_direction, state, sim_downed)
 	modulate.a = 0.4 if sim_iframes > 0.0 and int(sim_iframes * 20.0) % 2 == 0 else 1.0
 	if post_process != null:
 		post_process.set_downed(sim_downed)

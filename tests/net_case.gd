@@ -70,7 +70,7 @@ func _input() -> void:
 		[[12, 7, 100, ActorInput.BIT_PICKUP, ActorInput.BIT_ATTACK, 0x1020304, Vector2.DOWN]],
 	]
 	var wire := codec.encode_input(wire_packet)
-	var protocol_bytes := ("c718000807060507000000030c0000000f64000000000000000000e0bf00010000803e000000bf"
+	var protocol_bytes := ("c719000807060507000000030c0000000f64000000000000000000e0bf00010000803e000000bf"
 			+ "0d0000000365000000000000000000f03f0e00000000010c000000640000002000080004030201000000000000803f")
 	expect(NetBus._wire(wire).hex_encode() == protocol_bytes, "INPUT header, frame deltas and actions match the wire format")
 	var stream := _body(wire, NetCodec.INPUT)

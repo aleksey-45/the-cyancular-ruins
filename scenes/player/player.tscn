@@ -5,23 +5,22 @@
 [ext_resource type="SpriteFrames" path="res://scenes/player/player_frames.tres" id="frames"]
 [ext_resource type="Script" path="res://scenes/player/weapon_component.gd" id="4_wpn"]
 
-[node name="Player" node_paths=PackedStringArray("animator", "weapon_slot") instance=ExtResource("actor")]
+[node name="Player" node_paths=PackedStringArray("animator") instance=ExtResource("actor")]
 scale = Vector2(2.5, 2.5)
 script = ExtResource("1_kyqiw")
 collision_layer = 2
 collision_mask = 5
-animator = NodePath("Visuals/AnimatedSprite2D")
-weapon_slot = NodePath("Visuals/WeaponSlot")
+animator = NodePath("Visuals/Pose/AnimatedSprite2D")
 
 [node name="Visuals" type="Node2D" parent="."]
 
-[node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="Visuals" unique_id=29481906]
+[node name="Pose" type="Node2D" parent="Visuals" unique_id=1424965295]
+
+[node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="Visuals/Pose" unique_id=29481906]
 texture_filter = 1
 sprite_frames = ExtResource("frames")
 animation = &"move"
 autoplay = "idle"
-
-[node name="WeaponSlot" type="Node2D" parent="Visuals" unique_id=1424965295]
 
 [node name="Weapons" type="Node" parent="."]
 script = ExtResource("4_wpn")

@@ -503,9 +503,10 @@ func _lethal_hit(tree: SceneTree) -> void:
 	cleanup()
 
 func _remote_down_replay(tree: SceneTree, with_state: bool) -> void:
-	var viewport := world(tree).get_viewport() as SubViewport
+	var viewport := world_with_walls(tree, 8, 8, {}).get_viewport() as SubViewport
 	var actor := player(viewport, 2)
-	actor.position = Vector2(376, 134.999)
+	# 左移时脚底低于远端的站姿顶边，但高于蹲姿顶边。
+	actor.position = Vector2(360, 290)
 	actor.collision_mask = CollisionWorld.LAYER_TERRAIN | CollisionWorld.LAYER_TEAM_A
 	actor._apply_layers()
 	actor.sync_collision_geometry()
@@ -517,7 +518,7 @@ func _remote_down_replay(tree: SceneTree, with_state: bool) -> void:
 	var rollback := client._rollback
 	rollback.bind(actor, CombatSimulator.new(_terrain, viewport, true))
 	var baseline := _frame(actor, 100)
-	var remote_pos := Vector2(240.075, 134.999)
+	var remote_pos := Vector2(240.075, 390.999)
 	baseline["world"]["players"][3] = _remote(actor, remote_pos, 4)
 	client._install_world(baseline)
 	rollback.reset(baseline, 0)
@@ -529,8 +530,8 @@ func _remote_down_replay(tree: SceneTree, with_state: bool) -> void:
 			"vel": Vector2.ZERO, "knock": Vector2(2951.45, -537.55)}, true)
 	client._on_event(1, NetEvent.Kind.HIT, hit)
 	client._apply_pending_authority()
-	expect(rollback._state_at(103).players[actor.role]["state"]["actor"][PlayerStateSchema.KNOCK_VEL].x < 0.0,
-			"the standing hull does not block this knockback")
+	expect(rollback._state_at(103).players[actor.role]["state"]["actor"][PlayerStateSchema.KNOCK_VEL].x == 0.0,
+			"the standing hull blocks this knockback")
 	client._on_event(1, NetEvent.Kind.HIT, down)
 	if with_state:
 		var state := _saved_frame(rollback, 102)
@@ -546,9 +547,9 @@ func _remote_down_replay(tree: SceneTree, with_state: bool) -> void:
 	expect(proxy.sim_downed and proxy.global_position != remote_pos,
 			"a confirmed down updates the remote hull and moves it on the following ticks")
 	var at_contact: Array = rollback._state_at(103).players[actor.role]["state"]["actor"]
-	expect(at_contact[PlayerStateSchema.KNOCK_VEL].x == 0.0 and actor.sim_hp == 10
+	expect(at_contact[PlayerStateSchema.KNOCK_VEL].x < 0.0 and actor.sim_hp == 10
 			and rollback.replay_ticks == endpoint - (102 if with_state else 100),
-			"the confirmed down replays movement from the next tick and blocks horizontal knockback")
+			"the confirmed down replays movement from the next tick and clears the lower hull")
 	var covered := _saved_frame(rollback, endpoint)
 	client._on_state(covered)
 	client._apply_pending_authority()

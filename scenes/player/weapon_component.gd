@@ -181,7 +181,7 @@ func weapon_view() -> WeaponBase:
 	if type_id != 0 and _view == null:
 		_view = WeaponBase.new()
 		_view.configure(type_id, body.animator)
-		body.weapon_slot.add_child(_view)
+		body.pose_view.add_child(_view)
 	return _view
 
 func present() -> void:

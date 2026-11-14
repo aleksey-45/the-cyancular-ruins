@@ -183,7 +183,7 @@ func collision_rect() -> Rect2:
 	return (global_transform * hull.transform) * hull.shape.get_rect()
 
 func _active_hull() -> CollisionShape2D:
-	return _hulls[1 if is_squat and not sim_downed else 0]
+	return _hulls[1 if is_squat or sim_downed else 0]
 
 func set_crouched(crouched: bool) -> void:
 	if crouched == is_squat:
@@ -474,7 +474,6 @@ func force_down() -> bool:
 	if sim_downed:
 		return false
 	sim_downed = true
-	rotation = -PI / 2.0 * facing_direction
 	_grounded = false
 	sync_collision_geometry()
 	if equipped != null:
@@ -496,7 +495,6 @@ func apply_authoritative_state(hp: int, wp: int, down: bool) -> void:
 	sim_hp = hp
 	waterproof = wp
 	sim_downed = down
-	rotation = -PI / 2.0 * facing_direction if down else 0.0
 	sync_collision_geometry()
 
 func capture_actor_state(instance: int, inventory: PackedInt32Array) -> Array:

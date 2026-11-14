@@ -18,7 +18,7 @@ static func team_layer(team: int) -> int:
 
 # 一次 tick 的最大位移加上形状半径与 safe margin；接缝镜像只覆盖这个带宽。
 const SEAM_REACH := 192.0
-# 角色碰撞形状从 pose.origin 到接缝方向的最大外沿；覆盖站立、蹲下与 90° 倒地。
+# 站姿和蹲姿箱各轴的外沿距原点最多 57 px。
 const MIRROR_MARGIN := 57.0
 
 # 统一运动求解的 margin：沿用 CharacterBody2D 的默认值，台阶与命中分类阈值都按它调校。

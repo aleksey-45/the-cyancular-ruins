@@ -7,7 +7,7 @@ const STATE := 1
 const EVENT := 2
 const KEEP := 64
 const WIRE_MAGIC := 199
-const PROTOCOL_VERSION := 24
+const PROTOCOL_VERSION := 25
 const MODES := [PvpSession.MODE_PVP, PvpSession.MODE_TEAM, PvpSession.MODE_ROYALE]
 const Field := NetEvent.Field
 # 持续输入的完整槽位顺序。INPUT 单独写序号和包级 epoch，增量从目标 tick 开始。

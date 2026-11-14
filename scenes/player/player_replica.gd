@@ -11,7 +11,8 @@ const WATER_FEET_OFFSET := 24.0
 const HIT_FLASH_TIME := 0.35   # 受击闪白持续时间（秒）
 const HIT_FLASH_RATE := 20.0   # 受击闪白频率
 
-@onready var animator: AnimatedSprite2D = $AnimatedSprite2D
+@onready var pose_view: Node2D = $Pose
+@onready var animator: AnimatedSprite2D = $Pose/AnimatedSprite2D
 
 # 挤压拉伸补间形变组件
 var squash: SquashStretch = null
@@ -22,10 +23,8 @@ var role := 0
 var _pose: int = 0
 var _prev_vel_y: float = 0.0
 
-var _weapon_slot_node: Node2D        # 武器挂载节点
 var _weapon: WeaponBase = null       # 当前手持武器视觉实例
 var _weapon_type_int := 0            # 当前武器类型 ID
-var _facing := 1                         # 移动朝向
 var _aim_facing := 1                     # 瞄准朝向
 var _aim := Vector2(1.0, 0.0)            # 瞄准向量
 var _downed := false                     # 倒地状态标记
@@ -35,32 +34,22 @@ const CHARGE_GHOST_INTERVAL := 0.06
 
 func _ready() -> void:
 	animator.sprite_frames = preload("res://scenes/player/player_frames.tres")
-	_weapon_slot_node = Node2D.new()
-	_weapon_slot_node.name = "WeaponSlot"
-	add_child(_weapon_slot_node)
 	squash = SquashStretch.new()
 	squash.setup(animator, SquashStretch.Profile.PLAYER)
 	add_child(squash)
 
 
 func _apply_visual(aim: Vector2, actor: Array) -> void:
-	_facing = actor[PlayerStateSchema.FACING]
-	_aim = aim if aim != Vector2.ZERO else Vector2(float(_facing), 0.0)
+	var facing: int = actor[PlayerStateSchema.FACING]
+	_aim = aim if aim != Vector2.ZERO else Vector2(float(facing), 0.0)
 	if absf(_aim.x) > 0.1:
 		_aim_facing = 1 if _aim.x > 0.0 else -1
-	animator.flip_h = _facing < 0
 	var type_id := PlayerStateSchema.equipped_type(actor)
 	if type_id != _weapon_type_int:
 		_swap_weapon(type_id)
 	_downed = actor[PlayerStateSchema.DOWNED]
-	if _downed:
-		animator.stop()
-		rotation = -PI / 2.0 * float(_facing)
-	else:
-		rotation = 0.0
-		var pose: int = actor[PlayerStateSchema.STATE]
-		_pose = pose
-		animator.play(Player.POSE_ANIM[pose])
+	_pose = actor[PlayerStateSchema.STATE]
+	Player.present_pose(pose_view, animator, facing, _pose, _downed)
 
 # 播放受击反馈闪烁动画
 func play_hit() -> void:
@@ -80,7 +69,7 @@ func _swap_weapon(type_id: int) -> void:
 		return
 	_weapon = WeaponBase.new()
 	_weapon.configure(type_id, animator)
-	_weapon_slot_node.add_child(_weapon)
+	pose_view.add_child(_weapon)
 
 
 # 驱动武器视觉方向与枪口仰角

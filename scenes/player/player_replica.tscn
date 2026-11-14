@@ -6,6 +6,8 @@
 scale = Vector2(2.5, 2.5)
 script = ExtResource("1")
 
-[node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="."]
+[node name="Pose" type="Node2D" parent="."]
+
+[node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="Pose"]
 texture_filter = 1
 autoplay = "idle"
