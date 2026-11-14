@@ -20,7 +20,7 @@ present/  视听表现与特效：像素字体适配、音效播放、贴图边�
   - 本地键鼠采集生成输入记录（`local_input_source`），服务端从输入缓冲消费同样的记录。
   - 提供基于 EasyTier 的应用层 P2P 网络隧道（`tunnel`）与 Windows 进程管理（`net_session`）。
 - `config/`（配置与参数）
-  - 集中管理游戏全局常量与运行参数（`game_parameters`）、角色与敌人配置（`player_params`、`enemy_params`）、本地设置（`settings`）以及构建版本信息（`build_info`）。
+  - 集中管理游戏全局常量与运行参数（`game_parameters`）、角色与敌人配置（`player_params`、`enemy_params`）、本地设置（`settings`）以及版本信息（`app_info`）。
 - `present/`（视觉与音频表现）
   - 负责渲染与视听反馈效果，与游戏逻辑解耦。
   - 包含像素字体渲染（`pixel_font`）、程序化音效合成（`sfx`）以及激光光束渲染（`laser_visual`）。

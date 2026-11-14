@@ -8,8 +8,7 @@ echo   Starting PvP server on port 7777...
 echo   Wait for "server ready" output below, then keep this window open.
 echo   Close this window = stop the server.
 echo ============================================
-rem 引擎路径可用环境变量 GODOT 覆盖(换机器/换引擎版本只需设一次,不必改这些脚本)
-if not defined GODOT set "GODOT=D:\Program Files\Godot_v4.7.1-stable_win64\Godot_v4.7.1-stable_win64_console.exe"
+if not defined GODOT set "GODOT=godot"
 "%GODOT%" --headless --path . res://server/server_main.tscn
 echo.
 echo Server exited with code %ERRORLEVEL%.

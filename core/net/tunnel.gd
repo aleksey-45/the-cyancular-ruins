@@ -223,7 +223,10 @@ static func _sleep() -> void:
 
 ## 读取公共初始节点配置文件中的节点列表。
 static func relay_list() -> Array[String]:
-	return parse_relay_lines(FileAccess.get_file_as_string(relay_file()))
+	var path := relay_file()
+	if FileAccess.file_exists(path):
+		return parse_relay_lines(FileAccess.get_file_as_string(path))
+	return Meta.DEFAULT_RELAYS.duplicate()
 
 
 ## 解析公共节点文本行，忽略注释与空行，规范化协议前缀。
@@ -244,7 +247,7 @@ static func relay_file() -> String:
 	return AppPaths.easytier_dir().path_join(Meta.RELAY_FILE_NAME)
 
 
-## 大厅入口补齐公共节点配置，保留已有文件；macOS 优先复制包内配置。
+## 大厅入口补齐公共节点配置，保留已有文件。
 static func ensure_relay_file() -> void:
 	var path := relay_file()
 	if FileAccess.file_exists(path):
@@ -253,11 +256,7 @@ static func ensure_relay_file() -> void:
 	var f := FileAccess.open(path, FileAccess.WRITE)
 	if f == null:
 		return
-	var content := "\n".join(PackedStringArray(Meta.DEFAULT_RELAYS)) + "\n"
-	if OS.has_feature("macos") and OS.has_feature("template"):
-		var bundled := AppPaths.base_dir().get_base_dir().path_join("Resources/" + Meta.RELAY_FILE_NAME)
-		if FileAccess.file_exists(bundled): content = FileAccess.get_file_as_string(bundled)
-	f.store_string(content)
+	f.store_string("\n".join(PackedStringArray(Meta.DEFAULT_RELAYS)) + "\n")
 	f.close()
 	print("[tunnel] 已生成公共节点列表 %s" % path)
 

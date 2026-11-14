@@ -6,9 +6,6 @@ extends RefCounted
 # 无外部 Autoload 单例依赖，支持独立静态调用。
 
 
-# 获取版本号字符串：
-# 1. 导出发布版读取 build_info.gd 中的构建元数据；
-# 2. 本地开发版回退读取 Git 分支与提交序号；
 static var _version_cache := ""
 static var _log_cache: Array = []
 
@@ -16,9 +13,9 @@ static var _log_cache: Array = []
 static func version_string() -> String:
 	if _version_cache != "":
 		return _version_cache
-	var bi := preload("res://core/config/build_info.gd")
-	if str(bi.VERSION) != "" and str(bi.VERSION) != "dev":
-		_version_cache = bi.display()
+	if OS.has_feature("template"):
+		var version := str(ProjectSettings.get_setting("application/config/version")).trim_suffix(".0.0")
+		_version_cache = "%s_v%s" % [ProjectSettings.get_setting("application/config/release_prefix"), version]
 		return _version_cache
 	var branch := _git_text(["rev-parse", "--abbrev-ref", "HEAD"]).strip_edges()
 	var n := _git_text(["rev-list", "--count", "HEAD"]).strip_edges()

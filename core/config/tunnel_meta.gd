@@ -2,13 +2,12 @@ class_name TunnelMeta
 extends RefCounted
 
 # EasyTier 免驱动应用层虚拟网隧道全局常量定义。
-# 为 Tunnel 隧道管理、联机大厅与下载工具提供统一数据源。
+# 为 Tunnel 隧道管理与联机大厅提供统一数据源。
 #
 # 许可说明：EasyTier 采用 LGPL-3.0 协议。本项目仅以独立子进程方式调用其预编译可执行文件，
 # 许可正文、版权声明和官方源码链接收录于发布包根部的 THIRD_PARTY_NOTICES.txt。
 
 # Windows 组件包含 EXE 和依赖库，macOS 组件使用无后缀通用可执行文件。
-const ET_RELEASE := "nightly"
 const CORE_EXE := "easytier-core.exe"
 const CLI_EXE := "easytier-cli.exe"
 const CORE_DLLS := ["Packet.dll", "wintun.dll"]
@@ -25,7 +24,7 @@ const VIP_HOST := "10.126.126.1"
 # 双方连接相同的中继节点以交换端点并尝试 P2P 直连，直连受限时由中继节点转发。
 const RELAY_FILE_NAME := "relay.txt"
 
-const DEFAULT_RELAYS := [
+const DEFAULT_RELAYS: Array[String] = [
 	"txt://et2.lctn.cc.cd",
 	"udp://183.230.36.171:11010",
 ]

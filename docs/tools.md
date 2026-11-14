@@ -2,12 +2,11 @@
 
 ## 从源码运行
 
-项目使用 Godot 4.7.1 标准版、Python 和 Git。Windows 原生扩展使用 MSVC，也可通过 `MINGW_PREFIX` 指定 LLVM MinGW。macOS 使用 Xcode 命令行工具。两个构建脚本分别生成进程管理和 GNS 扩展。
+项目使用 Godot 4.7.1 标准版、Python 3.12 和 Git。Windows 使用 x64 MSVC 开发者终端，macOS 使用 Xcode 命令行工具。进程管理和 GNS 扩展共用一个 CMake 工程。
 
 ```sh
-python -m pip install scons==4.9.1 cmake==3.31.6 ninja==1.11.1.4
-python tools/build_process_group.py
-python tools/build_gns.py
+python -m pip install cmake==3.31.6 ninja==1.11.1.4
+python tools/build_native.py
 godot --headless --editor --path . --import
 godot --path .
 ```
@@ -18,7 +17,7 @@ godot --path .
 godot --headless --path . res://server/server_main.tscn -- --port 7777
 ```
 
-Windows 的 `start_server.bat` 使用 `GODOT` 指定的控制台程序。发布包使用游戏可执行文件启动同一个服务端。EasyTier 组件和导出模板见 [构建与发布](../RELEASE.md)。
+Windows 的 `start_server.bat` 从 `PATH` 调用 `godot`，也可以用 `GODOT` 指定控制台程序。发布包使用游戏可执行文件启动同一个服务端。EasyTier 组件和导出模板见 [构建与发布](../RELEASE.md)。
 
 ## 关卡编辑器
 
