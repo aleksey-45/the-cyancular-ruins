@@ -47,7 +47,7 @@ const climb_vertical_mult: float = 1.2
 const climb_recoil_mult: float = 0.1  # 攀爬状态的后坐力倍率
 const climb_foot_offset: float = 57.0    # 攀爬通道脚底探测点
 const elastic_bounce: float = 150.0  # 弹性表面的法向反弹速度（px/s）
-const step_max_height: float = 64.0   # 自动上台阶最大高度(px)；候选依次为 16/32/48/64
+const step_max_height: float = 64.0   # 自动上台阶最大高度(px)
 
 const player_max_hp: int = 50
 const iframes_time: float = 0.25

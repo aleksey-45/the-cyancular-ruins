@@ -103,8 +103,7 @@ func settle_on_spawn_floor() -> void:
 	var previous_mask := collision_mask
 	collision_mask = CollisionWorld.LAYER_TERRAIN
 	_apply_layers()
-	var hit := CollisionWorld.probe_body(_rid, from, Vector2(0.0, GameParameters.TILE_SIZE),
-			CollisionWorld.MOTION_MARGIN, false, result)
+	var hit := CollisionWorld.probe_body(_rid, from, Vector2(0.0, GameParameters.TILE_SIZE), result)
 	collision_mask = previous_mask
 	_apply_layers()
 	if not hit or result.get_collision_normal().y >= -0.5:
@@ -158,13 +157,13 @@ func _recompute_canonical() -> void:
 
 # 生成或重建时若与实心地形重叠：零位移重叠检测，逐格向上推出。
 func _unstick_up() -> bool:
-	if not CollisionWorld.probe_body(_rid, global_transform, Vector2.ZERO, 0.0, true):
+	if not CollisionWorld.probe_body(_rid, global_transform, Vector2.ZERO, null, 0.0, true):
 		return false
 	for i in 8:
 		global_position.y -= float(GameParameters.TILE_SIZE)
 		# 顶起过程只挪位姿；形状槽不变。
 		CollisionWorld.sync_body_pose(_rid, global_transform)
-		if not CollisionWorld.probe_body(_rid, global_transform, Vector2.ZERO, 0.0, true):
+		if not CollisionWorld.probe_body(_rid, global_transform, Vector2.ZERO, null, 0.0, true):
 			velocity.y = 0.0
 			_grounded = false # 推出后要重新落地。
 			_settled = false

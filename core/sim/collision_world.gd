@@ -43,26 +43,20 @@ static func create_body(layer: int, mask: int) -> RID:
 ## 统一的实体运动求解：服务端、预测端、角色、弹丸与敌人走同一条 body_test_motion 路径。
 ## 返回 [hit, result]；result.travel 永远包含恢复推出量，调用方必须按 travel 前进自身数据位姿，
 ## 服务器变换由本函数直接写（其他实体的查询靠它同帧看到新位置）。
-static func move_body(rid: RID, from: Transform2D, motion: Vector2, exclude: Array = []) -> Array:
-	_motion_params.from = from
-	_motion_params.motion = motion
-	_motion_params.margin = MOTION_MARGIN
-	_motion_params.exclude_bodies = exclude
-	_motion_params.recovery_as_collision = false
-	var hit := PhysicsServer2D.body_test_motion(rid, _motion_params, _motion_result)
+static func move_body(rid: RID, from: Transform2D, motion: Vector2) -> Array:
+	var hit := probe_body(rid, from, motion, _motion_result)
 	from.origin += _motion_result.get_travel()
 	PhysicsServer2D.body_set_state(rid, PhysicsServer2D.BODY_STATE_TRANSFORM, from)
 	return [hit, _motion_result]
 
 ## 只读探测（test_move 等价物）：不移动、不写变换。传入 result 可取得实际位移与接触信息。
-## recovery_as_collision 默认开启，允许恢复推出产生的接触计为碰撞。
+## 显式开启 recovery_as_collision 可将恢复推出产生的接触也计为碰撞。
 static func probe_body(rid: RID, from: Transform2D, motion: Vector2,
-		margin: float = MOTION_MARGIN, recovery_as_collision := true,
-		result: PhysicsTestMotionResult2D = null) -> bool:
+		result: PhysicsTestMotionResult2D = null, margin: float = MOTION_MARGIN,
+		recovery_as_collision := false) -> bool:
 	_motion_params.from = from
 	_motion_params.motion = motion
 	_motion_params.margin = margin
-	_motion_params.exclude_bodies = []
 	_motion_params.recovery_as_collision = recovery_as_collision
 	return PhysicsServer2D.body_test_motion(rid, _motion_params, result)
 
@@ -213,13 +207,11 @@ static func shape_origin(rid: RID, index: int) -> Vector2:
 		return body.origin
 	return (body * PhysicsServer2D.body_get_shape_transform(rid, index)).origin
 
-func ray_hit(from: Vector2, to: Vector2, mask: int, exclude: Array = []) -> Dictionary:
+func ray_hit(from: Vector2, to: Vector2, mask: int, hit_from_inside := false) -> Dictionary:
 	_ray.from = from
 	_ray.to = to
 	_ray.collision_mask = mask
-	_ray.exclude = exclude
-	_ray.collide_with_bodies = true
-	_ray.collide_with_areas = false
+	_ray.hit_from_inside = hit_from_inside
 	return direct().intersect_ray(_ray)
 
 func circle_overlaps(center: Vector2, radius: float, mask: int, exclude: Array = []) -> Array:

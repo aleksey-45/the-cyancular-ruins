@@ -28,7 +28,9 @@ func run(tree: SceneTree) -> void:
 	_pickup_order()
 	_pickup_landing(tree)
 	_step_up(tree)
-	_step_side_landing(tree)
+	_step_overhang(tree)
+	_step_stairs(tree)
+	_step_slope(tree)
 	_mvp(tree)
 	_team_setup(tree)
 	_team_respawn(tree)
@@ -931,7 +933,37 @@ func _step_up(tree: SceneTree) -> void:
 			"a rejected step candidate does not move the actor")
 	cleanup()
 
-func _step_side_landing(tree: SceneTree) -> void:
+func _step_overhang(tree: SceneTree) -> void:
+	# 角色从地图右侧靠近左侧台阶的镜像。顶板下有 112px，刚好容纳 107px 的站立碰撞体。
+	var parent := world_from_solid(tree, 16, 8, func(sx: int, sy: int) -> bool:
+		return sy >= 24 or sx < 12 and (sy >= 23 or sy == 15))
+	var mover := player(parent)
+	_place(mover, Vector2(_terrain.map_size.x - 36.5, 326.999))
+	mover.velocity.x = PlayerParams.move_speed
+	mover._grounded = true
+	var x := mover.position.x
+	ActorStep.step(mover, FORWARD_INPUT)
+	expect(mover.position.x > x + 10.0 and absf(mover.position.y - 311.0) < 0.1 and mover._grounded,
+			"a 16px step across the seam fits under a close overhang")
+	cleanup()
+
+func _step_stairs(tree: SceneTree) -> void:
+	var parent := world_from_solid(tree, 16, 8, func(sx: int, sy: int) -> bool:
+		return sy >= 24 or sx >= 32 and sy >= 23 or sx >= 33 and sy >= 22)
+	var mover := player(parent)
+	_place(mover, Vector2(475.5, 326.999))
+	mover.pvp_haste_mult = 3.0
+	mover.velocity.x = PlayerParams.move_speed * mover.pvp_haste_mult
+	mover._grounded = true
+	ActorStep.step(mover, FORWARD_INPUT)
+	expect(absf(mover.position.y - 311.0) < 0.1 and mover._grounded and mover.velocity.x > 0.0,
+			"the next riser shortens fast movement through the first step")
+	ActorStep.step(mover, FORWARD_INPUT)
+	expect(absf(mover.position.y - 295.0) < 0.1 and mover._grounded,
+			"the next tick climbs the second step")
+	cleanup()
+
+func _step_slope(tree: SceneTree) -> void:
 	var parent := world_from_solid(tree, 16, 16, func(_sx: int, sy: int) -> bool: return sy >= 24)
 	var slope := StaticBody2D.new()
 	slope.position = Vector2(513, 375)
@@ -953,13 +985,12 @@ func _step_side_landing(tree: SceneTree) -> void:
 	mover._grounded = true
 	mover.step_input = ActorInput.new()
 	mover.step_input.axis = 1.0
-	# 16px 抬高后能横移，但下落会先碰到斜面的侧面。
 	var blocked := mover.move_by_internal(Vector2(12, 0))
 	expect(blocked == Vector2(1, 0) and mover.global_position.x < 476.0
 			and absf(mover.global_position.y - 326.98) < 0.2,
-			"a steep contact on the downward sweep falls back to horizontal blocking")
+			"a rotated terrain face uses normal horizontal blocking")
 	var pose: Transform2D = PhysicsServer2D.body_get_state(mover.get_rid(), PhysicsServer2D.BODY_STATE_TRANSFORM)
-	expect(pose.origin.is_equal_approx(mover.global_position), "a rejected landing leaves the actor and RID in sync")
+	expect(pose.origin.is_equal_approx(mover.global_position), "the blocked actor and RID stay in sync")
 	cleanup()
 
 # 团队 MVP 只从获胜队选；平局与缺失候选都返回 0。

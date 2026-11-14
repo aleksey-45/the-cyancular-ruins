@@ -7,6 +7,7 @@ func run(tree: SceneTree) -> void:
 	_world_replication(tree)
 	_ordered_collision(tree)
 	_stacked_collision(tree)
+	_aligned_step_replay(tree)
 	_authority_batch(tree)
 	_lethal_hit(tree)
 	_remote_down_replay(tree, false)
@@ -358,6 +359,64 @@ func _stacked_collision(tree: SceneTree) -> void:
 			and rollback._state_at(2138).players == endpoint, "replay preserves the stacked contact through six ticks")
 	client.free()
 	cleanup()
+
+func _aligned_step_replay(tree: SceneTree) -> void:
+	for height: int in [48, 80]:
+		var parent := _aligned_step_world(tree, height, false)
+		var runner := player(parent)
+		runner.position = Vector2(475.5, 326.999)
+		runner.velocity.x = PlayerParams.move_speed
+		runner._grounded = true
+		runner.sync_collision_geometry()
+		runner.input_buffer.restore_authority(1, 0, [1, 1, 100, 1.0, 0, Vector2.RIGHT])
+		var authority := AuthorityWorld.new()
+		authority.terrain = _terrain
+		authority.players[runner.role] = runner
+		authority.combat_rules = CombatSimulator.new(_terrain, parent, true)
+		authority.combat_rules.players = authority.players
+		authority.rules.phase = NetEvent.RoundState.PLAYING
+		authority._snap_tick = 100
+		var frame := authority.state_for(runner.role, authority.world_state(), {})
+		var codec := NetCodec.new()
+		var wire := codec.encode_state(frame, NetCodec.StateBatch.new(frame))
+
+		var client_world := _aligned_step_world(tree, height, true)
+		var local := player(client_world)
+		var rollback := PredictionRollback.new()
+		rollback.bind(local, CombatSimulator.new(_terrain, client_world, true))
+		rollback.reset(NetCodec.new().decode_state(NetCodec.Reader.new(wire, 1)), 0)
+		for at in range(101, 105):
+			authority._physics_process(ActorStep.DT)
+			rollback._step()
+			expect(local.capture_state() == runner.capture_state(),
+					"the %dpx aligned face agrees with authority at tick %d" % [height, at])
+		var rise := 326.999 - runner.position.y
+		expect(absf(rise - (48.0 if height == 48 else 0.0)) < 0.1 and runner._grounded,
+				"the %dpx aligned face obeys the step height limit" % height)
+		var endpoint := rollback._state_at(104).players
+		rollback._request_replay(101)
+		expect(rollback.reconcile({}, 0) == PredictionRollback.Correction.KEEP and rollback.replay_ticks == 4
+				and rollback._state_at(104).players == endpoint, "aligned step replay reproduces the endpoint")
+		authority.free()
+		cleanup()
+
+func _aligned_step_world(tree: SceneTree, height: int, reverse_order: bool) -> Node2D:
+	var parent := world_from_solid(tree, 16, 8, func(_sx: int, sy: int) -> bool: return sy >= 24)
+	var faces := [Rect2(512, 368, 128, 16), Rect2(512, 384 - height, 64, height - 16)]
+	if reverse_order:
+		faces.reverse()
+	var wall := StaticBody2D.new()
+	wall.collision_layer = CollisionWorld.LAYER_TERRAIN
+	wall.collision_mask = 0
+	for rect: Rect2 in faces:
+		var hull := CollisionShape2D.new()
+		var shape := RectangleShape2D.new()
+		shape.size = rect.size
+		hull.shape = shape
+		hull.position = rect.get_center()
+		wall.add_child(hull)
+	parent.add_child(wall)
+	return parent
 
 func _authority_batch(tree: SceneTree) -> void:
 	var parent := world(tree)

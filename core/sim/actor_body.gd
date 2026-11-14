@@ -1,10 +1,7 @@
 class_name ActorBody
 extends ServerBody
 
-# 角色运动状态机与玩法状态。角色是自管 RID 物理体：地形与角色阻挡统一由
-# CollisionWorld.move_body() 在同一物理空间求解；本节点只承载状态、输入处理与
-# X/Y 运动顺序，节点变换就是权威数据位姿，服务器变换在每个写入收口同步。
-# 环形地图接缝由本体 RID 上的镜像形状槽补齐（规范形状由节点 hull 载体承担）。
+# 角色状态与 X/Y 移动。位姿同步到自管 RID，接缝由镜像形状补齐。
 
 const STATE_LOCK_TIME := 0.15
 const STAND := 0
@@ -55,13 +52,11 @@ var step_actions: Array = []
 
 var _speed_mult := 1.0
 var equipped: GunBody
-# 原 CharacterBody2D 的内建字段改为普通数据。
 var velocity := Vector2.ZERO
-var safe_margin := 0.08
 # 本体与最多三个接缝副本。
 const COLLISION_SLOTS := 4
+static var _axis_motion := PhysicsTestMotionResult2D.new()
 static var _step_motion := PhysicsTestMotionResult2D.new()
-
 
 func _ready() -> void:
 	var shape := _hulls[0].shape
@@ -75,10 +70,8 @@ func set_team_collision(side: int) -> void:
 	collision_mask = CollisionWorld.LAYER_TERRAIN | CollisionWorld.team_layer(3 - team)
 	_apply_layers()
 
-# 地形与角色阻挡共用同一条 CollisionWorld.move_body() 路径；掩码决定谁挡路（队友不在掩码内即穿透）。
 func move_by_internal(motion: Vector2) -> Vector2:
 	var blocked := Vector2.ZERO
-	var step_ready := _step_up_ready() and motion.y >= 0.0
 	for axis in 2:
 		var distance := motion[axis]
 		if distance == 0.0:
@@ -86,53 +79,59 @@ func move_by_internal(motion: Vector2) -> Vector2:
 		var start := global_transform
 		var travel := Vector2.ZERO
 		travel[axis] = distance
-		if axis == 0 and step_ready and signf(distance) == signf(step_input.axis) \
-				and CollisionWorld.probe_body(_rid, start, travel, safe_margin) \
-				and _try_step_up(distance, start):
-			blocked.y = 1.0
-			continue
-		var out := CollisionWorld.move_body(_rid, start, travel)
-		var hit: bool = out[0]
-		var result: PhysicsTestMotionResult2D = out[1]
-		global_position = start.origin + result.get_travel()
-		if hit:
-			motion_contacts.append({"rid": result.get_collider_rid(),
-					"normal": result.get_collision_normal(), "point": result.get_collision_point()})
-			if CollisionWorld.axis_blocked(result, axis, travel[axis]):
+		if CollisionWorld.probe_body(_rid, start, travel, _axis_motion):
+			if CollisionWorld.axis_blocked(_axis_motion, axis, distance):
+				if axis == 0 and motion.y >= 0.0 and _try_step_up(start, travel):
+					return Vector2.DOWN
 				blocked[axis] = signf(distance)
+			motion_contacts.append({"rid": _axis_motion.get_collider_rid(),
+					"normal": _axis_motion.get_collision_normal(), "point": _axis_motion.get_collision_point()})
+		start.origin += _axis_motion.get_travel()
+		global_position = start.origin
+		CollisionWorld.sync_body_pose(_rid, start)
 	return blocked
 
-## 仅着地、正常水平输入、未处于冲刺/蹲伏/攀爬/游泳时启用自动上台阶。
-func _step_up_ready() -> bool:
-	if not _grounded or sim_downed or is_charge or is_squat or climb_latched or in_water or rewinding:
+func _try_step_up(start: Transform2D, travel: Vector2) -> bool:
+	var direction := signf(travel.x)
+	var wall := _axis_motion.get_collider_rid()
+	if not _grounded or sim_downed or is_charge or is_squat or climb_latched or in_water or rewinding \
+			or direction != signf(step_input.axis) or _axis_motion.get_collision_normal().x * direction >= -0.5 \
+			or PhysicsServer2D.body_get_collision_layer(wall) != CollisionWorld.LAYER_TERRAIN:
 		return false
-	if PlayerParams.step_max_height <= 0.0 or step_input.axis == 0.0:
+	var margin := CollisionWorld.MOTION_MARGIN
+	var foot := collision_rect().end.y
+	var edge := _axis_motion.get_collision_point().x + direction * margin
+	# 只用侧边的 x。向下取第一个顶面，起点在墙内时视为超出台阶高度。
+	var hit := _physics.ray_hit(Vector2(edge, foot - PlayerParams.step_max_height - margin),
+			Vector2(edge, foot), CollisionWorld.LAYER_TERRAIN, true)
+	if hit.is_empty() or hit["normal"] != Vector2.UP:
 		return false
+	var height := foot - (hit["position"] as Vector2).y
+	if height <= margin \
+			or CollisionWorld.probe_body(_rid, start, Vector2.UP * (height + margin), _step_motion):
+		return false
+	var pose := start
+	pose.origin += _step_motion.get_travel()
+	# 加速时可能碰到下一阶，仍可用已经扫过的距离在第一阶落脚。
+	if CollisionWorld.probe_body(_rid, pose, travel, _step_motion) \
+			and PhysicsServer2D.body_get_collision_layer(_step_motion.get_collider_rid()) != CollisionWorld.LAYER_TERRAIN:
+		return false
+	pose.origin += _step_motion.get_travel()
+	var drop := start.origin.y - pose.origin.y + 1.0
+	if not CollisionWorld.probe_body(_rid, pose, Vector2.DOWN * drop, _step_motion) \
+			or _step_motion.get_collision_normal().y >= -0.5 \
+			or PhysicsServer2D.body_get_collision_layer(_step_motion.get_collider_rid()) != CollisionWorld.LAYER_TERRAIN:
+		return false
+	pose.origin += _step_motion.get_travel()
+	var rise := start.origin.y - pose.origin.y
+	if rise <= margin or rise > PlayerParams.step_max_height + margin \
+			or (pose.origin.x - start.origin.x - _axis_motion.get_travel().x) * direction <= 0.001:
+		return false
+	motion_contacts.append({"rid": _step_motion.get_collider_rid(),
+			"normal": _step_motion.get_collision_normal(), "point": _step_motion.get_collision_point()})
+	global_position = pose.origin
+	CollisionWorld.sync_body_pose(_rid, pose)
 	return true
-
-## 每段用物理查询返回的实际位移接续下一段，最后把有效落脚位置一次提交给节点和 RID。
-func _try_step_up(distance: float, start: Transform2D) -> bool:
-	for step in floori((PlayerParams.step_max_height + 0.001) / 16.0):
-		var height := (step + 1) * 16.0
-		var pose := start
-		if CollisionWorld.probe_body(_rid, pose, Vector2(0.0, -height), safe_margin, true, _step_motion):
-			continue
-		pose.origin += _step_motion.get_travel()
-		if CollisionWorld.probe_body(_rid, pose, Vector2(distance, 0.0), safe_margin, true, _step_motion):
-			continue
-		pose.origin += _step_motion.get_travel()
-		if not CollisionWorld.probe_body(_rid, pose, Vector2(0.0, height + 1.0), safe_margin, false, _step_motion):
-			continue
-		var normal := _step_motion.get_collision_normal()
-		if normal.y >= -0.5:
-			continue
-		pose.origin += _step_motion.get_travel()
-		motion_contacts.append({"rid": _step_motion.get_collider_rid(),
-				"normal": normal, "point": _step_motion.get_collision_point()})
-		global_position = pose.origin
-		CollisionWorld.sync_body_pose(_rid, pose)
-		return true
-	return false
 
 func _move_actor(delta: float) -> void:
 	motion_contacts.clear()
@@ -193,7 +192,7 @@ func set_crouched(crouched: bool) -> void:
 	sync_collision_geometry()
 	if crouched:
 		return
-	if CollisionWorld.probe_body(_rid, global_transform, Vector2.ZERO, 0.0, true):
+	if CollisionWorld.probe_body(_rid, global_transform, Vector2.ZERO, null, 0.0, true):
 		is_squat = true
 		sync_collision_geometry()
 
