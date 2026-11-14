@@ -37,7 +37,9 @@ func get_current_aim_dir() -> Vector2:
 		return fallback
 	var window := viewport.get_window()
 	var mouse_offset := window.get_mouse_position() - window.get_visible_rect().size * 0.5
-	var dir: Vector2 = camera.get_base_global_position() + mouse_offset / camera.zoom - global_position
+	var center: Vector2 = GridPathfinder.anchor_to_nearest(camera.get_base_global_position(),
+			global_position + Vector2(0.0, PlayerParams.cam_y_bias), terrain.map_size)
+	var dir := center + mouse_offset / camera.zoom - global_position
 	return fallback if dir.length_squared() < 0.0001 else dir.normalized()
 
 signal hp_changed(current: int, max: int)

@@ -2,9 +2,9 @@ class_name Level0
 extends Node2D
 
 # 地形由 Terrain 统一维护；场景负责装载、时间轴和表现提交。
-@onready var wall_layer: TileMapLayer = $WorldViewport/TerrainLayers/WallLayer
-@onready var water_layer: TileMapLayer = $WorldViewport/TerrainLayers/WaterLayer
-@onready var water_surface_layer: Node2D = $WorldViewport/TerrainLayers/WaterSurfaceLayer
+@onready var wall_layer: TileMapLayer = $WorldViewport/WallLayer
+@onready var water_layer: TileMapLayer = $WorldViewport/WaterLayer
+@onready var water_surface_layer: Node2D = $WorldViewport/WaterSurfaceLayer
 var map_info: Dictionary
 var terrain: Terrain
 var spawn_cell: Vector2i
@@ -12,7 +12,6 @@ var enabled_weapons: Array[int]
 var _weapon_floors: Array[Vector2i]
 var _wall_rows: Dictionary = {}
 var _view_margin := Vector2.ZERO
-@onready var _terrain_layers: Node2D = $WorldViewport/TerrainLayers
 
 # PvP 模式:只建世界(地图/瓦片/碰撞/水),玩家/敌人/相机/后处理由 PvP 场景负责。
 var pvp_mode := false
@@ -116,9 +115,8 @@ func _ready() -> void:
 
 	var grid: Array[Array] = map_info["grid"]
 	var viewport: SubViewport = $WorldViewport
-	var camera = $WorldViewport/Camera2D
-	_view_margin = Vector2(viewport.size) / (2.0 * camera.zoom)
-	camera.view_moved.connect(_align_terrain_layers)
+	_view_margin = Vector2(viewport.size) / (2.0 * $WorldViewport/Camera2D.zoom) \
+			+ Vector2.ONE * PlayerParams.cam_seam_margin
 
 	var water_rows := {}
 	for desc in TerrainAtlas.descriptor_rows(terrain.descriptors()):
@@ -185,13 +183,6 @@ func _ready() -> void:
 func _exit_tree() -> void:
 	if time_field != null:
 		Sfx.pitch_mult = 1.0
-
-
-func _align_terrain_layers(center: Vector2) -> void:
-	# 相机平滑或震动越界时，整层移动一个地图周期，让相机仍落在铺图的主区间。
-	var origin := (center / terrain.map_size).floor() * terrain.map_size
-	if _terrain_layers.position != origin:
-		_terrain_layers.position = origin
 
 
 func _paint_maze() -> void:

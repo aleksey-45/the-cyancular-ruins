@@ -1159,8 +1159,6 @@ func _camera(tree: SceneTree) -> void:
 	target.global_position = Vector2(_terrain.map_size.x - 4.0, 200)
 	cam._base_pos = Vector2(4.0, 200 + PlayerParams.cam_y_bias)
 	cam._process(1.0 / 60.0)
-	var aligned := GridPathfinder.anchor_to_nearest(cam.get_base_global_position(),
-			target.global_position, _terrain.map_size)
-	expect(aligned.distance_to(target.global_position + bias) < 32.0,
-			"the camera base follows the nearest copy of the target across the seam")
+	expect(cam.get_base_global_position().distance_to(target.global_position + bias) < 32.0,
+			"the camera moves into the target's copy across the seam")
 	cleanup()
