@@ -382,7 +382,7 @@ func _grenade(tree: SceneTree) -> void:
 	shooter.weapons.set_initial_inventory([type_id, WeaponRegistry.Type.PISTOL])
 	var bullet := sim.spawn_projectile(1, type_id, source, Vector2(500, 512), Vector2.RIGHT * 6000.0)
 	var blasts: Array = []
-	sim.detonated.connect(func(id: int, _at: Vector2, _radius: float) -> void: blasts.append(id))
+	sim.detonated.connect(func(id: int, _at: Vector2, _type_id: int) -> void: blasts.append(id))
 	var hp := victim.sim_hp
 	victim.rewinding = true
 	bullet.impact_collider_id = victim.get_instance_id()
@@ -498,8 +498,40 @@ func _melee(tree: SceneTree) -> void:
 			"melee hits once across a seam and respects walls and teams")
 	expect(target.motion_knock_velocity.is_equal_approx(Vector2(120.0, 0.0)),
 			"melee pushes the target away from the attacker across the seam")
-	WeaponRegistry._definitions.erase(TYPE_ID)
 	cleanup()
+	_combat_phase(tree, TYPE_ID)
+	WeaponRegistry._definitions.erase(TYPE_ID)
+
+func _combat_phase(tree: SceneTree, melee_type: int) -> void:
+	for type_id: int in [WeaponRegistry.Type.LASER, WeaponRegistry.Type.PISTOL, melee_type]:
+		var parent := world_with_walls(tree, 16, 16, {})
+		var shooter := player(parent, 1)
+		var target := player(parent, 2)
+		_place(shooter, Vector2(200, 544), 1)
+		_place(target, Vector2(335, 544), 2)
+		target.motion_knock_velocity = Vector2(600, 0)
+		shooter.weapons.set_initial_inventory([type_id])
+		var authority := AuthorityWorld.new()
+		authority.terrain = _terrain
+		authority.players = {1: shooter, 2: target}
+		authority.rules.phase = NetEvent.RoundState.PLAYING
+		authority.combat_rules = CombatSimulator.new(_terrain, parent, true)
+		var hit_positions: Array[Vector2] = []
+		var shots: Array[Dictionary] = []
+		authority.event.connect(func(kind: int, data: Variant, _exclude: int) -> void:
+			if kind == NetEvent.Kind.FIRE:
+				shots.append(data))
+		authority.combat_rules.player_hit.connect(func(_source: int, victim: Player, _damage: int,
+				_knock_changed: bool, _force: float) -> void:
+			expect(shots.size() == 1 and shots[0]["tick"] == 1 and shots[0]["type_id"] == type_id,
+					"attack %d broadcasts its action before resolving a hit" % type_id)
+			hit_positions.append(victim.position))
+		authority.accept_input(1, [[], [[1, 1, 1, ActorInput.BIT_ATTACK, 0, 0, Vector2.RIGHT]]])
+		authority._physics_process(ActorStep.DT)
+		expect(is_equal_approx(target.position.x, 345.0) and hit_positions == [target.position],
+				"attack type %d hits after the later role completes its movement" % type_id)
+		authority.free()
+		cleanup()
 
 func _blast(tree: SceneTree) -> void:
 	for pvp in [false, true]:
@@ -517,9 +549,8 @@ func _blast(tree: SceneTree) -> void:
 		var hp := near.sim_hp
 		near.sim_iframes = 1.0
 		var center := Vector2(936, 544)
-		var spec := {"radius": 200.0, "damage": 30, "impact": 100.0}
 		sim.tick = 100
-		sim.submit_blast(1, center, spec, near)
+		sim.submit_blast(ShotRules.shot_id(near.role, 1), center, WeaponRegistry.Type.GRENADE, near)
 		if pvp:
 			for tick in [100, 101, 102]:
 				sim.tick = tick

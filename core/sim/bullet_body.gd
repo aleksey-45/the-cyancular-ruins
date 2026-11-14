@@ -14,6 +14,7 @@ static var _shapes := {}
 
 var entity_id: int
 var type_id: int
+var launch: Dictionary
 var definition: Dictionary
 var hit_damage: int
 var hit_impact: float

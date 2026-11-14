@@ -92,6 +92,9 @@ static func _load_definitions() -> Dictionary:
 static func projectile_definition(type_id: int) -> Dictionary:
 	return BIRD_BOMB if type_id == CombatProfiles.BIRD_BOMB_TYPE else _definitions[type_id]
 
+static func blast_definition(type_id: int) -> Dictionary:
+	return projectile_definition(type_id)["projectile"]["blast"]
+
 static func definition(type_id: int) -> Dictionary:
 	return _definitions[type_id]
 

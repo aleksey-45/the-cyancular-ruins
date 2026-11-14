@@ -480,11 +480,14 @@ func force_down() -> bool:
 	return true
 
 func simulate_hit(source: Vector2, damage: int, force: float) -> bool:
-	cancel_charge()
-	sim_hp -= damage
-	sim_iframes = PlayerParams.iframes_time
 	if force != 0.0:
 		apply_impulse(source, force)
+	return apply_hit_health(sim_hp - damage)
+
+func apply_hit_health(hp: int) -> bool:
+	cancel_charge()
+	sim_hp = hp
+	sim_iframes = PlayerParams.iframes_time
 	return sim_hp <= 0 and force_down()
 
 func apply_authoritative_state(hp: int, wp: int, down: bool) -> void:

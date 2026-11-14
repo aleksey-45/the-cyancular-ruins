@@ -150,8 +150,8 @@ func _ready() -> void:
 	player.ground_actions = _handle_ground_actions
 	player.projectile_count = combat_rules.count_projectiles.bind(player)
 	combat_rules.projectile_spawned.connect(_present_projectile)
-	combat_rules.detonated.connect(func(_id: int, pos: Vector2, radius: float) -> void:
-		ProjectileVisual.explosion(viewport, pos, player, radius, terrain))
+	combat_rules.detonated.connect(func(_id: int, pos: Vector2, type_id: int) -> void:
+		ProjectileVisual.explosion(viewport, pos, player, WeaponRegistry.blast_definition(type_id)["radius"], terrain))
 	combat_rules.beam_fired.connect(func(_id: int, _shot: Dictionary, points: PackedVector2Array) -> void:
 		preload("res://core/present/laser_visual.gd").play(viewport, points, player.global_position, terrain.map_size))
 	combat_rules.tile_hit.connect(_present_tile_hit)

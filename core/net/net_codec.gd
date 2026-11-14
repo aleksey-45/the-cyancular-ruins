@@ -7,7 +7,7 @@ const STATE := 1
 const EVENT := 2
 const KEEP := 64
 const WIRE_MAGIC := 199
-const PROTOCOL_VERSION := 19
+const PROTOCOL_VERSION := 23
 const MODES := [PvpSession.MODE_PVP, PvpSession.MODE_TEAM, PvpSession.MODE_ROYALE]
 const Field := NetEvent.Field
 # 持续输入的完整槽位顺序。INPUT 单独写序号和包级 epoch，增量从目标 tick 开始。
@@ -15,6 +15,14 @@ const INPUT_FRAME_TYPES := [Field.U32, Field.U32, Field.I32, Field.F64, Field.U1
 const OWN_FIELDS := [["epoch", Field.U32], ["action_ack", Field.U32], ["timing_seq", Field.U32], ["lead", Field.I32], ["rewind", Field.BOOL]]
 const PlayerSlots := preload("res://core/sim/player_state_schema.gd")
 const PROJECTILE_FIELDS := [["type_id", Field.U8], ["pos", Field.VEC], ["vel", Field.VEC]]
+const COMBAT_EVENT_FIELDS := {
+	NetEvent.Kind.FIRE: [["role", Field.U16], ["tick", Field.U32], ["serial", Field.U32], ["type_id", Field.U8],
+		["pos", Field.VEC], ["dir", Field.VEC], ["charge", Field.F64], ["speed_mult", Field.F64]],
+	NetEvent.Kind.HIT: [["shooter", Field.U16], ["victim", Field.U16], ["damage", Field.U32],
+		["tick", Field.U32], ["epoch", Field.U32], ["hp", Field.I32], ["impulse_mode", Field.I8],
+		["pos", Field.VEC], ["facing", Field.I8], ["vel", Field.VEC], ["knock", Field.VEC]],
+	NetEvent.Kind.EXPLOSION: [["id", Field.U64], ["tick", Field.U32], ["type_id", Field.U8], ["pos", Field.VEC]],
+}
 const TIME_FIELDS := [["b", Field.F64], ["w", Field.F64], ["l", Field.F64], ["k", Field.BOOL]]
 const OPTIONS := ["map", "max_players", "match_time", "round_full_heal", "disabled_weapons", "beta", "time"]
 const STATS := ["kills", "deaths", "assists", "dealt", "taken"]
@@ -348,31 +356,12 @@ func encode_event(kind: int, data: Variant) -> PackedByteArray:
 				s.put_32(data["cells"][sub])
 		NetEvent.Kind.ROUND:
 			_put_round(s, data)
-		NetEvent.Kind.HIT:
-			s.put_u16(data["shooter"])
-			s.put_u16(data["victim"])
-			s.put_u32(data["damage"])
+		NetEvent.Kind.HIT, NetEvent.Kind.FIRE, NetEvent.Kind.EXPLOSION:
+			for field in COMBAT_EVENT_FIELDS[kind]:
+				_write_value(s, field[1], data[field[0]])
 		NetEvent.Kind.KILL:
 			s.put_u16(data[0])
 			s.put_u16(data[1])
-		NetEvent.Kind.BEAM:
-			s.put_u64(data["id"])
-			s.put_u32(data["tick"])
-			s.put_u8(data["type_id"])
-			_put_vec(s, data["pos"])
-			_put_vec(s, data["dir"])
-		NetEvent.Kind.FIRE:
-			s.put_u16(data["role"])
-			s.put_u8(data["type_id"])
-		NetEvent.Kind.BULLET_SPAWN:
-			s.put_u64(data["id"])
-			s.put_u32(data["tick"])
-			_put_projectile(s, data)
-		NetEvent.Kind.EXPLOSION:
-			s.put_u64(data["id"])
-			s.put_float(data["radius"])
-			_put_vec(s, data["pos"])
-			s.put_u32(data["tick"])
 		NetEvent.Kind.BULLET_END:
 			s.put_u32(data["tick"])
 			s.put_u16(data["ids"].size())
@@ -421,21 +410,12 @@ func _read_event(kind: int, s: Reader) -> Variant:
 				cells[sub] = s.read(Field.I32)
 			return {"tick": tick, "revision": revision, "cells": cells}
 		NetEvent.Kind.ROUND: return _get_round(s)
-		NetEvent.Kind.HIT:
-			return {"shooter": s.read(Field.U16), "victim": s.read(Field.U16), "damage": s.read(Field.U32)}
+		NetEvent.Kind.HIT, NetEvent.Kind.FIRE, NetEvent.Kind.EXPLOSION:
+			var data := {"kind": "fire"} if kind == NetEvent.Kind.FIRE else {}
+			for field in COMBAT_EVENT_FIELDS[kind]:
+				data[field[0]] = s.read(field[1])
+			return data
 		NetEvent.Kind.KILL: return [s.read(Field.U16), s.read(Field.U16)]
-		NetEvent.Kind.BEAM:
-			var id: int = s.read(Field.U64)
-			var tick: int = s.read(Field.U32)
-			var type_id: int = s.read(Field.U8)
-			return {"id": id, "tick": tick, "type_id": type_id, "pos": s.read(Field.VEC), "dir": s.read(Field.VEC)}
-		NetEvent.Kind.FIRE: return {"role": s.read(Field.U16), "type_id": s.read(Field.U8)}
-		NetEvent.Kind.BULLET_SPAWN:
-			var id: int = s.read(Field.U64)
-			var tick: int = s.read(Field.U32)
-			return _get_projectile(s).merged({"id": id, "tick": tick})
-		NetEvent.Kind.EXPLOSION:
-			return {"id": s.read(Field.U64), "radius": s.read(Field.F32), "pos": s.read(Field.VEC), "tick": s.read(Field.U32)}
 		NetEvent.Kind.BULLET_END:
 			var tick: int = s.read(Field.U32)
 			var ids: Array[int] = []
@@ -529,14 +509,6 @@ func _read_pickups(s: Reader, entities: Dictionary) -> void:
 		out[PickupState.TYPE_ID] = s.read(Field.U8) if mask & 4 else _state_value(data, PickupState.TYPE_ID)
 		out[PickupState.CARRIED] = s.read(Field.I32) if mask & 4 else _state_value(data, PickupState.CARRIED)
 		entities[id] = out
-
-static func _put_projectile(s: StreamPeerBuffer, data: Dictionary) -> void:
-	s.put_u8(data["type_id"])
-	_put_vec(s, data["pos"])
-	_put_vec(s, data["vel"])
-
-static func _get_projectile(s: Reader) -> Dictionary:
-	return {"type_id": s.read(Field.U8), "pos": s.read(Field.VEC), "vel": s.read(Field.VEC)}
 
 func _write_projectile_delta(s: StreamPeerBuffer, current: Dictionary, base: Dictionary) -> bool:
 	var removed := _put_removed(s, current, base, 8)
@@ -648,6 +620,7 @@ static func _write_value(s: StreamPeerBuffer, kind: int, value: Variant) -> void
 		Field.U16: s.put_u16(value)
 		Field.I32: s.put_32(value)
 		Field.U32: s.put_u32(value)
+		Field.U64: s.put_u64(value)
 		Field.F64: s.put_double(value)
 		Field.VEC: _put_vec(s, value)
 		Field.INVENTORY:

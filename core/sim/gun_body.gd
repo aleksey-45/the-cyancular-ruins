@@ -141,14 +141,14 @@ func _fire(actor: ActorBody, aim: Vector2) -> void:
 		start_reload(actor)
 		return
 	var cap: int = definition["live_cap"]
-	# 只有权威模拟绑定计数，本地预测由权威快照确认出手。
+	# 活弹上限使用当前模拟中的弹丸。
 	if cap > 0 and actor.projectile_count.is_valid() and actor.projectile_count.call(type_id) >= cap:
 		return
 	fire_cd_timer = definition["cooldown"]
 	var pose := muzzle_pose(actor, aim)
 	actor.shot_serial += 1
 	actor.step_actions.append({"kind": "fire", "type_id": type_id, "serial": actor.shot_serial,
-		"pos": pose.origin, "dir": pose.x, "charge": charge_ratio()})
+		"pos": pose.origin, "dir": pose.x, "charge": charge_ratio(), "speed_mult": actor.pvp_haste_mult})
 	if has_magazine():
 		carried -= 1
 		if carried == 0:

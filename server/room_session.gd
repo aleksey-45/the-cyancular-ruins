@@ -206,16 +206,17 @@ func start_match() -> void:
 	world.baseline_needed.connect(send_baselines)
 	send_baselines(true)
 
-func _send_state(frame: Dictionary, targets: Array) -> void:
+func _send_state(frame: Dictionary) -> void:
 	var perf_fanout := PerformanceStats.begin()
 	var batch: NetCodec.StateBatch
-	for role in seats:
-		if targets.has(role) and seats[role]["peer"] != 0 and seats[role]["ready"]:
+	for role in frame["players"]:
+		var seat: Dictionary = seats[role]
+		if seat["peer"] != 0 and seat["ready"]:
 			var perf_prepare := PerformanceStats.begin()
 			var state := world.state_for(role, frame, batch.time if batch != null else null)
 			if batch == null: batch = NetCodec.StateBatch.new(state)
 			PerformanceStats.end(PerformanceStats.STATE_PREPARE, perf_prepare)
-			NetBus.send_state(seats[role]["peer"], state, batch)
+			NetBus.send_state(seat["peer"], state, batch)
 	if batch != null: PerformanceStats.end(PerformanceStats.STATE_FANOUT, perf_fanout)
 
 func _broadcast(kind: int, data: Variant, except_role: int) -> void:

@@ -10,6 +10,8 @@ static func _actor(pos: Vector2) -> Array:
 	record[POS] = pos
 	record[VEL] = Vector2(60, 0)
 	record[EPOCH] = 1
+	record[PlayerStateSchema.REMOTE_REWIND] = false
+	record[PlayerStateSchema.REMOTE_KNOCK_VEL] = Vector2.ZERO
 	return record
 
 class LobbySession extends RoomSession:
@@ -71,7 +73,7 @@ func _input() -> void:
 		[[12, 7, 100, ActorInput.BIT_PICKUP, ActorInput.BIT_ATTACK, 0x1020304, Vector2.DOWN]],
 	]
 	var wire := codec.encode_input(wire_packet)
-	var protocol_bytes := ("c713000807060507000000030c0000000f64000000000000000000e0bf00010000803e000000bf"
+	var protocol_bytes := ("c717000807060507000000030c0000000f64000000000000000000e0bf00010000803e000000bf"
 			+ "0d0000000365000000000000000000f03f0e00000000010c000000640000002000080004030201000000000000803f")
 	expect(NetBus._wire(wire).hex_encode() == protocol_bytes, "INPUT header, frame deltas and actions match the wire format")
 	var stream := _body(wire, NetCodec.INPUT)
@@ -183,6 +185,10 @@ func _codec(tree: SceneTree) -> void:
 	bow.aiming = true
 	var servers := [NetCodec.new(), NetCodec.new()]
 	var clients := [NetCodec.new(), NetCodec.new()]
+	authority.rules.phase = NetEvent.RoundState.PLAYING
+	authority.players[2].sim_downed = true
+	authority.players[2].respawn_tick = 102
+	authority.players[2].motion_knock_velocity = Vector2(240, -120)
 	authority._snap_tick = 100
 	var captured := authority.world_state()
 	var frames := [authority.state_for(1, captured), authority.state_for(2, captured)]
@@ -197,6 +203,10 @@ func _codec(tree: SceneTree) -> void:
 				"a truncated full STATE does not commit its sequence, ACK or baseline")
 		var decoded := _state(clients[i], wire)
 		expect(decoded["world"]["players"][i + 1][POS] == authority.players[i + 1].position, "full STATE position")
+		expect(decoded["world"]["players"][2][PlayerStateSchema.REMOTE_RESPAWN_TICK] == 102,
+				"full STATE carries the scheduled respawn of a downed actor")
+		expect(decoded["world"]["players"][2][PlayerStateSchema.REMOTE_KNOCK_VEL] == Vector2(240, -120),
+				"full STATE carries remote knockback separately from velocity")
 		expect(decoded["own"]["state"] == frames[i]["own"]["state"], "full STATE preserves the equipped trigger and charge")
 		expect(decoded["time"] == frames[i]["time"], "full STATE preserves mutable time account fields")
 	var account: GrainAccount = authority.time_economy.accounts[1]
@@ -212,6 +222,7 @@ func _codec(tree: SceneTree) -> void:
 	gun.fire_cd_timer = 0.5
 	gun.hold_elapsed = 0.15
 	authority._snap_tick = 102
+	authority.players[2].motion_knock_velocity = Vector2.ZERO
 	var buffer: InputBuffer = authority.players[1].input_buffer
 	var record := [2, 1, 102, 0.0, 0, Vector2.RIGHT]
 	var action := [1, 1, 101, ActorInput.BIT_UP, 0, 0, Vector2.RIGHT]
@@ -228,6 +239,12 @@ func _codec(tree: SceneTree) -> void:
 		var independent := _state(NetCodec.new(), NetCodec.new().encode_state(frames[i], NetCodec.StateBatch.new(frames[i])))
 		expect(decoded == independent, "mixed baselines equal independent full STATE, peer %d" % (i + 1))
 		if i == 0:
+			var still_downed: Array = decoded["world"]["players"][2]
+			expect(still_downed[PlayerStateSchema.REMOTE_DOWNED]
+					and still_downed[PlayerStateSchema.REMOTE_RESPAWN_TICK] == 0,
+					"delta STATE clears an overdue respawn forecast for a still downed actor")
+			expect(still_downed[PlayerStateSchema.REMOTE_KNOCK_VEL] == Vector2.ZERO,
+					"delta STATE clears a remote knockback that has stopped")
 			expect(decoded["own"]["input"][InputBuffer.SEQ] == 2 and decoded["own"]["action_ack"] == 1
 					and not decoded["own"].has("ack"), "delta STATE carries separate frame and action confirmations")
 			expect(decoded["own"]["state"] == frames[i]["own"]["state"],
@@ -286,21 +303,24 @@ func _codec(tree: SceneTree) -> void:
 func _combat_events() -> void:
 	var codec := NetCodec.new()
 	var id := (2 << 48) | 256
-	var spawn := {"id": id, "tick": 100, "type_id": WeaponRegistry.Type.GRENADE,
-			"pos": Vector2(8, 16), "vel": Vector2(24, -32)}
+	var shot := {"kind": "fire", "role": 2, "serial": 1, "tick": 100, "type_id": WeaponRegistry.Type.GRENADE,
+			"pos": Vector2(8, 16), "dir": Vector2.LEFT, "charge": 1.0, "speed_mult": 3.0}
 	var events := {
-		NetEvent.Kind.BULLET_SPAWN: spawn,
+		NetEvent.Kind.FIRE: shot,
 		NetEvent.Kind.BULLET_END: {"tick": 100, "ids": [id]},
-		NetEvent.Kind.EXPLOSION: {"id": id, "radius": 350.0, "pos": Vector2(8, 16), "tick": 101},
-		NetEvent.Kind.BEAM: {"id": id + 256, "tick": 102, "type_id": WeaponRegistry.Type.LASER,
-			"pos": Vector2(8, 16), "dir": Vector2.RIGHT},
-		NetEvent.Kind.HIT: {"shooter": 2, "victim": 1, "damage": 5},
+		NetEvent.Kind.EXPLOSION: {"id": id, "type_id": shot["type_id"], "pos": Vector2(8, 16), "tick": 101},
+		NetEvent.Kind.HIT: {"shooter": 2, "victim": 1, "damage": 5, "tick": 102, "epoch": 3,
+				"hp": -2, "impulse_mode": -1, "pos": Vector2(16, 32),
+				"facing": -1, "vel": Vector2(400, -200), "knock": Vector2(12, -8)},
 	}
 	for kind: int in events:
 		var data: Dictionary = events[kind]
 		var stream := _body(codec.encode_event(kind, data), NetCodec.EVENT + kind)
 		expect(codec.decode_event(kind, stream) == data and stream.remaining() == 0,
 				"combat event %d round trips the authority facts" % kind)
+	expect(codec.encode_event(NetEvent.Kind.HIT, events[NetEvent.Kind.HIT]).hex_encode()
+			== "1102000100050000006600000003000000feffffffff0000804100000042ff0000c843000048c300004041000000c1",
+			"HIT keeps its wire layout")
 
 func _malformed_packets() -> void:
 	var codec := NetCodec.new()

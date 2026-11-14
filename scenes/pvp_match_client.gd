@@ -52,9 +52,9 @@ func _ready() -> void:
 	camera.target = _local.visuals
 	camera.process_priority = 100
 	_local.role = PvpSession.role
-	_rollback.bind(_local)
-	_local.shot_presented.connect(_present_local_shot)
 	_terrain = _level0.terrain
+	_rollback.bind(_local, _step_proxies, CombatSimulator.new(_terrain, _world, true))
+	_local.shot_presented.connect(_present_local_shot)
 	_playback.map_px = _terrain.map_size
 	_post = PostProcess.new()
 	_post.world_viewport = _world
@@ -154,26 +154,30 @@ func _apply_event(kind: int, data: Variant) -> void:
 				_terrain.apply_values(data["cells"])
 				_terrain.revision = data["revision"]
 		NetEvent.Kind.ROUND: _on_round_state(data)
-		NetEvent.Kind.BEAM: _on_beam_fired(data)
-		NetEvent.Kind.BULLET_SPAWN: _projectile_event(data["id"], data["tick"], data)
+		NetEvent.Kind.FIRE: _on_fire(data)
 		NetEvent.Kind.BULLET_END:
 			for id: int in data["ids"]:
+				_rollback.queue_projectile_end(id, data["tick"])
 				_projectile_event(id, data["tick"], null)
 		NetEvent.Kind.EXPLOSION:
+			var blast := CombatSimulator.blast_state(data["type_id"], data["pos"], data["tick"])
+			_rollback.queue_projectile_end(data["id"], data["tick"], blast)
 			_projectile_event(data["id"], data["tick"], null)
 			_present_explosion(data)
-		NetEvent.Kind.FIRE:
-			Sfx.play(WeaponRegistry.definition(data["type_id"])["shot_sound"])
-			if _replicas.has(data["role"]):
-				_replicas[data["role"]].play_fire(data["type_id"])
 		NetEvent.Kind.HIT:
 			if data["shooter"] == PvpSession.role:
 				CombatFeedback.hit_marker()
-			if data["damage"] > 0:
-				if data["victim"] == PvpSession.role:
+			var victim: int = data["victim"]
+			if victim == _local.role:
+				_rollback.queue_hit(data)
+				if data["damage"] > 0:
 					_local.play_hit_feedback(data["damage"])
-				elif _replicas.has(data["victim"]):
-					_replicas[data["victim"]].play_hit()
+			else:
+				if _proxies.has(victim) and (data["hp"] <= 0 or data["impulse_mode"] != 0) \
+						and data["epoch"] >= _latest_players[victim][PlayerStateSchema.REMOTE_EPOCH]:
+					_rollback.queue_hit(data)
+				if data["damage"] > 0 and _replicas.has(victim):
+					_replicas[victim].play_hit()
 		NetEvent.Kind.KILL:
 			if data[1] == PvpSession.role:
 				CombatFeedback.reset_streak()
@@ -203,11 +207,13 @@ func _apply_pending_authority() -> void:
 				chosen = frame
 	if not chosen.is_empty():
 		_install_world(chosen)
-		var previous := _local.corrected_position()
-		var correction := _rollback.reconcile(chosen, NetBus.ping_ms)
-		if correction != PredictionRollback.Correction.KEEP:
-			_discard_previews_after(ShotRules.shot_id(_local.role, _local.shot_serial) | 0xff)
-			_local.correct_visual(previous, correction == PredictionRollback.Correction.SNAP)
+	var previous := _local.corrected_position()
+	var correction := _rollback.reconcile(chosen, NetBus.ping_ms)
+	if correction != PredictionRollback.Correction.KEEP:
+		if correction == PredictionRollback.Correction.SNAP:
+			_step_proxies(_rollback.tick)
+		_discard_beams_after(ShotRules.shot_id(_local.role, _local.shot_serial) | 0xff)
+		_local.correct_visual(previous, correction == PredictionRollback.Correction.SNAP)
 	PerformanceStats.end(PerformanceStats.CLIENT_AUTHORITY, started)
 
 func _install_world(frame: Dictionary) -> void:
@@ -220,29 +226,72 @@ func _install_world(frame: Dictionary) -> void:
 	_make_label(PvpSession.role)
 
 func _sync_proxies() -> void:
+	var combat := _rollback.combat
 	for role: int in _proxies.keys():
 		if not _latest_players.has(role):
 			_proxies[role].free()
 			_proxies.erase(role)
+			if combat != null:
+				combat.players.erase(role)
 	for role: int in _latest_players:
-		if role == PvpSession.role:
+		if role == _local.role or _proxies.has(role):
 			continue
-		var proxy: ActorBody = _proxies.get(role)
-		if proxy == null:
-			proxy = preload("res://core/sim/actor_body.tscn").instantiate()
-			proxy.process_mode = Node.PROCESS_MODE_DISABLED
-			proxy.role = role
-			proxy.team = int(_teams.get(role, 0))
-			proxy.collision_layer = CollisionWorld.team_layer(proxy.team)
-			_world.add_child(proxy)
-			_proxies[role] = proxy
+		var proxy: ActorBody = preload("res://core/sim/actor_body.tscn").instantiate()
+		proxy.process_mode = Node.PROCESS_MODE_DISABLED
+		proxy.role = role
+		proxy.team = int(_teams.get(role, 0))
+		_world.add_child(proxy)
+		_proxies[role] = proxy
+		if combat != null:
+			combat.players[role] = proxy
+	_step_proxies(_rollback.tick, true)
+
+func _step_proxies(tick: int, after_move := false) -> void:
+	for role: int in _proxies:
+		var proxy := _proxies[role]
 		var state: Array = _latest_players[role]
-		proxy.global_position = state[PlayerStateSchema.REMOTE_POS]
-		proxy.facing_direction = state[PlayerStateSchema.REMOTE_FACING]
-		proxy.is_squat = state[PlayerStateSchema.REMOTE_SQUAT]
-		proxy.sim_downed = state[PlayerStateSchema.REMOTE_DOWNED]
-		proxy.rotation = -PI / 2.0 * proxy.facing_direction if proxy.sim_downed else 0.0
-		proxy.sync_collision_geometry()
+		var hit: Dictionary = _rollback.proxy_motion.get(role, {})
+		var at := _last_tick
+		var hp: int = state[PlayerStateSchema.REMOTE_HP]
+		var facing: int = state[PlayerStateSchema.REMOTE_FACING]
+		var downed: bool = state[PlayerStateSchema.REMOTE_DOWNED]
+		var squat: bool = state[PlayerStateSchema.REMOTE_SQUAT]
+		var respawn_tick: int = state[PlayerStateSchema.REMOTE_RESPAWN_TICK]
+		var pos: Vector2 = state[PlayerStateSchema.REMOTE_POS]
+		var vel: Vector2 = state[PlayerStateSchema.REMOTE_VEL]
+		var knock: Vector2 = state[PlayerStateSchema.REMOTE_KNOCK_VEL]
+		proxy.rewinding = state[PlayerStateSchema.REMOTE_REWIND]
+		if not hit.is_empty() and _last_tick < hit["tick"] and hit["tick"] < tick \
+				and (not proxy.rewinding or hit.has("epoch")):
+			at = hit["tick"]
+			hp = hit["hp"]
+			downed = hp <= 0
+			facing = hit["facing"]
+			pos = hit["pos"]
+			vel = hit["vel"]
+			knock = hit["knock"]
+			respawn_tick = 0
+			proxy.rewinding = false
+		var moved_tick := tick - int(not after_move and role > _local.role)
+		var elapsed := 0 if proxy.rewinding else clampi(moved_tick - at, 0, SnapshotBuffer.MAX_EXTRAPOLATION)
+		pos = SnapshotBuffer.project_position(pos, vel, knock, elapsed, _terrain.map_size)
+		proxy.velocity = vel
+		proxy.motion_knock_velocity = knock * pow(SnapshotBuffer.KNOCK_DECAY, elapsed)
+		proxy.sim_hp = hp
+		var shape_changed := proxy.sim_downed != downed or proxy.facing_direction != facing or proxy.is_squat != squat
+		if shape_changed:
+			proxy.facing_direction = facing
+			proxy.is_squat = squat
+			proxy.sim_downed = downed
+			proxy.rotation = -PI / 2.0 * proxy.facing_direction if proxy.sim_downed else 0.0
+		if shape_changed or pos != proxy.global_position:
+			proxy.global_position = pos
+			proxy.sync_collision_geometry()
+		# 服务端在复活 tick 的角色移动结束后才换位置。
+		var layer := 0 if respawn_tick > 0 and tick > respawn_tick else CollisionWorld.team_layer(proxy.team)
+		if proxy.collision_layer != layer:
+			proxy.collision_layer = layer
+			proxy._apply_layers()
 
 func _max_hp_for(role: int) -> int:
 	if _team_counts.is_empty():
@@ -334,7 +383,7 @@ func _remove_projectile(id: int) -> void:
 		_projectiles.erase(id)
 
 func _present_explosion(data: Dictionary) -> void:
-	ProjectileVisual.explosion(_world, data["pos"], _local, data["radius"], _terrain)
+	ProjectileVisual.explosion(_world, data["pos"], _local, WeaponRegistry.blast_definition(data["type_id"])["radius"], _terrain)
 
 func _sync_pickups(items: Dictionary) -> void:
 	var anchor := _local.global_position
@@ -377,9 +426,7 @@ func _process(delta: float) -> void:
 	_local.present_prediction(delta, render_tick - _rollback.tick)
 	for view: ProjectileVisual in _projectiles.values():
 		view.present(delta, _local.position)
-	for id: int in _preview_projectiles.keys():
-		if not _preview_projectiles[id].present_preview(delta, _local.position):
-			_remove_preview_projectile(id)
+	_present_projectile_previews(delta)
 	if _playback.frames.is_empty():
 		PerformanceStats.end(PerformanceStats.CLIENT_PRESENT, perf_started)
 		return
@@ -463,38 +510,60 @@ func _refresh_input_lock() -> void:
 			or _last_round_state["state"] != NetEvent.RoundState.PLAYING
 
 func _present_local_shot(shot: Dictionary) -> void:
+	var spec := WeaponRegistry.definition(shot["type_id"])
+	if spec["attack"] != WeaponRegistry.Attack.BEAM:
+		return
+	var id := ShotRules.shot_id(_local.role, shot["serial"])
+	if id <= _last_confirmed_beam:
+		return
+	var points: PackedVector2Array = ShotRules.trace_beam(_terrain, shot, spec)["points"]
+	if is_instance_valid(_preview_beams.get(id)):
+		LaserVisual.correct(_preview_beams[id], points, _local.position, _terrain.map_size)
+	else:
+		_preview_beams[id] = LaserVisual.play(_world, points, _local.position, _terrain.map_size)
+	if _preview_beams.size() > PredictionRollback.KEEP:
+		_preview_beams.erase(_preview_beams.keys()[0])
+
+func _present_projectile_previews(delta: float) -> void:
+	var live := _rollback.combat.projectiles
+	for id: int in _preview_projectiles.keys():
+		if not live.has(id) or _projectile_events.has(id) or _projectiles.has(id):
+			_remove_preview_projectile(id)
+	for bullet: BulletBody in live.values():
+		var id := bullet.entity_id
+		if bullet.shooter != _local or _projectiles.has(id) or _projectile_events.has(id):
+			continue
+		var view: ProjectileVisual = _preview_projectiles.get(id)
+		if view == null or view.type_id != bullet.type_id:
+			_remove_preview_projectile(id)
+			view = _new_projectile_view(bullet.type_id, bullet.position)
+			_preview_projectiles[id] = view
+		view.sample(_rollback.tick, bullet.position, bullet.velocity_vec, _local.rewinding)
+		view.present(delta, _local.position)
+
+func _on_fire(shot: Dictionary) -> void:
+	_rollback.queue_shot(shot)
+	var role: int = shot["role"]
 	var type_id: int = shot["type_id"]
 	var spec := WeaponRegistry.definition(type_id)
-	var id := ShotRules.shot_id(_local.role, shot["serial"])
-	if spec["attack"] == WeaponRegistry.Attack.BEAM:
-		if id <= _last_confirmed_beam:
-			return
-		var points: PackedVector2Array = ShotRules.trace_beam(_terrain, shot, spec)["points"]
-		if is_instance_valid(_preview_beams.get(id)):
-			LaserVisual.correct(_preview_beams[id], points, _local.position, _terrain.map_size)
-		else:
-			_preview_beams[id] = LaserVisual.play(_world, points, _local.position, _terrain.map_size)
-		if _preview_beams.size() > PredictionRollback.KEEP:
-			_preview_beams.erase(_preview_beams.keys()[0])
-		return
-	if spec["attack"] != WeaponRegistry.Attack.PROJECTILE:
-		return
-	var velocities := ShotRules.projectile_velocities(_local.role, shot, spec, _local.pvp_haste_mult)
-	for pellet in velocities.size():
-		var projectile_id := id | pellet
-		if _projectiles.has(projectile_id) or _projectile_events.has(projectile_id):
-			continue
-		_remove_preview_projectile(projectile_id)
-		var view := _new_projectile_view(type_id, shot["pos"])
-		view.start_preview(_rollback.tick, shot["pos"], velocities[pellet], spec)
-		_preview_projectiles[projectile_id] = view
+	if role != _local.role:
+		Sfx.play(spec["shot_sound"])
+		if _replicas.has(role):
+			_replicas[role].play_fire(type_id)
+	var id := ShotRules.shot_id(role, shot["serial"])
+	match spec["attack"]:
+		WeaponRegistry.Attack.BEAM:
+			_on_beam_fired(shot, id, spec)
+		WeaponRegistry.Attack.PROJECTILE:
+			var pos := GridPathfinder.wrap_to_range(shot["pos"], _terrain.map_size)
+			var velocities := ShotRules.projectile_velocities(role, shot, spec)
+			for pellet in velocities.size():
+				_projectile_event(id | pellet, shot["tick"], {"type_id": type_id, "pos": pos, "vel": velocities[pellet]})
 
-func _on_beam_fired(data: Dictionary) -> void:
+func _on_beam_fired(shot: Dictionary, id: int, spec: Dictionary) -> void:
 	# 复算光束前，让排在它前面的地形补丁生效。
 	_terrain.flush_collisions()
-	var type_id: int = data["type_id"]
-	var id: int = data["id"]
-	var points: PackedVector2Array = ShotRules.trace_beam(_terrain, data, WeaponRegistry.definition(type_id))["points"]
+	var points: PackedVector2Array = ShotRules.trace_beam(_terrain, shot, spec)["points"]
 	if id >> 48 == _local.role:
 		_last_confirmed_beam = id
 	if _preview_beams.has(id):
@@ -504,10 +573,7 @@ func _on_beam_fired(data: Dictionary) -> void:
 	else:
 		LaserVisual.play(_world, points, _local.position, _terrain.map_size)
 
-func _discard_previews_after(last_id: int) -> void:
-	for id: int in _preview_projectiles.keys():
-		if id > last_id:
-			_remove_preview_projectile(id)
+func _discard_beams_after(last_id: int) -> void:
 	for id: int in _preview_beams.keys():
 		if id > last_id:
 			var beam: Variant = _preview_beams[id]
@@ -519,8 +585,13 @@ func _discard_previews_after(last_id: int) -> void:
 func _clear_dynamics() -> void:
 	_pending_states.clear()
 	_pending_events.clear()
+	_rollback.proxy_motion.clear()
+	_rollback.combat.clear()
+	_rollback.combat.players = {_local.role: _local}
 	_projectile_events.clear()
-	_discard_previews_after(0)
+	_discard_beams_after(0)
+	for id: int in _preview_projectiles.keys():
+		_remove_preview_projectile(id)
 	_last_confirmed_beam = 0
 	for view: ProjectileVisual in _projectiles.values():
 		view.queue_free()

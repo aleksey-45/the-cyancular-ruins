@@ -4,7 +4,6 @@ extends Sprite2D
 const SHEET := preload("res://assets/textures/bullets.png")
 const TileHitFx := preload("res://scenes/effects/tile_hit_fx.gd")
 const EXPLOSION_SCENE := preload("res://scenes/effects/explosion.tscn")
-const PREVIEW_SECONDS := 0.5
 
 var type_id: int
 var _sample_tick := -1
@@ -15,8 +14,6 @@ var _velocity := Vector2.ZERO
 var _interval := 0.0
 var _age := 0.0
 var _rewinding := false
-var _preview_gravity := 0.0
-var _preview_range := 0.0
 var _bullet: BulletBody
 var _terrain: Terrain
 var _player: Player
@@ -46,9 +43,7 @@ func _process(_delta: float) -> void:
 	rotation = _bullet.rotation
 
 func sample(tick: int, pos: Vector2, vel: Vector2, rewinding: bool) -> void:
-	if _preview_range > 0.0:
-		_preview_range = 0.0
-	elif tick == _sample_tick and pos == _position and vel == _velocity and rewinding == _rewinding:
+	if tick == _sample_tick and pos == _position and vel == _velocity and rewinding == _rewinding:
 		return
 	if _sample_tick < 0:
 		_rendered = pos
@@ -61,21 +56,6 @@ func sample(tick: int, pos: Vector2, vel: Vector2, rewinding: bool) -> void:
 	_rewinding = rewinding
 	if vel != Vector2.ZERO:
 		rotation = vel.angle()
-
-func start_preview(tick: int, pos: Vector2, vel: Vector2, spec: Dictionary) -> void:
-	sample(tick, pos, vel, false)
-	_preview_gravity = spec["gravity"]
-	_preview_range = spec["range"]
-
-func present_preview(delta: float, anchor: Vector2) -> bool:
-	_age += delta
-	_velocity = ShotRules.flight_velocity(_terrain, _rendered, _velocity, _preview_gravity, delta)
-	var motion := _velocity * delta
-	_preview_range -= motion.length()
-	_rendered += motion
-	rotation = _velocity.angle()
-	_place_at_rendered(anchor)
-	return _preview_range > 0.0 and _age < PREVIEW_SECONDS
 
 func present(delta: float, anchor: Vector2) -> void:
 	_age += delta
