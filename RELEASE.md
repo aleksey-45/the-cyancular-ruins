@@ -33,4 +33,4 @@ python tools/build_macos.py
 
 ## GitHub Actions
 
-[Build game](.github/workflows/build.yml) 在推送到 `siri_v*` 分支或手动触发时构建 Windows 与 macOS，并运行 [行为检查](docs/tests.md)。产物名称为 `The-Cyancular-Ruins-Windows` 和 `The-Cyancular-Ruins-macOS`。
+[Build game](.github/workflows/build.yml) 在推送到 `siri` 分支或手动触发时构建 Windows 与 macOS，并运行 [行为检查](docs/tests.md)。产物名称为 `The-Cyancular-Ruins-Windows` 和 `The-Cyancular-Ruins-macOS`。

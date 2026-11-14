@@ -3,7 +3,7 @@ name: Build game
 on:
   push:
     branches:
-      - "siri_v*"
+      - "siri"
   workflow_dispatch:
 
 permissions:
