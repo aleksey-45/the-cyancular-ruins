@@ -28,8 +28,7 @@ const REPLAY_TICKS := 20
 const PHYSICS_MOTION := 21
 const PHYSICS_RAY := 22
 const PHYSICS_SHAPE := 23
-const PROXY_SYNC := 24
-const COUNT := 25
+const COUNT := 24
 const SAMPLES := 0
 const MEAN := 1
 const MAXIMUM := 2
@@ -52,7 +51,7 @@ const NAMES := [
 	"client_authority", "client_tick", "client_present", "replay",
 	"actor_step", "projectile_step", "combat_step", "history_save", "terrain_commit",
 	"callback_interval", "physics_ticks_per_frame", "replay_ticks_per_frame",
-	"physics_motion", "physics_ray", "physics_shape", "proxy_sync",
+	"physics_motion", "physics_ray", "physics_shape",
 ]
 
 static var _enabled := false

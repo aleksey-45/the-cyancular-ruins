@@ -44,15 +44,6 @@ const ACTOR_FIELDS := {
 }
 static var ACTOR_TYPES := _actor_types()
 
-enum {
-	REMOTE_POS, REMOTE_VEL, REMOTE_FACING, REMOTE_SQUAT, REMOTE_STATE, REMOTE_HP,
-	REMOTE_DOWNED, REMOTE_AIM, REMOTE_WEAPON_TYPE, REMOTE_EPOCH, REMOTE_HASTE, REMOTE_REWIND,
-	REMOTE_RESPAWN_TICK, REMOTE_KNOCK_VEL, REMOTE_SIZE,
-}
-const REMOTE_TYPES := [
-	Field.VEC, Field.VEC, Field.I8, Field.BOOL, Field.U8, Field.I32,
-	Field.BOOL, Field.VEC, Field.U8, Field.U32, Field.BOOL, Field.BOOL, Field.U32, Field.VEC,
-]
 enum Equipment { COOLDOWN, AIMING, BUFFERED, AIM_FACING, SHOT_FACING, RELOADING, RELOAD_LEFT, HOLD }
 const EQUIPMENT_TYPES := [Field.F64, Field.BOOL, Field.BOOL, Field.I8, Field.I8, Field.BOOL, Field.F64, Field.F64]
 
@@ -61,6 +52,14 @@ static func _actor_types() -> Array[int]:
 	for slot in SIZE:
 		types.append(ACTOR_FIELDS[slot][0])
 	return types
+
+static func equipped_type(actor: Array) -> int:
+	var inventory: PackedInt32Array = actor[INVENTORY]
+	var inst: int = actor[WEAPON_INST]
+	for at in range(0, inventory.size(), WeaponInventory.STRIDE):
+		if inventory[at + WeaponInventory.INST] == inst:
+			return inventory[at + WeaponInventory.TYPE]
+	return 0
 
 static func difference(snapshot: Dictionary, authority: Dictionary) -> String:
 	var values: Array = snapshot["actor"]

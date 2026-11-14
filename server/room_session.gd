@@ -208,12 +208,13 @@ func start_match() -> void:
 
 func _send_state(frame: Dictionary) -> void:
 	var perf_fanout := PerformanceStats.begin()
+	var accounts := world.time_economy.state_payload() if world.time_economy != null else {}
 	var batch: NetCodec.StateBatch
 	for role in frame["players"]:
 		var seat: Dictionary = seats[role]
 		if seat["peer"] != 0 and seat["ready"]:
 			var perf_prepare := PerformanceStats.begin()
-			var state := world.state_for(role, frame, batch.time if batch != null else null)
+			var state := world.state_for(role, frame, accounts)
 			if batch == null: batch = NetCodec.StateBatch.new(state)
 			PerformanceStats.end(PerformanceStats.STATE_PREPARE, perf_prepare)
 			NetBus.send_state(seat["peer"], state, batch)

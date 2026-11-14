@@ -223,22 +223,22 @@ func _inventory_rewind(tree: SceneTree) -> void:
 			"solo rewind keeps ownership and restores ammo only to the same instance")
 
 	var seen := []
-	var ground_action := func(_player: Player, record: Array) -> void: seen.append(record[ActorInput.PRESSED])
+	actor.ground_actions = func(_player: Player, record: Array) -> void: seen.append(record[ActorInput.PRESSED])
 	var buttons := ActorInput.BIT_PICKUP | ActorInput.BIT_DROP
 	var record := _attack(0, buttons)
 	actor._controls_locked = true
 	actor.equipped.fire_cd_timer = ActorStep.DT
 	actor.equipped.fire_buffered = true
-	expect(_fires(ActorStep.step(actor, record, ActorStep.DT, ground_action)).is_empty()
+	expect(_fires(ActorStep.step(actor, record)).is_empty()
 			and not actor.equipped.fire_buffered, "locked controls clear buffered attacks")
 	actor._controls_locked = false
 	actor.rewinding = true
-	ActorStep.step(actor, record, ActorStep.DT, ground_action)
+	ActorStep.step(actor, record)
 	actor.rewinding = false
 	actor.force_down()
-	ActorStep.step(actor, record, ActorStep.DT, ground_action)
+	ActorStep.step(actor, record)
 	actor.apply_authoritative_state(actor.sim_max_hp, actor.max_waterproof, false)
-	ActorStep.step(actor, record, ActorStep.DT, ground_action)
+	ActorStep.step(actor, record)
 	expect(seen == [buttons], "only an active actor can pick up or drop items")
 	cleanup()
 
@@ -704,7 +704,8 @@ func _beta_history(tree: SceneTree) -> void:
 		two.position.x = tick * 15.0
 		history.tick(ActorStep.DT)
 	expect(history.frames[1][1]["bullets"].keys() == [1 << 48], "Beta history records only the shooter's projectiles")
-	ActorStep.step(actor, _attack(0, ActorInput.BIT_DROP), ActorStep.DT, authority._handle_ground_actions)
+	actor.ground_actions = authority._handle_ground_actions
+	ActorStep.step(actor, _attack(0, ActorInput.BIT_DROP))
 	expect(actor.equipped == null and authority.pickups.size() == 1, "authority removes the dropped weapon from inventory")
 	var hp := other.sim_hp
 	one.impact_collider_id = other.get_instance_id()

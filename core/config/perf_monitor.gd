@@ -6,7 +6,7 @@ const MONITORS := {
 	"client_authority": PerformanceStats.CLIENT_AUTHORITY, "replay": PerformanceStats.REPLAY,
 	"actor_step": PerformanceStats.ACTOR_STEP, "terrain_commit": PerformanceStats.TERRAIN_COMMIT,
 	"physics_motion": PerformanceStats.PHYSICS_MOTION, "physics_ray": PerformanceStats.PHYSICS_RAY,
-	"physics_shape": PerformanceStats.PHYSICS_SHAPE, "proxy_sync": PerformanceStats.PROXY_SYNC,
+	"physics_shape": PerformanceStats.PHYSICS_SHAPE,
 	"callback_interval": PerformanceStats.CALLBACK_INTERVAL,
 }
 var _next_publish := 0

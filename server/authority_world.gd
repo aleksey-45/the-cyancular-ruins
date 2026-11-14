@@ -60,15 +60,11 @@ func setup(mode: String, map_path: String, roles: Array, teams: Dictionary, opti
 	for role in roles:
 		var player: Player = preload("res://scenes/player/player.tscn").instantiate()
 		player.role = role
-		player.team = teams.get(role, 0)
-		player.authority_world = self
+		player.set_team_collision(teams.get(role, 0))
+		player.process_mode = Node.PROCESS_MODE_DISABLED
+		player.ground_actions = _handle_ground_actions
 		player.projectile_count = combat_rules.count_projectiles.bind(player)
 		add_child(player)
-		player.enable_manual_simulation()
-		# 角色就是自己的碰撞体：本体站在队伍层上，敌人弹丸、光束与对手阻挡都直接命中它。
-		player.collision_layer = CollisionWorld.team_layer(player.team)
-		player.collision_mask = CollisionWorld.LAYER_TERRAIN | CollisionWorld.team_layer(3 - int(teams.get(role, 0)))
-		player._apply_layers()
 		player.weapons.enabled_types = _enabled_weapons
 		player.position = terrain.cell_center(rules.spawns[role])
 		player.sync_collision_geometry()
@@ -104,28 +100,18 @@ func _physics_process(_delta: float) -> void:
 	var playing := rules.phase == NetEvent.RoundState.PLAYING
 	for pickup: WeaponPickup in pickups.values():
 		pickup.simulate_tick(delta)
-	var roles := players.keys()
-	roles.sort()
-	var actions_by_role: Dictionary[int, Array] = {}
-	for role in roles:
-		var player: Player = players[role]
+	for player: Player in players.values():
 		player._controls_locked = not playing
-		var record := player.input_buffer.take(_snap_tick)
-		if time_economy != null:
-			time_economy.step_haste(player, record, delta)
-		var actions := ActorStep.step(player, record, delta, _handle_ground_actions)
-		if not actions.is_empty():
-			actions_by_role[role] = actions
+	var stepped := ActorStep.step_players(players, _snap_tick, time_economy)
 	if time_economy != null:
 		beta.tick(delta)
 		time_economy.tick(delta)
 
-	for role: int in actions_by_role:
-		var actions := actions_by_role[role]
-		for action: Dictionary in actions:
+	for player: Player in stepped:
+		for action: Dictionary in player.step_actions:
 			if action["kind"] == "fire":
-				broadcast(NetEvent.Kind.FIRE, action.merged({"role": role, "tick": _snap_tick}))
-		combat_rules.submit(players[role], actions)
+				broadcast(NetEvent.Kind.FIRE, action.merged({"role": player.role, "tick": _snap_tick}))
+		combat_rules.submit(player, player.step_actions)
 	combat_rules.step_projectiles(delta)
 	if not _ended_projectiles.is_empty():
 		broadcast(NetEvent.Kind.BULLET_END, {"tick": _snap_tick, "ids": _ended_projectiles})
@@ -255,6 +241,8 @@ func remove_role(role: int) -> void:
 	_stats[role]["left"] = true
 	players[role].queue_free()
 	players.erase(role)
+	if time_economy != null:
+		time_economy.accounts.erase(role)
 	if rules.role_left(players.keys()):
 		_apply_round_transition()
 
@@ -286,15 +274,13 @@ func broadcast_round() -> void:
 func world_state() -> Dictionary:
 	var perf_started := PerformanceStats.begin()
 	var actors := {}
-	for role in players:
+	for role: int in players:
 		var player: Player = players[role]
-		var respawn_tick := player.respawn_tick if player.sim_downed \
-				and rules.phase == NetEvent.RoundState.PLAYING and player.respawn_tick > _snap_tick else 0
-		# 按 PlayerStateSchema 的远端槽位顺序写入。
-		actors[role] = [player.global_position, player.velocity, player.facing_direction, player.is_squat,
-				player.state, player.sim_hp, player.sim_downed, player.step_input.aim,
-				player.weapons.current_type_id(), player.input_buffer.epoch, player.pvp_haste_mult > 1.0,
-				player.rewinding, respawn_tick, player.motion_knock_velocity]
+		var snapshot := player.capture_network_state()
+		snapshot["state"]["actor"][PlayerStateSchema.CONTROLS_LOCKED] = rules.phase != NetEvent.RoundState.PLAYING
+		if not player.sim_downed or rules.phase != NetEvent.RoundState.PLAYING or player.respawn_tick <= _snap_tick:
+			snapshot["respawn_tick"] = 0
+		actors[role] = snapshot
 	var drops := {}
 	for pickup: WeaponPickup in pickups.values():
 		drops[pickup.inst] = [pickup.canonical_pos, pickup.velocity, pickup.type_id, pickup.carried]
@@ -305,16 +291,10 @@ func world_state() -> Dictionary:
 	PerformanceStats.end(PerformanceStats.WORLD_CAPTURE, perf_started)
 	return frame
 
-func state_for(role: int, frame: Dictionary, accounts: Variant = null) -> Dictionary:
-	var player: Player = players[role]
-	var state := player.capture_state()
-	state["actor"][PlayerStateSchema.CONTROLS_LOCKED] = rules.phase != NetEvent.RoundState.PLAYING
+func state_for(role: int, frame: Dictionary, accounts: Dictionary) -> Dictionary:
+	var input: InputBuffer = players[role].input_buffer
 	return {"tick": _snap_tick, "map_revision": map_revision, "world": frame,
-			"own": {"epoch": player.input_buffer.epoch,
-			"action_ack": player.input_buffer.action_ack, "timing_seq": player.input_buffer.timing_seq,
-			"lead": player.input_buffer.lead, "input": player.input_buffer._last,
-			"state": state, "rewind": player.rewinding},
-			"time": accounts if accounts != null else (time_economy.state_payload() if time_economy != null else {})}
+			"own": {"timing_seq": input.timing_seq, "lead": input.lead}, "time": accounts}
 
 func _on_terrain_changed() -> void:
 	var blocks := terrain.take_rewards()

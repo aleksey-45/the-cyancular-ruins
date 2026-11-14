@@ -7,12 +7,14 @@ const STATE := 1
 const EVENT := 2
 const KEEP := 64
 const WIRE_MAGIC := 199
-const PROTOCOL_VERSION := 23
+const PROTOCOL_VERSION := 24
 const MODES := [PvpSession.MODE_PVP, PvpSession.MODE_TEAM, PvpSession.MODE_ROYALE]
 const Field := NetEvent.Field
 # 持续输入的完整槽位顺序。INPUT 单独写序号和包级 epoch，增量从目标 tick 开始。
 const INPUT_FRAME_TYPES := [Field.U32, Field.U32, Field.I32, Field.F64, Field.U16, Field.VEC]
-const OWN_FIELDS := [["epoch", Field.U32], ["action_ack", Field.U32], ["timing_seq", Field.U32], ["lead", Field.I32], ["rewind", Field.BOOL]]
+const OWN_FIELDS := [["timing_seq", Field.U32], ["lead", Field.I32]]
+const PLAYER_FIELDS := [["epoch", Field.U32], ["action_ack", Field.U32], ["rewind", Field.BOOL],
+	["respawn_tick", Field.U32], ["aim", Field.VEC]]
 const PlayerSlots := preload("res://core/sim/player_state_schema.gd")
 const PROJECTILE_FIELDS := [["type_id", Field.U8], ["pos", Field.VEC], ["vel", Field.VEC]]
 const COMBAT_EVENT_FIELDS := {
@@ -202,7 +204,7 @@ func _write_state(s: StreamPeerBuffer, frame: Dictionary, batch: StateBatch) -> 
 	if blocks & 1: s.put_data(parts["players"])
 	if blocks & 2: s.put_data(parts["pickups"])
 	var own_position := s.get_position()
-	if _put_own(s, frame["own"], base.get("own", {})):
+	if _put_delta(s, frame["own"], base.get("own", {}), OWN_FIELDS) != 0:
 		blocks |= 4
 	else:
 		s.seek(own_position)
@@ -265,7 +267,7 @@ func decode_state(s: Reader, baseline: bool = false) -> Dictionary:
 		world["pickups"] = world["pickups"].duplicate()
 		_read_pickups(s, world["pickups"])
 	frame["world"] = world
-	frame["own"] = _get_own(s, base.get("own", {})) if blocks & 4 else base["own"]
+	frame["own"] = _get_delta(s, base.get("own", {}), OWN_FIELDS) if blocks & 4 else base["own"]
 	frame["time"] = _get_time(s, base.get("time", {})) if blocks & 8 else base["time"]
 	if blocks & 16:
 		world["projectiles"] = world["projectiles"].duplicate()
@@ -283,7 +285,7 @@ func decode_state(s: Reader, baseline: bool = false) -> Dictionary:
 func _remember(number: int, frame: Dictionary, batch: StateBatch) -> void:
 	_store_history(number, {"tick": batch.tick, "map_revision": batch.map_revision,
 			"world": batch.world, "time": batch.time, "_snapshot": batch.snapshot,
-			"own": frame["own"].duplicate(true)})
+			"own": frame["own"]})
 
 # 只接纳已拥有的快照；历史内的嵌套记录此后不能原地修改。
 func _store_history(number: int, frame: Dictionary) -> void:
@@ -440,7 +442,7 @@ func _write_players(s: StreamPeerBuffer, current: Dictionary, base: Dictionary) 
 			continue
 		present |= 1 << i
 		var position := s.get_position()
-		if _put_state(s, current[role], base.get(role, []), PlayerSlots.REMOTE_TYPES) != 0:
+		if _put_player(s, current[role], base.get(role, {})):
 			changed |= 1 << i
 		else:
 			s.seek(position)
@@ -463,7 +465,7 @@ func _read_players(s: Reader, players: Dictionary, frame_roles: Array) -> void:
 		if not present & bit:
 			players.erase(role)
 		elif changed & bit:
-			players[role] = _get_state(s, players.get(role, []), PlayerSlots.REMOTE_TYPES)
+			players[role] = _get_player(s, players.get(role, {}))
 		elif not players.has(role):
 			s.valid = false
 			return
@@ -525,10 +527,10 @@ func _read_projectile_delta(s: Reader, current: Dictionary) -> void:
 		var id: int = s.read(Field.U64)
 		current[id] = _get_delta(s, current.get(id, {}), PROJECTILE_FIELDS)
 
-static func _put_own(s: StreamPeerBuffer, own: Dictionary, base: Dictionary) -> bool:
-	var changed := _put_delta(s, own, base, OWN_FIELDS) != 0
-	var input := _put_state(s, own["input"], base.get("input", []), INPUT_FRAME_TYPES)
-	var state: Dictionary = own["state"]
+static func _put_player(s: StreamPeerBuffer, player: Dictionary, base: Dictionary) -> bool:
+	var changed := _put_delta(s, player, base, PLAYER_FIELDS) != 0
+	var input := _put_state(s, player["input"], base.get("input", []), INPUT_FRAME_TYPES)
+	var state: Dictionary = player["state"]
 	var old: Dictionary = base.get("state", {})
 	var actor: Array = state["actor"]
 	var old_actor: Array = old.get("actor", [])
@@ -540,16 +542,16 @@ static func _put_own(s: StreamPeerBuffer, own: Dictionary, base: Dictionary) -> 
 		equipment_mask = _put_state(s, equipment, _equipment_base(actor, old), PlayerSlots.EQUIPMENT_TYPES)
 	return changed or input != 0 or mask != 0 or equipment_mask != 0
 
-static func _get_own(s: Reader, base: Dictionary) -> Dictionary:
-	var own := _get_delta(s, base, OWN_FIELDS)
-	own["input"] = _get_state(s, base.get("input", []), INPUT_FRAME_TYPES)
+static func _get_player(s: Reader, base: Dictionary) -> Dictionary:
+	var player := _get_delta(s, base, PLAYER_FIELDS)
+	player["input"] = _get_state(s, base.get("input", []), INPUT_FRAME_TYPES)
 	var old: Dictionary = base.get("state", {})
 	var actor := _get_state(s, old.get("actor", []), PlayerSlots.ACTOR_TYPES)
 	var equipment: Array = []
 	if s.read(Field.BOOL):
 		equipment = _get_state(s, _equipment_base(actor, old), PlayerSlots.EQUIPMENT_TYPES)
-	own["state"] = {"actor": actor, "equipment": equipment}
-	return own
+	player["state"] = {"actor": actor, "equipment": equipment}
+	return player
 
 static func _equipment_base(actor: Array, previous: Dictionary) -> Array:
 	var slot := PlayerSlots.WEAPON_INST

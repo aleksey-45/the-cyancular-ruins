@@ -43,24 +43,22 @@ func _ready() -> void:
 	add_child(squash)
 
 
-func _apply_visual(data: Array) -> void:
-	_vel = data[PlayerStateSchema.REMOTE_VEL]
-	_facing = data[PlayerStateSchema.REMOTE_FACING]
-	var aim: Vector2 = data[PlayerStateSchema.REMOTE_AIM]
+func _apply_visual(aim: Vector2, actor: Array) -> void:
+	_facing = actor[PlayerStateSchema.FACING]
 	_aim = aim if aim != Vector2.ZERO else Vector2(float(_facing), 0.0)
 	if absf(_aim.x) > 0.1:
 		_aim_facing = 1 if _aim.x > 0.0 else -1
 	animator.flip_h = _facing < 0
-	var type_id: int = data[PlayerStateSchema.REMOTE_WEAPON_TYPE]
+	var type_id := PlayerStateSchema.equipped_type(actor)
 	if type_id != _weapon_type_int:
 		_swap_weapon(type_id)
-	_downed = data[PlayerStateSchema.REMOTE_DOWNED]
+	_downed = actor[PlayerStateSchema.DOWNED]
 	if _downed:
 		animator.stop()
 		rotation = -PI / 2.0 * float(_facing)
 	else:
 		rotation = 0.0
-		var pose: int = data[PlayerStateSchema.REMOTE_STATE]
+		var pose: int = actor[PlayerStateSchema.STATE]
 		_pose = pose
 		animator.play(Player.POSE_ANIM[pose])
 
@@ -97,10 +95,12 @@ func _in_water() -> bool:
 	var gp := global_position
 	return terrain.water(gp + Vector2(0.0, WATER_FEET_OFFSET))
 
-func render_snapshot(data: Array, anchor: Vector2) -> void:
-	_apply_visual(data)
+func render_snapshot(data: Dictionary, anchor: Vector2) -> void:
+	var actor: Array = data["actor"]
+	_vel = data["vel"]
+	_apply_visual(data["aim"], actor)
 	_drive_weapon_visual()
-	global_position = GridPathfinder.anchor_to_nearest(data[PlayerStateSchema.REMOTE_POS], anchor, terrain.map_size)
+	global_position = GridPathfinder.anchor_to_nearest(data["pos"], anchor, terrain.map_size)
 
 func _process(delta: float) -> void:
 	# 远端按同步姿态触发冲刺残影；冲刺结束停止生成。

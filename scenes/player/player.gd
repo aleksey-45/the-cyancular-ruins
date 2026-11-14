@@ -52,6 +52,8 @@ const POSE_ANIM: Dictionary = {
 
 func _ready() -> void:
 	super()
+	if process_mode == Node.PROCESS_MODE_DISABLED:
+		return
 	add_to_group("player")
 	set_process(false)
 
@@ -62,8 +64,7 @@ func _ready() -> void:
 	_reload_ring.scale = Vector2.ONE / scale.x
 	_reload_ring.visible = false
 	add_child(_reload_ring)
-	if authority_world == null:
-		add_child(WaterFx.new())
+	add_child(WaterFx.new())
 	# 挂载挤压与拉伸补间形变组件
 	squash = SquashStretch.new()
 	# 先将形变组件加入场景树，再完成与动画精灵的绑定
@@ -72,8 +73,6 @@ func _ready() -> void:
 
 func enable_manual_simulation() -> void:
 	set_physics_process(false)
-	# 查询体的位姿立即生效，移动和接触由共享 tick 中的运动查询计算。
-	PhysicsServer2D.body_set_mode(get_rid(), PhysicsServer2D.BODY_MODE_STATIC)
 
 # 多人模式时间加速倍率：由服务端权威与客户端预测根据颗粒余额和输入状态写入
 var _ghost_t := 0.0     # 残影生成计时器
@@ -82,7 +81,7 @@ var _charge_ghost_t := 0.0  # 冲刺残影生成计时器
 const CHARGE_GHOST_INTERVAL := 0.06
 
 func _physics_process(delta: float) -> void:
-	var actions := ActorStep.step(self, sample_input(delta), delta, ground_actions)
+	var actions := ActorStep.step(self, sample_input(delta), delta)
 	combat_rules.submit(self, actions)
 	present_actions(actions)
 	present_tick(delta)
@@ -177,6 +176,20 @@ func restore_state(snapshot: Dictionary, rewinding_inventory := false) -> void:
 	restore_logic_state(actor)
 	_restore_equipment(actor[PlayerStateSchema.WEAPON_INST], actor[PlayerStateSchema.INVENTORY],
 			snapshot["equipment"], rewinding_inventory)
+
+func capture_network_state() -> Dictionary:
+	return {"state": capture_state(), "input": input_buffer._last, "aim": step_input.aim,
+			"epoch": input_buffer.epoch, "action_ack": input_buffer.action_ack,
+			"rewind": rewinding, "respawn_tick": respawn_tick}
+
+func restore_network_state(snapshot: Dictionary) -> void:
+	restore_state(snapshot["state"])
+	rewinding = snapshot["rewind"]
+	respawn_tick = snapshot["respawn_tick"]
+	step_input.aim = snapshot["aim"]
+	input_buffer.restore_authority(snapshot["epoch"], snapshot["action_ack"], snapshot["input"])
+	if collision_layer == 0:
+		set_team_collision(team)
 
 func _restore_equipment(instance: int, entries: PackedInt32Array, values: Array, rewind: bool) -> void:
 	if rewind:

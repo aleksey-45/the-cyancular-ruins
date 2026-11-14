@@ -1,18 +1,15 @@
 extends "res://tests/case.gd"
 
-const POS: int = PlayerStateSchema.REMOTE_POS
-const VEL: int = PlayerStateSchema.REMOTE_VEL
-const EPOCH: int = PlayerStateSchema.REMOTE_EPOCH
+const POS: int = PlayerStateSchema.POS
+const VEL: int = PlayerStateSchema.VEL
 
-static func _actor(pos: Vector2) -> Array:
+static func _actor(pos: Vector2) -> Dictionary:
 	var record: Array = []
-	record.resize(PlayerStateSchema.REMOTE_SIZE)
+	record.resize(PlayerStateSchema.SIZE)
 	record[POS] = pos
 	record[VEL] = Vector2(60, 0)
-	record[EPOCH] = 1
-	record[PlayerStateSchema.REMOTE_REWIND] = false
-	record[PlayerStateSchema.REMOTE_KNOCK_VEL] = Vector2.ZERO
-	return record
+	record[PlayerStateSchema.KNOCK_VEL] = Vector2.ZERO
+	return {"state": {"actor": record}, "aim": Vector2.RIGHT, "epoch": 1, "rewind": false}
 
 class LobbySession extends RoomSession:
 	var messages: Array[String] = []
@@ -51,7 +48,7 @@ func _input() -> void:
 	expect(buffer.take(100 + InputBuffer.HOLD_TICKS)[ActorInput.HELD] != 0, "held input survives its allowed window")
 	var expired := buffer.take(101 + InputBuffer.HOLD_TICKS)
 	expect(expired[ActorInput.AX] == 0.0 and expired[ActorInput.HELD] == 0, "expired input becomes neutral")
-	buffer.restore_authority(1, 1, record, 120)
+	buffer.restore_authority(1, 1, record)
 	var restored := buffer.take(121)
 	expect(restored[ActorInput.HELD] == 0 and buffer._last[InputBuffer.SEQ] == 1,
 			"expired authority input keeps its sequence")
@@ -73,7 +70,7 @@ func _input() -> void:
 		[[12, 7, 100, ActorInput.BIT_PICKUP, ActorInput.BIT_ATTACK, 0x1020304, Vector2.DOWN]],
 	]
 	var wire := codec.encode_input(wire_packet)
-	var protocol_bytes := ("c717000807060507000000030c0000000f64000000000000000000e0bf00010000803e000000bf"
+	var protocol_bytes := ("c718000807060507000000030c0000000f64000000000000000000e0bf00010000803e000000bf"
 			+ "0d0000000365000000000000000000f03f0e00000000010c000000640000002000080004030201000000000000803f")
 	expect(NetBus._wire(wire).hex_encode() == protocol_bytes, "INPUT header, frame deltas and actions match the wire format")
 	var stream := _body(wire, NetCodec.INPUT)
@@ -183,6 +180,7 @@ func _codec(tree: SceneTree) -> void:
 	var bow := authority.players[2].equipped as GunBody
 	bow.hold_elapsed = 0.4
 	bow.aiming = true
+	authority.players[2]._grounded = true
 	var servers := [NetCodec.new(), NetCodec.new()]
 	var clients := [NetCodec.new(), NetCodec.new()]
 	authority.rules.phase = NetEvent.RoundState.PLAYING
@@ -191,7 +189,8 @@ func _codec(tree: SceneTree) -> void:
 	authority.players[2].motion_knock_velocity = Vector2(240, -120)
 	authority._snap_tick = 100
 	var captured := authority.world_state()
-	var frames := [authority.state_for(1, captured), authority.state_for(2, captured)]
+	var accounts := authority.time_economy.state_payload()
+	var frames := [authority.state_for(1, captured, accounts), authority.state_for(2, captured, accounts)]
 	var batch := NetCodec.StateBatch.new(frames[0])
 	var first_wires: Array[PackedByteArray] = []
 	for i in 2:
@@ -202,12 +201,11 @@ func _codec(tree: SceneTree) -> void:
 				and clients[i].latest == 0 and clients[i].state_ack == 0 and clients[i].history.is_empty(),
 				"a truncated full STATE does not commit its sequence, ACK or baseline")
 		var decoded := _state(clients[i], wire)
-		expect(decoded["world"]["players"][i + 1][POS] == authority.players[i + 1].position, "full STATE position")
-		expect(decoded["world"]["players"][2][PlayerStateSchema.REMOTE_RESPAWN_TICK] == 102,
-				"full STATE carries the scheduled respawn of a downed actor")
-		expect(decoded["world"]["players"][2][PlayerStateSchema.REMOTE_KNOCK_VEL] == Vector2(240, -120),
-				"full STATE carries remote knockback separately from velocity")
-		expect(decoded["own"]["state"] == frames[i]["own"]["state"], "full STATE preserves the equipped trigger and charge")
+		var remote: Dictionary = decoded["world"]["players"][2]
+		expect(decoded["world"]["players"] == captured["players"], "full STATE preserves all players' authoritative and equipment state")
+		expect(remote["respawn_tick"] == 102, "full STATE carries the scheduled respawn of a downed actor")
+		expect(remote["state"]["actor"][PlayerStateSchema.KNOCK_VEL] == Vector2(240, -120)
+				and remote["state"]["actor"][PlayerStateSchema.GROUNDED], "full STATE carries remote knockback and grounded state")
 		expect(decoded["time"] == frames[i]["time"], "full STATE preserves mutable time account fields")
 	var account: GrainAccount = authority.time_economy.accounts[1]
 	account.spend(0.25, 100.0)
@@ -231,7 +229,8 @@ func _codec(tree: SceneTree) -> void:
 	captured = authority.world_state()
 	captured["projectiles"] = {123: {"type_id": WeaponRegistry.Type.COMPOUND_BOW, "pos": Vector2(10, 20),
 			"vel": Vector2(30, 0)}}
-	frames = [authority.state_for(1, captured), authority.state_for(2, captured)]
+	accounts = authority.time_economy.state_payload()
+	frames = [authority.state_for(1, captured, accounts), authority.state_for(2, captured, accounts)]
 	batch = NetCodec.StateBatch.new(frames[0])
 	for i in 2:
 		var wire: PackedByteArray = servers[i].encode_state(frames[i], batch)
@@ -239,16 +238,15 @@ func _codec(tree: SceneTree) -> void:
 		var independent := _state(NetCodec.new(), NetCodec.new().encode_state(frames[i], NetCodec.StateBatch.new(frames[i])))
 		expect(decoded == independent, "mixed baselines equal independent full STATE, peer %d" % (i + 1))
 		if i == 0:
-			var still_downed: Array = decoded["world"]["players"][2]
-			expect(still_downed[PlayerStateSchema.REMOTE_DOWNED]
-					and still_downed[PlayerStateSchema.REMOTE_RESPAWN_TICK] == 0,
+			var still_downed: Dictionary = decoded["world"]["players"][2]
+			expect(still_downed["state"]["actor"][PlayerStateSchema.DOWNED] and still_downed["respawn_tick"] == 0,
 					"delta STATE clears an overdue respawn forecast for a still downed actor")
-			expect(still_downed[PlayerStateSchema.REMOTE_KNOCK_VEL] == Vector2.ZERO,
+			expect(still_downed["state"]["actor"][PlayerStateSchema.KNOCK_VEL] == Vector2.ZERO,
 					"delta STATE clears a remote knockback that has stopped")
-			expect(decoded["own"]["input"][InputBuffer.SEQ] == 2 and decoded["own"]["action_ack"] == 1
-					and not decoded["own"].has("ack"), "delta STATE carries separate frame and action confirmations")
-			expect(decoded["own"]["state"] == frames[i]["own"]["state"],
-					"delta STATE preserves separate equipment timers and inventory carried state")
+			var own: Dictionary = decoded["world"]["players"][1]
+			expect(own["input"][InputBuffer.SEQ] == 2 and own["action_ack"] == 1,
+					"delta STATE carries separate frame and action confirmations")
+			expect(decoded["world"]["players"] == captured["players"], "delta STATE preserves input, equipment timers and inventory for all roles")
 			var old_message := [0, 1, NetBus._wire(first_wires[0]), Time.get_ticks_usec()]
 			var new_message := [0, 1, NetBus._wire(wire), Time.get_ticks_usec()]
 			var event_message := [0, 1, NetBus._wire(servers[i].encode_event(NetEvent.Kind.START, null)), Time.get_ticks_usec()]
@@ -262,25 +260,25 @@ func _codec(tree: SceneTree) -> void:
 	authority.players[2].weapons.inventory.max_weapons = 1
 	authority.players[2].weapons.pick_up(WeaponRegistry.Type.COMPOUND_BOW, 0)
 	captured = authority.world_state()
-	frames = [authority.state_for(1, captured), authority.state_for(2, captured)]
+	frames = [authority.state_for(1, captured, accounts), authority.state_for(2, captured, accounts)]
 	batch = NetCodec.StateBatch.new(frames[0])
 	for i in 2:
 		var decoded := _state(clients[i], servers[i].encode_state(frames[i], batch))
-		expect(decoded["world"]["projectiles"].is_empty() and decoded["own"]["state"] == frames[i]["own"]["state"],
+		expect(decoded["world"]["projectiles"].is_empty() and decoded["world"]["players"] == captured["players"],
 				"delta STATE removes ended projectiles and restores replaced equipment")
 	authority.players[2].weapons.drop_current()
 	expect(authority.players[2].weapons.current_type_id() == 0, "test drops the last weapon")
-	var unarmed: Array = authority.world_state()["players"][2]
-	expect(authority.players[2].capture_state()["equipment"].is_empty()
-			and unarmed.size() == PlayerStateSchema.REMOTE_SIZE, "unarmed actor has no equipment payload")
+	expect(authority.world_state()["players"][2]["state"]["equipment"].is_empty(), "unarmed actor has no equipment payload")
 	authority._snap_tick = 106
-	var unarmed_frame := authority.state_for(2, authority.world_state())
+	var unarmed_frame := authority.state_for(2, authority.world_state(), accounts)
 	servers[1].state_ack = clients[1].state_ack
 	for pair in [[NetCodec.new(), NetCodec.new()], [servers[1], clients[1]]]:
 		var decoded := _state(pair[1], pair[0].encode_state(unarmed_frame, NetCodec.StateBatch.new(unarmed_frame)))
-		expect(decoded["own"]["state"] == unarmed_frame["own"]["state"],
+		var state: Dictionary = decoded["world"]["players"][2]["state"]
+		var expected: Dictionary = unarmed_frame["world"]["players"][2]["state"]
+		expect(state == expected,
 				"full and delta STATE retain empty equipment after dropping the last weapon")
-		expect(PlayerStateSchema.difference(unarmed_frame["own"]["state"], decoded["own"]["state"]).is_empty(),
+		expect(PlayerStateSchema.difference(expected, state).is_empty(),
 				"decoded unarmed STATE does not invalidate matching prediction")
 	var baseline := {"code": "01234567", "mode": PvpSession.MODE_PVP, "role": 2, "options": {},
 			"names": {1: "host", 2: "guest"}, "hues": {2: 0.5}, "teams": {}, "map": PackedByteArray([1, 2, 3]),
@@ -357,10 +355,10 @@ func _playback() -> void:
 	playback.push(10, a)
 	playback.push(12, b)
 	var shown := playback.sample(11)
-	expect(shown["players"][2][POS].is_equal_approx(Vector2(0, 100)), "playback interpolates across map seam")
-	shown["players"][2][POS] = Vector2(99, 99)
-	expect(playback.sample(11)["players"][2][POS].is_equal_approx(Vector2(0, 100)), "presentation edits do not mutate buffered positions")
-	expect(a["players"][2][POS] == Vector2(508, 100), "sampling leaves source snapshot intact")
+	expect(shown["players"][2]["pos"].is_equal_approx(Vector2(0, 100)), "playback interpolates across map seam")
+	shown["players"][2]["pos"] = Vector2(99, 99)
+	expect(playback.sample(11)["players"][2]["pos"].is_equal_approx(Vector2(0, 100)), "presentation edits do not mutate buffered positions")
+	expect(a["players"][2]["state"]["actor"][POS] == Vector2(508, 100), "sampling leaves source snapshot intact")
 
 func _body(wire: PackedByteArray, type: int) -> NetCodec.Reader:
 	expect(not wire.is_empty() and wire[0] == type, "packet type")

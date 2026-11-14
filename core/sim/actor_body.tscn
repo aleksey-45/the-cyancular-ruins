@@ -1,9 +1,0 @@
-[gd_scene format=3]
-
-[ext_resource type="Script" path="res://core/sim/actor_body.gd" id="1"]
-[ext_resource type="PackedScene" path="res://core/sim/actor_hulls.tscn" id="hulls"]
-
-[node name="ActorBody" instance=ExtResource("hulls")]
-script = ExtResource("1")
-collision_layer = 2
-collision_mask = 5

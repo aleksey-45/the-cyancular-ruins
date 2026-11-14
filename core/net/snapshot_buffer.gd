@@ -37,24 +37,6 @@ func advance(delta: float) -> Dictionary:
 	render_tick = minf(render_tick + delta * 60.0 * _rate, float(frames[-1]["tick"]) + MAX_EXTRAPOLATION)
 	return sample(render_tick)
 
-static func player_position(state: Array, ticks: float, map_size: Vector2) -> Vector2:
-	var pos: Vector2 = state[PlayerStateSchema.REMOTE_POS]
-	if state[PlayerStateSchema.REMOTE_REWIND]:
-		return pos
-	return project_position(pos, state[PlayerStateSchema.REMOTE_VEL], state[PlayerStateSchema.REMOTE_KNOCK_VEL], ticks, map_size)
-
-static func project_position(pos: Vector2, vel: Vector2, knock: Vector2, ticks: float, map_size: Vector2) -> Vector2:
-	var elapsed := clampf(ticks, 0.0, MAX_EXTRAPOLATION)
-	if elapsed == 0.0:
-		return pos
-	var travel := vel * elapsed
-	if knock != Vector2.ZERO:
-		# 每个物理步先按当前击退速度移动，再衰减。小数步插在相邻两步之间。
-		var whole := floorf(elapsed)
-		var decay := pow(KNOCK_DECAY, whole)
-		travel += knock * ((1.0 - decay) / (1.0 - KNOCK_DECAY) + (elapsed - whole) * decay)
-	return GridPathfinder.wrap_to_range(pos + travel * ActorStep.DT, map_size)
-
 func sample(tick: float) -> Dictionary:
 	while frames.size() > 2 and frames[1]["tick"] <= tick:
 		frames.pop_front()
@@ -64,27 +46,36 @@ func sample(tick: float) -> Dictionary:
 	var weight := clampf((tick - from["tick"]) / maxf(1.0, to["tick"] - from["tick"]), 0.0, 1.0)
 	var between := weight > 0.0 and weight < 1.0
 	var source: Dictionary = from["world"] if weight < 1.0 else to["world"]
-	var result := {"players": {}, "pickups": {}}
-	for group: String in ["players", "pickups"]:
-		var players := group == "players"
-		var pos_slot: int = PlayerStateSchema.REMOTE_POS if players else PickupState.POS
-		var vel_slot: int = PlayerStateSchema.REMOTE_VEL if players else PickupState.VEL
-		for id in source[group]:
-			# 只改位置与速度；其余槽保持只读，不递归复制。
-			var state: Array = source[group][id].duplicate()
-			result[group][id] = state
-			if ahead > 0.0 and players:
-				state[pos_slot] = player_position(state, ahead, map_px)
-				continue
-			if ahead > 0.0:
-				state[pos_slot] += state[vel_slot] * (ahead * ActorStep.DT)
-			elif between and from["world"][group].has(id) and to["world"][group].has(id):
-				var a: Array = from["world"][group][id]
-				var b: Array = to["world"][group][id]
-				var movement := GridPathfinder.toroidal_delta_px(a[pos_slot], b[pos_slot], map_px)
-				if (not players or a[PlayerStateSchema.REMOTE_EPOCH] == b[PlayerStateSchema.REMOTE_EPOCH]) \
-						and movement.length() < 256.0:
-					state[pos_slot] = a[pos_slot] + movement * weight
-					state[vel_slot] = a[vel_slot].lerp(b[vel_slot], weight)
-			state[pos_slot] = GridPathfinder.wrap_to_range(state[pos_slot], map_px)
-	return result
+	var players := {}
+	for role in source["players"]:
+		var sample: Dictionary = source["players"][role]
+		var actor: Array = sample["state"]["actor"]
+		var pose := [actor[PlayerStateSchema.POS], actor[PlayerStateSchema.VEL]]
+		var next: Dictionary = to["world"]["players"].get(role, {})
+		if between and not next.is_empty() and sample["epoch"] == next["epoch"]:
+			var next_actor: Array = next["state"]["actor"]
+			_interpolate(pose, [next_actor[PlayerStateSchema.POS], next_actor[PlayerStateSchema.VEL]], weight)
+		elif ahead > 0.0 and not sample["rewind"]:
+			var whole := floorf(ahead)
+			var decay := pow(KNOCK_DECAY, whole)
+			var knock_ticks := (1.0 - decay) / (1.0 - KNOCK_DECAY) + (ahead - whole) * decay
+			var travel: Vector2 = pose[1] * ahead + actor[PlayerStateSchema.KNOCK_VEL] * knock_ticks
+			pose[0] = GridPathfinder.wrap_to_range(pose[0] + travel * ActorStep.DT, map_px)
+		players[role] = {"pos": pose[0], "vel": pose[1], "actor": actor, "aim": sample["aim"], "rewind": sample["rewind"]}
+	var pickups := {}
+	for id in source["pickups"]:
+		var state: Array = source["pickups"][id].duplicate()
+		var next: Array = to["world"]["pickups"].get(id, [])
+		if between and not next.is_empty():
+			_interpolate(state, next, weight)
+		elif ahead > 0.0:
+			state[PickupState.POS] = GridPathfinder.wrap_to_range(
+					state[PickupState.POS] + state[PickupState.VEL] * ahead * ActorStep.DT, map_px)
+		pickups[id] = state
+	return {"players": players, "pickups": pickups}
+
+func _interpolate(state: Array, next: Array, weight: float) -> void:
+	var movement := GridPathfinder.toroidal_delta_px(state[0], next[0], map_px)
+	if movement.length() < 256.0:
+		state[0] = GridPathfinder.wrap_to_range(state[0] + movement * weight, map_px)
+		state[1] = state[1].lerp(next[1], weight)

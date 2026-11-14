@@ -43,25 +43,13 @@ func reset(new_epoch: int) -> void:
 	actions.clear()
 	_last = neutral_frame()
 
-func restore_authority(new_epoch: int, confirmed_action: int, record: Array, tick: int) -> void:
+func restore_authority(new_epoch: int, confirmed_action: int, record: Array) -> void:
 	reset(new_epoch)
 	action_ack = confirmed_action
 	_last = record
-	if _expired(record, tick):
-		_last = record.duplicate()
-		_last[FRAME_AX] = 0.0
-		_last[FRAME_HELD] = 0
 
 static func _expired(record: Array, tick: int) -> bool:
 	return tick - record[TARGET_TICK] > HOLD_TICKS
-
-static func cursor(ep: int, confirmed_action: int, record: Array, tick: int) -> Array:
-	var expired := _expired(record, tick)
-	return [ep, record[SEQ], confirmed_action, record[TARGET_TICK],
-			0.0 if expired else record[FRAME_AX], 0 if expired else record[FRAME_HELD], record[FRAME_AIM]]
-
-func capture_cursor(tick: int) -> Array:
-	return cursor(epoch, action_ack, _last, tick)
 
 func push(packet: Array, tick: int) -> void:
 	var last_seq: int = _last[SEQ]

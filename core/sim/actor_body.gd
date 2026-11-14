@@ -48,8 +48,6 @@ var motion_knock_velocity := Vector2.ZERO
 var projectile_count: Callable
 
 var step_input := ActorInput.new()
-# 拥有本角色模拟权威的环境（AuthorityWorld）；null = 无权威环境（单机本地/纯预测体）。
-var authority_world: Node
 @onready var _hulls: Array[CollisionShape2D] = [$CollisionShape2D_stand, $CollisionShape2D_squat]
 # 本 tick 的运动接触：{"rid", "normal", "point"}；result 对象是复用的，出结果立即抄值。
 var motion_contacts: Array = []
@@ -59,7 +57,6 @@ var _speed_mult := 1.0
 var equipped: GunBody
 # 原 CharacterBody2D 的内建字段改为普通数据。
 var velocity := Vector2.ZERO
-var floor_snap_length := 1.0
 var safe_margin := 0.08
 # 本体与最多三个接缝副本。
 const COLLISION_SLOTS := 4
@@ -71,6 +68,12 @@ func _ready() -> void:
 	for slot in COLLISION_SLOTS:
 		PhysicsServer2D.body_add_shape(_rid, shape, Transform2D.IDENTITY, true)
 	sync_collision_geometry()
+
+func set_team_collision(side: int) -> void:
+	team = side
+	collision_layer = CollisionWorld.team_layer(team)
+	collision_mask = CollisionWorld.LAYER_TERRAIN | CollisionWorld.team_layer(3 - team)
+	_apply_layers()
 
 # 地形与角色阻挡共用同一条 CollisionWorld.move_body() 路径；掩码决定谁挡路（队友不在掩码内即穿透）。
 func move_by_internal(motion: Vector2) -> Vector2:
@@ -132,10 +135,11 @@ func _try_step_up(distance: float, start: Transform2D) -> bool:
 	return false
 
 func _move_actor(delta: float) -> void:
+	motion_contacts.clear()
 	var incoming := velocity + motion_knock_velocity
 	var motion := incoming * delta
 	if _grounded and motion.y >= 0.0:
-		motion.y = maxf(motion.y, floor_snap_length)
+		motion.y = maxf(motion.y, 1.0)
 	var blocked := move_by_internal(motion)
 	_grounded = blocked.y > 0.0
 	if blocked.x != 0.0:
@@ -404,7 +408,6 @@ func slide_reactions(incoming: Vector2) -> void:
 
 func _simulate_motion(delta: float, mult: Vector2, time_mult: float) -> void:
 	_speed_mult = time_mult
-	motion_contacts.clear()
 	if sim_downed:
 		_pre_move_vy = 0.0
 		if _grounded:
