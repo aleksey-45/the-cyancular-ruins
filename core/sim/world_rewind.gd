@@ -1,6 +1,9 @@
 class_name WorldRewind
 extends RefCounted
 
+# 玩家载荷与恢复的唯一实现(preload 而非依赖全局类缓存:`-s` 冒烟与无编辑器的批里 class_name 不一定已注册)。
+const RewindFrame := preload("res://core/sim/rewind_frame.gd")
+
 
 static var hold_corpses := false
 
@@ -24,6 +27,10 @@ func _init(parent: Node = null) -> void:
 
 func record(delta: float, player: Node, enemies: Array, bullets: Array) -> void:
 	if player == null or not is_instance_valid(player):
+		return
+	var pl := player as Player
+	if pl == null:
+		push_error("WorldRewind: record() 收到非 Player 节点(%s)—— 本帧不入快照" % str(player))
 		return
 	_t += delta
 	_acc += delta
@@ -70,7 +77,7 @@ func record(delta: float, player: Node, enemies: Array, bullets: Array) -> void:
 		})
 	_frames.append({
 		"t": _t,
-		"player": _snapshot_player(player),
+		"player": RewindFrame.build_player(pl),
 		"enemies": pe,
 		"bullets": pb,
 	})
@@ -78,34 +85,6 @@ func record(delta: float, player: Node, enemies: Array, bullets: Array) -> void:
 	while _frames.size() > 1 and float(_frames[0]["t"]) < cutoff:
 		_frames.pop_front()
 
-
-
-func _snapshot_player(player: Node) -> Dictionary:
-	var p := player as Player
-	var d := {
-		"p": p.global_position,
-		"v": p.velocity,
-		"hp": p.hp,
-		"facing": p.facing_direction,
-		"downed": p.is_downed(),
-		"wslot": 0, "widx": -1, "wmags": [], "wlive": -1,
-	}
-	var wc := p.weapons as WeaponComponent
-	if wc == null:
-		push_error("WorldRewind: player.weapons 不是 WeaponComponent —— 武器段无法回溯;本帧返回已收集的部分")
-		return d
-	d["wslot"] = wc._current_type
-	d["widx"] = wc._current_index
-	var inv: WeaponInventory = wc.inventory
-	if inv != null:
-		var mags: Array = []
-		for e in inv.held:
-			mags.append(int(e["mag"]))
-		d["wmags"] = mags
-	var live: WeaponBase = wc.current_weapon()
-	if live != null and is_instance_valid(live):
-		d["wlive"] = live.mag_ammo
-	return d
 
 
 func begin() -> void:
@@ -192,7 +171,7 @@ func _apply(f: Dictionary, player: Node) -> void:
 	if is_instance_valid(player):
 		var p := player as Player
 		if p != null:
-			p.rewind_restore(f["player"])
+			RewindFrame.apply_player(p, f["player"])
 	for d in f["enemies"]:
 		var raw = d["n"]
 		if not is_instance_valid(raw):

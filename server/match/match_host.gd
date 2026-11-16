@@ -1,6 +1,8 @@
 class_name MatchHost
 extends Node
 
+const RewindFrame := preload("res://core/sim/rewind_frame.gd")
+
 
 var state: MatchState = null
 var grace_snapshot: Dictionary = {}
@@ -565,38 +567,18 @@ func _finish_rw(r: int, p: Node2D, src: PacketInputSource) -> void:
 func _record_rw_frame(r: int, p: Node2D, now: float) -> void:
 	if now < float(_rw_snap_t.get(r, 0.0)):
 		return
+	var pl := p as Player
+	if pl == null:
+		return
 	_rw_snap_t[r] = now + RW_SNAP_DT
 	if not _rw_t0.has(r):
 		_rw_t0[r] = now
+	# 帧形状与单机 WorldRewind 共用一份契约:{t, player} ← RewindFrame。子弹段不写:
+	# 服务器回溯只恢复玩家(没有任何读者),旧实现每 50ms 遍历一次 bullet 组并写一份键集还不同的副本。
 	var d := {
 		"t": now - float(_rw_t0[r]),
-		"p": p.global_position,
-		"v": p.get("velocity"),
-		"hp": int(p.get("hp")),
-		"facing": int(p.get("facing_direction")),
-		"downed": p.is_downed(),
+		"player": RewindFrame.build_player(pl),
 	}
-	var wc := p.get("weapons") as WeaponComponent
-	if wc != null:
-		d["widx"] = wc._current_index
-		var inv: WeaponInventory = wc.inventory
-		var mags: Array = []
-		if inv != null:
-			for slot in inv.held:
-				mags.append(int(slot["mag"]))
-		d["wmags"] = mags
-		var live: WeaponBase = wc.current_weapon()
-		if live != null and is_instance_valid(live):
-			d["wlive"] = live.mag_ammo
-	var bl: Array = []
-	for b in get_tree().get_nodes_in_group("bullet"):
-		if not is_instance_valid(b) or not (b is Node2D):
-			continue
-		if b.get("shooter") != p:
-			continue
-		bl.append({"p": (b as Node2D).global_position, "v": b.get("velocity_vec"),
-				"fs": b.call("rewind_state") if b.has_method("rewind_state") else {}})
-	d["bullets"] = bl
 	if not _rw_buf.has(r):
 		_rw_buf[r] = []
 	var buf: Array = _rw_buf[r]
@@ -634,8 +616,9 @@ func _apply_rw_frame(r: int, p: Node2D, cursor: float) -> void:
 			f = e
 		else:
 			break
-	if p.has_method("rewind_restore"):
-		p.rewind_restore(f)
+	var pl := p as Player
+	if pl != null:
+		RewindFrame.apply_player(pl, f["player"])
 
 
 

@@ -1019,54 +1019,7 @@ func _update_reload_ring() -> void:
 
 const RELOAD_RING_OFFSET := Vector2(58.0, -44.0)   # 世界单位:x 朝"后侧"、y 朝上(2026-09-16 上移)
 
-## 回溯还原(WorldRewind 调用):位置/速度/HP/朝向/倒地态回到快照帧。
-func rewind_restore(d: Dictionary) -> void:
-	global_position = d["p"]
-	if d["v"] != null:
-		velocity = d["v"]
-	combat.knock_velocity = Vector2.ZERO
-	# ★ 必须发 hp_changed:HUD 血条只听信号(不是每帧轮询),直接改 combat.hp 的话血条会停在旧值 —— 玩家看到的血量没有回溯就是这个。
-	var hp_before := combat.hp
-	combat.hp = clampi(int(d["hp"]), 0, combat.max_hp)
-	if combat.hp != hp_before:
-		combat.hp_changed.emit(combat.hp, combat.max_hp)
-	facing_direction = int(d["facing"])
-	var downed_now := is_downed()
-	# 武器弹量回溯:背包各格残弹 + 手持那件实弹;当前武器不同则切回。
-	var wc: WeaponComponent = weapons
-	if wc != null and d.has("wmags"):
-		var inv: WeaponInventory = wc.inventory
-		# ★ 切枪排在下面条目写回之前:排在之后,_equip_index 写回的实弹会冲掉刚恢复的快照值。
-		var want_idx := int(d.get("widx", -1))
-		var switched := want_idx >= 0 and want_idx != wc._current_index
-		if switched:
-			wc.equip_index(want_idx)
-		if inv != null:
-			var held: Array = inv.held
-			var mags: Array = d["wmags"]
-			for i in mini(held.size(), mags.size()):
-				held[i]["mag"] = int(mags[i])
-		var live2: WeaponBase = wc.current_weapon()
-		if live2 != null and is_instance_valid(live2):
-			var want := int(d.get("wlive", -1))
-			if want < 0 and switched and inv != null and wc._current_index >= 0 \
-					and wc._current_index < inv.held.size():
-				# 见上:快照没记手持实弹而这次换了枪 ⇒ 用快照条目值,不是恢复前的旧值。
-				want = int(inv.held[wc._current_index]["mag"])
-				# ★ 两个 -1 语义不同:wlive 的 -1 = 哨兵(快照没记手持实弹);条目 mag 的 MAG_FULL(-1) = 满弹(weapon_inventory.gd)。
-				# 不折算的话 want 会是 -1、被下面的 want >= 0 挡住 ⇒ apply_mag 不调用 ⇒ 新枪停在 _equip_index 从恢复前条目取的有限旧值。折成 mag_size 与不设 pending_mag、_ready 用 mag_size 逐位同效。
-				if want == WeaponInventory.MAG_FULL:
-					want = live2.mag_size
-			if want >= 0:
-				# 见上:走 apply_mag —— 未入树窗口里写 mag_ammo 会被 _ready 覆盖。
-				# ★ 它顺带钳位到 [0, mag_size];范围内逐位等价(正常回溯的 wlive 取自同一把枪,而 _ready 自己就钳过);越界那一档无任何断言,见 docs/eng/registered-debt.md §六.13。
-				WeaponComponent.apply_mag(live2, want)
-	if bool(d["downed"]) and not downed_now:
-		combat.set_downed_by_rewind(true)
-	elif not bool(d["downed"]) and downed_now:
-		# ★ 2026-11-01(R3):不能走 revive() —— 它会把 hp 顶成满血,冲掉上面刚从快照恢复的 hp。
-		#   restore_alive_state() = revive() 减去 hp(旋转/灰屏/动画照旧);三处**状态恢复**入口(权威态 / 整态回滚 / 回溯)共用同一份(见 plan §R3)。
-		combat.restore_alive_state()
+## 回溯还原已搬到 core/sim/rewind_frame.gd(RewindFrame.apply_player):单机回溯与服务器 Beta 回溯共用同一份载荷契约。
 
 
 # ── 发光:由**美术遮罩**驱动(独立资产,像灯瓦片)──
