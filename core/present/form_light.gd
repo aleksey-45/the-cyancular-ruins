@@ -27,7 +27,7 @@ static var _unique_seq := 0
 # 晚创建的材质(敌人/子弹/武器)也要拿到同一套参数:set_* 只更新这里,建材质时再补推。
 static var _steps_cur := 0.0
 static var _dither_cur := 1.0
-static var _boost_cur := 0.15
+static var _boost_cur := 0.05
 static var _bulge_cur := 1.0
 static var _edge_lo_cur := 0.20
 static var _edge_hi_cur := 0.80

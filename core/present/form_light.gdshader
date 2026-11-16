@@ -27,7 +27,7 @@ uniform float part_flat : hint_range(0.0, 1.5) = 1.0;
 uniform float ao_strength : hint_range(0.0, 1.0) = 0.35;
 uniform vec2 sun_dir = vec2(0.0, -1.0);
 uniform float gain : hint_range(0.0, 1.0) = 0.45;
-uniform float boost : hint_range(0.0, 0.5) = 0.15;
+uniform float boost : hint_range(0.0, 0.5) = 0.05;
 // 椭球圆度:0 = 按剪影拟合的椭圆;1 = 两轴取均值(正圆)。
 uniform float shape_round : hint_range(0.0, 1.0) = 0.0;
 // ndl 重映射窗口:下移 lo ⇒ 亮面更大;窗口越窄 ⇒ 明暗交界越硬。

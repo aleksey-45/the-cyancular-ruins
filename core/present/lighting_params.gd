@@ -26,7 +26,7 @@ extends Resource
 ## 背光面压暗强度上限。
 @export_range(0.0, 1.0, 0.01) var form_gain: float = 0.50
 ## 预提亮量:贴图先整体乘 (1+boost),再只压暗面 ⇒ 亮面可高于原图、暗面低于原图,平均接近原值。
-@export_range(0.0, 0.5, 0.01) var form_boost: float = 0.15
+@export_range(0.0, 0.5, 0.01) var form_boost: float = 0.05
 ## 精灵明暗色阶数(像素化):0/1 = 关闭(连续渐变),3 = 亮/中/暗三档。
 @export_range(0.0, 6.0, 1.0) var form_steps: float = 4.0
 ## 精灵明暗抖动强度(0 = 硬色阶;1 = 满强度 Bayer)。
