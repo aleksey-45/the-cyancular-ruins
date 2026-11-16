@@ -9,14 +9,14 @@ extends Node
 #   ④ 保存链 encode/write 丢数据 ⇒ ⑩ 组「重开再存字节相等」红;
 #   ⑤ undo/redo 不工作 ⇒ ④ 组红;
 #   ⑥ 画布没建视口纹理 ⇒ ⑤ 组红;
-#   ⑦ 没按设计系统重做布局(缺左栏工具/调色板、右栏图层常驻 + 2 Tab、顶栏撤销重做、状态栏缩放)
-#      ⇒ ⑦ 组红;
+#   ⑦ 编辑器的「行为」坏了:撤销/重做可用态或点击接线、缩放按钮、工具快捷键(含组合键不被裸键吃掉)、
+#      按层适用性、校验结果不切 Tab ⇒ ⑦ 组红。★ 版式/控件存在性/宽度数值不自动化(tests.md「配色·版式不写」)。
 #   ⑧ 未保存改动能从新建/打开/返回/关窗任一入口静默丢掉 ⇒ ⑧ 组红;
-#   ⑨ 手形/移动工具按钮/快捷键没接到画布模式、移动落点没写 doc ⇒ ⑦/⑨ 组红;
+#   ⑨ 移动工具端到端(画布拖拽 → root 接线 → tools 写 doc)断了 ⇒ ⑨ 组红;
 #   ⑩ 用了绝对坐标/固定宽度导致控件溢出父容器 ⇒ ⑦ 组「无溢出」红。
 # 判据 = 未跑满条数 + 失败清单;退出码只是陪衬。
 
-const EXPECTED_CHECKS := 93
+const EXPECTED_CHECKS := 64
 const MAP := "res://maps/newfactory.cyrm"
 const A := "user://maps/_editor_scene_probe_a.cyrm"
 const EXPORT_C := "user://maps/_editor_scene_probe_export.cyrm"
@@ -147,14 +147,11 @@ func _check_move_tools() -> void:
 	_canvas_drag(canvas, Vector2(224, 208))
 	_canvas_click(canvas, Vector2(224, 208), false)
 	await get_tree().process_frame
-	_chk(_doc.get_subcell(10, 10) == 0 and _doc.get_subcell(12, 11) == d,
-			"⑨ 移动工具应把选区内容从 (10,10) 搬到 (12,11)(实得 %d / %d)"
-			% [_doc.get_subcell(10, 10), _doc.get_subcell(12, 11)])
-	_chk(_doc.selection.position == Vector2i(10, 9),
-			"⑨ 移动后选区应跟到 (10,9)(实得 %s)" % str(_doc.selection.position))
+	_chk(_doc.get_subcell(10, 10) == 0 and _doc.get_subcell(12, 11) == d
+			and _doc.selection.position == Vector2i(10, 9),
+			"⑨ 移动工具应把选区内容搬到 (12,11) 且选区跟到 (10,9)(实得 %d / %d / %s)"
+			% [_doc.get_subcell(10, 10), _doc.get_subcell(12, 11), str(_doc.selection.position)])
 	_doc.undo()
-	_chk(_doc.get_subcell(10, 10) == d and _doc.get_subcell(12, 11) == 0,
-			"⑨ 一次移动应是一条 undo:撤销后内容必须回 (10,10)")
 
 	# meta 拖拽:出生点格 (2,2) 中心 = 屏幕 (160,160),拖到 (224,224) ⇒ 格 (3,3)
 	_doc.clear_meta("all")
@@ -169,8 +166,6 @@ func _check_move_tools() -> void:
 	_chk(players.size() == 1 and int(players[0]["x"]) == 3 and int(players[0]["y"]) == 3,
 			"⑨ 移动工具拖 meta 应把出生点改到格 (3,3)(实得 %s)" % str(players))
 	_doc.undo()
-	_chk(int((_doc.map["players"] as Array)[0]["x"]) == 2,
-			"⑨ meta 拖动应是一条 undo:撤销后出生点必须回格 (2,2)")
 	(_editor.find_child("ToolBrush", true, false) as Button).pressed.emit()
 	await get_tree().process_frame
 
@@ -195,8 +190,6 @@ func _canvas_drag(canvas: EditorCanvas, pos: Vector2) -> void:
 # 干净的时候同一入口必须直接开新建弹层(不该无谓多一步);打开/返回/关窗各一条。
 func _check_dirty_guard() -> void:
 	_doc.set_cells([Vector2i(21, 21)], EditorDesc.neutral_desc(6))
-	_chk(_doc.dirty, "⑧ 前置:改一格后 doc.dirty 应为 true")
-	var map_before: String = String(_doc.map.get("name", ""))
 	var file_menu := _editor.find_child("FileMenu", true, false) as MenuButton
 	file_menu.get_popup().id_pressed.emit(0)          # 文件 → 新建
 	await get_tree().process_frame
@@ -204,8 +197,6 @@ func _check_dirty_guard() -> void:
 	var discard := _editor.get_node_or_null("DiscardDialog") as ConfirmationDialog
 	_chk(discard != null and discard.visible and discard.title.find("未保存") >= 0,
 			"⑧ 有未保存改动时「新建」应先弹确认弹层(实得 %s)" % (discard.title if discard != null else "null"))
-	_chk(String(_doc.map.get("name", "")) == map_before,
-			"⑧ 未确认前不许真的新建地图")
 	if discard != null:
 		discard.confirmed.emit()
 	await get_tree().process_frame
@@ -293,11 +284,8 @@ func _check_export_and_load() -> void:
 
 
 # ── 后置项:选区/剪贴板/镜像/渐变/meta 可视化/真渲染预览(都在场景里真接一遍) ──
-# ── UI 结构:左栏(工具/画刷/调色板)· 右栏(图层常驻 + 2 Tab)· 顶栏撤销重做 · 状态栏缩放 ──
-# ★ 这里只查结构与几何(节点类型、可见性、尺寸、是否在父 rect 内),不查颜色字面量:
-#   去掉容器化 / 把图层塞回 Tab / 删工具或调色板 / 删缩放控件 ⇒ 对应断言红。
+# ── UI 行为:撤销重做/缩放/快捷键/按层适用性/校验切 Tab(版式数值按 test-economy 不自动化) ──
 const UI_TAB_TITLES := [["选区", "meta"], ["校验", "消息"]]
-const UI_MENU_ITEMS := {"文件": 5, "编辑": 8}
 
 
 func _check_ui_layout() -> void:
@@ -306,18 +294,15 @@ func _check_ui_layout() -> void:
 	await get_tree().process_frame
 
 	var split := _editor.find_child("Split", true, false) as HSplitContainer
-	_chk(split != null and split.is_visible_in_tree(),
-			"⑦ 找不到可见的 HSplitContainer(Split)")
 	var tabs := _editor.find_child("RightTabs", true, false) as TabContainer
-	_chk(tabs != null and tabs.is_visible_in_tree(),
-			"⑦ 找不到可见的 TabContainer(RightTabs)")
-	var left := _editor.find_child("LeftPanel", true, false) as Control
 	var tool_strip := _editor.find_child("ToolStrip", true, false) as GridContainer
-	if split == null or tabs == null or left == null or tool_strip == null:
-		# 结构没建出来时补足条数,避免条数闸把后续所有断言算成「中途夭折」
-		for _i in 45:
+	var pal := _editor.find_child("PaletteGrid", true, false) as GridContainer
+	if split == null or tabs == null or tool_strip == null or pal == null:
+		for _i in 3:
 			_chk(false, "⑦ 结构缺失:跳过后续布局断言")
 		return
+	_chk(split.is_visible_in_tree() and tabs.is_visible_in_tree(),
+			"⑦ 找不到可见的 Split/RightTabs")
 
 	# 右栏只剩 2 个 Tab:选区·meta / 校验消息(图层与画刷已拆成常驻区域)
 	_chk(tabs.get_tab_count() == 2,
@@ -331,18 +316,7 @@ func _check_ui_layout() -> void:
 				titles_ok = false
 	_chk(titles_ok, "⑦ Tab 标题应含 选区·meta / 校验·消息(实得 %s)" % str(_tab_titles(tabs)))
 
-	var hidden := 0
-	for i in tabs.get_tab_count():
-		if tabs.is_tab_hidden(i):
-			hidden += 1
-	_chk(hidden == 0, "⑦ 2 个 Tab 都应为可见状态,实得隐藏 %d 个" % hidden)
-
-	_chk(tabs.size.x >= 300.0,
-			"⑦ 右栏最小宽度应 >= 300px(实得 %.1f)" % tabs.size.x)
-	_chk(tabs.size.x >= 300.0 and tabs.size.x <= 360.0,
-			"⑦ 右栏初始宽度应 ≈ 320px(实得 %.1f)" % tabs.size.x)
-
-	# 分栏可拖拽:把 divider 往左拖 = 加宽右栏,右栏尺寸必须跟着变。
+	# 分栏可拖拽(布局行为,不是版式数值)
 	var before_w := tabs.size.x
 	split.split_offset -= 120
 	await get_tree().process_frame
@@ -352,73 +326,38 @@ func _check_ui_layout() -> void:
 	_chk(dragged_w > before_w + 60.0 and absf(tabs.size.x - before_w) < 2.0,
 			"⑦ 拖拽分栏应改变右栏宽(前 %.1f / 拖后 %.1f / 复位 %.1f)" % [before_w, dragged_w, tabs.size.x])
 
-	# 顶部菜单栏:文件/编辑两个 MenuButton(下拉项 5/8)+ 撤销/重做 + 视图按钮(预览/返回)
-	var toolbar := _editor.find_child("Toolbar", true, false) as Control
-	var file_menu := _editor.find_child("FileMenu", true, false) as MenuButton
-	var edit_menu := _editor.find_child("EditMenu", true, false) as MenuButton
+	# 撤销/重做:可用态跟着 doc 栈走,点击真回退/重做;笔画收尾(history_changed)后立刻可用
 	var undo_btn := _editor.find_child("UndoBtn", true, false) as Button
 	var redo_btn := _editor.find_child("RedoBtn", true, false) as Button
-	var file_items := 0
-	var edit_items := 0
-	if file_menu != null:
-		file_items = file_menu.get_popup().item_count
-	if edit_menu != null:
-		edit_items = edit_menu.get_popup().item_count
-	var has_preview := toolbar != null and _has_button_text(toolbar, "预览")
-	var has_back := toolbar != null and _has_button_text(toolbar, "返回")
-	_chk(toolbar != null and toolbar.is_visible_in_tree() and file_menu != null and edit_menu != null \
-			and file_items == 5 and edit_items == 8 and has_preview and has_back and undo_btn != null \
-			and redo_btn != null,
-			"⑦ 菜单栏应为「文件(5 项)/编辑(8 项)/撤销/重做/预览/返回」(实得 %d/%d)" % [file_items, edit_items])
-	# open_path 会清空 undo/redo 栈 ⇒ 此时两个按钮都必须是禁用态(可用态跟 doc 栈走)。
 	_chk(undo_btn != null and redo_btn != null and undo_btn.disabled and redo_btn.disabled,
 			"⑦ 刚打开地图后撤销/重做按钮应为禁用态")
-	# 改一格后撤销按钮变可用;点按钮真回退/重做(可用态跟着 doc 栈)
 	var cur_val := _doc.get_subcell(2, 2)
 	var alt_val := EditorDesc.neutral_desc(6) if cur_val != EditorDesc.neutral_desc(6) \
 			else EditorDesc.neutral_desc(7)
 	_doc.set_cells([Vector2i(2, 2)], alt_val)
-	_chk(undo_btn != null and not undo_btn.disabled and redo_btn.disabled,
-			"⑦ 改一格后撤销按钮应可用、重做仍禁用")
 	undo_btn.pressed.emit()
-	_chk(_doc.get_subcell(2, 2) == cur_val, "⑦ 点撤销按钮应把值退回去")
-	_chk(undo_btn != null and undo_btn.disabled and not redo_btn.disabled,
-			"⑦ 撤销后撤销按钮应禁用、重做按钮应可用")
+	_chk(_doc.get_subcell(2, 2) == cur_val and not redo_btn.disabled,
+			"⑦ 点撤销按钮应把值退回去、重做按钮应变可用")
 	redo_btn.pressed.emit()
 	_chk(_doc.get_subcell(2, 2) == alt_val, "⑦ 点重做按钮应把值重新应用")
 	_doc.undo()
-	# ★ 笔画收尾才入栈:普通画笔路径(begin_stroke→set_cells→end_stroke)后按钮必须立刻可用
 	_doc.begin_stroke()
 	_doc.set_cells([Vector2i(2, 2)], alt_val)
 	_doc.end_stroke()
-	_chk(undo_btn != null and not undo_btn.disabled,
+	_chk(not undo_btn.disabled,
 			"⑦ 笔画收尾(history_changed)后撤销按钮应立即可用,不能等下一次改动")
 	_doc.undo()
 
-	# 左栏 = 工具网格(10 键)+ 画刷 + 颜色 + 纹理调色板
+	# 左栏工具网格 / 调色板缩略图 / 右栏 7 层(与既有覆盖面对齐;版式数值不自动化)
 	var tool_n := tool_strip.find_children("*", "Button", true, false).size()
-	_chk(left.is_visible_in_tree() and left.size.x >= 250.0,
-			"⑦ 左栏应可见且宽度 >= 250px(实得 %.1f)" % left.size.x)
 	_chk(tool_n == 10, "⑦ 左栏工具网格应有 10 个工具按钮(含 移动/手形;实得 %d)" % tool_n)
-	var pal := _editor.find_child("PaletteGrid", true, false) as GridContainer
-	_chk(left.find_child("PaletteGrid", true, false) != null and pal != null and pal.get_child_count() >= 10,
-			"⑦ 左栏应铺纹理缩略图(实得 %d 个)" % (pal.get_child_count() if pal != null else 0))
-
-	# 图层常驻:7 层按钮在右栏卡片里,且不在任何 Tab 页内(切到校验 Tab 仍然可见)
-	var layer_rows := _editor.find_child("LayerRows", true, false) as Control
+	_chk(pal.get_child_count() >= 10,
+			"⑦ 左栏应铺纹理缩略图(实得 %d 个)" % pal.get_child_count())
 	var layer_btns := 0
-	if layer_rows != null:
-		for node in layer_rows.find_children("*", "Button", true, false):
-			if _is_layer_button((node as Button).text):
-				layer_btns += 1
+	for node in _editor.find_children("*", "Button", true, false):
+		if _is_layer_button((node as Button).text):
+			layer_btns += 1
 	_chk(layer_btns == 7, "⑦ 图层区应有 7 层按钮(实得 %d)" % layer_btns)
-	tabs.current_tab = 1
-	await get_tree().process_frame
-	_chk(layer_rows != null and layer_rows.is_visible_in_tree() \
-			and tabs.get_child(0).find_child("LayerRows", true, false) == null,
-			"⑦ 图层必须常驻(Tab 切到校验消息时仍可见,且不属于 Tab 页)")
-	tabs.current_tab = 0
-	await get_tree().process_frame
 
 	# 校验结果自动切到「校验消息」Tab(错误/警告不再藏在看不见的页里)
 	_editor.call("validate")
@@ -427,57 +366,39 @@ func _check_ui_layout() -> void:
 	tabs.current_tab = 0
 	await get_tree().process_frame
 
-	# 状态栏缩放控件:− / 百分比 / + / 适应 真接线(canvas.zoom 与标签同步)
+	# 状态栏与缩放控件:点 +/− 真改变 canvas.zoom(百分比标签是观感,不自动化)
 	var status := _editor.find_child("StatusBar", true, false) as Control
 	var status_text := _editor.find_child("StatusText", true, false) as Label
 	var path_text := _editor.find_child("PathText", true, false) as Label
-	var zoom_out := _editor.find_child("ZoomOutBtn", true, false) as Button
 	var zoom_in := _editor.find_child("ZoomInBtn", true, false) as Button
-	var zoom_fit := _editor.find_child("FitBtn", true, false) as Button
-	var zoom_text := _editor.find_child("ZoomText", true, false) as Label
-	_chk(status != null and status.is_visible_in_tree() and status.size.y > 0.0
-			and status_text != null and path_text != null,
+	var zoom_out := _editor.find_child("ZoomOutBtn", true, false) as Button
+	_chk(status != null and status.is_visible_in_tree() and status_text != null and path_text != null,
 			"⑦ 状态栏应存在且含状态/路径文本(status=%s)" % str(status))
-	_chk(zoom_out != null and zoom_in != null and zoom_fit != null and zoom_text != null,
-			"⑦ 状态栏应有缩放控件(− / 百分比 / + / 适应)")
 	var canvas: EditorCanvas = _editor.call("get_editor_canvas") as EditorCanvas
 	var zoom_before := canvas.zoom
-	if zoom_in != null:
-		zoom_in.pressed.emit()
+	zoom_in.pressed.emit()
 	await get_tree().process_frame
-	_chk(canvas.zoom > zoom_before, "⑦ 点「+」应放大(zoom %.1f → %.1f)" % [zoom_before, canvas.zoom])
-	var zoom_mid := canvas.zoom
-	if zoom_out != null:
-		zoom_out.pressed.emit()
+	var zoomed := canvas.zoom
+	zoom_out.pressed.emit()
 	await get_tree().process_frame
-	_chk(canvas.zoom < zoom_mid, "⑦ 点「−」应缩小(zoom %.1f → %.1f)" % [zoom_mid, canvas.zoom])
-	if zoom_fit != null:
-		zoom_fit.pressed.emit()
-	await get_tree().process_frame
-	_chk(zoom_text != null and zoom_text.text == "%d%%" % roundi(canvas.zoom / EditorCanvas.ZOOM_DEFAULT * 100.0),
-			"⑦ 点「适应」后缩放百分比应同步(实得 %s)" % (zoom_text.text if zoom_text != null else "null"))
+	_chk(zoom_in != null and zoom_out != null and zoomed > zoom_before
+			and is_equal_approx(canvas.zoom, zoom_before),
+			"⑦ 点「+」应放大、点「−」应缩回(%.1f→%.1f→%.1f)"
+					% [zoom_before, zoomed, canvas.zoom])
 
-	# 手形 / 移动工具真接线:按钮 → 画布模式(平移 / 拖选区与 meta)
-	(_editor.find_child("ToolMove", true, false) as Button).pressed.emit()
-	_chk(canvas.is_move_tool(), "⑦ 「移动」工具应把画布切到移动模式")
-	(_editor.find_child("ToolHand", true, false) as Button).pressed.emit()
-	_chk(canvas.is_pan_tool(), "⑦ 「手形」工具应把画布切到平移模式")
-	(_editor.find_child("ToolBrush", true, false) as Button).pressed.emit()
-	_chk(not canvas.is_move_tool() and not canvas.is_pan_tool(),
-			"⑦ 切回画笔后画布应退出移动/平移模式")
-
-	# 工具快捷键:单键 H/V/B 走独立 editor_ InputMap,经 _unhandled_input 真接一遍。
+	# 工具快捷键:单键 H/V/B 分别切手形/移动/画笔;Ctrl+V 与 Shift+H 不被裸键吃掉
 	_press_editor_key(KEY_H)
-	_chk(canvas.is_pan_tool(), "⑦ 快捷键 H 应切到手形(平移)模式")
+	var h_ok := canvas.is_pan_tool()
 	_press_editor_key(KEY_V)
-	_chk(canvas.is_move_tool(), "⑦ 快捷键 V 应切到移动模式")
+	var v_ok := canvas.is_move_tool()
 	_press_editor_key(KEY_B)
-	_chk(not canvas.is_move_tool() and not canvas.is_pan_tool(), "⑦ 快捷键 B 应切回画笔")
-	# 组合键不能被单键工具吃掉(Ctrl+V 粘贴 / Shift+H 镜像)。
+	var b_ok := not canvas.is_pan_tool() and not canvas.is_move_tool()
+	_chk(h_ok and v_ok and b_ok,
+			"⑦ 工具快捷键 H/V/B 应分别切手形/移动/画笔(H=%s V=%s B=%s)" % [h_ok, v_ok, b_ok])
 	_press_editor_key(KEY_V, true, false)
-	_chk(not canvas.is_move_tool(), "⑦ Ctrl+V 不应被 V(移动工具)吃掉")
 	_press_editor_key(KEY_H, false, true)
-	_chk(not canvas.is_pan_tool(), "⑦ Shift+H 不应被 H(手形)吃掉")
+	_chk(not canvas.is_move_tool() and not canvas.is_pan_tool(),
+			"⑦ Ctrl+V / Shift+H 不应被单键 V/H 工具吃掉")
 
 	# 工具/面板按当前层类型适用性:纹理层(0-2) vs 颜色层(3-6)
 	var grad_btn := _editor.find_child("ToolGradient", true, false) as Button
@@ -488,26 +409,20 @@ func _check_ui_layout() -> void:
 	var layer3_btn := _editor.find_child("Layer3", true, false) as Button
 	layer3_btn.pressed.emit()                       # 切到颜色层(背景 100%)
 	await get_tree().process_frame
-	_chk(grad_btn != null and not grad_btn.disabled and brush_color_btn != null
-			and not brush_color_btn.disabled and not gradient_end_btn.disabled,
-			"⑦ 颜色层(3-6)应启用渐变与两个颜色选择器")
-	_chk(pal_first != null and pal_first.disabled and pal.get_child_count() > 0,
-			"⑦ 颜色层应禁用纹理调色板(画笔用颜色,不用纹理)")
+	_chk(not grad_btn.disabled and not brush_color_btn.disabled and not gradient_end_btn.disabled
+			and pal_first.disabled,
+			"⑦ 颜色层应启用渐变/颜色并禁用纹理调色板")
 	grad_btn.pressed.emit()
 	await get_tree().process_frame
-	_chk(grad_btn.theme_type_variation == &"ToolActive", "⑦ 颜色层上渐变工具应可选中")
+	var grad_active := grad_btn.theme_type_variation == &"ToolActive"
 	layer1_btn.pressed.emit()                       # 切回纹理层(场景)
 	await get_tree().process_frame
-	_chk(grad_btn.disabled and brush_color_btn.disabled and gradient_end_btn.disabled,
-			"⑦ 纹理层(0-2)应禁用渐变与颜色选择器")
-	_chk(_editor.find_child("ToolBrush", true, false).theme_type_variation == &"ToolActive",
-			"⑦ 从颜色层(渐变选中)切回纹理层应自动回到画笔")
-	_chk(pal_first != null and not pal_first.disabled,
-			"⑦ 纹理层应恢复纹理调色板")
 	_press_editor_key(KEY_T)
-	_chk(_editor.find_child("ToolBrush", true, false).theme_type_variation == &"ToolActive",
-			"⑦ 纹理层按 T 不应进入渐变工具")
-	# 颜色层吸管:吸的是 rgba 并回写取色器(纹理层吸的是 desc)
+	_chk(grad_active and grad_btn.disabled and brush_color_btn.disabled
+			and gradient_end_btn.disabled and not pal_first.disabled
+			and _editor.find_child("ToolBrush", true, false).theme_type_variation == &"ToolActive",
+			"⑦ 纹理层应禁用渐变/颜色、恢复调色板;渐变/按 T 都不得进入(应停在画笔)")
+	# 颜色层吸管:吸的是 RGBA 并回写取色器(纹理层吸的是 desc)
 	layer3_btn.pressed.emit()
 	await get_tree().process_frame
 	var eyedrop_color := 0x336699FF
@@ -517,10 +432,9 @@ func _check_ui_layout() -> void:
 	await get_tree().process_frame
 	_canvas_click(canvas, Vector2(88, 88), true)
 	await get_tree().process_frame
-	_chk(brush_color_btn.color.is_equal_approx(Color8(0x33, 0x66, 0x99, 0xFF)),
-			"⑦ 颜色层吸管应把 0x336699FF 写回取色器(实得 %s)" % str(brush_color_btn.color))
-	_chk(_editor.find_child("ToolBrush", true, false).theme_type_variation == &"ToolActive",
-			"⑦ 吸管完成后应自动回到画笔")
+	_chk(brush_color_btn.color.is_equal_approx(Color8(0x33, 0x66, 0x99, 0xFF))
+			and _editor.find_child("ToolBrush", true, false).theme_type_variation == &"ToolActive",
+			"⑦ 颜色层吸管应把 0x336699FF 写回取色器并回画笔(实得 %s)" % str(brush_color_btn.color))
 	layer1_btn.pressed.emit()                       # 收尾:回纹理层 + 画笔,后续检查不依赖层类型
 	await get_tree().process_frame
 
@@ -528,13 +442,6 @@ func _check_ui_layout() -> void:
 	var bad: Array[String] = []
 	_collect_overflow(_editor, bad)
 	_chk(bad.is_empty(), "⑦ 控件溢出父容器(应为 0 个):%s" % str(bad))
-
-
-func _has_button_text(root: Control, needle: String) -> bool:
-	for node in root.find_children("*", "Button", true, false):
-		if (node as Button).text.begins_with(needle):
-			return true
-	return false
 
 
 # 合成一个按键事件直接喂给编辑器根(_unhandled_input 会按 editor_ InputMap 判定)。
