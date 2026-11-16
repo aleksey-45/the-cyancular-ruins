@@ -103,10 +103,10 @@
 
 | 支 | 判词 | 条数闸 | 钉什么 |
 |---|---|---|---|
-| `tests/smoke/editor_doc_smoke.gd` | `EDITOR DOC SMOKE: OK(225 条断言)` | 225 | 7 层建图 / 环面 / Bresenham / 4 邻接与接缝油漆桶 / 颜色层 u32 / undo 往返与合并 / 栈上限 / load_map 清栈 / validate+to_bytes / **选区剪贴板镜像渐变 / meta 快照与 undo / 选区整块移动（重叠·越界·缺席层·一条 undo） / meta 单条改位置（side/type 保留·原地不动不入栈） / history_changed（只在笔画收尾入栈时发）** |
+| `tests/smoke/editor_doc_smoke.gd` | `EDITOR DOC SMOKE: OK(194 条断言)` | 194 | 7 层建图 / 环面 / Bresenham / 4 邻接与接缝油漆桶 / 颜色层 u32 / undo 往返与合并 / 栈上限 / load_map 清栈 / validate+to_bytes / **选区剪贴板镜像渐变 / meta 快照与 undo / 选区整块移动（源清目标写·重叠·越界拒绝·缺席层不建层·一条 undo） / meta 单条改位置（三 kind·side/type 保留·环面归一化·原地不动不入栈·undo 逐条还原）** |
 | `tests/smoke/editor_io_smoke.gd` | `EDITOR IO SMOKE: OK(53 条断言)` | 53 | v4 7 层读入 / legacy 读时迁移 / v3 与旧字母文本 / 坏文件 / 保存确定性 / 校验拒写 / 三处目录 / 默认落点 / **P3 导出落点与 res:// 拒写** |
-| `tests/probe/editor_canvas_probe.tscn` | `EDITOR CANVAS PROBE: ALL-OK(54 条断言)` | 54 | 上述 + **脏区刷新与全量 refresh 逐像素一致（单格/颜色层/跨接缝/小图多环面副本）** + 选区框几何 + meta 标记锚点 + `_draw` 真跑 + **手形平移（不发 pointer_*）/ 移动工具 delta 与边界 clamp / meta 命中（非 0 下标）**（写 doc 由工具层端到端钉） |
-| `tests/probe/editor_scene_probe.tscn` | `EDITOR SCENE PROBE: ALL-OK(64 条断言)` | 64 | 真实例化场景：打开 `maps/newfactory.cyrm` → 改一格 → undo/redo → 保存 → 重开 → 再保存**逐字节相等**；P3 导出并加载的 `Settings.sp_map_path`/`map_file_path()`；后置项：选区/复制/粘贴/镜像/渐变/meta/预览开关；**⑦ UI 行为：撤销/重做可用态 + 点击真回退/重做 + 笔画收尾后立即可用、缩放按钮、工具快捷键（Ctrl+V / Shift+H 不被单键吃掉）、按层适用性（纹理层禁渐变/颜色、颜色层禁纹理调色板、切层自动回画笔、颜色层吸管吸 RGBA）、校验自动切 Tab、无溢出**；**⑧ 未保存拦截（新建/打开/返回/关窗 4 条路径 + 确认/干净 2 种走向）**；**⑨ 移动工具端到端（选区 / meta 各一条）** |
+| `tests/probe/editor_canvas_probe.tscn` | `EDITOR CANVAS PROBE: ALL-OK(51 条断言)` | 51 | 上述 + **脏区刷新与全量 refresh 逐像素一致（单格/颜色层/跨接缝/小图多环面副本）** + 选区框几何 + meta 标记锚点 + `_draw` 真跑 + **手形平移（不 pointer_*）/ 移动 delta 与边界 clamp / meta 命中（非 0 下标）**（写 doc 由工具层端到端钉） |
+| `tests/probe/editor_scene_probe.tscn` | `EDITOR SCENE PROBE: ALL-OK(55 条断言)` | 55 | 真实例化场景：打开 `maps/newfactory.cyrm` → 改一格 → undo/redo → 保存 → 重开 → 再保存**逐字节相等**；P3 导出并加载的 `Settings.sp_map_path`/`map_file_path()`；后置项：选区/复制/粘贴/镜像/渐变/meta/预览开关；**⑦ UI 行为：撤销按钮点击真回退 + 笔画收尾后立即可用、工具快捷键（Ctrl+V / Shift+H 不被单键吃掉）、按层适用性（纹理层禁渐变/颜色、颜色层禁纹理调色板、切层自动回画笔、颜色层吸管吸 RGBA）、无溢出**；**⑧ 未保存拦截（新建 dirty 先确认 / 确认后继续 / 干净不多问 / 关窗通知路径）**；**⑨ 移动工具端到端（选区 + meta 一次落 doc）** |
 | `tests/probe/editor_preview_probe.tscn` | `EDITOR PREVIEW PROBE: ALL-OK(21 条断言)` | 21 | 真渲染预览的结构统计（773 瓦片 / 背景 1 层 / post 存在）/ 相机口径 / 显隐切换 / refresh 幂等 / doc 信号接线 |
 
 > ★ 本轮新增断言按 [`test-economy.md`](test-economy.md) 只留「去掉实现会红、且指向具体缺陷」的行为/逻辑断言；
@@ -187,7 +187,7 @@
 - `scenes/editor/editor_root.tscn` = **真实场景树**（根挂 `ui/theme/menu_theme.tres`）：`Toolbar`（标题 + `FileMenu`/`EditMenu` + 撤销/重做 + 视图 + 预览/返回）· **左栏** `LeftPanel`（2×5 工具网格 `ToolStrip` + 画刷 + 颜色 + `PaletteScroll`/`PaletteGrid` + 操作提示）· 中 `CanvasHost`（内含 `EditorCanvas` 节点）· **右栏** `RightSide`（`LayersCard` 7 层常驻 + `RightTabs` 2 Tab：选区 & meta / 校验消息）· `StatusBar`（含缩放控件）；功能节点全部 `unique_name_in_owner=true`，root 用 `%Name` 取。
 - `editor_root.gd` **只做装配/接线/公开 API**（1270 → **581** 行）：静态控件不再 `new`；代码里只保留动态内容（调色板缩略图、菜单下拉项、弹层内容、预览节点、撤销/重做可用态、缩放标签）。
 - 拆出两个无 `class_name` 的小组件（root `preload`）：`editor_tools.gd`（工具状态 + 画布指针 → `EditorDoc` 写入 + 选区拖拽 + meta 放置/拖动落点；只发信号）、`editor_actions.gd`（文件/编辑命令 + `ConfirmationDialog` 弹层 + 未保存拦截）。两者都不持有控件。
-- 判据：`EDITOR SCENE PROBE: ALL-OK(64)`（⑦ UI 行为组 / ⑧ 未保存拦截 4 路径 / ⑨ 移动工具端到端）/ `UI LAYOUT PROBE: ALL-OK(54)` / `RUN_ALL OK` / `check_naming.py` 绿；改前/改后截图 `.tmp/ui_shots/`（非 headless 人工对比）。
+- 判据：`EDITOR SCENE PROBE: ALL-OK(55)`（⑦ UI 行为组 / ⑧ 未保存拦截 / ⑨ 移动工具端到端）/ `UI LAYOUT PROBE: ALL-OK(54)` / `RUN_ALL OK` / `check_naming.py` 绿；改前/改后截图 `.tmp/ui_shots/`（非 headless 人工对比）。
 - 边界：`.tscn` 无法引用 `UiFactory.C_*`，所以全屏底色 `Bg` 在 tscn 里留一处字面量（全屏装饰例外），少数标签强调/弱化色由 root 在 `_ready` 按 `C_*` 覆盖 —— 不在 tscn 里另抄一套调色板。
 
 ## 13. UX 重排（2026-11-12）
@@ -203,9 +203,9 @@
 - **按层适用性**：纹理层置灰渐变/颜色（调色板可用），颜色层置灰纹理调色板（渐变/颜色可用）；吸管在两层分别吸 desc / RGBA；
   切层后渐变自动回画笔。守卫在 `editor_scene_probe` ⑦ 组（颜色层启用、纹理层禁用、自动回画笔、T 被拒、颜色层吸管回写）。
 - **安全网**：`doc.dirty` 时「新建 / 打开 / 返回」先弹确认，不再静默丢改动。
-- **守卫**：`editor_doc_smoke 183→225`（选区整块移动 / meta 单条改位置 / history_changed 时点）、`editor_canvas_probe 48→54`
-  （手形平移 / 移动 delta 与边界 clamp / meta 命中与 index）、`editor_scene_probe 50→64`（UI 行为 + 按层适用性 +
-  未保存拦截 4 路径 + 移动工具端到端 + 快捷键冲突）；`ui_layout_probe` 54 不变（编辑器页在 1920×1440 仍无溢出）。
-  按 [`test-economy.md`](test-economy.md) 删掉了本轮一度加的版式/控件存在性断言（宽度、Tab 数细节、图层常驻、控件条数、
-  菜单项条数、按钮接线存在性等）：这些答不清「去掉什么它才会红」或属于「版式不写」；布局观感靠截图人工验收。
+- **守卫**：`editor_doc_smoke 183→194`（新 API 的核心逻辑）、`editor_canvas_probe 48→51`（手形 / 移动 delta 与 clamp /
+  meta 命中）、`editor_scene_probe 50→55`（UI 行为 + 未保存拦截 + 移动工具端到端）；`ui_layout_probe` 54 不变。
+  按 [`test-economy.md`](test-economy.md) 删掉了本轮一度加的版式/控件存在性/逐事件点断言（宽度、Tab 细节、图层常驻、
+  控件条数、菜单项条数、按钮接线存在性、`history_changed` 每事件一条等）：这些答不清「去掉什么它才会红」或属于
+  「版式不写」；布局观感靠截图人工验收。
 - **非 headless 人工验收**：`python tools/ui_shots.py editor_root --size 1920x1440`（只截编辑器页，弹窗；不入默认批）。

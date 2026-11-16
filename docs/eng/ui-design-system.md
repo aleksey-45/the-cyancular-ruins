@@ -89,7 +89,7 @@ static func dialog(parent: Node, title: String, ok_text := "确定") -> AcceptDi
 
 | 页面 | 结果 |
 |---|---|
-| `scenes/editor/editor_root` | ✅ 顶栏（菜单/撤销重做/视图）+ HSplit（左栏工具/画刷/调色板 ｜ 画布 ｜ 右栏图层常驻 + TabContainer(2 页)）+ 状态栏 + ConfirmationDialog；`EDITOR SCENE PROBE` 64 条（2026-11-12 UX 重排后；版式不自动化，观感靠截图） |
+| `scenes/editor/editor_root` | ✅ 顶栏（菜单/撤销重做/视图）+ HSplit（左栏工具/画刷/调色板 ｜ 画布 ｜ 右栏图层常驻 + TabContainer(2 页)）+ 状态栏 + ConfirmationDialog；`EDITOR SCENE PROBE` 55 条（2026-11-12 UX 重排后；版式不自动化，观感靠截图） |
 | `scenes/main_menu` | ✅ 生成器改**构建模式**输出容器树（标题 HeaderStrip / 按钮列 720 / 版本号）；21 节点 16 unique name、0 offset |
 | `scenes/settings_menu` | ✅ 运行时 `UiKit.page` 构建；5 张卡 + 两列 + 滚动；12 个 unique name 运行时登记（`%` 12/12 命中） |
 | `scenes/info_menu` / `beta_menu` | ✅ root-only `.tscn` + 代码构建；H1/H2 标题 + 卡片；unique name 运行时登记 |

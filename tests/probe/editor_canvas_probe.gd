@@ -23,7 +23,7 @@ extends Node
 # 判据 = 判词行 + 条数闸;退出码只是陪衬。像素判据统一走 view_image()(纹理走 update() 上传,
 # view_texture().get_image() 是旧的)。
 
-const EXPECTED_CHECKS := 54
+const EXPECTED_CHECKS := 51
 const CANVAS_W := 800
 const CANVAS_H := 600
 const SUB := 32                     # 8 格 × 4 子格 = 32
@@ -333,10 +333,10 @@ func _ready() -> void:
 	_canvas.pointer_down.disconnect(_on_any_pointer)
 	var origin_after := _canvas.origin
 	_chk(absf(origin_after.x - (origin_before.x - 40.0 / float(SUB_PX))) < 0.01
-			and absf(origin_after.y - (origin_before.y - 20.0 / float(SUB_PX))) < 0.01,
-			"⑰ 手形拖动平移量期望 origin -=(2.5,1.25),实得 Δ=%s(前 %s / 后 %s)"
-			% [str(origin_after - origin_before), str(origin_before), str(origin_after)])
-	_chk(_pointer_hits == 0, "⑰ 手形拖动不应发 pointer_down(实得 %d 次)" % _pointer_hits)
+			and absf(origin_after.y - (origin_before.y - 20.0 / float(SUB_PX))) < 0.01
+			and _pointer_hits == 0,
+			"⑰ 手形拖动应平移 origin -= (2.5,1.25) 且不发 pointer_down(Δ=%s, hits=%d)"
+			% [str(origin_after - origin_before), _pointer_hits])
 	_canvas.set_pan_tool(false)
 
 	# ⑱ 移动工具:拖选区 → 发 selection_move_finished(delta)(写 doc 由工具层做,见 doc smoke/scene probe)
@@ -356,8 +356,7 @@ func _ready() -> void:
 	_drag_to(Vector2(96, 80))
 	_click_at(Vector2(96, 80), false)
 	_canvas.selection_move_finished.disconnect(_on_sel_move)
-	_chk(_last_sel_delta == Vector2i(2, 1),
-			"⑱ 移动工具应发出 selection_move_finished((2,1))(实得 %s)" % str(_last_sel_delta))
+	var move_delta := _last_sel_delta
 
 	# ⑱b 画布 clamp:选区贴右边界时继续往右拖 ⇒ 发出的 delta = 边界可移动量(选框不许出图)
 	_doc.set_selection(Rect2i(24, 20, 4, 4))
@@ -369,8 +368,9 @@ func _ready() -> void:
 	_drag_to(Vector2(700, 360))
 	_click_at(Vector2(700, 360), false)
 	_canvas.selection_move_finished.disconnect(_on_sel_move)
-	_chk(_last_sel_delta == Vector2i(4, 0),
-			"⑱b 拖出右边界时 delta 应被夹到边界可移动量 (4,0)(实得 %s)" % str(_last_sel_delta))
+	_chk(move_delta == Vector2i(2, 1) and _last_sel_delta == Vector2i(4, 0),
+			"⑱ 移动 delta 应为图内 (2,1)、贴右边界拖出时应夹到 (4,0)(实得 %s / %s)"
+			% [str(move_delta), str(_last_sel_delta)])
 	_canvas.set_move_tool(false)
 
 	# ⑲ 移动工具:meta 命中 → 发 meta_drag_finished(kind,index,格坐标);写 doc 由工具层做
@@ -389,9 +389,7 @@ func _ready() -> void:
 	_drag_to(Vector2(224, 224))
 	_click_at(Vector2(224, 224), false)
 	_canvas.meta_drag_finished.disconnect(_on_meta_drag)
-	_chk(String(_last_meta.get("kind", "")) == "player" and int(_last_meta.get("index", -1)) == 1
-			and _last_meta.get("cell", Vector2i.ZERO) == Vector2i(3, 3),
-			"⑲ 拖第 2 个出生点应发 player#1 → 格(3,3)(实得 %s)" % str(_last_meta))
+	var player_emit := _last_meta
 	# 复活点(2,2) 中心 = 屏幕 (160,160) → 拖到 (96,96) ⇒ 格 (1,1)
 	_last_meta = {}
 	_canvas.meta_drag_finished.connect(_on_meta_drag)
@@ -399,9 +397,13 @@ func _ready() -> void:
 	_drag_to(Vector2(96, 96))
 	_click_at(Vector2(96, 96), false)
 	_canvas.meta_drag_finished.disconnect(_on_meta_drag)
-	_chk(String(_last_meta.get("kind", "")) == "respawn" and int(_last_meta.get("index", -1)) == 0
+	_chk(String(player_emit.get("kind", "")) == "player" and int(player_emit.get("index", -1)) == 1
+			and player_emit.get("cell", Vector2i.ZERO) == Vector2i(3, 3)
+			and String(_last_meta.get("kind", "")) == "respawn"
+			and int(_last_meta.get("index", -1)) == 0
 			and _last_meta.get("cell", Vector2i.ZERO) == Vector2i(1, 1),
-			"⑲ 拖复活点应发 respawn#0 → 格(1,1)(实得 %s)" % str(_last_meta))
+			"⑲ meta 命中应发 player#1→(3,3) 与 respawn#0→(1,1)(实得 %s / %s)"
+			% [str(player_emit), str(_last_meta)])
 	_canvas.set_move_tool(false)
 
 

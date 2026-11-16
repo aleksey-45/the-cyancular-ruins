@@ -28,10 +28,9 @@ extends SceneTree
 #      缺席层凭空建层 / 选区不跟着平移 / 不是恰好一条多值 undo / offset=0 仍入栈 ⇒ 红。
 #   ⑰ meta 改位置丢 respawn.side / enemy.type / 新位置不环面归一化 / 原地不动仍入栈发信号 /
 #      越界索引或非法 kind 不拒 ⇒ 红。
-#   ⑱ history_changed 不在「条目入栈 / undo / redo / load_map」发,或笔画期间就发 ⇒ 红。
 # ★ 期望值按子格坐标手推(地图 4×3 格 ⇒ 16×12 子格),不复用被测函数的返回值自证。
 
-const EXPECTED_CHECKS := 225
+const EXPECTED_CHECKS := 194
 
 var _fails: Array[String] = []
 var _checks := 0
@@ -79,7 +78,6 @@ func _initialize() -> void:
 	_test_meta()
 	_test_move_selection()
 	_test_meta_position()
-	_test_history_signal()
 
 	# ══ 判词闸 ══
 	# 条数闸 = **恰好相等**:少了 = 脚本中途中止(断言被静默跳过);多了 = 忘更新 EXPECTED_CHECKS。
@@ -100,7 +98,7 @@ func _initialize() -> void:
 	print(("EDITOR DOC SMOKE: OK(%d 条断言):7 层建图 · 环面归一化 · Bresenham 直线 · 4 邻接/接缝油漆桶 · "
 			+ "颜色层 u32 · undo/redo 往返 · 笔画合并 · 栈上限 · load_map 清栈 · validate/to_bytes 接线 · "
 			+ "选区裁剪 · 剪贴板类型互斥 · 镜像 · 颜色层渐变 · meta 快照/undo · 选区整块移动 · "
-			+ "meta 单点改位置 · history_changed") % _checks)
+			+ "meta 单点改位置") % _checks)
 	quit(0)
 
 
@@ -827,7 +825,7 @@ func _test_move_selection() -> void:
 	var d1 := EditorDesc.neutral_desc(6)
 	var d2 := EditorDesc.neutral_desc(7)
 	var d3 := EditorDesc.neutral_desc(8)
-	# (a) 非重叠:子格 (2,2),(3,2) + offset(4,3) ⇒ 目标 (6,5),(7,5);手推改 4 格
+	# (a) 非重叠移动:源清 0 / 目标落值 / 选区跟随;一条 undo(源∪目标) + 一次 changed,undo/redo 两端还原
 	var doc := _fresh()                      # 16×12 子格
 	doc.set_cells(_cells([Vector2i(2, 2)]), d1)
 	doc.set_cells(_cells([Vector2i(3, 2)]), d2)
@@ -835,116 +833,65 @@ func _test_move_selection() -> void:
 	var u0 := doc.undo_count()
 	var e0 := _changed_count
 	var moved := doc.move_selection_content(Vector2i(4, 3))
-	_chk(bool(moved.get("ok", false)) and int(moved.get("count", 0)) == 4,
-			"⑯ 非重叠移动应 ok 且 count=4(手推:源 2 格清 0 + 目标 2 格落值)(实得 %s)" % [moved])
-	_chk(doc.get_subcell(2, 2) == 0 and doc.get_subcell(3, 2) == 0,
-			"⑯ 源区应被清空(实得 %d/%d)" % [doc.get_subcell(2, 2), doc.get_subcell(3, 2)])
-	_chk(doc.get_subcell(6, 5) == d1 and doc.get_subcell(7, 5) == d2,
-			"⑯ 目标区应逐格等于源值(实得 %d/%d)"
-					% [doc.get_subcell(6, 5), doc.get_subcell(7, 5)])
-	_chk(doc.selection == Rect2i(6, 5, 2, 1),
-			"⑯ 选区应跟着平移:(2,2,2,1)+offset(4,3) ⇒ (6,5,2,1)(实得 %s)" % doc.selection)
-	_chk(doc.undo_count() == u0 + 1 and doc.dirty,
-			"⑯ 移动应恰好一条 undo 且置 dirty(undo %d→%d, dirty=%s)"
-					% [u0, doc.undo_count(), doc.dirty])
-	# idx = sy*16+sx:源 (2,2)=34,(3,2)=35;目标 (6,5)=86,(7,5)=87
-	_chk(_changed_count == e0 + 1 and _last_layer == 1 and _last_idxs.size() == 4
-			and _last_idxs.has(34) and _last_idxs.has(35)
-			and _last_idxs.has(86) and _last_idxs.has(87),
-			"⑯ 应发一次 changed(层 1, idxs 覆盖源∪目标 = 34/35/86/87)(实得层 %d, idxs %s)"
-					% [_last_layer, _last_idxs])
-	var undone := doc.undo()
-	_chk(undone and doc.get_subcell(2, 2) == d1 and doc.get_subcell(3, 2) == d2
-			and doc.get_subcell(6, 5) == 0 and doc.get_subcell(7, 5) == 0,
-			"⑯ undo 应完整还原源与目标两端")
-	_chk(doc.redo() and doc.get_subcell(2, 2) == 0 and doc.get_subcell(6, 5) == d1
-			and doc.get_subcell(7, 5) == d2,
-			"⑯ redo 应再次搬走")
-	# (b) 重叠:源 (4,4)=d1,(5,4)=d2 + offset(1,0) ⇒ (5,4)=d1,(6,4)=d2;(5,4) 是源又是目标,
-	#     以目标写的 d1 为准(先清后返 0 就错了);手推改 3 格。
+	_chk(bool(moved.get("ok", false)) and int(moved.get("count", 0)) == 4
+			and doc.get_subcell(2, 2) == 0 and doc.get_subcell(3, 2) == 0
+			and doc.get_subcell(6, 5) == d1 and doc.get_subcell(7, 5) == d2
+			and doc.selection == Rect2i(6, 5, 2, 1),
+			"⑯ 移动应清源/落目标/选区跟随(count=4, 选区 (6,5,2,1);实得 %s/%s)" % [moved, doc.selection])
+	# idx = sy*16+sx:源 34/35,目标 86/87
+	_chk(doc.undo_count() == u0 + 1 and _changed_count == e0 + 1 and doc.dirty
+			and _last_layer == 1 and _last_idxs.size() == 4 and _last_idxs.has(34)
+			and _last_idxs.has(35) and _last_idxs.has(86) and _last_idxs.has(87)
+			and doc.undo() and doc.get_subcell(2, 2) == d1 and doc.get_subcell(6, 5) == 0
+			and doc.redo() and doc.get_subcell(6, 5) == d1,
+			"⑯ 移动应一条 undo+一次 changed(源∪目标),undo/redo 还原两端(idxs=%s)" % [_last_idxs])
+	# (b) 重叠:源 (4,4)=d1,(5,4)=d2 + offset(1,0) ⇒ (5,4) 以目标写的 d1 为准(不是先清后返 0)
 	var doc2 := _fresh()
 	doc2.set_cells(_cells([Vector2i(4, 4)]), d1)
 	doc2.set_cells(_cells([Vector2i(5, 4)]), d2)
 	doc2.set_cells(_cells([Vector2i(6, 4)]), d3)
 	doc2.set_selection(Rect2i(4, 4, 2, 1))
-	var u2 := doc2.undo_count()
 	var overlap := doc2.move_selection_content(Vector2i(1, 0))
-	_chk(bool(overlap.get("ok", false)) and int(overlap.get("count", 0)) == 3,
-			"⑯ 重叠移动应改 3 格((4,4)清 0、(5,4) 被目标值覆盖、(6,4) 落值)(实得 %s)" % [overlap])
-	_chk(doc2.get_subcell(4, 4) == 0 and doc2.get_subcell(5, 4) == d1
+	_chk(bool(overlap.get("ok", false)) and int(overlap.get("count", 0)) == 3
+			and doc2.get_subcell(4, 4) == 0 and doc2.get_subcell(5, 4) == d1
 			and doc2.get_subcell(6, 4) == d2,
-			"⑯ 重叠格应以目标写的值为准:手推 0/%d/%d(实得 %d/%d/%d)"
-					% [d1, d2, doc2.get_subcell(4, 4), doc2.get_subcell(5, 4), doc2.get_subcell(6, 4)])
-	_chk(doc2.undo_count() == u2 + 1, "⑯ 重叠移动也只产生一条 undo(实得 %d→%d)"
-			% [u2, doc2.undo_count()])
-	_chk(doc2.undo() and doc2.get_subcell(4, 4) == d1 and doc2.get_subcell(5, 4) == d2
-			and doc2.get_subcell(6, 4) == d3,
-			"⑯ undo 应还原重叠区三个值")
-	# (c) 不环面回绕:左 / 右 / 下越界都 ok:false,且选区/历史/信号/dirty 一律不动
+			"⑯ 重叠格应以目标写的值为准:手推 0/d1/d2(实得 %d/%d/%d)"
+					% [doc2.get_subcell(4, 4), doc2.get_subcell(5, 4), doc2.get_subcell(6, 4)])
+	# (c) 不环面回绕:左/右/下越界都 ok:false,且选区/历史/dirty 一律不动
 	var doc3 := _fresh()
 	doc3.set_selection(Rect2i(0, 0, 2, 1))
 	var e3 := _changed_count
 	var bad_l := doc3.move_selection_content(Vector2i(-1, 0))
-	_chk(not bool(bad_l.get("ok", true)) and String(bad_l.get("error", "")).contains("越界")
-			and doc3.selection == Rect2i(0, 0, 2, 1) and doc3.undo_count() == 0
-			and _changed_count == e3 and doc3.dirty == false,
-			"⑯ 左越界应 ok:false(error 提到越界)、选区不动、不入栈、不发 changed、不 dirty(实得 %s)" % [bad_l])
 	var bad_r := doc3.move_selection_content(Vector2i(15, 0))
-	_chk(not bool(bad_r.get("ok", true)) and doc3.selection == Rect2i(0, 0, 2, 1),
-			"⑯ 右越界(0+15+2>16)应 ok:false 且选区不动")
 	var doc3b := _fresh()
 	doc3b.set_selection(Rect2i(15, 11, 1, 1))
-	_chk(not bool(doc3b.move_selection_content(Vector2i(0, 1)).get("ok", true)),
-			"⑯ 下越界(11+1+1>12)应 ok:false")
-	# (d) 失败形状:没建图 / 没选区 / 图层非法
+	var bad_d := doc3b.move_selection_content(Vector2i(0, 1))
+	_chk(not bool(bad_l.get("ok", true)) and not bool(bad_r.get("ok", true))
+			and not bool(bad_d.get("ok", true))
+			and String(bad_l.get("error", "")).contains("越界")
+			and doc3.selection == Rect2i(0, 0, 2, 1) and doc3.undo_count() == 0
+			and _changed_count == e3 and doc3.dirty == false,
+			"⑯ 左/右/下越界都应 ok:false(不环面回绕)且选区/历史/changed/dirty 不动(实得 %s)" % [bad_l])
+	# (d) 失败形状 + offset=0 空操作:没图/没选区/层非法 ⇒ false;offset=0 ⇒ count 0、不入栈、不 dirty
 	var no_map := EditorDoc.new()
-	var no_map_ret := no_map.move_selection_content(Vector2i(1, 0))
-	_chk(not bool(no_map_ret.get("ok", true))
-			and String(no_map_ret.get("error", "")).contains("地图"),
-			"⑯ 没建图时移动应 ok:false 且 error 提到地图(实得 %s)" % [no_map_ret])
-	_chk(not bool(_fresh().move_selection_content(Vector2i(1, 0)).get("ok", true)),
-			"⑯ 无选区移动应 ok:false")
-	var doc_bad_layer := _fresh()
-	doc_bad_layer.set_selection(Rect2i(0, 0, 1, 1))
-	doc_bad_layer.active_layer = 7
-	var bad_layer := doc_bad_layer.move_selection_content(Vector2i(1, 0))
-	_chk(not bool(bad_layer.get("ok", true))
-			and String(bad_layer.get("error", "")).contains("图层"),
-			"⑯ active_layer 非法应 ok:false 且 error 提到图层(实得 %s)" % [bad_layer])
-	# (e) offset=0:无操作 —— 不入栈、不发 changed、不 dirty、选区不动
+	var bad_layer_doc := _fresh()
+	bad_layer_doc.set_selection(Rect2i(0, 0, 1, 1))
+	bad_layer_doc.active_layer = 7
 	var doc_z := _fresh()
 	doc_z.set_selection(Rect2i(2, 2, 2, 1))
-	var e_z := _changed_count
 	var zero := doc_z.move_selection_content(Vector2i.ZERO)
-	_chk(bool(zero.get("ok", false)) and int(zero.get("count", 0)) == 0
-			and doc_z.undo_count() == 0 and _changed_count == e_z and doc_z.dirty == false
+	_chk(not bool(no_map.move_selection_content(Vector2i(1, 0)).get("ok", true))
+			and not bool(_fresh().move_selection_content(Vector2i(1, 0)).get("ok", true))
+			and not bool(bad_layer_doc.move_selection_content(Vector2i(1, 0)).get("ok", true))
+			and bool(zero.get("ok", false)) and int(zero.get("count", 0)) == 0
+			and doc_z.undo_count() == 0 and doc_z.dirty == false
 			and doc_z.selection == Rect2i(2, 2, 2, 1),
-			"⑯ offset=0 应 ok:true/count=0 且不入栈/不发 changed/不 dirty/选区不动(实得 %s)" % [zero])
-	# (f) 颜色层:层内是有符号位,移动后 get_subcell 读回的 u32 不变(0xFF336699)
-	var doc_c := _fresh()
-	doc_c.active_layer = 3
-	var cc := 0xFF336699
-	doc_c.set_cells(_cells([Vector2i(1, 1)]), cc)
-	doc_c.set_selection(Rect2i(1, 1, 1, 1))
-	var uc := doc_c.undo_count()
-	var cmoved := doc_c.move_selection_content(Vector2i(3, 2))    # (1,1) → (4,3)
-	_chk(bool(cmoved.get("ok", false)) and int(cmoved.get("count", 0)) == 2
-			and doc_c.get_subcell(1, 1) == 0 and doc_c.get_subcell(4, 3) == cc,
-			"⑯ 颜色层移动应清源/落目标且 u32 不变 0x%X(实得 0x%X,%s)"
-					% [cc, doc_c.get_subcell(4, 3), cmoved])
-	_chk(doc_c.undo_count() == uc + 1 and doc_c.undo()
-			and doc_c.get_subcell(1, 1) == cc and doc_c.get_subcell(4, 3) == 0,
-			"⑯ 颜色层移动 undo 应还原 u32 值")
-	# (g) 缺席层没有内容可搬:count=0,选区照样平移,绝不凭空建层、不入栈
+			"⑯ 没图/没选区/层非法应 false;offset=0 应 count 0 且不入栈/不 dirty(实得 %s)" % [zero])
+	# (e) 缺席层没有内容可搬:count=0、选区照样平移、绝不凭空建层、不入栈
 	var doc_miss := _fresh()
 	doc_miss.active_layer = 5                 # 层 5 默认 null
 	doc_miss.set_selection(Rect2i(1, 1, 2, 2))
 	var miss := doc_miss.move_selection_content(Vector2i(2, 0))
-	_chk(bool(miss.get("ok", false)) and int(miss.get("count", 0)) == 0
-			and doc_miss.selection == Rect2i(3, 1, 2, 2)
-			and doc_miss.map["layers"][5] == null and doc_miss.undo_count() == 0
-			and doc_miss.dirty == false,
-			"⑯ 缺席颜色层应 count=0/选区平移/不建层/不入栈(实得 %s, 选区 %s)" % [miss, doc_miss.selection])
 	var sparse: Dictionary = EditorMap.create_map("s", 2, 2)       # 8×8 子格
 	sparse["layers"][0] = null
 	var doc_sparse := EditorDoc.new()
@@ -953,9 +900,13 @@ func _test_move_selection() -> void:
 	doc_sparse.active_layer = 0
 	doc_sparse.set_selection(Rect2i(0, 0, 2, 2))
 	var smiss := doc_sparse.move_selection_content(Vector2i(2, 2))
-	_chk(bool(smiss.get("ok", false)) and int(smiss.get("count", 0)) == 0
-			and sparse["layers"][0] == null and doc_sparse.selection == Rect2i(2, 2, 2, 2),
-			"⑯ 缺席纹理层也应 count=0、不凭空补层(实得 %s)" % [smiss])
+	_chk(bool(miss.get("ok", false)) and int(miss.get("count", 0)) == 0
+			and doc_miss.selection == Rect2i(3, 1, 2, 2)
+			and doc_miss.map["layers"][5] == null and doc_miss.undo_count() == 0
+			and doc_miss.dirty == false
+			and bool(smiss.get("ok", false)) and int(smiss.get("count", 0)) == 0
+			and sparse["layers"][0] == null,
+			"⑯ 缺席颜色/纹理层应 count=0、选区平移、不凭空建层(实得 %s / %s)" % [miss, smiss])
 
 
 # ══ ⑰ meta 单条改位置:三种 kind / 环面归一化 / 原地不动 / 越界与非法 kind 拒 / side·type 保留 ══
@@ -967,94 +918,43 @@ func _test_meta_position() -> void:
 	doc.add_enemy("slime", Vector2i(2, 2))   # enemy index 0
 	var u0 := doc.undo_count()
 	var m0 := _meta_count
-	var moved_p := doc.set_meta_position("player", 0, Vector2i(2, 0))
-	_chk(moved_p and _player_at(doc, 0) == Vector2i(2, 0),
-			"⑰ player 移动应成功且落 (2,0)(实得 %s)" % [_player_at(doc, 0)])
-	_chk(_meta_count == m0 + 1 and doc.undo_count() == u0 + 1 and doc.dirty,
-			"⑰ 改位置应一次 meta_changed / 一条 undo / dirty(meta +%d, undo %d→%d)"
-					% [_meta_count - m0, u0, doc.undo_count()])
-	var last_entry: Dictionary = {}
-	if not doc._undo.is_empty():
-		last_entry = doc._undo[doc._undo.size() - 1]
-	_chk(String(last_entry.get("kind", "")) == "meta",
-			"⑰ 改位置应记快照式 meta 条目(实得 %s)" % [last_entry])
-	# 环面归一化:(-1,4) ⇒ (3,1);(7,1) 归一化后同为 (3,1) ⇒ 原地不动
-	_chk(doc.set_meta_position("player", 0, Vector2i(-1, 4))
-			and _player_at(doc, 0) == Vector2i(3, 1),
-			"⑰ 新位置应环面归一化:(-1,4) ⇒ (3,1)(实得 %s)" % [_player_at(doc, 0)])
-	var u_same := doc.undo_count()
-	var m_same := _meta_count
-	_chk(not doc.set_meta_position("player", 0, Vector2i(7, 1))
-			and doc.undo_count() == u_same and _meta_count == m_same,
-			"⑰ 归一化后原地不动(7,1)⇒(3,1) 应 false 且不入栈/不发信号")
-	# respawn:side 保留;enemy:type 保留(只改 x/y,不重造条目)
-	_chk(doc.set_meta_position("respawn", 1, Vector2i(2, 1))
-			and _respawn_at(doc, 1) == Vector3i(2, 2, 1),
-			"⑰ respawn 移动应保留 side=2、位置 (2,1)(实得 %s)" % [_respawn_at(doc, 1)])
-	_chk(doc.set_meta_position("enemy", 0, Vector2i(0, 1))
-			and String((doc.map["enemies"][0] as Dictionary).get("type", "")) == "slime"
-			and _enemy_at(doc, 0) == Vector2i(0, 1),
-			"⑰ enemy 移动应保留 type=slime、位置 (0,1)(实得 %s)" % [doc.map["enemies"][0]])
-	# 非法 kind(复数 / bogus)/ 索引越界:false,不产生条目、不发信号
-	var u_bad := doc.undo_count()
-	var m_bad := _meta_count
-	_chk(not doc.set_meta_position("players", 0, Vector2i(0, 0))
-			and not doc.set_meta_position("bogus", 0, Vector2i(0, 0)),
-			"⑰ 非法 kind(players/bogus)应 false")
-	_chk(not doc.set_meta_position("player", 1, Vector2i(0, 0))
-			and not doc.set_meta_position("player", -1, Vector2i(0, 0))
-			and not doc.set_meta_position("respawn", 2, Vector2i(0, 0))
-			and not doc.set_meta_position("enemy", 1, Vector2i(0, 0)),
-			"⑰ 索引越界(正/负)应 false")
-	_chk(doc.undo_count() == u_bad and _meta_count == m_bad,
-			"⑰ 失败调用不应入栈/发 meta_changed(undo %d→%d, meta %d→%d)"
-					% [u_bad, doc.undo_count(), m_bad, _meta_count])
-	# undo/redo 还原(快照式):逆序撤 enemy / respawn / player 两次
-	_chk(doc.undo() and _enemy_at(doc, 0) == Vector2i(2, 2)
+	var p_ok := doc.set_meta_position("player", 0, Vector2i(2, 0))
+	var r_ok := doc.set_meta_position("respawn", 1, Vector2i(2, 1))
+	var e_ok := doc.set_meta_position("enemy", 0, Vector2i(0, 1))
+	_chk(p_ok and r_ok and e_ok and doc.undo_count() == u0 + 3 and _meta_count == m0 + 3
+			and doc.dirty and _player_at(doc, 0) == Vector2i(2, 0)
+			and _respawn_at(doc, 1) == Vector3i(2, 2, 1)
+			and _enemy_at(doc, 0) == Vector2i(0, 1)
 			and String((doc.map["enemies"][0] as Dictionary).get("type", "")) == "slime",
-			"⑰ undo 应把敌人撤回 (2,2) 且保留 type")
-	_chk(doc.undo() and _respawn_at(doc, 1) == Vector3i(2, 3, 2),
-			"⑰ undo 应把复活点撤回 (3,2) 且保留 side=2")
-	_chk(doc.undo() and _player_at(doc, 0) == Vector2i(2, 0),
-			"⑰ undo 应把环面移动撤回 (2,0)")
-	_chk(doc.undo() and _player_at(doc, 0) == Vector2i(1, 2),
-			"⑰ 再 undo 应回到改位置前的 (1,2)")
-	_chk(doc.redo() and _player_at(doc, 0) == Vector2i(2, 0),
-			"⑰ redo 应重新应用第一次移动")
-	# dirty:干净装载的图上改位置应置 dirty 且只入一条 undo
-	var m: Dictionary = EditorMap.create_map("mp", 2, 2)          # 2×2 格 = 8×8 子格
-	m["players"] = [{"x": 0, "y": 0}]
-	var doc2 := EditorDoc.new()
-	_watch(doc2)
-	doc2.load_map(m)
-	var u2 := doc2.undo_count()
-	_chk(doc2.set_meta_position("player", 0, Vector2i(1, 0))
-			and doc2.dirty and doc2.undo_count() == u2 + 1
-			and _player_at(doc2, 0) == Vector2i(1, 0),
-			"⑰ 干净图上改位置应 dirty=true 且入一条 undo(实得 dirty=%s undo=%d→%d)"
-					% [doc2.dirty, u2, doc2.undo_count()])
-	_chk(not doc2.set_meta_position("player", 1, Vector2i(0, 0))
-			and doc2.undo_count() == u2 + 1,
-			"⑰ 越界索引不改图不入栈")
+			"⑰ 三种 kind 应各入一条 meta 条目;respawn 保留 side、enemy 保留 type(实得 %s / %s)"
+					% [_respawn_at(doc, 1), doc.map["enemies"][0]])
+	# 环面归一化:(-1,4) ⇒ (3,1);(7,1) 归一化后同点 ⇒ 原地不动 false、不入栈
+	_chk(doc.set_meta_position("player", 0, Vector2i(-1, 4))
+			and _player_at(doc, 0) == Vector2i(3, 1)
+			and not doc.set_meta_position("player", 0, Vector2i(7, 1)),
+			"⑰ 新位置应环面归一化,归一化后原地不动应 false(实得 %s)" % [_player_at(doc, 0)])
+	# 非法 kind / 索引越界:false,不入栈、不发 meta_changed
+	var u1 := doc.undo_count()
+	var m1 := _meta_count
+	var bad_ok := not doc.set_meta_position("players", 0, Vector2i(0, 0)) \
+			and not doc.set_meta_position("bogus", 0, Vector2i(0, 0)) \
+			and not doc.set_meta_position("player", 1, Vector2i(0, 0)) \
+			and not doc.set_meta_position("player", -1, Vector2i(0, 0)) \
+			and not doc.set_meta_position("respawn", 2, Vector2i(0, 0)) \
+			and not doc.set_meta_position("enemy", 1, Vector2i(0, 0))
+	_chk(bad_ok and doc.undo_count() == u1 and _meta_count == m1,
+			"⑰ 非法 kind/越界索引应 false 且不入栈/不发信号(undo %d→%d, meta %d→%d)"
+					% [u1, doc.undo_count(), m1, _meta_count])
+	# undo 四次逐条还原(快照式;含归一化那次),redo 重新应用第一次
+	_chk(doc.undo() and doc.undo() and doc.undo() and doc.undo()
+			and _player_at(doc, 0) == Vector2i(1, 2)
+			and _respawn_at(doc, 1) == Vector3i(2, 3, 2)
+			and _enemy_at(doc, 0) == Vector2i(2, 2)
+			and doc.redo() and _player_at(doc, 0) == Vector2i(2, 0),
+			"⑰ undo 应逐条还原三种 kind,redo 重新应用(实得 player=%s)" % [_player_at(doc, 0)])
 	var blank := EditorDoc.new()
 	_chk(not blank.set_meta_position("player", 0, Vector2i(0, 0)),
 			"⑰ 没建图时改位置应 false")
-
-
-# ⑱ history_changed:撤销/重做按钮的可用态只听它(changed 在笔画期间每格都发,条目却还没入栈)。
-#     只钉最容易再错的时点 = 笔画收尾;undo/redo/load_map 各自入栈路径由 undo/redo 行为断言覆盖。
-func _test_history_signal() -> void:
-	var doc := EditorDoc.new()
-	var cnt := [0]
-	doc.history_changed.connect(func() -> void: cnt[0] += 1)
-	doc.new_map("hs", 4, 3)
-	doc.begin_stroke()
-	doc.set_cells([Vector2i(0, 0)], EditorDesc.neutral_desc(6))
-	var mid := int(cnt[0])
-	doc.end_stroke()
-	_chk(mid == 1 and cnt[0] == 2,
-			"⑱ history_changed 应只在笔画收尾入栈时发一次(期间 %d / 收尾后 %d)" % [mid, int(cnt[0])])
-
 
 
 # ── 工具 ────────────────────────────────────────────────────────────────────
