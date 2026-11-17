@@ -276,12 +276,12 @@ func _assert_stage3() -> void:
 		var cl := _rec_line(text, "CONV")
 		if cl != "":
 			conv_ok[role] = _tok(cl, "ok", "0") == "1"
-		var bl := _rec_line(text, "BULLET")
-		if bl != "":
-			bullet[role] = bl
-		var gl := _rec_line(text, "GRENADE")
-		if gl != "":
-			grenade[role] = gl
+		var b_line := _rec_line(text, "BULLET")
+		if b_line != "":
+			bullet[role] = b_line
+		var g_line := _rec_line(text, "GRENADE")
+		if g_line != "":
+			grenade[role] = g_line
 		var rol := _rec_line(text, "ROUND1")
 		if rol != "":
 			round1[role] = rol

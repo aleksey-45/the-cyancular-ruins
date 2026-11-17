@@ -64,7 +64,7 @@ func _run() -> void:
 	if must_reach.has(mode) and not _require_scene(tree, str(must_reach[mode])):
 		return
 	if mode == "sp":
-		await _verify_picked_map(tree)
+		_verify_picked_map(tree)
 		await _verify_pause(tree)
 		await _verify_go_menu(tree)
 	await _shot(tree, "autotest_%s.png" % mode)

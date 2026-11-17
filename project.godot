@@ -37,6 +37,25 @@ Recorder="*res://core/present/record/recorder.gd"
 file_logging/enable_file_logging=true
 file_logging/max_log_files=64
 file_logging/log_path.serverui="user://logs/server_engine.log"
+; ── GDScript 警告 → 错误(2026-11-17)──
+; 只挑"写了就是坑、当前违规可控"的几类;类型严格性那几条(unsafe_method_access 等)先不动:
+; 全仓 260 个脚本会当场炸,会训练所有人 @warning_ignore。逐步收紧的入口见 tools/check_architecture.py。
+gdscript/warnings/enable=true
+gdscript/warnings/exclude_addons=true
+gdscript/warnings/integer_division=1
+gdscript/warnings/shadowed_variable=1
+gdscript/warnings/shadowed_variable_base_class=1
+gdscript/warnings/standalone_expression=2
+gdscript/warnings/redundant_await=2
+gdscript/warnings/unsafe_void_return=2
+gdscript/warnings/int_as_enum_without_cast=1
+gdscript/warnings/int_as_enum_without_match=2
+gdscript/warnings/incompatible_ternary=1
+gdscript/warnings/missing_super_call=2
+gdscript/warnings/deprecated_keyword=2
+gdscript/warnings/confusable_identifier=2
+gdscript/warnings/confusable_local_declaration=2
+gdscript/warnings/confusable_local_usage=2
 
 [display]
 
