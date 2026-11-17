@@ -16,8 +16,7 @@
   - `--list` / `--inspect "x,y;..."`；`--respawn1 "x,y;..." --respawn2 "..." --write` 写盘。
   - 写盘走 `MapFormatV4.replace_meta`：只替换 meta 文本段，**层块字节逐字节原样保留**（走 `serialize()` 会从格级网格重铺场景层，
     丢掉编辑器画的 16px 混排）；写后自动回读校验。
-- [`tools/migrate_map_textures.gd`](../../tools/migrate_map_textures.gd)：旧纹理 id 的一次性迁移工具（legacy 映射规则见
-  [`editor-core.md`](../systems/editor/editor-core.md) §6）。
+- [`tools/clean_comments.py`](../../tools/clean_comments.py)：注释风格/额度的批量清理工具（一次性；日常改代码别顺手全仓跑）。
 
 ## 2. 发布工具
 
