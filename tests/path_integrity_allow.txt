@@ -10,3 +10,4 @@ res://map	# 同上 —— ★ 注意它与**真实存在**的 res://maps 是两�
 res://backup	# 同上(备份目录,见 .gitignore)
 res://editor/_build	# 同上(编辑器构建产物)
 res://_crashtest	# 同上 —— ★ 2026-10-05 补:2026-10-03 把 `res://_crashtest` 加进 `allscript_probe` 的 SKIP_DIRS 时**漏了同步本表**(该目录本身已于 2026-10-04 整个删除)⇒ 这一条一直缺,直到 `path_integrity_probe` 第一次被聚合入口真正跑起来才暴露
+res://.tmp	# 同上(本地暂存目录,见 .gitignore;`tools/ui_shots.py` 与导出验证用它,按需自建) —— ★ 2026-11-17 补:它与上面 `res://_crashtest` 是**同一类漏登记**,只是直到有人清掉本地 `.tmp/` 才暴露:本机一直有该目录 ⇒ `allscript_probe` 的 SKIP_DIRS 里那个字符串看似"存在",**干净克隆上其实不存在**
