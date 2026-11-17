@@ -39,7 +39,9 @@
   `PlayerMotor`/`PlayerPresent`/`PlayerPickup`/`PlayerNetState`。只解析本仓声明过的 `class_name`
   （`extends`/`preload`/`load`/类型注解/`as`/`is`/静态访问），内建类型不参与。存量违规进
   [`tools/architecture_allow.txt`](../../tools/architecture_allow.txt)，**只减不增**（新增与过期都退 1）；
-  人工确认后可用 `--update-allow` 重写。它是**工具**不是测试（`test-economy` D6：不把读源码的形态判断放进 `tests/`）。
+  人工确认后可用 `--update-allow` 重写。R5 校验目录契约表（`docs/eng/README.md`）覆盖每个顶层源码目录与
+  `core/` 子目录 —— 这是"不写每目录 README"的替代：一句话职责只写一处，漏写目录由工具判红。
+  它是**工具**不是测试（`test-economy` D6：不把读源码的形态判断放进 `tests/`）。
 - [`tools/gen_rpc_channel_table.py`](../../tools/gen_rpc_channel_table.py)：`docs/eng/netplay-rpc-channels.md` 的 RPC 通道表 ↔ 代码 `@rpc`
   声明的生成式对账（`--check` 只校验不写盘，漂移退 1；`--write` 幂等重写；`--self-test` 纯函数自测）。
 - [`tools/sync_agents_md.py`](../../tools/sync_agents_md.py)：`AGENTS.md` → `CLAUDE.md` 生成副本（改了 AGENTS 必须跑一次）。

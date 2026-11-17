@@ -24,3 +24,24 @@
 | 房间 / 端口生命周期约定（回收梯、超龄扫、端口池） | [`room-lifecycle-conventions.md`](room-lifecycle-conventions.md) |
 | **动手前必看**：既有红 / 待还的债 / 已裁定不做 | [`registered-debt.md`](registered-debt.md) |
 | 追溯"当时为什么这么定"（旧计划 / 旧审计） | `git log` / `git log -p -- <path>` —— **本仓不设归档目录**，历史不入库 |
+
+## 目录契约
+
+> 与 [`tools/check_architecture.py`](../../tools/check_architecture.py) 的规则 R1–R5 同源：R5 会校验**每个顶层源码目录与 `core/` 子目录都出现在这张表里**（漏一个 = 红；更深层的目录继承其父目录那一行），所以不需要每个目录放 README。
+> 表只写"一句话职责 + 依赖方向"，不写文件清单（清单必过期，以 `ls` 为准）。**改目录或改依赖方向 = 同时改这张表与工具规则。**
+
+| 目录 | 一句话职责 | 允许依赖 | 禁止 |
+|---|---|---|---|
+| `core/sim/` | 纯逻辑：几何 / 命中 / 规则 / 时间账本 | 自身、`core/config` | 场景树、`scenes/`、`server/`、`get_tree()` |
+| `core/net/` | 协议、编解码、快照、预测回滚 | `core/sim` | `scenes/`、`server/` |
+| `core/present/` | 渲染与表现辅助（后处理、相机、对象池、录像带） | 引擎 API | `server/` |
+| `core/config/` | 数值与全局配置的单一来源 | 自身 | 场景、网络 |
+| `core/editor/` | `.cyrm` 编解码与编辑器数据 | `core/sim` | `scenes/`、`server/` |
+| `core/mp/` | 模式定义 / 选项 / 队伍规则（各模式共用的常量与判据） | `core/sim` | 场景、网络 |
+| `core/ui/` | 跨场景共用的 UI 件（如加载屏） | `core/` | `server/` |
+| `scenes/` | 实体与场景（Godot 节点树、编辑期可见） | `core/`、`ui/` | `server/` |
+| `scenes/player/` | 玩家实体 + 其内部模块（motor / present / pickup / state） | `core/`、`scenes/weapons/` | 其它实体的内部模块 |
+| `server/` | 权威端：大厅、worker、裁决、回合 | `core/`、`scenes/` | — |
+| `ui/` | HUD / 菜单 / 设计系统 | `core/` | `server/` |
+| `tests/`、`tools/` | 验证与仓库守卫 | 全部（允许） | 不进导出包 |
+| `assets/`、`data/`、`maps/` | 美术 / 注册表 / 地图数据 | — | 不含 `.gd` |

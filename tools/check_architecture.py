@@ -49,6 +49,43 @@ RE_AS = re.compile(r"\bas\s+([A-Z][A-Za-z0-9_]*)")
 RE_IS = re.compile(r"\bis\s+([A-Z][A-Za-z0-9_]*)")
 RE_STATIC = re.compile(r"\b([A-Z][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)")
 RE_TREE = re.compile(r"\b(get_tree\(\)|get_node(?:_or_null)?\(|\$[A-Za-z_])")
+RE_DOC_ROW = re.compile(r"^\|\s*(.+?)\s*\|", re.M)   # 目录契约表的首列
+DOC = os.path.join(PROJECT, "docs", "eng", "README.md")
+
+
+def source_dirs() -> set[str]:
+    """含 .gd 的目录:顶层目录 + core/ 的直接子目录。这些目录必须出现在目录契约表里。"""
+    out: set[str] = set()
+    for name in os.listdir(PROJECT):
+        if name in SKIP_DIRS or name.startswith("."):
+            continue
+        d = os.path.join(PROJECT, name)
+        if not os.path.isdir(d):
+            continue
+        if any(f.endswith(".gd") for f in os.listdir(d)):
+            out.add(name)
+    core = os.path.join(PROJECT, "core")
+    if os.path.isdir(core):
+        for name in os.listdir(core):
+            d = os.path.join(core, name)
+            if os.path.isdir(d) and any(f.endswith(".gd") for f in os.listdir(d)):
+                out.add("core/" + name)
+    return out
+
+
+def documented_dirs() -> set[str]:
+    """目录契约表首列里所有反引号包裹的路径(去掉尾部 '/')。"""
+    out: set[str] = set()
+    if not os.path.exists(DOC):
+        return out
+    text = open(DOC, encoding="utf-8").read()
+    for m in RE_DOC_ROW.finditer(text):
+        cell = m.group(1)
+        for tok in re.findall(r"`([^`]+)`", cell):
+            t = tok.strip().rstrip("/")
+            if t and ("/" in t or t in ("tests", "tools", "scenes", "server", "ui", "assets", "data", "maps")):
+                out.add(t)
+    return out
 
 
 def walk_gd(base: str):
@@ -133,6 +170,15 @@ def main() -> int:
         if rp.startswith("core/sim/"):
             for m in RE_TREE.finditer(code):
                 add("R3", rp, m.group(1))
+
+    # R5:目录契约表(docs/eng/README.md)必须覆盖每个源码目录 —— 这是"不写每目录 README"的代价替代:
+    #    一句话职责只写一处,漏写目录由工具判红。
+    doc_rp = rel(DOC)
+    for d in sorted(source_dirs() - documented_dirs()):
+        add("R5", doc_rp, d + "/ 未入目录契约表")
+    for d in sorted(documented_dirs() - source_dirs()):
+        if d.startswith("core/"):
+            add("R5", doc_rp, d + "/ 表里有、但目录下没有 .gd(过期条目)")
 
     rows = sorted(violations)
     if args.list:
