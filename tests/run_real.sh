@@ -37,14 +37,14 @@
 #     心跳只在**支间**刷新 ⇒ 单支挂住 120~150s 期间心跳会旧,但仍在 600s 内 ⇒ 判活成立;
 #     ★ **阈值必须跟着预算走**:谁把单支预算调到 >600s,这里就会把**正在跑的**批判成陈旧(⇒ 锁失效)。
 #     三条都在 `tests/README.md` 的「聚合入口 → run_real.sh」一节里落纸(评审 I4 指出原先指向失效)。
-#   · **闸四(清单不许烂)**:`tests/{smoke,probe}/*.sh` 里每一支**必须**出现在 `ENTRIES`
+#   · **闸四(清单不许烂)**:`tests/e2e/*.sh` 里每一支**必须**出现在 `ENTRIES`
 #     (跑)或 `WRAPPERS`(不跑 + 理由)之一,且两边每条都必须匹配到真实文件 ⇒ 否则**红**。
 #     去掉这条:新加一支真链路 `.sh` 会**静默不进批**(而入口照样打 OK)。
 #   · **端口回收只对池内那几支**:池外 `rejoin_probe.sh`(29300/29350)与 `team_match_probe.sh`
 #     (29200/29250)**一律不扫** `[7800,8300)` —— 那是实现事实,也是**不许端掉用户对局**那条
 #     硬规定的落点;它们各自扫自己的那一段。
 #   · **测不到什么**:① 它**不替代**各支自己的判据(每支的日志里还有更细的断言);
-#     ② `tests/probe/team_match_probe.sh` **今天仍不可当 3v3 的端到端守卫** ——
+#     ② `tests/e2e/team_match_probe.sh` **今天仍不可当 3v3 的端到端守卫** ——
 #     `docs/registered-debt.md` §一第 1 行:根因已修(`9003dae`),但**修复后没有留下六人整跑的判决**。
 #     本入口**照实标注**它,不会因为"跑过"就把它当绿。
 #   · ASCII 射程(**与 `run_all.sh` 同一口径,权威表述在它的文件头**,2026-10-05 修复轮2 订正 ——
@@ -87,9 +87,9 @@ FAIL_RE='(^|[^A-Za-z0-9])FAIL[A-Z]{0,4}([^A-Za-z0-9]|$)'
 # 顺序 = 从"最短 + 最基础"到"最长 + 不确定性最大",这样先跑的先给出便宜信号。
 # 耗时估计取自各支自己的头注(不是猜的);改了头注就要同步改这里。
 ENTRIES=(
-	"tests/smoke/pvp_match_smoke.sh|7777 + pool[7800,8300]|~20s|SMOKE PASS|pool"
-	"tests/probe/rejoin_probe.sh|lobby 29300 / worker 29350 (OUT of pool)|60~110s|REJOIN PROBE: ALL-OK|nopool"
-	"tests/probe/team_match_probe.sh|lobby 29200 / worker 29250 (OUT of pool)|3~10min|TEAM MATCH PROBE: ALL-OK|nopool"
+	"tests/e2e/pvp_match_smoke.sh|7777 + pool[7800,8300]|~20s|SMOKE PASS|pool"
+	"tests/e2e/rejoin_probe.sh|lobby 29300 / worker 29350 (OUT of pool)|60~110s|REJOIN PROBE: ALL-OK|nopool"
+	"tests/e2e/team_match_probe.sh|lobby 29200 / worker 29250 (OUT of pool)|3~10min|TEAM MATCH PROBE: ALL-OK|nopool"
 )
 
 # ── 同目录下的 .sh 里**不进真链路批**的那些(`path|理由`)────────────────────────
@@ -203,13 +203,18 @@ gate3_precheck() {
 }
 
 # ── 闸四:清单不许烂 ─────────────────────────────────────────────────────
+# 2026-11-17 目录重构:e2e 是**唯一**允许出现 .sh 的目录;unit/scene 下出现 .sh = 放错了桶。
 shopt -s nullglob
 ALL_SH=()
-for f in tests/smoke/*.sh; do ALL_SH+=("$f"); done
-for f in tests/probe/*.sh; do ALL_SH+=("$f"); done
+for f in tests/e2e/*.sh; do ALL_SH+=("$f"); done
+STRAY_SH=()
+for f in tests/unit/*.sh tests/scene/*.sh; do STRAY_SH+=("$f"); done
 shopt -u nullglob
-
 LIST_BAD=0
+for f in "${STRAY_SH[@]}"; do
+	echo "[gate4] FATAL: $f -- .sh 只允许在 tests/e2e/(unit/scene 是单进程桶)"
+	LIST_BAD=$((LIST_BAD + 1))
+done
 for f in "${ALL_SH[@]}"; do
 	found=0
 	for line in "${ENTRIES[@]}" "${WRAPPERS[@]}"; do

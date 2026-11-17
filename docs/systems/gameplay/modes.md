@@ -12,7 +12,7 @@
   - 开局比分补贴(少人方)= `min(人数差, 目标 - 1)`。每局开局都给(`_start_next_round` 里 `_scores = _initial_scores()`);上限是「目标-1」,防开局即胜。
   - 血量补贴(少人方)= 基础 `max_hp` + **每差 1 人 +10%,封顶 +40%**(⇒ 50/55/60/65/70,封顶 70)。服务端 `TeamHost._apply_health_subsidy` 设真值;客户端 `scenes/team_game.gd::_apply_team_health_subsidy` 复算出同一个数(否则快照里的 hp 会被钳到客户端上限并每帧回滚)。
   - 伤害补贴(少人方,**仅极端少**)= 人数差 ≥ `TeamRules.DAMAGE_THRESHOLD`(3,即 4v1 / 5v2 起)才给,每差 +10%,封顶 +30%。落点:① 换枪时把倍率写到武器 `damage`(弹丸直击与激光都从这里取伤害);② `_adjudicate_bullets` 前置一遍,只乘子弹自带的 `direct_hit_damage` / `explosion_damage`(榴弹直击与 AoE,不走武器 damage)。子弹上用 meta 标记只乘一次。
-  - **人数差 = 0 时三处补贴恒等**:目标 9、比分不写(`_scores` 保持空表)、`max_hp` 一个字节不动、倍率恒 1.0 —— 既有 6 人 `team_match_probe` 的行为不变。守卫 = `tests/smoke/team_rules_smoke.gd`(§④「所有 n v n 势均局恒等」+ §③「6 人 3v3 恒等」)。
+  - **人数差 = 0 时三处补贴恒等**:目标 9、比分不写(`_scores` 保持空表)、`max_hp` 一个字节不动、倍率恒 1.0 —— 既有 6 人 `team_match_probe` 的行为不变。守卫 = `tests/unit/team_rules_smoke.gd`(§④「所有 n v n 势均局恒等」+ §③「6 人 3v3 恒等」)。
 - `round_state` 载荷:`TeamHost._broadcast_round_state` 在共有骨架上追加 `target`(本局目标,恒有)与 `handicap`(仅人数差 > 0:`team` / `diff` / `score` / `hp` / `damage_pct`)。`ui/hud/team_hud.gd` 的目标与「先到 N 杀」文案**只从载荷取**(旧实现写死 9,目标随人数缩放后会撒谎)。
 - 掉线 / 人数变化**不重算**目标与补贴(开局那一刻的 `_rules` 是快照):客户端手里的队伍表也不随掉线更新,两端同值优先于"实时公平"。
 - 启动契约(`server_main.gd` 文件头):`--worker --team --port P --roles r,… --teams t,…`。`roles` 与 `teams` 同序等长(第 i 个 role 的队号 = `teams[i]`);收齐判据 = `_claims.size() >= _team_of_role.size()`(催收不齐时 30s 超时梯 `quit(0)` 释放端口,不降级);`--royale` 与 `--team` 同时为真直接拒启动。

@@ -19,7 +19,7 @@
 #   · **已知红基线 `tests/known_red.txt`**:每行 `路径 类别 理由…`(理由**必填**;`#` 是注释;
 #     **空行 = 违规**;类别 ∈ `OK+RC|FAIL|NO-VERDICT|TIMEOUT|*`)。基线内的红 = `KNOWN-RED` ⇒
 #     **不进**新红计数,但**永远**印出文件名与条数。★ 需要它的理由是本仓自己的话:
-#     `tests/probe/allscript_probe.gd` 的"一条**永远红**的闸等于没有闸" —— 一建起来就永远 FAIL
+#     `tests/scene/allscript_probe.gd` 的"一条**永远红**的闸等于没有闸" —— 一建起来就永远 FAIL
 #     的入口,后面几个包**没法**拿它判断"我这次改坏了没有"。
 #     ★ 销一条就要**删行**;"修好了却没删行"= 过期基线条目 ⇒ 也红(与 §三「销掉时删行」同规)。
 #   · 全批判词:
@@ -32,7 +32,7 @@
 #     `-s` 冒烟与不带闸的场景探针贡献 0(它们仍受下面那条纪律约束)。
 #
 # ★★ 它给的最强保证 / 测不到什么(照实写,别读多):
-#   · **自动枚举**:`tests/smoke/*.gd` + `tests/probe/*.tscn` 用 glob,文件清单**不写死**
+#   · **自动枚举**:`tests/unit/*.gd` + `tests/scene/*.tscn` 用 glob,文件清单**不写死**
 #     (写死会让新探针**永不进默认批**而入口照样打 OK)。落选走 `EXCLUDED` 显式清单 + 每条理由。
 #   · **枚举到 0 支 / 跑 0 支 = 直接红**(防止 glob 与过滤器静默空转仍报 OK)。
 #   · **过期排除项 = 直接红**:改名的探针会让旧条目失效 —— 若不红,一个改名后的
@@ -117,13 +117,10 @@ declare -A BUDGET_OVERRIDE=(
 #   (D2 仪器不是守卫 / D5 只证明别的东西 / K1-K5 什么才值得留)。
 # ★★ 2026-10-09(测试面削减 90%):本表 **9 条 → 4 条** —— 删掉了 5 条指向**已删文件**的规则
 #   (`ground_net_probe` / `reconnect_probe` / `royale_bound_probe` / `royale_c2_probe` / `royale_probe`)。
-# ★★ 2026-11-04:4 条 → 3 条(royale_soak / bot_1v1 已整支删);剩下 3 条**必须留**:仍在枚举集里,
-#   清掉规则 ⇒ 承重安全检查 FATAL,或悄悄进批**占 7777**。现行清单见 `tests/README.md`。
+# ★★ 2026-11-17:目录重构后**本表为空**。真链路三支搬进 `tests/e2e/`,不在本入口的 glob 直径内
+#   ⇒ "悄悄进默认批占 7777"这件事从制度约束变成结构不可能。机制保留:以后若还有"会被 glob 扫到、
+#   但绝不能进默认批"的支,写在这里并给理由(上面的过期检查会盯住它)。
 EXCLUDED=(
-	# ── B 真链路 / 多进程 / 占 7777 ────────────────────────────────────────
-	"tests/probe/rejoin_probe.tscn|B 真链路:自当大厅(池外 29300)+ 拉子进程;由 tests/probe/rejoin_probe.sh 编排"
-	"tests/probe/team_match_probe.tscn|B 真链路:六人;自当大厅(池外 29200)+ 拉子进程"
-	"tests/smoke/pvp_match_smoke.gd|B 真链路客户端:要 --role、且要 7777 上有大厅;由 tests/smoke/pvp_match_smoke.sh 编排"
 )
 
 # ── 不在本入口 glob 直径内、但要**显式交代**的候选(`pattern|理由`)────────────────
@@ -155,7 +152,7 @@ done
 ascii_only() { LC_ALL=C sed 's/[^ -~]//g'; }
 
 # ── 已知红基线(tests/known_red.txt)────────────────────────────────────────
-# 为什么需要它:本仓自己的话 —— `tests/probe/allscript_probe.gd` 的"**一条永远红的闸等于
+# 为什么需要它:本仓自己的话 —— `tests/scene/allscript_probe.gd` 的"**一条永远红的闸等于
 # 没有闸**"(原话在 `docs/workflow/tests.md` 的同类讨论里)。当时钟摆的另一头是:`run_all.sh` 一建
 # 起来就**永远** FAIL(3 支既有红)⇒ 后面几个工作包**没法**用它判断"我这次改坏了没有"。
 # 所以:基线内的红 = `KNOWN-RED`,**不进**新红计数、**不**改全批判词为全绿(**永远**印出文件名
@@ -242,7 +239,7 @@ load_known_red() {
 #       它与 (a) 类(引擎在说话)和 (c) 类(脚本补一句**说明**)的区别只有一条:**它在对本次运行下判断**。
 #       ★ 为什么必须补这一支(评审 I-1 的一手证据):本仓中文失败汇总是**现网词汇**
 #       (`grep -rn 'print.*失败\|不通过' tests/{smoke,probe}/*.gd | grep -vcE 'FAIL|✗'` = **33 行**,
-#       例 `tests/smoke/app_info_smoke.gd`),而 `FAIL_RE` 只认 `FAIL`/`FAILURES` 这类**大写英文** ⇒
+#       例 `tests/unit/app_info_smoke.gd`),而 `FAIL_RE` 只认 `FAIL`/`FAILURES` 这类**大写英文** ⇒
 #       判词后再出现一句 `APP INFO SMOKE: 3 条失败`:旧口径 `NO-VERDICT`(**归红**),
 #       Task 6 初版落 `OK` / **`OK+RC`(本入口明说"不算红")** ⇒ **真红被洗白**。
 #     **★ 落地的清单(每项挡什么 / 边界在哪)**:判准是上面那句话,清单只是**今天实现它的词汇** ——
@@ -267,7 +264,7 @@ load_known_red() {
 #         ★ **为什么放松(控制器 R26)**:旧口径("命中行必须**就是**最后一条非引擎噪声行")当时**明知**
 #         会让"判词之后再打非噪声行"的支**假红**,按"方向安全(假红可查)"接受了;但
 #         `haste_probe` 那行 `  notes: …`(约一半跑次会出现)让一支**健康**探针**随机**落 `NO-VERDICT`
-#         ⇒ 会训练所有人**忽略 `NO-VERDICT`** —— 那正是 `tests/probe/allscript_probe.gd`
+#         ⇒ 会训练所有人**忽略 `NO-VERDICT`** —— 那正是 `tests/scene/allscript_probe.gd`
 #         "一条永远红的闸等于没有闸"的另一面("永远"变成"随机")。新口径只让 (b) 类尾行推翻判词。
 #     ★★ **放松了什么 / 会不会把真红读成绿(照实写,别读多)**:放松的正是 (c) 那一类 ——
 #       旧口径下"判词 + **任何**非噪声尾行"必红,现在只要尾行**不带判定形状**就算绿。
@@ -446,7 +443,7 @@ classify_selfcheck() {
 
 	# ── ⑨ 组(2026-10-05 Task 6):② 改口径后的五条。行抄自**实测日志 / 实测台账**,不是编的 ────
 	# ⑨a **判词之后跟良性尾行(`notes:`)⇒ 必须判绿**(这就是本任务修的那个假红)。
-	#     出处:`tests/probe/haste_probe.gd` 的 `  notes: …` + `task-2-control-batch.txt`
+	#     出处:`tests/scene/haste_probe.gd` 的 `  notes: …` + `task-2-control-batch.txt`
 	#     「NO-VERDICT 那两次」的日志末尾原文(判词 → notes → 输入桩噪声)。
 	#     ★ 去掉什么才会红:把 ② 改回**旧口径**(命中行必须是最后一条非引擎噪声行)⇒ 落 `NO-VERDICT`。
 	check_case "benign-note-tail-after-verdict" 0 OK \
@@ -487,7 +484,7 @@ classify_selfcheck() {
 	# ★ 这三条的"去掉什么才会红":把 `SELFFAIL_RE` 从 ② 的 grep 里拿掉
 	#   (即回到只查 `ITEM_RE` 的那一版)⇒ 三条全部变绿(⑨f rc=1 那条变 **`OK+RC` = 明确"不算红"**)。
 	# ⑨f 中文失败汇总(**现网词汇**:`grep -rn 'print.*失败\|不通过' tests/{smoke,probe}/*.gd | grep -vcE 'FAIL|✗'`
-	#     = 33 行;行形状抄自 `tests/smoke/app_info_smoke.gd` 那一族)。rc=1 ⇒ 初版会落 `OK+RC`(**不算红**)。
+	#     = 33 行;行形状抄自 `tests/unit/app_info_smoke.gd` 那一族)。rc=1 ⇒ 初版会落 `OK+RC`(**不算红**)。
 	check_case "repo-failure-words-tail-after-verdict" 1 NO-VERDICT \
 		'APP INFO SMOKE: ALL-OK(version=「main #1431」, commits=20)' \
 		'APP INFO SMOKE: 3 条失败'
@@ -524,7 +521,8 @@ gate_of() {
 	local src="$1" declared
 	GATE=""; GATE_USED="no"
 	[ -f "$src" ] || return 0
-	declared=$(grep -oE 'EXPECTED_CHECKS[[:space:]]*:=[[:space:]]*[0-9]+' "$src" 2>/dev/null |
+	# 允许后缀:`EXPECTED_CHECKS` 或 `EXPECTED_CHECKS_<SUFFIX>`(子类文件不能重定义父类 const,用后缀区分)。
+	declared=$(grep -oE 'EXPECTED_CHECKS[A-Z_]*[[:space:]]*:=[[:space:]]*[0-9]+' "$src" 2>/dev/null |
 		head -1 | grep -oE '[0-9]+')
 	[ -n "$declared" ] || return 0
 	if grep -qE 'EXPECTED_CHECKS' "$src" &&
@@ -545,12 +543,12 @@ if [ "$CLASSIFY_CHECK" -eq 1 ]; then
 fi
 shopt -s nullglob
 ENUM=()
-for f in tests/smoke/*.gd; do ENUM+=("$f"); done
-for f in tests/probe/*.tscn; do ENUM+=("$f"); done
-# ★ 2026-10-05 补(评审 C1):`tests/probe/*.gd` 里**没有同名 `.tscn`** 的那些也是候选 ——
+for f in tests/unit/*.gd; do ENUM+=("$f"); done
+for f in tests/scene/*.tscn; do ENUM+=("$f"); done
+# ★ 2026-10-05 补(评审 C1):`tests/scene/*.gd` 里**没有同名 `.tscn`** 的那些也是候选 ——
 #   它们只能按 `-s` 跑。原先这一片**既不在枚举、也不在任何排除里**(反向漏洞)。
 #   现在它们进枚举;进不了的逐支写在 `EXCLUDED` 的 E 组里(带理由),下面还有机械闸兜底。
-for f in tests/probe/*.gd; do
+for f in tests/scene/*.gd; do
 	[ -f "${f%.gd}.tscn" ] && continue      # 有 .tscn 的由上面的 scene glob 负责
 	ENUM+=("$f")
 done
@@ -581,9 +579,9 @@ PRE_PATH=()   # ★ 过滤**之前**的运行集:覆盖率闸(C1)必须看它,�
 N_SMOKE_ENUM=0; N_PROBE_TSCN_ENUM=0; N_PROBE_GD_ENUM=0; N_EXCLUDED=0
 for f in "${ENUM[@]}"; do
 	case "$f" in
-		tests/smoke/*.gd) N_SMOKE_ENUM=$((N_SMOKE_ENUM + 1)) ;;
-		tests/probe/*.tscn) N_PROBE_TSCN_ENUM=$((N_PROBE_TSCN_ENUM + 1)) ;;
-		tests/probe/*.gd) N_PROBE_GD_ENUM=$((N_PROBE_GD_ENUM + 1)) ;;
+		tests/unit/*.gd) N_SMOKE_ENUM=$((N_SMOKE_ENUM + 1)) ;;
+		tests/scene/*.tscn) N_PROBE_TSCN_ENUM=$((N_PROBE_TSCN_ENUM + 1)) ;;
+		tests/scene/*.gd) N_PROBE_GD_ENUM=$((N_PROBE_GD_ENUM + 1)) ;;
 	esac
 done
 
@@ -597,9 +595,10 @@ for f in "${ENUM[@]}"; do
 	if [ "$skip" -eq 1 ]; then N_EXCLUDED=$((N_EXCLUDED + 1)); continue; fi
 
 	case "$f" in
-		tests/smoke/*.gd)
+		tests/unit/*.gd)
 			first=$(head -1 "$f" | tr -d '\r')
-			if [[ "$first" == extends\ SceneTree* ]]; then
+			# 直接 extends SceneTree = 独立 -s;extends 另一个测试脚本(继承夹具/断言设施)= 也是 -s。
+			if [[ "$first" == extends\ SceneTree* || "$first" == extends\ \"res://tests/* ]]; then
 				mode=smoke; src="$f"; target="res://$f"
 			else
 				# `extends Node` / `Control` 等 ⇒ 必须走同名 .tscn(跑法见 docs/workflow/tests.md)
@@ -612,10 +611,10 @@ for f in "${ENUM[@]}"; do
 				mode=scene; src="$f"; target="res://$tscn"
 			fi
 			;;
-		tests/probe/*.tscn)
+		tests/scene/*.tscn)
 			mode=scene; src="${f%.tscn}.gd"; target="res://$f"
 			;;
-		tests/probe/*.gd)
+		tests/scene/*.gd)
 			# 没有同名 `.tscn` ⇒ 只能按 `-s` 跑(跑法见 docs/workflow/tests.md)
 			mode=smoke; src="$f"; target="res://$f"
 			;;
@@ -648,10 +647,10 @@ done
 
 N_RUN=${#RUN_PATH[@]}
 
-# ── 机械闸(评审 C1):`tests/probe/*.gd` 的**覆盖率断言** ────────────────────
-# 每一支 `tests/probe/*.gd` 必须落在三者之一:① 有同名 `.tscn`(由 scene glob 枚举);
+# ── 机械闸(评审 C1):`tests/scene/*.gd` 的**覆盖率断言** ────────────────────
+# 每一支 `tests/scene/*.gd` 必须落在三者之一:① 有同名 `.tscn`(由 scene glob 枚举);
 # ② 在运行清单里(按 `-s`);③ 在 `EXCLUDED`/`OUT_OF_SCOPE` 里带理由。
-# ★ 去掉什么才会红:**把那第三个 glob(`tests/probe/*.gd`)删掉/收窄**(= 回到 C1 爆出来的那个
+# ★ 去掉什么才会红:**把那第三个 glob(`tests/scene/*.gd`)删掉/收窄**(= 回到 C1 爆出来的那个
 #   口径)⇒ 那些"没有同名 `.tscn`、又没被排除"的支立刻在这里点名并 FATAL
 #   (实测:删掉那条 glob ⇒ 9 支被点名)。
 #   ★★ **注意别测错**:光**删掉 `EXCLUDED` 里的一条**是**不会**红的 —— 那支会被第三个 glob
@@ -659,7 +658,7 @@ N_RUN=${#RUN_PATH[@]}
 #   不是"某条排除理由在不在"。
 COVER_BAD=()
 shopt -s nullglob
-for f in tests/probe/*.gd; do
+for f in tests/scene/*.gd; do
 	[ -f "${f%.gd}.tscn" ] && continue         # ① 有 .tscn ⇒ 由 scene 侧负责
 	in_run=0
 	for p in "${PRE_PATH[@]:-}"; do [ "$p" = "$f" ] && { in_run=1; break; }; done
@@ -675,7 +674,7 @@ for f in tests/probe/*.gd; do
 done
 shopt -u nullglob
 if [ "${#COVER_BAD[@]}" -gt 0 ]; then
-	echo "[enum] FATAL: ${#COVER_BAD[@]} tests/probe/*.gd file(s) are NEITHER run NOR excluded -- they would be silently skipped:"
+	echo "[enum] FATAL: ${#COVER_BAD[@]} tests/scene/*.gd file(s) are NEITHER run NOR excluded -- they would be silently skipped:"
 	for p in "${COVER_BAD[@]}"; do echo "         $p"; done
 	echo "        Fix: give them a sibling .tscn, let the -s glob run them, or add an EXCLUDED/OUT_OF_SCOPE row with a reason."
 	echo "RUN_ALL FAIL(0 runs / ${#COVER_BAD[@]} probe .gd not covered)"
@@ -717,7 +716,7 @@ else echo "[env] lobby_alive = false"; fi
 echo "[env] godot procs before = $(tasklist 2>/dev/null | grep -ci godot || true)"
 echo "[env] log dir    = $LOG_DIR"
 echo "[env] quit-after = $QUIT_AFTER frames (scene probes) ; budget: smoke=${SMOKE_BUDGET}s scene=${SCENE_BUDGET}s (+per-file overrides)"
-echo "[enum] enumerated $N_ENUM files (tests/smoke/*.gd = $N_SMOKE_ENUM, tests/probe/*.tscn = $N_PROBE_TSCN_ENUM, tests/probe/*.gd without tscn = $N_PROBE_GD_ENUM)"
+echo "[enum] enumerated $N_ENUM files (tests/unit/*.gd = $N_SMOKE_ENUM, tests/scene/*.tscn = $N_PROBE_TSCN_ENUM, tests/scene/*.gd without tscn = $N_PROBE_GD_ENUM)"
 echo "[enum] excluded   $N_EXCLUDED files of the enumeration ($(( ${#EXCLUDED[@]} )) rules) -> see --list"
 echo "[enum] out of glob scope: ${#OUT_OF_SCOPE[@]} files (tools that must NOT enter the batch) -> see --list"
 echo "[enum] running    $N_RUN files${ONLY:+ (filter: --only $ONLY)}"
@@ -766,7 +765,7 @@ if [ "$N_RUN" -eq 0 ]; then
 	exit 1
 fi
 
-mkdir -p "$LOG_DIR/smoke" "$LOG_DIR/probe"
+mkdir -p "$LOG_DIR/unit" "$LOG_DIR/scene"
 : >"$SUMMARY"
 : >"$FAILED_LIST"
 
@@ -806,7 +805,7 @@ for i in $(seq 0 $((N_RUN - 1))); do
 	mode="${RUN_MODE[$i]}"; path="${RUN_PATH[$i]}"; src="${RUN_SRC[$i]}"
 	target="${RUN_TARGET[$i]}"; budget="${RUN_BUDGET[$i]}"
 
-	sub=probe; case "$path" in tests/smoke/*) sub=smoke ;; esac
+	sub=scene; case "$path" in tests/unit/*) sub=unit ;; esac
 	base=$(basename "$path"); base="${base%.*}"
 	log="$LOG_DIR/$sub/$base.log"
 
@@ -914,7 +913,7 @@ if [ -n "$OKRC_LIST" ]; then
 	echo "        mixed into OK (exit code is not a criterion; a run can crash on exit after OK):"
 	echo "        $OKRC_LIST"
 fi
-echo "[logs] full text: $LOG_DIR/smoke/*.log , $LOG_DIR/probe/*.log"
+echo "[logs] full text: $LOG_DIR/unit/*.log , $LOG_DIR/scene/*.log"
 echo "[logs] summary  : $SUMMARY"
 echo "[logs] failures : $FAILED_LIST"
 echo "[logs] baseline : $KNOWN_RED_FILE"

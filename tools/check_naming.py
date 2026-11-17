@@ -210,7 +210,7 @@ def doc_path_violations(text: str, doc: str) -> list[str]:
       (2026-10-13 实测),等于逼人删掉有价值的信息 —— 那正是"守卫逼人变坏"的形态。
       词表刻意窄:只收"明确表示不在了"的说法。
     - **反引号**:要求首段是真实存在的目录。★ 这一条**只挡得住"首段不是目录"的简写**
-      (`kh_l1/l3/l4_probe.tscn` —— 它意指 kh_l1_probe / kh_l3_probe / …);而 `tests/probe/kh_l1/l3/…`
+      (`kh_l1/l3/l4_probe.tscn` —— 它意指 kh_l1_probe / kh_l3_probe / …);而 `tests/scene/kh_l1/l3/…`
       这种**首段是真目录**的简写**仍会被判违规**,这是**有意**的:那种写法作为路径本就是歧义的,
       该改写成明确的文件名(自测 ⑦-⑦/⑦-⑧ 把这两种形态都钉住了)。
       `:NN` / `:NN-MM` 后缀先剥掉 —— 否则**缀一个行号就能让失效路径绕过检查**(2026-10-13 修的洞:
@@ -511,7 +511,7 @@ def self_test() -> int:
          "⑦-⑥ 已明说'已删'的行仍被判违规 —— 没有行级豁免会把 30 条正确的历史记录判红,逼人删信息")
     want(len(doc_path_violations("`kh_l1/l3/l4_probe.tscn`", "docs/systems/gameplay/x.md")) == 0,
          "⑦-⑦ 首段不是真目录的简写被误报 —— '首段是目录'这条启发式该挡住的正是这一形态")
-    want(len(doc_path_violations("`tests/probe/kh_l1/l3/l4_probe.tscn`", "docs/systems/gameplay/x.md")) == 1,
+    want(len(doc_path_violations("`tests/scene/kh_l1/l3/l4_probe.tscn`", "docs/systems/gameplay/x.md")) == 1,
          "⑦-⑧ 首段是真目录的简写没被报出 —— ★ 这是**有意**判违规的(歧义路径该改写成明确文件名);"
          "若哪天想放行它,必须先想清楚'歧义简写'与'真路径'怎么区分,别顺手把 ⑦-① 一起放行")
 

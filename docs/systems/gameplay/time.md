@@ -82,7 +82,7 @@
 - 数值唯一真相源 = [`time_config.tres`](../../../core/config/time_config.tres)；schema / 默认值在 [`time_config.gd`](../../../core/config/time_config.gd)（`class_name TimeConfig extends Resource` + `@export_range`，检查器按「颗粒经济 / 回溯 / 加速 / 贷款」分组）。改 `.tres` 即可调参，不用改代码，diff 也能看清哪个数值被动了。
 - `TimeParams` 用 `static var X: T = _CFG.X` 在**类加载时读一次**，不是每次读都穿 Resource：逐次 getter→Resource 实测比 `const` 慢 **13.8×**（200 万次 319ms vs 23ms），而这批值在 `TimeField` 的每个查询口被读。代价：改 `.tres` 要重启进程生效。
 - 调用点写法不变：仍是 `TimeParams.GRAIN_INITIAL` 这类静态访问。18 个参数的**含义**见下表，数值不抄在文档里（唯一真相源是 `.tres`）。
-- 守卫：[`tests/smoke/time_params_source_smoke.gd`](../../../tests/smoke/time_params_source_smoke.gd)（6 条：`.tres` 同一实例 / 从 `time_config.gd` 的 `@export` 列表反射枚举逐项一致 / 加速扣费 / 加速倍率 / 回溯扣费 / 贷款深度倍率）。
+- 守卫：[`tests/unit/time_params_source_smoke.gd`](../../../tests/unit/time_params_source_smoke.gd)（6 条：`.tres` 同一实例 / 从 `time_config.gd` 的 `@export` 列表反射枚举逐项一致 / 加速扣费 / 加速倍率 / 回溯扣费 / 贷款深度倍率）。
 
 | 参数 | 含义 |
 |---|---|
@@ -158,4 +158,4 @@
 
 - 回溯不还原「被打磨、但还没碎」的砖血;格级 HP 基线的纹路口径只在混纹理格上两侧不一致。`TimeField.current` 是 static 且从不置回 `null`;同一进程内「菜单 → 单机 → 回菜单 → PvP」这条路径上的残留影响未核。
 - `TileLedger` 只看 `not is_rewinding()`,不按破坏来源过滤;今天单机没有第二个破坏来源。
-- PvP 侧回溯的端到端行为(免伤 / 倒放 / 弹量)在 headless 里够不到;2026-11-01(R3)起 `MatchHost._apply_rw_frame` **不再自带一份抄写**、只寻帧后调 `RewindFrame.apply_player` ⇒ "两份会不会漂"从根上消失。载荷往返与武器语句序由 [`tests/probe/rewind_frame_probe.tscn`](../../../tests/probe/rewind_frame_probe.tscn) 两条断言覆盖(2026-11-16 加);**端到端行为(免伤/倒放)仍无断言**,见 [`registered-debt.md`](../../registered-debt.md)。线上 `trail` 只带最近 4 点 ⇒ 回溯残像比完整轨迹短;唯一判据是人眼。
+- PvP 侧回溯的端到端行为(免伤 / 倒放 / 弹量)在 headless 里够不到;2026-11-01(R3)起 `MatchHost._apply_rw_frame` **不再自带一份抄写**、只寻帧后调 `RewindFrame.apply_player` ⇒ "两份会不会漂"从根上消失。载荷往返与武器语句序由 [`tests/scene/rewind_frame_probe.tscn`](../../../tests/scene/rewind_frame_probe.tscn) 两条断言覆盖(2026-11-16 加);**端到端行为(免伤/倒放)仍无断言**,见 [`registered-debt.md`](../../registered-debt.md)。线上 `trail` 只带最近 4 点 ⇒ 回溯残像比完整轨迹短;唯一判据是人眼。

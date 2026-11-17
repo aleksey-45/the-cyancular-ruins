@@ -89,11 +89,11 @@ NetBus.rpc_id(peer, "snapshot_own",
 
 ### 1.5 分片
 
-- ENet MTU 预算 1400 B（`tests/probe/snapshot_size_probe.gd` 的 `WORLD_PACKET_BUDGET`）。`unreliable` = `UNSEQUENCED | UNRELIABLE_FRAGMENT` ⇒ 丢任意一片 = 整帧丢。
+- ENet MTU 预算 1400 B（`tests/scene/snapshot_size_probe.gd` 的 `WORLD_PACKET_BUDGET`）。`unreliable` = `UNSEQUENCED | UNRELIABLE_FRAGMENT` ⇒ 丢任意一片 = 整帧丢。
 - 世界包 = `8 + N × 25`（trail 2 点）：16 人 **408 B**、空 trail **280 B**；最坏（16 人各 4 点 trail）= `8 + 16 × 33 = **536 B**`，都恒 1 片（v6 为 791 B、P1 前 1031 B）。
 - 本人包 **99 B**、输入包 **42 B**，都不分片。
 - `NetCodec.TRAIL_MAX := 16` 是解码侧硬顶（长度是不可信输入），与发送侧 `TRAIL_WIRE_MAX` 不是同一个数。
-- 改世界字段 / `TRAIL_WIRE_MAX` 前先跑 `tests/probe/snapshot_size_probe.tscn`（判词 `SNAPSHOT SIZE PROBE: ALL-OK`，量真实产出并带条数闸）。
+- 改世界字段 / `TRAIL_WIRE_MAX` 前先跑 `tests/scene/snapshot_size_probe.tscn`（判词 `SNAPSHOT SIZE PROBE: ALL-OK`，量真实产出并带条数闸）。
 
 ### 1.6 客户端消费与丢弃
 
@@ -126,7 +126,7 @@ NetBus.rpc_id(peer, "snapshot_own",
 - **兜底**：`seq` 不可注入（来自未来 / 已 ack / 环外 / 乱序 / callable 失效）⇒ 只播反馈 `take_hit(..., feedback_only=true)`（白闪 / 震屏 / 音效 / 挤压），**不**扣血 / 不击退 / 不设无敌帧：权威 c2 可能已包含这一发，二次应用会在下一个 ack 再判一次分歧。
 - **读数**：`-- --netstat` 打印 `事件对齐=累计(+N/s) 拒绝=累计(+N/s)`（`rollback_count()` 之外的独立计数）；`royale_soak`（该支已删，2026-11-04）的每端结果行打 `C2:回滚=… 事件对齐=… 拒绝=…(ack/future/missing/order 分解)` —— 它曾是"真链路里唯一能证明注入真的生效了 vs 一直走兜底"的读数；今天没有替代读数。
 - **边界**（照实）：① `_captures` 环 256 tick（4.3s），超出只能走兜底；② 服务器饥饿 k tick 时玩家状态比 `_stepped_seq` 前进 k 步（held 输入），注入会**早** k 步（不是保守方向，只是近似）；③ 落水窒息是客户端已预测的伤害 ⇒ 服务端**不**为它广播 `hit_event`（`take_hit(..., cause="water")` → `_on_player_hit` 跳过），客户端因此不会二次应用（2026-10-29 修，见 [`registered-debt.md`](../../registered-debt.md) §二十三）；④ 事件按 seq 递增到达是契约（reliable 保序），seq 回退一律拒绝。
-- **守卫**：[`tests/probe/rollback_fidelity_probe.tscn`](../../../tests/probe/rollback_fidelity_probe.tscn) 的 D 组（注入 / **真实服务器顺序**的黄金轨迹 / 越界 / 同 seq 双发 / 乱序 / 注入后 reconcile 对独立黄金权威 / 迟到旧 ack 重放带回事件 / 计数）与 E 组（反馈-only），外加源码守卫（**代理判据，不是行为**）：客户端 5 条（入队 / 物理帧消费 / 物理帧接线 / 注入唯一 / 兜底第 5 参）+ 服务器 3 条（`_stepped_seq` 锚点【取数点 = `event_seq_for`】/ 帧末记录调度 / 记录写入）。
+- **守卫**：[`tests/scene/rollback_fidelity_probe.tscn`](../../../tests/scene/rollback_fidelity_probe.tscn) 的 D 组（注入 / **真实服务器顺序**的黄金轨迹 / 越界 / 同 seq 双发 / 乱序 / 注入后 reconcile 对独立黄金权威 / 迟到旧 ack 重放带回事件 / 计数）与 E 组（反馈-only），外加源码守卫（**代理判据，不是行为**）：客户端 5 条（入队 / 物理帧消费 / 物理帧接线 / 注入唯一 / 兜底第 5 参）+ 服务器 3 条（`_stepped_seq` 锚点【取数点 = `event_seq_for`】/ 帧末记录调度 / 记录写入）。
 
 ### 2.3 拆砖事件时刻对齐（2026-11-01，R2）
 
@@ -140,7 +140,7 @@ NetBus.rpc_id(peer, "snapshot_own",
   在 callable 里、**表现**（粒子/去重）在 callable 外只播一次。★ callable 会被多次重放 ⇒ 必须幂等（已死子格 `damage_sub` 返回 false）。
 - **兜底**：`seq = 0`（重连补态 / 探针直调 / 本地事件）或注入被拒（环外 / 已 ack / 乱序 / 没有 rollback）⇒ **立即应用** = 旧行为，不报错、不告警。
 - **协议**：加参数**不升 `PROTO_VERSION`**（两端同 build；动的是既有 RPC 参数，不是快照/c2 字段）。
-- **守卫**：`tests/probe/net_tile_fx_probe.tscn` 9→**11**（⑦ 有预测环时必须走注入：seq 透传 + 地形照拆 + 粒子仍 1 簇；
+- **守卫**：`tests/scene/net_tile_fx_probe.tscn` 9→**11**（⑦ 有预测环时必须走注入：seq 透传 + 地形照拆 + 粒子仍 1 簇；
   ⑧ 注入被拒时兜底立即应用）。★ **没有**为拆砖加源码文本守卫（用户裁定按 [`test-economy.md`](../../workflow/test-economy.md) 的 D6a 砍掉）：
   "锚点单源 / 三条事件都走它"只剩注释契约，"逐 peer 发"只能在真链路里观测（`pvp_match_smoke`）。
 - **测不到什么**：服务器"逐 peer 发 seq"这一步**没有任何自动守卫**（源码文本守卫按 test-economy D6a 砍掉）——

@@ -70,7 +70,7 @@ file   = "CYRM" + 4 + 0 + u32(body.length) + u32(Core.crc32(body))
 - **编辑器层**（移植后的 `EditorCodec`，镜像 JS `encodeMap`）：`decode_map` 不迁移（内存里仍是 legacy id）、
   未迁移直接 `encode_map` 必须被拒（error 含「不在 tile_defs」）、`EditorLegacy.migrate_map` 之后
   `encode_map(compress:false)` 必须逐字节等于 `v4_legacy_migrated.cyrm`。这就是现有
-  `tests/probe/cyrm_golden_probe.gd` 的 ⑤ 组口径。
+  `tests/unit/cyrm_golden_probe.gd` 的 ⑤ 组口径。
 - **游戏侧格式层**（`core/sim/map_format_v4.gd`，不经 `validateMap`）：`parse → encode` 应能把
   `v4_legacy_tex.cyrm` **原样读回写回**（字节相等；JS 侧已用 `decodeMap + 原语手拼`验证过，
   见上）。这条是可选的更强断言，**不要**拿「编辑器层拒绝」去要求它。

@@ -18,7 +18,7 @@
 
 ## 渲染管线(`scenes/level_0.tscn`)
 
-> ★ **守卫边界(2026-11-08 仓主裁定)**:渲染表现与数据细节**不写自动守卫**(见 [`test-economy.md`](../../workflow/test-economy.md) §1);渲染域唯一的自动守卫是启动结构探针 [`tests/probe/level0_boot_probe.tscn`](../../../tests/probe/level0_boot_probe.tscn)(24 条:世界数据/四视口/墙体铺贴/地形剪影镜像/水体合批/PostProcess 通道/地形掩码与剪影通道/相机与通道相机同步/形体光/碰撞/收尾状态)。原 water_atlas / wall_tint / tint_parity / bg_parallax / torus_camera 五支数据契约探针已删除。
+> ★ **守卫边界(2026-11-08 仓主裁定)**:渲染表现与数据细节**不写自动守卫**(见 [`test-economy.md`](../../workflow/test-economy.md) §1);渲染域唯一的自动守卫是启动结构探针 [`tests/scene/level0_boot_probe.tscn`](../../../tests/scene/level0_boot_probe.tscn)(24 条:世界数据/四视口/墙体铺贴/地形剪影镜像/水体合批/PostProcess 通道/地形掩码与剪影通道/相机与通道相机同步/形体光/碰撞/收尾状态)。原 water_atlas / wall_tint / tint_parity / bg_parallax / torus_camera 五支数据契约探针已删除。
 
 - 根节点把未处理输入手动转发进 `WorldViewport`(SubViewport);世界(墙体 / 玩家 / 敌人)渲染进 SubViewport,`PostProcess`(`post_process.gd`)把世界纹理合成到屏幕:中心裁剪(鱼眼默认关,见上)+ **天空合成 + 昼夜光照(环境光 / 斜投影影)+ 发光通道叠加** + 受击/低血/时间玩法视效(倒地暗角、残血边缘暗角只在屏幕边缘,中心保持干净,纯客户端、不挡 HUD)。
 - **世界里的一切都会被乘 `ambient`** —— 这是理解渲染层的第一句话:UI 辅助层(换弹读条 / 预瞄线)挂在世界子树里就会一起被压暗;发光体想"夜里更亮"就必须走发光通道(见下)。

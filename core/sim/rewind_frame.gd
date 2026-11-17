@@ -2,7 +2,7 @@ class_name RewindFrame
 extends RefCounted
 
 # 玩家回溯载荷的**唯一**契约:单机 WorldRewind 与服务器 Beta 回溯共用同一份生产者与恢复实现。
-# 加字段 = 改 PLAYER_KEYS + build_player + apply_player + tests/probe/rewind_frame_probe.gd 的 READERS;
+# 加字段 = 改 PLAYER_KEYS + build_player + apply_player + tests/scene/rewind_frame_probe.gd 的 READERS;
 # 探针第 ① 条会把"加了键却没补断言"照出来 —— 它不是同源重复,是防止契约漏测的闸。
 # ★ 键名短是刻意的:这份载荷只在内存里活,不上线(线上格式见 core/net/net_codec.gd 的 C2_SCHEMA)。
 # ★ 帧的外层形状 = `{t, player}`:enemies / bullets 是 WorldRewind 的私有扩展,不属于本契约。

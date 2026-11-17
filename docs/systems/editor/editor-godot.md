@@ -113,11 +113,11 @@
 
 | 支 | 判词 | 条数闸 | 钉什么 |
 |---|---|---|---|
-| `tests/smoke/editor_doc_smoke.gd` | `EDITOR DOC SMOKE: OK(199 条断言)` | 199 | 7 层建图 / 环面 / Bresenham / 4 邻接与接缝油漆桶 / 颜色层 u32 / undo 往返与合并 / 栈上限 / load_map 清栈 / validate+to_bytes / **选区剪贴板镜像渐变 / meta 快照与 undo / 选区整块移动 / meta 单条改位置 / meta 单项删除·改敌人类型·扁平列表** |
-| `tests/smoke/editor_io_smoke.gd` | `EDITOR IO SMOKE: OK(53 条断言)` | 53 | v4 7 层读入 / legacy 读时迁移 / v3 与旧字母文本 / 坏文件 / 保存确定性 / 校验拒写 / 三处目录 / 默认落点 / **P3 导出落点与 res:// 拒写** |
-| `tests/probe/editor_canvas_probe.tscn` | `EDITOR CANVAS PROBE: ALL-OK(56 条断言)` | 56 | 上述 + **脏区刷新与全量 refresh 逐像素一致** + 选区框几何 + meta 标记锚点 + `_draw` 真跑 + **手形平移 / 移动 delta 与 clamp / meta 命中与 index / meta 模式抑制画刷框 / 渐变预览只画不写 / 小地图 rect + 右键跳转 + `center_on_subcell`** |
-| `tests/probe/editor_scene_probe.tscn` | `EDITOR SCENE PROBE: ALL-OK(60 条断言)` | 60 | 真实例化场景：打开 `maps/newfactory.cyrm` → 改一格 → undo/redo → 保存 → 重开 → 再保存**逐字节相等**；P3 导出并加载的 `Settings.sp_map_path`/`map_file_path()`；后置项：选区/复制/粘贴/镜像/渐变/meta/预览开关；**⑦ UI 行为：撤销按钮点击 + 笔画收尾后立即可用、工具快捷键（含 Ctrl+V/Shift+H 冲突）、按层渐进披露与吸管分语义、当前层眼睛禁用、meta 模式随工具退出、敌人类型合法 + 列表删除、保存按钮写盘、无选区渐变拒绝、无溢出**；**⑧ 未保存拦截（新建 / 确认 / 干净 / 关窗）**；**⑨ 移动工具端到端** |
-| `tests/probe/editor_preview_probe.tscn` | `EDITOR PREVIEW PROBE: ALL-OK(21 条断言)` | 21 | 真渲染预览的结构统计（773 瓦片 / 背景 1 层 / post 存在）/ 相机口径 / 显隐切换 / refresh 幂等 / doc 信号接线 |
+| `tests/unit/editor_doc_smoke.gd` | `EDITOR DOC SMOKE: OK(199 条断言)` | 199 | 7 层建图 / 环面 / Bresenham / 4 邻接与接缝油漆桶 / 颜色层 u32 / undo 往返与合并 / 栈上限 / load_map 清栈 / validate+to_bytes / **选区剪贴板镜像渐变 / meta 快照与 undo / 选区整块移动 / meta 单条改位置 / meta 单项删除·改敌人类型·扁平列表** |
+| `tests/unit/editor_io_smoke.gd` | `EDITOR IO SMOKE: OK(53 条断言)` | 53 | v4 7 层读入 / legacy 读时迁移 / v3 与旧字母文本 / 坏文件 / 保存确定性 / 校验拒写 / 三处目录 / 默认落点 / **P3 导出落点与 res:// 拒写** |
+| `tests/scene/editor_canvas_probe.tscn` | `EDITOR CANVAS PROBE: ALL-OK(56 条断言)` | 56 | 上述 + **脏区刷新与全量 refresh 逐像素一致** + 选区框几何 + meta 标记锚点 + `_draw` 真跑 + **手形平移 / 移动 delta 与 clamp / meta 命中与 index / meta 模式抑制画刷框 / 渐变预览只画不写 / 小地图 rect + 右键跳转 + `center_on_subcell`** |
+| `tests/scene/editor_scene_probe.tscn` | `EDITOR SCENE PROBE: ALL-OK(60 条断言)` | 60 | 真实例化场景：打开 `maps/newfactory.cyrm` → 改一格 → undo/redo → 保存 → 重开 → 再保存**逐字节相等**；P3 导出并加载的 `Settings.sp_map_path`/`map_file_path()`；后置项：选区/复制/粘贴/镜像/渐变/meta/预览开关；**⑦ UI 行为：撤销按钮点击 + 笔画收尾后立即可用、工具快捷键（含 Ctrl+V/Shift+H 冲突）、按层渐进披露与吸管分语义、当前层眼睛禁用、meta 模式随工具退出、敌人类型合法 + 列表删除、保存按钮写盘、无选区渐变拒绝、无溢出**；**⑧ 未保存拦截（新建 / 确认 / 干净 / 关窗）**；**⑨ 移动工具端到端** |
+| `tests/scene/editor_preview_probe.tscn` | `EDITOR PREVIEW PROBE: ALL-OK(21 条断言)` | 21 | 真渲染预览的结构统计（773 瓦片 / 背景 1 层 / post 存在）/ 相机口径 / 显隐切换 / refresh 幂等 / doc 信号接线 |
 
 > ★ 本轮新增断言按 [`test-economy.md`](../../workflow/test-economy.md) 只留「去掉实现会红、且指向具体缺陷」的行为/逻辑断言；
 > 版式数值、控件存在性、宽高、菜单项条数等**不写自动化守卫**（配色/版式/观感按 [`tests.md`](../../workflow/tests.md) 只能人眼）。
@@ -126,9 +126,9 @@
 - 产品侧另有两条**真导出**才能回答的检查（不在默认批里，跑在 `tools/build_release.py`，见 §10）。
 
 - 场景探针就是 P2 的验收口径（`editor_scene_probe` 的 ② 组）；判据一律 grep 判词，退出码不是判据。
-- 跑法：`Godot --headless --path . -s res://tests/smoke/<支>.gd`（冒烟）、
-  `Godot --headless --path . --quit-after 3600 res://tests/probe/<支>.tscn`（场景探针）；
-  默认批 `bash tests/run_all.sh` 会自动收录（`tests/smoke/*.gd` 与 `tests/probe/*.tscn` 两个 glob），跑批纪律见 [`tests/README.md`](../../../tests/README.md)。
+- 跑法：`Godot --headless --path . -s res://tests/unit/<支>.gd`（冒烟）、
+  `Godot --headless --path . --quit-after 3600 res://tests/scene/<支>.tscn`（场景探针）；
+  默认批 `bash tests/run_all.sh` 会自动收录（`tests/unit/*.gd` 与 `tests/scene/*.tscn` 两个 glob），跑批纪律见 [`tests/README.md`](../../../tests/README.md)。
 
 ## 8. 已知边界（照实写）
 

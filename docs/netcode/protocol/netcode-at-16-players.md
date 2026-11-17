@@ -17,7 +17,7 @@
 - 现状没有兴趣管理 / PVS：世界包含全部玩家（含自己那份）。
 - 合同：**世界包必须恒 1 片**。`unreliable` = `UNSEQUENCED | UNRELIABLE_FRAGMENT` ⇒ 丢一片 = 整帧丢。
 - 最坏（16 人各 4 点 trail）：`8 + 16 × 33 = 536 B` ⇒ 1 片（`TRAIL_WIRE_MAX := 4`，MTU 预算 1400 B）；v6 同形是 792 B。
-- 改世界字段 / `TRAIL_WIRE_MAX` 前跑 `tests/probe/snapshot_size_probe.tscn`（判词 `SNAPSHOT SIZE PROBE: ALL-OK`，5 条断言）。
+- 改世界字段 / `TRAIL_WIRE_MAX` 前跑 `tests/scene/snapshot_size_probe.tscn`（判词 `SNAPSHOT SIZE PROBE: ALL-OK`，5 条断言）。
 - 历史：2026-10-24 bool 打包把世界条目 51→48 B、本人包 102→94 B；2026-10-26 P1 定点化把世界条目 48→33 B、输入包 46→42 B；2026-11-01 输入上行改 60Hz 单记录 ⇒ 输入包 **28 B/包（1.68 KB/s/客户端）**；2026-10-30 v7 把 trail 定点化 ⇒ 世界条目 33→**25 B**、最坏包 792→**536 B**；P1.5 增量/差分曾把稳态世界包降到 ≈28%，但 2026-10-28 因乱序/丢包下 RTT 级冻结而**整体放弃、回退全量**，v7 把差分代码一起删除。
 
 ## 2. 命中补偿：已落地（2026-10-26，时间域解耦）
@@ -39,7 +39,7 @@
 - `snapshot_size_probe` 的 N 折算表只到 N=8；16 人的每秒读数是由 schema 算术折算，不是探针产出。
 - 抖动 / 丢包 / 命中缺口的真链路读数没有仪器：无丢包注入路径，无取图探针。
 
-## 5. 多人局负载实测（2026-11-01；来源 = `tests/probe/royale_soak_probe.tscn`，该支已删）
+## 5. 多人局负载实测（2026-11-01；来源 = `tests/scene/royale_soak_probe.tscn`，该支已删）
 
 同配置（同一张 `newfactory` 图、同一机器人脚本、`--match=75 --run=105`），只改 `--clients=N`。**本机 20 逻辑核**；headless 客户端无渲染 ⇒ 下表量到的只是「网络 + 模拟 + 场景树」，**不含画面开销**；且 8 个 headless 客户端与 worker 同机跑，客户端帧读数含互相争用。worker CPU 取自进程 `TotalProcessorTime`（整局均值近似，含启动/收尾），「ms/tick」= CPU 秒 ÷ 局时长 ÷ 60。
 

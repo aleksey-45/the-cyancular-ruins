@@ -28,7 +28,7 @@ func _run() -> void:
 	# 直接切到某个场景探针(不进菜单流转):模块名 = 去掉 ground/ 前缀的探针名。
 	#   ⇒ 想在发布产物上跑探针,只能借主菜单这条既有的 -- --autotest-* 通道(它读 OS.get_cmdline_user_args,不受 path override 限制)。★ 2026-10-04 起 exclude_filter 已含 tests/* ⇒ 发布产物里这条通道没有了(见 registered-debt.md §七 第 3 条),本探针只在工程目录内可用。
 	if mode.begins_with("ground/") or mode.begins_with("sceneprobe/"):
-		var scene_path := "res://tests/probe/%s.tscn" % mode.split("/", true, 1)[1]
+		var scene_path := "res://tests/scene/%s.tscn" % mode.split("/", true, 1)[1]
 		if not ResourceLoader.exists(scene_path):
 			push_error("AUTOTEST: 场景探针不存在 " + scene_path)
 			tree.quit(1)

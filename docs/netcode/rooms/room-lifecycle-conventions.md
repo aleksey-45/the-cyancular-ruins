@@ -104,5 +104,5 @@
 4. `grep -n "prune\|_grant_rejoin\|pid_alive\|_reclaim_finished_matches" server/` —— E1–E3、B1–B4。
 5. `grep -n "GraceWindow.expire_action\|if _royale\|if _team_mode" server/` —— G1 是否还有人手写模式分派。
 6. **真链路跑一遍** 3v3 与 1v1：建房 → 开局 → 全员走光 → 确认 worker 退出、端口释放
-   （`tests/probe/team_match_probe.sh` / `tests/smoke/pvp_match_smoke.sh`；★ 3v3 真链路**仍没有可信的端到端守卫**；
+   （`tests/e2e/team_match_probe.sh` / `tests/e2e/pvp_match_smoke.sh`；★ 3v3 真链路**仍没有可信的端到端守卫**；
    ★ 1v1 的端口归还与回收梯**零自动断言**，只能人眼 + 日志）。

@@ -74,7 +74,7 @@ descriptor (u32)
 - **迁移发生在读时、不在文件里**：`migrate_descriptor(d)` = tex 命中表时 `new_tex = base`、`new_hue = clamp(hue_of(d) + legacy_hue − 4, 0, 7)`，bri/sat/alpha 原样；未命中（含 tex 0 与畸形）原样返回。
 - 调用点 = `EditorIO.open_path`（v4 读入后 `migrate_map`）+ `EditorV3.migrate_v3`（产出 desc 时逐条迁移）。**`decode_map` 自己不迁移**（格式契约不变）。
 - 迁移后内存即干净 ⇒ 新保存的文件不再含 legacy id；最后一道防线是 §9「纹理不在 tile_defs」error。
-- 守卫：`tests/smoke/editor_core_smoke.gd`（全表 + 钳制 + migrate_map）、`editor_v3_smoke.gd`（v3 产出时迁移）、`cyrm_golden_probe.gd`（迁移后期望字节 `v4_legacy_migrated.cyrm`）。
+- 守卫：`tests/unit/editor_core_smoke.gd`（全表 + 钳制 + migrate_map）、`editor_v3_smoke.gd`（v3 产出时迁移）、`cyrm_golden_probe.gd`（迁移后期望字节 `v4_legacy_migrated.cyrm`）。
 
 ## 7. 取角映射（`EditorV3.subcell_render`）
 
@@ -145,11 +145,11 @@ descriptor (u32)
 
 | 支 | 判词 | 条数闸 | 钉什么 |
 |---|---|---|---|
-| `tests/probe/cyrm_golden_probe.gd` | `CYRM GOLDEN PROBE: ALL-OK(26 条断言)` | 26 | 跨语言黄金夹具：解→重编码逐字节相等、legacy/v3 迁移期望字节、真实地图稳定、400×300 最大尺寸 |
-| `tests/smoke/editor_core_smoke.gd` | `EDITOR CORE SMOKE: OK(37 条断言)` | 37 | 常量/描述符/字节序/CRC/meta/几何/legacy/地图对象 |
-| `tests/smoke/editor_codec_smoke.gd` | `EDITOR CODEC SMOKE: OK(56 条断言)` | 56 | 层编解码/容器/压缩/稀疏 flags/双字节索引/65535 上界/七类坏输入 |
-| `tests/smoke/editor_v3_smoke.gd` | `EDITOR V3 SMOKE: OK(41 条断言)` | 41 | v3 标记/解析报错/旧字母 2×2/迁移展开/subcell_render |
-| `tests/smoke/editor_validate_smoke.gd` | `EDITOR VALIDATE SMOKE: OK(20 条断言)` | 20 | 钳制/errors vs warnings/复活点判据 |
+| `tests/unit/cyrm_golden_probe.gd` | `CYRM GOLDEN PROBE: ALL-OK(26 条断言)` | 26 | 跨语言黄金夹具：解→重编码逐字节相等、legacy/v3 迁移期望字节、真实地图稳定、400×300 最大尺寸 |
+| `tests/unit/editor_core_smoke.gd` | `EDITOR CORE SMOKE: OK(37 条断言)` | 37 | 常量/描述符/字节序/CRC/meta/几何/legacy/地图对象 |
+| `tests/unit/editor_codec_smoke.gd` | `EDITOR CODEC SMOKE: OK(56 条断言)` | 56 | 层编解码/容器/压缩/稀疏 flags/双字节索引/65535 上界/七类坏输入 |
+| `tests/unit/editor_v3_smoke.gd` | `EDITOR V3 SMOKE: OK(41 条断言)` | 41 | v3 标记/解析报错/旧字母 2×2/迁移展开/subcell_render |
+| `tests/unit/editor_validate_smoke.gd` | `EDITOR VALIDATE SMOKE: OK(20 条断言)` | 20 | 钳制/errors vs warnings/复活点判据 |
 
 编辑器场景/文档/导出两动作/两份产物的守卫表见 [`editor-godot.md`](editor-godot.md) §7、§10。
 

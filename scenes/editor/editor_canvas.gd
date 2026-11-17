@@ -22,7 +22,7 @@ extends Control
 #   渐变预览(虚线 + 两端点,a/b 异色;只画不写 doc)、右上角小地图(地图范围 / meta 小点 /
 #   当前视口矩形;右键小地图 = 把点击子格居中,不发 pointer_*)。
 #
-# 去掉什么它才会红(tests/probe/editor_canvas_probe.gd 逐条守):
+# 去掉什么它才会红(tests/scene/editor_canvas_probe.gd 逐条守):
 #   ① 不建离屏纹理 / 尺寸错 ⇒ view_texture 断言红;
 #   ② screen_to_subcell 不用 floor 或漏 origin ⇒ 手算 3 点红;
 #   ③ 缩放不以鼠标为锚 ⇒ 锚点子格变了红;

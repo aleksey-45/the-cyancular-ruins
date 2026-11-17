@@ -9,8 +9,8 @@
 
 | 桶 | 资源边界 | 形态 | 跑法 |
 |---|---|---|---|
-| **冒烟** | 单进程;被测代码与测试同进程;不碰网络 / 磁盘 / 真场景实例;**autoload 未实例化** | `tests/smoke/*.gd`(`extends SceneTree`) | `-s` |
-| **场景探针** | 单机、真场景树:真实例化 `.tscn`,走 `_ready` / 信号 / 资源加载 / 渲染 | `tests/probe/*.tscn` | `--quit-after 3600` |
+| **冒烟** | 单进程;被测代码与测试同进程;不碰网络 / 磁盘 / 真场景实例;**autoload 未实例化** | `tests/unit/*.gd`(`extends SceneTree`) | `-s` |
+| **场景探针** | 单机、真场景树:真实例化 `.tscn`,走 `_ready` / 信号 / 资源加载 / 渲染 | `tests/scene/*.tscn` | `--quit-after 3600` |
 | **真链路** | 跨进程 + 真端口 + 真协议:起大厅 / worker / 客户端子进程 | `tests/{smoke,probe}/*.sh` | `bash tests/run_real.sh` |
 
 - 永远选能证明它的**最小**一档。桶选大了更慢、更脆、更难定位。
@@ -21,9 +21,9 @@
 `extends SceneTree` ⇒ `-s`;`extends Node` ⇒ `--quit-after <帧数>` 加 `.tscn`。引擎路径来自 [`tests/env.sh`](../../tests/env.sh) 的 `$GODOT`。
 
 ```bash
-"$GODOT" --headless --path . -s res://tests/smoke/<名>.gd
-"$GODOT" --headless --path . --quit-after 3600 res://tests/probe/<名>.tscn
-bash tests/smoke/<名>.sh
+"$GODOT" --headless --path . -s res://tests/unit/<名>.gd
+"$GODOT" --headless --path . --quit-after 3600 res://tests/scene/<名>.tscn
+bash tests/unit/<名>.sh
 ```
 
 - `--quit-after` 的单位是**帧**,统一给 **3600**。它是安全网:探针跑完会自己 `quit()`,给少了会在负载重时先耗尽。
@@ -31,7 +31,7 @@ bash tests/smoke/<名>.sh
 
 ## 默认批:`bash tests/run_all.sh`
 
-- **自动枚举**三个 glob:`tests/smoke/*.gd` + `tests/probe/*.tscn` + `tests/probe/*.gd`(无同名 `.tscn` 的按 `-s` 跑)。清单不写死;落选走 `EXCLUDED` 显式清单 + 每条理由,规则匹配不到文件即红。
+- **自动枚举**三个 glob:`tests/unit/*.gd` + `tests/scene/*.tscn` + `tests/scene/*.gd`(无同名 `.tscn` 的按 `-s` 跑)。清单不写死;落选走 `EXCLUDED` 显式清单 + 每条理由,规则匹配不到文件即红。
 - 不碰 7777、不拉子进程、不弹窗。默认批里出现开端口 / 拉子进程的支 = 红。
 - 选项:`--list`(跑哪些 + 排除哪些 + 每条理由 + 已知红基线)· `--only <子串>` · `--classify-check`(分类器自检)。
 - 逐支判词:`OK`(判词肯定且 `rc == 0`)· `OK+RC`(判词肯定但 `rc != 0`,**不算红**,单列)· `FAIL` · `NO-VERDICT` · `TIMEOUT`。后两类**归红**。

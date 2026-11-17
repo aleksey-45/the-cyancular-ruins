@@ -15,7 +15,7 @@ extends Control
 # ── 行为零变化(迁移只改版式/结构)────────────────────────────────────────────
 #   · Settings 的键名与读写/保存/apply_display 调用、Sfx 音效、所有 toggled/value_changed 接线原样;
 #   · 键位捕获(点击→按新键 / Esc 取消)、Esc 返回、返回路径 main_menu.tscn 原样;
-#   · 对外契约保持:tests/smoke/binding_contract_smoke.gd 直接读本脚本的 ACTION_NAMES / CAPTURE_* /
+#   · 对外契约保持:tests/unit/binding_contract_smoke.gd 直接读本脚本的 ACTION_NAMES / CAPTURE_* /
 #     capture_action(),这些一个都没动。
 #   · 控件节点名与迁移前一致,且在运行时登记 owner + unique_name_in_owner(unique name 语义不变)。
 #

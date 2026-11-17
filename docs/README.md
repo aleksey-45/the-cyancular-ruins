@@ -52,6 +52,7 @@
 |---|---|
 | 探针怎么跑 / 怎么判、真链路纪律、守卫边界 | [`workflow/tests.md`](workflow/tests.md) |
 | 测试该不该写、写哪一档（桶划分与不写清单，**唯一真相源**） | [`workflow/test-economy.md`](workflow/test-economy.md) |
+| 测试 / 探针 / 守卫**怎么写**（粒度、条数闸、确定性、源码守卫的例外） | [`workflow/test-authoring.md`](workflow/test-authoring.md) |
 | 注释怎么写（含**注释额度**：>100 行的 `.gd` ≤15%）、守卫幻觉怎么标 | [`workflow/comment-style.md`](workflow/comment-style.md) |
 | 工具与格式（`tools/`） | [`workflow/tools.md`](workflow/tools.md) |
 | **动手前必看**：既有红 / 待还的债 / 已裁定不做 | [`registered-debt.md`](registered-debt.md) |
