@@ -4,8 +4,11 @@
 
 ## 结构
 
-- `scenes/player/player.gd`(CharacterBody2D):根只留移动 / 姿态 / 物理帧编排;攀爬、战斗、武器分别抽成 `ClimbComponent` / `CombatComponent` / `WeaponComponent`(`player.tscn` 子节点)。组件不写自己的 `_physics_process`,由根每帧按序调用:`climb.update → 移动 → combat.apply_knock → move_and_slide`。根公开 `take_hit` / `get_facing` / `set_facing` / `is_downed` / `apply_recoil`、信号 `hp_changed`、只读 `hp` / `max_hp`。
-- 整态(回滚/权威同步)编解码 = [`scenes/player/player_net_state.gd`](../../scenes/player/player_net_state.gd)(`PlayerNetState`):`capture` 装配根本体字段 + `climb` / `swim` / `combat` / `weapons` 各自的 `capture_state()`,`restore` 反向按序回灌。字段键名的唯一 schema 是 `NetCodec` 的 `C2_SCHEMA` / `WEAPON_SCHEMA`,本模块**不另立键清单**;加字段 = 加在有所有权的组件里 + 改 schema。根只留 `capture_self_state` / `restore_self_state`(位置 / 移动 / 姿态 / 水下计时)与不可序列化的收尾 `_after_state_restore`(碰撞箱、朝向贴图、贴地重判)。
+- `scenes/player/player.gd`(CharacterBody2D):根只留**物理帧编排 + 门面**(受击/朝向/瞄准/拾取转发)。攀爬、战斗、武器、游泳分别抽成 `ClimbComponent` / `CombatComponent` / `WeaponComponent` / `SwimComponent`(`player.tscn` 子节点),组件不写自己的 `_physics_process`。
+- 移动 / 姿态 / 物理 = [`scenes/player/player_motor.gd`](../../scenes/player/player_motor.gd)(`PlayerMotor`):**帧内顺序的唯一真相**,顺序写在 `tick()` 一处 —— `swim.update → 水下计时 → climb.update → 垂直 → 蹲/冲 → 水平 → 朝向 → 姿态+碰撞 → 迈台阶/自动跳 → 击退 → 记 _pre_move_vy → move_and_slide → 贴地 → 台沿抬升 → 滑面反应 → 环面回绕`。迈台阶必须在 `move_and_slide` 之前、`_pre_move_vy` 必须在它之前取值:这两条以前只活在阅读顺序里,现在是一份可 diff 的清单。Motor 只拥有只被移动读写的字段(计时器/姿态锁/碰撞箱表/本帧倍率);`facing` / `state` / `is_squat` / `is_charge` / `charge_timer` 仍归 Player(武器、快照、远端副本都读)。
+- 表现 / 拾取 = [`player_present.gd`](../../scenes/player/player_present.gd)(发光、换弹圆环、残影、朝向 flip;`headless` 下不创建 —— 权威端不再给每个玩家建圆环)与 [`player_pickup.gd`](../../scenes/player/player_pickup.gd)(F/Q 长按 + 两个方法名的端口;单机由 `Level0` 在出生时注入,联机不绑 = 本端不执行,删掉了旧的 `host_level()` 向上找场景类)。
+- 整态(回滚/权威同步)编解码 = [`scenes/player/player_net_state.gd`](../../scenes/player/player_net_state.gd)(`PlayerNetState`):`capture` 装配根本体字段 + `motor` 的时间字段 + `climb` / `swim` / `combat` / `weapons` 各自的 `capture_state()`,`restore` 反向按序回灌。字段键名的唯一 schema 是 `NetCodec` 的 `C2_SCHEMA` / `WEAPON_SCHEMA`,本模块**不另立键清单**;加字段 = 加在有所有权的组件里 + 改 schema。根只留 `capture_self_state` / `restore_self_state`(位置 / 速度 / 朝向 / 姿态 / 蹲冲)与不可序列化的收尾 `_after_state_restore`(碰撞箱、朝向贴图、贴地重判)。`apply_authoritative_state` 也在这里,与整态恢复共用"倒地不顶满 hp"的判据。
+- 根公开 `take_hit` / `get_facing` / `set_facing` / `is_downed` / `apply_recoil` / `drop_hold_progress`、信号 `hp_changed` / `waterproof_changed`、只读 `hp` / `max_hp` / `waterproof`。
 - 输入可注入:根读输入走 `core/net/player_input.gd` 的 `PlayerInput`(纯接口);本地实现 `LocalInputSource`、网络包 `PacketInputSource`;`source_kind()` 自报 `LOCAL` / `PACKET` / `AI`。PvP 服务器注入包驱动远端玩家;瞄准有 `get_aim_dir_override()` 覆盖钩子。
 
 ## 移动与姿态
