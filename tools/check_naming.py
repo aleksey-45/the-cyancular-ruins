@@ -60,11 +60,10 @@ def _md_in(rel_dir: str) -> list[str]:
     return sorted("%s/%s" % (rel_dir, f) for f in os.listdir(d) if f.endswith(".md"))
 
 
-DOC_FILES = (["README.md", "AGENTS.md", "CLAUDE.md", "RELEASE.md"]
+DOC_FILES = (["README.md", "AGENTS.md", "RELEASE.md"]
              + _md_in("docs/eng") + _md_in("docs/eng/debt") + _md_in("tests"))
-# ★ 2026-11-02:入口收敛成**一份** —— `AGENTS.md` 是唯一真相源,`CLAUDE.md` 是它的**生成副本**
-#   (`tools/sync_agents_md.py`)。两者都在本表里:AGENTS 的链接必须活;副本万一被手改出坏链接也要红
-#   (改坏的那一版会先被规则 F 抓住,两条规则互为兜底,不冲突)。
+# ★ 2026-11-17:入口只剩 `AGENTS.md` 一份。`CLAUDE.md` 生成副本与 `tools/sync_agents_md.py` 已删除
+#   (用户裁定:不再维护镜像;规则 F 的副本一致性检查随之退休)。
 # 被文档引用时检查存在性的扩展名
 DOC_EXTS = (".gd", ".tscn", ".json", ".js", ".html", ".cyrm", ".cfg",
             ".shader", ".gdshader", ".bat", ".py", ".md", ".ttf", ".otf", ".png")
@@ -514,17 +513,6 @@ def check_entry_docs() -> None:
         if n > cap:
             _fail.append("F %s 有 %d 行,超过预算 %d 行 ⇒ 把历史/细节搬去 "
                          "docs/eng 或脚本头,别加长入口文件" % (rel, n, cap))
-    # 副本一致性:CLAUDE.md 必须是 AGENTS.md 的生成物(与 tools/sync_agents_md.py 同一判据)
-    try:
-        import sync_agents_md  # 同目录(tools/)
-    except ImportError:  # 被当作包/别处调用时按路径兜底,不让导入失败变成"静默跳过"
-        import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "sync_agents_md", os.path.join(TOOLS, "sync_agents_md.py"))
-        sync_agents_md = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(sync_agents_md)
-    for e in sync_agents_md.check_mirror():
-        _fail.append("F " + e)
 
 
 def main() -> int:
@@ -550,7 +538,7 @@ def main() -> int:
               "确属有意偏离要加进 ACCEPTED_CLASS_FILES 并写明何时销)")
         return 0 if report_only else 1
     print("命名检查 OK(目录小写 / class_name↔文件名 / 文档路径 / .tscn snake_case / "
-          ".ps1·.bat 的 CRLF 与 .ps1 编码 / 入口文档预算与 CLAUDE.md 副本一致)")
+          ".ps1·.bat 的 CRLF 与 .ps1 编码 / 入口文档预算)")
     return 0
 
 

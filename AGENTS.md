@@ -3,7 +3,6 @@
 > **唯一入口。** 分域正文在 [`docs/eng/`](docs/eng),**按域路由 = [`docs/eng/README.md`](docs/eng/README.md)**。
 > 本文件只放**动手前必须知道的**。跑法细节、守卫经济、域机制一律不在这里(见 §4),理由:本文件会进每个会话的上下文。
 > 任何一处与源码冲突,**以源码为准**。
-> ★ `CLAUDE.md` 是本文件的**生成副本**(`python tools/sync_agents_md.py`),**勿手改**。
 
 ## 0. 是什么
 
@@ -17,7 +16,8 @@ Godot **4.7.1 标准版(非 mono)** 的 2D 横版射击 demo「The Cyancular Rui
 ```bash
 bash tests/run_all.sh            # 默认批:headless、不占端口、不弹窗。判据 = 全批判词行
 bash tests/run_real.sh           # 真链路批:占 7777 + 拉子进程 ⇒ 必须先让用户认领
-python tools/check_naming.py     # 目录 / 类名 / 文档链接 / EOL + CLAUDE.md 镜像一致
+python tools/check_naming.py     # 目录 / 类名 / 文档链接 / EOL
+python tools/check_architecture.py  # 依赖方向 R1–R5(存量违规走白名单,只减不增)
 ```
 
 引擎不在 PATH:**`$GODOT`(console 版,跑测试/服务端)与 `$GODOT_EDITOR`(导出)不能混用**,默认值各只留一处([`tests/env.sh`](tests/env.sh) / `start_server.bat` / [`tools/build_release.py`](tools/build_release.py)),换机器设环境变量、别改脚本里的绝对路径。
