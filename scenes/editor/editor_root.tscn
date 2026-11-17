@@ -137,7 +137,16 @@ unique_name_in_owner = true
 custom_minimum_size = Vector2(96, 32)
 layout_mode = 2
 theme_type_variation = &"BtnCompact"
+tooltip_text = "真渲染预览(复用游戏管线);开着时底部出现「光照」时辰条"
 text = "预览:关"
+
+[node name="PlaytestBtn" type="Button" parent="Frame/Layout/Toolbar/ToolbarMain"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(96, 32)
+layout_mode = 2
+theme_type_variation = &"BtnCompact"
+tooltip_text = "从出生点试玩当前地图(F5):敌人静止、玩家空手;Esc 返回编辑器"
+text = "试玩"
 
 [node name="BackBtn" type="Button" parent="Frame/Layout/Toolbar/ToolbarMain"]
 unique_name_in_owner = true
@@ -386,6 +395,57 @@ layout_mode = 2
 size_flags_horizontal = 3
 size_flags_vertical = 3
 script = ExtResource("3_canvas")
+
+[node name="OverlayHost" type="Control" parent="Frame/Layout/Split/WorkArea/CanvasHost"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 3
+mouse_filter = 2
+
+[node name="LightBar" type="PanelContainer" parent="Frame/Layout/Split/WorkArea/CanvasHost/OverlayHost"]
+unique_name_in_owner = true
+visible = false
+layout_mode = 1
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -190.0
+offset_top = -58.0
+offset_right = 190.0
+offset_bottom = -14.0
+grow_horizontal = 2
+grow_vertical = 0
+
+[node name="Row" type="HBoxContainer" parent="Frame/Layout/Split/WorkArea/CanvasHost/OverlayHost/LightBar"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="LightLabel" type="Label" parent="Frame/Layout/Split/WorkArea/CanvasHost/OverlayHost/LightBar/Row"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"Small"
+text = "光照"
+
+[node name="LightHour" type="HSlider" parent="Frame/Layout/Split/WorkArea/CanvasHost/OverlayHost/LightBar/Row"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(220, 0)
+layout_mode = 2
+size_flags_horizontal = 3
+size_flags_vertical = 4
+min_value = 0.0
+max_value = 23.75
+step = 0.25
+value = 12.0
+
+[node name="LightTime" type="Label" parent="Frame/Layout/Split/WorkArea/CanvasHost/OverlayHost/LightBar/Row"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(56, 0)
+layout_mode = 2
+theme_type_variation = &"Small"
+text = "12:00"
 
 [node name="RightSide" type="VBoxContainer" parent="Frame/Layout/Split"]
 unique_name_in_owner = true

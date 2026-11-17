@@ -7,6 +7,7 @@ extends Control
 const TOOLS_SCRIPT := preload("res://scenes/editor/editor_tools.gd")
 const ACTIONS_SCRIPT := preload("res://scenes/editor/editor_actions.gd")
 const PREVIEW_SCRIPT := preload("res://scenes/editor/editor_preview.gd")
+const PLAYTEST_SCRIPT := preload("res://scenes/editor/editor_playtest.gd")
 const TILE_DEFS_PATH := "res://data/tile_defs.json"
 const THEME := preload("res://ui/theme/menu_theme.tres")
 const RIGHT_DEFAULT_W := 320.0        # 右栏初始宽(图层卡 + 2 Tab;最小宽写在 tscn 的 RightSide)
@@ -68,10 +69,22 @@ var _preview_last_zoom := -1.0
 var _undo_btn: Button = null
 var _redo_btn: Button = null
 var _zoom_text: Label = null
+var _playtest_btn: Button = null
+var _light_bar: Control = null
+var _light_hour: HSlider = null
+var _light_time: Label = null
+var _preview_hour := 12.0             # 预览光照时辰(0..24;正午最亮 = 看地图版式的默认)
 
 
 func _ready() -> void:
 	doc = EditorDoc.new()
+	# 从试玩回来:取回同一个 EditorDoc(撤销栈/选区都还在),并还原被临时钉住的地图路径。
+	var restored := PLAYTEST_SCRIPT.take_restore()
+	if not restored.is_empty():
+		doc = restored["doc"] as EditorDoc
+		_path = String(restored.get("path", ""))
+		MazeGenerator.set_map_file(String(restored.get("picked_map", "")))
+	Level0.playtest_mode = false
 	canvas = %Canvas as EditorCanvas
 	_tools.setup(doc, canvas)
 	_actions.setup(self)
@@ -90,8 +103,26 @@ func _ready() -> void:
 	canvas.pointer_up.connect(_tools.pointer_up)
 	canvas.cursor_moved.connect(_on_cursor_moved)
 	canvas.zoom_changed.connect(_on_zoom_changed)
-	_set_message("新图 125×75 格;F1 快捷键 · Ctrl+G 跳转 · 右键小地图跳转;Ctrl+O 打开、Ctrl+S 保存", false)
+	if not restored.is_empty():
+		_adopt_restored_doc.call_deferred()
+	else:
+		_set_message("新图 125×75 格;F1 快捷键 · F5 试玩 · Ctrl+G 跳转 · 右键小地图跳转;Ctrl+O 打开、Ctrl+S 保存", false)
 	_update_status(Vector2i.ZERO, false)
+
+
+# 试玩返回后的画布/面板同步:文档对象是原样取回的,但场景是新建的 ⇒ 相机/图层行/调色板要重新喂一遍。
+func _adopt_restored_doc() -> void:
+	canvas.set_active_layer(doc.active_layer)
+	canvas.fit_to_map()
+	_sync_layer_rows()
+	_sync_layer_tool_availability()
+	_refresh_palette_texture()
+	_update_zoom_label()
+	_update_history_buttons()
+	if doc.map.is_empty():
+		_set_message("已从试玩返回:地图是空的", false)
+	else:
+		_set_message("已从试玩返回(未保存改动与撤销栈都还在)", false)
 
 
 func _process(_dt: float) -> void:
@@ -338,10 +369,26 @@ func _wire_ui() -> void:
 	(%FileMenu as MenuButton).theme_type_variation = &""
 	(%EditMenu as MenuButton).theme_type_variation = &""
 	(%PreviewBtn as Button).theme_type_variation = &"FlatButton"
+	(%PlaytestBtn as Button).theme_type_variation = &"FlatButton"
 	(%BackBtn as Button).theme_type_variation = &"FlatButton"
 	_preview_btn = %PreviewBtn
 	_preview_btn.pressed.connect(_on_preview_toggled)
+	_playtest_btn = %PlaytestBtn
+	_playtest_btn.pressed.connect(_on_playtest_pressed)
 	(%BackBtn as Button).pressed.connect(_actions.back)
+
+	# 光照时辰条(只在本画布上浮):预览开着才显示 —— 只在预览里有时辰可言,平时不占画布。
+	_light_bar = %LightBar as Control
+	_light_hour = %LightHour as HSlider
+	_light_time = %LightTime as Label
+	UiFactory.hud_plate(_light_bar, UiFactory.SP_3, UiFactory.SP_2, true, UiFactory.C_PLATE_DEEP)
+	UiFactory.style_slider(_light_hour)
+	UiFactory.style_control(_light_time, UiFactory.T_LABEL)
+	_light_time.add_theme_color_override("font_color", UiFactory.C_TEXT)
+	(%LightLabel as Label).add_theme_color_override("font_color", UiFactory.C_TEXT_DIM)
+	_light_hour.value = _preview_hour
+	_update_light_time()
+	_light_hour.value_changed.connect(_on_light_hour_changed)
 
 	# 右栏的次级按钮(选区 6 / meta 5 / 校验)统一扁平;当前态由 _on_*_changed 换 variation。
 	for nm: String in ["SelCopy", "SelCut", "SelPaste", "SelClear", "SelMirrorH", "SelMirrorV",
@@ -411,6 +458,7 @@ func _wire_ui() -> void:
 	canvas.selection_move_finished.connect(_tools.apply_selection_move)
 	canvas.meta_drag_started.connect(_on_meta_drag_started)
 	canvas.meta_drag_finished.connect(_tools.apply_meta_move)
+	canvas.player_playtest_requested.connect(_on_player_marker_clicked)
 
 	_tools.message.connect(_set_message)
 	_tools.tool_changed.connect(_on_tool_changed)
@@ -751,15 +799,51 @@ func set_preview(on: bool) -> void:
 	_preview.set_active(on)
 	if _preview_btn != null:
 		_preview_btn.text = "预览:开" if on else "预览:关"
+	if _light_bar != null:
+		_light_bar.visible = on
 	if on:
 		_preview_last_origin = canvas.origin
 		_preview_last_zoom = canvas.zoom
 		_preview.set_camera(canvas.origin, canvas.zoom)
-	_set_message("预览:%s" % ("开(复用游戏渲染管线)" if on else "关(快速画布)"), false)
+		_preview.set_hour(_preview_hour)
+	_set_message("预览:%s" % ("开(复用游戏渲染管线;底部「光照」可换时辰)" if on else "关(快速画布)"), false)
 
 
 func _on_preview_toggled() -> void:
 	set_preview(not _preview_on)
+
+
+# ── 光照时辰(只在预览里有意义;数值走游戏同一条 DayCycle/PostProcess 推导)──────────
+
+## 设置预览光照时辰(0..24)。公开 API:探针/截图/UI 共用同一个入口。
+func set_preview_hour(hour: float) -> void:
+	var h := fposmod(hour, 24.0)
+	if _light_hour != null and not is_equal_approx(_light_hour.value, h):
+		_light_hour.set_value_no_signal(h)
+	_preview_hour = h
+	_update_light_time()
+	if _preview != null and _preview_on:
+		_preview.set_hour(_preview_hour)
+
+
+func get_preview_hour() -> float:
+	return _preview_hour
+
+
+func _on_light_hour_changed(v: float) -> void:
+	if absf(v - _preview_hour) < 0.001:
+		return
+	_preview_hour = fposmod(v, 24.0)
+	_update_light_time()
+	if _preview != null and _preview_on:
+		_preview.set_hour(_preview_hour)
+
+
+func _update_light_time() -> void:
+	if _light_time == null:
+		return
+	var h := fposmod(_preview_hour, 24.0)
+	_light_time.text = "%02d:%02d" % [int(h), int((h - float(int(h))) * 60.0)]
 
 
 func _build_preview() -> void:
@@ -770,9 +854,72 @@ func _build_preview() -> void:
 	_preview.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_preview.mouse_filter = Control.MOUSE_FILTER_IGNORE      # 让画布继续收鼠标(预览是只读层)
 	_canvas_host.add_child(_preview)
+	# 绘制顺序:画布 → 预览 → 浮动控件(光照条)。预览必须盖住画布,但不能盖住贴着画布底部的控件。
+	var overlay := get_node_or_null("%OverlayHost") as Control
+	if overlay != null:
+		_canvas_host.move_child(_preview, overlay.get_index())
 	_preview.setup(doc)
+	_preview.set_hour(_preview_hour)
 	_preview.set_active(false)
 	_preview.visible = false
+
+
+# ── 试玩(编辑器 → 游戏;不落用户文件)────────────────────────────────────
+
+## 用**当前内存文档**起一局试玩:编码到临时图 → 钉住临时图 → 换到 level_0。
+## spawn_cell 给 (x,y) 就从该出生点起;(-1,-1) = 由 map 里的 `# player` 决定。
+## 返回 {ok, error?};失败只提示、不换场景。
+func start_playtest(spawn_cell: Vector2i = Vector2i(-1, -1)) -> Dictionary:
+	if doc == null or doc.map.is_empty():
+		_set_message("先新建或打开一张地图,再试玩", true)
+		return {"ok": false, "error": "空地图"}
+	var enc := EditorCodec.encode_map(doc.map)
+	if not bool(enc.get("ok", false)):
+		_set_message("试玩失败:%s" % String(enc.get("error", "")), true)
+		return {"ok": false, "error": String(enc.get("error", ""))}
+	var f := FileAccess.open(PLAYTEST_SCRIPT.TMP_MAP, FileAccess.WRITE)
+	if f == null:
+		_set_message("试玩失败:写不了临时地图(%s)"
+				% error_string(FileAccess.get_open_error()), true)
+		return {"ok": false, "error": "写临时地图失败"}
+	f.store_buffer(enc["bytes"] as PackedByteArray)
+	f.close()
+	var picked := MazeGenerator.picked_map_path()   # 试玩完 Level0 要还回原来的地图
+	PLAYTEST_SCRIPT.stash(doc, _path, spawn_cell, picked)
+	MazeGenerator.set_map_file(PLAYTEST_SCRIPT.TMP_MAP)
+	Level0.pvp_mode = false
+	CombatComponent.pvp_arena = false
+	Level0.playtest_restore_map = picked
+	Level0.playtest_spawn = spawn_cell
+	Level0.playtest_mode = true
+	var where := ""
+	if spawn_cell.x >= 0 and spawn_cell.y >= 0:
+		where = " · 出生点 (%d,%d)" % [spawn_cell.x, spawn_cell.y]
+	_set_message("试玩:敌人静止、空手%s;Esc 返回编辑器(未保存改动不丢)" % where, false)
+	Level0.safe_change_scene(get_tree(), "res://scenes/level_0.tscn")
+	return {"ok": true}
+
+
+func _on_playtest_pressed() -> void:
+	start_playtest(_first_player_cell())
+
+
+func _on_player_marker_clicked(cell: Vector2i) -> void:
+	start_playtest(cell)
+
+
+# 地图里第一个出生点(没有就 (-1,-1):由游戏按「左上第一个空格」兜底)。
+func _first_player_cell() -> Vector2i:
+	if doc == null or doc.map.is_empty():
+		return Vector2i(-1, -1)
+	var players: Array = doc.map.get("players", [])
+	if players.is_empty():
+		return Vector2i(-1, -1)
+	var p: Variant = players[0]
+	if not (p is Dictionary):
+		return Vector2i(-1, -1)
+	var pd: Dictionary = p
+	return Vector2i(int(pd.get("x", 0)), int(pd.get("y", 0)))
 
 
 # ── 状态栏 / 校验输出 / 快捷键 ─────────────────────────────────────────
@@ -872,6 +1019,7 @@ func _register_editor_actions() -> void:
 	_action("editor_delete", [KEY_DELETE], false)
 	_action("editor_fit", [KEY_F], false)
 	_action("editor_help", [KEY_F1], false)
+	_action("editor_playtest", [KEY_F5], false)
 	_action("editor_jump", [KEY_G], true)
 	# 镜像让位给 移动(V)/ 手形(H):单键 H/V = 工具,Shift+H / Shift+V = 镜像。
 	_action("editor_mirror_h", [KEY_H], false, true)
@@ -909,6 +1057,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		canvas.fit_to_map()
 	elif event.is_action_pressed("editor_help"):
 		_actions.shortcut_help()
+	elif event.is_action_pressed("editor_playtest"):
+		start_playtest(_first_player_cell())
 	elif event.is_action_pressed("editor_jump"):
 		_actions.jump_dialog()
 	elif event.is_action_pressed("editor_zoom_in"):

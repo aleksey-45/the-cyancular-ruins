@@ -11,11 +11,12 @@
 |---|---|---|
 | 文档模型 | [`core/editor/editor_doc.gd`](../../../core/editor/editor_doc.gd) | 地图字典 + 当前层 + 稀疏 cells 撤销栈 + 环面归一化 + `changed`/`structure_changed`/`history_changed` 信号；meta 单项删除/改敌人类型/扁平列表；纯逻辑、可 `-s` 测 |
 | 读写门面 | [`core/editor/editor_io.gd`](../../../core/editor/editor_io.gd) | `open_path`（v4 二进制 / v3 文本 / 旧字母格式 + 读时 legacy 迁移）、`save_path`（校验 + 编码 + 写盘）、`default_target`、`list_maps` |
-| 画布 | [`scenes/editor/editor_canvas.gd`](../../../scenes/editor/editor_canvas.gd) | 视口离屏层合成、相机（origin/zoom）、`screen_to_subcell`、层可见/压暗、网格与画刷框、`pointer_*` 信号；**手形平移 / 移动工具**（拖选区发几何信号、meta 标记命中测试与拖拽预览）、光标形状；**meta 模式抑制画刷框 / 渐变方向预览 / 小地图 + 右键跳转 / `center_on_subcell`** |
-| 真渲染预览 | [`scenes/editor/editor_preview.gd`](../../../scenes/editor/editor_preview.gd) | 复用游戏管线（TerrainAtlas tileset + ParallaxBg + PostProcess）的预览；三个 SubViewport 合成后贴回画布区域 |
-| UI 场景 | [`scenes/editor/editor_root.tscn`](../../../scenes/editor/editor_root.tscn) | **全部静态 UI**：顶栏（标题/`FileMenu`·`EditMenu`/**保存**/撤销/重做/**文件名+未保存标记**/**跳转**/**帮助**/视图/预览/返回）· **左栏**（工具网格 10 键 + 画刷 + 颜色/纹理调色板**按层渐进披露** + 操作提示）· 中 `CanvasHost`+`EditorCanvas` · **右栏**（`LayersCard` 7 层常驻 + 2 Tab：**选区 / 地图事件**、校验消息；meta 列表可单条删除/改类型）· 状态栏（消息 + 信息 + 缩放控件）；根挂 `ui/theme/menu_theme.tres`，功能节点 `unique_name_in_owner` |
-| 场景根逻辑 | [`scenes/editor/editor_root.gd`](../../../scenes/editor/editor_root.gd) | 装配 + 接线 + 公开 API（`open_path`/`save_to`/`validate`/`export_to`/`export_and_load`/`get_doc`/`get_editor_canvas`/`set_preview`/`current_path`/`new_map`）；撤销/重做可用态、工具快捷键、状态栏缩放、按层适用性/渐进披露、meta 列表、校验自动切 Tab；不建静态控件 |
+| 画布 | [`scenes/editor/editor_canvas.gd`](../../../scenes/editor/editor_canvas.gd) | 视口离屏层合成、相机（origin/zoom）、`screen_to_subcell`、层可见/压暗、网格与画刷框、`pointer_*` 信号；**手形平移 / 移动工具**（拖选区发几何信号、meta 标记命中测试与拖拽预览）、光标形状；**敌人按游戏 idle 贴图绘制（未知类型回退红点）、单击出生点=试玩、meta 模式抑制画刷框 / 渐变方向预览 / 小地图 + 右键跳转 / `center_on_subcell`** |
+| 真渲染预览 | [`scenes/editor/editor_preview.gd`](../../../scenes/editor/editor_preview.gd) | 复用游戏管线（TerrainAtlas tileset + ParallaxBg + PostProcess）的预览；三个 SubViewport 合成后贴回画布区域；**`set_hour` 把昼夜时钟钉在指定时刻（走 `PostProcess.set_hour`，不另算一套光照）** |
+| UI 场景 | [`scenes/editor/editor_root.tscn`](../../../scenes/editor/editor_root.tscn) | **全部静态 UI**：顶栏（标题/`FileMenu`·`EditMenu`/**保存**/撤销/重做/**文件名+未保存标记**/**跳转**/**帮助**/视图/预览/**试玩**/返回）· **左栏**（工具网格 10 键 + 画刷 + 颜色/纹理调色板**按层渐进披露** + 操作提示）· 中 `CanvasHost`+`EditorCanvas`+`OverlayHost`（**预览光照条**）· **右栏**（`LayersCard` 7 层常驻 + 2 Tab：**选区 / 地图事件**、校验消息；meta 列表可单条删除/改类型）· 状态栏（消息 + 信息 + 缩放控件）；根挂 `ui/theme/menu_theme.tres`，功能节点 `unique_name_in_owner` |
+| 场景根逻辑 | [`scenes/editor/editor_root.gd`](../../../scenes/editor/editor_root.gd) | 装配 + 接线 + 公开 API（`open_path`/`save_to`/`validate`/`export_to`/`export_and_load`/`get_doc`/`get_editor_canvas`/`set_preview`/`set_preview_hour`/`start_playtest`/`current_path`/`new_map`）；撤销/重做可用态、工具快捷键、状态栏缩放、按层适用性/渐进披露、meta 列表、校验自动切 Tab、试玩返回时取回同一个 `EditorDoc`；不建静态控件 |
 | 工具层 | [`scenes/editor/editor_tools.gd`](../../../scenes/editor/editor_tools.gd) | 工具状态（含手形/移动）+ 画布指针 → `EditorDoc` 写入 + 选区拖拽 + meta 放置/拖动落点 + 敌人类型 + 渐变选区限制；只发信号（`message`/`tool_changed`/`paint_desc_changed`/`color_changed`/`meta_mode_changed`/`selection_changed`） |
+| 试玩交接 | [`scenes/editor/editor_playtest.gd`](../../../scenes/editor/editor_playtest.gd) | 换场景进出试玩时的 `EditorDoc` 暂存（撤销栈/选区/dirty 不掉）+ 临时地图路径常量；只有编辑器脚本引用它（服务端导出排除 `scenes/editor/*`） |
 | 命令层 | [`scenes/editor/editor_actions.gd`](../../../scenes/editor/editor_actions.gd) | 文件/编辑命令 + `ConfirmationDialog` 弹层内容（新建/打开/保存为/导出/**按格跳转**/**快捷键帮助**）+ **未保存改动拦截**（新建/打开/返回/关窗前确认）；读写仍走 `EditorIO` 与 root 公开 API |
 
 ★ 纯逻辑（编解码 / 校验 / 文档 / 读写）全在 `core/editor/`；`scenes/editor/` 只做 UI 与接线 —— 场景探针不需要点按钮就能验完整链路。
@@ -102,6 +103,17 @@
 - **meta 放置模式**：若当前工具是手形/移动（画布接管指针），切换到放置模式时自动回到画笔，保证「点画布放置」可用；
   放置模式下画刷框被抑制；**点任一工具按钮自动退出放置模式**（两种模式不再同时高亮）。
 - **预览与拖拽**：预览是盖在画布上的只读层；切到移动/手形时自动关预览（否则选区框/meta 标记被预览图盖住，拖拽没有反馈）。
+- **怪物实体预览**：敌人不再画红点+首字母，直接画**游戏同一份敌人场景的 idle 贴图**（默认动画首帧 + 场景根缩放；
+  `jump_bird` 实测 120×120 世界像素 ≈ 1.9 格），格子中心留 2px 红点标「放的是哪一格」；命中半径按贴图宽给
+  （上限 30px）。未知类型 / 场景坏 ⇒ 回退红点+首字母。小地图仍是小点（图幅示意，不是贴图）。
+- **时辰光影预览**：预览开着时画布底部出现「光照」条（`OverlayHost/LightBar`），拖滑条 = 0..24 点、0.25 步进，
+  默认 12:00；驱动 `EditorPreview.set_hour` → `PostProcess.set_sun_cycle_enabled(false)` + `set_hour`（游戏同一条
+  DayCycle 推导，不是第二套光照）。关预览即隐藏；时辰不写进地图。
+- **试玩（当前地图直接可走）**：入口三条 —— 顶栏「试玩」、`F5`、移动工具（`V`）**单击出生点标记**（拖拽仍是移动出生点，
+  两者以「落点是否同一格」区分）。流程 = 把当前内存文档编码到 `user://editor_playtest.cyrm` → 钉住该临时图 →
+  换到 `level_0`；**敌人静止**（停物理帧 + 停动画首帧）、**玩家空手**（不发初始武器、不撒地面武器）；
+  `Esc` 回编辑器。编辑器实例被换场景拆掉，但 `EditorDoc`（撤销栈/选区/未保存 dirty）由 `editor_playtest.gd` 暂存后取回，
+  地图路径也还原 —— 试玩不会丢未保存改动。
 - **快捷键**（独立 `editor_` 前缀 InputMap，不与游戏 action 混）：
   工具 `B/E/L/R/G/I/M/V/H/T`；`Ctrl+Z/Y` 撤销重做、`Ctrl+S/O` 保存/打开、`Ctrl+C/X/V` 选区复制/剪切/粘贴、
   `Delete` 清除选区、`Shift+H/V` 水平/垂直镜像、`+/-` 缩放、`F` 适应窗口、`Ctrl+G` 跳转、`F1` 快捷键帮助。
@@ -158,6 +170,12 @@
 - 调色板缩略图缩到 56px（源砖 64px，`INTERPOLATE_NEAREST`）以便 3 列塞进 268px 左栏；图标本身不是 16px 实拍。
 - v3 文本 / 旧字母格式打开后另存为写的是 **v4**（`EditorV3` 迁移是单向的，与计划一致）。
 - 画布的图集行数 = 本图去重描述符数；一张图里出现大量 hue/bri 变体会让图集体积线性增长（16×16/行），极端图可能吃显存。
+
+- **试玩**：换场景实现（编辑器实例被拆），回到编辑器靠进程内暂存取回同一个 `EditorDoc` ⇒ 试玩中点窗口 X / 进程被杀 = 未保存改动直接丢（暂存不落盘）；
+  临时图 `user://editor_playtest.cyrm` 会留在盘上（不在 `user://maps`，不进「打开地图」列表）；退出时 `MazeGenerator` 的地图路径还原成进试玩前的值。
+- **试玩里的敌人**：冻结在 meta 格原地（停物理帧 + 停动画首帧）—— 若敌人挂点不在落地面，会悬空（校验只给 warning，不拦）；无暂停菜单、无武器与地面掉点、HUD（血/氧/怀表/时钟）照常显示。
+- **光照时辰**只作用在真渲染预览的三个 SubViewport 上（走 `PostProcess.set_hour`，正午最亮/夜里最暗）；滑条只在预览开着时可见，时辰不写进地图、不参与导出。
+- **敌人贴图**只画在非预览的画布叠加层（预览是只读层，会盖掉它）；尺寸跟游戏场景根缩放走（改敌人 `.tscn` 的 scale 会直接反映到编辑器）。
 
 ## 9. 计划 P6 已执行（2026-11-09）
 
@@ -249,3 +267,18 @@
 - **帮助**：顶栏 `?`/`F1` 快捷键总览弹层。
 - **守卫**：`EDITOR DOC SMOKE: OK(199)` / `EDITOR CANVAS PROBE: ALL-OK(56)` / `EDITOR SCENE PROBE: ALL-OK(60)`
   （新增 15 条，均按 test-economy 合并同类、只钉行为/逻辑）。
+
+## 15. 预览三件（2026-11-17）
+
+让「地图做出来长什么样/能不能走」在编辑器里直接看见，不再只能导出进游戏：
+
+| 能力 | 入口 | 实现口径 |
+|---|---|---|
+| 时辰光影预览 | 开「预览」后画布底部「光照」滑条（0..24，0.25 步进，默认 12:00） | `EditorPreview.set_hour` → `PostProcess.set_sun_cycle_enabled(false)` + `set_hour`；游戏同一套 DayCycle/光照 shader，不另写一套 |
+| 怪物实体预览 | 画布叠加层（无需开关） | `EditorCanvas.enemy_art()` 按 `data/enemies.json` 的 id 实例化**游戏敌人场景**、取默认动画首帧 + 根缩放（2.5）缓存；命中半径按贴图宽（≤30px），未知类型回退红点 |
+| 试玩当前地图 | 顶栏「试玩」/ `F5` / 移动工具单击出生点 | `EditorRoot.start_playtest`：`EditorCodec.encode_map` 写 `user://editor_playtest.cyrm` → `MazeGenerator.set_map_file` → `Level0.playtest_mode` + 换场景；`Level0` 生成敌人后逐个冻结、跳过初始武器与地面掉点、`Esc` 回编辑器；文档对象经 `editor_playtest.gd` 暂存取回 |
+
+- **UI 取舍**：光照条只在预览开着时出现（平时不占画布）；「试玩」放顶栏视图组、与「预览」「返回」同级 —— 试玩是视图动作，不是编辑命令。
+- **守卫**：编辑器/纯 UI 按 [`test-economy.md`](../../workflow/test-economy.md) 冻结新增断言；本轮只保证既有四支编辑器探针与 `level0_boot_probe` 全绿，
+  三件预览的 headless 行为与试玩端到端用**不入库**的临时探针验过（记在 commit message）。
+- **边界**见 §8 最后四条。

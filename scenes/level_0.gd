@@ -19,6 +19,11 @@ static var _damaged_subs: Dictionary = {}
 
 static var pvp_mode: bool = false
 
+# 试玩(编辑器 → 游戏)由编辑器置位;普通单人开局恒 false:玩家空手、敌人静止、Esc 回编辑器。
+static var playtest_mode: bool = false
+static var playtest_spawn: Vector2i = Vector2i(-1, -1)   # 编辑器点的那一个出生点(格)
+static var playtest_restore_map: String = ""            # 进试玩前钉住的地图路径(退出时还回去)
+
 # 图集只随地图变:同一进程里重开/换模式时直接复用,重建一次 ~87ms。
 static var _wall_ts_cache: Dictionary = {}
 
@@ -157,6 +162,11 @@ static func _perf_log(label: String, t0: int) -> int:
 
 # 根 Window 的输入事件不会自动路由进 SubViewport(WorldViewport),SubViewport 内节点(玩家/枪)的 _unhandled_input 收不到;在根级把未处理输入手动转发进 WorldViewport。
 func _unhandled_input(event: InputEvent) -> void:
+	# 试玩:Esc 直接回编辑器(没有暂停菜单 —— 试玩是编辑器的一次性验证,不该弹出「继续/回大厅」)。
+	if playtest_mode and event.is_action_pressed("ui_cancel"):
+		get_viewport().set_input_as_handled()
+		_leave_playtest()
+		return
 	$WorldViewport.push_input(event)
 
 func _ready() -> void:
@@ -225,7 +235,13 @@ func _ready() -> void:
 		return
 	EnemySpawner.load_types()
 	var spawns := MazeGenerator.load_spawns()
-	_place_player(grid, spawns.get("player", Vector2i(-1, -1)))
+	if playtest_mode:
+		# 试玩:敌人照常按图生成,但每个生成后立刻冻结(贴图/位置保留,不动、不结算)。
+		$EnemySpawner.enemy_spawned.connect(_on_playtest_enemy_spawned)
+	var start_cell: Vector2i = spawns.get("player", Vector2i(-1, -1))
+	if playtest_mode and playtest_spawn.x >= 0 and playtest_spawn.y >= 0:
+		start_cell = playtest_spawn
+	_place_player(grid, start_cell)
 	# 拾取/丢弃端口:Player 不再向上找 Level0(旧 host_level());未绑定 = 本端不执行,联机只上行走服务器。
 	($WorldViewport/Player as Player).bind_pickup_host(self)
 	$WorldViewport/Player.weapons.set_enabled_types(RunOptions.disabled_weapons)
@@ -238,17 +254,22 @@ func _ready() -> void:
 		var w = get_tree().get_first_node_in_group("watch_hud")
 		if w != null and w.has_method("flash_locked"):
 			w.flash_locked())
-	_give_starting_weapon($WorldViewport/Player)
+	if not playtest_mode:
+		_give_starting_weapon($WorldViewport/Player)
 	$EnemySpawner.spawn_all.call_deferred(spawns)
-	# 单机初始武器:每种 2 把、共 12 把,随机散落全图;玩家开局空手(见 player.gd)。★ deferred:scatter_weapons 要读 MazeGenerator.current_grid,延迟到帧末避半初始化状态。
-	scatter_weapons.call_deferred(_default_weapon_types())
+	if not playtest_mode:
+		# 单机初始武器:每种 2 把、共 12 把,随机散落全图;玩家开局空手(见 player.gd)。★ deferred:scatter_weapons 要读 MazeGenerator.current_grid,延迟到帧末避半初始化状态。
+		scatter_weapons.call_deferred(_default_weapon_types())
 
 	var pp := PostProcess.new()
 	pp.world_viewport = $WorldViewport
 	pp.bg_viewport = _bg_viewport
 	_post_process = pp
 	add_child.call_deferred(pp)
-	_build_pause_menu()
+	if playtest_mode:
+		_build_playtest_banner()
+	else:
+		_build_pause_menu()
 
 
 # 墙体/所有非空气砖的图集(16px 象限制,按描述符行烘:行 = 本图去重描述符,辅码颜色烘进像素)。
@@ -689,14 +710,17 @@ func restart_single() -> void:
 			(e as Node).queue_free()
 	var spawns := MazeGenerator.load_spawns()
 	var spawn_cell: Vector2i = spawns.get("player", Vector2i(-1, -1))
+	if playtest_mode and playtest_spawn.x >= 0 and playtest_spawn.y >= 0:
+		spawn_cell = playtest_spawn
 	if spawn_cell.x < 0:
 		spawn_cell = Vector2i(_grid_ref[0].size() / 2, _grid_ref.size() / 2)
 	player.restart_at(spawn_cell)
 	EnemySpawner.load_types()
 	$EnemySpawner.spawn_all.call_deferred(spawns)
 	clear_pickups()
-	_give_starting_weapon(player)
-	scatter_weapons.call_deferred(_default_weapon_types())
+	if not playtest_mode:
+		_give_starting_weapon(player)
+		scatter_weapons.call_deferred(_default_weapon_types())
 
 
 func _place_player(_grid: Array[Array], spawn_cell: Vector2i) -> void:
@@ -723,6 +747,48 @@ func _build_pause_menu() -> void:
 	var pm := preload("res://ui/screens/pause_menu.tscn").instantiate() as PauseMenu
 	pm.is_pvp = false
 	add_child(pm)
+
+
+# ── 试玩(编辑器 → 游戏)────────────────────────────────────────────────
+# 只由 scenes/editor 置 playtest_mode。三条差异:敌人静止、玩家空手、Esc 回编辑器。
+
+# 敌人一生成就定格:停物理帧 + 停动画首帧(位置/碰撞箱原样保留,「鸟会不会挡路/贴图多大」仍看得见)。
+func _on_playtest_enemy_spawned(enemy: Node) -> void:
+	if not is_instance_valid(enemy):
+		return
+	enemy.set_physics_process(false)
+	var spr := enemy.find_child("AnimatedSprite2D", true, false) as AnimatedSprite2D
+	if spr != null:
+		spr.stop()
+		spr.frame = 0
+
+
+func _build_playtest_banner() -> void:
+	var layer := CanvasLayer.new()
+	layer.name = "PlaytestBanner"
+	layer.layer = 150
+	add_child(layer)
+	var panel := PanelContainer.new()
+	panel.name = "Banner"
+	panel.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	# 让开顶部居中的 HUD 时钟:横幅下移一行,两段文字不叠。
+	panel.offset_top = float(UiFactory.MARGIN + UiFactory.SP_7)
+	UiFactory.hud_plate(panel, UiFactory.SP_4, UiFactory.SP_2, true, UiFactory.C_PLATE_DEEP)
+	layer.add_child(panel)
+	var label := Label.new()
+	label.text = "试玩 · 敌人静止 / 空手 · Esc 返回编辑器"
+	UiFactory.style_control(label, UiFactory.T_BODY)
+	label.add_theme_color_override("font_color", UiFactory.C_TEXT)
+	panel.add_child(label)
+
+
+func _leave_playtest() -> void:
+	if not playtest_mode:
+		return
+	playtest_mode = false
+	MazeGenerator.set_map_file(playtest_restore_map)   # 不让临时图泄漏到之后的开局
+	safe_change_scene(get_tree(), "res://scenes/editor/editor_root.tscn")
 
 
 var ground_weapons := GroundWeaponField.new()

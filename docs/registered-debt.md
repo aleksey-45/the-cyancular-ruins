@@ -34,7 +34,8 @@
 - **服务器 Beta 回溯的帧契约**（[`core/sim/rewind_frame.gd`](../core/sim/rewind_frame.gd) `RewindFrame`）：帧形状 `{t, player}`、玩家载荷键集 `PLAYER_KEYS` 是唯一来源；单机 `WorldRewind` 与服务器 `_record_rw_frame` 共用同一个生产者、`_apply_rw_frame` 只寻帧后调 `RewindFrame.apply_player`。加字段仍要同时改 `build_player` / `apply_player`（**没有前置编译提示**），但"加了键却没测"会被 [`tests/scene/rewind_frame_probe.tscn`](../tests/scene/rewind_frame_probe.tscn) ① 的键集/取值器断言照出来。
 - **客户端出生即落稳**（[`scenes/pvp_match_client.gd`](../scenes/pvp_match_client.gd) `_settle_local_spawn`，三模式共用）：在 `_boot_world()` 里把"从格子中心落到地面"这段物理**提前跑完**（≤8 步，超了放弃）。**未跑验证**（用户当轮要求别测 + 另一会话占着 Godot 进程）⇒ 若出现"出生卡在墙里 / 悬空不动 / 落点比服务器高"，第一嫌疑是这里；正常表现应是首条 ack 时两端 `pos` 差 < 2px（原先实测差 9.6px，每局固定一次开局回滚）。
 - **服务器按实例 id 判"这颗弹广播过没有"**（[`server/match/combat_system.gd`](../server/match/combat_system.gd) 的 `_seen_bullets`）——子弹池化（[`core/present/bullet_pool.gd`](../core/present/bullet_pool.gd)）之后，"同一帧内死一颗 → 池把它借给下一发"会被判成同一颗 ⇒ **不再广播**（客户端少看见一发、服务器不报错）。池已加"同一物理帧归还的实例不借出"（`_released_frame`）缓解；**结构修复未做**：把广播判据改成每发一个 use generation，或广播后清 meta 改按 `use_id` 记账（动 `server/match/**`，要单独评审）。
-- [`docs/registered-debt.md`](registered-debt.md) 本身**不是**逐项待办:它只登记"现在仍成立"的边界;一次性任务清单不入库(见 git log 与提交信息)。
+- **[`docs/registered-debt.md`](registered-debt.md) 本身**不是**逐项待办:它只登记"现在仍成立"的边界;一次性任务清单不入库(见 git log 与提交信息)。
+- **编辑器试玩（2026-11-17）**：换场景实现，未保存的 `EditorDoc` 只暂存在进程内（`scenes/editor/editor_playtest.gd`）⇒ **试玩中窗口 X / 进程被杀 = 未保存改动直接丢**；临时图 `user://editor_playtest.cyrm` 会留在盘上（不在 `user://maps`，不进打开列表，不影响选图）；敌人冻结在 meta 格原地（挂点不在落地面会悬空，校验只 warning）；试玩没有暂停菜单、没有武器与地面掉点。光照时辰只作用在预览子视口（不写地图、不参与导出）；敌人 idle 贴图只画在非预览画布叠加层。
 
 ## 零守卫面（按面列出;只统计 2026-10-24 与 2026-11-04 两轮削减后仍无替代守卫的）
 

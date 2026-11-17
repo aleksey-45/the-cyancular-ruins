@@ -93,7 +93,7 @@ func set_tool(key: String) -> void:
 	elif key == TOOL_HAND:
 		message.emit("手形:左键拖动画布;任何工具下空格/中键拖也能平移", false)
 	elif key == TOOL_MOVE:
-		message.emit("移动:拖选区内容或 meta 标记(先框选一块再拖)", false)
+		message.emit("移动:拖选区内容或 meta 标记;单击出生点 = 试玩当前地图", false)
 
 
 func label_of(key: String) -> String:

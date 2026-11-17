@@ -1,41 +1,8 @@
 extends Control
 
-# T3 真渲染预览:在地图编辑器里用**游戏同一套管线**出一张「真实观感」的预览图,不做第二套渲染。
-# 不加 class_name(调用方用 load/preload);契约见 .tmp/p2-extras-contract.md §3。
-#
-# ── 节点结构(全部运行时建,挂在本 Control 下)────────────────────────────────
-#   Display(TextureRect)          ← 贴 PreviewViewport.get_texture(),只铺满本 Control(不铺满编辑器)
-#   PreviewViewport(SubViewport)  ← 只放 PostProcess(CanvasLayer + 全屏 shader);它的输出才是最终图像
-#   WorldViewport(SubViewport)    ← transparent_bg;3 个 TileMapLayer(层 0/1/2)+ Camera2D(世界相机)
-#   BgViewport(SubViewport)       ← transparent_bg;ParallaxBg(背景四层,自己建 BgCam 跟随世界相机)
-# 接线:WorldViewport → PostProcess.world_viewport;BgViewport → PostProcess.bg_viewport;
-#       PreviewViewport 里 PostProcess 合成的图 → Display。PostProcess 只活在这个专用 SubViewport 里,
-#       不接触编辑器其余 UI(不会铺满编辑器)。
-#
-# ── 相机口径(与 EditorCanvas 完全一致;公式为实际验证口径)────────────────────
-#   origin = 预览左上角对应的世界**子格**坐标(float);zoom = 每子格屏幕像素(画布口径)。
-#   1 子格 = 16 世界像素;Camera2D.zoom(屏幕px/世界px)= zoom/16。
-#   可见世界尺寸 = 视口尺寸 / Camera2D.zoom ⇒ 视口中心的世界坐标
-#     = origin*16 + 视口size*0.5 / (zoom/16) = origin*16 + 视口size*0.5*16/zoom
-#   ⇒ camera.position = origin*16 + size*0.5*16/zoom;camera.zoom = Vector2(zoom/16, zoom/16)。
-#   (契约里 "size/2/zoom" 的 zoom 即 Camera2D.zoom;按数值验证写成本式。)
-#
-# ── 瓦片 ─────────────────────────────────────────────────────────────────────
-#   3 层共用同一个 TileSet:TerrainAtlas.make_wall_tileset_for(合成 descs),
-#   descs = 层 0/1/2 的非空 desc 去重排序;瓦片坐标 = Vector2i((sy%4)*4+(sx%4), row_of[desc]),
-#   用的是**子格**坐标(1 tile = 16px),与 EditorCanvas 的取角映射同源。
-#   本预览只铺地图本体一份,**不摆 3×3 环面副本**(画布才做环面);相机走出地图边界会看到空区 ——
-#   root 接预览时按需把相机限制在地图内,或接受边界外为空。
-#
-# ── 刷新策略 ─────────────────────────────────────────────────────────────────
-#   refresh() = 全量重铺(图集按 descs 签名缓存,背景按 rgba 哈希缓存;大图整铺较慢)。
-#   doc.changed:纹理层走**增量**(只改变过的子格);颜色层(背景)与 structure_changed 走下一帧全量。
-#   set_active(false) 后停止更新(视口 UPDATE_DISABLED + 关 ParallaxBg/PostProcess 的 _process),
-#   期间的变更只记脏,重新显示时补一次。
-#
-# ★ 像素不作为判据:headless(dummy 渲染)下本模块只保证 **零 SCRIPT ERROR / 零空引用**;
-#   画面正确性需非 headless 人工看(或像素探针另做)。探针只断言结构(stats)与相机数值。
-# ★ 禁止 RegEx(客户端导出裁剪了 regex 模块)。
+# T3 真渲染预览:复用游戏管线(TerrainAtlas/ParallaxBg/PostProcess),节点结构/相机公式/
+# 刷新策略见 docs/systems/editor/editor-godot.md §1、§11(headless 只保证零 SCRIPT ERROR;像素需人眼看)。
+# ★ 不加 class_name(调用方用 load/preload)。★ 禁止 RegEx(客户端导出裁剪了 regex 模块)。
 
 const SUB_PX: int = 16                          # 世界像素/子格
 const FALLBACK_SIZE := Vector2i(640, 480)       # 本 Control 还没拿到尺寸时的兜底视口
@@ -61,6 +28,7 @@ var _bg_layers := 0
 var _post: PostProcess = null
 var _tile_count := 0
 var _pending_full := false
+var _hour := 12.0
 
 
 # 装入文档:建(或复用)视口/图层/背景/后处理,并立即全量重铺。可反复调用(换图/换文档)。
@@ -94,6 +62,23 @@ func set_camera(origin: Vector2, zoom: float) -> void:
 	_origin = origin
 	_zoom = maxf(zoom, 0.01)
 	_apply_camera()
+
+
+# 光照时辰(0..24;只影响预览里的昼夜/光影,不写地图、不进 doc)。时钟停走,由 UI 滑条驱动。
+func set_hour(hour: float) -> void:
+	_hour = fposmod(hour, 24.0)
+	_apply_hour()
+
+
+func get_hour() -> float:
+	return _hour
+
+
+func _apply_hour() -> void:
+	if _post == null or not is_instance_valid(_post):
+		return
+	_post.set_sun_cycle_enabled(false)   # 预览的时辰是「定格」的:不让 120 秒/天 的时钟自己走
+	_post.set_hour(_hour)
 
 
 # 显示/隐藏;隐藏时停掉三个视口的渲染与背景/后处理的逐帧处理(统计值保留)。
@@ -202,6 +187,7 @@ func _build() -> void:
 	_post.world_viewport = _world_vp
 	_post.bg_viewport = _bg_vp
 	_preview_vp.add_child(_post)
+	_apply_hour()
 
 	resized.connect(_on_resized)
 

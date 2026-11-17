@@ -66,6 +66,7 @@ const META_FONT_SIZE := 10
 const META_ENEMY_RADIUS := 6.0
 const META_SQUARE := 10.0
 const META_HIT_RADIUS := 14.0       # 移动工具命中 meta 标记的半径(屏幕 px;标记本身只有 10px)
+const META_ENEMY_HIT_MAX := 30.0    # 敌人贴图比红点大:命中半径按贴图宽的一半夹上限,拖起来才不别扭
 
 # 渐变预览:虚线 + 两端点(a/b 异色)。只画在 _draw 叠加层,不进视口图、不写 doc。
 const GRADIENT_LINE_COLOR := Color(0.75, 0.95, 1.0, 0.85)
@@ -91,6 +92,8 @@ signal selection_move_started()
 signal selection_move_finished(delta_sub: Vector2i)
 signal meta_drag_started(kind: String, index: int)
 signal meta_drag_finished(kind: String, index: int, cell: Vector2i)
+# 移动工具下「单击出生点标记(没拖动)」= 从该点试玩当前地图(由 editor_root 接)。
+signal player_playtest_requested(cell: Vector2i)
 
 # 相机只读口(origin/zoom 由本文件维护;外部用 zoom_in/zoom_out/set_zoom/set_camera/fit_to_map/pan_pixels)。
 var zoom: float:
@@ -130,6 +133,7 @@ var _draw_calls := 0                            # _draw 完成次数(探针守�
 
 var _selection := Rect2i()                      # 子格矩形;size<=0 = 无选区(只画在 _draw 叠加层)
 var _meta_visible := true                       # meta 标记开关(默认显示)
+var _enemy_art_cache: Dictionary = {}           # 敌人 id → {tex, size, offset}(idle 贴图,见 enemy_art())
 var _meta_mode_active := false                  # meta 放置模式:抑制画刷框 + 手形光标(不改 pointer_*)
 var _gradient_active := false                   # 渐变预览:纯叠加层(不改 doc / 视口图)
 var _gradient_a := Vector2i.ZERO
@@ -302,9 +306,51 @@ func gradient_preview_active() -> bool:
 func meta_marker_at(pos: Vector2) -> Dictionary:
 	for m: Dictionary in meta_markers():
 		var marker_pos: Vector2 = m["pos"]
-		if marker_pos.distance_to(pos) <= META_HIT_RADIUS:
+		if marker_pos.distance_to(pos) <= _marker_hit_radius(m):
 			return m
 	return {}
+
+
+# 命中半径:敌人贴图比红点大得多,按贴图宽度给(上限防拖一只鸟时框住邻近点)。
+func _marker_hit_radius(m: Dictionary) -> float:
+	if String(m.get("kind", "")) == "enemy":
+		var art := enemy_art(String(m.get("type", "")))
+		if not art.is_empty():
+			var half: float = (art["size"] as Vector2).x * _zoom / float(EditorConstants.SUB_PX) * 0.5
+			return clampf(half * 0.7, META_HIT_RADIUS, META_ENEMY_HIT_MAX)
+	return META_HIT_RADIUS
+
+
+# 敌人 idle 贴图:从游戏同一份敌人场景取默认动画首帧 + 根缩放,编辑器里看到的就是游戏里出生那一帧。
+# 按 id 缓存;未知 id / 场景坏 ⇒ 空字典,调用方回退红点。
+func enemy_art(type_id: String) -> Dictionary:
+	if _enemy_art_cache.has(type_id):
+		return _enemy_art_cache[type_id]
+	var art: Dictionary = {}
+	if type_id != "":
+		if EnemySpawner.TYPES.is_empty():
+			EnemySpawner.load_types()
+		var scene_path := String(EnemySpawner.TYPES.get(type_id, ""))
+		if scene_path != "":
+			var packed := load(scene_path) as PackedScene
+			if packed != null:
+				var inst := packed.instantiate() as Node2D
+				if inst != null:
+					var spr := inst.get_node_or_null("AnimatedSprite2D") as AnimatedSprite2D
+					if spr != null and spr.sprite_frames != null \
+							and spr.sprite_frames.get_animation_names().size() > 0:
+						var anim := spr.animation
+						if not spr.sprite_frames.has_animation(anim):
+							anim = spr.sprite_frames.get_animation_names()[0]
+						var tex := spr.sprite_frames.get_frame_texture(anim, 0)
+						if tex != null:
+							var xf := inst.transform * spr.transform
+							var s := xf.get_scale()
+							art = {"tex": tex, "size": tex.get_size() * s,
+									"offset": xf.origin + spr.offset * s}
+					inst.free()
+	_enemy_art_cache[type_id] = art
+	return art
 
 
 # ── 选区 / meta 标记 / 视口图读取(叠加层,都不进视口图)────────────────
@@ -345,7 +391,8 @@ func view_image() -> Image:
 
 
 ## meta 标记列表(屏幕 px,固定像素大小)。空数组 = 没有 meta 或标记被隐藏。
-## 元素:{kind:"player"|"respawn"|"enemy", index:int, label:String, pos:Vector2, side:int}
+## 元素:{kind:"player"|"respawn"|"enemy", index:int, label:String, pos:Vector2, side:int,
+##        cell:Vector2i, type:String(仅敌人)}
 ## index = 该标记在对应 map 数组(players/respawns/enemies)里的下标 ⇒ 移动工具拖拽时能回写同一条。
 func meta_markers() -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
@@ -360,8 +407,9 @@ func meta_markers() -> Array[Dictionary]:
 		if not (p is Dictionary):
 			continue
 		var pd: Dictionary = p
+		var pc := Vector2i(int(pd.get("x", 0)), int(pd.get("y", 0)))
 		out.append({"kind": "player", "index": i, "label": "P%d" % (i + 1), "side": 0,
-				"pos": _cell_center_screen(Vector2i(int(pd.get("x", 0)), int(pd.get("y", 0))))})
+				"cell": pc, "type": "", "pos": _cell_center_screen(pc)})
 	var respawns: Array = map.get("respawns", [])
 	for i in respawns.size():
 		var r: Variant = respawns[i]
@@ -369,8 +417,9 @@ func meta_markers() -> Array[Dictionary]:
 			continue
 		var rd: Dictionary = r
 		var side := int(rd.get("side", 0))
+		var rc := Vector2i(int(rd.get("x", 0)), int(rd.get("y", 0)))
 		out.append({"kind": "respawn", "index": i, "label": "R%d" % side, "side": side,
-				"pos": _cell_center_screen(Vector2i(int(rd.get("x", 0)), int(rd.get("y", 0))))})
+				"cell": rc, "type": "", "pos": _cell_center_screen(rc)})
 	var enemies: Array = map.get("enemies", [])
 	for i in enemies.size():
 		var e: Variant = enemies[i]
@@ -378,8 +427,9 @@ func meta_markers() -> Array[Dictionary]:
 			continue
 		var ed: Dictionary = e
 		var t := String(ed.get("type", ""))
+		var ec := Vector2i(int(ed.get("x", 0)), int(ed.get("y", 0)))
 		out.append({"kind": "enemy", "index": i, "label": t.substr(0, 1).to_upper() if t != "" else "?",
-				"side": 0, "pos": _cell_center_screen(Vector2i(int(ed.get("x", 0)), int(ed.get("y", 0))))})
+				"side": 0, "cell": ec, "type": t, "pos": _cell_center_screen(ec)})
 	return out
 
 
@@ -957,10 +1007,23 @@ func _draw_meta() -> void:
 				draw_rect(box2, Color(0.0, 0.0, 0.0, 0.75), false, 1.0)
 				_draw_marker_text(font, pos + Vector2(META_SQUARE * 0.7, 4.0), label, c2)
 			"enemy":
-				draw_circle(pos, META_ENEMY_RADIUS, META_ENEMY_COLOR)
-				draw_circle(pos, META_ENEMY_RADIUS, Color(0.0, 0.0, 0.0, 0.6), false, 1.0)
-				_draw_marker_text(font, pos + Vector2(-META_ENEMY_RADIUS * 0.45, 4.0), label,
-						Color(1.0, 1.0, 1.0, 1.0))
+				# 敌人不再画成红点:直接用游戏里的 idle 贴图(默认动画首帧,尺寸 = 游戏内实际像素)。
+				var art := enemy_art(String(m.get("type", "")))
+				if not art.is_empty():
+					var k := _zoom / float(EditorConstants.SUB_PX)
+					var sz: Vector2 = (art["size"] as Vector2) * k
+					var org: Vector2 = (art["offset"] as Vector2) * k
+					var art_rect := Rect2(pos - sz * 0.5 + org, sz)
+					draw_texture_rect(art["tex"] as Texture2D, art_rect, false)
+					# 格子中心留一个 2px 点:贴图会盖住格子边界,这个点让「到底放在哪一格」一眼可见。
+					draw_circle(pos, 2.0, Color(1.0, 0.25, 0.25, 0.85))
+					if dragging:
+						draw_rect(art_rect, Color(1.0, 1.0, 1.0, 0.9), false, 1.5)
+				else:
+					draw_circle(pos, META_ENEMY_RADIUS, META_ENEMY_COLOR)
+					draw_circle(pos, META_ENEMY_RADIUS, Color(0.0, 0.0, 0.0, 0.6), false, 1.0)
+					_draw_marker_text(font, pos + Vector2(-META_ENEMY_RADIUS * 0.45, 4.0), label,
+							Color(1.0, 1.0, 1.0, 1.0))
 		if dragging:
 			draw_circle(pos, META_HIT_RADIUS, Color(1.0, 1.0, 1.0, 0.9), false, 1.5)
 
@@ -1263,6 +1326,9 @@ func _end_move(pos: Vector2) -> void:
 		_refresh_cursor()
 		queue_redraw()
 		meta_drag_finished.emit(String(m["kind"]), int(m["index"]), cell)
+		# 单击(没拖动)出生点 = 从这一点试玩:拖拽仍然是移动出生点,两者靠「落点是否同一格」区分。
+		if String(m["kind"]) == "player" and cell == (m.get("cell", Vector2i(-1, -1)) as Vector2i):
+			player_playtest_requested.emit(cell)
 		return
 	if _moving_selection:
 		_moving_selection = false

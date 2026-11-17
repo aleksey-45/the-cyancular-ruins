@@ -18,6 +18,12 @@ static func set_map_file(path: String) -> void:
 	_picked_map = path
 
 
+# 当前钉住的地图路径(空 = 还没选过,下次 map_file_path() 才会随机取)。
+# 需要「临时改地图、用完还回去」的调用方(编辑器试玩)先存这个值再 set_map_file。
+static func picked_map_path() -> String:
+	return _picked_map
+
+
 # 当前世界的格子数(像素尺寸 = 它 × GameParameters.TILE_SIZE)。
 # 网格已加载 ⇒ 网格尺寸;未加载(菜单态)⇒ 地图文件头。
 # ★ 单一来源:此前 GameParameters 存两个可写字段,`_ready()` 按文件写一次、`world_builder`
