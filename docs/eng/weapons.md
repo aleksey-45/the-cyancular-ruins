@@ -10,12 +10,12 @@
 - 术语:`type_id` = 武器类型 id(整数 1–N,与键位、背包位置无关);`inst` = 逐把唯一,进输入包与 `capture_state`;`index` = 背包位置(0-based,只在本地用于按键解析 / HUD 行号)。`slot` 只保留在三处:`Player.weapon_slot` 挂点、容量格 UI(`WeaponSlots` / `C_SLOT_*`)、`capture_state()` 的 `wslot` 键。
 - 上行传解析结果:输入包带 `"winst"` = 目标那把的 `inst`。客户端本地解析(数字键按 `index`、滚轮按相对位置)出 `inst`;服务器 `equip_inst(inst)`,`index_of_inst` 找不到就静默不动。下行世界包的枪型字段是 `type_id`。改这个键 = 改协议,两端必须同一 build。
 - ★★ **同型号两把(`winst` 变、`wslot` 不变)**(2026-11-01,用户用两把狙击枪实测「弹数/开火异常」):
-  ① `WeaponComponent.apply_state` 旧实现只在 `wslot != _current_type` 时重建实例 ⇒ 同型号时恒不重建,`_current_index` 已指向权威那把、
+  ① `WeaponState.apply`(旧实现住在 `WeaponComponent.apply_state`)只在 `wslot != _current_type` 时重建实例 ⇒ 同型号时恒不重建,`_current_index` 已指向权威那把、
      手里却是**上一把**的实例 ⇒ 开火扣错枪的弹、切枪把残弹写进另一把。修法:`WeaponComponent` 记 `_equipped_inst`(实例对应哪一把)+
      `instance_matched()`,权威同步时若"实例与下标分家"就 `equip_index_authoritative()`(重建但**不**把旧实例残弹写回条目)。
   ② 同一处 `apply_mag(w, st.get("mag", w.mag_ammo))` 在**软同步**(载荷无 `mag`)时把默认值 `w.mag_ammo` 写回新实例,而新实例未入树、
      `mag_ammo` 还是声明初值 0 ⇒ `pending_mag` 被冲成 0(切到第二把 = 0 弹)。改为 `st.has("mag")` / `st.has("rld")` 才回灌。
-  守卫:`tests/probe/wheel_switch_probe.tscn`(11 条:同帧双滚 / 上行 inst / 换弹中切换 / 换弹完成写回 / 切枪后开火 / 实例与下标分家 / 同型号 equip_inst)。
+  守卫:`tests/probe/wheel_switch_probe.tscn`(12 条:同帧双滚 / 上行 inst / 换弹中切换 / 换弹完成写回 / 切枪后开火 / 实例与下标分家 / 同型号 equip_inst / 整态武器段往返)。
 - `equip_type` 对「背包里没有这个类型」`push_error` 且不加入。发放走 `pick_up(type_id, MAG_FULL)` 或 `set_initial_inventory([...])`。
 - 现有武器:手枪 / 步枪 AK74U / m82a1(重狙,heavy_aim)/ s686(霰弹 8 丸 ±3°、射程 1400)/ 榴弹发射器(重型)/ 激光枪(中型即时光束)/ 复合弓(中型)/ M249(重型)。
 - 复合弓:`charge_time` 秒蓄满,`charge_ratio` 从 0 到 1 线性换算 `charge_damage_min..damage` / `charge_speed_min..bullet_speed`;当前为 1.2s、4–35 伤害、500–1800px/s。松开发箭,单箭自动搭箭 0.7s;箭场景独立,`bullet_gravity = 0.1`。蓄力只后移 `ChargeArrow` 精灵,弓身不动,箭实体从该精灵所在位置出膛;不用红色激光。`ChargeArrow` 挂在玩家根下(2026-11-10 起根 `scale = 2.0`);`.tscn` 里写的 `0.4` **会被运行时覆盖**为 `bullet_size × 1.5 / 继承缩放`(≈0.78),不要按 0.4 手算。
