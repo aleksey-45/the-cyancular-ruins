@@ -8,11 +8,11 @@
 
 | 实现 | 文件 | 职责 | 校验 |
 |---|---|---|---|
-| 游戏读取 | [`core/sim/map_format_v4.gd`](../../core/sim/map_format_v4.gd)（门面 [`map_format.gd`](../../core/sim/map_format.gd)） | `parse`（只留「场景」层 + 背景四层）、`serialize`（只写场景层、裸 body）、`replace_meta`（字节级改 meta 尾巴） | 不跑 `validateMap`（读得快、不拦老图） |
-| 编辑器读写 | [`core/editor/`](../../core/editor)（`EditorCodec` / `EditorLayers` / `EditorValidate` …） | 7 层完整编解码、导前校验、v3/旧字母迁移、legacy 读时迁移 | `encode_map` 先跑 `EditorValidate.validate_map`，**只拒 errors** |
+| 游戏读取 | [`core/sim/map_format_v4.gd`](../../../core/sim/map_format_v4.gd)（门面 [`map_format.gd`](../../../core/sim/map_format.gd)） | `parse`（只留「场景」层 + 背景四层）、`serialize`（只写场景层、裸 body）、`replace_meta`（字节级改 meta 尾巴） | 不跑 `validateMap`（读得快、不拦老图） |
+| 编辑器读写 | [`core/editor/`](../../../core/editor)（`EditorCodec` / `EditorLayers` / `EditorValidate` …） | 7 层完整编解码、导前校验、v3/旧字母迁移、legacy 读时迁移 | `encode_map` 先跑 `EditorValidate.validate_map`，**只拒 errors** |
 
 ★ **改格式必须两边同改**：同一份格式在游戏侧与编辑器侧各有一半（游戏侧是性能裁剪版，编辑器侧是完整版）。
-编辑器的字节契约由 `tests/fixtures/cyrm/` 的黄金夹具钉住（见 [`tests/fixtures/cyrm/README.md`](../../tests/fixtures/cyrm/README.md)）。
+编辑器的字节契约由 `tests/fixtures/cyrm/` 的黄金夹具钉住（见 [`tests/fixtures/cyrm/README.md`](../../../tests/fixtures/cyrm/README.md)）。
 
 ## 2. `MAX_BODY_SIZE = 64MB`（两道闸，都不可省）
 
@@ -91,7 +91,7 @@ descriptor (u32)
 - **旧字母格式的宽高必须都是 ≥2 的偶数**（它靠 2×2 折叠成 1 格）；否则会静默丢边缘行/列。
 - 旧 2×2 字母网格 → 1 格 packed：纹理取组内首个非零、形状 = 2×2 掩码；旧字母表只认 `0-9` 与 `A`（大小写均可）。
 - **meta 文本形状**就是那几行 `# ...` 注释。输出顺序：先注释，再出生点（`player` / `player2` / `player3`…），再**按侧复活点**（侧 1 全部在前、侧 2 在后），最后敌人。
-- **按侧复活点 `# respawn <1|2> <col> <row>`**（见 [`world.md`](world.md)「出生/复活点：按阵营半区的地图数据」）：`parse_meta` 解析进 `map.respawns`（`{side,x,y}`，侧 1 = 左半、侧 2 = 右半），`build_meta` 按侧分组回写 —— 游戏侧同侧按**文件顺序**去重（首次出现生效），顺序一变「生效的那条」也会变，故输出必须确定。
+- **按侧复活点 `# respawn <1|2> <col> <row>`**（见 [`world.md`](../gameplay/world.md)「出生/复活点：按阵营半区的地图数据」）：`parse_meta` 解析进 `map.respawns`（`{side,x,y}`，侧 1 = 左半、侧 2 = 右半），`build_meta` 按侧分组回写 —— 游戏侧同侧按**文件顺序**去重（首次出现生效），顺序一变「生效的那条」也会变，故输出必须确定。
 - **侧号只认 `1|2`、坐标必须是整数字面量**；认不出的 `# respawn` 行**降级成注释**（不会被丢掉）。整数判定必须是**整数字面量**（手写 `/^[+-]?\d+$/` 的等价循环，不可用 `is_valid_float` 之类前缀截断语义）。
 - **v3 → v4 迁移**：旧掩码 bit `(qy*2+qx)` 为 1 → 新网格 4 个子格 `X∈[2qx,2qx+1], Y∈[2qy,2qy+1]` 填同一纹理；spawn 坐标同步 ÷2（负坐标 floor）。前/后/背景三层留空。迁移**单向**。（`migrate_v3` 与旧 JS 版一致地**不复制** `respawns`，见 §13。）
 
@@ -124,18 +124,18 @@ descriptor (u32)
 
 | 文件 | class_name | 职责 |
 |---|---|---|
-| [`editor_constants.gd`](../../core/editor/editor_constants.gd) | `EditorConstants` | 网格/图层常量、`is_color_layer` |
-| [`editor_bytes.gd`](../../core/editor/editor_bytes.gd) | `EditorBytes` | 小端读写器（`Reader.failed` 不抛错）+ CRC32 |
-| [`editor_desc.gd`](../../core/editor/editor_desc.gd) | `EditorDesc` | descriptor 位域 |
-| [`editor_geometry.gd`](../../core/editor/editor_geometry.gd) | `EditorGeometry` | 名字净化、画笔几何、JS `\s` 等价判定 |
-| [`editor_meta.gd`](../../core/editor/editor_meta.gd) | `EditorMeta` | meta 文本编解码 |
-| [`editor_legacy.gd`](../../core/editor/editor_legacy.gd) | `EditorLegacy` | legacy 读时迁移 |
-| [`editor_map.gd`](../../core/editor/editor_map.gd) | `EditorMap` | 地图对象 + `ensure_layer` |
-| [`editor_layers.gd`](../../core/editor/editor_layers.gd) | `EditorLayers` | 单层编解码 |
-| [`editor_compress.gd`](../../core/editor/editor_compress.gd) | `EditorCompress` | zlib（引擎原生 `COMPRESSION_DEFLATE`） |
-| [`editor_codec.gd`](../../core/editor/editor_codec.gd) | `EditorCodec` | v4 容器 |
-| [`editor_v3.gd`](../../core/editor/editor_v3.gd) | `EditorV3` | v3 文本 / 旧字母格式 / 迁移 / `subcell_render` |
-| [`editor_validate.gd`](../../core/editor/editor_validate.gd) | `EditorValidate` | 尺寸钳制 + 整图校验 |
+| [`editor_constants.gd`](../../../core/editor/editor_constants.gd) | `EditorConstants` | 网格/图层常量、`is_color_layer` |
+| [`editor_bytes.gd`](../../../core/editor/editor_bytes.gd) | `EditorBytes` | 小端读写器（`Reader.failed` 不抛错）+ CRC32 |
+| [`editor_desc.gd`](../../../core/editor/editor_desc.gd) | `EditorDesc` | descriptor 位域 |
+| [`editor_geometry.gd`](../../../core/editor/editor_geometry.gd) | `EditorGeometry` | 名字净化、画笔几何、JS `\s` 等价判定 |
+| [`editor_meta.gd`](../../../core/editor/editor_meta.gd) | `EditorMeta` | meta 文本编解码 |
+| [`editor_legacy.gd`](../../../core/editor/editor_legacy.gd) | `EditorLegacy` | legacy 读时迁移 |
+| [`editor_map.gd`](../../../core/editor/editor_map.gd) | `EditorMap` | 地图对象 + `ensure_layer` |
+| [`editor_layers.gd`](../../../core/editor/editor_layers.gd) | `EditorLayers` | 单层编解码 |
+| [`editor_compress.gd`](../../../core/editor/editor_compress.gd) | `EditorCompress` | zlib（引擎原生 `COMPRESSION_DEFLATE`） |
+| [`editor_codec.gd`](../../../core/editor/editor_codec.gd) | `EditorCodec` | v4 容器 |
+| [`editor_v3.gd`](../../../core/editor/editor_v3.gd) | `EditorV3` | v3 文本 / 旧字母格式 / 迁移 / `subcell_render` |
+| [`editor_validate.gd`](../../../core/editor/editor_validate.gd) | `EditorValidate` | 尺寸钳制 + 整图校验 |
 
 - 全部 `extends RefCounted`，只用 `static func` / `const` / `static var`；错误一律 `{ok:false, "error"}`（文案中文、照抄旧实现），**不抛错、不拿 `push_error` 当失败路径**。
 - ★ **禁止 `RegEx`**（客户端导出走裁剪模板，`module_regex_enabled: false` ⇒ 整个脚本解析失败）：旧实现的三条正则（meta 整数字面量、v3 标记行、`sanitizeName`）全部手写成码点循环。

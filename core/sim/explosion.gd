@@ -208,7 +208,7 @@ static func _dist(center: Vector2, target: Vector2) -> float:
 
 
 # 目标受击面到爆心的距离:按 hurt_rect 的体积算(旧实现拿节点原点当点 ⇒ 半径边缘"身体重叠但零伤害")。
-# ★ 这是平衡变化:等效爆半径按半身变大,手感需人眼验收(已登记 docs/eng/registered-debt.md)。
+# ★ 这是平衡变化:等效爆半径按半身变大,手感需人眼验收(已登记 docs/registered-debt.md)。
 static func _hurt_dist(center: Vector2, n: Node2D) -> float:
 	var rect: Rect2 = n.hurt_rect() if n.has_method("hurt_rect") else HitShape.hurt_rect_of(n)
 	var map := _map_px()

@@ -58,7 +58,7 @@ static func apply_player(p: Player, d: Dictionary) -> void:
 		p.combat.restore_alive_state()
 
 
-# 弹量回溯的语句序是承重面(见 docs/eng/time.md §10):切枪必须排在条目写回之前 ——
+# 弹量回溯的语句序是承重面(见 docs/systems/gameplay/time.md §10):切枪必须排在条目写回之前 ——
 # _equip_index 会把走掉那把的出膛实弹写回条目;手持实弹走 apply_mag(未入树窗口写 pending)。
 static func _apply_weapons(p: Player, d: Dictionary) -> void:
 	var wc: WeaponComponent = p.weapons

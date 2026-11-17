@@ -29,7 +29,7 @@ const ACTION_NAMES := {
 	"rewind": "时间回溯", "haste": "时间加速",
 }
 
-# 表单布局(全部 token 组合,不写魔法数;规则见 docs/eng/ui-design-system.md §2)
+# 表单布局(全部 token 组合,不写魔法数;规则见 docs/systems/presentation/ui-design-system.md §2)
 const FORM_LABEL_W := UiFactory.T_H2 * 12   # 384:定宽标签列,容纳 12 个 32px 汉字(最长是「显示子弹尾迹(所有子弹)」)
 const BIND_NAME_W := UiFactory.T_H2 * 6     # 192:键位表标签列(6 个 32px 汉字)
 const ROW_MIN_H := UiFactory.SP_8           # 48:表单行最小高,让滑块/开关/下拉纵向对齐

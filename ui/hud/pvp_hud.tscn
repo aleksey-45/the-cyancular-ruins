@@ -7,7 +7,7 @@
 ; ★ 底板样式不再写在场景里(原先的 StyleBoxFlat 副本已删):由 ui/hud/pvp_hud.gd 的 _ready
 ;   调 UiFactory.hud_plate 统一给(C_PLATE + content margin 24/8)。C_PLATE 的唯一源仍只有
 ;   ui/factory/ui_factory.gd —— 场景结构上引用不到 GDScript const,所以样式不下沉进 .tscn。
-; ★ 版式 = HUD 例外(anchors + offset,token 口径见 docs/eng/ui-design-system.md §5):
+; ★ 版式 = HUD 例外(anchors + offset,token 口径见 docs/systems/presentation/ui-design-system.md §5):
 ;   居顶元素锚 top-center(anchor 0.5)、右下延迟条锚 bottom-right;偏移全是锚点相对值
 ;   (16 = SP_4、72 = SP_9+SP_2、-24 = -MARGIN),禁止从 1920×1440 反推坐标。
 
@@ -47,7 +47,7 @@ horizontal_alignment = 1
 ;     ★ 那个 36 是"本条含 CJK 的文案"量出来的,不是"本项目字体在 32 下的行高":Label 行高 =
 ;     max(字体在该字号的 get_height, 整形 ascent+descent),两半都随内容变 —— 纯拉丁那行实测 33,
 ;     所以共用同款底板的 PingWrap(只有 "24ms")实得 49 而不是 52,同一张图里就差这 3px。
-;     ★ 读数出处与 128 的推导(含大乱斗排行榜那 60px 侵入的登记)在 docs/eng/ui.md
+;     ★ 读数出处与 128 的推导(含大乱斗排行榜那 60px 侵入的登记)在 docs/systems/presentation/ui.md
 ;     「状态横幅的几何与层位」;代码侧只留 status_banner.gd 的 TOP_OFFSET 常量本身。
 [node name="GraceWrap" type="PanelContainer" parent="."]
 visible = false

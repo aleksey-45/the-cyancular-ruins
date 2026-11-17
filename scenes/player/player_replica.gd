@@ -3,9 +3,9 @@ extends Node2D
 # 玩家之间不物理互挡 ⇒ 客户端世界里没有「挡住我」的对手身体,为此服务的幽灵碰撞体 / 贴身容差整套已删。
 # 副本只做 playout 插值渲染;另带一个**零碰撞的几何探针**(见 _build_hurt_probe),只给 hurt_rect_rendered()(视觉子弹 cull)
 # 与 _in_water()(Water.feet_offset)提供受击面几何,不会被任何 move_and_slide 撞到。
-# ★ 观感不变量:位置与外观态都按 playout 取样、渲染层带排在世界结构层之前(见 docs/eng/render.md)。
+# ★ 观感不变量:位置与外观态都按 playout 取样、渲染层带排在世界结构层之前(见 docs/systems/presentation/render.md)。
 
-# 大跳变阈值:相邻两条权威快照的环面距离超过它 ⇒ 清历史、一帧落位(回溯 / 重生 / 换边本来就是瞬移,插值会演成「滑过去」;128px 的依据见 docs/eng/render.md)。
+# 大跳变阈值:相邻两条权威快照的环面距离超过它 ⇒ 清历史、一帧落位(回溯 / 重生 / 换边本来就是瞬移,插值会演成「滑过去」;128px 的依据见 docs/systems/presentation/render.md)。
 const SNAP_DIST := 128.0
 # 欠载外插上限:render_tick 超过最新快照时,用最新速度最多补 2 tick、总位移 ≤60px,超出即冻结。
 const UNDERRUN_EXTRAP_TICKS := 2.0

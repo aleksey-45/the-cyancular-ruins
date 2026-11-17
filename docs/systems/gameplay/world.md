@@ -14,9 +14,9 @@
 - 头 20 字节:`CYRM` magic(4)/ `version=4`(1)/ `compression`(1:0 = 裸 body,1 = zlib deflate)/ `body_size` u32LE(解压后)/ `body_crc32` u32LE / `sub_cols` u16LE / `sub_rows` u16LE / `layer_flags`(1)/ reserved(1)。校验:`sub_cols` / `sub_rows` 必须非零且为 4 的倍数;`body_size` 必须在解压前按 `MAX_BODY_SIZE = 64MB` 拦;`compression=0` 时 `body_size` 必须恰等于文件余量;CRC32 不符即失败。
 - body = `u16 meta_len` + meta UTF-8(含出生点行)+ 逐层块;层块 `kind=1` = 调色板 + 索引流,`kind=2` = 整块 RGBA;调色板描述符 u32 位域 = bit0-2 hue / bit3-5 brightness / bit6-8 saturation / bit9-11 alpha / bit12-23 texture(0 = 空气)/ bit24-31 保留 0(与 `core/editor/editor_desc.gd` 逐字一致);中性 = (hue4, bri4, sat4, alpha7)。
 - **legacy 纹理读时迁移**:旧图集的 tex 2-5 / 16-18(纯色方块与树叶的色相变体)已废弃 —— 新图集 `assets/textures/structure.png` 这 7 个槽位全透明,其余 15 块像素未动。纹理 id 空间**稳定 1..22 不重编号**、格式**保持 v4 不升版本**;颜色一律由描述符辅码承载。迁移表**单一来源 = `data/tile_defs.json` 的 `legacy_texture_map`**(旧 tex → {base, hue 档}:2→(1,3)、3→(1,1)、4→(1,5)、5→(1,0)、16→(15,2)、17→(15,7)、18→(15,7);读口 `TileDefs.legacy_base_of` / `legacy_hue_of`),合成规则唯一实现 = `MapFormatV4.migrate_descriptor`:tex→base、hue 档 = `clampi(旧hue + legacy_hue − 4, 0, 7)`(两偏移都是 15° 整数倍 ⇒ 档位直接相加),bri/sat/alpha 与保留位原样;非 legacy 不动。迁移在**读时**对所有入口生效:v4 二进制(`MapFormatV4.parse` 的 scene 描述符)、v3 文本与 v1 旧字母格式(`MapFormat.load_map_file` 的 packed 网格 + `expand_cells_to_subdescgrid` 的描述符合成);新写出一律不产生 legacy id(serialize 无需迁移,内存网格已无 legacy)。仓内 `maps/*.cyrm` 已由 `tools/migrate_map_textures.gd --write` 原位改写 scene 层调色板(索引流/meta/其余层逐字节无损)。守卫:`tests/probe/texture_migration_probe.gd`。
-- 游戏侧消费描述符(不再丢弃辅码):`MapFormat.load_subgrid_with_descs` 返回 {textures, descs},`MazeGenerator.current_subdesc` = 子格 u32 描述符表(**唯一装填点 = `WorldBuilder.load_grid`**,与 current_subgrid 同一次赋值);渲染按描述符行烘图集(`TerrainAtlas`,像素数学规范 = 旧浏览器编辑器 tint 数学的移植(源已退役),见 [`render.md`](render.md))。
-- `layer_flags` **bit0-6 = 层 0-6**:bit0 前景 / bit1 场景 / bit2 后景 / bit3 背景100% / bit4 背景75% / bit5 背景50% / bit6 背景25%(bit7 保留写 0)。前三层是纹理层(`kind=1`),四个背景层是**颜色层**(`kind=2`,`u32 0xRRGGBBAA`/子格)。游戏只用场景层算碰撞(`flatten_scene()` 把 4×4 子格扁平化回「单纹理 + 2×2 形状掩码」),四个背景层只作**视差背景**渲染(见 [`render.md`](render.md))。
-- ★ 兼容:旧文件只置 bit0-3 ⇒ 层 4-6 不存在(不画);旧读取器忽略 bit4-6 ⇒ 只看得到「背景 100%」这一层(可接受降级,已登记 [`registered-debt.md`](registered-debt.md))。
+- 游戏侧消费描述符(不再丢弃辅码):`MapFormat.load_subgrid_with_descs` 返回 {textures, descs},`MazeGenerator.current_subdesc` = 子格 u32 描述符表(**唯一装填点 = `WorldBuilder.load_grid`**,与 current_subgrid 同一次赋值);渲染按描述符行烘图集(`TerrainAtlas`,像素数学规范 = 旧浏览器编辑器 tint 数学的移植(源已退役),见 [`render.md`](../presentation/render.md))。
+- `layer_flags` **bit0-6 = 层 0-6**:bit0 前景 / bit1 场景 / bit2 后景 / bit3 背景100% / bit4 背景75% / bit5 背景50% / bit6 背景25%(bit7 保留写 0)。前三层是纹理层(`kind=1`),四个背景层是**颜色层**(`kind=2`,`u32 0xRRGGBBAA`/子格)。游戏只用场景层算碰撞(`flatten_scene()` 把 4×4 子格扁平化回「单纹理 + 2×2 形状掩码」),四个背景层只作**视差背景**渲染(见 [`render.md`](../presentation/render.md))。
+- ★ 兼容:旧文件只置 bit0-3 ⇒ 层 4-6 不存在(不画);旧读取器忽略 bit4-6 ⇒ 只看得到「背景 100%」这一层(可接受降级,已登记 [`registered-debt.md`](../../registered-debt.md))。
 - 子格:一格 64px = 4×4 个 16px 子格(`MapFormatV4.SUB_PER_CELL = 4`)。格值 packed = `texture*16 + shape`;`EMPTY = 0`、`SOLID = 31`(纹理 1 全砖)。
 - v3 文本(`# cyrm-v3`,每格 4 字符 = 3 位十进制纹理 + 1 位形状 hex)与单字符文本格式仍可读,加载时转换为 125×75;出生点 `# player <col> <row>`、`# player2 <col> <row>`(PvP 第二出生点),读口 `MapFormat.load_spawns` / `parse_spawn_metadata`。
 
@@ -40,16 +40,16 @@
 - **点合格判据**(全部在 `SpawnPicker`,工具 `--check` / 探针 / 运行时同源):地板格(本格空 + 正下方挡路 + 头顶 1 格空)+ 头顶 2 格净空 + 本格 EMPTY(不在水里)+ **可抵达**。
   - **可抵达** = 落在「跳跃感知图」的**主连通分量**里(`SpawnPicker.reachable_spawn_cells`,跳跃感知图 = 可站格 + 走 / 跳落组合 / 爬 / 游泳的边,主分量 = 节点数最大者)。这是对用户实报「复活点落进完全不联通的封闭空间」的修复:上一版只要求"同层连通区 ≥2",四面是墙的 2 格小密室也满足 ⇒ 已废弃。
   - **近似口径(照实,不是物理精确)**:升降包络按 `jump_velocity=1000 / gravity0=1600` 推出最高 ≈4.88 格(保守取 4)、空中横移取 6 格;同时覆盖"升→横移→直落"的跳沟/跳台/跳下;落体按直落最多 29 格;攀爬只认 `climb_speed > 0` 的道格;液体格算可游节点(可从岸边入水/游到相邻可站格)。**不支持**多段跳 / 冲刺 / 空中被外力改写轨迹,也不模拟砖块被拆开路后的新连通(静态地图口径)。
-  - ⚠ 比 `spawn_candidates()` 的"开阔"门槛(`area_threshold`)宽 —— 严格档会把 `newfactory` 全部合格点压到底部一条开阔带(用户已否决,见 [`registered-debt.md`](registered-debt.md) §四十六)。
+  - ⚠ 比 `spawn_candidates()` 的"开阔"门槛(`area_threshold`)宽 —— 严格档会把 `newfactory` 全部合格点压到底部一条开阔带(用户已否决,见 [`registered-debt.md`](../../registered-debt.md) §四十六)。
   - ⚠ `demo.cyrm` 是单机多房间图(无 `# player2`),其主可达区只覆盖部分桶(6/9 与 5/9)⇒ 非 PvP 图只强制「每侧 ≥5 + 可达 + 边界 + 间距」,不强制 3×3 桶覆盖;`newfactory`(PvP 图)必须 9/9。
 - 解析:`MapFormat.parse_spawn_metadata` → `load_spawns()` 的 `respawns: {1: [...], 2: [...]}`(两侧都空时连键都不带 ⇒ 老图回退判据成立)。非法行(负数 / 非整数 / 缺列 / 侧号不是 1|2)`push_warning` 后跳过、**不抛错**;坐标是格(col = x,row = y),越界不做重排(界外由工具/探针报红)。旧格式(2×2→1)的坐标同样 ÷2。
-- 写盘工具 [`tools/map_spawn_meta.gd`](../../tools/map_spawn_meta.gd)(SceneTree 脚本,`-s` 跑):
+- 写盘工具 [`tools/map_spawn_meta.gd`](../../../tools/map_spawn_meta.gd)(SceneTree 脚本,`-s` 跑):
   - `--check` 校验地图现有数据(每侧 ≥5 / 在自己半区 / 每个点合格 / 9 桶覆盖 / 同侧间距);
   - `--suggest [--side 1|2]` 按半区**均匀撒点建议**(每桶挑一个"离已选点最远"的合格格;只打印、不写盘,人确认后用固定坐标写死);
   - `--list` / `--inspect "x,y;..."`;`--respawn1 "x,y;..." --respawn2 "..." --write` 写盘。
   写盘走 `MapFormatV4.replace_meta`:只替换 meta 文本段,**层块字节逐字节原样保留**(走 `serialize()` 会从格级网格重铺场景层,丢掉编辑器画的 16px 混排);写后自动回读:两侧列表与场景层逐格都要与写入前一致。
-- Godot 编辑器(`core/editor/editor_meta.gd` + `scenes/editor/`)认识这些行:`parse_meta` 解析进 `map.respawns`、`build_meta` 按侧分组回写,`EditorValidate` 会报"每侧 <5 / 越半区 / 离边界太近 / 空桶 / 同侧挨太近"。认不出的行仍按旧规则归入注释原样保留。v1/v2/v3 老图**不新增**这些行,也不会报错(空列表 → 各模式回退路径)。★ 旧浏览器编辑器有按侧 `R1`/`R2` 标记与 3×3 桶辅助线;**Godot 编辑器还没做这两个可视化**(见 [`editor-godot.md`](editor-godot.md) §8「未做」)。
-- 运行时选点(唯一随机实现 = [`core/sim/spawn_chooser.gd`](../../core/sim/spawn_chooser.gd) 的 `SpawnChooser.pick` / `pick_many`):
+- Godot 编辑器(`core/editor/editor_meta.gd` + `scenes/editor/`)认识这些行:`parse_meta` 解析进 `map.respawns`、`build_meta` 按侧分组回写,`EditorValidate` 会报"每侧 <5 / 越半区 / 离边界太近 / 空桶 / 同侧挨太近"。认不出的行仍按旧规则归入注释原样保留。v1/v2/v3 老图**不新增**这些行,也不会报错(空列表 → 各模式回退路径)。★ 旧浏览器编辑器有按侧 `R1`/`R2` 标记与 3×3 桶辅助线;**Godot 编辑器还没做这两个可视化**(见 [`editor-godot.md`](../editor/editor-godot.md) §8「未做」)。
+- 运行时选点(唯一随机实现 = [`core/sim/spawn_chooser.gd`](../../../core/sim/spawn_chooser.gd) 的 `SpawnChooser.pick` / `pick_many`):
   - **排除上一次位置 = 硬约束**(若整张列表都被排除,才让位 —— 宁可重选自己的旧点,也不与对手同格);**最小间距 = 软约束**,按 `RELAX_STEP = 5` 逐级放宽到 0(点不够是地图数据的边界,不该把人甩到 (-1,-1) 的墙角)。
   - **1v1**:`MatchBootstrap.plan_spawns` 让每个 role 从**自己半区**的列表随机取一格(并广播同一份);`MatchHost._spawn_cell` 在**本 role 自己的半区**里重选(复活 / 换局 / 击杀后复位),排除自己上一次落点,并与对手尽量保持 `FAR_CELLS`;`role_spawns()` 只读不重算(match_sync 会重复拉)。**缺 `# respawn` 的老图**逐字回退改造前行为:`# player` / `# player2` 两点 + `_side_swap` 换边(role2 缺失时 `far_spawn_from` 现挑),并 `push_warning` 一次。
   - **对抗**:`TeamSpawn.plan_team_spawns(teams, last, side_swap)` 每局按队取侧,每人随机、排除本 role 上一局点位、队内尽量拉开;**局内复活** `TeamSpawn.respawn_cell` 也用**本队这一局所在侧**的数据(不跨侧、不回退几何),筛「离存活敌人 ≥ `RESPAWN_CLEARANCE`」且排除自己上一次落点。缺数据 / 某队人数超过该侧列表 ⇒ 回退改造前的几何生成(重试循环原样保留)并 `push_warning` 一次。
@@ -64,14 +64,14 @@
 
 ## 参数体系
 
-- autoload 五个(`project.godot`):`NetBus`(PvP RPC 唯一收口,`/root/NetBus` 跨场景常驻)、`NetBusExt`(旁路扩展:对局选项 / 角色色 / `hit_confirm` / 大乱斗房 RPC;未装扩展的 worker 上该节点不存在 ⇒ 扩展 RPC 静默丢弃)、`Settings`(音量 / 键位重映射 / 滚轮切枪 / 血条显示,落盘 `user://settings.cfg`)、`LoadingScreen`(载入遮罩)、`Recorder`(F5 录屏 / 死亡倒带,见 [`../录屏与死亡倒带设计.md`](../录屏与死亡倒带设计.md))。
+- autoload 五个(`project.godot`):`NetBus`(PvP RPC 唯一收口,`/root/NetBus` 跨场景常驻)、`NetBusExt`(旁路扩展:对局选项 / 角色色 / `hit_confirm` / 大乱斗房 RPC;未装扩展的 worker 上该节点不存在 ⇒ 扩展 RPC 静默丢弃)、`Settings`(音量 / 键位重映射 / 滚轮切枪 / 血条显示,落盘 `user://settings.cfg`)、`LoadingScreen`(载入遮罩)、`Recorder`(F5 录屏 / 死亡倒带,实现见 `core/present/record/recorder.gd`;原设计稿已删,历史看 `git log`)。
 - `GameParameters` **不是 autoload**(`class_name` + `RefCounted`):它只是**访问入口**,数值不写在代码里。
-  - **可调参数**(`gravity0` + 水的一整套阈值,共 13 项)唯一真相源 = [`world_config.tres`](../../core/config/world_config.tres);schema / 默认值在 [`world_config.gd`](../../core/config/world_config.gd)(`class_name WorldConfig extends Resource`,`@export_range`)。在检查器里改 `.tres` 即可调参,不用改代码。
+  - **可调参数**(`gravity0` + 水的一整套阈值,共 13 项)唯一真相源 = [`world_config.tres`](../../../core/config/world_config.tres);schema / 默认值在 [`world_config.gd`](../../../core/config/world_config.gd)(`class_name WorldConfig extends Resource`,`@export_range`)。在检查器里改 `.tres` 即可调参,不用改代码。
   - `GameParameters` 用 `static var gravity0: float = _CFG.gravity0` 在**类加载时读一次**,不是每次读都穿 Resource:实测逐次 getter→Resource 比 `const` 慢 **13.8×**(200 万次 319ms vs 23ms),而 `gravity0` 在每条子弹 / 每个敌人 / 每把枪的每一帧被读;一次性读回 static var 后成本与 `const` 同数量级。代价:改 `.tres` 要重启进程生效。
   - `TILE_SIZE = 64` **仍是 `const`,不进 `.tres`**:它是地图格式 v4 的结构定义(16px 子格 × 4),且被 3 处 `const TILE_TS: int = GameParameters.TILE_SIZE` 当**编译期常量**引用 —— 改成运行时字段会直接编译失败。
   - `MAP_WIDTH` / `MAP_HEIGHT` **没有存储、没有写点**,是只读派生属性:`MazeGenerator.world_cells() × TILE_SIZE`。`world_cells()` 网格优先(这一局真正在跑的东西)、网格为空(菜单态)才回退到地图文件头(按路径缓存,`set_map_file` 换图即失效)。
-  - ★ 旧实现是世界尺寸两个可写字段:`_ready()` 按地图文件写一次、[`world_builder.gd`](../../core/sim/world_builder.gd) 加载网格后**再写一次**,两者之间没有一致性断言。现在唯一的"写"就是换网格本身。
-  - 守卫:[`tests/smoke/world_size_smoke.gd`](../../tests/smoke/world_size_smoke.gd)(5 条:网格→尺寸 / 换网格跟变 / 空网格回退文件头 / 换图跟变 / 可调参数确实来自 `.tres`)。
+  - ★ 旧实现是世界尺寸两个可写字段:`_ready()` 按地图文件写一次、[`world_builder.gd`](../../../core/sim/world_builder.gd) 加载网格后**再写一次**,两者之间没有一致性断言。现在唯一的"写"就是换网格本身。
+  - 守卫:[`tests/smoke/world_size_smoke.gd`](../../../tests/smoke/world_size_smoke.gd)(5 条:网格→尺寸 / 换网格跟变 / 空网格回退文件头 / 换图跟变 / 可调参数确实来自 `.tres`)。
 - `PlayerParams` / `EnemyParams` / `TimeParams` 也不是 autoload:`class_name` + `RefCounted`,只做**静态访问入口**,数值同样是 `.tres`(见下面各域的文档):`player_config.tres`(62 项)/ `enemy_config.tres`(93 项)/ `time_config.tres`(18 项)。访问写法不变,如 `EnemyParams.FlyBird.wake_radius`、`PlayerParams.move_speed`。
   - ★ 三者与 `GameParameters` 同一套形态:`const _CFG := preload(...)` + 每个值一个 `static var x: T = _CFG.x`(**不是 getter** —— 实测 getter→Resource 每次读慢 13.8×)。缺 `.tres` = 加载期硬失败,不会静默退化成 0。
   - ★ 它们能在 `-s` 冒烟里直接引用,是因为 `class_name` 而非单例 —— 此前 water / explosion / collision_builder 各自手抄一份 `TILE_TS = 64` 就是为了躲开"autoload 在 `-s` 里未实例化",现在统一引用 `GameParameters.TILE_SIZE`。
@@ -91,8 +91,8 @@
 
 - `data/tile_defs.json` 是单一来源(每块 name / type / hp / explosion_decay / bullet_destroyable / explosion_destroyable / elastic / climb_speed / friction);游戏侧 `TileDefs` 与编辑器 `EditorValidate` 都直接读它,**没有第二份生成副本**。
 - 加载 `TileDefs.load_defs()`(`level_0._ready`);挡路 = `TileDefs.is_blocked`(非 0 且 type=wall),寻路 / LOS / 碰撞共用;只有 type=wall 产生碰撞。
-- 破坏:`TileDefs.damage_tile(cell, dmg, "bullet"/"explosion")` → hp≤0 变空气(改 `MazeGenerator.current_grid` + 格级回调 `TileDefs.on_destroyed` + 持久可破坏子格);子格按 16px(64px 格 → 4×4)计,清完标记所在分块下帧重建,`Level0.MAX_REBUILD_PER_FRAME = 2`。格级 `on_destroyed` 单机在 `scenes/level_0.gd` → `TileDefs.destroy_cell`,服务器在 `server/match/match_host.gd` → `CombatSystem.on_tile_destroyed`。★ 2026-11-01(R2):服务器广播 `tile_destroyed` / `sub_destroyed` 时**带逐 peer 的 seq 锚点**(与 `hit_event` 同一个 `_event_seq_for`),客户端把"改地形"注入预测历史(而不是到达即改)—— 理由与实现见 [`netcode-snapshots.md`](netcode-snapshots.md) §2.3。碰撞真相源是 `sub_hp`(`CollisionBuilder.build_sub` 按 `sub_alive` 筛),不是 `destructible_sub`;每局复位必须同时还原 `init_hp` 与 `init_sub_hp`。
-- 最小破坏单位(`BulletBase.tile_break_unit`,单位 = 格):`>=1` 走格级 `damage_tile`(一次清整格 16 个子格),`>=0.5` 走 **32px 块**(2×2 子格,`damage_block32`),`<0.5` 走单子格 `damage_sub`。**榴弹 = 0.5(= 32px 块;2026-10-30 用户裁定),其余所有子弹 = 1.0(= 整 64px 格)**;爆炸用同一参数(`Explosion.apply_aoe(..., tile_unit_cells)`,整格侧对爆区内每个 64px 格**去重**后按该格最近子格的衰减值扣一次)。两本账边界:子格路径把整格 16 个子格打空时同步把格级 `hp_grid[cell]=0`(与格级路径在"格子已消失"上对齐);但**混打时两本账仍独立累计**(先子格磨、再格级打 ⇒ 格级扣的是自己的 8/30,不是剩余子格合计)——已登记 [`registered-debt.md`](registered-debt.md) §十四。
+- 破坏:`TileDefs.damage_tile(cell, dmg, "bullet"/"explosion")` → hp≤0 变空气(改 `MazeGenerator.current_grid` + 格级回调 `TileDefs.on_destroyed` + 持久可破坏子格);子格按 16px(64px 格 → 4×4)计,清完标记所在分块下帧重建,`Level0.MAX_REBUILD_PER_FRAME = 2`。格级 `on_destroyed` 单机在 `scenes/level_0.gd` → `TileDefs.destroy_cell`,服务器在 `server/match/match_host.gd` → `CombatSystem.on_tile_destroyed`。★ 2026-11-01(R2):服务器广播 `tile_destroyed` / `sub_destroyed` 时**带逐 peer 的 seq 锚点**(与 `hit_event` 同一个 `_event_seq_for`),客户端把"改地形"注入预测历史(而不是到达即改)—— 理由与实现见 [`netcode-snapshots.md`](../../netcode/protocol/netcode-snapshots.md) §2.3。碰撞真相源是 `sub_hp`(`CollisionBuilder.build_sub` 按 `sub_alive` 筛),不是 `destructible_sub`;每局复位必须同时还原 `init_hp` 与 `init_sub_hp`。
+- 最小破坏单位(`BulletBase.tile_break_unit`,单位 = 格):`>=1` 走格级 `damage_tile`(一次清整格 16 个子格),`>=0.5` 走 **32px 块**(2×2 子格,`damage_block32`),`<0.5` 走单子格 `damage_sub`。**榴弹 = 0.5(= 32px 块;2026-10-30 用户裁定),其余所有子弹 = 1.0(= 整 64px 格)**;爆炸用同一参数(`Explosion.apply_aoe(..., tile_unit_cells)`,整格侧对爆区内每个 64px 格**去重**后按该格最近子格的衰减值扣一次)。两本账边界:子格路径把整格 16 个子格打空时同步把格级 `hp_grid[cell]=0`(与格级路径在"格子已消失"上对齐);但**混打时两本账仍独立累计**(先子格磨、再格级打 ⇒ 格级扣的是自己的 8/30,不是剩余子格合计)——已登记 [`registered-debt.md`](../../registered-debt.md) §十四。
 - 攀爬:玩家中心(或脚底)在通道格「刚按上」攀附(不受重力),上爬 / 下行速度取 `PlayerParams.climb_ladder_{up,down}_speed` 与 `PlayerParams.climb_chain_up_speed`(绝对值,数值在 `player_config.tres`,此处不抄;锁链无下降专用值);2026-10-28 起不再乘瓦片倍率。锁链无下降倍率 ⇒ 按下自由落体。松开挂住不坠落;到顶 = 脚底进入梯子上方一格,再按上 = 跳离;进入靠「刚按下上」而非按住;攀附空闲可水平走离。仅锁链顶/底基座有薄碰撞条(`CollisionBuilder.build_climb_ledges`,全宽 64×6px,梯顶不加)。身在梯/链格上不能空中下冲。
 
 ## 水
@@ -109,7 +109,7 @@
 - **碰撞层只剩地形参与角色移动**:玩家 mask = **1**(只撞地形)、三只敌人 mask = **5**(地形 1 | 敌人 4 —— 鸟与鸟之间仍互相挡路)。2026-11-10 用户裁定:玩家↔敌人、玩家↔玩家**不做物理互挡**,可以互相穿过;玩家层 2 仍被敌人 ContactArea(`mask=2`)拿来做贴身感知(冲锋 / 扑击判定),但不再产生被动贴触伤害。玩家子弹与敌弹的 mask = **1(只撞地形)** —— 受击判定不走物理碰撞,而是走 `core/sim/hit_shape.gd` 的"上一位置→当前位置线段 vs 受击面"扫掠。
 - **为什么不做互挡(裁定依据)**:单机侧接触伤害与物理互挡本来就解耦(走 ContactArea + 环面距离),策划案只要冲击攻击伤害;联机侧 C2 只预测自己、不交换对手输入 ⇒ 任何"对手身体能挡住我"都会持续制造预测分歧(2026-10-31 三客户端 soak 的 diag:424 次回滚里 **394 次发生在接触期**,92.9%;为它造的幽灵体 / 动态贴身容差 / 3v3 分队层随之整体删除)。
 - **受击面(hurtbox)与移动碰撞箱分离**:每个可受伤实体提供 `hurt_rect()`(玩家 = 当前姿态箱世界 AABB,敌人 = 活动碰撞箱 AABB,飞鸟按站/飞箱),客户端对手副本另提供 `hurt_rect_rendered()`(尺寸取副本的非碰撞几何探针、位置取渲染位置)。子弹 / 敌弹 / 激光 / 爆炸 / 服务器裁决 / 客户端 cull 全部经 hit_shape 查同一套矩形;`collision_layer = 0` 或 `is_hurtable() == false`(死亡白闪的尸体 / 倒地玩家)不可受击。
-- **命中裁决的时间域**:PvP 服务器结算命中时不用现时受击面,而是按**射手观看时刻**回放 `core/sim/hit_lag_history.gd` 的受击面历史(`st − LagComp.PLAYOUT_TICKS`,见 `core/net/lag_comp.gd`);移动预测 / 副本几何探针仍吃最新态,AoE 不回放(边界见 [`registered-debt.md`](registered-debt.md) §十五)。
+- **命中裁决的时间域**:PvP 服务器结算命中时不用现时受击面,而是按**射手观看时刻**回放 `core/sim/hit_lag_history.gd` 的受击面历史(`st − LagComp.PLAYOUT_TICKS`,见 `core/net/lag_comp.gd`);移动预测 / 副本几何探针仍吃最新态,AoE 不回放(边界见 [`registered-debt.md`](../../registered-debt.md) §十五)。
 - 地面武器 layer = 8 / mask = 9(地形 + 其它掉落物):玩家与敌人的掩码都不含 4,子弹 mask 也不含 ⇒ 三者天然不碰。
 - 层 6 / 值 32 与层 7 / 值 64 无生产代码引用;`project.godot` 没有 `layer_names`,层义只活在代码里,加新层时没有任何自动提醒。
 

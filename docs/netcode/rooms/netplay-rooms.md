@@ -8,7 +8,7 @@
 - 兜底 `_sweep_stale_rooms`:每 `SWEEP_INTERVAL`(600s)扫一次,房龄 > `MAX_ROOM_AGE`(7200s)连 worker 一起杀。1v1 无在局宽限;大乱斗 / 对抗的在局宽限为 `SWEEP_INTERVAL` + 一局上界(`ROYALE_MATCH_TIME_CEILING` / `TEAM_MATCH_ESTIMATE`,各 1800s;后者的推导已按"目标随人数缩放到 13 的上界"更新)。
 - 房记录 `RoomTypes.Room` 字段:`mode / code / host_peer / players / player_role / in_match / worker_port / worker_pid / roster / created_at / is_public / invite_code / team_of / max_players / beta / time_rules / options / map / match_time`;`started` 是 `in_match` 的属性别名。
 - `roster` 在开局那一刻由 `freeze_roster(room)` 冻结(`[{role, name}]`);列表行的人数和名字在 `in_match` 时取它。开局后成员转连 worker,`players` 会空。
-- 对抗房(`mode = "team"`):容量 = `LobbyRooms.TEAM_ROLES`(= `ModeDefs.TEAM_SIZE × 2` = 10),开局条件 = **两队各 ≥1 人**(`RoomTypes.team_ready`)。`RoomManager.team_start` 在拉起 worker **之前**先把未选边的人补进人少那队(`RoomTypes.team_autofill` 写回 `room.team_of`),再按这份表下发 `--teams`;所以"大厅看到的队伍"与"worker 里生效的队伍"永远是同一份。目标 / 补贴公式见 [`modes.md`](modes.md)。
+- 对抗房(`mode = "team"`):容量 = `LobbyRooms.TEAM_ROLES`(= `ModeDefs.TEAM_SIZE × 2` = 10),开局条件 = **两队各 ≥1 人**(`RoomTypes.team_ready`)。`RoomManager.team_start` 在拉起 worker **之前**先把未选边的人补进人少那队(`RoomTypes.team_autofill` 写回 `room.team_of`),再按这份表下发 `--teams`;所以"大厅看到的队伍"与"worker 里生效的队伍"永远是同一份。目标 / 补贴公式见 [`modes.md`](../../systems/gameplay/modes.md)。
 
 ## 列表与拒绝入房
 

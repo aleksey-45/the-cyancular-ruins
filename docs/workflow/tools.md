@@ -1,8 +1,8 @@
 # 工具与格式（`tools/`）
 
 > 本文件覆盖**仓库工具**（发布 / 守卫 / 地图数据 / 场景生成）与 `.ps1`·`.bat` 的硬约束。
-> 地图编辑器本身见 [`editor-godot.md`](editor-godot.md)；`.cyrm` 格式契约见 [`editor-core.md`](editor-core.md)。
-> 返回索引：[`README.md`](README.md)。★ 冲突以源码为准，读之前先 `grep` 复核。
+> 地图编辑器本身见 [`editor-godot.md`](../systems/editor/editor-godot.md)；`.cyrm` 格式契约见 [`editor-core.md`](../systems/editor/editor-core.md)。
+> 返回索引：[`README.md`](../README.md)。★ 冲突以源码为准，读之前先 `grep` 复核。
 
 ## 1. 地图与数据
 
@@ -17,7 +17,7 @@
   - 写盘走 `MapFormatV4.replace_meta`：只替换 meta 文本段，**层块字节逐字节原样保留**（走 `serialize()` 会从格级网格重铺场景层，
     丢掉编辑器画的 16px 混排）；写后自动回读校验。
 - [`tools/migrate_map_textures.gd`](../../tools/migrate_map_textures.gd)：旧纹理 id 的一次性迁移工具（legacy 映射规则见
-  [`editor-core.md`](editor-core.md) §6）。
+  [`editor-core.md`](../systems/editor/editor-core.md) §6）。
 
 ## 2. 发布工具
 
@@ -39,10 +39,10 @@
   `PlayerMotor`/`PlayerPresent`/`PlayerPickup`/`PlayerNetState`。只解析本仓声明过的 `class_name`
   （`extends`/`preload`/`load`/类型注解/`as`/`is`/静态访问），内建类型不参与。存量违规进
   [`tools/architecture_allow.txt`](../../tools/architecture_allow.txt)，**只减不增**（新增与过期都退 1）；
-  人工确认后可用 `--update-allow` 重写。R5 校验目录契约表（`docs/eng/README.md`）覆盖每个顶层源码目录与
+  人工确认后可用 `--update-allow` 重写。R5 校验目录契约表（`docs/README.md`）覆盖每个顶层源码目录与
   `core/` 子目录 —— 这是"不写每目录 README"的替代：一句话职责只写一处，漏写目录由工具判红。
   它是**工具**不是测试（`test-economy` D6：不把读源码的形态判断放进 `tests/`）。
-- [`tools/gen_rpc_channel_table.py`](../../tools/gen_rpc_channel_table.py)：`docs/eng/netplay-rpc-channels.md` 的 RPC 通道表 ↔ 代码 `@rpc`
+- [`tools/gen_rpc_channel_table.py`](../../tools/gen_rpc_channel_table.py)：`docs/netcode/rooms/netplay-rpc-channels.md` 的 RPC 通道表 ↔ 代码 `@rpc`
   声明的生成式对账（`--check` 只校验不写盘，漂移退 1；`--write` 幂等重写；`--self-test` 纯函数自测）。
 - [`tools/clean_comments.py`](../../tools/clean_comments.py)：注释风格/额度的批量清理工具（一次性；日常改代码别顺手全仓跑）。
 - [`tools/pixel_diff.py`](../../tools/pixel_diff.py)：两张图逐像素 diff（视觉整改的验收工具）。
@@ -70,4 +70,4 @@
 ## 7. 地图编辑器怎么打开
 
 开发态与客户端产物（`custom_features="editor"`）的主菜单里都有「地图编辑器」按钮；也可以直接加载
-`res://scenes/editor/editor_root.tscn`。画布/工具/导出/校验的操作说明见 [`editor-godot.md`](editor-godot.md) §6。
+`res://scenes/editor/editor_root.tscn`。画布/工具/导出/校验的操作说明见 [`editor-godot.md`](../systems/editor/editor-godot.md) §6。

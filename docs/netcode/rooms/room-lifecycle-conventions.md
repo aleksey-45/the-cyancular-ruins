@@ -1,11 +1,11 @@
 # 房间生命周期约定（端口 / 拆除 / 三张注册表 / 宽限界）
 
-> 房间从建到拆的**约定清单**——每条 = 一个不变量 + 违反后的**症状**。返回索引：[`README.md`](README.md)。
+> 房间从建到拆的**约定清单**——每条 = 一个不变量 + 违反后的**症状**。返回索引：[`README.md`](../../README.md)。
 >
 > ★★ **现状**:① 本页约定**今天零自动守卫** —— 原先那层源码文本检查器
 > `tools/room_sweep_lint.gd`(判「某人有没有写这段字」,本身不算行为守卫)已删(2026-11-04,`test-economy` D6a/D8)。
 > ② 原**行为**替代 `pvp_room_smoke.sh`(建房 → 配对 → `go_match`;**唯一碰 7777** 的那支)已于 2026-10-30 删除
-> (结构性恒红、挂死并毒化真链路批,见 [`registered-debt.md`](registered-debt.md))⇒ 房间回收这一带
+> (结构性恒红、挂死并毒化真链路批,见 [`registered-debt.md`](../../registered-debt.md))⇒ 房间回收这一带
 > **今天没有行为守卫**:`pvp_match_smoke.sh` 只跑到 1v1 建房 → 开始 → 对局,不断言端口归还 / 超龄房收掉
 > (缺口即审查 G-03)。③ ⇒ **第 3 节的人工自查必须照做**。
 
@@ -86,11 +86,11 @@
 
 ## 2. 相关文件
 
-- 拆除收口 / 账本：[`server/lobby/lobby_rooms.gd`](../../server/lobby/lobby_rooms.gd)；编排 / 清扫 / 回收梯 /
-  启动协议：[`server/lobby/room_manager.gd`](../../server/lobby/room_manager.gd)、[`server/server_main.gd`](../../server/server_main.gd)
-- worker 进程：[`server/lobby/worker_launcher.gd`](../../server/lobby/worker_launcher.gd)；宽限分派：
-  [`core/net/grace_window.gd`](../../core/net/grace_window.gd)
-- 大厅与上限链：[`scenes/mp_lobby.gd`](../../scenes/mp_lobby.gd) + [`scenes/mp_lobby.tscn`](../../scenes/mp_lobby.tscn)
+- 拆除收口 / 账本：[`server/lobby/lobby_rooms.gd`](../../../server/lobby/lobby_rooms.gd)；编排 / 清扫 / 回收梯 /
+  启动协议：[`server/lobby/room_manager.gd`](../../../server/lobby/room_manager.gd)、[`server/server_main.gd`](../../../server/server_main.gd)
+- worker 进程：[`server/lobby/worker_launcher.gd`](../../../server/lobby/worker_launcher.gd)；宽限分派：
+  [`core/net/grace_window.gd`](../../../core/net/grace_window.gd)
+- 大厅与上限链：[`scenes/mp_lobby.gd`](../../../scenes/mp_lobby.gd) + [`scenes/mp_lobby.tscn`](../../../scenes/mp_lobby.tscn)
 
 ★ **上列路径按内容读，别抄行号**。
 

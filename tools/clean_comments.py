@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""按 docs/eng/comment-style.md §10 清理仓库注释(默认干跑)。
+"""按 docs/workflow/comment-style.md §10 清理仓库注释(默认干跑)。
 
 范围:*.gd / *.gdshader(排除 .godot/ .tmp/ .superpowers/ builds/ releases/ docs/ .git/ 及 tests/.run_all_logs/)。
 保留:连续 ≤2 行的整行注释,且能归入三类之一 —— 静默错误陷阱 / 引擎怪癖 / 唯一真相源指针。

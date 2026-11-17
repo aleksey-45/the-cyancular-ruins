@@ -1,7 +1,7 @@
 class_name EditorConstants
 extends RefCounted
 
-# 移植自已退役的浏览器编辑器 core/00_constants.js(2026-11-09 删除,历史见 git)—— 网格与图层常量(格式规格见 docs/eng/editor-core.md)。
+# 移植自已退役的浏览器编辑器 core/00_constants.js(2026-11-09 删除,历史见 git)—— 网格与图层常量(格式规格见 docs/systems/editor/editor-core.md)。
 
 const SUB_PER_CELL: int = 4          # 每 64px 格细分成 4×4 个 16px 子格
 const SUB_PX: int = 16               # 子格边长(世界像素)

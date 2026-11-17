@@ -45,7 +45,7 @@
 #     硬规定的落点;它们各自扫自己的那一段。
 #   · **测不到什么**:① 它**不替代**各支自己的判据(每支的日志里还有更细的断言);
 #     ② `tests/probe/team_match_probe.sh` **今天仍不可当 3v3 的端到端守卫** ——
-#     `docs/eng/registered-debt.md` §一第 1 行:根因已修(`9003dae`),但**修复后没有留下六人整跑的判决**。
+#     `docs/registered-debt.md` §一第 1 行:根因已修(`9003dae`),但**修复后没有留下六人整跑的判决**。
 #     本入口**照实标注**它,不会因为"跑过"就把它当绿。
 #   · ASCII 射程(**与 `run_all.sh` 同一口径,权威表述在它的文件头**,2026-10-05 修复轮2 订正 ——
 #     原句"一律 ASCII(同 run_all.sh)"两边都对不上):**全批判词行(`RUN_REAL …`)是纯 ASCII**;
@@ -399,6 +399,6 @@ if [ "$N_BAD" -gt 0 ]; then
 fi
 echo
 echo "RUN_REAL OK($N_OK entries)"
-echo "[note] team_match_probe is registered in docs/eng/registered-debt.md sec.1 as NOT yet a trustworthy"
+echo "[note] team_match_probe is registered in docs/registered-debt.md sec.1 as NOT yet a trustworthy"
 echo "       3v3 end-to-end guard (root cause fixed, no 6-player verdict since) -- a green here does not change that."
 exit 0

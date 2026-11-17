@@ -2,7 +2,7 @@
 """架构规则检查(依赖方向)。
 
 把"架构规则即测试"搬运成这个仓能跑的一条命令:规则少而狠,存量违规进白名单、只减不增。
-与 `tools/check_naming.py` 同一层:它是**工具**,不是 `tests/` 里的断言(见 docs/eng/test-economy.md D6)。
+与 `tools/check_naming.py` 同一层:它是**工具**,不是 `tests/` 里的断言(见 docs/workflow/test-economy.md D6)。
 
 规则(每条都要能回答"它防的是哪种真实缺陷"):
 
@@ -50,7 +50,7 @@ RE_IS = re.compile(r"\bis\s+([A-Z][A-Za-z0-9_]*)")
 RE_STATIC = re.compile(r"\b([A-Z][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)")
 RE_TREE = re.compile(r"\b(get_tree\(\)|get_node(?:_or_null)?\(|\$[A-Za-z_])")
 RE_DOC_ROW = re.compile(r"^\|\s*(.+?)\s*\|", re.M)   # 目录契约表的首列
-DOC = os.path.join(PROJECT, "docs", "eng", "README.md")
+DOC = os.path.join(PROJECT, "docs", "README.md")
 
 
 def source_dirs() -> set[str]:
@@ -171,7 +171,7 @@ def main() -> int:
             for m in RE_TREE.finditer(code):
                 add("R3", rp, m.group(1))
 
-    # R5:目录契约表(docs/eng/README.md)必须覆盖每个源码目录 —— 这是"不写每目录 README"的代价替代:
+    # R5:目录契约表(docs/README.md)必须覆盖每个源码目录 —— 这是"不写每目录 README"的代价替代:
     #    一句话职责只写一处,漏写目录由工具判红。
     doc_rp = rel(DOC)
     for d in sorted(source_dirs() - documented_dirs()):

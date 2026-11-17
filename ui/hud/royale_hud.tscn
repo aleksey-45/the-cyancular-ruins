@@ -4,11 +4,11 @@
 [ext_resource type="FontFile" path="res://assets/fonts/less_perfect_dos_vga.ttf" id="2"]
 [ext_resource type="PackedScene" path="res://ui/hud/broadcast.tscn" id="3"]
 
-; ★ HUD 例外 = anchors + offset + token(docs/eng/ui-design-system.md §5):
+; ★ HUD 例外 = anchors + offset + token(docs/systems/presentation/ui-design-system.md §5):
 ;   排行榜/延迟条/提示全部用锚点表达,偏移由 ui/hud/royale_hud.gd 的 _ready 按
 ;   BOARD_W / UiFactory.MARGIN / SP_* 计算 —— 本场景不再有 -736 / -716 / 96 / 102 这批
 ;   从版式反推的魔法数(本文件也不再有 StyleBoxFlat:底板走 UiFactory.hud_plate)。
-;   排行板底色 0.25 是 docs/eng/ui.md「HUD」里登记的唯一例外(玩家栏,被用户点名排除)。
+;   排行板底色 0.25 是 docs/systems/presentation/ui.md「HUD」里登记的唯一例外(玩家栏,被用户点名排除)。
 
 [node name="RoyaleHud" type="CanvasLayer"]
 layer = 130

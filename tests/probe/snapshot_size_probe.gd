@@ -214,7 +214,7 @@ func _frags(payload: int) -> int:
 
 
 # ── 量化 / 体量的上限测算 ── ★ 全部绑在 NetCodec 的 schema 表上算,避免「另抄一份字段表」(那是本仓最贵的病)。
-# ★ 这些是算术上限,不是实测到的收益;真正落不落地由「值不值得 + 风险」决定,见 docs/eng/netcode-snapshots.md §5.1。
+# ★ 这些是算术上限,不是实测到的收益;真正落不落地由「值不值得 + 风险」决定,见 docs/netcode/protocol/netcode-snapshots.md §5.1。
 
 func _t_bytes(t: String, trail_n: int) -> int:
 	match t:

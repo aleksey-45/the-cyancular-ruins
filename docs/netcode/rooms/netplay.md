@@ -51,7 +51,7 @@
 5. **依赖是 DAG**(系统 → state/ports;壳 → 全部),故意不用类循环引用。
 6. 新增基类必须 ≥2 个真子类,或有明确在飞计划。
 
-★ 结构规则**零守卫**(唯一守过"基类不得泄漏子类方法"的 `kh_l5_probe` 已随 2026-10-09 测试面削减删除;见 [`registered-debt.md`](registered-debt.md) 零守卫面)。
+★ 结构规则**零守卫**(唯一守过"基类不得泄漏子类方法"的 `kh_l5_probe` 已随 2026-10-09 测试面削减删除;见 [`registered-debt.md`](../../registered-debt.md) 零守卫面)。
 
 历史(为什么曾是一条 7 层继承链,以及拆解过程)= git log(`0ae93a3e` / `3c8dc8f0` / `726a4008` / `baa60c9b`~`S4b` 提交);本仓不设归档目录。
 
@@ -80,9 +80,9 @@
 
 ## 服务端运维面
 
-- 面板:`server/gui/server_panel.tscn` 由 `server_main.gd` 在"大厅分支 + 非 headless"时**代码实例化**(不挂在 `server_main.tscn` 上)。只读大厅状态(房间 / 端口 / worker 存活 / 名单),唯一写操作是关房,走 `teardown_room`。审计:`NetDiag.audit()` 常开(仅非 client 进程),一行一 JSON 写 `<日志目录>/ops-<role>-<pid>-<时间戳>.jsonl`;关窗优雅拆房并写 `lobby_stop`;每局 worker 日志按端口归档。审计事件与字段的权威在 [`tests.md`](tests.md) 的「运维审计通道」一节。
-- **日志落盘目录(2026-10-30)**:选择逻辑收在 [`core/net/net_metrics.gd`](../../core/net/net_metrics.gd) 的 `server_log_dir`(纯函数,`-s` 可测)。**导出构建的服务端** = exe 同目录 `log/`(默认开,无需 `--diag`);开发态 / 编辑器 / 客户端 = `user://logs`。同目录里同时落:结构化 `diag-<role>-<pid>-<时间戳>.jsonl`、运维 `ops-*.jsonl`、worker 引擎日志 `worker_<port>.log`(归档保留 20 份)。打包侧由 `build_release.py` 的产物冒烟断言「exe 同目录跑完出现非空 `log/`」。`--netstat` 每秒一行含**下行丢包估计**(world/own 两本账,tick 缺口推算,口径见 `NetMetrics.snapshot_loss`),`--diag` 每秒一条 `snap_rx` 带 `world_lost/own_lost/loss_pct`。
+- 面板:`server/gui/server_panel.tscn` 由 `server_main.gd` 在"大厅分支 + 非 headless"时**代码实例化**(不挂在 `server_main.tscn` 上)。只读大厅状态(房间 / 端口 / worker 存活 / 名单),唯一写操作是关房,走 `teardown_room`。审计:`NetDiag.audit()` 常开(仅非 client 进程),一行一 JSON 写 `<日志目录>/ops-<role>-<pid>-<时间戳>.jsonl`;关窗优雅拆房并写 `lobby_stop`;每局 worker 日志按端口归档。审计事件与字段的权威在 [`tests.md`](../../workflow/tests.md) 的「运维审计通道」一节。
+- **日志落盘目录(2026-10-30)**:选择逻辑收在 [`core/net/net_metrics.gd`](../../../core/net/net_metrics.gd) 的 `server_log_dir`(纯函数,`-s` 可测)。**导出构建的服务端** = exe 同目录 `log/`(默认开,无需 `--diag`);开发态 / 编辑器 / 客户端 = `user://logs`。同目录里同时落:结构化 `diag-<role>-<pid>-<时间戳>.jsonl`、运维 `ops-*.jsonl`、worker 引擎日志 `worker_<port>.log`(归档保留 20 份)。打包侧由 `build_release.py` 的产物冒烟断言「exe 同目录跑完出现非空 `log/`」。`--netstat` 每秒一行含**下行丢包估计**(world/own 两本账,tick 缺口推算,口径见 `NetMetrics.snapshot_loss`),`--diag` 每秒一条 `snap_rx` 带 `world_lost/own_lost/loss_pct`。
 
 ## 测试
 
-`pvp_match_smoke.sh`（建房 → 房主开始 → 输入 → 模拟 → 快照 → 子弹广播，占 7777）= 真链路；默认批里与联机相关的有 `net_wire_smoke`（线格式）/ `input_queue_smoke`（输入队列，`-s`）/ `net_tile_fx_probe`（客户端拆砖粒子表现层，2026-10-26 增）。原 `rpc_channel_contract_smoke` / `room_registry_smoke` / `mode_*_smoke` 已随 2026-10-24 默认批激进削减删除（缺口见 [`registered-debt.md`](registered-debt.md) §九）；原 `pvp_room_smoke.sh` 已删（结构性恒红、毒化真链路批，见 [`registered-debt.md`](registered-debt.md) §二十七）。房间寿命与回局见 [`netplay-rooms.md`](netplay-rooms.md)，断线重连见 [`netplay-reconnect.md`](netplay-reconnect.md)，快照管线见 [`netcode-snapshots.md`](netcode-snapshots.md)。
+`pvp_match_smoke.sh`（建房 → 房主开始 → 输入 → 模拟 → 快照 → 子弹广播，占 7777）= 真链路；默认批里与联机相关的有 `net_wire_smoke`（线格式）/ `input_queue_smoke`（输入队列，`-s`）/ `net_tile_fx_probe`（客户端拆砖粒子表现层，2026-10-26 增）。原 `rpc_channel_contract_smoke` / `room_registry_smoke` / `mode_*_smoke` 已随 2026-10-24 默认批激进削减删除（缺口见 [`registered-debt.md`](../../registered-debt.md) §九）；原 `pvp_room_smoke.sh` 已删（结构性恒红、毒化真链路批，见 [`registered-debt.md`](../../registered-debt.md) §二十七）。房间寿命与回局见 [`netplay-rooms.md`](netplay-rooms.md)，断线重连见 [`netplay-reconnect.md`](netplay-reconnect.md)，快照管线见 [`netcode-snapshots.md`](../protocol/netcode-snapshots.md)。

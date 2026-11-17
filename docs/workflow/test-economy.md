@@ -1,7 +1,7 @@
 # 测试经济学
 
 > 一条守卫要被**保留**,必须**同时**过 K 组;命中 D 组任意一条,就是**删除候选**。
-> 总判据:能回答「去掉什么它才会红」;答不出 ⇒ 删。怎么跑见 [`tests.md`](tests.md);已知红见 [`registered-debt.md`](registered-debt.md)。
+> 总判据:能回答「去掉什么它才会红」;答不出 ⇒ 删。怎么跑见 [`tests.md`](tests.md);已知红见 [`registered-debt.md`](../registered-debt.md)。
 
 ## 1. 桶选择
 

@@ -48,7 +48,7 @@
 ## 3. 3 号为什么是「手拼」的（与直觉/计划假设不符，务必看）
 
 `Core.encodeMap` 在编码前会跑 `validateMap`，而 **legacy 纹理 id（2,3,4,5,16,17,18）在 `validateMap` 里是
-`errors` ⇒ `encodeMap` 硬拒**（`docs/eng/editor-core.md` §6.1/§9：这是「内存里还有 legacy 残留」的最后防线）。
+`errors` ⇒ `encodeMap` 硬拒**（`docs/systems/editor/editor-core.md` §6.1/§9：这是「内存里还有 legacy 残留」的最后防线）。
 
 但夹具要钉的恰恰是「**文件里就该有 legacy id** 时格式层能读能写」。所以 `v4_legacy_tex.cyrm` 用
 `Core` 暴露的原语手拼 v4 容器，绕过 `encodeMap` 的校验：

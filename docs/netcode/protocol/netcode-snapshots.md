@@ -1,7 +1,7 @@
 # 联机快照：现状、实测、与主流做法的对照
 
 > 真相源：源码 > 探针实测 > 本文档。行号只在写下那天成立，引用前先 `grep` 复核。
-> 结构化诊断（`--diag` / `CYR_DIAG=1`）与运维审计口径见 [`tests.md`](tests.md)。
+> 结构化诊断（`--diag` / `CYR_DIAG=1`）与运维审计口径见 [`tests.md`](../../workflow/tests.md)。
 
 ## 1. 频率与载荷
 
@@ -35,7 +35,7 @@ NetBus.rpc("snapshot_world", NetCodec.encode_world(world))
 - 世界包含自己那一份；客户端**刻意不消费**（C2 下本地玩家自步进，权威整态走本人包）。
 - `previewing` 服务端带、客户端不消费（预瞄线只有本人可见）。
 - `trail` 是回溯轨迹点数组（每 3 帧一个点），线上最多 `NetCodec.TRAIL_WIRE_MAX := 4` 点。
-- 传输：`snapshot_world` 是 `unreliable`、`transfer_channel = 0`（ENet 道 1）。通道契约见 [`netplay-rpc-channels.md`](netplay-rpc-channels.md)。
+- 传输：`snapshot_world` 是 `unreliable`、`transfer_channel = 0`（ENet 道 1）。通道契约见 [`netplay-rpc-channels.md`](../rooms/netplay-rpc-channels.md)。
 
 ### 1.3 本人包：逐 peer，`ack` + `q` + 权威整态
 
@@ -48,7 +48,7 @@ NetBus.rpc_id(peer, "snapshot_own",
 
 - `ack_seq` = 该 role 已消费输入记录的 seq。
 - `q` = 该 role 已到达但未消费的输入**记录**数。
-- `c2` = `player.capture_state()`：**25 个标量 + 武器块 10 个（仅手持非空时）+ 整个背包表**。字段表在 `core/net/net_codec.gd` 的 `C2_SCHEMA` / `WEAPON_SCHEMA` / `INV_SCHEMA`（仍是唯一 schema）；字典的装配在 [`scenes/player/player_net_state.gd`](../../scenes/player/player_net_state.gd)，由各组件 `capture_state()` 拼出来。
+- `c2` = `player.capture_state()`：**25 个标量 + 武器块 10 个（仅手持非空时）+ 整个背包表**。字段表在 `core/net/net_codec.gd` 的 `C2_SCHEMA` / `WEAPON_SCHEMA` / `INV_SCHEMA`（仍是唯一 schema）；字典的装配在 [`scenes/player/player_net_state.gd`](../../../scenes/player/player_net_state.gd)，由各组件 `capture_state()` 拼出来。
 - `c2` 是 C2 回滚的锚点：客户端 `restore_state()` 后用未确认输入重放。
 - ★ **S1（2026-10-24）发送时机**：本人包不在世界包广播里发，而是 MatchHost 在**消费完本 tick 输入后 call_deferred**、由 `SnapshotSystem.send_own()` 在帧末（Player 子节点步进完之后）发。⇒ `ack` 与 `c2` 是同一 tick 的最新权威态（旧实现落后一拍且要等下一次 30Hz 广播）；代价是**世界包里自己那份比本人包旧 1 tick**（客户端本来就不消费世界包的自己那份）。
 - 传输：`snapshot_own` 是 `unreliable`、`transfer_channel = 0`（ENet 道 1）。
@@ -100,7 +100,7 @@ NetBus.rpc_id(peer, "snapshot_own",
 | 包 | 处理 | 丢弃规则 |
 |---|---|---|
 | 世界包 | `net_bus.snapshot_world` 解码后 emit 完整 `{tick, players}` → 三模式 `_on_snapshot_world` 只喂对手副本 | `tick <= 已应用 tick` ⇒ 丢（新的赢） |
-| 本人包 | `net_bus.snapshot_own` 解码后 emit 完整 `c2` → [`pvp_match_client.gd`](../../scenes/pvp_match_client.gd) `_on_snapshot_own` → `_rollback.on_authoritative(ack, c2)` | ① `ack > seq`（判据在 `InputUplink.accept_ack`）⇒ 丢（跨纪元残留）；② `ack <= _acked` 由 [`prediction_rollback.gd`](../../core/net/prediction_rollback.gd) 挡 |
+| 本人包 | `net_bus.snapshot_own` 解码后 emit 完整 `c2` → [`pvp_match_client.gd`](../../../scenes/pvp_match_client.gd) `_on_snapshot_own` → `_rollback.on_authoritative(ack, c2)` | ① `ack > seq`（判据在 `InputUplink.accept_ack`）⇒ 丢（跨纪元残留）；② `ack <= _acked` 由 [`prediction_rollback.gd`](../../../core/net/prediction_rollback.gd) 挡 |
 
 `unreliable` 不保证顺序，"新的赢"是唯一正确的做法；丢弃不产生延迟累加。重连时 `NetBus.reset_snapshot_state()` 作废合并基准。
 
@@ -125,8 +125,8 @@ NetBus.rpc_id(peer, "snapshot_own",
 - **物理帧注入**：网络回调跑在 idle 帧，而注入的重放内部是 `move_and_slide()` —— 物理帧外它按**渲染帧 delta** 缩放（实测同一速度跨 idle 帧位移 0.01~2px 不等；首帧前才是 0）⇒ 帧外重放随帧率变、会算错轨迹。故回调只把事件压进 `_pending_hit_events`，由下一个物理帧开头的 `_drain_hit_events()` 注入（排在 `note_post_step` 之前）。代价：受击反馈最多晚 1 帧（≈16.7ms）。重连重建 C2 时队列一起清空（旧 seq 空间作废）。
 - **兜底**：`seq` 不可注入（来自未来 / 已 ack / 环外 / 乱序 / callable 失效）⇒ 只播反馈 `take_hit(..., feedback_only=true)`（白闪 / 震屏 / 音效 / 挤压），**不**扣血 / 不击退 / 不设无敌帧：权威 c2 可能已包含这一发，二次应用会在下一个 ack 再判一次分歧。
 - **读数**：`-- --netstat` 打印 `事件对齐=累计(+N/s) 拒绝=累计(+N/s)`（`rollback_count()` 之外的独立计数）；`royale_soak`（该支已删，2026-11-04）的每端结果行打 `C2:回滚=… 事件对齐=… 拒绝=…(ack/future/missing/order 分解)` —— 它曾是"真链路里唯一能证明注入真的生效了 vs 一直走兜底"的读数；今天没有替代读数。
-- **边界**（照实）：① `_captures` 环 256 tick（4.3s），超出只能走兜底；② 服务器饥饿 k tick 时玩家状态比 `_stepped_seq` 前进 k 步（held 输入），注入会**早** k 步（不是保守方向，只是近似）；③ 落水窒息是客户端已预测的伤害 ⇒ 服务端**不**为它广播 `hit_event`（`take_hit(..., cause="water")` → `_on_player_hit` 跳过），客户端因此不会二次应用（2026-10-29 修，见 [`registered-debt.md`](registered-debt.md) §二十三）；④ 事件按 seq 递增到达是契约（reliable 保序），seq 回退一律拒绝。
-- **守卫**：[`tests/probe/rollback_fidelity_probe.tscn`](../../tests/probe/rollback_fidelity_probe.tscn) 的 D 组（注入 / **真实服务器顺序**的黄金轨迹 / 越界 / 同 seq 双发 / 乱序 / 注入后 reconcile 对独立黄金权威 / 迟到旧 ack 重放带回事件 / 计数）与 E 组（反馈-only），外加源码守卫（**代理判据，不是行为**）：客户端 5 条（入队 / 物理帧消费 / 物理帧接线 / 注入唯一 / 兜底第 5 参）+ 服务器 3 条（`_stepped_seq` 锚点【取数点 = `event_seq_for`】/ 帧末记录调度 / 记录写入）。
+- **边界**（照实）：① `_captures` 环 256 tick（4.3s），超出只能走兜底；② 服务器饥饿 k tick 时玩家状态比 `_stepped_seq` 前进 k 步（held 输入），注入会**早** k 步（不是保守方向，只是近似）；③ 落水窒息是客户端已预测的伤害 ⇒ 服务端**不**为它广播 `hit_event`（`take_hit(..., cause="water")` → `_on_player_hit` 跳过），客户端因此不会二次应用（2026-10-29 修，见 [`registered-debt.md`](../../registered-debt.md) §二十三）；④ 事件按 seq 递增到达是契约（reliable 保序），seq 回退一律拒绝。
+- **守卫**：[`tests/probe/rollback_fidelity_probe.tscn`](../../../tests/probe/rollback_fidelity_probe.tscn) 的 D 组（注入 / **真实服务器顺序**的黄金轨迹 / 越界 / 同 seq 双发 / 乱序 / 注入后 reconcile 对独立黄金权威 / 迟到旧 ack 重放带回事件 / 计数）与 E 组（反馈-only），外加源码守卫（**代理判据，不是行为**）：客户端 5 条（入队 / 物理帧消费 / 物理帧接线 / 注入唯一 / 兜底第 5 参）+ 服务器 3 条（`_stepped_seq` 锚点【取数点 = `event_seq_for`】/ 帧末记录调度 / 记录写入）。
 
 ### 2.3 拆砖事件时刻对齐（2026-11-01，R2）
 
@@ -141,7 +141,7 @@ NetBus.rpc_id(peer, "snapshot_own",
 - **兜底**：`seq = 0`（重连补态 / 探针直调 / 本地事件）或注入被拒（环外 / 已 ack / 乱序 / 没有 rollback）⇒ **立即应用** = 旧行为，不报错、不告警。
 - **协议**：加参数**不升 `PROTO_VERSION`**（两端同 build；动的是既有 RPC 参数，不是快照/c2 字段）。
 - **守卫**：`tests/probe/net_tile_fx_probe.tscn` 9→**11**（⑦ 有预测环时必须走注入：seq 透传 + 地形照拆 + 粒子仍 1 簇；
-  ⑧ 注入被拒时兜底立即应用）。★ **没有**为拆砖加源码文本守卫（用户裁定按 [`test-economy.md`](test-economy.md) 的 D6a 砍掉）：
+  ⑧ 注入被拒时兜底立即应用）。★ **没有**为拆砖加源码文本守卫（用户裁定按 [`test-economy.md`](../../workflow/test-economy.md) 的 D6a 砍掉）：
   "锚点单源 / 三条事件都走它"只剩注释契约，"逐 peer 发"只能在真链路里观测（`pvp_match_smoke`）。
 - **测不到什么**：服务器"逐 peer 发 seq"这一步**没有任何自动守卫**（源码文本守卫按 test-economy D6a 砍掉）——
   只有真链路 `pvp_match_smoke` 能间接反映；探针里用 stub rollback 代替真 C2。

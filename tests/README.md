@@ -4,7 +4,7 @@
 
 > 本文件只讲**现在怎么跑**。历次批次增减（默认批 20→6→…→41 支的流水账）**已删除**（git log 里有；本仓不设归档目录）。
 > **实时读数一律看 `bash tests/run_all.sh --list`**（有 `GATE` 栏与排除理由）；**本文件不抄支数与闸值**——抄过，漂过三次。
-> 当前仍成立的覆盖缺口见 [`docs/eng/registered-debt.md`](../docs/eng/registered-debt.md)「零守卫面」表。
+> 当前仍成立的覆盖缺口见 [`docs/registered-debt.md`](../docs/registered-debt.md)「零守卫面」表。
 
 ## 文件分层
 
@@ -44,10 +44,10 @@
 | 2 | `probe/rejoin_probe.sh` | 29300 / 29350（池外） | 60~110s | `REJOIN PROBE: ALL-OK` | **不扫池** |
 | 3 | `probe/team_match_probe.sh` | 29200 / 29250（池外） | 3~10min | `TEAM MATCH PROBE: ALL-OK` | **不扫池** |
 
-- ★ 2026-11-04:`royale_soak_probe`(大乱斗多人 soak)/ `royale_role_cap_probe`(9 人 role 上限,只是 soak 的包装)/ `bot_1v1_probe`(bot 端到端)三支已整支删除 ⇒ **大乱斗 8+ 人端到端与 bot 端到端覆盖归零**,只能靠历史读数 + 人工试玩;见 [`docs/eng/registered-debt.md`](../docs/eng/registered-debt.md) 零守卫面。
+- ★ 2026-11-04:`royale_soak_probe`(大乱斗多人 soak)/ `royale_role_cap_probe`(9 人 role 上限,只是 soak 的包装)/ `bot_1v1_probe`(bot 端到端)三支已整支删除 ⇒ **大乱斗 8+ 人端到端与 bot 端到端覆盖归零**,只能靠历史读数 + 人工试玩;见 [`docs/registered-debt.md`](../docs/registered-debt.md) 零守卫面。
 - **四道闸**：① `lobby_alive` 为真 ⇒ 拒绝；② 无 `--yes` 且 stdin 非交互 ⇒ 拒绝；③ **R20 锁**（`tests/.run_all.lock`）+ 前后进程检查；④ **清单不许烂**（`tests/{smoke,probe}/*.sh` 每一支必须在 `ENTRIES` 或 `WRAPPERS` 里，两边每条都要匹配到真实文件）。
 - `WRAPPERS` 当前为空数组（`WRAPPERS=()`）；**别删这个数组** —— 闸四同时遍历 `ENTRIES` 与 `WRAPPERS`，`set -u` 下数组不存在会炸。
-- ★ `team_match_probe.sh` 在 [`docs/eng/registered-debt.md`](../docs/eng/registered-debt.md) 仍登记为**不可信**：它绿了也不构成 3v3 的可信端到端守卫。
+- ★ `team_match_probe.sh` 在 [`docs/registered-debt.md`](../docs/registered-debt.md) 仍登记为**不可信**：它绿了也不构成 3v3 的可信端到端守卫。
 - ★ 失败 entry 会残留 7777 大厅、连累后续 entry 假 FAIL（BUG-25，见 registered-debt §三十七）：串行跑前先确认 7777 空闲且无 godot 残留。
 
 ### 默认批绿 ≠ 真链路绿

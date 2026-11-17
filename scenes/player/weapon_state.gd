@@ -50,7 +50,7 @@ static func inv_structure_equal(c: WeaponComponent, want: Array) -> bool:
 
 # 武器/弹药的权威字段回灌(整态恢复与软同步共用)。
 # ★ 顺序不可反:先读 wslot(_current_type 还有值,可作默认)→ restore_inventory(会清 _current_type)
-#   → 判实例是否匹配/重建 → 最后回灌武器字段。写反就把快照弹量冲掉(见 docs/eng/time.md §10 同源坑)。
+#   → 判实例是否匹配/重建 → 最后回灌武器字段。写反就把快照弹量冲掉(见 docs/systems/gameplay/time.md §10 同源坑)。
 static func apply(c: WeaponComponent, st: Dictionary) -> void:
 	var wslot := int(st.get("wslot", c.current_type_id()))
 	var by_inst := c.restore_inventory(st.get("inv", []), int(st.get("winst", 0)))

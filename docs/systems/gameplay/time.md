@@ -28,7 +28,7 @@
 
 | 文件 | 职责 |
 |---|---|
-| `core/config/time_params.gd` / `time_rules.gd` | 单机 `TimeParams`（时间玩法参数的**访问入口**；数值唯一真相源 = [`time_config.tres`](../../core/config/time_config.tres)）/ PvP `TimeRules`（每局可调的实例数据 + 服务器钳制 + `make_account()` / `rewind_buffer_seconds()`） |
+| `core/config/time_params.gd` / `time_rules.gd` | 单机 `TimeParams`（时间玩法参数的**访问入口**；数值唯一真相源 = [`time_config.tres`](../../../core/config/time_config.tres)）/ PvP `TimeRules`（每局可调的实例数据 + 服务器钳制 + `make_account()` / `rewind_buffer_seconds()`） |
 | `core/sim/grain_account.gd` | `GrainAccount` 记账芯：总余额 / 短时窗 / 贷款 / 锁定，五个信号 |
 | `core/sim/time_field.gd` | `TimeField`：模式 → 各实体 delta / 速度倍率的唯一查询口（静态 `current`） |
 | `core/sim/world_rewind.gd` | `WorldRewind`：单机定频快照环缓 + 反向应用器 + 尸体保留（不碰 UI 与 shader） |
@@ -69,7 +69,7 @@
 7. **颗粒账户口径**（`GrainAccount`，纯逻辑零场景依赖）：一笔 `spend(delta, rate)` 同时扣总余额与短时窗（`short_used`）；短时窗满 ⇒ 溢出进贷款（`loan_used`）；贷款达 `loan_max` ⇒ `locked = true` 且 `can_spend()` 恒假；`regen(delta)` 无论是否在消耗都照走，先还贷后回窗，贷满锁定者还清那一刻自动解锁；`deposit(amount)` 只进总余额并夹 `cap`；`loan_depth() = loan_used / loan_max ∈ [0,1]`（`loan_max <= 0` 时返回 0）。
 8. **单机「录像带」模型**：`WorldRewind.finish()` 把过去的将来从 `_frames` 裁掉（至少留 1 帧），磁带钟退回出口，之后 `record()` 从这里续录；`TileLedger.prune_after(exit_t)` 同裁 ⇒ 两次回溯互不串带。PvP 同一语义在 `MatchHost._finish_rw`。
 9. **PvP 环缓只存该 role 自己的玩家载荷**（`RewindFrame.PLAYER_KEYS` 那 8 个键）：位置 / 速度 / HP / 朝向 / 倒地 / 武器弹量；**不存子弹** —— 服务器回溯从不恢复子弹，旧实现每 50ms 遍历一次 `bullet` 组写一份 `{p,v,fs}` 无人读，2026-11-16 删除。回溯期间输入源 frozen、`take_hit` 免伤。单机 `WorldRewind` 侧才重建子弹，重建的弹必须补 `scene_path` meta：写这份 meta 的唯一地方是出膛那一刻，重建弹绕过它 ⇒ 再录进快照时 `sp` 是空串 ⇒ 下次回溯该弹凭空消失。
-10. **弹药回溯的语句序**（**唯一实现** = [`core/sim/rewind_frame.gd`](../../core/sim/rewind_frame.gd) 的 `RewindFrame.apply_player`，单机与服务器共用；服务器 `_apply_rw_frame` 只寻帧后调它 —— 2026-11-01 R3 合并前这里有两份逐字抄写，已抄出两处口径相反）：切枪必须排在条目写回之前（`_equip_index` 会把走掉那把的出膛实弹写回条目）；手持实弹走 `WeaponComponent.apply_mag()`（未入树窗口写 pending，由 `WeaponBase._ready` 消费），不直接写 `mag_ammo`；`wlive`（手持实弹）与 `wmags`（各槽条目）各自照抄快照。
+10. **弹药回溯的语句序**（**唯一实现** = [`core/sim/rewind_frame.gd`](../../../core/sim/rewind_frame.gd) 的 `RewindFrame.apply_player`，单机与服务器共用；服务器 `_apply_rw_frame` 只寻帧后调它 —— 2026-11-01 R3 合并前这里有两份逐字抄写，已抄出两处口径相反）：切枪必须排在条目写回之前（`_equip_index` 会把走掉那把的出膛实弹写回条目）；手持实弹走 `WeaponComponent.apply_mag()`（未入树窗口写 pending，由 `WeaponBase._ready` 消费），不直接写 `mag_ammo`；`wlive`（手持实弹）与 `wmags`（各槽条目）各自照抄快照。
 11. **单机录制期保留尸体**：`WorldRewind.hold_corpses` 由 `Level0._tick_rewind` 每帧同步（录制 = true / 回放 = false）；保留下来的尸体隐藏时必须同时摘碰撞层（还原走 `_rw_held_layer`），否则是虚空碰撞箱；过期由 `WorldRewind.expire_corpses()` 按 `rw_death_ms` 清理。精英不保留。
 12. **进/出回溯必须读同一个输入源**：单机状态沿是 `WorldRewind.was_rewinding`，PvP 是 `_rw_on[role]`；置 `src.frozen = true` 与解冻必须是宿主自己那一个 `input_source` 对象（换对象 ⇒ `want` 恒假、回溯出不来）。
 13. **PvP 数值权威在服务器，客户端只做预测**：客户端拿 10Hz `TimeState` 镜像（`TimeEconomy.state_payload()`），本地不扣颗粒；本地加速只写 `pvp_haste_mult`，本地回溯只做冻结输入源 + 免伤 + 底片，位置由快照权威写回。建房参数走 `TimeRules.from_dict()`，其内部调 `clamp_self()`。
@@ -79,10 +79,10 @@
 
 ### 3.1 单机 `TimeParams`（`core/config/time_params.gd`：访问入口，数值不在代码里）
 
-- 数值唯一真相源 = [`time_config.tres`](../../core/config/time_config.tres)；schema / 默认值在 [`time_config.gd`](../../core/config/time_config.gd)（`class_name TimeConfig extends Resource` + `@export_range`，检查器按「颗粒经济 / 回溯 / 加速 / 贷款」分组）。改 `.tres` 即可调参，不用改代码，diff 也能看清哪个数值被动了。
+- 数值唯一真相源 = [`time_config.tres`](../../../core/config/time_config.tres)；schema / 默认值在 [`time_config.gd`](../../../core/config/time_config.gd)（`class_name TimeConfig extends Resource` + `@export_range`，检查器按「颗粒经济 / 回溯 / 加速 / 贷款」分组）。改 `.tres` 即可调参，不用改代码，diff 也能看清哪个数值被动了。
 - `TimeParams` 用 `static var X: T = _CFG.X` 在**类加载时读一次**，不是每次读都穿 Resource：逐次 getter→Resource 实测比 `const` 慢 **13.8×**（200 万次 319ms vs 23ms），而这批值在 `TimeField` 的每个查询口被读。代价：改 `.tres` 要重启进程生效。
 - 调用点写法不变：仍是 `TimeParams.GRAIN_INITIAL` 这类静态访问。18 个参数的**含义**见下表，数值不抄在文档里（唯一真相源是 `.tres`）。
-- 守卫：[`tests/smoke/time_params_source_smoke.gd`](../../tests/smoke/time_params_source_smoke.gd)（6 条：`.tres` 同一实例 / 从 `time_config.gd` 的 `@export` 列表反射枚举逐项一致 / 加速扣费 / 加速倍率 / 回溯扣费 / 贷款深度倍率）。
+- 守卫：[`tests/smoke/time_params_source_smoke.gd`](../../../tests/smoke/time_params_source_smoke.gd)（6 条：`.tres` 同一实例 / 从 `time_config.gd` 的 `@export` 列表反射枚举逐项一致 / 加速扣费 / 加速倍率 / 回溯扣费 / 贷款深度倍率）。
 
 | 参数 | 含义 |
 |---|---|
@@ -158,4 +158,4 @@
 
 - 回溯不还原「被打磨、但还没碎」的砖血;格级 HP 基线的纹路口径只在混纹理格上两侧不一致。`TimeField.current` 是 static 且从不置回 `null`;同一进程内「菜单 → 单机 → 回菜单 → PvP」这条路径上的残留影响未核。
 - `TileLedger` 只看 `not is_rewinding()`,不按破坏来源过滤;今天单机没有第二个破坏来源。
-- PvP 侧回溯的端到端行为(免伤 / 倒放 / 弹量)在 headless 里够不到;2026-11-01(R3)起 `MatchHost._apply_rw_frame` **不再自带一份抄写**、只寻帧后调 `RewindFrame.apply_player` ⇒ "两份会不会漂"从根上消失。载荷往返与武器语句序由 [`tests/probe/rewind_frame_probe.tscn`](../../tests/probe/rewind_frame_probe.tscn) 两条断言覆盖(2026-11-16 加);**端到端行为(免伤/倒放)仍无断言**,见 [`registered-debt.md`](registered-debt.md)。线上 `trail` 只带最近 4 点 ⇒ 回溯残像比完整轨迹短;唯一判据是人眼。
+- PvP 侧回溯的端到端行为(免伤 / 倒放 / 弹量)在 headless 里够不到;2026-11-01(R3)起 `MatchHost._apply_rw_frame` **不再自带一份抄写**、只寻帧后调 `RewindFrame.apply_player` ⇒ "两份会不会漂"从根上消失。载荷往返与武器语句序由 [`tests/probe/rewind_frame_probe.tscn`](../../../tests/probe/rewind_frame_probe.tscn) 两条断言覆盖(2026-11-16 加);**端到端行为(免伤/倒放)仍无断言**,见 [`registered-debt.md`](../../registered-debt.md)。线上 `trail` 只带最近 4 点 ⇒ 回溯残像比完整轨迹短;唯一判据是人眼。

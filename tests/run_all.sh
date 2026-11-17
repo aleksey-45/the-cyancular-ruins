@@ -88,7 +88,7 @@ if ! selflint_no_backtick_in_dq; then
 	exit 1
 fi
 
-QUIT_AFTER=3600                     # 场景探针的统一安全网(帧);理由见 docs/eng/tests.md「场景探针」
+QUIT_AFTER=3600                     # 场景探针的统一安全网(帧);理由见 docs/workflow/tests.md「场景探针」
 SMOKE_BUDGET=60                     # `-s` 冒烟的外层墙钟预算(秒)
 SCENE_BUDGET=120                    # 场景探针的外层墙钟预算(秒)
 LOG_DIR="tests/.run_all_logs"
@@ -107,13 +107,13 @@ declare -A BUDGET_OVERRIDE=(
 # pattern 是相对仓库根的路径,**支持 `*` 通配**。三类:
 #   A 非 headless(取图 / 真渲染探针)—— 会弹窗抢用户的焦点,硬规定不许 agent 自跑。
 #   B 真链路 / 多进程 / 占 7777 —— 会开端口或拉子进程;走 tests/run_real.sh。
-#   C 登记在册的仪器 —— 见 docs/eng/registered-debt.md §一。
+#   C 登记在册的仪器 —— 见 docs/registered-debt.md §一。
 # ★ 任何一条**匹配不到文件**= 过期 ⇒ 入口直接红(防"改名后偷偷进批")。所以改探针名时
 #   必须同步改这里。
 # ★★ 2026-10-08(测试经济 D2/D5):原 A 组(10 支非 headless 视觉探针)与原 E 组(8 支无判词/词汇不符的
 #   读数工具 + 1 支 helper)、C 组的 `brawl_rollback_probe`(自陈读数不可信)、D 组的 `menu_autotest`
 #   **都不再住在本入口的 glob 直径内** ⇒ 相应排除规则一并删除(留着就是"匹配不到文件"的过期规则,
-#   本块开头那条闸会直接红)。判据与理由见 `docs/eng/test-economy.md`
+#   本块开头那条闸会直接红)。判据与理由见 `docs/workflow/test-economy.md`
 #   (D2 仪器不是守卫 / D5 只证明别的东西 / K1-K5 什么才值得留)。
 # ★★ 2026-10-09(测试面削减 90%):本表 **9 条 → 4 条** —— 删掉了 5 条指向**已删文件**的规则
 #   (`ground_net_probe` / `reconnect_probe` / `royale_bound_probe` / `royale_c2_probe` / `royale_probe`)。
@@ -156,7 +156,7 @@ ascii_only() { LC_ALL=C sed 's/[^ -~]//g'; }
 
 # ── 已知红基线(tests/known_red.txt)────────────────────────────────────────
 # 为什么需要它:本仓自己的话 —— `tests/probe/allscript_probe.gd` 的"**一条永远红的闸等于
-# 没有闸**"(原话在 `docs/eng/tests.md` 的同类讨论里)。当时钟摆的另一头是:`run_all.sh` 一建
+# 没有闸**"(原话在 `docs/workflow/tests.md` 的同类讨论里)。当时钟摆的另一头是:`run_all.sh` 一建
 # 起来就**永远** FAIL(3 支既有红)⇒ 后面几个工作包**没法**用它判断"我这次改坏了没有"。
 # 所以:基线内的红 = `KNOWN-RED`,**不进**新红计数、**不**改全批判词为全绿(**永远**印出文件名
 # 与条数),但也不再挡路。★ 要销一条就把行**删掉**(与 `registered-debt.md` §三"销掉时删行"同规)。
@@ -602,7 +602,7 @@ for f in "${ENUM[@]}"; do
 			if [[ "$first" == extends\ SceneTree* ]]; then
 				mode=smoke; src="$f"; target="res://$f"
 			else
-				# `extends Node` / `Control` 等 ⇒ 必须走同名 .tscn(跑法见 docs/eng/tests.md)
+				# `extends Node` / `Control` 等 ⇒ 必须走同名 .tscn(跑法见 docs/workflow/tests.md)
 				tscn="${f%.gd}.tscn"
 				if [ ! -f "$tscn" ]; then
 					echo "[enum] FATAL: $f is '${first}', but has no sibling ${tscn##*/} -- add it to EXCLUDED with a reason."
@@ -616,7 +616,7 @@ for f in "${ENUM[@]}"; do
 			mode=scene; src="${f%.tscn}.gd"; target="res://$f"
 			;;
 		tests/probe/*.gd)
-			# 没有同名 `.tscn` ⇒ 只能按 `-s` 跑(跑法见 docs/eng/tests.md)
+			# 没有同名 `.tscn` ⇒ 只能按 `-s` 跑(跑法见 docs/workflow/tests.md)
 			mode=smoke; src="$f"; target="res://$f"
 			;;
 		*) echo "[enum] FATAL: unexpected enumerated path $f"; exit 1 ;;

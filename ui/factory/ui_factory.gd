@@ -17,7 +17,7 @@ const SP_9 := 64
 const SP_10 := 80
 # HUD 屏边距:**离屏幕边**的统一距离(与 SP_5 同值但语义不同 —— SP_* 是控件间距)。HUD 例外用
 # anchors + 本 token 表达,页面禁止再用 `1920.0 - …` / `1440.0 - …` 从逻辑分辨率反推坐标
-# (契约 .tmp/ui-system-contract.md §5 / docs/eng/ui-design-system.md §5)。
+# (契约 .tmp/ui-system-contract.md §5 / docs/systems/presentation/ui-design-system.md §5)。
 const MARGIN := 24
 # 字号档(像素字体只在 16 的倍数下锐利;新增档位必须同步 style_control 的 assert)
 const T_TITLE := 160
@@ -143,7 +143,7 @@ const BTN_BORDER_W := BORDER_W   # 兼容旧引用;新代码用 BORDER_W
 
 
 # ── HUD 底板工厂 ───────────────────────────────────────────────────────────
-# HUD 元素一律垫半透明深底板(唯一颜色语义 = C_PLATE 黑 0.1;例外见 docs/eng/ui.md「HUD」)。
+# HUD 元素一律垫半透明深底板(唯一颜色语义 = C_PLATE 黑 0.1;例外见 docs/systems/presentation/ui.md「HUD」)。
 # 本函数是**唯一**一处 HUD 底板 `StyleBoxFlat` 的构造点:页面不再手写 `StyleBoxFlat.new()` /
 # `add_theme_stylebox_override`(契约 §4)。语义与迁移前逐处复制完全一致:直角、无描边、
 # content margin 由调用方给像素档(同一调用方的 x/y 对称)。

@@ -2,7 +2,7 @@ class_name EditorDoc
 extends RefCounted
 
 # P2 文档模型:一张编辑器地图 + 稀疏 cells 撤销栈。纯逻辑、`-s` headless 可测;不碰磁盘、不依赖场景树。
-# 契约见 docs/eng/editor-godot.md §4;地图字典形状 = EditorMap.create_map()(7 层,0-2 tex / 3-6 color,4-6 可 null)。
+# 契约见 docs/systems/editor/editor-godot.md §4;地图字典形状 = EditorMap.create_map()(7 层,0-2 tex / 3-6 color,4-6 可 null)。
 #
 # ★ 撤销条目 = {layer:int, idxs:PackedInt32Array, before:PackedInt32Array, after:PackedInt32Array, color:bool}:
 #   只记**真正变过的子格**(idxs = sy*sub_cols+sx),一个笔画也只有变动格的内存,不存整图快照。

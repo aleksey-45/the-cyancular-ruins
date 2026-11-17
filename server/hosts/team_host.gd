@@ -349,7 +349,7 @@ func request_suicide_role(role: int) -> void:
 
 
 # 对抗口径:击杀定义沿用 1v1 的「不分死因」(任一玩家倒地 → 对方队 +1;队友误炸也照此,乱扔雷 = 给对面送分);
-# 逐人 kills 仍只在「归因到且异队」时由基类 _record_down 记(队分与逐人 kills 是两条账,见 docs/eng/modes.md)。
+# 逐人 kills 仍只在「归因到且异队」时由基类 _record_down 记(队分与逐人 kills 是两条账,见 docs/systems/gameplay/modes.md)。
 func _down_killer_of(role: int) -> int:
 	return _attributed_killer(state.players[int(role)])
 

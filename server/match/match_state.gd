@@ -2,7 +2,7 @@ class_name MatchState
 extends RefCounted
 
 # 对局权威的共享状态(C 方案 S4b):纯数据 + 纯查询;由 MatchHost 持有(state),不再在继承链上。
-# 原「为什么共享字段要住共同祖先」的链式说明已随拆解失效;现行结构见 docs/eng/netplay.md「权威宿主的结构」。
+# 原「为什么共享字段要住共同祖先」的链式说明已随拆解失效;现行结构见 docs/netcode/rooms/netplay.md「权威宿主的结构」。
 
 const HitLagHistory := preload("res://core/sim/hit_lag_history.gd")
 

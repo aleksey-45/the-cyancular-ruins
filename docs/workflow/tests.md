@@ -79,7 +79,7 @@ bash tests/smoke/<名>.sh
 - 心跳只在**支间**刷新 ⇒ 单支预算调到 >600s 会把正在跑的批判成陈旧、锁失效。
 - 全批判词 `RUN_REAL OK(n entries)` / `RUN_REAL FAIL(...)`,纯 ASCII;判词原文与各支日志在 `tests/.run_real_logs/`。
 - **默认批绿 ≠ 真链路绿**:两条链路覆盖不相交。改联机权威 / 协议 / 回滚 / 输入包,两边都要看。
-- `team_match_probe.sh` 整跑仍判 `FAIL`,不可当 3v3 的端到端守卫(见 [`registered-debt.md`](registered-debt.md))。
+- `team_match_probe.sh` 整跑仍判 `FAIL`,不可当 3v3 的端到端守卫(见 [`registered-debt.md`](../registered-debt.md))。
 
 ## 守卫能给的保证总是比它读起来少
 
@@ -95,7 +95,7 @@ bash tests/smoke/<名>.sh
 - **开关**:① 客户端命令行 `-- --diag` —— 必须写在 `--` 之后,写在前面会被 Godot 丢掉;② 环境变量 `CYR_DIAG=1`,worker 作为子进程继承(它的命令行固定拼出,不带 `--diag`);③ **导出构建的服务端默认开**(2026-10-30:打包后的服务端必须永远有日志,不再要求服主记得加开关)。
 - **文件**(2026-10-31 起分两份,别混回一个):`<日志目录>/diag-<role>-<pid>-<时间戳>.jsonl` = **事件**(回滚/丢包间隔/队列丢包/换局…,小而稀,直接 grep);`<日志目录>/metrics-<role>-<pid>-<时间戳>.jsonl` = **心跳指标**(queue / snapshot_tx / snap_rx,默认 **10s** 一条,`--diag-verbose` 或 `CYR_DIAG_VERBOSE=1` 才 1s —— 旧版每秒每角色一行,长局把 diag 撑到 700KB)。另有常开的运维 `ops-*.jsonl`(只有服务端)。一行一个 JSON,字段 `t` / `pid` / `role` / `event` / `data`。**日志目录**:导出构建的服务端 = **exe 同目录 `log/`**;其余 = `user://logs`;`CYR_LOG_DIR` 环境变量可整体覆盖(真链路批按支分目录)。选择逻辑在 [`core/net/net_metrics.gd`](../../core/net/net_metrics.gd) 的 `server_log_dir`(纯函数,`-s` 可测),`NetDiag.log_dir()` 只做一次转调 + env 覆盖 —— 别在第三处再判一次。
 - **默认关 = 零成本**:`enabled()` 懒查一次;关着时不开文件、不拼 JSON。
-- 判据:**零守卫**（原 `net_diag_smoke.gd` 已随 2026-10-24 默认批削减删除；缺口登记在 [`registered-debt.md`](registered-debt.md) §九）。2026-10-30 起 `snap_rx` 的丢包字段与目录选择各有一支纯逻辑冒烟（`net_metrics_smoke`）；**接线**（`NetBus` 调用点、`NetDiag.log_dir` 调用点）仍无守卫，导出侧由 `build_release.py` 的 `require_log_dir` 兜底。
+- 判据:**零守卫**（原 `net_diag_smoke.gd` 已随 2026-10-24 默认批削减删除；缺口登记在 [`registered-debt.md`](../registered-debt.md) §九）。2026-10-30 起 `snap_rx` 的丢包字段与目录选择各有一支纯逻辑冒烟（`net_metrics_smoke`）；**接线**（`NetBus` 调用点、`NetDiag.log_dir` 调用点）仍无守卫，导出侧由 `build_release.py` 的 `require_log_dir` 兜底。
 
 | 事件 | 落点 | 读它回答什么 |
 |---|---|---|
@@ -125,5 +125,5 @@ bash tests/smoke/<名>.sh
 - **关窗 = 优雅停止**:`server_main` 拦 `NOTIFICATION_WM_CLOSE_REQUEST` → 逐个 `teardown_room` → 写**唯一**一条 `lobby_stop`;`--quit-after` 等正常退出走 `_exit_tree` 兜底(`_stop_logged` 去重)。
 - **`worker_lost` 是"现场"不是"判定"**:记录 `alive_sec` + 该 worker 引擎日志最后 3 行;正常结束与崩溃都发。
 - **每局日志归档**:开局前把 `worker_<端口>.log` 改名成 `worker_<端口>_<HHMMSS>.log`,同端口保留最新 `WorkerLauncher.WORKER_LOG_KEEP`(20)份。
-- 判据:**零守卫**（原 `ops_log_smoke.gd` 已随 2026-10-24 默认批削减删除；缺口登记在 [`registered-debt.md`](registered-debt.md) §九）。
+- 判据:**零守卫**（原 `ops_log_smoke.gd` 已随 2026-10-24 默认批削减删除；缺口登记在 [`registered-debt.md`](../registered-debt.md) §九）。
 - **边界**:同 diag —— `t` 跨进程不可相减;写盘失败只 `push_warning`;审计事件不进断言。

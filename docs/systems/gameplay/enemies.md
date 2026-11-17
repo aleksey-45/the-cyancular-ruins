@@ -15,6 +15,6 @@
 - `EnemyJumpBird`:近战跳跃怪(跳 / 后跳 / 扑击);扑击(= LUNGE_DASH)贴身命中时结算 `impact_damage` 冲击伤害(穿透无敌帧)并转 BACK_HOP,每次扑击只结算一次;死亡物理与生前一致、保留碰撞。
 - `EnemyBlackBird`:睡眠 → 随机游走 → 周期性判定玩家另一侧、距玩家 2~6 格(随机)的地板格落点(地板格 + LOS)→ 起飞上跳 → 落地播 disappear → 白闪 → 传送 → appear → 落地 → 带跳跃冲锋 7 伤(穿透无敌帧)→ 大后跳(命中/未命中都)→ 回游走;玩家远离则入睡。数值在 `EnemyParams.BlackBird`。
 - **加新敌人** = 一个 `.tscn` + 在 `data/enemies.json` 的 `enemies` 数组加一条(`id` / `name` / `scene` / `color`);`EnemySpawner.TYPES` 是运行时加载结果,不手改。spawner 随机取「地板格」(EMPTY 且正下方 SOLID)布点。
-- **数值表**:唯一真相源 = [`core/config/enemy_config.tres`](../../core/config/enemy_config.tres);schema / 默认值在 [`enemy_config.gd`](../../core/config/enemy_config.gd)(`class_name EnemyConfig extends Resource`)。访问入口仍是 [`EnemyParams`](../../core/config/enemy_params.gd),写法不变(`EnemyParams.FlyBird.wake_radius` / `EnemyParams.shared.hit_flash`)。
+- **数值表**:唯一真相源 = [`core/config/enemy_config.tres`](../../../core/config/enemy_config.tres);schema / 默认值在 [`enemy_config.gd`](../../../core/config/enemy_config.gd)(`class_name EnemyConfig extends Resource`)。访问入口仍是 [`EnemyParams`](../../../core/config/enemy_params.gd),写法不变(`EnemyParams.FlyBird.wake_radius` / `EnemyParams.shared.hit_flash`)。
   - ★ 字段是**扁平 + 前缀**(`shared_` / `jump_bird_` / `fly_bird_` / `black_bird_`),不是 4 个子 Resource —— GDScript 的**内层类不能当 `@export` 类型**(实测 `Export type can only be built-in, a resource, a node, or an enum`)。内层类只作命名空间,每个常量是 `static var x = _CFG.<扁平名>`。
   - ★ 不用 getter:实测 getter→Resource 每次读比 `const` 慢 13.8×,而这些值在敌人 `_physics_process` 里每帧读(`enemy_fly_bird.gd` 单文件 52 处)。故在类加载时读一次;代价 = 改 `.tres` 要重启进程生效。

@@ -7,7 +7,7 @@
 ; ★ 底板样式不再写在场景里(原先的 StyleBoxFlat 副本已删):由 ui/hud/team_hud.gd 的 _ready
 ;   调 UiFactory.hud_plate 统一给(C_PLATE + content margin 24/8)。C_PLATE 的唯一源仍只有
 ;   ui/factory/ui_factory.gd —— 场景结构上引用不到 GDScript const,所以样式不下沉进 .tscn。
-; ★ 版式 = HUD 例外(anchors + offset,口径同 pvp_hud.tscn / docs/eng/ui-design-system.md §5):
+; ★ 版式 = HUD 例外(anchors + offset,口径同 pvp_hud.tscn / docs/systems/presentation/ui-design-system.md §5):
 ;   居顶元素锚 top-center、右下延迟条锚 bottom-right;偏移全是锚点相对值(16 = SP_4、-24 = -MARGIN)。
 
 [node name="TeamHud" type="CanvasLayer"]

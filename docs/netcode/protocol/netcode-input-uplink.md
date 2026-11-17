@@ -3,7 +3,7 @@
 > ★★ **2026-11-01：输入上行改 60Hz —— 一包一条 tick 记录（`INPUT_BATCH_TICKS := 1`，28 B/包，`PROTO_VERSION 7→8`）**。原 30Hz 一包两条的合包被撤：它让服务器最多多等 1 tick、且重传一次要补两条记录；代价是包数×2、每包头 2 B（带宽 1.26→**1.68 KB/s/客户端**）。两端必须同 build。
 > ★ **2026-10-24 U1：上行去锁存（本地 60Hz 真输入；当时发包 30Hz、一包两条，已于 2026-11-01 改回 60Hz 一包一条）**。
 > 此前是"30Hz 采样 + 本地也锁存"（34 B/包）：本地手感与服务器输入都被锁在 30Hz；现在一条记录 = **1 个物理 tick**，本地预测按 60Hz 现读真输入，服务器**每 tick 消费一条**，两端逐 tick 同序。
-> 线格式唯一来源 = [`core/net/net_codec.gd`](../../core/net/net_codec.gd) 的 `INPUT_SCHEMA` + `encode_input` / `decode_input`；记录构造在 [`core/net/input_wire.gd`](../../core/net/input_wire.gd) 的 `pack_record`（`PacketInputSource.pack_record` 是同签名转发壳）。**`pack_pair` / `unpack_pair` 已于 2026-11-01 删除**（不再有合包/拆包）。
+> 线格式唯一来源 = [`core/net/net_codec.gd`](../../../core/net/net_codec.gd) 的 `INPUT_SCHEMA` + `encode_input` / `decode_input`；记录构造在 [`core/net/input_wire.gd`](../../../core/net/input_wire.gd) 的 `pack_record`（`PacketInputSource.pack_record` 是同签名转发壳）。**`pack_pair` / `unpack_pair` 已于 2026-11-01 删除**（不再有合包/拆包）。
 
 ## 1. 载荷
 
@@ -53,7 +53,7 @@ seq(4) | held0(2) | held1(2) | ax0(4) | ax1(4) | pressed0/1(各1) | released0/1(
 
 ## 3. 消费
 
-- [`core/net/net_bus.gd`](../../core/net/net_bus.gd) 的 RPC 入口先 `NetCodec.decode_input(payload)` 再 emit `input_received(caller, pkt)` —— **解码失败返回空 + 只报一次 + 不喂进模拟**（两端版本不一致时现场会看到一条 `push_error`，而不是静默抽搐）。
+- [`core/net/net_bus.gd`](../../../core/net/net_bus.gd) 的 RPC 入口先 `NetCodec.decode_input(payload)` 再 emit `input_received(caller, pkt)` —— **解码失败返回空 + 只报一次 + 不喂进模拟**（两端版本不一致时现场会看到一条 `push_error`，而不是静默抽搐）。
 - `server/match/match_host.gd::_on_input`：解码出的记录**直接入队**（一包一条，不再拆包）。
 - `_physics_process`：**每物理 tick 恰 `pop_front()` 一条**（世界/本人快照下行 60Hz（`SNAPSHOT_STRIDE=1`）、输入上行自 2026-11-01 起也是 60Hz —— 三者同频但互不依赖；队列有界 `[4,16]` 条 = 66~266ms 抖动缓冲）
 - `st` / `ct` 在 `_on_input` 里**先落位**再入队（不进队列、不参与模拟）：后到的覆盖先到的 —— 它们本来就只代表"最近一次"。`st` 的读者是命中回放（同文件 §3 后的命中判定路径），`ct` 无消费者。

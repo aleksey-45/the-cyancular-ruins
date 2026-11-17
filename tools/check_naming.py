@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# 命名与目录规范检查(防复发)。**规范 = 本文件的规则 A~F**(各规则函数的注释即规范原文;旧文案指向的 docs/naming-cleanup-plan.md 已于 2026-10-24 文档清理删除,别再引它)。
+# 命名与目录规范检查(防复发)。**规范 = 本文件的规则 A~G**(各规则函数的注释即规范原文;旧文案指向的 docs/naming-cleanup-plan.md 已于 2026-10-24 文档清理删除,别再引它)。
 #
 # 为什么需要它:命名整改最典型的失败模式是「整完就漂回去」—— `.tscn` 的 PascalCase 约定
 # 就是这么失效的(约定写着 Pascal,现实 51/56 是 snake,而没有任何东西会报错)。
@@ -10,10 +10,10 @@
 #   python tools/check_naming.py -v         # 连"已接受的偏差"也列出来
 #   python tools/check_naming.py --report   # 只报告不失败(摸底用)
 #   python tools/check_naming.py --self-test # 检查器**自己**的自测(见 self_test():每条都答得出
-#                                            #   "去掉什么它才会红";现覆盖规则 A、C、E)
+#                                            #   "去掉什么它才会红";现覆盖规则 A、C、E、G)
 #                                            #   —— 退出码 0 = 自测通过
 #
-# 检查五条:
+# 检查七条:
 #   A 目录名一律小写
 #   B `class_name` 转 snake 必须等于文件名(规范原文:「名字 = 类名转 snake」)
 #   C 文档里引用的文件/目录路径必须存在
@@ -22,6 +22,9 @@
 #   E `.ps1` / `.bat` 的 EOL 必须 CRLF;`.ps1` 还必须「纯 ASCII 或带 UTF-8 BOM」(`.bat` 的编码
 #     **不查** —— cmd 把非 ASCII 注释显示成乱码但语义无害,而现存 .bat 里就有中文)。
 #     这条是 2026-10-04 补的:规则文字原先写「`.ps1` 保持纯 ASCII」,比现实严、且没机制守(审计 §2.11)。
+#   F 入口文档的**预算**(AGENTS.md / README.md / RELEASE.md / docs/README.md 不许又长回去)
+#   G `docs/construction/` 的 AI 施工产物必须带「日期前缀 + 状态横幅」(2026-11-17 加;
+#     文件名叫 `YYYY-MM-DD-<slug>.md`,首行 `> 日期: … · 状态: 进行中|已完结|已废弃|已提升`)
 import os
 import re
 import shutil
@@ -41,18 +44,19 @@ PROJECT = os.path.dirname(TOOLS)
 #   2026-10-03 实测 5 条 A 类违规全来自这两个目录,与代码无关。
 SKIP_DIRS = {".godot", ".git", ".superpowers", ".claude", ".tmp", "builds", "backup",
              "releases", "_crashtest", "__pycache__", "docs", "assets"}
-# 文档路径检查的对象 = 仓库根三份 + `docs/eng/`(含 `debt/`)+ `tests/*.md`
+# 文档路径检查的对象 = 仓库根三份 + `docs/` 下**契约面**全部文档 + `tests/*.md`
 # ★ 2026-10-13 改(两步):
-#   ① **从写死的 11 个名字改成 glob**。原表在 `CLAUDE.md` 拆分后只覆盖 11 份,而 `docs/eng/`
-#      当时已有 23 份 ⇒ 另外 12 份(含 `comment-style.md`、`netcode-*.md`)的路径**无人守**;
-#      写死名字的表**每加一份文档就漏一份**(实测:`docs/eng/time.md` 新建当天被检查的次数是**零**)。
-#   ② 再纳入 `tests/*.md`。
-#      ★ 纳入当天就抓到**78 处相对链接回归**:那些内容从 `docs/eng/` 搬走时
-#      时,链接没跟着多一层 `../`(搬目录不搬链接 ⇒ 全 404,而此前没有任何检查会红)。
-# ★ **刻意不纳入**:`docs/` 顶层文档与任何归档目录 ——
-#   它们按定义是**时间点/历史**文档,里面"刻意的旧路径"是**记录**而不是错误(且都带时效横幅)。
-#   **代价照实写**:这些文件里的路径**没有机械守卫**;要查只能手工扫。想彻底解决得按"时效横幅"分档
-#   (有横幅 ⇒ 只报"未标已删"的),那是下一步,别顺手把它们全纳入 —— 会把 200+ 条历史记录判红。
+#   ① **从写死的 11 个名字改成 glob**。写死名字的表**每加一份文档就漏一份**
+#      (实测:某域文档新建当天被检查的次数是**零**)。
+#   ② 再纳入 `tests/*.md` —— ★ 纳入当天就抓到**78 处相对链接回归**
+#      (搬目录没搬链接 ⇒ 全 404,而此前没有任何检查会红)。
+# ★ 2026-11-17 目录重构后改为**按目录 glob**:`docs/eng/` 拆成
+#   `docs/{systems/{gameplay,presentation,editor},netcode/{protocol,rooms},workflow,design}`。
+#   重构当天同样被这条规则抓到 189 处链接要重算(2 层 → 3 层),可见它是这次搬迁的安全网。
+# ★ **刻意不纳入**:
+#   - `docs/construction/` —— AI 施工产物按定义是**时间点**文档,里面"刻意的旧路径"是**记录**
+#     而不是错误。它由**规则 G**(文件名日期 + 状态横幅)约束,不靠路径存在性。
+#   - 任何归档目录(历史计划 / 旧审计)—— 同理,"已删"的路径是记录。
 def _md_in(rel_dir: str) -> list[str]:
     d = os.path.join(PROJECT, rel_dir)
     if not os.path.isdir(d):
@@ -60,8 +64,14 @@ def _md_in(rel_dir: str) -> list[str]:
     return sorted("%s/%s" % (rel_dir, f) for f in os.listdir(d) if f.endswith(".md"))
 
 
+# 契约面文档目录(新增文档目录必须加进这张表,否则新目录里的路径无人守)
+DOC_DIRS = ["docs",
+            "docs/systems/gameplay", "docs/systems/presentation", "docs/systems/editor",
+            "docs/netcode/protocol", "docs/netcode/rooms",
+            "docs/workflow", "docs/design"]
+
 DOC_FILES = (["README.md", "AGENTS.md", "RELEASE.md"]
-             + _md_in("docs/eng") + _md_in("docs/eng/debt") + _md_in("tests"))
+             + [p for d in DOC_DIRS for p in _md_in(d)] + _md_in("tests"))
 # ★ 2026-11-17:入口只剩 `AGENTS.md` 一份。`CLAUDE.md` 生成副本与 `tools/sync_agents_md.py` 已删除
 #   (用户裁定:不再维护镜像;规则 F 的副本一致性检查随之退休)。
 # 被文档引用时检查存在性的扩展名
@@ -155,8 +165,9 @@ def check_class_names() -> None:
 
 
 def check_doc_paths() -> None:
-    # ★ 2026-10-03:`CLAUDE.md` 拆成索引之后,正文住 `docs/eng/*.md`。**分域文档必须继续被本检查覆盖**
+    # ★ 2026-10-03:`CLAUDE.md` 拆成索引之后,正文搬进独立目录。**分域文档必须继续被本检查覆盖**
     #   —— 否则"文档引用的路径必须存在"这条会在拆分那一刻**静默失效**(最常见的那种假绿)。
+    # ★ 2026-11-17:目录重构(docs/eng → docs/{systems,netcode,workflow,design}),覆盖面由 DOC_DIRS 决定。
     for doc in DOC_FILES:
         full = os.path.join(PROJECT, doc)
         if not os.path.exists(full):
@@ -462,26 +473,41 @@ def self_test() -> int:
     # ⑦ 规则 C(**纯函数**形态,2026-10-13 加):喂合成文本 —— 这是台账点名的欠账
     #    (纪律:"并配一条**能红**的自测")。
     #    每条都答得出"去掉什么才会红"。
-    want(len(doc_path_violations("见 `tests/nope_xyz.gd`", "docs/eng/x.md")) == 1,
+    want(len(doc_path_violations("见 `tests/nope_xyz.gd`", "docs/systems/gameplay/x.md")) == 1,
          "⑦-① 不存在的反引号路径没被报出 —— 删掉 doc_path_violations() 的反引号分支才会绿")
-    want(len(doc_path_violations("见 `tests/nope_xyz.gd:55`", "docs/eng/x.md")) == 1,
+    want(len(doc_path_violations("见 `tests/nope_xyz.gd:55`", "docs/systems/gameplay/x.md")) == 1,
          "⑦-② 带 `:55` 行号后缀的失效路径没被报出 —— 去掉剥 `:NN` 的那行就会红(2026-10-13 修的洞)")
-    want(len(doc_path_violations("见 `core/sim/world_rewind.gd`", "docs/eng/x.md")) == 0,
+    want(len(doc_path_violations("见 `core/sim/world_rewind.gd`", "docs/systems/gameplay/x.md")) == 0,
          "⑦-③ 真实存在的路径被误报")
-    want(len(doc_path_violations("[计划](../eng/tests.md)",
-                                 "docs/eng/x.md")) == 0,
+    want(len(doc_path_violations("[计划](../../workflow/tests.md)",
+                                 "docs/systems/gameplay/x.md")) == 0,
          "⑦-④ 正确的相对链接被误报 —— 链接目标按**所在目录**解析,别按仓库根")
-    want(len(doc_path_violations("[计划](eng/tests.md)",
-                                 "docs/eng/x.md")) == 1,
+    want(len(doc_path_violations("[计划](../workflow/tests.md)",
+                                 "docs/systems/gameplay/x.md")) == 1,
          "⑦-⑤ 少一层的相对链接(真 404,仓里犯过两次)没被报出 —— 去掉链接分支才会绿")
     want(len(doc_path_violations("`tests/manual/brawl_rollback_probe.gd`（已删·2026-10-09）",
-                                 "docs/eng/x.md")) == 0,
+                                 "docs/systems/gameplay/x.md")) == 0,
          "⑦-⑥ 已明说'已删'的行仍被判违规 —— 没有行级豁免会把 30 条正确的历史记录判红,逼人删信息")
-    want(len(doc_path_violations("`kh_l1/l3/l4_probe.tscn`", "docs/eng/x.md")) == 0,
+    want(len(doc_path_violations("`kh_l1/l3/l4_probe.tscn`", "docs/systems/gameplay/x.md")) == 0,
          "⑦-⑦ 首段不是真目录的简写被误报 —— '首段是目录'这条启发式该挡住的正是这一形态")
-    want(len(doc_path_violations("`tests/probe/kh_l1/l3/l4_probe.tscn`", "docs/eng/x.md")) == 1,
+    want(len(doc_path_violations("`tests/probe/kh_l1/l3/l4_probe.tscn`", "docs/systems/gameplay/x.md")) == 1,
          "⑦-⑧ 首段是真目录的简写没被报出 —— ★ 这是**有意**判违规的(歧义路径该改写成明确文件名);"
          "若哪天想放行它,必须先想清楚'歧义简写'与'真路径'怎么区分,别顺手把 ⑦-① 一起放行")
+
+    # ⑧ 规则 G(construction 出生证,2026-11-17 加)。每条都答得出"去掉什么才会红"。
+    ok_name = "docs/construction/review/2026-11-17-x-review.md"
+    ok_body = "# 标题\n\n> 日期: 2026-11-17 · 状态: 已提升 → docs/systems/gameplay/world.md\n\n正文\n"
+    want(construction_violations(ok_name, ok_body) == [],
+         "⑧-① 合规的施工产物被误报 —— 日期前缀 + 状态横幅都在")
+    want(len(construction_violations("docs/construction/review/x-review.md", ok_body)) == 1,
+         "⑧-② 缺 `YYYY-MM-DD-` 前缀没被报出 —— 删掉 G1 的 RE_CONSTRUCTION_NAME 分支才会绿")
+    want(len(construction_violations(ok_name, "# 标题\n\n没有横幅\n")) == 1,
+         "⑧-③ 缺状态横幅没被报出 —— 删掉 G2 的 RE_STATUS_BANNER 分支才会绿")
+    want(len(construction_violations(ok_name, "# 标题\n\n> 日期: 2026-11-17 · 状态: 随便写\n")) == 1,
+         "⑧-④ 状态值不在白名单没被报出 —— 放行任意状态等于没有状态")
+    want(len(construction_violations(ok_name, "> 日期: 2026-11-17 · 状态: 进行中\n\n# 后置标题\n")) == 0,
+         "⑧-⑤ 横幅在标题前被误报 —— 判据是'标题之后的首个非空行',不是'文件第一行'")
+
     if fails:
         print("— 自测失败 %d 条 —" % len(fails))
         for f in fails:
@@ -490,17 +516,73 @@ def self_test() -> int:
         return 1
     print("命名检查自测 OK(规则 A:顶层目录被产出 / 大写名会被报出 / SKIP_DIRS 与点开头目录照旧跳过;"
           "规则 C:失效反引号路径、带 `:NN` 后缀的、少一层的相对链接都会被报出,而已删行与'首段非目录'的简写不报;"
-          "规则 E:裸 LF 与非 ASCII 无 BOM 会被报出 / BOM+非 ASCII 与纯 ASCII+CRLF 不报 / .bat 不查编码)")
+          "规则 E:裸 LF 与非 ASCII 无 BOM 会被报出 / BOM+非 ASCII 与纯 ASCII+CRLF 不报 / .bat 不查编码;"
+          "规则 G:缺日期前缀 / 缺状态横幅 / 状态值不在白名单都会被报出,合规形态与'横幅在标题前'不报)")
     return 0
 
 
-# ── 规则 F:入口文档的**预算**与**副本一致**(2026-11-02)─────────────────────────────────
+# ── 规则 G:AI 施工产物必须自带"出生证"(2026-11-17)────────────────────────────────
+# 守的是什么:`docs/construction/` 下的 review / spec / plan 会**腐烂** —— 结论过期、引用失效,
+#   却还占着"文档"的名分被人当现行契约读。2026-10 整删 `docs/superpowers/` 就是这个病,
+#   而 2026-11-17 又有意识地恢复了这类产物 ⇒ 必须有机制,否则是同一个坑再走一遍。
+# 两条子规则,各答得出"去掉什么才会红":
+#   G1 文件名必须以 `YYYY-MM-DD-` 开头 ⇒ **去掉日期前缀就红**。
+#      日期让陈旧一眼可见,并保证目录内按时间排序。
+#   G2 `#` 标题之后的**首个非空行**必须是状态横幅 `> 日期: YYYY-MM-DD · 状态: …`
+#      ⇒ **删掉横幅就红**。状态取:`进行中` / `已完结` / `已废弃` / `已提升 → <路径>`;
+#      "已提升"是唯一能让人知道"结论已经进真相源、这份可以只当历史"的字段。
+# ★ 为什么这是文本检查而不是行为检查:它是**文档格式契约**(与规则 C 的链接检查同性质),
+#   不是 test-economy D6 所禁的"拿源码文本判代码形态"—— 判的对象是文档自己的元数据。
+CONSTRUCTION_ROOT = "docs/construction"
+CONSTRUCTION_EXEMPT = {"docs/construction/README.md"}
+RE_CONSTRUCTION_NAME = re.compile(r'^\d{4}-\d{2}-\d{2}-.+\.md$')
+RE_STATUS_BANNER = re.compile(
+    r'^>\s*日期[:：]\s*\d{4}-\d{2}-\d{2}\s*[·・]\s*状态[:：]\s*(进行中|已完结|已废弃|已提升)')
+
+
+def construction_violations(rel: str, text: str) -> list[str]:
+    """规则 G 的**纯函数**形态(供 --self-test 喂合成文本)。返回违规说明;空 = 合规。"""
+    out: list[str] = []
+    name = os.path.basename(rel)
+    if not RE_CONSTRUCTION_NAME.match(name):
+        out.append("G1 文件名不是 `YYYY-MM-DD-<slug>.md`: %s" % name)
+    banner = ""
+    for line in text.split("\n"):
+        s = line.strip()
+        if s and not s.startswith("#"):
+            banner = s
+            break
+    if not RE_STATUS_BANNER.match(banner):
+        out.append("G2 首行不是状态横幅(`> 日期: YYYY-MM-DD · 状态: 进行中|已完结|已废弃|已提升`): %s"
+                   % (banner[:60] if banner else "(空)"))
+    return out
+
+
+def check_construction() -> None:
+    root = os.path.join(PROJECT, CONSTRUCTION_ROOT)
+    if not os.path.isdir(root):
+        return
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        for fn in sorted(filenames):
+            if not fn.endswith(".md"):
+                continue
+            rel = os.path.relpath(os.path.join(dirpath, fn), PROJECT).replace("\\", "/")
+            if rel in CONSTRUCTION_EXEMPT:
+                continue
+            text = open(os.path.join(dirpath, fn), encoding="utf-8", errors="replace").read()
+            for v in construction_violations(rel, text):
+                _fail.append("%s —— %s" % (v, rel))
+
+
+# ── 规则 F:入口文档的**预算**(2026-11-02)──────────────────────────────────────────
 # 为什么要有这条:AGENTS.md 会被**注入每个会话的上下文**,它的长度是每次交互的固定税。
 # 它从 61 行涨到 117 行(11.9 KB)的过程里,涨的全是"历史叙述 / 可执行细节 / 会过期的清单" ——
 # 那三类东西的正确归宿是 registered-debt / 脚本头 / `--list`,不是入口文件。
-# ★ 射程(别读多):本规则只挡"又长回去了"和"副本漂了",**不判断内容对不对**;
+# ★ 射程(别读多):本规则只挡"又长回去了",**不判断内容对不对**;
 #   预算超了就说明该搬内容,而不是"把字号调小"。
-ENTRY_BUDGETS = {"AGENTS.md": 70, "README.md": 90, "RELEASE.md": 180, "docs/eng/README.md": 80}
+# ★ 2026-11-17:`docs/eng/README.md` → `docs/README.md`(目录重构后索引上提一层)。
+ENTRY_BUDGETS = {"AGENTS.md": 70, "README.md": 90, "RELEASE.md": 180, "docs/README.md": 90}
 
 
 def check_entry_docs() -> None:
@@ -512,7 +594,7 @@ def check_entry_docs() -> None:
         n = _line_count(rel)
         if n > cap:
             _fail.append("F %s 有 %d 行,超过预算 %d 行 ⇒ 把历史/细节搬去 "
-                         "docs/eng 或脚本头,别加长入口文件" % (rel, n, cap))
+                         "docs/<域> 或脚本头,别加长入口文件" % (rel, n, cap))
 
 
 def main() -> int:
@@ -523,6 +605,7 @@ def main() -> int:
     check_dirs()
     check_class_names()
     check_doc_paths()
+    check_construction()
     check_tscn()
     check_ps1_bat()
     check_entry_docs()
@@ -534,11 +617,11 @@ def main() -> int:
         print("— 违规 %d 条 —" % len(_fail))
         for f in _fail:
             print("  " + f)
-        print("\n命名检查 FAIL(规范 = 本文件的规则 A~F;"
+        print("\n命名检查 FAIL(规范 = 本文件的规则 A~G;"
               "确属有意偏离要加进 ACCEPTED_CLASS_FILES 并写明何时销)")
         return 0 if report_only else 1
-    print("命名检查 OK(目录小写 / class_name↔文件名 / 文档路径 / .tscn snake_case / "
-          ".ps1·.bat 的 CRLF 与 .ps1 编码 / 入口文档预算)")
+    print("命名检查 OK(目录小写 / class_name↔文件名 / 文档路径 / construction 出生证 / "
+          ".tscn snake_case / .ps1·.bat 的 CRLF 与 .ps1 编码 / 入口文档预算)")
     return 0
 
 

@@ -3,7 +3,7 @@ extends Control
 
 # P2 编辑器画布:把 EditorDoc 的地图渲染成一张与 canvas 等大的离屏图像(视口离屏层),并把鼠标事件
 # 翻译成子格坐标。**不实现工具语义** —— 工具在 editor_root.gd,本文件只发 pointer_* 事件。
-# 契约见 docs/eng/editor-godot.md §3。
+# 契约见 docs/systems/editor/editor-godot.md §3。
 # ★ 本脚本进客户端导出包 ⇒ 禁止 RegEx(裁剪模板 module_regex_enabled=false);本文件不需要正则。
 #
 # 渲染:层号倒序(背景 25% → 前景)合成到 RGBA8 Image;纹理层用 TerrainAtlas 的 16px 象限制图集

@@ -2,7 +2,7 @@
 
 > 2026-11-09 用户裁定：**路线 A，全部一起做掉** —— 用 Godot 原生方案重构全仓 UI，不引第三方 UI 框架。
 > 本文件是**设计系统唯一入口**；具体页面的版式现状仍见 [`ui.md`](ui.md)（迁移完成后逐步收编到本文件）。
-> 返回索引：[`README.md`](README.md)。
+> 返回索引：[`README.md`](../../README.md)。
 
 ## 0. 结论：为什么不用第三方「UI 框架」
 
@@ -35,7 +35,7 @@ ui/factory/ui_factory.gd   ui/theme/menu_theme.tres   ui/components/ui_kit.gd   
 
 ## 3. Theme 2.0（`ui/theme/menu_theme.tres`，生成物）
 
-由 [`tools/gen_menu_theme.gd`](../../tools/gen_menu_theme.gd) 生成；**改样式只改生成器再重跑**。
+由 [`tools/gen_menu_theme.gd`](../../../tools/gen_menu_theme.gd) 生成；**改样式只改生成器再重跑**。
 
 | 控件 | variation | 用途 |
 |---|---|---|

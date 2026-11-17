@@ -41,7 +41,7 @@ static var water_drown_damage_interval: float = _CFG.water_drown_damage_interval
 # ── 世界像素尺寸:从当前网格派生,零存储、零写点 ──
 # 网格已加载 ⇒ 网格尺寸;未加载(菜单态)⇒ 地图文件头。
 # ★ 旧实现是两个可写字段:`_ready()` 按地图文件写一次、`world_builder` 加载网格后**再写一次**,
-#   两者之间没有一致性断言(见 docs/eng/world.md「参数体系」)。派生之后这种失败模式不存在。
+#   两者之间没有一致性断言(见 docs/systems/gameplay/world.md「参数体系」)。派生之后这种失败模式不存在。
 # ★ 网格永远优先:它才是这一局真正在跑的东西,文件头只是"还没开局时"的推测值。
 # (这两个是 getter:它们依赖运行时网格状态,且读取点远少于 gravity0 那批。)
 static var MAP_WIDTH: int:

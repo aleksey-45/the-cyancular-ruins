@@ -1,7 +1,7 @@
 class_name MapFormatV4
 extends RefCounted
 
-# .cyrm v4 二进制格式的编解码(格式定义见 docs/eng/world.md 的「`.cyrm` v4」一节)。头 20 字节:magic CYRM /
+# .cyrm v4 二进制格式的编解码(格式定义见 docs/systems/gameplay/world.md 的「`.cyrm` v4」一节)。头 20 字节:magic CYRM /
 
 const MAGIC := "CYRM"
 const HEADER_SIZE := 20

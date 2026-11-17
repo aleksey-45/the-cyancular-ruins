@@ -28,7 +28,7 @@
 | **对抗**(`server/hosts/team_host.gd`) | 2~10 人两队(每队 1~5),两队各有 ≥1 人即开 | 每局先到 **总人数 + 3** 击杀(2 人 = 5 / 6 人 = 9 / 10 人 = 13)赢一局、三局两胜;局间**整队**换边;人数不等时少人方有比分/血量/伤害补贴 | 2s 后复活 |
 | **大乱斗**(`server/hosts/royale_host.gd`) | N 人**限时**死斗、散点出生 | 倒计时归零 ⇒ **击杀最多者胜**(并列 = 0);剩 <2 人提前终局 | 2s 后复活(复活点动态避开敌人) |
 
-★ 计分口径:**1v1 / 对抗 不分死因**(任一玩家倒地 ⇒ 对方得分);**大乱斗按 `last_damager` 归因**、无源死亡不计分。三个宿主都在 `server/match/match_host.gd` → `match_state.gd` 基类链上;细节见 [`docs/eng/modes.md`](docs/eng/modes.md)。
+★ 计分口径:**1v1 / 对抗 不分死因**(任一玩家倒地 ⇒ 对方得分);**大乱斗按 `last_damager` 归因**、无源死亡不计分。三个宿主都在 `server/match/match_host.gd` → `match_state.gd` 基类链上;细节见 [`docs/systems/gameplay/modes.md`](docs/systems/gameplay/modes.md)。
 
 ## 规则要点(PvP)
 
@@ -71,4 +71,4 @@ assets/   字体(含中文像素字体 unifont)与纹理
 tools/    发布 / 控制台脚本(build_release.py、make_server_console.py)+ check_naming.py(命名规范检查)+ gen_rpc_channel_table.py(RPC 通道表对账 `--check`)
 ```
 
-技术细节见 [`AGENTS.md`](AGENTS.md)(入口;分域正文按 [`docs/eng/README.md`](docs/eng/README.md) 的路由读)与 [`RELEASE.md`](RELEASE.md)。
+技术细节见 [`AGENTS.md`](AGENTS.md)(入口;分域正文按 [`docs/README.md`](docs/README.md) 的路由读)与 [`RELEASE.md`](RELEASE.md)。

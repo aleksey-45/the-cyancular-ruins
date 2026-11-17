@@ -5,7 +5,7 @@ extends RefCounted
 # ★ Godot COMPRESSION_DEFLATE = zlib RFC1950 = 浏览器 CompressionStream('deflate'),三种实现互通
 #   (互操作已在仓内实测,见 core/sim/map_format_v4.gd 头注释)。
 # ★ 输出上界必须作用在**实际输出**上:Godot decompress 的 buffer_size 就是它,等价 JS 的流式闸
-#   (头里的 body_size 是攻击者可控的声明,见 docs/eng/editor-core.md §3)。
+#   (头里的 body_size 是攻击者可控的声明,见 docs/systems/editor/editor-core.md §3)。
 # ★ 失败一律返回 {ok:false, error};GDScript 没有异常,也不拿 push_error 当失败路径。
 
 const COMPRESSION_MODE: int = FileAccess.COMPRESSION_DEFLATE

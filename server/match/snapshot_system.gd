@@ -59,7 +59,7 @@ func send_own() -> void:
 		var c2 := {}
 		if p.has_method("capture_state"):
 			c2 = p.capture_state()
-		# `q` = 本 role 此刻已到达但还没被消费的输入记录数(判据与口径见 docs/eng/netcode-snapshots.md §6)。
+		# `q` = 本 role 此刻已到达但还没被消费的输入记录数(判据与口径见 docs/netcode/protocol/netcode-snapshots.md §6)。
 		var q: Array = _state._pending_input.get(role, [])
 		var obytes := NetCodec.encode_own({
 			"ack_seq": _state._ack_seq.get(role, 0), "q": q.size(), "c2": c2, "tick": _state._srv_tick,

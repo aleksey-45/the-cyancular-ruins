@@ -143,7 +143,7 @@ func tick(delta: float, tm: float) -> void:
 	# ④ 爆炸击退单独走 move_and_collide(带碰撞),不污染 velocity
 	body.combat.apply_knock(delta)
 
-	# ⑤ 必须在 move_and_slide() 之前取值;水中/攀爬中置 0 是设计取舍(见 docs/eng/player.md)
+	# ⑤ 必须在 move_and_slide() 之前取值;水中/攀爬中置 0 是设计取舍(见 docs/systems/gameplay/player.md)
 	_pre_move_vy = 0.0 if (in_water or latched) else body.velocity.y
 	body.move_and_slide()
 	if _step_up_snap:

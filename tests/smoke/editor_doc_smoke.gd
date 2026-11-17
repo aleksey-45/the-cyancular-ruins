@@ -4,7 +4,7 @@ extends SceneTree
 # 守护 core/editor/editor_doc.gd:环面归一化 / Bresenham / 4 邻接油漆桶 / 稀疏撤销栈 / 颜色层 u32 路径 /
 # 信号 / 校验与编码接线;P2 后置项:选区 / 剪贴板(纹理↔颜色互斥) / 镜像 / 颜色层渐变 / meta 可视化编辑 /
 # 选区整块移动 / meta 单条改位置。
-# 契约 = docs/eng/editor-godot.md §4 + .tmp/p2-extras-contract.md §1。
+# 契约 = docs/systems/editor/editor-godot.md §4 + .tmp/p2-extras-contract.md §1。
 #
 # 去掉什么会红:
 #   ① new_map 建出的 7 层形状(0-2 tex、3 color、4-6 null)或尺寸不对 ⇒ 红。

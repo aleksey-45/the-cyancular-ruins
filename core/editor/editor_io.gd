@@ -1,7 +1,7 @@
 class_name EditorIO
 extends RefCounted
 
-# P2 读写门面:磁盘字节 ↔ 地图字典(契约见 docs/eng/editor-godot.md §5)。
+# P2 读写门面:磁盘字节 ↔ 地图字典(契约见 docs/systems/editor/editor-godot.md §5)。
 # ★ 读入口只有一个:二进制 v4 / v3 文本 / 旧字母格式都在这里分流,且**读成功后必须** EditorLegacy.migrate_map
 #   (二进制分支)—— 与 JS 的四个读入口同规:迁移只发生在读时,内存即干净,写盘永远写迁移后的图。
 #   文本分支走 EditorV3.parse_v3_text(它自己认旧字母格式)+ EditorV3.migrate_v3(拍 desc 时已迁 legacy id)。

@@ -40,7 +40,7 @@ var _replica_set: ReplicaSet = null
 
 
 var _ping_acc := 0.0
-# C2 客户端预测:见 core/prediction_rollback.gd 与 docs/eng/netcode-snapshots.md。
+# C2 客户端预测:见 core/prediction_rollback.gd 与 docs/netcode/protocol/netcode-snapshots.md。
 
 # 受击事件队列:网络回调跑在 idle 帧,而注入要重放(内部 move_and_slide)—— 物理帧外 move_and_slide 位移恒 0(实测),
 # 故回调只入队,统一在下一个物理帧开头注入(反馈最多晚 1 帧 ≈16.7ms)。

@@ -57,7 +57,7 @@ gamelogs/
 .zcode/
 .mimosa/
 
-# 会话运行账本(逐任务 brief/report/进度;入库的 spec 与 plan 在 docs/superpowers/,别混淆)
+# 会话运行账本(逐任务 brief/report/进度;入库的 spec/review/plan 在 docs/construction/,别混淆)
 # 原先只靠 .superpowers/.gitignore 里那行 `*` 生效 —— 规则藏在一个不入库的嵌套文件里,
 # 从根 .gitignore 上看不出来 ⇒ 挪到这里当**唯一可发现的落点**(嵌套那两份留着不影响)。
 .superpowers/

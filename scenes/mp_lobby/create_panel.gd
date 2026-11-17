@@ -15,7 +15,7 @@ func setup(p: MpLobby, f: OptionsForm) -> void:
 
 
 func register(root: Node) -> void:
-	# ★ 压暗罩铺满整页 + mouse_filter = STOP(拦下背后的点击 = 点弹层外不会误触房卡)在骨架里;它的颜色是调色板纪律的已知例外(全屏遮罩不属于 C_PLATE 那条「HUD 底板 0.1」家族,见 docs/eng/ui.md):Color(0,0,0,0.55) 与 ui/screens/ma。
+	# ★ 压暗罩铺满整页 + mouse_filter = STOP(拦下背后的点击 = 点弹层外不会误触房卡)在骨架里;它的颜色是调色板纪律的已知例外(全屏遮罩不属于 C_PLATE 那条「HUD 底板 0.1」家族,见 docs/systems/presentation/ui.md):Color(0,0,0,0.55) 与 ui/screens/ma。
 	mask = root.get_node("%CreateMask") as ColorRect
 	mask.visible = false
 	panel = root.get_node("%CreatePanel") as PanelContainer

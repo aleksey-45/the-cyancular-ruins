@@ -17,7 +17,7 @@ const ROW_H := 60
 const ROW_GAP := 8
 const ROOM_ROWS_MAX := 6
 const MAP_UNITS := 15
-# 名单:行高 / 可见行数上限 / 名字定宽单位(★ 与 docs/eng/ui.md 的 HUD 节同口径:14 单位 @ 32 号;不抄行号)。
+# 名单:行高 / 可见行数上限 / 名字定宽单位(★ 与 docs/systems/presentation/ui.md 的 HUD 节同口径:14 单位 @ 32 号;不抄行号)。
 const ROSTER_ROW_H := 44
 const ROSTER_ROWS_MAX := 5
 const ROSTER_UNITS := 14

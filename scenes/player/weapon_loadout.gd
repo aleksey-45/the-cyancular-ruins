@@ -315,7 +315,7 @@ func reset_mag_state() -> void:
 
 
 # ★ 原 refill_current_weapon() / _refill_mag() 已删除:唯一理由是 _refill_mag 必须 deferred 并排在 _restore_mag 之后,而那条帧末写回已随 pending_mag 一起删掉;全仓也没有生产调用点(复活满弹由 Level0.restart_single 统一重置背包)。
-# ⚠ 删掉 _restore_mag 不等于弹数有了常规纠正路径:_close_enough 仍不比 mag,sync_soft_state 的指纹只比结构 ⇒ 非回滚来源的弹数分歧仍会静默保留(见 docs/eng/weapons.md)。
+# ⚠ 删掉 _restore_mag 不等于弹数有了常规纠正路径:_close_enough 仍不比 mag,sync_soft_state 的指纹只比结构 ⇒ 非回滚来源的弹数分歧仍会静默保留(见 docs/systems/gameplay/weapons.md)。
 
 
 func current_weapon() -> WeaponBase:

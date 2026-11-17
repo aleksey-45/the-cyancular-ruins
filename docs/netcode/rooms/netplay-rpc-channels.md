@@ -1,6 +1,6 @@
 # 联机:RPC 通道划分表（★ 单一来源）
 
-通道号以本表为准;代码里的 `@rpc("any_peer", "call_remote", "reliable", N)` 按本表对账。★ **单一真相源 / 对账入口 = `tools/gen_rpc_channel_table.py --check`**:扫两个 autoload 的行首 `@rpc(...)` + 紧随的 `func 名(`,与本表逐项比对;漂移逐项打印差异 + exit 1,一致打印 `OK` + exit 0;`--write` 按代码幂等重写表的 RPC 列与合计数字。原 `-s` 文本对账守卫(`rpc_channel_contract_smoke`)随 2026-10-24 默认批削减删除,由本工具接管(历史削减记录见 [`registered-debt.md`](registered-debt.md));它只核文本形态,不证明运行期派发(保证边界见「声明与对账」)。
+通道号以本表为准;代码里的 `@rpc("any_peer", "call_remote", "reliable", N)` 按本表对账。★ **单一真相源 / 对账入口 = `tools/gen_rpc_channel_table.py --check`**:扫两个 autoload 的行首 `@rpc(...)` + 紧随的 `func 名(`,与本表逐项比对;漂移逐项打印差异 + exit 1,一致打印 `OK` + exit 0;`--write` 按代码幂等重写表的 RPC 列与合计数字。原 `-s` 文本对账守卫(`rpc_channel_contract_smoke`)随 2026-10-24 默认批削减删除,由本工具接管(历史削减记录见 [`registered-debt.md`](../../registered-debt.md));它只核文本形态,不证明运行期派发(保证边界见「声明与对账」)。
 
 ## 映射
 `modules/enet/enet_multiplayer_peer.cpp::put_packet`:

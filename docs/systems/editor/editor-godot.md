@@ -9,14 +9,14 @@
 
 | 层 | 文件 | 职责 |
 |---|---|---|
-| 文档模型 | [`core/editor/editor_doc.gd`](../../core/editor/editor_doc.gd) | 地图字典 + 当前层 + 稀疏 cells 撤销栈 + 环面归一化 + `changed`/`structure_changed`/`history_changed` 信号；meta 单项删除/改敌人类型/扁平列表；纯逻辑、可 `-s` 测 |
-| 读写门面 | [`core/editor/editor_io.gd`](../../core/editor/editor_io.gd) | `open_path`（v4 二进制 / v3 文本 / 旧字母格式 + 读时 legacy 迁移）、`save_path`（校验 + 编码 + 写盘）、`default_target`、`list_maps` |
-| 画布 | [`scenes/editor/editor_canvas.gd`](../../scenes/editor/editor_canvas.gd) | 视口离屏层合成、相机（origin/zoom）、`screen_to_subcell`、层可见/压暗、网格与画刷框、`pointer_*` 信号；**手形平移 / 移动工具**（拖选区发几何信号、meta 标记命中测试与拖拽预览）、光标形状；**meta 模式抑制画刷框 / 渐变方向预览 / 小地图 + 右键跳转 / `center_on_subcell`** |
-| 真渲染预览 | [`scenes/editor/editor_preview.gd`](../../scenes/editor/editor_preview.gd) | 复用游戏管线（TerrainAtlas tileset + ParallaxBg + PostProcess）的预览；三个 SubViewport 合成后贴回画布区域 |
-| UI 场景 | [`scenes/editor/editor_root.tscn`](../../scenes/editor/editor_root.tscn) | **全部静态 UI**：顶栏（标题/`FileMenu`·`EditMenu`/**保存**/撤销/重做/**文件名+未保存标记**/**跳转**/**帮助**/视图/预览/返回）· **左栏**（工具网格 10 键 + 画刷 + 颜色/纹理调色板**按层渐进披露** + 操作提示）· 中 `CanvasHost`+`EditorCanvas` · **右栏**（`LayersCard` 7 层常驻 + 2 Tab：**选区 / 地图事件**、校验消息；meta 列表可单条删除/改类型）· 状态栏（消息 + 信息 + 缩放控件）；根挂 `ui/theme/menu_theme.tres`，功能节点 `unique_name_in_owner` |
-| 场景根逻辑 | [`scenes/editor/editor_root.gd`](../../scenes/editor/editor_root.gd) | 装配 + 接线 + 公开 API（`open_path`/`save_to`/`validate`/`export_to`/`export_and_load`/`get_doc`/`get_editor_canvas`/`set_preview`/`current_path`/`new_map`）；撤销/重做可用态、工具快捷键、状态栏缩放、按层适用性/渐进披露、meta 列表、校验自动切 Tab；不建静态控件 |
-| 工具层 | [`scenes/editor/editor_tools.gd`](../../scenes/editor/editor_tools.gd) | 工具状态（含手形/移动）+ 画布指针 → `EditorDoc` 写入 + 选区拖拽 + meta 放置/拖动落点 + 敌人类型 + 渐变选区限制；只发信号（`message`/`tool_changed`/`paint_desc_changed`/`color_changed`/`meta_mode_changed`/`selection_changed`） |
-| 命令层 | [`scenes/editor/editor_actions.gd`](../../scenes/editor/editor_actions.gd) | 文件/编辑命令 + `ConfirmationDialog` 弹层内容（新建/打开/保存为/导出/**按格跳转**/**快捷键帮助**）+ **未保存改动拦截**（新建/打开/返回/关窗前确认）；读写仍走 `EditorIO` 与 root 公开 API |
+| 文档模型 | [`core/editor/editor_doc.gd`](../../../core/editor/editor_doc.gd) | 地图字典 + 当前层 + 稀疏 cells 撤销栈 + 环面归一化 + `changed`/`structure_changed`/`history_changed` 信号；meta 单项删除/改敌人类型/扁平列表；纯逻辑、可 `-s` 测 |
+| 读写门面 | [`core/editor/editor_io.gd`](../../../core/editor/editor_io.gd) | `open_path`（v4 二进制 / v3 文本 / 旧字母格式 + 读时 legacy 迁移）、`save_path`（校验 + 编码 + 写盘）、`default_target`、`list_maps` |
+| 画布 | [`scenes/editor/editor_canvas.gd`](../../../scenes/editor/editor_canvas.gd) | 视口离屏层合成、相机（origin/zoom）、`screen_to_subcell`、层可见/压暗、网格与画刷框、`pointer_*` 信号；**手形平移 / 移动工具**（拖选区发几何信号、meta 标记命中测试与拖拽预览）、光标形状；**meta 模式抑制画刷框 / 渐变方向预览 / 小地图 + 右键跳转 / `center_on_subcell`** |
+| 真渲染预览 | [`scenes/editor/editor_preview.gd`](../../../scenes/editor/editor_preview.gd) | 复用游戏管线（TerrainAtlas tileset + ParallaxBg + PostProcess）的预览；三个 SubViewport 合成后贴回画布区域 |
+| UI 场景 | [`scenes/editor/editor_root.tscn`](../../../scenes/editor/editor_root.tscn) | **全部静态 UI**：顶栏（标题/`FileMenu`·`EditMenu`/**保存**/撤销/重做/**文件名+未保存标记**/**跳转**/**帮助**/视图/预览/返回）· **左栏**（工具网格 10 键 + 画刷 + 颜色/纹理调色板**按层渐进披露** + 操作提示）· 中 `CanvasHost`+`EditorCanvas` · **右栏**（`LayersCard` 7 层常驻 + 2 Tab：**选区 / 地图事件**、校验消息；meta 列表可单条删除/改类型）· 状态栏（消息 + 信息 + 缩放控件）；根挂 `ui/theme/menu_theme.tres`，功能节点 `unique_name_in_owner` |
+| 场景根逻辑 | [`scenes/editor/editor_root.gd`](../../../scenes/editor/editor_root.gd) | 装配 + 接线 + 公开 API（`open_path`/`save_to`/`validate`/`export_to`/`export_and_load`/`get_doc`/`get_editor_canvas`/`set_preview`/`current_path`/`new_map`）；撤销/重做可用态、工具快捷键、状态栏缩放、按层适用性/渐进披露、meta 列表、校验自动切 Tab；不建静态控件 |
+| 工具层 | [`scenes/editor/editor_tools.gd`](../../../scenes/editor/editor_tools.gd) | 工具状态（含手形/移动）+ 画布指针 → `EditorDoc` 写入 + 选区拖拽 + meta 放置/拖动落点 + 敌人类型 + 渐变选区限制；只发信号（`message`/`tool_changed`/`paint_desc_changed`/`color_changed`/`meta_mode_changed`/`selection_changed`） |
+| 命令层 | [`scenes/editor/editor_actions.gd`](../../../scenes/editor/editor_actions.gd) | 文件/编辑命令 + `ConfirmationDialog` 弹层内容（新建/打开/保存为/导出/**按格跳转**/**快捷键帮助**）+ **未保存改动拦截**（新建/打开/返回/关窗前确认）；读写仍走 `EditorIO` 与 root 公开 API |
 
 ★ 纯逻辑（编解码 / 校验 / 文档 / 读写）全在 `core/editor/`；`scenes/editor/` 只做 UI 与接线 —— 场景探针不需要点按钮就能验完整链路。
 
@@ -119,8 +119,8 @@
 | `tests/probe/editor_scene_probe.tscn` | `EDITOR SCENE PROBE: ALL-OK(60 条断言)` | 60 | 真实例化场景：打开 `maps/newfactory.cyrm` → 改一格 → undo/redo → 保存 → 重开 → 再保存**逐字节相等**；P3 导出并加载的 `Settings.sp_map_path`/`map_file_path()`；后置项：选区/复制/粘贴/镜像/渐变/meta/预览开关；**⑦ UI 行为：撤销按钮点击 + 笔画收尾后立即可用、工具快捷键（含 Ctrl+V/Shift+H 冲突）、按层渐进披露与吸管分语义、当前层眼睛禁用、meta 模式随工具退出、敌人类型合法 + 列表删除、保存按钮写盘、无选区渐变拒绝、无溢出**；**⑧ 未保存拦截（新建 / 确认 / 干净 / 关窗）**；**⑨ 移动工具端到端** |
 | `tests/probe/editor_preview_probe.tscn` | `EDITOR PREVIEW PROBE: ALL-OK(21 条断言)` | 21 | 真渲染预览的结构统计（773 瓦片 / 背景 1 层 / post 存在）/ 相机口径 / 显隐切换 / refresh 幂等 / doc 信号接线 |
 
-> ★ 本轮新增断言按 [`test-economy.md`](test-economy.md) 只留「去掉实现会红、且指向具体缺陷」的行为/逻辑断言；
-> 版式数值、控件存在性、宽高、菜单项条数等**不写自动化守卫**（配色/版式/观感按 [`tests.md`](tests.md) 只能人眼）。
+> ★ 本轮新增断言按 [`test-economy.md`](../../workflow/test-economy.md) 只留「去掉实现会红、且指向具体缺陷」的行为/逻辑断言；
+> 版式数值、控件存在性、宽高、菜单项条数等**不写自动化守卫**（配色/版式/观感按 [`tests.md`](../../workflow/tests.md) 只能人眼）。
 > 场景探针 ⑦ 组因此从原来的「结构快照」缩成行为组；布局改动靠截图人工验收。
 
 - 产品侧另有两条**真导出**才能回答的检查（不在默认批里，跑在 `tools/build_release.py`，见 §10）。
@@ -128,7 +128,7 @@
 - 场景探针就是 P2 的验收口径（`editor_scene_probe` 的 ② 组）；判据一律 grep 判词，退出码不是判据。
 - 跑法：`Godot --headless --path . -s res://tests/smoke/<支>.gd`（冒烟）、
   `Godot --headless --path . --quit-after 3600 res://tests/probe/<支>.tscn`（场景探针）；
-  默认批 `bash tests/run_all.sh` 会自动收录（`tests/smoke/*.gd` 与 `tests/probe/*.tscn` 两个 glob），跑批纪律见 [`tests/README.md`](../../tests/README.md)。
+  默认批 `bash tests/run_all.sh` 会自动收录（`tests/smoke/*.gd` 与 `tests/probe/*.tscn` 两个 glob），跑批纪律见 [`tests/README.md`](../../../tests/README.md)。
 
 ## 8. 已知边界（照实写）
 
@@ -162,7 +162,7 @@
 
 `level_editor/`（浏览器编辑器 146 个跟踪文件）与其四份旧文档（`editor-ui/render/io/server.md`）已删除；
 `.cyrm` 只剩 GDScript 一份实现。编辑器后置项已在 §11 补齐；P6 的档 3 评审
-（地图格式写盘路径 / forced map 影响面 / 两份导出的裁剪面）结论写在当次提交信息与 `docs/eng/editor-core.md`。
+（地图格式写盘路径 / forced map 影响面 / 两份导出的裁剪面）结论写在当次提交信息与 `docs/systems/editor/editor-core.md`。
 
 ## 10. 两份导出（P5，2026-11-09）
 
@@ -180,7 +180,7 @@
     `[editor] feature=false entry=false`。
 - 资源层「服务端 pck 不含编辑器」只有真导出验得了（推理不可靠）：可用 `Godot --headless --export-pack <preset> <out.pck>`
   后二进制 grep `scenes/editor/` / `core/editor/`（P5 落地时实测：客户端各 11/70 条，服务端 0 条）。
-- 构建/冒烟/归档的完整流程见 [`RELEASE.md`](../../RELEASE.md)「两份产物」块；版本号仍唯一来源 `project.godot`。
+- 构建/冒烟/归档的完整流程见 [`RELEASE.md`](../../../RELEASE.md)「两份产物」块；版本号仍唯一来源 `project.godot`。
 
 ## 11. 后置项补全（2026-11-09）
 
@@ -224,7 +224,7 @@
 - **守卫**：`editor_doc_smoke 183→199`（新 API 核心逻辑 + meta 单项删除/改类型/扁平列表）、`editor_canvas_probe 48→56`
   （手形 / 移动 delta 与 clamp / meta 命中 / meta 模式 / 渐变预览 / 小地图与跳转）、`editor_scene_probe 50→60`
   （UI 行为 + 未保存拦截 + 移动工具端到端 + 按层渐进披露 + meta 列表 + 保存按钮）；`ui_layout_probe` 54 不变。
-  按 [`test-economy.md`](test-economy.md) 删掉了本轮一度加的版式/控件存在性/逐事件点断言（宽度、Tab 细节、图层常驻、
+  按 [`test-economy.md`](../../workflow/test-economy.md) 删掉了本轮一度加的版式/控件存在性/逐事件点断言（宽度、Tab 细节、图层常驻、
   控件条数、菜单项条数、按钮接线存在性、`history_changed` 每事件一条等）：这些答不清「去掉什么它才会红」或属于
   「版式不写」；布局观感靠截图人工验收。
 - **非 headless 人工验收**：`python tools/ui_shots.py editor_root --size 1920x1440`（只截编辑器页，弹窗；不入默认批）。

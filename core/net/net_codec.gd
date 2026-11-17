@@ -187,7 +187,7 @@ static func encode_own(own: Dictionary) -> PackedByteArray:
 	i += 4
 	out.encode_u32(i, int(own.get("ack_seq", 0)))
 	i += 4
-	# 服务器侧该 role 的待消费队列深度(判据用:见 docs/eng/netcode-snapshots.md §6)。
+	# 服务器侧该 role 的待消费队列深度(判据用:见 docs/netcode/protocol/netcode-snapshots.md §6)。
 	out[i] = int(own.get("q", 0)) & 0xFF
 	i += 1
 	i = _write_own_body(out, i, c2)

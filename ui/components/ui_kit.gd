@@ -2,7 +2,7 @@ class_name UiKit
 extends RefCounted
 
 # UI 组件库 v1 —— 只做**结构**(容器 + token),不做样式(样式全在 Theme 2.0 / UiFactory 的 type variations)。
-# 设计系统见 docs/eng/ui-design-system.md;契约 .tmp/ui-system-contract.md §4。
+# 设计系统见 docs/systems/presentation/ui-design-system.md;契约 .tmp/ui-system-contract.md §4。
 # ★ 页面里禁止:自己 new StyleBoxFlat、add_theme_stylebox_override(动态状态色除外)、position=/size=、
 #   手写 Color(...) 字面量。用本文件 + UiFactory token。
 # ★ 本文件与具体页面无关:不引用任何场景/autoload;纯构造,方便在 `-s` 里独立测。

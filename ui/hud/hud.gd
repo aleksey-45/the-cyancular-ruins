@@ -2,7 +2,7 @@ class_name Hud
 extends CanvasLayer
 
 const LAYER := 129  # 在 post-process(128)之上,不受桶形/CRT/变灰影响
-# ★ HUD 坐标纪律(docs/eng/ui-design-system.md §5):左上元素锚 top-left、底部元素锚 bottom-left、
+# ★ HUD 坐标纪律(docs/systems/presentation/ui-design-system.md §5):左上元素锚 top-left、底部元素锚 bottom-left、
 #   居顶元素锚 top-center;像素边距一律 UiFactory.MARGIN / SP_* —— 禁止用 1920/1440 反推坐标。
 const SEG_W := 5        # 每根竖条宽
 const SEG_H := 32       # 竖条高

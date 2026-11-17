@@ -2,7 +2,7 @@ class_name WeaponSlots
 extends Control
 
 # 左下角容量格子(4×2,三态色)。HUD 例外:用 anchors + UiFactory.MARGIN / SP_* 表达位置,
-# 不再从逻辑分辨率反推坐标(契约 .tmp/ui-system-contract.md §5 / docs/eng/ui-design-system.md §5)。
+# 不再从逻辑分辨率反推坐标(契约 .tmp/ui-system-contract.md §5 / docs/systems/presentation/ui-design-system.md §5)。
 
 const COLS := 4
 const CELL := 22.0   # 格子边长(像素档;4×2 布局与格子大小是设计尺寸,不 token 化)

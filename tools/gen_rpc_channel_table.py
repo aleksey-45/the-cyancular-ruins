@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # RPC 通道表 ↔ 代码声明的对账 / 生成工具(单一真相源入口)。
 #
-# 为什么需要它:`docs/eng/netplay-rpc-channels.md` 那张通道表是**手抄 markdown**,刷新靠人眼。
+# 为什么需要它:`docs/netcode/rooms/netplay-rpc-channels.md` 那张通道表是**手抄 markdown**,刷新靠人眼。
 # 历史上已经漂过:DD-01 记录「代码 61 条 / 文档 60 条,通道 3 漏 explosion」;而 2026-10-24 的
 # 默认批削减把唯一一条文本对账 -s 守卫(`rpc_channel_contract_smoke`)删掉后,漂移彻底没人报了。
 # 本工具按同款口径(`tools/gen_menu_theme.gd`:只校验不写盘、
@@ -12,7 +12,7 @@
 #   python tools/gen_rpc_channel_table.py --write     # 按代码幂等重写文档的「RPC 列 / 合计数字 / 作用域数字」
 #   python tools/gen_rpc_channel_table.py --self-test # 解析/对账纯函数的自测(合成文本,不写盘)
 #
-# ★ 扫描口径(改之前先读 docs/eng/netplay-rpc-channels.md 的「声明与对账」):
+# ★ 扫描口径(改之前先读 docs/netcode/rooms/netplay-rpc-channels.md 的「声明与对账」):
 #   - 只认**行首** `@rpc(`:注释里的 @rpc 不算;缩进的 @rpc 会被**点名报错**(否则会被静默漏计);
 #   - 通道号 = 四个参数里最后那个 int;要求四参全写(三参把 int 放第 3 位引擎会拒,文本上看不出);
 #   - `@rpc` 行与 `func 名(` 行之间允许空行;中间夹别的行就红(认不出不猜)。
@@ -34,7 +34,7 @@ if hasattr(sys.stdout, "reconfigure"):
 TOOLS = os.path.dirname(os.path.abspath(__file__))
 PROJECT = os.path.dirname(TOOLS)
 NET_FILES = ("core/net/net_bus.gd", "core/net/net_bus_ext.gd")
-DOC = "docs/eng/netplay-rpc-channels.md"
+DOC = "docs/netcode/rooms/netplay-rpc-channels.md"
 TABLE_CHANNELS = (0, 1, 2, 3)
 
 _RPC_LINE = re.compile(r"^@rpc\s*\((.*)\)\s*(?:#.*)?$")
