@@ -45,12 +45,12 @@ python tools/build_release.py
 
 ## 测试
 
-无单测框架;`tests/` 分三档:冒烟(`-s`)/ 场景探针(`.tscn`)/ 真链路(`.sh`)。清单、逐支判词与已知边界见 [`tests/README.md`](tests/README.md)。
+无单测框架;判据 = 脚本自打的判词文本。三桶 `tests/unit/`(`-s`)· `tests/scene/`(`.tscn`)· `tests/e2e/`(真链路 `.sh`);清单、逐支判词、已知边界以 [`tests/README.md`](tests/README.md) 为准,写法见 [`docs/workflow/test-authoring.md`](docs/workflow/test-authoring.md)。
 
 ```bash
-source tests/env.sh && "$GODOT" --headless --path . -s res://tests/unit/net_wire_smoke.gd  # 单支冒烟
-bash tests/run_all.sh   # headless 默认批(不碰 7777、不弹窗;--list 看清单 / 排除理由 / 已知红基线)
-bash tests/run_real.sh  # 真链路批(大厅 → worker → 建房 → 开局;占 7777)
+bash tests/run_all.sh --list   # 当前跑哪些 / GATE 闸值 / 排除理由(实时读数以此为准)
+bash tests/run_all.sh          # 默认批:不碰 7777、不弹窗
+bash tests/run_real.sh         # 真链路批:占 7777 + 拉子进程,先让用户认领
 ```
 
 > 用 4.7.1 **console** 版跑;**跑测试前先问用户**,分工与跑批纪律见 [`AGENTS.md`](AGENTS.md)。
@@ -59,16 +59,18 @@ bash tests/run_real.sh  # 真链路批(大厅 → worker → 建房 → 开局;�
 
 ```
 scenes/   场景(页面与对局场景;.tscn 与脚本一律 snake_case)
-core/     autoload + 静态工具(参数 / 地图格式 / 寻路 / 砖块 / 水 / 联机…);sim/ net/ config/ present/ 四层
+core/     autoload + 静态工具(参数 / 地图格式 / 寻路 / 砖块 / 水 / 联机…);sim/ net/ config/ present/ editor/ mp/ ui/ 分域
 server/   服务端:大厅 + 房间(lobby/)+ 每局权威(match/ · hosts/)+ AI 补位(ai/)
 ui/       跨场景 UI(factory/ 工厂与唯一调色板、hud/ HUD、screens/ 结算页等页面)
-tests/    冒烟 / 探针 / 真链路(smoke/ · probe/ · harness/ · scripts/,分层见 tests/README.md)
+tests/    单元 / 场景 / 端到端(unit/ · scene/ · e2e/ · harness/ · lib/ · fixtures/,分层见 tests/README.md)
 scenes/editor/  地图编辑器场景(画布/7 层/工具/导出);入口只在导出的客户端里出现
 core/editor/    .cyrm 编辑器纯逻辑(编解码/校验/v3 迁移;游戏侧格式层在 core/sim/)
 maps/     .cyrm 地图(v4 二进制)
 data/     tile_defs.json / enemies.json / weapons.json(与编辑器共享的属性表、敌人注册表与武器注册表)
 assets/   字体(含中文像素字体 unifont)与纹理
-tools/    发布 / 控制台脚本(build_release.py、make_server_console.py)+ check_naming.py(命名规范检查)+ gen_rpc_channel_table.py(RPC 通道表对账 `--check`)
+tools/    发布 / 控制台脚本(build_release.py、make_server_console.py)+ check_naming.py(命名/文档/EOL)+ check_architecture.py(依赖方向 R1–R5)+ gen_rpc_channel_table.py(RPC 通道表对账 `--check`)
 ```
+
+> 目录的**权威定义**(职责 / 允许依赖 / 禁止依赖)= [`docs/README.md`](docs/README.md)「目录契约」;上面只是速览。
 
 技术细节见 [`AGENTS.md`](AGENTS.md)(入口;分域正文按 [`docs/README.md`](docs/README.md) 的路由读)与 [`RELEASE.md`](RELEASE.md)。

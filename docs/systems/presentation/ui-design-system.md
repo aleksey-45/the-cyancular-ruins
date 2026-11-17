@@ -102,11 +102,11 @@ static func dialog(parent: Node, title: String, ok_text := "确定") -> AcceptDi
 
 ## 8. 守卫
 
-- `tests/scene/ui_layout_probe.tscn`（布局探针，54 条）：9 个页面 × 6 条 —— 场景可加载/可实例化/根拿到 1920×1440/有子节点/关键节点或 API 在/**可见 Control 的 global_rect 都在逻辑屏幕内**（ScrollContainer 内容区不查，本来就会被裁）。判词 `UI LAYOUT PROBE: ALL-OK(54 条断言)` + 条数闸。
+- `tests/scene/ui_layout_probe.tscn`（布局探针）：9 个页面 × 6 条 —— 场景可加载/可实例化/根拿到 1920×1440/有子节点/关键节点或 API 在/**可见 Control 的 global_rect 都在逻辑屏幕内**（ScrollContainer 内容区不查，本来就会被裁）。判词 `UI LAYOUT PROBE: ALL-OK(54 条断言)` + 条数闸。
 - `tools/ui_shots.py`（非 headless，人工触发）：按页面 × 分辨率出截图到 `.tmp/ui_shots/`，供迁移前后评审；不进默认批。
 - `python tools/check_naming.py` 与 `bash tests/run_all.sh` 每步必跑；判据一律 grep 判词。
 - 不在默认批里加「源码里禁止 offset_*」这类形态守卫（D6）：先靠布局探针的行为判据，等迁移完再评估是否值得加。
 
 ## 9. 历史
 
-- 2026-11-09：本文件建立；同日完成全仓迁移（编辑器 + 主菜单 + 设置 + 信息/Beta + 大厅/房间列表 + HUD + 暂停/结算/启动面板），布局探针 54 条、`run_all` 62 支全绿；旧 `ui.md` 的页面级现状已同步为迁移后口径。
+- 2026-11-09：本文件建立；同日完成全仓迁移（编辑器 + 主菜单 + 设置 + 信息/Beta + 大厅/房间列表 + HUD + 暂停/结算/启动面板），布局探针、`run_all` 62 支全绿；旧 `ui.md` 的页面级现状已同步为迁移后口径。

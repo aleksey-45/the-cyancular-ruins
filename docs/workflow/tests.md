@@ -1,20 +1,7 @@
 # 测试与守卫
 
 > 判据一律 **grep 文本**(`SMOKE OK` / `ALL-OK` / `RUN_ALL ...`);**退出码不是判据**。
-> 现行清单只有两个自动来源:`bash tests/run_all.sh --list` 与 [`tests/README.md`](../../tests/README.md) —— 别抄任何枚举,它会漂。冲突以源码为准。
-
-## 桶划分
-
-判据是「跑它要什么资源」,不是「测多少代码」。
-
-| 桶 | 资源边界 | 形态 | 跑法 |
-|---|---|---|---|
-| **冒烟** | 单进程;被测代码与测试同进程;不碰网络 / 磁盘 / 真场景实例;**autoload 未实例化** | `tests/unit/*.gd`(`extends SceneTree`) | `-s` |
-| **场景探针** | 单机、真场景树:真实例化 `.tscn`,走 `_ready` / 信号 / 资源加载 / 渲染 | `tests/scene/*.tscn` | `--quit-after 3600` |
-| **真链路** | 跨进程 + 真端口 + 真协议:起大厅 / worker / 客户端子进程 | `tests/{smoke,probe}/*.sh` | `bash tests/run_real.sh` |
-
-- 永远选能证明它的**最小**一档。桶选大了更慢、更脆、更难定位。
-- 手感 / 观感 / 配色 / 版式**不是守卫缺口**:这类没有自动化判据,只能人眼与试玩。
+> 本页只讲**机制与诊断**。跑什么 / 桶 / 闸 / 基线以 [`tests/README.md`](../../tests/README.md) 与 `bash tests/run_all.sh --list` 为准;怎么写见 [`test-authoring.md`](test-authoring.md);留不留见 [`test-economy.md`](test-economy.md)。**本页不抄清单与计数。**
 
 ## 单支跑法
 
@@ -23,46 +10,31 @@
 ```bash
 "$GODOT" --headless --path . -s res://tests/unit/<名>.gd
 "$GODOT" --headless --path . --quit-after 3600 res://tests/scene/<名>.tscn
-bash tests/unit/<名>.sh
+bash tests/e2e/<名>.sh
 ```
 
 - `--quit-after` 的单位是**帧**,统一给 **3600**。它是安全网:探针跑完会自己 `quit()`,给少了会在负载重时先耗尽。
 - 判据是 grep 到判词;**不要**接管道取 `rc`(`| tail` 报的是 `tail` 的退出码)。
 
-## 默认批:`bash tests/run_all.sh`
+## 判词语义(全批)
 
-- **自动枚举**三个 glob:`tests/unit/*.gd` + `tests/scene/*.tscn` + `tests/scene/*.gd`(无同名 `.tscn` 的按 `-s` 跑)。清单不写死;落选走 `EXCLUDED` 显式清单 + 每条理由,规则匹配不到文件即红。
-- 不碰 7777、不拉子进程、不弹窗。默认批里出现开端口 / 拉子进程的支 = 红。
-- 选项:`--list`(跑哪些 + 排除哪些 + 每条理由 + 已知红基线)· `--only <子串>` · `--classify-check`(分类器自检)。
-- 逐支判词:`OK`(判词肯定且 `rc == 0`)· `OK+RC`(判词肯定但 `rc != 0`,**不算红**,单列)· `FAIL` · `NO-VERDICT` · `TIMEOUT`。后两类**归红**。
-- 全批判词(**纯 ASCII**):
-  - `RUN_ALL OK(n runs / m gated-assertions)`
-  - `RUN_ALL OK-WITH-KNOWN-RED(n runs, k registered)`
-  - `RUN_ALL FAIL(r new-red + k registered)`
-- 退出码:有新红 ⇒ 非 0;只有已登记红 ⇒ 0。
-- `m` = 带条数闸的那些支的闸值之和,**不是**全批断言总数。
-- **`GATE` 栏** = 该支 `_checks` 条数闸的值;`-` 表示这一支**没有闸**。声明了 `EXPECTED_CHECKS` 却没拿它比较 ⇒ 栏内 `-(declared,unused:N)`,不计入 `m`。
-- 说明行(`[env]` / `[enum]` / `[baseline]` / `[known-red]` / `[new-red]` / `[ok+rc]` 与 `--list` 的排除理由)不过 ASCII 过滤,原样含中文。
+- 逐支:`OK`(判词肯定且 `rc == 0`)· `OK+RC`(判词肯定但 `rc != 0`,**不算红**,单列)· `FAIL` · `NO-VERDICT` · `TIMEOUT`;后两类归红。
+- 全批:`RUN_ALL OK(n runs / m gated-assertions)` / `RUN_ALL OK-WITH-KNOWN-RED(n runs, k registered)` / `RUN_ALL FAIL(r new-red + k registered)`;`m` = 带条数闸那些支的闸值之和,**不是**全批断言总数。
 - 日志:`tests/.run_all_logs/` 下每支全文 + `summary.log`;跨跑次混装,同一路径会被下一趟覆盖。
-- 入口自己会红的九种情形:glob 空转 / 过期排除项 / `probe/*.gd` 既没跑也没排除 / 默认批出现开端口或拉子进程的支 / 新红 / 基线条目过期 / 基线路径不在候选面 / 基线文件写错 / 声明了 `EXPECTED_CHECKS` 却没用于比较。
 
-## 条数闸 `EXPECTED_CHECKS`
+## 条数闸
 
 - 单支 `OK` 只证明「没有任何断言失败」,**不证明每条断言都跑过**:脚本错误只结束出错的那个函数、调用方继续,verdict 照打 `ALL-OK`;`ProbeBase._summary` 在整组一条都没跑时也会打 ✓。权威表述在 [`tests/lib/probe_base.gd`](../../tests/lib/probe_base.gd) 文件头。
-- **新写的场景探针必须带闸**:同文件 `const EXPECTED_CHECKS := N`,并在收尾拿它比较(`_checks >= EXPECTED_CHECKS` 或 `!=`)。只声明不比较 = 没有闸。
-- 存量不追补。
+- 新写的场景探针必须带闸,写法见 [`test-authoring.md`](test-authoring.md) §3。存量不追补。
 
 ## 已知红基线:`tests/known_red.txt`
 
 - 每行 `路径 类别 理由`。路径必须与枚举出来的那一支**逐字相同**;类别 ∈ `OK+RC` / `FAIL` / `NO-VERDICT` / `TIMEOUT` / `*`;理由**必填**;`#` 开头是注释;**空行 = 违规**。
 - 基线内的红 = `KNOWN-RED`:不进新红计数,但**永远**印出文件名与条数;全批判词转 `OK-WITH-KNOWN-RED`、退出码 0。
-- 不在基线里的红 ⇒ `RUN_ALL FAIL`、退出码非 0。
 - **修好就删行**:条目"这趟跑到了却没红" = 过期 ⇒ 也红。路径不在候选面、同一路径出现两次 ⇒ 也红。
-- 基线当前 **0 条**。
 
 ## 跑批纪律
 
-- `-s` 冒烟必须写空载守卫:`load()` 之后立刻 `if X == null: print(...); quit(1); return`;否则 `_initialize()` 一抛错就走不到 `quit()`,进程**永久挂起**。跑新冒烟套外层 `timeout`。
 - 查"某常量在不在"用 `get_script_constant_map()`,不要直接取属性 —— 取不存在的属性会抛错 → 挂起。
 - 别拿"批量里红、单跑绿"断定是超时:安全网耗尽与探针真失败在输出上长得一样,先按真失败查。
 - 占 7777 的步骤先查 `lobby_alive` —— 大厅 `_ready` 会 `kill_udp_port(7777)`,会端掉用户正在跑的对局。
@@ -70,16 +42,7 @@ bash tests/unit/<名>.sh
 - 池外 `rejoin_probe.sh`(29300/29350)与 `team_match_probe.sh`(29200/29250)**一律不扫** `[7800,8300)`;其余支扫之前必须先过 `lobby_alive`。
 - **报告纪律**:结论里附**关键行的逐字内容**(判词原文)+ 退出码 / 日志位置 —— 别只写"跑了,是绿的"。跑批的**环境**(哪台机、哪版引擎、哪批参数)一并写进结论。
 - **时序类结论必须同配置跑两次**再下:单跑得到的"偶发/稳定"分辨不出噪声与信号。
-
-## 真链路批:`bash tests/run_real.sh`
-
-- 用法:`bash tests/run_real.sh`(打印清单 / 端口 / 耗时估计后交互确认)· `--yes`(无确认,仍过全部闸)· `--list` · `--only <子串>`。
-- 清单 = [`tests/run_real.sh`](../../tests/run_real.sh) 的 `ENTRIES`(`path|端口|耗时估计|判词|回收范围`);同目录里不进批的 `.sh` 走 `WRAPPERS`。
-- 四道闸:① `lobby_alive` 为真 ⇒ 拒;② 无 `--yes` 且 stdin 非交互 ⇒ 拒;③ **R20 锁**(`tests/.run_all.lock`:pid 活 **且** 心跳在 `LOCK_STALE_SECS` = 600s 内才算活锁)+ 跑前跑后 `tasklist` 无 Godot;④ **清单不许烂**(`tests/{smoke,probe}/*.sh` 每支必须在 `ENTRIES` 或 `WRAPPERS` 里,两边每条都要匹配到真实文件)。
-- 心跳只在**支间**刷新 ⇒ 单支预算调到 >600s 会把正在跑的批判成陈旧、锁失效。
-- 全批判词 `RUN_REAL OK(n entries)` / `RUN_REAL FAIL(...)`,纯 ASCII;判词原文与各支日志在 `tests/.run_real_logs/`。
 - **默认批绿 ≠ 真链路绿**:两条链路覆盖不相交。改联机权威 / 协议 / 回滚 / 输入包,两边都要看。
-- `team_match_probe.sh` 整跑仍判 `FAIL`,不可当 3v3 的端到端守卫(见 [`registered-debt.md`](../registered-debt.md))。
 
 ## 守卫能给的保证总是比它读起来少
 

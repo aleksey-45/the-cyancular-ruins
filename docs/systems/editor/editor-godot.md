@@ -111,13 +111,14 @@
 
 ## 7. 守卫
 
-| 支 | 判词 | 条数闸 | 钉什么 |
-|---|---|---|---|
-| `tests/unit/editor_doc_smoke.gd` | `EDITOR DOC SMOKE: OK(199 条断言)` | 199 | 7 层建图 / 环面 / Bresenham / 4 邻接与接缝油漆桶 / 颜色层 u32 / undo 往返与合并 / 栈上限 / load_map 清栈 / validate+to_bytes / **选区剪贴板镜像渐变 / meta 快照与 undo / 选区整块移动 / meta 单条改位置 / meta 单项删除·改敌人类型·扁平列表** |
-| `tests/unit/editor_io_smoke.gd` | `EDITOR IO SMOKE: OK(53 条断言)` | 53 | v4 7 层读入 / legacy 读时迁移 / v3 与旧字母文本 / 坏文件 / 保存确定性 / 校验拒写 / 三处目录 / 默认落点 / **P3 导出落点与 res:// 拒写** |
-| `tests/scene/editor_canvas_probe.tscn` | `EDITOR CANVAS PROBE: ALL-OK(56 条断言)` | 56 | 上述 + **脏区刷新与全量 refresh 逐像素一致** + 选区框几何 + meta 标记锚点 + `_draw` 真跑 + **手形平移 / 移动 delta 与 clamp / meta 命中与 index / meta 模式抑制画刷框 / 渐变预览只画不写 / 小地图 rect + 右键跳转 + `center_on_subcell`** |
-| `tests/scene/editor_scene_probe.tscn` | `EDITOR SCENE PROBE: ALL-OK(60 条断言)` | 60 | 真实例化场景：打开 `maps/newfactory.cyrm` → 改一格 → undo/redo → 保存 → 重开 → 再保存**逐字节相等**；P3 导出并加载的 `Settings.sp_map_path`/`map_file_path()`；后置项：选区/复制/粘贴/镜像/渐变/meta/预览开关；**⑦ UI 行为：撤销按钮点击 + 笔画收尾后立即可用、工具快捷键（含 Ctrl+V/Shift+H 冲突）、按层渐进披露与吸管分语义、当前层眼睛禁用、meta 模式随工具退出、敌人类型合法 + 列表删除、保存按钮写盘、无选区渐变拒绝、无溢出**；**⑧ 未保存拦截（新建 / 确认 / 干净 / 关窗）**；**⑨ 移动工具端到端** |
-| `tests/scene/editor_preview_probe.tscn` | `EDITOR PREVIEW PROBE: ALL-OK(21 条断言)` | 21 | 真渲染预览的结构统计（773 瓦片 / 背景 1 层 / post 存在）/ 相机口径 / 显隐切换 / refresh 幂等 / doc 信号接线 |
+| 支 | 判词 | 钉什么 |
+|---|---|---|
+| `tests/unit/editor_doc_smoke.gd` | `EDITOR DOC SMOKE: OK` | 7 层建图 / 环面 / Bresenham / 4 邻接与接缝油漆桶 / 颜色层 u32 / undo 往返与合并 / 栈上限 / load_map 清栈 / validate+to_bytes |
+| `tests/unit/editor_doc_extras_smoke.gd` | `EDITOR DOC EXTRAS SMOKE: OK` | 选区剪贴板镜像渐变 / meta 快照与 undo / 选区整块移动 / meta 单条改位置 / meta 单项删除·改敌人类型·扁平列表（夹具继承自 `editor_doc_smoke`） |
+| `tests/unit/editor_io_smoke.gd` | `EDITOR IO SMOKE: OK` | v4 7 层读入 / legacy 读时迁移 / v3 与旧字母文本 / 坏文件 / 保存确定性 / 校验拒写 / 三处目录 / 默认落点 / **P3 导出落点与 res:// 拒写** |
+| `tests/scene/editor_canvas_probe.tscn` | `EDITOR CANVAS PROBE: ALL-OK` | 上述 + **脏区刷新与全量 refresh 逐像素一致** + 选区框几何 + meta 标记锚点 + `_draw` 真跑 + **手形平移 / 移动 delta 与 clamp / meta 命中与 index / meta 模式抑制画刷框 / 渐变预览只画不写 / 小地图 rect + 右键跳转 + `center_on_subcell`** |
+| `tests/scene/editor_scene_probe.tscn` | `EDITOR SCENE PROBE: ALL-OK` | 真实例化场景：打开 `maps/newfactory.cyrm` → 改一格 → undo/redo → 保存 → 重开 → 再保存**逐字节相等**；P3 导出并加载的 `Settings.sp_map_path`/`map_file_path()`；后置项：选区/复制/粘贴/镜像/渐变/meta/预览开关；**⑦ UI 行为：撤销按钮点击 + 笔画收尾后立即可用、工具快捷键（含 Ctrl+V/Shift+H 冲突）、按层渐进披露与吸管分语义、当前层眼睛禁用、meta 模式随工具退出、敌人类型合法 + 列表删除、保存按钮写盘、无选区渐变拒绝、无溢出**；**⑧ 未保存拦截（新建 / 确认 / 干净 / 关窗）**；**⑨ 移动工具端到端** |
+| `tests/scene/editor_preview_probe.tscn` | `EDITOR PREVIEW PROBE: ALL-OK` | 真渲染预览的结构统计（773 瓦片 / 背景 1 层 / post 存在）/ 相机口径 / 显隐切换 / refresh 幂等 / doc 信号接线 |
 
 > ★ 本轮新增断言按 [`test-economy.md`](../../workflow/test-economy.md) 只留「去掉实现会红、且指向具体缺陷」的行为/逻辑断言；
 > 版式数值、控件存在性、宽高、菜单项条数等**不写自动化守卫**（配色/版式/观感按 [`tests.md`](../../workflow/tests.md) 只能人眼）。
@@ -221,9 +222,10 @@
 - **按层适用性**：纹理层置灰渐变/颜色（调色板可用），颜色层置灰纹理调色板（渐变/颜色可用）；吸管在两层分别吸 desc / RGBA；
   切层后渐变自动回画笔。守卫在 `editor_scene_probe` ⑦ 组（颜色层启用、纹理层禁用、自动回画笔、T 被拒、颜色层吸管回写）。
 - **安全网**：`doc.dirty` 时「新建 / 打开 / 返回」先弹确认，不再静默丢改动。
-- **守卫**：`editor_doc_smoke 183→199`（新 API 核心逻辑 + meta 单项删除/改类型/扁平列表）、`editor_canvas_probe 48→56`
-  （手形 / 移动 delta 与 clamp / meta 命中 / meta 模式 / 渐变预览 / 小地图与跳转）、`editor_scene_probe 50→60`
-  （UI 行为 + 未保存拦截 + 移动工具端到端 + 按层渐进披露 + meta 列表 + 保存按钮）；`ui_layout_probe` 54 不变。
+- **守卫**：`editor_doc_smoke` + `editor_doc_extras_smoke`（基础模型 / 选区与 meta 两个失败域）、`editor_canvas_probe`
+  （手形 / 移动 delta 与 clamp / meta 命中 / meta 模式 / 渐变预览 / 小地图与跳转）、`editor_scene_probe`
+  （UI 行为 + 未保存拦截 + 移动工具端到端 + 按层渐进披露 + meta 列表 + 保存按钮）；`ui_layout_probe` 不变。
+  ★ 条数不抄:各支实际闸值以 `run_all.sh --list` 的 `GATE` 栏为准（抄过，漂过）。
   按 [`test-economy.md`](../../workflow/test-economy.md) 删掉了本轮一度加的版式/控件存在性/逐事件点断言（宽度、Tab 细节、图层常驻、
   控件条数、菜单项条数、按钮接线存在性、`history_changed` 每事件一条等）：这些答不清「去掉什么它才会红」或属于
   「版式不写」；布局观感靠截图人工验收。

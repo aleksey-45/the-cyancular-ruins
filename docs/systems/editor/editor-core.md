@@ -143,13 +143,13 @@ descriptor (u32)
 
 守卫（`bash tests/run_all.sh` 自动收录，判据 = 判词文本）：
 
-| 支 | 判词 | 条数闸 | 钉什么 |
-|---|---|---|---|
-| `tests/unit/cyrm_golden_probe.gd` | `CYRM GOLDEN PROBE: ALL-OK(26 条断言)` | 26 | 跨语言黄金夹具：解→重编码逐字节相等、legacy/v3 迁移期望字节、真实地图稳定、400×300 最大尺寸 |
-| `tests/unit/editor_core_smoke.gd` | `EDITOR CORE SMOKE: OK(37 条断言)` | 37 | 常量/描述符/字节序/CRC/meta/几何/legacy/地图对象 |
-| `tests/unit/editor_codec_smoke.gd` | `EDITOR CODEC SMOKE: OK(56 条断言)` | 56 | 层编解码/容器/压缩/稀疏 flags/双字节索引/65535 上界/七类坏输入 |
-| `tests/unit/editor_v3_smoke.gd` | `EDITOR V3 SMOKE: OK(41 条断言)` | 41 | v3 标记/解析报错/旧字母 2×2/迁移展开/subcell_render |
-| `tests/unit/editor_validate_smoke.gd` | `EDITOR VALIDATE SMOKE: OK(20 条断言)` | 20 | 钳制/errors vs warnings/复活点判据 |
+| 支 | 判词 | 钉什么 |
+|---|---|---|
+| `tests/unit/cyrm_golden_probe.gd` | `CYRM GOLDEN PROBE: ALL-OK` | 跨语言黄金夹具：解→重编码逐字节相等、legacy/v3 迁移期望字节、真实地图稳定、400×300 最大尺寸 |
+| `tests/unit/editor_core_smoke.gd` | `EDITOR CORE SMOKE: OK` | 常量/描述符/字节序/CRC/meta/几何/legacy/地图对象 |
+| `tests/unit/editor_codec_smoke.gd` | `EDITOR CODEC SMOKE: OK` | 层编解码/容器/压缩/稀疏 flags/双字节索引/65535 上界/七类坏输入 |
+| `tests/unit/editor_v3_smoke.gd` | `EDITOR V3 SMOKE: OK` | v3 标记/解析报错/旧字母 2×2/迁移展开/subcell_render |
+| `tests/unit/editor_validate_smoke.gd` | `EDITOR VALIDATE SMOKE: OK` | 钳制/errors vs warnings/复活点判据 |
 
 编辑器场景/文档/导出两动作/两份产物的守卫表见 [`editor-godot.md`](editor-godot.md) §7、§10。
 
