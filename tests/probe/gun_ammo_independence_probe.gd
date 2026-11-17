@@ -1,7 +1,8 @@
 extends ProbeBase
 
 
-const EXPECTED_CHECKS := 8
+const EXPECTED_CHECKS := 9
+const WeaponLoadoutScript := preload("res://scenes/player/weapon_loadout.gd")
 
 var _player: Node = null
 var _checks := 0
@@ -89,6 +90,13 @@ func _ready() -> void:
 	_chk(dropped2 == 0 and w.current_type_id() == 2 and cw2 != null and cw2.mag_ammo == 5,
 			"对照:背包没满时拾取直接放入,新枪残弹 = 地面 5(实得 dropped=%d / type=%d / mag=%s)"
 			% [dropped2, w.current_type_id(), str(cw2.mag_ammo) if cw2 != null else "null"])
+
+	# ⑨ pick_up 三态的第三种:被启用类型闸门拒绝必须返回 PICKUP_DENIED(-1)。
+	# 与 0(成功无替换)分开是承重的:Level0.try_pickup_for 只在成功时删地面那件;混同 = 静默丢枪。
+	w.set_enabled_types([3])
+	var denied: int = w.pick_up(3, 5)
+	_chk(denied == WeaponLoadoutScript.PICKUP_DENIED,
+			"被拒的拾取必须返回 PICKUP_DENIED(-1),不能与成功 0 混同(实得 %d)" % denied)
 
 	if _checks != EXPECTED_CHECKS:
 		_check(false, "实跑 %d 条断言,与 EXPECTED_CHECKS=%d 对不上(有断言被静默跳过?)" % [_checks, EXPECTED_CHECKS])

@@ -1,7 +1,7 @@
 extends Node
 
 const MARKER := "LEVEL0 BOOT PROBE: ALL-OK"
-const EXPECTED_CHECKS := 23
+const EXPECTED_CHECKS := 24
 const MAP := "res://maps/newfactory.cyrm"
 const WATER_SHADER := "res://scenes/effects/water_surface_batch.gdshader"
 const FORM_SHADER := "res://core/present/form_light.gdshader"
@@ -164,6 +164,12 @@ func _run() -> void:
 				walls.get_child_count() if walls != null else -1, chunk_count])
 	_chk(not get_tree().paused and not LoadingScreen.visible,
 			"★ 收尾状态不对(树仍 pause 或载入屏仍在)")
+
+	# 拾取端口:Player 不再向上找 Level0,接线由 Level0 注入。删掉 level_0.gd 里那行 bind_pickup_host ⇒ 本断言红。
+	# ★ 这是"运行时对象图"断言(不是读源码文本):按 F 永远捡不起枪,且没有任何报错。
+	var pl := level.get_node_or_null("WorldViewport/Player")
+	_chk(pl != null and pl.pickup != null and pl.pickup.host == level,
+			"★ 拾取端口没接线(pickup.host ≠ Level0)⇒ 单机按 F 永远捡不起枪,且静默无报错")
 
 	_finish()
 
