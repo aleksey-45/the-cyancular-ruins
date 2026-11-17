@@ -1,0 +1,9 @@
+# 架构违规白名单:只减不增。新增条目必须有人工理由(见 commit message)。
+# 规则	文件	引用目标
+R1	core/sim/rewind_frame.gd	scenes/player/player.gd
+R1	core/sim/rewind_frame.gd	scenes/player/weapon_component.gd
+R1	core/sim/rewind_frame.gd	scenes/weapons/weapon_base.gd
+R1	core/sim/world_rewind.gd	scenes/enemies/enemy_base.gd
+R1	core/sim/world_rewind.gd	scenes/player/player.gd
+R1	core/sim/world_rewind.gd	scenes/weapons/bullet_base.gd
+R3	core/sim/collision_builder.gd	get_node_or_null(

@@ -33,6 +33,13 @@
 
 - [`tools/check_naming.py`](../../tools/check_naming.py)：目录小写 / `class_name`↔文件名 / 文档路径 / `.tscn` snake_case /
   `.ps1`·`.bat` 的 CRLF 与编码 / 入口文档预算与 `CLAUDE.md` 副本一致。规则 A~F 的原文就是该文件的函数注释。
+- [`tools/check_architecture.py`](../../tools/check_architecture.py)：**依赖方向规则**（架构规则即测试）。四条：
+  R1 `core/sim/**` 不得引用 `scenes/**`/`server/**`；R2 `scenes/**`、`ui/**` 不得引用 `res://server/`；
+  R3 `core/sim/**` 不得调 `get_tree()`/`get_node()`/`$`；R4 `scenes/player/**` 之外不得引用
+  `PlayerMotor`/`PlayerPresent`/`PlayerPickup`/`PlayerNetState`。只解析本仓声明过的 `class_name`
+  （`extends`/`preload`/`load`/类型注解/`as`/`is`/静态访问），内建类型不参与。存量违规进
+  [`tools/architecture_allow.txt`](../../tools/architecture_allow.txt)，**只减不增**（新增与过期都退 1）；
+  人工确认后可用 `--update-allow` 重写。它是**工具**不是测试（`test-economy` D6：不把读源码的形态判断放进 `tests/`）。
 - [`tools/gen_rpc_channel_table.py`](../../tools/gen_rpc_channel_table.py)：`docs/eng/netplay-rpc-channels.md` 的 RPC 通道表 ↔ 代码 `@rpc`
   声明的生成式对账（`--check` 只校验不写盘，漂移退 1；`--write` 幂等重写；`--self-test` 纯函数自测）。
 - [`tools/sync_agents_md.py`](../../tools/sync_agents_md.py)：`AGENTS.md` → `CLAUDE.md` 生成副本（改了 AGENTS 必须跑一次）。
