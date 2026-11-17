@@ -127,3 +127,24 @@ func _downed() -> void:
 		var pp := tree.get_first_node_in_group("post_process")
 		if pp != null and pp.has_method("set_downed"):
 			pp.set_downed(true)
+
+
+# 整态里的战斗段(键名 = NetCodec 的 C2_SCHEMA:hp / ifr / down / knock)。
+# ★ 只发值变化过的 hp:hp_changed 是 HUD 的唯一刷新源,但每帧重放都发会白刷。
+func capture_state() -> Dictionary:
+	return {"hp": hp, "ifr": iframes, "down": downed, "knock": knock_velocity}
+
+
+func restore_state(st: Dictionary) -> void:
+	var hp_v := int(st.get("hp", hp))
+	if hp_v != hp:
+		hp = clampi(hp_v, 0, max_hp)
+		hp_changed.emit(hp, max_hp)
+	var down_v := bool(st.get("down", downed))
+	if down_v and not downed:
+		force_down()
+	elif not down_v and downed:
+		# ★ 2026-11-01(R3):不能走 revive() —— 它会把 hp 顶成 max_hp,冲掉上面刚从整态恢复的 hp。
+		restore_alive_state()
+	iframes = float(st.get("ifr", iframes))
+	knock_velocity = st.get("knock", knock_velocity)

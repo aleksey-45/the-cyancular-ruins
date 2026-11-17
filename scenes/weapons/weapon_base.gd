@@ -119,6 +119,46 @@ func start_reload() -> void:
 	_reload_t = reload_time
 	Sfx.play("reload")
 
+# 弹量唯一写入口(整态 / 回滚 / 软同步共用):未入树窗口写 pending_mag,由 _ready 消费;入树后直接写 mag_ammo。
+# ★ 不能在外面直接写 mag_ammo:未入树时它会被 _ready 的初值覆盖。
+func set_mag(mag: int) -> void:
+	if is_inside_tree():
+		mag_ammo = clampi(mag, 0, mag_size)
+	else:
+		pending_mag = clampi(mag, 0, mag_size)
+
+# 武器自身状态(键名 = 线上 WEAPON_SCHEMA,唯一 schema 见 core/net/net_codec.gd)。
+# ★ 让武器自己吐/吃状态,而不是让 Player 去读 w._aiming 那批私有字段 —— 否则抽走编解码只是把私有穿透升级成跨文件公开 API。
+func capture_state() -> Dictionary:
+	return {
+		"fire_cd": fire_cd_timer,
+		"aiming": _aiming,
+		"fire_buf": _fire_buffered,
+		"aim_f": _aim_facing,
+		"aim_cf": _current_aim_facing,
+		"mag": mag_ammo,
+		"rld": _reloading,
+		"rld_t": _reload_t,
+		"chg": charge_ratio,
+		"trg": _trigger_t,
+	}
+
+func restore_state(d: Dictionary) -> void:
+	fire_cd_timer = float(d.get("fire_cd", fire_cd_timer))
+	_aiming = bool(d.get("aiming", _aiming))
+	_fire_buffered = bool(d.get("fire_buf", _fire_buffered))
+	_aim_facing = int(d.get("aim_f", _aim_facing))
+	_current_aim_facing = int(d.get("aim_cf", _current_aim_facing))
+	if d.has("mag"):
+		set_mag(int(d["mag"]))
+	if d.has("rld"):
+		_reloading = bool(d["rld"])
+		_reload_t = float(d.get("rld_t", _reload_t))
+	if d.has("chg"):
+		charge_ratio = float(d["chg"])
+	if d.has("trg"):
+		_trigger_t = float(d["trg"])
+
 # 把「换弹 > 后坐 > 走路 bob」合成为精灵 pose —— 唯一写 sprite.position/rotation 的地方(以后加表现只改这里)。
 # 换弹姿态压过其他(与旧实现同优先);bob 始终叠加:走路/换弹/后坐同时发生时只有它是连续的。
 func _apply_sprite_pose() -> void:

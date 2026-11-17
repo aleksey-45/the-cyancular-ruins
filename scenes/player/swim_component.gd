@@ -30,3 +30,12 @@ func update(parent: CharacterBody2D, delta: float, move_mult: Vector2 = Vector2.
 	parent.velocity.x = MathUtil.approach(parent.velocity.x, target_vx, PlayerParams.player_swim_accel, delta)
 	parent.velocity.y = (PlayerParams.player_swim_up if src.is_action_pressed("up") else PlayerParams.player_swim_down) * tm
 	return true
+
+
+# 整态里的游泳段(键名 = NetCodec 的 C2_SCHEMA 标志位 `swim`)。sample 是逐帧派生的,不入状态。
+func capture_state() -> Dictionary:
+	return {"swim": in_water}
+
+
+func restore_state(st: Dictionary) -> void:
+	in_water = bool(st.get("swim", in_water))

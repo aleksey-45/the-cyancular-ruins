@@ -6,6 +6,7 @@ extends CharacterBody2D
 #   一次重建全局类缓存(否则别的脚本报 Could not find type Player)—— 本地跑批与 CI 都已显式 import。
 const HitShape := preload("res://core/sim/hit_shape.gd")   # 受击判定几何唯一入口
 const DashRule := preload("res://core/sim/dash_rule.gd")   # 冲刺倍率/准入判据唯一入口(两端同一份算式)
+const PlayerNetState := preload("res://scenes/player/player_net_state.gd")   # 整态编解码(回滚/权威同步)
 # 帧数据:网格 + 每帧 [列, 行] 写在 JSON 里,由网格推导 Rect2(不再手写 .tres)。
 # ★ 本体与 PvP 副本都走这一份,且 SpriteFramesIO 有缓存 ⇒ 仍是"只有一处帧数据"。
 const FRAMES_JSON := "res://assets/textures/player.frames.json"
@@ -650,10 +651,13 @@ func apply_authoritative_state(hp_val: int, waterproof_val: int, downed_val: boo
 		# ★ 2026-11-01(R3):不能走 revive() —— 它会把 hp 顶成 max_hp,冲掉上面刚采纳的**权威** hp。
 		combat.restore_alive_state()
 
-# C2 预测的整态捕获/恢复:覆盖决定下一物理帧输出的全部变量(player 本体 + climb/swim/combat + 当前武器)。
-# 服务器快照 = capture_state();客户端 rollback = restore_state(权威态) 后重放未确认输入。漏一个变量 → 重放与服务器分歧。字段键名尽量短,压缩协议体积。
-func capture_state() -> Dictionary:
-	var st: Dictionary = {
+# 根本体自己拥有的整态字段(位置/移动/姿态/水下计时)。组件字段由各自的 capture_state() 提供,
+# 装配在 scenes/player/player_net_state.gd;键名 = core/net/net_codec.gd 的 C2_SCHEMA。
+# ★ 自动跳的"满速横移"窗口 **不进整态/不上线**:它是本地表现量,只影响自己后半秒的横移补速,
+#   且服务器从不 restore(只有客户端回滚重放会用到);进了 c2 就要动线格式(protocol 变更)与快照体积,
+#   收益不抵风险。已知边界:回滚重放时该窗口可能少/多几帧 ⇒ 偏差 <= 0.25s 的横移补速,自愈。
+func capture_self_state() -> Dictionary:
+	return {
 		"pos": global_position,
 		"vel": velocity,
 		"facing": facing_direction,
@@ -662,10 +666,6 @@ func capture_state() -> Dictionary:
 		"coyote": coyote_timer,
 		"jbuf": jump_buffer_timer,
 		"jcut": jump_cut_applied,
-		# ★ 自动跳的"满速横移"窗口 **不进整态/不上线**:它是本地表现量,只影响自己后半秒的横移补速,
-		#   且服务器从不 restore(只有客户端回滚重放会用到);进了 c2 就要动线格式(protocol 变更)与快照体积,
-		#   收益不抵风险。已知边界:回滚重放时该窗口可能少/多几帧 ⇒ 偏差 <= 0.25s 的横移补速,自愈。
-
 		"squat": is_squat,
 		"charge": is_charge,
 		"ct": charge_timer,
@@ -675,36 +675,16 @@ func capture_state() -> Dictionary:
 		"wp_t": _waterproof_timer,
 		"wp_s": _was_submerged,
 		"wp_d": _waterproof_drown_timer,
-		"clatch": climb._latched,
-		"swim": swim.in_water,
-		"hp": combat.hp,
-		"ifr": combat.iframes,
-		"down": combat.downed,
-		"knock": combat.knock_velocity,
-		"wslot": weapons._current_type,
-		# ★ winst = 手持那一条的逐把唯一 id:wslot 只有类型 id,同型号两把恒等,光凭它恢复端无法知道权威手持的是哪一把(会静默落回第 0 把:残弹写错条目/丢弃丢错把/武器框高亮错)。
-		# ★ 与 mag/rld 同口径:进 capture/restore,不进 _close_enough 的比对。加法式键:老接收端忽略未知键,不协商。
-		"winst": weapons.current_inst(),
 	}
-	# 背包整表(每条 {type, inst, mag})必须进整态:restore_state 会 equip_type(wslot),若不先重建背包,重放时可能切到客户端背包里没有的类型(equip_type 只 push_error、不再凭空造枪)。
-	st["inv"] = weapons.snapshot_inventory()
-	var w: WeaponBase = weapons._weapon
-	if w != null:
-		st["fire_cd"] = w.fire_cd_timer
-		st["aiming"] = w._aiming
-		st["fire_buf"] = w._fire_buffered
-		st["aim_f"] = w._aim_facing
-		st["aim_cf"] = w._current_aim_facing
-		# 弹药/装填必须进整态,否则 rollback 重放不确定:同一串输入在记得残弹与忘了残弹两种初态下会走出不同结果,重放就不是复现而是新历史。
-		st["mag"] = w.mag_ammo
-		st["rld"] = w._reloading
-		st["rld_t"] = w._reload_t
-		# 蓄力比与扳机延迟累计同样是"影响下一帧会不会出弹、出的是哪一发"的跨 tick 状态:漏一个,重放就会在错误的 tick 出弹(弓)/提前起转(机枪)。
-		st["chg"] = w.charge_ratio
-		st["trg"] = w._trigger_t
-	return st
 
-func restore_state(st: Dictionary) -> void:
+
+# C2 预测的整态捕获/恢复:覆盖决定下一物理帧输出的全部变量(本体 + climb/swim/combat + 当前武器)。
+# 服务器快照 = capture_state();客户端 rollback = restore_state(权威态) 后重放未确认输入。漏一个变量 → 重放与服务器分歧。
+func capture_state() -> Dictionary:
+	return PlayerNetState.capture(self)
+
+# 根本体字段的回灌;碰撞箱/朝向贴图/贴地重判不属于可序列化状态,留在 _after_state_restore。
+func restore_self_state(st: Dictionary) -> void:
 	global_position = st.get("pos", global_position)
 	velocity = st.get("vel", velocity)
 	facing_direction = int(st.get("facing", facing_direction))
@@ -718,30 +698,22 @@ func restore_state(st: Dictionary) -> void:
 	charge_timer = float(st.get("ct", charge_timer))
 	_last_move_dir = int(st.get("lmv_d", _last_move_dir))
 	_last_move_timer = float(st.get("lmv_t", _last_move_timer))
-	climb._latched = bool(st.get("clatch", climb._latched))
-	swim.in_water = bool(st.get("swim", swim.in_water))
-	var hp_v := int(st.get("hp", hp))
-	if hp_v != combat.hp:
-		combat.hp = clampi(hp_v, 0, combat.max_hp)
-		combat.hp_changed.emit(combat.hp, combat.max_hp)
 	var wp_v := int(st.get("wp", waterproof))
 	if wp_v != waterproof:
 		waterproof = clampi(wp_v, 0, max_waterproof)
 		waterproof_changed.emit(waterproof, max_waterproof)
-	var down_v := bool(st.get("down", combat.downed))
-	if down_v and not combat.is_downed():
-		combat.force_down()
-	elif not down_v and combat.is_downed():
-		# ★ 2026-11-01(R3):不能走 revive() —— 它会把 hp 顶成 max_hp,冲掉上面刚从整态恢复的 hp
-		#   (C2 回滚跨"死亡→活着"那一帧时会因此得出满血,与服务器继续分歧)。
-		combat.restore_alive_state()
-	combat.iframes = float(st.get("ifr", combat.iframes))
-	combat.knock_velocity = st.get("knock", combat.knock_velocity)
 	_waterproof_timer = float(st.get("wp_t", _waterproof_timer))
 	_was_submerged = bool(st.get("wp_s", _was_submerged))
 	_waterproof_drown_timer = float(st.get("wp_d", _waterproof_drown_timer))
-	# 武器(背包/手持/弹药):与软同步共用同一段,见 _apply_weapon_state 的顺序说明。
-	_apply_weapon_state(st)
+
+
+func restore_state(st: Dictionary) -> void:
+	PlayerNetState.restore(self, st)
+	_after_state_restore()
+
+
+# 不可序列化的收尾:按姿态启用碰撞箱、朝向贴图、以及恢复位置后的一次贴地重判。
+func _after_state_restore() -> void:
 	for pose in _coll_by_pose:
 		_coll_by_pose[pose].disabled = pose != state
 	animator.flip_h = facing_direction < 0
@@ -753,66 +725,11 @@ func restore_state(st: Dictionary) -> void:
 	velocity = saved
 
 
-# 非预测字段的软同步(拾取/丢弃/复活/换局改的就是这些):只补字段、不重放 —— 位置/速度是预测出来的,拿权威覆盖它们才是橡皮筋,而背包/残弹只由服务器裁决(客户端从不预测拾取/丢弃)。
-# ★ 由 PredictionRollback 在预测被证实那一支调用(每个本人包一次),所以先比指纹再动手:restore_inventory 会 emit inventory_changed → ui/hud.gd 整体重建武器框,无脑调等于每帧新建/销毁一堆 Control。
+# 非预测字段的软同步(拾取/丢弃/复活/换局改的就是这些):只补字段、不重放 —— 位置/速度是预测出来的,
+# 拿权威覆盖它们才是橡皮筋,而背包/残弹只由服务器裁决(客户端从不预测拾取/丢弃)。
+# ★ 由 PredictionRollback 在预测被证实那一支调用(每个本人包一次),指纹与回灌都在 WeaponComponent 里。
 func sync_soft_state(st: Dictionary) -> void:
-	# ★ 指纹必须连 winst 一起比:同型号两把之间换手时 wslot 与背包结构都不变,只看那两样会把整条软同步跳过。缺键时默认取当前值 ⇒ 老载荷(无 winst)行为与改动前逐字相同。
-	if int(st.get("wslot", weapons._current_type)) == weapons._current_type \
-			and int(st.get("winst", weapons.current_inst())) == weapons.current_inst() \
-			and _inv_structure_equal(st.get("inv", [])):
-		return
-	_apply_weapon_state(st)
-
-
-# 只比结构(type/inst 的有序对):mag 是连续量、本地每帧都在变,比它等于每帧都不一致,守卫当场失效。
-func _inv_structure_equal(want: Array) -> bool:
-	var held: Array = weapons.inventory.held
-	if held.size() != want.size():
-		return false
-	for i in held.size():
-		if int(held[i]["type"]) != int(want[i].get("type", 0)):
-			return false
-		if int(held[i]["inst"]) != int(want[i].get("inst", 0)):
-			return false
-	return true
-
-
-# 武器/弹药的权威字段回灌(restore_state 与 sync_soft_state 共用)。
-# ★ 顺序不可反:先读 wslot(此时 _current_type 还有值,可作默认),再 restore_inventory(它会把 _current_type 清 0),最后 equip_type。反过来会丢默认值,或在旧背包上切枪。
-func _apply_weapon_state(st: Dictionary) -> void:
-	var wslot := int(st.get("wslot", weapons._current_type))
-	# ★ 把手持的是哪一把交给 restore_inventory 按 inst 解析(同型号两把只有它能区分);下面那句 equip_type 只作兜底(老载荷无 winst、或权威那把不在表里时)。
-	var by_inst := weapons.restore_inventory(st.get("inv", []), int(st.get("winst", 0)))
-	# ★★ 同型号两把(winst 变了、wslot 没变):类型判据恒假 ⇒ 旧实现不重建实例,手里还是**上一把**枪的实例,
-	#   而 _current_index 已指向权威那一把 ⇒ 开火扣错枪的弹、切枪把残弹写进另一把(用户用两把狙击枪实测的弹数/开火异常)。
-	if weapons._current_index >= 0 and not weapons.instance_matched():
-		weapons.equip_index_authoritative(weapons._current_index)
-	if wslot > 0 and wslot != weapons._current_type:
-		# 手上实例的类型与权威不符(_current_type 由 _equip_index/_unequip 维护)→ 必须重建。这是已有行为,别绕开;但重建的落点要分两种,by_inst 就是判别器:
-		# ★ 按 winst 解析成功 → 走 equip_index(下标):不能用 equip_type(wslot),后者按类型找第一个,同型号两把时会把刚解析对的下标冲回第 0 把。
-		# ★ 按类型兜底(老载荷无 winst、或权威那把不在表里)→ 保原样走 equip_type(wslot):此时手里那个下标只代表旧类型那把,拿它重建会把权威的 wslot 顶掉。
-		if by_inst and weapons._current_index >= 0:
-			weapons.equip_index(weapons._current_index)
-		else:
-			weapons.equip_type(wslot)
-	var w: WeaponBase = weapons._weapon
-	if w != null:
-		w.fire_cd_timer = float(st.get("fire_cd", w.fire_cd_timer))
-		w._aiming = bool(st.get("aiming", w._aiming))
-		w._fire_buffered = bool(st.get("fire_buf", w._fire_buffered))
-		w._aim_facing = int(st.get("aim_f", w._aim_facing))
-		w._current_aim_facing = int(st.get("aim_cf", w._current_aim_facing))
-		# 弹药/装填随权威整态回灌(理由见 capture_state)。
-		if st.has("mag"):
-			WeaponComponent.apply_mag(w, int(st["mag"]))
-		if st.has("rld"):
-			w._reloading = bool(st["rld"])
-			w._reload_t = float(st.get("rld_t", w._reload_t))
-		# 软同步不带计时字段时保持原值。
-		if st.has("chg"):
-			w.charge_ratio = float(st["chg"])
-		if st.has("trg"):
-			w._trigger_t = float(st["trg"])
+	PlayerNetState.sync_soft(self, st)
 
 # 攀爬跳离梯顶时清跳跃缓冲/土狼/截断标记:防止残留输入造成二次起跳(由 climb 组件调用)。
 func cancel_jump_state() -> void:

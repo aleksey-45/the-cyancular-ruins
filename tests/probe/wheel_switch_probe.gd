@@ -1,6 +1,6 @@
 extends ProbeBase
 
-const EXPECTED_CHECKS := 11
+const EXPECTED_CHECKS := 12
 const SNIPER := 3
 
 var _player: Node = null
@@ -131,6 +131,26 @@ func _ready() -> void:
 	var cw7: WeaponBase = w.current_weapon()
 	_chk(w.current_inst() == inst_b and cw7 != null and cw7.mag_ammo == 4,
 			"⑦ 同型号 equip_inst 切到第二把:残弹必须取第二把条目 4(实得 %d)" % (cw7.mag_ammo if cw7 != null else -1))
+
+	# ⑧ 整态里的武器段(2026-11-16 从 player.gd 搬进 WeaponComponent/WeaponBase):capture → restore 必须把
+	#   弹量/冷却/瞄准态原样带回来。去掉 WeaponComponent.capture_state 里那句 merge 就会红。
+	w.equip_inst(inst_b)
+	await _settle()
+	var live: WeaponBase = w.current_weapon()
+	live.mag_ammo = 3
+	live.fire_cd_timer = 0.25
+	live._aiming = true
+	var cap: Dictionary = _player.capture_state()
+	live.mag_ammo = 1
+	live.fire_cd_timer = 0.0
+	live._aiming = false
+	_player.restore_state(cap)
+	var back: WeaponBase = w.current_weapon()
+	_chk(back != null and back.mag_ammo == 3 and is_equal_approx(back.fire_cd_timer, 0.25) and back._aiming,
+			"⑧ 整态往返:武器段弹量/冷却/瞄准必须原样回来(实得 %d / %.2f / %s)" % [
+				back.mag_ammo if back != null else -1,
+				back.fire_cd_timer if back != null else -1.0,
+				str(back._aiming) if back != null else "?"])
 
 	if _checks != EXPECTED_CHECKS:
 		_check(false, "实跑 %d 条断言,与 EXPECTED_CHECKS=%d 对不上(有断言被静默跳过?)" % [_checks, EXPECTED_CHECKS])

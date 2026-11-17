@@ -202,10 +202,7 @@ func _unequip() -> void:
 static func apply_mag(w: WeaponBase, mag: int) -> void:
 	if w == null or not is_instance_valid(w):
 		return
-	if w.is_inside_tree():
-		w.mag_ammo = clampi(mag, 0, w.mag_size)
-	else:
-		w.pending_mag = clampi(mag, 0, w.mag_size)
+	w.set_mag(mag)
 
 
 
@@ -377,3 +374,64 @@ func apply_recoil(push: float, is_squat: bool, is_latched: bool) -> void:
 func cancel_aim() -> void:
 	if _weapon != null:
 		_weapon.cancel_aim()
+
+
+# ── 整态(回滚/权威同步)的武器段 ──
+# 键名 = 线上 C2_SCHEMA + WEAPON_SCHEMA(唯一 schema 见 core/net/net_codec.gd);本文件不另立键清单。
+func capture_state() -> Dictionary:
+	var st := {
+		"wslot": _current_type,
+		"winst": current_inst(),
+		"inv": snapshot_inventory(),
+	}
+	var w: WeaponBase = _weapon
+	if w != null and is_instance_valid(w):
+		st.merge(w.capture_state(), true)
+	return st
+
+
+func restore_state(st: Dictionary) -> void:
+	apply_state(st)
+
+
+# 非预测字段的软同步(拾取/丢弃/复活/换局改的就是这些):先比指纹再动手 —— restore_inventory 会 emit inventory_changed,
+# 无脑调等于每帧重建 HUD 武器框;mag 是连续量,指纹只比结构不比它。
+func sync_soft(st: Dictionary) -> void:
+	# ★ 指纹必须连 winst 一起比:同型号两把之间换手时 wslot 与背包结构都不变。
+	if int(st.get("wslot", _current_type)) == _current_type \
+			and int(st.get("winst", current_inst())) == current_inst() \
+			and inv_structure_equal(st.get("inv", [])):
+		return
+	apply_state(st)
+
+
+# 只比结构(type/inst 的有序对):mag 本地每帧都在变,比它等于每帧都不一致,指纹守卫当场失效。
+func inv_structure_equal(want: Array) -> bool:
+	var held: Array = inventory.held
+	if held.size() != want.size():
+		return false
+	for i in held.size():
+		if int(held[i]["type"]) != int(want[i].get("type", 0)):
+			return false
+		if int(held[i]["inst"]) != int(want[i].get("inst", 0)):
+			return false
+	return true
+
+
+# 武器/弹药的权威字段回灌(整态恢复与软同步共用)。
+# ★ 顺序不可反:先读 wslot(此时 _current_type 还有值,可作默认),再 restore_inventory(它会把 _current_type 清 0),最后 equip_type。
+func apply_state(st: Dictionary) -> void:
+	var wslot := int(st.get("wslot", _current_type))
+	# ★ 手持是哪一把交给 restore_inventory 按 inst 解析(同型号两把只有它能区分);equip_type 只作兜底。
+	var by_inst := restore_inventory(st.get("inv", []), int(st.get("winst", 0)))
+	# ★★ 同型号两把(winst 变、wslot 不变):类型判据恒假 ⇒ 不重建实例,而 _current_index 已指向权威那把 ⇒ 开火扣错枪的弹。
+	if _current_index >= 0 and not instance_matched():
+		equip_index_authoritative(_current_index)
+	if wslot > 0 and wslot != _current_type:
+		if by_inst and _current_index >= 0:
+			equip_index(_current_index)
+		else:
+			equip_type(wslot)
+	var w: WeaponBase = _weapon
+	if w != null and is_instance_valid(w):
+		w.restore_state(st)

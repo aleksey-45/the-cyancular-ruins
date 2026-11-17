@@ -103,3 +103,12 @@ func _time_mult() -> float:
 	if TimeField.current != null:
 		m = TimeField.player_speed_mult()
 	return m if m > 0.0 else 1.0
+
+
+# 整态里的攀爬段(键名 = NetCodec 的 C2_SCHEMA 标志位 `clatch`)。状态归本组件所有,根的编解码只做装配。
+func capture_state() -> Dictionary:
+	return {"clatch": _latched}
+
+
+func restore_state(st: Dictionary) -> void:
+	_latched = bool(st.get("clatch", _latched))
