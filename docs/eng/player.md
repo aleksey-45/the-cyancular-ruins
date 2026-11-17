@@ -5,6 +5,7 @@
 ## 结构
 
 - `scenes/player/player.gd`(CharacterBody2D):根只留移动 / 姿态 / 物理帧编排;攀爬、战斗、武器分别抽成 `ClimbComponent` / `CombatComponent` / `WeaponComponent`(`player.tscn` 子节点)。组件不写自己的 `_physics_process`,由根每帧按序调用:`climb.update → 移动 → combat.apply_knock → move_and_slide`。根公开 `take_hit` / `get_facing` / `set_facing` / `is_downed` / `apply_recoil`、信号 `hp_changed`、只读 `hp` / `max_hp`。
+- 整态(回滚/权威同步)编解码 = [`scenes/player/player_net_state.gd`](../../scenes/player/player_net_state.gd)(`PlayerNetState`):`capture` 装配根本体字段 + `climb` / `swim` / `combat` / `weapons` 各自的 `capture_state()`,`restore` 反向按序回灌。字段键名的唯一 schema 是 `NetCodec` 的 `C2_SCHEMA` / `WEAPON_SCHEMA`,本模块**不另立键清单**;加字段 = 加在有所有权的组件里 + 改 schema。根只留 `capture_self_state` / `restore_self_state`(位置 / 移动 / 姿态 / 水下计时)与不可序列化的收尾 `_after_state_restore`(碰撞箱、朝向贴图、贴地重判)。
 - 输入可注入:根读输入走 `core/net/player_input.gd` 的 `PlayerInput`(纯接口);本地实现 `LocalInputSource`、网络包 `PacketInputSource`;`source_kind()` 自报 `LOCAL` / `PACKET` / `AI`。PvP 服务器注入包驱动远端玩家;瞄准有 `get_aim_dir_override()` 覆盖钩子。
 
 ## 移动与姿态

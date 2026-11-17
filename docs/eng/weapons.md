@@ -10,7 +10,7 @@
 - 术语:`type_id` = 武器类型 id(整数 1–N,与键位、背包位置无关);`inst` = 逐把唯一,进输入包与 `capture_state`;`index` = 背包位置(0-based,只在本地用于按键解析 / HUD 行号)。`slot` 只保留在三处:`Player.weapon_slot` 挂点、容量格 UI(`WeaponSlots` / `C_SLOT_*`)、`capture_state()` 的 `wslot` 键。
 - 上行传解析结果:输入包带 `"winst"` = 目标那把的 `inst`。客户端本地解析(数字键按 `index`、滚轮按相对位置)出 `inst`;服务器 `equip_inst(inst)`,`index_of_inst` 找不到就静默不动。下行世界包的枪型字段是 `type_id`。改这个键 = 改协议,两端必须同一 build。
 - ★★ **同型号两把(`winst` 变、`wslot` 不变)**(2026-11-01,用户用两把狙击枪实测「弹数/开火异常」):
-  ① `_apply_weapon_state` 旧实现只在 `wslot != _current_type` 时重建实例 ⇒ 同型号时恒不重建,`_current_index` 已指向权威那把、
+  ① `WeaponComponent.apply_state` 旧实现只在 `wslot != _current_type` 时重建实例 ⇒ 同型号时恒不重建,`_current_index` 已指向权威那把、
      手里却是**上一把**的实例 ⇒ 开火扣错枪的弹、切枪把残弹写进另一把。修法:`WeaponComponent` 记 `_equipped_inst`(实例对应哪一把)+
      `instance_matched()`,权威同步时若"实例与下标分家"就 `equip_index_authoritative()`(重建但**不**把旧实例残弹写回条目)。
   ② 同一处 `apply_mag(w, st.get("mag", w.mag_ammo))` 在**软同步**(载荷无 `mag`)时把默认值 `w.mag_ammo` 写回新实例,而新实例未入树、

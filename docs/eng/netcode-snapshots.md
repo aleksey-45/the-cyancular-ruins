@@ -48,7 +48,7 @@ NetBus.rpc_id(peer, "snapshot_own",
 
 - `ack_seq` = 该 role 已消费输入记录的 seq。
 - `q` = 该 role 已到达但未消费的输入**记录**数。
-- `c2` = `player.capture_state()`：**25 个标量 + 武器块 10 个（仅手持非空时）+ 整个背包表**。字段表在 `core/net/net_codec.gd` 的 `C2_SCHEMA` / `WEAPON_SCHEMA` / `INV_SCHEMA`。
+- `c2` = `player.capture_state()`：**25 个标量 + 武器块 10 个（仅手持非空时）+ 整个背包表**。字段表在 `core/net/net_codec.gd` 的 `C2_SCHEMA` / `WEAPON_SCHEMA` / `INV_SCHEMA`（仍是唯一 schema）；字典的装配在 [`scenes/player/player_net_state.gd`](../../scenes/player/player_net_state.gd)，由各组件 `capture_state()` 拼出来。
 - `c2` 是 C2 回滚的锚点：客户端 `restore_state()` 后用未确认输入重放。
 - ★ **S1（2026-10-24）发送时机**：本人包不在世界包广播里发，而是 MatchHost 在**消费完本 tick 输入后 call_deferred**、由 `SnapshotSystem.send_own()` 在帧末（Player 子节点步进完之后）发。⇒ `ack` 与 `c2` 是同一 tick 的最新权威态（旧实现落后一拍且要等下一次 30Hz 广播）；代价是**世界包里自己那份比本人包旧 1 tick**（客户端本来就不消费世界包的自己那份）。
 - 传输：`snapshot_own` 是 `unreliable`、`transfer_channel = 0`（ENet 道 1）。
