@@ -4,6 +4,8 @@
 
 ## 武器与子弹(scenes/weapons/)
 
+- 武器组件的实现分三件（2026-11-17 拆）：[`scenes/player/weapon_component.gd`](../../scenes/player/weapon_component.gd)（Node 薄壳：生命周期 / 启用类型 / 滚轮与上行 / 帧胶水 / 信号转发）、[`weapon_loadout.gd`](../../scenes/player/weapon_loadout.gd)（`RefCounted`：背包表 + 手持实例 + 装备/切枪/拾取丢弃的**唯一变更点**）、[`weapon_state.gd`](../../scenes/player/weapon_state.gd)（纯静态：整态武器段的 capture/restore/sync/apply，键名 = `NetCodec` 的 `C2_SCHEMA`/`WEAPON_SCHEMA`）。`inventory` / `_current_index` / `enabled_types` 仍是 `WeaponComponent` 上的转发属性（HUD 与探针按旧名字读）。
+
 - `WeaponBase`(Node2D):数值全是 `@export`(fire_cooldown、bullet_speed / range / size / color、pellet_count / spread、damage / impact、recoil_push / kick、cam_shake、move / jump_penalty、heavy_aim 激光、pitch_clamp_deg)。`fire()` 按 `pellet_count` 从 `bullet_scene`(默认 `bullet.tscn`)出弹并注入 `bullet_gravity`;`apply_hit()` 调敌人 `hurt()`;heavy_aim 按住预瞄、松开发射;`preview_arc = true` 时预瞄画抛物线弧线 + 末端爆点标记。
 - 弹道方向与走路朝向解耦:`fire()` 开火瞬间先 `_auto_aim()`(由鼠标推导瞄准侧,近垂直瞄沿用上次明确侧)再出弹;所有开火路径都取本帧鼠标方向,不读 `get_facing()`。
 - 精灵 pose 的唯一入口 = `_apply_sprite_pose()`(合成顺序:换弹压枪 > 开火后坐 > 走路 bob)。走路 bob **不跑自己的计时器**:相位取宿主 `AnimatedSprite2D` 的 `frame + frame_progress`(仅 `move` 动画;蹲/冲/飞是单帧姿态、没有帧进度 ⇒ 自然不抖),幅度随水平速度淡入。只写 `Sprite2D` 的 position/rotation ⇒ 枪口 `Muzzle` 与出弹点零影响;对手/队友副本的枪同样由 `drive_remote_visual(aim, facing, animator, |vel.x|)` 驱动。
