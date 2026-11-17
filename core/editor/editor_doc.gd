@@ -31,6 +31,9 @@ extends RefCounted
 #   只发 meta_changed、不发 changed,但 dirty 照样置位;undo/redo 走 _apply_meta_snapshot,
 #   永远深拷贝 —— 历史条目与 map 里的数组不许共用引用(JS applySpawns 同款纪律)。
 #   set_meta_position 只改一条的 x/y(保留 respawn.side / enemy.type),原地不动 ⇒ false、不入栈。
+#   remove_meta_at 按索引删一条(数组原地 remove_at ⇒ 其余条目保持相对顺序);set_meta_enemy_type 只改
+#   enemies[i].type(保留 x/y),同类型/空 type ⇒ false、不入栈;meta_entries 是只读扁平列表
+#   (players → respawns → enemies),不产生 undo / 信号 / dirty。
 
 
 signal changed(layer: int, subcells: PackedInt32Array)   # 子格索引 = sy * sub_cols + sx
@@ -685,16 +688,9 @@ func remove_enemy_at(cell: Vector2i) -> bool:
 func set_meta_position(kind: String, index: int, cell: Vector2i) -> bool:
 	if not _meta_ready():
 		return false
-	var list_name := ""
-	match kind:
-		"player":
-			list_name = "players"
-		"respawn":
-			list_name = "respawns"
-		"enemy":
-			list_name = "enemies"
-		_:
-			return false
+	var list_name := _meta_list_name(kind)
+	if list_name.is_empty():
+		return false
 	var entries: Array = map.get(list_name, [])
 	if index < 0 or index >= entries.size():
 		return false
@@ -713,6 +709,64 @@ func set_meta_position(kind: String, index: int, cell: Vector2i) -> bool:
 	map[list_name] = entries
 	_commit_meta_change(before)
 	return true
+
+
+# 按索引删除一条 meta(kind 只认 "player"|"respawn"|"enemy")。
+# 数组原地 remove_at ⇒ 剩余条目保持相对顺序(与 remove_*_at 的按坐标删互补:面板列表按行号删)。
+# 非法 kind / 索引越界 / 条目损坏 ⇒ false,不入栈、不发信号;成功 ⇒ 恰好一条 meta 快照条目
+# + 一次 meta_changed + dirty=true。
+func remove_meta_at(kind: String, index: int) -> bool:
+	if not _meta_ready():
+		return false
+	var list_name := _meta_list_name(kind)
+	if list_name.is_empty():
+		return false
+	var entries: Array = map.get(list_name, [])
+	if index < 0 or index >= entries.size():
+		return false
+	var raw: Variant = entries[index]
+	if not (raw is Dictionary):
+		return false
+	var before := meta_snapshot()
+	entries.remove_at(index)
+	map[list_name] = entries
+	return _commit_meta_change(before)
+
+
+# 只改 enemies[index].type,保留 x/y(不重造条目字典)。
+# 索引越界 / 条目损坏 / type 空白 / 与现类型相同 ⇒ false(不入栈、不发信号);
+# 成功 ⇒ 恰好一条 meta 快照条目 + 一次 meta_changed + dirty=true。
+func set_meta_enemy_type(index: int, type: String) -> bool:
+	if not _meta_ready():
+		return false
+	if type.strip_edges().is_empty():
+		return false
+	var enemies: Array = map.get("enemies", [])
+	if index < 0 or index >= enemies.size():
+		return false
+	var raw: Variant = enemies[index]
+	if not (raw is Dictionary):
+		return false
+	var d: Dictionary = raw
+	if String(d.get("type", "")) == type:
+		return false                       # 同类型:不产生条目、不发信号
+	var before := meta_snapshot()
+	d["type"] = type
+	enemies[index] = d
+	map["enemies"] = enemies
+	return _commit_meta_change(before)
+
+
+# kind → map 里的表名;非法 kind 返回空串(避免三处各抄一份 match)。
+static func _meta_list_name(kind: String) -> String:
+	match kind:
+		"player":
+			return "players"
+		"respawn":
+			return "respawns"
+		"enemy":
+			return "enemies"
+	return ""
 
 
 # kind 只认 "players"|"respawns"|"enemies"|"all";返回删除条数,非法 kind 返回 -1。
@@ -751,6 +805,40 @@ func meta_snapshot() -> Dictionary:
 		"respawns": _copy_meta_entries(map.get("respawns", []), "respawn"),
 		"enemies": _copy_meta_entries(map.get("enemies", []), "enemy"),
 	}
+
+
+# 只读扁平列表(顺序 = players → respawns → enemies),供面板 / 画布命中统一按行遍历:
+#   player  → {"kind":"player","index":i,"x":int,"y":int}
+#   respawn → {"kind":"respawn","index":i,"side":int,"x":int,"y":int}
+#   enemy   → {"kind":"enemy","index":i,"type":String,"x":int,"y":int}
+# 返回的是新建字典(改返回值不影响 doc);不产生 undo / 信号 / dirty。损坏条目跳过(不按 respawn 兜底)。
+func meta_entries() -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	var players: Array = map.get("players", [])
+	for i in players.size():
+		var raw_p: Variant = players[i]
+		if not (raw_p is Dictionary):
+			continue
+		var dp: Dictionary = raw_p
+		out.append({"kind": "player", "index": i, "x": int(dp.get("x", 0)),
+				"y": int(dp.get("y", 0))})
+	var respawns: Array = map.get("respawns", [])
+	for i in respawns.size():
+		var raw_r: Variant = respawns[i]
+		if not (raw_r is Dictionary):
+			continue
+		var dr: Dictionary = raw_r
+		out.append({"kind": "respawn", "index": i, "side": int(dr.get("side", 0)),
+				"x": int(dr.get("x", 0)), "y": int(dr.get("y", 0))})
+	var enemies: Array = map.get("enemies", [])
+	for i in enemies.size():
+		var raw_e: Variant = enemies[i]
+		if not (raw_e is Dictionary):
+			continue
+		var de: Dictionary = raw_e
+		out.append({"kind": "enemy", "index": i, "type": String(de.get("type", "")),
+				"x": int(de.get("x", 0)), "y": int(de.get("y", 0))})
+	return out
 
 
 # ── 校验 / 编码接线 ─────────────────────────────────────────────────────────

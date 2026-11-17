@@ -160,6 +160,43 @@ func export_load_pressed() -> void:
 			String(page.call("map_name"))))
 
 
+# ── 视图导航 / 帮助 ─────────────────────────────────────────────────────
+
+func jump_dialog() -> void:
+	var doc: EditorDoc = page.get_doc()
+	if doc == null or doc.map.is_empty():
+		notify("先新建或打开一张地图", true)
+		return
+	var canvas: EditorCanvas = page.call("get_editor_canvas")
+	var cells := doc.sub_size() / EditorConstants.SUB_PER_CELL
+	var ctx := {}
+	var dlg := _open_dialog("跳转到格", "跳转", func(body: VBoxContainer) -> void:
+		ctx["x"] = _dialog_line(body, "X(格)", "0")
+		ctx["y"] = _dialog_line(body, "Y(格)", "0"))
+	dlg.confirmed.connect(func() -> void:
+		var x := clampi(int((ctx["x"] as LineEdit).text), 0, maxi(0, cells.x - 1))
+		var y := clampi(int((ctx["y"] as LineEdit).text), 0, maxi(0, cells.y - 1))
+		canvas.center_on_subcell(Vector2i(x * EditorConstants.SUB_PER_CELL,
+				y * EditorConstants.SUB_PER_CELL))
+		notify("已跳到格 (%d,%d)" % [x, y]))
+
+
+func shortcut_help() -> void:
+	var lines: Array[String] = [
+		"工具:B 画笔 · E 橡皮 · L 直线 · R 矩形 · G 油漆桶",
+		"      I 吸管 · M 选框 · V 移动 · H 手形 · T 渐变",
+		"编辑:Ctrl+Z/Y 撤销/重做 · Ctrl+S/O 保存/打开",
+		"      Ctrl+C/X/V 复制/剪切/粘贴 · Del 清除选区",
+		"      Shift+H/V 镜像选区 · F 适应窗口 · F1 本帮助",
+		"      Ctrl+G 跳转到格",
+		"视图:滚轮缩放 · 空格/中键拖平移 · 右键点小地图跳转",
+		"颜色层:渐变只作用于选区;纹理层:点左侧调色板选纹理",
+	]
+	_open_dialog("快捷键", "关闭", func(body: VBoxContainer) -> void:
+		for line: String in lines:
+			body.add_child(UiFactory.label(line, 16, UiFactory.C_TEXT_DIM)))
+
+
 func back() -> void:
 	_confirm_discard("返回主菜单", _back_now)
 

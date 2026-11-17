@@ -71,6 +71,14 @@ layout_mode = 2
 theme_type_variation = &"BtnCompact"
 text = "编辑 ▾"
 
+[node name="SaveBtn" type="Button" parent="Frame/Layout/Toolbar/ToolbarMain"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(72, 32)
+layout_mode = 2
+theme_type_variation = &"BtnCompact"
+tooltip_text = "保存(Ctrl+S)"
+text = "保存"
+
 [node name="UndoBtn" type="Button" parent="Frame/Layout/Toolbar/ToolbarMain"]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(64, 32)
@@ -91,6 +99,31 @@ text = "重做"
 layout_mode = 2
 size_flags_horizontal = 3
 mouse_filter = 2
+
+[node name="DocLabel" type="Label" parent="Frame/Layout/Toolbar/ToolbarMain"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(140, 0)
+layout_mode = 2
+theme_type_variation = &"Small"
+text = "未命名"
+vertical_alignment = 1
+clip_text = true
+
+[node name="JumpBtn" type="Button" parent="Frame/Layout/Toolbar/ToolbarMain"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(72, 32)
+layout_mode = 2
+theme_type_variation = &"FlatButton"
+tooltip_text = "按格坐标跳转视口"
+text = "跳转"
+
+[node name="HelpBtn" type="Button" parent="Frame/Layout/Toolbar/ToolbarMain"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(32, 32)
+layout_mode = 2
+theme_type_variation = &"FlatButton"
+tooltip_text = "快捷键(F1)"
+text = "?"
 
 [node name="ViewLabel" type="Label" parent="Frame/Layout/Toolbar/ToolbarMain"]
 unique_name_in_owner = true
@@ -274,6 +307,7 @@ theme_type_variation = &"Small"
 text = "颜色(只作用于颜色层 3-6)"
 
 [node name="BrushColorRow" type="HBoxContainer" parent="Frame/Layout/Split/WorkArea/LeftPanel/LeftCard/Body"]
+unique_name_in_owner = true
 layout_mode = 2
 theme_override_constants/separation = 8
 
@@ -290,6 +324,7 @@ layout_mode = 2
 tooltip_text = "画笔颜色(只作用于颜色层 3-6)"
 
 [node name="GradientEndRow" type="HBoxContainer" parent="Frame/Layout/Split/WorkArea/LeftPanel/LeftCard/Body"]
+unique_name_in_owner = true
 layout_mode = 2
 theme_override_constants/separation = 8
 
@@ -312,6 +347,7 @@ theme_type_variation = &"Small"
 text = "纹理调色板(点选 = 画笔纹理)"
 
 [node name="PaletteScroll" type="ScrollContainer" parent="Frame/Layout/Split/WorkArea/LeftPanel/LeftCard/Body"]
+unique_name_in_owner = true
 layout_mode = 2
 size_flags_vertical = 3
 horizontal_scroll_mode = 0
@@ -330,7 +366,8 @@ layout_mode = 2
 theme_type_variation = &"Small"
 text = "左键:当前工具
 空格/中键拖:平移
-滚轮:缩放 · H 手形 · V 移动
+滚轮:缩放 · 右键小地图:跳转
+F1:快捷键 · Ctrl+G:跳转格
 Ctrl+Z/Y:撤销重做
 Ctrl+C/X/V:选区剪贴板
 Shift+H/V:镜像选区"
@@ -543,6 +580,13 @@ layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/separation = 6
 
+[node name="SelectionTitle" type="Label" parent="Frame/Layout/Split/RightSide/RightTabs/SelectionMeta/TabMargin/Body"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"Small"
+text = "选区 / 剪贴板"
+autowrap_mode = 3
+
 [node name="SelHint" type="Label" parent="Frame/Layout/Split/RightSide/RightTabs/SelectionMeta/TabMargin/Body"]
 unique_name_in_owner = true
 layout_mode = 2
@@ -604,6 +648,13 @@ layout_mode = 2
 theme_type_variation = &"BtnCompact"
 text = "垂直镜像"
 
+[node name="MetaTitle" type="Label" parent="Frame/Layout/Split/RightSide/RightTabs/SelectionMeta/TabMargin/Body"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"Small"
+text = "地图事件(出生点 / 复活点 / 敌人)"
+autowrap_mode = 3
+
 [node name="MetaHint" type="Label" parent="Frame/Layout/Split/RightSide/RightTabs/SelectionMeta/TabMargin/Body"]
 unique_name_in_owner = true
 layout_mode = 2
@@ -652,11 +703,38 @@ layout_mode = 2
 theme_type_variation = &"BtnCompact"
 text = "放敌人"
 
+[node name="EnemyTypeRow" type="HBoxContainer" parent="Frame/Layout/Split/RightSide/RightTabs/SelectionMeta/TabMargin/Body"]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="EnemyTypeLabel" type="Label" parent="Frame/Layout/Split/RightSide/RightTabs/SelectionMeta/TabMargin/Body/EnemyTypeRow"]
+layout_mode = 2
+theme_type_variation = &"Small"
+text = "敌人类型"
+vertical_alignment = 1
+
+[node name="EnemyTypeOption" type="OptionButton" parent="Frame/Layout/Split/RightSide/RightTabs/SelectionMeta/TabMargin/Body/EnemyTypeRow"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"Kit"
+
+[node name="MetaListHint" type="Label" parent="Frame/Layout/Split/RightSide/RightTabs/SelectionMeta/TabMargin/Body"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_type_variation = &"Small"
+text = "已放置(可删除 / 改类型)"
+
+[node name="MetaList" type="VBoxContainer" parent="Frame/Layout/Split/RightSide/RightTabs/SelectionMeta/TabMargin/Body"]
+unique_name_in_owner = true
+layout_mode = 2
+theme_override_constants/separation = 2
+
 [node name="MetaInfo" type="Label" parent="Frame/Layout/Split/RightSide/RightTabs/SelectionMeta/TabMargin/Body"]
 unique_name_in_owner = true
 layout_mode = 2
 theme_type_variation = &"Small"
 text = ""
+autowrap_mode = 3
 
 [node name="ClearMetaBtn" type="Button" parent="Frame/Layout/Split/RightSide/RightTabs/SelectionMeta/TabMargin/Body"]
 unique_name_in_owner = true
@@ -721,6 +799,12 @@ theme_override_constants/separation = 8
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
+theme_type_variation = &"Small"
+clip_text = true
+
+[node name="StatusInfo" type="Label" parent="Frame/Layout/StatusBar/StatusRow"]
+unique_name_in_owner = true
+layout_mode = 2
 theme_type_variation = &"Small"
 clip_text = true
 

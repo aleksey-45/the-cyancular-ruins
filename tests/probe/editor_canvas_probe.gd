@@ -19,11 +19,15 @@ extends Node
 #   ⑫ meta 标记漏类型/标签/锚点错/开关无效 ⇒ ⑭ 组红;
 #   ⑬ 手形拖动不平移 / 平移时发 pointer_* ⇒ ⑰ 组红;
 #   ⑭ 移动工具不发 selection_move_finished 或 delta 算错 ⇒ ⑱ 组红;
-#   ⑮ meta 标记命中测试/拖拽落点(格坐标)错 ⇒ ⑲ 组红。
+#   ⑮ meta 标记命中测试/拖拽落点(格坐标)错 ⇒ ⑲ 组红;
+#   ⑯ meta 放置模式标志/光标失效,或该模式吞掉 pointer_* ⇒ ⑳ 组红;
+#   ⑰ 渐变预览写进视口图(不是纯叠加层)或 active/clear 开关失灵 ⇒ ㉑ 组红;
+#   ⑱ 小地图 rect 越界/空图非零、右键小地图不跳转或误发 pointer_*、center_on_subcell 不居中
+#      ⇒ ㉒/㉓/㉔ 组红。
 # 判据 = 判词行 + 条数闸;退出码只是陪衬。像素判据统一走 view_image()(纹理走 update() 上传,
 # view_texture().get_image() 是旧的)。
 
-const EXPECTED_CHECKS := 51
+const EXPECTED_CHECKS := 56
 const CANVAS_W := 800
 const CANVAS_H := 600
 const SUB := 32                     # 8 格 × 4 子格 = 32
@@ -441,6 +445,94 @@ func _ready() -> void:
 			and not _near(ring_b.get_pixel(152, 152), ring_a.get_pixel(152, 152), 0),
 			"⑯ kx=ky=2 的环面副本(屏幕 152,152)也必须被重画")
 
+	# ⑳-㉔ 画布层新增能力:meta 放置模式 / 渐变预览 / 小地图 + 坐标跳转。
+	#   这些能力只许影响 _draw 叠加层与相机 ⇒ 视口图(view_image)必须逐字节不变。
+	_canvas.set_camera(Vector2.ZERO, float(SUB_PX))
+	_canvas.set_pan_tool(false)
+	_canvas.set_move_tool(false)
+	_canvas.refresh()
+
+	# ⑳ meta 放置模式:标志可开关 + 光标变手形/退出回十字 + 不吞 pointer_down
+	_pointer_hits = 0
+	_canvas.pointer_down.connect(_on_any_pointer)
+	_canvas.set_meta_mode_active(true)
+	var meta_mode_on := _canvas.is_meta_mode_active()
+	var cursor_on := _canvas.mouse_default_cursor_shape
+	_click_at(Vector2(40, 40), true)
+	_click_at(Vector2(40, 40), false)
+	_canvas.set_meta_mode_active(false)
+	_canvas.pointer_down.disconnect(_on_any_pointer)
+	var meta_mode_off := _canvas.is_meta_mode_active()
+	var cursor_off := _canvas.mouse_default_cursor_shape
+	_chk(meta_mode_on and not meta_mode_off
+			and cursor_on == Control.CURSOR_POINTING_HAND
+			and cursor_off == Control.CURSOR_CROSS
+			and _pointer_hits == 1,
+			"⑳ meta 模式应可开关(开 %s/关 %s)、光标手形→十字(%d→%d)、且不吞 pointer_down(hits=%d)"
+			% [meta_mode_on, meta_mode_off, cursor_on, cursor_off, _pointer_hits])
+
+	# ㉑ 渐变预览:纯叠加层(开启时 view_image 与关闭时逐字节相等)+ active/clear 开关
+	var grad_off: Image = _view_image()
+	_canvas.clear_gradient_preview()
+	var grad_clear_ok := not _canvas.gradient_preview_active()
+	var draws_before_grad := _canvas.get_draw_calls()
+	_canvas.set_gradient_preview(Vector2i(2, 2), Vector2i(30, 28))
+	var grad_active := _canvas.gradient_preview_active()
+	_canvas.queue_redraw()
+	await get_tree().process_frame
+	var grad_view: Image = _view_image()
+	var grad_draws := _canvas.get_draw_calls()
+	_canvas.set_gradient_preview(Vector2i(2, 2), Vector2i(30, 28), false)
+	var grad_toggle_off := not _canvas.gradient_preview_active()
+	_chk(grad_clear_ok and grad_active and grad_toggle_off and grad_draws > draws_before_grad
+			and grad_view != null and grad_off != null and grad_view.get_data() == grad_off.get_data(),
+			"㉑ 渐变预览必须只画叠加层:active 开关有效且开启前后 view_image 逐字节相等")
+
+	# ㉒ 小地图 rect:非空图非零且完整落在画布内(右上 margin 12);空图零尺寸
+	_canvas.set_camera(Vector2.ZERO, float(SUB_PX))
+	var mr := _canvas.minimap_rect()
+	var mr_inside := mr.size.x > 0.0 and mr.size.y > 0.0 \
+			and mr.position.x >= 0.0 and mr.position.y >= 0.0 \
+			and mr.end.x <= float(CANVAS_W) and mr.end.y <= float(CANVAS_H) \
+			and is_equal_approx(mr.position.y, 12.0) \
+			and is_equal_approx(float(CANVAS_W) - mr.end.x, 12.0)
+	var empty_mr_doc := EditorDoc.new()          # map 为空字典 = 空图 ⇒ 小地图零尺寸
+	bare.set_doc(empty_mr_doc)
+	var empty_mr := bare.minimap_rect()
+	_chk(mr_inside and empty_mr.size == Vector2.ZERO,
+			"㉒ 非空图小地图 rect 应非零且完整在画布内(右上 margin 12)(实得 %s);空图应零尺寸(实得 %s)"
+			% [str(mr), str(empty_mr)])
+
+	# ㉓ 右键小地图中心 ⇒ 跳转(改 origin)且不发 pointer_*;右键画布其它地方无动作
+	_canvas.set_camera(Vector2.ZERO, float(SUB_PX))
+	_pointer_hits = 0
+	_canvas.pointer_down.connect(_on_any_pointer)
+	var origin_before_rc := _canvas.origin
+	_right_click_at(Vector2(40, 40), true)
+	_right_click_at(Vector2(40, 40), false)
+	var origin_outside := _canvas.origin
+	var hits_outside := _pointer_hits
+	var mr_click := _canvas.minimap_rect()
+	_right_click_at(mr_click.get_center(), true)
+	_right_click_at(mr_click.get_center(), false)
+	var origin_map_click := _canvas.origin
+	var hits_map := _pointer_hits
+	_canvas.pointer_down.disconnect(_on_any_pointer)
+	_chk(hits_outside == 0 and origin_outside.is_equal_approx(origin_before_rc)
+			and hits_map == 0 and not origin_map_click.is_equal_approx(origin_before_rc),
+			"㉓ 右键小地图中心应跳转 origin 且不发 pointer_down(别处无动作;origin %s→%s→%s, hits=%d)"
+			% [str(origin_before_rc), str(origin_outside), str(origin_map_click), hits_map])
+
+	# ㉔ center_on_subcell:该子格放到视口中心(容差 1 子格),不改 zoom
+	var center_sub := Vector2i(21, 7)
+	var zoom_before_center := _canvas.zoom
+	_canvas.center_on_subcell(center_sub)
+	var mid_sub := _canvas.screen_to_subcell(Vector2(float(CANVAS_W), float(CANVAS_H)) * 0.5)
+	_chk(absi(mid_sub.x - center_sub.x) <= 1 and absi(mid_sub.y - center_sub.y) <= 1
+			and is_equal_approx(_canvas.zoom, zoom_before_center),
+			"㉔ center_on_subcell(%s) 后画布中心子格应为它(实得 %s,容差 1)且 zoom 不变(%f→%f)"
+			% [str(center_sub), str(mid_sub), zoom_before_center, _canvas.zoom])
+
 	_finish()
 
 
@@ -466,6 +558,15 @@ func _on_meta_drag(kind: String, index: int, cell: Vector2i) -> void:
 func _click_at(pos: Vector2, pressed: bool) -> void:
 	var ev := InputEventMouseButton.new()
 	ev.button_index = MOUSE_BUTTON_LEFT
+	ev.pressed = pressed
+	ev.position = pos
+	_canvas._gui_input(ev)
+
+
+# 右键合成事件(小地图跳转走这条;画布其它位置应无动作)。
+func _right_click_at(pos: Vector2, pressed: bool) -> void:
+	var ev := InputEventMouseButton.new()
+	ev.button_index = MOUSE_BUTTON_RIGHT
 	ev.pressed = pressed
 	ev.position = pos
 	_canvas._gui_input(ev)

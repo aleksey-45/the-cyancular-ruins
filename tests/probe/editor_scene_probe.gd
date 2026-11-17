@@ -16,7 +16,7 @@ extends Node
 #   ⑩ 用了绝对坐标/固定宽度导致控件溢出父容器 ⇒ ⑦ 组「无溢出」红。
 # 判据 = 未跑满条数 + 失败清单;退出码只是陪衬。
 
-const EXPECTED_CHECKS := 55
+const EXPECTED_CHECKS := 60
 const MAP := "res://maps/newfactory.cyrm"
 const A := "user://maps/_editor_scene_probe_a.cyrm"
 const EXPORT_C := "user://maps/_editor_scene_probe_export.cyrm"
@@ -340,28 +340,26 @@ func _check_ui_layout() -> void:
 	_chk(not canvas.is_move_tool() and not canvas.is_pan_tool(),
 			"⑦ Ctrl+V / Shift+H 不应被单键 V/H 工具吃掉")
 
-	# 工具/面板按当前层类型适用性:纹理层(0-2) vs 颜色层(3-6)
+	# 工具/面板按当前层类型适用性 + 渐进披露:纹理层只显示调色板,颜色层只显示颜色
 	var grad_btn := _editor.find_child("ToolGradient", true, false) as Button
 	var brush_color_btn := _editor.find_child("BrushColor", true, false) as ColorPickerButton
-	var gradient_end_btn := _editor.find_child("GradientEndColor", true, false) as ColorPickerButton
-	var pal_first := pal.get_child(0) as Button
 	var layer1_btn := _editor.find_child("Layer1", true, false) as Button
 	var layer3_btn := _editor.find_child("Layer3", true, false) as Button
 	layer3_btn.pressed.emit()                       # 切到颜色层(背景 100%)
 	await get_tree().process_frame
-	_chk(not grad_btn.disabled and not brush_color_btn.disabled and not gradient_end_btn.disabled
-			and pal_first.disabled,
-			"⑦ 颜色层应启用渐变/颜色并禁用纹理调色板")
+	_chk(not grad_btn.disabled and brush_color_btn.is_visible_in_tree()
+			and brush_color_btn.color.a > 0.9 and not pal.is_visible_in_tree(),
+			"⑦ 颜色层应启用渐变/颜色(默认色不透明),并隐藏纹理调色板(渐进披露)")
 	grad_btn.pressed.emit()
 	await get_tree().process_frame
 	var grad_active := grad_btn.theme_type_variation == &"ToolActive"
 	layer1_btn.pressed.emit()                       # 切回纹理层(场景)
 	await get_tree().process_frame
 	_press_editor_key(KEY_T)
-	_chk(grad_active and grad_btn.disabled and brush_color_btn.disabled
-			and gradient_end_btn.disabled and not pal_first.disabled
+	_chk(grad_active and grad_btn.disabled and not brush_color_btn.is_visible_in_tree()
+			and pal.is_visible_in_tree()
 			and _editor.find_child("ToolBrush", true, false).theme_type_variation == &"ToolActive",
-			"⑦ 纹理层应禁用渐变/颜色、恢复调色板;渐变/按 T 都不得进入(应停在画笔)")
+			"⑦ 纹理层应禁用渐变/隐藏颜色、恢复调色板;渐变/按 T 都不得进入(应停在画笔)")
 	# 颜色层吸管:吸的是 RGBA 并回写取色器(纹理层吸的是 desc)
 	layer3_btn.pressed.emit()
 	await get_tree().process_frame
@@ -376,6 +374,98 @@ func _check_ui_layout() -> void:
 			and _editor.find_child("ToolBrush", true, false).theme_type_variation == &"ToolActive",
 			"⑦ 颜色层吸管应把 0x336699FF 写回取色器并回画笔(实得 %s)" % str(brush_color_btn.color))
 	layer1_btn.pressed.emit()                       # 收尾:回纹理层 + 画笔,后续检查不依赖层类型
+	await get_tree().process_frame
+
+	# 当前层的眼睛不可关:控件不再出现「显示关但画布还在画」
+	var layer1_vis := _editor.find_child("Layer1Vis", true, false) as CheckButton
+	var vis_disabled := layer1_vis != null and layer1_vis.disabled
+	var vis_pressed := layer1_vis != null and layer1_vis.button_pressed
+	_chk(vis_disabled and vis_pressed,
+			"⑦ 当前编辑层的眼睛应禁用并保持显示为开(实得 disabled=%s pressed=%s)"
+			% [str(vis_disabled), str(vis_pressed)])
+
+	# meta 放置模式:画刷框被抑制;选工具自动退出放置模式
+	(_editor.find_child("MetaPlayer", true, false) as Button).pressed.emit()
+	await get_tree().process_frame
+	var meta_on := canvas.is_meta_mode_active()
+	(_editor.find_child("ToolBrush", true, false) as Button).pressed.emit()
+	await get_tree().process_frame
+	_chk(meta_on and not canvas.is_meta_mode_active(),
+			"⑦ 放置模式应抑制画刷框、选工具应自动退出放置模式(实得 on=%s / off=%s)"
+			% [str(meta_on), str(not canvas.is_meta_mode_active())])
+
+	# 敌人类型来自 enemies.json(不再写死非法 "slime");已放置列表可单条删除
+	var enemy_opt := _editor.find_child("EnemyTypeOption", true, false) as OptionButton
+	var enemies_before := (_doc.map["enemies"] as Array).size()
+	(_editor.find_child("MetaEnemy", true, false) as Button).pressed.emit()
+	await get_tree().process_frame
+	canvas.set_camera(Vector2.ZERO, 16.0)
+	_canvas_click(canvas, Vector2(120, 120), true)   # 格 (1,1)
+	await get_tree().process_frame
+	var enemies_after: Array = _doc.map["enemies"]
+	var placed_ok := enemies_after.size() == enemies_before + 1
+	var placed_type := ""
+	if placed_ok:
+		placed_type = String((enemies_after[enemies_after.size() - 1] as Dictionary).get("type", ""))
+	var meta_list := _editor.find_child("MetaList", true, false) as VBoxContainer
+	var type_changed := false
+	if meta_list.get_child_count() > 0:
+		var last_row := meta_list.get_child(meta_list.get_child_count() - 1) as Control
+		var row_opt: OptionButton = null
+		for node in last_row.find_children("*", "", true, false):
+			if node is OptionButton:
+				row_opt = node as OptionButton
+				break
+		if row_opt != null and row_opt.item_count > 1:
+			var new_type := row_opt.get_item_text(1)
+			row_opt.item_selected.emit(1)        # 模拟用户在下拉里改类型
+			await get_tree().process_frame
+			var enemy_list: Array = _doc.map["enemies"]
+			type_changed = enemies_before < enemy_list.size() \
+					and String((enemy_list[enemies_before] as Dictionary).get("type", "")) == new_type
+	var del_btn: Button = null
+	if meta_list.get_child_count() > 0:
+		var last_row2 := meta_list.get_child(meta_list.get_child_count() - 1) as Control
+		for node in last_row2.find_children("*", "", true, false):
+			if node is Button and (node as Button).text == "删除":
+				del_btn = node as Button
+				break
+	var had_del := del_btn != null
+	if del_btn != null:
+		del_btn.pressed.emit()
+	await get_tree().process_frame
+	_chk(placed_ok and placed_type == enemy_opt.get_item_text(0) and type_changed and had_del
+			and (_doc.map["enemies"] as Array).size() == enemies_before,
+			"⑦ 放敌人应用下拉里的合法类型、列表改类型、逐条删除(默认 %s 实得 %s / changed=%s / del=%s)"
+			% [enemy_opt.get_item_text(0), placed_type, str(type_changed), str(had_del)])
+	(_editor.find_child("ToolBrush", true, false) as Button).pressed.emit()
+	await get_tree().process_frame
+
+	# 顶栏「保存」主按钮:写盘并清 dirty
+	_doc.set_cells([Vector2i(2, 2)], EditorDesc.neutral_desc(9))
+	var dirty_before_save := _doc.dirty
+	(_editor.find_child("SaveBtn", true, false) as Button).pressed.emit()
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_chk(dirty_before_save and not _doc.dirty, "⑦ 顶栏保存按钮应写盘并清 dirty")
+
+	# 渐变默认只作用于选区:无选区时必须拒绝,不能整层覆盖
+	layer3_btn.pressed.emit()
+	await get_tree().process_frame
+	_doc.set_selection(Rect2i())
+	canvas.set_selection(Rect2i())
+	(_editor.find_child("ToolGradient", true, false) as Button).pressed.emit()
+	await get_tree().process_frame
+	var undo_before_grad := _doc.undo_count()
+	_canvas_click(canvas, Vector2(120, 120), true)
+	_canvas_drag(canvas, Vector2(160, 140))
+	_canvas_click(canvas, Vector2(160, 140), false)
+	await get_tree().process_frame
+	_chk(_doc.undo_count() == undo_before_grad,
+			"⑦ 无选区时渐变应拒绝,不得整层覆盖(undo %d→%d)"
+			% [undo_before_grad, _doc.undo_count()])
+	(_editor.find_child("ToolBrush", true, false) as Button).pressed.emit()
+	layer1_btn.pressed.emit()
 	await get_tree().process_frame
 
 	# 无溢出:每个可见 Control 都在父 Control 的 rect 内(容差 1px;ScrollContainer 内容不查)。

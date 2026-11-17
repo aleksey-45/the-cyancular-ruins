@@ -10,14 +10,17 @@ extends Control
 #   (象限列 = (sy%4)*4 + (sx%4),行 = row_of[desc];按 zoom 先整张 INTERPOLATE_NEAREST 缩放一次,
 #   再逐子格 blend),颜色层按子格填 rgba(u32),空气露出 SKY_COLOR。非 active 层 alpha 调低。
 # 相机:origin = 画布左上角对应的世界子格坐标(可负/小数;渲染按 posmod 取环面样本),
-#   zoom = 每子格屏幕像素(默认 16,档位 ZOOM_STEPS)。滚轮以鼠标为锚缩放,中键/空格拖动平移。
+#   zoom = 每子格屏幕像素(默认 16,档位 ZOOM_STEPS)。滚轮以鼠标为锚缩放,中键/空格拖动平移;
+#   center_on_subcell 把指定子格放到画布中心(不改 zoom),minimap_rect 给出右上角小地图的屏幕矩形。
 #
 # 脏区刷新(T2 后置项):doc.changed 只把变更子格的包围盒交给 refresh_region —— 它把 bbox
 #   按 ±sub_cols/±sub_rows 平移到各环面副本、与画布求交,只重画这些屏幕块(块内仍按全量
 #   的层序/坐标公式重放),结果与整张 refresh() 逐像素一致(场景探针逐字节比较)。bbox 面积
 #   超过半图或图集因新 desc 重建(图集行号全变)时退回全量 refresh()。
 # 叠加层(不进视口图):选区虚线框 + meta 标记(出生点 P1/P2…、复活点 R1 深绿 / R2 深橙、
-#   敌人红点+类型首字母);标记按屏幕像素大小画,不随 zoom 变大。
+#   敌人红点+类型首字母);标记按屏幕像素大小画,不随 zoom 变大。另有:meta 放置模式抑制画刷框、
+#   渐变预览(虚线 + 两端点,a/b 异色;只画不写 doc)、右上角小地图(地图范围 / meta 小点 /
+#   当前视口矩形;右键小地图 = 把点击子格居中,不发 pointer_*)。
 #
 # 去掉什么它才会红(tests/probe/editor_canvas_probe.gd 逐条守):
 #   ① 不建离屏纹理 / 尺寸错 ⇒ view_texture 断言红;
@@ -34,6 +37,10 @@ extends Control
 #   ⑫ 手形工具/空格拖不平移,或平移时仍发 pointer_* ⇒ 手形断言红;
 #   ⑬ 移动工具拖选区不算 delta / 不夹地图边界 / 不发 finished ⇒ 移动断言红;
 #   ⑭ meta 标记命中测试错 / 拖拽不跟鼠标 / 落点不是格坐标 ⇒ meta 拖拽断言红。
+#   ⑮ meta 放置模式标志/光标失效,或该模式吞掉/丢失 pointer_* ⇒ ⑳ 组红;
+#   ⑯ 渐变预览写进视口图(不是纯叠加层)或 active/clear 开关失灵 ⇒ ㉑ 组红;
+#   ⑰ 小地图 rect 越界或空图非零、右键不跳转或误发 pointer_*、center_on_subcell 不居中
+#      ⇒ ㉒/㉓/㉔ 组红。
 # class_name 行已由 Lead 预注册:别改(全局类缓存按名字解析)。
 
 const ZOOM_STEPS := [4.0, 8.0, 12.0, 16.0, 24.0, 32.0, 48.0, 64.0]
@@ -59,6 +66,20 @@ const META_FONT_SIZE := 10
 const META_ENEMY_RADIUS := 6.0
 const META_SQUARE := 10.0
 const META_HIT_RADIUS := 14.0       # 移动工具命中 meta 标记的半径(屏幕 px;标记本身只有 10px)
+
+# 渐变预览:虚线 + 两端点(a/b 异色)。只画在 _draw 叠加层,不进视口图、不写 doc。
+const GRADIENT_LINE_COLOR := Color(0.75, 0.95, 1.0, 0.85)
+const GRADIENT_A_COLOR := Color(0.20, 0.90, 1.0, 1.0)
+const GRADIENT_B_COLOR := Color(1.0, 0.62, 0.18, 1.0)
+const GRADIENT_DOT_RADIUS := 5.0
+# 小地图:画布内右上角,margin 12;最大 180×120,按地图宽高比缩放;空图 = 零尺寸。
+const MINIMAP_MARGIN := 12.0
+const MINIMAP_MAX_W := 180.0
+const MINIMAP_MAX_H := 120.0
+const MINIMAP_BG_COLOR := Color(0.02, 0.05, 0.08, 0.82)
+const MINIMAP_BORDER_COLOR := Color(0.55, 0.95, 1.0, 0.85)
+const MINIMAP_VIEW_COLOR := Color(1.0, 1.0, 1.0, 0.85)
+const MINIMAP_META_RADIUS := 1.6
 
 signal pointer_down(sub: Vector2i, button: int, shift: bool, ctrl: bool)
 signal pointer_drag(sub: Vector2i)
@@ -109,6 +130,10 @@ var _draw_calls := 0                            # _draw 完成次数(探针守�
 
 var _selection := Rect2i()                      # 子格矩形;size<=0 = 无选区(只画在 _draw 叠加层)
 var _meta_visible := true                       # meta 标记开关(默认显示)
+var _meta_mode_active := false                  # meta 放置模式:抑制画刷框 + 手形光标(不改 pointer_*)
+var _gradient_active := false                   # 渐变预览:纯叠加层(不改 doc / 视口图)
+var _gradient_a := Vector2i.ZERO
+var _gradient_b := Vector2i.ZERO
 
 var _atlas_img: Image = null
 var _atlas_row_of := {}
@@ -242,6 +267,37 @@ func is_move_tool() -> bool:
 	return _move_tool
 
 
+# meta 放置模式:面板点「放出生点/复活点/敌人」时打开 —— 抑制画刷框、光标变手形;
+# 只影响叠加层与光标,**不改变 pointer_* 事件**(落点仍由工具层按 pointer_down 处理)。
+func set_meta_mode_active(on: bool) -> void:
+	if _meta_mode_active == on:
+		return
+	_meta_mode_active = on
+	_refresh_cursor()
+	queue_redraw()
+
+
+func is_meta_mode_active() -> bool:
+	return _meta_mode_active
+
+
+# 渐变预览(只画不写):a/b 是子格坐标;on=false 等价于清空但保留端点(便于工具层复用)。
+func set_gradient_preview(a_sub: Vector2i, b_sub: Vector2i, on: bool = true) -> void:
+	_gradient_a = a_sub
+	_gradient_b = b_sub
+	_gradient_active = on
+	queue_redraw()
+
+
+func clear_gradient_preview() -> void:
+	_gradient_active = false
+	queue_redraw()
+
+
+func gradient_preview_active() -> bool:
+	return _gradient_active
+
+
 # 屏幕坐标命中的 meta 标记(空字典 = 没命中)。只有移动工具会用它做拖拽。
 func meta_marker_at(pos: Vector2) -> Dictionary:
 	for m: Dictionary in meta_markers():
@@ -347,6 +403,28 @@ func subcell_to_screen(sub: Vector2i) -> Vector2:
 	return Vector2((float(sub.x) - _origin.x) * _zoom, (float(sub.y) - _origin.y) * _zoom)
 
 
+## 小地图的屏幕矩形(画布内右上角,margin 12;最大 180×120,按地图宽高比缩放)。
+## 空图(无 doc / 地图尺寸为 0)或画布太小放不下时返回零尺寸 Rect2。
+func minimap_rect() -> Rect2:
+	var sub := _sub_size()
+	var inner := Vector2(size) - Vector2(MINIMAP_MARGIN, MINIMAP_MARGIN) * 2.0
+	if sub.x <= 0 or sub.y <= 0 or inner.x <= 0.0 or inner.y <= 0.0:
+		return Rect2()
+	var max_w := minf(MINIMAP_MAX_W, inner.x)
+	var max_h := minf(MINIMAP_MAX_H, inner.y)
+	if max_w <= 0.0 or max_h <= 0.0:
+		return Rect2()
+	# 先按宽撑满再按高收;极端宽高比时两轴都夹到 >=1px(非空图不允许零尺寸)。
+	var w := max_w
+	var h := w * float(sub.y) / float(sub.x)
+	if h > max_h:
+		h = max_h
+		w = h * float(sub.x) / float(sub.y)
+	w = clampf(w, 1.0, max_w)
+	h = clampf(h, 1.0, max_h)
+	return Rect2(Vector2(size.x - MINIMAP_MARGIN - w, MINIMAP_MARGIN), Vector2(w, h))
+
+
 ## 以屏幕点为锚缩放到下一个/上一个档位(direction = +1 放大 / -1 缩小)。
 ## 锚点下的子格保持不变(screen_to_subcell(at) 前后相等)。
 func zoom_at_screen(at: Vector2, direction: int) -> void:
@@ -389,6 +467,14 @@ func pan_pixels(delta: Vector2) -> void:
 	if _zoom <= 0.0:
 		return
 	_origin += delta / _zoom
+	refresh()
+
+
+## 把该世界子格放到画布中心(不改 zoom;负坐标/越界按原值平移,环面由渲染的 posmod 处理)。
+func center_on_subcell(sub: Vector2i) -> void:
+	if _zoom <= 0.0:
+		return
+	_origin = Vector2(sub) - Vector2(size) / (2.0 * _zoom)
 	refresh()
 
 
@@ -781,7 +867,9 @@ func _draw() -> void:
 	_draw_selection()
 	_draw_move_preview()
 	_draw_meta()
+	_draw_gradient_preview()
 	_draw_brush()
+	_draw_minimap()
 	_draw_calls += 1
 
 
@@ -893,8 +981,11 @@ func _over_move_target(pos: Vector2) -> bool:
 
 # 光标:手形/空格 = 抓手;移动工具悬在可拖目标 = 移动十字;其余工具 = 十字准星。
 func _refresh_cursor() -> void:
+	# meta 放置模式 = 手形(指向可放置处);平移类优先于它(空格/中键拖仍平移)。
 	if _pan_tool or _space_held:
 		mouse_default_cursor_shape = Control.CURSOR_DRAG
+	elif _meta_mode_active:
+		mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	elif _move_tool:
 		if _moving_selection or not _dragging_meta.is_empty() or (_has_hover and _over_move_target(_mouse_pos)):
 			mouse_default_cursor_shape = Control.CURSOR_MOVE
@@ -910,8 +1001,20 @@ func _draw_marker_text(font: Font, at: Vector2, text: String, color: Color) -> v
 	draw_string(font, at, text, HORIZONTAL_ALIGNMENT_LEFT, -1, META_FONT_SIZE, color)
 
 
+## 渐变预览:从 a 到 b 的屏幕点画虚线 + 两端小圆点(a/b 异色)。只在 active 时画,只进 _draw。
+func _draw_gradient_preview() -> void:
+	if not _gradient_active:
+		return
+	var a := subcell_to_screen(_gradient_a) + Vector2(_zoom, _zoom) * 0.5
+	var b := subcell_to_screen(_gradient_b) + Vector2(_zoom, _zoom) * 0.5
+	draw_dashed_line(a, b, GRADIENT_LINE_COLOR, 2.0, 8.0)
+	draw_circle(a, GRADIENT_DOT_RADIUS, GRADIENT_A_COLOR)
+	draw_circle(b, GRADIENT_DOT_RADIUS, GRADIENT_B_COLOR)
+
+
 func _draw_brush() -> void:
-	if not _has_hover or _pan_tool or _move_tool:
+	# meta 放置模式下不画画刷框(避免「放点模式还显示画笔框」)。
+	if not _has_hover or _pan_tool or _move_tool or _meta_mode_active:
 		return
 	var sub := _sub_size()
 	if sub.x <= 0 or sub.y <= 0:
@@ -931,6 +1034,112 @@ func _draw_brush() -> void:
 		tint = TerrainAtlas.tint_color(Color.WHITE, _preview_desc)
 	draw_rect(rect, Color(tint.r, tint.g, tint.b, 0.20))
 	draw_rect(rect, Color(tint.r, tint.g, tint.b, 0.95), false, 2.0)
+
+
+# ── 小地图(右上角;纯叠加层,不进视口图)─────────────────────────────
+
+## 底/边框 → meta 小点 → 当前视口矩形;缩放/平移/画布尺寸变化都按当前相机重算。
+func _draw_minimap() -> void:
+	var r := minimap_rect()
+	var sub := _sub_size()
+	if r.size.x <= 0.0 or r.size.y <= 0.0 or sub.x <= 0 or sub.y <= 0:
+		return
+	draw_rect(r, MINIMAP_BG_COLOR)
+	draw_rect(r, MINIMAP_BORDER_COLOR, false, 1.0)
+	_draw_minimap_meta(r, sub)
+	_draw_minimap_viewport(r, sub)
+
+
+## meta 小点:出生点 / 复活点(side 色)/ 敌人,颜色与画布标记同一套 META_* 常量;
+## meta 标记被隐藏时小地图也不画点(与 meta_markers() 口径一致)。
+func _draw_minimap_meta(r: Rect2, sub: Vector2i) -> void:
+	if not _meta_visible or _doc == null:
+		return
+	var map: Dictionary = _doc.map
+	if map.is_empty():
+		return
+	var players: Array = map.get("players", [])
+	for i in players.size():
+		var p: Variant = players[i]
+		if p is Dictionary:
+			var pd: Dictionary = p
+			draw_circle(_minimap_cell_point(r, sub,
+					Vector2i(int(pd.get("x", 0)), int(pd.get("y", 0)))), MINIMAP_META_RADIUS,
+					META_PLAYER_COLOR)
+	var respawns: Array = map.get("respawns", [])
+	for i in respawns.size():
+		var rp: Variant = respawns[i]
+		if rp is Dictionary:
+			var rd: Dictionary = rp
+			var color := META_RESPAWN1_COLOR if int(rd.get("side", 0)) == 1 else META_RESPAWN2_COLOR
+			draw_circle(_minimap_cell_point(r, sub,
+					Vector2i(int(rd.get("x", 0)), int(rd.get("y", 0)))), MINIMAP_META_RADIUS, color)
+	var enemies: Array = map.get("enemies", [])
+	for i in enemies.size():
+		var ep: Variant = enemies[i]
+		if ep is Dictionary:
+			var ed: Dictionary = ep
+			draw_circle(_minimap_cell_point(r, sub,
+					Vector2i(int(ed.get("x", 0)), int(ed.get("y", 0)))), MINIMAP_META_RADIUS,
+					META_ENEMY_COLOR)
+
+
+## 格坐标 → 小地图内该格中心的屏幕点(按环面 posmod 归一,越界 meta 也画在图内)。
+func _minimap_cell_point(r: Rect2, sub: Vector2i, cell: Vector2i) -> Vector2:
+	var world := Vector2(float(cell.x) * SUB_PER_CELL + SUB_PER_CELL * 0.5,
+			float(cell.y) * SUB_PER_CELL + SUB_PER_CELL * 0.5)
+	var frac := Vector2(fposmod(world.x, float(sub.x)) / float(sub.x),
+			fposmod(world.y, float(sub.y)) / float(sub.y))
+	return r.position + frac * r.size
+
+
+## 当前视口矩形(origin..origin+size/zoom)映射进小地图;跨环面接缝时拆成多段。
+func _draw_minimap_viewport(r: Rect2, sub: Vector2i) -> void:
+	if _zoom <= 0.0:
+		return
+	var span := Vector2(size) / _zoom
+	var xs := _wrap_intervals(fposmod(_origin.x, float(sub.x)) / float(sub.x),
+			span.x / float(sub.x))
+	var ys := _wrap_intervals(fposmod(_origin.y, float(sub.y)) / float(sub.y),
+			span.y / float(sub.y))
+	for xi in xs.size():
+		var xr: Vector2 = xs[xi]
+		for yi in ys.size():
+			var yr: Vector2 = ys[yi]
+			var vr := Rect2(r.position + Vector2(xr.x, yr.x) * r.size,
+					Vector2(maxf((xr.y - xr.x) * r.size.x, 1.0),
+							maxf((yr.y - yr.x) * r.size.y, 1.0)))
+			draw_rect(vr, MINIMAP_VIEW_COLOR, false, 1.0)
+
+
+## 把 [start, start+length) 在 0..1 的环面上切成 1~2 段(长度 >= 1 = 整圈)。
+func _wrap_intervals(start: float, length: float) -> Array[Vector2]:
+	var out: Array[Vector2] = []
+	if length <= 0.0:
+		return out
+	if length >= 1.0:
+		out.append(Vector2(0.0, 1.0))
+		return out
+	var s := fposmod(start, 1.0)
+	var l := minf(length, 1.0)
+	if s + l <= 1.0:
+		out.append(Vector2(s, s + l))
+	else:
+		out.append(Vector2(s, 1.0))
+		out.append(Vector2(0.0, s + l - 1.0))
+	return out
+
+
+## 小地图内点击位置 → 地图子格(夹在地图范围内)。
+func _minimap_to_subcell(pos: Vector2) -> Vector2i:
+	var sub := _sub_size()
+	var r := minimap_rect()
+	if sub.x <= 0 or sub.y <= 0 or r.size.x <= 0.0 or r.size.y <= 0.0:
+		return Vector2i.ZERO
+	var fx := clampf((pos.x - r.position.x) / r.size.x, 0.0, 0.999999)
+	var fy := clampf((pos.y - r.position.y) / r.size.y, 0.0, 0.999999)
+	return Vector2i(clampi(int(fx * float(sub.x)), 0, sub.x - 1),
+			clampi(int(fy * float(sub.y)), 0, sub.y - 1))
 
 
 # ── 输入:鼠标 → 子格事件 + 相机操作 ─────────────────────────────────
@@ -986,6 +1195,14 @@ func _gui_mouse_button(mb: InputEventMouseButton) -> void:
 			if mb.pressed:
 				grab_focus()
 			_refresh_cursor()
+		MOUSE_BUTTON_RIGHT:
+			# 右键只做小地图跳转:命中小地图 ⇒ 换算成子格并居中(不发 pointer_*、不落笔);
+			# 右键在画布其它地方保持无动作(也不改 hover / 相机)。
+			if mb.pressed:
+				var mr := minimap_rect()
+				if mr.size.x > 0.0 and mr.size.y > 0.0 and mr.has_point(mb.position):
+					grab_focus()
+					center_on_subcell(_minimap_to_subcell(mb.position))
 	if not _panning:
 		queue_redraw()
 

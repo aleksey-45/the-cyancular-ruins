@@ -28,9 +28,11 @@ extends SceneTree
 #      缺席层凭空建层 / 选区不跟着平移 / 不是恰好一条多值 undo / offset=0 仍入栈 ⇒ 红。
 #   ⑰ meta 改位置丢 respawn.side / enemy.type / 新位置不环面归一化 / 原地不动仍入栈发信号 /
 #      越界索引或非法 kind 不拒 ⇒ 红。
+#   ⑱ meta 单项删除不保持其余条目相对顺序 / 改敌人类型丢 x/y / 同类型·空 type 仍入栈发信号 /
+#      meta_entries 不按 players→respawns→enemies 扁平有序(缺 kind/index/side/type)或产生 undo·信号·dirty ⇒ 红。
 # ★ 期望值按子格坐标手推(地图 4×3 格 ⇒ 16×12 子格),不复用被测函数的返回值自证。
 
-const EXPECTED_CHECKS := 194
+const EXPECTED_CHECKS := 199
 
 var _fails: Array[String] = []
 var _checks := 0
@@ -78,6 +80,7 @@ func _initialize() -> void:
 	_test_meta()
 	_test_move_selection()
 	_test_meta_position()
+	_test_meta_edit()
 
 	# ══ 判词闸 ══
 	# 条数闸 = **恰好相等**:少了 = 脚本中途中止(断言被静默跳过);多了 = 忘更新 EXPECTED_CHECKS。
@@ -98,7 +101,7 @@ func _initialize() -> void:
 	print(("EDITOR DOC SMOKE: OK(%d 条断言):7 层建图 · 环面归一化 · Bresenham 直线 · 4 邻接/接缝油漆桶 · "
 			+ "颜色层 u32 · undo/redo 往返 · 笔画合并 · 栈上限 · load_map 清栈 · validate/to_bytes 接线 · "
 			+ "选区裁剪 · 剪贴板类型互斥 · 镜像 · 颜色层渐变 · meta 快照/undo · 选区整块移动 · "
-			+ "meta 单点改位置") % _checks)
+			+ "meta 单点改位置 · meta 单项删除/改类型/扁平列表") % _checks)
 	quit(0)
 
 
@@ -955,6 +958,84 @@ func _test_meta_position() -> void:
 	var blank := EditorDoc.new()
 	_chk(not blank.set_meta_position("player", 0, Vector2i(0, 0)),
 			"⑰ 没建图时改位置应 false")
+
+
+# ══ ⑱ meta 单项删除 / 改敌人类型 / 扁平列表:顺序保持·保留 x/y·失败不入栈·meta_entries 只读 ══
+func _test_meta_edit() -> void:
+	var doc := _fresh()                      # 4×3 格
+	doc.add_player(Vector2i(0, 0))
+	doc.add_player(Vector2i(1, 0))
+	doc.add_player(Vector2i(2, 0))
+	doc.add_enemy("slime", Vector2i(3, 2))
+	var u0 := doc.undo_count()
+	var m0 := _meta_count
+	_chk(doc.remove_meta_at("player", 1) and (doc.map["players"] as Array).size() == 2
+			and _player_at(doc, 0) == Vector2i(0, 0) and _player_at(doc, 1) == Vector2i(2, 0)
+			and doc.undo_count() == u0 + 1 and _meta_count == m0 + 1 and doc.dirty
+			and doc.undo() and (doc.map["players"] as Array).size() == 3
+			and _player_at(doc, 1) == Vector2i(1, 0) and doc.redo()
+			and (doc.map["players"] as Array).size() == 2,
+			"⑱ 删中间 player 应计数-1、剩余保持 (0,0)(2,0) 顺序、一条 meta 条目+一次 meta_changed,undo/redo 还原(实得 %s)"
+					% [_players_brief(doc)])
+	# 非法 kind / 越界 / 空表:false,不入栈、不发信号
+	var u1 := doc.undo_count()
+	var m1 := _meta_count
+	var bad_del := not doc.remove_meta_at("players", 0) and not doc.remove_meta_at("bogus", 0) \
+			and not doc.remove_meta_at("player", 2) and not doc.remove_meta_at("player", -1) \
+			and not doc.remove_meta_at("respawn", 0) and not doc.remove_meta_at("enemy", 1)
+	_chk(bad_del and doc.undo_count() == u1 and _meta_count == m1,
+			"⑱ 非法 kind/越界/空表删应 false 且不入栈不发信号(undo %d→%d, meta %d→%d)"
+					% [u1, doc.undo_count(), m1, _meta_count])
+	# 改敌人类型:只改 type、保留 x/y;同类型/越界/空 type 拒
+	var u2 := doc.undo_count()
+	var m2 := _meta_count
+	_chk(doc.set_meta_enemy_type(0, "bat")
+			and String((doc.map["enemies"][0] as Dictionary).get("type", "")) == "bat"
+			and _enemy_at(doc, 0) == Vector2i(3, 2)
+			and doc.undo_count() == u2 + 1 and _meta_count == m2 + 1 and doc.dirty
+			and doc.undo()
+			and String((doc.map["enemies"][0] as Dictionary).get("type", "")) == "slime"
+			and _enemy_at(doc, 0) == Vector2i(3, 2),
+			"⑱ 改敌人类型应保留 x/y、恰好一条 meta 条目,undo 还原(实得 %s)" % [doc.map["enemies"]])
+	var u3 := doc.undo_count()
+	var m3 := _meta_count
+	_chk(not doc.set_meta_enemy_type(0, "slime") and not doc.set_meta_enemy_type(1, "bat")
+			and not doc.set_meta_enemy_type(-1, "bat") and not doc.set_meta_enemy_type(0, "")
+			and not doc.set_meta_enemy_type(0, "  ")
+			and doc.undo_count() == u3 and _meta_count == m3,
+			"⑱ 同类型/越界/空 type 应 false 且不入栈不发信号(undo %d→%d, meta %d→%d)"
+					% [u3, doc.undo_count(), m3, _meta_count])
+	# meta_entries:扁平顺序 + 字段形状;不改 dirty/undo、不发信号
+	var m: Dictionary = EditorMap.create_map("flat", 4, 3)
+	m["players"] = [{"x": 0, "y": 0}, {"x": 1, "y": 0}]
+	m["respawns"] = [{"side": 2, "x": 2, "y": 1}]
+	m["enemies"] = [{"type": "slime", "x": 3, "y": 2}, {"type": "fly", "x": 1, "y": 1}]
+	var doc2 := EditorDoc.new()
+	_watch(doc2)
+	doc2.load_map(m)
+	var m4 := _meta_count
+	var flat := doc2.meta_entries()
+	var shape_ok := flat.size() == 5
+	if shape_ok:
+		shape_ok = String(flat[0].get("kind", "")) == "player" \
+				and int(flat[0].get("index", -1)) == 0 \
+				and int(flat[0].get("x", -1)) == 0 and int(flat[0].get("y", -1)) == 0 \
+				and String(flat[1].get("kind", "")) == "player" \
+				and int(flat[1].get("index", -1)) == 1 \
+				and int(flat[1].get("x", -1)) == 1 and int(flat[1].get("y", -1)) == 0 \
+				and String(flat[2].get("kind", "")) == "respawn" \
+				and int(flat[2].get("index", -1)) == 0 and int(flat[2].get("side", -1)) == 2 \
+				and int(flat[2].get("x", -1)) == 2 and int(flat[2].get("y", -1)) == 1 \
+				and String(flat[3].get("kind", "")) == "enemy" \
+				and int(flat[3].get("index", -1)) == 0 \
+				and String(flat[3].get("type", "")) == "slime" \
+				and int(flat[3].get("x", -1)) == 3 and int(flat[3].get("y", -1)) == 2 \
+				and String(flat[4].get("kind", "")) == "enemy" \
+				and int(flat[4].get("index", -1)) == 1 \
+				and String(flat[4].get("type", "")) == "fly"
+	_chk(shape_ok and doc2.undo_count() == 0 and not doc2.dirty and _meta_count == m4,
+			"⑱ meta_entries 应 players→respawns→enemies 扁平有序、含 kind/index/side/type,不产生 undo·信号·dirty(实得 %s)"
+					% [flat])
 
 
 # ── 工具 ────────────────────────────────────────────────────────────────────

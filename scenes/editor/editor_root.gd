@@ -44,11 +44,18 @@ var _tool_buttons: Dictionary = {}
 var _meta_buttons: Dictionary = {}
 var _palette_buttons: Array[Button] = []
 var _status: Label = null
+var _status_info: Label = null
+var _doc_label: Label = null
 var _path_label: Label = null
 var _output: RichTextLabel = null
 var _selection_info: Label = null
 var _meta_info: Label = null
+var _meta_list: VBoxContainer = null
+var _enemy_type_opt: OptionButton = null
 var _message := ""
+var _enemy_types: Array[String] = []
+var _color_nodes: Array[Control] = []
+var _palette_nodes: Array[Control] = []
 
 var _canvas_host: Control = null
 var _split: HSplitContainer = null
@@ -83,7 +90,7 @@ func _ready() -> void:
 	canvas.pointer_up.connect(_tools.pointer_up)
 	canvas.cursor_moved.connect(_on_cursor_moved)
 	canvas.zoom_changed.connect(_on_zoom_changed)
-	_set_message("新图默认 125×75 格;H 手形 / V 移动,空格或中键拖平移,滚轮缩放;Ctrl+O 打开、Ctrl+S 保存", false)
+	_set_message("新图 125×75 格;F1 快捷键 · Ctrl+G 跳转 · 右键小地图跳转;Ctrl+O 打开、Ctrl+S 保存", false)
 	_update_status(Vector2i.ZERO, false)
 
 
@@ -254,10 +261,13 @@ func export_and_load(path: String, persist: bool = true, switch_scene: bool = tr
 
 func _wire_ui() -> void:
 	_status = %StatusText
+	_status_info = %StatusInfo
+	_doc_label = %DocLabel
 	_path_label = %PathText
 	_output = %Output
 	_selection_info = %SelectionInfo
 	_meta_info = %MetaInfo
+	_meta_list = %MetaList
 	_canvas_host = %CanvasHost
 	_split = %Split
 	_tabs = %RightTabs
@@ -266,11 +276,22 @@ func _wire_ui() -> void:
 	# 标题从 32 号亮青降成 16 号弱化:菜单栏是"窗口标题"语气,不跟画布抢焦点。
 	(%TitleLabel as Label).theme_type_variation = &"SmallDim"
 	for name: String in ["ViewLabel", "ToolsHint", "BrushHint", "ColorHint", "PaletteHint", "HelpHint",
-			"LayersHint", "StatusText", "PathText", "SelHint", "MetaHint", "ReportHint",
-			"SelectionInfo", "MetaInfo", "ZoomText"]:
+			"LayersHint", "StatusText", "StatusInfo", "DocLabel", "PathText", "SelHint", "MetaHint",
+			"ReportHint", "SelectionInfo", "MetaInfo", "MetaListHint", "EnemyTypeLabel", "ZoomText"]:
 		var l := get_node_or_null("%" + name) as Label
 		if l != null:
 			l.add_theme_color_override("font_color", UiFactory.C_TEXT_DIM)
+	for name: String in ["SelectionTitle", "MetaTitle"]:
+		var h := get_node_or_null("%" + name) as Label
+		if h != null:
+			h.add_theme_color_override("font_color", UiFactory.C_TEXT)
+	_color_nodes.clear()
+	_color_nodes.append(%ColorHint as Control)
+	_color_nodes.append(%BrushColorRow as Control)
+	_color_nodes.append(%GradientEndRow as Control)
+	_palette_nodes.clear()
+	_palette_nodes.append(%PaletteHint as Control)
+	_palette_nodes.append(%PaletteScroll as Control)
 
 	_tabs.set_tab_title(0, "选区 & meta")
 	_tabs.set_tab_title(1, "校验消息")
@@ -293,11 +314,14 @@ func _wire_ui() -> void:
 		b.pressed.connect(_tools.set_tool.bind(key))
 		_tool_buttons[key] = b
 
-	# 顶栏撤销/重做:菜单的快捷入口,禁用态跟 undo/redo 栈走。
-	(%UndoBtn as Button).theme_type_variation = &"FlatButton"
-	(%RedoBtn as Button).theme_type_variation = &"FlatButton"
+	# 顶栏撤销/重做/保存/跳转/帮助:高频动作从菜单提到一级。
+	for nm: String in ["UndoBtn", "RedoBtn", "JumpBtn", "HelpBtn"]:
+		(get_node("%" + nm) as Button).theme_type_variation = &"FlatButton"
 	(%UndoBtn as Button).pressed.connect(_actions.undo)
 	(%RedoBtn as Button).pressed.connect(_actions.redo)
+	(%SaveBtn as Button).pressed.connect(_actions.save_pressed)
+	(%JumpBtn as Button).pressed.connect(_actions.jump_dialog)
+	(%HelpBtn as Button).pressed.connect(_actions.shortcut_help)
 	_undo_btn = %UndoBtn
 	_redo_btn = %RedoBtn
 
@@ -350,6 +374,18 @@ func _wire_ui() -> void:
 	grad_btn.color = _tools.gradient_end
 	grad_btn.color_changed.connect(func(c: Color) -> void: _tools.gradient_end = c)
 
+	# 敌人类型下拉:单一数据源 = data/enemies.json(默认值也是合法 id,不再写死 "slime")。
+	_load_enemy_types()
+	_enemy_type_opt = %EnemyTypeOption as OptionButton
+	for type_id: String in _enemy_types:
+		_enemy_type_opt.add_item(type_id)
+	if not _enemy_types.is_empty():
+		_enemy_type_opt.selected = 0
+		_tools.set_enemy_type(_enemy_types[0])
+	_enemy_type_opt.item_selected.connect(func(i: int) -> void:
+		if i >= 0 and i < _enemy_types.size():
+			_tools.set_enemy_type(_enemy_types[i]))
+
 	var sel_actions := {"SelCopy": _actions.copy, "SelCut": _actions.cut, "SelPaste": _actions.paste,
 		"SelClear": _actions.clear_selection, "SelMirrorH": _actions.mirror.bind("h"),
 		"SelMirrorV": _actions.mirror.bind("v")}
@@ -384,9 +420,21 @@ func _wire_ui() -> void:
 	_on_tool_changed(_tools.tool)
 	_on_meta_mode_changed(_tools.meta_mode)
 	_sync_layer_tool_availability()
+	_sync_meta_info()
 	_update_history_buttons()
 	_update_zoom_label()
 	_layout_split.call_deferred()
+
+
+func _load_enemy_types() -> void:
+	_enemy_types.clear()
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/enemies.json"))
+	if parsed is Dictionary:
+		for item in (parsed as Dictionary).get("enemies", []):
+			if item is Dictionary and (item as Dictionary).has("id"):
+				_enemy_types.append(String((item as Dictionary)["id"]))
+	if _enemy_types.is_empty():
+		_enemy_types = ["jump_bird", "fly_bird", "black_bird"]
 
 
 func _fill_menu(mb: MenuButton, items: Array) -> void:
@@ -427,6 +475,7 @@ func _build_palette(container: GridContainer) -> void:
 		b.icon = ImageTexture.create_from_image(img)
 		b.expand_icon = false
 		b.theme_type_variation = &"BtnCompact"
+		b.toggle_mode = true                             # 选中态用按钮 pressed 样式,不再只靠 modulate
 		b.pressed.connect(func() -> void: _tools.set_paint_desc(EditorDesc.neutral_desc(tid)))
 		container.add_child(b)
 		_palette_buttons.append(b)
@@ -444,8 +493,9 @@ func _refresh_palette_texture() -> void:
 
 func _mark_palette(tex: int) -> void:
 	for i in _palette_buttons.size():
-		_palette_buttons[i].modulate = UiFactory.C_WHITE if _texture_ids[i] == tex \
-				else Color(1, 1, 1, 0.55)
+		var on := _texture_ids[i] == tex
+		_palette_buttons[i].set_pressed_no_signal(on)
+		_palette_buttons[i].modulate = Color(1, 1, 1, 1.0 if on else 0.85)
 
 
 # ── 工具/图层/meta 的显示态 ─────────────────────────────────────────────
@@ -469,6 +519,7 @@ func _on_meta_mode_changed(key: String) -> void:
 		var b: Button = _meta_buttons[k]
 		b.theme_type_variation = &"ToolActive" if k == key else &"FlatButton"
 		b.modulate = UiFactory.C_WHITE
+	_update_status(Vector2i.ZERO, false)
 
 
 func _on_layer_selected(L: int) -> void:
@@ -476,6 +527,10 @@ func _on_layer_selected(L: int) -> void:
 	canvas.set_active_layer(L)
 	_sync_layer_rows()
 	_sync_layer_tool_availability()
+	if EditorConstants.is_color_layer(L):
+		_set_message("颜色层:用左栏「颜色」画笔;渐变只作用于选区", false)
+	else:
+		_set_message("纹理层:点左栏调色板选纹理;颜色工具不可用", false)
 	_update_status(Vector2i.ZERO, false)
 
 
@@ -510,6 +565,13 @@ func _sync_layer_tool_availability() -> void:
 		brush_color.disabled = not is_color
 	if grad_color != null:
 		grad_color.disabled = not is_color
+	# 渐进披露:纹理层只露调色板,颜色层只露颜色;另一组整块隐藏(不再常驻置灰)。
+	for n: Control in _color_nodes:
+		if n != null:
+			n.visible = is_color
+	for n: Control in _palette_nodes:
+		if n != null:
+			n.visible = not is_color
 	if not is_color and _tools.tool == "gradient":
 		_tools.set_tool("brush")
 		_set_message("当前是纹理层:渐变不可用,已切回画笔", false)
@@ -520,8 +582,13 @@ func _sync_layer_rows() -> void:
 		var b: Button = (_layer_rows[L] as Dictionary)["button"]
 		b.theme_type_variation = &"LayerActive" if L == doc.active_layer else &"LayerRow"
 		var vis: CheckButton = (_layer_rows[L] as Dictionary)["visible"]
-		# 眼睛开关:开=亮一档(0.8),关=压暗(0.35);不再 7 个高亮青胶囊同时抢眼。
-		vis.modulate = Color(1, 1, 1, 0.8 if vis.button_pressed else 0.35)
+		# 当前层恒可见(canvas 语义):眼睛对它禁用并强制显示为"开",不再出现「控件说关、画布还在画」。
+		var is_active := L == doc.active_layer
+		vis.disabled = is_active
+		vis.tooltip_text = "当前编辑层不可隐藏(先切到其它层)" if is_active else "显示/隐藏该层"
+		if is_active:
+			vis.set_pressed_no_signal(true)
+		vis.modulate = Color(1, 1, 1, 1.0 if is_active else (0.8 if vis.button_pressed else 0.35))
 
 
 # ── doc / 画布 回调 ─────────────────────────────────────────────────────
@@ -536,6 +603,7 @@ func _on_doc_structure_changed() -> void:
 	canvas.set_selection(doc.selection)       # 换图/新建清了 doc.selection,别让旧选框留在画布上
 	_sync_layer_rows()
 	_sync_layer_tool_availability()
+	_sync_meta_info()
 	_update_selection_info()
 	_update_history_buttons()
 
@@ -575,7 +643,11 @@ func _on_clear_meta_pressed() -> void:
 
 
 func _sync_meta_info() -> void:
-	if _meta_info == null or doc == null or doc.map.is_empty():
+	if _meta_info == null or doc == null:
+		return
+	if doc.map.is_empty():
+		_meta_info.text = ""
+		_rebuild_meta_list()
 		return
 	var players: Array = doc.map.get("players", [])
 	var respawns: Array = doc.map.get("respawns", [])
@@ -588,6 +660,67 @@ func _sync_meta_info() -> void:
 			side2 += 1
 	_meta_info.text = "出生点 %d · 复活点 侧1 %d / 侧2 %d · 敌人 %d" % [
 		players.size(), side1, side2, (doc.map.get("enemies", []) as Array).size()]
+	_rebuild_meta_list()
+
+
+# 已放置 meta 列表:每条一行(标签 + 敌人类型下拉 + 删除),点行内「删除」= 单条删除。
+func _rebuild_meta_list() -> void:
+	if _meta_list == null:
+		return
+	for child in _meta_list.get_children():
+		_meta_list.remove_child(child)
+		child.queue_free()
+	if doc == null or doc.map.is_empty():
+		return
+	for ent: Dictionary in doc.meta_entries():
+		var entry := ent
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 6)
+		var kind := String(entry["kind"])
+		var label := Label.new()
+		label.theme_type_variation = &"Small"
+		label.add_theme_color_override("font_color", UiFactory.C_TEXT_DIM)
+		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		label.custom_minimum_size = Vector2(80, 0)
+		label.clip_text = true
+		match kind:
+			"player":
+				label.text = "出生点 #%d @ (%d,%d)" % [int(entry["index"]) + 1, int(entry["x"]), int(entry["y"])]
+			"respawn":
+				label.text = "复活点 侧%d #%d @ (%d,%d)" % [int(entry["side"]),
+						int(entry["index"]) + 1, int(entry["x"]), int(entry["y"])]
+			_:
+				label.text = "敌人 %s #%d @ (%d,%d)" % [String(entry.get("type", "")),
+						int(entry["index"]) + 1, int(entry["x"]), int(entry["y"])]
+		label.tooltip_text = label.text
+		row.add_child(label)
+		if kind == "enemy":
+			var items: Array[String] = _enemy_types.duplicate()
+			var cur_type := String(entry.get("type", ""))
+			if not items.has(cur_type):
+				items.append(cur_type)
+			var opt := OptionButton.new()
+			for id: String in items:
+				opt.add_item(id)
+			opt.selected = items.find(cur_type)
+			opt.theme_type_variation = &"Kit"
+			opt.custom_minimum_size = Vector2(96, 0)
+			opt.clip_text = true
+			opt.size_flags_horizontal = Control.SIZE_SHRINK_END
+			opt.item_selected.connect(func(i: int) -> void:
+				if i >= 0 and i < items.size():
+					doc.set_meta_enemy_type(int(entry["index"]), items[i]))
+			row.add_child(opt)
+		var del := Button.new()
+		del.text = "删除"
+		del.tooltip_text = "删除这条 %s(可撤销)" % kind
+		del.theme_type_variation = &"FlatButton"
+		del.custom_minimum_size = Vector2(48, 26)
+		del.pressed.connect(func() -> void:
+			if doc.remove_meta_at(kind, int(entry["index"])):
+				_set_message("已删除一条 %s" % _tools.meta_label_of(kind), false))
+		row.add_child(del)
+		_meta_list.add_child(row)
 
 
 func _update_selection_info() -> void:
@@ -695,18 +828,35 @@ func _set_message(text: String, is_error: bool) -> void:
 
 
 func _update_status(sub: Vector2i, _has_cursor: bool) -> void:
-	if _status == null or doc == null or doc.map.is_empty():
+	var dirty_mark := ""
+	if doc != null and doc.dirty:
+		dirty_mark = " ●"
+	if _doc_label != null and doc != null and doc.map.is_empty():
+		_doc_label.text = "未命名" + dirty_mark
+	if _status == null or _status_info == null or doc == null or doc.map.is_empty():
 		if _status != null:
 			_status.text = _message
+		if _status_info != null:
+			_status_info.text = ""
+		if _path_label != null:
+			_path_label.text = _path if _path != "" else "未命名"
 		return
 	var cells := doc.sub_size() / EditorConstants.SUB_PER_CELL
 	var wrapped := Vector2i(posmod(sub.x, doc.sub_size().x), posmod(sub.y, doc.sub_size().y))
 	var desc := doc.get_subcell(wrapped.x, wrapped.y)
-	var dirty := "未保存" if doc.dirty else "已保存"
-	_status.text = "%s · 尺寸 %d×%d 格 · 层 %s · 工具 %s · 子格 (%d,%d) · 值 0x%08X · %s" % [
-		_message, cells.x, cells.y, String(EditorConstants.LAYER_NAMES[doc.active_layer]),
-		_tools.tool_label(), wrapped.x, wrapped.y, desc, dirty]
-	_path_label.text = ("● " if doc.dirty else "") + (_path if _path != "" else "未命名")
+	var mode_text := ""
+	if _tools.meta_mode != "none":
+		mode_text = " · 放置:%s" % _tools.meta_label_of(_tools.meta_mode)
+	var file_name := _path.get_file() if _path != "" else "未命名"
+	_status.text = _message
+	_status_info.text = "%d×%d 格 · 层 %s · 工具 %s%s · 子格 (%d,%d) · 0x%08X" % [
+		cells.x, cells.y, String(EditorConstants.LAYER_NAMES[doc.active_layer]),
+		_tools.tool_label(), mode_text, wrapped.x, wrapped.y, desc]
+	if _doc_label != null:
+		var shown := file_name if file_name.length() <= 24 else file_name.left(24) + "…"
+		_doc_label.text = shown + dirty_mark
+		_doc_label.tooltip_text = _path if _path != "" else "尚未落盘"
+	_path_label.text = _path if _path != "" else "未命名"
 
 
 func _register_editor_actions() -> void:
@@ -721,6 +871,8 @@ func _register_editor_actions() -> void:
 	_action("editor_paste", [KEY_V], true)
 	_action("editor_delete", [KEY_DELETE], false)
 	_action("editor_fit", [KEY_F], false)
+	_action("editor_help", [KEY_F1], false)
+	_action("editor_jump", [KEY_G], true)
 	# 镜像让位给 移动(V)/ 手形(H):单键 H/V = 工具,Shift+H / Shift+V = 镜像。
 	_action("editor_mirror_h", [KEY_H], false, true)
 	_action("editor_mirror_v", [KEY_V], false, true)
@@ -755,6 +907,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		_actions.open_dialog()
 	elif event.is_action_pressed("editor_fit"):
 		canvas.fit_to_map()
+	elif event.is_action_pressed("editor_help"):
+		_actions.shortcut_help()
+	elif event.is_action_pressed("editor_jump"):
+		_actions.jump_dialog()
 	elif event.is_action_pressed("editor_zoom_in"):
 		canvas.zoom_in()
 	elif event.is_action_pressed("editor_zoom_out"):
