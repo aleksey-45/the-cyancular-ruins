@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# 命名与目录规范检查(防复发)。**规范 = 本文件的规则 A~G**(各规则函数的注释即规范原文;旧文案指向的 docs/naming-cleanup-plan.md 已于 2026-10-24 文档清理删除,别再引它)。
+# 命名与目录规范检查(防复发)。**规范 = 本文件的规则 A~H**(各规则函数的注释即规范原文;旧文案指向的 docs/naming-cleanup-plan.md 已于 2026-10-24 文档清理删除,别再引它)。
 #
 # 为什么需要它:命名整改最典型的失败模式是「整完就漂回去」—— `.tscn` 的 PascalCase 约定
 # 就是这么失效的(约定写着 Pascal,现实 51/56 是 snake,而没有任何东西会报错)。
@@ -13,7 +13,7 @@
 #                                            #   "去掉什么它才会红";现覆盖规则 A、C、E、G)
 #                                            #   —— 退出码 0 = 自测通过
 #
-# 检查七条:
+# 检查八条:
 #   A 目录名一律小写
 #   B `class_name` 转 snake 必须等于文件名(规范原文:「名字 = 类名转 snake」)
 #   C 文档里引用的文件/目录路径必须存在
@@ -25,6 +25,7 @@
 #   F 入口文档的**预算**(AGENTS.md / README.md / RELEASE.md / docs/README.md 不许又长回去)
 #   G `docs/construction/` 的 AI 施工产物必须带「日期前缀 + 状态横幅」(2026-11-17 加;
 #     文件名叫 `YYYY-MM-DD-<slug>.md`,首行 `> 日期: … · 状态: 进行中|已完结|已废弃|已提升`)
+#   H 仓库根只允许登记过的条目(源码目录 / 工程配置 / 三份入口文档;本地产物按 .gitignore 放行)
 import os
 import re
 import shutil
@@ -64,14 +65,34 @@ def _md_in(rel_dir: str) -> list[str]:
     return sorted("%s/%s" % (rel_dir, f) for f in os.listdir(d) if f.endswith(".md"))
 
 
-# 契约面文档目录(新增文档目录必须加进这张表,否则新目录里的路径无人守)
-DOC_DIRS = ["docs",
-            "docs/systems/gameplay", "docs/systems/presentation", "docs/systems/editor",
-            "docs/netcode/protocol", "docs/netcode/rooms",
-            "docs/workflow", "docs/design"]
+# 契约面文档目录 = `docs/` 下**所有含 .md 的目录**,自动发现(排除 construction/)。
+# ★ 2026-11-17 从**手工列表**改成自动发现:手工表是又一个"会漂的派生值" ——
+#   新建一个文档目录却忘了登记,那个目录里的路径就**无人守**,而且不会报错。
+#   (与 allscript 的 EXPECTED_SCRIPTS 同类问题:手维护的派生值必然漂。)
+# ★ 排除 `docs/construction/`:它是**时间点**产物,旧路径是记录不是错误(见上),
+#   由规则 G 管形态,不由路径存在性管。
+DOC_TREE_ROOT = "docs"
+DOC_TREE_EXCLUDE = {"docs/construction"}
+
+
+def _doc_dirs() -> list[str]:
+    out: list[str] = []
+    root = os.path.join(PROJECT, DOC_TREE_ROOT)
+    if not os.path.isdir(root):
+        return out
+    for dirpath, dirnames, filenames in os.walk(root):
+        rel = os.path.relpath(dirpath, PROJECT).replace("\\", "/")
+        dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
+        if rel in DOC_TREE_EXCLUDE or any(rel.startswith(e + "/") for e in DOC_TREE_EXCLUDE):
+            dirnames[:] = []
+            continue
+        if any(f.endswith(".md") for f in filenames):
+            out.append(rel)
+    return sorted(out)
+
 
 DOC_FILES = (["README.md", "AGENTS.md", "RELEASE.md"]
-             + [p for d in DOC_DIRS for p in _md_in(d)] + _md_in("tests"))
+             + [p for d in _doc_dirs() for p in _md_in(d)] + _md_in("tests"))
 # ★ 2026-11-17:入口只剩 `AGENTS.md` 一份。`CLAUDE.md` 生成副本与 `tools/sync_agents_md.py` 已删除
 #   (用户裁定:不再维护镜像;规则 F 的副本一致性检查随之退休)。
 # 被文档引用时检查存在性的扩展名
@@ -508,6 +529,18 @@ def self_test() -> int:
     want(len(construction_violations(ok_name, "> 日期: 2026-11-17 · 状态: 进行中\n\n# 后置标题\n")) == 0,
          "⑧-⑤ 横幅在标题前被误报 —— 判据是'标题之后的首个非空行',不是'文件第一行'")
 
+    # ⑨ 规则 H(仓库根白名单,2026-11-17 加)。每条都答得出"去掉什么才会红"。
+    want(root_entry_violation("core") == "", "⑨-① 已登记的根目录被误报")
+    want(root_entry_violation("AGENTS.md") == "", "⑨-② 已登记的根文件被误报")
+    want(root_entry_violation("releases") == "", "⑨-③ 本地产物目录被误报 —— 它归 .gitignore 管")
+    want(root_entry_violation("The Cyancular Ruins.exe") == "", "⑨-④ 固定名产物被误报")
+    want(root_entry_violation(".idea") == "",
+         "⑨-⑤ 点开头目录被误判 —— 那是各人本地工具配置,刻意放行(见规则 H 注释)")
+    want(root_entry_violation("root_junk.gd") != "",
+         "⑨-⑥ 根上新建未登记文件没被报出 —— 删掉 check_root_entries() 的调用才会绿")
+    want(root_entry_violation("notes.md") != "",
+         "⑨-⑦ 根上新建未登记 .md 没被报出 —— 入口文档只许 AGENTS/README/RELEASE 三份")
+
     if fails:
         print("— 自测失败 %d 条 —" % len(fails))
         for f in fails:
@@ -517,7 +550,8 @@ def self_test() -> int:
     print("命名检查自测 OK(规则 A:顶层目录被产出 / 大写名会被报出 / SKIP_DIRS 与点开头目录照旧跳过;"
           "规则 C:失效反引号路径、带 `:NN` 后缀的、少一层的相对链接都会被报出,而已删行与'首段非目录'的简写不报;"
           "规则 E:裸 LF 与非 ASCII 无 BOM 会被报出 / BOM+非 ASCII 与纯 ASCII+CRLF 不报 / .bat 不查编码;"
-          "规则 G:缺日期前缀 / 缺状态横幅 / 状态值不在白名单都会被报出,合规形态与'横幅在标题前'不报)")
+          "规则 G:缺日期前缀 / 缺状态横幅 / 状态值不在白名单都会被报出,合规形态与'横幅在标题前'不报;"
+          "规则 H:未登记的根条目会被报出,已登记项 / 本地产物 / 固定名产物 / 点开头目录不报)")
     return 0
 
 
@@ -575,6 +609,53 @@ def check_construction() -> None:
                 _fail.append("%s —— %s" % (v, rel))
 
 
+# ── 规则 H:仓库根只允许"登记过的条目"(2026-11-17)──────────────────────────────────
+# 守的是什么:根目录是**唯一没有归属约束**的地方 —— 谁都能往根上丢一个脚本 / 目录 / 备份,
+#   不报错、不越界、也没人会在 review 时注意。它只增不减,慢慢变成杂物堆。
+#   2026-11-17 实测根下 38 个条目,其中 1.26GB 是本地产物(releases 800MB / builds 253MB /
+#   根上固定名产物 151MB)。**入库面**只有 23 项,那 23 项是清白的;风险是"以后还会加"。
+# 判据:遍历仓库根,**入库条目必须在 ROOT_ALLOWED 里**;本地产物按 ROOT_LOCAL_DIRS /
+#   产物后缀 / 点开头放行(它们由 .gitignore 管,不是本规则的射程)。
+# 去掉什么会红:在根上新建一个未登记的目录或文件 ⇒ 红;把它加进 ROOT_ALLOWED 并写明理由 ⇒ 绿。
+# ★ 刻意跳过点开头条目:`.idea` / `.claude` 这类是各人本地工具配置,挡它们只会逼人改 SKIP_DIRS。
+ROOT_ALLOWED = {
+    # 源码 / 数据目录
+    "core", "scenes", "server", "ui", "tests", "tools", "assets", "data", "maps", "docs",
+    # 工程配置
+    "project.godot", "export_presets.cfg", "cyancular_build_profile.gdbuild",
+    "start_server.bat", "icon.svg", "icon.svg.import",
+    ".editorconfig", ".gitattributes", ".gitignore", ".vscode",
+    # 入口文档(只有三份;其余按 docs/README.md 的路由上提,不许再往根上加 .md)
+    "AGENTS.md", "README.md", "RELEASE.md",
+}
+# 本地产物目录(已在 .gitignore;不进导出包的事由 RELEASE.md §导出预设负责)
+ROOT_LOCAL_DIRS = {"_crashtest", ".godot", ".superpowers", ".tmp", ".git",
+                   "backup", "builds", "gamelogs", "record", "releases", "web_build"}
+# 本地产物文件(固定名发布产物 / 局域网 IP 缓存 / 日志)
+ROOT_LOCAL_SUFFIX = (".exe", ".zip", ".pck", ".log", ".txt")
+
+
+def root_entry_violation(name: str) -> str:
+    """规则 H 的**纯函数**形态:返回违规说明;"" = 放行(供 --self-test 喂合成名字)。"""
+    if name in ROOT_ALLOWED:
+        return ""
+    if name in ROOT_LOCAL_DIRS:
+        return ""
+    if name.startswith("."):
+        return ""
+    if name.lower().endswith(ROOT_LOCAL_SUFFIX):
+        return ""
+    return ("H 仓库根出现未登记条目: %s ⇒ 放进对应子目录;确属根级物(工程配置 / 入口文档)"
+            "就加进 ROOT_ALLOWED 并写明理由" % name)
+
+
+def check_root_entries() -> None:
+    for name in sorted(os.listdir(PROJECT)):
+        v = root_entry_violation(name)
+        if v:
+            _fail.append(v)
+
+
 # ── 规则 F:入口文档的**预算**(2026-11-02)──────────────────────────────────────────
 # 为什么要有这条:AGENTS.md 会被**注入每个会话的上下文**,它的长度是每次交互的固定税。
 # 它从 61 行涨到 117 行(11.9 KB)的过程里,涨的全是"历史叙述 / 可执行细节 / 会过期的清单" ——
@@ -606,6 +687,7 @@ def main() -> int:
     check_class_names()
     check_doc_paths()
     check_construction()
+    check_root_entries()
     check_tscn()
     check_ps1_bat()
     check_entry_docs()
@@ -617,11 +699,11 @@ def main() -> int:
         print("— 违规 %d 条 —" % len(_fail))
         for f in _fail:
             print("  " + f)
-        print("\n命名检查 FAIL(规范 = 本文件的规则 A~G;"
+        print("\n命名检查 FAIL(规范 = 本文件的规则 A~H;"
               "确属有意偏离要加进 ACCEPTED_CLASS_FILES 并写明何时销)")
         return 0 if report_only else 1
     print("命名检查 OK(目录小写 / class_name↔文件名 / 文档路径 / construction 出生证 / "
-          ".tscn snake_case / .ps1·.bat 的 CRLF 与 .ps1 编码 / 入口文档预算)")
+          "仓库根白名单 / .tscn snake_case / .ps1·.bat 的 CRLF 与 .ps1 编码 / 入口文档预算)")
     return 0
 
 
