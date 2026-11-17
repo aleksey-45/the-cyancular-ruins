@@ -542,6 +542,15 @@ if [ "$CLASSIFY_CHECK" -eq 1 ]; then
 	exit $?
 fi
 shopt -s nullglob
+# 桶契约(2026-11-17):`.sh` 只允许出现在 tests/e2e/。放错桶 = 默认批永远不跑它(静默)。
+STRAY_SH=()
+for f in tests/unit/*.sh tests/scene/*.sh; do STRAY_SH+=("$f"); done
+if [ "${#STRAY_SH[@]}" -gt 0 ]; then
+	echo "[enum] FATAL: ${#STRAY_SH[@]} .sh 出现在单进程桶里(-- .sh 只允许 tests/e2e/):"
+	for p in "${STRAY_SH[@]}"; do echo "         $p"; done
+	echo "RUN_ALL FAIL(0 runs / .sh in unit|scene)"
+	exit 1
+fi
 ENUM=()
 for f in tests/unit/*.gd; do ENUM+=("$f"); done
 for f in tests/scene/*.tscn; do ENUM+=("$f"); done

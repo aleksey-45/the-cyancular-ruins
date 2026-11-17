@@ -15,8 +15,9 @@ Godot **4.7.1 标准版(非 mono)** 的 2D 横版射击 demo「The Cyancular Rui
 
 ```bash
 bash tests/run_all.sh            # 默认批:headless、不占端口、不弹窗。判据 = 全批判词行
+bash tests/run_all.sh --list     # 当前跑哪些 / GATE 闸值 / 排除理由(实时读数以此为准,别抄进文档)
 bash tests/run_real.sh           # 真链路批:占 7777 + 拉子进程 ⇒ 必须先让用户认领
-python tools/check_naming.py     # 目录 / 类名 / 文档链接 / EOL
+python tools/check_naming.py     # 目录 / 类名 / 文档链接 / EOL / construction 出生证
 python tools/check_architecture.py  # 依赖方向 R1–R5(存量违规走白名单,只减不增)
 ```
 
@@ -28,15 +29,16 @@ python tools/check_architecture.py  # 依赖方向 R1–R5(存量违规走白名
 
 1. **定档**(按**爆炸半径**,不看行数):**1 皮**(文案/颜色/版式) · **2 单系统**(一个子系统的逻辑,不动协议与存档) · **3 承重面**(协议 / 输入包 / 回滚与快照 / 存档与地图格式 / 导出与裁剪 / 命中与碰撞 / 联机权威)。同时触及两档取高档。
 2. **定位**:`grep` 现网引用。**别信文档里的文件清单 / 枚举**(必然过期)。
-3. **改**:单一真相源;新逻辑落进该落的那一层(域路由见 [`docs/README.md`](docs/README.md))。
-4. **守卫**:每条新断言先答「**去掉什么它才会红**」。答不出、或只能读源码文本判形态 ⇒ **不写**。什么该写、写哪一档、条数闸:`docs/workflow/test-economy.md`(桶划分 + 删/留判据 + 不写清单,**唯一真相源,本文不重复**)。
+3. **改**:单一真相源;新逻辑落进该落的那一层(域路由 + **目录契约**见 [`docs/README.md`](docs/README.md);谁能依赖谁由 [`tools/check_architecture.py`](tools/check_architecture.py) 的 R1–R5 守)。
+4. **守卫**:每条新断言先答「**去掉什么它才会红**」。答不出、或只能读源码文本判形态 ⇒ **不写**。取舍与不写清单 = [`docs/workflow/test-economy.md`](docs/workflow/test-economy.md);粒度 / 条数闸 / 确定性 / 源码守卫例外 = [`docs/workflow/test-authoring.md`](docs/workflow/test-authoring.md)。**新断言优先落承重面**(协议 / 回滚 / 命中 / 导出),编辑器与纯 UI 冻结新增。
 5. **验证**:判据**一律 grep 文本**(该支自打的 `OK` / `ALL-OK`),**退出码不是判据**。档 2 ≥1 条承重断言变异;**档 3 每条承重断言逐条变异 + 真链路跑批 + 逐任务评审**。
 6. **提交**:逐个文件点名 `git add`(新 `.gd` 连 `.gd.uid`;`.tscn` 不用),**绝不 `git add -A`**;提交前逐文件 `git diff` **认领每个 hunk**(多会话共用工作树)。信息格式 `type(scope): 中文一句话`。
 
 ## 3. 会静默错的硬规则(违反不报错,只是很久以后才发现)
 
 - **7777** 是大厅端口:任何占它的步骤先查 `lobby_alive`,为真**跳过并问用户**(大厅 `_ready` 会 kill 掉用户正在跑的对局)。**非 headless(弹窗)步骤跑前告知**。真链路跑批**前后** `tasklist | grep -i godot` 必须为空。
-- **`-s` 冒烟必须写空载守卫**(`load()` 后判空 + `quit(1)`),否则抛错后走不到 `quit()`,**进程永久挂起**;新冒烟一律套外层 `timeout`。场景探针 `--quit-after` 给足(3600)。
+- **`-s` 单元测试必须写空载守卫**(`load()` 后判空 + `quit(1)`),否则抛错后走不到 `quit()`,**进程永久挂起**;新单元测试一律套外层 `timeout`。场景探针 `--quit-after` 给足(3600)。
+- **测试按桶放**:`tests/unit/`(`-s`)/ `tests/scene/`(必须同名 `.tscn`)/ `tests/e2e/`(**唯一允许 `.sh`**,只在真链路批跑)。放错桶 = 默认批永远不跑它;`run_all.sh` 对 `unit/`、`scene/` 下的 `.sh` 直接 FATAL,`scene/*.gd` 无同名 `.tscn` 也 FATAL。
 - **`ALL-OK` 只证明"没有断言失败",不证明"每条断言都跑过"**(脚本错误只结束出错函数、调用方继续)⇒ 新场景探针必须自带 `_checks >= EXPECTED_CHECKS` 条数闸。
 - **命令行开关必须写在 `--` 之后**(`server_main.gd` 读 `OS.get_cmdline_user_args()`);写在前面会被 Godot 丢掉并**静默跑错分支**。
 - **要进导出包的脚本禁用 `RegEx`**(裁剪模板 `module_regex_enabled: false` ⇒ 整个脚本解析失败,而编辑器里全绿)。
@@ -54,7 +56,8 @@ python tools/check_architecture.py  # 依赖方向 R1–R5(存量违规走白名
 |---|---|
 | 域细节(地图格式 / 敌人 / 武器 / 玩家 / 渲染 / UI / 联机 / 网码 / 时间 / 编辑器) | [`docs/README.md`](docs/README.md) 按域路由 |
 | **动手前必看**:既有红 / 待还的债 / 已裁定不做 | [`docs/registered-debt.md`](docs/registered-debt.md) |
-| 测试分层 / 跑法 / 守卫经济 | [`tests/README.md`](tests/README.md) · [`docs/workflow/tests.md`](docs/workflow/tests.md) · [`docs/workflow/test-economy.md`](docs/workflow/test-economy.md) |
+| 测试分层 / 跑法 / 守卫经济 / **怎么写** | [`tests/README.md`](tests/README.md) · [`docs/workflow/tests.md`](docs/workflow/tests.md) · [`docs/workflow/test-economy.md`](docs/workflow/test-economy.md) · [`docs/workflow/test-authoring.md`](docs/workflow/test-authoring.md) |
+| 目录契约 / 依赖方向(谁能 import 谁) | [`docs/README.md`](docs/README.md)「目录契约」+ [`tools/check_architecture.py`](tools/check_architecture.py)(R1–R5) |
 | 发布 / 裁剪模板 / 产品冒烟 | [`RELEASE.md`](RELEASE.md) |
 | 目录分层 / 操作 / PvP 规则要点 | [`README.md`](README.md) |
 | AI 生成的 review / spec / plan | [`docs/construction/`](docs/construction) —— ★ 结论不作数,须先提升进上面各域 |
