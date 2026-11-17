@@ -1,6 +1,8 @@
 class_name MpLobby
 extends LobbyPage
 
+const WorkerPorts := preload("res://core/config/worker_ports.gd")   # worker 端口池唯一来源(客户端不 import 服务器分配器)
+
 
 var _mode := ""
 var _grid: VBoxContainer = null     # 房间列表是纵向容器(T3/M2:不再用 4 列网格 + 固定卡宽)
@@ -451,8 +453,8 @@ func _worker_timeout_msg() -> String:
 
 
 func _worker_port_span() -> String:
-	return "%d~%d" % [WorkerLauncher.WORKER_PORT_BASE,
-			WorkerLauncher.WORKER_PORT_BASE + WorkerLauncher.WORKER_PORT_SPAN - 1]
+	return "%d~%d" % [WorkerPorts.BASE,
+			WorkerPorts.BASE + WorkerPorts.SPAN - 1]
 
 
 func _claim_timeout_msg() -> String:

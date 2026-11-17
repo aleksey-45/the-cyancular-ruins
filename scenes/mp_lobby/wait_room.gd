@@ -108,7 +108,7 @@ func _fill_team_roster(state: Dictionary, plist: Array, my_role: int, host_role:
 		if not buckets.has(t):
 			t = 0
 		(buckets[t] as Array).append(p)
-	var team_size := int(state.get("team_size", LobbyRooms.TEAM_SIZE))
+	var team_size := int(state.get("team_size", ModeDefs.TEAM_SIZE))
 	var shown := 0
 	for t in [1, 2]:
 		var tag := "A 队" if t == 1 else "B 队"
@@ -161,8 +161,8 @@ func _team_count_text(state: Dictionary, plist: Array) -> String:
 			picked += 1
 	# 只留玩家真正需要知道的一句话:两队各有 1 人即可开始;容量取 TEAM_ROLES / TEAM_SIZE 单一来源。
 	return "%d / %d 人(已选边 %d 人;两队各 1 人即可开始,每队最多 %d 人)" % [
-			plist.size(), LobbyRooms.TEAM_ROLES, picked,
-			int(state.get("team_size", LobbyRooms.TEAM_SIZE))]
+			plist.size(), (ModeDefs.TEAM_SIZE * ModeDefs.TEAM_COUNT), picked,
+			int(state.get("team_size", ModeDefs.TEAM_SIZE))]
 
 
 func pvp_wait_state(code: String, role: int, host_role: int, count: int) -> Dictionary:
