@@ -7,6 +7,8 @@ extends CharacterBody2D
 const HitShape := preload("res://core/sim/hit_shape.gd")   # 受击判定几何唯一入口
 const DashRule := preload("res://core/sim/dash_rule.gd")   # 冲刺倍率/准入判据唯一入口(两端同一份算式)
 const PlayerNetState := preload("res://scenes/player/player_net_state.gd")   # 整态编解码(回滚/权威同步)
+const PlayerPresentScript := preload("res://scenes/player/player_present.gd")   # 表现层(headless 不创建)
+const PlayerPickupScript := preload("res://scenes/player/player_pickup.gd")     # 拾取/丢弃 + 端口
 # 帧数据:网格 + 每帧 [列, 行] 写在 JSON 里,由网格推导 Rect2(不再手写 .tres)。
 # ★ 本体与 PvP 副本都走这一份,且 SpriteFramesIO 有缓存 ⇒ 仍是"只有一处帧数据"。
 const FRAMES_JSON := "res://assets/textures/player.frames.json"
@@ -165,10 +167,14 @@ func _ready() -> void:
 
 	# 单机开局空手:武器全部散落在地图上,由 Level0._ready 铺;联机由 MatchHost 调 set_initial_inventory 发随机一把。
 	weapons.set_initial_inventory([])
-	# 换弹圆环在**第一次需要显示时**才建:它要挂进 PostProcess 的 UI 通道(不吃光照),
-	# 而 PostProcess 可能比玩家晚 _ready ⇒ 延迟到 _update_reload_ring 里惰性创建。
+	# 表现层:只在**有渲染**的环境创建(headless = 服务器/测试,没有画面,建了就是白花;
+	# 旧实现靠"找不到 post_process 就 return"降级,结果权威端每个玩家都建了一个换弹圆环)。
+	if DisplayServer.get_name() != "headless":
+		present = PlayerPresentScript.new()
+		add_child(present)
+		present.setup(self)
 	add_child.call_deferred(WaterFx.new())
-	# 补间形变:挂在玩家自己身上(与 _reload_ring 同款的一个接入点覆盖单机/PvP/大乱斗);animator 是 @export 引用,场景实例化时就已就位。
+	# 补间形变:挂在玩家自己身上(一个接入点覆盖单机/PvP/大乱斗);animator 是 @export 引用,场景实例化时就已就位。
 	squash = SquashStretch.new()
 	# ★ 先 add_child() 再 setup(),与另两个宿主(敌鸟/对手副本)统一。两种序今天等价 —— SquashStretch 没有 _ready,入树不触发按参数建出来的东西。
 	# ★ 本仓另有一条相反规矩:WeaponPickup.configure() 必须先于 add_child()。将来给本组件加 _ready 时,这三处要一起倒过来。
@@ -187,14 +193,15 @@ var _speed_mult := 1.0  # 时间场速度域倍率(加速;跨函数用,故设成
 # Beta 时间玩法(PvP):服务器权威与本端预测各写一次的加速倍率(1 = 常速)。单机不走这里(走 TimeField.player_speed_mult)。
 # ★ 本字段也是唯一分发源:由 _push_haste_mult() 推给攀爬/武器/游泳三个消费点;match_host 的写与快照的读都打在本字段上。
 var pvp_haste_mult := 1.0
-var _ghost_t := 0.0     # 残影生成计时(加速时)
-var _ghost_flip := false  # 红/蓝交替
-# 冲刺残影:渲染帧里发射(不在物理 tick —— 回滚重放不会重复生成)。
-var _dash_ghost_t := 0.0
-# 冲刺残影的 3 个常量与远端副本共用一份,见 player_visual.gd。
-# 下冲残影:下冲是一次性速度赋值、没有冲刺那样的持续态,故自带一段发射窗口(约 3 张)。纯表现,不进整态。
-const DOWN_DASH_GHOST_TIME := 0.06
-var _down_dash_ghost_t := 0.0
+
+# 表现层(发光/换弹环/残影/朝向 flip):headless 下为 null。见 scenes/player/player_present.gd。
+var present = null
+# 拾取/丢弃(F/Q)与长按进度:端口由单机 Level0 在出生时绑定;联机不绑(只上行走服务器)。见 player_pickup.gd。
+var pickup = PlayerPickupScript.new()
+
+
+func speed_mult() -> float:
+	return _speed_mult
 
 
 # 本帧倍率推给三个消费点:攀爬/武器的宿主引用是一次给入的、而倍率每帧在变 ⇒ 只能每帧推;游泳走 swim.update 的调用参数。
@@ -207,21 +214,8 @@ func _push_haste_mult(tm: float) -> void:
 
 
 func _process(delta: float) -> void:
-	_tick_eye_glow()
-	_sync_form_flip()   # 必须放在下面那条早退之前,否则平时不刷新
-	# 冲刺 / 下冲残影(纯表现):只在渲染帧发射 ⇒ C2 回滚重放不会把同一段冲刺再生成一遍;
-	# 服务器/无相机路径直接跳过(看不见的节点不花)。强度/间隔见 DASH_GHOST_* 常量。
-	if _down_dash_ghost_t > 0.0:
-		_down_dash_ghost_t = maxf(_down_dash_ghost_t - delta, 0.0)
-	if not (is_charge or _down_dash_ghost_t > 0.0) or animator == null or not is_inside_tree():
-		_dash_ghost_t = 0.0
-		return
-	if get_viewport().get_camera_2d() == null:
-		return
-	_dash_ghost_t -= delta
-	if _dash_ghost_t <= 0.0:
-		_dash_ghost_t = PlayerVisual.DASH_GHOST_INTERVAL
-		AfterImage.spawn(get_parent(), animator, PlayerVisual.DASH_GHOST_TINT, PlayerVisual.DASH_GHOST_DURATION, -1)
+	if present != null:
+		present.tick(delta)
 
 
 func _physics_process(delta: float) -> void:
@@ -239,16 +233,6 @@ func _physics_process(delta: float) -> void:
 		return
 	_push_haste_mult(tm)   # ① 见该函数注释:必须在 weapons.tick 之前(tick 里的轮询开火吃它)
 	weapons.tick(delta * tm)   # 加速时开火/换弹节拍 ×tm(武器帧逻辑走物理 tick)
-
-	if _speed_mult > 1.0:
-		_ghost_t -= delta
-		if _ghost_t <= 0.0:
-			_ghost_t = 0.03   # 2× 下比原先(0.045)更密,拖尾才跟得上
-			var anim := animator   # @export 引用,场景实例化即就位
-			if anim != null:
-				var tint := Color(1.0, 0.25, 0.25, 0.55) if _ghost_flip else Color(0.3, 0.4, 1.0, 0.55)
-				_ghost_flip = not _ghost_flip
-				AfterImage.spawn(get_parent(), anim, tint)
 
 	combat.update_iframe_blink(delta)
 
@@ -270,8 +254,7 @@ func _physics_process(delta: float) -> void:
 		if reload_w != null:
 			reload_w.start_reload()
 
-	_poll_pickup_drop(delta)
-	_update_reload_ring()
+	pickup.tick(self, delta)
 
 	var mult := weapons.movement_multiplier()
 
@@ -463,7 +446,8 @@ func _tick_crouch_and_dash(delta: float, latched: bool, in_water: bool, mult: Ve
 			and not climb.is_over_climb_tile() \
 			and DashRule.down_dash_allowed(velocity.y, charge_down_velocity):
 		velocity.y = charge_down_velocity
-		_down_dash_ghost_t = DOWN_DASH_GHOST_TIME
+		if present != null:
+			present.down_dash_started()
 	# 下蹲逐帧推导,不用按下/松开边沿:旧实现把 release 分支套在 is_on_floor() 内,空中松开 S 不执行 ⇒ 落地仍蹲(卡蹲)。
 	var want_squat := is_on_floor() and input_source.is_action_pressed("down")
 	if want_squat and not is_squat:
@@ -516,7 +500,8 @@ func _tick_facing(delta: float, horizontal_input: float) -> void:
 # 期望姿态由输入/接触状态决定;每个姿态对应一个 CollisionPolygon2D(多边形可在编辑器里分别调整),运行时只启用当前姿态对应的那个。
 func _tick_pose_and_collision(delta: float, in_water: bool) -> void:
 	animator.flip_h = facing_direction < 0
-	_sync_form_flip()
+	if present != null:
+		present.sync_form_flip()
 
 	var desired: Pose = Pose.STAND
 	if in_water:
@@ -717,7 +702,8 @@ func _after_state_restore() -> void:
 	for pose in _coll_by_pose:
 		_coll_by_pose[pose].disabled = pose != state
 	animator.flip_h = facing_direction < 0
-	_sync_form_flip()
+	if present != null:
+		present.sync_form_flip()
 	# CharacterBody2D 的 is_on_floor 是上次 move_and_slide 的内部结果、无法直接赋值 ⇒ 恢复位置后做一次向下 0.001px 的微位移 move_and_slide,让它在恢复位置重判接触。
 	var saved := velocity
 	velocity = Vector2(0.0, 0.001)
@@ -798,70 +784,15 @@ func restart_at(spawn_cell: Vector2i) -> void:
 	set_controls_locked(false)
 
 
-var _reload_ring: ReloadRing = null   # 换弹圆环(角色后侧);挂在 UI 通道里
-var _ring_in_ui: bool = false        # 圆环是否已挂进 UI 通道(决定用世界坐标还是局部坐标)
-var _drop_hold_t := 0.0     # Q 已按住多久
-var _drop_latched := false  # 本次长按是否已触发过(防按住不放连续丢)
-
-
-# F 捡起 / Q 长按丢弃都走 input_source 读口,不在 _unhandled_input 里读原始 InputEvent —— 权威服务器没有输入事件、只有注入包,读原始事件的话联机端永远收不到。
-func _poll_pickup_drop(delta: float) -> void:
-	# ★ Q 长按计时两种模式都要跑:联机时它也是长按丢弃这条规则的唯一执行点(服务器只收得到一次满了的边沿,它自己没有计时器)。
-	# 早先写成联机早退 ⇒ 长按形同虚设、碰一下 Q 就丢枪。分支只差满了之后干什么:单机就地丢,联机打一个一次性边沿由 pack_record 上行给服务器裁决(不做客户端预测)。
-	if input_source.is_action_pressed("Q"):
-		if not _drop_latched:
-			_drop_hold_t += delta
-			if _drop_hold_t >= PlayerParams.weapon_drop_hold_time:
-				_drop_latched = true
-				if Level0.pvp_mode:
-					input_source.mark_drop_edge()
-				else:
-					_try_drop()
-	else:
-		_drop_hold_t = 0.0
-		_drop_latched = false
-
-	# 拾取 F 本来就是按下边沿:单机就地执行,联机只上行(服务器侧走 MatchGround._handle_ground_actions 裁决;本函数在服务器上靠 current_scene is Level0 早退兜底)。
-	if input_source.is_pickup_pressed() and not Level0.pvp_mode:
-		_try_pickup()
+# 拾取/丢弃的端口:单机由 Level0 在出生时绑定(PlayerPickup 只认两个方法名,不认场景类);
+# 联机不绑 = 明确"本端不执行",只上行走服务器裁决。
+func bind_pickup_host(host: Node) -> void:
+	pickup.bind(host)
 
 
 # 长按 Q 的进度 0..1(只读;HUD 的丢弃进度条用):没有反馈的长按是不可用的 —— 玩家会以为按键没生效。
 func drop_hold_progress() -> float:
-	if _drop_latched:
-		return 1.0
-	return clampf(_drop_hold_t / PlayerParams.weapon_drop_hold_time, 0.0, 1.0)
-
-
-# 本玩家所属的 Level0(从自己往上走)。★ 不用 get_tree().current_scene:那是当前场景根这一全局状态,与我在哪个世界并不等价
-# (PvP 里 current_scene 是 PvpGame/大乱斗场景,Level0 只是它的子节点;服务器 worker 里干脆没有 Level0)。往上走是本地的、精确的。
-func host_level() -> Level0:
-	var n: Node = self
-	while n != null:
-		if n is Level0:
-			return n
-		n = n.get_parent()
-	return null
-
-
-func _try_pickup() -> void:
-	var lvl := host_level()
-	if lvl != null:
-		lvl.try_pickup_for(self)
-
-
-func _try_drop() -> void:
-	if weapons.current_type_id() == 0:
-		return   # 空手没什么可丢
-	var e: Dictionary = weapons.drop_current()
-	if e.is_empty():
-		return
-	var lvl := host_level()
-	if lvl != null:
-		lvl.spawn_pickup(int(e["type"]), int(e["mag"]),
-			global_position + PlayerParams.weapon_drop_offset * Vector2(float(facing_direction), 1.0),
-			Vector2(PlayerParams.weapon_drop_speed * facing_direction, -PlayerParams.weapon_drop_up),
-			0, true)   # self_drop=true:冷却期内不参与自己的拾取(防丢完原地按 F 捡回)
+	return pickup.progress()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -892,111 +823,4 @@ func _unhandled_input(event: InputEvent) -> void:
 	# R 换弹已从这里迁走(改走 _physics_process 的 input_source 轮询):读原始 InputEvent 的话权威服务器永远收不到。倒地时 R 仍是重载/复活。
 
 
-# 换弹圆环显示在角色后侧(背对朝向那一侧),环心是带一位小数的倒计时。
-# ★ 挂在 PostProcess 的 **UI 通道**(不吃 ambient、不吃影子):它是有暗色底环的 UI,
-#   留在世界里会被整体压暗,塞进加色的发光通道又会变亮。
-#   降级:没有 UI 通道时退回挂在玩家身上(旧的局部坐标算法)。
-func _ensure_reload_ring() -> void:
-	if _reload_ring != null and is_instance_valid(_reload_ring):
-		return
-	var pp := get_tree().get_first_node_in_group("post_process")
-	var root: Node = null
-	if pp != null and pp.has_method("ui_root"):
-		root = pp.ui_root()
-	_reload_ring = ReloadRing.new()
-	_reload_ring.visible = false
-	if root != null:
-		_ring_in_ui = true
-		root.add_child(_reload_ring)          # UI 通道里 1 单位 = 1 世界像素
-	else:
-		_ring_in_ui = false
-		_reload_ring.scale = Vector2.ONE / scale.x
-		add_child(_reload_ring)
-
-
-func _update_reload_ring() -> void:
-	_ensure_reload_ring()
-	if _reload_ring == null or not is_instance_valid(_reload_ring):
-		return
-	var w := weapons.current_weapon()
-	var prog := w.reload_progress() if w != null else -1.0
-	_reload_ring.visible = prog >= 0.0
-	if prog < 0.0:
-		return
-	var offset := Vector2(-RELOAD_RING_OFFSET.x * float(facing_direction), RELOAD_RING_OFFSET.y)
-	if _ring_in_ui:
-		# UI 通道有自己的一份同参数相机 ⇒ 直接用世界坐标即可,不需要投影换算。
-		_reload_ring.global_position = global_position + offset
-		_reload_ring.scale = Vector2.ONE
-	else:
-		var sc := maxf(absf(scale.x), 0.001)
-		_reload_ring.position = offset / sc
-	_reload_ring.set_progress(prog, w.reload_time * (1.0 - prog))
-
-
-const RELOAD_RING_OFFSET := Vector2(58.0, -44.0)   # 世界单位:x 朝"后侧"、y 朝上(2026-09-16 上移)
-
 ## 回溯还原已搬到 core/sim/rewind_frame.gd(RewindFrame.apply_player):单机回溯与服务器 Beta 回溯共用同一份载荷契约。
-
-
-# ── 发光:由**美术遮罩**驱动(独立资产,像灯瓦片)──
-# 遮罩 = `player_light.png`,与 player.png **同布局**(同一份 cells)、白色标记、A 通道装强度。
-# ★ 为什么用遮罩而不是程序化:眼睛每帧位置都在变(实测跨帧 x 漂 4px、y 漂 6px),
-#   硬编码坐标跟不住;遮罩逐帧画,天然对齐。
-# ★ 为什么要单独的发光通道:世界整体在 PostProcess 里乘 ambient。发光体若画在世界里,会被
-#   一起压暗 —— 那不是"夜里更亮",而是"夜里跟着变暗",与需求相反。所以发光精灵挂在
-#   PostProcess 的 GlowViewport(相机逐帧同步),由 shader 在光照**之后**叠加。
-# ★ 纯表现:不碰逻辑、不进快照;拿不到遮罩或发光通道就不显示。
-const LIGHT_FIELD := "light_image"          # player.frames.json 里的遮罩字段名
-const LIGHT_K := 0.32                        # 强度上限(压低:核心与光晕一起变淡)
-const LIGHT_TINT := Color(0.86, 0.93, 1.0)   # 发光色(偏冷);白色标记只表示"这里发光",颜色在这里定
-var _light: AnimatedSprite2D = null
-var _light_root: Node2D = null   # 发光通道里的镜像根(承载玩家的位置/缩放)
-var _post: Node = null           # PostProcess(惰性获取)
-
-
-func _sync_form_flip() -> void:
-	var mat := animator.material as ShaderMaterial if animator != null else null
-	if mat != null:
-		mat.set_shader_parameter("flip_x", 1.0 if animator.flip_h else 0.0)
-
-
-
-func _tick_eye_glow() -> void:
-	if animator == null:
-		return
-	if _light == null:
-		if _post == null or not is_instance_valid(_post):
-			_post = get_tree().get_first_node_in_group("post_process")
-		if _post == null or not _post.has_method("glow_root"):
-			return
-		var glow_parent: Node = _post.glow_root()
-		if glow_parent == null:
-			return                        # 没有发光通道(别的场景/测试)=> 本特性自隐
-		var lf := SpriteFramesIO.load_json(FRAMES_JSON, LIGHT_FIELD)
-		if lf == null:
-			return
-		_light_root = Node2D.new()
-		_light_root.name = "PlayerLight"
-		glow_parent.add_child(_light_root)
-		_light = AnimatedSprite2D.new()
-		_light.name = "LightMask"
-		_light.sprite_frames = lf
-		_light.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST   # 遮罩绝不能被过滤混色
-		_light.centered = animator.centered
-		_light.offset = animator.offset
-		_light_root.add_child(_light)
-	# 镜像本体变换:发光通道有自己的相机(同世界相机),所以世界坐标直接可用。
-	_light_root.global_position = global_position
-	_light_root.scale = scale
-	# 与本体严格同帧:同一个动画名 + 同一个帧号,遮罩不会和贴图错开。
-	_light.animation = animator.animation
-	_light.frame = animator.frame
-	_light.flip_h = animator.flip_h
-	_light.scale = animator.scale
-	var amb := 1.0
-	if _post != null and is_instance_valid(_post):
-		amb = clampf(_post.ambient_for(_post.get("day_hour"), _post.moon_amount(_post.get("day_hour"))), 0.05, 1.0)
-	# 强度:白天几乎为 0、夜里明显。遮罩自己的 A 通道仍是逐像素强度,两者相乘。
-	var gain := clampf(LIGHT_K * (1.0 - amb), 0.0, 1.0)
-	_light.modulate = Color(LIGHT_TINT.r, LIGHT_TINT.g, LIGHT_TINT.b, gain)

@@ -226,6 +226,8 @@ func _ready() -> void:
 	EnemySpawner.load_types()
 	var spawns := MazeGenerator.load_spawns()
 	_place_player(grid, spawns.get("player", Vector2i(-1, -1)))
+	# 拾取/丢弃端口:Player 不再向上找 Level0(旧 host_level());未绑定 = 本端不执行,联机只上行走服务器。
+	($WorldViewport/Player as Player).bind_pickup_host(self)
 	$WorldViewport/Player.weapons.set_enabled_types(RunOptions.disabled_weapons)
 	grain_account = GrainAccount.new()
 	time_field = TimeField.new(grain_account)
