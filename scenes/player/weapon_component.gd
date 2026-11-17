@@ -376,6 +376,27 @@ func cancel_aim() -> void:
 		_weapon.cancel_aim()
 
 
+# 滚轮切枪(仅本地输入):设置开关、倒地闸门、PvP 的"本地即时切 + 上行 inst"都在这里,根不再复制一份按键表。
+# 返回 true = 事件已被消费。
+func try_wheel_switch(event: InputEvent) -> bool:
+	if not Settings.wheel_switch or body == null or body.is_downed():
+		return false
+	if not (event is InputEventMouseButton) or not event.pressed:
+		return false
+	var dir := 0
+	if event.button_index == MOUSE_BUTTON_WHEEL_UP:
+		dir = -1
+	elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+		dir = 1
+	if dir == 0:
+		return false
+	if Level0.pvp_mode:
+		request_net_cycle(dir)
+	else:
+		cycle_index(dir)
+	return true
+
+
 # ── 整态(回滚/权威同步)的武器段 ──
 # 键名 = 线上 C2_SCHEMA + WEAPON_SCHEMA(唯一 schema 见 core/net/net_codec.gd);本文件不另立键清单。
 func capture_state() -> Dictionary:

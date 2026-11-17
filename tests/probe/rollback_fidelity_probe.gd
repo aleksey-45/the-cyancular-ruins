@@ -3,7 +3,7 @@ extends Node
 
 const DT := 1.0 / 60.0
 const MARKER := "ROLLBACK FIDELITY PROBE: ALL-OK"
-const EXPECTED_CHECKS := 30
+const EXPECTED_CHECKS := 29
 
 var _failures: Array[String] = []
 var _checks := 0
@@ -221,14 +221,9 @@ func _check_source_guard() -> void:
 	_check(hit_fn[0] >= 0 and water_skip == 1,
 			"服务端必须跳过 cause=water 的 hit_event(实得 %d 处;0 = 溺水伤害双计)" % water_skip)
 
-	var water_calls := 0
-	for line7 in FileAccess.get_file_as_string("res://scenes/player/player.gd").split("\n"):
-		if line7.strip_edges().begins_with("#"):
-			continue
-		if line7.contains("take_hit(global_position, PlayerParams.player_waterproof_damage") and line7.contains("\"water\""):
-			water_calls += 1
-	_check(water_calls == 1,
-			"溺水 take_hit 必须带 cause=\"water\"(实得 %d 处;0 = 服务端不会跳过回声)" % water_calls)
+	# ★ 2026-11-17:原先这里还有一条"溺水 take_hit 必须带 cause=water"的**源码扫描**(扫 player.gd)。
+	#   按 test-economy D6a 删除:它判的是"这段字写在哪",而且行为面已被 ⑲(took_hit 实带 cause=water)覆盖;
+	#   溺水逻辑搬进 scenes/player/swim_component.gd 后它只会因为"位置变了"而红。
 
 
 func _func_block(lines: Array, header_prefix: String) -> Array:

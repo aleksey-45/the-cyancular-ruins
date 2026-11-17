@@ -5,50 +5,22 @@ extends CharacterBody2D
 #   (has_method / call / get),拼错不报错、只在运行期静默失效。代价 = 新环境必须 `--import`
 #   一次重建全局类缓存(否则别的脚本报 Could not find type Player)—— 本地跑批与 CI 都已显式 import。
 const HitShape := preload("res://core/sim/hit_shape.gd")   # 受击判定几何唯一入口
-const DashRule := preload("res://core/sim/dash_rule.gd")   # 冲刺倍率/准入判据唯一入口(两端同一份算式)
 const PlayerNetState := preload("res://scenes/player/player_net_state.gd")   # 整态编解码(回滚/权威同步)
 const PlayerPresentScript := preload("res://scenes/player/player_present.gd")   # 表现层(headless 不创建)
 const PlayerPickupScript := preload("res://scenes/player/player_pickup.gd")     # 拾取/丢弃 + 端口
+const PlayerMotorScript := preload("res://scenes/player/player_motor.gd")       # 移动/姿态/物理(帧内顺序唯一真相)
 # 帧数据:网格 + 每帧 [列, 行] 写在 JSON 里,由网格推导 Rect2(不再手写 .tres)。
 # ★ 本体与 PvP 副本都走这一份,且 SpriteFramesIO 有缓存 ⇒ 仍是"只有一处帧数据"。
 const FRAMES_JSON := "res://assets/textures/player.frames.json"
 
 @export var animator : AnimatedSprite2D
 
-var gravity: float = GameParameters.gravity0
-# 自动跳跃的落地余量(px):按v=-sqrt(2gh)算的峰值高度**等于**台阶高度,60Hz 离散化下可能差一帧够不到,
-# 加 2px(远小于一个 16px 子格,肉眼不可辨)保证真的能站上去。
-const AUTO_JUMP_CLEARANCE := 2.0
-# ★ 2026-11-01(R1 删):这里原有一个 `AUTO_JUMP_ASSIST_S = 0.25s` 的"自动跳后强制满速"窗口。
-const AUTO_LEDGE_NUDGE_PX := 16.0
-var jump_velocity: float = PlayerParams.jump_velocity
-var charge_down_velocity: float = PlayerParams.charge_down_velocity
-var charge_velocity: float = PlayerParams.charge_velocity   # 冲刺速度
-var charge_duration: float = PlayerParams.charge_duration   # 冲刺持续时间(秒)
-var charge_air_gravity_mult: float = PlayerParams.charge_air_gravity_mult  # 空中冲刺重力倍率
-var move_speed: float = PlayerParams.move_speed
-var crouch_walk_speed: float = PlayerParams.crouch_walk_speed  # 蹲走水平速度
-
-# 水平加速/刹车/转身的指数缓动系数(越大越跟手)
-var accel_ground: float = PlayerParams.accel_ground
-var accel_air: float = PlayerParams.accel_air
-var brake_ground: float = PlayerParams.brake_ground
-var brake_air: float = PlayerParams.brake_air
-
-var coyote_time: float = PlayerParams.coyote_time
-var jump_buffer_time: float = PlayerParams.jump_buffer_time
-var jump_cut_factor: float = PlayerParams.jump_cut_factor
-var coyote_timer: float = 0.0
-var jump_buffer_timer: float = 0.0
-var jump_cut_applied: bool = false   # 本次跳跃是否已截断(可变高度)
 
 var is_squat: bool = false
 var is_charge: bool = false
 var facing_direction: int = 1   # 1=右，-1=左
 
 var charge_timer: float = 0.0
-var _last_move_dir: int = 1            # 最近水平移动方向(1右/-1左)
-var _last_move_timer: float = 0.0      # 距上次水平移动的剩余窗口(>0 表示最近在走)
 
 @export var weapon_slot: Node2D
 
@@ -59,8 +31,6 @@ var _last_move_timer: float = 0.0      # 距上次水平移动的剩余窗口(>0
 
 # 补间形变(squash & stretch):运行期创建、不进 capture_state()/restore_state()、不碰碰撞箱。
 var squash: SquashStretch = null
-# ★ move_and_slide() 之前的 velocity.y,只喂 squash 的无状态落地推导;不得进 capture_state()、不得被模拟逻辑读。
-var _pre_move_vy: float = 0.0
 
 # 输入来源:默认委托真实 Input;服务器注入 PacketInputSource 驱动远端玩家。
 var input_source: PlayerInput = LocalInputSource.new()
@@ -108,13 +78,13 @@ var max_hp: int:
 	get:
 		return combat.max_hp
 
-# 防水值(氧气):没顶按 water_drain_interval 掉 1、暴露空气按 water_recover_interval 回 1;归零后每秒扣血。
-const WaterSample := preload("res://core/sim/water_sample.gd")   # 水判定数据类型;本文件不自己查水面
-var waterproof: int = PlayerParams.player_waterproof_max
-var max_waterproof: int = PlayerParams.player_waterproof_max
-var _waterproof_timer: float = 0.0
-var _was_submerged: bool = false
-var _waterproof_drown_timer: float = 0.0
+# 防水值(氧气)归 SwimComponent(它已是水判定的唯一来源);这里只保留转发,外部(HUD / 整态)接口不变。
+var waterproof: int:
+	get:
+		return swim.waterproof
+var max_waterproof: int:
+	get:
+		return swim.max_waterproof
 
 enum Pose { STAND, MOVE, FLY, CHARGE, SQUAT }
 # 姿态动画名 / 碰撞箱节点名 / 冲刺残影常量 = **与远端副本共享的单一来源**。
@@ -123,11 +93,8 @@ const PlayerVisual := preload("res://scenes/player/player_visual.gd")
 
 # 姿态锁:进入某姿态后锁定一小段时间,防止 is_on_floor()/velocity 抖动导致 move↔fly 等高频切换(走路抽搐)。
 var state: Pose = Pose.STAND
-var state_lock_timer: float = 0.0
-const STATE_LOCK_TIME := 0.15   # 秒，切换后的最短停留时长
 
 
-var _coll_by_pose: Dictionary = {}
 
 # PvP COUNTDOWN/局间冻结:锁住本地玩家输入(武器开火查询 + 移动),并把输入源一并冻结 ——
 # 否则本地预测在服务器权威冻结的倒计时里照常移动,PLAYING 起 ack 跳变 → 大 rollback。
@@ -157,10 +124,11 @@ func _ready() -> void:
 
 	combat.hp_changed.connect(func(cur: int, mx: int) -> void: hp_changed.emit(cur, mx))
 	combat.went_down.connect(func() -> void: weapons.cancel_aim())
+	swim.waterproof_changed.connect(func(cur: int, mx: int) -> void: waterproof_changed.emit(cur, mx))
 	hp_changed.emit(combat.hp, combat.max_hp)
 
-	for pose in Pose.values():
-		_coll_by_pose[pose] = get_node(PlayerVisual.COLLISION_NODE[pose])
+	# 姿态碰撞箱与姿态锁归 motor(它每帧按姿态启用对应箱子);这里只做枚举顺序的一致性检查。
+	motor.setup(self)
 	# 共享表的键是裸 int:枚举顺序改了这里会立刻喊,而不是静默放错动画 / 用错碰撞箱。
 	if int(Pose.SQUAT) != PlayerVisual.POSE_SQUAT:
 		push_error("PlayerVisual.POSE_* 与 player.gd 的 Pose 枚举顺序不一致")
@@ -188,7 +156,6 @@ func _ready() -> void:
 	max_slides = 6
 
 
-var _speed_mult := 1.0  # 时间场速度域倍率(加速;跨函数用,故设成员)
 
 # Beta 时间玩法(PvP):服务器权威与本端预测各写一次的加速倍率(1 = 常速)。单机不走这里(走 TimeField.player_speed_mult)。
 # ★ 本字段也是唯一分发源:由 _push_haste_mult() 推给攀爬/武器/游泳三个消费点;match_host 的写与快照的读都打在本字段上。
@@ -198,10 +165,12 @@ var pvp_haste_mult := 1.0
 var present = null
 # 拾取/丢弃(F/Q)与长按进度:端口由单机 Level0 在出生时绑定;联机不绑(只上行走服务器)。见 player_pickup.gd。
 var pickup = PlayerPickupScript.new()
+# 移动/姿态/物理:帧内顺序的唯一真相。见 scenes/player/player_motor.gd。
+var motor = PlayerMotorScript.new()
 
 
 func speed_mult() -> float:
-	return _speed_mult
+	return motor.speed_mult()
 
 
 # 本帧倍率推给三个消费点:攀爬/武器的宿主引用是一次给入的、而倍率每帧在变 ⇒ 只能每帧推;游泳走 swim.update 的调用参数。
@@ -221,15 +190,14 @@ func _process(delta: float) -> void:
 func _physics_process(delta: float) -> void:
 	# 加速走速度域(move_and_slide 用引擎自己的 delta):tick 类与水平速度目标 ×tm,重力/跳跃保持原样 —— 缩放 delta 只会让坠落变快、跳跃变低、移速不变。
 	var tm := TimeField.player_speed_mult() if TimeField.current != null else pvp_haste_mult
-	_speed_mult = tm
+	motor.set_speed_mult(tm)
 	if TimeField.current != null and TimeField.current.is_rewinding():
 		return
 	# squash 必须在最首行(倒地早退之前):否则倒地后 animator.scale 会卡在最后一个挤压值上。
-	squash.tick(delta, _pre_move_vy, is_on_floor(), combat.is_downed())
+	squash.tick(delta, motor.pre_move_vy(), is_on_floor(), combat.is_downed())
 	if combat.is_downed():
-		# 倒地不更新 _pre_move_vy:不归零的话,被击杀那一刻的下坠速度会陈旧地留满整个倒地窗口,并与复活首帧的地面态配对 → 一个满幅假挤压脉冲。
-		_pre_move_vy = 0.0
-		_tick_downed(delta)
+		# 倒地路径不归零 _pre_move_vy:否则被击杀那一刻的下坠速度会陈旧地留满整个倒地窗口(见 motor.tick_downed)。
+		motor.tick_downed(delta)
 		return
 	_push_haste_mult(tm)   # ① 见该函数注释:必须在 weapons.tick 之前(tick 里的轮询开火吃它)
 	weapons.tick(delta * tm)   # 加速时开火/换弹节拍 ×tm(武器帧逻辑走物理 tick)
@@ -256,328 +224,8 @@ func _physics_process(delta: float) -> void:
 
 	pickup.tick(self, delta)
 
-	var mult := weapons.movement_multiplier()
-
-	var horizontal_input = input_source.get_axis("left", "right")
-
-	# 水中与攀爬是数据源:in_water / latched 决定后面每一块跑不跑,故留在编排函数里,只把消费它们的逻辑分出去。
-	var in_water := swim.update(self, delta, mult, input_source, tm)
-	_update_waterproof(delta, swim.sample)
-	var latched := false
-	if not in_water:
-		climb.update(mult, delta, is_squat, input_source)
-		latched = climb.is_latched()
-	else:
-		is_charge = false
-		is_squat = false
-
-	_tick_vertical(delta, latched, in_water, mult)
-	_tick_crouch_and_dash(delta, latched, in_water, mult)
-	_tick_horizontal(delta, in_water, horizontal_input, mult)
-	_tick_facing(delta, horizontal_input)
-	_tick_pose_and_collision(delta, in_water)
-	if not latched and not in_water:
-		_try_step_or_jump(delta, mult, float(horizontal_input))
-
-	# 爆炸击退位移单独走 move_and_collide(带碰撞),不污染 velocity —— 地面把向下击退吃掉后再减回去会把玩家弹起。
-	combat.apply_knock(delta)
-
-	# ★ 必须在 move_and_slide() 之前取值:落地那一帧它在调用后就被清零。且必须滤掉不是摔下来的下坠速度(squash 的契约 = 地面真正吸收掉的坠落速度)。
-	# ★ 水中/攀爬中置 0 是落实设计取舍(游泳不该有自由落体那种弹感),不是修 bug;梯子下行那条满幅假挤压仍是残留。实测读数与推导见 docs/eng/player.md。
-	_pre_move_vy = 0.0 if (in_water or latched) else velocity.y
-	move_and_slide()
-	if _step_up_snap:
-		# 迈台阶后脚底只离台面 1px:吸一下地,避免"腾空一帧"(姿态切 FLY/落地挤压)造成的抖动
-		_step_up_snap = false
-		apply_floor_snap()
-	_try_ledge_nudge(in_water, latched, horizontal_input)   # 卡脚修复,见函数注释
-
-	_tick_slide_reactions()
-	_wrap_position()
-
-
-func _tick_vertical(delta: float, latched: bool, in_water: bool, mult: Vector2) -> void:
-	if latched or in_water:
-		return
-	if is_on_floor():
-		coyote_timer = coyote_time
-	else:
-		# 空中冲刺那几帧重力 ×charge_air_gravity_mult(变平,可跨沟)。
-		var grav_mult := charge_air_gravity_mult if is_charge else 1.0
-		velocity.y += gravity * grav_mult * delta
-		coyote_timer = maxf(coyote_timer - delta, 0.0)
-
-	if input_source.is_action_just_pressed("up"):
-		jump_buffer_timer = jump_buffer_time
-	else:
-		jump_buffer_timer = maxf(jump_buffer_timer - delta, 0.0)
-
-	if jump_buffer_timer > 0.0 and (is_on_floor() or coyote_timer > 0.0) and not is_squat:
-		# 冲刺中按跳 = 打断冲刺转跳跃,保留当前水平速度作动量(下方 accel/air-brake 平滑接管)。
-		if is_charge:
-			is_charge = false
-			charge_timer = 0.0
-		velocity.y = jump_velocity * mult.y
-		jump_buffer_timer = 0.0
-		coyote_timer = 0.0
-		jump_cut_applied = false
-		squash.impulse(SquashStretch.Impulse.JUMP)
-
-	if not jump_cut_applied and input_source.is_action_just_released("up") and velocity.y < 0.0:
-		velocity.y *= jump_cut_factor
-		jump_cut_applied = true
-
-
-# ★★ 迈台阶 / 自动跳(用户 2026-11-01 三轮反馈的收敛版)——
-var _step_up_snap := false   # 本帧抬过台阶 ⇒ move_and_slide 之后 apply_floor_snap() 吸地
-
-func _try_step_or_jump(delta: float, mult: Vector2, horizontal_input: float) -> void:
-	if not is_on_floor() or is_squat or is_charge or jump_buffer_timer > 0.0:
-		return
-	var dx := velocity.x * delta
-	if absf(dx) < 0.5:
-		return
-	var dir := 1 if dx > 0.0 else -1
-	if not test_move(global_transform, Vector2(dx, 0.0)):
-		return   # 这一帧本来就过得去
-	var feet := _front_feet_subcell(dir)
-	var h := StepJump.low_step_height(feet, dir, Callable(self, "_sub_solid_at"))
-	if h <= 0 or not _step_up_headroom_clear(feet, dir, h):
-		return
-	var sub_px := float(GameParameters.TILE_SIZE) / float(StepJump.SUB_PER_CELL)
-	# 抬起来之后本帧位移必须真的进得去(物理判据,不只信网格):否则那面"台阶"其实进不去,不抬。
-	var lift := float(h) * sub_px + 1.0
-	if test_move(global_transform.translated(Vector2(0.0, -lift)), Vector2(dx, 0.0)):
-		return
-	var full_x := horizontal_input * move_speed * _speed_mult * mult.x
-	if StepJump.is_walk_up_step(h):
-		# 矮台阶(≤32px):抬到台阶顶,同一帧的 move_and_slide 直接迈上去 —— 不丢那一帧。
-		global_position.y -= lift
-		velocity.y = 0.0
-		velocity.x = full_x
-		_step_up_snap = true
-		return
-	# 3~4 子格(48/64px):按台阶高度起跳(跳高 = 台阶高度,不是满力跳)。
-	velocity.y = StepJump.jump_velocity_for_height(float(h) * sub_px + AUTO_JUMP_CLEARANCE, gravity)
-	velocity.x = full_x
-	jump_buffer_timer = 0.0
-	coyote_timer = 0.0
-	jump_cut_applied = true
-	squash.impulse(SquashStretch.Impulse.JUMP)
-
-
-# 自动跳跃的两个数据口:脚底前方落在哪个 16px 子格 / 该子格有没有碰撞。
-# ★ 用 hurt_rect()(= 当前姿态的逻辑体)而不是碰撞箱:与"受击面"同一份几何,蹲下时不会用站立身高去探。
-func _front_feet_subcell(dir: int) -> Vector2i:
-	var r := hurt_rect()
-	var sub := float(GameParameters.TILE_SIZE) / float(StepJump.SUB_PER_CELL)
-	var x := r.position.x + r.size.x * 0.5 + float(dir) * (r.size.x * 0.5 + 1.0)
-	var y := r.position.y + r.size.y - 2.0
-	return Vector2i(int(floor(x / sub)), int(floor(y / sub)))
-
-
-# 子格是否挡路:**与 CollisionBuilder.build_sub 同一份判据**(否则会出现"看起来是墙但没碰撞/已被打穿"的误判):
-#   type=wall 才有碰撞;可破坏砖还要 `sub_alive`(被摧毁的子格纹理不变、碰撞已删 —— 只判纹理会让打穿的洞口被当成台阶)。
-# ★ 世界是环面的 ⇒ 子格坐标先环面回绕,否则接缝旁的台阶永远判成"没挡路"。
-func _sub_solid_at(cell: Vector2i) -> bool:
-	var sub := MazeGenerator.current_subgrid
-	if sub.is_empty():
-		return false
-	var sr := sub.size()
-	var sc := (sub[0] as Array).size()
-	var wrapped := Vector2i(posmod(cell.x, sc), posmod(cell.y, sr))
-	var tex := int((sub[wrapped.y] as Array)[wrapped.x])
-	if tex == 0:
-		return false
-	if TileDefs.type_id_of(tex) != TileDefs.TYPE_WALL:
-		return false
-	var destr: bool = TileDefs.bullet_destroyable(tex) or TileDefs.explosion_destroyable(tex)
-	if destr and TileDefs.sub_cols != 0 and not TileDefs.sub_alive(wrapped):
-		return false
-	return true
-
-
-# 迈台阶前的净空检查:台阶顶面往上一格(4 个 16px 子格)必须是空的,否则抬上去就是把头塞进天花板。
-# ★ 台阶的实体子格 = 从脚底那行往上连续 step_sub 行,顶面 = (feet_sub.y - step_sub + 1) 行的上沿
-#   ⇒ 顶面**上方**第一行 = feet_sub.y - step_sub(顶面那行自己是实体,不能算进净空 —— 旧写法把顶面行也算进去,恒 false)。
-func _step_up_headroom_clear(feet_sub: Vector2i, dir: int, step_sub: int) -> bool:
-	var top_row := feet_sub.y - step_sub   # 台阶顶面上方第一行
-	for k in range(0, StepJump.SUB_PER_CELL):
-		if _sub_solid_at(Vector2i(feet_sub.x + dir, top_row - k)):
-			return false
-	return true
-
-
-# 卡脚修复:跳跃/下落贴着台沿时,脚底会以 ≤1 个子格的深度卡在台沿竖直面或顶面
-func _try_ledge_nudge(in_water: bool, latched: bool, horizontal_input: float) -> void:
-	if in_water or latched or is_on_floor() or not is_on_wall() or absf(horizontal_input) < 0.01:
-		return
-	var sub := MazeGenerator.current_subgrid
-	if sub.is_empty():
-		return
-	var dir := 1 if horizontal_input > 0.0 else -1
-	var sub_px := float(GameParameters.TILE_SIZE) / float(StepJump.SUB_PER_CELL)
-	var r := hurt_rect()
-	var feet_y := r.position.y + r.size.y
-	var x_px := r.position.x + r.size.x * 0.5 + float(dir) * (r.size.x * 0.5 + 1.0)
-	var col := int(floor(x_px / sub_px))
-	var feet_sub := int(floor(feet_y / sub_px))
-	# 只看"脚所在子格"与"再上一格":台沿顶面必须在这 2 个子格内,否则是撞真墙/差得太多,不抬。
-	for k in range(0, 2):
-		var row := feet_sub - k
-		if not _sub_solid_at(Vector2i(col, row)):
-			continue
-		var dy := feet_y - float(row) * sub_px
-		if dy <= 0.0 or dy > AUTO_LEDGE_NUDGE_PX:
-			continue   # 这一行不在范围内(可能脚正好压在子格边界上),再看下一行
-		# 台沿上方要有一格净空(否则是把人往墙里塞)
-		if _sub_solid_at(Vector2i(col, row - 1)) or _sub_solid_at(Vector2i(col, row - 2)):
-			return
-		global_position.y -= dy + 1.0
-		velocity.y = minf(velocity.y, 0.0)
-		return
-
-
-func _tick_crouch_and_dash(delta: float, latched: bool, in_water: bool, mult: Vector2) -> void:
-	if latched or in_water:
-		return
-	# 下冲:空中按 S 给一次向下的速度脉冲。已经比他掉得还快时不给(= 不许用它刹车)。
-	if not is_on_floor() and input_source.is_action_just_pressed("down") \
-			and not climb.is_over_climb_tile() \
-			and DashRule.down_dash_allowed(velocity.y, charge_down_velocity):
-		velocity.y = charge_down_velocity
-		if present != null:
-			present.down_dash_started()
-	# 下蹲逐帧推导,不用按下/松开边沿:旧实现把 release 分支套在 is_on_floor() 内,空中松开 S 不执行 ⇒ 落地仍蹲(卡蹲)。
-	var want_squat := is_on_floor() and input_source.is_action_pressed("down")
-	if want_squat and not is_squat:
-		is_charge = false   # 冲刺中按 S → 取消冲刺进蹲
-	is_squat = want_squat
-
-	# 冲刺 = 双击左/右走(没有独立键,边沿由 LocalInputSource 合成);已比冲刺还快时不触发。
-	if not is_charge and not is_squat and input_source.is_action_just_pressed("charge"):
-		if DashRule.dash_allowed(velocity.x, DashRule.dash_speed(charge_velocity, _speed_mult, mult.x)):
-			is_charge = true
-			charge_timer = charge_duration
-			squash.impulse(SquashStretch.Impulse.DASH)
-			# 冲刺方向沿用最近移动方向;没在走路(如刚用枪瞄)则保留当前朝向。
-			if _last_move_timer > 0.0:
-				facing_direction = _last_move_dir
-
-
-# 水平速度:攀爬中不锁横移(爬/挂/空闲都可左右走,由 climb 只管垂直)。
-func _tick_horizontal(delta: float, in_water: bool, horizontal_input: float, mult: Vector2) -> void:
-	if in_water:
-		return
-	if is_charge:
-		# 速度 ×tm、计时 ÷tm(判据见 DashRule)⇒ 时间加速只让冲刺更快、不改变冲刺距离;武器减速只缩短距离。
-		velocity.x = DashRule.dash_speed(charge_velocity, _speed_mult, mult.x) * facing_direction
-		charge_timer -= delta * _speed_mult
-		if charge_timer <= 0:
-			is_charge = false
-	else:
-		var speed_target := (crouch_walk_speed if is_squat else move_speed) * _speed_mult
-		var target_velocity_x = horizontal_input * speed_target * mult.x
-		if horizontal_input != 0:
-			if is_on_floor():
-				velocity.x = MathUtil.approach(velocity.x, target_velocity_x, accel_ground, delta)
-			else:
-				velocity.x = MathUtil.approach(velocity.x, target_velocity_x, accel_air, delta)
-		else:
-			_brake_horizontal(delta)
-
-
-# 移动输入非零时朝向跟随移动;零输入时保留(枪瞄准设置的)当前朝向。
-func _tick_facing(delta: float, horizontal_input: float) -> void:
-	if not is_charge and horizontal_input != 0:
-		facing_direction = 1 if horizontal_input > 0 else -1
-		_last_move_dir = facing_direction
-		_last_move_timer = PlayerParams.charge_dir_window
-	else:
-		_last_move_timer = maxf(_last_move_timer - delta, 0.0)
-
-
-# 期望姿态由输入/接触状态决定;每个姿态对应一个 CollisionPolygon2D(多边形可在编辑器里分别调整),运行时只启用当前姿态对应的那个。
-func _tick_pose_and_collision(delta: float, in_water: bool) -> void:
-	animator.flip_h = facing_direction < 0
-	if present != null:
-		present.sync_form_flip()
-
-	var desired: Pose = Pose.STAND
-	if in_water:
-		desired = Pose.MOVE if absf(velocity.x) > 1.0 else Pose.STAND
-	elif is_charge:
-		desired = Pose.CHARGE
-	elif is_squat:
-		desired = Pose.SQUAT
-	elif not is_on_floor():
-		desired = Pose.FLY
-	elif velocity.x != 0:
-		desired = Pose.MOVE
-
-	if state_lock_timer > 0.0:
-		state_lock_timer -= delta
-	elif state != desired:
-		state = desired
-		state_lock_timer = STATE_LOCK_TIME
-
-	animator.play(PlayerVisual.ANIM[state])
-
-	for pose in _coll_by_pose:
-		_coll_by_pose[pose].disabled = pose != state
-
-
-func _tick_slide_reactions() -> void:
-	if is_charge:
-		for i in range(get_slide_collision_count()):
-			var col := get_slide_collision(i)
-			if col != null and absf(col.get_normal().x) > 0.5:
-				is_charge = false
-				charge_timer = 0.0
-				velocity.x = 0.0
-				break
-
-	# 弹性瓦片(如树叶)弱反弹;空网格跳过(冒烟测试会清空 current_grid;真实游戏 Level0 总会赋值)。
-	if not MazeGenerator.current_grid.is_empty():
-		for i in range(get_slide_collision_count()):
-			var sc := get_slide_collision(i)
-			if sc == null:
-				continue
-			var ec := MazeGenerator.cell_of(sc.get_position(), GameParameters.TILE_SIZE,
-					MazeGenerator.current_grid[0].size(), MazeGenerator.current_grid.size())
-			var ev: int = MazeGenerator.current_grid[ec.y][ec.x]
-			if ev != 0 and TileDefs.elastic(MazeGenerator.texture_of(ev)):
-				velocity += sc.get_normal() * PlayerParams.elastic_bounce
-				break
-
-
-# 倒地(死亡态)不取消物理:重力/制动/击退照常,只是不吃输入、不结算战斗。与正常路径的差别只有三处:不读输入、不跑武器/攀爬/跳跃/冲刺/姿态切换、制动那段共用。
-# ★ 重力那段刻意不与正常路径合并:这份不乘 charge_air_gravity_mult、也不递减土狼时间 —— 今天都不可观测(倒地不能跳),但不可观测是要论证的。
-func _tick_downed(delta: float) -> void:
-	if is_on_floor():
-		coyote_timer = coyote_time
-	else:
-		velocity.y += gravity * delta
-	_brake_horizontal(delta)
-	combat.apply_knock(delta)
-	move_and_slide()
-	_wrap_position()
-
-
-# 无水平输入时的制动 + 吸附(倒地路径与正常路径逐句相同,故收在这里):指数缓动逼近不到 0,接近 0 时直接吸附,避免贴地滑行。
-func _brake_horizontal(delta: float) -> void:
-	if is_on_floor():
-		velocity.x = MathUtil.approach(velocity.x, 0.0, brake_ground, delta)
-	else:
-		velocity.x = MathUtil.approach(velocity.x, 0.0, brake_air, delta)
-	if absf(velocity.x) < PlayerParams.stop_snap:
-		velocity.x = 0.0
-
-
-# 环面回卷:玩家只能在中间副本,离开时取模送回。
-func _wrap_position() -> void:
-	global_position = MazeGenerator.wrap_to_range(global_position,
-			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
+	# ② 移动/物理:帧内顺序的唯一真相在 PlayerMotor.tick(顺序说明见该文件头)。
+	motor.tick(delta, tm)
 
 
 func take_hit(source_pos: Vector2, damage: int, ignore_iframes: bool = false, knockback: float = -1.0,
@@ -625,42 +273,27 @@ func apply_recoil(push: float) -> void:
 	weapons.apply_recoil(push, is_squat, climb.is_latched())
 
 # 服务器快照权威状态:血量/防水/倒地直接采纳(本地 hit 事件只做视觉,血量以快照为准)。
+# 字段归谁、按什么顺序采纳,都在 PlayerNetState(与整态恢复共用同一份"倒地不顶满 hp"的判据)。
 func apply_authoritative_state(hp_val: int, waterproof_val: int, downed_val: bool) -> void:
-	combat.hp = clampi(hp_val, 0, combat.max_hp)
-	combat.hp_changed.emit(combat.hp, combat.max_hp)
-	waterproof = clampi(waterproof_val, 0, max_waterproof)
-	waterproof_changed.emit(waterproof, max_waterproof)
-	if downed_val and not combat.is_downed():
-		combat.force_down()
-	elif not downed_val and combat.is_downed():
-		# ★ 2026-11-01(R3):不能走 revive() —— 它会把 hp 顶成 max_hp,冲掉上面刚采纳的**权威** hp。
-		combat.restore_alive_state()
+	PlayerNetState.apply_authoritative(self, hp_val, waterproof_val, downed_val)
 
-# 根本体自己拥有的整态字段(位置/移动/姿态/水下计时)。组件字段由各自的 capture_state() 提供,
+# 根本体自己拥有的整态字段(位置/速度/朝向/姿态/蹲冲)。移动计时器归 PlayerMotor,水/战斗/武器归各自组件;
 # 装配在 scenes/player/player_net_state.gd;键名 = core/net/net_codec.gd 的 C2_SCHEMA。
 # ★ 自动跳的"满速横移"窗口 **不进整态/不上线**:它是本地表现量,只影响自己后半秒的横移补速,
 #   且服务器从不 restore(只有客户端回滚重放会用到);进了 c2 就要动线格式(protocol 变更)与快照体积,
 #   收益不抵风险。已知边界:回滚重放时该窗口可能少/多几帧 ⇒ 偏差 <= 0.25s 的横移补速,自愈。
 func capture_self_state() -> Dictionary:
-	return {
+	var st := {
 		"pos": global_position,
 		"vel": velocity,
 		"facing": facing_direction,
 		"state": state,
-		"slock": state_lock_timer,
-		"coyote": coyote_timer,
-		"jbuf": jump_buffer_timer,
-		"jcut": jump_cut_applied,
 		"squat": is_squat,
 		"charge": is_charge,
 		"ct": charge_timer,
-		"lmv_d": _last_move_dir,
-		"lmv_t": _last_move_timer,
-		"wp": waterproof,
-		"wp_t": _waterproof_timer,
-		"wp_s": _was_submerged,
-		"wp_d": _waterproof_drown_timer,
 	}
+	st.merge(motor.capture_extra(), true)
+	return st
 
 
 # C2 预测的整态捕获/恢复:覆盖决定下一物理帧输出的全部变量(本体 + climb/swim/combat + 当前武器)。
@@ -674,22 +307,10 @@ func restore_self_state(st: Dictionary) -> void:
 	velocity = st.get("vel", velocity)
 	facing_direction = int(st.get("facing", facing_direction))
 	state = clampi(int(st.get("state", state)), Pose.STAND, Pose.SQUAT)
-	state_lock_timer = float(st.get("slock", state_lock_timer))
-	coyote_timer = float(st.get("coyote", coyote_timer))
-	jump_buffer_timer = float(st.get("jbuf", jump_buffer_timer))
-	jump_cut_applied = bool(st.get("jcut", jump_cut_applied))
+	motor.restore_extra(st)
 	is_squat = bool(st.get("squat", is_squat))
 	is_charge = bool(st.get("charge", is_charge))
 	charge_timer = float(st.get("ct", charge_timer))
-	_last_move_dir = int(st.get("lmv_d", _last_move_dir))
-	_last_move_timer = float(st.get("lmv_t", _last_move_timer))
-	var wp_v := int(st.get("wp", waterproof))
-	if wp_v != waterproof:
-		waterproof = clampi(wp_v, 0, max_waterproof)
-		waterproof_changed.emit(waterproof, max_waterproof)
-	_waterproof_timer = float(st.get("wp_t", _waterproof_timer))
-	_was_submerged = bool(st.get("wp_s", _was_submerged))
-	_waterproof_drown_timer = float(st.get("wp_d", _waterproof_drown_timer))
 
 
 func restore_state(st: Dictionary) -> void:
@@ -699,8 +320,7 @@ func restore_state(st: Dictionary) -> void:
 
 # 不可序列化的收尾:按姿态启用碰撞箱、朝向贴图、以及恢复位置后的一次贴地重判。
 func _after_state_restore() -> void:
-	for pose in _coll_by_pose:
-		_coll_by_pose[pose].disabled = pose != state
+	motor.sync_pose_collision()
 	animator.flip_h = facing_direction < 0
 	if present != null:
 		present.sync_form_flip()
@@ -719,42 +339,12 @@ func sync_soft_state(st: Dictionary) -> void:
 
 # 攀爬跳离梯顶时清跳跃缓冲/土狼/截断标记:防止残留输入造成二次起跳(由 climb 组件调用)。
 func cancel_jump_state() -> void:
-	jump_buffer_timer = 0.0
-	coyote_timer = 0.0
-	jump_cut_applied = false
+	motor.cancel_jump_state()
 
 # combat 命中落地时调用:冲刺被打断,否则下一帧 is_charge 分支会用冲刺速度覆盖击退。
 func cancel_charge() -> void:
 	is_charge = false
 	charge_timer = 0.0
-
-# 呼吸口径:头低于水面线(head_under)才扣氧 —— 采样点与水面线都由 Water.sample_body 定,玩家与敌人同一条线。
-func _update_waterproof(delta: float, water: WaterSample) -> void:
-	var submerged := water != null and water.head_under
-	if submerged != _was_submerged:
-		_was_submerged = submerged
-		_waterproof_timer = 0.0  # 状态切换重置:自切换起累计满一个间隔才结算第一下
-	if submerged:
-		_waterproof_timer += delta
-		if _waterproof_timer >= GameParameters.water_drain_interval:
-			_waterproof_timer = 0.0
-			_set_waterproof(waterproof - 1)
-	else:
-		_waterproof_timer += delta
-		if _waterproof_timer >= GameParameters.water_recover_interval:
-			_waterproof_timer = 0.0
-			_set_waterproof(waterproof + 1)
-	if waterproof <= 0:
-		_waterproof_drown_timer += delta
-		if _waterproof_drown_timer >= GameParameters.water_drown_damage_interval:
-			_waterproof_drown_timer = 0.0
-			# ★ cause="water":这是**客户端已本地预测**的伤害(两端跑同一份 _tick_underwater)。服务器必须据此不广播 hit_event,
-			#   否则客户端会二次应用(多扣一次血 → 下个 ack 再回滚)。服务端跳过见 match_combat._on_player_hit。
-			take_hit(global_position, PlayerParams.player_waterproof_damage, true, -1.0, false, "water")
-
-func _set_waterproof(v: int) -> void:
-	waterproof = clampi(v, 0, max_waterproof)
-	waterproof_changed.emit(waterproof, max_waterproof)
 
 
 # 单人倒地按 R 重启(Level0.restart_single 调):满血满氧回出生点,清倒地/冲刺/跳跃残留。
@@ -765,7 +355,7 @@ func restart_at(spawn_cell: Vector2i) -> void:
 	is_charge = false
 	charge_timer = 0.0
 	is_squat = false
-	cancel_jump_state()
+	motor.reset_timers()
 	combat.knock_velocity = Vector2.ZERO
 	combat.iframes = 0.0
 	if combat.is_downed():
@@ -773,11 +363,7 @@ func restart_at(spawn_cell: Vector2i) -> void:
 	else:
 		combat.hp = combat.max_hp
 	combat.hp_changed.emit(combat.hp, combat.max_hp)   # 兜底同步 HUD 血条(revive 本身不发射)
-	waterproof = max_waterproof
-	waterproof_changed.emit(waterproof, max_waterproof)
-	_was_submerged = false
-	_waterproof_timer = 0.0
-	_waterproof_drown_timer = 0.0
+	swim.reset_oxygen()
 	weapons.cancel_aim()
 	# ★ 这里不再动背包:本函数被单机与联机共用,而两种模式的武器规则不同 —— 单机的重开由 Level0.restart_single 统一重置(清空 + 重新散落),联机的复活另有规则(除随机一把外全丢)。
 	weapons.reset_mag_state()   # 只把当前武器的残弹同步进背包条目(不再清任何表)
@@ -796,21 +382,9 @@ func drop_hold_progress() -> float:
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	# 滚轮切枪(设置开启时):循环跳到下一个启用槽位;倒地时不切。
-	# PvP:滚轮不在输入包协议里,只本地切会被快照防脱同步切回旧槽位 ⇒ 走 request_net_cycle(本地即时切 + 目标槽位打包进输入包由服务器权威同步)。
-	if Settings.wheel_switch and not combat.is_downed() \
-			and event is InputEventMouseButton and event.pressed:
-		var dir := 0
-		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
-			dir = -1
-		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			dir = 1
-		if dir != 0:
-			if Level0.pvp_mode:
-				weapons.request_net_cycle(dir)
-			else:
-				weapons.cycle_index(dir)
-			return
+	# 滚轮切枪(仅本地):判据与分发都在 WeaponComponent,根不再复制一份按键表。
+	if weapons.try_wheel_switch(event):
+		return
 	if combat.is_downed():
 		# PvP 倒地不重载场景(服务器权威管复活/回合);单人照旧。
 		if not Level0.pvp_mode and event.is_action_pressed("R"):

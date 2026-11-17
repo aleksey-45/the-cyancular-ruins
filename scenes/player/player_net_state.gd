@@ -29,3 +29,9 @@ static func restore(p: Player, st: Dictionary) -> void:
 # 软同步:只补权威裁决的字段(拾取/丢弃/复活/换局),不动预测出来的位置/速度 —— 拿权威覆盖位置才是橡皮筋。
 static func sync_soft(p: Player, st: Dictionary) -> void:
 	p.weapons.sync_soft(st)
+
+
+# 服务器快照的权威 hp/氧/倒地:与整态恢复共用"倒地不顶满 hp"的判据(见 CombatComponent.restore_state)。
+static func apply_authoritative(p: Player, hp_val: int, waterproof_val: int, downed_val: bool) -> void:
+	p.combat.apply_authoritative(hp_val, downed_val)
+	p.swim.set_waterproof(waterproof_val)

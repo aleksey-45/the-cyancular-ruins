@@ -140,11 +140,21 @@ func restore_state(st: Dictionary) -> void:
 	if hp_v != hp:
 		hp = clampi(hp_v, 0, max_hp)
 		hp_changed.emit(hp, max_hp)
-	var down_v := bool(st.get("down", downed))
-	if down_v and not downed:
-		force_down()
-	elif not down_v and downed:
-		# ★ 2026-11-01(R3):不能走 revive() —— 它会把 hp 顶成 max_hp,冲掉上面刚从整态恢复的 hp。
-		restore_alive_state()
+	_set_downed_from(bool(st.get("down", downed)))
 	iframes = float(st.get("ifr", iframes))
 	knock_velocity = st.get("knock", knock_velocity)
+
+
+# 服务器快照的权威 hp/倒地:血量无条件采纳并广播(HUD 只听信号)。
+func apply_authoritative(hp_val: int, downed_val: bool) -> void:
+	hp = clampi(hp_val, 0, max_hp)
+	hp_changed.emit(hp, max_hp)
+	_set_downed_from(downed_val)
+
+
+# "倒地↔活着"的唯一判据(整态恢复与权威态共用):不许走 revive() —— 它把 hp 顶成 max_hp,会冲掉快照 hp。
+func _set_downed_from(v: bool) -> void:
+	if v and not downed:
+		force_down()
+	elif not v and downed:
+		restore_alive_state()
