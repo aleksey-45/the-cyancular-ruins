@@ -90,7 +90,7 @@ func spawn_for(players: Dictionary, role: int, initial: bool = false) -> Vector2
 		var player: Player = players[other]
 		if other == role or player.sim_downed:
 			continue
-		var cell := GridPathfinder.cell_of(player.global_position, GameParameters.TILE_SIZE, _size.x, _size.y)
+		var cell := GridPathfinder.cell_of(player.position, GameParameters.TILE_SIZE, _size.x, _size.y)
 		if player_collision:
 			occupied.append(cell)
 		if not same_team(role, other):

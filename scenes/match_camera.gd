@@ -1,5 +1,5 @@
 class_name MatchCamera
-extends RefCounted
+extends Camera2D
 
 const SHAKE_EPS := 0.0001
 
@@ -8,7 +8,6 @@ var _shake_time: float = 0.0
 var _shake_dur: float = 0.0
 var _shake_offset: Vector2 = Vector2.ZERO
 var base_position := Vector2.ZERO
-var position := Vector2.ZERO
 var _bound := false
 var _rng := RandomNumberGenerator.new()
 

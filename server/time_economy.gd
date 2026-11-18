@@ -9,13 +9,13 @@ extends RefCounted
 # - 收益过滤规则：仅对有效敌方目标生效；自残、自杀或未知来源不予结算，友方伤害由外层宿主过滤，被击杀者当前余额保持不变。
 
 var rules: Dictionary
-var rewind_frame_limit: int
+var rewind_seconds: float
 var accounts: Dictionary[int, GrainAccount] = {}
 
 
 func _init(options: Dictionary, roles: Array = []) -> void:
 	rules = TimeRules.normalized(options)
-	rewind_frame_limit = int(TimeParams.SNAP_HZ * minf(rules["cap"] / rules["rewind_burn"], 15.0))
+	rewind_seconds = minf(rules["cap"] / rules["rewind_burn"], 15.0)
 	for role in roles:
 		add_role(int(role))
 
@@ -30,8 +30,13 @@ func restore_account(role: int, state: Array) -> void:
 	accounts[role].restore_state(state)
 
 
+func advance(players: Dictionary, inputs: Dictionary) -> void:
+	for role: int in inputs:
+		step_haste(players[role], inputs[role], ActorStep.DT)
+	tick(ActorStep.DT)
+
 func step_haste(player: Player, record: Array, delta: float) -> void:
-	player.pvp_haste_mult = 1.0
+	player.personal_haste_mult = 1.0
 	var held: int = record[ActorInput.HELD]
 	if player._controls_locked or player.sim_downed or player.rewinding \
 			or (held & (ActorInput.BIT_HASTE | ActorInput.BIT_REWIND)) != ActorInput.BIT_HASTE:
@@ -39,7 +44,7 @@ func step_haste(player: Player, record: Array, delta: float) -> void:
 	var account: GrainAccount = accounts[player.role]
 	if account.can_spend():
 		account.spend(delta, rules["haste_burn"])
-		player.pvp_haste_mult = rules["haste_mult"]
+		player.personal_haste_mult = rules["haste_mult"]
 
 
 ## 定时自然回复：以固定速率优先偿还透支额度，透支还清后恢复短期可用额度。

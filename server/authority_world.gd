@@ -1,23 +1,21 @@
 class_name AuthorityWorld
-extends Node
+extends RefCounted
 
 signal state_ready(frame: Dictionary)
 signal baseline_needed
 signal event(kind: int, data: Variant, except_role: int)
-var players: Dictionary = {}
+var players: Dictionary[int, Player]:
+	get: return combat_rules.players
 var combat_rules: CombatSimulator
-var _ground := GroundWeaponField.new(self)
-var pickups: Dictionary = _ground.items
 var terrain: Terrain
 var _options: Dictionary = {}
 var _enabled_weapons: Array[int]
 var _weapon_floors: Array[Vector2i]
-var _snap_tick := 0
 var map_revision: int:
 	get: return terrain.revision if terrain != null else 0
 var rules := MatchRules.new()
 var time_economy: TimeEconomy
-var beta: BetaHistory
+var _rewinds: Dictionary[int, RewindHistory] = {}
 var map_bytes: PackedByteArray
 var _stats: Dictionary = {}
 var _final_round: Dictionary = {}
@@ -52,21 +50,17 @@ func setup(mode: String, map_path: String, roles: Array, teams: Dictionary, opti
 	terrain = Terrain.new(map["grid"], map["descriptors"])
 	terrain.authoritative = true
 	terrain.changed.connect(_on_terrain_changed)
-	terrain.attach(self)
-	combat_rules = CombatSimulator.new(terrain, self, true)
-	combat_rules.players = players
-	combat_rules.blast_target_query = CombatSimulator.roster_blast_targets.bind(players)
+	combat_rules = CombatSimulator.new(terrain)
 	combat_rules.team_counts = rules.team_counts
-	combat_rules.projectile_ended.connect(func(id: int) -> void: _ended_projectiles.append(id))
+	combat_rules.projectile_ended.connect(_on_projectile_ended)
 	combat_rules.detonated.connect(_detonated)
-	combat_rules.fired.connect(func(shot: Dictionary) -> void: broadcast(NetEvent.Kind.FIRE, shot))
+	combat_rules.fired.connect(_on_fired)
 	combat_rules.player_hit.connect(_on_player_hit)
 	if options.get("beta", false):
 		time_economy = TimeEconomy.new(options["time"])
-		beta = BetaHistory.new(self)
 	for role in roles:
-		var player := combat_rules.add_simulated_player(role, teams.get(role, 0), rules.player_collision, _enabled_weapons)
-		player.ground_actions = _handle_ground_actions
+		var player := combat_rules.add_player(role, teams.get(role, 0), rules.player_collision)
+		player.weapons.enabled_types = _enabled_weapons
 		player.sim_max_hp = TeamRules.max_hp(player.team, rules.team_counts)
 		player.sim_hp = player.sim_max_hp
 		player.position = terrain.cell_center(rules.spawns[role])
@@ -78,42 +72,56 @@ func setup(mode: String, map_path: String, roles: Array, teams: Dictionary, opti
 	_setup_ground_weapons()
 	return ""
 
-func _exit_tree() -> void:
-	if terrain != null and terrain.changed.is_connected(_on_terrain_changed):
-		terrain.changed.disconnect(_on_terrain_changed)
-
-func _physics_process(_delta: float) -> void:
+func step() -> void:
+	if rules.phase == NetEvent.RoundState.MATCH_OVER:
+		return
 	var perf_tick := PerformanceStats.begin()
 	var perf_simulation := PerformanceStats.begin()
-	var delta := ActorStep.DT
-	_snap_tick += 1
-	combat_rules.tick = _snap_tick
 	var playing := rules.phase == NetEvent.RoundState.PLAYING
-	for pickup: WeaponPickup in pickups.values():
-		pickup.simulate_tick(delta)
 	for player: Player in players.values():
 		player._controls_locked = not playing
-	var stepped := ActorStep.step_players(players, _snap_tick, time_economy)
+	var next := combat_rules.tick + 1
+	var inputs := ActorStep.buffered_inputs(players, next)
 	if time_economy != null:
-		beta.tick(delta)
-		time_economy.tick(delta)
-
-	for player: Player in stepped:
-		combat_rules.submit(player, player.combat_requests)
-	combat_rules.step_projectiles(delta)
+		_step_rewinds(inputs, next)
+		time_economy.advance(players, inputs)
+	combat_rules.step(inputs)
 	if not _ended_projectiles.is_empty():
-		broadcast(NetEvent.Kind.BULLET_END, {"tick": _snap_tick, "ids": _ended_projectiles})
+		broadcast(NetEvent.Kind.BULLET_END, {"tick": combat_rules.tick, "ids": _ended_projectiles})
 		_ended_projectiles = []
-	combat_rules.settle_blasts()
-	terrain.flush_collisions()
 	var terrain_patch := terrain.take_network_changes()
 	if not terrain_patch.is_empty():
-		broadcast(NetEvent.Kind.TERRAIN, {"tick": _snap_tick, "revision": map_revision, "cells": terrain_patch})
-	_advance_round(delta)
+		broadcast(NetEvent.Kind.TERRAIN, {"tick": combat_rules.tick, "revision": map_revision, "cells": terrain_patch})
+	_advance_round(ActorStep.DT)
 	PerformanceStats.end(PerformanceStats.SERVER_SIMULATION, perf_simulation)
-	if rules.phase != NetEvent.RoundState.MATCH_OVER and (_snap_tick % 2 == 0 or _impact_tick == _snap_tick):
+	if rules.phase != NetEvent.RoundState.MATCH_OVER and (combat_rules.tick % 2 == 0 or _impact_tick == combat_rules.tick):
 		state_ready.emit(world_state())
 	PerformanceStats.end(PerformanceStats.SERVER_TICK, perf_tick)
+
+func _step_rewinds(inputs: Dictionary, at: int) -> void:
+	var sample: CombatSnapshot
+	var reversing: Array[RewindHistory] = []
+	for role: int in players:
+		var player := players[role]
+		var history: RewindHistory = _rewinds.get(role)
+		if history == null:
+			history = RewindHistory.new(combat_rules, role, time_economy.rewind_seconds)
+			_rewinds[role] = history
+		var account := time_economy.accounts[role]
+		if int(inputs[role][ActorInput.HELD]) & ActorInput.BIT_REWIND and history.can_rewind() \
+				and account.can_spend() and not player._controls_locked and not player.sim_downed:
+			player.rewinding = true
+			account.spend(ActorStep.DT, time_economy.rules["rewind_burn"])
+			reversing.append(history)
+		else:
+			if player.rewinding:
+				player.rewinding = false
+				new_epoch(role)
+				inputs[role] = player.input_buffer.take(at)
+			sample = history.record(ActorStep.DT, sample)
+	# 当帧的采样完成后，再恢复各个玩家所选的时刻。
+	for history in reversing:
+		history.rewind(ActorStep.DT)
 
 func start_countdown() -> void:
 	if rules.start_countdown():
@@ -135,7 +143,7 @@ func _settle_downs_and_respawns() -> void:
 		var player: Player = players[role]
 		if not player.sim_downed or player.respawn_tick > 0:
 			continue
-		player.respawn_tick = _snap_tick + MatchRules.RESPAWN_TICKS
+		player.respawn_tick = combat_rules.tick + MatchRules.RESPAWN_TICKS
 		_drop_all_but_one(player, role)
 		var killer := rules.score_down(role, killer_for(player))
 		_record_down(role, killer)
@@ -145,7 +153,7 @@ func _settle_downs_and_respawns() -> void:
 		broadcast_round()
 	for role: int in players:
 		var player: Player = players[role]
-		if player.respawn_tick > 0 and _snap_tick >= player.respawn_tick:
+		if player.respawn_tick > 0 and combat_rules.tick >= player.respawn_tick:
 			respawn(role)
 
 func _apply_round_transition() -> void:
@@ -160,17 +168,22 @@ func _apply_round_transition() -> void:
 		NetEvent.RoundState.MATCH_OVER:
 			combat_rules.clear_blasts()
 			_final_round = _round_payload()
-			set_physics_process(false)
 	broadcast_round()
 	if rules.phase == NetEvent.RoundState.MATCH_OVER:
 		state_ready.emit(world_state())
 
-func _detonated(id: int, at: Vector2, type_id: int, _cells: PackedInt32Array) -> void:
-	broadcast(NetEvent.Kind.EXPLOSION, {"id": id, "type_id": type_id, "pos": at, "tick": _snap_tick})
+func _on_fired(shot: Dictionary) -> void:
+	broadcast(NetEvent.Kind.FIRE, shot)
+
+func _on_projectile_ended(id: int) -> void:
+	_ended_projectiles.append(id)
+
+func _detonated(id: int, at: Vector2, type_id: int) -> void:
+	broadcast(NetEvent.Kind.EXPLOSION, {"id": id, "type_id": type_id, "pos": at, "tick": combat_rules.tick})
 
 func accept_input(role: int, packet: Array) -> void:
 	if rules.phase != NetEvent.RoundState.MATCH_OVER:
-		players[role].input_buffer.push(packet, _snap_tick)
+		players[role].input_buffer.push(packet, combat_rules.tick)
 
 func clear_input(role: int) -> void:
 	var player: Player = players[role]
@@ -195,14 +208,12 @@ func respawn(role: int, heal: bool = true, initial: bool = false) -> bool:
 	player.respawn_tick = 0
 	player.last_attacker = 0
 	_stats[role]["hits"].clear()
-	if beta != null:
-		beta.discard(role)
+	_rewinds.erase(role)
+	player.rewinding = false
 	new_epoch(role)
 	return true
 
 func _reset_round() -> void:
-	if beta != null:
-		beta.reset()
 	combat_rules.clear()
 	terrain.reset()
 	_reset_ground_weapons()
@@ -212,14 +223,9 @@ func _reset_round() -> void:
 	baseline_needed.emit()
 
 func remove_role(role: int) -> void:
-	for bullet: BulletBody in combat_rules.projectiles.values():
-		if bullet.shooter == players[role]:
-			combat_rules.erase_projectile(bullet.entity_id)
-	if beta != null:
-		beta.discard(role)
+	_rewinds.erase(role)
 	_stats[role]["left"] = true
-	players[role].queue_free()
-	players.erase(role)
+	combat_rules.remove_player(role)
 	if time_economy != null:
 		time_economy.accounts.erase(role)
 	if rules.role_left(players.keys()):
@@ -255,26 +261,23 @@ func world_state() -> Dictionary:
 	var actors := {}
 	for role: int in players:
 		var player: Player = players[role]
-		var snapshot := player.capture_network_state()
-		snapshot["state"]["actor"][PlayerStateSchema.CONTROLS_LOCKED] = rules.phase != NetEvent.RoundState.PLAYING
-		if not player.sim_downed or rules.phase != NetEvent.RoundState.PLAYING or player.respawn_tick <= _snap_tick:
-			snapshot["respawn_tick"] = 0
+		var snapshot := player.capture_checkpoint()
+		snapshot[PlayerStateSchema.Network.STATE][PlayerStateSchema.CONTROLS_LOCKED] = rules.phase != NetEvent.RoundState.PLAYING
+		if not player.sim_downed or rules.phase != NetEvent.RoundState.PLAYING or player.respawn_tick <= combat_rules.tick:
+			snapshot[PlayerStateSchema.Network.RESPAWN_TICK] = 0
 		actors[role] = snapshot
-	var drops := {}
-	for pickup: WeaponPickup in pickups.values():
-		var lock := PickupState.pack_lock(pickup.locked_role, pickup.unlock_at, _snap_tick)
-		drops[pickup.inst] = [pickup.canonical_pos, pickup.velocity, pickup.type_id, lock]
 	var projectiles := {}
 	for bullet: BulletBody in combat_rules.projectiles.values():
-		projectiles[bullet.entity_id] = {"type_id": bullet.type_id, "pos": bullet.position, "vel": bullet.velocity_vec}
-	var frame := {"players": actors, "pickups": drops, "projectiles": projectiles}
+		projectiles[bullet.entity_id] = [bullet.type_id, bullet.position, bullet.velocity]
+	var frame := {"players": actors, "pickups": combat_rules.ground.snapshot(), "projectiles": projectiles,
+			"beams": combat_rules.beams.duplicate()}
 	PerformanceStats.end(PerformanceStats.WORLD_CAPTURE, perf_started)
 	return frame
 
 func state_for(role: int, frame: Dictionary, accounts: Dictionary) -> Dictionary:
 	var input: InputBuffer = players[role].input_buffer
-	return {"tick": _snap_tick, "map_revision": map_revision, "world": frame,
-			"own": {"timing_seq": input.timing_seq, "lead": input.lead}, "time": accounts}
+	return {"tick": combat_rules.tick, "map_revision": map_revision, "world": frame,
+			"own": [input.timing_seq, input.lead], "time": accounts}
 
 func _on_terrain_changed() -> void:
 	var blocks := terrain.take_rewards()
@@ -325,7 +328,7 @@ static func _mvp_better(stats: Dictionary, a: int, b: int) -> bool:
 
 func _on_player_hit(attacker: int, victim: Player, dealt: int, knock_changed: bool, force: float) -> void:
 	if force != 0.0 or victim.sim_downed:
-		_impact_tick = _snap_tick
+		_impact_tick = combat_rules.tick
 	if dealt <= 0 and not knock_changed and force >= 0.0:
 		return
 	var victim_role := victim.role
@@ -335,8 +338,8 @@ func _on_player_hit(attacker: int, victim: Player, dealt: int, knock_changed: bo
 			v["self_damage"] += dealt
 		elif attacker != 0:
 			victim.last_attacker = attacker
-			victim.last_hit_tick = _snap_tick
-			v["hits"][attacker] = _snap_tick
+			victim.last_hit_tick = combat_rules.tick
+			v["hits"][attacker] = combat_rules.tick
 			if same_team(attacker, victim_role):
 				_stats[attacker]["team_damage"] += dealt
 			else:
@@ -345,8 +348,8 @@ func _on_player_hit(attacker: int, victim: Player, dealt: int, knock_changed: bo
 				if time_economy != null:
 					time_economy.award_damage(attacker, victim_role, dealt)
 	broadcast(NetEvent.Kind.HIT, {"shooter": attacker, "victim": victim_role, "damage": maxi(dealt, 0),
-			"tick": _snap_tick, "epoch": victim.input_buffer.epoch, "hp": victim.sim_hp,
-			"impulse_mode": int(signf(force)), "pos": victim.global_position,
+			"tick": combat_rules.tick, "epoch": victim.input_buffer.epoch, "hp": victim.sim_hp,
+			"impulse_mode": int(signf(force)), "pos": victim.position,
 			"facing": victim.facing_direction, "vel": victim.velocity, "knock": victim.motion_knock_velocity})
 
 func _record_down(victim_role: int, killer: int) -> void:
@@ -361,29 +364,26 @@ func _record_down(victim_role: int, killer: int) -> void:
 		time_economy.award_kill(killer, victim_role)
 	var hits: Dictionary = _stats[victim_role]["hits"]
 	for attacker in hits:
-		if attacker != killer and same_team(attacker, killer) and _snap_tick - hits[attacker] <= ATTRIB_WINDOW_TICKS:
+		if attacker != killer and same_team(attacker, killer) and combat_rules.tick - hits[attacker] <= ATTRIB_WINDOW_TICKS:
 			_stats[attacker]["assists"] += 1
 
 func killer_for(player: Player) -> int:
-	if players.has(player.last_attacker) and _snap_tick - player.last_hit_tick <= ATTRIB_WINDOW_TICKS:
+	if players.has(player.last_attacker) and combat_rules.tick - player.last_hit_tick <= ATTRIB_WINDOW_TICKS:
 		return player.last_attacker
 	return 0
-
-func _handle_ground_actions(player: Player, record: Array) -> void:
-	_ground.handle_actions(player, record, _snap_tick)
 
 func _drop_all_but_one(player: Player, role: int) -> void:
 	var items: Array = player.weapons.random_keep_one()
 	for i in items.size():
 		var angle := TAU * i / items.size()
-		_ground.spawn_locked(items[i]["type"], items[i]["carried"], player.position + Vector2(0, -12),
-				Vector2(cos(angle), -absf(sin(angle))) * 380, role, _snap_tick)
+		combat_rules.ground.spawn(items[i]["type"], items[i]["carried"], player.position + Vector2(0, -12),
+				Vector2(cos(angle), -absf(sin(angle))) * 380, role)
 
 func _setup_ground_weapons() -> void:
 	for player: Player in players.values():
 		player.weapons.set_initial_inventory([_enabled_weapons.pick_random()])
-	_ground.scatter(terrain, _weapon_floors, _enabled_weapons)
+	combat_rules.ground.scatter(_weapon_floors, _enabled_weapons)
 
 func _reset_ground_weapons() -> void:
-	_ground.clear()
+	combat_rules.ground.clear()
 	_setup_ground_weapons()

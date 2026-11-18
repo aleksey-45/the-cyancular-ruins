@@ -12,9 +12,22 @@ var world: AuthorityWorld
 var _returned: Dictionary = {}
 
 func _ready() -> void:
+	var args := OS.get_cmdline_user_args()
+	var port_arg := args.find("--port")
+	var port := int(args[port_arg + 1]) if port_arg >= 0 else NetBus.DEFAULT_PORT
+	var error := NetBus.start_server(port)
+	if error != OK:
+		push_error("服务器绑定失败: %d" % error)
+		get_tree().quit(1)
+		return
 	NetBus.event_received.connect(_on_event)
 	NetBus.input_received.connect(_on_input)
 	NetBus.peer_left.connect(_on_left)
+	print("SERVER READY port=%d" % NetBus.server_port)
+
+func _physics_process(_delta: float) -> void:
+	if world != null:
+		world.step()
 
 func _on_event(peer: int, kind: int, data: Variant) -> void:
 	match kind:
@@ -191,11 +204,10 @@ func _start_problem() -> String:
 func start_match() -> void:
 	var teams := _seat_teams() if mode == PvpSession.MODE_TEAM else {}
 	world = AuthorityWorld.new()
-	add_child(world)
 	var problem := world.setup(mode, map_path(), seats.keys(), teams, options)
 	if not problem.is_empty():
+		world = null
 		message(int(seats[host_role]["peer"]), problem)
-		_discard_world()
 		return
 	world.state_ready.connect(_send_state)
 	world.event.connect(_broadcast)
@@ -295,14 +307,14 @@ func _with_grace(state: Dictionary) -> Dictionary:
 func remove_seat(role: int) -> void:
 	if role == host_role:
 		_broadcast(NetEvent.Kind.ROOM_CLOSED, "房主已离开", role)
-		_discard_world()
+		world = null
 		seats.clear()
 		_returned.clear()
 		code = ""
 		return
 	if world != null:
 		if world.rules.phase == NetEvent.RoundState.WAITING:
-			_discard_world()
+			world = null
 		else:
 			world.remove_role(role)
 	seats.erase(role)
@@ -312,16 +324,9 @@ func online_count() -> int:
 	return seats.values().filter(func(seat: Dictionary) -> bool: return seat["peer"] != 0).size()
 
 func return_to_room() -> void:
-	_discard_world()
+	world = null
 	_returned.clear()
 	broadcast_room()
-
-func _discard_world() -> void:
-	if world == null:
-		return
-	remove_child(world)
-	world.queue_free()
-	world = null
 
 func _process(_delta: float) -> void:
 	var now := Time.get_ticks_msec() / 1000.0

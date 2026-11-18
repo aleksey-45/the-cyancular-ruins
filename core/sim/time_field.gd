@@ -24,19 +24,23 @@ func step_rewards() -> void:
 		_grain_due.erase(_tick)
 		grain_received.emit()
 
-func update(delta: float, want_rewind: bool, want_haste: bool) -> void:
+func step(held: int, delta: float, history: RewindHistory) -> void:
+	step_rewards()
 	account.regen(delta)
 	mode = Mode.NONE
-	if not account.can_spend():
-		return
-	if want_haste:
-		mode = Mode.HASTE
-		account.spend(delta, TimeParams.COST_HASTE)
-	elif want_rewind:
-		mode = Mode.REWIND
-		account.spend(delta, TimeParams.COST_REWIND)
-	if account.balance <= 0.0:
-		mode = Mode.NONE
+	if account.can_spend():
+		if held & ActorInput.BIT_HASTE:
+			mode = Mode.HASTE
+			account.spend(delta, TimeParams.COST_HASTE)
+		elif held & ActorInput.BIT_REWIND and history.can_rewind():
+			mode = Mode.REWIND
+			account.spend(delta, TimeParams.COST_REWIND)
+		if account.balance <= 0.0:
+			mode = Mode.NONE
+	if is_rewinding():
+		history.rewind(delta)
+	else:
+		history.record(delta)
 
 func is_rewinding() -> bool:
 	return mode == Mode.REWIND

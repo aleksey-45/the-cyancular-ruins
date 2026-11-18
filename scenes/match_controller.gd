@@ -3,14 +3,15 @@ extends Node2D
 
 const Mode := MatchFrame.Mode
 
-@onready var world_viewport: SubViewport = $WorldViewport
-@onready var player: LocalPlayer = $WorldViewport/Player
+var player: Player
+var controls := LocalInputSource.new()
+var combat_rules: CombatSimulator
 
 var map_info: Dictionary
 var terrain: Terrain
-var _view: MatchView
+@onready var _view: MatchView = $View
 var _world := WorldView.new()
-var _camera := MatchCamera.new()
+@onready var _camera: MatchCamera = _view.camera
 var _local_motion := LocalMotion.new()
 var _frame := MatchFrame.new()
 var _mode := Mode.SOLO
@@ -22,10 +23,10 @@ var _splash_after := {}
 
 func _enter_tree() -> void:
 	terrain = Terrain.new(map_info["grid"], map_info["descriptors"])
-	$WorldViewport.world_2d = World2D.new()
+	$View/WorldViewport.world_2d = terrain.physics.world
 
-func _ready() -> void:
-	terrain.attach(world_viewport)
+func _exit_tree() -> void:
+	combat_rules.close()
 
 func _mount(mode: MatchFrame.Mode, account: GrainAccount = null, radar := false) -> void:
 	_mode = mode
@@ -34,9 +35,7 @@ func _mount(mode: MatchFrame.Mode, account: GrainAccount = null, radar := false)
 	if account != null:
 		_frame.clock = MatchFrame.Clock.new()
 		_sample_clock(false, false)
-	_view = MatchView.new(_world)
-	add_child(_view)
-	_view.mount(world_viewport, terrain.get_grid_snapshot(), terrain.descriptors(), mode, _frame.clock, radar)
+	_view.mount(_world, terrain.get_grid_snapshot(), terrain.descriptors(), mode, _frame.clock, radar)
 	_view.pause.toggled.connect(_set_pause)
 	_view.pause.leave_requested.connect(_leave_match)
 
@@ -52,35 +51,33 @@ func _leave_match() -> void:
 	SceneTransition.change(get_tree(), "res://scenes/main_menu.tscn")
 
 func _unhandled_input(event: InputEvent) -> void:
-	world_viewport.push_input(event)
+	controls.handle_event(player, event)
 
 func _aim_direction() -> Vector2:
 	if not is_inside_tree():
 		return Vector2(player.facing_direction, 0.0)
 	var window := get_window()
 	var offset := window.get_mouse_position() - window.get_visible_rect().size * 0.5
-	return LocalInputSource.aim_direction(player.global_position, player.facing_direction, terrain.map_size,
+	return LocalInputSource.aim_direction(player.position, player.facing_direction, terrain.map_size,
 			_camera.base_position, PlayerParams.cam_zoom, offset)
 
 func _input_record(record: Array, delta: float) -> Array:
-	return player.complete_input(record, delta, _aim_direction())
+	return controls.complete(player, record, delta, _aim_direction())
 
 func _reset_view() -> void:
 	_poses.clear()
 	_splash_after.clear()
-	_frame.beams.clear()
 	_world.reset()
 
 func _live_step(from: Vector2, actions: Array) -> void:
 	_local_motion.from = from
-	var id := player.get_instance_id()
+	var id := player.role
 	for action in actions:
 		match action["kind"]:
 			"fire":
 				var weapon: int = action["type_id"]
 				_world.fire(id, weapon, _frame.now)
 				_camera.fire(weapon)
-			"beam": _show_beam(action["points"], action["id"])
 			"land":
 				if not player.in_water and not player.climb_latched:
 					_world.motion(id, &"land", _frame.now, action["speed"])
@@ -90,22 +87,15 @@ func _live_step(from: Vector2, actions: Array) -> void:
 				if Sfx.ACTION_SOUNDS.has(action["kind"]):
 					Sfx.play(Sfx.ACTION_SOUNDS[action["kind"]])
 
-func _beam_path(points: PackedVector2Array) -> PackedVector2Array:
-	var offset := GridPathfinder.anchor_to_nearest(points[0], player.position, terrain.map_size) - points[0]
-	return Transform2D(0.0, offset) * points
-
-func _show_beam(points: PackedVector2Array, _id := 0) -> void:
-	_frame.add_beam(_beam_path(points))
-
 func _damage(damage: int) -> void:
 	Sfx.play("hurt")
-	_world.motion(player.get_instance_id(), &"hurt", _frame.now)
+	_world.motion(player.role, &"hurt", _frame.now)
 	_hit_damage = maxi(_hit_damage, damage)
 
-func _blast(at: Vector2, type_id: int, cells: PackedInt32Array) -> void:
+func _blast(at: Vector2, type_id: int) -> void:
 	var radius: float = WeaponRegistry.blast_definition(type_id)["radius"]
 	_world.blast(at, _frame.now)
-	for index: int in cells:
+	for index: int in terrain.blast_cells(at, radius):
 		var cell := terrain.sub_position(index)
 		_world.debris((Vector2(cell) + Vector2(0.5, 0.5)) * Terrain.SUB_SIZE, terrain.sub_texture(cell), _frame.now)
 	var distance := GridPathfinder.toroidal_delta_px(player.position, at, terrain.map_size).length()
@@ -113,18 +103,25 @@ func _blast(at: Vector2, type_id: int, cells: PackedInt32Array) -> void:
 
 func _begin_frame(delta: float, at: Vector2, haste: bool, rewind: bool) -> void:
 	_frame.begin(delta, at)
+	for id: int in combat_rules.beams:
+		if ShotRules.shooter_role(id) == player.role:
+			_frame.sample_beam(combat_rules.beams[id], combat_rules.tick)
 	_frame.wall_changes = terrain.take_wall_changes()
 	_frame.hit_ratio = float(_hit_damage) / float(player.sim_max_hp) if _hit_damage > 0 else 0.0
 	_hit_damage = 0
 	_camera.hit(_frame.hit_ratio)
 	var speed_x := player.velocity.x + player.motion_knock_velocity.x
 	_camera.advance(delta, at, terrain.map_size, -speed_x if rewind else speed_x)
-	_frame.camera_at = _camera.position
 	_frame.trajectories = Settings.pvp_show_trajectories
 	_frame.radar_players = Settings.pvp_minimap_show_enemy
 	if _clock_account != null:
 		_sample_clock(rewind, haste)
 	_sample_hud()
+
+func _show_pickup(pos: Vector2, type: int, owner: int, unlock: int, tick: int) -> void:
+	var offset := GridPathfinder.toroidal_delta_px(player.position, pos, terrain.map_size)
+	var available := GroundWeaponField.available(player, type, owner, unlock, tick, offset.length_squared())
+	_frame.pickups.append([type, player.position + offset, available])
 
 func _sample_clock(rewind: bool, haste: bool) -> void:
 	var clock := _frame.clock
@@ -145,7 +142,7 @@ func _sample_hud() -> void:
 	_frame.oxygen = player.waterproof
 	_frame.max_oxygen = player.max_waterproof
 	_frame.downed = player.sim_downed
-	_frame.drop_progress = player.drop_hold_progress()
+	_frame.drop_progress = controls.drop_hold_progress(player)
 	var weapon := player.equipped
 	_frame.inventory = player.weapons.cell_layout()
 	_frame.magazine = int(weapon.definition.get("mag", 0)) if weapon != null else 0
@@ -178,16 +175,15 @@ func _weapon_pose(pose: MatchFrame.Pose, type_id: int, aim: Vector2, facing: int
 		pose.aim = GunBody.aim_transform(aim, facing, WeaponRegistry.definition(type_id)["pitch"])
 
 func _local_pose(haste: bool, rewind: bool) -> MatchFrame.Pose:
-	var pose := _player_pose(player.get_instance_id(), _frame.focus, player.facing_direction, player.state,
+	var pose := _player_pose(player.role, _frame.focus, player.facing_direction, player.state,
 			player.sim_downed, rewind, haste, player.sim_iframes)
 	pose.air_speed = 0.0 if player._grounded or player.in_water or player.climb_latched else player.velocity.y
 	_splash(pose.id, player.collision_rect(), player.velocity)
-	_frame.aim_guide = PackedVector2Array()
 	var weapon := player.equipped
 	var aim := _aim_direction()
 	_weapon_pose(pose, weapon.type_id if weapon != null else 0, aim,
 			weapon.shot_facing if weapon != null else player.facing_direction, weapon.reload_left if weapon != null else 0.0)
-	_frame.aim_guide = player.aim_guide(aim)
+	_frame.aim_guide = weapon.aim_guide(player, aim) if weapon != null else PackedVector2Array()
 	return pose
 
 func _splash(id: int, bounds: Rect2, velocity: Vector2) -> void:

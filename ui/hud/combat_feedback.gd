@@ -29,6 +29,7 @@ var _streak := 0
 var _hit_progress := 1.0
 
 func _ready() -> void:
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	layer = 131
 	var root := Control.new()
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -81,7 +82,7 @@ func show_kill(who: String) -> void:
 	_streak_label.text = "x%d" % _streak
 	Sfx.play("kill")
 
-func present(delta: float) -> void:
+func _process(delta: float) -> void:
 	_now += delta
 	_hit_progress = minf(1.0, (_now - _hit_at) / HIT_LIFE)
 	_marker.visible = _hit_progress < 1.0

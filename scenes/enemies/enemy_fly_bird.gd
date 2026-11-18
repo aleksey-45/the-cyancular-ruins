@@ -7,64 +7,54 @@ var intent: Intent = Intent.SHOOT
 
 var _spawn_pos: Vector2 = Vector2.ZERO
 var _home_cell: Vector2i = Vector2i.ZERO
-var _max_hp: int = 20
 var _shoot_timer: float = 0.0
 var _hover_anchor: Vector2 = Vector2.ZERO
 var _hover_side: float = 1.0
-var _strafe_target: Vector2 = Vector2.INF  # 开火后短距随机移动目标;INF=未在移动
-var _strafe_timer: float = 0.0             # 短距移动剩余时长
+var _strafe_target: Vector2 = Vector2.INF  # Vector2.INF 表示还没有选定投弹后的飞行目标。
+var _strafe_timer: float = 0.0
 
-# 视线按端点和物理帧 TTL 缓存；拆墙最多延迟一个 TTL 反映。
+# 视线检测结果最长复用 9 个物理帧。
 const SHOT_CLEAR_TTL_FRAMES: int = 9
 var _shot_clear_ok := false
 var _shot_clear_at_frame := -100000
 var _shot_clear_from := Vector2i(-1, -1)
 var _shot_clear_to := Vector2i(-1, -1)
-# _shoot_side(斜上射击位所在侧,内部各做一次 LOS):玩家格/几何侧不变且未超 TTL 则复用,
-# 避免 _near_shoot_pos 每帧为每只追玩家的鸟白付 1~2 次 Bresenham。
+# 缓存按玩家所在的瓦片和默认投弹方向区分，避免连续重新选择从哪一侧投弹。
 var _side_cache := 1.0
 var _side_at_frame := -100000
 var _side_player_cell := Vector2i(-1, -1)
 var _side_geo := 1.0
-var _landing: bool = false           # RETURN 落地阶段
-var _spawn_captured: bool = false   # 出生点是否已抓取(等 spawner 设好位置再取,否则是 (0,0))
+var _landing: bool = false
 
 
-var _fly_box_min: Vector2 = Vector2.ZERO   # 飞行碰撞箱 AABB 最小角(已按 scale 换算)
-var _fly_box_max: Vector2 = Vector2.ZERO   # 飞行碰撞箱 AABB 最大角(已按 scale 换算)
+var _fly_box_min: Vector2 = Vector2.ZERO   # 两个角点是飞行包围盒的坐标，已计入敌人缩放。
+var _fly_box_max: Vector2 = Vector2.ZERO
 var _obstacle_boxes: Array[Rect2] = []
 var _path: Array[Vector2i] = []
 var _path_index: int = 0
-var _path_target: Vector2i = Vector2i(-1, -1)  # 上次寻路目标格;未变且路径还在时跳过重寻(静态战斗砍搜索量)
+var _path_target: Vector2i = Vector2i(-1, -1)  # 同一目标还有未走完的路径时，继续使用原路径。
 var _repath_timer: float = 0.0
-var _repath_phase: float = 0.0             # 随机微小相位差，分散寻路时机
-var _escape_target: Vector2 = Vector2.INF  # 避障脱困目标点（寻路无解时脱离狭窄死角）
+var _repath_phase: float = 0.0             # 每只飞鸟使用不同的寻路间隔，分散同一帧中的寻路请求。
+var _escape_target: Vector2 = Vector2.INF  # 找不到路径时，飞鸟先尝试飞到这个临时目标绕过障碍。
 
 
-func _ready() -> void:
-	super._ready()
-	var hull: CollisionPolygon2D = $CollisionPolygon2D_fly
-	var bounds := hull.transform * CollisionWorld.carrier_shape(hull).get_rect()
+func _setup() -> void:
+	_rewind_fields.append_array([&"intent", &"_shoot_timer", &"_hover_anchor", &"_hover_side", &"_strafe_target",
+			&"_strafe_timer", &"_shot_clear_ok", &"_shot_clear_at_frame", &"_shot_clear_from", &"_shot_clear_to",
+			&"_side_cache", &"_side_at_frame", &"_side_player_cell", &"_side_geo", &"_landing", &"_path",
+			&"_path_index", &"_path_target", &"_repath_timer", &"_escape_target"])
+	var bounds := kind.hulls[1].get_rect()
 	_fly_box_min = bounds.position * scale
 	_fly_box_max = bounds.end * scale
-	# spawner 在 add_child 后才设置位置，出生点延至首帧记录。
-	_max_hp = hp
 	wake_radius = EnemyParams.FlyBird.wake_radius
 	waterproof_max = 10
 	_repath_phase = randf() * EnemyParams.FlyBird.repath_interval
-	_apply_flight_collision(false)
+	_spawn_pos = position
+	_home_cell = terrain.cell(_spawn_pos)
 
-
-func simulate_tick(delta: float) -> void:
-	# 首帧补抓出生点:spawner 在 _ready 之后才设 global_position。
-	if not _spawn_captured:
-		_spawn_pos = global_position
-		_home_cell = _cell_of(global_position)
-		_spawn_captured = true
-	# 死亡白闪/销毁由基类统一处理(物理与生前一致走 super 同一套)。
-	super(delta)
-	# 冲撞撞到东西(super 已执行主移动)
-	if state == State.CHARGE and not _move_hits.is_empty():
+func _move_slide(travel: Vector2) -> void:
+	super(travel)
+	if state == State.CHARGE and not motion_contacts.is_empty():
 		_on_charge_impact()
 
 
@@ -78,7 +68,7 @@ func _ai(delta: float) -> void:
 				_set_state(State.TAKE_OFF)
 				motion.emit(&"take_off", 0.0)
 				activity = Activity.TAKE_OFF
-				_apply_flight_collision(true)
+				stance = 1
 				_takeoff_velocity()
 		State.TAKE_OFF:
 			_tick_take_off(delta)
@@ -119,9 +109,8 @@ func _tick_fly(delta: float, dist: float) -> void:
 	_repath_timer -= delta
 	if _repath_timer <= 0.0:
 		_repath_timer = EnemyParams.FlyBird.repath_interval + _repath_phase
-		# 目标是斜上射击位(玩家上方),让下方的鸟绕道爬升到能打的位置。
-		_repath_to(_cell_of(_shoot_pos()))
-	# 空路径才计算直飞目标，避免重复视线查询。
+		_repath_to(terrain.cell(_shoot_pos()))
+	# 沿路径飞行或绕过障碍都不可行时，才直接飞向投弹点。
 	_follow_path(delta, _shoot_pos() if _path.is_empty() else Vector2.INF)
 
 
@@ -143,7 +132,6 @@ func _tick_shoot(delta: float, dist: float) -> void:
 	_update_hover_anchor()
 	_shoot_timer -= delta
 	if _strafe_target != Vector2.INF:
-		# 开火后的短距随机移动:滑向随机目标,到点或超时结束。
 		_strafe_timer -= delta
 		_glide_to(_strafe_target, delta)
 		if _strafe_timer <= 0.0 or _toroidal_dist_to(_strafe_target) <= EnemyParams.FlyBird.fly_speed * delta:
@@ -151,13 +139,13 @@ func _tick_shoot(delta: float, dist: float) -> void:
 	else:
 		_glide_to(_hover_anchor, delta)
 	if _shoot_timer <= 0.0:
-		# 弹道被墙挡:不空射,退 FLY 继续接近玩家找射击位。
+		# 投弹前重新检查视线。目标被挡住时，返回飞行状态寻找其他位置。
 		if not _shot_clear():
 			_set_state(State.FLY)
 			_schedule_repath()
 			return
-		# 平抛只能下落:鸟在玩家下方时弹道够不到玩家,不空射,继续爬向斜上锚点。
-		if global_position.y <= _player_pos().y:
+		# 炸弹抛出后会下落，因此只在飞鸟不低于玩家时投弹。
+		if position.y <= player.position.y:
 			_fire_parabolic()
 		_shoot_timer = EnemyParams.FlyBird.shoot_cooldown
 		_start_strafe()
@@ -165,10 +153,8 @@ func _tick_shoot(delta: float, dist: float) -> void:
 
 func _tick_charge(delta: float) -> void:
 	_state_timer += delta
-	# 接触区/贴脸距离命中玩家直接结算(弥补 slide 碰撞偶尔穿过的情形)。
-	var target := _charge_victim()
-	if target != null:
-		_hit_charge_player(target)
+	if touches_player():
+		_hit_charge_player()
 		_begin_death()
 	elif _state_timer >= EnemyParams.FlyBird.charge_timeout:
 		_begin_death()
@@ -176,12 +162,11 @@ func _tick_charge(delta: float) -> void:
 
 func _tick_return(delta: float, dist: float) -> void:
 	if _landing:
-		# FLOATING 模式不提供地面状态，返程落地阶段以计时结束。
 		_state_timer += delta
 		if _state_timer >= EnemyParams.FlyBird.landing_time:
 			_settle_sleep(EnemyParams.FlyBird.settle_time)
 			_set_state(State.SLEEP)
-			_apply_flight_collision(false)
+			stance = 0
 			_landing = false
 	elif _home_reached():
 		_start_landing()
@@ -189,15 +174,13 @@ func _tick_return(delta: float, dist: float) -> void:
 		_repath_timer -= delta
 		if _repath_timer <= 0.0:
 			_repath_timer = EnemyParams.FlyBird.repath_interval + _repath_phase
-			# 玩家太远时不启动任何搜索;空路径时直线飞回家(不再漂移)。
+			# 玩家离得太远时，仍继续返回出生点，但暂时不重新寻路。
 			if dist <= EnemyParams.FlyBird.max_chase_distance:
 				_repath_to(_home_cell)
 		_follow_path(delta, _spawn_pos)
 
 
-# 死亡瞬间:冲撞中死(含被打死/超时)清冲撞速度,尸体不再续冲。撞墙/撞玩家的死亡已由
-# 主移动命中即停抵消速度,归零无副作用;普通受击仍保留击退滑出感。
-# 其余死亡保留击退速度 + 开重力,带白闪飞出后消失(不像 JumpBird 清速度定格)。
+# 死亡后飞鸟开始下落，正在冲撞时还会失去冲撞速度。
 func _on_death() -> void:
 	if state == State.CHARGE:
 		velocity = Vector2.ZERO
@@ -205,14 +188,11 @@ func _on_death() -> void:
 
 
 
-# 斜上射击位(与 SHOOT 锚点同一逻辑):玩家侧向 + 上方,鸟不穿越玩家头顶。
-# 世界坐标与格坐标共用同一侧,保证寻路目标可到、直线保底处理同向。
-# 侧向优先取 LOS 通的一侧:几何侧对玩家无视线(被墙挡,如玩家站高平台一侧有墙)时,
-# 鸟会一直停在射击位进不了 SHOOT——换另一侧绕过去攻击。两侧都堵才退回几何侧。
-# 结果按(玩家格,几何侧)缓存,TTL 物理帧内复用(几何/位置变化最迟 ~150ms 反映)。
+# 先检查玩家靠飞鸟这一侧的上方是否有空位，以及视线是否畅通。
+# 该侧不可用时检查另一侧，两侧都找不到合适位置时沿用默认方向。
 func _shoot_side() -> float:
-	var now := Engine.get_physics_frames()
-	var pcell := _cell_of(_player_pos())
+	var now := combat.tick
+	var pcell := terrain.cell(player.position)
 	var geo := _shoot_side_geo()
 	if pcell != _side_player_cell or geo != _side_geo or now - _side_at_frame > SHOT_CLEAR_TTL_FRAMES:
 		_side_player_cell = pcell
@@ -223,34 +203,32 @@ func _shoot_side() -> float:
 
 
 func _shoot_side_compute(geo: float) -> float:
-	var p := _player_pos()
+	var p := player.position
 	for side in [geo, -geo]:
 		var pos := p + Vector2(side * EnemyParams.FlyBird.hover_offset_x,
 				-EnemyParams.FlyBird.hover_offset_y)
-		if _cell_is_solid(_cell_of(pos)):
+		if TileDefs.is_blocked(terrain.value(terrain.cell(pos))):
 			continue
 		if terrain.line_of_sight(pos, p):
 			return side
 	return geo
 
 
-# 几何侧:鸟在玩家哪一侧,射击位就放哪一侧(避免穿越玩家头顶)。20px 死区防抖。
+# 水平距离大于 20 像素且飞鸟在玩家左侧时，默认从左侧投弹。其他情况下默认从右侧投弹。
 func _shoot_side_geo() -> float:
 	var delta := toroidal_delta_to_player()
 	return -1.0 if delta.x > 20.0 else 1.0
 
 
 func _shoot_pos() -> Vector2:
-	var p := _player_pos()
+	var p := player.position
 	var side := _shoot_side()
 	var pos := p + Vector2(side * EnemyParams.FlyBird.hover_offset_x, -EnemyParams.FlyBird.hover_offset_y)
-	if _cell_is_solid(_cell_of(pos)):
+	if TileDefs.is_blocked(terrain.value(terrain.cell(pos))):
 		pos = p + Vector2(-side * EnemyParams.FlyBird.hover_offset_x, -EnemyParams.FlyBird.hover_offset_y)
 	return pos
 
 
-# 是否已在斜上射击位附近:SHOOT 只应在鸟接近锚点时进入,否则下方/远方的鸟会
-# 直线硬插到锚点被墙卡住。未就位时留在 FLY,靠 BFS 绕到玩家上方再进 SHOOT。
 func _near_shoot_pos() -> bool:
 	return _toroidal_dist_to(_shoot_pos()) <= EnemyParams.FlyBird.shoot_position_radius
 
@@ -263,79 +241,79 @@ func _start_shoot() -> void:
 
 
 func _update_hover_anchor() -> void:
-	# 斜上锚点:玩家侧向 + 上向偏移,不在玩家正头顶。
-	var p := _player_pos()
+	# 默认在玩家斜上方悬停，原位置被地形占据时移到玩家另一侧。
+	var p := player.position
 	_hover_anchor = p + Vector2(_hover_side * EnemyParams.FlyBird.hover_offset_x,
 			-EnemyParams.FlyBird.hover_offset_y)
-	if _cell_is_solid(_cell_of(_hover_anchor)):
+	if TileDefs.is_blocked(terrain.value(terrain.cell(_hover_anchor))):
 		_hover_side = -_hover_side
 		_hover_anchor = p + Vector2(_hover_side * EnemyParams.FlyBird.hover_offset_x,
 				-EnemyParams.FlyBird.hover_offset_y)
 
 
-# 以 fly_speed 向 point 直线滑翔(悬停归位 / 开火后短距随机移动共用)。
+# 飞鸟以固定速度靠近目标。本帧可以到达时，直接设置节点坐标，避免越过目标。
 func _glide_to(point: Vector2, delta: float) -> void:
 	var spd := EnemyParams.FlyBird.fly_speed
-	var to_target := GridPathfinder.toroidal_delta_px(global_position, point, terrain.map_size)
+	var to_target := GridPathfinder.toroidal_delta_px(position, point, terrain.map_size)
 	if to_target.length() <= spd * delta:
-		global_position = point
+		position = point
 		velocity = Vector2.ZERO
 		return
 	velocity = to_target.normalized() * spd
 
 
-# 开火后短距随机移动:在当前位置 ±strafe_range 内取一个随机点作为滑翔目标。
 func _start_strafe() -> void:
-	_strafe_target = global_position + Vector2(
-			randf_range(-EnemyParams.FlyBird.strafe_range, EnemyParams.FlyBird.strafe_range),
-			randf_range(-EnemyParams.FlyBird.strafe_range, EnemyParams.FlyBird.strafe_range))
+	var rng := RandomNumberGenerator.new()
+	rng.seed = (combat.tick << 32) | slot
+	_strafe_target = position + Vector2(
+			rng.randf_range(-EnemyParams.FlyBird.strafe_range, EnemyParams.FlyBird.strafe_range),
+			rng.randf_range(-EnemyParams.FlyBird.strafe_range, EnemyParams.FlyBird.strafe_range))
 	_strafe_timer = EnemyParams.FlyBird.strafe_duration
 
 
-# 弹道无遮挡:鸟与玩家格子之间无墙(平抛子弹会被地形挡住)。
-# 结果按(鸟格,玩家格)缓存 SHOT_CLEAR_TTL_FRAMES,墙被拆/堵或任一方换格(超时保底处理)才重算。
+# 只有与上次检测处在同一对瓦片而且缓存未到期，才继续使用上次的视线结果。
 func _shot_clear() -> bool:
-	var from := _cell_of(global_position)
-	var to := _cell_of(_player_pos())
-	var now := Engine.get_physics_frames()
+	var from := terrain.cell(position)
+	var to := terrain.cell(player.position)
+	var now := combat.tick
 	if from != _shot_clear_from or to != _shot_clear_to or now - _shot_clear_at_frame > SHOT_CLEAR_TTL_FRAMES:
 		_shot_clear_from = from
 		_shot_clear_to = to
 		_shot_clear_at_frame = now
-		_shot_clear_ok = terrain.line_of_sight(global_position, _player_pos())
+		_shot_clear_ok = terrain.line_of_sight(position, player.position)
 	return _shot_clear_ok
 
 
 func _fire_parabolic() -> void:
-	# 平抛:水平初速 + 重力,落点按玩家坐标 + 玩家即时速度预测。
+	# 投弹时只设置水平初速度，垂直速度由重力计算。
 	var v0 := _bullet_v0()
-	combat_rules.spawn_enemy_projectile(CombatProfiles.BIRD_BOMB_TYPE, self, Vector2(v0, 0.0))
-	# 开火后座:沿发射反方向轻推鸟(v0 符号即发射方向)。
+	combat.spawn_enemy_projectile(CombatProfiles.BIRD_BOMB_TYPE, self, Vector2(v0, 0.0))
+	# 后坐力让飞鸟在水平方向向弹丸的反方向移动。
 	velocity += Vector2(-signf(v0) * EnemyParams.FlyBird.shoot_recoil, 0.0)
 
 
-# 平抛水平初速(含玩家即时速度预测):开火与朝向共用,符号即弹道水平方向。
-# 落差 = 玩家.y − 鸟.y(玩家在鸟下方为正);玩家高于鸟时夹到下限,弹道偏近属预期。
+# 用高度差估算弹丸落到玩家的高度需要多久，再预测那时的玩家位置。
+# 算出的弹丸水平速度同时决定飞鸟的朝向。
 func _bullet_v0() -> float:
-	var drop := maxf(_player_pos().y - global_position.y, EnemyParams.FlyBird.bullet_min_drop)
+	var drop := maxf(player.position.y - position.y, EnemyParams.FlyBird.bullet_min_drop)
 	var t := sqrt(2.0 * drop / GameParameters.gravity0)
-	var pred := _player_pos() + _player_velocity() * t
-	var dx := GridPathfinder.toroidal_delta_px(global_position, pred, terrain.map_size).x
+	var pred := player.position + player.velocity * t
+	var dx := GridPathfinder.toroidal_delta_px(position, pred, terrain.map_size).x
 	return clampf(absf(dx) / t, EnemyParams.FlyBird.bullet_min_speed,
 			EnemyParams.FlyBird.bullet_max_speed) * signf(dx)
 
 
 
 func _update_charge_intent_if_needed() -> void:
-	# 血量跌穿 25% 单向切冲撞意图(HP 只减不增)。
-	if intent == Intent.SHOOT and hp < _max_hp * EnemyParams.FlyBird.charge_hp_fraction:
+	# 生命值降到上限的四分之一以下时，飞鸟转为寻找冲撞机会。
+	if intent == Intent.SHOOT and hp < kind.hp * EnemyParams.FlyBird.charge_hp_fraction:
 		intent = Intent.CHARGE
 
 
 func _try_charge() -> bool:
 	if toroidal_dist_to_player() > EnemyParams.FlyBird.charge_range:
 		return false
-	# LOS 端点与 _shot_clear 相同(鸟格→玩家格),复用缓存,不重复全图扫描。
+	# 发动冲撞前也检查视线，避免向被地形挡住的玩家冲撞。
 	if not _shot_clear():
 		return false
 	_start_charge()
@@ -345,34 +323,33 @@ func _try_charge() -> bool:
 func _start_charge() -> void:
 	_set_state(State.CHARGE)
 	motion.emit(&"charge", 0.0)
-	use_gravity = false  # 冲撞为水平直线,不吃重力
+	use_gravity = false  # 冲撞期间不受重力影响，因此可以沿指定方向直线飞行。
 	var dir := toroidal_dir_to_player()
 	velocity = dir * EnemyParams.FlyBird.charge_speed
 	activity = Activity.CHARGE
 
 
 func _on_charge_impact() -> void:
-	if is_dead:  # 本帧若已由接触判定自毁,避免二次结算
+	if is_dead:
 		return
-	for hit: Dictionary in _move_hits:
-		var collider: Node = null if int(hit["id"]) == 0 else instance_from_id(int(hit["id"]))
-		if collider is Player:
-			_hit_charge_player(collider)
+	for hit: Array in motion_contacts:
+		if hit[Contact.COLLIDER_ID] == player.get_instance_id():
+			_hit_charge_player()
 			break
 	_begin_death()
 
 
-func _hit_charge_player(player: Player) -> void:
-	if combat_rules.resolve_hit(self, player, CombatProfiles.FLY_CHARGE,
-			global_position, EnemyParams.FlyBird.charge_damage, -1.0):
-		_smash_player(player, EnemyParams.FlyBird.charge_impact, EnemyParams.FlyBird.charge_impact_up)
+func _hit_charge_player() -> void:
+	if combat.resolve_hit(self, player, CombatProfiles.FLY_CHARGE,
+			position, EnemyParams.FlyBird.charge_damage, -1.0):
+		_smash_player(EnemyParams.FlyBird.charge_impact, EnemyParams.FlyBird.charge_impact_up)
 
 
 func _start_return() -> void:
 	_set_state(State.RETURN)
 	_landing = false
 	activity = Activity.FLY
-	# 玩家太远时不启动任何搜索,清空路径交给 RETURN 的直线保底处理飞回家。
+	# 返回出生点前，若玩家仍在追击距离内就重新寻路，否则只清空原路径。
 	if toroidal_dist_to_player() <= EnemyParams.FlyBird.max_chase_distance:
 		_repath_to(_home_cell)
 	else:
@@ -388,12 +365,12 @@ func _start_landing() -> void:
 	_path = []
 	use_gravity = true
 	velocity = Vector2.ZERO
-	_state_timer = 0.0  # 落地计时从零起,到 landing_time 直接入睡
-	_apply_flight_collision(false)  # 落地用站立碰撞箱
+	_state_timer = 0.0
+	stance = 0
 
 
 func _player_home_dist() -> float:
-	return GridPathfinder.toroidal_delta_px(_player_pos(), _spawn_pos, terrain.map_size).length()
+	return GridPathfinder.toroidal_delta_px(player.position, _spawn_pos, terrain.map_size).length()
 
 
 func _takeoff_velocity() -> void:
@@ -405,8 +382,7 @@ func _takeoff_velocity() -> void:
 
 func _update_facing() -> void:
 	if state == State.SHOOT:
-		# 射击时朝向弹道水平方向(含玩家速度预测,可能与正对玩家略有差异)。
-		# v0 为 0(玩家近正上方)时不翻转,保持上一帧朝向防抖。
+		# 以弹丸的水平速度选择朝向。弹丸没有水平速度时不转向。
 		var v0 := _bullet_v0()
 		if v0 != 0.0:
 			_set_facing(v0 < 0.0)
@@ -414,13 +390,6 @@ func _update_facing() -> void:
 		var vx := velocity.x
 		if absf(vx) > 5.0:
 			_set_facing(vx < 0.0)
-
-
-# 状态进入 → 形变事件。enum State { SLEEP, TAKE_OFF, FLY, SHOOT, CHARGE, RETURN }
-func _apply_flight_collision(in_air: bool) -> void:
-	# 站立用 CollisionPolygon2D,空中用 CollisionPolygon2D_fly。
-	_active_stance = 1 if in_air else 0
-	_sync_collision()
 
 
 func _waypoint_world(cell: Vector2i) -> Vector2:
@@ -436,9 +405,9 @@ func _follow_path(delta: float, fallback_target: Vector2 = Vector2.INF) -> void:
 	var spd := EnemyParams.FlyBird.fly_speed
 	while _path_index < _path.size():
 		var target := _waypoint_world(_path[_path_index])
-		var to_target := GridPathfinder.toroidal_delta_px(global_position, target, terrain.map_size)
+		var to_target := GridPathfinder.toroidal_delta_px(position, target, terrain.map_size)
 		if to_target.length() <= spd * delta:
-			global_position = target
+			position = target
 			_path_index += 1
 		else:
 			velocity = to_target.normalized() * spd
@@ -448,10 +417,10 @@ func _follow_path(delta: float, fallback_target: Vector2 = Vector2.INF) -> void:
 
 func _find_escape_column() -> Vector2:
 	if terrain.empty():
-		return global_position
+		return position
 	var cols := terrain.columns
 	var rows := terrain.rows
-	var bc := _cell_of(global_position)
+	var bc := terrain.cell(position)
 	for drop in range(1, EnemyParams.FlyBird.escape_max_descent + 1):
 		var row := posmod(bc.y + drop, rows)
 		for dist in range(1, EnemyParams.FlyBird.escape_search_range + 1):
@@ -463,11 +432,11 @@ func _find_escape_column() -> Vector2:
 		for side in [-1, 1]:
 			var cell := Vector2i(posmod(bc.x + side * dist, cols), bc.y)
 			if _bird_can_pass(cell):
-				return Vector2(terrain.cell_center(cell).x, global_position.y)
-	return global_position
+				return Vector2(terrain.cell_center(cell).x, position.y)
+	return position
 
 
-# 飞行碰撞箱贴在悬停路径点上，与地形和最近的环面障碍副本比较。
+# 以飞行时的包围盒判断路径点是否有足够空间。地形、水和附近角色都可能挡住飞鸟。
 func _bird_can_pass(cell: Vector2i) -> bool:
 	if terrain.empty():
 		return false
@@ -475,7 +444,7 @@ func _bird_can_pass(cell: Vector2i) -> bool:
 	var bounds := Rect2(center + _fly_box_min, _fly_box_max - _fly_box_min)
 	if terrain.rect_overlaps(bounds, GameParameters.TILE_SIZE, true):
 		return false
-	var anchored := GridPathfinder.anchor_to_nearest(center, global_position, terrain.map_size)
+	var anchored := GridPathfinder.anchor_to_nearest(center, position, terrain.map_size)
 	bounds.position = anchored + _fly_box_min
 	for obstacle in _obstacle_boxes:
 		if bounds.intersects(obstacle):
@@ -485,17 +454,16 @@ func _bird_can_pass(cell: Vector2i) -> bool:
 
 func _collect_obstacles() -> void:
 	_obstacle_boxes.clear()
-	for player: Player in _players_frame():
-		if _toroidal_dist_to(player.global_position) <= 600.0:
-			_obstacle_boxes.append(_anchored_obstacle(player.collision_rect()))
-	for enemy: EnemyBase in get_tree().get_nodes_in_group("enemies"):
-		if enemy != self and enemy.get_viewport() == get_viewport() and enemy.collision_layer != 0 \
-				and _toroidal_dist_to(enemy.global_position) <= 600.0:
+	if toroidal_dist_to_player() <= 600.0:
+		_obstacle_boxes.append(_anchored_obstacle(player.collision_rect()))
+	for enemy: EnemyBase in combat.enemies:
+		if enemy != self and enemy.active \
+				and _toroidal_dist_to(enemy.position) <= 600.0:
 			_obstacle_boxes.append(_anchored_obstacle(enemy.collision_rect()))
 
 
 func _anchored_obstacle(rect: Rect2) -> Rect2:
-	var anchored := GridPathfinder.anchor_to_nearest(rect.get_center(), global_position, terrain.map_size)
+	var anchored := GridPathfinder.anchor_to_nearest(rect.get_center(), position, terrain.map_size)
 	return Rect2(anchored - rect.size * 0.5, rect.size)
 
 
@@ -504,13 +472,13 @@ func _schedule_repath() -> void:
 
 
 func _repath_to(cell: Vector2i) -> void:
-	# 搜索预算耗尽时沿最近可达格的路径继续飞行。
+	# 搜索未到达目标时，A* 仍可能返回一条通往最接近目标的可达瓦片的路径。
 	if cell == _path_target and not _path.is_empty():
 		return
 	_path_target = cell
 	_collect_obstacles()
-	_path = GridPathfinder.find_path(Vector2i(terrain.columns, terrain.rows), _cell_of(global_position), cell,
+	_path = GridPathfinder.find_path(Vector2i(terrain.columns, terrain.rows), terrain.cell(position), cell,
 			_bird_can_pass, EnemyParams.FlyBird.path_max_visit, EnemyParams.FlyBird.search_radius_cells)
 	_path_index = 0
-	# 寻路未找到可行路径时计算脱困目标点，先水平或向下绕出障碍
+	# 若未找到任何路径，尝试选取侧方或下方的临时绕行点。
 	_escape_target = _find_escape_column() if _path.is_empty() else Vector2.INF

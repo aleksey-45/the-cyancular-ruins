@@ -1,6 +1,6 @@
 [gd_scene format=3 uid="uid://servermain0000a1"]
 
-[ext_resource type="Script" path="res://server/server_main.gd" id="1"]
+[ext_resource type="Script" path="res://server/room_session.gd" id="1"]
 
-[node name="ServerMain" type="Node2D"]
+[node name="RoomSession" type="Node"]
 script = ExtResource("1")

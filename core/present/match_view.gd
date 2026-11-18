@@ -5,47 +5,32 @@ const TIME_REWIND := Color(0.86, 0.90, 0.95, 0.55)
 const TIME_HASTE := Color8(168, 96, 216)
 const FILM := preload("res://core/present/time_film.gdshader")
 
-var terrain_view: TerrainView
-var feedback: CombatFeedback
-var pause: PauseMenu
+@onready var terrain_view: TerrainView = $WorldViewport/Terrain
+@onready var feedback: CombatFeedback = $Feedback
+@onready var pause: PauseMenu = $Pause
 var pvp_hud: PvpHud
 var watch: WatchHud
 
 var _world: WorldView
-var _camera: Camera2D
-var _hud: Hud
-var _screen: PostProcess
+@onready var camera: MatchCamera = $WorldViewport/Camera
+@onready var _hud: Hud = $Hud
+@onready var _screen: PostProcess = $PostProcess
 var _radar: Minimap
 var _symbol: Label
 var _film: ShaderMaterial
 var _mode: MatchFrame.Mode
 
-func _init(world: WorldView) -> void:
-	_world = world
-
-func mount(viewport: SubViewport, grid: Array[Array], descriptors: PackedInt32Array,
+func mount(world: WorldView, grid: Array[Array], descriptors: PackedInt32Array,
 		mode: MatchFrame.Mode, clock: MatchFrame.Clock, radar: bool) -> void:
 	_mode = mode
+	_world = world
 	RenderingServer.set_default_clear_color(TerrainAtlas.SKY_COLOR)
-	var zoom := PlayerParams.cam_zoom
-	_camera = Camera2D.new()
-	_camera.zoom = Vector2.ONE * zoom
-	viewport.add_child(_camera)
-	terrain_view = TerrainView.new()
-	viewport.add_child(terrain_view)
-	terrain_view.install(grid, descriptors, Vector2(viewport.size) / (2.0 * zoom) + Vector2.ONE * PlayerParams.cam_seam_margin)
+	camera.zoom = Vector2.ONE * PlayerParams.cam_zoom
+	var viewport: SubViewport = $WorldViewport
+	terrain_view.install(grid, descriptors, Vector2(viewport.size) / (2.0 * camera.zoom) + Vector2.ONE * PlayerParams.cam_seam_margin)
 	var size := Vector2(grid[0].size(), grid.size()) * TerrainView.CELL
-	_world.attach(viewport, size)
-	_screen = PostProcess.new()
-	_screen.world_viewport = viewport
-	add_child(_screen)
-	_hud = Hud.new()
-	add_child(_hud)
-	feedback = CombatFeedback.new()
-	add_child(feedback)
-	pause = PauseMenu.new(mode != MatchFrame.Mode.SOLO)
-	add_child(pause)
-	pause.paused_frame.connect(present.bind(null))
+	_world.bind($WorldViewport/Canvas, size)
+	pause.mount(mode != MatchFrame.Mode.SOLO)
 	if mode != MatchFrame.Mode.SOLO:
 		pvp_hud = PvpHud.new()
 		pvp_hud.mode = mode
@@ -57,18 +42,10 @@ func mount(viewport: SubViewport, grid: Array[Array], descriptors: PackedInt32Ar
 		_mount_watch(clock)
 
 func present(delta: float, frame: MatchFrame) -> void:
-	if pvp_hud != null:
-		pvp_hud.present(delta)
-	if frame != null:
-		_camera.position = frame.camera_at
-		if frame.hit_ratio > 0.0:
-			_screen.flash_hit(clampf(frame.hit_ratio * 2.0, 0.5, 1.0))
-		_screen.set_downed(frame.downed)
-		_screen.set_health_ratio(frame.health, frame.max_health)
-	_screen.present(delta)
-	feedback.present(delta)
-	if frame == null:
-		return
+	if frame.hit_ratio > 0.0:
+		_screen.flash_hit(clampf(frame.hit_ratio * 2.0, 0.5, 1.0))
+	_screen.set_downed(frame.downed)
+	_screen.set_health_ratio(frame.health, frame.max_health)
 	_hud.present(frame, delta)
 	var film: ShaderMaterial
 	if frame.clock != null:
@@ -81,7 +58,7 @@ func present(delta: float, frame: MatchFrame) -> void:
 		Sfx.pitch_mult = clampf(1.0 + TimeParams.LOAN_PITCH_RANGE * clock.loan_depth
 				+ (0.12 if clock.haste else -0.15 if clock.rewind else 0.0), 0.7, 1.8)
 		var offset := watch.get_global_rect().get_center() - get_viewport().get_visible_rect().size * 0.5
-		grain_target = _camera.get_screen_center_position() + offset / _camera.zoom
+		grain_target = camera.get_screen_center_position() + offset / camera.zoom
 	_world.present(frame, grain_target)
 	if _radar != null:
 		_radar.present(frame)

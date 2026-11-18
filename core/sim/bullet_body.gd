@@ -1,17 +1,12 @@
 class_name BulletBody
-extends ServerBody
+extends RectBody
+
+enum Network { TYPE, POS, VEL }
 
 enum AdvanceResult { MOVED, TERRAIN_HIT, ACTOR_HIT, RANGE_END, FUSE_END }
-enum { SNAP_TYPE, SNAP_SOURCE, SNAP_DAMAGE, SNAP_LAUNCH, SNAP_DIRECT_HIT, SNAP_MOTION }
-
-const MOTION_POS: int = 0
-const MOTION_VEL: int = 1
-const MOTION_TRAVELED: int = 2
-const MOTION_FUSE_ELAPSED: int = 3
-const MOTION_FUSE_DURATION: int = 4
-const MOTION_SIZE: int = 5
-
-static var _shapes := {}
+# 个人回溯只恢复前五项运动状态，直击等已经结算的结果属于当前世界。
+enum { MOTION_POS, MOTION_VEL, MOTION_TRAVELED, MOTION_FUSE_ELAPSED, MOTION_FUSE_DURATION,
+		SNAP_TYPE, SNAP_OWNER, SNAP_DAMAGE, SNAP_LAUNCH, SNAP_DIRECT_HIT }
 
 var entity_id: int
 var type_id: int
@@ -21,86 +16,63 @@ var hit_damage: int
 var hit_impact: float
 var max_range: float
 var gravity_factor: float
-var shape: RectangleShape2D
 var traveled := 0.0
 var fuse_elapsed := 0.0
 var fuse_duration := 0.0
-# 联机直击已结算给其他角色，标记随弹丸实例保留。
+# 记录榴弹是否已经造成过直击伤害，供快照恢复，避免预测回滚后重复结算直接命中。
 var direct_hit := false
 
-var velocity_vec := Vector2.ZERO
 var impact_point := Vector2.ZERO
 var impact_normal := Vector2.ZERO
 var impact_collider_id := 0
 var rewind_hits := {}
 
-var _source_id: int
-var _combat: CombatSimulator
+var shooter: ActorBody
 
-var shooter: Node:
-	get: return instance_from_id(_source_id) if _source_id != 0 else null
-
-func configure(combat: CombatSimulator, id: int, type: int, profile: Dictionary, source_id: int,
-		pos: Vector2, vel: Vector2, projectile_size: float, gravity: float,
-		rng: float, damage: int, force: float) -> void:
-	_combat = combat
+func _init(map: Terrain, id: int, type: int, source: ActorBody, pos: Vector2, vel: Vector2, damage: int) -> void:
+	var spec := WeaponRegistry.projectile_definition(type)
 	entity_id = id
 	type_id = type
-	definition = profile
-	_source_id = source_id
-	gravity_factor = gravity
-	max_range = rng
-	hit_damage = damage
-	hit_impact = force
-	var dimensions: Vector2 = profile["shape"]
-	if not _shapes.has(dimensions):
-		var rect := RectangleShape2D.new()
-		rect.size = dimensions
-		_shapes[dimensions] = rect
-	shape = _shapes[dimensions]
-	position = GridPathfinder.wrap_to_range(pos, combat.terrain.map_size)
-	velocity_vec = vel
-	rotation = vel.angle()
-	scale = Vector2.ONE * projectile_size
-	collision_mask = CollisionWorld.LAYER_TERRAIN
-	if profile.has("collision_layers"):
-		collision_mask |= int(profile["collision_layers"])
+	definition = spec["projectile"]
+	shooter = source
+	gravity_factor = spec["gravity"]
+	max_range = spec["range"]
+	hit_damage = spec["damage"] if damage == -1 else damage
+	hit_impact = spec["impact"]
+	velocity = vel
+	var mask := CollisionWorld.LAYER_TERRAIN
+	if definition.has("collision_layers"):
+		mask |= int(definition["collision_layers"])
 	else:
-		var owner := shooter as ActorBody
-		collision_mask |= CollisionWorld.LAYER_ENEMY
-		collision_mask |= (CollisionWorld.LAYER_TEAM_A | CollisionWorld.LAYER_TEAM_B) if owner.team == 0 \
+		var owner := shooter as Player
+		mask |= CollisionWorld.LAYER_ENEMY
+		mask |= (CollisionWorld.LAYER_TEAM_A | CollisionWorld.LAYER_TEAM_B) if owner.team == 0 \
 				else CollisionWorld.team_layer(3 - owner.team)
-
-func _enter_tree() -> void:
-	super()
-	PhysicsServer2D.body_add_shape(_rid, shape.get_rid())
-	CollisionWorld.sync_body_pose(_rid, global_transform)
-	if shooter is ActorBody:
-		PhysicsServer2D.body_add_collision_exception(_rid, (shooter as ActorBody).get_rid())
+	var pose := Transform2D(vel.angle(), GridPathfinder.wrap_to_range(pos, map.map_size))
+	super(map, (definition["shape"] as Vector2) * float(spec["size"]), pose, 0, mask)
+	PhysicsServer2D.body_add_collision_exception(rid, shooter.rid)
 
 func start_fuse(duration: float) -> void:
 	if fuse_duration == 0.0:
 		fuse_duration = duration
 
 func bounce(normal: Vector2) -> void:
-	velocity_vec = velocity_vec.bounce(normal) * 0.6
-	if velocity_vec != Vector2.ZERO:
-		rotation = velocity_vec.angle()
-	CollisionWorld.sync_body_pose(_rid, global_transform)
+	velocity = velocity.bounce(normal) * 0.6
+	if velocity != Vector2.ZERO:
+		transform = Transform2D(velocity.angle(), position)
 
 func advance_physics(delta: float) -> AdvanceResult:
 	var started := PerformanceStats.begin()
 	impact_collider_id = 0
-	velocity_vec = ShotRules.flight_velocity(terrain, global_position, velocity_vec, gravity_factor, delta)
-	if gravity_factor > 0.0 and velocity_vec != Vector2.ZERO:
-		rotation = velocity_vec.angle()
-		CollisionWorld.sync_body_pose(_rid, global_transform)
+	velocity = ShotRules.flight_velocity(terrain, position, velocity, gravity_factor, delta)
+	if gravity_factor > 0.0 and velocity != Vector2.ZERO:
+		transform = Transform2D(velocity.angle(), position)
 	if fuse_duration > 0.0:
 		fuse_elapsed += delta
 		if fuse_elapsed >= fuse_duration:
 			PerformanceStats.end(PerformanceStats.PROJECTILE_STEP, started)
 			return AdvanceResult.FUSE_END
-	var motion := velocity_vec * delta
+	var motion := velocity * delta
 	traveled += motion.length()
 	var result := _sweep(motion)
 	_wrap_bounds()
@@ -109,8 +81,8 @@ func advance_physics(delta: float) -> AdvanceResult:
 	PerformanceStats.end(PerformanceStats.PROJECTILE_STEP, started)
 	return result
 
-## 位移按接缝拆成不超过镜像覆盖带的有限段，每段仍由统一运动求解。
-## 跨接缝的长位移若一次走完，会越过对侧空档、漏掉规范世界里的中部形状。
+## 移动时分段检查弹丸的整条路径。如果路径穿过地图边缘，就从另一侧接着检查。
+## 每段距离不超过地图边缘已覆盖的碰撞范围。
 func _sweep(step: Vector2) -> AdvanceResult:
 	var length := step.length()
 	if length <= 0.0:
@@ -118,18 +90,15 @@ func _sweep(step: Vector2) -> AdvanceResult:
 	var chunks := maxi(1, ceili(length / CollisionWorld.SEAM_REACH))
 	var run := step / float(chunks)
 	for i in chunks:
-		var out := CollisionWorld.move_body(_rid, global_transform, run)
-		global_position += (out[1] as PhysicsTestMotionResult2D).get_travel()
-		if bool(out[0]):
-			return _contact(out[1] as PhysicsTestMotionResult2D)
+		if move(run):
+			return _contact(_motion)
 		_wrap_bounds()
 	return AdvanceResult.MOVED
 
 func _wrap_bounds() -> void:
-	var wrapped := GridPathfinder.wrap_to_range(global_position, terrain.map_size)
-	if wrapped != global_position:
-		global_position = wrapped
-	CollisionWorld.sync_body_pose(_rid, global_transform)
+	var wrapped := GridPathfinder.wrap_to_range(position, terrain.map_size)
+	if wrapped != position:
+		position = wrapped
 
 
 func _contact(result: PhysicsTestMotionResult2D) -> AdvanceResult:
@@ -139,45 +108,30 @@ func _contact(result: PhysicsTestMotionResult2D) -> AdvanceResult:
 	var layer := PhysicsServer2D.body_get_collision_layer(result.get_collider_rid())
 	return AdvanceResult.TERRAIN_HIT if layer & CollisionWorld.LAYER_TERRAIN else AdvanceResult.ACTOR_HIT
 
-func impact_node() -> Node2D:
-	return instance_from_id(impact_collider_id) as Node2D if impact_collider_id != 0 else null
+func impact_actor() -> ActorBody:
+	return instance_from_id(impact_collider_id) as ActorBody if impact_collider_id != 0 else null
 
 func motion_state() -> Array:
-	var state: Array = []
-	_append_motion_state(state)
-	return state
+	return [position, velocity, traveled, fuse_elapsed, fuse_duration]
 
 func capture_state() -> Array:
-	var state := [type_id, _source_id, hit_damage, launch, direct_hit]
-	_append_motion_state(state)
-	return state
+	var owner: int = shooter.role if shooter is Player else (shooter as EnemyBase).slot
+	return motion_state() + [type_id, owner, hit_damage, launch, direct_hit]
 
 static func with_authoritative_pose(state: Array, pos: Vector2, vel: Vector2) -> Array:
-	if state[SNAP_MOTION + MOTION_POS] == pos and state[SNAP_MOTION + MOTION_VEL] == vel:
+	if state[MOTION_POS] == pos and state[MOTION_VEL] == vel:
 		return state
 	var corrected := state.duplicate()
-	corrected[SNAP_MOTION + MOTION_POS] = pos
-	corrected[SNAP_MOTION + MOTION_VEL] = vel
+	corrected[MOTION_POS] = pos
+	corrected[MOTION_VEL] = vel
 	return corrected
 
-func _append_motion_state(state: Array) -> void:
-	var start := state.size()
-	state.resize(start + MOTION_SIZE)
-	state[start + MOTION_POS] = position
-	state[start + MOTION_VEL] = velocity_vec
-	state[start + MOTION_TRAVELED] = traveled
-	state[start + MOTION_FUSE_ELAPSED] = fuse_elapsed
-	state[start + MOTION_FUSE_DURATION] = fuse_duration
-
-func restore_motion(state: Array, start: int = 0) -> void:
-	traveled = state[start + MOTION_TRAVELED]
-	fuse_elapsed = state[start + MOTION_FUSE_ELAPSED]
-	fuse_duration = state[start + MOTION_FUSE_DURATION]
-	restore_pose(state[start + MOTION_POS], state[start + MOTION_VEL])
+func restore_motion(state: Array) -> void:
+	traveled = state[MOTION_TRAVELED]
+	fuse_elapsed = state[MOTION_FUSE_ELAPSED]
+	fuse_duration = state[MOTION_FUSE_DURATION]
+	restore_pose(state[MOTION_POS], state[MOTION_VEL])
 
 func restore_pose(pos: Vector2, vel: Vector2) -> void:
-	position = pos
-	velocity_vec = vel
-	if vel != Vector2.ZERO:
-		rotation = vel.angle()
-	CollisionWorld.sync_body_pose(_rid, global_transform)
+	velocity = vel
+	transform = Transform2D(vel.angle() if vel != Vector2.ZERO else transform.get_rotation(), pos)

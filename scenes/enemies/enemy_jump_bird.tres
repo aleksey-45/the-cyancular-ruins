@@ -1,5 +1,6 @@
-[gd_scene format=3 uid="uid://bp1qruo0scwah"]
+[gd_resource type="Resource" script_class="EnemyType" format=3 uid="uid://bp1qruo0scwah"]
 
+[ext_resource type="Script" path="res://core/config/enemy_type.gd" id="type"]
 [ext_resource type="Script" uid="uid://dyb7bjjo3dkml" path="res://scenes/enemies/enemy_jump_bird.gd" id="1_ej"]
 [ext_resource type="Texture2D" uid="uid://dg5t7bgfwer3r" path="res://assets/textures/jump_bird.png" id="2_uxahq"]
 
@@ -153,18 +154,16 @@ animations = [{
 "speed": 8.0
 }]
 
-[node name="EnemyJumpBird" type="Node2D" unique_id=1399832467]
-scale = Vector2(2.5, 2.5)
-script = ExtResource("1_ej")
-collision_layer = 4
-collision_mask = 23
+[sub_resource type="ConvexPolygonShape2D" id="Hull0"]
+points = PackedVector2Array(-21.2, 20.8, 7.2, -14.8, 14, -14.8, 20, -8.4, 14, 6, 7.2, 20.8)
+
+[resource]
+script = ExtResource("type")
+ai = ExtResource("1_ej")
+frames = SubResource("SpriteFrames_688rj")
+hulls = Array[ConvexPolygonShape2D]([SubResource("Hull0")])
+body_scale = 2.5
 hp = 30
 contact_damage = 4
 contact_size = Vector2(44, 36)
 contact_offset = Vector2(0, 4.5)
-knockback_strength = 200.0
-sprite_frames = SubResource("SpriteFrames_688rj")
-
-[node name="CollisionPolygon2D" type="CollisionPolygon2D" parent="." unique_id=740945204]
-visible = false
-polygon = PackedVector2Array(-21.2, 20.8, 7.2, -14.8, 14, -14.8, 20, -8.4, 16, -5.2, 14, 6, 9.2, 10.8, 7.2, 20.8)

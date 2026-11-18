@@ -7,17 +7,16 @@ var _hop_timer: float = 0.0
 var _back_hop_cd: float = 0.0
 var _lunge_dir: Vector2 = Vector2.RIGHT
 var _lunge_traveled: float = 0.0
-var _dash_timer: float = 0.0    # 冲刺总超时保险(防止永久卡在冲刺)
+var _dash_timer: float = 0.0
 
-func _ready() -> void:
-	super._ready()
-	# 战斗参数来自场景。
+func _setup() -> void:
+	_rewind_fields.append_array([&"_hop_timer", &"_back_hop_cd", &"_lunge_dir", &"_lunge_traveled", &"_dash_timer"])
 	wake_radius = EnemyParams.JumpBird.wake_radius
 
 func _ai(delta: float) -> void:
 	var dist := toroidal_dist_to_player()
 	_back_hop_cd = maxf(_back_hop_cd - delta, 0.0)
-	# 面朝玩家:所有精灵帧朝右,玩家在左时翻转(经 _set_facing 锁转向频率)
+	# 跳鸟苏醒后尝试面向玩家，实际转向还受冷却时间限制。
 	var dir_to_player := toroidal_dir_to_player()
 	if state != State.SLEEP and absf(dir_to_player.x) > 0.05:
 		_set_facing(dir_to_player.x < 0.0)
@@ -37,7 +36,6 @@ func _ai(delta: float) -> void:
 			_tick_back_hop()
 
 
-# 按状态分派。
 
 func _tick_sleep(delta: float, dist: float) -> void:
 	_sleep_idle(delta)
@@ -64,7 +62,7 @@ func _tick_chase(delta: float, dist: float) -> void:
 		_lunge_dir = toroidal_dir_to_player()
 		_state_timer = EnemyParams.JumpBird.lunge_windup
 	elif _grounded:
-		# 鸟非冲刺状态下只能跳跃移动,不能滑行
+		# 起跳倒计时只在地面上减少，避免在空中发起下一次跳跃。
 		_hop_timer -= delta
 		if _hop_timer <= 0.0:
 			_hop_timer = EnemyParams.JumpBird.hop_interval
@@ -88,7 +86,7 @@ func _tick_lunge_windup(delta: float) -> void:
 func _tick_lunge_dash(delta: float) -> void:
 	_dash_timer -= delta
 	_lunge_traveled += (velocity * delta).length()
-	# 冲刺总时长保险:速度被外力(爆炸击退等)改动或主移动异常时,防止永久卡在冲刺状态。
+	# 一次扑击同时受时间和行进距离限制。碰到侧墙也会提前结束，改为向后跳开。
 	if _dash_timer <= 0.0 or _lunge_traveled >= EnemyParams.JumpBird.lunge_max_dist or _hit_wall():
 		_set_state(State.BACK_HOP)
 		motion.emit(&"charge", 0.0)
@@ -106,7 +104,6 @@ func _tick_back_hop() -> void:
 func _on_death() -> void:
 	activity = Activity.DEAD
 
-# 落水:朝玩家水平游(不朝岸边,保持追击感)。
 func _water_swim_dir() -> Vector2:
 	return toroidal_dir_to_player()
 

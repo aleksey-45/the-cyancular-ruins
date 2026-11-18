@@ -1,11 +1,12 @@
 class_name PvpMatchClient
 extends MatchController
 
+const NetPlayer := PlayerStateSchema.Network
+const Sample := SnapshotBuffer.Sample
+
 enum Phase { LOADING, ONLINE, RECONNECTING, OFFLINE }
 var phase := Phase.LOADING
 var _previous_samples: Dictionary = {}
-var _beam_previews: Dictionary[int, MatchFrame.Beam] = {}
-var _confirmed_beam := 0
 var _projectiles: Dictionary[int, ProjectileTrack] = {}
 var _names: Dictionary = {}
 var _hues: Dictionary = {}
@@ -24,11 +25,10 @@ func _enter_tree() -> void:
 	super()
 
 func _ready() -> void:
-	process_priority = 1 # 摄像机在更新角色表现后跟随。
-	super()
 	var baseline := PvpSession.baseline
-	player.role = baseline["role"]
-	_rollback.bind(player, CombatSimulator.new(terrain, world_viewport, true))
+	combat_rules = CombatSimulator.new(terrain)
+	player = combat_rules.add_player(baseline["role"])
+	_rollback.bind(player)
 	_rollback.step_advanced.connect(_live_step)
 	_playback.map_px = terrain.map_size
 	var account: GrainAccount
@@ -57,7 +57,7 @@ func apply_baseline(payload: Dictionary) -> void:
 	_hues = payload["hues"]
 	_teams = payload["teams"]
 	var team_mode := PvpSession.room_mode == PvpSession.MODE_TEAM
-	# 阵容在基线到达时冻结，人数只计算一次，供血条与 HUD 复用。
+	# 根据房间快照统计每队人数，团队对抗据此计算生命值上限，并在界面显示队伍信息。
 	_team_counts = TeamRules.team_counts(_teams) if team_mode else {}
 	var round: int = payload["round_state"]["round"]
 	if _terrain_round != 0 and round != _terrain_round:
@@ -71,7 +71,7 @@ func apply_baseline(payload: Dictionary) -> void:
 	_player_collision = options.get("player_collision", false)
 	var my_team := int(_teams.get(player.role, 0))
 	player.set_team_collision(my_team, _player_collision)
-	# 团队规则在恢复基线前固定；重连按基线恢复剩余 HP，不重置满血。
+	# 先设置本地角色的生命值上限，随后用服务器快照恢复当前生命值。
 	player.sim_max_hp = TeamRules.max_hp(my_team, _team_counts)
 	_clear_dynamics()
 	var frame: Dictionary = payload["frame"]
@@ -82,7 +82,7 @@ func apply_baseline(payload: Dictionary) -> void:
 	_on_round_state(payload["round_state"])
 	phase = Phase.ONLINE
 	_view.pvp_hud.set_status("")
-	_local_motion.correct(player.global_transform, player.global_position, terrain.map_size, true)
+	_local_motion.correct(player.transform, player.position, terrain.map_size, true)
 	_refresh_input_lock()
 	NetBus.send_event(NetEvent.Kind.READY, payload["round_state"]["round"])
 
@@ -118,9 +118,7 @@ func _apply_event(kind: int, data: Variant) -> void:
 		NetEvent.Kind.EXPLOSION:
 			var blast := CombatSimulator.blast_state(data["type_id"], data["pos"], data["tick"])
 			_end_projectile(data["id"], data["tick"], blast)
-			var radius: float = WeaponRegistry.blast_definition(data["type_id"])["radius"]
-			var cells := terrain.blast_cells(data["pos"], radius)
-			_blast(data["pos"], data["type_id"], PackedInt32Array(cells.keys()))
+			_blast(data["pos"], data["type_id"])
 		NetEvent.Kind.HIT:
 			if data["shooter"] == player.role:
 				_view.feedback.show_hit()
@@ -130,7 +128,7 @@ func _apply_event(kind: int, data: Variant) -> void:
 				if data["damage"] > 0:
 					_damage(data["damage"])
 			elif data["damage"] > 0 and _previous_samples.has(victim):
-				_world.motion(-victim, &"hurt", _frame.now)
+				_world.remote_hurt(victim, _frame.now)
 		NetEvent.Kind.KILL:
 			if data[1] == player.role:
 				_view.feedback.reset_streak()
@@ -161,23 +159,23 @@ func _apply_pending_authority() -> bool:
 				chosen = frame
 	if not chosen.is_empty():
 		_install_world(chosen)
-	var previous := _local_motion.corrected(player.global_position)
-	var before := player.global_position
+	var previous := _local_motion.corrected(player.position)
+	var before := player.position
 	var was_rewinding := player.rewinding
 	var epoch := player.input_buffer.epoch
 	var correction := _rollback.reconcile(chosen, NetBus.ping_ms)
 	var snap := correction == PredictionRollback.Correction.SNAP
 	if player.input_buffer.epoch != epoch:
-		_world.clear_motion(player.get_instance_id())
-	# 结束回溯只增加一个 epoch；跨过复活的快照仍直接对齐。
+		_world.clear_motion(player.role)
+	# 即时校正模拟位置时，时间回溯造成的位移仍可在画面上用插值过渡。
+	# 退出回溯会增加一次输入版本号。如果版本号进一步增加，例如发生了复活，画面直接跳到校正位置。
 	var smooth_rewind := snap and (was_rewinding or player.rewinding) \
 			and player.input_buffer.epoch <= epoch + int(was_rewinding)
 	if correction != PredictionRollback.Correction.KEEP:
-		_cancel_beams_after(ShotRules.shot_id(player.role, player.shot_serial) | 0xff)
 		if not snap:
-			_local_motion.rebase(player.global_position, before, terrain.map_size)
+			_local_motion.rebase(player.position, before, terrain.map_size)
 		if not smooth_rewind:
-			_local_motion.correct(player.global_transform, previous, terrain.map_size, snap)
+			_local_motion.correct(player.transform, previous, terrain.map_size, snap)
 	PerformanceStats.end(PerformanceStats.CLIENT_AUTHORITY, started)
 	return smooth_rewind
 
@@ -188,23 +186,22 @@ func _install_world(frame: Dictionary) -> void:
 	_sync_projectiles(world["projectiles"])
 
 func _sync_proxies(latest: Dictionary) -> void:
-	var players := _rollback.combat.players
+	var players := combat_rules.players
 	for role: int in players.keys():
 		if role != player.role and not latest.has(role):
 			_remove_proxy(role)
 	for role: int in latest:
 		if players.has(role):
 			continue
-		_rollback.combat.add_simulated_player(role, _teams.get(role, 0), _player_collision, player.weapons.enabled_types)
+		var proxy := combat_rules.add_player(role, _teams.get(role, 0), _player_collision)
+		proxy.weapons.enabled_types = player.weapons.enabled_types
 
 func _remove_proxy(role: int) -> void:
-	var players := _rollback.combat.players
-	players[role].free()
-	players.erase(role)
+	combat_rules.remove_player(role)
 	if _rollback.time_economy != null:
 		_rollback.time_economy.accounts.erase(role)
 
-func _end_projectile(id: int, tick: int, blast := {}) -> void:
+func _end_projectile(id: int, tick: int, blast: Array = []) -> void:
 	_rollback.queue_projectile_end(id, tick, blast)
 	var view: ProjectileTrack = _projectiles.get(id)
 	if view != null and (view.predicted or (tick > _playback.latest_tick and tick >= view.authority_tick)):
@@ -220,8 +217,8 @@ func _sync_projectiles(authoritative: Dictionary) -> void:
 			_projectiles.erase(id)
 	for id: int in authoritative:
 		if _rollback.projectile_end_tick(id) <= last_tick:
-			var state: Dictionary = authoritative[id]
-			_show_projectile(id, last_tick, state["type_id"], state["pos"], state["vel"])
+			var state: Array = authoritative[id]
+			_show_projectile(id, last_tick, state[BulletBody.Network.TYPE], state[BulletBody.Network.POS], state[BulletBody.Network.VEL])
 
 func _show_projectile(id: int, tick: int, type_id: int, pos: Vector2, vel: Vector2) -> void:
 	if _projectiles.has(id) and _projectiles[id].authority_tick > tick:
@@ -231,7 +228,8 @@ func _show_projectile(id: int, tick: int, type_id: int, pos: Vector2, vel: Vecto
 	view.sample(tick, pos, vel, _shooter_rewinding(id))
 
 func _shooter_rewinding(id: int) -> bool:
-	return _playback.latest_players.get(id >> 48, {}).get("rewind", false)
+	var shooter: Array = _playback.latest_players.get(ShotRules.shooter_role(id), [])
+	return not shooter.is_empty() and shooter[NetPlayer.REWIND]
 
 func _projectile_track(id: int, type_id: int) -> ProjectileTrack:
 	var shot: ProjectileTrack = _projectiles.get(id)
@@ -240,47 +238,44 @@ func _projectile_track(id: int, type_id: int) -> ProjectileTrack:
 		_projectiles[id] = shot
 	return shot
 
-func _draw_pickups(items: Dictionary, anchor: Vector2) -> void:
-	var tick := _playback.latest_tick
+func _draw_pickups(items: Dictionary) -> void:
 	for item: Array in items.values():
-		var offset := GridPathfinder.toroidal_delta_px(anchor, item[PickupState.POS], terrain.map_size)
-		var type_id: int = item[PickupState.TYPE_ID]
-		var lock: int = item[PickupState.LOCK]
-		var available := GroundWeaponField.in_pickup_range(offset.length()) and GroundWeaponField.can_pick_up(
-			player, type_id, lock >> 16, PickupState.unlock_tick(lock, tick), tick)
-		_frame.pickups.append([type_id, anchor + offset, available])
+		_show_pickup(item[WeaponPickup.Network.POS], item[WeaponPickup.Network.TYPE], item[WeaponPickup.Network.LOCKED_ROLE],
+				item[WeaponPickup.Network.UNLOCK_TICK], _playback.latest_tick)
 
 func _physics_process(delta: float) -> void:
 	if phase != Phase.ONLINE:
-		_local_motion.from = player.global_position
+		_local_motion.from = player.position
 		return
 	var perf_started := PerformanceStats.begin()
-	var shown := _local_motion.shown(player.global_transform)
+	var shown := _local_motion.shown(player.transform)
 	var smooth_rewind := _apply_pending_authority()
-	var input := LocalInputSource.sample(player.input_frozen)
+	var input := controls.sample()
 	_rollback.capture(_input_record(input, delta))
 	var packet := _rollback.packet()
 	NetBus.send_input(packet)
 	_rollback.advance(delta, packet)
 	if smooth_rewind:
-		# 松开回溯时，这一帧恢复预测后再更新视觉目标。
-		_local_motion.from = player.global_position
-		_local_motion.correct(player.global_transform, GridPathfinder.wrap_to_range(shown, terrain.map_size), terrain.map_size, false)
+		# 模拟完成后，从本帧开始时玩家看到的位置平滑过渡到校正后的位置。
+		_local_motion.from = player.position
+		_local_motion.correct(player.transform, GridPathfinder.wrap_to_range(shown, terrain.map_size), terrain.map_size, false)
 	PerformanceStats.end(PerformanceStats.CLIENT_TICK, perf_started)
 
 func _process(delta: float) -> void:
 	if phase != Phase.ONLINE:
-		_view.present(delta, null)
 		return
 	var perf_started := PerformanceStats.begin()
 	var anchor := _local_motion.advance(delta, _rollback.render_offset(Engine.get_physics_interpolation_fraction()),
-			player.global_transform, terrain.map_size)
-	var haste := player.pvp_haste_mult > 1.0
+			player.transform, terrain.map_size)
+	var haste := player.personal_haste_mult > 1.0
 	_begin_frame(delta, anchor, haste, player.rewinding)
-	var world := _playback.advance(delta)
+	var world := _playback.advance(delta, player.role)
+	for id: int in world["beams"]:
+		if ShotRules.shooter_role(id) != player.role:
+			_frame.sample_beam(world["beams"][id], _playback.render_tick)
 	_set_nameplate(_local_pose(haste, player.rewinding), player.role)
 	_sample_remotes(world["players"], anchor)
-	_draw_pickups(world["pickups"], player.global_position)
+	_draw_pickups(world["pickups"])
 	_present_projectiles(delta, anchor)
 	for id: int in _projectiles:
 		var shot := _projectiles[id]
@@ -290,22 +285,22 @@ func _process(delta: float) -> void:
 
 func _sample_remotes(samples: Dictionary, anchor: Vector2) -> void:
 	for role: int in samples:
-		if role == player.role:
-			continue
-		var sample: Dictionary = samples[role]
-		var state: Array = sample["actor"]
-		_present_remote_motion(role, sample, _previous_samples.get(role, sample))
-		var at := GridPathfinder.anchor_to_nearest(sample["pos"], anchor, terrain.map_size)
+		var row: Array = samples[role]
+		var sample: Array = row[Sample.SOURCE]
+		var state: Array = sample[NetPlayer.STATE]
+		_present_remote_motion(role, sample, _previous_samples.get(role, row)[Sample.SOURCE])
+		var at := GridPathfinder.anchor_to_nearest(row[Sample.POS], anchor, terrain.map_size)
 		var facing: int = state[PlayerStateSchema.FACING]
 		var downed: bool = state[PlayerStateSchema.DOWNED]
-		var pose := _player_pose(-role, at, facing, state[PlayerStateSchema.STATE], downed, sample["rewind"],
+		var pose := _player_pose(role, at, facing, state[PlayerStateSchema.STATE], downed, sample[NetPlayer.REWIND],
 				state[PlayerStateSchema.HASTE_MULT] > 1.0)
+		pose.remote = true
 		var airborne: bool = not (state[PlayerStateSchema.GROUNDED] or state[PlayerStateSchema.IN_WATER] or state[PlayerStateSchema.CLIMB_LATCHED])
-		var velocity: Vector2 = sample["vel"]
+		var velocity: Vector2 = row[Sample.VEL]
 		pose.air_speed = velocity.y if airborne else 0.0
 		var type_id := PlayerStateSchema.equipped_type(state)
-		var equipment: Array = sample["equipment"]
-		var aim: Vector2 = sample["aim"]
+		var equipment: Array = state[PlayerStateSchema.EQUIPMENT]
+		var aim: Vector2 = sample[NetPlayer.AIM]
 		_weapon_pose(pose, type_id, aim if aim != Vector2.ZERO else Vector2(facing, 0),
 				equipment[GunBody.StateSlot.SHOT_FACING] if type_id != 0 and aim != Vector2.ZERO else facing,
 				equipment[GunBody.StateSlot.RELOAD_LEFT] if type_id != 0 else 0.0)
@@ -319,13 +314,13 @@ func _set_nameplate(pose: MatchFrame.Pose, role: int) -> void:
 	pose.team = _teams.get(role, role)
 	pose.hue = float(_hues.get(role, 0.0)) / 360.0
 
-func _present_remote_motion(role: int, sample: Dictionary, previous: Dictionary) -> void:
-	if sample["epoch"] != previous["epoch"]:
-		_world.clear_motion(-role)
+func _present_remote_motion(role: int, sample: Array, previous: Array) -> void:
+	if sample[NetPlayer.EPOCH] != previous[NetPlayer.EPOCH]:
+		_world.clear_motion(role)
 		return
-	var state: Array = sample["actor"]
-	var before: Array = previous["actor"]
-	if sample["rewind"] or previous["rewind"] or state[PlayerStateSchema.DOWNED] or before[PlayerStateSchema.DOWNED]:
+	var state: Array = sample[NetPlayer.STATE]
+	var before: Array = previous[NetPlayer.STATE]
+	if sample[NetPlayer.REWIND] or previous[NetPlayer.REWIND] or state[PlayerStateSchema.DOWNED] or before[PlayerStateSchema.DOWNED]:
 		return
 	if state[PlayerStateSchema.IN_WATER] or state[PlayerStateSchema.CLIMB_LATCHED]:
 		return
@@ -333,13 +328,13 @@ func _present_remote_motion(role: int, sample: Dictionary, previous: Dictionary)
 	var was_grounded: bool = before[PlayerStateSchema.GROUNDED]
 	if grounded and not was_grounded:
 		var incoming: Vector2 = before[PlayerStateSchema.VEL] + before[PlayerStateSchema.KNOCK_VEL]
-		_world.motion(-role, &"land", _frame.now, incoming.y)
+		_world.motion(role, &"land", _frame.now, incoming.y)
 	elif not grounded and (was_grounded or before[PlayerStateSchema.COYOTE_TIMER] > 0.0):
 		var velocity: Vector2 = state[PlayerStateSchema.VEL]
 		if velocity.y < 0.0 and state[PlayerStateSchema.COYOTE_TIMER] == 0.0:
-			_world.motion(-role, &"jump", _frame.now)
+			_world.motion(role, &"jump", _frame.now)
 	if state[PlayerStateSchema.CHARGE] and not before[PlayerStateSchema.CHARGE]:
-		_world.motion(-role, &"dash", _frame.now)
+		_world.motion(role, &"dash", _frame.now)
 
 func _on_round_state(data: Dictionary) -> void:
 	_round_state = data["state"]
@@ -351,7 +346,7 @@ func _leave_result() -> void:
 	NetBus.send_event(NetEvent.Kind.LEAVE)
 
 func _refresh_input_lock() -> void:
-	player.input_frozen = phase != Phase.ONLINE or _pause_open \
+	controls.frozen = phase != Phase.ONLINE or _pause_open \
 			or _round_state != NetEvent.RoundState.PLAYING
 
 func _set_pause(open: bool) -> void:
@@ -359,7 +354,7 @@ func _set_pause(open: bool) -> void:
 	_refresh_input_lock()
 
 func _present_projectiles(delta: float, anchor: Vector2) -> void:
-	var live := _rollback.combat.projectiles
+	var live := combat_rules.projectiles
 	var last_tick := _playback.latest_tick
 	for id: int in _projectiles.keys():
 		if _projectiles[id].predicted and not live.has(id):
@@ -370,7 +365,7 @@ func _present_projectiles(delta: float, anchor: Vector2) -> void:
 				or (_projectiles.has(id) and not _projectiles[id].predicted):
 			continue
 		var view := _projectile_track(id, bullet.type_id)
-		view.sample(_rollback.tick, bullet.position, bullet.velocity_vec, player.rewinding)
+		view.sample(_rollback.tick, bullet.position, bullet.velocity, player.rewinding)
 	for view: ProjectileTrack in _projectiles.values():
 		view.present(delta, anchor)
 
@@ -378,63 +373,27 @@ func _on_fire(shot: Dictionary) -> void:
 	var vectors := _rollback.queue_shot(shot)
 	var role: int = shot["role"]
 	var type_id: int = shot["type_id"]
-	var spec := WeaponRegistry.definition(type_id)
 	if role != player.role:
-		_world.fire(-role, type_id, _frame.now)
-	var id := ShotRules.shot_id(role, shot["serial"])
-	match spec["attack"]:
-		WeaponRegistry.Attack.BEAM:
-			_confirm_beam(id, vectors)
-		WeaponRegistry.Attack.PROJECTILE:
-			var at: int = shot["tick"]
-			if at <= _playback.latest_tick:
-				return
-			var pos := GridPathfinder.wrap_to_range(shot["pos"], terrain.map_size)
-			for pellet in vectors.size():
-				var key := id | pellet
-				if _rollback.projectile_end_tick(key) < at:
-					_show_projectile(key, at, type_id, pos, vectors[pellet])
-
-func _show_beam(points: PackedVector2Array, id := 0) -> void:
-	if id <= _confirmed_beam:
+		_world.fire(role, type_id, _frame.now)
+	var at: int = shot["tick"]
+	if at <= _playback.latest_tick or WeaponRegistry.definition(type_id)["attack"] != WeaponRegistry.Attack.PROJECTILE:
 		return
-	var preview: MatchFrame.Beam = _beam_previews.get(id)
-	var path := _beam_path(points)
-	if _frame.beams.has(preview):
-		preview.points = path
-	else:
-		_beam_previews[id] = _frame.add_beam(path)
-		if _beam_previews.size() > 64:
-			_beam_previews.erase(_beam_previews.keys()[0])
-
-func _confirm_beam(id: int, points: PackedVector2Array) -> void:
-	if id >> 48 == player.role:
-		_confirmed_beam = id
-	var preview: MatchFrame.Beam = _beam_previews.get(id)
-	_beam_previews.erase(id)
-	var path := _beam_path(points)
-	if preview == null:
-		_frame.add_beam(path)
-	else:
-		preview.points = path
-
-func _cancel_beams_after(id: int) -> void:
-	for key: int in _beam_previews.keys():
-		if key > id:
-			_frame.beams.erase(_beam_previews[key])
-			_beam_previews.erase(key)
+	var id := ShotRules.shot_id(role, shot["serial"])
+	var pos := GridPathfinder.wrap_to_range(shot["pos"], terrain.map_size)
+	for pellet in vectors.size():
+		var key := ShotRules.pellet_id(id, pellet)
+		if _rollback.projectile_end_tick(key) < at:
+			_show_projectile(key, at, type_id, pos, vectors[pellet])
 
 func _clear_dynamics() -> void:
 	_pending_states.clear()
 	_pending_events.clear()
-	_rollback.combat.clear()
-	for role: int in _rollback.combat.players.keys():
+	combat_rules.clear()
+	for role: int in combat_rules.players.keys():
 		if role != player.role:
 			_remove_proxy(role)
 	_projectiles.clear()
 	_previous_samples.clear()
-	_beam_previews.clear()
-	_confirmed_beam = 0
 	_reset_view()
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -467,3 +426,4 @@ func _exit_tree() -> void:
 	NetBus.event_received.disconnect(_on_event)
 	NetBus.server_disconnected.disconnect(_begin_reconnect)
 	NetBus.protocol_error.disconnect(_go_offline)
+	super()

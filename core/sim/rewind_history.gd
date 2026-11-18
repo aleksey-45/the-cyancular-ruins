@@ -1,55 +1,69 @@
 class_name RewindHistory
 extends RefCounted
 
-# 第一槽是单调递增的时间。过期帧清空引用，前缀过半时再压缩数组。
-const TIME := 0
-var rewound := 0.0
+enum { TIME, SNAPSHOT }
+var time := 0.0
 var _frames: Array = []
-var _head := 0
+var _first := 0
+var _since_sample := 0.0
+var _rewound := -1.0
+var _combat: CombatSimulator
+var _scope: int
+var _seconds: float
 
-func size() -> int:
-	return _frames.size() - _head
+func _init(combat: CombatSimulator, scope := CombatSnapshot.WORLD, seconds := TimeParams.SNAP_SECONDS) -> void:
+	_combat = combat
+	_scope = scope
+	_seconds = seconds
+	if scope == CombatSnapshot.WORLD:
+		combat.terrain.rewind_enabled = true
 
-func frame(index: int) -> Array:
-	return _frames[_head + index]
+func can_rewind() -> bool:
+	return not _frames.is_empty() and (_rewound >= 0.0 or time > float(_frames[_first][TIME]))
 
-func push(value: Array) -> void:
-	_frames.append(value)
+## 同帧采样的角色共用一个检查点，各自记录这个检查点在个人时间轴上的时刻。
+func record(delta: float, sample: CombatSnapshot = null) -> CombatSnapshot:
+	_rewound = -1.0
+	time += delta
+	_since_sample += delta
+	if _since_sample < TimeParams.SNAP_INTERVAL:
+		return sample
+	_since_sample = 0.0
+	if sample == null:
+		sample = CombatSnapshot.new()
+		sample.capture(_combat)
+	if _scope == CombatSnapshot.WORLD:
+		sample.capture_environment(_combat)
+	_frames.append([time, sample])
+	while _frames[_first][TIME] < time - _seconds:
+		_frames[_first] = null
+		_first += 1
+	if _first * 2 >= _frames.size():
+		_frames = _frames.slice(_first)
+		_first = 0
+	return sample
 
-func expire_before(time: float) -> void:
-	while _head < _frames.size() and float(_frames[_head][TIME]) < time:
-		_drop_first()
-	_compact()
-
-func keep_last(count: int) -> void:
-	while size() > count:
-		_drop_first()
-	_compact()
-
-func _drop_first() -> void:
-	_frames[_head] = null
-	_head += 1
-
-func _compact() -> void:
-	if _head > 0 and _head * 2 >= _frames.size():
-		_frames = _frames.slice(_head)
-		_head = 0
-
-func sample(time: float) -> Array:
-	return frame(maxi(0, first_after(time) - 1))
-
-func truncate(time: float) -> void:
-	_frames.resize(_head + first_after(time))
-	_compact()
-
-## 跳过所有等于 time 的帧，返回当前有效区间内的下标。
-func first_after(time: float) -> int:
-	var low := _head
-	var high := _frames.size()
-	while low < high:
-		var middle := (low + high) / 2
-		if float(_frames[middle][TIME]) <= time:
-			low = middle + 1
-		else:
-			high = middle
-	return low - _head
+func rewind(delta: float) -> void:
+	var world := _scope == CombatSnapshot.WORLD
+	var terrain := _combat.terrain
+	if _rewound < 0.0:
+		_rewound = 0.0
+		_since_sample = 0.0
+		if world:
+			terrain.undo_changes(terrain.take_rewind_changes())
+			for bullet: BulletBody in _combat.projectiles.values():
+				bullet.rewind_hits.clear()
+	var target := maxf(_frames[_first][TIME], time - TimeParams.rewind_delta(_rewound, delta))
+	_rewound += time - target
+	time = target
+	while _frames.back()[TIME] > time:
+		var later: Array = _frames.pop_back()
+		if world:
+			var snapshot: CombatSnapshot = later[SNAPSHOT]
+			terrain.undo_changes(snapshot.terrain_changes)
+	if world:
+		terrain.flush_collisions()
+	var selected: CombatSnapshot = _frames.back()[SNAPSHOT]
+	selected.restore(_combat, _scope)
+	if world:
+		_combat.hit_rewound_elites()

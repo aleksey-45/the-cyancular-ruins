@@ -1,60 +1,127 @@
 class_name CombatSimulator
 extends RefCounted
 
+enum Blast { TYPE, POS, DUE }
+enum Beam { END_TICK, POINTS }
+enum ProjectileEnd { TICK, BLAST }
+
 signal projectile_ended(id: int)
 signal fired(shot: Dictionary)
-signal detonated(id: int, position: Vector2, type_id: int, cells: PackedInt32Array)
+signal detonated(id: int, position: Vector2, type_id: int)
 signal tile_hit(position: Vector2, texture_id: int)
 signal player_hit(source_role: int, victim: Player, damage: int, knock_changed: bool, force: float)
-signal npc_hit(source: Node, victim: EnemyBase, damage: int)
+signal npc_hit(source: ActorBody, victim: EnemyBase, damage: int)
 signal projectile_hit_npc(type_id: int)
 signal grain_dropped(position: Vector2)
 
 const BLAST_DELAY := 3
+const BEAM_TICKS := 15
 const ACTOR_LAYERS := CollisionWorld.LAYER_ENEMY | CollisionWorld.LAYER_TEAM_A | CollisionWorld.LAYER_TEAM_B
 
 var terrain: Terrain
+var ground: GroundWeaponField
 var time_field: TimeField
 var tick := 0
 var projectiles: Dictionary[int, BulletBody] = {}
-var players: Dictionary
+var beams: Dictionary[int, Array] = {}
+var enemies: Array[EnemyBase] = []
+var players: Dictionary[int, Player] = {}
 var team_counts: Dictionary
 var predicting := false
 var predicted_hits: Array = []
-var blast_target_query: Callable
-var _pending_blasts: Dictionary = {}
+var pending_blasts: Dictionary[int, Array] = {}
 var _next_enemy_projectile := -1
-var _parent: Node
-var _multiplayer_rules: bool
 
-func _init(map: Terrain, parent: Node, multiplayer_rules := false) -> void:
+func _init(map: Terrain) -> void:
 	terrain = map
-	_parent = parent
-	_multiplayer_rules = multiplayer_rules
+	ground = GroundWeaponField.new(map)
 
 func drop_grain(at: Vector2, amount: int) -> void:
-	time_field.schedule_grain(amount)
-	grain_dropped.emit(at)
+	if time_field != null:
+		time_field.schedule_grain(amount)
+		grain_dropped.emit(at)
 
-func add_simulated_player(role: int, team: int, player_collision: bool, enabled_weapons: Array) -> Player:
-	var actor: Player = load("res://scenes/player/player_body.tscn").instantiate()
-	actor.role = role
-	actor.set_team_collision(team, player_collision)
-	actor.process_mode = Node.PROCESS_MODE_DISABLED
-	actor.projectile_count = count_projectiles.bind(actor)
-	_parent.add_child(actor)
-	actor.weapons.enabled_types = enabled_weapons
-	players[role] = actor
-	return actor
+func add_player(role: int, team := 0, player_collision := false) -> Player:
+	var player := Player.new(self, role)
+	player.set_team_collision(team, player_collision)
+	players[role] = player
+	return player
 
-func submit(actor: Player, requests: Array) -> void:
-	for request: Dictionary in requests:
-		match request["kind"]:
-			"fire": fire(actor, request)
-			"drown":
-				resolve_hit(null, actor, CombatProfiles.DROWN, request["pos"], request["damage"], 0.0)
+func remove_player(role: int) -> void:
+	for bullet: BulletBody in projectiles.values():
+		if bullet.shooter == players[role]:
+			erase_projectile(bullet.entity_id)
+	players[role].release()
+	players.erase(role)
 
-func fire(actor: ActorBody, action: Dictionary) -> Dictionary:
+func add_enemy(type_id: String, player: Player, at: Vector2) -> EnemyBase:
+	var kind: EnemyType = load(EnemyType.paths[type_id])
+	var enemy: EnemyBase = kind.ai.new(self, player, at, kind)
+	enemies.append(enemy)
+	return enemy
+
+func clear_enemies() -> void:
+	for enemy in enemies:
+		enemy.release()
+	enemies.clear()
+
+func close() -> void:
+	clear()
+	ground.clear()
+	clear_enemies()
+	for role: int in players.keys():
+		remove_player(role)
+
+## 输入按角色 ID 处理。角色全部移动后才发射，当帧生成的弹丸参加本帧的运动。
+func step(inputs: Dictionary, confirmed_shots: Dictionary = {}, projectile_ends: Dictionary = {}) -> Dictionary:
+	var reversing := time_field != null and time_field.is_rewinding()
+	if not reversing:
+		tick += 1
+		for id: int in beams.keys():
+			if beams[id][Beam.END_TICK] <= tick:
+				beams.erase(id)
+		ground.step(time_field.world_delta(ActorStep.DT) if time_field != null else ActorStep.DT)
+	var roles := inputs.keys()
+	roles.sort()
+	for role: int in roles:
+		ActorStep.step(players[role], inputs[role])
+
+	predicted_hits.clear()
+	var shots := resolve_requests(roles, confirmed_shots)
+	for enemy in enemies:
+		if enemy.active:
+			enemy.simulate_tick(ActorStep.DT)
+	if not reversing:
+		apply_projectile_ends(projectile_ends)
+		step_projectiles(ActorStep.DT)
+		settle_blasts()
+	terrain.flush_collisions()
+	return shots
+
+func resolve_requests(roles: Array, confirmed_shots: Dictionary = {}) -> Dictionary:
+	var shots := {}
+	for role: int in roles:
+		var actor := players[role]
+		for request: Dictionary in actor.combat_requests:
+			match request["kind"]:
+				"fire": shots[ShotRules.shot_id(role, request["serial"])] = request
+				"drown": resolve_hit(null, actor, CombatProfiles.DROWN, request["pos"], request["damage"], 0.0)
+	for id: int in confirmed_shots:
+		var shot: Dictionary = confirmed_shots[id]
+		if shot["tick"] == tick:
+			shots[id] = shot
+		else:
+			shots.erase(id)
+	var ids := shots.keys()
+	ids.sort()
+	for id: int in ids:
+		var actor: Player = players.get(ShotRules.shooter_role(id))
+		if actor != null:
+			actor.shot_serial = maxi(actor.shot_serial, shots[id]["serial"])
+			shots[id] = fire(actor, shots[id])
+	return shots
+
+func fire(actor: Player, action: Dictionary) -> Dictionary:
 	var spec := WeaponRegistry.definition(action["type_id"])
 	var shot := action
 	if not shot.has("vectors"):
@@ -65,24 +132,20 @@ func fire(actor: ActorBody, action: Dictionary) -> Dictionary:
 	if spec["attack"] == WeaponRegistry.Attack.PROJECTILE:
 		ShotRules.projectiles(self, actor, shot, spec)
 	else:
+		if spec["attack"] == WeaponRegistry.Attack.BEAM:
+			beams[ShotRules.shot_id(actor.role, shot["serial"])] = [tick + BEAM_TICKS, shot["vectors"]]
 		ShotRules.hitscan(self, actor, shot, spec)
 	return shot
 
 func spawn_enemy_projectile(type_id: int, enemy: EnemyBase, velocity: Vector2) -> void:
 	var id := _next_enemy_projectile
 	_next_enemy_projectile -= 1
-	spawn_projectile(id, type_id, enemy.get_instance_id(), enemy.global_position, velocity)
+	spawn_projectile(id, type_id, enemy, enemy.position, velocity)
 
-func spawn_projectile(id: int, type_id: int, source: int, pos: Vector2, vel: Vector2,
+func spawn_projectile(id: int, type_id: int, source: ActorBody, pos: Vector2, vel: Vector2,
 		damage_override: int = -1) -> BulletBody:
 	assert(not projectiles.has(id))
-	var bullet := BulletBody.new()
-	var spec := WeaponRegistry.projectile_definition(type_id)
-	var damage: int = spec["damage"] if damage_override == -1 else damage_override
-	bullet.configure(self, id, type_id, spec["projectile"],
-			source, pos, vel,
-			spec["size"], spec["gravity"], spec["range"], damage, spec["impact"])
-	_parent.add_child(bullet)
+	var bullet := BulletBody.new(terrain, id, type_id, source, pos, vel, damage_override)
 	projectiles[id] = bullet
 	return bullet
 
@@ -94,75 +157,17 @@ func count_projectiles(type_id: int, owner: Player) -> int:
 	return count
 
 func erase_projectile(id: int) -> void:
-	var bullet := projectiles[id]
+	projectiles[id].release()
 	projectiles.erase(id)
-	bullet.queue_free()
 
 func clear() -> void:
 	for id: int in projectiles.keys():
 		erase_projectile(id)
+	beams.clear()
 	clear_blasts()
 
-func capture_projectiles(include_pending_blasts := false) -> Dictionary:
-	var states := _pending_blasts.duplicate() if include_pending_blasts else {}
-	for bullet: BulletBody in projectiles.values():
-		states[bullet.entity_id] = bullet.capture_state()
-	return states
-
-func restore_prediction_projectiles(states: Dictionary) -> void:
-	_pending_blasts.clear()
-	for id: int in projectiles.keys():
-		var state: Variant = states.get(id)
-		if not state is Array or state[BulletBody.SNAP_TYPE] != projectiles[id].type_id:
-			erase_projectile(id)
-	for id: int in states:
-		var state: Variant = states[id]
-		if state is Dictionary:
-			_pending_blasts[id] = state
-			continue
-		var owner: ActorBody = players.get(id >> 48)
-		if owner == null:
-			continue
-		var bullet := _restore_projectile(id, state, owner.get_instance_id())
-		bullet.launch = state[BulletBody.SNAP_LAUNCH]
-		bullet.hit_damage = state[BulletBody.SNAP_DAMAGE]
-		bullet.direct_hit = state[BulletBody.SNAP_DIRECT_HIT]
-
-func rewind_projectiles(states: Dictionary) -> void:
-	for id: int in states:
-		var state: Array = states[id]
-		_restore_projectile(id, state, state[BulletBody.SNAP_SOURCE])
-	for id: int in projectiles.keys():
-		if not states.has(id):
-			erase_projectile(id)
-	# 所有弹丸归位后，每枚倒飞弹丸仍可命中同一精英一次。
-	var space := CollisionWorld.for_space(terrain.space_rid())
-	for bullet: BulletBody in projectiles.values():
-		var source := bullet.shooter
-		if not source is Player:
-			continue
-		for entry: Dictionary in space.shape_overlaps(bullet.shape, bullet.global_transform, CollisionWorld.LAYER_ENEMY):
-			var elite := entry["collider"] as EnemyBase
-			if elite == null or not elite.has_meta("elite") or elite.is_dead:
-				continue
-			var id := elite.get_instance_id()
-			if bullet.rewind_hits.has(id):
-				continue
-			bullet.rewind_hits[id] = true
-			resolve_hit(source, elite, CombatProfiles.DIRECT, bullet.global_position, bullet.hit_damage,
-					bullet.hit_impact, hit_direction(bullet.global_position, elite.global_position))
-
-func _restore_projectile(id: int, state: Array, source: int) -> BulletBody:
-	var bullet: BulletBody = projectiles.get(id)
-	var start := BulletBody.SNAP_MOTION
-	if bullet == null:
-		bullet = spawn_projectile(id, state[BulletBody.SNAP_TYPE], source, state[start + BulletBody.MOTION_POS],
-				state[start + BulletBody.MOTION_VEL], state[BulletBody.SNAP_DAMAGE])
-	bullet.restore_motion(state, start)
-	return bullet
-
 func catch_up_shot(shot: Dictionary, live: Dictionary, at: int) -> void:
-	var owner: ActorBody = players.get(shot["role"])
+	var owner: Player = players.get(shot["role"])
 	var spec := WeaponRegistry.definition(shot["type_id"])
 	if owner == null or spec["attack"] != WeaponRegistry.Attack.PROJECTILE:
 		return
@@ -170,9 +175,9 @@ func catch_up_shot(shot: Dictionary, live: Dictionary, at: int) -> void:
 	var ids: Array[int] = []
 	var velocities: PackedVector2Array = shot["vectors"]
 	for pellet in velocities.size():
-		var key := id | pellet
+		var key := ShotRules.pellet_id(id, pellet)
 		var existing: BulletBody = projectiles.get(key)
-		if live.has(key) and live[key]["type_id"] == shot["type_id"] and (existing == null or existing.launch != shot):
+		if live.has(key) and live[key][BulletBody.Network.TYPE] == shot["type_id"] and (existing == null or existing.launch != shot):
 			if existing != null:
 				erase_projectile(key)
 			ids.append(key)
@@ -186,13 +191,13 @@ func catch_up_shot(shot: Dictionary, live: Dictionary, at: int) -> void:
 			step_projectile(bullet, ActorStep.DT)
 			if not projectiles.has(key):
 				break
-		_pending_blasts.erase(key)
+		pending_blasts.erase(key)
 		if projectiles.has(key):
-			bullet.restore_pose(live[key]["pos"], live[key]["vel"])
+			bullet.restore_pose(live[key][BulletBody.Network.POS], live[key][BulletBody.Network.VEL])
 	tick = at
 
 func clear_blasts() -> void:
-	_pending_blasts.clear()
+	pending_blasts.clear()
 
 func step_projectiles(delta: float) -> void:
 	var started := PerformanceStats.begin()
@@ -200,7 +205,7 @@ func step_projectiles(delta: float) -> void:
 	ids.sort()
 	for id: int in ids:
 		var bullet := projectiles[id]
-		if not (bullet.shooter is ActorBody and bullet.shooter.rewinding):
+		if not (bullet.shooter is Player and bullet.shooter.rewinding):
 			step_projectile(bullet, delta)
 	PerformanceStats.end(PerformanceStats.COMBAT_STEP, started)
 
@@ -209,96 +214,93 @@ func step_projectile(bullet: BulletBody, delta: float) -> void:
 		if time_field.is_rewinding():
 			return
 		delta = delta * time_field.player_speed_mult() if bullet.shooter is Player else time_field.world_delta(delta)
-	ShotRules.step_projectile(self, bullet, delta, _multiplayer_rules)
+	ShotRules.step_projectile(self, bullet, delta)
 
-static func blast_state(type_id: int, pos: Vector2, at: int) -> Dictionary:
-	return {"type_id": type_id, "pos": pos, "due": at + BLAST_DELAY}
+static func blast_state(type_id: int, pos: Vector2, at: int) -> Array:
+	return [type_id, pos, at + BLAST_DELAY]
 
-func submit_blast(id: int, pos: Vector2, type_id: int, source: Node) -> void:
-	if _multiplayer_rules:
-		if not predicting:
-			detonated.emit(id, pos, type_id, PackedInt32Array())
-		assert(not _pending_blasts.has(id))
-		_pending_blasts[id] = blast_state(type_id, pos, tick)
-	else:
-		var spec := WeaponRegistry.blast_definition(type_id)
-		var cells := terrain.blast_cells(pos, spec["radius"])
-		detonated.emit(id, pos, type_id, PackedInt32Array(cells.keys()))
-		resolve_blast(pos, spec, source, cells)
+func submit_blast(id: int, pos: Vector2, type_id: int) -> void:
+	pending_blasts[id] = blast_state(type_id, pos, tick)
+	if not predicting:
+		detonated.emit(id, pos, type_id)
 
 func apply_projectile_ends(ends: Dictionary) -> void:
 	for id: int in ends:
-		var end: Dictionary = ends[id]
-		if tick > end["tick"]:
+		var end: Array = ends[id]
+		if tick > end[ProjectileEnd.TICK]:
 			continue
-		_pending_blasts.erase(id)
-		if tick == end["tick"]:
+		pending_blasts.erase(id)
+		if tick == end[ProjectileEnd.TICK]:
 			if projectiles.has(id):
 				erase_projectile(id)
-			if not end["blast"].is_empty():
-				_pending_blasts[id] = end["blast"]
+			if not end[ProjectileEnd.BLAST].is_empty():
+				pending_blasts[id] = end[ProjectileEnd.BLAST]
 
 func settle_blasts() -> void:
 	var ready: Array[int] = []
-	for id: int in _pending_blasts:
-		if _pending_blasts[id]["due"] <= tick:
+	for id: int in pending_blasts:
+		if pending_blasts[id][Blast.DUE] <= tick:
 			ready.append(id)
 	ready.sort_custom(func(a: int, b: int) -> bool:
-		var ta: int = _pending_blasts[a]["due"]
-		var tb: int = _pending_blasts[b]["due"]
+		var ta: int = pending_blasts[a][Blast.DUE]
+		var tb: int = pending_blasts[b][Blast.DUE]
 		return a < b if ta == tb else ta < tb)
 	for id: int in ready:
-		var blast: Dictionary = _pending_blasts[id]
-		_pending_blasts.erase(id)
-		resolve_blast(blast["pos"], WeaponRegistry.blast_definition(blast["type_id"]), players.get(id >> 48))
+		var blast: Array = pending_blasts[id]
+		pending_blasts.erase(id)
+		resolve_blast(blast[Blast.POS], WeaponRegistry.blast_definition(blast[Blast.TYPE]), players.get(ShotRules.shooter_role(id)))
 
-func resolve_blast(center: Vector2, spec: Dictionary, source: Node, cells = null) -> void:
+func resolve_blast(center: Vector2, spec: Dictionary, source: ActorBody) -> void:
 	var radius: float = spec["radius"]
-	for target: Node2D in _blast_targets(center, radius):
-		var distance := _delta(center, target.global_position).length()
+	var actors: Array[ActorBody] = []
+	actors.assign(players.values())
+	actors.sort_custom(func(a: Player, b: Player) -> bool: return a.role < b.role)
+	for enemy in enemies:
+		if enemy.active:
+			actors.append(enemy)
+	for target in actors:
+		var distance := _delta(center, target.position).length()
 		if distance > radius:
 			continue
-		var blocked := not terrain.line_of_sight(center, target.global_position)
+		var blocked := not terrain.line_of_sight(center, target.position)
 		var cover := BlastCurve.cover_multiplier(distance, radius, blocked)
 		var inner := radius * BlastCurve.INNER_FRACTION
 		resolve_hit(source, target, CombatProfiles.BLAST, center,
 				BlastCurve.falloff(distance, radius, inner, spec["damage"]) * cover,
 				BlastCurve.falloff(distance, radius, inner, spec["impact"]) * cover,
-				hit_direction(center, target.global_position))
+				hit_direction(center, target.position))
 	if not predicting:
-		terrain.damage_blast(cells if cells != null else terrain.blast_cells(center, radius),
+		terrain.damage_blast(terrain.blast_cells(center, radius),
 				radius, spec["damage"], source_role(source))
 
-static func roster_blast_targets(_center: Vector2, _radius: float, roster: Dictionary) -> Array:
-	var roles := roster.keys()
-	roles.sort()
-	var targets: Array = []
-	for role in roles: targets.append(roster[role])
-	return targets
+func hit_rewound_elites() -> void:
+	# 恢复玩家弹丸的位置后，检查它们是否与仍在活动的精英敌人相撞。
+	# 回溯期间，同一枚弹丸只能对同一个敌人结算一次伤害。
+	var space := terrain.physics
+	for bullet: BulletBody in projectiles.values():
+		var source := bullet.shooter
+		if not source is Player:
+			continue
+		for entry: Dictionary in space.shape_overlaps(bullet.shape, bullet.transform, CollisionWorld.LAYER_ENEMY):
+			var enemy := entry["collider"] as EnemyBase
+			if enemy == null or not enemy.kind.elite or enemy.is_dead:
+				continue
+			var id := enemy.get_instance_id()
+			if bullet.rewind_hits.has(id):
+				continue
+			bullet.rewind_hits[id] = true
+			resolve_hit(source, enemy, CombatProfiles.DIRECT, bullet.position, bullet.hit_damage,
+					bullet.hit_impact, hit_direction(bullet.position, enemy.position))
 
-func _blast_targets(center: Vector2, radius: float) -> Array:
-	if blast_target_query.is_valid():
-		return blast_target_query.call(center, radius)
-	var targets: Array = []
-	var seen := {}
-	var space := CollisionWorld.for_space(terrain.space_rid())
-	for at in space.toroidal_centers(center, radius):
-		for entry: Dictionary in space.circle_overlaps(at, radius, ACTOR_LAYERS):
-			var target: Node2D = entry["collider"]
-			if target != null and not seen.has(target.get_instance_id()):
-				seen[target.get_instance_id()] = true
-				targets.append(target)
-	return targets
-
-func resolve_hit(source: Node, target: Node2D, profile: Dictionary, at: Vector2,
+func resolve_hit(source: ActorBody, target: ActorBody, profile: Dictionary, at: Vector2,
 		damage: float, force: float, direction := Vector2.ZERO) -> bool:
 	var targets: int = profile["targets"]
-	if target is ActorBody:
+	if target is Player:
 		if not (targets & _relation(source, target)) or target.sim_downed or target.rewinding:
 			return false
 		if time_field != null and time_field.is_rewinding():
 			return false
-		if not _multiplayer_rules and target.sim_iframes > 0.0 and not profile["ignore_iframes"]:
+		if target.sim_iframes > 0.0 and profile.get("respects_iframes", false):
 			return false
 	elif target is EnemyBase:
 		if not (targets & CombatProfiles.Target.NPC):
@@ -308,14 +310,14 @@ func resolve_hit(source: Node, target: Node2D, profile: Dictionary, at: Vector2,
 
 	match profile["water"]:
 		CombatProfiles.Water.BLAST:
-			var mult := terrain.water_multiplier(target.global_position)
+			var mult := terrain.water_multiplier(target.position)
 			damage *= mult
 			force *= mult
 		CombatProfiles.Water.WET:
-			if terrain.water(target.global_position):
+			if terrain.water(target.position):
 				damage = roundi(damage * CombatProfiles.FLY_BIRD_WET_MULT)
 	if predicting:
-		if force != 0.0 and target is ActorBody:
+		if force != 0.0 and target is Player:
 			predicted_hits.append([target, at, force])
 		return true
 
@@ -340,15 +342,15 @@ func resolve_hit(source: Node, target: Node2D, profile: Dictionary, at: Vector2,
 	player_hit.emit(source_role(source), victim, before - victim.sim_hp, knock != victim.motion_knock_velocity, force)
 	return true
 
-static func _relation(source: Node, target: ActorBody) -> int:
+static func _relation(source: ActorBody, target: Player) -> int:
 	if source == target:
 		return CombatProfiles.Target.SELF
-	if source is ActorBody and source.team != 0 and source.team == target.team:
+	if source is Player and source.team != 0 and source.team == target.team:
 		return CombatProfiles.Target.ALLY
 	return CombatProfiles.Target.OPPONENT
 
-static func source_role(source: Node) -> int:
-	return source.role if source is ActorBody else 0
+static func source_role(source: ActorBody) -> int:
+	return source.role if source is Player else 0
 
 func _delta(from: Vector2, to: Vector2) -> Vector2:
 	var size := terrain.map_size

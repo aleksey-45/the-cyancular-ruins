@@ -47,6 +47,7 @@ var _remaining := -1.0
 var _leaving := false
 
 func _ready() -> void:
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	layer = 130
 	_board_bg = UiFactory.shade(Color(0, 0, 0, 0.25))
 	_board_bg.grow_horizontal = Control.GROW_DIRECTION_BEGIN
@@ -134,8 +135,7 @@ func _build_result() -> void:
 	_sections.alignment = BoxContainer.ALIGNMENT_CENTER
 	UiFactory.action(body, "返回主菜单", Vector2(420, 88), &"BtnGold", _request_leave)
 
-func present(delta: float) -> void:
-	_broadcast.present(delta)
+func _process(delta: float) -> void:
 	if _remaining >= 0.0:
 		_update_timer(_remaining - delta)
 	if _grace_left >= 0.0:

@@ -1,5 +1,6 @@
-[gd_scene format=3 uid="uid://b332erg3p61ae"]
+[gd_resource type="Resource" script_class="EnemyType" format=3 uid="uid://b332erg3p61ae"]
 
+[ext_resource type="Script" path="res://core/config/enemy_type.gd" id="type"]
 [ext_resource type="Texture2D" uid="uid://dhps2onsxrq72" path="res://assets/textures/fly_bird.png" id="1_jclwe"]
 [ext_resource type="Script" uid="uid://d3dyh06lmyjkr" path="res://scenes/enemies/enemy_fly_bird.gd" id="2_script"]
 
@@ -165,20 +166,17 @@ animations = [{
 "speed": 6.0
 }]
 
-[node name="EnemyFlyBird" type="Node2D" unique_id=1702711534]
-scale = Vector2(2, 2)
-script = ExtResource("2_script")
-collision_layer = 4
-collision_mask = 23
+[sub_resource type="ConvexPolygonShape2D" id="Hull0"]
+points = PackedVector2Array(-23, 21, -19, 8, 5, -14, 20, -9, 2, 21)
+
+[sub_resource type="ConvexPolygonShape2D" id="Hull1"]
+points = PackedVector2Array(-23, 4.5, -7.5, -15.5, 19, -6, 19, -2, 6, 11.5, -9, 16.5)
+
+[resource]
+script = ExtResource("type")
+ai = ExtResource("2_script")
+frames = SubResource("SpriteFrames_0uvy8")
+hulls = Array[ConvexPolygonShape2D]([SubResource("Hull0"), SubResource("Hull1")])
+body_scale = 2
 hp = 25
 contact_damage = 0
-knockback_strength = 200.0
-sprite_frames = SubResource("SpriteFrames_0uvy8")
-
-[node name="CollisionPolygon2D" type="CollisionPolygon2D" parent="." unique_id=1488681478]
-visible = false
-polygon = PackedVector2Array(5, -14, -19, 8, -23, 21, 2, 21, 6, 7, 20, -9)
-
-[node name="CollisionPolygon2D_fly" type="CollisionPolygon2D" parent="." unique_id=283299039]
-polygon = PackedVector2Array(19, -6, -7.5, -15.5, -23, 4.5, -9, 16.5, 6, 11.5, 19, -2)
-disabled = true

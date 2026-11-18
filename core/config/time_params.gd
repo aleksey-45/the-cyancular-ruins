@@ -1,34 +1,33 @@
 class_name TimeParams
 extends RefCounted
 
-# 怀表时间系统参数配置表：时间颗粒经济与时间控制的核心数值单一来源。
-# 数值统一在此配置，便于平衡性调优。
+# 单人模式在这里设定时间颗粒、玩家的时间技能以及记录游戏状态的频率。
 
-const GRAIN_INITIAL := 1000       # 初始颗粒
-const GRAIN_CAP := 5000           # 颗粒额度上限（怀表白短针一圈）
-const SHORT_WINDOW := 400.0       # 短时间额度（红长针一圈；短时消耗累计，恢复时逆时针回拨）
-const SHORT_REGEN := 50.0         # 短期额度恢复速率（颗粒/秒；优先偿还透支，还清后恢复短期额度）
-const LOAN_LIMIT := 100.0         # 透支限额（红长针额外 1/4 圈，即短期时间窗口的 1/4）
+const GRAIN_INITIAL := 1000       # 进入单人关卡时持有的时间颗粒数。
+const GRAIN_CAP := 5000           # 余额达到此上限时，怀表的白色短针转满一圈。
+const SHORT_WINDOW := 400.0       # 短期消耗达到此上限时，怀表的红色长针转满一圈。
+const SHORT_REGEN := 50.0         # 每秒补充的使用额度。若已透支，先偿还欠下的额度。
+const LOAN_LIMIT := 100.0         # 短期额度已用完时，可额外透支的时间颗粒数。
 
-const COST_REWIND := 120.0        # 时空回溯消耗率（颗粒/秒，按住 Shift）
-const COST_HASTE := 80.0          # 时间加速消耗率（颗粒/秒，按住右键或 Ctrl）
+const COST_REWIND := 120.0        # 每秒维持时间回溯所需的时间颗粒数。
+const COST_HASTE := 80.0          # 每秒维持时间加速所需的时间颗粒数。
 
-const SNAP_HZ := 20               # 快照采样频率，单位为 Hz
-const SNAP_SECONDS := 40.0        # 环形缓冲容量（秒），即颗粒耗尽前可回溯的最大时长上限
-const REWIND_START_MULT := 3.0    # 倒放起步倍速（快速倒流视觉反馈，随后平滑过渡至 1x）
-const REWIND_RAMP_TIME := 0.35    # 起步倍速过渡至 1x 的时长（秒）
+const SNAP_HZ := 20               # 游戏每秒为时间回溯保存这么多份状态。
+const SNAP_INTERVAL := 1.0 / SNAP_HZ
+const SNAP_SECONDS := 40.0        # 可用于回溯的历史状态最多覆盖这么多秒。
+const REWIND_START_MULT := 3.0    # 刚进入回溯时，每秒回退的游戏时间与实际时间之比。
+const REWIND_RAMP_TIME := 0.35    # 累计回退这么多秒的游戏时间后，回溯速度降至正常速度。
 
-# 主角与精英单位时间加快（2.0 倍），普通敌人、敌方子弹及世界物体时间减慢（0.5 倍）。
-# 通过分域缩放实现相对 4 倍时差，不修改全局 Engine.time_scale，确保底层物理手感稳定。
-const HASTE_PLAYER := 2.0         # 玩家与精英的行动倍率
-const HASTE_WORLD := 0.5          # 其余实体（普通敌人、敌弹、世界物件）的倍率
+# 时间加速期间，各类物体用以下倍率换算模拟时间。
+const HASTE_PLAYER := 2.0         # 适用于玩家、玩家发射的弹丸和精英敌人。
+const HASTE_WORLD := 0.5          # 适用于普通敌人、敌方弹丸和地上的武器。
 
-const LOAN_ENEMY_SPEED_BONUS := 0.5    # 敌人表现速度加成上限(深度1 → ×1.5;实为自身变慢)
-const LOAN_PITCH_RANGE := 0.5          # Sfx 全局音调加成上限(深度1 → pitch×1.5)
+const LOAN_ENEMY_SPEED_BONUS := 0.5    # 普通敌人的时间倍率随透支比例增加。透支用满时，在原倍率上额外增加此比例。
+const LOAN_PITCH_RANGE := 0.5          # 透支会提高音效的音高。此值为透支用满时音高倍率的增量。
 
-const ELITE_GRAIN_DROP := 300     # 击杀一次掉落颗粒
+const ELITE_GRAIN_DROP := 300     # 乌鸫被击败后，玩家获得的时间颗粒数。
 const ELITE_GRAIN_DELAY_TICKS := 36
 
-static func advance_rewind(cursor: float, delta: float) -> float:
-	var ramp := clampf(cursor / REWIND_RAMP_TIME, 0.0, 1.0)
-	return cursor + delta * lerpf(REWIND_START_MULT, 1.0, ramp)
+static func rewind_delta(rewound: float, delta: float) -> float:
+	var ramp := clampf(rewound / REWIND_RAMP_TIME, 0.0, 1.0)
+	return delta * lerpf(REWIND_START_MULT, 1.0, ramp)

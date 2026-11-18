@@ -1,12 +1,10 @@
 class_name Terrain
 extends RefCounted
 
-# 地形数据与破坏状态的唯一所有者：宏格/16px 子格、HP、分块碰撞几何、
-# 单人回溯历史也在这里；场景只负责提供物理空间与视觉瓦片。
+# 地图保留瓦片及其子格数据。地形碰撞按区域更新，期间的变化可同步到客户端或用于时间回溯。
 
 signal changed
 
-# 物理与渲染共用的地形尺度；分块布局与生命周期由本类唯一持有。
 const TILE_SIZE := 64
 const SUB_SIZE := 16
 const SUB_PER_CELL := TILE_SIZE / SUB_SIZE
@@ -28,7 +26,6 @@ const CELL_VALUE: int = 1
 const CELL_HP: int = 2
 const CELL_SUB_HP: int = 3
 
-const REWIND_CELLS: int = 1
 
 var columns := 0
 var rows := 0
@@ -44,22 +41,19 @@ var _initial_grid := PackedInt32Array()
 var _textures := PackedInt32Array()
 var _descriptors := PackedInt32Array()
 var _hp := PackedInt32Array()
-# 只保存偏离初始材质值的宏格 HP。
+# 默认耐久度由初始瓦片的材质决定。只有修改过的瓦片才在字典里记录当前耐久度。
 var _tile_hp: Dictionary[int, int] = {}
 var _network_changes: Dictionary = {}
 var _modified: Dictionary = {}
 var _rewind_pending: Dictionary[int, PackedInt32Array] = {}
-var _rewind_entries := RewindHistory.new()
 var _rewards: Dictionary = {}
 var _visual_changes: Dictionary = {}
 var _chunk_columns := 0
 var _chunk_dirty := PackedByteArray()
 var _dirty_chunks := PackedInt32Array()
-var _owner: Node
-# 常规块按编号索引，数组末两槽存台阶和永久墙。
+var physics: CollisionWorld
+# 每块区域的碰撞合并到一个物理体。数组最后两项预留给可站立的铁链和不可破坏的墙壁。
 var _chunks: Array[Chunk] = []
-var _space := RID()
-var _ray_params := PhysicsRayQueryParameters2D.create(Vector2.ZERO, Vector2.ZERO, CollisionWorld.LAYER_TERRAIN)
 var _shape_rids: Dictionary = {}
 var _placements: Array = []
 var permanent_dirty := true
@@ -102,12 +96,12 @@ func _init(macro: Array = [], descriptors := PackedInt32Array()) -> void:
 	_chunks.resize(_chunk_dirty.size() + 2)
 	for key in _chunks.size():
 		_chunks[key] = Chunk.new()
+	physics = CollisionWorld.new(map_size)
+	invalidate_all()
+	flush_collisions()
 
 func empty() -> bool:
 	return columns == 0 or rows == 0
-
-func space_rid() -> RID:
-	return _space
 
 func cell(position: Vector2) -> Vector2i:
 	if empty():
@@ -162,7 +156,7 @@ func _water_cell(at: Vector2i) -> bool:
 	var v := value(at)
 	return v != 0 and TileDefs.types[texture(v)] == TileDefs.TYPE_LIQUID
 
-## 沿采样点所在的连续水柱向上量深度。干处为 -INF，整列是水时为 INF。
+## 返回输入位置到其正上方水面的距离。输入位置不在水里时为 -INF，整列没有水面时为 INF。
 func water_depth(position: Vector2) -> float:
 	var at := cell(position)
 	if not _water_cell(at):
@@ -178,9 +172,8 @@ func water_multiplier(position: Vector2) -> float:
 func cell_center(at: Vector2i) -> Vector2:
 	return Vector2((at.x + 0.5) * TILE_SIZE, (at.y + 0.5) * TILE_SIZE)
 
-## 遮挡查询走引擎射线：只有真实存在于物理空间的地形才遮挡。
-## 连线按环面最短位移分段，跨接缝时每段都在规范世界内查询；
-## 否则两端贴边的连线会改判成穿过整张地图的直线。
+## 沿两点之间的最短路线检查地形遮挡。
+## 路线横跨地图边缘时，在另一侧继续发射射线。
 func line_of_sight(from: Vector2, to: Vector2) -> bool:
 	if empty():
 		return true
@@ -200,16 +193,14 @@ func line_of_sight(from: Vector2, to: Vector2) -> bool:
 	return true
 
 func _ray_between(from: Vector2, to: Vector2) -> Dictionary:
-	_ray_params.from = from
-	_ray_params.to = to
 	var started := PerformanceStats.begin()
-	var hit := PhysicsServer2D.space_get_direct_state(_space).intersect_ray(_ray_params)
+	var hit := physics.ray_hit(from, to, CollisionWorld.LAYER_TERRAIN)
 	PerformanceStats.end(PerformanceStats.PHYSICS_RAY, started)
 	return hit
 
-## 光束几何全部交给引擎射线；命中后沿法线反射并保留剩余总长度。
-## 长光线在接缝处分段：查询位置回绕到规范区间，返回的折线保持视觉连续。
-## contacts 仍是宏格坐标，供武器结算瓦片伤害。
+## 光束按碰撞法线反射，反射前走过的距离会从剩余射程中扣除。
+## 跨边缘的碰撞查询从地图另一侧继续。记录路径点时保留相应的偏移量，让渲染仍能连成整条光束。
+## 返回的 contacts 中保存被光束击中的瓦片坐标，供地形伤害结算。
 func trace_beam(origin: Vector2, direction: Vector2, length: float, max_bounces: int) -> Dictionary:
 	var points := PackedVector2Array([origin])
 	var hit_points := PackedVector2Array()
@@ -255,7 +246,7 @@ func trace_beam(origin: Vector2, direction: Vector2, length: float, max_bounces:
 		points.append(p + shift)
 	return {"points": points, "contacts": contacts, "hit_points": hit_points}
 
-## 矩形是否与实心格重叠；with_liquid 时液体格也算。按格尺寸取样，边界格向两侧取整。
+## 检查矩形是否碰到实心瓦片。将 with_liquid 设为 true 也会检查水体。
 func rect_overlaps(bounds: Rect2, size: float, with_liquid: bool) -> bool:
 	if empty() or size <= 0.0:
 		return false
@@ -475,7 +466,6 @@ func reset() -> void:
 	_modified.clear()
 	_rewards.clear()
 	_rewind_pending.clear()
-	_rewind_entries = RewindHistory.new()
 	revision = revision + 1 if authoritative else 0
 	flush_collisions()
 
@@ -539,27 +529,15 @@ static func _wall_rectangles(area: Rect2i, remaining: PackedByteArray) -> Array:
 			result.append(Rect2(corner + size * 0.5, size))
 	return result
 
-# 挂载节点离树时归还自管的物理句柄。
-func close() -> void:
-	if is_instance_valid(_owner):
-		_owner.tree_exiting.disconnect(close)
-	_owner = null
-	for chunk in _chunks:
-		if chunk.body.is_valid():
-			PhysicsServer2D.free_rid(chunk.body)
-		chunk.body = RID()
-		chunk.signature = PackedByteArray()
-		chunk.layouts.clear()
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_PREDELETE:
+		for chunk in _chunks:
+			if chunk.body.is_valid():
+				PhysicsServer2D.free_rid(chunk.body)
+		for shape: RID in _shape_rids.values():
+			PhysicsServer2D.free_rid(shape)
 
-	for rid: RID in _shape_rids.values():
-		if rid.is_valid():
-			PhysicsServer2D.free_rid(rid)
-	_shape_rids.clear()
-	if _space.is_valid():
-		CollisionWorld.release_terrain(_space, self)
-		_space = RID()
-
-# 形状句柄按尺寸共享；物理服务器收的是半宽高。
+# 尺寸相同的矩形共用一个形状。在物理服务器中，矩形的尺寸参数是半宽和半高。
 func _shape_rid(size: Vector2) -> RID:
 	var key := Vector2i(size)
 	var rid: RID = _shape_rids.get(key, RID())
@@ -578,7 +556,7 @@ func _lay_shapes(rects: Array) -> void:
 	for rect: Rect2 in rects:
 		var shape := _shape_rid(rect.size)
 		_placements.append([shape, Transform2D(0.0, rect.position)])
-		# 碰撞布局存矩形中心，接缝判定用边界。
+		# 为地图边缘附近的矩形添加另一侧的碰撞形状，覆盖越界后的移动和查询。
 		var box := Rect2(rect.position - rect.size * 0.5, rect.size)
 		var copies := GridPathfinder.seam_copy_range(box, map_size, margin)
 		for y in range(copies.position.y, copies.end.y):
@@ -587,7 +565,7 @@ func _lay_shapes(rects: Array) -> void:
 					var center := rect.position + Vector2(x, y) * map_size
 					_placements.append([shape, Transform2D(0.0, center)])
 
-# 碰撞几何直接写进物理空间，不建场景节点。槽位按索引更新，数量变化时才整体重建。
+# 数量相同就更新物理体上的已有形状。必须增减形状时，再清空形状列表并重新添加。
 func _submit(chunk: Chunk, signature: PackedByteArray, rects: Array) -> void:
 	var body := chunk.body
 	if not body.is_valid():
@@ -595,7 +573,7 @@ func _submit(chunk: Chunk, signature: PackedByteArray, rects: Array) -> void:
 		PhysicsServer2D.body_set_mode(body, PhysicsServer2D.BODY_MODE_STATIC)
 		PhysicsServer2D.body_set_collision_layer(body, 1)
 		PhysicsServer2D.body_set_collision_mask(body, 0)
-		PhysicsServer2D.body_set_space(body, _space)
+		PhysicsServer2D.body_set_space(body, physics.world.space)
 		chunk.body = body
 	_lay_shapes(rects)
 	if PhysicsServer2D.body_get_shape_count(body) == _placements.size():
@@ -607,11 +585,11 @@ func _submit(chunk: Chunk, signature: PackedByteArray, rects: Array) -> void:
 		PhysicsServer2D.body_clear_shapes(body)
 		for entry: Array in _placements:
 			PhysicsServer2D.body_add_shape(body, entry[0], entry[1])
-	# 静态体的形状改动必须重设自身变换后才会进入宽相；否则同帧查询看不到新几何。
+	# 提交一次变换以刷新物理服务器，让紧接着的查询就能使用更新后的形状。
 	PhysicsServer2D.body_set_state(body, PhysicsServer2D.BODY_STATE_TRANSFORM, Transform2D.IDENTITY)
 	chunk.signature = signature
 
-# 观测用：某个分块当前写入空间的形状中心；接缝镜像的数量由这份布局核对。
+# 读取指定地形区域的形状中心点，让测试能验证地图边缘两侧的碰撞位置。
 func body_shapes(key: int) -> PackedVector2Array:
 	var out := PackedVector2Array()
 	var body := _chunks[key].body
@@ -629,7 +607,7 @@ func _chunk_area(key: int) -> Rect2i:
 func _rebuild_walls(key: int, area: Rect2i) -> void:
 	var chunk := _chunks[key]
 	var mask := _wall_mask(area, key != PERMANENT_CHUNK)
-	# 无损压缩的占用图同时标识当前形状和最近四个可破坏布局。
+	# 每块区域用压缩后的子格占用数据标识碰撞布局。相同布局再次出现时，可以直接使用已计算的矩形列表。
 	var signature := mask.compress(FileAccess.COMPRESSION_FASTLZ)
 	if chunk.signature == signature:
 		return
@@ -661,27 +639,10 @@ func _rebuild_ledges() -> void:
 		_submit(_chunks[LEDGE_CHUNK], signature, rects)
 	ledges_dirty = false
 
-func attach(parent: Node) -> void:
-	assert(parent.is_inside_tree(), "Terrain: attach 需要已挂载的节点")
-	var space := CollisionWorld.world_of(parent).space
-	var physics := CollisionWorld.for_space(space)
-	assert(physics.terrain == null or physics.terrain == self, "一个物理空间只能挂载一张地图")
-	if _space != space:
-		close()
-		_space = space
-	if _owner != parent:
-		if _owner != null:
-			_owner.tree_exiting.disconnect(close)
-		_owner = parent
-		_owner.tree_exiting.connect(close)
-	physics.terrain = self
-	invalidate_all()
-	flush_collisions()
-
 func flush_collisions() -> int:
 	if _dirty_chunks.is_empty() and not permanent_dirty and not ledges_dirty:
 		return 0
-	if empty() or not _space.is_valid():
+	if empty():
 		return 0
 	var started := PerformanceStats.begin()
 	if permanent_dirty:
@@ -713,25 +674,12 @@ func invalidate_all() -> void:
 	for key in _chunk_dirty.size():
 		_queue_chunk(key)
 
-func seal_rewind(time: float) -> void:
-	if _rewind_pending.is_empty():
-		return
-	_rewind_pending.sort()
-	_rewind_entries.push([time, _rewind_pending.values()])
+## 每个世界检查点只需保存期间有改动的瓦片，每个瓦片保留首次修改前的值。
+func take_rewind_changes() -> Array:
+	var cells := _rewind_pending.values()
 	_rewind_pending.clear()
+	return cells
 
-func rewind_between(target: float, cursor: float) -> void:
-	var begin := _rewind_entries.first_after(target)
-	var end := _rewind_entries.first_after(cursor)
-	for index in range(end - 1, begin - 1, -1):
-		var cells: Array = _rewind_entries.frame(index)[REWIND_CELLS]
-		for i in range(cells.size() - 1, -1, -1):
-			_restore_cell(cells[i])
-	flush_collisions()
-
-func prune_rewind(cutoff: float) -> void:
-	_rewind_entries.expire_before(cutoff)
-
-func truncate_rewind(time: float) -> void:
-	_rewind_entries.truncate(time)
-	_rewind_pending.clear()
+func undo_changes(cells: Array) -> void:
+	for state: PackedInt32Array in cells:
+		_restore_cell(state)

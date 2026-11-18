@@ -38,7 +38,7 @@ func start_countdown(seconds: float, subtitle: String) -> void:
 	_subtitle.text = subtitle
 	_count(maxi(ceili(_countdown), 1))
 
-func present(delta: float) -> void:
+func _process(delta: float) -> void:
 	if _punch > 0.0:
 		_punch = maxf(0.0, _punch - delta * 4.0)
 		_apply_punch()

@@ -2,23 +2,15 @@ class_name ActorStep
 extends RefCounted
 const DT := 1.0 / 60.0
 
-## 联机角色按 ID 推进。客户端在预测范围内推进远端角色。
-static func step_players(players: Dictionary, tick: int, economy: TimeEconomy, local: Player = null,
-		predict_remotes := true) -> Array[Player]:
-	var roles := players.keys()
-	roles.sort()
-	var stepped: Array[Player] = []
-	for role: int in roles:
+## 取出本帧可以模拟的玩家输入。预测窗口以外的远端角色等待服务器快照。
+static func buffered_inputs(players: Dictionary, tick: int, local: Player = null, predict_remotes := true) -> Dictionary:
+	var inputs := {}
+	for role: int in players:
 		var player: Player = players[role]
-		if local != null and player != local \
-				and (not predict_remotes or (player.respawn_tick > 0 and tick > player.respawn_tick)):
+		if local != null and player != local and (not predict_remotes or (player.respawn_tick > 0 and tick > player.respawn_tick)):
 			continue
-		var record := player.input_buffer.take(tick)
-		if economy != null:
-			economy.step_haste(player, record, DT)
-		step(player, record)
-		stepped.append(player)
-	return stepped
+		inputs[role] = player.input_buffer.take(tick)
+	return inputs
 
 static func step(actor: Player, record: Array, delta: float = DT) -> Array:
 	actor.step_input.prepare(record, actor._controls_locked)
@@ -28,8 +20,8 @@ static func step(actor: Player, record: Array, delta: float = DT) -> Array:
 	if actor.rewinding or (field != null and field.is_rewinding()):
 		return actor.combat_requests
 	if not actor.sim_downed:
-		if not actor._controls_locked and actor.ground_actions.is_valid():
-			actor.ground_actions.call(actor, record)
+		if not actor._controls_locked and not actor.combat.predicting:
+			actor.combat.ground.handle_actions(actor, record)
 		var winst := actor.step_input.weapon_inst
 		if winst > 0:
 			actor.weapons.equip_inst(winst)
@@ -37,6 +29,6 @@ static func step(actor: Player, record: Array, delta: float = DT) -> Array:
 				actor.step_input.pressed &= ~(ActorInput.BIT_ATTACK | ActorInput.BIT_RELOAD)
 				actor.step_input.released &= ~ActorInput.BIT_ATTACK
 				actor.step_input.held &= ~ActorInput.BIT_ATTACK
-	var tm: float = field.player_speed_mult() if field != null else actor.pvp_haste_mult
+	var tm: float = field.player_speed_mult() if field != null else actor.personal_haste_mult
 	actor.step_actor(delta, tm)
 	return actor.combat_requests

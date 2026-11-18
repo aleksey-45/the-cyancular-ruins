@@ -1,24 +1,17 @@
 class_name InputBuffer
 extends RefCounted
+
+enum Timing { SEQ, LEAD }
 const REDUNDANCY := 4
 const HOLD_TICKS := 6
 const FUTURE_TICKS := 32
 const ACTION_TICKS := 12
 
-const PACKET_FRAMES: int = 0
-const PACKET_ACTIONS: int = 1
+enum { PACKET_FRAMES, PACKET_ACTIONS }
 
 # 持续输入和单次动作共用前三个槽。
-const SEQ: int = 0
-const EPOCH: int = 1
-const TARGET_TICK: int = 2
-const FRAME_AX: int = 3
-const FRAME_HELD: int = 4
-const FRAME_AIM: int = 5
-const ACTION_PRESSED: int = 3
-const ACTION_RELEASED: int = 4
-const ACTION_WINST: int = 5
-const ACTION_AIM: int = 6
+enum { SEQ, EPOCH, TARGET_TICK, FRAME_AX, FRAME_HELD, FRAME_AIM }
+enum { ACTION_PRESSED = TARGET_TICK + 1, ACTION_RELEASED, ACTION_WINST, ACTION_AIM }
 
 const _AVAILABLE_TICK: int = 0
 const _ACTION_RECORD: int = 1

@@ -33,14 +33,11 @@ func fill_default_magazine() -> void:
 func has_magazine() -> bool:
 	return definition.has("mag")
 
-func has_aim_guide() -> bool:
-	return aiming and definition["attack"] != WeaponRegistry.Attack.MELEE
-
 func cancel_aim() -> void:
 	aiming = false
 	hold_elapsed = 0.0
 
-func start_reload(actor: ActorBody) -> void:
+func start_reload(actor: Player) -> void:
 	if not has_magazine() or reloading or carried >= definition["mag"]:
 		return
 	reload_left = definition["reload"]
@@ -51,24 +48,29 @@ static func aim_transform(direction: Vector2, facing: int, limit: float) -> Tran
 	var angle := clampf(local.angle(), -deg_to_rad(limit), deg_to_rad(limit)) * facing
 	return Transform2D(angle, Vector2(facing, 1.0), 0.0, Vector2.ZERO)
 
-func muzzle_pose(actor: ActorBody, aim: Vector2) -> Transform2D:
+func muzzle_pose(actor: Player, aim: Vector2) -> Transform2D:
 	var direction := aim if aim != Vector2.ZERO else Vector2(actor.facing_direction, 0)
 	var pose := aim_transform(direction, shot_facing, definition["pitch"])
-	pose.origin = actor.to_global(pose * (definition["muzzle"] as Vector2))
+	pose.origin = actor.transform * (pose * (definition["muzzle"] as Vector2))
 	return pose
 
-func preview_arc(actor: ActorBody, aim: Vector2, delta: float) -> PackedVector2Array:
-	if not definition.has("arc_time"):
+func aim_guide(actor: Player, aim: Vector2) -> PackedVector2Array:
+	if not aiming or definition["attack"] == WeaponRegistry.Attack.MELEE:
 		return PackedVector2Array()
 	var muzzle := muzzle_pose(actor, aim)
-	var speed := ShotRules.launch_speed(definition, charge_ratio()) * actor.pvp_haste_mult
+	if not definition.has("arc_time"):
+		return PackedVector2Array([muzzle.origin, muzzle.origin + muzzle.x * 600.0 * actor.scale.x])
+	var delta := ActorStep.DT
+	if actor.time_field != null and actor.time_field.is_hasting():
+		delta *= actor.time_field.player_speed_mult()
+	var speed := ShotRules.launch_speed(definition, charge_ratio()) * actor.personal_haste_mult
 	return ShotRules.trace_arc(actor.terrain, muzzle.origin, muzzle.x * speed, definition, delta, definition["arc_time"])
 
 func charge_ratio() -> float:
 	return hold_elapsed / float(definition["charge_time"]) \
 			if definition["trigger"] == WeaponRegistry.Trigger.CHARGE_RELEASE else 1.0
 
-func step(actor: ActorBody, input: ActorInput, delta: float) -> Vector2:
+func step(actor: Player, input: ActorInput, delta: float) -> Vector2:
 	if input.pressed & ActorInput.BIT_RELOAD:
 		start_reload(actor)
 	fire_cd_timer = maxf(fire_cd_timer - delta, 0.0)
@@ -123,7 +125,7 @@ func step(actor: ActorBody, input: ActorInput, delta: float) -> Vector2:
 			or penalty == WeaponRegistry.Penalty.AIM_OR_COOLDOWN and aiming
 	return definition["move"] if slowed else Vector2.ONE
 
-func aim_at(actor: ActorBody, input_aim: Vector2) -> void:
+func aim_at(actor: Player, input_aim: Vector2) -> void:
 	if absf(input_aim.x) > 0.1:
 		shot_facing = 1 if input_aim.x > 0.0 else -1
 		if not actor.is_charge:
@@ -131,7 +133,7 @@ func aim_at(actor: ActorBody, input_aim: Vector2) -> void:
 	elif input_aim == Vector2.ZERO:
 		shot_facing = actor.facing_direction
 
-func _try_fire(actor: ActorBody, aim: Vector2) -> void:
+func _try_fire(actor: Player, aim: Vector2) -> void:
 	var cooldown: float = definition["cooldown"]
 	if fire_cd_timer > 0.0:
 		if cooldown > 0.5 and fire_cd_timer <= cooldown * 0.2:
@@ -139,20 +141,20 @@ func _try_fire(actor: ActorBody, aim: Vector2) -> void:
 		return
 	_fire(actor, aim)
 
-func _fire(actor: ActorBody, aim: Vector2) -> void:
+func _fire(actor: Player, aim: Vector2) -> void:
 	if reloading:
 		return
 	if has_magazine() and carried == 0:
 		start_reload(actor)
 		return
 	var cap: int = definition["live_cap"]
-	# 活弹上限使用当前模拟中的弹丸。
-	if cap > 0 and actor.projectile_count.is_valid() and actor.projectile_count.call(type_id) >= cap:
+	# 同类弹丸达到场上数量上限时，跳过开火，不扣减弹药。
+	if cap > 0 and actor.combat.count_projectiles(type_id, actor) >= cap:
 		return
 	fire_cd_timer = definition["cooldown"]
 	var pose := muzzle_pose(actor, aim)
 	actor.shot_serial += 1
-	var speed_mult := actor.pvp_haste_mult if definition["attack"] == WeaponRegistry.Attack.PROJECTILE else 1.0
+	var speed_mult := actor.personal_haste_mult if definition["attack"] == WeaponRegistry.Attack.PROJECTILE else 1.0
 	actor.combat_requests.append({"kind": "fire", "type_id": type_id, "serial": actor.shot_serial,
 		"pos": pose.origin, "dir": pose.x, "charge": charge_ratio(), "speed_mult": speed_mult})
 	actor.presentation_events.append({"kind": "fire", "type_id": type_id, "serial": actor.shot_serial})
@@ -163,8 +165,7 @@ func _fire(actor: ActorBody, aim: Vector2) -> void:
 	actor.apply_recoil(definition["recoil"])
 
 func state_values() -> Array:
-	# 协议 19 保留两份朝向和装填标记，运行状态只持有朝向和剩余时间。
-	return [fire_cd_timer, aiming, fire_buffered, shot_facing, shot_facing, reloading, reload_left, hold_elapsed]
+	return [fire_cd_timer, aiming, fire_buffered, shot_facing, reload_left, hold_elapsed]
 
 func restore_state_values(values: Array) -> void:
 	fire_cd_timer = values[StateSlot.COOLDOWN]

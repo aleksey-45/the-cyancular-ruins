@@ -5,9 +5,10 @@ enum Mode { SOLO, DUEL, TEAM, ROYALE }
 
 class Pose:
 	var id: int
+	var remote: bool
 	var anchor: Vector2
-	var scale := Vector2(2.5, 2.5)
-	# 敌人使用场景提供的资源和 Activity，玩家使用默认资源和移动状态。
+	var scale := Vector2.ONE * PlayerParams.body_scale
+	# 有 SpriteFrames 时，WorldView 使用该敌人类型的动画资源。未设置时使用玩家的共享动画。
 	var frames: SpriteFrames
 	var state: int
 	var facing := 1
@@ -43,19 +44,15 @@ class Clock:
 	var rewind: bool
 	var haste: bool
 
-class Beam:
-	var points: PackedVector2Array
-	var until: float
-
 var now := 0.0
 var mode := Mode.SOLO
-var camera_at: Vector2
 var focus: Vector2
 var actors: Array[Pose] = []
-# 拾取行是 [类型, 位置, 显示提示]，弹丸行是 [ID, 类型, 位置, 朝向]。
+# 掉落物按类型、显示位置和可拾取状态记录。弹丸按 ID、类型、显示位置和旋转角度记录。
 var pickups: Array[Array] = []
 var projectiles: Array[Array] = []
-var beams: Array[Beam] = []
+# 每条光束取自对应模拟帧，保存路径和本帧透明度。
+var beams: Array[Array] = []
 var wall_changes: Dictionary = {}
 var aim_guide := PackedVector2Array()
 var health: int
@@ -65,7 +62,7 @@ var max_oxygen: int
 var downed: bool
 var hit_ratio := 0.0
 var kills := 0
-# [选中槽位, 容量, (武器类型, 占位数)...]。弹药变化独立更新。
+# 武器栏使用 WeaponInventory.cell_layout() 的返回值。剩余弹药和弹匣容量另存为字段。
 var inventory := PackedInt32Array()
 var ammo := -1
 var magazine := 0
@@ -80,13 +77,9 @@ func begin(delta: float, local_at: Vector2) -> void:
 	actors.clear()
 	pickups.clear()
 	projectiles.clear()
-	for i in range(beams.size() - 1, -1, -1):
-		if beams[i].until <= now:
-			beams.remove_at(i)
+	beams.clear()
 
-func add_beam(points: PackedVector2Array) -> Beam:
-	var beam := Beam.new()
-	beam.points = points
-	beam.until = now + 0.25
-	beams.append(beam)
-	return beam
+func sample_beam(beam: Array, tick: float) -> void:
+	var remaining := float(beam[CombatSimulator.Beam.END_TICK]) - tick
+	if remaining > 0.0 and remaining <= CombatSimulator.BEAM_TICKS:
+		beams.append([beam[CombatSimulator.Beam.POINTS], minf(remaining * ActorStep.DT / 0.12, 1.0)])

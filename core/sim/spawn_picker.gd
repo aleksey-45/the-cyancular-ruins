@@ -2,7 +2,6 @@ class_name SpawnPicker
 extends RefCounted
 
 const NO_CELL := Vector2i(-1, -1)
-const STANDING_RECT := Rect2(-45, -50, 80, 107)  # 相对出生格中心的站立碰撞箱
 const SUPPORT_ROWS := 2
 const PREFERRED_DISTANCE := 8  # 瓦片
 
@@ -94,7 +93,9 @@ static func spawn_cell_problem(descriptors: PackedInt32Array, dims: Vector2i, ce
 
 static func _standing_subrect(cell: Vector2i) -> Rect2:
 	var center := (Vector2(cell) + Vector2(0.5, 0.5)) * Terrain.TILE_SIZE
-	return Rect2((center + STANDING_RECT.position) / Terrain.SUB_SIZE, STANDING_RECT.size / Terrain.SUB_SIZE)
+	var hull := PlayerParams.standing_hull
+	return Rect2((center + hull.position * PlayerParams.body_scale) / Terrain.SUB_SIZE,
+			hull.size * PlayerParams.body_scale / Terrain.SUB_SIZE)
 
 static func _wall_at(descriptors: PackedInt32Array, size: Vector2i, x: int, y: int) -> bool:
 	var index := posmod(y, size.y) * size.x + posmod(x, size.x)
@@ -108,7 +109,7 @@ static func _first_wall(descriptors: PackedInt32Array, size: Vector2i, bounds: R
 				return Vector2i(x, y)
 	return null
 
-## 沿环面四邻域找出站立包围盒能够通过的静态空域。
+## 从出生点沿相邻瓦片搜索，仅经过有完整站立空间的位置。越过地图边缘时继续检查另一侧。
 static func _clear_region(descriptors: PackedInt32Array, dims: Vector2i, start: Vector2i) -> Dictionary:
 	var size := dims * Terrain.SUB_PER_CELL
 	var visited := {start: true}

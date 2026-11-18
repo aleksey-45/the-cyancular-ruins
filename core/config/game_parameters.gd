@@ -1,4 +1,5 @@
-extends Node
+class_name GameParameters
+extends RefCounted
 
 # 全局共享参数：供玩家、敌人与子弹等实体共享的物理常数、世界网格规格与敌人生成参数。
 # 玩家独立参数已移至 PlayerParams（包含移动、跳跃、冲刺、相机与战斗相关参数）。

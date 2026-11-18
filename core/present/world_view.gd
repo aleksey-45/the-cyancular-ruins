@@ -37,10 +37,9 @@ var _effects := [[], [], [], []]
 var _hits := {}
 var _remote_hits := {}
 
-func attach(parent: Node, size: Vector2) -> void:
+func bind(canvas: WorldCanvas, size: Vector2) -> void:
+	_canvas = canvas
 	_size = size
-	_canvas = WorldCanvas.new()
-	parent.add_child(_canvas)
 
 func reset() -> void:
 	for buffer in [_motions, _poses, _fire, _trails, _trail_deadlines, _paths, _next_paths, _hits, _remote_hits] + _effects:
@@ -54,8 +53,10 @@ func motion(id: int, kind: StringName, now: float, speed := 0.0) -> void:
 	var strength := float(PULSES[kind]) if kind != &"land" else -clampf(inverse_lerp(220.0, 900.0, speed), 0.0, 1.0)
 	if strength != 0.0:
 		_motions[id] = Vector2(now, strength)
-	if id < 0 and kind == &"hurt":
-		_remote_hits[id] = now + 0.35
+
+func remote_hurt(role: int, now: float) -> void:
+	motion(role, &"hurt", now)
+	_remote_hits[role] = now + 0.35
 
 func fire(id: int, weapon: int, now: float) -> void:
 	Sfx.play(WeaponRegistry.definition(weapon)["shot_sound"])
@@ -122,7 +123,6 @@ func _actor(pose: MatchFrame.Pose, frame: MatchFrame) -> void:
 	var now := frame.now
 	var enemy := pose.frames != null
 	var flip := pose.facing < 0
-	var remote := pose.id < 0
 	var frames := pose.frames if enemy else PLAYER_FRAMES
 	var clip := _enemy_clip(pose) if enemy else (&"idle" if pose.downed else PLAYER_CLIPS[pose.state]) as StringName
 	var first_frame := pose.state == Activity.WAIT if enemy else pose.downed
@@ -162,14 +162,14 @@ func _actor(pose: MatchFrame.Pose, frame: MatchFrame) -> void:
 			var base := UiFactory.C_TEAM_A
 			var team_color := pose.name_color(frame.mode)
 			tint = Color(team_color.r / base.r, team_color.g / base.g, team_color.b / base.b)
-		var hit_left := float(_remote_hits.get(pose.id, 0.0)) - now if remote else pose.hit_left
+		var hit_left := float(_remote_hits.get(pose.id, 0.0)) - now if pose.remote else pose.hit_left
 		var alpha := 0.4 if hit_left > 0.0 and int(hit_left * 20.0) % 2 == 0 else 1.0
 		color = Color(tint, alpha)
 		if frame.mode == MatchFrame.Mode.ROYALE and pose.hue != 0.0:
 			color = Color(fposmod(pose.hue, 1.0), 1, 1, alpha)
 			pass_kind = WorldCanvas.Pass.HUE
 		if pose.haste and not pose.rewind:
-			glow = Color((ENEMY_GLOW if remote else PLAYER_GLOW) * tint, alpha)
+			glow = Color((ENEMY_GLOW if pose.remote else PLAYER_GLOW) * tint, alpha)
 		if not pose.downed:
 			_trail(pose, frame, image, visual, tint)
 	_texture(image, visual, color, flip, pass_kind)
@@ -192,7 +192,7 @@ func _actor(pose: MatchFrame.Pose, frame: MatchFrame) -> void:
 		var cycle := age * frames.get_animation_speed(clip) / frames.get_frame_count(clip)
 		offset.y += sin(TAU * cycle) * 1.4
 	_canvas.sprite(WEAPONS, weapon["region"], body * pose.aim * Transform2D(tilt, offset), Color(Color.WHITE, color.a))
-	if reload >= 0.0 and not remote:
+	if reload >= 0.0 and not pose.remote:
 		_reload(pose.anchor, pose.facing, reload, pose.reload_left)
 
 func _enemy_clip(pose: MatchFrame.Pose) -> StringName:
@@ -207,7 +207,7 @@ func _enemy_clip(pose: MatchFrame.Pose) -> StringName:
 func _trail(pose: MatchFrame.Pose, frame: MatchFrame, image: Texture2D, visual: Transform2D, tint: Color) -> void:
 	if frame.now < float(_trail_deadlines.get(pose.id, 0.0)):
 		return
-	var foreground := pose.rewind and pose.id < 0
+	var foreground := pose.rewind and pose.remote
 	var alternate := pose.haste and frame.mode == MatchFrame.Mode.SOLO
 	var color := Color.WHITE
 	if alternate:
@@ -217,7 +217,7 @@ func _trail(pose: MatchFrame.Pose, frame: MatchFrame, image: Texture2D, visual: 
 		color = UiFactory.C_TEAM_B
 	elif foreground:
 		color = UiFactory.C_TEXT_DIM
-	elif pose.state == ActorBody.DASH:
+	elif pose.state == Player.DASH:
 		color = UiFactory.C_TEAM_A * tint
 	else:
 		return
@@ -265,13 +265,15 @@ func _draw_effects(frame: MatchFrame, grain_target: Vector2) -> void:
 	for hit_row: Array in _hits.values():
 		_effects[Effect.NUMBER].append([hit_row[0], now, hit_row[1], hit_row[2]])
 	_hits.clear()
-	for i in range(frame.beams.size() - 1, -1, -1):
-		var shot := frame.beams[i]
-		var alpha := minf((shot.until - now) / 0.12, 1.0)
-		_canvas.line(shot.points, Color(0.1, 0.35, 1.0, 0.30 * alpha), 10.0)
-		_canvas.line(shot.points, Color(1, 1, 1, 0.95 * alpha), 3.0)
-		_canvas.circle(shot.points[0], 13.0, Color(0.1, 0.35, 1.0, 0.18 * alpha))
-		_canvas.circle(shot.points[0], 5.0, Color(1, 1, 1, 0.65 * alpha))
+	for beam: Array in frame.beams:
+		var points: PackedVector2Array = beam[0]
+		var alpha: float = beam[1]
+		var offset := GridPathfinder.anchor_to_nearest(points[0], frame.focus, _size) - points[0]
+		points = Transform2D(0.0, offset) * points
+		_canvas.line(points, Color(0.1, 0.35, 1.0, 0.30 * alpha), 10.0)
+		_canvas.line(points, Color(1, 1, 1, 0.95 * alpha), 3.0)
+		_canvas.circle(points[0], 13.0, Color(0.1, 0.35, 1.0, 0.18 * alpha))
+		_canvas.circle(points[0], 5.0, Color(1, 1, 1, 0.65 * alpha))
 	for kind in _effects.size():
 		var rows: Array = _effects[kind]
 		for i in range(rows.size() - 1, -1, -1):

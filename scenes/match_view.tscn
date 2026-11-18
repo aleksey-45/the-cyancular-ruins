@@ -1,0 +1,41 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://core/present/match_view.gd" id="1"]
+[ext_resource type="Script" path="res://scenes/match_camera.gd" id="2"]
+[ext_resource type="Script" path="res://core/present/terrain_view.gd" id="3"]
+[ext_resource type="Script" path="res://core/present/world_canvas.gd" id="4"]
+[ext_resource type="Script" path="res://core/present/post_process.gd" id="5"]
+[ext_resource type="Script" path="res://ui/hud/hud.gd" id="6"]
+[ext_resource type="Script" path="res://ui/hud/combat_feedback.gd" id="7"]
+[ext_resource type="Script" path="res://ui/screens/pause_menu.gd" id="8"]
+
+[node name="View" type="Node"]
+script = ExtResource("1")
+
+[node name="WorldViewport" type="SubViewport" parent="."]
+size = Vector2i(2208, 1728)
+render_target_update_mode = 4
+
+[node name="Camera" type="Camera2D" parent="WorldViewport"]
+script = ExtResource("2")
+
+[node name="Terrain" type="Node2D" parent="WorldViewport"]
+script = ExtResource("3")
+
+[node name="Canvas" type="Node2D" parent="WorldViewport"]
+script = ExtResource("4")
+
+[node name="PostProcess" type="CanvasLayer" parent="." node_paths=PackedStringArray("world_viewport")]
+script = ExtResource("5")
+world_viewport = NodePath("../WorldViewport")
+
+[node name="Hud" type="CanvasLayer" parent="."]
+script = ExtResource("6")
+
+[node name="Feedback" type="CanvasLayer" parent="."]
+script = ExtResource("7")
+
+[node name="Pause" type="CanvasLayer" parent="."]
+layer = 145
+process_mode = 3
+script = ExtResource("8")
