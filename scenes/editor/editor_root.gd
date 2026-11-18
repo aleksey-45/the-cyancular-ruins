@@ -52,6 +52,8 @@ var _output: RichTextLabel = null
 var _selection_info: Label = null
 var _meta_info: Label = null
 var _meta_list: VBoxContainer = null
+var _meta_toggle: Button = null
+var _meta_expanded := false            # 已放置列表默认收起:77 条同权文本会淹没右栏(渐进披露)
 var _enemy_type_opt: OptionButton = null
 var _message := ""
 var _enemy_types: Array[String] = []
@@ -299,6 +301,10 @@ func _wire_ui() -> void:
 	_selection_info = %SelectionInfo
 	_meta_info = %MetaInfo
 	_meta_list = %MetaList
+	_meta_toggle = %MetaToggle as Button
+	_meta_toggle.theme_type_variation = &"FlatButton"
+	_meta_toggle.add_theme_color_override("font_color", UiFactory.C_TEXT_DIM)
+	_meta_toggle.pressed.connect(_toggle_meta_list)
 	_canvas_host = %CanvasHost
 	_split = %Split
 	_tabs = %RightTabs
@@ -307,11 +313,13 @@ func _wire_ui() -> void:
 	# 标题从 32 号亮青降成 16 号弱化:菜单栏是"窗口标题"语气,不跟画布抢焦点。
 	(%TitleLabel as Label).theme_type_variation = &"SmallDim"
 	for name: String in ["ViewLabel", "ToolsHint", "BrushHint", "ColorHint", "PaletteHint", "HelpHint",
-			"LayersHint", "StatusText", "StatusInfo", "DocLabel", "PathText", "SelHint", "MetaHint",
+			"LayersHint", "StatusInfo", "DocLabel", "PathText", "SelHint", "MetaHint",
 			"ReportHint", "SelectionInfo", "MetaInfo", "MetaListHint", "EnemyTypeLabel", "ZoomText"]:
 		var l := get_node_or_null("%" + name) as Label
 		if l != null:
 			l.add_theme_color_override("font_color", UiFactory.C_TEXT_DIM)
+	# 状态栏消息是「当前发生了什么」,比右侧读数(尺寸/层/子格)更重要 ⇒ 亮一档。
+	(%StatusText as Label).add_theme_color_override("font_color", UiFactory.C_TEXT)
 	for name: String in ["SelectionTitle", "MetaTitle"]:
 		var h := get_node_or_null("%" + name) as Label
 		if h != null:
@@ -368,6 +376,8 @@ func _wire_ui() -> void:
 	# 顶栏命令:菜单用 MenuButton 基础扁平皮,视图按钮用 FlatButton(透明底,hover 才出底)。
 	(%FileMenu as MenuButton).theme_type_variation = &""
 	(%EditMenu as MenuButton).theme_type_variation = &""
+	# 顶栏只有一个主行动 = 保存:accent 字 + 左侧 accent 条(复用紧凑强调皮);其余全部 FlatButton。
+	(%SaveBtn as Button).theme_type_variation = &"ToolActive"
 	(%PreviewBtn as Button).theme_type_variation = &"FlatButton"
 	(%PlaytestBtn as Button).theme_type_variation = &"FlatButton"
 	(%BackBtn as Button).theme_type_variation = &"FlatButton"
@@ -443,6 +453,7 @@ func _wire_ui() -> void:
 		b.pressed.connect(_tools.set_meta_mode.bind(key))
 		_meta_buttons[key] = b
 	(%ClearMetaBtn as Button).pressed.connect(_on_clear_meta_pressed)
+	(%ClearMetaBtn as Button).add_theme_color_override("font_color", UiFactory.C_TEXT_DIM)
 	(%ValidateBtn as Button).pressed.connect(_actions.validate)
 
 	# 状态栏缩放控件(与滚轮 / ± 快捷键同源;百分比 = zoom / 默认档)。
@@ -699,19 +710,13 @@ func _sync_meta_info() -> void:
 		return
 	var players: Array = doc.map.get("players", [])
 	var respawns: Array = doc.map.get("respawns", [])
-	var side1 := 0
-	var side2 := 0
-	for r in respawns:
-		if int((r as Dictionary).get("side", 0)) == 1:
-			side1 += 1
-		else:
-			side2 += 1
-	_meta_info.text = "出生点 %d · 复活点 侧1 %d / 侧2 %d · 敌人 %d" % [
-		players.size(), side1, side2, (doc.map.get("enemies", []) as Array).size()]
+	_meta_info.text = "出生点 %d · 复活点 %d · 敌人 %d" % [
+		players.size(), respawns.size(), (doc.map.get("enemies", []) as Array).size()]
 	_rebuild_meta_list()
 
 
-# 已放置 meta 列表:每条一行(标签 + 敌人类型下拉 + 删除),点行内「删除」= 单条删除。
+# 已放置 meta 列表:按 kind 分组(标题带计数),行 = 标签 + 敌人类型下拉 + 删除。
+# 一张图 60+ 条时平铺同权文本会淹没右栏 ⇒ 默认收起 + 分组 + 压暗行,层次靠位置/对比/分组,不靠装饰色。
 func _rebuild_meta_list() -> void:
 	if _meta_list == null:
 		return
@@ -719,56 +724,98 @@ func _rebuild_meta_list() -> void:
 		_meta_list.remove_child(child)
 		child.queue_free()
 	if doc == null or doc.map.is_empty():
+		_refresh_meta_toggle()
 		return
-	for ent: Dictionary in doc.meta_entries():
-		var entry := ent
-		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 6)
-		var kind := String(entry["kind"])
-		var label := Label.new()
-		label.theme_type_variation = &"Small"
-		label.add_theme_color_override("font_color", UiFactory.C_TEXT_DIM)
-		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		label.custom_minimum_size = Vector2(80, 0)
-		label.clip_text = true
-		match kind:
-			"player":
-				label.text = "出生点 #%d @ (%d,%d)" % [int(entry["index"]) + 1, int(entry["x"]), int(entry["y"])]
-			"respawn":
-				label.text = "复活点 侧%d #%d @ (%d,%d)" % [int(entry["side"]),
-						int(entry["index"]) + 1, int(entry["x"]), int(entry["y"])]
-			_:
-				label.text = "敌人 %s #%d @ (%d,%d)" % [String(entry.get("type", "")),
-						int(entry["index"]) + 1, int(entry["x"]), int(entry["y"])]
-		label.tooltip_text = label.text
-		row.add_child(label)
-		if kind == "enemy":
-			var items: Array[String] = _enemy_types.duplicate()
-			var cur_type := String(entry.get("type", ""))
-			if not items.has(cur_type):
-				items.append(cur_type)
-			var opt := OptionButton.new()
-			for id: String in items:
-				opt.add_item(id)
-			opt.selected = items.find(cur_type)
-			opt.theme_type_variation = &"Kit"
-			opt.custom_minimum_size = Vector2(96, 0)
-			opt.clip_text = true
-			opt.size_flags_horizontal = Control.SIZE_SHRINK_END
-			opt.item_selected.connect(func(i: int) -> void:
-				if i >= 0 and i < items.size():
-					doc.set_meta_enemy_type(int(entry["index"]), items[i]))
-			row.add_child(opt)
-		var del := Button.new()
-		del.text = "删除"
-		del.tooltip_text = "删除这条 %s(可撤销)" % kind
-		del.theme_type_variation = &"FlatButton"
-		del.custom_minimum_size = Vector2(48, 26)
-		del.pressed.connect(func() -> void:
-			if doc.remove_meta_at(kind, int(entry["index"])):
-				_set_message("已删除一条 %s" % _tools.meta_label_of(kind), false))
-		row.add_child(del)
-		_meta_list.add_child(row)
+	var entries := doc.meta_entries()
+	for g: Dictionary in [{"kind": "player", "title": "出生点"},
+			{"kind": "respawn", "title": "复活点"}, {"kind": "enemy", "title": "敌人"}]:
+		var kind_g := String(g["kind"])
+		var rows: Array = []
+		for ent: Dictionary in entries:
+			if String(ent["kind"]) == kind_g:
+				rows.append(ent)
+		if rows.is_empty():
+			continue
+		var head := Label.new()
+		head.theme_type_variation = &"Small"
+		head.add_theme_color_override("font_color", UiFactory.C_TEXT)
+		head.text = "%s · %d" % [String(g["title"]), rows.size()]
+		head.custom_minimum_size = Vector2(0, 20)
+		head.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_meta_list.add_child(head)
+		for row_ent: Dictionary in rows:
+			_meta_list.add_child(_meta_row(row_ent))
+	_refresh_meta_toggle()
+
+
+## 单条 meta 行:全部用 Small 字号/弱化色;删除按钮保持文本「删除」(探针按文本找)。
+func _meta_row(entry: Dictionary) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 4)
+	var kind := String(entry["kind"])
+	var label := Label.new()
+	label.theme_type_variation = &"Small"
+	label.add_theme_color_override("font_color", UiFactory.C_TEXT_DIM)
+	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	label.custom_minimum_size = Vector2(90, 0)
+	label.clip_text = true
+	var ix := int(entry["index"]) + 1
+	match kind:
+		"player":
+			label.text = "P%d (%d,%d)" % [ix, int(entry["x"]), int(entry["y"])]
+		"respawn":
+			label.text = "R%d·侧%d (%d,%d)" % [ix, int(entry["side"]), int(entry["x"]), int(entry["y"])]
+		_:
+			# 类型已由行内下拉展示,标签只留「第几个 + 坐标」,不再重复 id(避免被 92px 下拉挤到截断)。
+			label.text = "#%d (%d,%d)" % [ix, int(entry["x"]), int(entry["y"])]
+	label.tooltip_text = label.text
+	row.add_child(label)
+	if kind == "enemy":
+		var items: Array[String] = _enemy_types.duplicate()
+		var cur_type := String(entry.get("type", ""))
+		if not items.has(cur_type):
+			items.append(cur_type)
+		var opt := OptionButton.new()
+		for id: String in items:
+			opt.add_item(id)
+		opt.selected = items.find(cur_type)
+		opt.theme_type_variation = &"Kit"
+		opt.custom_minimum_size = Vector2(92, 24)
+		opt.clip_text = true
+		opt.size_flags_horizontal = Control.SIZE_SHRINK_END
+		opt.tooltip_text = "敌人类型(可撤销)"
+		opt.item_selected.connect(func(i: int) -> void:
+			if i >= 0 and i < items.size():
+				doc.set_meta_enemy_type(int(entry["index"]), items[i]))
+		row.add_child(opt)
+	var del := Button.new()
+	del.text = "删除"
+	del.tooltip_text = "删除这条 %s(可撤销)" % kind
+	del.theme_type_variation = &"FlatButton"
+	del.custom_minimum_size = Vector2(40, 24)
+	del.add_theme_color_override("font_color", UiFactory.C_TEXT_DIM)
+	del.pressed.connect(func() -> void:
+		if doc.remove_meta_at(kind, int(entry["index"])):
+			_set_message("已删除一条 %s" % _tools.meta_label_of(kind), false))
+	row.add_child(del)
+	return row
+
+
+func _toggle_meta_list() -> void:
+	_meta_expanded = not _meta_expanded
+	if _meta_list != null:
+		_meta_list.visible = _meta_expanded
+	_refresh_meta_toggle()
+
+
+func _refresh_meta_toggle() -> void:
+	if _meta_toggle == null:
+		return
+	var n := 0
+	if doc != null and not doc.map.is_empty():
+		n = doc.meta_entries().size()
+	_meta_toggle.text = "%s列表 (%d)" % ["收起" if _meta_expanded else "展开", n]
+	_meta_toggle.visible = n > 0
 
 
 func _update_selection_info() -> void:

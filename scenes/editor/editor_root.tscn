@@ -782,10 +782,21 @@ theme_type_variation = &"Kit"
 unique_name_in_owner = true
 layout_mode = 2
 theme_type_variation = &"Small"
-text = "已放置(可删除 / 改类型)"
+text = "已放置"
+
+[node name="MetaToggle" type="Button" parent="Frame/Layout/Split/RightSide/RightTabs/SelectionMeta/TabMargin/Body"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(160, 26)
+layout_mode = 2
+size_flags_horizontal = 0
+theme_type_variation = &"FlatButton"
+tooltip_text = "展开/收起已放置列表(条目多时默认收起,右栏不被列表淹没)"
+text = "展开列表"
+alignment = 0
 
 [node name="MetaList" type="VBoxContainer" parent="Frame/Layout/Split/RightSide/RightTabs/SelectionMeta/TabMargin/Body"]
 unique_name_in_owner = true
+visible = false
 layout_mode = 2
 theme_override_constants/separation = 2
 
@@ -798,10 +809,13 @@ autowrap_mode = 3
 
 [node name="ClearMetaBtn" type="Button" parent="Frame/Layout/Split/RightSide/RightTabs/SelectionMeta/TabMargin/Body"]
 unique_name_in_owner = true
-custom_minimum_size = Vector2(200, 30)
+custom_minimum_size = Vector2(160, 26)
 layout_mode = 2
-theme_type_variation = &"BtnCompact"
+size_flags_horizontal = 0
+theme_type_variation = &"FlatButton"
+tooltip_text = "清空所有出生点/复活点/敌人(可撤销)"
 text = "清空全部 meta"
+alignment = 0
 
 [node name="Report" type="VBoxContainer" parent="Frame/Layout/Split/RightSide/RightTabs"]
 visible = false

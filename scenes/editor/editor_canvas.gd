@@ -77,10 +77,11 @@ const GRADIENT_DOT_RADIUS := 5.0
 const MINIMAP_MARGIN := 12.0
 const MINIMAP_MAX_W := 180.0
 const MINIMAP_MAX_H := 120.0
-const MINIMAP_BG_COLOR := Color(0.02, 0.05, 0.08, 0.82)
-const MINIMAP_BORDER_COLOR := Color(0.55, 0.95, 1.0, 0.85)
-const MINIMAP_VIEW_COLOR := Color(1.0, 1.0, 1.0, 0.85)
-const MINIMAP_META_RADIUS := 1.6
+const MINIMAP_BG_COLOR := Color(0.02, 0.05, 0.08, 0.72)
+const MINIMAP_BORDER_COLOR := Color(0.55, 0.95, 1.0, 0.50)
+const MINIMAP_VIEW_COLOR := Color(1.0, 1.0, 1.0, 0.65)
+const MINIMAP_META_RADIUS := 1.2
+const MINIMAP_ENEMY_ALPHA := 0.55      # 敌人点很多(一张图 60+):压暗压小,小地图不抢画布主视口
 
 signal pointer_down(sub: Vector2i, button: int, shift: bool, ctrl: bool)
 signal pointer_drag(sub: Vector2i)
@@ -1138,13 +1139,14 @@ func _draw_minimap_meta(r: Rect2, sub: Vector2i) -> void:
 			draw_circle(_minimap_cell_point(r, sub,
 					Vector2i(int(rd.get("x", 0)), int(rd.get("y", 0)))), MINIMAP_META_RADIUS, color)
 	var enemies: Array = map.get("enemies", [])
+	var enemy_color := Color(META_ENEMY_COLOR.r, META_ENEMY_COLOR.g, META_ENEMY_COLOR.b, MINIMAP_ENEMY_ALPHA)
 	for i in enemies.size():
 		var ep: Variant = enemies[i]
 		if ep is Dictionary:
 			var ed: Dictionary = ep
 			draw_circle(_minimap_cell_point(r, sub,
-					Vector2i(int(ed.get("x", 0)), int(ed.get("y", 0)))), MINIMAP_META_RADIUS,
-					META_ENEMY_COLOR)
+					Vector2i(int(ed.get("x", 0)), int(ed.get("y", 0)))), MINIMAP_META_RADIUS * 0.8,
+					enemy_color)
 
 
 ## 格坐标 → 小地图内该格中心的屏幕点(按环面 posmod 归一,越界 meta 也画在图内)。
