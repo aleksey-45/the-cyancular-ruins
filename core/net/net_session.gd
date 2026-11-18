@@ -13,8 +13,7 @@ var _processes := OwnedProcessGroup.new()
 var _cli_worker := CliWorker.new()
 var _cli_requests: Array = []
 
-# CLI 的启动、管道读取和回收都由同一个常驻线程独占。
-# OwnedProcessGroup 没有并发接口，不能把会话进程表跨线程共享。
+# 主线程提交 EasyTier 命令并等待结果。取消标记和执行结果由两个线程共享，通过互斥锁访问。
 class CliRequest extends RefCounted:
 	var path: String
 	var args: PackedStringArray
@@ -52,6 +51,7 @@ class CliRequest extends RefCounted:
 		_mutex.unlock()
 		return value
 
+# 执行 EasyTier 命令和读取输出都在后台线程进行，主线程可继续更新界面。
 class CliWorker extends RefCounted:
 	var _thread := Thread.new()
 	var _mutex := Mutex.new()
@@ -120,7 +120,7 @@ func _on_event(_peer: int, kind: int, data: Variant) -> void:
 		NetEvent.Kind.REJOIN_DENIED: PvpSession.room.erase("token")
 		NetEvent.Kind.ROOM_CLOSED: PvpSession.room = {}
 		_:
-			# 基线被对局场景接管前，先留住后续可靠事件。
+			# 客户端已收到开局快照但还没完成场景加载时，把后续对局事件暂存起来，交给对局场景处理。
 			if not PvpSession.baseline.is_empty() and kind in NetEvent.MATCH_EVENTS:
 				PvpSession.match_events.append([kind, data])
 
@@ -207,7 +207,7 @@ func room_error(error: Error) -> String:
 		ERR_CANT_CONNECT, ERR_CONNECTION_ERROR: return "无法连接房间，请创建房间或输入房间号加入"
 		_: return "启动连接失败（%d）" % error
 
-# 场景同步消费业务消息；这里仅等待本次请求对应的应答。
+# 只等待当前连接的预期回复。房间关闭通知也会结束此次等待。
 func _room_request(kind: int, data: Variant, port: int, timeout_ms := 8000) -> Error:
 	var deadline := Time.get_ticks_msec() + timeout_ms
 	var error := await NetBus.connect_local(port, timeout_ms)

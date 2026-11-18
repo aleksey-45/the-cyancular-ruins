@@ -34,14 +34,11 @@ globalThis.Editor = (function () {
     if (typeof console !== 'undefined') console.error(text, err);
   }
 
-  // 面板与渲染里抛出的异常必须可见:症状"按了没反应"最难查,而静默捕获更糟。
+  // 界面操作失败时，状态栏显示简短提示，浏览器控制台保留详细错误。
   function guard(label, fn) {
     var out;
     try { out = fn(); }
     catch (e) { reportError('出错了(' + label + '):' + msgOf(e), e); return null; }
-    // thenable ⇒ 挂收口并交回已收口的 promise:调用方 await 也好、完全不接也好,
-    //   都不会再冒"未处理的 promise 拒绝"(那条全局通道只会说"有个 promise 被拒了",
-    //   不说是谁 —— 而这条说的是"哪个入口").
     if (out && typeof out.then === 'function') {
       return out.then(null, function (e) {
         reportError('出错了(' + label + '):' + msgOf(e), e);
@@ -60,19 +57,12 @@ globalThis.Editor = (function () {
   var RESPAWN_SIDES = { 'respawn-1': 1, 'respawn-2': 2 };
   var DERIVED_TEXTURES = [22];
 
-  // ── 尺寸与纹理的硬上限(闸 1:一律钳制,不报错回滚)──
-  // 唯一的造图入口。Core.createMap 不判 400×300 上限(它只要求正整数),
-  //    所以输入 99999 的那条路必须在这里被 Core.clampMapSize 截住(A8 的原样复发形态:
-  //    旧编辑器的 clampMin 第三参是"非数字时的默认值",根本没有上限)。
+  // 创建地图与修改尺寸共用同一套宽高限制。
   function createEmptyMap(name, w, h) {
     var c = Core.clampMapSize(w, h);
     return Core.createMap(Core.sanitizeName(name), c.w, c.h);
   }
-  // 纹理号必须同时避开两个坑:0(空气,没有贴图)与超出图集容量(越界会抛)。
-  // 上界派生自图集(列 × 行,换图集就变):调用方不传就自己问 Render。
-  //    容量 < 1(= 图集还没加载 / 一块都放不下 / 畸形图集算出的负数)一律当"没有信息"
-  //    ⇒ 只给 1,不是放宽到描述符位宽那个上界 —— tint 的越界判据是"图集里有没有
-  //    这一块",放宽等于把越界号直接放进 tileFor(它抛,而且每帧同一处抛一屏)。
+  // 根据图集容量限制画笔的纹理编号。图集还未加载时只能选编号 1。
   function clampTexture(tex, atlasCap) {
     var t = parseInt(tex, 10);
     if (!isFinite(t) || t < 1) t = 1;
@@ -107,12 +97,12 @@ globalThis.Editor = (function () {
   function idxOf(map, X, Y) {
     return Render.wrapIdx(Y, map.subRows) * map.subCols + Render.wrapIdx(X, map.subCols);
   }
-  // 两种单位(格 / 子格)的换算只此一处:region.unit === 'cell' ⇒ 每格 16 个子格。
+  // 收集待绘制子格的数组索引。轮廓工具只取边缘，活动选区会进一步限制绘制范围。
   function regionCells(map, region, clip, outline = false) {
     var out = [], seen = new Set();
     function add(X, Y) {
       var wx = Render.wrapIdx(X, map.subCols), wy = Render.wrapIdx(Y, map.subRows);
-      if (!inRect(clip, wx, wy, map.subCols, map.subRows)) return;   // C12:选区约束绘制(环面)
+      if (!inRect(clip, wx, wy, map.subCols, map.subRows)) return;
       var i = wy * map.subCols + wx;
       if (seen.has(i)) return;
       seen.add(i); out.push(i);
@@ -163,9 +153,9 @@ globalThis.Editor = (function () {
     if (!shift) return { x: bx, y: by };
     var dx = b.x - a.x, dy = b.y - a.y;
     var adx = Math.abs(dx), ady = Math.abs(dy);
-    if (adx >= 2 * ady) return { x: bx, y: Math.floor(a.y) };          // 近水平 → 锁水平
-    if (ady >= 2 * adx) return { x: Math.floor(a.x), y: by };          // 近垂直 → 锁垂直
-    var m = Math.max(adx, ady);                                        // 其余 → 45°
+    if (adx >= 2 * ady) return { x: bx, y: Math.floor(a.y) };
+    if (ady >= 2 * adx) return { x: Math.floor(a.x), y: by };
+    var m = Math.max(adx, ady);
     return { x: Math.floor(a.x + (dx < 0 ? -m : m)), y: Math.floor(a.y + (dy < 0 ? -m : m)) };
   }
   function constrainSquare(a, b, shift) {
@@ -184,8 +174,7 @@ globalThis.Editor = (function () {
   function valueFor(st, L) {
     if (L === Core.LAYER_BG) return function () { return st.rgba >>> 0; };
     if (st.descOnly) {
-      // "只改辅码":空气仍是空气(不能凭空长出纹理),有纹理的保留原纹理、只换辅码。
-      //   少了这一支,整片墙"变暗"的操作会把墙换成画笔当前选的那个纹理。
+      // 调色只修改已有纹理的颜色参数，空子格不会被填入纹理。
       return function (oldV) {
         if (oldV === 0 || Core.texOf(oldV) === 0) return oldV;
         return Core.packDesc(Core.texOf(oldV), Core.hueOf(st.desc), Core.brightOf(st.desc),
@@ -196,7 +185,7 @@ globalThis.Editor = (function () {
   }
   function pickAt(map, L, X, Y) { return Render.descAt(map, L, X, Y); }
 
-  // 一次工具操作 → 一条差量(没有改动就返回 null)。bucket / gradient / select 不走这里。
+  // 一次工具操作产生一条可撤销的记录。操作没有改变地图时返回 null。
   function applyTool(st, tool, from, to) {
     var map = st.map, L = st.layer, clip = st.selection || null;
     var idx = null;
@@ -224,7 +213,7 @@ globalThis.Editor = (function () {
     return paintCells(map, L, idx, tool === 'eraser' ? () => 0 : valueFor(st, L));
   }
 
-  // 环面四邻域填充，遍历结束时队列正好包含所有要涂的子格。
+  // 填充从起点搜索上下左右相邻且内容相同的子格。搜索到达地图边缘时从另一端继续。
   function createBucketJob(map, L, X, Y, opts) {
     opts = opts || {};
     var arr = Core.layerArray(map, L);
@@ -244,7 +233,7 @@ globalThis.Editor = (function () {
           var ny = Render.wrapIdx(y + (k === 2 ? 1 : k === 3 ? -1 : 0), rows);
           var ni = ny * cols + nx;
           if (seen.has(ni)) continue;
-          if (!inRect(opts.clip, nx, ny, cols, rows)) continue;   // 选区内外是两块互不连通的地
+          if (!inRect(opts.clip, nx, ny, cols, rows)) continue;
           if (arr && arr[ni] !== seedVal) continue;
           seen.add(ni); queue.push(ni);
         }
@@ -283,7 +272,7 @@ globalThis.Editor = (function () {
       while (head < end) {
         var i = head++;
         var X = i % cols, Y = (i - X) / cols;
-        if (!inRect(opts.clip, X, Y, cols, rows)) continue;   // 选区约束(与 regionCells 同一条判据)
+        if (!inRect(opts.clip, X, Y, cols, rows)) continue;
         var t = len2 === 0 ? 0 : ((X - ax) * dx + (Y - ay) * dy) / len2;
         t = t < 0 ? 0 : (t > 1 ? 1 : t);
         out.push({ i, rgba: lerpRGBA(rgba0, rgba1, t) });
@@ -293,7 +282,7 @@ globalThis.Editor = (function () {
     return { runChunk, result: out };
   }
 
-  // 出生点、敌人与团队复活点使用新的数组，历史持有上一个数组。
+  // 复活点改动创建新数组。撤销时可直接换回修改前的数组。
   function toggleRespawn(map, side, hit) {
     var p = toSub(hit), k = Core.SUB_PER_CELL;
     var x = Math.floor(p.x / k), y = Math.floor(p.y / k);
@@ -308,9 +297,8 @@ globalThis.Editor = (function () {
     return keep.length === map.respawns.length ? null : Edits.replace(map, {respawns: keep});
   }
 
-  // ── 改尺寸(与 A8/A10 同源)──
   function resizeMap(map, w, h) {
-    var out = createEmptyMap(map.name, w, h);          // ← 尺寸闸只在这一条路上
+    var out = createEmptyMap(map.name, w, h);
     var copyW = Math.min(map.subCols, out.subCols), copyH = Math.min(map.subRows, out.subRows);
     for (var L = 0; L < Core.LAYER_COUNT; L++) {
       var src = Core.layerArray(map, L), dst = Core.layerArray(out, L);
@@ -334,7 +322,7 @@ globalThis.Editor = (function () {
     }
     return { map: out, dropped: dropped, size: { w: cellsW, h: cellsH } };
   }
-  // A10 要求的是"提示并清理"而不是"静默清理" —— 这一行就是那个提示的文案。
+  // 缩小地图后，向用户列出因越界而移除的出生点、敌人和复活点。
   function resizeReportLines(dropped) {
     return (dropped || []).map(function (d) {
       var label = '出生点';
@@ -343,7 +331,6 @@ globalThis.Editor = (function () {
       return label + '落在图外 (' + d.x + ',' + d.y + ')，已移除';
     });
   }
-  // 尺寸统一经 resizeMap 钳制，输入框回显实际地图尺寸。
   function sizeInputsSync() {
     if (!app.map) return;
     var w = $('size-w'), h = $('size-h');
@@ -368,7 +355,7 @@ globalThis.Editor = (function () {
     if (!app.map) { status('先打开一张地图'); return null; }
     var wEl = $('size-w'), hEl = $('size-h');
     var curW = Core.cellsWOf(app.map), curH = Core.cellsHOf(app.map);
-    // 未输入有效数字的维度保留当前尺寸，其余值钳制到合法范围。
+    // 宽或高无法读成数字时，保留该方向的原值，再将两个方向的尺寸限制在有效范围内。
     var wNum = sizeInputNum(wEl), hNum = sizeInputNum(hEl);
     var c = Core.clampMapSize(wNum === null ? curW : wNum, hNum === null ? curH : hNum);
     var ig = [];
@@ -376,7 +363,7 @@ globalThis.Editor = (function () {
     if (hNum === null) ig.push('高保留 ' + curH);
     var igTxt = ig.length ? (';' + ig.join(',') + '(那一格是空的或不是数字 ⇒ 这一项不改)') : '';
     if (c.w === curW && c.h === curH) {
-      sizeInputsSync();                     // 钳制结果照样回显(输 99999 → 框里变 400)
+      sizeInputsSync();
       status('尺寸没变(' + c.w + '×' + c.h + '),没有改动地图' + igTxt);
       return null;
     }
@@ -393,9 +380,7 @@ globalThis.Editor = (function () {
   }
 
   var KEY_TOOLS = { b: 'brush', e: 'eraser', g: 'bucket', l: 'line', m: 'select', i: 'picker' };
-  // 事件目标是不是一个"正在打字"的控件(评审发现 4)。判据取 tagName 与 isContentEditable,
-  // 不取 ev.target === document.activeElement 之类:合成事件 / 焦点在 body 时 target 就是
-  // body,那样的判据会把"按在画布上"也判成输入(热键整个失灵,而症状是"什么键都没反应")。
+  // 焦点在可编辑的文本控件内时，编辑器不接管这些按键。
   function isTypingTarget(el) {
     if (!el || typeof el !== 'object') return false;
     var t = String(el.tagName == null ? '' : el.tagName).toLowerCase();
@@ -430,7 +415,7 @@ globalThis.Editor = (function () {
     return null;
   }
 
-  // ── 剪贴板(跨图层粘贴只允许"纹理 ↔ 纹理")──
+  // 剪贴板记录选区的图层类型，粘贴时据此限制可用图层。
   function copyRegion(map, L, sel) {
     if (!sel) return null;
     var arr = Core.layerArray(map, L);
@@ -443,7 +428,7 @@ globalThis.Editor = (function () {
     return { kind: Core.LAYER_KINDS[L], w: sel.w, h: sel.h, values: values };
   }
 
-  // 环绕后的每个目标只写一次，扫描范围最多是一张图。
+  // 粘贴会从地图另一端接续。将区域宽高限制在地图尺寸以内，每个子格最多处理一次。
   function visitRegion(map, x0, y0, region, visit) {
     var w = Math.min(region.w, map.subCols), h = Math.min(region.h, map.subRows);
     for (var y = 0; y < h; y++) {
@@ -506,8 +491,7 @@ globalThis.Editor = (function () {
     return diff;
   }
 
-  // ── 交互(指针 / 滚轮 / 热键)──
-  // 写格产生的差量用于撤销和局部重画。
+  // 重绘时从修改记录提取子格索引，避免刷新整个地图。
   var undoHistory = null;
   var clipboard = null;
 
@@ -587,7 +571,7 @@ globalThis.Editor = (function () {
     var sel = app.r.selection();
     set('st-sel', sel ? ('选区 ' + (sel.w / Core.SUB_PER_CELL) + '×' + (sel.h / Core.SUB_PER_CELL) + ' 格') : '无选区');
     set('st-undo', '撤销 ' + undoHistory.depth() + ' / 重做 ' + undoHistory.redoDepth());
-    renderSaveState();                // 每落一笔都要跟着翻(状态栏是"现在"的样子)
+    renderSaveState();
   }
 
   function hitOf(ev, inside = false) {
@@ -596,7 +580,7 @@ globalThis.Editor = (function () {
     var x = ev.clientX - rect.left, y = ev.clientY - rect.top;
     if (inside && !app.r.containsPoint(x, y)) return null;
     var p = app.r.screenToSub(x, y);
-    // 两种单位的吸附只在 hitOf 里决定一次:整数画笔吸附到格、小数画笔吸附到子格
+    // 整数画笔大小使用瓦片坐标，带小数的画笔大小使用子格坐标。
     var unit = Render.brushSpan(app.st.brushSize).unit;
     var k = Core.SUB_PER_CELL;
     return unit === 'sub' ? { kind: 'sub', x: p.X, y: p.Y }
@@ -726,7 +710,7 @@ globalThis.Editor = (function () {
       var tool = app.st.tool;
       if (tool === 'brush' || tool === 'eraser') {
         pushAndShow(applyTool(stNow(), tool, gesture.last || gesture.from, hit));
-        gesture.last = hit;   // 单击在松手时落笔，拖动已在这里落笔。
+        gesture.last = hit;   // 下一次指针移动从此处延续，使两次指针事件之间也能画出连续笔画。
         return;
       }
     }
@@ -790,7 +774,6 @@ globalThis.Editor = (function () {
       guard('wheel', function () {
         ev.preventDefault();
         var rect = cv.getBoundingClientRect();
-        // 视图入口的 promise 同样收口(见上面 pointermove 的说明)
         var zp = app.r.setZoomAt(ev.clientX - rect.left, ev.clientY - rect.top,
                                 ev.deltaY < 0 ? 1.25 : 0.8);
         statusLine();
@@ -808,7 +791,7 @@ globalThis.Editor = (function () {
     });
     window.addEventListener('keyup', function (ev) {
       if (ev.key !== ' ') return;
-      spaceDown = false;                  // 清位与"认不认领"无关:键已经抬起来了
+      spaceDown = false;
       if (isTypingTarget(ev.target)) return;
       ev.preventDefault();
     });
@@ -1046,12 +1029,12 @@ globalThis.Editor = (function () {
   var CRASH_STORE = 'crash';
   var DRAFT_DB_VERSION = 2;
   var DRAFT_TIME_INDEX = 'savedAt';
-  var UI_STATE_KEY = 'cyrm.ui.v1';       // 带版本号:将来换字段可以让老的那份自然失效
+  var UI_STATE_KEY = 'cyrm.ui.v1';
   var MAX_LIB = 60;
-  var DRAFT_DEBOUNCE_MS = 1500;          // 最后一笔之后多久落盘(不是每笔都写)
+  var DRAFT_DEBOUNCE_MS = 1500;          // 用户停止编辑后，等待 1.5 秒再自动保存草稿。
   var UI_SAVE_THROTTLE_MS = 500;
   function draftKey(name) { return Core.sanitizeName(nameFromFile(name)); }
-  // ── 第 3 层:localStorage 小状态(读损坏值一律回落默认:编辑器要能开)──
+  // 界面设置存放在 localStorage。没有可用记录时，界面采用默认设置。
   function uiStateDefaults() {
     return { ...Render.VIEW_DEFAULTS, layer: Core.LAYER_SCENE, zoom: 0, tool: 'brush', brushSize: 1,
              visible: [true, true, true, true], locked: [false, false, false, false],
@@ -1085,7 +1068,7 @@ globalThis.Editor = (function () {
       if (isFinite(pr.cy)) state.playerRef.cy = Math.floor(pr.cy);
       state.playerRef.visible = pr.visible === true;
     }
-    // 纹理上界在图集载入后校验。
+    // 这里只读取已选纹理编号，待图集加载完毕后再按实际大小限制编号。
     if (isFinite(saved.selectedTexture) && saved.selectedTexture > 0) {
       state.selectedTexture = Math.floor(saved.selectedTexture);
     }
@@ -1094,10 +1077,9 @@ globalThis.Editor = (function () {
 
   function writeUiState(store, uist) {
     try { store.setItem(UI_STATE_KEY, JSON.stringify(uist)); }
-    catch (e) { /* 私密模式/配额满:UI 小状态丢了不影响作品,静默 */ }
+    catch (e) { /* 界面设置无法写入时，地图编辑和草稿保存仍可继续。 */ }
   }
-  // 取 localStorage 这件事本身在私密模式下就可能抛(不是只有 setItem 会)——
-  //   收在一处,读与写的调用方都不必各自 try。
+  // 浏览器禁止访问本地存储时，用 null 表示该功能不可用。
   function localStore() {
     try {
       return (typeof window !== 'undefined' && window.localStorage) ? window.localStorage : null;
@@ -1111,7 +1093,7 @@ globalThis.Editor = (function () {
       try { req = indexedDB.open(DRAFT_DB, DRAFT_DB_VERSION); } catch (e) { resolve(null); return; }
       req.onupgradeneeded = function () {
         var db = req.result;
-        // 按保存时间清理最旧的草稿。
+        // 通过保存时间索引找到最早保存的草稿，便于按时间顺序清理。
         var st = db.objectStoreNames.contains(DRAFT_STORE)
           ? req.transaction.objectStore(DRAFT_STORE)
           : db.createObjectStore(DRAFT_STORE, { keyPath: 'key' });
@@ -1144,9 +1126,9 @@ globalThis.Editor = (function () {
     });
   }
   var draftTimer = null;
-  var draftRev = 0;              // 地图每次变动 +1(判"这一版写过没有")
-  var draftSavedRev = -1;        // 上一次草稿落盘时的 rev
-  var lastAutoSaveAt = 0;        // 状态栏那一格要显示的自动保存时刻(0 = 本局还没自动存过)
+  var draftRev = 0;              // 以递增的版本号标记地图改动，判断当前内容是否还有未保存的修改。
+  var draftSavedRev = -1;        // 最后一次成功保存对应的版本号。
+  var lastAutoSaveAt = 0;        // 最近一次自动保存的时间戳，用于更新状态栏。初值 0 表示尚未自动保存。
 
   function markDirty() {
     dirty = true;
@@ -1188,7 +1170,7 @@ globalThis.Editor = (function () {
       renderSaveState();
       await pruneDrafts().catch(error => reportError('草稿已保存，清理失败：' + msgOf(error), error));
     });
-    // 后续草稿仍可保存，当前调用者收到本次写入的错误。
+    // 调用方仍可收到本次保存的错误，保存队列会继续处理后续任务。
     draftWrite = job.catch(() => {});
     return job;
   }
@@ -1265,14 +1247,12 @@ globalThis.Editor = (function () {
       sameDocument ? app.sourceFormat : 'v4', sameDocument && app.inLibrary, rec);
     status('已恢复草稿 ' + rec.name);
   }
-  // 逐字节相同(长度先过;两边都可能是 Uint8Array,也可能有一个是 null —— 那就不相同)
   function sameBytes(a, b) {
     if (!a || !b || a.length !== b.length) return false;
     for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
     return true;
   }
 
-  // ── UI 小状态(第 3 层):恢复与落盘 ──
   function setViewToggle(key, on) {
     var control = $(VIEW_CONTROLS[key]);
     if (control?.type === 'checkbox') control.checked = on;
@@ -1282,7 +1262,7 @@ globalThis.Editor = (function () {
 
   async function applyUiState() {
     var u = app.uist;
-    // 打开地图后恢复缩放，0 表示沿用自动适配。
+    // 保存的缩放值大于 0 时恢复该值。值为 0 时使用打开地图时计算的比例。
     var cur = app.r.view().zoom;
     if (app.map && u.zoom > 0 && cur > 0 && Math.abs(u.zoom - cur) > 1e-6) {
       await app.r.setZoomAt(app.canvas.width / 2, app.canvas.height / 2, u.zoom / cur);
@@ -1328,10 +1308,6 @@ globalThis.Editor = (function () {
     }, UI_SAVE_THROTTLE_MS);
   }
 
-  // 绑定一律经 onWin:node 冒烟里 window 是 globalThis 而 globalThis 没有
-  //   addEventListener(Node 24 实测),裸 window.addEventListener(...) 会在
-  //   bootLoad() 的第一行就抛 —— 那会让"打开失败也要有面板"(⑭e)那条路一起红,
-  //   而根因与面板毫无关系。
   function onWin(evt, fn, opts) {
     if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
     window.addEventListener(evt, fn, opts);
@@ -1363,7 +1339,7 @@ globalThis.Editor = (function () {
     if (marker.draftKey) {
       rec = await idbGetOne(app.db, DRAFT_STORE, marker.draftKey);
     } else {
-      // 旧版快照自带字节。恢复时迁入草稿库，避免覆盖同名文件的草稿。
+      // 直接从崩溃记录恢复地图时，使用独立的草稿键，避免覆盖普通草稿。
       rec = {key: 'recovery:' + marker.scope + marker.name, name: marker.name,
         bytes: marker.bytes, savedAt: marker.savedAt, dirty: true};
     }
@@ -1467,13 +1443,12 @@ globalThis.Editor = (function () {
     if (DERIVED_TEXTURES.length) {
       var hint = document.createElement('div');
       hint.className = 'desc-row';
-      // 给它一个 id:它是 #palette 的派生行,背景层上必须跟着一起藏 —— 否则
-      //    「纹理 22 不进调色板…」会孤零零浮在一个空面板底下(见 syncPanelForLayer)。
+      // 提示和纹理设置归入同一类控件，切换图层时会一并显示或隐藏。
       hint.id = 'palette-hint';
       hint.textContent = '纹理 ' + DERIVED_TEXTURES.join('/') + ' 不进调色板:游戏侧由地形自动派生';
       box.parentNode.insertBefore(hint, box.nextSibling);
     }
-    // 辅码四组档位
+    // 颜色参数的下拉列表根据色相、亮度、饱和度和不透明度的取值生成。
     [['desc-hue', 'hueOf'], ['desc-bri', 'brightOf'],
      ['desc-sat', 'satOf'], ['desc-alp', 'alphaOf']].forEach(function (spec) {
       var sel = $(spec[0]);
@@ -1524,11 +1499,7 @@ globalThis.Editor = (function () {
         pushAndShow(clearRespawns(app.map, Number(button.dataset.clearRespawn)));
       });
     });
-    // ── 画布尺寸面板(规格 A10)──
-    // 与上面四个出生点按钮同款:没打开地图时说一句话,而不是把 resizeMap(null, …) 的
-    //   TypeError 抛进 click 处理器(同一个面板里两种说法)。
-    // 输入框里的回车也当"应用尺寸":两个数字框 + 一颗按钮的版式里,按回车什么都不发生
-    //   是最容易被当成"坏了"的一种手感。
+    // 尺寸输入框的 Enter 键与调整按钮执行同一个操作。
     var rsBtn = $('btn-resize');
     if (rsBtn) rsBtn.addEventListener('click', function () { guard('改尺寸', applySize); });
     ['size-w', 'size-h'].forEach(function (id) {
@@ -1567,10 +1538,7 @@ globalThis.Editor = (function () {
   function syncPanelForLayer() {
     var isBg = (app.r.layer() === Core.LAYER_BG);
     var show = function (id, on) { var el = $(id); if (el) el.style.display = on ? '' : 'none'; };
-    // 藏的是整行,不是控件的直接父节点:面板里各控件的父节点并不统一 —— 四个档位
-    //    select 的父节点就是 .desc-row,而「只改辅码」那个 input 外面还包着一层 <label>
-    //    ⇒ 直接写 parentNode 的话后者只藏掉 label,那一行仍占着位置(而且只读得出"少了个
-    //    勾选框",看不出是故意的)。故一律向上找到 .desc-row。
+    // 当前图层决定右侧显示纹理参数还是背景颜色，相关提示随控件一起切换。
     var hideRow = function (id, on) {
       var el = $(id);
       if (!el) return;
@@ -1579,19 +1547,17 @@ globalThis.Editor = (function () {
       if (row) row.style.display = on ? '' : 'none';
     };
     show('palette', !isBg);
-    show('palette-hint', !isBg);       // 派生行跟着调色板走(见 buildPanels 里插它的那一段)
+    show('palette-hint', !isBg);
     show('bg-color-row', isBg);
     show('bg-color-row2', isBg);
     show('bg-color-title', isBg);
     ['desc-hue', 'desc-bri', 'desc-sat', 'desc-alp'].forEach(function (id) { hideRow(id, !isBg); });
-    // 「只改辅码」与四个档位是同一组(它管的就是那四档),故同显同藏 —— 否则背景层上
-    //   它会挂在一个已经没有别的控件的「辅码」区块里。
     hideRow('desc-only', !isBg);
     var titles = document.querySelectorAll('#right h2');
     for (var i = 0; i < titles.length; i++) {
       if (titles[i].textContent === '辅码') titles[i].style.display = isBg ? 'none' : '';
     }
-    // 工具条上"渐变只在背景层可用":其余工具照旧(纹理层没有颜色可插值,故渐变只在背景层)
+    // 渐变工具只对背景颜色图层生效。其他图层中降低其显示亮度。
     var g = document.querySelector('.tool[data-tool="gradient"]');
     if (g) g.style.opacity = isBg ? '1' : '0.45';
   }
@@ -1626,7 +1592,7 @@ globalThis.Editor = (function () {
         var g = c.getContext('2d', { willReadFrequently: true });
         g.drawImage(img, 0, 0);
         var d = g.getImageData(0, 0, img.width, img.height);
-        Render.setAtlas(d.data, img.width, img.height);   // 同时作废 ③ 与 ④
+        Render.setAtlas(d.data, img.width, img.height);
         resolve({ width: img.width, height: img.height });
       };
       img.onerror = function () { reject(new Error('structure.png 加载失败')); };
@@ -1653,7 +1619,7 @@ globalThis.Editor = (function () {
   async function directoryScope(handle) {
     var id = 'dir:' + crypto.randomUUID() + ':';
     if (!app.db) return id;
-    // 浏览器只暴露目录名，通过句柄识别同名目录。
+    // 用目录句柄识别同一个地图库。两个目录即使同名，也不会共用草稿。
     var key = 'directories:' + handle.name;
     var record = await idbGetOne(app.db, CRASH_STORE, key);
     var entries = record ? record.entries : [];
@@ -1761,7 +1727,7 @@ globalThis.Editor = (function () {
     app.canvas = $('map-canvas');
     if (!app.canvas) return;
     app.tileDefs = globalThis.TILE_DEFS || null;
-    // 闸 3 没有降级路径 ⇒ 缺 Worker 时的唯一正确行为是把话说清楚(而不是静默退回主线程)
+    // 文件的解析和编码由 Web Worker 处理。浏览器无法创建 Worker 时无法启动编辑器。
     if (!Io.workerAvailable()) {
       var b = $('boot-error');
       if (b) { b.hidden = false; b.textContent = '浏览器不支持 Web Worker，请换用支持 Worker 的浏览器。源码版请通过 serve.bat 打开；离线版请打开 cyrm-editor.html。'; }
@@ -1774,7 +1740,7 @@ globalThis.Editor = (function () {
     var fitBtn = $('btn-fit');
     if (fitBtn) fitBtn.addEventListener('click', function () { guard('fit', function () { return app.r.fit(); }); });
 
-    // 图集必须先就位(渲染第一帧就要它);失败要说出来,而不是画一片黑。
+    // 画布和输入事件已准备好，纹理列表将在图集加载后生成。
     bootLoad().catch(error => reportError('启动失败：' + msgOf(error), error));
   }
 

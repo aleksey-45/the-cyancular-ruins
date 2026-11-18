@@ -1,17 +1,16 @@
 class_name Minimap
 extends CanvasLayer
 
-# 环面小地图组件：以本地玩家为中心的圆形雷达视野。
-# 地形纹理经着色器渲染为圆形视口，环面距离由 GridPathfinder 统一计算。
-# 超出探测半径的目标点自动裁剪隐藏。
+# 玩家位于小地图中央。可见范围跨过地图边缘时，背景接着显示另一侧的瓦片。
+# 玩家标记取跨地图边缘的最短偏移。只绘制落在圆内的标记。
 
-const RADIUS_PX := 140.0    # 屏幕渲染半径（像素）
-const RANGE_CELLS := 50.0   # 雷达探测覆盖的世界网格半径（瓦片格）
+const RADIUS_PX := 140.0    # 小地图在 HUD 上的半径，单位为像素。
+const RANGE_CELLS := 50.0   # 从玩家位置向外显示的瓦片数。
 const PX_PER_CELL := RADIUS_PX / RANGE_CELLS
-const EDGE := 24.0          # 距屏幕右边缘间距
-const EDGE_BOTTOM := 72.0   # 距屏幕下边缘间距，避开右下角网络延迟显示区域
-const RING_PX := 4.0        # 圆形雷达外边缘描边宽度
-const RING_SELF_PX := 4.0   # 本地玩家标记外侧描边宽度
+const EDGE := 24.0
+const EDGE_BOTTOM := 72.0   # 延迟读数显示在小地图下方，此处预留高度。
+const RING_PX := 4.0
+const RING_SELF_PX := 4.0
 
 const CENTER := Vector2(1920.0 - EDGE - RADIUS_PX, 1440.0 - EDGE_BOTTOM - RADIUS_PX)
 
@@ -31,7 +30,7 @@ func _ready() -> void:
 	var cols: int = grid[0].size()
 	var rows: int = grid.size()
 
-	# 生成缩略地形底图：墙体、水体与空地使用不同颜色区分
+	# 背景纹理用一个像素表示一块瓦片，空地、水和其他地形分别着色。
 	var img := Image.create(cols, rows, false, Image.FORMAT_RGBA8)
 	for y in range(rows):
 		for x in range(cols):

@@ -1,27 +1,24 @@
 class_name TunnelMeta
 extends RefCounted
 
-# EasyTier 免驱动应用层虚拟网隧道全局常量定义。
-# 为 Tunnel 隧道管理与联机大厅提供统一数据源。
-#
-# 许可说明：EasyTier 采用 LGPL-3.0 协议。本项目仅以独立子进程方式调用其预编译可执行文件，
-# 许可正文、版权声明和官方源码链接收录于发布包根部的 THIRD_PARTY_NOTICES.txt。
+# 大厅与对局使用相同的 EasyTier 设置。虚拟网络负责转发对局的 UDP 数据。
+# EasyTier 由游戏作为子进程启动。随附的版权、许可证和源码出处记录在 THIRD_PARTY_NOTICES.txt 中。
 
-# Windows 组件包含 EXE 和依赖库，macOS 组件使用无后缀通用可执行文件。
+# Windows 版会检查可执行文件和依赖的 DLL。macOS 版的可执行文件名不带扩展名。
 const CORE_EXE := "easytier-core.exe"
 const CLI_EXE := "easytier-cli.exe"
 const CORE_DLLS := ["Packet.dll", "wintun.dll"]
 
-# 房间码直接映射为网络名与接入密钥；主机名携带端口信息供加入方解析。
+# 房间号加上前缀构成虚拟网络名称。房间号也充当网络密钥，房主则把游戏端口写到自己的节点名中。
 const NET_PREFIX := "cyr-"
 const HOST_PREFIX := "cyr-host-"
 const GUEST_PREFIX := "cyr-guest-"
 
-# 房主固定分配 10.126.126.1，加入方通过 DHCP 动态分配。
+# 虚拟网络为房主保留固定地址。加入方通过 DHCP 获得自己的地址。
 const VIP_HOST := "10.126.126.1"
 
-# relay.txt 每行一个节点，支持 txt://、udp://、tcp:// 或无协议的 host:port。
-# 双方连接相同的中继节点以交换端点并尝试 P2P 直连，直连受限时由中继节点转发。
+# 初始节点地址按行保存在 relay.txt 中，支持 txt://、udp://、tcp:// 和 host:port。
+# 客户端经初始节点交换地址。能建立点对点连接时直接通信，否则通过中继传输数据。
 const RELAY_FILE_NAME := "relay.txt"
 
 const DEFAULT_RELAYS: Array[String] = [

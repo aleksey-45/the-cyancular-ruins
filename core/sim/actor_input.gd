@@ -1,8 +1,8 @@
 class_name ActorInput
 extends RefCounted
 
-# 单次步进的输入。锁定只屏蔽本 tick 的动作，原记录由输入缓冲保留。
-# 本地和网络输入都先打包，再在这里统一应用控制锁。
+# 本地输入与联机输入共用一组字段，模拟每个物理帧时读取对应的记录。
+# 限制操作期间只保留瞄准方向，按键、移动和换武器输入都不参与模拟。
 const AX: int = 0
 const HELD: int = 1
 const PRESSED: int = 2

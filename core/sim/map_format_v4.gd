@@ -1,13 +1,12 @@
 class_name MapFormatV4
 extends RefCounted
 
-# .cyrm v4 二进制地图读取。
-# 包含 20 字节明文文件头、Deflate 解压缩、CRC32 校验以及四图层二进制数据解析。
-# 游戏侧核心消费场景层数据：支持通过 flatten_scene 将 4x4 子格降采样为游戏主网格，
-# 或直接输出 16px 子格表供物理破坏与精细渲染系统使用。
+# CYRM v4 包含文件头和数据体，数据体存放地图元数据与图层。
+# 文件头记录压缩方式、原始大小和 CRC32，用于解压并校验数据。
+# 场景层以 16 像素的子格保存纹理。每 4 × 4 个子格还可合并成一块 64 像素的瓦片。
 
 const HEADER_SIZE := 20
-const SUB_PER_CELL := 4   # 一格 64px = 4×4 个 16px 子格
+const SUB_PER_CELL := 4
 const TEXTURE_SHIFT := 12
 const TINT_MASK := (1 << TEXTURE_SHIFT) - 1
 const NEUTRAL_TINT := 4 | (4 << 3) | (4 << 6) | (7 << 9)
@@ -42,10 +41,7 @@ static func read_header(data: PackedByteArray) -> Dictionary:
 	}
 
 
-## 解析 v4。成功:{"ok": true, "meta_lines": Array, "scene": PackedInt32Array(子格描述符),
-## "sub_cols", "sub_rows", "layer_flags"};失败:{"ok": false, "error": "..."}。
-## 目前只保留「场景」层的内容(其余层按块大小跳过,保持游标对齐)。
-const MAX_BODY_SIZE := 64 * 1024 * 1024   # body 上限(解压后;与编辑器 core.js 同值)
+const MAX_BODY_SIZE := 64 * 1024 * 1024   # 兼容网页编辑器，解压后的数据体不得超过 64 MiB。
 
 static func parse(data: PackedByteArray) -> Dictionary:
 	if data.size() < HEADER_SIZE:
@@ -55,15 +51,13 @@ static func parse(data: PackedByteArray) -> Dictionary:
 	var h := read_header(data)
 	if int(h["version"]) != 4:
 		return {"ok": false, "error": "版本 %d 不支持(只支持 4)" % int(h["version"])}
-	# 格式防御性校验：
-	# 1. 瓦片尺寸必须为 4 的整数倍且大于 0
+	# 宽高必须能分为完整的 4 × 4 子格瓦片。
 	if int(h["sub_cols"]) <= 0 or int(h["sub_rows"]) <= 0 \
 			or int(h["sub_cols"]) % SUB_PER_CELL != 0 or int(h["sub_rows"]) % SUB_PER_CELL != 0:
 		return {"ok": false, "error": "sub 尺寸非法(%dx%d,须为 4 的倍数且非零)" % [int(h["sub_cols"]), int(h["sub_rows"])]}
-	# 2. 校验解压前声明的 body_size 上限，避免异常大内存分配
+	# 先限制声明的解压大小，避免解压时分配超出上限的内存。
 	if int(h["body_size"]) > MAX_BODY_SIZE:
 		return {"ok": false, "error": "body_size 超上限(%d > %d)" % [int(h["body_size"]), MAX_BODY_SIZE]}
-	# 3. 未压缩模式下 body_size 必须与文件实际数据余量一致
 	if int(h["compression"]) == 0 and int(h["body_size"]) != data.size() - HEADER_SIZE:
 		return {"ok": false, "error": "裸 body 大小与文件不符"}
 	var body := data.slice(HEADER_SIZE)
@@ -94,7 +88,7 @@ static func parse(data: PackedByteArray) -> Dictionary:
 		"scene": PackedInt32Array(),
 	}
 	var off := 2 + meta_len
-	for bit in 4:   # bit0 前景 / bit1 场景 / bit2 后景 / bit3 背景
+	for bit in 4:   # 依次处理前景、场景、后景和背景。文件头中未设置的图层没有数据。
 		if int(h["layer_flags"]) & (1 << bit) == 0:
 			continue
 		if off >= body.size():
@@ -136,14 +130,14 @@ static func parse(data: PackedByteArray) -> Dictionary:
 		elif kind == 2:
 			if off + n * 4 > body.size():
 				return {"ok": false, "error": "RGBA 层截断(bit%d)" % bit}
-			off += n * 4   # 背景层:整块 RGBA,游戏侧暂不消费
+			off += n * 4   # RGBA 图层不提供游戏所用的场景瓦片，直接跳过像素字节。
 		else:
 			return {"ok": false, "error": "未知层类型 %d" % kind}
 	return out
 
 
-## 「场景」层 → 游戏网格。纹理取 16 子格中出现最多的非零者(平票取小 id),
-## 形状 = 2×2 象限掩码(象限内有任一子格非空即置位)。
+## 用每块瓦片中最常见的非空纹理作为瓦片纹理。频次相同时取较小的纹理 ID。
+## 低四位记录四个区域是否包含非空子格，顺序是左上、右上、左下、右下。
 static func flatten_scene(scene: PackedInt32Array, sub_cols: int, sub_rows: int) -> Array[Array]:
 	var cols := sub_cols / SUB_PER_CELL
 	var rows := sub_rows / SUB_PER_CELL
@@ -181,8 +175,8 @@ static func flatten_scene(scene: PackedInt32Array, sub_cols: int, sub_rows: int)
 	return grid
 
 
-# CRC32 校验（IEEE 802.3 标准，多项式 0xEDB88320）：静态表驱动加速。
-# 内部使用 64 位整型避免无符号 32 位整型溢出符号位。
+# CRC32 使用按多项式 0xEDB88320 生成的查找表。
+# GDScript 的整数为有符号 64 位，足以存放计算得到的无符号 32 位校验值。
 static var _crc_table: PackedInt64Array = PackedInt64Array()
 
 static func crc32(data: PackedByteArray) -> int:

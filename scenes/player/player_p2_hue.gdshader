@@ -1,5 +1,5 @@
 shader_type canvas_item;
-// 共用画布通过每条贴图指令的红色通道传入归一化的色相偏移。
+// 红色顶点色分量用来传递色相偏移。顶点着色器先保存该值，再把红色分量设回 1，避免它影响纹理颜色。
 varying float hue_shift;
 
 void vertex() {
@@ -23,7 +23,6 @@ vec3 hsv2rgb(vec3 c) {
 }
 
 void fragment() {
-	// 只改色相:读**入参** COLOR(已含纹理),写回 rgb;alpha 原样透传。
 	vec3 hsv = rgb2hsv(COLOR.rgb);
 	hsv.x = fract(hsv.x + hue_shift);
 	COLOR.rgb = hsv2rgb(hsv);

@@ -101,7 +101,7 @@ func send_state(peer: int, frame: Dictionary, batch: NetCodec.StateBatch) -> voi
 func send_event(kind: int, data: Variant = null, peer: int = 1) -> void:
 	_send(peer, Flow.EVENT, _codec(peer).encode_event(kind, data))
 
-# 广播只压缩一次，各连接共享编码结果。
+# 同一个事件发给多个连接时，所有接收方共用编码后的字节。
 func broadcast_event(kind: int, data: Variant, peers: PackedInt32Array) -> void:
 	if peers.is_empty(): return
 	assert(kind != NetEvent.Kind.BASELINE)
@@ -119,7 +119,7 @@ func _send(peer: int, flow: Flow, bytes: PackedByteArray) -> void:
 	PerformanceStats.end(PerformanceStats.TRANSPORT_SEND, perf_started)
 
 func _check_send_result(peer: int, error: int) -> void:
-	# 原生层已关闭或找不到连接时，由断线通知处理，避免重复关闭。
+	# 发送时若发现连接已关闭，等待传输层的断开通知清理连接状态。
 	if error == OK or error == ERR_UNCONFIGURED or error == ERR_CONNECTION_ERROR: return
 	push_warning("网络发送失败 peer=%d error=%d" % [peer, error])
 	_transport.disconnect_peer(peer, "Outgoing message rejected: %d" % error)
@@ -134,15 +134,14 @@ func _physics_process(_delta: float) -> void:
 		return
 	var perf_poll := PerformanceStats.begin()
 	var generation := connection_generation
-	# 每帧接纳新包，使排队中的旧 STATE 能被最新锚点合并；派发仍受独立预算约束。
-	# 只排空旧批次会把新 STATE 留在原生队列，延长重放窗口并进一步拖慢排空。
+	# 本物理帧收到的消息加入待处理队列，再与前面各帧积压的消息一起筛选。
 	var messages := _transport.poll(RECEIVE_BATCH_MESSAGES)
 	_pending_messages.append_array(messages)
 	messages = _filter_receive_backlog(_coalesce_messages(_pending_messages))
 	_pending_messages = []
 	PerformanceStats.end(PerformanceStats.NETWORK_POLL, perf_poll)
 	var perf_dispatch := PerformanceStats.begin()
-	# 合并和年龄检查单独计时，不能因旧队列扫描耗尽业务派发的预算。
+	# 性能统计将快照合并和积压检查归入轮询。后续的消息分发另行计时。
 	var dispatch_started := Time.get_ticks_usec()
 	var dispatched := 0
 	var dispatched_bytes := 0
@@ -186,16 +185,16 @@ func _filter_receive_backlog(messages: Array) -> Array:
 		totals[peer]["bytes"] += message[2].size()
 		if totals[peer]["messages"] > MAX_PENDING_MESSAGES or totals[peer]["bytes"] > MAX_PENDING_BYTES or now - int(message[3]) > MAX_RECEIVE_AGE_US:
 			rejected[peer] = true
+	# 任一条消息等待过久，或某连接积压的消息数、字节数超出限制时，关闭该连接。
 	for peer: int in rejected:
 		_transport.disconnect_peer(peer, "Receive backlog exceeded processing limits")
-	# 关闭连接后由正常断线流程重连并获得新 epoch/基线；已有连接事件仍须派发。
+	# 连接关闭后，过滤其尚未处理的游戏数据。连接状态通知仍交给分发流程。
 	return messages.filter(func(message: Array) -> bool: return message[0] != 0 or not rejected.has(message[1]))
 
-# STATE 只依赖已回传的 ACK，同批尚未派发的中间 STATE 不会成为新基线。
-# 同一合并区间内按 peer 保留最大序号 STATE；收到 EVENT、连接通知或无效包时结束区间。
-# INPUT 不结束区间，有限冗余记录必须全部解码后去重。
-# 屏障只保留本地接收顺序，不建立跨 lane 的发送或接收顺序保证。
-
+# 同一段队列里的快照可以跳过中间项，因为服务器以接收方已经确认的快照为基准计算增量。
+# 仅当一段消息由有效的 STATE 和 INPUT 组成时，才按连接合并 STATE，每个连接保留最新序号。
+# 可靠事件、连接通知和无法识别的消息都会结束当前的合并范围。
+# 这里保留 INPUT 的接收顺序，输入缓冲区再去掉重复记录。
 func _coalesce_messages(messages: Array) -> Array:
 	var result: Array = []
 	var latest := {}
@@ -211,13 +210,11 @@ func _coalesce_messages(messages: Array) -> Array:
 				var old: Array = result[latest[key]]
 				var previous: PackedByteArray = old[2]
 				var current: PackedByteArray = message[2]
-				# STATE 可能乱序到达；合并时保留最大序号，不能让迟到旧包覆盖新状态。
 				if current.decode_u32(3) <= previous.decode_u32(3):
 					continue
 				result[latest[key]] = null
 			latest[key] = result.size()
 		elif code != NetCodec.INPUT:
-			# 只清空可替换 STATE 的索引，屏障前保留的消息仍按原位置派发。
 			latest.clear()
 		result.append(message)
 	return result.filter(func(message: Variant) -> bool: return message != null)

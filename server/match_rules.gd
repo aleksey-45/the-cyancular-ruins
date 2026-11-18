@@ -45,7 +45,7 @@ func setup(p_mode: String, roster: Array, p_teams: Dictionary, map: Dictionary, 
 				return "侧 %d 出生点不足（需要 %d 个，实际 %d 个）" % [side, minimum, sides[side].size()]
 		_spawn_pools = sides
 	if mode == PvpSession.MODE_TEAM:
-		# 开局后固定阵容，掉线不重算补偿。
+		# 开局记录两队人数。后续回合都用这份人数计算起始比分补偿。
 		team_counts = TeamRules.team_counts(teams)
 		assert(not team_counts.is_empty())
 	_plan_round_spawns()
@@ -55,7 +55,7 @@ func setup(p_mode: String, roster: Array, p_teams: Dictionary, map: Dictionary, 
 func same_team(a: int, b: int) -> bool:
 	return teams.has(a) and teams[a] == teams.get(b, 0)
 
-## 单局初始比分：团队双方按人数差补贴，其他模式保持清空。
+## 新回合清除之前的比分。人数不等时，人数较少的一队以补偿分开局。
 func _reset_scores() -> void:
 	scores.clear()
 	if team_counts.is_empty():

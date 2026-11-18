@@ -24,7 +24,7 @@ using namespace godot;
 namespace gns {
 using Bytes = std::vector<uint8_t>;
 using Payload = std::shared_ptr<const Bytes>;
-constexpr uint32_t WIRE_TAG = 0x02534e47; // GNS, transport version 2, little endian.
+constexpr uint32_t WIRE_TAG = 0x02534e47; // Header bytes: ASCII GNS followed by the transport version byte.
 constexpr size_t HEADER = 8;
 constexpr size_t MAX_PAYLOAD = 64 * 1024 * 1024;
 
@@ -34,7 +34,7 @@ uint32_t read_u32(const uint8_t *p) {
 void write_u32(uint8_t *p, uint32_t value) {
     for (int i = 0; i < 4; ++i) p[i] = uint8_t(value >> (8 * i));
 }
-} // namespace gns
+}
 
 class GnsEndpoint : public RefCounted {
     GDCLASS(GnsEndpoint, RefCounted)
@@ -70,7 +70,7 @@ class GnsEndpoint : public RefCounted {
     static void status_changed(SteamNetConnectionStatusChangedCallback_t *change) {
         const auto handle = change->m_hConn;
         const auto &info = change->m_info;
-        // Callback snapshots can contain stale user data; query the live connection instead.
+        // The live connection provides the current peer ID. Pending callbacks may still refer to a previous ID.
         const int peer = int(sockets->GetConnectionUserData(handle));
         for (auto *endpoint : endpoints) {
             auto found = endpoint->connections.find(peer);
@@ -157,8 +157,7 @@ class GnsEndpoint : public RefCounted {
         return result > 0 ? k_EResultOK : result < 0 ? EResult(-result) : k_EResultFail;
     }
     void service(int peer, Connection &connection) {
-        // A full-size EVENT fragment needs the default send buffer empty.
-        // Try it before adding new realtime data so small packets cannot starve it.
+        // Reliable fragments can use the entire send buffer, so this loop attempts them before sending real-time updates.
         while (!connection.reliable.empty()) {
             const auto &wire = *connection.reliable.front();
             const size_t length = std::min(size_t(k_cbMaxSteamNetworkingSocketsMessageSizeSend) - gns::HEADER,

@@ -1,4 +1,4 @@
-"""Build both native extensions with MSVC on Windows or Xcode on macOS."""
+"""为 Godot 构建网络传输和子进程管理的原生扩展。"""
 import os
 import platform
 import shutil
@@ -37,7 +37,7 @@ def build_native():
         raise SystemExit("Native builds require Windows with MSVC or macOS with Xcode.")
     mac = sys.platform == "darwin"
     host = platform.machine() if mac else "x86_64"
-    # Build protoc for the current machine before compiling the other slice.
+    # protoc 在构建机器上执行，因此交叉编译时也使用与本机架构匹配的版本。
     architectures = (host, "x86_64" if host == "arm64" else "arm64") if mac else (host,)
     jobs = str(min(4, os.cpu_count() or 1))
     with tempfile.TemporaryDirectory(prefix="cyr-native-") as temporary:

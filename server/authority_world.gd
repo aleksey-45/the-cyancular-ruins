@@ -302,7 +302,7 @@ func _mvp_role(stats: Dictionary) -> int:
 		return 0
 	var candidates: Array = []
 	if rules.mode == PvpSession.MODE_TEAM or not rules.team_counts.is_empty():
-		# 团队赛只在分出胜负后从获胜队选 MVP；平局没有 MVP。
+		# 只有获胜队伍的队员参与团队赛 MVP 评选。平局时没有 MVP。
 		if rules.winner == 0:
 			return 0
 		for role in stats:

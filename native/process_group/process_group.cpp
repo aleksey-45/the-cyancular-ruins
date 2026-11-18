@@ -24,7 +24,7 @@ struct Handle {
 	HANDLE release() { HANDLE result = value; value = nullptr; return result; }
 };
 
-// CreateProcess receives one command line. Quote each argv item using Windows rules.
+// Each argument is escaped before joining the command line, so the child can recover its original value.
 static std::wstring quote(const String &value) {
 	auto chars = value.utf16();
 	std::wstring result = L"\"";
@@ -106,7 +106,7 @@ public:
 		startup.lpAttributeList = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(storage.data());
 		if (!InitializeProcThreadAttributeList(startup.lpAttributeList, capture ? 2 : 1, 0, &size))
 			return error("InitializeProcThreadAttributeList");
-		// Assign the Job as part of creation; the child never runs outside its owner's Job.
+		// Using the startup attribute attaches the child to the job before it can create any descendants.
 		BOOL configured = UpdateProcThreadAttribute(startup.lpAttributeList, 0,
 				PROC_THREAD_ATTRIBUTE_JOB_LIST, &job, sizeof(job), nullptr, nullptr);
 		if (configured && capture)

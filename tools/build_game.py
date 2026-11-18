@@ -1,4 +1,4 @@
-"""Export the game and create a ZIP with its native libraries and EasyTier."""
+"""调用 Godot 导出游戏，将程序、原生扩展和 EasyTier 文件一起打包成 ZIP。"""
 import argparse
 import hashlib
 import json

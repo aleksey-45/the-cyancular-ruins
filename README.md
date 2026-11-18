@@ -1,29 +1,54 @@
 # The Cyancular Ruins
 
 <p align="center">
-  <img src="icon.svg" alt="The Cyancular Ruins" width="128" height="128" />
+  <img src="assets/textures/icon.svg" alt="The Cyancular Ruins" width="128" height="128" />
 </p>
 
 [![Godot 4.7.1](https://img.shields.io/badge/Godot-4.7.1-478CBF?logo=godotengine&logoColor=white)](https://godotengine.org/)
+[![支持平台：Windows x64、macOS](https://img.shields.io/badge/platform-Windows%20x64%20%7C%20macOS-0078D4)](RELEASE.md)
+[![构建与测试状态](https://github.com/aleksey-45/the-cyancular-ruins/actions/workflows/build.yml/badge.svg?branch=siri)](https://github.com/aleksey-45/the-cyancular-ruins/actions/workflows/build.yml?query=branch%3Asiri)
+[![MIT 许可证](https://img.shields.io/badge/license-MIT-green)](#许可证)
 
-像素风 2D 横版平台动作射击游戏演示项目，基于 Godot 引擎开发，内置 P2P 联机支持。
+像素风 2D 横版平台动作射击游戏，基于 Godot 引擎开发，内置 P2P 联机支持。
 
-- [源码启动、专用服务端与关卡编辑器](docs/tools.md)
-- [游戏行为与系统索引](AGENTS.md)
-- [Windows 与 macOS 发布](RELEASE.md)
+## 项目结构
 
----
+客户端从主菜单进入单人关卡或联机大厅。专用服务器在同一个进程中承载房间和对局。单人、服务器和联机客户端共用角色移动、碰撞与战斗模拟。[主菜单场景](scenes/main_menu.tscn) · [专用服务器场景](server/server_main.tscn)
+
+| 目录 | 内容 |
+|---|---|
+| `core/sim/` | 地图读取、角色移动、碰撞查询、战斗、装备、地形破坏与时间回溯 |
+| `core/net/` | 消息编解码、输入缓冲、状态快照、客户端预测与回滚、联机会话 |
+| `core/config/` | 玩法参数、房间选项、显示与输入设置、性能统计 |
+| `core/present/` | 对局画面与 HUD、地形图集、着色器、字体与音效 |
+| `scenes/` 与 `ui/` | 场景控制器、角色和敌人、菜单与 HUD |
+| `server/` | 房间会话、服务器模拟、回合规则与 Beta 时间技能 |
+| `data/` 与 `maps/` | 地形和敌人的数据配置、内置地图 |
+| `native/` | UDP 消息传输与子进程管理的 GDExtension |
+| `level_editor/` | 网页关卡编辑器及其本地文件服务 |
+| `tools/` 与 `tests/` | 构建、打包和测试入口 |
+
+## 开发文档
+
+| 主题 | 文档 |
+|---|---|
+| 从源码运行、自动加载节点、关卡编辑器与发布 | [运行与工具](docs/tools.md) · [构建与发布](RELEASE.md) |
+| 地图格式、水体与可破坏地形 | [世界与地图](docs/world.md) · [地形](docs/terrain.md) |
+| 移动、敌人、装备与伤害 | [模拟与战斗](docs/simulation.md) · [玩家](docs/player.md) · [敌人](docs/enemies.md) · [武器与装备](docs/weapons.md) |
+| 多人玩法与网络同步 | [对战模式](docs/modes.md) · [联机系统](docs/netplay.md) |
+| 画面与交互 | [渲染](docs/render.md) · [界面与交互](docs/ui.md) |
+| 自动化测试与运行性能 | [测试](docs/tests.md) · [性能监测](docs/performance.md) |
 
 ## 致谢
 
-- [Godot Engine](https://godotengine.org/) — 开源游戏引擎（遵循 MIT 许可证）
-- [GameNetworkingSockets](https://github.com/ValveSoftware/GameNetworkingSockets) — 可靠与不可靠 UDP 消息传输（遵循 BSD-3-Clause 许可证）
-- [EasyTier](https://github.com/EasyTier/EasyTier) — 分布式网络隧道（遵循 LGPL-3.0 许可证）
-- GNU Unifont — 点阵字体（遵循 SIL OFL 1.1 许可证）
-- Less Perfect DOS VGA — 像素字体（Zeh Fernando / Laemeur）
+- [Godot Engine](https://godotengine.org/)（MIT 许可证）
+- [GameNetworkingSockets](https://github.com/ValveSoftware/GameNetworkingSockets)（BSD-3-Clause 许可证）
+- [EasyTier](https://github.com/EasyTier/EasyTier)（LGPL-3.0 许可证）
+- GNU Unifont 点阵字体（SIL OFL 1.1 许可证）
+- Less Perfect DOS VGA 像素字体（Zeh Fernando / Laemeur）
 
 世界观受博尔赫斯《环形废墟》与艾略特《四个四重奏》启发。
 
 ## 许可证
 
-MIT 许可证。第三方资源遵循各自原始开源许可证。
+项目采用 MIT 许可证。第三方组件与资源各自适用的许可证见 [第三方声明](THIRD_PARTY_NOTICES.txt)。

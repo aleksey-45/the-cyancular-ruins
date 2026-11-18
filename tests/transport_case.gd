@@ -135,7 +135,7 @@ func _reopen_with_pending_data() -> void:
 	expect(_clients[0].send(1, EVENT, fresh) == OK, "new session sends")
 	expect(_until(func() -> bool: return not _server_messages.is_empty()), "new session receives completion")
 	expect(_server_messages.size() == 1 and _server_messages[0][2] == fresh, "old data cannot leak into the new connection")
-	# Leave unsent fragments for endpoint cleanup.
+	# 退出测试前发送一条需要分片的消息，使清理连接时仍有尚未发送的数据。
 	_clients[0].send(1, EVENT, old)
 	_clients[0].flush()
 

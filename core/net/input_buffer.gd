@@ -9,7 +9,7 @@ const ACTION_TICKS := 12
 
 enum { PACKET_FRAMES, PACKET_ACTIONS }
 
-# 持续输入和单次动作共用前三个槽。
+# 每帧的输入状态与单次操作使用相同的前三个字段。SEQ 是输入序号，EPOCH 区分重置前后的输入，TARGET_TICK 是输入原定生效的模拟帧。
 enum { SEQ, EPOCH, TARGET_TICK, FRAME_AX, FRAME_HELD, FRAME_AIM }
 enum { ACTION_PRESSED = TARGET_TICK + 1, ACTION_RELEASED, ACTION_WINST, ACTION_AIM }
 

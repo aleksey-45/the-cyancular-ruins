@@ -17,7 +17,7 @@ var _seg_from := Vector2.ZERO
 var _seg_to := Vector2.ZERO
 var _seg_index := 0
 
-func start_motion() -> void:
+func _ready() -> void:
 	var tex := TerrainAtlas.terrain_texture(MAP, CELL_PX, TerrainAtlas.SKY_COLOR)
 	_map_cells = Vector2(tex.get_width(), tex.get_height()) / float(CELL_PX)
 	_mat = ShaderMaterial.new()
@@ -37,7 +37,7 @@ func _random_target() -> Vector2:
 	return Vector2(_rng.randf_range(0.2, 0.8) * _map_cells.x,
 			_rng.randf_range(0.2, 0.8) * _map_cells.y)
 
-func present(delta: float) -> void:
+func _process(delta: float) -> void:
 	_seg_t += delta
 	while _seg_t >= SEGMENT_SEC:
 		_seg_t -= SEGMENT_SEC

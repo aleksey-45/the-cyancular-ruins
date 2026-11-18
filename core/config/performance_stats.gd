@@ -1,9 +1,8 @@
 class_name PerformanceStats
 extends RefCounted
 
-# 主线程固定容量聚合：不保存实体、报文、字符串或逐样本分配。
+# 统计数组在开始采样前分配，主线程在每次采样时直接更新其中的数值。
 
-# 枚举成员不能按 类名.成员 访问，因此用常量暴露给调用方。
 const NETWORK_POLL := 0
 const NETWORK_DISPATCH := 1
 const SERVER_TICK := 2
@@ -37,7 +36,7 @@ const OVER_BUDGET := 4
 
 const TIME_BOUNDS := [100, 250, 500, 1000, 2000, 4000, 8000, 16667, 33334, 66667]
 const COUNT_BOUNDS := [0, 1, 2, 4, 8, 16, 32, 64, 128, 256]
-# 窗口行按固定槽位存储，避免每次采样写字典。
+# 每个指标使用一行数组。以下常量给出样本数、累计值、最大值等统计量在行内的索引。
 const ROW_COUNT := 0
 const ROW_SUM := 1
 const ROW_MAX := 2
@@ -85,7 +84,6 @@ static func _add(row: Array, value: int, count_metric: bool, at: int) -> void:
 	var bin := 0
 	while bin < bounds.size() and value > int(bounds[bin]):
 		bin += 1
-	# Packed 数组是引用语义，链式下标即原地自增。
 	row[ROW_HIST][bin] += 1
 
 static func set_enabled(enabled: bool) -> void:
@@ -207,5 +205,5 @@ static func snapshot(total: bool) -> Dictionary:
 	return result
 
 static func storage_bytes() -> int:
-	# 三个窗口 × 每个指标 5 个计数 + 11 档直方图，全部 int64。
+	# 分别计算当前采样、上一次发布的结果和累计结果。每行含五项统计量和十一个直方图区间。
 	return 3 * COUNT * (5 * 8 + (TIME_BOUNDS.size() + 1) * 8) + 32

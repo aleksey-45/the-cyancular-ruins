@@ -1,4 +1,4 @@
-// 由 sync-tiles.js 从 data/tile_defs.json 生成;改配置请改 JSON 再跑一次。
+// 关卡编辑器读取的瓦片属性来自 data/tile_defs.json。
 globalThis.TILE_DEFS = {
   "version": 1,
   "friction": 1,

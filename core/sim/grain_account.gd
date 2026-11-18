@@ -1,19 +1,7 @@
 class_name GrainAccount
 extends RefCounted
 
-# 时间颗粒账户（怀表系统核心状态机）：总量余额 + 短期额度 + 透支状态机。纯逻辑零场景依赖。
-#
-# 模型结构：
-#   - balance     总余额（0..GRAIN_CAP，白短针一圈；结晶入账仅增加此处）
-#   - short_used  短期窗口已消耗额度（0..SHORT_WINDOW，红长针主圈；消耗顺时针推进，恢复逆时针回拨）
-#   - loan_used   已透支额度（0..LOAN_LIMIT，红长针额外 1/4 圈；短期时间窗口满后继续消耗即计入透支）
-#   - loan_depth  = loan_used / LOAN_LIMIT ∈ [0, 1]，作为视觉特效与敌人时间流速倍率的驱动变量
-#   - locked      透支达到上限后的强制锁定：透支达到上限 LOAN_LIMIT 触发，透支额度逐步偿还完毕前锁定技能
-#
-# 操作接口：
-#   - 消耗：同时扣除总余额与短期额度；超出短期额度后计入透支；透支达上限时锁定。
-#   - 恢复：以固定速率恢复，优先偿还透支额度，还清透支后解除锁定并恢复短期额度。
-#   - 吸收结晶：结晶吸收增加总余额（不超过上限）。
+# 单人和 Beta 模式使用相同的时间技能消耗规则，这里保存余额、短期消耗量和透支量。
 
 signal loan_locked
 
@@ -58,13 +46,13 @@ func loan_depth() -> float:
 	return loan_used / loan_max
 
 
-## 消耗 delta 秒 × rate 颗粒/秒。返回实际扣掉的颗粒数(余额/锁定不足时 < rate·delta)。
+## 按使用时长和每秒消耗量扣减余额。余额不足时扣完为止，返回这次实际花费的数量。
 func spend(delta: float, rate: float) -> float:
 	if locked or balance <= 0.0 or delta <= 0.0 or rate <= 0.0:
 		return 0.0
 	var got: float = minf(rate * delta, balance)
 	balance -= got
-	# 指针推进与消耗同额:短期时间窗口满 → 溢出进透支;透支达到上限 → 强制锁定
+	# 消耗超出短期额度的部分记为透支。透支达到上限后锁定时间技能。
 	short_used += got
 	if short_used > window:
 		var over: float = short_used - window
@@ -77,7 +65,7 @@ func spend(delta: float, rate: float) -> float:
 	return got
 
 
-## 每帧恢复(无论是否在消耗都照走):50/s,优先偿还透支，还清后恢复短期额度;锁定中还清透支额度 → 解锁。
+## 恢复额度时优先偿还透支，多余的额度用于减少已有的短期消耗。透支归零后解除锁定。
 func regen(delta: float) -> void:
 	if delta <= 0.0:
 		return
@@ -94,7 +82,7 @@ func regen(delta: float) -> void:
 		locked = false
 
 
-## 结晶入账(乌鸫击杀 300 等):只进总余额,夹上限。返回实际入账量。
+## 补充时间颗粒后返回实际到账数量。超出余额上限的部分不计入。
 func deposit(amount: int) -> int:
 	if amount <= 0:
 		return 0

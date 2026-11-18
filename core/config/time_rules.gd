@@ -3,7 +3,7 @@ extends RefCounted
 
 enum { DEFAULT, MINIMUM, MAXIMUM }
 
-# 联机规则的默认值、范围和类型。字段顺序用于建房与开局协议。
+# 每个设置项按默认值、下限和上限的顺序保存。建房与开局消息按此字典的字段顺序编码。
 const FIELDS := {
 	"initial": [1000.0, 0.0, 5000.0],
 	"cap": [1800.0, 100.0, 9999.0],

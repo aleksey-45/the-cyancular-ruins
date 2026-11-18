@@ -1,16 +1,15 @@
 class_name MapCatalog
 extends RefCounted
 
-# 扫描内置与外置地图，用解析出的地图数据生成缩略图。
+# 地图选择界面从这里取得地图列表和地形缩略图。列表包括内置地图和外部地图。
 
 const MAP_DIR := "res://maps"
-const CELL_PX: int = 2                     # 每格 2px:125×75 → 250×150;150×100 → 300×200
-const BG := Color(0.04, 0.07, 0.11, 1.0)   # 空气 = 背景
+const CELL_PX: int = 2                     # 每块地图瓦片在缩略图中占 2 × 2 像素。
+const BG := Color(0.04, 0.07, 0.11, 1.0)
 const SOLO_SPAWN := Color(0.35, 0.72, 1.0)
 const SIDE_COLORS := {1: Color(0.35, 1.0, 0.45), 2: Color(1.0, 0.62, 0.27)}
 
-# 瓦片配色(纹理 id → 颜色),与 ui/minimap.gd 的观感保持一致:
-# 墙、梯、链、树叶、树干和水体的材质标记色。
+# 缩略图用纯色区分地形材质，无需加载墙面和水体纹理。
 const PALETTE := {
 	1: Color(0.72, 0.76, 0.82), 6: Color(0.52, 0.56, 0.63),
 	7: Color(0.48, 0.52, 0.59), 8: Color(0.44, 0.48, 0.55), 9: Color(0.40, 0.44, 0.51),
@@ -93,7 +92,7 @@ static func _build_image(map: Dictionary) -> Image:
 	_mark_spawns(img, map["spawns"])
 	return img
 
-## 随机卡片的棋盘格占位图。
+## 随机地图尚未选定，界面用棋盘格作为占位缩略图。
 static func random_texture() -> ImageTexture:
 	if _random_texture == null:
 		var n := 64
@@ -122,7 +121,7 @@ static func _scan(dir: String) -> Array[String]:
 static func _color_of(v: int) -> Color:
 	var tex := MapFormat.texture_of(v)
 	var col: Color = PALETTE.get(tex, Color(0.6, 0.6, 0.62))
-	# 半砖/缺角(形状 != 15)压暗一点:简略图上能看出"这格是半格",与实际可走性相符
+	# 只有四个区域都被占用的瓦片使用原色，其余瓦片调暗。
 	if MapFormat.shape_of(v) != 15:
 		col = col.lerp(BG, 0.45)
 	return col

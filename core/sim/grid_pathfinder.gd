@@ -1,14 +1,12 @@
 class_name GridPathfinder
 extends RefCounted
 
-# 环形空间几何、地面检测与 A* 寻路。
-# 纯静态工具类，无内部状态，网格与尺寸参数由调用方传入。
+# 距离、活动范围和 A* 寻路都把地图的左右边缘、上下边缘视为相连。
 
-# 四邻域的顺序决定等长路径的选取。
+# 相邻瓦片始终按相同顺序加入候选列表，确保同等优先级的路径能稳定复现。
 const DIRECTIONS := [Vector2i.RIGHT, Vector2i.LEFT, Vector2i.DOWN, Vector2i.UP]
 
-# 计算网格坐标在环形地图上的曼哈顿距离（以网格单元为单位）。
-# cols 与 rows 参数由调用方根据实际地图尺寸传入，不依赖全局常量。
+# 两个瓦片之间的曼哈顿距离，横向和纵向分别取较短的路线。
 static func toroidal_dist(a: Vector2i, b: Vector2i, cols: int, rows: int) -> int:
 	var dx := absi(a.x - b.x)
 	dx = mini(dx, cols - dx)
@@ -17,7 +15,7 @@ static func toroidal_dist(a: Vector2i, b: Vector2i, cols: int, rows: int) -> int
 	return dx + dy
 
 
-# 计算环形空间内的像素级最短位移向量：从 a 指向 b（考虑跨边界的最短路径）。
+# 取得 a 指向 b 的最短位移。若从地图另一侧到达更近，则用跨边缘的位移。
 static func toroidal_delta_px(a: Vector2, b: Vector2, size: Vector2) -> Vector2:
 	var dx := b.x - a.x
 	if absf(dx) > size.x * 0.5:
@@ -28,19 +26,20 @@ static func toroidal_delta_px(a: Vector2, b: Vector2, size: Vector2) -> Vector2:
 	return Vector2(dx, dy)
 
 
-# 将 pos 映射到距离 anchor 最近的可视镜像副本位置，使各轴差值不超过半个地图跨度。
+# 返回离 anchor 最近的对应位置。必要时将 pos 按地图宽度或高度平移。
 static func anchor_to_nearest(pos: Vector2, anchor: Vector2, size: Vector2) -> Vector2:
 	return anchor + toroidal_delta_px(anchor, pos, size)
 
 
-# 整图平移的索引范围。只保留与地图及其接缝带相交的副本，零偏移是原位。
+# 计算地图两侧哪些平移位置需要放置同一份地形，以补齐边缘附近的碰撞和绘制范围。
+# 返回结果是偏移的取值范围，横向每单位为一个地图宽度，纵向每单位为一个地图高度。(0, 0) 表示不平移。
 static func seam_copy_range(bounds: Rect2, period: Vector2, reach: Vector2) -> Rect2i:
 	var first := -Vector2i(((bounds.end + reach - period) / period).ceil())
 	var last := Vector2i(((reach - bounds.position) / period).ceil())
 	return Rect2i(first, last - first + Vector2i.ONE)
 
 
-# 将位置坐标规范化到 [0, w) × [0, h) 的世界逻辑区间内。
+# 把越界坐标换回地图另一侧的对应位置，结果总在 [0, width) × [0, height) 内。
 static func wrap_to_range(pos: Vector2, size: Vector2) -> Vector2:
 	var p := pos
 	if p.x >= size.x or p.x < 0.0:
@@ -50,14 +49,13 @@ static func wrap_to_range(pos: Vector2, size: Vector2) -> Vector2:
 	return p
 
 
-# 像素坐标 → 环面格子坐标(取模回 [0,cols)×[0,rows))。
+# 把世界坐标换算成瓦片索引，并将越界位置对应到地图另一侧。
 static func cell_of(pos: Vector2, ts: int, cols: int, rows: int) -> Vector2i:
 	var c := Vector2i(floori(pos.x / ts), floori(pos.y / ts))
 	return Vector2i(posmod(c.x, cols), posmod(c.y, rows))
 
 
-# 判定标准：当前格为空气且正下方（y+1，环面回绕）为实心瓦片，确保实体具有稳固托底表面。
-# 坐标内部自动通过 posmod 进行环面归一化。
+# 可站立的位置须是空瓦片，正下方一格有可承托角色的地形。计算时把地图上下两侧视为相连。
 static func is_floor_cell(grid: Array, cell: Vector2i) -> bool:
 	if grid.is_empty():
 		return false
@@ -69,7 +67,7 @@ static func is_floor_cell(grid: Array, cell: Vector2i) -> bool:
 	return TileDefs.is_blocked(grid[posmod(cell.y + 1, rows)][x])
 
 
-# 地面站立判定（包含头顶净空）：要求当前格为站立格且上方（y-1）为空气，防范嵌墙。
+# 为头部多留一格空间，用于挑选需要完整站立空间的位置。
 static func is_floor_cell_with_headroom(grid: Array, cell: Vector2i) -> bool:
 	if not is_floor_cell(grid, cell):
 		return false
@@ -131,7 +129,7 @@ static func find_path(size: Vector2i, start: Vector2i, goal: Vector2i, can_pass:
 	path.reverse()
 	return path
 
-# 小根堆的每项保存 (优先级, 格子编号)，相同优先级保留原有的父子顺序。
+# 最小堆以 Vector2i.x 作为优先级，y 保存瓦片索引。
 static func _push(heap: Array[Vector2i], entry: Vector2i) -> void:
 	var i := heap.size()
 	heap.append(entry)
@@ -160,9 +158,8 @@ static func _pop(heap: Array[Vector2i]) -> Vector2i:
 	heap[i] = last
 	return first
 
-# 从候选瓦片集合中贪心选取 count 个互相保持最大间距的点集（基于环面距离）。
-# 优先满足两两间距 >= clearance，若候选不足则逐步放宽间距限制。
-# 内部包含随机打乱逻辑，开局规划完成后应保存结果，避免二次调用导致不同步。
+# 先随机排列候选瓦片，再挑选相互至少间隔 clearance 格的位置。
+# 达到初始间距的位置不够时，逐步缩小最小间距。
 static func spread_cells(cells: Array[Vector2i], count: int, clearance: int, cols: int, rows: int) -> Array[Vector2i]:
 	var picked: Array[Vector2i] = []
 	count = mini(count, cells.size())

@@ -1,11 +1,10 @@
 class_name UiFactory
 extends RefCounted
 
-# 统一主题与控件构造；字号为 16 的整数倍。
+# 代码创建的菜单控件采用同一套主题和字体。
 
 const MENU_THEME := preload("res://ui/theme/menu_theme.tres")
 
-# 为目标控件统一配置像素字体与字号
 static func style_control(c: Control, size: int) -> void:
 	c.add_theme_font_size_override("font_size", size)
 	c.add_theme_font_override("font", PixelFont.FONT)
@@ -19,7 +18,7 @@ static func label(text: String, size: int, color: Color = C_WHITE) -> Label:
 	return l
 
 
-# 对昵称进行等宽约束截断与留白对齐
+# 列表用空格补齐短昵称，过长的昵称用省略号截断。长度按字符宽度估算。
 static func fit_name(s: String, max_units: int) -> String:
 	var units := 0
 	var out := ""
@@ -38,12 +37,12 @@ static func fit_name(s: String, max_units: int) -> String:
 
 
 
-const C_BG          := Color(0.039, 0.059, 0.094)   # 页面底色 #0A0F18
-const C_DANGER      := Color(0.900, 0.400, 0.400)   # 警示红色
-const C_WHITE       := Color(1, 1, 1)               # 纯白字色
-const C_WARN        := Color(0.950, 0.850, 0.550)   # 弹药低量警告金色
+const C_BG          := Color(0.039, 0.059, 0.094)
+const C_DANGER      := Color(0.900, 0.400, 0.400)
+const C_WHITE       := Color(1, 1, 1)
+const C_WARN        := Color(0.950, 0.850, 0.550)
 
-# 动态控件与场景使用同一组主题配色。
+# 直接绘制文字或背景的控件也从菜单主题读取相应颜色。
 static var C_TEXT := MENU_THEME.get_color(&"font_color", &"Label")
 static var C_TEXT_DIM := MENU_THEME.get_color(&"font_color", &"Dim")
 static var C_ACCENT := MENU_THEME.get_color(&"font_color", &"Accent")
@@ -52,32 +51,29 @@ static var C_MODE_TEAM := MENU_THEME.get_color(&"font_pressed_color", &"TeamFilt
 static var C_MODE_ROYALE := MENU_THEME.get_color(&"font_pressed_color", &"RoyaleFilter")
 static var C_SURFACE := (MENU_THEME.get_stylebox(&"panel", &"PanelCarved") as StyleBoxFlat).bg_color
 
-# 断线与宽限期提示色
+# 用于标记连接中断或正在重连的玩家。
 const C_GRACE       := Color(0.72, 0.62, 0.90)
 
-# HUD 通用底板半透明背景色
 const C_PLATE       := Color(0, 0, 0, 0.1)
 
-# 团队对抗队伍阵营色
-const C_TEAM_A := Color(99.0 / 255.0, 155.0 / 255.0, 1.0)     # A 队基础蓝
-const C_TEAM_B := Color(128.0 / 255.0, 244.0 / 255.0, 1.0)    # B 队青色
+const C_TEAM_A := Color(99.0 / 255.0, 155.0 / 255.0, 1.0)
+const C_TEAM_B := Color(128.0 / 255.0, 244.0 / 255.0, 1.0)
 
 
-# 各模式共用的延迟指示色。
+# 延迟低于 60、100、150 毫秒时分别显示绿色、黄色、橙色，其他情况显示红色。
 static func ping_color(ms: int) -> Color:
 	if ms < 60:
-		return Color(0.45, 0.9, 0.45)      # 绿色：延迟良好（<60ms）
+		return Color(0.45, 0.9, 0.45)
 	if ms < 100:
-		return Color(1.0, 0.85, 0.25)      # 黄色：网络正常（60-100ms）
+		return Color(1.0, 0.85, 0.25)
 	if ms < 150:
-		return Color(1.0, 0.6, 0.15)       # 橙色：延迟偏高（100-150ms）
-	return Color(1.0, 0.3, 0.3)            # 红色：网络卡顿（>=150ms）
+		return Color(1.0, 0.6, 0.15)
+	return Color(1.0, 0.3, 0.3)
 
 
-# 槽位颜色：空位、已有武器、当前手持。
-const C_SLOT_EMPTY  := Color(0.510, 0.600, 0.624, 0.5)   # 未占据：淡灰，贴近底板明度
-const C_SLOT_FILLED := Color(0.360, 0.620, 0.920, 0.5)   # 已占据：偏蓝的淡青色
-const C_SLOT_ACTIVE := Color(0.090, 0.300, 0.680, 0.5)   # 手持当前武器：深蓝色，对比最醒目
+const C_SLOT_EMPTY  := Color(0.510, 0.600, 0.624, 0.5)
+const C_SLOT_FILLED := Color(0.360, 0.620, 0.920, 0.5)
+const C_SLOT_ACTIVE := Color(0.090, 0.300, 0.680, 0.5)
 
 static func panel_box(border := true) -> StyleBoxFlat:
 	var box: StyleBoxFlat = MENU_THEME.get_stylebox("panel", "PanelContainer").duplicate()
@@ -112,7 +108,7 @@ static func header_strip(text: String, size: int = 32, centered := false, color:
 static func row_box() -> StyleBoxFlat:
 	return MENU_THEME.get_stylebox("panel", "RowPanel").duplicate()
 
-# 色相角度（0-360 度）转换为角色预览色彩
+# 预览只改变色相，所有选项使用相同的饱和度和亮度。
 static func hue_preview_color(hue_deg: float) -> Color:
 	return Color.from_hsv(fposmod(hue_deg, 360.0) / 360.0, 0.75, 1.0)
 

@@ -1,7 +1,8 @@
 class_name PlayerStateSchema
 extends RefCounted
 
-# 角色检查点按槽位顺序编码。手持装备在最后一个槽位，用独立的增量掩码。
+# 角色状态以数组传递。枚举值是各字段的索引，SIZE 是数组长度。
+# 手持武器状态放在数组最后。发送增量快照时，用独立位掩码标记变化的武器字段。
 enum {
 	POS, GROUNDED, HASTE_MULT, VEL, FACING, STATE_LOCK_TIMER, COYOTE_TIMER,
 	JUMP_BUFFER_TIMER, JUMP_CUT_APPLIED, SQUAT, CHARGE, CHARGE_TIMER, LAST_MOVE_DIR,
@@ -10,7 +11,7 @@ enum {
 	WEAPON_INST, INVENTORY, EQUIPMENT, SIZE,
 }
 
-# 网络记录引用同一份模拟检查点，并附上这名角色的输入与时序。
+# 联机快照除了角色状态，还存有已处理的输入、时间回溯进度及复活帧。
 enum Network { EPOCH, ACTION_ACK, REWIND, RESPAWN_TICK, AIM, INPUT, STATE, SIZE }
 
 enum Equipment { COOLDOWN, AIMING, BUFFERED, SHOT_FACING, RELOAD_LEFT, HOLD }

@@ -1,4 +1,5 @@
-// 单格用异或差量，地图字段交换所有权。相同操作可向前或向后应用。
+// 每个子格只记录修改前后数值的异或值。用该值异或一次即可撤销，再异或一次即可重做。
+// 对地图尺寸或元数据执行撤销和重做时，交换地图当前字段与修改记录里的字段。
 globalThis.Edits = (function () {
   'use strict';
 
@@ -16,7 +17,7 @@ globalThis.Edits = (function () {
     return edit;
   }
 
-  // 每个目标子格只提交一次。读完整个原图后再一起写回，允许源区与目标区重叠。
+  // 先从原图收集所有修改，再统一写入。移动选区时，即使原位置和目标重叠，也能完整读取原选区。
   function cells(map, layer, plan) {
     const values = Core.layerArray(map, layer);
     if (!values || !values.length) return null;
@@ -33,7 +34,7 @@ globalThis.Edits = (function () {
                         cost: 12 + 12 * indices.length});
   }
 
-  // 沿用原有历史预算，改变内部表示后，相同操作仍在同一步淘汰旧记录。
+  // 根据出生点、敌人和复活点的数量估算记录占用的内存。若记录里保存了整张地图，还要计入各图层的大小。
   function fieldCost(map, whole) {
     let cost = 32 * (map.players.length + map.enemies.length + map.respawns.length);
     if (whole) {

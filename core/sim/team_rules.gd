@@ -1,8 +1,8 @@
 class_name TeamRules
 extends RefCounted
 
-# 团队模式的纯规则：人数校验、击杀目标、少人方补偿与伤害倍率。
-# 服务端、客户端预测与 HUD 共用同一份公式，开局后阵容固定，掉线不重算补偿。
+# 这里集中定义组队限制、获胜分数和人数劣势时的补偿。
+# 服务器、客户端和 HUD 都使用对局开始时确定的队伍人数，以免补偿随连接状态变化。
 
 const MIN_TEAM := 1
 const MAX_TEAM := 5
@@ -13,7 +13,7 @@ const DAMAGE_DIFF_MIN := 3
 const DAMAGE_STEP := 0.1
 const DAMAGE_STEP_CAP := 3
 
-## 纯校验：返回 {1: 人数, 2: 人数}，非法数据返回空字典；错误由调用方决定是否报告。
+## 检查玩家队伍编号并统计各队人数。人数或队伍编号无效时返回空字典。
 static func team_counts(teams: Dictionary) -> Dictionary:
 	var counts := {1: 0, 2: 0}
 	for role in teams:
@@ -29,20 +29,19 @@ static func team_counts(teams: Dictionary) -> Dictionary:
 		return {}
 	return counts
 
-## 以下规则只接受 team_counts() 验证过的阵容；缺失字段是内部不变量错误，不再按零人处理。
+## counts 保存两队的人数，由 team_counts() 计算。
 static func total_players(counts: Dictionary) -> int:
 	return int(counts[1]) + int(counts[2])
 
 static func team_difference(counts: Dictionary) -> int:
 	return absi(int(counts[1]) - int(counts[2]))
 
-## 单局击杀目标：总人数 + 3，夹在 [5, 13]。
-## clampi 只处理合法总人数下的规则上限，不替非法阵容兜底。
+## 对局共有几名玩家，就在这个人数上加 3 得到获胜所需的击杀数，结果限制在 5 到 13 之间。
 static func kills_to_win(total: int) -> int:
 	assert(total >= MIN_TEAM * 2 and total <= MAX_TOTAL, "TeamRules: 总人数 %d 超出 2~%d" % [total, MAX_TOTAL])
 	return clampi(total + 3, 5, 13)
 
-## 少人方队伍编号；人数相同返回 0。
+## 两队人数相同不需要补偿，因此用 0 表示没有人数较少的队伍。
 static func disadvantaged_team(counts: Dictionary) -> int:
 	var a := int(counts[1])
 	var b := int(counts[2])
@@ -50,21 +49,21 @@ static func disadvantaged_team(counts: Dictionary) -> int:
 		return 0
 	return 1 if a < b else 2
 
-## 少人方开局得分补贴等于人数差，其他队伍为 0。
+## 人数较少的一队开局获得额外分数，每少一人加 1 分。
 static func score_bonus(team: int, counts: Dictionary) -> int:
 	if team != disadvantaged_team(counts):
 		return 0
 	return team_difference(counts)
 
-## 少人方起始最大生命：50 + 5 × min(人数差, 4)，其他队伍 50。
+## 通常使用玩家的默认生命值上限。人数较少的一队每少一人增加 5 点生命值上限，最多增加 20 点。
 static func max_hp(team: int, counts: Dictionary) -> int:
 	var base := PlayerParams.player_max_hp
 	if counts.is_empty() or team != disadvantaged_team(counts):
 		return base
 	return base + HP_PER_PLAYER * mini(team_difference(counts), HP_BONUS_CAP)
 
-## 少人方对敌伤害倍率：人数差 ≥3 时为 1.0 + 0.1 × min(人数差 - 2, 3)，否则 1.0。
-## 自伤、友伤、无归属伤害与非团队模式都由 attacker_team/victim_team 归零处理。
+## 伤害加成只适用于人数较少的一队攻击另一队。
+## 人数相差 3、4、5 人时分别增加 10%、20%、30% 伤害，人数差更大时仍按 30% 计算。
 static func damage_factor(attacker_team: int, victim_team: int, counts: Dictionary) -> float:
 	if attacker_team != 1 and attacker_team != 2:
 		return 1.0

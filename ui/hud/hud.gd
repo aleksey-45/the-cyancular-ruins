@@ -174,7 +174,7 @@ class Vitals extends Node2D:
 		var width := _max_hp * HP_STEP - 1
 		draw_rect(Rect2(-PAD, Vector2(width, HP_SIZE.y) + PAD * 2), UiFactory.C_PLATE)
 		var health_color := HP_LOW if _hp < _max_hp * 0.25 else HP_NORMAL
-		# 两次白闪后淡出最近一次失去的血量。
+		# 刚扣除的生命格先以白色闪烁提示受伤，再逐渐变透明。
 		var flash := 1.0 - absf(fposmod(_hit_age, 0.16) / 0.08 - 1.0) if _hit_age < HIT_FLASH else 0.0
 		var ghost := health_color.lerp(Color.WHITE, flash)
 		ghost.a = 1.0 - clampf((_hit_age - HIT_FLASH) / HIT_FADE, 0.0, 1.0)

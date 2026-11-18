@@ -9,7 +9,7 @@ const TIER_HEAVY := 2
 const CELL_COST := [2, 3, 4]
 const DEFAULT_CARRIED := -1
 
-# 每件装备独有一行，手持武器直接使用这一行。只有快照将各行打平。
+# 每把武器在背包里有自己的实例和弹药数量。手持武器使用同一条记录，快照按顺序传递所有记录。
 enum { TYPE, INST, CARRIED, STRIDE }
 
 var capacity := 8
@@ -120,7 +120,8 @@ func random_keep_one() -> Array[Dictionary]:
 		_equip(keep)
 	return dropped
 
-# [当前槽, 总格数, 类型, 占格数, ...]，装备按获得顺序排列。
+# 给 HUD 的数组先记录手持武器在背包中的索引，再记录背包容量。没有手持武器时索引是 -1。
+# 后面每两项描述一把武器，依次为武器类型和占用的格数。
 func cell_layout() -> PackedInt32Array:
 	var active := _slots.find(equipped.item) if equipped != null else -1
 	var layout := PackedInt32Array([active, capacity])
@@ -137,7 +138,7 @@ func snapshot() -> PackedInt32Array:
 
 func restore(inst: int, entries: PackedInt32Array, values: Array, rewind: bool) -> void:
 	if rewind:
-		# 主动回溯只退回仍持有的实例的弹药。
+		# 回溯时背包中的武器种类保持不变，只把仍然持有的武器的弹药恢复到历史值。
 		for at in range(0, entries.size(), STRIDE):
 			var owned := _find(entries[at + INST])
 			if not owned.is_empty():

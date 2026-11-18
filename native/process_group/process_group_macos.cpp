@@ -54,7 +54,7 @@ class OwnedProcessGroup : public RefCounted {
 		pid_t pid = fork();
 		if (pid < 0) { error("fork"); return false; }
 		if (pid == 0) {
-			// After fork, use only async-signal-safe syscalls in this multithreaded host.
+			// The monitor is created with fork. Its child branch is limited to async-signal-safe functions.
 			close(writer.value);
 			setpgid(0, 0);
 			char byte;
@@ -63,7 +63,7 @@ class OwnedProcessGroup : public RefCounted {
 			kill(-getpid(), SIGKILL);
 			_exit(0);
 		}
-		// Establish the group before spawning its first member.
+		// The parent assigns the monitor its process group before launching any process that joins it.
 		if (setpgid(pid, pid) < 0) {
 			error("setpgid"); kill(pid, SIGKILL); wait_child(pid, nullptr); return false;
 		}
@@ -174,8 +174,8 @@ public:
 	}
 
 	void stop_all() {
-		// Another forked watcher can retain this pipe's writer. Explicit shutdown
-		// kills our group before waiting; EOF remains the owner-death fallback.
+		// Shutdown terminates the process group before waiting for the monitor, since another process may hold the pipe open.
+		// When all write descriptors close after the owner exits, the monitor reads EOF and terminates the group.
 		if (watcher) kill(-watcher, SIGKILL);
 		if (lifetime >= 0) { close(lifetime); lifetime = -1; }
 		if (watcher) { wait_child(watcher, nullptr); watcher = 0; }

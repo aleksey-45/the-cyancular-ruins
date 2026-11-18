@@ -149,7 +149,7 @@ func _input(event: InputEvent) -> void:
 		return
 	var ev: InputEvent = null
 	if event is InputEventKey and event.pressed:
-		# 修饰键单独按下不作为绑定(留给组合键的未来扩展)
+		# Shift、Ctrl 和 Alt 单独按下时不会绑定。Esc 结束本次按键设置。
 		if event.physical_keycode in [KEY_SHIFT, KEY_CTRL, KEY_ALT, KEY_ESCAPE]:
 			if event.physical_keycode == KEY_ESCAPE:
 				_cancel_capture()

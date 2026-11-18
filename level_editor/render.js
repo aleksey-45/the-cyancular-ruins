@@ -7,17 +7,16 @@ globalThis.Render = (function () {
 
   var SUB = Core.SUB_PER_CELL;
 
-  var MIN_ZOOM = 1, MAX_ZOOM = 64;              // px / 子格
+  var MIN_ZOOM = 1, MAX_ZOOM = 64;              // 缩放值表示一个子格在画布上显示为多少像素。
   var ZOOM_THRESHOLD = 8;
   var THUMB_PX = 2;
-  var THUMB_MAX_BYTES = 24 * 1024 * 1024;       // 超过就降到 1px/子格(400×300 格 @2px = 30MB,偏大)
-  var DEFAULT_BUDGET_MS = 8;                    // 闸 2 的单帧 CPU 预算
-  // 单元格缓存条目上限（每条存储 16 个瓦片引用）
+  var THUMB_MAX_BYTES = 24 * 1024 * 1024;       // 单张缩略图预计超出内存预算时，每个子格改用 1 像素。
+  var DEFAULT_BUDGET_MS = 8;                    // 当前帧的绘制用时达到预算后，等到下一次动画帧再继续。
+  // 缓存容量以整块瓦片计，每块包含 16 个子格的图像引用。
   var DEFAULT_CELL_MAX = 8192;
   var VIEW_DEFAULTS = Object.freeze({ grid: true, subGrid: false, torus: true, dimOthers: true, guides: false });
 
-  // ── 环面折算 ──
-  // 坐标折算：规范化处理负数取模
+  // 根据地图宽或高对坐标取模，得到对应的地图内坐标。
   function wrapIdx(v, n) { return v - Math.floor(v / n) * n; }
   function quadOf(v) { return wrapIdx(v, SUB); }
   const layerArray = Core.layerArray;
@@ -32,7 +31,7 @@ globalThis.Render = (function () {
     return a[wrapIdx(Y, map.subRows) * map.subCols + wrapIdx(X, map.subCols)];
   }
 
-  // ── 贴图源与缓存管理（更换图集时统一重置）──
+  // 图集变更会清空图像和瓦片缓存，并使使用这些缓存的视图重新绘制。
   var atlasW = 0, atlasH = 0, atlasVersion = 0, tiles = null, cells = null;
   var atlasInvalidators = new Set();
 
@@ -62,7 +61,7 @@ globalThis.Render = (function () {
   function tileFor(desc, qx, qy) {
     if (desc === 0) return null;
     var tex = Core.texOf(desc);
-    if (tex === 0) return null;                  // 畸形描述符(辅码非 0、纹理 0)= 空气
+    if (tex === 0) return null;
     return tileCache().get(tex, quadOf(qx), quadOf(qy), desc);
   }
 
@@ -71,8 +70,8 @@ globalThis.Render = (function () {
     var maxCells = opts.maxCells === undefined ? DEFAULT_CELL_MAX : opts.maxCells;
     var build = opts.build;
     if (typeof build !== 'function') throw new Error('createCellCache: 缺 build 回调');
-    var ver = new Map();                         // 内容版本号
-    var entries = new Map();                     // 键 -> {v, gen, tile}
+    var ver = new Map();                         // 按瓦片记录版本号。编辑瓦片会递增版本号，使先前的图像失效。
+    var entries = new Map();
     var gen = 0, hits = 0, misses = 0, evictions = 0;
 
     function key(L, cx, cy) { return L + '/' + cx + '/' + cy; }
@@ -85,7 +84,7 @@ globalThis.Render = (function () {
       var e = entries.get(k);
       if (e !== undefined && e.v === v && e.gen === gen) {
         hits++;
-        entries.delete(k); entries.set(k, e);    // 命中提到最近端(Map 的插入序 = LRU 序)
+        entries.delete(k); entries.set(k, e);    // 命中后将记录移到末尾，超出容量时从开头淘汰最久未访问的瓦片。
         return e.tile;
       }
       misses++;
@@ -139,10 +138,9 @@ globalThis.Render = (function () {
     return {run, runWhile, budgetMs: budget};
   }
 
-  // ── 缩放与适配 ──
   function zoomPath(pxPerSub) { return pxPerSub < ZOOM_THRESHOLD ? 'thumb' : 'layers'; }
   function clampZoom(z) {
-    if (!isFinite(z) || z <= 0) return MIN_ZOOM;   // 用户输入钳制,不报错回滚
+    if (!isFinite(z) || z <= 0) return MIN_ZOOM;
     return Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, z));
   }
   function fitZoom(subCols, subRows, viewW, viewH, pad) {
@@ -155,8 +153,7 @@ globalThis.Render = (function () {
     return bytes > THUMB_MAX_BYTES ? 1 : THUMB_PX;
   }
 
-  // ── 可见区裁剪 ──
-  // 可见区域使用连续的世界坐标，采样地图时折算回主网格。
+  // 返回画布覆盖的子格坐标范围。为绘制地图边缘以外的部分，结果不会限制在原地图内。
   function visibleSubRange(view, viewW, viewH, subCols, subRows) {
     var x0 = Math.floor(view.x), y0 = Math.floor(view.y);
     var x1 = Math.ceil(view.x + viewW / view.zoom), y1 = Math.ceil(view.y + viewH / view.zoom);
@@ -179,8 +176,7 @@ globalThis.Render = (function () {
     return out;
   }
 
-  // 屏幕 → 子格(折算回主网格)。副本上落笔靠的就是这一步:无论点在哪个副本上,
-  // 结果都落在 [0, subCols) 里。
+  // 点击原地图或其重复绘制的部分，都会得到原地图内的子格坐标。
   function hitTest(view, px, py, subCols, subRows) {
     var X = Math.floor(view.x + px / view.zoom);
     var Y = Math.floor(view.y + py / view.zoom);
@@ -192,7 +188,7 @@ globalThis.Render = (function () {
     var s = (typeof size === 'number' && isFinite(size)) ? size : 1;
     if (s <= 0) s = 1;
     if (Math.floor(s) === s) return { unit: 'cell', n: Math.max(1, Math.min(MAX_BRUSH_CELLS, s)) };
-    var n = Math.round(s * SUB);                 // 0.25→1、0.5→2、0.75→3、2.5→10
+    var n = Math.round(s * SUB);
     return { unit: 'sub', n: Math.max(1, Math.min(MAX_BRUSH_CELLS * SUB, n)) };
   }
   function brushRegion(hit, size) {
@@ -216,13 +212,8 @@ globalThis.Render = (function () {
     return { hit: false, X: X, Y: Y };
   }
 
-  // 选区在环面上的成员判据,而且它是唯一一处 —— UI 的 inRect 直接转调它
-  // (ui.js:inRect),故 regionCells 的 clip / 油漆桶 / 渐变 / 直线 / "按在选区里"五个
-  // 调用点与这里的 moveRegion from 集合是同一条判据。
-  // 公式:先各自折算到主网格,再比相对偏移 —— 于是"选区自己跨着接缝"(先前的拖动把
-  //   选区挪到了接缝另一侧,如 96 宽的图上 {x:93,w:6} 盖住 93..95 与 0..2)也算得对;
-  //   绝对比大小(x >= sel.x && x < sel.x + sel.w)会在那种选区上静默漏掉绕过去的那半截。
-  // 不给 W/H 时退回线性区间(旧口径),给了一律折算。
+  // 支持跨越地图边缘的选区。先把子格相对选区左上角的偏移换算到地图范围内，再与选区宽高比较。
+  // 地图宽高不可用时，直接在原坐标系中判断点是否落在矩形内。
   function inSel(sel, X, Y, W, H) {
     if (!sel) return false;
     if (!(W > 0 && H > 0)) {
@@ -244,13 +235,7 @@ globalThis.Render = (function () {
     return out;
   }
 
-  // 一个矩形在环面上折算后的规范分解(至多 4 块):拖动预览要重画的区域必须落在这些块里。
-  // 只取"左上角折算"是不够的:矩形自己跨过接缝时(x1 < x0),折算后是两段区间 ——
-  //   取并集会漏掉另一头那半截(那半边的烤痕永远留着)；取"包围盒"则会把整幅图都算进去。
-  //   本函数不依赖 w ≤ W:"矩形自己跨接缝"这条分支就是为 w 大于一整行时准备的
-  //   (本文件的 canonRects 不变量写成"w>0"即可)—— 而 UI 的选区确实可以是
-  //   {x:93,w:6}(96 宽):先前的拖动把选区挪过接缝时,pointerup 存回的是折算后的
-  //   左上角,宽度原样带过来 ⇒ x+w 可以越过 W。故这里只要求 w>0,不假设 x+w ≤ W。
+  // 矩形越过地图边缘时，按照边缘分别拆分宽和高，得到最多四个需要重绘的矩形。
   function canonRects(r, W, H) {
     var out = [];
     if (!r || r.w <= 0 || r.h <= 0) return out;
@@ -267,21 +252,11 @@ globalThis.Render = (function () {
     return out;
   }
 
-  // ── 图层绘制顺序 ──
-  // 前景(0)是"从外到内"的第一层 ⇒ 最后画(盖在最上面);背景(3)最先画。
+  // 画布按背景、后景、场景和前景的顺序叠加各层。
   var DRAW_ORDER = [3, 2, 1, 0];
   var SKY_COLOR = '#b0e5f6';
 
-  // ── 层的种类:决定那一格怎么读 ──
-  // 纹理层是描述符(走 Core.texOf / Tint),背景层是 RGBA 0xRRGGBBAA
-  //    (走 cssOfRGBA / fillRect)。两者都是 32 位无符号数,长得一模一样、含义完全不同 ——
-  //    把 RGBA 喂给 Core.texOf 不抛,只是结论毫无意义,而两种颜色各有一种静默症状:
-  //      · 不透明红 #FF0000FF(背景色输入框里随手就有):(0xFF0000FF >>> 12) & 0xFFF = 0
-  //        ⇒ 被当成空气 ⇒ 整层看不见;
-  //      · 不透明青 #00FFFFFF(输入框的默认值):texOf = 4095 = "图集里没有的那块砖"
-  //        ⇒ 任何一处漏掉"先判层、再判纹理"的地方都当场抛 Tint 的越界错(闸门越少越容易漏)。
-  //    判据取 core.js 的单一来源(LAYER_KINDS),别在渲染层再抄一份 [0,0,0,1] ——
-  //    那就是第二份实现,而两份实现迟早漂、且漂了不报错。
+  // 背景层直接保存 RGBA 值。其余图层用纹理编号和颜色参数描述子格。
   function layerIsColor(L) { return Core.LAYER_KINDS[L] === 'color'; }
 
   function mount(canvas) {
@@ -294,8 +269,8 @@ globalThis.Render = (function () {
       layerVisible: [true, true, true, true],
       layerLocked: [false, false, false, false],
       selection: null,
-      preview: null,       // 拖矩形/直线时的预览框(子格单位)
-      selDrag: null,       // {sel, dx, dy}:选区拖动中(拖动只记偏移,松手才提交)
+      preview: null,       // 保存矩形或直线工具尚未完成的预览范围，坐标以子格为单位。
+      selDrag: null,       // 保存选区和拖动偏移，直到拖动结束才将改动写入地图。
     };
     var thumbs = [null, null, null, null];
     var thumbPx = THUMB_PX;
@@ -307,18 +282,10 @@ globalThis.Render = (function () {
 
     function ensureThumbs(map) {
       var px = thumbScale(map.subCols, map.subRows);
-      // 复用条件必须逐轴判(宽 与 高),只判宽度是不够的:
-      //    thumbScale 只看总字节数,所以"同宽更高"的两张图可以拿到同一个刻度
-      //    (如 demo 的 500×300 子格 → 1000×600,与 500×400 子格 → 1000×800,刻度都是 2)。
-      //    这时宽度那条对得上 ⇒ 复用了那张矮画布,而 drawThumbPath 用五实参 drawImage
-      //    把它整张缩进 subRows*px*scale 的目标框里 ⇒ 画面纵向被拉伸/截断(默认视图
-      //    fitZoom 之后 zoom < 8,走的正是缩略图这条路,所以默认视图就是错的)。
+      // 画布宽高和缩略图缩放比例都匹配时，可以继续使用原来的画布。
       if (thumbs[0] && thumbPx === px &&
           thumbs[0].width === map.subCols * px && thumbs[0].height === map.subRows * px) {
-        // 复用尺寸相同的旧缩略图之前,先把新图里缺席的层清掉:缺席层不进 thumbTasks
-        //    (省一次全图扫描),于是它不会被重画 —— 留着旧像素的话,换到一张少层的图
-        //    之后那一层会继续显示上一张图的内容(而缩略图路径会把它当"这一层的画面"贴出去)。
-        //    只判"尺寸变了没"是抓不住的(尺寸一样 ⇒ 走的就是这条路)。
+        // 地图切换后，清除新地图中不存在的图层，避免残留旧地图的图像。
         for (var Lc = 0; Lc < Core.LAYER_COUNT; Lc++) {
           if (thumbs[Lc] && !layerArray(map, Lc)) {
             thumbs[Lc].getContext('2d').clearRect(0, 0, thumbs[Lc].width, thumbs[Lc].height);
@@ -337,11 +304,7 @@ globalThis.Render = (function () {
       return true;
     }
 
-    // 画缩略图的一块矩形(单位 = 子格;rect 由调用方保证在图内)
-    // 逐子格 drawImage / fillRect 是这里唯一的成本(默认图 15 万次),所以缩略图总是
-    //   经分帧器建(闸 2):大图上是"慢慢画出来",不是"页面死掉"。
-    // 先按层种类分派、再谈内容:RGBA 永远走不到 Core.texOf / Tint 那条路上
-    //    (见 layerIsColor —— 这一句就是那个缺陷的闸门,不是装饰)。
+    // 绘制缩略图的局部区域。背景层按颜色填充，其他图层按纹理与颜色参数绘制。
     function paintThumbRect(L, rect) {
       var tc = thumbs[L].getContext('2d'), px = thumbPx;
       tc.clearRect(rect.x * px, rect.y * px, rect.w * px, rect.h * px);
@@ -367,11 +330,11 @@ globalThis.Render = (function () {
       for (var rect of rects) paintThumbRect(L, rect);
     }
 
-    // 把一整层的缩略图切成"每 8 行一组"的任务交给分帧器
+    // 每个缩略图绘制任务最多处理单个图层的 8 行子格。
     function thumbTasks(map) {
       var tasks = [], rows = 8;
       for (var L = 0; L < Core.LAYER_COUNT; L++) {
-        if (!layerArray(map, L)) continue;             // 缺席层不画(全空气)
+        if (!layerArray(map, L)) continue;
         for (var y = 0; y < map.subRows; y += rows) {
           tasks.push({ L: L, rect: { x: 0, y: y, w: map.subCols, h: Math.min(rows, map.subRows - y) } });
         }
@@ -395,10 +358,8 @@ globalThis.Render = (function () {
       return 'rgba(' + ((u >>> 24) & 255) + ',' + ((u >>> 16) & 255) + ',' +
              ((u >>> 8) & 255) + ',' + ((u & 255) / 255) + ')';
     }
-    // 用鼠标坐标算世界坐标的两个方向:命中(C15 子格级)与反算(画 spawn 标记)
+    // 根据平移和缩放将鼠标位置换算为子格坐标。绘制标记时将子格坐标换算回画布位置。
     function screenToSub(px, py) {
-      // 还没打开地图时返回中性值(闸 1:用户输入钳制,不报错回滚)——
-      //   指针事件比 setMap 早到是完全可能的,而这里抛错只会表现为"点了没反应"。
       if (!s.map) return { X: 0, Y: 0 };
       return hitTest(s.view, px, py, s.map.subCols, s.map.subRows);
     }
@@ -436,7 +397,7 @@ globalThis.Render = (function () {
         redrawDrag(previous, drag, paintThumbRegions);
       }
       var px = thumbPx;
-      var scale = s.view.zoom / px;                  // 缩略图像素 → 屏幕像素
+      var scale = s.view.zoom / px;
       var offs = torusList(W, H), i, L;
       for (i = 0; i < offs.length; i++) {
         for (var oi = 0; oi < DRAW_ORDER.length; oi++) {
@@ -452,24 +413,24 @@ globalThis.Render = (function () {
       ctx.globalAlpha = 1;
     }
 
-    // 每层缓存当前视口的像素。平移沿用整数像素，保留小数缩放的采样位置。
+    // 各图层分别绘制到离屏画布。平移幅度较小时，保留仍可见的图像，只重画新露出的部分。
     var layerCv = [null, null, null, null], cellCache = null;
     var layerGen = 0, layersClean = false;
     var stat2 = { layerRebuilds: 0, layerRebuildMs: 0, panCopies: 0 };
 
-    // 缩放或换图会使正在分帧绘制的旧视口过期。
+    // 修改视图或地图会递增绘制版本。未完成的旧任务发现版本不再匹配后会跳过绘制。
     function viewChanged() { layerGen++; layersClean = false; }
 
     function ensureLayerCanvas(L) {
       if (layerCv[L] && layerCv[L].width === canvas.width && layerCv[L].height === canvas.height) return layerCv[L];
       var c = document.createElement('canvas');
       c.width = canvas.width; c.height = canvas.height;
-      c.getContext('2d').imageSmoothingEnabled = false;   // 离屏也必须关插值(A5)
+      c.getContext('2d').imageSmoothingEnabled = false;   // 关闭图像平滑，避免像素纹理缩放后边缘模糊。
       layerCv[L] = c;
       return c;
     }
 
-    // 一个宏格缓存 16 个瓦片引用。像素由共享的染色瓦片缓存持有。
+    // 缓存一块瓦片时保存其 16 个子格的图像引用。多块瓦片可以共用同一张着色图像。
     function buildCell(L, cx, cy) {
       var out = new Array(SUB * SUB);
       var bx = cx * SUB, by = cy * SUB;
@@ -482,40 +443,36 @@ globalThis.Render = (function () {
       return out;
     }
 
-    // 重画某一层的离屏上的一块矩形(单位 = 子格;矩形允许越出画布与主网格,内部裁剪)
-    // 越出主网格是常态:离屏层的像素系与屏幕同一套,视图越过接缝时那半边像素只有
-    //   靠折算后的格才填得上(descAt 本来就环面折算)。绝不许按"主网格"裁剪 —— 裁了就是
-    //   视图经过接缝时的两侧内容。
+    // 按当前视图重绘离屏画布中的指定区域。
+    // 区域越过地图边缘时，使用地图另一端的子格数据。
     function paintLayerRect(L, rect) {
       var cv = ensureLayerCanvas(L);
       var c = cv.getContext('2d');
       var z = s.view.zoom;
-      // 世界子格 → 画布局部像素
+      // 根据缩放比例求出子格区域对应的像素范围，并限制在画布内。
       var px0 = Math.max(0, Math.floor((rect.x - s.view.x) * z));
       var py0 = Math.max(0, Math.floor((rect.y - s.view.y) * z));
       var px1 = Math.min(cv.width, Math.ceil((rect.x + rect.w - s.view.x) * z));
       var py1 = Math.min(cv.height, Math.ceil((rect.y + rect.h - s.view.y) * z));
       if (px1 <= px0 || py1 <= py0) return;
       c.clearRect(px0, py0, px1 - px0, py1 - py0);
-      if (!layerArray(s.map, L)) return;                 // 缺席层 = 全空气(已清干净)
+      if (!layerArray(s.map, L)) return;
       c.save();
       c.beginPath();
       c.rect(px0, py0, px1 - px0, py1 - py0);
       c.clip();
       var cell0x = Math.floor((s.view.x + px0 / z) / SUB), cell1x = Math.ceil((s.view.x + px1 / z) / SUB);
       var cell0y = Math.floor((s.view.y + py0 / z) / SUB), cell1y = Math.ceil((s.view.y + py1 / z) / SUB);
-      // 按层种类分派(判据取一次,不在逐格循环里重算)—— 这就是 F1 那道闸门。
       var colorLayer = layerIsColor(L);
       var cw = Core.cellsWOf(s.map), ch = Core.cellsHOf(s.map);
       for (var cy = cell0y; cy < cell1y; cy++) {
         for (var cx = cell0x; cx < cell1x; cx++) {
           var bx = cx * SUB, by = cy * SUB;
           if (colorLayer) {
-            // 颜色层:逐子格读 RGBA、直接填色。alpha = 0 = 这一格没有颜色(上面已 clearRect,
-            // 这里什么都不画)。这里不许出现 texOf(见 buildCell 的两条静默症状)。
+            // 背景层直接依据像素颜色绘制。完全透明的子格保持为空。
             for (var kc = 0; kc < SUB * SUB; kc++) {
               var Xc = bx + (kc % SUB), Yc = by + Math.floor(kc / SUB);
-              var qc = dragSource(L, Xc, Yc, drag);              // 拖动中:读源子格(纯读;只对活动层)
+              var qc = dragSource(L, Xc, Yc, drag);
               var rawc = qc.hit ? descAt(s.map, L, qc.X, qc.Y) : 0;
               if (((rawc >>> 0) & 255) === 0) continue;
               c.fillStyle = cssOfRGBA(rawc);
@@ -523,23 +480,17 @@ globalThis.Render = (function () {
             }
             continue;
           }
-          // ③ 的键必须是主网格上的格号:环面让同一格有多种写法(cx = -1 与 cx = cellsW-1),
-          //   不折算的话同一格会缓存两条条目,而编辑只 touch 其中一条 ⇒ 接缝另一侧的副本
-          //   继续显示陈旧内容(画面错了、一个字都不报)。
-          // 拖动偏移从这里接:拖动中读的是源格(纯读,不改进数据),画的位置仍是
-          //   目标格(bx/by,见循环体最后一行)—— 只有"读"是偏移过的。
-          //   传进去的是子格坐标(选区与偏移都是子格单位),取缓存键前再折回格号:
-          //     偏移是格对齐时(整数画笔 + 整格选区)这一步是恒等;偏移落在子格上时按格取整
-          //     —— 只见于小数画笔的选区,是拖动途中的子格级近似,松手后由 moveRegion 归位。
+          // 重复绘制的部分按原地图坐标查找瓦片，因此可以共用缓存。
+          // 选区拖动期间，纹理图层按整块瓦片显示预览。实际移动量仍以子格计算。
           var gx = wrapIdx(cx, cw), gy = wrapIdx(cy, ch);
           var q = dragSource(L, gx * SUB, gy * SUB, drag);
-          if (!q.hit) continue;                            // 被腾空的源区 ⇒ 这一格不画
+          if (!q.hit) continue;                            // 拖动选区后，原位置露出的部分保持透明。
           var tilesOfCell = cellCache.get(L, wrapIdx(Math.floor(q.X / SUB), cw),
-                                             wrapIdx(Math.floor(q.Y / SUB), ch));  // ③:这一格的 16 个 tile
+                                             wrapIdx(Math.floor(q.Y / SUB), ch));
           for (var k = 0; k < tilesOfCell.length; k++) {
             var t = tilesOfCell[k];
             if (!t) continue;
-            var X = bx + (k % SUB), Y = by + Math.floor(k / SUB);   // 画在目标格的位置
+            var X = bx + (k % SUB), Y = by + Math.floor(k / SUB);
             c.drawImage(t, (X - s.view.x) * z, (Y - s.view.y) * z, z, z);
           }
         }
@@ -574,16 +525,16 @@ globalThis.Render = (function () {
       }
       var t0 = nowMs();
       return slicer.run(tasks, function (t) {
-        if (myGen !== layerGen) return;              // 过期的一轮:整条作废(视图/尺寸/图集已变)
+        if (myGen !== layerGen) return;
         paintLayerRect(t.L, t.rect);
       }).then(function () {
-        if (myGen !== layerGen) return;              // 过期的一轮不许把 layersClean 抬起来
+        if (myGen !== layerGen) return;              // 画布完整绘制后，还要核对版本是否与当前视图一致。
         stat2.layerRebuildMs = nowMs() - t0;
         layersClean = true;
       });
     }
 
-    // 离屏层已经按环面坐标铺满视口，合成时裁到预览区域。
+    // 将各图层叠加到主画布，只显示地图覆盖的区域。
     function drawLayerPath(W, H) {
       var origin = subToScreen(0, 0), z = s.view.zoom;
       ctx.save();
@@ -695,7 +646,7 @@ globalThis.Render = (function () {
       }
       ctx.restore();
     }
-    // spawn 标记与选区框共用字体和对齐设置。
+    // 在地图上绘制出生点等标记。文字使用统一的字体和居中对齐。
     function drawOverlay(W, H) {
       if (!s.map) return;
       ctx.save();
@@ -778,7 +729,7 @@ globalThis.Render = (function () {
       stat.lastRenderMs = nowMs() - t0;
     }
 
-    // ResizeObserver 统一触发尺寸重建。
+    // 画布容器尺寸变化时，按照实际可用空间调整画布并重绘。
     function resize() {
       var wrap = canvas.parentElement;
       var w = Math.max(1, wrap ? wrap.clientWidth : canvas.width);
@@ -786,7 +737,7 @@ globalThis.Render = (function () {
       if (canvas.width === w && canvas.height === h) return;
       canvas.width = w; canvas.height = h;
       s.view = limitView(s.view);
-      ctx.imageSmoothingEnabled = false;            // 改尺寸会重置 ctx 状态,必须重设
+      ctx.imageSmoothingEnabled = false;            // 设置画布宽高会重置绘图状态，所以这里恢复最近邻缩放。
       clearLayers();
       return drawView();
     }
@@ -809,7 +760,7 @@ globalThis.Render = (function () {
       return drawView();
     }
 
-    // 拖动时只保存预览偏移，松手后由 moveRegion 提交地图变化。
+    // 选区拖动期间仅绘制预览。鼠标松开后由 moveRegion 写入改动。
     var drag = null, thumbDrag = null;
 
     function setSelDrag(sel, dx, dy) {
@@ -900,7 +851,7 @@ globalThis.Render = (function () {
         var cx = Math.floor((i % cols) / SUB), cy = Math.floor(i / (cols * SUB));
         changed.add(cy * cellsWide + cx);
       }
-      // 同一宏格只刷新一次。连续的宏格按行合并，跨接缝的两端各自刷新。
+      // 同一行的相邻瓦片合并成一块重绘区域。地图两端各自重绘。
       var rects = [];
       for (var key of Array.from(changed).sort((a, b) => a - b)) {
         var x = key % cellsWide, y = Math.floor(key / cellsWide);
@@ -931,7 +882,7 @@ globalThis.Render = (function () {
         c.globalCompositeOperation = 'copy';
         c.drawImage(cv, -dx, -dy);
         c.globalCompositeOperation = 'source-over';
-        // 边条和全幅绘制共用子格投影，覆盖小数倍率下贴边的半个像素。
+        // 露出的区域沿用主图的坐标换算。即使缩放后子格占用非整数像素，边缘也能对齐。
         for (var r of strips) {
           paintLayerRect(L, { x: s.view.x + r.x / z, y: s.view.y + r.y / z, w: r.w / z, h: r.h / z });
         }
@@ -963,7 +914,7 @@ globalThis.Render = (function () {
       view: function () { return { x: s.view.x, y: s.view.y, zoom: s.view.zoom }; },
       setViewOption: setViewOption, viewOptions: () => ({ ...viewOptions }),
       containsPoint: containsPoint,
-      // 可见性只影响合成(离屏内容照旧保留)⇒ 开关是 4 次 drawImage 的事,不重画任何一层。
+      // 切换图层可见性时，保留各图层已绘制的图像。
       setLayerVisible: function (L, b) { s.layerVisible[L] = !!b; render(); },
       layerVisible: function (L) { return s.layerVisible[L]; },
       setLayerLocked: function (L, b) { s.layerLocked[L] = !!b; },
@@ -989,7 +940,6 @@ globalThis.Render = (function () {
     };
   }
 
-  // ── 脏区 ──
   function rectUnion(a, b) {
     if (!a) return { x: b.x, y: b.y, w: b.w, h: b.h };
     if (!b) return { x: a.x, y: a.y, w: a.w, h: a.h };
@@ -999,9 +949,8 @@ globalThis.Render = (function () {
   }
   function rectIsEmpty(r) { return !r || r.w <= 0 || r.h <= 0; }
 
-  // 画布自拷贝之后"新露出来"的那一条(单位 = 画布像素)。位移超过画布尺寸 = 整块重画。
-  // 参数是视图/世界的位移方向(view.x 增加 dxPx/zoom):画面内容是反向走的,
-  //   所以"向右看 10px"新露出来的是右边那 10px。调用方那里的自拷贝偏移是它的相反数。
+  // 计算平移后新露出的区域。若水平方向的移动达到画布宽度，或垂直方向的移动达到画布高度，就重绘整张画布。
+  // dx 和 dy 是视图的像素偏移。已有图像向偏移的反方向移动。
   function panStrips(w, h, dx, dy) {
     var out = [];
     if (dx === 0 && dy === 0) return out;
@@ -1013,7 +962,7 @@ globalThis.Render = (function () {
     return out;
   }
 
-  // 以光标为锚缩放:光标下的那一子格在缩放前后停在原地。
+  // 以光标为缩放中心，使缩放前后光标对应同一地图坐标。
   function zoomAround(view, px, py, factor) {
     var z = clampZoom(view.zoom * (isFinite(factor) && factor > 0 ? factor : 1));
     var wx = view.x + px / view.zoom, wy = view.y + py / view.zoom;

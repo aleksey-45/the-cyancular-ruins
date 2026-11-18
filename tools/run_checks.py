@@ -1,4 +1,4 @@
-"""Run selected behavior checks once in one Godot process; no matches or recording."""
+"""启动一个无界面的 Godot 实例，在其中运行指定的测试组。"""
 import argparse
 import os
 from pathlib import Path

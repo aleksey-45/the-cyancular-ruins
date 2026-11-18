@@ -30,7 +30,7 @@ func _ready() -> void:
 			_trace_path = args[at + 1]
 		else:
 			push_warning("--corr-trace 需要文件路径")
-	# 统计默认关闭，只有显式要求时才采样；打包版不付任何观测成本。
+	# 只在命令行指定对应选项时采集数据，正常启动不计时。
 	var enabled := (_console or not _summary_path.is_empty() or not _trace_path.is_empty()) and not args.has("--no-perf")
 	PerformanceStats.set_enabled(enabled)
 	if enabled:

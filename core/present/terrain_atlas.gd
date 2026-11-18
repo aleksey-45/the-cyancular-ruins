@@ -29,7 +29,7 @@ static func source_image() -> Image:
 		_src_cache = tex.get_image()
 	return _src_cache
 
-# 源砖使用从零开始的图集编号。
+# idx 是原始图集中的瓦片索引，返回对应的像素矩形。
 static func source_rect(idx: int) -> Rect2i:
 	return Rect2i((idx % SRC_COLS) * SRC_TILE, (idx / SRC_COLS) * SRC_TILE, SRC_TILE, SRC_TILE)
 
@@ -49,7 +49,7 @@ static func _atlas_image(tile: int, count: int) -> Image:
 	return Image.create(mini(groups, GROUPS_PER_ROW) * QUAD_COLS * tile,
 			ceili(float(groups) / GROUPS_PER_ROW) * tile, false, Image.FORMAT_RGBA8)
 
-## 与编辑器 tint.js 使用相同的 HSV、透明度和字节取整规则。
+## 与关卡编辑器使用相同的着色算法。颜色和不透明度都换算成 0 至 255 的整数。
 static func tint_color(color: Color, tint: int) -> Color:
 	if (tint & MapFormatV4.TINT_MASK) == MapFormatV4.NEUTRAL_TINT:
 		return color
@@ -121,7 +121,7 @@ static func _tileset(image: Image, tile: int, groups: int) -> TileSet:
 			atlas.create_tile(atlas_coords(group, variant))
 	return tile_set
 
-# 水体和水面共用辅码，分别取各自的源砖。
+# 按纹理索引、尺寸和颜色参数缓存染色结果，供水体和水面绘制复用。
 static func water_brick_image(ts: int, brick: int, tint: int = MapFormatV4.NEUTRAL_TINT) -> Image:
 	var key := Vector3i(ts, brick, tint & MapFormatV4.TINT_MASK)
 	if _brick_cache.has(key):
@@ -144,7 +144,7 @@ static func make_water_tileset(ts: int, brick: int, rows: Dictionary) -> TileSet
 					atlas.blit_rect(img, Rect2i(offset, Vector2i.ONE * half), at + offset)
 	return _tileset(atlas, ts, rows.size())
 
-# 菜单背景复用关卡的子格图集，先将图集合成到天空底色，再整体缩放。
+# 先将瓦片纹理与天空底色混合，缩放到所需的子格尺寸，再按地图布局拼成背景。
 static func _bake_map_image(map: Dictionary, cell_px: int, air: Color) -> Image:
 	var sp := maxi(1, cell_px / SUB_PER_CELL)
 	var descriptors: PackedInt32Array = map["descriptors"]

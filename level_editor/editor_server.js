@@ -10,6 +10,8 @@ const DEFAULT_PORT = 8777;
 const DEFAULT_ROOT_DIR = __dirname;
 const DEFAULT_MAPS_DIR = path.join(__dirname, '..', 'maps');
 const DEFAULT_INDEX = 'editor.html';
+const EDITOR_ATLAS_PATH = path.join(DEFAULT_ROOT_DIR, 'structure.png');
+const PROJECT_ATLAS_PATH = path.join(__dirname, '..', 'assets', 'textures', 'structure.png');
 const MAX_MAP_BYTES = 64 * 1024 * 1024;
 
 const MIME = {
@@ -43,13 +45,13 @@ function sendJson(res, status, obj) {
   res.end(body);
 }
 
-// 解析静态文件相对路径为绝对路径，并校验其必须位于 rootDir 根目录内，防御目录遍历攻击
+// 根据 URL 找到静态资源。路径规范化后超出编辑器目录时拒绝读取。
 function staticFileFor(rootDir, urlPath, indexName) {
   let rel;
   try { rel = decodeURIComponent(String(urlPath)); }
   catch (e) { return { status: 400, message: 'URL 编码非法' }; }
   if (rel.indexOf('\0') >= 0) return { status: 400, message: '路径里含空字节' };
-  rel = rel.split('\\').join('/');                 // Windows 上反斜杠也是分隔符
+  rel = rel.split('\\').join('/');
   if (rel === '/' || rel === '') rel = '/' + indexName;
   const rootAbs = path.resolve(rootDir);
   const target = path.resolve(rootAbs, '.' + (rel.charAt(0) === '/' ? rel : '/' + rel));
@@ -71,20 +73,20 @@ function serveFile(res, target, headOnly) {
     if (headOnly) return res.end();
     const stream = fs.createReadStream(target);
     stream.on('error', function () { res.destroy(); });
-    // 客户端提前断开连接时销毁可读流，防止文件句柄泄露
+    // HTTP 响应关闭时终止文件读取，避免客户端提前断开后仍在读取。
     res.on('close', function () { stream.destroy(); });
     stream.pipe(res);
   });
 }
 
-// 地图文件名：裸文件名，1-64 个 ASCII 安全字符加 .cyrm 后缀。
+// 统一使用地图文件的命名规则。扩展名前最多 64 个字符，可用英文字母、数字、下划线和连字符。
 const {NAME_PATTERN: MAP_NAME_RE, backupName} = require('./map_files.js');
 
 function isValidMapName(name) {
   return MAP_NAME_RE.test(name);
 }
 
-// 名字已限定为裸文件名，resolve 结果必然在 mapsDir 下；符号链接越界只在写盘前检查。
+// 文件名通过检查后才能生成地图路径。写入时另外检查路径实际指向的位置。
 function mapPathFor(mapsDir, name) {
   if (!isValidMapName(name)) throw new Error('地图名非法:' + JSON.stringify(name));
   return path.resolve(mapsDir, name);
@@ -113,14 +115,14 @@ function listMaps(mapsDir, logger) {
   return out;
 }
 
-// 请求体超限错误：带有 tooLarge 标记，便于将超限（413）与其他错误区分
+// 这类错误会转换为 HTTP 413，表示请求体过大。
 function rejectTooLarge(message) {
   const e = new Error(message);
   e.tooLarge = true;
   return e;
 }
 
-// 读取请求体并限制最大字节数，防止超大请求耗尽内存
+// 请求体分块接收，全部读取后合并成一个缓冲区。
 function readBody(req, maxBytes) {
   return new Promise(function (resolve, reject) {
     const chunks = [];
@@ -129,7 +131,7 @@ function readBody(req, maxBytes) {
     req.on('data', function (c) {
       total += c.length;
       if (total > maxBytes) {
-        // 发现超限立即丢弃后续 chunk，不再保留超限数据
+        // 超出大小限制后释放已收到的数据，并停止缓存余下的数据。
         overflow = true;
         chunks.length = 0;
         return;
@@ -144,16 +146,16 @@ function readBody(req, maxBytes) {
   });
 }
 
-// 安全校验拦截错误：带有 writeRejected 标记，便于将权限拒绝（403）与写入故障（500）区分
+// 写入因安全检查被拒绝时返回 HTTP 403。
 function rejectWrite(message) {
   const e = new Error(message);
   e.writeRejected = true;
   return e;
 }
 
-// 针对写路径的符号链接二次校验，确保解析真实路径后仍位于 mapsDir 内
+// 写入前比较实际路径，防止符号链接将目标指向地图库之外。
 function assertWriteTargetInside(mapsDir, target, name) {
-  const realDir = fs.realpathSync(mapsDir);            // 调用方保证 mapsDir 已存在
+  const realDir = fs.realpathSync(mapsDir);
   let st = null;
   try { st = fs.lstatSync(target); }
   catch (e) {
@@ -162,7 +164,7 @@ function assertWriteTargetInside(mapsDir, target, name) {
   }
   let realTarget;
   if (st === null) {
-    // 目标文件尚不存在时，校验其父目录必须为 mapsDir
+    // 新文件还没有实际路径，改用解析过的地图库路径拼接文件名。
     if (path.resolve(path.dirname(target)) !== path.resolve(mapsDir)) {
       throw rejectWrite('地图目标不在 maps 目录正下方,拒绝写入:' + name);
     }
@@ -180,7 +182,7 @@ function assertWriteTargetInside(mapsDir, target, name) {
   }
 }
 
-// 同步保留目标名并提交，服务端在一次操作中完成改名。
+// 先以独占方式创建目标文件，再移入源文件。有同名地图时会在创建阶段失败。
 function installNewFile(source, target) {
   fs.closeSync(fs.openSync(target, 'wx'));
   try { fs.renameSync(source, target); }
@@ -242,22 +244,20 @@ function changeMapFile(mapsDir, name, newName) {
   return {name: newName};
 }
 
-// Host 请求头白名单检查，防御 DNS 重绑定攻击
+// Host 中的主机名须为 localhost 或 127.0.0.1，端口须与当前连接的本地端口一致。
 const ALLOWED_HOSTS = ['127.0.0.1', 'localhost'];
 function hostAllowed(req) {
   const localPort = req.socket ? req.socket.localPort : 0;
-  if (!localPort) return false;                       // 无法获取本地监听端口时直接拒绝
+  if (!localPort) return false;
   const host = String(req.headers.host || '').toLowerCase();
-  // Host 必须与回环地址及端口完全匹配
   return ALLOWED_HOSTS.some(function (h) { return host === h + ':' + localPort; });
 }
 
-// 写接口 CSRF 防护：仅允许 application/json 内容类型并校验 Origin 请求头
+// 修改地图的请求使用 JSON 媒体类型。服务器还会检查浏览器提供的来源信息。
 const WRITE_CONTENT_TYPE = 'application/json';
 
-// 返回 null = 放行; 返回 {status, message} = 拒绝
+// 请求通过检查后返回 null。拒绝请求时返回 HTTP 状态码和原因。
 function writeGuardReject(req) {
-  // 校验 Content-Type 的媒体类型（忽略参数部分）
   const raw = String(req.headers['content-type'] || '');
   const mediaType = raw.split(';')[0].trim().toLowerCase();
   if (mediaType !== WRITE_CONTENT_TYPE) {
@@ -265,7 +265,7 @@ function writeGuardReject(req) {
       '(非简单内容类型 ⇒ 跨源的浏览器请求会先发预检,而预检不被放行);实得 ' +
       JSON.stringify(raw === '' ? '(缺失)' : raw) };
   }
-  // 校验跨域 Origin 是否在允许的回环地址白名单内
+  // 有 Origin 标头时，将它与本机编辑器的 HTTP 地址比较。
   const localPort = req.socket ? req.socket.localPort : 0;
   const origin = req.headers['origin'];
   if (origin !== undefined) {
@@ -276,10 +276,9 @@ function writeGuardReject(req) {
       return { status: 403, message: '跨源写被拒:Origin: ' + String(origin) +
         '(只接受 http://127.0.0.1:' + localPort + ' / http://localhost:' + localPort + ')' };
     }
-    // Origin 校验通过后直接放行
     return null;
   }
-  // 当缺少 Origin 请求头时，若 Sec-Fetch-Site 标为 cross-site 则拒绝写入
+  // 没有 Origin 时，若 Sec-Fetch-Site 将请求标为跨站，就拒绝写入。
   const site = req.headers['sec-fetch-site'];
   if (site === 'cross-site') {
     return { status: 403, message: '跨源写被拒:没有 Origin 可判,而 Sec-Fetch-Site 是 ' +
@@ -288,7 +287,6 @@ function writeGuardReject(req) {
   return null;
 }
 
-// /api/* 接口路由分派
 function handleApi(req, res, parsed, ctx) {
   if (parsed.pathname === '/api/maps') {
     if (req.method !== 'GET' && req.method !== 'HEAD') return sendText(res, 405, '只接受 GET');
@@ -300,7 +298,6 @@ function handleApi(req, res, parsed, ctx) {
   }
   if (parsed.pathname === '/api/map') {
     const name = parsed.searchParams.get('p');
-    // 地图文件名不合法时在操作文件系统前直接返回 400
     if (!isValidMapName(name)) {
       return sendText(res, 400,
         '地图名非法(只接受裸文件名 ' + MAP_NAME_RE.source + '):' + JSON.stringify(name));
@@ -336,7 +333,6 @@ function createServer(opts) {
     writes: Promise.resolve(),
   };
   return http.createServer(function (req, res) {
-    // 全局 Host 白名单校验
     if (!hostAllowed(req)) {
       return sendText(res, 403, 'Host 头不被接受:' + String(req.headers.host || '(缺失)') +
                                 '(只接受本机回环地址)');
@@ -350,7 +346,8 @@ function createServer(opts) {
     }
     const resolved = staticFileFor(ctx.rootDir, parsed.pathname, ctx.indexName);
     if (resolved.status !== 200) return sendText(res, resolved.status, resolved.message);
-    serveFile(res, resolved.file, req.method === 'HEAD');
+    const file = resolved.file === EDITOR_ATLAS_PATH ? PROJECT_ATLAS_PATH : resolved.file;
+    serveFile(res, file, req.method === 'HEAD');
   });
 }
 
@@ -368,7 +365,7 @@ function openBrowser(url) {
   }
 }
 
-// 绑定并起服务。port:0 = 由系统分配一个空闲端口（冒烟测试用）
+// 若指定端口 0，操作系统会分配监听端口。
 function startServer(opts) {
   opts = opts || {};
   const host = opts.host || DEFAULT_HOST;
@@ -379,7 +376,6 @@ function startServer(opts) {
     server.listen(port, host, function () {
       const addr = server.address();
       const url = 'http://' + host + ':' + addr.port + '/';
-      // 启动时仅在明确指定时自动打开浏览器（避免自动化测试时弹出窗口）
       if (opts.openBrowser === true) openBrowser(url);
       resolve({ server: server, port: addr.port, host: host, url: url });
     });
@@ -401,7 +397,7 @@ function parseArgs(argv) {
 
 if (require.main === module) {
   const opts = parseArgs(process.argv.slice(2));
-  // 命令行启动时默认打开浏览器，--no-open 可关闭该行为
+  // 从命令行启动后会打开浏览器。--no-open 关闭自动打开。
   startServer(Object.assign({ openBrowser: true }, opts)).then(function (r) {
     console.log('[editor] 服务器就绪 ' + r.url);
     console.log('[editor] 静态根 ' + path.resolve(opts.rootDir || DEFAULT_ROOT_DIR));

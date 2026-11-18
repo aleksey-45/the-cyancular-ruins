@@ -1,8 +1,6 @@
 'use strict';
-// 从 data/enemies.json 重新生成 editor.html 内嵌的敌人注册表
-// (/*__ENEMY_REGISTRY_BEGIN__*/ ... /*__ENEMY_REGISTRY_END__*/ 之间)。
-// 用法:node level_editor/sync-enemies.js [--check]
-//   --check: 仅校验不写入。若与 data/enemies.json 不一致则退出码为 1。
+// editor.html 内的敌人类型表以 data/enemies.json 为数据来源。
+// --check 不写入文件。现有类型表与生成结果不一致时，退出码为 1。
 const fs = require('fs');
 const path = require('path');
 
@@ -22,8 +20,8 @@ const enemies = (json.enemies || []).map(function (e) {
 const block = '/*__ENEMY_REGISTRY_BEGIN__*/\nwindow.ENEMY_REGISTRY = ' +
   JSON.stringify(enemies, null, 2) + ';\n/*__ENEMY_REGISTRY_END__*/';
 
-// 字段覆盖校验：确保 enemies.json 中的字段均映射至注册表
-const NOT_IN_EDITOR = [];   // 暂无忽略字段: enemies.json 的 4 个字段全部进入注册表
+// 敌人数据出现未写入类型表且未列为例外的字段时，生成失败。
+const NOT_IN_EDITOR = [];
 const generatedKeys = {};
 enemies.forEach(function (e) { Object.keys(e).forEach(function (k) { generatedKeys[k] = true; }); });
 const dropped = {};

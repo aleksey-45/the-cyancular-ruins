@@ -7,10 +7,9 @@ globalThis.Tint = (function () {
   }
 
   var LEVELS = 8;
-  var HUE_OFFSET_DEG = [-60, -45, -30, -15, 0, 15, 30, 45];      // = (k - 4) * 15
-  var MUL = [0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3];             // = (k + 6) / 10
+  var HUE_OFFSET_DEG = [-60, -45, -30, -15, 0, 15, 30, 45];      // 色相偏移以度为单位，数组索引对应颜色设置中的色相档位。
+  var MUL = [0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3];             // 亮度与饱和度共用同一组缩放系数。
   var ALPHA_NUM = [0, 1, 2, 3, 4, 5, 6, 7];
-  // 中性档位常量来自 Core，保持单一数据源
   var NEUTRAL = {
     hue: Core.HUE_NEUTRAL, bri: Core.BRI_NEUTRAL,
     sat: Core.SAT_NEUTRAL, alpha: Core.ALPHA_NEUTRAL,
@@ -60,7 +59,7 @@ globalThis.Tint = (function () {
     return { r: rgb.r, g: rgb.g, b: rgb.b, a: a * alphaScaleOf(Core.alphaOf(desc)) };
   }
 
-  // 8 位颜色通道取整: Math.round(clamp01(x) * 255)
+  // 将通道值限制在 0 到 1，再换算为一个字节所能表示的整数。
   function toByte(x) {
     var v = Math.round(clamp01(x) * 255);
     return v < 0 ? 0 : (v > 255 ? 255 : v);
@@ -70,10 +69,9 @@ globalThis.Tint = (function () {
     return [toByte(o.r), toByte(o.g), toByte(o.b), toByte(o.a)];
   }
 
-  // ── 贴图几何 ──
-  // structure.png 规格为 320×320，每块 32×32，每行 10 块
+  // 图集中的每张纹理占 32×32 像素，计算纹理位置时使用图集的实际宽度。
   var BLOCK_PX = 32;
-  var QUAD_PX = 32 / Core.SUB_PER_CELL;     // 8
+  var QUAD_PX = 32 / Core.SUB_PER_CELL;     // 一张纹理按 4×4 切分，每个子格取其中 8×8 像素。
   var TILE_PX = Core.SUB_PX;
   var SUB = Core.SUB_PER_CELL;
   function quadIndex(q, which) {
@@ -93,7 +91,7 @@ globalThis.Tint = (function () {
     return { x: (i % cols) * BLOCK_PX, y: Math.floor(i / cols) * BLOCK_PX, w: BLOCK_PX, h: BLOCK_PX };
   }
 
-  // 从图集中获取指定象限并按描述符着色，返回 Uint8ClampedArray(16*16*4)
+  // 取出子格对应的图集区域，应用颜色设置，再以最近邻方式放大，输出 16×16 像素的 RGBA 数据。
   function buildTilePixels(atlas, atlasWidth, texture, qx, qy, desc) {
     if (Core.texOf(desc) === 0) {
       throw new Error('buildTilePixels: 空气格没有贴图(desc=0x' + (desc >>> 0).toString(16) + ')');
@@ -106,7 +104,6 @@ globalThis.Tint = (function () {
       throw new Error('buildTilePixels: 图集里没有纹理 ' + texture + ' 的象限 (' + qx + ',' + qy +
                       ') —— 图集是 ' + atlasWidth + '×' + rows);
     }
-    // 校验传入 texture 与描述符中的纹理 ID 一致
     if (Core.texOf(desc) !== texture) {
       throw new Error('buildTilePixels: 纹理实参 ' + texture + ' 与描述符里的纹理 ' +
                       Core.texOf(desc) + ' 不一致(desc=0x' + (desc >>> 0).toString(16) + ')');
@@ -137,7 +134,7 @@ globalThis.Tint = (function () {
       c.width = size;
       c.height = size;
       var ctx = c.getContext('2d');
-      ctx.imageSmoothingEnabled = false;       // 最近邻,与项目其余部分一致
+      ctx.imageSmoothingEnabled = false;
       ctx.putImageData(new ImageData(pixels, size, size), 0, 0);
       return c;
     },
@@ -147,7 +144,7 @@ globalThis.Tint = (function () {
     opts = opts || {};
     var maxSize = opts.maxSize === undefined ? DEFAULT_MAX_TILES : opts.maxSize;
     var backend = opts.backend || DEFAULT_BACKEND;
-    // 使用 Map 维护 LRU 缓存队列
+    // 缓存淘汰最近最少使用的图像。命中时将该图像移到末尾。
     var tiles = new Map();
     var atlas = null, atlasWidth = 0;
     var hits = 0, misses = 0, evictions = 0;
@@ -159,7 +156,7 @@ globalThis.Tint = (function () {
                         (data && typeof data.length === 'number' ? '(length=' + data.length + ')' : ''));
       }
       var w = width | 0;
-      // 每像素 4 字节，宽度必须是 4 的倍数且总字节数为整行整数倍
+      // 图集宽度必须是 4 像素的倍数。每个 RGBA 像素占 4 字节，因此每行有 w * 4 字节。
       if (w <= 0 || w % 4 !== 0) {
         throw new Error('setSource: 图集宽度必须是正的、4 的倍数(每像素 4 字节),实得 ' + width);
       }
@@ -171,19 +168,17 @@ globalThis.Tint = (function () {
       atlasWidth = w;
       tiles.clear();
     }
-    // 生成瓦片缓存键名
     function tileKey(texture, qx, qy, desc) {
       return texture + '/' + quadIndex(qx, 'qx') + '/' + quadIndex(qy, 'qy') + '/' + (desc >>> 0);
     }
-    // 获取缓存瓦片，未命中时调用 buildTilePixels 构建
+    // 只有缓存中没有对应结果时，才按纹理编号、子格位置及颜色设置生成图像。
     function get(texture, qx, qy, desc) {
       var k = tileKey(texture, qx, qy, desc);
-      // 命中判据基于 tiles.has(k)
       if (tiles.has(k)) {
         var hit = tiles.get(k);
         hits++;
         tiles.delete(k);
-        tiles.set(k, hit);                     // 提到最近使用端
+        tiles.set(k, hit);
         return hit;
       }
       misses++;

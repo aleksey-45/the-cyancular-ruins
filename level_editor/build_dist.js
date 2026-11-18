@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-// 从现有入口收集资源，格式与渲染继续使用源码版的实现。
+// 离线版只有一个 HTML 文件，内含编辑器脚本、处理地图文件的 Web Worker 和瓦片图集。
 const fs = require('node:fs');
 const path = require('node:path');
 const root = __dirname;
@@ -19,7 +19,7 @@ function bundle() {
   const dependency = "importScripts('tile_defs.js', 'core.js');";
   if (!worker.includes(dependency)) throw new Error('worker.js 的依赖入口已变化，请更新离线打包器');
   const workerSource = worker.replace(dependency, () => tiles + '\n' + core);
-  const atlas = fs.readFileSync(path.join(root, 'structure.png')).toString('base64');
+  const atlas = fs.readFileSync(path.join(root, '..', 'assets', 'textures', 'structure.png')).toString('base64');
   const bootstrap = 'globalThis.CYRM_OFFLINE = {\n' +
     'workerUrl: URL.createObjectURL(new Blob([' + JSON.stringify(workerSource) + '], {type:"text/javascript"})),\n' +
     'atlasUrl: "data:image/png;base64,' + atlas + '"\n};';

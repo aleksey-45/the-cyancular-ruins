@@ -27,13 +27,14 @@ func reset() -> void:
 func push(tick: int, world: Dictionary) -> void:
 	if tick <= latest_tick:
 		return
-	# 记录在解码后只读，缓冲与解码帧共用同一份槽数组，插值时再复制要改动的那一条。
+	# 插值以原始服务器快照为端点。相邻渲染帧可以从相同快照得到不同的显示位置。
 	frames.append([tick, world])
 	if frames.size() == 1:
 		render_tick = tick - DELAY_TICKS
 	while frames.size() > KEEP:
 		frames.pop_front()
-	# 普通到包只调播放速度；严重停顿恢复才重新定位。
+	# 渲染时刻按服务器的模拟帧计。落后过多时，把它重置到最新快照前 DELAY_TICKS 帧。
+	# 平时调整渲染时刻的推进速度，使画面与最新快照维持设定的延迟。
 	if tick - render_tick > DELAY_TICKS * 2.0 or render_tick < frames[0][Frame.TICK] - DELAY_TICKS:
 		render_tick = tick - DELAY_TICKS
 		_drift = 0.0

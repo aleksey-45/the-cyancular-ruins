@@ -1,8 +1,7 @@
 class_name WeaponIcons
 extends RefCounted
 
-# 武器图标与选择控件：生成纯白像素剪影切片以及选择单元格控件。
-# 数据来源统一由 WeaponRegistry 读取，与武器配置保持一致。
+# 武器选择界面根据注册表指定的图集区域生成单色图标。
 
 static var _silhouette_cache: Dictionary = {}
 

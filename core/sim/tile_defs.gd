@@ -1,7 +1,7 @@
 class_name TileDefs
 extends RefCounted
 
-# 从项目配置装载一次，预览、校验与模拟共用静态材质表。
+# 从 data/tile_defs.json 读取瓦片材质。预览、地图校验和模拟共用其中的材质类型和属性。
 const PATH := "res://data/tile_defs.json"
 const TYPE_WALL := 0
 const TYPE_PASSAGE := 1

@@ -1,18 +1,6 @@
 #!/usr/bin/env python3
-# 命名与目录规范自动化检查工具。
-# 检验项目内的目录名、GDScript 类名映射、文档路径有效性以及场景文件名规范。
-#
-# 用法:
-#   python tools/check_naming.py            # 执行检查，发现违规时退出码为 1
-#   python tools/check_naming.py -v         # 详细模式，输出已登记的兼容项
-#   python tools/check_naming.py --report   # 仅输出报告，不阻断退出码
-#
-# 检查项说明:
-#   A 目录名一律使用小写
-#   B class_name 声明转 snake_case 后需与当前文件名一致
-#   C 文档中引用的工程内相对文件与目录路径必须真实存在
-#   D .tscn 场景文件名统一使用 snake_case
-#   E PowerShell/BAT 换行与 PowerShell 编码
+# 检查项目文件的命名、文档引用以及脚本的字符编码和换行符。
+# -v 同时列出提示信息。--report 只报告问题，退出码仍为 0。
 import os
 import re
 import sys
@@ -26,20 +14,18 @@ if hasattr(sys.stdout, "reconfigure"):
 TOOLS = os.path.dirname(os.path.abspath(__file__))
 PROJECT = os.path.dirname(TOOLS)
 
-# 排除检查的目录（引擎构建缓存、版本控制、构建产物与临时目录）
-# 与版本忽略规则保持一致，避免构建和运行临时文件引发偶发误报
+# 下列目录不参与文件名和脚本检查，包括工具缓存、构建输出和游戏资源。
 SKIP_DIRS = {".test_logs", ".godot", ".git", ".superpowers", ".claude", "builds", "backup",
              "releases", "_crashtest", "__pycache__", "docs", "assets"}
-# 按当前目录发现文档，不为新增域文档维护第二张清单。
 DOC_FILES = sorted(p.relative_to(PROJECT).as_posix() for p in [
     *Path(PROJECT).glob("*.md"), *Path(PROJECT, "docs", "eng").rglob("*.md"),
 ])
-# 被文档引用时检查存在性的扩展名
+# 识别反引号中的文件路径时，只考虑下列扩展名。
 DOC_EXTS = (".gd", ".tscn", ".json", ".js", ".html", ".cyrm", ".cfg",
             ".shader", ".gdshader", ".bat", ".py", ".md", ".ttf", ".otf", ".png")
 GENERATED_DOC_PREFIXES = (".test_logs/", "builds/", "releases/", "level_editor/dist/")
 
-# 已确认的特殊命名豁免项，记录文件路径与保留现有名称的技术原因
+# 可在此登记目录名和 GDScript 类名的例外。
 ACCEPTED_CLASS_FILES = {}
 ACCEPTED_DIRS = {}
 
@@ -48,7 +34,7 @@ _notes: list[str] = []
 
 
 def to_snake(name: str) -> str:
-    """将 PascalCase 转换为 snake_case，支持常见缩写命名。"""
+    """将 PascalCase 名称转为小写下划线形式，并把连续大写缩写视为一个词。"""
     s = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", name)
     s = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s)
     return s.lower()
@@ -97,7 +83,7 @@ def check_class_names() -> None:
 
 
 def markdown_issues(doc: Path, text: str, project: Path) -> list[str]:
-    """Markdown 链接相对于所在文档解析；忽略网址、锚点及代码块。"""
+    """检查 Markdown 链接的目标文件与行号。相对链接以当前文档所在目录为基准。"""
     issues = []
     prose = re.sub(r"^```[^\n]*\n.*?^```[^\n]*$", "", text, flags=re.M | re.S)
     for match in re.finditer(r"\]\(\s*(?:<([^>]+)>|([^\s)]+))(?:\s+\"[^\"]*\")?\s*\)", prose):
@@ -120,7 +106,7 @@ def markdown_issues(doc: Path, text: str, project: Path) -> list[str]:
             line = int(anchor[1:].split("-")[0])
         path = (base / location).resolve()
         if not path.is_relative_to(project.resolve()):
-            continue  # 工程外参考文件不是仓库的可移植性约束。
+            continue  # 仓库外的文件不在检查范围内。
         if not path.exists():
             issues.append("链接目标不存在: " + target)
         elif line is not None and path.is_file():
@@ -131,8 +117,8 @@ def markdown_issues(doc: Path, text: str, project: Path) -> list[str]:
 
 
 def check_doc_paths() -> None:
-    # 覆盖根文档以及各分域文档中引用的本地工程路径，防止出现无效死链
-    seen: dict[str, str] = {}          # 路径标识与来源文档映射
+    # 除 Markdown 链接外，也识别文档中以代码格式列出的路径和行首目录名。
+    seen: dict[str, str] = {}          # 用第一次出现该路径的文档定位报错。
     for doc in DOC_FILES:
         full = os.path.join(PROJECT, doc)
         if not os.path.exists(full):
@@ -140,19 +126,18 @@ def check_doc_paths() -> None:
             continue
         text = open(full, encoding="utf-8", errors="replace").read()
         _fail.extend("C %s %s" % (doc, issue) for issue in markdown_issues(Path(full), text, Path(PROJECT)))
-        # 反引号包裹的带扩展名相对路径
-        # 验证路径首级目录存在，避免误伤文档中的复合简写
+        # 反引号中的代码片段可能形似路径。只有目录开头已存在于仓库中的项才会作为路径检查。
         for tok in re.findall(r"`([A-Za-z0-9_./-]+)`", text):
             if "/" not in tok or not tok.endswith(DOC_EXTS):
                 continue
             if tok.startswith(GENERATED_DOC_PREFIXES):
-                continue  # 文档可说明尚未生成的产物，不要求干净检出时已存在。
+                continue  # 允许文档引用当前尚未生成的输出文件。
             if tok.startswith(("http", "res://")):
                 continue
             head = tok.split("/", 1)[0]
             if os.path.isdir(os.path.join(PROJECT, head)):
                 seen.setdefault(tok, doc)
-        # 代码块中行首以目录格式命名的路径
+        # 把行首形如 目录/ 的引用也记入检查清单。
         for tok in re.findall(r"^\s*([a-z_]+/)\s", text, re.M):
             seen.setdefault(tok, doc)
     for tok in sorted(seen):
@@ -161,12 +146,12 @@ def check_doc_paths() -> None:
 
 
 def check_tscn() -> None:
-    """检查场景文件名是否统一遵循 snake_case 命名规范。"""
+    """检查场景文件是否使用小写下划线命名，并为缺少同名脚本的场景生成提示。"""
     bad, snake, unpaired = [], [], []
     for root, dirs, files in os.walk(PROJECT):
         dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
-        listing = set(files)          # 读取当前目录真实文件列表判定同名脚本
-        for f in files:               # 避免不区分大小写的文件系统引起判定偏差
+        listing = set(files)          # 使用实际文件名比较大小写。在 Windows 上也按相同方式检查。
+        for f in files:
             if not f.endswith(".tscn"):
                 continue
             rel = os.path.relpath(os.path.join(root, f), PROJECT).replace("\\", "/")
@@ -226,7 +211,7 @@ def main() -> int:
         print("— 违规 %d 条 —" % len(_fail))
         for f in _fail:
             print("  " + f)
-        print("\n命名检查 FAIL(规范见 AGENTS.md；有意保留的类名差异应登记原因)")
+        print("\n命名检查 FAIL")
         return 0 if report_only else 1
     print("命名检查 OK(目录小写 / class_name↔文件名 / 文档链接与行号 / .tscn snake_case / 脚本编码)")
     return 0

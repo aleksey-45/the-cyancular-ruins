@@ -1,19 +1,18 @@
 class_name GameParameters
 extends RefCounted
 
-# 全局共享参数：供玩家、敌人与子弹等实体共享的物理常数、世界网格规格与敌人生成参数。
-# 玩家独立参数已移至 PlayerParams（包含移动、跳跃、冲刺、相机与战斗相关参数）。
+# 物理模拟和地图绘制共用这些参数。距离以游戏世界中的像素计，速度以像素/秒计。
 
 const gravity0: float = 1600.0
 const TILE_SIZE: int = 64
 
-const water_sway_amp: float = 2.0        # 水面起伏振幅（像素，用于顶部网格形变拉伸）
-const water_sway_speed: float = 1.6      # 水面晃动角速度（rad/s）
-const water_bullet_drag: float = 2.0     # 子弹在水中的指数阻力衰减系数（exp(-drag·Δt)）
-const water_fx_move_threshold: float = 40.0   # 实体在水中的移动速度低于此阈值时不发射水花粒子
-const water_fx_splash_band: float = 20.0     # 实体底部距离水面高度差在此范围内判定为表面水花
+const water_sway_amp: float = 2.0        # 水面上下摆动的最大偏移（像素）。
+const water_sway_speed: float = 1.6      # 水面波形随时间变化的角速度（弧度/秒）。
+const water_bullet_drag: float = 2.0     # 弹丸在水中按指数减速。数值越大，速度下降越快。
+const water_fx_move_threshold: float = 40.0   # 只有物体速度达到此值（像素/秒），才会播放水花或气泡效果。
+const water_fx_splash_band: float = 20.0     # 脚底在水面下的深度超过碰撞形状半高加此值时，播放气泡效果。较浅时在水面播放水花。
 const water_fx_splash_interval: float = 0.15
 const water_fx_bubble_interval: float = 0.12
-const water_drain_interval: float = 1.0    # 完全浸水状态下防水值（氧气）每 1s 扣除 1 点
-const water_recover_interval: float = 0.3  # 脱离水面暴露在空气中时每 0.3s 恢复 1 点
-const water_drown_damage_interval: float = 1.5  # 防水值耗尽后的溺水扣除生命值间隔（秒）
+const water_drain_interval: float = 1.0    # 头部在水下时，每隔这么多秒扣除 1 点氧气。
+const water_recover_interval: float = 0.3  # 头部露出水面后，每隔这么多秒补充 1 点氧气。
+const water_drown_damage_interval: float = 1.5  # 氧气降为 0 后，相邻两次溺水伤害的时间间隔（秒）。

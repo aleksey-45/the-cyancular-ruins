@@ -6,7 +6,7 @@ func _ready() -> void:
 	_run.call_deferred()
 
 func _run() -> void:
-	# 物理查询需要空间已经推进过至少一个物理帧；否则首帧的直接空间状态还没有宽相。
+	# 等到场景树发出 physics_frame，在各节点处理本次物理更新之前执行测试。
 	await get_tree().physics_frame
 	var selected: Array = GROUPS.keys()
 	var args := OS.get_cmdline_user_args()

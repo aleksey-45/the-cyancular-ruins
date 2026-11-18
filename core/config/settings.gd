@@ -1,7 +1,7 @@
 extends Node
 
-# 设置中枢（Autoload 单例）：负责配置持久化、窗口显示、音频总线与键位重映射。
-# 存储基于 ConfigFile（user://settings.cfg）；首次运行使用 InputMap 当前配置作为默认键位。
+# 项目以自动加载节点的方式使用这份设置，菜单和各场景均可访问。
+# 用户设置读写 user://settings.cfg。项目的 InputMap 提供默认按键。
 
 const SAVE_PATH := "user://settings.cfg"
 enum { SECTION, KEY, DEFAULT }
@@ -21,7 +21,7 @@ const SCALAR_SETTINGS := {
 	&"pvp_minimap_show_enemy": ["pvp", "minimap_show_enemy", true],
 }
 
-# 可重映射的动作（1-5 切枪槽固定，不开放重绑）
+# 设置菜单仅列出这些可修改的动作。武器切换固定用数字键 1–4，按背包顺序选择。
 const REMAPPABLE_ACTIONS: Array[String] = ["left", "right", "up", "down", "charge", "attack", "R", "F", "Q", "rewind", "haste"]
 
 var master_volume: float = SCALAR_SETTINGS.master_volume[DEFAULT]:
@@ -33,19 +33,18 @@ var sfx_volume: float = SCALAR_SETTINGS.sfx_volume[DEFAULT]:
 		sfx_volume = clampf(v, 0.0, 1.0)
 		_apply_bus_volume("SFX", sfx_volume)
 
-# 鼠标滚轮切换武器（默认启用）
 var wheel_switch: bool = SCALAR_SETTINGS.wheel_switch[DEFAULT]
 
-var sp_disabled_weapons: Array[int] = []   # 禁用的武器槽位（1-6，第 6 槽为激光枪）
+var sp_disabled_weapons: Array[int] = []   # 单人模式开局时，从可用武器中排除这些类型。
 
-# 地图选择路径（空字符串表示进入关卡时随机选取）
+# 未指定地图路径时，从可用地图中随机挑选。
 var sp_map_path: String = SCALAR_SETTINGS.sp_map_path[DEFAULT]
 var mp_map_path: String = SCALAR_SETTINGS.mp_map_path[DEFAULT]
 
 var pvp_show_trajectories: bool = SCALAR_SETTINGS.pvp_show_trajectories[DEFAULT]
 var pvp_round_full_heal: bool = SCALAR_SETTINGS.pvp_round_full_heal[DEFAULT]
 var pvp_show_enemy_hp: bool = SCALAR_SETTINGS.pvp_show_enemy_hp[DEFAULT]
-var pvp_disabled_weapons: Array[int] = []  # 禁用武器(服务器生效项,房主值优先)
+var pvp_disabled_weapons: Array[int] = []  # 多人房间创建时，从可用武器中排除这些类型。
 var pvp_color_hue: float = SCALAR_SETTINGS.pvp_color_hue[DEFAULT]
 var royale_match_min: float = SCALAR_SETTINGS.royale_match_min[DEFAULT]:
 	set(value):
@@ -53,7 +52,7 @@ var royale_match_min: float = SCALAR_SETTINGS.royale_match_min[DEFAULT]:
 var pvp_show_minimap: bool = SCALAR_SETTINGS.pvp_show_minimap[DEFAULT]
 var pvp_minimap_show_enemy: bool = SCALAR_SETTINGS.pvp_minimap_show_enemy[DEFAULT]
 
-# 窗口尺寸不改变 1920×1440 的逻辑视口或游戏模拟。
+# 这些窗口分辨率采用 4:3 的宽高比。游戏画面基于 1920×1440 的视口设置，再缩放至实际窗口大小。
 const DISPLAY_RESOLUTIONS: Array[Vector2i] = [
 	Vector2i(1280, 960), Vector2i(1600, 1200),
 	Vector2i(1920, 1440), Vector2i(2560, 1920),
@@ -68,7 +67,7 @@ func _ready() -> void:
 
 
 static func fit_window(requested: Vector2i, available: Vector2i) -> Vector2i:
-	# 小屏幕允许缩到档位以下，仍保持 4:3；不覆盖用户保存的首选尺寸。
+	# 窗口放不进屏幕时，按原来的 4:3 比例缩小。玩家选择的分辨率仍保存在设置中。
 	var ratio := minf(1.0, minf(float(available.x) / requested.x, float(available.y) / requested.y))
 	var units := maxi(1, int(floor(minf(requested.x / 4.0, requested.y / 3.0) * ratio)))
 	return Vector2i(units * 4, units * 3)
@@ -83,12 +82,12 @@ func apply_display() -> void:
 		return
 	DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
 	var usable := DisplayServer.screen_get_usable_rect(DisplayServer.window_get_current_screen())
-	# 预留标题栏和窗口边框，防止 1080p 等屏幕上的窗口越过工作区。
+	# 先从屏幕可用尺寸扣除给窗口标题栏和边框预留的空间。
 	var target := fit_window(display_resolution, Vector2i(maxi(4, usable.size.x - 32), maxi(3, usable.size.y - 64)))
 	DisplayServer.window_set_size(target)
 	DisplayServer.window_set_position(usable.position + (usable.size - target) / 2)
 
-# SFX 总线挂在 Master 下;Music 预留给将来 BGM。音量统一 linear→db。
+# 缺少音频总线时新建 SFX 或 Music，并将其输出接到 Master。音量设置换算成分贝后再交给音频服务器。
 func _ensure_buses() -> void:
 	if AudioServer.get_bus_index("Music") == -1:
 		var at := AudioServer.bus_count
@@ -110,10 +109,8 @@ func _apply_bus_volume(bus_name: String, linear: float) -> void:
 	AudioServer.set_bus_volume_db(idx, linear_to_db(maxf(linear, 0.0001)))
 	AudioServer.set_bus_mute(idx, linear <= 0.001)
 
-# 单个动作支持绑定多个键位（例如 up 支持 W 与空格，down 支持 S 与下箭头）。
-# set_binding 会替换当前动作绑定的按键并保存；get_binding_names 用于展示所有已绑定键位。
 
-# 显示用:一个动作的全部键位名,如 "W / Space"
+# 界面用斜杠连接同一个动作的多个按键名称，斜杠前后各有一个空格。
 func get_binding_names(action: String) -> String:
 	var names: Array[String] = []
 	for ev in InputMap.action_get_events(action):

@@ -1,18 +1,15 @@
 globalThis.Core = (function () {
   'use strict';
 
-  // ── 常量 ──
   const SUB_PER_CELL = 4;
-  const SUB_PX = 16;               // 子格边长(世界像素)
+  const SUB_PX = 16;               // 一个子格在游戏中占 16×16 像素。
   const CELL_PX = 64;
   const LAYER_COUNT = 4;
   const LAYER_FRONT = 0, LAYER_SCENE = 1, LAYER_BACK = 2, LAYER_BG = 3;
   const LAYER_NAMES = ['前景', '场景', '后景', '背景'];
   const LAYER_KINDS = ['tex', 'tex', 'tex', 'color'];
 
-  // ── 地图对象 ──
-  // 全部用 TypedArray:4 层 × 150k 子格若用嵌套 JS 数组会到几十 MB 且 GC 压力巨大。
-  // 下标一律 = y * subCols + x(行主序),与文件里的排布一致。
+  // 各图层用类型化数组逐行保存子格，索引等于行号乘以每行子格数，再加上列号。
   function createMap(name, cellsW, cellsH) {
     if (!Number.isInteger(cellsW) || !Number.isInteger(cellsH) || cellsW <= 0 || cellsH <= 0) {
       throw new Error('createMap: 格数必须是正整数,收到 ' + cellsW + '×' + cellsH);
@@ -44,7 +41,7 @@ globalThis.Core = (function () {
   }
   function subIndex(subCols, X, Y) { return Y * subCols + X; }
 
-  // ── 字节读写器(一律小端)──
+  // CYRM 使用小端字节序保存多字节整数。
   function ByteWriter(capacity) {
     this.buf = new Uint8Array(capacity || 256);
     this.len = 0;
@@ -117,7 +114,7 @@ globalThis.Core = (function () {
   };
   ByteReader.prototype.remaining = function () { return this.b.length - this.p; };
 
-  // ── CRC32(IEEE 802.3,多项式 0xEDB88320)──
+  // 用多项式 0xEDB88320 生成 CRC32 查找表。
   const CRC_TABLE = (function () {
     var t = new Uint32Array(256);
     for (var n = 0; n < 256; n++) {
@@ -238,10 +235,8 @@ globalThis.Core = (function () {
     return lines.length ? lines.join('\n') + '\n' : '';
   }
 
-  // 解析失败的行降级为注释保留，避免丢失用户输入
+  // 无法识别的行会作为地图注释读入，保存时随地图写回。
   function parseMeta(text) {
-    // 整数字面量(允许前导正负号)。用它而不是 isFinite,是为了拒绝 parseInt 的
-    // 前缀截断:3.5 / 7abc / 1e3 / 0x10 都必须整行走降级路径。
     var INT_TOKEN = /^[+-]?\d+$/;
     var players = new Map(), enemies = [], respawns = [], comments = [];
     var lines = String(text == null ? '' : text).split(/\r?\n/);
@@ -252,7 +247,6 @@ globalThis.Core = (function () {
       var body = s.slice(1).trim();
       var parts = body.split(/\s+/);
       var head = parts[0];
-      // 仅当 token 为整数字面量时才解析成功，避免 parseInt 截断非纯数字字符串
       if (/^player(?:[1-9]\d*)?$/.test(head) && parts.length === 3) {
         const slot = Number(head.slice(6) || 1);
         if (Number.isSafeInteger(slot) && INT_TOKEN.test(parts[1]) && INT_TOKEN.test(parts[2])) {
@@ -277,7 +271,6 @@ globalThis.Core = (function () {
   }
 
   function deflateBytes(bytes) {
-    // 兼容性检查：确保运行环境包含 CompressionStream、Blob 与 Response
     if (typeof CompressionStream === 'undefined' || typeof Blob === 'undefined' ||
         typeof Response === 'undefined') {
       return Promise.reject(new Error(
@@ -286,7 +279,7 @@ globalThis.Core = (function () {
     var stream = new Blob([bytes]).stream().pipeThrough(new CompressionStream('deflate'));
     return new Response(stream).arrayBuffer().then(function (buf) { return new Uint8Array(buf); });
   }
-  // 流式解压：限制解压输出最大字节数，防止超大解压数据耗尽内存
+  // 限定解压后体积时，边读取边统计字节数。一旦超过上限，就取消读取并报告错误。
   function inflateBytes(bytes, maxBytes) {
     if (typeof DecompressionStream === 'undefined' || typeof Blob === 'undefined' ||
         typeof Response === 'undefined') {
@@ -309,7 +302,6 @@ globalThis.Core = (function () {
         }
         var chunk = res.value || new Uint8Array(0);
         total += chunk.length;
-        // 校验解压输出累计大小，超限立即中止
         if (total > maxBytes) {
           var err = new Error('inflateBytes: 解压输出超过 ' + maxBytes + ' 字节上限(已累计 ' +
                               total + ' 字节),中止');
@@ -325,9 +317,9 @@ globalThis.Core = (function () {
 
   const FORMAT_VERSION = 4;
   const HEADER_SIZE = 20;
-  const MAGIC = [0x43, 0x59, 0x52, 0x4D];   // "CYRM"
+  const MAGIC = [0x43, 0x59, 0x52, 0x4D];   // 文件头以 CYRM 四个字节开头。
 
-  // 解压后数据体硬上限（64MB），防止超大解压数据耗尽内存
+  // 此上限用于校验文件头声明的大小，也限制解压输出的字节数。
   const MAX_BODY_SIZE = 64 * 1024 * 1024;
 
   function layerFlags(map) {
@@ -344,7 +336,7 @@ globalThis.Core = (function () {
     w.bytes(metaBytes);
     for (var L = 0; L < LAYER_COUNT; L++) {
       var layer = map.layers[L];
-      if (!layer) continue;                        // 缺层不写块,由 layer_flags 表达
+      if (!layer) continue;                        // 文件头已记录哪些图层存在，因此数据区可以省略缺失的图层。
       w.bytes(layer.kind === 'tex'
         ? encodeTexLayer(layer.desc, map.subCols, map.subRows)
         : encodeColorLayer(layer.rgba, map.subCols, map.subRows));
@@ -361,7 +353,7 @@ globalThis.Core = (function () {
     for (var L = 0; L < LAYER_COUNT; L++) {
       if (!(flags & (1 << L))) { layers.push(null); continue; }
       var kind = LAYER_KINDS[L];
-      // 防御损坏的文件头：根据本层剩余字节数粗估容量上界，避免非法尺寸触发异常大内存分配
+      // 纹理图层的每个子格至少占 1 字节，颜色图层则占 4 字节。先检查剩余数据，再分配数组。
       var room = r.remaining();
       var maxCells = kind === 'tex' ? room : ((room / 4) | 0);
       if (n > maxCells) {
@@ -415,7 +407,7 @@ globalThis.Core = (function () {
     const bodySize = r.u32();
     const expectedCrc = r.u32();
     const subCols = r.u16(), subRows = r.u16(), flags = r.u8();
-    r.u8();  // 保留字段
+    r.u8();  // 文件头末尾留有一个保留字节。
     if (bodySize > MAX_BODY_SIZE) throw new Error('decodeMap: body_size 超过 64 MiB');
     if (!subCols || !subRows || subCols % SUB_PER_CELL || subRows % SUB_PER_CELL) {
       throw new Error('decodeMap: 非法尺寸 ' + subCols + '×' + subRows);
@@ -578,7 +570,7 @@ globalThis.Core = (function () {
     }
     if (map.respawns.length) checkRespawnDistribution(map.respawns, cellsW, cellsH, warnings);
 
-    // 四层全空
+    // 图层全部为空时会报告警告，空地图仍可保存。
     var allEmpty = true;
     for (L = 0; L < LAYER_COUNT && allEmpty; L++) {
       layer = map.layers[L];
@@ -619,7 +611,7 @@ globalThis.Core = (function () {
     }
   }
 
-  // 游戏启动依赖的点位坐标错误阻止导出。实心格和团队点位问题仍提示。
+  // 玩家 1、玩家 2 和敌人的出生点坐标有误时会阻止导出。其他玩家出生点和复活点的坐标问题只发出警告。
   function _checkSpawn(pt, label, cellsW, cellsH, sceneDesc, warnings, coordinateIssues = warnings) {
     if (!Number.isSafeInteger(pt.x) || !Number.isSafeInteger(pt.y)) {
       coordinateIssues.push(label + ' 坐标必须是整数');
@@ -630,7 +622,7 @@ globalThis.Core = (function () {
       return;
     }
     if (!sceneDesc) return;
-    // 「场景」层该格 4×4 子格全非空才算实心
+    // 出生点所在瓦片的 16 个子格都有纹理时，提示此处可能无法通行。
     var subCols = cellsW * SUB_PER_CELL;
     var solid = true;
     for (var dy = 0; dy < SUB_PER_CELL && solid; dy++) {
@@ -643,7 +635,6 @@ globalThis.Core = (function () {
     if (solid) warnings.push(label + ' 落在实心格里(场景层该格被填满)');
   }
 
-  // ── 与格式无关的纯工具(自旧编辑器沿用)──
   function sanitizeName(name) {
     var n = String(name == null ? '' : name).trim();
     n = n.replace(/\s+/g, '_');
@@ -653,13 +644,12 @@ globalThis.Core = (function () {
     return n === '' ? 'structure' : n;
   }
 
-  // 画笔块偏移:以指针格为中心的上下/左右扩展量,保证 lo+1+hi===size。
-  // 奇数尺寸对称;偶数尺寸偏下右(否则偶数会缩水一格)。
+  // 画笔以光标所在格为中心。边长是偶数时，多出的一格放在右侧或下侧。
   function brushOffsets(size) {
     return { lo: Math.floor((size - 1) / 2), hi: Math.ceil((size - 1) / 2) };
   }
 
-  // Bresenham 直线路径格坐标(含两端)。
+  // 用 Bresenham 算法将线段转换为网格坐标，保留起点和终点。
   function lineCells(x0, y0, x1, y1) {
     var cells = [];
     var dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0);
@@ -676,7 +666,7 @@ globalThis.Core = (function () {
     return cells;
   }
 
-  // 矩形区域归一化:任意两角点 → {x, y, w, h}(含两端)。
+  // 两个角上的格子都计入矩形的宽和高。
   function normRegion(x0, y0, x1, y1) {
     return { x: Math.min(x0, x1), y: Math.min(y0, y1),
              w: Math.abs(x1 - x0) + 1, h: Math.abs(y1 - y0) + 1 };
@@ -686,7 +676,7 @@ globalThis.Core = (function () {
   const TEXTURE_MAX = 4095;
   const HUE_NEUTRAL = 4, BRI_NEUTRAL = 4, SAT_NEUTRAL = 4, ALPHA_NEUTRAL = 7;
 
-  // 打包成 u32。纹理不在 1..TEXTURE_MAX 内一律当空气(含 0 与负数)。
+  // 一个 32 位无符号整数同时保存纹理编号和颜色参数。无效的纹理编号按空子格处理。
   function packDesc(texture, hue, bright, sat, alpha) {
     texture = texture | 0;
     if (texture <= 0 || texture > TEXTURE_MAX) return DESC_AIR;
@@ -703,7 +693,7 @@ globalThis.Core = (function () {
   function alphaOf(d)  { return (d >>> 9) & 7; }
   function isAir(d)    { return d === DESC_AIR; }
 
-  // 中性描述符：完全按原图渲染，不应用调色。alpha 中性档为 7，其余通道为 4
+  // 使用默认参数时，纹理保持原有颜色和不透明度。
   function neutralDesc(texture) {
     return packDesc(texture, HUE_NEUTRAL, BRI_NEUTRAL, SAT_NEUTRAL, ALPHA_NEUTRAL);
   }

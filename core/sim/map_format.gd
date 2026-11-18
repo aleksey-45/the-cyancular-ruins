@@ -1,12 +1,12 @@
 class_name MapFormat
 extends RefCounted
 
-# 游戏与编辑器统一使用 v4。
+# 把 CYRM v4 文件读成关卡模拟和编辑工具所用的地图数据。
 const EMPTY: int = 0
 const CACHE_SIZE := 8
 static var _maps: Dictionary[PackedByteArray, Dictionary] = {}
 
-# 64px 格的纹理编号和 2×2 象限掩码；0 表示空气。
+# 瓦片值的高位存储纹理 ID，低四位分别表示瓦片四个区域是否被占用。空瓦片用 EMPTY 表示。
 static func pack(texture: int, shape: int) -> int:
 	return texture * 16 + shape if texture != 0 and shape != 0 else EMPTY
 
@@ -24,7 +24,7 @@ static func load_map(path: String) -> Dictionary:
 		return {}
 	return parse_map(file.get_buffer(file.get_length()), path)
 
-# 本地文件和联机基线按原始字节共用地图数据。
+# 缓存以地图的字节内容为键。地图来自本地或联机都可以共用解析结果。
 static func parse_map(bytes: PackedByteArray, source: String) -> Dictionary:
 	if _maps.has(bytes):
 		return _maps[bytes]

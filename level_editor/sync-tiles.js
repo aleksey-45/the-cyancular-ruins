@@ -1,8 +1,6 @@
 'use strict';
-// 从 data/tile_defs.json 重新生成 level_editor/tile_defs.js(编辑器打包副本)。
-// 页面、Worker 和离线版共用 globalThis.TILE_DEFS。
-// 用法:node level_editor/sync-tiles.js [--check]
-//   --check: 仅校验不写入。若与 data/tile_defs.json 不一致则退出码为 1。
+// 根据 data/tile_defs.json 生成材质表。编辑器页面、Web Worker 和离线版都通过 globalThis.TILE_DEFS 读取该表。
+// --check 只校验文件内容。现有材质表与生成结果不一致时，退出码为 1。
 const fs = require('fs');
 const path = require('path');
 
@@ -10,7 +8,7 @@ const jsonPath = path.join(__dirname, '..', 'data', 'tile_defs.json');
 const jsPath = path.join(__dirname, 'tile_defs.js');
 
 const json = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
-const body = '// 由 sync-tiles.js 从 data/tile_defs.json 生成;改配置请改 JSON 再跑一次。\n' +
+const body = '// 关卡编辑器读取的瓦片属性来自 data/tile_defs.json。\n' +
   'globalThis.TILE_DEFS = ' + JSON.stringify(json, null, 2) + ';\n';
 const tileCount = Object.keys(json.tiles || {}).length;
 

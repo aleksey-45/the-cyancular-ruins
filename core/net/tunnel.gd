@@ -1,29 +1,28 @@
 class_name Tunnel
 extends RefCounted
 
-# EasyTier 在虚拟网络内转发 UDP；房主通过主机名公布游戏端口。
+# 加入房间时从 EasyTier 的节点列表读取房主地址和游戏端口，然后将本地 UDP 数据转发到房主。
 const Meta := preload("res://core/config/tunnel_meta.gd")
 
-# 房间码规格：固定 8 位十进制数字，允许前导零
+# 房间号由八位数字组成。它按字符串处理，以保留前导零。
 const ROOM_DIGITS := 8
-# 客机等待房主在虚拟网络中就绪的超时时限（秒）
+# 客户端等待房主出现在 EasyTier 节点列表中的时间上限（毫秒）。
 const CLIENT_WAIT_MS := 60000
-# CLI 轮询间隔（秒）
+# 查询节点列表或重试 UDP 转发前，等待这么多秒。
 const POLL_INTERVAL := 1.0
-# 端口转发规则添加重试次数
+# 找到房主后，最多尝试这么多次建立 UDP 转发规则。
 const FORWARD_TRIES := 3
 
-static var _pid := 0            # 核心进程 PID，0 表示未启动
-static var _rpc_port := 0       # 本端 RPC 门户监听端口
+static var _pid := 0            # 记录当前 EasyTier 进程的 ID。未启动或已清除状态时为 0。
+static var _rpc_port := 0       # 本地 EasyTier 命令使用的 RPC 端口。
 static var _config_dir: DirAccess
 static var _forward_host := ""
 static var _forward_target := 0
-static var _forward_port := 0   # 本端本地转发端口（客机使用，0 表示未转发或房主模式）
-static var _code := ""          # 当前加入的 8 位房间码
-static var _cli_path := ""      # 命令行工具可执行文件路径
+static var _forward_port := 0   # 客户端供游戏连接的本地 UDP 端口。转发规则未建立时为 0。
+static var _code := ""
+static var _cli_path := ""
 
 
-## 校验房间码格式是否为合法的 8 位纯数字字符串。
 static func is_valid_room(s: String) -> bool:
 	if s.length() != ROOM_DIGITS:
 		return false
@@ -34,7 +33,7 @@ static func is_valid_room(s: String) -> bool:
 	return true
 
 
-## 从主机名中解析房主的服务端端口号，非房主条目或无效格式返回 -1。
+## 房主节点的名称由前缀和游戏端口组成。名称不符合格式或端口超出有效范围时返回 -1。
 static func host_port_of(hostname: String) -> int:
 	if not hostname.begins_with(Meta.HOST_PREFIX):
 		return -1
@@ -45,7 +44,7 @@ static func host_port_of(hostname: String) -> int:
 	return p if p > 0 and p < 65536 else -1
 
 
-## 从对等节点列表中筛选房主条目，返回包含 ipv4、hostname 与 port 的字典。未找到返回空字典。
+## 按节点列表的顺序查找，返回第一条具有有效地址及游戏端口的房主记录。没有符合条件的节点时返回空字典。
 static func pick_host_peer(peers: Array) -> Dictionary:
 	for e in peers:
 		if typeof(e) != TYPE_DICTIONARY:
@@ -144,12 +143,12 @@ static func _forward_to(port: int, host_ip: String) -> String:
 	return "已找到房主，UDP 转发配置失败%s" % detail
 
 
-## 获取客机本地转发绑定的端口号（0 表示当前为房主或未建立转发）。
+## 游戏客户端通过此端口发送交给 EasyTier 转发的数据。尚未配置转发时得到 0。
 static func forward_port() -> int:
 	return _forward_port
 
 
-## 停止当前网络隧道子进程并重置状态。
+## 关闭当前房间使用的 EasyTier 进程，并一并清除本地转发及配置状态。临时配置目录随引用释放。
 static func stop() -> void:
 	if _pid > 0:
 		NetSession.stop(_pid)
@@ -165,12 +164,10 @@ static func reset() -> void:
 	_forward_target = 0
 
 
-## 获取当前网络所属的房间码，未启动时返回空字符串。
 static func current_code() -> String:
 	return _code
 
 
-## 检查当前隧道是否已连入指定房间码对应的虚拟网络中。
 static func on_network(code: String) -> bool:
 	return code != "" and _code == code and is_running()
 
@@ -221,7 +218,7 @@ static func _sleep() -> void:
 	await (Engine.get_main_loop() as SceneTree).create_timer(POLL_INTERVAL).timeout
 
 
-## 读取公共初始节点配置文件中的节点列表。
+## 优先读取本地配置中的初始节点。仅在配置文件不存在时回退到内置列表。
 static func relay_list() -> Array[String]:
 	var path := relay_file()
 	if FileAccess.file_exists(path):
@@ -229,7 +226,7 @@ static func relay_list() -> Array[String]:
 	return Meta.DEFAULT_RELAYS.duplicate()
 
 
-## 解析公共节点文本行，忽略注释与空行，规范化协议前缀。
+## 每行一个节点地址。忽略空行和以 # 开头的行，省略协议的地址按 UDP 处理。
 static func parse_relay_lines(text: String) -> Array[String]:
 	var out: Array[String] = []
 	for raw in text.split("\n"):
@@ -240,14 +237,14 @@ static func parse_relay_lines(text: String) -> Array[String]:
 	return out
 
 
-## 返回公共节点列表配置文件路径。
+## 打包成 macOS 应用后，从用户数据目录读取初始节点列表。其他版本和 EasyTier 组件放在同一目录。
 static func relay_file() -> String:
 	if OS.has_feature("macos") and OS.has_feature("template"):
 		return OS.get_user_data_dir().path_join(Meta.RELAY_FILE_NAME)
 	return AppPaths.easytier_dir().path_join(Meta.RELAY_FILE_NAME)
 
 
-## 大厅入口补齐公共节点配置，保留已有文件。
+## 大厅首次使用初始节点配置时，把内置列表写入文件。已经存在的文件会保留。
 static func ensure_relay_file() -> void:
 	var path := relay_file()
 	if FileAccess.file_exists(path):
@@ -285,7 +282,7 @@ static func _write_config(code: String, port: int, relays: Array[String]) -> boo
 		"private_mode = true",
 		"data_compress_algo = \"None\"",
 	])
-	# EasyTier 只允许 CLI 修改由 --config-dir 加载的实例。
+	# 启动时会把临时目录的路径交给 EasyTier，让它读取这一房间的 instance.toml。
 	_config_dir = DirAccess.create_temp("cyr-easytier")
 	if _config_dir == null:
 		return false
@@ -294,7 +291,7 @@ static func _write_config(code: String, port: int, relays: Array[String]) -> boo
 	return config != null and config.store_string("\n".join(lines) + "\n")
 
 
-# 动态分配一个本机空闲的 TCP 端口作为 RPC 门户监听端口。
+# 让系统为临时监听套接字分配一个 TCP 端口，取得端口号后关闭监听。
 static func _pick_rpc_port() -> int:
 	var srv := TCPServer.new()
 	if srv.listen(0, "127.0.0.1") != OK:

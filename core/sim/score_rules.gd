@@ -1,22 +1,21 @@
 class_name ScoreRules
 extends RefCounted
 
-# 玩家个人战绩表现分与积分规则（纯逻辑工具类，无 Autoload 依赖）。
-# 统一定义全模式通用的战绩权重与场均战斗积分 ACS 计算公式。
+# 多人模式使用同一套战斗计分。ACS 表示每回合平均获得的战斗分。
 
-const KILL_SCORE := 100          # 单次击杀得分
-const ASSIST_SCORE := 50         # 单次助攻得分
-const DAMAGE_PER_POINT := 5      # 造成伤害折算分（伤害 / 5）
-const DEATH_PENALTY := 50        # 单次阵亡扣分
-const TEAM_KILL_PENALTY := 100   # 误杀队友扣分
+const KILL_SCORE := 100
+const ASSIST_SCORE := 50
+const DAMAGE_PER_POINT := 5      # 每累计 5 点有效伤害，计入 1 分。
+const DEATH_PENALTY := 50
+const TEAM_KILL_PENALTY := 100
 
 
-# 计算违规操作罚分：友军伤害与自伤按相同伤害比例扣除，误杀队友额外扣除固定罚分。
+# 自伤和友军伤害按伤害量合并扣分，击杀队友另计罚分。
 static func penalty(team_damage: int, self_damage: int, team_kills: int) -> int:
 	return (team_damage + self_damage) / DAMAGE_PER_POINT + team_kills * TEAM_KILL_PENALTY
 
 
-# 计算单局或累计表现总积分。
+# 合计击杀、助攻和伤害得分，扣除阵亡与友军伤害等罚分。
 static func kscore(kills: int, assists: int, dealt: int, deaths: int,
 		team_damage: int = 0, self_damage: int = 0, team_kills: int = 0) -> int:
 	return kills * KILL_SCORE \
@@ -26,6 +25,6 @@ static func kscore(kills: int, assists: int, dealt: int, deaths: int,
 			- penalty(team_damage, self_damage, team_kills)
 
 
-# 计算每局平均战斗积分 ACS，回合数保底为 1。
+# 回合计数为零时按一回合计算，以免除零。
 static func acs(total_kscore: int, rounds: int) -> float:
 	return float(total_kscore) / float(maxi(rounds, 1))

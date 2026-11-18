@@ -6,11 +6,9 @@ const LOBBY := "res://scenes/mp_lobby.tscn"
 
 var _layer: CanvasLayer
 var _launch: SpLaunchPanel
-var _background: ColorRect
 
 func _ready() -> void:
 	if OS.get_cmdline_user_args().has("--server"):
-		set_process(false)
 		get_tree().change_scene_to_file.call_deferred("res://server/server_main.tscn")
 		return
 	_layer = CanvasLayer.new()
@@ -20,11 +18,10 @@ func _ready() -> void:
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.theme = UiFactory.MENU_THEME
 	UiFactory.cover(_layer, root)
-	_background = BACKGROUND.new()
-	_background.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_background.color = UiFactory.C_BG
-	UiFactory.cover(root, _background)
-	_background.start_motion()
+	var background := BACKGROUND.new()
+	background.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	background.color = UiFactory.C_BG
+	UiFactory.cover(root, background)
 	var title := UiFactory.label("The Cyancular Ruins", 128, UiFactory.C_ACCENT)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.grow_horizontal = Control.GROW_DIRECTION_BOTH
@@ -68,9 +65,6 @@ static func _separator(menu: VBoxContainer) -> void:
 	var line := UiFactory.shade(Color(0.25, 0.31, 0.4))
 	line.custom_minimum_size.y = 2.0
 	menu.add_child(line)
-
-func _process(delta: float) -> void:
-	_background.present(delta)
 
 func _open(path: String) -> void:
 	Sfx.play("ui")

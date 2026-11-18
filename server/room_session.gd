@@ -117,7 +117,7 @@ func max_players() -> int:
 func map_path() -> String:
 	return str(options.get("map", "res://maps/newfactory.cyrm"))
 
-# 新席位进入人数较少的队伍；平手进入 A 队。每队最多 5 人，容量由 max_players 保证。
+# 团队模式为新加入的玩家自动分队。人数相等时优先安排到 A 队，否则选人数较少的一队。
 func add_seat(peer: int) -> void:
 	var role := 1
 	while seats.has(role):
@@ -144,7 +144,7 @@ func _seat_teams() -> Dictionary:
 		teams[role] = int(seats[role]["team"])
 	return teams
 
-# 选边只接受 1/2；先排除当前角色再判断目标队容量。
+# 换队前检查目标队是否有空位。玩家已在该队时，自己的位置不计入这次检查。
 func _pick_team(peer: int, role: int, team: int) -> void:
 	if team != 1 and team != 2:
 		message(peer, "只能选择 A 队或 B 队")
@@ -160,7 +160,7 @@ func _pick_team(peer: int, role: int, team: int) -> void:
 		seats[role]["team"] = team
 		broadcast_room()
 
-# 只产出线路会编码的字段；team_counts、host_name 等派生数据由客户端从 players 还原。
+# 房间状态同步名单、队伍和房主的角色 ID。客户端可以据此显示房主身份及各队成员。
 func room_data() -> Dictionary:
 	var roster: Array = []
 	for role in seats:
@@ -179,7 +179,7 @@ func broadcast_room(only_role: int = 0) -> void:
 			var payload := base.merged({"your_role": role, "token": seat["token"]})
 			NetBus.send_event(NetEvent.Kind.ROOM, payload, seat["peer"])
 
-## 团队可开局：模式正确、所有席位在线，且唯一一次阵容校验通过。
+## 团队对抗要求所有房间成员均已连接，且两队各有至少一名玩家、都没有超过每队上限。
 func team_ready() -> bool:
 	if mode != PvpSession.MODE_TEAM:
 		return false

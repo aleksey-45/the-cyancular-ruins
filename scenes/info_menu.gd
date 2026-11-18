@@ -1,21 +1,18 @@
 extends Control
 
-# 制作团队与特别鸣谢名单
 const DEV_TEAM := ["RoFtaCD", "KikuchiH", "Lord Nahiz Waugh", "siri2048",
 	"ofbwyx", "Lycoris Max", "hsk"]
-# 致谢三段:软件/素材(带许可或署名)与文学来源,中间空一档。
 const CREDITS := [
 	["Godot Engine", "MIT"],
 	["GNU Unifont", "SIL OFL 1.1"],
 	["Less Perfect DOS VGA", "Zeh Fernando / Laemeur"],
-	# 外部技术支持与致谢名单
 	["Deepseek", ""],
 	["GLM", ""],
 	["Thomas Stearns Eliot", ""],
 	["Jorge Luis Borges", ""],
 ]
 
-# 提交记录列表行宽限制与截断设置
+# 提交列表和每行提交记录使用同一个最小宽度，单位为像素。
 const ROW_W := 760.0
 
 func _ready() -> void:
@@ -85,7 +82,7 @@ func _commit_row(text: String, color: Color) -> Label:
 	return row
 
 
-# 页面切换延迟至帧末执行
+# 返回主菜单的操作延迟执行，使本次输入回调能够先结束。
 func _go_back() -> void:
 	Sfx.play("ui")
 	get_tree().change_scene_to_file.call_deferred("res://scenes/main_menu.tscn")
@@ -93,6 +90,5 @@ func _go_back() -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("ui_cancel"):
-		# 优先标记已处理再执行页面跳转
 		get_viewport().set_input_as_handled()
 		_go_back()
