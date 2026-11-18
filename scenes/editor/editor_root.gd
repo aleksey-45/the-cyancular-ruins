@@ -320,10 +320,14 @@ func _wire_ui() -> void:
 			l.add_theme_color_override("font_color", UiFactory.C_TEXT_DIM)
 	# 状态栏消息是「当前发生了什么」,比右侧读数(尺寸/层/子格)更重要 ⇒ 亮一档。
 	(%StatusText as Label).add_theme_color_override("font_color", UiFactory.C_TEXT)
-	for name: String in ["SelectionTitle", "MetaTitle"]:
+	# 面板分组标题 = 比内容亮一档 + 上方留白。像素字只有 16 一档可选(32 留给卡片/页面标题),
+	# 所以层次靠「对比 + 间距 + 位置 + 分组」建立,不靠字号。内容行一律 C_TEXT_DIM 或 accent(选中态)。
+	for name: String in ["SelectionTitle", "MetaTitle", "MetaListHint",
+			"ToolsHint", "BrushHint", "ColorHint", "PaletteHint"]:
 		var h := get_node_or_null("%" + name) as Label
 		if h != null:
 			h.add_theme_color_override("font_color", UiFactory.C_TEXT)
+			h.custom_minimum_size = Vector2(0, 26)
 	_color_nodes.clear()
 	_color_nodes.append(%ColorHint as Control)
 	_color_nodes.append(%BrushColorRow as Control)
@@ -617,7 +621,8 @@ func _sync_layer_tool_availability() -> void:
 		pal_grid.modulate = Color(1, 1, 1, 0.45 if is_color else 1.0)
 	var pal_hint := get_node_or_null("%PaletteHint") as Label
 	if pal_hint != null:
-		pal_hint.text = "调色板(颜色层用「颜色」画笔)" if is_color else "纹理调色板(点选 = 画笔纹理)"
+		pal_hint.text = "纹理调色板"
+		pal_hint.tooltip_text = "调色板(颜色层用「颜色」画笔)" if is_color else "点选 = 画笔纹理"
 	var brush_color := get_node_or_null("%BrushColor") as ColorPickerButton
 	var grad_color := get_node_or_null("%GradientEndColor") as ColorPickerButton
 	if brush_color != null:

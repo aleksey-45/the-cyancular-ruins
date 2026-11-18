@@ -188,7 +188,8 @@ theme_override_constants/separation = 6
 unique_name_in_owner = true
 layout_mode = 2
 theme_type_variation = &"Small"
-text = "工具 · 悬停看快捷键"
+tooltip_text = "工具按钮;悬停按钮看快捷键"
+text = "工具"
 
 [node name="ToolStrip" type="GridContainer" parent="Frame/Layout/Split/WorkArea/LeftPanel/LeftCard/Body"]
 unique_name_in_owner = true
@@ -313,7 +314,8 @@ tooltip_text = "画刷格数(1 格 = 4 子格)"
 unique_name_in_owner = true
 layout_mode = 2
 theme_type_variation = &"Small"
-text = "颜色(只作用于颜色层 3-6)"
+tooltip_text = "只作用于颜色层 3-6"
+text = "颜色"
 
 [node name="BrushColorRow" type="HBoxContainer" parent="Frame/Layout/Split/WorkArea/LeftPanel/LeftCard/Body"]
 unique_name_in_owner = true
@@ -353,7 +355,8 @@ tooltip_text = "渐变终点颜色(只作用于颜色层 3-6)"
 unique_name_in_owner = true
 layout_mode = 2
 theme_type_variation = &"Small"
-text = "纹理调色板(点选 = 画笔纹理)"
+tooltip_text = "点选 = 画笔纹理"
+text = "纹理调色板"
 
 [node name="PaletteScroll" type="ScrollContainer" parent="Frame/Layout/Split/WorkArea/LeftPanel/LeftCard/Body"]
 unique_name_in_owner = true
@@ -712,7 +715,8 @@ text = "垂直镜像"
 unique_name_in_owner = true
 layout_mode = 2
 theme_type_variation = &"Small"
-text = "地图事件(出生点 / 复活点 / 敌人)"
+tooltip_text = "出生点 / 复活点 / 敌人(点模式再点画布;移动工具可拖)"
+text = "地图事件"
 autowrap_mode = 3
 
 [node name="MetaHint" type="Label" parent="Frame/Layout/Split/RightSide/RightTabs/SelectionMeta/TabMargin/Body"]
