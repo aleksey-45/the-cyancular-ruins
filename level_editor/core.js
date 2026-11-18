@@ -32,11 +32,16 @@ globalThis.Core = (function () {
       ],
       players: [],
       enemies: [],
+      respawns: [],
       comments: [],
     };
   }
   function cellsWOf(map) { return map.subCols / SUB_PER_CELL; }
   function cellsHOf(map) { return map.subRows / SUB_PER_CELL; }
+  function layerArray(map, layer) {
+    const data = map.layers[layer];
+    return data ? (data.kind === 'tex' ? data.desc : data.rgba) : null;
+  }
   function subIndex(subCols, X, Y) { return Y * subCols + X; }
 
   // ── 字节读写器(一律小端)──
@@ -132,6 +137,19 @@ globalThis.Core = (function () {
 
   const KIND_TEX = 1;
   const KIND_COLOR = 2;
+  const LEGACY_TEXTURES = globalThis.TILE_DEFS.legacy_texture_map;
+  const MATERIAL_IDS = new Uint8Array(4096);
+  for (var id of [...Object.keys(globalThis.TILE_DEFS.tiles), ...Object.keys(LEGACY_TEXTURES), 0]) {
+    MATERIAL_IDS[id] = 1;
+  }
+  const RESPAWN_GUIDE_DIVISIONS = 3;
+
+  function migrateDescriptor(desc) {
+    var entry = LEGACY_TEXTURES[texOf(desc)];
+    if (!entry) return desc;
+    var hue = Math.max(0, Math.min(7, hueOf(desc) + entry.hue - HUE_NEUTRAL));
+    return ((desc & ~((0xFFF << 12) | 7)) | (entry.base << 12) | hue) >>> 0;
+  }
 
   function encodeTexLayer(desc, subCols, subRows) {
     var n = subCols * subRows;
@@ -148,7 +166,7 @@ globalThis.Core = (function () {
       if (p === undefined) {
         p = pal.length;
         if (p >= 65535) throw new Error('encodeTexLayer: 调色板超过 65535 项(u16 上限)');
-        pal.push(d);
+        pal.push(migrateDescriptor(d));
         seen.set(d, p);
       }
       idx[i] = p;
@@ -170,7 +188,7 @@ globalThis.Core = (function () {
     var palCount = r.u16();
     if (palCount === 0) throw new Error('decodeTexLayer: 调色板为空(索引 0 必须留给空气)');
     var pal = new Uint32Array(palCount);
-    for (var k = 0; k < palCount; k++) pal[k] = r.u32();
+    for (var k = 0; k < palCount; k++) pal[k] = migrateDescriptor(r.u32());
     var iw = r.u8();
     if (iw !== 1 && iw !== 2) throw new Error('decodeTexLayer: index_width=' + iw + '(只允许 1 或 2)');
     var n = subCols * subRows;
@@ -207,13 +225,15 @@ globalThis.Core = (function () {
     var lines = [];
     var i;
     for (i = 0; i < map.comments.length; i++) lines.push('# ' + map.comments[i]);
-    for (i = 0; i < map.players.length; i++) {
-      var kw = i === 0 ? 'player' : (i === 1 ? 'player2' : 'player' + (i + 1));
-      lines.push('# ' + kw + ' ' + map.players[i].x + ' ' + map.players[i].y);
+    for (const p of map.players) {
+      lines.push('# ' + (p.slot === 1 ? 'player' : 'player' + p.slot) + ' ' + p.x + ' ' + p.y);
     }
     for (i = 0; i < map.enemies.length; i++) {
       var e = map.enemies[i];
       lines.push('# enemy ' + e.type + ' ' + e.x + ' ' + e.y);
+    }
+    for (var r of map.respawns) {
+      lines.push('# respawn ' + r.side + ' ' + r.x + ' ' + r.y);
     }
     return lines.length ? lines.join('\n') + '\n' : '';
   }
@@ -223,7 +243,7 @@ globalThis.Core = (function () {
     // 整数字面量(允许前导正负号)。用它而不是 isFinite,是为了拒绝 parseInt 的
     // 前缀截断:3.5 / 7abc / 1e3 / 0x10 都必须整行走降级路径。
     var INT_TOKEN = /^[+-]?\d+$/;
-    var players = [], enemies = [], comments = [];
+    var players = new Map(), enemies = [], respawns = [], comments = [];
     var lines = String(text == null ? '' : text).split(/\r?\n/);
     for (var i = 0; i < lines.length; i++) {
       var s = lines[i].trim();
@@ -233,20 +253,27 @@ globalThis.Core = (function () {
       var parts = body.split(/\s+/);
       var head = parts[0];
       // 仅当 token 为整数字面量时才解析成功，避免 parseInt 截断非纯数字字符串
-      if (/^player\d*$/.test(head) && parts.length >= 3) {
-        if (INT_TOKEN.test(parts[1]) && INT_TOKEN.test(parts[2])) {
-          players.push({ x: parseInt(parts[1], 10), y: parseInt(parts[2], 10) });
+      if (/^player(?:[1-9]\d*)?$/.test(head) && parts.length === 3) {
+        const slot = Number(head.slice(6) || 1);
+        if (Number.isSafeInteger(slot) && INT_TOKEN.test(parts[1]) && INT_TOKEN.test(parts[2])) {
+          players.set(slot, { slot, x: Number(parts[1]), y: Number(parts[2]) });
           continue;
         }
-      } else if (head === 'enemy' && parts.length >= 4) {
+      } else if (head === 'enemy' && parts.length === 4) {
         if (INT_TOKEN.test(parts[2]) && INT_TOKEN.test(parts[3])) {
           enemies.push({ type: parts[1], x: parseInt(parts[2], 10), y: parseInt(parts[3], 10) });
+          continue;
+        }
+      } else if (head === 'respawn' && parts.length === 4 && parts.slice(1).every(t => INT_TOKEN.test(t))) {
+        var side = Number(parts[1]), x = Number(parts[2]), y = Number(parts[3]);
+        if ((side === 1 || side === 2) && Number.isSafeInteger(x) && Number.isSafeInteger(y)) {
+          respawns.push({ side: side, x: x, y: y });
           continue;
         }
       }
       comments.push(body);
     }
-    return { players: players, enemies: enemies, comments: comments };
+    return { players: Array.from(players.values()), enemies, respawns, comments };
   }
 
   function deflateBytes(bytes) {
@@ -351,212 +378,120 @@ globalThis.Core = (function () {
     }
     return {
       name: '', subCols: subCols, subRows: subRows, layers: layers,
-      players: meta.players, enemies: meta.enemies, comments: meta.comments,
+      players: meta.players, enemies: meta.enemies, respawns: meta.respawns, comments: meta.comments,
     };
   }
 
-  // opts.compress 默认 true;传 false 走裸 body(compress=0),用来兜住
-  // "两端 deflate 实现对不上"这类风险,是一条完整可用的路径而不是半成品。
-  function encodeMap(map, opts) {
-    opts = opts || {};
-    var report = validateMap(map);
+  async function encodeMap(map, opts = {}) {
+    const report = validateMap(map);
     if (report.errors.length) {
-      return Promise.reject(new Error('encodeMap: 地图校验未通过 —— ' + report.errors.join(';')));
+      throw new Error('encodeMap: 地图校验未通过 —— ' + report.errors.join(';'));
     }
-    var body, payload, compression;
-    try {
-      body = encodeBody(map);
-    } catch (e) {
-      return Promise.reject(e);
-    }
-    var compress = opts.compress !== false;
-    var pre = compress ? deflateBytes(body) : Promise.resolve(body);
-    return pre.then(function (p) {
-      payload = p;
-      compression = compress ? 1 : 0;
-      var w = new ByteWriter(HEADER_SIZE + payload.length);
-      w.u8(MAGIC[0]); w.u8(MAGIC[1]); w.u8(MAGIC[2]); w.u8(MAGIC[3]);
-      w.u8(FORMAT_VERSION);
-      w.u8(compression);
-      w.u32(body.length);          // 解压后数据长度
-      w.u32(crc32(body));
-      w.u16(map.subCols);
-      w.u16(map.subRows);
-      w.u8(layerFlags(map));
-      w.u8(0);
-      w.bytes(payload);
-      return w.finish();
-    });
+    const body = encodeBody(map);
+    const compress = opts.compress !== false;
+    const payload = compress ? await deflateBytes(body) : body;
+    const w = new ByteWriter(HEADER_SIZE + payload.length);
+    for (const byte of MAGIC) w.u8(byte);
+    w.u8(FORMAT_VERSION);
+    w.u8(compress ? 1 : 0);
+    w.u32(body.length);
+    w.u32(crc32(body));
+    w.u16(map.subCols);
+    w.u16(map.subRows);
+    w.u8(layerFlags(map));
+    w.u8(0);
+    w.bytes(payload);
+    return w.finish();
   }
 
-  function decodeMap(bytes) {
-    return new Promise(function (resolve) { resolve(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)); })
-      .then(function (b) {
-        if (b.length < HEADER_SIZE) throw new Error('decodeMap: 文件只有 ' + b.length + ' 字节,小于头部 20 字节');
-        var r = new ByteReader(b);
-        if (r.u8() !== MAGIC[0] || r.u8() !== MAGIC[1] || r.u8() !== MAGIC[2] || r.u8() !== MAGIC[3]) {
-          throw new Error('decodeMap: magic 不是 "CYRM"');
-        }
-        var version = r.u8();
-        if (version !== FORMAT_VERSION) {
-          throw new Error('decodeMap: 版本 ' + version + ',本编辑器只认 ' + FORMAT_VERSION);
-        }
-        var compression = r.u8();
-        var bodySize = r.u32();
-        var expectCrc = r.u32();
-        var subCols = r.u16(), subRows = r.u16();
-        var flags = r.u8();
-        // 保留字段与 layer_flags 的高 4 位保持忽略，支持向前兼容
-        r.u8();
-        // 解压前校验解压后大小上限，超过限制直接拒绝
-        if (bodySize > MAX_BODY_SIZE) {
-          throw new Error('decodeMap: 头部声明的 body_size ' + bodySize +
-                          ' 字节超过 64MB 上限(' + MAX_BODY_SIZE + ' 字节),拒绝解压');
-        }
-        if (subCols <= 0 || subRows <= 0) {
-          throw new Error('decodeMap: 尺寸非法 ' + subCols + '×' + subRows);
-        }
-        if (subCols % SUB_PER_CELL !== 0 || subRows % SUB_PER_CELL !== 0) {
-          throw new Error('decodeMap: 尺寸 ' + subCols + '×' + subRows + ' 不是 ' + SUB_PER_CELL + ' 的倍数');
-        }
-        var payload = r.bytes(b.length - HEADER_SIZE);
-        var next;
-        if (compression === 0) next = Promise.resolve(payload);
-        else if (compression === 1) {
-          // 解压输出上限设为 bodySize，避免解压炸弹消耗过多内存
-          next = inflateBytes(payload, bodySize);
-        }
-        else throw new Error('decodeMap: 未知 compression=' + compression);
-        return next.then(function (body) {
-          if (body.length !== bodySize) {
-            throw new Error('decodeMap: 解压后 ' + body.length + ' 字节,头部声明 ' + bodySize);
+  async function decodeMap(bytes) {
+    const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    if (data.length < HEADER_SIZE) throw new Error('decodeMap: 文件小于 20 字节');
+    const r = new ByteReader(data);
+    if (!MAGIC.every(byte => byte === r.u8())) throw new Error('decodeMap: magic 不是 "CYRM"');
+    const version = r.u8();
+    if (version !== FORMAT_VERSION) throw new Error('decodeMap: 不支持版本 ' + version);
+    const compression = r.u8();
+    const bodySize = r.u32();
+    const expectedCrc = r.u32();
+    const subCols = r.u16(), subRows = r.u16(), flags = r.u8();
+    r.u8();  // 保留字段
+    if (bodySize > MAX_BODY_SIZE) throw new Error('decodeMap: body_size 超过 64 MiB');
+    if (!subCols || !subRows || subCols % SUB_PER_CELL || subRows % SUB_PER_CELL) {
+      throw new Error('decodeMap: 非法尺寸 ' + subCols + '×' + subRows);
+    }
+    if (compression !== 0 && compression !== 1) throw new Error('decodeMap: 未知 compression=' + compression);
+    const payload = r.bytes(data.length - HEADER_SIZE);
+    const body = compression === 1 ? await inflateBytes(payload, bodySize) : payload;
+    if (body.length !== bodySize) throw new Error('decodeMap: body_size 与实际大小不符');
+    if (crc32(body) !== expectedCrc) throw new Error('decodeMap: CRC 不符');
+    return decodeBody(body, subCols, subRows, flags);
+  }
+
+  async function importMap(bytes) {
+    const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    if (MAGIC.every((byte, i) => data[i] === byte)) {
+      return { map: await decodeMap(data), format: 'v4' };
+    }
+    if (data.length > MAX_BODY_SIZE) throw new Error('旧地图超过 64 MiB');
+    return importTextMap(new TextDecoder('utf-8', { fatal: true }).decode(data));
+  }
+
+  function importTextMap(text) {
+    var rows = [], meta = [], version = 0;
+    for (var line of text.split(/\r?\n/)) {
+      line = line.trim();
+      if (!line) continue;
+      var marker = /^#\s*cyrm-v(\d+)(?:\s|$)/.exec(line);
+      if (marker) {
+        version = Number(marker[1]);
+        if (version !== 3) throw new Error('无法导入文本地图版本 ' + version);
+      } else if (line.startsWith('#')) meta.push(line);
+      else rows.push(line);
+    }
+    var v3 = version === 3;
+    var width = rows.length ? rows[0].length : 0;
+    var rowPattern = v3 ? /^(?:\d{3}[0-9a-f])+$/i : /^[0-9a]+$/i;
+    if (!width || rows.some(row => row.length !== width || !rowPattern.test(row))) {
+      throw new Error('旧地图网格为空、行宽不齐或含无效字符');
+    }
+    if (!v3 && (width % 2 || rows.length % 2)) throw new Error('字符地图的宽和高必须为偶数');
+    var w = width / (v3 ? 4 : 2), h = rows.length / (v3 ? 1 : 2);
+    if (w > MAX_CELLS_W || h > MAX_CELLS_H) throw new Error('旧地图尺寸超过编辑器上限');
+    var map = Object.assign(createMap('', w, h), parseMeta(meta.join('\n')));
+    var scene = map.layers[LAYER_SCENE].desc;
+    for (var y = 0; y < h; y++) {
+      for (var x = 0; x < w; x++) {
+        var tex = 0, shape = 0;
+        if (v3) {
+          tex = Number(rows[y].slice(x * 4, x * 4 + 3));
+          shape = parseInt(rows[y][x * 4 + 3], 16);
+        } else {
+          for (var q = 0; q < 4; q++) {
+            var value = parseInt(rows[y * 2 + (q >> 1)][x * 2 + (q & 1)], 16);
+            if (!value) continue;
+            shape |= 1 << q;
+            if (!tex) tex = value;
           }
-          var actual = crc32(body);
-          if (actual !== expectCrc) {
-            throw new Error('decodeMap: CRC 不符(算得 0x' + actual.toString(16) +
-                            ',头部 0x' + expectCrc.toString(16) + ')');
-          }
-          return decodeBody(body, subCols, subRows, flags);
-        });
-      });
-  }
-
-  const SHAPE_HEX = '0123456789ABCDEF';
-  // 旧字母格式只认 0-9 与 A(大小写均可),与游戏侧 MapFormat._tile_char_to_value 一致。
-  const LEGACY_CHAR = { '0':0,'1':1,'2':2,'3':3,'4':4,'5':5,'6':6,'7':7,'8':8,'9':9,'A':10 };
-  function isV3MarkerLine(line) {
-    return /^#\s*cyrm-v\d+(\s|$)/.test(String(line).trim());
-  }
-
-  function _v3Pack(texture, shape) {
-    if (shape === 0 || texture === 0) return 0;
-    return (texture * 16 + shape) & 0xFFFF;
-  }
-  function _v3TexOf(v)   { return (v / 16) | 0; }
-  function _v3ShapeOf(v) { return v % 16; }
-
-  function isV3Text(text) {
-    var lines = String(text == null ? '' : text).split(/\r?\n/);
-    for (var i = 0; i < lines.length; i++) {
-      if (isV3MarkerLine(lines[i])) return true;
-    }
-    return false;
-  }
-
-  // 旧 2×2 字母网格 → 1 格 packed(纹理取组内首个非零,形状 = 2×2 掩码)。
-  // 逻辑与游戏侧 MapFormat.convert_old_grid 逐字对应。
-  function _convertLegacy2x2(rows) {
-    var h = rows.length, w = rows[0].length;
-    var out = [];
-    for (var ny = 0; ny < Math.floor(h / 2); ny++) {
-      var row = [];
-      for (var nx = 0; nx < Math.floor(w / 2); nx++) {
-        var shape = 0, tex = 0;
-        for (var sy = 0; sy < 2; sy++) {
-          for (var sx = 0; sx < 2; sx++) {
-            var ov = rows[ny * 2 + sy][nx * 2 + sx];
-            if (ov !== 0) {
-              shape |= 1 << (sy * 2 + sx);
-              if (tex === 0) tex = ov;
+        }
+        if (!tex || !shape) continue;
+        var desc = migrateDescriptor(neutralDesc(tex));
+        for (var sy = 0; sy < SUB_PER_CELL; sy++) {
+          for (var sx = 0; sx < SUB_PER_CELL; sx++) {
+            if (shape & (1 << ((sy >> 1) * 2 + (sx >> 1)))) {
+              scene[(y * SUB_PER_CELL + sy) * map.subCols + x * SUB_PER_CELL + sx] = desc;
             }
           }
         }
-        row.push(_v3Pack(tex, shape));
       }
-      out.push(row);
     }
-    return out;
-  }
-
-  function parseV3Text(text) {
-    var lines = String(text == null ? '' : text).split(/\r?\n/);
-    var v3 = false;
-    for (var i = 0; i < lines.length; i++) {
-      if (isV3MarkerLine(lines[i])) { v3 = true; break; }
-    }
-    var rows = [], width = -1;
-    var metaText = '';
-    for (i = 0; i < lines.length; i++) {
-      var line = lines[i].trim();
-      if (line === '') continue;
-      if (line.charAt(0) === '#') {
-        // 版本标记行不作为普通注释存入 comments
-        if (isV3MarkerLine(line)) continue;
-        metaText += line + '\n';
-        continue;
-      }
-      var row = [];
-      if (v3) {
-        if (line.length % 4 !== 0) {
-          throw new Error('parseV3Text: 第 ' + (i + 1) + ' 行长度 ' + line.length + ' 不是 4 的倍数');
-        }
-        for (var j = 0; j < line.length; j += 4) {
-          var tstr = line.substr(j, 3);
-          if (!/^[0-9]{3}$/.test(tstr)) {
-            throw new Error('parseV3Text: 第 ' + (i + 1) + ' 行纹理位 "' + tstr + '" 不是 3 位数字');
-          }
-          var ch = line.charAt(j + 3).toUpperCase();
-          var sv = SHAPE_HEX.indexOf(ch);
-          if (sv < 0) throw new Error('parseV3Text: 第 ' + (i + 1) + ' 行非法形状字符 "' + line.charAt(j + 3) + '"');
-          row.push(_v3Pack(parseInt(tstr, 10), sv));
-        }
-      } else {
-        for (j = 0; j < line.length; j++) {
-          var lch = line.charAt(j).toUpperCase();
-          var lv = LEGACY_CHAR[lch];
-          if (lv === undefined) {
-            throw new Error('parseV3Text: 第 ' + (i + 1) + ' 行非法字符 "' + line.charAt(j) + '"(旧格式只允许 0-9/A)');
-          }
-          row.push(lv);
-        }
-      }
-      if (width < 0) width = row.length;
-      else if (row.length !== width) {
-        throw new Error('parseV3Text: 第 ' + (i + 1) + ' 行宽度 ' + row.length + ' 与首行 ' + width + ' 不一致');
-      }
-      rows.push(row);
-    }
-    if (rows.length === 0) throw new Error('parseV3Text: 地图里没有有效网格行');
-
-    var meta = parseMeta(metaText);
-    var players = meta.players, enemies = meta.enemies;
     if (!v3) {
-      if (width < 2 || width % 2 !== 0 || rows.length < 2 || rows.length % 2 !== 0) {
-        throw new Error('parseV3Text: 旧字母格式的宽高必须都是 ≥2 的偶数(收到 ' +
-                        width + '×' + rows.length + '),否则 2×2 折叠会静默丢掉边缘行/列');
+      for (var point of [...map.players, ...map.enemies, ...map.respawns]) {
+        point.x = Math.floor(point.x / 2);
+        point.y = Math.floor(point.y / 2);
       }
-      rows = _convertLegacy2x2(rows);
-      // 旧格式 2×2 → 1,spawn 坐标同步 ÷2
-      players = players.map(function (p) { return { x: Math.floor(p.x / 2), y: Math.floor(p.y / 2) }; });
-      enemies = enemies.map(function (e) { return { type: e.type, x: Math.floor(e.x / 2), y: Math.floor(e.y / 2) }; });
     }
-    var cellsW = rows[0].length, cellsH = rows.length;
-    var packed = new Uint16Array(cellsW * cellsH);
-    for (var y = 0; y < cellsH; y++) {
-      for (var x = 0; x < cellsW; x++) packed[y * cellsW + x] = rows[y][x];
-    }
-    return { cellsW: cellsW, cellsH: cellsH, packed: packed,
-             players: players, enemies: enemies, comments: meta.comments };
+    return { map, format: v3 ? 'v3' : 'legacy' };
   }
 
   function subcellRender(X, Y) {
@@ -564,37 +499,6 @@ globalThis.Core = (function () {
     return { dst: [X * SUB_PX, Y * SUB_PX, SUB_PX, SUB_PX],
              src: [qx * (32 / SUB_PER_CELL), qy * (32 / SUB_PER_CELL),
                    32 / SUB_PER_CELL, 32 / SUB_PER_CELL] };
-  }
-
-  function migrateV3(parsed) {
-    var map = createMap('', parsed.cellsW, parsed.cellsH);
-    var scene = map.layers[LAYER_SCENE].desc;
-    var subCols = map.subCols;
-    for (var cy = 0; cy < parsed.cellsH; cy++) {
-      for (var cx = 0; cx < parsed.cellsW; cx++) {
-        var v = parsed.packed[cy * parsed.cellsW + cx];
-        if (v === 0) continue;
-        var tex = _v3TexOf(v), shape = _v3ShapeOf(v);
-        if (tex === 0 || shape === 0) continue;
-        var d = neutralDesc(tex);
-        for (var qy = 0; qy < 2; qy++) {
-          for (var qx = 0; qx < 2; qx++) {
-            if (!(shape & (1 << (qy * 2 + qx)))) continue;
-            for (var dy = 0; dy < 2; dy++) {
-              for (var dx = 0; dx < 2; dx++) {
-                var X = cx * SUB_PER_CELL + qx * 2 + dx;
-                var Y = cy * SUB_PER_CELL + qy * 2 + dy;
-                scene[Y * subCols + X] = d;
-              }
-            }
-          }
-        }
-      }
-    }
-    map.players = parsed.players.map(function (p) { return { x: p.x, y: p.y }; });
-    map.enemies = parsed.enemies.map(function (e) { return { type: e.type, x: e.x, y: e.y }; });
-    map.comments = parsed.comments.slice();
-    return map;
   }
 
   const MAX_CELLS_W = 400;
@@ -617,8 +521,12 @@ globalThis.Core = (function () {
       errors.push('图层数不是 ' + LAYER_COUNT);
       return { errors: errors, warnings: warnings };
     }
-    if (map.subCols % SUB_PER_CELL !== 0 || map.subRows % SUB_PER_CELL !== 0) {
-      errors.push('尺寸 ' + map.subCols + '×' + map.subRows + ' 不是 ' + SUB_PER_CELL + ' 的倍数');
+    if (map.subCols <= 0 || map.subRows <= 0 ||
+        map.subCols % SUB_PER_CELL !== 0 || map.subRows % SUB_PER_CELL !== 0) {
+      errors.push('尺寸 ' + map.subCols + '×' + map.subRows + ' 必须是正数且为 ' + SUB_PER_CELL + ' 的倍数');
+    }
+    if (map.layers[LAYER_SCENE]?.kind !== 'tex') {
+      errors.push('地图缺少场景层');
     }
     var n = map.subCols * map.subRows;
     var L, layer;
@@ -628,30 +536,47 @@ globalThis.Core = (function () {
       var arr = layer.kind === 'tex' ? layer.desc : layer.rgba;
       if (!arr || arr.length !== n) {
         errors.push(LAYER_NAMES[L] + '层长度不是 ' + map.subCols + '×' + map.subRows);
+      } else if (layer.kind === 'tex') {
+        var unknown = new Set();
+        for (var i = 0; i < arr.length; i++) {
+          var tex = texOf(arr[i]);
+          if (!MATERIAL_IDS[tex]) unknown.add(tex);
+        }
+        if (unknown.size) errors.push(LAYER_NAMES[L] + '层使用了未定义材质 ' + Array.from(unknown).join('、'));
       }
     }
     if (errors.length) return { errors: errors, warnings: warnings };
 
     var cellsW = map.subCols / SUB_PER_CELL, cellsH = map.subRows / SUB_PER_CELL;
-    var scene = map.layers[LAYER_SCENE] ? map.layers[LAYER_SCENE].desc : null;
+    var scene = map.layers[LAYER_SCENE].desc;
 
-    // 出生点
-    if (map.players.length === 0) {
-      warnings.push('一个出生点都没有');
+    var playerSlots = new Set();
+    for (const p of map.players) {
+      if (!Number.isSafeInteger(p.slot) || p.slot < 1 || playerSlots.has(p.slot)) {
+        errors.push('玩家出生点编号无效或重合：' + p.slot);
+        continue;
+      }
+      playerSlots.add(p.slot);
+      if (p.slot > 2) warnings.push('游戏不使用出生点 P' + p.slot);
+      _checkSpawn(p, '出生点 P' + p.slot, cellsW, cellsH, scene, warnings, p.slot <= 2 ? errors : warnings);
     }
-    if (map.players.length > 2) {
-      warnings.push('有 ' + map.players.length + ' 个出生点,但游戏只认前两个' +
-                    '(第 3 个及以后在 map_format.gd 里读不到)');
-    }
+    if (!playerSlots.has(1)) warnings.push('未设置 P1，单人模式将使用第一个空瓦片');
     var i;
-    for (i = 0; i < map.players.length; i++) {
-      warnings = warnings.concat(_checkSpawn(map.players[i], '出生点 P' + (i + 1),
-                                            cellsW, cellsH, scene));
-    }
     for (i = 0; i < map.enemies.length; i++) {
-      warnings = warnings.concat(_checkSpawn(map.enemies[i], '敌人 ' + map.enemies[i].type,
-                                            cellsW, cellsH, scene));
+      _checkSpawn(map.enemies[i], '敌人 ' + map.enemies[i].type, cellsW, cellsH, scene, warnings, errors);
     }
+    var respawnCells = new Set();
+    for (var r of map.respawns) {
+      _checkSpawn(r, '侧 ' + r.side + ' 复活点', cellsW, cellsH, null, warnings);
+      var cell = r.x + ',' + r.y;
+      if (respawnCells.has(cell)) warnings.push('复活点 (' + cell + ') 重合');
+      respawnCells.add(cell);
+    }
+    for (var comment of map.comments) {
+      if (/^respawn(?:\s|$)/.test(comment)) warnings.push('复活点格式无效：' + comment);
+      if (/^(player2?|enemy)(?:\s|$)/.test(comment.trim())) errors.push('点位元数据格式无效：' + comment);
+    }
+    if (map.respawns.length) checkRespawnDistribution(map.respawns, cellsW, cellsH, warnings);
 
     // 四层全空
     var allEmpty = true;
@@ -666,14 +591,45 @@ globalThis.Core = (function () {
     return { errors: errors, warnings: warnings };
   }
 
-  // 越界 / 落在实心格。返回 warning 文案数组(可能为空)。
-  function _checkSpawn(pt, label, cellsW, cellsH, sceneDesc) {
-    var out = [];
-    if (pt.x < 0 || pt.y < 0 || pt.x >= cellsW || pt.y >= cellsH) {
-      out.push(label + ' 坐标 (' + pt.x + ',' + pt.y + ') 越界(地图是 ' + cellsW + '×' + cellsH + ' 格)');
-      return out;
+  function checkRespawnDistribution(points, w, h, warnings) {
+    var half = w / 2, divisions = RESPAWN_GUIDE_DIVISIONS;
+    var wrapDistance = (a, b, size) => Math.min(Math.abs(a - b), size - Math.abs(a - b));
+    for (var side of [1, 2]) {
+      var label = '侧 ' + side + ' 复活点';
+      var pool = points.filter(p => p.side === side && p.x >= 0 && p.y >= 0 && p.x < w && p.y < h);
+      if (pool.length < 5) warnings.push(label + '少于团队赛要求的 5 个');
+      var left = (side - 1) * half;
+      var inside = pool.filter(p => p.x >= left && p.x < left + half);
+      if (inside.length !== pool.length) warnings.push(label + '有点位落在另一半区');
+      if (half >= 20 && inside.some(p => Math.min(p.x - left, left + half - p.x) < 10)) {
+        warnings.push(label + '有点位离中线或接缝不足 10 格');
+      }
+      if (pool.some((a, i) => {
+        for (var j = i + 1; j < pool.length; j++) {
+          var b = pool[j];
+          if (Math.max(wrapDistance(a.x, b.x, w), wrapDistance(a.y, b.y, h)) < 5) return true;
+        }
+        return false;
+      })) warnings.push(label + '存在间距不足 5 格的点位');
+      if (half >= divisions && h >= divisions) {
+        var regions = new Set(inside.map(p =>
+          Math.floor((p.x - left) * divisions / half) + ',' + Math.floor(p.y * divisions / h)));
+        if (regions.size < divisions ** 2) warnings.push(label + '在 3×3 标线中仍有空区');
+      }
     }
-    if (!sceneDesc) return out;
+  }
+
+  // 游戏启动依赖的点位坐标错误阻止导出。实心格和团队点位问题仍提示。
+  function _checkSpawn(pt, label, cellsW, cellsH, sceneDesc, warnings, coordinateIssues = warnings) {
+    if (!Number.isSafeInteger(pt.x) || !Number.isSafeInteger(pt.y)) {
+      coordinateIssues.push(label + ' 坐标必须是整数');
+      return;
+    }
+    if (pt.x < 0 || pt.y < 0 || pt.x >= cellsW || pt.y >= cellsH) {
+      coordinateIssues.push(label + ' 坐标 (' + pt.x + ',' + pt.y + ') 越界(地图是 ' + cellsW + '×' + cellsH + ' 格)');
+      return;
+    }
+    if (!sceneDesc) return;
     // 「场景」层该格 4×4 子格全非空才算实心
     var subCols = cellsW * SUB_PER_CELL;
     var solid = true;
@@ -684,8 +640,7 @@ globalThis.Core = (function () {
         }
       }
     }
-    if (solid) out.push(label + ' 落在实心格里(场景层该格被填满)');
-    return out;
+    if (solid) warnings.push(label + ' 落在实心格里(场景层该格被填满)');
   }
 
   // ── 与格式无关的纯工具(自旧编辑器沿用)──
@@ -759,11 +714,11 @@ globalThis.Core = (function () {
     CELL_PX: CELL_PX,
     DESC_AIR: DESC_AIR,
     TEXTURE_MAX: TEXTURE_MAX,
-    LAYER_COUNT: LAYER_COUNT,
+    LAYER_COUNT: LAYER_COUNT, RESPAWN_GUIDE_DIVISIONS: RESPAWN_GUIDE_DIVISIONS,
     LAYER_FRONT: LAYER_FRONT, LAYER_SCENE: LAYER_SCENE,
     LAYER_BACK: LAYER_BACK, LAYER_BG: LAYER_BG,
     LAYER_NAMES: LAYER_NAMES, LAYER_KINDS: LAYER_KINDS,
-    createMap: createMap, cellsWOf: cellsWOf, cellsHOf: cellsHOf, subIndex: subIndex,
+    createMap: createMap, cellsWOf: cellsWOf, cellsHOf: cellsHOf, subIndex: subIndex, layerArray,
     sanitizeName: sanitizeName, brushOffsets: brushOffsets,
     lineCells: lineCells, normRegion: normRegion,
     ByteWriter: ByteWriter, ByteReader: ByteReader, crc32: crc32,
@@ -774,15 +729,15 @@ globalThis.Core = (function () {
     HUE_NEUTRAL: HUE_NEUTRAL, BRI_NEUTRAL: BRI_NEUTRAL,
     SAT_NEUTRAL: SAT_NEUTRAL, ALPHA_NEUTRAL: ALPHA_NEUTRAL,
     packDesc: packDesc,
+    migrateDescriptor: migrateDescriptor,
     texOf: texOf, hueOf: hueOf, brightOf: brightOf, satOf: satOf, alphaOf: alphaOf,
     isAir: isAir, neutralDesc: neutralDesc,
     FORMAT_VERSION: FORMAT_VERSION, HEADER_SIZE: HEADER_SIZE,
     MAX_BODY_SIZE: MAX_BODY_SIZE,
     deflateBytes: deflateBytes, inflateBytes: inflateBytes,
     encodeMap: encodeMap, decodeMap: decodeMap, layerFlags: layerFlags,
-    isV3Text: isV3Text, parseV3Text: parseV3Text,
-    _v3Pack: _v3Pack, _v3TexOf: _v3TexOf, _v3ShapeOf: _v3ShapeOf,
-    subcellRender: subcellRender, migrateV3: migrateV3,
+    importMap: importMap,
+    subcellRender: subcellRender,
     MAX_CELLS_W: MAX_CELLS_W, MAX_CELLS_H: MAX_CELLS_H,
     clampMapSize: clampMapSize, validateMap: validateMap,
   };

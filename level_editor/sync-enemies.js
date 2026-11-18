@@ -15,7 +15,7 @@ const enemies = (json.enemies || []).map(function (e) {
   return {
     id: String(e.id),
     name: String(e.name),
-    scene: String(e.scene),
+    definition: String(e.definition),
     color: String(e.color || '#999999')
   };
 });

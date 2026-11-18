@@ -1,43 +1,11 @@
 // 由 sync-tiles.js 从 data/tile_defs.json 生成;改配置请改 JSON 再跑一次。
-window.TILE_DEFS = {
+globalThis.TILE_DEFS = {
   "version": 1,
   "friction": 1,
   "explosion_decay": 0.75,
   "tiles": {
     "1": {
       "name": "全色方块-1",
-      "type": "wall",
-      "hp": 1,
-      "bullet_destroyable": false,
-      "explosion_destroyable": false,
-      "elastic": false
-    },
-    "2": {
-      "name": "全色方块-2",
-      "type": "wall",
-      "hp": 1,
-      "bullet_destroyable": false,
-      "explosion_destroyable": false,
-      "elastic": false
-    },
-    "3": {
-      "name": "全色方块-3",
-      "type": "wall",
-      "hp": 1,
-      "bullet_destroyable": false,
-      "explosion_destroyable": false,
-      "elastic": false
-    },
-    "4": {
-      "name": "全色方块-4",
-      "type": "wall",
-      "hp": 1,
-      "bullet_destroyable": false,
-      "explosion_destroyable": false,
-      "elastic": false
-    },
-    "5": {
-      "name": "全色方块-5",
       "type": "wall",
       "hp": 1,
       "bullet_destroyable": false,
@@ -96,6 +64,7 @@ window.TILE_DEFS = {
     },
     "12": {
       "name": "锁链上端",
+      "collision_ledge": 1,
       "type": "passage",
       "hp": 1,
       "bullet_destroyable": false,
@@ -114,6 +83,7 @@ window.TILE_DEFS = {
     },
     "14": {
       "name": "锁链下端",
+      "collision_ledge": -1,
       "type": "passage",
       "hp": 1,
       "bullet_destroyable": false,
@@ -123,30 +93,6 @@ window.TILE_DEFS = {
     },
     "15": {
       "name": "树叶-1",
-      "type": "wall",
-      "hp": 8,
-      "bullet_destroyable": true,
-      "explosion_destroyable": true,
-      "elastic": true
-    },
-    "16": {
-      "name": "树叶-2",
-      "type": "wall",
-      "hp": 8,
-      "bullet_destroyable": true,
-      "explosion_destroyable": true,
-      "elastic": true
-    },
-    "17": {
-      "name": "树叶-3",
-      "type": "wall",
-      "hp": 8,
-      "bullet_destroyable": true,
-      "explosion_destroyable": true,
-      "elastic": true
-    },
-    "18": {
-      "name": "树叶-4",
       "type": "wall",
       "hp": 8,
       "bullet_destroyable": true,
@@ -186,6 +132,36 @@ window.TILE_DEFS = {
       "explosion_destroyable": false,
       "elastic": false,
       "explosion_decay": 0.25
+    }
+  },
+  "legacy_texture_map": {
+    "2": {
+      "base": 1,
+      "hue": 3
+    },
+    "3": {
+      "base": 1,
+      "hue": 1
+    },
+    "4": {
+      "base": 1,
+      "hue": 5
+    },
+    "5": {
+      "base": 1,
+      "hue": 0
+    },
+    "16": {
+      "base": 15,
+      "hue": 2
+    },
+    "17": {
+      "base": 15,
+      "hue": 7
+    },
+    "18": {
+      "base": 15,
+      "hue": 7
     }
   }
 };

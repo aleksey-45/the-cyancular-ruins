@@ -15,4 +15,4 @@ static var paths: Dictionary[String, String] = {}
 
 static func _static_init() -> void:
 	for entry: Dictionary in JSON.parse_string(FileAccess.get_file_as_string("res://data/enemies.json"))["enemies"]:
-		paths[entry["id"]] = entry["scene"]
+		paths[entry["id"]] = entry["definition"]
