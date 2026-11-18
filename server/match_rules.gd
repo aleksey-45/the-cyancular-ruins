@@ -1,182 +1,177 @@
 class_name MatchRules
 extends RefCounted
 
+# 联机模式共用地图出生点，本类负责分配地图侧、推进回合和计分。
+const RoundState = NetEvent.RoundState
+const RESPAWN_TICKS := 120
+
 var mode := PvpSession.MODE_PVP
 var teams: Dictionary = {}
+var team_counts: Dictionary = {}
 var spawns: Dictionary = {}
-var swapped: Dictionary = {}
+var phase := RoundState.WAITING
+var round_number := 1
+var round_timer := 0.0
 var match_time := 300.0
-var hud_time := 0.0
+var player_collision := false
+var scores: Dictionary = {}
+var rounds_won: Dictionary = {}
+var round_winner := 0
 var winner := 0
+var _roster: Array
+var _spawn_pools: Dictionary
+var _size: Vector2i
 
-func setup(p_mode: String, roster: Array, p_teams: Dictionary, options: Dictionary) -> void:
+func setup(p_mode: String, roster: Array, p_teams: Dictionary, map: Dictionary, options: Dictionary) -> String:
 	mode = p_mode
+	_roster = roster
 	teams = p_teams
 	match_time = float(options.get("match_time", 300.0))
-	if mode == PvpSession.MODE_TEAM:
-		spawns = plan_team_spawns(teams)
-		swapped = compute_swap_spawns(spawns, teams)
-	elif mode == PvpSession.MODE_ROYALE:
-		var dims := SpawnPicker.grid_dims()
-		var points := GridPathfinder.spread_cells(SpawnPicker.spawn_candidates(), roster.size(), 15, dims.x, dims.y)
-		for i in roster.size():
-			spawns[roster[i]] = points[i]
+	player_collision = options.get("player_collision", false)
+	_size = map["size"]
+	var problem := SpawnPicker.validate_multiplayer_spawns(map)
+	if not problem.is_empty():
+		return problem
+	var sides: Dictionary = map["spawns"]["respawn"]
+	if mode == PvpSession.MODE_ROYALE:
+		var combined: Array = sides[1] + sides[2]
+		if combined.size() < roster.size():
+			return "大乱斗需要 %d 个不同出生点，实际 %d 个" % [roster.size(), combined.size()]
+		_spawn_pools = {0: combined}
 	else:
-		var points := MazeGenerator.load_spawns()
-		var a: Vector2i = points["player"]
-		var b: Vector2i = points.get("player2", Vector2i(-1, -1))
-		if b.x < 0:
-			b = SpawnPicker.far_spawn_from(a, MazeGenerator.current_grid)
-		spawns = {1: a, 2: b}
-		swapped = {1: b, 2: a}
+		var minimum := TeamRules.MAX_TEAM if mode == PvpSession.MODE_TEAM else 1
+		for side: int in [1, 2]:
+			if sides[side].size() < minimum:
+				return "侧 %d 出生点不足（需要 %d 个，实际 %d 个）" % [side, minimum, sides[side].size()]
+		_spawn_pools = sides
+	if mode == PvpSession.MODE_TEAM:
+		# 开局后固定阵容，掉线不重算补偿。
+		team_counts = TeamRules.team_counts(teams)
+		assert(not team_counts.is_empty())
+	_plan_round_spawns()
+	_reset_scores()
+	return ""
 
 func same_team(a: int, b: int) -> bool:
 	return teams.has(a) and teams[a] == teams.get(b, 0)
 
-func spawn_for(world: Node, role: int, initial: bool = false) -> Vector2i:
-	if initial or mode == PvpSession.MODE_PVP:
-		return spawns[role]
-	var dims := SpawnPicker.grid_dims()
-	var best := spawns[role] as Vector2i
-	var best_distance := -1
-	for pool: Array in SpawnPicker.respawn_pools():
-		var cells := pool.duplicate()
-		cells.shuffle()
-		for cell: Vector2i in cells:
-			var distance := 1000000
-			for other in world.players:
-				var player: Node2D = world.players[other]
-				if other == role or same_team(role, other) or player.is_downed():
-					continue
-				distance = mini(distance, MazeGenerator.toroidal_dist(cell, Vector2i(player.position / GameParameters.TILE_SIZE), dims.x, dims.y))
-			if distance > best_distance:
-				best = cell
-				best_distance = distance
-			if distance >= 8:
-				return cell
-	return best
-
-func tick(world: Node, delta: float) -> void:
-	if world._round_state == NetEvent.RoundState.MATCH_OVER:
+## 单局初始比分：团队双方按人数差补贴，其他模式保持清空。
+func _reset_scores() -> void:
+	scores.clear()
+	if team_counts.is_empty():
 		return
-	for role in world.players:
-		var player: Node2D = world.players[role]
-		if not player.is_downed() or world._round_state != NetEvent.RoundState.PLAYING:
-			continue
-		if player.respawn_left > 0:
-			continue
-		player.respawn_left = 2.0
-		world._drop_all_but_one(player, role)
-		var killer: int = world.killer_for(player)
-		var scorer := killer
-		if mode == PvpSession.MODE_PVP:
-			killer = 3 - int(role)
-			scorer = killer
-		elif mode == PvpSession.MODE_TEAM:
-			scorer = 3 - int(teams[role])
-		world._record_down(role, killer)
-		if scorer > 0:
-			world._scores[scorer] = int(world._scores.get(scorer, 0)) + 1
-		world.broadcast(NetEvent.Kind.KILL, [killer, role])
-		if mode == PvpSession.MODE_PVP and not world.players[killer].is_downed():
-			world.respawn(killer, false)
-		world.broadcast_round()
-	match world._round_state:
-		NetEvent.RoundState.COUNTDOWN:
-			world._round_timer -= delta
-			if world._round_timer <= 0.0:
-				world._round_state = NetEvent.RoundState.PLAYING
-				if world._options.get("round_full_heal", false):
-					for role in world.players:
-						var player: Node2D = world.players[role]
-						player.apply_authoritative_state(player.max_hp, player.max_waterproof, false)
-				world.broadcast_round()
-		NetEvent.RoundState.PLAYING:
-			for role in world.players:
-				var player: Node2D = world.players[role]
-				if player.respawn_left > 0:
-					player.respawn_left -= delta
-					if player.respawn_left <= 0:
-						world.respawn(role)
-			if mode == PvpSession.MODE_ROYALE:
-				match_time -= delta
-				hud_time -= delta
-				if hud_time <= 0.0:
-					hud_time = 1.0
-					world.broadcast_round()
-				if match_time <= 0.0:
-					finish(world)
-			else:
-				var limit := 9 if mode == PvpSession.MODE_TEAM else 5
-				for scorer in world._scores:
-					if world._scores[scorer] >= limit:
-						world._last_round_winner = scorer
-						world._rounds_won[scorer] = int(world._rounds_won.get(scorer, 0)) + 1
-						world._round_state = NetEvent.RoundState.ROUND_OVER
-						world._round_timer = 4.0
-						world.broadcast_round()
-						break
-		NetEvent.RoundState.ROUND_OVER:
-			world._round_timer -= delta
-			if world._round_timer <= 0.0:
-				for scorer in world._rounds_won:
-					if world._rounds_won[scorer] >= 2:
-						winner = scorer
-						finish(world)
-						return
-				var previous := spawns
-				spawns = swapped
-				swapped = previous
-				world.start_round()
+	for team: int in [1, 2]:
+		var bonus := TeamRules.score_bonus(team, team_counts)
+		if bonus > 0:
+			scores[team] = bonus
 
-func finish(world: Node) -> void:
+func _pool_for(role: int) -> Array:
 	if mode == PvpSession.MODE_ROYALE:
-		var best := -1
-		for role in world._roster():
-			var score := int(world._scores.get(role, 0))
-			if score > best:
-				winner = role
-				best = score
-			elif score == best:
-				winner = 0
-	world._round_state = NetEvent.RoundState.MATCH_OVER
-	world.broadcast_round()
+		return _spawn_pools[0]
+	var side: int = teams[role] if mode == PvpSession.MODE_TEAM else role
+	return _spawn_pools[side if round_number % 2 == 1 else 3 - side]
 
-func left(world: Node, _role: int) -> void:
-	if world._round_state == NetEvent.RoundState.MATCH_OVER:
-		return
+func _plan_round_spawns() -> void:
+	spawns.clear()
+	var taken: Array[Vector2i] = []
+	var roles := _roster.duplicate()
+	roles.shuffle()
+	for role: int in roles:
+		var cell := SpawnPicker.pick(_pool_for(role), taken, taken, _size)
+		spawns[role] = cell
+		taken.append(cell)
+
+func spawn_for(players: Dictionary, role: int, initial: bool = false) -> Vector2i:
+	if initial:
+		return spawns[role]
+	var occupied: Array[Vector2i] = []
+	var enemies: Array[Vector2i] = []
+	for other: int in players:
+		var player: Player = players[other]
+		if other == role or player.sim_downed:
+			continue
+		var cell := GridPathfinder.cell_of(player.global_position, GameParameters.TILE_SIZE, _size.x, _size.y)
+		if player_collision:
+			occupied.append(cell)
+		if not same_team(role, other):
+			enemies.append(cell)
+	return SpawnPicker.pick(_pool_for(role), occupied, enemies, _size)
+
+func start_countdown() -> bool:
+	if phase != RoundState.WAITING:
+		return false
+	phase = RoundState.COUNTDOWN
+	round_timer = 3.0
+	return true
+
+func score_down(role: int, killer: int) -> int:
+	var credited := 3 - role if mode == PvpSession.MODE_PVP else killer
+	var scorer := 3 - int(teams[role]) if mode == PvpSession.MODE_TEAM else credited
+	if scorer > 0:
+		scores[scorer] = int(scores.get(scorer, 0)) + 1
+	return credited
+
+func advance(delta: float) -> void:
+	match phase:
+		RoundState.COUNTDOWN:
+			round_timer = maxf(round_timer - delta, 0.0)
+			if round_timer == 0.0:
+				phase = RoundState.PLAYING
+		RoundState.PLAYING:
+			if mode == PvpSession.MODE_ROYALE:
+				match_time = maxf(match_time - delta, 0.0)
+				if match_time == 0.0:
+					_finish(_royale_winner())
+				return
+			var limit := TeamRules.kills_to_win(teams.size()) if mode == PvpSession.MODE_TEAM else 5
+			for scorer: int in scores:
+				if scores[scorer] >= limit:
+					round_winner = scorer
+					rounds_won[scorer] = int(rounds_won.get(scorer, 0)) + 1
+					phase = RoundState.ROUND_OVER
+					round_timer = 4.0
+					return
+		RoundState.ROUND_OVER:
+			round_timer = maxf(round_timer - delta, 0.0)
+			if round_timer > 0.0:
+				return
+			if rounds_won[round_winner] >= 2:
+				_finish(round_winner)
+				return
+			round_number += 1
+			_plan_round_spawns()
+			_reset_scores()
+			phase = RoundState.WAITING
+
+func role_left(remaining_roles: Array) -> bool:
+	if phase == RoundState.MATCH_OVER:
+		return false
+	var contenders := remaining_roles
 	if mode == PvpSession.MODE_TEAM:
-		var remaining := {}
-		for role in world.players:
-			remaining[teams[role]] = true
-		if remaining.size() < 2:
-			winner = int(remaining.keys()[0]) if remaining.size() == 1 else 0
-			finish(world)
-	elif world.players.size() < 2:
-		winner = int(world.players.keys()[0]) if world.players.size() == 1 else 0
-		finish(world)
+		_roster = remaining_roles
+		var remaining_teams := {}
+		for role in remaining_roles:
+			remaining_teams[teams[role]] = true
+		contenders = remaining_teams.keys()
+	if contenders.size() >= 2:
+		return false
+	var remaining_winner := 0 if contenders.is_empty() else int(contenders[0])
+	_finish(_royale_winner() if mode == PvpSession.MODE_ROYALE else remaining_winner)
+	return true
 
-static func plan_team_spawns(teams: Dictionary) -> Dictionary:
-	var points := MazeGenerator.load_spawns()
-	var first: Vector2i = points["player"]
-	var bases := [first, SpawnPicker.far_spawn_from(first, MazeGenerator.current_grid)]
-	var dims := SpawnPicker.grid_dims()
-	var result := {}
-	for team in [1, 2]:
-		var roles := teams.keys().filter(func(role: int) -> bool: return teams[role] == team)
-		roles.sort()
-		var cells := GridPathfinder.spread_cells(SpawnPicker.cells_within(bases[team - 1], 6), roles.size(), 3, dims.x, dims.y)
-		for i in roles.size():
-			result[roles[i]] = cells[i]
-	return result
+func _finish(winning_id: int) -> void:
+	winner = winning_id
+	phase = RoundState.MATCH_OVER
+	round_timer = 0.0
 
-static func compute_swap_spawns(spawns: Dictionary, teams: Dictionary) -> Dictionary:
-	var a := teams.keys().filter(func(role: int) -> bool: return teams[role] == 1)
-	var b := teams.keys().filter(func(role: int) -> bool: return teams[role] == 2)
-	a.sort()
-	b.sort()
-	var result := {}
-	for i in a.size():
-		result[a[i]] = spawns[b[i]]
-		result[b[i]] = spawns[a[i]]
-	return result
+func _royale_winner() -> int:
+	var leader := 0
+	var best := -1
+	for role: int in _roster:
+		var score := int(scores.get(role, 0))
+		if score > best:
+			leader = role
+			best = score
+		elif score == best:
+			leader = 0
+	return leader

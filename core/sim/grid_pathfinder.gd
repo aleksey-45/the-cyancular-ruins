@@ -1,8 +1,11 @@
 class_name GridPathfinder
 extends RefCounted
 
-# 环形空间几何与网格寻路工具类：包含环形距离计算、跨边界可视副本映射、瓦片坐标转换、地面站立检测、A* 寻路与视线遮挡检测。
+# 环形空间几何、地面检测与 A* 寻路。
 # 纯静态工具类，无内部状态，网格与尺寸参数由调用方传入。
+
+# 四邻域的顺序决定等长路径的选取。
+const DIRECTIONS := [Vector2i.RIGHT, Vector2i.LEFT, Vector2i.DOWN, Vector2i.UP]
 
 # 计算网格坐标在环形地图上的曼哈顿距离（以网格单元为单位）。
 # cols 与 rows 参数由调用方根据实际地图尺寸传入，不依赖全局常量。
@@ -15,61 +18,36 @@ static func toroidal_dist(a: Vector2i, b: Vector2i, cols: int, rows: int) -> int
 
 
 # 计算环形空间内的像素级最短位移向量：从 a 指向 b（考虑跨边界的最短路径）。
-static func toroidal_delta_px(a: Vector2, b: Vector2, w: float, h: float) -> Vector2:
+static func toroidal_delta_px(a: Vector2, b: Vector2, size: Vector2) -> Vector2:
 	var dx := b.x - a.x
-	if absf(dx) > w * 0.5:
-		dx = -signf(dx) * (w - absf(dx))
+	if absf(dx) > size.x * 0.5:
+		dx = -signf(dx) * (size.x - absf(dx))
 	var dy := b.y - a.y
-	if absf(dy) > h * 0.5:
-		dy = -signf(dy) * (h - absf(dy))
+	if absf(dy) > size.y * 0.5:
+		dy = -signf(dy) * (size.y - absf(dy))
 	return Vector2(dx, dy)
 
 
-# 环形空间线性插值：沿 a 到 b 的最短向量进行插值，并将结果约束在 [0, w) × [0, h) 范围内。
-# 用于多人对战实体位置平滑插值，避免跨边界时角色横穿整个地图。
-static func toroidal_lerp(a: Vector2, b: Vector2, alpha: float, w: float, h: float) -> Vector2:
-	return wrap_to_range(a + toroidal_delta_px(a, b, w, h) * alpha, w, h)
-
-
 # 将 pos 映射到距离 anchor 最近的可视镜像副本位置，使各轴差值不超过半个地图跨度。
-# 场景瓦片按 3×3 铺贴，摄像机在接缝处能看到对侧画面；远端实体若直接取模会导致越界闪烁或消失。
-static func anchor_to_nearest(pos: Vector2, anchor: Vector2, w: float, h: float) -> Vector2:
-	var p := pos
-	if p.x - anchor.x > w * 0.5:
-		p.x -= w
-	elif p.x - anchor.x < -w * 0.5:
-		p.x += w
-	if p.y - anchor.y > h * 0.5:
-		p.y -= h
-	elif p.y - anchor.y < -h * 0.5:
-		p.y += h
-	return p
+static func anchor_to_nearest(pos: Vector2, anchor: Vector2, size: Vector2) -> Vector2:
+	return anchor + toroidal_delta_px(anchor, pos, size)
+
+
+# 整图平移的索引范围。只保留与地图及其接缝带相交的副本，零偏移是原位。
+static func seam_copy_range(bounds: Rect2, period: Vector2, reach: Vector2) -> Rect2i:
+	var first := -Vector2i(((bounds.end + reach - period) / period).ceil())
+	var last := Vector2i(((reach - bounds.position) / period).ceil())
+	return Rect2i(first, last - first + Vector2i.ONE)
 
 
 # 将位置坐标规范化到 [0, w) × [0, h) 的世界逻辑区间内。
-static func wrap_to_range(pos: Vector2, w: float, h: float) -> Vector2:
+static func wrap_to_range(pos: Vector2, size: Vector2) -> Vector2:
 	var p := pos
-	if p.x >= w:
-		p.x -= w
-	elif p.x < 0.0:
-		p.x += w
-	if p.y >= h:
-		p.y -= h
-	elif p.y < 0.0:
-		p.y += h
+	if p.x >= size.x or p.x < 0.0:
+		p.x = fposmod(p.x, size.x)
+	if p.y >= size.y or p.y < 0.0:
+		p.y = fposmod(p.y, size.y)
 	return p
-
-
-# 深拷贝网格(每行复制 int),用于保存"未破坏"基线 / 每局复位。返回强类型 Array[Array],
-# 以便赋回 MazeGenerator.current_grid / Level0._grid_ref 等强类型成员(普通 Array 赋给强类型会运行时报错)。
-static func copy_grid(grid: Array) -> Array[Array]:
-	var out: Array[Array] = []
-	for row in grid:
-		var r: Array = []
-		for v in row:
-			r.append(v)
-		out.append(r)
-	return out
 
 
 # 像素坐标 → 环面格子坐标(取模回 [0,cols)×[0,rows))。
@@ -78,7 +56,6 @@ static func cell_of(pos: Vector2, ts: int, cols: int, rows: int) -> Vector2i:
 	return Vector2i(posmod(c.x, cols), posmod(c.y, rows))
 
 
-# ── 地面站立判定 ──
 # 判定标准：当前格为空气且正下方（y+1，环面回绕）为实心瓦片，确保实体具有稳固托底表面。
 # 坐标内部自动通过 posmod 进行环面归一化。
 static func is_floor_cell(grid: Array, cell: Vector2i) -> bool:
@@ -101,215 +78,98 @@ static func is_floor_cell_with_headroom(grid: Array, cell: Vector2i) -> bool:
 	return grid[posmod(cell.y - 1, rows)][posmod(cell.x, cols)] == MapFormat.EMPTY
 
 
-static var _g_cost: PackedInt32Array = PackedInt32Array()
-static var _prev: PackedInt32Array = PackedInt32Array()
-static var _heap_f: PackedInt32Array = PackedInt32Array()
-static var _heap_c: PackedInt32Array = PackedInt32Array()
-static var astar_calls: int = 0  # A* 调用计数(冒烟测试验证路径缓存命中用)
-
-static func astar_path_nearest(grid: Array[Array], from_cell: Vector2i, to_cell: Vector2i, max_visit: int = 4000,
-		passable_pred: Callable = Callable(), max_search_dist: int = -1) -> Array[Vector2i]:
-	astar_calls += 1
+static func astar_path_nearest(grid: Array[Array], start: Vector2i, goal: Vector2i, max_visit := 4000,
+		can_pass := Callable(), radius := -1) -> Array[Vector2i]:
 	if grid.is_empty():
 		return []
-	var rows := grid.size()
-	var cols := grid[0].size()
-	if from_cell == to_cell:
+	if not can_pass.is_valid():
+		can_pass = func(at: Vector2i) -> bool: return not TileDefs.is_blocked(grid[at.y][at.x])
+	return find_path(Vector2i(grid[0].size(), grid.size()), start, goal, can_pass, max_visit, radius)
+
+static func find_path(size: Vector2i, start: Vector2i, goal: Vector2i, can_pass: Callable,
+		max_visit := 4000, radius := -1) -> Array[Vector2i]:
+	if start == goal:
 		return []
-	var n := rows * cols
-	if _g_cost.size() < n:
-		_g_cost.resize(n)
-		_prev.resize(n)
-	_g_cost.fill(-1)
-	_prev.fill(-1)
-	var start_idx := from_cell.y * cols + from_cell.x
-	var goal_idx := to_cell.y * cols + to_cell.x
-	_g_cost[start_idx] = 0
-	_heap_f.clear()
-	_heap_c.clear()
-	var start_f := toroidal_dist(from_cell, to_cell, cols, rows)
-	_astar_heap_push(start_f, start_idx)
-	var expanded := 0
-	var best_idx := start_idx
-	var best_d := start_f
-	while _heap_f.size() > 0:
-		var pop := _astar_heap_pop()
-		var f := pop.x
-		var cur_idx := pop.y
-		var g_cur: int = _g_cost[cur_idx]
-		var cx := cur_idx % cols
-		var cy := cur_idx / cols
-		# 惰性删除:该格后来被更优路径更新过,旧堆项作废。
-		if f > g_cur + toroidal_dist(Vector2i(cx, cy), to_cell, cols, rows):
+	var cost := PackedInt32Array()
+	cost.resize(size.x * size.y)
+	cost.fill(-1)
+	var parent := PackedInt32Array()
+	parent.resize(cost.size())
+	var origin := start.y * size.x + start.x
+	cost[origin] = 0
+	var nearest := origin
+	var best := toroidal_dist(start, goal, size.x, size.y)
+	var frontier: Array[Vector2i] = [Vector2i(best, origin)]
+	while not frontier.is_empty() and max_visit > 0:
+		var entry := _pop(frontier)
+		var index := entry.y
+		var at := Vector2i(index % size.x, index / size.x)
+		var distance := toroidal_dist(at, goal, size.x, size.y)
+		if entry.x > cost[index] + distance:
 			continue
-		expanded += 1
-		if expanded > max_visit:
+		max_visit -= 1
+		if distance < best:
+			best = distance
+			nearest = index
+		if at == goal:
 			break
-		if cur_idx == goal_idx:
-			return _rebuild_path_flat(start_idx, goal_idx, cols, rows)
-		var cd := toroidal_dist(Vector2i(cx, cy), to_cell, cols, rows)
-		if cd < best_d:
-			best_d = cd
-			best_idx = cur_idx
-		_astar_relax(cx, cy, cols, rows, grid, passable_pred, to_cell, g_cur + 1, cur_idx, from_cell, max_search_dist)
-	if best_idx == start_idx:
-		return []
-	return _rebuild_path_flat(start_idx, best_idx, cols, rows)
-
-
-# 4 邻域偏移(右/左/下/上)。顺序会影响平局时的路径形态,勿随意调整。
-const _DIRS4: Array = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
-
-
-# 展开当前格:对每个邻居做「可走 + 更优」判定,通过则更新 g/prev 并入堆。
-static func _astar_relax(cx: int, cy: int, cols: int, rows: int, grid: Array[Array],
-		passable_pred: Callable, to_cell: Vector2i, ng: int, cur_idx: int,
-		from_cell: Vector2i, max_search_dist: int) -> void:
-	for d in _DIRS4:
-		var nx: int = cx + d.x
-		var ny: int = cy + d.y
-		if nx >= cols:
-			nx = 0
-		elif nx < 0:
-			nx = cols - 1
-		if ny >= rows:
-			ny = 0
-		elif ny < 0:
-			ny = rows - 1
-		# 搜索范围上限:不展开超出 from_cell 半径的节点(鸟的寻路不搜太远)
-		if max_search_dist > 0 and toroidal_dist(from_cell, Vector2i(nx, ny), cols, rows) > max_search_dist:
-			continue
-		if passable_pred.is_valid():
-			if not passable_pred.call(Vector2i(nx, ny)):
+		var next_cost := cost[index] + 1
+		for step: Vector2i in DIRECTIONS:
+			var next := Vector2i(posmod(at.x + step.x, size.x), posmod(at.y + step.y, size.y))
+			if radius > 0 and toroidal_dist(start, next, size.x, size.y) > radius:
 				continue
-		elif TileDefs.is_blocked(grid[ny][nx]):
-			continue
-		var ni: int = ny * cols + nx
-		var old := _g_cost[ni]
-		if old >= 0 and old <= ng:
-			continue
-		_g_cost[ni] = ng
-		_prev[ni] = cur_idx
-		_astar_heap_push(ng + toroidal_dist(Vector2i(nx, ny), to_cell, cols, rows), ni)
-
-
-# 隐式二叉堆(小根堆,按 f 排序;两条并行 PackedInt32Array 一起交换)。
-static func _astar_heap_push(f: int, c: int) -> void:
-	_heap_f.append(f)
-	_heap_c.append(c)
-	var i := _heap_f.size() - 1
-	while i > 0:
-		var p := (i - 1) >> 1
-		if _heap_f[i] < _heap_f[p]:
-			var tf := _heap_f[i]
-			_heap_f[i] = _heap_f[p]
-			_heap_f[p] = tf
-			var tc := _heap_c[i]
-			_heap_c[i] = _heap_c[p]
-			_heap_c[p] = tc
-			i = p
-		else:
-			break
-
-
-static func _astar_heap_pop() -> Vector2i:
-	var top := Vector2i(_heap_f[0], _heap_c[0])
-	var last_f: int = _heap_f[_heap_f.size() - 1]
-	_heap_f.resize(_heap_f.size() - 1)
-	var last_c: int = _heap_c[_heap_c.size() - 1]
-	_heap_c.resize(_heap_c.size() - 1)
-	if _heap_f.size() > 0:
-		_heap_f[0] = last_f
-		_heap_c[0] = last_c
-		var i := 0
-		var m := _heap_f.size()
-		while true:
-			var l := i * 2 + 1
-			var r := l + 1
-			var s := i
-			if l < m and _heap_f[l] < _heap_f[s]:
-				s = l
-			if r < m and _heap_f[r] < _heap_f[s]:
-				s = r
-			if s == i:
-				break
-			var tf := _heap_f[i]
-			_heap_f[i] = _heap_f[s]
-			_heap_f[s] = tf
-			var tc := _heap_c[i]
-			_heap_c[i] = _heap_c[s]
-			_heap_c[s] = tc
-			i = s
-	return top
-
-
-# 从 prev 扁平链重建格序列(不含起点含终点)。
-static func _rebuild_path_flat(start_idx: int, goal_idx: int, cols: int, rows: int) -> Array[Vector2i]:
+			var neighbor := next.y * size.x + next.x
+			if not can_pass.call(next) or (cost[neighbor] >= 0 and cost[neighbor] <= next_cost):
+				continue
+			cost[neighbor] = next_cost
+			parent[neighbor] = index
+			_push(frontier, Vector2i(next_cost + toroidal_dist(next, goal, size.x, size.y), neighbor))
 	var path: Array[Vector2i] = []
-	var idx := goal_idx
-	while idx != start_idx:
-		path.push_front(Vector2i(idx % cols, idx / cols))
-		idx = _prev[idx]
+	while nearest != origin:
+		path.append(Vector2i(nearest % size.x, nearest / size.x))
+		nearest = parent[nearest]
+	path.reverse()
 	return path
 
-
-# 环面网格 LOS:整数 Bresenham 沿直线采样两格之间的格子,途中任一 SOLID 即阻断。
-# 不能用「每步双轴各进一」的斜对角走法——|dx|≠|dy| 时会越过目标行/列、采样到线外的格子。
-static func has_line_of_sight(grid: Array[Array], from_cell: Vector2i, to_cell: Vector2i) -> bool:
-	if grid.is_empty():
-		return false
-	var rows := grid.size()
-	var cols := grid[0].size()
-	var d := _toroidal_step(from_cell, to_cell, cols, rows)
-	if d == Vector2i.ZERO:
-		return true
-	var x := from_cell.x
-	var y := from_cell.y
-	var sx := 1 if d.x > 0 else -1
-	var sy := 1 if d.y > 0 else -1
-	var dx := absi(d.x)
-	var dy := absi(d.y)
-	var err := dx - dy
-	while true:
-		if TileDefs.is_blocked(grid[y][x]):
-			return false
-		if x == to_cell.x and y == to_cell.y:
+# 小根堆的每项保存 (优先级, 格子编号)，相同优先级保留原有的父子顺序。
+static func _push(heap: Array[Vector2i], entry: Vector2i) -> void:
+	var i := heap.size()
+	heap.append(entry)
+	while i > 0:
+		var parent := (i - 1) / 2
+		if heap[parent].x <= entry.x:
 			break
-		var e2 := 2 * err
-		if e2 > -dy:
-			err -= dy
-			x = posmod(x + sx, cols)
-		if e2 < dx:
-			err += dx
-			y = posmod(y + sy, rows)
-	return true
+		heap[i] = heap[parent]
+		i = parent
+	heap[i] = entry
 
-
-static func _toroidal_step(a: Vector2i, b: Vector2i, cols: int, rows: int) -> Vector2i:
-	var dx := b.x - a.x
-	if dx > cols / 2:
-		dx -= cols
-	elif dx < -cols / 2:
-		dx += cols
-	var dy := b.y - a.y
-	if dy > rows / 2:
-		dy -= rows
-	elif dy < -rows / 2:
-		dy += rows
-	return Vector2i(dx, dy)
-
+static func _pop(heap: Array[Vector2i]) -> Vector2i:
+	var first := heap[0]
+	var last: Vector2i = heap.pop_back()
+	if heap.is_empty():
+		return first
+	var i := 0
+	while i * 2 + 1 < heap.size():
+		var child := i * 2 + 1
+		if child + 1 < heap.size() and heap[child + 1].x < heap[child].x:
+			child += 1
+		if heap[child].x >= last.x:
+			break
+		heap[i] = heap[child]
+		i = child
+	heap[i] = last
+	return first
 
 # 从候选瓦片集合中贪心选取 count 个互相保持最大间距的点集（基于环面距离）。
 # 优先满足两两间距 >= clearance，若候选不足则逐步放宽间距限制。
 # 内部包含随机打乱逻辑，开局规划完成后应保存结果，避免二次调用导致不同步。
-static func spread_cells(cells: Array, count: int, clearance: int, cols: int, rows: int) -> Array:
-	var picked: Array = []
-	if count <= 0 or cells.is_empty():
-		return picked
+static func spread_cells(cells: Array[Vector2i], count: int, clearance: int, cols: int, rows: int) -> Array[Vector2i]:
+	var picked: Array[Vector2i] = []
+	count = mini(count, cells.size())
 	var pool := cells.duplicate()
 	pool.shuffle()
 	var cl := clearance
-	while picked.size() < count and cl >= 0:
+	while picked.size() < count:
 		for c in pool:
 			if picked.size() >= count:
 				break
@@ -322,12 +182,5 @@ static func spread_cells(cells: Array, count: int, clearance: int, cols: int, ro
 					break
 			if ok:
 				picked.append(c)
-		cl -= 5
-	# 保底处理:放宽到头仍不够,补任意剩余的格
-	if picked.size() < count:
-		for c in pool:
-			if picked.size() >= count:
-				break
-			if not picked.has(c):
-				picked.append(c)
+		cl = maxi(0, cl - 5)
 	return picked

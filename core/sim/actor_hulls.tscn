@@ -1,0 +1,21 @@
+[gd_scene format=3]
+
+[sub_resource type="RectangleShape2D" id="squat"]
+size = Vector2(32, 36.8)
+
+[sub_resource type="RectangleShape2D" id="stand"]
+size = Vector2(32, 42.8)
+
+[node name="ActorHulls" type="Node2D"]
+scale = Vector2(2.5, 2.5)
+
+[node name="CollisionShape2D_squat" type="CollisionShape2D" parent="."]
+visible = false
+position = Vector2(-2, 4.4)
+shape = SubResource("squat")
+disabled = true
+
+[node name="CollisionShape2D_stand" type="CollisionShape2D" parent="."]
+visible = false
+position = Vector2(-2, 1.4)
+shape = SubResource("stand")

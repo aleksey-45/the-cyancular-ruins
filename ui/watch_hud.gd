@@ -6,7 +6,6 @@ extends Control
 # - 红长针：指示短期额度消耗与透支深度（一圈对应短期额度 window）
 # - 白短针：指示当前颗粒总余额相对上限的比例
 # - 右侧数字：当前时间颗粒总余额，伴随平滑滚动插值动画；右上角显示上限，表盘中央显示短期额度
-# 位置位于玩家生命条与氧气条下方。数据源绑定 Level0.grain_account。
 
 const DIAL := 84.0                 # 表盘直径（像素）
 const BIG_FONT := 96               # 大数字字号
@@ -27,17 +26,16 @@ var _big: Label = null
 var _cap: Label = null
 var _center: Label = null
 var _disp: float = 0.0             # 大数字插值显示值
-var _anim_from: float = 0.0
-var _anim_target: float = 0.0
-var _anim_t: float = 1.0           # 动画进度（固定 0.2 秒平滑过渡）
-var _initialized := false
+var _clock: MatchFrame.Clock
 var _tremble_t := 0.0              # 吸收结晶颤抖计时
 var _lock_flash_t := 0.0           # 透支锁定闪烁计时
+var _rng := RandomNumberGenerator.new()
 
+func _init(clock: MatchFrame.Clock) -> void:
+	_clock = clock
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_to_group("watch_hud")
 	_dial_tex = build_dial_texture()
 	_big = _mk_label(BIG_FONT, COLOR_TEXT, Vector2(DIAL + 14, -16))
 	_cap = _mk_label(CAP_FONT, COLOR_TEXT_DIM, Vector2(DIAL + 14, BIG_FONT - 4))
@@ -45,15 +43,11 @@ func _ready() -> void:
 	_center.size = Vector2(DIAL, SMALL_FONT + 8)
 	_center.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_center.position = Vector2(0, DIAL * 0.5 - SMALL_FONT * 0.5 - 4)
-	var acc := Level0.grain_account
-	if acc != null:
-		_disp = acc.balance
-	visible = acc != null
-
+	_disp = _clock.balance
 
 func _mk_label(size: int, color: Color, pos: Vector2) -> Label:
 	var l := Label.new()
-	l.add_theme_font_override("font", PixelFont.shared())
+	l.add_theme_font_override("font", PixelFont.FONT)
 	l.add_theme_font_size_override("font_size", size)
 	l.add_theme_color_override("font_color", color)
 	l.add_theme_constant_override("outline_size", maxi(size / 12, 4))
@@ -100,64 +94,34 @@ static func build_dial_texture() -> ImageTexture:
 				img.set_pixel(px, py, COLOR_TICK)
 	return ImageTexture.create_from_image(img)
 
-
-func _process(delta: float) -> void:
-	var acc := Level0.grain_account
-	visible = acc != null
-	if acc == null:
-		return
-	# 余额数字变化时触发 0.2 秒定长平滑过渡动画
-	if not _initialized:
-		_disp = acc.balance
-		_anim_from = acc.balance
-		_anim_target = acc.balance
-		_anim_t = 1.0
-		_initialized = true
-	if not is_equal_approx(acc.balance, _anim_target):
-		_anim_from = _disp
-		_anim_target = acc.balance
-		_anim_t = 0.0
-	_anim_t = minf(_anim_t + delta / 0.2, 1.0)
-	_disp = lerpf(_anim_from, _anim_target, _anim_t)
+func present(clock: MatchFrame.Clock, delta: float) -> void:
+	_clock = clock
+	_disp = lerpf(_disp, clock.balance, minf(1.0, delta * 10.0))
 	_big.text = str(int(round(_disp)))
-	# 余额数字颜色响应时间模式：回溯为红色，加速为紫色，常态为白色
-	var col := COLOR_TEXT
-	if TimeField.current != null:
-		if TimeField.current.is_rewinding():
-			col = Color8(210, 62, 62)
-		elif TimeField.current.is_hasting():
-			col = Color8(168, 96, 216)
+	var col := Color8(210, 62, 62) if clock.rewind else Color8(168, 96, 216) if clock.haste else COLOR_TEXT
 	_big.add_theme_color_override("font_color", col)
-	_cap.text = "上限 %d" % int(acc.cap)
+	_cap.text = "上限 %d" % int(clock.cap)
 	# 表盘中央显示短期额度剩余量，透支时显示红色负数
-	if acc.loan_used > 0.5:
-		_center.text = "-%d" % int(round(acc.loan_used))
-		_center.add_theme_color_override("font_color", COLOR_LOAN)
-	else:
-		_center.text = "%d" % int(round(acc.window - acc.short_used))
-		_center.add_theme_color_override("font_color", COLOR_TEXT_DIM)
+	_center.text = str(clock.allowance)
+	_center.add_theme_color_override("font_color", COLOR_LOAN if clock.borrowed else COLOR_TEXT_DIM)
 	_tremble_t = maxf(_tremble_t - delta, 0.0)
 	_lock_flash_t = maxf(_lock_flash_t - delta, 0.0)
 	queue_redraw()
 
-
 func _draw() -> void:
-	var acc := Level0.grain_account
-	if acc == null or _dial_tex == null:
+	var clock := _clock
+	if _dial_tex == null:
 		return
 	var shake := Vector2.ZERO
 	if _tremble_t > 0.0:
-		shake = Vector2(randf_range(-1.5, 1.5), randf_range(-1.5, 1.5)) * (_tremble_t / 0.4)
+		shake = Vector2(_rng.randf_range(-1.5, 1.5), _rng.randf_range(-1.5, 1.5)) * (_tremble_t / 0.4)
 	draw_texture(_dial_tex, shake)
 	var c := Vector2(DIAL * 0.5, DIAL * 0.5) + shake
 	# 白短针：指示当前总量相对上限的旋转角度
-	var a_short := -PI * 0.5 + TAU * clampf(acc.balance / maxf(acc.cap, 1.0), 0.0, 1.0)
+	var a_short := -PI * 0.5 + TAU * clampf(clock.balance / maxf(clock.cap, 1.0), 0.0, 1.0)
 	draw_line(c, c + Vector2(cos(a_short), sin(a_short)) * (DIAL * 0.30), COLOR_HAND_SHORT, 4.0)
 	# 红长针：指示短期窗口已消耗额度与透支进度
-	var win: float = acc.window if acc.window > 0.0 else TimeParams.SHORT_WINDOW
-	var turns := (acc.short_used + acc.loan_used) / win
-	var max_turns := 1.0 + (acc.loan_max / win)
-	var a_long := -PI * 0.5 + TAU * clampf(turns, 0.0, max_turns)
+	var a_long := -PI * 0.5 + TAU * clock.long_turns
 	var long_col := COLOR_HAND_LONG
 	if _lock_flash_t > 0.0 and fmod(_lock_flash_t, 0.16) > 0.08:
 		long_col = Color8(255, 90, 90)
@@ -173,10 +137,3 @@ func tremble() -> void:
 # 透支达到上限触发锁定红闪警报
 func flash_locked() -> void:
 	_lock_flash_t = 1.2
-
-
-# 吸收结晶颗粒存入账户并触发颤抖动画
-func absorb(amount: int) -> void:
-	if Level0.grain_account != null:
-		Level0.grain_account.deposit(amount)
-	tremble()

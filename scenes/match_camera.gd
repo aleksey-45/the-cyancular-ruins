@@ -1,0 +1,71 @@
+class_name MatchCamera
+extends RefCounted
+
+const SHAKE_EPS := 0.0001
+
+var _shake_amt: float = 0.0
+var _shake_time: float = 0.0
+var _shake_dur: float = 0.0
+var _shake_offset: Vector2 = Vector2.ZERO
+var base_position := Vector2.ZERO
+var position := Vector2.ZERO
+var _bound := false
+var _rng := RandomNumberGenerator.new()
+
+func fire(weapon: int) -> void:
+	var spec := WeaponRegistry.definition(weapon)
+	if spec.has("shake"):
+		shake(spec["shake"], spec.get("shake_time", 0.1))
+
+func blast(distance: float, radius: float) -> void:
+	var reach := maxf(radius * 2.5, 400.0)
+	if distance <= reach:
+		shake(PlayerParams.explosion_cam_shake * (1.0 - distance / reach), PlayerParams.explosion_cam_shake_time)
+
+func hit(ratio: float) -> void:
+	if ratio > 0.0:
+		shake(PlayerParams.hit_cam_shake * (ratio / 0.25) if ratio > 0.25 else 6.0,
+				PlayerParams.hit_cam_shake_time if ratio > 0.25 else 0.15)
+
+## 保留当前仍有效的较强震幅与较长持续时间，避免弱震覆盖强震。
+func shake(amount: float, duration: float) -> void:
+	var remaining := _shake_time
+	var effective := 0.0
+	if remaining > 0.0:
+		effective = _shake_amt * (remaining / maxf(_shake_dur, SHAKE_EPS))
+	if amount >= effective:
+		_shake_amt = amount
+		_shake_dur = maxf(duration, remaining)
+		_shake_time = _shake_dur
+	elif duration > remaining:
+		# 弱震只延长已有节奏，不改写更强的震幅。
+		_shake_dur = duration
+		_shake_time = duration
+
+
+func advance(delta: float, position_to_follow: Vector2, size: Vector2, speed_x: float = 0.0) -> void:
+	var run_fraction := clampf(speed_x / PlayerParams.move_speed, -1.0, 1.0)
+	var desired := position_to_follow + Vector2(run_fraction * PlayerParams.cam_lead_x, PlayerParams.cam_y_bias)
+	if not _bound:
+		base_position = desired
+		_bound = true
+	else:
+		# 角色回绕时先把相机切到同侧的副本，再继续平滑。
+		base_position = GridPathfinder.anchor_to_nearest(base_position, desired, size)
+		var dx := desired.x - base_position.x
+		if absf(dx) > PlayerParams.cam_deadzone:
+			base_position.x += (dx - signf(dx) * PlayerParams.cam_deadzone) \
+					* (1.0 - exp(-PlayerParams.cam_smooth_x * delta))
+		var dy := desired.y - base_position.y
+		if absf(dy) > PlayerParams.cam_deadzone:
+			base_position.y += (dy - signf(dy) * PlayerParams.cam_deadzone) \
+					* (1.0 - exp(-PlayerParams.cam_smooth_y * delta))
+	var margin := Vector2.ONE * PlayerParams.cam_seam_margin
+	# 镜头滞后时把基准位置限制在铺好的接缝带内。
+	base_position = base_position.clamp(-margin, size + margin)
+	_shake_offset = Vector2.ZERO
+	if _shake_time > 0.0:
+		_shake_time = maxf(_shake_time - delta, 0.0)
+		var amount := _shake_amt * (_shake_time / maxf(_shake_dur, SHAKE_EPS))
+		_shake_offset = Vector2(_rng.randf_range(-1.0, 1.0), _rng.randf_range(-1.0, 1.0)) * amount
+	position = (base_position + _shake_offset).clamp(-margin, size + margin)

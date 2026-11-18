@@ -1,116 +1,120 @@
 extends Control
-# 设置菜单:键鼠重映射 / 音量 / 滚轮切枪 / 联机显示。
-# 全部改动即时生效并经 Settings 持久化(user://settings.cfg)。像素风格,Esc 返回。
-#
-# 设置页面：控制音频音量、显示选项与按键映射。
-# 静态布局结构定义在 settings_menu.tscn 中，本脚本负责装配按键行并绑定配置。
 
 const ACTION_NAMES := {
 	"left": "左移", "right": "右移", "up": "跳跃/上爬", "down": "下蹲/下落",
-	"charge": "冲刺", "attack": "开火", "R": "重开(单机)",
-	"F": "拾取", "Q": "丢弃(长按)",
-	# 按键动作映射表
+	"charge": "冲刺", "attack": "开火", "R": "换弹/重开", "F": "拾取", "Q": "丢弃(长按)",
 	"rewind": "时间回溯", "haste": "时间加速",
 }
+const BATTLE_DISPLAY := [
+	[&"pvp_show_trajectories", "显示武器弹丸尾迹"],
+	[&"pvp_show_enemy_hp", "显示其他玩家血量条"],
+	[&"pvp_show_minimap", "打开小地图"],
+	[&"pvp_minimap_show_enemy", "小地图显示其他玩家"],
+]
 
-# 按钮尺寸常量
-const ROW_H := 72
-# 键位表里的名字列宽(基础结构框架里那几行静态标签的宽度是同源的另一份,改这里要一起改)。
-const BIND_NAME_W := 200.0
-const BIND_BTN_W := 220.0
-
-var _capturing_action := ""      # 正在等待捕获新键位的动作(""=不在捕获态)
-var _capture_btn: Button = null
-var _bind_buttons: Dictionary = {}   # action -> Button
-
-@onready var _master: HSlider = %MasterSlider
-@onready var _sfx: HSlider = %SfxSlider
-@onready var _wheel: CheckButton = %WheelCheck
-@onready var _traj: CheckButton = %TrajCheck
-@onready var _enemy_hp: CheckButton = %EnemyHpCheck
-@onready var _minimap: CheckButton = %MinimapCheck
-@onready var _minimap_enemy: CheckButton = %MinimapEnemyCheck
-@onready var _bind_grid: GridContainer = %BindGrid
-
+var _capturing_action := ""
+var _bind_buttons: Dictionary = {}
+var _resolution := OptionButton.new()
 
 func _ready() -> void:
-	# ── 音量设置 ──（滑条调节不播放音效，
-	#   与键位按钮那一档不同 —— 切勿随意给滑条补一个点击音)
-	_slider(_master, Settings.master_volume, func(v: float) -> void:
-		Settings.master_volume = v
+	var page := UiFactory.page(self, "—— 设置 ——", 16, true)
+	var columns := UiFactory.columns(page)
+	var options := VBoxContainer.new()
+	options.add_theme_constant_override("separation", 24)
+	UiFactory.column(columns, options)
+	_heading(options, "音量")
+	for spec in [[&"master_volume", "主音量"], [&"sfx_volume", "音效"]]:
+		var slider := HSlider.new()
+		slider.custom_minimum_size = Vector2(360, 28)
+		slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		slider.max_value = 1.0
+		slider.step = 0.05
+		_row(options, spec[1], slider)
+		slider.set_value_no_signal(Settings.get(spec[0]))
+		slider.value_changed.connect(Settings.store.bind(spec[0]))
+	_heading(options, "显示")
+	_setup_resolution(options)
+	_heading(options, "通用")
+	_toggle(options, "鼠标滚轮切枪", &"wheel_switch")
+	_heading(options, "战斗显示")
+	for spec in BATTLE_DISPLAY:
+		_toggle(options, spec[1], spec[0])
+
+	var keys := VBoxContainer.new()
+	keys.add_theme_constant_override("separation", 24)
+	UiFactory.column(columns, keys)
+	_heading(keys, "按键映射(点击后按新键;Esc 取消)")
+	_fill_bind_grid(keys)
+
+	var actions := UiFactory.box(page, 24, false)
+	UiFactory.action(actions, "恢复默认键位", Vector2(360, 72), &"", _reset)
+	UiFactory.action(actions, "返回(Esc)", Vector2(280, 72), &"", _go_back)
+
+func _setup_resolution(options: VBoxContainer) -> void:
+	_resolution.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_resolution.tooltip_text = "窗口会按屏幕可用区域等比例缩小；游戏视野不变。"
+	_row(options, "窗口分辨率", _resolution)
+	for resolution in Settings.DISPLAY_RESOLUTIONS:
+		_resolution.add_item("%d × %d" % [resolution.x, resolution.y])
+	_resolution.select(Settings.DISPLAY_RESOLUTIONS.find(Settings.display_resolution))
+	_resolution.disabled = Settings.display_fullscreen
+	_resolution.item_selected.connect(func(index: int) -> void:
+		Settings.display_resolution = Settings.DISPLAY_RESOLUTIONS[index]
+		Settings.apply_display()
 		Settings.save())
-	_slider(_sfx, Settings.sfx_volume, func(v: float) -> void:
-		Settings.sfx_volume = v
-		Settings.save())
+	var fullscreen := _toggle(options, "全屏", &"display_fullscreen")
+	fullscreen.toggled.connect(func(on: bool) -> void:
+		_resolution.disabled = on
+		Settings.apply_display())
 
-	# ── 通用 / 联机显示 ──
-	# 先设置初始值再连接信号，避免初始化触发额外反馈
-	_check(_wheel, Settings.wheel_switch, func(on: bool) -> void:
-		Settings.wheel_switch = on
-		Settings.save())
-	_check(_traj, Settings.pvp_show_trajectories, func(on: bool) -> void:
-		Settings.pvp_show_trajectories = on
-		Settings.save())
-	_check(_enemy_hp, Settings.pvp_show_enemy_hp, func(on: bool) -> void:
-		Settings.pvp_show_enemy_hp = on
-		Settings.save())
-	_check(_minimap, Settings.pvp_show_minimap, func(on: bool) -> void:
-		Settings.pvp_show_minimap = on
-		Settings.save())
-	_check(_minimap_enemy, Settings.pvp_minimap_show_enemy, func(on: bool) -> void:
-		Settings.pvp_minimap_show_enemy = on
-		Settings.save())
+static func _heading(parent: VBoxContainer, title: String) -> void:
+	parent.add_child(UiFactory.header_strip(title))
 
-	_fill_bind_grid()
+static func _row(parent: VBoxContainer, text: String, control: Control) -> void:
+	var row := UiFactory.box(parent, 16, false)
+	var label := Label.new()
+	label.text = text
+	label.custom_minimum_size.x = 384
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	row.add_child(label)
+	row.add_child(control)
 
-	# ── 底部动作 ──
-	# 恢复默认设置确认
-	%ResetBtn.pressed.connect(func() -> void:
-		Sfx.play("ui")   # 点击音由各 handler 自己出(UiFactory.button 不代挂,防同帧双响)
-		Settings.reset_bindings()
-		for a in _bind_buttons:
-			_refresh_bind_label(a))
-	%BackBtn.pressed.connect(_go_back)
+func _toggle(parent: VBoxContainer, text: String, key: StringName) -> CheckButton:
+	var widget := CheckButton.new()
+	widget.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	_row(parent, text, widget)
+	widget.set_pressed_no_signal(Settings.get(key))
+	widget.toggled.connect(Settings.store.bind(key))
+	widget.toggled.connect(func(_on: bool) -> void: Sfx.play("switch"))
+	return widget
 
-
-func _slider(s: HSlider, value: float, on_change: Callable) -> void:
-	s.value = value
-	s.value_changed.connect(on_change)
-
-
-func _check(cb: CheckButton, on: bool, on_toggle: Callable) -> void:
-	cb.button_pressed = on
-	cb.toggled.connect(func(v: bool) -> void:
-		Sfx.play("switch")
-		on_toggle.call(v))
-
-
-# ── 键位映射表 ──
-func _fill_bind_grid() -> void:
+func _fill_bind_grid(parent: VBoxContainer) -> void:
+	var grid := GridContainer.new()
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", 24)
+	grid.add_theme_constant_override("v_separation", 8)
+	parent.add_child(grid)
 	for action in Settings.REMAPPABLE_ACTIONS:
-		var name_l := Label.new()
-		name_l.text = ACTION_NAMES.get(action, action)
-		# 键位列表行文字样式与鼠标过滤配置
-		#      (键位按钮就在同一行里)。
-		name_l.add_theme_color_override("font_color", UiFactory.C_WHITE)
-		name_l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		name_l.custom_minimum_size = Vector2(BIND_NAME_W, 0)
-		_bind_grid.add_child(name_l)
-		# 键位按钮是网格单元(不是主菜单按钮列)。-  高度 40 会被按钮内边距顶到 72,
+		var label := Label.new()
+		label.text = ACTION_NAMES.get(action, action)
+		label.add_theme_color_override("font_color", Color.WHITE)
+		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		label.custom_minimum_size = Vector2(200, 0)
+		grid.add_child(label)
+		var button := UiFactory.menu_button(Settings.get_binding_names(action), Vector2(220, 72), &"BtnBinding")
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		if action == "R":
+			button.tooltip_text = "存活时换弹；单人模式倒地后重开关卡。"
+		button.pressed.connect(_begin_capture.bind(action))
+		grid.add_child(button)
+		_bind_buttons[action] = button
 
-		var bind_btn := Button.new()
-		bind_btn.theme_type_variation = &"BtnLegacy"
-		bind_btn.custom_minimum_size = Vector2(BIND_BTN_W, ROW_H)
-		bind_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		bind_btn.pressed.connect(func() -> void: _begin_capture(action, bind_btn))
-		_bind_grid.add_child(bind_btn)
-		_bind_buttons[action] = bind_btn
+func _reset() -> void:
+	Sfx.play("ui")
+	Settings.reset_bindings()
+	for action in _bind_buttons:
 		_refresh_bind_label(action)
 
-
-# 本菜单是纯 UI(无世界、无大物理),普通切场景只会销毁一棵 Control 树;
-# 反方向(游戏世界 → 菜单)才需要挂起式切换,见 Level0.safe_change_scene。
-# 页面返回延迟至帧末执行，防止悬空引用
 func _go_back() -> void:
 	Sfx.play("ui")
 	get_tree().change_scene_to_file.call_deferred("res://scenes/main_menu.tscn")
@@ -118,7 +122,6 @@ func _go_back() -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("ui_cancel"):
-		# 先消费输入事件再执行返回
 		get_viewport().set_input_as_handled()
 		if _capturing_action != "":
 			_cancel_capture()
@@ -126,13 +129,11 @@ func _unhandled_input(event: InputEvent) -> void:
 			_go_back()
 
 
-# ── 键位捕获 ──
-func _begin_capture(action: String, btn: Button) -> void:
+func _begin_capture(action: String) -> void:
 	Sfx.play("ui")
 	_cancel_capture()
 	_capturing_action = action
-	_capture_btn = btn
-	btn.text = "按任意键…"
+	_bind_buttons[action].text = "按任意键…"
 
 
 func _cancel_capture() -> void:
@@ -140,7 +141,6 @@ func _cancel_capture() -> void:
 		return
 	var action := _capturing_action
 	_capturing_action = ""
-	_capture_btn = null
 	_refresh_bind_label(action)
 
 
@@ -160,25 +160,11 @@ func _input(event: InputEvent) -> void:
 		ev = event
 	if ev == null:
 		return
-	# 重绑按键后更新映射并持久化保存
 	Settings.set_binding(_capturing_action, ev)
 	Sfx.play("switch")
-	_capturing_action = ""
-	_refresh_bind_label_for(_capture_btn)
-	_capture_btn = null
+	_cancel_capture()
 	get_viewport().set_input_as_handled()
 
 
 func _refresh_bind_label(action: String) -> void:
-	if action != "" and _bind_buttons.has(action):
-		_refresh_bind_label_for(_bind_buttons[action])
-
-
-func _refresh_bind_label_for(btn: Button) -> void:
-	if btn == null:
-		return
-	var action := Settings.REMAPPABLE_ACTIONS.filter(func(a: String) -> bool:
-		return _bind_buttons.get(a) == btn)
-	if action.is_empty():
-		return
-	btn.text = Settings.get_binding_names(action[0])
+	_bind_buttons[action].text = Settings.get_binding_names(action)

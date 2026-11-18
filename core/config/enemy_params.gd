@@ -1,14 +1,10 @@
 class_name EnemyParams
 extends RefCounted
 # 敌人参数集中地。每个敌人一个嵌套类,专属数值归位;跨敌人共享的放 shared。
-# 访问方式: EnemyParams.JumpBird.wake_radius / EnemyParams.shared.hit_flash。
-# 加新敌人 = 在此加一个嵌套类,不污染全局 GameParameters。
-
 class shared:
-	const hit_flash: float = 0.1        # 受击白闪时长(秒)
-	const death_flash_time: float = 0.5  # 死亡白闪时长(秒),闪完销毁(全敌人统一)
+	const hit_reaction_time: float = 0.1
+	const corpse_time: float = 0.5
 	const turn_min_interval: float = 0.5  # 敌人最小转向间隔(秒),防止来回抖
-	# ── 水 ──
 	const bird_swim_speed: float = 260.0   # 落水鸟朝玩家游的速度
 	const bird_buoyancy_k: float = 6.0     # 浮力弹簧刚度(回水面)
 	const bird_max_float: float = 260.0    # 上浮最大速度
@@ -16,19 +12,11 @@ class shared:
 	const bird_water_damp: float = 5.0     # 水中垂直速度阻尼
 	const drown_interval: float = 1.5      # 防水值空后扣除生命值间隔(秒)
 	const drown_damage: int = 5
-	const squash_amount: float = 0.06
-	const squash_recover: float = 16.0
-	const squash_take_off: float = 0.80        # 鸟起飞(FlyBird / BlackBird TAKE_OFF)
-	const squash_charge: float = 0.90          # 冲撞(FlyBird/BlackBird CHARGE、JumpBird LUNGE_DASH/BACK_HOP)
-	const squash_land_min_vy: float = 220.0
-	const squash_land_ref_vy: float = 900.0
-	const squash_land: float = 1.00
-	const squash_hurt: float = 0.50
-	const squash_air: float = 0.10
-	const squash_air_ref_vy: float = 700.0
 
 class JumpBird:
 	const wake_radius: float = 900.0    # 玩家多近苏醒
+	const wake_time: float = 0.5
+	const settle_time: float = 0.5
 	const give_up_radius: float = 1100.0 # 玩家多远放弃追击
 	const lunge_range: float = 400.0    # 冲刺触发距离
 	const lunge_max_dist: float = 450.0 # 冲刺最远距离
@@ -42,6 +30,8 @@ class JumpBird:
 
 class FlyBird:
 	const wake_radius: float = 1100.0     # 视野半径,屏幕外可见
+	const wake_time: float = 0.5
+	const settle_time: float = 0.5
 	const max_chase_distance: float = 2000.0  # 距玩家超此值不启动任何寻路(直接返程)
 	const home_range: float = 2000.0      # 玩家距出生点超此值 → 放弃，然后返程
 	const hover_altitude: float = 40.0    # 巡航高度(路径格上方 px)
@@ -60,8 +50,8 @@ class FlyBird:
 	const bullet_range: float = 2000.0    # 投弹射程
 	const bullet_gravity: float = 0.85     # 投弹重力倍率
 	const bullet_size: float = 1.2        # 投弹放大倍数(贴图+碰撞体)
-	const bullet_min_speed: float = 250.0 # 平抛初速下限
-	const bullet_max_speed: float = 1600.0 # 平抛初速上限
+	const bullet_min_speed: float = 312.5 # 平抛初速下限
+	const bullet_max_speed: float = 2000.0 # 平抛初速上限
 	const bullet_min_drop: float = 30.0   # 落点落差下限
 	const charge_hp_fraction: float = 0.25 # 冲撞血量阈值(HP<25%)
 	const charge_range: float = 1300.0    # 冲撞触发距离(且需 LOS)
@@ -73,7 +63,7 @@ class FlyBird:
 	const shoot_recoil: float = 500.0      # 开火后座力(鸟沿发射反方向被推)
 	const repath_interval: float = 0.75    # 重寻路间隔(秒)
 	const arrival_radius: float = 50.0    # 到路径格/回家判定
-	const landing_time: float = 0.4       # 到家落地后多久直接入睡(不再等地板接触)
+	const landing_time: float = 0.4       # 返程落地计时结束后入睡(秒)
 	const path_max_visit: int = 600       # 寻路(A*)展开格数上限(32×32 最小单位下已调小)
 	const search_radius_cells: int = 45  # A* 搜索半径(格):限定鸟的寻路范围,不搜太远
 	const escape_search_range: int = 90   # 避障脱困时向左右搜索的格数上限
@@ -81,6 +71,8 @@ class FlyBird:
 
 class BlackBird:
 	const wake_radius: float = 1000.0     # 玩家多近苏醒
+	const wake_time: float = 0.625
+	const settle_time: float = 0.625
 	const sleep_radius: float = 1200.0   # 玩家多远入睡(离开范围)
 	const wander_speed: float = 300.0    # 随机游走速度
 	const wander_min_t: float = 1.0      # 一段行走时长下限(秒)
@@ -93,10 +85,11 @@ class BlackBird:
 	const teleport_max_tiles: int = 6    # 传送落点距玩家的最长格数(环面距离,随机)
 	const teleport_drop: float = 250.0    # 瞬移到落点上方高度（像素），再下落
 	const landing_timeout: float = 0.3   # 落地保底处理(秒)
-	const teleport_prep_time: float = 0.25  # 落地播 disappear 的最小停顿(传送前)
-	const charge_prep_time: float = 0.4     # appear 落地后停顿(冲锋前)
+	const teleport_prep_time: float = 0.6
+	const teleport_entry_time: float = 0.1
+	const teleport_hover_time: float = 0.7
+	const charge_prep_time: float = 0.4     # 传送落地后停顿(冲锋前)
 	const teleport_cooldown: float = 3.0    # 冲锋结束后瞬移冷却(秒),期间不判定瞬移
-	const teleport_flash_time: float = 0.1  # 传送白闪时长(秒;消散→到达全程覆盖)
 	const charge_speed: float = 900.0   # 冲锋水平速度
 	const charge_damage: int = 7         # 冲锋伤害(穿透无敌帧)
 	const charge_impact: float = 1500.0  # 冲锋冲击力(撞飞玩家水平速度,同飞鸟)

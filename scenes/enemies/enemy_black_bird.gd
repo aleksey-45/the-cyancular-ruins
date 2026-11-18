@@ -6,10 +6,6 @@ extends EnemyBase
 # 空中显现 -> 落地冲锋造成伤害 -> 大幅度后跳 -> 恢复游走；玩家远离时重新进入休眠。
 # 全程受重力影响的地面实体，不使用飞行寻路。
 
-enum State { SLEEP, WAKE, WANDER, TAKE_OFF, CHARGE, BACK_HOP }
-
-var _wake_timer: float = -1.0        # wake_up 动画剩余时长（>=0 表示正在播放）
-var _sleep_anim_timer: float = -1.0  # fall_asleep 动画剩余时长
 var _wander_timer: float = 0.0       # 当前游走剩余时间
 var _wander_dir: float = 1.0         # 游走方向（±1）
 var _wander_idle_timer: float = 0.0  # 游走停顿剩余时间（>0 表示原地待机）
@@ -24,26 +20,16 @@ var _charge_timer: float = 0.0       # 冲锋超时计时器
 var _back_hop_cd: float = 0.0        # 后跳落地后的冷却时间
 var _body_min: Vector2 = Vector2.ZERO   # 碰撞盒 AABB 最小顶点（经 scale 变换后）
 var _body_max: Vector2 = Vector2.ZERO   # 碰撞盒 AABB 最大顶点（经 scale 变换后）
-var _teleport_flash_timer: float = 0.0  # 传送闪白特效计时器（纯白剪影着色，结束后复原）
-var _silhouette_mat: ShaderMaterial = null  # 纯白剪影着色器材质
-var _appear_timer: float = 0.0         # 传送后显现动画播放剩余时长（期间空中悬停）
+var _body_shape: RectangleShape2D = null  # 落点净空查询复用的形状
+var _teleport_left := 0.0
+var _hover_left := 0.0
 
 
 func _ready() -> void:
-	# 精英实体标记（阶段一）：免疫时空回溯（不计入快照）、时间加速倍率与玩家同步、被击杀后掉落 300 单位时间颗粒
+	# 精英实体标记：免疫时空回溯（不计入快照）、时间加速倍率与玩家同步、被击杀后掉落 300 单位时间颗粒
 	set_meta("elite", true)
 	super._ready()
-	_anim = $AnimatedSprite2D
 	wake_radius = EnemyParams.BlackBird.wake_radius
-	# 纯白剪影材质：每个实例独立创建，避免跨实例共享材质导致闪白表现相互干扰
-	var bb_shader := load("res://scenes/enemies/black_bird_silhouette.gdshader") as Shader
-	var bb_mat := ShaderMaterial.new()
-	bb_mat.shader = bb_shader
-	_anim.material = bb_mat
-	_silhouette_mat = bb_mat
-	_set_state(State.SLEEP)
-	_anim.play("sleep")
-	_align_contact_area()
 	# 记录碰撞箱 AABB(按 scale 换算),供瞬移落点清空判定用
 	var cp := get_node_or_null("CollisionPolygon2D") as CollisionPolygon2D
 	if cp != null and cp.polygon.size() > 0:
@@ -56,20 +42,6 @@ func _ready() -> void:
 		_body_max = mx * scale
 
 
-# 接触范围与身体对齐:黑鸟碰撞箱按 scale 2.5 世界约 100px,ContactArea 由 EnemyBase
-# 代码创建(不在场景里),这里把形状放大并下移对齐身体中心。
-func _align_contact_area() -> void:
-	var area := get_node_or_null("ContactArea") as Area2D
-	if area != null:
-		for child in area.get_children():
-			if child is CollisionShape2D:
-				var area_shape := RectangleShape2D.new()
-				area_shape.size = Vector2(46, 36)
-				child.shape = area_shape
-				child.position = Vector2(4, 4)
-				break
-
-
 func _ai(delta: float) -> void:
 	var dist := toroidal_dist_to_player()
 	_back_hop_cd = maxf(_back_hop_cd - delta, 0.0)
@@ -77,9 +49,13 @@ func _ai(delta: float) -> void:
 		_update_facing()
 	match state:
 		State.SLEEP:
-			_tick_sleep(delta, dist)
+			if _wake_ready(delta, dist, EnemyParams.BlackBird.wake_time):
+				_set_state(State.WAKE)
 		State.WAKE:
-			_tick_wake(delta)
+			_set_state(State.WANDER)
+			_wander_timer = 0.2
+			_wander_idle_timer = 0.0
+			_flank_check_timer = 0.5 # 醒来先游走一会。
 		State.WANDER:
 			_tick_wander(delta, dist)
 		State.TAKE_OFF:
@@ -92,46 +68,19 @@ func _ai(delta: float) -> void:
 
 # 状态机帧逻辑更新，各状态逻辑分派至独立方法处理
 
-func _tick_sleep(delta: float, dist: float) -> void:
-	if _wake_timer > 0.0:
-		_wake_timer -= delta
-		if _wake_timer <= 0.0:
-			_set_state(State.WAKE)
-	elif _sleep_anim_timer > 0.0:
-		_sleep_anim_timer -= delta
-		if _sleep_anim_timer <= 0.0:
-			_anim.play("sleep")
-	else:
-		_anim.play("sleep")
-		if dist <= EnemyParams.BlackBird.wake_radius:
-			_anim.play("wake_up")
-			_wake_timer = _anim_duration("wake_up")
-
-
-func _tick_wake(delta: float) -> void:
-	if _wake_timer > 0.0:
-		_wake_timer -= delta
-	if _wake_timer <= 0.0:
-		_set_state(State.WANDER)
-		_wander_timer = 0.2
-		_wander_idle_timer = 0.0
-		_flank_check_timer = 0.5  # 先游走一会再判定瞬移,避免一醒就闪
-
-
 func _tick_wander(delta: float, dist: float) -> void:
 	if dist > EnemyParams.BlackBird.sleep_radius:
 		_set_state(State.SLEEP)
-		_anim.play("fall_asleep")
-		_sleep_anim_timer = _anim_duration("fall_asleep")
+		_settle_sleep(EnemyParams.BlackBird.settle_time)
 		velocity.x = 0.0
 		return
 	# 行走一段后随机停顿 0~wander_idle_max(站着不动),减少频繁游荡感
 	if _wander_idle_timer > 0.0:
 		_wander_idle_timer -= delta
 		velocity.x = 0.0
-		_anim.stop()  # 冻在站立帧(idle 开始那帧已切到 frame 0)
+		activity = Activity.WAIT
 	else:
-		_anim.play("run")
+		activity = Activity.RUN
 		_wander_timer -= delta
 		if _wander_timer <= 0.0:
 			_wander_timer = randf_range(EnemyParams.BlackBird.wander_min_t, EnemyParams.BlackBird.wander_max_t)
@@ -140,13 +89,11 @@ func _tick_wander(delta: float, dist: float) -> void:
 		if _wander_idle_timer > 0.0:
 			# 刚决定停顿:本帧就停(切站立帧),不再移动
 			velocity.x = 0.0
-			_anim.play("run")
-			_anim.frame = 0
-			_anim.stop()
+			activity = Activity.WAIT
 		else:
 			velocity.x = _wander_dir * EnemyParams.BlackBird.wander_speed
 			# 游走撞墙不卡死:小跳翻越矮墙(与冲锋自动跳相同机制判定)
-			if is_on_wall():
+			if _hit_wall():
 				velocity.y = EnemyParams.BlackBird.wander_jump_velocity
 	_teleport_cooldown = maxf(_teleport_cooldown - delta, 0.0)
 	_flank_check_timer -= delta
@@ -158,51 +105,50 @@ func _tick_wander(delta: float, dist: float) -> void:
 			_left_ground = false
 			_prep_timer = 0.0
 			_set_state(State.TAKE_OFF)
-			_anim.play("take_off")
+			motion.emit(&"take_off", 0.0)
+			activity = Activity.TAKE_OFF
 
 
-# 起飞竖直上跳 → 落地 → 播 disappear → 白闪 → 传送
+# 起跳落地后原地停顿，再传送。
 func _tick_take_off(delta: float) -> void:
 	if _wait_land:
-		_anim.play("take_off")
-		# 进状态那帧 is_on_floor 是旧的(上帧在地面),要求先离地再落地才算数
-		if is_on_floor():
+		# 进状态那帧着地状态是旧的(上帧在地面),要求先离地再落地才算数
+		if _grounded:
 			if _left_ground:
 				_wait_land = false
-				# 落地瞬间:播 disappear(消散),停顿等它播完再闪
-				_prep_timer = maxf(EnemyParams.BlackBird.teleport_prep_time, _anim_duration("disappear"))
+				_prep_timer = EnemyParams.BlackBird.teleport_prep_time
 			else:
 				_left_ground = true
 	elif _prep_timer > 0.0:
 		_prep_timer -= delta
 		velocity.x = 0.0  # 停顿期间停止左右移动
-		_anim.play("disappear")
+		activity = Activity.PREPARE_TELEPORT
 	else:
 		if _flank_cell == Vector2i(-1, -1):
-			_set_state(State.WANDER)  # 保底处理:无落点不该进 TAKE_OFF
+			# TAKE_OFF 只在 _find_flank_cell() 成功后进入；走到这里说明状态机被外部破坏，显式暴露并回到游走。
+			push_error("BlackBird: TAKE_OFF 无传送落点(状态机不一致) pf=%d" % Engine.get_physics_frames())
+			_set_state(State.WANDER)
 			return
-		_teleport_to_flank()  # 白闪在 _teleport_to_flank 内触发(传送瞬间)
+		_teleport_to_flank()
 		_set_state(State.CHARGE)
+		motion.emit(&"charge", 0.0)
 		_charge_timer = EnemyParams.BlackBird.charge_timeout
 		_landing_timer = EnemyParams.BlackBird.landing_timeout
 		_wait_land = true
 		_left_ground = true  # 传送后必在落点上方空中,之后任何落地都是真落地
-		# appear 总时长 = 白闪 + 动画本身,期间在空中滞留(不落地)
-		_appear_timer = EnemyParams.BlackBird.teleport_flash_time + _anim_duration("appear")
+		_hover_left = EnemyParams.BlackBird.teleport_hover_time
 
 
 func _tick_charge(delta: float) -> void:
-	if _appear_timer > 0.0:
-		# 传送后:白闪滞留 → appear 播完(在空中)→ 才落地
-		_appear_timer -= delta
+	if _hover_left > 0.0:
+		_hover_left -= delta
 		velocity = Vector2.ZERO  # 空中滞留,不受重力下落
-		if _teleport_flash_timer <= 0.0:
-			_anim.play("appear")  # 白闪结束才开始播 appear
+		if _teleport_left <= 0.0:
+			activity = Activity.RECOVER
 		return
-	_anim.play("run")
-	# appear 落地 → 停顿 charge_prep_time → 才冲锋
+	activity = Activity.RUN
 	if _wait_land:
-		if is_on_floor():
+		if _grounded:
 			if _left_ground:
 				_wait_land = false
 				_prep_timer = EnemyParams.BlackBird.charge_prep_time
@@ -218,8 +164,12 @@ func _tick_charge(delta: float) -> void:
 		_prep_timer -= delta
 		velocity.x = 0.0
 		return
-	if _player_overlapping or toroidal_dist_to_player() <= CONTACT_RADIUS:
-		_on_charge_hit_player()
+	var target := _charge_victim()
+	if target != null:
+		if combat_rules.resolve_hit(self, target, CombatProfiles.SMASH,
+				global_position, EnemyParams.BlackBird.charge_damage, -1.0):
+			_smash_player(target, EnemyParams.BlackBird.charge_impact, EnemyParams.BlackBird.charge_impact_up)
+		_start_back_hop()
 		return
 	_charge_timer -= delta
 	if _charge_timer <= 0.0:
@@ -227,13 +177,13 @@ func _tick_charge(delta: float) -> void:
 		return
 	var dir := toroidal_dir_to_player()
 	velocity.x = dir.x * EnemyParams.BlackBird.charge_speed
-	if is_on_wall():
+	if _hit_wall():
 		velocity.x = 0.0  # 越障跳纯上跳,不叠加水平分量
 		velocity.y = EnemyParams.BlackBird.charge_jump_velocity
 
 
 func _tick_back_hop() -> void:
-	if is_on_floor() and _back_hop_cd <= 0.0:
+	if _grounded and _back_hop_cd <= 0.0:
 		_set_state(State.WANDER)
 		_wander_timer = 0.2
 		_wander_idle_timer = 0.0
@@ -243,19 +193,15 @@ func _tick_back_hop() -> void:
 # 游走中瞬移判定:在「距玩家 3~8 格(随机)、且位于玩家相对鸟的另一侧」的环形带
 # (环面取模)搜地板格(EMPTY 且正下方非 EMPTY),且该格到玩家格 LOS 通 → 可瞬移冲锋。
 func _find_flank_cell() -> bool:
-	var p := _nearest_player() as Node2D
-	var grid := MazeGenerator.current_grid
-	if p == null or grid.is_empty():
+	var p := _nearest_player()
+	if p == null or terrain.empty():
 		return false
-	var cols := grid[0].size()
-	var rows := grid.size()
 	var ts := GameParameters.TILE_SIZE
-	var player_cell := MazeGenerator.cell_of(p.global_position, ts, cols, rows)
-	var bird_cell := MazeGenerator.cell_of(global_position, ts, cols, rows)
-	var player_px := Vector2(player_cell.x * ts + ts * 0.5, player_cell.y * ts + ts * 0.5)
-	var bird_px := Vector2(bird_cell.x * ts + ts * 0.5, bird_cell.y * ts + ts * 0.5)
+	var player_cell := terrain.cell(p.global_position)
+	var player_px := terrain.cell_center(player_cell)
+	var bird_px := terrain.cell_center(terrain.cell(global_position))
 	# 目标侧 = 玩家相对鸟的另一侧:取「玩家→鸟」偏移的主轴,落点取该轴反号
-	var off := MazeGenerator.toroidal_delta_px(player_px, bird_px, cols * ts, rows * ts)
+	var off := GridPathfinder.toroidal_delta_px(player_px, bird_px, terrain.map_size)
 	var sx := signf(off.x)  # 鸟在玩家 +x 侧 → 目标 −x 侧
 	var sy := signf(off.y)
 	var use_x := absf(off.x) >= absf(off.y)
@@ -270,10 +216,10 @@ func _find_flank_cell() -> bool:
 	var valid: Array[Vector2i] = []
 	for dy in range(-max_r, max_r + 1):
 		for dx in range(-max_r, max_r + 1):
-			var c := Vector2i(posmod(player_cell.x + dx, cols), posmod(player_cell.y + dy, rows))
+			var c := Vector2i(posmod(player_cell.x + dx, terrain.columns), posmod(player_cell.y + dy, terrain.rows))
 			# 距离与侧向都用环面最短向量,避免跨接缝失真
-			var c_px := Vector2(c.x * ts + ts * 0.5, c.y * ts + ts * 0.5)
-			var rel := MazeGenerator.toroidal_delta_px(player_px, c_px, cols * ts, rows * ts)
+			var c_px := terrain.cell_center(c)
+			var rel := GridPathfinder.toroidal_delta_px(player_px, c_px, terrain.map_size)
 			var dlen := rel.length()
 			if dlen < min_d or dlen > max_d:
 				continue
@@ -281,14 +227,14 @@ func _find_flank_cell() -> bool:
 				continue
 			if not use_x and signf(rel.y) != -sy:
 				continue
-			if not MazeGenerator.is_floor_cell(MazeGenerator.current_grid, c):
+			if terrain.value(c) != MapFormat.EMPTY or not _cell_is_solid(c + Vector2i.DOWN):
 				continue
 			# 瞬移落点上方必须有空间:碰撞箱在「下落起点」处不压到任何实心格,
 			# 否则会穿进天花板/檐下/矮洞(落点格是地板但头顶有墙)。
-			var drop_pos := Vector2(c.x * ts + ts * 0.5, c.y * ts + ts * 0.5 - EnemyParams.BlackBird.teleport_drop)
+			var drop_pos := c_px + Vector2.UP * EnemyParams.BlackBird.teleport_drop
 			if not _body_clear_at(drop_pos):
 				continue
-			if not MazeGenerator.has_line_of_sight(c, player_cell):
+			if not terrain.line_of_sight(c_px, player_px):
 				continue
 			valid.append(c)
 	if valid.is_empty():
@@ -297,10 +243,14 @@ func _find_flank_cell() -> bool:
 	return true
 
 
+# 落点净空由引擎形状重叠判定，避免在传送点压进地形。
 func _body_clear_at(pos: Vector2) -> bool:
-	var ts := GameParameters.TILE_SIZE
-	var rect := Rect2(pos + _body_min, _body_max - _body_min)
-	return not TileQuery.rect_overlaps_solid(rect, ts)
+	if _body_shape == null:
+		_body_shape = RectangleShape2D.new()
+		_body_shape.size = _body_max - _body_min
+	var center := pos + (_body_min + _body_max) * 0.5
+	var world := CollisionWorld.acquire(self)
+	return world.shape_overlaps(_body_shape, Transform2D(0.0, center), CollisionWorld.LAYER_TERRAIN).is_empty()
 
 
 func _teleport_to_flank() -> void:
@@ -308,17 +258,18 @@ func _teleport_to_flank() -> void:
 	global_position = Vector2(_flank_cell.x * ts + ts * 0.5,
 			_flank_cell.y * ts + ts * 0.5 - EnemyParams.BlackBird.teleport_drop)
 	velocity = Vector2.ZERO
-	_teleport_flash_timer = EnemyParams.BlackBird.teleport_flash_time  # 传送白闪(覆盖消散→到达),闪完播 appear
+	_teleport_left = EnemyParams.BlackBird.teleport_entry_time
+	activity = Activity.TELEPORT
 	_flank_cell = Vector2i(-1, -1)
-	_wrap()  # 锚定到玩家最近副本(环面)
-	# 传送后朝向玩家(appear 出现即面向目标;后续冲锋 _update_facing 也会跟方向)
-	_anim.flip_h = toroidal_dir_to_player().x < 0.0
+	_wrap()  # 物理保持规范坐标，只把渲染投影到玩家最近副本
+	# 传送后朝向玩家。
+	facing_left = toroidal_dir_to_player().x < 0.0
 
 
 func _player_facing() -> int:
 	var p := _nearest_player()
-	if p != null and p.has_method("get_facing"):
-		return p.get_facing()
+	if p != null:
+		return p.facing_direction
 	return 1
 
 
@@ -329,63 +280,23 @@ func _update_facing() -> void:
 		_set_facing(velocity.x < 0.0)
 
 
-# 冲锋命中玩家:穿透无敌帧打伤 + 猛推飞玩家,随后大后跳。
-func _on_charge_hit_player() -> void:
-	var p := _nearest_player()
-	if p != null and p.has_method("take_hit"):
-		p.take_hit(global_position, EnemyParams.BlackBird.charge_damage, true)
-		_apply_charge_impact(p)
-	_start_back_hop()
-
-
-# 冲锋冲击力:沿远离黑鸟的方向猛推玩家(实现收在 EnemyBase,同飞鸟)。
-func _apply_charge_impact(p: Node) -> void:
-	_smash_player(p, EnemyParams.BlackBird.charge_impact, EnemyParams.BlackBird.charge_impact_up)
-
-
 func _start_back_hop() -> void:
 	_set_state(State.BACK_HOP)
-	_anim.play("jump_backward")
+	activity = Activity.BACK_HOP
 	var away := toroidal_dir_to_player()
 	velocity = Vector2(-away.x * EnemyParams.BlackBird.back_hop_away, EnemyParams.BlackBird.back_hop_up)
 	_back_hop_cd = 0.35
 	_teleport_cooldown = EnemyParams.BlackBird.teleport_cooldown
 
 
-func _physics_process(delta: float) -> void:
-	# 瞬移白闪计时(渲染由 _flash_update 统一处理)
-	if _teleport_flash_timer > 0.0:
-		_teleport_flash_timer = maxf(_teleport_flash_timer - delta, 0.0)
-	super._physics_process(delta)
-
-
-# 黑鸟白闪走纯白剪影 shader(自定义 canvas shader 覆写 COLOR 时 modulate 不生效):
-# 受击/死亡/瞬移任一激活即纯白,否则正常渲染。
-func _flash_update() -> void:
-	if _silhouette_mat != null:
-		_silhouette_mat.set_shader_parameter("silhouette",
-				1.0 if _hit_flash_time > 0.0 or _death_timer > 0.0 or _teleport_flash_timer > 0.0 else 0.0)
+func simulate_tick(delta: float) -> void:
+	_teleport_left = maxf(_teleport_left - delta, 0.0)
+	super(delta)
 
 # 落水:朝玩家水平游(不朝岸边,保持追击感)。
 func _water_swim_dir() -> Vector2:
 	return toroidal_dir_to_player()
 
 
-# 睡眠态判定(基类 _is_far_sleeping 用)。-  显式写出来而不是靠"SLEEP 恰好是枚举第一个":
-# 加新敌人时照抄本方法 —— 详见 EnemyBase._is_asleep 的注释。
-func _is_asleep() -> bool:
-	return state == State.SLEEP
-
-
-# 状态进入 → 形变事件。enum State { SLEEP, WAKE, WANDER, TAKE_OFF, CHARGE, BACK_HOP }
-func _on_state_entered(s: int) -> void:
-	match s:
-		State.TAKE_OFF:
-			squash.impulse(SquashStretch.Impulse.TAKE_OFF)
-		State.CHARGE:
-			squash.impulse(SquashStretch.Impulse.CHARGE)
-
-## 死亡:掉 300 颗粒结晶(碎裂→飞向怀表→吸收时入账+表体颤抖)。基类虚钩覆写。
 func _on_death() -> void:
-	super()
-	GrainCrystalFx.spawn(get_parent(), global_position, TimeParams.ELITE_GRAIN_DROP)
+	combat_rules.drop_grain(global_position, TimeParams.ELITE_GRAIN_DROP)

@@ -1,68 +1,64 @@
 class_name BetaHistory
 extends RefCounted
 
-var frames: Dictionary = {}
-var cursors: Dictionary = {}
+const PLAYER := 1
+const PROJECTILES := 2
+var frames: Dictionary[int, RewindHistory] = {}
 var world: Node
 
 func _init(owner_world: Node) -> void:
 	world = owner_world
 
 func tick(delta: float) -> void:
-	for role in world.players:
-		var player: Node2D = world.players[role]
-		var src: PlayerInput = player.input_source
+	var by_owner := {}
+	for bullet: BulletBody in world.combat_rules.projectiles.values():
+		by_owner.get_or_add(bullet.shooter, []).append(bullet)
+	for role: int in world.players:
+		var player: Player = world.players[role]
+		var history: RewindHistory = frames.get(role)
 		var account: GrainAccount = world.time_economy.accounts[role]
-		var want: bool = src.rewind_held() and account.can_spend() and not player.is_downed() and world._round_state == NetEvent.RoundState.PLAYING
-		if want and not cursors.has(role) and frames.has(role):
-			cursors[role] = 0.0
+		var want := (player.step_input.held & ActorInput.BIT_REWIND) != 0 \
+				and account.can_spend() and not player.sim_downed
+		if want and history != null:
 			player.rewinding = true
-		elif not want and cursors.has(role):
-			finish(role)
-		if cursors.has(role):
-			account.spend(delta, world.time_economy.rules.rewind_burn)
-			cursors[role] += delta * lerpf(TimeParams.REWIND_START_MULT, 1.0, clampf(cursors[role] / TimeParams.REWIND_RAMP_TIME, 0.0, 1.0))
-			var history: Array = frames[role]
-			var target: float = history[-1]["tick"] - cursors[role] * 60.0
-			var frame: Dictionary = history[0]
-			for candidate: Dictionary in history:
-				if candidate["tick"] > target:
-					break
-				frame = candidate
-			var shot_serial: int = player.shot_serial
-			player.restore_state(frame["player"])
-			player.shot_serial = shot_serial
-			for bullet: BulletBase in world.live_bullets():
-				if bullet.shooter == player:
-					if frame["bullets"].has(bullet.entity_id):
-						var state: Dictionary = frame["bullets"][bullet.entity_id]
-						bullet.position = state["pos"]
-						bullet.velocity_vec = state["vel"]
-						bullet.apply_rewind_state(state["fuse"])
-						bullet.adjudicated_pos = bullet.position
+			account.spend(delta, world.time_economy.rules["rewind_burn"])
+			history.rewound = TimeParams.advance_rewind(history.rewound, delta)
+			var frame := history.sample(_target(history))
+			player.restore_state(frame[PLAYER], true)
+			for bullet: BulletBody in by_owner.get(player, []):
+				if frame[PROJECTILES].has(bullet.entity_id):
+					bullet.restore_motion(frame[PROJECTILES][bullet.entity_id])
 			continue
+		finish(role)
 		if world._snap_tick % 3 == 0:
-			var bullets := {}
-			for bullet: BulletBase in world.live_bullets():
-				if bullet.shooter == player:
-					bullets[bullet.entity_id] = {"pos": bullet.position, "vel": bullet.velocity_vec, "fuse": bullet.rewind_state()}
-			if not frames.has(role):
-				frames[role] = []
-			var history: Array = frames[role]
-			history.append({"tick": world._snap_tick, "player": player.capture_state(), "bullets": bullets})
-			while history.size() > 20 * world.time_economy.rules.rewind_buffer_seconds():
-				history.pop_front()
+			var states := {}
+			for bullet: BulletBody in by_owner.get(player, []):
+				states[bullet.entity_id] = bullet.motion_state()
+			if history == null:
+				history = RewindHistory.new()
+				frames[role] = history
+			history.push([world._snap_tick, player.capture_state(), states])
+			history.keep_last(world.time_economy.rewind_frame_limit)
+
+func _target(history: RewindHistory) -> float:
+	var latest: float = history.frame(history.size() - 1)[RewindHistory.TIME]
+	return maxf(history.frame(0)[RewindHistory.TIME], latest - history.rewound * 60.0)
 
 func finish(role: int) -> void:
-	var history: Array = frames[role]
-	var target: float = history[-1]["tick"] - cursors[role] * 60.0
-	while history.size() > 1 and history[-1]["tick"] > target:
-		history.pop_back()
-	cursors.erase(role)
-	world.players[role].rewinding = false
+	var player: Player = world.players[role]
+	if not player.rewinding:
+		return
+	var history := frames[role]
+	history.truncate(_target(history))
+	history.rewound = 0.0
+	player.rewinding = false
 	world.new_epoch(role)
 
+func discard(role: int) -> void:
+	finish(role)
+	frames.erase(role)
+
 func reset() -> void:
-	for role in cursors.keys():
+	for role: int in frames:
 		finish(role)
 	frames.clear()

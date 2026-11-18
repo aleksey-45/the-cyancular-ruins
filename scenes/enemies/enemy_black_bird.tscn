@@ -319,20 +319,17 @@ animations = [{
 "speed": 8.0
 }]
 
-[node name="EnemyBlackBird" type="CharacterBody2D" unique_id=59898956]
+[node name="EnemyBlackBird" type="Node2D" unique_id=59898956]
 scale = Vector2(2.5, 2.5)
-collision_layer = 4
-collision_mask = 7
 script = ExtResource("1_bb")
+collision_layer = 4
+collision_mask = 23
 hp = 40
 contact_damage = 0
+contact_size = Vector2(46, 36)
+contact_offset = Vector2(4, 4)
 knockback_strength = 200.0
-
-[node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="." unique_id=1365150420]
-texture_filter = 1
 sprite_frames = SubResource("SpriteFrames_a04ey")
-animation = &"run"
-frame_progress = 0.12144421
 
 [node name="CollisionPolygon2D" type="CollisionPolygon2D" parent="." unique_id=1634011558]
 polygon = PackedVector2Array(8.5, -16.5, -21, 12.5, -21, 15.5, -7, 20.5, 12, 20.5, 13, 4, 20.5, -9, 20.8, -16.4)

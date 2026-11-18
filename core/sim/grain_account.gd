@@ -15,35 +15,38 @@ extends RefCounted
 #   - 恢复：以固定速率恢复，优先偿还透支额度，还清透支后解除锁定并恢复短期额度。
 #   - 吸收结晶：结晶吸收增加总余额（不超过上限）。
 
-signal balance_changed(balance: float)
-signal window_changed(short_used: float, loan_used: float)
-signal loan_depth_changed(depth: float)
 signal loan_locked
-signal loan_unlocked
 
-# ── 参数配置（单人模式使用 TimeParams 默认值；多人对战可通过参数自定义）──
-var initial := TimeParams.GRAIN_INITIAL
-var cap := TimeParams.GRAIN_CAP
-var window := TimeParams.SHORT_WINDOW
-var regen_rate := TimeParams.SHORT_REGEN
-var loan_max := TimeParams.LOAN_LIMIT
+enum { BALANCE, SHORT_USED, LOAN_USED, LOCKED }
 
-var balance: float = TimeParams.GRAIN_INITIAL
+var cap: float
+var window: float
+var regen_rate: float
+var loan_max: float
+
+var balance: float
 var short_used: float = 0.0
 var loan_used: float = 0.0
 var locked := false
 
 
-func _init(initial_ := TimeParams.GRAIN_INITIAL, cap_ := TimeParams.GRAIN_CAP,
+func _init(initial: float = TimeParams.GRAIN_INITIAL, cap_: float = TimeParams.GRAIN_CAP,
 		window_ := TimeParams.SHORT_WINDOW, regen_ := TimeParams.SHORT_REGEN,
 		loan_max_ := TimeParams.LOAN_LIMIT) -> void:
-	initial = initial_
 	cap = cap_
 	window = window_
 	regen_rate = regen_
 	loan_max = loan_max_
 	balance = clampf(initial, 0.0, cap)
 
+func capture_state() -> Array:
+	return [balance, short_used, loan_used, locked]
+
+func restore_state(values: Array) -> void:
+	balance = values[BALANCE]
+	short_used = values[SHORT_USED]
+	loan_used = values[LOAN_USED]
+	locked = values[LOCKED]
 
 func can_spend() -> bool:
 	return not locked and balance > 0.0
@@ -69,12 +72,8 @@ func spend(delta: float, rate: float) -> float:
 		loan_used += over
 		if loan_used >= loan_max:
 			loan_used = loan_max
-			_emit_window()
-			if not locked:
-				locked = true
-				loan_locked.emit()
-	_emit_window()
-	balance_changed.emit(balance)
+			locked = true
+			loan_locked.emit()
 	return got
 
 
@@ -91,14 +90,8 @@ func regen(delta: float) -> void:
 			loan_used = 0.0
 	if pay > 0.0:
 		short_used = maxf(short_used - pay, 0.0)
-	var was_locked := locked
 	if locked and loan_used <= 0.0:
 		locked = false
-		_emit_window()
-		loan_unlocked.emit()
-		was_locked = false
-	if not is_equal_approx(pay, 0.0) or was_locked:
-		_emit_window()
 
 
 ## 结晶入账(乌鸫击杀 300 等):只进总余额,夹上限。返回实际入账量。
@@ -108,10 +101,4 @@ func deposit(amount: int) -> int:
 	var room: int = int(cap) - int(ceil(balance))
 	var got: int = mini(amount, maxi(room, 0))
 	balance += got
-	balance_changed.emit(balance)
 	return got
-
-
-func _emit_window() -> void:
-	window_changed.emit(short_used, loan_used)
-	loan_depth_changed.emit(loan_depth())

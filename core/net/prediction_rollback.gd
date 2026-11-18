@@ -1,124 +1,419 @@
 class_name PredictionRollback
 extends RefCounted
+
+signal step_advanced(from: Vector2, presentation: Array)
+
 const KEEP := 64
 const MAX_REPLAY := 32
 const MARGIN := 2.0
-var history: Array = []
-var epoch := 1
+
+enum Correction { KEEP, SMOOTH, SNAP }
+
+var tick := 0
 var sequence := 0
-var sent: Array = []
+var history: Array = []
 var actions: Array = []
+var time_economy: TimeEconomy
+var combat: CombatSimulator
+var replay_ticks := 0
+
+var _states: Array[PredictionFrame] = []
 var _clock := 0.0
-var _sim_tick := 0
 var _lead := MARGIN
 var _rate := 1.0
 var _timing_seq := 0
-var _clock_correction_seq := 0
 var _discarded_through := 0
-var _input := InputBuffer.new()
-var _player: CharacterBody2D
+var _player: Player
+var _authority_frame: Dictionary
+var _hits: Dictionary[int, Array] = {}
+var _shots: Dictionary[int, Dictionary] = {}
+var _projectile_ends: Dictionary[int, Dictionary] = {}
+var _replay_tick := 0
+var _late_shot := false
 
-func bind(player: CharacterBody2D) -> void:
+func _init() -> void:
+	_states.resize(KEEP)
+
+func bind(player: Player, simulator: CombatSimulator) -> void:
 	_player = player
+	combat = simulator
+	combat.players[_player.role] = _player
+	if not combat.blast_target_query.is_valid():
+		combat.blast_target_query = CombatSimulator.roster_blast_targets.bind(combat.players)
+	combat.predicting = true
+	_player.projectile_count = combat.count_projectiles.bind(_player)
 
-func reset(new_epoch: int, ack: int, tick: int, ping_ms: int) -> void:
-	epoch = new_epoch
-	sequence = ack
-	sent.clear()
+func reset(frame: Dictionary, ping_ms: int, keep_events := false) -> void:
+	var own: Dictionary = frame["world"]["players"][_player.role]
+	sequence = own["input"][InputBuffer.SEQ]
 	history.clear()
 	actions.clear()
-	_input.reset(epoch)
-	_clock = tick + ceilf(ping_ms * 0.06) + MARGIN
-	_sim_tick = tick
+	if not keep_events:
+		_hits.clear()
+		_shots.clear()
+		_projectile_ends.clear()
+		_states.fill(null)
+	_anchor(frame, ping_ms)
+
+func _anchor(frame: Dictionary, ping_ms: int) -> void:
+	_authority_frame = frame
+	_clock = frame["tick"] + minf(ceilf(ping_ms * 0.06) + MARGIN, MAX_REPLAY)
 	_lead = MARGIN
 	_rate = 1.0
-	_timing_seq = 0
-	_clock_correction_seq = 0
+	_timing_seq = frame["own"]["timing_seq"]
 	_discarded_through = 0
+	_restore(_projectiles_at(frame, _state_at(frame["tick"])))
 
-func capture(source: PlayerInput, aim: Vector2, view_tick: int, weapon_inst: int) -> void:
-	actions = actions.filter(func(action: Dictionary) -> bool:
-		return _clock - action["target_tick"] <= InputBuffer.FUTURE_TICKS + InputBuffer.ACTION_TICKS)
+func capture(record: Array) -> void:
+	actions = actions.filter(func(action: Array) -> bool:
+		return sequence - action[InputBuffer.SEQ] <= InputBuffer.FUTURE_TICKS + InputBuffer.ACTION_TICKS)
 	sequence += 1
-	var record := PacketInputSource.pack_record(source, sequence, aim)
-	record["epoch"] = epoch
-	record["target_tick"] = int(_clock) + 1
-	record["view_tick"] = view_tick
-	record["winst"] = weapon_inst
-	if record["pressed"] != 0 or record["released"] != 0 or weapon_inst != 0:
-		var action := record.duplicate()
-		if weapon_inst == 0 and (record["pressed"] | record["released"]) & (PacketInputSource.BIT_ATTACK | PacketInputSource.BIT_RELOAD | PacketInputSource.BIT_DROP):
-			action["winst"] = _player.weapons.current_inst()
-		action.erase("ax")
-		action.erase("held")
-		actions.append(action)
-	for key in ["pressed", "released", "winst"]:
-		record.erase(key)
-	sent.append(record)
-	if sent.size() > InputBuffer.REDUNDANCY:
-		sent.pop_front()
-	history.append(record)
+	var epoch := _player.input_buffer.epoch
+	var target := mini(int(_clock) + 1, _authority_frame["tick"] + MAX_REPLAY)
+	var pressed: int = record[ActorInput.PRESSED]
+	var released: int = record[ActorInput.RELEASED]
+	var weapon_inst: int = record[ActorInput.WINST]
+	var aim: Vector2 = record[ActorInput.AIM]
+	if pressed != 0 or released != 0 or weapon_inst != 0:
+		if weapon_inst == 0 and (pressed | released) & (ActorInput.BIT_ATTACK | ActorInput.BIT_RELOAD | ActorInput.BIT_DROP):
+			weapon_inst = _player.weapons.current_inst()
+		actions.append([sequence, epoch, target, pressed, released, weapon_inst, aim])
+	history.append([sequence, epoch, target, record[ActorInput.AX], record[ActorInput.HELD], aim])
 	if history.size() > KEEP:
-		_discarded_through = history.pop_front()["seq"]
-	_input.push(packet(), _sim_tick)
+		_discarded_through = history.pop_front()[InputBuffer.SEQ]
 
-func packet() -> Dictionary:
-	return {"frames": sent, "actions": actions}
+func packet() -> Array:
+	return [history.slice(-InputBuffer.REDUNDANCY), actions]
 
-func advance(delta: float) -> void:
-	_clock += delta * 60.0 * _rate
-	while _sim_tick < int(_clock):
-		_sim_tick += 1
-		var record := _input.take(_sim_tick)
-		if not _player.rewinding:
-			_player.begin_visual_step()
-			_player.execute_actions(ActorStep.step(_player, record))
+func render_offset(interpolation: float) -> float:
+	return _clock - _rate * (1.0 - interpolation) - tick
 
-func reconcile(own: Dictionary, tick: int, ping_ms: int) -> bool:
-	var changed: bool = own["epoch"] != epoch
-	if changed:
-		reset(own["epoch"], own["ack"], tick, ping_ms)
-	var desired := tick + ceilf(ping_ms * 0.06) + MARGIN
-	if absf(_clock - desired) > MAX_REPLAY:
-		_clock = desired
-		history.clear()
-		sent.clear()
-		actions.clear()
-		_clock_correction_seq = sequence
-	if own["timing_seq"] > _timing_seq and own["timing_seq"] > _clock_correction_seq:
-		_timing_seq = own["timing_seq"]
-		if absf(own["lead"] - MARGIN) > InputBuffer.ACTION_TICKS:
-			var offset: int = int(MARGIN) - own["lead"]
-			_clock += offset
-			for record: Dictionary in history:
-				record["target_tick"] += offset
-			for action: Dictionary in actions:
-				action["target_tick"] += offset
-			_clock_correction_seq = sequence
-			_lead = MARGIN
-		else:
-			_lead = lerpf(_lead, own["lead"], 0.1)
+func advance(delta: float, input: Array) -> void:
+	var previous_tick := tick
+	var limit: int = _authority_frame["tick"] + MAX_REPLAY
+	_clock = minf(_clock + delta * 60.0 * _rate, limit)
+	if _player.rewinding:
+		return
+	if tick < int(_clock):
+		_player.input_buffer.push(input, tick)
+	while tick < int(_clock):
+		var from := _player.global_position
+		step_advanced.emit(from, _step(true))
+	if tick == previous_tick and _clock >= limit:
+		step_advanced.emit(_player.global_position, [])
+
+func reconcile(frame: Dictionary, ping_ms: int) -> Correction:
+	if frame.is_empty():
+		if _replay_tick == 0 or _player.rewinding \
+				or _authority_frame["world"]["players"][_player.role]["input"][InputBuffer.SEQ] < _discarded_through:
+			return Correction.KEEP
+		return _replay(_replay_tick, "combat", _projectiles_at(_authority_frame, _state_at(_authority_frame["tick"])))
+	var players: Dictionary = frame["world"]["players"]
+	var own: Dictionary = players[_player.role]
+	var at: int = frame["tick"]
+	replay_ticks = 0
+	for hit_tick: int in _hits.keys():
+		if hit_tick <= at:
+			_hits.erase(hit_tick)
+	if own["epoch"] != _player.input_buffer.epoch:
+		reset(frame, ping_ms, true)
+		return Correction.SNAP
+	var input: Array = own["input"]
+	var input_seq: int = input[InputBuffer.SEQ]
+	var action_ack: int = own["action_ack"]
+	var fresh_anchor: bool = at > tick or tick - at >= KEEP or input_seq < _discarded_through
+	history = history.filter(func(record: Array) -> bool: return record[InputBuffer.SEQ] > input_seq)
+	actions = actions.filter(func(action: Array) -> bool:
+		return action[InputBuffer.SEQ] > action_ack and at - action[InputBuffer.TARGET_TICK] < InputBuffer.ACTION_TICKS)
+	var saved := _state_at(at)
+	if fresh_anchor or saved == null or own["rewind"] or _player.rewinding:
+		_anchor(frame, ping_ms)
+		return Correction.SNAP
+	var timing: Dictionary = frame["own"]
+	if timing["timing_seq"] > _timing_seq:
+		_timing_seq = timing["timing_seq"]
+		_lead = lerpf(_lead, timing["lead"], 0.1)
 		_rate = 1.02 if _lead < MARGIN - 1.0 else 0.96 if _lead > MARGIN + 1.0 else 1.0
-	history = history.filter(func(record: Dictionary) -> bool: return record["seq"] > own["ack"])
-	sent = sent.filter(func(record: Dictionary) -> bool: return record["seq"] > own["ack"])
-	actions = actions.filter(func(action: Dictionary) -> bool:
-		return action["seq"] > own["action_ack"] and tick - action["target_tick"] <= InputBuffer.ACTION_TICKS)
-	var previous := _player.global_position
-	_player.restore_state(own["state"])
-	_player.rebase_visual_step(previous)
-	_input.reset(epoch)
-	_input.ack = own["ack"]
-	_input.action_ack = own["action_ack"]
-	_input.seed(own["input"])
-	_input.push({"frames": history, "actions": actions}, tick)
-	_sim_tick = tick
-	if own["ack"] < _discarded_through or int(_clock) - tick > MAX_REPLAY or own["rewind"]:
-		history.clear()
-		_sim_tick = int(_clock)
-	else:
-		while _sim_tick < int(_clock):
-			_sim_tick += 1
-			_player.begin_visual_step()
-			ActorStep.step(_player, _input.take(_sim_tick))
-	_discarded_through = 0
-	return changed or own["rewind"]
+	var forecast_extended: bool = at > _authority_frame["tick"] and tick > at \
+			and tick > _authority_frame["tick"] + SnapshotBuffer.MAX_EXTRAPOLATION
+	_authority_frame = frame
+	var predicted: Dictionary = saved.players[_player.role]
+	var map_size := _player.terrain.map_size
+	var difference := PredictionFrame.difference(predicted["state"], own["state"], map_size)
+	if difference.is_empty() and (predicted["input"] != input or predicted["action_ack"] != action_ack):
+		difference = "input"
+	if difference.is_empty() and time_economy != null and saved.accounts[_player.role] != frame["time"][_player.role]:
+		difference = "economy"
+	if difference.is_empty() and (saved.accounts != frame["time"] or (players.size() > 1 and forecast_extended)
+			or _players_differ(saved.players, players, map_size)):
+		difference = "players"
+	var projectiles := _projectiles_at(frame, saved)
+	if difference.is_empty() and (_late_shot or saved.projectiles != projectiles):
+		difference = "projectiles"
+	if difference.is_empty() and _replay_tick <= at:
+		_replay_tick = 0
+		_retire_combat_events()
+		return Correction.KEEP
+	return _replay(at, "combat" if difference.is_empty() else difference, projectiles)
+
+static func _players_differ(saved: Dictionary, players: Dictionary, map_size: Vector2) -> bool:
+	if saved.size() != players.size():
+		return true
+	for role: int in players:
+		if not saved.has(role):
+			return true
+		var predicted: Dictionary = saved[role]
+		var authority: Dictionary = players[role]
+		if predicted == authority:
+			continue
+		for field: String in authority:
+			if field != "state" and predicted[field] != authority[field]:
+				return true
+		if not PredictionFrame.difference(predicted["state"], authority["state"], map_size, true).is_empty():
+			return true
+	return false
+
+func queue_shot(event: Dictionary) -> PackedVector2Array:
+	var shot := event.duplicate()
+	var spec := WeaponRegistry.definition(shot["type_id"])
+	# 可靠事件按顺序处理，光束应读取同批次中在它之前的地形补丁。
+	if spec["attack"] == WeaponRegistry.Attack.BEAM:
+		combat.terrain.flush_collisions()
+	ShotRules.prepare(combat.terrain, shot, spec)
+	var at: int = shot["tick"]
+	var id := ShotRules.shot_id(shot["role"], shot["serial"])
+	_shots[id] = shot
+	if at <= tick:
+		var saved := _state_at(at)
+		if saved == null or saved.shots.get(id) != shot:
+			_late_shot = true
+			_request_replay(maxi(at, _authority_frame["tick"]))
+	return shot["vectors"]
+
+func queue_projectile_end(id: int, at: int, blast := {}) -> void:
+	if at < projectile_end_tick(id):
+		return
+	_projectile_ends[id] = {"tick": at, "blast": blast}
+	if at <= tick:
+		var check_tick := maxi(at, _authority_frame["tick"])
+		var saved := _state_at(check_tick)
+		var remaining := blast if int(blast.get("due", 0)) > check_tick else {}
+		var state: Variant = saved.projectiles.get(id, {}) if saved != null else {}
+		if saved == null or state is Array or state != remaining:
+			_request_replay(check_tick)
+
+func projectile_end_tick(id: int) -> int:
+	return _projectile_ends[id]["tick"] if _projectile_ends.has(id) else -1
+
+func queue_hit(hit: Dictionary) -> void:
+	var at: int = hit["tick"]
+	var victim: Player = combat.players.get(hit["victim"])
+	if at <= _authority_frame["tick"] or victim == null or hit["epoch"] < victim.input_buffer.epoch:
+		return
+	_hits.get_or_add(at, []).append(hit)
+	if at <= tick and hit["epoch"] == victim.input_buffer.epoch:
+		_request_replay(at)
+
+func _request_replay(at: int) -> void:
+	_replay_tick = maxi(_replay_tick, at)
+
+func _replay(at: int, reason: String, projectiles: Dictionary) -> Correction:
+	var started := PerformanceStats.begin()
+	var before := _state_at(at) if PerformanceStats.is_enabled() else null
+	var end := tick
+	var endpoint := _state_at(end)
+	_restore(projectiles)
+	while tick < end:
+		_step()
+		replay_ticks += 1
+	var role := _player.role
+	var world_only := reason in ["combat", "projectiles", "players"]
+	var corrected: bool = not world_only or endpoint == null \
+			or endpoint.players[role]["state"] != _state_at(end).players[role]["state"]
+	if corrected and before != null:
+		_record_correction(at, before.players[role]["state"]["actor"], _state_at(at).players[role]["state"]["actor"], reason)
+	PerformanceStats.replayed(replay_ticks)
+	PerformanceStats.end(PerformanceStats.REPLAY, started)
+	return Correction.SMOOTH if corrected else Correction.KEEP
+
+func _restore(projectiles: Dictionary) -> void:
+	tick = _authority_frame["tick"]
+	_replay_tick = 0
+	replay_ticks = 0
+	var world: Dictionary = _authority_frame["world"]
+	for role: int in world["players"]:
+		combat.players[role].restore_network_state(world["players"][role])
+		if time_economy != null:
+			time_economy.restore_account(role, _authority_frame["time"][role])
+	_player.input_buffer.push([history, actions], tick)
+	combat.restore_prediction_projectiles(projectiles)
+	_retire_combat_events()
+	for shot: Dictionary in _shots.values():
+		if tick - KEEP < shot["tick"] and shot["tick"] <= tick:
+			combat.catch_up_shot(shot, world["projectiles"], tick)
+	_late_shot = false
+	_states.fill(null)
+	_remember()
+
+func _projectiles_at(frame: Dictionary, saved: PredictionFrame) -> Dictionary:
+	var states := {}
+	var live: Dictionary = frame["world"]["projectiles"]
+	if saved != null:
+		for id: int in saved.projectiles:
+			var state: Variant = saved.projectiles[id]
+			if state is Dictionary:
+				var owner: Dictionary = frame["world"]["players"].get(id >> 48, {})
+				if not live.has(id) and not owner.is_empty() \
+						and ((id >> 8) & 0xffffffff) <= owner["state"]["actor"][PlayerStateSchema.SHOT_SERIAL]:
+					states[id] = state
+			elif live.has(id) and live[id]["type_id"] == state[BulletBody.SNAP_TYPE] and not _shooter_rewinding(frame, id >> 48):
+				var sample: Dictionary = live[id]
+				states[id] = BulletBody.with_authoritative_pose(state, sample["pos"], sample["vel"])
+	for id: int in _projectile_ends:
+		var end := _projectile_ends[id]
+		if end["tick"] <= frame["tick"]:
+			var blast: Dictionary = end["blast"]
+			if int(blast.get("due", 0)) > frame["tick"]:
+				states[id] = blast
+			else:
+				states.erase(id)
+	return states
+
+func _retire_combat_events() -> void:
+	var at: int = _authority_frame["tick"]
+	var live_shots := {}
+	for id: int in _authority_frame["world"]["projectiles"]:
+		live_shots[id & ~0xff] = true
+	for id: int in _shots.keys():
+		if _shots[id]["tick"] <= at and (not live_shots.has(id) or _shooter_rewinding(_authority_frame, id >> 48)):
+			_shots.erase(id)
+	for id: int in _projectile_ends.keys():
+		if _projectile_ends[id]["tick"] <= at:
+			_projectile_ends.erase(id)
+
+func _shooter_rewinding(frame: Dictionary, role: int) -> bool:
+	return frame["world"]["players"].get(role, {}).get("rewind", false)
+
+func _step(present := false) -> Array:
+	tick += 1
+	var inside_forecast: bool = tick <= _authority_frame["tick"] + SnapshotBuffer.MAX_EXTRAPOLATION
+	var stepped := ActorStep.step_players(combat.players, tick, time_economy, _player, inside_forecast)
+	if time_economy != null:
+		time_economy.tick(ActorStep.DT)
+	var presentation := _player.presentation_events
+	var shots := _step_combat(stepped, presentation if present else null)
+	_apply_hits(_hits.get(tick, []))
+	for player: Player in combat.players.values():
+		# 复活在移动与命中之后结算，下一 tick 才不再查询旧位置。
+		if player != _player and player.respawn_tick == tick:
+			player.collision_layer = 0
+			player._apply_layers()
+	_remember(shots)
+	return presentation
+
+func _step_combat(stepped: Array, presentation: Variant) -> Dictionary:
+	var shots := {}
+	for player: Player in stepped:
+		for action: Dictionary in player.combat_requests:
+			if action["kind"] == "fire":
+				var id := ShotRules.shot_id(player.role, action["serial"])
+				if not _shots.has(id):
+					shots[id] = action
+	for id: int in _shots:
+		if _shots[id]["tick"] == tick:
+			shots[id] = _shots[id]
+	combat.tick = tick
+	combat.predicted_hits.clear()
+	var ids := shots.keys()
+	ids.sort()
+	for id: int in ids:
+		var shot: Dictionary = shots[id]
+		var shooter: Player = combat.players.get(id >> 48)
+		if shooter != null:
+			# 可靠出手也可能先于远端输入进入重放，占用同一个射击序号。
+			shooter.shot_serial = maxi(shooter.shot_serial, shot["serial"])
+			shots[id] = combat.fire(shooter, shot)
+			if (presentation != null and shooter == _player
+					and WeaponRegistry.definition(shot["type_id"])["attack"] == WeaponRegistry.Attack.BEAM):
+				presentation.append({"kind": "beam", "id": id, "points": shots[id]["vectors"]})
+	combat.apply_projectile_ends(_projectile_ends)
+	combat.step_projectiles(ActorStep.DT)
+	combat.settle_blasts()
+	return shots
+
+func _apply_hits(hits: Array) -> void:
+	var confirmed := {}
+	for hit: Dictionary in hits:
+		var role: int = hit["victim"]
+		var victim: Player = combat.players.get(role)
+		if victim == null or hit["epoch"] != victim.input_buffer.epoch:
+			continue
+		confirmed[role] = true
+		if victim != _player:
+			victim.global_position = hit["pos"]
+			victim.facing_direction = hit["facing"]
+			victim.rewinding = false
+		if victim != _player or hit["impulse_mode"] < 0:
+			victim.velocity = hit["vel"]
+		if victim != _player or hit["impulse_mode"] > 0:
+			victim.motion_knock_velocity = hit["knock"]
+		if not victim.apply_hit_health(hit["hp"]) and victim != _player:
+			victim.sync_collision_geometry()
+	for hit: Array in combat.predicted_hits:
+		var target: ActorBody = hit[0]
+		if confirmed.has(target.role):
+			continue
+		target.apply_impulse(hit[1], hit[2])
+		target.cancel_charge()
+
+func _remember(shots := {}) -> void:
+	var started := PerformanceStats.begin()
+	var saved := PredictionFrame.new()
+	saved.tick = tick
+	for role: int in combat.players:
+		var player: Player = combat.players[role]
+		saved.players[role] = player.capture_network_state()
+	if time_economy != null:
+		saved.accounts = time_economy.state_payload()
+	saved.projectiles = combat.capture_projectiles(true)
+	saved.shots = shots
+	_states[tick % KEEP] = saved
+	PerformanceStats.end(PerformanceStats.HISTORY_SAVE, started)
+
+func _state_at(at: int) -> PredictionFrame:
+	var saved := _states[at % KEEP]
+	return saved if saved != null and saved.tick == at else null
+
+static var corr_n := 0
+static var corr_sum := 0.0
+static var corr_max := 0.0
+static var corr_list: Array[Dictionary] = []
+static var corr_reasons := {}
+
+static func reset_correction_stats() -> void:
+	corr_n = 0
+	corr_sum = 0.0
+	corr_max = 0.0
+	corr_list.clear()
+	corr_reasons.clear()
+
+static func take_correction_samples() -> Array:
+	var samples := corr_list
+	corr_list = []
+	return samples
+
+static func corr_stats() -> Dictionary:
+	return {"n": corr_n, "sum": corr_sum, "max": corr_max, "reasons": corr_reasons.duplicate()}
+
+func _record_correction(at: int, predicted: Array, authoritative: Array, field: String) -> void:
+	var pos := PlayerStateSchema.POS
+	var before: Vector2 = predicted[pos]
+	var after: Vector2 = authoritative[pos]
+	var distance := GridPathfinder.toroidal_delta_px(before, after, _player.terrain.map_size).length()
+	corr_n += 1
+	corr_sum += distance
+	corr_max = maxf(corr_max, distance)
+	var entry: Array = corr_reasons.get(field, [0, 0.0])
+	corr_reasons[field] = [entry[0] + 1, entry[1] + distance]
+	corr_list.append({"t": at, "sim": tick, "f": field, "d": distance,
+			"role": _player.role, "ms": Time.get_ticks_msec(), "pf": Engine.get_physics_frames()})

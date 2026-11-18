@@ -153,19 +153,17 @@ animations = [{
 "speed": 8.0
 }]
 
-[node name="EnemyJumpBird" type="CharacterBody2D" unique_id=1399832467]
+[node name="EnemyJumpBird" type="Node2D" unique_id=1399832467]
 scale = Vector2(2.5, 2.5)
-collision_layer = 4
-collision_mask = 7
 script = ExtResource("1_ej")
+collision_layer = 4
+collision_mask = 23
 hp = 30
 contact_damage = 4
+contact_size = Vector2(44, 36)
+contact_offset = Vector2(0, 4.5)
 knockback_strength = 200.0
-
-[node name="AnimatedSprite2D" type="AnimatedSprite2D" parent="." unique_id=1953313436]
-texture_filter = 1
 sprite_frames = SubResource("SpriteFrames_688rj")
-animation = &"sleeping"
 
 [node name="CollisionPolygon2D" type="CollisionPolygon2D" parent="." unique_id=740945204]
 visible = false

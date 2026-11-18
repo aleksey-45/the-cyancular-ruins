@@ -7,8 +7,11 @@ extends RefCounted
 # 音量走 Settings 的 SFX 总线(没有该总线时回落 Master)。
 
 const RATE := 22050
+const ACTION_SOUNDS := {"reload_started": "reload", "reload_finished": "switch",
+		"equipped": "switch", "pickup_denied": "deny"}
 
 static var _cache: Dictionary = {}
+static var _rng := RandomNumberGenerator.new()
 
 # 轻微随机音高的音效(开枪类,避免每次一模一样的机械感)
 const PITCH_VARIATION := ["shoot", "shoot_heavy", "shotgun", "hit"]
@@ -31,7 +34,7 @@ static func play(kind: String, pitch: float = 1.0, volume_db: float = 0.0) -> vo
 	p.bus = "SFX" if AudioServer.get_bus_index("SFX") >= 0 else "Master"
 	p.process_mode = Node.PROCESS_MODE_ALWAYS   # 单机暂停树时 UI 音效仍可播
 	p.volume_db = volume_db
-	p.pitch_scale = pitch * pitch_mult * (randf_range(0.94, 1.06) if kind in PITCH_VARIATION else 1.0)
+	p.pitch_scale = pitch * pitch_mult * (_rng.randf_range(0.94, 1.06) if kind in PITCH_VARIATION else 1.0)
 	# 游戏启动链(_ready 里 equip→switch 音)树正在建子节点,直接 add_child 会被拒:
 	# 延迟到帧末加入场景树,再依序延迟播放(保证此时已进树)。
 	tree.root.add_child.call_deferred(p)
@@ -58,22 +61,30 @@ static func _stream(kind: String) -> AudioStreamWAV:
 	return w
 
 
-# ── 音效定义:每 kind 一段逐样本合成 ──
 static func _build(kind: String) -> PackedFloat32Array:
 	match kind:
 		"shoot":        return _sweep_square(900.0, 240.0, 0.09, 0.5, 0.10)
 		"shoot_heavy":  return _sweep_square(240.0, 45.0, 0.30, 0.3, 0.10)
 		"shotgun":      return _noise_burst(0.20, 1400.0, 0.6, 0.35)
+		"bow":          return _sweep_square(520.0, 140.0, 0.11, 0.25, 0.02)
 		"hit":          return _sweep_square(210.0, 70.0, 0.07, 0.5, 0.12)
 		"hurt":         return _sweep_square(430.0, 110.0, 0.18, 0.4, 0.10)
 		"explosion":    return _noise_burst(0.55, 900.0, 1.0, 0.12)
 		"kill":         return _arp([620.0, 440.0, 300.0], 0.07, 0.5)
 		"switch":       return _arp([500.0, 820.0], 0.05, 0.5)
 		"deny":         return _sweep_square(150.0, 110.0, 0.12, 0.25, 0.0)
+		"heartbeat":    return _heartbeat()
 		"reload":       return _arp([180.0, 320.0], 0.06, 0.4)   # 换弹:两段机械咔哒
 		"ui":           return _arp([700.0, 1050.0], 0.04, 0.5)
 	push_warning("Sfx: 未知音效 \"%s\"" % kind)
 	return PackedFloat32Array()
+
+
+# 心跳:两记低频闷响，第二记略弱，整体留短间隔。
+static func _heartbeat() -> PackedFloat32Array:
+	var out := _sweep_square(96.0, 52.0, 0.12, 0.5, 0.0)
+	out.append_array(_sweep_square(82.0, 44.0, 0.10, 0.5, 0.0))
+	return out
 
 
 # 方波滑音:freq0→freq1 指数过渡,duty 占空比,noise_mix 开头混入的噪声比例。
@@ -90,7 +101,7 @@ static func _sweep_square(freq0: float, freq1: float, dur: float, duty: float,
 		phase = fmod(phase + freq / RATE, 1.0)
 		var square := (1.0 if phase < duty else -1.0) * (1.0 - t) * (1.0 - t)
 		if noise_mix > 0.0 and t < 0.25:
-			noise_state = lerp(noise_state, randf_range(-1.0, 1.0), 0.6)
+			noise_state = lerp(noise_state, _rng.randf_range(-1.0, 1.0), 0.6)
 			square = lerp(square, noise_state, noise_mix * (1.0 - t * 4.0))
 		out[i] = square * 0.7
 	return out
@@ -105,7 +116,7 @@ static func _noise_burst(dur: float, lp: float, amp0: float, decay: float) -> Pa
 	var state := 0.0
 	for i in n:
 		var t := float(i) / float(n)
-		state = lerp(state, randf_range(-1.0, 1.0), clampf(lp * (1.0 - t * 0.7), 0.05, 1.0))
+		state = lerp(state, _rng.randf_range(-1.0, 1.0), clampf(lp * (1.0 - t * 0.7), 0.05, 1.0))
 		out[i] = state * amp0 * exp(-decay * t * 6.0)
 	return out
 

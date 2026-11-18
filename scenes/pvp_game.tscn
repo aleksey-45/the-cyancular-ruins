@@ -1,6 +1,7 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=3 format=3]
 
 [ext_resource type="Script" path="res://scenes/pvp_match_client.gd" id="1"]
+[ext_resource type="PackedScene" path="res://scenes/level_0.tscn" id="2"]
 
-[node name="PvpGame" type="Node2D"]
+[node name="PvpGame" instance=ExtResource("2")]
 script = ExtResource("1")

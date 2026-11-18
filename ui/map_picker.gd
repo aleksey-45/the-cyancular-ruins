@@ -20,7 +20,7 @@ var _box_on: StyleBoxFlat
 
 # 初始化地图选择卡片网格
 func setup(initial: String = "", columns := 2, max_h := 320.0,
-		title := "地　图(点选;缩略图 = 开局地形简略图)") -> void:
+		title := "地图(点选;缩略图 = 开局地形简略图)") -> void:
 	add_theme_constant_override("separation", 8)
 	add_child(UiFactory.header_strip(title, 32))
 
@@ -38,27 +38,24 @@ func setup(initial: String = "", columns := 2, max_h := 320.0,
 	_box_off = _style_off()
 	_box_on = _style_on()
 
-	_add_card("", "随　机", "进图时从目录中现挑一份", MapCatalog.random_texture())
-	var maps := MapCatalog.list_maps()
-	var names: Array[String] = []
-	for m in maps:
-		names.append(str(m["path"]))
+	_add_card("", "随机", "进图时从目录中现挑一份", MapCatalog.random_texture())
+	for m in MapCatalog.list_maps():
 		var size: Vector2i = m["size"]
-		var sub := "%d×%d 格" % [size.x, size.y]
-		sub += "· 双出生点" if bool(m["pvp"]) else "· 单人图(联机出生点自动分配)"
+		var counts: Vector2i = m["spawn_counts"]
+		var sub := "%d×%d 格 · 出生点 A %d / B %d" % [size.x, size.y, counts.x, counts.y]
 		if bool(m["external"]):
-			sub += "· 外置"
-		_add_card(str(m["path"]), str(m["name"]), sub, MapCatalog.texture(str(m["path"])))
+			sub += " · 外置"
+		_add_card(str(m["path"]), str(m["name"]), sub, m["texture"])
+		_cards[m["path"]].tooltip_text = "蓝色为单人出生点，绿色为 A 侧出生点，橙色为 B 侧出生点"
 
-	if initial != "" and names.has(initial):
-		select_path(initial, false)
-	else:
-		select_path("", false)
+	if not _cards.has(initial):
+		_add_card(initial, initial.get_file(), "地图不可用", null)
+	select_path(initial, false)
 
 
 # 选中指定地图路径
 func select_path(path: String, from_click := true) -> void:
-	if not _cards.has(path) or path == selected:
+	if not _cards.has(path) or (path == selected and from_click):
 		return
 	var prev: PanelContainer = _cards.get(selected)
 	if prev != null:
@@ -71,7 +68,6 @@ func select_path(path: String, from_click := true) -> void:
 		picked.emit(path)
 
 
-# ── 内部方法 ──
 
 func _add_card(path: String, title: String, sub: String, tex: Texture2D) -> void:
 	var card := PanelContainer.new()

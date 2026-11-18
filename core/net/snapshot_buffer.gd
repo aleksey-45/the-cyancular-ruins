@@ -4,8 +4,13 @@ extends RefCounted
 const DELAY_TICKS := 6.0
 const MAX_EXTRAPOLATION := 6.0
 const KEEP := 32
+const KNOCK_DECAY := exp(-PlayerParams.player_knock_decay_rate * ActorStep.DT)
 var map_px := Vector2.ZERO
 var frames: Array = []
+var latest_tick: int:
+	get: return frames[-1]["tick"] if not frames.is_empty() else -1
+var latest_players: Dictionary:
+	get: return frames[-1]["world"]["players"] if not frames.is_empty() else {}
 var render_tick := 0.0
 var _drift := 0.0
 var _rate := 1.0
@@ -17,8 +22,9 @@ func reset() -> void:
 
 
 func push(tick: int, world: Dictionary) -> void:
-	if not frames.is_empty() and tick <= frames[-1]["tick"]:
+	if tick <= latest_tick:
 		return
+	# 记录在解码后只读，缓冲与解码帧共用同一份槽数组，插值时再复制要改动的那一条。
 	frames.append({"tick": tick, "world": world})
 	if frames.size() == 1:
 		render_tick = tick - DELAY_TICKS
@@ -40,19 +46,43 @@ func sample(tick: float) -> Dictionary:
 		frames.pop_front()
 	var from: Dictionary = frames[0]
 	var to: Dictionary = frames[1] if frames.size() > 1 else from
+	var ahead := minf(tick - to["tick"], MAX_EXTRAPOLATION)
 	var weight := clampf((tick - from["tick"]) / maxf(1.0, to["tick"] - from["tick"]), 0.0, 1.0)
-	var result: Dictionary = from["world"].duplicate(true) if weight < 1.0 else to["world"].duplicate(true)
-	for group in ["players", "projectiles", "pickups"]:
-		for id in result[group]:
-			var state: Dictionary = result[group][id]
-			if from["world"][group].has(id) and to["world"][group].has(id):
-				var a: Dictionary = from["world"][group][id]
-				var b: Dictionary = to["world"][group][id]
-				var movement := GridPathfinder.toroidal_delta_px(a["pos"], b["pos"], map_px.x, map_px.y)
-				if (group != "players" or a["epoch"] == b["epoch"]) and movement.length() < 256.0:
-					state["pos"] = a["pos"] + movement * weight
-					state["vel"] = a["vel"].lerp(b["vel"], weight)
-			if tick > to["tick"]:
-				state["pos"] += state["vel"] * minf(tick - to["tick"], MAX_EXTRAPOLATION) / 60.0
-			state["pos"] = GridPathfinder.wrap_to_range(state["pos"], map_px.x, map_px.y)
-	return result
+	var between := weight > 0.0 and weight < 1.0
+	var source: Dictionary = from["world"] if weight < 1.0 else to["world"]
+	var players := {}
+	for role in source["players"]:
+		var sample: Dictionary = source["players"][role]
+		var actor: Array = sample["state"]["actor"]
+		var pose := [actor[PlayerStateSchema.POS], actor[PlayerStateSchema.VEL]]
+		var next: Dictionary = to["world"]["players"].get(role, {})
+		if between and not next.is_empty():
+			var rewinding: bool = sample["rewind"] or next["rewind"]
+			if next["epoch"] == sample["epoch"] or (sample["rewind"] and next["epoch"] == sample["epoch"] + 1):
+				var next_actor: Array = next["state"]["actor"]
+				_interpolate(pose, [next_actor[PlayerStateSchema.POS], next_actor[PlayerStateSchema.VEL]], weight, rewinding)
+		elif ahead > 0.0 and not sample["rewind"]:
+			var whole := floorf(ahead)
+			var decay := pow(KNOCK_DECAY, whole)
+			var knock_ticks := (1.0 - decay) / (1.0 - KNOCK_DECAY) + (ahead - whole) * decay
+			var travel: Vector2 = pose[1] * ahead + actor[PlayerStateSchema.KNOCK_VEL] * knock_ticks
+			pose[0] = GridPathfinder.wrap_to_range(pose[0] + travel * ActorStep.DT, map_px)
+		players[role] = {"pos": pose[0], "vel": pose[1], "actor": actor, "aim": sample["aim"],
+				"rewind": sample["rewind"], "epoch": sample["epoch"], "equipment": sample["state"]["equipment"]}
+	var pickups := {}
+	for id in source["pickups"]:
+		var state: Array = source["pickups"][id].duplicate()
+		var next: Array = to["world"]["pickups"].get(id, [])
+		if between and not next.is_empty():
+			_interpolate(state, next, weight)
+		elif ahead > 0.0:
+			state[PickupState.POS] = GridPathfinder.wrap_to_range(
+					state[PickupState.POS] + state[PickupState.VEL] * ahead * ActorStep.DT, map_px)
+		pickups[id] = state
+	return {"players": players, "pickups": pickups}
+
+func _interpolate(state: Array, next: Array, weight: float, rewinding := false) -> void:
+	var movement := GridPathfinder.toroidal_delta_px(state[0], next[0], map_px)
+	if rewinding or movement.length_squared() < 256.0 * 256.0:
+		state[0] = GridPathfinder.wrap_to_range(state[0] + movement * weight, map_px)
+		state[1] = state[1].lerp(next[1], weight)

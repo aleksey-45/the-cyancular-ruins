@@ -1,5 +1,7 @@
 shader_type canvas_item;
 
+#include "res://core/present/time_film.gdshaderinc"
+
 uniform sampler2D screen_tex : filter_nearest, repeat_disable;
 
 uniform bool barrel_enabled = true;
@@ -9,6 +11,8 @@ uniform vec2 crop_scale = vec2(1.0);
 uniform float desat : hint_range(0.0, 1.0) = 0.0;
 // 受击红闪:0=无,1=纯红罩。由 PostProcess.flash_hit() 置峰后每帧衰减。
 uniform float hit_red : hint_range(0.0, 1.0) = 0.0;
+// 低血暗角强度:0=无,1=最深。按实际最大 HP 归一化后由 PostProcess 平滑更新。
+uniform float low_hp : hint_range(0.0, 1.0) = 0.0;
 // ── 怀表时间系统·第一阶段(时间玩法)三个全屏效果 ──
 uniform float rewind_film : hint_range(0.0, 1.0) = 0.0;   // 回溯底片化覆盖度(0→1:由内而外铺满)
 uniform float loan_depth : hint_range(0.0, 1.0) = 0.0;    // 透支深度:变亮 + 红蓝色差
@@ -46,18 +50,21 @@ void fragment() {
 
 	// 回溯:全图统一底片色调(反色 + 轻去饱和)
 	if (rewind_film > 0.0) {
-		float amt = smoothstep(0.0, 0.28, rewind_film - rt);
-		vec3 inv = vec3(1.0) - COLOR.rgb;
-		float g = dot(inv, vec3(0.299, 0.587, 0.114));
-		vec3 film = mix(inv, vec3(g), 0.25);
-		COLOR.rgb = mix(COLOR.rgb, film, amt);
+		COLOR.rgb = rewind_film_color(COLOR.rgb, SCREEN_UV, rewind_film);
 	}
-	// 加速:全图统一压暗 + 冷色偏移(角色靠加色高亮"跳"出来 —— 见 TimeGlow)
+	// 加速:全图统一压暗 + 冷色偏移(角色着色强化对比)
 	// -  0.42 → 0.55:压得太黑时用户会读成"一切都被调暗了、谁都没被高亮",留一点环境可读性。
 	if (haste_dim > 0.0) {
 		float amt = smoothstep(0.0, 0.28, haste_dim - rt);
 		vec3 target = COLOR.rgb * 0.55 + vec3(0.02, 0.035, 0.07);
 		COLOR.rgb = mix(COLOR.rgb, target, amt);
+	}
+	// 低血:屏幕边缘暗角
+	if (low_hp > 0.0) {
+		// 屏幕边缘压暗并轻微染红，中心保持可读。
+		float edge = smoothstep(0.30, 0.78, distance(SCREEN_UV, vec2(0.5)) / 0.75);
+		vec3 shade = COLOR.rgb * vec3(0.32, 0.22, 0.24);
+		COLOR.rgb = mix(COLOR.rgb, shade, edge * low_hp * 0.85);
 	}
 	// 透支:整体变亮 + 红蓝色影分离(深度越深越明显)
 	if (loan_depth > 0.0) {

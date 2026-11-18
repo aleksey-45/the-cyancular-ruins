@@ -4,78 +4,101 @@ const REDUNDANCY := 4
 const HOLD_TICKS := 6
 const FUTURE_TICKS := 32
 const ACTION_TICKS := 12
+
+const PACKET_FRAMES: int = 0
+const PACKET_ACTIONS: int = 1
+
+# 持续输入和单次动作共用前三个槽。
+const SEQ: int = 0
+const EPOCH: int = 1
+const TARGET_TICK: int = 2
+const FRAME_AX: int = 3
+const FRAME_HELD: int = 4
+const FRAME_AIM: int = 5
+const ACTION_PRESSED: int = 3
+const ACTION_RELEASED: int = 4
+const ACTION_WINST: int = 5
+const ACTION_AIM: int = 6
+
+const _AVAILABLE_TICK: int = 0
+const _ACTION_RECORD: int = 1
+
 var epoch := 1
-var ack := 0
 var action_ack := 0
 var timing_seq := 0
 var lead := 2
-var frames: Dictionary = {}
-var actions: Dictionary = {}
-var _last := neutral()
-var _missing := HOLD_TICKS
+var frames: Dictionary[int, Array] = {}
+var actions: Dictionary[int, Array] = {}
+var _last := neutral_frame()
 
-static func neutral() -> Dictionary:
-	return {"seq": 0, "epoch": 1, "target_tick": 0, "view_tick": 0, "ax": 0.0, "held": 0, "pressed": 0, "released": 0, "winst": 0, "aim": Vector2.RIGHT}
+static func neutral_frame() -> Array:
+	return [0, 1, 0, 0.0, 0, Vector2.RIGHT]
 
 func reset(new_epoch: int) -> void:
 	epoch = new_epoch
-	ack = 0
 	action_ack = 0
 	timing_seq = 0
 	lead = 2
 	frames.clear()
 	actions.clear()
-	_last = neutral()
-	_missing = HOLD_TICKS
+	_last = neutral_frame()
 
-func seed(record: Dictionary) -> void:
+func restore_authority(new_epoch: int, confirmed_action: int, record: Array) -> void:
+	reset(new_epoch)
+	action_ack = confirmed_action
 	_last = record
 
-func push(packet: Dictionary, tick: int) -> void:
-	for record: Dictionary in packet["frames"]:
-		if record["epoch"] != epoch:
-			continue
-		if record["seq"] > timing_seq:
-			timing_seq = record["seq"]
-			lead = record["target_tick"] - tick
-		if record["seq"] <= ack or record["target_tick"] > tick + FUTURE_TICKS:
-			continue
-		var at: int = maxi(record["target_tick"], tick + 1)
-		if not frames.has(at) or record["seq"] > frames[at]["seq"]:
-			frames[at] = record
-	for action: Dictionary in packet["actions"]:
-		if action["epoch"] == epoch and action["seq"] > action_ack and action["target_tick"] <= tick + FUTURE_TICKS:
-			actions[action["seq"]] = action
+static func _expired(record: Array, tick: int) -> bool:
+	return tick - record[TARGET_TICK] > HOLD_TICKS
 
-func take(tick: int) -> Dictionary:
+func push(packet: Array, tick: int) -> void:
+	var last_seq: int = _last[SEQ]
+	for record: Array in packet[PACKET_FRAMES]:
+		if record[EPOCH] != epoch:
+			continue
+		var seq: int = record[SEQ]
+		var target: int = record[TARGET_TICK]
+		if seq > timing_seq:
+			timing_seq = seq
+			lead = target - tick
+		if seq <= last_seq or target > tick + FUTURE_TICKS:
+			continue
+		var at := maxi(target, tick + 1)
+		if not frames.has(at) or seq > frames[at][SEQ]:
+			frames[at] = record
+	for action: Array in packet[PACKET_ACTIONS]:
+		var seq: int = action[SEQ]
+		var target: int = action[TARGET_TICK]
+		if action[EPOCH] != epoch or seq <= action_ack or target > tick + FUTURE_TICKS:
+			continue
+		var available := maxi(target, tick + 1)
+		if not actions.has(seq) or available < actions[seq][_AVAILABLE_TICK]:
+			actions[seq] = [available, action]
+
+func take(tick: int) -> Array:
 	for at in frames.keys():
 		if at <= tick:
-			var next: Dictionary = frames[at]
-			if next["seq"] > ack:
-				ack = next["seq"]
+			var next: Array = frames[at]
+			if next[SEQ] > _last[SEQ]:
 				_last = next
 			frames.erase(at)
-	_missing = tick - _last["target_tick"]
-	var record := _last.duplicate()
-	if _missing > HOLD_TICKS:
-		record["ax"] = 0.0
-		record["held"] = 0
-	record["seq"] = ack
-	record["epoch"] = epoch
-	record["pressed"] = 0
-	record["released"] = 0
-	record["winst"] = 0
+	var expired := _expired(_last, tick)
+	var record := [0.0 if expired else _last[FRAME_AX], 0 if expired else _last[FRAME_HELD],
+			0, 0, 0, _last[FRAME_AIM]]
 	var seqs := actions.keys()
 	seqs.sort()
 	for seq in seqs:
-		var action: Dictionary = actions[seq]
-		if action["target_tick"] > tick:
+		var scheduled: Array = actions[seq]
+		if scheduled[_AVAILABLE_TICK] > tick:
 			break
 		action_ack = seq
 		actions.erase(seq)
-		if tick - action["target_tick"] > ACTION_TICKS:
+		var action: Array = scheduled[_ACTION_RECORD]
+		if tick - action[TARGET_TICK] > ACTION_TICKS:
 			continue
-		for key in ["seq", "pressed", "released", "winst", "aim", "view_tick"]:
-			record[key] = action[key]
+		record[ActorInput.PRESSED] = action[ACTION_PRESSED]
+		record[ActorInput.RELEASED] = action[ACTION_RELEASED]
+		record[ActorInput.WINST] = action[ACTION_WINST]
+		record[ActorInput.AIM] = action[ACTION_AIM]
 		break
 	return record
