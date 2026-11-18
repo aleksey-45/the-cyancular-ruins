@@ -1,7 +1,7 @@
 extends Node
 
 const MARKER := "LEVEL0 BOOT PROBE: ALL-OK"
-const EXPECTED_CHECKS := 24
+const EXPECTED_CHECKS := 25
 const MAP := "res://maps/newfactory.cyrm"
 const WATER_SHADER := "res://scenes/effects/water_surface_batch.gdshader"
 const FORM_SHADER := "res://core/present/form_light.gdshader"
@@ -170,6 +170,9 @@ func _run() -> void:
 	var pl := level.get_node_or_null("WorldViewport/Player")
 	_chk(pl != null and pl.pickup != null and pl.pickup.host == level,
 			"★ 拾取端口没接线(pickup.host ≠ Level0)⇒ 单机按 F 永远捡不起枪,且静默无报错")
+	# 地面武器:散枪必须真的发生。去掉 _ready 里的 scatter 或 clear 语义写反 ⇒ 这里空表(开局捡不到枪,且无报错)。
+	_chk(not (level as Level0).pickups.nodes().is_empty(),
+			"★ 地面武器没散出来(pickups 空表)⇒ 开局地图上没有任何可捡的枪")
 
 	_finish()
 

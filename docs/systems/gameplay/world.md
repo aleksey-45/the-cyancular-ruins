@@ -111,6 +111,7 @@
 - **受击面(hurtbox)与移动碰撞箱分离**:每个可受伤实体提供 `hurt_rect()`(玩家 = 当前姿态箱世界 AABB,敌人 = 活动碰撞箱 AABB,飞鸟按站/飞箱),客户端对手副本另提供 `hurt_rect_rendered()`(尺寸取副本的非碰撞几何探针、位置取渲染位置)。子弹 / 敌弹 / 激光 / 爆炸 / 服务器裁决 / 客户端 cull 全部经 hit_shape 查同一套矩形;`collision_layer = 0` 或 `is_hurtable() == false`(死亡白闪的尸体 / 倒地玩家)不可受击。
 - **命中裁决的时间域**:PvP 服务器结算命中时不用现时受击面,而是按**射手观看时刻**回放 `core/sim/hit_lag_history.gd` 的受击面历史(`st − LagComp.PLAYOUT_TICKS`,见 `core/net/lag_comp.gd`);移动预测 / 副本几何探针仍吃最新态,AoE 不回放(边界见 [`registered-debt.md`](../../registered-debt.md) §十五)。
 - 地面武器 layer = 8 / mask = 9(地形 + 其它掉落物):玩家与敌人的掩码都不含 4,子弹 mask 也不含 ⇒ 三者天然不碰。
+- **实现归属(2026-11-18 拆)**:地面武器场(空间表 `GroundWeaponField` + `WeaponPickup` 节点表 + 自丢冷却)在 [`scenes/level/level_pickups.gd`](../../../scenes/level/level_pickups.gd);`Level0` 只保留 `spawn_pickup` / `remove_pickup` / `clear_pickups` / `scatter_weapons` / `try_pickup_for` 五个门面,并在 `_ready` 里注入容器(`WorldViewport`)与刷新器(`EnemySpawner`)。PvP 侧的 `scenes/mp_client/pickup_sync.gd` 是网络事件驱动的另一份,不共享状态。
 - 层 6 / 值 32 与层 7 / 值 64 无生产代码引用;`project.godot` 没有 `layer_names`,层义只活在代码里,加新层时没有任何自动提醒。
 
 ## 进关卡建图的耗时与分帧(2026-11-02)

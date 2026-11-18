@@ -1,6 +1,8 @@
 class_name Level0
 extends Node2D
 
+const LevelPickupsScript := preload("res://scenes/level/level_pickups.gd")
+
 static var wall_layer: TileMapLayer = null
 # 地形剪影层(TerrainViewport 内):与墙层同一份 cells,供后处理的地形受光/斜影当遮挡源。
 static var terrain_layer: TileMapLayer = null
@@ -244,6 +246,7 @@ func _ready() -> void:
 	_place_player(grid, start_cell)
 	# 拾取/丢弃端口:Player 不再向上找 Level0(旧 host_level());未绑定 = 本端不执行,联机只上行走服务器。
 	($WorldViewport/Player as Player).bind_pickup_host(self)
+	pickups.setup($WorldViewport, $EnemySpawner)
 	$WorldViewport/Player.weapons.set_enabled_types(RunOptions.disabled_weapons)
 	grain_account = GrainAccount.new()
 	time_field = TimeField.new(grain_account)
@@ -791,12 +794,7 @@ func _leave_playtest() -> void:
 	safe_change_scene(get_tree(), "res://scenes/editor/editor_root.tscn")
 
 
-var ground_weapons := GroundWeaponField.new()
-var _next_pickup_inst: int = 1
-var _pickup_nodes: Dictionary = {}
-var _self_drop_until: Dictionary = {}
-
-const PICKUP_SCENE := preload("res://scenes/weapons/weapon_pickup.tscn")
+var pickups := LevelPickupsScript.new()
 
 
 func _give_starting_weapon(p: Node) -> void:
@@ -817,88 +815,23 @@ func _default_weapon_types() -> Array:
 
 func spawn_pickup(type_id: int, mag: int, pos: Vector2, vel: Vector2,
 		inst: int = 0, self_drop: bool = false) -> WeaponPickup:
-	if inst <= 0:
-		inst = _next_pickup_inst
-		_next_pickup_inst += 1
-	else:
-		_next_pickup_inst = maxi(_next_pickup_inst, inst + 1)
-	var node: WeaponPickup = PICKUP_SCENE.instantiate()
-	node.configure(type_id, inst, mag, vel)
-	$WorldViewport.add_child(node)
-	node.global_position = pos
-	node.canonical_pos = pos
-	ground_weapons.map_size = Vector2(float(GameParameters.MAP_WIDTH), float(GameParameters.MAP_HEIGHT))
-	ground_weapons.add({"inst": inst, "type_id": type_id, "mag": mag, "pos": pos, "vel": vel})
-	_pickup_nodes[inst] = node
-	if self_drop:
-		_self_drop_until[inst] = Time.get_ticks_msec() + int(PlayerParams.weapon_pickup_self_delay * 1000.0)
-	return node
+	return pickups.spawn(type_id, mag, pos, vel, inst, self_drop)
 
 
 func remove_pickup(inst: int) -> void:
-	ground_weapons.remove(inst)
-	_self_drop_until.erase(inst)
-	var n = _pickup_nodes.get(inst, null)
-	if n != null and is_instance_valid(n):
-		n.queue_free()
-	_pickup_nodes.erase(inst)
+	pickups.remove(inst)
 
 
 func clear_pickups() -> void:
-	for n in _pickup_nodes.values():
-		if is_instance_valid(n):
-			n.queue_free()
-	_pickup_nodes.clear()
-	_self_drop_until.clear()
-	ground_weapons.clear()
+	pickups.clear()
 
 
 func scatter_weapons(types: Array) -> void:
-	clear_pickups()
-	if MazeGenerator.current_grid.is_empty():
-		return
-	ground_weapons.map_size = Vector2(float(GameParameters.MAP_WIDTH), float(GameParameters.MAP_HEIGHT))
-	var cols := int(ground_weapons.map_size.x / float(GameParameters.TILE_SIZE))
-	var rows := int(ground_weapons.map_size.y / float(GameParameters.TILE_SIZE))
-	var cells: Array = $EnemySpawner.open_floor_cells(MazeGenerator.current_grid)
-	var want := types.size()
-	var picked: Array = GridPathfinder.spread_cells(cells, want, 10, cols, rows)
-	# 与 EnemySpawner 的 spawned N enemies from map 同款:布点数量要能一眼核对(不足时也走这行 —— 小图/密封图有多少铺多少,不报错也不卡住开局)。
-	print("[Level0] 地面武器 %d/%d 件(开阔地板格 %d)" % [picked.size(), want, cells.size()])
-	var half := float(GameParameters.TILE_SIZE) * 0.5
-	for i in picked.size():
-		var pos := Vector2(picked[i]) * float(GameParameters.TILE_SIZE) + Vector2(half, half)
-		spawn_pickup(int(types[i]), WeaponInventory.MAG_FULL, pos, Vector2.ZERO)
+	pickups.scatter(types)
 
 
 func try_pickup_for(p: Node2D) -> void:
-	if p == null or p.weapons == null:
-		return
-	var e: Dictionary = ground_weapons.nearest_within(
-		p.global_position, PlayerParams.weapon_pickup_radius, _live_self_drops())
-	if e.is_empty():
-		return
-	var inst := int(e["inst"])
-	var dropped_type: int = p.weapons.pick_up(int(e["type_id"]), int(e["mag"]))
-	if dropped_type < 0:
-		return
-	remove_pickup(inst)
-	if dropped_type > 0:
-		var d: Dictionary = p.weapons.take_last_dropped()
-		spawn_pickup(dropped_type, int(d.get("mag", WeaponInventory.MAG_FULL)),
-			p.global_position + PlayerParams.weapon_drop_offset * Vector2(float(p.facing_direction), 1.0),
-			Vector2(PlayerParams.weapon_drop_speed * p.facing_direction, -PlayerParams.weapon_drop_up))
-
-
-func _live_self_drops() -> Array:
-	var now := Time.get_ticks_msec()
-	var out: Array = []
-	for inst in _self_drop_until.keys():
-		if int(_self_drop_until[inst]) > now:
-			out.append(inst)
-		else:
-			_self_drop_until.erase(inst)
-	return out
+	pickups.try_pickup_for(p)
 
 
 func _tick_time_visuals(delta: float) -> void:
@@ -1022,20 +955,21 @@ func _tick_rewind(delta: float) -> void:
 func _update_pickup_prompt() -> void:
 	var pl := $WorldViewport.get_node_or_null("Player") as Node2D
 	var anchor: Vector2 = pl.global_position if pl != null else Vector2.ZERO
-	for inst in _pickup_nodes:
-		var n0 = _pickup_nodes.get(inst, null)
+	var nodes := pickups.nodes()
+	for inst in nodes:
+		var n0 = nodes.get(inst, null)
 		if n0 != null and is_instance_valid(n0):
 			var pk0 := n0 as WeaponPickup
 			pk0.set_anchor(anchor)
 			pk0.sync_render_from_canonical()
-			var e0: Dictionary = ground_weapons.get_entry(int(inst))
+			var e0: Dictionary = pickups.entry(int(inst))
 			if not e0.is_empty():
 				e0["pos"] = pk0.canonical_pos
-	var self_drops := _live_self_drops()
+	var self_drops := pickups.live_self_drops()
 	var w := float(GameParameters.MAP_WIDTH)
 	var h := float(GameParameters.MAP_HEIGHT)
-	for inst in _pickup_nodes:
-		var n = _pickup_nodes.get(inst, null)
+	for inst in nodes:
+		var n = nodes.get(inst, null)
 		if n == null or not is_instance_valid(n):
 			continue
 		var pk := n as WeaponPickup
