@@ -3,7 +3,7 @@ extends Control
 
 signal nickname_changed(text: String)
 signal filter_changed(mode: String)
-signal create_requested(mode: String, choices: Dictionary)
+signal create_requested(mode: String, options: Dictionary)
 signal join_requested(code: String)
 signal room_chosen
 signal copy_requested

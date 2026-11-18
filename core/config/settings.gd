@@ -4,36 +4,54 @@ extends Node
 # 存储基于 ConfigFile（user://settings.cfg）；首次运行使用 InputMap 当前配置作为默认键位。
 
 const SAVE_PATH := "user://settings.cfg"
+enum { SECTION, KEY, DEFAULT }
+const SCALAR_SETTINGS := {
+	&"master_volume": ["audio", "master_volume", 0.8],
+	&"sfx_volume": ["audio", "sfx_volume", 1.0],
+	&"wheel_switch": ["controls", "wheel_switch", true],
+	&"display_fullscreen": ["display", "fullscreen", false],
+	&"sp_map_path": ["single", "map_path", ""],
+	&"mp_map_path": ["pvp", "map_path", ""],
+	&"pvp_show_trajectories": ["pvp", "show_trajectories", true],
+	&"pvp_round_full_heal": ["pvp", "round_full_heal", false],
+	&"pvp_show_enemy_hp": ["pvp", "show_enemy_hp", true],
+	&"pvp_color_hue": ["pvp", "color_hue", 0.0],
+	&"royale_match_min": ["royale", "match_min", RoomOptions.DEFAULT_MATCH_MINUTES],
+	&"pvp_show_minimap": ["pvp", "show_minimap", true],
+	&"pvp_minimap_show_enemy": ["pvp", "minimap_show_enemy", true],
+}
 
 # 可重映射的动作（1-5 切枪槽固定，不开放重绑）
 const REMAPPABLE_ACTIONS: Array[String] = ["left", "right", "up", "down", "charge", "attack", "R", "F", "Q", "rewind", "haste"]
 
-var master_volume: float = 0.8:
+var master_volume: float = SCALAR_SETTINGS.master_volume[DEFAULT]:
 	set(v):
 		master_volume = clampf(v, 0.0, 1.0)
 		_apply_bus_volume("Master", master_volume)
-var sfx_volume: float = 1.0:
+var sfx_volume: float = SCALAR_SETTINGS.sfx_volume[DEFAULT]:
 	set(v):
 		sfx_volume = clampf(v, 0.0, 1.0)
 		_apply_bus_volume("SFX", sfx_volume)
 
 # 鼠标滚轮切换武器（默认启用）
-var wheel_switch: bool = true
+var wheel_switch: bool = SCALAR_SETTINGS.wheel_switch[DEFAULT]
 
 var sp_disabled_weapons: Array[int] = []   # 禁用的武器槽位（1-6，第 6 槽为激光枪）
 
 # 地图选择路径（空字符串表示进入关卡时随机选取）
-var sp_map_path: String = ""
-var mp_map_path: String = ""
+var sp_map_path: String = SCALAR_SETTINGS.sp_map_path[DEFAULT]
+var mp_map_path: String = SCALAR_SETTINGS.mp_map_path[DEFAULT]
 
-var pvp_show_trajectories: bool = true  # 显示敌方武器(子弹)轨迹
-var pvp_round_full_heal: bool = false   # 每回合开始回满血(服务器生效项,房主值优先)
-var pvp_show_enemy_hp: bool = true      # 显示敌方头顶生命条
+var pvp_show_trajectories: bool = SCALAR_SETTINGS.pvp_show_trajectories[DEFAULT]
+var pvp_round_full_heal: bool = SCALAR_SETTINGS.pvp_round_full_heal[DEFAULT]
+var pvp_show_enemy_hp: bool = SCALAR_SETTINGS.pvp_show_enemy_hp[DEFAULT]
 var pvp_disabled_weapons: Array[int] = []  # 禁用武器(服务器生效项,房主值优先)
-var pvp_color_hue: float = 0.0          # 自己角色色相旋转(度;0=默认青色)
-var royale_match_min: float = 5.0       # 大乱斗一局限时(分钟,建房页可调,随房主报到生效)
-var pvp_show_minimap: bool = true       # 小地图
-var pvp_minimap_show_enemy: bool = true # 小地图显示敌方位置
+var pvp_color_hue: float = SCALAR_SETTINGS.pvp_color_hue[DEFAULT]
+var royale_match_min: float = SCALAR_SETTINGS.royale_match_min[DEFAULT]:
+	set(value):
+		royale_match_min = clampf(value, RoomOptions.ROYALE_MINUTES.x, RoomOptions.ROYALE_MINUTES.y)
+var pvp_show_minimap: bool = SCALAR_SETTINGS.pvp_show_minimap[DEFAULT]
+var pvp_minimap_show_enemy: bool = SCALAR_SETTINGS.pvp_minimap_show_enemy[DEFAULT]
 
 # 窗口尺寸不改变 1920×1440 的逻辑视口或游戏模拟。
 const DISPLAY_RESOLUTIONS: Array[Vector2i] = [
@@ -41,7 +59,7 @@ const DISPLAY_RESOLUTIONS: Array[Vector2i] = [
 	Vector2i(1920, 1440), Vector2i(2560, 1920),
 ]
 var display_resolution := Vector2i(1920, 1440)
-var display_fullscreen := false
+var display_fullscreen: bool = SCALAR_SETTINGS.display_fullscreen[DEFAULT]
 
 func _ready() -> void:
 	_ensure_buses()
@@ -134,22 +152,12 @@ func store(value: Variant, key: StringName) -> void:
 
 func save() -> void:
 	var cf := ConfigFile.new()
-	cf.set_value("audio", "master_volume", master_volume)
-	cf.set_value("audio", "sfx_volume", sfx_volume)
-	cf.set_value("controls", "wheel_switch", wheel_switch)
+	for property: StringName in SCALAR_SETTINGS:
+		var field: Array = SCALAR_SETTINGS[property]
+		cf.set_value(field[SECTION], field[KEY], get(property))
 	cf.set_value("display", "resolution", display_resolution)
-	cf.set_value("display", "fullscreen", display_fullscreen)
 	cf.set_value("single", "disabled_weapons", sp_disabled_weapons)
-	cf.set_value("single", "map_path", sp_map_path)
-	cf.set_value("pvp", "map_path", mp_map_path)
-	cf.set_value("pvp", "show_trajectories", pvp_show_trajectories)
-	cf.set_value("pvp", "round_full_heal", pvp_round_full_heal)
-	cf.set_value("pvp", "show_enemy_hp", pvp_show_enemy_hp)
 	cf.set_value("pvp", "disabled_weapons", pvp_disabled_weapons)
-	cf.set_value("pvp", "color_hue", pvp_color_hue)
-	cf.set_value("royale", "match_min", royale_match_min)
-	cf.set_value("pvp", "show_minimap", pvp_show_minimap)
-	cf.set_value("pvp", "minimap_show_enemy", pvp_minimap_show_enemy)
 	for action in REMAPPABLE_ACTIONS:
 		var arr: Array = []
 		for ev in InputMap.action_get_events(action):
@@ -168,24 +176,18 @@ func load_settings() -> void:
 		if error == ERR_FILE_NOT_FOUND:
 			save()
 		return
-	master_volume = float(cf.get_value("audio", "master_volume", 0.8))
-	sfx_volume = float(cf.get_value("audio", "sfx_volume", 1.0))
-	wheel_switch = bool(cf.get_value("controls", "wheel_switch", true))
+	for property: StringName in SCALAR_SETTINGS:
+		var field: Array = SCALAR_SETTINGS[property]
+		var value: Variant = cf.get_value(field[SECTION], field[KEY], field[DEFAULT])
+		match typeof(field[DEFAULT]):
+			TYPE_BOOL: set(property, bool(value))
+			TYPE_FLOAT: set(property, float(value))
+			TYPE_STRING: set(property, str(value))
 	var saved_resolution = cf.get_value("display", "resolution", display_resolution)
 	if saved_resolution is Vector2i and saved_resolution in DISPLAY_RESOLUTIONS:
 		display_resolution = saved_resolution
-	display_fullscreen = bool(cf.get_value("display", "fullscreen", false))
 	sp_disabled_weapons.assign(cf.get_value("single", "disabled_weapons", []))
-	sp_map_path = str(cf.get_value("single", "map_path", ""))
-	mp_map_path = str(cf.get_value("pvp", "map_path", ""))
-	pvp_show_trajectories = bool(cf.get_value("pvp", "show_trajectories", true))
-	pvp_round_full_heal = bool(cf.get_value("pvp", "round_full_heal", false))
-	pvp_show_enemy_hp = bool(cf.get_value("pvp", "show_enemy_hp", true))
 	pvp_disabled_weapons.assign(cf.get_value("pvp", "disabled_weapons", []))
-	pvp_color_hue = float(cf.get_value("pvp", "color_hue", 0.0))
-	royale_match_min = clampf(float(cf.get_value("royale", "match_min", 5.0)), 1.0, 30.0)
-	pvp_show_minimap = bool(cf.get_value("pvp", "show_minimap", true))
-	pvp_minimap_show_enemy = bool(cf.get_value("pvp", "minimap_show_enemy", true))
 	for action in REMAPPABLE_ACTIONS:
 		var saved: Variant = cf.get_value("bindings", action, [])
 		if not saved is Array:

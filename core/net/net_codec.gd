@@ -284,7 +284,7 @@ func decode_state(s: Reader, baseline: bool = false) -> Dictionary:
 		return {}
 	var frame_roles := _get_roles(s) if base_number == 0 else roles
 	var blocks := _get_mask(s, 5, base_number == 0)
-	if not s.valid or frame_roles.size() > TeamRules.MAX_TOTAL:
+	if not s.valid or frame_roles.size() > maxi(TeamRules.MAX_TOTAL, RoomOptions.ROYALE_PLAYERS.y):
 		s.valid = false
 		return {}
 	var base: Dictionary = history.get(base_number, {})

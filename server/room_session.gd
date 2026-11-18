@@ -28,12 +28,7 @@ func _on_event(peer: int, kind: int, data: Variant) -> void:
 				message(peer, "请先提交玩家资料")
 				return
 			mode = data["mode"]
-			options = data["options"].duplicate()
-			if mode == PvpSession.MODE_ROYALE:
-				options["max_players"] = clampi(options.get("max_players", 8), 2, 8)
-				options["match_time"] = clampi(options.get("match_time", 300), 60, 900)
-			if options.get("beta", false):
-				options["time"] = TimeRules.normalized(options.get("time", {}))
+			options = RoomOptions.normalized(mode, data["options"])
 			code = "%08d" % (randi() % 100000000)
 			add_seat(peer)
 			broadcast_room()
@@ -104,7 +99,7 @@ func role_of(peer: int) -> int:
 	return 0
 
 func max_players() -> int:
-	return 10 if mode == PvpSession.MODE_TEAM else (2 if mode == PvpSession.MODE_PVP else int(options.get("max_players", 8)))
+	return RoomOptions.capacity(mode, options)
 
 func map_path() -> String:
 	return str(options.get("map", "res://maps/newfactory.cyrm"))
@@ -158,7 +153,7 @@ func room_data() -> Dictionary:
 	for role in seats:
 		roster.append({"role": role, "name": seats[role]["name"], "team": seats[role]["team"]})
 	return {"code": code, "mode": mode, "map": map_path(), "players": roster,
-			"max_players": max_players(), "match_time": options.get("match_time", 300),
+			"max_players": max_players(), "match_time": options.get("match_time", RoomOptions.MATCH_SECONDS),
 			"host_role": host_role, "in_match": world != null, "beta": options.get("beta", false),
 			"player_collision": options.get("player_collision", false),
 			"can_start": world == null and _start_problem().is_empty()}

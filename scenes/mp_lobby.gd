@@ -33,14 +33,9 @@ func _ready() -> void:
 		_list_rooms.call_deferred()
 
 static func _form_values() -> Dictionary:
-	var bounds := {}
-	var time := TimeRules.normalized() if PvpSession.beta_mode else {}
-	for field in time:
-		var rule: Array = TimeRules.FIELDS[field]
-		bounds[field] = Vector2(rule[TimeRules.MINIMUM], rule[TimeRules.MAXIMUM])
 	return {"hue": Settings.pvp_color_hue, "match_min": Settings.royale_match_min,
 		"full_heal": Settings.pvp_round_full_heal, "disabled": Settings.pvp_disabled_weapons,
-		"map": Settings.mp_map_path, "time": time, "bounds": bounds}
+		"map": Settings.mp_map_path, "time": TimeRules.normalized() if PvpSession.beta_mode else {}}
 
 func _name_changed(text: String) -> void:
 	var name := text.strip_edges()
@@ -76,22 +71,10 @@ func _join_room(code: String) -> void:
 		return
 	_request("正在连接房间 %s 的网络…" % code, NetSession.join_room.bind(code), true)
 
-func _create_room(mode: String, fields: Dictionary) -> void:
-	var options := {"map": fields["map"], "player_collision": fields["player_collision"]}
-	if mode != PvpSession.MODE_TEAM:
-		options["disabled_weapons"] = fields["disabled_weapons"]
+func _create_room(mode: String, options: Dictionary) -> void:
 	if WeaponRegistry.enabled_ids(options.get("disabled_weapons", [])).is_empty():
 		_view.set_status("请至少启用一种武器")
 		return
-	match mode:
-		PvpSession.MODE_ROYALE:
-			options["max_players"] = fields["max_players"]
-			options["match_time"] = fields["match_min"] * 60
-		PvpSession.MODE_PVP:
-			options["round_full_heal"] = fields["round_full_heal"]
-	if PvpSession.beta_mode:
-		options["beta"] = true
-		options["time"] = TimeRules.normalized(fields["time"])
 	_request("正在创建房间…", func() -> String:
 		_view.close_create()
 		return await NetSession.create_room({"mode": mode, "options": options}), true)

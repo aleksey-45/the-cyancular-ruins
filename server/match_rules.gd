@@ -12,7 +12,7 @@ var spawns: Dictionary = {}
 var phase := RoundState.WAITING
 var round_number := 1
 var round_timer := 0.0
-var match_time := 300.0
+var match_time := float(RoomOptions.MATCH_SECONDS)
 var player_collision := false
 var scores: Dictionary = {}
 var rounds_won: Dictionary = {}
@@ -26,7 +26,7 @@ func setup(p_mode: String, roster: Array, p_teams: Dictionary, map: Dictionary, 
 	mode = p_mode
 	_roster = roster
 	teams = p_teams
-	match_time = float(options.get("match_time", 300.0))
+	match_time = float(options.get("match_time", RoomOptions.MATCH_SECONDS))
 	player_collision = options.get("player_collision", false)
 	_size = map["size"]
 	var problem := SpawnPicker.validate_multiplayer_spawns(map)

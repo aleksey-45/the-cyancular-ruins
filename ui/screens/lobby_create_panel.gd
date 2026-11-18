@@ -58,9 +58,9 @@ func _ready() -> void:
 	options.add_child(_collision)
 
 	_limits = UiFactory.box(options, 16, false)
-	_max_players = _slider(_limits, "人数上限:", Vector2(2, 8), 4.0, " 人")
+	_max_players = _slider(_limits, "人数上限:", RoomOptions.ROYALE_PLAYERS, 4.0, " 人")
 	_duration = UiFactory.box(options, 16, false)
-	_match_time = _slider(_duration, "一局限时:", Vector2(1, 15), _prefs["match_min"], " 分钟")
+	_match_time = _slider(_duration, "一局限时:", RoomOptions.ROYALE_MINUTES, _prefs["match_min"], " 分钟")
 	_match_time.value_changed.connect(preference_changed.emit.bind(&"royale_match_min"))
 	var heal := UiFactory.box(options, 16, false)
 	_full_heal.text = "每回合开始回满血(房主生效)"
@@ -97,25 +97,30 @@ func open(mode: String) -> void:
 
 func _choose_mode(mode: String) -> void:
 	_mode = mode
-	_limits.visible = mode == PvpSession.MODE_ROYALE
-	_duration.visible = _limits.visible
-	_full_heal.get_parent().visible = mode == PvpSession.MODE_PVP
-	_weapons_panel.visible = mode != PvpSession.MODE_TEAM
+	var fields: Array = RoomOptions.MODE_FIELDS.get(mode, [])
+	_limits.visible = fields.has("max_players")
+	_duration.visible = fields.has("match_time")
+	_full_heal.get_parent().visible = fields.has("round_full_heal")
+	_weapons_panel.visible = fields.has("disabled_weapons")
 	for key in _buttons:
 		_buttons[key].disabled = key == mode
 
 func _submit() -> void:
-	submitted.emit(_mode, {"map": _map.selected, "player_collision": _collision.button_pressed,
-		"disabled_weapons": _weapons.disabled_weapons(), "max_players": int(_max_players.value),
-		"match_min": int(_match_time.value), "round_full_heal": _full_heal.button_pressed,
-		"time": _prefs["time"]})
+	var options := {"map": _map.selected, "player_collision": _collision.button_pressed}
+	var selected := {"disabled_weapons": _weapons.disabled_weapons(), "max_players": int(_max_players.value),
+		"match_time": int(_match_time.value) * 60, "round_full_heal": _full_heal.button_pressed}
+	for key in RoomOptions.MODE_FIELDS.get(_mode, []):
+		options[key] = selected[key]
+	if not _prefs["time"].is_empty():
+		options.merge({"beta": true, "time": TimeRules.normalized(_prefs["time"])})
+	submitted.emit(_mode, options)
 
 func _unhandled_input(event: InputEvent) -> void:
 	if visible and event.is_action_pressed("ui_cancel"):
 		hide()
 		get_viewport().set_input_as_handled()
 
-static func _slider(row: BoxContainer, text: String, bounds: Vector2, initial: float, suffix: String) -> HSlider:
+static func _slider(row: BoxContainer, text: String, bounds: Vector2i, initial: float, suffix: String) -> HSlider:
 	row.add_child(UiFactory.label(text, 32))
 	var slider := HSlider.new()
 	slider.custom_minimum_size = Vector2(300, 30)
@@ -132,13 +137,13 @@ func _time_slider(parent: BoxContainer, field: String, title: String, step: floa
 	var row := UiFactory.box(parent, 12, false)
 	var units := 100.0 if field == "kill_ratio" else 1.0
 	var suffix := "%" if units == 100.0 else ""
-	var bounds: Vector2 = _prefs["bounds"][field]
+	var rule: Array = TimeRules.FIELDS[field]
 	var label := UiFactory.label(title, 32)
 	label.custom_minimum_size.x = 300
 	row.add_child(label)
 	var slider := HSlider.new()
-	slider.min_value = bounds.x * units
-	slider.max_value = bounds.y * units
+	slider.min_value = rule[TimeRules.MINIMUM] * units
+	slider.max_value = rule[TimeRules.MAXIMUM] * units
 	slider.step = step
 	slider.value = _prefs["time"][field] * units
 	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
