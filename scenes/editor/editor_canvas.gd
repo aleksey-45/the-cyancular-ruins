@@ -43,6 +43,12 @@ extends Control
 #      ⇒ ㉒/㉓/㉔ 组红。
 # class_name 行已由 Lead 预注册:别改(全局类缓存按名字解析)。
 
+const OVERLAY_SCRIPT := preload("res://scenes/editor/editor_canvas_overlay.gd")
+const IMAGE_SCRIPT := preload("res://scenes/editor/editor_canvas_image.gd")
+
+var _overlay = OVERLAY_SCRIPT.new()    # 叠加层绘制(不持状态,画时读本对象)
+var _image = IMAGE_SCRIPT.new()        # 图集/层合成(操作本对象的 _atlas_* 缓存)
+
 const ZOOM_STEPS := [4.0, 8.0, 12.0, 16.0, 24.0, 32.0, 48.0, 64.0]
 const ZOOM_DEFAULT := 16.0
 const INACTIVE_ALPHA := 0.45        # 非 active 层被压暗到多少(契约 §4)
@@ -184,7 +190,7 @@ func set_doc(doc: EditorDoc) -> void:
 		if _doc.has_signal("meta_changed"):
 			_doc.connect("meta_changed", _on_doc_meta_changed)
 		_active_layer = clampi(int(_doc.active_layer), 0, EditorConstants.LAYER_COUNT - 1)
-		_ensure_atlas(true)
+		_image.ensure_atlas(self, true)
 	refresh()
 
 
@@ -580,8 +586,8 @@ func refresh_region(sub_rect: Rect2i) -> void:
 	if regions.is_empty():
 		return
 	if _atlas_img == null:
-		_ensure_atlas(true)
-	_ensure_scaled_atlas()
+		_image.ensure_atlas(self, true)
+	_image.ensure_scaled_atlas(self)
 	_color_stamps.clear()
 	_region_refreshes += 1
 	for reg in regions:
@@ -622,7 +628,7 @@ func _redraw_screen_region(reg: Rect2i, sub: Vector2i) -> void:
 	var wy0 := floori(_origin.y + float(reg.position.y) / _zoom) - 1
 	var wx1 := floori(_origin.x + float(reg.position.x + reg.size.x) / _zoom) + 1
 	var wy1 := floori(_origin.y + float(reg.position.y + reg.size.y) / _zoom) + 1
-	_paint_layers(temp, sub, Rect2i(wx0, wy0, wx1 - wx0 + 1, wy1 - wy0 + 1), -reg.position)
+	_image.paint_layers(self, temp, sub, Rect2i(wx0, wy0, wx1 - wx0 + 1, wy1 - wy0 + 1), -reg.position)
 	_view_img.blit_rect(temp, Rect2i(Vector2i.ZERO, reg.size), reg.position)
 
 
@@ -634,10 +640,10 @@ func _render_full() -> void:
 	var sub := _sub_size()
 	if _doc != null and sub.x > 0 and sub.y > 0:
 		if _atlas_img == null:
-			_ensure_atlas(true)
-		_ensure_scaled_atlas()
+			_image.ensure_atlas(self, true)
+		_image.ensure_scaled_atlas(self)
 		_color_stamps.clear()
-		_paint_layers(img, sub, _visible_sub_rect(), Vector2i.ZERO)
+		_image.paint_layers(self, img, sub, _visible_sub_rect(), Vector2i.ZERO)
 	_view_img = img
 
 
@@ -652,27 +658,6 @@ func _publish_view() -> void:
 	else:
 		_view_tex.update(_view_img)
 	queue_redraw()
-
-
-## 层号倒序(背景 25% → 前景)把 world 矩形内的子格重放到 dst;shift 是屏幕平移量
-## (全量 = 0;脏块 = -块左上角)。子格→屏幕像素公式与相机严格一致。
-func _paint_layers(dst: Image, sub: Vector2i, world: Rect2i, shift: Vector2i) -> void:
-	if _doc == null:
-		return
-	var layers: Array = _doc.map.get("layers", [])
-	for li in range(EditorConstants.LAYER_COUNT - 1, -1, -1):
-		if li >= layers.size():
-			continue
-		var ld: Variant = layers[li]
-		if ld == null:
-			continue
-		if not layer_visible(li):
-			continue
-		var alpha_mul := 1.0 if li == _active_layer else INACTIVE_ALPHA
-		if EditorConstants.is_color_layer(li):
-			_blit_color_layer(dst, ld, sub, world, alpha_mul, shift)
-		else:
-			_blit_tex_layer(dst, ld, sub, world, alpha_mul, shift)
 
 
 func _sub_size() -> Vector2i:
@@ -697,156 +682,13 @@ static func _norm_rect(r: Rect2i) -> Rect2i:
 	return Rect2i(x0, y0, absi(r.size.x), absi(r.size.y))
 
 
-func _blit_tex_layer(img: Image, ld: Dictionary, sub: Vector2i, vis: Rect2i, alpha_mul: float,
-		shift: Vector2i) -> void:
-	if _atlas_scaled == null:
-		return
-	var cells: PackedInt32Array = ld.get("desc", PackedInt32Array())
-	if cells.is_empty():
-		return
-	var z := _atlas_scaled_cell
-	var atlas_h := _atlas_scaled.get_height()
-	var src_img := _atlas_scaled if alpha_mul >= 0.999 else _atlas_scaled_dim
-	if src_img == null:
-		src_img = _atlas_scaled
-	for dy in vis.size.y:
-		var wy := vis.position.y + dy
-		var sy := posmod(wy, sub.y)
-		var qy4 := (sy % SUB_PER_CELL) * SUB_PER_CELL
-		var dst_y := roundi((float(wy) - _origin.y) * _zoom)
-		for dx in vis.size.x:
-			var wx := vis.position.x + dx
-			var sx := posmod(wx, sub.x)
-			var idx := sy * sub.x + sx
-			if idx < 0 or idx >= cells.size():
-				continue
-			var d := int(cells[idx])
-			if d == 0:
-				continue
-			var row := int(_atlas_row_of.get(d, -1))
-			if row < 0:
-				row = TerrainAtlas.fallback_row(_atlas_row_of, d)
-			if row < 0 or (row + 1) * z > atlas_h:
-				continue
-			var src := Rect2i((qy4 + (sx % SUB_PER_CELL)) * z, row * z, z, z)
-			img.blend_rect(src_img, src,
-					Vector2i(roundi((float(wx) - _origin.x) * _zoom) + shift.x, dst_y + shift.y))
-
-
-func _blit_color_layer(img: Image, ld: Dictionary, sub: Vector2i, vis: Rect2i, alpha_mul: float,
-		shift: Vector2i) -> void:
-	var cells: PackedInt32Array = ld.get("rgba", PackedInt32Array())
-	if cells.is_empty():
-		return
-	var z := int(round(_zoom))
-	for dy in vis.size.y:
-		var wy := vis.position.y + dy
-		var sy := posmod(wy, sub.y)
-		var dst_y := roundi((float(wy) - _origin.y) * _zoom)
-		for dx in vis.size.x:
-			var wx := vis.position.x + dx
-			var idx := sy * sub.x + posmod(wx, sub.x)
-			if idx < 0 or idx >= cells.size():
-				continue
-			var u := int(cells[idx]) & 0xFFFFFFFF
-			if u == 0:
-				continue
-			var a := float(u & 0xFF) / 255.0 * alpha_mul
-			if a <= 0.0:
-				continue
-			var c := Color8((u >> 24) & 0xFF, (u >> 16) & 0xFF, (u >> 8) & 0xFF, clampi(roundi(a * 255.0), 0, 255))
-			img.blend_rect(_stamp_for(c), Rect2i(0, 0, z, z),
-					Vector2i(roundi((float(wx) - _origin.x) * _zoom) + shift.x, dst_y + shift.y))
-
-
-func _stamp_for(c: Color) -> Image:
-	var key := "%d,%d,%d,%d" % [clampi(roundi(c.r * 255.0), 0, 255),
-			clampi(roundi(c.g * 255.0), 0, 255), clampi(roundi(c.b * 255.0), 0, 255),
-			clampi(roundi(c.a * 255.0), 0, 255)]
-	if _color_stamps.has(key):
-		return _color_stamps[key]
-	var z := int(round(_zoom))
-	var stamp := Image.create(maxi(z, 1), maxi(z, 1), false, Image.FORMAT_RGBA8)
-	stamp.fill(c)
-	_color_stamps[key] = stamp
-	return stamp
-
-
-# ── 图集(descs 变了才重建)─────────────────────────────────────────
-
-func _collect_descs() -> Array[int]:
-	var out: Array[int] = []
-	if _doc == null:
-		return out
-	var map: Dictionary = _doc.map
-	if map.is_empty():
-		return out
-	var layers: Array = map.get("layers", [])
-	var uniq := {}
-	for li in range(0, mini(layers.size(), EditorConstants.LAYER_COUNT)):
-		if EditorConstants.is_color_layer(li):
-			continue
-		var ld: Variant = layers[li]
-		if ld == null:
-			continue
-		var cells: PackedInt32Array = (ld as Dictionary).get("desc", PackedInt32Array())
-		for d in cells:
-			var dd := int(d)
-			if EditorDesc.tex_of(dd) != 0:
-				uniq[dd] = true
-	out.assign(uniq.keys())
-	out.sort()
-	return out
-
-
-func _ensure_atlas(force: bool = false) -> void:
-	var descs := _collect_descs()
-	if not force and _atlas_img != null and descs == _atlas_descs:
-		return
-	_atlas_descs = descs
-	var built := TerrainAtlas.build_atlas_image_for(descs)
-	_atlas_img = built["image"]
-	_atlas_row_of = built["row_of"]
-	_atlas_scaled = null
-	_atlas_scaled_dim = null
-	_atlas_scaled_cell = 0
-
-
-func _ensure_scaled_atlas() -> void:
-	var z := int(round(_zoom))
-	if _atlas_img == null or z <= 0:
-		return
-	if _atlas_scaled != null and _atlas_scaled_cell == z:
-		return
-	var rows := maxi(1, _atlas_img.get_height() / QUAD_TILE)
-	var scaled := _atlas_img.duplicate()
-	scaled.resize(QUAD_COLS * z, rows * z, Image.INTERPOLATE_NEAREST)
-	_atlas_scaled = scaled
-	_atlas_scaled_cell = z
-	_atlas_scaled_dim = scaled.duplicate()
-	_multiply_alpha(_atlas_scaled_dim, INACTIVE_ALPHA)
-
-
-func _multiply_alpha(img: Image, mul: float) -> void:
-	var w := img.get_width()
-	var h := img.get_height()
-	for y in h:
-		for x in w:
-			var c := img.get_pixel(x, y)
-			if c.a <= 0.0:
-				continue
-			img.set_pixel(x, y, Color(c.r, c.g, c.b, c.a * mul))
-
-
-# ── doc 信号 ─────────────────────────────────────────────────────────
-
 func _on_doc_changed(layer: int, subcells: PackedInt32Array) -> void:
 	var sub := _sub_size()
 	if _doc == null or sub.x <= 0 or sub.y <= 0:
 		refresh()
 		return
 	# 出现新 desc ⇒ 图集重建后**所有行号都可能平移** ⇒ 必须全量刷新(不能只刷脏区)。
-	if _refresh_atlas_for(layer, subcells):
+	if _image.refresh_atlas_for(self, layer, subcells):
 		refresh()
 		return
 	# changed 的 subcells 是已归一化 idx ⇒ 直接 min/max 得包围盒(环面绕回由 refresh_region 平移副本处理)。
@@ -876,27 +718,8 @@ func _on_doc_changed(layer: int, subcells: PackedInt32Array) -> void:
 		refresh_region(bbox)
 
 
-## 只在 changed 子格里判有没有图集里没有的新 desc;有则重建图集并返回 true。
-func _refresh_atlas_for(layer: int, subcells: PackedInt32Array) -> bool:
-	if _doc == null or EditorConstants.is_color_layer(layer):
-		return false
-	var layers: Array = _doc.map.get("layers", [])
-	if layer < 0 or layer >= layers.size() or layers[layer] == null:
-		return false
-	var cells: PackedInt32Array = (layers[layer] as Dictionary).get("desc", PackedInt32Array())
-	for raw_idx in subcells:
-		var idx := int(raw_idx)
-		if idx < 0 or idx >= cells.size():
-			continue
-		var d := int(cells[idx])
-		if EditorDesc.tex_of(d) != 0 and not _atlas_row_of.has(d):
-			_ensure_atlas(true)
-			return true
-	return false
-
-
 func _on_doc_structure_changed() -> void:
-	_ensure_atlas(true)
+	_image.ensure_atlas(self, true)
 	refresh()
 
 
@@ -914,126 +737,14 @@ func _on_resized() -> void:
 func _draw() -> void:
 	if _view_tex != null and size.x > 0.0 and size.y > 0.0:
 		draw_texture_rect(_view_tex, Rect2(Vector2.ZERO, size), false)
-	_draw_grid()
-	_draw_selection()
-	_draw_move_preview()
-	_draw_meta()
-	_draw_gradient_preview()
-	_draw_brush()
-	_draw_minimap()
+	_overlay.draw_grid(self)
+	_overlay.draw_selection(self)
+	_overlay.draw_move_preview(self)
+	_overlay.draw_meta(self)
+	_overlay.draw_gradient_preview(self)
+	_overlay.draw_brush(self)
+	_overlay.draw_minimap(self)
 	_draw_calls += 1
-
-
-func _draw_grid() -> void:
-	var sub := _sub_size()
-	var x0 := floori(_origin.x)
-	var x1 := ceili(_origin.x + size.x / _zoom)
-	for wx in range(x0, x1 + 1):
-		var px := (float(wx) - _origin.x) * _zoom
-		if px < -1.0 or px > size.x + 1.0:
-			continue
-		if sub.x > 0 and posmod(wx, sub.x) == 0:
-			draw_line(Vector2(px, 0.0), Vector2(px, size.y), SEAM_COLOR, 2.0)
-		elif posmod(wx, SUB_PER_CELL) == 0:
-			draw_line(Vector2(px, 0.0), Vector2(px, size.y), GRID_COLOR, 1.0)
-	var y0 := floori(_origin.y)
-	var y1 := ceili(_origin.y + size.y / _zoom)
-	for wy in range(y0, y1 + 1):
-		var py := (float(wy) - _origin.y) * _zoom
-		if py < -1.0 or py > size.y + 1.0:
-			continue
-		if sub.y > 0 and posmod(wy, sub.y) == 0:
-			draw_line(Vector2(0.0, py), Vector2(size.x, py), SEAM_COLOR, 2.0)
-		elif posmod(wy, SUB_PER_CELL) == 0:
-			draw_line(Vector2(0.0, py), Vector2(size.x, py), GRID_COLOR, 1.0)
-
-
-## 选区:半透明填充 + 虚线框(屏幕像素,不随 zoom 变粗)。
-func _draw_selection() -> void:
-	var r := selection_screen_rect()
-	if r.size.x <= 0.0 or r.size.y <= 0.0:
-		return
-	draw_rect(r, SELECTION_FILL_COLOR)
-	_draw_dashed_rect(r, SELECTION_LINE_COLOR, 1.5)
-
-
-## 移动工具:拖动中的位移预览(半透明框 + 虚线 + 中心连线),松手才写 doc。
-func _draw_move_preview() -> void:
-	if not _moving_selection or _doc == null or not _doc.has_selection():
-		return
-	var r := selection_screen_rect()
-	if r.size.x <= 0.0 or r.size.y <= 0.0:
-		return
-	var moved := Rect2(r.position + Vector2(_move_delta) * _zoom, r.size)
-	draw_rect(moved, Color(0.35, 0.90, 1.0, 0.10))
-	var c := Color(1.0, 0.85, 0.35, 0.95)
-	_draw_dashed_rect(moved, c, 1.5)
-	draw_line(r.get_center(), moved.get_center(), Color(c.r, c.g, c.b, 0.35), 1.0)
-
-
-func _draw_dashed_rect(r: Rect2, color: Color, width: float) -> void:
-	draw_dashed_line(r.position, Vector2(r.end.x, r.position.y), color, width, 6.0)
-	draw_dashed_line(Vector2(r.end.x, r.position.y), r.end, color, width, 6.0)
-	draw_dashed_line(r.end, Vector2(r.position.x, r.end.y), color, width, 6.0)
-	draw_dashed_line(Vector2(r.position.x, r.end.y), r.position, color, width, 6.0)
-
-
-## meta 标记:出生点青方块 P1/P2…、复活点 R1 深绿 / R2 深橙、敌人红点+类型首字母。
-## 全部按屏幕像素画(方块 10px / 红点半径 6px),缩放只改变标记位置,不改变标记大小。
-func _draw_meta() -> void:
-	var markers := meta_markers()
-	if markers.is_empty():
-		return
-	var font: Font = ThemeDB.fallback_font
-	for m: Dictionary in markers:
-		var pos: Vector2 = m["pos"]
-		# 移动工具拖拽中:该标记跟鼠标走(屏幕像素),松手才落回格坐标。
-		var dragging := _is_dragging_marker(m)
-		if dragging:
-			pos = _mouse_pos
-		var label := String(m["label"])
-		match String(m["kind"]):
-			"player":
-				var c := META_PLAYER_COLOR
-				var box := Rect2(pos - Vector2(META_SQUARE, META_SQUARE) * 0.5,
-						Vector2(META_SQUARE, META_SQUARE))
-				draw_rect(box, c)
-				draw_rect(box, Color(0.0, 0.0, 0.0, 0.75), false, 1.0)
-				_draw_marker_text(font, pos + Vector2(META_SQUARE * 0.7, 4.0), label, c)
-			"respawn":
-				var c2 := META_RESPAWN1_COLOR if int(m["side"]) == 1 else META_RESPAWN2_COLOR
-				var box2 := Rect2(pos - Vector2(META_SQUARE, META_SQUARE) * 0.5,
-						Vector2(META_SQUARE, META_SQUARE))
-				draw_rect(box2, c2)
-				draw_rect(box2, Color(0.0, 0.0, 0.0, 0.75), false, 1.0)
-				_draw_marker_text(font, pos + Vector2(META_SQUARE * 0.7, 4.0), label, c2)
-			"enemy":
-				# 敌人不再画成红点:直接用游戏里的 idle 贴图(默认动画首帧,尺寸 = 游戏内实际像素)。
-				var art := enemy_art(String(m.get("type", "")))
-				if not art.is_empty():
-					var k := _zoom / float(EditorConstants.SUB_PX)
-					var sz: Vector2 = (art["size"] as Vector2) * k
-					var org: Vector2 = (art["offset"] as Vector2) * k
-					var art_rect := Rect2(pos - sz * 0.5 + org, sz)
-					draw_texture_rect(art["tex"] as Texture2D, art_rect, false)
-					# 格子中心留一个 2px 点:贴图会盖住格子边界,这个点让「到底放在哪一格」一眼可见。
-					draw_circle(pos, 2.0, Color(1.0, 0.25, 0.25, 0.85))
-					if dragging:
-						draw_rect(art_rect, Color(1.0, 1.0, 1.0, 0.9), false, 1.5)
-				else:
-					draw_circle(pos, META_ENEMY_RADIUS, META_ENEMY_COLOR)
-					draw_circle(pos, META_ENEMY_RADIUS, Color(0.0, 0.0, 0.0, 0.6), false, 1.0)
-					_draw_marker_text(font, pos + Vector2(-META_ENEMY_RADIUS * 0.45, 4.0), label,
-							Color(1.0, 1.0, 1.0, 1.0))
-		if dragging:
-			draw_circle(pos, META_HIT_RADIUS, Color(1.0, 1.0, 1.0, 0.9), false, 1.5)
-
-
-func _is_dragging_marker(m: Dictionary) -> bool:
-	if _dragging_meta.is_empty():
-		return false
-	return String(_dragging_meta.get("kind", "")) == String(m.get("kind", "")) \
-			and int(_dragging_meta.get("index", -1)) == int(m.get("index", -2))
 
 
 # 移动工具命中测试(鼠标是否悬在可拖目标上):meta 标记优先,其次选区内部。
@@ -1057,142 +768,6 @@ func _refresh_cursor() -> void:
 			mouse_default_cursor_shape = Control.CURSOR_ARROW
 	else:
 		mouse_default_cursor_shape = Control.CURSOR_CROSS
-
-
-func _draw_marker_text(font: Font, at: Vector2, text: String, color: Color) -> void:
-	if font == null or text == "":
-		return
-	draw_string(font, at, text, HORIZONTAL_ALIGNMENT_LEFT, -1, META_FONT_SIZE, color)
-
-
-## 渐变预览:从 a 到 b 的屏幕点画虚线 + 两端小圆点(a/b 异色)。只在 active 时画,只进 _draw。
-func _draw_gradient_preview() -> void:
-	if not _gradient_active:
-		return
-	var a := subcell_to_screen(_gradient_a) + Vector2(_zoom, _zoom) * 0.5
-	var b := subcell_to_screen(_gradient_b) + Vector2(_zoom, _zoom) * 0.5
-	draw_dashed_line(a, b, GRADIENT_LINE_COLOR, 2.0, 8.0)
-	draw_circle(a, GRADIENT_DOT_RADIUS, GRADIENT_A_COLOR)
-	draw_circle(b, GRADIENT_DOT_RADIUS, GRADIENT_B_COLOR)
-
-
-func _draw_brush() -> void:
-	# meta 放置模式下不画画刷框(避免「放点模式还显示画笔框」)。
-	if not _has_hover or _pan_tool or _move_tool or _meta_mode_active:
-		return
-	var sub := _sub_size()
-	if sub.x <= 0 or sub.y <= 0:
-		return
-	# 指针子格 → 格;画刷以格为中心(与 editor_root._stamp_cell 的 brush_offsets 同源)。
-	var cell := Vector2i(floori(float(_hover_sub.x) / SUB_PER_CELL), floori(float(_hover_sub.y) / SUB_PER_CELL))
-	var off := EditorGeometry.brush_offsets(_brush_cells)
-	var top_left := Vector2i(cell.x - int(off["lo"]), cell.y - int(off["lo"]))
-	var rect := Rect2(subcell_to_screen(top_left * SUB_PER_CELL),
-			Vector2(float(_brush_cells) * SUB_PER_CELL, float(_brush_cells) * SUB_PER_CELL) * _zoom)
-	var tint := ERASER_COLOR
-	if EditorConstants.is_color_layer(_active_layer):
-		# 颜色层:橡皮(_preview_desc=0)保持红框;其余用工具层喂的当前画笔颜色。
-		if _preview_desc != 0:
-			tint = _preview_color
-	elif _preview_desc != 0:
-		tint = TerrainAtlas.tint_color(Color.WHITE, _preview_desc)
-	draw_rect(rect, Color(tint.r, tint.g, tint.b, 0.20))
-	draw_rect(rect, Color(tint.r, tint.g, tint.b, 0.95), false, 2.0)
-
-
-# ── 小地图(右上角;纯叠加层,不进视口图)─────────────────────────────
-
-## 底/边框 → meta 小点 → 当前视口矩形;缩放/平移/画布尺寸变化都按当前相机重算。
-func _draw_minimap() -> void:
-	var r := minimap_rect()
-	var sub := _sub_size()
-	if r.size.x <= 0.0 or r.size.y <= 0.0 or sub.x <= 0 or sub.y <= 0:
-		return
-	draw_rect(r, MINIMAP_BG_COLOR)
-	draw_rect(r, MINIMAP_BORDER_COLOR, false, 1.0)
-	_draw_minimap_meta(r, sub)
-	_draw_minimap_viewport(r, sub)
-
-
-## meta 小点:出生点 / 复活点(side 色)/ 敌人,颜色与画布标记同一套 META_* 常量;
-## meta 标记被隐藏时小地图也不画点(与 meta_markers() 口径一致)。
-func _draw_minimap_meta(r: Rect2, sub: Vector2i) -> void:
-	if not _meta_visible or _doc == null:
-		return
-	var map: Dictionary = _doc.map
-	if map.is_empty():
-		return
-	var players: Array = map.get("players", [])
-	for i in players.size():
-		var p: Variant = players[i]
-		if p is Dictionary:
-			var pd: Dictionary = p
-			draw_circle(_minimap_cell_point(r, sub,
-					Vector2i(int(pd.get("x", 0)), int(pd.get("y", 0)))), MINIMAP_META_RADIUS,
-					META_PLAYER_COLOR)
-	var respawns: Array = map.get("respawns", [])
-	for i in respawns.size():
-		var rp: Variant = respawns[i]
-		if rp is Dictionary:
-			var rd: Dictionary = rp
-			var color := META_RESPAWN1_COLOR if int(rd.get("side", 0)) == 1 else META_RESPAWN2_COLOR
-			draw_circle(_minimap_cell_point(r, sub,
-					Vector2i(int(rd.get("x", 0)), int(rd.get("y", 0)))), MINIMAP_META_RADIUS, color)
-	var enemies: Array = map.get("enemies", [])
-	var enemy_color := Color(META_ENEMY_COLOR.r, META_ENEMY_COLOR.g, META_ENEMY_COLOR.b, MINIMAP_ENEMY_ALPHA)
-	for i in enemies.size():
-		var ep: Variant = enemies[i]
-		if ep is Dictionary:
-			var ed: Dictionary = ep
-			draw_circle(_minimap_cell_point(r, sub,
-					Vector2i(int(ed.get("x", 0)), int(ed.get("y", 0)))), MINIMAP_META_RADIUS * 0.8,
-					enemy_color)
-
-
-## 格坐标 → 小地图内该格中心的屏幕点(按环面 posmod 归一,越界 meta 也画在图内)。
-func _minimap_cell_point(r: Rect2, sub: Vector2i, cell: Vector2i) -> Vector2:
-	var world := Vector2(float(cell.x) * SUB_PER_CELL + SUB_PER_CELL * 0.5,
-			float(cell.y) * SUB_PER_CELL + SUB_PER_CELL * 0.5)
-	var frac := Vector2(fposmod(world.x, float(sub.x)) / float(sub.x),
-			fposmod(world.y, float(sub.y)) / float(sub.y))
-	return r.position + frac * r.size
-
-
-## 当前视口矩形(origin..origin+size/zoom)映射进小地图;跨环面接缝时拆成多段。
-func _draw_minimap_viewport(r: Rect2, sub: Vector2i) -> void:
-	if _zoom <= 0.0:
-		return
-	var span := Vector2(size) / _zoom
-	var xs := _wrap_intervals(fposmod(_origin.x, float(sub.x)) / float(sub.x),
-			span.x / float(sub.x))
-	var ys := _wrap_intervals(fposmod(_origin.y, float(sub.y)) / float(sub.y),
-			span.y / float(sub.y))
-	for xi in xs.size():
-		var xr: Vector2 = xs[xi]
-		for yi in ys.size():
-			var yr: Vector2 = ys[yi]
-			var vr := Rect2(r.position + Vector2(xr.x, yr.x) * r.size,
-					Vector2(maxf((xr.y - xr.x) * r.size.x, 1.0),
-							maxf((yr.y - yr.x) * r.size.y, 1.0)))
-			draw_rect(vr, MINIMAP_VIEW_COLOR, false, 1.0)
-
-
-## 把 [start, start+length) 在 0..1 的环面上切成 1~2 段(长度 >= 1 = 整圈)。
-func _wrap_intervals(start: float, length: float) -> Array[Vector2]:
-	var out: Array[Vector2] = []
-	if length <= 0.0:
-		return out
-	if length >= 1.0:
-		out.append(Vector2(0.0, 1.0))
-		return out
-	var s := fposmod(start, 1.0)
-	var l := minf(length, 1.0)
-	if s + l <= 1.0:
-		out.append(Vector2(s, s + l))
-	else:
-		out.append(Vector2(s, 1.0))
-		out.append(Vector2(0.0, s + l - 1.0))
-	return out
 
 
 ## 小地图内点击位置 → 地图子格(夹在地图范围内)。

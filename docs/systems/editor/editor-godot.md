@@ -11,10 +11,15 @@
 |---|---|---|
 | 文档模型 | [`core/editor/editor_doc.gd`](../../../core/editor/editor_doc.gd) | 地图字典 + 当前层 + 稀疏 cells 撤销栈 + 环面归一化 + `changed`/`structure_changed`/`history_changed` 信号；meta 单项删除/改敌人类型/扁平列表；纯逻辑、可 `-s` 测 |
 | 读写门面 | [`core/editor/editor_io.gd`](../../../core/editor/editor_io.gd) | `open_path`（v4 二进制 / v3 文本 / 旧字母格式 + 读时 legacy 迁移）、`save_path`（校验 + 编码 + 写盘）、`default_target`、`list_maps` |
-| 画布 | [`scenes/editor/editor_canvas.gd`](../../../scenes/editor/editor_canvas.gd) | 视口离屏层合成、相机（origin/zoom）、`screen_to_subcell`、层可见/压暗、网格与画刷框、`pointer_*` 信号；**手形平移 / 移动工具**（拖选区发几何信号、meta 标记命中测试与拖拽预览）、光标形状；**敌人按游戏 idle 贴图绘制（未知类型回退红点）、单击出生点=试玩、meta 模式抑制画刷框 / 渐变方向预览 / 小地图 + 右键跳转 / `center_on_subcell`** |
+| 画布 | [`scenes/editor/editor_canvas.gd`](../../../scenes/editor/editor_canvas.gd) | 相机（origin/zoom）、`screen_to_subcell`、层可见/压暗、刷新（全量/脏区）、输入与手形/移动工具、`pointer_*` 信号、meta 标记命中与 `enemy_art()`；**把绘制转发给 overlay、把图集合成转发给 image** |
+| 画布叠加层 | [`scenes/editor/editor_canvas_overlay.gd`](../../../scenes/editor/editor_canvas_overlay.gd) | `_draw` 里的网格/选区/移动预览/meta 标记（含敌人 idle 贴图）/渐变/画刷框/小地图；不持状态，画时读画布对象 |
+| 画布图集合成 | [`scenes/editor/editor_canvas_image.gd`](../../../scenes/editor/editor_canvas_image.gd) | `Image` 合成：图集按 descs 重建/缩放、层号倒序重放、颜色图章、脏块重画；图集缓存在画布对象上 |
 | 真渲染预览 | [`scenes/editor/editor_preview.gd`](../../../scenes/editor/editor_preview.gd) | 复用游戏管线（TerrainAtlas tileset + ParallaxBg + PostProcess）的预览；三个 SubViewport 合成后贴回画布区域；**`set_hour` 把昼夜时钟钉在指定时刻（走 `PostProcess.set_hour`，不另算一套光照）** |
-| UI 场景 | [`scenes/editor/editor_root.tscn`](../../../scenes/editor/editor_root.tscn) | **全部静态 UI**：顶栏（标题/`FileMenu`·`EditMenu`/**保存**/撤销/重做/**文件名+未保存标记**/**跳转**/**帮助**/视图/预览/**试玩**/返回）· **左栏**（工具网格 10 键 + 画刷 + 颜色/纹理调色板**按层渐进披露** + 操作提示）· 中 `CanvasHost`+`EditorCanvas`+`OverlayHost`（**预览光照条**）· **右栏**（`LayersCard` 7 层常驻 + 2 Tab：**选区 / 地图事件**、校验消息；meta 列表可单条删除/改类型）· 状态栏（消息 + 信息 + 缩放控件）；根挂 `ui/theme/menu_theme.tres`，功能节点 `unique_name_in_owner` |
-| 场景根逻辑 | [`scenes/editor/editor_root.gd`](../../../scenes/editor/editor_root.gd) | 装配 + 接线 + 公开 API（`open_path`/`save_to`/`validate`/`export_to`/`export_and_load`/`get_doc`/`get_editor_canvas`/`set_preview`/`set_preview_hour`/`start_playtest`/`current_path`/`new_map`）；撤销/重做可用态、工具快捷键、状态栏缩放、按层适用性/渐进披露、meta 列表、校验自动切 Tab、试玩返回时取回同一个 `EditorDoc`；不建静态控件 |
+| UI 场景 | [`scenes/editor/editor_root.tscn`](../../../scenes/editor/editor_root.tscn) | **全部静态 UI**：顶栏（标题/`FileMenu`·`EditMenu`/**保存**/撤销/重做/**文件名+未保存标记**/**跳转**/**帮助**/视图/预览/**试玩**/返回）· **左栏**（工具网格 10 键 + 画刷 + 颜色/纹理调色板**按层渐进披露** + 操作提示）· 中 `CanvasHost`+`EditorCanvas`+`OverlayHost`（**预览光照条**）· **右栏**（`LayersCard` 7 层常驻 + 2 Tab：**选区 / 地图事件**、校验消息；meta 列表默认收起、可单条删除/改类型）· 状态栏（消息 + 信息 + 缩放控件）；根挂 `ui/theme/menu_theme.tres`，功能节点 `unique_name_in_owner` |
+| 场景根逻辑 | [`scenes/editor/editor_root.gd`](../../../scenes/editor/editor_root.gd) | **只做装配/接线/公开 API**（文件读写、doc 信号分发、状态栏、快捷键、菜单、工具/meta 按钮接线）；面板逻辑转发给下面三个组件；不建静态控件 |
+| 左栏 + 图层卡 | [`scenes/editor/editor_layer_panel.gd`](../../../scenes/editor/editor_layer_panel.gd) | 7 层行、可见开关、按层渐进披露、工具可用性、纹理调色板构建/标记 |
+| 右栏 meta 面板 | [`scenes/editor/editor_meta_panel.gd`](../../../scenes/editor/editor_meta_panel.gd) | meta 计数摘要 + 已放置列表（收起/分组/单条删除/改敌人类型）+ 清空 |
+| 视图 + 试玩 | [`scenes/editor/editor_view_controls.gd`](../../../scenes/editor/editor_view_controls.gd) | 真渲染预览开关/相机同步/光照时辰条 + 试玩（临时图、暂存交接、Esc 回编辑器） |
 | 工具层 | [`scenes/editor/editor_tools.gd`](../../../scenes/editor/editor_tools.gd) | 工具状态（含手形/移动）+ 画布指针 → `EditorDoc` 写入 + 选区拖拽 + meta 放置/拖动落点 + 敌人类型 + 渐变选区限制；只发信号（`message`/`tool_changed`/`paint_desc_changed`/`color_changed`/`meta_mode_changed`/`selection_changed`） |
 | 试玩交接 | [`scenes/editor/editor_playtest.gd`](../../../scenes/editor/editor_playtest.gd) | 换场景进出试玩时的 `EditorDoc` 暂存（撤销栈/选区/dirty 不掉）+ 临时地图路径常量；只有编辑器脚本引用它（服务端导出排除 `scenes/editor/*`） |
 | 命令层 | [`scenes/editor/editor_actions.gd`](../../../scenes/editor/editor_actions.gd) | 文件/编辑命令 + `ConfirmationDialog` 弹层内容（新建/打开/保存为/导出/**按格跳转**/**快捷键帮助**）+ **未保存改动拦截**（新建/打开/返回/关窗前确认）；读写仍走 `EditorIO` 与 root 公开 API |
@@ -225,7 +230,9 @@
 用户裁定「要用 .tscn 和 .tres，别再在 GDScript 里动态搭 UI」。落地形态：
 
 - `scenes/editor/editor_root.tscn` = **真实场景树**（根挂 `ui/theme/menu_theme.tres`）：`Toolbar`（标题 + `FileMenu`/`EditMenu` + 保存/撤销/重做 + 文件名 + 跳转/帮助 + 视图 + 预览/返回）· **左栏** `LeftPanel`（2×5 工具网格 `ToolStrip` + 画刷 + **按层显示的颜色组或调色板** + 操作提示）· 中 `CanvasHost`（内含 `EditorCanvas` 节点）· **右栏** `RightSide`（`LayersCard` 7 层常驻 + `RightTabs` 2 Tab：**选区 / 地图事件**、校验消息；含敌人类型下拉 + meta 列表）· `StatusBar`（消息/信息/缩放）；功能节点全部 `unique_name_in_owner=true`，root 用 `%Name` 取。
-- `editor_root.gd` **只做装配/接线/公开 API**（1270 → **581** 行）：静态控件不再 `new`；代码里只保留动态内容（调色板缩略图、菜单下拉项、弹层内容、预览节点、撤销/重做可用态、缩放标签）。
+- `editor_root.gd` **只做装配/接线/公开 API**：静态控件不再 `new`；代码里只保留动态内容（调色板缩略图、菜单下拉项、弹层内容、预览节点、撤销/重做可用态、缩放标签）。
+  面板与画布子逻辑在 2026-11-18 进一步拆成 `editor_layer_panel.gd` / `editor_meta_panel.gd` / `editor_view_controls.gd` /
+  `editor_canvas_overlay.gd` / `editor_canvas_image.gd`（见 §17；行数是趋势不是判据）。
 - 拆出两个无 `class_name` 的小组件（root `preload`）：`editor_tools.gd`（工具状态 + 画布指针 → `EditorDoc` 写入 + 选区拖拽 + meta 放置/拖动落点；只发信号）、`editor_actions.gd`（文件/编辑命令 + `ConfirmationDialog` 弹层 + 未保存拦截）。两者都不持有控件。
 - 判据：`EDITOR SCENE PROBE: ALL-OK(60)`（⑦ UI 行为组 / ⑧ 未保存拦截 / ⑨ 移动工具端到端）/ `UI LAYOUT PROBE: ALL-OK(54)` / `RUN_ALL OK` / `check_naming.py` 绿；改前/改后截图 `.tmp/ui_shots/`（非 headless 人工对比）。
 - 边界：`.tscn` 无法引用 `UiFactory.C_*`，所以全屏底色 `Bg` 在 tscn 里留一处字面量（全屏装饰例外），少数标签强调/弱化色由 root 在 `_ready` 按 `C_*` 覆盖 —— 不在 tscn 里另抄一套调色板。
@@ -307,3 +314,24 @@
   左栏四个分组标题与 `选区 / 剪贴板`、`地图事件`、`已放置` 同一套；卡片标题「图层」保留主题默认 32（每张卡只此一处）。
 - **边界**：列表默认收起但子节点照建（探针按结构找行/按钮，不看可见性）；「删除」文本保留（探针按文本找）；左栏 palette 下方的留白未动
   （信息架构是「左=作画上下文」，往里塞内容会破坏 2026-11-12 的重排结论）。
+
+## 17. 结构拆分（2026-11-18）
+
+规范依据：[`AGENTS.md`](../../../AGENTS.md) 的「单一真相源 / 新逻辑落进该落的层」、[`docs/README.md`](../../README.md) 的目录契约，
+以及本文 §12 立的先例「root 只做装配/接线，组件用无 `class_name` 的 preload 脚本」。本轮把两处重新长大的文件按同一模式拆开，
+**公开 API / 节点名 / 行为不变**（探针只调 root 与画布的公开口）：
+
+| 新文件 | 从哪拆出 | 职责 |
+|---|---|---|
+| `editor_layer_panel.gd` | `editor_root.gd` | 7 层行、可见开关、按层渐进披露、工具可用性、纹理调色板 |
+| `editor_meta_panel.gd` | `editor_root.gd` | meta 计数摘要 + 已放置列表（收起/分组/删除/改类型）+ 清空 |
+| `editor_view_controls.gd` | `editor_root.gd` | 预览开关/相机同步/光照时辰条 + 试玩（临时图、`editor_playtest` 交接） |
+| `editor_canvas_overlay.gd` | `editor_canvas.gd` | `_draw` 的叠加层：网格/选区/移动预览/meta 贴图/渐变/画刷框/小地图 |
+| `editor_canvas_image.gd` | `editor_canvas.gd` | `Image` 合成：图集重建与缩放、层重放、颜色图章、脏块 |
+
+- **拆分口径**：组件不持状态（画布侧的 overlay/image 直接操作传入的 `EditorCanvas` 对象与其缓存），root 侧组件只持 UI 节点引用与 `doc/canvas`；
+  与 `editor_tools.gd` / `editor_actions.gd` 同规 —— 无 `class_name`、由调用方 `preload`，不进全局类表。
+- **拆分后规模（行数，仅作趋势参考）**：`editor_root.gd` 1137 → 730；`editor_canvas.gd` 1384 → 959；
+  新增组件 154~258 行。**没有**新增测试断言（编辑器/纯 UI 按 [`test-economy.md`](../../workflow/test-economy.md) 冻结新增守卫）。
+- **验证**：`EDITOR CANVAS PROBE: ALL-OK(56)` / `EDITOR SCENE PROBE: ALL-OK(60)` / `EDITOR PREVIEW PROBE: ALL-OK(21)` /
+  `UI LAYOUT PROBE: ALL-OK(54)` / 试玩端到端（不入库临时探针 18 条）/ `ALLSCRIPT: OK(308 个脚本)` / `check_naming` / `check_architecture` 全绿。

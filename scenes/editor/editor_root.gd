@@ -1,14 +1,16 @@
 extends Control
 
-# 编辑器场景根(**只做逻辑/接线**):UI 在 editor_root.tscn(theme=menu_theme.tres);工具/指针在
-# editor_tools.gd,命令/弹层在 editor_actions.gd,画布在 editor_canvas.gd,纯逻辑在 core/editor/。
+# 编辑器场景根(**只做装配/接线/公开 API**):UI 在 editor_root.tscn(theme=menu_theme.tres);工具/指针在
+# editor_tools.gd,命令/弹层在 editor_actions.gd,画布在 editor_canvas.gd,左栏+图层卡在 editor_layer_panel.gd,
+# 右栏 meta 面板在 editor_meta_panel.gd,预览+试玩在 editor_view_controls.gd,纯逻辑在 core/editor/。
 # ★ 进客户端导出包 ⇒ 禁止 RegEx。坐标 = 子格(16px);格 = 子格/4。探针只调公开 API 与 UI 节点。
 
 const TOOLS_SCRIPT := preload("res://scenes/editor/editor_tools.gd")
 const ACTIONS_SCRIPT := preload("res://scenes/editor/editor_actions.gd")
-const PREVIEW_SCRIPT := preload("res://scenes/editor/editor_preview.gd")
+const LAYER_PANEL_SCRIPT := preload("res://scenes/editor/editor_layer_panel.gd")
+const META_PANEL_SCRIPT := preload("res://scenes/editor/editor_meta_panel.gd")
+const VIEW_SCRIPT := preload("res://scenes/editor/editor_view_controls.gd")
 const PLAYTEST_SCRIPT := preload("res://scenes/editor/editor_playtest.gd")
-const TILE_DEFS_PATH := "res://data/tile_defs.json"
 const THEME := preload("res://ui/theme/menu_theme.tres")
 const RIGHT_DEFAULT_W := 320.0        # 右栏初始宽(图层卡 + 2 Tab;最小宽写在 tscn 的 RightSide)
 
@@ -37,45 +39,27 @@ var canvas: EditorCanvas = null
 
 var _tools = TOOLS_SCRIPT.new()
 var _actions = ACTIONS_SCRIPT.new()
+var _layers = LAYER_PANEL_SCRIPT.new()
+var _meta = META_PANEL_SCRIPT.new()
+var _view = VIEW_SCRIPT.new()
 
 var _path := ""
-var _texture_ids: Array[int] = []
-var _layer_rows: Array[Dictionary] = []
 var _tool_buttons: Dictionary = {}
 var _meta_buttons: Dictionary = {}
-var _palette_buttons: Array[Button] = []
 var _status: Label = null
 var _status_info: Label = null
 var _doc_label: Label = null
 var _path_label: Label = null
 var _output: RichTextLabel = null
-var _selection_info: Label = null
-var _meta_info: Label = null
-var _meta_list: VBoxContainer = null
-var _meta_toggle: Button = null
-var _meta_expanded := false            # 已放置列表默认收起:77 条同权文本会淹没右栏(渐进披露)
-var _enemy_type_opt: OptionButton = null
 var _message := ""
 var _enemy_types: Array[String] = []
-var _color_nodes: Array[Control] = []
-var _palette_nodes: Array[Control] = []
-
 var _canvas_host: Control = null
 var _split: HSplitContainer = null
 var _tabs: TabContainer = null
-var _preview: Control = null
-var _preview_on := false
-var _preview_btn: Button = null
-var _preview_last_origin := Vector2.INF
-var _preview_last_zoom := -1.0
 var _undo_btn: Button = null
 var _redo_btn: Button = null
 var _zoom_text: Label = null
-var _playtest_btn: Button = null
-var _light_bar: Control = null
-var _light_hour: HSlider = null
-var _light_time: Label = null
-var _preview_hour := 12.0             # 预览光照时辰(0..24;正午最亮 = 看地图版式的默认)
+var _selection_info: Label = null
 
 
 func _ready() -> void:
@@ -90,10 +74,12 @@ func _ready() -> void:
 	canvas = %Canvas as EditorCanvas
 	_tools.setup(doc, canvas)
 	_actions.setup(self)
+	_layers.setup(self, doc, canvas, _tools, _tool_buttons, TOOL_KEYS)
 	_register_editor_actions()
 	_wire_ui()
+	_layers.wire()
 	canvas.set_doc(doc)
-	_build_preview()
+	_view.build()
 	doc.changed.connect(_on_doc_changed)
 	doc.structure_changed.connect(_on_doc_structure_changed)
 	doc.meta_changed.connect(_on_doc_meta_changed)
@@ -116,9 +102,9 @@ func _ready() -> void:
 func _adopt_restored_doc() -> void:
 	canvas.set_active_layer(doc.active_layer)
 	canvas.fit_to_map()
-	_sync_layer_rows()
-	_sync_layer_tool_availability()
-	_refresh_palette_texture()
+	_layers.sync_layer_rows()
+	_layers.sync_tool_availability()
+	_layers.refresh_palette_texture()
 	_update_zoom_label()
 	_update_history_buttons()
 	if doc.map.is_empty():
@@ -127,15 +113,8 @@ func _adopt_restored_doc() -> void:
 		_set_message("已从试玩返回(未保存改动与撤销栈都还在)", false)
 
 
-func _process(_dt: float) -> void:
-	if not _preview_on or _preview == null or canvas == null:
-		return
-	var origin := canvas.origin
-	var zoom := canvas.zoom
-	if origin != _preview_last_origin or zoom != _preview_last_zoom:
-		_preview_last_origin = origin
-		_preview_last_zoom = zoom
-		_preview.set_camera(origin, zoom)
+func _process(dt: float) -> void:
+	_view.process(dt)
 
 
 # 关窗(Alt+F4 / 窗口 X)也要拦未保存改动:_ready 里把 auto_accept_quit 置 false,
@@ -189,9 +168,9 @@ func open_path(path: String) -> Dictionary:
 	_path = path
 	canvas.set_active_layer(doc.active_layer)
 	canvas.fit_to_map()
-	_sync_layer_rows()
-	_sync_layer_tool_availability()
-	_refresh_palette_texture()
+	_layers.sync_layer_rows()
+	_layers.sync_tool_availability()
+	_layers.refresh_palette_texture()
 	_set_message("已打开 %s(%s)" % [path, String(res.get("source", "v4"))], false)
 	if not (res.get("warnings", []) as Array).is_empty():
 		_append_output("打开时校验提示:\n- " + "\n- ".join(res["warnings"]))
@@ -205,8 +184,8 @@ func new_map(cells_w: int, cells_h: int, map_name_arg: String = "untitled") -> v
 	doc.new_map(map_name_arg, cells_w, cells_h)
 	_path = ""
 	canvas.fit_to_map()
-	_sync_layer_rows()
-	_sync_layer_tool_availability()
+	_layers.sync_layer_rows()
+	_layers.sync_tool_availability()
 	_set_message("已新建 %d×%d 格" % [cells_w, cells_h], false)
 	_update_zoom_label()
 	_update_history_buttons()
@@ -290,6 +269,32 @@ func export_and_load(path: String, persist: bool = true, switch_scene: bool = tr
 	return res
 
 
+# ── 预览 / 试玩的公开转发(探针与命令层只用 root 这几个口)────────────────
+
+func get_preview() -> Control:
+	return _view.get_preview()
+
+
+func is_preview_on() -> bool:
+	return _view.is_preview_on()
+
+
+func set_preview(on: bool) -> void:
+	_view.set_preview(on)
+
+
+func set_preview_hour(hour: float) -> void:
+	_view.set_hour(hour)
+
+
+func get_preview_hour() -> float:
+	return _view.get_hour()
+
+
+func start_playtest(spawn_cell: Vector2i = Vector2i(-1, -1)) -> Dictionary:
+	return _view.start_playtest(spawn_cell)
+
+
 # ── UI 接线(scene 树见 editor_root.tscn;这里只连信号 + 填动态内容)──────────
 
 func _wire_ui() -> void:
@@ -299,15 +304,11 @@ func _wire_ui() -> void:
 	_path_label = %PathText
 	_output = %Output
 	_selection_info = %SelectionInfo
-	_meta_info = %MetaInfo
-	_meta_list = %MetaList
-	_meta_toggle = %MetaToggle as Button
-	_meta_toggle.theme_type_variation = &"FlatButton"
-	_meta_toggle.add_theme_color_override("font_color", UiFactory.C_TEXT_DIM)
-	_meta_toggle.pressed.connect(_toggle_meta_list)
 	_canvas_host = %CanvasHost
 	_split = %Split
 	_tabs = %RightTabs
+	_view.setup(self, doc, canvas, _canvas_host)
+	_meta.setup(self, doc, _tools, %MetaInfo, %MetaList, %MetaToggle)
 
 	# 少数颜色 token 不在 tscn 里重复写值(single source = UiFactory.C_*)。
 	# 标题从 32 号亮青降成 16 号弱化:菜单栏是"窗口标题"语气,不跟画布抢焦点。
@@ -328,26 +329,9 @@ func _wire_ui() -> void:
 		if h != null:
 			h.add_theme_color_override("font_color", UiFactory.C_TEXT)
 			h.custom_minimum_size = Vector2(0, 26)
-	_color_nodes.clear()
-	_color_nodes.append(%ColorHint as Control)
-	_color_nodes.append(%BrushColorRow as Control)
-	_color_nodes.append(%GradientEndRow as Control)
-	_palette_nodes.clear()
-	_palette_nodes.append(%PaletteHint as Control)
-	_palette_nodes.append(%PaletteScroll as Control)
 
 	_tabs.set_tab_title(0, "选区 & meta")
 	_tabs.set_tab_title(1, "校验消息")
-
-	# 图层:7 行静态在 tscn(LayerRow0-6 = Button + 眼睛 CheckButton);卡片常驻,不随 Tab 切走。
-	for i in EditorConstants.LAYER_COUNT:
-		var row := (%LayerRows as VBoxContainer).get_child(i) as HBoxContainer
-		var btn := row.get_child(0) as Button
-		var vis := row.get_child(1) as CheckButton
-		btn.theme_type_variation = &"LayerRow"
-		btn.pressed.connect(_on_layer_selected.bind(i))
-		vis.toggled.connect(_on_layer_visible_toggled.bind(i))
-		_layer_rows.append({"button": btn, "visible": vis})
 
 	# 工具网格(左栏 10 键;悬停提示带快捷键)
 	for key: String in TOOL_BUTTONS:
@@ -382,27 +366,10 @@ func _wire_ui() -> void:
 	(%EditMenu as MenuButton).theme_type_variation = &""
 	# 顶栏只有一个主行动 = 保存:accent 字 + 左侧 accent 条(复用紧凑强调皮);其余全部 FlatButton。
 	(%SaveBtn as Button).theme_type_variation = &"ToolActive"
-	(%PreviewBtn as Button).theme_type_variation = &"FlatButton"
-	(%PlaytestBtn as Button).theme_type_variation = &"FlatButton"
-	(%BackBtn as Button).theme_type_variation = &"FlatButton"
-	_preview_btn = %PreviewBtn
-	_preview_btn.pressed.connect(_on_preview_toggled)
-	_playtest_btn = %PlaytestBtn
-	_playtest_btn.pressed.connect(_on_playtest_pressed)
+	for nm: String in ["PreviewBtn", "PlaytestBtn", "BackBtn"]:
+		(get_node("%" + nm) as Button).theme_type_variation = &"FlatButton"
 	(%BackBtn as Button).pressed.connect(_actions.back)
-
-	# 光照时辰条(只在本画布上浮):预览开着才显示 —— 只在预览里有时辰可言,平时不占画布。
-	_light_bar = %LightBar as Control
-	_light_hour = %LightHour as HSlider
-	_light_time = %LightTime as Label
-	UiFactory.hud_plate(_light_bar, UiFactory.SP_3, UiFactory.SP_2, true, UiFactory.C_PLATE_DEEP)
-	UiFactory.style_slider(_light_hour)
-	UiFactory.style_control(_light_time, UiFactory.T_LABEL)
-	_light_time.add_theme_color_override("font_color", UiFactory.C_TEXT)
-	(%LightLabel as Label).add_theme_color_override("font_color", UiFactory.C_TEXT_DIM)
-	_light_hour.value = _preview_hour
-	_update_light_time()
-	_light_hour.value_changed.connect(_on_light_hour_changed)
+	_view.wire(%PreviewBtn as Button, %PlaytestBtn as Button)
 
 	# 右栏的次级按钮(选区 6 / meta 5 / 校验)统一扁平;当前态由 _on_*_changed 换 variation。
 	for nm: String in ["SelCopy", "SelCut", "SelPaste", "SelClear", "SelMirrorH", "SelMirrorV",
@@ -413,7 +380,7 @@ func _wire_ui() -> void:
 			b.theme_type_variation = &"FlatButton"
 
 	# 调色板缩略图是动态内容(图集按 tile_defs 生成);按钮列表本身也在 tscn 之外生成。
-	_build_palette(%PaletteGrid as GridContainer)
+	_layers.build_palette(%PaletteGrid as GridContainer)
 
 	var brush_opt := %BrushSizeOption as OptionButton
 	for n in [1, 3, 5, 7, 9]:
@@ -437,13 +404,14 @@ func _wire_ui() -> void:
 
 	# 敌人类型下拉:单一数据源 = data/enemies.json(默认值也是合法 id,不再写死 "slime")。
 	_load_enemy_types()
-	_enemy_type_opt = %EnemyTypeOption as OptionButton
+	_meta.set_enemy_types(_enemy_types)
+	var enemy_opt := %EnemyTypeOption as OptionButton
 	for type_id: String in _enemy_types:
-		_enemy_type_opt.add_item(type_id)
+		enemy_opt.add_item(type_id)
 	if not _enemy_types.is_empty():
-		_enemy_type_opt.selected = 0
+		enemy_opt.selected = 0
 		_tools.set_enemy_type(_enemy_types[0])
-	_enemy_type_opt.item_selected.connect(func(i: int) -> void:
+	enemy_opt.item_selected.connect(func(i: int) -> void:
 		if i >= 0 and i < _enemy_types.size():
 			_tools.set_enemy_type(_enemy_types[i]))
 
@@ -456,7 +424,7 @@ func _wire_ui() -> void:
 		var b := get_node("%" + String(META_BUTTONS[key])) as Button
 		b.pressed.connect(_tools.set_meta_mode.bind(key))
 		_meta_buttons[key] = b
-	(%ClearMetaBtn as Button).pressed.connect(_on_clear_meta_pressed)
+	(%ClearMetaBtn as Button).pressed.connect(_meta.clear_all)
 	(%ClearMetaBtn as Button).add_theme_color_override("font_color", UiFactory.C_TEXT_DIM)
 	(%ValidateBtn as Button).pressed.connect(_actions.validate)
 
@@ -473,7 +441,7 @@ func _wire_ui() -> void:
 	canvas.selection_move_finished.connect(_tools.apply_selection_move)
 	canvas.meta_drag_started.connect(_on_meta_drag_started)
 	canvas.meta_drag_finished.connect(_tools.apply_meta_move)
-	canvas.player_playtest_requested.connect(_on_player_marker_clicked)
+	canvas.player_playtest_requested.connect(_view.on_player_marker_clicked)
 
 	_tools.message.connect(_set_message)
 	_tools.tool_changed.connect(_on_tool_changed)
@@ -482,8 +450,8 @@ func _wire_ui() -> void:
 	_tools.selection_changed.connect(_update_selection_info)
 	_on_tool_changed(_tools.tool)
 	_on_meta_mode_changed(_tools.meta_mode)
-	_sync_layer_tool_availability()
-	_sync_meta_info()
+	_layers.sync_tool_availability()
+	_meta.sync()
 	_update_history_buttons()
 	_update_zoom_label()
 	_layout_split.call_deferred()
@@ -519,62 +487,20 @@ func _layout_split() -> void:
 	_split.split_offset = -int(RIGHT_DEFAULT_W)
 
 
-func _build_palette(container: GridContainer) -> void:
-	var defs = JSON.parse_string(FileAccess.get_file_as_string(TILE_DEFS_PATH))
-	var tiles: Dictionary = defs.get("tiles", {}) if defs is Dictionary else {}
-	var ids: Array[int] = []
-	for k in tiles:
-		ids.append(int(String(k)))
-	ids.sort()
-	_texture_ids = ids
-	var src := TerrainAtlas.source_image()
-	for tid in ids:
-		var b := Button.new()
-		# 缩略图缩到 56px:图集源砖是 64px,但调色板要 3 列塞进 268px 左栏(64px + 按钮内边距会撑到 82)。
-		b.custom_minimum_size = Vector2(56, 56)              # 缩略图边长(内容驱动)
-		b.tooltip_text = "%d %s" % [tid, String((tiles[str(tid)] as Dictionary).get("name", ""))]
-		var img: Image = src.get_region(TerrainAtlas.source_rect(tid - 1))
-		img.resize(56, 56, Image.INTERPOLATE_NEAREST)
-		b.icon = ImageTexture.create_from_image(img)
-		b.expand_icon = false
-		b.theme_type_variation = &"BtnCompact"
-		b.toggle_mode = true                             # 选中态用按钮 pressed 样式,不再只靠 modulate
-		b.pressed.connect(func() -> void: _tools.set_paint_desc(EditorDesc.neutral_desc(tid)))
-		container.add_child(b)
-		_palette_buttons.append(b)
-	_tools.set_paint_desc(EditorDesc.neutral_desc(_texture_ids[0] if not _texture_ids.is_empty() else 1))
-
-
-func _refresh_palette_texture() -> void:
-	if _texture_ids.is_empty():
-		return
-	var tex := EditorDesc.tex_of(_tools.paint_desc)
-	if tex == 0:
-		return
-	_tools.set_paint_desc(EditorDesc.neutral_desc(tex))
-
-
-func _mark_palette(tex: int) -> void:
-	for i in _palette_buttons.size():
-		var on := _texture_ids[i] == tex
-		_palette_buttons[i].set_pressed_no_signal(on)
-		_palette_buttons[i].modulate = Color(1, 1, 1, 1.0 if on else 0.85)
-
-
-# ── 工具/图层/meta 的显示态 ─────────────────────────────────────────────
+# ── 工具/meta 放置的显示态 ─────────────────────────────────────────────
 
 func _on_tool_changed(key: String) -> void:
 	for k: String in _tool_buttons:
 		var b: Button = _tool_buttons[k]
 		b.theme_type_variation = &"ToolActive" if k == key else &"ToolButton"
 	# 预览是盖在画布上的一层:移动/手形要看到选区框与 meta 标记,开着预览就先把预览关掉。
-	if (key == "move" or key == "hand") and _preview_on:
-		set_preview(false)
+	if (key == "move" or key == "hand") and _view.is_preview_on():
+		_view.set_preview(false)
 	_update_status(Vector2i.ZERO, false)
 
 
 func _on_paint_desc_changed(desc: int) -> void:
-	_mark_palette(EditorDesc.tex_of(desc))
+	_layers.mark_palette(EditorDesc.tex_of(desc))
 
 
 func _on_meta_mode_changed(key: String) -> void:
@@ -583,76 +509,6 @@ func _on_meta_mode_changed(key: String) -> void:
 		b.theme_type_variation = &"ToolActive" if k == key else &"FlatButton"
 		b.modulate = UiFactory.C_WHITE
 	_update_status(Vector2i.ZERO, false)
-
-
-func _on_layer_selected(L: int) -> void:
-	doc.active_layer = L
-	canvas.set_active_layer(L)
-	_sync_layer_rows()
-	_sync_layer_tool_availability()
-	if EditorConstants.is_color_layer(L):
-		_set_message("颜色层:用左栏「颜色」画笔;渐变只作用于选区", false)
-	else:
-		_set_message("纹理层:点左栏调色板选纹理;颜色工具不可用", false)
-	_update_status(Vector2i.ZERO, false)
-
-
-func _on_layer_visible_toggled(on: bool, L: int) -> void:
-	canvas.set_layer_visible(L, on)
-
-
-# ── 按当前层的类型决定「工具/面板」可用性 ─────────────────────────────────
-# 纹理层 0-2:调色板/纹理解析适用,颜色选择器与渐变不适用;
-# 颜色层 3-6:颜色/渐变适用,纹理调色板不适用(画笔直接用颜色画)。
-# 切层后当前工具若变得不适用(渐变)⇒ 自动回画笔,避免下一次落笔才报错。
-func _sync_layer_tool_availability() -> void:
-	if doc == null or _tools == null:
-		return
-	var is_color := EditorConstants.is_color_layer(doc.active_layer)
-	var grad := _tool_buttons.get("gradient") as Button
-	if grad != null:
-		grad.disabled = not is_color
-		grad.tooltip_text = "渐变 (%s)%s" % [String(TOOL_KEYS.get("gradient", "")),
-				"" if is_color else " · 仅颜色层 3-6"]
-	for b in _palette_buttons:
-		b.disabled = is_color
-	var pal_grid := get_node_or_null("%PaletteGrid") as GridContainer
-	if pal_grid != null:
-		pal_grid.modulate = Color(1, 1, 1, 0.45 if is_color else 1.0)
-	var pal_hint := get_node_or_null("%PaletteHint") as Label
-	if pal_hint != null:
-		pal_hint.text = "纹理调色板"
-		pal_hint.tooltip_text = "调色板(颜色层用「颜色」画笔)" if is_color else "点选 = 画笔纹理"
-	var brush_color := get_node_or_null("%BrushColor") as ColorPickerButton
-	var grad_color := get_node_or_null("%GradientEndColor") as ColorPickerButton
-	if brush_color != null:
-		brush_color.disabled = not is_color
-	if grad_color != null:
-		grad_color.disabled = not is_color
-	# 渐进披露:纹理层只露调色板,颜色层只露颜色;另一组整块隐藏(不再常驻置灰)。
-	for n: Control in _color_nodes:
-		if n != null:
-			n.visible = is_color
-	for n: Control in _palette_nodes:
-		if n != null:
-			n.visible = not is_color
-	if not is_color and _tools.tool == "gradient":
-		_tools.set_tool("brush")
-		_set_message("当前是纹理层:渐变不可用,已切回画笔", false)
-
-
-func _sync_layer_rows() -> void:
-	for L in _layer_rows.size():
-		var b: Button = (_layer_rows[L] as Dictionary)["button"]
-		b.theme_type_variation = &"LayerActive" if L == doc.active_layer else &"LayerRow"
-		var vis: CheckButton = (_layer_rows[L] as Dictionary)["visible"]
-		# 当前层恒可见(canvas 语义):眼睛对它禁用并强制显示为"开",不再出现「控件说关、画布还在画」。
-		var is_active := L == doc.active_layer
-		vis.disabled = is_active
-		vis.tooltip_text = "当前编辑层不可隐藏(先切到其它层)" if is_active else "显示/隐藏该层"
-		if is_active:
-			vis.set_pressed_no_signal(true)
-		vis.modulate = Color(1, 1, 1, 1.0 if is_active else (0.8 if vis.button_pressed else 0.35))
 
 
 # ── doc / 画布 回调 ─────────────────────────────────────────────────────
@@ -665,9 +521,9 @@ func _on_doc_changed(_layer: int, _subcells: PackedInt32Array) -> void:
 func _on_doc_structure_changed() -> void:
 	canvas.refresh()
 	canvas.set_selection(doc.selection)       # 换图/新建清了 doc.selection,别让旧选框留在画布上
-	_sync_layer_rows()
-	_sync_layer_tool_availability()
-	_sync_meta_info()
+	_layers.sync_layer_rows()
+	_layers.sync_tool_availability()
+	_meta.sync()
 	_update_selection_info()
 	_update_history_buttons()
 
@@ -683,7 +539,7 @@ func _on_zoom_changed(_zoom: float) -> void:
 
 func _on_doc_meta_changed() -> void:
 	canvas.queue_redraw()
-	_sync_meta_info()
+	_meta.sync()
 	_update_history_buttons()
 	_update_status(Vector2i.ZERO, false)
 
@@ -701,277 +557,14 @@ func _on_fit_pressed() -> void:
 	canvas.fit_to_map()
 
 
-func _on_clear_meta_pressed() -> void:
-	_set_message("已清空 meta(%d 条)" % doc.clear_meta("all"), false)
-	_sync_meta_info()
-
-
-func _sync_meta_info() -> void:
-	if _meta_info == null or doc == null:
-		return
-	if doc.map.is_empty():
-		_meta_info.text = ""
-		_rebuild_meta_list()
-		return
-	var players: Array = doc.map.get("players", [])
-	var respawns: Array = doc.map.get("respawns", [])
-	_meta_info.text = "出生点 %d · 复活点 %d · 敌人 %d" % [
-		players.size(), respawns.size(), (doc.map.get("enemies", []) as Array).size()]
-	_rebuild_meta_list()
-
-
-# 已放置 meta 列表:按 kind 分组(标题带计数),行 = 标签 + 敌人类型下拉 + 删除。
-# 一张图 60+ 条时平铺同权文本会淹没右栏 ⇒ 默认收起 + 分组 + 压暗行,层次靠位置/对比/分组,不靠装饰色。
-func _rebuild_meta_list() -> void:
-	if _meta_list == null:
-		return
-	for child in _meta_list.get_children():
-		_meta_list.remove_child(child)
-		child.queue_free()
-	if doc == null or doc.map.is_empty():
-		_refresh_meta_toggle()
-		return
-	var entries := doc.meta_entries()
-	for g: Dictionary in [{"kind": "player", "title": "出生点"},
-			{"kind": "respawn", "title": "复活点"}, {"kind": "enemy", "title": "敌人"}]:
-		var kind_g := String(g["kind"])
-		var rows: Array = []
-		for ent: Dictionary in entries:
-			if String(ent["kind"]) == kind_g:
-				rows.append(ent)
-		if rows.is_empty():
-			continue
-		var head := Label.new()
-		head.theme_type_variation = &"Small"
-		head.add_theme_color_override("font_color", UiFactory.C_TEXT)
-		head.text = "%s · %d" % [String(g["title"]), rows.size()]
-		head.custom_minimum_size = Vector2(0, 20)
-		head.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		_meta_list.add_child(head)
-		for row_ent: Dictionary in rows:
-			_meta_list.add_child(_meta_row(row_ent))
-	_refresh_meta_toggle()
-
-
-## 单条 meta 行:全部用 Small 字号/弱化色;删除按钮保持文本「删除」(探针按文本找)。
-func _meta_row(entry: Dictionary) -> HBoxContainer:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 4)
-	var kind := String(entry["kind"])
-	var label := Label.new()
-	label.theme_type_variation = &"Small"
-	label.add_theme_color_override("font_color", UiFactory.C_TEXT_DIM)
-	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	label.custom_minimum_size = Vector2(90, 0)
-	label.clip_text = true
-	var ix := int(entry["index"]) + 1
-	match kind:
-		"player":
-			label.text = "P%d (%d,%d)" % [ix, int(entry["x"]), int(entry["y"])]
-		"respawn":
-			label.text = "R%d·侧%d (%d,%d)" % [ix, int(entry["side"]), int(entry["x"]), int(entry["y"])]
-		_:
-			# 类型已由行内下拉展示,标签只留「第几个 + 坐标」,不再重复 id(避免被 92px 下拉挤到截断)。
-			label.text = "#%d (%d,%d)" % [ix, int(entry["x"]), int(entry["y"])]
-	label.tooltip_text = label.text
-	row.add_child(label)
-	if kind == "enemy":
-		var items: Array[String] = _enemy_types.duplicate()
-		var cur_type := String(entry.get("type", ""))
-		if not items.has(cur_type):
-			items.append(cur_type)
-		var opt := OptionButton.new()
-		for id: String in items:
-			opt.add_item(id)
-		opt.selected = items.find(cur_type)
-		opt.theme_type_variation = &"Kit"
-		opt.custom_minimum_size = Vector2(92, 24)
-		opt.clip_text = true
-		opt.size_flags_horizontal = Control.SIZE_SHRINK_END
-		opt.tooltip_text = "敌人类型(可撤销)"
-		opt.item_selected.connect(func(i: int) -> void:
-			if i >= 0 and i < items.size():
-				doc.set_meta_enemy_type(int(entry["index"]), items[i]))
-		row.add_child(opt)
-	var del := Button.new()
-	del.text = "删除"
-	del.tooltip_text = "删除这条 %s(可撤销)" % kind
-	del.theme_type_variation = &"FlatButton"
-	del.custom_minimum_size = Vector2(40, 24)
-	del.add_theme_color_override("font_color", UiFactory.C_TEXT_DIM)
-	del.pressed.connect(func() -> void:
-		if doc.remove_meta_at(kind, int(entry["index"])):
-			_set_message("已删除一条 %s" % _tools.meta_label_of(kind), false))
-	row.add_child(del)
-	return row
-
-
-func _toggle_meta_list() -> void:
-	_meta_expanded = not _meta_expanded
-	if _meta_list != null:
-		_meta_list.visible = _meta_expanded
-	_refresh_meta_toggle()
-
-
-func _refresh_meta_toggle() -> void:
-	if _meta_toggle == null:
-		return
-	var n := 0
-	if doc != null and not doc.map.is_empty():
-		n = doc.meta_entries().size()
-	_meta_toggle.text = "%s列表 (%d)" % ["收起" if _meta_expanded else "展开", n]
-	_meta_toggle.visible = n > 0
-
-
 func _update_selection_info() -> void:
-	if _selection_info == null:
+	if _selection_info == null or doc == null:
 		return
-	if doc == null or not doc.has_selection():
+	if not doc.has_selection():
 		_selection_info.text = "无选区"
 		return
 	var r := doc.selection
 	_selection_info.text = "%d×%d 子格 @ (%d,%d)" % [r.size.x, r.size.y, r.position.x, r.position.y]
-
-
-# ── 真渲染预览 ─────────────────────────────────────────────────────────
-
-func get_preview() -> Control:
-	return _preview
-
-
-func is_preview_on() -> bool:
-	return _preview_on
-
-
-func set_preview(on: bool) -> void:
-	if _preview == null:
-		return
-	_preview_on = on
-	_preview.visible = on
-	_preview.set_active(on)
-	if _preview_btn != null:
-		_preview_btn.text = "预览:开" if on else "预览:关"
-	if _light_bar != null:
-		_light_bar.visible = on
-	if on:
-		_preview_last_origin = canvas.origin
-		_preview_last_zoom = canvas.zoom
-		_preview.set_camera(canvas.origin, canvas.zoom)
-		_preview.set_hour(_preview_hour)
-	_set_message("预览:%s" % ("开(复用游戏渲染管线;底部「光照」可换时辰)" if on else "关(快速画布)"), false)
-
-
-func _on_preview_toggled() -> void:
-	set_preview(not _preview_on)
-
-
-# ── 光照时辰(只在预览里有意义;数值走游戏同一条 DayCycle/PostProcess 推导)──────────
-
-## 设置预览光照时辰(0..24)。公开 API:探针/截图/UI 共用同一个入口。
-func set_preview_hour(hour: float) -> void:
-	var h := fposmod(hour, 24.0)
-	if _light_hour != null and not is_equal_approx(_light_hour.value, h):
-		_light_hour.set_value_no_signal(h)
-	_preview_hour = h
-	_update_light_time()
-	if _preview != null and _preview_on:
-		_preview.set_hour(_preview_hour)
-
-
-func get_preview_hour() -> float:
-	return _preview_hour
-
-
-func _on_light_hour_changed(v: float) -> void:
-	if absf(v - _preview_hour) < 0.001:
-		return
-	_preview_hour = fposmod(v, 24.0)
-	_update_light_time()
-	if _preview != null and _preview_on:
-		_preview.set_hour(_preview_hour)
-
-
-func _update_light_time() -> void:
-	if _light_time == null:
-		return
-	var h := fposmod(_preview_hour, 24.0)
-	_light_time.text = "%02d:%02d" % [int(h), int((h - float(int(h))) * 60.0)]
-
-
-func _build_preview() -> void:
-	if _preview != null:
-		return
-	_preview = PREVIEW_SCRIPT.new()
-	_preview.name = "Preview"
-	_preview.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_preview.mouse_filter = Control.MOUSE_FILTER_IGNORE      # 让画布继续收鼠标(预览是只读层)
-	_canvas_host.add_child(_preview)
-	# 绘制顺序:画布 → 预览 → 浮动控件(光照条)。预览必须盖住画布,但不能盖住贴着画布底部的控件。
-	var overlay := get_node_or_null("%OverlayHost") as Control
-	if overlay != null:
-		_canvas_host.move_child(_preview, overlay.get_index())
-	_preview.setup(doc)
-	_preview.set_hour(_preview_hour)
-	_preview.set_active(false)
-	_preview.visible = false
-
-
-# ── 试玩(编辑器 → 游戏;不落用户文件)────────────────────────────────────
-
-## 用**当前内存文档**起一局试玩:编码到临时图 → 钉住临时图 → 换到 level_0。
-## spawn_cell 给 (x,y) 就从该出生点起;(-1,-1) = 由 map 里的 `# player` 决定。
-## 返回 {ok, error?};失败只提示、不换场景。
-func start_playtest(spawn_cell: Vector2i = Vector2i(-1, -1)) -> Dictionary:
-	if doc == null or doc.map.is_empty():
-		_set_message("先新建或打开一张地图,再试玩", true)
-		return {"ok": false, "error": "空地图"}
-	var enc := EditorCodec.encode_map(doc.map)
-	if not bool(enc.get("ok", false)):
-		_set_message("试玩失败:%s" % String(enc.get("error", "")), true)
-		return {"ok": false, "error": String(enc.get("error", ""))}
-	var f := FileAccess.open(PLAYTEST_SCRIPT.TMP_MAP, FileAccess.WRITE)
-	if f == null:
-		_set_message("试玩失败:写不了临时地图(%s)"
-				% error_string(FileAccess.get_open_error()), true)
-		return {"ok": false, "error": "写临时地图失败"}
-	f.store_buffer(enc["bytes"] as PackedByteArray)
-	f.close()
-	var picked := MazeGenerator.picked_map_path()   # 试玩完 Level0 要还回原来的地图
-	PLAYTEST_SCRIPT.stash(doc, _path, spawn_cell, picked)
-	MazeGenerator.set_map_file(PLAYTEST_SCRIPT.TMP_MAP)
-	Level0.pvp_mode = false
-	CombatComponent.pvp_arena = false
-	Level0.playtest_restore_map = picked
-	Level0.playtest_spawn = spawn_cell
-	Level0.playtest_mode = true
-	var where := ""
-	if spawn_cell.x >= 0 and spawn_cell.y >= 0:
-		where = " · 出生点 (%d,%d)" % [spawn_cell.x, spawn_cell.y]
-	_set_message("试玩:敌人静止、空手%s;Esc 返回编辑器(未保存改动不丢)" % where, false)
-	Level0.safe_change_scene(get_tree(), "res://scenes/level_0.tscn")
-	return {"ok": true}
-
-
-func _on_playtest_pressed() -> void:
-	start_playtest(_first_player_cell())
-
-
-func _on_player_marker_clicked(cell: Vector2i) -> void:
-	start_playtest(cell)
-
-
-# 地图里第一个出生点(没有就 (-1,-1):由游戏按「左上第一个空格」兜底)。
-func _first_player_cell() -> Vector2i:
-	if doc == null or doc.map.is_empty():
-		return Vector2i(-1, -1)
-	var players: Array = doc.map.get("players", [])
-	if players.is_empty():
-		return Vector2i(-1, -1)
-	var p: Variant = players[0]
-	if not (p is Dictionary):
-		return Vector2i(-1, -1)
-	var pd: Dictionary = p
-	return Vector2i(int(pd.get("x", 0)), int(pd.get("y", 0)))
 
 
 # ── 状态栏 / 校验输出 / 快捷键 ─────────────────────────────────────────
@@ -1110,7 +703,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	elif event.is_action_pressed("editor_help"):
 		_actions.shortcut_help()
 	elif event.is_action_pressed("editor_playtest"):
-		start_playtest(_first_player_cell())
+		_view.start_playtest(_view.first_player_cell())
 	elif event.is_action_pressed("editor_jump"):
 		_actions.jump_dialog()
 	elif event.is_action_pressed("editor_zoom_in"):
