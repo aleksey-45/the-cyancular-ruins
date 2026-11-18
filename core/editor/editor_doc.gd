@@ -18,22 +18,9 @@ extends RefCounted
 # ★ 撤销栈双上限:undo_capacity 条 + undo_cells_budget 累计 cells,超了丢最旧;
 #   单条就超 budget 时保留最新一条(与 JS 编辑器 createHistory 的 `undos.length > 1` 一致:全丢 = 没有撤销)。
 # ★ dirty 只在 load_map/new_map 清 false;undo/redo 不回退 dirty(撤销过的图依然没落盘)。
-# ★ history_changed 与 changed 分开发:笔画期间每条 changed 都发,但条目要到 end_stroke 的
-#   _flush_stroke_entry 才入栈 ⇒ 撤销/重做按钮的可用态只能听 history_changed(否则画第一笔后一直灰)。
-# ★ 选区/剪贴板/镜像/渐变(契约 .tmp/p2-extras-contract.md §1):
-#   selection 是**裁剪到图内**的子格矩形(w/h<=0 = 无选区);clipboard 形状
-#   {"kind":"tex"|"color","w":int,"h":int,"values":PackedInt32Array}(纹理↔颜色两种类型不互转)。
-#   这些操作各产生一条稀疏 cells 条目(无变化不产生);操作前若笔画未收尾会先 end_stroke。
-# ★ 选区整块移动 move_selection_content 是「移动」不是「复制」:源区置 0、目标区写回源值,重叠格
-#   以目标写的值为准;不环面回绕(目标矩形必须完整落在图内,否则 ok:false —— 回绕会让同一块内容
-#   在图里出现两份,撤销条目也说不清);缺席层没有内容可搬 ⇒ 选区照样平移、count=0、绝不建层。
-# ★ meta(出生点/复活点/敌人)编辑产生快照式条目 {"kind":"meta","before","after"}:
-#   只发 meta_changed、不发 changed,但 dirty 照样置位;undo/redo 走 _apply_meta_snapshot,
-#   永远深拷贝 —— 历史条目与 map 里的数组不许共用引用(JS applySpawns 同款纪律)。
-#   set_meta_position 只改一条的 x/y(保留 respawn.side / enemy.type),原地不动 ⇒ false、不入栈。
-#   remove_meta_at 按索引删一条(数组原地 remove_at ⇒ 其余条目保持相对顺序);set_meta_enemy_type 只改
-#   enemies[i].type(保留 x/y),同类型/空 type ⇒ false、不入栈;meta_entries 是只读扁平列表
-#   (players → respawns → enemies),不产生 undo / 信号 / dirty。
+# ★ 选区 / 剪贴板 / 镜像 / 整块移动 / 渐变的语义见 docs/systems/editor/editor-godot.md §4、§11
+#   (一条稀疏条目、类型互斥、整块移动不环面回绕、缺席层不建层)。
+# ★ meta 编辑产生快照式条目 {"kind":"meta","before","after"},只发 meta_changed 但照置 dirty。
 
 
 signal changed(layer: int, subcells: PackedInt32Array)   # 子格索引 = sy * sub_cols + sx
@@ -43,6 +30,15 @@ signal meta_changed()                                    # 出生点/复活点/�
 # 笔画期间 changed 每条都发,但条目要到 end_stroke 的 _flush_stroke_entry 才入栈 ——
 # 撤销/重做按钮只听 changed 会在「画完第一笔」后一直是灰的(2026-11-12 复核抓到的真 bug)。
 signal history_changed()
+
+const CELLS_SCRIPT := preload("res://core/editor/editor_doc_cells.gd")
+const EDIT_SCRIPT := preload("res://core/editor/editor_doc_edit.gd")
+const META_SCRIPT := preload("res://core/editor/editor_doc_meta.gd")
+
+# 域实现(纯静态函数,第一个参数是本对象;数据/信号仍归本类)。拆文件只为可读性,不改契约。
+var _cells = CELLS_SCRIPT.new()
+var _edit = EDIT_SCRIPT.new()
+var _meta = META_SCRIPT.new()
 
 var map: Dictionary = {}                # 契约 §1 形状;外部可读,别整体替换(用 load_map/new_map)
 var active_layer: int = 1               # 0..6;0-2 读写 desc,3-6 读写 rgba(u32)
@@ -93,755 +89,12 @@ func sub_size() -> Vector2i:
 
 # ── 读取 ────────────────────────────────────────────────────────────────────
 
-# 环面归一化后读 active_layer:纹理层返回 desc,颜色层返回 u32 颜色;缺席层返回 0。
-func get_subcell(sx: int, sy: int) -> int:
-	var sz := sub_size()
-	if sz.x <= 0 or sz.y <= 0:
-		return 0
-	var layer := active_layer
-	if layer < 0 or layer >= EditorConstants.LAYER_COUNT:
-		return 0
-	var store_v: Variant = _read_array(layer)
-	if store_v == null:
-		return 0
-	var store: PackedInt32Array = store_v
-	var idx := posmod(sy, sz.y) * sz.x + posmod(sx, sz.x)
-	if idx < 0 or idx >= store.size():
-		return 0
-	var v := store[idx]
-	if EditorConstants.is_color_layer(layer):
-		return v & 0xFFFFFFFF
-	return v
-
-
-# 吸管:与 get_subcell 同口径(active_layer 的 desc / 颜色层的 u32 颜色)。
-func sample(sx: int, sy: int) -> int:
-	return get_subcell(sx, sy)
-
-
-# ── 写入 ────────────────────────────────────────────────────────────────────
-
-# 批量写 active_layer(环面归一化、去重、跳过写同值),返回实际改动格数。
-# 0 改动 ⇒ 不 push undo、不发 changed、不动 dirty。
-func set_cells(cells: Array[Vector2i], desc: int) -> int:
-	var sz := sub_size()
-	if sz.x <= 0 or sz.y <= 0:
-		return 0
-	var layer := active_layer
-	if layer < 0 or layer >= EditorConstants.LAYER_COUNT:
-		return 0
-	var new_val := _to_i32(desc)
-	var store_v: Variant = _read_array(layer)
-	if store_v == null:
-		if not EditorConstants.is_color_layer(layer):
-			return 0                      # 纹理层缺席:不许凭空补层
-		if new_val == 0:
-			return 0                      # 写「透明」到不存在的颜色层 = 无操作,别白建一层
-		store_v = _ensure_color_layer(layer)
-		if store_v == null:
-			return 0
-	var store: PackedInt32Array = store_v
-	var seen := {}
-	var idxs := PackedInt32Array()
-	var before := PackedInt32Array()
-	for p in cells:
-		var pt: Vector2i = p
-		var idx := posmod(pt.y, sz.y) * sz.x + posmod(pt.x, sz.x)
-		if seen.has(idx):
-			continue
-		seen[idx] = true
-		var old := store[idx]
-		if old == new_val:
-			continue
-		idxs.append(idx)
-		before.append(old)
-	if idxs.is_empty():
-		return 0
-	return _apply_change(layer, store, idxs, before, new_val)
-
-
-# 直线 = Bresenham(含两端,与旧浏览器编辑器 lineCells 同算法;源已退役,历史见 git);
-# 两端坐标可越界/为负,写入时逐格环面归一化。
-func paint_line(a: Vector2i, b: Vector2i, desc: int) -> int:
-	var cells: Array[Vector2i] = []
-	var dx := absi(b.x - a.x)
-	var dy := absi(b.y - a.y)
-	var sx := 1 if a.x < b.x else -1
-	var sy := 1 if a.y < b.y else -1
-	var err := dx - dy
-	var x := a.x
-	var y := a.y
-	while true:
-		cells.append(Vector2i(x, y))
-		if x == b.x and y == b.y:
-			break
-		var e2 := 2 * err
-		if e2 > -dy:
-			err -= dy
-			x += sx
-		if e2 < dx:
-			err += dx
-			y += sy
-	return set_cells(cells, desc)
-
-
-# 油漆桶:4 邻接、按「当前值相等」扩散,环面接缝算连通;返回实际改动格数。
-func flood_fill(start: Vector2i, desc: int) -> int:
-	var sz := sub_size()
-	if sz.x <= 0 or sz.y <= 0:
-		return 0
-	var layer := active_layer
-	if layer < 0 or layer >= EditorConstants.LAYER_COUNT:
-		return 0
-	var new_val := _to_i32(desc)
-	var store_v: Variant = _read_array(layer)
-	if store_v == null:
-		if not EditorConstants.is_color_layer(layer):
-			return 0                      # 纹理层缺席:不许凭空补层
-		if new_val == 0:
-			return 0
-		store_v = _ensure_color_layer(layer)
-		if store_v == null:
-			return 0
-	var store: PackedInt32Array = store_v
-	var n := sz.x * sz.y
-	var start_idx := posmod(start.y, sz.y) * sz.x + posmod(start.x, sz.x)
-	var target := store[start_idx]
-	if target == new_val:
-		return 0
-	var visited := PackedByteArray()
-	visited.resize(n)
-	visited[start_idx] = 1
-	var queue := PackedInt32Array([start_idx])
-	var idxs := PackedInt32Array()
-	var before := PackedInt32Array()
-	var dirs: Array[Vector2i] = [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
-	while not queue.is_empty():
-		var idx := queue[queue.size() - 1]
-		queue.remove_at(queue.size() - 1)
-		idxs.append(idx)
-		before.append(store[idx])
-		var cx := idx % sz.x
-		var cy := idx / sz.x
-		for d in dirs:
-			var ni := posmod(cy + d.y, sz.y) * sz.x + posmod(cx + d.x, sz.x)
-			if visited[ni] == 1 or store[ni] != target:
-				continue
-			visited[ni] = 1
-			queue.append(ni)
-	return _apply_change(layer, store, idxs, before, new_val)
-
-
-# ── 选区(子格矩形,裁剪到图内)──────────────────────────────────────────────
-
-# 裁剪到 [0,sub_size);w/h<=0(或裁剪后为空)⇒ 清空。越界不报错,也不环面回绕 ——
-# 选区是「屏幕上看得到的一块矩形」,回绕会让同一块选区出现两份,画布没法画一个虚框。
-func set_selection(sub_rect: Rect2i) -> void:
-	var sz := sub_size()
-	if sz.x <= 0 or sz.y <= 0 or sub_rect.size.x <= 0 or sub_rect.size.y <= 0:
-		selection = Rect2i()
-		return
-	var x0 := maxi(0, sub_rect.position.x)
-	var y0 := maxi(0, sub_rect.position.y)
-	var x1 := mini(sz.x, sub_rect.position.x + sub_rect.size.x)
-	var y1 := mini(sz.y, sub_rect.position.y + sub_rect.size.y)
-	if x1 <= x0 or y1 <= y0:
-		selection = Rect2i()
-		return
-	selection = Rect2i(x0, y0, x1 - x0, y1 - y0)
-
-
-func clear_selection() -> void:
-	selection = Rect2i()
-
-
-func has_selection() -> bool:
-	return selection.size.x > 0 and selection.size.y > 0
-
-
-func selection_size() -> Vector2i:
-	return selection.size if has_selection() else Vector2i.ZERO
-
-
-# ── 剪贴板(纹理↔颜色两种类型不互转)─────────────────────────────────────────
-
-# 复制 active_layer 的选区到 clipboard;返回 {ok:true,w,h,count}(count = 复制的子格数 w*h,
-# 空气格也算)。缺席的纹理层按 0 复制(与旧 JS copyRegion 的 `arr ? … : 0` 一致)。
-func copy_selection() -> Dictionary:
-	var sz := sub_size()
-	if sz.x <= 0 or sz.y <= 0:
-		return _fail("地图还没建,无法复制")
-	if not has_selection():
-		return _fail("先框选一块,再复制")
-	var layer := active_layer
-	if layer < 0 or layer >= EditorConstants.LAYER_COUNT:
-		return _fail("图层号非法: %d" % layer)
-	var sel := _clipped_selection()
-	var is_color := EditorConstants.is_color_layer(layer)
-	var store_v: Variant = _read_array(layer)
-	var store := PackedInt32Array()
-	if store_v != null:
-		store = store_v
-	var w := sel.size.x
-	var h := sel.size.y
-	var values := PackedInt32Array()
-	values.resize(w * h)
-	for y in h:
-		for x in w:
-			var idx := posmod(sel.position.y + y, sz.y) * sz.x + posmod(sel.position.x + x, sz.x)
-			# 颜色层存的是同一批位的有符号读数;剪贴板按原样存,粘贴时写回同一批位。
-			values[y * w + x] = store[idx] if store_v != null else 0
-	clipboard = {
-		"kind": "color" if is_color else "tex",
-		"w": w,
-		"h": h,
-		"values": values,
-	}
-	return {"ok": true, "w": w, "h": h, "count": w * h}
-
-
-# 剪切 = 复制 + 选区置 0。复制不产生历史;置 0 若有改动则恰好一条 cells 条目。
-func cut_selection() -> Dictionary:
-	if not has_selection():
-		return _fail("先框选一块,再剪切")
-	var copied := copy_selection()
-	if not bool(copied.get("ok", false)):
-		return copied
-	var w := int(copied.get("w", 0))
-	var h := int(copied.get("h", 0))
-	clear_selection_cells()
-	return {"ok": true, "w": w, "h": h, "count": w * h}
-
-
-# 以**格** (x,y) 为左上角粘贴(内部 ×SUB_PER_CELL 转子格),目标环面回绕;同一目标子格被多个源格
-# 命中时按行主序先到先得(与旧 JS paintCells 的 seen 去重同序)。类型不互转时 ok:false。
-func paste_clipboard(at_cell: Vector2i) -> Dictionary:
-	var sz := sub_size()
-	if sz.x <= 0 or sz.y <= 0:
-		return _fail("地图还没建,无法粘贴")
-	var layer := active_layer
-	if layer < 0 or layer >= EditorConstants.LAYER_COUNT:
-		return _fail("图层号非法: %d" % layer)
-	if clipboard.is_empty():
-		return _fail("剪贴板是空的(先复制或剪切一块)")
-	var kind := String(clipboard.get("kind", ""))
-	var w := int(clipboard.get("w", 0))
-	var h := int(clipboard.get("h", 0))
-	var values_v: Variant = clipboard.get("values", null)
-	if w <= 0 or h <= 0 or not (values_v is PackedInt32Array) \
-			or (values_v as PackedInt32Array).size() < w * h or (kind != "tex" and kind != "color"):
-		return _fail("剪贴板内容损坏(形状不对)")
-	var layer_is_color := EditorConstants.is_color_layer(layer)
-	if layer_is_color and kind != "color":
-		return _fail("剪贴板是纹理层内容,不能粘到颜色层(纹理与颜色两种数据类型不互转)")
-	if not layer_is_color and kind != "tex":
-		return _fail("剪贴板是颜色层内容,不能粘到纹理层(纹理与颜色两种数据类型不互转)")
-	var values: PackedInt32Array = values_v
-	var base_x := posmod(at_cell.x * EditorConstants.SUB_PER_CELL, sz.x)
-	var base_y := posmod(at_cell.y * EditorConstants.SUB_PER_CELL, sz.y)
-	var seen := {}
-	var target_idxs := PackedInt32Array()
-	var target_vals := PackedInt32Array()
-	var any_nonzero := false
-	for y in h:
-		for x in w:
-			var idx := posmod(base_y + y, sz.y) * sz.x + posmod(base_x + x, sz.x)
-			if seen.has(idx):
-				continue
-			seen[idx] = true
-			var v := _to_i32(values[y * w + x])
-			target_idxs.append(idx)
-			target_vals.append(v)
-			if v != 0:
-				any_nonzero = true
-	var store_v: Variant = _read_array(layer)
-	if store_v == null:
-		if not layer_is_color or not any_nonzero:
-			return {"ok": true, "count": 0, "w": w, "h": h}
-		store_v = _ensure_color_layer(layer)
-		if store_v == null:
-			return _fail("这一层不存在,无法粘贴")
-	var store: PackedInt32Array = store_v
-	var changed_idx := PackedInt32Array()
-	var before := PackedInt32Array()
-	var after := PackedInt32Array()
-	for k in target_idxs.size():
-		var idx := target_idxs[k]
-		var nv := target_vals[k]
-		if store[idx] == nv:
-			continue
-		changed_idx.append(idx)
-		before.append(store[idx])
-		after.append(nv)
-	var changed := changed_idx.size()
-	if changed > 0:
-		_apply_cells_atomic(layer, store, changed_idx, before, after)
-	return {"ok": true, "count": changed, "w": w, "h": h}
-
-
-# 选区写 0(纹理层 = 空气 / 颜色层 = 黑);返回实际改动数。缺席层无改动、不建层、不产生条目。
-func clear_selection_cells() -> int:
-	var sz := sub_size()
-	if sz.x <= 0 or sz.y <= 0 or not has_selection():
-		return 0
-	var layer := active_layer
-	if layer < 0 or layer >= EditorConstants.LAYER_COUNT:
-		return 0
-	var store_v: Variant = _read_array(layer)
-	if store_v == null:
-		return 0
-	var store: PackedInt32Array = store_v
-	var sel := _clipped_selection()
-	var idxs := PackedInt32Array()
-	var before := PackedInt32Array()
-	for y in sel.size.y:
-		for x in sel.size.x:
-			var idx := posmod(sel.position.y + y, sz.y) * sz.x + posmod(sel.position.x + x, sz.x)
-			if store[idx] == 0:
-				continue
-			idxs.append(idx)
-			before.append(store[idx])
-	if idxs.is_empty():
-		return 0
-	var after := PackedInt32Array()
-	after.resize(idxs.size())
-	_apply_cells_atomic(layer, store, idxs, before, after)
-	return idxs.size()
-
-
-# 选区整块平移(子格偏移):先读源值,再把源区置 0、目标区写回源值 —— 重叠格以目标写的值为准
-# (是「移动」而非「复制」,也不是「先清后写」的 0)。选区跟着平移,尺寸不变。
-# ★ 不环面回绕:目标矩形必须完整落在图内,越界 ⇒ ok:false(回绕会让同一块内容出现两份)。
-# ★ 缺席的纹理层/颜色层没有内容可搬:选区照样平移、返回 count=0、绝不凭空建层。
-# 成功且有改动 ⇒ 恰好一条多值稀疏条目(覆盖源∪目标中真正变过的格)+ 一次 changed + dirty=true。
-func move_selection_content(offset_sub: Vector2i) -> Dictionary:
-	var sz := sub_size()
-	if sz.x <= 0 or sz.y <= 0:
-		return _fail("地图还没建,无法移动选区内容")
-	var layer := active_layer
-	if layer < 0 or layer >= EditorConstants.LAYER_COUNT:
-		return _fail("图层号非法: %d" % layer)
-	if not has_selection():
-		return _fail("先框选一块,再移动")
-	var sel := _clipped_selection()
-	if sel.size.x <= 0 or sel.size.y <= 0:
-		return _fail("先框选一块,再移动")
-	if offset_sub == Vector2i.ZERO:
-		return {"ok": true, "count": 0}
-	# 目标矩形必须完整在图内(不环面回绕);失败时选区/图/历史一律不动。
-	var tx := sel.position.x + offset_sub.x
-	var ty := sel.position.y + offset_sub.y
-	if tx < 0 or ty < 0 or tx + sel.size.x > sz.x or ty + sel.size.y > sz.y:
-		return _fail("移动目标越界,选区不能移出图外(本操作不环面回绕)")
-	var new_sel := Rect2i(tx, ty, sel.size.x, sel.size.y)
-	var store_v: Variant = _read_array(layer)
-	if store_v == null:
-		selection = new_sel                # 缺席层没有内容可搬:选区照样平移,不建层、不入栈
-		return {"ok": true, "count": 0}
-	var store: PackedInt32Array = store_v
-	# ① 先读源值:后面要先清源再写目标,读晚了会被自己覆盖。
-	var w := sel.size.x
-	var h := sel.size.y
-	var src_vals := PackedInt32Array()
-	src_vals.resize(w * h)
-	for y in h:
-		for x in w:
-			src_vals[y * w + x] = store[(sel.position.y + y) * sz.x + sel.position.x + x]
-	# ② 每格最终值 = 源置 0 + 目标写源值;同一格既是源又是目标时,目标写覆盖 0(最终值为准)。
-	var final_vals := {}
-	for y in h:
-		for x in w:
-			final_vals[(sel.position.y + y) * sz.x + sel.position.x + x] = 0
-	for y in h:
-		for x in w:
-			final_vals[(ty + y) * sz.x + tx + x] = src_vals[y * w + x]
-	# ③ 只记真正变过的格(源区里本来就是空气的格不产生条目),一条多值稀疏条目。
-	var idxs := PackedInt32Array()
-	var before := PackedInt32Array()
-	var after := PackedInt32Array()
-	for idx in final_vals:
-		var nv := int(final_vals[idx])
-		if store[idx] == nv:
-			continue
-		idxs.append(idx)
-		before.append(store[idx])
-		after.append(nv)
-	selection = new_sel
-	if idxs.is_empty():
-		return {"ok": true, "count": 0}    # 搬了一块空气:无改动、不发信号、不 dirty
-	_apply_cells_atomic(layer, store, idxs, before, after)
-	return {"ok": true, "count": idxs.size()}
-
-
-# ── 镜像(只翻选区,不是整层)────────────────────────────────────────────────
-
-# JS mirrorRegion 语义:目标 (x,y) 写源 (w-1-x,y) / (x,h-1-y);先全部读、再统一写(同时镜像);
-# 与目标同值时跳过 ⇒ 回文/单格 = 0 改动、不产生 undo 条目。非法 axis 返回 ok:false。
-func mirror_selection(axis: String) -> Dictionary:
-	if axis != "h" and axis != "v":
-		return _fail("镜像轴非法(只能 h 水平 / v 垂直):实得 " + axis)
-	var sz := sub_size()
-	if sz.x <= 0 or sz.y <= 0:
-		return _fail("地图还没建,无法镜像")
-	if not has_selection():
-		return _fail("先框选一块,再镜像")
-	var layer := active_layer
-	if layer < 0 or layer >= EditorConstants.LAYER_COUNT:
-		return _fail("图层号非法: %d" % layer)
-	var store_v: Variant = _read_array(layer)
-	if store_v == null:
-		return {"ok": true, "count": 0}    # 缺席层没有内容可翻(不是用户错误)
-	var store: PackedInt32Array = store_v
-	var sel := _clipped_selection()
-	var idxs := PackedInt32Array()
-	var before := PackedInt32Array()
-	var after := PackedInt32Array()
-	for y in sel.size.y:
-		for x in sel.size.x:
-			var sx := (sel.size.x - 1 - x) if axis == "h" else x
-			var sy := (sel.size.y - 1 - y) if axis == "v" else y
-			var di := posmod(sel.position.y + y, sz.y) * sz.x + posmod(sel.position.x + x, sz.x)
-			var si := posmod(sel.position.y + sy, sz.y) * sz.x + posmod(sel.position.x + sx, sz.x)
-			if store[di] == store[si]:
-				continue
-			idxs.append(di)
-			before.append(store[di])
-			after.append(store[si])
-	if idxs.is_empty():
-		return {"ok": true, "count": 0}
-	_apply_cells_atomic(layer, store, idxs, before, after)
-	return {"ok": true, "count": idxs.size()}
-
-
-# ── 颜色层渐变(JS createGradientJob 语义)─────────────────────────────────
-
-# t = ((X-ax)*dx + (Y-ay)*dy) / (dx²+dy²),夹 0..1;dx=dy=0 ⇒ t=0;逐通道 round(x+(y-x)*t)&255。
-# 默认扫整层(行主序);clip_selection=true 只扫 selection 覆盖的子格。非颜色层 ⇒ ok:false。
-func paint_gradient(a_sub: Vector2i, b_sub: Vector2i, rgba0: int, rgba1: int,
-		clip_selection: bool = false) -> Dictionary:
-	var sz := sub_size()
-	if sz.x <= 0 or sz.y <= 0:
-		return _fail("地图还没建,无法渐变")
-	var layer := active_layer
-	if layer < 0 or layer >= EditorConstants.LAYER_COUNT:
-		return _fail("图层号非法: %d" % layer)
-	if not EditorConstants.is_color_layer(layer):
-		# 注意 %% :这段文案里的 50%/25% 是正文,不转义会被当成格式符。
-		return _fail("渐变只能用在颜色层(背景 100%%/75%%/50%%/25%%),实得图层 %d" % layer)
-	var dx := b_sub.x - a_sub.x
-	var dy := b_sub.y - a_sub.y
-	var len2 := dx * dx + dy * dy
-	var store_v: Variant = _read_array(layer)
-	var has_store := store_v != null
-	var store := PackedInt32Array()
-	if has_store:
-		store = store_v
-	var sel := selection
-	var clip_ok := has_selection()
-	var idxs := PackedInt32Array()
-	var before := PackedInt32Array()
-	var after := PackedInt32Array()
-	for Y in sz.y:
-		for X in sz.x:
-			if clip_selection:
-				if not clip_ok:
-					continue
-				if X < sel.position.x or Y < sel.position.y \
-						or X >= sel.position.x + sel.size.x or Y >= sel.position.y + sel.size.y:
-					continue
-			var t := 0.0
-			if len2 != 0:
-				t = float((X - a_sub.x) * dx + (Y - a_sub.y) * dy) / float(len2)
-				t = clampf(t, 0.0, 1.0)
-			var nv := _to_i32(_lerp_rgba(rgba0, rgba1, t))
-			var idx := Y * sz.x + X
-			var old := store[idx] if has_store else 0
-			if old == nv:
-				continue
-			idxs.append(idx)
-			before.append(old)
-			after.append(nv)
-	if idxs.is_empty():
-		return {"ok": true, "count": 0}
-	if not has_store:
-		var created: Variant = _ensure_color_layer(layer)
-		if created == null:
-			return _fail("这一层不存在,无法写入渐变")
-		store = created
-	_apply_cells_atomic(layer, store, idxs, before, after)
-	return {"ok": true, "count": idxs.size()}
-
-
-# JS lerpRGBA:逐通道 round(x+(y-x)*t)&255;结果按 u32 返回。
-static func _lerp_rgba(a: int, b: int, t: float) -> int:
-	var au := a & 0xFFFFFFFF
-	var bu := b & 0xFFFFFFFF
-	var out := 0
-	for raw_shift in [24, 16, 8, 0]:
-		var shift := int(raw_shift)
-		var x := (au >> shift) & 255
-		var y := (bu >> shift) & 255
-		var c := roundi(float(x) + float(y - x) * t) & 255
-		out = (out << 8) | c
-	return out
-
 
 # ── meta:出生点 / 复活点 / 敌人(入 undo 栈,快照式条目)──────────────────────
 # 坐标一律先环面归一化到格([0,cells_w)×[0,cells_h));list 里存的也是格坐标(与 validate/MapFormat 同口径)。
 # 所有改动 dirty=true、发 meta_changed(每次恰好一次);无改动不产生条目、不发信号。
 # add_* 不做重复检查(旧 JS 同款);remove_* 删「坐标等同的第一个」。
 
-func add_player(cell: Vector2i) -> int:
-	if not _meta_ready():
-		return -1
-	var before := meta_snapshot()
-	var c := _wrap_cell(cell)
-	var players: Array = map.get("players", [])
-	players.append({"x": c.x, "y": c.y})
-	map["players"] = players
-	_commit_meta_change(before)
-	return players.size() - 1
-
-
-func remove_player_at(cell: Vector2i) -> bool:
-	if not _meta_ready():
-		return false
-	var c := _wrap_cell(cell)
-	var players: Array = map.get("players", [])
-	for i in players.size():
-		var d: Dictionary = players[i]
-		if int(d.get("x", -1)) == c.x and int(d.get("y", -1)) == c.y:
-			var before := meta_snapshot()
-			players.remove_at(i)
-			map["players"] = players
-			_commit_meta_change(before)
-			return true
-	return false
-
-
-# side 只认 1|2,否则 -1。
-func add_respawn(side: int, cell: Vector2i) -> int:
-	if side != 1 and side != 2:
-		return -1
-	if not _meta_ready():
-		return -1
-	var before := meta_snapshot()
-	var c := _wrap_cell(cell)
-	var respawns: Array = map.get("respawns", [])
-	respawns.append({"side": side, "x": c.x, "y": c.y})
-	map["respawns"] = respawns
-	_commit_meta_change(before)
-	return respawns.size() - 1
-
-
-func remove_respawn_at(side: int, cell: Vector2i) -> bool:
-	if side != 1 and side != 2:
-		return false
-	if not _meta_ready():
-		return false
-	var c := _wrap_cell(cell)
-	var respawns: Array = map.get("respawns", [])
-	for i in respawns.size():
-		var d: Dictionary = respawns[i]
-		if int(d.get("side", 0)) == side and int(d.get("x", -1)) == c.x \
-				and int(d.get("y", -1)) == c.y:
-			var before := meta_snapshot()
-			respawns.remove_at(i)
-			map["respawns"] = respawns
-			_commit_meta_change(before)
-			return true
-	return false
-
-
-func add_enemy(enemy_type: String, cell: Vector2i) -> int:
-	if not _meta_ready():
-		return -1
-	var before := meta_snapshot()
-	var c := _wrap_cell(cell)
-	var enemies: Array = map.get("enemies", [])
-	enemies.append({"type": enemy_type, "x": c.x, "y": c.y})
-	map["enemies"] = enemies
-	_commit_meta_change(before)
-	return enemies.size() - 1
-
-
-func remove_enemy_at(cell: Vector2i) -> bool:
-	if not _meta_ready():
-		return false
-	var c := _wrap_cell(cell)
-	var enemies: Array = map.get("enemies", [])
-	for i in enemies.size():
-		var d: Dictionary = enemies[i]
-		if int(d.get("x", -1)) == c.x and int(d.get("y", -1)) == c.y:
-			var before := meta_snapshot()
-			enemies.remove_at(i)
-			map["enemies"] = enemies
-			_commit_meta_change(before)
-			return true
-	return false
-
-
-# 移动一条 meta 条目到新格坐标(环面归一化)。kind 只认 "player"|"respawn"|"enemy";
-# 只改 x/y,保留 respawn.side / enemy.type(不重造条目字典)。
-# 越界索引 / 非法 kind / 原地不动 ⇒ false,不入栈、不发信号;成功 ⇒ 恰好一条 meta 快照条目
-# + 一次 meta_changed + dirty=true(与 add_*/remove_* 同口径)。
-func set_meta_position(kind: String, index: int, cell: Vector2i) -> bool:
-	if not _meta_ready():
-		return false
-	var list_name := _meta_list_name(kind)
-	if list_name.is_empty():
-		return false
-	var entries: Array = map.get(list_name, [])
-	if index < 0 or index >= entries.size():
-		return false
-	var raw: Variant = entries[index]
-	if not (raw is Dictionary):
-		return false
-	var d: Dictionary = raw
-	var c := _wrap_cell(cell)
-	# 判「原地不动」用的是快照归一化后的坐标口径(缺 x/y 时按 0),与新位置比较。
-	if int(d.get("x", 0)) == c.x and int(d.get("y", 0)) == c.y:
-		return false                       # 原地不动:不产生条目、不发信号
-	var before := meta_snapshot()
-	d["x"] = c.x
-	d["y"] = c.y
-	entries[index] = d
-	map[list_name] = entries
-	_commit_meta_change(before)
-	return true
-
-
-# 按索引删除一条 meta(kind 只认 "player"|"respawn"|"enemy")。
-# 数组原地 remove_at ⇒ 剩余条目保持相对顺序(与 remove_*_at 的按坐标删互补:面板列表按行号删)。
-# 非法 kind / 索引越界 / 条目损坏 ⇒ false,不入栈、不发信号;成功 ⇒ 恰好一条 meta 快照条目
-# + 一次 meta_changed + dirty=true。
-func remove_meta_at(kind: String, index: int) -> bool:
-	if not _meta_ready():
-		return false
-	var list_name := _meta_list_name(kind)
-	if list_name.is_empty():
-		return false
-	var entries: Array = map.get(list_name, [])
-	if index < 0 or index >= entries.size():
-		return false
-	var raw: Variant = entries[index]
-	if not (raw is Dictionary):
-		return false
-	var before := meta_snapshot()
-	entries.remove_at(index)
-	map[list_name] = entries
-	return _commit_meta_change(before)
-
-
-# 只改 enemies[index].type,保留 x/y(不重造条目字典)。
-# 索引越界 / 条目损坏 / type 空白 / 与现类型相同 ⇒ false(不入栈、不发信号);
-# 成功 ⇒ 恰好一条 meta 快照条目 + 一次 meta_changed + dirty=true。
-func set_meta_enemy_type(index: int, type: String) -> bool:
-	if not _meta_ready():
-		return false
-	if type.strip_edges().is_empty():
-		return false
-	var enemies: Array = map.get("enemies", [])
-	if index < 0 or index >= enemies.size():
-		return false
-	var raw: Variant = enemies[index]
-	if not (raw is Dictionary):
-		return false
-	var d: Dictionary = raw
-	if String(d.get("type", "")) == type:
-		return false                       # 同类型:不产生条目、不发信号
-	var before := meta_snapshot()
-	d["type"] = type
-	enemies[index] = d
-	map["enemies"] = enemies
-	return _commit_meta_change(before)
-
-
-# kind → map 里的表名;非法 kind 返回空串(避免三处各抄一份 match)。
-static func _meta_list_name(kind: String) -> String:
-	match kind:
-		"player":
-			return "players"
-		"respawn":
-			return "respawns"
-		"enemy":
-			return "enemies"
-	return ""
-
-
-# kind 只认 "players"|"respawns"|"enemies"|"all";返回删除条数,非法 kind 返回 -1。
-func clear_meta(kind: String) -> int:
-	if not _meta_ready():
-		return -1
-	if kind != "players" and kind != "respawns" and kind != "enemies" and kind != "all":
-		return -1
-	var before := meta_snapshot()
-	var removed := 0
-	if kind == "players" or kind == "all":
-		var players: Array = map.get("players", [])
-		removed += players.size()
-		if not players.is_empty():
-			map["players"] = []
-	if kind == "respawns" or kind == "all":
-		var respawns: Array = map.get("respawns", [])
-		removed += respawns.size()
-		if not respawns.is_empty():
-			map["respawns"] = []
-	if kind == "enemies" or kind == "all":
-		var enemies: Array = map.get("enemies", [])
-		removed += enemies.size()
-		if not enemies.is_empty():
-			map["enemies"] = []
-	if removed == 0:
-		return 0
-	_commit_meta_change(before)
-	return removed
-
-
-# 深拷贝 {"players","respawns","enemies"}:改返回值不影响 doc(undo 快照同样靠它隔离)。
-func meta_snapshot() -> Dictionary:
-	return {
-		"players": _copy_meta_entries(map.get("players", []), "player"),
-		"respawns": _copy_meta_entries(map.get("respawns", []), "respawn"),
-		"enemies": _copy_meta_entries(map.get("enemies", []), "enemy"),
-	}
-
-
-# 只读扁平列表(顺序 = players → respawns → enemies),供面板 / 画布命中统一按行遍历:
-#   player  → {"kind":"player","index":i,"x":int,"y":int}
-#   respawn → {"kind":"respawn","index":i,"side":int,"x":int,"y":int}
-#   enemy   → {"kind":"enemy","index":i,"type":String,"x":int,"y":int}
-# 返回的是新建字典(改返回值不影响 doc);不产生 undo / 信号 / dirty。损坏条目跳过(不按 respawn 兜底)。
-func meta_entries() -> Array[Dictionary]:
-	var out: Array[Dictionary] = []
-	var players: Array = map.get("players", [])
-	for i in players.size():
-		var raw_p: Variant = players[i]
-		if not (raw_p is Dictionary):
-			continue
-		var dp: Dictionary = raw_p
-		out.append({"kind": "player", "index": i, "x": int(dp.get("x", 0)),
-				"y": int(dp.get("y", 0))})
-	var respawns: Array = map.get("respawns", [])
-	for i in respawns.size():
-		var raw_r: Variant = respawns[i]
-		if not (raw_r is Dictionary):
-			continue
-		var dr: Dictionary = raw_r
-		out.append({"kind": "respawn", "index": i, "side": int(dr.get("side", 0)),
-				"x": int(dr.get("x", 0)), "y": int(dr.get("y", 0))})
-	var enemies: Array = map.get("enemies", [])
-	for i in enemies.size():
-		var raw_e: Variant = enemies[i]
-		if not (raw_e is Dictionary):
-			continue
-		var de: Dictionary = raw_e
-		out.append({"kind": "enemy", "index": i, "type": String(de.get("type", "")),
-				"x": int(de.get("x", 0)), "y": int(de.get("y", 0))})
-	return out
-
-
-# ── 校验 / 编码接线 ─────────────────────────────────────────────────────────
 
 func validate() -> Dictionary:
 	return EditorValidate.validate_map(map)
@@ -1110,14 +363,14 @@ func _store_write_back(layer: int, store: PackedInt32Array) -> void:
 
 
 # u32 → PackedInt32Array 里存的有符号 32 位(0xFF000000 存 -16777216 是正常的)。
-static func _to_i32(v: int) -> int:
+func _to_i32(v: int) -> int:
 	var u := v & 0xFFFFFFFF
 	if u >= 0x80000000:
 		return u - 0x100000000
 	return u
 
 
-static func _filled(n: int, v: int) -> PackedInt32Array:
+func _filled(n: int, v: int) -> PackedInt32Array:
 	var a := PackedInt32Array()
 	a.resize(n)
 	a.fill(v)
@@ -1128,7 +381,7 @@ static func _filled(n: int, v: int) -> PackedInt32Array:
 
 # 当前选区的防御性裁剪(w/h<=0 或地图尺寸变了 ⇒ 空矩形)。
 func _clipped_selection() -> Rect2i:
-	if not has_selection():
+	if not _edit.has_selection(self):
 		return Rect2i()
 	var sz := sub_size()
 	var x0 := maxi(0, selection.position.x)
@@ -1155,7 +408,7 @@ static func _is_meta_entry(entry: Dictionary) -> bool:
 
 
 # 失败形状唯一(契约 §0):不抛错、不 push_error。
-static func _fail(msg: String) -> Dictionary:
+func _fail(msg: String) -> Dictionary:
 	return {"ok": false, "error": msg}
 
 
@@ -1177,7 +430,7 @@ func _wrap_cell(cell: Vector2i) -> Vector2i:
 
 # 改动前后各拍一份深拷贝;无差异 ⇒ 不入栈、不发信号、返回 false。
 func _commit_meta_change(before: Dictionary) -> bool:
-	var after := meta_snapshot()
+	var after := _meta.meta_snapshot(self)
 	if JSON.stringify(before) == JSON.stringify(after):
 		return false
 	_commit_entry({"kind": "meta", "before": before, "after": after})
@@ -1194,7 +447,7 @@ func _apply_meta_snapshot(snap: Dictionary) -> void:
 
 
 # meta 三张表的深拷贝;kind = "player" / "respawn" / "enemy"(其它按 respawn 处理)。
-static func _copy_meta_entries(list: Variant, kind: String) -> Array:
+func _copy_meta_entries(list: Variant, kind: String) -> Array:
 	var out: Array = []
 	if not (list is Array):
 		return out
@@ -1212,3 +465,89 @@ static func _copy_meta_entries(list: Variant, kind: String) -> Array:
 				out.append({"side": int(d.get("side", 0)), "x": int(d.get("x", 0)),
 						"y": int(d.get("y", 0))})
 	return out
+
+# ── 委托:域实现拆到 editor_doc_{cells,edit,meta}.gd(签名/行为不变)──────────
+func get_subcell(sx: int, sy: int) -> int:
+	return _cells.get_subcell(self, sx, sy)
+
+func sample(sx: int, sy: int) -> int:
+	return _cells.sample(self, sx, sy)
+
+func set_cells(cells: Array[Vector2i], desc: int) -> int:
+	return _cells.set_cells(self, cells, desc)
+
+func paint_line(a: Vector2i, b: Vector2i, desc: int) -> int:
+	return _cells.paint_line(self, a, b, desc)
+
+func flood_fill(start: Vector2i, desc: int) -> int:
+	return _cells.flood_fill(self, start, desc)
+
+func set_selection(sub_rect: Rect2i) -> void:
+	return _edit.set_selection(self, sub_rect)
+
+func clear_selection() -> void:
+	return _edit.clear_selection(self)
+
+func has_selection() -> bool:
+	return _edit.has_selection(self)
+
+func selection_size() -> Vector2i:
+	return _edit.selection_size(self)
+
+func copy_selection() -> Dictionary:
+	return _edit.copy_selection(self)
+
+func cut_selection() -> Dictionary:
+	return _edit.cut_selection(self)
+
+func paste_clipboard(at_cell: Vector2i) -> Dictionary:
+	return _edit.paste_clipboard(self, at_cell)
+
+func clear_selection_cells() -> int:
+	return _edit.clear_selection_cells(self)
+
+func move_selection_content(offset_sub: Vector2i) -> Dictionary:
+	return _edit.move_selection_content(self, offset_sub)
+
+func mirror_selection(axis: String) -> Dictionary:
+	return _edit.mirror_selection(self, axis)
+
+func paint_gradient(a_sub: Vector2i, b_sub: Vector2i, rgba0: int, rgba1: int,
+		clip_selection: bool = false) -> Dictionary:
+	return _edit.paint_gradient(self, a_sub, b_sub, rgba0, rgba1, clip_selection)
+
+func add_player(cell: Vector2i) -> int:
+	return _meta.add_player(self, cell)
+
+func remove_player_at(cell: Vector2i) -> bool:
+	return _meta.remove_player_at(self, cell)
+
+func add_respawn(side: int, cell: Vector2i) -> int:
+	return _meta.add_respawn(self, side, cell)
+
+func remove_respawn_at(side: int, cell: Vector2i) -> bool:
+	return _meta.remove_respawn_at(self, side, cell)
+
+func add_enemy(enemy_type: String, cell: Vector2i) -> int:
+	return _meta.add_enemy(self, enemy_type, cell)
+
+func remove_enemy_at(cell: Vector2i) -> bool:
+	return _meta.remove_enemy_at(self, cell)
+
+func set_meta_position(kind: String, index: int, cell: Vector2i) -> bool:
+	return _meta.set_meta_position(self, kind, index, cell)
+
+func remove_meta_at(kind: String, index: int) -> bool:
+	return _meta.remove_meta_at(self, kind, index)
+
+func set_meta_enemy_type(index: int, type: String) -> bool:
+	return _meta.set_meta_enemy_type(self, index, type)
+
+func clear_meta(kind: String) -> int:
+	return _meta.clear_meta(self, kind)
+
+func meta_snapshot() -> Dictionary:
+	return _meta.meta_snapshot(self)
+
+func meta_entries() -> Array[Dictionary]:
+	return _meta.meta_entries(self)

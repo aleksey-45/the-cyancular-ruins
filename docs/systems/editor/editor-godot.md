@@ -9,7 +9,10 @@
 
 | 层 | 文件 | 职责 |
 |---|---|---|
-| 文档模型 | [`core/editor/editor_doc.gd`](../../../core/editor/editor_doc.gd) | 地图字典 + 当前层 + 稀疏 cells 撤销栈 + 环面归一化 + `changed`/`structure_changed`/`history_changed` 信号；meta 单项删除/改敌人类型/扁平列表；纯逻辑、可 `-s` 测 |
+| 文档模型 | [`core/editor/editor_doc.gd`](../../../core/editor/editor_doc.gd) | 地图字典 + 当前层 + 撤销栈状态 + 环面归一化 + `changed`/`structure_changed`/`history_changed` 信号 + `load_map/new_map`/历史/层访问；**公开 API 委托给下面三个域模块**（签名/行为不变） |
+| 文档域:格子 | [`core/editor/editor_doc_cells.gd`](../../../core/editor/editor_doc_cells.gd) | 读 / 批量写 / Bresenham 直线 / 4 邻接油漆桶（静态函数，首参是 `EditorDoc`） |
+| 文档域:编辑 | [`core/editor/editor_doc_edit.gd`](../../../core/editor/editor_doc_edit.gd) | 选区 / 剪贴板 / 镜像 / 整块移动 / 颜色层渐变 |
+| 文档域:meta | [`core/editor/editor_doc_meta.gd`](../../../core/editor/editor_doc_meta.gd) | 出生点 / 复活点 / 敌人 meta（快照式 undo + 单项删/改） |
 | 读写门面 | [`core/editor/editor_io.gd`](../../../core/editor/editor_io.gd) | `open_path`（v4 二进制 / v3 文本 / 旧字母格式 + 读时 legacy 迁移）、`save_path`（校验 + 编码 + 写盘）、`default_target`、`list_maps` |
 | 画布 | [`scenes/editor/editor_canvas.gd`](../../../scenes/editor/editor_canvas.gd) | 相机（origin/zoom）、`screen_to_subcell`、层可见/压暗、刷新（全量/脏区）、输入与手形/移动工具、`pointer_*` 信号、meta 标记命中与 `enemy_art()`；**把绘制转发给 overlay、把图集合成转发给 image** |
 | 画布叠加层 | [`scenes/editor/editor_canvas_overlay.gd`](../../../scenes/editor/editor_canvas_overlay.gd) | `_draw` 里的网格/选区/移动预览/meta 标记（含敌人 idle 贴图）/渐变/画刷框/小地图；不持状态，画时读画布对象 |
@@ -328,10 +331,18 @@
 | `editor_view_controls.gd` | `editor_root.gd` | 预览开关/相机同步/光照时辰条 + 试玩（临时图、`editor_playtest` 交接） |
 | `editor_canvas_overlay.gd` | `editor_canvas.gd` | `_draw` 的叠加层：网格/选区/移动预览/meta 贴图/渐变/画刷框/小地图 |
 | `editor_canvas_image.gd` | `editor_canvas.gd` | `Image` 合成：图集重建与缩放、层重放、颜色图章、脏块 |
+| `editor_doc_cells.gd` | `core/editor/editor_doc.gd` | 格子读 / 批量写 / Bresenham 直线 / 4 邻接油漆桶（静态函数，首参 `doc`） |
+| `editor_doc_edit.gd` | `core/editor/editor_doc.gd` | 选区 / 剪贴板 / 镜像 / 整块移动 / 颜色层渐变 |
+| `editor_doc_meta.gd` | `core/editor/editor_doc.gd` | 出生点 / 复活点 / 敌人 meta（快照式 undo + 单项删/改） |
 
 - **拆分口径**：组件不持状态（画布侧的 overlay/image 直接操作传入的 `EditorCanvas` 对象与其缓存），root 侧组件只持 UI 节点引用与 `doc/canvas`；
   与 `editor_tools.gd` / `editor_actions.gd` 同规 —— 无 `class_name`、由调用方 `preload`，不进全局类表。
-- **拆分后规模（行数，仅作趋势参考）**：`editor_root.gd` 1137 → 730；`editor_canvas.gd` 1384 → 959；
-  新增组件 154~258 行。**没有**新增测试断言（编辑器/纯 UI 按 [`test-economy.md`](../../workflow/test-economy.md) 冻结新增守卫）。
-- **验证**：`EDITOR CANVAS PROBE: ALL-OK(56)` / `EDITOR SCENE PROBE: ALL-OK(60)` / `EDITOR PREVIEW PROBE: ALL-OK(21)` /
-  `UI LAYOUT PROBE: ALL-OK(54)` / 试玩端到端（不入库临时探针 18 条）/ `ALLSCRIPT: OK(308 个脚本)` / `check_naming` / `check_architecture` 全绿。
+- **文档模型同样拆域（同批）**：`core/editor/editor_doc.gd` 1066 → 586 行，公开 API 原样保留、方法体改为委托；
+  `editor_doc_cells.gd`(151) / `editor_doc_edit.gd`(354) / `editor_doc_meta.gd`(257) 是**纯静态函数**（首参 `doc`）。
+  ★ 组件里的 `doc` 参数刻意**不写类型**（写 `EditorDoc` 会与 preload 形成类循环），因此这些模块局部变量也不做 `:=` 推断；
+  数据与信号仍归 `EditorDoc`，模块只做操作。
+- **拆分后规模（行数，仅作趋势参考）**：`editor_root.gd` 1137 → 730；`editor_canvas.gd` 1384 → 959；`editor_doc.gd` 1066 → 586；
+  新增组件 151~354 行。**没有**新增测试断言（编辑器/纯 UI 按 [`test-economy.md`](../../workflow/test-economy.md) 冻结新增守卫）。
+- **验证**：`EDITOR DOC SMOKE: OK(93)` / `EDITOR DOC EXTRAS SMOKE: OK(106)` / `EDITOR CANVAS PROBE: ALL-OK(56)` /
+  `EDITOR SCENE PROBE: ALL-OK(60)` / `EDITOR PREVIEW PROBE: ALL-OK(21)` / `UI LAYOUT PROBE: ALL-OK(54)` /
+  试玩端到端（不入库临时探针 18 条）/ `ALLSCRIPT: OK(311 个脚本)` / `check_naming` / `check_architecture` 全绿。
