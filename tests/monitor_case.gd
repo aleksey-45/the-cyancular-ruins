@@ -1,0 +1,30 @@
+extends "res://tests/case.gd"
+
+
+func run(_tree: SceneTree) -> void:
+	PerformanceStats.set_enabled(true)
+	PerformanceStats.reset()
+	var bytes := PerformanceStats.storage_bytes()
+	for value in [100, 250, 16668]: PerformanceStats.observe(PerformanceStats.SERVER_TICK, value)
+	PerformanceStats.replayed(2)
+	PerformanceStats.replayed(3)
+	PerformanceStats.physics_tick()
+	PerformanceStats.physics_tick()
+	PerformanceStats.frame_boundary()
+	PerformanceStats.publish()
+	expect(PerformanceStats.read(PerformanceStats.SERVER_TICK, PerformanceStats.SAMPLES) == 3, "all ticks contribute to one-second statistics")
+	expect(PerformanceStats.read(PerformanceStats.SERVER_TICK, PerformanceStats.TOTAL) == 17018, "microsecond totals preserve units")
+	expect(PerformanceStats.read(PerformanceStats.SERVER_TICK, PerformanceStats.MAXIMUM) == 16668 and PerformanceStats.read(PerformanceStats.SERVER_TICK, PerformanceStats.OVER_BUDGET) == 1, "maximum and threshold count retain short spikes")
+	expect(PerformanceStats.read(PerformanceStats.REPLAY_TICKS, PerformanceStats.TOTAL) == 5 and PerformanceStats.read(PerformanceStats.PHYSICS_TICKS, PerformanceStats.MAXIMUM) == 2, "one displayed-frame interval accumulates all replay and physics ticks")
+	var report := PerformanceStats.snapshot(true)
+	var histogram: PackedInt64Array = report["metrics"]["server_tick"]["histogram"]
+	expect(histogram[0] == 1 and histogram[1] == 1 and histogram[8] == 1, "histogram uses inclusive upper bounds")
+	PerformanceStats.publish()
+	expect(PerformanceStats.read(PerformanceStats.SERVER_TICK, PerformanceStats.SAMPLES) == 0, "publishing expires the previous window")
+	expect(PerformanceStats.snapshot(true)["metrics"]["server_tick"]["samples"] == 3, "session totals survive window rotation")
+	PerformanceStats.set_enabled(false)
+	var started := PerformanceStats.begin()
+	PerformanceStats.observe(PerformanceStats.SERVER_TICK, 1)
+	PerformanceStats.end(PerformanceStats.SERVER_TICK, started)
+	expect(started == 0 and PerformanceStats.snapshot(true)["metrics"]["server_tick"]["samples"] == 0, "disabled instrumentation records no samples")
+	expect(PerformanceStats.storage_bytes() == bytes and bytes <= 16 * 1024, "aggregates have fixed storage independent of sample count")
