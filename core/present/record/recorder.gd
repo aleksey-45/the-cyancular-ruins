@@ -9,13 +9,13 @@ extends Node
 const AviMjpegWriter := preload("res://core/present/record/avi_writer.gd")
 const FfmpegTranscode := preload("res://core/present/record/ffmpeg_transcode.gd")
 const WavWriter := preload("res://core/present/record/wav_writer.gd")
+const RecorderAudio := preload("res://core/present/record/recorder_audio.gd")
 const RewindTape := preload("res://core/present/record/rewind_tape.gd")
 const REWIND_SHADER := preload("res://core/present/record/rewind_tape.gdshader")
 
 const CAP_FPS := 30
 const JPG_QUALITY := 0.95
 const MAX_PENDING := 4
-const AUDIO_BUFFER := 1.5
 
 const TAPE_CAP_W := 960
 const TAPE_CAP_H := 720
@@ -27,15 +27,9 @@ const TAPE_MAX_PENDING := 2
 
 # ── UI 版式：对齐 HUD 的 24/32 系（ui/hud/hud.gd）──
 # REWIND：顶部居中，做法与 HUD 时钟同款（anchor 0.5 + 对称 offset + 居中对齐）；
-# REC：右上角，右边缘与击杀计数器同一条 -32 线，纵向排在击杀计数器下方。
 const UI_MARGIN := 24.0
 const REWIND_HALF_W := 240.0
 const REWIND_FONT := 64          # 16 的倍数（UiFactory.style_control 会 assert）
-const REC_FONT := 32             # 与 HUD 时钟同号
-# 击杀计数器的 PanelContainer 右边缘是 -32，但它的文字还有 16px 右 content margin；
-# REC 没有底板，要对齐的是文字右缘，所以取 32+16=48。
-const REC_RIGHT := 48.0
-const REC_TOP := 16.0 + 48.0 + 12.0 + 8.0   # 击杀计数器 top16 + 48 字 + 上下 margin 12 + 间距 8
 
 var _enabled := true
 var _cap: SubViewport = null
@@ -58,11 +52,7 @@ var _rec_capture_slot := -1
 var _rec_written_slots := 0
 var _rec_final_slots := 0
 var _rec_last_blob := PackedByteArray()
-var _audio_cap: AudioEffectCapture = null
-var _audio_bus := -1
-var _audio_fx := -1
-var _indicator: CanvasLayer = null
-var _indicator_label: Label = null
+var _audio = null
 
 # ── MP4 后编码（worker 线程；主线程每帧轮询完成） ──
 var _ffmpeg := ""
@@ -100,6 +90,7 @@ var _last_speed := 1.0
 
 
 func _ready() -> void:
+	_audio = RecorderAudio.new(self)
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	if DisplayServer.get_name() == "headless" or OS.has_feature("web"):
 		_enabled = false
@@ -267,8 +258,7 @@ func start_recording() -> void:
 	_rec_last_blob = PackedByteArray()
 	_results.clear()
 	_pending = 0
-	if _audio_cap != null:
-		_audio_cap.clear_buffer()
+	_clear_audio_capture()
 	_show_indicator(true)
 
 
@@ -401,35 +391,19 @@ func _finish_transcode(job: Dictionary) -> void:
 
 
 func _attach_audio() -> void:
-	if _audio_cap != null:
-		return
-	_audio_bus = AudioServer.get_bus_index("Master")
-	_audio_cap = AudioEffectCapture.new()
-	_audio_cap.buffer_length = AUDIO_BUFFER
-	_audio_fx = AudioServer.get_bus_effect_count(_audio_bus)
-	AudioServer.add_bus_effect(_audio_bus, _audio_cap)
-	_audio_cap.clear_buffer()
+	_audio.attach_audio()
 
 
 func _detach_audio() -> void:
-	if _audio_cap == null:
-		return
-	if _audio_bus >= 0 and _audio_fx >= 0:
-		AudioServer.remove_bus_effect(_audio_bus, _audio_fx)
-	_audio_cap = null
-	_audio_bus = -1
-	_audio_fx = -1
+	_audio.detach_audio()
 
 
 func _drain_audio() -> void:
-	if _audio_cap == null:
-		return
-	var n := _audio_cap.get_frames_available()
-	if n <= 0:
-		return
-	var buf: PackedVector2Array = _audio_cap.get_buffer(n)
-	if _wav != null:
-		_wav.add_frames(buf)
+	_audio.drain_audio(_wav)
+
+
+func _clear_audio_capture() -> void:
+	_audio.clear_capture()
 
 
 func _submit_record(img: Image, slot: int) -> void:
@@ -719,36 +693,8 @@ func _ensure_capture() -> void:
 
 
 func _stamp() -> String:
-	var d := Time.get_datetime_dict_from_system()
-	return "%04d%02d%02d_%02d%02d%02d" % [
-		int(d["year"]), int(d["month"]), int(d["day"]),
-		int(d["hour"]), int(d["minute"]), int(d["second"])]
+	return _audio.stamp()
 
 
 func _show_indicator(on: bool) -> void:
-	if _indicator == null:
-		_indicator = CanvasLayer.new()
-		_indicator.name = "RecordIndicator"
-		_indicator.layer = 200
-		_indicator.process_mode = Node.PROCESS_MODE_ALWAYS
-		var label := Label.new()
-		label.text = "● REC"
-		UiFactory.style_control(label, REC_FONT)
-		label.add_theme_color_override("font_color", UiFactory.C_DANGER)
-		label.add_theme_color_override("font_outline_color", Color8(10, 12, 16, 200))
-		label.add_theme_constant_override("outline_size", 4)
-		# 右上角：右边缘与击杀计数器同一条 -32 线，排在它下方；文字在定宽框内右对齐。
-		label.anchor_left = 1.0
-		label.anchor_right = 1.0
-		label.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-		label.offset_left = -REC_RIGHT - 160.0
-		label.offset_right = -REC_RIGHT
-		label.offset_top = REC_TOP
-		label.offset_bottom = REC_TOP
-		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		_indicator.add_child(label)
-		_indicator_label = label
-		add_child(_indicator)
-	if _indicator_label != null:
-		_indicator.visible = on
+	_audio.show_indicator(on)
