@@ -2,6 +2,7 @@ class_name MatchHost
 extends Node
 
 const RewindFrame := preload("res://core/sim/rewind_frame.gd")
+const HostGroundWeapons := preload("res://server/match/host_ground_weapons.gd")
 
 
 var state: MatchState = null
@@ -41,7 +42,7 @@ var _rw_t0: Dictionary = {}
 var _ports: MatchPorts = null
 var _snapshot: SnapshotSystem = null
 var _combat: CombatSystem = null
-var _ground: GroundSystem = null
+var _ground_weapons := HostGroundWeapons.new()
 var _round: RoundSystem = null
 
 func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
@@ -75,10 +76,9 @@ func _init(map_path: String, role_peers: Dictionary, options: Dictionary = {},
 	_snapshot.bind(state, _ports)
 	_combat = CombatSystem.new()
 	_combat.bind(state, _ports)
-	_ground = GroundSystem.new()
-	_ground.bind(state, _ports)
+	_ground_weapons.setup(self, _ports)
 	_round = RoundSystem.new()
-	_round.bind(state, _ports, _ground)
+	_round.bind(state, _ports, _ground_weapons.ground())
 	TileDefs.on_destroyed = Callable(self, "_on_tile_destroyed")
 # cyrm v4(B18):破坏已下沉 16px 子格 —— worker 必须连子格回调(TileDefs.on_sub_destroyed),否则客户端永远收不到拆砖事件(幽灵墙:服务器碰撞已消、客户端还在渲染/预测碰撞)。
 	TileDefs.on_sub_destroyed = Callable(self, "_on_sub_destroyed")
@@ -191,23 +191,23 @@ func notify_direct_hit(shooter: Node, victim: Node) -> void:
 
 
 func _sync_ground_positions() -> void:
-	_ground.sync_positions()
+	_ground_weapons._sync_ground_positions()
 
 
 func _debug_keep_weapon_within_reach() -> void:
-	_ground.debug_keep_weapon_within_reach()
+	_ground_weapons._debug_keep_weapon_within_reach()
 
 
 func _handle_ground_actions(role: int, src: PacketInputSource) -> void:
-	_ground.handle_actions(role, src)
+	_ground_weapons._handle_ground_actions(role, src)
 
 
 func _setup_ground_weapons() -> void:
-	_ground.setup()
+	_ground_weapons._setup_ground_weapons()
 
 
 func ground_weapons_payload() -> Array:
-	return _ground.payload()
+	return _ground_weapons.ground_weapons_payload()
 
 
 func _match_round_tick(delta: float) -> void:
