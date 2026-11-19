@@ -58,7 +58,7 @@
 
 - 世界纹理的 alpha 不能当地形遮挡用:地形与精灵在里面都是不透明像素。`level_0.tscn` 另有一个 SubViewport `TerrainViewport`(`transparent_bg`、半分辨率、自带 `TerrainCamera`),里面只放 `TerrainLayer`(与 `WallLayer` 同一份 TileSet、同一份 cells)⇒ 渲染出**只含地形**的剪影图。`PostProcess._bind_terrain()` 发现同级 `TerrainViewport` 后,把纹理与 `terrain_occ_gain = 1` 推给 shader。
 - shader 的地形判定入口 `_occ()`:有剪影通道时采 `terrain_tex`(`filter_nearest`),否则退回 `occ_tex`(= 世界纹理 alpha,旧行为)。因此精灵像素落在空气/地形洞里时 `_occ = 0`,地形受光不再被刷到实体上。斜投影影走 `_occ_shadow(suv, allow_world)`:地形像素允许世界 alpha 参与(实体可投影),实体/空气像素只用地形剪影。**其余光照公式一行未改。**
-- 铺贴必须镜像:`Level0` 的墙层写点全部走 `_set_wall_cell` / `_erase_wall_cell`(整图铺贴、砖被摧毁、回溯复原、换局复位),两层 cells 一致是硬约束。★ 漏镜像不报错,只会让实体重新被地形光误伤 —— 承重判据 = 探针里「两层 TileSet 相同且 used_cells 数一致」。
+- 铺贴必须镜像:`Level0` 的墙层写点全部走 `scenes/level/level_world_painter.gd` 的 `_set_wall_cell` / `_erase_wall_cell`(整图铺贴、砖被摧毁、回溯复原、换局复位),两层 cells 一致是硬约束。★ 漏镜像不报错,只会让实体重新被地形光误伤 —— 承重判据 = 探针里「两层 TileSet 相同且 used_cells 数一致」。
 - 相机同步在 `_sync_glow_camera()` 里:`global_position` / `rotation` 与世界相机相同,`zoom = 世界 zoom × 0.5`(半分辨率覆盖同一片世界;shader 按 uv 采样,与分辨率无关)。
 - **降级**:找不到 `TerrainViewport`(主菜单实时光影背景、编辑器预览这类运行时自建视口的调用方)⇒ `terrain_occ_gain = 0` ⇒ 退回世界纹理 alpha,行为与加通道之前完全一致,调用方不用改接线。
 - 代价:铺墙多写一份 cells(加载时间略增);遮挡判定降到半分辨率(1 texel = 2 世界像素 = 1 美术像素),地形边缘的受光 / 影子最多差 1~2 世界像素。观感(实体不再被地形光误伤、地形亮度不变)零自动守卫,只能同机位截图 + 人眼对比。

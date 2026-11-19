@@ -2,6 +2,9 @@ class_name Level0
 extends Node2D
 
 const LevelPickupsScript := preload("res://scenes/level/level_pickups.gd")
+const LevelWorldPainterScript := preload("res://scenes/level/level_world_painter.gd")
+const LevelTimeFxScript := preload("res://scenes/level/level_time_fx.gd")
+const LevelPlaytestScript := preload("res://scenes/level/level_playtest.gd")
 
 static var wall_layer: TileMapLayer = null
 # 地形剪影层(TerrainViewport 内):与墙层同一份 cells,供后处理的地形受光/斜影当遮挡源。
@@ -46,6 +49,11 @@ var _film_t: float = 0.0
 var _haste_t: float = 0.0
 # 时间状态高亮(B13):加色副本(见 scenes/effects/time_glow.gd),实体 → TimeGlow
 var _glows: Dictionary = {}
+
+# 世界绘制 / 时间视觉 / 试玩三个域模块:host = 本节点,世界状态留在 static 字段与上面的实例账本里。
+var _painter := LevelWorldPainterScript.new()
+var _time_fx := LevelTimeFxScript.new()
+var _playtest := LevelPlaytestScript.new()
 
 
 static func safe_change_scene(tree: SceneTree, path: String) -> void:
@@ -172,6 +180,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	$WorldViewport.push_input(event)
 
 func _ready() -> void:
+	_painter.setup(self, $WorldViewport as SubViewport)
+	_time_fx.setup(self)
+	_playtest.setup(self)
 	LoadingScreen.show_loading("正在构建世界…")
 	LoadingScreen.set_progress(0.02, "读取地图…")
 	# 清屏色 = 世界的「空气」色。★ 单一来源放在 TerrainAtlas:主菜单背景的底色也读同一个常量,两处不许各写一份。
@@ -278,31 +289,7 @@ func _ready() -> void:
 # 墙体/所有非空气砖的图集(16px 象限制,按描述符行烘:行 = 本图去重描述符,辅码颜色烘进像素)。
 # 构造在 TerrainAtlas —— 主菜单背景要「真实的那个世界」,必须与这里用同一份映射(见 terrain_atlas.gd 文件头)。
 func _create_wall_tileset() -> Dictionary:
-	var key := MazeGenerator.map_file_path()
-	var built: Dictionary = _wall_ts_cache.get(key, {})
-	if built.is_empty():
-		built = TerrainAtlas.make_wall_tileset_for(_collect_wall_descs())
-		_wall_ts_cache[key] = built
-	_desc_row = built["row_of"]
-	return built
-
-
-func _collect_wall_descs() -> Array:
-	var uniq := {}
-	var sd := MazeGenerator.current_subdesc
-	if sd.is_empty():
-		for row in MazeGenerator.current_subgrid:
-			for t in row:
-				if int(t) != 0:
-					uniq[MapFormatV4.neutral_descriptor(int(t))] = true
-	else:
-		for row in sd:
-			for d in row:
-				if int(d) != 0:
-					uniq[int(d)] = true
-	var out: Array = uniq.keys()
-	out.sort()
-	return out
+	return _painter.create_wall_tileset()
 
 
 static func _desc_or_neutral(sd: Array, y: int, x: int, tex: int) -> int:
@@ -348,210 +335,20 @@ static func _water_desc_of(v: int, x: int, y: int) -> int:
 	return best if best != 0 else fallback
 
 
-func _ring_copies() -> Array:
-	var out: Array = []
-	for ty in range(-1, 2):
-		for tx in range(-1, 2):
-			out.append(Vector2i(tx, ty))
-	return out
-
-
 static var _paint_cache: Dictionary = {}
-
-func _paint_cache_for_current_map() -> Dictionary:
-	var key := MazeGenerator.map_file_path()
-	var hit: Dictionary = _paint_cache.get(key, {})
-	if not hit.is_empty():
-		return hit
-	var sg := MazeGenerator.current_subgrid
-	var sd := MazeGenerator.current_subdesc
-	var sc: int = sg[0].size()
-	var sr: int = sg.size()
-	var xs := PackedInt32Array()
-	var ys := PackedInt32Array()
-	xs.resize(sc * sr)
-	ys.resize(sc * sr)
-	var rows := PackedByteArray()
-	rows.resize(sr)
-	for y in sr:
-		var row: Array = sg[y]
-		var base := y * sc
-		var any := false
-		for x in sc:
-			var tex: int = row[x]
-			if tex == MazeGenerator.EMPTY or Water.is_liquid(tex):
-				xs[base + x] = -1
-				continue
-			any = true
-			xs[base + x] = (y % 4) * 4 + (x % 4)
-			ys[base + x] = _wall_row(_desc_or_neutral(sd, y, x, tex))
-		rows[y] = 1 if any else 0
-	var out := {"x": xs, "y": ys, "rows": rows, "sc": sc, "sr": sr}
-	_paint_cache[key] = out
-	return out
-
-
-# 只画真正可能出现在视口里的环带:视口 2208x1728 远小于地图,整圈 9 份全画是 5~6 倍浪费
-# (贴图 24 万格 -> 4 万级;碰撞环带不在此列,见 CollisionBuilder)。中心份全画,其余按"该副本在源图里的可见条带"画。
-const RING_VIEW_MARGIN_SUB := 8
-
-func _ring_visible_sub_rects() -> Array:
-	var sc: int = MazeGenerator.current_subgrid[0].size()
-	var sr: int = MazeGenerator.current_subgrid.size()
-	var zoom := maxf(0.01, PlayerParams.cam_zoom)
-	var wsub := mini(sc, ceili(float(($WorldViewport as SubViewport).size.x) / (16.0 * zoom)) + RING_VIEW_MARGIN_SUB * 2)
-	var hsub := mini(sr, ceili(float(($WorldViewport as SubViewport).size.y) / (16.0 * zoom)) + RING_VIEW_MARGIN_SUB * 2)
-	var out: Array = []
-	for c: Vector2i in _ring_copies():
-		var x0 := 0
-		var y0 := 0
-		var x1 := sc
-		var y1 := sr
-		if c.x < 0:
-			x0 = maxi(0, sc - wsub)
-		elif c.x > 0:
-			x1 = mini(sc, wsub)
-		if c.y < 0:
-			y0 = maxi(0, sr - hsub)
-		elif c.y > 0:
-			y1 = mini(sr, hsub)
-		out.append([c, x0, y0, x1, y1])
-	return out
-
-
-# ★ 墙层与地形剪影层的唯一写点:漏镜像不会报错,只会让实体重新被地形受光/斜影误伤。
-static func _set_wall_cell(cell: Vector2i, atlas: Vector2i) -> void:
-	if wall_layer != null:
-		wall_layer.set_cell(cell, 0, atlas)
-	if terrain_layer != null:
-		terrain_layer.set_cell(cell, 0, atlas)
-
-
-static func _erase_wall_cell(cell: Vector2i) -> void:
-	if wall_layer != null:
-		wall_layer.set_cell(cell, -1)
-	if terrain_layer != null:
-		terrain_layer.set_cell(cell, -1)
 
 
 func _paint_maze_copies() -> void:
-	var cache := _paint_cache_for_current_map()
-	var xs: PackedInt32Array = cache["x"]
-	var ys: PackedInt32Array = cache["y"]
-	var row_any: PackedByteArray = cache["rows"]
-	var sc: int = cache["sc"]
-	var sr: int = cache["sr"]
-	for entry in _ring_visible_sub_rects():
-		var c: Vector2i = entry[0]
-		var x0: int = entry[1]
-		var y0: int = entry[2]
-		var x1: int = entry[3]
-		var y1: int = entry[4]
-		var offset_x = c.x * sc
-		var offset_y = c.y * sr
-		for y in range(y0, y1):
-			if row_any[y] == 0:
-				continue
-			var base := y * sc
-			var oy: int = y + offset_y
-			for x in range(x0, x1):
-				var tx := xs[base + x]
-				if tx < 0:
-					continue
-				_set_wall_cell(Vector2i(x + offset_x, oy), Vector2i(tx, ys[base + x]))
+	_painter.paint_maze_copies()
 
 
 func _paint_water_copies(grid: Array[Array]) -> void:
-	var ts := GameParameters.TILE_SIZE
-	var cols := grid[0].size()
-	var rows := grid.size()
-	var surf: Node2D = Level0.water_surface_layer
-	var surface_by_desc: Dictionary = {}   # 描述符 → 该描述符下的所有液体格
-	var wzoom := maxf(0.01, PlayerParams.cam_zoom)
-	var x_limit := mini(cols, ceili(float(($WorldViewport as SubViewport).size.x) / (float(ts) * wzoom)) + RING_VIEW_MARGIN_SUB / 4 + 1)
-	var y_limit := mini(rows, ceili(float(($WorldViewport as SubViewport).size.y) / (float(ts) * wzoom)) + RING_VIEW_MARGIN_SUB / 4 + 1)
-	for entry in _ring_visible_sub_rects():
-		var c: Vector2i = entry[0]
-		var x0: int = entry[1] / 4
-		var y0: int = entry[2] / 4
-		var x1: int = mini(cols, ceili(float(entry[3]) / 4.0))
-		var y1: int = mini(rows, ceili(float(entry[4]) / 4.0))
-		if c.x < 0:
-			x0 = maxi(x0, cols - x_limit)
-		elif c.x > 0:
-			x1 = mini(x1, x_limit)
-		if c.y < 0:
-			y0 = maxi(y0, rows - y_limit)
-		elif c.y > 0:
-			y1 = mini(y1, y_limit)
-		var ox := c.x * cols
-		var oy := c.y * rows
-		for y in range(y0, y1):
-			var row: Array = grid[y]
-			for x in range(x0, x1):
-				var v: int = row[x]
-				if v == MazeGenerator.EMPTY:
-					continue
-				if not Water.is_liquid(MazeGenerator.texture_of(v)):
-					continue
-				# ★ 所有液体格都进**同一条管线**(合批):水面砖 / 水体砖只是图集里不同的 UV 行,
-				#   同色、同 alpha、同条纹、同起伏 —— 不存在"两层对不齐"的接缝。
-				var above: int = grid[posmod(y - 1, rows)][x]
-				var is_surface := above == 0 or not Water.is_liquid(MazeGenerator.texture_of(above))
-				var d: int = _water_desc_of(v, x, y)
-				if not surface_by_desc.has(d):
-					surface_by_desc[d] = []
-				(surface_by_desc[d] as Array).append({
-					"pos": Vector2((x + ox) * ts + ts * 0.5, (y + oy) * ts + ts),
-					"phase": (x + ox) * 1.7 + (y + oy) * 2.3,
-					"surface": is_surface,
-					"weight": 1.0 if is_surface else 0.0,   # ★ 只有水面格起伏
-				})
-
-	# ★ 按**描述符分桶**:每桶用自己的 tint 砖。水面若恒用中性砖,而水体按辅码 tint 过,
-	#   两层就会有色差(registered-debt 里那条"水面合批不消费辅码")。
-	for d in surface_by_desc:
-		var cells: Array = surface_by_desc[d]
-		if cells.is_empty():
-			continue
-		var tex := ImageTexture.create_from_image(_make_water_atlas(ts, int(d)))
-		var batch := WaterSurfaceBatch.new()
-		batch.setup(cells, tex, ts)
-		surf.add_child.call_deferred(batch)
+	_painter.paint_water_copies(grid)
 
 
-
-const BOOT_BUDGET_US := 8000
 
 func _build_world_progressive(grid: Array[Array]) -> void:
-	var t := Time.get_ticks_usec()
-	LoadingScreen.set_progress(0.68, "碰撞:永久墙")
-	var perm := CollisionBuilder.build_sub(grid, false)
-	CollisionBuilder.build_permanent(perm, $WorldViewport, "WallCollision")
-	await get_tree().process_frame
-	t = Time.get_ticks_usec()
-	LoadingScreen.set_progress(0.72, "碰撞:可破坏层")
-	var sub := CollisionBuilder.build_sub(grid, true)
-	var cw := ceili(sub[0].size() / float(CollisionBuilder.CHUNK_CELLS * 4))
-	var ch := ceili(sub.size() / float(CollisionBuilder.CHUNK_CELLS * 4))
-	var total := cw * ch
-	var n := 0
-	for chy in ch:
-		for chx in cw:
-			CollisionBuilder.rebuild_chunk(sub, Vector2i(chx, chy), $WorldViewport)
-			n += 1
-			LoadingScreen.set_progress(0.72 + 0.26 * float(n) / float(maxi(total, 1)),
-					"碰撞块 %d/%d" % [n, total])
-			if Time.get_ticks_usec() - t >= BOOT_BUDGET_US:
-				await get_tree().process_frame
-				t = Time.get_ticks_usec()
-	CollisionBuilder.build_climb_ledges(grid, $WorldViewport)
-	_destructible_sub = sub
-	LoadingScreen.set_progress(1.0, "完成")
-	await get_tree().process_frame
-	get_tree().paused = false
-	await get_tree().process_frame
-	LoadingScreen.hide_loading()
+	await _painter.build_world_progressive(grid)
 
 
 func _process(_delta: float) -> void:
@@ -575,126 +372,24 @@ func _process(_delta: float) -> void:
 
 
 func _rewind_elite_hits() -> void:
-	if _rewind == null:
-		return
-	var elites: Array = []
-	for e in get_tree().get_nodes_in_group("enemies"):
-		if is_instance_valid(e) and e.has_meta("elite") and not bool(e.get("is_dead")):
-			elites.append(e)
-	if elites.is_empty():
-		return
-	for b in _rewind.replay_bullets():
-		if not is_instance_valid(b):
-			continue
-		var dmg := int(b.get("hit_damage"))
-		if dmg <= 0:
-			continue
-		var bp: Vector2 = (b as Node2D).global_position
-		for e in elites:
-			var ep: Vector2 = (e as Node2D).global_position
-			var d := MazeGenerator.toroidal_delta_px(bp, ep,
-					GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
-			if d.length() > 42.0:
-				continue
-			var hit_ids: Array = b.get_meta("rw_hit_ids", [])
-			if hit_ids.has(e.get_instance_id()):
-				continue
-			hit_ids.append(e.get_instance_id())
-			b.set_meta("rw_hit_ids", hit_ids)
-			var dir := d.normalized() if not d.is_zero_approx() else Vector2.RIGHT
-			e.call("hurt", dmg, dir, float(b.get("hit_impact")))
+	_painter.rewind_elite_hits()
 
 
 func _restore_sub(e: Dictionary) -> void:
-	if _grid_ref.is_empty() or wall_layer == null or MazeGenerator.current_subgrid.is_empty():
-		return
-	var sub: Vector2i = e["sub"]
-	var hp := int(e["hp"])
-	var sc: int = MazeGenerator.current_subgrid[0].size()
-	var sr: int = MazeGenerator.current_subgrid.size()
-	if sub.x < 0 or sub.y < 0 or sub.x >= sc or sub.y >= sr:
-		return
-	TileDefs.restore_sub(sub, hp)
-	var tex := int(MazeGenerator.current_subgrid[sub.y][sub.x])
-	var cell := Vector2i(sub.x / 4, sub.y / 4)
-	if tex == 0:
-		return
-	var atlas_row := _wall_row(_desc_or_neutral(MazeGenerator.current_subdesc, sub.y, sub.x, tex))
-	for ty in range(-1, 2):
-		for tx in range(-1, 2):
-			_set_wall_cell(Vector2i(sub.x + tx * sc, sub.y + ty * sr),
-					Vector2i((sub.y % 4) * 4 + (sub.x % 4), atlas_row))
-	if not _destructible_sub.is_empty():
-		_destructible_sub[sub.y][sub.x] = MazeGenerator.SOLID
-		_dirty_chunks[CollisionBuilder.chunk_of(cell)] = true
-	if _grid_ref[cell.y][cell.x] == 0 and not _pristine_grid.is_empty():
-		_grid_ref[cell.y][cell.x] = _pristine_grid[cell.y][cell.x]
-		if TileDefs.hp_grid_at(cell) <= 0:
-			TileDefs.set_hp_grid(cell, TileDefs.hp_of(tex))
+	_painter.restore_sub(e)
 
 
 func _on_tile_destroyed(cell: Vector2i) -> void:
-	TileDefs.destroy_cell(cell)
+	_painter.on_tile_destroyed(cell)
 
 
 func _on_sub_destroyed(sub: Vector2i, pre_hp: int, _owner: Node = null) -> void:
-	_damaged_subs[sub] = true
-	if _tile_ledger != null and TimeField.current != null and not TimeField.current.is_rewinding() and wall_layer != null:
-		_tile_pending.append({"sub": sub, "hp": pre_hp})
-	if wall_layer != null:
-		var sc: int = MazeGenerator.current_subgrid[0].size()
-		var sr: int = MazeGenerator.current_subgrid.size()
-		for ty in range(-1, 2):
-			for tx in range(-1, 2):
-				_erase_wall_cell(Vector2i(sub.x + tx * sc, sub.y + ty * sr))
-	if not _destructible_sub.is_empty():
-		_destructible_sub[sub.y][sub.x] = MazeGenerator.EMPTY
-		_dirty_chunks[CollisionBuilder.chunk_of(Vector2i(sub.x / 4, sub.y / 4))] = true
+	_painter.on_sub_destroyed(sub, pre_hp, _owner)
 
 
 # PvP 换局复位(增量,2026-10-24):只还原「被拆过的 16px 子格」—— 全量重铺 9 环面副本实测 ~0.86s、整层碰撞重建 ~0.48s
 func reset_destructibles() -> void:
-	if _pristine_grid.is_empty() or _pristine_subgrid.is_empty():
-		return
-	var sc: int = (_pristine_subgrid[0] as Array).size()
-	var sr: int = _pristine_subgrid.size()
-	var subs: Dictionary = _damaged_subs.duplicate()
-	var grid := MazeGenerator.current_grid
-	for cy in grid.size():
-		var row: Array = grid[cy]
-		var prow: Array = _pristine_grid[cy]
-		for cx in row.size():
-			if row[cx] == prow[cx]:
-				continue
-			row[cx] = prow[cx]
-			for sy in 4:
-				for sx in 4:
-					subs[Vector2i(cx * 4 + sx, cy * 4 + sy)] = true
-	var chunks: Dictionary = {}
-	var cells: Dictionary = {}
-	for key in subs:
-		var sub: Vector2i = key
-		if sub.x < 0 or sub.y < 0 or sub.x >= sc or sub.y >= sr:
-			continue
-		var tex: int = int(_pristine_subgrid[sub.y][sub.x])
-		TileDefs.restore_sub(sub, TileDefs.hp_of(tex) if tex != 0 else 0)
-		if not _destructible_sub.is_empty():
-			_destructible_sub[sub.y][sub.x] = CollisionBuilder.destructible_value(tex)
-		if tex != 0:
-			var atlas := Vector2i((sub.y % 4) * 4 + (sub.x % 4),
-					_wall_row(_desc_or_neutral(_pristine_subdesc, sub.y, sub.x, tex)))
-			for ty in range(-1, 2):
-				for tx in range(-1, 2):
-					_set_wall_cell(Vector2i(sub.x + tx * sc, sub.y + ty * sr), atlas)
-		var cell := Vector2i(sub.x / 4, sub.y / 4)
-		chunks[CollisionBuilder.chunk_of(cell)] = true
-		cells[cell] = true
-	for cell in cells:
-		TileDefs.set_hp_grid(cell, TileDefs.hp_of(MazeGenerator.texture_of(int(_pristine_grid[cell.y][cell.x]))))
-	for ch in chunks:
-		CollisionBuilder.rebuild_chunk(_destructible_sub, ch, $WorldViewport)
-	_dirty_chunks.clear()
-	_damaged_subs.clear()
+	_painter.reset_destructibles()
 
 
 # 单人「倒地按 R 重启」:原地复位,不重建世界。
@@ -757,41 +452,15 @@ func _build_pause_menu() -> void:
 
 # 敌人一生成就定格:停物理帧 + 停动画首帧(位置/碰撞箱原样保留,「鸟会不会挡路/贴图多大」仍看得见)。
 func _on_playtest_enemy_spawned(enemy: Node) -> void:
-	if not is_instance_valid(enemy):
-		return
-	enemy.set_physics_process(false)
-	var spr := enemy.find_child("AnimatedSprite2D", true, false) as AnimatedSprite2D
-	if spr != null:
-		spr.stop()
-		spr.frame = 0
+	_playtest.on_enemy_spawned(enemy)
 
 
 func _build_playtest_banner() -> void:
-	var layer := CanvasLayer.new()
-	layer.name = "PlaytestBanner"
-	layer.layer = 150
-	add_child(layer)
-	var panel := PanelContainer.new()
-	panel.name = "Banner"
-	panel.set_anchors_preset(Control.PRESET_CENTER_TOP)
-	panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	# 让开顶部居中的 HUD 时钟:横幅下移一行,两段文字不叠。
-	panel.offset_top = float(UiFactory.MARGIN + UiFactory.SP_7)
-	UiFactory.hud_plate(panel, UiFactory.SP_4, UiFactory.SP_2, true, UiFactory.C_PLATE_DEEP)
-	layer.add_child(panel)
-	var label := Label.new()
-	label.text = "试玩 · 敌人静止 / 空手 · Esc 返回编辑器"
-	UiFactory.style_control(label, UiFactory.T_BODY)
-	label.add_theme_color_override("font_color", UiFactory.C_TEXT)
-	panel.add_child(label)
+	_playtest.build_playtest_banner()
 
 
 func _leave_playtest() -> void:
-	if not playtest_mode:
-		return
-	playtest_mode = false
-	MazeGenerator.set_map_file(playtest_restore_map)   # 不让临时图泄漏到之后的开局
-	safe_change_scene(get_tree(), "res://scenes/editor/editor_root.tscn")
+	_playtest.leave_playtest()
 
 
 var pickups := LevelPickupsScript.new()
@@ -835,71 +504,7 @@ func try_pickup_for(p: Node2D) -> void:
 
 
 func _tick_time_visuals(delta: float) -> void:
-	if _post_process == null or time_field == null:
-		return
-	var rewinding: bool = time_field.is_rewinding()
-	_film_t = move_toward(_film_t, 1.0 if rewinding else 0.0, delta / 0.2)
-	_haste_t = move_toward(_haste_t, 1.0 if time_field.is_hasting() else 0.0, delta / 0.1)
-	_post_process.set_time_effects(_film_t, time_field.loan_depth(), _haste_t)
-
-	var depth := time_field.loan_depth()
-	var mult := 1.0 + TimeParams.LOAN_PITCH_RANGE * depth
-	if time_field.is_hasting():
-		mult += 0.12
-	elif rewinding:
-		mult -= 0.15
-	Sfx.pitch_mult = clampf(mult, 0.7, 1.8)
-	_sync_time_glows()
-
-
-const GLOW_PLAYER := Color(0.30, 0.62, 1.0)
-const GLOW_ENEMY := Color(1.0, 0.94, 0.86)
-const GLOW_ELITE := Color(1.0, 0.82, 0.06)
-const GLOW_RADIUS := 1500.0
-
-func _sync_time_glows() -> void:
-	if time_field == null:
-		return
-	var want: Dictionary = {}
-	if time_field.is_hasting():
-		var pl := get_node_or_null("WorldViewport/Player") as Node2D
-		if pl != null:
-			want[pl] = [GLOW_PLAYER, 1]
-		for e in get_tree().get_nodes_in_group("enemies"):
-			if not (e is Node2D) or not is_instance_valid(e) or bool(e.get("is_dead")):
-				continue
-			if e.has_meta("elite"):
-				want[e] = [GLOW_ELITE, 2]
-			elif _near_player(e as Node2D):
-				want[e] = [GLOW_ENEMY, 1]
-	elif time_field.is_rewinding():
-		for e in get_tree().get_nodes_in_group("enemies"):
-			if is_instance_valid(e) and e is Node2D and not bool(e.get("is_dead")) and e.has_meta("elite"):
-				want[e] = [GLOW_ELITE, 2]
-	for k in _glows.keys():
-		if not is_instance_valid(k) or not want.has(k):
-			var old: TimeGlow = _glows[k]
-			if is_instance_valid(old):
-				old.queue_free()
-			_glows.erase(k)
-	for k in want.keys():
-		var spec: Array = want[k]
-		var g: TimeGlow = _glows.get(k)
-		if g == null or not is_instance_valid(g):
-			g = TimeGlow.attach(k, spec[0], int(spec[1]))
-			if g != null:
-				_glows[k] = g
-		else:
-			g.set_color(spec[0])
-
-
-func _near_player(n: Node2D) -> bool:
-	var pl := get_node_or_null("WorldViewport/Player") as Node2D
-	if pl == null:
-		return false
-	var d := MazeGenerator.toroidal_delta_px(n.global_position, pl.global_position,
-			GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
-	return d.length() <= GLOW_RADIUS
+	_time_fx.tick_time_visuals(delta)
 
 
 var _prev_want_rewind := false
@@ -907,49 +512,11 @@ var _prev_want_haste := false
 
 
 func _drive_time(delta: float, want_rewind: bool, want_haste: bool) -> void:
-	if grain_account != null and want_rewind and not _prev_want_rewind and not grain_account.can_spend():
-		Sfx.play("deny")
-	if grain_account != null and want_haste and not _prev_want_haste and not grain_account.can_spend():
-		Sfx.play("deny")
-	_prev_want_rewind = want_rewind
-	_prev_want_haste = want_haste
-	time_field.update(delta, want_rewind, want_haste)
+	_time_fx.drive_time(delta, want_rewind, want_haste)
 
 
 func _tick_rewind(delta: float) -> void:
-	if _rewind == null:
-		return
-	var pl := get_node_or_null("WorldViewport/Player")
-	var rewinding: bool = time_field != null and time_field.is_rewinding()
-	if rewinding and not _rewind.was_rewinding:
-		_rewind.begin()
-		_tile_cursor = _rewind.recorded_seconds()
-	elif not rewinding and _rewind.was_rewinding:
-		var exit_t: float = _rewind.finish()
-		if _tile_ledger != null:
-			_tile_ledger.prune_after(exit_t)
-	_rewind.was_rewinding = rewinding
-	_prev_time_mode = time_field.mode if time_field != null else 0
-	if rewinding:
-		WorldRewind.hold_corpses = false
-		_rewind.step(delta, pl)
-		_rewind_elite_hits()
-		if _tile_ledger != null and _tile_cursor >= 0.0:
-			var target := _rewind.current_target()
-			for e in _tile_ledger.take_range(target, _tile_cursor):
-				for c in e["cells"]:
-					_restore_sub(c)
-			_tile_cursor = target
-	else:
-		WorldRewind.hold_corpses = true
-		_rewind.record(delta, pl, get_tree().get_nodes_in_group("enemies"),
-				get_tree().get_nodes_in_group("bullet"))
-		WorldRewind.expire_corpses(get_tree())
-		if _tile_ledger != null:
-			if not _tile_pending.is_empty():
-				_tile_ledger.record(_rewind.recorded_seconds(), _tile_pending)
-				_tile_pending = []
-			_tile_ledger.prune(_rewind.recorded_seconds() - TimeParams.SNAP_SECONDS)
+	_time_fx.tick_rewind(delta)
 
 
 func _update_pickup_prompt() -> void:
@@ -980,16 +547,3 @@ func _update_pickup_prompt() -> void:
 						pk.canonical_pos, pl.global_position, w, h).length()
 				can = d <= PlayerParams.weapon_pickup_radius
 		pk.set_prompt_visible(can)
-
-## 被合批用的两行图集:上半 = 水体砖,下半 = 水面砖,都按描述符 tint。
-func _make_water_atlas(ts: int, desc: int) -> Image:
-	var img := Image.create(ts, ts * 2, false, Image.FORMAT_RGBA8)
-	img.blit_rect(TerrainAtlas._tinted_water_brick(ts, desc), Rect2i(0, 0, ts, ts), Vector2i(0, 0))
-	# 下半行 = **水面砖**(自带顶边水线),按同一描述符 tint:
-	#   水面格用它,水线本来就画在贴图里,不需要后处理再画。
-	var surf := TerrainAtlas.water_brick_image(ts, TerrainAtlas.WATER_SURFACE_BRICK).duplicate()
-	for yy in ts:
-		for xx in ts:
-			surf.set_pixel(xx, yy, TerrainAtlas.tint_color(surf.get_pixel(xx, yy), desc))
-	img.blit_rect(surf, Rect2i(0, 0, ts, ts), Vector2i(0, ts))
-	return img
