@@ -111,6 +111,7 @@ func _test_predicted_fields() -> void:
 #   + `tests/scene/stair_climb_probe` ⑦(重放确定性)。本函数只兜"接线被删/被改名"这类**没有廉价行为观测**的缺陷:
 #   map_px 不接线、受击事件绕开队列直接注入、事件锚点换回 ack、服务端不跳过 cause=water —— 它们全都静默。
 # ⚠ 判词不可读成"功能没问题";搬家/改名后这 5 条会因"内容不在了"而红,先看是不是位置变了。
+# 2026-11-18 受击事件搬进 mp_client/hit_events.gd,②③⑤ 的读取源已随之改到该文件;④ 仍在客户端。
 func _check_source_guard() -> void:
 	var lines0 := FileAccess.get_file_as_string("res://scenes/pvp_match_client.gd").split("\n")
 	var boot := _func_block(lines0, "func _boot_world(")
@@ -125,7 +126,7 @@ func _check_source_guard() -> void:
 			"PvpMatchClient._boot_world() 给控制器设了 map_px(不设 = 环面修复惰性且静默;块没找到 = 引导段入口名改了,守卫也要跟着改)")
 
 	# ② 受击事件时刻对齐的接线(2026-10-28):网络回调只入队,由物理帧开头的 _drain_hit_events 注入
-	var lines3 := FileAccess.get_file_as_string("res://scenes/pvp_match_client.gd").split("\n")
+	var lines3 := FileAccess.get_file_as_string("res://scenes/mp_client/hit_events.gd").split("\n")
 	var ev_block := _func_block(lines3, "func _on_hit_event(")
 	var drain_block := _func_block(lines3, "func _drain_hit_events(")
 	var apply_block := _func_block(lines3, "func _apply_local_hit_event(")
@@ -150,12 +151,12 @@ func _check_source_guard() -> void:
 	_check(drain_block[0] >= 0 and drained == 1,
 			"物理帧开头只许有一处 _drain_hit_events → _apply_local_hit_event(实得 %d 处;0 = 队列没人消费)" % drained)
 
-	var phys_block := _func_block(lines3, "func _physics_process(")
+	var phys_block := _func_block(lines0, "func _physics_process(")
 	var drain_calls := 0
 	for i in range(phys_block[0] + 1, phys_block[1]):
-		if lines3[i].strip_edges().begins_with("#"):
+		if lines0[i].strip_edges().begins_with("#"):
 			continue
-		if lines3[i].contains("_drain_hit_events()"):
+		if lines0[i].contains("_drain_hit_events()"):
 			drain_calls += 1
 	_check(phys_block[0] >= 0 and drain_calls == 1,
 			"_physics_process 必须消费一次 _drain_hit_events()(实得 %d 处;0 = 受击事件永远不生效)" % drain_calls)

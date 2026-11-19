@@ -28,7 +28,8 @@ func _get_multiplayer() -> MultiplayerAPI:
 
 
 const LaserVisual := preload("res://core/present/laser_visual.gd")
-const HitShape := preload("res://core/sim/hit_shape.gd")
+const BulletContactScript := preload("res://scenes/mp_client/bullet_contact.gd")
+const HitEventsScript := preload("res://scenes/mp_client/hit_events.gd")
 
 
 
@@ -42,9 +43,6 @@ var _replica_set: ReplicaSet = null
 var _ping_acc := 0.0
 # C2 客户端预测:见 core/prediction_rollback.gd 与 docs/netcode/protocol/netcode-snapshots.md。
 
-# 受击事件队列:网络回调跑在 idle 帧,而注入要重放(内部 move_and_slide)—— 物理帧外 move_and_slide 位移恒 0(实测),
-# 故回调只入队,统一在下一个物理帧开头注入(反馈最多晚 1 帧 ≈16.7ms)。
-var _pending_hit_events: Array = []
 var _input_uplink: InputUplink = null
 
 
@@ -471,60 +469,36 @@ func _take_visual_bullet(scene_path: String) -> BulletBase:
 	return scene.instantiate() as BulletBase
 
 
-var _contact_targets: Array = []
-var _contact_targets_frame := -1
+var _bullet_contact: BulletContactScript = null
+
+
+func _ensure_bullet_contact() -> BulletContactScript:
+	_ensure_context()
+	if _bullet_contact == null:
+		_bullet_contact = BulletContactScript.new()
+		_bullet_contact.bind(ports, Callable(self, "_bullet_hits_entity"))
+	return _bullet_contact
 
 
 func _contact_targets_now() -> Array:
-	var f := Engine.get_physics_frames()
-	if f != _contact_targets_frame:
-		_contact_targets_frame = f
-		_contact_targets.clear()
-		var tree := get_tree()
-		if tree != null:
-			for group in BulletBase.CONTACT_GROUPS:
-				for n in tree.get_nodes_in_group(group):
-					if n is Node2D:
-						_contact_targets.append(n)
-	return _contact_targets
+	return _ensure_bullet_contact().contact_targets_now()
 
 
 func _cull_bullet_contacts() -> void:
-	for n in get_tree().get_nodes_in_group("bullet"):
-		var b := n as BulletBase
-		if b == null or b.apply_damage or b.explodes:
-			continue
-		if _bullet_contact_target(b) != null:
-			b.despawn()
+	_ensure_bullet_contact().cull_bullet_contacts()
 
 
 func _bullet_contact_target(b: BulletBase) -> Node2D:
-	var w := float(GameParameters.MAP_WIDTH)
-	var h := float(GameParameters.MAP_HEIGHT)
-	for n in _contact_targets_now():
-		if n == b.shooter or not (n is Node2D):
-			continue
-		if not _bullet_hits_entity(b, n as Node2D):
-			continue
-		if not HitShape.hurtable(n):
-			continue
-		if HitShape.segment_hits_rect(b.prev_pos, b.global_position,
-				_bullet_hurt_rect(n as Node2D), w, h, b.hit_grow()) >= 0.0:
-			return n as Node2D
-	return null
+	return _ensure_bullet_contact().bullet_contact_target(b)
 
 
 func _bullet_hurt_rect(n: Node2D) -> Rect2:
-	if n.has_method("hurt_rect_rendered"):
-		return n.hurt_rect_rendered()
-	if n.has_method("hurt_rect"):
-		return n.hurt_rect()
-	return HitShape.hurt_rect_of(n)
+	return _ensure_bullet_contact().bullet_hurt_rect(n)
 
 
 # 这颗视觉子弹能不能停在那个实体上。默认能(1v1 / 大乱斗:除了射手谁都能挡);3v3 覆写:与射手同队的排掉(规则:队友不互挡 + 子弹穿透队友)—— 不覆写的话队友副本会把自己的子弹吃掉(与服务器裁决相反,且不报错)。
 func _bullet_hits_entity(_b: BulletBase, _ent: Node2D) -> bool:
-	return true
+	return _ensure_bullet_contact().bullet_hits_entity(_b, _ent)
 
 
 func _on_round_state(data: Dictionary) -> void:
@@ -600,16 +574,19 @@ func _build_result_payload() -> Dictionary:
 
 
 
+var _hit_events: HitEventsScript = null
+
+
+func _ensure_hit_events() -> HitEventsScript:
+	_ensure_context()
+	if _hit_events == null:
+		_hit_events = HitEventsScript.new()
+		_hit_events.bind(state, Callable(self, "_replica_for"))
+	return _hit_events
+
+
 func _on_hit_event(victim_role: int, damage: int, source_pos: Vector2, seq: int) -> void:
-	if state._local == null:
-		return
-	if victim_role == PvpSession.role:
-		# 网络回调在 idle 帧:只入队,由 _drain_hit_events() 在下一个物理帧开头注入(帧外 move_and_slide 位移恒 0)。
-		_pending_hit_events.append([source_pos, damage, seq])
-		return
-	var r := _replica_for(victim_role)
-	if r != null and r.has_method("play_hit"):
-		r.play_hit(source_pos)
+	_ensure_hit_events()._on_hit_event(victim_role, damage, source_pos, seq)
 
 
 func _on_kill_event(_killer: int, _victim: int) -> void:
@@ -617,20 +594,11 @@ func _on_kill_event(_killer: int, _victim: int) -> void:
 
 
 func _drain_hit_events() -> void:
-	if _pending_hit_events.is_empty():
-		return
-	var events: Array = _pending_hit_events
-	_pending_hit_events = []
-	for ev in events:
-		_apply_local_hit_event(ev[0], int(ev[1]), int(ev[2]))
+	_ensure_hit_events()._drain_hit_events()
 
 
 func _apply_local_hit_event(source_pos: Vector2, damage: int, seq: int) -> void:
-	if state._rollback != null and state._rollback.apply_external_event(seq, func() -> void:
-			state._local.take_hit(source_pos, damage, false, -1.0)) \
-			== PredictionRollback.EventApply.APPLIED:
-		return
-	state._local.take_hit(source_pos, damage, false, -1.0, true)
+	_ensure_hit_events()._apply_local_hit_event(source_pos, damage, seq)
 
 
 func _on_beam_fired(data: Dictionary) -> void:
@@ -774,7 +742,7 @@ func _set_status(text: String) -> void:
 func _pull_resync() -> void:
 	# ★ 必须重置:worker 在 reclaim 时把 _ack_seq[role] 归 0 重协商锚点,而客户端这边的 _acked 还停在断线前那个数 —— 不重置的话新快照的 ack 一律 <= _acked,on_authoritative 全数丢弃(C2 静默失效,要等 seq 重新爬过那个数才恢复),同时环里断线前的记录会被当成未确认输入重放,与服务器的新锚点错位。
 	_ensure_input_uplink().reset_epoch()
-	_pending_hit_events.clear()
+	_ensure_hit_events().clear()
 	state._rollback = PredictionRollback.new()
 	state._rollback.bind(state._local)
 	state._rollback.map_px = Vector2(GameParameters.MAP_WIDTH, GameParameters.MAP_HEIGHT)
