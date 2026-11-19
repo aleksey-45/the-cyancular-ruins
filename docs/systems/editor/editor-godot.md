@@ -14,7 +14,8 @@
 | 文档域:编辑 | [`core/editor/editor_doc_edit.gd`](../../../core/editor/editor_doc_edit.gd) | 选区 / 剪贴板 / 镜像 / 整块移动 / 颜色层渐变 |
 | 文档域:meta | [`core/editor/editor_doc_meta.gd`](../../../core/editor/editor_doc_meta.gd) | 出生点 / 复活点 / 敌人 meta（快照式 undo + 单项删/改） |
 | 读写门面 | [`core/editor/editor_io.gd`](../../../core/editor/editor_io.gd) | `open_path`（v4 二进制 / v3 文本 / 旧字母格式 + 读时 legacy 迁移）、`save_path`（校验 + 编码 + 写盘）、`default_target`、`list_maps` |
-| 画布 | [`scenes/editor/editor_canvas.gd`](../../../scenes/editor/editor_canvas.gd) | 相机（origin/zoom）、`screen_to_subcell`、层可见/压暗、刷新（全量/脏区）、输入与手形/移动工具、`pointer_*` 信号、meta 标记命中与 `enemy_art()`；**把绘制转发给 overlay、把图集合成转发给 image** |
+| 画布 | [`scenes/editor/editor_canvas.gd`](../../../scenes/editor/editor_canvas.gd) | 相机状态（origin/zoom）、层可见/压暗、刷新（全量/脏区）、输入与手形/移动工具、`pointer_*` 信号、meta 标记命中与 `enemy_art()`；**把绘制转发给 overlay、把图集合成转发给 image、把视图变换转发给 view** |
+| 画布视图变换 | [`scenes/editor/canvas_view.gd`](../../../scenes/editor/canvas_view.gd) | 缩放/平移数学（`zoom_at_screen`/`set_zoom`/`set_camera`/`pan_pixels`/`fit_to_map`）与坐标换算（`screen_to_subcell`/`subcell_to_screen`）；相机状态仍在画布对象上 |
 | 画布叠加层 | [`scenes/editor/editor_canvas_overlay.gd`](../../../scenes/editor/editor_canvas_overlay.gd) | `_draw` 里的网格/选区/移动预览/meta 标记（含敌人 idle 贴图）/渐变/画刷框/小地图；不持状态，画时读画布对象 |
 | 画布图集合成 | [`scenes/editor/editor_canvas_image.gd`](../../../scenes/editor/editor_canvas_image.gd) | `Image` 合成：图集按 descs 重建/缩放、层号倒序重放、颜色图章、脏块重画；图集缓存在画布对象上 |
 | 真渲染预览 | [`scenes/editor/editor_preview.gd`](../../../scenes/editor/editor_preview.gd) | 复用游戏管线（TerrainAtlas tileset + ParallaxBg + PostProcess）的预览；三个 SubViewport 合成后贴回画布区域；**`set_hour` 把昼夜时钟钉在指定时刻（走 `PostProcess.set_hour`，不另算一套光照）** |
@@ -331,6 +332,7 @@
 | `editor_view_controls.gd` | `editor_root.gd` | 预览开关/相机同步/光照时辰条 + 试玩（临时图、`editor_playtest` 交接） |
 | `editor_canvas_overlay.gd` | `editor_canvas.gd` | `_draw` 的叠加层：网格/选区/移动预览/meta 贴图/渐变/画刷框/小地图 |
 | `editor_canvas_image.gd` | `editor_canvas.gd` | `Image` 合成：图集重建与缩放、层重放、颜色图章、脏块 |
+| `canvas_view.gd` | `editor_canvas.gd` | 视图变换：缩放/平移/相机/坐标换算（相机状态仍在画布对象上） |
 | `editor_doc_cells.gd` | `core/editor/editor_doc.gd` | 格子读 / 批量写 / Bresenham 直线 / 4 邻接油漆桶（静态函数，首参 `doc`） |
 | `editor_doc_edit.gd` | `core/editor/editor_doc.gd` | 选区 / 剪贴板 / 镜像 / 整块移动 / 颜色层渐变 |
 | `editor_doc_meta.gd` | `core/editor/editor_doc.gd` | 出生点 / 复活点 / 敌人 meta（快照式 undo + 单项删/改） |

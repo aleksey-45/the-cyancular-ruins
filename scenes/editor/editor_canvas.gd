@@ -45,9 +45,11 @@ extends Control
 
 const OVERLAY_SCRIPT := preload("res://scenes/editor/editor_canvas_overlay.gd")
 const IMAGE_SCRIPT := preload("res://scenes/editor/editor_canvas_image.gd")
+const VIEW_SCRIPT := preload("res://scenes/editor/canvas_view.gd")
 
 var _overlay = OVERLAY_SCRIPT.new()    # 叠加层绘制(不持状态,画时读本对象)
 var _image = IMAGE_SCRIPT.new()        # 图集/层合成(操作本对象的 _atlas_* 缓存)
+var _view = VIEW_SCRIPT.new()          # 视图变换(缩放/平移/坐标换算;相机状态仍在本对象)
 
 const ZOOM_STEPS := [4.0, 8.0, 12.0, 16.0, 24.0, 32.0, 48.0, 64.0]
 const ZOOM_DEFAULT := 16.0
@@ -153,6 +155,10 @@ var _atlas_scaled: Image = null
 var _atlas_scaled_dim: Image = null
 var _atlas_scaled_cell := 0        # _atlas_scaled 里一个子格占几像素(== int(zoom))
 var _color_stamps := {}
+
+
+func _init() -> void:
+	_view.bind(self)
 
 
 func _ready() -> void:
@@ -442,22 +448,18 @@ func meta_markers() -> Array[Dictionary]:
 
 ## 格坐标 → 格中心在屏幕上的像素位置(标记锚点)。
 func _cell_center_screen(cell: Vector2i) -> Vector2:
-	return Vector2(
-			(float(cell.x) * SUB_PER_CELL + SUB_PER_CELL * 0.5 - _origin.x) * _zoom,
-			(float(cell.y) * SUB_PER_CELL + SUB_PER_CELL * 0.5 - _origin.y) * _zoom)
+	return _view._cell_center_screen(cell)
 
 
 # ── 相机 ──────────────────────────────────────────────────────────────
 
 ## 屏幕(画布内)坐标 → 世界子格。可能为负/超出地图;环面归一化由调用方(EditorDoc)做。
 func screen_to_subcell(pos: Vector2) -> Vector2i:
-	if _zoom <= 0.0:
-		return Vector2i.ZERO
-	return Vector2i(floori(_origin.x + pos.x / _zoom), floori(_origin.y + pos.y / _zoom))
+	return _view.screen_to_subcell(pos)
 
 
 func subcell_to_screen(sub: Vector2i) -> Vector2:
-	return Vector2((float(sub.x) - _origin.x) * _zoom, (float(sub.y) - _origin.y) * _zoom)
+	return _view.subcell_to_screen(sub)
 
 
 ## 小地图的屏幕矩形(画布内右上角,margin 12;最大 180×120,按地图宽高比缩放)。
@@ -485,73 +487,39 @@ func minimap_rect() -> Rect2:
 ## 以屏幕点为锚缩放到下一个/上一个档位(direction = +1 放大 / -1 缩小)。
 ## 锚点下的子格保持不变(screen_to_subcell(at) 前后相等)。
 func zoom_at_screen(at: Vector2, direction: int) -> void:
-	if direction == 0:
-		return
-	var idx := _zoom_index(_zoom)
-	var ni := clampi(idx + direction, 0, ZOOM_STEPS.size() - 1)
-	if ni == idx:
-		return
-	_apply_zoom(float(ZOOM_STEPS[ni]), at)
+	_view.zoom_at_screen(at, direction)
 
 
 func zoom_in() -> void:
-	zoom_at_screen(size * 0.5, 1)
+	_view.zoom_in()
 
 
 func zoom_out() -> void:
-	zoom_at_screen(size * 0.5, -1)
+	_view.zoom_out()
 
 
 ## 直接设档位(贴到最近档);锚点 = 画布中心。
 func set_zoom(value: float) -> void:
-	var target := _nearest_step(value)
-	if is_equal_approx(target, _zoom):
-		return
-	_apply_zoom(target, size * 0.5)
+	_view.set_zoom(value)
 
 
 ## 重置相机(origin = 世界子格,zoom 贴到最近档);主要给场景探针/root 复位用。
 func set_camera(new_origin: Vector2, new_zoom: float) -> void:
-	var changed := not _origin.is_equal_approx(new_origin) or not is_equal_approx(_zoom, _nearest_step(new_zoom))
-	_origin = new_origin
-	_zoom = _nearest_step(new_zoom)
-	refresh()
-	if changed:
-		zoom_changed.emit(_zoom)
+	_view.set_camera(new_origin, new_zoom)
 
 
 func pan_pixels(delta: Vector2) -> void:
-	if _zoom <= 0.0:
-		return
-	_origin += delta / _zoom
-	refresh()
+	_view.pan_pixels(delta)
 
 
 ## 把该世界子格放到画布中心(不改 zoom;负坐标/越界按原值平移,环面由渲染的 posmod 处理)。
 func center_on_subcell(sub: Vector2i) -> void:
-	if _zoom <= 0.0:
-		return
-	_origin = Vector2(sub) - Vector2(size) / (2.0 * _zoom)
-	refresh()
+	_view.center_on_subcell(sub)
 
 
 ## 让整张地图尽量大地放进画布并居中;空图复位到默认档 + 原点。
 func fit_to_map() -> void:
-	var sub := _sub_size()
-	if sub.x <= 0 or sub.y <= 0 or size.x <= 0.0 or size.y <= 0.0:
-		_origin = Vector2.ZERO
-		_zoom = ZOOM_DEFAULT
-		refresh()
-		zoom_changed.emit(_zoom)
-		return
-	var best: float = float(ZOOM_STEPS[0])
-	for s: float in ZOOM_STEPS:
-		if float(sub.x) * s <= size.x and float(sub.y) * s <= size.y:
-			best = s
-	_zoom = best
-	_origin = (Vector2(sub) - size / best) * 0.5
-	refresh()
-	zoom_changed.emit(_zoom)
+	_view.fit_to_map()
 
 
 # ── 刷新:全量 / 脏区 ─────────────────────────────────────────────────
@@ -661,18 +629,11 @@ func _publish_view() -> void:
 
 
 func _sub_size() -> Vector2i:
-	if _doc == null:
-		return Vector2i.ZERO
-	var map: Dictionary = _doc.map
-	if map.is_empty():
-		return Vector2i.ZERO
-	return Vector2i(int(map.get("sub_cols", 0)), int(map.get("sub_rows", 0)))
+	return _view._sub_size()
 
 
 func _visible_sub_rect() -> Rect2i:
-	var cols := ceili(float(size.x) / _zoom) + 1
-	var rows := ceili(float(size.y) / _zoom) + 1
-	return Rect2i(floori(_origin.x), floori(_origin.y), maxi(cols, 1), maxi(rows, 1))
+	return _view._visible_sub_rect()
 
 
 ## 负宽/负高的 Rect2i 归一成「左上角 + 正尺寸」;0 尺寸保持 0(调用方按无选区/无脏区处理)。
@@ -937,23 +898,4 @@ func _clamped_move_delta(pointer_sub: Vector2i) -> Vector2i:
 # ── 档位小工具 ───────────────────────────────────────────────────────
 
 func _apply_zoom(new_zoom: float, at: Vector2) -> void:
-	var anchor := _origin + at / _zoom     # 锚点处的世界子格(带小数)
-	_zoom = new_zoom
-	_origin = anchor - at / _zoom
-	refresh()
-	zoom_changed.emit(_zoom)
-
-
-func _zoom_index(z: float) -> int:
-	var best := 0
-	var best_d := absf(float(ZOOM_STEPS[0]) - z)
-	for i in ZOOM_STEPS.size():
-		var d := absf(float(ZOOM_STEPS[i]) - z)
-		if d < best_d:
-			best_d = d
-			best = i
-	return best
-
-
-func _nearest_step(z: float) -> float:
-	return float(ZOOM_STEPS[_zoom_index(z)])
+	_view._apply_zoom(new_zoom, at)
