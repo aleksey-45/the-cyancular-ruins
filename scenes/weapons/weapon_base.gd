@@ -6,7 +6,7 @@ enum PenaltyMode { NONE, WHILE_FIRING, WHILE_AIM_OR_COOLDOWN }
 
 @export var bullet_scene: PackedScene = preload("res://scenes/weapons/bullet.tscn")
 const RECOIL_TIME: float = 0.06  # 枪口后坐复位时长(秒),旧 recoil_time 内联
-const PREVIEW_COLLISION_RADIUS: float = 4.0
+const WeaponAimFxScript := preload("res://scenes/weapons/weapon_aim_fx.gd")   # 瞄准/蓄力视觉(节点由 host 注入)
 # ── 走路 bob(纯表现)── 相位取宿主模型的走路动画帧(move 的 frame+frame_progress),不是自己的计时器;
 #    单帧姿态(蹲/冲刺/飞行)没有帧进度 ⇒ 自然不抖,不为它们加代码。幅度随水平速度线性淡入。
 const WALK_BOB_Y: float = 0.55             # local px(武器根继承玩家 2.0× 缩放、cam_zoom 1.0 ⇒ 屏幕 ≈1.1px)
@@ -179,46 +179,16 @@ func _apply_sprite_pose() -> void:
 	_apply_charge_arrow_pose()
 
 
-# 只移动箭,弓身不动;ChargeArrow 的 z_index 让箭画在弓身后。
-# ★ 抖动是纯表现:出膛点按 _charge_pull_px() 算,不吃抖动(见 fire 的 b.global_position);放大在入树时一次性施加。
-const CHARGE_ARROW_SHOW_SCALE := 1.5      # 蓄力箭相对飞行箭的倍数(飞行箭世界缩放 = bullet_size × BulletBase.ART_WORLD_PX)
-const CHARGE_ARROW_JITTER_PX := 0.5       # 上下抖动幅度(px);★ 只有蓄满(charge_ratio>=1)才抖
-const CHARGE_ARROW_JITTER_PERIOD := 0.2   # 抖动周期(秒)
-
-# 让蓄力箭与飞行箭同一标尺:飞行箭视觉 = bullet_size × ART_WORLD_PX;蓄力箭在玩家子树里(玩家根 scale 2.5),
-# 局部缩放 = bullet_size × 本倍数 / 继承缩放。★ 别写死:玩家根是 2.5 倍,写死会再乘一次。
 func _sync_charge_arrow_scale() -> void:
-	if _charge_arrow == null or _arrow_scale_synced:
-		return
-	var inherited := 1.0
-	var par := _charge_arrow.get_parent() as Node2D
-	if par != null:
-		var s := absf(par.get_global_transform().get_scale().x)
-		if s > 0.0001:
-			inherited = s
-	_charge_arrow.scale = Vector2.ONE * (bullet_size * CHARGE_ARROW_SHOW_SCALE / inherited)
-	_arrow_scale_synced = true
+	_fx().sync_charge_arrow_scale()
 
 
-# 拉弓后移量(0→charge_arrow_pull 线性):显示与出膛点共用这一个量,不另加显示偏移。
 func _charge_pull_px() -> float:
-	return charge_arrow_pull * charge_ratio
+	return _fx().charge_pull_px()
+
 
 func _apply_charge_arrow_pose() -> void:
-	if _charge_arrow == null:
-		return
-	_sync_charge_arrow_scale()
-	var on := charge_time > 0.0 and _aiming
-	_charge_arrow.visible = on
-	if not on:
-		_charge_arrow.position = _base_arrow_pos
-		return
-	var jitter := 0.0
-	if charge_ratio >= 1.0:   # ★ 蓄满才抖:蓄力过程中箭是稳的,拉满那一刻开始微颤
-		var period_ms := maxf(CHARGE_ARROW_JITTER_PERIOD, 0.001) * 1000.0
-		var phase := float(Time.get_ticks_msec() % int(period_ms)) / period_ms * TAU   # 0..TAU 一个周期
-		jitter = sin(phase) * CHARGE_ARROW_JITTER_PX
-	_charge_arrow.position = _base_arrow_pos + Vector2(-_charge_pull_px(), jitter)
+	_fx().apply_charge_arrow_pose()
 
 # ★ 走路 bob 的相位取自宿主模型的走路动画帧(move 的 frame + frame_progress),不是独立计时器:
 #   模型换一帧 = 枪跟着换一次;单帧姿态(蹲/冲刺/飞行)没有帧进度 ⇒ 自然不抖,不为它们加代码。
@@ -268,6 +238,13 @@ var _current_aim_facing: int = 1  # 本帧实际生效的朝向(含冲刺锁定�
 var _laser: Line2D = null
 var _explosion_marker: Sprite2D = null
 var _overlay_host: Node2D = null   # UI 通道里跟随武器变换的宿主(预瞄线/爆炸标记挂在它下面)
+var _aim_fx: WeaponAimFxScript = null
+
+# 瞄准/蓄力视觉组件:入树前(tick 已跑、@onready 还没解析)也要能调,故惰性创建,节点引用在 _ready() 里 bind 一次。
+func _fx() -> WeaponAimFxScript:
+	if _aim_fx == null:
+		_aim_fx = WeaponAimFxScript.new(self, _charge_arrow, muzzle, _laser, _explosion_marker)
+	return _aim_fx
 
 static func clamp_pitch(dir: Vector2, facing: int, limit_deg: float = 45.0) -> float:
 	var local := Vector2(dir.x * float(facing), dir.y)
@@ -300,6 +277,8 @@ func _ready() -> void:
 	_explosion_marker.texture = Explosion.make_circle_texture(16)
 	_explosion_marker.modulate = Color(1.0, 0.4, 0.2, 0.9)
 	_explosion_marker.visible = false
+	# 节点引用到这里才齐(蓄力箭/枪口是 @onready、预瞄线与标记本函数 new)⇒ 注入瞄准/蓄力视觉。
+	_fx().bind(_charge_arrow, muzzle, _laser, _explosion_marker)
 	_attach_overlay_host.call_deferred()
 
 
@@ -577,132 +556,39 @@ func get_movement_multiplier() -> Vector2:
 		return Vector2.ONE
 	return Vector2(move_penalty, jump_penalty)
 
-# 与枪口相同的出弹方向:经过 ±45° 仰角钳制后的世界单位向量。
 func _clamped_aim_dir() -> Vector2:
-	var facing := _current_aim_facing
-	var pitch := clamp_pitch(_aim_world_dir(), facing, pitch_clamp_deg)
-	var local := Vector2.from_angle(pitch)
-	return Vector2(local.x * float(facing), local.y)
+	return _fx().clamped_aim_dir()
+
 
 func _auto_aim() -> void:
-	var dir := _aim_world_dir()
-	var facing := _aim_facing
-	if absf(dir.x) > 0.1:
-		facing = 1 if dir.x > 0.0 else -1
-		_aim_facing = facing
-	var p := player as Player
-	if p != null and absf(dir.x) > 0.1:
-		p.set_facing(facing)
-		# 冲刺时 player.set_facing 被锁(身体保持冲刺方向,位移需要),此时枪口不跟随身体翻转、保持鼠标瞄准侧;非冲刺时 set_facing 成功、get_facing() 读回一致,无差异。
-		# ★ 旧写法对 is_charging 有 has_method 兜底;宿主恒为 Player ⇒ 直接读(非 Player 宿主上旧写法算 charging=false,这里走 p==null 同一分支)。
-		var charging: bool = p.is_charging()
-		if not charging:
-			facing = get_facing()
-	_current_aim_facing = facing
-	# 朝向镜像(scale.x=-1)会翻转旋转方向:clamp_pitch 已按 facing 折叠 dir.x,返回值再乘 facing 取反,朝左时镜像后的枪口才指向正确的俯仰象限。
-	rotation = clamp_pitch(dir, facing, pitch_clamp_deg) * float(facing)
-	scale.x = float(facing)
+	_fx().auto_aim()
 
 func _update_laser() -> void:
-	_sync_overlay_host()
-	if _laser == null or muzzle == null:
-		return
-	_laser.visible = _aiming and show_aim_laser
-	if not _aiming:
-		_update_explosion_marker(false)
-		return
-	if preview_arc or not is_zero_approx(bullet_gravity):
-		# ★ 有下坠的武器默认走真实弹道(与 fire 同源),不再要求逐个武器手动开 preview_arc。
-		_laser.points = _sample_arc_points()
-		_update_explosion_marker(preview_arc)   # 爆炸球只跟 preview_arc:有下坠但没开弧线预览的武器不画球
-	else:
-		_laser.points = PackedVector2Array([muzzle.position, muzzle.position + Vector2(laser_length, 0.0)])
-		_update_explosion_marker(false)
+	_fx().update_laser()
 
-# 预瞄抛物线:与 fire 同源(v0 = 钳制瞄准方向 × speed,g = bullet_gravity × gravity0),1/60s 采样到 preview_time,途中遇墙(非 EMPTY)格截断(榴弹撞墙停驻处 = 爆炸点),并封顶 bullet_range。
+
 func _sample_arc_points() -> PackedVector2Array:
-	var pts := PackedVector2Array()
-	var p := muzzle.global_position
-	var start := p
-	var v := _clamped_aim_dir() * bullet_speed
-	var g := bullet_gravity * GameParameters.gravity0
-	var dt := 1.0 / 60.0
-	var t := 0.0
-	# 枪口起点判墙 ⇒ 真实榴弹会挣脱墙继续飞;跳过起点段判墙,避免弧线退化成贴脸短弧。
-	var escape := _disk_overlaps_solid(start)
-	pts.append(to_local(p))
-	while t < preview_time:
-		v.y += g * dt
-		# 水中阻力:与真实子弹一致(water_bullet_drag),入水后减速 ⇒ 弧线在水里更垂/更短。
-		if Water.is_in_water(p):
-			v *= Water.bullet_drag_factor(true, GameParameters.water_bullet_drag, dt)
-		p += v * dt
-		t += dt
-		if escape and p.distance_to(start) < GameParameters.TILE_SIZE:
-			continue  # 起点挣脱段:不判墙、不截断,榴弹正从枪口墙体里飞出
-		if _disk_overlaps_solid(p):
-			break
-		if p.distance_to(start) >= bullet_range:
-			break
-		pts.append(to_local(p))
-	return pts
+	return _fx().sample_arc_points()
 
-# 预瞄判墙:以 center 为圆心、半径 6px 的小球是否压到任一墙(非 EMPTY)格(环面)。
+
 func _disk_overlaps_solid(center: Vector2) -> bool:
-	var r := PREVIEW_COLLISION_RADIUS * bullet_size
-	return TileQuery.rect_overlaps_solid(
-			Rect2(center - Vector2(r, r), Vector2(r * 2.0, r * 2.0)), GameParameters.TILE_SIZE)
+	return _fx().disk_overlaps_solid(center)
+
 
 func _update_explosion_marker(visible_on: bool) -> void:
-	# ★ 参数不能叫 show:CanvasItem 有同名方法,会触发 SHADOWED_VARIABLE_BASE_CLASS。
-	if _explosion_marker == null:
-		return
-	_explosion_marker.visible = visible_on
-	if visible_on and _laser.points.size() > 0:
-		_explosion_marker.position = _laser.points[_laser.points.size() - 1]
+	_fx().update_explosion_marker(visible_on)
+
 
 func _recoil_recover(delta: float) -> void:
-	# 只推进计时器;精灵 pose 由 tick() 末尾的 _apply_sprite_pose() 统一写(与 bob/换弹合成一处)。
-	_recoil_timer = maxf(_recoil_timer - delta, 0.0)
+	_fx().recoil_recover(delta)
+
 
 func get_current_aim_dir() -> Vector2:
-	return _aim_world_dir()
+	return _fx().get_current_aim_dir()
+
 
 func _aim_world_dir() -> Vector2:
-	# 网络驱动的玩家(服务器上的远端模拟)用注入的瞄准;本地玩家返回 ZERO ⇒ 落回鼠标。★ 宿主恒为 Player(有 class_name)⇒ 直接调,
-	# 不再 has_method 探测:拼错方法名当场编译报错,不会静默落回"读鼠标"那条错源(非 Player 宿主 = 违约,与 null 同路落回鼠标)。
-	var p := player as Player
-	if p != null:
-		var override: Vector2 = p.get_aim_dir_override()
-		if override != Vector2.ZERO:
-			return override
-		# override 存在但为 ZERO(网络玩家还没收到瞄准)时:网络驱动 ⇒ 永不读宿主机 OS 鼠标(服务器 headless 上没有鼠标,读了是垃圾方向),用朝向兜底;本地 PlayerInput 的 override 恒为 ZERO ⇒ is_network_driven()==false ⇒ 走下面的鼠标路径。
-		if p.input_is_network():
-			return Vector2(float(get_facing()), 0.0)
-	# 用基类 Viewport 而非 SubViewport:冒烟测试把武器挂到 SceneTree 根(Window),标 SubViewport 会在运行时类型检查失败(Window≠SubViewport),函数被中断返回零方向。
-	var sub: Viewport = get_viewport()
-	if sub == null:
-		return Vector2(float(get_facing()), 0.0)
-	var cam: Camera2D = sub.get_camera_2d()
-	if cam == null:
-		return Vector2(float(get_facing()), 0.0)
-	var win: Viewport = sub.get_window()
-	if win == null:
-		return Vector2(float(get_facing()), 0.0)
-	# 窗口鼠标 → 世界坐标:鼠标用根 Window 的真实坐标(SubViewport 的 get_mouse_position 是被 push 进去的窗口坐标,不能直接用)。
-	var win_size := win.get_visible_rect().size
-	var mouse := win.get_mouse_position()
-	# 用相机无抖动的基准位置,避免镜头抖动让准星跟着跳。
-	var cam_center: Vector2 = cam.global_position
-	if cam.has_method("get_base_global_position"):
-		cam_center = cam.get_base_global_position()
-	# PostProcess 是中心裁剪(显示世界视口中心、窗口大小的区域);相机 zoom(<1 视野更大)让窗口 1px = 世界 1/zoom px,鼠标偏移按 zoom 放大回世界坐标。
-	var world_mouse := cam_center + (mouse - win_size * 0.5) / cam.zoom
-	var origin := player.global_position if player != null else global_position
-	var dir := world_mouse - origin
-	if dir.length_squared() < 0.0001:
-		return Vector2(float(get_facing()), 0.0)
-	return dir.normalized()
+	return _fx().aim_world_dir()
 
 func get_facing() -> int:
 	var p := player as Player
