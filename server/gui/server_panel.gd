@@ -5,6 +5,7 @@ const LAYER := 100
 
 const THEME_MENU := preload("res://ui/theme/menu_theme.tres")
 const BUILD_INFO := preload("res://core/config/build_info.gd")
+const PanelRooms := preload("res://server/gui/panel_rooms.gd")
 
 const PAGE_MARGIN := 76
 const SEP := 24
@@ -13,17 +14,11 @@ const LEFT_W := 1080
 const RIGHT_W := 648
 const MID_GAP := 40
 
-const ROW_H := 60
 const ROW_GAP := 8
-const ROOM_ROWS_MAX := 6
-const MAP_UNITS := 15
 # 名单:行高 / 可见行数上限 / 名字定宽单位(★ 与 docs/systems/presentation/ui.md 的 HUD 节同口径:14 单位 @ 32 号;不抄行号)。
 const ROSTER_ROW_H := 44
 const ROSTER_ROWS_MAX := 5
 const ROSTER_UNITS := 14
-
-const COL_TITLES := ["房号", "模式", "人数", "状态", "端口", "房龄", "地图"]
-const COL_WIDTHS := [104, 152, 88, 168, 104, 104, 0]
 
 const REFRESH_SEC := 0.5
 const CONFIRM_SEC := 3.0
@@ -32,27 +27,19 @@ const HINT_SEC := 4.0
 const LOG_FONT := preload("res://assets/fonts/menu_font.tres")
 const LOG_MAX_CHARS := PanelLogTail.DEFAULT_MAX_CHARS
 
-const STATE_TEXT := {ServerStatus.STATE_WAITING: "等待中",
-		ServerStatus.STATE_IN_MATCH: "对局中", ServerStatus.STATE_STALE: "worker 已退出"}
-
 const KIND_TEXT := {"1v1": "1v1", "royale": "大乱斗", "team": "对抗"}
 
 var _rm: RoomManager = null
 var _lan_ip := ""
 var _started_at := 0.0
 var _acc := 0.0
+var _rooms := PanelRooms.new()
 
 var _overview: Label = null
 var _footnote: Label = null
 var _rooms_meta: Label = null
 var _hint_left := 0.0
-var _rows_col: VBoxContainer = null
-var _rows: Dictionary = {}
-# ★ 初值必须与"空房集合"不同:否则首次刷新判定"集合没变"⇒ 跳过重建 ⇒ 空态那一行永远不建。
-var _codes: Array = [""]
 
-var _sel_block: PanelContainer = null
-var _roster_block: PanelContainer = null
 var _sel_code_lbl: Label = null
 var _sel_mode_lbl: Label = null
 var _sel_info_lbl: Label = null
@@ -61,8 +48,6 @@ var _close_btn: Button = null
 var _roster_meta: Label = null
 var _roster_col: VBoxContainer = null
 var _roster_sig: Array = []
-var _selected_code := ""
-var _selected_kind := ""
 var _armed_code := ""
 var _armed_kind := ""
 var _confirming := false
@@ -154,10 +139,11 @@ func _build_overview() -> Control:
 func _build_middle() -> Control:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", MID_GAP)
+	var right := _build_right_column()
 	var left := _build_rooms_block()
 	left.custom_minimum_size.x = LEFT_W
 	row.add_child(left)
-	row.add_child(_build_right_column())
+	row.add_child(right)
 	return row
 
 
@@ -166,10 +152,11 @@ func _build_right_column() -> Control:
 	col.name = "RightColumn"
 	col.add_theme_constant_override("separation", 16)
 	col.custom_minimum_size.x = RIGHT_W
-	_sel_block = _build_selected_block()
-	col.add_child(_sel_block)
-	_roster_block = _build_roster_block()
-	col.add_child(_roster_block)
+	var sel_block := _build_selected_block()
+	col.add_child(sel_block)
+	var roster_block := _build_roster_block()
+	col.add_child(roster_block)
+	_rooms.setup(self, sel_block, roster_block)
 	_show_right(false)
 	return col
 
@@ -231,41 +218,13 @@ func _build_roster_block() -> PanelContainer:
 
 
 func _build_rooms_block() -> PanelContainer:
-	var panel := UiFactory.menu_panel(PAD)
-	var body := panel.get_node("Body") as PanelContainer
-	var col := VBoxContainer.new()
-	col.add_theme_constant_override("separation", 12)
-	body.add_child(col)
-
-	var head := HBoxContainer.new()
-	head.add_theme_constant_override("separation", 16)
-	head.add_child(_inset_left(UiFactory.label("房 间", 32, UiFactory.C_GOLD), 16))
-	head.add_child(_spacer())
-	_rooms_meta = UiFactory.label("", 32, UiFactory.C_TEXT_DIM)
-	head.add_child(_rooms_meta)
-	col.add_child(head)
-
-	col.add_child(_build_rooms_header())
-
-	var scroll := ScrollContainer.new()
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_MAXIMIZE_FIRST
-	scroll.custom_maximum_size.y = ROOM_ROWS_MAX * ROW_H + (ROOM_ROWS_MAX - 1) * ROW_GAP
-	_style_vbar(scroll.get_v_scroll_bar())
-	_rows_col = VBoxContainer.new()
-	_rows_col.add_theme_constant_override("separation", ROW_GAP)
-	_rows_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.add_child(_rows_col)
-	col.add_child(scroll)
+	var panel := _rooms._build_rooms_block()
+	_rooms_meta = _rooms.meta_label
 	return panel
 
 
 func _build_rooms_header() -> Control:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 0)
-	for i in COL_TITLES.size():
-		row.add_child(_cell(str(COL_TITLES[i]), int(COL_WIDTHS[i]), 32, UiFactory.C_TEXT_DIM))
-	return _inset(row, 16)
+	return _rooms._build_rooms_header()
 
 
 
@@ -329,103 +288,27 @@ func _update_footnote() -> void:
 
 
 func _sync_rows(rooms: Array[Dictionary]) -> void:
-	var keys: Array = []
-	for r in rooms:
-		keys.append(ServerStatus.row_key(str(r["kind"]), str(r["code"])))
-	if keys != _codes:
-		_rebuild_rows(rooms)
-		_codes = keys
-		return
-	for r in rooms:
-		_apply_row(_rows[ServerStatus.row_key(str(r["kind"]), str(r["code"]))]["cells"], r)
+	_rooms._sync_rows(rooms)
 
 
 func _rebuild_rows(rooms: Array[Dictionary]) -> void:
-	for c in _rows_col.get_children():
-		_rows_col.remove_child(c)
-		c.queue_free()
-	_rows.clear()
-	if rooms.is_empty():
-		_rows_col.add_child(UiFactory.label("现在没有房间。玩家建房后会出现在这里。", 32, UiFactory.C_TEXT_MUTE))
-		return
-	for r in rooms:
-		var code := str(r["code"])
-		var kind := str(r["kind"])
-		var key := ServerStatus.row_key(kind, code)
-		var panel := PanelContainer.new()
-		panel.add_theme_stylebox_override("panel", UiFactory.row_box())
-		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 0)
-		panel.add_child(row)
-		var cells: Array[Label] = []
-		for i in COL_TITLES.size():
-			var l := _cell("", int(COL_WIDTHS[i]), 32, UiFactory.C_TEXT)
-			row.add_child(l)
-			cells.append(l)
-		panel.custom_minimum_size.y = ROW_H
-		panel.mouse_filter = Control.MOUSE_FILTER_STOP
-		panel.gui_input.connect(_on_row_input.bind(code, kind))
-		_rows_col.add_child(panel)
-		_rows[key] = {"panel": panel, "cells": cells, "code": code, "kind": kind}
-		_apply_row(cells, r)
-	_apply_selection_styles()
+	_rooms._rebuild_rows(rooms)
 
 
 func _apply_row(cells: Array[Label], r: Dictionary) -> void:
-	var state := str(r["state"])
-	cells[0].text = str(r["code"])
-	cells[0].add_theme_color_override("font_color", UiFactory.C_WHITE)
-
-	var kind := str(r["kind"])
-	cells[1].text = str(KIND_TEXT.get(kind, kind))
-	cells[1].add_theme_color_override("font_color", _kind_color(kind))
-
-	cells[2].text = "%d / %d" % [int(r["players"]), int(r["cap"])]
-	cells[2].add_theme_color_override("font_color", UiFactory.C_TEXT)
-
-	cells[3].text = str(STATE_TEXT.get(state, state))
-	# ★ 颜色表也用 STATE_* 常量(CM-10):字面量键在加第四态时会静默回落 C_TEXT,"worker 已退出"不再红且不报错。
-	cells[3].add_theme_color_override("font_color", {
-		ServerStatus.STATE_WAITING: UiFactory.C_TEXT_DIM, ServerStatus.STATE_IN_MATCH: UiFactory.C_GOLD,
-		ServerStatus.STATE_STALE: UiFactory.C_DANGER}.get(state, UiFactory.C_TEXT))
-
-	var port := int(r["worker_port"])
-	cells[4].text = "—" if port <= 0 else str(port)
-	cells[4].add_theme_color_override("font_color", UiFactory.C_TEXT_DIM)
-	cells[5].text = _mmss(float(r["age_sec"]))
-	cells[5].add_theme_color_override("font_color", UiFactory.C_TEXT_DIM)
-	cells[6].text = UiFactory.fit_name(str(r["map"]), MAP_UNITS)
-	cells[6].add_theme_color_override("font_color", UiFactory.C_TEXT_DIM)
+	_rooms._apply_row(cells, r)
 
 
 
 func _sync_selection(rooms: Array[Dictionary]) -> void:
-	var found: Dictionary = {}
-	for r in rooms:
-		if str(r["code"]) == _selected_code and str(r["kind"]) == _selected_kind:
-			found = r
-			break
-	if found.is_empty():
-		if not _selected_code.is_empty():
-			_selected_code = ""
-			_selected_kind = ""
-			_reset_confirm()
-			_show_right(false)
-			_apply_selection_styles()
-		_refresh_log({})
-		return
-	_show_right(true)
-	_render_selected(found)
-	_render_roster(found)
-	_refresh_log(found)
+	_rooms._sync_selection(rooms)
 
 
 func _render_selected(r: Dictionary) -> void:
 	_sel_code_lbl.text = str(r["code"])
 	var kind := str(r["kind"])
-	_selected_kind = kind
 	_sel_mode_lbl.text = str(KIND_TEXT.get(kind, kind))
-	_sel_mode_lbl.add_theme_color_override("font_color", _kind_color(kind))
+	_sel_mode_lbl.add_theme_color_override("font_color", _rooms._kind_color(kind))
 	var port := int(r["worker_port"])
 	var pid := int(r["worker_pid"])
 	if port <= 0:
@@ -471,50 +354,19 @@ func _render_roster(r: Dictionary) -> void:
 
 
 func _select(code: String, kind: String) -> void:
-	if code == _selected_code and kind == _selected_kind:
-		return
-	# ★ 改选目标必须撤销武装:否则"武装 A → 改选 B → 再点"会关掉 B(C1)。
-	_reset_confirm()
-	_selected_code = code
-	_selected_kind = kind
-	_apply_selection_styles()
-	var snap := _snapshot()
-	if not snap.is_empty():
-		_sync_selection(snap["rooms"])
+	_rooms._select(code, kind)
 
 
 func _on_row_input(event: InputEvent, code: String, kind: String) -> void:
-	if event is InputEventMouseButton and event.pressed \
-			and (event as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
-		_select(code, kind)
+	_rooms._on_row_input(event, code, kind)
 
 
 func _apply_selection_styles() -> void:
-	for key in _rows:
-		var panel: PanelContainer = _rows[key]["panel"]
-		var row_code := str(_rows[key]["code"])
-		var row_kind := str(_rows[key]["kind"])
-		panel.add_theme_stylebox_override("panel",
-				_row_sb(row_code == _selected_code and row_kind == _selected_kind))
+	_rooms._apply_selection_styles()
 
 
 func _row_sb(selected: bool) -> StyleBoxFlat:
-	var sb := UiFactory.row_box()
-	if selected:
-		sb.border_color = UiFactory.C_ACCENT
-		sb.set_border_width_all(2)
-	return sb
-
-
-static func _kind_color(kind: String) -> Color:
-	match kind:
-		"1v1":
-			return UiFactory.C_ACCENT
-		"royale":
-			return UiFactory.C_MODE_ROYALE
-		"team":
-			return UiFactory.C_MODE_TEAM
-	return UiFactory.C_TEXT
+	return _rooms._row_sb(selected)
 
 
 func _set_hint(text: String) -> void:
@@ -525,19 +377,18 @@ func _set_hint(text: String) -> void:
 
 
 func _show_right(v: bool) -> void:
-	_sel_block.visible = v
-	_roster_block.visible = v
+	_rooms._show_right(v)
 
 
 func _on_close_pressed() -> void:
-	if _selected_code.is_empty():
+	if _rooms.selected_code.is_empty():
 		return
 	if not _confirming:
 		_confirming = true
 		_confirm_left = CONFIRM_SEC
-		_armed_code = _selected_code
-		_armed_kind = _selected_kind
-		_close_btn.text = "确认关闭 %s?" % _selected_code
+		_armed_code = _rooms.selected_code
+		_armed_kind = _rooms.selected_kind
+		_close_btn.text = "确认关闭 %s?" % _rooms.selected_code
 		_close_btn.add_theme_color_override("font_color", UiFactory.C_WHITE)
 		return
 	_close_room()
@@ -556,11 +407,11 @@ func _reset_confirm() -> void:
 func _close_room() -> void:
 	# ★★ C1:武装的目标必须仍是当前选中的目标,否则一律不执行(判据 = ServerStatus.can_close)。
 	#   武装后改选别行 ⇒ 这一次点击只是取消武装,不会关掉任何房。
-	if not ServerStatus.can_close(_armed_code, _armed_kind, _selected_code, _selected_kind):
+	if not ServerStatus.can_close(_armed_code, _armed_kind, _rooms.selected_code, _rooms.selected_kind):
 		_reset_confirm()
 		return
-	var code := _selected_code
-	var kind := _selected_kind
+	var code := _rooms.selected_code
+	var kind := _rooms.selected_kind
 	_reset_confirm()
 	if _rm == null or _rm.lobby == null:
 		return
@@ -704,21 +555,6 @@ func _spacer() -> Control:
 	return c
 
 
-func _inset(c: Control, px: int) -> Control:
-	var wrap := MarginContainer.new()
-	wrap.add_theme_constant_override("margin_left", px)
-	wrap.add_theme_constant_override("margin_right", px)
-	wrap.add_child(c)
-	return wrap
-
-
-func _inset_left(c: Control, px: int) -> Control:
-	var wrap := MarginContainer.new()
-	wrap.add_theme_constant_override("margin_left", px)
-	wrap.add_child(c)
-	return wrap
-
-
 # 可见滚动条:轨道 C_FIELD(比面板底亮一档)、滑块 C_BORDER、悬停转 C_ACCENT。
 # 轨道若用 C_ROW 压在 C_SURFACE 上几乎看不见(设计期实测)。
 func _style_vbar(bar: VScrollBar) -> void:
@@ -741,11 +577,6 @@ func _style_vbar(bar: VScrollBar) -> void:
 
 func _hms(sec: int) -> String:
 	return "%02d:%02d:%02d" % [sec / 3600, (sec / 60) % 60, sec % 60]
-
-
-func _mmss(sec: float) -> String:
-	var s := maxi(0, int(sec))
-	return "%02d:%02d" % [s / 60, s % 60]
 
 
 func _audit_if_requested() -> void:
