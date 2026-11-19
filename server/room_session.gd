@@ -256,10 +256,10 @@ func send_baselines(include_map: bool = false, only_role: int = 0) -> void:
 			var payload := common.merged({"role": role, "frame": world.state_for(role, frame, accounts)})
 			NetBus.send_event(NetEvent.Kind.BASELINE, payload, seat["peer"])
 
-func _on_input(peer: int, packet: Array) -> void:
+func _on_input(peer: int, packet: Array, received_us: int, input_at_snapshot: int) -> void:
 	var role := role_of(peer)
 	if world != null and role != 0 and seats[role]["ready"]:
-		world.accept_input(role, packet)
+		world.accept_input(role, packet, received_us, input_at_snapshot)
 
 func _on_left(peer: int) -> void:
 	guests.erase(peer)

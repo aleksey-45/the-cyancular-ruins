@@ -1,13 +1,12 @@
 class_name InputBuffer
 extends RefCounted
 
-enum Timing { SEQ, LEAD }
 const REDUNDANCY := 4
 const HOLD_TICKS := 6
 const FUTURE_TICKS := 32
 const ACTION_TICKS := 12
 
-enum { PACKET_FRAMES, PACKET_ACTIONS }
+enum { PACKET_FRAMES, PACKET_ACTIONS, PACKET_NOTICE }
 
 # 每帧的输入状态与单次操作使用相同的前三个字段。SEQ 是输入序号，EPOCH 区分重置前后的输入，TARGET_TICK 是输入原定生效的模拟帧。
 enum { SEQ, EPOCH, TARGET_TICK, FRAME_AX, FRAME_HELD, FRAME_AIM }
@@ -18,11 +17,11 @@ const _ACTION_RECORD: int = 1
 
 var epoch := 1
 var action_ack := 0
-var timing_seq := 0
-var lead := 2
 var frames: Dictionary[int, Array] = {}
 var actions: Dictionary[int, Array] = {}
 var _last := neutral_frame()
+var consumed_seq: int:
+	get: return _last[SEQ]
 
 static func neutral_frame() -> Array:
 	return [0, 1, 0, 0.0, 0, Vector2.RIGHT]
@@ -30,8 +29,6 @@ static func neutral_frame() -> Array:
 func reset(new_epoch: int) -> void:
 	epoch = new_epoch
 	action_ack = 0
-	timing_seq = 0
-	lead = 2
 	frames.clear()
 	actions.clear()
 	_last = neutral_frame()
@@ -45,15 +42,12 @@ static func _expired(record: Array, tick: int) -> bool:
 	return tick - record[TARGET_TICK] > HOLD_TICKS
 
 func push(packet: Array, tick: int) -> void:
-	var last_seq: int = _last[SEQ]
+	var last_seq := consumed_seq
 	for record: Array in packet[PACKET_FRAMES]:
 		if record[EPOCH] != epoch:
 			continue
 		var seq: int = record[SEQ]
 		var target: int = record[TARGET_TICK]
-		if seq > timing_seq:
-			timing_seq = seq
-			lead = target - tick
 		if seq <= last_seq or target > tick + FUTURE_TICKS:
 			continue
 		var at := maxi(target, tick + 1)

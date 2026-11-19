@@ -713,7 +713,7 @@ func _combat_phase(tree: SceneTree, melee_type: int) -> void:
 			expect(shots.size() == 1 and shots[0]["tick"] == 1 and shots[0]["type_id"] == type_id,
 					"attack %d broadcasts its action before resolving a hit" % type_id)
 			hit_positions.append(victim.position))
-		authority.accept_input(1, [[], [[1, 1, 1, ActorInput.BIT_ATTACK, 0, 0, Vector2.RIGHT]]])
+		shooter.input_buffer.push([[], [[1, 1, 1, ActorInput.BIT_ATTACK, 0, 0, Vector2.RIGHT]]], 0)
 		authority.step()
 		expect(is_equal_approx(target.position.x, 345.0) and hit_positions == [target.position],
 				"attack type %d hits after the later role completes its movement" % type_id)
@@ -782,7 +782,7 @@ func _shared_combat_tick(tree: SceneTree) -> void:
 	for at in range(1, 46):
 		var release := ActorInput.BIT_ATTACK if at == 1 else 0
 		var actions := [[at, 1, at, 0, release, 0, direction]] if release else []
-		server.accept_input(1, [[[at, 1, at, 0.0, held, direction]], actions])
+		host_player.input_buffer.push([[[at, 1, at, 0.0, held, direction]], actions], at - 1)
 		single.time_field.step(held, ActorStep.DT, rewind)
 		single.step({1: [0.0, held, 0, release, 0, direction]})
 		server.step()
@@ -1185,7 +1185,7 @@ func _personal_rewind() -> void:
 	var send := func(actor: Player, at: int, held: int, pressed := 0) -> void:
 		var e := actor.input_buffer.epoch
 		var actions := [[at, e, at, pressed, 0, actor.weapons.current_inst(), Vector2.RIGHT]] if pressed else []
-		server.accept_input(actor.role, [[[at, e, at, 0.0, held, Vector2.RIGHT]], actions])
+		actor.input_buffer.push([[[at, e, at, 0.0, held, Vector2.RIGHT]], actions], at - 1)
 	for at in range(1, 11):
 		first.sim_hp = 20 + at
 		second.sim_hp = 30 + at
@@ -1554,16 +1554,16 @@ func _team_setup() -> void:
 			"each team opens on distinct marked points on its own side")
 	var actor: Player = authority.players[1]
 	var drop := [1, actor.input_buffer.epoch, 0, ActorInput.BIT_DROP, 0, 0, Vector2.RIGHT]
-	authority.accept_input(1, [[], [drop]])
-	authority.step()
+	authority.accept_input(1, [[], [drop]], 0)
+	for i in 3: authority.step()
 	expect(actor.equipped != null and actor.equipped.type_id == WeaponRegistry.Type.PISTOL,
 			"WAITING blocks a queued drop even after the seat is ready")
 
 	authority.start_countdown()
 	authority._advance_round(3.0)
-	drop[InputBuffer.SEQ] = 2
-	authority.accept_input(1, [[], [drop]])
-	authority.step()
+	drop[InputBuffer.SEQ] = 4
+	authority.accept_input(1, [[], [drop]], 50000)
+	for i in 3: authority.step()
 	expect(actor.equipped == null, "PLAYING accepts the same drop")
 
 	_win_team_round(authority)
@@ -1585,7 +1585,7 @@ func _team_setup() -> void:
 	expect(authority.combat_rules.tick == final_tick, "the final result stops authoritative combat")
 	drop[InputBuffer.EPOCH] = actor.input_buffer.epoch
 	drop[InputBuffer.TARGET_TICK] = authority.combat_rules.tick + 1
-	authority.accept_input(1, [[], [drop]])
+	authority.accept_input(1, [[], [drop]], 100000)
 	expect(actor.input_buffer.actions.is_empty(), "the final result stops accepting input")
 	authority.remove_role(3)
 	expect(authority.round_state() == result, "leaving after the match keeps the final result")

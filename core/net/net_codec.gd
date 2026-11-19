@@ -7,7 +7,8 @@ const STATE := 1
 const EVENT := 2
 const KEEP := 64
 const WIRE_MAGIC := 199
-const PROTOCOL_VERSION := 31
+const PROTOCOL_VERSION := 33
+const NOTICE_ACK_BIT := 1 << 6
 const MODES := [PvpSession.MODE_PVP, PvpSession.MODE_TEAM, PvpSession.MODE_ROYALE]
 const Field := NetEvent.Field
 const PlayerSlots := preload("res://core/sim/player_state_schema.gd")
@@ -15,7 +16,7 @@ const NetPlayer := PlayerSlots.Network
 
 # 增量编码先写入位掩码，每一位对应一个字段。只追加已变化的字段值。
 const INPUT_FRAME_TYPES := [Field.U32, Field.U32, Field.I32, Field.F64, Field.U16, Field.VEC]
-const OWN_TYPES := [Field.U32, Field.I32]
+const OWN_TYPES := [Field.U32, Field.I32, Field.U32, Field.I32]
 const PLAYER_TYPES := [Field.U32, Field.U32, Field.BOOL, Field.U32, Field.VEC]
 const PROJECTILE_TYPES := [Field.U8, Field.VEC, Field.VEC]
 const BEAM_TYPES := [Field.U32, Field.POLYLINE]
@@ -41,6 +42,7 @@ const ROUND_FIELDS := [["state", Field.U8], ["round", Field.U32], ["timer", Fiel
 	["winner", Field.U16], ["match_winner", Field.U16], ["mvp", Field.U16]]
 const STATS := ["kills", "deaths", "assists", "dealt", "taken"]
 var state_ack := 0
+var input_at_acked_snapshot := 0 # 本机发送历史中的输入序号，只在首次确认该快照时交给调度器。
 var serial := 0
 var latest := 0
 var history: Dictionary = {}
@@ -163,16 +165,19 @@ func _write_input(s: StreamPeerBuffer, packet: Array) -> void:
 	var previous: Array = []
 	for frame: Array in frames:
 		s.put_u32(frame[InputBuffer.SEQ])
-		_put_delta(s, frame, previous, INPUT_FRAME_TYPES, InputBuffer.TARGET_TICK)
+		_put_delta(s, frame, previous, INPUT_FRAME_TYPES, InputBuffer.FRAME_AX)
 		previous = frame
 	s.put_u8(actions.size())
 	for action: Array in actions:
 		s.put_u32(action[InputBuffer.SEQ])
-		s.put_32(action[InputBuffer.TARGET_TICK])
 		s.put_u16(action[InputBuffer.ACTION_PRESSED])
 		s.put_u16(action[InputBuffer.ACTION_RELEASED])
 		s.put_u32(action[InputBuffer.ACTION_WINST])
 		_put_vec(s, action[InputBuffer.ACTION_AIM])
+	if packet.size() > InputBuffer.PACKET_NOTICE:
+		var report: Vector2i = packet[InputBuffer.PACKET_NOTICE]
+		s.put_u32(report.x)
+		s.put_8(report.y)
 
 func decode_input(s: Reader) -> Array:
 	var ack: int = s.read(Field.U32)
@@ -182,21 +187,36 @@ func decode_input(s: Reader) -> Array:
 	var previous: Array = []
 	for i in count:
 		var seq: int = s.read(Field.U32)
-		var frame := _get_delta(s, previous, INPUT_FRAME_TYPES, InputBuffer.TARGET_TICK)
+		var frame := _get_delta(s, previous, INPUT_FRAME_TYPES, InputBuffer.FRAME_AX)
 		if not s.valid:
 			return []
 		frame[InputBuffer.SEQ] = seq
 		frame[InputBuffer.EPOCH] = epoch
+		frame[InputBuffer.TARGET_TICK] = 0
 		frames.append(frame)
 		previous = frame
 	var actions: Array = []
-	for i in s.count(s.read(Field.U8), 24):
-		actions.append([s.read(Field.U32), epoch, s.read(Field.I32),
+	for i in s.count(s.read(Field.U8), 20):
+		actions.append([s.read(Field.U32), epoch, 0,
 			s.read(Field.U16), s.read(Field.U16), s.read(Field.U32), s.read(Field.VEC)])
+	var packet := [frames, actions]
+	if s.remaining() > 0:
+		var start: int = s.read(Field.U32)
+		var margin: int = s.read(Field.I8)
+		if start <= 1 or frames.is_empty():
+			s.valid = false
+		packet.append(Vector2i(start, margin))
 	if not s.finish():
 		return []
+	input_at_acked_snapshot = 0
+	if ack > state_ack and history.has(ack):
+		var base: Dictionary = history[ack]
+		var sent: Vector2i = base.get("_sent_input", Vector2i.ZERO)
+		if sent.x == epoch:
+			input_at_acked_snapshot = sent.y
+			base.erase("_sent_input")
 	state_ack = 0 if ack == 0 else maxi(state_ack, ack)
-	return [frames, actions]
+	return packet
 
 func encode_state(frame: Dictionary, batch: StateBatch) -> PackedByteArray:
 	if roles.is_empty():
@@ -232,7 +252,7 @@ func _write_state(s: StreamPeerBuffer, frame: Dictionary, batch: StateBatch) -> 
 	if blocks & 32: s.put_data(parts["beams"])
 	var end := s.get_position()
 	s.seek(block_position)
-	s.put_u8(blocks)
+	s.put_u8(blocks | (NOTICE_ACK_BIT if frame.get("notice_ack", false) else 0))
 	s.seek(end)
 	s.resize(end)
 	_remember(serial, frame, batch)
@@ -271,7 +291,12 @@ func decode_state(s: Reader, baseline: bool = false) -> Dictionary:
 	if number <= latest:
 		return {}
 	var frame_roles := _get_roles(s) if base_number == 0 else roles
-	var blocks := _get_mask(s, 6, base_number == 0)
+	var blocks := _get_mask(s, 7)
+	if blocks & NOTICE_ACK_BIT:
+		frame["notice_ack"] = true
+	blocks &= NOTICE_ACK_BIT - 1
+	if base_number == 0 and blocks != NOTICE_ACK_BIT - 1:
+		s.valid = false
 	if not s.valid or frame_roles.size() > maxi(TeamRules.MAX_TOTAL, RoomOptions.ROYALE_PLAYERS.y):
 		s.valid = false
 		return {}
@@ -306,7 +331,7 @@ func decode_state(s: Reader, baseline: bool = false) -> Dictionary:
 func _remember(number: int, frame: Dictionary, batch: StateBatch) -> void:
 	_store_history(number, {"tick": batch.tick, "map_revision": batch.map_revision,
 			"world": batch.world, "time": batch.time, "_snapshot": batch.snapshot,
-			"own": frame["own"]})
+			"own": frame["own"], "_sent_input": frame.get("_sent_input", Vector2i.ZERO)})
 
 # 按序号保存最近的快照，发送和接收增量时都从这里查找基准。达到容量上限后覆盖最早保存的记录。
 func _store_history(number: int, frame: Dictionary) -> void:

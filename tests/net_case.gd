@@ -25,6 +25,7 @@ class LobbySession extends RoomSession:
 
 func run(tree: SceneTree) -> void:
 	_input()
+	_input_schedule()
 	_lobby()
 	_room_admission()
 	_royale_capacity()
@@ -76,17 +77,124 @@ func _input() -> void:
 		[[12, 7, 100, ActorInput.BIT_PICKUP, ActorInput.BIT_ATTACK, 0x1020304, Vector2.DOWN]],
 	]
 	var wire := codec.encode_input(wire_packet)
-	var protocol_bytes := ("c71f000807060507000000030c0000000f64000000000000000000e0bf00010000803e000000bf"
-			+ "0d0000000365000000000000000000f03f0e00000000010c000000640000002000080004030201000000000000803f")
+	var protocol_bytes := ("c721000807060507000000030c00000007000000000000e0bf00010000803e000000bf"
+			+ "0d00000001000000000000f03f0e00000000010c0000002000080004030201000000000000803f")
 	expect(NetBus._wire(wire).hex_encode() == protocol_bytes, "INPUT header, frame deltas and actions match the wire format")
 	var stream := _body(wire, NetCodec.INPUT)
 	var decoded := codec.decode_input(stream)
-	expect(decoded == wire_packet, "input wire preserves frame fields, action edges and scheduling")
+	for group: Array in wire_packet:
+		for row: Array in group:
+			row[InputBuffer.TARGET_TICK] = 0
+	expect(decoded == wire_packet, "INPUT preserves controls and edges, authority supplies the target tick")
 	expect(stream.remaining() == 0, "input decoder consumes packet")
+	var reported := wire_packet + [Vector2i(0x01020304, -5)]
+	var feedback_wire := codec.encode_input(reported)
+	expect(feedback_wire.slice(0, wire.size()) == wire and feedback_wire.slice(wire.size()).hex_encode() == "04030201fb"
+			and codec.decode_input(_body(feedback_wire, NetCodec.INPUT)) == reported, "optional input report costs five bytes and preserves a signed margin")
+	codec.state_ack = 123
+	for length in range(wire.size() + 1, feedback_wire.size()):
+		var truncated := NetCodec.Reader.new(feedback_wire.slice(0, length), 1)
+		expect(codec.decode_input(truncated).is_empty() and not truncated.valid and codec.state_ack == 123,
+				"partial notice does not commit the packet ACK")
 	wire = codec.encode_event(NetEvent.Kind.START, null)
 	expect(wire.size() == 1, "START has no obsolete bot payload")
 	stream = _body(wire, NetCodec.EVENT + NetEvent.Kind.START)
 	expect(codec.decode_event(NetEvent.Kind.START, stream) == null and stream.remaining() == 0, "START round trip")
+
+func _input_schedule() -> void:
+	var scheduler := InputScheduler.new()
+	var buffer := InputBuffer.new()
+	var row := [1, 1, 9999, 1.0, 0, Vector2.RIGHT]
+	var edge := [1, 1, -50, ActorInput.BIT_UP, 0, 0, Vector2.RIGHT]
+	var packet := [[row], [edge]]
+	scheduler.submit(buffer, packet, 100, 123000)
+	scheduler.submit(buffer, packet, 101, 125000)
+	expect(InputScheduler.target(scheduler.announcement(), 1) == 103 and buffer.take(102)[ActorInput.AX] == 0.0,
+			"authority sets the first deadline from availability and a two-tick margin")
+	var input := buffer.take(103)
+	expect(input[ActorInput.AX] == 1.0 and input[ActorInput.PRESSED] == ActorInput.BIT_UP
+			and buffer.take(104)[ActorInput.PRESSED] == 0 and row[InputBuffer.TARGET_TICK] == 9999,
+			"continuous input and a repeated edge share the authority deadline without mutating the caller")
+	row[InputBuffer.SEQ] = 2
+	expect(not scheduler.submit(buffer, [[row], []], 200, 3000000), "a stalled input clock requests a fresh epoch")
+	buffer.reset(2)
+	scheduler = InputScheduler.new()
+	scheduler.submit(buffer, packet, 201, 3016000)
+	expect(scheduler.announcement() == InputScheduler.UNBOUND, "delayed packets cannot anchor a new epoch")
+	scheduler.submit(buffer, [[[45, 2, 0, 1.0, 0, Vector2.RIGHT]], [[1, 2, 0, ActorInput.BIT_UP, 0, 0, Vector2.RIGHT]]],
+			200, 3020000)
+	expect(InputScheduler.target(scheduler.announcement(), 45) == 203 and buffer.take(203)[ActorInput.PRESSED] == 0
+			and buffer.action_ack == 1, "an old retransmitted edge cannot shift the first continuous sample's anchor")
+	var offsets := []
+	offsets.resize(100)
+	offsets.fill(0)
+	offsets[0] = 1
+	expect(InputScheduler._best_step(offsets, 0, 0, 0, 3) == 0, "one percent late is inside the deadline budget")
+	offsets[1] = 1
+	expect(InputScheduler._best_step(offsets, 0, 0, 0, 3) == 1, "one more tick recovers the excess misses")
+	offsets[0] = 8
+	offsets[1] = 8
+	expect(InputScheduler._best_step(offsets, 0, 0, 0, 3) == 0, "unrecoverable misses do not buy an extra tick")
+	offsets.fill(3)
+	expect(InputScheduler._best_step(offsets, 0, 0, 0, 3) == 1, "the horizon can start crossing a multi-tick delay step")
+	scheduler = InputScheduler.new()
+	buffer.reset(1)
+	var feedback := InputScheduler.InstallFeedback.new()
+	for k in range(1, 121):
+		var current := [[[k, 1, 0, 1.0, 0, Vector2.RIGHT]], []]
+		if k >= 65:
+			feedback.install(1, scheduler.announcement(), k - 1, scheduler.notice_confirmed())
+			feedback.attach(current, k)
+		if k == 65:
+			expect(current.back() == Vector2i(90, 26), "first installation measures the actual client sample")
+			current.pop_back() # 首份回报丢失。
+		if k == 80:
+			expect(current.back() == Vector2i(90, 26), "a retry preserves the original installation margin")
+		if k == 95:
+			expect(current.size() == 2 and scheduler.notice_confirmed(), "a confirmed report costs nothing on subsequent inputs")
+		scheduler.submit(buffer, current, k - 1, roundi(k * 1000000.0 / 60))
+		scheduler.update(k)
+		buffer.take(k)
+	expect(scheduler.announcement()[2] == 127 and not scheduler.notice_confirmed(),
+			"the next plan uses the measured five samples plus one snapshot interval")
+	feedback.install(2, InputScheduler.UNBOUND, 0, false)
+	var empty := [[row], []]
+	feedback.attach(empty, 200)
+	expect(empty.size() == 2, "a new epoch drops the pending installation report")
+	var sender := NetCodec.new()
+	var receiver := NetCodec.new()
+	var frame := {"tick": 100, "map_revision": 0, "world": NetCodec.EMPTY_WORLD, "time": {}, "own": [1, 3, 0, 0]}
+	_state(receiver, sender.encode_state(frame, NetCodec.StateBatch.new(frame)))
+	sender.state_ack = receiver.state_ack
+	frame = frame.merged({"tick": 160, "own": [1, 3, 180, 2]}, true)
+	sender.encode_state(frame, NetCodec.StateBatch.new(frame)) # 此次公告丢失。
+	frame = frame.merged({"tick": 220, "own": [180, 2, 240, 3]}, true)
+	var recovered := _state(receiver, sender.encode_state(frame, NetCodec.StateBatch.new(frame)))
+	expect(recovered["own"] == frame["own"] and InputScheduler.target(recovered["own"], 239) == 241
+			and InputScheduler.target(recovered["own"], 240) == 243, "the next STATE restores both schedule segments across a lost notice")
+	sender.state_ack = receiver.state_ack
+	var plain := sender.encode_state(frame, NetCodec.StateBatch.new(frame))
+	frame["notice_ack"] = true
+	var confirmed := sender.encode_state(frame, NetCodec.StateBatch.new(frame))
+	expect(confirmed.size() == plain.size() and _state(receiver, confirmed).get("notice_ack", false),
+			"the report ACK uses one existing header bit without adding a downlink byte")
+	frame["_sent_input"] = Vector2i(1, 115)
+	var observed := _state(receiver, sender.encode_state(frame, NetCodec.StateBatch.new(frame)))
+	expect(not observed.has("_sent_input"), "the sending anchor for a passive ACK stays local")
+	var reply := receiver.encode_input([[row], []])
+	sender.decode_input(NetCodec.Reader.new(reply, 1))
+	expect(sender.input_at_acked_snapshot == 115, "a new snapshot ACK carries a free network progress sample")
+	sender.decode_input(NetCodec.Reader.new(reply, 1))
+	expect(sender.input_at_acked_snapshot == 0, "a duplicate ACK cannot remeasure an older input packet")
+	frame["_sent_input"] = Vector2i(2, 116)
+	_state(receiver, sender.encode_state(frame, NetCodec.StateBatch.new(frame)))
+	sender.decode_input(NetCodec.Reader.new(receiver.encode_input([[row], []]), 1))
+	expect(sender.input_at_acked_snapshot == 0, "a prior input epoch cannot sample another epoch's sent snapshot")
+	expect(scheduler._notice(0) == 60, "an unconfirmed notice defaults to the conservative upper bound")
+	var delayed := InputScheduler.new()
+	delayed._notices.append(Vector4i(90, 30, 5, 12))
+	expect(delayed._notice(9) == 18 and delayed._notice(3) == 12,
+			"seven samples of client installation delay carry over when the network estimate changes")
 
 func _lobby() -> void:
 	var codec := NetCodec.new()
@@ -346,8 +454,8 @@ func _codec(tree: SceneTree) -> void:
 			"frame": unarmed_frame}
 	var wire: PackedByteArray = servers[1].encode_event(NetEvent.Kind.BASELINE, baseline)
 	var digest := wire.hex_encode().sha256_text()
-	expect(digest == "019f36f8e75b7de57bccee3cbfeb0489a3879f95bebec4d77c10c2c255f59a63",
-			"BASELINE matches the v31 layout (%s)" % digest)
+	expect(digest == "a429b17296674864af07cd8819e101e3175a4793f167267d3b955931a54f3203",
+			"BASELINE matches the v33 layout (%s)" % digest)
 	var client: NetCodec = clients[1]
 	var known := client.history.keys()
 	var ack := client.state_ack
@@ -447,7 +555,7 @@ func _projectile_deltas() -> void:
 		pellets[id] = [WeaponRegistry.Type.S686, Vector2.ZERO, Vector2.RIGHT]
 	var shot := ShotRules.shot_id(2, 1)
 	var points := PackedVector2Array([Vector2(8, 24), Vector2(120, 24), Vector2(-80, 24)])
-	var frame := {"tick": 1, "map_revision": 0, "own": [0, 0], "time": {},
+	var frame := {"tick": 1, "map_revision": 0, "own": InputScheduler.UNBOUND, "time": {},
 			"world": {"players": {}, "pickups": {}, "projectiles": pellets, "beams": {shot: [16, points]}}}
 	var server := NetCodec.new()
 	var client := NetCodec.new()
@@ -488,17 +596,23 @@ func _malformed_packets() -> void:
 			"CREATE rejects an unknown mode before indexing the mode table")
 
 	var received: Array[int] = []
+	var stamps: Array[int] = []
+	var stamp := func(_peer: int, _packet: Array, us: int, _input_at_snapshot: int) -> void: stamps.append(us)
+	NetBus.input_received.connect(stamp)
 	var listen := func(_peer: int, kind: int, _data: Variant) -> void: received.append(kind)
 	NetBus.event_received.connect(listen)
 	var was_server: bool = NetBus.is_server_mode
 	NetBus.is_server_mode = true
-	NetBus._receive(999, PackedByteArray([NetCodec.WIRE_MAGIC, 17, NetCodec.EVENT + NetEvent.Kind.START]))
+	NetBus._receive(999, PackedByteArray([NetCodec.WIRE_MAGIC, 17, NetCodec.EVENT + NetEvent.Kind.START]), 0)
 	var patch := {"tick": 9, "revision": 7, "cells": {Vector2i.ZERO: 0}}
-	NetBus._receive(999, NetBus._wire(codec.encode_event(NetEvent.Kind.TERRAIN, patch)))
-	NetBus._receive(999, NetBus._wire(codec.encode_event(NetEvent.Kind.START, null)))
+	NetBus._receive(999, NetBus._wire(codec.encode_event(NetEvent.Kind.TERRAIN, patch)), 0)
+	NetBus._receive(999, NetBus._wire(codec.encode_event(NetEvent.Kind.START, null)), 0)
+	NetBus._receive(999, NetBus._wire(codec.encode_input([[], []])), 123456)
 	NetBus.is_server_mode = was_server
 	NetBus._codecs.erase(999)
 	NetBus.event_received.disconnect(listen)
+	NetBus.input_received.disconnect(stamp)
+	expect(stamps == [123456], "INPUT dispatch preserves the native receipt timestamp")
 	expect(received == [NetEvent.Kind.START], "server dispatches valid client commands from the current protocol only")
 
 func _playback() -> void:

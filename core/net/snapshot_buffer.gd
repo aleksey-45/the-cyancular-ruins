@@ -4,8 +4,6 @@ extends RefCounted
 enum Sample { POS, VEL, SOURCE }
 enum Frame { TICK, WORLD }
 const NetPlayer := PlayerStateSchema.Network
-const DELAY_TICKS := 6.0
-const MAX_EXTRAPOLATION := 6.0
 const KEEP := 32
 const KNOCK_DECAY := exp(-PlayerParams.player_knock_decay_rate * ActorStep.DT)
 var map_px := Vector2.ZERO
@@ -15,34 +13,27 @@ var latest_tick: int:
 var latest_players: Dictionary:
 	get: return frames[-1][Frame.WORLD]["players"] if not frames.is_empty() else {}
 var render_tick := 0.0
-var _drift := 0.0
-var _rate := 1.0
+var _clock := SnapshotClock.new()
 
 func reset() -> void:
 	frames.clear()
-	_drift = 0.0
-	_rate = 1.0
 
 
 func push(tick: int, world: Dictionary) -> void:
 	if tick <= latest_tick:
 		return
 	# 插值以原始服务器快照为端点。相邻渲染帧可以从相同快照得到不同的显示位置。
+	if frames.is_empty() or tick - latest_tick > 2 * KEEP:
+		frames.clear()
+		render_tick = _clock.start(tick)
 	frames.append([tick, world])
-	if frames.size() == 1:
-		render_tick = tick - DELAY_TICKS
 	while frames.size() > KEEP:
 		frames.pop_front()
-	# 渲染时刻按服务器的模拟帧计。落后过多时，把它重置到最新快照前 DELAY_TICKS 帧。
-	# 平时调整渲染时刻的推进速度，使画面与最新快照维持设定的延迟。
-	if tick - render_tick > DELAY_TICKS * 2.0 or render_tick < frames[0][Frame.TICK] - DELAY_TICKS:
-		render_tick = tick - DELAY_TICKS
-		_drift = 0.0
-	_drift = lerpf(_drift, tick - render_tick - DELAY_TICKS, 0.1)
-	_rate = 1.02 if _drift > 2.0 else 0.96 if _drift < -2.0 else 1.0
+		if render_tick < frames[0][Frame.TICK]:
+			render_tick = _clock.start(tick)
 
 func advance(delta: float, local_role: int) -> Dictionary:
-	render_tick = minf(render_tick + delta * 60.0 * _rate, float(frames[-1][Frame.TICK]) + MAX_EXTRAPOLATION)
+	render_tick = _clock.advance(render_tick, latest_tick, delta)
 	return sample(render_tick, local_role)
 
 func sample(tick: float, local_role := 0) -> Dictionary:
@@ -50,7 +41,7 @@ func sample(tick: float, local_role := 0) -> Dictionary:
 		frames.pop_front()
 	var from := frames[0]
 	var to := frames[1] if frames.size() > 1 else from
-	var ahead := minf(tick - to[Frame.TICK], MAX_EXTRAPOLATION)
+	var ahead := minf(tick - to[Frame.TICK], SnapshotClock.MAX_EXTRAPOLATION)
 	var weight := clampf((tick - from[Frame.TICK]) / maxf(1.0, to[Frame.TICK] - from[Frame.TICK]), 0.0, 1.0)
 	var between := weight > 0.0 and weight < 1.0
 	var source: Dictionary = from[Frame.WORLD] if weight < 1.0 else to[Frame.WORLD]

@@ -16,6 +16,7 @@ var map_revision: int:
 var rules := MatchRules.new()
 var time_economy: TimeEconomy
 var _rewinds: Dictionary[int, RewindHistory] = {}
+var _schedulers: Dictionary[int, InputScheduler] = {}
 var map_bytes: PackedByteArray
 var _stats: Dictionary = {}
 var _final_round: Dictionary = {}
@@ -81,6 +82,8 @@ func step() -> void:
 	for player: Player in players.values():
 		player._controls_locked = not playing
 	var next := combat_rules.tick + 1
+	for role: int in _schedulers:
+		_schedulers[role].update(next)
 	var inputs := ActorStep.buffered_inputs(players, next)
 	if time_economy != null:
 		_step_rewinds(inputs, next)
@@ -181,11 +184,16 @@ func _on_projectile_ended(id: int) -> void:
 func _detonated(id: int, at: Vector2, type_id: int) -> void:
 	broadcast(NetEvent.Kind.EXPLOSION, {"id": id, "type_id": type_id, "pos": at, "tick": combat_rules.tick})
 
-func accept_input(role: int, packet: Array) -> void:
-	if rules.phase != NetEvent.RoundState.MATCH_OVER:
-		players[role].input_buffer.push(packet, combat_rules.tick)
+func accept_input(role: int, packet: Array, received_us: int, input_at_snapshot := 0) -> void:
+	if rules.phase == NetEvent.RoundState.MATCH_OVER:
+		return
+	if not _schedulers.has(role):
+		_schedulers[role] = InputScheduler.new()
+	if not _schedulers[role].submit(players[role].input_buffer, packet, combat_rules.tick, received_us, input_at_snapshot):
+		new_epoch(role)
 
 func clear_input(role: int) -> void:
+	_schedulers.erase(role)
 	var player: Player = players[role]
 	player.input_buffer.reset(player.input_buffer.epoch)
 
@@ -196,6 +204,7 @@ func suicide(role: int) -> void:
 		player.force_down()
 
 func new_epoch(role: int) -> void:
+	_schedulers.erase(role)
 	var player: Player = players[role]
 	player.input_buffer.reset(player.input_buffer.epoch + 1)
 
@@ -223,6 +232,7 @@ func _reset_round() -> void:
 	baseline_needed.emit()
 
 func remove_role(role: int) -> void:
+	_schedulers.erase(role)
 	_rewinds.erase(role)
 	_stats[role]["left"] = true
 	combat_rules.remove_player(role)
@@ -275,9 +285,14 @@ func world_state() -> Dictionary:
 	return frame
 
 func state_for(role: int, frame: Dictionary, accounts: Dictionary) -> Dictionary:
-	var input: InputBuffer = players[role].input_buffer
-	return {"tick": combat_rules.tick, "map_revision": map_revision, "world": frame,
-			"own": [input.timing_seq, input.lead], "time": accounts}
+	var state := {"tick": combat_rules.tick, "map_revision": map_revision, "world": frame,
+			"own": InputScheduler.UNBOUND, "time": accounts}
+	if _schedulers.has(role):
+		state["own"] = _schedulers[role].announcement()
+		state["_sent_input"] = Vector2i(players[role].input_buffer.epoch, _schedulers[role].latest_input())
+		if _schedulers[role].notice_confirmed():
+			state["notice_ack"] = true
+	return state
 
 func _on_terrain_changed() -> void:
 	var blocks := terrain.take_rewards()

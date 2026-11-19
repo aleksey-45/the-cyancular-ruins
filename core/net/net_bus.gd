@@ -1,6 +1,6 @@
 extends Node
 
-signal input_received(peer: int, packet: Array)
+signal input_received(peer: int, packet: Array, received_us: int, input_at_snapshot: int)
 signal state_received(frame: Dictionary)
 signal event_received(peer: int, kind: int, data: Variant)
 signal peer_left(peer: int)
@@ -154,7 +154,7 @@ func _physics_process(_delta: float) -> void:
 		if message[0] == 0: dispatched_bytes += message[2].size()
 		var peer: int = message[1]
 		match message[0]:
-			0: _receive(peer, message[2])
+			0: _receive(peer, message[2], message[3])
 			1:
 				if not is_server_mode:
 					_protocol_waiting_at = Time.get_ticks_msec()
@@ -219,7 +219,7 @@ func _coalesce_messages(messages: Array) -> Array:
 		result.append(message)
 	return result.filter(func(message: Variant) -> bool: return message != null)
 
-func _receive(peer: int, packet: PackedByteArray) -> void:
+func _receive(peer: int, packet: PackedByteArray, received_us: int) -> void:
 	if packet.size() < 3 or packet[0] != NetCodec.WIRE_MAGIC or packet[1] != NetCodec.PROTOCOL_VERSION:
 		if not is_server_mode:
 			_fail_protocol("联机协议版本不同，请更新服务端与客户端")
@@ -237,7 +237,7 @@ func _receive(peer: int, packet: PackedByteArray) -> void:
 		NetCodec.INPUT:
 			var input := codec.decode_input(reader)
 			if reader.valid:
-				input_received.emit(peer, input)
+				input_received.emit(peer, input, received_us, codec.input_at_acked_snapshot)
 		NetCodec.STATE:
 			var frame := codec.decode_state(reader)
 			if not frame.is_empty():

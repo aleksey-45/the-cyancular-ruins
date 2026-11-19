@@ -4,6 +4,7 @@ const NetPlayer := PlayerStateSchema.Network
 
 func run(tree: SceneTree) -> void:
 	_local_replay(tree)
+	_input_schedule(tree)
 	_position_tolerance(tree)
 	_history_window(tree)
 	_rewind_and_epoch(tree)
@@ -83,7 +84,7 @@ func _client_scene(tree: SceneTree) -> void:
 func _frame(actor: Player, tick: int) -> Dictionary:
 	return {"tick": tick, "map_revision": 0,
 		"world": {"players": {actor.role: actor.capture_checkpoint()}, "pickups": {}, "projectiles": {}, "beams": {}},
-		"time": {}, "own": [0, 2]}
+		"time": {}, "own": InputScheduler.UNBOUND}
 
 func _saved_frame(rollback: PredictionRollback, at: int) -> Dictionary:
 	var saved := rollback._state_at(at)
@@ -153,6 +154,41 @@ func _local_replay(tree: SceneTree) -> void:
 	expect(rollback.reconcile(snapshot, 0) == PredictionRollback.Correction.SMOOTH
 			and actor.shot_serial == 0 and actor.equipped.carried == mag + 1,
 			"an acknowledged action cannot execute again, even when its input frame is still pending")
+	cleanup()
+
+func _input_schedule(tree: SceneTree) -> void:
+	var actor := player(world(tree))
+	var rollback := PredictionRollback.new()
+	rollback.bind(actor)
+	var baseline := _frame(actor, 100)
+	baseline["own"] = [1, 100, 4, 99]
+	rollback.reset(baseline, 0)
+	for n in range(1, 6):
+		var bit := ActorInput.BIT_UP
+		rollback.capture([0.0, 0, bit if n == 3 else 0, bit if n == 4 else 0, 0, Vector2.RIGHT])
+		var outgoing := rollback.packet()
+		if n == 1:
+			expect(outgoing.back() == Vector2i(4, 4), "the client reports a baseline plan before taking its first sample")
+		rollback.advance(ActorStep.DT, outgoing)
+		if n == 3:
+			expect(rollback.tick == 102, "prediction waits for both samples assigned to the same slot")
+		if n == 4:
+			expect(rollback.tick == 103 and actor.input_buffer._last[InputBuffer.SEQ] == 4
+					and actor.input_buffer.action_ack == 3, "merged samples keep the newest hold and first edge")
+	expect(rollback.tick == 104 and actor.input_buffer.action_ack == 4, "the second edge follows on the next tick")
+	# 此时第五个输入已经预测过。迟到的公告将其改期到 105。
+	var correction := _saved_frame(rollback, 103)
+	correction["own"] = [4, 99, 5, 100]
+	var old_record: Array = rollback.history[-1]
+	rollback.reconcile(correction, 0)
+	expect(old_record[InputBuffer.TARGET_TICK] == 104 and rollback.history[-1][InputBuffer.TARGET_TICK] == 105
+			and actor.input_buffer._last[InputBuffer.SEQ] == 4, "late announcements redate pending inputs and replay from authority")
+	_capture(rollback, 0, 0)
+	var late_report := rollback.packet()
+	expect(late_report.back() == Vector2i(5, 0), "a late change reports the first installation, before retiming pending inputs")
+	rollback.advance(ActorStep.DT, late_report)
+	expect(rollback.tick == 106 and actor.input_buffer._last[InputBuffer.SEQ] == 6,
+			"prediction spans the extra authoritative tick after the offset increases")
 	cleanup()
 
 func _position_tolerance(tree: SceneTree) -> void:
@@ -313,11 +349,15 @@ func _world_replication(tree: SceneTree) -> void:
 	expect(not physics.ray_hit(Vector2(seam_x, 400), Vector2(seam_x, 650), mask).is_empty()
 			and proxy.collision_mask == (CollisionWorld.LAYER_TERRAIN | CollisionWorld.LAYER_ENEMY),
 			"the default proxy exposes a team hitbox across the map seam")
-	for i in 6:
+	for i in 2:
+		rollback._step()
+	var visible: Vector2 = client._playback.sample(106)["players"][2][SnapshotBuffer.Sample.POS]
+	expect(is_equal_approx(proxy.position.x, visible.x) and proxy.position.y > visible.y,
+			"visual extrapolation stops after two ticks of decaying knockback")
+	for i in 4:
 		rollback._step()
 	var projected := proxy.position
-	var visible: Vector2 = client._playback.sample(106)["players"][2][SnapshotBuffer.Sample.POS]
-	expect(is_equal_approx(projected.x, visible.x) and projected.y > visible.y
+	expect(projected.x < visible.x and projected.y > visible.y
 			and not physics.ray_hit(projected - Vector2(0, 80), projected + Vector2(0, 80), mask).is_empty(),
 			"the collider applies gravity and projects decaying knockback across the seam")
 	rollback._step()
