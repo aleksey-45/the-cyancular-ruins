@@ -349,7 +349,7 @@ func _world_replication(tree: SceneTree) -> void:
 	var mask := CollisionWorld.LAYER_TEAM_B
 	var seam_x := 10.0 + _terrain.map_size.x
 	expect(not physics.ray_hit(Vector2(seam_x, 400), Vector2(seam_x, 650), mask).is_empty()
-			and proxy.collision_mask == (CollisionWorld.LAYER_TERRAIN | CollisionWorld.LAYER_ENEMY),
+			and proxy.collision_mask == CollisionWorld.LAYER_TERRAIN,
 			"the default proxy exposes a team hitbox across the map seam")
 	for i in 2:
 		rollback._step()
@@ -409,7 +409,7 @@ func _world_replication(tree: SceneTree) -> void:
 	client._install_world(frame)
 	rollback.reconcile(frame, 0)
 	expect(not physics.ray_hit(Vector2(512, 400), Vector2(512, 650), mask).is_empty()
-			and proxy.collision_mask == (CollisionWorld.LAYER_TERRAIN | CollisionWorld.LAYER_ENEMY),
+			and proxy.collision_mask == CollisionWorld.LAYER_TERRAIN,
 			"restoring a hitbox after the due tick preserves the no-blocking movement mask")
 	rollback._step()
 	frame = _saved_frame(rollback, 111)

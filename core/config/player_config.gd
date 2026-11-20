@@ -78,7 +78,7 @@ extends Resource
 
 @export_group("攀爬 / 弹跳")
 ## 攀爬基础速度与上下倍率(siri 模型)。
-@export_range(0.0, 3000.0, 1.0) var climb_speed: float = 300.0
+@export_range(0.0, 3000.0, 1.0) var climb_speed: float = 375.0
 @export_range(0.0, 5.0, 0.01) var climb_vertical_mult: float = 1.2
 ## 脚下攀爬检测偏移(px)与攀爬时后坐力倍率。
 @export_range(0.0, 200.0, 1.0) var climb_foot_offset: float = 57.0

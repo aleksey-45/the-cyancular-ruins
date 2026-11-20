@@ -68,7 +68,7 @@ func _init(match_sim: CombatSimulator, player_role: int) -> void:
 	role = player_role
 	var shape := CollisionWorld.rectangle(CFG.standing_hull.size)
 	super(match_sim, Vector2.ZERO, CFG.body_scale, shape, CollisionWorld.LAYER_TEAM_A,
-			CollisionWorld.LAYER_TERRAIN | CollisionWorld.LAYER_ENEMY)
+			CollisionWorld.LAYER_TERRAIN)
 	weapons.feedback.connect(_weapon_feedback)
 	for slot in range(1, COLLISION_SLOTS):
 		PhysicsServer2D.body_add_shape(rid, shape, Transform2D.IDENTITY, true)
@@ -80,7 +80,7 @@ func _weapon_feedback(kind: String) -> void:
 func set_team_collision(side: int, player_collision: bool) -> void:
 	team = side
 	collision_layer = CollisionWorld.team_layer(team)
-	collision_mask = CollisionWorld.LAYER_TERRAIN | CollisionWorld.LAYER_ENEMY
+	collision_mask = CollisionWorld.LAYER_TERRAIN
 	if player_collision:
 		collision_mask |= CollisionWorld.team_layer(3 - team)
 

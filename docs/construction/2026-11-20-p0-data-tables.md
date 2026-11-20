@@ -126,12 +126,12 @@ siri 的近似表达：
 | 地面武器 | layer 8 / mask 9（地形+掉落物） | 无物理 body（`GroundWeaponField` 数据） | 不需要层 |
 | 敌人接触 | Area2D layer 0 / mask 2 | `CollisionWorld.circle/rect` 查队伍层 | 用队伍层查询 |
 
-**关键行为差异**（必须在 P1 决定，不能默认 siri 现状）：
+**关键行为差异（已裁决：按 main）**：
 
-1. **玩家是否被敌人挡住**：main 否（layer2/mask1），siri 是（mask 含 enemy）；
-2. **敌人是否被玩家挡住**：main 否（mask5 不含玩家），siri 是（mask 含 A/B）。
+1. **玩家是否被敌人挡住**：main 否（layer2/mask1），siri 原来是（mask 含 enemy）——已改为只撞地形；
+2. **敌人是否被玩家挡住**：main 否（mask5 不含玩家），siri 原来是（mask 含 A/B）——已改为只撞地形/敌人。
 
-main 的设计是“接触伤害与物理互挡解耦”（`world.md` 已写），siri 现在是“物理互挡”。迁移时应按 main 语义改 siri 的 mask，并用 `simulation_case` 锁住“玩家穿过敌人但会受接触伤害”。
+接触伤害仍由 `touches_player()` 的矩形查询结算（已改为查询 A/B 两个队伍层）；「玩家碰撞」选项只影响玩家之间。`simulation_case` / `prediction_case` 的 mask 断言已同步。
 
 ## 5. P0 结论与下一步
 
@@ -139,8 +139,8 @@ main 的设计是“接触伤害与物理互挡解耦”（`world.md` 已写）�
 
 **待办（按依赖）**：
 
-1. 拍板：**玩家/敌人是否互相物理阻挡**——建议按 main（不阻挡，只做接触伤害）；
-2. P1：搬 `PlayerConfig` / `WorldConfig` 的 `.tres` + 转发层；按语义映射相机/攀爬/squash；
+1. ~~拍板：玩家/敌人是否互相物理阻挡~~——已按 main 落地（不阻挡，只做接触伤害）；
+2. P1：`PlayerConfig.tres` 已落地（无转发层，直接 `const CFG`）；`WorldConfig` 待搬；相机已按 main 映射；squash 丢弃；攀爬保留 siri 模型、基础速度 375（梯子≈720、铁链≈900）；
 3. P2：把 main 的 8 场景数值写入 `data/weapons/*.tres`（弓/M249 差异 + 缺失字段）；
 4. P2：补 siri `WeaponDef`/`GunBody` 的缺失字段（`jump_penalty`、`pitch_clamp_deg`、`laser_color/length`、`charge_arrow_pull`）；
 5. P1/P2 各加一条 `simulation_case` 覆盖上述行为差异。
