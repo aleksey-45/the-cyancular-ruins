@@ -35,6 +35,7 @@ func mount(world: WorldView, grid: Array[Array], descriptors: PackedInt32Array,
 	_silhouette.install(grid, descriptors,
 			Vector2(silhouette_viewport.size) / (2.0 * camera.zoom) + Vector2.ONE * CFG.cam_seam_margin)
 	_silhouette.modulate = Color.BLACK
+	_screen.set_terrain_mask_image(_terrain_mask(grid), (grid[0] as Array).size(), grid.size())
 	var size := Vector2(grid[0].size(), grid.size()) * TerrainView.CELL
 	_world.bind($WorldViewport/Canvas, size)
 	pause.mount(mode != MatchFrame.Mode.SOLO)
@@ -110,3 +111,19 @@ func _present_clock(clock: MatchFrame.Clock, now: float, delta: float) -> Shader
 func _exit_tree() -> void:
 	if _mode == MatchFrame.Mode.SOLO:
 		Sfx.pitch_mult = 1.0
+
+
+## 地形光照掩码:1 像素 = 1 格;R=实心,G=材质类/255,A=1。与 main 的 mask 格式一致。
+func _terrain_mask(grid: Array[Array]) -> Image:
+	var rows := grid.size()
+	var cols: int = (grid[0] as Array).size()
+	var img := Image.create(cols, rows, false, Image.FORMAT_RGBA8)
+	for y in rows:
+		for x in cols:
+			var value: int = grid[y][x]
+			var tex := Terrain.texture(value)
+			if tex != 0:
+				img.set_pixel(x, y, Color(1.0, float(TileDefs.type_id_of(tex)) / 255.0, 0.0, 1.0))
+			else:
+				img.set_pixel(x, y, Color(0.0, 0.0, 0.0, 1.0))
+	return img
