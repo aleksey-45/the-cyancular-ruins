@@ -41,6 +41,11 @@ func bind(canvas: WorldCanvas, size: Vector2) -> void:
 	_canvas = canvas
 	_size = size
 
+
+## 发光通道节点:交给 PostProcess 挂到 GlowViewport。
+func glow_pass() -> CanvasItem:
+	return _canvas.glow_pass()
+
 func reset() -> void:
 	for buffer in [_motions, _poses, _fire, _trails, _trail_deadlines, _paths, _next_paths, _hits, _remote_hits] + _effects:
 		buffer.clear()

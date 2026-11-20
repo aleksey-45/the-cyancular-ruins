@@ -460,6 +460,15 @@ func glow_root() -> Node:
 	return _glow_vp
 
 
+## 把 WorldCanvas 的加色 sprite pass 挪进发光视口;相机同步在 _sync_glow_camera 里。
+func attach_glow(node: CanvasItem) -> void:
+	if _glow_vp == null or node == null:
+		return
+	if node.get_parent() == _glow_vp:
+		return
+	node.reparent(_glow_vp)
+
+
 ## UI 辅助层挂载点:换弹读条 / 预瞄线加进这里,不吃 ambient 也不吃影子。没有通道时返回 null。
 func ui_root() -> Node:
 	return _ui_vp

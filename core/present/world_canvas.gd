@@ -43,6 +43,11 @@ func _add_sprite_pass(style: Material) -> void:
 	pass_node.draw.connect(_draw_sprites.bind(pass_node, rows))
 	_sprite_passes.append(pass_node)
 
+
+## 发光 sprite pass(加色混合);由 MatchView 挪进 GlowViewport。
+func glow_pass() -> CanvasItem:
+	return _sprite_passes[Pass.GLOW]
+
 func begin() -> void:
 	for rows: Array in _sprites:
 		rows.clear()

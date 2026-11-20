@@ -38,6 +38,7 @@ func mount(world: WorldView, grid: Array[Array], descriptors: PackedInt32Array,
 	_screen.set_terrain_mask_image(_terrain_mask(grid), (grid[0] as Array).size(), grid.size())
 	var size := Vector2(grid[0].size(), grid.size()) * TerrainView.CELL
 	_world.bind($WorldViewport/Canvas, size)
+	_screen.attach_glow(_world.glow_pass())
 	pause.mount(mode != MatchFrame.Mode.SOLO)
 	if mode != MatchFrame.Mode.SOLO:
 		pvp_hud = PvpHud.new()
