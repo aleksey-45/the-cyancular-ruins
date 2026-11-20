@@ -14,12 +14,14 @@ var _overlay_marks: Array[Array] = []
 var _labels := [[], []]
 var _sprite_passes: Array[CanvasItem] = [self]
 var _normal := Node2D.new()
+var _form_mat: ShaderMaterial
 var _names := Node2D.new()
 var _overlay := Node2D.new()
 
 func _ready() -> void:
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
-	var form := FormLight.material()
+	var form := FormLight.attach()
+	_form_mat = form
 	_normal.material = form
 	_normal.z_index = -1
 	add_child(_normal)
@@ -37,6 +39,12 @@ func _ready() -> void:
 	_overlay.z_index = 100
 	add_child(_overlay)
 	_overlay.draw.connect(_draw_overlay)
+
+
+func _exit_tree() -> void:
+	_normal.material = null
+	FormLight.detach(_form_mat)
+	_form_mat = null
 
 static func _shader_material(shader: Shader) -> ShaderMaterial:
 	var result := ShaderMaterial.new()
