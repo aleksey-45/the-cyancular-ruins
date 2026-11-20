@@ -97,8 +97,8 @@ Godot 官方把 `Resource` 定义为 **data containers**，并明确自定义 Re
 
 武器数值属于**游戏内容/配置**，不是用户存档 ⇒ 按官方建议用**自定义 Resource**，而不是 JSON 或散落在场景里的导出属性：
 
-- `WeaponDef extends Resource`：`@export` 全部数值（伤害/弹速/散布/后坐/蓄力/弹夹/换弹/移动倍率/拾取边界/音效），子资源 `CombatProfile` 复用弹道参数；
-- 每个武器一个 `.tres`，再加一个 `WeaponCatalog.tres`（`Array[WeaponDef]`）作为唯一目录；
+- `WeaponDef extends Resource`：`@export var weapon_id` + `@export var data: Dictionary`。**没有拆成 40 个 typed 字段**，原因：现有定义里 `charge_time`/`arc_time`/`bounces`/`guide_color`/`speed` 等是**可选键**，拆字段会强行补默认值，改变 `definition().has()` 与 `.get()` 的语义；先保住键的存在性，字段化可后续再做；
+- 每个武器一个 `.tres`（8 个），再加一个 `WeaponCatalog.tres`（`Array[WeaponDef]`）作为唯一目录；
 - `WeaponRegistry` 退化为**加载器 + 校验器**：启动时校验 8 个 id 齐全、字段范围合法，不再内置数值；
 - 导出时引擎会把 `.tres` 序列化成 `.res`（官方行为）；运行时**只读**——Resource 默认共享，若要每实例可变状态必须 `duplicate()`；
 - `.tres` 文本可 diff/合并，适合版本控制；JSON 只保留给用户设置/存档（如 `settings.cfg`）。
@@ -114,7 +114,7 @@ Godot 官方把 `Resource` 定义为 **data containers**，并明确自定义 Re
 - `.tres` 全仓只有 **6 个**：主题、字体、玩家帧图、3 个 `EnemyType`（视觉 + AI 脚本引用）；**没有任何武器/瓦片的 `.tres`**。
 - 结论：siri 是**“代码表 + JSON”驱动的表驱动实现**，不是 Resource 驱动；武器迁移只是**换存储介质**，表结构本身不用重做。
 
-**迁移时的兼容点**：`WeaponRegistry.definition(id)` 的 Dictionary 契约必须保留。推荐从 8 个 `WeaponDef.tres` 读出字段，在加载时组装成**只读 Dictionary**（沿用现有 `make_read_only()`），这样 `GunBody` / `CombatSimulator` / `WeaponInventory` 一行不用改；`DEFAULTS` 可以变成 `WeaponDef` 的字段默认值，或继续在加载时合并。
+**迁移时的兼容点（已落地）**：`WeaponRegistry.definition(id)` 的 Dictionary 契约保留；`_load_definitions()` 从 catalog 读出 `WeaponDef.data`，`duplicate(true)` 后 `make_read_only()`；`DEFAULTS` 只保留为**测试注入自定义武器**的模板（`simulation_case`/`prediction_case` 用），不再参与正式武器定义。
 
 1. **数值单一来源**：从 main 各 `.tscn` 的导出属性提取到 `WeaponDef.tres`（8 个）+ `WeaponCatalog.tres`；删除 main 的 `data/weapons.json` 作为真相源（它现在只有 id/name/scene/tier）。
 2. **行为映射**：
