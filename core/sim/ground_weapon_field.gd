@@ -1,6 +1,8 @@
 class_name GroundWeaponField
 extends RefCounted
 
+const CFG: PlayerConfig = preload("res://core/config/player_config.tres")
+
 var items: Dictionary[int, WeaponPickup] = {}
 var tick := 0
 var _next_id := 1
@@ -14,7 +16,7 @@ func spawn(type: int, carried: int, pos: Vector2, vel: Vector2, owner := 0) -> W
 	_next_id += 1
 	if owner != 0:
 		item.locked_role = owner
-		item.unlock_tick = tick + ceili(PlayerParams.weapon_pickup_self_delay / ActorStep.DT)
+		item.unlock_tick = tick + ceili(CFG.weapon_pickup_self_delay / ActorStep.DT)
 	items[item.inst] = item
 	return item
 
@@ -35,7 +37,7 @@ func clear() -> void:
 	items.clear()
 
 static func available(player: Player, type: int, owner: int, unlock: int, now: int, distance_sq: float) -> bool:
-	return distance_sq <= PlayerParams.weapon_pickup_radius ** 2 and (owner != player.role or now >= unlock) \
+	return distance_sq <= CFG.weapon_pickup_radius ** 2 and (owner != player.role or now >= unlock) \
 			and player.weapons.is_type_enabled(type)
 
 func nearest(player: Player) -> WeaponPickup:
@@ -71,8 +73,8 @@ func handle_actions(player: Player, record: Array) -> void:
 func _drop(player: Player, item: Dictionary) -> void:
 	if not item.is_empty():
 		spawn(item["type"], item["carried"],
-				player.position + PlayerParams.weapon_drop_offset * Vector2(player.facing_direction, 1),
-				Vector2(PlayerParams.weapon_drop_speed * player.facing_direction, -PlayerParams.weapon_drop_up), player.role)
+				player.position + CFG.weapon_drop_offset * Vector2(player.facing_direction, 1),
+				Vector2(CFG.weapon_drop_speed * player.facing_direction, -CFG.weapon_drop_up), player.role)
 
 func scatter(floors: Array[Vector2i], types: Array[int]) -> void:
 	var cells := GridPathfinder.spread_cells(floors, types.size() * 2, 10, _terrain.columns, _terrain.rows)

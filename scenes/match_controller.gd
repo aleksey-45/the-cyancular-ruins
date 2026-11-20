@@ -1,6 +1,8 @@
 class_name MatchController
 extends Node2D
 
+const CFG: PlayerConfig = preload("res://core/config/player_config.tres")
+
 const Mode := MatchFrame.Mode
 
 var player: Player
@@ -59,7 +61,7 @@ func _aim_direction() -> Vector2:
 	var window := get_window()
 	var offset := window.get_mouse_position() - window.get_visible_rect().size * 0.5
 	return LocalInputSource.aim_direction(player.position, player.facing_direction, terrain.map_size,
-			_camera.base_position, PlayerParams.cam_zoom, offset)
+			_camera.base_position, CFG.cam_zoom, offset)
 
 func _input_record(record: Array, delta: float) -> Array:
 	return controls.complete(player, record, delta, _aim_direction())

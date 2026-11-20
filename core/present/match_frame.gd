@@ -1,13 +1,15 @@
 class_name MatchFrame
 extends RefCounted
 
+const CFG: PlayerConfig = preload("res://core/config/player_config.tres")
+
 enum Mode { SOLO, DUEL, TEAM, ROYALE }
 
 class Pose:
 	var id: int
 	var remote: bool
 	var anchor: Vector2
-	var scale := Vector2.ONE * PlayerParams.body_scale
+	var scale := Vector2.ONE * CFG.body_scale
 	# 有 SpriteFrames 时，WorldView 使用该敌人类型的动画资源。未设置时使用玩家的共享动画。
 	var frames: SpriteFrames
 	var state: int

@@ -1,6 +1,8 @@
 class_name WeaponPickup
 extends RectBody
 
+const CFG: PlayerConfig = preload("res://core/config/player_config.tres")
+
 enum Network { POS, VEL, TYPE, LOCKED_ROLE, UNLOCK_TICK }
 const LAYER := 8
 const MASK := CollisionWorld.LAYER_TERRAIN | LAYER
@@ -36,8 +38,8 @@ func settle_on_spawn_floor() -> void:
 
 func simulate_tick(delta: float) -> void:
 	if not _settled:
-		velocity.y += PlayerParams.weapon_fall_gravity * delta
-		var drag := PlayerParams.weapon_ground_friction if _grounded else PlayerParams.weapon_air_drag
+		velocity.y += CFG.weapon_fall_gravity * delta
+		var drag := CFG.weapon_ground_friction if _grounded else CFG.weapon_air_drag
 		velocity.x *= exp(-drag * delta)
 		_grounded = false
 		for axis in 2:
@@ -49,7 +51,7 @@ func simulate_tick(delta: float) -> void:
 				velocity[axis] = 0.0
 			if travel.y > 0.0:
 				_grounded = _motion.get_collision_normal().y < -0.5
-		if _grounded and absf(velocity.x) < PlayerParams.weapon_stop_eps:
+		if _grounded and absf(velocity.x) < CFG.weapon_stop_eps:
 			velocity = Vector2.ZERO
 			_settled = true
 	# 地形或其他掉落物可能占据这块空间。找到空位后再移动物理体。

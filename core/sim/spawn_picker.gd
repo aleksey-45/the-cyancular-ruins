@@ -1,6 +1,8 @@
 class_name SpawnPicker
 extends RefCounted
 
+const CFG: PlayerConfig = preload("res://core/config/player_config.tres")
+
 const NO_CELL := Vector2i(-1, -1)
 const SUPPORT_ROWS := 2
 const PREFERRED_DISTANCE := 8  # 瓦片
@@ -93,9 +95,9 @@ static func spawn_cell_problem(descriptors: PackedInt32Array, dims: Vector2i, ce
 
 static func _standing_subrect(cell: Vector2i) -> Rect2:
 	var center := (Vector2(cell) + Vector2(0.5, 0.5)) * Terrain.TILE_SIZE
-	var hull := PlayerParams.standing_hull
-	return Rect2((center + hull.position * PlayerParams.body_scale) / Terrain.SUB_SIZE,
-			hull.size * PlayerParams.body_scale / Terrain.SUB_SIZE)
+	var hull := CFG.standing_hull
+	return Rect2((center + hull.position * CFG.body_scale) / Terrain.SUB_SIZE,
+			hull.size * CFG.body_scale / Terrain.SUB_SIZE)
 
 static func _wall_at(descriptors: PackedInt32Array, size: Vector2i, x: int, y: int) -> bool:
 	var index := posmod(y, size.y) * size.x + posmod(x, size.x)

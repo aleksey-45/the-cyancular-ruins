@@ -1,6 +1,8 @@
 class_name MatchView
 extends Node
 
+const CFG: PlayerConfig = preload("res://core/config/player_config.tres")
+
 const TIME_REWIND := Color(0.86, 0.90, 0.95, 0.55)
 const TIME_HASTE := Color8(168, 96, 216)
 const FILM := preload("res://core/present/time_film.gdshader")
@@ -25,9 +27,9 @@ func mount(world: WorldView, grid: Array[Array], descriptors: PackedInt32Array,
 	_mode = mode
 	_world = world
 	RenderingServer.set_default_clear_color(TerrainAtlas.SKY_COLOR)
-	camera.zoom = Vector2.ONE * PlayerParams.cam_zoom
+	camera.zoom = Vector2.ONE * CFG.cam_zoom
 	var viewport: SubViewport = $WorldViewport
-	terrain_view.install(grid, descriptors, Vector2(viewport.size) / (2.0 * camera.zoom) + Vector2.ONE * PlayerParams.cam_seam_margin)
+	terrain_view.install(grid, descriptors, Vector2(viewport.size) / (2.0 * camera.zoom) + Vector2.ONE * CFG.cam_seam_margin)
 	var size := Vector2(grid[0].size(), grid.size()) * TerrainView.CELL
 	_world.bind($WorldViewport/Canvas, size)
 	pause.mount(mode != MatchFrame.Mode.SOLO)
