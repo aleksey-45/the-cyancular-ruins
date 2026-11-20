@@ -13,11 +13,19 @@ var _lines: Array[Array] = []
 var _overlay_marks: Array[Array] = []
 var _labels := [[], []]
 var _sprite_passes: Array[CanvasItem] = [self]
+var _normal := Node2D.new()
 var _names := Node2D.new()
 var _overlay := Node2D.new()
 
 func _ready() -> void:
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	var form := FormLight.material()
+	_normal.material = form
+	_normal.z_index = -1
+	add_child(_normal)
+	_normal.draw.connect(_draw_sprites.bind(_normal, _sprites[Pass.NORMAL]))
+	if form == null:
+		_normal.visible = false
 	var glow := CanvasItemMaterial.new()
 	glow.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
 	_add_sprite_pass(_shader_material(PLAYER_HUE))
@@ -60,6 +68,7 @@ func begin() -> void:
 func submit() -> void:
 	for pass_node in _sprite_passes:
 		pass_node.queue_redraw()
+	_normal.queue_redraw()
 	_names.queue_redraw()
 	_overlay.queue_redraw()
 
@@ -95,7 +104,8 @@ static func centered_baseline() -> float:
 func _draw() -> void:
 	for row in _lines:
 		draw_polyline(row[0], row[1], row[2], true)
-	_draw_sprites(self, _sprites[Pass.NORMAL])
+	if not _normal.visible:
+		_draw_sprites(self, _sprites[Pass.NORMAL])
 	_draw_marks(self, _marks)
 
 func _draw_overlay() -> void:
