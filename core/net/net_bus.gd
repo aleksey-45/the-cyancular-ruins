@@ -55,9 +55,16 @@ func start_server(port: int = DEFAULT_PORT) -> Error:
 func connect_local(port: int, timeout_ms: int, alive := Callable()) -> Error:
 	if can_send_to_server() and server_port == port:
 		return OK
+	return await _connect_to("127.0.0.1", port, timeout_ms, alive)
+
+# 连接到任意地址的服务器（LAN 直连）。等待、取消与超时语义和 connect_local 相同。
+func connect_remote(ip: String, port: int, timeout_ms: int, alive := Callable()) -> Error:
+	return await _connect_to(ip, port, timeout_ms, alive)
+
+func _connect_to(ip: String, port: int, timeout_ms: int, alive: Callable) -> Error:
 	stop()
 	server_port = port
-	var error := _transport.connect_to("127.0.0.1", port) as Error
+	var error := _transport.connect_to(ip, port) as Error
 	if error != OK:
 		return error
 	_active = true

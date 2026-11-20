@@ -163,14 +163,39 @@ func create_room(data: Dictionary) -> String:
 		return "创建房间失败，请检查日志"
 	return room_error(await _room_request(NetEvent.Kind.CREATE, data, port))
 
-func join_room(code: String) -> String:
+func join_room(code: String, endpoint: Dictionary = {}) -> String:
+	var payload := {"code": code, "beta": PvpSession.beta_mode}
+	var direct := _lan_endpoint(endpoint)
+	if not direct.is_empty():
+		var error := await _room_request(NetEvent.Kind.JOIN, payload, direct["port"], 8000, direct["ip"])
+		# 直连失败才回退隧道；连接已被新的请求取代时不再另起隧道。
+		if error == OK or error == ERR_SKIP:
+			return room_error(error)
 	var port := _lobby_port() if Tunnel.on_network(code) and NetBus.can_send_to_server() else 0
 	if port <= 0:
 		var route := await Tunnel.start_client(code)
 		if route.is_empty() or route.has("error"):
 			return route.get("error", "")
 		port = route["port"]
-	return room_error(await _room_request(NetEvent.Kind.JOIN, {"code": code, "beta": PvpSession.beta_mode}, port))
+	return room_error(await _room_request(NetEvent.Kind.JOIN, payload, port))
+
+## 局域网直连端点：需要非空地址和 1024–65535 的游戏端口，否则按空字典处理，回退原房码/隧道路径。
+func _lan_endpoint(endpoint: Dictionary) -> Dictionary:
+	if endpoint.is_empty():
+		return {}
+	var ip_value: Variant = endpoint.get("ip", "")
+	if not (ip_value is String or ip_value is StringName):
+		return {}
+	var ip := str(ip_value).strip_edges()
+	if ip.is_empty():
+		return {}
+	var port_value: Variant = endpoint.get("port", 0)
+	if not (port_value is int or port_value is float):
+		return {}
+	var port := int(port_value)
+	if port < 1024 or port > 65535:
+		return {}
+	return {"ip": ip, "port": port}
 
 func rejoin_room(retry := false) -> Error:
 	var data := PvpSession.rejoin_payload()
@@ -208,9 +233,14 @@ func room_error(error: Error) -> String:
 		_: return "启动连接失败（%d）" % error
 
 # 只等待当前连接的预期回复。房间关闭通知也会结束此次等待。
-func _room_request(kind: int, data: Variant, port: int, timeout_ms := 8000) -> Error:
+# host 为 127.0.0.1 时走本机连接，其余地址走 LAN 直连。
+func _room_request(kind: int, data: Variant, port: int, timeout_ms := 8000, host := "127.0.0.1") -> Error:
 	var deadline := Time.get_ticks_msec() + timeout_ms
-	var error := await NetBus.connect_local(port, timeout_ms)
+	var error: Error
+	if host == "127.0.0.1":
+		error = await NetBus.connect_local(port, timeout_ms)
+	else:
+		error = await NetBus.connect_remote(host, port, timeout_ms)
 	if error != OK:
 		return error
 	var connection := NetBus.connection_generation
