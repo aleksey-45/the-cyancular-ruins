@@ -21,6 +21,7 @@ var _prefs: Dictionary
 var _mode := PvpSession.MODE_PVP
 var _buttons := {}
 var _collision := CheckButton.new()
+var _lan_public := CheckButton.new()
 var _full_heal := CheckButton.new()
 var _limits: BoxContainer
 var _duration: BoxContainer
@@ -56,6 +57,10 @@ func _ready() -> void:
 	_collision.text = "玩家碰撞"
 	_collision.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	options.add_child(_collision)
+	_lan_public.text = "对局域网展示房间卡片"
+	_lan_public.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	_lan_public.set_pressed_no_signal(true)
+	options.add_child(_lan_public)
 
 	_limits = UiFactory.box(options, 16, false)
 	_max_players = _slider(_limits, "人数上限:", RoomOptions.ROYALE_PLAYERS, 4.0, " 人")
@@ -92,6 +97,7 @@ func _ready() -> void:
 
 func open(mode: String) -> void:
 	_collision.set_pressed_no_signal(false)
+	_lan_public.set_pressed_no_signal(true)
 	_choose_mode(mode)
 	show()
 
@@ -106,7 +112,8 @@ func _choose_mode(mode: String) -> void:
 		_buttons[key].disabled = key == mode
 
 func _submit() -> void:
-	var options := {"map": _map.selected, "player_collision": _collision.button_pressed}
+	var options := {"map": _map.selected, "player_collision": _collision.button_pressed,
+			"lan_public": _lan_public.button_pressed}
 	var selected := {"disabled_weapons": _weapons.disabled_weapons(), "max_players": int(_max_players.value),
 		"match_time": int(_match_time.value) * 60, "round_full_heal": _full_heal.button_pressed}
 	for key in RoomOptions.MODE_FIELDS.get(_mode, []):
