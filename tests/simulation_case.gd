@@ -437,7 +437,7 @@ func _compound_bow(tree: SceneTree) -> void:
 	submit(actor, release)
 	var arrow: BulletBody = sim.projectiles.values()[0]
 	var id := arrow.entity_id
-	expect(arrow.hit_damage == 27 and is_equal_approx(arrow.velocity.length(), 1250.0),
+	expect(arrow.hit_damage == 29 and is_equal_approx(arrow.velocity.length(), 2040.0),
 			"the released arrow takes its speed and damage from the draw")
 	var spread := deg_to_rad(bow.definition["spread"])
 	var max_spread_offset := 2.0 * arrow.velocity.length() * ActorStep.DT * sin(spread * 0.5)
@@ -452,10 +452,10 @@ func _compound_bow(tree: SceneTree) -> void:
 	sim.erase_projectile(id)
 	rewind.record(dt)
 	rewind.rewind(1.0)
-	expect(sim.projectiles[id].hit_damage == 27, "rewinding restores the damage of an expired arrow")
+	expect(sim.projectiles[id].hit_damage == 29, "rewinding restores the damage of an expired arrow")
 	rewind.record(0.0)
 	actor.restore_state(drawn, true)
-	expect(is_equal_approx((actor.equipped as GunBody).charge_ratio(), 0.75),
+	expect(is_equal_approx((actor.equipped as GunBody).charge_ratio(), 0.8),
 			"single-player rewind restores a partially drawn bow")
 	for tick in 20:
 		ActorStep.step(actor, hold)

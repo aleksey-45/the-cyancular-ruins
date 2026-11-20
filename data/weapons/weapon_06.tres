@@ -12,6 +12,7 @@ data = {
 "count": 1,
 "damage": 6,
 "gravity": 0.0,
+"guide_color": Color(0.1, 0.35, 1, 1),
 "hit_radius": 3.5,
 "impact": 350.0,
 "kick": 10.0,

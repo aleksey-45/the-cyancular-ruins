@@ -112,7 +112,7 @@ siri 的近似表达：
 
 其余 6 把在可映射字段上一致。**W5 榴弹的 `damage` 两边顶层都是 5**；`.tres` 里 `projectile` 子字典也有 `"damage": 35`，脚本比对时会被误读成顶层差异，迁移脚本必须只读顶层键。
 
-**建议**：P2 把 main 的 8 个场景数值写进 `data/weapons/*.tres`（含上面差异），并把“siri 缺的字段”补进 `WeaponDef.data` 与 `GunBody`；不要保留 main 的 `.tscn` 数值作为第二来源。
+**建议（已落地）**：P2 已把 main 的 8 个场景数值写进 `data/weapons/*.tres`（弓/M249 差异 + 缺失字段），并把 `catalog.tres` 改为**引用外部 `.tres`**（不再内嵌副本）。上面 13 个 main 字段的映射：`full_auto/heavy_aim/penalty_mode` → `trigger/penalty`；`move_penalty+jump_penalty` → `move`；`bullet_size` → `size`；`pitch_clamp_deg` → `pitch`（siri 的 `pitch` 就是仰角钳制）；`laser_color` → `guide_color`；`charge_arrow_pull` 已进数据（视觉 P4 用）；`laser_length/show_aim_laser/preview_arc/preview_time/bullet_color` 暂留 P4 表现层。
 
 ## 4. 碰撞层：不是数字对照，是语义对照
 
@@ -141,8 +141,8 @@ siri 的近似表达：
 
 1. ~~拍板：玩家/敌人是否互相物理阻挡~~——已按 main 落地（不阻挡，只做接触伤害）；
 2. P1：`PlayerConfig.tres` 已落地（无转发层，直接 `const CFG`）；`WorldConfig` 待搬；相机已按 main 映射；squash 丢弃；攀爬保留 siri 模型、基础速度 375（梯子≈720、铁链≈900）；
-3. P2：把 main 的 8 场景数值写入 `data/weapons/*.tres`（弓/M249 差异 + 缺失字段）；
-4. P2：补 siri `WeaponDef`/`GunBody` 的缺失字段（`jump_penalty`、`pitch_clamp_deg`、`laser_color/length`、`charge_arrow_pull`）；
-5. P1/P2 各加一条 `simulation_case` 覆盖上述行为差异。
+3. ~~P2：把 main 的 8 场景数值写入 `data/weapons/*.tres`（弓/M249 差异 + 缺失字段）~~——已落地（弓 speed 2400/mag 1/charge .75/min_speed 600/size 1.3；M249 kick 9/shake 6/shake_time .12；激光 guide_color 蓝）；
+4. P2 剩余：`charge_arrow_pull`/`laser_length`/`show_aim_laser`/`preview_arc`/`preview_time`/`bullet_color` 的表现层（P4 视口/着色器一起做）；
+5. P1/P2 各加一条 `simulation_case` 覆盖上述行为差异（弓的伤害/速度断言已按新数值更新）。
 
 > 本文是数据盘点，不是实现；P1/P2 开工前先把“玩家/敌人阻挡”这一条裁决掉。
