@@ -1,6 +1,8 @@
 class_name Player
 extends ActorBody
 
+const WCFG: WorldConfig = preload("res://core/config/world_config.tres")
+
 const CFG: PlayerConfig = preload("res://core/config/player_config.tres")
 
 # 玩家在固定模拟帧内处理移动、武器与生命状态。
@@ -12,7 +14,7 @@ const FLY := 2
 const DASH := 3
 const SQUAT := 4
 
-var gravity := GameParameters.gravity0
+var gravity := WCFG.gravity0
 var coyote_timer := 0.0
 var jump_buffer_timer := 0.0
 var charge_timer := 0.0
@@ -297,13 +299,13 @@ func update_waterproof(delta: float, submerged: bool) -> void:
 		_waterproof_timer = 0.0
 	if submerged and waterproof == 0:
 		_waterproof_drown_timer += delta
-		if _waterproof_drown_timer >= GameParameters.water_drown_damage_interval:
+		if _waterproof_drown_timer >= WCFG.water_drown_damage_interval:
 			_waterproof_drown_timer = 0.0
 			combat_requests.append({"kind": "drown", "pos": position, "damage": CFG.player_waterproof_damage})
 		return
 	_waterproof_drown_timer = 0.0
 	_waterproof_timer += delta
-	if _waterproof_timer >= (GameParameters.water_drain_interval if submerged else GameParameters.water_recover_interval):
+	if _waterproof_timer >= (WCFG.water_drain_interval if submerged else WCFG.water_recover_interval):
 		_waterproof_timer = 0.0
 		waterproof = maxi(waterproof - 1, 0) if submerged else mini(waterproof + 1, max_waterproof)
 

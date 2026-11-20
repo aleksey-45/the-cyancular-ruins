@@ -1,6 +1,8 @@
 class_name TerrainView
 extends Node2D
 
+const WCFG: WorldConfig = preload("res://core/config/world_config.tres")
+
 const CELL := GameParameters.TILE_SIZE
 const SUBS := MapFormatV4.SUB_PER_CELL
 const SUB := CELL / SUBS
@@ -95,7 +97,7 @@ func _add_water(grid: Array[Array], water_rows: Dictionary) -> void:
 			var atlas := TerrainAtlas.atlas_coords(water_rows[tint], MapFormat.shape_of(value))
 			var bounds := Rect2(Vector2(cell), Vector2.ONE)
 			if surface:
-				bounds = bounds.grow_individual(0.0, GameParameters.water_sway_amp / CELL, 0.0, 0.0)
+				bounds = bounds.grow_individual(0.0, WCFG.water_sway_amp / CELL, 0.0, 0.0)
 			var copies := GridPathfinder.seam_copy_range(bounds, Vector2(_span), _margin / CELL)
 			for ty in range(copies.position.y, copies.end.y):
 				for tx in range(copies.position.x, copies.end.x):

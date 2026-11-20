@@ -27,7 +27,7 @@ Godot 根据 [project.godot](../project.godot) 的 `[autoload]` 配置，在加�
 
 | 节点 | 职责 |
 |---|---|
-| [GameParameters](../core/config/game_parameters.gd) | 提供重力、瓦片尺寸和水体参数 |
+| [GameParameters](../core/config/game_parameters.gd) | 提供瓦片尺寸等地图格式结构常量；重力与水体参数见 [WorldConfig](../core/config/world_config.gd) / [world_config.tres](../core/config/world_config.tres) |
 | [PerfMonitor](../core/config/perf_monitor.gd) | 根据命令行选项启用性能采样、发布统计和写入报告 |
 | [NetBus](../core/net/net_bus.gd) | 通过 GameNetworkingSockets 收发消息，分发输入、状态和事件 |
 | [NetSession](../core/net/net_session.gd) | 管理联机连接、断线重连和游戏启动的后台进程 |

@@ -1,6 +1,8 @@
 class_name WaterSurfaceBatch
 extends MeshInstance2D
 
+const WCFG: WorldConfig = preload("res://core/config/world_config.tres")
+
 const UV := [Vector2(0, 1), Vector2(1, 1), Vector2(1, 0), Vector2(0, 0)]
 const TRIANGLES := [0, 1, 2, 0, 2, 3]
 const SHADER_CODE := """
@@ -49,8 +51,8 @@ func setup(cells: Array, texture: Texture2D, tile_size: int) -> void:
 	var surface := ShaderMaterial.new()
 	surface.shader = shader
 	surface.set_shader_parameter("surface", texture)
-	surface.set_shader_parameter("speed", GameParameters.water_sway_speed)
-	surface.set_shader_parameter("amplitude", GameParameters.water_sway_amp)
+	surface.set_shader_parameter("speed", WCFG.water_sway_speed)
+	surface.set_shader_parameter("amplitude", WCFG.water_sway_amp)
 	material = surface
 
 func present(now: float) -> void:

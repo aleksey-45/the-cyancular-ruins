@@ -1,5 +1,7 @@
 extends "res://tests/case.gd"
 
+const WCFG: WorldConfig = preload("res://core/config/world_config.tres")
+
 const CFG: PlayerConfig = preload("res://core/config/player_config.tres")
 
 const NEUTRAL_INPUT := [0.0, 0, 0, 0, 0, Vector2.RIGHT]
@@ -237,10 +239,10 @@ func _water(tree: SceneTree) -> void:
 	# 固定角色脚下的水深以比较两种姿势。站立时能呼吸，蹲下后头部就会没入水中。
 	var head_at_surface := 299.0
 	actor.waterproof = 1
-	step_at.call(head_at_surface, GameParameters.water_drain_interval)
+	step_at.call(head_at_surface, WCFG.water_drain_interval)
 	expect(actor.in_water and actor.waterproof == 2, "a swimmer with their head out recovers oxygen")
 	actor.set_crouched(true)
-	step_at.call(head_at_surface, GameParameters.water_drain_interval)
+	step_at.call(head_at_surface, WCFG.water_drain_interval)
 	expect(actor.waterproof == 1, "the same position drains oxygen with the crouched hull")
 
 	var sim := parent.combat
@@ -250,15 +252,15 @@ func _water(tree: SceneTree) -> void:
 		hits.append([source, damage, knock_changed]))
 	var hp := actor.sim_hp
 	actor._controls_locked = true
-	submit(actor, step_at.call(384.0, GameParameters.water_drain_interval))
+	submit(actor, step_at.call(384.0, WCFG.water_drain_interval))
 	expect(actor.sim_hp == hp and actor.waterproof == 1, "locked rounds pause water survival")
 	actor._controls_locked = false
-	submit(actor, step_at.call(384.0, GameParameters.water_drain_interval))
-	submit(actor, step_at.call(384.0, GameParameters.water_drown_damage_interval - 0.1))
+	submit(actor, step_at.call(384.0, WCFG.water_drain_interval))
+	submit(actor, step_at.call(384.0, WCFG.water_drown_damage_interval - 0.1))
 	expect(actor.waterproof == 0 and actor.sim_hp == hp, "exhausted oxygen starts the drowning interval")
 	submit(actor, step_at.call(head_at_surface, 0.2))
 	expect(actor.sim_hp == hp and actor.waterproof == 0, "surfacing stops damage before oxygen recovers")
-	submit(actor, step_at.call(384.0, GameParameters.water_drown_damage_interval - 0.1))
+	submit(actor, step_at.call(384.0, WCFG.water_drown_damage_interval - 0.1))
 	expect(actor.sim_hp == hp, "submerging again starts a fresh drowning interval")
 	var before := actor.capture_state()
 	var actions: Array = step_at.call(384.0, 0.2)
@@ -1359,7 +1361,7 @@ func _step_up(tree: SceneTree) -> void:
 		cleanup()
 		var parent := _step_world(tree, height)
 		var mover := player(parent, 1)
-		mover.gravity = GameParameters.gravity0
+		mover.gravity = WCFG.gravity0
 		mover.collision_layer = 0
 		mover.collision_mask = CollisionWorld.LAYER_TERRAIN
 		mover.position = Vector2(400, 384 - 57)
@@ -1375,7 +1377,7 @@ func _step_up(tree: SceneTree) -> void:
 	cleanup()
 	var too_high := _step_world(tree, 80)
 	var blocked := player(too_high, 1)
-	blocked.gravity = GameParameters.gravity0
+	blocked.gravity = WCFG.gravity0
 	blocked.collision_layer = 0
 	blocked.collision_mask = CollisionWorld.LAYER_TERRAIN
 	blocked.position = Vector2(400, 384 - 57)
@@ -1387,7 +1389,7 @@ func _step_up(tree: SceneTree) -> void:
 	cleanup()
 	var low := _step_world(tree, 16, true)
 	var ceiling_mover := player(low, 1)
-	ceiling_mover.gravity = GameParameters.gravity0
+	ceiling_mover.gravity = WCFG.gravity0
 	ceiling_mover.collision_layer = 0
 	ceiling_mover.collision_mask = CollisionWorld.LAYER_TERRAIN
 	ceiling_mover.position = Vector2(400, 384 - 57)
@@ -1399,7 +1401,7 @@ func _step_up(tree: SceneTree) -> void:
 	cleanup()
 	var dynamic := _step_world(tree, 16)
 	var runner := player(dynamic, 1)
-	runner.gravity = GameParameters.gravity0
+	runner.gravity = WCFG.gravity0
 	runner.collision_layer = 0
 	runner.collision_mask = CollisionWorld.LAYER_TERRAIN | CollisionWorld.LAYER_TEAM_A
 	runner.position = Vector2(400, 384 - 57)

@@ -1,6 +1,8 @@
 class_name MatchController
 extends Node2D
 
+const WCFG: WorldConfig = preload("res://core/config/world_config.tres")
+
 const CFG: PlayerConfig = preload("res://core/config/player_config.tres")
 
 const Mode := MatchFrame.Mode
@@ -189,13 +191,13 @@ func _local_pose(haste: bool, rewind: bool) -> MatchFrame.Pose:
 	return pose
 
 func _splash(id: int, bounds: Rect2, velocity: Vector2) -> void:
-	if _frame.now < float(_splash_after.get(id, 0.0)) or velocity.length_squared() < GameParameters.water_fx_move_threshold ** 2:
+	if _frame.now < float(_splash_after.get(id, 0.0)) or velocity.length_squared() < WCFG.water_fx_move_threshold ** 2:
 		return
 	var feet := Water.feet(bounds)
 	var depth := terrain.water_depth(feet)
 	if depth == -INF:
 		return
-	var surface := depth <= GameParameters.water_fx_splash_band + bounds.size.y * 0.5
+	var surface := depth <= WCFG.water_fx_splash_band + bounds.size.y * 0.5
 	_world.splash(feet - Vector2(0, depth if surface else 0.0), surface, _frame.now)
-	_splash_after[id] = _frame.now + (GameParameters.water_fx_splash_interval if surface else GameParameters.water_fx_bubble_interval)
+	_splash_after[id] = _frame.now + (WCFG.water_fx_splash_interval if surface else WCFG.water_fx_bubble_interval)
 

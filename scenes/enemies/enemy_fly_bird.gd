@@ -296,7 +296,7 @@ func _fire_parabolic() -> void:
 # 算出的弹丸水平速度同时决定飞鸟的朝向。
 func _bullet_v0() -> float:
 	var drop := maxf(player.position.y - position.y, EnemyParams.FlyBird.bullet_min_drop)
-	var t := sqrt(2.0 * drop / GameParameters.gravity0)
+	var t := sqrt(2.0 * drop / WCFG.gravity0)
 	var pred := player.position + player.velocity * t
 	var dx := GridPathfinder.toroidal_delta_px(position, pred, terrain.map_size).x
 	return clampf(absf(dx) / t, EnemyParams.FlyBird.bullet_min_speed,

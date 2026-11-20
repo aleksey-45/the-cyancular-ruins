@@ -10,7 +10,7 @@
 |---|---|---|
 | 玩家 | `core/config/player_config.tres` + `PlayerConfig`（123 行）；`PlayerParams` 只做转发 | `player_params.gd`：53 个 `const` |
 | 敌人 | `enemy_config.tres` + `EnemyConfig`（116 行） | `enemy_params.gd` 常量 + `data/enemies.json` |
-| 世界/水 | `world_config.tres` + `WorldConfig`（41 行，水体参数 11 项） | `Terrain` / `Water` 里的常量 |
+| 世界/水 | `world_config.tres` + `WorldConfig`（41 行，水体参数 11 项） | ~~`Terrain` / `Water` 里的常量~~ → 已迁到 `world_config.tres`（`Water` 的入水/出水阈值改为 `water_enter_depth/water_exit_depth`） |
 | 时间 | `time_config.tres` + `TimeConfig`（50 行） | `time_params.gd` / `time_rules.gd` |
 | 武器 | 场景导出属性（本次已迁到 siri 的 `data/weapons/*.tres`） | `data/weapons/*.tres`（本轮新建） |
 
@@ -140,7 +140,7 @@ siri 的近似表达：
 **待办（按依赖）**：
 
 1. ~~拍板：玩家/敌人是否互相物理阻挡~~——已按 main 落地（不阻挡，只做接触伤害）；
-2. P1：`PlayerConfig.tres` 已落地（无转发层，直接 `const CFG`）；`WorldConfig` 待搬；相机已按 main 映射；squash 丢弃；攀爬保留 siri 模型、基础速度 375（梯子≈720、铁链≈900）；
+2. P1：`PlayerConfig.tres` 已落地（无转发层，直接 `const CFG`）；`WorldConfig.tres` 已落地（重力 + 11 项水体参数，`Water` 的入水/出水阈值改用 `water_enter_depth/water_exit_depth`）；相机已按 main 映射；squash 丢弃；攀爬保留 siri 模型、基础速度 375（梯子≈720、铁链≈900）；
 3. ~~P2：把 main 的 8 场景数值写入 `data/weapons/*.tres`（弓/M249 差异 + 缺失字段）~~——已落地（弓 speed 2400/mag 1/charge .75/min_speed 600/size 1.3；M249 kick 9/shake 6/shake_time .12；激光 guide_color 蓝）；
 4. P2 剩余：`charge_arrow_pull`/`laser_length`/`show_aim_laser`/`preview_arc`/`preview_time`/`bullet_color` 的表现层（P4 视口/着色器一起做）；
 5. P1/P2 各加一条 `simulation_case` 覆盖上述行为差异（弓的伤害/速度断言已按新数值更新）。
