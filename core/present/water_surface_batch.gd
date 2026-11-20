@@ -7,17 +7,31 @@ const UV := [Vector2(0, 1), Vector2(1, 1), Vector2(1, 0), Vector2(0, 0)]
 const TRIANGLES := [0, 1, 2, 0, 2, 3]
 const SHADER_CODE := """
 shader_type canvas_item;
-uniform sampler2D surface;
+
+// 对齐 main:所有液体格共用一条带状纹理流水线,使用世界坐标锚定横向条纹。
+varying vec2 v_world;
+
+uniform sampler2D surf : filter_nearest;
 uniform float elapsed;
-uniform float speed;
-uniform float amplitude;
+uniform float sway_speed = 1.6;
+uniform float sway_amp = 2.0;
 
 void vertex() {
-	VERTEX.y += sin(elapsed * speed + COLOR.r * 6.2831853) * amplitude * COLOR.g;
+	float w = COLOR.g;
+	float lift = sin(elapsed * sway_speed + COLOR.r * 6.2831853) * (sway_amp * w);
+	VERTEX.y += lift;
+	v_world = VERTEX;
 }
 
 void fragment() {
-	COLOR = texture(surface, UV);
+	vec4 t = texture(surf, UV);
+	float band = floor(v_world.y / 16.0);
+	float s1 = sin(v_world.x * 0.020 + elapsed * 1.10 + band * 0.7);
+	float s2 = sin(v_world.x * 0.035 - elapsed * 1.70 + band * 1.3);
+	float st = clamp(0.5 + 0.25 * s1 + 0.25 * s2, 0.0, 1.0);
+	st = floor(st * 3.0 + 0.5) / 3.0;
+	t.rgb *= mix(0.95, 1.0, st);
+	COLOR = t;
 }
 """
 
@@ -50,9 +64,9 @@ func setup(cells: Array, texture: Texture2D, tile_size: int) -> void:
 	shader.code = SHADER_CODE
 	var surface := ShaderMaterial.new()
 	surface.shader = shader
-	surface.set_shader_parameter("surface", texture)
-	surface.set_shader_parameter("speed", WCFG.water_sway_speed)
-	surface.set_shader_parameter("amplitude", WCFG.water_sway_amp)
+	surface.set_shader_parameter("surf", texture)
+	surface.set_shader_parameter("sway_speed", WCFG.water_sway_speed)
+	surface.set_shader_parameter("sway_amp", WCFG.water_sway_amp)
 	material = surface
 
 func present(now: float) -> void:

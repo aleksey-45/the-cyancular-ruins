@@ -98,8 +98,10 @@ func present(frame: MatchFrame, grain_target := Vector2.ZERO) -> void:
 		_actor(pose, frame)
 		if i == 0 and not frame.aim_guide.is_empty():
 			var weapon := WeaponRegistry.definition(pose.weapon)
-			_guide(frame.aim_guide, weapon.get("guide_color", Color(1, 0.2, 0.2, 0.6)),
-					not weapon["projectile"]["blast"].is_empty())
+			# main:没有 preview_arc 的枪只画直线激光;有 preview_arc 的才同时画弧。
+			if not (bool(weapon.get("show_aim_laser", false)) and not bool(weapon.get("preview_arc", false))):
+				_guide(frame.aim_guide, weapon.get("guide_color", Color(1, 0.2, 0.2, 0.6)),
+						not weapon["projectile"]["blast"].is_empty())
 		if not pose.name.is_empty():
 			_nameplate(pose.anchor, pose.name, pose.name_color(frame.mode), pose.health)
 	for row in frame.pickups:
