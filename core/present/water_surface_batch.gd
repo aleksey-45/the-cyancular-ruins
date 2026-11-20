@@ -35,6 +35,8 @@ void fragment() {
 }
 """
 
+
+## cells: [格子底边中心, 相位, v0(0=水体行 / 0.5=水面行), 起伏权重]
 func setup(cells: Array, texture: Texture2D, tile_size: int) -> void:
 	var points := PackedVector3Array()
 	var uvs := PackedVector2Array()
@@ -43,11 +45,13 @@ func setup(cells: Array, texture: Texture2D, tile_size: int) -> void:
 	for cell: Array in cells:
 		var start := points.size()
 		var phase := fposmod(cell[1], TAU) / TAU
+		var v0: float = float(cell[2])
+		var weight: float = float(cell[3])
 		for corner: Vector2 in UV:
 			var at: Vector2 = cell[0] + (corner - Vector2(0.5, 1.0)) * tile_size
 			points.append(Vector3(at.x, at.y, 0))
-			uvs.append(corner)
-			colors.append(Color(phase, 1.0 - corner.y, 0.0))
+			uvs.append(Vector2(corner.x, v0 + corner.y * 0.5))
+			colors.append(Color(phase, 1.0 - corner.y if weight > 0.0 else 0.0, 0.0))
 		for index: int in TRIANGLES:
 			indices.append(start + index)
 	var geometry := []

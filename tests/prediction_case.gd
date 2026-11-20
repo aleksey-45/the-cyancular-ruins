@@ -601,7 +601,9 @@ func _aligned_step_replay(tree: SceneTree) -> void:
 		var rollback := PredictionRollback.new()
 		rollback.bind(local)
 		rollback.reset(NetCodec.new().decode_state(NetCodec.Reader.new(wire, 1)), 0)
-		for at in range(101, 105):
+		# 48px 现在是自动跳(需要多帧落地);80px 仍然是普通阻挡,4 帧就够。
+		var ticks := 40 if height == 48 else 4
+		for at in range(101, 101 + ticks):
 			authority.step()
 			rollback._step()
 			expect(local.capture_state() == runner.capture_state(),
@@ -609,10 +611,10 @@ func _aligned_step_replay(tree: SceneTree) -> void:
 		var rise := 326.999 - runner.position.y
 		expect(absf(rise - (48.0 if height == 48 else 0.0)) < 0.1 and runner._grounded,
 				"the %dpx aligned face obeys the step height limit" % height)
-		var endpoint := rollback._state_at(104).players
+		var endpoint := rollback._state_at(100 + ticks).players
 		rollback._request_replay(101)
-		expect(rollback.reconcile({}, 0) == PredictionRollback.Correction.KEEP and rollback.replay_ticks == 4
-				and rollback._state_at(104).players == endpoint, "aligned step replay reproduces the endpoint")
+		expect(rollback.reconcile({}, 0) == PredictionRollback.Correction.KEEP and rollback.replay_ticks == ticks
+				and rollback._state_at(100 + ticks).players == endpoint, "aligned step replay reproduces the endpoint")
 		cleanup()
 
 func _aligned_step_world(tree: SceneTree, height: int, reverse_order: bool) -> TestWorld:

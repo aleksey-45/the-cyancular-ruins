@@ -47,6 +47,13 @@ func present(elapsed: float, film: ShaderMaterial) -> void:
 	_wall.material = film
 	_water.material = film
 
+
+## 地形剪影通道只要墙;水体不参与遮挡,否则会把光照刷到水面上。
+func set_water_visible(v: bool) -> void:
+	_water.visible = v
+	for surface in _surfaces:
+		surface.visible = v
+
 func _paint_wall(index: int, alive: bool) -> void:
 	var row: int = _wall_rows.get(_descriptors[index], -1)
 	if row < 0:
@@ -94,7 +101,6 @@ func _add_water(grid: Array[Array], water_rows: Dictionary) -> void:
 			var cell := Vector2i(x, y)
 			var tint := _water_tint(cell, texture)
 			var surface := not TileDefs.is_liquid(MapFormat.texture_of(above[x]))
-			var atlas := TerrainAtlas.atlas_coords(water_rows[tint], MapFormat.shape_of(value))
 			var bounds := Rect2(Vector2(cell), Vector2.ONE)
 			if surface:
 				bounds = bounds.grow_individual(0.0, WCFG.water_sway_amp / CELL, 0.0, 0.0)
@@ -102,15 +108,17 @@ func _add_water(grid: Array[Array], water_rows: Dictionary) -> void:
 			for ty in range(copies.position.y, copies.end.y):
 				for tx in range(copies.position.x, copies.end.x):
 					var at := cell + Vector2i(tx, ty) * _span
-					if surface:
-						groups.get_or_add(tint, []).append([
-							(Vector2(at) + Vector2(0.5, 1.0)) * CELL, x * 1.7 + y * 2.3])
-					else:
-						_water.set_cell(at, 0, atlas)
+					groups.get_or_add(tint, []).append([
+						(Vector2(at) + Vector2(0.5, 1.0)) * CELL, x * 1.7 + y * 2.3,
+						0.5 if surface else 0.0, 1.0 if surface else 0.0])
 	for tint: int in groups:
 		var batch := WaterSurfaceBatch.new()
 		batch.z_index = 5
-		var image := TerrainAtlas.water_brick_image(CELL, TerrainAtlas.WATER_SURFACE_BRICK, tint)
-		batch.setup(groups[tint], ImageTexture.create_from_image(image), CELL)
+		var body := TerrainAtlas.water_brick_image(CELL, TerrainAtlas.WATER_BODY_BRICK, tint)
+		var surface := TerrainAtlas.water_brick_image(CELL, TerrainAtlas.WATER_SURFACE_BRICK, tint)
+		var combined := Image.create(CELL, CELL * 2, false, Image.FORMAT_RGBA8)
+		combined.blit_rect(body, Rect2i(0, 0, CELL, CELL), Vector2i.ZERO)
+		combined.blit_rect(surface, Rect2i(0, 0, CELL, CELL), Vector2i(0, CELL))
+		batch.setup(groups[tint], ImageTexture.create_from_image(combined), CELL)
 		add_child(batch)
 		_surfaces.append(batch)

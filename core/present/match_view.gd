@@ -35,6 +35,7 @@ func mount(world: WorldView, grid: Array[Array], descriptors: PackedInt32Array,
 	_silhouette.install(grid, descriptors,
 			Vector2(silhouette_viewport.size) / (2.0 * camera.zoom) + Vector2.ONE * CFG.cam_seam_margin)
 	_silhouette.modulate = Color.BLACK
+	_silhouette.set_water_visible(false)
 	_screen.set_terrain_mask_image(_terrain_mask(grid), (grid[0] as Array).size(), grid.size())
 	var size := Vector2(grid[0].size(), grid.size()) * TerrainView.CELL
 	_world.bind($WorldViewport/Canvas, size)
@@ -123,8 +124,8 @@ func _terrain_mask(grid: Array[Array]) -> Image:
 		for x in cols:
 			var value: int = grid[y][x]
 			var tex := Terrain.texture(value)
-			if tex != 0:
-				img.set_pixel(x, y, Color(1.0, float(TileDefs.type_id_of(tex)) / 255.0, 0.0, 1.0))
+			if tex != 0 and TileDefs.type_id_of(tex) == TileDefs.TYPE_WALL:
+				img.set_pixel(x, y, Color(1.0, 0.0, 0.0, 1.0))
 			else:
 				img.set_pixel(x, y, Color(0.0, 0.0, 0.0, 1.0))
 	return img

@@ -143,9 +143,8 @@ func _try_step_up(start: Transform2D, travel: Vector2) -> bool:
 	if rise <= margin or rise > CFG.step_max_height + margin \
 			or (pose.origin.x - start.origin.x - _axis_motion.get_travel().x) * direction <= 0.001:
 		return false
-	# 与 main 一致:低台阶抬上去;64px 台阶改成按台阶高度的自动跳,而不是瞬移。
-	# 48px 仍走抬升(预测/回放用例按 4 帧内上台阶的旧契约锁着,后续再单独改)。
-	if rise > 48.0 + margin:
+	# 与 main 一致:≤32px 抬上去;48/64px 按台阶高度自动跳,而不是瞬移。
+	if rise > 32.0 + margin:
 		velocity.y = -sqrt(2.0 * maxf(gravity, 1.0) * (rise + 6.0))
 		velocity.x = step_input.axis * CFG.move_speed * _speed_mult
 		_auto_jump_frame = true
