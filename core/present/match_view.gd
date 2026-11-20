@@ -8,6 +8,7 @@ const TIME_HASTE := Color8(168, 96, 216)
 const FILM := preload("res://core/present/time_film.gdshader")
 
 @onready var terrain_view: TerrainView = $WorldViewport/Terrain
+@onready var _silhouette: TerrainView = $TerrainViewport/Silhouette
 @onready var feedback: CombatFeedback = $Feedback
 @onready var pause: PauseMenu = $Pause
 var pvp_hud: PvpHud
@@ -30,6 +31,10 @@ func mount(world: WorldView, grid: Array[Array], descriptors: PackedInt32Array,
 	camera.zoom = Vector2.ONE * CFG.cam_zoom
 	var viewport: SubViewport = $WorldViewport
 	terrain_view.install(grid, descriptors, Vector2(viewport.size) / (2.0 * camera.zoom) + Vector2.ONE * CFG.cam_seam_margin)
+	var silhouette_viewport: SubViewport = $TerrainViewport
+	_silhouette.install(grid, descriptors,
+			Vector2(silhouette_viewport.size) / (2.0 * camera.zoom) + Vector2.ONE * CFG.cam_seam_margin)
+	_silhouette.modulate = Color.BLACK
 	var size := Vector2(grid[0].size(), grid.size()) * TerrainView.CELL
 	_world.bind($WorldViewport/Canvas, size)
 	pause.mount(mode != MatchFrame.Mode.SOLO)
@@ -54,6 +59,8 @@ func present(delta: float, frame: MatchFrame) -> void:
 		film = _present_clock(frame.clock, frame.now, delta)
 	terrain_view.patch(frame.wall_changes)
 	terrain_view.present(frame.now, film)
+	_silhouette.patch(frame.wall_changes)
+	_silhouette.present(frame.now, film)
 	var grain_target := Vector2.ZERO
 	if _mode == MatchFrame.Mode.SOLO:
 		var clock := frame.clock

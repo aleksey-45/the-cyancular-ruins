@@ -13,6 +13,11 @@ var _low_hp_target: float = 0.0
 var _heartbeat_cd: float = 0.0
 var _rewind_coverage := 0.0
 var _haste_dim := 0.0
+var _glow_vp: SubViewport = null
+var _glow_cam: Camera2D = null
+var _terrain_vp: SubViewport = null
+var _terrain_cam: Camera2D = null
+const CHANNEL_SCALE := 0.5
 
 # 生命值在 35% 以下时显示暗角，降到零时暗角最深。
 const LOW_HP_THRESHOLD := 0.35
@@ -41,8 +46,49 @@ func _ready() -> void:
 	var vsize := get_viewport().get_visible_rect().size
 	_mat.set_shader_parameter("crop_scale", crop_scale(vsize, world_viewport.size))
 
+	_bind_channels()
 	rect.material = _mat
 	add_child(rect)
+
+
+## 发现同级 Glow/Terrain 视口;没有就保持 null,对应效果可降级关闭。
+func _bind_channels() -> void:
+	var host := world_viewport.get_parent()
+	if host == null:
+		return
+	_glow_vp = host.get_node_or_null("GlowViewport") as SubViewport
+	if _glow_vp != null:
+		_glow_cam = _glow_vp.get_node_or_null("GlowCamera") as Camera2D
+	_terrain_vp = host.get_node_or_null("TerrainViewport") as SubViewport
+	if _terrain_vp != null:
+		_terrain_cam = _terrain_vp.get_node_or_null("TerrainCamera") as Camera2D
+
+
+## 半分辨率通道的相机必须与世界相机逐帧同步,否则发光/地形剪影会错位。
+func _sync_extra_cameras() -> void:
+	if world_viewport == null:
+		return
+	var cam := world_viewport.get_camera_2d()
+	if cam == null:
+		return
+	if _glow_cam != null:
+		_glow_cam.global_position = cam.global_position
+		_glow_cam.zoom = cam.zoom * CHANNEL_SCALE
+		_glow_cam.rotation = cam.rotation
+	if _terrain_cam != null:
+		_terrain_cam.global_position = cam.global_position
+		_terrain_cam.zoom = cam.zoom * CHANNEL_SCALE
+		_terrain_cam.rotation = cam.rotation
+
+
+## 发光体挂载点;没有通道时返回 null。
+func glow_root() -> Node:
+	return _glow_vp
+
+
+## 地形剪影视口;没有通道时返回 null。
+func terrain_root() -> Node:
+	return _terrain_vp
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -78,6 +124,7 @@ func advance_time(delta: float, rewinding: bool, haste: bool, loan: float, fulls
 
 
 func _process(delta: float) -> void:
+	_sync_extra_cameras()
 	if _hit_red > 0.0:
 		_hit_red = maxf(_hit_red - delta * 4.0, 0.0)
 		if _mat != null:
