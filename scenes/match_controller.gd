@@ -187,6 +187,7 @@ func _local_pose(haste: bool, rewind: bool) -> MatchFrame.Pose:
 	var aim := _aim_direction()
 	_weapon_pose(pose, weapon.type_id if weapon != null else 0, aim,
 			weapon.shot_facing if weapon != null else player.facing_direction, weapon.reload_left if weapon != null else 0.0)
+	pose.charge = weapon.charge_ratio() if weapon != null else 0.0
 	_frame.aim_guide = weapon.aim_guide(player, aim) if weapon != null else PackedVector2Array()
 	return pose
 

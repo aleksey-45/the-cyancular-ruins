@@ -184,6 +184,12 @@ func _actor(pose: MatchFrame.Pose, frame: MatchFrame) -> void:
 		return
 	var weapon := WeaponRegistry.definition(pose.weapon)
 	var offset: Vector2 = weapon["sprite_offset"]
+	# 蓄力弓:拉弓时把箭画在弓弦后方,后退量由 charge_arrow_pull 与蓄力比例决定。
+	if pose.charge > 0.0 and weapon.has("charge_arrow_pull"):
+		var pull: float = float(weapon["charge_arrow_pull"]) * pose.charge
+		_canvas.sprite(BULLETS, weapon["projectile_region"],
+				body * pose.aim * Transform2D(0.0, Vector2.ONE * float(weapon["size"]), 0.0, Vector2(-pull, 0.0)),
+				Color.WHITE)
 	var fired: Array = _fire.get(pose.id, [])
 	if not fired.is_empty() and fired[0] == pose.weapon:
 		offset.x -= float(weapon.get("kick", 0.0)) * (1.0 - clampf((now - float(fired[1])) / 0.06, 0.0, 1.0))
