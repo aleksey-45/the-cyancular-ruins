@@ -1,3 +1,10 @@
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
 
 config_version=5
 
@@ -9,12 +16,12 @@ compatibility/default_parent_skeleton_in_mesh_instance_3d=true
 
 config/name="The Cyancular Ruins"
 config/version="1.0.0"
-config/release_prefix="siri"
 run/main_scene="res://scenes/main_menu.tscn"
 config/features=PackedStringArray("4.7", "Mobile")
-run/max_fps=60
 run/flush_stdout_on_print=true
+run/max_fps=60
 config/icon="uid://dccomu5fn6od5"
+config/release_prefix="siri"
 run/main_scene.dedicated_server="res://server/server_main.tscn"
 
 [autoload]
@@ -26,16 +33,13 @@ Settings="*res://core/config/settings.gd"
 
 [debug]
 
-file_logging/enable_file_logging=false
 file_logging/enable_file_logging.pc=false
 
 [display]
 
 window/size/viewport_width=1920
 window/size/viewport_height=1440
-window/size/resizable=true
 window/stretch/mode="viewport"
-window/stretch/aspect="keep"
 
 [dotnet]
 
@@ -55,8 +59,7 @@ right={
 }
 up={
 "deadzone": 0.2,
-"events": [Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":0,"physical_keycode":87,"key_label":0,"unicode":119,"location":0,"echo":false,"script":null)
-, Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":0,"physical_keycode":32,"key_label":0,"unicode":32,"location":0,"echo":false,"script":null)
+"events": [Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":0,"physical_keycode":32,"key_label":0,"unicode":32,"location":0,"echo":false,"script":null)
 ]
 }
 down={
@@ -66,8 +69,7 @@ down={
 }
 charge={
 "deadzone": 0.2,
-"events": [Object(InputEventKey,"resource_local_to_scene":false,"resource_name":"","device":-1,"window_id":0,"alt_pressed":false,"shift_pressed":false,"ctrl_pressed":false,"meta_pressed":false,"pressed":false,"keycode":0,"physical_keycode":88,"key_label":0,"unicode":120,"location":0,"echo":false,"script":null)
-]
+"events": []
 }
 rewind={
 "deadzone": 0.2,

@@ -22,7 +22,7 @@ const SCALAR_SETTINGS := {
 }
 
 # 设置菜单仅列出这些可修改的动作。武器切换固定用数字键 1–4，按背包顺序选择。
-const REMAPPABLE_ACTIONS: Array[String] = ["left", "right", "up", "down", "charge", "attack", "R", "F", "Q", "rewind", "haste"]
+const REMAPPABLE_ACTIONS: Array[String] = ["left", "right", "up", "down", "attack", "R", "F", "Q", "rewind", "haste"]
 
 var master_volume: float = SCALAR_SETTINGS.master_volume[DEFAULT]:
 	set(v):

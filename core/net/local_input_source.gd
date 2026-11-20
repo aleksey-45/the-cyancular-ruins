@@ -7,6 +7,11 @@ var frozen := false
 var _drop_hold_t := 0.0
 var _drop_latched := false
 var _wheel_weapon := 0
+# main 的冲刺:双击左/右方向键(15 个物理帧窗口),没有独立冲刺键。
+const DOUBLE_TAP_FRAMES := 15
+var _tap_frame := {&"left": -1000000, &"right": -1000000}
+var _dash_frame := -1000000
+var _dash_edge := false
 
 static func aim_direction(origin: Vector2, facing: int, map_size: Vector2, base: Vector2,
 		zoom: float, mouse_offset: Vector2) -> Vector2:
@@ -17,10 +22,28 @@ static func aim_direction(origin: Vector2, facing: int, map_size: Vector2, base:
 const ACTIONS := [
 	[&"up", ActorInput.BIT_UP],
 	[&"down", ActorInput.BIT_DOWN],
-	[&"charge", ActorInput.BIT_CHARGE],
 	[&"attack", ActorInput.BIT_ATTACK],
 	[&"R", ActorInput.BIT_RELOAD],
 ]
+
+
+## 同一物理帧只算一次双击边沿:玩家 tick 与 PvP 上行组包可能各问一次。
+func _dash_pressed() -> bool:
+	var frame := Engine.get_physics_frames()
+	if frame == _dash_frame:
+		return _dash_edge
+	_dash_frame = frame
+	_dash_edge = false
+	for dir: StringName in [&"left", &"right"]:
+		if not Input.is_action_just_pressed(dir):
+			continue
+		if frame - int(_tap_frame[dir]) <= DOUBLE_TAP_FRAMES:
+			_tap_frame[dir] = -1000000
+			_dash_edge = true
+		else:
+			_tap_frame[dir] = frame
+	return _dash_edge
+
 
 func sample() -> Array:
 	var held := 0
@@ -38,6 +61,8 @@ func sample() -> Array:
 				pressed |= bit
 			if Input.is_action_just_released(action):
 				released |= bit
+		if _dash_pressed():
+			pressed |= ActorInput.BIT_CHARGE
 		if Input.is_action_pressed(&"haste"):
 			held |= ActorInput.BIT_HASTE
 		if Input.is_action_pressed(&"rewind"):
