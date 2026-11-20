@@ -2,6 +2,7 @@
 
 > 日期: 2026-11-20 · 状态: 进行中
 > 基座：siri `9bdb8303`；对照：main `668d5f6a`（worktree `the-cyancular-ruins-main`）。
+> **已确认**：2.1 采用方案 A；2.3、2.4 的方案通过。**录像、回溯回放（recorder / rewind_tape）、编辑器不在本迁移范围**，另行 plan。
 > 结论先行：**视口与后处理是最大缺口，必须专门设计；武器是“数据 + 规则”迁移，不能搬节点；物理不能搬，只能把规则重写进 siri 的 ActorStep/Terrain。**
 
 ## 1. 现状对照
@@ -14,7 +15,7 @@
 | `form_light.gdshader` | 130 | — | 移植（依赖地形掩码） |
 | `water_surface_batch.gdshader` | 30 | — | 移植或合并进 siri `WaterSurfaceBatch` |
 | `black_bird_silhouette.gdshader` | 7 | — | 移植（小） |
-| `rewind_tape.gdshader` | 97 | — | 仅当决定保留录像时移植 |
+| `rewind_tape.gdshader` | 97 | — | **不迁移**（录像不在范围） |
 | `time_film.gdshader` | 12 | 9 | 按 main 对齐 |
 | `player_p2_hue.gdshader` | 24 | 29 | 对齐 |
 | `minimap_circle.gdshader` | 24 | 27 | 对齐 |
@@ -89,9 +90,22 @@ main 的 `PostProcess`（538 行）每帧同步各相机、烘地形掩码、把
 
 ### 2.3 武器机制
 
-**原则：不搬 `weapon_base.gd` / 子弹节点；把“数值 + 规则”搬进 siri 的 `WeaponRegistry` / `GunBody` / `CombatSimulator`。**
+**武器数值存哪：官方建议**
 
-1. **数值单一来源**：把 main 各 `.tscn` 的导出属性（伤害/弹速/散布/后坐/蓄力/弹夹/换弹/移动倍率/拾取边界/音效）整理成一张表，写进 `weapon_registry.gd`；删除 main 的 `data/weapons.json` 作为真相源（或改成只存 id→scene 的 UI 资源表）。
+Godot 官方把 `Resource` 定义为 **data containers**，并明确自定义 Resource 相对 JSON/CSV/TXT 的优势：可定义常量/方法/信号、有确定的属性、内建序列化、可递归嵌套子资源、`.tres` 是**版本控制友好的文本**、Inspector 可直接编辑（[Resources](https://docs.godotengine.org/en/stable/tutorials/scripting/resources.html)）。
+而 `Saving games` 文档把 **JSON 定位为“简单游戏状态/存档”的可读格式**，并列出 JSON 的类型限制（Vector2/Rect2/Color 等无法直接表达、自定义类要自己编解码）（[Saving games](https://docs.godotengine.org/en/stable/tutorials/io/saving_games.html)）。
+
+武器数值属于**游戏内容/配置**，不是用户存档 ⇒ 按官方建议用**自定义 Resource**，而不是 JSON 或散落在场景里的导出属性：
+
+- `WeaponDef extends Resource`：`@export` 全部数值（伤害/弹速/散布/后坐/蓄力/弹夹/换弹/移动倍率/拾取边界/音效），子资源 `CombatProfile` 复用弹道参数；
+- 每个武器一个 `.tres`，再加一个 `WeaponCatalog.tres`（`Array[WeaponDef]`）作为唯一目录；
+- `WeaponRegistry` 退化为**加载器 + 校验器**：启动时校验 8 个 id 齐全、字段范围合法，不再内置数值；
+- 导出时引擎会把 `.tres` 序列化成 `.res`（官方行为）；运行时**只读**——Resource 默认共享，若要每实例可变状态必须 `duplicate()`；
+- `.tres` 文本可 diff/合并，适合版本控制；JSON 只保留给用户设置/存档（如 `settings.cfg`）。
+
+**迁移原则：不搬 `weapon_base.gd` / 子弹节点；把“数值 + 规则”搬进 siri 的 `WeaponRegistry` / `GunBody` / `CombatSimulator`。**
+
+1. **数值单一来源**：从 main 各 `.tscn` 的导出属性提取到 `WeaponDef.tres`（8 个）+ `WeaponCatalog.tres`；删除 main 的 `data/weapons.json` 作为真相源（它现在只有 id/name/scene/tier）。
 2. **行为映射**：
    - 触发：`trigger_delay`、PRESS/AUTO/RELEASE/CHARGE_RELEASE → siri `GunBody` 已有枚举，逐项对照；
    - 蓄力弓：`charge_time`、`charge_damage_min`、`charge_speed_min`、`charge_arrow_pull` → siri `charge_ratio()` + `presentation_events`（拉弓视觉由 WorldView 播）；
@@ -133,14 +147,14 @@ P1 与 P2 是玩法底座，P3–P4 可并行；P2 完成前不要删 main 的�
 - **视觉**：main/siri 同场景截图（白天/黄昏/夜、水面、发光、形体光、受击、回溯），人工对照；不做像素级自动断言（按 test-economy 不写）。
 - **性能**：加视口后测帧率/显存；Mobile 渲染器下 0.5× 通道是否可接受。
 
-## 5. 风险与待决策
+## 5. 风险与已定决策
 
-1. **视觉范围**：是否保留 main 的天空/三套光照？这是 393 行 shader + 538 行 PostProcess + 3 个视口的成本。
-2. **物理手感**：`move_and_slide` → `test_motion` 的漂移不可避免，需要重新调参；没有“逐字节一致”的捷径。
-3. **武器数值源**：main 在 `.tscn`，siri 在代码表；必须二选一，否则双真相源。
-4. **网络权威**：main 本地开火/命中与 siri 服务器结算不同；移植时要重做“客户端预测 + 服务器确认”，不是搬函数。
-5. **录像/回溯磁带**：`rewind_tape` 只在保留录像时才有意义，先不做。
-6. **编辑器预览**：Godot 编辑器若沿用 main 的 3 视口预览，需要与 siri MatchView 的视口结构统一。
+1. **视觉范围（已定）**：采用方案 A，保留 main 的天空/三套光照；成本 = 393 行 shader + 538 行 PostProcess + 3 个视口，不再讨论“是否值得”。
+2. **物理手感**：`move_and_slide` → `test_motion` 的漂移不可避免，P1 必须重新调参并用回放一致性锁住；没有“逐字节一致”的捷径。
+3. **武器数值（已定）**：自定义 `Resource`（`WeaponDef.tres` × 8 + `WeaponCatalog.tres`）为唯一来源；JSON 只用于用户设置/存档。
+4. **网络权威**：main 本地开火/命中与 siri 服务器结算不同；按 siri 模型重做“客户端预测 + 服务器确认”，不是搬函数。
+5. **不在范围**：录像、回溯回放（`recorder` / `rewind_tape`）、编辑器；三者另行 plan，本计划不为其预留实现。
+6. **待估**：P0 的数值/规则表完成后，才能把 4–6 周收敛到具体排期。
 
 ## 6. 粗略工作量
 
