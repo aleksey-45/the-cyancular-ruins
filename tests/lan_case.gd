@@ -47,3 +47,17 @@ func run(_tree: SceneTree) -> void:
 	expect(discovery.expire(now + 1.0 + LanDiscovery.TTL + 0.1), "stale room expires")
 	expect(discovery.rooms(now + 1.0 + LanDiscovery.TTL + 0.1).is_empty(),
 			"expired room is not listed")
+
+	# UDP 监听不参与自动测试(绑定固定端口会与并行测试冲突),只验证未监听时的安全行为。
+	var idle := LanDiscovery.new()
+	expect(not idle.poll(0.0), "poll without listening reports no change")
+	idle.stop()
+	expect(idle.rooms(0.0).is_empty(), "stop without listening is harmless")
+
+	var copies := LanDiscovery.new()
+	copies.update(room, "10.0.0.2", 5.0)
+	var listed := copies.rooms(5.5)
+	listed[0]["ip"] = "1.2.3.4"
+	expect(str(copies.rooms(5.5)[0]["ip"]) == "10.0.0.2", "listed rooms are copies")
+	copies.clear()
+	expect(copies.rooms(5.5).is_empty(), "clear drops registered rooms")

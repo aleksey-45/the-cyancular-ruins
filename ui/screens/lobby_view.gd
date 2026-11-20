@@ -4,8 +4,7 @@ extends Control
 signal nickname_changed(text: String)
 signal filter_changed(mode: String)
 signal create_requested(mode: String, options: Dictionary)
-signal join_requested(code: String)
-signal room_chosen
+signal join_requested(code: String, endpoint: Dictionary)
 signal copy_requested
 signal team_requested(side: int)
 signal start_requested
@@ -21,8 +20,11 @@ var _join: PanelContainer
 var _code := LineEdit.new()
 var _browser := Control.new()
 var _status := Label.new()
-var _card := LobbyRoomCard.new()
-var _empty := UiFactory.label("暂无房间", 32, UiFactory.C_TEXT_DIM)
+var _scroll: ScrollContainer
+var _list: VBoxContainer
+var _rooms: Array[Dictionary] = []
+var _cards: Array[LobbyRoomCard] = []
+var _empty := UiFactory.label("暂无房间（可输入房码加入）", 32, UiFactory.C_TEXT_DIM)
 var _create_button: Button
 var _join_button: Button
 
@@ -54,12 +56,16 @@ func mount(nickname: String, prefs: Dictionary) -> void:
 
 	_browser.mouse_filter = MOUSE_FILTER_IGNORE
 	UiFactory.place(self, _browser, Rect2(76, 296, 1768, 956))
-	_browser.add_child(_empty)
-	_browser.add_child(_card)
-	_card.hide()
-	_card.pressed.connect(func() -> void:
-		Sfx.play("ui")
-		room_chosen.emit())
+	_scroll = ScrollContainer.new()
+	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	UiFactory.cover(_browser, _scroll)
+	_list = VBoxContainer.new()
+	_list.add_theme_constant_override("separation", 16)
+	_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_scroll.add_child(_list)
+	_empty.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_empty.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	UiFactory.place(_browser, _empty, Rect2(0, 0, 1768, 160))
 	_build_status()
 	_fixed_button("返回主菜单", Rect2(1584, 1292, 260, 72), &"BtnPrimary", back_requested.emit)
 	_build_join()
@@ -85,15 +91,17 @@ func select_filter(mode: String) -> void:
 	_mode = mode
 	for key in _filters:
 		_filters[key].button_pressed = key == mode
+	_rebuild()
+
+## 用当前发现的房间重建卡片列表;筛选在视图内完成。
+func present_rooms(rooms: Array[Dictionary]) -> void:
+	_rooms.clear()
+	for room in rooms:
+		_rooms.append(room.duplicate(true))
+	_rebuild()
 
 func set_status(message: String) -> void:
 	_status.text = message
-
-func show_listing(card: Dictionary) -> void:
-	_card.visible = not card.is_empty()
-	_empty.visible = not _card.visible
-	if _card.visible:
-		_card.present(card)
 
 func show_wait(room: Dictionary) -> void:
 	var open := not room.is_empty()
@@ -108,6 +116,23 @@ func show_wait(room: Dictionary) -> void:
 
 func close_create() -> void:
 	_create.hide()
+
+func _rebuild() -> void:
+	if _list == null:
+		return
+	for card in _cards:
+		_list.remove_child(card)
+		card.queue_free()
+	_cards.clear()
+	for room in _rooms:
+		if not _mode.is_empty() and str(room.get("mode", "")) != _mode:
+			continue
+		var card := LobbyRoomCard.new()
+		_list.add_child(card)
+		card.present(room)
+		card.join_requested.connect(join_requested.emit)
+		_cards.append(card)
+	_empty.visible = _cards.is_empty()
 
 func _build_status() -> void:
 	_status.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -140,7 +165,7 @@ func _build_join() -> void:
 		var value := code.text.strip_edges()
 		if not value.is_empty():
 			_code.text = value
-		join_requested.emit(value))
+		join_requested.emit(value, {}))
 	UiFactory.action(buttons, "取消", Vector2(220, 64), &"BtnQuiet", _join.hide)
 
 func _display_code(code: String) -> void:
@@ -156,7 +181,7 @@ func _join_clicked() -> void:
 	if code.is_empty():
 		_join.visible = not _join.visible
 	else:
-		join_requested.emit(code)
+		join_requested.emit(code, {})
 
 func _fixed_button(text: String, rect: Rect2, variant: StringName, pressed: Callable) -> Button:
 	var button := UiFactory.menu_button(text, rect.size, variant)

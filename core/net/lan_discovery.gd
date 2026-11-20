@@ -1,9 +1,9 @@
 class_name LanDiscovery
 extends RefCounted
 
-# 局域网房间发现:广播包的编解码 + 接收端注册表(TTL/去重)。
-# 房主侧每秒广播一次,客户端侧监听同一 UDP 端口(见 docs/netplay.md)。
-# 本类只做纯逻辑,方便测试;真正的 UDP 收发在 LanBeacon / 大厅监听处。
+# 局域网房间发现:广播包的编解码 + 接收端注册表(TTL/去重) + 客户端 UDP 监听。
+# 房主侧每秒广播一次(见 LanBeacon),客户端侧监听同一 UDP 端口(见 docs/netplay.md)。
+# 编解码与注册表保持纯逻辑,方便测试;UDP 监听不参与自动测试。
 
 const PORT := 7788
 const INTERVAL := 1.0
@@ -11,8 +11,11 @@ const TTL := 3.0
 const MAX_PACKET := 1024
 const VERSION := 1
 const MODES := ["pvp", "team", "royale"]
+# 单次 poll 最多处理的包数,避免广播风暴占满一帧。
+const MAX_PACKETS := 64
 
 var _rooms: Dictionary = {}
+var _socket: PacketPeerUDP = null
 
 
 static func encode_room(info: Dictionary) -> PackedByteArray:
@@ -132,6 +135,43 @@ func expire(now: float) -> bool:
 
 func clear() -> void:
 	_rooms.clear()
+
+
+## 绑定 0.0.0.0:PORT 开始接收广播;端口被占用等失败时返回错误,不崩溃。
+func listen() -> Error:
+	stop()
+	var socket := PacketPeerUDP.new()
+	var error := socket.bind(PORT, "0.0.0.0")
+	if error != OK:
+		return error
+	_socket = socket
+	return OK
+
+
+## 停止监听并释放端口;未监听时无操作。
+func stop() -> void:
+	if _socket == null:
+		return
+	_socket.close()
+	_socket = null
+
+
+## 收取已到达的广播并刷新注册表;返回注册表是否有变化。未监听时直接返回 false。
+func poll(now: float) -> bool:
+	if _socket == null:
+		return false
+	var changed := false
+	for _i in MAX_PACKETS:
+		if _socket.get_available_packet_count() <= 0:
+			break
+		var packet := _socket.get_packet()
+		var source_ip := _socket.get_packet_ip()
+		var info := decode_room(packet)
+		if info.is_empty():
+			continue
+		if update(info, source_ip, now):
+			changed = true
+	return changed
 
 
 static func _same_room(a: Dictionary, b: Dictionary) -> bool:
