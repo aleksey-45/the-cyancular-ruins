@@ -2,6 +2,7 @@ class_name RoomSession
 extends Node
 
 const GRACE_SECONDS := 60.0
+const LanBeaconScript := preload("res://core/net/lan_beacon.gd")
 var code := ""
 var mode := PvpSession.MODE_PVP
 var options: Dictionary = {}
@@ -10,6 +11,7 @@ var guests: Dictionary = {}
 var host_role := 1
 var world: AuthorityWorld
 var _returned: Dictionary = {}
+var _beacon: LanBeaconScript
 
 func _ready() -> void:
 	var args := OS.get_cmdline_user_args()
@@ -44,6 +46,7 @@ func _on_event(peer: int, kind: int, data: Variant) -> void:
 			options = RoomOptions.normalized(mode, data["options"])
 			code = "%08d" % (randi() % 100000000)
 			add_seat(peer)
+			_start_beacon()
 			broadcast_room()
 		NetEvent.Kind.LIST:
 			var entry := room_data() if not code.is_empty() and options.get("beta", false) == data else {}
@@ -179,6 +182,26 @@ func broadcast_room(only_role: int = 0) -> void:
 			var payload := base.merged({"your_role": role, "token": seat["token"]})
 			NetBus.send_event(NetEvent.Kind.ROOM, payload, seat["peer"])
 
+# 建房成功后启动局域网广播;lan_public 为 false 时完全不广播。
+func _start_beacon() -> void:
+	_stop_beacon()
+	if not bool(options.get("lan_public", true)):
+		return
+	_beacon = LanBeaconScript.new()
+	_beacon.start(_lan_info)
+
+func _stop_beacon() -> void:
+	if _beacon != null:
+		_beacon.stop()
+		_beacon = null
+
+# 广播包字段取自 room_data();port 是实际游戏端口,房号等待阶段也可以被发现。
+func _lan_info() -> Dictionary:
+	var data := room_data()
+	return {"code": data["code"], "mode": data["mode"], "players": data["players"].size(),
+			"max": data["max_players"], "in_match": data["in_match"],
+			"beta": data["beta"], "port": NetBus.server_port}
+
 ## 团队对抗要求所有房间成员均已连接，且两队各有至少一名玩家、都没有超过每队上限。
 func team_ready() -> bool:
 	if mode != PvpSession.MODE_TEAM:
@@ -307,6 +330,7 @@ func _with_grace(state: Dictionary) -> Dictionary:
 func remove_seat(role: int) -> void:
 	if role == host_role:
 		_broadcast(NetEvent.Kind.ROOM_CLOSED, "房主已离开", role)
+		_stop_beacon()
 		world = null
 		seats.clear()
 		_returned.clear()
@@ -335,3 +359,8 @@ func _process(_delta: float) -> void:
 			remove_seat(role)
 			if role == host_role:
 				return
+	if _beacon != null:
+		_beacon.tick(now)
+
+func _exit_tree() -> void:
+	_stop_beacon()
