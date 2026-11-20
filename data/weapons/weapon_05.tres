@@ -8,12 +8,15 @@ weapon_id = 5
 data = {
 "arc_time": 3.0,
 "attack": 0,
+"bullet_color": Color(1, 1, 1, 1),
 "cooldown": 1.4,
 "count": 1,
 "damage": 5,
 "gravity": 0.45,
 "impact": 10.0,
 "kick": 16.0,
+"laser_color": Color(1, 0.2, 0.2, 0.6),
+"laser_length": 2000.0,
 "live_cap": 3,
 "mag": 6,
 "move": Vector2(0.5, 0.8),
@@ -23,6 +26,8 @@ data = {
 "penalty": 2,
 "pickup_bounds": Rect2(-25.5, -10.5, 51, 21),
 "pitch": 60.0,
+"preview_arc": true,
+"preview_time": 3.0,
 "projectile": {
 "actor": {
 "bounce": true,
@@ -55,6 +60,7 @@ data = {
 "shake": 14.0,
 "shake_time": 0.3,
 "shot_sound": "shoot_heavy",
+"show_aim_laser": true,
 "size": 1.5,
 "speed": 1375.0,
 "spread": 0.0,

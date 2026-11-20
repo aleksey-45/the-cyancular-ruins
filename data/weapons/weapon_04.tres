@@ -7,12 +7,15 @@ script = ExtResource("1_hcd0w")
 weapon_id = 4
 data = {
 "attack": 0,
+"bullet_color": Color(1, 1, 1, 1),
 "cooldown": 0.75,
 "count": 8,
 "damage": 5,
 "gravity": 0.0,
 "impact": 200.0,
 "kick": 11.0,
+"laser_color": Color(1, 0.2, 0.2, 0.6),
+"laser_length": 600.0,
 "live_cap": 0,
 "mag": 2,
 "move": Vector2(0.9, 1),
@@ -22,6 +25,8 @@ data = {
 "penalty": 1,
 "pickup_bounds": Rect2(-29.5, -7, 59, 14),
 "pitch": 55.0,
+"preview_arc": false,
+"preview_time": 0.5,
 "projectile": {
 "actor": {
 "bounce": false,
@@ -48,6 +53,7 @@ data = {
 "reload": 2.2,
 "shake": 5.0,
 "shot_sound": "shotgun",
+"show_aim_laser": true,
 "size": 0.8,
 "speed": 1375.0,
 "spread": 3.5,

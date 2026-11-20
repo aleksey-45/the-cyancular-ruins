@@ -142,7 +142,7 @@ siri 的近似表达：
 1. ~~拍板：玩家/敌人是否互相物理阻挡~~——已按 main 落地（不阻挡，只做接触伤害）；
 2. P1：`PlayerConfig.tres` 已落地（无转发层，直接 `const CFG`）；`WorldConfig.tres` 已落地（重力 + 11 项水体参数，`Water` 的入水/出水阈值改用 `water_enter_depth/water_exit_depth`）；相机已按 main 映射；squash 丢弃；攀爬保留 siri 模型、基础速度 375（梯子≈720、铁链≈900）；
 3. ~~P2：把 main 的 8 场景数值写入 `data/weapons/*.tres`（弓/M249 差异 + 缺失字段）~~——已落地（弓 speed 2400/mag 1/charge .75/min_speed 600/size 1.3；M249 kick 9/shake 6/shake_time .12；激光 guide_color 蓝）；
-4. P2 剩余：`laser_length`/`show_aim_laser`/`preview_arc`/`preview_time`/`bullet_color` 的表现层（P4 视口/着色器一起做）；`charge_arrow_pull` 已接入 `WorldView`（拉弓时箭矢后移）；
+4. P2 剩余：~~`laser_length`/`show_aim_laser`/`preview_arc`/`preview_time`/`bullet_color` 的表现层~~——`charge_arrow_pull`、预瞄直线、`bullet_color`、远端蓄力已接入；`preview_arc/preview_time` 作为数据保留（siri 用 `arc_time` 画弧）；FormLight 逐精灵形体光仍是接口桩（需要改 `WorldCanvas` 自绘材质，单列）；
 5. P1/P2 各加一条 `simulation_case` 覆盖上述行为差异（弓的伤害/速度断言已按新数值更新）。
 
 > 本文是数据盘点，不是实现；P1/P2 开工前先把“玩家/敌人阻挡”这一条裁决掉。

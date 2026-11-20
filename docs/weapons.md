@@ -3,6 +3,8 @@
 `WeaponRegistry` 保存手枪、步枪、M82A1、S686、榴弹发射器、激光枪、复合弓和 M249 的配置。数值的唯一来源是 `data/weapons/*.tres`（`WeaponDef`）与 `data/weapons/catalog.tres`：每条包含武器类型 ID、攻击参数、图集区域和掉落物的碰撞尺寸；`WeaponRegistry` 只负责加载并转成只读 Dictionary。`GunBody` 按定义处理按下射击、持续射击、松开射击和蓄力后松开，并更新瞄准、装填、冷却和后坐力。[武器配置](../core/sim/weapon_registry.gd) · [武器定义](../core/config/weapon_def.gd) · [GunBody](../core/sim/gun_body.gd)
 
 - 复合弓蓄力 0.75 秒达到上限，松开后发射。蓄力程度决定 600–2,400 像素/秒的初速度及 4–35 点伤害。拉弓时箭矢按蓄力比例后移（`charge_arrow_pull`），箭受重力和水体阻力，预览轨迹使用同样的发射参数。
+- 按住重武器（M82A1、榴弹、复合弓）进入预瞄时，按 `laser_length` / `laser_color` 画预瞄直线；复合弓关闭该直线（`show_aim_laser=false`），用拉弓箭矢表达。弹丸颜色由 `bullet_color` 决定。
+- 联机时远端玩家的蓄力比例由快照里的 `Equipment.HOLD` 除以 `charge_time` 还原，因此别人也能看到拉弓动作。
 - M249 按住 0.3 秒后开始连射，弹匣容量为 100 发。蓄力和射击延迟共用按住时长，松开攻击键或切换武器时重新计时。
 - 每名射手最多同时保有 3 枚在途榴弹。达到上限时，本次攻击在扣除弹药及开始冷却前结束。切换武器后，已发射的榴弹继续运动。
 - 激光枪沿地形表面反射，剩余射程与反射次数由武器配置决定。[攻击规则](simulation.md#伤害结算)

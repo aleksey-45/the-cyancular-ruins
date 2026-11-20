@@ -27,6 +27,7 @@ class Pose:
 	var aim := Transform2D.IDENTITY
 	var reload_left := 0.0
 	var charge := 0.0
+	var aiming := false
 	var name := ""
 	var team: int
 	var health := -1.0

@@ -7,12 +7,15 @@ script = ExtResource("1_jd102")
 weapon_id = 1
 data = {
 "attack": 0,
+"bullet_color": Color(1, 1, 1, 1),
 "cooldown": 0.3,
 "count": 1,
 "damage": 10,
 "gravity": 0.0,
 "impact": 800.0,
 "kick": 8.0,
+"laser_color": Color(1, 0.2, 0.2, 0.6),
+"laser_length": 600.0,
 "live_cap": 0,
 "mag": 12,
 "move": Vector2(1, 1),
@@ -22,6 +25,8 @@ data = {
 "penalty": 0,
 "pickup_bounds": Rect2(-8.5, -5, 17, 11),
 "pitch": 65.0,
+"preview_arc": false,
+"preview_time": 0.5,
 "projectile": {
 "actor": {
 "bounce": false,
@@ -48,6 +53,7 @@ data = {
 "reload": 1.0,
 "shake": 2.0,
 "shot_sound": "shoot",
+"show_aim_laser": true,
 "size": 1.0,
 "speed": 1750.0,
 "spread": 0.6,

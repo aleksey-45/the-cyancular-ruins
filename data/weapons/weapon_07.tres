@@ -8,6 +8,7 @@ weapon_id = 7
 data = {
 "arc_time": 2.0,
 "attack": 0,
+"bullet_color": Color(1, 1, 1, 1),
 "charge_arrow_pull": 15.0,
 "charge_time": 0.75,
 "cooldown": 0.15,
@@ -17,6 +18,8 @@ data = {
 "guide_color": Color(0.42, 0.92, 0.82, 0.7),
 "impact": 800.0,
 "kick": 2.0,
+"laser_color": Color(1, 0.2, 0.2, 0.6),
+"laser_length": 1000.0,
 "live_cap": 0,
 "mag": 1,
 "min_damage": 4,
@@ -28,6 +31,8 @@ data = {
 "penalty": 2,
 "pickup_bounds": Rect2(-10, -22, 20, 44),
 "pitch": 50.0,
+"preview_arc": false,
+"preview_time": 1.0,
 "projectile": {
 "actor": {
 "bounce": false,
@@ -54,6 +59,7 @@ data = {
 "reload": 1.25,
 "shake": 1.0,
 "shot_sound": "bow",
+"show_aim_laser": false,
 "size": 1.3,
 "speed": 2400.0,
 "spread": 0.5,

@@ -304,6 +304,11 @@ func _sample_remotes(samples: Dictionary, anchor: Vector2) -> void:
 		_weapon_pose(pose, type_id, aim if aim != Vector2.ZERO else Vector2(facing, 0),
 				equipment[GunBody.StateSlot.SHOT_FACING] if type_id != 0 and aim != Vector2.ZERO else facing,
 				equipment[GunBody.StateSlot.RELOAD_LEFT] if type_id != 0 else 0.0)
+		pose.aiming = bool(equipment[GunBody.StateSlot.AIMING]) if type_id != 0 else false
+		if type_id != 0:
+			var spec := WeaponRegistry.definition(type_id)
+			if spec["trigger"] == WeaponRegistry.Trigger.CHARGE_RELEASE:
+				pose.charge = clampf(float(equipment[GunBody.StateSlot.HOLD]) / float(spec["charge_time"]), 0.0, 1.0)
 		_set_nameplate(pose, role)
 		pose.health = float(state[PlayerStateSchema.HP]) / TeamRules.max_hp(_teams.get(role, 0), _team_counts) \
 				if Settings.pvp_show_enemy_hp and not downed else -1.0

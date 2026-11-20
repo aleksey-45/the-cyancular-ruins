@@ -117,7 +117,8 @@ func present(frame: MatchFrame, grain_target := Vector2.ZERO) -> void:
 			_trajectory(row[0], row[2])
 		var bullet := WeaponRegistry.projectile_definition(row[1])
 		_canvas.sprite(BULLETS, bullet["projectile_region"],
-				Transform2D(row[3], Vector2.ONE * float(bullet["size"]), 0.0, row[2]))
+				Transform2D(row[3], Vector2.ONE * float(bullet["size"]), 0.0, row[2]),
+				bullet.get("bullet_color", Color.WHITE))
 	var previous := _paths
 	_paths = _next_paths
 	_next_paths = previous
@@ -203,6 +204,14 @@ func _actor(pose: MatchFrame.Pose, frame: MatchFrame) -> void:
 		var cycle := age * frames.get_animation_speed(clip) / frames.get_frame_count(clip)
 		offset.y += sin(TAU * cycle) * 1.4
 	_canvas.sprite(WEAPONS, weapon["region"], body * pose.aim * Transform2D(tilt, offset), Color(Color.WHITE, color.a))
+	# 重武器预瞄:main 的 laser_length/laser_color;弓的 show_aim_laser=false,用拉弓表现代替。
+	if pose.aiming and bool(weapon.get("show_aim_laser", false)):
+		var length := float(weapon.get("laser_length", 0.0))
+		if length > 0.0:
+			var aim_xform := body * pose.aim
+			var dir := aim_xform.x.normalized()
+			_canvas.line(PackedVector2Array([aim_xform.origin, aim_xform.origin + dir * length]),
+					weapon.get("laser_color", Color(1.0, 0.2, 0.2, 0.6)), 2.0)
 	if reload >= 0.0 and not pose.remote:
 		_reload(pose.anchor, pose.facing, reload, pose.reload_left)
 

@@ -7,12 +7,15 @@ script = ExtResource("1_to6mt")
 weapon_id = 2
 data = {
 "attack": 0,
+"bullet_color": Color(1, 1, 1, 1),
 "cooldown": 0.1,
 "count": 1,
 "damage": 4,
 "gravity": 0.0,
 "impact": 500.0,
 "kick": 6.0,
+"laser_color": Color(1, 0.2, 0.2, 0.6),
+"laser_length": 600.0,
 "live_cap": 0,
 "mag": 30,
 "move": Vector2(0.7, 0.8),
@@ -22,6 +25,8 @@ data = {
 "penalty": 1,
 "pickup_bounds": Rect2(-27.5, -9, 55, 18),
 "pitch": 60.0,
+"preview_arc": false,
+"preview_time": 0.5,
 "projectile": {
 "actor": {
 "bounce": false,
@@ -49,6 +54,7 @@ data = {
 "shake": 3.0,
 "shake_time": 0.12,
 "shot_sound": "shoot",
+"show_aim_laser": true,
 "size": 1.0,
 "speed": 2000.0,
 "spread": 0.8,
