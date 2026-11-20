@@ -9,7 +9,7 @@ node tests/editor_case.js
 python tools/check_naming.py
 ```
 
-`run_checks.py` 默认在一个无界面的 Godot 进程中运行六组测试。`--groups` 接受逗号分隔的组名。Godot 路径也可来自 `GODOT`、`GODOT_EDITOR` 或 `PATH`。断言失败、脚本错误、缺少完成标记或测试总用时超过 120 秒时，脚本返回非零退出码。
+`run_checks.py` 默认在一个无界面的 Godot 进程中运行七组测试。`--groups` 接受逗号分隔的组名。Godot 路径也可来自 `GODOT`、`GODOT_EDITOR` 或 `PATH`。断言失败、脚本错误、缺少完成标记或测试总用时超过 120 秒时，脚本返回非零退出码。
 
 | 分组 | 覆盖内容 |
 |---|---|
@@ -19,6 +19,7 @@ python tools/check_naming.py
 | `simulation` | 移动、装备、弹道、伤害、队伍规则和时间回溯 |
 | `prediction` | 预测状态、本地输入及 Beta 账户校正、远端角色和弹丸同步 |
 | `monitor` | 统计周期、样本单位、耗时阈值、直方图及存储容量 |
+| `lan` | 局域网房间广播包的编解码/校验、TTL 过期、按房号去重与刷新 |
 
 编辑器测试覆盖 CYRM 编解码、兼容格式导入和文件保存。文件检查脚本检查目录、GDScript 类名、场景名、脚本编码和换行，也检查仓库根目录 Markdown 文件中的本地链接。
 

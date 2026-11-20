@@ -31,3 +31,5 @@ python tools/build_game.py
 ```sh
 "./The Cyancular Ruins.app/Contents/MacOS/The Cyancular Ruins" --headless -- --server --port 7777
 ```
+
+局域网发现使用 UDP 7788：房主/服务端的防火墙需同时放行游戏端口与 7788（公网联机另需放行 EasyTier 隧道端口）。
