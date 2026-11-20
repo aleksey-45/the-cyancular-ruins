@@ -105,6 +105,17 @@ Godot 官方把 `Resource` 定义为 **data containers**，并明确自定义 Re
 
 **迁移原则：不搬 `weapon_base.gd` / 子弹节点；把“数值 + 规则”搬进 siri 的 `WeaponRegistry` / `GunBody` / `CombatSimulator`。**
 
+**siri 的表现状（2026-11-20 盘点）**
+
+- `core/` 里共 **64 个字典/数组常量**；最集中的是 `net_codec.gd` 16 个（协议 schema）、`combat_profiles.gd` 12 个（弹道/爆炸 profile）、`world_view.gd` 7 个（动画/特效表）。
+- 武器：`weapon_registry.gd` 里 **1 张 `WEAPONS` 表（8 条）+ 1 张 `DEFAULTS`**；启动时 `merged` 后 `make_read_only()`，`definition(id)` 返回只读 Dictionary。
+- 弹道：`combat_profiles.gd` **15 个 profile 常量**（DIRECT/BLAST/ROUND/GRENADE…），被武器表引用。
+- 内容数据：`data/tile_defs.json`（15 个 tile）、`data/enemies.json`（3 条，指向 3 个 `EnemyType.tres`）。
+- `.tres` 全仓只有 **6 个**：主题、字体、玩家帧图、3 个 `EnemyType`（视觉 + AI 脚本引用）；**没有任何武器/瓦片的 `.tres`**。
+- 结论：siri 是**“代码表 + JSON”驱动的表驱动实现**，不是 Resource 驱动；武器迁移只是**换存储介质**，表结构本身不用重做。
+
+**迁移时的兼容点**：`WeaponRegistry.definition(id)` 的 Dictionary 契约必须保留。推荐从 8 个 `WeaponDef.tres` 读出字段，在加载时组装成**只读 Dictionary**（沿用现有 `make_read_only()`），这样 `GunBody` / `CombatSimulator` / `WeaponInventory` 一行不用改；`DEFAULTS` 可以变成 `WeaponDef` 的字段默认值，或继续在加载时合并。
+
 1. **数值单一来源**：从 main 各 `.tscn` 的导出属性提取到 `WeaponDef.tres`（8 个）+ `WeaponCatalog.tres`；删除 main 的 `data/weapons.json` 作为真相源（它现在只有 id/name/scene/tier）。
 2. **行为映射**：
    - 触发：`trigger_delay`、PRESS/AUTO/RELEASE/CHARGE_RELEASE → siri `GunBody` 已有枚举，逐项对照；
