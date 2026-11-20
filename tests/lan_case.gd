@@ -34,6 +34,8 @@ func run(_tree: SceneTree) -> void:
 			"mode": "team", "players": 1, "max": 4, "in_match": false, "beta": false,
 			"port": 51234, "pad": "x".repeat(2048)}).to_utf8_buffer()).is_empty(),
 			"oversized packet is rejected")
+	expect(not bool(RoomOptions.normalized("pvp", {"lan_public": false}).get("lan_public", true)),
+			"lan_public false survives room option normalization")
 
 	var discovery := LanDiscovery.new()
 	var now := 100.0
