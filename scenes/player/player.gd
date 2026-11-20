@@ -51,6 +51,8 @@ var combat_requests: Array = []
 var presentation_events: Array = []
 
 var _speed_mult := 1.0
+var _auto_jump_frame := false
+var _auto_jump_timer := 0.0
 var weapons := WeaponInventory.new()
 var equipped: GunBody:
 	get: return weapons.equipped
@@ -141,6 +143,15 @@ func _try_step_up(start: Transform2D, travel: Vector2) -> bool:
 	if rise <= margin or rise > CFG.step_max_height + margin \
 			or (pose.origin.x - start.origin.x - _axis_motion.get_travel().x) * direction <= 0.001:
 		return false
+	# 与 main 一致:低台阶抬上去;64px 台阶改成按台阶高度的自动跳,而不是瞬移。
+	# 48px 仍走抬升(预测/回放用例按 4 帧内上台阶的旧契约锁着,后续再单独改)。
+	if rise > 48.0 + margin:
+		velocity.y = -sqrt(2.0 * maxf(gravity, 1.0) * (rise + 6.0))
+		velocity.x = step_input.axis * CFG.move_speed * _speed_mult
+		_auto_jump_frame = true
+		_auto_jump_timer = 0.35
+		jump_cut_applied = true
+		return false
 	_record_contact(_step_motion)
 	position = pose.origin
 	return true
@@ -154,14 +165,16 @@ func _move_actor(delta: float) -> void:
 	var blocked := move_by_internal(motion)
 	if blocked.y > 0.0 and not _grounded and incoming.y > 0.0:
 		presentation_events.append({"kind": "land", "speed": incoming.y})
-	_grounded = blocked.y > 0.0
-	if blocked.x != 0.0:
+	_grounded = blocked.y > 0.0 and not _auto_jump_frame
+	if blocked.x != 0.0 and not _auto_jump_frame and _auto_jump_timer <= 0.0:
 		velocity.x = 0.0
 		motion_knock_velocity.x = 0.0
 		cancel_charge()
-	if blocked.y != 0.0:
+	if blocked.y != 0.0 and not _auto_jump_frame:
 		velocity.y = 0.0
 		motion_knock_velocity.y = 0.0
+	_auto_jump_frame = false
+	_auto_jump_timer = maxf(_auto_jump_timer - delta, 0.0)
 	motion_knock_velocity *= exp(-CFG.player_knock_decay_rate * delta)
 	if not sim_downed:
 		slide_reactions(incoming)
@@ -347,7 +360,9 @@ func update_crouch_dash() -> void:
 		is_charge = true
 		charge_timer = CFG.charge_distance / maxf(CFG.charge_velocity, 1.0)
 		presentation_events.append({"kind": "dash"})
-		if _last_move_timer > 0.0:
+		if step_input.axis != 0.0:
+			facing_direction = 1 if step_input.axis > 0.0 else -1
+		elif _last_move_timer > 0.0:
 			facing_direction = _last_move_dir
 
 func update_horizontal(delta: float, mult: Vector2) -> void:
