@@ -5,21 +5,17 @@ extends Control
 # 白色短针转满一圈表示余额达到上限。红色长针显示已用的短期额度，超过一圈表示开始透支。
 # 表盘中央通常显示剩余额度，透支后改用红色负数显示透支量。
 
-const DIAL := 84.0
+const DIAL := preload("res://assets/textures/watch_dial.png")
 const BIG_FONT := 96
 const SMALL_FONT := 32
 const CAP_FONT := 16
 const COLOR_RIM := Color8(20, 23, 28)
-const COLOR_CASE := Color8(58, 64, 72)
-const COLOR_FACE := Color8(96, 103, 112)
-const COLOR_TICK := Color8(70, 76, 84)
 const COLOR_HAND_LONG := Color8(196, 62, 62)
 const COLOR_HAND_SHORT := Color8(235, 238, 242)
 const COLOR_TEXT := Color8(232, 236, 242)
 const COLOR_TEXT_DIM := Color8(150, 158, 168)
 const COLOR_LOAN := Color8(158, 40, 48)
 
-var _dial_tex: ImageTexture = null
 var _big: Label = null
 var _cap: Label = null
 var _center: Label = null
@@ -34,13 +30,13 @@ func _init(clock: MatchFrame.Clock) -> void:
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_dial_tex = build_dial_texture()
-	_big = _mk_label(BIG_FONT, COLOR_TEXT, Vector2(DIAL + 14, -16))
-	_cap = _mk_label(CAP_FONT, COLOR_TEXT_DIM, Vector2(DIAL + 14, BIG_FONT - 4))
+	var diameter := DIAL.get_width()
+	_big = _mk_label(BIG_FONT, COLOR_TEXT, Vector2(diameter + 14, -16))
+	_cap = _mk_label(CAP_FONT, COLOR_TEXT_DIM, Vector2(diameter + 14, BIG_FONT - 4))
 	_center = _mk_label(SMALL_FONT, COLOR_TEXT_DIM, Vector2(0, 0))
-	_center.size = Vector2(DIAL, SMALL_FONT + 8)
+	_center.size = Vector2(diameter, SMALL_FONT + 8)
 	_center.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_center.position = Vector2(0, DIAL * 0.5 - SMALL_FONT * 0.5 - 4)
+	_center.position = Vector2(0, diameter * 0.5 - SMALL_FONT * 0.5 - 4)
 	_disp = _clock.balance
 
 func _mk_label(size: int, color: Color, pos: Vector2) -> Label:
@@ -54,42 +50,6 @@ func _mk_label(size: int, color: Color, pos: Vector2) -> Label:
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(l)
 	return l
-
-
-# 按像素绘制表壳与盘面，再沿圆周绘制 12 个刻度。
-static func build_dial_texture() -> ImageTexture:
-	var n := int(DIAL)
-	var img := Image.create(n, n, false, Image.FORMAT_RGBA8)
-	img.fill(Color(0, 0, 0, 0))
-	var c := float(n) * 0.5
-	var block := 2.0
-	var r_out := c - 1.0
-	var r_case := r_out - 5.0
-	var r_face := r_case - 5.0
-	for y in range(0, n, int(block)):
-		for x in range(0, n, int(block)):
-			var d := Vector2(float(x) + block * 0.5, float(y) + block * 0.5).distance_to(Vector2(c, c))
-			var col := Color(0, 0, 0, 0)
-			if d <= r_out:
-				col = COLOR_RIM
-			if d <= r_out - 2.0:
-				col = COLOR_CASE
-			if d <= r_case:
-				col = COLOR_FACE
-			if d <= r_face:
-				col = COLOR_CASE
-			if col.a > 0.0:
-				for by in range(int(block)):
-					for bx in range(int(block)):
-						img.set_pixel(x + bx, y + by, col)
-	for i in 12:
-		var ang := -PI * 0.5 + TAU * float(i) / 12.0
-		for t in range(3):
-			var px := int(c + cos(ang) * (r_face - 4.0 - float(t) * 2.0))
-			var py := int(c + sin(ang) * (r_face - 4.0 - float(t) * 2.0))
-			if px >= 0 and py >= 0 and px < n and py < n:
-				img.set_pixel(px, py, COLOR_TICK)
-	return ImageTexture.create_from_image(img)
 
 func present(clock: MatchFrame.Clock, delta: float) -> void:
 	_clock = clock
@@ -106,20 +66,18 @@ func present(clock: MatchFrame.Clock, delta: float) -> void:
 
 func _draw() -> void:
 	var clock := _clock
-	if _dial_tex == null:
-		return
 	var shake := Vector2.ZERO
 	if _tremble_t > 0.0:
 		shake = Vector2(_rng.randf_range(-1.5, 1.5), _rng.randf_range(-1.5, 1.5)) * (_tremble_t / 0.4)
-	draw_texture(_dial_tex, shake)
-	var c := Vector2(DIAL * 0.5, DIAL * 0.5) + shake
+	draw_texture(DIAL, shake)
+	var c := DIAL.get_size() * 0.5 + shake
 	var a_short := -PI * 0.5 + TAU * clampf(clock.balance / maxf(clock.cap, 1.0), 0.0, 1.0)
-	draw_line(c, c + Vector2(cos(a_short), sin(a_short)) * (DIAL * 0.30), COLOR_HAND_SHORT, 4.0)
+	draw_line(c, c + Vector2(cos(a_short), sin(a_short)) * (DIAL.get_width() * 0.30), COLOR_HAND_SHORT, 4.0)
 	var a_long := -PI * 0.5 + TAU * clock.long_turns
 	var long_col := COLOR_HAND_LONG
 	if _lock_flash_t > 0.0 and fmod(_lock_flash_t, 0.16) > 0.08:
 		long_col = Color8(255, 90, 90)
-	draw_line(c, c + Vector2(cos(a_long), sin(a_long)) * (DIAL * 0.42), long_col, 3.0)
+	draw_line(c, c + Vector2(cos(a_long), sin(a_long)) * (DIAL.get_width() * 0.42), long_col, 3.0)
 	draw_circle(c, 3.0, COLOR_RIM)
 
 

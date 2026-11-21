@@ -26,9 +26,8 @@ func _ready() -> void:
 	var page := UiFactory.page(self, "—— Beta ——", 28)
 	page.add_child(UiFactory.label("实验性玩法都在这里;规则可能与正式模式不同", 16, UiFactory.C_TEXT_DIM))
 	var row := UiFactory.box(page, 36, false)
-	var dial := WatchHud.build_dial_texture()
 	for card in CARDS:
-		row.add_child(_make_card(card, dial))
+		row.add_child(_make_card(card))
 	var spacer := Control.new()
 	spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	page.add_child(spacer)
@@ -41,7 +40,7 @@ func _ready() -> void:
 		get_tree().change_scene_to_file("res://scenes/main_menu.tscn"))
 
 
-func _make_card(c: Dictionary, texture: Texture2D) -> PanelContainer:
+func _make_card(c: Dictionary) -> PanelContainer:
 	var body := VBoxContainer.new()
 	body.add_theme_constant_override("separation", 12)
 	var card := UiFactory.framed(body, CARD_PAD)
@@ -65,7 +64,7 @@ func _make_card(c: Dictionary, texture: Texture2D) -> PanelContainer:
 	icon_box.add_theme_constant_override("separation", 2)
 	body.add_child(icon_box)
 	var dial := TextureRect.new()
-	dial.texture = texture
+	dial.texture = WatchHud.DIAL
 	dial.custom_minimum_size = Vector2(196, 196)
 	dial.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	dial.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
