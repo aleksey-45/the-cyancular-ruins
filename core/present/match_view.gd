@@ -20,15 +20,15 @@ var _symbol: Label
 var _film: ShaderMaterial
 var _mode: MatchFrame.Mode
 
-func mount(world: WorldView, grid: Array[Array], descriptors: PackedInt32Array,
+func mount(world: WorldView, map: Dictionary,
 		mode: MatchFrame.Mode, clock: MatchFrame.Clock, radar: bool) -> void:
 	_mode = mode
 	_world = world
 	RenderingServer.set_default_clear_color(TerrainAtlas.SKY_COLOR)
 	camera.zoom = Vector2.ONE * PlayerParams.cam_zoom
 	var viewport: SubViewport = $WorldViewport
-	terrain_view.install(grid, descriptors, Vector2(viewport.size) / (2.0 * camera.zoom) + Vector2.ONE * PlayerParams.cam_seam_margin)
-	var size := Vector2(grid[0].size(), grid.size()) * TerrainView.CELL
+	terrain_view.install(map, Vector2(viewport.size) / (2.0 * camera.zoom) + Vector2.ONE * PlayerParams.cam_seam_margin)
+	var size := Vector2(map.size * CyrmMap.CELL_SIZE)
 	_world.bind($WorldViewport/Canvas, size)
 	pause.mount(mode != MatchFrame.Mode.SOLO)
 	if mode != MatchFrame.Mode.SOLO:
@@ -36,7 +36,7 @@ func mount(world: WorldView, grid: Array[Array], descriptors: PackedInt32Array,
 		pvp_hud.mode = mode
 		add_child(pvp_hud)
 	if radar:
-		_radar = Minimap.new(grid, size)
+		_radar = Minimap.new(map)
 		add_child(_radar)
 	if clock != null:
 		_mount_watch(clock)

@@ -50,7 +50,7 @@ func _setup() -> void:
 	waterproof_max = 10
 	_repath_phase = randf() * EnemyParams.FlyBird.repath_interval
 	_spawn_pos = position
-	_home_cell = terrain.cell(_spawn_pos)
+	_home_cell = terrain.cell(_spawn_pos + Vector2.UP * EnemyParams.FlyBird.hover_altitude)
 
 func _move_slide(travel: Vector2) -> void:
 	super(travel)
@@ -109,7 +109,7 @@ func _tick_fly(delta: float, dist: float) -> void:
 	_repath_timer -= delta
 	if _repath_timer <= 0.0:
 		_repath_timer = EnemyParams.FlyBird.repath_interval + _repath_phase
-		_repath_to(terrain.cell(_shoot_pos()))
+		_repath_to(terrain.cell(_shoot_pos() + Vector2.UP * EnemyParams.FlyBird.hover_altitude))
 	# 沿路径飞行或绕过障碍都不可行时，才直接飞向投弹点。
 	_follow_path(delta, _shoot_pos() if _path.is_empty() else Vector2.INF)
 
@@ -207,7 +207,7 @@ func _shoot_side_compute(geo: float) -> float:
 	for side in [geo, -geo]:
 		var pos := p + Vector2(side * EnemyParams.FlyBird.hover_offset_x,
 				-EnemyParams.FlyBird.hover_offset_y)
-		if TileDefs.is_blocked(terrain.value(terrain.cell(pos))):
+		if TileDefs.is_blocked(terrain.material_at(terrain.cell(pos))):
 			continue
 		if terrain.line_of_sight(pos, p):
 			return side
@@ -224,7 +224,7 @@ func _shoot_pos() -> Vector2:
 	var p := player.position
 	var side := _shoot_side()
 	var pos := p + Vector2(side * EnemyParams.FlyBird.hover_offset_x, -EnemyParams.FlyBird.hover_offset_y)
-	if TileDefs.is_blocked(terrain.value(terrain.cell(pos))):
+	if TileDefs.is_blocked(terrain.material_at(terrain.cell(pos))):
 		pos = p + Vector2(-side * EnemyParams.FlyBird.hover_offset_x, -EnemyParams.FlyBird.hover_offset_y)
 	return pos
 
@@ -245,7 +245,7 @@ func _update_hover_anchor() -> void:
 	var p := player.position
 	_hover_anchor = p + Vector2(_hover_side * EnemyParams.FlyBird.hover_offset_x,
 			-EnemyParams.FlyBird.hover_offset_y)
-	if TileDefs.is_blocked(terrain.value(terrain.cell(_hover_anchor))):
+	if TileDefs.is_blocked(terrain.material_at(terrain.cell(_hover_anchor))):
 		_hover_side = -_hover_side
 		_hover_anchor = p + Vector2(_hover_side * EnemyParams.FlyBird.hover_offset_x,
 				-EnemyParams.FlyBird.hover_offset_y)
@@ -271,7 +271,7 @@ func _start_strafe() -> void:
 	_strafe_timer = EnemyParams.FlyBird.strafe_duration
 
 
-# 只有与上次检测处在同一对瓦片而且缓存未到期，才继续使用上次的视线结果。
+# 只有与上次检测处在同一对子格而且缓存未到期，才继续使用上次的视线结果。
 func _shot_clear() -> bool:
 	var from := terrain.cell(position)
 	var to := terrain.cell(player.position)
@@ -392,11 +392,6 @@ func _update_facing() -> void:
 			_set_facing(vx < 0.0)
 
 
-func _waypoint_world(cell: Vector2i) -> Vector2:
-	var center := (Vector2(cell) + Vector2(0.5, 0.5)) * GameParameters.TILE_SIZE
-	return center - Vector2(0.0, EnemyParams.FlyBird.hover_altitude)
-
-
 func _follow_path(delta: float, fallback_target: Vector2 = Vector2.INF) -> void:
 	if _path.is_empty():
 		if fallback_target != Vector2.INF:
@@ -404,7 +399,7 @@ func _follow_path(delta: float, fallback_target: Vector2 = Vector2.INF) -> void:
 		return
 	var spd := EnemyParams.FlyBird.fly_speed
 	while _path_index < _path.size():
-		var target := _waypoint_world(_path[_path_index])
+		var target := terrain.cell_center(_path[_path_index])
 		var to_target := GridPathfinder.toroidal_delta_px(position, target, terrain.map_size)
 		if to_target.length() <= spd * delta:
 			position = target
@@ -421,14 +416,15 @@ func _find_escape_column() -> Vector2:
 	var cols := terrain.columns
 	var rows := terrain.rows
 	var bc := terrain.cell(position)
-	for drop in range(1, EnemyParams.FlyBird.escape_max_descent + 1):
+	var width := mini(cols / 2, EnemyParams.FlyBird.escape_search_range)
+	for drop in range(1, mini(rows - 1, EnemyParams.FlyBird.escape_max_descent) + 1):
 		var row := posmod(bc.y + drop, rows)
-		for dist in range(1, EnemyParams.FlyBird.escape_search_range + 1):
+		for dist in range(1, width + 1):
 			for side in [-1, 1]:
 				var cell := Vector2i(posmod(bc.x + side * dist, cols), row)
 				if _bird_can_pass(cell):
 					return terrain.cell_center(cell)
-	for dist in range(1, EnemyParams.FlyBird.escape_search_range + 1):
+	for dist in range(1, width + 1):
 		for side in [-1, 1]:
 			var cell := Vector2i(posmod(bc.x + side * dist, cols), bc.y)
 			if _bird_can_pass(cell):
@@ -440,9 +436,9 @@ func _find_escape_column() -> Vector2:
 func _bird_can_pass(cell: Vector2i) -> bool:
 	if terrain.empty():
 		return false
-	var center := _waypoint_world(cell)
+	var center := terrain.cell_center(cell)
 	var bounds := Rect2(center + _fly_box_min, _fly_box_max - _fly_box_min)
-	if terrain.rect_overlaps(bounds, GameParameters.TILE_SIZE, true):
+	if terrain.rect_overlaps(bounds, true):
 		return false
 	var anchored := GridPathfinder.anchor_to_nearest(center, position, terrain.map_size)
 	bounds.position = anchored + _fly_box_min

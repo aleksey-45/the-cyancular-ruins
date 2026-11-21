@@ -12,7 +12,7 @@ var beams: Dictionary
 var pending_blasts: Dictionary[int, Array]
 
 var enemies: Dictionary[int, Array]
-var terrain_changes: Array
+var terrain_changes: Dictionary[int, int] = {}
 
 func capture(combat: CombatSimulator) -> void:
 	tick = combat.tick

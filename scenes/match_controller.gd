@@ -7,7 +7,7 @@ var player: Player
 var controls := LocalInputSource.new()
 var combat_rules: CombatSimulator
 
-var map_info: Dictionary
+var map: Dictionary
 var terrain: Terrain
 @onready var _view: MatchView = $View
 var _world := WorldView.new()
@@ -22,7 +22,7 @@ var _poses: Dictionary[int, MatchFrame.Pose] = {}
 var _splash_after := {}
 
 func _enter_tree() -> void:
-	terrain = Terrain.new(map_info["grid"], map_info["descriptors"])
+	terrain = Terrain.new(map)
 	$View/WorldViewport.world_2d = terrain.physics.world
 
 func _exit_tree() -> void:
@@ -35,7 +35,7 @@ func _mount(mode: MatchFrame.Mode, account: GrainAccount = null, radar := false)
 	if account != null:
 		_frame.clock = MatchFrame.Clock.new()
 		_sample_clock(false, false)
-	_view.mount(_world, terrain.get_grid_snapshot(), terrain.descriptors(), mode, _frame.clock, radar)
+	_view.mount(_world, map, mode, _frame.clock, radar)
 	_view.pause.toggled.connect(_set_pause)
 	_view.pause.leave_requested.connect(_leave_match)
 

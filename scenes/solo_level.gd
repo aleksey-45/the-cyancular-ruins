@@ -8,11 +8,19 @@ var _rewind: RewindHistory
 var _weapon_floors: Array[Vector2i]
 var _kills := 0
 
+static func create(document: Dictionary, spawn: Vector2i, weapons: Array[int]) -> SoloLevel:
+	var scene: PackedScene = load("res://scenes/level_0.tscn")
+	var level: SoloLevel = scene.instantiate()
+	level.map = document
+	level.spawn_cell = spawn
+	level.enabled_weapons = weapons
+	return level
+
 func _ready() -> void:
 	combat_rules = CombatSimulator.new(terrain)
 	combat_rules.time_field = time_field
 	player = combat_rules.add_player(1)
-	_weapon_floors = SpawnPicker.floor_cells(map_info["grid"], map_info["size"])
+	_weapon_floors = SpawnPicker.floor_cells(map)
 	player.weapons.enabled_types = enabled_weapons
 	_mount(Mode.SOLO, time_field.account)
 	_bind_combat()
@@ -106,9 +114,10 @@ func _start_single() -> void:
 	player.sim_iframes = 0.0
 	player._controls_locked = false
 	player.weapons.set_initial_inventory([enabled_weapons[0]])
-	for entry: Dictionary in map_info["spawns"]["enemies"]:
+	for entry: Dictionary in map.points.values():
+		if entry.kind != "enemy": continue
 		var type_id: String = entry["type"]
-		var enemy := combat_rules.add_enemy(type_id, player, terrain.cell_center(entry["cell"]))
+		var enemy := combat_rules.add_enemy(type_id, player, CyrmMap.world_position(entry.cell))
 		enemy.died.connect(_count_kill)
 		var id := -1 - enemy.slot
 		enemy.motion.connect(func(kind: StringName, speed: float) -> void:

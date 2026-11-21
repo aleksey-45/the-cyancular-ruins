@@ -49,19 +49,20 @@ func run(tree: SceneTree) -> void:
 	await _solo_scene(tree)
 
 func _detached_match() -> void:
-	var map := MapFormat.load_map("res://maps/demo.cyrm")
-	var sim := CombatSimulator.new(Terrain.new(map["grid"], map["descriptors"]))
+	var map := CyrmMap.load_file("res://maps/demo.cyrm")
+	var sim := CombatSimulator.new(Terrain.new(map))
 	sim.time_field = TimeField.new(GrainAccount.new())
 	var actor := sim.add_player(1)
 	actor.spawn_at(SpawnPicker.single_spawn(map))
 	actor.weapons.set_initial_inventory([WeaponRegistry.Type.RIFLE])
-	for entry: Dictionary in map["spawns"]["enemies"]:
-		sim.add_enemy(entry["type"], actor, sim.terrain.cell_center(entry["cell"]))
+	var enemies: Array = map.points.values().filter(func(p: Dictionary) -> bool: return p.kind == "enemy")
+	for entry: Dictionary in enemies:
+		sim.add_enemy(entry["type"], actor, CyrmMap.world_position(entry.cell))
 	var slots: Array[int] = []
 	for enemy in sim.enemies:
 		slots.append(enemy.slot)
 	sim.step({actor.role: _attack(ActorInput.BIT_ATTACK, ActorInput.BIT_ATTACK)})
-	expect(sim.tick == 1 and sim.enemies.size() == map["spawns"]["enemies"].size() and slots == range(slots.size()),
+	expect(sim.tick == 1 and sim.enemies.size() == enemies.size() and slots == range(slots.size()),
 			"demo builds and steps every enemy in map order without a viewport")
 	var hulls := sim.terrain.physics.shape_overlaps(CollisionWorld.rectangle(Vector2.ONE), actor.transform, CollisionWorld.LAYER_TEAM_A)
 	expect(hulls.size() == 1 and hulls[0]["collider"] == actor, "a detached player's RID resolves to its model")
@@ -72,12 +73,12 @@ func _detached_match() -> void:
 
 func _solo_scene(tree: SceneTree) -> void:
 	var level: SoloLevel = preload("res://scenes/level_0.tscn").instantiate()
-	level.map_info = MapFormat.load_map("res://maps/newfactory.cyrm")
-	level.spawn_cell = SpawnPicker.single_spawn(level.map_info)
+	level.map = CyrmMap.load_file("res://maps/newfactory.cyrm")
+	level.spawn_cell = SpawnPicker.single_spawn(level.map)
 	level.enabled_weapons.assign([WeaponRegistry.Type.RIFLE])
 	tree.root.add_child(level)
 	var sim := level.combat_rules
-	var enemy_count: int = level.map_info["spawns"]["enemies"].size()
+	var enemy_count: int = level.map.points.values().filter(func(p: Dictionary) -> bool: return p.kind == "enemy").size()
 	expect(sim.enemies.size() == enemy_count and enemy_count > 0, "the solo match owns the map's enemies")
 	var viewport := level.get_node("View/WorldViewport")
 	var nodes := viewport.get_child_count()
@@ -494,14 +495,16 @@ func _rounds(tree: SceneTree) -> void:
 	var sim := parent.combat
 	var bullet := sim.spawn_projectile(1, WeaponRegistry.Type.PISTOL, actor,
 			Vector2(136, 160), Vector2.DOWN * 900.0)
-	var tile := Vector2i(2, 3)
-	var before: int = _terrain.capture_cell(tile)["hp"]
+	var hit_sub := Vector2i(8, 12)
+	var before := _terrain.get_hp(hit_sub)
 	for i in 4:
 		sim.step_projectiles(ActorStep.DT)
 		if sim.projectiles.is_empty(): break
 	expect(sim.projectiles.is_empty(), "an ordinary round ends on terrain contact")
-	expect(_terrain.capture_cell(tile)["hp"] == maxi(0, before - bullet.hit_damage),
-			"a projectile impact immediately damages the 64 px tile")
+	expect(_terrain.get_hp(hit_sub) == before - bullet.hit_damage
+			and _terrain.get_hp(hit_sub + Vector2i.ONE) == before - bullet.hit_damage
+			and _terrain.get_hp(hit_sub + Vector2i(2, 0)) == before,
+			"a swept projectile immediately damages only the 32 px block at the contact point")
 	cleanup()
 	var walls := {}
 	for x in 8: walls[Vector2i(x, 3)] = wall_texture(true)
@@ -608,7 +611,7 @@ func _beam(tree: SceneTree) -> void:
 	var shots := ActorStep.step(shooter, _attack(attack, attack))
 	var before := near.sim_hp
 	var cell := Vector2i(14, 8)
-	_terrain.damage_tile(cell, _terrain.capture_cell(cell)["hp"] - 1, 1, 0)
+	_terrain.damage_beam(cell * 4, _terrain.get_hp(cell * 4) - 1, 0)
 	var sim := parent.combat
 	var rewind := RewindHistory.new(sim)
 	rewind.record(TimeParams.SNAP_INTERVAL)
@@ -619,7 +622,7 @@ func _beam(tree: SceneTree) -> void:
 	expect(near.sim_hp == before - damage and far.sim_hp == before - damage,
 			"the authoritative beam hits multiple targets, each once across reflections")
 	expect(ally.sim_hp == before and shooter.sim_hp == before, "the beam skips its shooter and allies")
-	expect(_terrain.value(cell) == 0, "the first beam destroys the wall in terrain data immediately")
+	expect(_terrain.material_at(cell * 4) == 0, "the first beam destroys the wall in terrain data immediately")
 	ActorStep.step(ally, NEUTRAL_INPUT)
 	var bullet := sim.spawn_projectile(1, WeaponRegistry.Type.PISTOL, shooter,
 			Vector2(872, 544), Vector2.RIGHT * 3000.0)
@@ -731,7 +734,7 @@ func _blast(tree: SceneTree) -> void:
 	var enemy := sim.add_enemy("jump_bird", near, Vector2(936, 530))
 	var enemy_hp := enemy.hp
 	var cell := Vector2i(15, 8)
-	var wall := _terrain.capture_cell(cell)
+	var wall := block_hp(_terrain, cell)
 	var hp := near.sim_hp
 	near.sim_iframes = 1.0
 	sim.tick = 100
@@ -739,13 +742,13 @@ func _blast(tree: SceneTree) -> void:
 	for at in [100, 101, 102]:
 		sim.tick = at
 		sim.settle_blasts()
-		expect(near.sim_hp == hp and enemy.hp == enemy_hp and _terrain.capture_cell(cell) == wall,
+		expect(near.sim_hp == hp and enemy.hp == enemy_hp and block_hp(_terrain, cell) == wall,
 				"actors and terrain wait until three ticks after detonation")
 	sim.tick = 103
 	sim.settle_blasts()
 	expect(near.sim_hp < hp and across.sim_hp < hp and far.sim_hp == hp and enemy.hp < enemy_hp,
 			"one blast reaches players and enemies across the seam and respects its radius")
-	expect(_terrain.capture_cell(cell) != wall, "blast damage reaches terrain on the same tick")
+	expect(block_hp(_terrain, cell) != wall, "blast damage reaches terrain on the same tick")
 	var after := near.sim_hp
 	sim.settle_blasts()
 	expect(near.sim_hp == after and sim.pending_blasts.is_empty(), "each blast settles once")
@@ -777,7 +780,7 @@ func _shared_combat_tick(tree: SceneTree) -> void:
 	var direction := Vector2(0.3, 1.0).normalized()
 	var held := ActorInput.BIT_DOWN
 	var floor_cell := Vector2i(4, 3)
-	var original := single.terrain.capture_cell(floor_cell)
+	var original := block_hp(single.terrain, floor_cell)
 	var damaged_at := 0
 	for at in range(1, 46):
 		var release := ActorInput.BIT_ATTACK if at == 1 else 0
@@ -788,10 +791,10 @@ func _shared_combat_tick(tree: SceneTree) -> void:
 		server.step()
 		one.capture(single)
 		two.capture(host.combat)
-		var floor_state := single.terrain.capture_cell(floor_cell)
+		var floor_state := block_hp(single.terrain, floor_cell)
 		expect(one.tick == two.tick and solo_player.capture_state() == host_player.capture_state()
 				and one.projectiles == two.projectiles and one.pending_blasts == two.pending_blasts
-				and floor_state == server.terrain.capture_cell(floor_cell),
+				and floor_state == block_hp(server.terrain, floor_cell),
 				"the same input on solo world time and authority produces the same combat state at tick %d" % at)
 		if at == 1:
 			expect(single.projectiles.has(id) and single.projectiles[id].traveled > 0.0,
@@ -895,7 +898,7 @@ func _rewound_blast(tree: SceneTree) -> void:
 	sim.time_field = TimeField.new(GrainAccount.new())
 	var rewind := RewindHistory.new(sim)
 	var dt := 1.0 / TimeParams.SNAP_HZ
-	var wall := sim.terrain.capture_cell(cell)
+	var wall := block_hp(sim.terrain, cell)
 	var hp := actor.sim_hp
 	var id := ShotRules.shot_id(actor.role, 1)
 	var shot := sim.spawn_projectile(id, WeaponRegistry.Type.GRENADE, actor, Vector2(936, 544), Vector2.RIGHT)
@@ -911,7 +914,7 @@ func _rewound_blast(tree: SceneTree) -> void:
 	saved.capture(sim)
 	sim.step(inputs)
 	sim.step(inputs)
-	var damaged := sim.terrain.capture_cell(cell)
+	var damaged := block_hp(sim.terrain, cell)
 	var hit_hp := actor.sim_hp
 	expect(events == [1] and hit_hp < hp and damaged != wall, "the original grenade settles at tick four")
 	# 地形损伤落在两份世界记录之间。
@@ -925,29 +928,29 @@ func _rewound_blast(tree: SceneTree) -> void:
 	expect(sim.tick == 2 and sim.ground.tick == 4 and events == [1] and sim.projectiles.is_empty()
 			and sim.pending_blasts[id][CombatSimulator.Blast.DUE] == 4
 			and saved.pending_blasts[id][CombatSimulator.Blast.DUE] == 4
-			and actor.sim_hp == hp and sim.terrain.capture_cell(cell) == wall,
+			and actor.sim_hp == hp and block_hp(sim.terrain, cell) == wall,
 			"holding a pending-blast sample restores its wall and HP and freezes its two remaining ticks")
 	sim.time_field.mode = TimeField.Mode.NONE
 	rewind.record(0.0)
 	sim.step(inputs)
-	expect(actor.sim_hp == hp and sim.terrain.capture_cell(cell) == wall, "one resumed tick leaves the blast pending")
+	expect(actor.sim_hp == hp and block_hp(sim.terrain, cell) == wall, "one resumed tick leaves the blast pending")
 	sim.step(inputs)
 	expect(events == [1] and actor.sim_hp == hit_hp and actor.motion_knock_velocity != Vector2.ZERO
-			and sim.terrain.capture_cell(cell) == damaged and sim.pending_blasts.is_empty(),
+			and block_hp(sim.terrain, cell) == damaged and sim.pending_blasts.is_empty(),
 			"resuming settles the original damage and impulse once without a second detonation event")
 	actor.waterproof = 1
 	actor.shot_serial = 7
 	sim.time_field.mode = TimeField.Mode.REWIND
 	rewind.rewind(1.0)
 	expect(sim.projectiles.has(id) and sim.projectiles[id].fuse_duration == ActorStep.DT
-			and sim.pending_blasts.is_empty() and actor.sim_hp == hp and sim.terrain.capture_cell(cell) == wall
+			and sim.pending_blasts.is_empty() and actor.sim_hp == hp and block_hp(sim.terrain, cell) == wall
 			and actor.waterproof == 1 and actor.shot_serial == 7,
 			"rewinding before detonation restores the live fuse, preserving oxygen and unique shot IDs")
 	sim.time_field.mode = TimeField.Mode.NONE
 	rewind.record(0.0)
 	for i in 5:
 		sim.step(inputs)
-	expect(events == [1, 1] and actor.sim_hp == hit_hp and sim.terrain.capture_cell(cell) == damaged
+	expect(events == [1, 1] and actor.sim_hp == hit_hp and block_hp(sim.terrain, cell) == damaged
 			and sim.projectiles.is_empty() and sim.pending_blasts.is_empty(),
 			"a new branch detonates once and reproduces exactly one terrain and damage settlement")
 	cleanup()
@@ -1124,7 +1127,7 @@ func _shared_rewind_history(tree: SceneTree) -> void:
 	var blast := ShotRules.shot_id(first.role, 3)
 	var cell := Vector2i(2, 3)
 	var sub := Vector2i(8, 12)
-	var wall := sim.terrain.capture_cell(cell)
+	var wall := block_hp(sim.terrain, cell)
 	for i in range(1, 4):
 		sim.tick = i * 3
 		first.position.x = 100.0 + i
@@ -1165,7 +1168,7 @@ func _shared_rewind_history(tree: SceneTree) -> void:
 	all.rewind(1.0)
 	expect(first.position.x == 101.0 and second.position.x == 201.0 and shell.position.x == 181.0
 			and not shell.direct_hit and sim.projectiles.has(gone) and not sim.projectiles.has(late_id)
-			and sim.pending_blasts.is_empty() and sim.terrain.capture_cell(cell) == wall
+			and sim.pending_blasts.is_empty() and block_hp(sim.terrain, cell) == wall
 			and sim.tick == 3 and first.waterproof == 1 and first.equipped == null and first.shot_serial == 8,
 			"world rewind restores both actors, projectile membership, hit flags, clock, terrain and pending blasts together")
 	cleanup()
@@ -1267,11 +1270,11 @@ func _pickup_order(tree: SceneTree) -> void:
 
 func _pickup_landing(tree: SceneTree) -> void:
 	var parent := world(tree)
-	var floor_y := 3.0 * GameParameters.TILE_SIZE
+	var floor_y := 12.0 * CyrmMap.CELL_SIZE
 	var before := parent.get_child_count()
 	var field := GroundWeaponField.new(_terrain)
 	for preplaced in [true, false]:
-		var at := Vector2(160.0 if preplaced else 352.0, floor_y - GameParameters.TILE_SIZE * 0.5)
+		var at := Vector2(160.0 if preplaced else 352.0, floor_y - CyrmMap.CELL_SIZE * 0.5)
 		var bow := field.spawn( WeaponRegistry.Type.COMPOUND_BOW, WeaponInventory.DEFAULT_CARRIED, at, Vector2.ZERO)
 		if preplaced:
 			bow.settle_on_spawn_floor()
@@ -1497,7 +1500,7 @@ func _mvp() -> void:
 
 func _duel_spawns() -> void:
 	var path := "res://maps/newfactory.cyrm"
-	var sides: Dictionary = MapFormat.load_map(path)["spawns"]["respawn"]
+	var sides := SpawnPicker.respawn_cells(CyrmMap.load_file(path))
 	var authority := AuthorityWorld.new()
 	var problem := authority.setup(PvpSession.MODE_PVP, path, [1, 2], {}, {"player_collision": true})
 	expect(problem.is_empty(), "the duel loads the multiplayer spawn points")
@@ -1549,7 +1552,7 @@ func _team_setup() -> void:
 	expect(int(authority.rules.scores.get(2, 0)) == 1 and int(authority.rules.scores.get(1, 0)) == 0,
 			"the smaller team starts with its score bonus")
 	expect(authority.rules.team_counts == {1: 2, 2: 1}, "the roster counts are frozen at setup")
-	var sides: Dictionary = MapFormat.load_map("res://maps/demo.cyrm")["spawns"]["respawn"]
+	var sides := SpawnPicker.respawn_cells(CyrmMap.load_file("res://maps/demo.cyrm"))
 	expect(players_on_map_points(authority, [1, 2], sides[1]) and players_on_map_points(authority, [3], sides[2]),
 			"each team opens on distinct marked points on its own side")
 	var actor: Player = authority.players[1]
@@ -1600,32 +1603,32 @@ func _win_team_round(authority: AuthorityWorld) -> void:
 func _team_respawn(tree: SceneTree) -> void:
 	cleanup()
 	var parent := world_from_solid(tree, 125, 75, func(sx: int, sy: int) -> bool: return sy >= 74 * 4)
-	var info := MapFormat.load_map("res://maps/demo.cyrm")
-	var respawn: Dictionary = info["spawns"]["respawn"]
+	var info := CyrmMap.load_file("res://maps/demo.cyrm")
+	var respawn := SpawnPicker.respawn_cells(info)
 	var rules := MatchRules.new()
 	rules.setup(PvpSession.MODE_TEAM, [1, 2, 3], {1: 1, 2: 1, 3: 2}, info, {"player_collision": true})
 	var ally := player(parent, 1)
 	ally.team = 1
-	ally.position = Vector2(respawn[1][0]) * 64 + Vector2(32, 32)
+	ally.position = CyrmMap.world_position(respawn[1][0])
 	var enemy := player(parent, 3)
 	enemy.team = 2
-	enemy.position = Vector2(respawn[1][1]) * 64 + Vector2(32, 32)
+	enemy.position = CyrmMap.world_position(respawn[1][1])
 	var players := {1: ally, 3: enemy}
 	var picked := {}
 	seed(1729)
 	for i in 16:
 		picked[rules.spawn_for(players, 2)] = true
 	randomize()
-	var size: Vector2i = info["size"]
+	var size: Vector2i = info.size
 	expect(picked.size() > 1 and picked.keys().all(func(cell: Vector2i) -> bool:
 		var distance := GridPathfinder.toroidal_dist(cell, respawn[1][1], size.x, size.y)
-		return respawn[1].has(cell) and cell != respawn[1][0] and distance >= 8),
+		return respawn[1].has(cell) and cell != respawn[1][0] and distance >= SpawnPicker.PREFERRED_DISTANCE),
 			"team respawn varies among free points at least eight cells from the enemy")
 	# 让队友占用所有己方复活点，比较启用和关闭角色碰撞时的选点结果。
 	for index in respawn[1].size():
 		var mate := player(parent, 10 + index)
 		mate.team = 1
-		mate.position = Vector2(respawn[1][index]) * 64 + Vector2(32, 32)
+		mate.position = CyrmMap.world_position(respawn[1][index])
 		mate.sync_collision_geometry()
 		players[10 + index] = mate
 	expect(rules.spawn_for(players, 2) == SpawnPicker.NO_CELL,
@@ -1640,9 +1643,13 @@ func _team_respawn(tree: SceneTree) -> void:
 func _sparse_spawn_map(tree: SceneTree) -> void:
 	var size := Vector2i(18, 4)
 	var parent := world_from_solid(tree, size.x, size.y, func(_x: int, y: int) -> bool: return y >= 10)
-	var metadata := ["# player 0 1", "# player2 16 1", "# respawn 1 0 1", "# respawn 1 2 1", "# respawn 1 16 1"]
-	var info := {"size": size, "grid": _terrain.get_grid_snapshot(), "descriptors": _terrain.descriptors(),
-			"spawns": MapFormat.parse_spawn_metadata(metadata, size)}
+	var info := CyrmMap.create(size * 4)
+	var ground: PackedInt32Array = info.layers[CyrmMap.SCENE]
+	var wall := CyrmMap.tile_value(wall_texture())
+	for i in range(info.size.x * 10, ground.size()): ground[i] = wall
+	info.points[0] = {"kind": "player", "cell": Vector2i(2, 6)}
+	info.points[1] = {"kind": "player2", "cell": Vector2i(66, 6)}
+	for x: int in [2, 10, 66]: info.points[x] = {"kind": "respawn", "side": 1, "cell": Vector2i(x, 6)}
 	expect(not MatchRules.new().setup(PvpSession.MODE_PVP, [1, 2], {}, info, {}).is_empty(),
 			"a duel with a missing side rejects the map even when both solo markers exist")
 	expect(not MatchRules.new().setup(PvpSession.MODE_TEAM, [1, 2], {1: 1, 2: 2}, info, {}).is_empty(),
@@ -1650,16 +1657,19 @@ func _sparse_spawn_map(tree: SceneTree) -> void:
 	expect(not MatchRules.new().setup(PvpSession.MODE_ROYALE, [1, 2, 3, 4], {}, info, {}).is_empty(),
 			"a Royale with too few marked points rejects the map")
 	var rules := MatchRules.new()
+	expect(not rules.setup(PvpSession.MODE_ROYALE, [1], {}, info, {}).is_empty()
+			and not rules.setup(PvpSession.MODE_ROYALE, [1, 2, 3], {}, info, {"max_players": 2}).is_empty(),
+			"Royale admission respects both the minimum roster and the configured room cap")
 	var problem := rules.setup(PvpSession.MODE_ROYALE, [1, 2], {}, info, {"player_collision": true})
 	expect(problem.is_empty(), "a Royale can use points that all come from the same side")
 	if problem.is_empty():
 		var self_player := player(parent, 1)
 		var enemy := player(parent, 2)
-		self_player.position = _terrain.cell_center(Vector2i(2, 1))
-		enemy.position = _terrain.cell_center(Vector2i(17, 1))
-		expect(rules.spawn_for({1: self_player, 2: enemy}, 1) == Vector2i(2, 1),
+		self_player.position = CyrmMap.world_position(Vector2i(10, 6))
+		enemy.position = CyrmMap.world_position(Vector2i(70, 6))
+		expect(rules.spawn_for({1: self_player, 2: enemy}, 1) == Vector2i(10, 6),
 				"with no safe point, pick the farthest across the seam and ignore the moving player's own position")
-	info["spawns"]["respawn"][2].append(Vector2i(0, 1))
+	info.points[75] = {"kind": "respawn", "side": 2, "cell": Vector2i(2, 6)}
 	expect(not MatchRules.new().setup(PvpSession.MODE_PVP, [1, 2], {}, info, {}).is_empty(),
 			"a point marked on both sides cannot start a duel")
 	cleanup()

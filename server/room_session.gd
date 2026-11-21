@@ -195,8 +195,8 @@ func _start_problem() -> String:
 	var online := online_count()
 	if mode == PvpSession.MODE_PVP and online != max_players():
 		return "1v1 需要两名在线玩家"
-	if online < 2:
-		return "至少需要两名在线玩家"
+	if online < RoomOptions.MIN_PLAYERS:
+		return "至少需要 %d 名在线玩家" % RoomOptions.MIN_PLAYERS
 	if online != seats.size():
 		return "所有席位在线后才能开始"
 	return ""

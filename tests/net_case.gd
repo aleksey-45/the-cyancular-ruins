@@ -307,7 +307,7 @@ func _royale_capacity() -> void:
 		if not problem.is_empty():
 			session.free()
 			return
-		var sides: Dictionary = MapFormat.load_map(path)["spawns"]["respawn"]
+		var sides := SpawnPicker.respawn_cells(CyrmMap.load_file(path))
 		var points: Array = sides[1] + sides[2]
 		expect(players_on_map_points(authority, roles, points), "%s assigns sixteen distinct marked points" % path)
 		authority.players[16].force_down()

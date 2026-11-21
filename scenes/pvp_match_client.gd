@@ -21,7 +21,7 @@ var _pending_states: Dictionary[int, Dictionary] = {}
 var _pending_events: Array = []
 
 func _enter_tree() -> void:
-	map_info = PvpSession.baseline["map_info"]
+	map = PvpSession.baseline["map"]
 	super()
 
 func _ready() -> void:

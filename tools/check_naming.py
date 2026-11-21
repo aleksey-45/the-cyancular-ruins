@@ -23,7 +23,7 @@ DOC_FILES = sorted(p.relative_to(PROJECT).as_posix() for p in [
 # 识别反引号中的文件路径时，只考虑下列扩展名。
 DOC_EXTS = (".gd", ".tscn", ".json", ".js", ".html", ".cyrm", ".cfg",
             ".shader", ".gdshader", ".bat", ".py", ".md", ".ttf", ".otf", ".png")
-GENERATED_DOC_PREFIXES = (".test_logs/", "builds/", "releases/", "level_editor/dist/")
+GENERATED_DOC_PREFIXES = (".test_logs/", "builds/", "releases/")
 
 # 可在此登记目录名和 GDScript 类名的例外。
 ACCEPTED_CLASS_FILES = {}

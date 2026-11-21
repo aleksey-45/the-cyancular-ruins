@@ -75,7 +75,7 @@ func _drop(player: Player, item: Dictionary) -> void:
 				Vector2(PlayerParams.weapon_drop_speed * player.facing_direction, -PlayerParams.weapon_drop_up), player.role)
 
 func scatter(floors: Array[Vector2i], types: Array[int]) -> void:
-	var cells := GridPathfinder.spread_cells(floors, types.size() * 2, 10, _terrain.columns, _terrain.rows)
+	var cells := GridPathfinder.spread_cells(floors, types.size() * 2, 40, _terrain.columns, _terrain.rows)
 	for i in cells.size():
 		var pickup := spawn(types[i / 2], WeaponInventory.DEFAULT_CARRIED, _terrain.cell_center(cells[i]), Vector2.ZERO)
 		pickup.settle_on_spawn_floor()

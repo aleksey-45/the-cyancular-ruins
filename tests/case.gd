@@ -9,6 +9,7 @@ class TestWorld extends Node2D:
 var failures: Array[String] = []
 var checks := 0
 var _worlds: Array[Node] = []
+var _document: Dictionary
 var _terrain: Terrain
 
 ## 测试角色使用指定的碰撞层。设置会立即应用到物理服务器中的物理体。
@@ -37,45 +38,32 @@ func world(tree: SceneTree) -> TestWorld:
 	return world_with_walls(tree, 8, 4, walls)
 
 func world_with_walls(tree: SceneTree, columns: int, rows: int, walls: Dictionary) -> TestWorld:
-	TileDefs.load_defs()
-	var grid: Array[Array] = []
-	var descriptors := PackedInt32Array()
-	descriptors.resize(columns * rows * 16)
-	for y in rows:
-		var row: Array = []
-		for x in columns:
-			var texture: int = walls.get(Vector2i(x, y), 0)
-			row.append(MapFormat.pack(texture, 15) if texture != 0 else 0)
-		grid.append(row)
-	for y in rows * 4:
-		for x in columns * 4:
-			var texture: int = walls.get(Vector2i(x / 4, y / 4), 0)
-			if texture != 0:
-				descriptors[y * columns * 4 + x] = (texture << MapFormatV4.TEXTURE_SHIFT) | MapFormatV4.NEUTRAL_TINT
-	return _install_world(tree, grid, descriptors)
+	var map := CyrmMap.create(Vector2i(columns, rows) * 4)
+	var cells: PackedInt32Array = map.layers[CyrmMap.SCENE]
+	for tile: Vector2i in walls:
+		var value := CyrmMap.tile_value(walls[tile])
+		for y in 4:
+			for x in 4: cells[(tile.y * 4 + y) * map.size.x + tile.x * 4 + x] = value
+	return _install_world(tree, map)
 
-## 按子格生成测试用的墙体。solid(x, y) 返回 true 时，该子格填入墙体纹理。
 func world_from_solid(tree: SceneTree, columns: int, rows: int, solid: Callable) -> TestWorld:
-	TileDefs.load_defs()
-	var texture := wall_texture(false)
-	var grid: Array[Array] = []
-	var descriptors := PackedInt32Array()
-	descriptors.resize(columns * rows * 16)
-	for y in rows:
-		var row: Array = []
-		for x in columns:
-			row.append(0)
-		grid.append(row)
-	for y in rows * 4:
-		for x in columns * 4:
-			if solid.call(x, y):
-				descriptors[y * columns * 4 + x] = (texture << MapFormatV4.TEXTURE_SHIFT) | MapFormatV4.NEUTRAL_TINT
-				grid[y / 4][x / 4] = MapFormat.pack(texture, 15)
-	return _install_world(tree, grid, descriptors)
+	var map := CyrmMap.create(Vector2i(columns, rows) * 4)
+	var cells: PackedInt32Array = map.layers[CyrmMap.SCENE]
+	var value := CyrmMap.tile_value(wall_texture())
+	for y in map.size.y:
+		for x in map.size.x:
+			if solid.call(x, y): cells[y * map.size.x + x] = value
+	return _install_world(tree, map)
 
-## 为测试创建 SubViewport 和单独的 World2D，使地形碰撞不影响其他测试场景。
-func _install_world(tree: SceneTree, grid: Array[Array], descriptors: PackedInt32Array) -> TestWorld:
-	_terrain = Terrain.new(grid, descriptors)
+func block_hp(terrain: Terrain, block: Vector2i) -> PackedInt32Array:
+	var result := PackedInt32Array()
+	for y in 4:
+		for x in 4: result.append(terrain.get_hp(block * 4 + Vector2i(x, y)))
+	return result
+
+func _install_world(tree: SceneTree, map: Dictionary) -> TestWorld:
+	_document = map
+	_terrain = Terrain.new(map)
 	var viewport := SubViewport.new()
 	viewport.world_2d = _terrain.physics.world
 	tree.root.add_child(viewport)
@@ -108,7 +96,7 @@ func players_on_map_points(authority: AuthorityWorld, roles: Array, points: Arra
 	for role: int in roles:
 		var at: Vector2 = authority.players[role].position
 		var cell := authority.terrain.cell(at)
-		if not points.has(cell) or used.has(cell) or at != authority.terrain.cell_center(cell):
+		if not points.has(cell) or used.has(cell) or at != CyrmMap.world_position(cell):
 			return false
 		used[cell] = true
 	return true
@@ -118,3 +106,4 @@ func cleanup() -> void:
 	for node in _worlds: node.free()
 	_worlds.clear()
 	_terrain = null
+	_document = {}

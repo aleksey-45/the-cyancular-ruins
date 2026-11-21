@@ -1,7 +1,8 @@
 class_name RoomOptions
 extends RefCounted
 
-const ROYALE_PLAYERS := Vector2i(2, 16)
+const MIN_PLAYERS := 2
+const ROYALE_PLAYERS := Vector2i(MIN_PLAYERS, 16)
 const ROYALE_MINUTES := Vector2i(1, 15)
 const DEFAULT_MATCH_MINUTES := 5.0
 const MATCH_SECONDS := int(DEFAULT_MATCH_MINUTES * 60)

@@ -31,14 +31,14 @@ static func can_rejoin_to(code: String, mode: String) -> bool:
 static func rejoin_payload() -> Dictionary:
 	return {"code": room_code, "token": room["token"]} if can_rejoin() else {}
 
-static func begin_match(data: Dictionary, map: Dictionary) -> void:
+static func begin_match(data: Dictionary, document: Dictionary) -> void:
 	beta_mode = data["options"].get("beta", false)
 	if room_code != data["code"] or room_mode != data["mode"] or room.get("your_role") != data["role"] \
 			or room.get("beta", false) != beta_mode:
 		room = {}
 	room.merge({"code": data["code"], "mode": data["mode"], "your_role": data["role"],
 			"beta": beta_mode, "in_match": true}, true)
-	baseline = data.merged({"map_info": map})
+	baseline = data.merged({"map": document}, true)
 
 static func reset(beta := false, mode := "") -> void:
 	beta_mode = beta

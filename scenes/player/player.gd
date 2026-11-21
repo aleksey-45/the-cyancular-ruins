@@ -239,13 +239,13 @@ func update_swim(delta: float, mult: Vector2) -> void:
 func over_climb_tile() -> bool:
 	if terrain.empty():
 		return false
-	return terrain.climb_speed(Terrain.texture(terrain.value(
-			terrain.cell(position + Vector2(0, PlayerParams.climb_foot_offset))))) > 0.0 \
-		or terrain.climb_speed(Terrain.texture(terrain.value(terrain.cell(position)))) > 0.0
+	return terrain.climb_speed(terrain.material_at(
+			terrain.cell(position + Vector2(0, PlayerParams.climb_foot_offset)))) > 0.0 \
+		or terrain.climb_speed(terrain.material_at(terrain.cell(position))) > 0.0
 
 func ladder_top(foot: Vector2i) -> bool:
-	var below := terrain.value(foot + Vector2i(0, 1))
-	return below != 0 and terrain.climb_speed(Terrain.texture(below)) > 0.0
+	var below := terrain.material_at(foot + Vector2i(0, 1))
+	return below != 0 and terrain.climb_speed(below) > 0.0
 
 func update_climb(delta: float, mult: Vector2) -> void:
 	if not climb_latched and (step_input.pressed & ActorInput.BIT_UP) == 0:
@@ -254,11 +254,11 @@ func update_climb(delta: float, mult: Vector2) -> void:
 		climb_latched = false
 		return
 	var foot := terrain.cell(position + Vector2(0, PlayerParams.climb_foot_offset))
-	var fv := terrain.value(foot)
-	var cv := terrain.value(terrain.cell(position))
-	var ft := Terrain.texture(fv)
+	var fv := terrain.material_at(foot)
+	var cv := terrain.material_at(terrain.cell(position))
+	var ft := fv
 	var fs := terrain.climb_speed(ft)
-	var cs := terrain.climb_speed(Terrain.texture(cv))
+	var cs := terrain.climb_speed(cv)
 	var foot_channel := fv != 0 and fs > 0.0
 	var center_channel := cv != 0 and cs > 0.0
 	if not climb_latched and (center_channel or foot_channel) and (step_input.pressed & ActorInput.BIT_UP) != 0:
@@ -533,7 +533,7 @@ func restore_checkpoint(snapshot: Array, scope := CombatSnapshot.NETWORK) -> voi
 		collision_layer = CollisionWorld.team_layer(team)
 
 func spawn_at(spawn_cell: Vector2i, heal := true) -> void:
-	position = terrain.cell_center(spawn_cell)
+	position = CyrmMap.world_position(spawn_cell)
 	reset_motion()
 	if heal:
 		apply_authoritative_state(sim_max_hp, max_waterproof, false)

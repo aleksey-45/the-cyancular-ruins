@@ -18,7 +18,6 @@ static func card(room: Dictionary, can_open: bool) -> Dictionary:
 			rules = "三局两胜"
 	if room["player_collision"]:
 		rules += " · 玩家碰撞开启"
-	var map := MapFormat.load_map(room["map"])
 	var players: Array = room["players"]
 	var names := PackedStringArray()
 	for i in mini(players.size(), 3):
@@ -31,7 +30,7 @@ static func card(room: Dictionary, can_open: bool) -> Dictionary:
 		"in_match": room["in_match"], "code": room["code"], "rules": rules,
 		"count": "人数 %d / %d" % [room["count"], room["max_players"]],
 		"host": "房主 %s" % room["host_name"], "roster": "\n".join(names),
-		"thumbnail": MapCatalog.texture(map) if not map.is_empty() else null}
+		"thumbnail": MapCatalog.thumbnail(room["map"])}
 
 static func waiting(room: Dictionary) -> Dictionary:
 	var mode: String = room["mode"]

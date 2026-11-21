@@ -46,7 +46,7 @@ func _client_scene(tree: SceneTree) -> void:
 			"round_state": authority.round_state().merged({"grace": {}}), "frame": frame}
 	var wire := NetCodec.new().encode_event(NetEvent.Kind.BASELINE, data)
 	var baseline: Dictionary = NetCodec.new().decode_event(NetEvent.Kind.BASELINE, NetCodec.Reader.new(wire, 1))
-	PvpSession.begin_match(baseline, MapFormat.parse_map(baseline["map"], MAP))
+	PvpSession.begin_match(baseline, CyrmMap.from_bytes(baseline["map"]))
 	var runner := tree.current_scene
 	var old := Node.new()
 	tree.root.add_child(old)
@@ -528,8 +528,8 @@ func _ordered_collision(tree: SceneTree, enabled: bool) -> void:
 
 func _stacked_collision(tree: SceneTree) -> void:
 	# 两个角色上下相叠。应用服务器快照后，上方角色仍站在另一名角色身上，下方角色仍站在地面上。
-	var map := MapFormat.load_map("res://maps/newfactory.cyrm")
-	var parent := _install_world(tree, map["grid"], map["descriptors"])
+	var map := CyrmMap.load_file("res://maps/newfactory.cyrm")
+	var parent := _install_world(tree, map)
 	var upper := player(parent, 2)
 	var lower := player(parent, 6)
 	upper.position = Vector2(6586.07763671875, 5532.1279296875)
@@ -546,7 +546,7 @@ func _stacked_collision(tree: SceneTree) -> void:
 	var codec := NetCodec.new()
 	var wire := codec.encode_state(frame, NetCodec.StateBatch.new(frame))
 	frame = NetCodec.new().decode_state(NetCodec.Reader.new(wire, 1))
-	var client_map := _install_world(tree, map["grid"], map["descriptors"])
+	var client_map := _install_world(tree, map)
 	var local := player(client_map, 6)
 	local.set_team_collision(0, true)
 	var client := detached_client()
@@ -790,6 +790,7 @@ func _beam_order(tree: SceneTree) -> void:
 	client._view = preload("res://scenes/match_view.tscn").instantiate()
 	parent.add_child(client._view)
 	client._camera = client._view.camera
+	client.map = _document
 	client._mount(MatchFrame.Mode.DUEL, null)
 	var canvas: WorldCanvas = client._view.get_node("WorldViewport/Canvas")
 	var rollback := client._rollback

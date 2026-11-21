@@ -63,6 +63,10 @@ def build_game(*, skip_native=False):
         package = work / PACKAGE
         package.mkdir()
         shutil.copy2(ROOT / "THIRD_PARTY_NOTICES.txt", package)
+        maps = package / "maps"
+        maps.mkdir()
+        for path in (ROOT / "maps").glob("*.cyrm"):
+            shutil.copy2(path, maps)
         if mac:
             app = package / f"{GAME}.app"
             run(godot, "--headless", "--export-release", "macOS", app)

@@ -4,7 +4,8 @@ extends RefCounted
 # 地图选择界面从这里取得地图列表和地形缩略图。列表包括内置地图和外部地图。
 
 const MAP_DIR := "res://maps"
-const CELL_PX: int = 2                     # 每块地图瓦片在缩略图中占 2 × 2 像素。
+const USER_DIR := "user://maps"
+const CACHE_SIZE := 8
 const BG := Color(0.04, 0.07, 0.11, 1.0)
 const SOLO_SPAWN := Color(0.35, 0.72, 1.0)
 const SIDE_COLORS := {1: Color(0.35, 1.0, 0.45), 2: Color(1.0, 0.62, 0.27)}
@@ -21,32 +22,23 @@ const PALETTE := {
 	21: Color(0.14, 0.36, 0.82), 22: Color(0.26, 0.56, 0.95),
 }
 
-static var _textures: Dictionary[PackedByteArray, ImageTexture] = {}
+static var _entries: Dictionary[PackedByteArray, Dictionary] = {}
 static var _random_texture: ImageTexture
 
 static func list_maps() -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
-	for dir in [MAP_DIR, OS.get_executable_path().get_base_dir()]:
+	for dir in [MAP_DIR, USER_DIR, OS.get_executable_path().get_base_dir()]:
 		for path in _scan(dir):
-			var map := MapFormat.load_map(path)
-			if map.is_empty():
-				continue
-			var respawns: Dictionary = map["spawns"]["respawn"]
-			out.append({
-				"path": path,
-				"name": _display_name(path, map["meta_lines"]),
-				"size": map["size"],
-				"spawn_counts": Vector2i(respawns[1].size(), respawns[2].size()),
-				"external": dir != MAP_DIR,
-				"texture": texture(map),
-			})
+			var entry := _entry(path)
+			if entry.is_empty(): continue
+			out.append(entry.merged({"path": path, "name": _display_name(path, entry.notes), "external": dir != MAP_DIR}))
 	out.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		return str(a["path"]) < str(b["path"]))
 	return out
 
 static func shuffled_paths() -> Array[String]:
 	var choices: Array[String] = []
-	for dir in [OS.get_executable_path().get_base_dir(), MAP_DIR]:
+	for dir in [USER_DIR, OS.get_executable_path().get_base_dir(), MAP_DIR]:
 		var paths := _scan(dir)
 		paths.shuffle()
 		choices.append_array(paths)
@@ -54,42 +46,51 @@ static func shuffled_paths() -> Array[String]:
 
 static func random_map() -> Dictionary:
 	for path in shuffled_paths():
-		var map := MapFormat.load_map(path)
+		var map := CyrmMap.load_file(path)
 		if not map.is_empty():
 			return map
 	return {}
 
-static func _display_name(path: String, meta_lines: Array) -> String:
-	for line in meta_lines:
-		var text := String(line).strip_edges()
+static func _display_name(path: String, notes: String) -> String:
+	for line in notes.split("\n", false):
+		var text := line.strip_edges()
+		if text.is_empty(): continue
 		if not text.begins_with("#"):
 			break
 		var title := text.substr(1).strip_edges()
-		if title == "" or title.begins_with("cyrm") or title.begins_with("player") \
-				or title.begins_with("enemy") or title.begins_with("respawn"):
-			continue
-		return title
+		if not title.is_empty() and not title.begins_with("cyrm"):
+			return title
 	return path.get_file().get_basename()
 
-static func texture(map: Dictionary) -> ImageTexture:
-	var bytes: PackedByteArray = map["bytes"]
-	if not _textures.has(bytes):
-		if _textures.size() >= MapFormat.CACHE_SIZE:
-			_textures.erase(_textures.keys()[0])
-		_textures[bytes] = ImageTexture.create_from_image(_build_image(map))
-	return _textures[bytes]
+static func _entry(path: String) -> Dictionary:
+	var bytes := CyrmMap.read_bytes(path)
+	if _entries.has(bytes): return _entries[bytes]
+	var map := CyrmMap.from_bytes(bytes)
+	if map.is_empty(): return {}
+	if _entries.size() >= CACHE_SIZE: _entries.erase(_entries.keys()[0])
+	var sides := SpawnPicker.respawn_cells(map)
+	var entry := {"size": map.size, "notes": map.notes, "spawn_counts": Vector2i(sides[1].size(), sides[2].size()),
+			"texture": ImageTexture.create_from_image(_build_image(map, sides))}
+	_entries[bytes] = entry
+	return entry
 
-static func _build_image(map: Dictionary) -> Image:
-	var size: Vector2i = map["size"]
-	var grid: Array[Array] = map["grid"]
-	var img := Image.create(size.x * CELL_PX, size.y * CELL_PX, false, Image.FORMAT_RGBA8)
+static func thumbnail(path: String) -> Texture2D:
+	return _entry(path).get("texture")
+
+static func _build_image(map: Dictionary, sides: Dictionary) -> Image:
+	var size: Vector2i = map.size
+	var cells: PackedInt32Array = map.layers[CyrmMap.SCENE]
+	var img := Image.create(size.x, size.y, false, Image.FORMAT_RGBA8)
 	img.fill(BG)
-	for y in size.y:
-		for x in size.x:
-			var value: int = grid[y][x]
-			if value != MapFormat.EMPTY:
-				_fill(img, x, y, _color_of(value))
-	_mark_spawns(img, map["spawns"])
+	for i in cells.size():
+		if cells[i] != 0:
+			img.set_pixel(i % size.x, i / size.x, PALETTE.get(CyrmMap.tile_material(cells[i]), Color.GRAY))
+	var player := CyrmMap.first_point_id(map, "player")
+	if player >= 0:
+		img.fill_rect(Rect2i(map.points[player].cell, Vector2i.ONE).grow(3), SOLO_SPAWN)
+	for side: int in sides:
+		for at: Vector2i in sides[side]:
+			img.fill_rect(Rect2i(at, Vector2i.ONE).grow(1), SIDE_COLORS[side])
 	return img
 
 ## 随机地图尚未选定，界面用棋盘格作为占位缩略图。
@@ -117,23 +118,3 @@ static func _scan(dir: String) -> Array[String]:
 		f = da.get_next()
 	da.list_dir_end()
 	return out
-
-static func _color_of(v: int) -> Color:
-	var tex := MapFormat.texture_of(v)
-	var col: Color = PALETTE.get(tex, Color(0.6, 0.6, 0.62))
-	# 只有四个区域都被占用的瓦片使用原色，其余瓦片调暗。
-	if MapFormat.shape_of(v) != 15:
-		col = col.lerp(BG, 0.45)
-	return col
-
-static func _fill(img: Image, x: int, y: int, color: Color) -> void:
-	img.fill_rect(Rect2i(x * CELL_PX, y * CELL_PX, CELL_PX, CELL_PX), color)
-
-static func _mark_spawns(img: Image, spawns: Dictionary) -> void:
-	if spawns.has("player"):
-		var anchor: Vector2i = spawns["player"]
-		# 单人点多画一圈，即便与联机点重合也能看见。
-		img.fill_rect(Rect2i(anchor * CELL_PX, Vector2i.ONE * CELL_PX).grow(1), SOLO_SPAWN)
-	for side: int in spawns["respawn"]:
-		for cell: Vector2i in spawns["respawn"][side]:
-			_fill(img, cell.x, cell.y, SIDE_COLORS[side])

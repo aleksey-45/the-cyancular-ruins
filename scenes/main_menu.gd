@@ -40,6 +40,7 @@ func _ready() -> void:
 	])
 	_separator(menu)
 	_buttons(UiFactory.box(menu, 28, true), [
+		["地图编辑器", Vector2(560, 76), &"BtnPrimary", _open.bind("res://scenes/map_editor.tscn")],
 		["设置", Vector2(560, 76), &"BtnPrimary", _open.bind("res://scenes/settings_menu.tscn")],
 		["信息", Vector2(560, 76), &"BtnPrimary", _open.bind("res://scenes/info_menu.tscn")],
 	])
@@ -94,7 +95,7 @@ func _play(path: String, disabled: Array[int]) -> void:
 	if enabled.is_empty():
 		_launch.show_error("请至少启用一种武器")
 		return
-	var map := MapCatalog.random_map() if path.is_empty() else MapFormat.load_map(path)
+	var map := MapCatalog.random_map() if path.is_empty() else CyrmMap.load_file(path)
 	if map.is_empty():
 		_launch.show_error("没有可用的地图" if path.is_empty() else "无法读取地图 %s" % path.get_file())
 		return
@@ -105,8 +106,5 @@ func _play(path: String, disabled: Array[int]) -> void:
 	Settings.sp_disabled_weapons = disabled
 	Settings.sp_map_path = path
 	Settings.save()
-	var level := preload("res://scenes/level_0.tscn").instantiate()
-	level.map_info = map
-	level.spawn_cell = spawn
-	level.enabled_weapons = enabled
+	var level := SoloLevel.create(map, spawn, enabled)
 	get_tree().change_scene_to_node(level)

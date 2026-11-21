@@ -35,7 +35,8 @@ func setup(mode: String, map_path: String, roles: Array, teams: Dictionary, opti
 	var map: Dictionary
 	var problem := "没有可用的联机地图"
 	for path in paths:
-		map = MapFormat.load_map(path)
+		map_bytes = CyrmMap.read_bytes(path)
+		map = CyrmMap.from_bytes(map_bytes)
 		if map.is_empty():
 			problem = "无法读取地图 %s" % path
 			continue
@@ -46,9 +47,8 @@ func setup(mode: String, map_path: String, roles: Array, teams: Dictionary, opti
 	if not problem.is_empty():
 		return problem
 	_options = options
-	map_bytes = map["bytes"]
-	_weapon_floors = SpawnPicker.floor_cells(map["grid"], map["size"])
-	terrain = Terrain.new(map["grid"], map["descriptors"])
+	_weapon_floors = SpawnPicker.floor_cells(map)
+	terrain = Terrain.new(map)
 	terrain.authoritative = true
 	terrain.changed.connect(_on_terrain_changed)
 	combat_rules = CombatSimulator.new(terrain)
@@ -64,7 +64,7 @@ func setup(mode: String, map_path: String, roles: Array, teams: Dictionary, opti
 		player.weapons.enabled_types = _enabled_weapons
 		player.sim_max_hp = TeamRules.max_hp(player.team, rules.team_counts)
 		player.sim_hp = player.sim_max_hp
-		player.position = terrain.cell_center(rules.spawns[role])
+		player.position = CyrmMap.world_position(rules.spawns[role])
 		player.sync_collision_geometry()
 		_stats[role] = {"kills": 0, "deaths": 0, "assists": 0, "dealt": 0, "taken": 0,
 				"team_damage": 0, "self_damage": 0, "team_kills": 0, "rounds": 1, "left": false, "hits": {}}

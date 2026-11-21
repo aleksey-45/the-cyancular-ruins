@@ -4,7 +4,6 @@ extends RefCounted
 # 物理模拟和地图绘制共用这些参数。距离以游戏世界中的像素计，速度以像素/秒计。
 
 const gravity0: float = 1600.0
-const TILE_SIZE: int = 64
 
 const water_sway_amp: float = 2.0        # 水面上下摆动的最大偏移（像素）。
 const water_sway_speed: float = 1.6      # 水面波形随时间变化的角速度（弧度/秒）。

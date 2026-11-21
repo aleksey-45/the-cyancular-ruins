@@ -55,12 +55,14 @@ static func load_defs() -> void:
 		decay[texture] = material.get("explosion_decay", blast_decay)
 		ledges[texture] = material.get("collision_ledge", 0)
 
-static func has_texture(texture: int) -> bool:
-	return texture < types.size() and types[texture] != UNDEFINED
-
-static func legacy_textures() -> Dictionary:
+static func materials() -> Dictionary:
 	load_defs()
-	return _defs["legacy_texture_map"]
+	return _defs["tiles"]
+
+static func has_texture(texture: int) -> bool:
+	if types.is_empty():
+		load_defs()
+	return texture >= 0 and texture < types.size() and types[texture] != UNDEFINED
 
 static func type_id_of(texture: int) -> int:
 	return types[texture]
@@ -71,5 +73,5 @@ static func is_liquid(texture: int) -> bool:
 static func explosion_destroyable(texture: int) -> bool:
 	return (damage_masks[texture] & DamageMask.EXPLOSION) != 0
 
-static func is_blocked(value: int) -> bool:
-	return types[MapFormat.texture_of(value)] == TYPE_WALL
+static func is_blocked(material: int) -> bool:
+	return types[material] == TYPE_WALL

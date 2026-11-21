@@ -34,7 +34,7 @@ class FlyBird:
 	const settle_time: float = 0.5
 	const max_chase_distance: float = 2000.0  # 玩家离飞鸟超过这个距离时，飞鸟放弃追击。
 	const home_range: float = 2000.0      # 玩家离飞鸟的出生点超过这个距离时，飞鸟返回出生点。
-	const hover_altitude: float = 40.0    # 路径点的实际位置在对应瓦片中心的上方，此值为两者的距离（像素）。
+	const hover_altitude: float = 40.0    # 飞行目的地相对于投弹点或出生点的悬停高度（像素）。
 	const hover_offset_x: float = 260.0   # 投弹目标点位于玩家左侧或右侧，水平偏移量为此值（像素）。
 	const hover_offset_y: float = 240.0   # 投弹目标点与玩家之间的高度差（像素）。
 	const fly_speed: float = 320.0
@@ -64,10 +64,10 @@ class FlyBird:
 	const repath_interval: float = 0.75    # 周期性寻路的基础间隔（秒）。每只飞鸟在此基础上加一个固定的随机偏移，错开寻路时间。
 	const arrival_radius: float = 50.0    # 飞鸟到出生点的距离不超过此值时，开始降落。
 	const landing_time: float = 0.4       # 飞鸟回到出生点后，经过这段降落时间（秒）才重新休眠。
-	const path_max_visit: int = 600       # A* 搜索每次访问的瓦片数上限。
-	const search_radius_cells: int = 45  # A* 只搜索起点周围的瓦片，范围以瓦片数计。
-	const escape_search_range: int = 90   # 绕过障碍时，在左右两个方向上至多搜索这么多格。
-	const escape_max_descent: int = 40      # 从当前高度往下找绕行位置时，至多检查这么多行瓦片。
+	const path_max_visit: int = 600       # A* 搜索每次访问的子格数上限。
+	const search_radius_cells: int = 180  # A* 搜索半径，单位为 16 像素子格。
+	const escape_search_range: int = 360  # 绕过障碍时，在左右两个方向上至多搜索这么多格。
+	const escape_max_descent: int = 160     # 从当前高度往下找绕行位置时，至多检查这么多行子格。
 
 class BlackBird:
 	const wake_radius: float = 1000.0     # 玩家靠近到这个距离内时，乌鸫结束休眠。
@@ -81,8 +81,8 @@ class BlackBird:
 	const wander_jump_velocity: float = -500.0  # 乌鸫巡逻撞墙后起跳时，使用这个值作为垂直初速度。
 	const take_off_jump_velocity: float = -1000.0  # 找到传送位置后，乌鸫原地起跳时的垂直初速度。
 	const flank_check_interval: float = 1.0  # 传送冷却结束后，乌鸫每隔这么多秒尝试寻找传送位置。
-	const teleport_min_tiles: int = 2    # 沿搜索轴从玩家身旁至少隔这么多格开始寻找传送位置。
-	const teleport_max_tiles: int = 6    # 传送搜索沿选定轴检查玩家周围的格子，距离不超过此值。
+	const teleport_min_range := 128.0    # 传送落点与玩家的最小像素距离。
+	const teleport_max_range := 384.0    # 传送落点与玩家的最大像素距离。
 	const teleport_drop: float = 250.0    # 乌鸫传送到选定位置上方这么多像素处，随后开始下落。
 	const landing_timeout: float = 0.3   # 从传送到允许继续执行冲刺准备的最长时间（秒）。
 	const teleport_prep_time: float = 0.6

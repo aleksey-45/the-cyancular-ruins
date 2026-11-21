@@ -137,7 +137,7 @@ func _on_net_event(_peer: int, kind: int, data: Variant) -> void:
 			_list_rooms()
 		NetEvent.Kind.ROOM_CLOSED: _close_room(data)
 		NetEvent.Kind.BASELINE:
-			var map := MapFormat.parse_map(data["map"], "房间 %s" % data["code"])
+			var map := CyrmMap.from_bytes(data.map)
 			if map.is_empty():
 				_view.set_status("对局地图无法读取")
 				return

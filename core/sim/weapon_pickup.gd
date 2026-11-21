@@ -24,9 +24,9 @@ func _init(map: Terrain, id: int, type: int, ammo: int, pos: Vector2, vel: Vecto
 
 func settle_on_spawn_floor() -> void:
 	var from := transform
-	from.origin.y += (GameParameters.TILE_SIZE - shape.size.y) * 0.5 - CollisionWorld.MOTION_MARGIN
+	from.origin.y += (CyrmMap.CELL_SIZE - shape.size.y) * 0.5 - CollisionWorld.MOTION_MARGIN
 	PhysicsServer2D.body_set_collision_mask(rid, CollisionWorld.LAYER_TERRAIN)
-	var hit := CollisionWorld.probe_body(rid, from, Vector2.DOWN * GameParameters.TILE_SIZE, _motion)
+	var hit := CollisionWorld.probe_body(rid, from, Vector2.DOWN * CyrmMap.CELL_SIZE, _motion)
 	PhysicsServer2D.body_set_collision_mask(rid, MASK)
 	if hit and _motion.get_collision_normal().y < -0.5:
 		position = GridPathfinder.wrap_to_range(from.origin + _motion.get_travel(), terrain.map_size)
@@ -55,8 +55,8 @@ func simulate_tick(delta: float) -> void:
 	# 地形或其他掉落物可能占据这块空间。找到空位后再移动物理体。
 	var pose := transform
 	if CollisionWorld.probe_body(rid, pose, Vector2.ZERO, null, 0.0, true):
-		for i in 8:
-			pose.origin.y -= GameParameters.TILE_SIZE
+		for i in 32:
+			pose.origin.y -= CyrmMap.CELL_SIZE
 			if not CollisionWorld.probe_body(rid, pose, Vector2.ZERO, null, 0.0, true):
 				position = pose.origin
 				velocity.y = 0.0

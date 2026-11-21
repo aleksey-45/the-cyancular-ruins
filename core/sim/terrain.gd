@@ -1,15 +1,14 @@
 class_name Terrain
 extends RefCounted
 
-# 地图保留瓦片及其子格数据。地形碰撞按区域更新，期间的变化可同步到客户端或用于时间回溯。
+# 地形引用地图的子格描述，单独记录本局耐久。地形碰撞按区域更新，期间的变化可同步到客户端或用于时间回溯。
 
 signal changed
 
-const TILE_SIZE := 64
-const SUB_SIZE := 16
-const SUB_PER_CELL := TILE_SIZE / SUB_SIZE
-const BLAST_SUBS_PER_BLOCK := 32 / SUB_SIZE
-const CHUNK_CELLS := 12
+const SUB_SIZE := CyrmMap.CELL_SIZE
+const DAMAGE_BLOCK_SUBS := 32 / SUB_SIZE
+const BEAM_BLOCK_SUBS := 64 / SUB_SIZE
+const CHUNK_CELLS := 48
 const LEDGE_THICKNESS := 6
 const CACHE_STATES := 4
 
@@ -21,31 +20,18 @@ class Chunk:
 	var signature := PackedByteArray()
 	var layouts: Dictionary[PackedByteArray, Array] = {}
 
-const CELL_INDEX: int = 0
-const CELL_VALUE: int = 1
-const CELL_HP: int = 2
-const CELL_SUB_HP: int = 3
-
-
 var columns := 0
 var rows := 0
-var sub_columns := 0
-var sub_rows := 0
 var map_size := Vector2.ZERO
 var revision := 0
 var rewind_enabled := false
 var authoritative := false
 
-var _grid := PackedInt32Array()
-var _initial_grid := PackedInt32Array()
-var _textures := PackedInt32Array()
-var _descriptors := PackedInt32Array()
+var _cells := PackedInt32Array()
 var _hp := PackedInt32Array()
-# 默认耐久度由初始瓦片的材质决定。只有修改过的瓦片才在字典里记录当前耐久度。
-var _tile_hp: Dictionary[int, int] = {}
 var _network_changes: Dictionary = {}
 var _modified: Dictionary = {}
-var _rewind_pending: Dictionary[int, PackedInt32Array] = {}
+var _rewind_pending: Dictionary[int, int] = {}
 var _rewards: Dictionary = {}
 var _visual_changes: Dictionary = {}
 var _chunk_columns := 0
@@ -63,33 +49,16 @@ static func _wrap(value: int, span: int) -> int:
 	var n := value % span
 	return n + span if n < 0 else n
 
-static func texture(value: int) -> int:
-	return value / 16
-
-func _init(macro: Array = [], descriptors := PackedInt32Array()) -> void:
-	if macro.is_empty():
-		return
+func _init(map: Dictionary = {}) -> void:
+	if map.is_empty(): return
 	TileDefs.load_defs()
-	rows = macro.size()
-	columns = (macro[0] as Array).size()
-	sub_rows = rows * SUB_PER_CELL
-	sub_columns = columns * SUB_PER_CELL
-	assert(descriptors.size() == sub_rows * sub_columns)
-	map_size = Vector2(columns * TILE_SIZE, rows * TILE_SIZE)
-	_grid.resize(columns * rows)
-	for y in rows:
-		var row: Array = macro[y]
-		for x in columns:
-			var i := y * columns + x
-			_grid[i] = int(row[x])
-	_descriptors = descriptors
-	_textures.resize(descriptors.size())
-	_hp.resize(descriptors.size())
-	for i in descriptors.size():
-		var tex := MapFormatV4.descriptor_texture(descriptors[i])
-		_textures[i] = tex
-		_hp[i] = TileDefs.hit_points[tex]
-	_initial_grid = _grid.duplicate()
+	columns = map.size.x
+	rows = map.size.y
+	map_size = Vector2(map.size * SUB_SIZE)
+	_cells = map.layers[CyrmMap.SCENE]
+	_hp.resize(_cells.size())
+	for i in _cells.size():
+		_hp[i] = TileDefs.hit_points[_material(i)]
 	_chunk_columns = (columns + CHUNK_CELLS - 1) / CHUNK_CELLS
 	_chunk_dirty.resize(_chunk_columns * ((rows + CHUNK_CELLS - 1) / CHUNK_CELLS))
 	_chunk_dirty.fill(0)
@@ -104,44 +73,32 @@ func empty() -> bool:
 	return columns == 0 or rows == 0
 
 func cell(position: Vector2) -> Vector2i:
-	if empty():
-		return Vector2i()
-	return Vector2i(_wrap(int(floor(position.x / TILE_SIZE)), columns),
-			_wrap(int(floor(position.y / TILE_SIZE)), rows))
+	if empty(): return Vector2i.ZERO
+	return GridPathfinder.cell_of(position, SUB_SIZE, columns, rows)
 
-func value(at: Vector2i) -> int:
-	return 0 if empty() else _grid[_wrap(at.y, rows) * columns + _wrap(at.x, columns)]
+func _material(index: int) -> int:
+	return CyrmMap.tile_material(_cells[index])
+
+func material_at(at: Vector2i) -> int:
+	if empty(): return 0
+	var i := _wrap(at.y, rows) * columns + _wrap(at.x, columns)
+	return _material(i) if _hp[i] > 0 else 0
 
 func sub_index(at: Vector2i) -> int:
-	if at.x < 0 or at.y < 0 or at.x >= sub_columns or at.y >= sub_rows:
+	if at.x < 0 or at.y < 0 or at.x >= columns or at.y >= rows:
 		return -1
-	return at.y * sub_columns + at.x
+	return at.y * columns + at.x
 
 func sub_position(i: int) -> Vector2i:
-	return Vector2i(i % sub_columns, i / sub_columns)
-
-func macro_of(i: int) -> int:
-	return (i / sub_columns / SUB_PER_CELL) * columns + (i % sub_columns / SUB_PER_CELL)
-
-func _macro_sub_start(index: int) -> int:
-	return (index / columns * sub_columns + index % columns) * SUB_PER_CELL
+	return Vector2i(i % columns, i / columns)
 
 func sub_texture(at: Vector2i) -> int:
 	var i := sub_index(at)
-	return 0 if i < 0 else _textures[i]
-
-func descriptors() -> PackedInt32Array:
-	return _descriptors
+	return _material(i) if i >= 0 else 0
 
 func get_hp(at: Vector2i) -> int:
 	var i := sub_index(at)
 	return 0 if i < 0 else _hp[i]
-
-func sub_of(position: Vector2) -> Vector2i:
-	if sub_columns == 0 or sub_rows == 0:
-		return Vector2i()
-	return Vector2i(_wrap(int(floor(position.x / SUB_SIZE)), sub_columns),
-			_wrap(int(floor(position.y / SUB_SIZE)), sub_rows))
 
 func climb_speed(tex: int) -> float:
 	return TileDefs.climb[tex]
@@ -153,8 +110,7 @@ func water(position: Vector2) -> bool:
 	return _water_cell(cell(position))
 
 func _water_cell(at: Vector2i) -> bool:
-	var v := value(at)
-	return v != 0 and TileDefs.types[texture(v)] == TileDefs.TYPE_LIQUID
+	return TileDefs.is_liquid(material_at(at))
 
 ## 返回输入位置到其正上方水面的距离。输入位置不在水里时为 -INF，整列没有水面时为 INF。
 func water_depth(position: Vector2) -> float:
@@ -163,14 +119,14 @@ func water_depth(position: Vector2) -> float:
 		return -INF
 	for above in range(1, rows):
 		if not _water_cell(at - Vector2i(0, above)):
-			return fposmod(position.y, TILE_SIZE) + (above - 1) * TILE_SIZE
+			return fposmod(position.y, SUB_SIZE) + (above - 1) * SUB_SIZE
 	return INF
 
 func water_multiplier(position: Vector2) -> float:
-	return TileDefs.decay[texture(value(cell(position)))] if water(position) else 1.0
+	return TileDefs.decay[material_at(cell(position))] if water(position) else 1.0
 
 func cell_center(at: Vector2i) -> Vector2:
-	return Vector2((at.x + 0.5) * TILE_SIZE, (at.y + 0.5) * TILE_SIZE)
+	return Vector2((at.x + 0.5) * SUB_SIZE, (at.y + 0.5) * SUB_SIZE)
 
 ## 沿两点之间的最短路线检查地形遮挡。
 ## 路线横跨地图边缘时，在另一侧继续发射射线。
@@ -184,12 +140,15 @@ func line_of_sight(from: Vector2, to: Vector2) -> bool:
 	var dir := delta.normalized()
 	var p := GridPathfinder.wrap_to_range(from, size)
 	var remaining := delta.length()
+	var crossed_seam := false
 	while remaining > 0.0:
 		var run := CollisionWorld.seam_run(p, dir, size, remaining)
-		if not _ray_between(p, p + dir * run).is_empty():
+		var start := p - dir * 0.5 if crossed_seam else p
+		if not _ray_between(start, p + dir * run).is_empty():
 			return false
 		p = GridPathfinder.wrap_to_range(p + dir * run, size)
 		remaining -= run
+		crossed_seam = true
 	return true
 
 func _ray_between(from: Vector2, to: Vector2) -> Dictionary:
@@ -200,7 +159,7 @@ func _ray_between(from: Vector2, to: Vector2) -> Dictionary:
 
 ## 光束按碰撞法线反射，反射前走过的距离会从剩余射程中扣除。
 ## 跨边缘的碰撞查询从地图另一侧继续。记录路径点时保留相应的偏移量，让渲染仍能连成整条光束。
-## 返回的 contacts 中保存被光束击中的瓦片坐标，供地形伤害结算。
+## 返回的 contacts 中保存被光束击中的子格坐标，供地形伤害结算。
 func trace_beam(origin: Vector2, direction: Vector2, length: float, max_bounces: int) -> Dictionary:
 	var points := PackedVector2Array([origin])
 	var hit_points := PackedVector2Array()
@@ -217,10 +176,12 @@ func trace_beam(origin: Vector2, direction: Vector2, length: float, max_bounces:
 	var remaining := length
 	var bounces := 0
 	var ended_on_hit := false
+	var crossed_seam := false
 	while remaining > 0.0:
 		var run := CollisionWorld.seam_run(p, d, size, remaining)
 		var q := p + d * run
-		var hit := _ray_between(p, q)
+		var start := p - d * 0.5 if crossed_seam else p
+		var hit := _ray_between(start, q)
 		if not hit.is_empty():
 			var point: Vector2 = hit["position"]
 			var normal: Vector2 = hit["normal"]
@@ -232,6 +193,7 @@ func trace_beam(origin: Vector2, direction: Vector2, length: float, max_bounces:
 			if remaining <= 0.0 or bounces >= max_bounces:
 				break
 			bounces += 1
+			crossed_seam = false
 			d = d.bounce(normal)
 			q = point + d * 0.5
 			p = GridPathfinder.wrap_to_range(q, size)
@@ -240,6 +202,7 @@ func trace_beam(origin: Vector2, direction: Vector2, length: float, max_bounces:
 			continue
 		remaining -= run
 		ended_on_hit = false
+		crossed_seam = true
 		p = GridPathfinder.wrap_to_range(q, size)
 		shift += q - p
 	if not ended_on_hit:
@@ -247,167 +210,91 @@ func trace_beam(origin: Vector2, direction: Vector2, length: float, max_bounces:
 	return {"points": points, "contacts": contacts, "hit_points": hit_points}
 
 ## 检查矩形是否碰到实心瓦片。将 with_liquid 设为 true 也会检查水体。
-func rect_overlaps(bounds: Rect2, size: float, with_liquid: bool) -> bool:
-	if empty() or size <= 0.0:
-		return false
-	var x0 := int(floor(bounds.position.x / size))
-	var x1 := int(floor(bounds.end.x / size))
-	var y0 := int(floor(bounds.position.y / size))
-	var y1 := int(floor(bounds.end.y / size))
-	for y in range(y0, y1 + 1):
-		for x in range(x0, x1 + 1):
-			var packed := value(Vector2i(x, y))
-			if packed == 0:
-				continue
-			var kind := TileDefs.types[texture(packed)]
-			if kind == TileDefs.TYPE_WALL or (with_liquid and kind == TileDefs.TYPE_LIQUID):
-				return true
+func rect_overlaps(bounds: Rect2, with_liquid: bool) -> bool:
+	if empty() or not bounds.has_area(): return false
+	var first := Vector2i((bounds.position / SUB_SIZE).floor())
+	var end := Vector2i((bounds.end / SUB_SIZE).ceil())
+	for y in range(first.y, end.y):
+		for x in range(first.x, end.x):
+			var kind := TileDefs.types[material_at(Vector2i(x, y))]
+			if kind == TileDefs.TYPE_WALL or (with_liquid and kind == TileDefs.TYPE_LIQUID): return true
 	return false
 
 func elastic_alive(position: Vector2) -> bool:
-	var i := sub_index(sub_of(position))
-	return i >= 0 and _hp[i] > 0 and TileDefs.elastic[_textures[i]] != 0
-
-func get_grid_snapshot() -> Array[Array]:
-	var grid: Array[Array] = []
-	for y in rows:
-		var row := Array(_grid.slice(y * columns, (y + 1) * columns))
-		row.make_read_only()
-		grid.append(row)
-	grid.make_read_only()
-	return grid
-
-func _initial_macro_hp(at: int) -> int:
-	return TileDefs.hit_points[texture(_initial_grid[at])]
-
-func _macro_hp(at: int) -> int:
-	return _tile_hp.get(at, _initial_macro_hp(at))
-
-func _capture(at: int) -> PackedInt32Array:
-	var state := PackedInt32Array([at, _grid[at], _macro_hp(at)])
-	state.resize(CELL_SUB_HP + SUB_PER_CELL * SUB_PER_CELL)
-	var start := _macro_sub_start(at)
-	for y in SUB_PER_CELL:
-		for x in SUB_PER_CELL:
-			state[CELL_SUB_HP + y * SUB_PER_CELL + x] = _hp[start + y * sub_columns + x]
-	return state
-
-func _capture_before(at: int) -> void:
-	if rewind_enabled and not _rewind_pending.has(at):
-		_rewind_pending[at] = _capture(at)
-
-func capture_cell(at: Vector2i) -> Dictionary:
-	if at.x < 0 or at.y < 0 or at.x >= columns or at.y >= rows:
-		return {}
-	var state := _capture(at.y * columns + at.x)
-	return {"cell": at, "tile": state[CELL_VALUE], "hp": state[CELL_HP],
-			"subs": state.slice(CELL_SUB_HP)}
-
-func _restore_cell(state: PackedInt32Array) -> void:
-	var index := state[CELL_INDEX]
-	var start := _macro_sub_start(index)
-	for y in SUB_PER_CELL:
-		for x in SUB_PER_CELL:
-			_write_hp(start + y * sub_columns + x, state[CELL_SUB_HP + y * SUB_PER_CELL + x], false, false)
-	_write_macro(index, state[CELL_VALUE])
-	if state[CELL_HP] == _initial_macro_hp(index):
-		_tile_hp.erase(index)
-	else:
-		_tile_hp[index] = state[CELL_HP]
-
-func _write_macro(at: int, next: int) -> void:
-	var before := _grid[at]
-	if before == next:
-		return
-	ledges_dirty = ledges_dirty or TileDefs.ledges[texture(before)] != 0 or TileDefs.ledges[texture(next)] != 0
-	_grid[at] = next
-
-func _refresh_macro(at: int) -> void:
-	var start := _macro_sub_start(at)
-	for y in SUB_PER_CELL:
-		for x in SUB_PER_CELL:
-			if _hp[start + y * sub_columns + x] > 0:
-				_write_macro(at, _initial_grid[at])
-				return
-	_write_macro(at, 0)
+	var i := sub_index(cell(position))
+	return i >= 0 and _hp[i] > 0 and TileDefs.elastic[_material(i)] != 0
 
 func _mark_collision(index: int) -> void:
 	var sub := sub_position(index)
-	var span := CHUNK_CELLS * SUB_PER_CELL
-	_queue_chunk((sub.y / span) * _chunk_columns + sub.x / span)
-	var tex := _textures[index]
+	_queue_chunk((sub.y / CHUNK_CELLS) * _chunk_columns + sub.x / CHUNK_CELLS)
+	var tex := _material(index)
 	if TileDefs.types[tex] == TileDefs.TYPE_WALL and TileDefs.damage_masks[tex] == 0:
 		permanent_dirty = true
 
-func _write_hp(index: int, next: int, record: bool, notify: bool, owner := 0) -> bool:
+func _write_hp(index: int, next: int, from_combat: bool, owner := 0) -> bool:
 	next = maxi(0, next)
 	var before := _hp[index]
 	if before == next:
 		return false
-	var macro := macro_of(index)
-	if record:
-		_capture_before(macro)
+	if from_combat and rewind_enabled:
+		_rewind_pending.get_or_add(index, before)
 	_hp[index] = next
-	if notify and authoritative:
+	if from_combat and authoritative:
 		_network_changes[index] = next
 		_modified[index] = next
 		revision += 1
 	if (before > 0) != (next > 0):
 		_visual_changes[index] = next > 0
 		_mark_collision(index)
-		_refresh_macro(macro)
-		if notify and before > 0 and next == 0 and owner > 0:
+		if TileDefs.ledges[_material(index)] != 0: ledges_dirty = true
+		if from_combat and before > 0 and next == 0 and owner > 0:
 			_rewards[owner] = int(_rewards.get(owner, 0)) + 1
 	return true
 
 func damage_impact(position: Vector2, normal: Vector2, amount: int, owner: int) -> int:
-	if empty():
+	if empty() or amount <= 0:
 		return 0
-	var at := cell(position - normal * (TILE_SIZE * 0.5))
-	var tex := texture(value(at))
-	if (TileDefs.damage_masks[tex] & TileDefs.DamageMask.BULLET) == 0:
+	var hit := cell(position - normal * 0.5)
+	var index := sub_index(hit)
+	var tex := _material(index)
+	if _hp[index] <= 0 or (TileDefs.damage_masks[tex] & TileDefs.DamageMask.BULLET) == 0:
 		return 0
-	damage_tile(at, amount, 0, owner)
+	_damage_block(hit / DAMAGE_BLOCK_SUBS, DAMAGE_BLOCK_SUBS, amount, TileDefs.DamageMask.BULLET, owner)
+	changed.emit()
 	return tex
 
-func damage_tile(at: Vector2i, amount: int, source: int, owner: int) -> bool:
-	if at.x < 0 or at.y < 0 or at.x >= columns or at.y >= rows or amount <= 0:
-		return false
-	var i := at.y * columns + at.x
-	if _grid[i] == 0:
-		return false
-	var mask := TileDefs.DamageMask.BULLET if source == 0 else TileDefs.DamageMask.EXPLOSION
-	if (TileDefs.damage_masks[texture(_grid[i])] & mask) == 0:
-		return false
-	_capture_before(i)
-	_tile_hp[i] = maxi(0, _macro_hp(i) - amount)
-	if _tile_hp[i] > 0:
-		return false
-	var start := _macro_sub_start(i)
-	for y in SUB_PER_CELL:
-		for x in SUB_PER_CELL:
-			var n := start + y * sub_columns + x
-			if (TileDefs.damage_masks[_textures[n]] & mask) != 0:
-				_write_hp(n, 0, false, true, owner)
-	_refresh_macro(i)
-	changed.emit()
-	return _grid[i] == 0
+func damage_beam(at: Vector2i, amount: int, owner: int) -> void:
+	if sub_index(at) < 0 or amount <= 0: return
+	if _damage_block(at / BEAM_BLOCK_SUBS, BEAM_BLOCK_SUBS, amount, TileDefs.DamageMask.EXPLOSION, owner):
+		changed.emit()
+
+func _damage_block(block: Vector2i, side: int, amount: int, mask: int, owner: int) -> bool:
+	var origin := block * side
+	var start := sub_index(origin)
+	var extent := (Vector2i(columns, rows) - origin).min(Vector2i(side, side))
+	var modified := false
+	for y in extent.y:
+		for x in extent.x:
+			var index := start + y * columns + x
+			if (TileDefs.damage_masks[_material(index)] & mask) != 0:
+				modified = _write_hp(index, _hp[index] - amount, true, owner) or modified
+	return modified
 
 func blast_cells(center: Vector2, radius: float) -> Dictionary:
 	var out := {}
-	if sub_columns == 0 or sub_rows == 0 or radius <= 0.0:
+	if columns == 0 or rows == 0 or radius <= 0.0:
 		return out
-	var at := sub_of(center)
+	var at := cell(center)
 	var reach := int(ceil(radius / SUB_SIZE)) + 1
-	var width := mini(2 * reach + 1, sub_columns)
-	var height := mini(2 * reach + 1, sub_rows)
+	var width := mini(2 * reach + 1, columns)
+	var height := mini(2 * reach + 1, rows)
 	for y in range(-reach, -reach + height):
 		for x in range(-reach, -reach + width):
-			var sx := _wrap(at.x + x, sub_columns)
-			var sy := _wrap(at.y + y, sub_rows)
-			var i := sy * sub_columns + sx
-			if _textures[i] == 0 or _hp[i] <= 0 \
-					or (TileDefs.damage_masks[_textures[i]] & TileDefs.DamageMask.EXPLOSION) == 0:
+			var sx := _wrap(at.x + x, columns)
+			var sy := _wrap(at.y + y, rows)
+			var i := sy * columns + sx
+			if _material(i) == 0 or _hp[i] <= 0 \
+					or (TileDefs.damage_masks[_material(i)] & TileDefs.DamageMask.EXPLOSION) == 0:
 				continue
 			var d := GridPathfinder.toroidal_delta_px(center, Vector2((sx + 0.5) * SUB_SIZE, (sy + 0.5) * SUB_SIZE), map_size).length()
 			if d > radius:
@@ -420,7 +307,7 @@ func damage_blast(cells: Dictionary, radius: float, damage: int, owner: int) -> 
 	var nearest: Dictionary[Vector2i, float] = {}
 	for index: int in cells:
 		var sub := sub_position(index)
-		var block := sub / BLAST_SUBS_PER_BLOCK
+		var block := sub / DAMAGE_BLOCK_SUBS
 		nearest[block] = minf(nearest.get(block, INF), cells[index])
 	var modified := false
 	var inner := radius * BlastCurve.INNER_FRACTION
@@ -429,39 +316,29 @@ func damage_blast(cells: Dictionary, radius: float, damage: int, owner: int) -> 
 		var amount := int(falloff * TileDefs.blast_decay)
 		if amount <= 0:
 			continue
-		var start := sub_index(block * BLAST_SUBS_PER_BLOCK)
-		for y in BLAST_SUBS_PER_BLOCK:
-			for x in BLAST_SUBS_PER_BLOCK:
-				var index := start + y * sub_columns + x
-				if (TileDefs.damage_masks[_textures[index]] & TileDefs.DamageMask.EXPLOSION) != 0:
-					modified = _write_hp(index, _hp[index] - amount, true, true, owner) or modified
+		modified = _damage_block(block, DAMAGE_BLOCK_SUBS, amount, TileDefs.DamageMask.EXPLOSION, owner) or modified
 	if modified:
 		changed.emit()
 
 func apply_hp(at: Vector2i, value: int, owner: int) -> bool:
 	var i := sub_index(at)
-	return i >= 0 and _apply_hp(i, value, owner)
-
-func _apply_hp(index: int, value: int, owner: int) -> bool:
-	if not _write_hp(index, value, true, true, owner):
+	if i < 0 or not _write_hp(i, value, true, owner):
 		return false
 	changed.emit()
-	return _hp[index] == 0
+	return _hp[i] == 0
 
 func apply_values(values: Dictionary) -> void:
 	for at in values.keys():
 		var n := sub_index(at)
 		if n >= 0:
-			_write_hp(n, int(values[at]), false, false)
+			_write_hp(n, int(values[at]), false)
 
 func reset() -> void:
 	var material_hp := TileDefs.hit_points
 	for i in _hp.size():
-		var initial := material_hp[_textures[i]]
+		var initial := material_hp[_material(i)]
 		if _hp[i] != initial:
-			_write_hp(i, initial, false, false)
-	_grid = _initial_grid.duplicate()
-	_tile_hp.clear()
+			_write_hp(i, initial, false)
 	_network_changes.clear()
 	_modified.clear()
 	_rewards.clear()
@@ -493,9 +370,9 @@ func _wall_mask(area: Rect2i, breakable: bool) -> PackedByteArray:
 	mask.resize(area.get_area())
 	var width := area.size.x
 	for y in area.size.y:
-		var row := (area.position.y + y) * sub_columns + area.position.x
+		var row := (area.position.y + y) * columns + area.position.x
 		for x in width:
-			var tex := _textures[row + x]
+			var tex := _material(row + x)
 			if _hp[row + x] > 0 and TileDefs.types[tex] == TileDefs.TYPE_WALL \
 					and (TileDefs.damage_masks[tex] != 0) == breakable:
 				mask[y * width + x] = 1
@@ -600,9 +477,9 @@ func body_shapes(key: int) -> PackedVector2Array:
 	return out
 
 func _chunk_area(key: int) -> Rect2i:
-	var span := CHUNK_CELLS * SUB_PER_CELL
+	var span := CHUNK_CELLS
 	var start := Vector2i(key % _chunk_columns, key / _chunk_columns) * span
-	return Rect2i(start, (Vector2i(sub_columns, sub_rows) - start).min(Vector2i.ONE * span))
+	return Rect2i(start, (Vector2i(columns, rows) - start).min(Vector2i.ONE * span))
 
 func _rebuild_walls(key: int, area: Rect2i) -> void:
 	var chunk := _chunks[key]
@@ -623,17 +500,24 @@ func _rebuild_walls(key: int, area: Rect2i) -> void:
 
 func _rebuild_ledges() -> void:
 	var rects: Array = []
-	var ledges := PackedInt64Array([columns, rows, LEDGE_THICKNESS])
-	for i in _grid.size():
-		var side := TileDefs.ledges[texture(_grid[i])] if _grid[i] else 0
-		if side == 0:
-			continue
-		ledges.append((i << 1) | (1 if side < 0 else 0))
-		var x := i % columns
-		var y := i / columns
-		var center_y := y * TILE_SIZE + LEDGE_THICKNESS * 0.5 if side > 0 \
-				else (y + 1) * TILE_SIZE - LEDGE_THICKNESS * 0.5
-		rects.append(Rect2(Vector2((x + 0.5) * TILE_SIZE, center_y), Vector2(TILE_SIZE, LEDGE_THICKNESS)))
+	var ledges := PackedInt64Array()
+	for y in rows:
+		var start := 0
+		var run := 0
+		for x in columns + 1:
+			var side := 0
+			if x < columns:
+				var at := Vector2i(x, y)
+				side = TileDefs.ledges[material_at(at)]
+				if side != 0 and TileDefs.ledges[material_at(at - Vector2i(0, side))] == side: side = 0
+			if side == run: continue
+			if run != 0:
+				var width := (x - start) * SUB_SIZE
+				var top := y * SUB_SIZE if run > 0 else (y + 1) * SUB_SIZE - LEDGE_THICKNESS
+				rects.append(Rect2(Vector2(start * SUB_SIZE + width * 0.5, top + LEDGE_THICKNESS * 0.5), Vector2(width, LEDGE_THICKNESS)))
+				ledges.append_array(PackedInt64Array([start, x, y, run]))
+			run = side
+			start = x
 	var signature := ledges.to_byte_array()
 	if _chunks[LEDGE_CHUNK].signature != signature:
 		_submit(_chunks[LEDGE_CHUNK], signature, rects)
@@ -646,7 +530,7 @@ func flush_collisions() -> int:
 		return 0
 	var started := PerformanceStats.begin()
 	if permanent_dirty:
-		_rebuild_walls(PERMANENT_CHUNK, Rect2i(0, 0, sub_columns, sub_rows))
+		_rebuild_walls(PERMANENT_CHUNK, Rect2i(0, 0, columns, rows))
 		permanent_dirty = false
 	if ledges_dirty:
 		_rebuild_ledges()
@@ -674,12 +558,12 @@ func invalidate_all() -> void:
 	for key in _chunk_dirty.size():
 		_queue_chunk(key)
 
-## 每个世界检查点只需保存期间有改动的瓦片，每个瓦片保留首次修改前的值。
-func take_rewind_changes() -> Array:
-	var cells := _rewind_pending.values()
-	_rewind_pending.clear()
-	return cells
+## 每个检查点只保留实际改动子格的首次耐久值。
+func take_rewind_changes() -> Dictionary[int, int]:
+	var changes := _rewind_pending
+	_rewind_pending = {}
+	return changes
 
-func undo_changes(cells: Array) -> void:
-	for state: PackedInt32Array in cells:
-		_restore_cell(state)
+func undo_changes(changes: Dictionary) -> void:
+	for index: int in changes:
+		_write_hp(index, changes[index], false)

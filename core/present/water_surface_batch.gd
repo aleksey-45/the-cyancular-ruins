@@ -30,7 +30,8 @@ func setup(cells: Array, texture: Texture2D, tile_size: int) -> void:
 		for corner: Vector2 in UV:
 			var at: Vector2 = cell[0] + (corner - Vector2(0.5, 1.0)) * tile_size
 			points.append(Vector3(at.x, at.y, 0))
-			uvs.append(corner)
+			var uv: Rect2 = cell[2]
+			uvs.append(uv.position + corner * uv.size)
 			colors.append(Color(phase, 1.0 - corner.y, 0.0))
 		for index: int in TRIANGLES:
 			indices.append(start + index)

@@ -7,7 +7,7 @@ GitHub Actions 在 `siri` 分支收到推送时构建 Windows 和 macOS 版本�
 | Windows x64 | `The-Cyancular-Ruins-Windows.zip` | 游戏可执行文件、原生扩展、`easytier/` |
 | macOS | `The-Cyancular-Ruins-macOS.zip` | 游戏应用包，内含原生扩展和 EasyTier。支持 Apple Silicon 与 Intel，使用 ad-hoc 签名 |
 
-两个 ZIP 都以 `The-Cyancular-Ruins/` 为顶层目录，并包含 [第三方声明](THIRD_PARTY_NOTICES.txt)。
+两个 ZIP 都以 `The-Cyancular-Ruins/` 为顶层目录。`maps/` 目录中的示例地图可以直接在地图编辑器中打开。包内另附 [第三方声明](THIRD_PARTY_NOTICES.txt)。
 
 ## 本地构建
 

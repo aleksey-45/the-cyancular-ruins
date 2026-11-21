@@ -41,7 +41,7 @@ func setup(initial: String = "", columns := 2, max_h := 320.0,
 	for m in MapCatalog.list_maps():
 		var size: Vector2i = m["size"]
 		var counts: Vector2i = m["spawn_counts"]
-		var sub := "%d×%d 格 · 出生点 A %d / B %d" % [size.x, size.y, counts.x, counts.y]
+		var sub := "%d×%d 子格 · 出生点 A %d / B %d" % [size.x, size.y, counts.x, counts.y]
 		if bool(m["external"]):
 			sub += " · 外置"
 		_add_card(str(m["path"]), str(m["name"]), sub, m["texture"])

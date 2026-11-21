@@ -104,13 +104,14 @@ static func hitscan(combat: CombatSimulator, shooter: Player, shot: Dictionary, 
 	var cells: Array = trace["contacts"]
 	for index in cells.size():
 		var cell: Vector2i = cells[index]
-		if seen.has(cell):
+		var block := cell / Terrain.BEAM_BLOCK_SUBS
+		if seen.has(block):
 			continue
-		seen[cell] = true
-		var tex := MapFormat.texture_of(terrain.value(cell))
+		var tex := terrain.material_at(cell)
 		if TileDefs.explosion_destroyable(tex):
+			seen[block] = true
 			combat.tile_hit.emit(trace["hit_points"][index], tex)
-			terrain.damage_tile(cell, spec["tile_chip"], 1, shooter.role)
+			terrain.damage_beam(cell, spec["tile_chip"], shooter.role)
 
 static func step_projectile(combat: CombatSimulator, bullet: BulletBody, delta: float) -> void:
 	var advance := bullet.advance_physics(delta)

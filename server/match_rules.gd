@@ -28,22 +28,16 @@ func setup(p_mode: String, roster: Array, p_teams: Dictionary, map: Dictionary, 
 	teams = p_teams
 	match_time = float(options.get("match_time", RoomOptions.MATCH_SECONDS))
 	player_collision = options.get("player_collision", false)
-	_size = map["size"]
+	_size = map.size
 	var problem := SpawnPicker.validate_multiplayer_spawns(map)
 	if not problem.is_empty():
 		return problem
-	var sides: Dictionary = map["spawns"]["respawn"]
-	if mode == PvpSession.MODE_ROYALE:
-		var combined: Array = sides[1] + sides[2]
-		if combined.size() < roster.size():
-			return "大乱斗需要 %d 个不同出生点，实际 %d 个" % [roster.size(), combined.size()]
-		_spawn_pools = {0: combined}
-	else:
-		var minimum := TeamRules.MAX_TEAM if mode == PvpSession.MODE_TEAM else 1
-		for side: int in [1, 2]:
-			if sides[side].size() < minimum:
-				return "侧 %d 出生点不足（需要 %d 个，实际 %d 个）" % [side, minimum, sides[side].size()]
-		_spawn_pools = sides
+	var sides := SpawnPicker.respawn_cells(map)
+	var limit := SpawnPicker.player_limit(sides, mode, options)
+	if limit == 0: return "该模式出生点不足（侧 1 / 侧 2：%d / %d）" % [sides[1].size(), sides[2].size()]
+	if roster.size() < RoomOptions.MIN_PLAYERS: return "至少需要 %d 名玩家" % RoomOptions.MIN_PLAYERS
+	if roster.size() > limit: return "本图在此模式下最多支持 %d 人，当前 %d 人" % [limit, roster.size()]
+	_spawn_pools = {0: sides[1] + sides[2]} if mode == PvpSession.MODE_ROYALE else sides
 	if mode == PvpSession.MODE_TEAM:
 		# 开局记录两队人数。后续回合都用这份人数计算起始比分补偿。
 		team_counts = TeamRules.team_counts(teams)
@@ -90,7 +84,7 @@ func spawn_for(players: Dictionary, role: int, initial: bool = false) -> Vector2
 		var player: Player = players[other]
 		if other == role or player.sim_downed:
 			continue
-		var cell := GridPathfinder.cell_of(player.position, GameParameters.TILE_SIZE, _size.x, _size.y)
+		var cell := GridPathfinder.cell_of(player.position, CyrmMap.CELL_SIZE, _size.x, _size.y)
 		if player_collision:
 			occupied.append(cell)
 		if not same_team(role, other):

@@ -18,14 +18,5 @@
     "20": { "name": "树干（横）", "type": "wall", "hp": 30, "bullet_destroyable": true, "explosion_destroyable": true, "elastic": false },
     "21": { "name": "水", "type": "liquid", "hp": 1, "bullet_destroyable": false, "explosion_destroyable": false, "elastic": false, "explosion_decay": 0.25 },
     "22": { "name": "水面", "type": "liquid", "hp": 1, "bullet_destroyable": false, "explosion_destroyable": false, "elastic": false, "explosion_decay": 0.25 }
-  },
-  "legacy_texture_map": {
-    "2":  { "base": 1, "hue": 3 },
-    "3":  { "base": 1, "hue": 1 },
-    "4":  { "base": 1, "hue": 5 },
-    "5":  { "base": 1, "hue": 0 },
-    "16": { "base": 15, "hue": 2 },
-    "17": { "base": 15, "hue": 7 },
-    "18": { "base": 15, "hue": 7 }
   }
 }

@@ -3,10 +3,10 @@ extends RefCounted
 
 # 距离、活动范围和 A* 寻路都把地图的左右边缘、上下边缘视为相连。
 
-# 相邻瓦片始终按相同顺序加入候选列表，确保同等优先级的路径能稳定复现。
+# 相邻子格始终按相同顺序加入候选列表，确保同等优先级的路径能稳定复现。
 const DIRECTIONS := [Vector2i.RIGHT, Vector2i.LEFT, Vector2i.DOWN, Vector2i.UP]
 
-# 两个瓦片之间的曼哈顿距离，横向和纵向分别取较短的路线。
+# 两个子格之间的曼哈顿距离，横向和纵向分别取较短的路线。
 static func toroidal_dist(a: Vector2i, b: Vector2i, cols: int, rows: int) -> int:
 	var dx := absi(a.x - b.x)
 	dx = mini(dx, cols - dx)
@@ -49,50 +49,19 @@ static func wrap_to_range(pos: Vector2, size: Vector2) -> Vector2:
 	return p
 
 
-# 把世界坐标换算成瓦片索引，并将越界位置对应到地图另一侧。
+# 把世界坐标换算成子格索引，并将越界位置对应到地图另一侧。
 static func cell_of(pos: Vector2, ts: int, cols: int, rows: int) -> Vector2i:
 	var c := Vector2i(floori(pos.x / ts), floori(pos.y / ts))
 	return Vector2i(posmod(c.x, cols), posmod(c.y, rows))
 
 
-# 可站立的位置须是空瓦片，正下方一格有可承托角色的地形。计算时把地图上下两侧视为相连。
-static func is_floor_cell(grid: Array, cell: Vector2i) -> bool:
-	if grid.is_empty():
-		return false
-	var rows := grid.size()
-	var cols: int = (grid[0] as Array).size()
-	var x := posmod(cell.x, cols)
-	if grid[posmod(cell.y, rows)][x] != MapFormat.EMPTY:
-		return false
-	return TileDefs.is_blocked(grid[posmod(cell.y + 1, rows)][x])
-
-
-# 为头部多留一格空间，用于挑选需要完整站立空间的位置。
-static func is_floor_cell_with_headroom(grid: Array, cell: Vector2i) -> bool:
-	if not is_floor_cell(grid, cell):
-		return false
-	var rows := grid.size()
-	var cols: int = (grid[0] as Array).size()
-	return grid[posmod(cell.y - 1, rows)][posmod(cell.x, cols)] == MapFormat.EMPTY
-
-
-static func astar_path_nearest(grid: Array[Array], start: Vector2i, goal: Vector2i, max_visit := 4000,
-		can_pass := Callable(), radius := -1) -> Array[Vector2i]:
-	if grid.is_empty():
-		return []
-	if not can_pass.is_valid():
-		can_pass = func(at: Vector2i) -> bool: return not TileDefs.is_blocked(grid[at.y][at.x])
-	return find_path(Vector2i(grid[0].size(), grid.size()), start, goal, can_pass, max_visit, radius)
-
 static func find_path(size: Vector2i, start: Vector2i, goal: Vector2i, can_pass: Callable,
 		max_visit := 4000, radius := -1) -> Array[Vector2i]:
 	if start == goal:
 		return []
-	var cost := PackedInt32Array()
-	cost.resize(size.x * size.y)
-	cost.fill(-1)
-	var parent := PackedInt32Array()
-	parent.resize(cost.size())
+	# 搜索预算只覆盖局部子格，按实际访问的位置保存代价和前驱。
+	var cost: Dictionary[int, int] = {}
+	var parent: Dictionary[int, int] = {}
 	var origin := start.y * size.x + start.x
 	cost[origin] = 0
 	var nearest := origin
@@ -117,7 +86,7 @@ static func find_path(size: Vector2i, start: Vector2i, goal: Vector2i, can_pass:
 			if radius > 0 and toroidal_dist(start, next, size.x, size.y) > radius:
 				continue
 			var neighbor := next.y * size.x + next.x
-			if not can_pass.call(next) or (cost[neighbor] >= 0 and cost[neighbor] <= next_cost):
+			if cost.get(neighbor, 2147483647) <= next_cost or not can_pass.call(next):
 				continue
 			cost[neighbor] = next_cost
 			parent[neighbor] = index
@@ -129,7 +98,7 @@ static func find_path(size: Vector2i, start: Vector2i, goal: Vector2i, can_pass:
 	path.reverse()
 	return path
 
-# 最小堆以 Vector2i.x 作为优先级，y 保存瓦片索引。
+# 最小堆以 Vector2i.x 作为优先级，y 保存子格索引。
 static func _push(heap: Array[Vector2i], entry: Vector2i) -> void:
 	var i := heap.size()
 	heap.append(entry)

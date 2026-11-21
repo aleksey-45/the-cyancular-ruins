@@ -1,4 +1,4 @@
-#include <fast-lzma2.h>
+#include "cyrm_storage.hpp"
 #include <steam/isteamnetworkingutils.h>
 #include <steam/steamnetworkingsockets.h>
 #include <godot_cpp/classes/ref_counted.hpp>
@@ -389,7 +389,10 @@ public:
 };
 
 static void initialize_gns(ModuleInitializationLevel level) {
-    if (level == MODULE_INITIALIZATION_LEVEL_SCENE) ClassDB::register_class<GnsEndpoint>();
+    if (level == MODULE_INITIALIZATION_LEVEL_SCENE) {
+        ClassDB::register_class<GnsEndpoint>();
+        ClassDB::register_class<CyrmStorage>();
+    }
 }
 extern "C" GDExtensionBool GDE_EXPORT gns_init(GDExtensionInterfaceGetProcAddress get_proc_address,
         GDExtensionClassLibraryPtr library, GDExtensionInitialization *initialization) {

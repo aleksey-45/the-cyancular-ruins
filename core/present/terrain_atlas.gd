@@ -10,9 +10,9 @@ const QUAD_SRC := 8
 const QUAD_TILE := 16
 const QUAD_COLS := 16
 const GROUPS_PER_ROW := 4
-const SUB_PER_CELL := MapFormatV4.SUB_PER_CELL
-const WATER_BODY_BRICK := 20
-const WATER_SURFACE_BRICK := 21
+const SUBS_PER_TEXTURE := SRC_TILE / QUAD_SRC
+const WATER_BODY_MATERIAL := 21
+const WATER_SURFACE_MATERIAL := 22
 
 static var _src_cache: Image
 static var _brick_cache: Dictionary = {}
@@ -36,7 +36,7 @@ static func source_rect(idx: int) -> Rect2i:
 static func descriptor_rows(descriptors: PackedInt32Array) -> Dictionary:
 	var rows := {}
 	for desc in descriptors:
-		var tex := MapFormatV4.descriptor_texture(desc)
+		var tex := CyrmMap.tile_material(desc)
 		if tex > 0 and tex <= TEX_COUNT:
 			rows.get_or_add(desc, rows.size())
 	return rows
@@ -49,47 +49,21 @@ static func _atlas_image(tile: int, count: int) -> Image:
 	return Image.create(mini(groups, GROUPS_PER_ROW) * QUAD_COLS * tile,
 			ceili(float(groups) / GROUPS_PER_ROW) * tile, false, Image.FORMAT_RGBA8)
 
-## 与关卡编辑器使用相同的着色算法。颜色和不透明度都换算成 0 至 255 的整数。
-static func tint_color(color: Color, tint: int) -> Color:
-	if (tint & MapFormatV4.TINT_MASK) == MapFormatV4.NEUTRAL_TINT:
-		return color
-	var r := roundi(color.r * 255.0) / 255.0
-	var g := roundi(color.g * 255.0) / 255.0
-	var b := roundi(color.b * 255.0) / 255.0
-	var peak := maxf(r, maxf(g, b))
-	var chroma := peak - minf(r, minf(g, b))
-	var hue := 0.0
-	if chroma > 0.0:
-		if peak == r:
-			hue = 60.0 * fposmod((g - b) / chroma, 6.0)
-		elif peak == g:
-			hue = 60.0 * ((b - r) / chroma + 2.0)
-		else:
-			hue = 60.0 * ((r - g) / chroma + 4.0)
-	hue = fposmod(fposmod(hue, 360.0) + ((tint & 7) - 4) * 15.0, 360.0)
-	var saturation_scale := (((tint >> 6) & 7) + 6) / 10.0
-	var brightness_scale := (((tint >> 3) & 7) + 6) / 10.0
-	var saturation := 0.0 if peak == 0.0 else clampf(chroma / peak * saturation_scale, 0.0, 1.0)
-	var value := clampf(peak * brightness_scale, 0.0, 1.0)
-	var span := value * saturation
-	var offset := value - span
-	var mid := span * (1.0 - absf(fposmod(hue / 60.0, 2.0) - 1.0))
-	var hi := roundi((span + offset) * 255.0)
-	var lo := roundi(offset * 255.0)
-	var blend := roundi((mid + offset) * 255.0)
-	var alpha_scale := ((tint >> 9) & 7) / 7.0
-	var alpha := roundi((roundi(color.a * 255.0) / 255.0) * alpha_scale * 255.0)
-	match int(hue / 60.0):
-		0: return Color8(hi, blend, lo, alpha)
-		1: return Color8(blend, hi, lo, alpha)
-		2: return Color8(lo, hi, blend, alpha)
-		3: return Color8(lo, blend, hi, alpha)
-		4: return Color8(blend, lo, hi, alpha)
-		_: return Color8(hi, lo, blend, alpha)
+static func tint_color(color: Color, tint: Vector4i) -> Color:
+	if tint == CyrmMap.NEUTRAL_TINT: return color
+	var adjusted := Color.from_hsv(
+		fposmod(color.h + (tint.x - 4) / 24.0, 1.0),
+		clampf(color.s * (tint.z + 6) / 10.0, 0.0, 1.0),
+		clampf(color.v * (tint.y + 6) / 10.0, 0.0, 1.0),
+		color.a * tint.w / 7.0)
+	return Color.hex(adjusted.to_rgba32())
 
-static func _colored_brick(brick: int, tint: int) -> Image:
-	var image := source_image().get_region(source_rect(brick))
-	if (tint & MapFormatV4.TINT_MASK) != MapFormatV4.NEUTRAL_TINT:
+static func _colored_brick(tile: int) -> Image:
+	if tile == 0:
+		return Image.create_empty(SRC_TILE, SRC_TILE, false, Image.FORMAT_RGBA8)
+	var image := source_image().get_region(source_rect(CyrmMap.tile_material(tile) - 1))
+	var tint := CyrmMap.tile_tint(tile)
+	if tint != CyrmMap.NEUTRAL_TINT:
 		for y in SRC_TILE:
 			for x in SRC_TILE:
 				image.set_pixel(x, y, tint_color(image.get_pixel(x, y), tint))
@@ -98,9 +72,9 @@ static func _colored_brick(brick: int, tint: int) -> Image:
 static func build_atlas_image(rows: Dictionary) -> Image:
 	var atlas := _atlas_image(QUAD_TILE, rows.size())
 	for desc in rows:
-		var brick := _colored_brick(MapFormatV4.descriptor_texture(desc) - 1, desc)
+		var brick := _colored_brick(desc)
 		for quad in QUAD_COLS:
-			var origin := Vector2i(quad % SUB_PER_CELL, quad / SUB_PER_CELL) * QUAD_SRC
+			var origin := Vector2i(quad % SUBS_PER_TEXTURE, quad / SUBS_PER_TEXTURE) * QUAD_SRC
 			var q := brick.get_region(Rect2i(origin, Vector2i.ONE * QUAD_SRC))
 			q.resize(QUAD_TILE, QUAD_TILE, Image.INTERPOLATE_NEAREST)
 			atlas.blit_rect(q, Rect2i(Vector2i.ZERO, q.get_size()), atlas_coords(rows[desc], quad) * QUAD_TILE)
@@ -121,40 +95,25 @@ static func _tileset(image: Image, tile: int, groups: int) -> TileSet:
 			atlas.create_tile(atlas_coords(group, variant))
 	return tile_set
 
-# 按纹理索引、尺寸和颜色参数缓存染色结果，供水体和水面绘制复用。
-static func water_brick_image(ts: int, brick: int, tint: int = MapFormatV4.NEUTRAL_TINT) -> Image:
-	var key := Vector3i(ts, brick, tint & MapFormatV4.TINT_MASK)
+static func tile_image(ts: int, tile: int) -> Image:
+	var key := Vector2i(ts, tile)
 	if _brick_cache.has(key):
 		return _brick_cache[key]
-	var img := _colored_brick(brick, tint)
+	var img := _colored_brick(tile)
 	img.resize(ts, ts, Image.INTERPOLATE_NEAREST)
 	_brick_cache[key] = img
 	return img
 
-static func make_water_tileset(ts: int, brick: int, rows: Dictionary) -> TileSet:
-	var half := ts / 2
-	var atlas := _atlas_image(ts, rows.size())
-	for tint in rows:
-		var img := water_brick_image(ts, brick, tint)
-		for shape in QUAD_COLS:
-			var at := atlas_coords(rows[tint], shape) * ts
-			for bit in 4:
-				if (shape & (1 << bit)) != 0:
-					var offset := Vector2i(bit % 2, bit / 2) * half
-					atlas.blit_rect(img, Rect2i(offset, Vector2i.ONE * half), at + offset)
-	return _tileset(atlas, ts, rows.size())
-
-# 先将瓦片纹理与天空底色混合，缩放到所需的子格尺寸，再按地图布局拼成背景。
 static func _bake_map_image(map: Dictionary, cell_px: int, air: Color) -> Image:
-	var sp := maxi(1, cell_px / SUB_PER_CELL)
-	var descriptors: PackedInt32Array = map["descriptors"]
+	var sp := maxi(1, cell_px / SUBS_PER_TEXTURE)
+	var descriptors: PackedInt32Array = map.layers[CyrmMap.SCENE]
 	var rows := descriptor_rows(descriptors)
 	var atlas := build_atlas_image(rows)
 	var flat := Image.create(atlas.get_width(), atlas.get_height(), false, Image.FORMAT_RGBA8)
 	flat.fill(air)
 	flat.blend_rect(atlas, Rect2i(Vector2i.ZERO, atlas.get_size()), Vector2i.ZERO)
 	flat.resize(atlas.get_width() / QUAD_TILE * sp, atlas.get_height() / QUAD_TILE * sp, Image.INTERPOLATE_NEAREST)
-	var sub_size: Vector2i = map["size"] * SUB_PER_CELL
+	var sub_size: Vector2i = map.size
 	var out := Image.create(sub_size.x * sp, sub_size.y * sp, false, Image.FORMAT_RGBA8)
 	out.fill(air)
 	for i in descriptors.size():
@@ -162,19 +121,20 @@ static func _bake_map_image(map: Dictionary, cell_px: int, air: Color) -> Image:
 		if not rows.has(desc):
 			continue
 		var sub := Vector2i(i % sub_size.x, i / sub_size.x)
-		var quad := (sub.y % SUB_PER_CELL) * SUB_PER_CELL + sub.x % SUB_PER_CELL
+		var quad := (sub.y % SUBS_PER_TEXTURE) * SUBS_PER_TEXTURE + sub.x % SUBS_PER_TEXTURE
 		var at := atlas_coords(rows[desc], quad) * sp
 		out.blit_rect(flat, Rect2i(at, Vector2i.ONE * sp), sub * sp)
 	return out
 
 static func terrain_texture(path: String, cell_px: int, air: Color) -> ImageTexture:
-	var map := MapFormat.load_map(path)
+	var bytes := CyrmMap.read_bytes(path)
+	var key := [bytes, cell_px, air]
+	if _tex_cache.has(key): return _tex_cache[key]
+	var map := CyrmMap.from_bytes(bytes)
 	if map.is_empty():
 		push_error("TerrainAtlas: 地图为空,无法烘背景 %s" % path)
 		var blank := Image.create(1, 1, false, Image.FORMAT_RGBA8)
 		blank.fill(air)
 		return ImageTexture.create_from_image(blank)
-	var key := [map["bytes"], cell_px, air]
-	if not _tex_cache.has(key):
-		_tex_cache[key] = ImageTexture.create_from_image(_bake_map_image(map, cell_px, air))
+	_tex_cache[key] = ImageTexture.create_from_image(_bake_map_image(map, cell_px, air))
 	return _tex_cache[key]

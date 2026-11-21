@@ -165,9 +165,8 @@ func _tick_back_hop() -> void:
 		_flank_check_timer = EnemyParams.BlackBird.flank_check_interval
 
 
-# 可用的落点在玩家另一侧，距玩家 2 至 6 格，并且能直接看到玩家所在的瓦片。
+# 可用的落点在玩家另一侧，距玩家 128 至 384 像素，并且能直接看到玩家所在的瓦片。
 func _find_flank_cell() -> bool:
-	var ts := GameParameters.TILE_SIZE
 	var player_cell := terrain.cell(player.position)
 	var player_px := terrain.cell_center(player_cell)
 	var bird_px := terrain.cell_center(terrain.cell(position))
@@ -181,9 +180,9 @@ func _find_flank_cell() -> bool:
 		sx = -player.facing_direction
 		sy = 0.0
 		use_x = true
-	var min_d := EnemyParams.BlackBird.teleport_min_tiles * ts
-	var max_d := EnemyParams.BlackBird.teleport_max_tiles * ts
-	var max_r := EnemyParams.BlackBird.teleport_max_tiles
+	var min_d := EnemyParams.BlackBird.teleport_min_range
+	var max_d := EnemyParams.BlackBird.teleport_max_range
+	var max_r := ceili(max_d / Terrain.SUB_SIZE)
 	var valid: Array[Vector2i] = []
 	for dy in range(-max_r, max_r + 1):
 		for dx in range(-max_r, max_r + 1):
@@ -197,7 +196,7 @@ func _find_flank_cell() -> bool:
 				continue
 			if not use_x and signf(rel.y) != -sy:
 				continue
-			if terrain.value(c) != MapFormat.EMPTY or not TileDefs.is_blocked(terrain.value(c + Vector2i.DOWN)):
+			if terrain.material_at(c) != 0 or not TileDefs.is_blocked(terrain.material_at(c + Vector2i.DOWN)):
 				continue
 			# 除了地面附近的落脚空间，还需要检查落点上方实际传送到的位置。
 			var drop_pos := c_px + Vector2.UP * EnemyParams.BlackBird.teleport_drop
@@ -218,9 +217,7 @@ func _body_clear_at(pos: Vector2) -> bool:
 	return terrain.physics.shape_overlaps(shape, Transform2D(0.0, pos + _body_bounds.get_center()), CollisionWorld.LAYER_TERRAIN).is_empty()
 
 func _teleport_to_flank() -> void:
-	var ts := GameParameters.TILE_SIZE
-	position = Vector2(_flank_cell.x * ts + ts * 0.5,
-			_flank_cell.y * ts + ts * 0.5 - EnemyParams.BlackBird.teleport_drop)
+	position = terrain.cell_center(_flank_cell) + Vector2.UP * EnemyParams.BlackBird.teleport_drop
 	velocity = Vector2.ZERO
 	_teleport_left = EnemyParams.BlackBird.teleport_entry_time
 	activity = Activity.TELEPORT

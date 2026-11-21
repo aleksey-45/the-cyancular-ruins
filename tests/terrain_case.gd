@@ -32,6 +32,7 @@ func run(tree: SceneTree) -> void:
 	_mirror_topology(tree)
 	_mirrored_collision(tree)
 	_destruction_units(tree)
+	_subcell_navigation()
 	_beam_hole(tree)
 	_proxy_same_frame(tree)
 	_lifecycle(tree)
@@ -45,7 +46,6 @@ func _rewind_boundaries(level: Terrain) -> void:
 	var sub := Vector2i(8, 12)
 	var cell := Vector2i(2, 3)
 	var initial := level.get_hp(sub)
-	var macro_hp: int = level.capture_cell(cell)["hp"]
 	level.rewind_enabled = true
 	level.apply_hp(sub, initial + 1, 0)
 	level.apply_hp(sub, initial + 2, 0)
@@ -58,11 +58,14 @@ func _rewind_boundaries(level: Terrain) -> void:
 	level.undo_changes(level.take_rewind_changes())
 	level.undo_changes(first)
 	expect(level.get_hp(sub) == initial, "a new branch can undo its edits and the shared earlier history")
-	level.damage_tile(cell, 1, 1, 0)
-	expect(level.capture_cell(cell)["hp"] == macro_hp - 1, "whole-tile damage has independent HP")
+	var adjacent := sub + Vector2i.RIGHT
+	level.apply_hp(adjacent, initial - 2, 0)
+	level.damage_beam(sub, 1, 0)
+	expect(level.get_hp(sub) == initial - 1 and level.get_hp(adjacent) == initial - 3,
+			"damage over a full tile subtracts from each subcell's current HP")
 	level.reset()
-	expect(level.get_hp(sub) == initial and level.capture_cell(cell)["hp"] == macro_hp,
-			"reset restores both subcell and whole-tile HP from their materials")
+	expect(level.get_hp(sub) == initial and level.get_hp(adjacent) == initial,
+			"reset restores each subcell's material HP")
 	level.rewind_enabled = false
 
 func _water_depth(tree: SceneTree) -> void:
@@ -88,12 +91,27 @@ func _destruction_units(tree: SceneTree) -> void:
 	var terrain := _terrain
 	var point := Vector2(256, 8)
 	var hp := TileDefs.hit_points[trunk]
+	terrain.authoritative = true
+	terrain.rewind_enabled = true
+	var original := block_hp(terrain, Vector2i.ZERO)
 	terrain.damage_impact(point, Vector2.LEFT, hp - 1, 0)
-	expect(terrain.capture_cell(Vector2i.ZERO)["hp"] == 1 and terrain.get_hp(Vector2i.ZERO) == hp,
-			"ordinary projectiles chip the 64 px tile HP across the seam")
-	terrain.damage_impact(point, Vector2.LEFT, 1, 0)
-	expect(terrain.value(Vector2i.ZERO) == 0 and terrain.get_hp(Vector2i(3, 3)) == 0,
-			"ordinary projectiles destroy all subcells of the tile at zero HP")
+	var damaged := {Vector2i.ZERO: 1, Vector2i.RIGHT: 1, Vector2i.DOWN: 1, Vector2i.ONE: 1}
+	expect(terrain.take_network_changes() == damaged and terrain.get_modified() == damaged,
+			"a seam hit synchronizes residual HP for exactly the four subcells in the 32 px block")
+	terrain.damage_impact(Vector2(24, 0), Vector2.UP, 1, 0)
+	expect(terrain.get_hp(Vector2i.ZERO) == 0 and terrain.get_hp(Vector2i.ONE) == 0
+			and terrain.get_hp(Vector2i(2, 0)) == hp and terrain.get_hp(Vector2i(0, 2)) == hp,
+			"another hit in the same block opens a hole and leaves the adjacent blocks intact")
+	terrain.flush_collisions()
+	var mask := CollisionWorld.LAYER_TERRAIN
+	expect(terrain.physics.ray_hit(Vector2(8, -8), Vector2(8, 24), mask).is_empty()
+			and not terrain.physics.ray_hit(Vector2(40, -8), Vector2(40, 24), mask).is_empty(),
+			"rays pass through the new projectile hole and still hit its neighboring block")
+	expect(terrain.line_of_sight(Vector2(8, -8), Vector2(8, 24))
+			and not terrain.line_of_sight(Vector2(40, -8), Vector2(40, 24)),
+			"a sight line wrapped at the seam sees the same opening and wall as the physical ray")
+	terrain.undo_changes(terrain.take_rewind_changes())
+	expect(block_hp(terrain, Vector2i.ZERO) == original, "rewind restores all four bullet-damaged subcells")
 
 	var blast_center := Vector2(248, 8)
 	var blast_radius := 12.0
@@ -104,16 +122,59 @@ func _destruction_units(tree: SceneTree) -> void:
 			and terrain.get_hp(Vector2i(14, 1)) == leaf_hp - 6
 			and terrain.get_hp(Vector2i(13, 0)) == leaf_hp,
 			"grenades apply the nearest subcell's damage only to its containing 32 px block")
+	terrain.damage_impact(Vector2(248, 0), Vector2.UP, leaf_hp - 6, 0)
+	expect(terrain.get_hp(Vector2i(15, 0)) == 0 and terrain.get_hp(Vector2i(14, 1)) == 0
+			and terrain.get_hp(Vector2i(13, 0)) == leaf_hp,
+			"rounds and grenades accumulate damage on the same four subcells")
 
-## 光束的起点位于空瓦片内，下方紧邻一排有碰撞形状的墙体。
+	var solid := 7
+	var tiles := PackedInt32Array()
+	tiles.resize(16)
+	tiles.fill(CyrmMap.tile_value(solid))
+	tiles[0] = CyrmMap.tile_value(trunk)
+	tiles[1] = CyrmMap.tile_value(leaf)
+	tiles[4] = 0
+	var authored := CyrmMap.create(Vector2i(4, 4))
+	authored.layers[CyrmMap.SCENE] = tiles
+	var mixed := Terrain.new(authored)
+	expect(mixed.damage_impact(Vector2(0, 8), Vector2.LEFT, leaf_hp, 0) == trunk
+			and mixed.get_hp(Vector2i.ZERO) == hp - leaf_hp and mixed.get_hp(Vector2i.RIGHT) == 0
+			and mixed.get_hp(Vector2i.DOWN) == 0 and mixed.get_hp(Vector2i.ONE) == TileDefs.hit_points[solid],
+			"the hit subcell selects the block and each neighbor takes damage according to its own material")
+	expect(mixed.damage_impact(Vector2(16, 24), Vector2.LEFT, 1, 0) == 0
+			and mixed.get_hp(Vector2i.ZERO) == hp - leaf_hp,
+			"hitting an indestructible face leaves its vulnerable neighbors alone")
+
+func _subcell_navigation() -> void:
+	var map := CyrmMap.create(Vector2i(7, 5))
+	var wall := CyrmMap.tile_value(19)
+	for y in map.size.y: CyrmMap.write_cells(map, CyrmMap.SCENE, [2, y, wall])
+	CyrmMap.write_cells(map, CyrmMap.SCENE, [3, 1, CyrmMap.tile_value(21), 6, 4, wall])
+	var terrain := Terrain.new(map)
+	var can_pass := func(at: Vector2i) -> bool: return not TileDefs.is_blocked(terrain.material_at(at))
+	var start := Vector2i(1, 1)
+	var goal := Vector2i(3, 1)
+	var gap := Vector2i(2, 1)
+	expect(not GridPathfinder.find_path(map.size, start, goal, can_pass).has(gap),
+			"navigation avoids a single solid subcell")
+	expect(terrain.water(terrain.cell_center(goal)) and not terrain.water(terrain.cell_center(gap)),
+			"water and wall inside the same artwork tile have distinct gameplay materials")
+	terrain.apply_hp(gap, 0, 0)
+	expect(GridPathfinder.find_path(map.size, start, goal, can_pass) == [gap, goal],
+			"navigation uses a freshly opened subcell without rebuilding a coarse map")
+	var corner := Vector2i(6, 4)
+	terrain.damage_impact(terrain.cell_center(corner), Vector2.LEFT, 30, 0)
+	expect(terrain.get_hp(corner) == 0 and terrain.get_hp(Vector2i(2, 4)) == 30,
+			"an odd-sized map clips the last damage block to its actual subcells")
+
+## 光束的起点位于空子格内，下方紧邻一排有碰撞形状的墙体。
 func _beam(terrain: Terrain) -> void:
 	var x := terrain.columns / 2
-	var wall_cell := Vector2i(x, terrain.rows - 1)
-	var start := Vector2((x + 0.5) * Terrain.TILE_SIZE, (terrain.rows - 1.5) * Terrain.TILE_SIZE)
-	var packed := terrain.value(wall_cell)
-	expect(terrain.value(Vector2i(x, terrain.rows - 2)) == 0 and (packed & 15) == 15,
-			"test map has a solid row under an empty one")
-	var target := Vector2(start.x, start.y + Terrain.TILE_SIZE)
+	var wall_cell := Vector2i(x, terrain.rows - 4)
+	var start := terrain.cell_center(wall_cell + Vector2i.UP)
+	expect(terrain.material_at(wall_cell + Vector2i.UP) == 0 and terrain.material_at(wall_cell) == wall_texture(),
+			"fixture has wall directly below an empty subcell")
+	var target := terrain.cell_center(wall_cell)
 	var direction := (target - start).normalized()
 	var beam := terrain.trace_beam(start, direction, 64.0, 0)
 	expect((beam["points"] as PackedVector2Array).size() == 2 and (beam["points"] as PackedVector2Array)[0] == start,
@@ -352,37 +413,34 @@ func _proxy_same_frame(tree: SceneTree) -> void:
 	expect(stable, "the body stays queryable across 32 in-frame updates")
 
 func _queries(terrain: Terrain) -> void:
-	var ts := float(Terrain.TILE_SIZE)
+	var ts := float(Terrain.SUB_SIZE)
 	var x := terrain.columns / 2
 	var solid := Rect2(Vector2(x * ts, (terrain.rows - 1) * ts), Vector2(ts, ts))
 	var empty := Rect2(Vector2(x * ts, 0.0), Vector2(ts, ts))
-	expect(terrain.rect_overlaps(solid, ts, false), "rect overlap finds a solid cell")
-	expect(not terrain.rect_overlaps(empty, ts, false), "rect overlap misses an empty cell")
-	# 快照保存的瓦片数组可直接交给 A* 寻路使用。
-	var path := GridPathfinder.astar_path_nearest(terrain.get_grid_snapshot(), Vector2i(1, 1), Vector2i(1, 2))
-	expect(not path.is_empty(), "grid snapshot feeds the typed pathfinder directly")
+	expect(terrain.rect_overlaps(solid, false), "rect overlap finds a solid cell")
+	expect(not terrain.rect_overlaps(empty, false), "rect overlap misses an empty cell")
+	var path := GridPathfinder.find_path(Vector2i(terrain.columns, terrain.rows), Vector2i(1, 1), Vector2i(1, 2),
+			func(at: Vector2i) -> bool: return not TileDefs.is_blocked(terrain.material_at(at)))
+	expect(path == [Vector2i(1, 2)], "adjacent subcells are separate nodes in A*")
 
 func _map_format() -> void:
 	var path := "res://maps/newfactory.cyrm"
-	var info := MapFormat.load_map(path)
-	expect(not info["grid"].is_empty() and not info["descriptors"].is_empty(), "shipped v4 map loads macro cells and subcell descriptors")
-	var received := MapFormat.parse_map(FileAccess.get_file_as_bytes(path), "network fixture")
-	expect(is_same(received, info), "received bytes reuse the same parsed map as the file")
-	var body := PackedByteArray([0, 0, 1, 1, 0, 0, 16, 0, 0, 1])
-	body.resize(26)
-	var bytes := _map_bytes(body)
-	expect(MapFormatV4.parse(bytes)["ok"], "minimal valid v4 scene")
-	var legacy := body.duplicate()
-	legacy.encode_u32(5, (16 << 12) | (2 << 9) | (5 << 6) | (6 << 3) | 3)
-	var colored := MapFormat.parse_map(_map_bytes(legacy), "legacy fixture")
-	var desc: int = colored["descriptors"][0]
-	expect(desc == 62833 and MapFormatV4.descriptor_texture(desc) == 15,
-			"loading a legacy leaf composes its hue and preserves brightness, saturation and alpha")
-	expect(TerrainAtlas.tint_color(Color8(82, 196, 144, 147), desc) == Color8(116, 235, 85, 42),
+	var map := CyrmMap.load_file(path)
+	expect(not map.is_empty() and map.size == Vector2i(600, 400), "shipped map dimensions are subcells")
+	var received := CyrmMap.from_bytes(FileAccess.get_file_as_bytes(path))
+	expect(not is_same(received, map) and received == map, "file and network restore independent identical maps")
+	var colored := CyrmMap.create(Vector2i(4, 4))
+	var desc := 62833
+	var values: PackedInt32Array = colored.layers[CyrmMap.SCENE]
+	values.fill(desc)
+	var authored_tint := Vector4i(1, 6, 5, 2)
+	expect(CyrmMap.tile_value(15, authored_tint) == desc and CyrmMap.tile_tint(desc) == authored_tint,
+			"semantic tile fields match the stored subcell value")
+	expect(TerrainAtlas.tint_color(Color8(82, 196, 144, 147), CyrmMap.tile_tint(desc)) == Color8(116, 235, 85, 42),
 			"game tint agrees with the editor's RGBA bytes")
-	var colored_terrain := Terrain.new(colored["grid"], colored["descriptors"])
+	var colored_terrain := Terrain.new(colored)
 	var display := TerrainView.new()
-	display.install(colored["grid"], colored_terrain.descriptors(), Vector2(16.0, 16.0))
+	display.install(colored, Vector2(16.0, 16.0))
 	var layer := display._wall
 	var sub := Vector2i.ZERO
 	var corner := Vector2i(4, 4)
@@ -401,74 +459,56 @@ func _map_format() -> void:
 			and layer.get_cell_atlas_coords(corner) == atlas,
 			"rewind restores the tinted tile and its seam copy")
 	display.free()
-	for size in [3, 4, 8, 9, 10, 25]:
-		expect(not MapFormatV4.parse(_map_bytes(body.slice(0, size)))["ok"], "truncated v4 block is rejected, length %d" % size)
-	var invalid := body.duplicate()
-	invalid[9] = 3
-	expect(not MapFormatV4.parse(_map_bytes(invalid))["ok"], "invalid palette index width is rejected")
-	invalid = body.duplicate()
-	invalid[10] = 1
-	expect(not MapFormatV4.parse(_map_bytes(invalid))["ok"], "out-of-range palette index is rejected")
-	bytes[10] ^= 1
-	expect(not MapFormatV4.parse(bytes)["ok"], "v4 CRC mismatch is rejected")
+	var bytes := CyrmMap.to_bytes(colored)
+	for length in [0, 4, 13, bytes.size() - 1]:
+		expect(CyrmMap.from_bytes(bytes.slice(0, length)).is_empty(), "truncated map stream is rejected")
+	bytes[-1] ^= 1
+	expect(CyrmMap.from_bytes(bytes).is_empty(), "corrupt map stream is rejected")
 
 func _water_atlas() -> void:
-	expect(TerrainAtlas.WATER_BODY_BRICK == 20 and TerrainAtlas.WATER_SURFACE_BRICK == 21,
-			"water body and surface use distinct 0-based brick indices")
+	expect(TerrainAtlas.WATER_BODY_MATERIAL == 21 and TerrainAtlas.WATER_SURFACE_MATERIAL == 22,
+			"water body and surface use their map material IDs")
 	TerrainAtlas.clear_cache()
-	var body := TerrainAtlas.water_brick_image(64, TerrainAtlas.WATER_BODY_BRICK)
-	var surface := TerrainAtlas.water_brick_image(64, TerrainAtlas.WATER_SURFACE_BRICK)
+	var body_tile := CyrmMap.tile_value(21)
+	var body := TerrainAtlas.tile_image(64, body_tile)
+	var surface := TerrainAtlas.tile_image(64, CyrmMap.tile_value(22))
 	expect(body != surface, "water body and surface images come from different bricks")
-	expect(TerrainAtlas.water_brick_image(64, TerrainAtlas.WATER_BODY_BRICK) == body,
+	expect(TerrainAtlas.tile_image(64, body_tile) == body,
 			"the neutral water brick is cached")
-	var tint := MapFormatV4.NEUTRAL_TINT - 4
-	var colored_body := TerrainAtlas.water_brick_image(64, TerrainAtlas.WATER_BODY_BRICK, tint)
-	var colored_surface := TerrainAtlas.water_brick_image(64, TerrainAtlas.WATER_SURFACE_BRICK, tint)
+	var tint := Vector4i(0, 4, 4, 7)
+	var colored_body := TerrainAtlas.tile_image(64, CyrmMap.tile_value(21, tint))
+	var colored_surface := TerrainAtlas.tile_image(64, CyrmMap.tile_value(22, tint))
 	expect(colored_body.get_data() != body.get_data() and colored_surface.get_data() != surface.get_data(),
 			"the same tint applies to both water textures")
-	var tiles := TerrainAtlas.make_water_tileset(64, TerrainAtlas.WATER_BODY_BRICK, {tint: 0})
-	expect(tiles != null and tiles.tile_size == Vector2i(64, 64), "the water tileset keeps its 64px cell size")
+	expect(TerrainAtlas.tile_image(8, 0).get_pixel(0, 0).a == 0.0, "air has a transparent tile image")
+	var water_map := CyrmMap.create(Vector2i(4, 4))
+	var cells: PackedInt32Array = water_map.layers[CyrmMap.SCENE]
+	var transparent := Vector4i(7, 4, 4, 0)
+	cells.fill(CyrmMap.tile_value(21, tint))
+	cells[0] = CyrmMap.tile_value(21, transparent)
+	cells[3] = 0
+	var water := TerrainView.new()
+	water.install(water_map, Vector2.ZERO)
+	expect(water._water.tile_set.tile_size == Vector2i(16, 16), "water is rendered at subcell resolution")
+	expect(water._water.get_cell_atlas_coords(Vector2i.ZERO) != water._water.get_cell_atlas_coords(Vector2i.RIGHT)
+			and water._water.get_cell_source_id(Vector2i(3, 0)) == -1, "separate water tints and air remain independent")
+	water.free()
 
-
-func _map_bytes(body: PackedByteArray) -> PackedByteArray:
-	var bytes := PackedByteArray([67, 89, 82, 77, 4, 0])
-	bytes.resize(20)
-	bytes.encode_u32(6, body.size())
-	bytes.encode_u32(10, MapFormatV4.crc32(body))
-	bytes.encode_u16(14, 4)
-	bytes.encode_u16(16, 4)
-	bytes[18] = 2
-	bytes.append_array(body)
-	return bytes
 ## 验证联机出生点的元数据格式和内置地图的点位。
 func _respawn_format() -> void:
-	var demo := MapFormat.load_map("res://maps/demo.cyrm")
-	var factory := MapFormat.load_map("res://maps/newfactory.cyrm")
-	var demo_respawn: Dictionary = demo["spawns"].get("respawn", {})
-	var factory_respawn: Dictionary = factory["spawns"].get("respawn", {})
-	expect(demo_respawn.get(1, []).size() == 8 and demo_respawn.get(2, []).size() == 8,
+	var demo := CyrmMap.load_file("res://maps/demo.cyrm")
+	var factory := CyrmMap.load_file("res://maps/newfactory.cyrm")
+	var demo_respawn := SpawnPicker.respawn_cells(demo)
+	var factory_respawn := SpawnPicker.respawn_cells(factory)
+	expect(demo_respawn[1].size() == 8 and demo_respawn[2].size() == 8,
 			"demo.cyrm defines eight spawn points per side")
-	expect(factory_respawn.get(1, []).size() == 9 and factory_respawn.get(2, []).size() == 9,
+	expect(factory_respawn[1].size() == 9 and factory_respawn[2].size() == 9,
 			"newfactory.cyrm defines nine spawn points per side")
 	expect(SpawnPicker.validate_multiplayer_spawns(demo).is_empty(), "demo.cyrm spawn validation passes")
 	expect(SpawnPicker.validate_multiplayer_spawns(factory).is_empty(), "newfactory.cyrm spawn validation passes")
-	var meta := ["# respawn 1 2 3", "# respawn 3 1 2", "# respawn 1 a 2",
-			"# respawn 1 1", "# respawn 1 200 200"]
-	var parsed := MapFormat.parse_spawn_metadata(meta, Vector2i(10, 10))
-	expect(parsed["respawn"][1] == [Vector2i(2, 3)], "a valid respawn line is stored per team")
-	expect(parsed["respawn_errors"].size() == 4, "malformed respawn lines are reported")
-	expect(str(parsed["respawn_errors"][0]).contains("第 2 行"),
-			"the respawn error names its source line")
-	expect(str(parsed["respawn_errors"][0]).contains("3"), "the respawn error includes the source content")
-	parsed = MapFormat.parse_spawn_metadata(["# player 1 2", "# player2 4294967296 2",
-			"# enemy jump_bird 10 2", "# enemy jump_bird x 2"], Vector2i(10, 10))
-	expect(parsed["player"] == Vector2i(1, 2) and parsed["errors"].size() == 3,
-			"bad coordinates and integer overflow are rejected before storing spawn cells")
-	var dims := Vector2i(125, 75)
-	var descriptors: PackedInt32Array = demo["descriptors"]
-	expect(SpawnPicker.spawn_cell_problem(descriptors, dims, Vector2i(-1, 0)) != "",
+	expect(SpawnPicker.spawn_cell_problem(demo, Vector2i(-1, 0)) != "",
 			"an out-of-bounds respawn cell is rejected")
-	expect(SpawnPicker.spawn_cell_problem(descriptors, dims, Vector2i(10, 10)) != "",
+	expect(SpawnPicker.spawn_cell_problem(demo, Vector2i(10, 10)) != "",
 			"a cell without foot support is rejected")
-	expect(SpawnPicker.spawn_cell_problem(descriptors, dims, demo_respawn[1][0]) == "",
+	expect(SpawnPicker.spawn_cell_problem(demo, demo_respawn[1][0]) == "",
 			"a configured respawn cell passes clearance and support checks")
