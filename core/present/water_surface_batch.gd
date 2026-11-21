@@ -3,23 +3,8 @@ extends MeshInstance2D
 
 const UV := [Vector2(0, 1), Vector2(1, 1), Vector2(1, 0), Vector2(0, 0)]
 const TRIANGLES := [0, 1, 2, 0, 2, 3]
-const SHADER_CODE := """
-shader_type canvas_item;
-uniform sampler2D surface;
-uniform float elapsed;
-uniform float speed;
-uniform float amplitude;
 
-void vertex() {
-	VERTEX.y += sin(elapsed * speed + COLOR.r * 6.2831853) * amplitude * COLOR.g;
-}
-
-void fragment() {
-	COLOR = texture(surface, UV);
-}
-"""
-
-func setup(cells: Array, texture: Texture2D, tile_size: int) -> void:
+func setup(cells: Array, surface_texture: Texture2D, tile_size: int) -> void:
 	var points := PackedVector3Array()
 	var uvs := PackedVector2Array()
 	var colors := PackedColorArray()
@@ -44,15 +29,4 @@ func setup(cells: Array, texture: Texture2D, tile_size: int) -> void:
 	var shape := ArrayMesh.new()
 	shape.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, geometry)
 	mesh = shape
-
-	var shader := Shader.new()
-	shader.code = SHADER_CODE
-	var surface := ShaderMaterial.new()
-	surface.shader = shader
-	surface.set_shader_parameter("surface", texture)
-	surface.set_shader_parameter("speed", GameParameters.water_sway_speed)
-	surface.set_shader_parameter("amplitude", GameParameters.water_sway_amp)
-	material = surface
-
-func present(now: float) -> void:
-	material.set_shader_parameter("elapsed", now)
+	texture = surface_texture

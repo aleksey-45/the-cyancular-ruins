@@ -6,7 +6,8 @@ const ATLAS_SIDE := TerrainAtlas.SUBS_PER_TEXTURE
 
 var _wall := TileMapLayer.new()
 var _water := TileMapLayer.new()
-var _surfaces: Array[WaterSurfaceBatch] = []
+var _water_material := ShaderMaterial.new()
+var _wall_film := ShaderMaterial.new()
 var _span: Vector2i
 var _margin: Vector2
 var _descriptors: PackedInt32Array
@@ -30,6 +31,12 @@ func install(map: Dictionary, margin: Vector2) -> void:
 		layer.occlusion_enabled = false
 		add_child(layer)
 	_water.z_index = 4
+	_wall_film.shader = preload("res://core/present/time_film.gdshader")
+	_water_material.shader = preload("res://core/present/water_current.gdshader")
+	_water_material.set_shader_parameter("map_size", Vector2(_span * SUB))
+	_water_material.set_shader_parameter("wave_speed", GameParameters.water_sway_speed)
+	_water_material.set_shader_parameter("wave_amplitude", GameParameters.water_sway_amp)
+	_water.material = _water_material
 	_wall.tile_set = TerrainAtlas.make_wall_tileset(_wall_rows)
 	_water.tile_set = TerrainAtlas.make_wall_tileset(water_rows)
 	for index in _descriptors.size():
@@ -40,11 +47,11 @@ func patch(changes: Dictionary) -> void:
 	for index: int in changes:
 		_paint_wall(index, changes[index])
 
-func present(elapsed: float, film: ShaderMaterial) -> void:
-	for surface in _surfaces:
-		surface.present(elapsed)
-	_wall.material = film
-	_water.material = film
+func present(elapsed: float, coverage: float) -> void:
+	_wall.material = _wall_film if coverage > 0.0 else null
+	_wall_film.set_shader_parameter("coverage", coverage)
+	_water_material.set_shader_parameter("elapsed", elapsed)
+	_water_material.set_shader_parameter("coverage", coverage)
 
 func _paint_wall(index: int, alive: bool) -> void:
 	var row: int = _wall_rows.get(_descriptors[index], -1)
@@ -88,7 +95,8 @@ func _add_water(rows: Dictionary) -> void:
 	for tint: Vector4i in groups:
 		var batch := WaterSurfaceBatch.new()
 		batch.z_index = 5
+		batch.material = _water_material
+		batch.set_instance_shader_parameter("wave", true)
 		var image := TerrainAtlas.tile_image(ATLAS_SIDE * SUB, CyrmMap.tile_value(TerrainAtlas.WATER_SURFACE_MATERIAL, tint))
 		batch.setup(groups[tint], ImageTexture.create_from_image(image), SUB)
 		add_child(batch)
-		_surfaces.append(batch)
