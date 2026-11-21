@@ -169,11 +169,16 @@ func _player_pose(id: int, at: Vector2, facing: int, state: int, downed: bool,
 	pose.hit_left = hit_left
 	return pose
 
-func _weapon_pose(pose: MatchFrame.Pose, type_id: int, aim: Vector2, facing: int, remaining: float) -> void:
+func _weapon_pose(pose: MatchFrame.Pose, type_id: int, aim: Vector2, facing: int,
+		remaining: float, draw_elapsed := -1.0) -> void:
 	pose.weapon = type_id
 	pose.reload_left = remaining
+	pose.bow_draw = -1.0
 	if type_id != 0:
-		pose.aim = GunBody.aim_transform(aim, facing, WeaponRegistry.definition(type_id)["pitch"])
+		var weapon := WeaponRegistry.definition(type_id)
+		pose.aim = GunBody.aim_transform(aim, facing, weapon["pitch"])
+		if draw_elapsed >= 0.0 and weapon.has("draw_length"):
+			pose.bow_draw = GunBody.charge_for_hold(weapon, draw_elapsed)
 
 func _local_pose(haste: bool, rewind: bool) -> MatchFrame.Pose:
 	var pose := _player_pose(player.role, _frame.focus, player.facing_direction, player.state,
@@ -183,7 +188,9 @@ func _local_pose(haste: bool, rewind: bool) -> MatchFrame.Pose:
 	var weapon := player.equipped
 	var aim := _aim_direction()
 	_weapon_pose(pose, weapon.type_id if weapon != null else 0, aim,
-			weapon.shot_facing if weapon != null else player.facing_direction, weapon.reload_left if weapon != null else 0.0)
+			weapon.shot_facing if weapon != null else player.facing_direction,
+			weapon.reload_left if weapon != null else 0.0,
+			weapon.hold_elapsed if weapon != null and weapon.aiming else -1.0)
 	_frame.aim_guide = weapon.aim_guide(player, aim) if weapon != null else PackedVector2Array()
 	return pose
 

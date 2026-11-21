@@ -95,7 +95,7 @@ func present(frame: MatchFrame, grain_target := Vector2.ZERO) -> void:
 		if i == 0 and not frame.aim_guide.is_empty():
 			var weapon := WeaponRegistry.definition(pose.weapon)
 			_guide(frame.aim_guide, weapon.get("guide_color", Color(1, 0.2, 0.2, 0.6)),
-					not weapon["projectile"]["blast"].is_empty())
+					not weapon["projectile"]["blast"].is_empty(), pose.bow_draw < 0.0)
 		if not pose.name.is_empty():
 			_nameplate(pose.anchor, pose.name, pose.name_color(frame.mode), pose.health)
 	for row in frame.pickups:
@@ -111,9 +111,7 @@ func present(frame: MatchFrame, grain_target := Vector2.ZERO) -> void:
 	for row in frame.projectiles:
 		if frame.trajectories:
 			_trajectory(row[0], row[2])
-		var bullet := WeaponRegistry.projectile_definition(row[1])
-		_canvas.sprite(BULLETS, bullet["projectile_region"],
-				Transform2D(row[3], Vector2.ONE * float(bullet["size"]), 0.0, row[2]))
+		_projectile_sprite(WeaponRegistry.projectile_definition(row[1]), row[2], row[3])
 	var previous := _paths
 	_paths = _next_paths
 	_next_paths = previous
@@ -186,12 +184,30 @@ func _actor(pose: MatchFrame.Pose, frame: MatchFrame) -> void:
 		var lift := sin(PI * reload)
 		tilt = 0.9 * lift
 		offset += Vector2(-3.0 + 1.2 * sin(34.0 * reload), 7.0) * lift
-	if clip == &"move":
+	var drawing := pose.bow_draw >= 0.0 and not pose.downed
+	if clip == &"move" and not drawing:
 		var cycle := age * frames.get_animation_speed(clip) / frames.get_frame_count(clip)
 		offset.y += sin(TAU * cycle) * 1.4
-	_canvas.sprite(WEAPONS, weapon["region"], body * pose.aim * Transform2D(tilt, offset), Color(Color.WHITE, color.a))
+	var aim := body * pose.aim
+	_canvas.sprite(WEAPONS, weapon["region"], aim * Transform2D(tilt, offset), Color(Color.WHITE, color.a))
+	if drawing:
+		_draw_bow(weapon, aim, pose.bow_draw, now, color.a)
 	if reload >= 0.0 and not pose.remote:
 		_reload(pose.anchor, pose.facing, reload, pose.reload_left)
+
+func _draw_bow(weapon: Dictionary, aim: Transform2D, charge: float, now: float, alpha: float) -> void:
+	var center := aim * ShotRules.launch_offset(weapon, charge)
+	var direction := aim.x.normalized()
+	var region: Rect2 = weapon["projectile_region"]
+	var tail := center - direction * (region.size.x * float(weapon["size"]) * 0.5 - 1.0)
+	var pulse := 0.5 + 0.5 * sin(TAU * 6.0 * now) if charge == 1.0 else 0.0
+	var string_color := Color(0.34, 0.59, 0.76, alpha).lerp(Color(0.58, 0.88, 1.0, alpha), pulse)
+	_canvas.line(PackedVector2Array([aim * Vector2(3.5, -8.5), tail, aim * Vector2(3.5, 25.5)]), string_color, 2.0, true)
+	_projectile_sprite(weapon, center, direction.angle(), Color(Color.WHITE * (1.45 + 0.85 * pulse), alpha))
+
+func _projectile_sprite(spec: Dictionary, at: Vector2, rotation: float, color := Color.WHITE) -> void:
+	_canvas.sprite(BULLETS, spec["projectile_region"],
+			Transform2D(rotation, Vector2.ONE * float(spec["size"]), 0.0, at), color)
 
 func _enemy_clip(pose: MatchFrame.Pose) -> StringName:
 	if pose.black_bird and pose.state == Activity.REST:
@@ -326,10 +342,10 @@ func _nameplate(at: Vector2, name: String, color: Color, hp := -1.0) -> void:
 		bar.size.x *= clampf(hp, 0.0, 1.0)
 		_canvas.rect(bar, Color(0.35, 0.9, 0.4) if hp > 0.25 else Color(0.95, 0.35, 0.3), -1.0, false)
 
-func _guide(points: PackedVector2Array, color: Color, explosive: bool) -> void:
+func _guide(points: PackedVector2Array, color: Color, explosive: bool, overlay: bool) -> void:
 	if points.size() < 2:
 		return
-	_canvas.line(points, color, 1.5, true)
+	_canvas.line(points, color, 1.5, overlay)
 	if explosive:
 		_canvas.circle(points[-1], 20.0, Color(1.0, 0.4, 0.2, 0.16), true)
 		_canvas.circle(points[-1], 9.0, Color(1.0, 0.4, 0.2, 0.48), true)

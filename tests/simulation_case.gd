@@ -422,34 +422,49 @@ func _compound_bow(tree: SceneTree) -> void:
 	var actor := player(parent)
 	_place(actor, Vector2(384, 384))
 	actor.weapons.set_initial_inventory([WeaponRegistry.Type.COMPOUND_BOW])
+	var bow := actor.equipped as GunBody
 	var attack := ActorInput.BIT_ATTACK
+	expect(bow.carried == 1, "a fresh bow carries one arrow")
 	expect(_fires(ActorStep.step(actor, _attack(0, 0, attack))).is_empty(),
 			"a release on a newly equipped bow does not fire")
 	var tap := _fires(ActorStep.step(actor, _attack(0, attack, attack)))
 	expect(tap.size() == 1 and tap[0]["charge"] == 0.0, "a tap shoots at minimum charge")
-	actor.weapons.set_initial_inventory([WeaponRegistry.Type.COMPOUND_BOW])
-	var bow := actor.equipped as GunBody
+	var tap_velocity := ShotRules.projectile_velocities(actor.role, tap[0], bow.definition)
+	expect(is_equal_approx(tap_velocity[0].length(), 600.0) and bow.carried == 0 and bow.reloading,
+			"a tap launches at 600 px/s and immediately starts reloading the one-arrow bow")
 	var hold := _attack(attack, 0)
+	ActorStep.step(actor, hold)
+	expect(not bow.aiming, "the bow cannot draw during reload")
+	for tick in 74:
+		ActorStep.step(actor, NEUTRAL_INPUT)
+	expect(not bow.reloading and bow.carried == 1, "reload restores exactly one arrow")
+	actor.reset_motion()
+	_place(actor, Vector2(384, 384))
 	for tick in 36:
 		ActorStep.step(actor, hold)
 	var drawn := actor.capture_state()
-	var view := WorldView.new()
-	view.bind(canvas_for(parent), _terrain.map_size)
-	var guide := actor.equipped.aim_guide(actor, Vector2.RIGHT)
-	view._guide(guide, Color.WHITE, not bow.definition["projectile"]["blast"].is_empty())
+	var display := _display(parent, actor)
+	_draw_actor(display, actor)
+	var guide := display._frame.aim_guide
 	var guide_next := guide[1]
+	var canvas := display._world._canvas
+	var sprite: Array = canvas._batches[canvas._batch_count - 1].rows[-1]
+	var nocked: Transform2D = sprite[2]
+	expect(sprite[0] == WorldView.BULLETS and nocked.origin.is_equal_approx(guide[0]),
+			"the drawn arrow is centered at the start of its guide")
 	var sim := parent.combat
 	var release := ActorStep.step(actor, _attack(0, 0, attack))
 	submit(actor, release)
 	var arrow: BulletBody = sim.projectiles.values()[0]
 	var id := arrow.entity_id
-	expect(arrow.hit_damage == 27 and is_equal_approx(arrow.velocity.length(), 1250.0),
-			"the released arrow takes its speed and damage from the draw")
+	expect(arrow.hit_damage == 29 and is_equal_approx(arrow.velocity.length(), 2040.0)
+			and arrow.position.is_equal_approx(nocked.origin),
+			"the released arrow starts from the drawn arrow and takes its speed and damage from the draw")
 	var spread := deg_to_rad(bow.definition["spread"])
 	var max_spread_offset := 2.0 * arrow.velocity.length() * ActorStep.DT * sin(spread * 0.5)
 	sim.step_projectile(arrow, ActorStep.DT)
 	expect(arrow.position.distance_to(guide_next) <= max_spread_offset + 0.001
-			and view._canvas._marks.is_empty(),
+			and canvas._marks.is_empty(),
 			"the first arrow step stays within spread of the guide without an explosion marker")
 
 	var rewind := RewindHistory.new(sim)
@@ -458,14 +473,17 @@ func _compound_bow(tree: SceneTree) -> void:
 	sim.erase_projectile(id)
 	rewind.record(dt)
 	rewind.rewind(1.0)
-	expect(sim.projectiles[id].hit_damage == 27, "rewinding restores the damage of an expired arrow")
+	expect(sim.projectiles[id].hit_damage == 29, "rewinding restores the damage of an expired arrow")
 	rewind.record(0.0)
 	actor.restore_state(drawn, true)
-	expect(is_equal_approx((actor.equipped as GunBody).charge_ratio(), 0.75),
+	expect(is_equal_approx((actor.equipped as GunBody).charge_ratio(), 0.8),
 			"single-player rewind restores a partially drawn bow")
-	for tick in 20:
+	for tick in 9:
 		ActorStep.step(actor, hold)
+	expect((actor.equipped as GunBody).charge_ratio() == 1.0, "45 ticks reach full draw")
+	ActorStep.step(actor, hold)
 	expect((actor.equipped as GunBody).charge_ratio() == 1.0, "holding past full draw keeps charge capped")
+	display.free()
 	cleanup()
 
 func _m249(tree: SceneTree) -> void:

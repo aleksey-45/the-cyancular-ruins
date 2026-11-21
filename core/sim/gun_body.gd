@@ -51,7 +51,7 @@ static func aim_transform(direction: Vector2, facing: int, limit: float) -> Tran
 func muzzle_pose(actor: Player, aim: Vector2) -> Transform2D:
 	var direction := aim if aim != Vector2.ZERO else Vector2(actor.facing_direction, 0)
 	var pose := aim_transform(direction, shot_facing, definition["pitch"])
-	pose.origin = actor.transform * (pose * (definition["muzzle"] as Vector2))
+	pose.origin = actor.transform * (pose * ShotRules.launch_offset(definition, charge_ratio()))
 	return pose
 
 func aim_guide(actor: Player, aim: Vector2) -> PackedVector2Array:
@@ -67,8 +67,10 @@ func aim_guide(actor: Player, aim: Vector2) -> PackedVector2Array:
 	return ShotRules.trace_arc(actor.terrain, muzzle.origin, muzzle.x * speed, definition, delta, definition["arc_time"])
 
 func charge_ratio() -> float:
-	return hold_elapsed / float(definition["charge_time"]) \
-			if definition["trigger"] == WeaponRegistry.Trigger.CHARGE_RELEASE else 1.0
+	return charge_for_hold(definition, hold_elapsed)
+
+static func charge_for_hold(spec: Dictionary, elapsed: float) -> float:
+	return elapsed / float(spec["charge_time"]) if spec["trigger"] == WeaponRegistry.Trigger.CHARGE_RELEASE else 1.0
 
 func step(actor: Player, input: ActorInput, delta: float) -> Vector2:
 	if input.pressed & ActorInput.BIT_RELOAD:
@@ -98,7 +100,9 @@ func step(actor: Player, input: ActorInput, delta: float) -> Vector2:
 			if not held and not pressed:
 				aiming = false
 		WeaponRegistry.Trigger.CHARGE_RELEASE:
-			if reloading:
+			if carried == 0 and (held or pressed):
+				start_reload(actor)
+			if reloading or carried == 0:
 				cancel_aim()
 			elif released:
 				if (aiming or pressed) and fire_cd_timer == 0.0:

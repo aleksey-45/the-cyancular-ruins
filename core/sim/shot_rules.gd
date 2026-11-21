@@ -45,6 +45,11 @@ static func shot_from_projectile(id: int) -> int:
 static func attack_damage(spec: Dictionary, charge: float) -> int:
 	return roundi(lerpf(spec.get("min_damage", spec["damage"]), spec["damage"], charge))
 
+static func launch_offset(spec: Dictionary, charge: float) -> Vector2:
+	var offset: Vector2 = spec["muzzle"]
+	offset.x -= float(spec.get("draw_length", 0.0)) * charge
+	return offset
+
 static func launch_speed(spec: Dictionary, charge: float) -> float:
 	var speed: float = spec["speed"]
 	return lerpf(spec.get("min_speed", speed), speed, charge)

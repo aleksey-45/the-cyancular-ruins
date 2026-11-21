@@ -10,6 +10,7 @@ func run(tree: SceneTree) -> void:
 	_rewind_and_epoch(tree)
 	_rewind_presentation(tree)
 	_world_replication(tree)
+	_remote_bow(tree)
 	_ordered_collision(tree, true)
 	_ordered_collision(tree, false)
 	_stacked_collision(tree)
@@ -467,6 +468,42 @@ func _world_replication(tree: SceneTree) -> void:
 	client._on_fire(shot)
 	expect(client._projectiles.is_empty(),
 			"a newer complete snapshot discards obsolete projectile events")
+	client.free()
+	cleanup()
+
+func _remote_bow(tree: SceneTree) -> void:
+	var parent := world_with_walls(tree, 16, 16, {})
+	var actor := player(parent)
+	var remote := player(parent, 2)
+	remote.weapons.set_initial_inventory([WeaponRegistry.Type.COMPOUND_BOW])
+	ActorStep.step(remote, [0.0, ActorInput.BIT_ATTACK, 0, 0, 0, Vector2.RIGHT], 0.375)
+	var client := detached_client()
+	client.player = actor
+	client.combat_rules = actor.combat
+	client.terrain = _terrain
+	client._rollback.bind(actor)
+	client._playback.map_px = _terrain.map_size
+	var baseline := _frame(actor, 100)
+	baseline["world"]["players"][remote.role] = remote.capture_checkpoint()
+	client._install_world(baseline)
+	client._rollback.reset(baseline, 0)
+	var samples: Dictionary = client._playback.sample(100.0, actor.role)["players"]
+	client._sample_remotes(samples, actor.position)
+	expect(is_equal_approx(client._frame.actors[0].bow_draw, 0.5), "a remote snapshot shows the held bow's charge")
+	var requests := ActorStep.step(remote, [0.0, 0, 0, ActorInput.BIT_ATTACK, 0, Vector2.RIGHT])
+	var shot: Dictionary = requests[0]
+	shot.merge({"role": remote.role, "tick": 101})
+	var id := ShotRules.shot_id(remote.role, shot["serial"])
+	client._on_fire(shot)
+	client._frame.begin(0.0, actor.position)
+	client._sample_remotes(samples, actor.position)
+	expect(client._projectiles.has(id) and client._frame.actors[0].bow_draw < 0.0,
+			"a remote arrow already in flight clears the older held arrow")
+	client._end_projectile(id, 101)
+	client._frame.begin(0.0, actor.position)
+	client._sample_remotes(samples, actor.position)
+	expect(not client._projectiles.has(id) and client._frame.actors[0].bow_draw < 0.0,
+			"the old held arrow does not reappear when a remote projectile ends before the next snapshot")
 	client.free()
 	cleanup()
 

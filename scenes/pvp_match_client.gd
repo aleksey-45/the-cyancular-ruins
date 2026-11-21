@@ -302,9 +302,18 @@ func _sample_remotes(samples: Dictionary, anchor: Vector2) -> void:
 		var type_id := PlayerStateSchema.equipped_type(state)
 		var equipment: Array = state[PlayerStateSchema.EQUIPMENT]
 		var aim: Vector2 = sample[NetPlayer.AIM]
+		var draw_elapsed := -1.0
+		if type_id == WeaponRegistry.Type.COMPOUND_BOW and equipment[GunBody.StateSlot.AIMING]:
+			var serial: int = state[PlayerStateSchema.SHOT_SERIAL]
+			var arrow := ShotRules.shot_id(role, serial + 1)
+			var latest: Array = _playback.latest_players.get(role, sample)
+			# 弹丸可先于插值中的人物更新到出箭帧。此时清除旧快照中的搭箭。
+			if serial == latest[NetPlayer.STATE][PlayerStateSchema.SHOT_SERIAL] and not _projectiles.has(arrow) \
+					and _rollback.projectile_end_tick(arrow) == -1:
+				draw_elapsed = equipment[GunBody.StateSlot.HOLD]
 		_weapon_pose(pose, type_id, aim if aim != Vector2.ZERO else Vector2(facing, 0),
 				equipment[GunBody.StateSlot.SHOT_FACING] if type_id != 0 and aim != Vector2.ZERO else facing,
-				equipment[GunBody.StateSlot.RELOAD_LEFT] if type_id != 0 else 0.0)
+				equipment[GunBody.StateSlot.RELOAD_LEFT] if type_id != 0 else 0.0, draw_elapsed)
 		_set_nameplate(pose, role)
 		pose.health = float(state[PlayerStateSchema.HP]) / TeamRules.max_hp(_teams.get(role, 0), _team_counts) \
 				if Settings.pvp_show_enemy_hp and not downed else -1.0
