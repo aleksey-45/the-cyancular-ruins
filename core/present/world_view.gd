@@ -24,6 +24,7 @@ const BUBBLES := {"life": 0.7, "count": 5, "spread": deg_to_rad(24), "speed": Ve
 enum Effect { BLAST, PARTICLES, NUMBER, GRAIN }
 
 var _canvas: WorldCanvas
+var _ui: GuideCanvas
 var _size: Vector2
 var _motions := {}
 var _poses := {}
@@ -37,9 +38,10 @@ var _effects := [[], [], [], []]
 var _hits := {}
 var _remote_hits := {}
 
-func bind(canvas: WorldCanvas, size: Vector2) -> void:
+func bind(canvas: WorldCanvas, size: Vector2, ui_canvas: GuideCanvas = null) -> void:
 	_canvas = canvas
 	_size = size
+	_ui = ui_canvas
 
 
 ## 发光通道节点:交给 PostProcess 挂到 GlowViewport。
@@ -92,6 +94,8 @@ func grain(at: Vector2, now: float, flight: float) -> void:
 
 func present(frame: MatchFrame, grain_target := Vector2.ZERO) -> void:
 	_canvas.begin()
+	if _ui != null:
+		_ui.begin()
 	_draw_trails(frame.now, frame.focus)
 	for i in frame.actors.size():
 		var pose := frame.actors[i]
@@ -126,6 +130,8 @@ func present(frame: MatchFrame, grain_target := Vector2.ZERO) -> void:
 	_next_paths = previous
 	_draw_effects(frame, grain_target)
 	_canvas.submit()
+	if _ui != null:
+		_ui.submit()
 
 func _actor(pose: MatchFrame.Pose, frame: MatchFrame) -> void:
 	var now := frame.now
@@ -212,7 +218,8 @@ func _actor(pose: MatchFrame.Pose, frame: MatchFrame) -> void:
 		if length > 0.0:
 			var aim_xform := body * pose.aim
 			var dir := aim_xform.x.normalized()
-			_canvas.line(PackedVector2Array([aim_xform.origin, aim_xform.origin + dir * length]),
+			var target = _ui if _ui != null else _canvas
+			target.line(PackedVector2Array([aim_xform.origin, aim_xform.origin + dir * length]),
 					weapon.get("laser_color", Color(1.0, 0.2, 0.2, 0.6)), 2.0)
 	if reload >= 0.0 and not pose.remote:
 		_reload(pose.anchor, pose.facing, reload, pose.reload_left)
@@ -272,7 +279,8 @@ func _trajectory(id: int, at: Vector2) -> void:
 	path.append(at)
 	_next_paths[id] = path
 	if path.size() > 1:
-		_canvas.line(path, Color(1, 1, 1, 0.55), 2.5)
+		var target = _ui if _ui != null else _canvas
+		target.line(path, Color(1, 1, 1, 0.55), 2.5)
 
 func _pickup_prompt(at: Vector2) -> void:
 	var center := at + Vector2(0, -64)
@@ -353,17 +361,19 @@ func _nameplate(at: Vector2, name: String, color: Color, hp := -1.0) -> void:
 func _guide(points: PackedVector2Array, color: Color, explosive: bool) -> void:
 	if points.size() < 2:
 		return
-	_canvas.line(points, color, 1.0)
+	var target = _ui if _ui != null else _canvas
+	target.line(points, color, 1.0)
 	if explosive:
-		_canvas.circle(points[-1], 20.0, Color(1.0, 0.4, 0.2, 0.16))
-		_canvas.circle(points[-1], 9.0, Color(1.0, 0.4, 0.2, 0.48))
+		target.circle(points[-1], 20.0, Color(1.0, 0.4, 0.2, 0.16))
+		target.circle(points[-1], 9.0, Color(1.0, 0.4, 0.2, 0.48))
 
 func _reload(at: Vector2, facing: int, progress: float, remaining: float) -> void:
 	var center := at + Vector2(-58 * facing, -44)
-	_canvas.arc(center, 24.0, 0.0, TAU, Color(0.42, 0.45, 0.5, 0.22), 9.0)
+	var target = _ui if _ui != null else _canvas
+	target.arc(center, 24.0, 0.0, TAU, Color(0.42, 0.45, 0.5, 0.22), 9.0)
 	if progress > 0.0:
-		_canvas.arc(center, 24.0, -PI * 0.5, -PI * 0.5 + TAU * progress, Color(0.8, 0.84, 0.88, 0.78), 9.0)
-	_canvas.text_at("%.1f" % remaining, center + Vector2(0, WorldCanvas.centered_baseline()),
+		target.arc(center, 24.0, -PI * 0.5, -PI * 0.5 + TAU * progress, Color(0.8, 0.84, 0.88, 0.78), 9.0)
+	target.text_at("%.1f" % remaining, center + Vector2(0, WorldCanvas.centered_baseline()),
 			Color(0.93, 0.95, 0.97, 0.92))
 
 func _draw_particles(style: Dictionary, color: Color, age: float, at: Vector2) -> void:

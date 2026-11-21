@@ -8,10 +8,16 @@ const TYPE_PASSAGE := 1
 const TYPE_LIQUID := 2
 const TYPE_GAS := 3
 const UNDEFINED := 255
+const MAT_STONE := 0
+const MAT_METAL := 1
+const MAT_FOLIAGE := 2
+const MAT_WOOD := 3
+const MAT_WATER := 4
 enum DamageMask { BULLET = 1, EXPLOSION = 2 }
 
 static var _defs: Dictionary = {}
 static var types := PackedByteArray()
+static var material_ids := PackedByteArray()
 static var hit_points := PackedInt32Array()
 static var damage_masks := PackedByteArray()
 static var elastic := PackedByteArray()
@@ -33,6 +39,8 @@ static func load_defs() -> void:
 	types.resize(count)
 	types.fill(UNDEFINED)
 	types[0] = TYPE_GAS
+	material_ids.resize(count)
+	material_ids.fill(MAT_STONE)
 	hit_points.resize(count)
 	damage_masks.resize(count)
 	elastic.resize(count)
@@ -45,6 +53,7 @@ static func load_defs() -> void:
 		var texture := int(key)
 		var material: Dictionary = materials[key]
 		types[texture] = kinds[material["type"]]
+		material_ids[texture] = _material_id_of(String(material.get("material", "stone")))
 		hit_points[texture] = material["hp"]
 		var bullet := DamageMask.BULLET if material["bullet_destroyable"] else 0
 		var explosion := DamageMask.EXPLOSION if material["explosion_destroyable"] else 0
@@ -64,6 +73,26 @@ static func legacy_textures() -> Dictionary:
 
 static func type_id_of(texture: int) -> int:
 	return types[texture]
+
+
+static func _material_id_of(name: String) -> int:
+	match name:
+		"metal":
+			return MAT_METAL
+		"foliage":
+			return MAT_FOLIAGE
+		"wood":
+			return MAT_WOOD
+		"water":
+			return MAT_WATER
+		_:
+			return MAT_STONE
+
+
+static func material_id(texture: int) -> int:
+	if texture <= 0 or texture >= material_ids.size():
+		return MAT_STONE
+	return material_ids[texture]
 
 static func is_liquid(texture: int) -> bool:
 	return type_id_of(texture) == TYPE_LIQUID

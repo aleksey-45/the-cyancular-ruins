@@ -9,6 +9,7 @@ const FILM := preload("res://core/present/time_film.gdshader")
 
 @onready var terrain_view: TerrainView = $WorldViewport/Terrain
 @onready var _silhouette: TerrainView = $TerrainViewport/Silhouette
+@onready var _ui_canvas: GuideCanvas = $UiViewport/UiCanvas
 @onready var feedback: CombatFeedback = $Feedback
 @onready var pause: PauseMenu = $Pause
 var pvp_hud: PvpHud
@@ -38,7 +39,7 @@ func mount(world: WorldView, grid: Array[Array], descriptors: PackedInt32Array,
 	_silhouette.set_water_visible(false)
 	_screen.set_terrain_mask_image(_terrain_mask(grid), (grid[0] as Array).size(), grid.size())
 	var size := Vector2(grid[0].size(), grid.size()) * TerrainView.CELL
-	_world.bind($WorldViewport/Canvas, size)
+	_world.bind($WorldViewport/Canvas, size, _ui_canvas)
 	_screen.attach_glow(_world.glow_pass())
 	pause.mount(mode != MatchFrame.Mode.SOLO)
 	if mode != MatchFrame.Mode.SOLO:
@@ -125,7 +126,7 @@ func _terrain_mask(grid: Array[Array]) -> Image:
 			var value: int = grid[y][x]
 			var tex := Terrain.texture(value)
 			if tex != 0 and TileDefs.type_id_of(tex) == TileDefs.TYPE_WALL:
-				img.set_pixel(x, y, Color(1.0, 0.0, 0.0, 1.0))
+				img.set_pixel(x, y, Color(1.0, float(TileDefs.material_id(tex)) / 255.0, 0.0, 1.0))
 			else:
 				img.set_pixel(x, y, Color(0.0, 0.0, 0.0, 1.0))
 	return img

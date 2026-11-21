@@ -8,6 +8,7 @@
 [ext_resource type="Script" path="res://ui/hud/hud.gd" id="6"]
 [ext_resource type="Script" path="res://ui/hud/combat_feedback.gd" id="7"]
 [ext_resource type="Script" path="res://ui/screens/pause_menu.gd" id="8"]
+[ext_resource type="Script" path="res://core/present/guide_canvas.gd" id="9"]
 
 [node name="View" type="Node"]
 script = ExtResource("1")
@@ -43,9 +44,27 @@ render_target_update_mode = 4
 [node name="Silhouette" type="Node2D" parent="TerrainViewport"]
 script = ExtResource("3")
 
-[node name="PostProcess" type="CanvasLayer" parent="." node_paths=PackedStringArray("world_viewport")]
+[node name="UiViewport" type="SubViewport" parent="."]
+size = Vector2i(1920, 1440)
+transparent_bg = true
+render_target_update_mode = 4
+
+[node name="UiCamera" type="Camera2D" parent="UiViewport"]
+
+[node name="UiCanvas" type="Node2D" parent="UiViewport"]
+script = ExtResource("9")
+
+[node name="BgViewport" type="SubViewport" parent="."]
+size = Vector2i(1920, 1440)
+transparent_bg = true
+render_target_update_mode = 4
+
+[node name="BgCamera" type="Camera2D" parent="BgViewport"]
+
+[node name="PostProcess" type="CanvasLayer" parent="." node_paths=PackedStringArray("world_viewport", "bg_viewport")]
 script = ExtResource("5")
 world_viewport = NodePath("../WorldViewport")
+bg_viewport = NodePath("../BgViewport")
 
 [node name="Hud" type="CanvasLayer" parent="."]
 script = ExtResource("6")
