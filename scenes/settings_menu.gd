@@ -2,7 +2,7 @@ extends Control
 
 const ACTION_NAMES := {
 	"left": "左移", "right": "右移", "up": "跳跃/上爬", "down": "下蹲/下落",
-	"charge": "冲刺", "attack": "开火", "R": "换弹/重开", "F": "拾取", "Q": "丢弃(长按)",
+	"attack": "开火", "R": "换弹/重开", "F": "拾取", "Q": "丢弃(长按)",
 	"rewind": "时间回溯", "haste": "时间加速",
 }
 const BATTLE_DISPLAY := [
@@ -103,6 +103,8 @@ func _fill_bind_grid(parent: VBoxContainer) -> void:
 		grid.add_child(label)
 		var button := UiFactory.menu_button(Settings.get_binding_names(action), Vector2(220, 72), &"BtnBinding")
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		if action in ["left", "right"]:
+			button.tooltip_text = "快速按两次此键可向该方向横冲。"
 		if action == "R":
 			button.tooltip_text = "存活时换弹。单人模式倒地后倒带并重开关卡。"
 		button.pressed.connect(_begin_capture.bind(action))

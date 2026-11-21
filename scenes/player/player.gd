@@ -14,7 +14,6 @@ var gravity := GameParameters.gravity0
 var coyote_timer := 0.0
 var jump_buffer_timer := 0.0
 var charge_timer := 0.0
-var _last_move_timer := 0.0
 var state_lock_timer := 0.0
 var _waterproof_timer := 0.0
 var _waterproof_drown_timer := 0.0
@@ -39,7 +38,6 @@ var sim_hp := PlayerParams.player_max_hp
 var sim_max_hp := PlayerParams.player_max_hp
 var personal_haste_mult := 1.0
 var facing_direction := 1
-var _last_move_dir := 1
 var motion_knock_velocity := Vector2.ZERO
 
 var step_input := ActorInput.new()
@@ -212,8 +210,6 @@ func reset_motion() -> void:
 	is_squat = false
 	cancel_jump_state()
 	cancel_charge()
-	_last_move_dir = 0
-	_last_move_timer = 0.0
 	climb_latched = false
 	in_water = false
 	_was_submerged = false
@@ -339,18 +335,17 @@ func update_crouch_dash() -> void:
 	if want_squat and not is_squat:
 		is_charge = false
 	set_crouched(want_squat)
-	if not is_charge and not is_squat and (step_input.pressed & ActorInput.BIT_CHARGE) != 0:
+	if not is_charge and not is_squat and step_input.charge_direction != 0:
 		is_charge = true
 		charge_timer = PlayerParams.charge_duration
+		facing_direction = step_input.charge_direction
 		presentation_events.append({"kind": "dash"})
-		if _last_move_timer > 0.0:
-			facing_direction = _last_move_dir
 
 func update_horizontal(delta: float, mult: Vector2) -> void:
 	if in_water:
 		return
 	if is_charge:
-		velocity.x = PlayerParams.charge_velocity * facing_direction
+		velocity.x = PlayerParams.charge_velocity * facing_direction * mult.x
 		charge_timer -= delta
 		if charge_timer <= 0.0:
 			is_charge = false
@@ -362,13 +357,9 @@ func update_horizontal(delta: float, mult: Vector2) -> void:
 		else:
 			brake(delta)
 
-func update_facing(delta: float) -> void:
+func update_facing() -> void:
 	if not is_charge and step_input.axis != 0.0:
 		facing_direction = 1 if step_input.axis > 0.0 else -1
-		_last_move_dir = facing_direction
-		_last_move_timer = PlayerParams.charge_dir_window
-	else:
-		_last_move_timer = maxf(_last_move_timer - delta, 0.0)
 
 func update_pose(delta: float) -> void:
 	var desired := STAND
@@ -433,7 +424,7 @@ func _simulate_motion(delta: float, mult: Vector2, time_mult: float) -> void:
 	update_vertical(delta, latched, mult)
 	update_crouch_dash()
 	update_horizontal(delta, mult)
-	update_facing(delta)
+	update_facing()
 	update_pose(delta)
 	_move_actor(delta)
 

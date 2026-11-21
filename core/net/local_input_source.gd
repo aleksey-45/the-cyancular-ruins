@@ -1,7 +1,17 @@
 class_name LocalInputSource
 extends RefCounted
 
-var frozen := false
+const CHARGE_TAP_MS := 250
+
+var frozen := false:
+	set(value):
+		frozen = value
+		if frozen:
+			_last_move_press = 0
+			_charge_pressed = 0
+var _last_move_press := 0
+var _last_move_press_at := 0
+var _charge_pressed := 0
 var _drop_hold_t := 0.0
 var _drop_latched := false
 var _wheel_weapon := 0
@@ -15,14 +25,14 @@ static func aim_direction(origin: Vector2, facing: int, map_size: Vector2, base:
 const ACTIONS := [
 	[&"up", ActorInput.BIT_UP],
 	[&"down", ActorInput.BIT_DOWN],
-	[&"charge", ActorInput.BIT_CHARGE],
 	[&"attack", ActorInput.BIT_ATTACK],
 	[&"R", ActorInput.BIT_RELOAD],
 ]
 
 func sample() -> Array:
 	var held := 0
-	var pressed := 0
+	var pressed := _charge_pressed
+	_charge_pressed = 0
 	var released := 0
 	var axis := 0.0
 	if not frozen:
@@ -81,9 +91,23 @@ func drop_hold_progress(player: Player) -> float:
 
 
 func handle_event(player: Player, event: InputEvent) -> void:
+	if player.sim_downed:
+		_last_move_press = 0
+		return
+	if not frozen:
+		var left := event.is_action_pressed(&"left")
+		var right := event.is_action_pressed(&"right")
+		if left != right:
+			var direction := ActorInput.BIT_CHARGE_LEFT if left else ActorInput.BIT_CHARGE_RIGHT
+			var now := Time.get_ticks_msec()
+			if direction == _last_move_press and now - _last_move_press_at <= CHARGE_TAP_MS:
+				_charge_pressed = direction
+				_last_move_press = 0
+			else:
+				_last_move_press = direction
+				_last_move_press_at = now
 	# 鼠标滚轮选中的武器留到下一次采集输入时提交。
-	if Settings.wheel_switch and not player.sim_downed \
-			and event is InputEventMouseButton and event.pressed:
+	if Settings.wheel_switch and event is InputEventMouseButton and event.pressed:
 		var dir := 0
 		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
 			dir = -1

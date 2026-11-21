@@ -25,7 +25,6 @@ const charge_down_velocity: float = 2000.0
 const charge_velocity: float = 3000.0
 const charge_duration: float = 256.0 / 3000.0   # 持续时间等于 256 像素除以冲刺初速度。
 const charge_air_gravity_mult: float = 0.35   # 角色在空中冲刺时，实际重力等于场景重力乘以此值。
-const charge_dir_window: float = 0.3  # 最近一次水平移动距今不超过这么多秒时，冲刺可以沿用当时的方向。
 
 const player_swim_speed: float = 540.0    # 游泳时用这个值作为目标水平速度（像素/秒）。
 const player_swim_up: float = -400.0

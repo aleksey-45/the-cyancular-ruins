@@ -42,6 +42,7 @@ func _mount(mode: MatchFrame.Mode, account: GrainAccount = null, radar := false)
 func _set_pause(open: bool) -> void:
 	_pause_open = open
 	if _mode == Mode.SOLO:
+		controls.frozen = open
 		get_tree().paused = open
 
 func _leave_match() -> void:

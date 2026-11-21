@@ -5,8 +5,8 @@ extends RefCounted
 # 手持武器状态放在数组最后。发送增量快照时，用独立位掩码标记变化的武器字段。
 enum {
 	POS, GROUNDED, HASTE_MULT, VEL, FACING, STATE_LOCK_TIMER, COYOTE_TIMER,
-	JUMP_BUFFER_TIMER, JUMP_CUT_APPLIED, SQUAT, CHARGE, CHARGE_TIMER, LAST_MOVE_DIR,
-	LAST_MOVE_TIMER, CLIMB_LATCHED, IN_WATER, KNOCK_VEL, SHOT_SERIAL, WATERPROOF_TIMER,
+	JUMP_BUFFER_TIMER, JUMP_CUT_APPLIED, SQUAT, CHARGE, CHARGE_TIMER,
+	CLIMB_LATCHED, IN_WATER, KNOCK_VEL, SHOT_SERIAL, WATERPROOF_TIMER,
 	WAS_SUBMERGED, DROWN_TIMER, IFRAMES, CONTROLS_LOCKED, STATE, WATERPROOF, HP, DOWNED,
 	WEAPON_INST, INVENTORY, EQUIPMENT, SIZE,
 }
@@ -26,7 +26,6 @@ const FIELDS := {
 	COYOTE_TIMER: [&"coyote_timer", Field.F64], JUMP_BUFFER_TIMER: [&"jump_buffer_timer", Field.F64],
 	JUMP_CUT_APPLIED: [&"jump_cut_applied", Field.BOOL], SQUAT: [&"is_squat", Field.BOOL],
 	CHARGE: [&"is_charge", Field.BOOL], CHARGE_TIMER: [&"charge_timer", Field.F64],
-	LAST_MOVE_DIR: [&"_last_move_dir", Field.I8], LAST_MOVE_TIMER: [&"_last_move_timer", Field.F64],
 	CLIMB_LATCHED: [&"climb_latched", Field.BOOL], IN_WATER: [&"in_water", Field.BOOL],
 	KNOCK_VEL: [&"motion_knock_velocity", Field.VEC], SHOT_SERIAL: [&"shot_serial", Field.U32],
 	WATERPROOF_TIMER: [&"_waterproof_timer", Field.F64], WAS_SUBMERGED: [&"_was_submerged", Field.BOOL],

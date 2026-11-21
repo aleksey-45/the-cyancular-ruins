@@ -75,11 +75,11 @@ func _input() -> void:
 	var wire_packet := [
 		[[12, 7, 100, -0.5, ActorInput.BIT_REWIND, aim], [13, 7, 101, 1.0, ActorInput.BIT_REWIND, aim],
 				[14, 7, 101, 1.0, ActorInput.BIT_REWIND, aim]],
-		[[12, 7, 100, ActorInput.BIT_PICKUP, ActorInput.BIT_ATTACK, 0x1020304, Vector2.DOWN]],
+		[[12, 7, 100, ActorInput.BIT_PICKUP | ActorInput.BIT_CHARGE_RIGHT, ActorInput.BIT_ATTACK, 0x1020304, Vector2.DOWN]],
 	]
 	var wire := codec.encode_input(wire_packet)
-	var protocol_bytes := ("c721000807060507000000030c00000007000000000000e0bf00010000803e000000bf"
-			+ "0d00000001000000000000f03f0e00000000010c0000002000080004030201000000000000803f")
+	var protocol_bytes := ("c722000807060507000000030c00000007000000000000e0bf00010000803e000000bf"
+			+ "0d00000001000000000000f03f0e00000000010c0000002002080004030201000000000000803f")
 	expect(NetBus._wire(wire).hex_encode() == protocol_bytes, "INPUT header, frame deltas and actions match the wire format")
 	var stream := _body(wire, NetCodec.INPUT)
 	var decoded := codec.decode_input(stream)
@@ -455,8 +455,8 @@ func _codec(tree: SceneTree) -> void:
 			"frame": unarmed_frame}
 	var wire: PackedByteArray = servers[1].encode_event(NetEvent.Kind.BASELINE, baseline)
 	var digest := wire.hex_encode().sha256_text()
-	expect(digest == "a429b17296674864af07cd8819e101e3175a4793f167267d3b955931a54f3203",
-			"BASELINE matches the v33 layout (%s)" % digest)
+	expect(digest == "20f870f02cfe24a067a6aebaf18a491dea9bcd868d5ce2d2b2ed5c9605dd4b10",
+			"BASELINE matches the v34 layout (%s)" % digest)
 	var client: NetCodec = clients[1]
 	var known := client.history.keys()
 	var ack := client.state_ack
