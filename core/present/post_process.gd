@@ -33,7 +33,7 @@ func _ready() -> void:
 	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_mat = ShaderMaterial.new()
 	_mat.shader = preload("res://core/present/post_process.gdshader")
-	_mat.set_shader_parameter("barrel_enabled", true)
+	_mat.set_shader_parameter("barrel_enabled", false)
 	_mat.set_shader_parameter("barrel_strength", barrel_strength)
 	_mat.set_shader_parameter("screen_tex", world_viewport.get_texture())
 	_mat.set_shader_parameter("viewport_size", Vector2(world_viewport.size))

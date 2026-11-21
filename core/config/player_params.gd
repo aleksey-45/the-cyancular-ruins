@@ -39,8 +39,7 @@ const cam_y_bias: float = -100.0       # 摄像机跟随点在角色原点的上
 const cam_smooth_x: float = 10.0       # 控制摄像机中心在水平方向上接近跟随点的快慢。
 const cam_smooth_y: float = 8.0        # 控制摄像机中心在垂直方向上接近跟随点的快慢。
 const cam_deadzone: float = 8.0        # 跟随点在某个轴上偏离摄像机中心超过此距离（像素）时，摄像机才沿对应的轴移动。
-# 当 Camera2D.zoom 为 0.75 时，游戏世界里的 4 个像素在视口中显示为 3 个像素。
-const cam_zoom: float = 0.75
+const cam_zoom: float = 1.0
 const cam_seam_margin: float = 512.0   # 摄像机可在边缘外移动这么多像素，地形绘制范围随之扩大。
 
 const climb_speed: float = 300.0   # 攀爬速度以此值为基础，再根据角色所处的瓦片调整。

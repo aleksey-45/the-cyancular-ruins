@@ -16,4 +16,4 @@
 
 `TerrainAtlas` 根据地图纹理和色彩参数生成墙体及水体图集。`TerrainView` 绘制场景层，在地图边缘覆盖半个视野加 512 世界像素，并按子格更新被破坏或恢复的墙体。水面按色彩参数分批，顶点着色器根据关卡传入的时间改变波形。[地形图集](../core/present/terrain_atlas.gd) · [地形视图](../core/present/terrain_view.gd) · [水面](../core/present/water_surface_batch.gd)
 
-后期处理读取世界视口纹理，添加镜头畸变、受击时的红色闪光、低生命值暗角和时间技能滤镜。HUD 绘制在后期处理图层之上。主菜单使用 `newfactory` 的场景层生成背景纹理，由脚本更新视野中心与旋转角度，着色器处理鱼眼畸变、模糊和色差。[后期处理](../core/present/post_process.gd) · [主菜单背景](../core/present/menu_background.gd)
+对局默认以 1.00× 显示 1920×1440 世界像素的矩形视野，窗口等比缩放。按 `Delete` 切换鱼眼畸变。后期处理读取世界视口纹理，添加受击时的红色闪光、低生命值暗角和时间技能滤镜。HUD 绘制在后期处理图层之上。主菜单使用 `newfactory` 的场景层生成背景纹理，由脚本更新视野中心与旋转角度，着色器处理鱼眼畸变、模糊和色差。[后期处理](../core/present/post_process.gd) · [主菜单背景](../core/present/menu_background.gd)

@@ -4,7 +4,7 @@ shader_type canvas_item;
 
 uniform sampler2D screen_tex : filter_nearest, repeat_disable;
 
-uniform bool barrel_enabled = true;
+uniform bool barrel_enabled;
 uniform float barrel_strength : hint_range(0.0, 0.5) = 0.3;
 // 用窗口与视口的尺寸比确定采样区域，中心始终对齐。
 uniform vec2 crop_scale = vec2(1.0);
