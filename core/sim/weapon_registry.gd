@@ -72,7 +72,7 @@ const WEAPONS := {
 		"impact": 800.0, "recoil": 30.0, "pitch": 50.0, "mag": 1, "reload": 1.25},
 	Type.M249: {"name": "机枪 M249", "tier": WeaponInventory.TIER_HEAVY,
 		"region": Rect2(62, 40, 74, 26), "sprite_offset": Vector2(16, 10),
-		"pickup_bounds": Rect2(-37, -13, 74, 26), "kick": 4.0, "shake": 2.5, "shake_time": 0.08,
+		"pickup_bounds": Rect2(-37, -13, 74, 26), "kick": 8.0, "shake": 4.5, "shake_time": 0.10,
 		"muzzle": Vector2(52, 6),
 		"trigger": Trigger.AUTO, "trigger_delay": 0.3, "penalty": Penalty.COOLDOWN, "move": Vector2(0.5, 0.7),
 		"cooldown": 0.07, "speed": 2200.0, "range": 1800.0, "spread": 1.8,
