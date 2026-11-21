@@ -155,6 +155,36 @@ func _try_step_up(start: Transform2D, travel: Vector2) -> bool:
 	position = pose.origin
 	return true
 
+func _try_ledge_nudge() -> void:
+	# 对齐 main:跳跃/下落贴着台沿时,脚底以 ≤1 个子格卡在台沿竖直面/顶面,向上挤出来。
+	if absf(step_input.axis) < 0.01:
+		return
+	var dir := 1 if step_input.axis > 0.0 else -1
+	var bounds := collision_rect()
+	var feet_y := bounds.end.y
+	var x_px := bounds.get_center().x + dir * (bounds.size.x * 0.5 + 1.0)
+	var col := int(floor(x_px / Terrain.SUB_SIZE))
+	var feet_sub := int(floor(feet_y / Terrain.SUB_SIZE))
+	for k in range(0, 2):
+		var row := feet_sub - k
+		var tex := terrain.sub_texture(Vector2i(col, row))
+		if tex == 0 or TileDefs.type_id_of(tex) != TileDefs.TYPE_WALL:
+			continue
+		var dy := feet_y - float(row) * Terrain.SUB_SIZE
+		if dy <= 0.0 or dy > 16.0:
+			continue
+		if _sub_solid(col, row - 1) or _sub_solid(col, row - 2):
+			return
+		position.y -= dy + 1.0
+		velocity.y = minf(velocity.y, 0.0)
+		return
+
+
+func _sub_solid(col: int, row: int) -> bool:
+	var tex := terrain.sub_texture(Vector2i(col, row))
+	return tex != 0 and TileDefs.type_id_of(tex) == TileDefs.TYPE_WALL
+
+
 func _move_actor(delta: float) -> void:
 	motion_contacts.clear()
 	var incoming := velocity + motion_knock_velocity
@@ -174,6 +204,8 @@ func _move_actor(delta: float) -> void:
 		motion_knock_velocity.y = 0.0
 	_auto_jump_frame = false
 	_auto_jump_timer = maxf(_auto_jump_timer - delta, 0.0)
+	if blocked.x != 0.0 and not _grounded and not in_water and not climb_latched:
+		_try_ledge_nudge()
 	motion_knock_velocity *= exp(-CFG.player_knock_decay_rate * delta)
 	if not sim_downed:
 		slide_reactions(incoming)
