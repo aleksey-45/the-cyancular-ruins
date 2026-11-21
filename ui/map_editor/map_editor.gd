@@ -5,15 +5,15 @@ const HEADING_COLOR := Color("#a9dcca")
 const LAYERS := ["前景", "场景", "后景", "背景 1 · 近", "背景 2", "背景 3", "背景 4 · 远"]
 const POINT_HINT := "拖动移动点位 · 双击试玩"
 const TOOLS := {
-	"brush": {"label": "画笔", "key": KEY_B, "params": ["width", "material", "color"], "preview": "path",
+	"brush": {"label": "画笔", "key": KEY_B, "params": ["width", "material", "color"],
 		"pick_points": POINT_HINT + " · Alt 在点位下绘制"},
-	"erase": {"label": "橡皮", "key": KEY_E, "params": ["width"], "preview": "path"},
-	"line": {"label": "直线", "key": KEY_L, "params": ["width", "material", "color"], "preview": "line"},
-	"rect": {"label": "矩形", "key": KEY_NONE, "params": ["outline", "material", "color"], "preview": "rect"},
+	"erase": {"label": "橡皮", "key": KEY_E, "params": ["width"]},
+	"line": {"label": "直线", "key": KEY_L, "params": ["width", "material", "color"]},
+	"rect": {"label": "矩形", "key": KEY_NONE, "params": ["outline", "material", "color"]},
 	"bucket": {"label": "填充", "key": KEY_G, "params": ["material", "color"]},
 	"picker": {"label": "吸管", "key": KEY_I, "params": ["material", "color"]},
 	"select": {"label": "选区", "key": KEY_M, "params": ["selection"]},
-	"gradient": {"label": "渐变", "key": KEY_NONE, "params": ["color", "end_color"], "preview": "guide", "min_layer": CyrmMap.FIRST_BACKGROUND},
+	"gradient": {"label": "渐变", "key": KEY_NONE, "params": ["color", "end_color"], "min_layer": CyrmMap.FIRST_BACKGROUND},
 	"point": {"label": "点位", "key": KEY_P, "params": ["points"], "pick_points": POINT_HINT},
 }
 const ENEMY_LABELS := {"jump_bird": "跳鸟", "fly_bird": "飞鸟", "black_bird": "乌鸫"}
@@ -67,6 +67,7 @@ func _ready() -> void:
 	session.cells_changed.connect(canvas.paint_cells)
 	session.points_changed.connect(_refresh_points)
 	canvas.session = session
+	canvas.brush = brush
 	canvas.tool_pressed.connect(_tool_pressed)
 	_selection_changed()
 	var autosave := Timer.new()
@@ -89,6 +90,9 @@ func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST and is_node_ready() and not _closing:
 		_confirm_discard(_leave.bind(true))
 
+func _request_exit() -> void:
+	_confirm_discard(_leave.bind(false))
+
 func _leave(quit: bool) -> void:
 	_closing = true
 	MapEditFiles.clear_draft(draft_path)
@@ -109,8 +113,6 @@ func _build_ui() -> void:
 	files.add_separator()
 	_command(files, "保存", _save, cmd | KEY_S)
 	_command(files, "另存为…", _file_dialog.bind(true), cmd | KEY_MASK_SHIFT | KEY_S)
-	files.add_separator()
-	_command(files, "返回主菜单", _confirm_discard.bind(_leave.bind(false)))
 	var edit := _command_menu(bar, "编辑")
 	_command(edit, "撤销", _travel.bind(-1), cmd | KEY_Z)
 	_command(edit, "重做", _travel.bind(1), cmd | KEY_MASK_SHIFT | KEY_Z)
@@ -136,6 +138,7 @@ func _build_ui() -> void:
 	var play := _button(bar, "试玩  F5", start_trial, null, KEY_F5)
 	play.theme_type_variation = &"EditorPrimary"
 	play.tooltip_text = "从所选点位试玩当前地图，Esc 返回"
+	_button(bar, "退出编辑器", _request_exit).tooltip_text = "返回主菜单 · Esc"
 
 	var body := UiFactory.box(_workspace, 8, false)
 	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -312,8 +315,8 @@ func _sync_context() -> void:
 	var hidden_ink := "material" if session.on_background else "color"
 	for parameter: String in _param_rows:
 		_param_rows[parameter].visible = parameter != hidden_ink and params.has(parameter)
-	_context_title.text = "关卡点位" if _param_rows.points.visible else _tool.label
-	canvas.cursor_width = brush.width if _param_rows.width.visible else 1
+	_context_title.text = "关卡点位" if params.has("points") else _tool.label
+	canvas.cursor_width = brush.width if params.has("width") else 1
 	var placing := _place_points.button_pressed
 	canvas.point_hint = "" if placing else _tool.get("pick_points", "")
 	var point := session.selected_point()
@@ -606,10 +609,8 @@ func _tool_pressed(cell: Vector2i, event: InputEventMouseButton, point_id: int) 
 	elif active_tool == "gradient" and not session.selection.has_area():
 		_say("先框选要绘制渐变的区域")
 	else:
-		var preview: String = _tool.preview
-		if "outline" in _tool.params and brush.outline: preview = "outline"
 		var paint := brush.gradient.bind(session) if active_tool == "gradient" else brush.stroke.bind(session, active_tool)
-		canvas.begin_drag(preview, paint)
+		canvas.begin_drag(active_tool, paint)
 
 func _selection_pressed(cell: Vector2i, shift: bool) -> void:
 	var moving := session.selection.has_point(cell) and not shift
@@ -696,7 +697,7 @@ func _shortcut_input(event: InputEvent) -> void:
 		return
 	var focus := get_viewport().gui_get_focus_owner()
 	var key: Key = event.get_keycode_with_modifiers()
-	if focus is LineEdit or focus is TextEdit:
+	if key != KEY_ESCAPE and (focus is LineEdit or focus is TextEdit):
 		if not focus.get_parent() is SpinBox or _shortcuts.get(key) != _save: return
 	match key:
 		KEY_DELETE:
@@ -706,8 +707,10 @@ func _shortcut_input(event: InputEvent) -> void:
 			if not canvas.cancel():
 				if _place_points.button_pressed:
 					_choose_tool("point")
-				else:
+				elif session.selection.has_area():
 					session.selection = Rect2i()
+				else:
+					_request_exit.call_deferred()
 		_:
 			if not _shortcuts.has(key):
 				return

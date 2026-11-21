@@ -7,6 +7,7 @@ signal cursor_moved(cell: Vector2i)
 
 const COPIES := [Vector2i.ZERO, Vector2i.RIGHT, Vector2i.DOWN, Vector2i.ONE]
 var session: MapEditSession
+var brush: MapBrush
 var cursor_width := 1
 var point_hint := ""
 var zoom := 6.0:
@@ -36,6 +37,8 @@ var _tip: Vector2i:
 var terrain := UiFactory.shade(Color("#26363b"))
 var _sky := Daylight.new()
 var _map_layers := Node2D.new()
+var _major_grid := UiFactory.shade(Color(0.75, 0.88, 0.85))
+var _minor_grid := UiFactory.shade(Color(1, 1, 1, 0.12))
 var preview_minute := -1.0:
 	set(value):
 		preview_minute = value
@@ -79,6 +82,11 @@ func _ready() -> void:
 		planes.append(sprite)
 	for i in range(planes.size() - 1, -1, -1):
 		_map_layers.add_child(planes[i])
+	var grid_material := ShaderMaterial.new()
+	grid_material.shader = preload("res://ui/map_editor/grid.gdshader")
+	for overlay in [_minor_grid, _major_grid]:
+		overlay.material = grid_material
+		UiFactory.cover(terrain, overlay)
 	add_child(markings)
 	markings.draw.connect(_draw_markings)
 	add_child(preview)
@@ -160,6 +168,13 @@ func refresh_view() -> void:
 	terrain.scale = Vector2.ONE * zoom
 	terrain.size = Vector2(session.map.size)
 	RenderingServer.canvas_set_item_repeat(terrain.get_canvas_item(), terrain.size if torus else Vector2.ZERO, 1)
+	var spacing := 4
+	while spacing * zoom < 14.0:
+		spacing *= 2
+	_major_grid.visible = grid
+	_major_grid.color.a = 0.13 if spacing > 4 else 0.22
+	_major_grid.set_instance_shader_parameter("spacing", float(spacing))
+	_minor_grid.visible = subgrid and zoom >= 8.0
 	var detail := 1 if zoom < 2.5 else (3 if zoom < 6 else 8)
 	if _palette.tile_size.x != detail:
 		_palette.tile_size = Vector2i.ONE * detail
@@ -179,15 +194,6 @@ func _draw_markings() -> void:
 		var shape := Rect2(corner, Vector2(dims) * zoom)
 		if not shape.intersects(Rect2(Vector2.ZERO, size)):
 			continue
-		var first := Vector2i((-corner / zoom).floor()).clamp(Vector2i.ZERO, dims - Vector2i.ONE)
-		var end := Vector2i(((size - corner) / zoom).ceil()).clamp(Vector2i.ONE, dims)
-		if subgrid and zoom >= 8:
-			_grid(corner, first, end, 1, Color(1, 1, 1, 0.12))
-		if grid:
-			var spacing := 4
-			while spacing * zoom < 14.0:
-				spacing *= 2
-			_grid(corner, first, end, spacing, Color(0.75, 0.88, 0.85, 0.13 if spacing > 4 else 0.22))
 		if guides:
 			for fraction: float in [1.0 / 3.0, 0.5, 2.0 / 3.0]:
 				var p := corner + shape.size * fraction
@@ -201,12 +207,6 @@ func _draw_markings() -> void:
 		if i != 0:
 			markings.draw_rect(shape, Color(0, 0, 0, 0.22))
 		markings.draw_rect(shape, Color("#739b9c"), false, 1.0)
-
-func _grid(corner: Vector2, first: Vector2i, end: Vector2i, step: int, color: Color) -> void:
-	for x in range((first.x / step) * step, end.x + 1, step):
-		markings.draw_line(corner + Vector2(x, first.y) * zoom, corner + Vector2(x, end.y) * zoom, color)
-	for y in range((first.y / step) * step, end.y + 1, step):
-		markings.draw_line(corner + Vector2(first.x, y) * zoom, corner + Vector2(end.x, y) * zoom, color)
 
 func _marker_center(cell: Vector2i, corner: Vector2) -> Vector2:
 	return corner + Vector2(cell) * zoom
@@ -289,14 +289,11 @@ func _overlay() -> void:
 		preview.draw_rect(rect, Color("#72e4dc"), false, 2.0)
 	var ink := Color(0.98, 0.84, 0.44, 0.8)
 	match _gesture:
-		"line", "guide":
-			var width := 2.0 if _gesture == "guide" else maxf(2.0, cursor_width * zoom)
-			preview.draw_line(_cell_center(_points[0]), _cell_center(_tip), ink, width)
-		"rect", "outline":
-			preview.draw_rect(_screen_box(MapEditSession.cell_box(_points[0], _tip)), ink, _gesture == "rect")
-		"path":
-			for i in range(1, _points.size()):
-				preview.draw_line(_cell_center(_points[i - 1]), _cell_center(_points[i]), ink, maxf(1.0, cursor_width * zoom))
+		"brush", "erase", "line", "rect":
+			for area in brush.stroke_regions(_drag_path(), session, _gesture):
+				preview.draw_rect(_screen_box(area), ink)
+		"gradient":
+			preview.draw_line(_cell_center(_points[0]), _cell_center(_tip), ink, 2.0)
 	if _gesture != "point_drag" and session.bounds.has_point(mouse_cell):
 		var area := Rect2i(mouse_cell - Vector2i.ONE * (cursor_width / 2), Vector2i.ONE * cursor_width)
 		preview.draw_rect(_screen_box(area), Color.WHITE, false, 1)
@@ -330,13 +327,18 @@ func _end_drag() -> void:
 	tooltip_text = ""
 	preview.queue_redraw()
 
+func _drag_path() -> Array[Vector2i]:
+	if _points[-1] == _tip: return _points
+	var path := _points.duplicate()
+	path.append(_tip)
+	return path
+
 func _finish_drag() -> void:
 	if not _on_release.is_valid() or (_gesture == "point_drag" and not session.bounds.has_point(mouse_cell)):
 		_end_drag()
 		return
 	var finish := _on_release
-	var path := _points
-	if path.back() != _tip: path.append(_tip)
+	var path := _drag_path()
 	_end_drag()
 	finish.call(path)
 
@@ -349,7 +351,7 @@ func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		if _gesture == "pan":
 			origin += event.relative
-		elif _gesture == "path" and _points[-1] != _tip:
+		elif _gesture in ["brush", "erase"] and _points[-1] != _tip:
 			_points.append(_tip)
 		elif _gesture.is_empty() and destination_point_id < 0:
 			var hover := _point_at(event) >= 0

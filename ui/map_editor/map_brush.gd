@@ -49,11 +49,9 @@ func _paint_regions(session: MapEditSession, regions: Array[Rect2i], ink: int, r
 				offset += 3
 	return session.put_cells(changes)
 
-func stroke(path: Array[Vector2i], session: MapEditSession, shape := "brush") -> bool:
-	if path.is_empty() or session.locked[session.layer]: return false
+func stroke_regions(path: Array[Vector2i], session: MapEditSession, shape: String) -> Array[Rect2i]:
+	if path.is_empty() or session.locked[session.layer]: return []
 	var bounds := _paint_bounds(session)
-	var ink := 0 if shape == "erase" else _ink(session.on_background)
-	var recolor := tint_only and not session.on_background and shape != "erase"
 	var regions: Array[Rect2i] = []
 	var add_stamp := func(footprint: Rect2i) -> void:
 		var rect := footprint.intersection(bounds)
@@ -76,12 +74,16 @@ func stroke(path: Array[Vector2i], session: MapEditSession, shape := "brush") ->
 		var previous := first
 		add_stamp.call(Rect2i(first - offset, size))
 		for end: Vector2i in ([last] if shape == "line" else path):
-			var delta := (end - previous).abs()
-			var steps := maxi(delta.x, delta.y)
-			for i in range(1, steps + 1):
-				var cell := Vector2i(Vector2(previous).lerp(Vector2(end), float(i) / steps).round())
+			for cell in Geometry2D.bresenham_line(previous, end).slice(1):
 				add_stamp.call(Rect2i(cell - offset, size))
 			previous = end
+	return regions
+
+func stroke(path: Array[Vector2i], session: MapEditSession, shape := "brush") -> bool:
+	var regions := stroke_regions(path, session, shape)
+	if regions.is_empty(): return false
+	var ink := 0 if shape == "erase" else _ink(session.on_background)
+	var recolor := tint_only and not session.on_background and shape != "erase"
 	return _paint_regions(session, regions, ink, recolor)
 
 func bucket(cell: Vector2i, session: MapEditSession) -> bool:
