@@ -45,6 +45,7 @@ class Clock:
 	var haste: bool
 
 var now := 0.0
+var day_minute := Daylight.minute_at(0.0)
 var mode := Mode.SOLO
 var focus: Vector2
 var actors: Array[Pose] = []

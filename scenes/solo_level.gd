@@ -4,6 +4,7 @@ extends MatchController
 var spawn_cell: Vector2i
 var enabled_weapons: Array[int]
 var time_field := TimeField.new(GrainAccount.new())
+var preview_minute := -1.0
 var _rewind: RewindHistory
 var _weapon_floors: Array[Vector2i]
 var _kills := 0
@@ -69,6 +70,7 @@ func _process(delta: float) -> void:
 	var haste := time_field.is_hasting()
 	var rewind := time_field.is_rewinding()
 	_begin_frame(delta, anchor, haste, rewind)
+	_frame.day_minute = preview_minute if preview_minute >= 0.0 else Daylight.minute_at(time_field.elapsed)
 	_frame.kills = _kills
 	_local_pose(haste, rewind)
 	for enemy: EnemyBase in combat_rules.enemies:

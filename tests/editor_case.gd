@@ -10,10 +10,10 @@ func run(tree: SceneTree) -> void:
 
 func _sample() -> Dictionary:
 	var map := CyrmMap.create(Vector2i(48, 32))
-	for layer in 4:
+	for layer in CyrmMap.LAYER_COUNT:
 		var tile := PackedInt32Array([_stone, CyrmMap.tile_value(15, Vector4i(6, 4, 4, 7)),
 				0, CyrmMap.tile_value(7, Vector4i(3, 4, 4, 7))])
-		if layer == CyrmMap.COLOR:
+		if layer >= CyrmMap.FIRST_BACKGROUND:
 			tile = PackedInt32Array([0xFBDC9981, 0x123456FF, 0, 0xAAF09017])
 		CyrmMap.write_cells(map, layer, [layer + 2, 2, tile[0], layer + 3, 2, tile[1],
 				layer + 2, 3, tile[2], layer + 3, 3, tile[3]])
@@ -36,7 +36,7 @@ func _format() -> void:
 	var encoded := CyrmMap.to_bytes(map)
 	expect(bytes_to_var(CyrmStorage.unpack(encoded)) == map, "the map file contains the document dictionary")
 	var restored := CyrmMap.from_bytes(CyrmStorage.pack(var_to_bytes(map)))
-	expect(restored == map and not is_same(restored, map), "all four layers, 64-bit point IDs and Unicode notes round trip")
+	expect(restored == map and not is_same(restored, map), "all seven layers, 64-bit point IDs and Unicode notes round trip")
 	var session := MapEditSession.new()
 	session.open(restored, "")
 	var respawn := {"kind": "respawn", "cell": Vector2i(2, 4), "side": 2}
@@ -47,9 +47,9 @@ func _format() -> void:
 	session.put_notes("first\n\nsecond")
 	expect(session.travel(-1) and restored.notes == notes and session.travel(1) and restored.notes == "first\n\nsecond",
 			"undo and redo preserve the full notes text")
-	var copy := CyrmMap.read_region(map, CyrmMap.COLOR, session.bounds)
+	var copy := CyrmMap.read_region(map, CyrmMap.FIRST_BACKGROUND, session.bounds)
 	copy.fill(0)
-	expect(copy != map.layers[CyrmMap.COLOR], "whole-layer reads are independent")
+	expect(copy != map.layers[CyrmMap.FIRST_BACKGROUND], "whole-layer reads are independent")
 	var shades := PackedInt32Array()
 	var painted := PackedInt32Array()
 	for i in 300:
@@ -64,7 +64,7 @@ func _format() -> void:
 	encoded = CyrmMap.to_bytes(blank)
 	expect(not encoded.is_empty() and CyrmMap.from_bytes(encoded).is_empty(), "material validation happens on load")
 	blank.layers.pop_back()
-	expect(CyrmMap.from_bytes(CyrmMap.to_bytes(blank)).is_empty(), "loading requires all four layers")
+	expect(CyrmMap.from_bytes(CyrmMap.to_bytes(blank)).is_empty(), "loading requires all seven layers")
 
 func _editing() -> void:
 	var s := MapEditSession.new()
@@ -135,7 +135,7 @@ func _editing() -> void:
 	s.locked[s.layer] = true
 	expect(not s.paste(Vector2i.ZERO) and s.selection == selection_before, "a locked paste preserves the selection")
 	s.locked[s.layer] = false
-	s.layer = 3
+	s.layer = CyrmMap.LAYER_COUNT - 1
 	expect(not s.paste(Vector2i.ZERO), "material clipboard cannot overwrite RGBA")
 	brush.color = Color.RED
 	brush.end_color = Color.BLUE
@@ -144,19 +144,23 @@ func _editing() -> void:
 	expect(not brush.gradient(segment, s), "gradient needs a selection")
 	s.selection = Rect2i(1, 2, 3, 1)
 	expect(brush.gradient(segment, s), "gradient writes selection")
-	var colors := CyrmMap.read_region(s.map, 3, s.selection)
+	var colors := CyrmMap.read_region(s.map, s.layer, s.selection)
 	brush.sample(s, segment[0])
 	expect(brush.color == Color.RED and Color.hex(colors[2]) == Color.BLUE, "gradient endpoints and eyedropper preserve unsigned RGBA colors")
 	s.mirror(true)
-	expect(CyrmMap.read_region(s.map, 3, s.selection)[0] == colors[2], "horizontal mirror")
+	expect(CyrmMap.read_region(s.map, s.layer, s.selection)[0] == colors[2], "horizontal mirror")
 	brush.color = Color.WHITE
 	s.selection = Rect2i(0, 4, 4, 4)
-	expect(brush.bucket(Vector2i(0, 4), s) and CyrmMap.read_region(s.map, 3, s.selection).count(-1) == 16, "bucket obeys selection")
+	expect(brush.bucket(Vector2i(0, 4), s) and CyrmMap.read_region(s.map, s.layer, s.selection).count(-1) == 16, "bucket obeys selection")
 	expect(brush.bucket(Vector2i(0, 4), s) and s._undo.back().cost == 16 * 12,
 			"a same-color fill visits and submits each connected cell once")
-	s.locked[3] = true
+	s.locked[s.layer] = true
 	expect(not s.clear_selection(), "locked layer prevents cut or clear")
-	s.locked[3] = false
+	s.locked[s.layer] = false
+	s.copy_selection()
+	s.layer = CyrmMap.FIRST_BACKGROUND
+	expect(s.paste(Vector2i.ZERO) and s.travel(-1) and CyrmMap.cell_at(s.map, s.layer, Vector2i.ZERO) == 0
+			and CyrmMap.cell_at(s.map, CyrmMap.LAYER_COUNT - 1, Vector2i(0, 4)) == -1, "copy between backgrounds and undo only on the destination")
 	var enemy := s.place_point({"kind": "enemy", "cell": Vector2i(3, 2), "type": "jump_bird"})
 	s.resize_map(Vector2i(2, 2))
 	expect(not s.map.points.has(enemy), "shrink drops cropped point")
@@ -265,11 +269,11 @@ func _canvas_display(tree: SceneTree, editor: MapEditor) -> void:
 			expect(tiles.get_cell_atlas_coords(cell) == Vector2i(1, 2)
 					and is_equal_approx(tiles.get_cell_tile_data(cell).modulate.a, 3.0 / 7.0), "material phase and tint opacity reach the tile")
 	if DisplayServer.get_name() != "headless":
-		s.layer = CyrmMap.COLOR
+		s.layer = CyrmMap.LAYER_COUNT - 1
 		for apply: Callable in [s.put_cells.bind(PackedInt32Array([3, 2, 0xeb286600, 4, 2, 0x12a8c4ad])), s.travel.bind(-1), s.travel.bind(1)]:
 			expect(apply.call(), "color edit or history step commits")
 			await RenderingServer.frame_post_draw
-			var bytes := c._colors.texture.get_image().get_data()
+			var bytes := (c.planes[s.layer] as Sprite2D).texture.get_image().get_data()
 			bytes.bswap32()
 			expect(bytes.to_int32_array() == map.layers[s.layer], "color texture preserves all RGBA bytes on edit, undo and redo")
 			await tree.process_frame
@@ -278,7 +282,7 @@ func _canvas_display(tree: SceneTree, editor: MapEditor) -> void:
 	var terrain_draw := func() -> void: draws[0] += 1
 	var markings_draw := func() -> void: draws[1] += 1
 	var preview_draw := func() -> void: draws[2] += 1
-	var ground := c.terrain.get_children()
+	var ground := c.terrain.find_children("*", "CanvasItem", true, false)
 	ground.append(c.terrain)
 	for item: CanvasItem in ground: item.draw.connect(terrain_draw)
 	c.markings.draw.connect(markings_draw)
@@ -299,6 +303,29 @@ func _canvas_display(tree: SceneTree, editor: MapEditor) -> void:
 	for item: CanvasItem in ground: item.draw.disconnect(terrain_draw)
 	c.markings.draw.disconnect(markings_draw)
 	c.preview.draw.disconnect(preview_draw)
+
+func _lighting_preview(editor: MapEditor) -> void:
+	editor._open_document(CyrmMap.create(Vector2i(12, 180)), "")
+	var canvas := editor.canvas
+	canvas.zoom = 4
+	canvas.origin = Vector2(200, 80)
+	var edge := Vector2i(canvas.terrain.get_global_transform_with_canvas() * Vector2(0, 75.5))
+	var pixel := edge + Vector2i(8, 0)
+	var outside := edge - Vector2i(4, 0)
+	var screen := canvas.get_viewport().get_texture()
+	await RenderingServer.frame_post_draw
+	var raw := screen.get_image()
+	canvas.preview_minute = 9 * 60
+	await RenderingServer.frame_post_draw
+	var morning := screen.get_image()
+	expect(morning.get_pixelv(pixel).r > 0.9 and morning.get_pixelv(outside) == raw.get_pixelv(outside),
+			"on a tall map the morning sun stops at the edge of the document")
+	canvas.preview_minute = 0.0
+	await RenderingServer.frame_post_draw
+	expect(morning.get_pixelv(pixel).b > screen.get_image().get_pixelv(pixel).b + 0.4, "empty editor cells show the selected sky")
+	canvas.preview_minute = -1.0
+	await RenderingServer.frame_post_draw
+	expect(screen.get_image().get_pixelv(pixel) == raw.get_pixelv(pixel), "closing the preview restores the original canvas color")
 
 func _canvas_tools(editor: MapEditor) -> void:
 	var s := editor.session
@@ -356,7 +383,7 @@ func _canvas_tools(editor: MapEditor) -> void:
 	_mouse(c, Vector2i(2, 2), true)
 	expect(s.revision == revision, "gradient press previews without writing")
 	_mouse(c, corner, false)
-	var colors := CyrmMap.read_region(s.map, CyrmMap.COLOR, area)
+	var colors := CyrmMap.read_region(s.map, CyrmMap.FIRST_BACKGROUND, area)
 	expect(Color.hex(colors[0]) == editor.brush.color and Color.hex(colors[-1]) == editor.brush.end_color, "gradient release writes the selected endpoints")
 	editor._pick_material(7)
 	revision = s.revision
@@ -374,6 +401,9 @@ func _workspace_controls(editor: MapEditor) -> void:
 	editor._set_layer(CyrmMap.BACK)
 	editor._choose_tool("gradient")
 	expect(editor._param_rows.color.visible and editor._param_rows.end_color.visible and not editor._param_rows.material.visible, "gradient shows its two color endpoints")
+	for layer in range(CyrmMap.FIRST_BACKGROUND, CyrmMap.LAYER_COUNT):
+		_click_button(editor._layers[layer])
+		expect(s.layer == layer and editor.active_tool == "gradient", "gradient follows the selected background")
 	_click_button(editor._materials[7])
 	expect(s.layer == CyrmMap.BACK and editor.active_tool == "brush" and editor.brush.material_id == 7, "one palette click returns to painting on the last material layer")
 	editor._choose_tool("line")
@@ -471,7 +501,7 @@ func _workspace_controls(editor: MapEditor) -> void:
 	for i in 4: expect(editor._tints[i].value == tint[i], "eyedropper restores inspector channel %d" % i)
 	editor._layer_flag(false, CyrmMap.BACK, "visible")
 	editor._layer_flag(true, CyrmMap.BACK, "locked")
-	expect(not c.show_layers[CyrmMap.BACK] and s.locked[CyrmMap.BACK] and s.layer == CyrmMap.SCENE, "per-row visibility and locking do not switch the active layer")
+	expect(not c.planes[CyrmMap.BACK].visible and s.locked[CyrmMap.BACK] and s.layer == CyrmMap.SCENE, "per-row visibility and locking do not switch the active layer")
 	editor._layer_flag(true, CyrmMap.BACK, "visible")
 	editor._layer_flag(false, CyrmMap.BACK, "locked")
 	editor._choose_tool("brush")
@@ -619,6 +649,7 @@ func _workflow(tree: SceneTree) -> void:
 	editor._open_document(_sample(), "")
 	await _size_dialogs(tree, editor)
 	await _canvas_display(tree, editor)
+	if DisplayServer.get_name() != "headless": await _lighting_preview(editor)
 	_canvas_tools(editor)
 	editor._open_document(_sample(), "")
 	_workspace_controls(editor)
@@ -663,6 +694,14 @@ func _workflow(tree: SceneTree) -> void:
 	recovered.queue_free()
 	await tree.process_frame
 	var settings_path := Settings.sp_map_path
+	var toolbar := editor._workspace.get_child(0).get_child(0)
+	var lighting: CheckBox = toolbar.find_children("*", "CheckBox", false, false)[0]
+	var time: HSlider = toolbar.find_children("*", "HSlider", false, false)[0]
+	_click_button(lighting)
+	expect(time.editable and editor.canvas.preview_minute == 720, "lighting preview opens at noon")
+	time.value = time.max_value
+	expect(time.step == 15 and editor.canvas.preview_minute == 1425 and s.revision == revision,
+			"the preview reaches 23:45 in quarter hours without making a map edit")
 	editor._choose_tool("point")
 	_click_cell(editor.canvas, Vector2i(2, 3))
 	editor._point_list.grab_focus()
@@ -670,10 +709,29 @@ func _workflow(tree: SceneTree) -> void:
 	_key(editor, KEY_F5)
 	await tree.physics_frame
 	expect(editor.trial != null and editor.trial.spawn_cell == Vector2i(6, 3), "F5 uses the point selected with the list's arrow keys")
+	var view := editor.trial._view
+	editor.trial._process(0.0)
+	expect(editor.trial._frame.day_minute == 1425 and view._time_of_day.text == "23:45",
+			"F5 uses the same fixed light and HUD time as the editor")
+	var planes := view.camera.get_viewport().find_children("*", "Parallax2D", false, false)
+	expect(planes.size() == 4, "trial renders all four painted backgrounds")
+	view.camera.force_update_scroll()
+	var starts := planes.map(func(p: Parallax2D) -> Vector2: return p.get_global_transform_with_canvas().origin)
+	var lap := Vector2(s.map.size * CyrmMap.CELL_SIZE)
+	view.camera.position += lap
+	view.camera.force_update_scroll()
+	for i in planes.size():
+		var plane: Parallax2D = planes[i]
+		var sprite: Sprite2D = plane.get_child(0)
+		var travel: Vector2 = (starts[i] - plane.get_global_transform_with_canvas().origin) / view.camera.zoom
+		expect(travel.is_equal_approx(lap * MatchView.BACKGROUND_SCROLL[i])
+				and (travel / sprite.scale).is_equal_approx(Vector2(s.map.size)), "one camera lap scrolls each depth by one texture period")
 	expect(editor.trial.terrain.sub_texture(step.position) == 7, "trial collision terrain includes unsaved step")
 	editor.trial.terrain.apply_hp(step.position, 0, 1)
 	expect(CyrmMap.read_region(s.map, 1, step) == pixels, "trial destruction cannot modify authored cells")
 	editor.finish_trial()
+	_click_button(lighting)
+	expect(not time.editable and editor.canvas.preview_minute < 0.0, "returning to paint restores unlit colors")
 	expect(s.selection == step and s.revision == revision and editor.canvas.zoom == 13 and editor.canvas.origin == Vector2(91, 33), "return preserves view, selection and history")
 	expect(Settings.sp_map_path == settings_path and FileAccess.get_file_as_bytes(path) == old_bytes, "trial preserves saved map and normal launch preference")
 	expect(s.travel(-1) and not s.dirty(), "step can still be undone after trial")

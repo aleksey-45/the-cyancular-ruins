@@ -7,6 +7,7 @@ enum Mode { NONE, REWIND, HASTE }
 
 var mode := Mode.NONE
 var account: GrainAccount
+var elapsed := 0.0  # 玩家经历的秒数，随世界快照回溯。
 var _tick := 0
 var _grain_due: Dictionary[int, int] = {}
 
@@ -40,6 +41,7 @@ func step(held: int, delta: float, history: RewindHistory) -> void:
 	if is_rewinding():
 		history.rewind(delta)
 	else:
+		elapsed += delta * player_speed_mult()
 		history.record(delta)
 
 func is_rewinding() -> bool:

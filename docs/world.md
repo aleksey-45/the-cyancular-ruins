@@ -2,9 +2,15 @@
 
 地图的左右边缘相连，上下边缘也相连。实体的模拟坐标与网络快照使用 `[0, width) × [0, height)` 的范围。`GridPathfinder` 计算跨边界的最短位移、最近的平移副本和 A* 路径。碰撞与渲染在边缘附近使用平移副本，让角色、弹丸和镜头连续穿过边界。[寻路与坐标](../core/sim/grid_pathfinder.gd) · [地形碰撞](terrain.md)
 
+单人关卡从 06:00 开始，正常速度下 120 秒走完一天。暂停时停表，时间加速按玩家倍率推进，回溯恢复所到时刻的天色。联机的昼夜由房间的对局时钟决定。对局、主菜单和编辑器共用一条昼夜色带，每格相隔 5 分钟，跨午夜平滑衔接。天顶色照亮地形、视差背景和角色。[昼夜光照](../core/present/daylight.gd) · [昼夜色带](../core/present/daylight_palette.png)
+
+角色皮肤的颜色等于本色乘以环境光与眼光之和。两种光共用 `player_shade.png` 的 RG 推算出的表面法线。环境光随天色和日月方向实时变化，B 通道压暗肢体贴合处。[角色材质](../scenes/player/player_color.gdshader)
+
+每只眼睛是一根内部均匀发光的透明长方柱，底面随该帧的白色眼条，柱高为 3 个原画像素。烘焙时，以皮肤像素在精灵平面上的位置为接收点，按入射角累加两根柱体从表面正面照来的光。运行时用眼睛相对环境的亮度缩放这张受光图。修改角色原画、部位贴图、曲率或动画帧区域后，用装有 NumPy 和 Pillow 的 Python 运行 `python tools/bake_eye_light.py` 更新 `player_eye_light.png`。[光柱烘焙](../tools/bake_eye_light.py)
+
 ## CYRM 地图
 
-地图的宽、高、图层内的坐标和点位坐标都以 16×16 像素子格计。四个图层各自使用一个行优先的 `PackedInt32Array`。前三层保存材质和调色，颜色层保存 RGBA。每场对局从场景层初始化子格耐久，运行时的破坏和回溯独立于编辑文档。[地图结构](../core/sim/cyrm_map.gd) · [材质表](../data/tile_defs.json)
+地图的宽、高、图层内的坐标和点位坐标都以 16×16 像素子格计。七个图层各自使用一个行优先的 `PackedInt32Array`。前三层保存材质和调色，后四层从近到远保存 RGBA 背景。各背景沿两轴循环，镜头绕地图一圈正好滚过该层的一幅图。每场对局从场景层初始化子格耐久，运行时的破坏和回溯独立于编辑文档。[地图结构](../core/sim/cyrm_map.gd) · [材质表](../data/tile_defs.json)
 
 `CyrmMap.cell_at(map, layer, at)` 返回一个格值。`CyrmMap.write_cells(map, layer, changes)` 按提交顺序把每组 x、y、新值写入图层。编辑器先读取旧值供撤销。画布按修改数组更新材质层的 `TileMapLayer`，颜色层每笔更新一张 RGBA 纹理。笔刷框和拖动预览在独立节点上绘制。[地图接口](../core/sim/cyrm_map.gd) · [编辑器画布](../ui/map_editor/map_edit_canvas.gd)
 
@@ -15,7 +21,7 @@
 | 键 | 内容 |
 | --- | --- |
 | `size` | 以子格计的宽高，类型为 `Vector2i`，最大为 1600 × 1200。 |
-| `layers` | 依次为前景、场景、背景和颜色四个 `PackedInt32Array`。前三层的第 12–23 位存材质编号，低 12 位按色相、亮度、饱和度、透明度各占 3 位。颜色层存 `0xRRGGBBAA`。 |
+| `layers` | 依次为前景、场景、后景和背景 1 至 4。前三层的第 12–23 位存材质编号，低 12 位按色相、亮度、饱和度、透明度各占 3 位。四个背景层均存 `0xRRGGBBAA`。 |
 | `points` | 以整数 ID 为键。每项都有 `kind` 和子格坐标 `cell`，复活点另存 `side`，敌人另存 `type`。 |
 | `notes` | 作者输入的多行字符串。 |
 

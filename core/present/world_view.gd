@@ -86,6 +86,7 @@ func grain(at: Vector2, now: float, flight: float) -> void:
 	_effects[Effect.GRAIN].append([at, now, flight])
 
 func present(frame: MatchFrame, grain_target := Vector2.ZERO) -> void:
+	_canvas.set_daylight(frame.day_minute)
 	_canvas.begin()
 	_draw_trails(frame.now, frame.focus)
 	for i in frame.actors.size():
@@ -158,16 +159,13 @@ func _actor(pose: MatchFrame.Pose, frame: MatchFrame) -> void:
 			elif pose.haste and pose.anchor.distance_squared_to(frame.focus) < 1500.0 * 1500.0:
 				glow = ENEMY_GLOW
 	else:
+		var skin_tint := Color.WHITE if frame.mode == MatchFrame.Mode.SOLO else pose.name_color(frame.mode) / UiFactory.C_TEAM_A
 		if frame.mode == MatchFrame.Mode.DUEL or frame.mode == MatchFrame.Mode.TEAM:
-			var base := UiFactory.C_TEAM_A
-			var team_color := pose.name_color(frame.mode)
-			tint = Color(team_color.r / base.r, team_color.g / base.g, team_color.b / base.b)
+			tint = skin_tint
 		var hit_left := float(_remote_hits.get(pose.id, 0.0)) - now if pose.remote else pose.hit_left
 		var alpha := 0.4 if hit_left > 0.0 and int(hit_left * 20.0) % 2 == 0 else 1.0
-		color = Color(tint, alpha)
-		if frame.mode == MatchFrame.Mode.ROYALE and pose.hue != 0.0:
-			color = Color(fposmod(pose.hue, 1.0), 1, 1, alpha)
-			pass_kind = WorldCanvas.Pass.HUE
+		color = Color(skin_tint, alpha)
+		pass_kind = WorldCanvas.Pass.PLAYER
 		if pose.haste and not pose.rewind:
 			glow = Color((ENEMY_GLOW if pose.remote else PLAYER_GLOW) * tint, alpha)
 		if not pose.downed:
@@ -331,10 +329,10 @@ func _nameplate(at: Vector2, name: String, color: Color, hp := -1.0) -> void:
 func _guide(points: PackedVector2Array, color: Color, explosive: bool) -> void:
 	if points.size() < 2:
 		return
-	_canvas.line(points, color, 1.0)
+	_canvas.line(points, color, 1.5, true)
 	if explosive:
-		_canvas.circle(points[-1], 20.0, Color(1.0, 0.4, 0.2, 0.16))
-		_canvas.circle(points[-1], 9.0, Color(1.0, 0.4, 0.2, 0.48))
+		_canvas.circle(points[-1], 20.0, Color(1.0, 0.4, 0.2, 0.16), true)
+		_canvas.circle(points[-1], 9.0, Color(1.0, 0.4, 0.2, 0.48), true)
 
 func _reload(at: Vector2, facing: int, progress: float, remaining: float) -> void:
 	var center := at + Vector2(-58 * facing, -44)

@@ -14,13 +14,15 @@ var bounds: Rect2i:
 	get: return Rect2i(Vector2i.ZERO, map.size)
 var path := ""
 var layer := CyrmMap.SCENE
+var on_background: bool:
+	get: return layer >= CyrmMap.FIRST_BACKGROUND
 var selection := Rect2i():
 	set(value):
 		if value != selection:
 			selection = value
 			selection_changed.emit()
 var selected_point_id := -1
-var locked := [false, false, false, false]
+var locked: Array[bool] = []
 var clipboard := PackedInt32Array()
 var clip_size := Vector2i.ZERO
 var clip_color := false
@@ -31,6 +33,9 @@ var _undo: Array[Dictionary] = []
 var _redo: Array[Dictionary] = []
 var _bytes := 0
 var _next_point_id := 0
+
+func _init() -> void:
+	locked.resize(CyrmMap.LAYER_COUNT)
 
 static func cell_box(a: Vector2i, b: Vector2i) -> Rect2i:
 	return Rect2i(a.min(b), (a - b).abs() + Vector2i.ONE)
@@ -157,7 +162,7 @@ func resize_map(dimensions: Vector2i) -> bool:
 
 func _replace_map(document: Dictionary, direction := 0) -> bool:
 	if document.is_empty(): return false
-	var cost := maxi(map.layers[0].size(), document.layers[0].size()) * 16
+	var cost := maxi(map.layers[0].size(), document.layers[0].size()) * CyrmMap.LAYER_COUNT * 4
 	_record({"value": map, "cost": cost}, direction)
 	_set_map(document, map.points.size() != document.points.size())
 	return true
@@ -180,14 +185,14 @@ func copy_selection() -> bool:
 		return false
 	clipboard = CyrmMap.read_region(map, layer, selection)
 	clip_size = selection.size
-	clip_color = layer == CyrmMap.COLOR
+	clip_color = on_background
 	return true
 
 func clear_selection() -> bool:
 	return not locked[layer] and put_cells(_region_cells(selection, PackedInt32Array()))
 
 func paste(at: Vector2i) -> bool:
-	if clipboard.is_empty() or (layer == CyrmMap.COLOR) != clip_color or locked[layer]:
+	if clipboard.is_empty() or on_background != clip_color or locked[layer]:
 		return false
 	var source := Rect2i(at, clip_size)
 	var dest := source.intersection(bounds)

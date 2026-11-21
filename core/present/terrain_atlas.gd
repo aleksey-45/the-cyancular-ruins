@@ -1,7 +1,6 @@
 class_name TerrainAtlas
 extends RefCounted
 
-const SKY_COLOR := Color("b0e5f6")
 const SOURCE_PATH := "res://assets/textures/structure.png"
 const TEX_COUNT := 22
 const SRC_COLS := 10
@@ -28,6 +27,11 @@ static func source_image() -> Image:
 		var tex: Texture2D = load(SOURCE_PATH)
 		_src_cache = tex.get_image()
 	return _src_cache
+
+static func background_image(map: Dictionary, layer: int) -> Image:
+	var bytes: PackedByteArray = map.layers[layer].to_byte_array()
+	bytes.bswap32() # 地图存 0xRRGGBBAA，图像按 R、G、B、A 读取字节。
+	return Image.create_from_data(map.size.x, map.size.y, false, Image.FORMAT_RGBA8, bytes)
 
 # idx 是原始图集中的瓦片索引，返回对应的像素矩形。
 static func source_rect(idx: int) -> Rect2i:
@@ -104,18 +108,14 @@ static func tile_image(ts: int, tile: int) -> Image:
 	_brick_cache[key] = img
 	return img
 
-static func _bake_map_image(map: Dictionary, cell_px: int, air: Color) -> Image:
+static func _bake_map_image(map: Dictionary, cell_px: int) -> Image:
 	var sp := maxi(1, cell_px / SUBS_PER_TEXTURE)
 	var descriptors: PackedInt32Array = map.layers[CyrmMap.SCENE]
 	var rows := descriptor_rows(descriptors)
 	var atlas := build_atlas_image(rows)
-	var flat := Image.create(atlas.get_width(), atlas.get_height(), false, Image.FORMAT_RGBA8)
-	flat.fill(air)
-	flat.blend_rect(atlas, Rect2i(Vector2i.ZERO, atlas.get_size()), Vector2i.ZERO)
-	flat.resize(atlas.get_width() / QUAD_TILE * sp, atlas.get_height() / QUAD_TILE * sp, Image.INTERPOLATE_NEAREST)
+	atlas.resize(atlas.get_width() / QUAD_TILE * sp, atlas.get_height() / QUAD_TILE * sp, Image.INTERPOLATE_NEAREST)
 	var sub_size: Vector2i = map.size
 	var out := Image.create(sub_size.x * sp, sub_size.y * sp, false, Image.FORMAT_RGBA8)
-	out.fill(air)
 	for i in descriptors.size():
 		var desc := descriptors[i]
 		if not rows.has(desc):
@@ -123,18 +123,17 @@ static func _bake_map_image(map: Dictionary, cell_px: int, air: Color) -> Image:
 		var sub := Vector2i(i % sub_size.x, i / sub_size.x)
 		var quad := (sub.y % SUBS_PER_TEXTURE) * SUBS_PER_TEXTURE + sub.x % SUBS_PER_TEXTURE
 		var at := atlas_coords(rows[desc], quad) * sp
-		out.blit_rect(flat, Rect2i(at, Vector2i.ONE * sp), sub * sp)
+		out.blit_rect(atlas, Rect2i(at, Vector2i.ONE * sp), sub * sp)
 	return out
 
-static func terrain_texture(path: String, cell_px: int, air: Color) -> ImageTexture:
+static func terrain_texture(path: String, cell_px: int) -> ImageTexture:
 	var bytes := CyrmMap.read_bytes(path)
-	var key := [bytes, cell_px, air]
+	var key := [bytes, cell_px]
 	if _tex_cache.has(key): return _tex_cache[key]
 	var map := CyrmMap.from_bytes(bytes)
 	if map.is_empty():
 		push_error("TerrainAtlas: 地图为空,无法烘背景 %s" % path)
 		var blank := Image.create(1, 1, false, Image.FORMAT_RGBA8)
-		blank.fill(air)
 		return ImageTexture.create_from_image(blank)
-	_tex_cache[key] = ImageTexture.create_from_image(_bake_map_image(map, cell_px, air))
+	_tex_cache[key] = ImageTexture.create_from_image(_bake_map_image(map, cell_px))
 	return _tex_cache[key]

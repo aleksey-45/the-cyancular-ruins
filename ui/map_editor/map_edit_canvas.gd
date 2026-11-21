@@ -20,7 +20,6 @@ var origin := Vector2(20, 20):
 		terrain.position = value
 		markings.queue_redraw()
 		preview.queue_redraw()
-var show_layers := [true, true, true, true]
 var grid := true
 var subgrid := false
 var torus := false
@@ -34,10 +33,19 @@ var _on_release: Callable
 var _points: Array[Vector2i] = []
 var _tip: Vector2i:
 	get: return mouse_cell.clamp(Vector2i.ZERO, session.map.size - Vector2i.ONE)
-var terrain := ColorRect.new()
+var terrain := UiFactory.shade(Color("#26363b"))
+var _sky := Daylight.new()
+var _map_layers := Node2D.new()
+var preview_minute := -1.0:
+	set(value):
+		preview_minute = value
+		_sky.visible = value >= 0.0
+		_map_layers.modulate = _sky.set_minute(value) if _sky.visible else Color.WHITE
+		markings.queue_redraw()
+		preview.queue_redraw()
 var markings := Node2D.new()
 var preview := Node2D.new()
-var _colors := Sprite2D.new()
+var planes: Array[Node2D] = []
 var _tiles: Array[TileMapLayer] = [TileMapLayer.new(), TileMapLayer.new(), TileMapLayer.new()]
 var _palette := TileSet.new()
 var _source_ids: Dictionary[int, int] = {}
@@ -55,17 +63,22 @@ func _ready() -> void:
 	size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	size_flags_vertical = Control.SIZE_EXPAND_FILL
 	mouse_default_cursor_shape = Control.CURSOR_CROSS
-	terrain.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	terrain.color = Color("#26363b")
+	terrain.clip_contents = true
 	add_child(terrain)
-	_colors.centered = false
-	terrain.add_child(_colors)
-	for layer: int in [CyrmMap.BACK, CyrmMap.SCENE, CyrmMap.FRONT]:
-		var tiles := _tiles[layer]
+	_sky.visible = preview_minute >= 0.0
+	UiFactory.cover(terrain, _sky)
+	terrain.add_child(_map_layers)
+	for tiles in _tiles:
 		tiles.collision_enabled = false
 		tiles.navigation_enabled = false
 		tiles.occlusion_enabled = false
-		terrain.add_child(tiles)
+		planes.append(tiles)
+	for layer in range(CyrmMap.FIRST_BACKGROUND, CyrmMap.LAYER_COUNT):
+		var sprite := Sprite2D.new()
+		sprite.centered = false
+		planes.append(sprite)
+	for i in range(planes.size() - 1, -1, -1):
+		_map_layers.add_child(planes[i])
 	add_child(markings)
 	markings.draw.connect(_draw_markings)
 	add_child(preview)
@@ -105,17 +118,15 @@ func paint_cells(layer: int, changes: PackedInt32Array) -> void:
 			var cells: PackedInt32Array = session.map.layers[index]
 			for i in cells.size():
 				if cells[i]: _paint_tile(_tiles[index], Vector2i(i % width, i / width), cells[i])
-		_colors.texture = ImageTexture.create_from_image(_color_image())
-	elif layer == CyrmMap.COLOR:
-		(_colors.texture as ImageTexture).update(_color_image())
+		for index in range(CyrmMap.FIRST_BACKGROUND, CyrmMap.LAYER_COUNT):
+			var sprite := planes[index] as Sprite2D
+			sprite.texture = ImageTexture.create_from_image(TerrainAtlas.background_image(session.map, index))
+	elif layer >= CyrmMap.FIRST_BACKGROUND:
+		var sprite := planes[layer] as Sprite2D
+		(sprite.texture as ImageTexture).update(TerrainAtlas.background_image(session.map, layer))
 	else:
 		for i in range(0, changes.size(), 3):
 			_paint_tile(_tiles[layer], Vector2i(changes[i], changes[i + 1]), changes[i + 2])
-
-func _color_image() -> Image:
-	var bytes: PackedByteArray = session.map.layers[CyrmMap.COLOR].to_byte_array()
-	bytes.bswap32() # 地图的整数为 0xRRGGBBAA，Image 按 R、G、B、A 读取字节。
-	return Image.create_from_data(session.map.size.x, session.map.size.y, false, Image.FORMAT_RGBA8, bytes)
 
 func _paint_tile(tiles: TileMapLayer, cell: Vector2i, value: int) -> void:
 	if CyrmMap.tile_material(value) == 0:
@@ -154,10 +165,8 @@ func refresh_view() -> void:
 		_palette.tile_size = Vector2i.ONE * detail
 		for opaque in _source_ids: _set_tile_image(_palette.get_source(_source_ids[opaque]), opaque)
 		for tiles in _tiles: tiles.scale = Vector2.ONE / detail
-	for layer in show_layers.size():
-		var plane: CanvasItem = _colors if layer == CyrmMap.COLOR else _tiles[layer] as CanvasItem
-		plane.visible = show_layers[layer]
-		plane.modulate = Color(0.43, 0.46, 0.5) if dim_others and layer != session.layer else Color.WHITE
+	for layer in planes.size():
+		planes[layer].modulate = Color(0.43, 0.46, 0.5) if dim_others and layer != session.layer else Color.WHITE
 	markings.queue_redraw()
 	preview.queue_redraw()
 
@@ -238,7 +247,7 @@ func _draw_point(target: Node2D, row: Dictionary, pos: Vector2, selected: bool, 
 		var icon: Dictionary = _enemy_icons[row.type]
 		var sprite: Texture2D = icon.sprite
 		var extent: Vector2 = sprite.get_size() * icon.scale * zoom / 16.0
-		target.draw_texture_rect(sprite, Rect2(pos - extent / 2.0, extent), false, tint)
+		target.draw_texture_rect(sprite, Rect2(pos - extent / 2.0, extent), false, tint * _map_layers.modulate)
 	else:
 		var fill := Color("#f2d391")
 		var letter := "P" if row.kind == "player" else "2"

@@ -270,6 +270,7 @@ func _process(delta: float) -> void:
 	var haste := player.personal_haste_mult > 1.0
 	_begin_frame(delta, anchor, haste, player.rewinding)
 	var world := _playback.advance(delta, player.role)
+	_frame.day_minute = Daylight.minute_at(_playback.render_tick * ActorStep.DT)
 	for id: int in world["beams"]:
 		if ShotRules.shooter_role(id) != player.role:
 			_frame.sample_beam(world["beams"][id], _playback.render_tick)

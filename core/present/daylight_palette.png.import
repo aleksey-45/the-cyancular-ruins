@@ -1,0 +1,13 @@
+[remap]
+
+importer="image"
+type="Image"
+uid="uid://bos08f0oc566"
+path="res://.godot/imported/daylight_palette.png-370a65a18b257301a2871e952f06584e.image"
+
+[deps]
+
+source_file="res://core/present/daylight_palette.png"
+dest_files=["res://.godot/imported/daylight_palette.png-370a65a18b257301a2871e952f06584e.image"]
+
+[params]

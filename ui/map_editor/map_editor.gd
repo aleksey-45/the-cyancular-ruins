@@ -2,7 +2,7 @@ class_name MapEditor
 extends Control
 
 const HEADING_COLOR := Color("#a9dcca")
-const LAYERS := ["前景", "场景", "后景", "背景"]
+const LAYERS := ["前景", "场景", "后景", "背景 1 · 近", "背景 2", "背景 3", "背景 4 · 远"]
 const POINT_HINT := "拖动移动点位 · 双击试玩"
 const TOOLS := {
 	"brush": {"label": "画笔", "key": KEY_B, "params": ["width", "material", "color"], "preview": "path",
@@ -13,7 +13,7 @@ const TOOLS := {
 	"bucket": {"label": "填充", "key": KEY_G, "params": ["material", "color"]},
 	"picker": {"label": "吸管", "key": KEY_I, "params": ["material", "color"]},
 	"select": {"label": "选区", "key": KEY_M, "params": ["selection"]},
-	"gradient": {"label": "渐变", "key": KEY_NONE, "params": ["color", "end_color"], "preview": "guide", "layer": CyrmMap.COLOR},
+	"gradient": {"label": "渐变", "key": KEY_NONE, "params": ["color", "end_color"], "preview": "guide", "min_layer": CyrmMap.FIRST_BACKGROUND},
 	"point": {"label": "点位", "key": KEY_P, "params": ["points"], "pick_points": POINT_HINT},
 }
 const ENEMY_LABELS := {"jump_bird": "跳鸟", "fly_bird": "飞鸟", "black_bird": "乌鸫"}
@@ -129,6 +129,7 @@ func _build_ui() -> void:
 		view.add_check_item(entry[0], index)
 		view.set_item_checked(index, canvas.get(entry[1]))
 		view.set_item_metadata(index, _toggle_view.bind(view, index, entry[1]))
+	_build_light_preview(bar)
 	bar.add_spacer(false)
 	_button(bar, "保存", _save).tooltip_text = "写入当前地图文件"
 	_button(bar, "校验", _validate)
@@ -180,6 +181,23 @@ func _build_ui() -> void:
 	canvas.cursor_moved.connect(func(p: Vector2i) -> void:
 		coords.text = "子格 %d, %d" % [p.x, p.y] if session.bounds.has_point(p) else "")
 
+func _build_light_preview(bar: Control) -> void:
+	var slider := HSlider.new()
+	slider.max_value = Daylight.DAY - 15
+	slider.step = 15
+	slider.value = Daylight.NOON
+	slider.custom_minimum_size.x = 180
+	slider.accessibility_name = "光照预览时刻"
+	var preview := _check(bar, "光照预览", func(on: bool) -> void:
+		slider.editable = on
+		canvas.preview_minute = slider.value if on else -1.0)
+	bar.add_child(slider)
+	slider.editable = false
+	var clock := _label(bar, Daylight.time_text(slider.value))
+	slider.value_changed.connect(func(value: float) -> void:
+		clock.text = Daylight.time_text(value)
+		if preview.button_pressed: canvas.preview_minute = value)
+
 func _build_materials(parent: Control) -> void:
 	var header := _row(parent)
 	_label(header, "材质", 24, HEADING_COLOR).size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -220,8 +238,7 @@ func _build_layers(parent: Control) -> void:
 
 func _layer_flag(value: bool, index: int, property: String) -> void:
 	if property == "visible":
-		canvas.show_layers[index] = value
-		canvas.refresh_view()
+		canvas.planes[index].visible = value
 	else:
 		session.locked[index] = value
 		canvas.cancel()
@@ -292,7 +309,7 @@ func _build_inspector(parent: Control, clipboard: Array) -> void:
 
 func _sync_context() -> void:
 	var params: Array = _tool.params
-	var hidden_ink := "material" if session.layer == CyrmMap.COLOR else "color"
+	var hidden_ink := "material" if session.on_background else "color"
 	for parameter: String in _param_rows:
 		_param_rows[parameter].visible = parameter != hidden_ink and params.has(parameter)
 	_context_title.text = "关卡点位" if _param_rows.points.visible else _tool.label
@@ -488,9 +505,9 @@ func _choose_tool(id: String, layer := -1) -> void:
 	if id != active_tool or layer < 0: _place_points.set_pressed_no_signal(false)
 	active_tool = id
 	if layer >= 0: session.layer = layer
-	if _tool.has("layer"): session.layer = _tool.layer
+	session.layer = maxi(session.layer, _tool.get("min_layer", 0))
 	if canvas.dim_others and old_layer != session.layer: canvas.refresh_view()
-	if session.layer != CyrmMap.COLOR: _texture_layer = session.layer
+	if not session.on_background: _texture_layer = session.layer
 	_layers[session.layer].button_pressed = true
 	var button := _tools[id]
 	button.button_pressed = true
@@ -498,7 +515,7 @@ func _choose_tool(id: String, layer := -1) -> void:
 	_say(button.tooltip_text)
 
 func _set_layer(index: int) -> void:
-	var id := active_tool if _tool.get("layer", index) == index else "brush"
+	var id := active_tool if index >= _tool.get("min_layer", 0) else "brush"
 	_choose_tool(id, index)
 
 func _pick_material(id: int) -> void:
@@ -508,7 +525,7 @@ func _pick_material(id: int) -> void:
 	canvas.grab_focus()
 
 func _reflect_ink() -> void:
-	if session.layer == CyrmMap.COLOR:
+	if session.on_background:
 		_ink.color = brush.color
 	else:
 		_materials[brush.material_id].button_pressed = true
@@ -643,6 +660,7 @@ func start_trial(cell: Vector2i = session.selected_point().get("cell", SpawnPick
 		_say("地图没有可用起点")
 		return
 	trial = SoloLevel.create(map, spawn, WeaponRegistry.enabled_ids([]))
+	trial.preview_minute = canvas.preview_minute
 	canvas.cancel()
 	_workspace.hide()
 	add_child(trial)
@@ -653,9 +671,9 @@ func start_trial(cell: Vector2i = session.selected_point().get("cell", SpawnPick
 	text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	text.add_theme_constant_override("outline_size", 5)
 	hint.add_child(text)
-	text.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
-	text.offset_top = 22
-	text.offset_bottom = 66
+	text.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
+	text.offset_top = -66
+	text.offset_bottom = -22
 
 func finish_trial() -> void:
 	if trial == null:

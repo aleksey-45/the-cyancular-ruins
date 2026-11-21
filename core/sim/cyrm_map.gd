@@ -3,7 +3,8 @@ class_name CyrmMap
 const FRONT := 0
 const SCENE := 1
 const BACK := 2
-const COLOR := 3
+const FIRST_BACKGROUND := 3
+const LAYER_COUNT := FIRST_BACKGROUND + 4
 const CELL_SIZE := 16
 const MAX_SIZE := Vector2i(1600, 1200)
 const NEUTRAL_TINT := Vector4i(4, 4, 4, 7)
@@ -12,7 +13,7 @@ const NEUTRAL_TINT := Vector4i(4, 4, 4, 7)
 static func create(size: Vector2i) -> Dictionary:
 	if not _valid_size(size): return {}
 	var layers: Array[PackedInt32Array] = []
-	for layer in 4:
+	for layer in LAYER_COUNT:
 		var cells := PackedInt32Array()
 		cells.resize(size.x * size.y)
 		layers.append(cells)
@@ -92,11 +93,11 @@ static func from_bytes(file: PackedByteArray) -> Dictionary:
 	var raw := CyrmStorage.unpack(file)
 	if raw.is_empty(): return {}
 	var map: Variant = bytes_to_var(raw)
-	if not map is Dictionary or not _valid_size(map.size) or map.layers.size() != 4: return {}
-	for layer in 4:
+	if not map is Dictionary or not _valid_size(map.size) or map.layers.size() != LAYER_COUNT: return {}
+	for layer in LAYER_COUNT:
 		var cells: PackedInt32Array = map.layers[layer]
 		if cells.size() != map.size.x * map.size.y: return {}
-		if layer == COLOR: continue
+		if layer >= FIRST_BACKGROUND: continue
 		for value in cells:
 			if value != 0 and (value < 0x1000 or value > 0xFFFFFF or not TileDefs.has_texture(tile_material(value))): return {}
 	return map

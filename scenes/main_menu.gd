@@ -20,7 +20,6 @@ func _ready() -> void:
 	UiFactory.cover(_layer, root)
 	var background := BACKGROUND.new()
 	background.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	background.color = UiFactory.C_BG
 	UiFactory.cover(root, background)
 	var title := UiFactory.label("The Cyancular Ruins", 128, UiFactory.C_ACCENT)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER

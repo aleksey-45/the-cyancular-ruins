@@ -12,6 +12,7 @@ var beams: Dictionary
 var pending_blasts: Dictionary[int, Array]
 
 var enemies: Dictionary[int, Array]
+var elapsed: float
 var terrain_changes: Dictionary[int, int] = {}
 
 func capture(combat: CombatSimulator) -> void:
@@ -26,6 +27,8 @@ func capture(combat: CombatSimulator) -> void:
 	pending_blasts = combat.pending_blasts.duplicate()
 
 func capture_environment(combat: CombatSimulator) -> void:
+	if combat.time_field:
+		elapsed = combat.time_field.elapsed
 	enemies = {}
 	for enemy in combat.enemies:
 		if not enemy.kind.elite:
@@ -63,5 +66,7 @@ func restore(combat: CombatSimulator, scope := NETWORK) -> void:
 		bullet.hit_damage = state[BulletBody.SNAP_DAMAGE]
 		bullet.direct_hit = state[BulletBody.SNAP_DIRECT_HIT]
 	if scope == WORLD:
+		if combat.time_field:
+			combat.time_field.elapsed = elapsed
 		for slot: int in enemies:
 			combat.enemies[slot].rewind_restore(enemies[slot])

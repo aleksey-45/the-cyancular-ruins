@@ -11,7 +11,7 @@ var end_color := Color("#182b49")
 
 func sample(session: MapEditSession, cell: Vector2i) -> void:
 	var value := CyrmMap.cell_at(session.map, session.layer, cell)
-	if session.layer == CyrmMap.COLOR:
+	if session.on_background:
 		color = Color.hex(value)
 	else:
 		material_id = CyrmMap.tile_material(value)
@@ -20,8 +20,8 @@ func sample(session: MapEditSession, cell: Vector2i) -> void:
 func _paint_bounds(session: MapEditSession) -> Rect2i:
 	return session.selection if session.selection.has_area() else session.bounds
 
-func _ink(layer: int) -> int:
-	return color.to_rgba32() if layer == CyrmMap.COLOR else CyrmMap.tile_value(material_id, tint)
+func _ink(background: bool) -> int:
+	return color.to_rgba32() if background else CyrmMap.tile_value(material_id, tint)
 
 func _tinted(tile: int) -> int:
 	return CyrmMap.tile_value(CyrmMap.tile_material(tile), tint)
@@ -52,8 +52,8 @@ func _paint_regions(session: MapEditSession, regions: Array[Rect2i], ink: int, r
 func stroke(path: Array[Vector2i], session: MapEditSession, shape := "brush") -> bool:
 	if path.is_empty() or session.locked[session.layer]: return false
 	var bounds := _paint_bounds(session)
-	var ink := 0 if shape == "erase" else _ink(session.layer)
-	var recolor := tint_only and session.layer != CyrmMap.COLOR and shape != "erase"
+	var ink := 0 if shape == "erase" else _ink(session.on_background)
+	var recolor := tint_only and not session.on_background and shape != "erase"
 	var regions: Array[Rect2i] = []
 	var add_stamp := func(footprint: Rect2i) -> void:
 		var rect := footprint.intersection(bounds)
@@ -91,7 +91,7 @@ func bucket(cell: Vector2i, session: MapEditSession) -> bool:
 	var stride := area.size.x
 	var root := (cell.y - area.position.y) * stride + cell.x - area.position.x
 	var old := pixels[root]
-	var ink := _tinted(old) if tint_only and session.layer != CyrmMap.COLOR else _ink(session.layer)
+	var ink := _tinted(old) if tint_only and not session.on_background else _ink(session.on_background)
 	var visited := ~old # 在工作副本中标出已经走过的格子。
 	var regions: Array[Rect2i] = []
 	var seeds := PackedInt32Array([root])
@@ -117,6 +117,6 @@ func bucket(cell: Vector2i, session: MapEditSession) -> bool:
 
 func gradient(path: Array[Vector2i], session: MapEditSession) -> bool:
 	var area := session.selection
-	if path.is_empty() or not area.has_area() or session.layer != CyrmMap.COLOR or session.locked[session.layer]: return false
+	if path.is_empty() or not area.has_area() or not session.on_background or session.locked[session.layer]: return false
 	var start := path[0]
 	return _paint_regions(session, [area], color.to_rgba32(), false, start, Vector2(path[-1] - start))

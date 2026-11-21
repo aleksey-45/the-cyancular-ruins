@@ -26,6 +26,9 @@ func run(tree: SceneTree) -> void:
 	_rewound_enemy_action(tree)
 	_rewind_window(tree)
 	_enemy_time(tree)
+	_daylight(tree)
+	if DisplayServer.get_name() != "headless":
+		await _daylight_render(tree)
 	_grain_rewards(tree)
 	_shared_rewind_history(tree)
 	_personal_rewind()
@@ -99,10 +102,12 @@ func _solo_scene(tree: SceneTree) -> void:
 	var tick := sim.tick
 	var feedback := level._view.feedback
 	var effect_time := feedback._now
+	var daylight_time := level.time_field.elapsed
 	level._view.pause.set_open(true)
 	await tree.process_frame
 	await tree.process_frame
-	expect(sim.tick == tick and feedback._now > effect_time, "pause stops simulation while the scene tree advances HUD feedback")
+	expect(sim.tick == tick and level.time_field.elapsed == daylight_time and feedback._now > effect_time,
+			"pause stops simulation and daylight while the scene tree advances HUD feedback")
 	level._view.pause.set_open(false)
 	await tree.physics_frame
 	await tree.physics_frame
@@ -165,7 +170,9 @@ func _actor_animation(tree: SceneTree) -> void:
 	var id := actor.role
 	var pose := func(part: int) -> Transform2D:
 		_draw_actor(display, actor)
-		return display._world._canvas._sprites[WorldCanvas.Pass.NORMAL][part][2]
+		var canvas := display._world._canvas
+		var batch := canvas._batches[0 if part == 0 else canvas._batch_count - 1]
+		return batch.rows[0][2]
 
 	var foot := actor.collision_rect().end.y - actor.position.y
 	_place(actor, Vector2(160, 192 - foot - 8))
@@ -1088,6 +1095,165 @@ func _enemy_time(tree: SceneTree) -> void:
 	biting.simulate_tick(ActorStep.DT)
 	expect(target.sim_hp == hp - biting.kind.contact_damage, "leaving the contact rectangle ends melee damage")
 	cleanup()
+
+func _daylight(tree: SceneTree) -> void:
+	var sky := Daylight.new()
+	for sample in [[0, "2f3643"], [280, "8d779f"], [325, "b38aa3"], [360, "c39da7"],
+			[720, "aad9ea"], [1080, "c89475"], [1440, "2f3643"]]:
+		var light := sky.set_minute(sample[0])
+		expect(light == sky.color and sky.color.to_html(false) == sample[1],
+				"the sky color also lights the world at minute %d" % sample[0])
+	var dawn := sky.set_minute(360)
+	var next := sky.set_minute(365)
+	expect(sky.set_minute(362.5).is_equal_approx(dawn.lerp(next, 0.5)), "light changes smoothly between swatches")
+	sky.free()
+	var combat := world(tree).combat
+	var field := TimeField.new(GrainAccount.new())
+	combat.time_field = field
+	var history := RewindHistory.new(combat)
+	expect(Daylight.time_text(Daylight.minute_at(0.0)) == "06:00" and Daylight.minute_at(120.0) == 360.0,
+			"a full daylight cycle returns to dawn after 120 seconds")
+	field.elapsed = 89.75
+	field.step(0, 0.125, history)
+	var before := field.elapsed
+	field.step(ActorInput.BIT_HASTE, 0.125, history)
+	expect(field.elapsed == before + 0.25 and Daylight.time_text(Daylight.minute_at(field.elapsed)) == "00:01",
+			"haste carries the sky and clock through midnight at player speed")
+	field.step(ActorInput.BIT_REWIND, 0.125, history)
+	expect(field.elapsed == before and Daylight.time_text(Daylight.minute_at(field.elapsed)) == "23:58",
+			"rewinding a hasted interval restores the exact earlier time of day")
+	field.step(0, 0.125, history)
+	expect(Daylight.time_text(Daylight.minute_at(field.elapsed)) == "00:00", "daylight resumes from the restored time")
+	cleanup()
+
+func _daylight_render(tree: SceneTree) -> void:
+	var viewport := SubViewport.new()
+	viewport.size = Vector2i(96, 72)
+	viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	tree.root.add_child(viewport)
+	var canvas := canvas_for(viewport)
+	canvas.rect(Rect2(4, 4, 16, 16), Color.WHITE, -1, false)
+	canvas.rect(Rect2(24, 4, 16, 16), Color.WHITE)
+	canvas.rect(Rect2(64, 4, 16, 16), Color(1, 0, 0, 0.5), -1, false)
+	canvas.rect(Rect2(4, 46, 88, 12), Color.GRAY, -1, false)
+	canvas.rect(Rect2(42, 33, 12, 27), Color.BLACK, -1, false)
+	canvas.submit()
+	canvas.set_daylight(Daylight.NOON)
+	await RenderingServer.frame_post_draw
+	var noon := viewport.get_texture().get_image()
+	canvas.set_daylight(0.0)
+	await RenderingServer.frame_post_draw
+	var night := viewport.get_texture().get_image()
+	var sky := night.get_pixel(60, 36)
+	expect(sky.b > 0.12 and noon.get_pixel(60, 36).b > sky.b + 0.4, "empty space shows the night and day sky")
+	expect(noon.get_pixel(60, 2).r > noon.get_pixel(60, 68).r + 0.12
+			and noon.get_pixel(48, 17).r > 0.9 and night.get_pixel(48, 17).b > 0.65,
+			"the sky grades toward the horizon behind the sun and moon")
+	var glass := night.get_pixel(70, 12)
+	var air := night.get_pixel(84, 12)
+	var white := night.get_pixel(12, 12)
+	expect(absf(glass.r - (air.r + white.r) * 0.5) < 0.02 and absf(glass.b - air.b * 0.5) < 0.02,
+			"translucent paint blends with the night sky at its authored opacity")
+	expect(night.get_pixel(12, 12).r < 0.6 and night.get_pixel(32, 12).r > 0.95,
+			"night shades the world while combat cues keep their color")
+	for minute in [280, 325]:
+		canvas.set_daylight(minute)
+		await RenderingServer.frame_post_draw
+		var dawn := viewport.get_texture().get_image()
+		expect(dawn.get_pixel(12, 12) == dawn.get_pixel(60, 0),
+				"white terrain follows the brightening sky at %s" % Daylight.time_text(minute))
+	for hour in [9, 15]:
+		canvas.set_daylight(hour * 60.0)
+		await RenderingServer.frame_post_draw
+		var image := viewport.get_texture().get_image()
+		var x := 15 if hour == 9 else 80
+		expect(image.get_pixel(x, 30).r > image.get_pixel(95 - x, 30).r + 0.3,
+				"the sun crosses from morning left to afternoon right")
+		var ground := image.get_pixel(10, 52)
+		expect(image.get_pixel(41, 52) == ground and image.get_pixel(54, 52) == ground,
+				"nearby geometry casts no shadow on either side at %02d:00" % hour)
+	await _eye_glow_render(viewport, canvas)
+	viewport.free()
+
+func _eye_glow_render(viewport: SubViewport, canvas: WorldCanvas) -> void:
+	var view := WorldView.new()
+	view.bind(canvas, Vector2(viewport.size))
+	var frame := MatchFrame.new()
+	var actor := MatchFrame.Pose.new()
+	actor.anchor = Vector2(24, 24)
+	actor.scale = Vector2.ONE
+	frame.actors.append(actor)
+	var render := func(minute: float, reflect := true) -> Image:
+		frame.day_minute = minute
+		canvas._player_material.set_shader_parameter("eye_reflection", null if reflect else 0.0)
+		view.present(frame)
+		canvas.rect(Rect2(84, 4, 8, 8), Color.WHITE, -1, false)
+		await RenderingServer.frame_post_draw
+		return viewport.get_texture().get_image()
+	var noon: Image = await render.call(Daylight.NOON)
+	expect(canvas._batch_count == 1 and canvas._batches[0].rows.size() == 1,
+			"the body and its eye lighting draw as a single sprite")
+	var night: Image = await render.call(0.0)
+	var dusk: Image = await render.call(18 * 60)
+	var morning: Image = await render.call(9 * 60, false)
+	var afternoon: Image = await render.call(15 * 60, false)
+	expect(morning.get_pixel(10, 21).b > morning.get_pixel(34, 21).b
+			and afternoon.get_pixel(10, 21).b < afternoon.get_pixel(34, 21).b,
+			"daylight on the same blue skin follows the sun across the shade atlas")
+	var eye := night.get_pixel(24, 13)
+	var day_eye := noon.get_pixel(24, 13)
+	var night_face := night.get_pixel(8, 13)
+	expect(day_eye.b > day_eye.r + 0.15 and day_eye.g > eye.g + 0.15
+			and eye.get_luminance() > night_face.get_luminance() + 0.25,
+			"blue eyes catch daylight and remain luminous on the dark face")
+	var dusk_eye := dusk.get_pixel(24, 13)
+	expect(dusk_eye.r > day_eye.r and dusk_eye.b < day_eye.b, "sunset warms the eye color")
+	var night_base: Image = await render.call(0.0, false)
+	var dusk_base: Image = await render.call(18 * 60, false)
+	var noon_base: Image = await render.call(Daylight.NOON, false)
+	var reflected := night.get_pixel(26, 13) - night_base.get_pixel(26, 13)
+	var skin := UiFactory.C_TEAM_A * Color.WHITE.lerp(night.get_pixel(88, 8), 0.5)
+	var error := reflected - skin * (reflected.get_luminance() / skin.get_luminance())
+	expect(Vector3(error.r, error.g, error.b).length() < 3.0 / 255.0,
+			"white eye light takes on the ambient tint and the skin color")
+	var light_at := func(x: int, y: int) -> float:
+		return (night.get_pixel(x, y) - night_base.get_pixel(x, y)).get_luminance()
+	expect(light_at.call(26, 13) > light_at.call(26, 9)
+			and light_at.call(22, 9) > light_at.call(21, 8) + 2.0 / 255.0,
+			"light decreases from the long side of the eye past its corners")
+	expect(light_at.call(27, 12) > light_at.call(21, 12) + 2.0 / 255.0,
+			"light from both eye volumes adds in the gap")
+	expect(light_at.call(21, 13) > light_at.call(34, 13) + 3.0 / 255.0,
+			"equidistant pixels of the same skin color reflect more when facing the eyes")
+	var body := WorldView.PLAYER_FRAMES.get_frame_texture(&"idle", 0).get_image()
+	var night_area := 0
+	var dusk_area := 0
+	var spill := 0
+	for y in body.get_height():
+		for x in body.get_width():
+			var n := night.get_pixel(x, y) - night_base.get_pixel(x, y)
+			var d := dusk.get_pixel(x, y) - dusk_base.get_pixel(x, y)
+			night_area += int(n.get_luminance() >= 3.0 / 255.0)
+			dusk_area += int(d.get_luminance() >= 3.0 / 255.0)
+			spill += int(body.get_pixel(x, y).a == 0.0 and (n.get_luminance() > 0.0 or d.get_luminance() > 0.0))
+	expect(spill == 0, "eye light stays within the body's opaque pixels")
+	var noon_lift := (noon.get_pixel(26, 13) - noon_base.get_pixel(26, 13)).get_luminance()
+	expect(noon_lift < 2.0 / 255.0 and night_area > dusk_area and dusk_area > 0,
+			"greater eye emission lights a wider part of the face")
+	var other := MatchFrame.Pose.new()
+	other.id = 2
+	other.remote = true
+	other.anchor = actor.anchor + Vector2(12, 0)
+	other.scale = actor.scale
+	frame.actors.append(other)
+	var overlap: Image = await render.call(0.0)
+	expect(overlap.get_pixel(24, 13) == night.get_pixel(12, 13) and overlap.get_pixel(36, 13) == eye,
+			"the front player's face covers the other eyes and shows its own")
+	frame.actors.pop_back()
+	actor.downed = true
+	var down: Image = await render.call(0.0)
+	expect(down.get_pixel(13, 28) == eye and down.get_pixel(24, 13) != eye,
+			"the eye glow rotates with the downed player and clears its standing position")
 
 func _grain_rewards(tree: SceneTree) -> void:
 	var parent := world(tree)

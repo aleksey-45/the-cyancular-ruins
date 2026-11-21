@@ -3,6 +3,7 @@ extends Node
 
 const TIME_REWIND := Color(0.86, 0.90, 0.95, 0.55)
 const TIME_HASTE := Color8(168, 96, 216)
+const BACKGROUND_SCROLL := [0.8, 0.6, 0.4, 0.2]
 const FILM := preload("res://core/present/time_film.gdshader")
 
 @onready var terrain_view: TerrainView = $WorldViewport/Terrain
@@ -17,6 +18,7 @@ var _world: WorldView
 @onready var _screen: PostProcess = $PostProcess
 var _radar: Minimap
 var _symbol: Label
+var _time_of_day: Label
 var _film: ShaderMaterial
 var _mode: MatchFrame.Mode
 
@@ -24,14 +26,20 @@ func mount(world: WorldView, map: Dictionary,
 		mode: MatchFrame.Mode, clock: MatchFrame.Clock, radar: bool) -> void:
 	_mode = mode
 	_world = world
-	RenderingServer.set_default_clear_color(TerrainAtlas.SKY_COLOR)
 	camera.zoom = Vector2.ONE * PlayerParams.cam_zoom
 	var viewport: SubViewport = $WorldViewport
-	terrain_view.install(map, Vector2(viewport.size) / (2.0 * camera.zoom) + Vector2.ONE * PlayerParams.cam_seam_margin)
+	var margin := Vector2(viewport.size) / (2.0 * camera.zoom) + Vector2.ONE * PlayerParams.cam_seam_margin
+	_mount_backgrounds(viewport, map, margin)
+	terrain_view.install(map, margin)
 	var size := Vector2(map.size * CyrmMap.CELL_SIZE)
 	_world.bind($WorldViewport/Canvas, size)
 	pause.mount(mode != MatchFrame.Mode.SOLO)
-	if mode != MatchFrame.Mode.SOLO:
+	if mode == MatchFrame.Mode.SOLO:
+		_time_of_day = UiFactory.label("", 40)
+		_time_of_day.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_time_of_day.add_theme_constant_override("outline_size", 6)
+		UiFactory.place(_hud, _time_of_day, Rect2(-88, 16, 176, 54), Vector2(0.5, 0))
+	else:
 		pvp_hud = PvpHud.new()
 		pvp_hud.mode = mode
 		add_child(pvp_hud)
@@ -40,6 +48,28 @@ func mount(world: WorldView, map: Dictionary,
 		add_child(_radar)
 	if clock != null:
 		_mount_watch(clock)
+
+func _mount_backgrounds(viewport: SubViewport, map: Dictionary, margin: Vector2) -> void:
+	for depth in BACKGROUND_SCROLL.size():
+		var image := TerrainAtlas.background_image(map, CyrmMap.FIRST_BACKGROUND + depth)
+		if image.is_invisible(): continue
+		var plane := Parallax2D.new()
+		plane.scroll_scale = Vector2.ONE * BACKGROUND_SCROLL[depth]
+		plane.scroll_offset = Vector2(viewport.size) * 0.5 * (Vector2.ONE - plane.scroll_scale)
+		plane.z_index = -1 - depth
+		var sprite := Sprite2D.new()
+		sprite.texture = ImageTexture.create_from_image(image)
+		sprite.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		sprite.texture_repeat = CanvasItem.TEXTURE_REPEAT_ENABLED
+		sprite.centered = false
+		sprite.region_enabled = true
+		# 纹理周期与滚动速度同比缩放，镜头绕地图一圈后仍落在同一像素。
+		sprite.scale = plane.scroll_scale * CyrmMap.CELL_SIZE
+		var border := (margin / sprite.scale).ceil()
+		sprite.region_rect = Rect2(-border, Vector2(map.size) + 2 * border)
+		sprite.position = -border * sprite.scale
+		plane.add_child(sprite)
+		viewport.add_child(plane)
 
 func present(delta: float, frame: MatchFrame) -> void:
 	if frame.hit_ratio > 0.0:
@@ -54,6 +84,7 @@ func present(delta: float, frame: MatchFrame) -> void:
 	terrain_view.present(frame.now, film)
 	var grain_target := Vector2.ZERO
 	if _mode == MatchFrame.Mode.SOLO:
+		_time_of_day.text = Daylight.time_text(frame.day_minute)
 		var clock := frame.clock
 		Sfx.pitch_mult = clampf(1.0 + TimeParams.LOAN_PITCH_RANGE * clock.loan_depth
 				+ (0.12 if clock.haste else -0.15 if clock.rewind else 0.0), 0.7, 1.8)
