@@ -146,7 +146,7 @@ Godot 官方把 `Resource` 定义为 **data containers**，并明确自定义 Re
 | P1 | 物理规则对齐（移动/碰撞/水体/砖块/命中） | P0 | `simulation_case` 全绿 + 回放一致 |
 | P2 | 武器规则对齐（8 种 + 蓄力/光束/榴弹/弹夹/拾取） | P1 | 每武器 1 条 case + `prediction_case` |
 | P3 | 视口 + PostProcess（方案 A） | P1 | 主菜单/对局启动无错；三通道出图 |
-| P4 | 着色器对齐（form_light / water / blackbird / 小 shader） | P3 | 截图对比可接受 |
+| P4 | 着色器对齐（water / blackbird / 小 shader；**form_light 不迁**） | P3 | 截图对比可接受 |
 | P5 | 视觉验收（昼夜/水体/受击/回溯） | P4 | 人工验收清单 |
 
 P1 与 P2 是玩法底座，P3–P4 可并行；P2 完成前不要删 main 的武器场景（对照用）。
@@ -165,7 +165,8 @@ P1 与 P2 是玩法底座，P3–P4 可并行；P2 完成前不要删 main 的�
 3. **武器数值（已定）**：自定义 `Resource`（`WeaponDef.tres` × 8 + `WeaponCatalog.tres`）为唯一来源；JSON 只用于用户设置/存档。
 4. **网络权威**：main 本地开火/命中与 siri 服务器结算不同；按 siri 模型重做“客户端预测 + 服务器确认”，不是搬函数。
 5. **不在范围**：录像、回溯回放（`recorder` / `rewind_tape`）、编辑器；三者另行 plan，本计划不为其预留实现。
-6. **待估**：P0 的数值/规则表完成后，才能把 4–6 周收敛到具体排期。
+6. **形体光（已定）**：不迁 main 的逐资产 ellipsoid/cylinder/SDF 模型，也不做 normal map；保留 siri 的 alpha 梯度近似，后续由用户单独调整。
+7. **待估**：P0 的数值/规则表完成后，才能把 4–6 周收敛到具体排期。
 
 ## 6. 粗略工作量
 
