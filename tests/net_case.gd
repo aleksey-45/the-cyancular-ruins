@@ -31,7 +31,8 @@ func run(tree: SceneTree) -> void:
 	_royale_capacity()
 	_tunnel_parsing()
 	_team_room()
-	await _ready_flow(tree)
+	await _ready_flow(tree, false)
+	await _ready_flow(tree, true)
 	_codec(tree)
 	_event_records()
 	_combat_events(tree)
@@ -692,12 +693,12 @@ func _team_room() -> void:
 	small.free()
 
 
-func _ready_flow(tree: SceneTree) -> void:
+func _ready_flow(tree: SceneTree, beta: bool) -> void:
 	var session := LobbySession.new()
 	tree.root.add_child(session)
 	session.code = "12345678"
 	session.mode = PvpSession.MODE_TEAM
-	session.options = RoomOptions.normalized(session.mode, {"map": "res://maps/demo.cyrm", "beta": true})
+	session.options = RoomOptions.normalized(session.mode, {"map": "res://maps/demo.cyrm", "beta": beta})
 	session.guests = {11: {"name": "A", "hue": 0.0}, 12: {"name": "B", "hue": 0.5}}
 	session.add_seat(11)
 	session.add_seat(12)

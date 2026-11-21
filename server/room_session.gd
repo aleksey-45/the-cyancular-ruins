@@ -216,7 +216,7 @@ func start_match() -> void:
 
 func _send_state(frame: Dictionary) -> void:
 	var perf_fanout := PerformanceStats.begin()
-	var accounts := world.time_economy.state_payload() if world.time_economy != null else {}
+	var accounts: Dictionary = world.time_economy.state_payload() if world.time_economy != null else {}
 	var batch: NetCodec.StateBatch
 	for role in frame["players"]:
 		var seat: Dictionary = seats[role]
@@ -247,7 +247,7 @@ func send_baselines(include_map: bool = false, only_role: int = 0) -> void:
 			"teams": world.rules.teams, "map": world.map_bytes if include_map else PackedByteArray(),
 			"sub_hp": world.terrain.get_modified(), "round_state": _with_grace(world.round_state())}
 	var frame := world.world_state()
-	var accounts := world.time_economy.state_payload() if world.time_economy != null else {}
+	var accounts: Dictionary = world.time_economy.state_payload() if world.time_economy != null else {}
 	var targets := seats.keys() if only_role == 0 else [only_role]
 	for role in targets:
 		var seat: Dictionary = seats[role]
