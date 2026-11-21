@@ -120,10 +120,11 @@ func get_binding_names(action: String) -> String:
 func set_binding(action: String, event: InputEvent) -> void:
 	if not action in InputMap.get_actions():
 		return
+	# 按保存格式重建绑定，修饰键本身也可以作为独立键位。
+	var binding: InputEvent = _make_key(event.physical_keycode) if event is InputEventKey \
+			else _make_mouse(event.button_index)
 	InputMap.action_erase_events(action)
-	var ev := event.duplicate()
-	ev.pressed = false
-	InputMap.action_add_event(action, ev)
+	InputMap.action_add_event(action, binding)
 	save()
 
 func reset_bindings() -> void:

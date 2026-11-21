@@ -145,24 +145,16 @@ func _cancel_capture() -> void:
 
 
 func _input(event: InputEvent) -> void:
-	if _capturing_action == "":
+	if _capturing_action == "" or not event.is_pressed() or event.is_echo():
 		return
-	var ev: InputEvent = null
-	if event is InputEventKey and event.pressed:
-		# Shift、Ctrl 和 Alt 单独按下时不会绑定。Esc 结束本次按键设置。
-		if event.physical_keycode in [KEY_SHIFT, KEY_CTRL, KEY_ALT, KEY_ESCAPE]:
-			if event.physical_keycode == KEY_ESCAPE:
-				_cancel_capture()
-				get_viewport().set_input_as_handled()
-			return
-		ev = event
-	elif event is InputEventMouseButton and event.pressed:
-		ev = event
-	if ev == null:
+	if event.is_action_pressed(&"ui_cancel") or (event is InputEventKey and event.physical_keycode == KEY_ESCAPE):
+		_cancel_capture()
+	elif event is InputEventKey or event is InputEventMouseButton:
+		Settings.set_binding(_capturing_action, event)
+		Sfx.play("switch")
+		_cancel_capture()
+	else:
 		return
-	Settings.set_binding(_capturing_action, ev)
-	Sfx.play("switch")
-	_cancel_capture()
 	get_viewport().set_input_as_handled()
 
 
