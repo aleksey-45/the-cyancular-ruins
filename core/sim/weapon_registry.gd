@@ -32,7 +32,7 @@ const WEAPONS := {
 	Type.M82: {"name": "重狙 M82A1", "tier": WeaponInventory.TIER_HEAVY,
 		"region": Rect2(22, 0.351734, 84, 17.6483), "sprite_offset": Vector2(24, 9),
 		"pickup_bounds": Rect2(-42, -7.5, 84, 16), "kick": 12.0, "shake": 8.0, "shake_time": 0.2,
-		"muzzle": Vector2(54, 5),
+		"muzzle": Vector2(54, 5), "guide_length": 1000.0,
 		"trigger": Trigger.RELEASE, "penalty": Penalty.AIM_OR_COOLDOWN, "move": Vector2(0.5, 0.6), "shot_sound": "shoot_heavy",
 		"cooldown": 1.2, "speed": 3750.0, "range": 2000.0, "size": 1.25,
 		"damage": 30, "impact": 1800.0, "recoil": 1200.0, "pitch": 65.0, "mag": 5, "reload": 2.6},

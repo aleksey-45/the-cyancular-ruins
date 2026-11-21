@@ -59,7 +59,8 @@ func aim_guide(actor: Player, aim: Vector2) -> PackedVector2Array:
 		return PackedVector2Array()
 	var muzzle := muzzle_pose(actor, aim)
 	if not definition.has("arc_time"):
-		return PackedVector2Array([muzzle.origin, muzzle.origin + muzzle.x * 600.0 * actor.scale.x])
+		var length := float(definition.get("guide_length", 600.0)) * actor.scale.x
+		return PackedVector2Array([muzzle.origin, muzzle.origin + muzzle.x * length])
 	var delta := ActorStep.DT
 	if actor.time_field != null and actor.time_field.is_hasting():
 		delta *= actor.time_field.player_speed_mult()
