@@ -15,12 +15,10 @@ const WATER_SURFACE_MATERIAL := 22
 
 static var _src_cache: Image
 static var _brick_cache: Dictionary = {}
-static var _tex_cache: Dictionary = {}
 
 static func clear_cache() -> void:
 	_src_cache = null
 	_brick_cache.clear()
-	_tex_cache.clear()
 
 static func source_image() -> Image:
 	if _src_cache == null:
@@ -107,33 +105,3 @@ static func tile_image(ts: int, tile: int) -> Image:
 	img.resize(ts, ts, Image.INTERPOLATE_NEAREST)
 	_brick_cache[key] = img
 	return img
-
-static func _bake_map_image(map: Dictionary, cell_px: int) -> Image:
-	var sp := maxi(1, cell_px / SUBS_PER_TEXTURE)
-	var descriptors: PackedInt32Array = map.layers[CyrmMap.SCENE]
-	var rows := descriptor_rows(descriptors)
-	var atlas := build_atlas_image(rows)
-	atlas.resize(atlas.get_width() / QUAD_TILE * sp, atlas.get_height() / QUAD_TILE * sp, Image.INTERPOLATE_NEAREST)
-	var sub_size: Vector2i = map.size
-	var out := Image.create(sub_size.x * sp, sub_size.y * sp, false, Image.FORMAT_RGBA8)
-	for i in descriptors.size():
-		var desc := descriptors[i]
-		if not rows.has(desc):
-			continue
-		var sub := Vector2i(i % sub_size.x, i / sub_size.x)
-		var quad := (sub.y % SUBS_PER_TEXTURE) * SUBS_PER_TEXTURE + sub.x % SUBS_PER_TEXTURE
-		var at := atlas_coords(rows[desc], quad) * sp
-		out.blit_rect(atlas, Rect2i(at, Vector2i.ONE * sp), sub * sp)
-	return out
-
-static func terrain_texture(path: String, cell_px: int) -> ImageTexture:
-	var bytes := CyrmMap.read_bytes(path)
-	var key := [bytes, cell_px]
-	if _tex_cache.has(key): return _tex_cache[key]
-	var map := CyrmMap.from_bytes(bytes)
-	if map.is_empty():
-		push_error("TerrainAtlas: 地图为空,无法烘背景 %s" % path)
-		var blank := Image.create(1, 1, false, Image.FORMAT_RGBA8)
-		return ImageTexture.create_from_image(blank)
-	_tex_cache[key] = ImageTexture.create_from_image(_bake_map_image(map, cell_px))
-	return _tex_cache[key]

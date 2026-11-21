@@ -1,16 +1,14 @@
 shader_type canvas_item;
 render_mode blend_premul_alpha;
 
-// 主菜单将 newfactory.cyrm 的场景图层绘制成一张背景纹理。
-// 脚本移动并旋转视野。纹理采用重复采样，视野越过地图边缘时会显示地图另一侧。
-
-
-uniform sampler2D map_tex : filter_nearest, repeat_enable;
+// 每个子格保存对应的瓦片图层，地图边缘循环采样。
+uniform sampler2D tile_index : filter_nearest, repeat_enable;
+uniform sampler2DArray tiles : filter_nearest, repeat_disable;
 uniform vec2  map_size   = vec2(150.0, 100.0);  // 地图宽高均以瓦片数表示。
 uniform float view_w_cells = 26.6667;              // 应用畸变前，窗口宽度对应的瓦片数。
 uniform float fisheye    = 0.85;
-uniform vec2  view_center = vec2(75.0, 50.0);   // 视野中心在地图中的位置，以瓦片为单位。
-uniform float rot_angle  = 0.0;                 // 以视野中心为原点的旋转角，单位为弧度。
+instance uniform vec2 view_center = vec2(0.5);          // 视野中心在整张地图中的相对位置。
+instance uniform float rot_angle = 0.0;                // 以视野中心为原点的旋转角，单位为弧度。
 uniform float breathe_amp = 0.012;              // 坐标缩放系数在 1 的两侧变化，最大偏差由该参数决定。
 uniform float aberration = 0.020;
 uniform float dim        = 0.60;                // 整幅画面的压暗程度。1 表示全黑。
@@ -26,34 +24,21 @@ vec2 rot2(vec2 v, float a) {
 }
 
 
-// 先旋转采样点并调整它到中心的距离，再将其映射到地图纹理。
-vec2 menu_sample_uv(vec2 cc, float strength) {
+vec4 bg_sample(vec2 cc, float strength) {
 	vec2 c = rot2(cc, rot_angle);
-	float r = length(c);
-	float rs = r * (1.0 + strength * r * r);
-	vec2 dir = c / max(r, 0.00001);
-	vec2 c2 = dir * rs;
-	vec2 cell = view_center + c2 * view_w_cells;
-	return cell / map_size;
-}
-
-
-vec4 map_sample(vec2 uv) {
-	vec4 texel = texture(map_tex, uv);
+	vec2 uv = view_center + c * (1.0 + strength * dot(c, c)) * view_w_cells / map_size;
+	float layer = texture(tile_index, uv).r;
+	vec2 tile_uv = fract(fract(uv) * map_size);
+	vec4 texel = texture(tiles, vec3(tile_uv, layer));
 	return vec4(texel.rgb * texel.a, texel.a);
 }
-
-vec4 bg_sample(vec2 cc) {
-	return map_sample(menu_sample_uv(cc, fisheye));
-}
-
 
 // 画面边缘的红色和蓝色通道使用不同的采样坐标，模拟镜头色差。
 vec4 bg_sample_ab(vec2 cc) {
 	float ab = aberration * smoothstep(0.22, 0.60, length(cc));
-	vec4 col = bg_sample(cc);
-	col.r = map_sample(menu_sample_uv(cc, fisheye * (1.0 + ab))).r;
-	col.b = map_sample(menu_sample_uv(cc, fisheye * (1.0 - ab))).b;
+	vec4 col = bg_sample(cc, fisheye);
+	col.r = bg_sample(cc, fisheye * (1.0 + ab)).r;
+	col.b = bg_sample(cc, fisheye * (1.0 - ab)).b;
 	return col;
 }
 
@@ -67,20 +52,17 @@ void fragment() {
 	float r = length(cc);
 
 	// 模糊使用 3×3 高斯卷积核。只有中央采样点计算各颜色通道的偏移，减小纹理采样开销。
-	vec4 scene;
-	if (blur_radius < 0.5) {
-		scene = bg_sample_ab(cc);
-	} else {
-		vec2 sp = vec2(SCREEN_PIXEL_SIZE.x, SCREEN_PIXEL_SIZE.y / aspect) * blur_radius;
-		scene = bg_sample_ab(cc) * 4.0;
-		scene += bg_sample(cc + vec2(sp.x, 0.0)) * 2.0;
-		scene += bg_sample(cc + vec2(-sp.x, 0.0)) * 2.0;
-		scene += bg_sample(cc + vec2(0.0, sp.y)) * 2.0;
-		scene += bg_sample(cc + vec2(0.0, -sp.y)) * 2.0;
-		scene += bg_sample(cc + vec2(sp.x, sp.y));
-		scene += bg_sample(cc + vec2(-sp.x, sp.y));
-		scene += bg_sample(cc + vec2(sp.x, -sp.y));
-		scene += bg_sample(cc + vec2(-sp.x, -sp.y));
+	vec4 scene = bg_sample_ab(cc);
+	if (blur_radius >= 0.5) {
+		float step_uv = SCREEN_PIXEL_SIZE.x * blur_radius;
+		scene *= 4.0;
+		for (int y = -1; y <= 1; y++) {
+			for (int x = -1; x <= 1; x++) {
+				if (x == 0 && y == 0) { continue; }
+				float weight = float((2 - abs(x)) * (2 - abs(y)));
+				scene += bg_sample(cc + vec2(float(x), float(y)) * step_uv, fisheye) * weight;
+			}
+		}
 		scene /= 16.0;
 	}
 
