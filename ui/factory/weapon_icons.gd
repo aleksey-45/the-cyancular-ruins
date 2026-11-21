@@ -1,26 +1,22 @@
 class_name WeaponIcons
 extends RefCounted
 
-# 武器选择界面根据注册表指定的图集区域生成单色图标。
-
-static var _silhouette_cache: Dictionary = {}
+static var _atlas: ImageTexture
 
 static func silhouette(type_id: int) -> Texture2D:
-	if _silhouette_cache.has(type_id):
-		return _silhouette_cache[type_id]
-	var region: Rect2 = WeaponRegistry.definition(type_id)["region"]
-	var atlas := preload("res://assets/textures/weapons.png").get_image()
-	if atlas.is_compressed():
-		atlas.decompress()
-	var img := atlas.get_region(Rect2i(region))
-	for y in img.get_height():
-		for x in img.get_width():
-			if img.get_pixel(x, y).a > 0.05:
-				img.set_pixel(x, y, Color.WHITE)
-	img.resize(img.get_width() * 3, img.get_height() * 3, Image.INTERPOLATE_NEAREST)
-	var texture := ImageTexture.create_from_image(img)
-	_silhouette_cache[type_id] = texture
-	return texture
+	if _atlas == null:
+		var image := preload("res://assets/textures/weapons.png").get_image()
+		var white := image.duplicate() as Image
+		white.fill(Color.WHITE)
+		image.blit_rect_mask(white, image, Rect2i(Vector2i.ZERO, image.get_size()), Vector2i.ZERO)
+		image.resize(image.get_width() * 3, image.get_height() * 3, Image.INTERPOLATE_NEAREST)
+		_atlas = ImageTexture.create_from_image(image)
+	var region := Rect2i(WeaponRegistry.definition(type_id).region)
+	var icon := AtlasTexture.new()
+	icon.atlas = _atlas
+	icon.region = Rect2i(region.position * 3, region.size * 3)
+	icon.filter_clip = true
+	return icon
 
 static func make_weapon_check(type_id: int, checked: bool) -> CheckButton:
 	var button := CheckButton.new()
