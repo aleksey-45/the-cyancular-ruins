@@ -1,0 +1,25 @@
+[gd_resource type="Resource" script_class="TimeConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://core/config/time_config.gd" id="1_tc"]
+
+[resource]
+script = ExtResource("1_tc")
+GRAIN_INITIAL = 1000
+GRAIN_CAP = 5000
+SHORT_WINDOW = 400.0
+SHORT_REGEN = 50.0
+LOAN_LIMIT = 100.0
+ELITE_GRAIN_DROP = 300
+COST_REWIND = 120.0
+SNAP_HZ = 20
+SNAP_SECONDS = 40.0
+REWIND_START_MULT = 3.0
+REWIND_RAMP_TIME = 0.35
+COST_HASTE = 80.0
+HASTE_PLAYER = 2.0
+HASTE_WORLD = 0.5
+LOAN_ENEMY_SPEED_BONUS = 0.5
+LOAN_PITCH_RANGE = 0.5
+LOAN_BRIGHT_RANGE = 0.35
+LOAN_ABERRATION_PX = 5.0
+ELITE_GRAIN_DELAY_TICKS = 36

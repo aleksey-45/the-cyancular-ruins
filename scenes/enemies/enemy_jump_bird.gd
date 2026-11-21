@@ -1,7 +1,7 @@
 class_name EnemyJumpBird
 extends EnemyBase
 
-const DASH_TIMEOUT := EnemyParams.JumpBird.lunge_max_dist / EnemyParams.JumpBird.lunge_speed + 0.2
+static var DASH_TIMEOUT := EnemyParams.JumpBird.lunge_max_dist / EnemyParams.JumpBird.lunge_speed + 0.2
 
 var _hop_timer: float = 0.0
 var _back_hop_cd: float = 0.0
