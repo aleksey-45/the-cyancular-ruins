@@ -9,10 +9,10 @@ const PLAYER_CLIPS := [&"idle", &"move", &"fly", &"charge", &"squat"]
 const Activity := EnemyBase.Activity
 const ENEMY_CLIPS := [&"sleeping", &"fall_asleep", &"wake_up", &"jump", &"dashing",
 	&"take_off", &"flying", &"dashing", &"run", &"run", &"disappear", &"disappear", &"appear", &"jump_backward", &"dead"]
+const CFG: PlayerConfig = preload("res://core/config/player_config.tres")
 const PLAYER_GLOW := Color(0.30, 0.62, 1.0)
 const ENEMY_GLOW := Color(1.0, 0.94, 0.86)
 const ELITE_GLOW := Color(2.0, 1.64, 0.12)
-const PULSES := {&"jump": 0.75, &"dash": 0.8, &"take_off": 0.8, &"charge": 0.9, &"hurt": -0.5}
 const EXPLOSION_FRAMES := [0.09, 0.18, 0.255, 0.33, 0.39, 0.45, 0.50, 0.55]
 const DEBRIS := {"life": 0.4, "count": 10, "spread": TAU, "speed": Vector2(0, 120),
 		"gravity": 900.0, "size": Vector2(4, 8)}
@@ -57,7 +57,21 @@ func clear_motion(id: int) -> void:
 	_motions.erase(id)
 
 func motion(id: int, kind: StringName, now: float, speed := 0.0) -> void:
-	var strength := float(PULSES[kind]) if kind != &"land" else -clampf(inverse_lerp(220.0, 900.0, speed), 0.0, 1.0)
+	var strength := 0.0
+	match kind:
+		&"land":
+			strength = -CFG.squash_land * clampf(inverse_lerp(CFG.squash_land_min_vy,
+					CFG.squash_land_ref_vy, speed), 0.0, 1.0)
+		&"jump":
+			strength = CFG.squash_jump
+		&"dash":
+			strength = CFG.squash_dash
+		&"hurt":
+			strength = -CFG.squash_hurt
+		&"take_off":
+			strength = EnemyParams.shared.squash_take_off
+		&"charge":
+			strength = EnemyParams.shared.squash_charge
 	if strength != 0.0:
 		_motions[id] = Vector2(now, strength)
 
@@ -152,8 +166,8 @@ func _actor(pose: MatchFrame.Pose, frame: MatchFrame) -> void:
 	var visual := body
 	if not (pose.downed or (pose.rewind and not pose.elite)):
 		var pulse: Vector2 = _motions.get(pose.id, Vector2.ZERO)
-		var air := minf(absf(pose.air_speed) / 700.0, 1.0) * 0.1
-		var amount := 0.06 * clampf(air + pulse.y * exp(-16.0 * (now - pulse.x)), -1.0, 1.0)
+		var air := minf(absf(pose.air_speed) / maxf(CFG.squash_air_ref_vy, 1.0), 1.0) * CFG.squash_air
+		var amount := CFG.squash_amount * clampf(air + pulse.y * exp(-CFG.squash_recover * (now - pulse.x)), -1.0, 1.0)
 		visual = visual.scaled_local(Vector2(1.0 - amount, 1.0 + amount))
 	else:
 		_motions.erase(pose.id)

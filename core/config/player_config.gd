@@ -83,6 +83,20 @@ extends Resource
 ## 脚下攀爬检测偏移(px)与攀爬时后坐力倍率。
 @export_range(0.0, 200.0, 1.0) var climb_foot_offset: float = 57.0
 @export_range(0.0, 1.0, 0.01) var climb_recoil_mult: float = 0.1
+
+@export_group("补间形变")
+## squash & stretch(实现见 WorldView 的 motion pulse):上限 0.06 = 满冲击时最少 0.94 / 最多 1.06。
+@export_range(0.0, 0.5, 0.001) var squash_amount: float = 0.06
+@export_range(0.0, 48.0, 0.01) var squash_recover: float = 16.0
+@export_range(0.0, 3.0, 0.01) var squash_jump: float = 0.75
+@export_range(0.0, 3.0, 0.01) var squash_dash: float = 0.80
+@export_range(0.0, 3.0, 0.01) var squash_hurt: float = 0.50
+## 落地形变按竖直速度插值:低于 min 不形变,高于 ref 取满。
+@export_range(0.0, 660.0, 1.0) var squash_land_min_vy: float = 220.0
+@export_range(0.0, 2700.0, 1.0) var squash_land_ref_vy: float = 900.0
+@export_range(0.0, 3.0, 0.01) var squash_land: float = 1.00
+@export_range(0.0, 3.0, 0.01) var squash_air: float = 0.10
+@export_range(0.0, 2100.0, 1.0) var squash_air_ref_vy: float = 700.0
 ## 撞到弹性面时获得的反向速度(px/s)。
 @export_range(0.0, 2000.0, 1.0) var elastic_bounce: float = 150.0
 

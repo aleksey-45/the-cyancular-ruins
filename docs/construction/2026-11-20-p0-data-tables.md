@@ -43,7 +43,7 @@ main 63 个键 vs siri 53 个键；大部分同名键数值相同，差异如下
 - 相机：`cam_lookahead_x` / `cam_lookahead_y`（siri 用 `cam_lead_x`）；
 - 冲刺：`charge_distance`（siri 用 `charge_duration` 派生，等价需同初速）；
 - 攀爬：`climb_ladder_up_speed` / `climb_ladder_down_speed` / `climb_chain_up_speed`（850 / 800 / 800；siri 是 `climb_speed=300` + `climb_vertical_mult=1.2` + `climb_foot_offset`，**两种模型**）；
-- 挤压动画：`squash_amount` / `squash_jump` / `squash_land` / `squash_land_min_vy` / `squash_land_ref_vy` / `squash_air` / `squash_air_ref_vy` / `squash_dash` / `squash_hurt` / `squash_recover`（siri 没有节点挤压，表现走 `WorldView` 的 motion pulse）；
+- 挤压动画：`squash_amount` / `squash_jump` / `squash_land` / `squash_land_min_vy` / `squash_land_ref_vy` / `squash_air` / `squash_air_ref_vy` / `squash_dash` / `squash_hurt` / `squash_recover`——已收进 `PlayerConfig.tres`，由 `WorldView` 的 motion pulse 读取（siri 没有节点挤压）。
 - 掉落：`weapon_drop_offset`。
 
 **siri 独有（8 项）**：`cam_lead_x`、`cam_seam_margin`、`charge_duration`（派生）、`climb_foot_offset`、`climb_recoil_mult`、`climb_speed`、`climb_vertical_mult`、`step_max_height`。
@@ -52,7 +52,7 @@ main 63 个键 vs siri 53 个键；大部分同名键数值相同，差异如下
 
 - 相机：把 main 的 `cam_lookahead_x/y` + `Vector2` 死区映射到 siri `match_camera`；`cam_zoom` 与 siri 视口缩放一起调，不能只改数；
 - 攀爬：main 的“梯子/铁链分速”要在 siri `Terrain.climb_speed`/`Player.step_actor` 里重新表达，不能把 850 直接填进 `climb_speed=300`；
-- 挤压：siri 无节点 squash，映射到 `WorldView` 的 motion（起跳/落地/冲刺/受击已有脉冲），不要新增 8 个常量。
+- 挤压：siri 无节点 squash，但 main 的 10 个参数已进 `PlayerConfig.tres`，`WorldView.motion()` / `_actor()` 读取；敌人 take_off/charge 脉冲读 `EnemyParams.shared.squash_*`。
 
 ## 3. 武器字段映射与数值差异
 
@@ -140,7 +140,7 @@ siri 的近似表达：
 **待办（按依赖）**：
 
 1. ~~拍板：玩家/敌人是否互相物理阻挡~~——已按 main 落地（不阻挡，只做接触伤害）；
-2. P1：`PlayerConfig.tres` 已落地（无转发层，直接 `const CFG`）；`WorldConfig.tres` / `EnemyConfig.tres` / `TimeConfig.tres` 已落地（Enemy/Time 沿用 main 的转发层，保留 `EnemyParams.xxx` / `TimeParams.xxx` 调用写法）；相机已按 main 映射；squash 丢弃；攀爬保留 siri 模型、基础速度 375（梯子≈720、铁链≈900）；
+2. P1：`PlayerConfig.tres` 已落地（无转发层，直接 `const CFG`）；`WorldConfig.tres` / `EnemyConfig.tres` / `TimeConfig.tres` 已落地（Enemy/Time 沿用 main 的转发层，保留 `EnemyParams.xxx` / `TimeParams.xxx` 调用写法）；相机已按 main 映射；squash 参数已进 `PlayerConfig`；攀爬保留 siri 模型、基础速度 375（梯子≈720、铁链≈900）；
 3. ~~P2：把 main 的 8 场景数值写入 `data/weapons/*.tres`（弓/M249 差异 + 缺失字段）~~——已落地（弓 speed 2400/mag 1/charge .75/min_speed 600/size 1.3；M249 kick 9/shake 6/shake_time .12；激光 guide_color 蓝）；
 4. P2 剩余：~~`laser_length`/`show_aim_laser`/`preview_arc`/`preview_time`/`bullet_color` 的表现层~~——`charge_arrow_pull`、预瞄直线、`bullet_color`、远端蓄力已接入；`preview_arc/preview_time` 作为数据保留（siri 用 `arc_time` 画弧）；FormLight 已用 alpha 梯度法线做成 siri 版近似（不是 main 的逐资产几何模型）；
 5. P1/P2 各加一条 `simulation_case` 覆盖上述行为差异（弓的伤害/速度断言已按新数值更新）。

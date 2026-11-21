@@ -15,6 +15,16 @@ class shared:
 	static var bird_water_damp: float = _CFG.shared_bird_water_damp
 	static var drown_interval: float = _CFG.shared_drown_interval
 	static var drown_damage: int = _CFG.shared_drown_damage
+	static var squash_amount: float = _CFG.shared_squash_amount
+	static var squash_recover: float = _CFG.shared_squash_recover
+	static var squash_take_off: float = _CFG.shared_squash_take_off
+	static var squash_charge: float = _CFG.shared_squash_charge
+	static var squash_land_min_vy: float = _CFG.shared_squash_land_min_vy
+	static var squash_land_ref_vy: float = _CFG.shared_squash_land_ref_vy
+	static var squash_land: float = _CFG.shared_squash_land
+	static var squash_hurt: float = _CFG.shared_squash_hurt
+	static var squash_air: float = _CFG.shared_squash_air
+	static var squash_air_ref_vy: float = _CFG.shared_squash_air_ref_vy
 
 class JumpBird:
 	static var wake_radius: float = _CFG.jump_bird_wake_radius
