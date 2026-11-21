@@ -330,7 +330,7 @@ func update_crouch_dash() -> void:
 	if climb_latched or in_water:
 		return
 	if not _grounded and (step_input.pressed & ActorInput.BIT_DOWN) != 0 and not over_climb_tile():
-		velocity.y = PlayerParams.charge_down_velocity
+		velocity.y = maxf(velocity.y, PlayerParams.charge_down_velocity)
 	var want_squat := _grounded and (step_input.held & ActorInput.BIT_DOWN) != 0
 	if want_squat and not is_squat:
 		is_charge = false
