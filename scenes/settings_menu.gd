@@ -104,7 +104,7 @@ func _fill_bind_grid(parent: VBoxContainer) -> void:
 		var button := UiFactory.menu_button(Settings.get_binding_names(action), Vector2(220, 72), &"BtnBinding")
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		if action == "R":
-			button.tooltip_text = "存活时换弹；单人模式倒地后重开关卡。"
+			button.tooltip_text = "存活时换弹。单人模式倒地后倒带并重开关卡。"
 		button.pressed.connect(_begin_capture.bind(action))
 		grid.add_child(button)
 		_bind_buttons[action] = button

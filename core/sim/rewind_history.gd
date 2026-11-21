@@ -21,6 +21,9 @@ func _init(combat: CombatSimulator, scope := CombatSnapshot.WORLD, seconds := Ti
 func can_rewind() -> bool:
 	return not _frames.is_empty() and (_rewound >= 0.0 or time > float(_frames[_first][TIME]))
 
+func oldest_time() -> float:
+	return time if _frames.is_empty() else float(_frames[_first][TIME])
+
 ## 同帧采样的角色共用一个检查点，各自记录这个检查点在个人时间轴上的时刻。
 func record(delta: float, sample: CombatSnapshot = null) -> CombatSnapshot:
 	_rewound = -1.0
@@ -43,7 +46,7 @@ func record(delta: float, sample: CombatSnapshot = null) -> CombatSnapshot:
 		_first = 0
 	return sample
 
-func rewind(delta: float) -> void:
+func rewind(delta: float, hit_elites := true) -> void:
 	var world := _scope == CombatSnapshot.WORLD
 	var terrain := _combat.terrain
 	if _rewound < 0.0:
@@ -53,7 +56,7 @@ func rewind(delta: float) -> void:
 			terrain.undo_changes(terrain.take_rewind_changes())
 			for bullet: BulletBody in _combat.projectiles.values():
 				bullet.rewind_hits.clear()
-	var target := maxf(_frames[_first][TIME], time - TimeParams.rewind_delta(_rewound, delta))
+	var target := maxf(oldest_time(), time - TimeParams.rewind_delta(_rewound, delta))
 	_rewound += time - target
 	time = target
 	while _frames.back()[TIME] > time:
@@ -65,5 +68,5 @@ func rewind(delta: float) -> void:
 		terrain.flush_collisions()
 	var selected: CombatSnapshot = _frames.back()[SNAPSHOT]
 	selected.restore(_combat, _scope)
-	if world:
+	if world and hit_elites:
 		_combat.hit_rewound_elites()

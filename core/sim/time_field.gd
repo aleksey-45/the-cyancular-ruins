@@ -25,7 +25,7 @@ func step_rewards() -> void:
 		_grain_due.erase(_tick)
 		grain_received.emit()
 
-func step(held: int, delta: float, history: RewindHistory) -> void:
+func step(held: int, delta: float, history: RewindHistory, record_history := true) -> void:
 	step_rewards()
 	account.regen(delta)
 	mode = Mode.NONE
@@ -42,7 +42,8 @@ func step(held: int, delta: float, history: RewindHistory) -> void:
 		history.rewind(delta)
 	else:
 		elapsed += delta * player_speed_mult()
-		history.record(delta)
+		if record_history:
+			history.record(delta)
 
 func is_rewinding() -> bool:
 	return mode == Mode.REWIND

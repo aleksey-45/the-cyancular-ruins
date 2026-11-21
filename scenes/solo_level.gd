@@ -1,11 +1,15 @@
 class_name SoloLevel
 extends MatchController
 
+const DEATH_REWIND_SECONDS := 4.0
+const MIN_DEATH_REWIND_SECONDS := 0.5
+
 var spawn_cell: Vector2i
 var enabled_weapons: Array[int]
 var time_field := TimeField.new(GrainAccount.new())
 var preview_minute := -1.0
 var _rewind: RewindHistory
+var _death_rewind_end := -1.0
 var _weapon_floors: Array[Vector2i]
 var _kills := 0
 
@@ -27,10 +31,28 @@ func _ready() -> void:
 	_bind_combat()
 	_start_single()
 
-func _unhandled_input(event: InputEvent) -> void:
-	super(event)
-	if player.sim_downed and event.is_action_pressed(&"R"):
-		restart_single.call_deferred()
+func _input(event: InputEvent) -> void:
+	var replaying := _death_rewind_end >= 0.0
+	if not replaying and (not player.sim_downed or not event.is_action_pressed(&"R")):
+		return
+	get_viewport().set_input_as_handled()
+	if not event.is_pressed():
+		return
+	# 消耗本次按键的轮询状态，避免它传入新一局。
+	for action in InputMap.get_actions():
+		if event.is_action(action):
+			Input.action_release(action)
+	if event.is_echo():
+		return
+	if not replaying:
+		var oldest := _rewind.oldest_time()
+		_death_rewind_end = _rewind.time
+		if _rewind.time - oldest >= MIN_DEATH_REWIND_SECONDS:
+			_death_rewind_end = maxf(oldest, _rewind.time - DEATH_REWIND_SECONDS)
+	elif event.is_action_pressed(&"R") or event.is_action_pressed(&"ui_cancel") \
+			or (event is InputEventKey and (event.keycode == KEY_SPACE or event.physical_keycode == KEY_SPACE)) \
+			or (event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT):
+		_death_rewind_end = _rewind.time
 
 func _bind_combat() -> void:
 	time_field.grain_received.connect(_view.watch.tremble)
@@ -56,10 +78,17 @@ func _bind_combat() -> void:
 			Sfx.play(sound))
 
 func _physics_process(delta: float) -> void:
+	if _death_rewind_end >= 0.0:
+		if _rewind.time <= _death_rewind_end:
+			restart_single()
+		else:
+			time_field.mode = TimeField.Mode.REWIND
+			_rewind.rewind(delta, false)
+		return
 	var input := controls.sample()
 	if not time_field.account.can_spend() and (Input.is_action_just_pressed(&"rewind") or Input.is_action_just_pressed(&"haste")):
 		Sfx.play("deny")
-	time_field.step(input[ActorInput.HELD], delta, _rewind)
+	time_field.step(input[ActorInput.HELD], delta, _rewind, not player.sim_downed)
 	var from := player.position
 	combat_rules.step({player.role: _input_record(input, delta)})
 	_live_step(from, player.presentation_events)
@@ -104,6 +133,8 @@ func _enemy_pose(enemy: EnemyBase, anchor: Vector2, size: Vector2, haste: bool, 
 func restart_single() -> void:
 	terrain.reset()
 	_view.terrain_view.patch(terrain.take_wall_changes())
+	_death_rewind_end = -1.0
+	controls = LocalInputSource.new()
 	time_field.mode = TimeField.Mode.NONE
 	combat_rules.clear()
 	combat_rules.clear_enemies()
