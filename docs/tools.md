@@ -21,13 +21,16 @@ godot --headless --path . res://server/server_main.tscn -- --port 7777
 
 发布包中的服务器入口见 [构建与发布](../RELEASE.md#发布包中的专用服务器)。
 
+## 数值资源
+
+世界重力与水体参数由使用方预加载 [WorldConfig 资源](../core/config/world_config.tres)。玩家、敌人和时间参数分别保存在 `core/config/` 下的自定义资源中。
+
 ## 自动加载节点
 
 Godot 根据 [project.godot](../project.godot) 的 `[autoload]` 配置，在加载主场景前添加以下节点。
 
 | 节点 | 职责 |
 |---|---|
-| [GameParameters](../core/config/game_parameters.gd) | 提供重力、瓦片尺寸和水体参数 |
 | [PerfMonitor](../core/config/perf_monitor.gd) | 根据命令行选项启用性能采样、发布统计和写入报告 |
 | [NetBus](../core/net/net_bus.gd) | 通过 GameNetworkingSockets 收发消息，分发输入、状态和事件 |
 | [NetSession](../core/net/net_session.gd) | 管理联机连接、断线重连和游戏启动的后台进程 |

@@ -1,11 +1,13 @@
 class_name SnapshotBuffer
 extends RefCounted
 
+const CFG: PlayerConfig = preload("res://core/config/player_config.tres")
+
 enum Sample { POS, VEL, SOURCE }
 enum Frame { TICK, WORLD }
 const NetPlayer := PlayerStateSchema.Network
 const KEEP := 32
-const KNOCK_DECAY := exp(-PlayerParams.player_knock_decay_rate * ActorStep.DT)
+static var KNOCK_DECAY := exp(-CFG.player_knock_decay_rate * ActorStep.DT)
 var map_px := Vector2.ZERO
 var frames: Array[Array] = []
 var latest_tick: int:

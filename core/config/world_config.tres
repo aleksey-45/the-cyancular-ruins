@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="WorldConfig" load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://core/config/world_config.gd" id="1_wc"]
+
+[resource]
+script = ExtResource("1_wc")
+gravity0 = 1600.0
+water_sway_amp = 2.0
+water_sway_speed = 1.6
+water_bullet_drag = 2.0
+water_fx_move_threshold = 40.0
+water_fx_splash_band = 20.0
+water_fx_splash_interval = 0.15
+water_fx_bubble_interval = 0.12
+water_drain_interval = 1.0
+water_recover_interval = 0.3
+water_drown_damage_interval = 1.5
+water_enter_depth = 8.0
+water_exit_depth = -2.0

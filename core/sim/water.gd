@@ -1,8 +1,8 @@
 class_name Water
 extends RefCounted
 
-const SWIM_ENTER_DEPTH := 8.0
-const SWIM_EXIT_MARGIN := 2.0
+const WCFG: WorldConfig = preload("res://core/config/world_config.tres")
+
 
 
 static func feet(bounds: Rect2) -> Vector2:
@@ -18,9 +18,9 @@ static func swim_depth(terrain: Terrain, foot: Vector2, swimming: bool) -> float
 	var depth := terrain.water_depth(foot)
 	if swimming:
 		if depth == -INF:
-			depth = terrain.water_depth(foot + Vector2(0.0, SWIM_EXIT_MARGIN)) - SWIM_EXIT_MARGIN
+			depth = terrain.water_depth(foot + Vector2(0.0, -WCFG.water_exit_depth)) + WCFG.water_exit_depth
 		return depth
-	return depth if depth >= SWIM_ENTER_DEPTH else -INF
+	return depth if depth >= WCFG.water_enter_depth else -INF
 
 
 # 阻力只作用于水中的弹丸。指数衰减使经过相同时间后的减速量不受更新次数影响。

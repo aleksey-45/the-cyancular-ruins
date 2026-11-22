@@ -1,6 +1,8 @@
 class_name MatchView
 extends Node
 
+const CFG: PlayerConfig = preload("res://core/config/player_config.tres")
+
 const TIME_REWIND := Color(0.86, 0.90, 0.95, 0.55)
 const TIME_HASTE := Color8(168, 96, 216)
 const BACKGROUND_SCROLL := [0.8, 0.6, 0.4, 0.2]
@@ -24,9 +26,9 @@ func mount(world: WorldView, map: Dictionary,
 		mode: MatchFrame.Mode, clock: MatchFrame.Clock, radar: bool) -> void:
 	_mode = mode
 	_world = world
-	camera.zoom = Vector2.ONE * PlayerParams.cam_zoom
+	camera.zoom = Vector2.ONE * CFG.cam_zoom
 	var viewport: SubViewport = $WorldViewport
-	var margin := Vector2(viewport.size) / (2.0 * camera.zoom) + Vector2.ONE * PlayerParams.cam_seam_margin
+	var margin := Vector2(viewport.size) / (2.0 * camera.zoom) + Vector2.ONE * CFG.cam_seam_margin
 	_mount_backgrounds(viewport, map, margin)
 	terrain_view.install(map, margin)
 	var size := Vector2(map.size * CyrmMap.CELL_SIZE)

@@ -11,7 +11,7 @@ const DEFAULTS := {"trigger": Trigger.PRESS, "trigger_delay": 0.0, "penalty": Pe
 	"muzzle": Vector2.ZERO, "pitch": 90.0, "recoil": 0.0,
 	"size": 1.0, "gravity": 0.0, "count": 1, "spread": 0.0, "live_cap": 0,
 	"shot_sound": "shoot", "npc_hit_sound": "hit", "projectile_region": Rect2(2, 1, 11, 4)}
-const BIRD_BOMB := {"projectile": CombatProfiles.BIRD_BOMB, "size": EnemyParams.FlyBird.bullet_size,
+static var BIRD_BOMB := {"projectile": CombatProfiles.BIRD_BOMB, "size": EnemyParams.FlyBird.bullet_size,
 	"gravity": EnemyParams.FlyBird.bullet_gravity, "range": EnemyParams.FlyBird.bullet_range,
 	"damage": EnemyParams.FlyBird.bullet_damage, "impact": -1.0, "npc_hit_sound": "",
 	"projectile_region": Rect2(28, 1, 10, 9)}

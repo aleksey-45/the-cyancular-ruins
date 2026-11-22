@@ -1,6 +1,8 @@
 class_name LocalInputSource
 extends RefCounted
 
+const CFG: PlayerConfig = preload("res://core/config/player_config.tres")
+
 const CHARGE_TAP_MS := 250
 
 var frozen := false:
@@ -18,7 +20,7 @@ var _wheel_weapon := 0
 
 static func aim_direction(origin: Vector2, facing: int, map_size: Vector2, base: Vector2,
 		zoom: float, mouse_offset: Vector2) -> Vector2:
-	var center := GridPathfinder.anchor_to_nearest(base, origin + Vector2(0, PlayerParams.cam_y_bias), map_size)
+	var center := GridPathfinder.anchor_to_nearest(base, origin + Vector2(0, CFG.cam_y_bias), map_size)
 	var direction := center + mouse_offset / zoom - origin
 	return Vector2(facing, 0.0) if direction.length_squared() < 0.0001 else direction.normalized()
 
@@ -79,7 +81,7 @@ func _drop_pressed(delta: float) -> bool:
 	if _drop_latched:
 		return false
 	_drop_hold_t += delta
-	_drop_latched = _drop_hold_t >= PlayerParams.weapon_drop_hold_time
+	_drop_latched = _drop_hold_t >= CFG.weapon_drop_hold_time
 	return _drop_latched
 
 
@@ -87,7 +89,7 @@ func _drop_pressed(delta: float) -> bool:
 func drop_hold_progress(player: Player) -> float:
 	if player.equipped == null or player.equipped.reloading:
 		return 0.0
-	return minf(_drop_hold_t / PlayerParams.weapon_drop_hold_time, 1.0)
+	return minf(_drop_hold_t / CFG.weapon_drop_hold_time, 1.0)
 
 
 func handle_event(player: Player, event: InputEvent) -> void:

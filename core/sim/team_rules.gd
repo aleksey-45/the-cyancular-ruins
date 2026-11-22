@@ -1,6 +1,8 @@
 class_name TeamRules
 extends RefCounted
 
+const CFG: PlayerConfig = preload("res://core/config/player_config.tres")
+
 # 这里集中定义组队限制、获胜分数和人数劣势时的补偿。
 # 服务器、客户端和 HUD 都使用对局开始时确定的队伍人数，以免补偿随连接状态变化。
 
@@ -57,7 +59,7 @@ static func score_bonus(team: int, counts: Dictionary) -> int:
 
 ## 通常使用玩家的默认生命值上限。人数较少的一队每少一人增加 5 点生命值上限，最多增加 20 点。
 static func max_hp(team: int, counts: Dictionary) -> int:
-	var base := PlayerParams.player_max_hp
+	var base := CFG.player_max_hp
 	if counts.is_empty() or team != disadvantaged_team(counts):
 		return base
 	return base + HP_PER_PLAYER * mini(team_difference(counts), HP_BONUS_CAP)

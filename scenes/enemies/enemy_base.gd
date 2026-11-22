@@ -1,6 +1,8 @@
 class_name EnemyBase
 extends ActorBody
 
+const WCFG: WorldConfig = preload("res://core/config/world_config.tres")
+
 # 各类敌人共用这套移动和伤害规则，行动方式由各自的脚本实现。
 
 # 关卡监听 died 信号来统计击杀数。
@@ -131,7 +133,7 @@ func simulate_tick(delta: float) -> void:
 		return
 	_turn_cooldown = maxf(_turn_cooldown - delta, 0.0)
 	if use_gravity and not _grounded:
-		velocity.y += GameParameters.gravity0 * delta
+		velocity.y += WCFG.gravity0 * delta
 	if use_gravity and _grounded:
 		velocity.x *= GROUND_FRICTION
 		if absf(velocity.x) < STOP_EPSILON:
@@ -211,13 +213,13 @@ func _apply_water(delta: float) -> void:
 	if submerged:
 		_waterproof_recover_timer = 0.0
 		_waterproof_drain_timer += delta
-		if _waterproof_drain_timer >= GameParameters.water_drain_interval:
+		if _waterproof_drain_timer >= WCFG.water_drain_interval:
 			_waterproof_drain_timer = 0.0
 			_waterproof = maxi(_waterproof - 1, 0)
 	else:
 		_waterproof_drain_timer = 0.0
 		_waterproof_recover_timer += delta
-		if _waterproof_recover_timer >= GameParameters.water_recover_interval:
+		if _waterproof_recover_timer >= WCFG.water_recover_interval:
 			_waterproof_recover_timer = 0.0
 			_waterproof = mini(_waterproof + 1, waterproof_max)
 func _begin_death() -> void:

@@ -1,5 +1,9 @@
 extends "res://tests/case.gd"
 
+const WCFG: WorldConfig = preload("res://core/config/world_config.tres")
+
+const CFG: PlayerConfig = preload("res://core/config/player_config.tres")
+
 const NEUTRAL_INPUT := [0.0, 0, 0, 0, 0, Vector2.RIGHT]
 const FORWARD_INPUT := [1.0, 0, 0, 0, 0, Vector2.RIGHT]
 
@@ -243,10 +247,10 @@ func _water(tree: SceneTree) -> void:
 	# 固定角色脚下的水深以比较两种姿势。站立时能呼吸，蹲下后头部就会没入水中。
 	var head_at_surface := 299.0
 	actor.waterproof = 1
-	step_at.call(head_at_surface, GameParameters.water_drain_interval)
+	step_at.call(head_at_surface, WCFG.water_drain_interval)
 	expect(actor.in_water and actor.waterproof == 2, "a swimmer with their head out recovers oxygen")
 	actor.set_crouched(true)
-	step_at.call(head_at_surface, GameParameters.water_drain_interval)
+	step_at.call(head_at_surface, WCFG.water_drain_interval)
 	expect(actor.waterproof == 1, "the same position drains oxygen with the crouched hull")
 
 	var sim := parent.combat
@@ -256,15 +260,15 @@ func _water(tree: SceneTree) -> void:
 		hits.append([source, damage, knock_changed]))
 	var hp := actor.sim_hp
 	actor._controls_locked = true
-	submit(actor, step_at.call(384.0, GameParameters.water_drain_interval))
+	submit(actor, step_at.call(384.0, WCFG.water_drain_interval))
 	expect(actor.sim_hp == hp and actor.waterproof == 1, "locked rounds pause water survival")
 	actor._controls_locked = false
-	submit(actor, step_at.call(384.0, GameParameters.water_drain_interval))
-	submit(actor, step_at.call(384.0, GameParameters.water_drown_damage_interval - 0.1))
+	submit(actor, step_at.call(384.0, WCFG.water_drain_interval))
+	submit(actor, step_at.call(384.0, WCFG.water_drown_damage_interval - 0.1))
 	expect(actor.waterproof == 0 and actor.sim_hp == hp, "exhausted oxygen starts the drowning interval")
 	submit(actor, step_at.call(head_at_surface, 0.2))
 	expect(actor.sim_hp == hp and actor.waterproof == 0, "surfacing stops damage before oxygen recovers")
-	submit(actor, step_at.call(384.0, GameParameters.water_drown_damage_interval - 0.1))
+	submit(actor, step_at.call(384.0, WCFG.water_drown_damage_interval - 0.1))
 	expect(actor.sim_hp == hp, "submerging again starts a fresh drowning interval")
 	var before := actor.capture_state()
 	var actions: Array = step_at.call(384.0, 0.2)
@@ -275,7 +279,7 @@ func _water(tree: SceneTree) -> void:
 	actor.motion_knock_velocity = Vector2(20.0, 10.0)
 	var velocity := actor.velocity
 	submit(actor, actions)
-	expect(actor.sim_hp == hp - PlayerParams.player_waterproof_damage and hits == [[0, PlayerParams.player_waterproof_damage, false]]
+	expect(actor.sim_hp == hp - CFG.player_waterproof_damage and hits == [[0, CFG.player_waterproof_damage, false]]
 			and actor.velocity == velocity and actor.motion_knock_velocity == Vector2(20.0, 10.0),
 			"PvP authority deducts drowning damage once without credit or knockback")
 
@@ -538,7 +542,7 @@ func _rounds(tree: SceneTree) -> void:
 	for i in 40:
 		ActorStep.step(actor, NEUTRAL_INPUT)
 		if not actor.motion_contacts.is_empty(): break
-	expect(not actor.motion_contacts.is_empty() and is_equal_approx(actor.velocity.y, -PlayerParams.elastic_bounce),
+	expect(not actor.motion_contacts.is_empty() and is_equal_approx(actor.velocity.y, -CFG.elastic_bounce),
 			"actor bounces from elastic RID-backed terrain")
 	cleanup()
 	parent = world_with_walls(tree, 16, 16, {})
@@ -1548,7 +1552,7 @@ func _step_up(tree: SceneTree) -> void:
 		cleanup()
 		var parent := _step_world(tree, height)
 		var mover := player(parent, 1)
-		mover.gravity = GameParameters.gravity0
+		mover.gravity = WCFG.gravity0
 		mover.collision_layer = 0
 		mover.collision_mask = CollisionWorld.LAYER_TERRAIN
 		mover.position = Vector2(400, 384 - 57)
@@ -1564,7 +1568,7 @@ func _step_up(tree: SceneTree) -> void:
 	cleanup()
 	var too_high := _step_world(tree, 80)
 	var blocked := player(too_high, 1)
-	blocked.gravity = GameParameters.gravity0
+	blocked.gravity = WCFG.gravity0
 	blocked.collision_layer = 0
 	blocked.collision_mask = CollisionWorld.LAYER_TERRAIN
 	blocked.position = Vector2(400, 384 - 57)
@@ -1576,7 +1580,7 @@ func _step_up(tree: SceneTree) -> void:
 	cleanup()
 	var low := _step_world(tree, 16, true)
 	var ceiling_mover := player(low, 1)
-	ceiling_mover.gravity = GameParameters.gravity0
+	ceiling_mover.gravity = WCFG.gravity0
 	ceiling_mover.collision_layer = 0
 	ceiling_mover.collision_mask = CollisionWorld.LAYER_TERRAIN
 	ceiling_mover.position = Vector2(400, 384 - 57)
@@ -1588,7 +1592,7 @@ func _step_up(tree: SceneTree) -> void:
 	cleanup()
 	var dynamic := _step_world(tree, 16)
 	var runner := player(dynamic, 1)
-	runner.gravity = GameParameters.gravity0
+	runner.gravity = WCFG.gravity0
 	runner.collision_layer = 0
 	runner.collision_mask = CollisionWorld.LAYER_TERRAIN | CollisionWorld.LAYER_TEAM_A
 	runner.position = Vector2(400, 384 - 57)
@@ -1614,7 +1618,7 @@ func _step_overhang(tree: SceneTree) -> void:
 		return sy >= 24 or sx < 12 and (sy >= 23 or sy == 15))
 	var mover := player(parent)
 	_place(mover, Vector2(_terrain.map_size.x - 36.5, 326.999))
-	mover.velocity.x = PlayerParams.move_speed
+	mover.velocity.x = CFG.move_speed
 	mover._grounded = true
 	var x := mover.position.x
 	ActorStep.step(mover, FORWARD_INPUT)
@@ -1628,7 +1632,7 @@ func _step_stairs(tree: SceneTree) -> void:
 	var mover := player(parent)
 	_place(mover, Vector2(475.5, 326.999))
 	mover.personal_haste_mult = 3.0
-	mover.velocity.x = PlayerParams.move_speed * mover.personal_haste_mult
+	mover.velocity.x = CFG.move_speed * mover.personal_haste_mult
 	mover._grounded = true
 	ActorStep.step(mover, FORWARD_INPUT)
 	expect(absf(mover.position.y - 311.0) < 0.1 and mover._grounded and mover.velocity.x > 0.0,
@@ -1873,17 +1877,17 @@ func _camera(tree: SceneTree) -> void:
 	parent.add_child(target)
 	target.position = Vector2(300, 200)
 	cam.advance(1.0 / 60.0, target.position, _terrain.map_size)
-	var bias := Vector2(0.0, PlayerParams.cam_y_bias)
+	var bias := Vector2(0.0, CFG.cam_y_bias)
 	expect(cam.base_position.is_equal_approx(Vector2(300, 200) + bias),
 			"the first bind initializes the base position with the y bias")
 	var leading := MatchCamera.new()
 	parent.add_child(leading)
-	leading.advance(ActorStep.DT, target.position, _terrain.map_size, PlayerParams.move_speed * 0.5)
+	leading.advance(ActorStep.DT, target.position, _terrain.map_size, CFG.move_speed * 0.5)
 	expect(leading.base_position.is_equal_approx(target.position + bias + Vector2(50, 0)),
 			"half running speed leads the player by fifty world pixels")
 	leading = MatchCamera.new()
 	parent.add_child(leading)
-	leading.advance(ActorStep.DT, target.position, _terrain.map_size, -PlayerParams.charge_velocity)
+	leading.advance(ActorStep.DT, target.position, _terrain.map_size, -CFG.charge_velocity)
 	expect(leading.base_position.is_equal_approx(target.position + bias + Vector2(-100, 0)),
 			"a leftward dash caps the camera lead at one hundred world pixels")
 	var before_stop := leading.base_position.x
@@ -1891,7 +1895,7 @@ func _camera(tree: SceneTree) -> void:
 	expect(leading.base_position.x > before_stop and leading.base_position.x < target.position.x,
 			"stopping eases the camera back toward the player")
 	# 先让目标在摄像机的跟随阈值以内移动，然后越过阈值。
-	target.position += Vector2(PlayerParams.cam_deadzone - 1.0, 0.0)
+	target.position += Vector2(CFG.cam_deadzone - 1.0, 0.0)
 	cam.advance(1.0 / 60.0, target.position, _terrain.map_size)
 	var settled: Vector2 = cam.base_position
 	expect(settled.x < 301.0, "a target inside the deadzone does not move the camera")
@@ -1914,7 +1918,7 @@ func _camera(tree: SceneTree) -> void:
 	cam._shake_dur = 0.0
 	cam._shake_offset = Vector2.ZERO
 	target.position = Vector2(_terrain.map_size.x - 4.0, 200)
-	cam.base_position = Vector2(4.0, 200 + PlayerParams.cam_y_bias)
+	cam.base_position = Vector2(4.0, 200 + CFG.cam_y_bias)
 	cam.advance(1.0 / 60.0, target.position, _terrain.map_size)
 	expect(cam.base_position.distance_to(target.position + bias) < 32.0,
 			"the camera moves into the target's copy across the seam")

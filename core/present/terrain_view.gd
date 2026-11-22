@@ -1,6 +1,8 @@
 class_name TerrainView
 extends Node2D
 
+const WCFG: WorldConfig = preload("res://core/config/world_config.tres")
+
 const SUB := CyrmMap.CELL_SIZE
 const ATLAS_SIDE := TerrainAtlas.SUBS_PER_TEXTURE
 
@@ -34,8 +36,8 @@ func install(map: Dictionary, margin: Vector2) -> void:
 	_wall_film.shader = preload("res://core/present/time_film.gdshader")
 	_water_material.shader = preload("res://core/present/water_current.gdshader")
 	_water_material.set_shader_parameter("map_size", Vector2(_span * SUB))
-	_water_material.set_shader_parameter("wave_speed", GameParameters.water_sway_speed)
-	_water_material.set_shader_parameter("wave_amplitude", GameParameters.water_sway_amp)
+	_water_material.set_shader_parameter("wave_speed", WCFG.water_sway_speed)
+	_water_material.set_shader_parameter("wave_amplitude", WCFG.water_sway_amp)
 	_water.material = _water_material
 	_wall.tile_set = TerrainAtlas.make_wall_tileset(_wall_rows)
 	_water.tile_set = TerrainAtlas.make_wall_tileset(water_rows)
@@ -82,7 +84,7 @@ func _add_water(rows: Dictionary) -> void:
 		var quad := cell % ATLAS_SIDE
 		var atlas := TerrainAtlas.atlas_coords(rows[body], quad.y * ATLAS_SIDE + quad.x)
 		var bounds := Rect2(Vector2(cell), Vector2.ONE)
-		if surface: bounds = bounds.grow_individual(0, GameParameters.water_sway_amp / SUB, 0, 0)
+		if surface: bounds = bounds.grow_individual(0, WCFG.water_sway_amp / SUB, 0, 0)
 		var copies := GridPathfinder.seam_copy_range(bounds, Vector2(_span), _margin / SUB)
 		for y in range(copies.position.y, copies.end.y):
 			for x in range(copies.position.x, copies.end.x):

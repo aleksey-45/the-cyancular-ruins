@@ -1,6 +1,10 @@
 class_name Player
 extends ActorBody
 
+const WCFG: WorldConfig = preload("res://core/config/world_config.tres")
+
+const CFG: PlayerConfig = preload("res://core/config/player_config.tres")
+
 # 玩家在固定模拟帧内处理移动、武器与生命状态。
 
 const STATE_LOCK_TIME := 0.15
@@ -10,7 +14,7 @@ const FLY := 2
 const DASH := 3
 const SQUAT := 4
 
-var gravity := GameParameters.gravity0
+var gravity := WCFG.gravity0
 var coyote_timer := 0.0
 var jump_buffer_timer := 0.0
 var charge_timer := 0.0
@@ -32,10 +36,10 @@ var role := 0
 var team := 0
 var shot_serial := 0
 var state := 0
-var waterproof := PlayerParams.player_waterproof_max
-var max_waterproof := PlayerParams.player_waterproof_max
-var sim_hp := PlayerParams.player_max_hp
-var sim_max_hp := PlayerParams.player_max_hp
+var waterproof := CFG.player_waterproof_max
+var max_waterproof := CFG.player_waterproof_max
+var sim_hp := CFG.player_max_hp
+var sim_max_hp := CFG.player_max_hp
 var personal_haste_mult := 1.0
 var facing_direction := 1
 var motion_knock_velocity := Vector2.ZERO
@@ -62,8 +66,8 @@ var last_hit_tick := 0
 
 func _init(match_sim: CombatSimulator, player_role: int) -> void:
 	role = player_role
-	var shape := CollisionWorld.rectangle(PlayerParams.standing_hull.size)
-	super(match_sim, Vector2.ZERO, PlayerParams.body_scale, shape, CollisionWorld.LAYER_TEAM_A,
+	var shape := CollisionWorld.rectangle(CFG.standing_hull.size)
+	super(match_sim, Vector2.ZERO, CFG.body_scale, shape, CollisionWorld.LAYER_TEAM_A,
 			CollisionWorld.LAYER_TERRAIN | CollisionWorld.LAYER_ENEMY)
 	weapons.feedback.connect(_weapon_feedback)
 	for slot in range(1, COLLISION_SLOTS):
@@ -110,7 +114,7 @@ func _try_step_up(start: Transform2D, travel: Vector2) -> bool:
 	var foot := collision_rect().end.y
 	var edge := _axis_motion.get_collision_point().x + direction * margin
 	# 射线要从墙壁内侧向下检测，才能找到台阶上表面。墙太高时，射线从墙内发出，无法找到可站立的表面。
-	var hit := terrain.physics.ray_hit(Vector2(edge, foot - PlayerParams.step_max_height - margin),
+	var hit := terrain.physics.ray_hit(Vector2(edge, foot - CFG.step_max_height - margin),
 			Vector2(edge, foot), CollisionWorld.LAYER_TERRAIN, true)
 	if hit.is_empty() or hit["normal"] != Vector2.UP:
 		return false
@@ -132,7 +136,7 @@ func _try_step_up(start: Transform2D, travel: Vector2) -> bool:
 		return false
 	pose.origin += _step_motion.get_travel()
 	var rise := start.origin.y - pose.origin.y
-	if rise <= margin or rise > PlayerParams.step_max_height + margin \
+	if rise <= margin or rise > CFG.step_max_height + margin \
 			or (pose.origin.x - start.origin.x - _axis_motion.get_travel().x) * direction <= 0.001:
 		return false
 	_record_contact(_step_motion)
@@ -156,7 +160,7 @@ func _move_actor(delta: float) -> void:
 	if blocked.y != 0.0:
 		velocity.y = 0.0
 		motion_knock_velocity.y = 0.0
-	motion_knock_velocity *= exp(-PlayerParams.player_knock_decay_rate * delta)
+	motion_knock_velocity *= exp(-CFG.player_knock_decay_rate * delta)
 	if not sim_downed:
 		slide_reactions(incoming)
 	var size := terrain.map_size
@@ -164,8 +168,8 @@ func _move_actor(delta: float) -> void:
 	sync_collision_geometry()
 
 func brake(delta: float) -> void:
-	velocity.x = MathUtil.approach(velocity.x, 0.0, PlayerParams.brake_ground if _grounded else PlayerParams.brake_air, delta)
-	if absf(velocity.x) < PlayerParams.stop_snap:
+	velocity.x = MathUtil.approach(velocity.x, 0.0, CFG.brake_ground if _grounded else CFG.brake_air, delta)
+	if absf(velocity.x) < CFG.stop_snap:
 		velocity.x = 0.0
 
 ## 在地图另一侧设置碰撞形状时，需要把世界坐标偏移转换成物理体的局部坐标。
@@ -189,7 +193,7 @@ func collision_rect() -> Rect2:
 	return transform * _active_hull()
 
 func _active_hull() -> Rect2:
-	return PlayerParams.crouched_hull if is_squat or sim_downed else PlayerParams.standing_hull
+	return CFG.crouched_hull if is_squat or sim_downed else CFG.standing_hull
 
 func set_crouched(crouched: bool) -> void:
 	if crouched == is_squat:
@@ -228,15 +232,15 @@ func cancel_jump_state() -> void:
 
 func update_swim(delta: float, mult: Vector2) -> void:
 	var tm := _speed_mult
-	var target := step_input.axis * PlayerParams.player_swim_speed * mult.x * tm
-	velocity.x = MathUtil.approach(velocity.x, target, PlayerParams.player_swim_accel, delta)
-	velocity.y = (PlayerParams.player_swim_up if (step_input.held & ActorInput.BIT_UP) != 0 else PlayerParams.player_swim_down) * tm
+	var target := step_input.axis * CFG.player_swim_speed * mult.x * tm
+	velocity.x = MathUtil.approach(velocity.x, target, CFG.player_swim_accel, delta)
+	velocity.y = (CFG.player_swim_up if (step_input.held & ActorInput.BIT_UP) != 0 else CFG.player_swim_down) * tm
 
 func over_climb_tile() -> bool:
 	if terrain.empty():
 		return false
 	return terrain.climb_speed(terrain.material_at(
-			terrain.cell(position + Vector2(0, PlayerParams.climb_foot_offset)))) > 0.0 \
+			terrain.cell(position + Vector2(0, CFG.climb_foot_offset)))) > 0.0 \
 		or terrain.climb_speed(terrain.material_at(terrain.cell(position))) > 0.0
 
 func ladder_top(foot: Vector2i) -> bool:
@@ -249,7 +253,7 @@ func update_climb(delta: float, mult: Vector2) -> void:
 	if terrain.empty() or is_squat:
 		climb_latched = false
 		return
-	var foot := terrain.cell(position + Vector2(0, PlayerParams.climb_foot_offset))
+	var foot := terrain.cell(position + Vector2(0, CFG.climb_foot_offset))
 	var fv := terrain.material_at(foot)
 	var cv := terrain.material_at(terrain.cell(position))
 	var ft := fv
@@ -266,12 +270,12 @@ func update_climb(delta: float, mult: Vector2) -> void:
 	var tm := _speed_mult
 	if step_input.vertical_axis < 0.0:
 		if foot_channel or not ladder_top(foot):
-			var speed := PlayerParams.climb_speed * maxf(fs, cs) * PlayerParams.climb_vertical_mult * mult.y * tm
+			var speed := CFG.climb_speed * maxf(fs, cs) * CFG.climb_vertical_mult * mult.y * tm
 			velocity.y = step_input.vertical_axis * speed
 			return
 		if (step_input.pressed & ActorInput.BIT_UP) != 0:
 			climb_latched = false
-			velocity.y = PlayerParams.jump_velocity * mult.y
+			velocity.y = CFG.jump_velocity * mult.y
 			cancel_jump_state()
 			return
 		velocity.y = 0.0
@@ -281,7 +285,7 @@ func update_climb(delta: float, mult: Vector2) -> void:
 		if descent <= 0.0:
 			climb_latched = false
 			return
-		velocity.y = step_input.vertical_axis * PlayerParams.climb_speed * descent * PlayerParams.climb_vertical_mult * mult.y * tm
+		velocity.y = step_input.vertical_axis * CFG.climb_speed * descent * CFG.climb_vertical_mult * mult.y * tm
 		return
 	velocity.y = 0.0
 
@@ -291,13 +295,13 @@ func update_waterproof(delta: float, submerged: bool) -> void:
 		_waterproof_timer = 0.0
 	if submerged and waterproof == 0:
 		_waterproof_drown_timer += delta
-		if _waterproof_drown_timer >= GameParameters.water_drown_damage_interval:
+		if _waterproof_drown_timer >= WCFG.water_drown_damage_interval:
 			_waterproof_drown_timer = 0.0
-			combat_requests.append({"kind": "drown", "pos": position, "damage": PlayerParams.player_waterproof_damage})
+			combat_requests.append({"kind": "drown", "pos": position, "damage": CFG.player_waterproof_damage})
 		return
 	_waterproof_drown_timer = 0.0
 	_waterproof_timer += delta
-	if _waterproof_timer >= (GameParameters.water_drain_interval if submerged else GameParameters.water_recover_interval):
+	if _waterproof_timer >= (WCFG.water_drain_interval if submerged else WCFG.water_recover_interval):
 		_waterproof_timer = 0.0
 		waterproof = maxi(waterproof - 1, 0) if submerged else mini(waterproof + 1, max_waterproof)
 
@@ -305,39 +309,39 @@ func update_vertical(delta: float, latched: bool, mult: Vector2) -> void:
 	if latched or in_water:
 		return
 	if _grounded:
-		coyote_timer = PlayerParams.coyote_time
+		coyote_timer = CFG.coyote_time
 	else:
-		var grav_mult := PlayerParams.charge_air_gravity_mult if is_charge else 1.0
+		var grav_mult := CFG.charge_air_gravity_mult if is_charge else 1.0
 		velocity.y += gravity * grav_mult * delta
 		coyote_timer = maxf(coyote_timer - delta, 0.0)
 	if (step_input.pressed & ActorInput.BIT_UP) != 0:
-		jump_buffer_timer = PlayerParams.jump_buffer_time
+		jump_buffer_timer = CFG.jump_buffer_time
 	else:
 		jump_buffer_timer = maxf(jump_buffer_timer - delta, 0.0)
 	if jump_buffer_timer > 0.0 and (_grounded or coyote_timer > 0.0) and not is_squat:
 		if is_charge:
 			cancel_charge()
-		velocity.y = PlayerParams.jump_velocity * mult.y
+		velocity.y = CFG.jump_velocity * mult.y
 		jump_buffer_timer = 0.0
 		coyote_timer = 0.0
 		jump_cut_applied = false
 		presentation_events.append({"kind": "jump"})
 	if not jump_cut_applied and (step_input.released & ActorInput.BIT_UP) != 0 and velocity.y < 0.0:
-		velocity.y *= PlayerParams.jump_cut_factor
+		velocity.y *= CFG.jump_cut_factor
 		jump_cut_applied = true
 
 func update_crouch_dash() -> void:
 	if climb_latched or in_water:
 		return
 	if not _grounded and (step_input.pressed & ActorInput.BIT_DOWN) != 0 and not over_climb_tile():
-		velocity.y = maxf(velocity.y, PlayerParams.charge_down_velocity)
+		velocity.y = maxf(velocity.y, CFG.charge_down_velocity)
 	var want_squat := _grounded and (step_input.held & ActorInput.BIT_DOWN) != 0
 	if want_squat and not is_squat:
 		is_charge = false
 	set_crouched(want_squat)
 	if not is_charge and not is_squat and step_input.charge_direction != 0:
 		is_charge = true
-		charge_timer = PlayerParams.charge_duration
+		charge_timer = CFG.charge_distance / maxf(CFG.charge_velocity, 1.0)
 		facing_direction = step_input.charge_direction
 		presentation_events.append({"kind": "dash"})
 
@@ -345,15 +349,15 @@ func update_horizontal(delta: float, mult: Vector2) -> void:
 	if in_water:
 		return
 	if is_charge:
-		velocity.x = PlayerParams.charge_velocity * facing_direction * mult.x
+		velocity.x = CFG.charge_velocity * facing_direction * mult.x
 		charge_timer -= delta
 		if charge_timer <= 0.0:
 			is_charge = false
 	else:
-		var speed := (PlayerParams.crouch_walk_speed if is_squat else PlayerParams.move_speed) * _speed_mult
+		var speed := (CFG.crouch_walk_speed if is_squat else CFG.move_speed) * _speed_mult
 		var target := step_input.axis * speed * mult.x
 		if step_input.axis != 0.0:
-			velocity.x = MathUtil.approach(velocity.x, target, PlayerParams.accel_ground if _grounded else PlayerParams.accel_air, delta)
+			velocity.x = MathUtil.approach(velocity.x, target, CFG.accel_ground if _grounded else CFG.accel_air, delta)
 		else:
 			brake(delta)
 
@@ -395,14 +399,14 @@ func slide_reactions(incoming: Vector2) -> void:
 			continue
 		var point := GridPathfinder.wrap_to_range((contact[Contact.POINT] as Vector2) - normal, terrain.map_size)
 		if terrain.elastic_alive(point):
-			velocity = velocity.slide(normal) + normal * PlayerParams.elastic_bounce
+			velocity = velocity.slide(normal) + normal * CFG.elastic_bounce
 			break
 
 func _simulate_motion(delta: float, mult: Vector2, time_mult: float) -> void:
 	_speed_mult = time_mult
 	if sim_downed:
 		if _grounded:
-			coyote_timer = PlayerParams.coyote_time
+			coyote_timer = CFG.coyote_time
 		else:
 			velocity.y += gravity * delta
 		brake(delta)
@@ -442,7 +446,7 @@ func apply_recoil(push: float) -> void:
 	if is_squat:
 		return
 	if climb_latched:
-		push *= PlayerParams.climb_recoil_mult
+		push *= CFG.climb_recoil_mult
 	var v := velocity
 	v.x -= facing_direction * push
 	velocity = v
@@ -454,7 +458,7 @@ func apply_impulse(source: Vector2, force: float) -> void:
 	else:
 		away = away.normalized()
 	if force < 0.0:
-		velocity = Vector2(away.x * PlayerParams.player_hit_knockback, away.y * PlayerParams.player_hit_knockback - PlayerParams.player_hit_knockback_up)
+		velocity = Vector2(away.x * CFG.player_hit_knockback, away.y * CFG.player_hit_knockback - CFG.player_hit_knockback_up)
 	else:
 		motion_knock_velocity = away * force
 
@@ -476,7 +480,7 @@ func simulate_hit(source: Vector2, damage: int, force: float) -> bool:
 func apply_hit_health(hp: int) -> bool:
 	cancel_charge()
 	sim_hp = hp
-	sim_iframes = PlayerParams.iframes_time
+	sim_iframes = CFG.iframes_time
 	return sim_hp <= 0 and force_down()
 
 func apply_authoritative_state(hp: int, wp: int, down: bool) -> void:

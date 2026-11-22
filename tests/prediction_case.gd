@@ -1,5 +1,7 @@
 extends "res://tests/case.gd"
 
+const CFG: PlayerConfig = preload("res://core/config/player_config.tres")
+
 const NetPlayer := PlayerStateSchema.Network
 
 func run(tree: SceneTree) -> void:
@@ -614,7 +616,7 @@ func _aligned_step_replay(tree: SceneTree) -> void:
 		var parent := _aligned_step_world(tree, height, false)
 		var runner := player(parent)
 		runner.position = Vector2(475.5, 326.999)
-		runner.velocity.x = PlayerParams.move_speed
+		runner.velocity.x = CFG.move_speed
 		runner._grounded = true
 		runner.sync_collision_geometry()
 		runner.input_buffer.restore_authority(1, 0, [1, 1, 100, 1.0, 0, Vector2.RIGHT])
@@ -731,7 +733,7 @@ func _terrain_replay(tree: SceneTree, with_state: bool) -> void:
 		return y == 24 or (x == WALL_X and y >= 10 and y < 24))
 	var actor := player(parent)
 	actor.position = Vector2(475.5, 326.999)
-	actor.velocity = Vector2(PlayerParams.move_speed, 0.0)
+	actor.velocity = Vector2(CFG.move_speed, 0.0)
 	actor.input_buffer.restore_authority(1, 0, [1, 1, BREAK_TICK - 2, 1.0, 0, Vector2.RIGHT])
 	actor.sync_collision_geometry()
 	var client := detached_client(actor)

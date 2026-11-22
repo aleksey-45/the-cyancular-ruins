@@ -1,6 +1,8 @@
 class_name ShotRules
 extends RefCounted
 
+const WCFG: WorldConfig = preload("res://core/config/world_config.tres")
+
 static func prepare(terrain: Terrain, shot: Dictionary, spec: Dictionary) -> void:
 	var pos: Vector2 = shot["pos"]
 	var dir: Vector2 = shot["dir"]
@@ -67,8 +69,8 @@ static func projectile_velocities(role: int, shot: Dictionary, spec: Dictionary)
 	return velocities
 
 static func flight_velocity(terrain: Terrain, at: Vector2, velocity: Vector2, gravity: float, delta: float) -> Vector2:
-	velocity.y += GameParameters.gravity0 * gravity * delta
-	return velocity * Water.bullet_drag_factor(terrain.water(at), GameParameters.water_bullet_drag, delta)
+	velocity.y += WCFG.gravity0 * gravity * delta
+	return velocity * Water.bullet_drag_factor(terrain.water(at), WCFG.water_bullet_drag, delta)
 
 static func trace_arc(terrain: Terrain, at: Vector2, velocity: Vector2, spec: Dictionary,
 		delta: float, duration: float) -> PackedVector2Array:

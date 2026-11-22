@@ -1,6 +1,8 @@
 class_name MatchCamera
 extends Camera2D
 
+const CFG: PlayerConfig = preload("res://core/config/player_config.tres")
+
 const SHAKE_EPS := 0.0001
 
 var _shake_amt: float = 0.0
@@ -19,12 +21,12 @@ func fire(weapon: int) -> void:
 func blast(distance: float, radius: float) -> void:
 	var reach := maxf(radius * 2.5, 400.0)
 	if distance <= reach:
-		shake(PlayerParams.explosion_cam_shake * (1.0 - distance / reach), PlayerParams.explosion_cam_shake_time)
+		shake(CFG.explosion_cam_shake * (1.0 - distance / reach), CFG.explosion_cam_shake_time)
 
 func hit(ratio: float) -> void:
 	if ratio > 0.0:
-		shake(PlayerParams.hit_cam_shake * (ratio / 0.25) if ratio > 0.25 else 6.0,
-				PlayerParams.hit_cam_shake_time if ratio > 0.25 else 0.15)
+		shake(CFG.hit_cam_shake * (ratio / 0.25) if ratio > 0.25 else 6.0,
+				CFG.hit_cam_shake_time if ratio > 0.25 else 0.15)
 
 ## 新抖动至少与当前衰减后的抖动一样强时，才更新幅度。新抖动与原抖动的剩余时间取较长者。
 func shake(amount: float, duration: float) -> void:
@@ -42,8 +44,8 @@ func shake(amount: float, duration: float) -> void:
 
 
 func advance(delta: float, position_to_follow: Vector2, size: Vector2, speed_x: float = 0.0) -> void:
-	var run_fraction := clampf(speed_x / PlayerParams.move_speed, -1.0, 1.0)
-	var desired := position_to_follow + Vector2(run_fraction * PlayerParams.cam_lead_x, PlayerParams.cam_y_bias)
+	var run_fraction := clampf(speed_x / CFG.move_speed, -1.0, 1.0)
+	var desired := position_to_follow + Vector2(run_fraction * CFG.cam_lead_x, CFG.cam_y_bias)
 	if not _bound:
 		base_position = desired
 		_bound = true
@@ -51,14 +53,14 @@ func advance(delta: float, position_to_follow: Vector2, size: Vector2, speed_x: 
 		# 地图边缘相接。摄像机先移到离跟随目标最近的一侧，避免沿整个地图宽度或高度移动。
 		base_position = GridPathfinder.anchor_to_nearest(base_position, desired, size)
 		var dx := desired.x - base_position.x
-		if absf(dx) > PlayerParams.cam_deadzone:
-			base_position.x += (dx - signf(dx) * PlayerParams.cam_deadzone) \
-					* (1.0 - exp(-PlayerParams.cam_smooth_x * delta))
+		if absf(dx) > CFG.cam_deadzone:
+			base_position.x += (dx - signf(dx) * CFG.cam_deadzone) \
+					* (1.0 - exp(-CFG.cam_smooth_x * delta))
 		var dy := desired.y - base_position.y
-		if absf(dy) > PlayerParams.cam_deadzone:
-			base_position.y += (dy - signf(dy) * PlayerParams.cam_deadzone) \
-					* (1.0 - exp(-PlayerParams.cam_smooth_y * delta))
-	var margin := Vector2.ONE * PlayerParams.cam_seam_margin
+		if absf(dy) > CFG.cam_deadzone:
+			base_position.y += (dy - signf(dy) * CFG.cam_deadzone) \
+					* (1.0 - exp(-CFG.cam_smooth_y * delta))
+	var margin := Vector2.ONE * CFG.cam_seam_margin
 	# 平滑跟随只使用没有抖动的摄像机位置，抖动偏移只影响本帧的画面。
 	base_position = base_position.clamp(-margin, size + margin)
 	_shake_offset = Vector2.ZERO
