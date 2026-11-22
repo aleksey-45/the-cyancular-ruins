@@ -1,0 +1,60 @@
+[gd_resource type="Resource" script_class="WeaponDef" format=3]
+
+[ext_resource type="Script" path="res://core/config/weapon_def.gd" id="1_kigar"]
+
+[resource]
+script = ExtResource("1_kigar")
+weapon_id = 6
+data = {
+"attack": 1,
+"bounces": 5,
+"cooldown": 0.5,
+"count": 1,
+"damage": 6,
+"gravity": 0.0,
+"hit_radius": 3.5,
+"impact": 350.0,
+"kick": 10.0,
+"live_cap": 0,
+"mag": 12,
+"move": Vector2(0.8, 0.8),
+"muzzle": Vector2(30, 5),
+"name": "激光枪",
+"npc_hit_sound": "hit",
+"penalty": 1,
+"pickup_bounds": Rect2(-26.5, -8.5, 52, 17),
+"pitch": 65.0,
+"projectile": {
+"actor": {
+"bounce": false,
+"effect": 2,
+"fuse": 0.0
+},
+"blast": {},
+"hit": {
+"npc_impulse": 0,
+"targets": 12,
+"water": 0
+},
+"shape": Vector2(12, 6),
+"wall": {
+"bounce": false,
+"effect": 1,
+"fuse": 0.0
+}
+},
+"projectile_region": Rect2(2, 1, 11, 4),
+"range": 2000.0,
+"recoil": 400.0,
+"region": Rect2(65, 20.341309, 53, 17.658691),
+"reload": 1.2,
+"shake": 5.0,
+"shot_sound": "shoot",
+"size": 1.0,
+"spread": 0.0,
+"sprite_offset": Vector2(12, 9),
+"tier": 1,
+"tile_chip": 8,
+"trigger": 1,
+"trigger_delay": 0.0
+}

@@ -1,0 +1,16 @@
+[gd_resource type="Resource" script_class="WeaponCatalog" format=3]
+
+[ext_resource type="Script" path="res://core/config/weapon_catalog.gd" id="1_62afq"]
+[ext_resource type="Script" path="res://core/config/weapon_def.gd" id="2_b2o04"]
+[ext_resource type="Resource" path="res://data/weapons/weapon_01.tres" id="3_ol58c"]
+[ext_resource type="Resource" path="res://data/weapons/weapon_02.tres" id="4_vnwx3"]
+[ext_resource type="Resource" path="res://data/weapons/weapon_03.tres" id="5_gkacy"]
+[ext_resource type="Resource" path="res://data/weapons/weapon_04.tres" id="6_3wqmx"]
+[ext_resource type="Resource" path="res://data/weapons/weapon_05.tres" id="7_jcwrn"]
+[ext_resource type="Resource" path="res://data/weapons/weapon_06.tres" id="8_s2fjn"]
+[ext_resource type="Resource" path="res://data/weapons/weapon_07.tres" id="9_wal2o"]
+[ext_resource type="Resource" path="res://data/weapons/weapon_08.tres" id="10_icvlx"]
+
+[resource]
+script = ExtResource("1_62afq")
+weapons = Array[ExtResource("2_b2o04")]([ExtResource("3_ol58c"), ExtResource("4_vnwx3"), ExtResource("5_gkacy"), ExtResource("6_3wqmx"), ExtResource("7_jcwrn"), ExtResource("8_s2fjn"), ExtResource("9_wal2o"), ExtResource("10_icvlx")])

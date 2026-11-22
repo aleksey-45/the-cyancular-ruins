@@ -1,0 +1,58 @@
+[gd_resource type="Resource" script_class="WeaponDef" format=3]
+
+[ext_resource type="Script" path="res://core/config/weapon_def.gd" id="1_hcd0w"]
+
+[resource]
+script = ExtResource("1_hcd0w")
+weapon_id = 4
+data = {
+"attack": 0,
+"cooldown": 0.75,
+"count": 8,
+"damage": 5,
+"gravity": 0.0,
+"impact": 200.0,
+"kick": 11.0,
+"live_cap": 0,
+"mag": 2,
+"move": Vector2(0.9, 1),
+"muzzle": Vector2(46, 4),
+"name": "霰弹 S686",
+"npc_hit_sound": "hit",
+"penalty": 1,
+"pickup_bounds": Rect2(-29.5, -7, 59, 14),
+"pitch": 55.0,
+"projectile": {
+"actor": {
+"bounce": false,
+"effect": 2,
+"fuse": 0.0
+},
+"blast": {},
+"hit": {
+"npc_impulse": 0,
+"targets": 12,
+"water": 0
+},
+"shape": Vector2(12, 6),
+"wall": {
+"bounce": false,
+"effect": 1,
+"fuse": 0.0
+}
+},
+"projectile_region": Rect2(2, 1, 11, 4),
+"range": 1400.0,
+"recoil": 900.0,
+"region": Rect2(3, 19, 59, 14),
+"reload": 2.2,
+"shake": 5.0,
+"shot_sound": "shotgun",
+"size": 0.8,
+"speed": 1375.0,
+"spread": 3.5,
+"sprite_offset": Vector2(24, 9),
+"tier": 0,
+"trigger": 0,
+"trigger_delay": 0.0
+}

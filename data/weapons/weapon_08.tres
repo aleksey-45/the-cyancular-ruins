@@ -1,0 +1,59 @@
+[gd_resource type="Resource" script_class="WeaponDef" format=3]
+
+[ext_resource type="Script" path="res://core/config/weapon_def.gd" id="1_lektf"]
+
+[resource]
+script = ExtResource("1_lektf")
+weapon_id = 8
+data = {
+"attack": 0,
+"cooldown": 0.07,
+"count": 1,
+"damage": 4,
+"gravity": 0.0,
+"impact": 1100.0,
+"kick": 9.0,
+"live_cap": 0,
+"mag": 100,
+"move": Vector2(0.5, 0.7),
+"muzzle": Vector2(52, 6),
+"name": "机枪 M249",
+"npc_hit_sound": "hit",
+"penalty": 1,
+"pickup_bounds": Rect2(-37, -13, 74, 26),
+"pitch": 55.0,
+"projectile": {
+"actor": {
+"bounce": false,
+"effect": 2,
+"fuse": 0.0
+},
+"blast": {},
+"hit": {
+"npc_impulse": 0,
+"targets": 12,
+"water": 0
+},
+"shape": Vector2(12, 6),
+"wall": {
+"bounce": false,
+"effect": 1,
+"fuse": 0.0
+}
+},
+"projectile_region": Rect2(2, 1, 11, 4),
+"range": 1800.0,
+"recoil": 200.0,
+"region": Rect2(62, 40, 74, 26),
+"reload": 5.5,
+"shake": 6.0,
+"shake_time": 0.12,
+"shot_sound": "shoot",
+"size": 1.0,
+"speed": 2200.0,
+"spread": 1.8,
+"sprite_offset": Vector2(16, 10),
+"tier": 2,
+"trigger": 1,
+"trigger_delay": 0.3
+}

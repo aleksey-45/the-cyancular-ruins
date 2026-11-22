@@ -1,0 +1,64 @@
+[gd_resource type="Resource" script_class="WeaponDef" format=3]
+
+[ext_resource type="Script" path="res://core/config/weapon_def.gd" id="1_oo46p"]
+
+[resource]
+script = ExtResource("1_oo46p")
+weapon_id = 7
+data = {
+"arc_time": 2.0,
+"attack": 0,
+"charge_time": 0.75,
+"cooldown": 0.15,
+"count": 1,
+"damage": 35,
+"draw_length": 6.5,
+"gravity": 0.2,
+"guide_color": Color(0.42, 0.92, 0.82, 0.7),
+"impact": 800.0,
+"kick": 2.0,
+"live_cap": 0,
+"mag": 1,
+"min_damage": 4,
+"min_speed": 600.0,
+"move": Vector2(0.85, 0.9),
+"muzzle": Vector2(12.5, 7),
+"name": "复合弓",
+"npc_hit_sound": "hit",
+"penalty": 2,
+"pickup_bounds": Rect2(-10, -22, 20, 44),
+"pitch": 50.0,
+"projectile": {
+"actor": {
+"bounce": false,
+"effect": 2,
+"fuse": 0.0
+},
+"blast": {},
+"hit": {
+"npc_impulse": 0,
+"targets": 12,
+"water": 0
+},
+"shape": Vector2(20, 4),
+"wall": {
+"bounce": false,
+"effect": 1,
+"fuse": 0.0
+}
+},
+"projectile_region": Rect2(17, 13, 45, 6),
+"range": 1600.0,
+"recoil": 30.0,
+"region": Rect2(4, 60, 20, 44),
+"reload": 1.25,
+"shake": 1.5,
+"shot_sound": "bow",
+"size": 1.0,
+"speed": 2400.0,
+"spread": 0.5,
+"sprite_offset": Vector2(10, 10),
+"tier": 1,
+"trigger": 3,
+"trigger_delay": 0.0
+}
