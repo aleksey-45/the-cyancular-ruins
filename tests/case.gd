@@ -78,8 +78,13 @@ func canvas_for(parent: Node) -> WorldCanvas:
 	parent.add_child(canvas)
 	return canvas
 
-func detached_client() -> PvpMatchClient:
+func detached_client(actor: Player) -> PvpMatchClient:
 	var client := PvpMatchClient.new()
+	client.player = actor
+	client.combat_rules = actor.combat
+	client.terrain = actor.terrain
+	client._rollback.bind(actor)
+	client._playback.map_px = actor.terrain.map_size
 	client._camera = MatchCamera.new()
 	client.add_child(client._camera)
 	return client

@@ -5,6 +5,7 @@ const NetPlayer := PlayerStateSchema.Network
 func run(tree: SceneTree) -> void:
 	_local_replay(tree)
 	_input_schedule(tree)
+	_prediction_limit(tree)
 	_position_tolerance(tree)
 	_history_window(tree)
 	_rewind_and_epoch(tree)
@@ -16,6 +17,8 @@ func run(tree: SceneTree) -> void:
 	_stacked_collision(tree)
 	_aligned_step_replay(tree)
 	_authority_batch(tree)
+	_terrain_replay(tree, true)
+	_terrain_replay(tree, false)
 	_lethal_hit(tree)
 	_remote_down_replay(tree, false)
 	_remote_down_replay(tree, true)
@@ -85,7 +88,7 @@ func _client_scene(tree: SceneTree) -> void:
 func _frame(actor: Player, tick: int) -> Dictionary:
 	return {"tick": tick, "map_revision": 0,
 		"world": {"players": {actor.role: actor.capture_checkpoint()}, "pickups": {}, "projectiles": {}, "beams": {}},
-		"time": {}, "own": InputScheduler.UNBOUND}
+		"time": {}, "input_feedback": PackedByteArray()}
 
 func _saved_frame(rollback: PredictionRollback, at: int) -> Dictionary:
 	var saved := rollback._state_at(at)
@@ -116,7 +119,7 @@ func _local_replay(tree: SceneTree) -> void:
 			if action["kind"] == "fire":
 				shown.append(action["serial"]))
 	rollback.reset(_frame(actor, 100), 0)
-	rollback.advance(ActorStep.DT, rollback.packet())
+	rollback.advance(ActorStep.DT)
 	var at := rollback.tick
 	var snapshot := _saved_frame(rollback, at)
 	var equipment_only := snapshot.duplicate(true)
@@ -126,7 +129,7 @@ func _local_replay(tree: SceneTree) -> void:
 			"an equipment-only difference restores the equipment block")
 	rollback.reconcile(snapshot, 0)
 	_capture(rollback, ActorInput.BIT_ATTACK, ActorInput.BIT_ATTACK)
-	rollback.advance(ActorStep.DT, rollback.packet())
+	rollback.advance(ActorStep.DT)
 	var predicted := actor.capture_state()
 	var endpoint := rollback.tick
 	expect(actor.shot_serial == 1, "prediction calls the gun rule for the pending attack")
@@ -162,34 +165,54 @@ func _input_schedule(tree: SceneTree) -> void:
 	var rollback := PredictionRollback.new()
 	rollback.bind(actor)
 	var baseline := _frame(actor, 100)
-	baseline["own"] = [1, 100, 4, 99]
 	rollback.reset(baseline, 0)
+	var codec := NetCodec.new()
 	for n in range(1, 6):
-		var bit := ActorInput.BIT_UP
-		rollback.capture([0.0, 0, bit if n == 3 else 0, bit if n == 4 else 0, 0, Vector2.RIGHT])
-		var outgoing := rollback.packet()
-		if n == 1:
-			expect(outgoing.back() == Vector2i(4, 4), "the client reports a baseline plan before taking its first sample")
-		rollback.advance(ActorStep.DT, outgoing)
-		if n == 3:
-			expect(rollback.tick == 102, "prediction waits for both samples assigned to the same slot")
-		if n == 4:
-			expect(rollback.tick == 103 and actor.input_buffer._last[InputBuffer.SEQ] == 4
-					and actor.input_buffer.action_ack == 3, "merged samples keep the newest hold and first edge")
-	expect(rollback.tick == 104 and actor.input_buffer.action_ack == 4, "the second edge follows on the next tick")
-	# 此时第五个输入已经预测过。迟到的公告将其改期到 105。
+		_capture(rollback, 0, ActorInput.BIT_UP if n == 5 else 0)
+		rollback.advance(ActorStep.DT)
+	var first: Array = rollback.history.back().duplicate()
+	var first_edge: Array = rollback.actions.back().duplicate()
 	var correction := _saved_frame(rollback, 103)
-	correction["own"] = [4, 99, 5, 100]
-	var old_record: Array = rollback.history[-1]
-	rollback.reconcile(correction, 0)
-	expect(old_record[InputBuffer.TARGET_TICK] == 104 and rollback.history[-1][InputBuffer.TARGET_TICK] == 105
-			and actor.input_buffer._last[InputBuffer.SEQ] == 4, "late announcements redate pending inputs and replay from authority")
+	var scheduler := InputScheduler.new()
+	scheduler.submit(InputBuffer.new(), [[[3, 1, 99, 0.0, 0, Vector2.RIGHT]], []], 97)
+	correction["input_feedback"] = scheduler.feedback
+	expect(rollback.reconcile(correction, 0) == PredictionRollback.Correction.KEEP and rollback.replay_ticks == 0,
+			"an older estimate changes only future clock decisions, without a schedule rollback")
+	var decoded := codec.decode_input(NetCodec.Reader.new(codec.encode_input(rollback.packet()), 1))
+	expect(decoded[0].back() == first and decoded[1].back() == first_edge
+			and first[InputBuffer.TARGET_TICK] == rollback.tick and actor.input_buffer.action_ack == 5,
+			"prediction, replays and every retransmission share the original tick")
+	rollback.reset(correction, 50)
+	expect(rollback.sequence == 5 and rollback.history.back() == first,
+			"a same-epoch baseline cannot recycle an unacknowledged sequence or its commitment")
 	_capture(rollback, 0, 0)
-	var late_report := rollback.packet()
-	expect(late_report.back() == Vector2i(5, 0), "a late change reports the first installation, before retiming pending inputs")
-	rollback.advance(ActorStep.DT, late_report)
-	expect(rollback.tick == 106 and actor.input_buffer._last[InputBuffer.SEQ] == 6,
-			"prediction spans the extra authoritative tick after the offset increases")
+	rollback.advance(ActorStep.DT)
+	expect(rollback.sequence == 6 and rollback.history.back()[InputBuffer.TARGET_TICK] >= first[InputBuffer.TARGET_TICK],
+			"prediction resumes after a same-epoch baseline without reassigning old input")
+	cleanup()
+
+func _prediction_limit(tree: SceneTree) -> void:
+	var actor := player(world(tree))
+	var rollback := PredictionRollback.new()
+	rollback.bind(actor)
+	rollback.reset(_frame(actor, 100), 0)
+	var edge_tick := 0
+	for seq in range(1, 61):
+		_capture(rollback, 0, ActorInput.BIT_UP if seq == 41 else 0)
+		rollback.advance(ActorStep.DT)
+		if seq == 41:
+			edge_tick = rollback.actions.back()[InputBuffer.TARGET_TICK]
+	expect(rollback.tick == 100 + PredictionRollback.MAX_REPLAY and edge_tick > rollback.tick,
+			"a downstream stall caps local simulation while new inputs retain their future commitments")
+	var resumed := _frame(actor, rollback.tick + 4)
+	rollback.reconcile(resumed, 0)
+	_capture(rollback, 0, 0)
+	rollback.advance(ActorStep.DT)
+	var before := rollback._state_at(edge_tick - 1)
+	var after := rollback._state_at(edge_tick)
+	expect(before != null and after != null and before.players[actor.role][NetPlayer.ACTION_ACK] == 0
+			and after.players[actor.role][NetPlayer.ACTION_ACK] == 41,
+			"catch-up from the new authority checkpoint uses the original edge tick outside the outgoing redundancy window")
 	cleanup()
 
 func _position_tolerance(tree: SceneTree) -> void:
@@ -257,7 +280,7 @@ func _rewind_and_epoch(tree: SceneTree) -> void:
 	var baseline := _frame(actor, 100)
 	baseline["time"] = rollback.time_economy.state_payload()
 	rollback.reset(baseline, 0)
-	rollback.advance(ActorStep.DT, rollback.packet())
+	rollback.advance(ActorStep.DT)
 	var authority := _saved_frame(rollback, rollback.tick - 1)
 	expect(rollback.reconcile(authority, 0) == PredictionRollback.Correction.KEEP,
 			"a matching Beta account keeps the current prediction")
@@ -270,7 +293,7 @@ func _rewind_and_epoch(tree: SceneTree) -> void:
 	expect(rollback.reconcile(authority, 0) == PredictionRollback.Correction.SNAP and actor.rewinding,
 			"gameplay rewind follows the authority snapshot")
 	var at := rollback.tick
-	rollback.advance(2.0 * ActorStep.DT, rollback.packet())
+	rollback.advance(2.0 * ActorStep.DT)
 	expect(rollback.tick == at and actor.shot_serial == 0, "local input does not advance the rewinding actor")
 	authority["tick"] += 1
 	authority["world"]["players"][actor.role][NetPlayer.EPOCH] += 1
@@ -278,7 +301,7 @@ func _rewind_and_epoch(tree: SceneTree) -> void:
 	expect(rollback.reconcile(authority, 0) == PredictionRollback.Correction.SNAP
 			and not actor.rewinding and rollback.packet()[InputBuffer.PACKET_ACTIONS].is_empty(),
 			"the new control epoch drops edges from before gameplay rewind")
-	rollback.advance(ActorStep.DT, rollback.packet())
+	rollback.advance(ActorStep.DT)
 	expect(actor.shot_serial == 0 and rollback.tick > at, "prediction resumes without firing an old action")
 	cleanup()
 
@@ -286,13 +309,8 @@ func _rewind_presentation(tree: SceneTree) -> void:
 	var client_map := world_with_walls(tree, 16, 16, {})
 	var actor := player(client_map)
 	actor.position = Vector2(40, 360)
-	var client := detached_client()
+	var client := detached_client(actor)
 	client.phase = PvpMatchClient.Phase.ONLINE
-	client.player = actor
-	client.combat_rules = actor.combat
-
-	client.terrain = _terrain
-	client._rollback.bind(actor)
 	client._rollback.step_advanced.connect(client._live_step)
 	client._local_motion.correct(actor.transform, actor.position, _terrain.map_size, true)
 	client._rollback.reset(_frame(actor, 100), 0)
@@ -327,20 +345,14 @@ func _rewind_presentation(tree: SceneTree) -> void:
 func _world_replication(tree: SceneTree) -> void:
 	var parent := world_with_walls(tree, 16, 16, {})
 	var actor := player(parent)
-	var client := detached_client()
-	client.player = actor
-	client.combat_rules = actor.combat
-
-	client.terrain = _terrain
+	var client := detached_client(actor)
 	client._teams = {2: 2}
 	var rollback := client._rollback
 	var combat := parent.combat
-	rollback.bind(actor)
 	var remote := _remote(actor, Vector2(10, 512), 100)
 	remote[NetPlayer.STATE][PlayerStateSchema.KNOCK_VEL] = Vector2(-600, 0)
 	var frame := _frame(actor, 100)
 	frame["world"]["players"][2] = remote
-	client._playback.map_px = _terrain.map_size
 	client._install_world(frame)
 	rollback.reset(frame, 0)
 	var proxy: Player = combat.players[2]
@@ -439,7 +451,7 @@ func _world_replication(tree: SceneTree) -> void:
 	var preview := client._projectiles[id]
 	expect(preview.predicted and preview._target == combat.projectiles[id].position
 			and preview._target != projectile[BulletBody.Network.POS], "the local projectile view uses the predicted physics body")
-	client._on_fire(shot)
+	client._apply_event(NetEvent.Kind.FIRE, shot)
 	expect(client._projectiles[id] == preview and not preview.predicted,
 			"a reliable spawn takes over the existing projectile view")
 	client._sync_projectiles({})
@@ -458,14 +470,14 @@ func _world_replication(tree: SceneTree) -> void:
 	preview.present(ActorStep.DT, shot_pos)
 	expect(preview.position.is_equal_approx(shot_pos - Vector2(160, 0)),
 			"a live projectile also interpolates on leaving rewind")
-	client._end_projectile(id, 102)
-	client._on_fire(shot)
+	client._apply_event(NetEvent.Kind.BULLET_END, {"tick": 102, "ids": [id]})
+	client._apply_event(NetEvent.Kind.FIRE, shot)
 	client._playback.push(101, {"players": {}})
 	client._sync_projectiles({id: projectile})
 	expect(client._projectiles.is_empty(), "an older STATE cannot revive a projectile ended by a reliable event")
 	client._playback.push(103, {"players": {}})
 	client._sync_projectiles({})
-	client._on_fire(shot)
+	client._apply_event(NetEvent.Kind.FIRE, shot)
 	expect(client._projectiles.is_empty(),
 			"a newer complete snapshot discards obsolete projectile events")
 	client.free()
@@ -477,12 +489,7 @@ func _remote_bow(tree: SceneTree) -> void:
 	var remote := player(parent, 2)
 	remote.weapons.set_initial_inventory([WeaponRegistry.Type.COMPOUND_BOW])
 	ActorStep.step(remote, [0.0, ActorInput.BIT_ATTACK, 0, 0, 0, Vector2.RIGHT], 0.375)
-	var client := detached_client()
-	client.player = actor
-	client.combat_rules = actor.combat
-	client.terrain = _terrain
-	client._rollback.bind(actor)
-	client._playback.map_px = _terrain.map_size
+	var client := detached_client(actor)
 	var baseline := _frame(actor, 100)
 	baseline["world"]["players"][remote.role] = remote.capture_checkpoint()
 	client._install_world(baseline)
@@ -494,12 +501,12 @@ func _remote_bow(tree: SceneTree) -> void:
 	var shot: Dictionary = requests[0]
 	shot.merge({"role": remote.role, "tick": 101})
 	var id := ShotRules.shot_id(remote.role, shot["serial"])
-	client._on_fire(shot)
+	client._apply_event(NetEvent.Kind.FIRE, shot)
 	client._frame.begin(0.0, actor.position)
 	client._sample_remotes(samples, actor.position)
 	expect(client._projectiles.has(id) and client._frame.actors[0].bow_draw < 0.0,
 			"a remote arrow already in flight clears the older held arrow")
-	client._end_projectile(id, 101)
+	client._apply_event(NetEvent.Kind.BULLET_END, {"tick": 101, "ids": [id]})
 	client._frame.begin(0.0, actor.position)
 	client._sample_remotes(samples, actor.position)
 	expect(not client._projectiles.has(id) and client._frame.actors[0].bow_draw < 0.0,
@@ -533,14 +540,9 @@ func _ordered_collision(tree: SceneTree, enabled: bool) -> void:
 		var client_world := world(tree)
 		var actor := player(client_world, local_role)
 		actor.set_team_collision(0, enabled)
-		var client := detached_client()
-		client.player = actor
-		client.combat_rules = actor.combat
-
-		client.terrain = _terrain
+		var client := detached_client(actor)
 		client._player_collision = enabled
 		var rollback := client._rollback
-		rollback.bind(actor)
 		client._install_world(anchors[local_role])
 		rollback.reset(anchors[local_role], 0)
 		rollback._step()
@@ -586,14 +588,9 @@ func _stacked_collision(tree: SceneTree) -> void:
 	var client_map := _install_world(tree, map)
 	var local := player(client_map, 6)
 	local.set_team_collision(0, true)
-	var client := detached_client()
-	client.player = local
-	client.combat_rules = local.combat
-
-	client.terrain = _terrain
+	var client := detached_client(local)
 	client._player_collision = true
 	var rollback := client._rollback
-	rollback.bind(local)
 	client._install_world(frame)
 	rollback.reset(frame, 0)
 	var proxy: Player = rollback.combat.players[2]
@@ -672,17 +669,12 @@ func _authority_batch(tree: SceneTree) -> void:
 	var parent := world(tree)
 	var actor := player(parent)
 	var terrain := _terrain
-	var client := detached_client()
+	var client := detached_client(actor)
 	client.phase = PvpMatchClient.Phase.ONLINE
-	client.player = actor
-	client.combat_rules = actor.combat
-
-	client.terrain = terrain
-	client._rollback.bind(actor)
 	client._rollback.reset(_frame(actor, 100), 0)
 	client._playback.reset()
 	client._playback.push(100, {"players": {}})
-	client._rollback.advance(3.0 * ActorStep.DT, client._rollback.packet())
+	client._rollback.advance(3.0 * ActorStep.DT)
 	var endpoint := client._rollback.tick
 	var before := actor.capture_state()
 	var sub := Vector2i(8, 12)
@@ -695,7 +687,7 @@ func _authority_batch(tree: SceneTree) -> void:
 	client._apply_pending_authority()
 	expect(client._playback.latest_tick == 101 and client._pending_states.size() == 1,
 			"the newest STATE with an installed revision is used while a newer revision waits")
-	client._on_event(1, NetEvent.Kind.TERRAIN, {"revision": 1, "cells": {sub: initial_hp - 1}})
+	client._on_event(1, NetEvent.Kind.TERRAIN, {"tick": 102, "revision": 1, "cells": {sub: initial_hp - 1}})
 	var hit := {"shooter": 2, "victim": actor.role, "damage": 3, "tick": 102, "epoch": 1,
 			"hp": actor.sim_hp - 3, "impulse_mode": 1, "knock": Vector2(600, 0)}
 	client._on_event(1, NetEvent.Kind.HIT, hit)
@@ -714,14 +706,15 @@ func _authority_batch(tree: SceneTree) -> void:
 	var after := actor.capture_state()
 	client._on_state(newest)
 	client._on_state(wait)
-	client._on_event(1, NetEvent.Kind.TERRAIN, {"revision": 2, "cells": {sub: 0}})
+	client._on_event(1, NetEvent.Kind.TERRAIN, {"tick": 102, "revision": 2, "cells": {sub: 0}})
 	client._apply_pending_authority()
 	expect(client._playback.latest_tick == 103 and client._pending_states.is_empty() and terrain.get_hp(sub) == 0,
 			"the matching patch makes only the newest waiting STATE installable")
+	var replayed := client._rollback.replay_ticks
 	client._on_event(1, NetEvent.Kind.HIT, hit)
 	client._apply_pending_authority()
 	expect(actor.capture_state() == after and client._rollback._hits.is_empty()
-			and client._rollback.replay_ticks == 0, "a STATE covering a hit replaces it without applying the impulse twice")
+			and client._rollback.replay_ticks == replayed, "a STATE covering a hit replaces it without applying the impulse twice")
 	for index in PredictionRollback.KEEP + 1:
 		_capture(client._rollback, 0, 0)
 	client._on_event(1, NetEvent.Kind.HIT, hit.merged({"tick": endpoint}, true))
@@ -731,12 +724,62 @@ func _authority_batch(tree: SceneTree) -> void:
 	client.free()
 	cleanup()
 
+func _terrain_replay(tree: SceneTree, with_state: bool) -> void:
+	const BREAK_TICK := 101
+	const WALL_X := 32
+	var parent := world_from_solid(tree, 64, 48, func(x: int, y: int) -> bool:
+		return y == 24 or (x == WALL_X and y >= 10 and y < 24))
+	var actor := player(parent)
+	actor.position = Vector2(475.5, 326.999)
+	actor.velocity = Vector2(PlayerParams.move_speed, 0.0)
+	actor.input_buffer.restore_authority(1, 0, [1, 1, BREAK_TICK - 2, 1.0, 0, Vector2.RIGHT])
+	actor.sync_collision_geometry()
+	var client := detached_client(actor)
+	client.phase = PvpMatchClient.Phase.ONLINE
+	var rollback := client._rollback
+	var baseline := _frame(actor, BREAK_TICK - 2)
+	client._install_world(baseline)
+	rollback.reset(baseline, 0)
+	for index in 3:
+		_capture(rollback, 0, 0)
+		rollback.advance(ActorStep.DT)
+	var blocked: Vector2 = rollback._state_at(BREAK_TICK).players[actor.role][NetPlayer.STATE][PlayerStateSchema.POS]
+	var endpoint := actor.position
+	if with_state:
+		var old := _saved_frame(rollback, BREAK_TICK - 1)
+		old["world"]["players"][actor.role][NetPlayer.STATE][PlayerStateSchema.HP] -= 1
+		client._on_state(old)
+	var cells := {}
+	for y in range(10, 24):
+		cells[Vector2i(WALL_X, y)] = 0
+	client._on_event(1, NetEvent.Kind.TERRAIN, {"tick": BREAK_TICK, "revision": cells.size(), "cells": cells})
+	client._apply_pending_authority()
+	var replayed: Vector2 = rollback._state_at(BREAK_TICK).players[actor.role][NetPlayer.STATE][PlayerStateSchema.POS]
+	expect(replayed.is_equal_approx(blocked), "movement still collides with the wall in the frame that breaks it")
+	expect(actor.position.x > endpoint.x and rollback.replay_ticks > 0,
+			"a terrain patch replays movement after the break even without a new STATE")
+	if with_state:
+		var ahead := rollback.tick + 3
+		var floor := {}
+		for x in range(WALL_X - 5, WALL_X + 6):
+			floor[Vector2i(x, 24)] = 0
+		client._on_event(1, NetEvent.Kind.TERRAIN, {"tick": ahead, "revision": cells.size() + floor.size(), "cells": floor})
+		for i in 2:
+			client._physics_process(ActorStep.DT)
+		expect(rollback.tick < ahead and actor._grounded and _terrain.get_hp(Vector2i(WALL_X, 24)) > 0,
+				"a future patch leaves the floor intact until its frame")
+		rollback._step()
+		expect(rollback.tick == ahead and actor._grounded and _terrain.get_hp(Vector2i(WALL_X, 24)) == 0,
+				"the floor breaks after movement in the frame that owns the patch")
+	client.free()
+	cleanup()
+
 func _lethal_hit(tree: SceneTree) -> void:
 	var actor := player(world(tree))
 	var rollback := PredictionRollback.new()
 	rollback.bind(actor)
 	rollback.reset(_frame(actor, 100), 0)
-	rollback.queue_hit({"tick": 102, "epoch": 1, "victim": actor.role, "hp": 0,
+	rollback.queue_event(NetEvent.Kind.HIT, {"tick": 102, "epoch": 1, "victim": actor.role, "hp": 0,
 			"impulse_mode": -1, "vel": Vector2(600, 0)})
 	rollback._step()
 	var start := actor.position
@@ -749,7 +792,7 @@ func _lethal_hit(tree: SceneTree) -> void:
 	var fresh := _frame(actor, 104)
 	fresh["world"]["players"][actor.role][NetPlayer.EPOCH] = 2
 	rollback.reconcile(fresh, 0)
-	rollback.queue_hit({"tick": 105, "epoch": 1, "victim": actor.role})
+	rollback.queue_event(NetEvent.Kind.HIT, {"tick": 105, "epoch": 1, "victim": actor.role})
 	expect(rollback._hits.is_empty(), "a hit from an older epoch cannot move the new actor")
 	cleanup()
 
@@ -760,21 +803,16 @@ func _remote_down_replay(tree: SceneTree, with_state: bool) -> void:
 	actor.position = Vector2(360, 290)
 	actor.collision_mask = CollisionWorld.LAYER_TERRAIN | CollisionWorld.LAYER_TEAM_A
 	actor.sync_collision_geometry()
-	var client := detached_client()
+	var client := detached_client(actor)
 	client.phase = PvpMatchClient.Phase.ONLINE
-	client.player = actor
-	client.combat_rules = actor.combat
-
-	client.terrain = _terrain
 	client._player_collision = true
 	var rollback := client._rollback
-	rollback.bind(actor)
 	var baseline := _frame(actor, 100)
 	var remote_pos := Vector2(240.075, 390.999)
 	baseline["world"]["players"][3] = _remote(actor, remote_pos, 4)
 	client._install_world(baseline)
 	rollback.reset(baseline, 0)
-	rollback.advance(3.0 * ActorStep.DT, rollback.packet())
+	rollback.advance(3.0 * ActorStep.DT)
 	var endpoint := rollback.tick
 	var hit := {"shooter": 3, "victim": 2, "damage": 35, "tick": 102, "epoch": 1, "hp": 10,
 			"impulse_mode": 1, "knock": Vector2(-2970.7, -418.37)}
@@ -839,7 +877,7 @@ func _beam_order(tree: SceneTree) -> void:
 	client._install_world(baseline)
 	rollback.reset(baseline, 0)
 	rollback.capture([0.0, ActorInput.BIT_ATTACK, ActorInput.BIT_ATTACK, 0, 0, Vector2.RIGHT])
-	rollback.advance(ActorStep.DT, rollback.packet())
+	rollback.advance(ActorStep.DT)
 	client._process(0.0)
 	var id := ShotRules.shot_id(actor.role, 1)
 	var shot: Dictionary = rollback._state_at(rollback.tick).shots[id].duplicate()
@@ -849,13 +887,14 @@ func _beam_order(tree: SceneTree) -> void:
 			"the first render draws the predicted reflected path before authority")
 	shot.erase("vectors")
 	shot.erase("trace")
-	var remote_shot := shot.merged({"role": remote.role, "tick": 101}, true)
+	var break_tick: int = shot["tick"] - 1
+	var remote_shot := shot.merged({"role": remote.role, "tick": break_tick}, true)
 	var patch := {}
 	for y in 4:
 		for x in 4:
 			patch[cell * 4 + Vector2i(x, y)] = 0
 	client._on_event(1, NetEvent.Kind.FIRE, remote_shot)
-	client._on_event(1, NetEvent.Kind.TERRAIN, {"revision": _terrain.revision + 1, "cells": patch})
+	client._on_event(1, NetEvent.Kind.TERRAIN, {"tick": break_tick, "revision": _terrain.revision + 1, "cells": patch})
 	client._on_event(1, NetEvent.Kind.FIRE, shot)
 	client._apply_pending_authority()
 	client._process(0.0)
@@ -868,6 +907,7 @@ func _beam_order(tree: SceneTree) -> void:
 			"the corrected local beam replaces the old drawing without restarting its lifetime")
 
 	var confirmed := _saved_frame(rollback, rollback.tick)
+	confirmed["map_revision"] = _terrain.revision
 	confirmed["world"]["beams"].erase(id)
 	client._on_state(confirmed)
 	client._apply_pending_authority()
@@ -882,6 +922,7 @@ func _beam_order(tree: SceneTree) -> void:
 			"a remote beam follows its shooter's snapshot clock even after it expires on the prediction clock")
 
 	var expired := _saved_frame(rollback, rollback.tick)
+	expired["map_revision"] = _terrain.revision
 	client._on_state(expired)
 	client._apply_pending_authority()
 	client._on_event(1, NetEvent.Kind.FIRE, remote_shot)
@@ -899,10 +940,7 @@ func _pickup_prompt(tree: SceneTree) -> void:
 	var parent := world(tree)
 	var actor := player(parent, 2)
 	actor.weapons.enabled_types = [WeaponRegistry.Type.PISTOL]
-	var client := detached_client()
-	client.player = actor
-	client.combat_rules = actor.combat
-	client.terrain = _terrain
+	var client := detached_client(actor)
 	var at := actor.position
 	const TICK := 65535
 	var pickups := {1: [at, Vector2.ZERO, WeaponRegistry.Type.PISTOL, 2, TICK + 1],
@@ -941,14 +979,14 @@ func _combat_prediction(tree: SceneTree) -> void:
 		rollback.reset(frame, 0)
 		rollback._step()
 		var pos := actor.position
-		rollback.queue_shot({"role": proxy.role, "type_id": type_id, "serial": 1, "tick": 101,
+		rollback.queue_event(NetEvent.Kind.FIRE, {"role": proxy.role, "type_id": type_id, "serial": 1, "tick": 101,
 			"pos": Vector2(260, 544), "dir": Vector2.RIGHT, "charge": 1.0, "speed_mult": 1.0})
 		expect(rollback.reconcile({}, 0) == PredictionRollback.Correction.SMOOTH
 				and actor.position == pos and actor.motion_knock_velocity.x > 0.0
 				and actor.sim_hp == 1 and not actor.sim_downed,
 				"attack %d predicts its impact in the combat phase while HP stays authoritative" % type_id)
 		var authority_knock := Vector2(240, 120)
-		rollback.queue_hit({"victim": actor.role, "tick": 101, "epoch": 1, "hp": 0,
+		rollback.queue_event(NetEvent.Kind.HIT, {"victim": actor.role, "tick": 101, "epoch": 1, "hp": 0,
 			"impulse_mode": 1, "knock": authority_knock})
 		rollback.reconcile({}, 0)
 		expect(actor.sim_downed and actor.motion_knock_velocity == authority_knock,
@@ -980,7 +1018,7 @@ func _late_shot(tree: SceneTree) -> void:
 	var frame := _saved_frame(rollback, 102)
 	frame["world"]["projectiles"][id] = [shot["type_id"], shot["pos"] + velocity * ActorStep.DT * 2.0, velocity]
 	rollback.reconcile(frame, 0)
-	rollback.queue_shot(shot)
+	rollback.queue_event(NetEvent.Kind.FIRE, shot)
 	expect(rollback.reconcile({}, 0) == PredictionRollback.Correction.KEEP and rollback.replay_ticks == 2,
 			"a shot behind STATE replays its flight without correcting unchanged local motion")
 	var bullet: BulletBody = combat.projectiles.get(id)
@@ -998,13 +1036,8 @@ func _proxy_impulse(tree: SceneTree) -> void:
 	actor.position = Vector2(200, 544)
 	actor.sync_collision_geometry()
 	actor.weapons.set_initial_inventory([WeaponRegistry.Type.LASER])
-	var client := detached_client()
-	client.player = actor
-	client.combat_rules = actor.combat
-
-	client.terrain = _terrain
+	var client := detached_client(actor)
 	var rollback := client._rollback
-	rollback.bind(actor)
 	var baseline := _frame(actor, 100)
 	var pos := Vector2(450, 544)
 	baseline["world"]["players"][2] = _remote(actor, pos, 1)
@@ -1012,7 +1045,7 @@ func _proxy_impulse(tree: SceneTree) -> void:
 	client._install_world(baseline)
 	rollback.reset(baseline, 0)
 	_capture(rollback, ActorInput.BIT_ATTACK, ActorInput.BIT_ATTACK)
-	rollback.advance(ActorStep.DT, rollback.packet())
+	rollback.advance(ActorStep.DT)
 	var proxy: Player = rollback.combat.players[2]
 	expect(proxy.motion_knock_velocity.x > 0.0 and proxy.position.x == pos.x and proxy.sim_hp == 1,
 			"a local action predicts the remote collider impulse after movement")
@@ -1044,7 +1077,7 @@ func _remote_auto_fire(tree: SceneTree) -> void:
 	expect(combat.projectiles.has(id) and proxy.shot_serial == 1 and proxy.equipped.carried == 29,
 			"shared remote actor step advances held fire, equipment and recoil")
 	var shot: Dictionary = rollback._state_at(101).shots[id].merged({"pos": Vector2(350, 128)}, true)
-	rollback.queue_shot(shot)
+	rollback.queue_event(NetEvent.Kind.FIRE, shot)
 	rollback.reconcile({}, 0)
 	expect(combat.projectiles.size() == 1 and combat.projectiles[id].launch == shot
 			and proxy.shot_serial == 1 and proxy.equipped.carried == 29,
@@ -1062,7 +1095,7 @@ func _grenade_prediction(tree: SceneTree) -> void:
 	rollback.bind(actor)
 	rollback.reset(_frame(actor, 100), 0)
 	rollback.capture([0.0, ActorInput.BIT_DOWN, 0, ActorInput.BIT_ATTACK, 0, Vector2(0.3, 1.0).normalized()])
-	rollback.advance(ActorStep.DT, rollback.packet())
+	rollback.advance(ActorStep.DT)
 	var id := ShotRules.shot_id(actor.role, 1)
 	expect(combat.projectiles.has(id), "the local attack action immediately creates a physics projectile")
 	for i in 3:
@@ -1117,8 +1150,8 @@ func _late_blast(tree: SceneTree) -> void:
 	rollback.bind(actor)
 	rollback.reset(_frame(actor, 102), 0)
 	var id := ShotRules.shot_id(actor.role, 1)
-	rollback.queue_projectile_end(id, 101, CombatSimulator.blast_state(WeaponRegistry.Type.GRENADE,
-			actor.position - Vector2(60, 0), 101))
+	rollback.queue_event(NetEvent.Kind.EXPLOSION, {"id": id, "tick": 101,
+			"type_id": WeaponRegistry.Type.GRENADE, "pos": actor.position - Vector2(60, 0)})
 	rollback.reconcile({}, 0)
 	rollback._step()
 	expect(actor.motion_knock_velocity == Vector2.ZERO, "a late EXPLOSION retains its settlement tick")

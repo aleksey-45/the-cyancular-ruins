@@ -6,7 +6,7 @@ const HOLD_TICKS := 6
 const FUTURE_TICKS := 32
 const ACTION_TICKS := 12
 
-enum { PACKET_FRAMES, PACKET_ACTIONS, PACKET_NOTICE }
+enum { PACKET_FRAMES, PACKET_ACTIONS }
 
 # 每帧的输入状态与单次操作使用相同的前三个字段。SEQ 是输入序号，EPOCH 区分重置前后的输入，TARGET_TICK 是输入原定生效的模拟帧。
 enum { SEQ, EPOCH, TARGET_TICK, FRAME_AX, FRAME_HELD, FRAME_AIM }

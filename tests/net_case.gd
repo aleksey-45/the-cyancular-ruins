@@ -26,6 +26,7 @@ class LobbySession extends RoomSession:
 func run(tree: SceneTree) -> void:
 	_input()
 	_input_schedule()
+	_clock_steps()
 	_lobby()
 	_room_admission()
 	_royale_capacity()
@@ -78,25 +79,26 @@ func _input() -> void:
 		[[12, 7, 100, ActorInput.BIT_PICKUP | ActorInput.BIT_CHARGE_RIGHT, ActorInput.BIT_ATTACK, 0x1020304, Vector2.DOWN]],
 	]
 	var wire := codec.encode_input(wire_packet)
-	var protocol_bytes := ("c722000807060507000000030c00000007000000000000e0bf00010000803e000000bf"
-			+ "0d00000001000000000000f03f0e00000000010c0000002002080004030201000000000000803f")
-	expect(NetBus._wire(wire).hex_encode() == protocol_bytes, "INPUT header, frame deltas and actions match the wire format")
+	var protocol_bytes := ("c723000807060507000000030c0000000f58000000000000000000e0bf00010000803e000000bf"
+			+ "0d00000002000000000000f03f0e0000000157000000010c000000640000002002080004030201000000000000803f")
+	expect(NetBus._wire(wire).hex_encode() == protocol_bytes, "INPUT encodes packet-local phase deltas and a self-contained action tick")
 	var stream := _body(wire, NetCodec.INPUT)
-	var decoded := codec.decode_input(stream)
-	for group: Array in wire_packet:
-		for row: Array in group:
-			row[InputBuffer.TARGET_TICK] = 0
-	expect(decoded == wire_packet, "INPUT preserves controls and edges, authority supplies the target tick")
-	expect(stream.remaining() == 0, "input decoder consumes packet")
-	var reported := wire_packet + [Vector2i(0x01020304, -5)]
-	var feedback_wire := codec.encode_input(reported)
-	expect(feedback_wire.slice(0, wire.size()) == wire and feedback_wire.slice(wire.size()).hex_encode() == "04030201fb"
-			and codec.decode_input(_body(feedback_wire, NetCodec.INPUT)) == reported, "optional input report costs five bytes and preserves a signed margin")
+	expect(codec.decode_input(stream) == wire_packet and stream.remaining() == 0,
+			"both held samples and edges preserve the originally committed tick")
+	var other := NetCodec.new()
+	var sparse := [[], [[1, 7, 3000, ActorInput.BIT_DROP, 0, 37, Vector2.LEFT]]]
+	expect(other.decode_input(_body(codec.encode_input(sparse), NetCodec.INPUT)) == sparse,
+			"an old edge is independently decodable without any frame or preceding packet")
 	codec.state_ack = 123
-	for length in range(wire.size() + 1, feedback_wire.size()):
-		var truncated := NetCodec.Reader.new(feedback_wire.slice(0, length), 1)
+	for length in range(wire.size() - 8, wire.size()):
+		var truncated := NetCodec.Reader.new(wire.slice(0, length), 1)
 		expect(codec.decode_input(truncated).is_empty() and not truncated.valid and codec.state_ack == 123,
-				"partial notice does not commit the packet ACK")
+				"partial INPUT does not commit its snapshot ACK")
+	var missing_target := wire.duplicate()
+	missing_target[14] &= ~1 # 第一个样本的增量掩码必须含完整偏移。
+	var invalid := NetCodec.Reader.new(missing_target, 1)
+	expect(codec.decode_input(invalid).is_empty() and not invalid.valid and codec.state_ack == 123,
+			"an incomplete first sample cannot decode a target or advance the ACK")
 	wire = codec.encode_event(NetEvent.Kind.START, null)
 	expect(wire.size() == 1, "START has no obsolete bot payload")
 	stream = _body(wire, NetCodec.EVENT + NetEvent.Kind.START)
@@ -105,97 +107,115 @@ func _input() -> void:
 func _input_schedule() -> void:
 	var scheduler := InputScheduler.new()
 	var buffer := InputBuffer.new()
-	var row := [1, 1, 9999, 1.0, 0, Vector2.RIGHT]
-	var edge := [1, 1, -50, ActorInput.BIT_UP, 0, 0, Vector2.RIGHT]
-	var packet := [[row], [edge]]
-	scheduler.submit(buffer, packet, 100, 123000)
-	scheduler.submit(buffer, packet, 101, 125000)
-	expect(InputScheduler.target(scheduler.announcement(), 1) == 103 and buffer.take(102)[ActorInput.AX] == 0.0,
-			"authority sets the first deadline from availability and a two-tick margin")
-	var input := buffer.take(103)
+	var row := [1, 1, 105, 1.0, 0, Vector2.RIGHT]
+	var edge := [1, 1, 105, ActorInput.BIT_UP, 0, 0, Vector2.RIGHT]
+	expect(scheduler.submit(buffer, [[row], [edge]], 100), "the authority accepts a valid client commitment")
+	var conflict := row.duplicate()
+	conflict[InputBuffer.TARGET_TICK] = 102
+	scheduler.submit(buffer, [[conflict], [edge]], 101)
+	expect(buffer.take(104)[ActorInput.AX] == 0.0, "a conflicting repeat cannot move a queued sample forward")
+	var input := buffer.take(105)
 	expect(input[ActorInput.AX] == 1.0 and input[ActorInput.PRESSED] == ActorInput.BIT_UP
-			and buffer.take(104)[ActorInput.PRESSED] == 0 and row[InputBuffer.TARGET_TICK] == 9999,
-			"continuous input and a repeated edge share the authority deadline without mutating the caller")
-	row[InputBuffer.SEQ] = 2
-	expect(not scheduler.submit(buffer, [[row], []], 200, 3000000), "a stalled input clock requests a fresh epoch")
+			and buffer.take(106)[ActorInput.PRESSED] == 0, "early input and duplicate edge execute once at P")
+	edge = [2, 1, 105, ActorInput.BIT_DROP, 0, 0, Vector2.RIGHT]
+	scheduler.submit(buffer, [[], [edge]], 106)
+	expect(buffer.take(107)[ActorInput.PRESSED] == ActorInput.BIT_DROP and edge[InputBuffer.TARGET_TICK] == 105,
+			"late input executes at availability and keeps its original age")
+	expect(not scheduler.submit(buffer, [[[3, 1, 107, 0.0, 0, Vector2.RIGHT]], []], 200),
+			"a stalled input clock requests a fresh epoch")
 	buffer.reset(2)
 	scheduler = InputScheduler.new()
-	scheduler.submit(buffer, packet, 201, 3016000)
-	expect(scheduler.announcement() == InputScheduler.UNBOUND, "delayed packets cannot anchor a new epoch")
-	scheduler.submit(buffer, [[[45, 2, 0, 1.0, 0, Vector2.RIGHT]], [[1, 2, 0, ActorInput.BIT_UP, 0, 0, Vector2.RIGHT]]],
-			200, 3020000)
-	expect(InputScheduler.target(scheduler.announcement(), 45) == 203 and buffer.take(203)[ActorInput.PRESSED] == 0
-			and buffer.action_ack == 1, "an old retransmitted edge cannot shift the first continuous sample's anchor")
-	var offsets := []
-	offsets.resize(100)
-	offsets.fill(0)
-	offsets[0] = 1
-	expect(InputScheduler._best_step(offsets, 0, 0, 0, 3) == 0, "one percent late is inside the deadline budget")
-	offsets[1] = 1
-	expect(InputScheduler._best_step(offsets, 0, 0, 0, 3) == 1, "one more tick recovers the excess misses")
-	offsets[0] = 8
-	offsets[1] = 8
-	expect(InputScheduler._best_step(offsets, 0, 0, 0, 3) == 0, "unrecoverable misses do not buy an extra tick")
-	offsets.fill(3)
-	expect(InputScheduler._best_step(offsets, 0, 0, 0, 3) == 1, "the horizon can start crossing a multi-tick delay step")
-	scheduler = InputScheduler.new()
-	buffer.reset(1)
-	var feedback := InputScheduler.InstallFeedback.new()
-	for k in range(1, 121):
-		var current := [[[k, 1, 0, 1.0, 0, Vector2.RIGHT]], []]
-		if k >= 65:
-			feedback.install(1, scheduler.announcement(), k - 1, scheduler.notice_confirmed())
-			feedback.attach(current, k)
-		if k == 65:
-			expect(current.back() == Vector2i(90, 26), "first installation measures the actual client sample")
-			current.pop_back() # 首份回报丢失。
-		if k == 80:
-			expect(current.back() == Vector2i(90, 26), "a retry preserves the original installation margin")
-		if k == 95:
-			expect(current.size() == 2 and scheduler.notice_confirmed(), "a confirmed report costs nothing on subsequent inputs")
-		scheduler.submit(buffer, current, k - 1, roundi(k * 1000000.0 / 60))
-		scheduler.update(k)
-		buffer.take(k)
-	expect(scheduler.announcement()[2] == 127 and not scheduler.notice_confirmed(),
-			"the next plan uses the measured five samples plus one snapshot interval")
-	feedback.install(2, InputScheduler.UNBOUND, 0, false)
-	var empty := [[row], []]
-	feedback.attach(empty, 200)
-	expect(empty.size() == 2, "a new epoch drops the pending installation report")
+	scheduler.submit(buffer, [[row], [edge]], 200)
+	expect(scheduler.feedback.is_empty(), "old epoch input cannot seed a new controller")
+	for seq in range(1, 241):
+		var target := seq + 200
+		var at := target - 1 + int(seq > 140) * 3
+		row = [seq, 2, target, 1.0, 0, Vector2.RIGHT]
+		scheduler.submit(buffer, [[row], []], at)
+		scheduler.submit(buffer, [[row], []], at + 1)
+		buffer.take(at + 1)
+	var clock := InputClock.new()
+	var neutral := [0.0, 0, 0, 0, 0, Vector2.RIGHT]
+	clock.reset(440, 240, 0, scheduler.feedback)
+	var target := clock.sample(241, neutral)
+	expect(target == 444, "first-copy feedback follows a persistent upstream step across duplicate packets")
+
 	var sender := NetCodec.new()
 	var receiver := NetCodec.new()
-	var frame := {"tick": 100, "map_revision": 0, "world": NetCodec.EMPTY_WORLD, "time": {}, "own": [1, 3, 0, 0]}
+	var frame := {"tick": 100, "map_revision": 0, "world": NetCodec.EMPTY_WORLD, "time": {},
+			"input_feedback": PackedByteArray([0, 11, 0xff])}
 	_state(receiver, sender.encode_state(frame, NetCodec.StateBatch.new(frame)))
 	sender.state_ack = receiver.state_ack
-	frame = frame.merged({"tick": 160, "own": [1, 3, 180, 2]}, true)
-	sender.encode_state(frame, NetCodec.StateBatch.new(frame)) # 此次公告丢失。
-	frame = frame.merged({"tick": 220, "own": [180, 2, 240, 3]}, true)
-	var recovered := _state(receiver, sender.encode_state(frame, NetCodec.StateBatch.new(frame)))
-	expect(recovered["own"] == frame["own"] and InputScheduler.target(recovered["own"], 239) == 241
-			and InputScheduler.target(recovered["own"], 240) == 243, "the next STATE restores both schedule segments across a lost notice")
-	sender.state_ack = receiver.state_ack
-	var plain := sender.encode_state(frame, NetCodec.StateBatch.new(frame))
-	frame["notice_ack"] = true
-	var confirmed := sender.encode_state(frame, NetCodec.StateBatch.new(frame))
-	expect(confirmed.size() == plain.size() and _state(receiver, confirmed).get("notice_ack", false),
-			"the report ACK uses one existing header bit without adding a downlink byte")
-	frame["_sent_input"] = Vector2i(1, 115)
-	var observed := _state(receiver, sender.encode_state(frame, NetCodec.StateBatch.new(frame)))
-	expect(not observed.has("_sent_input"), "the sending anchor for a passive ACK stays local")
-	var reply := receiver.encode_input([[row], []])
-	sender.decode_input(NetCodec.Reader.new(reply, 1))
-	expect(sender.input_at_acked_snapshot == 115, "a new snapshot ACK carries a free network progress sample")
-	sender.decode_input(NetCodec.Reader.new(reply, 1))
-	expect(sender.input_at_acked_snapshot == 0, "a duplicate ACK cannot remeasure an older input packet")
-	frame["_sent_input"] = Vector2i(2, 116)
-	_state(receiver, sender.encode_state(frame, NetCodec.StateBatch.new(frame)))
-	sender.decode_input(NetCodec.Reader.new(receiver.encode_input([[row], []]), 1))
-	expect(sender.input_at_acked_snapshot == 0, "a prior input epoch cannot sample another epoch's sent snapshot")
-	expect(scheduler._notice(0) == 60, "an unconfirmed notice defaults to the conservative upper bound")
-	var delayed := InputScheduler.new()
-	delayed._notices.append(Vector4i(90, 30, 5, 12))
-	expect(delayed._notice(9) == 18 and delayed._notice(3) == 12,
-			"seven samples of client installation delay carry over when the network estimate changes")
+	frame = frame.merged({"tick": 115, "input_feedback": PackedByteArray([6, 7, 8, 9, 10])}, true)
+	sender.encode_state(frame, NetCodec.StateBatch.new(frame)) # 此次反馈丢失。
+	frame = frame.merged({"tick": 130, "input_feedback": PackedByteArray([251])}, true)
+	expect(_state(receiver, sender.encode_state(frame, NetCodec.StateBatch.new(frame)))["input_feedback"] == frame["input_feedback"],
+			"STATE transports opaque scheduling feedback of any length even across a lost report")
+
+	clock.reset(98, 0, 0, PackedByteArray())
+	var previous := 100
+	var last_change := -100
+	var spaced := true
+	var repeated := InputClock.pack_feedback(1, 103, 103)
+	for seq in range(1, 221):
+		clock.synchronize(0, seq - 1, repeated if seq % 2 else PackedByteArray())
+		target = clock.sample(seq, neutral)
+		var end := clock.advance(ActorStep.DT, previous, 1000)
+		if end != previous + 1:
+			spaced = spaced and seq - last_change >= 6 and target == previous + 2
+			last_change = seq
+		previous = end
+	expect(spaced and previous - 220 == 103, "spaced catch-up settles at a repeated absolute target exactly once")
+	clock.synchronize(0, 220, InputClock.pack_feedback(220, 100, 100))
+	clock.synchronize(0, 220, repeated)
+	var unknown := InputClock.pack_feedback(300, 140, 140)
+	unknown[-1] = 0xff
+	clock.synchronize(0, 220, unknown)
+	var protected := true
+	for seq in range(221, 321):
+		target = clock.sample(seq, [0.0, 0, ActorInput.BIT_UP, 0, 0, Vector2.RIGHT])
+		var end := clock.advance(ActorStep.DT, previous, 1000)
+		protected = protected and end == previous + 1 and target == end
+		previous = end
+	expect(protected, "a new button edge is immediately simulated even when the clock needs to slow down")
+	var monotone := true
+	for seq in range(321, 521):
+		var analog := [0.75 if seq % 2 == 0 else 0.8, 0, 0, 0, 0, Vector2.RIGHT]
+		target = clock.sample(seq, analog)
+		var end := clock.advance(ActorStep.DT, previous, 1000)
+		monotone = monotone and target > previous and end >= previous
+		previous = end
+	expect(monotone and previous - 520 == 100, "small analog variations allow lead recovery without scheduling into the past")
+
+func _clock_steps() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 20261122
+	var optimal := true
+	for trial in 128:
+		var errors := PackedFloat64Array()
+		for i in InputClock.SPACING:
+			errors.append(rng.randf_range(-2.0, 2.0))
+		var since := rng.randi_range(0, InputClock.SPACING)
+		var protect := trial % 2 == 0
+		var chosen := InputClock._choose_step(errors, since, protect)
+		var best := INF
+		var achieved := INF
+		# 直接累加所有合法路径的逐步损失，包含全程匀速的路径。
+		for slot in range(-1, InputClock.SPACING):
+			if slot >= 0 and since + slot < InputClock.SPACING:
+				continue
+			for direction: int in [-1, 1]:
+				if slot == 0 and protect and direction < 0:
+					continue
+				var cost := 0.0
+				for k in InputClock.SPACING:
+					var movement := direction if slot >= 0 and k >= slot else 0
+					cost += (errors[k] - movement) ** 2
+				best = minf(best, cost)
+				if chosen == (direction if slot == 0 else 0):
+					achieved = minf(achieved, cost)
+		optimal = optimal and is_equal_approx(best, achieved)
+	expect(optimal, "clock chooses a minimum-cost feasible first step for every reference path")
 
 func _lobby() -> void:
 	var codec := NetCodec.new()
@@ -455,8 +475,8 @@ func _codec(tree: SceneTree) -> void:
 			"frame": unarmed_frame}
 	var wire: PackedByteArray = servers[1].encode_event(NetEvent.Kind.BASELINE, baseline)
 	var digest := wire.hex_encode().sha256_text()
-	expect(digest == "20f870f02cfe24a067a6aebaf18a491dea9bcd868d5ce2d2b2ed5c9605dd4b10",
-			"BASELINE matches the v34 layout (%s)" % digest)
+	expect(digest == "25087d45e60379596b77bfc4288a535c760dda10bbd6b2e597eaa51ecb9de5cf",
+			"BASELINE matches the v35 layout (%s)" % digest)
 	var client: NetCodec = clients[1]
 	var known := client.history.keys()
 	var ack := client.state_ack
@@ -556,7 +576,7 @@ func _projectile_deltas() -> void:
 		pellets[id] = [WeaponRegistry.Type.S686, Vector2.ZERO, Vector2.RIGHT]
 	var shot := ShotRules.shot_id(2, 1)
 	var points := PackedVector2Array([Vector2(8, 24), Vector2(120, 24), Vector2(-80, 24)])
-	var frame := {"tick": 1, "map_revision": 0, "own": InputScheduler.UNBOUND, "time": {},
+	var frame := {"tick": 1, "map_revision": 0, "input_feedback": PackedByteArray(), "time": {},
 			"world": {"players": {}, "pickups": {}, "projectiles": pellets, "beams": {shot: [16, points]}}}
 	var server := NetCodec.new()
 	var client := NetCodec.new()
@@ -598,7 +618,7 @@ func _malformed_packets() -> void:
 
 	var received: Array[int] = []
 	var stamps: Array[int] = []
-	var stamp := func(_peer: int, _packet: Array, us: int, _input_at_snapshot: int) -> void: stamps.append(us)
+	var stamp := func(_peer: int, _packet: Array, us: int) -> void: stamps.append(us)
 	NetBus.input_received.connect(stamp)
 	var listen := func(_peer: int, kind: int, _data: Variant) -> void: received.append(kind)
 	NetBus.event_received.connect(listen)

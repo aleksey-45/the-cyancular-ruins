@@ -881,10 +881,13 @@ func _world_rewind(tree: SceneTree) -> void:
 	bird.hp = 0
 	bird.is_dead = true
 	bird.active = false
+	sim.tick += 1
 	rewind.record(dt)
 	var sub := Vector2i(8, 12)
 	var wall_hp := _terrain.get_hp(sub)
 	_terrain.apply_hp(sub, 0, 1)
+	sim.tick += 1
+	_terrain.record_tick(sim.tick)
 	var elite := sim.add_enemy("black_bird", actor, Vector2(100, 128)) as EnemyBlackBird
 	var elite_hp := elite.hp
 	rewind.rewind(1.0)
@@ -1326,6 +1329,7 @@ func _shared_rewind_history(tree: SceneTree) -> void:
 	sim.submit_blast(blast, Vector2(180, 64), WeaponRegistry.Type.GRENADE)
 	var pending := sim.pending_blasts.duplicate(true)
 	sim.terrain.apply_hp(sub, 0, 1)
+	sim.terrain.record_tick(sim.tick)
 	ActorStep.step(first, _attack(0, ActorInput.BIT_DROP))
 	first.shot_serial = 8
 	first.waterproof = 1
@@ -1740,7 +1744,7 @@ func _team_setup() -> void:
 	expect(players_on_map_points(authority, [1, 2], sides[1]) and players_on_map_points(authority, [3], sides[2]),
 			"each team opens on distinct marked points on its own side")
 	var actor: Player = authority.players[1]
-	var drop := [1, actor.input_buffer.epoch, 0, ActorInput.BIT_DROP, 0, 0, Vector2.RIGHT]
+	var drop := [1, actor.input_buffer.epoch, authority.combat_rules.tick + 1, ActorInput.BIT_DROP, 0, 0, Vector2.RIGHT]
 	authority.accept_input(1, [[], [drop]], 0)
 	for i in 3: authority.step()
 	expect(actor.equipped != null and actor.equipped.type_id == WeaponRegistry.Type.PISTOL,
@@ -1749,6 +1753,7 @@ func _team_setup() -> void:
 	authority.start_countdown()
 	authority._advance_round(3.0)
 	drop[InputBuffer.SEQ] = 4
+	drop[InputBuffer.TARGET_TICK] = authority.combat_rules.tick + 1
 	authority.accept_input(1, [[], [drop]], 50000)
 	for i in 3: authority.step()
 	expect(actor.equipped == null, "PLAYING accepts the same drop")

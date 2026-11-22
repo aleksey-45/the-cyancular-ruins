@@ -1,6 +1,6 @@
 extends Node
 
-signal input_received(peer: int, packet: Array, received_us: int, input_at_snapshot: int)
+signal input_received(peer: int, packet: Array, received_us: int)
 signal state_received(frame: Dictionary)
 signal event_received(peer: int, kind: int, data: Variant)
 signal peer_left(peer: int)
@@ -237,7 +237,7 @@ func _receive(peer: int, packet: PackedByteArray, received_us: int) -> void:
 		NetCodec.INPUT:
 			var input := codec.decode_input(reader)
 			if reader.valid:
-				input_received.emit(peer, input, received_us, codec.input_at_acked_snapshot)
+				input_received.emit(peer, input, received_us)
 		NetCodec.STATE:
 			var frame := codec.decode_state(reader)
 			if not frame.is_empty():

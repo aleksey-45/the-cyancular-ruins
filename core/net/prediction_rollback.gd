@@ -22,17 +22,17 @@ var combat: CombatSimulator
 var replay_ticks := 0
 
 var _states: Array[PredictionFrame] = []
-var _clock := 0.0
+var _clock := InputClock.new()
+var _epoch := -1
+var _render_tick := 0
 var _clock_step := 1.0
 var _discarded_through := 0
 var _player: Player
 var _authority_frame: Dictionary
-var _notice_feedback := InputScheduler.InstallFeedback.new()
 var _hits: Dictionary[int, Array] = {}
 var _shots: Dictionary[int, Dictionary] = {}
 var _projectile_ends: Dictionary[int, Array] = {}
 var _replay_tick := 0
-var _late_shot := false
 
 func _init() -> void:
 	_states.resize(KEEP)
@@ -45,40 +45,38 @@ func bind(player: Player) -> void:
 func reset(frame: Dictionary, ping_ms: int, keep_events := false) -> void:
 	var own: Array = frame["world"]["players"][_player.role]
 	var confirmed_seq := maxi(own[NetPlayer.INPUT][InputBuffer.SEQ], own[NetPlayer.ACTION_ACK])
-	_notice_feedback.install(own[NetPlayer.EPOCH], frame["own"],
-			sequence if _notice_feedback.epoch == own[NetPlayer.EPOCH] else confirmed_seq, frame.get("notice_ack", false))
-	sequence = confirmed_seq
-	history.clear()
-	actions.clear()
+	if _epoch != own[NetPlayer.EPOCH] or confirmed_seq > sequence:
+		_epoch = own[NetPlayer.EPOCH]
+		sequence = confirmed_seq
+		history.clear()
+		actions.clear()
+		_clock.reset(frame["tick"], sequence, ping_ms, frame["input_feedback"])
+	else:
+		_clock.synchronize(frame["tick"], sequence, frame["input_feedback"])
+		history = history.filter(func(row: Array) -> bool: return row[InputBuffer.SEQ] > own[NetPlayer.INPUT][InputBuffer.SEQ])
+		actions = actions.filter(func(row: Array) -> bool: return row[InputBuffer.SEQ] > own[NetPlayer.ACTION_ACK])
 	if not keep_events:
 		_hits.clear()
 		_shots.clear()
 		_projectile_ends.clear()
-		_states.fill(null)
-	_anchor(frame, ping_ms)
+	_anchor(frame, _state_at(frame["tick"]) if keep_events else null)
 
-func _anchor(frame: Dictionary, ping_ms: int) -> void:
+func _anchor(frame: Dictionary, saved: PredictionFrame) -> void:
 	_authority_frame = frame
-	var at: int = frame["tick"]
-	var due := InputScheduler.target(frame["own"], sequence)
-	if due < 0:
-		due = at + ceili(ping_ms * 0.06) + InputScheduler.START_MARGIN
-	_clock = clampi(due, at, at + MAX_REPLAY)
+	_render_tick = frame["tick"]
 	_clock_step = 1.0
 	_discarded_through = 0
-	_restore(_authority_checkpoint(frame, _state_at(frame["tick"])))
+	_restore(_authority_checkpoint(frame, saved))
 
 func capture(record: Array) -> void:
 	actions = actions.filter(func(action: Array) -> bool:
 		return sequence - action[InputBuffer.SEQ] <= InputBuffer.FUTURE_TICKS + InputBuffer.ACTION_TICKS)
 	sequence += 1
 	var epoch := _player.input_buffer.epoch
-	var target := InputScheduler.target(_authority_frame["own"], sequence)
-	if target < 0:
-		target = mini(int(_clock) + 1, _authority_frame["tick"] + MAX_REPLAY)
 	var pressed: int = record[ActorInput.PRESSED]
 	var released: int = record[ActorInput.RELEASED]
 	var weapon_inst: int = record[ActorInput.WINST]
+	var target := _clock.sample(sequence, record)
 	var aim: Vector2 = record[ActorInput.AIM]
 	if pressed != 0 or released != 0 or weapon_inst != 0:
 		if weapon_inst == 0 and (pressed | released) & (ActorInput.BIT_ATTACK | ActorInput.BIT_RELOAD | ActorInput.BIT_DROP):
@@ -89,35 +87,24 @@ func capture(record: Array) -> void:
 		_discarded_through = history.pop_front()[InputBuffer.SEQ]
 
 func packet() -> Array:
-	var input := [history.slice(-InputBuffer.REDUNDANCY), actions]
-	_notice_feedback.attach(input, sequence)
-	return input
+	return [history.slice(-InputBuffer.REDUNDANCY), actions]
 
 func render_offset(interpolation: float) -> float:
-	return _clock - _clock_step * (1.0 - interpolation) - tick
+	return _render_tick - _clock_step * (1.0 - interpolation) - tick
 
-func advance(delta: float, input: Array) -> void:
+func advance(delta: float) -> void:
 	var previous_tick := tick
 	var limit: int = _authority_frame["tick"] + MAX_REPLAY
-	var plan: Array = _authority_frame["own"]
-	var due := InputScheduler.target(plan, sequence)
-	var goal := _clock + delta * 60.0
-	if due >= 0:
-		# 缩短偏移时两个样本共用同一帧，等第二个样本后交给原缓冲合并。
-		goal = due - int(InputScheduler.target(plan, sequence + 1) == due)
-	_clock = clampf(goal, tick, limit)
-	_clock_step = clampf(_clock - previous_tick, 0.0, 1.0)
+	_render_tick = _clock.advance(delta, tick, limit)
+	_clock_step = clampf(_render_tick - previous_tick, 0.0, 1.0)
 	if _player.rewinding:
 		return
-	if due > _authority_frame["tick"] and due <= tick and sequence > _player.input_buffer.consumed_seq:
-		# 晚到的排期可能把新样本映射到已经预测过的帧。
-		var at: int = _authority_frame["tick"]
-		_replay(at, "schedule", _authority_checkpoint(_authority_frame, _state_at(at)))
-	_player.input_buffer.push(input, tick)
-	while tick < int(_clock):
+	# 本地历史独立于上行冗余长度。预测窗口恢复后也能取回先前尚未入缓冲的样本。
+	_player.input_buffer.push([history, actions], tick)
+	while tick < _render_tick:
 		var from := _player.position
 		step_advanced.emit(from, _step())
-	if tick == previous_tick and _clock >= limit:
+	if tick == previous_tick and _render_tick >= limit:
 		step_advanced.emit(_player.position, [])
 
 func reconcile(frame: Dictionary, ping_ms: int) -> Correction:
@@ -129,27 +116,23 @@ func reconcile(frame: Dictionary, ping_ms: int) -> Correction:
 	var players: Dictionary = frame["world"]["players"]
 	var own: Array = players[_player.role]
 	var at: int = frame["tick"]
-	replay_ticks = 0
 	for hit_tick: int in _hits.keys():
 		if hit_tick <= at:
 			_hits.erase(hit_tick)
 	if own[NetPlayer.EPOCH] != _player.input_buffer.epoch:
 		reset(frame, ping_ms, true)
 		return Correction.SNAP
-	_notice_feedback.install(own[NetPlayer.EPOCH], frame["own"], sequence, frame.get("notice_ack", false))
+	_clock.synchronize(at, sequence, frame["input_feedback"])
 	var input: Array = own[NetPlayer.INPUT]
 	var input_seq: int = input[InputBuffer.SEQ]
 	var action_ack: int = own[NetPlayer.ACTION_ACK]
 	var fresh_anchor: bool = at > tick or tick - at >= KEEP or input_seq < _discarded_through
 	history = history.filter(func(record: Array) -> bool: return record[InputBuffer.SEQ] > input_seq)
-	var retimed := false
-	if frame["own"] != _authority_frame["own"]:
-		retimed = _retime([history, actions], frame["own"])
 	actions = actions.filter(func(action: Array) -> bool:
 		return action[InputBuffer.SEQ] > action_ack and at - action[InputBuffer.TARGET_TICK] < InputBuffer.ACTION_TICKS)
 	var saved := _state_at(at)
 	if fresh_anchor or saved == null or own[NetPlayer.REWIND] or _player.rewinding:
-		_anchor(frame, ping_ms)
+		_anchor(frame, saved)
 		return Correction.SNAP
 	var forecast_extended: bool = at > _authority_frame["tick"] and tick > at \
 			and tick > _authority_frame["tick"] + REMOTE_FORECAST
@@ -162,35 +145,21 @@ func reconcile(frame: Dictionary, ping_ms: int) -> Correction:
 	if difference.is_empty() and time_economy != null and saved.accounts[_player.role] != frame["time"][_player.role]:
 		difference = "economy"
 	var local_changed := not difference.is_empty()
-	if retimed and difference.is_empty():
-		difference = "schedule"
 	if not local_changed and (saved.accounts != frame["time"] or (players.size() > 1 and forecast_extended)
 			or _players_differ(saved.players, players, map_size, _player.role)):
 		difference = "players"
 	var checkpoint := _authority_checkpoint(frame, saved)
-	if difference.is_empty() and (_late_shot or saved.projectiles != checkpoint.projectiles
+	if difference.is_empty() and (saved.projectiles != checkpoint.projectiles
 			or saved.pending_blasts != checkpoint.pending_blasts):
 		difference = "projectiles"
 	if difference.is_empty() and saved.beams != checkpoint.beams:
 		difference = "beams"
-	if difference.is_empty() and _replay_tick <= at:
-		_replay_tick = 0
-		_retire_combat_events()
+	# 快照确定重放起点。迟到事件也可能影响快照之后的预测。
+	if difference.is_empty() and _replay_tick == 0:
+		replay_ticks = 0
+		_retire_events()
 		return Correction.KEEP
 	return _replay(at, "combat" if difference.is_empty() else difference, checkpoint, local_changed)
-
-static func _retime(packet: Array, plan: Array) -> bool:
-	var changed := false
-	for records: Array in packet:
-		for i in records.size():
-			var record: Array = records[i]
-			var due := InputScheduler.target(plan, record[InputBuffer.SEQ])
-			if due >= 0 and due != record[InputBuffer.TARGET_TICK]:
-				# 旧记录还可能被检查点引用。
-				records[i] = record.duplicate()
-				records[i][InputBuffer.TARGET_TICK] = due
-				changed = true
-	return changed
 
 static func _players_differ(saved: Dictionary, players: Dictionary, map_size: Vector2, local_role: int) -> bool:
 	if saved.size() != players.size():
@@ -209,45 +178,51 @@ static func _players_differ(saved: Dictionary, players: Dictionary, map_size: Ve
 			return true
 	return false
 
-func queue_shot(event: Dictionary) -> PackedVector2Array:
-	var shot := event.duplicate()
-	var spec := WeaponRegistry.definition(shot["type_id"])
-	# 计算光束轨迹所用的地形碰撞形状需要包含本帧已收到的地形变更，因此先应用待处理的修改。
-	if spec["attack"] == WeaponRegistry.Attack.BEAM:
-		combat.terrain.flush_collisions()
-	ShotRules.prepare(combat.terrain, shot, spec)
-	var at: int = shot["tick"]
-	var id := ShotRules.shot_id(shot["role"], shot["serial"])
-	_shots[id] = shot
+func queue_event(kind: int, event: Dictionary) -> void:
+	var at: int = event["tick"]
+	var authority_tick: int = _authority_frame["tick"]
+	match kind:
+		NetEvent.Kind.FIRE:
+			var id := ShotRules.shot_id(event["role"], event["serial"])
+			_shots[id] = event
+			var saved := _state_at(at)
+			var predicted: Dictionary = saved.shots.get(id, {}) if saved != null else {}
+			if predicted.merged(event, true) == predicted:
+				return
+		NetEvent.Kind.HIT:
+			var victim: Player = combat.players.get(event["victim"])
+			if at <= authority_tick or victim == null or event["epoch"] < victim.input_buffer.epoch:
+				return
+			_hits.get_or_add(at, []).append(event)
+			if event["epoch"] != victim.input_buffer.epoch:
+				return
+		NetEvent.Kind.BULLET_END, NetEvent.Kind.EXPLOSION:
+			var explosion := kind == NetEvent.Kind.EXPLOSION
+			var ids: Array = [event["id"]] if explosion else event["ids"]
+			var blast := CombatSimulator.blast_state(event["type_id"], event["pos"], at) if explosion else []
+			var check_tick := maxi(at, authority_tick)
+			var saved := _state_at(check_tick)
+			var remaining := blast if not blast.is_empty() and blast[Blast.DUE] > check_tick else []
+			var changed := false
+			for id: int in ids:
+				if at < projectile_end_tick(id):
+					continue
+				_projectile_ends[id] = [at, blast]
+				changed = changed or saved == null or saved.projectiles.has(id) \
+						or saved.pending_blasts.get(id, []) != remaining
+			if not changed:
+				return
+		NetEvent.Kind.TERRAIN:
+			var terrain := combat.terrain
+			if event["revision"] <= terrain.revision:
+				return
+			terrain.record_values(at, event["cells"])
+			terrain.revision = event["revision"]
 	if at <= tick:
-		var saved := _state_at(at)
-		if saved == null or saved.shots.get(id) != shot:
-			_late_shot = true
-			_request_replay(maxi(at, _authority_frame["tick"]))
-	return shot["vectors"]
-
-func queue_projectile_end(id: int, at: int, blast: Array = []) -> void:
-	if at < projectile_end_tick(id):
-		return
-	_projectile_ends[id] = [at, blast]
-	if at <= tick:
-		var check_tick := maxi(at, _authority_frame["tick"])
-		var saved := _state_at(check_tick)
-		var remaining := blast if not blast.is_empty() and blast[Blast.DUE] > check_tick else []
-		if saved == null or saved.projectiles.has(id) or saved.pending_blasts.get(id, []) != remaining:
-			_request_replay(check_tick)
+		_request_replay(maxi(at, authority_tick))
 
 func projectile_end_tick(id: int) -> int:
 	return _projectile_ends[id][End.TICK] if _projectile_ends.has(id) else -1
-
-func queue_hit(hit: Dictionary) -> void:
-	var at: int = hit["tick"]
-	var victim: Player = combat.players.get(hit["victim"])
-	if at <= _authority_frame["tick"] or victim == null or hit["epoch"] < victim.input_buffer.epoch:
-		return
-	_hits.get_or_add(at, []).append(hit)
-	if at <= tick and hit["epoch"] == victim.input_buffer.epoch:
-		_request_replay(at)
 
 func _request_replay(at: int) -> void:
 	_replay_tick = maxi(_replay_tick, at)
@@ -278,11 +253,10 @@ func _restore(checkpoint: PredictionFrame) -> void:
 		for role: int in checkpoint.players:
 			time_economy.restore_account(role, checkpoint.accounts[role])
 	_player.input_buffer.push([history, actions], tick)
-	_retire_combat_events()
+	_retire_events()
 	for shot: Dictionary in _shots.values():
 		if tick - KEEP < shot["tick"] and shot["tick"] <= tick:
 			combat.catch_up_shot(shot, _authority_frame["world"]["projectiles"], tick)
-	_late_shot = false
 	_states.fill(null)
 	_remember()
 
@@ -318,8 +292,9 @@ func _authority_checkpoint(frame: Dictionary, saved: PredictionFrame) -> Predict
 				checkpoint.pending_blasts.erase(id)
 	return checkpoint
 
-func _retire_combat_events() -> void:
+func _retire_events() -> void:
 	var at: int = _authority_frame["tick"]
+	combat.terrain.forget_through(at - KEEP)
 	var live_shots := {}
 	for id: int in _authority_frame["world"]["projectiles"]:
 		live_shots[ShotRules.shot_from_projectile(id)] = true

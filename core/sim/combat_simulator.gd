@@ -73,6 +73,7 @@ func close() -> void:
 		remove_player(role)
 
 ## 输入按角色 ID 处理。角色全部移动后才发射，当帧生成的弹丸参加本帧的运动。
+## 以当前战斗帧末的地形开始，结束时记录下一帧的地形改动。
 func step(inputs: Dictionary, confirmed_shots: Dictionary = {}, projectile_ends: Dictionary = {}) -> Dictionary:
 	var reversing := time_field != null and time_field.is_rewinding()
 	if not reversing:
@@ -95,7 +96,7 @@ func step(inputs: Dictionary, confirmed_shots: Dictionary = {}, projectile_ends:
 		apply_projectile_ends(projectile_ends)
 		step_projectiles(ActorStep.DT)
 		settle_blasts()
-	terrain.flush_collisions()
+	terrain.record_tick(tick)
 	return shots
 
 func resolve_requests(roles: Array, confirmed_shots: Dictionary = {}) -> Dictionary:
@@ -171,6 +172,8 @@ func catch_up_shot(shot: Dictionary, live: Dictionary, at: int) -> void:
 	var spec := WeaponRegistry.definition(shot["type_id"])
 	if owner == null or spec["attack"] != WeaponRegistry.Attack.PROJECTILE:
 		return
+	shot = shot.duplicate()
+	ShotRules.prepare(terrain, shot, spec)
 	var id := ShotRules.shot_id(owner.role, shot["serial"])
 	var ids: Array[int] = []
 	var velocities: PackedVector2Array = shot["vectors"]
@@ -187,6 +190,7 @@ func catch_up_shot(shot: Dictionary, live: Dictionary, at: int) -> void:
 	for key: int in ids:
 		var bullet := projectiles[key]
 		for launch_tick in range(shot["tick"], at + 1):
+			terrain.restore(launch_tick - 1)
 			tick = launch_tick
 			step_projectile(bullet, ActorStep.DT)
 			if not projectiles.has(key):
@@ -195,6 +199,7 @@ func catch_up_shot(shot: Dictionary, live: Dictionary, at: int) -> void:
 		if projectiles.has(key):
 			bullet.restore_pose(live[key][BulletBody.Network.POS], live[key][BulletBody.Network.VEL])
 	tick = at
+	terrain.restore(at)
 
 func clear_blasts() -> void:
 	pending_blasts.clear()

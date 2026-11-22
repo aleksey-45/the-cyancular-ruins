@@ -15,6 +15,8 @@ const CACHE_STATES := 4
 const PERMANENT_CHUNK := -1
 const LEDGE_CHUNK := -2
 
+enum Change { TICK, HP }
+
 class Chunk:
 	var body := RID()
 	var signature := PackedByteArray()
@@ -31,7 +33,10 @@ var _cells := PackedInt32Array()
 var _hp := PackedInt32Array()
 var _network_changes: Dictionary = {}
 var _modified: Dictionary = {}
-var _rewind_pending: Dictionary[int, int] = {}
+var _pending_changes: Dictionary[int, int] = {}
+var _history: Array[Array] = []
+# 游标之前的差分已应用。
+var _cursor := 0
 var _rewards: Dictionary = {}
 var _visual_changes: Dictionary = {}
 var _chunk_columns := 0
@@ -237,17 +242,18 @@ func _write_hp(index: int, next: int, from_combat: bool, owner := 0) -> bool:
 	if before == next:
 		return false
 	if from_combat and rewind_enabled:
-		_rewind_pending.get_or_add(index, before)
+		_pending_changes.get_or_add(index, before)
 	_hp[index] = next
 	if from_combat and authoritative:
 		_network_changes[index] = next
 		_modified[index] = next
 		revision += 1
-	if (before > 0) != (next > 0):
-		_visual_changes[index] = next > 0
+	var solid := next > 0
+	if (before > 0) != solid:
+		_visual_changes[index] = solid
 		_mark_collision(index)
 		if TileDefs.ledges[_material(index)] != 0: ledges_dirty = true
-		if from_combat and before > 0 and next == 0 and owner > 0:
+		if from_combat and not solid and owner > 0:
 			_rewards[owner] = int(_rewards.get(owner, 0)) + 1
 	return true
 
@@ -327,11 +333,15 @@ func apply_hp(at: Vector2i, value: int, owner: int) -> bool:
 	changed.emit()
 	return _hp[i] == 0
 
-func apply_values(values: Dictionary) -> void:
-	for at in values.keys():
-		var n := sub_index(at)
-		if n >= 0:
-			_write_hp(n, int(values[at]), false)
+## 记录帧末的权威耐久，战斗步进与检查点恢复都按帧读取。
+func record_values(at: int, values: Dictionary) -> void:
+	var changes: Dictionary[int, int] = {}
+	for cell: Vector2i in values:
+		var index := sub_index(cell)
+		if index >= 0:
+			changes[index] = values[cell]
+	if not changes.is_empty():
+		_history.append([at, changes])
 
 func reset() -> void:
 	var material_hp := TileDefs.hit_points
@@ -342,7 +352,7 @@ func reset() -> void:
 	_network_changes.clear()
 	_modified.clear()
 	_rewards.clear()
-	_rewind_pending.clear()
+	clear_history()
 	revision = revision + 1 if authoritative else 0
 	flush_collisions()
 
@@ -558,12 +568,39 @@ func invalidate_all() -> void:
 	for key in _chunk_dirty.size():
 		_queue_chunk(key)
 
-## 每个检查点只保留实际改动子格的首次耐久值。
-func take_rewind_changes() -> Dictionary[int, int]:
-	var changes := _rewind_pending
-	_rewind_pending = {}
-	return changes
+func record_tick(at: int) -> void:
+	if not _pending_changes.is_empty():
+		_history.append([at, _pending_changes])
+		_cursor += 1
+		_pending_changes = {}
+	restore(at)
 
-func undo_changes(changes: Dictionary) -> void:
+## 恢复指定战斗帧末的耐久和碰撞。
+func restore(at: int) -> void:
+	while _cursor > 0 and _history[_cursor - 1][Change.TICK] > at:
+		_cursor -= 1
+		_swap_changes(_history[_cursor][Change.HP])
+	while _cursor < _history.size() and _history[_cursor][Change.TICK] <= at:
+		_swap_changes(_history[_cursor][Change.HP])
+		_cursor += 1
+	flush_collisions()
+
+func discard_future() -> void:
+	_history.resize(_cursor)
+
+func forget_through(at: int) -> void:
+	while not _history.is_empty() and _history.front()[Change.TICK] <= at:
+		_history.pop_front()
+		_cursor -= 1
+
+func clear_history() -> void:
+	_history.clear()
+	_cursor = 0
+	_pending_changes.clear()
+
+## 原地交换子格耐久与差分，交换后的差分可以将地形还原。
+func _swap_changes(changes: Dictionary[int, int]) -> void:
 	for index: int in changes:
+		var previous := _hp[index]
 		_write_hp(index, changes[index], false)
+		changes[index] = previous

@@ -35,8 +35,6 @@ func record(delta: float, sample: CombatSnapshot = null) -> CombatSnapshot:
 	if sample == null:
 		sample = CombatSnapshot.new()
 		sample.capture(_combat)
-	if _scope == CombatSnapshot.WORLD:
-		sample.capture_environment(_combat)
 	_frames.append([time, sample])
 	while _frames[_first][TIME] < time - _seconds:
 		_frames[_first] = null
@@ -44,29 +42,27 @@ func record(delta: float, sample: CombatSnapshot = null) -> CombatSnapshot:
 	if _first * 2 >= _frames.size():
 		_frames = _frames.slice(_first)
 		_first = 0
+	if _scope == CombatSnapshot.WORLD:
+		sample.capture_environment(_combat)
+		_combat.terrain.forget_through(_frames[_first][SNAPSHOT].tick)
 	return sample
 
 func rewind(delta: float, hit_elites := true) -> void:
 	var world := _scope == CombatSnapshot.WORLD
-	var terrain := _combat.terrain
 	if _rewound < 0.0:
 		_rewound = 0.0
 		_since_sample = 0.0
 		if world:
-			terrain.undo_changes(terrain.take_rewind_changes())
 			for bullet: BulletBody in _combat.projectiles.values():
 				bullet.rewind_hits.clear()
 	var target := maxf(oldest_time(), time - TimeParams.rewind_delta(_rewound, delta))
 	_rewound += time - target
 	time = target
 	while _frames.back()[TIME] > time:
-		var later: Array = _frames.pop_back()
-		if world:
-			var snapshot: CombatSnapshot = later[SNAPSHOT]
-			terrain.undo_changes(snapshot.terrain_changes)
-	if world:
-		terrain.flush_collisions()
+		_frames.pop_back()
 	var selected: CombatSnapshot = _frames.back()[SNAPSHOT]
 	selected.restore(_combat, _scope)
-	if world and hit_elites:
-		_combat.hit_rewound_elites()
+	if world:
+		_combat.terrain.discard_future()
+		if hit_elites:
+			_combat.hit_rewound_elites()

@@ -17,17 +17,20 @@ func run(tree: SceneTree) -> void:
 	level.rewind_enabled = true
 	level.apply_hp(sub, 0, 1)
 	level.apply_hp(adjacent, 0, 1)
-	var changes := level.take_rewind_changes()
 	expect(level.flush_collisions() == 1, "two destroyed subcells queue their shared chunk once")
-	level.undo_changes(changes)
+	level.record_tick(1)
+	level.restore(0)
 	expect(level.get_hp(sub) == original - 1, "rewind restores residual HP, not full health")
 	expect(level.get_hp(adjacent) == adjacent_hp, "rewind restores both subcells from the first saved macro state")
 	level.reset()
-	level.apply_values({sub: original - 2})
+	level.take_wall_changes()
+	level.record_values(1, {sub: original - 2})
+	level.restore(1)
 	expect(level.get_hp(sub) == original - 2,
 			"an authority patch sets exact HP")
-	level.apply_values({sub: original - 2})
-	expect(level.flush_collisions() == 0 and level.get_hp(sub) == original - 2,
+	level.record_values(2, {sub: original - 2})
+	level.restore(2)
+	expect(level.take_wall_changes().is_empty() and level.get_hp(sub) == original - 2,
 			"the absolute HP patch is idempotent and keeps the same geometry")
 	_mirror_topology(tree)
 	_mirrored_collision(tree)
@@ -49,15 +52,21 @@ func _rewind_boundaries(level: Terrain) -> void:
 	level.rewind_enabled = true
 	level.apply_hp(sub, initial + 1, 0)
 	level.apply_hp(sub, initial + 2, 0)
-	var first := level.take_rewind_changes()
-	level.apply_hp(sub, initial + 3, 0)
-	var second := level.take_rewind_changes()
-	level.undo_changes(second)
+	level.record_tick(1)
+	level.record_values(2, {sub: initial - 1})
+	level.restore(1)
 	expect(level.get_hp(sub) == initial + 2, "undo returns to the previous checkpoint's exact terrain")
+	level.restore(2)
+	expect(level.get_hp(sub) == initial - 1, "seeking forward reuses a patch recorded on the same timeline")
+	level.restore(1)
+	level.discard_future()
 	level.apply_hp(sub, initial + 4, 0)
-	level.undo_changes(level.take_rewind_changes())
-	level.undo_changes(first)
+	level.record_tick(2)
+	level.restore(0)
 	expect(level.get_hp(sub) == initial, "a new branch can undo its edits and the shared earlier history")
+	level.restore(2)
+	expect(level.get_hp(sub) == initial + 4, "seeking to the head applies the new branch's change")
+	level.reset()
 	var adjacent := sub + Vector2i.RIGHT
 	level.apply_hp(adjacent, initial - 2, 0)
 	level.damage_beam(sub, 1, 0)
@@ -110,7 +119,9 @@ func _destruction_units(tree: SceneTree) -> void:
 	expect(terrain.line_of_sight(Vector2(8, -8), Vector2(8, 24))
 			and not terrain.line_of_sight(Vector2(40, -8), Vector2(40, 24)),
 			"a sight line wrapped at the seam sees the same opening and wall as the physical ray")
-	terrain.undo_changes(terrain.take_rewind_changes())
+	terrain.record_tick(1)
+	terrain.restore(0)
+	terrain.discard_future()
 	expect(block_hp(terrain, Vector2i.ZERO) == original, "rewind restores all four bullet-damaged subcells")
 
 	var blast_center := Vector2(248, 8)
@@ -449,11 +460,11 @@ func _map_format() -> void:
 			"initial paint adds only the one-subcell seam bands around the 4x4 map")
 	colored_terrain.rewind_enabled = true
 	colored_terrain.apply_hp(sub, 0, 1)
-	var changes := colored_terrain.take_rewind_changes()
+	colored_terrain.record_tick(1)
 	display.patch(colored_terrain.take_wall_changes())
 	expect(layer.get_used_cells().size() == 32 and layer.get_cell_source_id(sub) == -1
 			and layer.get_cell_source_id(corner) == -1, "destroying a corner tile erases its four visual cells")
-	colored_terrain.undo_changes(changes)
+	colored_terrain.restore(0)
 	display.patch(colored_terrain.take_wall_changes())
 	expect(layer.get_used_cells().size() == 36 and layer.get_cell_atlas_coords(sub) == atlas
 			and layer.get_cell_atlas_coords(corner) == atlas,

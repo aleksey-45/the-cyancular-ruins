@@ -13,7 +13,6 @@ var pending_blasts: Dictionary[int, Array]
 
 var enemies: Dictionary[int, Array]
 var elapsed: float
-var terrain_changes: Dictionary[int, int] = {}
 
 func capture(combat: CombatSimulator) -> void:
 	tick = combat.tick
@@ -33,9 +32,7 @@ func capture_environment(combat: CombatSimulator) -> void:
 	for enemy in combat.enemies:
 		if not enemy.kind.elite:
 			enemies[enemy.slot] = enemy.capture_rewind_state()
-	terrain_changes = combat.terrain.take_rewind_changes()
 
-## scope 指定需要恢复的角色和弹丸，以及是否倒回世界时钟。
 func restore(combat: CombatSimulator, scope := NETWORK) -> void:
 	if scope > WORLD:
 		combat.players[scope].restore_checkpoint(players[scope], scope)
@@ -45,6 +42,7 @@ func restore(combat: CombatSimulator, scope := NETWORK) -> void:
 		return
 
 	combat.tick = tick
+	combat.terrain.restore(tick)
 	for role: int in players:
 		combat.players[role].restore_checkpoint(players[role], scope)
 	combat.beams.assign(beams)

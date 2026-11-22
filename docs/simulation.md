@@ -6,9 +6,9 @@
 
 `LocalInputSource` 把按键、瞄准方向、长按丢弃和滚轮切换合成输入记录。`ActorStep` 使用同一种输入记录更新单人角色、服务器角色和客户端预测。每次更新分别生成开火或溺水等结算请求，以及落地和换弹等画面与音效事件。重放预测时跳过一次性画面与音效。[本地输入](../core/net/local_input_source.gd) · [角色更新](../core/sim/actor_step.gd)
 
-本地对局、服务器和客户端预测都以 60 Hz 调用 `CombatSimulator.step()`。每帧先移动地面武器，再按角色 ID 处理输入与移动。所有角色就位后按射击 ID 执行攻击，更新敌人，并推进包括刚发射弹丸在内的所有在途弹丸。最后结算到期爆炸并更新地形碰撞。服务器随后推进回合，客户端重放时使用服务器确认的射击和终止帧。[战斗步进](../core/sim/combat_simulator.gd) · [本地对局](../scenes/solo_level.gd) · [服务器](../server/authority_world.gd)
+本地对局、服务器和客户端预测都以 60 Hz 调用 `CombatSimulator.step()`。每帧先移动地面武器，再按角色 ID 处理输入与移动。所有角色就位后按射击 ID 执行攻击，更新敌人，并推进包括刚发射弹丸在内的所有在途弹丸。最后结算到期爆炸并更新地形碰撞。服务器随后推进回合，客户端预测和重放都在对应帧结算已收到的权威战斗事件。[战斗步进](../core/sim/combat_simulator.gd) · [本地对局](../scenes/solo_level.gd) · [服务器](../server/authority_world.gd)
 
-世界回溯与个人回溯都用 `RewindHistory` 以 20 Hz 记录 `CombatSnapshot`。同一物理帧需要采样的玩家引用同一份检查点，每个玩家可以独立倒退、松开并从所选时刻继续。个人范围恢复使用者和仍在场的自有弹丸的运动状态。世界范围还恢复战斗帧号、弹丸的存在与结算状态、普通敌人和地形。网络预测使用同一种战斗检查点，并在 `PredictionFrame` 中额外保存时间账户和当帧射击。[时间历史](../core/sim/rewind_history.gd) · [战斗检查点](../core/sim/combat_snapshot.gd) · [预测回滚](../core/net/prediction_rollback.gd)
+世界回溯与个人回溯都用 `RewindHistory` 以 20 Hz 记录 `CombatSnapshot`。同一物理帧需要采样的玩家引用同一份检查点，每个玩家可以独立倒退、松开并从所选时刻继续。个人范围恢复使用者和仍在场的自有弹丸的运动状态。世界回溯和网络回滚通过同一个检查点恢复战斗帧号、地形、角色与弹丸。世界回溯还恢复普通敌人与环境时钟，网络预测在 `PredictionFrame` 中额外保存时间账户和当帧射击。[时间历史](../core/sim/rewind_history.gd) · [战斗检查点](../core/sim/combat_snapshot.gd) · [预测回滚](../core/net/prediction_rollback.gd)
 
 ## 物理查询
 
