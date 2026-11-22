@@ -49,6 +49,8 @@ var combat_requests: Array = []
 var presentation_events: Array = []
 
 var _speed_mult := 1.0
+var _auto_jump_frame := false
+var _auto_jump_timer := 0.0
 var weapons := WeaponInventory.new()
 var equipped: GunBody:
 	get: return weapons.equipped
@@ -68,7 +70,7 @@ func _init(match_sim: CombatSimulator, player_role: int) -> void:
 	role = player_role
 	var shape := CollisionWorld.rectangle(CFG.standing_hull.size)
 	super(match_sim, Vector2.ZERO, CFG.body_scale, shape, CollisionWorld.LAYER_TEAM_A,
-			CollisionWorld.LAYER_TERRAIN | CollisionWorld.LAYER_ENEMY)
+			CollisionWorld.LAYER_TERRAIN)
 	weapons.feedback.connect(_weapon_feedback)
 	for slot in range(1, COLLISION_SLOTS):
 		PhysicsServer2D.body_add_shape(rid, shape, Transform2D.IDENTITY, true)
@@ -80,7 +82,7 @@ func _weapon_feedback(kind: String) -> void:
 func set_team_collision(side: int, player_collision: bool) -> void:
 	team = side
 	collision_layer = CollisionWorld.team_layer(team)
-	collision_mask = CollisionWorld.LAYER_TERRAIN | CollisionWorld.LAYER_ENEMY
+	collision_mask = CollisionWorld.LAYER_TERRAIN
 	if player_collision:
 		collision_mask |= CollisionWorld.team_layer(3 - team)
 
@@ -139,9 +141,45 @@ func _try_step_up(start: Transform2D, travel: Vector2) -> bool:
 	if rise <= margin or rise > CFG.step_max_height + margin \
 			or (pose.origin.x - start.origin.x - _axis_motion.get_travel().x) * direction <= 0.001:
 		return false
+	# 与 main 一致:≤32px 抬上去;48/64px 按台阶高度自动跳,而不是瞬移。
+	if rise > 32.0 + margin:
+		velocity.y = -sqrt(2.0 * maxf(gravity, 1.0) * (rise + 6.0))
+		velocity.x = step_input.axis * CFG.move_speed * _speed_mult
+		_auto_jump_frame = true
+		_auto_jump_timer = 0.35
+		jump_cut_applied = true
+		return false
 	_record_contact(_step_motion)
 	position = pose.origin
 	return true
+
+func _try_ledge_nudge() -> void:
+	# 对齐 main:跳跃/下落贴着台沿时,脚底以 ≤1 个子格卡在台沿竖直面/顶面,向上挤出来。
+	if absf(step_input.axis) < 0.01:
+		return
+	var dir := 1 if step_input.axis > 0.0 else -1
+	var bounds := collision_rect()
+	var feet_y := bounds.end.y
+	var x_px := bounds.get_center().x + dir * (bounds.size.x * 0.5 + 1.0)
+	var col := int(floor(x_px / Terrain.SUB_SIZE))
+	var feet_sub := int(floor(feet_y / Terrain.SUB_SIZE))
+	for k in range(0, 2):
+		var row := feet_sub - k
+		var tex := terrain.sub_texture(Vector2i(col, row))
+		if tex == 0 or TileDefs.type_id_of(tex) != TileDefs.TYPE_WALL:
+			continue
+		var dy := feet_y - float(row) * Terrain.SUB_SIZE
+		if dy <= 0.0 or dy > 16.0:
+			continue
+		if _sub_solid(col, row - 1) or _sub_solid(col, row - 2):
+			return
+		position.y -= dy + 1.0
+		velocity.y = minf(velocity.y, 0.0)
+		return
+
+func _sub_solid(col: int, row: int) -> bool:
+	var tex := terrain.sub_texture(Vector2i(col, row))
+	return tex != 0 and TileDefs.type_id_of(tex) == TileDefs.TYPE_WALL
 
 func _move_actor(delta: float) -> void:
 	motion_contacts.clear()
@@ -152,14 +190,18 @@ func _move_actor(delta: float) -> void:
 	var blocked := move_by_internal(motion)
 	if blocked.y > 0.0 and not _grounded and incoming.y > 0.0:
 		presentation_events.append({"kind": "land", "speed": incoming.y})
-	_grounded = blocked.y > 0.0
-	if blocked.x != 0.0:
+	_grounded = blocked.y > 0.0 and not _auto_jump_frame
+	if blocked.x != 0.0 and not _auto_jump_frame and _auto_jump_timer <= 0.0:
 		velocity.x = 0.0
 		motion_knock_velocity.x = 0.0
 		cancel_charge()
-	if blocked.y != 0.0:
+	if blocked.y != 0.0 and not _auto_jump_frame:
 		velocity.y = 0.0
 		motion_knock_velocity.y = 0.0
+	_auto_jump_frame = false
+	_auto_jump_timer = maxf(_auto_jump_timer - delta, 0.0)
+	if blocked.x != 0.0 and not _grounded and not in_water and not climb_latched:
+		_try_ledge_nudge()
 	motion_knock_velocity *= exp(-CFG.player_knock_decay_rate * delta)
 	if not sim_downed:
 		slide_reactions(incoming)

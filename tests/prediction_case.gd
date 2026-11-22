@@ -362,7 +362,7 @@ func _world_replication(tree: SceneTree) -> void:
 	var mask := CollisionWorld.LAYER_TEAM_B
 	var seam_x := 10.0 + _terrain.map_size.x
 	expect(not physics.ray_hit(Vector2(seam_x, 400), Vector2(seam_x, 650), mask).is_empty()
-			and proxy.collision_mask == (CollisionWorld.LAYER_TERRAIN | CollisionWorld.LAYER_ENEMY),
+			and proxy.collision_mask == CollisionWorld.LAYER_TERRAIN,
 			"the default proxy exposes a team hitbox across the map seam")
 	for i in 2:
 		rollback._step()
@@ -422,7 +422,7 @@ func _world_replication(tree: SceneTree) -> void:
 	client._install_world(frame)
 	rollback.reconcile(frame, 0)
 	expect(not physics.ray_hit(Vector2(512, 400), Vector2(512, 650), mask).is_empty()
-			and proxy.collision_mask == (CollisionWorld.LAYER_TERRAIN | CollisionWorld.LAYER_ENEMY),
+			and proxy.collision_mask == CollisionWorld.LAYER_TERRAIN,
 			"restoring a hitbox after the due tick preserves the no-blocking movement mask")
 	rollback._step()
 	frame = _saved_frame(rollback, 111)
@@ -635,7 +635,8 @@ func _aligned_step_replay(tree: SceneTree) -> void:
 		var rollback := PredictionRollback.new()
 		rollback.bind(local)
 		rollback.reset(NetCodec.new().decode_state(NetCodec.Reader.new(wire, 1)), 0)
-		for at in range(101, 105):
+		var ticks := 40 if height == 48 else 4
+		for at in range(101, 101 + ticks):
 			authority.step()
 			rollback._step()
 			expect(local.capture_state() == runner.capture_state(),
@@ -643,10 +644,10 @@ func _aligned_step_replay(tree: SceneTree) -> void:
 		var rise := 326.999 - runner.position.y
 		expect(absf(rise - (48.0 if height == 48 else 0.0)) < 0.1 and runner._grounded,
 				"the %dpx aligned face obeys the step height limit" % height)
-		var endpoint := rollback._state_at(104).players
+		var endpoint := rollback._state_at(100 + ticks).players
 		rollback._request_replay(101)
-		expect(rollback.reconcile({}, 0) == PredictionRollback.Correction.KEEP and rollback.replay_ticks == 4
-				and rollback._state_at(104).players == endpoint, "aligned step replay reproduces the endpoint")
+		expect(rollback.reconcile({}, 0) == PredictionRollback.Correction.KEEP and rollback.replay_ticks == ticks
+				and rollback._state_at(100 + ticks).players == endpoint, "aligned step replay reproduces the endpoint")
 		cleanup()
 
 func _aligned_step_world(tree: SceneTree, height: int, reverse_order: bool) -> TestWorld:

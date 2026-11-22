@@ -1734,7 +1734,8 @@ func _team_setup() -> void:
 			{"match_time": 300, "disabled_weapons": disabled})
 	expect(problem.is_empty(), "the team match loads and validates its map")
 	for p: Player in authority.players.values():
-		expect(p.collision_mask == (CollisionWorld.LAYER_TERRAIN | CollisionWorld.LAYER_ENEMY), "players collide with terrain and NPCs by default")
+		expect(p.collision_mask == CollisionWorld.LAYER_TERRAIN,
+				"players collide with terrain only; NPC contact is damage-only")
 		expect(p.equipped != null and p.equipped.type_id == WeaponRegistry.Type.PISTOL,
 				"each player starts equipped even when only one weapon type is enabled")
 	expect(authority.rules.phase == NetEvent.RoundState.WAITING and is_zero_approx(authority.rules.round_timer),
