@@ -1,9 +1,14 @@
 extends Node
 
+# 大厅:轮询局域网广播刷新房间卡片;卡片带房主端点,可直接加入。
+
+const POLL_INTERVAL := 0.1
+
 var _requesting := false
 var _waiting := false
-var _filter := ""
-var _listed_room: Dictionary
+var _discovering := false
+var _poll_clock := 0.0
+var _discovery := LanDiscovery.new()
 var _view := LobbyView.new()
 
 func _ready() -> void:
@@ -13,7 +18,6 @@ func _ready() -> void:
 	_view.filter_changed.connect(_set_filter)
 	_view.create_requested.connect(_create_room)
 	_view.join_requested.connect(_join_room)
-	_view.room_chosen.connect(_open_listing)
 	_view.copy_requested.connect(_copy_room_code)
 	_view.team_requested.connect(func(side: int) -> void: NetBus.send_event(NetEvent.Kind.PICK_TEAM, side))
 	_view.start_requested.connect(NetBus.send_event.bind(NetEvent.Kind.START))
@@ -26,11 +30,24 @@ func _ready() -> void:
 	NetBus.event_received.connect(_on_net_event)
 	NetBus.protocol_error.connect(_on_connection_error)
 	NetBus.server_disconnected.connect(_on_connection_error.bind("与房间的连接已断开"))
+	_start_discovery()
 	if NetBus.can_send_to_server() and not PvpSession.room.is_empty() and not PvpSession.room["in_match"]:
 		NetSession.send_hello()
 		_show_room()
-	else:
-		_list_rooms.call_deferred()
+	elif PvpSession.can_rejoin() and bool(PvpSession.room.get("in_match", false)) and not NetBus.can_send_to_server():
+		_auto_rejoin()
+
+func _process(delta: float) -> void:
+	if _waiting or not _discovering:
+		return
+	_poll_clock += delta
+	if _poll_clock < POLL_INTERVAL:
+		return
+	_poll_clock = 0.0
+	var now := Time.get_ticks_msec() / 1000.0
+	var expired := _discovery.expire(now)
+	if _discovery.poll(now) or expired:
+		_view.present_rooms(_discovery.rooms(now))
 
 static func _form_values() -> Dictionary:
 	return {"hue": Settings.pvp_color_hue, "match_min": Settings.royale_match_min,
@@ -47,29 +64,13 @@ func _back() -> void:
 	get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
 
 func _set_filter(mode: String) -> void:
-	_filter = mode
 	_view.select_filter(mode)
-	_refresh_listing()
 
-func _refresh_listing() -> void:
-	var room := _listed_room
-	if room.is_empty() or (not _filter.is_empty() and room["mode"] != _filter):
-		_view.show_listing({})
-	else:
-		_view.show_listing(LobbyProjection.card(room, not room["in_match"] or PvpSession.can_rejoin_to(room["code"], room["mode"])))
-
-func _open_listing() -> void:
-	if _listed_room["in_match"]:
-		_request("正在回到对局…", func() -> String:
-			return NetSession.room_error(await NetSession.rejoin_room()), false)
-	else:
-		_join_room(_listed_room["code"])
-
-func _join_room(code: String) -> void:
+func _join_room(code: String, endpoint: Dictionary) -> void:
 	if not Tunnel.is_valid_room(code):
 		_view.set_status("房间码是 8 位数字(例 00048213)")
 		return
-	_request("正在连接房间 %s 的网络…" % code, NetSession.join_room.bind(code), true)
+	_request("正在连接房间 %s 的网络…" % code, NetSession.join_room.bind(code, endpoint))
 
 func _create_room(mode: String, options: Dictionary) -> void:
 	if WeaponRegistry.enabled_ids(options.get("disabled_weapons", [])).is_empty():
@@ -77,27 +78,26 @@ func _create_room(mode: String, options: Dictionary) -> void:
 		return
 	_request("正在创建房间…", func() -> String:
 		_view.close_create()
-		return await NetSession.create_room({"mode": mode, "options": options}), true)
+		return await NetSession.create_room({"mode": mode, "options": options}))
 
-func _request(message: String, send: Callable, clear_listing: bool) -> void:
+func _request(message: String, send: Callable) -> void:
 	if _requesting or _waiting:
 		return
 	_requesting = true
 	_view.set_status(message)
-	if clear_listing:
-		_listed_room = {}
-		_refresh_listing()
 	var error: String = await send.call()
 	_requesting = false
 	if is_inside_tree() and not error.is_empty():
 		_view.set_status(error)
 
-func _list_rooms() -> void:
-	var error := await NetSession.list_rooms()
-	if is_inside_tree() and not _requesting and not error.is_empty():
-		_view.set_status(error)
+## 带着有效凭据回到大厅时先尝试回到对局;失败就留在局域网列表。
+func _auto_rejoin() -> void:
+	_request("正在重连到对局…", func() -> String:
+		var error := await NetSession.rejoin_room()
+		return NetSession.room_error(error))
 
 func _show_room() -> void:
+	_stop_discovery()
 	var room := PvpSession.room
 	var code: String = room["code"]
 	if room["host_role"] == room["your_role"]:
@@ -122,19 +122,14 @@ func _exit_room() -> void:
 
 func _close_room(message: String) -> void:
 	_on_connection_error(message)
-	_list_rooms()
 
 func _on_net_event(_peer: int, kind: int, data: Variant) -> void:
 	match kind:
 		NetEvent.Kind.MESSAGE: _view.set_status(data)
 		NetEvent.Kind.ROOM: _show_room()
-		NetEvent.Kind.ROOM_LIST:
-			_listed_room = data
-			_refresh_listing()
 		NetEvent.Kind.REJOIN_DENIED:
-			_refresh_listing()
+			_view.present_rooms([])
 			_view.set_status("无法回到对局：%s" % data)
-			_list_rooms()
 		NetEvent.Kind.ROOM_CLOSED: _close_room(data)
 		NetEvent.Kind.BASELINE:
 			var map := CyrmMap.from_bytes(data.map)
@@ -144,14 +139,30 @@ func _on_net_event(_peer: int, kind: int, data: Variant) -> void:
 			PvpSession.begin_match(data, map)
 			SceneTransition.change(get_tree(), "res://scenes/pvp_game.tscn")
 
+func _start_discovery() -> void:
+	if _discovering:
+		return
+	if _discovery.listen() != OK:
+		return
+	_discovering = true
+	_poll_clock = 0.0
+
+func _stop_discovery() -> void:
+	if not _discovering:
+		return
+	_discovering = false
+	_discovery.stop()
+	_discovery.clear()
+
 func _exit_tree() -> void:
+	_stop_discovery()
 	NetBus.event_received.disconnect(_on_net_event)
 	NetBus.protocol_error.disconnect(_on_connection_error)
 	NetBus.server_disconnected.disconnect(_on_connection_error.bind("与房间的连接已断开"))
 
 func _on_connection_error(message: String) -> void:
-	_listed_room = {}
 	_waiting = false
 	_view.show_wait({})
-	_refresh_listing()
+	_view.present_rooms([])
+	_start_discovery()
 	_view.set_status(message)

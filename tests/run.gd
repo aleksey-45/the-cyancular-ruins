@@ -1,6 +1,6 @@
 extends Node
 
-const GROUPS := {"editor": "editor_case", "net": "net_case", "transport": "transport_case", "terrain": "terrain_case", "simulation": "simulation_case", "monitor": "monitor_case", "prediction": "prediction_case"}
+const GROUPS := {"editor": "editor_case", "lan": "lan_case", "net": "net_case", "transport": "transport_case", "terrain": "terrain_case", "simulation": "simulation_case", "monitor": "monitor_case", "prediction": "prediction_case"}
 
 func _ready() -> void:
 	_run.call_deferred()
