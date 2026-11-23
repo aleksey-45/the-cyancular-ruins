@@ -1,6 +1,17 @@
-[gd_scene format=3]
+[gd_scene load_steps=3 format=3]
 
-[ext_resource type="Script" path="res://scenes/beta_menu.gd" id="1"]
+; Beta 页静态骨架:**只有根节点**。版式与卡片全部由 scenes/beta_menu.gd 用 UiKit + UiDesign 建
+; (设计系统 v2:容器优先、零绝对坐标;颜色/字号/间距只引 UiDesign token;卡片用 UiKit.card)。
+; 根节点挂 Theme 2.0,运行时创建的控件通过 UiDesign 的 variation 解析出主设计系统皮肤。
+[ext_resource type="Script" path="res://scenes/beta_menu.gd" id="1_beta"]
+[ext_resource type="Theme" path="res://ui/theme/menu_theme_v2.tres" id="2_theme"]
 
 [node name="BetaMenu" type="Control"]
-script = ExtResource("1")
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme = ExtResource("2_theme")
+script = ExtResource("1_beta")

@@ -1,0 +1,64 @@
+[gd_scene load_steps=3 format=3]
+
+; 暂停菜单(设计系统 v2):CanvasLayer + Control 叠加层,原地开合。
+; 场景只留结构(Card 面板 + H2 标题 + Primary/Quiet 按钮);颜色/间距/最小宽度 token 在 pause_menu.gd 里设置。
+; MatchView.$Pause 仍是"裸脚本挂 CanvasLayer"的旧实例化方式,pause_menu.gd 会就地构建同一套结构;
+; 本场景供需要独立实例化暂停菜单的调用方使用,两者保持同一视觉与行为。
+[ext_resource type="Script" path="res://ui/screens/pause_menu.gd" id="1_pm"]
+[ext_resource type="Theme" path="res://ui/theme/menu_theme_v2.tres" id="2_theme"]
+
+[node name="PauseMenu" type="CanvasLayer"]
+layer = 145
+process_mode = 3
+script = ExtResource("1_pm")
+
+[node name="Root" type="Control" parent="."]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme = ExtResource("2_theme")
+visible = false
+
+[node name="Dim" type="ColorRect" parent="Root"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 0
+
+[node name="Center" type="CenterContainer" parent="Root"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 0
+
+[node name="Dialog" type="PanelContainer" parent="Root/Center"]
+layout_mode = 2
+theme_type_variation = &"Card"
+
+[node name="Body" type="VBoxContainer" parent="Root/Center/Dialog"]
+layout_mode = 2
+
+[node name="Header" type="Label" parent="Root/Center/Dialog/Body"]
+layout_mode = 2
+theme_type_variation = &"H2"
+text = "—— 已暂停 ——"
+horizontal_alignment = 1
+
+[node name="Resume" type="Button" parent="Root/Center/Dialog/Body"]
+layout_mode = 2
+theme_type_variation = &"Primary"
+text = "继续游戏"
+
+[node name="Back" type="Button" parent="Root/Center/Dialog/Body"]
+layout_mode = 2
+theme_type_variation = &"Quiet"
+text = "回到主菜单"

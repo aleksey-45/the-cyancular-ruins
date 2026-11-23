@@ -1,82 +1,99 @@
 extends Control
 
+# 主菜单(设计系统 v2):静态骨架在 scenes/main_menu.tscn(从 main 的生成器骨架迁移),
+# 本文件只做三件事:把 UiDesign token 补到骨架上、接 siri 原有导航、播入场动画。
+# ★ 保留 siri 功能与行为:单人开局 SpLaunchPanel(initial_map / disabled / play_requested /
+#   show_error 全保留)、多人走 LAN 大厅、Beta、地图编辑器、设置、信息、退出、--server 直通服务端。
+# ★ 不写 StyleBox / Color 字面量 / 绝对坐标;导航目标与原 siri 完全一致。
+
 const SP_PANEL := preload("res://ui/screens/sp_launch_panel.tscn")
-const BACKGROUND := preload("res://core/present/menu_background.gd")
 const LOBBY := "res://scenes/mp_lobby.tscn"
 
-var _layer: CanvasLayer
-var _launch: SpLaunchPanel
+@onready var _bg: ColorRect = %Bg
+@onready var _title: Label = %Title
+@onready var _version: Label = %Version
+@onready var _menu_box: VBoxContainer = %MenuBox
+@onready var _sep_a: ColorRect = %SepA
+@onready var _sep_b: ColorRect = %SepB
+@onready var _ui_layer: CanvasLayer = %UILayer
+
+var _launch: SpLaunchPanel = null
+
 
 func _ready() -> void:
 	if OS.get_cmdline_user_args().has("--server"):
 		get_tree().change_scene_to_file.call_deferred("res://server/server_main.tscn")
 		return
-	_layer = CanvasLayer.new()
-	_layer.layer = 140
-	add_child(_layer)
-	var root := Control.new()
-	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	root.theme = UiFactory.MENU_THEME
-	UiFactory.cover(_layer, root)
-	var background := BACKGROUND.new()
-	background.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	UiFactory.cover(root, background)
-	var title := UiFactory.label("The Cyancular Ruins", 128, UiFactory.C_ACCENT)
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	title.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	UiFactory.place(root, title, Rect2(-78.5, 160, 157, 180), Vector2(0.5, 0.0))
+	_style_page()
+	_wire_menu()
+	_play_emerge()
 
-	var menu := VBoxContainer.new()
-	menu.grow_vertical = Control.GROW_DIRECTION_BOTH
-	menu.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	menu.alignment = BoxContainer.ALIGNMENT_CENTER
-	menu.add_theme_constant_override("separation", 48)
-	UiFactory.place(root, menu, Rect2(0, 170, 0, -170), Vector2(0.5, 0.5))
-	_buttons(UiFactory.box(menu, 28, true), [
-		["单人模式", Vector2(720, 104), &"BtnAccent", _toggle_single],
-		["多人模式", Vector2(640, 88), &"BtnPrimary", _enter_multiplayer],
-		["Beta", Vector2(640, 88), &"BtnQuiet", _open.bind("res://scenes/beta_menu.tscn")],
-	])
-	_separator(menu)
-	_buttons(UiFactory.box(menu, 28, true), [
-		["地图编辑器", Vector2(560, 76), &"BtnPrimary", _open.bind("res://scenes/map_editor.tscn")],
-		["设置", Vector2(560, 76), &"BtnPrimary", _open.bind("res://scenes/settings_menu.tscn")],
-		["信息", Vector2(560, 76), &"BtnPrimary", _open.bind("res://scenes/info_menu.tscn")],
-	])
-	_separator(menu)
-	_buttons(menu, [["退出", Vector2(640, 88), &"BtnQuiet", _quit]])
-	title.modulate.a = 0.0
+
+# 颜色/字号全部引 UiDesign token;.tscn 里只有结构,没有样式字面量。
+func _style_page() -> void:
+	_bg.color = UiDesign.C_BG
+	_sep_a.color = UiDesign.C_BORDER_DIM
+	_sep_b.color = UiDesign.C_BORDER_DIM
+	_title.text = str(ProjectSettings.get_setting("application/config/name"))
+	_title.add_theme_color_override("font_color", UiDesign.C_ACCENT)
+	UiDesign.style_control(_title, UiDesign.T_HUGE)
+	_version.text = "%s v%s" % [
+			ProjectSettings.get_setting("application/config/release_prefix"),
+			ProjectSettings.get_setting("application/config/version")]
+	_version.add_theme_color_override("font_color", UiDesign.C_TEXT_DIM)
+	UiDesign.style_control(_version, UiDesign.T_BODY)
+
+
+func _wire_menu() -> void:
+	%StartBtn.pressed.connect(_toggle_single)
+	%MultiBtn.pressed.connect(_enter_multiplayer)
+	%BetaBtn.pressed.connect(_open.bind("res://scenes/beta_menu.tscn"))
+	%EditorBtn.pressed.connect(_open.bind("res://scenes/map_editor.tscn"))
+	%SettingsBtn.pressed.connect(_open.bind("res://scenes/settings_menu.tscn"))
+	%VerBtn.pressed.connect(_open.bind("res://scenes/info_menu.tscn"))
+	%QuitBtn.pressed.connect(_quit)
+
+
+func _menu_sequence() -> Array:
+	var seq: Array = []
+	for c in _menu_box.get_children():
+		if c is VBoxContainer:
+			for item in c.get_children():
+				seq.append(item)
+		else:
+			seq.append(c)
+	return seq
+
+
+# 入场动画沿用 siri 旧版节奏:标题先淡入,按钮组随后逐项淡入。
+func _play_emerge() -> void:
+	_title.modulate.a = 0.0
+	_version.modulate.a = 0.0
 	var emerge := create_tween().set_parallel()
-	emerge.tween_property(title, "modulate:a", 1.0, 0.6).set_trans(Tween.TRANS_SINE).set_delay(0.1)
+	emerge.tween_property(_title, "modulate:a", 1.0, 0.6).set_trans(Tween.TRANS_SINE).set_delay(0.1)
+	emerge.tween_property(_version, "modulate:a", 1.0, 0.6).set_trans(Tween.TRANS_SINE).set_delay(0.1)
 	var delay := 0.45
-	for group in menu.get_children():
-		for item: Control in group.get_children() if group is VBoxContainer else [group]:
-			item.modulate.a = 0.0
+	for item in _menu_sequence():
+		if item is Control:
+			(item as Control).modulate.a = 0.0
 			emerge.tween_property(item, "modulate:a", 1.0, 0.28).set_trans(Tween.TRANS_SINE).set_delay(delay)
-			delay += 0.09
+		delay += 0.09
 
-static func _buttons(parent: BoxContainer, rows: Array) -> void:
-	for row in rows:
-		var button := UiFactory.menu_button(row[0], row[1], row[2])
-		parent.add_child(button)
-		button.pressed.connect(row[3])
-
-static func _separator(menu: VBoxContainer) -> void:
-	var line := UiFactory.shade(Color(0.25, 0.31, 0.4))
-	line.custom_minimum_size.y = 2.0
-	menu.add_child(line)
 
 func _open(path: String) -> void:
 	Sfx.play("ui")
 	get_tree().change_scene_to_file(path)
 
+
 func _enter_multiplayer() -> void:
 	PvpSession.reset()
 	_open(LOBBY)
 
+
 func _quit() -> void:
 	Sfx.play("ui")
 	get_tree().quit()
+
 
 func _toggle_single() -> void:
 	Sfx.play("ui")
@@ -85,9 +102,10 @@ func _toggle_single() -> void:
 		_launch.initial_map = Settings.sp_map_path
 		_launch.disabled = Settings.sp_disabled_weapons
 		_launch.play_requested.connect(_play)
-		_layer.add_child(_launch)
+		_ui_layer.add_child(_launch)
 	else:
 		_launch.visible = not _launch.visible
+
 
 func _play(path: String, disabled: Array[int]) -> void:
 	var enabled := WeaponRegistry.enabled_ids(disabled)

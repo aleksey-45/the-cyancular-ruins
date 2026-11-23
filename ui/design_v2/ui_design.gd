@@ -57,7 +57,7 @@ static func style_control(c: Control, size: int) -> void:
 	# 非 16 倍数必须经过实际截图确认,不要盲用。
 	assert(size > 0, "字号必须为正;收到 %d" % size)
 	c.add_theme_font_size_override("font_size", size)
-	var pf: FontFile = pixel_font()
+	var pf: Font = pixel_font()
 	if pf != null:
 		c.add_theme_font_override("font", pf)
 
@@ -423,7 +423,7 @@ static func button(text: String, size: int, min_size: Vector2 = Vector2(420, 64)
 
 static func apply_font_recursive(root: Node) -> void:
 	if root is Control and not (root is PanelContainer or root is VBoxContainer or root is HBoxContainer 			or root is GridContainer or root is ScrollContainer):
-		var pf: FontFile = pixel_font()
+		var pf: Font = pixel_font()
 		if pf != null:
 			(root as Control).add_theme_font_override("font", pf)
 	for n in root.get_children():
