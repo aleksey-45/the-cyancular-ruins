@@ -52,7 +52,6 @@ def build_game(*, skip_native=False):
     if not skip_native:
         build_native()
     godot = os.getenv("GODOT_EDITOR") or "godot"
-    run(godot, "--headless", "--editor", "--import")
     assets = nightly()
     builds = ROOT / "builds"
     builds.mkdir(exist_ok=True)

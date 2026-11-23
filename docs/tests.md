@@ -23,3 +23,11 @@ python tools/check_naming.py
 文件检查脚本检查目录、GDScript 类名、场景名、脚本编码和换行，也检查仓库根目录 Markdown 文件中的本地链接。
 
 主菜单的短时加载检查使用 `godot --headless --path . --quit-after 90`，游戏运行 90 帧后退出。
+
+构建发行包后，可以解压 ZIP 并从解压目录启动其中的游戏，检查退出状态与 Godot 日志。
+
+```sh
+python tools/check_package.py builds/The-Cyancular-Ruins-Windows.zip
+```
+
+在 macOS 上传入 `builds/The-Cyancular-Ruins-macOS.zip`。
