@@ -1,24 +1,27 @@
 class_name Minimap
 extends CanvasLayer
 
-# 玩家位于小地图中央。可见范围跨过地图边缘时，背景接着显示另一侧的瓦片。
-# 玩家标记取跨地图边缘的最短偏移。只绘制落在圆内的标记。
+# 右下角圆形小地图。玩家位于小地图中央；可见范围跨过地图边缘时背景接着显示另一侧瓦片，
+# 玩家标记取跨地图边缘的最短偏移，只绘制落在圆内的标记。
+# ★ HUD 坐标纪律：位置只用 anchors + UiDesign.MARGIN / SP_* 表达，不再从 1920×1440 反推圆心。
 
-const RADIUS_PX := 140.0    # 小地图在 HUD 上的半径，单位为像素。
+const RADIUS_PX := 140.0     # 小地图在 HUD 上的半径，单位为像素。
 const RANGE_CELLS := 200.0   # 从玩家位置向外显示的子格数。
 const PX_PER_CELL := RADIUS_PX / RANGE_CELLS
-const EDGE := 24.0
-const EDGE_BOTTOM := 72.0   # 延迟读数显示在小地图下方，此处预留高度。
+const EDGE := float(UiDesign.MARGIN)                             # 屏幕右边距。
+const EDGE_BOTTOM := float(UiDesign.MARGIN + UiDesign.SP_8)      # 底部再让出延迟读数的高度。
 const RING_PX := 4.0
-const RING_SELF_PX := 4.0
 
-const CENTER := Vector2(1920.0 - EDGE - RADIUS_PX, 1440.0 - EDGE_BOTTOM - RADIUS_PX)
+# 地形底色也由 v2 调色板派生（颜色定义只住 UiDesign，本文件不写 Color 字面量）。
+const TILE_EMPTY_ALPHA := 0.55
+const TILE_LIQUID_ALPHA := 0.85
+const TILE_SOLID_ALPHA := 0.95
 
 var _map_size: Vector2
 var _map: Dictionary
 var _mat: ShaderMaterial
-var _dots := Node2D.new()
-var _markers: Array[Array] = []
+var _view: ColorRect
+var _dots: Dots
 
 func _init(map: Dictionary) -> void:
 	_map = map
@@ -26,21 +29,26 @@ func _init(map: Dictionary) -> void:
 
 func _ready() -> void:
 	layer = 131
+	# 小地图可能先于其它世界绘制建出来：材质表按需加载，避免 is_liquid 读到空表。
+	TileDefs.load_defs()
 	var cells: PackedInt32Array = _map.layers[CyrmMap.SCENE]
 	var cols: int = _map.size.x
 	var rows: int = _map.size.y
 
 	# 背景纹理用一个像素表示一个子格，空地、水和其他地形分别着色。
+	var empty_color := Color(UiDesign.C_BG, TILE_EMPTY_ALPHA)
+	var liquid_color := Color(UiDesign.C_SLOT_FILLED, TILE_LIQUID_ALPHA)
+	var solid_color := Color(UiDesign.C_TEXT_DIM, TILE_SOLID_ALPHA)
 	var img := Image.create(cols, rows, false, Image.FORMAT_RGBA8)
 	for y in range(rows):
 		for x in range(cols):
 			var v := CyrmMap.tile_material(cells[y * cols + x])
 			if v == 0:
-				img.set_pixel(x, y, Color(0.05, 0.09, 0.13, 0.55))
+				img.set_pixel(x, y, empty_color)
 			elif TileDefs.is_liquid(v):
-				img.set_pixel(x, y, Color(0.15, 0.38, 0.85, 0.85))
+				img.set_pixel(x, y, liquid_color)
 			else:
-				img.set_pixel(x, y, Color(0.62, 0.68, 0.75, 0.95))
+				img.set_pixel(x, y, solid_color)
 
 	_mat = ShaderMaterial.new()
 	_mat.shader = preload("res://ui/hud/minimap_circle.gdshader")
@@ -50,31 +58,68 @@ func _ready() -> void:
 	_mat.set_shader_parameter("radius", RADIUS_PX)
 	_mat.set_shader_parameter("ring", RING_PX)
 
-	var view := ColorRect.new()
-	view.name = "Circle"
-	view.material = _mat
-	view.position = CENTER - Vector2.ONE * RADIUS_PX
-	view.size = Vector2(RADIUS_PX, RADIUS_PX) * 2.0
-	view.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(view)
+	# 右下角：锚 bottom-right，位置只由 MARGIN/SP_* token 与固定像素半径决定。
+	_view = ColorRect.new()
+	_view.name = "Circle"
+	_view.material = _mat
+	_view.anchor_left = 1.0
+	_view.anchor_right = 1.0
+	_view.anchor_top = 1.0
+	_view.anchor_bottom = 1.0
+	_view.offset_left = -EDGE - RADIUS_PX * 2.0
+	_view.offset_right = -EDGE
+	_view.offset_top = -EDGE_BOTTOM - RADIUS_PX * 2.0
+	_view.offset_bottom = -EDGE_BOTTOM
+	_view.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_view)
 
+	# 标记层铺满视口，按自身中心绘制（锚点解析后即小地图圆心），不再持有绝对圆心常量。
+	_dots = Dots.new()
+	_dots.name = "Markers"
 	add_child(_dots)
-	_dots.draw.connect(_draw_markers)
 
 func present(frame: MatchFrame) -> void:
 	var pos := frame.focus
 	var canonical := GridPathfinder.wrap_to_range(pos, _map_size)
 	_mat.set_shader_parameter("center_cell", canonical / float(CyrmMap.CELL_SIZE))
-	_markers = [[CENTER, frame.actors[0].name_color(frame.mode)]]
+	_dots.markers.clear()
+	if frame.actors.is_empty():
+		_dots.queue_redraw()
+		return
+	# 本地玩家永远在圆心；其余标记只保留落进圆内的。
+	_dots.markers.append([Vector2.ZERO, frame.actors[0].name_color(frame.mode)])
 	if frame.radar_players:
 		for i in range(1, frame.actors.size()):
 			var pose := frame.actors[i]
-			var offset := GridPathfinder.toroidal_delta_px(pos, pose.anchor, _map_size) * (PX_PER_CELL / CyrmMap.CELL_SIZE)
+			var offset := GridPathfinder.toroidal_delta_px(pos, pose.anchor, _map_size) \
+					* (PX_PER_CELL / CyrmMap.CELL_SIZE)
 			if offset.length_squared() <= RADIUS_PX * RADIUS_PX:
-				_markers.append([CENTER + offset, pose.name_color(frame.mode)])
+				_dots.markers.append([offset, pose.name_color(frame.mode)])
 	_dots.queue_redraw()
 
-func _draw_markers() -> void:
-	_dots.draw_rect(Rect2(CENTER - Vector2.ONE * (4 + RING_SELF_PX), Vector2.ONE * (8 + 2 * RING_SELF_PX)), Color.WHITE)
-	for marker in _markers:
-		_dots.draw_rect(Rect2(marker[0] - Vector2(4, 4), Vector2(8, 8)), marker[1])
+
+# 圆内标记层：自己绘制在控件中心，标记偏移以圆心为参考。
+class Dots extends Control:
+	const DOT_PX := 8.0
+	const RING_SELF_PX := 4.0
+	var markers: Array = []
+
+	func _init() -> void:
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		anchor_left = 0.0
+		anchor_top = 0.0
+		anchor_right = 1.0
+		anchor_bottom = 1.0
+		offset_left = 0.0
+		offset_top = 0.0
+		offset_right = 0.0
+		offset_bottom = 0.0
+
+	func _draw() -> void:
+		var center := size * 0.5
+		# 本地玩家：先画一圈白描边，再让彩色标记压在上面（绘制顺序 = 后画在上）。
+		draw_rect(Rect2(center - Vector2.ONE * (DOT_PX * 0.5 + RING_SELF_PX),
+				Vector2.ONE * (DOT_PX + 2.0 * RING_SELF_PX)), Color.WHITE)
+		for marker in markers:
+			draw_rect(Rect2(center + marker[0] - Vector2.ONE * (DOT_PX * 0.5),
+					Vector2.ONE * DOT_PX), marker[1])

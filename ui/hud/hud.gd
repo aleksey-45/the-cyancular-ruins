@@ -1,11 +1,23 @@
 class_name Hud
 extends CanvasLayer
 
-const MARGIN := Vector2(24, 24)
-const FONT_SIZE := 32
-const WEAPON_ICON_W := 96.0
+# 玩家对局 HUD（单人/联机共用）。数据只从 MatchFrame 读，视觉/结构按 main HUD 重建，
+# 但样式与度量一律走 UI 设计系统 v2（UiDesign token + hud_plate → Theme 2.0）。
+# ★ HUD 坐标纪律：只用 anchors + UiDesign.MARGIN / SP_* 表达位置，禁止从 1920×1440 反推坐标。
+const LAYER := 129  # 在 post-process(128) 之上，不受桶形/CRT/变灰影响。
+# 右上角击杀计数的骨架/样式/零填充全部收进组件（kill_counter.tscn + kill_counter.gd），
+# 本文件只负责把它挂到 HUD 的锚点上，不再自己拼 PanelContainer + Label。
+const KILL_COUNTER_SCENE := preload("res://ui/hud/kill_counter.tscn")
 
-var _kill_label: Label
+const MARGIN := UiDesign.MARGIN          # 兼容别名：HUD 屏边距 token 的唯一来源仍是 UiDesign。
+const FONT_SIZE := UiDesign.T_H2         # 武器名/残弹数；16 的倍数才像素锐利。
+
+const WEAPON_ICON_W := 96.0              # 左下角剪影/丢弃进度条宽度（设计像素档）。
+const WEAPON_ROW_W := 320.0              # 每把武器一行方框的固定宽。
+# 武器面板固定宽 = 行宽 + 左右 content margin（SP_3×2），高度由内容驱动。
+const WEAPON_PANEL_W := WEAPON_ROW_W + UiDesign.SP_3 * 2.0
+
+var _kill_counter: KillCounter
 var _ammo_label: Label
 var _ammo_low := false
 var _slots: WeaponSlots
@@ -15,19 +27,21 @@ var _drop_bar: ColorRect
 var _layout := PackedInt32Array()
 
 func _ready() -> void:
-	layer = 129
-	_build_kill_label()
+	layer = LAYER
+	_build_kill_counter()
 	_vitals = Vitals.new()
 	add_child(_vitals)
 	_build_weapon_display()
 
+# 外部唯一契约：每帧把 siri 的 MatchFrame 喂给 HUD。
 func present(frame: MatchFrame, delta: float) -> void:
 	_vitals.present(frame, delta)
-	_kill_label.text = "%03d" % frame.kills
+	_kill_counter.set_kills(frame.kills)
 	_update_weapon_display(frame.inventory)
-	_drop_bar.visible = frame.drop_progress > 0.0
-	if _drop_bar.visible:
-		_drop_bar.size.x = WEAPON_ICON_W * frame.drop_progress
+	var dropping := frame.drop_progress > 0.0
+	_drop_bar.visible = dropping
+	if dropping:
+		_drop_bar.custom_minimum_size.x = WEAPON_ICON_W * clampf(frame.drop_progress, 0.0, 1.0)
 	if _ammo_label == null:
 		return
 	_ammo_label.visible = frame.magazine > 0
@@ -35,36 +49,52 @@ func present(frame: MatchFrame, delta: float) -> void:
 		var low := frame.ammo <= ceili(frame.magazine * 0.25)
 		if low != _ammo_low:
 			_ammo_low = low
-			_ammo_label.add_theme_color_override("font_color", UiFactory.C_WARN if low else UiFactory.C_TEXT)
+			_ammo_label.add_theme_color_override("font_color",
+					UiDesign.C_WARN if low else UiDesign.C_TEXT)
 		_ammo_label.text = "%d/%d" % [frame.ammo, frame.magazine]
 
+# 左下角：容量格子（WeaponSlots）+ 武器面板上下并列，整列锚 bottom-left、按内容向上生长。
 func _build_weapon_display() -> void:
 	var stack := VBoxContainer.new()
+	stack.name = "WeaponStack"
 	stack.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	stack.add_theme_constant_override("separation", 8)
-	stack.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
-	stack.offset_left = MARGIN.x
-	stack.offset_right = MARGIN.x + 344
-	stack.offset_bottom = -MARGIN.y
-	stack.offset_top = -MARGIN.y
+	stack.add_theme_constant_override("separation", UiDesign.SP_2)
+	stack.anchor_left = 0.0
+	stack.anchor_top = 1.0
+	stack.anchor_right = 0.0
+	stack.anchor_bottom = 1.0
+	stack.offset_left = MARGIN
+	stack.offset_right = MARGIN + WEAPON_PANEL_W
+	stack.offset_top = -MARGIN
+	stack.offset_bottom = -MARGIN
 	stack.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	add_child(stack)
+
 	_slots = WeaponSlots.new()
 	_slots.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	stack.add_child(_slots)
 
 	var wrap := PanelContainer.new()
-	wrap.add_theme_stylebox_override("panel", UiFactory.plate(UiFactory.C_PLATE, Vector2(12, 8)))
+	wrap.name = "WeaponPanel"
+	# HUD 底板骨架的唯一构造点是 UiDesign.hud_plate（C_PLATE + content margin SP_3/SP_2）。
+	UiDesign.hud_plate(wrap, UiDesign.SP_3, UiDesign.SP_2)
+	wrap.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	wrap.custom_minimum_size.x = WEAPON_PANEL_W
 	stack.add_child(wrap)
+
 	_weapon_box = VBoxContainer.new()
-	_weapon_box.add_theme_constant_override("separation", 6)
+	_weapon_box.add_theme_constant_override("separation", UiDesign.SP_2)
 	wrap.add_child(_weapon_box)
+
 	_drop_bar = ColorRect.new()
-	_drop_bar.color = UiFactory.C_DANGER
-	_drop_bar.custom_minimum_size = Vector2(WEAPON_ICON_W, 4)
+	_drop_bar.color = UiDesign.C_DANGER
+	_drop_bar.custom_minimum_size = Vector2(WEAPON_ICON_W, UiDesign.SP_1)
+	_drop_bar.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	_drop_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_drop_bar.hide()
 	_weapon_box.add_child(_drop_bar)
 
+# 背包布局（WeaponInventory.cell_layout()）变化时才重建；顺序 = 背包顺序，选中行垫深一档底板。
 func _update_weapon_display(layout: PackedInt32Array) -> void:
 	if layout == _layout:
 		return
@@ -81,19 +111,24 @@ func _update_weapon_display(layout: PackedInt32Array) -> void:
 		var type_id := layout[slot]
 		var selected := i == layout[0]
 		var box := PanelContainer.new()
-		box.add_theme_stylebox_override("panel", UiFactory.plate(Color(0, 0, 0, 0.28 if selected else 0.0), Vector2(8, 4)))
+		UiDesign.hud_plate(box, UiDesign.SP_2, UiDesign.SP_1, true,
+				UiDesign.C_PLATE_DEEP if selected else UiDesign.C_TRANSPARENT)
 		box.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-		box.custom_minimum_size.x = 320
+		box.custom_minimum_size.x = WEAPON_ROW_W
 		_weapon_box.add_child(box)
 
 		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 14)
+		row.add_theme_constant_override("separation", UiDesign.SP_3)
 		box.add_child(row)
-		var key := UiFactory.label(str(i + 1), FONT_SIZE, UiFactory.C_TEXT if selected else UiFactory.C_TEXT_DIM)
-		key.custom_minimum_size.x = 48
+
+		# 键位数字（最左）：与数字键 1-4 一一对应，顺序 = 背包顺序。
+		var key := UiDesign.label(str(i + 1), FONT_SIZE,
+				UiDesign.C_TEXT if selected else UiDesign.C_TEXT_DIM)
+		key.custom_minimum_size.x = UiDesign.SP_8
 		key.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		key.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		row.add_child(key)
+
 		var icon := TextureRect.new()
 		icon.texture = WeaponIcons.silhouette(type_id)
 		icon.custom_minimum_size = Vector2(72, 46) if selected else Vector2(58, 36)
@@ -101,39 +136,48 @@ func _update_weapon_display(layout: PackedInt32Array) -> void:
 		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 		if not selected:
-			icon.modulate = Color(0.45, 0.45, 0.50)
+			# 未选中压暗：用设计系统的暗文字色做 modulate，不写 Color 字面量。
+			icon.modulate = UiDesign.C_TEXT_DIM
 		row.add_child(icon)
 
 		if selected:
+			# 选中的才有全部信息：名称 + 残弹。
 			var info := VBoxContainer.new()
-			info.add_theme_constant_override("separation", 2)
+			info.add_theme_constant_override("separation", UiDesign.SP_1)
 			info.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 			row.add_child(info)
-			info.add_child(UiFactory.label(WeaponRegistry.name_of(type_id), FONT_SIZE, UiFactory.C_TEXT))
-			_ammo_label = UiFactory.label("", FONT_SIZE, UiFactory.C_TEXT)
+			info.add_child(UiDesign.label(WeaponRegistry.name_of(type_id), FONT_SIZE, UiDesign.C_TEXT))
+			_ammo_label = UiDesign.label("", FONT_SIZE, UiDesign.C_TEXT)
 			info.add_child(_ammo_label)
 	_weapon_box.move_child(_drop_bar, -1)
 
-func _build_kill_label() -> void:
-	var wrap := PanelContainer.new()
-	wrap.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	wrap.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	var plate := UiFactory.plate(UiFactory.C_PLATE, Vector2(16, 6))
-	plate.draw_center = false
-	wrap.add_theme_stylebox_override("panel", plate)
-	_kill_label = UiFactory.label("000", 48, UiFactory.C_ACCENT)
-	wrap.add_child(_kill_label)
-	UiFactory.place(self, wrap, Rect2(-32, 16, 0, 0), Vector2(1, 0))
+# 右上角击杀计数：锚 right、距边 SP_6/SP_4、向上生长。底板/字号/颜色都在 KillCounter 组件里
+# （唯一来源），本文件只给锚点与层位 —— 组件自己保证「不画底色、只留 content margin」。
+func _build_kill_counter() -> void:
+	_kill_counter = KILL_COUNTER_SCENE.instantiate() as KillCounter
+	_kill_counter.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	_kill_counter.anchor_left = 1.0
+	_kill_counter.anchor_right = 1.0
+	_kill_counter.anchor_top = 0.0
+	_kill_counter.anchor_bottom = 0.0
+	_kill_counter.offset_left = -UiDesign.SP_6
+	_kill_counter.offset_right = -UiDesign.SP_6
+	_kill_counter.offset_top = UiDesign.SP_4
+	_kill_counter.offset_bottom = UiDesign.SP_4
+	_kill_counter.grow_vertical = Control.GROW_DIRECTION_END
+	add_child(_kill_counter)
 
 
-class Vitals extends Node2D:
+# 左上角血条/氧条群：锚 top-left + MARGIN，自绘矩形（无 StyleBox），颜色只引用 UiDesign token。
+class Vitals extends Control:
 	const HP_SIZE := Vector2(5, 32)
 	const HP_STEP := 6.0
-	const HP_NORMAL := Color(0.35, 0.85, 0.9)
-	const HP_LOW := Color(0.9, 0.4, 0.4)
+	const LOW_RATIO := 0.25
 	const PAD := Vector2(6, 5)
 	const OXYGEN_POS := Vector2(0, 50)
-	const OXYGEN_COLOR := Color(0.45, 0.72, 1.0)
+	const OXYGEN_W := 18.0
+	const OXYGEN_H := 10.0
+	const OXYGEN_BACK_ALPHA := 0.16
 	const HIT_FLASH := 0.32
 	const HIT_FADE := 0.2
 	var _hp := 0
@@ -145,7 +189,15 @@ class Vitals extends Node2D:
 	var oxygen_alpha := 0.0
 
 	func _init() -> void:
-		position = Hud.MARGIN
+		mouse_filter = Control.MOUSE_FILTER_IGNORE
+		anchor_left = 0.0
+		anchor_top = 0.0
+		anchor_right = 0.0
+		anchor_bottom = 0.0
+		offset_left = Hud.MARGIN
+		offset_top = Hud.MARGIN
+		offset_right = Hud.MARGIN
+		offset_bottom = Hud.MARGIN
 
 	func present(frame: MatchFrame, delta: float) -> void:
 		var hp := clampi(frame.health, 0, frame.max_health)
@@ -169,20 +221,22 @@ class Vitals extends Node2D:
 			_max_oxygen = capacity
 			queue_redraw()
 
-
 	func _draw() -> void:
-		var width := _max_hp * HP_STEP - 1
-		draw_rect(Rect2(-PAD, Vector2(width, HP_SIZE.y) + PAD * 2), UiFactory.C_PLATE)
-		var health_color := HP_LOW if _hp < _max_hp * 0.25 else HP_NORMAL
+		var width := _max_hp * HP_STEP - 1.0
+		draw_rect(Rect2(-PAD, Vector2(width, HP_SIZE.y) + PAD * 2.0), UiDesign.C_PLATE)
+		var health_color := UiDesign.C_DANGER if _hp < _max_hp * LOW_RATIO else UiDesign.C_ACCENT
 		# 刚扣除的生命格先以白色闪烁提示受伤，再逐渐变透明。
 		var flash := 1.0 - absf(fposmod(_hit_age, 0.16) / 0.08 - 1.0) if _hit_age < HIT_FLASH else 0.0
 		var ghost := health_color.lerp(Color.WHITE, flash)
 		ghost.a = 1.0 - clampf((_hit_age - HIT_FLASH) / HIT_FADE, 0.0, 1.0)
 		for i in maxi(_hp, _ghost_end):
 			var color := health_color if i < _hp else ghost
-			draw_rect(Rect2(Vector2(i * HP_STEP, 0), HP_SIZE), color)
+			draw_rect(Rect2(Vector2(i * HP_STEP, 0.0), HP_SIZE), color)
 		if oxygen_alpha > 0.0:
-			var size := Vector2(18 * _max_oxygen, 10)
-			draw_rect(Rect2(OXYGEN_POS - PAD, size + PAD * 2), Color(UiFactory.C_PLATE, UiFactory.C_PLATE.a * oxygen_alpha))
-			draw_rect(Rect2(OXYGEN_POS, size), Color(1, 1, 1, 0.16 * oxygen_alpha))
-			draw_rect(Rect2(OXYGEN_POS, Vector2(18 * _oxygen, size.y)), Color(OXYGEN_COLOR, oxygen_alpha))
+			var size := Vector2(OXYGEN_W * _max_oxygen, OXYGEN_H)
+			draw_rect(Rect2(OXYGEN_POS - PAD, size + PAD * 2.0),
+					Color(UiDesign.C_PLATE, UiDesign.C_PLATE.a * oxygen_alpha))
+			draw_rect(Rect2(OXYGEN_POS, size),
+					Color(UiDesign.C_WHITE, OXYGEN_BACK_ALPHA * oxygen_alpha))
+			draw_rect(Rect2(OXYGEN_POS, Vector2(OXYGEN_W * _oxygen, size.y)),
+					Color(UiDesign.C_SLOT_FILLED, oxygen_alpha))

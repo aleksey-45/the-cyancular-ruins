@@ -20,6 +20,9 @@ const SPLASH := {"life": 0.4, "count": 8, "spread": deg_to_rad(80), "speed": Vec
 		"gravity": 700.0, "size": Vector2(4, 10)}
 const BUBBLES := {"life": 0.7, "count": 5, "spread": deg_to_rad(24), "speed": Vector2(40, 90),
 		"gravity": -30.0, "size": Vector2(2, 4)}
+# 敌人头顶血条中心相对角色锚点的偏移 = 旧 canvas 版 Rect2(at + (-42, -112.5), (84, 9)) 的中心:
+# 血条贴在名字上方,尺寸/低血阈值由 EnemyHpBar 组件决定(84×9、25%)。
+const HP_BAR_CENTER := Vector2(0.0, -108.0)
 
 enum Effect { BLAST, PARTICLES, NUMBER, GRAIN }
 
@@ -36,6 +39,12 @@ var _next_paths := {}
 var _effects := [[], [], [], []]
 var _hits := {}
 var _remote_hits := {}
+# 世界坐标 HUD 小组件(拾取提示 / 换弹圆环 / 敌人头顶血条):全部挂到 WorldCanvas 下,
+# 与 canvas 绘制共享同一世界变换;组件只管画,数据仍由本表现层从 MatchFrame 喂。
+# 懒创建 + 池化:只有真正要显示时才 new,避免每帧增删节点。
+var _pickup_nodes: Array[PickupPrompt] = []
+var _reload_node: ReloadRing
+var _hp_nodes: Array[EnemyHpBar] = []
 
 func bind(canvas: WorldCanvas, size: Vector2) -> void:
 	_canvas = canvas
@@ -45,6 +54,15 @@ func reset() -> void:
 	for buffer in [_motions, _poses, _fire, _trails, _trail_deadlines, _paths, _next_paths, _hits, _remote_hits] + _effects:
 		buffer.clear()
 	_alternate = false
+	# 重开对局/重录时世界内 HUD 组件一并复位,避免上一局的提示、圆环、血条残留一帧以上。
+	for node in _pickup_nodes:
+		if is_instance_valid(node):
+			node.hide()
+	if is_instance_valid(_reload_node):
+		_reload_node.hide()
+	for node in _hp_nodes:
+		if is_instance_valid(node):
+			node.hide()
 
 func clear_motion(id: int) -> void:
 	_motions.erase(id)
@@ -89,6 +107,11 @@ func present(frame: MatchFrame, grain_target := Vector2.ZERO) -> void:
 	_canvas.set_daylight(frame.day_minute)
 	_canvas.begin()
 	_draw_trails(frame.now, frame.focus)
+	# 换弹圆环先藏起,只有本帧真有本地角色换弹时下面才显示;血条在名字循环里按需显示。
+	if is_instance_valid(_reload_node):
+		_reload_node.hide()
+	var prompts := 0
+	var bars := 0
 	for i in frame.actors.size():
 		var pose := frame.actors[i]
 		_actor(pose, frame)
@@ -97,7 +120,14 @@ func present(frame: MatchFrame, grain_target := Vector2.ZERO) -> void:
 			_guide(frame.aim_guide, weapon.get("guide_color", Color(1, 0.2, 0.2, 0.6)),
 					not weapon["projectile"]["blast"].is_empty(), pose.bow_draw < 0.0)
 		if not pose.name.is_empty():
-			_nameplate(pose.anchor, pose.name, pose.name_color(frame.mode), pose.health)
+			_nameplate(pose.anchor, pose.name, pose.name_color(frame.mode))
+			# 只有带血量(设置开启且未倒地)的角色才画血条;语义与原 canvas 版逐项一致。
+			if pose.health >= 0.0:
+				var bar := _hp_bar(bars)
+				bar.position = pose.anchor + HP_BAR_CENTER
+				bar.ratio = pose.health
+				bar.show()
+				bars += 1
 	for row in frame.pickups:
 		var weapon := WeaponRegistry.definition(row[0])
 		var bounds: Rect2 = weapon["pickup_bounds"]
@@ -106,7 +136,12 @@ func present(frame: MatchFrame, grain_target := Vector2.ZERO) -> void:
 		_canvas.sprite(WEAPONS, weapon["region"],
 				Transform2D(0.0, Vector2.ONE * size, 0.0, at - bounds.get_center() * size))
 		if row[2]:
-			_pickup_prompt(at)
+			_show_pickup_prompt(prompts, at)
+			prompts += 1
+	for i in range(prompts, _pickup_nodes.size()):
+		_pickup_nodes[i].hide()
+	for i in range(bars, _hp_nodes.size()):
+		_hp_nodes[i].hide()
 	_next_paths.clear()
 	for row in frame.projectiles:
 		if frame.trajectories:
@@ -266,13 +301,29 @@ func _trajectory(id: int, at: Vector2) -> void:
 	if path.size() > 1:
 		_canvas.line(path, Color(1, 1, 1, 0.55), 2.5)
 
-func _pickup_prompt(at: Vector2) -> void:
-	var center := at + Vector2(0, -64)
-	var box := Rect2(center - Vector2(25, 25), Vector2(50, 50))
-	_canvas.rect(box, Color(0.24, 0.42, 0.46, 0.72))
-	_canvas.rect(box.grow(-1.5), Color(0.35, 0.85, 0.90), 3.0)
-	_canvas.rect(box.grow(-8.5), Color(0.20, 0.55, 0.62), 3.0)
-	_canvas.text_at("F", center + Vector2(0, WorldCanvas.centered_baseline()), Color(0.92, 0.97, 1.0))
+# 拾取提示 = v2 PickupPrompt 组件(世界内 Node2D 自绘):盒子 50×50、挂点 = 拾取物上方
+# GAP_ABOVE(64px),位置/尺寸与原 canvas 版逐项一致;底色/描边/按键字改由组件按 v2 token 决定。
+func _show_pickup_prompt(index: int, at: Vector2) -> void:
+	var node := _pickup_prompt_node(index)
+	node.position = at + Vector2(0.0, -PickupPrompt.GAP_ABOVE)
+	node.show()
+
+
+func _pickup_prompt_node(index: int) -> PickupPrompt:
+	while _pickup_nodes.size() <= index:
+		var node := PickupPrompt.new()
+		node.name = "PickupPrompt%d" % _pickup_nodes.size()
+		_hud_parent().add_child(node)
+		_pickup_nodes.append(node)
+	return _pickup_nodes[index]
+
+
+# 世界内 HUD 组件的挂载父节点 = WorldCanvas 的 overlay CanvasLayer(follow_viewport,世界坐标、
+# 压在世界绘制之上)。挂在 overlay 而不是 canvas 本体有两个原因:与旧 canvas 手绘提示同处
+# 「不被 CanvasModulate 昼夜压暗」的那一层(战斗/拾取提示夜里也要读得清),且盖在角色 sprite 之上。
+# overlay 在 WorldCanvas._ready 里创建;极端的先 bind 后 ready 顺序下退回 canvas 本体(世界坐标一致)。
+func _hud_parent() -> Node2D:
+	return _canvas._overlay if _canvas._overlay != null else _canvas
 
 func _draw_effects(frame: MatchFrame, grain_target: Vector2) -> void:
 	var now := frame.now
@@ -334,13 +385,21 @@ func _draw_grains(origin: Vector2, target: Vector2, age: float, life: float) -> 
 				at + Vector2(0, 2 * size), at - Vector2(size, 0)]), Color8(18, 18, 22))
 		_canvas.rect(Rect2(at - Vector2.ONE, Vector2(2, 2)), Color8(70, 70, 78), -1.0, false)
 
-func _nameplate(at: Vector2, name: String, color: Color, hp := -1.0) -> void:
+func _nameplate(at: Vector2, name: String, color: Color) -> void:
 	_canvas.text_at(name, at + Vector2(0, -78), Color(color, 0.85), true)
-	if hp >= 0.0:
-		var bar := Rect2(at + Vector2(-42, -112.5), Vector2(84, 9))
-		_canvas.rect(bar.grow(2.0), Color(0, 0, 0, 0.45), -1.0, false)
-		bar.size.x *= clampf(hp, 0.0, 1.0)
-		_canvas.rect(bar, Color(0.35, 0.9, 0.4) if hp > 0.25 else Color(0.95, 0.35, 0.3), -1.0, false)
+
+
+# 血条 = v2 EnemyHpBar 组件(世界内自绘 84×9 条,残血 <25% 转危险红)。挂 overlay 层:
+# 与 PickupPrompt/ReloadRing 同层(那两个在 _ready 里自设 z_index=100;本组件按 main 契约不自设层位),
+# 保证压在角色 sprite / 前景武器 / canvas 标记之上,且不被昼夜环境光压暗。
+func _hp_bar(index: int) -> EnemyHpBar:
+	while _hp_nodes.size() <= index:
+		var node := EnemyHpBar.new()
+		node.name = "EnemyHpBar%d" % _hp_nodes.size()
+		node.z_index = 100
+		_hud_parent().add_child(node)
+		_hp_nodes.append(node)
+	return _hp_nodes[index]
 
 func _guide(points: PackedVector2Array, color: Color, explosive: bool, overlay: bool) -> void:
 	if points.size() < 2:
@@ -350,13 +409,16 @@ func _guide(points: PackedVector2Array, color: Color, explosive: bool, overlay: 
 		_canvas.circle(points[-1], 20.0, Color(1.0, 0.4, 0.2, 0.16), true)
 		_canvas.circle(points[-1], 9.0, Color(1.0, 0.4, 0.2, 0.48), true)
 
+# 换弹圆环 = v2 ReloadRing 组件(世界内自绘):半径 24 / 环宽 9 / 中心在角色后侧
+# -58*facing / -44,位置与几何与原 canvas 版逐项一致;底环/进度弧/数字配色改走 v2 token。
 func _reload(at: Vector2, facing: int, progress: float, remaining: float) -> void:
-	var center := at + Vector2(-58 * facing, -44)
-	_canvas.arc(center, 24.0, 0.0, TAU, Color(0.42, 0.45, 0.5, 0.22), 9.0)
-	if progress > 0.0:
-		_canvas.arc(center, 24.0, -PI * 0.5, -PI * 0.5 + TAU * progress, Color(0.8, 0.84, 0.88, 0.78), 9.0)
-	_canvas.text_at("%.1f" % remaining, center + Vector2(0, WorldCanvas.centered_baseline()),
-			Color(0.93, 0.95, 0.97, 0.92))
+	if not is_instance_valid(_reload_node):
+		_reload_node = ReloadRing.new()
+		_reload_node.name = "ReloadRing"
+		_hud_parent().add_child(_reload_node)
+	_reload_node.position = at + Vector2(-58.0 * facing, -44.0)
+	_reload_node.set_progress(progress, remaining)
+	_reload_node.show()
 
 func _draw_particles(style: Dictionary, color: Color, age: float, at: Vector2) -> void:
 	var count: int = style["count"]

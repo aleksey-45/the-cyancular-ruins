@@ -1,10 +1,47 @@
 class_name PvpHud
 extends CanvasLayer
 
+# 联机对局 HUD(比分 / 回合 / 倒计时 / 宽限 / 结算 / 中央提示 / 延迟 / 大乱斗排行榜)。
+# UI-3b 迁移到设计系统 v2:视觉全部来自 Theme 2.0 + UiDesign token,不再用旧 UiFactory。
+#
+# ── 数据契约(与迁移前逐项一致,不搬 main 的 RoundProjection)──────────────────
+#   · 外部入口:mode / show_round(PvpHud.Round) / set_status(msg) / set_ping(ms) /
+#     leave_requested;PvpHud.Round / PvpHud.Section 的字段名与语义不变
+#     (scenes/round_projection.gd 直接构造它们)。
+#   · 比分、回合、倒计时、宽限、结算标题/统计数据、中央提示、延迟阈值配色、
+#     大乱斗排行榜的行内容全部保留;数据只从 Round / 现有信号读。
+#   · 计时节奏不变:_process 里剩余时间与宽限倒计时各自递减,countdown 仍交给 Broadcast 自己跑。
+#
+# ── 版式 ───────────────────────────────────────────────────────────────────
+# 对局 HUD 属"锚点例外"(docs/construction/2026-11-23-ui-full-replacement-plan.md §5.4):
+# 位置全部由 anchor + UiDesign token 偏移表达;底板统一走 UiDesign.hud_plate(唯一 HUD 底板工厂)。
+# 本文件零 StyleBox 手写、零 Color 字面量、零 position=/size=。
+
 signal leave_requested
 
+# 对局内状态横幅(断线/重连/等待提示)收进 v2 组件:组件自带 CanvasLayer(140)+顶部居中版式,
+# 本类只负责喂文本,不再自己拼 CenterContainer + panel + label。
+const STATUS_BANNER_SCENE := preload("res://ui/hud/status_banner.tscn")
+
 const Mode := MatchFrame.Mode
-const BOARD_ROW_WIDTH := 712.0
+
+# ── 大乱斗排行榜几何(与迁移前逐像素相同,数值由 token 推导)──────────────────
+const BOARD_W := 720.0                                   # 排行榜面板宽
+const BOARD_TOP := UiDesign.SP_9 + UiDesign.SP_6         # 96:离屏幕上沿
+const BOARD_INSET := 6.0                                 # 内容列相对底板的内缩(像素档)
+const BOARD_ROW_WIDTH := 712                             # 720 - SP_2:行内容宽
+const BOARD_BG_EXTRA := 34.0                             # 底板比内容多出的高度(上下留白)
+# 排行榜/点击结果遮罩的不透明度:版式参数,颜色统一取 UiDesign.C_BG。
+const BOARD_DIM_ALPHA := 0.25
+const RESULT_DIM_ALPHA := 0.55
+
+# ── 顶/底条几何(锚点相对偏移)──
+const SCORE_TOP := UiDesign.SP_4                          # 16
+const GRACE_TOP := UiDesign.SP_9 + UiDesign.SP_2          # 72:记分条(高 52)之下
+const PLATE_PAD := Vector2i(UiDesign.MARGIN, UiDesign.SP_2)         # 记分/宽限/延迟底板 24 / 8
+const PING_PAD_ROYALE := Vector2i(14, 6)                            # 大乱斗延迟条:像素档,与 main 一致
+const RESULT_BTN_SIZE := Vector2(UiDesign.SP_10 * 5 + UiDesign.SP_5 - UiDesign.SP_1,
+		UiDesign.SP_10 + UiDesign.SP_2)                             # 420 × 88
 
 class Section:
 	var title: String
@@ -32,13 +69,12 @@ var _grace_wrap: PanelContainer
 var _ping: Label
 var _board_bg: ColorRect
 var _board := VBoxContainer.new()
-var _timer := Label.new()
-var _status := CenterContainer.new()
-var _status_label: Label
+var _timer: Label
+var _status_banner: StatusBanner
 var _result := Control.new()
 var _result_panel: PanelContainer
-var _result_title := Label.new()
-var _result_subtitle := Label.new()
+var _result_title: Label
+var _result_subtitle: Label
 var _sections: HBoxContainer
 
 var _grace_left := -1.0
@@ -46,37 +82,17 @@ var _rows: Array[Label] = []
 var _remaining := -1.0
 var _leaving := false
 
+
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	layer = 130
-	_board_bg = UiFactory.shade(Color(0, 0, 0, 0.25))
-	_board_bg.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	UiFactory.place(self, _board_bg, Rect2(-736, 96, 720, 64), Vector2(1, 0))
-	_board.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	_board.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_board.theme = UiFactory.MENU_THEME
-	_board.add_theme_constant_override("separation", 4)
-	UiFactory.place(self, _board, Rect2(-716, 102, 712, 0), Vector2(1, 0))
-	_board.add_child(UiFactory.label("—— 击杀排行榜 ——", 32, UiFactory.C_ACCENT))
-	_board.add_child(_timer)
-	UiFactory.cover(self, _broadcast)
 	var royale := mode == Mode.ROYALE
-	_score = _center_label(Color(0.9, 0.95, 1.0))
-	var score_wrap := _plate(_score, Vector2(24, 8))
-	score_wrap.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	UiFactory.place(self, score_wrap, Rect2(0, 16, 0, -16), Vector2(0.5, 0.0))
-	score_wrap.visible = not royale
-	_grace_label = _center_label(UiFactory.C_GRACE)
-	_grace_wrap = _plate(_grace_label, Vector2(24, 8))
-	_grace_wrap.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	_grace_wrap.hide()
-	UiFactory.place(self, _grace_wrap, Rect2(0, 72, 0, -72), Vector2(0.5, 0.0))
-	_ping = UiFactory.label("--ms", 32, Color(0.75, 0.8, 0.9, 0.9))
-	_ping.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	var ping_wrap := _plate(_ping, Vector2(14, 6) if royale else Vector2(24, 8))
-	ping_wrap.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	ping_wrap.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	UiFactory.place(self, ping_wrap, Rect2(-24, -24, 0, 0), Vector2.ONE)
+	_build_board()
+	add_child(_broadcast)
+	_broadcast.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_build_score(royale)
+	_build_grace()
+	_build_ping(royale)
 	_build_status()
 	_build_result()
 	_board_bg.visible = royale
@@ -86,54 +102,155 @@ func _ready() -> void:
 		Mode.TEAM: _broadcast.set_broadcast(true, "等待玩家加载", "")
 		_: _broadcast.set_broadcast(true, "对战开始", "第 1 局")
 
-static func _center_label(color: Color) -> Label:
-	var label := UiFactory.label("", 32, color)
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	return label
 
-static func _plate(content: Control, margin: Vector2) -> PanelContainer:
+# ── 构造 ───────────────────────────────────────────────────────────────────
+
+# HUD 底板唯一构造点:UiDesign.hud_plate(C_PLATE + 调用方给的像素档 content margin)。
+static func _plate(content: Control, pad_x: int, pad_y: int) -> PanelContainer:
 	var panel := PanelContainer.new()
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.add_theme_stylebox_override("panel", UiFactory.plate(UiFactory.C_PLATE, margin))
+	UiDesign.hud_plate(panel, pad_x, pad_y)
 	panel.add_child(content)
 	return panel
 
+
+func _build_board() -> void:
+	# 右上角排行榜底板:锚 top-right,偏移由 BOARD_W / token 推导(数值与迁移前相同)。
+	_board_bg = ColorRect.new()
+	_board_bg.name = "BoardBg"
+	_board_bg.color = UiDesign.C_BG
+	_board_bg.modulate.a = BOARD_DIM_ALPHA
+	_board_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_board_bg.anchor_left = 1.0
+	_board_bg.anchor_right = 1.0
+	_board_bg.offset_left = -(BOARD_W + UiDesign.SP_4)
+	_board_bg.offset_right = -UiDesign.SP_4
+	_board_bg.offset_top = BOARD_TOP
+	_board_bg.offset_bottom = BOARD_TOP + BOARD_BG_EXTRA
+	_board_bg.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	add_child(_board_bg)
+
+	_board.name = "BoardBox"
+	_board.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_board.add_theme_constant_override("separation", UiDesign.SP_1)
+	_board.anchor_left = 1.0
+	_board.anchor_right = 1.0
+	_board.offset_left = -(BOARD_W - UiDesign.SP_1)
+	_board.offset_right = -UiDesign.SP_1
+	_board.offset_top = BOARD_TOP + BOARD_INSET
+	_board.offset_bottom = BOARD_TOP + BOARD_INSET
+	_board.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	_board.grow_vertical = Control.GROW_DIRECTION_END
+	add_child(_board)
+
+	_board.add_child(UiDesign.label("—— 击杀排行榜 ——", UiDesign.T_H2, UiDesign.C_ACCENT))
+	_timer = UiDesign.label("", UiDesign.T_H2, UiDesign.C_TEXT)
+	_board.add_child(_timer)
+
+
+func _build_score(royale: bool) -> void:
+	_score = UiDesign.label("", UiDesign.T_H2, UiDesign.C_TEXT)
+	_score.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	var score_wrap := _plate(_score, PLATE_PAD.x, PLATE_PAD.y)
+	score_wrap.name = "ScoreWrap"
+	score_wrap.anchor_left = 0.5
+	score_wrap.anchor_right = 0.5
+	score_wrap.offset_top = SCORE_TOP
+	score_wrap.offset_bottom = SCORE_TOP
+	score_wrap.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	score_wrap.grow_vertical = Control.GROW_DIRECTION_END
+	add_child(score_wrap)
+	score_wrap.visible = not royale
+
+
+func _build_grace() -> void:
+	_grace_label = UiDesign.label("", UiDesign.T_H2, UiDesign.C_GRACE)
+	_grace_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_grace_wrap = _plate(_grace_label, PLATE_PAD.x, PLATE_PAD.y)
+	_grace_wrap.name = "GraceWrap"
+	_grace_wrap.anchor_left = 0.5
+	_grace_wrap.anchor_right = 0.5
+	_grace_wrap.offset_top = GRACE_TOP
+	_grace_wrap.offset_bottom = GRACE_TOP
+	_grace_wrap.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	_grace_wrap.grow_vertical = Control.GROW_DIRECTION_END
+	_grace_wrap.hide()
+	add_child(_grace_wrap)
+
+
+func _build_ping(royale: bool) -> void:
+	_ping = UiDesign.label("--ms", UiDesign.T_H2, UiDesign.C_TEXT_DIM)
+	_ping.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	var pad := PING_PAD_ROYALE if royale else PLATE_PAD
+	var ping_wrap := _plate(_ping, pad.x, pad.y)
+	ping_wrap.name = "PingWrap"
+	ping_wrap.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
+	ping_wrap.offset_left = -UiDesign.MARGIN
+	ping_wrap.offset_top = -UiDesign.MARGIN
+	ping_wrap.offset_right = -UiDesign.MARGIN
+	ping_wrap.offset_bottom = -UiDesign.MARGIN
+	ping_wrap.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	ping_wrap.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	add_child(ping_wrap)
+
+
 func _build_status() -> void:
-	var layer_node := CanvasLayer.new()
-	layer_node.layer = 140
-	add_child(layer_node)
-	_status.hide()
-	_status.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	UiFactory.place(layer_node, _status, Rect2(0, 128, 0, 0))
-	_status.anchor_right = 1.0
-	var panel := PanelContainer.new()
-	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.add_theme_stylebox_override("panel", UiFactory.panel_box(false))
-	_status.add_child(panel)
-	_status_label = UiFactory.label("", 32, UiFactory.C_DANGER)
-	panel.add_child(_status_label)
+	# 对局内状态横幅:StatusBanner 自带 CanvasLayer(140;压在 HUD 之上、结算(150)之下),
+	# 也自带顶部居中版式与危险色文案、空串隐藏;本类只喂文本。
+	_status_banner = STATUS_BANNER_SCENE.instantiate() as StatusBanner
+	add_child(_status_banner)
+
 
 func _build_result() -> void:
+	# 结算页:独立 CanvasLayer(150),遮罩 + Theme 2.0 的 PanelCarved 面板。
 	var layer_node := CanvasLayer.new()
+	layer_node.name = "ResultLayer"
 	layer_node.layer = 150
 	add_child(layer_node)
+	_result.name = "Result"
 	_result.hide()
-	_result.theme = UiFactory.MENU_THEME
-	UiFactory.cover(layer_node, _result)
-	UiFactory.cover(_result, UiFactory.shade(Color(0, 0, 0, 0.55), true))
+	_result.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	layer_node.add_child(_result)
+
+	var dim := ColorRect.new()
+	dim.name = "Dim"
+	dim.color = UiDesign.C_BG
+	dim.modulate.a = RESULT_DIM_ALPHA
+	dim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_result.add_child(dim)
+
+	var center := CenterContainer.new()
+	center.name = "Center"
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_result.add_child(center)
+
+	_result_panel = UiDesign.menu_panel()
+	_result_panel.name = "Panel"
+	center.add_child(_result_panel)
 	var body := VBoxContainer.new()
-	body.add_theme_constant_override("separation", 24)
-	_result_panel = UiFactory.framed(body)
-	_result_panel.custom_minimum_size.x = 1120
-	UiFactory.place(_result, _result_panel, Rect2(), Vector2(0.5, 0.5))
-	_result_title.theme_type_variation = &"H1"
-	_result_subtitle.theme_type_variation = &"Dim"
-	for label in [_result_title, _result_subtitle]:
+	body.name = "Body"
+	body.add_theme_constant_override("separation", UiDesign.SP_5)
+	(_result_panel.get_node("Body") as Container).add_child(body)
+
+	_result_title = UiDesign.ui_label("", "h1")
+	_result_title.name = "Title"
+	_result_subtitle = UiDesign.ui_label("", "dim")
+	_result_subtitle.name = "Subtitle"
+	for label: Label in [_result_title, _result_subtitle]:
 		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		body.add_child(label)
-	_sections = UiFactory.box(body, 48, false)
+	_sections = HBoxContainer.new()
+	_sections.name = "Sections"
+	_sections.add_theme_constant_override("separation", UiDesign.SP_8)
 	_sections.alignment = BoxContainer.ALIGNMENT_CENTER
-	UiFactory.action(body, "返回主菜单", Vector2(420, 88), &"BtnGold", _request_leave)
+	body.add_child(_sections)
+	var back := UiDesign.menu_button("返回主菜单", UiDesign.T_H2, RESULT_BTN_SIZE, "gold")
+	back.name = "Back"
+	back.pressed.connect(_request_leave)
+	body.add_child(back)
+
+
+# ── 运行期 ─────────────────────────────────────────────────────────────────
 
 func _process(delta: float) -> void:
 	if _remaining >= 0.0:
@@ -141,19 +258,24 @@ func _process(delta: float) -> void:
 	if _grace_left >= 0.0:
 		_update_grace(maxf(0.0, _grace_left - delta))
 
+
 func set_status(message: String) -> void:
-	_status_label.text = message
-	_status.visible = not message.is_empty()
+	# 空串 = 隐藏横幅(重连成功/回到房间的清空路径);显隐规则在组件里(set_text)。
+	if _status_banner != null:
+		_status_banner.set_text(message)
+
 
 func set_ping(ms: int) -> void:
 	_ping.text = "%dms" % ms
-	_ping.add_theme_color_override("font_color", UiFactory.ping_color(ms))
+	_ping.add_theme_color_override("font_color", UiDesign.ping_color(ms))
+
 
 func _update_grace(seconds: float) -> void:
 	_grace_left = seconds
 	_grace_wrap.visible = seconds >= 0.0
 	if _grace_wrap.visible:
 		_grace_label.text = "对手掉线中,等待重连… 剩余 %ds" % ceili(seconds)
+
 
 func show_round(round: Round) -> void:
 	_score.text = round.score
@@ -172,38 +294,46 @@ func show_round(round: Round) -> void:
 	if not round.title.is_empty() and not _result.visible:
 		_show_result(round)
 
+
 func _show_result(round: Round) -> void:
 	_result_title.text = round.title
 	_result_subtitle.text = round.subtitle
 	_result_subtitle.visible = mode != Mode.ROYALE
 	for section in round.sections:
 		var box := VBoxContainer.new()
-		box.add_theme_constant_override("separation", 12)
-		box.add_child(UiFactory.header_strip(section.title, 32, true, section.color))
+		box.add_theme_constant_override("separation", UiDesign.SP_3)
+		box.add_child(_section_strip(section))
 		var grid := GridContainer.new()
 		grid.columns = section.headers.size()
-		grid.add_theme_constant_override("h_separation", 24)
-		grid.add_theme_constant_override("v_separation", 8)
-		_add_result_row(grid, section.headers, UiFactory.C_TEXT_DIM)
+		grid.add_theme_constant_override("h_separation", UiDesign.SP_5)
+		grid.add_theme_constant_override("v_separation", UiDesign.SP_2)
+		_add_result_row(grid, section.headers, UiDesign.C_TEXT_DIM)
 		for row in section.rows:
-			_add_result_row(grid, row[1], UiFactory.C_TEXT if row[0] else UiFactory.C_TEXT_DIM)
+			_add_result_row(grid, row[1], UiDesign.C_TEXT if row[0] else UiDesign.C_TEXT_DIM)
 		box.add_child(grid)
 		_sections.add_child(box)
 	_result.show()
-	var half := _result_panel.get_combined_minimum_size() * 0.5
-	_result_panel.offset_left = -half.x
-	_result_panel.offset_top = -half.y
-	_result_panel.offset_right = half.x
-	_result_panel.offset_bottom = half.y
+
+
+# 结算分区标题条:HeaderStrip 主题底 + HeaderTitle 字体;分区颜色(队伍色)来自 RoundProjection 数据。
+static func _section_strip(section: Section) -> PanelContainer:
+	var strip := UiDesign.header_strip(section.title, UiDesign.T_H2, true)
+	var title := strip.get_child(0) as Label
+	if title != null:
+		title.add_theme_color_override("font_color", section.color)
+	return strip
+
 
 static func _add_result_row(grid: GridContainer, values: Array, color: Color) -> void:
 	for value in values:
-		grid.add_child(UiFactory.label(str(value), 32, color))
+		grid.add_child(UiDesign.label(str(value), UiDesign.T_H2, color))
+
 
 func _request_leave() -> void:
 	if not _leaving:
 		_leaving = true
 		leave_requested.emit()
+
 
 func _unhandled_input(event: InputEvent) -> void:
 	if _result.visible and event is InputEventKey and event.pressed and not event.echo \
@@ -211,10 +341,12 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		_request_leave()
 
+
 func _update_timer(seconds: float) -> void:
 	_remaining = maxf(seconds, 0.0)
 	var whole := int(_remaining)
 	_timer.text = "剩余时间  %d:%02d" % [whole / 60, whole % 60]
+
 
 func _show_board(rows: Array[Array]) -> void:
 	var resized := _rows.size() != rows.size()
@@ -223,14 +355,14 @@ func _show_board(rows: Array[Array]) -> void:
 		_board.remove_child(row)
 		row.queue_free()
 	while _rows.size() < rows.size():
-		var row := UiFactory.label("", 32, UiFactory.C_TEXT)
+		var row := UiDesign.label("", UiDesign.T_H2, UiDesign.C_TEXT)
 		row.custom_minimum_size.x = BOARD_ROW_WIDTH
 		row.size_flags_horizontal = Control.SIZE_FILL
 		row.clip_text = true
 		_board.add_child(row)
 		_rows.append(row)
 	if resized:
-		_board_bg.size.y = _board.get_combined_minimum_size().y + 34
+		_board_bg.offset_bottom = _board_bg.offset_top + _board.get_combined_minimum_size().y + BOARD_BG_EXTRA
 	for i in rows.size():
 		_rows[i].text = rows[i][0]
 		_rows[i].add_theme_color_override("font_color", rows[i][1])
