@@ -252,7 +252,7 @@ func _canvas_display(tree: SceneTree, editor: MapEditor) -> void:
 	CyrmMap.write_cells(map, CyrmMap.FRONT, [0, 0, _stone])
 	var tinted := CyrmMap.tile_value(22, Vector4i(1, 6, 2, 3))
 	CyrmMap.write_cells(map, CyrmMap.BACK, [1, 2, tinted])
-	editor._open_document(map, "")
+	editor._files.open_document(map, "")
 	var stroke := PackedInt32Array([0, 0, 1, 65, 66, tinted, 0, 0, _stone, 32, 32, 0])
 	for apply: Callable in [s.put_cells.bind(stroke), s.travel.bind(-1), s.travel.bind(1)]:
 		expect(apply.call(), "write, undo and redo submit the same stroke to the display")
@@ -305,7 +305,7 @@ func _canvas_display(tree: SceneTree, editor: MapEditor) -> void:
 	c.preview.draw.disconnect(preview_draw)
 
 func _lighting_preview(editor: MapEditor) -> void:
-	editor._open_document(CyrmMap.create(Vector2i(12, 180)), "")
+	editor._files.open_document(CyrmMap.create(Vector2i(12, 180)), "")
 	var canvas := editor.canvas
 	canvas.zoom = 4
 	canvas.origin = Vector2(200, 80)
@@ -330,7 +330,7 @@ func _lighting_preview(editor: MapEditor) -> void:
 func _canvas_tools(editor: MapEditor) -> void:
 	var s := editor.session
 	var c := editor.canvas
-	editor._open_document(CyrmMap.create(Vector2i(16, 12)), "")
+	editor._files.open_document(CyrmMap.create(Vector2i(16, 12)), "")
 	var area := Rect2i(2, 2, 5, 1)
 	var corner := Vector2i(6, 2)
 	editor._pick_material(7)
@@ -397,30 +397,30 @@ func _workspace_controls(editor: MapEditor) -> void:
 	var c := editor.canvas
 	c.origin = Vector2(16, 16)
 	c.zoom = 8
-	expect(editor._materials.size() == TileDefs.materials().size() + 1, "persistent palette covers every material and air")
+	expect(editor._materials_panel.buttons().size() == TileDefs.materials().size() + 1, "persistent palette covers every material and air")
 	editor._set_layer(CyrmMap.BACK)
 	editor._choose_tool("gradient")
 	expect(editor._param_rows.color.visible and editor._param_rows.end_color.visible and not editor._param_rows.material.visible, "gradient shows its two color endpoints")
 	for layer in range(CyrmMap.FIRST_BACKGROUND, CyrmMap.LAYER_COUNT):
-		_click_button(editor._layers[layer])
+		_click_button(editor._layers_panel.buttons()[layer])
 		expect(s.layer == layer and editor.active_tool == "gradient", "gradient follows the selected background")
-	_click_button(editor._materials[7])
+	_click_button(editor._materials_panel.buttons()[7])
 	expect(s.layer == CyrmMap.BACK and editor.active_tool == "brush" and editor.brush.material_id == 7, "one palette click returns to painting on the last material layer")
 	editor._choose_tool("line")
-	_click_button(editor._materials[15])
-	expect(editor.active_tool == "line" and editor._materials[15].button_pressed and not editor._materials[7].button_pressed, "choosing material keeps a compatible drawing tool")
+	_click_button(editor._materials_panel.buttons()[15])
+	expect(editor.active_tool == "line" and editor._materials_panel.buttons()[15].button_pressed and not editor._materials_panel.buttons()[7].button_pressed, "choosing material keeps a compatible drawing tool")
 	editor._choose_tool("rect")
 	expect(editor._param_rows.outline.visible and not editor._param_rows.width.visible and not editor._param_rows.points.visible, "rectangle inspector only offers relevant settings")
 	editor._choose_tool("erase")
 	expect(editor._param_rows.width.visible and c.cursor_width == editor.brush.width and not editor._param_rows.material.visible, "eraser uses the brush width without an ink picker")
 	editor._choose_tool("picker")
 	expect(editor._param_rows.material.visible and c.cursor_width == 1 and not editor._param_rows.width.visible, "eyedropper displays the sampled ink at a single cell")
-	_click_button(editor._materials[7])
+	_click_button(editor._materials_panel.buttons()[7])
 	expect(editor.active_tool == "brush", "choosing a material after the eyedropper returns to painting")
 	editor._choose_tool("select")
 	expect(editor._param_rows.selection.visible and not editor._param_rows.color.visible, "selection has its own controls")
 	editor._set_layer(CyrmMap.SCENE)
-	_click_button(editor._materials[7])
+	_click_button(editor._materials_panel.buttons()[7])
 	var enemy := CyrmMap.first_point_id(s.map, "enemy")
 	var origin := Vector2i(9, 3)
 	var destination := Vector2i(7, 4)
@@ -433,8 +433,8 @@ func _workspace_controls(editor: MapEditor) -> void:
 	editor._choose_tool("brush")
 	c.zoom = 8
 	_mouse(c, origin, true)
-	expect(editor.active_tool == "point" and s.selected_point().cell == origin and editor._point_details.visible, "grab a bird directly from the drawing tool")
-	expect(editor._point_type.visible and editor._point_type.is_item_disabled(0), "selected bird offers only compatible type edits")
+	expect(editor.active_tool == "point" and s.selected_point().cell == origin and editor._points.details().visible, "grab a bird directly from the drawing tool")
+	expect(editor._points.type_option().visible and editor._points.type_option().is_item_disabled(0), "selected bird offers only compatible type edits")
 	_move_mouse(c, destination)
 	expect(s.map.points[enemy].cell == origin and s.revision == initial, "drag preview leaves the document intact")
 	_mouse(c, destination, false)
@@ -460,14 +460,14 @@ func _workspace_controls(editor: MapEditor) -> void:
 	_mouse(c, Vector2i(53, 38), false)
 	expect(s.revision == initial and s.map.points[enemy].cell == origin, "releasing beyond the map cancels a point drag")
 	var fly := -1
-	for i in editor._point_type.item_count:
-		if editor._point_type.get_item_metadata(i) == {"kind": "enemy", "type": "fly_bird"}: fly = i
-	editor._point_type.select(fly)
-	editor._point_type.item_selected.emit(fly)
+	for i in editor._points.type_option().item_count:
+		if editor._points.type_option().get_item_metadata(i) == {"kind": "enemy", "type": "fly_bird"}: fly = i
+	editor._points.type_option().select(fly)
+	editor._points.type_option().item_selected.emit(fly)
 	expect(s.map.points[enemy].type == "fly_bird" and s.selected_point().type == "fly_bird", "type choice updates the selected bird immediately")
 	editor._travel(-1)
-	expect(s.selected_point().type == "jump_bird" and editor._point_type.get_selected_metadata().type == "jump_bird", "undo refreshes the canvas and the point inspector together")
-	var list := editor._point_list
+	expect(s.selected_point().type == "jump_bird" and editor._points.type_option().get_selected_metadata().type == "jump_bird", "undo refreshes the canvas and the point inspector together")
+	var list := editor._points.list()
 	var bird_row := list.get_selected_items()[0]
 	s.put_notes("# editor notes")
 	expect(s.selected_point_id == enemy, "editing notes keeps the selected point")
@@ -488,29 +488,29 @@ func _workspace_controls(editor: MapEditor) -> void:
 	expect(list.is_selected(spawn_row) and s.selected_point().cell == destination, "drag keeps the selected respawn row")
 	var tint := Vector4i(1, 7, 2, 4)
 	for i in 4: editor._tints[i].value = tint[i]
-	_click_button(editor._materials[7])
+	_click_button(editor._materials_panel.buttons()[7])
 	expect(editor.brush.tint == tint and editor.brush.material_id == 7, "palette and four inspector controls set independent brush fields")
 	_mouse(c, origin, true, MOUSE_BUTTON_LEFT, KEY_MASK_ALT)
 	_mouse(c, origin, false, MOUSE_BUTTON_LEFT, KEY_MASK_ALT)
 	expect(editor.active_tool == "brush" and CyrmMap.read_region(s.map, CyrmMap.SCENE, Rect2i(origin, Vector2i.ONE))[0] == CyrmMap.tile_value(7, tint), "Alt paints the chosen material and tint under a marker")
-	_click_button(editor._materials[15])
+	_click_button(editor._materials_panel.buttons()[15])
 	for i in 4: editor._tints[i].value = 0
 	editor._choose_tool("picker")
 	_click_cell(c, origin)
-	expect(editor.brush.material_id == 7 and editor._materials[7].button_pressed and not editor._materials[15].button_pressed, "eyedropper synchronizes palette selection")
+	expect(editor.brush.material_id == 7 and editor._materials_panel.buttons()[7].button_pressed and not editor._materials_panel.buttons()[15].button_pressed, "eyedropper synchronizes palette selection")
 	for i in 4: expect(editor._tints[i].value == tint[i], "eyedropper restores inspector channel %d" % i)
-	editor._layer_flag(false, CyrmMap.BACK, "visible")
-	editor._layer_flag(true, CyrmMap.BACK, "locked")
+	editor._layers_panel.set_flag(false, CyrmMap.BACK, "visible")
+	editor._layers_panel.set_flag(true, CyrmMap.BACK, "locked")
 	expect(not c.planes[CyrmMap.BACK].visible and s.locked[CyrmMap.BACK] and s.layer == CyrmMap.SCENE, "per-row visibility and locking do not switch the active layer")
-	editor._layer_flag(true, CyrmMap.BACK, "visible")
-	editor._layer_flag(false, CyrmMap.BACK, "locked")
+	editor._layers_panel.set_flag(true, CyrmMap.BACK, "visible")
+	editor._layers_panel.set_flag(false, CyrmMap.BACK, "locked")
 	editor._choose_tool("brush")
 
 func _point_selection(tree: SceneTree, editor: MapEditor) -> void:
-	editor._open_document(_sample(), "")
+	editor._files.open_document(_sample(), "")
 	var s := editor.session
 	var c := editor.canvas
-	var list := editor._point_list
+	var list := editor._points.list()
 	var inside := Vector2i(3, 4)
 	var outside := Vector2i(10, 4)
 	var outside_id := CyrmMap.first_point_id(s.map, "respawn")
@@ -524,7 +524,7 @@ func _point_selection(tree: SceneTree, editor: MapEditor) -> void:
 	editor._travel(-1)
 	expect(s.selected_point().is_empty() and s.map.points[outside_id].cell == outside, "undo crop restores the original point without selecting it")
 	_click_cell(c, inside)
-	var option := editor._point_type.selected
+	var option := editor._points.type_option().selected
 	list.grab_focus()
 	_key(editor, KEY_F5)
 	expect(editor.trial.spec.solo_spawn == inside, "F5 starts at the point the user just picked")
@@ -536,11 +536,11 @@ func _point_selection(tree: SceneTree, editor: MapEditor) -> void:
 	editor.finish_trial()
 	_mouse(c, Vector2i(0, 7), false)
 
-	_click_button(editor._place_points)
-	editor._point_type.select(option)
+	_click_button(editor._points.place_button())
+	editor._points.type_option().select(option)
 	_click_cell(c, inside)
 	var twin := s.selected_point_id
-	expect(twin != inside_id and s.map.points[twin] == s.map.points[inside_id] and editor._place_points.button_pressed, "identical respawns have distinct IDs and continuous placement stays active")
+	expect(twin != inside_id and s.map.points[twin] == s.map.points[inside_id] and editor._points.place_button().button_pressed, "identical respawns have distinct IDs and continuous placement stays active")
 	_mouse(c, inside, true, MOUSE_BUTTON_LEFT, 0, true)
 	_mouse(c, inside, false)
 	expect(editor.trial == null and s.selected_point_id != twin and s.selected_point() == s.map.points[twin], "the second press of a double-click places another marker in continuous mode")
@@ -551,14 +551,14 @@ func _point_selection(tree: SceneTree, editor: MapEditor) -> void:
 	expect(s.selected_point().is_empty() and s.map.points[twin].cell == inside, "redo restores the same ID without selecting it")
 	var revision := s.revision
 	var player: Vector2i = s.map.points[CyrmMap.first_point_id(s.map, "player")].cell
-	editor._point_type.select(0)
+	editor._points.type_option().select(0)
 	_click_cell(c, player)
 	expect(s.selected_point().kind == "player" and s.revision == revision, "placing the existing single spawn selects its row without adding history")
 
 	editor._choose_tool("point")
 	_click_cell(c, outside)
 	s.resize_map(Vector2i(7, 8))
-	expect(s.selected_point().is_empty() and not editor._point_details.visible, "cropping the selected point clears the inspector")
+	expect(s.selected_point().is_empty() and not editor._points.details().visible, "cropping the selected point clears the inspector")
 	editor._travel(-1)
 	_click_cell(c, outside)
 	_key(editor, KEY_DELETE)
@@ -572,16 +572,16 @@ func _point_selection(tree: SceneTree, editor: MapEditor) -> void:
 	expect(s.selected_point().is_empty(), "restoring an indistinguishable twin does not silently select another row")
 	_click_cell(c, inside)
 	_click_cell(c, Vector2i(0, 7))
-	expect(s.selected_point().is_empty() and not editor._point_details.visible, "clicking empty space clears the list and point inspector")
+	expect(s.selected_point().is_empty() and not editor._points.details().visible, "clicking empty space clears the list and point inspector")
 	_key(editor, KEY_F5)
 	expect(editor.trial.spec.solo_spawn == player, "F5 falls back to the normal spawn when selection is empty")
 	editor.finish_trial()
 	_click_cell(c, player)
-	editor._open_document(_sample(), "")
+	editor._files.open_document(_sample(), "")
 	expect(s.selected_point().is_empty(), "opening a document clears the previous map's point selection")
 
 func _size_dialogs(tree: SceneTree, editor: MapEditor) -> void:
-	editor._size_dialog(false)
+	editor._files.size_dialog(false)
 	var dialog: ConfirmationDialog = editor.get_child(-1)
 	var fields := dialog.find_children("*", "SpinBox", true, false)
 	fields[0].value = 49
@@ -591,7 +591,7 @@ func _size_dialogs(tree: SceneTree, editor: MapEditor) -> void:
 	expect(editor.session.map.size == Vector2i(49, 32), "resize is available from the editor dialog")
 	editor._travel(-1)
 	expect(editor.session.map.size == Vector2i(48, 32), "dialog resize remains one undo")
-	editor._size_dialog(true)
+	editor._files.size_dialog(true)
 	dialog = editor.get_child(-1)
 	fields = dialog.find_children("*", "SpinBox", true, false)
 	fields[0].value = 20
@@ -605,7 +605,7 @@ func _mode_limits(editor: MapEditor) -> void:
 	var map := CyrmMap.load_file("res://maps/newfactory.cyrm")
 	var sides := SpawnPicker.respawn_cells(map)
 	map.points = {0: {"kind": "respawn", "side": 1, "cell": sides[1][0]}}
-	editor._open_document(map, "")
+	editor._files.open_document(map, "")
 	editor._validate()
 	var rules := MatchRules.new(RandomNumberGenerator.new())
 	expect(editor._status.text.contains("大乱斗：点位不足，至少需要 2 人")
@@ -625,9 +625,9 @@ func _workflow(tree: SceneTree) -> void:
 	editor.draft_path = "user://" + filename + ".draft"
 	tree.root.add_child(editor)
 	await tree.process_frame
-	editor._open_document(_sample(), "")
+	editor._files.open_document(_sample(), "")
 	var autosave_target := path.get_basename() + "-autosave.cyrm"
-	editor._save(autosave_target)
+	editor._files.save(autosave_target)
 	var saved := FileAccess.get_file_as_bytes(autosave_target)
 	var edited := editor.session
 	var added := edited.place_point({"kind": "enemy", "type": "fly_bird", "cell": Vector2i(1, 1)})
@@ -646,16 +646,16 @@ func _workflow(tree: SceneTree) -> void:
 	expect(FileAccess.get_file_as_bytes(autosave_target) == saved, "autosaving the whole draft leaves the chosen CYRM file intact")
 	DirAccess.remove_absolute(autosave_target)
 	_mode_limits(editor)
-	editor._open_document(_sample(), "")
+	editor._files.open_document(_sample(), "")
 	await _size_dialogs(tree, editor)
 	await _canvas_display(tree, editor)
 	if DisplayServer.get_name() != "headless": await _lighting_preview(editor)
 	_canvas_tools(editor)
-	editor._open_document(_sample(), "")
+	editor._files.open_document(_sample(), "")
 	_workspace_controls(editor)
 	await _point_selection(tree, editor)
-	editor._open_document(_sample(), "")
-	editor._file_selected(true, PackedStringArray([path.get_basename()]), 0, true)
+	editor._files.open_document(_sample(), "")
+	editor._files.file_selected(true, PackedStringArray([path.get_basename()]), 0, true)
 	expect(editor.session.path == path and FileAccess.file_exists(path), "native Save As accepts a path without its CYRM extension")
 	var old_bytes := FileAccess.get_file_as_bytes(path)
 	expect(CyrmMap.save_file(editor.session.map, path.path_join("blocked.cyrm")) != OK and FileAccess.get_file_as_bytes(path) == old_bytes, "failed save leaves original file intact")
@@ -670,21 +670,21 @@ func _workflow(tree: SceneTree) -> void:
 	var revision := s.revision
 	var document := s.map
 	var choice := PackedStringArray([path])
-	editor._file_selected(false, PackedStringArray(), 0, false)
-	editor._file_selected(false, choice, 0, true)
+	editor._files.file_selected(false, PackedStringArray(), 0, false)
+	editor._files.file_selected(false, choice, 0, true)
 	expect(is_same(s.map, document) and s.dirty() and FileAccess.get_file_as_bytes(path) == old_bytes, "cancelling the native picker preserves the dirty document and saved file")
-	editor._file_selected(true, choice, 0, false)
+	editor._files.file_selected(true, choice, 0, false)
 	var discard: ConfirmationDialog = editor.get_child(-1)
 	expect(discard.visible and is_same(s.map, document), "choosing a file waits for confirmation before discarding changes")
 	discard.get_cancel_button().pressed.emit()
 	await tree.process_frame
 	expect(is_same(s.map, document) and s.revision == revision, "cancelling discard retains the edited map")
-	editor._file_selected(true, PackedStringArray([path.get_basename()]), 0, true)
+	editor._files.file_selected(true, PackedStringArray([path.get_basename()]), 0, true)
 	var overwrite: ConfirmationDialog = editor.get_child(-1)
 	expect(overwrite.visible and FileAccess.get_file_as_bytes(path) == old_bytes, "adding the extension cannot silently overwrite an existing map")
 	overwrite.get_cancel_button().pressed.emit()
 	await tree.process_frame
-	editor._write_draft()
+	editor._files.write_draft()
 	var draft := MapEditFiles.read_draft(editor.draft_path)
 	expect(draft.path == path and CyrmMap.read_region(draft.map, 1, step) == pixels, "unsaved draft can recover the step")
 	var recovered: MapEditor = load("res://scenes/map_editor.tscn").instantiate()
@@ -704,7 +704,7 @@ func _workflow(tree: SceneTree) -> void:
 			"the preview reaches 23:45 in quarter hours without making a map edit")
 	editor._choose_tool("point")
 	_click_cell(editor.canvas, Vector2i(2, 3))
-	editor._point_list.grab_focus()
+	editor._points.list().grab_focus()
 	_key(editor, KEY_DOWN)
 	_key(editor, KEY_F5)
 	await tree.physics_frame
@@ -747,7 +747,7 @@ func _workflow(tree: SceneTree) -> void:
 	var received := CyrmMap.from_bytes(FileAccess.get_file_as_bytes(path))
 	expect(local == s.map and received == local,
 			"local, network and unsaved preview share the same map schema")
-	editor._file_selected(true, choice, 0, false)
+	editor._files.file_selected(true, choice, 0, false)
 	expect(not is_same(s.map, document) and s.path == path and CyrmMap.read_region(s.map, 1, step) == pixels, "choosing a CYRM opens it in the editor")
 	await tree.process_frame
 	expect(editor._filename.text.contains(filename) and editor._filename.size.x > 150.0, "document strip displays the filename")

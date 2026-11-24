@@ -2,7 +2,6 @@ class_name MapEditor
 extends Control
 
 const HEADING_COLOR := Color("#a9dcca")
-const LAYERS := ["前景", "场景", "后景", "背景 1 · 近", "背景 2", "背景 3", "背景 4 · 远"]
 const POINT_HINT := "拖动移动点位 · 双击试玩"
 const TOOLS := {
 	"brush": {"label": "画笔", "key": KEY_B, "params": ["width", "material", "color"],
@@ -16,40 +15,39 @@ const TOOLS := {
 	"gradient": {"label": "渐变", "key": KEY_NONE, "params": ["color", "end_color"], "min_layer": CyrmMap.FIRST_BACKGROUND},
 	"point": {"label": "点位", "key": KEY_P, "params": ["points"], "pick_points": POINT_HINT},
 }
-const ENEMY_LABELS := {"jump_bird": "跳鸟", "fly_bird": "飞鸟", "black_bird": "乌鸫"}
-const DEFAULT_SIZE := Vector2i(500, 300)
 
-var draft_path := "user://map-editor.draft"
 var active_tool := "brush"
 var _tool: Dictionary:
 	get: return TOOLS[active_tool]
 var session := MapEditSession.new()
 var brush := MapBrush.new()
 var canvas := MapEditCanvas.new()
-var trial: SoloLevel
+var trial: SoloLevel:
+	get: return _trial.trial if _trial != null else null
 var _workspace := VBoxContainer.new()
 var _filename: Label
 var _modified: Label
 var _status: Label
-var _materials: Dictionary[int, Button] = {}
-var _place_points: CheckBox
-var _point_type := OptionButton.new()
-var _point_list := ItemList.new()
-var _ink := ColorPickerButton.new()
+var _materials_panel: MapEditorMaterials
+var _points: MapEditorPoints
+var _files: MapEditorFiles
+var _toolbar: MapEditorToolbar
+var _trial: MapEditorTrial
+var _inspector: MapEditorInspector
+var _palette: MapEditorToolPalette
+var _clipboard: Array = []
+var _param_rows: Dictionary[String, Control]:
+	get: return _inspector.param_rows if _inspector != null else {}
+var _tints: Array[SpinBox]:
+	get: return _inspector.tints if _inspector != null else []
+var _ink: ColorPickerButton:
+	get: return _inspector.ink if _inspector != null else null
 var _shortcuts: Dictionary[int, Callable] = {}
-var _tints: Array[SpinBox] = []
-var _tools: Dictionary[String, Button] = {}
-var _layers: Array[Button] = []
+var _layers_panel: MapEditorLayers
 var _texture_layer := CyrmMap.SCENE
 var _dimensions: Label
 var _context_title: Label
-var _param_rows: Dictionary[String, Control] = {
-	"material": FoldableContainer.new(), "color": VBoxContainer.new(),
-	"selection": VBoxContainer.new(), "points": VBoxContainer.new(),
-}
-var _selection_info := Label.new()
-var _point_details := HBoxContainer.new()
-var _draft_revision := -1
+var draft_path := "user://map-editor.draft"
 var _closing := false
 var _auto_quit := true
 
@@ -61,8 +59,16 @@ func _ready() -> void:
 	add_child(_workspace)
 	_workspace.add_theme_constant_override("separation", 10)
 	_workspace.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 10)
+	_files = MapEditorFiles.new()
+	_files.draft_path = draft_path
+	add_child(_files)
+	_trial = MapEditorTrial.new()
+	add_child(_trial)
+	_clipboard = [["复制选区", session.copy_selection, KEY_C], ["剪切选区", _cut, KEY_X], ["粘贴", _paste, KEY_V]]
 	_build_ui()
-	session.changed.connect(_changed)
+	_files.setup(session, canvas, self, _filename, _modified, _dimensions, _say)
+	_trial.setup(session, canvas, _workspace, _say)
+	session.changed.connect(_files.changed)
 	session.selection_changed.connect(_selection_changed)
 	session.cells_changed.connect(canvas.paint_cells)
 	session.points_changed.connect(_refresh_points)
@@ -73,14 +79,14 @@ func _ready() -> void:
 	var autosave := Timer.new()
 	autosave.wait_time = 10.0
 	autosave.autostart = true
-	autosave.timeout.connect(_write_draft)
+	autosave.timeout.connect(_files.write_draft)
 	add_child(autosave)
-	var draft := MapEditFiles.read_draft(draft_path)
+	var draft := MapEditFiles.read_draft(_files.draft_path)
 	if draft.is_empty():
-		_open_document(CyrmMap.create(DEFAULT_SIZE), "")
+		_files.open_document(CyrmMap.create(MapEditorFiles.DEFAULT_SIZE), "")
 		_say("左键绘制 · 拖动点位移动 · 中键平移 · 滚轮缩放")
 	else:
-		_open_document(draft.map, draft.path, true)
+		_files.open_document(draft.map, draft.path, true)
 		_say("已恢复上次未保存的草稿")
 
 func _exit_tree() -> void:
@@ -88,75 +94,51 @@ func _exit_tree() -> void:
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST and is_node_ready() and not _closing:
-		_confirm_discard(_leave.bind(true))
+		_files.confirm_discard(_leave.bind(true))
 
 func _request_exit() -> void:
-	_confirm_discard(_leave.bind(false))
+	_files.confirm_discard(_leave.bind(false))
 
 func _leave(quit: bool) -> void:
 	_closing = true
-	MapEditFiles.clear_draft(draft_path)
+	_files.discard_draft()
 	if quit: get_tree().quit()
 	else: get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
 
 func _build_ui() -> void:
-	var top := PanelContainer.new()
-	_workspace.add_child(top)
-	var bar := _row(top)
-	_label(bar, "地图编辑器", 28, Color("#b7e9d5"))
-	bar.add_child(VSeparator.new())
+	_toolbar = MapEditorToolbar.new()
+	_workspace.add_child(_toolbar)
+	_toolbar.setup(canvas)
+	_shortcuts.merge(_toolbar.shortcuts)
 	var cmd := KEY_MASK_META if OS.has_feature("macos") else KEY_MASK_CTRL
-	_shortcuts[cmd | KEY_Y] = _travel.bind(1)
-	var files := _command_menu(bar, "文件")
-	_command(files, "新建地图…", _size_dialog.bind(true), cmd | KEY_N)
-	_command(files, "打开地图…", _file_dialog, cmd | KEY_O)
-	files.add_separator()
-	_command(files, "保存", _save, cmd | KEY_S)
-	_command(files, "另存为…", _file_dialog.bind(true), cmd | KEY_MASK_SHIFT | KEY_S)
-	var edit := _command_menu(bar, "编辑")
-	_command(edit, "撤销", _travel.bind(-1), cmd | KEY_Z)
-	_command(edit, "重做", _travel.bind(1), cmd | KEY_MASK_SHIFT | KEY_Z)
-	edit.add_separator()
-	var clipboard := [["复制选区", session.copy_selection, KEY_C], ["剪切选区", _cut, KEY_X], ["粘贴", _paste, KEY_V]]
-	for entry in clipboard:
-		_command(edit, entry[0], entry[1], cmd | entry[2])
-	edit.add_separator()
-	_command(edit, "调整地图尺寸…", _size_dialog.bind(false))
-	_command(edit, "地图注记…", _notes_dialog)
-	var view := _command_menu(bar, "视图")
-	_command(view, "适配全图", canvas.fit)
-	view.add_separator()
-	for entry in [["坐标标尺", "grid"], ["子格网格", "subgrid"], ["环面预览", "torus"], ["分区标线", "guides"], ["压暗其他层", "dim_others"]]:
-		var index := view.item_count
-		view.add_check_item(entry[0], index)
-		view.set_item_checked(index, canvas.get(entry[1]))
-		view.set_item_metadata(index, _toggle_view.bind(view, index, entry[1]))
-	_build_light_preview(bar)
-	bar.add_spacer(false)
-	_button(bar, "保存", _save).tooltip_text = "写入当前地图文件"
-	_button(bar, "校验", _validate)
-	var play := _button(bar, "试玩  F5", start_trial, null, KEY_F5)
-	play.theme_type_variation = &"EditorPrimary"
-	play.tooltip_text = "从所选点位试玩当前地图，Esc 返回"
-	_button(bar, "退出编辑器", _request_exit).tooltip_text = "返回主菜单 · Esc"
+	_shortcuts[cmd | KEY_S] = _files.save
+	_toolbar.new_requested.connect(func() -> void: _files.size_dialog(true))
+	_toolbar.open_requested.connect(_files.open_dialog)
+	_toolbar.save_requested.connect(_files.save)
+	_toolbar.save_as_requested.connect(_files.open_dialog.bind(true))
+	_toolbar.undo_requested.connect(_travel.bind(-1))
+	_toolbar.redo_requested.connect(_travel.bind(1))
+	_toolbar.travel_requested.connect(_travel)
+	_toolbar.copy_requested.connect(session.copy_selection)
+	_toolbar.cut_requested.connect(_cut)
+	_toolbar.paste_requested.connect(_paste)
+	_toolbar.resize_requested.connect(_files.size_dialog.bind(false))
+	_toolbar.notes_requested.connect(_notes_dialog)
+	_toolbar.validate_requested.connect(_validate)
+	_toolbar.play_requested.connect(start_trial)
+	_toolbar.exit_requested.connect(_request_exit)
 
 	var body := UiFactory.box(_workspace, 8, false)
 	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var left := _sidebar(body, 292)
-	_label(left, "绘制工具", 24, HEADING_COLOR)
-	var tools := _grid(left, 3)
-	var tool_group := ButtonGroup.new()
-	for id: String in TOOLS:
-		var key: Key = TOOLS[id].key
-		var button := _button(tools, TOOLS[id].label, _choose_tool.bind(id), tool_group, key)
-		if id == "point":
-			button.tooltip_text = "点位：右侧选择出生点/敌人类型，勾选放置点位后单击画布"
-		else:
-			button.tooltip_text = button.text + (" " + OS.get_keycode_string(key) if key != KEY_NONE else "")
-		_tools[id] = button
-	_tools[active_tool].button_pressed = true
+	_palette = MapEditorToolPalette.new()
+	left.add_child(_palette)
+	_palette.setup(TOOLS, active_tool)
+	_palette.tool_selected.connect(_choose_tool)
+	_shortcuts.merge(_palette.shortcuts)
 	left.add_child(HSeparator.new())
 	_build_materials(left)
+
 	var center := UiFactory.box(body, 4, true)
 	center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var strip := PanelContainer.new()
@@ -179,7 +161,15 @@ func _build_ui() -> void:
 	_build_layers(right)
 	right.add_child(HSeparator.new())
 	_context_title = _label(right, "画笔", 24, HEADING_COLOR)
-	_build_inspector(right, clipboard)
+	_inspector = MapEditorInspector.new()
+	right.add_child(_inspector)
+	_inspector.setup(session, brush, canvas, _clipboard, _sync_context)
+	_points = _inspector.points
+	_points.point_selected.connect(func(id: int) -> void:
+		_select_point(id)
+		_choose_tool("point"))
+	_points.point_activated.connect(func(id: int) -> void:
+		canvas.center_on(session.map.points[id].cell))
 
 	var footer := _row(_workspace)
 	_status = _flex_label(footer)
@@ -187,341 +177,46 @@ func _build_ui() -> void:
 	canvas.cursor_moved.connect(func(p: Vector2i) -> void:
 		coords.text = "子格 %d, %d" % [p.x, p.y] if session.bounds.has_point(p) else "")
 
-func _build_light_preview(bar: Control) -> void:
-	var slider := HSlider.new()
-	slider.max_value = Daylight.DAY - 15
-	slider.step = 15
-	slider.value = Daylight.NOON
-	slider.custom_minimum_size.x = 180
-	slider.accessibility_name = "光照预览时刻"
-	var preview := _check(bar, "光照预览", func(on: bool) -> void:
-		slider.editable = on
-		canvas.preview_minute = slider.value if on else -1.0)
-	bar.add_child(slider)
-	slider.editable = false
-	var clock := _label(bar, Daylight.time_text(slider.value))
-	slider.value_changed.connect(func(value: float) -> void:
-		clock.text = Daylight.time_text(value)
-		if preview.button_pressed: canvas.preview_minute = value)
-
 func _build_materials(parent: Control) -> void:
-	var header := _row(parent)
-	_label(header, "材质", 24, HEADING_COLOR).size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var group := ButtonGroup.new()
-	_materials[0] = _button(header, "空气", _pick_material.bind(0), group)
-	var grid := _grid(parent, 3)
-	var materials := TileDefs.materials()
-	for key in materials:
-		var id := int(key)
-		var button := _button(grid, materials[key].name, _pick_material.bind(id), group)
-		button.icon = ImageTexture.create_from_image(TerrainAtlas.tile_image(48, CyrmMap.tile_value(id)))
-		button.vertical_icon_alignment = VERTICAL_ALIGNMENT_TOP
-		button.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		button.add_theme_font_size_override("font_size", 16)
-		button.custom_minimum_size = Vector2(70, 100)
-		button.tooltip_text = button.text
-		_materials[id] = button
-	_materials[brush.material_id].button_pressed = true
+	_materials_panel = MapEditorMaterials.new()
+	parent.add_child(_materials_panel)
+	_materials_panel.setup(brush)
+	_materials_panel.material_selected.connect(_pick_material)
 
 func _build_layers(parent: Control) -> void:
-	var rows := _grid(parent, 3)
-	var group := ButtonGroup.new()
-	_label(rows, "图层", 24, HEADING_COLOR)
-	for title in ["可见", "锁定"]:
-		_label(rows, title, 20).horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	for i in LAYERS.size():
-		var name_button := _button(rows, LAYERS[i], _set_layer.bind(i), group)
-		name_button.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		name_button.button_pressed = i == session.layer
-		_layers.append(name_button)
-		for property in ["visible", "locked"]:
-			var check := _check(rows, "", _layer_flag.bind(i, property), property == "visible")
-			check.tooltip_text = ("显示" if property == "visible" else "锁定") + LAYERS[i]
-			check.accessibility_name = check.tooltip_text
-			check.custom_minimum_size = Vector2(40, 34)
-			check.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-
-func _layer_flag(value: bool, index: int, property: String) -> void:
-	if property == "visible":
-		canvas.planes[index].visible = value
-	else:
-		session.locked[index] = value
-		canvas.cancel()
-
-func _build_inspector(parent: Control, clipboard: Array) -> void:
-	var width := _spin(parent, "笔宽（子格）", 1, 60, brush.width)
-	_param_rows.width = width.get_parent()
-	width.value_changed.connect(func(value: float) -> void:
-		brush.width = int(value)
-		_sync_context()
-		canvas.preview.queue_redraw())
-	_param_rows.outline = _check(parent, "仅画矩形边框", func(on: bool) -> void: brush.outline = on)
-	var tints: FoldableContainer = _param_rows.material
-	parent.add_child(tints)
-	tints.title = "材质调色"
-	tints.folded = true
-	var fields := UiFactory.box(tints, 4, true)
-	for i in 4:
-		var spin := _spin(fields, ["色相", "亮度", "饱和度", "透明度"][i], 0, 7, brush.tint[i])
-		spin.value_changed.connect(func(value: float) -> void: brush.tint[i] = int(value))
-		_tints.append(spin)
-	_check(fields, "仅修改调色", func(on: bool) -> void:
-		brush.tint_only = on
-		tints.title = "材质调色 · 仅调色" if on else "材质调色")
-	parent.add_child(_param_rows.color)
-	for property: String in ["color", "end_color"]:
-		var row := _row(_param_rows.color)
-		var start := property == "color"
-		_label(row, "颜色" if start else "终点色").size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		var picker := _ink if start else ColorPickerButton.new()
-		row.add_child(picker)
-		picker.custom_minimum_size = Vector2(85, 34)
-		picker.color = brush.get(property)
-		picker.color_changed.connect(func(value: Color) -> void: brush.set(property, value))
-		if not start: _param_rows.end_color = row
-	parent.add_child(_param_rows.selection)
-	_param_rows.selection.add_child(_selection_info)
-	var actions := _grid(_param_rows.selection, 2)
-	for item in clipboard:
-		_button(actions, item[0], item[1]).size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	for item in [["清除选区内容", session.clear_selection, KEY_NONE], ["水平镜像", session.mirror.bind(true), KEY_H],
-			["垂直镜像", session.mirror.bind(false), KEY_V]]:
-		_button(actions, item[0], item[1], null, item[2]).size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	parent.add_child(_param_rows.points)
-	_place_points = _check(_param_rows.points, "放置点位（连续）", func(_on: bool) -> void:
-		canvas.cancel()
-		_sync_context())
-	_place_points.tooltip_text = "勾选后单击画布放置所选类型；取消勾选可拖动已有点位"
-	_label(_param_rows.points, "点位类型", 20).tooltip_text = "出生点、复活点和敌人出生点都在这里选择"
-	_param_rows.points.add_child(_point_type)
-	_point_type.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_point_type.tooltip_text = "选择要放置的出生点或敌人类型"
-	_point_option("单人出生点", {"kind": "player"})
-	_point_option("第二出生点", {"kind": "player2"})
-	for side in [1, 2]:
-		_point_option("侧 %d 复活点" % side, {"kind": "respawn", "side": side})
-	for id: String in EnemyType.paths:
-		_point_option("敌人 · " + str(ENEMY_LABELS.get(id, id)), {"kind": "enemy", "type": id})
-	_param_rows.points.add_child(_point_list)
-	_point_list.custom_minimum_size.y = 270
-	_point_list.add_theme_font_size_override("font_size", 20)
-	_point_list.item_selected.connect(func(index: int) -> void:
-		_select_point(_point_list.get_item_metadata(index))
-		_choose_tool("point"))
-	_point_list.item_activated.connect(func(index: int) -> void:
-		canvas.center_on(session.map.points[_point_list.get_item_metadata(index)].cell))
-	_point_type.item_selected.connect(_change_point_type)
-	_param_rows.points.add_child(_point_details)
-	_button(_point_details, "移至…", canvas.pick_point_destination).tooltip_text = "单击目标子格移动所选点位"
-	_button(_point_details, "删除", func() -> void: session.commit_point(session.selected_point_id, {}))
+	_layers_panel = MapEditorLayers.new()
+	parent.add_child(_layers_panel)
+	_layers_panel.setup(session, canvas)
+	_layers_panel.layer_selected.connect(_set_layer)
 
 func _sync_context() -> void:
 	var params: Array = _tool.params
 	var hidden_ink := "material" if session.on_background else "color"
-	for parameter: String in _param_rows:
-		_param_rows[parameter].visible = parameter != hidden_ink and params.has(parameter)
+	_inspector.sync(params, hidden_ink)
 	_context_title.text = "关卡点位" if params.has("points") else _tool.label
 	canvas.cursor_width = brush.width if params.has("width") else 1
-	var placing := _place_points.button_pressed
-	canvas.point_hint = "" if placing else _tool.get("pick_points", "")
-	var point := session.selected_point()
-	var kind: String = point.get("kind", "")
-	var editable_type := not placing and kind in ["enemy", "respawn"]
-	_point_details.visible = not kind.is_empty() and not placing
-	_point_type.visible = active_tool == "point"
-	if editable_type: _point_type.select(_option_for(point))
-	for i in _point_type.item_count:
-		_point_type.set_item_disabled(i, editable_type and _point_type.get_item_metadata(i).kind != kind)
+	canvas.point_hint = "" if _points.is_placing() else _tool.get("pick_points", "")
 
 func _selection_changed() -> void:
-	var size_in_cells := session.selection.size
-	_selection_info.text = "%d × %d 子格" % [size_in_cells.x, size_in_cells.y] if session.selection.has_area() else "拖动框选范围"
+	_inspector.set_selection(session.selection)
 	canvas.preview.queue_redraw()
 
-func _toggle_view(menu: PopupMenu, index: int, property: String) -> void:
-	var value := not bool(canvas.get(property))
-	menu.set_item_checked(index, value)
-	canvas.set(property, value)
-	canvas.refresh_view()
-
-static func _command_menu(parent: Control, title: String) -> PopupMenu:
-	var menu := MenuButton.new()
-	menu.text = title
-	menu.set_disable_shortcuts(true)
-	parent.add_child(menu)
-	var popup := menu.get_popup()
-	popup.index_pressed.connect(func(i: int) -> void: popup.get_item_metadata(i).call())
-	return popup
-
-func _command(menu: PopupMenu, text: String, action: Callable, accelerator := 0) -> void:
-	var i := menu.item_count
-	menu.add_item(text, i, accelerator)
-	menu.set_item_metadata(i, action)
-	if accelerator: _shortcuts[accelerator] = action
-
-func _point_option(label: String, fields: Dictionary) -> void:
-	_point_type.add_item(label)
-	_point_type.set_item_metadata(_point_type.item_count - 1, fields)
-
-func _size_dialog(create: bool) -> void:
-	var dialog := ConfirmationDialog.new()
-	dialog.title = "新建地图" if create else "调整地图尺寸"
-	dialog.ok_button_text = "创建" if create else "调整尺寸"
-	var form := VBoxContainer.new()
-	form.custom_minimum_size.x = 400
-	dialog.add_child(form)
-	var initial: Vector2i = DEFAULT_SIZE if create else session.map.size
-	var width := _spin(form, "宽（子格）", 1, CyrmMap.MAX_SIZE.x, initial.x)
-	var height := _spin(form, "高（子格）", 1, CyrmMap.MAX_SIZE.y, initial.y)
-	dialog.confirmed.connect(func() -> void:
-		var dims := Vector2i(int(width.value), int(height.value))
-		if create:
-			_confirm_discard.call_deferred(_open_document.bind(CyrmMap.create(dims), ""))
-		else:
-			_resize_to.call_deferred(dims))
-	_show_dialog(dialog)
-
-func _open_document(map: Dictionary, filename: String, dirty := false) -> void:
-	_filename.tooltip_text = filename
-	session.open(map, filename, dirty)
-	_draft_revision = session.revision
-	canvas.fit()
-
-func _changed() -> void:
-	_dimensions.text = "%d × %d" % [session.map.size.x, session.map.size.y]
-	_filename.text = "未命名.cyrm" if session.path.is_empty() else session.path.get_file()
-	_modified.visible = session.dirty()
-	if not _modified.visible:
-		_draft_revision = session.revision
-		MapEditFiles.clear_draft(draft_path)
-		_filename.tooltip_text = session.path
-
-func _write_draft() -> void:
-	if _draft_revision == session.revision: return
-	var error := MapEditFiles.save_draft(draft_path, session.map, session.path)
-	if error == OK:
-		_draft_revision = session.revision
-		_filename.tooltip_text = "%s  草稿 %s" % [session.path, Time.get_time_string_from_system()]
-	else:
-		_say("草稿保存失败 · " + error_string(error))
-
-func _save(path := session.path) -> void:
-	if path.is_empty() or path.begins_with("res://"):
-		_file_dialog(true)
-		return
-	var error := CyrmMap.save_file(session.map, path)
-	if error != OK:
-		_say("保存失败 · " + error_string(error))
-		return
-	session.mark_saved(path)
-	_say("已保存 " + path.get_file())
-
-func _open_file(path: String) -> void:
-	var map := CyrmMap.load_file(path)
-	if map.is_empty():
-		_say("打开失败 · 无效的地图")
-		return
-	_open_document(map, path)
-	_say("已打开 " + path.get_file())
-
-func _file_dialog(saving := false) -> void:
-	var directory := ProjectSettings.globalize_path(MapCatalog.USER_DIR)
-	var error := DirAccess.make_dir_recursive_absolute(directory)
-	if error == OK:
-		var filename := session.path.get_file() if not session.path.is_empty() else "新地图.cyrm"
-		error = DisplayServer.file_dialog_show(
-			"另存为" if saving else "打开地图", directory, filename if saving else "", false,
-			DisplayServer.FILE_DIALOG_MODE_SAVE_FILE if saving else DisplayServer.FILE_DIALOG_MODE_OPEN_FILE,
-			PackedStringArray(["*.cyrm;CYRM 地图"]), _file_selected.bind(saving), get_window().get_window_id())
-	if error != OK:
-		_say("无法打开系统文件窗口 · " + error_string(error))
-
-func _file_selected(accepted: bool, paths: PackedStringArray, _filter: int, saving: bool) -> void:
-	if not accepted or paths.is_empty():
-		return
-	var path := paths[0]
-	if not saving:
-		_confirm_discard(_open_file.bind(path))
-		return
-	if path.get_extension().to_lower() != "cyrm":
-		path += ".cyrm"
-		if FileAccess.file_exists(path):
-			_confirm("覆盖 %s？" % path.get_file(), "覆盖", _save.bind(path))
-			return
-	_save(path)
-
-func _confirm_discard(proceed: Callable) -> void:
-	if session.dirty():
-		_confirm("当前地图有未保存的修改。放弃这些修改？", "放弃修改", proceed)
-	else:
-		proceed.call()
-
-func _confirm(text: String, action: String, proceed: Callable) -> void:
-	var dialog := ConfirmationDialog.new()
-	dialog.dialog_text = text
-	dialog.ok_button_text = action
-	dialog.confirmed.connect(proceed)
-	_show_dialog(dialog, Vector2i(620, 190))
-
-func _show_dialog(dialog: ConfirmationDialog, size_hint := Vector2i.ZERO) -> void:
-	dialog.cancel_button_text = "取消"
-	add_child(dialog)
-	dialog.visibility_changed.connect(func() -> void:
-		if not dialog.visible: dialog.queue_free())
-	dialog.popup_centered(size_hint)
-
-func _resize_to(dims: Vector2i) -> void:
-	if dims == session.map.size:
-		return
-	var apply_change := func() -> void:
-		session.resize_map(dims)
-		canvas.fit()
-	if dims.x < session.map.size.x or dims.y < session.map.size.y:
-		var cropped: Array[String] = []
-		var bounds := Rect2i(Vector2i.ZERO, dims)
-		for row: Dictionary in session.map.points.values():
-			if not bounds.has_point(row.cell):
-				cropped.append("%s %s" % [row.kind, row.cell])
-		var warning := "画布将裁至 %d × %d 格。" % [dims.x, dims.y]
-		if not cropped.is_empty():
-			warning += "\n将移除 %d 个越界点位：%s" % [cropped.size(), "、".join(cropped.slice(0, 6))]
-		_confirm(warning + "\n可用撤销恢复。", "调整尺寸", apply_change)
-	else:
-		apply_change.call()
-
 func _validate() -> void:
-	var map := session.map
-	var problem := SpawnPicker.validate_multiplayer_spawns(map)
-	var solo := SpawnPicker.single_spawn(map)
-	var sides := SpawnPicker.respawn_cells(map)
-	var summary := "侧 1 / 侧 2：%d / %d" % [sides[1].size(), sides[2].size()]
-	if problem.is_empty():
-		for mode: String in PvpSession.MODE_NAMES:
-			var limit := SpawnPicker.player_limit(sides, mode)
-			var label := "点位不足"
-			if mode == PvpSession.MODE_ROYALE:
-				label = "最多 %d 人" % limit if limit else "点位不足，至少需要 %d 人" % RoomOptions.MIN_PLAYERS
-			elif limit: label = "通过"
-			summary += "    %s：%s" % [PvpSession.mode_name(mode), label]
-	else:
-		summary += "    " + problem
-	_say("单人：%s    %s" % ["无起点" if solo == SpawnPicker.NO_CELL else str(solo), summary])
+	_trial.validate()
 
 func _choose_tool(id: String, layer := -1) -> void:
 	canvas.cancel()
 	var old_layer := session.layer
-	if id != active_tool or layer < 0: _place_points.set_pressed_no_signal(false)
+	if id != active_tool or layer < 0: _points.reset_placing()
 	active_tool = id
 	if layer >= 0: session.layer = layer
 	session.layer = maxi(session.layer, _tool.get("min_layer", 0))
 	if canvas.dim_others and old_layer != session.layer: canvas.refresh_view()
 	if not session.on_background: _texture_layer = session.layer
-	_layers[session.layer].button_pressed = true
-	var button := _tools[id]
-	button.button_pressed = true
+	_layers_panel.select_layer(session.layer)
+	_palette.select_tool(id)
 	_sync_context()
-	_say(button.tooltip_text)
+	_say(_palette.tooltip(id))
 
 func _set_layer(index: int) -> void:
 	var id := active_tool if index >= _tool.get("min_layer", 0) else "brush"
@@ -535,11 +230,10 @@ func _pick_material(id: int) -> void:
 
 func _reflect_ink() -> void:
 	if session.on_background:
-		_ink.color = brush.color
+		_inspector.set_ink(brush.color)
 	else:
-		_materials[brush.material_id].button_pressed = true
-		for i in _tints.size():
-			_tints[i].set_value_no_signal(brush.tint[i])
+		_materials_panel.select_material(brush.material_id)
+		_inspector.set_tints(brush.tint)
 	_say("已取样")
 
 func _travel(direction: int) -> void:
@@ -555,45 +249,15 @@ func _paste() -> void:
 		at = session.selection.position if session.selection.has_area() else Vector2i.ZERO
 	session.paste(at)
 
-func _option_for(point: Dictionary) -> int:
-	var choice := point.duplicate()
-	choice.erase("cell")
-	for i in _point_type.item_count:
-		if _point_type.get_item_metadata(i) == choice: return i
-	return -1
-
-func _point_label(id: int) -> String:
-	var point: Dictionary = session.map.points[id]
-	return "%s  %s" % [_point_type.get_item_text(_option_for(point)), point.cell]
-
-func _point_index(id: int) -> int:
-	if id < 0: return -1
-	for i in _point_list.item_count:
-		if _point_list.get_item_metadata(i) == id: return i
-	return -1
-
 func _refresh_points(updated_id: int) -> void:
 	canvas.cancel()
 	canvas.markings.queue_redraw()
-	var existing := _point_index(updated_id)
-	if existing >= 0:
-		_point_list.set_item_text(existing, _point_label(updated_id))
-	else:
-		_point_list.clear()
-		for id in session.point_ids():
-			var index := _point_list.add_item(_point_label(id))
-			_point_list.set_item_metadata(index, id)
-			if id == session.selected_point_id: _point_list.select(index)
-	_sync_context()
+	_points.refresh(updated_id)
 
 func _select_point(id: int) -> void:
 	session.selected_point_id = id
 	canvas.markings.queue_redraw()
-	_point_list.deselect_all()
-	var index := _point_index(id)
-	if index >= 0:
-		_point_list.select(index)
-		_point_list.ensure_current_is_visible.call_deferred()
+	_points.select(id)
 
 func _tool_pressed(cell: Vector2i, event: InputEventMouseButton, point_id: int) -> void:
 	if canvas.destination_point_id >= 0:
@@ -625,9 +289,8 @@ func _selection_pressed(cell: Vector2i, shift: bool) -> void:
 		else: session.selection = MapEditSession.cell_box(path[0], path[-1]))
 
 func _point_pressed(cell: Vector2i, id: int, double_click: bool) -> void:
-	if _place_points.button_pressed:
-		var fields: Dictionary = _point_type.get_selected_metadata()
-		var placed := session.place_point(fields.merged({"cell": cell}))
+	if _points.is_placing():
+		var placed := session.place_point(_points.placed_fields().merged({"cell": cell}))
 		if placed >= 0: _select_point(placed)
 		return
 	if double_click and active_tool == "point":
@@ -642,15 +305,6 @@ func _point_pressed(cell: Vector2i, id: int, double_click: bool) -> void:
 	canvas.begin_drag("point_drag", func(path: Array[Vector2i]) -> void:
 		session.commit_point(id, session.dragged_point_cell(anchor, path[0], path[-1])))
 
-func _change_point_type(index: int) -> void:
-	var choice: Dictionary = _point_type.get_item_metadata(index)
-	var point := session.selected_point()
-	if not _place_points.button_pressed and point.get("kind") == choice.kind:
-		session.commit_point(session.selected_point_id, choice.merged({"cell": point.cell}))
-	elif not _place_points.button_pressed and point.is_empty():
-		_place_points.set_pressed_no_signal(true)
-		_sync_context()
-
 func _notes_dialog() -> void:
 	var dialog := ConfirmationDialog.new()
 	dialog.title = "地图注记"
@@ -659,62 +313,33 @@ func _notes_dialog() -> void:
 	field.text = session.map.notes
 	dialog.add_child(field)
 	dialog.confirmed.connect(func() -> void: session.put_notes(field.text))
-	_show_dialog(dialog)
+	_files.show_dialog(dialog)
 
 func start_trial(cell: Vector2i = session.selected_point().get("cell", SpawnPicker.NO_CELL)) -> void:
-	if trial != null:
-		return
-	var map := session.map
-	var spawn := cell if session.bounds.has_point(cell) else SpawnPicker.single_spawn(map)
-	if spawn == SpawnPicker.NO_CELL:
-		_say("地图没有可用起点")
-		return
-	trial = SoloLevel.create(map, spawn, WeaponRegistry.enabled_ids([]))
-	trial.preview_minute = canvas.preview_minute
-	canvas.cancel()
-	_workspace.hide()
-	add_child(trial)
-	var hint := CanvasLayer.new()
-	hint.layer = 160
-	trial.add_child(hint)
-	var text := UiFactory.label("试玩    Esc 返回地图编辑器", 28)
-	text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	text.add_theme_constant_override("outline_size", 5)
-	hint.add_child(text)
-	text.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
-	text.offset_top = -66
-	text.offset_bottom = -22
+	_trial.start(cell)
 
 func finish_trial() -> void:
-	if trial == null:
-		return
-	get_tree().paused = false
-	remove_child(trial)
-	trial.queue_free()
-	trial = null
-	_workspace.show()
-	canvas.grab_focus()
-	_say("已返回编辑现场")
+	_trial.finish()
 
 func _input(event: InputEvent) -> void:
-	if trial != null and event.is_action_pressed("ui_cancel"):
+	if _trial.active() and event.is_action_pressed("ui_cancel"):
 		get_viewport().set_input_as_handled()
 		finish_trial.call_deferred()
 
 func _shortcut_input(event: InputEvent) -> void:
-	if trial != null or not event is InputEventKey or not event.pressed or event.echo:
+	if _trial.active() or not event is InputEventKey or not event.pressed or event.echo:
 		return
 	var focus := get_viewport().gui_get_focus_owner()
 	var key: Key = event.get_keycode_with_modifiers()
 	if key != KEY_ESCAPE and (focus is LineEdit or focus is TextEdit):
-		if not focus.get_parent() is SpinBox or _shortcuts.get(key) != _save: return
+		if not focus.get_parent() is SpinBox or _shortcuts.get(key) != _files.save: return
 	match key:
 		KEY_DELETE:
 			if active_tool == "point": session.commit_point(session.selected_point_id, {})
 			else: session.clear_selection()
 		KEY_ESCAPE:
 			if not canvas.cancel():
-				if _place_points.button_pressed:
+				if _points.is_placing():
 					_choose_tool("point")
 				elif session.selection.has_area():
 					session.selection = Rect2i()

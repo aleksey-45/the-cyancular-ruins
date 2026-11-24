@@ -1,0 +1,149 @@
+class_name MapEditorPoints
+extends VBoxContainer
+
+signal point_selected(id: int)
+signal point_activated(id: int)
+
+const ENEMY_LABELS := {"jump_bird": "跳鸟", "fly_bird": "飞鸟", "black_bird": "乌鸫"}
+
+var session: MapEditSession
+var canvas: MapEditCanvas
+
+var _place: CheckBox
+var _type := OptionButton.new()
+var _list := ItemList.new()
+var _details := HBoxContainer.new()
+
+func setup(p_session: MapEditSession, p_canvas: MapEditCanvas) -> void:
+	session = p_session
+	canvas = p_canvas
+	_build()
+
+func _build() -> void:
+	add_theme_constant_override("separation", 6)
+	_place = CheckBox.new()
+	_place.text = "放置点位（连续）"
+	_place.tooltip_text = "勾选后单击画布放置所选类型；取消勾选可拖动已有点位"
+	_place.toggled.connect(func(_on: bool) -> void:
+		canvas.cancel()
+		sync())
+	add_child(_place)
+
+	var type_label := Label.new()
+	type_label.text = "点位类型"
+	type_label.tooltip_text = "出生点、复活点和敌人出生点都在这里选择"
+	type_label.add_theme_font_size_override("font_size", 20)
+	add_child(type_label)
+
+	_type.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_type.tooltip_text = "选择要放置的出生点或敌人类型"
+	_type.item_selected.connect(_change_type)
+	add_child(_type)
+	_option("单人出生点", {"kind": "player"})
+	_option("第二出生点", {"kind": "player2"})
+	for side in [1, 2]:
+		_option("侧 %d 复活点" % side, {"kind": "respawn", "side": side})
+	for id: String in EnemyType.paths:
+		_option("敌人 · " + str(ENEMY_LABELS.get(id, id)), {"kind": "enemy", "type": id})
+
+	_list.custom_minimum_size.y = 270
+	_list.add_theme_font_size_override("font_size", 20)
+	_list.item_selected.connect(func(index: int) -> void:
+		point_selected.emit(_list.get_item_metadata(index)))
+	_list.item_activated.connect(func(index: int) -> void:
+		point_activated.emit(_list.get_item_metadata(index)))
+	add_child(_list)
+
+	add_child(_details)
+	var move_button := _button("移至…", func() -> void: canvas.pick_point_destination())
+	move_button.tooltip_text = "单击目标子格移动所选点位"
+	_details.add_child(move_button)
+	_details.add_child(_button("删除", func() -> void: session.commit_point(session.selected_point_id, {})))
+
+func sync() -> void:
+	var placing := _place.button_pressed
+	var point := session.selected_point()
+	var kind: String = point.get("kind", "")
+	var editable_type := not placing and kind in ["enemy", "respawn"]
+	_type.visible = true
+	_details.visible = not kind.is_empty() and not placing
+	if editable_type: _type.select(_option_for(point))
+	for i in _type.item_count:
+		_type.set_item_disabled(i, editable_type and _type.get_item_metadata(i).kind != kind)
+
+func refresh(updated_id: int) -> void:
+	var existing := _index(updated_id)
+	if existing >= 0:
+		_list.set_item_text(existing, _point_label(updated_id))
+	else:
+		_list.clear()
+		for id in session.point_ids():
+			var index := _list.add_item(_point_label(id))
+			_list.set_item_metadata(index, id)
+			if id == session.selected_point_id: _list.select(index)
+	sync()
+
+func select(id: int) -> void:
+	_list.deselect_all()
+	var index := _index(id)
+	if index >= 0:
+		_list.select(index)
+		_list.ensure_current_is_visible.call_deferred()
+
+func is_placing() -> bool:
+	return _place.button_pressed
+
+func place_button() -> CheckBox:
+	return _place
+
+func type_option() -> OptionButton:
+	return _type
+
+func list() -> ItemList:
+	return _list
+
+func details() -> HBoxContainer:
+	return _details
+
+func placed_fields() -> Dictionary:
+	return _type.get_selected_metadata()
+
+func reset_placing() -> void:
+	_place.set_pressed_no_signal(false)
+
+func _change_type(index: int) -> void:
+	var choice: Dictionary = _type.get_item_metadata(index)
+	var point := session.selected_point()
+	if not _place.button_pressed and point.get("kind") == choice.kind:
+		session.commit_point(session.selected_point_id, choice.merged({"cell": point.cell}))
+	elif not _place.button_pressed and point.is_empty():
+		_place.set_pressed_no_signal(true)
+		sync()
+
+func _option(label: String, fields: Dictionary) -> void:
+	_type.add_item(label)
+	_type.set_item_metadata(_type.item_count - 1, fields)
+
+func _option_for(point: Dictionary) -> int:
+	var choice := point.duplicate()
+	choice.erase("cell")
+	for i in _type.item_count:
+		if _type.get_item_metadata(i) == choice: return i
+	return -1
+
+func _point_label(id: int) -> String:
+	var point: Dictionary = session.map.points[id]
+	return "%s  %s" % [_type.get_item_text(_option_for(point)), point.cell]
+
+func _index(id: int) -> int:
+	if id < 0: return -1
+	for i in _list.item_count:
+		if _list.get_item_metadata(i) == id: return i
+	return -1
+
+func _button(text: String, action: Callable) -> Button:
+	var button := Button.new()
+	button.text = text
+	button.add_theme_color_override("font_color", Color("#d9e3df"))
+	button.pressed.connect(action)
+	return button
