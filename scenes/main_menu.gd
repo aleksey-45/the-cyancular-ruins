@@ -123,5 +123,11 @@ func _play(path: String, disabled: Array[int]) -> void:
 	Settings.sp_disabled_weapons = disabled
 	Settings.sp_map_path = path
 	Settings.save()
-	var level := SoloLevel.create(map, spawn, enabled)
-	get_tree().change_scene_to_node(level)
+	# P0:单人开局的重量级构建(SoloLevel.create + level_0 的 _ready:地形/敌人/视图)走带载入遮罩的异步入口。
+	# change_with_builder 负责防重入、阶段进度(0/0.15/0.55/0.85/1)、输入拦截与旧场景释放;
+	# 地图/出生点/武器校验仍在本函数同步完成(失败信息照旧走 SpLaunchPanel.show_error)。
+	var document := map
+	var spawn_cell := spawn
+	var weapons := enabled
+	SceneTransition.change_with_builder(get_tree(), func() -> Node:
+		return SoloLevel.create(document, spawn_cell, weapons), "正在进入单人…")

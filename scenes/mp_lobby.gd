@@ -61,7 +61,8 @@ func _name_changed(text: String) -> void:
 
 func _back() -> void:
 	NetSession.close()
-	get_tree().change_scene_to_file("res://scenes/main_menu.tscn")
+	# 回主菜单是轻场景,SceneTransition 会附短遮罩(process_mode=ALWAYS + 输入拦截)。
+	SceneTransition.change(get_tree(), "res://scenes/main_menu.tscn")
 
 func _set_filter(mode: String) -> void:
 	_view.select_filter(mode)
@@ -137,7 +138,11 @@ func _on_net_event(_peer: int, kind: int, data: Variant) -> void:
 				_view.set_status("对局地图无法读取")
 				return
 			PvpSession.begin_match(data, map)
-			SceneTransition.change(get_tree(), "res://scenes/pvp_game.tscn")
+			# P0:baseline 的地图字节已解析完(begin_match 也已完成,后续对局事件由 NetSession 暂存),
+			# 剩下 pvp_game 的场景加载/实例化/挂载是重构建,走 v2 载入界面。
+			SceneTransition.change_with_builder(get_tree(), func() -> Node:
+				var packed := load("res://scenes/pvp_game.tscn") as PackedScene
+				return packed.instantiate() if packed != null else null, "正在进入对局…")
 
 func _start_discovery() -> void:
 	if _discovering:
