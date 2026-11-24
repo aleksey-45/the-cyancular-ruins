@@ -149,7 +149,10 @@ func _build_ui() -> void:
 	for id: String in TOOLS:
 		var key: Key = TOOLS[id].key
 		var button := _button(tools, TOOLS[id].label, _choose_tool.bind(id), tool_group, key)
-		button.tooltip_text = button.text + (" " + OS.get_keycode_string(key) if key != KEY_NONE else "")
+		if id == "point":
+			button.tooltip_text = "点位：右侧选择出生点/敌人类型，勾选放置点位后单击画布"
+		else:
+			button.tooltip_text = button.text + (" " + OS.get_keycode_string(key) if key != KEY_NONE else "")
 		_tools[id] = button
 	_tools[active_tool].button_pressed = true
 	left.add_child(HSeparator.new())
@@ -286,11 +289,14 @@ func _build_inspector(parent: Control, clipboard: Array) -> void:
 			["垂直镜像", session.mirror.bind(false), KEY_V]]:
 		_button(actions, item[0], item[1], null, item[2]).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	parent.add_child(_param_rows.points)
-	_place_points = _check(_param_rows.points, "连续放置点位", func(_on: bool) -> void:
+	_place_points = _check(_param_rows.points, "放置点位（连续）", func(_on: bool) -> void:
 		canvas.cancel()
 		_sync_context())
-	_place_points.tooltip_text = "单击画布放置所选类型，Esc 返回选取"
+	_place_points.tooltip_text = "勾选后单击画布放置所选类型；取消勾选可拖动已有点位"
+	_label(_param_rows.points, "点位类型", 20).tooltip_text = "出生点、复活点和敌人出生点都在这里选择"
 	_param_rows.points.add_child(_point_type)
+	_point_type.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_point_type.tooltip_text = "选择要放置的出生点或敌人类型"
 	_point_option("单人出生点", {"kind": "player"})
 	_point_option("第二出生点", {"kind": "player2"})
 	for side in [1, 2]:
@@ -323,7 +329,7 @@ func _sync_context() -> void:
 	var kind: String = point.get("kind", "")
 	var editable_type := not placing and kind in ["enemy", "respawn"]
 	_point_details.visible = not kind.is_empty() and not placing
-	_point_type.visible = placing or editable_type
+	_point_type.visible = active_tool == "point"
 	if editable_type: _point_type.select(_option_for(point))
 	for i in _point_type.item_count:
 		_point_type.set_item_disabled(i, editable_type and _point_type.get_item_metadata(i).kind != kind)
@@ -641,6 +647,9 @@ func _change_point_type(index: int) -> void:
 	var point := session.selected_point()
 	if not _place_points.button_pressed and point.get("kind") == choice.kind:
 		session.commit_point(session.selected_point_id, choice.merged({"cell": point.cell}))
+	elif not _place_points.button_pressed and point.is_empty():
+		_place_points.set_pressed_no_signal(true)
+		_sync_context()
 
 func _notes_dialog() -> void:
 	var dialog := ConfirmationDialog.new()
