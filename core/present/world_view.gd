@@ -12,7 +12,22 @@ const ENEMY_CLIPS := [&"sleeping", &"fall_asleep", &"wake_up", &"jump", &"dashin
 const PLAYER_GLOW := Color(0.30, 0.62, 1.0)
 const ENEMY_GLOW := Color(1.0, 0.94, 0.86)
 const ELITE_GLOW := Color(2.0, 1.64, 0.12)
-const PULSES := {&"jump": 0.75, &"dash": 0.8, &"take_off": 0.8, &"charge": 0.9, &"hurt": -0.5}
+# 残影规则(挤压参数不在这里:走 SquashTracker + PlayerConfig/EnemyConfig)。
+const DASH_GHOST_INTERVAL := 0.03
+const DASH_GHOST_LIFE := 0.20
+const HASTE_GHOST_INTERVAL := 0.03
+const REWIND_GHOST_INTERVAL := 0.06
+const ENEMY_GHOST_INTERVAL := 0.06
+const ENEMY_GHOST_LIFE := 0.16
+const HURT_GHOST_LIFE := 0.18
+const DEATH_GHOST_LIFE := 0.30
+const TRAIL_LIFE := 0.26
+# 时间加速(单人)沿用旧观感:红/蓝交替、50% 透明度。
+const HASTE_GHOST_WARM := Color(1.0, 0.25, 0.25, 0.55)
+const HASTE_GHOST_COOL := Color(0.3, 0.4, 1.0, 0.55)
+const HURT_GHOST := Color(1.0, 0.4, 0.4, 0.5)
+const DEATH_GHOST := Color(1.0, 1.0, 1.0, 0.5)
+const ENEMY_GHOST := Color(ENEMY_GLOW, 0.18)
 const EXPLOSION_FRAMES := [0.09, 0.18, 0.255, 0.33, 0.39, 0.45, 0.50, 0.55]
 const DEBRIS := {"life": 0.4, "count": 10, "spread": TAU, "speed": Vector2(0, 120),
 		"gravity": 900.0, "size": Vector2(4, 8)}
@@ -28,12 +43,16 @@ enum Effect { BLAST, PARTICLES, NUMBER, GRAIN }
 
 var _canvas: WorldCanvas
 var _size: Vector2
-var _motions := {}
+# 挤压拉伸:每个实体一个 tracker(SquashTracker 从 PlayerConfig/EnemyConfig 取参数)。
+var _squash := {}
+# 通用残影场:旧 _trails/_trail_deadlines 的唯一实现替换。
+var _after := AfterImageField.new()
+var _ghost_after := {}
+var _hit_prev := {}
+var _downed_prev := {}
+var _alternate := false
 var _poses := {}
 var _fire := {}
-var _trails: Array[Array] = []
-var _trail_deadlines := {}
-var _alternate := false
 var _paths := {}
 var _next_paths := {}
 var _effects := [[], [], [], []]
@@ -51,8 +70,13 @@ func bind(canvas: WorldCanvas, size: Vector2) -> void:
 	_size = size
 
 func reset() -> void:
-	for buffer in [_motions, _poses, _fire, _trails, _trail_deadlines, _paths, _next_paths, _hits, _remote_hits] + _effects:
+	for buffer in [_poses, _fire, _paths, _next_paths, _hits, _remote_hits] + _effects:
 		buffer.clear()
+	_squash.clear()
+	_after.clear()
+	_ghost_after.clear()
+	_hit_prev.clear()
+	_downed_prev.clear()
 	_alternate = false
 	# 重开对局/重录时世界内 HUD 组件一并复位,避免上一局的提示、圆环、血条残留一帧以上。
 	for node in _pickup_nodes:
@@ -65,12 +89,21 @@ func reset() -> void:
 			node.hide()
 
 func clear_motion(id: int) -> void:
-	_motions.erase(id)
+	_squash.erase(id)
+	_ghost_after.erase(id)
 
 func motion(id: int, kind: StringName, now: float, speed := 0.0) -> void:
-	var strength := float(PULSES[kind]) if kind != &"land" else -clampf(inverse_lerp(220.0, 900.0, speed), 0.0, 1.0)
-	if strength != 0.0:
-		_motions[id] = Vector2(now, strength)
+	# 强度由 SquashTracker 按实体配置取(玩家 PlayerConfig / 敌人 EnemyConfig),
+	# PULSES 硬编码表已删除;实体侧别由 id(敌人为负)与 kind 推断。
+	_squash_for(id, kind).impulse(kind, now, speed)
+
+func _squash_for(id: int, kind: StringName) -> SquashTracker:
+	var squash: SquashTracker = _squash.get(id)
+	if squash == null:
+		squash = SquashTracker.new()
+		squash.setup(SquashTracker.profile_for(id, kind))
+		_squash[id] = squash
+	return squash
 
 func remote_hurt(role: int, now: float) -> void:
 	motion(role, &"hurt", now)
@@ -106,7 +139,7 @@ func grain(at: Vector2, now: float, flight: float) -> void:
 func present(frame: MatchFrame, grain_target := Vector2.ZERO) -> void:
 	_canvas.set_daylight(frame.day_minute)
 	_canvas.begin()
-	_draw_trails(frame.now, frame.focus)
+	_after.present(frame.now, frame.focus, _canvas, _size)
 	# 换弹圆环先藏起,只有本帧真有本地角色换弹时下面才显示;血条在名字循环里按需显示。
 	if is_instance_valid(_reload_node):
 		_reload_node.hide()
@@ -170,13 +203,16 @@ func _actor(pose: MatchFrame.Pose, frame: MatchFrame) -> void:
 	if not enemy and pose.downed:
 		body *= Transform2D(-PI / 2.0 * pose.facing, Vector2(0, 6.8 - 2.0 * pose.facing))
 	var visual := body
-	if not (pose.downed or (pose.rewind and not pose.elite)):
-		var pulse: Vector2 = _motions.get(pose.id, Vector2.ZERO)
-		var air := minf(absf(pose.air_speed) / 700.0, 1.0) * 0.1
-		var amount := 0.06 * clampf(air + pulse.y * exp(-16.0 * (now - pulse.x)), -1.0, 1.0)
-		visual = visual.scaled_local(Vector2(1.0 - amount, 1.0 + amount))
+	# 挤压只乘 sprite 的局部坐标轴:origin(= pose.anchor)不动,武器/瞄准继续用 body。
+	var squash: SquashTracker = _squash.get(pose.id)
+	if squash == null:
+		squash = SquashTracker.new()
+		squash.setup(SquashTracker.Profile.ENEMY if enemy else SquashTracker.Profile.PLAYER)
+		_squash[pose.id] = squash
+	if pose.downed or (pose.rewind and not pose.elite):
+		squash.reset()
 	else:
-		_motions.erase(pose.id)
+		visual = visual.scaled_local(squash.sample(now, pose.air_speed))
 	var tint := Color.WHITE
 	var color := Color.WHITE
 	var glow := Color.TRANSPARENT
@@ -201,8 +237,7 @@ func _actor(pose: MatchFrame.Pose, frame: MatchFrame) -> void:
 		pass_kind = WorldCanvas.Pass.PLAYER
 		if pose.haste and not pose.rewind:
 			glow = Color((ENEMY_GLOW if pose.remote else PLAYER_GLOW) * tint, alpha)
-		if not pose.downed:
-			_trail(pose, frame, image, visual, tint)
+	_afterimages(pose, frame, image, visual, tint)
 	_texture(image, visual, color, flip, pass_kind)
 	if glow.a > 0.0:
 		_texture(image, visual, glow, flip, WorldCanvas.Pass.GLOW)
@@ -253,39 +288,68 @@ func _enemy_clip(pose: MatchFrame.Pose) -> StringName:
 			return start
 	return ENEMY_CLIPS[pose.state]
 
-func _trail(pose: MatchFrame.Pose, frame: MatchFrame, image: Texture2D, visual: Transform2D, tint: Color) -> void:
-	if frame.now < float(_trail_deadlines.get(pose.id, 0.0)):
+# 残影触发规则(统一走 AfterImageField;旧 _trail/_draw_trails 已删除):
+#   玩家:加速(单人红/蓝交替) > 加速(队伍色) > 远端回溯(前景) > 冲刺(队伍色);
+#         受击/倒地各补一条一次性短残影。
+#   敌人:take_off/charge 期间低强度冷白残影(可选表现,不改变 squash 手感)。
+# 连续残影按 pose.id 记 deadline,避免每帧刷屏;一次性残影按 hit/downed 边沿触发。
+func _afterimages(pose: MatchFrame.Pose, frame: MatchFrame, image: Texture2D,
+		visual: Transform2D, tint: Color) -> void:
+	var now := frame.now
+	var enemy := pose.frames != null
+	var was_downed := bool(_downed_prev.get(pose.id, false))
+	_downed_prev[pose.id] = pose.downed
+	if pose.downed:
+		# 倒地/死亡:白色淡出残影,只在进入倒地的第一帧发一条。
+		if not was_downed:
+			_after.spawn(now, image, visual, DEATH_GHOST, pose.facing < 0,
+					WorldCanvas.Pass.NORMAL, DEATH_GHOST_LIFE)
 		return
-	var foreground := pose.rewind and pose.remote
-	var alternate := pose.haste and frame.mode == MatchFrame.Mode.SOLO
+	if not enemy:
+		var hit_left := float(_remote_hits.get(pose.id, 0.0)) - now if pose.remote else pose.hit_left
+		var was_hit := bool(_hit_prev.get(pose.id, false))
+		_hit_prev[pose.id] = hit_left > 0.0
+		if hit_left > 0.0 and not was_hit:
+			_after.spawn(now, image, visual, HURT_GHOST, pose.facing < 0,
+					WorldCanvas.Pass.NORMAL, HURT_GHOST_LIFE)
 	var color := Color.WHITE
-	if alternate:
-		color = Color(1.0, 0.25, 0.25, 0.55) if _alternate else Color(0.3, 0.4, 1.0, 0.55)
-		_alternate = not _alternate
-	elif pose.haste:
-		color = UiFactory.C_TEAM_B
-	elif foreground:
-		color = UiFactory.C_TEXT_DIM
-	elif pose.state == Player.DASH:
-		color = UiFactory.C_TEAM_A * tint
+	var pass_kind := WorldCanvas.Pass.NORMAL
+	var interval := 0.0
+	var life := TRAIL_LIFE
+	var alternate := false
+	if enemy:
+		if pose.state != Activity.TAKE_OFF and pose.state != Activity.CHARGE:
+			return
+		color = ENEMY_GHOST
+		interval = ENEMY_GHOST_INTERVAL
+		life = ENEMY_GHOST_LIFE
 	else:
-		return
-	_trail_deadlines[pose.id] = frame.now + (0.03 if alternate else 0.06)
-	var pass_kind := WorldCanvas.Pass.FOREGROUND if foreground else WorldCanvas.Pass.NORMAL
-	_trails.append([frame.now, image, visual, color, pose.facing < 0, pass_kind])
-
-func _draw_trails(now: float, anchor: Vector2) -> void:
-	for i in range(_trails.size() - 1, -1, -1):
-		var row := _trails[i]
-		var fade := 1.0 - (now - float(row[0])) / 0.26
-		if fade <= 0.0:
-			_trails.remove_at(i)
+		var foreground := pose.rewind and pose.remote
+		alternate = pose.haste and frame.mode == MatchFrame.Mode.SOLO
+		if alternate:
+			interval = HASTE_GHOST_INTERVAL
+		elif pose.haste:
+			color = UiFactory.C_TEAM_B
+			interval = HASTE_GHOST_INTERVAL
+		elif foreground:
+			color = UiFactory.C_TEXT_DIM
+			pass_kind = WorldCanvas.Pass.FOREGROUND
+			interval = REWIND_GHOST_INTERVAL
+		elif pose.state == Player.DASH:
+			color = UiFactory.C_TEAM_A * tint
+			interval = DASH_GHOST_INTERVAL
+			life = DASH_GHOST_LIFE
 		else:
-			var color: Color = row[3]
-			color.a *= fade
-			var pose: Transform2D = row[2]
-			pose.origin = GridPathfinder.anchor_to_nearest(pose.origin, anchor, _size)
-			_texture(row[1], pose, color, row[4], row[5])
+			return
+	if now < float(_ghost_after.get(pose.id, 0.0)):
+		return
+	# 红/蓝交替只在真正 spawn 的那一帧翻转。旧 _trail 的 deadline 早退在翻色之前,
+	# 若按帧翻转、而 spawn 每两帧一次,就会每次落到同一奇偶 → 拖影只有一种颜色。
+	if alternate:
+		color = HASTE_GHOST_WARM if _alternate else HASTE_GHOST_COOL
+		_alternate = not _alternate
+	_ghost_after[pose.id] = now + interval
+	_after.spawn(now, image, visual, color, pose.facing < 0, pass_kind, life)
 
 func _trajectory(id: int, at: Vector2) -> void:
 	var path: PackedVector2Array = _paths.get(id, PackedVector2Array())

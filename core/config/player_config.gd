@@ -60,3 +60,17 @@ extends Resource
 @export var weapon_fall_gravity: float = 1600.0
 @export var weapon_stop_eps: float = 6.0
 @export var weapon_pickup_self_delay: float = 0.5
+
+# 挤压拉伸(squash & stretch):实现见 core/present/squash_tracker.gd,数值对齐 main 的 PlayerParams。
+# squash_amount 是满冲击时的最大形变比例(0.06 ⇒ 最少 0.94 / 最多 1.06 倍);recover 是指数回正速率。
+@export var squash_amount: float = 0.06
+@export var squash_recover: float = 16.0
+@export var squash_jump: float = 0.75
+# 落地形变按竖直速度插值:低于 min 不形变,高于 ref 取满。
+@export var squash_land_min_vy: float = 220.0
+@export var squash_land_ref_vy: float = 900.0
+@export var squash_land: float = 1.0
+@export var squash_hurt: float = 0.5
+@export var squash_dash: float = 0.8
+@export var squash_air: float = 0.1
+@export var squash_air_ref_vy: float = 700.0

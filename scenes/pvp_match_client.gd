@@ -338,7 +338,8 @@ func _present_remote_motion(role: int, sample: Array, previous: Array) -> void:
 		if velocity.y < 0.0 and state[PlayerStateSchema.COYOTE_TIMER] == 0.0:
 			_world.motion(role, &"jump", _frame.now)
 	if state[PlayerStateSchema.CHARGE] and not before[PlayerStateSchema.CHARGE]:
-		_world.motion(role, &"dash", _frame.now)
+		# 远端玩家蓄力冲刺起手:与本地玩家同一事件语义(&"charge" → squash_dash)。
+		_world.motion(role, &"charge", _frame.now)
 
 func _on_round_state(data: Dictionary) -> void:
 	_round_state = data["state"]

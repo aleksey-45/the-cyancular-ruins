@@ -87,7 +87,10 @@ func _live_step(from: Vector2, actions: Array) -> void:
 				if not player.in_water and not player.climb_latched:
 					_world.motion(id, &"land", _frame.now, action["speed"])
 			"jump", "dash":
-				_world.motion(id, StringName(action["kind"]), _frame.now)
+				# 玩家的 "dash" = 蓄力冲刺起手(Player.DASH 状态,动画 clip 名就是 charge)。
+				# main 里这也是同一个 SquashStretch.Impulse.DASH;表现层按 &"charge" 记录,
+				# 强度取 PlayerConfig.squash_dash(SquashTracker 对玩家 charge/dash 同值)。
+				_world.motion(id, &"charge" if action["kind"] == "dash" else &"jump", _frame.now)
 			_:
 				if Sfx.ACTION_SOUNDS.has(action["kind"]):
 					Sfx.play(Sfx.ACTION_SOUNDS[action["kind"]])
