@@ -32,6 +32,14 @@ func _ready() -> void:
 	_start_single()
 
 func _input(event: InputEvent) -> void:
+	# 死亡倒带优先于旧的模拟回溯：Recorder 负责画面回放，回放完自己 restart_single。
+	var recorder: Node = get_node_or_null("View/Recorder")
+	if recorder != null:
+		if recorder.is_replaying():
+			return
+		if event.is_action_pressed(&"R") and event.is_pressed() and recorder.start_rewind():
+			get_viewport().set_input_as_handled()
+			return
 	var replaying := _death_rewind_end >= 0.0
 	if not replaying and (not player.sim_downed or not event.is_action_pressed(&"R")):
 		return
