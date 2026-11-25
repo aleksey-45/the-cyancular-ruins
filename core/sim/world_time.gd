@@ -64,7 +64,7 @@ func rewind(combat: CombatSimulator, player: Player, delta := ActorStep.DT) -> v
 	var environment: Dictionary = sample[TimeHistory.Sample.ENVIRONMENT]
 	combat.tick = environment["tick"]
 	elapsed = environment["elapsed"]
-	combat.terrain.undo_to(environment["terrain"])
+	combat.terrain.apply_at(environment["terrain"], {})
 	player.rewind_state(sample[TimeHistory.Sample.ACTOR], true)
 	combat.restore_projectiles(sample[TimeHistory.Sample.PROJECTILES])
 	combat.beams.assign(environment["beams"])

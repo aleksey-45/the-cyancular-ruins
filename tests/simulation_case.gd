@@ -645,7 +645,7 @@ func _beam(tree: SceneTree) -> void:
 	var shots := ActorStep.step(shooter, _attack(attack, attack))
 	var before := near.sim_hp
 	var cell := Vector2i(14, 8)
-	_terrain.damage_beam(cell * 4, _terrain.get_hp(cell * 4) - 1, 0)
+	_terrain.damage_beam(cell * 4, _terrain.get_hp(cell * 4) - 1)
 	var sim := parent.combat
 	sim.time_field = WorldTime.new(GrainAccount.new())
 	_terrain.commit()
@@ -667,7 +667,7 @@ func _beam(tree: SceneTree) -> void:
 	beams.append(sim.fire(shooter, next)["vectors"])
 	expect(beams.size() == 2 and beams[0].size() >= 3 and beams[0] == beams[1],
 			"actor and projectile steps do not rebuild terrain collision between beams")
-	_terrain.flush_collisions()
+	_terrain.commit()
 	next["serial"] += 1
 	beams.append(sim.fire(shooter, next)["vectors"])
 	expect(beams.back().size() == 2, "the tick-end collision refresh removes the wall for the following beam")
@@ -832,11 +832,11 @@ func _damage_numbers(tree: SceneTree) -> void:
 	var presenter := MatchPresenter.new(spec, _terrain, shooter.role, null)
 	var frame := presenter.frame
 	frame.begin(0.0, shooter.position)
-	presenter._sample_enemies(props._sample(0)["enemies"], false, false)
+	presenter._sample_enemies(props.sample()["enemies"], false, false)
 	var lethal_damage := bird.hp
 	sim.resolve_hit(shooter, bird, CombatProfiles.DIRECT, bird.position, lethal_damage, 0.0)
 	frame.begin(0.0, shooter.position)
-	presenter._sample_enemies(props._sample(0)["enemies"], false, false)
+	presenter._sample_enemies(props.sample()["enemies"], false, false)
 	for cue: Array in frame.cues:
 		if cue[0] == "number":
 			view.hit(cue[1], cue[2], cue[3], cue[4])
@@ -881,9 +881,8 @@ func _world_rewind(tree: SceneTree) -> void:
 	_record_time(sim, actor, dt)
 	var sub := Vector2i(8, 12)
 	var wall_hp := _terrain.get_hp(sub)
-	_terrain.apply_hp(sub, 0, 1)
+	_terrain.apply_at(_terrain.version, {sub: 0})
 	sim.tick += 1
-	_terrain.commit()
 	var elite := sim.add_enemy("black_bird", actor, Vector2(100, 128)) as EnemyBlackBird
 	var elite_hp := elite.hp
 	rewind.rewind(sim, actor, 1.0)
@@ -1306,8 +1305,7 @@ func _shared_rewind_history(tree: SceneTree) -> void:
 	sim.submit_blast(ShotRules.shot_id(1, 3), shell.position, WeaponRegistry.Type.GRENADE)
 	var pending := sim.pending_blasts.duplicate(true)
 	var sub := Vector2i(8, 12)
-	sim.terrain.apply_hp(sub, 0, 1)
-	sim.terrain.commit()
+	sim.terrain.apply_at(sim.terrain.version, {sub: 0})
 	ActorStep.step(first, _attack(0, ActorInput.BIT_DROP))
 	first.shot_serial = 8
 	first.waterproof = 1

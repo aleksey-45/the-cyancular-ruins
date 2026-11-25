@@ -36,7 +36,7 @@ func _mount_session() -> void:
 
 func _reset_sampler() -> void:
 	_sampler = MatchSampler.new(terrain.map_size, session.role)
-	var update := session.initial_view()
+	var update := session.view()
 	if session.remote:
 		update["authority"] = session.latest_authority
 	_sampler.accept(update)
@@ -44,11 +44,10 @@ func _reset_sampler() -> void:
 	_world.reset()
 
 func _physics_process(delta: float) -> void:
-	var record := controls.complete(player, controls.sample(), delta, _aim_direction())
-	var updated := session.fixed_step({session.role: record}, NetBus.ping_ms if session.remote else 0)
-	if session.remote:
-		NetBus.send_input(session.outgoing_input)
-	_sampler.accept(updated)
+	_sampler.accept(session.fixed_step({session.role: _sample_input(delta)}))
+
+func _sample_input(delta: float) -> Array:
+	return controls.sample(player, delta, _aim_direction())
 
 func _process(delta: float) -> void:
 	var started := PerformanceStats.begin()
@@ -70,7 +69,7 @@ func _aim_direction() -> Vector2:
 			_camera.base_position, CFG.cam_zoom, offset)
 
 func _unhandled_input(event: InputEvent) -> void:
-	controls.handle_event(player, event)
+	controls.handle_event(event)
 
 func _set_pause(open: bool) -> void:
 	_pause_open = open

@@ -38,6 +38,16 @@ func restore_authority(new_epoch: int, confirmed_action: int, record: Array) -> 
 	action_ack = confirmed_action
 	_last = record
 
+## 在当前预测位置接收确认。已经预测消费的输入进度继续有效。
+func acknowledge(confirmed_action: int, record: Array) -> void:
+	if record[SEQ] >= consumed_seq:
+		_last = record
+	if confirmed_action > action_ack:
+		action_ack = confirmed_action
+		for seq: int in actions.keys():
+			if seq <= action_ack:
+				actions.erase(seq)
+
 static func _expired(record: Array, tick: int) -> bool:
 	return tick - record[TARGET_TICK] > HOLD_TICKS
 

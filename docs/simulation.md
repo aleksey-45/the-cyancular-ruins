@@ -8,14 +8,17 @@
 
 | 接口 | 行为 |
 |---|---|
-| `MatchWorld.create(spec)` | 创建并返回对局实例，可通过 `world.frame` 读取初始帧。 |
-| `world.advance(inputs, commands)` | 按固定步长推进一次，返回本帧的状态视图。`commands` 用于开局、离场、重开和死亡倒带。 |
+| `MatchWorld.create(spec)` | 创建并返回对局实例。 |
+| `world.advance(inputs, commands)` | 按固定步长推进一次。`commands` 用于开局、离场、重开和死亡倒带。 |
+| `world.sample(role)` | 采集当前帧所需的表现数据。省略角色或传入 0 时采集整个世界。 |
 | `world.capture()` | 按需保存完整的动态状态和地形版本。 |
-| `world.restore(checkpoint)` | 将地形恢复到记录中的版本，恢复帧末状态和计时任务，返回该帧的状态视图。联机会话在调用前应用服务器的地形补丁。 |
+| `world.restore(checkpoint)` | 将地形恢复到检查点记录的本地版本，并恢复帧末状态和计时任务。 |
 | `MatchSession.open_local()` / `open_remote()` | 分别创建本地会话或连接已有对局的联机会话。 |
-| `session.fixed_step(seat_intents, ping_ms)` | 在一次固定步回调中处理输入并推进模拟。有观察角色时返回供表现层采样的前后两帧。 |
+| `session.fixed_step(seat_intents)` | 推进单人或服务端模拟。有观察角色时返回供表现层采样的前后两帧。 |
+| `session.reconcile(ping_ms)` | 联机客户端采用可用快照并重放旧输入，返回权威与校正数据。 |
+| `session.predict(input)` | 提交本步新输入，推进预测并返回表现所需的前后两帧。 |
 
-状态视图反映对局实例当前的状态。调用下一次 `advance()` 或 `restore()` 前，可用 `sample()` 保存表现层所需的字段。网络传输和预测校正使用完整检查点。 [世界接口](../core/sim/match_world.gd) · [会话接口](../core/net/match_session.gd)
+会话决定何时采样。联机重放只为最终显示保留前后两帧的表现数据。传输和恢复使用检查点。 [世界接口](../core/sim/match_world.gd) · [会话接口](../core/net/match_session.gd)
 
 ## 每帧更新
 

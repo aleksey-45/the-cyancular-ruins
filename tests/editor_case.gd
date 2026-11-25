@@ -727,7 +727,8 @@ func _workflow(tree: SceneTree) -> void:
 		expect(travel.is_equal_approx(lap * MatchView.BACKGROUND_SCROLL[i])
 				and (travel / sprite.scale).is_equal_approx(Vector2(s.map.size)), "one camera lap scrolls each depth by one texture period")
 	expect(editor.trial.terrain.sub_texture(step.position) == 7, "trial collision terrain includes unsaved step")
-	editor.trial.terrain.apply_hp(step.position, 0, 1)
+	var terrain := editor.trial.terrain
+	terrain.apply_at(terrain.version, {step.position: 0})
 	expect(CyrmMap.read_region(s.map, 1, step) == pixels, "trial destruction cannot modify authored cells")
 	editor.finish_trial()
 	_click_button(lighting)

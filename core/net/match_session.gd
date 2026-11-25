@@ -3,6 +3,7 @@ extends RefCounted
 
 const KEEP := 64
 const MAX_REPLAY := InputBuffer.FUTURE_TICKS
+const POSITION_TOLERANCE_PX := 0.1
 const REMOTE_MOVEMENT := ActorInput.BIT_UP | ActorInput.BIT_DOWN
 const Actor := preload("res://core/sim/player_state_schema.gd")
 
@@ -18,7 +19,10 @@ var _buffers: Dictionary[int, InputBuffer] = {}
 var _schedulers: Dictionary[int, InputScheduler] = {}
 var _commands: Array = []
 var _pending: Dictionary[int, Dictionary] = {}
+var _terrain_patches: Dictionary[int, Dictionary] = {}
+var _confirmed_terrain := 0
 var _prediction := InputBuffer.new()
+var _predicted_player: Dictionary[int, Array] = {}
 var _clock := InputClock.new()
 var _seq := 0
 var _history: Array = []
@@ -35,7 +39,7 @@ static func open_local(spec: WorldSpec, observing_role := 0) -> MatchSession:
 		for id: int in spec.roles:
 			session._buffers[id] = InputBuffer.new()
 		if observing_role != 0:
-			session._current = session.world.frame.sample()
+			session._current = session.world.sample()
 			session._previous = session._current
 	return session
 
@@ -52,7 +56,10 @@ static func open_remote(baseline: Dictionary, ping_ms: int) -> MatchSession:
 func install(baseline: Dictionary, ping_ms: int) -> void:
 	var frame: Dictionary = baseline["frame"]
 	_pending.clear()
-	world.terrain.install_baseline(frame["checkpoint"]["terrain"], baseline["sub_hp"])
+	_terrain_patches.clear()
+	var terrain := world.terrain
+	terrain.reset()
+	_confirmed_terrain = terrain.apply_at(terrain.version, baseline["sub_hp"])
 	_adopt(frame, ping_ms, true)
 
 func enqueue(command: int, seat := 0) -> void:
@@ -66,7 +73,7 @@ func receive_state(frame: Dictionary) -> void:
 		_pending[version] = frame
 
 func receive_terrain(patch: Dictionary) -> void:
-	world.terrain.queue_patch(patch["version"], patch["cells"])
+	_terrain_patches[patch["version"]] = patch["cells"]
 
 func accept_input(seat: int, packet: Array, received_us: int) -> void:
 	if world.rules.phase == MatchRules.Phase.MATCH_OVER:
@@ -91,16 +98,14 @@ func packet(grace: Dictionary) -> Dictionary:
 func feedback(seat: int) -> PackedByteArray:
 	return _schedulers[seat].feedback if _schedulers.has(seat) else PackedByteArray()
 
-func fixed_step(seat_intents: Dictionary = {}, ping_ms := 0) -> Dictionary:
-	if remote:
-		return _fixed_remote(seat_intents[role], ping_ms)
+func fixed_step(seat_intents: Dictionary = {}) -> Dictionary:
 	var inputs := {}
 	var before := {}
 	for id: int in world.players:
 		var actor := world.players[id]
 		before[id] = [actor.life, actor.rewinding]
 		inputs[id] = seat_intents[id] if seat_intents.has(id) else _buffers[id].take(world.tick + 1)
-	var view := world.advance(inputs, _commands)
+	world.advance(inputs, _commands)
 	_commands.clear()
 	for id: int in before:
 		if not world.players.has(id):
@@ -113,60 +118,62 @@ func fixed_step(seat_intents: Dictionary = {}, ping_ms := 0) -> Dictionary:
 	if role == 0:
 		return {}
 	_previous = _current
-	_current = view.sample()
-	return {"previous": _previous, "current": _current}
+	_current = world.sample()
+	return view()
 
-func initial_view() -> Dictionary:
+func view() -> Dictionary:
 	return {"previous": _previous, "current": _current}
 
 func close() -> void:
 	world.close()
 
-func _fixed_remote(record: Array, ping_ms: int) -> Dictionary:
+func predict(record: Array) -> Dictionary:
+	_record_input(record)
+	outgoing_input = [_history.slice(-InputBuffer.REDUNDANCY), _actions]
+	var limit: int = latest_authority["checkpoint"]["tick"] + MAX_REPLAY
+	_advance_prediction(_clock.advance(ActorStep.DT, world.tick, limit))
+	return view()
+
+## 采用可用快照并重放旧输入，再由调用者绑定本步的新输入。
+func reconcile(ping_ms: int) -> Dictionary:
+	replay_ticks = 0
 	var anchor := _take_anchor()
-	var update := {}
-	if not anchor.is_empty():
-		var started := PerformanceStats.begin()
-		var old_end := world.tick
-		var old_previous_tick: int = _previous["tick"]
-		var old_prev: Array = _previous["players"][role]
-		var old_local: Array = _current["players"][role]
-		var old_life: int = latest_authority["checkpoint"]["players"][role][Actor.LIFE]
-		_adopt(anchor, ping_ms)
-		var auth: Array = anchor["checkpoint"]["players"][role]
-		var life_changed: bool = old_life != auth[Actor.LIFE]
+	if anchor.is_empty():
+		return {}
+	var started := PerformanceStats.begin()
+	var update := {"authority": anchor}
+	var old_end := world.tick
+	var old_prev: Array = _previous["players"][role]
+	var old_local: Array = _current["players"][role]
+	var auth: Array = anchor["checkpoint"]["players"][role]
+	var life_changed: bool = auth[Actor.LIFE] != latest_authority["checkpoint"]["players"][role][Actor.LIFE]
+	if _adopt(anchor, ping_ms):
 		var start := world.tick
 		if not life_changed:
-			_advance_prediction(mini(old_end, start + MAX_REPLAY))
+			_advance_prediction(old_end)
 		replay_ticks = world.tick - start
 		PerformanceStats.replayed(replay_ticks)
 		PerformanceStats.end(PerformanceStats.REPLAY, started)
 		var new_local: Array = _current["players"][role]
 		var new_prev: Array = _previous["players"][role]
-		var distance := GridPathfinder.toroidal_delta_px(old_local[Actor.POS], new_local[Actor.POS], world.terrain.map_size).length()
-		var previous_changed: bool = old_previous_tick == _previous["tick"] and old_prev[Actor.POS] != new_prev[Actor.POS]
-		if life_changed or distance > 0.1 or previous_changed:
+		var current_changed: bool = old_local[Actor.POS] != new_local[Actor.POS]
+		if life_changed or current_changed or old_prev[Actor.POS] != new_prev[Actor.POS]:
 			update["replacement"] = [old_prev[Actor.POS], old_local[Actor.POS], new_prev[Actor.POS], new_local[Actor.POS], life_changed]
-		if distance > 0.1 and PerformanceStats.is_enabled():
+		if current_changed and old_end == world.tick and PerformanceStats.is_enabled():
+			var distance := GridPathfinder.toroidal_delta_px(old_local[Actor.POS], new_local[Actor.POS], world.terrain.map_size).length()
 			var reason := "respawn" if life_changed else ("rewind" if auth[Actor.REWIND] or old_local[Actor.REWIND] else "state")
 			PerformanceStats.record_correction(role, start, world.tick, reason, distance)
-		update["authority"] = anchor
-		PerformanceStats.end(PerformanceStats.CLIENT_AUTHORITY, started)
-	_record_input(record)
-	outgoing_input = [_history.slice(-InputBuffer.REDUNDANCY), _actions]
-	var limit: int = latest_authority["checkpoint"]["tick"] + MAX_REPLAY
-	_advance_prediction(_clock.advance(ActorStep.DT, world.tick, limit))
-	update["previous"] = _previous
-	update["current"] = _current
+	PerformanceStats.end(PerformanceStats.CLIENT_AUTHORITY, started)
 	return update
 
 func _take_anchor() -> Dictionary:
 	var adopted: int = latest_authority["checkpoint"]["tick"]
+	var confirmed_version: int = latest_authority["checkpoint"]["terrain"]
 	var chosen := {}
 	var newest := adopted
 	for version: int in _pending:
 		var frame := _pending[version]
-		if world.terrain.has_authority(version) and frame["checkpoint"]["tick"] > newest:
+		if (version == confirmed_version or _terrain_patches.has(version)) and frame["checkpoint"]["tick"] > newest:
 			newest = frame["checkpoint"]["tick"]
 			chosen = frame
 	for version: int in _pending.keys():
@@ -174,7 +181,8 @@ func _take_anchor() -> Dictionary:
 			_pending.erase(version)
 	return chosen
 
-func _adopt(anchor: Dictionary, ping_ms: int, initial := false) -> void:
+## 返回是否恢复了模拟。本地玩家相符时，可继续当前预测。
+func _adopt(anchor: Dictionary, ping_ms: int, initial := false) -> bool:
 	var state: Dictionary = anchor["checkpoint"]
 	var meta: Array = anchor["inputs"][role]
 	var epoch: int = meta[0]
@@ -182,7 +190,8 @@ func _adopt(anchor: Dictionary, ping_ms: int, initial := false) -> void:
 	var held := meta.slice(2)
 	var seq: int = held[InputBuffer.SEQ]
 	var at: int = state["tick"]
-	if initial or epoch != _prediction.epoch or seq > _seq or seq < _discarded:
+	var reset := initial or epoch != _prediction.epoch or seq > _seq or seq < _discarded
+	if reset:
 		_seq = maxi(seq, action_ack) if initial or epoch != _prediction.epoch else maxi(_seq, maxi(seq, action_ack))
 		_history.clear()
 		_actions.clear()
@@ -193,11 +202,48 @@ func _adopt(anchor: Dictionary, ping_ms: int, initial := false) -> void:
 		_history = _history.filter(func(row: Array) -> bool: return row[InputBuffer.SEQ] > seq)
 		_actions = _actions.filter(func(row: Array) -> bool:
 			return row[InputBuffer.SEQ] > action_ack and at - row[InputBuffer.TARGET_TICK] < InputBuffer.ACTION_TICKS)
+	var cells := {}
+	for version: int in _terrain_patches.keys():
+		if version > state["terrain"]:
+			break
+		cells.merge(_terrain_patches[version], true)
+		_terrain_patches.erase(version)
+	var rules: Array = state["rules"]
+	var keep: bool = not reset and cells.is_empty() and world.terrain.version == _confirmed_terrain \
+			and rules[MatchRules.State.PHASE] == world.rules.phase \
+			and rules[MatchRules.State.NUMBER] == world.rules.round_number \
+			and state["players"].size() == world.players.size() \
+			and _player_matches(at, state["players"][role])
 	latest_authority = anchor
+	if keep:
+		_prediction.acknowledge(action_ack, held)
+		for tick: int in _predicted_player.keys():
+			if tick <= at:
+				_predicted_player.erase(tick)
+		return false
+	_predicted_player.clear()
 	_prediction.restore_authority(epoch, action_ack, held)
-	world.terrain.apply_patches(state["terrain"])
-	_current = world.restore(state).sample(role)
+	var terrain := world.terrain
+	_confirmed_terrain = terrain.apply_at(_confirmed_terrain, cells)
+	terrain.forget_before(_confirmed_terrain)
+	var local_state := state.duplicate()
+	local_state["terrain"] = _confirmed_terrain
+	world.restore(local_state)
+	_current = world.sample(role)
 	_previous = _current
+	return true
+
+func _player_matches(at: int, actual: Array) -> bool:
+	var predicted: Array = _predicted_player.get(at, [])
+	if predicted.is_empty():
+		return false
+	var offset := GridPathfinder.toroidal_delta_px(predicted[Actor.POS], actual[Actor.POS], world.terrain.map_size)
+	if offset.length_squared() > POSITION_TOLERANCE_PX * POSITION_TOLERANCE_PX:
+		return false
+	for field in range(Actor.POS + 1, Actor.SIZE):
+		if predicted[field] != actual[field]:
+			return false
+	return true
 
 func _record_input(record: Array) -> void:
 	_seq += 1
@@ -236,6 +282,9 @@ func _advance_prediction(end: int) -> void:
 				int(meta[2 + InputBuffer.FRAME_HELD]) & REMOTE_MOVEMENT if moving else 0,
 				0, 0, 0, meta[2 + InputBuffer.FRAME_AIM]]
 		if next == end:
-			_previous = world.frame.sample(role)
+			_previous = _current if _current["tick"] == world.tick else world.sample(role)
 		world.advance(inputs)
-	_current = world.frame.sample(role)
+		if next < end:
+			_predicted_player[next] = world.players[role].capture_state()
+	_current = world.sample(role)
+	_predicted_player[world.tick] = _current["players"][role]

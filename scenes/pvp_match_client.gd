@@ -66,8 +66,11 @@ func _physics_process(delta: float) -> void:
 	_inbox.clear()
 	if phase == Phase.ONLINE:
 		var started := PerformanceStats.begin()
-		super(delta)
+		var update := session.reconcile(NetBus.ping_ms)
 		_refresh_input_lock()
+		update.merge(session.predict(_sample_input(delta)))
+		NetBus.send_input(session.outgoing_input)
+		_sampler.accept(update)
 		PerformanceStats.end(PerformanceStats.CLIENT_TICK, started)
 
 func _process(delta: float) -> void:

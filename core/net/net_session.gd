@@ -121,6 +121,7 @@ func _on_event(_peer: int, kind: int, data: Variant) -> void:
 		NetEvent.Kind.ROOM: PvpSession.room = data
 		NetEvent.Kind.REJOIN_DENIED: PvpSession.room.erase("token")
 		NetEvent.Kind.ROOM_CLOSED: PvpSession.room = {}
+		NetEvent.Kind.BASELINE: match_inbox.clear()
 		NetEvent.Kind.TERRAIN:
 			if not PvpSession.baseline.is_empty():
 				match_inbox.append([kind, data])

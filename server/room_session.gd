@@ -13,6 +13,7 @@ var session: MatchSession
 var world: MatchWorld:
 	get: return session.world if session != null else null
 var _map_bytes: PackedByteArray
+var _published_terrain := 0
 var _returned: Dictionary = {}
 var _beacon: LanBeaconScript
 
@@ -38,18 +39,23 @@ func _physics_process(_delta: float) -> void:
 		return
 	var started := PerformanceStats.begin()
 	var previous := world.rules.phase
+	if previous == MatchRules.Phase.WAITING and seats.values().all(func(seat: Dictionary) -> bool: return seat["ready"]):
+		session.enqueue(MatchWorld.Command.START)
 	var sim_started := PerformanceStats.begin()
 	session.fixed_step()
 	PerformanceStats.end(PerformanceStats.SERVER_SIMULATION, sim_started)
-	var patch := world.terrain.take_patch()
 	var phase := world.rules.phase
-	if phase == MatchRules.Phase.WAITING and phase != previous:
+	var new_round := phase == MatchRules.Phase.WAITING and phase != previous
+	var terrain := world.terrain
+	if terrain.version != _published_terrain:
+		if not new_round:
+			_broadcast(NetEvent.Kind.TERRAIN, {"version": terrain.version, "cells": terrain.changes_since(_published_terrain)})
+		_published_terrain = terrain.version
+		terrain.forget_before(_published_terrain)
+	if new_round:
 		send_baselines()
-	else:
-		if not patch.is_empty():
-			_broadcast(NetEvent.Kind.TERRAIN, patch)
-		if world.tick % 2 == 0 or not world.combat.hits.is_empty() or phase != previous:
-			_send_state(phase == MatchRules.Phase.MATCH_OVER)
+	elif world.tick % 2 == 0 or not world.combat.hits.is_empty() or phase != previous:
+		_send_state(phase == MatchRules.Phase.MATCH_OVER)
 	PerformanceStats.end(PerformanceStats.SERVER_TICK, started)
 
 func _on_event(peer: int, kind: int, data: Variant) -> void:
@@ -104,13 +110,8 @@ func _on_event(peer: int, kind: int, data: Variant) -> void:
 			rejoin(peer, data["code"], data["token"])
 		NetEvent.Kind.READY:
 			var role := role_of(peer)
-			if world == null or role == 0:
-				return
-			if int(data) != world.rules.round_number or world.rules.phase == MatchRules.Phase.MATCH_OVER:
-				return
-			seats[role]["ready"] = true
-			if seats.values().all(func(seat: Dictionary) -> bool: return seat["ready"]):
-				session.enqueue(MatchWorld.Command.START)
+			if world != null and role != 0 and int(data) == world.rules.round_number:
+				seats[role]["ready"] = true
 		NetEvent.Kind.SUICIDE:
 			var role := role_of(peer)
 			if world != null and role != 0:
@@ -274,7 +275,8 @@ func start_match() -> void:
 		var candidate := MatchSession.open_local(spec)
 		if candidate.world.problem.is_empty():
 			session = candidate
-			send_baselines(true)
+			_published_terrain = world.terrain.version
+			send_baselines()
 			return
 		problem = "地图 %s：%s" % [path, candidate.world.problem]
 	message(int(seats[host_role]["peer"]), problem)
@@ -285,7 +287,7 @@ func _send_state(final: bool) -> void:
 	var final_peers := PackedInt32Array()
 	for role: int in world.players:
 		var seat: Dictionary = seats[role]
-		if seat["peer"] != 0 and seat["ready"]:
+		if seat["peer"] != 0 and (final or seat["ready"]):
 			var prepare := PerformanceStats.begin()
 			if batch == null:
 				batch = NetCodec.StateBatch.new(session.packet(_grace()))
@@ -306,14 +308,14 @@ func _broadcast(kind: int, data: Variant, except_role := 0) -> void:
 			peers.append(seats[role]["peer"])
 	NetBus.broadcast_event(kind, data, peers)
 
-func send_baselines(include_map := false, only_role := 0) -> void:
+func send_baselines(only_role := 0) -> void:
 	var names := {}
 	var hues := {}
 	for r in seats:
 		names[r] = seats[r]["name"]
 		hues[r] = seats[r]["hue"]
 	var common := {"code": code, "mode": mode, "options": options, "names": names, "hues": hues,
-		"teams": world.spec.teams, "map": _map_bytes if include_map else PackedByteArray(),
+		"teams": world.spec.teams, "map": _map_bytes,
 		"roles": world.spec.roles, "seed": world.spec.seed, "sub_hp": world.terrain.get_modified()}
 	var frame := session.packet(_grace())
 	var targets := seats.keys() if only_role == 0 else [only_role]
@@ -353,7 +355,7 @@ func rejoin(peer: int, target_code: String, token: String) -> void:
 			seats[role]["deadline"] = 0.0
 			if world != null:
 				session.reset_input(role, true)
-				send_baselines(true, role)
+				send_baselines(role)
 			else:
 				broadcast_room()
 			return

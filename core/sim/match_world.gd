@@ -11,21 +11,8 @@ const ATTRIB_WINDOW_TICKS := 180
 const DEATH_REWIND_SECONDS := 4.0
 const MIN_DEATH_REWIND_SECONDS := 0.5
 
-class FrameView:
-	var _world: WeakRef
-	var tick: int:
-		get: return _world.get_ref().tick
-
-	func _init(world: MatchWorld) -> void:
-		_world = weakref(world)
-
-	## 复制表现层所需的状态字段。回滚后重新模拟时，只需为最终显示保留采样结果。
-	func sample(only_role := 0) -> Dictionary:
-		return _world.get_ref()._sample(only_role)
-
 var spec: WorldSpec
 var problem: String
-var frame: FrameView
 var combat: CombatSimulator
 var terrain: Terrain
 var players: Dictionary[int, Player]:
@@ -41,7 +28,6 @@ var _floors: Array[Vector2i]
 static func create(config: WorldSpec) -> MatchWorld:
 	var world := MatchWorld.new()
 	world.spec = config
-	world.frame = FrameView.new(world)
 	world.problem = world._build()
 	return world
 
@@ -78,17 +64,17 @@ func _build() -> String:
 	return ""
 
 ## 模拟帧号持续递增。单人世界回溯只调整战斗时间和历史读取位置。
-func advance(inputs: Dictionary, commands: Array = []) -> FrameView:
+func advance(inputs: Dictionary, commands: Array = []) -> void:
 	if rules != null and rules.phase == Phase.MATCH_OVER:
-		return frame
+		return
 	tick += 1
 	if world_time != null:
 		if _step_solo_time(inputs, commands):
-			return frame
+			return
 	else:
 		_commit_commands(inputs, commands)
 		if rules.phase == Phase.MATCH_OVER:
-			return frame
+			return
 		var playing := rules.phase == Phase.PLAYING
 		for player: Player in players.values():
 			player._controls_locked = not playing
@@ -98,17 +84,15 @@ func advance(inputs: Dictionary, commands: Array = []) -> FrameView:
 			PerformanceStats.end(PerformanceStats.HISTORY_SAVE, started)
 	combat.hits.clear()
 	combat.step(inputs)
-	var blocks := terrain.take_rewards()
 	if rules != null:
 		for hit: Array in combat.hits:
 			_credit_hit(hit[0], players[hit[1]], hit[2])
 		if personal_time != null:
-			for role: int in blocks:
-				personal_time.award_blocks(role, blocks[role])
+			for role: int in combat.destroyed_subcells:
+				personal_time.award_blocks(role, combat.destroyed_subcells[role])
 		if rules.phase == Phase.PLAYING:
 			_settle_downs_and_respawns()
 		_advance_round()
-	return frame
 
 func capture() -> Dictionary:
 	var started := PerformanceStats.begin()
@@ -126,8 +110,8 @@ func capture() -> Dictionary:
 	PerformanceStats.end(PerformanceStats.WORLD_CAPTURE, started)
 	return state
 
-func restore(state: Dictionary) -> FrameView:
-	terrain.undo_to(state["terrain"])
+func restore(state: Dictionary) -> void:
+	terrain.apply_at(state["terrain"], {})
 	tick = state["tick"]
 	combat.tick = state["combat_tick"]
 	death_rewind_end = state["death_end"]
@@ -160,8 +144,8 @@ func restore(state: Dictionary) -> FrameView:
 	combat._next_enemy_projectile = state["enemy_next"]
 	combat.enemy_kills = state["kills"]
 	combat.hits.clear()
+	combat.destroyed_subcells.clear()
 	combat.rng.state = state["rng"]
-	return frame
 
 func close() -> void:
 	combat.close()
@@ -172,7 +156,8 @@ func _add_player(role: int) -> Player:
 	player.sim_max_hp = TeamRules.max_hp(player.team, combat.team_counts)
 	return player
 
-func _sample(only_role: int) -> Dictionary:
+## 采集当前帧的表现数据。角色为 0 时采集整个世界。
+func sample(only_role := 0) -> Dictionary:
 	var actors := combat.capture_players() if only_role == 0 else {only_role: players[only_role].capture_state()}
 	var enemies := []
 	for enemy: EnemyBase in combat.enemies:

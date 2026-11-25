@@ -2,12 +2,17 @@ extends "res://tests/case.gd"
 
 class LobbySession extends RoomSession:
 	var messages: Array[String] = []
+	var terrain_patches := 0
 
 	# 房间规则用例直接传入事件，物理帧仍由场景树驱动。
 	func _ready() -> void:
 		pass
 
 	func message(_peer: int, value: String) -> void: messages.append(value)
+
+	func _broadcast(kind: int, data: Variant, except_role := 0) -> void:
+		terrain_patches += int(kind == NetEvent.Kind.TERRAIN)
+		super(kind, data, except_role)
 
 func run(tree: SceneTree) -> void:
 	_input()
@@ -45,6 +50,16 @@ func _input() -> void:
 	expect(restored[ActorInput.HELD] == 0 and buffer._last[InputBuffer.SEQ] == 1,
 			"expired authority input keeps its sequence")
 	expect(record[InputBuffer.FRAME_HELD] == ActorInput.BIT_ATTACK, "restoring expired input leaves the baseline frame intact")
+	var confirmed := [2, 1, 122, 0.0, 0, Vector2.RIGHT]
+	var confirmed_edge := [2, 1, 122, ActorInput.BIT_UP, 0, 0, Vector2.RIGHT]
+	var future_edge := [3, 1, 123, ActorInput.BIT_RELOAD, 0, 0, Vector2.RIGHT]
+	buffer.push([[confirmed], [confirmed_edge, future_edge]], 121)
+	buffer.acknowledge(2, confirmed)
+	expect(buffer.consumed_seq == 2 and buffer.take(122)[ActorInput.PRESSED] == 0
+			and buffer.take(123)[ActorInput.PRESSED] == ActorInput.BIT_RELOAD,
+			"acknowledging live prediction skips a confirmed queued action and retains later input")
+	buffer.acknowledge(1, record)
+	expect(buffer.consumed_seq == 2 and buffer.action_ack == 3, "an older acknowledgment keeps predicted input progress")
 	buffer.reset(2)
 	buffer.push(packet, 100)
 	var ignored := buffer.take(101)
@@ -62,7 +77,7 @@ func _input() -> void:
 		[[12, 7, 100, ActorInput.BIT_PICKUP | ActorInput.BIT_CHARGE_RIGHT, ActorInput.BIT_ATTACK, 0x1020304, Vector2.DOWN]],
 	]
 	var wire := codec.encode_input(wire_packet)
-	var protocol_bytes := ("c725000807060507000000030c0000000f58000000000000000000e0bf00010000803e000000bf"
+	var protocol_bytes := ("c726000807060507000000030c0000000f58000000000000000000e0bf00010000803e000000bf"
 			+ "0d00000002000000000000f03f0e0000000157000000010c000000640000002002080004030201000000000000803f")
 	expect(NetBus._wire(wire).hex_encode() == protocol_bytes, "INPUT encodes packet-local phase deltas and a self-contained action tick")
 	var stream := _body(wire, NetCodec.INPUT)
@@ -480,7 +495,7 @@ func _team_room() -> void:
 	small.options = {}
 	for role in range(1, 7):
 		small.seats[role] = {"peer": role, "token": "", "name": "p%d" % role, "hue": 0.0,
-				"team": 1 if role <= 5 else 2, "deadline": 0.0, "ready": false}
+				"team": 1 if role <= 5 else 2, "deadline": 0.0}
 	expect(small.team_ready(), "a 5v1 roster satisfies the team start condition")
 	small.seats[6]["team"] = 1
 	expect(small.team_count(2) == 0, "a roster without both teams cannot start")
@@ -511,11 +526,11 @@ func _ready_flow(tree: SceneTree, beta: bool) -> void:
 	session._on_event(99, NetEvent.Kind.READY, 1)
 	expect(not session.seats[1]["ready"], "READY from an unseated peer is ignored")
 	session._on_event(11, NetEvent.Kind.READY, 1)
-	expect(session.seats[1]["ready"], "a current-round READY is accepted")
+	expect(session.seats[1]["ready"], "READY confirms the current baseline")
 	expect(session.world.rules.phase == MatchRules.Phase.WAITING, "WAITING is kept until every seat is ready")
 	session._on_event(12, NetEvent.Kind.READY, 1)
 	var rules := session.world.rules
-	expect(rules.phase == MatchRules.Phase.WAITING, "READY queues a command without advancing the world")
+	expect(rules.phase == MatchRules.Phase.WAITING, "READY leaves the countdown to the fixed step")
 	await tree.physics_frame
 	expect(rules.phase == MatchRules.Phase.COUNTDOWN and is_equal_approx(rules.round_timer, 3.0 - ActorStep.DT),
 			"the last READY starts the countdown on the fixed step")
@@ -526,10 +541,39 @@ func _ready_flow(tree: SceneTree, beta: bool) -> void:
 			"a repeated READY does not restart the countdown")
 	rules.round_timer = ActorStep.DT
 	await tree.physics_frame
-	session.seats[2]["ready"] = false
+	var token: String = session.seats[2]["token"]
+	session.rejoin(12, session.code, token)
 	session._on_event(12, NetEvent.Kind.READY, 1)
 	expect(session.seats[2]["ready"] and rules.phase == MatchRules.Phase.PLAYING,
 			"a reconnect READY only restores its own data sending")
+
+	var terrain := session.world.terrain
+	var hp := terrain.get_hp(Vector2i.ZERO)
+	terrain.apply_at(terrain.version, {Vector2i.ZERO: hp + 1})
+	await tree.physics_frame
+	var patches := session.terrain_patches
+	session.rejoin(12, session.code, token)
+	rules.phase = MatchRules.Phase.ROUND_OVER
+	rules.round_timer = ActorStep.DT
+	rules.round_winner = 1
+	rules.rounds_won[1] = 1
+	await tree.physics_frame
+	expect(rules.round_number == 2 and session.seats[1]["peer"] == 11 and not session.seats[1]["ready"],
+			"a new round sends a fresh baseline on the existing connection")
+	expect(terrain.get_hp(Vector2i.ZERO) == hp and session._published_terrain == terrain.version
+			and patches > 0 and session.terrain_patches == patches,
+			"the new baseline replaces the terrain reset patch and advances the publication cursor")
+	terrain = null
+	session._on_event(12, NetEvent.Kind.READY, 1)
+	expect(not session.seats[2]["ready"], "a reconnect READY for the old round leaves the new baseline pending")
+	session._on_event(11, NetEvent.Kind.READY, 2)
+	await tree.physics_frame
+	expect(rules.phase == MatchRules.Phase.WAITING, "the new round waits for its own acknowledgments")
+	session._on_event(12, NetEvent.Kind.READY, 2)
+	await tree.physics_frame
+	expect(rules.phase == MatchRules.Phase.COUNTDOWN, "both new round acknowledgments start the countdown")
+	rules.round_timer = ActorStep.DT
+	await tree.physics_frame
 
 	session.remove_seat(2)
 	expect(rules.phase == MatchRules.Phase.PLAYING, "leaving queues a world command")

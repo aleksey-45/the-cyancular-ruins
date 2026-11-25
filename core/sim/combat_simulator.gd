@@ -17,6 +17,7 @@ var enemies: Array[EnemyBase] = []
 var players: Dictionary[int, Player] = {}
 var team_counts: Dictionary
 var hits: Array[Array] = []
+var destroyed_subcells: Dictionary[int, int] = {}
 var enemy_kills := 0
 var rng := RandomNumberGenerator.new()
 var pending_blasts: Dictionary[int, Array] = {}
@@ -61,6 +62,7 @@ func close() -> void:
 ## 输入按角色 ID 处理。角色全部移动后才发射，当帧生成的弹丸参加本帧的运动。
 ## 以当前战斗帧末的地形开始，结束时记录下一帧的地形改动。
 func step(inputs: Dictionary) -> Dictionary:
+	destroyed_subcells.clear()
 	var reversing := time_field != null and time_field.is_rewinding()
 	if not reversing:
 		tick += 1
@@ -200,7 +202,11 @@ func resolve_blast(center: Vector2, spec: Dictionary, source: ActorBody) -> void
 				BlastCurve.falloff(distance, radius, inner, spec["damage"]) * cover,
 				BlastCurve.falloff(distance, radius, inner, spec["impact"]) * cover,
 				hit_direction(center, target.position))
-	terrain.damage_blast(terrain.blast_cells(center, radius), radius, spec["damage"], source_role(source))
+	record_destruction(source_role(source), terrain.damage_blast(center, radius, spec["damage"]))
+
+func record_destruction(role: int, count: int) -> void:
+	if role > 0 and count > 0:
+		destroyed_subcells[role] = destroyed_subcells.get(role, 0) + count
 
 func hit_rewound_elites(hits_by_projectile: Dictionary) -> void:
 	# 恢复玩家弹丸的位置后，检查它们是否与仍在活动的精英敌人相撞。

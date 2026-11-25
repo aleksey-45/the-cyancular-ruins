@@ -106,7 +106,7 @@ static func hitscan(combat: CombatSimulator, shooter: Player, shot: Dictionary, 
 		var tex := terrain.material_at(cell)
 		if TileDefs.explosion_destroyable(tex):
 			seen[block] = true
-			terrain.damage_beam(cell, spec["tile_chip"], shooter.role)
+			combat.record_destruction(shooter.role, terrain.damage_beam(cell, spec["tile_chip"]))
 
 static func step_projectile(combat: CombatSimulator, bullet: BulletBody, delta: float) -> void:
 	var advance := bullet.advance_physics(delta)
@@ -120,8 +120,8 @@ static func step_projectile(combat: CombatSimulator, bullet: BulletBody, delta: 
 				bullet.bounce(bullet.impact_normal)
 			match response["effect"]:
 				CombatProfiles.ContactEffect.CHIP_SUB:
-					combat.terrain.damage_impact(bullet.impact_point, bullet.impact_normal,
-							bullet.hit_damage, CombatSimulator.source_role(bullet.shooter))
+					var destroyed := combat.terrain.damage_impact(bullet.impact_point, bullet.impact_normal, bullet.hit_damage)
+					combat.record_destruction(CombatSimulator.source_role(bullet.shooter), destroyed)
 				CombatProfiles.ContactEffect.HIT:
 					_projectile_hit(combat, bullet, incoming)
 			if not response["bounce"]:

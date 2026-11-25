@@ -16,7 +16,7 @@ var _last_move_press_at := 0
 var _charge_pressed := 0
 var _drop_hold_t := 0.0
 var _drop_latched := false
-var _wheel_weapon := 0
+var _wheel_direction := 0
 
 static func aim_direction(origin: Vector2, facing: int, map_size: Vector2, base: Vector2,
 		zoom: float, mouse_offset: Vector2) -> Vector2:
@@ -31,12 +31,13 @@ const ACTIONS := [
 	[&"R", ActorInput.BIT_RELOAD],
 ]
 
-func sample() -> Array:
+func sample(player: Player, delta: float, aim: Vector2) -> Array:
 	var held := 0
 	var pressed := _charge_pressed
 	_charge_pressed = 0
 	var released := 0
 	var axis := 0.0
+	var inst := 0
 	if not frozen:
 		axis = Input.get_axis(&"left", &"right")
 		for entry in ACTIONS:
@@ -54,24 +55,19 @@ func sample() -> Array:
 			held |= ActorInput.BIT_REWIND
 		if Input.is_action_just_pressed(&"F"):
 			pressed |= ActorInput.BIT_PICKUP
-	return [axis, held, pressed, released, 0, Vector2.ZERO]
+		inst = player.weapons.inst_at_index(_switch_index() - 1)
+		if inst == 0 and _wheel_direction != 0:
+			inst = player.weapons.cycle_instance(_wheel_direction)
+	if _drop_pressed(delta):
+		pressed |= ActorInput.BIT_DROP
+	_wheel_direction = 0
+	return [axis, held, pressed, released, inst, aim]
 
-static func switch_index() -> int:
+static func _switch_index() -> int:
 	for i in range(1, 5):
 		if Input.is_action_just_pressed(str(i)):
 			return i
 	return 0
-
-# 从当前手持装备生成换枪和丢弃意图。
-func complete(player: Player, record: Array, delta: float, aim: Vector2) -> Array:
-	record[ActorInput.AIM] = aim
-	if _drop_pressed(delta):
-		record[ActorInput.PRESSED] |= ActorInput.BIT_DROP
-	var key := 0 if frozen else switch_index()
-	var inst := player.weapons.inst_at_index(key - 1)
-	record[ActorInput.WINST] = inst if inst > 0 else _wheel_weapon
-	_wheel_weapon = 0
-	return record
 
 func _drop_pressed(delta: float) -> bool:
 	if frozen or not Input.is_action_pressed(&"Q"):
@@ -89,7 +85,7 @@ func drop_hold_progress() -> float:
 	return minf(_drop_hold_t / CFG.weapon_drop_hold_time, 1.0)
 
 
-func handle_event(player: Player, event: InputEvent) -> void:
+func handle_event(event: InputEvent) -> void:
 	if not frozen:
 		var left := event.is_action_pressed(&"left")
 		var right := event.is_action_pressed(&"right")
@@ -102,14 +98,7 @@ func handle_event(player: Player, event: InputEvent) -> void:
 			else:
 				_last_move_press = direction
 				_last_move_press_at = now
-	# 鼠标滚轮选中的武器留到下一次采集输入时提交。
 	if Settings.wheel_switch and event is InputEventMouseButton and event.pressed:
-		var dir := 0
-		if event.button_index == MOUSE_BUTTON_WHEEL_UP:
-			dir = -1
-		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			dir = 1
-		if dir != 0:
-			var inst := player.weapons.cycle_instance(dir)
-			if inst > 0:
-				_wheel_weapon = inst
+		match event.button_index:
+			MOUSE_BUTTON_WHEEL_UP: _wheel_direction = -1
+			MOUSE_BUTTON_WHEEL_DOWN: _wheel_direction = 1

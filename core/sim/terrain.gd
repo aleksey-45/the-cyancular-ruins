@@ -1,7 +1,7 @@
 class_name Terrain
 extends RefCounted
 
-# 地形引用地图的子格描述，单独记录本局耐久。地形碰撞按区域更新，期间的变化可同步到客户端或用于时间回溯。
+# 地形引用原图的子格描述，维护当前耐久、碰撞和线性撤销日志。
 
 const SUB_SIZE := CyrmMap.CELL_SIZE
 const DAMAGE_BLOCK_SUBS := 32 / SUB_SIZE
@@ -21,16 +21,16 @@ class Chunk:
 var columns := 0
 var rows := 0
 var map_size := Vector2.ZERO
-var version := 0
+var version: int:
+	get: return _version
 
+var _version := 0
 var _cells := PackedInt32Array()
 var _hp := PackedInt32Array()
 var _modified: Dictionary = {}
 var _pending: Dictionary[int, int] = {}
 # 当前版本减去日志长度就是尚可撤销到的起点。
 var _undo: Array[Dictionary] = []
-var _patches: Dictionary[int, Dictionary] = {}
-var _rewards: Dictionary = {}
 var _visual_changes: Dictionary = {}
 var _chunk_columns := 0
 var _chunk_dirty := PackedByteArray()
@@ -64,8 +64,9 @@ func _init(map: Dictionary = {}) -> void:
 	for key in _chunks.size():
 		_chunks[key] = Chunk.new()
 	physics = CollisionWorld.new(map_size)
-	invalidate_all()
-	flush_collisions()
+	for key in _chunk_dirty.size():
+		_queue_chunk(key)
+	_flush_collisions()
 
 func empty() -> bool:
 	return columns == 0 or rows == 0
@@ -222,38 +223,33 @@ func elastic_alive(position: Vector2) -> bool:
 	var i := sub_index(cell(position))
 	return i >= 0 and _hp[i] > 0 and TileDefs.elastic[_material(i)] != 0
 
-func _mark_collision(index: int) -> void:
-	var sub := sub_position(index)
-	_queue_chunk((sub.y / CHUNK_CELLS) * _chunk_columns + sub.x / CHUNK_CELLS)
-	var tex := _material(index)
-	if TileDefs.types[tex] == TileDefs.TYPE_WALL and TileDefs.damage_masks[tex] == 0:
-		permanent_dirty = true
-
-func _write_hp(index: int, next: int, from_combat: bool, owner := 0) -> bool:
-	next = maxi(0, next)
-	var before := _hp[index]
-	if before == next:
-		return false
-	if from_combat:
-		_pending.get_or_add(index, before)
+func _write_hp(index: int, next: int) -> void:
 	_hp[index] = next
 	if next == TileDefs.hit_points[_material(index)]:
 		_modified.erase(index)
 	else:
 		_modified[index] = next
-	var solid := next > 0
-	if (before > 0) != solid:
-		if _visual_changes.has(index):
-			_visual_changes.erase(index)
-		else:
-			_visual_changes[index] = solid
-		_mark_collision(index)
-		if TileDefs.ledges[_material(index)] != 0: ledges_dirty = true
-		if from_combat and not solid and owner > 0:
-			_rewards[owner] = int(_rewards.get(owner, 0)) + 1
-	return true
 
-func damage_impact(position: Vector2, normal: Vector2, amount: int, owner: int) -> int:
+func _occupancy_changed(index: int, before: int) -> void:
+	var alive := _hp[index] > 0
+	if (before > 0) == alive:
+		return
+	if _visual_changes.has(index):
+		_visual_changes.erase(index)
+	else:
+		_visual_changes[index] = alive
+	var tex := _material(index)
+	if TileDefs.types[tex] == TileDefs.TYPE_WALL:
+		if TileDefs.damage_masks[tex] == 0:
+			permanent_dirty = true
+		else:
+			var sub := sub_position(index)
+			_queue_chunk((sub.y / CHUNK_CELLS) * _chunk_columns + sub.x / CHUNK_CELLS)
+	if TileDefs.ledges[tex] != 0:
+		ledges_dirty = true
+
+## 伤害立即扣除耐久，返回实际破坏的子格数。占用变化在 commit() 时发布。
+func damage_impact(position: Vector2, normal: Vector2, amount: int) -> int:
 	if empty() or amount <= 0:
 		return 0
 	var hit := cell(position - normal * 0.5)
@@ -261,29 +257,34 @@ func damage_impact(position: Vector2, normal: Vector2, amount: int, owner: int) 
 	var tex := _material(index)
 	if _hp[index] <= 0 or (TileDefs.damage_masks[tex] & TileDefs.DamageMask.BULLET) == 0:
 		return 0
-	_damage_block(hit / DAMAGE_BLOCK_SUBS, DAMAGE_BLOCK_SUBS, amount, TileDefs.DamageMask.BULLET, owner)
-	return tex
+	return _damage_block(hit / DAMAGE_BLOCK_SUBS, DAMAGE_BLOCK_SUBS, amount, TileDefs.DamageMask.BULLET)
 
-func damage_beam(at: Vector2i, amount: int, owner: int) -> void:
-	if sub_index(at) < 0 or amount <= 0: return
-	_damage_block(at / BEAM_BLOCK_SUBS, BEAM_BLOCK_SUBS, amount, TileDefs.DamageMask.EXPLOSION, owner)
+func damage_beam(at: Vector2i, amount: int) -> int:
+	if sub_index(at) < 0 or amount <= 0:
+		return 0
+	return _damage_block(at / BEAM_BLOCK_SUBS, BEAM_BLOCK_SUBS, amount, TileDefs.DamageMask.EXPLOSION)
 
-func _damage_block(block: Vector2i, side: int, amount: int, mask: int, owner: int) -> bool:
+func _damage_block(block: Vector2i, side: int, amount: int, mask: int) -> int:
 	var origin := block * side
 	var start := sub_index(origin)
 	var extent := (Vector2i(columns, rows) - origin).min(Vector2i(side, side))
-	var modified := false
+	var destroyed := 0
 	for y in extent.y:
 		for x in extent.x:
 			var index := start + y * columns + x
-			if (TileDefs.damage_masks[_material(index)] & mask) != 0:
-				modified = _write_hp(index, _hp[index] - amount, true, owner) or modified
-	return modified
+			var before := _hp[index]
+			if before > 0 and (TileDefs.damage_masks[_material(index)] & mask) != 0:
+				var next := maxi(0, before - amount)
+				_pending.get_or_add(index, before)
+				_write_hp(index, next)
+				destroyed += int(next == 0)
+	return destroyed
 
-func blast_cells(center: Vector2, radius: float) -> Dictionary:
-	var out := {}
-	if columns == 0 or rows == 0 or radius <= 0.0:
-		return out
+func damage_blast(center: Vector2, radius: float, damage: int) -> int:
+	if empty() or radius <= 0.0:
+		return 0
+	# 每个 32 像素块用块内距爆心最近的可破坏子格计算伤害。
+	var nearest: Dictionary[Vector2i, float] = {}
 	var at := cell(center)
 	var reach := int(ceil(radius / SUB_SIZE)) + 1
 	var width := mini(2 * reach + 1, columns)
@@ -297,64 +298,37 @@ func blast_cells(center: Vector2, radius: float) -> Dictionary:
 					or (TileDefs.damage_masks[_material(i)] & TileDefs.DamageMask.EXPLOSION) == 0:
 				continue
 			var d := GridPathfinder.toroidal_delta_px(center, Vector2((sx + 0.5) * SUB_SIZE, (sy + 0.5) * SUB_SIZE), map_size).length()
-			if d > radius:
-				continue
-			out[i] = d
-	return out
-
-func damage_blast(cells: Dictionary, radius: float, damage: int, owner: int) -> void:
-	# 每个 32 像素块用块内距爆心最近的可破坏子格计算伤害。
-	var nearest: Dictionary[Vector2i, float] = {}
-	for index: int in cells:
-		var sub := sub_position(index)
-		var block := sub / DAMAGE_BLOCK_SUBS
-		nearest[block] = minf(nearest.get(block, INF), cells[index])
+			if d <= radius:
+				var block := Vector2i(sx, sy) / DAMAGE_BLOCK_SUBS
+				nearest[block] = minf(nearest.get(block, INF), d)
 	var inner := radius * BlastCurve.INNER_FRACTION
+	var destroyed := 0
 	for block in nearest:
 		var falloff := BlastCurve.falloff(nearest[block], radius, inner, float(damage))
 		var amount := int(falloff * TileDefs.blast_decay)
-		if amount <= 0:
-			continue
-		_damage_block(block, DAMAGE_BLOCK_SUBS, amount, TileDefs.DamageMask.EXPLOSION, owner)
-
-func apply_hp(at: Vector2i, value: int, owner: int) -> bool:
-	var i := sub_index(at)
-	if i < 0 or not _write_hp(i, value, true, owner):
-		return false
-	return _hp[i] == 0
+		if amount > 0:
+			destroyed += _damage_block(block, DAMAGE_BLOCK_SUBS, amount, TileDefs.DamageMask.EXPLOSION)
+	return destroyed
 
 func reset() -> void:
-	_reset_hp(true)
-	_rewards.clear()
+	for i: int in _modified.keys():
+		_pending.get_or_add(i, _hp[i])
+		_write_hp(i, TileDefs.hit_points[_material(i)])
 	commit()
 
-func _reset_hp(record: bool) -> void:
-	for i: int in _modified.keys():
-		_write_hp(i, TileDefs.hit_points[_material(i)], record)
-
-## 发布当前耐久后，这些改动成为新的历史起点。
-func take_patch() -> Dictionary:
-	if _undo.is_empty():
-		return {}
+## 返回相对保留版本 at 的非零差异，耐久值取当前绝对值。
+func changes_since(at: int) -> Dictionary:
 	var cells := {}
-	for changes in _undo:
-		for index: int in changes:
+	var originals := _originals_since(at)
+	for index: int in originals:
+		if originals[index] != _hp[index]:
 			cells[sub_position(index)] = _hp[index]
-	_undo.clear()
-	return {"version": version, "cells": cells}
+	return cells
 
 func get_modified() -> Dictionary:
-	return _hp_by_position(_modified)
-
-func _hp_by_position(values: Dictionary) -> Dictionary:
 	var out := {}
-	for index in values:
-		out[sub_position(index)] = values[index]
-	return out
-
-func take_rewards() -> Dictionary:
-	var out := _rewards.duplicate()
-	_rewards.clear()
+	for index: int in _modified:
+		out[sub_position(index)] = _modified[index]
 	return out
 
 func _wall_mask(area: Rect2i, breakable: bool) -> PackedByteArray:
@@ -515,11 +489,9 @@ func _rebuild_ledges() -> void:
 		_submit(_chunks[LEDGE_CHUNK], signature, rects)
 	ledges_dirty = false
 
-func flush_collisions() -> int:
+func _flush_collisions() -> void:
 	if _dirty_chunks.is_empty() and not permanent_dirty and not ledges_dirty:
-		return 0
-	if empty():
-		return 0
+		return
 	var started := PerformanceStats.begin()
 	if permanent_dirty:
 		_rebuild_walls(PERMANENT_CHUNK, Rect2i(0, 0, columns, rows))
@@ -532,7 +504,6 @@ func flush_collisions() -> int:
 		_chunk_dirty[key] = 0
 		_rebuild_walls(key, _chunk_area(key))
 	PerformanceStats.end(PerformanceStats.TERRAIN_COMMIT, started)
-	return pending.size()
 
 func take_wall_changes() -> Dictionary:
 	var changes := _visual_changes
@@ -544,66 +515,60 @@ func _queue_chunk(key: int) -> void:
 		_chunk_dirty[key] = 1
 		_dirty_chunks.append(key)
 
-func invalidate_all() -> void:
-	permanent_dirty = true
-	ledges_dirty = true
-	for key in _chunk_dirty.size():
-		_queue_chunk(key)
-
 func commit() -> void:
-	if not _pending.is_empty():
-		for index in _pending.keys():
-			if _pending[index] == _hp[index]:
-				_pending.erase(index)
-		if not _pending.is_empty():
-			_undo.append(_pending)
-			_pending = {}
-			version += 1
-	flush_collisions()
+	if _pending.is_empty():
+		return
+	for index: int in _pending.keys():
+		if _pending[index] == _hp[index]:
+			_pending.erase(index)
+		else:
+			_occupancy_changed(index, _pending[index])
+	_finish_commit(_pending)
+	_pending = {}
 
-func install_baseline(at: int, cells: Dictionary) -> void:
-	_reset_hp(false)
-	_write_patch(cells)
-	_pending.clear()
-	_rewards.clear()
-	_undo.clear()
-	_patches.clear()
-	version = at
-	flush_collisions()
-
-## 可靠通道按版本顺序送达。采用对应状态时才写入耐久。
-func queue_patch(at: int, cells: Dictionary) -> void:
-	_patches[at] = cells
-
-func has_authority(at: int) -> bool:
-	return at == version - _undo.size() or _patches.has(at)
-
-func apply_patches(at: int) -> void:
-	_undo_to(version - _undo.size())
-	for next: int in _patches.keys():
-		if next > at:
-			break
-		_write_patch(_patches[next])
-		_patches.erase(next)
-	version = at
-	flush_collisions()
-
-func undo_to(at: int) -> void:
-	_undo_to(at)
-	flush_collisions()
+## 在提交之间使用。保留 at 及其前缀，覆盖 cells 指定的绝对耐久。
+func apply_at(at: int, cells: Dictionary) -> int:
+	if at == version and cells.is_empty():
+		return version
+	var originals := _originals_since(at)
+	_undo.resize(_undo.size() - (version - at))
+	_version = at
+	var undo: Dictionary[int, int] = {}
+	for sub: Vector2i in cells:
+		var index := sub_index(sub)
+		var before: int = originals.get(index, _hp[index])
+		var next := maxi(0, cells[sub])
+		if before != next:
+			undo[index] = before
+		_replace_hp(index, next)
+		originals.erase(index)
+	for index: int in originals:
+		_replace_hp(index, originals[index])
+	_finish_commit(undo)
+	return version
 
 func forget_before(at: int) -> void:
-	var count := _undo.size() - (version - at)
-	if count > 0:
-		_undo = _undo.slice(count)
+	if at == version:
+		_undo.clear()
+	else:
+		var count := _undo.size() - (version - at)
+		if count > 0:
+			_undo = _undo.slice(count)
 
-func _undo_to(at: int) -> void:
-	while version > at:
-		var changes: Dictionary = _undo.pop_back()
-		for index: int in changes:
-			_write_hp(index, changes[index], false)
-		version -= 1
+func _originals_since(at: int) -> Dictionary:
+	var originals := {}
+	for offset in range(1, version - at + 1):
+		originals.merge(_undo[-offset], true)
+	return originals
 
-func _write_patch(cells: Dictionary) -> void:
-	for cell: Vector2i in cells:
-		_write_hp(sub_index(cell), cells[cell], false)
+func _replace_hp(index: int, next: int) -> void:
+	var before := _hp[index]
+	if before != next:
+		_write_hp(index, next)
+		_occupancy_changed(index, before)
+
+func _finish_commit(undo: Dictionary) -> void:
+	if not undo.is_empty():
+		_undo.append(undo)
+		_version += 1
+	_flush_collisions()
