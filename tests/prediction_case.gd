@@ -261,6 +261,8 @@ func _load_match(tree: SceneTree) -> void:
 			"mounting the remote match takes ownership of the loading inbox")
 	await tree.physics_frame
 	await tree.process_frame
+	# process_frame 在 _process() 前发出，再等一次信号让画面更新完成。
+	await tree.process_frame
 	expect(client.session.latest_authority == newest and client._presenter.frame.actors.size() == 2,
 			"the inbox is consumed by the fixed-step driver and both actors reach the view")
 	client.free()

@@ -218,7 +218,7 @@ func _stop_beacon() -> void:
 		_beacon = null
 
 
-# 广播包字段取自 room_data()；port 是实际游戏端口，房号等待阶段也可以被发现。
+# 广播包中的 port 是游戏服务器的监听端口。等待玩家加入时也会广播。
 func _lan_info() -> Dictionary:
 	var data := room_data()
 	return {"code": data["code"], "mode": data["mode"], "players": data["players"].size(),

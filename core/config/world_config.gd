@@ -1,8 +1,7 @@
 class_name WorldConfig
 extends Resource
 
-# 世界/水体参数表：schema + 默认值；运行时读 world_config.tres。
-# 数值保持上游 siri 行为。
+# 定义世界重力和水体参数及其默认值。对局使用 world_config.tres 中的数值。
 
 @export var gravity0: float = 1600.0
 @export var water_sway_amp: float = 2.0

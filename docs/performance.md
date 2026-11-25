@@ -18,7 +18,7 @@ godot --path . -- --corr-trace corrections.jsonl
 | `state_encode_peer` · `state_fanout` | 单个连接的快照编码及整批快照的准备、编码和发送 |
 | `network_poll` · `network_dispatch` · `transport_send` | 轮询并整理新消息、脚本解码和分发、封装并提交待发消息 |
 | `client_authority` · `client_tick` · `client_present` | 选择并采用权威状态、客户端物理回调、脚本更新画面和界面 |
-| `replay` · `history_save` | 采用检查点并重放预测、记录玩法历史 |
+| `replay` · `history_save` | 恢复服务器快照并重新模拟未确认的输入、记录时间技能历史 |
 | `terrain_commit` · `physics_motion` · `physics_ray` · `physics_shape` | 更新地形碰撞、运动查询、射线查询和形状查询 |
 | `callback_interval` | 相邻两次普通帧回调之间的间隔，包含等待时间 |
 

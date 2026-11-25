@@ -1,18 +1,9 @@
 class_name SquashTracker
 extends RefCounted
 
-# 挤压拉伸(单实体):把一次动作事件换成一个只作用于 sprite 局部坐标轴的 scale 乘子。
-#
-# 参数来自现有 Resource(main 同款字段/数值):
-#   PlayerConfig.squash_*       玩家 jump/dash/land/hurt/air
-#   EnemyConfig.shared_squash_* 敌人 take_off/charge/land/hurt/air
-# 调用方(WorldView._actor)只把 sample() 返回的 Vector2 乘到 sprite 的局部缩放上;
-# origin(角色锚点)不动,碰撞箱与武器/瞄准用的仍是未缩放的 body transform。
-#
-# 衰减沿用旧 WorldView 的指数形式:impulse * exp(-recover * age)。
-# 新事件**覆盖**旧事件(而不是累加):旧实现 `_motions[id] = Vector2(now, strength)` 就是覆盖语义,
-# tests/simulation_case.gd 的 "_actor_animation" 依赖「落地后紧接起跳,以起跳为准」,
-# 累加会让 land(-1)+jump(0.75) 变成 -0.25 而破坏该断言。这里保留覆盖语义。
+# 按动作事件和空中竖直速度计算实体的挤压与拉伸，参数来自 PlayerConfig 和 EnemyConfig。
+# 缩放只影响精灵的局部坐标轴。角色锚点、碰撞形状、武器挂点和瞄准方向沿用原变换。
+# 动作形变按指数曲线衰减。新的形变事件覆盖旧事件，例如落地后立即起跳时以起跳为准。
 
 enum Profile { PLAYER, ENEMY }
 
@@ -31,9 +22,7 @@ var _impulses := {}
 var _impulse := 0.0
 var _at := -INF
 
-# 事件 → 实体侧别的兜底推断:WorldView.motion() 只拿得到 id 与 kind(调用点不在本次写范围)。
-# 约定(见 SoloLevel._start_single):敌人 id = -1 - slot(负数),玩家/副本 role 为正数。
-# jump/dash 只有玩家发;take_off 只有敌人发;charge 两侧都有(玩家 charge = 冲刺蓄力起手)。
+# 根据动作类型和实体 ID 选择形变配置。玩家 ID 为正数，敌人 ID 为负数。
 static func profile_for(id: int, kind: StringName) -> int:
 	match kind:
 		&"jump", &"dash":
@@ -82,7 +71,7 @@ func setup(profile: int) -> void:
 	reset()
 
 
-## 记录一次冲击。land 按竖直速度插值(低于 squash_land_min_vy 不形变),其余查配置强度。
+## 记录动作触发的形变。落地强度按竖直速度插值，低于阈值时不触发形变。其他动作使用配置值。
 func impulse(kind: StringName, now: float, speed := 0.0) -> void:
 	var strength := 0.0
 	if kind == &"land":
@@ -97,7 +86,7 @@ func impulse(kind: StringName, now: float, speed := 0.0) -> void:
 	_at = now
 
 
-## 当前 sprite 局部 scale 乘子。age=0 时为冲击峰值,之后按 exp(-recover*age) 回到 1。
+## 返回精灵局部坐标轴的缩放系数。动作形变随时间指数衰减，空中形变取决于当前竖直速度。
 func sample(now: float, air_speed: float) -> Vector2:
 	var air := clampf(absf(air_speed) / maxf(_air_ref_vy, 1.0), 0.0, 1.0) * _air
 	var age := maxf(now - _at, 0.0)

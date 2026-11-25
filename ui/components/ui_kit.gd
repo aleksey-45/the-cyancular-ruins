@@ -1,11 +1,8 @@
 class_name UiKit
 extends RefCounted
 
-# UI 组件库 v1 —— 只做**结构**(容器 + token),不做样式(样式全在 Theme 2.0 / UiDesign 的 type variations)。
-# 设计系统见 docs/systems/presentation/ui-design-system.md;契约 .tmp/ui-system-contract.md §4。
-# ★ 页面里禁止:自己 new StyleBoxFlat、add_theme_stylebox_override(动态状态色除外)、position=/size=、
-#   手写 Color(...) 字面量。用本文件 + UiDesign token。
-# ★ 本文件与具体页面无关:不引用任何场景/autoload;纯构造,方便在 `-s` 里独立测。
+# 创建容器和通用控件，布局使用 UiDesign 的间距常量，样式来自主题类型变体。
+# 控件布局与样式约定见 docs/construction/2026-11-23-ui-full-replacement-plan.md 的「实现约定」。
 
 # ── 页面骨架 ────────────────────────────────────────────────────────────────
 
@@ -163,7 +160,7 @@ static func list_row(parent: Control, icon: Texture2D, title: String, subtitle: 
 	return panel
 
 
-## 统一弹层:AcceptDialog + Kit variation;返回对话框(调用方 popup_centered / 填内容)。
+## 创建使用 Kit 主题变体的对话框。调用方填充内容并按需显示。
 static func dialog(parent: Node, title: String, ok_text: String = "确定") -> AcceptDialog:
 	var d := AcceptDialog.new()
 	d.title = title

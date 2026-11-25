@@ -1,8 +1,7 @@
 class_name TimeConfig
 extends Resource
 
-# 单人时间玩法参数表：schema + 默认值；运行时读 time_config.tres。
-# 由上游 TimeParams 常量迁入，数值保持上游 siri 行为。
+# 定义单人时间技能参数及其默认值。对局使用 time_config.tres 中的数值。
 
 @export var GRAIN_INITIAL: int = 1000
 @export var GRAIN_CAP: int = 5000

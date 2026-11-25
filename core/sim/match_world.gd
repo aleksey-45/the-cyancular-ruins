@@ -19,7 +19,7 @@ class FrameView:
 	func _init(world: MatchWorld) -> void:
 		_world = weakref(world)
 
-	## 复制展示所需的端点。一次重放只需保留最终端点。
+	## 复制表现层所需的状态字段。回滚后重新模拟时，只需为最终显示保留采样结果。
 	func sample(only_role := 0) -> Dictionary:
 		return _world.get_ref()._sample(only_role)
 
@@ -77,7 +77,7 @@ func _build() -> String:
 		_scatter_weapons()
 	return ""
 
-## 提交号单调递增。单人世界回溯调整战斗时间和历史游标。
+## 模拟帧号持续递增。单人世界回溯只调整战斗时间和历史读取位置。
 func advance(inputs: Dictionary, commands: Array = []) -> FrameView:
 	if rules != null and rules.phase == Phase.MATCH_OVER:
 		return frame

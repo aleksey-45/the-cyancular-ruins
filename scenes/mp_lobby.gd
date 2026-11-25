@@ -138,8 +138,7 @@ func _on_net_event(_peer: int, kind: int, data: Variant) -> void:
 				_view.set_status("对局地图无法读取")
 				return
 			PvpSession.begin_match(data, map)
-			# P0:baseline 的地图字节已解析完(begin_match 也已完成,后续对局事件由 NetSession 暂存),
-			# 剩下 pvp_game 的场景加载/实例化/挂载是重构建,走 v2 载入界面。
+			# 地图解析完成后先显示加载界面，再实例化联机场景。切换期间由 NetSession 暂存对局消息。
 			SceneTransition.change_with_builder(get_tree(), func() -> Node:
 				var packed := load("res://scenes/pvp_game.tscn") as PackedScene
 				return packed.instantiate() if packed != null else null, "正在进入对局…")

@@ -225,7 +225,7 @@ func _option_row(parent: Control, label_text: String, node_name: String) -> Opti
 	return ob
 
 
-# ── 设置接线(与本仓迁移前逐行等价;main 的属性式 API 在这里改成 get()/store())────────
+# 设置项的读取、写入与信号绑定。
 func _wire_settings() -> void:
 	_slider(_master, Settings.get(&"master_volume"), Settings.store.bind(&"master_volume"))
 	_slider(_sfx, Settings.get(&"sfx_volume"), Settings.store.bind(&"sfx_volume"))
@@ -300,9 +300,7 @@ func _fill_bind_grid() -> void:
 		_bind_grid.add_child(row)
 
 
-# ── 返回 / 键位捕获(与迁移前逐行等价)──────────────────────────────────────────
-# ★ 切场景必须延迟到帧末:change_scene_to_file 会同步 memdelete 当前场景,而本函数两条调用路径
-# (ESC 的 _unhandled_input 与返回按钮)在切换之后还会碰 self/get_tree()。
+# 延迟切换，让当前输入回调先完成。引擎切换时立即将旧场景移出场景树，帧末再释放。
 func _go_back() -> void:
 	Sfx.play("ui")
 	get_tree().change_scene_to_file.call_deferred(BACK_SCENE)
@@ -310,7 +308,7 @@ func _go_back() -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("ui_cancel"):
-		# ★ 顺序不能反:先标记事件已处理,再决定去向 —— _go_back() 之后本节点即被移出场景树。
+		# 先标记 Esc 已处理，再取消键位录入或请求返回。
 		get_viewport().set_input_as_handled()
 		if _capturing_action != "":
 			_cancel_capture()

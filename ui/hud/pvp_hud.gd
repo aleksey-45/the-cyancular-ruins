@@ -13,14 +13,13 @@ extends CanvasLayer
 #   · 计时节奏不变:_process 里剩余时间与宽限倒计时各自递减,countdown 仍交给 Broadcast 自己跑。
 #
 # ── 版式 ───────────────────────────────────────────────────────────────────
-# 对局 HUD 属"锚点例外"(docs/construction/2026-11-23-ui-full-replacement-plan.md §5.4):
-# 位置全部由 anchor + UiDesign token 偏移表达;底板统一走 UiDesign.hud_plate(唯一 HUD 底板工厂)。
-# 本文件零 StyleBox 手写、零 Color 字面量、零 position=/size=。
+# HUD 用锚点和 UiDesign 的间距常量定位，底板由 UiDesign.hud_plate 创建。
+# 布局约定见 docs/construction/2026-11-23-ui-full-replacement-plan.md 的「实现约定」。
 
 signal leave_requested
 
 # 对局内状态横幅(断线/重连/等待提示)收进 v2 组件:组件自带 CanvasLayer(140)+顶部居中版式,
-# 本类只负责喂文本,不再自己拼 CenterContainer + panel + label。
+# 联机 HUD 仅向 StatusBanner 提供提示文字。
 const STATUS_BANNER_SCENE := preload("res://ui/hud/status_banner.tscn")
 
 const Mode := MatchFrame.Mode
@@ -196,7 +195,7 @@ func _build_ping(royale: bool) -> void:
 
 func _build_status() -> void:
 	# 对局内状态横幅:StatusBanner 自带 CanvasLayer(140;压在 HUD 之上、结算(150)之下),
-	# 也自带顶部居中版式与危险色文案、空串隐藏;本类只喂文本。
+	# 组件在顶部居中显示提示，收到空字符串时隐藏。
 	_status_banner = STATUS_BANNER_SCENE.instantiate() as StatusBanner
 	add_child(_status_banner)
 

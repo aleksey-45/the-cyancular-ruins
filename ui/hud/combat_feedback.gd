@@ -1,11 +1,11 @@
 class_name CombatFeedback
 extends CanvasLayer
 
-# 击打/击杀反馈(命中准星 + 击杀播报 + 连杀计数)。UI-3b 迁移到设计系统 v2。
+# 战斗反馈，包括命中标记、击杀播报和连杀计数。
 #
 # ── 与 main 参考版的关系 ────────────────────────────────────────────────────
 # 结构照 main 的 ui/hud/combat_feedback:Root(全屏 Control)内
-#   HitMarker(全屏自绘准星)/ KillLabel(RichTextLabel)/ SkullSlot(自绘骷髅)/ StreakLabel;
+#   HitMarker（屏幕中央的自绘命中标记）/ KillLabel(RichTextLabel)/ SkullSlot(自绘骷髅)/ StreakLabel;
 # 不同处:siri 把节点在 _ready 里就地搭出来(宿主 match_view.tscn 直接用脚本挂 CanvasLayer,
 # 不需要新 .tscn,也不新增集成点)。
 #
@@ -13,7 +13,7 @@ extends CanvasLayer
 #   · show_hit() / reset_streak() / show_kill(who) 三个公开入口不变;
 #   · HIT_LIFE / KILL_LIFE / STREAK_RESET 与 _now / 各计时变量的语义不变
 #     (tests/simulation_case.gd 读 feedback._now,不能让时钟停摆);
-#   · 准星在屏幕正中扩散淡出、骷髅逐像素绘制、连杀计数、击杀音效 Sfx.play("kill") 均保持;
+#   · 命中标记在屏幕中央扩散并淡出、骷髅逐像素绘制、连杀计数、击杀音效 Sfx.play("kill") 均保持;
 #   · 布局改为容器(居中 VBox:击杀字在上,骷髅 + 连杀在下),不再写相对坐标偏移。
 #
 # ── v2 约束 ────────────────────────────────────────────────────────────────
@@ -37,7 +37,7 @@ const SKULL := [
 ]
 const SKULL_PX := 8.0
 
-# 准星 4 条斜线的几何(像素):长度随命中进度收缩、离中心距离扩散。
+# 命中标记由四条斜线组成。动画播放时，斜线缩短并向外移动。
 const HIT_GAP := 6.0
 const HIT_SPREAD := 5.0
 const HIT_SEG := 10.0

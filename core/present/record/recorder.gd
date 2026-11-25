@@ -1,17 +1,12 @@
 extends Node
 
-# siri P3 录像 / 死亡倒带服务：挂在 scenes/match_view.tscn 的 Recorder 节点上（每个对局一份）。
-# F5：读 root viewport 窗口纹理（1920×1440，含 HUD/后处理）→ worker JPEG q0.95 → MJPEG AVI +
-#     Master 音频 WAV；停录后后台转 H.264/AAC MP4（无 ffmpeg 保留 AVI+WAV）。文件写 user://recordings/。
-# 30fps 槽位时钟（Time.get_ticks_usec）：缺帧重复同一帧补齐 ⇒ 视频时长恒等于真实时长。
-# 死亡倒带：solo 内存 640×480 环形缓冲，倒地 R 键回放（纯表现，不改模拟），播完调 SoloLevel.restart_single()。
-# headless / Web 直接禁用；服务器模式没有 MatchView，天然不录。
-# 相对 main 的适配：采集源从 main 的 Level0 换成 siri MatchView 的窗口纹理；REC/REWIND 走 UiDesign v2；
-# 重开调 siri 现有 SoloLevel.restart_single()；落盘目录改 user://recordings/。
-# ★ P3b 接线（未接，等 P1 完成/Lead 确认）：siri 本地的死亡 R 目前由 scenes/solo_level.gd 自己接管
-#   （模拟回溯）。实测 _input 派发顺序是 SoloLevel 先于 Recorder 子节点，Recorder 抢不到这个键，
-#   所以这里只提供 start_rewind() / is_replaying() 公开入口；接线只需在 SoloLevel._input 里先调
-#   `$View/Recorder.start_rewind()`（成功就 set_input_as_handled 并 return），见任务报告。
+# 对局录屏和单人死亡倒带，由 MatchView 挂载。
+# 按 F5 开始或停止录屏。以录制开始时的根视口尺寸采集画面，包含 HUD 和后期效果。
+# 在工作线程中编码 JPEG，按 30 fps 写入 MJPEG AVI，漏采时重复上一帧补齐。
+# Master 总线音频写入 WAV。若有 ffmpeg，停止录制后在后台转码为 H.264/AAC MP4。
+# 录制文件保存在 user://recordings/。无界面模式和 Web 禁用采集。
+# 单人倒地后按 R 时，SoloLevel 优先倒放缓存的 640×480 画面。缓存不足时回溯模拟状态。
+# 倒放结束或跳过时，由 SoloLevel.restart_single() 请求重开。
 
 const AviMjpegWriter := preload("res://core/present/record/avi_writer.gd")
 const WavWriter := preload("res://core/present/record/wav_writer.gd")
@@ -33,11 +28,11 @@ const TAPE_QUALITY := 0.75
 const TAPE_MAX_PENDING := 2
 
 const RECORD_DIR := "user://recordings"
-# REWIND 巨字：main 用 64，这里同样落在像素字体 16 的倍数上（T_HUGE=128 的一半）。
+# REWIND 提示使用 64 像素字号，为像素字体基准字号的整数倍。
 const REWIND_FONT := UiDesign.T_HUGE / 2
 
 
-# ── worker 任务：都是自持 RefCounted，线程只碰自己，宿主节点先被释放也不崩 ──
+# 工作线程任务持有自己的数据，可在 Recorder 释放后继续完成。
 class RecordJob extends RefCounted:
 	var mutex := Mutex.new()
 	var done := false
@@ -122,7 +117,7 @@ var _rec_final_slots := 0
 var _rec_last_blob := PackedByteArray()
 var _audio = null
 
-# ── MP4 后编码（worker 线程；主线程每帧轮询完成） ──
+# MP4 后台转码。主线程每帧检查转码是否完成。
 var _ffmpeg := ""
 var _rec_crf := 22
 var _transcodes: Array = []
@@ -176,7 +171,7 @@ func _ready() -> void:
 	set_process_input(true)
 
 
-# 场景切换会连同 MatchView 一起释放 Recorder：收尾尚未关闭的文件，避免半截 AVI。
+# 离开场景时，结束录制并关闭尚在写入的文件。
 func _exit_tree() -> void:
 	if not _enabled:
 		return
@@ -497,7 +492,7 @@ func _flush_record() -> void:
 		_rec_last_blob = blob
 
 
-# ══════════════════════════ 死亡带（solo 内存缓冲） ══════════════════════════
+# 单人死亡倒带的帧缓存。
 
 func _submit_tape(img: Image) -> void:
 	if _tape_jobs.size() >= TAPE_MAX_PENDING:
@@ -533,9 +528,9 @@ func _flush_tape() -> void:
 		_tape.append(t, blob)
 
 
-# ══════════════════════════ 倒带回放（纯表现，不改模拟） ══════════════════════════
+# 倒放缓存画面。
 
-## P3b 入口：solo 倒地时回放内存带，播完 restart_single()。返回 false = 带太短/不在单人。
+## 倒放单人角色死亡前的缓存画面，结束时请求重开。角色尚未倒地或缓存不足时返回 false。
 func start_rewind() -> bool:
 	if _replaying:
 		return true
@@ -753,7 +748,7 @@ func _tick_capture(tape_due: bool) -> void:
 			if img != null:
 				_rec_capture_slot = slot
 				_submit_record(img, slot)
-				# ★ 录制期死亡带复用同一张整帧，在 worker 里 resize，不额外读回第二张图。
+				# 同时录屏时，倒带缓存复用已读回的画面，在工作线程中缩小尺寸。
 				if tape_due:
 					_last_tape_t = _run_t
 					_submit_tape(img)

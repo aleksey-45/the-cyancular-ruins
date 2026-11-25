@@ -1,16 +1,13 @@
 class_name LobbyRoomCard
 extends Button
 
-# 大厅里的一张局域网房间卡片(设计系统 v2)。
-# 卡本体 = 可点 Button(RowButton variation:底色/描边/hover/pressed/disabled 全在 Theme 2.0),
-# 内容 = MarginContainer + HBox/VBox,所有子控件 mouse_filter = IGNORE(点文字也算点整卡)。
-# 信息来自广播包(LanDiscovery.rooms);点击后带着房主地址端点交给控制器直连加入。
-# ★ 不 new StyleBoxFlat、不写 Color 字面量、不设 position/size;模式色只引用 UiDesign token。
-# ★ 卡高由内容驱动(_fit_height 在 present 后回填,同 main 房卡做法),不手抬行高。
+# 联机大厅中的局域网房间卡片。用 RowButton 主题变体处理悬停、按下和禁用等状态。
+# 子控件忽略鼠标输入，整张卡片可点击。点击后，控制器根据广播中的服务器地址尝试直连。
+# 卡片的最小高度取决于内容。字体和颜色沿用 UI v2 主题。
 
 signal join_requested(code: String, endpoint: Dictionary)
 
-# 内容驱动下限:SP_9 + SP_8 = 112(与 main 房卡同档;真实高度由 _fit_height 按内容回填)。
+# 卡片最小高度的下限为 112 像素。
 const CARD_MIN_H := UiDesign.SP_9 + UiDesign.SP_8
 
 var _info: Dictionary = {}
@@ -105,7 +102,7 @@ func present(info: Dictionary) -> void:
 	_code.text = str(info.get("code", ""))
 	_count.text = "人数 %d / %d" % [int(info.get("players", 0)), int(info.get("max", 0))]
 	_fit_height()
-	# Theme 的字体度量要入树后才解析,入树后下一帧再按内容回填一次(同 main 房卡:不手抬行高)。
+	# 控件加入场景树后，在下一帧按主题字体重新测量内容。
 	_fit_height.call_deferred()
 
 
@@ -116,7 +113,7 @@ func _on_pressed() -> void:
 	join_requested.emit(str(_info["code"]), {"ip": str(_info.get("ip", "")), "port": int(_info.get("port", 0))})
 
 
-# Button 不是 Container,子节点不参与最小尺寸;按内容(含 Margin)回填卡高。
+# Button 不会按子控件自动调整尺寸。根据内容与内边距设置卡片最小高度。
 func _fit_height() -> void:
 	var content := _frame.get_combined_minimum_size()
 	custom_minimum_size = Vector2(0, maxi(int(content.y), CARD_MIN_H))

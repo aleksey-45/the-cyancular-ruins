@@ -2,8 +2,8 @@ class_name UiDesign
 extends RefCounted
 
 
-# ── 设计系统 tokens(单一来源 = 本文件;页面只许引用,不许写字面量 —— 契约 .tmp/ui-system-contract.md §2)──
-# 间距档(像素;布局度量,8 的倍数)
+# 设计系统 v2 的间距、字号、圆角和描边常量。界面布局约定见 docs/construction/2026-11-23-ui-full-replacement-plan.md 的「实现约定」。
+# 布局间距以像素为单位。
 const SP_0 := 0
 const SP_1 := 4
 const SP_2 := 8
@@ -15,11 +15,9 @@ const SP_7 := 40
 const SP_8 := 48
 const SP_9 := 64
 const SP_10 := 80
-# HUD 屏边距:**离屏幕边**的统一距离(与 SP_5 同值但语义不同 —— SP_* 是控件间距)。HUD 例外用
-# anchors + 本 token 表达,页面禁止再用 `1920.0 - …` / `1440.0 - …` 从逻辑分辨率反推坐标
-# (契约 .tmp/ui-system-contract.md §5 / docs/systems/presentation/ui-design-system.md §5)。
+# HUD 与视口边缘的统一间距。用锚点与此常量定位 HUD，避免将坐标绑定到固定分辨率。
 const MARGIN := 24
-# 字号档(像素字体只在 16 的倍数下锐利;新增档位必须同步 style_control 的 assert)
+# 像素字体优先使用 16 的整数倍字号。其他字号用原尺寸截图检查字形清晰度。
 const T_TITLE := 160
 const T_HUGE := 128
 const T_H1 := 48
@@ -36,10 +34,8 @@ const R_LG := 6
 const BORDER_W := 2
 const BORDER_W_DIM := 1
 
-# Theme 2.0(type variations 全由 tools/gen_menu_theme.gd 生成;本文件只引用,不手工造样式)。
-# ★ 为什么把 Theme 挂在工厂控件自己身上:控件可能被加进**没挂 menu_theme 的树**(HUD / 载入屏 /
-#   服务端 GUI / 编辑器),只设 variation 在那种树里会退回 Godot 默认主题(灰皮)。挂的是**同一份**
-#   资源(单一真相源不变),variation 在任何调用树里都能解析;挂在已挂主题的树上也无害。
+# 主题类型变体由 tools/gen_menu_theme_v2.gd 生成。
+# 工厂为控件引用同一份主题资源，确保 HUD、加载界面和编辑器中的控件都能解析主题变体。
 const MENU_THEME := preload("res://ui/theme/menu_theme_v2.tres")
 
 
@@ -53,8 +49,7 @@ static func pixel_font() -> Font:
 
 
 static func style_control(c: Control, size: int) -> void:
-	# 像素字体在 16/32/48… 最锐利,但设计需要 28/40 这类档位时允许任意整数;
-	# 非 16 倍数必须经过实际截图确认,不要盲用。
+	# 允许正整数字号。使用 24、28、40 等非基准字号时，以实际截图检查笔画。
 	assert(size > 0, "字号必须为正;收到 %d" % size)
 	c.add_theme_font_size_override("font_size", size)
 	var pf: Font = pixel_font()
@@ -88,7 +83,7 @@ static func fit_name(s: String, max_units: int) -> String:
 	return out
 
 
-# ── 调色板(全项目 UI 配色的唯一来源:颜色只在这里定义,其余文件一律引用,不许再写 Color 字面量)──
+# UI 调色板。各页面使用这里定义的颜色。
 const C_BG          := Color(0.039, 0.059, 0.094)
 const C_SURFACE     := Color(0.071, 0.086, 0.118)
 const C_ROW         := Color(0.086, 0.094, 0.110)
@@ -96,14 +91,14 @@ const C_FIELD       := Color(0.106, 0.118, 0.141)
 const C_BTN_FILL    := Color(0.106, 0.125, 0.157)
 const C_BTN_FILL_HI := Color(0.137, 0.165, 0.204)
 const C_BTN_FILL_DN := Color(0.063, 0.075, 0.098)
-# 描边亮度标定目标(实测,不是拍脑袋):对页面底 ≥3:1、对按钮填充 ≥3:1 —— 第一版 #3D4A5A 只到 2.13:1 / 1.82:1,偏暗故上调。
+# 描边与页面背景、按钮填充色的对比度目标均为 3:1。旧值 #3D4A5A 实测分别为 2.13:1 和 1.82:1。
 const C_BORDER      := Color(0.361, 0.439, 0.561)
 const C_BORDER_DIM  := Color(0.250, 0.310, 0.400)
 const C_ACCENT      := Color(0.349, 0.851, 0.902)
 const C_DANGER      := Color(0.900, 0.400, 0.400)
 const C_TEXT        := Color(0.878, 0.914, 0.949)
 const C_TEXT_DIM    := Color(0.510, 0.573, 0.639)
-# ★★ C_WHITE 不是 C_TEXT(C_TEXT 略带蓝,单通道差 0.122):别把走默认色的调用点统一成 C_TEXT —— 深底上肉眼几乎看不出,但迁移的判据是逐像素(设置页键位表那一列动作名,实测差 9220 个像素)。
+# 默认纯白使用 C_WHITE，带冷色调的正文使用 C_TEXT。切换颜色会改变截图中的文字像素。
 const C_WHITE       := Color(1, 1, 1)
 const C_WARN        := Color(0.950, 0.850, 0.550)
 
@@ -121,16 +116,15 @@ const C_TRANSPARENT := Color(0, 0, 0, 0)
 const C_GRACE       := Color(0.72, 0.62, 0.90)
 
 const C_PLATE       := Color(0, 0, 0, 0.1)
-# 主菜单实时光影背景上的压暗层(可读性;不是 HUD 底板,单独一个 token)。
+# 主菜单背景遮罩色，用于提高菜单文字的对比度。
 const C_MENU_DIM    := Color(0, 0, 0, 0.22)
-# HUD 里「选中的武器行」底板:比通用 C_PLATE 深一档(原先 hud.gd 在调用点写 Color(0,0,0,0.28));
-# 颜色定义只许住在本文件 —— 页面引用本 token,不许写字面量。
+# 当前选中的武器行使用比 C_PLATE 更深的底色。
 const C_PLATE_DEEP  := Color(0, 0, 0, 0.28)
 
 const C_TEAM_A := Color(99.0 / 255.0, 155.0 / 255.0, 1.0)
 const C_TEAM_B := Color(128.0 / 255.0, 244.0 / 255.0, 1.0)
 
-# 延迟阈值配色的单一来源:两个对局 HUD(pvp_hud / royale_hud)的 _on_ping 都调它 —— 原先只有 1v1 按阈值上色,同一个数字在两种模式里长得不一样。
+# 对局 HUD 共用延迟阈值配色。
 static func ping_color(ms: int) -> Color:
 	if ms < 60:
 		return Color(0.45, 0.9, 0.45)
@@ -148,12 +142,8 @@ const BTN_BORDER_W := BORDER_W   # 兼容旧引用;新代码用 BORDER_W
 
 
 # ── HUD 底板工厂 ───────────────────────────────────────────────────────────
-# HUD 元素一律垫半透明深底板(唯一颜色语义 = C_PLATE 黑 0.1;例外见 docs/systems/presentation/ui.md「HUD」)。
-# 本函数是**唯一**一处 HUD 底板 `StyleBoxFlat` 的构造点:页面不再手写 `StyleBoxFlat.new()` /
-# `add_theme_stylebox_override`(契约 §4)。语义与迁移前逐处复制完全一致:直角、无描边、
-# content margin 由调用方给像素档(同一调用方的 x/y 对称)。
-#   · draw_center=false:不画底色(右上角击杀计数器:只留 content margin 撑出留白)。
-#   · fill:默认 C_PLATE;选中态用 C_PLATE_DEEP,不垫底用 C_TRANSPARENT。
+# 创建 HUD 底板。默认半透明深底、直角、无描边，调用方指定横向和纵向内边距。
+# 击杀计数器可关闭底色，仅保留边距。选中项使用 C_PLATE_DEEP。
 static func hud_plate(c: Control, pad_x: int, pad_y: int, draw_center := true,
 		fill: Color = C_PLATE) -> void:
 	var sb := StyleBoxFlat.new()
@@ -206,8 +196,7 @@ static func skin_menu_panel(outer: PanelContainer, padding: Vector2) -> void:
 	_apply_variation(outer, &"PanelCarved")
 	var body := PanelContainer.new()
 	body.name = "Body"
-	# 内衬 = 透明底 + C_INNER 亮线;padding 是**布局参数**不是样式 —— 能对上 Theme 现成档位的直接取变体,
-	# 对不上的从 Theme 的 PanelCarvedBody 复制一份、只改 content_margin(颜色/描边仍只有主题一份真相源)。
+	# 优先使用内边距匹配的主题变体。没有对应变体时，复制 PanelCarvedBody 并调整内边距。
 	var body_var := _body_variation_for(padding)
 	if body_var != &"":
 		_apply_variation(body, body_var)
@@ -219,14 +208,14 @@ static func skin_menu_panel(outer: PanelContainer, padding: Vector2) -> void:
 		isb.content_margin_top = padding.y
 		isb.content_margin_bottom = padding.y
 		body.add_theme_stylebox_override("panel", isb)
-	# 把外层已有的子节点搬进 Body(就地套皮的调用方:骨架来自 .tscn);★ 必须先 remove_child 再 add_child —— 同帧直接 add 会因已有父节点而静默换父失败。
+	# 先从原父节点移除 .tscn 中的内容节点，再将它们加入新的 Body 容器。
 	for c in outer.get_children():
 		outer.remove_child(c)
 		body.add_child(c)
 	outer.add_child(body)
 
 
-# Theme 里已有的「抠槽内衬」档位(与 tools/gen_menu_theme.gd 的 _panel_variants 对应);其它 padding 走复制档。
+# 将内边距映射到主题变体，定义对应 tools/gen_menu_theme_v2.gd 的 _panel_variants。
 static func _body_variation_for(padding: Vector2) -> StringName:
 	if padding == Vector2(64, 46):
 		return &"PanelCarvedBody"
@@ -235,13 +224,13 @@ static func _body_variation_for(padding: Vector2) -> StringName:
 	return &""
 
 
-# 旧 API 的 variant 名 → Theme 里的旧 variation(样式值没变,只是从逐控件 override 换成主题)。
+# 将旧接口的样式名映射为兼容主题变体。
 const _MENU_BTN_VARIATIONS := {
 	"primary": &"BtnPrimary", "quiet": &"BtnQuiet",
 	"gold": &"BtnGold", "accent": &"BtnAccent",
 	"compact": &"BtnCompact",
 }
-# 新 API 的 variant 名 → Theme 2.0 的 Button variation(契约 §3)。
+# 将按钮样式名映射为对应的主题类型变体。
 const _UI_BTN_VARIATIONS := {
 	"primary": &"Primary", "quiet": &"Quiet", "danger": &"Danger", "icon": &"Icon",
 }
@@ -257,7 +246,7 @@ static func menu_button(text: String, size: int, min_size: Vector2 = Vector2(640
 	return b
 
 
-# ── 组件化薄 API(契约 §4;新页面只用这些 + tokens,不再自己拼 StyleBox / 设字号)──
+# 通用控件构建方法。
 static func ui_button(text: String, size: int = T_H2, min_size: Vector2 = Vector2.ZERO,
 		variant: String = "primary") -> Button:
 	var b := Button.new()
@@ -319,9 +308,6 @@ static func header_strip(text: String, size: int = 32, centered := false) -> Pan
 	return p
 
 
-# menu_filter_button 已删(全仓零调用):选中态由 scenes/mp_lobby.tscn 的内联 SubResource 承担;为何 Theme 里没有 Filter 变体见 tools/gen_menu_theme.gd 开头的覆盖上限注。
-
-
 static func row_box() -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = C_ROW
@@ -361,13 +347,12 @@ static func style_line_edit(le: LineEdit) -> void:
 
 
 static func style_button(b: Button, variant: String = "primary") -> void:
-	# 旧 API 的两种皮 = Theme 里的 BtnLegacy / BtnLegacyQuiet(与改造前逐字段等值:填充 C_BTN_FILL、
-# 描边 C_BORDER / C_BORDER_DIM;menu_button 那套 C_HEADER 填充的是 BtnPrimary 家族)。
+	# 旧版按钮使用 BtnLegacy 或 BtnLegacyQuiet 主题变体。
 	var v := &"BtnLegacyQuiet" if variant == "quiet" else &"BtnLegacy"
 	_apply_variation(b, v)
 
 
-# ── 开关图形:Godot 默认主题的 CheckButton 开 = 一条浅灰药丸,关 = 一个小灰点、轨道不可见(状态一变连形状都变了);自绘一对图标,开/关都是完整胶囊轨道,只有颜色与滑块位置不同 ──
+# 自定义开关图标。开和关都保留完整轨道，通过颜色和滑块位置区分状态。
 const SWITCH_W := 40
 const SWITCH_H := 22
 const SWITCH_TRACK_OFF := Color(0.180, 0.212, 0.259)
@@ -407,7 +392,7 @@ static func switch_icons() -> Array:
 
 static func style_check(cb: CheckButton, size: int) -> void:
 	style_control(cb, size)
-	# 图标(自绘胶囊开关)与文字色都在 Theme 的 Kit variation 里;不再逐控件挂 override。
+	# 开关图标和文字颜色由 Kit 主题变体提供。
 	_apply_variation(cb, &"Kit")
 
 

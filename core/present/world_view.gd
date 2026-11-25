@@ -22,7 +22,7 @@ const ENEMY_GHOST_LIFE := 0.16
 const HURT_GHOST_LIFE := 0.18
 const DEATH_GHOST_LIFE := 0.30
 const TRAIL_LIFE := 0.26
-# 时间加速(单人)沿用旧观感:红/蓝交替、50% 透明度。
+# 单人时间加速残影交替使用红色和蓝色，初始不透明度为 55%。
 const HASTE_GHOST_WARM := Color(1.0, 0.25, 0.25, 0.55)
 const HASTE_GHOST_COOL := Color(0.3, 0.4, 1.0, 0.55)
 const HURT_GHOST := Color(1.0, 0.4, 0.4, 0.5)
@@ -45,7 +45,7 @@ var _canvas: WorldCanvas
 var _size: Vector2
 # 挤压拉伸:每个实体一个 tracker(SquashTracker 从 PlayerConfig/EnemyConfig 取参数)。
 var _squash := {}
-# 通用残影场:旧 _trails/_trail_deadlines 的唯一实现替换。
+# 残影绘制与回收由 AfterImageField 负责。
 var _after := AfterImageField.new()
 var _ghost_after := {}
 var _hit_prev := {}

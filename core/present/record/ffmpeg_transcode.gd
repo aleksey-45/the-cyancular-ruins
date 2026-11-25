@@ -1,8 +1,8 @@
 class_name FfmpegTranscode
 extends RefCounted
 
-# 录屏后编码辅助:按 PATH(或环境变量覆盖)找 ffmpeg,把 MJPEG AVI + WAV 合成为 H.264/AAC MP4。
-# 有 ffmpeg 才走 MP4;没有就由调用方保留 AVI+WAV,绝不让它变成硬依赖。
+# 在 PATH 或指定路径中查找 ffmpeg，将 MJPEG AVI 和 WAV 转为 H.264/AAC MP4。
+# 找不到 ffmpeg 时，调用方保留原始 AVI 和 WAV。
 
 const FFMPEG_ENV := "CYR_REC_FFMPEG"
 const CRF_ENV := "CYR_REC_CRF"
@@ -27,7 +27,7 @@ static func resolve(env_override: String) -> String:
 	return ""
 
 
-# CYR_REC_CRF:空/非法 = 默认 22(视觉无损档);数字夹到 14..32,越小越清晰越大。
+# CYR_REC_CRF 默认为 22，取值限制在 14–32。较小的值通常保留更多细节，也会增加文件大小。
 static func resolve_crf(env_override: String) -> int:
 	var ov := env_override.strip_edges()
 	if ov == "" or not ov.is_valid_int():
@@ -35,7 +35,7 @@ static func resolve_crf(env_override: String) -> int:
 	return clampi(ov.to_int(), CRF_MIN, CRF_MAX)
 
 
-# ★ 只在 worker 线程调用:OS.execute 阻塞的是该线程,主线程不碰它。
+# OS.execute 会阻塞调用线程，在工作线程中执行转码。
 static func transcode(ffmpeg: String, avi: String, wav: String, output: String, crf: int) -> Dictionary:
 	if ffmpeg == "" or not FileAccess.file_exists(avi):
 		return {"ok": false, "log": "ffmpeg 或输入文件不存在", "audio": false}

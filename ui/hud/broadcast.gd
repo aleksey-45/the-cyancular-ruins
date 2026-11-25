@@ -16,7 +16,7 @@ extends Control
 #   · 巨字缩放入场(punch)的幅度/衰减与迁移前相同。
 
 # 巨字/副文案字号:像素字体硬约束 = 16 的倍数;用 T_* token 组合出原来的 144 / 64,
-# 不把 144 / 64 写成裸数字(契约见 docs/construction/2026-11-23-ui-full-replacement-plan.md §5.4)。
+# HUD 的布局和样式约定见 docs/construction/2026-11-23-ui-full-replacement-plan.md 的「实现约定」。
 const BIG_SIZE := UiDesign.T_H1 * 3   # 144
 const SUB_SIZE := UiDesign.T_H2 * 2   # 64
 

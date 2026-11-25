@@ -1,12 +1,10 @@
 class_name RewindTape
 extends RefCounted
 
-# 死亡倒带的纯逻辑：内存环形缓冲 + 按年龄抽稀 + 回放加速曲线。
-# 不碰 Node / Image / 文件；payload 由调用方给（录制侧是 JPEG PackedByteArray）。
-#
-# 曲线：显示帧几何级数 step_i = step_0 * r^i（step_0=1/60，r=1.04），
-# 前面 0.5s 死亡慢放（0.5×→1×，吃掉 D_A=0.375 游戏秒），最后 0.1s 原点定格。
-# 曲线参数只在死亡瞬间算一次（D 已知）；录制期按"最老帧再抽稀一半"控制内存。
+# 死亡倒带的帧缓存和播放速度曲线。调用方提供帧数据，录制器传入 JPEG 字节数组。
+# 达到容量上限后，在较早的一半画面中隔帧删除，始终保留起始帧。
+# 画面短暂停在死亡时刻，再用 0.5 秒把倒放速度从 0.5 倍提高到 1 倍。
+# 接着按几何级数加快倒放速度，回到起始帧后定格 0.1 秒。
 
 const STEP0 := 1.0 / 60.0
 const R_BASE := 1.04
@@ -47,7 +45,7 @@ func append(t: float, payload: Variant) -> void:
 
 
 func _compact() -> void:
-	# 超上限时把"最老的一半"隔一个扔一个（保留最老那一帧 = 原点）。
+	# 超出上限时，降低较早一半画面的采样密度并保留起始帧。
 	while _t.size() > MAX_FRAMES:
 		var half := _t.size() / 2
 		var nt: Array[float] = []
@@ -57,7 +55,7 @@ func _compact() -> void:
 				nt.append(_t[i])
 				np.append(_payload[i])
 			elif i < half and i % 2 == 1:
-				continue   # 老段抽稀一半
+				continue   # 较早的画面隔帧删除。
 			else:
 				nt.append(_t[i])
 				np.append(_payload[i])
@@ -65,7 +63,7 @@ func _compact() -> void:
 		_payload = np
 
 
-## 冻结成回放带：frames 按 t 升序；ages 是"距死亡的游戏秒"（最老 = 最大）。
+## 生成倒带用的帧快照。frames 按录制时间升序排列，ages 记录各帧距死亡的游戏时间（秒）。
 func freeze(now_t: float) -> Dictionary:
 	var last_t := _t[_t.size() - 1] if not _t.is_empty() else now_t
 	var d := clampf(now_t - _t[0] if not _t.is_empty() else 0.0, 0.0, now_t)
@@ -82,7 +80,7 @@ func freeze(now_t: float) -> Dictionary:
 	}
 
 
-## 由一局时长算回放调度；返回 {} = 不播（太短/无帧）。
+## 根据录制时长计算倒放速度与时长。录制时长不足时返回空字典。
 static func schedule(run_seconds: float) -> Dictionary:
 	var d := maxf(run_seconds, 0.0)
 	if d < MIN_RUN:
@@ -116,7 +114,7 @@ static func _solve_r(body: float, n: int) -> float:
 	return 0.5 * (lo + hi)
 
 
-## 演出经过 tau 秒时：要倒回到多少游戏秒（age），当前倍率 speed。
+## 根据倒放已播放的时间 tau 计算目标帧距死亡的秒数 age 和当前速度倍率 speed。
 ## tau ∈ [0, sched.total]；返回 Vector2(age, speed)。
 static func age_at(tau: float, sched: Dictionary) -> Vector2:
 	var d: float = sched["D"]

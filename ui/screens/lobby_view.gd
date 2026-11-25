@@ -24,7 +24,7 @@ signal exit_room_requested
 signal back_requested
 signal preference_changed(value: Variant, key: StringName)
 
-# 4 个筛选 = 空串(全部)+ 3 种模式;文案/顺序与迁移前的 UiFactory.ROOM_FILTERS 一致。
+# 提供「全部」和三个对战模式筛选项，空字符串代表「全部」。
 const FILTERS := [
 	["", "全部"],
 	[PvpSession.MODE_PVP, "1v1"],
@@ -42,8 +42,7 @@ const CODE_MIN_UNITS := 6
 const DIM_ALPHA := 0.55
 # 加入房间对话框的内容下限宽度:SP_10 × 6 = 480(内容驱动,不写固定 rect)。
 const JOIN_MIN_W := UiDesign.SP_10 * 6
-# 大厅内容的最大宽度:在 1920 逻辑视口上左右各留 5%（2 × 96px），内容宽 1472。
-# 太窄会让工具栏/卡片显得缩在中间，太宽又会把筛选/按钮拉满整屏。
+# 大厅内容区宽度上限为 1472 像素。在 1920 像素的逻辑视口中居中时，两侧各留 224 像素。
 const PAGE_MAX_W := 1472
 
 var _mode := ""
@@ -300,7 +299,7 @@ func _build_overlays(prefs: Dictionary) -> void:
 	_build_join()
 
 
-# 全屏居中容器:自身不吃鼠标(内容面板自己吃),不设 position/size,由 CenterContainer 居中内容。
+# 全屏 CenterContainer 居中摆放面板，鼠标输入由面板处理。
 func _overlay_center(layer_name: String) -> CenterContainer:
 	var center := CenterContainer.new()
 	center.name = layer_name

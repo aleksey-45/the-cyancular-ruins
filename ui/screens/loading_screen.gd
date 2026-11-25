@@ -1,22 +1,19 @@
 class_name LoadingScreen
 extends CanvasLayer
 
-# 载入界面(P0,设计系统 v2):CanvasLayer(200)全屏遮罩 + HeaderStrip + 阶段进度条。
-# ★ 职责单一:只负责"显示/更新/隐藏"以及加载期间的输入拦截;场景构建与换场由 SceneTransition 驱动。
-# ★ API(计划 P0 §2.1):show_loading(text) / set_progress(p, text) / hide_loading();
-#   失败态另有 show_failure(text) + back_requested 信号,保证加载失败不白屏、可返回。
-# ★ 构建是同步 GDScript,没有资源级回调 —— 进度只表示**阶段**(0/0.15/0.55/0.85/1),不伪造细粒度。
-# ★ 样式只用 UiDesign token / Theme 2.0 variation:不写 Color 字面量、不写 StyleBox、不写绝对坐标。
-# ★ 按需挂到 tree.root:遮罩要活过换场那一帧;hide_loading 后自行释放,不常驻场景。
+# 显示全屏加载遮罩和阶段进度条，并在加载期间拦截输入。
+# SceneTransition 构建和切换场景，加载失败时界面显示错误和返回按钮。
+# 遮罩挂在场景树根节点，切换当前场景时继续显示，关闭后释放。
+# 布局和样式使用 UiDesign 常量及主题类型变体。
 
 signal dismissed
 
 const SCENE_PATH := "res://scenes/loading_screen.tscn"
 const HEADER_LOADING := "载 入 中"
 const HEADER_FAILED := "载 入 失 败"
-# 卡片最小宽度:内容驱动(640 = 1280×960 下左右各留 320 的安全宽度),不是屏幕坐标反推。
+# 加载提示卡片的最小宽度为 640 像素。
 const CARD_MIN_W := UiDesign.SP_10 * 8
-# 进度条厚度:8px(SP_2),描边/底色都取 token。
+# 进度条高度为 8 像素，描边和底色取自 UiDesign。
 const BAR_H := UiDesign.SP_2
 
 var _root: Control
@@ -34,7 +31,7 @@ var _back: Button
 var _busy := false
 
 
-# ── 静态挂载:同一个 root 只留一个载入层,按需创建 ─────────────────────────────
+# 按需创建加载界面，每个场景树根节点只保留一份。
 static func find(tree: SceneTree) -> LoadingScreen:
 	if tree == null or tree.root == null:
 		return null

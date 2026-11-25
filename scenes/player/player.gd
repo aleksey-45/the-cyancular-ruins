@@ -135,7 +135,7 @@ func _try_step_up(start: Transform2D, travel: Vector2) -> bool:
 	if rise <= margin or rise > CFG.step_max_height + margin \
 			or (pose.origin.x - start.origin.x - _axis_motion.get_travel().x) * direction <= 0.001:
 		return false
-	# 与 main 一致:≤32px 抬上去;48/64px 按台阶高度自动跳,而不是瞬移。
+	# 高度不超过 32 像素时直接迈上台阶。更高的台阶按高度计算自动跳跃速度。
 	if rise > 32.0 + margin:
 		velocity.y = -sqrt(2.0 * maxf(gravity, 1.0) * (rise + 6.0))
 		velocity.x = step_input.axis * CFG.move_speed * _speed_mult
@@ -148,7 +148,7 @@ func _try_step_up(start: Transform2D, travel: Vector2) -> bool:
 	return true
 
 func _try_ledge_nudge() -> void:
-	# 对齐 main:跳跃/下落贴着台沿时,脚底以 ≤1 个子格卡在台沿竖直面/顶面,向上挤出来。
+	# 角色在空中贴近台沿时，如果脚底低于顶面不超过一个子格，尝试将角色抬到台沿上方。
 	if absf(step_input.axis) < 0.01:
 		return
 	var dir := 1 if step_input.axis > 0.0 else -1

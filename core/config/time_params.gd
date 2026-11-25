@@ -1,7 +1,7 @@
 class_name TimeParams
 extends RefCounted
 
-# 时间玩法参数访问入口：数值在 time_config.tres（main 同款转发层）。
+# 通过现有的单人时间技能接口读取 time_config.tres 中的数值。
 const _CFG: TimeConfig = preload("res://core/config/time_config.tres")
 
 static var GRAIN_INITIAL: int = _CFG.GRAIN_INITIAL

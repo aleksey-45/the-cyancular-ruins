@@ -1,7 +1,7 @@
 class_name EnemyParams
 extends RefCounted
 
-# 敌人参数访问入口：数值在 enemy_config.tres，这里只做转发（main 同款）。
+# 通过现有的敌人参数接口读取 enemy_config.tres 中的数值。
 const _CFG: EnemyConfig = preload("res://core/config/enemy_config.tres")
 
 class shared:

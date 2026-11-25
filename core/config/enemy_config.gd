@@ -1,8 +1,7 @@
 class_name EnemyConfig
 extends Resource
 
-# 敌人参数表：扁平 prefix schema + 默认值；运行时读 enemy_config.tres。
-# 由上游 EnemyParams 内层类常量迁入，数值保持上游 siri 行为。
+# 定义敌人参数及其默认值。字段以前缀区分敌人类型，对局使用 enemy_config.tres 中的数值。
 
 @export var shared_hit_reaction_time: float = 0.1
 @export var shared_corpse_time: float = 0.5
@@ -14,8 +13,8 @@ extends Resource
 @export var shared_bird_water_damp: float = 5.0
 @export var shared_drown_interval: float = 1.5
 @export var shared_drown_damage: int = 5
-# 挤压拉伸(squash & stretch):实现见 core/present/squash_tracker.gd,数值对齐 main 的 EnemyParams。
-# 敌鸟没有 jump/dash 的独立事件:起跳复用 take_off,冲撞复用 charge。
+# 挤压与拉伸参数见 core/present/squash_tracker.gd。
+# 敌鸟的跳跃和冲刺分别沿用起飞（take_off）和蓄力冲撞（charge）的形变强度。
 @export var shared_squash_amount: float = 0.06
 @export var shared_squash_recover: float = 16.0
 @export var shared_squash_take_off: float = 0.8

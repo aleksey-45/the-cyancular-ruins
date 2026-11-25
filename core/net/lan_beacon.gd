@@ -1,9 +1,9 @@
 class_name LanBeacon
 extends RefCounted
 
-# 房主侧局域网广播:按 LanDiscovery 的包格式,周期性把房间信息发到 UDP 7788 端口。
-# 每轮向全局广播地址和每个本机 IPv4 网段的 /24 广播地址各发一次;发送失败静默,下一轮重试。
-# 只发送、不监听,包体里不写 IP;接收端见 LanDiscovery 与大厅监听。
+# 建房后，服务器按 LanDiscovery 定义的格式向 UDP 7788 端口广播房间信息。
+# 每轮向 IPv4 受限广播地址和按 /24 推算的广播地址分别发送，失败时等下一轮重试。
+# 客户端从 UDP 数据报的源地址取得服务器 IP。
 
 const PORT := LanDiscovery.PORT
 const INTERVAL := LanDiscovery.INTERVAL
@@ -15,8 +15,8 @@ var _room_info := Callable()
 var _next_at := 0.0
 var _running := false
 
-## 开始广播;room_info 在每轮发包时调用,返回交给 LanDiscovery.encode_room 的字段。
-## 重复调用无副作用;每次启动都按当前本机地址重新计算目标。
+## 开始广播。每轮发送前调用 room_info，取得 LanDiscovery.encode_room 所需的字段。
+## 广播已启动时直接返回。每次重新启动时，根据当前本机地址计算广播目标。
 func start(room_info: Callable) -> void:
 	if _running:
 		return
@@ -40,7 +40,7 @@ func stop() -> void:
 func is_running() -> bool:
 	return _running
 
-## 到达广播周期时发送一包。now 与 RoomSession 的时间基准一致(秒)。
+## 到达发送时间后，向每个目标地址发送一个广播包。now 与 RoomSession 使用相同的时间基准，单位为秒。
 func tick(now: float) -> void:
 	if not _running or now < _next_at or not _room_info.is_valid():
 		return
@@ -51,7 +51,7 @@ func tick(now: float) -> void:
 		if _peer.set_dest_address(address, PORT) == OK:
 			_peer.put_packet(packet)
 
-## 目标地址:全局广播地址,加上每个本机 IPv4 的 /24 广播地址(x.y.z.255)。
+## 返回 IPv4 受限广播地址，以及将本机 IPv4 地址按 /24 推算得到的广播地址（x.y.z.255）。
 func _broadcast_targets() -> PackedStringArray:
 	var targets := PackedStringArray([BROADCAST])
 	var seen := {BROADCAST: true}

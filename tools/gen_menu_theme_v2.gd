@@ -1,18 +1,10 @@
 extends SceneTree
 
-# 菜单 Theme(Theme 2.0)生成器 —— 生成物:`res://ui/theme/menu_theme_v2.tres`。
-#
-# ★ 本 Theme **刻意不设基础类型 `Button` 的皮肤**:`CheckButton` / `CheckBox` 都继承 `Button`
-#   (`CheckButton → Button → BaseButton`),给基础类型 Button 挂皮会让开关沿类链穿上按钮皮
-#   (而 CheckButton 的开关外观是自绘胶囊图标,见 UiDesign.switch_icons)。按钮一律走 **type variation**。
-# ★ 颜色只从 `UiDesign` 的 `C_*` 取;字号/间距/圆角只从 `SP_* / T_* / R_* / BORDER_*` token 取 ——
-#   本文件里不写颜色字面量,也不写魔法数(旧 variation 的既有数值原样保留,只为不改动未迁移页面的像素)。
-# ★ Theme 的 variation 名是**全局唯一**的(名字 → base 只能一条,`set_type_variation` 是覆盖语义、不报错),
-#   所以契约里跨控件同名的 `Field` / `Kit` 各只建一条,用 base=Control 承载多个控件的主题项。
-# ★ 两趟:Theme 要引用两个开关 PNG,而 res:// 下的 PNG 必须先 `--import` 才 load() 得到(-s 不触发导入)
-#   ⇒ 第一趟写下 PNG 并以 exit 1 要求「先 --import 再重跑」,第二趟才真的建 Theme。
-# ★ 刻意不做「缺图标也照样存一份」:那会留下一份看着成功、其实少两个图标的 .tres,而「开关画成默认主题
-#   的小灰点」这种缺失不会报错。
+# 生成 res://ui/theme/menu_theme_v2.tres。
+# 按钮样式定义在主题类型变体中，防止 CheckButton 和 CheckBox 继承普通按钮的样式。
+# 颜色、字号、间距和圆角取自 UiDesign，兼容旧界面的主题变体保留原有数值。
+# 同一份主题中的变体名唯一。Field 和 Kit 各以 Control 为基类，提供多种控件所需的主题项。
+# 开关 PNG 尚未导入时，先写出图标并返回退出码 1。用 Godot --import 导入后重新运行以生成主题。
 
 const OUT_THEME := "res://ui/theme/menu_theme_v2.tres"
 const OUT_SWITCH_OFF := "res://ui/theme/switch_off.png"
@@ -142,7 +134,7 @@ func _field_variants(t: Theme, C: Dictionary) -> void:
 
 
 func _button_variants(t: Theme, F: GDScript, C: Dictionary) -> void:
-	# ── Theme 2.0 的四档(契约 §3)──
+	# UI v2 的通用按钮样式。
 	_menu_btn(t, F, C, "Primary", _c(C, "C_EDGE"), _c(C, "C_TEXT"))
 	_menu_btn(t, F, C, "Quiet", _c(C, "C_BORDER_DIM"), _c(C, "C_TEXT_DIM"))
 	_danger_btn(t, F, C)
@@ -245,7 +237,7 @@ func _legacy_btn(t: Theme, F: GDScript, C: Dictionary, name: String, dim: bool) 
 
 
 func _panel_variants(t: Theme, F: GDScript, C: Dictionary) -> void:
-	# ── Theme 2.0 的三档(契约 §3)──
+	# UI v2 的通用面板样式。
 	t.set_type_variation("Card", "PanelContainer")
 	t.set_stylebox("panel", "Card",
 			_flat(C, "C_SURFACE", "C_BORDER", _n(C, "BORDER_W"), _n(C, "SP_5"), _n(C, "SP_4")))
@@ -515,7 +507,7 @@ func _other_controls(t: Theme, F: GDScript, C: Dictionary) -> void:
 	t.set_color("font_disabled_color", "PopupMenu", _c(C, "C_TEXT_DIM"))
 	t.set_color("font_separator_color", "PopupMenu", _c(C, "C_TEXT_DIM"))
 
-	# MenuButton 是 Button 的子类;仍不设基础 Button(避免 CheckButton 穿衣),只给 MenuButton。
+	# 为 MenuButton 单独定义主题项，避免 CheckButton 继承普通按钮样式。
 	# 菜单栏文字按钮:透明底,hover 才出轻底;不再是"实心盒子排在标题旁边"。
 	t.set_stylebox("normal", "MenuButton",
 			_flat(C, "C_TRANSPARENT", "", 0, _n(C, "SP_2"), _n(C, "SP_1")))

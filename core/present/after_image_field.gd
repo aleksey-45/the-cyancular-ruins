@@ -1,15 +1,10 @@
 class_name AfterImageField
 extends RefCounted
 
-# 通用残影场:把「某一帧的角色贴图 + 当时的世界变换 + 颜色 + 绘制通道」排进池子,
-# 每帧按年龄线性淡出、过期回收,超过上限丢最老的一条。
-#
-# 只做数据 + 绘制,不创建 Node:全部经 WorldCanvas.sprite() 提交到
-# Pass.NORMAL / Pass.FOREGROUND(角色残影压在角色下,前景残影盖在世界之上)。
-# 行数组从 _free 池复用,池满时循环覆盖,避免每帧为残影分配新对象。
-#
-# 旧 WorldView._trails 的语义原样保留:寿命 0.26s、按镜头锚点做世界环绕折叠;
-# 红/蓝交替只是颜色由调用方(WorldView)决定,本层不关心触发规则。
+# 记录残影的贴图、世界变换、颜色和绘制通道。残影随存续时间线性淡出，过期后回收。
+# 通过 WorldCanvas.sprite() 绘制，普通残影位于角色下方，前景残影位于世界画面上方。
+# 复用回收的记录。达到数量上限时，优先回收最早的残影。
+# 默认显示 0.26 秒。跨地图边缘时，以相机锚点为参考选择最近的地图副本。
 
 const MAX_ENTRIES := 48
 const DEFAULT_LIFE := 0.26
@@ -20,7 +15,7 @@ var _cap := MAX_ENTRIES
 var _life := DEFAULT_LIFE
 
 
-## 上限/默认寿命可调(探针与 QA 用;运行时用默认值)。
+## 设置最大残影数和默认显示时长。
 func configure(cap: int, life := DEFAULT_LIFE) -> void:
 	_cap = maxi(cap, 1)
 	_life = maxf(life, 0.0)
@@ -58,7 +53,7 @@ func spawn(now: float, image: Texture2D, pose: Transform2D, color: Color,
 	_rows.append(row)
 
 
-## 淡出并绘制;过期的行回收进池。anchor/size 用于世界环绕折叠(与旧 _draw_trails 一致)。
+## 绘制淡出中的残影，回收过期记录。根据相机锚点和地图尺寸计算跨边界的绘制位置。
 func present(now: float, anchor: Vector2, canvas: WorldCanvas, size: Vector2) -> void:
 	for i in range(_rows.size() - 1, -1, -1):
 		var row: Array = _rows[i]
