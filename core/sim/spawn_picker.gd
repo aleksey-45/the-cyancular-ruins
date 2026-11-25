@@ -32,9 +32,10 @@ static func floor_cells(map: Dictionary) -> Array[Vector2i]:
 	return floors
 
 ## 打乱顺序后，取第一个距离足够的点。距离都不足时，选最近威胁最远的点。
-static func pick(pool: Array, occupied: Array[Vector2i], avoid: Array[Vector2i], size: Vector2i) -> Vector2i:
+static func pick(pool: Array, occupied: Array[Vector2i], avoid: Array[Vector2i], size: Vector2i,
+		rng: RandomNumberGenerator) -> Vector2i:
 	var candidates := pool.duplicate()
-	candidates.shuffle()
+	MathUtil.shuffle(candidates, rng)
 	var best := NO_CELL
 	var best_distance := -1
 	for cell: Vector2i in candidates:
@@ -61,9 +62,9 @@ static func player_limit(sides: Dictionary, mode: String, options := {}) -> int:
 	var a: int = sides[1].size()
 	var b: int = sides[2].size()
 	var limit := RoomOptions.capacity(mode, options)
-	if mode == PvpSession.MODE_ROYALE:
+	if mode == WorldSpec.ROYALE:
 		return mini(a + b, limit) if a + b >= RoomOptions.MIN_PLAYERS else 0
-	var per_side := TeamRules.MAX_TEAM if mode == PvpSession.MODE_TEAM else 1
+	var per_side := TeamRules.MAX_TEAM if mode == WorldSpec.TEAM else 1
 	return limit if mini(a, b) >= per_side else 0
 
 ## 联机共用地图标注的出生点，开局时检查净空、支撑及连通性。

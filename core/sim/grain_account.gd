@@ -3,8 +3,6 @@ extends RefCounted
 
 # 单人和 Beta 模式使用相同的时间技能消耗规则，这里保存余额、短期消耗量和透支量。
 
-signal loan_locked
-
 enum { BALANCE, SHORT_USED, LOAN_USED, LOCKED }
 
 var cap: float
@@ -61,7 +59,6 @@ func spend(delta: float, rate: float) -> float:
 		if loan_used >= loan_max:
 			loan_used = loan_max
 			locked = true
-			loan_locked.emit()
 	return got
 
 

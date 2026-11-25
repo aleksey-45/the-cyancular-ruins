@@ -5,8 +5,6 @@ extends RefCounted
 # 每次播放创建一个节点，结束时释放。音频发往 SFX 总线，找不到该总线时改用 Master。
 
 const RATE := 22050
-const ACTION_SOUNDS := {"reload_started": "reload", "reload_finished": "switch",
-		"equipped": "switch", "pickup_denied": "deny"}
 
 static var _cache: Dictionary = {}
 static var _rng := RandomNumberGenerator.new()

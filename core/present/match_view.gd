@@ -21,6 +21,7 @@ var _radar: Minimap
 var _symbol: Label
 var _time_of_day: Label
 var _mode: MatchFrame.Mode
+var _presented_at := -1.0
 
 func mount(world: WorldView, map: Dictionary,
 		mode: MatchFrame.Mode, clock: MatchFrame.Clock, radar: bool) -> void:
@@ -72,6 +73,12 @@ func _mount_backgrounds(viewport: SubViewport, map: Dictionary, margin: Vector2)
 		viewport.add_child(plane)
 
 func present(delta: float, frame: MatchFrame) -> void:
+	if frame.now == _presented_at:
+		return
+	_presented_at = frame.now
+	_apply_cues(frame)
+	if frame.round != null:
+		pvp_hud.show_round(frame.round)
 	if frame.hit_ratio > 0.0:
 		_screen.flash_hit(clampf(frame.hit_ratio * 2.0, 0.5, 1.0))
 	_screen.set_downed(frame.downed)
@@ -91,6 +98,33 @@ func present(delta: float, frame: MatchFrame) -> void:
 	_world.present(frame, grain_target)
 	if _radar != null:
 		_radar.present(frame)
+
+func _apply_cues(frame: MatchFrame) -> void:
+	camera.hit(frame.hit_ratio)
+	for cue: Array in frame.cues:
+		match cue[0]:
+			"reset": _world.reset()
+			"clear_motion": _world.clear_motion(cue[1])
+			"motion": _world.motion(cue[1], cue[2], frame.now, cue[3])
+			"splash": _world.splash(cue[1], cue[2], frame.now)
+			"debris": _world.debris(cue[1], cue[2], frame.now)
+			"number": _world.hit(cue[1], cue[2], cue[3], cue[4])
+			"sound": Sfx.play(cue[1])
+			"hit": feedback.show_hit()
+			"kill": feedback.show_kill(cue[1])
+			"streak_reset": feedback.reset_streak()
+			"grain": _world.grain(cue[1], frame.now, TimeParams.ELITE_GRAIN_DELAY_TICKS * ActorStep.DT)
+			"grain_received": watch.tremble()
+			"loan_locked": watch.flash_locked()
+			"fire":
+				_world.fire(cue[1], cue[2], frame.now)
+				Sfx.play(WeaponRegistry.definition(cue[2])["shot_sound"])
+				if cue[3]:
+					camera.fire(cue[2])
+			"blast":
+				_world.blast(cue[1], frame.now)
+				var distance: float = frame.focus.distance_to(GridPathfinder.anchor_to_nearest(cue[1], frame.focus, _world._size))
+				camera.blast(distance, WeaponRegistry.blast_definition(cue[2])["radius"])
 
 func _mount_watch(clock: MatchFrame.Clock) -> void:
 	watch = WatchHud.new(clock)

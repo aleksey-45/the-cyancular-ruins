@@ -7,50 +7,55 @@ const STATE := 1
 const EVENT := 2
 const KEEP := 64
 const WIRE_MAGIC := 199
-const PROTOCOL_VERSION := 35
+const PROTOCOL_VERSION := 37
 const MODES := [PvpSession.MODE_PVP, PvpSession.MODE_TEAM, PvpSession.MODE_ROYALE]
 const Field := NetEvent.Field
 const PlayerSlots := preload("res://core/sim/player_state_schema.gd")
-const NetPlayer := PlayerSlots.Network
-
-# 增量编码先写入位掩码，每一位对应一个字段。只追加已变化的字段值。
+# 世界字段使用自己的布局。传输只为各字段指定编码。
 const INPUT_FRAME_TYPES := [Field.U32, Field.U32, Field.I32, Field.F64, Field.U16, Field.VEC]
-const PLAYER_TYPES := [Field.U32, Field.U32, Field.BOOL, Field.U32, Field.VEC]
-const PROJECTILE_TYPES := [Field.U8, Field.VEC, Field.VEC]
-const BEAM_TYPES := [Field.U32, Field.POLYLINE]
-const EMPTY_WORLD := {"players": {}, "pickups": {}, "projectiles": {}, "beams": {}}
-const PICKUP_TYPES := [Field.VEC, Field.VEC, Field.U8, Field.U16, Field.U32]
-const TIME_TYPES := [Field.F64, Field.F64, Field.F64, Field.BOOL]
-const FIRE_MODIFIER_TYPES := [Field.F64, Field.F64]
-const DEFAULT_FIRE_MODIFIERS := [1.0, 1.0]
-const COMBAT_EVENT_FIELDS := {
-	NetEvent.Kind.FIRE: [["role", Field.U16], ["tick", Field.U32], ["serial", Field.U32], ["type_id", Field.U8],
-		["pos", Field.VEC], ["dir", Field.VEC]],
-	NetEvent.Kind.HIT: [["shooter", Field.U16], ["victim", Field.U16], ["damage", Field.U32],
-		["tick", Field.U32], ["epoch", Field.U32], ["hp", Field.I32], ["impulse_mode", Field.I8],
-		["pos", Field.VEC], ["facing", Field.I8], ["vel", Field.VEC], ["knock", Field.VEC]],
-	NetEvent.Kind.EXPLOSION: [["id", Field.U64], ["tick", Field.U32], ["type_id", Field.U8], ["pos", Field.VEC]],
+const ACTOR_FIELDS := [
+	Field.VEC, Field.BOOL, Field.F64, Field.VEC, Field.I8, Field.F64, Field.F64, Field.F64,
+	Field.BOOL, Field.BOOL, Field.BOOL, Field.F64, Field.BOOL, Field.BOOL, Field.VEC, Field.U32,
+	Field.F64, Field.BOOL, Field.F64, Field.F64, Field.BOOL, Field.U8, Field.I32, Field.I32,
+	Field.BOOL, Field.F64, Field.BOOL, Field.U32, Field.U32, Field.U16, Field.U32, Field.VEC,
+	Field.U8, Field.U32, Field.U32, Field.INVENTORY,
+]
+const EQUIPMENT_FIELDS := [Field.F64, Field.BOOL, Field.BOOL, Field.I8, Field.F64, Field.F64]
+const MOTION_FIELDS := [Field.VEC, Field.VEC, Field.F64, Field.F64, Field.F64, Field.F64]
+const PROJECTILE_FIELDS := MOTION_FIELDS + [Field.U8, Field.U16, Field.I32, Field.BOOL]
+const HISTORY_FIELDS := [Field.F64, Field.F64, Field.F64]
+const RULE_FIELDS := [Field.U8, Field.U32, Field.F64, Field.F64, Field.DATA, Field.DATA,
+	Field.DATA, Field.U16, Field.U16, Field.DATA]
+const META_KEYS := ["combat_tick", "pickup_tick", "pickup_next", "enemy_next", "kills", "rng", "death_end"]
+const META_FIELDS := [Field.U32, Field.U32, Field.U32, Field.I32, Field.U32, Field.U64, Field.F64]
+const RECORDS := {
+	"projectiles": [Field.U64, PROJECTILE_FIELDS],
+	"pickups": [Field.U32, [Field.VEC, Field.VEC, Field.U8, Field.U16, Field.U32, Field.I32, Field.BOOL, Field.BOOL]],
+	"beams": [Field.U64, [Field.U32, Field.POLYLINE]],
+	"blasts": [Field.U64, [Field.U8, Field.VEC, Field.U32]],
+	"accounts": [Field.U16, [Field.F64, Field.F64, Field.F64, Field.BOOL]],
+	"inputs": [Field.U16, [Field.U32, Field.U32] + INPUT_FRAME_TYPES],
 }
+const SECTIONS := ["players", "projectiles", "pickups", "beams", "blasts", "accounts", "inputs",
+	"histories", "rules", "stats", "enemies", "world_time", "grace"]
+
 # 编解码器按字典中的顺序读写房间选项。标为 null 的选项由各自的专用格式处理。
 const OPTIONS := {
 	"map": null, "max_players": Field.U32, "match_time": Field.U32, "round_full_heal": Field.BOOL,
 	"disabled_weapons": null, "beta": Field.BOOL, "time": null, "player_collision": Field.BOOL,
 }
-const ROUND_FIELDS := [["state", Field.U8], ["round", Field.U32], ["timer", Field.F64],
-	["winner", Field.U16], ["match_winner", Field.U16], ["mvp", Field.U16]]
-const STATS := ["kills", "deaths", "assists", "dealt", "taken"]
 var state_ack := 0
 var serial := 0
 var latest := 0
+var waiting_full := 0
 var history: Dictionary = {}
-var roles: Array = []
 var _history_order: Array[int] = []
 var _history_cursor := 0
 
 class Reader extends RefCounted:
 	const FIELD_BYTES := {
 		Field.U8: 1, Field.I8: 1, Field.BOOL: 1, Field.INVENTORY: 1, Field.POLYLINE: 1, Field.U16: 2,
-		Field.U32: 4, Field.I32: 4, Field.F32: 4, Field.U64: 8, Field.F64: 8, Field.VEC: 8,
+		Field.U32: 4, Field.I32: 4, Field.F32: 4, Field.U64: 8, Field.F64: 8, Field.VEC: 8, Field.DATA: 4,
 	}
 
 	var valid := true
@@ -95,6 +100,9 @@ class Reader extends RefCounted:
 			Field.I32: return _data.decode_s32(at)
 			Field.U32: return _data.decode_u32(at)
 			Field.U64: return _data.decode_u64(at)
+			Field.DATA:
+				var blob := bytes(_data.decode_u32(at))
+				return bytes_to_var(blob) if valid else null
 			Field.F32, Field.F64:
 				var value := _data.decode_float(at) if kind == Field.F32 else _data.decode_double(at)
 				valid = is_finite(value)
@@ -127,20 +135,12 @@ class Reader extends RefCounted:
 		return _data.slice(at, _pos) if at >= 0 else PackedByteArray()
 
 class StateBatch extends RefCounted:
-	var tick: int
-	var map_revision: int
-	var world: Dictionary
-	var time: Dictionary
-	# 同一批次的快照共用此对象标识。之后为各连接编码时，可据此判断它们是否采用同一基准。
+	var data: Dictionary
 	var snapshot := RefCounted.new()
-	# 按照基准快照和角色列表缓存增量。同一组接收方可以复用对应的编码结果。
-	var deltas: Dictionary = {}
+	var deltas := {}
 
 	func _init(frame: Dictionary) -> void:
-		tick = frame["tick"]
-		map_revision = frame["map_revision"]
-		world = frame["world"]
-		time = frame["time"]
+		data = frame["checkpoint"].merged({"inputs": frame["inputs"], "grace": frame["grace"]})
 
 func encode_input(packet: Array) -> PackedByteArray:
 	var s := StreamPeerBuffer.new()
@@ -209,114 +209,105 @@ func decode_input(s: Reader) -> Array:
 	state_ack = 0 if ack == 0 else maxi(state_ack, ack)
 	return [frames, actions]
 
-func encode_state(frame: Dictionary, batch: StateBatch) -> PackedByteArray:
-	if roles.is_empty():
-		roles = batch.world["players"].keys()
-		roles.sort()
+func encode_state(feedback: PackedByteArray, batch: StateBatch, full := false) -> PackedByteArray:
 	var s := StreamPeerBuffer.new()
 	s.put_u8(STATE)
-	_write_state(s, frame, batch)
+	_write_state(s, feedback, batch, full)
 	return s.data_array
 
-func _write_state(s: StreamPeerBuffer, frame: Dictionary, batch: StateBatch) -> void:
+func _write_state(s: StreamPeerBuffer, feedback: PackedByteArray, batch: StateBatch, full := false) -> void:
 	serial += 1
-	var base: Dictionary = history.get(state_ack, {})
+	var base: Dictionary = {} if full else history.get(state_ack, {})
 	s.put_u32(serial)
 	s.put_u32(state_ack if not base.is_empty() else 0)
-	s.put_u32(batch.tick)
-	s.put_u32(batch.map_revision)
-	if base.is_empty():
-		_put_roles(s, roles)
-	var parts := _shared_delta(base, batch)
-	var blocks: int = parts["blocks"]
-	var block_position := s.get_position()
-	s.put_u8(0)
-	if blocks & 1: s.put_data(parts["players"])
-	if blocks & 2: s.put_data(parts["pickups"])
-	var feedback: PackedByteArray = frame["input_feedback"]
-	if base.is_empty() or feedback != base["input_feedback"]:
-		blocks |= 4
-		_put_blob(s, feedback)
-	if blocks & 8: s.put_data(parts["time"])
-	if blocks & 16: s.put_data(parts["projectiles"])
-	if blocks & 32: s.put_data(parts["beams"])
-	var end := s.get_position()
-	s.seek(block_position)
-	s.put_u8(blocks)
-	s.seek(end)
-	s.resize(end)
-	_remember(serial, frame, batch)
+	s.put_u32(batch.data["tick"])
+	s.put_u32(batch.data["terrain"])
+	_put_blob(s, feedback)
+	var key: Variant = base.get("snapshot")
+	if not batch.deltas.has(key):
+		batch.deltas[key] = _encode_world(batch.data, base.get("data", {}))
+	s.put_data(batch.deltas[key])
+	_store_history(serial, {"data": batch.data, "snapshot": batch.snapshot})
 
-# 收到相同角色列表、并确认过同一基准快照的连接，共用已经编码的世界状态增量。
-# 快照序号和调度器的反馈按连接写入。
-func _shared_delta(base: Dictionary, batch: StateBatch) -> Dictionary:
-	var key := [null if base.is_empty() else base["_snapshot"], roles]
-	if batch.deltas.has(key): return batch.deltas[key]
-	var old: Dictionary = base.get("world", EMPTY_WORLD)
-	var old_time: Dictionary = base.get("time", {})
-	var result := {"blocks": 0}
-	for part in [[1, "players"], [2, "pickups"], [8, "time"], [16, "projectiles"], [32, "beams"]]:
-		var body := StreamPeerBuffer.new()
-		var changed := false
-		match part[0]:
-			1: changed = _write_players(body, batch.world["players"], old["players"])
-			2: changed = _put_records(body, batch.world["pickups"], old["pickups"], Field.U32, PICKUP_TYPES)
-			8: changed = _put_records(body, batch.time, old_time, Field.U16, TIME_TYPES)
-			16: changed = _put_records(body, batch.world["projectiles"], old["projectiles"], Field.U64, PROJECTILE_TYPES)
-			32: changed = _put_records(body, batch.world["beams"], old["beams"], Field.U64, BEAM_TYPES)
-		if changed or base.is_empty():
-			body.resize(body.get_position())
-			result["blocks"] |= part[0]
-			result[part[1]] = body.data_array
-	batch.deltas[key] = result
-	return result
+func _encode_world(current: Dictionary, base: Dictionary) -> PackedByteArray:
+	var s := StreamPeerBuffer.new()
+	_put_delta(s, _meta(current), _meta(base), META_FIELDS)
+	var mask := 0
+	for i in SECTIONS.size():
+		var key: String = SECTIONS[i]
+		if base.is_empty() or current[key] != base[key]:
+			mask |= 1 << i
+	_put_mask(s, mask, SECTIONS.size())
+	for i in SECTIONS.size():
+		if not mask & (1 << i):
+			continue
+		var key: String = SECTIONS[i]
+		if RECORDS.has(key):
+			var format: Array = RECORDS[key]
+			_put_records(s, current[key], base.get(key, {}), format[0], format[1])
+		else:
+			match key:
+				"players": _write_players(s, current[key], base.get(key, {}))
+				"histories": _write_histories(s, current[key], base.get(key, {}))
+				"rules": _put_delta(s, current[key], base.get(key, []), RULE_FIELDS)
+				_: _write_value(s, Field.DATA, current[key])
+	return s.data_array
 
-func decode_state(s: Reader, baseline: bool = false) -> Dictionary:
+static func _meta(data: Dictionary) -> Array:
+	var row := []
+	if not data.is_empty():
+		for key in META_KEYS:
+			row.append(data[key])
+	return row
+
+func decode_state(s: Reader, baseline := false) -> Dictionary:
 	var number: int = s.read(Field.U32)
 	var base_number: int = s.read(Field.U32)
-	var frame := {"tick": s.read(Field.U32), "map_revision": s.read(Field.U32)}
-	if not s.valid or (baseline and (base_number != 0 or number <= latest)):
+	var tick: int = s.read(Field.U32)
+	var terrain: int = s.read(Field.U32)
+	if baseline and base_number != 0:
 		s.valid = false
 		return {}
 	if number <= latest:
 		return {}
-	var frame_roles := _get_roles(s) if base_number == 0 else roles
-	var blocks := _get_mask(s, 6, base_number == 0)
-	if not s.valid or frame_roles.size() > maxi(TeamRules.MAX_TOTAL, RoomOptions.ROYALE_PLAYERS.y):
-		s.valid = false
-		return {}
-	var base: Dictionary = history.get(base_number, {})
+	var base: Dictionary = history.get(base_number, {}).get("data", {})
 	if base_number != 0 and base.is_empty():
-		state_ack = 0 # 找不到基准时把确认序号重置为 0，下一条输入消息会请服务器发送完整快照。
+		state_ack = 0
 		return {}
-	# 只在写入变化时复制对应的字典，未修改的部分继续引用基准快照中的数据。
-	var world: Dictionary = base.get("world", EMPTY_WORLD).duplicate()
-	if blocks & 1:
-		world["players"] = world["players"].duplicate()
-		_read_players(s, world["players"], frame_roles)
-	if blocks & 2:
-		world["pickups"] = _get_records(s, world["pickups"], Field.U32, PICKUP_TYPES)
-	frame["world"] = world
-	frame["input_feedback"] = _get_blob(s) if blocks & 4 else base["input_feedback"]
-	frame["time"] = _get_records(s, base.get("time", {}), Field.U16, TIME_TYPES) if blocks & 8 else base["time"]
-	if blocks & 16:
-		world["projectiles"] = _get_records(s, world["projectiles"], Field.U64, PROJECTILE_TYPES)
-	if blocks & 32:
-		world["beams"] = _get_records(s, world["beams"], Field.U64, BEAM_TYPES)
+	var feedback := _get_blob(s)
+	var meta := _get_delta(s, _meta(base), META_FIELDS)
+	var mask := _get_mask(s, SECTIONS.size(), base.is_empty())
+	var data := base.duplicate()
+	data["tick"] = tick
+	data["terrain"] = terrain
+	for i in META_KEYS.size():
+		data[META_KEYS[i]] = meta[i]
+	for i in SECTIONS.size():
+		if not s.valid or not mask & (1 << i):
+			continue
+		var key: String = SECTIONS[i]
+		if RECORDS.has(key):
+			var format: Array = RECORDS[key]
+			data[key] = _get_records(s, base.get(key, {}), format[0], format[1])
+		else:
+			match key:
+				"players": data[key] = _read_players(s, base.get(key, {}))
+				"histories": data[key] = _read_histories(s, base.get(key, {}))
+				"rules": data[key] = _get_delta(s, base.get(key, []), RULE_FIELDS)
+				_: data[key] = s.read(Field.DATA)
 	if not s.finish():
 		return {}
 	if baseline:
 		history.clear()
-	roles = frame_roles
 	latest = number
 	state_ack = number
-	_store_history(number, frame)
-	return frame
-
-func _remember(number: int, frame: Dictionary, batch: StateBatch) -> void:
-	_store_history(number, {"tick": batch.tick, "map_revision": batch.map_revision,
-			"world": batch.world, "time": batch.time, "_snapshot": batch.snapshot,
-			"input_feedback": frame["input_feedback"]})
+	_store_history(number, {"data": data})
+	var inputs: Dictionary = data["inputs"]
+	var grace: Dictionary = data["grace"]
+	var checkpoint := data.duplicate()
+	checkpoint.erase("inputs")
+	checkpoint.erase("grace")
+	return {"checkpoint": checkpoint, "inputs": inputs, "input_feedback": feedback, "grace": grace}
 
 # 按序号保存最近的快照，发送和接收增量时都从这里查找基准。达到容量上限后覆盖最早保存的记录。
 func _store_history(number: int, frame: Dictionary) -> void:
@@ -365,35 +356,21 @@ func encode_event(kind: int, data: Variant) -> PackedByteArray:
 		NetEvent.Kind.BASELINE:
 			history.clear()
 			state_ack = 0
-			roles = data["frame"]["world"]["players"].keys()
-			roles.sort()
+			waiting_full = 0
 			s.put_u32(int(data["code"]))
 			s.put_u8(MODES.find(data["mode"]))
 			s.put_u16(data["role"])
+			s.put_u64(data["seed"])
+			_put_roles(s, data["roles"])
 			_put_options(s, data["options"])
 			_put_names(s, data["names"], data["hues"])
 			_put_role_map(s, data["teams"])
 			_put_blob(s, data["map"])
 			_put_cell_hp(s, data["sub_hp"])
-			_put_round(s, data["round_state"])
-			_write_state(s, data["frame"], StateBatch.new(data["frame"]))
+			_write_state(s, data["frame"]["input_feedback"], StateBatch.new(data["frame"]))
 		NetEvent.Kind.TERRAIN:
-			s.put_u32(data["tick"])
-			s.put_u32(data["revision"])
+			s.put_u32(data["version"])
 			_put_cell_hp(s, data["cells"])
-		NetEvent.Kind.ROUND:
-			_put_round(s, data)
-		NetEvent.Kind.HIT, NetEvent.Kind.FIRE, NetEvent.Kind.EXPLOSION:
-			_put_fields(s, data, COMBAT_EVENT_FIELDS[kind])
-			if kind == NetEvent.Kind.FIRE:
-				_put_delta(s, [data["charge"], data["speed_mult"]], DEFAULT_FIRE_MODIFIERS, FIRE_MODIFIER_TYPES)
-		NetEvent.Kind.KILL:
-			s.put_u16(data[0])
-			s.put_u16(data[1])
-		NetEvent.Kind.BULLET_END:
-			s.put_u32(data["tick"])
-			s.put_u16(data["ids"].size())
-			for id in data["ids"]: s.put_u64(id)
 	return s.data_array
 
 func decode_event(kind: int, s: Reader) -> Variant:
@@ -417,105 +394,119 @@ func _read_event(kind: int, s: Reader) -> Variant:
 			return _get_room(s) if s.read(Field.BOOL) else {}
 		NetEvent.Kind.BASELINE:
 			var data := {"code": "%08d" % s.read(Field.U32), "mode": _get_mode(s),
-				"role": s.read(Field.U16), "options": _get_options(s)}
+				"role": s.read(Field.U16), "seed": s.read(Field.U64), "roles": _get_roles(s),
+				"options": _get_options(s)}
 			data.merge(_get_names(s))
 			data["teams"] = _get_role_map(s)
 			data["map"] = _get_blob(s)
 			data["sub_hp"] = _get_cell_hp(s)
-			data["round_state"] = _get_round(s)
 			data["frame"] = decode_state(s, true)
 			return data
 		NetEvent.Kind.TERRAIN:
-			var tick: int = s.read(Field.U32)
-			var revision: int = s.read(Field.U32)
-			return {"tick": tick, "revision": revision, "cells": _get_cell_hp(s)}
-		NetEvent.Kind.ROUND: return _get_round(s)
-		NetEvent.Kind.HIT, NetEvent.Kind.FIRE, NetEvent.Kind.EXPLOSION:
-			var data := _get_fields(s, COMBAT_EVENT_FIELDS[kind])
-			if kind == NetEvent.Kind.FIRE:
-				data["kind"] = "fire"
-				var modifiers := _get_delta(s, DEFAULT_FIRE_MODIFIERS, FIRE_MODIFIER_TYPES)
-				data["charge"] = modifiers[0]
-				data["speed_mult"] = modifiers[1]
-			return data
-		NetEvent.Kind.KILL: return [s.read(Field.U16), s.read(Field.U16)]
-		NetEvent.Kind.BULLET_END:
-			var tick: int = s.read(Field.U32)
-			var ids: Array[int] = []
-			for i in s.count(s.read(Field.U16), 8): ids.append(s.read(Field.U64))
-			return {"tick": tick, "ids": ids}
+			return {"version": s.read(Field.U32), "cells": _get_cell_hp(s)}
 		NetEvent.Kind.LEAVE, NetEvent.Kind.START, NetEvent.Kind.SUICIDE:
 			return null
 	s.valid = false
 	return null
 
-func _write_players(s: StreamPeerBuffer, current: Dictionary, base: Dictionary) -> bool:
-	var start := s.get_position()
-	_put_mask(s, 0, roles.size())
-	_put_mask(s, 0, roles.size())
-	var present := 0
-	var changed := 0
-	var removed := false
-	for i in roles.size():
-		var role: int = roles[i]
-		if not current.has(role):
-			removed = removed or base.has(role)
-			continue
-		present |= 1 << i
-		var old: Array = base.get(role, [])
-		if current[role] != old:
-			changed |= 1 << i
-			_put_player(s, current[role], old)
-	var end := s.get_position()
-	s.seek(start)
-	_put_mask(s, present, roles.size())
-	_put_mask(s, changed, roles.size())
-	s.seek(end)
-	return changed != 0 or removed
+static func _write_players(s: StreamPeerBuffer, current: Dictionary, base: Dictionary) -> void:
+	_put_removed(s, current, base, Field.U16)
+	var count_position := s.get_position()
+	s.put_u16(0)
+	var count := 0
+	for id: int in current:
+		var old: Array = base.get(id, [])
+		if current[id] != old:
+			s.put_u16(id)
+			_put_actor(s, current[id], old)
+			count += 1
+	_patch_count(s, count_position, count)
 
-func _read_players(s: Reader, players: Dictionary, frame_roles: Array) -> void:
-	var present := _get_mask(s, frame_roles.size())
-	var changed := _get_mask(s, frame_roles.size())
-	if changed & ~present:
-		s.valid = false
-		return
-	for i in frame_roles.size():
-		var role: int = frame_roles[i]
-		var bit := 1 << i
-		if not present & bit:
-			players.erase(role)
-		elif changed & bit:
-			players[role] = _get_player(s, players.get(role, []))
-		elif not players.has(role):
-			s.valid = false
-			return
+static func _read_players(s: Reader, base: Dictionary) -> Dictionary:
+	var players := base.duplicate()
+	for i in s.count(s.read(Field.U16), 2):
+		players.erase(s.read(Field.U16))
+	for i in s.count(s.read(Field.U16), 2):
+		var id: int = s.read(Field.U16)
+		players[id] = _get_actor(s, players.get(id, []))
+	return players
 
-static func _put_player(s: StreamPeerBuffer, player: Array, base: Array) -> void:
-	var old: Array = [] if base.is_empty() else base[NetPlayer.STATE]
-	var state: Array = player[NetPlayer.STATE]
-	_put_delta(s, player, base, PLAYER_TYPES)
-	_put_delta(s, player[NetPlayer.INPUT], [] if base.is_empty() else base[NetPlayer.INPUT], INPUT_FRAME_TYPES)
-	_put_delta(s, state, old, PlayerSlots.wire_types)
+static func _put_actor(s: StreamPeerBuffer, state: Array, old: Array) -> void:
+	_put_delta(s, state, old, ACTOR_FIELDS)
 	var equipment: Array = state[PlayerSlots.EQUIPMENT]
 	s.put_u8(int(not equipment.is_empty()))
 	if not equipment.is_empty():
-		_put_delta(s, equipment, _equipment_base(state, old), PlayerSlots.EQUIPMENT_TYPES)
+		_put_delta(s, equipment, _equipment_base(state, old), EQUIPMENT_FIELDS)
 
-static func _get_player(s: Reader, base: Array) -> Array:
-	var old: Array = [] if base.is_empty() else base[NetPlayer.STATE]
-	var player := _get_delta(s, base, PLAYER_TYPES)
-	player.resize(NetPlayer.SIZE)
-	player[NetPlayer.INPUT] = _get_delta(s, [] if base.is_empty() else base[NetPlayer.INPUT], INPUT_FRAME_TYPES)
-	var state := _get_delta(s, old, PlayerSlots.wire_types)
+static func _get_actor(s: Reader, old: Array) -> Array:
+	var state := _get_delta(s, old, ACTOR_FIELDS)
 	state.resize(PlayerSlots.SIZE)
-	state[PlayerSlots.EQUIPMENT] = _get_delta(s, _equipment_base(state, old), PlayerSlots.EQUIPMENT_TYPES) if s.read(Field.BOOL) else []
-	player[NetPlayer.STATE] = state
-	return player
+	state[PlayerSlots.EQUIPMENT] = _get_delta(s, _equipment_base(state, old), EQUIPMENT_FIELDS) if s.read(Field.BOOL) else []
+	return state
 
 static func _equipment_base(state: Array, old: Array) -> Array:
 	if old.is_empty() or state[PlayerSlots.WEAPON_INST] != old[PlayerSlots.WEAPON_INST]:
 		return []
 	return old[PlayerSlots.EQUIPMENT]
+
+## 已确认窗口和当前窗口共用连续的一段采样，其余只发送新追加的行。
+static func _write_histories(s: StreamPeerBuffer, current: Dictionary, base: Dictionary) -> void:
+	s.put_u16(current.size())
+	for role: int in current:
+		s.put_u16(role)
+		var row: Array = current[role]
+		var previous: Array = base.get(role, [])
+		_put_delta(s, row, previous, HISTORY_FIELDS)
+		var old: Array = [] if previous.is_empty() else previous[TimeHistory.State.SAMPLES]
+		var samples: Array = row[TimeHistory.State.SAMPLES]
+		var start := 0
+		var shared := 0
+		if not samples.is_empty() and not old.is_empty():
+			var first: int = samples[0][TimeHistory.Sample.COMMIT]
+			while start < old.size() and old[start][TimeHistory.Sample.COMMIT] < first:
+				start += 1
+			if start < old.size() and old[start][TimeHistory.Sample.COMMIT] == first:
+				shared = mini(samples.size(), old.size() - start)
+				while samples[shared - 1][TimeHistory.Sample.COMMIT] != old[start + shared - 1][TimeHistory.Sample.COMMIT]:
+					shared -= 1
+		s.put_u16(start)
+		s.put_u16(shared)
+		s.put_u16(samples.size() - shared)
+		var reference: Array = [] if shared == 0 else samples[shared - 1]
+		for i in range(shared, samples.size()):
+			var sample: Array = samples[i]
+			s.put_u32(sample[TimeHistory.Sample.COMMIT])
+			s.put_double(sample[TimeHistory.Sample.TIME])
+			_put_actor(s, sample[TimeHistory.Sample.ACTOR], [] if reference.is_empty() else reference[TimeHistory.Sample.ACTOR])
+			_put_records(s, sample[TimeHistory.Sample.PROJECTILES],
+					{} if reference.is_empty() else reference[TimeHistory.Sample.PROJECTILES], Field.U64, MOTION_FIELDS)
+			reference = sample
+
+static func _read_histories(s: Reader, base: Dictionary) -> Dictionary:
+	var histories := {}
+	for i in s.count(s.read(Field.U16), 9):
+		var role: int = s.read(Field.U16)
+		var previous: Array = base.get(role, [])
+		var row := _get_delta(s, previous, HISTORY_FIELDS)
+		var old: Array = [] if previous.is_empty() else previous[TimeHistory.State.SAMPLES]
+		var start: int = s.read(Field.U16)
+		var shared: int = s.read(Field.U16)
+		if start + shared > old.size():
+			s.valid = false
+			return {}
+		var samples := old.slice(start, start + shared)
+		for j in s.count(s.read(Field.U16), 12):
+			var at: int = s.read(Field.U32)
+			var time: float = s.read(Field.F64)
+			var reference: Array = [] if samples.is_empty() else samples.back()
+			var actor := _get_actor(s, [] if reference.is_empty() else reference[TimeHistory.Sample.ACTOR])
+			var projectiles := _get_records(s, {} if reference.is_empty() else reference[TimeHistory.Sample.PROJECTILES],
+					Field.U64, MOTION_FIELDS)
+			samples.append([at, time, actor, projectiles])
+		row.resize(TimeHistory.State.SAMPLES + 1)
+		row[TimeHistory.State.SAMPLES] = samples
+		histories[role] = row
+	return histories
 
 static func _put_records(s: StreamPeerBuffer, current: Dictionary, base: Dictionary, id_type: int, types: Array) -> bool:
 	var removed := _put_removed(s, current, base, id_type)
@@ -551,6 +542,7 @@ static func _write_value(s: StreamPeerBuffer, kind: int, value: Variant) -> void
 		Field.U32: s.put_u32(value)
 		Field.U64: s.put_u64(value)
 		Field.F64: s.put_double(value)
+		Field.DATA: _put_blob(s, var_to_bytes(value))
 		Field.VEC: _put_vec(s, value)
 		Field.POLYLINE:
 			s.put_u8(value.size())
@@ -562,16 +554,6 @@ static func _write_value(s: StreamPeerBuffer, kind: int, value: Variant) -> void
 				s.put_u32(value[i + WeaponInventory.INST])
 				s.put_u8(value[i + WeaponInventory.TYPE])
 				s.put_32(value[i + WeaponInventory.CARRIED])
-
-static func _put_fields(s: StreamPeerBuffer, data: Dictionary, fields: Array) -> void:
-	for field in fields:
-		_write_value(s, field[1], data[field[0]])
-
-static func _get_fields(s: Reader, fields: Array) -> Dictionary:
-	var data := {}
-	for field in fields:
-		data[field[0]] = s.read(field[1])
-	return data
 
 static func _put_delta(s: StreamPeerBuffer, data: Array, base: Array, types: Array, first := 0) -> int:
 	var mask := 0
@@ -692,34 +674,6 @@ static func _get_room(s: Reader) -> Dictionary:
 		counts[player["team"]] += 1
 		if player["role"] == data["host_role"]: data["host_name"] = player["name"]
 	data.merge({"players": roster, "team_counts": counts, "count": roster.size()})
-	return data
-
-static func _put_round(s: StreamPeerBuffer, data: Dictionary) -> void:
-	_put_fields(s, data, ROUND_FIELDS)
-	for key in ["scores", "rounds_won"]: _put_role_map(s, data[key])
-	_put_roles(s, data["left"])
-	_put_role_map(s, data["grace"], Field.F64)
-	_put_role_map(s, data["alive"], Field.BOOL)
-	s.put_u16(data["stats"].size())
-	for role in data["stats"]:
-		s.put_u16(role)
-		for key in STATS: s.put_32(data["stats"][role][key])
-		s.put_double(data["stats"][role]["acs"])
-
-static func _get_round(s: Reader) -> Dictionary:
-	var data := _get_fields(s, ROUND_FIELDS)
-	for key in ["scores", "rounds_won"]: data[key] = _get_role_map(s)
-	data["left"] = _get_roles(s)
-	data["grace"] = _get_role_map(s, Field.F64)
-	data["alive"] = _get_role_map(s, Field.BOOL)
-	var stats := {}
-	for i in s.count(s.read(Field.U16), 2 + STATS.size() * 4 + 8):
-		var role: int = s.read(Field.U16)
-		var entry := {}
-		for key in STATS: entry[key] = s.read(Field.I32)
-		entry["acs"] = s.read(Field.F64)
-		stats[role] = entry
-	data["stats"] = stats
 	return data
 
 static func _put_names(s: StreamPeerBuffer, names: Dictionary, hues: Dictionary) -> void:

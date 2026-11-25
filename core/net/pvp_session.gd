@@ -1,9 +1,9 @@
 class_name PvpSession
 extends RefCounted
 
-const MODE_PVP := "pvp"
-const MODE_ROYALE := "royale"
-const MODE_TEAM := "team"
+const MODE_PVP := WorldSpec.DUEL
+const MODE_ROYALE := WorldSpec.ROYALE
+const MODE_TEAM := WorldSpec.TEAM
 const MODE_NAMES := {MODE_PVP: "1v1", MODE_TEAM: "团队对抗", MODE_ROYALE: "大乱斗"}
 const BETA_MODE_NAMES := {MODE_PVP: "Beta 1v1", MODE_TEAM: "时空团队对抗", MODE_ROYALE: "错乱大乱斗"}
 
@@ -12,7 +12,6 @@ static var beta_mode := false
 static var entry_mode := ""
 static var baseline: Dictionary = {}
 static var room: Dictionary = {}
-static var match_events: Array = []
 
 static var room_code: String:
 	get: return room.get("code", "")
@@ -44,4 +43,3 @@ static func reset(beta := false, mode := "") -> void:
 	beta_mode = beta
 	entry_mode = mode
 	baseline.clear()
-	match_events.clear()

@@ -14,24 +14,24 @@ func run(tree: SceneTree) -> void:
 	level.apply_hp(sub, original - 1, 1)
 	expect(level.get_hp(sub) == original - 1, "partial terrain damage preserves exact HP")
 	expect(level.flush_collisions() == 0, "HP-only damage does not rebuild geometry")
-	level.rewind_enabled = true
+	level.commit()
+	var before := level.version
 	level.apply_hp(sub, 0, 1)
 	level.apply_hp(adjacent, 0, 1)
 	expect(level.flush_collisions() == 1, "two destroyed subcells queue their shared chunk once")
-	level.record_tick(1)
-	level.restore(0)
+	level.commit()
+	level.undo_to(before)
 	expect(level.get_hp(sub) == original - 1, "rewind restores residual HP, not full health")
 	expect(level.get_hp(adjacent) == adjacent_hp, "rewind restores both subcells from the first saved macro state")
-	level.reset()
-	level.take_wall_changes()
-	level.record_values(1, {sub: original - 2})
-	level.restore(1)
-	expect(level.get_hp(sub) == original - 2,
-			"an authority patch sets exact HP")
-	level.record_values(2, {sub: original - 2})
-	level.restore(2)
-	expect(level.take_wall_changes().is_empty() and level.get_hp(sub) == original - 2,
-			"the absolute HP patch is idempotent and keeps the same geometry")
+	var replica := Terrain.new(_document)
+	replica.install_baseline(10, {})
+	replica.queue_patch(11, {sub: original - 1, adjacent: adjacent_hp - 1})
+	replica.queue_patch(12, {sub: original - 2})
+	expect(replica.get_hp(sub) == original, "receiving a patch does not change the active terrain")
+	replica.apply_patches(12)
+	expect(replica.get_hp(sub) == original - 2 and replica.get_hp(adjacent) == adjacent_hp - 1,
+			"adopting a later version applies every queued patch in order")
+	expect(replica.take_wall_changes().is_empty(), "HP-only authority patches leave geometry unchanged")
 	_mirror_topology(tree)
 	_mirrored_collision(tree)
 	_destruction_units(tree)
@@ -49,23 +49,20 @@ func _rewind_boundaries(level: Terrain) -> void:
 	var sub := Vector2i(8, 12)
 	var cell := Vector2i(2, 3)
 	var initial := level.get_hp(sub)
-	level.rewind_enabled = true
+	var root := level.version
 	level.apply_hp(sub, initial + 1, 0)
 	level.apply_hp(sub, initial + 2, 0)
-	level.record_tick(1)
-	level.record_values(2, {sub: initial - 1})
-	level.restore(1)
-	expect(level.get_hp(sub) == initial + 2, "undo returns to the previous checkpoint's exact terrain")
-	level.restore(2)
-	expect(level.get_hp(sub) == initial - 1, "seeking forward reuses a patch recorded on the same timeline")
-	level.restore(1)
-	level.discard_future()
+	level.commit()
+	var first := level.version
+	level.apply_hp(sub, initial - 1, 0)
+	level.commit()
+	level.undo_to(first)
+	expect(level.get_hp(sub) == initial + 2, "undo returns to the previous version's exact terrain")
 	level.apply_hp(sub, initial + 4, 0)
-	level.record_tick(2)
-	level.restore(0)
-	expect(level.get_hp(sub) == initial, "a new branch can undo its edits and the shared earlier history")
-	level.restore(2)
-	expect(level.get_hp(sub) == initial + 4, "seeking to the head applies the new branch's change")
+	level.commit()
+	expect(level.get_hp(sub) == initial + 4, "a new commit follows the retained history")
+	level.undo_to(root)
+	expect(level.get_hp(sub) == initial, "undo crosses the new commit and the retained earlier history")
 	level.reset()
 	var adjacent := sub + Vector2i.RIGHT
 	level.apply_hp(adjacent, initial - 2, 0)
@@ -75,7 +72,6 @@ func _rewind_boundaries(level: Terrain) -> void:
 	level.reset()
 	expect(level.get_hp(sub) == initial and level.get_hp(adjacent) == initial,
 			"reset restores each subcell's material HP")
-	level.rewind_enabled = false
 
 func _water_depth(tree: SceneTree) -> void:
 	var cells := {}
@@ -100,13 +96,12 @@ func _destruction_units(tree: SceneTree) -> void:
 	var terrain := _terrain
 	var point := Vector2(256, 8)
 	var hp := TileDefs.hit_points[trunk]
-	terrain.authoritative = true
-	terrain.rewind_enabled = true
 	var original := block_hp(terrain, Vector2i.ZERO)
 	terrain.damage_impact(point, Vector2.LEFT, hp - 1, 0)
 	var damaged := {Vector2i.ZERO: 1, Vector2i.RIGHT: 1, Vector2i.DOWN: 1, Vector2i.ONE: 1}
-	expect(terrain.take_network_changes() == damaged and terrain.get_modified() == damaged,
-			"a seam hit synchronizes residual HP for exactly the four subcells in the 32 px block")
+	terrain.commit()
+	expect(terrain.get_modified() == damaged,
+			"a seam hit records residual HP for exactly the four subcells in the 32 px block")
 	terrain.damage_impact(Vector2(24, 0), Vector2.UP, 1, 0)
 	expect(terrain.get_hp(Vector2i.ZERO) == 0 and terrain.get_hp(Vector2i.ONE) == 0
 			and terrain.get_hp(Vector2i(2, 0)) == hp and terrain.get_hp(Vector2i(0, 2)) == hp,
@@ -119,9 +114,8 @@ func _destruction_units(tree: SceneTree) -> void:
 	expect(terrain.line_of_sight(Vector2(8, -8), Vector2(8, 24))
 			and not terrain.line_of_sight(Vector2(40, -8), Vector2(40, 24)),
 			"a sight line wrapped at the seam sees the same opening and wall as the physical ray")
-	terrain.record_tick(1)
-	terrain.restore(0)
-	terrain.discard_future()
+	terrain.commit()
+	terrain.undo_to(0)
 	expect(block_hp(terrain, Vector2i.ZERO) == original, "rewind restores all four bullet-damaged subcells")
 
 	var blast_center := Vector2(248, 8)
@@ -323,11 +317,8 @@ func _toroidal_sight(tree: SceneTree) -> void:
 	victim.sync_collision_geometry()
 	collider(victim, CollisionWorld.LAYER_TEAM_A)
 	var sim := parent.combat
-	var damage: Array[int] = []
-	sim.player_hit.connect(func(_role: int, _victim: Player, amount: int, _knock: bool, _force: float) -> void:
-		damage.append(amount))
 	sim.resolve_blast(Vector2(1010, 544), {"radius": 128.0, "damage": 25, "impact": 0}, null)
-	expect(damage.size() == 1 and damage[0] > 0, "an explosion at the seam damages the actor once across it")
+	expect(sim.hits.size() == 1 and sim.hits[0][2] > 0, "an explosion at the seam damages the actor once across it")
 	cleanup()
 	world_from_solid(tree, 8, 6, func(sx: int, sy: int) -> bool: return sx == 2 and sy == 2)
 	expect(not _terrain.line_of_sight(Vector2(496, 360), Vector2(48, 48)),
@@ -458,13 +449,12 @@ func _map_format() -> void:
 	var atlas := TerrainAtlas.atlas_coords(display._wall_rows[desc], 0)
 	expect(layer.get_used_cells().size() == 36 and layer.get_cell_atlas_coords(corner) == atlas,
 			"initial paint adds only the one-subcell seam bands around the 4x4 map")
-	colored_terrain.rewind_enabled = true
 	colored_terrain.apply_hp(sub, 0, 1)
-	colored_terrain.record_tick(1)
+	colored_terrain.commit()
 	display.patch(colored_terrain.take_wall_changes())
 	expect(layer.get_used_cells().size() == 32 and layer.get_cell_source_id(sub) == -1
 			and layer.get_cell_source_id(corner) == -1, "destroying a corner tile erases its four visual cells")
-	colored_terrain.restore(0)
+	colored_terrain.undo_to(0)
 	display.patch(colored_terrain.take_wall_changes())
 	expect(layer.get_used_cells().size() == 36 and layer.get_cell_atlas_coords(sub) == atlas
 			and layer.get_cell_atlas_coords(corner) == atlas,

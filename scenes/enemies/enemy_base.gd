@@ -5,9 +5,6 @@ const WCFG: WorldConfig = preload("res://core/config/world_config.tres")
 
 # 各类敌人共用这套移动和伤害规则，行动方式由各自的脚本实现。
 
-# 关卡监听 died 信号来统计击杀数。
-signal died
-signal motion(kind: StringName, speed: float)
 enum State { SLEEP, WAKE, CHASE, LUNGE_WINDUP, LUNGE_DASH, BACK_HOP, TAKE_OFF, FLY, SHOOT, CHARGE, RETURN, WANDER }
 enum Activity { REST, SETTLE, WAKE, HOP, LUNGE, TAKE_OFF, FLY, CHARGE, RUN, WAIT,
 	PREPARE_TELEPORT, TELEPORT, RECOVER, BACK_HOP, DEAD }
@@ -101,8 +98,6 @@ func _move_slide(travel: Vector2) -> void:
 			blocked[axis] = signf(travel[axis])
 	transform = pose
 	var landed: bool = blocked.y > 0.0 and motion_contacts[-1][Contact.NORMAL].y < -0.5
-	if landed and not _grounded:
-		motion.emit(&"land", velocity.y)
 	_grounded = landed
 	if blocked.x != 0.0:
 		velocity.x = 0.0
@@ -171,7 +166,6 @@ func hurt(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, set_velo
 		return
 	hp -= damage
 	hit_reaction_left = EnemyParams.shared.hit_reaction_time
-	motion.emit(&"hurt", 0.0)
 	if hp <= 0:
 		_begin_death()
 
@@ -227,7 +221,7 @@ func _begin_death() -> void:
 	if is_dead:
 		return
 	is_dead = true
-	died.emit()
+	combat.enemy_kills += 1
 	corpse_left = EnemyParams.shared.corpse_time
 	_on_death()
 
@@ -298,15 +292,16 @@ func toroidal_delta_to_player() -> Vector2:
 func _wrap() -> void:
 	position = GridPathfinder.wrap_to_range(position, terrain.map_size)
 
-func capture_rewind_state() -> Array:
+func capture_state() -> Array:
 	var row := []
 	for field: StringName in _rewind_fields:
-		row.append(get(field))
-	row.append(motion_contacts.duplicate())
+		var value: Variant = get(field)
+		row.append(value.duplicate() if value is Array else value)
 	return row
 
-func rewind_restore(row: Array) -> void:
+func restore_state(row: Array) -> void:
 	for i in _rewind_fields.size():
-		set(_rewind_fields[i], row[i])
-	motion_contacts.assign(row[-1])
+		var value: Variant = row[i]
+		set(_rewind_fields[i], value.duplicate() if value is Array else value)
+	motion_contacts.clear()
 	collision_layer = CollisionWorld.LAYER_ENEMY if active else 0

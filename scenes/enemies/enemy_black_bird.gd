@@ -21,6 +21,10 @@ var _hover_left := 0.0
 
 
 func _setup() -> void:
+	_rewind_fields.append_array([&"_wander_timer", &"_wander_dir", &"_wander_idle_timer",
+			&"_flank_check_timer", &"_flank_cell", &"_landing_timer", &"_prep_timer", &"_wait_land",
+			&"_left_ground", &"_teleport_cooldown", &"_charge_timer", &"_back_hop_cd",
+			&"_teleport_left", &"_hover_left"])
 	wake_radius = EnemyParams.BlackBird.wake_radius
 	_body_bounds = Transform2D.IDENTITY.scaled(scale) * hull.get_rect()
 
@@ -65,9 +69,9 @@ func _tick_wander(delta: float, dist: float) -> void:
 		activity = Activity.RUN
 		_wander_timer -= delta
 		if _wander_timer <= 0.0:
-			_wander_timer = randf_range(EnemyParams.BlackBird.wander_min_t, EnemyParams.BlackBird.wander_max_t)
-			_wander_dir = 1.0 if randf() < 0.5 else -1.0
-			_wander_idle_timer = randf_range(0.0, EnemyParams.BlackBird.wander_idle_max)
+			_wander_timer = combat.rng.randf_range(EnemyParams.BlackBird.wander_min_t, EnemyParams.BlackBird.wander_max_t)
+			_wander_dir = 1.0 if combat.rng.randf() < 0.5 else -1.0
+			_wander_idle_timer = combat.rng.randf_range(0.0, EnemyParams.BlackBird.wander_idle_max)
 		if _wander_idle_timer > 0.0:
 			velocity.x = 0.0
 			activity = Activity.WAIT
@@ -86,7 +90,7 @@ func _tick_wander(delta: float, dist: float) -> void:
 			_left_ground = false
 			_prep_timer = 0.0
 			_set_state(State.TAKE_OFF)
-			motion.emit(&"take_off", 0.0)
+
 			activity = Activity.TAKE_OFF
 
 
@@ -107,7 +111,7 @@ func _tick_take_off(delta: float) -> void:
 	else:
 		_teleport_to_flank()
 		_set_state(State.CHARGE)
-		motion.emit(&"charge", 0.0)
+
 		_charge_timer = EnemyParams.BlackBird.charge_timeout
 		_landing_timer = EnemyParams.BlackBird.landing_timeout
 		_wait_land = true
@@ -207,7 +211,7 @@ func _find_flank_cell() -> bool:
 			valid.append(c)
 	if valid.is_empty():
 		return false
-	_flank_cell = valid[randi() % valid.size()]
+	_flank_cell = valid[combat.rng.randi_range(0, valid.size() - 1)]
 	return true
 
 
@@ -247,4 +251,5 @@ func _water_swim_dir() -> Vector2:
 
 
 func _on_death() -> void:
-	combat.drop_grain(position, TimeParams.ELITE_GRAIN_DROP)
+	if combat.time_field != null:
+		combat.time_field.schedule_grain(TimeParams.ELITE_GRAIN_DROP)

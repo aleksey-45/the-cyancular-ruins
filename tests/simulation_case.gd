@@ -58,7 +58,7 @@ func run(tree: SceneTree) -> void:
 func _detached_match() -> void:
 	var map := CyrmMap.load_file("res://maps/demo.cyrm")
 	var sim := CombatSimulator.new(Terrain.new(map))
-	sim.time_field = TimeField.new(GrainAccount.new())
+	sim.time_field = WorldTime.new(GrainAccount.new())
 	var actor := sim.add_player(1)
 	actor.spawn_at(SpawnPicker.single_spawn(map))
 	actor.weapons.set_initial_inventory([WeaponRegistry.Type.RIFLE])
@@ -79,13 +79,12 @@ func _detached_match() -> void:
 			"closing a detached match releases all combat bodies")
 
 func _solo_scene(tree: SceneTree) -> void:
-	var level: SoloLevel = preload("res://scenes/level_0.tscn").instantiate()
-	level.map = CyrmMap.load_file("res://maps/newfactory.cyrm")
-	level.spawn_cell = SpawnPicker.single_spawn(level.map)
-	level.enabled_weapons.assign([WeaponRegistry.Type.RIFLE])
+	var map := CyrmMap.load_file("res://maps/newfactory.cyrm")
+	var level := SoloLevel.create(map, SpawnPicker.single_spawn(map), [WeaponRegistry.Type.RIFLE])
 	tree.root.add_child(level)
-	var sim := level.combat_rules
-	var enemy_count: int = level.map.points.values().filter(func(p: Dictionary) -> bool: return p.kind == "enemy").size()
+	var game := level.session.world
+	var sim := game.combat
+	var enemy_count: int = map.points.values().filter(func(p: Dictionary) -> bool: return p.kind == "enemy").size()
 	expect(sim.enemies.size() == enemy_count and enemy_count > 0, "the solo match owns the map's enemies")
 	var viewport := level.get_node("View/WorldViewport")
 	var nodes := viewport.get_child_count()
@@ -106,11 +105,11 @@ func _solo_scene(tree: SceneTree) -> void:
 	var tick := sim.tick
 	var feedback := level._view.feedback
 	var effect_time := feedback._now
-	var daylight_time := level.time_field.elapsed
+	var daylight_time := game.world_time.elapsed
 	level._view.pause.set_open(true)
 	await tree.process_frame
 	await tree.process_frame
-	expect(sim.tick == tick and level.time_field.elapsed == daylight_time and feedback._now > effect_time,
+	expect(sim.tick == tick and game.world_time.elapsed == daylight_time and feedback._now > effect_time,
 			"pause stops simulation and daylight while the scene tree advances HUD feedback")
 	level._view.pause.set_open(false)
 	await tree.physics_frame
@@ -119,22 +118,23 @@ func _solo_scene(tree: SceneTree) -> void:
 	for i in 6:
 		await tree.physics_frame
 	var before_rewind := sim.tick
-	var balance := level.time_field.account.balance
+	var balance := game.world_time.account.balance
 	Input.action_press(&"rewind")
 	await tree.physics_frame
 	var restored := sim.tick
-	expect(level.time_field.is_rewinding() and restored < before_rewind and level.time_field.account.balance < balance,
+	expect(game.world_time.is_rewinding() and restored < before_rewind and game.world_time.account.balance < balance,
 			"holding rewind in the actual match spends grains and restores an earlier combat tick")
 	Input.action_release(&"rewind")
 	await tree.physics_frame
-	expect(not level.time_field.is_rewinding() and sim.tick == restored + 1,
+	expect(not game.world_time.is_rewinding() and sim.tick == restored + 1,
 			"releasing rewind runs the very next combat tick on the new branch")
 	var old_drop: WeaponPickup = sim.ground.items.values()[0]
 	var old_enemy := sim.enemies[0]
 	level.restart_single()
+	await tree.physics_frame
 	expect(not old_drop.rid.is_valid() and not old_enemy.rid.is_valid() and sim.enemies.size() == enemy_count
 			and sim.enemies[0] != old_enemy
-			and sim.projectiles.is_empty(), "restart replaces the roster and immediately releases the old bodies")
+			and sim.projectiles.is_empty(), "restart replaces the roster and releases the old bodies on the next fixed step")
 	level.free()
 
 func _place(actor: Player, at: Vector2, team: int = 0) -> void:
@@ -153,19 +153,36 @@ func submit(actor: Player, requests: Array) -> void:
 func _fires(actions: Array) -> Array:
 	return actions.filter(func(action: Dictionary) -> bool: return action["kind"] == "fire")
 
-func _display(parent: Node, actor: Player) -> MatchController:
-	var display := MatchController.new()
-	display.player = actor
-	display.terrain = _terrain
-	display._camera = MatchCamera.new()
-	display.add_child(display._camera)
+class ActorDisplay extends Node:
+	var _frame: MatchFrame
+	var _world := WorldView.new()
+	var presenter: MatchPresenter
+
+func _display(parent: Node, actor: Player) -> ActorDisplay:
+	var display := ActorDisplay.new()
+	var spec := WorldSpec.solo(_document, Vector2i.ZERO, [WeaponRegistry.Type.RIFLE], 0)
+	display.presenter = MatchPresenter.new(spec, _terrain, actor.role, null)
+	display._frame = display.presenter.frame
 	display._world.bind(canvas_for(parent), _terrain.map_size)
 	return display
 
-func _draw_actor(display: MatchController, actor: Player) -> void:
-	display._frame.begin(0.0, actor.position)
-	display._local_pose(false, false)
-	display._world.present(display._frame)
+func _draw_actor(display: ActorDisplay, actor: Player) -> void:
+	var row := actor.capture_state()
+	var frame := display._frame
+	frame.begin(0.0, actor.position)
+	var presenter := display.presenter
+	presenter._player_pose(actor.role, actor.position, actor.velocity, row, row, Vector2.RIGHT, false, false)
+	presenter._player_cues(actor.role, row, row, actor.position, false)
+	presenter._actors = {actor.role: row}
+	presenter._health = row
+	frame.aim_guide = presenter._aim_guide(row, frame.actors[0], false)
+	for cue: Array in frame.cues:
+		if cue[0] == "motion":
+			display._world.motion(cue[1], cue[2], frame.now, cue[3])
+	display._world.present(frame)
+
+func _record_time(sim: CombatSimulator, actor: Player, delta := TimeParams.SNAP_INTERVAL) -> void:
+	sim.time_field.history.record(delta, sim.tick, sim.time_field._sample.bind(sim, actor))
 
 func _actor_animation(tree: SceneTree) -> void:
 	var parent := world(tree)
@@ -181,26 +198,21 @@ func _actor_animation(tree: SceneTree) -> void:
 	var foot := actor.collision_rect().end.y - actor.position.y
 	_place(actor, Vector2(160, 192 - foot - 8))
 	actor.velocity.y = 900.0
-	var from := actor.position
+	_draw_actor(display, actor)
 	ActorStep.step(actor, NEUTRAL_INPUT)
-	display._live_step(from, actor.presentation_events)
 	var hull := actor.collision_rect()
 	var scale: Vector2 = pose.call(0).get_scale()
 	expect(actor._grounded and scale.x > 2.6 and scale.y < 2.4 and actor.collision_rect() == hull,
 			"a real landing squashes the drawn body while keeping its collision shape")
 	display._frame.now = 0.3
-	from = actor.position
 	ActorStep.step(actor, NEUTRAL_INPUT)
-	display._live_step(from, actor.presentation_events)
 	scale = pose.call(0).get_scale()
 	expect(scale.distance_to(Vector2(2.5, 2.5)) < 0.003,
 			"resting on the floor lets the landing pulse decay")
 	var jump := ActorInput.BIT_UP
 	display._world.motion(id, &"land", display._frame.now, 900.0)
 	display._frame.now += ActorStep.DT
-	from = actor.position
 	ActorStep.step(actor, _attack(jump, jump))
-	display._live_step(from, actor.presentation_events)
 	scale = pose.call(0).get_scale()
 	expect(scale.x < 2.45 and scale.y > 2.55, "a jump directly after landing still stretches the drawn body")
 
@@ -254,10 +266,6 @@ func _water(tree: SceneTree) -> void:
 	expect(actor.waterproof == 1, "the same position drains oxygen with the crouched hull")
 
 	var sim := parent.combat
-	var hits: Array = []
-	sim.player_hit.connect(func(source: int, _victim: Player, damage: int,
-			knock_changed: bool, _force: float) -> void:
-		hits.append([source, damage, knock_changed]))
 	var hp := actor.sim_hp
 	actor._controls_locked = true
 	submit(actor, step_at.call(384.0, WCFG.water_drain_interval))
@@ -279,7 +287,7 @@ func _water(tree: SceneTree) -> void:
 	actor.motion_knock_velocity = Vector2(20.0, 10.0)
 	var velocity := actor.velocity
 	submit(actor, actions)
-	expect(actor.sim_hp == hp - CFG.player_waterproof_damage and hits == [[0, CFG.player_waterproof_damage, false]]
+	expect(actor.sim_hp == hp - CFG.player_waterproof_damage and sim.hits == [[0, actor.role, CFG.player_waterproof_damage]]
 			and actor.velocity == velocity and actor.motion_knock_velocity == Vector2(20.0, 10.0),
 			"PvP authority deducts drowning damage once without credit or knockback")
 
@@ -359,8 +367,8 @@ func _equipment(tree: SceneTree) -> void:
 	actor.restore_state(full_loadout)
 	var restored_inst := weapons.current_inst()
 	weapons.pick_up(WeaponRegistry.Type.PISTOL, 1)
-	expect(restored_inst == inst and weapons.current_inst() > replacement_inst,
-			"restoring an earlier weapon preserves its ID and subsequent allocations keep increasing")
+	expect(restored_inst == inst and weapons.current_inst() == replacement_inst,
+			"exact restoration reuses the captured weapon allocator on the new branch")
 	cleanup()
 
 func _inventory_rewind(tree: SceneTree) -> void:
@@ -384,7 +392,7 @@ func _inventory_rewind(tree: SceneTree) -> void:
 	expect(snapshot == authority_state and snapshot[INV][WeaponInventory.CARRIED] == 3,
 			"rewind and reconciliation capture the same player state and independent ammo")
 	weapons.equip_inst(pistol)
-	actor.restore_state(snapshot, true)
+	actor.rewind_state(snapshot, true)
 	expect(weapons.current_inst() == rifle and actor.equipped.carried == 3,
 			"solo rewind re-equips a still-owned weapon with its historical ammo")
 
@@ -394,7 +402,7 @@ func _inventory_rewind(tree: SceneTree) -> void:
 	weapons.equip_inst(pistol)
 	actor.equipped.carried = 1
 	weapons.equip_inst(picked_up)
-	actor.restore_state(snapshot, true)
+	actor.rewind_state(snapshot, true)
 	expect(weapons.inst_at_index(0) == pistol and weapons.inst_at_index(1) == picked_up and picked_up > rifle
 			and weapons.current_inst() == picked_up and actor.equipped.carried == 9
 			and weapons.snapshot()[WeaponInventory.CARRIED] == 5,
@@ -471,15 +479,14 @@ func _compound_bow(tree: SceneTree) -> void:
 			and canvas._marks.is_empty(),
 			"the first arrow step stays within spread of the guide without an explosion marker")
 
-	var rewind := RewindHistory.new(sim)
-	var dt := 1.0 / TimeParams.SNAP_HZ
-	rewind.record(dt)
+	sim.time_field = WorldTime.new(GrainAccount.new())
+	_record_time(sim, actor)
 	sim.erase_projectile(id)
-	rewind.record(dt)
-	rewind.rewind(1.0)
+	_record_time(sim, actor)
+	sim.time_field.rewind(sim, actor, 1.0)
 	expect(sim.projectiles[id].hit_damage == 29, "rewinding restores the damage of an expired arrow")
-	rewind.record(0.0)
-	actor.restore_state(drawn, true)
+	sim.time_field.mode = WorldTime.Mode.NONE
+	actor.rewind_state(drawn, true)
 	expect(is_equal_approx((actor.equipped as GunBody).charge_ratio(), 0.8),
 			"single-player rewind restores a partially drawn bow")
 	for tick in 9:
@@ -584,8 +591,6 @@ func _grenade(tree: SceneTree) -> void:
 	var type_id := WeaponRegistry.Type.GRENADE
 	shooter.weapons.set_initial_inventory([type_id, WeaponRegistry.Type.PISTOL])
 	var bullet := sim.spawn_projectile(1, type_id, shooter, Vector2(500, 512), Vector2.RIGHT * 6000.0)
-	var blasts: Array = []
-	sim.detonated.connect(func(id: int, _at: Vector2, _type_id: int) -> void: blasts.append(id))
 	var hp := victim.sim_hp
 	victim.rewinding = true
 	bullet.impact_collider_id = victim.get_instance_id()
@@ -601,7 +606,7 @@ func _grenade(tree: SceneTree) -> void:
 	for tick in range(1, 12):
 		sim.tick = tick
 		sim.step_projectiles(ActorStep.DT)
-	expect(victim.sim_hp == settled and blasts == [1] and sim.projectiles.is_empty(),
+	expect(victim.sim_hp == settled and sim.pending_blasts.keys() == [1] and sim.projectiles.is_empty(),
 			"the grenade detonates once without repeating contact damage")
 	sim.clear_blasts()
 	for id in [2, 3, 4]:
@@ -621,7 +626,7 @@ func _grenade(tree: SceneTree) -> void:
 	var ranged := sim.projectiles[3]
 	ranged.max_range = 0.0
 	sim.step_projectile(ranged, ActorStep.DT)
-	expect(blasts == [1, 3], "reaching maximum range detonates an unarmed grenade")
+	expect(sim.pending_blasts.keys() == [3], "reaching maximum range detonates an unarmed grenade")
 	cleanup()
 
 func _beam(tree: SceneTree) -> void:
@@ -642,11 +647,11 @@ func _beam(tree: SceneTree) -> void:
 	var cell := Vector2i(14, 8)
 	_terrain.damage_beam(cell * 4, _terrain.get_hp(cell * 4) - 1, 0)
 	var sim := parent.combat
-	var rewind := RewindHistory.new(sim)
-	rewind.record(TimeParams.SNAP_INTERVAL)
-	var beams: Array = []
-	sim.fired.connect(func(shot: Dictionary) -> void: beams.append(shot["vectors"]))
-	submit(shooter, shots)
+	sim.time_field = WorldTime.new(GrainAccount.new())
+	_terrain.commit()
+	_record_time(sim, shooter)
+	var fired := sim.resolve_requests([shooter.role])
+	var beams: Array = [fired.values()[0]["vectors"]]
 	var damage: int = WeaponRegistry.definition(WeaponRegistry.Type.LASER)["damage"]
 	expect(near.sim_hp == before - damage and far.sim_hp == before - damage,
 			"the authoritative beam hits multiple targets, each once across reflections")
@@ -659,12 +664,12 @@ func _beam(tree: SceneTree) -> void:
 	expect(sim.projectiles.is_empty(), "a projectile still collides with the broken wall in the same tick")
 	var next: Dictionary = shots[0].duplicate()
 	next["serial"] += 1
-	sim.fire(shooter, next)
+	beams.append(sim.fire(shooter, next)["vectors"])
 	expect(beams.size() == 2 and beams[0].size() >= 3 and beams[0] == beams[1],
 			"actor and projectile steps do not rebuild terrain collision between beams")
 	_terrain.flush_collisions()
 	next["serial"] += 1
-	sim.fire(shooter, next)
+	beams.append(sim.fire(shooter, next)["vectors"])
 	expect(beams.back().size() == 2, "the tick-end collision refresh removes the wall for the following beam")
 	var laser := WeaponRegistry.definition(WeaponRegistry.Type.LASER)
 	WeaponRegistry._definitions[WeaponRegistry.Type.LASER] = laser.merged({"min_damage": 2})
@@ -674,17 +679,16 @@ func _beam(tree: SceneTree) -> void:
 	sim.fire(shooter, next)
 	WeaponRegistry._definitions[WeaponRegistry.Type.LASER] = laser
 	expect(near.sim_hp == before - 3, "a charged beam uses its interpolated damage")
-	var authority := AuthorityWorld.new()
-	authority.combat_rules = sim
-	var lit: Dictionary = authority.world_state()["beams"]
-	rewind.record(TimeParams.SNAP_INTERVAL)
+	_terrain.commit()
+	var lit := sim.beams.duplicate()
+	_record_time(sim, shooter)
 	for i in CombatSimulator.BEAM_TICKS:
 		sim.step({})
-	rewind.record(TimeParams.SNAP_INTERVAL)
+	_record_time(sim, shooter)
 	expect(lit.size() == 4 and sim.beams.is_empty(), "overlapping beams expire after fifteen simulation ticks")
-	rewind.rewind(TimeParams.SNAP_INTERVAL * 0.5 / TimeParams.REWIND_START_MULT)
+	sim.time_field.rewind(sim, shooter, TimeParams.SNAP_INTERVAL * 0.5 / TimeParams.REWIND_START_MULT)
 	expect(sim.beams == lit, "world rewind restores the original paths after the wall was destroyed")
-	rewind.rewind(1.0)
+	sim.time_field.rewind(sim, shooter, 1.0)
 	expect(sim.beams.is_empty(), "rewinding past the shots removes their beams")
 	cleanup()
 
@@ -729,25 +733,12 @@ func _combat_phase(tree: SceneTree, melee_type: int) -> void:
 		_place(target, Vector2(335, 544), 2)
 		target.motion_knock_velocity = Vector2(600, 0)
 		shooter.weapons.set_initial_inventory([type_id])
-		var authority := AuthorityWorld.new()
-		authority.terrain = _terrain
-
-		authority.rules.phase = NetEvent.RoundState.PLAYING
-		authority.combat_rules = parent.combat
-		authority.combat_rules.fired.connect(authority._on_fired)
-		var hit_positions: Array[Vector2] = []
-		var shots: Array[Dictionary] = []
-		authority.event.connect(func(kind: int, data: Variant, _exclude: int) -> void:
-			if kind == NetEvent.Kind.FIRE:
-				shots.append(data))
-		authority.combat_rules.player_hit.connect(func(_source: int, victim: Player, _damage: int,
-				_knock_changed: bool, _force: float) -> void:
-			expect(shots.size() == 1 and shots[0]["tick"] == 1 and shots[0]["type_id"] == type_id,
-					"attack %d broadcasts its action before resolving a hit" % type_id)
-			hit_positions.append(victim.position))
-		shooter.input_buffer.push([[], [[1, 1, 1, ActorInput.BIT_ATTACK, 0, 0, Vector2.RIGHT]]], 0)
-		authority.step()
-		expect(is_equal_approx(target.position.x, 345.0) and hit_positions == [target.position],
+		var shot := _attack(ActorInput.BIT_ATTACK, ActorInput.BIT_ATTACK)
+		var sim := parent.combat
+		var fired := sim.step({shooter.role: shot, target.role: NEUTRAL_INPUT})
+		expect(fired.size() == 1 and fired.values()[0]["type_id"] == type_id,
+				"attack %d resolves one shot in the shared step" % type_id)
+		expect(is_equal_approx(target.position.x, 345.0) and sim.hits.size() == 1,
 				"attack type %d hits after the later role completes its movement" % type_id)
 		cleanup()
 
@@ -792,20 +783,11 @@ func _shared_combat_tick(tree: SceneTree) -> void:
 		_place(actor, Vector2(260, 135))
 		actor.weapons.set_initial_inventory([WeaponRegistry.Type.GRENADE])
 	var single := local.combat
-	single.time_field = TimeField.new(GrainAccount.new())
-	var rewind := RewindHistory.new(single)
-	var server := AuthorityWorld.new()
-	server.combat_rules = host.combat
-	server.terrain = host.combat.terrain
-	server.rules.phase = NetEvent.RoundState.PLAYING
-	var one := CombatSnapshot.new()
-	var two := CombatSnapshot.new()
+	single.time_field = WorldTime.new(GrainAccount.new())
+	var server := host.combat
 	var id := ShotRules.shot_id(1, 1)
-	var detonations: Array[int] = []
-	var hits: Array[int] = []
-	single.detonated.connect(func(_id: int, _pos: Vector2, _type: int) -> void: detonations.append(local.combat.tick))
-	single.player_hit.connect(func(_source: int, _victim: Player, _damage: int, _knock: bool, _force: float) -> void:
-		hits.append(local.combat.tick))
+	var due := 0
+	var hit_at := 0
 	var direction := Vector2(0.3, 1.0).normalized()
 	var held := ActorInput.BIT_DOWN
 	var floor_cell := Vector2i(4, 3)
@@ -813,25 +795,27 @@ func _shared_combat_tick(tree: SceneTree) -> void:
 	var damaged_at := 0
 	for at in range(1, 46):
 		var release := ActorInput.BIT_ATTACK if at == 1 else 0
-		var actions := [[at, 1, at, 0, release, 0, direction]] if release else []
-		host_player.input_buffer.push([[[at, 1, at, 0.0, held, direction]], actions], at - 1)
-		single.time_field.step(held, ActorStep.DT, rewind)
-		single.step({1: [0.0, held, 0, release, 0, direction]})
-		server.step()
-		one.capture(single)
-		two.capture(host.combat)
+		var record := {1: [0.0, held, 0, release, 0, direction]}
+		single.time_field.advance(single, solo_player, held, at)
+		single.hits.clear()
+		single.step(record)
+		server.step(record)
 		var floor_state := block_hp(single.terrain, floor_cell)
-		expect(one.tick == two.tick and solo_player.capture_state() == host_player.capture_state()
-				and one.projectiles == two.projectiles and one.pending_blasts == two.pending_blasts
+		expect(single.tick == server.tick and solo_player.capture_state() == host_player.capture_state()
+				and single.capture_projectiles() == server.capture_projectiles() and single.pending_blasts == server.pending_blasts
 				and floor_state == block_hp(server.terrain, floor_cell),
-				"the same input on solo world time and authority produces the same combat state at tick %d" % at)
+				"the same input produces the same solo and arena combat state at tick %d" % at)
 		if at == 1:
 			expect(single.projectiles.has(id) and single.projectiles[id].traveled > 0.0,
 					"the same release launches and moves the grenade on the firing tick")
+		if single.pending_blasts.has(id):
+			due = single.pending_blasts[id][CombatSimulator.Blast.DUE]
+		if not single.hits.is_empty():
+			hit_at = at
 		if damaged_at == 0 and floor_state != original:
 			damaged_at = at
-	expect(detonations.size() == 1 and hits == [detonations[0] + 3] and damaged_at == hits[0],
-			"one detonation settles both HP and terrain exactly three ticks later")
+	expect(due > 3 and hit_at == due and damaged_at == due,
+			"the same pending blast settles both HP and terrain on its due tick")
 	cleanup()
 
 func _damage_numbers(tree: SceneTree) -> void:
@@ -841,13 +825,21 @@ func _damage_numbers(tree: SceneTree) -> void:
 	var bird := sim.add_enemy("jump_bird", shooter, Vector2.ZERO)
 	var view := WorldView.new()
 	view.bind(canvas_for(parent), _terrain.map_size)
-	sim.npc_hit.connect(func(_source: ActorBody, victim: EnemyBase, damage: int) -> void:
-		view.hit(-1 - victim.slot, victim.position, damage, false))
-
+	var spec := WorldSpec.solo(_document, Vector2i.ZERO, [WeaponRegistry.Type.RIFLE], 0)
+	var props := MatchWorld.new()
+	props.combat = sim
+	props.terrain = _terrain
+	var presenter := MatchPresenter.new(spec, _terrain, shooter.role, null)
+	var frame := presenter.frame
+	frame.begin(0.0, shooter.position)
+	presenter._sample_enemies(props._sample(0)["enemies"], false, false)
 	var lethal_damage := bird.hp
 	sim.resolve_hit(shooter, bird, CombatProfiles.DIRECT, bird.position, lethal_damage, 0.0)
-	var frame := MatchFrame.new()
 	frame.begin(0.0, shooter.position)
+	presenter._sample_enemies(props._sample(0)["enemies"], false, false)
+	for cue: Array in frame.cues:
+		if cue[0] == "number":
+			view.hit(cue[1], cue[2], cue[3], cue[4])
 	view.present(frame)
 	var labels: Array = view._canvas._labels[1]
 	expect(bird.is_dead and labels.size() == 1 and labels[0][0] == str(lethal_damage),
@@ -862,7 +854,7 @@ func _world_rewind(tree: SceneTree) -> void:
 	var parent := world(tree)
 	var actor := player(parent)
 	var sim := parent.combat
-	sim.time_field = TimeField.new(GrainAccount.new())
+	sim.time_field = WorldTime.new(GrainAccount.new())
 	var bird := sim.add_enemy("jump_bird", actor, Vector2(300, 120))
 	bird.velocity = Vector2(12, -7)
 	var bird_hp := bird.hp
@@ -874,10 +866,10 @@ func _world_rewind(tree: SceneTree) -> void:
 	bullet.traveled = 29.0
 	var before := bullet.motion_state()
 	var initial := actor.position
-	var rewind := RewindHistory.new(sim)
+	var rewind := sim.time_field
 	var dt := 1.0 / TimeParams.SNAP_HZ
-	rewind.record(dt)
-	expect(not rewind.can_rewind() and sim.projectiles.get(id) == bullet, "one newly recorded frame cannot start rewind or clear live projectiles")
+	_record_time(sim, actor, dt)
+	expect(not rewind.history.can_rewind() and sim.projectiles.get(id) == bullet, "one newly recorded frame cannot start rewind or clear live projectiles")
 	sim.erase_projectile(id)
 	actor.position.x += 80.0
 	bird.position.x += 40.0
@@ -886,20 +878,22 @@ func _world_rewind(tree: SceneTree) -> void:
 	bird.is_dead = true
 	bird.active = false
 	sim.tick += 1
-	rewind.record(dt)
+	_record_time(sim, actor, dt)
 	var sub := Vector2i(8, 12)
 	var wall_hp := _terrain.get_hp(sub)
 	_terrain.apply_hp(sub, 0, 1)
 	sim.tick += 1
-	_terrain.record_tick(sim.tick)
+	_terrain.commit()
 	var elite := sim.add_enemy("black_bird", actor, Vector2(100, 128)) as EnemyBlackBird
 	var elite_hp := elite.hp
-	rewind.rewind(1.0)
+	rewind.rewind(sim, actor, 1.0)
+	sim.hit_rewound_elites(rewind._elite_hits)
 	expect(actor.position == initial, "single-player gameplay rewind restores the actor")
 	var restored: BulletBody = sim.projectiles[id]
 	expect(_terrain.get_hp(sub) == wall_hp, "entering rewind seals and restores the last live tick's terrain")
 	expect(elite.hp == elite_hp - restored.hit_damage, "a rewound projectile hits an elite added after recording")
-	rewind.rewind(dt)
+	rewind.rewind(sim, actor, dt)
+	sim.hit_rewound_elites(rewind._elite_hits)
 	expect(elite.hp == elite_hp - restored.hit_damage, "holding rewind on the same sample hits the elite once")
 	expect(restored != bullet and restored.shooter == actor and restored.motion_state() == before,
 			"single-player rewind restores the same projectile identity, owner, motion and fuse")
@@ -907,16 +901,17 @@ func _world_rewind(tree: SceneTree) -> void:
 			and bird.hp == bird_hp and not bird.is_dead and bird.active,
 			"single-player rewind restores a recorded enemy and revives it")
 	bird.hurt(bird.hp, Vector2.ZERO)
-	rewind.record(dt)
+	_record_time(sim, actor, dt)
 	var remaining := bird.corpse_left
+	rewind.mode = WorldTime.Mode.NONE
 	bird.simulate_tick(remaining + dt)
-	rewind.record(dt)
+	_record_time(sim, actor, dt)
 	expect(not bird.active and bird.collision_layer == 0 and sim.enemies[bird.slot] == bird,
 			"an expired corpse keeps its slot without collision")
-	rewind.rewind(dt / TimeParams.REWIND_START_MULT)
+	rewind.rewind(sim, actor, dt / TimeParams.REWIND_START_MULT)
 	expect(bird.active and bird.is_dead and bird.corpse_left == remaining and bird.collision_layer == CollisionWorld.LAYER_ENEMY,
 			"rewinding into the corpse interval restores collision and its remaining lifetime")
-	rewind.rewind(TimeParams.SNAP_SECONDS)
+	rewind.rewind(sim, actor, TimeParams.SNAP_SECONDS)
 	expect(bird.active and not bird.is_dead and bird.hp == bird_hp, "rewinding before the kill revives the same slot")
 	cleanup()
 
@@ -927,62 +922,58 @@ func _rewound_blast(tree: SceneTree) -> void:
 	_place(actor, Vector2(900, 544))
 	actor.gravity = 0.0
 	var sim := parent.combat
-	sim.time_field = TimeField.new(GrainAccount.new())
-	var rewind := RewindHistory.new(sim)
+	sim.time_field = WorldTime.new(GrainAccount.new())
+	var rewind := sim.time_field
 	var dt := 1.0 / TimeParams.SNAP_HZ
 	var wall := block_hp(sim.terrain, cell)
 	var hp := actor.sim_hp
 	var id := ShotRules.shot_id(actor.role, 1)
 	var shot := sim.spawn_projectile(id, WeaponRegistry.Type.GRENADE, actor, Vector2(936, 544), Vector2.RIGHT)
 	shot.start_fuse(ActorStep.DT)
-	var events: Array[int] = []
-	sim.detonated.connect(func(_id: int, _at: Vector2, _type: int) -> void: events.append(parent.combat.tick))
 	var inputs := {actor.role: NEUTRAL_INPUT}
-	rewind.record(dt)
+	_record_time(sim, actor, dt)
 	sim.step(inputs)
 	sim.step(inputs)
-	rewind.record(dt)
-	var saved := CombatSnapshot.new()
-	saved.capture(sim)
+	_record_time(sim, actor, dt)
+	var scheduled := sim.pending_blasts[id][CombatSimulator.Blast.DUE] as int
 	sim.step(inputs)
 	sim.step(inputs)
 	var damaged := block_hp(sim.terrain, cell)
 	var hit_hp := actor.sim_hp
-	expect(events == [1] and hit_hp < hp and damaged != wall, "the original grenade settles at tick four")
+	expect(scheduled == 4 and hit_hp < hp and damaged != wall, "the original grenade settles at tick four")
 	# 地形损伤落在两份世界记录之间。
-	rewind.record(dt * 0.5)
-	rewind.record(dt * 0.5)
-	sim.time_field.mode = TimeField.Mode.REWIND
-	rewind.rewind(dt * 0.25 / TimeParams.REWIND_START_MULT)
+	_record_time(sim, actor, dt * 0.5)
+	_record_time(sim, actor, dt * 0.5)
+	sim.time_field.mode = WorldTime.Mode.REWIND
+	rewind.rewind(sim, actor, dt * 0.25 / TimeParams.REWIND_START_MULT)
 	for i in 4:
-		rewind.rewind(0.0)
+		rewind.rewind(sim, actor, 0.0)
 		sim.step(inputs)
-	expect(sim.tick == 2 and sim.ground.tick == 4 and events == [1] and sim.projectiles.is_empty()
+	expect(sim.tick == 2 and sim.ground.tick == 4 and sim.projectiles.is_empty()
 			and sim.pending_blasts[id][CombatSimulator.Blast.DUE] == 4
-			and saved.pending_blasts[id][CombatSimulator.Blast.DUE] == 4
 			and actor.sim_hp == hp and block_hp(sim.terrain, cell) == wall,
 			"holding a pending-blast sample restores its wall and HP and freezes its two remaining ticks")
-	sim.time_field.mode = TimeField.Mode.NONE
-	rewind.record(0.0)
+	sim.time_field.mode = WorldTime.Mode.NONE
+	_record_time(sim, actor, 0.0)
 	sim.step(inputs)
 	expect(actor.sim_hp == hp and block_hp(sim.terrain, cell) == wall, "one resumed tick leaves the blast pending")
 	sim.step(inputs)
-	expect(events == [1] and actor.sim_hp == hit_hp and actor.motion_knock_velocity != Vector2.ZERO
+	expect(actor.sim_hp == hit_hp and actor.motion_knock_velocity != Vector2.ZERO
 			and block_hp(sim.terrain, cell) == damaged and sim.pending_blasts.is_empty(),
 			"resuming settles the original damage and impulse once without a second detonation event")
 	actor.waterproof = 1
 	actor.shot_serial = 7
-	sim.time_field.mode = TimeField.Mode.REWIND
-	rewind.rewind(1.0)
+	sim.time_field.mode = WorldTime.Mode.REWIND
+	rewind.rewind(sim, actor, 1.0)
 	expect(sim.projectiles.has(id) and sim.projectiles[id].fuse_duration == ActorStep.DT
 			and sim.pending_blasts.is_empty() and actor.sim_hp == hp and block_hp(sim.terrain, cell) == wall
 			and actor.waterproof == 1 and actor.shot_serial == 7,
 			"rewinding before detonation restores the live fuse, preserving oxygen and unique shot IDs")
-	sim.time_field.mode = TimeField.Mode.NONE
-	rewind.record(0.0)
+	sim.time_field.mode = WorldTime.Mode.NONE
+	_record_time(sim, actor, 0.0)
 	for i in 5:
 		sim.step(inputs)
-	expect(events == [1, 1] and actor.sim_hp == hit_hp and block_hp(sim.terrain, cell) == damaged
+	expect(actor.sim_hp == hit_hp and block_hp(sim.terrain, cell) == damaged
 			and sim.projectiles.is_empty() and sim.pending_blasts.is_empty(),
 			"a new branch detonates once and reproduces exactly one terrain and damage settlement")
 	cleanup()
@@ -993,7 +984,7 @@ func _rewound_enemy_action(tree: SceneTree) -> void:
 	_place(actor, Vector2(400, 320))
 	actor.gravity = 0.0
 	var sim := parent.combat
-	sim.time_field = TimeField.new(GrainAccount.new())
+	sim.time_field = WorldTime.new(GrainAccount.new())
 	var jumper := sim.add_enemy("jump_bird", actor, Vector2(480, 320)) as EnemyJumpBird
 	jumper.state = EnemyBase.State.LUNGE_WINDUP
 	jumper._state_timer = ActorStep.DT
@@ -1002,49 +993,51 @@ func _rewound_enemy_action(tree: SceneTree) -> void:
 	flyer._start_shoot()
 	flyer._shoot_timer = 0.0
 	sim.spawn_enemy_projectile(CombatProfiles.BIRD_BOMB_TYPE, flyer, Vector2.RIGHT * 100.0)
-	var rewind := RewindHistory.new(sim)
+	var rewind := sim.time_field
 	var dt := 1.0 / TimeParams.SNAP_HZ
-	rewind.record(dt)
+	_record_time(sim, actor, dt)
 	sim.step({1: NEUTRAL_INPUT})
-	var jump := jumper.capture_rewind_state()
-	var fly := flyer.capture_rewind_state()
+	var jump := jumper.capture_state()
+	var fly := flyer.capture_state()
 	expect(jumper.state == EnemyBase.State.LUNGE_DASH and flyer._strafe_target != Vector2.INF,
 			"one input tick starts the jump bird's lunge and the fly bird's firing strafe")
-	rewind.record(dt)
+	_record_time(sim, actor, dt)
 	sim.clear()
-	rewind.rewind(1.0)
+	rewind.rewind(sim, actor, 1.0)
 	expect(sim.projectiles.size() == 1 and sim.projectiles[-1].shooter == flyer and sim.tick == 0,
 			"a recreated enemy projectile resolves the same shooter from the world checkpoint")
-	rewind.record(0.0)
+	_record_time(sim, actor, 0.0)
+	rewind.mode = WorldTime.Mode.NONE
 	sim.step({1: NEUTRAL_INPUT})
-	expect(jumper.capture_rewind_state() == jump and flyer.capture_rewind_state() == fly,
+	expect(jumper.capture_state() == jump and flyer.capture_state() == fly,
 			"resuming repeats both enemies' AI transitions, timers, movement and chosen strafe")
 	cleanup()
 
 func _rewind_window(tree: SceneTree) -> void:
 	var parent := world(tree)
 	var actor := player(parent)
-	var rewind := RewindHistory.new(parent.combat)
+	var rewind := TimeHistory.new(TimeParams.SNAP_SECONDS)
+	var sample := func() -> Array: return [actor.capture_state(), {}]
 	var dt := 0.0625
 	var window := int(TimeParams.SNAP_SECONDS / dt)
 	var samples := 2 * window + 4
 	for index in samples:
 		actor.position.x = 64.0 + index * 0.25
-		rewind.record(dt)
+		rewind.record(dt, index, sample)
 	var end := samples * dt
 	var backwards := TimeParams.SNAP_SECONDS * 0.5 + dt * 0.5
 	var target := end - backwards
 	var expected_x := 64.0 + (floori(target / dt) - 1) * 0.25
-	rewind.rewind(backwards / TimeParams.REWIND_START_MULT)
+	actor.rewind_state(rewind.backward(backwards / TimeParams.REWIND_START_MULT)[TimeHistory.Sample.ACTOR], true)
 	expect(actor.position.x == expected_x, "rewind finds the preceding frame across the wrapped buffer")
-	rewind.record(0.0)
+	rewind.record(0.0, samples, sample)
 	expect(is_equal_approx(rewind.time, target), "rewind exits at the target time between recorded frames")
 	actor.position.x = 480.0
-	rewind.record(dt)
-	rewind.rewind(dt * 0.25 / TimeParams.REWIND_START_MULT)
+	rewind.record(dt, samples, sample)
+	actor.rewind_state(rewind.backward(dt * 0.25 / TimeParams.REWIND_START_MULT)[TimeHistory.Sample.ACTOR], true)
 	expect(actor.position.x == expected_x, "recording after rewind discards the former future")
-	rewind.rewind(TimeParams.SNAP_SECONDS + 1.0)
-	rewind.record(0.0)
+	actor.rewind_state(rewind.backward(TimeParams.SNAP_SECONDS + 1.0)[TimeHistory.Sample.ACTOR], true)
+	rewind.record(0.0, samples, sample)
 	expect(actor.position.x == 64.0 + (samples - 1 - window) * 0.25
 			and is_equal_approx(rewind.time, end - TimeParams.SNAP_SECONDS),
 			"rewinding beyond the window clamps to the oldest retained frame and its time")
@@ -1067,8 +1060,8 @@ func _enemy_time(tree: SceneTree) -> void:
 	bird.is_dead = true
 	bird.use_gravity = false
 	bird.knock_decay_rate = 0.0
-	bird.combat.time_field = TimeField.new(GrainAccount.new())
-	bird.time_field.mode = TimeField.Mode.HASTE
+	bird.combat.time_field = WorldTime.new(GrainAccount.new())
+	bird.time_field.mode = WorldTime.Mode.HASTE
 	for elite in [false, true]:
 		bird.kind.elite = elite
 		bird.position = Vector2(200.0, 80.0)
@@ -1083,9 +1076,9 @@ func _enemy_time(tree: SceneTree) -> void:
 	flyer._glide_to(Vector2(8, 80), ActorStep.DT)
 	expect(flyer.hull == flyer.kind.hulls[1] and flyer.velocity.x > 0.0,
 			"a flying bird uses its flight hull and glides along the short path across a seam")
-	var flight := flyer.capture_rewind_state()
+	var flight := flyer.capture_state()
 	flyer.stance = 0
-	flyer.rewind_restore(flight)
+	flyer.restore_state(flight)
 	expect(PhysicsServer2D.body_get_shape(flyer.rid, 0) == flyer.kind.hulls[1].get_rid(),
 			"restoring the flight stance also restores the physics shape")
 	flyer.position = Vector2(200, 80)
@@ -1105,10 +1098,10 @@ func _enemy_time(tree: SceneTree) -> void:
 	expect(not flyer.touches_player(), "crouching ends contact in the same tick")
 	flyer.state = EnemyBase.State.CHARGE
 	flyer.motion_contacts.append([target.rid, Vector2.LEFT, target.position, target.get_instance_id()])
-	flyer.time_field.mode = TimeField.Mode.REWIND
+	flyer.time_field.mode = WorldTime.Mode.REWIND
 	flyer.simulate_tick(ActorStep.DT)
 	expect(not flyer.is_dead, "a suspended charge cannot process a contact from an earlier tick")
-	flyer.time_field.mode = TimeField.Mode.NONE
+	flyer.time_field.mode = WorldTime.Mode.NONE
 	var biting := parent.combat.add_enemy("jump_bird", target, Vector2(200, 80))
 	_place(target, Vector2(275, 80))
 	var hp := target.sim_hp
@@ -1132,23 +1125,26 @@ func _daylight(tree: SceneTree) -> void:
 	var next := sky.set_minute(365)
 	expect(sky.set_minute(362.5).is_equal_approx(dawn.lerp(next, 0.5)), "light changes smoothly between swatches")
 	sky.free()
-	var combat := world(tree).combat
-	var field := TimeField.new(GrainAccount.new())
+	var parent := world(tree)
+	var combat := parent.combat
+	var actor := player(parent)
+	var field := WorldTime.new(GrainAccount.new())
 	combat.time_field = field
-	var history := RewindHistory.new(combat)
 	expect(Daylight.time_text(Daylight.minute_at(0.0)) == "06:00" and Daylight.minute_at(120.0) == 360.0,
 			"a full daylight cycle returns to dawn after 120 seconds")
 	field.elapsed = 89.75
-	field.step(0, 0.125, history)
+	field.advance(combat, actor, 0, 1)
+	_record_time(combat, actor)
 	var before := field.elapsed
-	field.step(ActorInput.BIT_HASTE, 0.125, history)
-	expect(field.elapsed == before + 0.25 and Daylight.time_text(Daylight.minute_at(field.elapsed)) == "00:01",
+	for at in range(2, 17):
+		field.advance(combat, actor, ActorInput.BIT_HASTE, at)
+	expect(is_equal_approx(field.elapsed, before + 0.5) and Daylight.time_text(Daylight.minute_at(field.elapsed)).begins_with("00:"),
 			"haste carries the sky and clock through midnight at player speed")
-	field.step(ActorInput.BIT_REWIND, 0.125, history)
-	expect(field.elapsed == before and Daylight.time_text(Daylight.minute_at(field.elapsed)) == "23:58",
-			"rewinding a hasted interval restores the exact earlier time of day")
-	field.step(0, 0.125, history)
-	expect(Daylight.time_text(Daylight.minute_at(field.elapsed)) == "00:00", "daylight resumes from the restored time")
+	field.rewind(combat, actor, 1.0)
+	expect(field.elapsed == before and Daylight.time_text(Daylight.minute_at(field.elapsed)).begins_with("23:"),
+			"rewinding a hasted interval restores the earlier time of day")
+	field.advance(combat, actor, 0, 18)
+	expect(is_equal_approx(field.elapsed, before + ActorStep.DT), "daylight resumes from the restored time")
 	cleanup()
 
 func _daylight_render(tree: SceneTree) -> void:
@@ -1284,20 +1280,18 @@ func _grain_rewards(tree: SceneTree) -> void:
 	var parent := world(tree)
 	var combat := parent.combat
 	var account := GrainAccount.new(0.0)
-	var field := TimeField.new(account)
+	var field := WorldTime.new(account)
 	combat.time_field = field
 	var elite := combat.add_enemy("black_bird", player(parent), Vector2.ZERO) as EnemyBlackBird
-	var received: Array[float] = []
-	field.grain_received.connect(func() -> void: received.append(account.balance))
 	elite._begin_death()
 	for i in TimeParams.ELITE_GRAIN_DELAY_TICKS - 1:
 		field.step_rewards()
-	expect(field.account.balance == 0.0 and received.is_empty(), "crystals wait for the reward tick")
+	expect(field.account.balance == 0.0, "crystals wait for the reward tick")
 	field.step_rewards()
-	expect(account.balance == TimeParams.ELITE_GRAIN_DROP and received == [account.balance],
+	expect(account.balance == TimeParams.ELITE_GRAIN_DROP,
 			"the elite's reward settles on its tick without a camera, HUD, or crystal effect")
 	field.step_rewards()
-	expect(received.size() == 1, "the reward is delivered once")
+	expect(account.balance == TimeParams.ELITE_GRAIN_DROP, "the reward is delivered once")
 	cleanup()
 
 func _shared_rewind_history(tree: SceneTree) -> void:
@@ -1305,9 +1299,7 @@ func _shared_rewind_history(tree: SceneTree) -> void:
 	var first := player(parent, 1)
 	var second := player(parent, 2)
 	var sim := parent.combat
-	var all := RewindHistory.new(sim)
-	var own := RewindHistory.new(sim, first.role, 1.0)
-	var other := RewindHistory.new(sim, second.role, 1.0)
+	var time := PersonalTime.new({}, [1, 2])
 	var dt := TimeParams.SNAP_INTERVAL
 	var id := ShotRules.shot_id(first.role, 1)
 	var shell := sim.spawn_projectile(id, WeaponRegistry.Type.GRENADE, first, Vector2(180, 64), Vector2.RIGHT)
@@ -1315,10 +1307,6 @@ func _shared_rewind_history(tree: SceneTree) -> void:
 	sim.spawn_projectile(gone, WeaponRegistry.Type.PISTOL, first, Vector2(260, 64), Vector2.LEFT)
 	var remote := sim.spawn_projectile(ShotRules.shot_id(second.role, 1), WeaponRegistry.Type.PISTOL,
 			second, Vector2(310, 64), Vector2.RIGHT)
-	var blast := ShotRules.shot_id(first.role, 3)
-	var cell := Vector2i(2, 3)
-	var sub := Vector2i(8, 12)
-	var wall := block_hp(sim.terrain, cell)
 	for i in range(1, 4):
 		sim.tick = i * 3
 		first.position.x = 100.0 + i
@@ -1326,14 +1314,14 @@ func _shared_rewind_history(tree: SceneTree) -> void:
 		shell.position.x = 180.0 + i
 		shell.fuse_elapsed = i * 0.01
 		remote.position.x = 310.0 + i
-		var frame := own.record(dt)
-		expect(other.record(dt, frame) == frame and all.record(dt, frame) == frame,
-				"world and personal histories reference one combat checkpoint on the same tick")
+		for actor: Player in [first, second]:
+			time.histories[actor.role].record(dt, sim.tick, PersonalTime._sample.bind(sim, actor))
 	sim.erase_projectile(gone)
-	sim.submit_blast(blast, Vector2(180, 64), WeaponRegistry.Type.GRENADE)
+	sim.submit_blast(ShotRules.shot_id(1, 3), shell.position, WeaponRegistry.Type.GRENADE)
 	var pending := sim.pending_blasts.duplicate(true)
+	var sub := Vector2i(8, 12)
 	sim.terrain.apply_hp(sub, 0, 1)
-	sim.terrain.record_tick(sim.tick)
+	sim.terrain.commit()
 	ActorStep.step(first, _attack(0, ActorInput.BIT_DROP))
 	first.shot_serial = 8
 	first.waterproof = 1
@@ -1342,7 +1330,7 @@ func _shared_rewind_history(tree: SceneTree) -> void:
 	var hit_hp := second.sim_hp
 	var late_id := ShotRules.shot_id(first.role, 8)
 	sim.spawn_projectile(late_id, WeaponRegistry.Type.PISTOL, first, Vector2(220, 64), Vector2.RIGHT)
-	own.rewind(dt * 0.5 / TimeParams.REWIND_START_MULT)
+	time.advance(sim, {1: _attack(ActorInput.BIT_REWIND, 0), 2: NEUTRAL_INPUT}, 10)
 	expect(first.position.x == 102.0 and shell.position.x == 182.0 and is_equal_approx(shell.fuse_elapsed, 0.02)
 			and second.position.x == 203.0 and remote.position.x == 313.0 and sim.tick == 9,
 			"personal rewind restores just its player and the motion of surviving owned projectiles")
@@ -1351,68 +1339,52 @@ func _shared_rewind_history(tree: SceneTree) -> void:
 			and sim.pending_blasts == pending and sim.terrain.get_hp(sub) == 0 and first.waterproof == first.max_waterproof
 			and first.equipped == null and first.shot_serial == 8 and sim.ground.items.size() == 1,
 			"personal restore preserves world effects, settled hits, projectile lifetimes, weapon ownership and shot IDs")
-	first.position.x = 500.0
-	own.record(dt)
-	other.rewind(dt * 0.5 / TimeParams.REWIND_START_MULT)
-	expect(second.position.x == 202.0 and first.position.x == 500.0 and remote.position.x == 312.0,
-			"one player's new branch leaves another player's shared checkpoint available")
-	first.waterproof = 1
-	all.rewind(1.0)
-	expect(first.position.x == 101.0 and second.position.x == 201.0 and shell.position.x == 181.0
-			and not shell.direct_hit and sim.projectiles.has(gone) and not sim.projectiles.has(late_id)
-			and sim.pending_blasts.is_empty() and block_hp(sim.terrain, cell) == wall
-			and sim.tick == 3 and first.waterproof == 1 and first.equipped == null and first.shot_serial == 8,
-			"world rewind restores both actors, projectile membership, hit flags, clock, terrain and pending blasts together")
+	time.advance(sim, {1: NEUTRAL_INPUT, 2: _attack(ActorInput.BIT_REWIND, 0)}, 11)
+	expect(second.position.x < 203.0 and first.position.x == 102.0 and remote.position.x < 313.0,
+			"one player's new branch leaves the other player's past intact")
 	cleanup()
 
 func _personal_rewind() -> void:
-	var server := AuthorityWorld.new()
-	var mode := PvpSession.MODE_ROYALE
-	var options := RoomOptions.normalized(mode, {"max_players": 3, "beta": true})
-	var problem := server.setup(mode, "res://maps/newfactory.cyrm", [1, 2, 3], {}, options)
-	expect(problem.is_empty(), "authority creates an arena with personal time skills")
-	server.start_countdown()
-	server._advance_round(3.0)
+	var mode := WorldSpec.ROYALE
+	var host := arena(mode, [1, 2, 3], {}, RoomOptions.normalized(mode, {"max_players": 3, "beta": true}))
+	var server := host.world
+	expect(server.problem.is_empty(), "authority creates an arena with personal time skills")
+	server.rules.phase = MatchRules.Phase.PLAYING
 	var first := server.players[1]
 	var second := server.players[2]
 	first.weapons.set_initial_inventory([WeaponRegistry.Type.RIFLE])
-	var epoch := first.input_buffer.epoch
-	var send := func(actor: Player, at: int, held: int, pressed := 0) -> void:
-		var e := actor.input_buffer.epoch
-		var actions := [[at, e, at, pressed, 0, actor.weapons.current_inst(), Vector2.RIGHT]] if pressed else []
-		actor.input_buffer.push([[[at, e, at, 0.0, held, Vector2.RIGHT]], actions], at - 1)
+	var epoch := host._buffers[1].epoch
 	for at in range(1, 11):
 		first.sim_hp = 20 + at
 		second.sim_hp = 30 + at
-		server.step()
-	var account := server.time_economy.accounts[1]
+		host.fixed_step()
+	var account := server.personal_time.accounts[1]
 	var balance := account.balance
 	var both := ActorInput.BIT_REWIND | ActorInput.BIT_HASTE
-	send.call(first, 11, both)
-	server.step()
-	expect(first.rewinding and first.sim_hp == 26 and second.sim_hp == 40 and server.combat_rules.tick == 11
+	host.fixed_step({1: _attack(both, 0)})
+	expect(first.rewinding and first.sim_hp == 26 and second.sim_hp == 40 and server.tick == 11
 			and first.personal_haste_mult == 1.0
-			and is_equal_approx(account.balance, balance - ActorStep.DT * server.time_economy.rules["rewind_burn"]),
-			"only the rewind is charged while its user restores health and the server clock moves on")
-	send.call(second, 12, ActorInput.BIT_REWIND)
-	server.step()
+			and is_equal_approx(account.balance, balance - ActorStep.DT * server.personal_time.rules["rewind_burn"]),
+			"rewind has priority and restores health while the commit clock advances")
+	host.fixed_step({1: _attack(both, 0), 2: _attack(ActorInput.BIT_REWIND, 0)})
 	expect(first.rewinding and second.rewinding and first.sim_hp == 23 and second.sim_hp == 36,
-			"two concurrent personal rewinds select different moments on the same server tick")
-	send.call(first, 13, 0, ActorInput.BIT_ATTACK)
-	server.step()
-	expect(not first.rewinding and first.input_buffer.epoch == epoch + 1 and first.shot_serial == 0
-			and second.rewinding and second.input_buffer.epoch == epoch and server.combat_rules.tick == 13,
-			"one release discards stale actions and leaves the other player's branch and control epoch intact")
-	expect(server.respawn(2) and not second.rewinding and second.input_buffer.epoch == epoch + 1,
+			"two concurrent personal rewinds select different moments")
+	host.fixed_step({1: _attack(ActorInput.BIT_ATTACK, ActorInput.BIT_ATTACK), 2: _attack(ActorInput.BIT_REWIND, 0)})
+	expect(not first.rewinding and host._buffers[1].epoch == epoch + 1 and first.shot_serial == 0
+			and second.rewinding and host._buffers[2].epoch == epoch and server.tick == 13,
+			"releasing one skill discards stale actions and leaves the other branch and input epoch alone")
+	second.force_down()
+	second.respawn_tick = server.tick + 1
+	host.fixed_step()
+	expect(not second.rewinding and host._buffers[2].epoch == epoch + 1,
 			"respawning during a rewind starts one new input epoch")
-	send.call(second, 14, ActorInput.BIT_REWIND)
-	server.step()
+	host.fixed_step({2: _attack(ActorInput.BIT_REWIND, 0)})
 	expect(not second.rewinding and second.sim_hp == second.sim_max_hp,
 			"respawn discards all personal samples from the previous life")
-	server.remove_role(3)
-	expect(not server._rewinds.has(3), "a departing player releases its history")
-	server._reset_round()
-	expect(server._rewinds.is_empty(), "a fresh round drops all old personal timelines")
+	host.enqueue(MatchWorld.Command.LEAVE, 3)
+	host.fixed_step()
+	expect(not server.personal_time.histories.has(3), "a departing player releases its history")
+	host.close()
 
 func _team_health(tree: SceneTree) -> void:
 	var parent := world_with_walls(tree, 16, 16, {})
@@ -1673,125 +1645,110 @@ func _step_slope(tree: SceneTree) -> void:
 
 ## 该测试覆盖胜队内部的 MVP 评选、同分时的顺序以及平局不评 MVP 的规则。
 func _mvp() -> void:
-	var authority := AuthorityWorld.new()
-	authority.rules.mode = PvpSession.MODE_TEAM
-	authority.rules.teams = {1: 1, 2: 1, 3: 2, 4: 2}
-	authority._stats = {}
-	for role: int in [1, 2, 3, 4]:
-		authority._stats[role] = {"kills": 50 if role == 1 else (20 if role == 3 else 1),
-				"deaths": 1, "assists": 0, "dealt": 100, "taken": 10, "team_damage": 0,
-				"self_damage": 0, "team_kills": 0, "rounds": 1, "left": false, "hits": {}}
-	authority.rules.winner = 2
-	expect(authority.mvp_role() == 3, "the team MVP comes from the winning team")
-	authority._stats[4]["kills"] = 20
-	authority._stats[4]["dealt"] = 100
-	authority._stats[4]["deaths"] = 1
-	expect(authority.mvp_role() == 3, "an exact statistical tie is decided by role order")
-	authority.rules.winner = 0
-	expect(authority.mvp_role() == 0, "a drawn team match has no MVP")
+	var host := arena(WorldSpec.TEAM, [1, 2, 3, 4], {1: 1, 2: 1, 3: 2, 4: 2}, {})
+	var world := host.world
+	for id: int in world.players:
+		world._stats[id]["kills"] = 50 if id == 1 else (20 if id == 3 else 1)
+	world.rules.winner = 2
+	expect(arena_round(world)["mvp"] == 3, "the team MVP comes from the winning team")
+	world._stats[4]["kills"] = 20
+	expect(arena_round(world)["mvp"] == 3, "an exact statistical tie is decided by role order")
+	world.rules.winner = 0
+	expect(arena_round(world)["mvp"] == 0, "a drawn team match has no MVP")
+	host.close()
 
 func _duel_spawns() -> void:
-	var path := "res://maps/newfactory.cyrm"
-	var sides := SpawnPicker.respawn_cells(CyrmMap.load_file(path))
-	var authority := AuthorityWorld.new()
-	var problem := authority.setup(PvpSession.MODE_PVP, path, [1, 2], {}, {"player_collision": true})
-	expect(problem.is_empty(), "the duel loads the multiplayer spawn points")
-	if not problem.is_empty():
-		return
-	expect(players_on_map_points(authority, [1], sides[1]) and players_on_map_points(authority, [2], sides[2]),
+	var host := arena(WorldSpec.DUEL, [1, 2], {}, {"player_collision": true})
+	var world := host.world
+	var sides := SpawnPicker.respawn_cells(world.spec.map)
+	expect(world.problem.is_empty(), "the duel loads the multiplayer spawn points")
+	expect(players_on_map_points(world, [1], sides[1]) and players_on_map_points(world, [2], sides[2]),
 			"duelists open on their respective marked sides")
-	authority.start_countdown()
-	authority._advance_round(3.0)
-	var winner: Player = authority.players[1]
-	var victim: Player = authority.players[2]
+	world.rules.phase = MatchRules.Phase.PLAYING
+	var winner := world.players[1]
+	var victim := world.players[2]
 	winner.position = Vector2.ZERO
 	winner.sim_hp = 13
 	victim.position = Vector2.ZERO
 	victim.apply_hit_health(0)
-	authority._advance_round(ActorStep.DT)
-	expect(winner.sim_hp == 13 and players_on_map_points(authority, [1], sides[1])
-			and victim.sim_downed and victim.respawn_tick == authority.combat_rules.tick + MatchRules.RESPAWN_TICKS,
-			"the survivor moves to a marked point immediately with current HP while the victim waits")
-	authority.combat_rules.tick = victim.respawn_tick
-	authority._advance_round(ActorStep.DT)
-	expect(not victim.sim_downed and victim.sim_hp == victim.sim_max_hp and players_on_map_points(authority, [2], sides[2]),
+	host.fixed_step()
+	expect(winner.sim_hp == 13 and players_on_map_points(world, [1], sides[1])
+			and victim.sim_downed and victim.respawn_tick == world.tick + MatchRules.RESPAWN_TICKS,
+			"the survivor moves to a marked point with current HP while the victim waits")
+	for i in MatchRules.RESPAWN_TICKS:
+		host.fixed_step()
+	expect(not victim.sim_downed and victim.sim_hp == victim.sim_max_hp and players_on_map_points(world, [2], sides[2]),
 			"the victim revives at full HP on the other marked side")
-	authority.rules.scores[1] = 5
-	authority._advance_round(ActorStep.DT)
-	authority._advance_round(4.0)
-	expect(authority.rules.round_number == 2 and players_on_map_points(authority, [1], sides[2])
-			and players_on_map_points(authority, [2], sides[1]), "duelists use the opposite map sides in round two")
+	world.rules.scores[1] = 5
+	host.fixed_step()
+	world.rules.round_timer = ActorStep.DT
+	host.fixed_step()
+	expect(world.rules.round_number == 2 and players_on_map_points(world, [1], sides[2])
+			and players_on_map_points(world, [2], sides[1]), "duelists use the opposite map sides in round two")
+	host.close()
 
-## 使用人数不等的两个队伍，验证开局加分、生命值、出生点与回合间换边。
 func _team_setup() -> void:
-	var authority := AuthorityWorld.new()
 	var disabled := WeaponRegistry.all_ids()
-	expect(not authority.setup(PvpSession.MODE_TEAM, "res://maps/demo.cyrm", [1, 2, 3], {1: 1, 2: 1, 3: 2},
-			{"disabled_weapons": disabled}).is_empty() and authority.combat_rules == null,
-			"all weapons disabled rejects the match before spawning players")
+	var teams := {1: 1, 2: 1, 3: 2}
+	var roles := [1, 2, 3]
+	var invalid := arena(WorldSpec.TEAM, roles, teams, {"disabled_weapons": disabled}).world
+	expect(not invalid.problem.is_empty() and invalid.combat == null, "disabling all weapons rejects the match")
 	disabled.erase(WeaponRegistry.Type.PISTOL)
-	var problem := authority.setup(PvpSession.MODE_TEAM, "res://maps/demo.cyrm", [1, 2, 3], {1: 1, 2: 1, 3: 2},
-			{"match_time": 300, "disabled_weapons": disabled})
-	expect(problem.is_empty(), "the team match loads and validates its map")
-	for p: Player in authority.players.values():
+	var host := arena(WorldSpec.TEAM, roles, teams, {"disabled_weapons": disabled}, "res://maps/demo.cyrm")
+	var world := host.world
+	expect(world.problem.is_empty(), "the team match loads and validates its map")
+	for p: Player in world.players.values():
 		expect(p.collision_mask == CollisionWorld.LAYER_TERRAIN,
 				"players collide with terrain only; NPC contact is damage-only")
 		expect(p.equipped != null and p.equipped.type_id == WeaponRegistry.Type.PISTOL,
-				"each player starts equipped even when only one weapon type is enabled")
-	expect(authority.rules.phase == NetEvent.RoundState.WAITING and is_zero_approx(authority.rules.round_timer),
+				"each player starts equipped when only one type is enabled")
+	expect(world.rules.phase == MatchRules.Phase.WAITING and is_zero_approx(world.rules.round_timer),
 			"setup starts in WAITING with a zero timer")
-	expect(authority.players[3].sim_max_hp == 55 and authority.players[1].sim_max_hp == 50,
+	expect(world.players[3].sim_max_hp == 55 and world.players[1].sim_max_hp == 50,
 			"team max HP follows the fixed roster")
-	expect(int(authority.rules.scores.get(2, 0)) == 1 and int(authority.rules.scores.get(1, 0)) == 0,
+	expect(int(world.rules.scores.get(2, 0)) == 1 and int(world.rules.scores.get(1, 0)) == 0,
 			"the smaller team starts with its score bonus")
-	expect(authority.rules.team_counts == {1: 2, 2: 1}, "the roster counts are frozen at setup")
-	var sides := SpawnPicker.respawn_cells(CyrmMap.load_file("res://maps/demo.cyrm"))
-	expect(players_on_map_points(authority, [1, 2], sides[1]) and players_on_map_points(authority, [3], sides[2]),
-			"each team opens on distinct marked points on its own side")
-	var actor: Player = authority.players[1]
-	var drop := [1, actor.input_buffer.epoch, authority.combat_rules.tick + 1, ActorInput.BIT_DROP, 0, 0, Vector2.RIGHT]
-	authority.accept_input(1, [[], [drop]], 0)
-	for i in 3: authority.step()
-	expect(actor.equipped != null and actor.equipped.type_id == WeaponRegistry.Type.PISTOL,
-			"WAITING blocks a queued drop even after the seat is ready")
-
-	authority.start_countdown()
-	authority._advance_round(3.0)
-	drop[InputBuffer.SEQ] = 4
-	drop[InputBuffer.TARGET_TICK] = authority.combat_rules.tick + 1
-	authority.accept_input(1, [[], [drop]], 50000)
-	for i in 3: authority.step()
+	expect(world.rules.team_counts == {1: 2, 2: 1}, "the roster counts are frozen at setup")
+	var sides := SpawnPicker.respawn_cells(world.spec.map)
+	expect(players_on_map_points(world, [1, 2], sides[1]) and players_on_map_points(world, [3], sides[2]),
+			"each team opens on distinct points on its own side")
+	var actor := world.players[1]
+	var drop := _attack(0, ActorInput.BIT_DROP)
+	host.fixed_step({1: drop})
+	expect(actor.equipped != null, "WAITING blocks a queued drop")
+	host.enqueue(MatchWorld.Command.START)
+	host.fixed_step()
+	world.rules.round_timer = ActorStep.DT
+	host.fixed_step()
+	host.fixed_step({1: drop})
 	expect(actor.equipped == null, "PLAYING accepts the same drop")
-
-	_win_team_round(authority)
-	expect(authority.rules.phase == NetEvent.RoundState.WAITING,
-			"the next round returns to WAITING instead of counting down")
-	expect(authority.rules.round_number == 2 and players_on_map_points(authority, [1, 2], sides[2])
-			and players_on_map_points(authority, [3], sides[1]), "both teams start on the opposite side in round two")
-	expect(int(authority.rules.scores.get(2, 0)) == 1 and int(authority.rules.scores.get(1, 0)) == 0,
+	_win_team_round(host)
+	expect(world.rules.phase == MatchRules.Phase.WAITING and world.rules.round_number == 2
+			and players_on_map_points(world, [1, 2], sides[2]) and players_on_map_points(world, [3], sides[1]),
+			"the next round opens on opposite sides and waits for readiness")
+	expect(int(world.rules.scores.get(2, 0)) == 1 and int(world.rules.scores.get(1, 0)) == 0,
 			"the next round reapplies the initial score bonus")
-
-	authority.start_countdown()
-	authority._advance_round(3.0)
-	_win_team_round(authority)
-	var result := authority.round_state()
-	expect(result["state"] == NetEvent.RoundState.MATCH_OVER and result["match_winner"] == 1,
+	world.rules.phase = MatchRules.Phase.PLAYING
+	_win_team_round(host)
+	var result := arena_round(world)
+	expect(result["state"] == MatchRules.Phase.MATCH_OVER and result["match_winner"] == 1,
 			"the second round win seals the match result")
-	var final_tick := authority.combat_rules.tick
-	authority.step()
-	expect(authority.combat_rules.tick == final_tick, "the final result stops authoritative combat")
-	drop[InputBuffer.EPOCH] = actor.input_buffer.epoch
-	drop[InputBuffer.TARGET_TICK] = authority.combat_rules.tick + 1
-	authority.accept_input(1, [[], [drop]], 100000)
-	expect(actor.input_buffer.actions.is_empty(), "the final result stops accepting input")
-	authority.remove_role(3)
-	expect(authority.round_state() == result, "leaving after the match keeps the final result")
+	var final_tick := world.tick
+	host.enqueue(MatchWorld.Command.LEAVE, 3)
+	host.fixed_step()
+	expect(world.tick == final_tick and arena_round(world) == result, "terminal matches keep their committed result")
+	var epoch := host._buffers[1].epoch
+	host.accept_input(1, [[], [[1, epoch, final_tick + 1, ActorInput.BIT_DROP, 0, 0, Vector2.RIGHT]]], 0)
+	expect(host._buffers[1].actions.is_empty(), "the final result stops accepting input")
+	host.close()
 
-func _win_team_round(authority: AuthorityWorld) -> void:
+func _win_team_round(host: MatchSession) -> void:
+	var world := host.world
 	for kill in TeamRules.kills_to_win(3):
-		authority.rules.score_down(3, 1)
-	authority._advance_round(ActorStep.DT)
-	authority._advance_round(4.0)
+		world.rules.score_down(3, 1)
+	host.fixed_step()
+	world.rules.round_timer = ActorStep.DT
+	host.fixed_step()
 
 ## 用固定随机种子验证安全点间的抽选，并检查开启碰撞时阵亡角色会让出占用的点。
 func _team_respawn(tree: SceneTree) -> void:
@@ -1799,7 +1756,7 @@ func _team_respawn(tree: SceneTree) -> void:
 	var parent := world_from_solid(tree, 125, 75, func(sx: int, sy: int) -> bool: return sy >= 74 * 4)
 	var info := CyrmMap.load_file("res://maps/demo.cyrm")
 	var respawn := SpawnPicker.respawn_cells(info)
-	var rules := MatchRules.new()
+	var rules := MatchRules.new(RandomNumberGenerator.new())
 	rules.setup(PvpSession.MODE_TEAM, [1, 2, 3], {1: 1, 2: 1, 3: 2}, info, {"player_collision": true})
 	var ally := player(parent, 1)
 	ally.team = 1
@@ -1809,10 +1766,9 @@ func _team_respawn(tree: SceneTree) -> void:
 	enemy.position = CyrmMap.world_position(respawn[1][1])
 	var players := {1: ally, 3: enemy}
 	var picked := {}
-	seed(1729)
+	rules._rng.seed = 1729
 	for i in 16:
 		picked[rules.spawn_for(players, 2)] = true
-	randomize()
 	var size: Vector2i = info.size
 	expect(picked.size() > 1 and picked.keys().all(func(cell: Vector2i) -> bool:
 		var distance := GridPathfinder.toroidal_dist(cell, respawn[1][1], size.x, size.y)
@@ -1844,13 +1800,13 @@ func _sparse_spawn_map(tree: SceneTree) -> void:
 	info.points[0] = {"kind": "player", "cell": Vector2i(2, 6)}
 	info.points[1] = {"kind": "player2", "cell": Vector2i(66, 6)}
 	for x: int in [2, 10, 66]: info.points[x] = {"kind": "respawn", "side": 1, "cell": Vector2i(x, 6)}
-	expect(not MatchRules.new().setup(PvpSession.MODE_PVP, [1, 2], {}, info, {}).is_empty(),
+	expect(not MatchRules.new(RandomNumberGenerator.new()).setup(PvpSession.MODE_PVP, [1, 2], {}, info, {}).is_empty(),
 			"a duel with a missing side rejects the map even when both solo markers exist")
-	expect(not MatchRules.new().setup(PvpSession.MODE_TEAM, [1, 2], {1: 1, 2: 2}, info, {}).is_empty(),
+	expect(not MatchRules.new(RandomNumberGenerator.new()).setup(PvpSession.MODE_TEAM, [1, 2], {1: 1, 2: 2}, info, {}).is_empty(),
 			"a team match rejects a map with an empty side")
-	expect(not MatchRules.new().setup(PvpSession.MODE_ROYALE, [1, 2, 3, 4], {}, info, {}).is_empty(),
+	expect(not MatchRules.new(RandomNumberGenerator.new()).setup(PvpSession.MODE_ROYALE, [1, 2, 3, 4], {}, info, {}).is_empty(),
 			"a Royale with too few marked points rejects the map")
-	var rules := MatchRules.new()
+	var rules := MatchRules.new(RandomNumberGenerator.new())
 	expect(not rules.setup(PvpSession.MODE_ROYALE, [1], {}, info, {}).is_empty()
 			and not rules.setup(PvpSession.MODE_ROYALE, [1, 2, 3], {}, info, {"max_players": 2}).is_empty(),
 			"Royale admission respects both the minimum roster and the configured room cap")
@@ -1864,7 +1820,7 @@ func _sparse_spawn_map(tree: SceneTree) -> void:
 		expect(rules.spawn_for({1: self_player, 2: enemy}, 1) == Vector2i(10, 6),
 				"with no safe point, pick the farthest across the seam and ignore the moving player's own position")
 	info.points[75] = {"kind": "respawn", "side": 2, "cell": Vector2i(2, 6)}
-	expect(not MatchRules.new().setup(PvpSession.MODE_PVP, [1, 2], {}, info, {}).is_empty(),
+	expect(not MatchRules.new(RandomNumberGenerator.new()).setup(PvpSession.MODE_PVP, [1, 2], {}, info, {}).is_empty(),
 			"a point marked on both sides cannot start a duel")
 	cleanup()
 

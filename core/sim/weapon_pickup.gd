@@ -3,7 +3,7 @@ extends RectBody
 
 const CFG: PlayerConfig = preload("res://core/config/player_config.tres")
 
-enum Network { POS, VEL, TYPE, LOCKED_ROLE, UNLOCK_TICK }
+enum { POS, VEL, TYPE, LOCKED_ROLE, UNLOCK_TICK, AMMO, GROUNDED, SETTLED }
 const LAYER := 8
 const MASK := CollisionWorld.LAYER_TERRAIN | LAYER
 const WORLD_SCALE := 2.5
@@ -15,6 +15,18 @@ var locked_role := 0
 var unlock_tick := 0
 var _grounded := false
 var _settled := false
+
+func capture() -> Array:
+	return [position, velocity, type_id, locked_role, unlock_tick, carried, _grounded, _settled]
+
+func restore(row: Array) -> void:
+	position = row[POS]
+	velocity = row[VEL]
+	locked_role = row[LOCKED_ROLE]
+	unlock_tick = row[UNLOCK_TICK]
+	carried = row[AMMO]
+	_grounded = row[GROUNDED]
+	_settled = row[SETTLED]
 
 func _init(map: Terrain, id: int, type: int, ammo: int, pos: Vector2, vel: Vector2) -> void:
 	inst = id

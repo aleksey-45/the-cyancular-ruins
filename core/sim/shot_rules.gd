@@ -16,18 +16,13 @@ static func prepare(terrain: Terrain, shot: Dictionary, spec: Dictionary) -> voi
 		WeaponRegistry.Attack.MELEE:
 			shot["vectors"] = PackedVector2Array([pos, pos + dir * float(spec["range"])])
 
-static func projectiles(combat: CombatSimulator, actor: Player, shot: Dictionary, spec: Dictionary,
-		ids: Array[int] = []) -> void:
+static func projectiles(combat: CombatSimulator, actor: Player, shot: Dictionary, spec: Dictionary) -> void:
 	var id := shot_id(actor.role, shot["serial"])
 	var velocities: PackedVector2Array = shot["vectors"]
 	var damage := attack_damage(spec, shot["charge"])
 	for pellet in velocities.size():
 		var key := pellet_id(id, pellet)
-		if not ids.is_empty() and not ids.has(key):
-			continue
-		var bullet := combat.spawn_projectile(key, shot["type_id"], actor,
-				shot["pos"], velocities[pellet], damage)
-		bullet.launch = shot
+		combat.spawn_projectile(key, shot["type_id"], actor, shot["pos"], velocities[pellet], damage)
 
 static func shot_id(role: int, serial: int) -> int:
 	return (role << 48) | (serial << 8)
@@ -35,14 +30,8 @@ static func shot_id(role: int, serial: int) -> int:
 static func shooter_role(id: int) -> int:
 	return id >> 48
 
-static func shot_serial(id: int) -> int:
-	return (id >> 8) & 0xffffffff
-
 static func pellet_id(shot: int, pellet: int) -> int:
 	return shot | pellet
-
-static func shot_from_projectile(id: int) -> int:
-	return id & ~0xff
 
 static func attack_damage(spec: Dictionary, charge: float) -> int:
 	return roundi(lerpf(spec.get("min_damage", spec["damage"]), spec["damage"], charge))
@@ -103,7 +92,7 @@ static func hitscan(combat: CombatSimulator, shooter: Player, shot: Dictionary, 
 		combat.resolve_hit(shooter, target, CombatProfiles.DIRECT, at, damage, spec["impact"],
 				combat.hit_direction(at, target.position))
 
-	if combat.predicting or block_walls:
+	if block_walls:
 		return
 	var trace: Dictionary = shot["trace"]
 	var terrain := combat.terrain
@@ -117,7 +106,6 @@ static func hitscan(combat: CombatSimulator, shooter: Player, shot: Dictionary, 
 		var tex := terrain.material_at(cell)
 		if TileDefs.explosion_destroyable(tex):
 			seen[block] = true
-			combat.tile_hit.emit(trace["hit_points"][index], tex)
 			terrain.damage_beam(cell, spec["tile_chip"], shooter.role)
 
 static func step_projectile(combat: CombatSimulator, bullet: BulletBody, delta: float) -> void:
@@ -132,22 +120,16 @@ static func step_projectile(combat: CombatSimulator, bullet: BulletBody, delta: 
 				bullet.bounce(bullet.impact_normal)
 			match response["effect"]:
 				CombatProfiles.ContactEffect.CHIP_SUB:
-					if not combat.predicting:
-						var tex := combat.terrain.damage_impact(bullet.impact_point, bullet.impact_normal,
-								bullet.hit_damage, CombatSimulator.source_role(bullet.shooter))
-						if tex != 0:
-							combat.tile_hit.emit(bullet.impact_point, tex)
+					combat.terrain.damage_impact(bullet.impact_point, bullet.impact_normal,
+							bullet.hit_damage, CombatSimulator.source_role(bullet.shooter))
 				CombatProfiles.ContactEffect.HIT:
 					_projectile_hit(combat, bullet, incoming)
 			if not response["bounce"]:
 				combat.erase_projectile(bullet.entity_id)
-				combat.projectile_ended.emit(bullet.entity_id)
 		BulletBody.AdvanceResult.FUSE_END, BulletBody.AdvanceResult.RANGE_END:
 			var blast: Dictionary = bullet.definition["blast"]
 			combat.erase_projectile(bullet.entity_id)
-			if blast.is_empty():
-				combat.projectile_ended.emit(bullet.entity_id)
-			else:
+			if not blast.is_empty():
 				combat.submit_blast(bullet.entity_id, bullet.position, bullet.type_id)
 
 static func _projectile_hit(combat: CombatSimulator, bullet: BulletBody, incoming: Vector2) -> void:
@@ -159,5 +141,3 @@ static func _projectile_hit(combat: CombatSimulator, bullet: BulletBody, incomin
 			bullet.position, bullet.hit_damage, bullet.hit_impact, incoming)
 	if applied and single_direct:
 		bullet.direct_hit = true
-	if applied and target is EnemyBase:
-		combat.projectile_hit_npc.emit(bullet.type_id)

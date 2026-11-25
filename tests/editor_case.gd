@@ -527,12 +527,12 @@ func _point_selection(tree: SceneTree, editor: MapEditor) -> void:
 	var option := editor._point_type.selected
 	list.grab_focus()
 	_key(editor, KEY_F5)
-	expect(editor.trial.spawn_cell == inside, "F5 starts at the point the user just picked")
+	expect(editor.trial.spec.solo_spawn == inside, "F5 starts at the point the user just picked")
 	_key(editor, KEY_ESCAPE)
 	await tree.process_frame
 	expect(editor.trial == null and s.selected_point().cell == inside, "returning from the trial preserves the same list selection")
 	_mouse(c, Vector2i(0, 7), true, MOUSE_BUTTON_LEFT, 0, true)
-	expect(editor.trial != null and editor.trial.spawn_cell == Vector2i(0, 7), "double-clicking empty space in point mode trials the clicked cell")
+	expect(editor.trial != null and editor.trial.spec.solo_spawn == Vector2i(0, 7), "double-clicking empty space in point mode trials the clicked cell")
 	editor.finish_trial()
 	_mouse(c, Vector2i(0, 7), false)
 
@@ -574,7 +574,7 @@ func _point_selection(tree: SceneTree, editor: MapEditor) -> void:
 	_click_cell(c, Vector2i(0, 7))
 	expect(s.selected_point().is_empty() and not editor._point_details.visible, "clicking empty space clears the list and point inspector")
 	_key(editor, KEY_F5)
-	expect(editor.trial.spawn_cell == player, "F5 falls back to the normal spawn when selection is empty")
+	expect(editor.trial.spec.solo_spawn == player, "F5 falls back to the normal spawn when selection is empty")
 	editor.finish_trial()
 	_click_cell(c, player)
 	editor._open_document(_sample(), "")
@@ -607,7 +607,7 @@ func _mode_limits(editor: MapEditor) -> void:
 	map.points = {0: {"kind": "respawn", "side": 1, "cell": sides[1][0]}}
 	editor._open_document(map, "")
 	editor._validate()
-	var rules := MatchRules.new()
+	var rules := MatchRules.new(RandomNumberGenerator.new())
 	expect(editor._status.text.contains("大乱斗：点位不足，至少需要 2 人")
 			and not rules.setup(PvpSession.MODE_ROYALE, [1, 2], {}, map, {}).is_empty(), "one valid spawn is insufficient in both the editor and a two-player Royale")
 	map.points[1] = {"kind": "respawn", "side": 2, "cell": sides[2][0]}
@@ -708,10 +708,10 @@ func _workflow(tree: SceneTree) -> void:
 	_key(editor, KEY_DOWN)
 	_key(editor, KEY_F5)
 	await tree.physics_frame
-	expect(editor.trial != null and editor.trial.spawn_cell == Vector2i(6, 3), "F5 uses the point selected with the list's arrow keys")
+	expect(editor.trial != null and editor.trial.spec.solo_spawn == Vector2i(6, 3), "F5 uses the point selected with the list's arrow keys")
 	var view := editor.trial._view
 	editor.trial._process(0.0)
-	expect(editor.trial._frame.day_minute == 1425 and view._time_of_day.text == "23:45",
+	expect(editor.trial._presenter.frame.day_minute == 1425 and view._time_of_day.text == "23:45",
 			"F5 uses the same fixed light and HUD time as the editor")
 	var planes := view.camera.get_viewport().find_children("*", "Parallax2D", false, false)
 	expect(planes.size() == 4, "trial renders all four painted backgrounds")

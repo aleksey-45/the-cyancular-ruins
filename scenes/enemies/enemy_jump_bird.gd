@@ -75,7 +75,7 @@ func _tick_lunge_windup(delta: float) -> void:
 	_state_timer -= delta
 	if _state_timer <= 0.0:
 		_set_state(State.LUNGE_DASH)
-		motion.emit(&"charge", 0.0)
+
 		use_gravity = false
 		_lunge_traveled = 0.0
 		activity = Activity.LUNGE
@@ -89,7 +89,7 @@ func _tick_lunge_dash(delta: float) -> void:
 	# 一次扑击同时受时间和行进距离限制。碰到侧墙也会提前结束，改为向后跳开。
 	if _dash_timer <= 0.0 or _lunge_traveled >= EnemyParams.JumpBird.lunge_max_dist or _hit_wall():
 		_set_state(State.BACK_HOP)
-		motion.emit(&"charge", 0.0)
+
 		use_gravity = true
 		velocity = Vector2(-_lunge_dir.x * EnemyParams.JumpBird.back_hop_away,
 				EnemyParams.JumpBird.back_hop_up)

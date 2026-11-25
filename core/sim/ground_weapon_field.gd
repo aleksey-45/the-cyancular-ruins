@@ -25,11 +25,27 @@ func step(delta: float) -> void:
 	for item: WeaponPickup in items.values():
 		item.simulate_tick(delta)
 
-func snapshot() -> Dictionary:
+func capture() -> Dictionary:
 	var drops := {}
 	for item: WeaponPickup in items.values():
-		drops[item.inst] = [item.position, item.velocity, item.type_id, item.locked_role, item.unlock_tick]
+		drops[item.inst] = item.capture()
 	return drops
+
+func restore(rows: Dictionary, at: int, next_id: int) -> void:
+	for id: int in items.keys():
+		if not rows.has(id) or rows[id][WeaponPickup.TYPE] != items[id].type_id:
+			items[id].release()
+			items.erase(id)
+	var ids := rows.keys()
+	ids.sort()
+	for id: int in ids:
+		var row: Array = rows[id]
+		if not items.has(id):
+			items[id] = WeaponPickup.new(_terrain, id, row[WeaponPickup.TYPE], row[WeaponPickup.AMMO],
+					row[WeaponPickup.POS], row[WeaponPickup.VEL])
+		items[id].restore(row)
+	tick = at
+	_next_id = next_id
 
 func clear() -> void:
 	for item: WeaponPickup in items.values():
@@ -76,8 +92,8 @@ func _drop(player: Player, item: Dictionary) -> void:
 				player.position + CFG.weapon_drop_offset * Vector2(player.facing_direction, 1),
 				Vector2(CFG.weapon_drop_speed * player.facing_direction, -CFG.weapon_drop_up), player.role)
 
-func scatter(floors: Array[Vector2i], types: Array[int]) -> void:
-	var cells := GridPathfinder.spread_cells(floors, types.size() * 2, 40, _terrain.columns, _terrain.rows)
+func scatter(floors: Array[Vector2i], types: Array[int], rng: RandomNumberGenerator) -> void:
+	var cells := GridPathfinder.spread_cells(floors, types.size() * 2, 40, _terrain.columns, _terrain.rows, rng)
 	for i in cells.size():
 		var pickup := spawn(types[i / 2], WeaponInventory.DEFAULT_CARRIED, _terrain.cell_center(cells[i]), Vector2.ZERO)
 		pickup.settle_on_spawn_floor()

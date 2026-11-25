@@ -74,6 +74,8 @@ var drop_progress: float
 var clock: Clock
 var trajectories: bool
 var radar_players: bool
+var cues: Array[Array] = []
+var round: PvpHud.Round
 
 func begin(delta: float, local_at: Vector2) -> void:
 	now += delta
@@ -82,6 +84,7 @@ func begin(delta: float, local_at: Vector2) -> void:
 	pickups.clear()
 	projectiles.clear()
 	beams.clear()
+	cues.clear()
 
 func sample_beam(beam: Array, tick: float) -> void:
 	var remaining := float(beam[CombatSimulator.Beam.END_TICK]) - tick

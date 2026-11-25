@@ -12,6 +12,7 @@ var shutting_down := false
 var _processes := OwnedProcessGroup.new()
 var _cli_worker := CliWorker.new()
 var _cli_requests: Array = []
+var match_inbox: Array = []
 
 # 主线程提交 EasyTier 命令并等待结果。取消标记和执行结果由两个线程共享，通过互斥锁访问。
 class CliRequest extends RefCounted:
@@ -112,6 +113,7 @@ class CliWorker extends RefCounted:
 func _ready() -> void:
 	get_tree().auto_accept_quit = false
 	NetBus.event_received.connect(_on_event)
+	NetBus.state_received.connect(_on_state)
 	_cli_worker.start()
 
 func _on_event(_peer: int, kind: int, data: Variant) -> void:
@@ -119,10 +121,18 @@ func _on_event(_peer: int, kind: int, data: Variant) -> void:
 		NetEvent.Kind.ROOM: PvpSession.room = data
 		NetEvent.Kind.REJOIN_DENIED: PvpSession.room.erase("token")
 		NetEvent.Kind.ROOM_CLOSED: PvpSession.room = {}
-		_:
-			# 客户端已收到开局快照但还没完成场景加载时，把后续对局事件暂存起来，交给对局场景处理。
-			if not PvpSession.baseline.is_empty() and kind in NetEvent.MATCH_EVENTS:
-				PvpSession.match_events.append([kind, data])
+		NetEvent.Kind.TERRAIN:
+			if not PvpSession.baseline.is_empty():
+				match_inbox.append([kind, data])
+
+func _on_state(frame: Dictionary) -> void:
+	if not PvpSession.baseline.is_empty():
+		match_inbox.append([-1, frame])
+
+func take_match_inbox() -> Array:
+	var messages := match_inbox
+	match_inbox = []
+	return messages
 
 func launch(path: String, args: PackedStringArray) -> int:
 	return -1 if shutting_down else _processes.launch(path, args, false)
@@ -266,6 +276,7 @@ func _room_request(kind: int, data: Variant, port: int, timeout_ms := 8000, host
 
 func disconnect_client() -> void:
 	generation += 1
+	match_inbox.clear()
 	NetBus.stop()
 
 func close() -> void:

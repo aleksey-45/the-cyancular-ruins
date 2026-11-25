@@ -35,6 +35,7 @@ var in_water := false
 var role := 0
 var team := 0
 var shot_serial := 0
+var last_shot_type := 0
 var state := 0
 var waterproof := CFG.player_waterproof_max
 var max_waterproof := CFG.player_waterproof_max
@@ -46,7 +47,6 @@ var motion_knock_velocity := Vector2.ZERO
 
 var step_input := ActorInput.new()
 var combat_requests: Array = []
-var presentation_events: Array = []
 
 var _speed_mult := 1.0
 var _auto_jump_frame := false
@@ -59,9 +59,7 @@ const COLLISION_SLOTS := 4
 static var _axis_motion := PhysicsTestMotionResult2D.new()
 static var _step_motion := PhysicsTestMotionResult2D.new()
 
-const NetPlayer := PlayerStateSchema.Network
-
-var input_buffer := InputBuffer.new()
+var life := 0
 var respawn_tick := 0
 var last_attacker := 0
 var last_hit_tick := 0
@@ -71,13 +69,9 @@ func _init(match_sim: CombatSimulator, player_role: int) -> void:
 	var shape := CollisionWorld.rectangle(CFG.standing_hull.size)
 	super(match_sim, Vector2.ZERO, CFG.body_scale, shape, CollisionWorld.LAYER_TEAM_A,
 			CollisionWorld.LAYER_TERRAIN)
-	weapons.feedback.connect(_weapon_feedback)
 	for slot in range(1, COLLISION_SLOTS):
 		PhysicsServer2D.body_add_shape(rid, shape, Transform2D.IDENTITY, true)
 	sync_collision_geometry()
-
-func _weapon_feedback(kind: String) -> void:
-	presentation_events.append({"kind": kind})
 
 func set_team_collision(side: int, player_collision: bool) -> void:
 	team = side
@@ -188,8 +182,6 @@ func _move_actor(delta: float) -> void:
 	if _grounded and motion.y >= 0.0:
 		motion.y = maxf(motion.y, 1.0)
 	var blocked := move_by_internal(motion)
-	if blocked.y > 0.0 and not _grounded and incoming.y > 0.0:
-		presentation_events.append({"kind": "land", "speed": incoming.y})
 	_grounded = blocked.y > 0.0 and not _auto_jump_frame
 	if blocked.x != 0.0 and not _auto_jump_frame and _auto_jump_timer <= 0.0:
 		velocity.x = 0.0
@@ -367,7 +359,6 @@ func update_vertical(delta: float, latched: bool, mult: Vector2) -> void:
 		jump_buffer_timer = 0.0
 		coyote_timer = 0.0
 		jump_cut_applied = false
-		presentation_events.append({"kind": "jump"})
 	if not jump_cut_applied and (step_input.released & ActorInput.BIT_UP) != 0 and velocity.y < 0.0:
 		velocity.y *= CFG.jump_cut_factor
 		jump_cut_applied = true
@@ -385,7 +376,6 @@ func update_crouch_dash() -> void:
 		is_charge = true
 		charge_timer = CFG.charge_distance / maxf(CFG.charge_velocity, 1.0)
 		facing_direction = step_input.charge_direction
-		presentation_events.append({"kind": "dash"})
 
 func update_horizontal(delta: float, mult: Vector2) -> void:
 	if in_water:
@@ -535,41 +525,40 @@ func apply_authoritative_state(hp: int, wp: int, down: bool) -> void:
 func capture_state() -> Array:
 	var values := []
 	values.resize(PlayerStateSchema.SIZE)
-	for slot in PlayerStateSchema.WEAPON_INST:
-		values[slot] = get(PlayerStateSchema.names[slot])
+	for slot in PlayerStateSchema.PROPERTIES.size():
+		values[slot] = get(PlayerStateSchema.PROPERTIES[slot])
+	values[PlayerStateSchema.AIM] = step_input.aim
+	values[PlayerStateSchema.SHOT_TYPE] = last_shot_type
+	values[PlayerStateSchema.WEAPON_NEXT] = weapons._next_inst
 	values[PlayerStateSchema.WEAPON_INST] = weapons.current_inst()
 	values[PlayerStateSchema.INVENTORY] = weapons.snapshot()
 	values[PlayerStateSchema.EQUIPMENT] = equipped.state_values() if equipped != null else []
 	return values
 
-func restore_state(values: Array, rewinding_inventory := false) -> void:
-	for slot in PlayerStateSchema.WEAPON_INST:
-		if slot != PlayerStateSchema.SHOT_SERIAL or not rewinding_inventory:
-			set(PlayerStateSchema.names[slot], values[slot])
+func restore_state(values: Array) -> void:
+	for slot in PlayerStateSchema.PROPERTIES.size():
+		set(PlayerStateSchema.PROPERTIES[slot], values[slot])
+	step_input.aim = values[PlayerStateSchema.AIM]
+	last_shot_type = values[PlayerStateSchema.SHOT_TYPE]
+	weapons._next_inst = values[PlayerStateSchema.WEAPON_NEXT]
 	sync_collision_geometry()
 	weapons.restore(values[PlayerStateSchema.WEAPON_INST], values[PlayerStateSchema.INVENTORY],
-			values[PlayerStateSchema.EQUIPMENT], rewinding_inventory)
+			values[PlayerStateSchema.EQUIPMENT], false)
 
-func capture_checkpoint() -> Array:
-	return [input_buffer.epoch, input_buffer.action_ack, rewinding, respawn_tick, step_input.aim,
-			input_buffer._last, capture_state()]
-
-func restore_checkpoint(snapshot: Array, scope := CombatSnapshot.NETWORK) -> void:
+func rewind_state(values: Array, keep_oxygen: bool) -> void:
 	var oxygen := waterproof
-	restore_state(snapshot[NetPlayer.STATE], scope != CombatSnapshot.NETWORK)
-	if scope == CombatSnapshot.WORLD:
+	for slot in PlayerStateSchema.REWIND:
+		if slot != PlayerStateSchema.SHOT_SERIAL:
+			set(PlayerStateSchema.PROPERTIES[slot], values[slot])
+	if keep_oxygen:
 		sim_hp = clampi(sim_hp, 0, sim_max_hp)
 		waterproof = oxygen
-	if scope != CombatSnapshot.NETWORK:
-		return
-	rewinding = snapshot[NetPlayer.REWIND]
-	respawn_tick = snapshot[NetPlayer.RESPAWN_TICK]
-	step_input.aim = snapshot[NetPlayer.AIM]
-	input_buffer.restore_authority(snapshot[NetPlayer.EPOCH], snapshot[NetPlayer.ACTION_ACK], snapshot[NetPlayer.INPUT])
-	if collision_layer == 0:
-		collision_layer = CollisionWorld.team_layer(team)
+	sync_collision_geometry()
+	weapons.restore(values[PlayerStateSchema.WEAPON_INST], values[PlayerStateSchema.INVENTORY],
+			values[PlayerStateSchema.EQUIPMENT], true)
 
 func spawn_at(spawn_cell: Vector2i, heal := true) -> void:
+	life += 1
 	position = CyrmMap.world_position(spawn_cell)
 	reset_motion()
 	if heal:

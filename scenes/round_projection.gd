@@ -2,7 +2,9 @@ class_name RoundProjection
 extends RefCounted
 
 const Mode := MatchFrame.Mode
-const Phase := NetEvent.RoundState
+const Phase := MatchRules.Phase
+const RuleState := MatchRules.State
+const Actor := preload("res://core/sim/player_state_schema.gd")
 const STAT_TITLES := {"kills": "击杀", "deaths": "阵亡", "assists": "助攻",
 		"dealt": "造成", "taken": "承受", "acs": "ACS"}
 const COLUMNS := {
@@ -136,3 +138,39 @@ static func _board(data: Dictionary, names: Dictionary, own: int, playing: bool)
 		rows.append(["%d. %s  击杀 %d  阵亡 %d  %s" % [
 				i + 1, UiFactory.fit_name(names[role], 14), scores.get(role, 0), data["stats"][role]["deaths"], tag], color])
 	return rows
+
+static func round_view(config: WorldSpec, state: Dictionary) -> Dictionary:
+	var rules_row: Array = state["rules"]
+	var phase: int = rules_row[RuleState.PHASE]
+	var winner: int = rules_row[RuleState.WINNER]
+	var stats := {}
+	var left := []
+	var alive := {}
+	for role: int in state["stats"]:
+		var s: Dictionary = state["stats"][role]
+		var score := ScoreRules.kscore(s["kills"], s["assists"], s["dealt"], s["deaths"],
+				s["team_damage"], s["self_damage"], s["team_kills"])
+		stats[role] = {"kills": s["kills"], "deaths": s["deaths"], "assists": s["assists"],
+			"dealt": s["dealt"], "taken": s["taken"], "acs": ScoreRules.acs(score, s["rounds"])}
+		if s["left"]:
+			left.append(role)
+	for role: int in state["players"]:
+		alive[role] = not state["players"][role][Actor.DOWNED]
+	var candidates := stats.keys()
+	if config.mode == WorldSpec.TEAM:
+		candidates = [] if winner == 0 else candidates.filter(func(role: int) -> bool: return config.teams[role] == winner)
+	candidates.sort_custom(func(a: int, b: int) -> bool: return _mvp_better(stats, a, b))
+	var timed := config.mode == WorldSpec.ROYALE and phase == Phase.PLAYING
+	var timer: float = ceilf(rules_row[RuleState.MATCH_TIME]) if timed else rules_row[RuleState.TIMER]
+	return {"state": phase, "round": rules_row[RuleState.NUMBER], "scores": rules_row[RuleState.SCORES],
+		"rounds_won": rules_row[RuleState.WINS], "timer": timer, "winner": rules_row[RuleState.ROUND_WINNER],
+		"match_winner": winner, "mvp": candidates[0] if not candidates.is_empty() else 0,
+		"stats": stats, "left": left, "alive": alive}
+
+static func _mvp_better(stats: Dictionary, a: int, b: int) -> bool:
+	for key in ["acs", "kills"]:
+		if stats[a][key] != stats[b][key]:
+			return stats[a][key] > stats[b][key]
+	if stats[a]["deaths"] != stats[b]["deaths"]:
+		return stats[a]["deaths"] < stats[b]["deaths"]
+	return a < b

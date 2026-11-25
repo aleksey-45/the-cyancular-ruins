@@ -62,7 +62,7 @@ static func switch_index() -> int:
 			return i
 	return 0
 
-# 这一步补齐瞄准、丢弃和切换武器的输入。单人模式先处理时间技能，确保这里使用的是更新后的角色和背包状态。
+# 从当前手持装备生成换枪和丢弃意图。
 func complete(player: Player, record: Array, delta: float, aim: Vector2) -> Array:
 	record[ActorInput.AIM] = aim
 	if _drop_pressed(delta):
@@ -85,17 +85,11 @@ func _drop_pressed(delta: float) -> bool:
 	return _drop_latched
 
 
-# 丢弃进度是已按住的时长占所需时长的比例。未装备武器或正在装填时，不显示进度。
-func drop_hold_progress(player: Player) -> float:
-	if player.equipped == null or player.equipped.reloading:
-		return 0.0
+func drop_hold_progress() -> float:
 	return minf(_drop_hold_t / CFG.weapon_drop_hold_time, 1.0)
 
 
 func handle_event(player: Player, event: InputEvent) -> void:
-	if player.sim_downed:
-		_last_move_press = 0
-		return
 	if not frozen:
 		var left := event.is_action_pressed(&"left")
 		var right := event.is_action_pressed(&"right")

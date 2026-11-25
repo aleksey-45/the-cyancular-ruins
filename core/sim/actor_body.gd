@@ -6,7 +6,7 @@ var motion_contacts: Array[Array] = []
 var _match: WeakRef
 var combat: CombatSimulator:
 	get: return _match.get_ref()
-var time_field: TimeField:
+var time_field: WorldTime:
 	get: return combat.time_field
 var scale: Vector2:
 	get: return transform.get_scale()

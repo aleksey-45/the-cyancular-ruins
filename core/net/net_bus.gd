@@ -18,6 +18,7 @@ const MAX_PENDING_BYTES := 64 * 1024 * 1024
 const MAX_RECEIVE_AGE_US := 5000000
 const MIN_STATE_PACKET_BYTES := 3 + 4 * 4 + 1
 var is_server_mode := false
+var manual_poll := false
 var server_port := DEFAULT_PORT
 var ping_ms := 0
 var _transport := GnsEndpoint.new()
@@ -27,9 +28,6 @@ var _codecs: Dictionary = {}
 var _ping_sample_at := 0
 var _protocol_waiting_at := 0
 var _pending_messages: Array = []
-
-func _ready() -> void:
-	process_physics_priority = -1000
 
 func pick_free_port() -> int:
 	var probe := PacketPeerUDP.new()
@@ -101,11 +99,29 @@ func can_send_to_server() -> bool:
 func send_input(packet: Array) -> void:
 	_send(1, Flow.INPUT, _codec(1).encode_input(packet))
 
-func send_state(peer: int, frame: Dictionary, batch: NetCodec.StateBatch) -> void:
+func send_state(peer: int, feedback: PackedByteArray, batch: NetCodec.StateBatch) -> void:
+	var codec := _codec(peer)
+	if codec.waiting_full > codec.state_ack:
+		return
 	var perf_started := PerformanceStats.begin()
-	var bytes := _codec(peer).encode_state(frame, batch)
+	var bytes := codec.encode_state(feedback, batch)
+	var large := bytes.size() > 256 * 1024
+	if large and bytes.decode_u32(5) != 0:
+		bytes = codec.encode_state(feedback, batch, true)
 	PerformanceStats.end(PerformanceStats.STATE_ENCODE, perf_started)
-	_send(peer, Flow.STATE, bytes)
+	codec.waiting_full = codec.serial if large else 0
+	_send(peer, Flow.EVENT if large else Flow.STATE, bytes)
+
+func send_final_state(peers: PackedInt32Array, batch: NetCodec.StateBatch) -> void:
+	var started := PerformanceStats.begin()
+	var encoder := NetCodec.new()
+	for peer: int in peers:
+		encoder.serial = maxi(encoder.serial, _codec(peer).serial)
+	var bytes := encoder.encode_state(PackedByteArray(), batch, true)
+	for peer: int in peers:
+		_codec(peer).serial = encoder.serial
+	PerformanceStats.end(PerformanceStats.STATE_ENCODE, started)
+	_send_reliable(peers, bytes)
 
 func send_event(kind: int, data: Variant = null, peer: int = 1) -> void:
 	_send(peer, Flow.EVENT, _codec(peer).encode_event(kind, data))
@@ -114,7 +130,9 @@ func send_event(kind: int, data: Variant = null, peer: int = 1) -> void:
 func broadcast_event(kind: int, data: Variant, peers: PackedInt32Array) -> void:
 	if peers.is_empty(): return
 	assert(kind != NetEvent.Kind.BASELINE)
-	var bytes := _codec(peers[0]).encode_event(kind, data)
+	_send_reliable(peers, _codec(peers[0]).encode_event(kind, data))
+
+func _send_reliable(peers: PackedInt32Array, bytes: PackedByteArray) -> void:
 	var perf_started := PerformanceStats.begin()
 	var wire := _wire(bytes)
 	var errors := _transport.send_many(peers, Flow.EVENT, wire)
@@ -139,6 +157,10 @@ func _wire(bytes: PackedByteArray) -> PackedByteArray:
 	return wire
 
 func _physics_process(_delta: float) -> void:
+	if not manual_poll:
+		poll_messages()
+
+func poll_messages() -> void:
 	if not _active:
 		return
 	var perf_poll := PerformanceStats.begin()
@@ -238,7 +260,7 @@ func _receive(peer: int, packet: PackedByteArray, received_us: int) -> void:
 	if is_server_mode:
 		if code != NetCodec.INPUT and (kind < NetEvent.Kind.HELLO or kind > NetEvent.Kind.SUICIDE):
 			return
-	elif code != NetCodec.STATE and (kind < NetEvent.Kind.ROOM or kind > NetEvent.Kind.BULLET_END):
+	elif code != NetCodec.STATE and (kind < NetEvent.Kind.ROOM or kind > NetEvent.Kind.ROOM_CLOSED):
 		return
 	var reader := NetCodec.Reader.new(packet, 3)
 	var codec := _codec(peer)

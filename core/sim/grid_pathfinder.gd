@@ -129,11 +129,12 @@ static func _pop(heap: Array[Vector2i]) -> Vector2i:
 
 # 先随机排列候选瓦片，再挑选相互至少间隔 clearance 格的位置。
 # 达到初始间距的位置不够时，逐步缩小最小间距。
-static func spread_cells(cells: Array[Vector2i], count: int, clearance: int, cols: int, rows: int) -> Array[Vector2i]:
+static func spread_cells(cells: Array[Vector2i], count: int, clearance: int, cols: int, rows: int,
+		rng: RandomNumberGenerator) -> Array[Vector2i]:
 	var picked: Array[Vector2i] = []
 	count = mini(count, cells.size())
 	var pool := cells.duplicate()
-	pool.shuffle()
+	MathUtil.shuffle(pool, rng)
 	var cl := clearance
 	while picked.size() < count:
 		for c in pool:

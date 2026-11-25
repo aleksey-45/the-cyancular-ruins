@@ -1,7 +1,7 @@
 class_name GunBody
 extends RefCounted
 
-const StateSlot := PlayerStateSchema.Equipment
+enum StateSlot { COOLDOWN, AIMING, BUFFERED, SHOT_FACING, RELOAD_LEFT, HOLD }
 
 var type_id: int
 var definition: Dictionary
@@ -37,11 +37,10 @@ func cancel_aim() -> void:
 	aiming = false
 	hold_elapsed = 0.0
 
-func start_reload(actor: Player) -> void:
+func start_reload() -> void:
 	if not has_magazine() or reloading or carried >= definition["mag"]:
 		return
 	reload_left = definition["reload"]
-	actor.presentation_events.append({"kind": "reload_started"})
 
 static func aim_transform(direction: Vector2, facing: int, limit: float) -> Transform2D:
 	var local := Vector2(direction.x * facing, direction.y)
@@ -54,19 +53,6 @@ func muzzle_pose(actor: Player, aim: Vector2) -> Transform2D:
 	pose.origin = actor.transform * (pose * ShotRules.launch_offset(definition, charge_ratio()))
 	return pose
 
-func aim_guide(actor: Player, aim: Vector2) -> PackedVector2Array:
-	if not aiming or definition["attack"] == WeaponRegistry.Attack.MELEE:
-		return PackedVector2Array()
-	var muzzle := muzzle_pose(actor, aim)
-	if not definition.has("arc_time"):
-		var length := float(definition.get("guide_length", 600.0)) * actor.scale.x
-		return PackedVector2Array([muzzle.origin, muzzle.origin + muzzle.x * length])
-	var delta := ActorStep.DT
-	if actor.time_field != null and actor.time_field.is_hasting():
-		delta *= actor.time_field.player_speed_mult()
-	var speed := ShotRules.launch_speed(definition, charge_ratio()) * actor.personal_haste_mult
-	return ShotRules.trace_arc(actor.terrain, muzzle.origin, muzzle.x * speed, definition, delta, definition["arc_time"])
-
 func charge_ratio() -> float:
 	return charge_for_hold(definition, hold_elapsed)
 
@@ -75,13 +61,12 @@ static func charge_for_hold(spec: Dictionary, elapsed: float) -> float:
 
 func step(actor: Player, input: ActorInput, delta: float) -> Vector2:
 	if input.pressed & ActorInput.BIT_RELOAD:
-		start_reload(actor)
+		start_reload()
 	fire_cd_timer = maxf(fire_cd_timer - delta, 0.0)
 	if reloading:
 		reload_left -= delta
 		if not reloading:
 			carried = definition["mag"]
-			actor.presentation_events.append({"kind": "reload_finished"})
 	aim_at(actor, input.aim)
 	if actor._controls_locked:
 		fire_buffered = false
@@ -102,7 +87,7 @@ func step(actor: Player, input: ActorInput, delta: float) -> Vector2:
 				aiming = false
 		WeaponRegistry.Trigger.CHARGE_RELEASE:
 			if carried == 0 and (held or pressed):
-				start_reload(actor)
+				start_reload()
 			if reloading or carried == 0:
 				cancel_aim()
 			elif released:
@@ -150,7 +135,7 @@ func _fire(actor: Player, aim: Vector2) -> void:
 	if reloading:
 		return
 	if has_magazine() and carried == 0:
-		start_reload(actor)
+		start_reload()
 		return
 	var cap: int = definition["live_cap"]
 	# 同类弹丸达到场上数量上限时，跳过开火，不扣减弹药。
@@ -159,14 +144,14 @@ func _fire(actor: Player, aim: Vector2) -> void:
 	fire_cd_timer = definition["cooldown"]
 	var pose := muzzle_pose(actor, aim)
 	actor.shot_serial += 1
+	actor.last_shot_type = type_id
 	var speed_mult := actor.personal_haste_mult if definition["attack"] == WeaponRegistry.Attack.PROJECTILE else 1.0
 	actor.combat_requests.append({"kind": "fire", "type_id": type_id, "serial": actor.shot_serial,
 		"pos": pose.origin, "dir": pose.x, "charge": charge_ratio(), "speed_mult": speed_mult})
-	actor.presentation_events.append({"kind": "fire", "type_id": type_id, "serial": actor.shot_serial})
 	if has_magazine():
 		carried -= 1
 		if carried == 0:
-			start_reload(actor)
+			start_reload()
 	actor.apply_recoil(definition["recoil"])
 
 func state_values() -> Array:

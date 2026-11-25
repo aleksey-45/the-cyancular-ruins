@@ -1,16 +1,12 @@
 class_name BulletBody
 extends RectBody
 
-enum Network { TYPE, POS, VEL }
-
 enum AdvanceResult { MOVED, TERRAIN_HIT, ACTOR_HIT, RANGE_END, FUSE_END }
-# 个人回溯只恢复前五项运动状态，直击等已经结算的结果属于当前世界。
-enum { MOTION_POS, MOTION_VEL, MOTION_TRAVELED, MOTION_FUSE_ELAPSED, MOTION_FUSE_DURATION,
-		SNAP_TYPE, SNAP_OWNER, SNAP_DAMAGE, SNAP_LAUNCH, SNAP_DIRECT_HIT }
+enum { MOTION_POS, MOTION_VEL, MOTION_TRAVELED, MOTION_FUSE_ELAPSED, MOTION_FUSE_DURATION, ROTATION,
+		SNAP_TYPE, SNAP_OWNER, SNAP_DAMAGE, SNAP_DIRECT_HIT }
 
 var entity_id: int
 var type_id: int
-var launch: Dictionary
 var definition: Dictionary
 var hit_damage: int
 var hit_impact: float
@@ -25,7 +21,6 @@ var direct_hit := false
 var impact_point := Vector2.ZERO
 var impact_normal := Vector2.ZERO
 var impact_collider_id := 0
-var rewind_hits := {}
 
 var shooter: ActorBody
 
@@ -112,26 +107,15 @@ func impact_actor() -> ActorBody:
 	return instance_from_id(impact_collider_id) as ActorBody if impact_collider_id != 0 else null
 
 func motion_state() -> Array:
-	return [position, velocity, traveled, fuse_elapsed, fuse_duration]
+	return [position, velocity, traveled, fuse_elapsed, fuse_duration, transform.get_rotation()]
 
 func capture_state() -> Array:
 	var owner: int = shooter.role if shooter is Player else (shooter as EnemyBase).slot
-	return motion_state() + [type_id, owner, hit_damage, launch, direct_hit]
-
-static func with_authoritative_pose(state: Array, pos: Vector2, vel: Vector2) -> Array:
-	if state[MOTION_POS] == pos and state[MOTION_VEL] == vel:
-		return state
-	var corrected := state.duplicate()
-	corrected[MOTION_POS] = pos
-	corrected[MOTION_VEL] = vel
-	return corrected
+	return motion_state() + [type_id, owner, hit_damage, direct_hit]
 
 func restore_motion(state: Array) -> void:
 	traveled = state[MOTION_TRAVELED]
 	fuse_elapsed = state[MOTION_FUSE_ELAPSED]
 	fuse_duration = state[MOTION_FUSE_DURATION]
-	restore_pose(state[MOTION_POS], state[MOTION_VEL])
-
-func restore_pose(pos: Vector2, vel: Vector2) -> void:
-	velocity = vel
-	transform = Transform2D(vel.angle() if vel != Vector2.ZERO else transform.get_rotation(), pos)
+	velocity = state[MOTION_VEL]
+	transform = Transform2D(state[ROTATION], state[MOTION_POS])

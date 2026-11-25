@@ -57,7 +57,6 @@ var _paths := {}
 var _next_paths := {}
 var _effects := [[], [], [], []]
 var _hits := {}
-var _remote_hits := {}
 # 世界坐标 HUD 小组件(拾取提示 / 换弹圆环 / 敌人头顶血条):全部挂到 WorldCanvas 下,
 # 与 canvas 绘制共享同一世界变换;组件只管画,数据仍由本表现层从 MatchFrame 喂。
 # 懒创建 + 池化:只有真正要显示时才 new,避免每帧增删节点。
@@ -70,7 +69,7 @@ func bind(canvas: WorldCanvas, size: Vector2) -> void:
 	_size = size
 
 func reset() -> void:
-	for buffer in [_poses, _fire, _paths, _next_paths, _hits, _remote_hits] + _effects:
+	for buffer in [_poses, _fire, _paths, _next_paths, _hits] + _effects:
 		buffer.clear()
 	_squash.clear()
 	_after.clear()
@@ -105,12 +104,7 @@ func _squash_for(id: int, kind: StringName) -> SquashTracker:
 		_squash[id] = squash
 	return squash
 
-func remote_hurt(role: int, now: float) -> void:
-	motion(role, &"hurt", now)
-	_remote_hits[role] = now + 0.35
-
 func fire(id: int, weapon: int, now: float) -> void:
-	Sfx.play(WeaponRegistry.definition(weapon)["shot_sound"])
 	_fire[id] = [weapon, now]
 
 func blast(at: Vector2, now: float) -> void:
@@ -231,7 +225,7 @@ func _actor(pose: MatchFrame.Pose, frame: MatchFrame) -> void:
 		var skin_tint := Color.WHITE if frame.mode == MatchFrame.Mode.SOLO else pose.name_color(frame.mode) / UiFactory.C_TEAM_A
 		if frame.mode == MatchFrame.Mode.DUEL or frame.mode == MatchFrame.Mode.TEAM:
 			tint = skin_tint
-		var hit_left := float(_remote_hits.get(pose.id, 0.0)) - now if pose.remote else pose.hit_left
+		var hit_left := pose.hit_left
 		var alpha := 0.4 if hit_left > 0.0 and int(hit_left * 20.0) % 2 == 0 else 1.0
 		color = Color(skin_tint, alpha)
 		pass_kind = WorldCanvas.Pass.PLAYER
@@ -306,7 +300,7 @@ func _afterimages(pose: MatchFrame.Pose, frame: MatchFrame, image: Texture2D,
 					WorldCanvas.Pass.NORMAL, DEATH_GHOST_LIFE)
 		return
 	if not enemy:
-		var hit_left := float(_remote_hits.get(pose.id, 0.0)) - now if pose.remote else pose.hit_left
+		var hit_left := pose.hit_left
 		var was_hit := bool(_hit_prev.get(pose.id, false))
 		_hit_prev[pose.id] = hit_left > 0.0
 		if hit_left > 0.0 and not was_hit:

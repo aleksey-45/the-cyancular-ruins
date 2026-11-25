@@ -30,6 +30,9 @@ var released := 0
 var weapon_inst := 0
 var aim := Vector2.ZERO
 
+static func neutral(direction := Vector2.RIGHT) -> Array:
+	return [0.0, 0, 0, 0, 0, direction]
+
 func prepare(record: Array, locked: bool) -> void:
 	aim = record[AIM]
 	axis = 0.0 if locked else float(record[AX])

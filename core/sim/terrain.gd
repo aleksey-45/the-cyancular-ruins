@@ -3,8 +3,6 @@ extends RefCounted
 
 # 地形引用地图的子格描述，单独记录本局耐久。地形碰撞按区域更新，期间的变化可同步到客户端或用于时间回溯。
 
-signal changed
-
 const SUB_SIZE := CyrmMap.CELL_SIZE
 const DAMAGE_BLOCK_SUBS := 32 / SUB_SIZE
 const BEAM_BLOCK_SUBS := 64 / SUB_SIZE
@@ -15,8 +13,6 @@ const CACHE_STATES := 4
 const PERMANENT_CHUNK := -1
 const LEDGE_CHUNK := -2
 
-enum Change { TICK, HP }
-
 class Chunk:
 	var body := RID()
 	var signature := PackedByteArray()
@@ -25,18 +21,15 @@ class Chunk:
 var columns := 0
 var rows := 0
 var map_size := Vector2.ZERO
-var revision := 0
-var rewind_enabled := false
-var authoritative := false
+var version := 0
 
 var _cells := PackedInt32Array()
 var _hp := PackedInt32Array()
-var _network_changes: Dictionary = {}
 var _modified: Dictionary = {}
-var _pending_changes: Dictionary[int, int] = {}
-var _history: Array[Array] = []
-# 游标之前的差分已应用。
-var _cursor := 0
+var _pending: Dictionary[int, int] = {}
+# 当前版本减去日志长度就是尚可撤销到的起点。
+var _undo: Array[Dictionary] = []
+var _patches: Dictionary[int, Dictionary] = {}
 var _rewards: Dictionary = {}
 var _visual_changes: Dictionary = {}
 var _chunk_columns := 0
@@ -241,16 +234,19 @@ func _write_hp(index: int, next: int, from_combat: bool, owner := 0) -> bool:
 	var before := _hp[index]
 	if before == next:
 		return false
-	if from_combat and rewind_enabled:
-		_pending_changes.get_or_add(index, before)
+	if from_combat:
+		_pending.get_or_add(index, before)
 	_hp[index] = next
-	if from_combat and authoritative:
-		_network_changes[index] = next
+	if next == TileDefs.hit_points[_material(index)]:
+		_modified.erase(index)
+	else:
 		_modified[index] = next
-		revision += 1
 	var solid := next > 0
 	if (before > 0) != solid:
-		_visual_changes[index] = solid
+		if _visual_changes.has(index):
+			_visual_changes.erase(index)
+		else:
+			_visual_changes[index] = solid
 		_mark_collision(index)
 		if TileDefs.ledges[_material(index)] != 0: ledges_dirty = true
 		if from_combat and not solid and owner > 0:
@@ -266,13 +262,11 @@ func damage_impact(position: Vector2, normal: Vector2, amount: int, owner: int) 
 	if _hp[index] <= 0 or (TileDefs.damage_masks[tex] & TileDefs.DamageMask.BULLET) == 0:
 		return 0
 	_damage_block(hit / DAMAGE_BLOCK_SUBS, DAMAGE_BLOCK_SUBS, amount, TileDefs.DamageMask.BULLET, owner)
-	changed.emit()
 	return tex
 
 func damage_beam(at: Vector2i, amount: int, owner: int) -> void:
 	if sub_index(at) < 0 or amount <= 0: return
-	if _damage_block(at / BEAM_BLOCK_SUBS, BEAM_BLOCK_SUBS, amount, TileDefs.DamageMask.EXPLOSION, owner):
-		changed.emit()
+	_damage_block(at / BEAM_BLOCK_SUBS, BEAM_BLOCK_SUBS, amount, TileDefs.DamageMask.EXPLOSION, owner)
 
 func _damage_block(block: Vector2i, side: int, amount: int, mask: int, owner: int) -> bool:
 	var origin := block * side
@@ -315,51 +309,39 @@ func damage_blast(cells: Dictionary, radius: float, damage: int, owner: int) -> 
 		var sub := sub_position(index)
 		var block := sub / DAMAGE_BLOCK_SUBS
 		nearest[block] = minf(nearest.get(block, INF), cells[index])
-	var modified := false
 	var inner := radius * BlastCurve.INNER_FRACTION
 	for block in nearest:
 		var falloff := BlastCurve.falloff(nearest[block], radius, inner, float(damage))
 		var amount := int(falloff * TileDefs.blast_decay)
 		if amount <= 0:
 			continue
-		modified = _damage_block(block, DAMAGE_BLOCK_SUBS, amount, TileDefs.DamageMask.EXPLOSION, owner) or modified
-	if modified:
-		changed.emit()
+		_damage_block(block, DAMAGE_BLOCK_SUBS, amount, TileDefs.DamageMask.EXPLOSION, owner)
 
 func apply_hp(at: Vector2i, value: int, owner: int) -> bool:
 	var i := sub_index(at)
 	if i < 0 or not _write_hp(i, value, true, owner):
 		return false
-	changed.emit()
 	return _hp[i] == 0
 
-## 记录帧末的权威耐久，战斗步进与检查点恢复都按帧读取。
-func record_values(at: int, values: Dictionary) -> void:
-	var changes: Dictionary[int, int] = {}
-	for cell: Vector2i in values:
-		var index := sub_index(cell)
-		if index >= 0:
-			changes[index] = values[cell]
-	if not changes.is_empty():
-		_history.append([at, changes])
-
 func reset() -> void:
-	var material_hp := TileDefs.hit_points
-	for i in _hp.size():
-		var initial := material_hp[_material(i)]
-		if _hp[i] != initial:
-			_write_hp(i, initial, false)
-	_network_changes.clear()
-	_modified.clear()
+	_reset_hp(true)
 	_rewards.clear()
-	clear_history()
-	revision = revision + 1 if authoritative else 0
-	flush_collisions()
+	commit()
 
-func take_network_changes() -> Dictionary:
-	var out := _hp_by_position(_network_changes)
-	_network_changes.clear()
-	return out
+func _reset_hp(record: bool) -> void:
+	for i: int in _modified.keys():
+		_write_hp(i, TileDefs.hit_points[_material(i)], record)
+
+## 发布当前耐久后，这些改动成为新的历史起点。
+func take_patch() -> Dictionary:
+	if _undo.is_empty():
+		return {}
+	var cells := {}
+	for changes in _undo:
+		for index: int in changes:
+			cells[sub_position(index)] = _hp[index]
+	_undo.clear()
+	return {"version": version, "cells": cells}
 
 func get_modified() -> Dictionary:
 	return _hp_by_position(_modified)
@@ -568,39 +550,60 @@ func invalidate_all() -> void:
 	for key in _chunk_dirty.size():
 		_queue_chunk(key)
 
-func record_tick(at: int) -> void:
-	if not _pending_changes.is_empty():
-		_history.append([at, _pending_changes])
-		_cursor += 1
-		_pending_changes = {}
-	restore(at)
-
-## 恢复指定战斗帧末的耐久和碰撞。
-func restore(at: int) -> void:
-	while _cursor > 0 and _history[_cursor - 1][Change.TICK] > at:
-		_cursor -= 1
-		_swap_changes(_history[_cursor][Change.HP])
-	while _cursor < _history.size() and _history[_cursor][Change.TICK] <= at:
-		_swap_changes(_history[_cursor][Change.HP])
-		_cursor += 1
+func commit() -> void:
+	if not _pending.is_empty():
+		for index in _pending.keys():
+			if _pending[index] == _hp[index]:
+				_pending.erase(index)
+		if not _pending.is_empty():
+			_undo.append(_pending)
+			_pending = {}
+			version += 1
 	flush_collisions()
 
-func discard_future() -> void:
-	_history.resize(_cursor)
+func install_baseline(at: int, cells: Dictionary) -> void:
+	_reset_hp(false)
+	_write_patch(cells)
+	_pending.clear()
+	_rewards.clear()
+	_undo.clear()
+	_patches.clear()
+	version = at
+	flush_collisions()
 
-func forget_through(at: int) -> void:
-	while not _history.is_empty() and _history.front()[Change.TICK] <= at:
-		_history.pop_front()
-		_cursor -= 1
+## 可靠通道按版本顺序送达。采用对应状态时才写入耐久。
+func queue_patch(at: int, cells: Dictionary) -> void:
+	_patches[at] = cells
 
-func clear_history() -> void:
-	_history.clear()
-	_cursor = 0
-	_pending_changes.clear()
+func has_authority(at: int) -> bool:
+	return at == version - _undo.size() or _patches.has(at)
 
-## 原地交换子格耐久与差分，交换后的差分可以将地形还原。
-func _swap_changes(changes: Dictionary[int, int]) -> void:
-	for index: int in changes:
-		var previous := _hp[index]
-		_write_hp(index, changes[index], false)
-		changes[index] = previous
+func apply_patches(at: int) -> void:
+	_undo_to(version - _undo.size())
+	for next: int in _patches.keys():
+		if next > at:
+			break
+		_write_patch(_patches[next])
+		_patches.erase(next)
+	version = at
+	flush_collisions()
+
+func undo_to(at: int) -> void:
+	_undo_to(at)
+	flush_collisions()
+
+func forget_before(at: int) -> void:
+	var count := _undo.size() - (version - at)
+	if count > 0:
+		_undo = _undo.slice(count)
+
+func _undo_to(at: int) -> void:
+	while version > at:
+		var changes: Dictionary = _undo.pop_back()
+		for index: int in changes:
+			_write_hp(index, changes[index], false)
+		version -= 1
+
+func _write_patch(cells: Dictionary) -> void:
+	for cell: Vector2i in cells:
+		_write_hp(sub_index(cell), cells[cell], false)

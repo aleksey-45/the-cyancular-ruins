@@ -60,6 +60,36 @@ static var _replay_ticks := 0
 static var _pending: Dictionary = _new_window()
 static var _published: Dictionary = _new_window()
 static var _total: Dictionary = _new_window()
+static var _correction_n := 0
+static var _correction_sum := 0.0
+static var _correction_max := 0.0
+static var _corrections: Array[Dictionary] = []
+static var _correction_reasons := {}
+
+static func reset_correction_stats() -> void:
+	_correction_n = 0
+	_correction_sum = 0.0
+	_correction_max = 0.0
+	_corrections.clear()
+	_correction_reasons.clear()
+
+static func record_correction(role: int, at: int, simulated: int, reason: String, distance: float) -> void:
+	_correction_n += 1
+	_correction_sum += distance
+	_correction_max = maxf(_correction_max, distance)
+	var entry: Array = _correction_reasons.get_or_add(reason, [0, 0.0])
+	entry[0] += 1
+	entry[1] += distance
+	_corrections.append({"t": at, "sim": simulated, "f": reason, "d": distance,
+		"role": role, "ms": Time.get_ticks_msec(), "pf": Engine.get_physics_frames()})
+
+static func take_correction_samples() -> Array:
+	var samples := _corrections
+	_corrections = []
+	return samples
+
+static func corr_stats() -> Dictionary:
+	return {"n": _correction_n, "sum": _correction_sum, "max": _correction_max, "reasons": _correction_reasons.duplicate()}
 
 static func _now() -> int:
 	return Time.get_ticks_usec()

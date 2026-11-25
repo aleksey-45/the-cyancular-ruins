@@ -34,7 +34,7 @@ func _ready() -> void:
 	var enabled := (_console or not _summary_path.is_empty() or not _trace_path.is_empty()) and not args.has("--no-perf")
 	PerformanceStats.set_enabled(enabled)
 	if enabled:
-		PredictionRollback.reset_correction_stats()
+		PerformanceStats.reset_correction_stats()
 	if not _trace_path.is_empty():
 		_trace = FileAccess.open(_trace_path, FileAccess.WRITE)
 		if _trace == null:
@@ -55,7 +55,7 @@ func _physics_process(_delta: float) -> void:
 	PerformanceStats.physics_tick()
 
 func _flush_correction_samples() -> void:
-	var samples := PredictionRollback.take_correction_samples()
+	var samples := PerformanceStats.take_correction_samples()
 	if samples.is_empty():
 		return
 	if _trace != null:
@@ -82,7 +82,7 @@ func _process(_delta: float) -> void:
 				PerformanceStats.read(PerformanceStats.STATE_ENCODE, PerformanceStats.MEAN), PerformanceStats.read(PerformanceStats.STATE_ENCODE, PerformanceStats.MAXIMUM),
 				PerformanceStats.read(PerformanceStats.REPLAY, PerformanceStats.MEAN), PerformanceStats.read(PerformanceStats.REPLAY, PerformanceStats.MAXIMUM),
 				PerformanceStats.read(PerformanceStats.CALLBACK_INTERVAL, PerformanceStats.MAXIMUM)])
-		var corr := PredictionRollback.corr_stats()
+		var corr := PerformanceStats.corr_stats()
 		print("PERF correction n=%.0f max=%.1f reasons=%s" % [
 				corr["n"], corr["max"], JSON.stringify(corr["reasons"])])
 
@@ -110,5 +110,5 @@ func _exit_tree() -> void:
 		report["physics_ticks_per_second"] = Engine.physics_ticks_per_second
 		report["max_fps"] = Engine.max_fps
 		report["debug_build"] = OS.is_debug_build()
-		report["correction"] = PredictionRollback.corr_stats()
+		report["correction"] = PerformanceStats.corr_stats()
 		file.store_string(JSON.stringify(report))

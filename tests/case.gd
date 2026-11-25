@@ -78,17 +78,6 @@ func canvas_for(parent: Node) -> WorldCanvas:
 	parent.add_child(canvas)
 	return canvas
 
-func detached_client(actor: Player) -> PvpMatchClient:
-	var client := PvpMatchClient.new()
-	client.player = actor
-	client.combat_rules = actor.combat
-	client.terrain = actor.terrain
-	client._rollback.bind(actor)
-	client._playback.map_px = actor.terrain.map_size
-	client._camera = MatchCamera.new()
-	client.add_child(client._camera)
-	return client
-
 func player(parent: TestWorld, role: int = 1) -> Player:
 	var actor := parent.combat.add_player(role)
 	actor.position = Vector2(96 + role * 64, 128)
@@ -96,7 +85,15 @@ func player(parent: TestWorld, role: int = 1) -> Player:
 	actor.weapons.set_initial_inventory([WeaponRegistry.all_ids()[0]])
 	return actor
 
-func players_on_map_points(authority: AuthorityWorld, roles: Array, points: Array) -> bool:
+func arena(mode: String, roles: Array, teams: Dictionary, options: Dictionary,
+		path := "res://maps/newfactory.cyrm") -> MatchSession:
+	var spec := WorldSpec.new(CyrmMap.load_file(path), mode, roles, teams, options, 1729)
+	return MatchSession.open_local(spec)
+
+func arena_round(world: MatchWorld) -> Dictionary:
+	return RoundProjection.round_view(world.spec, world.capture())
+
+func players_on_map_points(authority: MatchWorld, roles: Array, points: Array) -> bool:
 	var used := {}
 	for role: int in roles:
 		var at: Vector2 = authority.players[role].position

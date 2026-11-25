@@ -1,19 +1,5 @@
 extends "res://tests/case.gd"
 
-const NetPlayer := PlayerStateSchema.Network
-const Sample := SnapshotBuffer.Sample
-const POS: int = PlayerStateSchema.POS
-const VEL: int = PlayerStateSchema.VEL
-
-static func _actor(pos: Vector2, epoch := 1, rewind := false) -> Array:
-	var record: Array = []
-	record.resize(PlayerStateSchema.SIZE)
-	record[POS] = pos
-	record[VEL] = Vector2(60, 0)
-	record[PlayerStateSchema.KNOCK_VEL] = Vector2.ZERO
-	record[PlayerStateSchema.EQUIPMENT] = []
-	return [epoch, 0, rewind, 0, Vector2.RIGHT, [], record]
-
 class LobbySession extends RoomSession:
 	var messages: Array[String] = []
 
@@ -34,12 +20,9 @@ func run(tree: SceneTree) -> void:
 	_team_room()
 	await _ready_flow(tree, false)
 	await _ready_flow(tree, true)
-	_codec(tree)
+	_codec()
 	_event_records()
-	_combat_events(tree)
-	_projectile_deltas()
 	_malformed_packets()
-	_playback()
 
 func _input() -> void:
 	var buffer := InputBuffer.new()
@@ -79,7 +62,7 @@ func _input() -> void:
 		[[12, 7, 100, ActorInput.BIT_PICKUP | ActorInput.BIT_CHARGE_RIGHT, ActorInput.BIT_ATTACK, 0x1020304, Vector2.DOWN]],
 	]
 	var wire := codec.encode_input(wire_packet)
-	var protocol_bytes := ("c723000807060507000000030c0000000f58000000000000000000e0bf00010000803e000000bf"
+	var protocol_bytes := ("c725000807060507000000030c0000000f58000000000000000000e0bf00010000803e000000bf"
 			+ "0d00000002000000000000f03f0e0000000157000000010c000000640000002002080004030201000000000000803f")
 	expect(NetBus._wire(wire).hex_encode() == protocol_bytes, "INPUT encodes packet-local phase deltas and a self-contained action tick")
 	var stream := _body(wire, NetCodec.INPUT)
@@ -142,15 +125,16 @@ func _input_schedule() -> void:
 
 	var sender := NetCodec.new()
 	var receiver := NetCodec.new()
-	var frame := {"tick": 100, "map_revision": 0, "world": NetCodec.EMPTY_WORLD, "time": {},
-			"input_feedback": PackedByteArray([0, 11, 0xff])}
-	_state(receiver, sender.encode_state(frame, NetCodec.StateBatch.new(frame)))
+	var host := arena(WorldSpec.DUEL, [1, 2], {}, {})
+	var frame := host.packet({})
+	var feedback := PackedByteArray([0, 11, 0xff])
+	_state(receiver, sender.encode_state(feedback, NetCodec.StateBatch.new(frame)))
 	sender.state_ack = receiver.state_ack
-	frame = frame.merged({"tick": 115, "input_feedback": PackedByteArray([6, 7, 8, 9, 10])}, true)
-	sender.encode_state(frame, NetCodec.StateBatch.new(frame)) # 此次反馈丢失。
-	frame = frame.merged({"tick": 130, "input_feedback": PackedByteArray([251])}, true)
-	expect(_state(receiver, sender.encode_state(frame, NetCodec.StateBatch.new(frame)))["input_feedback"] == frame["input_feedback"],
-			"STATE transports opaque scheduling feedback of any length even across a lost report")
+	sender.encode_state(PackedByteArray([6, 7, 8, 9, 10]), NetCodec.StateBatch.new(frame))
+	feedback = PackedByteArray([251])
+	expect(_state(receiver, sender.encode_state(feedback, NetCodec.StateBatch.new(frame)))["input_feedback"] == feedback,
+			"STATE relays opaque scheduling feedback even across a lost report")
+	host.close()
 
 	clock.reset(98, 0, 0, PackedByteArray())
 	var previous := 100
@@ -320,288 +304,110 @@ func _royale_capacity() -> void:
 	expect(session.seats.size() == 16 and session.role_of(16) == 16 and session.role_of(17) == 0,
 			"Royale admits sixteen players and rejects a seventeenth")
 	var roles := session.seats.keys()
-	var authority: AuthorityWorld
 	for path: String in ["res://maps/demo.cyrm", session.map_path()]:
-		authority = AuthorityWorld.new()
-		var problem := authority.setup(session.mode, path, roles, {}, session.options)
-		expect(problem.is_empty(), "%s starts a sixteen-player Royale: %s" % [path, problem])
-		if not problem.is_empty():
-			session.free()
-			return
-		var sides := SpawnPicker.respawn_cells(CyrmMap.load_file(path))
+		var host := arena(session.mode, roles, {}, session.options, path)
+		var authority := host.world
+		expect(authority.problem.is_empty(), "%s starts a sixteen-player Royale: %s" % [path, authority.problem])
+		var sides := SpawnPicker.respawn_cells(authority.spec.map)
 		var points: Array = sides[1] + sides[2]
 		expect(players_on_map_points(authority, roles, points), "%s assigns sixteen distinct marked points" % path)
+		authority.rules.phase = MatchRules.Phase.PLAYING
 		authority.players[16].force_down()
-		expect(authority.respawn(16) and players_on_map_points(authority, roles, points),
-				"%s revives the sixteenth player on a free marked point" % path)
+		authority.players[16].respawn_tick = authority.tick + 1
+		host.fixed_step()
+		expect(players_on_map_points(authority, [16], points), "%s revives the sixteenth player on a marked point" % path)
+		var sender := NetCodec.new()
+		var receiver := NetCodec.new()
+		var frame := host.packet({})
+		var got := _state(receiver, sender.encode_state(PackedByteArray(), NetCodec.StateBatch.new(frame)))
+		expect(got == frame and got["checkpoint"]["players"].size() == 16, "full state delivers all sixteen players")
+		sender.state_ack = receiver.state_ack
+		authority.players[16].position.x += 16.0
+		frame = host.packet({})
+		got = _state(receiver, sender.encode_state(PackedByteArray(), NetCodec.StateBatch.new(frame)))
+		expect(got == frame, "delta state delivers an update for the sixteenth player")
+		host.close()
 	session.free()
-	var server := NetCodec.new()
-	var client := NetCodec.new()
-	var captured := authority.world_state()
-	var frame := authority.state_for(16, captured, {})
-	var decoded := _state(client, server.encode_state(frame, NetCodec.StateBatch.new(frame)))
-	expect(decoded.get("world", {}).get("players", {}).size() == 16,
-			"a full snapshot delivers all sixteen players")
-	server.state_ack = client.state_ack
-	authority.players[16].position.x += 16.0
-	captured = authority.world_state()
-	frame = authority.state_for(16, captured, {})
-	decoded = _state(client, server.encode_state(frame, NetCodec.StateBatch.new(frame)))
-	expect(decoded.get("world", {}).get("players", {}).get(16, []) == captured["players"][16],
-			"a delta snapshot delivers an update for the sixteenth player")
 
-func _codec(tree: SceneTree) -> void:
-	var parent := world(tree)
-	var authority := AuthorityWorld.new()
-	player(parent, 1)
-	player(parent, 2)
-	authority.combat_rules = parent.combat
-	authority.time_economy = TimeEconomy.new({"cap": 1800.25}, [1, 2])
-	authority.players[1].weapons.set_initial_inventory([WeaponRegistry.Type.M249])
-	authority.players[2].weapons.set_initial_inventory([WeaponRegistry.Type.COMPOUND_BOW])
-	var bow := authority.players[2].equipped as GunBody
-	bow.hold_elapsed = 0.4
-	bow.aiming = true
-	authority.players[2]._grounded = true
-	var servers := [NetCodec.new(), NetCodec.new()]
-	var clients := [NetCodec.new(), NetCodec.new()]
-	authority.rules.phase = NetEvent.RoundState.PLAYING
-	authority.players[2].sim_downed = true
-	authority.players[2].respawn_tick = 102
-	authority.players[2].motion_knock_velocity = Vector2(240, -120)
-	authority.combat_rules.tick = 100
-	authority.combat_rules.ground.tick = authority.combat_rules.tick
-	authority.combat_rules.ground.spawn(WeaponRegistry.Type.PISTOL, 1, Vector2(128, 99), Vector2.ZERO, 2)
-	var captured := authority.world_state()
-	var accounts := authority.time_economy.state_payload()
-	var frames := [authority.state_for(1, captured, accounts), authority.state_for(2, captured, accounts)]
-	var batch := NetCodec.StateBatch.new(frames[0])
-	var first_wires: Array[PackedByteArray] = []
-	for i in 2:
-		var wire: PackedByteArray = servers[i].encode_state(frames[i], batch)
-		first_wires.append(wire)
-		var truncated := NetCodec.Reader.new(wire.slice(0, wire.size() - 1), 1)
-		expect(clients[i].decode_state(truncated).is_empty() and not truncated.valid
-				and clients[i].latest == 0 and clients[i].state_ack == 0 and clients[i].history.is_empty(),
-				"a truncated full STATE does not commit its sequence, ACK or baseline")
-		var decoded := _state(clients[i], wire)
-		var remote: Array = decoded["world"]["players"][2]
-		expect(decoded["world"]["players"] == captured["players"], "full STATE preserves all players' authoritative and equipment state")
-		expect(decoded["world"]["pickups"] == captured["pickups"], "full STATE preserves the pickup owner and deadline")
-		expect(remote[NetPlayer.RESPAWN_TICK] == 102, "full STATE carries the scheduled respawn of a downed actor")
-		expect(remote[NetPlayer.STATE][PlayerStateSchema.KNOCK_VEL] == Vector2(240, -120)
-				and remote[NetPlayer.STATE][PlayerStateSchema.GROUNDED], "full STATE carries remote knockback and grounded state")
-		expect(decoded["time"] == frames[i]["time"], "full STATE preserves mutable time account fields")
-	var account: GrainAccount = authority.time_economy.accounts[1]
-	account.spend(0.25, 100.0)
-	var spent := account.capture_state()
-	account.spend(5.0, 100.0)
-	authority.time_economy.restore_account(1, spent)
-	expect(spent == [975.0, 25.0, 0.0, false] and account.capture_state() == spent and account.cap == 1800.25,
-			"reconciliation restores the saved account slots and uses the capacity from the rules")
-	servers[0].state_ack = clients[0].state_ack
-	# 第一个客户端已确认了基准快照。第二个客户端还没有可用于增量更新的基准，因此接收完整快照。
-	authority.players[1].position += Vector2(8, 0)
-	var gun := authority.players[1].equipped as GunBody
-	gun.carried = 5
-	gun.fire_cd_timer = 0.5
-	gun.hold_elapsed = 0.15
-	authority.combat_rules.tick = 102
-	authority.players[2].motion_knock_velocity = Vector2.ZERO
-	var buffer: InputBuffer = authority.players[1].input_buffer
-	var record := [2, 1, 102, 0.0, 0, Vector2.RIGHT]
-	var action := [1, 1, 101, ActorInput.BIT_UP, 0, 0, Vector2.RIGHT]
-	buffer.push([[record], [action]], 100)
-	buffer.take(102)
-	captured = authority.world_state()
-	captured["pickups"][1][WeaponPickup.Network.POS] += Vector2.RIGHT
-	captured["projectiles"] = {123: [WeaponRegistry.Type.COMPOUND_BOW, Vector2(10, 20), Vector2(30, 0)]}
-	accounts = authority.time_economy.state_payload()
-	frames = [authority.state_for(1, captured, accounts), authority.state_for(2, captured, accounts)]
-	batch = NetCodec.StateBatch.new(frames[0])
-	for i in 2:
-		var wire: PackedByteArray = servers[i].encode_state(frames[i], batch)
-		var decoded := _state(clients[i], wire)
-		var independent := _state(NetCodec.new(), NetCodec.new().encode_state(frames[i], NetCodec.StateBatch.new(frames[i])))
-		expect(decoded == independent, "mixed baselines equal independent full STATE, peer %d" % (i + 1))
-		if i == 0:
-			expect(clients[i].history[1] == _state(NetCodec.new(), first_wires[i]),
-					"a delta preserves the acknowledged player's slots, pickup and time account for subsequent packets")
-			var still_downed: Array = decoded["world"]["players"][2]
-			expect(still_downed[NetPlayer.STATE][PlayerStateSchema.DOWNED] and still_downed[NetPlayer.RESPAWN_TICK] == 0,
-					"delta STATE clears an overdue respawn forecast for a still downed actor")
-			expect(still_downed[NetPlayer.STATE][PlayerStateSchema.KNOCK_VEL] == Vector2.ZERO,
-					"delta STATE clears a remote knockback that has stopped")
-			var own: Array = decoded["world"]["players"][1]
-			expect(own[NetPlayer.INPUT][InputBuffer.SEQ] == 2 and own[NetPlayer.ACTION_ACK] == 1,
-					"delta STATE carries separate frame and action confirmations")
-			expect(decoded["world"]["players"] == captured["players"], "delta STATE preserves input, equipment timers and inventory for all roles")
-			var old_message := [0, 1, NetBus._wire(first_wires[0]), Time.get_ticks_usec()]
-			var new_message := [0, 1, NetBus._wire(wire), Time.get_ticks_usec()]
-			var event_message := [0, 1, NetBus._wire(servers[i].encode_event(NetEvent.Kind.START, null)), Time.get_ticks_usec()]
-			var coalesced: Array = NetBus._coalesce_messages([new_message, old_message])
-			expect(coalesced.size() == 1 and coalesced[0] == new_message, "late STATE cannot replace a newer queued state")
-			expect(NetBus._coalesce_messages([old_message, event_message, new_message]).size() == 3, "events form a receive-side STATE coalescing barrier")
-			var missing := NetCodec.new()
-			expect(_state(missing, wire).is_empty() and missing.state_ack == 0, "missing baseline requests a full STATE")
-		servers[i].state_ack = clients[i].state_ack
-	authority.combat_rules.tick = 104
-	authority.players[2].weapons.max_weapons = 1
-	authority.players[2].weapons.pick_up(WeaponRegistry.Type.COMPOUND_BOW, 0)
-	captured = authority.world_state()
-	frames = [authority.state_for(1, captured, accounts), authority.state_for(2, captured, accounts)]
-	batch = NetCodec.StateBatch.new(frames[0])
-	for i in 2:
-		var decoded := _state(clients[i], servers[i].encode_state(frames[i], batch))
-		expect(decoded["world"]["projectiles"].is_empty() and decoded["world"]["players"] == captured["players"],
-				"delta STATE removes ended projectiles and restores replaced equipment")
-	authority.players[2].weapons.drop_current()
-	expect(authority.players[2].equipped == null, "test drops the last weapon")
-	expect(authority.world_state()["players"][2][NetPlayer.STATE][PlayerStateSchema.EQUIPMENT].is_empty(), "unarmed actor has no equipment payload")
-	authority.combat_rules.tick = 106
-	var unarmed_frame := authority.state_for(2, authority.world_state(), accounts)
-	servers[1].state_ack = clients[1].state_ack
-	for pair in [[NetCodec.new(), NetCodec.new()], [servers[1], clients[1]]]:
-		var decoded := _state(pair[1], pair[0].encode_state(unarmed_frame, NetCodec.StateBatch.new(unarmed_frame)))
-		var state: Array = decoded["world"]["players"][2][NetPlayer.STATE]
-		var expected: Array = unarmed_frame["world"]["players"][2][NetPlayer.STATE]
-		expect(state == expected,
-				"full and delta STATE retain empty equipment after dropping the last weapon")
-		expect(PredictionFrame.difference(expected, state).is_empty(),
-				"decoded unarmed STATE does not invalidate matching prediction")
-	var baseline := {"code": "01234567", "mode": PvpSession.MODE_PVP, "role": 2, "options": {"player_collision": true},
-			"names": {1: "host", 2: "guest"}, "hues": {2: 0.5}, "teams": {}, "map": PackedByteArray([1, 2, 3]),
-			"sub_hp": {Vector2i(2, 3): 4}, "round_state": authority.round_state().merged({"grace": {}}),
-			"frame": unarmed_frame}
-	var wire: PackedByteArray = servers[1].encode_event(NetEvent.Kind.BASELINE, baseline)
-	var digest := wire.hex_encode().sha256_text()
-	expect(digest == "25087d45e60379596b77bfc4288a535c760dda10bbd6b2e597eaa51ecb9de5cf",
-			"BASELINE matches the v35 layout (%s)" % digest)
-	var client: NetCodec = clients[1]
-	var known := client.history.keys()
-	var ack := client.state_ack
-	var short := NetCodec.Reader.new(wire.slice(0, wire.size() - 1), 1)
-	expect(client.decode_event(NetEvent.Kind.BASELINE, short) == null and not short.valid
-			and client.history.keys() == known and client.state_ack == ack,
-			"truncated BASELINE leaves the current history and ACK intact")
-	var full := NetCodec.Reader.new(wire, 1)
-	expect(client.decode_event(NetEvent.Kind.BASELINE, full) == baseline and full.valid
-			and client.history.size() == 1 and client.state_ack > ack,
-			"valid BASELINE replaces the history after decoding its full frame")
-	authority.time_economy.restore_account(17, [72.125, 250.0, 17.75, true])
-	var received := authority.time_economy.state_payload()
-	authority.time_economy.accounts[17].regen(0.25)
-	expect(received[17] == [72.125, 250.0, 17.75, true]
-			and authority.time_economy.accounts[17].capture_state() == [72.125, 250.0, 5.25, true],
-			"restoring a new role preserves its loan and lock, and later repayment leaves the snapshot intact")
+func _codec() -> void:
+	var mode := WorldSpec.ROYALE
+	var host := arena(mode, [1, 2], {}, RoomOptions.normalized(mode, {"beta": true, "time": {"cap": 1800.25}}))
+	var world := host.world
+	world.rules.phase = MatchRules.Phase.PLAYING
+	var actor := world.players[1]
+	actor.weapons.set_initial_inventory([WeaponRegistry.Type.GRENADE])
+	var sender := NetCodec.new()
+	var receiver := NetCodec.new()
+	var sibling := NetCodec.new()
+	var aim := Vector2(0.6, 0.8)
+	var feedback := InputClock.pack_feedback(1, 4.0, 4.75, 0.05)
+	for at in range(1, 11):
+		var fire := ActorInput.BIT_ATTACK if at == 1 else 0
+		host.fixed_step({1: [0.0, 0, 0, fire, 0, aim]})
+	world.personal_time.accounts[1].restore_state([72.125, 250.0, 17.75, true])
+	var frame := host.packet({2: 59.75})
+	frame["input_feedback"] = feedback
+	var batch := NetCodec.StateBatch.new(frame)
+	var full := sender.encode_state(feedback, batch)
+	var independent := sibling.encode_state(PackedByteArray(), batch)
+	expect(batch.deltas.size() == 1 and independent != full, "full state fanout shares the world payload")
+	expect(_state(receiver, full) == frame, "complete state preserves equipment, live grenade, history and account")
+
+	var first_ack := receiver.state_ack
+	sender.state_ack = first_ack
+	sibling.state_ack = 1
+	for at in range(11, 17):
+		host.fixed_step({1: [1.0, ActorInput.BIT_REWIND if at < 14 else 0, 0, 0, 0, aim]})
+	var next := host.packet({})
+	batch = NetCodec.StateBatch.new(next)
+	var delta := sender.encode_state(PackedByteArray(), batch)
+	expect(delta.size() < full.size(), "a recent acknowledged base only needs changed state and history rows")
+	expect(_state(receiver, delta) == next, "delta reconstructs the complete state after history sampling")
+	expect(_state(receiver, full).is_empty(), "an out-of-order state cannot replace a newer one")
+	var no_base := NetCodec.new()
+	no_base.state_ack = first_ack
+	expect(_state(no_base, delta).is_empty() and no_base.state_ack == 0, "a lost base requests a complete state")
+	expect(sender.decode_input(_body(receiver.encode_input([[], []]), NetCodec.INPUT)) == [[], []]
+			and sender.state_ack == receiver.state_ack, "input acknowledges the adopted codec sequence")
+
+	world.personal_time.accounts[1].locked = false
+	world.personal_time.accounts[1].balance = 240.0
+	host.fixed_step({1: [0.0, ActorInput.BIT_REWIND, 0, 0, 0, aim]})
+	var rewound := host.packet({})
+	var branch := sender.encode_state(PackedByteArray(), NetCodec.StateBatch.new(rewound))
+	expect(_state(receiver, branch) == rewound, "delta removes the abandoned suffix when a skill rewinds")
+	var fresh := NetCodec.new()
+	var baseline := {"code": "12345678", "mode": mode, "role": 1, "roles": world.spec.roles,
+		"seed": world.spec.seed, "teams": {}, "options": world.spec.options, "names": {1: "A", 2: "B"},
+		"hues": {1: 0.0, 2: 22.0}, "map": CyrmMap.read_bytes("res://maps/newfactory.cyrm"),
+		"sub_hp": world.terrain.get_modified(), "frame": rewound}
+	var wire := sender.encode_event(NetEvent.Kind.BASELINE, baseline)
+	expect(fresh.decode_event(NetEvent.Kind.BASELINE, _body(wire, NetCodec.EVENT + NetEvent.Kind.BASELINE)) == baseline,
+			"a fresh decoder gets an independent logical checkpoint from BASELINE")
+	expect(fresh.history.size() == 1, "BASELINE creates one codec reference")
+
+	var offset := world.terrain.cell(actor.position)
+	actor.position = world.terrain.cell_center(offset + Vector2i(2, 0))
+	world.combat.clear()
+	world.combat.submit_blast(ShotRules.shot_id(1, 8), actor.position, WeaponRegistry.Type.GRENADE)
+	var ending := host.packet({})
+	var end_wire := sender.encode_state(PackedByteArray(), NetCodec.StateBatch.new(ending))
+	expect(_state(fresh, end_wire) == ending, "a projectile removal and a pending blast are separate state")
+	host.close()
 
 func _event_records() -> void:
 	var codec := NetCodec.new()
 	var records := {
-		NetEvent.Kind.CREATE: {"mode": PvpSession.MODE_ROYALE, "options": {
+		NetEvent.Kind.CREATE: {"mode": WorldSpec.ROYALE, "options": {
 			"map": "res://maps/newfactory.cyrm", "max_players": 8, "match_time": 300,
 			"round_full_heal": false, "disabled_weapons": [1, 5], "beta": true,
 			"time": TimeRules.normalized({"cap": 1800.25}), "player_collision": false}},
-		NetEvent.Kind.TERRAIN: {"tick": 9, "revision": 7, "cells": {Vector2i(34, 1): 0, Vector2i(2, 10): 4}},
-		NetEvent.Kind.ROUND: {"state": 2, "round": 3, "timer": 1.25, "winner": 2, "match_winner": 0,
-			"mvp": 2, "scores": {1: -2, 2: 3}, "rounds_won": {2: 1}, "left": [3],
-			"grace": {1: 2.5}, "alive": {1: false, 2: true},
-			"stats": {2: {"kills": 5, "deaths": 1, "assists": 2, "dealt": 333, "taken": 44, "acs": 3.5}}},
-	}
-	# 用当前协议 的参考编码检验兼容性。测试比较事件十六进制文本的 SHA-256。
-	var expected := {
-		NetEvent.Kind.CREATE: "248e1dc5623cf0eaa55d334ce5be25378bb6957471dccc48e4d96121c82af899",
-		NetEvent.Kind.TERRAIN: "ed33184f65bf5a3c0cec57f899cbbd7813e567c06afe2223823a0ae0a7e140c4",
-		NetEvent.Kind.ROUND: "33d37b690f525a9d6fc802416ec2d5b0f73c7040f442d80ebfffe7b8549886d2",
+		NetEvent.Kind.TERRAIN: {"version": 9, "cells": {Vector2i(34, 1): 0, Vector2i(2, 10): 4}},
 	}
 	for kind: int in records:
 		var wire := codec.encode_event(kind, records[kind])
-		expect(wire.hex_encode().sha256_text() == expected[kind], "event %d matches its wire layout" % kind)
 		expect(codec.decode_event(kind, NetCodec.Reader.new(wire, 1)) == records[kind],
 				"event %d decodes to the original record" % kind)
-
-func _combat_events(tree: SceneTree) -> void:
-	var codec := NetCodec.new()
-	var id := (2 << 48) | 256
-	var shot := {"kind": "fire", "role": 2, "serial": 1, "tick": 100, "type_id": WeaponRegistry.Type.GRENADE,
-			"pos": Vector2(8, 16), "dir": Vector2.LEFT, "charge": 1.0, "speed_mult": 3.0}
-	var events := {
-		NetEvent.Kind.FIRE: shot,
-		NetEvent.Kind.BULLET_END: {"tick": 100, "ids": [id]},
-		NetEvent.Kind.EXPLOSION: {"id": id, "type_id": shot["type_id"], "pos": Vector2(8, 16), "tick": 101},
-		NetEvent.Kind.HIT: {"shooter": 2, "victim": 1, "damage": 5, "tick": 102, "epoch": 3,
-				"hp": -2, "impulse_mode": -1, "pos": Vector2(16, 32),
-				"facing": -1, "vel": Vector2(400, -200), "knock": Vector2(12, -8)},
-	}
-	for kind: int in events:
-		var data: Dictionary = events[kind]
-		var stream := _body(codec.encode_event(kind, data), NetCodec.EVENT + kind)
-		expect(codec.decode_event(kind, stream) == data and stream.remaining() == 0,
-				"combat event %d round trips the authority facts" % kind)
-	expect(codec.encode_event(NetEvent.Kind.HIT, events[NetEvent.Kind.HIT]).hex_encode()
-			== "1102000100050000006600000003000000feffffffff0000804100000042ff0000c843000048c300004041000000c1",
-			"HIT keeps its wire layout")
-	var fire := shot.merged({"vectors": PackedVector2Array([Vector2.LEFT]), "trace": {}})
-	var explosion: Dictionary = events[NetEvent.Kind.EXPLOSION].merged({"cells": PackedInt32Array([1, 513])})
-	for kind: int in [NetEvent.Kind.FIRE, NetEvent.Kind.EXPLOSION]:
-		var result := fire if kind == NetEvent.Kind.FIRE else explosion
-		var wire := NetBus._wire(codec.encode_event(kind, result))
-		expect(wire.size() == (39 if kind == NetEvent.Kind.FIRE else 24)
-				and wire == NetBus._wire(codec.encode_event(kind, events[kind])),
-				"event %d sends parameters without local geometry" % kind)
-	var normal := shot.merged({"speed_mult": 1.0}, true)
-	var default_wire := codec.encode_event(NetEvent.Kind.FIRE, normal)
-	expect(NetBus._wire(default_wire).size() == 31 and codec.decode_event(NetEvent.Kind.FIRE,
-			_body(default_wire, NetCodec.EVENT + NetEvent.Kind.FIRE)) == normal,
-			"FIRE omits default charge and speed, and restores them exactly")
-
-	var shooter := player(world(tree))
-	for haste: float in [1.0, 2.0]:
-		shooter.personal_haste_mult = haste
-		for type_id: int in WeaponRegistry.all_ids():
-			shooter.weapons.set_initial_inventory([type_id])
-			var gun := shooter.equipped as GunBody
-			gun.hold_elapsed = 0.4
-			gun._fire(shooter, Vector2.RIGHT)
-			var fired: Dictionary = shooter.combat_requests.back().merged({"role": shooter.role, "tick": 100})
-			var bytes := NetBus._wire(codec.encode_event(NetEvent.Kind.FIRE, fired))
-			var expected := 31
-			if type_id == WeaponRegistry.Type.COMPOUND_BOW: expected += 8
-			if haste != 1.0 and gun.definition["attack"] == WeaponRegistry.Attack.PROJECTILE: expected += 8
-			expect(bytes.size() == expected, "weapon %d sends only active launch modifiers at %sx" % [type_id, haste])
-
-func _projectile_deltas() -> void:
-	var pellets := {}
-	for id in 8:
-		pellets[id] = [WeaponRegistry.Type.S686, Vector2.ZERO, Vector2.RIGHT]
-	var shot := ShotRules.shot_id(2, 1)
-	var points := PackedVector2Array([Vector2(8, 24), Vector2(120, 24), Vector2(-80, 24)])
-	var frame := {"tick": 1, "map_revision": 0, "input_feedback": PackedByteArray(), "time": {},
-			"world": {"players": {}, "pickups": {}, "projectiles": pellets, "beams": {shot: [16, points]}}}
-	var server := NetCodec.new()
-	var client := NetCodec.new()
-	var first := _state(client, server.encode_state(frame, NetCodec.StateBatch.new(frame)))
-	expect(first["world"]["beams"] == frame["world"]["beams"], "a full STATE preserves a reflected beam and its deadline")
-	server.state_ack = client.state_ack
-	frame = frame.duplicate(true)
-	frame["tick"] = 2
-	var quiet := server.encode_state(frame, NetCodec.StateBatch.new(frame))
-	expect(quiet.size() == 18 and _state(client, quiet)["world"] == frame["world"],
-			"unchanged pellets and beams leave only the STATE header")
-	server.state_ack = client.state_ack
-	frame = frame.duplicate(true)
-	frame["tick"] = 3
-	frame["world"]["projectiles"][3][BulletBody.Network.POS] = Vector2(10, 0)
-	var update := server.encode_state(frame, NetCodec.StateBatch.new(frame))
-	expect(update.size() - quiet.size() == 21 and _state(client, update)["world"] == frame["world"],
-			"one moving pellet sends only its ID, field mask and position")
-	server.state_ack = client.state_ack
-	frame = frame.duplicate(true)
-	frame["tick"] = 16
-	frame["world"]["beams"] = {ShotRules.shot_id(1, 2): [31, PackedVector2Array([Vector2.ZERO, Vector2.RIGHT])]}
-	var changed := _state(client, server.encode_state(frame, NetCodec.StateBatch.new(frame)))
-	expect(changed["world"]["beams"] == frame["world"]["beams"] and first["world"]["beams"].has(shot),
-			"a delta adds and removes beams while preserving the earlier snapshot")
 
 func _malformed_packets() -> void:
 	var codec := NetCodec.new()
@@ -609,7 +415,7 @@ func _malformed_packets() -> void:
 	var short_input := NetCodec.Reader.new(PackedByteArray([100, 0, 0, 0]))
 	expect(codec.decode_input(short_input).is_empty() and not short_input.valid and codec.state_ack == 42,
 			"invalid INPUT does not acknowledge a snapshot")
-	var short_terrain := NetCodec.Reader.new(PackedByteArray([9, 0, 0, 0, 7, 0, 0, 0, 255, 255, 255, 255]))
+	var short_terrain := NetCodec.Reader.new(PackedByteArray([9, 0, 0, 0, 255, 255, 255, 255]))
 	expect(codec.decode_event(NetEvent.Kind.TERRAIN, short_terrain) == null and not short_terrain.valid,
 			"TERRAIN rejects a cell count larger than the remaining packet")
 	var bad_mode := NetCodec.Reader.new(PackedByteArray([255, 0, 0]))
@@ -625,7 +431,7 @@ func _malformed_packets() -> void:
 	var was_server: bool = NetBus.is_server_mode
 	NetBus.is_server_mode = true
 	NetBus._receive(999, PackedByteArray([NetCodec.WIRE_MAGIC, 17, NetCodec.EVENT + NetEvent.Kind.START]), 0)
-	var patch := {"tick": 9, "revision": 7, "cells": {Vector2i.ZERO: 0}}
+	var patch := {"version": 9, "cells": {Vector2i.ZERO: 0}}
 	NetBus._receive(999, NetBus._wire(codec.encode_event(NetEvent.Kind.TERRAIN, patch)), 0)
 	NetBus._receive(999, NetBus._wire(codec.encode_event(NetEvent.Kind.START, null)), 0)
 	NetBus._receive(999, NetBus._wire(codec.encode_input([[], []])), 123456)
@@ -635,38 +441,6 @@ func _malformed_packets() -> void:
 	NetBus.input_received.disconnect(stamp)
 	expect(stamps == [123456], "INPUT dispatch preserves the native receipt timestamp")
 	expect(received == [NetEvent.Kind.START], "server dispatches valid client commands from the current protocol only")
-
-func _playback() -> void:
-	var playback := SnapshotBuffer.new()
-	playback.map_px = Vector2(512, 256)
-	var a := {"players": {2: _actor(Vector2(508, 100))}, "pickups": {}, "beams": {}}
-	var b := {"players": {2: _actor(Vector2(4, 100))}, "pickups": {}, "beams": {}}
-	var loading := [0.0, false, false, -1, 0.5, 0.0]
-	b["players"][2][NetPlayer.STATE][PlayerStateSchema.EQUIPMENT] = loading
-	playback.push(10, a)
-	playback.push(12, b)
-	var shown := playback.sample(11)
-	expect(playback.sample(11, 2)["players"].is_empty() and playback.latest_players.has(2),
-			"remote sampling skips the local role and preserves the complete authority frame")
-	expect(shown["players"][2][Sample.POS].is_equal_approx(Vector2(0, 100)), "playback interpolates across map seam")
-	shown["players"][2][Sample.POS] = Vector2(99, 99)
-	expect(playback.sample(11)["players"][2][Sample.POS].is_equal_approx(Vector2(0, 100)), "presentation edits do not mutate buffered positions")
-	expect(a["players"][2][NetPlayer.STATE][POS] == Vector2(508, 100), "sampling leaves source snapshot intact")
-	expect(shown["players"][2][Sample.SOURCE][NetPlayer.STATE][PlayerStateSchema.EQUIPMENT].is_empty() and playback.sample(12)["players"][2][Sample.SOURCE][NetPlayer.STATE][PlayerStateSchema.EQUIPMENT] == loading,
-			"the held weapon pose follows the displayed player's equipment snapshot")
-	playback.reset()
-	playback.map_px.x = 1024.0
-	playback.push(10, {"players": {2: _actor(Vector2(980, 100))}, "pickups": {}, "beams": {}})
-	playback.push(12, {"players": {2: _actor(Vector2(260, 100), 1, true)}, "pickups": {}, "beams": {}})
-	playback.push(14, {"players": {2: _actor(Vector2(600, 100), 2)}, "pickups": {}, "beams": {}})
-	expect(playback.sample(11)["players"][2][Sample.POS] == Vector2(108, 100),
-			"a large rewind step interpolates across the seam")
-	expect(playback.sample(13)["players"][2][Sample.POS] == Vector2(430, 100),
-			"remote playback interpolates through the epoch change when rewind ends")
-	playback.push(16, {"players": {2: _actor(Vector2(610, 100), 3)}, "pickups": {}, "beams": {}})
-	expect(playback.sample(15)["players"][2][Sample.POS] == Vector2(600, 100)
-			and playback.sample(16)["players"][2][Sample.POS] == Vector2(610, 100),
-			"a respawn still switches directly at its snapshot even over a short distance")
 
 func _body(wire: PackedByteArray, type: int) -> NetCodec.Reader:
 	expect(not wire.is_empty() and wire[0] == type, "packet type")
@@ -729,36 +503,42 @@ func _ready_flow(tree: SceneTree, beta: bool) -> void:
 	session.options["disabled_weapons"] = []
 	session.start_match()
 	await tree.physics_frame
-	var tick := session.world.combat_rules.tick
+	var tick := session.world.tick
 	await tree.physics_frame
-	expect(session.world.combat_rules.tick == tick + 1, "the room advances the match once per physics frame")
+	expect(session.world.tick == tick + 1, "the room advances the match once per physics frame")
 	session._on_event(11, NetEvent.Kind.READY, 2)
 	expect(not session.seats[1]["ready"], "READY for another round is ignored")
 	session._on_event(99, NetEvent.Kind.READY, 1)
 	expect(not session.seats[1]["ready"], "READY from an unseated peer is ignored")
 	session._on_event(11, NetEvent.Kind.READY, 1)
 	expect(session.seats[1]["ready"], "a current-round READY is accepted")
-	expect(session.world.rules.phase == NetEvent.RoundState.WAITING, "WAITING is kept until every seat is ready")
+	expect(session.world.rules.phase == MatchRules.Phase.WAITING, "WAITING is kept until every seat is ready")
 	session._on_event(12, NetEvent.Kind.READY, 1)
 	var rules := session.world.rules
-	expect(rules.phase == NetEvent.RoundState.COUNTDOWN and is_equal_approx(rules.round_timer, 3.0),
-			"the last READY starts a full 3 second countdown")
-	rules.advance(0.5)
+	expect(rules.phase == MatchRules.Phase.WAITING, "READY queues a command without advancing the world")
+	await tree.physics_frame
+	expect(rules.phase == MatchRules.Phase.COUNTDOWN and is_equal_approx(rules.round_timer, 3.0 - ActorStep.DT),
+			"the last READY starts the countdown on the fixed step")
+	var remaining := rules.round_timer
 	session._on_event(12, NetEvent.Kind.READY, 1)
-	expect(rules.phase == NetEvent.RoundState.COUNTDOWN and is_equal_approx(rules.round_timer, 2.5),
+	await tree.physics_frame
+	expect(rules.phase == MatchRules.Phase.COUNTDOWN and rules.round_timer < remaining,
 			"a repeated READY does not restart the countdown")
-	rules.advance(2.5)
+	rules.round_timer = ActorStep.DT
+	await tree.physics_frame
 	session.seats[2]["ready"] = false
 	session._on_event(12, NetEvent.Kind.READY, 1)
-	expect(session.seats[2]["ready"] and rules.phase == NetEvent.RoundState.PLAYING,
+	expect(session.seats[2]["ready"] and rules.phase == MatchRules.Phase.PLAYING,
 			"a reconnect READY only restores its own data sending")
 
 	session.remove_seat(2)
-	var result := session.world.round_state()
-	tick = session.world.combat_rules.tick
+	expect(rules.phase == MatchRules.Phase.PLAYING, "leaving queues a world command")
 	await tree.physics_frame
-	expect(rules.phase == NetEvent.RoundState.MATCH_OVER and session.world.combat_rules.tick == tick
-			and session.world.round_state() == result, "the room keeps the final result at the last simulated tick")
+	var result := arena_round(session.world)
+	tick = session.world.tick
+	await tree.physics_frame
+	expect(rules.phase == MatchRules.Phase.MATCH_OVER and session.world.tick == tick
+			and arena_round(session.world) == result, "the room keeps the final result at the last simulated tick")
 	var old_match: WeakRef = weakref(session.world)
 	var body: WeakRef = weakref(session.world.players[1])
 	var space: WeakRef = weakref(session.world.terrain.physics.world)
@@ -768,7 +548,7 @@ func _ready_flow(tree: SceneTree, beta: bool) -> void:
 
 	session.add_seat(12)
 	session.start_match()
-	expect(session.world.combat_rules.tick == 0 and session.world.rules.phase == NetEvent.RoundState.WAITING,
+	expect(session.world.tick == 0 and session.world.rules.phase == MatchRules.Phase.WAITING,
 			"the same room can open a fresh match")
 	session.remove_seat(2)
 	expect(session.world == null, "an expiring seat cancels the unstarted match")

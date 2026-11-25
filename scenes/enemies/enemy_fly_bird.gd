@@ -42,13 +42,13 @@ func _setup() -> void:
 	_rewind_fields.append_array([&"intent", &"_shoot_timer", &"_hover_anchor", &"_hover_side", &"_strafe_target",
 			&"_strafe_timer", &"_shot_clear_ok", &"_shot_clear_at_frame", &"_shot_clear_from", &"_shot_clear_to",
 			&"_side_cache", &"_side_at_frame", &"_side_player_cell", &"_side_geo", &"_landing", &"_path",
-			&"_path_index", &"_path_target", &"_repath_timer", &"_escape_target"])
+			&"_path_index", &"_path_target", &"_repath_timer", &"_repath_phase", &"_escape_target"])
 	var bounds := kind.hulls[1].get_rect()
 	_fly_box_min = bounds.position * scale
 	_fly_box_max = bounds.end * scale
 	wake_radius = EnemyParams.FlyBird.wake_radius
 	waterproof_max = 10
-	_repath_phase = randf() * EnemyParams.FlyBird.repath_interval
+	_repath_phase = combat.rng.randf() * EnemyParams.FlyBird.repath_interval
 	_spawn_pos = position
 	_home_cell = terrain.cell(_spawn_pos + Vector2.UP * EnemyParams.FlyBird.hover_altitude)
 
@@ -66,7 +66,7 @@ func _ai(delta: float) -> void:
 		State.SLEEP:
 			if _wake_ready(delta, dist, EnemyParams.FlyBird.wake_time):
 				_set_state(State.TAKE_OFF)
-				motion.emit(&"take_off", 0.0)
+
 				activity = Activity.TAKE_OFF
 				stance = 1
 				_takeoff_velocity()
@@ -322,7 +322,7 @@ func _try_charge() -> bool:
 
 func _start_charge() -> void:
 	_set_state(State.CHARGE)
-	motion.emit(&"charge", 0.0)
+
 	use_gravity = false  # 冲撞期间不受重力影响，因此可以沿指定方向直线飞行。
 	var dir := toroidal_dir_to_player()
 	velocity = dir * EnemyParams.FlyBird.charge_speed

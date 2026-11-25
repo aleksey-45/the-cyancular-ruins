@@ -1,8 +1,6 @@
 class_name WeaponInventory
 extends RefCounted
 
-signal feedback(kind: String)
-
 const TIER_LIGHT := 0
 const TIER_MEDIUM := 1
 const TIER_HEAVY := 2
@@ -53,7 +51,6 @@ func _equip(item: PackedInt32Array) -> void:
 	var cooldown := equipped.fire_cd_timer if equipped != null else 0.0
 	equipped = GunBody.new(item)
 	equipped.fire_cd_timer = cooldown
-	feedback.emit("equipped")
 
 func _equip_first() -> void:
 	equipped = null
@@ -95,7 +92,6 @@ func pick_up(type_id: int, carried: int) -> Dictionary:
 	var count := _slots.size()
 	var item := _add(type_id, carried)
 	if item.is_empty():
-		feedback.emit("pickup_denied")
 		return {"ok": false}
 	var dropped := _drop_data(equipped.item) if count == _slots.size() else {}
 	_equip(item)
@@ -109,10 +105,10 @@ func drop_current() -> Dictionary:
 	_equip_first()
 	return _drop_data(item)
 
-func random_keep_one() -> Array[Dictionary]:
+func random_keep_one(rng: RandomNumberGenerator) -> Array[Dictionary]:
 	var dropped: Array[Dictionary] = []
 	if not _slots.is_empty():
-		var keep := _slots[randi() % _slots.size()]
+		var keep := _slots[rng.randi_range(0, _slots.size() - 1)]
 		for item in _slots:
 			if item != keep:
 				dropped.append(_drop_data(item))
@@ -123,11 +119,16 @@ func random_keep_one() -> Array[Dictionary]:
 # 给 HUD 的数组先记录手持武器在背包中的索引，再记录背包容量。没有手持武器时索引是 -1。
 # 后面每两项描述一把武器，依次为武器类型和占用的格数。
 func cell_layout() -> PackedInt32Array:
-	var active := _slots.find(equipped.item) if equipped != null else -1
+	return layout(snapshot(), current_inst(), capacity)
+
+static func layout(entries: PackedInt32Array, inst: int, capacity := 8) -> PackedInt32Array:
+	var active := -1
 	var layout := PackedInt32Array([active, capacity])
-	for item in _slots:
-		layout.append(item[TYPE])
-		layout.append(_cost(item[TYPE]))
+	for at in range(0, entries.size(), STRIDE):
+		if entries[at + INST] == inst:
+			layout[0] = at / STRIDE
+		layout.append(entries[at + TYPE])
+		layout.append(_cost(entries[at + TYPE]))
 	return layout
 
 func snapshot() -> PackedInt32Array:
@@ -147,15 +148,14 @@ func restore(inst: int, entries: PackedInt32Array, values: Array, rewind: bool) 
 		_slots.clear()
 		for at in range(0, entries.size(), STRIDE):
 			_slots.append(entries.slice(at, at + STRIDE))
-			_next_inst = maxi(_next_inst, entries[at + INST] + 1)
 	var selected := _find(inst) if inst > 0 else PackedInt32Array()
 	if not selected.is_empty():
-		if inst == current_inst():
+		if inst == current_inst() and equipped.type_id == selected[TYPE]:
 			equipped.item = selected
 		else:
 			equipped = GunBody.new(selected)
 		equipped.restore_state_values(values)
 	elif not rewind:
 		equipped = null
-	if equipped != null:
+	if rewind and equipped != null:
 		equipped.fill_default_magazine()

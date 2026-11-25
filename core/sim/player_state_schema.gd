@@ -8,40 +8,18 @@ enum {
 	JUMP_BUFFER_TIMER, JUMP_CUT_APPLIED, SQUAT, CHARGE, CHARGE_TIMER,
 	CLIMB_LATCHED, IN_WATER, KNOCK_VEL, SHOT_SERIAL, WATERPROOF_TIMER,
 	WAS_SUBMERGED, DROWN_TIMER, IFRAMES, CONTROLS_LOCKED, STATE, WATERPROOF, HP, DOWNED,
-	WEAPON_INST, INVENTORY, EQUIPMENT, SIZE,
+	AUTO_JUMP, REWIND, RESPAWN_TICK, LIFE, LAST_ATTACKER, LAST_HIT, AIM, SHOT_TYPE,
+	WEAPON_NEXT, WEAPON_INST, INVENTORY, EQUIPMENT, SIZE,
 }
 
-# 联机快照除了角色状态，还存有已处理的输入、时间回溯进度及复活帧。
-enum Network { EPOCH, ACTION_ACK, REWIND, RESPAWN_TICK, AIM, INPUT, STATE, SIZE }
-
-enum Equipment { COOLDOWN, AIMING, BUFFERED, SHOT_FACING, RELOAD_LEFT, HOLD }
-
-# 普通字段直接来自角色属性。装备归属和武器内部状态由背包恢复。
-const Field := NetEvent.Field
-const EQUIPMENT_TYPES := [Field.F64, Field.BOOL, Field.BOOL, Field.I8, Field.F64, Field.F64]
-const FIELDS := {
-	POS: [&"position", Field.VEC], GROUNDED: [&"_grounded", Field.BOOL],
-	HASTE_MULT: [&"personal_haste_mult", Field.F64], VEL: [&"velocity", Field.VEC],
-	FACING: [&"facing_direction", Field.I8], STATE_LOCK_TIMER: [&"state_lock_timer", Field.F64],
-	COYOTE_TIMER: [&"coyote_timer", Field.F64], JUMP_BUFFER_TIMER: [&"jump_buffer_timer", Field.F64],
-	JUMP_CUT_APPLIED: [&"jump_cut_applied", Field.BOOL], SQUAT: [&"is_squat", Field.BOOL],
-	CHARGE: [&"is_charge", Field.BOOL], CHARGE_TIMER: [&"charge_timer", Field.F64],
-	CLIMB_LATCHED: [&"climb_latched", Field.BOOL], IN_WATER: [&"in_water", Field.BOOL],
-	KNOCK_VEL: [&"motion_knock_velocity", Field.VEC], SHOT_SERIAL: [&"shot_serial", Field.U32],
-	WATERPROOF_TIMER: [&"_waterproof_timer", Field.F64], WAS_SUBMERGED: [&"_was_submerged", Field.BOOL],
-	DROWN_TIMER: [&"_waterproof_drown_timer", Field.F64], IFRAMES: [&"sim_iframes", Field.F64],
-	CONTROLS_LOCKED: [&"_controls_locked", Field.BOOL], STATE: [&"state", Field.U8],
-	WATERPROOF: [&"waterproof", Field.I32], HP: [&"sim_hp", Field.I32], DOWNED: [&"sim_downed", Field.BOOL],
-	WEAPON_INST: [&"weapon_inst", Field.U32], INVENTORY: [&"inventory", Field.INVENTORY],
-}
-static var names: Array[StringName] = []
-static var wire_types: Array[int] = []
-
-static func _static_init() -> void:
-	for slot in EQUIPMENT:
-		names.append(FIELDS[slot][0])
-		wire_types.append(FIELDS[slot][1])
-	names.append(&"equipment")
+const PROPERTIES := [
+	&"position", &"_grounded", &"personal_haste_mult", &"velocity", &"facing_direction",
+	&"state_lock_timer", &"coyote_timer", &"jump_buffer_timer", &"jump_cut_applied", &"is_squat",
+	&"is_charge", &"charge_timer", &"climb_latched", &"in_water", &"motion_knock_velocity",
+	&"shot_serial", &"_waterproof_timer", &"_was_submerged", &"_waterproof_drown_timer",
+	&"sim_iframes", &"_controls_locked", &"state", &"waterproof", &"sim_hp", &"sim_downed",
+	&"_auto_jump_timer", &"rewinding", &"respawn_tick", &"life", &"last_attacker", &"last_hit_tick",
+]
 
 static func equipped_type(actor: Array) -> int:
 	var inventory: PackedInt32Array = actor[INVENTORY]

@@ -1,12 +1,10 @@
-class_name TimeEconomy
+class_name PersonalTime
 extends RefCounted
-
-# 服务器负责 Beta 对战的时间颗粒奖励。击败或伤害其他玩家、破坏地形均可获得时间颗粒。
-# 客户端先以服务器快照中的余额和透支状态为准，再预测本地输入造成的消耗和后续恢复。
 
 var rules: Dictionary
 var rewind_seconds: float
 var accounts: Dictionary[int, GrainAccount] = {}
+var histories: Dictionary[int, TimeHistory] = {}
 
 
 func _init(options: Dictionary, roles: Array = []) -> void:
@@ -17,19 +15,61 @@ func _init(options: Dictionary, roles: Array = []) -> void:
 
 
 func add_role(role: int) -> void:
-	if role > 0 and not accounts.has(role):
-		accounts[role] = GrainAccount.new(rules["initial"], rules["cap"], rules["window"],
-				rules["regen"], rules["window"])
+	accounts[role] = GrainAccount.new(rules["initial"], rules["cap"], rules["window"],
+			rules["regen"], rules["window"])
+	histories[role] = TimeHistory.new(rewind_seconds)
 
-func restore_account(role: int, state: Array) -> void:
-	add_role(role)
-	accounts[role].restore_state(state)
+func remove_role(role: int) -> void:
+	accounts.erase(role)
+	histories.erase(role)
 
+func reset_history(role: int) -> void:
+	histories[role] = TimeHistory.new(rewind_seconds)
 
-func advance(players: Dictionary, inputs: Dictionary) -> void:
-	for role: int in inputs:
-		step_haste(players[role], inputs[role], ActorStep.DT)
+func advance(combat: CombatSimulator, inputs: Dictionary, at: int) -> void:
+	var reversing: Array[int] = []
+	for role: int in combat.players:
+		var player := combat.players[role]
+		var history := histories[role]
+		var input: Array = inputs[role]
+		if int(input[ActorInput.HELD]) & ActorInput.BIT_REWIND and history.can_rewind() \
+				and accounts[role].can_spend() and not player._controls_locked and not player.sim_downed:
+			player.rewinding = true
+			accounts[role].spend(ActorStep.DT, rules["rewind_burn"])
+			reversing.append(role)
+		else:
+			if player.rewinding:
+				player.rewinding = false
+				inputs[role] = ActorInput.neutral(input[ActorInput.AIM])
+			history.record(ActorStep.DT, at, _sample.bind(combat, player))
+		step_haste(player, inputs[role], ActorStep.DT)
+	for role: int in reversing:
+		var sample := histories[role].backward(ActorStep.DT)
+		combat.players[role].rewind_state(sample[TimeHistory.Sample.ACTOR], false)
+		var projectiles: Dictionary = sample[TimeHistory.Sample.PROJECTILES]
+		for id: int in projectiles:
+			if combat.projectiles.has(id):
+				combat.projectiles[id].restore_motion(projectiles[id])
 	tick(ActorStep.DT)
+
+static func _sample(combat: CombatSimulator, player: Player) -> Array:
+	return [player.capture_state(), combat.capture_projectiles(player.role, true)]
+
+func capture_histories() -> Dictionary:
+	var state := {}
+	for role: int in histories:
+		state[role] = histories[role].capture()
+	return state
+
+func restore(states: Dictionary, samples: Dictionary) -> void:
+	for role: int in accounts.keys():
+		if not states.has(role):
+			remove_role(role)
+	for role: int in states:
+		if not accounts.has(role):
+			add_role(role)
+		accounts[role].restore_state(states[role])
+		histories[role].restore(samples[role])
 
 func step_haste(player: Player, record: Array, delta: float) -> void:
 	player.personal_haste_mult = 1.0
