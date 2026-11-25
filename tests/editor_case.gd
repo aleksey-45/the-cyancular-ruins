@@ -318,8 +318,8 @@ func _lighting_preview(editor: MapEditor) -> void:
 	canvas.preview_minute = 9 * 60
 	await RenderingServer.frame_post_draw
 	var morning := screen.get_image()
-	expect(morning.get_pixelv(pixel).r > 0.9 and morning.get_pixelv(outside) == raw.get_pixelv(outside),
-			"on a tall map the morning sun stops at the edge of the document")
+	expect(morning.get_pixelv(pixel) != raw.get_pixelv(pixel) and morning.get_pixelv(outside) == raw.get_pixelv(outside),
+			"on a tall map the sky preview stops at the edge of the document")
 	canvas.preview_minute = 0.0
 	await RenderingServer.frame_post_draw
 	expect(morning.get_pixelv(pixel).b > screen.get_image().get_pixelv(pixel).b + 0.4, "empty editor cells show the selected sky")

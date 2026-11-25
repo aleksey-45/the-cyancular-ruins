@@ -4,9 +4,9 @@
 
 单人关卡从 06:00 开始，正常速度下 120 秒走完一天。暂停时停表，时间加速按玩家倍率推进，回溯恢复所到时刻的天色。联机的昼夜由房间的对局时钟决定。对局、主菜单和编辑器共用一条昼夜色带，每格相隔 5 分钟，跨午夜平滑衔接。天顶色照亮地形、视差背景和角色。[昼夜光照](../core/present/daylight.gd) · [昼夜色带](../core/present/daylight_palette.png)
 
-角色皮肤的颜色等于本色乘以环境光与眼光之和。两种光共用 `player_shade.png` 的 RG 推算出的表面法线。环境光随天色和日月方向实时变化，B 通道压暗肢体贴合处。[角色材质](../scenes/player/player_color.gdshader)
+对局用 `CanvasModulate` 提供环境底光，`DirectionalLight2D` 随日月方向变化。玩家的 `CanvasTexture` 读取烘好接触阴影的底色和法线贴图，角色着色器将方向光分档。双眼共用一盏点光，随动画帧、朝向和姿势移动，可照亮附近角色与地形。[世界绘制](../core/present/world_canvas.gd) · [角色贴图](../assets/textures/player_canvas_texture.tres)
 
-每只眼睛是一根内部均匀发光的透明长方柱，底面随该帧的白色眼条，柱高为 3 个原画像素。烘焙时，以皮肤像素在精灵平面上的位置为接收点，按入射角累加两根柱体从表面正面照来的光。运行时用眼睛相对环境的亮度缩放这张受光图。修改角色原画、部位贴图、曲率或动画帧区域后，用装有 NumPy 和 Pillow 的 Python 运行 `python tools/bake_eye_light.py` 更新 `player_eye_light.png`。[光柱烘焙](../tools/bake_eye_light.py)
+`player_shade.png` 的 B 通道提供接触阴影。修改角色原画或动画帧区域后，用装有 NumPy 和 Pillow 的 Python 运行 `python tools/bake_eye_light.py`，更新底色、双眼光斑和各动画帧的眼睛挂点。[角色光照烘焙](../tools/bake_eye_light.py)
 
 ## CYRM 地图
 

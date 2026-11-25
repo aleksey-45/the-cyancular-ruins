@@ -5,66 +5,82 @@
 [sub_resource type="AtlasTexture" id="AtlasTexture_miouo"]
 atlas = ExtResource("1_rpqav")
 region = Rect2(144, 1, 48, 48)
+metadata/eye_offset = Vector2(6.61363636, -8.77272727)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_bhhdu"]
 atlas = ExtResource("1_rpqav")
 region = Rect2(96, 0, 48, 48)
+metadata/eye_offset = Vector2(4, -6)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_kyqiw"]
 atlas = ExtResource("1_rpqav")
 region = Rect2(0, 1, 48, 48)
+metadata/eye_offset = Vector2(4, -10)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_gntrk"]
 atlas = ExtResource("1_rpqav")
 region = Rect2(48, 1, 48, 48)
+metadata/eye_offset = Vector2(4, -8)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_dewec"]
 atlas = ExtResource("1_rpqav")
 region = Rect2(0, 49, 48, 48)
+metadata/eye_offset = Vector2(3, -10.5)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_5ixxa"]
 atlas = ExtResource("1_rpqav")
 region = Rect2(48, 49, 48, 48)
+metadata/eye_offset = Vector2(2, -12)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_nn08x"]
 atlas = ExtResource("1_rpqav")
 region = Rect2(96, 49, 48, 48)
+metadata/eye_offset = Vector2(5, -10.5)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_52ee3"]
 atlas = ExtResource("1_rpqav")
 region = Rect2(144, 49, 48, 48)
+metadata/eye_offset = Vector2(3, -12)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_megsn"]
 atlas = ExtResource("1_rpqav")
 region = Rect2(0, 97, 48, 48)
+metadata/eye_offset = Vector2(5, -4)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_yoq75"]
 atlas = ExtResource("1_rpqav")
 region = Rect2(48, 97, 48, 48)
+metadata/eye_offset = Vector2(5, -4)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_ksbbd"]
 atlas = ExtResource("1_rpqav")
 region = Rect2(96, 97, 48, 48)
+metadata/eye_offset = Vector2(5, -4)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_glx4g"]
 atlas = ExtResource("1_rpqav")
 region = Rect2(144, 97, 48, 48)
+metadata/eye_offset = Vector2(5, -4)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_move_01"]
 atlas = ExtResource("1_rpqav")
 region = Rect2(0, 145, 48, 48)
+metadata/eye_offset = Vector2(2, -11)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_move_12"]
 atlas = ExtResource("1_rpqav")
 region = Rect2(48, 145, 48, 48)
+metadata/eye_offset = Vector2(4, -11)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_move_23"]
 atlas = ExtResource("1_rpqav")
 region = Rect2(96, 145, 48, 48)
+metadata/eye_offset = Vector2(4, -11)
 
 [sub_resource type="AtlasTexture" id="AtlasTexture_move_30"]
 atlas = ExtResource("1_rpqav")
 region = Rect2(144, 145, 48, 48)
+metadata/eye_offset = Vector2(2, -11)
 
 [resource]
 animations = [{

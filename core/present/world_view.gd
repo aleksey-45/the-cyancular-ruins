@@ -5,6 +5,7 @@ const WEAPONS := preload("res://assets/textures/weapons.png")
 const BULLETS := preload("res://assets/textures/bullets.png")
 const EXPLOSION := preload("res://assets/textures/effects.png")
 const PLAYER_FRAMES := preload("res://scenes/player/player_frames.tres")
+const PLAYER_SURFACE := preload("res://assets/textures/player_canvas_texture.tres")
 const PLAYER_CLIPS := [&"idle", &"move", &"fly", &"charge", &"squat"]
 const Activity := EnemyBase.Activity
 const ENEMY_CLIPS := [&"sleeping", &"fall_asleep", &"wake_up", &"jump", &"dashing",
@@ -132,7 +133,7 @@ func grain(at: Vector2, now: float, flight: float) -> void:
 
 func present(frame: MatchFrame, grain_target := Vector2.ZERO) -> void:
 	_canvas.set_daylight(frame.day_minute)
-	_canvas.begin()
+	_canvas.begin(frame.actors.size())
 	_after.present(frame.now, frame.focus, _canvas, _size)
 	# 换弹圆环先藏起,只有本帧真有本地角色换弹时下面才显示;血条在名字循环里按需显示。
 	if is_instance_valid(_reload_node):
@@ -183,7 +184,6 @@ func present(frame: MatchFrame, grain_target := Vector2.ZERO) -> void:
 func _actor(pose: MatchFrame.Pose, frame: MatchFrame) -> void:
 	var now := frame.now
 	var enemy := pose.frames != null
-	var flip := pose.facing < 0
 	var frames := pose.frames if enemy else PLAYER_FRAMES
 	var clip := _enemy_clip(pose) if enemy else (&"idle" if pose.downed else PLAYER_CLIPS[pose.state]) as StringName
 	var first_frame := pose.state == Activity.WAIT if enemy else pose.downed
@@ -207,6 +207,8 @@ func _actor(pose: MatchFrame.Pose, frame: MatchFrame) -> void:
 		squash.reset()
 	else:
 		visual = visual.scaled_local(squash.sample(now, pose.air_speed))
+	if pose.facing < 0:
+		visual.x = -visual.x
 	var tint := Color.WHITE
 	var color := Color.WHITE
 	var glow := Color.TRANSPARENT
@@ -228,13 +230,14 @@ func _actor(pose: MatchFrame.Pose, frame: MatchFrame) -> void:
 		var hit_left := pose.hit_left
 		var alpha := 0.4 if hit_left > 0.0 and int(hit_left * 20.0) % 2 == 0 else 1.0
 		color = Color(skin_tint, alpha)
-		pass_kind = WorldCanvas.Pass.PLAYER
+		pass_kind = WorldCanvas.Pass.PLAYER_BODY
+		_canvas.eye_light(visual.translated_local(image.get_meta(&"eye_offset")))
 		if pose.haste and not pose.rewind:
 			glow = Color((ENEMY_GLOW if pose.remote else PLAYER_GLOW) * tint, alpha)
 	_afterimages(pose, frame, image, visual, tint)
-	_texture(image, visual, color, flip, pass_kind)
+	_canvas.sprite(image.atlas if enemy else PLAYER_SURFACE, image.region, visual, color, pass_kind)
 	if glow.a > 0.0:
-		_texture(image, visual, glow, flip, WorldCanvas.Pass.GLOW)
+		_canvas.sprite(image.atlas, image.region, visual, glow, WorldCanvas.Pass.GLOW)
 	if pose.weapon == 0:
 		return
 	var weapon := WeaponRegistry.definition(pose.weapon)
@@ -287,7 +290,7 @@ func _enemy_clip(pose: MatchFrame.Pose) -> StringName:
 #         受击/倒地各补一条一次性短残影。
 #   敌人:take_off/charge 期间低强度冷白残影(可选表现,不改变 squash 手感)。
 # 连续残影按 pose.id 记 deadline,避免每帧刷屏;一次性残影按 hit/downed 边沿触发。
-func _afterimages(pose: MatchFrame.Pose, frame: MatchFrame, image: Texture2D,
+func _afterimages(pose: MatchFrame.Pose, frame: MatchFrame, image: AtlasTexture,
 		visual: Transform2D, tint: Color) -> void:
 	var now := frame.now
 	var enemy := pose.frames != null
@@ -296,7 +299,7 @@ func _afterimages(pose: MatchFrame.Pose, frame: MatchFrame, image: Texture2D,
 	if pose.downed:
 		# 倒地/死亡:白色淡出残影,只在进入倒地的第一帧发一条。
 		if not was_downed:
-			_after.spawn(now, image, visual, DEATH_GHOST, pose.facing < 0,
+			_after.spawn(now, image, visual, DEATH_GHOST,
 					WorldCanvas.Pass.NORMAL, DEATH_GHOST_LIFE)
 		return
 	if not enemy:
@@ -304,7 +307,7 @@ func _afterimages(pose: MatchFrame.Pose, frame: MatchFrame, image: Texture2D,
 		var was_hit := bool(_hit_prev.get(pose.id, false))
 		_hit_prev[pose.id] = hit_left > 0.0
 		if hit_left > 0.0 and not was_hit:
-			_after.spawn(now, image, visual, HURT_GHOST, pose.facing < 0,
+			_after.spawn(now, image, visual, HURT_GHOST,
 					WorldCanvas.Pass.NORMAL, HURT_GHOST_LIFE)
 	var color := Color.WHITE
 	var pass_kind := WorldCanvas.Pass.NORMAL
@@ -343,7 +346,7 @@ func _afterimages(pose: MatchFrame.Pose, frame: MatchFrame, image: Texture2D,
 		color = HASTE_GHOST_WARM if _alternate else HASTE_GHOST_COOL
 		_alternate = not _alternate
 	_ghost_after[pose.id] = now + interval
-	_after.spawn(now, image, visual, color, pose.facing < 0, pass_kind, life)
+	_after.spawn(now, image, visual, color, pass_kind, life)
 
 func _trajectory(id: int, at: Vector2) -> void:
 	var path: PackedVector2Array = _paths.get(id, PackedVector2Array())
@@ -491,13 +494,7 @@ func _draw_particles(style: Dictionary, color: Color, age: float, at: Vector2) -
 		var size := Vector2.ONE * lerpf(sizes.x, sizes.y, weight)
 		_canvas.rect(Rect2(pos - size * 0.5, size), color, -1.0, false)
 
-func _texture(texture: Texture2D, pose: Transform2D, color: Color, flip: bool,
-		pass_kind := WorldCanvas.Pass.NORMAL) -> void:
-	var atlas := texture as AtlasTexture
-	_canvas.sprite(atlas.atlas, atlas.region, pose, color, flip, pass_kind)
-
-
-static func _frame(frames: SpriteFrames, animation: StringName, age: float) -> Texture2D:
+static func _frame(frames: SpriteFrames, animation: StringName, age: float) -> AtlasTexture:
 	var count := frames.get_frame_count(animation)
 	var duration := 0.0
 	for i in count:
@@ -508,5 +505,5 @@ static func _frame(frames: SpriteFrames, animation: StringName, age: float) -> T
 	for i in count - 1:
 		at -= frames.get_frame_duration(animation, i)
 		if at < 0.0:
-			return frames.get_frame_texture(animation, i)
-	return frames.get_frame_texture(animation, count - 1)
+			return frames.get_frame_texture(animation, i) as AtlasTexture
+	return frames.get_frame_texture(animation, count - 1) as AtlasTexture

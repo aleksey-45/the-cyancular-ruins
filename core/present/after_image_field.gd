@@ -32,8 +32,8 @@ func size() -> int:
 
 
 ## 记录一条残影。life < 0 时用 configure() 的默认寿命。
-func spawn(now: float, image: Texture2D, pose: Transform2D, color: Color,
-		flip := false, pass_kind := WorldCanvas.Pass.NORMAL, life := -1.0) -> void:
+func spawn(now: float, image: AtlasTexture, pose: Transform2D, color: Color,
+		pass_kind := WorldCanvas.Pass.NORMAL, life := -1.0) -> void:
 	if image == null or color.a <= 0.0:
 		return
 	var lifetime := _life if life < 0.0 else life
@@ -42,14 +42,13 @@ func spawn(now: float, image: Texture2D, pose: Transform2D, color: Color,
 	while _rows.size() >= _cap:
 		_free.append(_rows.pop_front())
 	var row: Array = _free.pop_back() if not _free.is_empty() \
-			else [0.0, null, Transform2D.IDENTITY, Color.WHITE, false, WorldCanvas.Pass.NORMAL, 0.0]
+			else [0.0, null, Transform2D.IDENTITY, Color.WHITE, WorldCanvas.Pass.NORMAL, 0.0]
 	row[0] = now
 	row[1] = image
 	row[2] = pose
 	row[3] = color
-	row[4] = flip
-	row[5] = pass_kind
-	row[6] = lifetime
+	row[4] = pass_kind
+	row[5] = lifetime
 	_rows.append(row)
 
 
@@ -57,7 +56,7 @@ func spawn(now: float, image: Texture2D, pose: Transform2D, color: Color,
 func present(now: float, anchor: Vector2, canvas: WorldCanvas, size: Vector2) -> void:
 	for i in range(_rows.size() - 1, -1, -1):
 		var row: Array = _rows[i]
-		var lifetime := float(row[6])
+		var lifetime := float(row[5])
 		var age := now - float(row[0])
 		if age >= lifetime:
 			_rows.remove_at(i)
@@ -67,16 +66,10 @@ func present(now: float, anchor: Vector2, canvas: WorldCanvas, size: Vector2) ->
 		color.a *= clampf(1.0 - age / lifetime, 0.0, 1.0)
 		var pose: Transform2D = row[2]
 		pose.origin = GridPathfinder.anchor_to_nearest(pose.origin, anchor, size)
-		_sprite(canvas, row[1], pose, color, row[4], row[5])
+		var image: AtlasTexture = row[1]
+		canvas.sprite(image.atlas, image.region, pose, color, row[4])
 
 
 func clear() -> void:
 	_free.append_array(_rows)
 	_rows.clear()
-
-
-# 残影贴图与角色一样来自帧图集,Region 绘制方式与 WorldView._texture 一致。
-static func _sprite(canvas: WorldCanvas, texture: Texture2D, pose: Transform2D,
-		color: Color, flip: bool, pass_kind: int) -> void:
-	var atlas := texture as AtlasTexture
-	canvas.sprite(atlas.atlas, atlas.region, pose, color, flip, pass_kind)

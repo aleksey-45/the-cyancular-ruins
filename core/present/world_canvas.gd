@@ -3,7 +3,10 @@ extends Node2D
 
 const FONT := PixelFont.FONT
 const WHITE_MASK := preload("res://core/present/white_mask.gdshader")
-enum Pass { NORMAL, PLAYER, GLOW, MASK, FOREGROUND }
+const PLAYER_CONFIG: PlayerConfig = preload("res://core/config/player_config.tres")
+const EYE_LIGHT := preload("res://assets/textures/player_light_cookie.png")
+const MAX_POINT_LIGHTS_PER_ITEM := 15  # Godot Mobile 的单 CanvasItem 点光上限。
+enum Pass { NORMAL, PLAYER_BODY, GLOW, MASK, FOREGROUND }
 enum Mark { BOX, CIRCLE, ARC, POLYGON, LINE }
 
 class SpriteBatch extends Node2D:
@@ -11,11 +14,15 @@ class SpriteBatch extends Node2D:
 
 var _sky := Daylight.new()
 var _ambient := CanvasModulate.new()
-var _player_material := _shader_material(preload("res://scenes/player/player_color.gdshader"))
+var _directional := DirectionalLight2D.new()
+var _eye_lights: Array[PointLight2D] = []
+var _eye_light_count := 0
+var _player_body_material := _shader_material(preload("res://core/present/player_body_lighting.gdshader"))
 var _marks: Array[Array] = []
 var _materials: Array[Material]
 var _batches: Array[SpriteBatch] = []
 var _batch_count := 0
+var _split_player_batches := false
 var _lines: Array[Array] = []
 var _overlay_marks: Array[Array] = []
 var _labels := [[], []]
@@ -26,9 +33,7 @@ func _ready() -> void:
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	var glow := CanvasItemMaterial.new()
 	glow.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
-	_player_material.set_shader_parameter("shade_atlas", preload("res://assets/textures/player_shade.png"))
-	_player_material.set_shader_parameter("eye_irradiance", preload("res://assets/textures/player_eye_light.png"))
-	_materials = [null, _player_material, glow, _shader_material(WHITE_MASK)]
+	_materials = [null, _player_body_material, glow, _shader_material(WHITE_MASK)]
 	_foreground.z_index = 1
 	add_child(_foreground)
 	_foreground.draw.connect(_draw_foreground)
@@ -39,6 +44,8 @@ func _ready() -> void:
 	_sky.overscan_y = maxf(1.0, get_viewport_rect().size.y / get_window().get_visible_rect().size.y)
 	UiFactory.cover(sky_layer, _sky)
 	add_child(_ambient)
+	_directional.height = 0.25
+	add_child(_directional)
 	set_daylight(Daylight.NOON)
 	var cues := CanvasLayer.new()
 	cues.follow_viewport_enabled = true
@@ -48,8 +55,12 @@ func _ready() -> void:
 
 func set_daylight(minute: float) -> void:
 	_ambient.color = _sky.set_minute(minute)
-	_player_material.set_shader_parameter("ambient_light", _ambient.color)
-	_player_material.set_shader_parameter("directional_light", _sky.directional_light)
+	var source := _sky.directional_light
+	var color := _sky.directional_color
+	_directional.rotation = Vector2.DOWN.angle_to(-Vector2(source.x, source.y))
+	_directional.color = Color(color, 1.0)
+	_directional.energy = (0.22 if source.z > 0.0 else 0.11) * color.a
+	_player_body_material.set_shader_parameter(&"body_daylight", Color(_ambient.color, source.z))
 
 static func _shader_material(shader: Shader) -> ShaderMaterial:
 	var result := ShaderMaterial.new()
@@ -57,8 +68,8 @@ static func _shader_material(shader: Shader) -> ShaderMaterial:
 	return result
 
 ## 只合批相邻的同材质贴图，保留角色、武器与特效的遮挡顺序。
-func _batch(style: Material) -> SpriteBatch:
-	if _batch_count > 0 and _batches[_batch_count - 1].material == style:
+func _batch(style: Material, separate: bool) -> SpriteBatch:
+	if not separate and _batch_count > 0 and _batches[_batch_count - 1].material == style:
 		return _batches[_batch_count - 1]
 	if _batch_count == _batches.size():
 		var node := SpriteBatch.new()
@@ -70,10 +81,12 @@ func _batch(style: Material) -> SpriteBatch:
 	_batch_count += 1
 	return batch
 
-func begin() -> void:
+func begin(actor_count: int) -> void:
 	for batch in _batches:
 		batch.rows.clear()
 	_batch_count = 0
+	_split_player_batches = actor_count > MAX_POINT_LIGHTS_PER_ITEM
+	_eye_light_count = 0
 	_foreground.rows.clear()
 	for rows: Array in _labels:
 		rows.clear()
@@ -82,6 +95,8 @@ func begin() -> void:
 	_overlay_marks.clear()
 
 func submit() -> void:
+	for index in range(_eye_light_count, _eye_lights.size()):
+		_eye_lights[index].hide()
 	queue_redraw()
 	for batch in _batches:
 		batch.queue_redraw()
@@ -89,12 +104,25 @@ func submit() -> void:
 	_overlay.queue_redraw()
 
 func sprite(texture: Texture2D, region: Rect2, pose: Transform2D, color := Color.WHITE,
-		flip := false, sprite_pass := Pass.NORMAL) -> void:
+		sprite_pass := Pass.NORMAL) -> void:
 	var rect := Rect2(-region.size * 0.5, region.size)
-	if flip:
-		pose.x = -pose.x
-	var batch := _foreground if sprite_pass == Pass.FOREGROUND else _batch(_materials[sprite_pass])
+	var separate := _split_player_batches and sprite_pass == Pass.PLAYER_BODY
+	var batch := _foreground if sprite_pass == Pass.FOREGROUND else _batch(_materials[sprite_pass], separate)
 	batch.rows.append([texture, region, pose, color, rect])
+
+func eye_light(pose: Transform2D) -> void:
+	if _eye_light_count == _eye_lights.size():
+		var node := PointLight2D.new()
+		node.texture = EYE_LIGHT
+		node.texture_scale = 1.0 / PLAYER_CONFIG.body_scale
+		node.height = 32.0
+		add_child(node)
+		_eye_lights.append(node)
+	var light := _eye_lights[_eye_light_count]
+	_eye_light_count += 1
+	light.energy = lerpf(0.75, 0.04, smoothstep(0.22, 0.64, _ambient.color.get_luminance()))
+	light.transform = pose
+	light.show()
 
 func line(points: PackedVector2Array, color: Color, width: float, overlay := false) -> void:
 	if overlay:
