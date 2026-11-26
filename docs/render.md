@@ -4,7 +4,7 @@
 
 `WorldView` 根据角色动作与受击状态选择动画，计算武器和特效的显示位置。`WorldCanvas` 批量绘制角色、武器、掉落物、弹丸和残影的贴图，也绘制光束、弹道线、伤害数字、名牌和生命条。控制器按武器发射位置与弹道参数计算瞄准辅助线。爆炸碎屑根据引爆位置附近的地形生成。[世界视图](../core/present/world_view.gd) · [世界画布](../core/present/world_canvas.gd)
 
-`SquashTracker` 根据玩家和敌人动作计算精灵局部缩放，武器挂点和瞄准使用角色变换。`AfterImageField` 管理冲刺、加速、回溯等动作的残影与淡出，并限制存续的残影数量。[动作形变](../core/present/squash_tracker.gd) · [残影](../core/present/after_image_field.gd)
+`SquashTracker` 根据玩家和敌人的动作计算挤压与拉伸，只缩放精灵的局部坐标轴。武器挂点和瞄准沿用角色变换。`AfterImageField` 管理冲刺、加速、回溯等动作的残影与淡出，并限制存续的残影数量。[动作形变](../core/present/squash_tracker.gd) · [残影](../core/present/after_image_field.gd)
 
 激光命中在开火时结算，模拟保留当时的折线路径 15 个物理帧。每个渲染帧直接采样仍然可见的光束，按剩余时间淡出。本地光束取自当前模拟，远端光束与射手共用服务器快照的播放时刻。[战斗模拟](../core/sim/combat_simulator.gd) · [画面采样](../core/present/match_frame.gd)
 

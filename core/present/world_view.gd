@@ -93,15 +93,12 @@ func clear_motion(id: int) -> void:
 	_ghost_after.erase(id)
 
 func motion(id: int, kind: StringName, now: float, speed := 0.0) -> void:
-	# 强度由 SquashTracker 按实体配置取(玩家 PlayerConfig / 敌人 EnemyConfig),
-	# PULSES 硬编码表已删除;实体侧别由 id(敌人为负)与 kind 推断。
-	_squash_for(id, kind).impulse(kind, now, speed)
+	_squash_for(id).impulse(kind, now, speed)
 
-func _squash_for(id: int, kind: StringName) -> SquashTracker:
+func _squash_for(id: int) -> SquashTracker:
 	var squash: SquashTracker = _squash.get(id)
 	if squash == null:
-		squash = SquashTracker.new()
-		squash.setup(SquashTracker.profile_for(id, kind))
+		squash = SquashTracker.new(id < 0)
 		_squash[id] = squash
 	return squash
 
@@ -197,12 +194,8 @@ func _actor(pose: MatchFrame.Pose, frame: MatchFrame) -> void:
 	if not enemy and pose.downed:
 		body *= Transform2D(-PI / 2.0 * pose.facing, Vector2(0, 6.8 - 2.0 * pose.facing))
 	var visual := body
-	# 挤压只乘 sprite 的局部坐标轴:origin(= pose.anchor)不动,武器/瞄准继续用 body。
-	var squash: SquashTracker = _squash.get(pose.id)
-	if squash == null:
-		squash = SquashTracker.new()
-		squash.setup(SquashTracker.Profile.ENEMY if enemy else SquashTracker.Profile.PLAYER)
-		_squash[pose.id] = squash
+	# 挤压与拉伸只缩放精灵的局部坐标轴，武器挂点和瞄准沿用角色变换。
+	var squash := _squash_for(pose.id)
 	if pose.downed or (pose.rewind and not pose.elite):
 		squash.reset()
 	else:
