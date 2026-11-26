@@ -56,7 +56,9 @@ var equipped: GunBody:
 	get: return weapons.equipped
 # 最多容纳四个碰撞形状，一个用于原位置，其余用于地图边缘和角落。
 const COLLISION_SLOTS := 4
-static var _axis_motion := PhysicsTestMotionResult2D.new()
+# 纵向移动结束后，空中补抬仍需读取横向碰撞结果。
+static var _horizontal_motion := PhysicsTestMotionResult2D.new()
+static var _vertical_motion := PhysicsTestMotionResult2D.new()
 static var _step_motion := PhysicsTestMotionResult2D.new()
 
 var life := 0
@@ -89,38 +91,46 @@ func move_by_internal(motion: Vector2) -> Vector2:
 		var start := transform
 		var travel := Vector2.ZERO
 		travel[axis] = distance
-		if CollisionWorld.probe_body(rid, start, travel, _axis_motion):
-			if CollisionWorld.axis_blocked(_axis_motion, axis, distance):
+		var result := _horizontal_motion if axis == 0 else _vertical_motion
+		if CollisionWorld.probe_body(rid, start, travel, result):
+			if CollisionWorld.axis_blocked(result, axis, distance):
 				if axis == 0 and motion.y >= 0.0 and _try_step_up(start, travel):
 					return Vector2.DOWN
 				blocked[axis] = signf(distance)
-			_record_contact(_axis_motion)
-		start.origin += _axis_motion.get_travel()
+			_record_contact(result)
+		start.origin += result.get_travel()
 		position = start.origin
 	return blocked
 
-func _try_step_up(start: Transform2D, travel: Vector2) -> bool:
-	var direction := signf(travel.x)
-	var wall := _axis_motion.get_collider_rid()
-	if not _grounded or sim_downed or is_charge or is_squat or climb_latched or in_water or rewinding \
-			or direction != signf(step_input.axis) or _axis_motion.get_collision_normal().x * direction >= -0.5 \
-			or PhysicsServer2D.body_get_collision_layer(wall) != CollisionWorld.LAYER_TERRAIN:
-		return false
+func _probe_step_lift(start: Transform2D, direction: float, max_height: float) -> Vector2:
+	if direction != signf(step_input.axis) or _horizontal_motion.get_collision_normal().x * direction >= -0.5 \
+			or PhysicsServer2D.body_get_collision_layer(_horizontal_motion.get_collider_rid()) != CollisionWorld.LAYER_TERRAIN:
+		return Vector2.ZERO
 	var margin := CollisionWorld.MOTION_MARGIN
-	var foot := collision_rect().end.y
-	var edge := _axis_motion.get_collision_point().x + direction * margin
-	# 射线要从墙壁内侧向下检测，才能找到台阶上表面。墙太高时，射线从墙内发出，无法找到可站立的表面。
-	var hit := terrain.physics.ray_hit(Vector2(edge, foot - CFG.step_max_height - margin),
+	var foot := (start * _active_hull()).end.y
+	var edge := _horizontal_motion.get_collision_point().x + direction * margin
+	# 墙高超出探测范围时，射线从墙体内发出，命中法线为零。
+	var hit := terrain.physics.ray_hit(Vector2(edge, foot - max_height - margin),
 			Vector2(edge, foot), CollisionWorld.LAYER_TERRAIN, true)
 	if hit.is_empty() or hit["normal"] != Vector2.UP:
-		return false
+		return Vector2.ZERO
 	var height := foot - (hit["position"] as Vector2).y
-	if height <= margin \
-			or CollisionWorld.probe_body(rid, start, Vector2.UP * (height + margin), _step_motion):
+	if height <= margin or CollisionWorld.probe_body(rid, start, Vector2.UP * (height + margin), _step_motion):
+		return Vector2.ZERO
+	return _step_motion.get_travel()
+
+func _try_step_up(start: Transform2D, travel: Vector2) -> bool:
+	if not _grounded or sim_downed or is_charge or is_squat or climb_latched or in_water or rewinding:
+		return false
+	var direction := signf(travel.x)
+	var margin := CollisionWorld.MOTION_MARGIN
+	var max_height := CFG.step_max_cells * Terrain.SUB_SIZE
+	var lift := _probe_step_lift(start, direction, max_height)
+	if lift == Vector2.ZERO:
 		return false
 	var pose := start
-	pose.origin += _step_motion.get_travel()
-	# 先在抬高后的位置检测横向移动，再检测下方是否有可站立的地面。两项检测都通过才使用上台阶的移动结果。
+	pose.origin += lift
+	# 前方更高的台阶可以截短横移，角色仍可在当前台阶落脚。
 	if CollisionWorld.probe_body(rid, pose, travel, _step_motion) \
 			and PhysicsServer2D.body_get_collision_layer(_step_motion.get_collider_rid()) != CollisionWorld.LAYER_TERRAIN:
 		return false
@@ -132,11 +142,10 @@ func _try_step_up(start: Transform2D, travel: Vector2) -> bool:
 		return false
 	pose.origin += _step_motion.get_travel()
 	var rise := start.origin.y - pose.origin.y
-	if rise <= margin or rise > CFG.step_max_height + margin \
-			or (pose.origin.x - start.origin.x - _axis_motion.get_travel().x) * direction <= 0.001:
+	if rise <= margin or rise > max_height + margin \
+			or (pose.origin.x - start.origin.x - _horizontal_motion.get_travel().x) * direction <= 0.001:
 		return false
-	# 高度不超过 32 像素时直接迈上台阶。更高的台阶按高度计算自动跳跃速度。
-	if rise > 32.0 + margin:
+	if rise > CFG.step_walk_cells * Terrain.SUB_SIZE + margin:
 		velocity.y = -sqrt(2.0 * maxf(gravity, 1.0) * (rise + 6.0))
 		velocity.x = step_input.axis * CFG.move_speed * _speed_mult
 		_auto_jump_frame = true
@@ -146,34 +155,6 @@ func _try_step_up(start: Transform2D, travel: Vector2) -> bool:
 	_record_contact(_step_motion)
 	position = pose.origin
 	return true
-
-func _try_ledge_nudge() -> void:
-	# 角色在空中贴近台沿时，如果脚底低于顶面不超过一个子格，尝试将角色抬到台沿上方。
-	if absf(step_input.axis) < 0.01:
-		return
-	var dir := 1 if step_input.axis > 0.0 else -1
-	var bounds := collision_rect()
-	var feet_y := bounds.end.y
-	var x_px := bounds.get_center().x + dir * (bounds.size.x * 0.5 + 1.0)
-	var col := int(floor(x_px / Terrain.SUB_SIZE))
-	var feet_sub := int(floor(feet_y / Terrain.SUB_SIZE))
-	for k in range(0, 2):
-		var row := feet_sub - k
-		var tex := terrain.sub_texture(Vector2i(col, row))
-		if tex == 0 or TileDefs.type_id_of(tex) != TileDefs.TYPE_WALL:
-			continue
-		var dy := feet_y - float(row) * Terrain.SUB_SIZE
-		if dy <= 0.0 or dy > 16.0:
-			continue
-		if _sub_solid(col, row - 1) or _sub_solid(col, row - 2):
-			return
-		position.y -= dy + 1.0
-		velocity.y = minf(velocity.y, 0.0)
-		return
-
-func _sub_solid(col: int, row: int) -> bool:
-	var tex := terrain.sub_texture(Vector2i(col, row))
-	return tex != 0 and TileDefs.type_id_of(tex) == TileDefs.TYPE_WALL
 
 func _move_actor(delta: float) -> void:
 	motion_contacts.clear()
@@ -193,7 +174,10 @@ func _move_actor(delta: float) -> void:
 	_auto_jump_frame = false
 	_auto_jump_timer = maxf(_auto_jump_timer - delta, 0.0)
 	if blocked.x != 0.0 and not _grounded and not in_water and not climb_latched:
-		_try_ledge_nudge()
+		var lift := _probe_step_lift(transform, blocked.x, CFG.air_ledge_cells * Terrain.SUB_SIZE)
+		if lift != Vector2.ZERO:
+			position += lift
+			velocity.y = minf(velocity.y, 0.0)
 	motion_knock_velocity *= exp(-CFG.player_knock_decay_rate * delta)
 	if not sim_downed:
 		slide_reactions(incoming)
@@ -247,6 +231,8 @@ func reset_motion() -> void:
 	state_lock_timer = 0.0
 	is_squat = false
 	cancel_jump_state()
+	_auto_jump_frame = false
+	_auto_jump_timer = 0.0
 	cancel_charge()
 	climb_latched = false
 	in_water = false

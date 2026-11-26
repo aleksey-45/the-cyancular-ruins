@@ -1659,10 +1659,13 @@ func _duel_spawns() -> void:
 	expect(winner.sim_hp == 13 and players_on_map_points(world, [1], sides[1])
 			and victim.sim_downed and victim.respawn_tick == world.tick + MatchRules.RESPAWN_TICKS,
 			"the survivor moves to a marked point with current HP while the victim waits")
-	for i in MatchRules.RESPAWN_TICKS:
+	for i in MatchRules.RESPAWN_TICKS - 1:
 		host.fixed_step()
+	victim._auto_jump_timer = 0.35
+	host.fixed_step()
 	expect(not victim.sim_downed and victim.sim_hp == victim.sim_max_hp and players_on_map_points(world, [2], sides[2]),
 			"the victim revives at full HP on the other marked side")
+	expect(victim._auto_jump_timer == 0.0, "respawn clears an automatic jump from the previous life")
 	world.rules.scores[1] = 5
 	host.fixed_step()
 	world.rules.round_timer = ActorStep.DT
