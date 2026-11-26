@@ -120,7 +120,7 @@ func paint_cells(layer: int, changes: PackedInt32Array) -> void:
 		for tiles in _tiles:
 			tiles.clear()
 			tiles.tile_set = _palette
-		refresh_view()
+		fit()
 		var width: int = session.map.size.x
 		for index in _tiles.size():
 			var cells: PackedInt32Array = session.map.layers[index]

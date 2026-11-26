@@ -5,40 +5,24 @@ const DEFAULT_SIZE := Vector2i(500, 300)
 const DRAFT_PATH := "user://map-editor.draft"
 
 var session: MapEditSession
-var canvas: MapEditCanvas
-var host: Control
-var filename_label: Label
-var modified_label: Label
-var dimensions_label: Label
 var say: Callable
 var draft_path := DRAFT_PATH
 
 var _draft_revision := -1
 
-func setup(p_session: MapEditSession, p_canvas: MapEditCanvas, p_host: Control,
-		p_filename: Label, p_modified: Label, p_dimensions: Label, p_say: Callable) -> void:
+func _init(p_session: MapEditSession, p_say: Callable) -> void:
 	session = p_session
-	canvas = p_canvas
-	host = p_host
-	filename_label = p_filename
-	modified_label = p_modified
-	dimensions_label = p_dimensions
 	say = p_say
+	session.changed.connect(_discard_saved_draft)
 
 func open_document(map: Dictionary, path: String, dirty := false) -> void:
-	filename_label.tooltip_text = path
 	session.open(map, path, dirty)
 	_draft_revision = session.revision
-	canvas.fit()
 
-func changed() -> void:
-	dimensions_label.text = "%d × %d" % [session.map.size.x, session.map.size.y]
-	filename_label.text = "未命名.cyrm" if session.path.is_empty() else session.path.get_file()
-	modified_label.visible = session.dirty()
-	if not modified_label.visible:
+func _discard_saved_draft() -> void:
+	if not session.dirty():
 		_draft_revision = session.revision
 		discard_draft()
-		filename_label.tooltip_text = session.path
 
 func write_draft() -> void:
 	if _draft_revision == session.revision:
@@ -46,7 +30,6 @@ func write_draft() -> void:
 	var error := MapEditFiles.save_draft(draft_path, session.map, session.path)
 	if error == OK:
 		_draft_revision = session.revision
-		filename_label.tooltip_text = "%s  草稿 %s" % [session.path, Time.get_time_string_from_system()]
 	else:
 		say.call("草稿保存失败 · " + error_string(error))
 
@@ -79,7 +62,7 @@ func open_dialog(saving := false) -> void:
 		error = DisplayServer.file_dialog_show(
 			"另存为" if saving else "打开地图", directory, filename if saving else "", false,
 			DisplayServer.FILE_DIALOG_MODE_SAVE_FILE if saving else DisplayServer.FILE_DIALOG_MODE_OPEN_FILE,
-			PackedStringArray(["*.cyrm;CYRM 地图"]), file_selected.bind(saving), host.get_window().get_window_id())
+			PackedStringArray(["*.cyrm;CYRM 地图"]), file_selected.bind(saving), get_window().get_window_id())
 	if error != OK:
 		say.call("无法打开系统文件窗口 · " + error_string(error))
 
@@ -91,7 +74,7 @@ func confirm_discard(proceed: Callable) -> void:
 
 func show_dialog(dialog: ConfirmationDialog, size_hint := Vector2i.ZERO) -> void:
 	dialog.cancel_button_text = "取消"
-	host.add_child(dialog)
+	get_parent().add_child(dialog)
 	dialog.visibility_changed.connect(func() -> void:
 		if not dialog.visible: dialog.queue_free())
 	dialog.popup_centered(size_hint)
@@ -141,9 +124,6 @@ func confirm(text: String, action: String, proceed: Callable) -> void:
 func resize_to(dims: Vector2i) -> void:
 	if dims == session.map.size:
 		return
-	var apply_change := func() -> void:
-		session.resize_map(dims)
-		canvas.fit()
 	if dims.x < session.map.size.x or dims.y < session.map.size.y:
 		var cropped: Array[String] = []
 		var bounds := Rect2i(Vector2i.ZERO, dims)
@@ -153,9 +133,9 @@ func resize_to(dims: Vector2i) -> void:
 		var warning := "画布将裁至 %d × %d 格。" % [dims.x, dims.y]
 		if not cropped.is_empty():
 			warning += "\n将移除 %d 个越界点位：%s" % [cropped.size(), "、".join(cropped.slice(0, 6))]
-		confirm(warning + "\n可用撤销恢复。", "调整尺寸", apply_change)
+		confirm(warning + "\n可用撤销恢复。", "调整尺寸", session.resize_map.bind(dims))
 	else:
-		apply_change.call()
+		session.resize_map(dims)
 
 func _spin(parent: Control, text: String, minimum: int, maximum: int, value: int) -> SpinBox:
 	var row := HBoxContainer.new()

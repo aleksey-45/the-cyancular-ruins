@@ -22,8 +22,6 @@ var _tool: Dictionary:
 var session := MapEditSession.new()
 var brush := MapBrush.new()
 var canvas := MapEditCanvas.new()
-var trial: SoloLevel:
-	get: return _trial.trial if _trial != null else null
 var _workspace := VBoxContainer.new()
 var _filename: Label
 var _modified: Label
@@ -36,18 +34,12 @@ var _trial: MapEditorTrial
 var _inspector: MapEditorInspector
 var _palette: MapEditorToolPalette
 var _clipboard: Array = []
-var _param_rows: Dictionary[String, Control]:
-	get: return _inspector.param_rows if _inspector != null else {}
-var _tints: Array[SpinBox]:
-	get: return _inspector.tints if _inspector != null else []
-var _ink: ColorPickerButton:
-	get: return _inspector.ink if _inspector != null else null
 var _shortcuts: Dictionary[int, Callable] = {}
 var _layers_panel: MapEditorLayers
 var _texture_layer := CyrmMap.SCENE
 var _dimensions: Label
 var _context_title: Label
-var draft_path := "user://map-editor.draft"
+var draft_path := MapEditorFiles.DRAFT_PATH
 var _closing := false
 var _auto_quit := true
 
@@ -59,16 +51,15 @@ func _ready() -> void:
 	add_child(_workspace)
 	_workspace.add_theme_constant_override("separation", 10)
 	_workspace.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT, Control.PRESET_MODE_MINSIZE, 10)
-	_files = MapEditorFiles.new()
+	_files = MapEditorFiles.new(session, _say)
 	_files.draft_path = draft_path
 	add_child(_files)
 	_trial = MapEditorTrial.new()
 	add_child(_trial)
 	_clipboard = [["复制选区", session.copy_selection, KEY_C], ["剪切选区", _cut, KEY_X], ["粘贴", _paste, KEY_V]]
 	_build_ui()
-	_files.setup(session, canvas, self, _filename, _modified, _dimensions, _say)
 	_trial.setup(session, canvas, _workspace, _say)
-	session.changed.connect(_files.changed)
+	session.changed.connect(_sync_document)
 	session.selection_changed.connect(_selection_changed)
 	session.cells_changed.connect(canvas.paint_cells)
 	session.points_changed.connect(_refresh_points)
@@ -165,6 +156,9 @@ func _build_ui() -> void:
 	right.add_child(_inspector)
 	_inspector.setup(session, brush, canvas, _clipboard, _sync_context)
 	_points = _inspector.points
+	_points.place_button.toggled.connect(func(_placing: bool) -> void:
+		canvas.cancel()
+		_sync_context())
 	_points.point_selected.connect(func(id: int) -> void:
 		_select_point(id)
 		_choose_tool("point"))
@@ -196,6 +190,12 @@ func _sync_context() -> void:
 	_context_title.text = "关卡点位" if params.has("points") else _tool.label
 	canvas.cursor_width = brush.width if params.has("width") else 1
 	canvas.point_hint = "" if _points.is_placing() else _tool.get("pick_points", "")
+
+func _sync_document() -> void:
+	_filename.text = "未命名.cyrm" if session.path.is_empty() else session.path.get_file()
+	_filename.tooltip_text = session.path
+	_modified.visible = session.dirty()
+	_dimensions.text = "%d × %d" % [session.map.size.x, session.map.size.y]
 
 func _selection_changed() -> void:
 	_inspector.set_selection(session.selection)
@@ -358,12 +358,6 @@ func _say(text: String) -> void:
 static func _row(parent: Control) -> HBoxContainer:
 	return UiFactory.box(parent, 6, false) as HBoxContainer
 
-static func _grid(parent: Control, columns: int) -> GridContainer:
-	var grid := GridContainer.new()
-	grid.columns = columns
-	parent.add_child(grid)
-	return grid
-
 static func _label(parent: Control, text: String, font_size := 24, color := Color(0.812, 0.859, 0.843)) -> Label:
 	var label := UiFactory.label(text, font_size, color)
 	parent.add_child(label)
@@ -375,14 +369,9 @@ static func _flex_label(parent: Control) -> Label:
 	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	return label
 
-func _button(parent: Control, text: String, action: Callable, group: ButtonGroup = null, shortcut := KEY_NONE) -> Button:
+static func _button(parent: Control, text: String, action: Callable) -> Button:
 	var button := Button.new()
 	button.text = text
-	if group:
-		button.toggle_mode = true
-		button.button_group = group
-		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	if shortcut: _shortcuts[shortcut] = action
 	parent.add_child(button)
 	button.pressed.connect(action)
 	return button
@@ -397,22 +386,3 @@ static func _sidebar(parent: Control, width: float) -> VBoxContainer:
 	var column := UiFactory.box(scroll, 9, true) as VBoxContainer
 	column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	return column
-
-static func _check(parent: Control, text: String, action: Callable, value := false) -> CheckBox:
-	var check := CheckBox.new()
-	check.text = text
-	check.button_pressed = value
-	parent.add_child(check)
-	check.toggled.connect(action)
-	return check
-
-static func _spin(parent: Control, text: String, minimum: int, maximum: int, value: int) -> SpinBox:
-	var line := _row(parent)
-	_label(line, text).size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var spin := SpinBox.new()
-	spin.min_value = minimum
-	spin.max_value = maximum
-	spin.value = value
-	spin.custom_minimum_size.x = 112
-	line.add_child(spin)
-	return spin

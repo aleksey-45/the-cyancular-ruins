@@ -9,7 +9,7 @@ const ENEMY_LABELS := {"jump_bird": "跳鸟", "fly_bird": "飞鸟", "black_bird"
 var session: MapEditSession
 var canvas: MapEditCanvas
 
-var _place: CheckBox
+var place_button := CheckBox.new()
 var _type := OptionButton.new()
 var _list := ItemList.new()
 var _details := HBoxContainer.new()
@@ -21,13 +21,9 @@ func setup(p_session: MapEditSession, p_canvas: MapEditCanvas) -> void:
 
 func _build() -> void:
 	add_theme_constant_override("separation", 6)
-	_place = CheckBox.new()
-	_place.text = "放置点位（连续）"
-	_place.tooltip_text = "勾选后单击画布放置所选类型；取消勾选可拖动已有点位"
-	_place.toggled.connect(func(_on: bool) -> void:
-		canvas.cancel()
-		sync())
-	add_child(_place)
+	place_button.text = "放置点位（连续）"
+	place_button.tooltip_text = "勾选后单击画布放置所选类型，取消勾选可拖动已有点位"
+	add_child(place_button)
 
 	var type_label := Label.new()
 	type_label.text = "点位类型"
@@ -61,11 +57,10 @@ func _build() -> void:
 	_details.add_child(_button("删除", func() -> void: session.commit_point(session.selected_point_id, {})))
 
 func sync() -> void:
-	var placing := _place.button_pressed
+	var placing := is_placing()
 	var point := session.selected_point()
 	var kind: String = point.get("kind", "")
 	var editable_type := not placing and kind in ["enemy", "respawn"]
-	_type.visible = true
 	_details.visible = not kind.is_empty() and not placing
 	if editable_type: _type.select(_option_for(point))
 	for i in _type.item_count:
@@ -91,34 +86,21 @@ func select(id: int) -> void:
 		_list.ensure_current_is_visible.call_deferred()
 
 func is_placing() -> bool:
-	return _place.button_pressed
-
-func place_button() -> CheckBox:
-	return _place
-
-func type_option() -> OptionButton:
-	return _type
-
-func list() -> ItemList:
-	return _list
-
-func details() -> HBoxContainer:
-	return _details
+	return place_button.button_pressed
 
 func placed_fields() -> Dictionary:
 	return _type.get_selected_metadata()
 
 func reset_placing() -> void:
-	_place.set_pressed_no_signal(false)
+	place_button.set_pressed_no_signal(false)
 
 func _change_type(index: int) -> void:
 	var choice: Dictionary = _type.get_item_metadata(index)
 	var point := session.selected_point()
-	if not _place.button_pressed and point.get("kind") == choice.kind:
+	if not is_placing() and point.get("kind") == choice.kind:
 		session.commit_point(session.selected_point_id, choice.merged({"cell": point.cell}))
-	elif not _place.button_pressed and point.is_empty():
-		_place.set_pressed_no_signal(true)
-		sync()
+	elif not is_placing() and point.is_empty():
+		place_button.button_pressed = true
 
 func _option(label: String, fields: Dictionary) -> void:
 	_type.add_item(label)
