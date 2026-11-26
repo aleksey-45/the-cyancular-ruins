@@ -1,44 +1,26 @@
 class_name PvpHud
 extends CanvasLayer
 
-# 联机对局 HUD(比分 / 回合 / 倒计时 / 宽限 / 结算 / 中央提示 / 延迟 / 大乱斗排行榜)。
-# UI-3b 迁移到设计系统 v2:视觉全部来自 Theme 2.0 + UiDesign token,不再用旧 UiFactory。
-#
-# ── 数据契约(与迁移前逐项一致,不搬 main 的 RoundProjection)──────────────────
-#   · 外部入口:mode / show_round(PvpHud.Round) / set_status(msg) / set_ping(ms) /
-#     leave_requested;PvpHud.Round / PvpHud.Section 的字段名与语义不变
-#     (scenes/round_projection.gd 直接构造它们)。
-#   · 比分、回合、倒计时、宽限、结算标题/统计数据、中央提示、延迟阈值配色、
-#     大乱斗排行榜的行内容全部保留;数据只从 Round / 现有信号读。
-#   · 计时节奏不变:_process 里剩余时间与宽限倒计时各自递减,countdown 仍交给 Broadcast 自己跑。
-#
-# ── 版式 ───────────────────────────────────────────────────────────────────
-# HUD 用锚点和 UiDesign 的间距常量定位，底板由 UiDesign.hud_plate 创建。
-# 布局约定见 docs/construction/2026-11-23-ui-full-replacement-plan.md 的「实现约定」。
+# 联机对局 HUD 从 Round 读取比分、回合和结算信息。开局倒计时由 Broadcast 推进。
 
 signal leave_requested
 
-# 对局内状态横幅(断线/重连/等待提示)收进 v2 组件:组件自带 CanvasLayer(140)+顶部居中版式,
-# 联机 HUD 仅向 StatusBanner 提供提示文字。
 const STATUS_BANNER_SCENE := preload("res://ui/hud/status_banner.tscn")
 
 const Mode := MatchFrame.Mode
 
-# ── 大乱斗排行榜几何(与迁移前逐像素相同,数值由 token 推导)──────────────────
 const BOARD_W := 720.0                                   # 排行榜面板宽
 const BOARD_TOP := UiDesign.SP_9 + UiDesign.SP_6         # 96:离屏幕上沿
 const BOARD_INSET := 6.0                                 # 内容列相对底板的内缩(像素档)
 const BOARD_ROW_WIDTH := 712                             # 720 - SP_2:行内容宽
 const BOARD_BG_EXTRA := 34.0                             # 底板比内容多出的高度(上下留白)
-# 排行榜/点击结果遮罩的不透明度:版式参数,颜色统一取 UiDesign.C_BG。
 const BOARD_DIM_ALPHA := 0.25
 const RESULT_DIM_ALPHA := 0.55
 
-# ── 顶/底条几何(锚点相对偏移)──
 const SCORE_TOP := UiDesign.SP_4                          # 16
 const GRACE_TOP := UiDesign.SP_9 + UiDesign.SP_2          # 72:记分条(高 52)之下
 const PLATE_PAD := Vector2i(UiDesign.MARGIN, UiDesign.SP_2)         # 记分/宽限/延迟底板 24 / 8
-const PING_PAD_ROYALE := Vector2i(14, 6)                            # 大乱斗延迟条:像素档,与 main 一致
+const PING_PAD_ROYALE := Vector2i(14, 6)
 const RESULT_BTN_SIZE := Vector2(UiDesign.SP_10 * 5 + UiDesign.SP_5 - UiDesign.SP_1,
 		UiDesign.SP_10 + UiDesign.SP_2)                             # 420 × 88
 
@@ -104,7 +86,6 @@ func _ready() -> void:
 
 # ── 构造 ───────────────────────────────────────────────────────────────────
 
-# HUD 底板唯一构造点:UiDesign.hud_plate(C_PLATE + 调用方给的像素档 content margin)。
 static func _plate(content: Control, pad_x: int, pad_y: int) -> PanelContainer:
 	var panel := PanelContainer.new()
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -114,7 +95,6 @@ static func _plate(content: Control, pad_x: int, pad_y: int) -> PanelContainer:
 
 
 func _build_board() -> void:
-	# 右上角排行榜底板:锚 top-right,偏移由 BOARD_W / token 推导(数值与迁移前相同)。
 	_board_bg = ColorRect.new()
 	_board_bg.name = "BoardBg"
 	_board_bg.color = UiDesign.C_BG
@@ -194,14 +174,12 @@ func _build_ping(royale: bool) -> void:
 
 
 func _build_status() -> void:
-	# 对局内状态横幅:StatusBanner 自带 CanvasLayer(140;压在 HUD 之上、结算(150)之下),
-	# 组件在顶部居中显示提示，收到空字符串时隐藏。
+	# 状态横幅位于常规 HUD 上方、结算层下方。
 	_status_banner = STATUS_BANNER_SCENE.instantiate() as StatusBanner
 	add_child(_status_banner)
 
 
 func _build_result() -> void:
-	# 结算页:独立 CanvasLayer(150),遮罩 + Theme 2.0 的 PanelCarved 面板。
 	var layer_node := CanvasLayer.new()
 	layer_node.name = "ResultLayer"
 	layer_node.layer = 150
@@ -243,7 +221,7 @@ func _build_result() -> void:
 	_sections.add_theme_constant_override("separation", UiDesign.SP_8)
 	_sections.alignment = BoxContainer.ALIGNMENT_CENTER
 	body.add_child(_sections)
-	var back := UiDesign.menu_button("返回主菜单", UiDesign.T_H2, RESULT_BTN_SIZE, "gold")
+	var back := UiDesign.ui_button("返回主菜单", UiDesign.T_H2, RESULT_BTN_SIZE, "gold")
 	back.name = "Back"
 	back.pressed.connect(_request_leave)
 	body.add_child(back)
@@ -259,14 +237,13 @@ func _process(delta: float) -> void:
 
 
 func set_status(message: String) -> void:
-	# 空串 = 隐藏横幅(重连成功/回到房间的清空路径);显隐规则在组件里(set_text)。
 	if _status_banner != null:
 		_status_banner.set_text(message)
 
 
 func set_ping(ms: int) -> void:
 	_ping.text = "%dms" % ms
-	_ping.add_theme_color_override("font_color", UiDesign.ping_color(ms))
+	_ping.add_theme_color_override("font_color", UiFactory.ping_color(ms))
 
 
 func _update_grace(seconds: float) -> void:
@@ -314,7 +291,7 @@ func _show_result(round: Round) -> void:
 	_result.show()
 
 
-# 结算分区标题条:HeaderStrip 主题底 + HeaderTitle 字体;分区颜色(队伍色)来自 RoundProjection 数据。
+# 结算标题的队伍颜色来自 RoundProjection。
 static func _section_strip(section: Section) -> PanelContainer:
 	var strip := UiDesign.header_strip(section.title, UiDesign.T_H2, true)
 	var title := strip.get_child(0) as Label

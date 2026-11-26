@@ -1,23 +1,17 @@
 class_name Hud
 extends CanvasLayer
 
-# 玩家对局 HUD（单人/联机共用）。数据只从 MatchFrame 读，视觉/结构按 main HUD 重建，
-# 但样式与度量一律走 UI 设计系统 v2（UiDesign token + hud_plate → Theme 2.0）。
-# ★ HUD 坐标纪律：只用 anchors + UiDesign.MARGIN / SP_* 表达位置，禁止从 1920×1440 反推坐标。
-const LAYER := 129  # 在 post-process(128) 之上，不受桶形/CRT/变灰影响。
-# 右上角击杀计数的骨架/样式/零填充全部收进组件（kill_counter.tscn + kill_counter.gd），
-# 本文件只负责把它挂到 HUD 的锚点上，不再自己拼 PanelContainer + Label。
-const KILL_COUNTER_SCENE := preload("res://ui/hud/kill_counter.tscn")
+# 单人和联机共用的玩家 HUD。HUD 绘制在后期处理层上方，避免文字和图标受畸变和时间技能滤镜影响。
+const LAYER := 129
 
-const MARGIN := UiDesign.MARGIN          # 兼容别名：HUD 屏边距 token 的唯一来源仍是 UiDesign。
-const FONT_SIZE := UiDesign.T_H2         # 武器名/残弹数；16 的倍数才像素锐利。
+const MARGIN := UiDesign.MARGIN
+const FONT_SIZE := UiDesign.T_H2
 
 const WEAPON_ICON_W := 96.0              # 左下角剪影/丢弃进度条宽度（设计像素档）。
 const WEAPON_ROW_W := 320.0              # 每把武器一行方框的固定宽。
-# 武器面板固定宽 = 行宽 + 左右 content margin（SP_3×2），高度由内容驱动。
 const WEAPON_PANEL_W := WEAPON_ROW_W + UiDesign.SP_3 * 2.0
 
-var _kill_counter: KillCounter
+var _kill_count: Label
 var _ammo_label: Label
 var _ammo_low := false
 var _slots: WeaponSlots
@@ -33,10 +27,9 @@ func _ready() -> void:
 	add_child(_vitals)
 	_build_weapon_display()
 
-# 外部唯一契约：每帧把 siri 的 MatchFrame 喂给 HUD。
 func present(frame: MatchFrame, delta: float) -> void:
 	_vitals.present(frame, delta)
-	_kill_counter.set_kills(frame.kills)
+	_kill_count.text = "%03d" % frame.kills
 	_update_weapon_display(frame.inventory)
 	var dropping := frame.drop_progress > 0.0
 	_drop_bar.visible = dropping
@@ -53,7 +46,6 @@ func present(frame: MatchFrame, delta: float) -> void:
 					UiDesign.C_WARN if low else UiDesign.C_TEXT)
 		_ammo_label.text = "%d/%d" % [frame.ammo, frame.magazine]
 
-# 左下角：容量格子（WeaponSlots）+ 武器面板上下并列，整列锚 bottom-left、按内容向上生长。
 func _build_weapon_display() -> void:
 	var stack := VBoxContainer.new()
 	stack.name = "WeaponStack"
@@ -76,7 +68,6 @@ func _build_weapon_display() -> void:
 
 	var wrap := PanelContainer.new()
 	wrap.name = "WeaponPanel"
-	# HUD 底板骨架的唯一构造点是 UiDesign.hud_plate（C_PLATE + content margin SP_3/SP_2）。
 	UiDesign.hud_plate(wrap, UiDesign.SP_3, UiDesign.SP_2)
 	wrap.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	wrap.custom_minimum_size.x = WEAPON_PANEL_W
@@ -94,7 +85,7 @@ func _build_weapon_display() -> void:
 	_drop_bar.hide()
 	_weapon_box.add_child(_drop_bar)
 
-# 背包布局（WeaponInventory.cell_layout()）变化时才重建；顺序 = 背包顺序，选中行垫深一档底板。
+# 背包布局变化时才重建武器栏。
 func _update_weapon_display(layout: PackedInt32Array) -> void:
 	if layout == _layout:
 		return
@@ -121,7 +112,7 @@ func _update_weapon_display(layout: PackedInt32Array) -> void:
 		row.add_theme_constant_override("separation", UiDesign.SP_3)
 		box.add_child(row)
 
-		# 键位数字（最左）：与数字键 1-4 一一对应，顺序 = 背包顺序。
+		# 武器栏序号对应快捷键 1–4。
 		var key := UiDesign.label(str(i + 1), FONT_SIZE,
 				UiDesign.C_TEXT if selected else UiDesign.C_TEXT_DIM)
 		key.custom_minimum_size.x = UiDesign.SP_8
@@ -136,12 +127,10 @@ func _update_weapon_display(layout: PackedInt32Array) -> void:
 		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		icon.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 		if not selected:
-			# 未选中压暗：用设计系统的暗文字色做 modulate，不写 Color 字面量。
 			icon.modulate = UiDesign.C_TEXT_DIM
 		row.add_child(icon)
 
 		if selected:
-			# 选中的才有全部信息：名称 + 残弹。
 			var info := VBoxContainer.new()
 			info.add_theme_constant_override("separation", UiDesign.SP_1)
 			info.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -151,24 +140,16 @@ func _update_weapon_display(layout: PackedInt32Array) -> void:
 			info.add_child(_ammo_label)
 	_weapon_box.move_child(_drop_bar, -1)
 
-# 右上角击杀计数：锚 right、距边 SP_6/SP_4、向上生长。底板/字号/颜色都在 KillCounter 组件里
-# （唯一来源），本文件只给锚点与层位 —— 组件自己保证「不画底色、只留 content margin」。
 func _build_kill_counter() -> void:
-	_kill_counter = KILL_COUNTER_SCENE.instantiate() as KillCounter
-	_kill_counter.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	_kill_counter.anchor_left = 1.0
-	_kill_counter.anchor_right = 1.0
-	_kill_counter.anchor_top = 0.0
-	_kill_counter.anchor_bottom = 0.0
-	_kill_counter.offset_left = -UiDesign.SP_6
-	_kill_counter.offset_right = -UiDesign.SP_6
-	_kill_counter.offset_top = UiDesign.SP_4
-	_kill_counter.offset_bottom = UiDesign.SP_4
-	_kill_counter.grow_vertical = Control.GROW_DIRECTION_END
-	add_child(_kill_counter)
+	var panel := PanelContainer.new()
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	UiDesign.hud_plate(panel, UiDesign.SP_4, UiDesign.SP_2, false)
+	_kill_count = UiDesign.label("000", UiDesign.T_H1, UiDesign.C_ACCENT)
+	panel.add_child(_kill_count)
+	UiFactory.place(self, panel, Rect2(-UiDesign.SP_6, UiDesign.SP_4, 0, 0), Vector2.RIGHT)
 
 
-# 左上角血条/氧条群：锚 top-left + MARGIN，自绘矩形（无 StyleBox），颜色只引用 UiDesign token。
 class Vitals extends Control:
 	const HP_SIZE := Vector2(5, 32)
 	const HP_STEP := 6.0

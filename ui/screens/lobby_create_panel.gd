@@ -1,31 +1,7 @@
 class_name LobbyCreatePanel
 extends PanelContainer
 
-# 大厅建房表单(UI 设计系统 v2):整块面板**容器化**,零绝对坐标、零手写 StyleBox/Color 字面量。
-#
-# ── 结构 ─────────────────────────────────────────────────────────────────────
-#   UiDesign.skin_menu_panel(self, SP_9×SP_6) = 凿刻外框(PanelCarved) + 内衬 Body
-#     └─ VBox(SP_6)
-#         ├─ 标题行:HBox → header_strip(创建房间,T_H1,居中,expand) + ×(Quiet)
-#         ├─ 两列 HBox(SP_8):左 = 模式/碰撞/LAN/人数/限时/回血/Beta 时间颗粒;右 = 禁用武器 + 地图
-#         └─ 操作行 HBox(SP_5,右对齐):取消(Quiet) / 创建房间(Gold)
-#   皮肤全部来自 UiDesign / Theme 2.0 variation(BtnPrimary/BtnQuiet/BtnGold/HeaderStrip…);
-#   滑块用 Theme 的 HSlider 条目;开关用 UiDesign.ui_check()(Kit variation);字号/间距只用 T_* / SP_* token。
-#
-# ── 契约(与迁移前逐项等价;lobby_view 只依赖这些)──────────────────────────────
-#   · LobbyCreatePanel.new(preferences: Dictionary) —— preferences 键:hue / match_min / full_heal /
-#     disabled / map / time(由 scenes/mp_lobby.gd::_form_values 提供)。
-#   · open(mode: String):重置玩家碰撞为关、LAN 展示为开,切到 mode,显示面板。
-#   · signal submitted(mode, options):options 恒含 map / player_collision / lan_public;按
-#     RoomOptions.MODE_FIELDS 追加 disabled_weapons / max_players / match_time(秒) / round_full_heal;
-#     Beta 模式再并入 beta=true + 归一化后的 time。
-#   · signal preference_changed(value, key):royale_match_min / pvp_round_full_heal /
-#     pvp_disabled_weapons / mp_map_path(Beta 时间颗粒与旧实现一样只进 options,不写设置)。
-#   · Esc 关闭面板(_unhandled_input),与旧实现一致。
-#   · 不自带固定 rect:尺寸由内容驱动,调用方把它放进居中容器即可(当前由 lobby_view 负责)。
-#
-# ★ MapPicker / WeaponPicker 仍是 siri 旧组件(UI-5 范围),本文件不改它们,只把实例放进 v2 面板 ——
-#   与已迁移的 SpLaunchPanel 采用同一处理方式。
+# 联机建房表单，按当前对战模式提交地图、房间设置和规则选项。
 
 signal submitted(mode: String, options: Dictionary)
 
@@ -43,13 +19,10 @@ const TIME_FIELDS := [
 	["damage_gain", "伤害获取/点", 1.0],
 ]
 
-# 建房可选模式(顺序 = 旧 UiFactory.ROOM_FILTERS.slice(1));显示名统一取 PvpSession.MODE_NAMES。
 const MODES: Array[String] = [PvpSession.MODE_PVP, PvpSession.MODE_TEAM, PvpSession.MODE_ROYALE]
 
-# 人数滑块的初始值(迁移前固定 4 人,是表单默认值不是布局尺寸)。
 const DEFAULT_MAX_PLAYERS := 4.0
 
-# 布局 token 组合(内容驱动的下限/间距,不是绝对坐标)。
 const PANEL_PAD := Vector2(UiDesign.SP_9, UiDesign.SP_6)
 const TITLE_BUTTON := Vector2(UiDesign.SP_10, UiDesign.SP_9 + UiDesign.SP_2)  # 80×72
 const COLUMN_GAP := UiDesign.SP_8
@@ -111,7 +84,7 @@ func _build_title() -> HBoxContainer:
 	var title := UiDesign.header_strip("创建房间", UiDesign.T_H1, true)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.add_child(title)
-	var close := UiDesign.menu_button("×", UiDesign.T_H2, TITLE_BUTTON, "quiet")
+	var close := UiDesign.ui_button("×", UiDesign.T_H2, TITLE_BUTTON, "quiet")
 	close.name = "CloseBtn"
 	close.tooltip_text = "关闭(Esc)"
 	close.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -133,7 +106,7 @@ func _build_options() -> VBoxContainer:
 	options.add_child(modes)
 	var group := ButtonGroup.new()
 	for mode: String in MODES:
-		var button := UiDesign.menu_button(PvpSession.MODE_NAMES[mode], UiDesign.T_H2, Vector2.ZERO,
+		var button := UiDesign.ui_button(PvpSession.MODE_NAMES[mode], UiDesign.T_H2, Vector2.ZERO,
 				"quiet")
 		button.toggle_mode = true
 		button.button_group = group
@@ -170,7 +143,7 @@ func _build_options() -> VBoxContainer:
 	if not _prefs["time"].is_empty():
 		options.add_child(UiDesign.label("时间颗粒规则(房主可调,开局生效):", UiDesign.T_H2,
 				UiDesign.C_ACCENT))
-		# 10 项颗粒参数在窄窗口下会顶高面板:限高 + 纵向滚动,横滚关闭,滚动条用 Kit 皮肤。
+		# 颗粒参数可纵向滚动，避免在较小窗口中撑高表单。
 		var scroll := ScrollContainer.new()
 		scroll.name = "TimeScroll"
 		scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -209,7 +182,7 @@ func _build_gear() -> VBoxContainer:
 
 	_map.name = "MapPicker"
 	gear.add_child(_map)
-	_map.setup(_prefs["map"], 2, MAP_H, "地图(房主选;缩略图 = 开局地形简略图)")
+	_map.setup(_prefs["map"], MAP_H, "地图（房主选择）")
 	_map.picked.connect(preference_changed.emit.bind(&"mp_map_path"))
 	return gear
 
@@ -219,11 +192,11 @@ func _build_actions() -> HBoxContainer:
 	row.name = "Actions"
 	row.alignment = BoxContainer.ALIGNMENT_END
 	row.add_theme_constant_override("separation", BLOCK_GAP)
-	var cancel := UiDesign.menu_button("取消", UiDesign.T_H2, CANCEL_MIN, "quiet")
+	var cancel := UiDesign.ui_button("取消", UiDesign.T_H2, CANCEL_MIN, "quiet")
 	cancel.name = "CancelBtn"
 	cancel.pressed.connect(hide)
 	row.add_child(cancel)
-	var submit := UiDesign.menu_button("创建房间", UiDesign.T_H2, SUBMIT_MIN, "gold")
+	var submit := UiDesign.ui_button("创建房间", UiDesign.T_H2, SUBMIT_MIN, "gold")
 	submit.name = "SubmitBtn"
 	submit.pressed.connect(_submit)
 	row.add_child(submit)
@@ -240,7 +213,6 @@ func _form_row(parent: Control, node_name: String) -> HBoxContainer:
 	return row
 
 
-# 一行 = 定宽标签 + 滑块(吃满剩余宽) + 定宽数值;返回滑块。
 func _slider(row: BoxContainer, text: String, bounds: Vector2i, initial: float,
 		suffix: String) -> HSlider:
 	var label := UiDesign.ui_label(text, "body")
@@ -264,7 +236,7 @@ func _slider(row: BoxContainer, text: String, bounds: Vector2i, initial: float,
 
 
 func _time_slider(parent: BoxContainer, field: String, title: String, step: float) -> void:
-	# 与旧实现同口径:kill_ratio 用百分比显示,其余按原始单位。
+	# 击杀获取倍率按百分比显示。
 	var units := 100.0 if field == "kill_ratio" else 1.0
 	var suffix := "%" if units == 100.0 else ""
 	var rule: Array = TimeRules.FIELDS[field]
@@ -295,7 +267,6 @@ func _time_slider(parent: BoxContainer, field: String, title: String, step: floa
 		value.text = str(int(round(v))) + suffix)
 
 
-# ── 行为(与迁移前逐项等价)────────────────────────────────────────────────────
 func open(mode: String) -> void:
 	_collision.set_pressed_no_signal(false)
 	_lan_public.set_pressed_no_signal(true)
@@ -305,8 +276,7 @@ func open(mode: String) -> void:
 
 func _choose_mode(mode: String) -> void:
 	_mode = mode
-	# 用 button_pressed(而非 set_pressed_no_signal)同步选中:no_signal 不会通知 ButtonGroup,
-	# 连续 open()/切模式会让旧模式也保持高亮(两个模式同时亮)。
+	# 设置 button_pressed 会通知 ButtonGroup 取消原模式的选中状态。
 	for key: String in _mode_buttons:
 		(_mode_buttons[key] as Button).button_pressed = key == mode
 	var fields: Array = RoomOptions.MODE_FIELDS.get(mode, [])
@@ -335,7 +305,6 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 
 
-# 设置里的禁用武器是 Array[int];显式收窄,避免把无类型 Array 传给 WeaponPicker 的 typed 参数。
 func _disabled_ids() -> Array[int]:
 	var ids: Array[int] = []
 	for id: Variant in _prefs["disabled"]:

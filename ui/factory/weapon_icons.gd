@@ -17,11 +17,3 @@ static func silhouette(type_id: int) -> Texture2D:
 	icon.region = Rect2i(region.position * 3, region.size * 3)
 	icon.filter_clip = true
 	return icon
-
-static func make_weapon_check(type_id: int, checked: bool) -> CheckButton:
-	var button := CheckButton.new()
-	button.text = WeaponRegistry.name_of(type_id)
-	button.icon = silhouette(type_id)
-	button.button_pressed = checked
-	button.theme = UiFactory.MENU_THEME
-	return button
