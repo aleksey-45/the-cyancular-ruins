@@ -63,16 +63,4 @@ extends Resource
 @export var weapon_pickup_self_delay: float
 
 # 挤压与拉伸参数见 core/present/squash_tracker.gd。
-# squash_amount 控制最大形变比例，0.06 对应 0.94 至 1.06 倍缩放。
-# squash_recover 控制动作形变的指数衰减速率。
-@export var squash_amount: float
-@export var squash_recover: float
-@export var squash_jump: float
-# 落地时按竖直速度插值。低于最小速度时不触发，达到参考速度后使用最大强度。
-@export var squash_land_min_vy: float
-@export var squash_land_ref_vy: float
-@export var squash_land: float
-@export var squash_hurt: float
-@export var squash_dash: float
-@export var squash_air: float
-@export var squash_air_ref_vy: float
+@export var squash: SquashConfig

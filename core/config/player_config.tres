@@ -1,6 +1,21 @@
-[gd_resource type="Resource" script_class="PlayerConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="PlayerConfig" load_steps=4 format=3]
 
 [ext_resource type="Script" path="res://core/config/player_config.gd" id="1_pc"]
+
+[ext_resource type="Script" path="res://core/config/squash_config.gd" id="squash_script"]
+
+[sub_resource type="Resource" id="squash_settings"]
+script = ExtResource("squash_script")
+amount = 0.06
+recover = 16.0
+jump = 0.75
+land_min_vy = 220.0
+land_ref_vy = 900.0
+land = 1.0
+hurt = 0.5
+dash = 0.8
+air = 0.1
+air_ref_vy = 700.0
 
 [resource]
 script = ExtResource("1_pc")
@@ -62,13 +77,4 @@ weapon_air_drag = 0.4
 weapon_fall_gravity = 1600.0
 weapon_stop_eps = 6.0
 weapon_pickup_self_delay = 0.5
-squash_amount = 0.06
-squash_recover = 16.0
-squash_jump = 0.75
-squash_land_min_vy = 220.0
-squash_land_ref_vy = 900.0
-squash_land = 1.0
-squash_hurt = 0.5
-squash_dash = 0.8
-squash_air = 0.1
-squash_air_ref_vy = 700.0
+squash = SubResource("squash_settings")

@@ -15,16 +15,7 @@ extends Resource
 @export var shared_drown_damage: int
 # 挤压与拉伸参数见 core/present/squash_tracker.gd。
 # 敌鸟的跳跃和冲刺分别沿用起飞（take_off）和蓄力冲撞（charge）的形变强度。
-@export var shared_squash_amount: float
-@export var shared_squash_recover: float
-@export var shared_squash_take_off: float
-@export var shared_squash_charge: float
-@export var shared_squash_land_min_vy: float
-@export var shared_squash_land_ref_vy: float
-@export var shared_squash_land: float
-@export var shared_squash_hurt: float
-@export var shared_squash_air: float
-@export var shared_squash_air_ref_vy: float
+@export var squash: SquashConfig
 @export var jump_bird_wake_radius: float
 @export var jump_bird_wake_time: float
 @export var jump_bird_settle_time: float

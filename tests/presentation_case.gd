@@ -135,7 +135,7 @@ func _actor_animation(tree: SceneTree) -> void:
 	expect(scale.x < 2.45 and scale.y > 2.55, "a jump directly after landing still stretches the drawn body")
 	display._world.motion(-1, &"jump", 0.0)
 	var bird_scale: Vector2 = display._world._squash[-1].sample(0.0, 0.0)
-	expect(is_equal_approx(bird_scale.y, 1.0 + ECFG.shared_squash_amount * ECFG.shared_squash_take_off),
+	expect(is_equal_approx(bird_scale.y, 1.0 + ECFG.squash.amount * ECFG.squash.jump),
 			"a bird's first jump cue uses the enemy squash settings")
 
 	actor.state = Player.MOVE

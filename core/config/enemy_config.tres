@@ -1,6 +1,21 @@
-[gd_resource type="Resource" script_class="EnemyConfig" load_steps=2 format=3]
+[gd_resource type="Resource" script_class="EnemyConfig" load_steps=4 format=3]
 
 [ext_resource type="Script" path="res://core/config/enemy_config.gd" id="1_ec"]
+
+[ext_resource type="Script" path="res://core/config/squash_config.gd" id="squash_script"]
+
+[sub_resource type="Resource" id="squash_settings"]
+script = ExtResource("squash_script")
+amount = 0.06
+recover = 16.0
+jump = 0.8
+dash = 0.9
+land_min_vy = 220.0
+land_ref_vy = 900.0
+land = 1.0
+hurt = 0.5
+air = 0.1
+air_ref_vy = 700.0
 
 [resource]
 script = ExtResource("1_ec")
@@ -14,16 +29,7 @@ shared_bird_max_sink = 160.0
 shared_bird_water_damp = 5.0
 shared_drown_interval = 1.5
 shared_drown_damage = 5
-shared_squash_amount = 0.06
-shared_squash_recover = 16.0
-shared_squash_take_off = 0.8
-shared_squash_charge = 0.9
-shared_squash_land_min_vy = 220.0
-shared_squash_land_ref_vy = 900.0
-shared_squash_land = 1.0
-shared_squash_hurt = 0.5
-shared_squash_air = 0.1
-shared_squash_air_ref_vy = 700.0
+squash = SubResource("squash_settings")
 jump_bird_wake_radius = 900.0
 jump_bird_wake_time = 0.5
 jump_bird_settle_time = 0.5
