@@ -14,7 +14,7 @@ from build_native import EXTENSIONS, ROOT, build_native, run
 
 PACKAGE = "The-Cyancular-Ruins"
 GAME = "The Cyancular Ruins"
-HELPERS = ("easytier-core", "easytier-cli")
+EASYTIER = json.loads((ROOT / "data/easytier.json").read_text(encoding="utf-8"))
 
 
 def nightly():
@@ -26,7 +26,9 @@ def nightly():
         return json.load(response)["assets"]
 
 
-def download_easytier(assets, platform, arch, directory, names):
+def download_easytier(assets, platform, arch, directory):
+    manifest = EASYTIER[platform]
+    names = [manifest["core"], manifest["cli"], *manifest["libraries"], *manifest["extra"]]
     prefix = f"easytier-{platform}-{arch}"
     matches = [asset for asset in assets if asset["name"].startswith(prefix + "-") and asset["name"].endswith(".zip")]
     if len(matches) != 1:
@@ -56,6 +58,7 @@ def build_game(*, skip_native=False):
     builds = ROOT / "builds"
     builds.mkdir(exist_ok=True)
     mac = sys.platform == "darwin"
+    mac_helpers = (EASYTIER["macos"]["core"], EASYTIER["macos"]["cli"])
     output = f"{PACKAGE}-{'macOS' if mac else 'Windows'}.zip"
     with tempfile.TemporaryDirectory(prefix=".package-", dir=builds) as temporary:
         work = Path(temporary)
@@ -70,15 +73,15 @@ def build_game(*, skip_native=False):
             app = package / f"{GAME}.app"
             run(godot, "--headless", "--export-release", "macOS", app)
             for arch in ("aarch64", "x86_64"):
-                download_easytier(assets, "macos", arch, work / arch, HELPERS)
+                download_easytier(assets, "macos", arch, work / arch)
             helpers = app / "Contents/Helpers"
             helpers.mkdir(exist_ok=True)
-            for name in HELPERS:
+            for name in mac_helpers:
                 target = helpers / name
                 run("lipo", "-create", work / "aarch64" / name, work / "x86_64" / name, "-output", target)
                 target.chmod(0o755)
                 run("codesign", "--force", "--sign", "-", "--timestamp=none", target)
-            for library in (app / f"Contents/MacOS/{GAME}", *(helpers / name for name in HELPERS),
+            for library in (app / f"Contents/MacOS/{GAME}", *(helpers / name for name in mac_helpers),
                             *(app / "Contents/Frameworks" / f"{name}.macos.universal.dylib" for name in EXTENSIONS)):
                 run("lipo", library, "-verify_arch", "arm64", "x86_64")
             run("codesign", "--force", "--sign", "-", "--timestamp=none", "--options", "runtime",
@@ -91,8 +94,7 @@ def build_game(*, skip_native=False):
             for name in (executable.name, *(f"{name}.windows.x86_64.dll" for name in EXTENSIONS)):
                 if not (package / name).is_file():
                     raise FileNotFoundError(package / name)
-            download_easytier(assets, "windows", "x86_64", package / "easytier",
-                             (*(name + ".exe" for name in HELPERS), "Packet.dll", "wintun.dll", "WinDivert64.sys"))
+            download_easytier(assets, "windows", "x86_64", package / "easytier")
             shutil.make_archive(str(work / output.removesuffix(".zip")), "zip", work, PACKAGE)
         (work / output).replace(builds / output)
     print(builds / output)

@@ -1,0 +1,19 @@
+{
+  "windows": {
+    "core": "easytier-core.exe",
+    "cli": "easytier-cli.exe",
+    "libraries": [
+      "Packet.dll",
+      "wintun.dll"
+    ],
+    "extra": [
+      "WinDivert64.sys"
+    ]
+  },
+  "macos": {
+    "core": "easytier-core",
+    "cli": "easytier-cli",
+    "libraries": [],
+    "extra": []
+  }
+}

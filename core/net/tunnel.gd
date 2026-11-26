@@ -107,8 +107,8 @@ static func _launch(code: String, host_port: int) -> String:
 	if not _write_config(code, host_port, relays):
 		reset()
 		return "无法写入 EasyTier 临时配置"
-	_cli_path = dir.path_join(Meta.cli_name())
-	var core := dir.path_join(Meta.core_name())
+	_cli_path = dir.path_join(Meta.files.cli)
+	var core := dir.path_join(Meta.files.core)
 	_pid = NetSession.launch(core, ["--config-dir", _config_dir.get_current_dir(), "--rpc-portal", _rpc_address()])
 	if _pid <= 0:
 		reset()

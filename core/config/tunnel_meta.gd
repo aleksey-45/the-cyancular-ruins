@@ -4,10 +4,8 @@ extends RefCounted
 # 大厅与对局使用相同的 EasyTier 设置。虚拟网络负责转发对局的 UDP 数据。
 # EasyTier 由游戏作为子进程启动。随附的版权、许可证和源码出处记录在 THIRD_PARTY_NOTICES.txt 中。
 
-# Windows 版会检查可执行文件和依赖的 DLL。macOS 版的可执行文件名不带扩展名。
-const CORE_EXE := "easytier-core.exe"
-const CLI_EXE := "easytier-cli.exe"
-const CORE_DLLS := ["Packet.dll", "wintun.dll"]
+static var files: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://data/easytier.json"))[
+	"macos" if OS.has_feature("macos") else "windows"]
 
 # 房间号加上前缀构成虚拟网络名称。房间号也充当网络密钥，房主则把游戏端口写到自己的节点名中。
 const NET_PREFIX := "cyr-"
@@ -26,14 +24,5 @@ const DEFAULT_RELAYS: Array[String] = [
 	"udp://183.230.36.171:11010",
 ]
 
-static func core_name() -> String:
-	return "easytier-core" if OS.has_feature("macos") else CORE_EXE
-
-static func cli_name() -> String:
-	return "easytier-cli" if OS.has_feature("macos") else CLI_EXE
-
 static func required_files() -> PackedStringArray:
-	var files := PackedStringArray([core_name(), cli_name()])
-	if OS.has_feature("windows"):
-		files.append_array(CORE_DLLS)
-	return files
+	return PackedStringArray([files.core, files.cli] + files.libraries)
