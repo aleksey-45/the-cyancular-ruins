@@ -38,6 +38,7 @@
 | 多人玩法与网络同步 | [对战模式](docs/modes.md) · [联机系统](docs/netplay.md) |
 | 画面与交互 | [渲染](docs/render.md) · [界面与交互](docs/ui.md) |
 | 自动化测试与运行性能 | [测试](docs/tests.md) · [性能监测](docs/performance.md) |
+| 开发计划 | [B-1 二维光照](docs/construction/2026-11-24-render-b1-plan.md) |
 
 ## 致谢
 
