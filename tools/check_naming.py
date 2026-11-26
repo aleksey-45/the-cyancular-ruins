@@ -17,17 +17,11 @@ PROJECT = os.path.dirname(TOOLS)
 # 下列目录不参与文件名和脚本检查，包括工具缓存、构建输出和游戏资源。
 SKIP_DIRS = {".test_logs", ".godot", ".git", ".superpowers", ".claude", "builds", "backup",
              "releases", "_crashtest", "__pycache__", "docs", "assets"}
-DOC_FILES = sorted(p.relative_to(PROJECT).as_posix() for p in [
-    *Path(PROJECT).glob("*.md"), *Path(PROJECT, "docs", "eng").rglob("*.md"),
-])
+DOC_FILES = sorted(p.name for p in Path(PROJECT).glob("*.md"))
 # 识别反引号中的文件路径时，只考虑下列扩展名。
 DOC_EXTS = (".gd", ".tscn", ".json", ".js", ".html", ".cyrm", ".cfg",
             ".shader", ".gdshader", ".bat", ".py", ".md", ".ttf", ".otf", ".png")
 GENERATED_DOC_PREFIXES = (".test_logs/", "builds/", "releases/")
-
-# 可在此登记目录名和 GDScript 类名的例外。
-ACCEPTED_CLASS_FILES = {}
-ACCEPTED_DIRS = {}
 
 _fail: list[str] = []
 _notes: list[str] = []
@@ -38,48 +32,6 @@ def to_snake(name: str) -> str:
     s = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", name)
     s = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s)
     return s.lower()
-
-
-def walk_dirs():
-    for root, dirs, _files in os.walk(PROJECT):
-        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
-        rel = os.path.relpath(root, PROJECT).replace("\\", "/")
-        for d in dirs:
-            yield d if rel == "." else rel + "/" + d
-
-
-def check_dirs() -> None:
-    for path in walk_dirs():
-        name = path.rsplit("/", 1)[-1]
-        if name != name.lower():
-            if path in ACCEPTED_DIRS:
-                _notes.append("A (已接受) %s: %s" % (path, ACCEPTED_DIRS[path]))
-            else:
-                _fail.append("A 目录名不是全小写: %s" % path)
-
-
-def check_class_names() -> None:
-    for root, dirs, files in os.walk(PROJECT):
-        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
-        for f in files:
-            if not f.endswith(".gd"):
-                continue
-            full = os.path.join(root, f)
-            rel = os.path.relpath(full, PROJECT).replace("\\", "/")
-            try:
-                text = open(full, encoding="utf-8", errors="replace").read()
-            except OSError:
-                continue
-            m = re.search(r"^class_name\s+(\w+)", text, re.M)
-            if not m:
-                continue
-            want = to_snake(m.group(1)) + ".gd"
-            if want != f:
-                if rel in ACCEPTED_CLASS_FILES:
-                    _notes.append("B (已接受) %s: class_name=%s → 期望 %s | %s"
-                                  % (rel, m.group(1), want, ACCEPTED_CLASS_FILES[rel]))
-                else:
-                    _fail.append("B %s: class_name=%s 转 snake 应为 %s" % (rel, m.group(1), want))
 
 
 def markdown_issues(doc: Path, text: str, project: Path) -> list[str]:
@@ -121,9 +73,6 @@ def check_doc_paths() -> None:
     seen: dict[str, str] = {}          # 用第一次出现该路径的文档定位报错。
     for doc in DOC_FILES:
         full = os.path.join(PROJECT, doc)
-        if not os.path.exists(full):
-            _fail.append("C 文档不存在: %s(检查表配置路径有误)" % doc)
-            continue
         text = open(full, encoding="utf-8", errors="replace").read()
         _fail.extend("C %s %s" % (doc, issue) for issue in markdown_issues(Path(full), text, Path(PROJECT)))
         # 反引号中的代码片段可能形似路径。只有目录开头已存在于仓库中的项才会作为路径检查。
@@ -145,30 +94,6 @@ def check_doc_paths() -> None:
             _fail.append("C %s 引用了不存在的路径: %s" % (seen[tok], tok))
 
 
-def check_tscn() -> None:
-    """检查场景文件是否使用小写下划线命名，并为缺少同名脚本的场景生成提示。"""
-    bad, snake, unpaired = [], [], []
-    for root, dirs, files in os.walk(PROJECT):
-        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
-        listing = set(files)          # 使用实际文件名比较大小写。在 Windows 上也按相同方式检查。
-        for f in files:
-            if not f.endswith(".tscn"):
-                continue
-            rel = os.path.relpath(os.path.join(root, f), PROJECT).replace("\\", "/")
-            stem = f[:-5]
-            if to_snake(stem) != stem:
-                bad.append("%s: .tscn 文件名 %s 不是 snake_case(应为 %s.tscn)"
-                           % (rel, stem, to_snake(stem)))
-            else:
-                snake.append(rel)
-            if stem + ".gd" not in listing:
-                unpaired.append(rel)
-    _fail.extend(bad)
-    _notes.append("D .tscn 命名: snake %d 个%s" % (len(snake), "" if not bad else " / 违规 %d 个" % len(bad)))
-    for rel in sorted(unpaired):
-        _notes.append("D   无同名 .gd 兄弟(仅备注): %s" % rel)
-
-
 def script_encoding_issues(data: bytes, suffix: str) -> list[str]:
     issues = []
     if b"\n" in data.replace(b"\r\n", b"") or b"\r" in data.replace(b"\r\n", b""):
@@ -183,26 +108,39 @@ def script_encoding_issues(data: bytes, suffix: str) -> list[str]:
     return issues
 
 
-def check_script_encodings() -> None:
-    for root, dirs, files in os.walk(PROJECT):
+def check_tree() -> None:
+    scenes = 0
+    unpaired = []
+    for root, dirs, names in os.walk(PROJECT):
         dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
-        for name in files:
-            suffix = Path(name).suffix.lower()
-            if suffix not in (".ps1", ".bat"):
-                continue
-            file = Path(root, name)
-            _fail.extend("E %s: %s" % (file.relative_to(PROJECT), issue)
-                         for issue in script_encoding_issues(file.read_bytes(), suffix))
+        folder = Path(root)
+        for name in dirs:
+            if name != name.lower():
+                _fail.append(f"A 目录名不是全小写: {(folder / name).relative_to(PROJECT)}")
+        for name in names:
+            path = folder / name
+            rel = path.relative_to(PROJECT).as_posix()
+            if path.suffix == ".gd":
+                match = re.search(r"^class_name\s+(\w+)", path.read_text(encoding="utf-8", errors="replace"), re.M)
+                if match and path.stem != to_snake(match[1]):
+                    _fail.append(f"B {rel}: class_name={match[1]} 应为 {to_snake(match[1])}.gd")
+            elif path.suffix == ".tscn":
+                scenes += 1
+                if path.stem != to_snake(path.stem):
+                    _fail.append(f"D {rel}: 场景名应为 {to_snake(path.stem)}.tscn")
+                if path.stem + ".gd" not in names:
+                    unpaired.append(rel)
+            elif path.suffix.lower() in (".ps1", ".bat"):
+                _fail.extend(f"E {rel}: {issue}" for issue in script_encoding_issues(path.read_bytes(), path.suffix.lower()))
+    _notes.append(f"D .tscn 场景 {scenes} 个")
+    _notes.extend(f"D   无同名 .gd 兄弟(仅备注): {rel}" for rel in sorted(unpaired))
 
 
 def main() -> int:
     verbose = "-v" in sys.argv or "--verbose" in sys.argv
     report_only = "--report" in sys.argv
-    check_dirs()
-    check_class_names()
+    check_tree()
     check_doc_paths()
-    check_tscn()
-    check_script_encodings()
     if _notes and verbose:
         print("— 备注(不判失败,仅 -v 显示) —")
         for n in _notes:

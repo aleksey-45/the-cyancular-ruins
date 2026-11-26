@@ -1,16 +1,29 @@
-"""启动一个无界面的 Godot 实例，在其中运行指定的测试组。"""
+"""以无头模式启动 Godot 并运行指定的测试组。"""
 import argparse
 import os
 from pathlib import Path
-import re
 import shutil
 import subprocess
 import sys
-import tempfile
+
+from godot_log import FATAL
 
 ROOT = Path(__file__).resolve().parents[1]
 CHECK_TIMEOUT_SECONDS = 120
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+
+
+def run(command, marker=None):
+    try:
+        result = subprocess.run(command, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                timeout=CHECK_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired as error:
+        print((error.stdout or b"").decode("utf-8", errors="replace"), file=sys.stderr)
+        print(f"Godot timed out ({CHECK_TIMEOUT_SECONDS} seconds)", file=sys.stderr)
+        return False
+    log = result.stdout.decode("utf-8", errors="replace")
+    print(log, end="")
+    return result.returncode == 0 and not FATAL.search(log) and (marker is None or marker in log)
 
 
 def main():
@@ -20,21 +33,16 @@ def main():
     args = parser.parse_args()
     if not args.godot:
         parser.error('set GODOT or pass --godot; build native extensions and import the project first')
-    command = [args.godot, '--headless', '--path', str(ROOT), 'res://tests/run.tscn',
-               '--', '--no-perf', '--groups', args.groups]
-    with tempfile.TemporaryFile() as output:
-        timed_out = False
-        try:
-            result = subprocess.run(command, stdout=output, stderr=subprocess.STDOUT, cwd=ROOT,
-                                    timeout=CHECK_TIMEOUT_SECONDS)
-        except subprocess.TimeoutExpired:
-            print(f'Behavior checks timed out ({CHECK_TIMEOUT_SECONDS} seconds); not retried.', file=sys.stderr)
-            timed_out = True
-        output.seek(0)
-        log = output.read().decode('utf-8', errors='replace')
-    print(log, end='')
-    errors = re.search(r'(?:SCRIPT ERROR|Parse Error|Compile Error|ERROR:)', log)
-    return 0 if not timed_out and result.returncode == 0 and not errors and 'CHECKS COMPLETE failures=0' in log else 1
+    engine = [args.godot, "--headless", "--path", str(ROOT)]
+    scripts = [ROOT / "tests/weapon_load.gd"]
+    tools = ROOT.parent / "test-tools"
+    if tools.is_dir():
+        scripts.extend([tools / "match_driver.gd", tools / "replay.gd"])
+    for script in scripts:
+        if not run([*engine, "--check-only", "--script", str(script)]):
+            return 1
+    return 0 if run([*engine, "res://tests/run.tscn", "--", "--no-perf", "--groups", args.groups],
+                    "CHECKS COMPLETE failures=0") else 1
 
 
 if __name__ == '__main__':

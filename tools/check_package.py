@@ -1,11 +1,12 @@
 """解压发行 ZIP 并启动其中的游戏，检查退出状态和 Godot 日志。"""
 import argparse
 from pathlib import Path
-import re
 import shutil
 import subprocess
 import sys
 import tempfile
+
+from godot_log import FATAL
 
 from build_game import GAME, PACKAGE
 
@@ -38,7 +39,7 @@ def check_package(archive: Path) -> None:
             raise SystemExit(f"Packaged game exited with status {result.returncode}.")
         if not (engine_log or console_log).strip():
             raise SystemExit("Packaged game produced no startup log.")
-        if re.search(r"SCRIPT ERROR|Parse Error|Compile Error|ERROR:", engine_log + "\n" + console_log):
+        if FATAL.search(engine_log + "\n" + console_log):
             raise SystemExit("Packaged game reported a startup error.")
         print(f"Packaged game started and exited successfully from {archive.name}.")
 
