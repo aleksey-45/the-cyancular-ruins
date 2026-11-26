@@ -24,7 +24,7 @@ func expect(condition: bool, message: String) -> void:
 	if not condition: failures.append(message)
 
 func wall_texture(elastic: bool = false) -> int:
-	TileDefs.load_defs()
+
 	for key in TileDefs._defs["tiles"]:
 		var material: Dictionary = TileDefs._defs["tiles"][key]
 		if material["type"] == "wall" and material["hp"] > 1 and material["bullet_destroyable"] \
@@ -84,7 +84,7 @@ func player(parent: TestWorld, role: int = 1) -> Player:
 	var actor := parent.combat.add_player(role)
 	actor.position = Vector2(96 + role * 64, 128)
 	actor.sync_collision_geometry()
-	actor.weapons.set_initial_inventory([WeaponRegistry.all_ids()[0]])
+	actor.weapons.set_initial_inventory([WeaponRegistry.enabled_ids()[0]])
 	return actor
 
 func arena(mode: String, roles: Array, teams: Dictionary, options: Dictionary,

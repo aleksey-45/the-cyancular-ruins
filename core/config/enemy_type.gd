@@ -11,8 +11,11 @@ extends Resource
 @export var contact_size := Vector2(44, 40)
 @export var contact_offset := Vector2.ZERO
 
-static var paths: Dictionary[String, String] = {}
+const PATHS := {
+	"jump_bird": "res://scenes/enemies/enemy_jump_bird.tres",
+	"fly_bird": "res://scenes/enemies/enemy_fly_bird.tres",
+	"black_bird": "res://scenes/enemies/enemy_black_bird.tres",
+}
 
-static func _static_init() -> void:
-	for entry: Dictionary in JSON.parse_string(FileAccess.get_file_as_string("res://data/enemies.json"))["enemies"]:
-		paths[entry["id"]] = entry["definition"]
+static func get_type(id: String) -> EnemyType:
+	return load(PATHS[id])

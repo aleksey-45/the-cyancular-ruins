@@ -15,7 +15,7 @@ func run(tree: SceneTree) -> void:
 	_pickup_landing(tree)
 
 func _equipment(tree: SceneTree) -> void:
-	var ids := WeaponRegistry.all_ids()
+	var ids := WeaponRegistry.enabled_ids()
 	expect(ids == WeaponRegistry.CATALOG.weapons.map(func(weapon: WeaponDef) -> int: return weapon.weapon_id)
 			and ids.all(func(id: int) -> bool: return id > 0 and id <= 255),
 			"the catalog supplies unique wire IDs in resource order")

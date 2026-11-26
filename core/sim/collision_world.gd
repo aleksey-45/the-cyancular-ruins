@@ -3,14 +3,10 @@ extends RefCounted
 
 # 提供二维物理空间的位移检测、射线查询和形状查询。跨地图边缘的查询可从另一侧接续。
 
-const LAYER_TERRAIN := 1
-const LAYER_TEAM_A := 2
-const LAYER_ENEMY := 4
-const LAYER_TEAM_B := 16
 
 ## 未分队的玩家沿用 A 队的碰撞层。B 队有自己的碰撞层。
 static func team_layer(team: int) -> int:
-	return LAYER_TEAM_B if team == 2 else LAYER_TEAM_A
+	return CombatProfiles.Layer.TEAM_B if team == 2 else CombatProfiles.Layer.TEAM_A
 
 # 将地图两侧的地形碰撞各延伸这么多像素，便于跨越边缘时仍能检测碰撞。
 const SEAM_REACH := 192.0

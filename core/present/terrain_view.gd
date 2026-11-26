@@ -16,7 +16,7 @@ var _descriptors: PackedInt32Array
 var _wall_rows: Dictionary
 
 func install(map: Dictionary, margin: Vector2) -> void:
-	TileDefs.load_defs()
+
 	_span = map.size
 	_descriptors = map.layers[CyrmMap.SCENE]
 	_margin = margin

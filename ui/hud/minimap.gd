@@ -27,7 +27,7 @@ func _init(map: Dictionary) -> void:
 func _ready() -> void:
 	layer = 131
 	# 小地图可能先于世界画布创建，先加载材质表供地形着色使用。
-	TileDefs.load_defs()
+
 	var cells: PackedInt32Array = _map.layers[CyrmMap.SCENE]
 	var cols: int = _map.size.x
 	var rows: int = _map.size.y

@@ -112,7 +112,7 @@ func _duel_spawns() -> void:
 	host.close()
 
 func _team_setup() -> void:
-	var disabled := WeaponRegistry.all_ids()
+	var disabled := WeaponRegistry.enabled_ids()
 	var teams := {1: 1, 2: 1, 3: 2}
 	var roles := [1, 2, 3]
 	var invalid := arena(WorldSpec.TEAM, roles, teams, {"disabled_weapons": disabled}).world
@@ -122,7 +122,7 @@ func _team_setup() -> void:
 	var world := host.world
 	expect(world.problem.is_empty(), "the team match loads and validates its map")
 	for p: Player in world.players.values():
-		expect(p.collision_mask == CollisionWorld.LAYER_TERRAIN,
+		expect(p.collision_mask == CombatProfiles.Layer.TERRAIN,
 				"players collide with terrain only; NPC contact is damage-only")
 		expect(p.equipped != null and p.equipped.type_id == WeaponType.PISTOL,
 				"each player starts equipped when only one type is enabled")

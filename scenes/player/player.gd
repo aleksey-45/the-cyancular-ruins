@@ -69,8 +69,8 @@ var last_hit_tick := 0
 func _init(match_sim: CombatSimulator, player_role: int) -> void:
 	role = player_role
 	var shape := CollisionWorld.rectangle(CFG.standing_hull.size)
-	super(match_sim, Vector2.ZERO, CFG.body_scale, shape, CollisionWorld.LAYER_TEAM_A,
-			CollisionWorld.LAYER_TERRAIN)
+	super(match_sim, Vector2.ZERO, CFG.body_scale, shape, CombatProfiles.Layer.TEAM_A,
+			CombatProfiles.Layer.TERRAIN)
 	for slot in range(1, COLLISION_SLOTS):
 		PhysicsServer2D.body_add_shape(rid, shape, Transform2D.IDENTITY, true)
 	sync_collision_geometry()
@@ -78,7 +78,7 @@ func _init(match_sim: CombatSimulator, player_role: int) -> void:
 func set_team_collision(side: int, player_collision: bool) -> void:
 	team = side
 	collision_layer = CollisionWorld.team_layer(team)
-	collision_mask = CollisionWorld.LAYER_TERRAIN
+	collision_mask = CombatProfiles.Layer.TERRAIN
 	if player_collision:
 		collision_mask |= CollisionWorld.team_layer(3 - team)
 
@@ -104,14 +104,14 @@ func move_by_internal(motion: Vector2) -> Vector2:
 
 func _probe_step_lift(start: Transform2D, direction: float, max_height: float) -> Vector2:
 	if direction != signf(step_input.axis) or _horizontal_motion.get_collision_normal().x * direction >= -0.5 \
-			or PhysicsServer2D.body_get_collision_layer(_horizontal_motion.get_collider_rid()) != CollisionWorld.LAYER_TERRAIN:
+			or PhysicsServer2D.body_get_collision_layer(_horizontal_motion.get_collider_rid()) != CombatProfiles.Layer.TERRAIN:
 		return Vector2.ZERO
 	var margin := CollisionWorld.MOTION_MARGIN
 	var foot := (start * _active_hull()).end.y
 	var edge := _horizontal_motion.get_collision_point().x + direction * margin
 	# 墙高超出探测范围时，射线从墙体内发出，命中法线为零。
 	var hit := terrain.physics.ray_hit(Vector2(edge, foot - max_height - margin),
-			Vector2(edge, foot), CollisionWorld.LAYER_TERRAIN, true)
+			Vector2(edge, foot), CombatProfiles.Layer.TERRAIN, true)
 	if hit.is_empty() or hit["normal"] != Vector2.UP:
 		return Vector2.ZERO
 	var height := foot - (hit["position"] as Vector2).y
@@ -132,13 +132,13 @@ func _try_step_up(start: Transform2D, travel: Vector2) -> bool:
 	pose.origin += lift
 	# 前方更高的台阶可以截短横移，角色仍可在当前台阶落脚。
 	if CollisionWorld.probe_body(rid, pose, travel, _step_motion) \
-			and PhysicsServer2D.body_get_collision_layer(_step_motion.get_collider_rid()) != CollisionWorld.LAYER_TERRAIN:
+			and PhysicsServer2D.body_get_collision_layer(_step_motion.get_collider_rid()) != CombatProfiles.Layer.TERRAIN:
 		return false
 	pose.origin += _step_motion.get_travel()
 	var drop := start.origin.y - pose.origin.y + 1.0
 	if not CollisionWorld.probe_body(rid, pose, Vector2.DOWN * drop, _step_motion) \
 			or _step_motion.get_collision_normal().y >= -0.5 \
-			or PhysicsServer2D.body_get_collision_layer(_step_motion.get_collider_rid()) != CollisionWorld.LAYER_TERRAIN:
+			or PhysicsServer2D.body_get_collision_layer(_step_motion.get_collider_rid()) != CombatProfiles.Layer.TERRAIN:
 		return false
 	pose.origin += _step_motion.get_travel()
 	var rise := start.origin.y - pose.origin.y
@@ -404,7 +404,7 @@ func update_pose(delta: float) -> void:
 func slide_reactions(incoming: Vector2) -> void:
 	if is_charge:
 		for contact: Array in motion_contacts:
-			if (PhysicsServer2D.body_get_collision_layer(contact[Contact.BODY]) & CollisionWorld.LAYER_TERRAIN) != 0 \
+			if (PhysicsServer2D.body_get_collision_layer(contact[Contact.BODY]) & CombatProfiles.Layer.TERRAIN) != 0 \
 					and absf((contact[Contact.NORMAL] as Vector2).x) > 0.5:
 				cancel_charge()
 				velocity.x = 0.0
@@ -413,7 +413,7 @@ func slide_reactions(incoming: Vector2) -> void:
 		var normal: Vector2 = contact[Contact.NORMAL]
 		# 查询碰撞层使用物理体 RID。由物理服务器直接创建的地形可能没有对应节点。
 		var layer := PhysicsServer2D.body_get_collision_layer(contact[Contact.BODY])
-		if (layer & CollisionWorld.LAYER_TERRAIN) == 0 or incoming.dot(normal) >= 0.0:
+		if (layer & CombatProfiles.Layer.TERRAIN) == 0 or incoming.dot(normal) >= 0.0:
 			continue
 		var point := ToroidalGrid.wrap_to_range((contact[Contact.POINT] as Vector2) - normal, terrain.map_size)
 		if terrain.elastic_alive(point):

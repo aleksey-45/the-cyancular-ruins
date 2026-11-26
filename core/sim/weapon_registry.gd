@@ -39,12 +39,7 @@ static func blast_definition(type_id: int) -> Dictionary:
 static func definition(type_id: int) -> Dictionary:
 	return _definitions[type_id]
 
-static func all_ids() -> Array[int]:
-	var ids: Array[int] = []
-	ids.assign(_definitions.keys())
-	return ids
-
-static func enabled_ids(disabled: Array) -> Array[int]:
+static func enabled_ids(disabled: Array = []) -> Array[int]:
 	var enabled: Array[int] = []
 	for id: int in _definitions:
 		if not disabled.has(id):

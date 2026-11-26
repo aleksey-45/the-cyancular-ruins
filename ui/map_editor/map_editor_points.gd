@@ -39,7 +39,7 @@ func _build() -> void:
 	_option("第二出生点", {"kind": "player2"})
 	for side in [1, 2]:
 		_option("侧 %d 复活点" % side, {"kind": "respawn", "side": side})
-	for id: String in EnemyType.paths:
+	for id: String in EnemyType.PATHS:
 		_option("敌人 · " + str(ENEMY_LABELS.get(id, id)), {"kind": "enemy", "type": id})
 
 	_list.custom_minimum_size.y = 270

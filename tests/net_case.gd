@@ -230,7 +230,7 @@ func _lobby() -> void:
 			and rules["regen"] == 50.0 and rules["damage_gain"] == 50 and not rules.has("unused"),
 			"one validation pass bounds lobby rules and rejects non-finite values")
 	var options := {"map": "res://maps/newfactory.cyrm", "max_players": 8, "match_time": 300,
-			"round_full_heal": false, "disabled_weapons": WeaponRegistry.all_ids().slice(0, 1),
+			"round_full_heal": false, "disabled_weapons": WeaponRegistry.enabled_ids().slice(0, 1),
 			"beta": true, "time": rules, "player_collision": true}
 	var create := {"mode": PvpSession.MODE_ROYALE, "options": options}
 	stream = _body(codec.encode_event(NetEvent.Kind.CREATE, create), NetCodec.EVENT + NetEvent.Kind.CREATE)
@@ -511,7 +511,7 @@ func _ready_flow(tree: SceneTree, beta: bool) -> void:
 	session.guests = {11: {"name": "A", "hue": 0.0}, 12: {"name": "B", "hue": 0.5}}
 	session.add_seat(11)
 	session.add_seat(12)
-	session.options["disabled_weapons"] = WeaponRegistry.all_ids()
+	session.options["disabled_weapons"] = WeaponRegistry.enabled_ids()
 	session.start_match()
 	expect(session.world == null and not session.messages.is_empty(), "a rejected start leaves the room idle")
 	await tree.physics_frame

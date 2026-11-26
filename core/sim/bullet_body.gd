@@ -35,13 +35,13 @@ func _init(map: Terrain, id: int, type: int, source: ActorBody, pos: Vector2, ve
 	hit_damage = spec["damage"] if damage == -1 else damage
 	hit_impact = spec["impact"]
 	velocity = vel
-	var mask := CollisionWorld.LAYER_TERRAIN
+	var mask := CombatProfiles.Layer.TERRAIN
 	if definition.has("collision_layers"):
 		mask |= int(definition["collision_layers"])
 	else:
 		var owner := shooter as Player
-		mask |= CollisionWorld.LAYER_ENEMY
-		mask |= (CollisionWorld.LAYER_TEAM_A | CollisionWorld.LAYER_TEAM_B) if owner.team == 0 \
+		mask |= CombatProfiles.Layer.ENEMY
+		mask |= (CombatProfiles.Layer.TEAM_A | CombatProfiles.Layer.TEAM_B) if owner.team == 0 \
 				else CollisionWorld.team_layer(3 - owner.team)
 	var pose := Transform2D(vel.angle(), ToroidalGrid.wrap_to_range(pos, map.map_size))
 	super(map, (definition["shape"] as Vector2) * float(spec["size"]), pose, 0, mask)
@@ -101,7 +101,7 @@ func _contact(result: PhysicsTestMotionResult2D) -> AdvanceResult:
 	impact_normal = result.get_collision_normal()
 	impact_collider_id = result.get_collider_id()
 	var layer := PhysicsServer2D.body_get_collision_layer(result.get_collider_rid())
-	return AdvanceResult.TERRAIN_HIT if layer & CollisionWorld.LAYER_TERRAIN else AdvanceResult.ACTOR_HIT
+	return AdvanceResult.TERRAIN_HIT if layer & CombatProfiles.Layer.TERRAIN else AdvanceResult.ACTOR_HIT
 
 func impact_actor() -> ActorBody:
 	return instance_from_id(impact_collider_id) as ActorBody if impact_collider_id != 0 else null

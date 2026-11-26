@@ -1,6 +1,7 @@
 class_name CombatProfiles
 extends RefCounted
 
+enum Layer { TERRAIN = 1, TEAM_A = 2, ENEMY = 4, TEAM_B = 16 }
 enum Target { SELF = 1, ALLY = 2, OPPONENT = 4, NPC = 8 }
 enum Water { NONE, BLAST, WET }
 enum NpcImpulse { ADD, SET, DEFAULT }
@@ -21,7 +22,7 @@ const DROWN := {"targets": PLAYERS | Target.NPC,
 	"water": Water.NONE, "npc_impulse": NpcImpulse.ADD}
 
 const BIRD_BOMB := {
-	"collision_layers": CollisionWorld.LAYER_TEAM_A,
+	"collision_layers": Layer.TEAM_A,
 	"shape": Vector2(10, 10),
 	"wall": {"bounce": false, "fuse": 0.0, "effect": ContactEffect.NONE},
 	"actor": {"bounce": false, "fuse": 0.0, "effect": ContactEffect.HIT},

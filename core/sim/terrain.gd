@@ -49,7 +49,7 @@ static func _wrap(value: int, span: int) -> int:
 
 func _init(map: Dictionary = {}) -> void:
 	if map.is_empty(): return
-	TileDefs.load_defs()
+
 	columns = map.size.x
 	rows = map.size.y
 	map_size = Vector2(map.size * SUB_SIZE)
@@ -152,7 +152,7 @@ func line_of_sight(from: Vector2, to: Vector2) -> bool:
 
 func _ray_between(from: Vector2, to: Vector2) -> Dictionary:
 	var started := PerformanceStats.begin()
-	var hit := physics.ray_hit(from, to, CollisionWorld.LAYER_TERRAIN)
+	var hit := physics.ray_hit(from, to, CombatProfiles.Layer.TERRAIN)
 	PerformanceStats.end(PerformanceStats.PHYSICS_RAY, started)
 	return hit
 

@@ -58,8 +58,8 @@ var _move_result := PhysicsTestMotionResult2D.new()
 
 func _init(match_sim: CombatSimulator, target: Player, at: Vector2, definition: EnemyType) -> void:
 	kind = definition
-	super(match_sim, at, definition.body_scale, hull, CollisionWorld.LAYER_ENEMY,
-			CollisionWorld.LAYER_TERRAIN | CollisionWorld.LAYER_ENEMY)
+	super(match_sim, at, definition.body_scale, hull, CombatProfiles.Layer.ENEMY,
+			CombatProfiles.Layer.TERRAIN | CombatProfiles.Layer.ENEMY)
 	slot = match_sim.enemies.size()
 	player = target
 	hp = kind.hp
@@ -74,7 +74,7 @@ func collision_rect() -> Rect2:
 func touches_player() -> bool:
 	return not terrain.physics.shape_overlaps(CollisionWorld.rectangle(kind.contact_size),
 			transform.translated_local(kind.contact_offset),
-			CollisionWorld.LAYER_TEAM_A | CollisionWorld.LAYER_TEAM_B).is_empty()
+			CombatProfiles.Layer.TEAM_A | CombatProfiles.Layer.TEAM_B).is_empty()
 
 ## 爆炸击退单独做一次碰撞检测，不改变落地状态。
 func _move_knock(motion: Vector2) -> void:
@@ -306,4 +306,4 @@ func restore_state(row: Array) -> void:
 		var value: Variant = row[i]
 		set(_rewind_fields[i], value.duplicate() if value is Array else value)
 	motion_contacts.clear()
-	collision_layer = CollisionWorld.LAYER_ENEMY if active else 0
+	collision_layer = CombatProfiles.Layer.ENEMY if active else 0

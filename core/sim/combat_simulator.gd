@@ -5,7 +5,7 @@ enum Blast { TYPE, POS, DUE }
 enum Beam { END_TICK, POINTS }
 const BLAST_DELAY := 3
 const BEAM_TICKS := 15
-const ACTOR_LAYERS := CollisionWorld.LAYER_ENEMY | CollisionWorld.LAYER_TEAM_A | CollisionWorld.LAYER_TEAM_B
+const ACTOR_LAYERS := CombatProfiles.Layer.ENEMY | CombatProfiles.Layer.TEAM_A | CombatProfiles.Layer.TEAM_B
 
 var terrain: Terrain
 var ground: GroundWeaponField
@@ -42,7 +42,7 @@ func remove_player(role: int) -> void:
 	players.erase(role)
 
 func add_enemy(type_id: String, player: Player, at: Vector2) -> EnemyBase:
-	var kind: EnemyType = load(EnemyType.paths[type_id])
+	var kind: EnemyType = EnemyType.get_type(type_id)
 	var enemy: EnemyBase = kind.ai.new(self, player, at, kind)
 	enemies.append(enemy)
 	return enemy
@@ -222,7 +222,7 @@ func hit_rewound_elites(hits_by_projectile: Dictionary) -> void:
 		var source := bullet.shooter
 		if not source is Player:
 			continue
-		for entry: Dictionary in space.shape_overlaps(bullet.shape, bullet.transform, CollisionWorld.LAYER_ENEMY):
+		for entry: Dictionary in space.shape_overlaps(bullet.shape, bullet.transform, CombatProfiles.Layer.ENEMY):
 			var enemy := entry["collider"] as EnemyBase
 			if enemy == null or not enemy.kind.elite or enemy.is_dead:
 				continue

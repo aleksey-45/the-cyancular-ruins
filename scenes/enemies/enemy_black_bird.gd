@@ -220,7 +220,7 @@ func _find_flank_cell() -> bool:
 # 把乌鸫的包围盒放到候选位置，检测是否与地形重叠。
 func _body_clear_at(pos: Vector2) -> bool:
 	var shape := CollisionWorld.rectangle(_body_bounds.size)
-	return terrain.physics.shape_overlaps(shape, Transform2D(0.0, pos + _body_bounds.get_center()), CollisionWorld.LAYER_TERRAIN).is_empty()
+	return terrain.physics.shape_overlaps(shape, Transform2D(0.0, pos + _body_bounds.get_center()), CombatProfiles.Layer.TERRAIN).is_empty()
 
 func _teleport_to_flank() -> void:
 	position = terrain.cell_center(_flank_cell) + Vector2.UP * ECFG.black_bird_teleport_drop

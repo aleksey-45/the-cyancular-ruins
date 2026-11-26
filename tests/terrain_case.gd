@@ -109,7 +109,7 @@ func _destruction_units(tree: SceneTree) -> void:
 			and terrain.get_hp(Vector2i(2, 0)) == hp and terrain.get_hp(Vector2i(0, 2)) == hp,
 			"another hit in the same block opens a hole and leaves the adjacent blocks intact")
 	terrain.commit()
-	var mask := CollisionWorld.LAYER_TERRAIN
+	var mask := CombatProfiles.Layer.TERRAIN
 	expect(terrain.physics.ray_hit(Vector2(8, -8), Vector2(8, 24), mask).is_empty()
 			and not terrain.physics.ray_hit(Vector2(40, -8), Vector2(40, 24), mask).is_empty(),
 			"rays pass through the new projectile hole and still hit its neighboring block")
@@ -313,7 +313,7 @@ func _toroidal_sight(tree: SceneTree) -> void:
 	var victim := player(parent, 3)
 	victim.position = Vector2(10, 544)
 	victim.sync_collision_geometry()
-	collider(victim, CollisionWorld.LAYER_TEAM_A)
+	collider(victim, CombatProfiles.Layer.TEAM_A)
 	var sim := parent.combat
 	sim.resolve_blast(Vector2(1010, 544), {"radius": 128.0, "damage": 25, "impact": 0}, null)
 	expect(sim.hits.size() == 1 and sim.hits[0][2] > 0, "an explosion at the seam damages the actor once across it")
@@ -329,14 +329,14 @@ func _beam_hole(tree: SceneTree) -> void:
 	var terrain := _terrain
 	var world := parent.combat.terrain.physics
 	var down := [Vector2(704, 480), Vector2(704, 600)]
-	expect(not world.ray_hit(down[0], down[1], CollisionWorld.LAYER_TERRAIN).is_empty(),
+	expect(not world.ray_hit(down[0], down[1], CombatProfiles.Layer.TERRAIN).is_empty(),
 			"intact subcells block the ray before the hole exists")
 	var cells := {}
 	for y in range(32, 36):
 		for x in range(41, 47):
 			cells[Vector2i(x, y)] = 0
 	terrain.apply_at(terrain.version, cells)
-	expect(world.ray_hit(down[0], down[1], CollisionWorld.LAYER_TERRAIN).is_empty(),
+	expect(world.ray_hit(down[0], down[1], CombatProfiles.Layer.TERRAIN).is_empty(),
 			"a same-frame ray already sees the freshly destroyed subcells")
 	var start := Vector2(704, 480)
 	var beam := terrain.trace_beam(start, Vector2.DOWN, 160.0, 0)
@@ -360,7 +360,7 @@ func _proxy_same_frame(tree: SceneTree) -> void:
 	var actor := player(parent, 1)
 	actor.position = Vector2(512, 512)
 	actor.sync_collision_geometry()
-	var mask := CollisionWorld.LAYER_TEAM_A
+	var mask := CombatProfiles.Layer.TEAM_A
 	collider(actor, mask)
 	var world := actor.terrain.physics
 	var circle := CircleShape2D.new()

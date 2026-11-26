@@ -10,24 +10,15 @@ const BG := Color(0.04, 0.07, 0.11, 1.0)
 const SOLO_SPAWN := Color(0.35, 0.72, 1.0)
 const SIDE_COLORS := {1: Color(0.35, 1.0, 0.45), 2: Color(1.0, 0.62, 0.27)}
 
-# 缩略图用纯色区分地形材质，无需加载墙面和水体纹理。
-const PALETTE := {
-	1: Color(0.72, 0.76, 0.82), 6: Color(0.52, 0.56, 0.63),
-	7: Color(0.48, 0.52, 0.59), 8: Color(0.44, 0.48, 0.55), 9: Color(0.40, 0.44, 0.51),
-	10: Color(0.36, 0.40, 0.47),
-	11: Color(0.80, 0.66, 0.34),
-	12: Color(0.55, 0.55, 0.60), 13: Color(0.48, 0.48, 0.53), 14: Color(0.42, 0.42, 0.47),
-	15: Color(0.34, 0.66, 0.34),
-	19: Color(0.46, 0.33, 0.22), 20: Color(0.40, 0.29, 0.19),
-	21: Color(0.14, 0.36, 0.82), 22: Color(0.26, 0.56, 0.95),
-}
-
 static var _entries: Dictionary[PackedByteArray, Dictionary] = {}
 static var _random_texture: ImageTexture
 
+static func _directories() -> Array[String]:
+	return [USER_DIR, OS.get_executable_path().get_base_dir(), MAP_DIR]
+
 static func list_maps() -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
-	for dir in [MAP_DIR, USER_DIR, OS.get_executable_path().get_base_dir()]:
+	for dir in _directories():
 		for path in _scan(dir):
 			var entry := _entry(path)
 			if entry.is_empty(): continue
@@ -38,7 +29,7 @@ static func list_maps() -> Array[Dictionary]:
 
 static func shuffled_paths() -> Array[String]:
 	var choices: Array[String] = []
-	for dir in [USER_DIR, OS.get_executable_path().get_base_dir(), MAP_DIR]:
+	for dir in _directories():
 		var paths := _scan(dir)
 		paths.shuffle()
 		choices.append_array(paths)
@@ -84,7 +75,7 @@ static func _build_image(map: Dictionary, sides: Dictionary) -> Image:
 	img.fill(BG)
 	for i in cells.size():
 		if cells[i] != 0:
-			img.set_pixel(i % size.x, i / size.x, PALETTE.get(CyrmMap.tile_material(cells[i]), Color.GRAY))
+			img.set_pixel(i % size.x, i / size.x, TileDefs.preview[CyrmMap.tile_material(cells[i])])
 	var player := CyrmMap.first_point_id(map, "player")
 	if player >= 0:
 		img.fill_rect(Rect2i(map.points[player].cell, Vector2i.ONE).grow(3), SOLO_SPAWN)

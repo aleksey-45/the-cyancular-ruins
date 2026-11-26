@@ -80,13 +80,13 @@ func _dynamic_blocking(tree: SceneTree) -> void:
 	var blocker := player(parent, 2)
 	mover.gravity = 0.0
 	blocker.gravity = 0.0
-	mover.collision_mask = CollisionWorld.LAYER_TERRAIN | CollisionWorld.LAYER_TEAM_A
+	mover.collision_mask = CombatProfiles.Layer.TERRAIN | CombatProfiles.Layer.TEAM_A
 	mover.collision_layer = 0
 	mover.position = Vector2(200, 512)
 	blocker.position = Vector2(320, 512)
 	mover.sync_collision_geometry()
 	blocker.sync_collision_geometry()
-	collider(blocker, CollisionWorld.LAYER_TEAM_A)
+	collider(blocker, CombatProfiles.Layer.TEAM_A)
 	var start := mover.position.x
 	var record := [1.0, ActorInput.BIT_UP, 0, 0, 0, Vector2.RIGHT]
 	for i in 14:
@@ -117,7 +117,7 @@ func _step_up(tree: SceneTree) -> void:
 		var mover := player(parent, 1)
 		mover.gravity = WCFG.gravity0
 		mover.collision_layer = 0
-		mover.collision_mask = CollisionWorld.LAYER_TERRAIN
+		mover.collision_mask = CombatProfiles.Layer.TERRAIN
 		mover.position = Vector2(400, 384 - 57)
 		mover.sync_collision_geometry()
 		ActorStep.step(mover, NEUTRAL_INPUT)
@@ -133,7 +133,7 @@ func _step_up(tree: SceneTree) -> void:
 	var blocked := player(too_high, 1)
 	blocked.gravity = WCFG.gravity0
 	blocked.collision_layer = 0
-	blocked.collision_mask = CollisionWorld.LAYER_TERRAIN
+	blocked.collision_mask = CombatProfiles.Layer.TERRAIN
 	blocked.position = Vector2(400, 384 - 57)
 	blocked.sync_collision_geometry()
 	for i in 40:
@@ -145,7 +145,7 @@ func _step_up(tree: SceneTree) -> void:
 	var ceiling_mover := player(low, 1)
 	ceiling_mover.gravity = WCFG.gravity0
 	ceiling_mover.collision_layer = 0
-	ceiling_mover.collision_mask = CollisionWorld.LAYER_TERRAIN
+	ceiling_mover.collision_mask = CombatProfiles.Layer.TERRAIN
 	ceiling_mover.position = Vector2(400, 384 - 57)
 	ceiling_mover.sync_collision_geometry()
 	for i in 40:
@@ -157,7 +157,7 @@ func _step_up(tree: SceneTree) -> void:
 	var runner := player(dynamic, 1)
 	runner.gravity = WCFG.gravity0
 	runner.collision_layer = 0
-	runner.collision_mask = CollisionWorld.LAYER_TERRAIN | CollisionWorld.LAYER_TEAM_A
+	runner.collision_mask = CombatProfiles.Layer.TERRAIN | CombatProfiles.Layer.TEAM_A
 	runner.position = Vector2(400, 384 - 57)
 	runner.sync_collision_geometry()
 	var blocker := player(dynamic, 2)
@@ -165,7 +165,7 @@ func _step_up(tree: SceneTree) -> void:
 	# 阻挡者悬在台阶上方。角色沿原高度移动时不会碰到它，但尝试抬高 16 像素后会被挡住。
 	blocker.position = Vector2(500, 213)
 	blocker.sync_collision_geometry()
-	collider(blocker, CollisionWorld.LAYER_TEAM_A)
+	collider(blocker, CombatProfiles.Layer.TEAM_A)
 	for i in 40:
 		ActorStep.step(runner, FORWARD_INPUT)
 	expect(absf(runner.position.y - (384 - 57)) < 2.0,
@@ -210,7 +210,7 @@ func _step_slope(tree: SceneTree) -> void:
 	var slope := StaticBody2D.new()
 	slope.position = Vector2(513, 375)
 	slope.rotation_degrees = -70.0
-	slope.collision_layer = CollisionWorld.LAYER_TERRAIN
+	slope.collision_layer = CombatProfiles.Layer.TERRAIN
 	slope.collision_mask = 0
 	var hull := CollisionShape2D.new()
 	var box := RectangleShape2D.new()
@@ -220,7 +220,7 @@ func _step_slope(tree: SceneTree) -> void:
 	parent.add_child(slope)
 	var mover := player(parent)
 	mover.collision_layer = 0
-	mover.collision_mask = CollisionWorld.LAYER_TERRAIN
+	mover.collision_mask = CombatProfiles.Layer.TERRAIN
 	mover.position = Vector2(464, 326.98)
 	mover.sync_collision_geometry()
 	mover._grounded = true

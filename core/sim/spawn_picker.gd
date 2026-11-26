@@ -10,7 +10,7 @@ const PREFERRED_DISTANCE := 32  # 子格，512 像素
 static func single_spawn(map: Dictionary) -> Vector2i:
 	var id := CyrmMap.first_point_id(map, "player")
 	if id >= 0: return map.points[id].cell
-	TileDefs.load_defs()
+
 	var cells: PackedInt32Array = map.layers[CyrmMap.SCENE]
 	for i in cells.size():
 		if cells[i] == 0:
@@ -19,7 +19,7 @@ static func single_spawn(map: Dictionary) -> Vector2i:
 	return NO_CELL
 
 static func floor_cells(map: Dictionary) -> Array[Vector2i]:
-	TileDefs.load_defs()
+
 	var floors: Array[Vector2i] = []
 	var cells: PackedInt32Array = map.layers[CyrmMap.SCENE]
 	var size: Vector2i = map.size
@@ -69,7 +69,7 @@ static func player_limit(sides: Dictionary, mode: String, options := {}) -> int:
 
 ## 校验联机复活点的坐标、站立空间、脚下支撑和点位连通性。
 static func validate_multiplayer_spawns(map: Dictionary) -> String:
-	TileDefs.load_defs()
+
 	var descriptors: PackedInt32Array = map.layers[CyrmMap.SCENE]
 	var dims: Vector2i = map.size
 	var occupied := {}
@@ -90,7 +90,7 @@ static func validate_multiplayer_spawns(map: Dictionary) -> String:
 	return ""
 
 static func spawn_cell_problem(map: Dictionary, cell: Vector2i) -> String:
-	TileDefs.load_defs()
+
 	var dims: Vector2i = map.size
 	var descriptors: PackedInt32Array = map.layers[CyrmMap.SCENE]
 	if not Rect2i(Vector2i.ZERO, dims).has_point(cell):

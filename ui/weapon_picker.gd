@@ -24,7 +24,7 @@ func _init(disabled: Array[int], columns: int, height: float) -> void:
 	var list := _make_list(columns)
 	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	add_child(list)
-	for id: int in WeaponRegistry.all_ids():
+	for id: int in WeaponRegistry.enabled_ids():
 		var check := UiDesign.ui_check()
 		check.text = WeaponRegistry.name_of(id)
 		check.icon = WeaponIcons.silhouette(id)

@@ -1,18 +1,18 @@
 # 世界与地图
 
-地图的左右边缘相连，上下边缘也相连。实体的模拟坐标与网络快照使用 `[0, width) × [0, height)` 的范围。`GridPathfinder` 计算跨边界的最短位移、最近的平移副本和 A* 路径。碰撞与渲染在边缘附近使用平移副本，让角色、弹丸和镜头连续穿过边界。[寻路与坐标](../core/sim/grid_pathfinder.gd) · [地形碰撞](terrain.md)
+地图的左右边缘相连，上下边缘也相连。实体的模拟坐标及网络快照中的位置都在 `[0, width) × [0, height)` 范围内。`ToroidalGrid` 计算跨边界位移和最近的平移副本。`GridPathfinder` 用同一套坐标计算 A* 路径。物理和渲染都使用边缘的平移副本，使角色、弹丸和摄像机能连续穿过地图边界。[环面坐标](../core/sim/toroidal_grid.gd) · [寻路](../core/sim/grid_pathfinder.gd) · [地形碰撞](terrain.md)
 
-单人关卡从 06:00 开始，正常速度下 120 秒走完一天。暂停时停表，时间加速按玩家倍率推进，回溯恢复所到时刻的天色。联机的昼夜由房间的对局时钟决定。对局、主菜单和编辑器共用一条昼夜色带，每格相隔 5 分钟，跨午夜平滑衔接。天顶色照亮地形、视差背景和角色。[昼夜光照](../core/present/daylight.gd) · [昼夜色带](../core/present/daylight_palette.png)
+单人关卡从 06:00 开始，正常速度下每 120 秒循环一天。暂停时昼夜时钟停止，时间加速按玩家时间倍率推进，回溯恢复所到时刻的天色。联机的昼夜随对局时钟变化。对局、主菜单和编辑器共用一条昼夜色带，每个采样点相隔 5 分钟，跨午夜平滑衔接。天顶色照亮地形、视差背景和角色。[昼夜光照](../core/present/daylight.gd) · [昼夜色带](../core/present/daylight_palette.png)
 
-对局用 `CanvasModulate` 提供环境底光，`DirectionalLight2D` 随日月方向变化。玩家的 `CanvasTexture` 读取烘好接触阴影的底色和法线贴图，角色着色器将方向光分档。双眼共用一盏点光，随动画帧、朝向和姿势移动，可照亮附近角色与地形。[世界绘制](../core/present/world_canvas.gd) · [角色贴图](../assets/textures/player_canvas_texture.tres)
+`CanvasModulate` 提供环境光，`DirectionalLight2D` 随日月方向变化。玩家的 `CanvasTexture` 使用带有烘焙接触阴影的底色贴图和法线贴图，角色着色器将方向光强度分档。角色双眼共用一盏点光源，随动画帧、朝向和姿态移动，照亮附近角色与地形。[世界绘制](../core/present/world_canvas.gd) · [角色贴图](../assets/textures/player_canvas_texture.tres)
 
-`player_shade.png` 的 B 通道提供接触阴影。修改角色原画或动画帧区域后，用装有 NumPy 和 Pillow 的 Python 运行 `python tools/bake_eye_light.py`，更新底色、双眼光斑和各动画帧的眼睛挂点。[角色光照烘焙](../tools/bake_eye_light.py)
+`player_shade.png` 的蓝色通道存放接触阴影。修改角色贴图或动画帧区域后，可运行 `python tools/bake_eye_light.py` 更新底色、双眼光斑和每个动画帧的眼睛挂点。脚本依赖 NumPy 和 Pillow。[角色光照烘焙](../tools/bake_eye_light.py)
 
 ## CYRM 地图
 
-地图的宽、高、图层内的坐标和点位坐标都以 16×16 像素子格计。七个图层各自使用一个行优先的 `PackedInt32Array`。前三层保存材质和调色，后四层从近到远保存 RGBA 背景。各背景沿两轴循环，镜头绕地图一圈正好滚过该层的一幅图。每场对局从场景层初始化子格耐久，运行时的破坏和回溯独立于编辑文档。[地图结构](../core/sim/cyrm_map.gd) · [材质表](../data/tile_defs.json)
+地图的宽、高、图层内的坐标和点位坐标都以 16×16 像素子格计。每个图层用一个 `PackedInt32Array` 按行存储。前三层保存材质和调色参数，后四层从近到远保存 RGBA 背景。各背景沿两轴循环，摄像机沿地图任一轴绕行一周时，该层图案也循环一次。每场对局从场景层初始化子格耐久度，地形破坏和回溯只更新本场对局的数据。[地图结构](../core/sim/cyrm_map.gd) · [材质表](../data/tile_defs.json)
 
-`CyrmMap.cell_at(map, layer, at)` 返回一个格值。`CyrmMap.write_cells(map, layer, changes)` 按提交顺序把每组 x、y、新值写入图层。编辑器先读取旧值供撤销。画布按修改数组更新材质层的 `TileMapLayer`，颜色层每笔更新一张 RGBA 纹理。笔刷框和拖动预览在独立节点上绘制。[地图接口](../core/sim/cyrm_map.gd) · [编辑器画布](../ui/map_editor/map_edit_canvas.gd)
+`CyrmMap.cell_at(map, layer, at)` 返回指定图层和坐标的子格值。`CyrmMap.write_cells(map, layer, changes)` 按数组顺序批量写入 `(x, y, 新值)`，编辑器在写入前读取旧值以支持撤销。前三层的画布按修改位置更新对应的图块地图层（`TileMapLayer`），背景层每笔更新一张 RGBA 纹理。笔刷框和拖动预览在独立节点上绘制。[地图接口](../core/sim/cyrm_map.gd) · [编辑器画布](../ui/map_editor/map_edit_canvas.gd)
 
 ### 地图文件
 
@@ -22,21 +22,21 @@
 | --- | --- |
 | `size` | 以子格计的宽高，类型为 `Vector2i`，最大为 1600 × 1200。 |
 | `layers` | 依次为前景、场景、后景和背景 1 至 4。前三层的第 12–23 位存材质编号，低 12 位按色相、亮度、饱和度、透明度各占 3 位。四个背景层均存 `0xRRGGBBAA`。 |
-| `points` | 以整数 ID 为键。每项都有 `kind` 和子格坐标 `cell`，复活点另存 `side`，敌人另存 `type`。 |
+| `points` | 以整数 ID 为键。每项都有 `kind` 和子格坐标 `cell`。联机复活点另存 `side`，敌人出生点另存 `type`。 |
 | `notes` | 作者输入的多行字符串。 |
 
 保存时用 `var_to_bytes(map)` 编码整张图，再用 Fast LZMA2 压缩。读入时校验压缩流、解压，用 `bytes_to_var()` 取回字典，并核对图层尺寸和材质。[压缩封装](../native/gns/cyrm_storage.hpp)
 
 ## 出生点
 
-玩家出生点的类型是 `player` 和 `player2`，敌人出生点为 `enemy`。联机开局和复活使用 `respawn`，按 `side` 分组。点位的世界坐标为子格坐标乘以 16。单人地图缺少 `player` 出生点时，取第一个能容纳站立角色的空子格。[点位与寻路](../core/sim/spawn_picker.gd)
+单人开局使用 `player` 出生点。缺少该点时，选用第一个能容纳站立角色的空子格。编辑器还支持标注 `player2`（第二出生点）和 `enemy`（敌人出生点）。联机开局与复活均使用按 `side` 分组的 `respawn`。点位的世界坐标等于子格坐标乘以 16。[点位与寻路](../core/sim/spawn_picker.gd)
 
-联机开局时检查 `respawn` 的格式与坐标。每个点都要有站立空间和脚下支撑，各点须互不重合，且能沿容得下站立角色的空间连通。1v1 每侧至少 1 个点，团队赛每侧至少 5 个点，大乱斗两侧合计至少与本场人数相同。指定地图不合格时会显示原因，随机选图会继续尝试其余地图。[对战选点规则](modes.md) · [地图点位校验](../core/sim/spawn_picker.gd)
+联机开局会校验 `respawn` 的坐标、站立空间和脚下支撑。各点互不重合，并位于同一片可容纳站立角色通行的空间内。1v1 每侧至少有 1 个点，团队赛每侧至少有 5 个点，大乱斗两侧的点数合计应覆盖本场人数。指定地图未通过校验时会显示原因，随机选图会继续尝试其余地图。[对战选点规则](modes.md) · [地图点位校验](../core/sim/spawn_picker.gd)
 
 ## 水体
 
-水体按 16 像素子格采样。`Water` 从当前碰撞包围盒的顶边和底边中点确定头部与脚底位置。脚底浸入至少 8 像素时开始游泳。已经在游泳时，脚底可高出水面 2 像素。水深沿连续水柱向上测量，可以跨地图边界，整列都是水时返回无穷大。
+`Water` 用角色碰撞包围盒的上、下边中点检测头部和脚底所在的 16 像素子格。脚底浸入至少 8 像素时开始游泳，游泳中脚底最多可高出水面 2 像素。入水深度沿连续水柱向上测量，可跨地图边界，整列都是水时返回无穷大。
 
-玩家头部浸水后每秒损失 1 点氧气。头部出水后清空溺水计时，每 0.3 秒恢复 1 点氧气。氧气耗尽后，每浸水 1.5 秒损失 5 点生命值。多人在交战阶段由服务器结算。敌人也受浮力和溺水影响，使用自己的氧气上限和伤害参数。
+玩家头部浸水后每秒损失 1 点氧气。头部出水后清空溺水计时，每 0.3 秒恢复 1 点氧气。氧气耗尽后，每持续浸水 1.5 秒损失 5 点生命值。联机交战阶段的溺水伤害由服务器权威结算。敌人也受浮力和溺水影响，使用自己的氧气上限和伤害参数。
 
-弹丸在水中按 `exp(-drag × delta)` 降低速度。水下目标受到的爆炸伤害和击退速度乘以水材质的衰减系数 0.25。[浸水查询](../core/sim/water.gd) · [玩家状态](../core/sim/actor_body.gd) · [伤害结算](../core/sim/combat_simulator.gd)
+弹丸在水中按 `exp(-drag × delta)` 衰减速度。水下目标受到的爆炸伤害和击退速度乘以水材质的衰减系数，默认水体的系数为 0.25。[浸水查询](../core/sim/water.gd) · [玩家状态](../core/sim/actor_body.gd) · [伤害结算](../core/sim/combat_simulator.gd)

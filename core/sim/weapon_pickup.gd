@@ -5,7 +5,7 @@ const CFG: PlayerConfig = preload("res://core/config/player_config.tres")
 
 enum { POS, VEL, TYPE, LOCKED_ROLE, UNLOCK_TICK, AMMO, GROUNDED, SETTLED }
 const LAYER := 8
-const MASK := CollisionWorld.LAYER_TERRAIN | LAYER
+const MASK := CombatProfiles.Layer.TERRAIN | LAYER
 const WORLD_SCALE := 2.5
 
 var inst: int
@@ -39,7 +39,7 @@ func _init(map: Terrain, id: int, type: int, ammo: int, pos: Vector2, vel: Vecto
 func settle_on_spawn_floor() -> void:
 	var from := transform
 	from.origin.y += (CyrmMap.CELL_SIZE - shape.size.y) * 0.5 - CollisionWorld.MOTION_MARGIN
-	PhysicsServer2D.body_set_collision_mask(rid, CollisionWorld.LAYER_TERRAIN)
+	PhysicsServer2D.body_set_collision_mask(rid, CombatProfiles.Layer.TERRAIN)
 	var hit := CollisionWorld.probe_body(rid, from, Vector2.DOWN * CyrmMap.CELL_SIZE, _motion)
 	PhysicsServer2D.body_set_collision_mask(rid, MASK)
 	if hit and _motion.get_collision_normal().y < -0.5:

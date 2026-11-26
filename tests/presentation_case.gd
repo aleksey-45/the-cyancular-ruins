@@ -36,7 +36,7 @@ func _detached_match() -> void:
 	sim.step({actor.role: _attack(ActorInput.BIT_ATTACK, ActorInput.BIT_ATTACK)})
 	expect(sim.tick == 1 and sim.enemies.size() == enemies.size() and slots == range(slots.size()),
 			"demo builds and steps every enemy in map order without a viewport")
-	var hulls := sim.terrain.physics.shape_overlaps(CollisionWorld.rectangle(Vector2.ONE), actor.transform, CollisionWorld.LAYER_TEAM_A)
+	var hulls := sim.terrain.physics.shape_overlaps(CollisionWorld.rectangle(Vector2.ONE), actor.transform, CombatProfiles.Layer.TEAM_A)
 	expect(hulls.size() == 1 and hulls[0]["collider"] == actor, "a detached player's RID resolves to its model")
 	expect(sim.projectiles.size() == 1, "a detached match resolves player input and spawns a real projectile")
 	sim.close()

@@ -54,8 +54,8 @@ var _palette := TileSet.new()
 var _source_ids: Dictionary[int, int] = {}
 
 func _ready() -> void:
-	for type: String in EnemyType.paths:
-		var enemy: EnemyType = load(EnemyType.paths[type])
+	for type: String in EnemyType.PATHS:
+		var enemy: EnemyType = EnemyType.get_type(type)
 		var clip := &"sleeping" if enemy.frames.has_animation(&"sleeping") else &"sleep"
 		var sprite := enemy.frames.get_frame_texture(clip, 0)
 		_enemy_icons[type] = {"sprite": sprite, "image": sprite.get_image(), "scale": enemy.body_scale}

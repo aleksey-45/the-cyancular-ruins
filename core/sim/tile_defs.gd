@@ -11,6 +11,7 @@ const UNDEFINED := 255
 enum DamageMask { BULLET = 1, EXPLOSION = 2 }
 
 static var _defs: Dictionary = {}
+static var preview := PackedColorArray()
 static var types := PackedByteArray()
 static var hit_points := PackedInt32Array()
 static var damage_masks := PackedByteArray()
@@ -21,15 +22,14 @@ static var decay := PackedFloat64Array()
 static var ledges := PackedInt32Array()
 static var blast_decay: float
 
-static func load_defs() -> void:
-	if not _defs.is_empty():
-		return
+static func _static_init() -> void:
 	_defs = JSON.parse_string(FileAccess.get_file_as_string(PATH))
 	blast_decay = _defs["explosion_decay"]
 	var materials: Dictionary = _defs["tiles"]
 	var count := 1
 	for key in materials:
 		count = maxi(count, int(key) + 1)
+	preview.resize(count)
 	types.resize(count)
 	types.fill(UNDEFINED)
 	types[0] = TYPE_GAS
@@ -44,6 +44,8 @@ static func load_defs() -> void:
 	for key in materials:
 		var texture := int(key)
 		var material: Dictionary = materials[key]
+		var rgb: Array = material["preview"]
+		preview[texture] = Color(rgb[0], rgb[1], rgb[2])
 		types[texture] = kinds[material["type"]]
 		hit_points[texture] = material["hp"]
 		var bullet := DamageMask.BULLET if material["bullet_destroyable"] else 0
@@ -56,12 +58,9 @@ static func load_defs() -> void:
 		ledges[texture] = material.get("collision_ledge", 0)
 
 static func materials() -> Dictionary:
-	load_defs()
 	return _defs["tiles"]
 
 static func has_texture(texture: int) -> bool:
-	if types.is_empty():
-		load_defs()
 	return texture >= 0 and texture < types.size() and types[texture] != UNDEFINED
 
 static func type_id_of(texture: int) -> int:

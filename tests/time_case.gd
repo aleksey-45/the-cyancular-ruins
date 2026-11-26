@@ -68,7 +68,7 @@ func _world_rewind(tree: SceneTree) -> void:
 	expect(not bird.active and bird.collision_layer == 0 and sim.enemies[bird.slot] == bird,
 			"an expired corpse keeps its slot without collision")
 	rewind.rewind(sim, actor, dt / TCFG.REWIND_START_MULT)
-	expect(bird.active and bird.is_dead and bird.corpse_left == remaining and bird.collision_layer == CollisionWorld.LAYER_ENEMY,
+	expect(bird.active and bird.is_dead and bird.corpse_left == remaining and bird.collision_layer == CombatProfiles.Layer.ENEMY,
 			"rewinding into the corpse interval restores collision and its remaining lifetime")
 	rewind.rewind(sim, actor, TCFG.SNAP_SECONDS)
 	expect(bird.active and not bird.is_dead and bird.hp == bird_hp, "rewinding before the kill revives the same slot")

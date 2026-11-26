@@ -12,7 +12,7 @@ enum { TYPE, INST, CARRIED, STRIDE }
 
 var capacity := 8
 var max_weapons := 4
-var enabled_types: Array = WeaponRegistry.all_ids()
+var enabled_types: Array = WeaponRegistry.enabled_ids()
 var equipped: GunBody
 var _slots: Array[PackedInt32Array] = []
 var _next_inst := 1
