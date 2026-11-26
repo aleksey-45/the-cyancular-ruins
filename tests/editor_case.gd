@@ -41,11 +41,11 @@ func _format() -> void:
 	session.open(restored, "")
 	var respawn := {"kind": "respawn", "cell": Vector2i(2, 4), "side": 2}
 	session.commit_point(large_id, respawn)
-	expect(restored.points[large_id] == respawn and session.travel(-1) and restored == map,
+	expect(restored.points[large_id] == respawn and session.undo() and restored == map,
 			"replacing a point's kind and undoing restores the complete document")
-	expect(session.travel(1) and restored.points[large_id] == respawn, "redo replaces the same point ID")
+	expect(session.redo() and restored.points[large_id] == respawn, "redo replaces the same point ID")
 	session.put_notes("first\n\nsecond")
-	expect(session.travel(-1) and restored.notes == notes and session.travel(1) and restored.notes == "first\n\nsecond",
+	expect(session.undo() and restored.notes == notes and session.redo() and restored.notes == "first\n\nsecond",
 			"undo and redo preserve the full notes text")
 	var copy := CyrmMap.read_region(map, CyrmMap.FIRST_BACKGROUND, session.bounds)
 	copy.fill(0)
@@ -75,22 +75,22 @@ func _editing() -> void:
 	s.cells_changed.connect(func(_layer: int, cells: PackedInt32Array) -> void: notifications.append(cells), CONNECT_ONE_SHOT)
 	expect(s.put_cells(sparse) and notifications == [sparse] and CyrmMap.cell_at(s.map, s.layer, Vector2i.ZERO) == leaf
 			and CyrmMap.cell_at(s.map, s.layer, Vector2i(15, 11)) == _stone, "write and forward the submitted order including repeated coordinates and equal values")
-	expect(s.travel(-1) and not s.dirty() and CyrmMap.cell_at(s.map, s.layer, Vector2i.ZERO) == 0
+	expect(s.undo() and not s.dirty() and CyrmMap.cell_at(s.map, s.layer, Vector2i.ZERO) == 0
 			and CyrmMap.cell_at(s.map, s.layer, Vector2i(15, 11)) == 0, "undo restores both cells to their values before the stroke")
-	expect(s.travel(1) and CyrmMap.cell_at(s.map, s.layer, Vector2i.ZERO) == leaf and CyrmMap.cell_at(s.map, s.layer, Vector2i(15, 11)) == _stone, "redo restores the last value submitted at each coordinate")
-	s.travel(-1)
-	expect(s.put_cells([0, 0, 0]) and s.dirty() and s.travel(-1) and not s.dirty(), "a same-value submission has its own undo step")
+	expect(s.redo() and CyrmMap.cell_at(s.map, s.layer, Vector2i.ZERO) == leaf and CyrmMap.cell_at(s.map, s.layer, Vector2i(15, 11)) == _stone, "redo restores the last value submitted at each coordinate")
+	s.undo()
+	expect(s.put_cells([0, 0, 0]) and s.dirty() and s.undo() and not s.dirty(), "a same-value submission has its own undo step")
 	var brush := MapBrush.new()
 	brush.material_id = 7
 	brush.width = 5
 	expect(brush.stroke([Vector2i.ZERO], s) and s._undo.back().cost == 9 * 12
 			and s.map.layers[s.layer].count(_stone) == 9, "a five-cell brush at the corner submits just the 3x3 cells inside the map")
-	s.travel(-1)
+	s.undo()
 	brush.width = 1
 	brush.outline = true
 	var rect: Array[Vector2i] = [Vector2i(2, 2), Vector2i(5, 5)]
 	expect(brush.stroke(rect, s, "rect") and CyrmMap.read_region(s.map, 1, Rect2i(2, 2, 4, 4)).count(_stone) == 12, "outlined rectangle leaves interior empty")
-	s.travel(-1)
+	s.undo()
 	var area := Rect2i(2, 2, 4, 4)
 	expect(brush.stroke(rect, s, "line") and CyrmMap.read_region(s.map, 1, area).count(_stone) == 4, "diagonal line covers endpoints")
 	var before := CyrmMap.read_region(s.map, 1, area)
@@ -105,8 +105,8 @@ func _editing() -> void:
 	expected[5] = CyrmMap.tile_value(15, brush.tint)
 	expected[15] = expected[0]
 	expect(brush.stroke(rect, s) and CyrmMap.read_region(s.map, 1, area) == expected, "one tint-only stroke preserves stone, leaves and air even with air selected")
-	expect(s.travel(-1) and CyrmMap.read_region(s.map, 1, area) == before, "one undo restores the whole mixed-material stroke")
-	expect(s.travel(1) and CyrmMap.read_region(s.map, 1, area) == expected, "redo restores all four tint channels")
+	expect(s.undo() and CyrmMap.read_region(s.map, 1, area) == before, "one undo restores the whole mixed-material stroke")
+	expect(s.redo() and CyrmMap.read_region(s.map, 1, area) == expected, "redo restores all four tint channels")
 	var reopened: Dictionary = CyrmMap.from_bytes(CyrmMap.to_bytes(s.map))
 	expect(CyrmMap.read_region(reopened, 1, area) == expected, "the mixed-material stroke survives a CYRM round trip")
 	brush.sample(s, Vector2i(3, 3))
@@ -119,18 +119,18 @@ func _editing() -> void:
 	brush.tint_only = false
 	var path: Array[Vector2i] = [Vector2i(1, 1), Vector2i(5, 1), Vector2i(1, 1)]
 	expect(brush.stroke(path, s), "freehand stroke commits")
-	expect(s.travel(-1) and not s.dirty() and not s.travel(-1), "self-overlapping stroke is one undo")
-	expect(s.travel(1) and s.dirty(), "redo restores the stroke")
+	expect(s.undo() and not s.dirty() and not s.undo(), "self-overlapping stroke is one undo")
+	expect(s.redo() and s.dirty(), "redo restores the stroke")
 	s.mark_saved(s.path)
 	s.selection = Rect2i(1, 1, 5, 1)
 	expect(s.copy_selection(), "copy selected subcells")
 	expect(s.move_selection(Vector2i(2, 0)), "move overlapping selection")
 	expect(CyrmMap.read_region(s.map, 1, Rect2i(3, 1, 5, 1)).count(_stone) == 5, "overlapping move reads original values")
-	s.travel(-1)
+	s.undo()
 	expect(not s.dirty(), "undo to save point clears dirty state")
 	expect(s.paste(Vector2i(14, 3)), "paste clips at map edge")
 	expect(CyrmMap.read_region(s.map, 1, Rect2i(14, 3, 2, 1)).count(_stone) == 2, "clipped clipboard dimensions")
-	expect(not s.travel(1), "new edit discards redo branch")
+	expect(not s.redo(), "new edit discards redo branch")
 	var selection_before := s.selection
 	s.locked[s.layer] = true
 	expect(not s.paste(Vector2i.ZERO) and s.selection == selection_before, "a locked paste preserves the selection")
@@ -159,12 +159,12 @@ func _editing() -> void:
 	s.locked[s.layer] = false
 	s.copy_selection()
 	s.layer = CyrmMap.FIRST_BACKGROUND
-	expect(s.paste(Vector2i.ZERO) and s.travel(-1) and CyrmMap.cell_at(s.map, s.layer, Vector2i.ZERO) == 0
+	expect(s.paste(Vector2i.ZERO) and s.undo() and CyrmMap.cell_at(s.map, s.layer, Vector2i.ZERO) == 0
 			and CyrmMap.cell_at(s.map, CyrmMap.LAYER_COUNT - 1, Vector2i(0, 4)) == -1, "copy between backgrounds and undo only on the destination")
 	var enemy := s.place_point({"kind": "enemy", "cell": Vector2i(3, 2), "type": "jump_bird"})
 	s.resize_map(Vector2i(2, 2))
 	expect(not s.map.points.has(enemy), "shrink drops cropped point")
-	s.travel(-1)
+	s.undo()
 	expect(s.map.size == Vector2i(16, 12) and s.map.points[enemy].cell == Vector2i(3, 2), "undo resize restores the same point and dimensions")
 
 	s.open(CyrmMap.create(Vector2i(2, 1)), "")
@@ -172,7 +172,7 @@ func _editing() -> void:
 		s.place_point({"kind": "player", "cell": Vector2i(i % 2, 0)})
 	var point_bytes := MapEditSession.POINT_EDIT_BYTES
 	expect(s._undo.size() == 200 and s._bytes == 200 * point_bytes, "trimming point history deducts the evicted edit")
-	expect(s.travel(-1) and s._bytes == 199 * point_bytes and s.travel(1) and s._bytes == 200 * point_bytes,
+	expect(s.undo() and s._bytes == 199 * point_bytes and s.redo() and s._bytes == 200 * point_bytes,
 			"point undo and redo deduct and restore the fixed byte estimate")
 
 func _bucket_history() -> void:
@@ -189,7 +189,7 @@ func _bucket_history() -> void:
 		brush.bucket(single, s)
 	expect(changed.size() == 9 and changed.count(PackedInt32Array([single.x, single.y, _stone])) == 4
 			and changed.count(PackedInt32Array([single.x, single.y, CyrmMap.tile_value(15)])) == 5, "nine isolated fills report only their changed cell and its new value")
-	for i in 9: s.travel(-1)
+	for i in 9: s.undo()
 	expect(not s.dirty() and CyrmMap.cell_at(s.map, s.layer, single) == _stone, "all nine single-cell fills fit in undo history")
 
 	s.open(CyrmMap.create(Vector2i(24, 16)), "")
@@ -204,7 +204,7 @@ func _bucket_history() -> void:
 	changed.clear()
 	brush.bucket(area.position, s)
 	expect(changed.size() == 1 and changed[0].size() == 9 and CyrmMap.read_region(s.map, s.layer, area) == after, "offset L-shaped fill reports three changed cells and preserves the hole and the disconnected tile")
-	expect(s.travel(-1) and CyrmMap.read_region(s.map, s.layer, area) == before and s.travel(1) and CyrmMap.read_region(s.map, s.layer, area) == after, "undo and redo replay the cropped fill as one edit")
+	expect(s.undo() and CyrmMap.read_region(s.map, s.layer, area) == before and s.redo() and CyrmMap.read_region(s.map, s.layer, area) == after, "undo and redo replay the cropped fill as one edit")
 
 func _mouse(canvas: MapEditCanvas, cell: Vector2i, down: bool, button := MOUSE_BUTTON_LEFT, modifiers := 0, twice := false) -> void:
 	var event := InputEventMouseButton.new()
@@ -254,7 +254,7 @@ func _canvas_display(tree: SceneTree, editor: MapEditor) -> void:
 	CyrmMap.write_cells(map, CyrmMap.BACK, [1, 2, tinted])
 	editor._files.open_document(map, "")
 	var stroke := PackedInt32Array([0, 0, 1, 65, 66, tinted, 0, 0, _stone, 32, 32, 0])
-	for apply: Callable in [s.put_cells.bind(stroke), s.travel.bind(-1), s.travel.bind(1)]:
+	for apply: Callable in [s.put_cells.bind(stroke), s.undo, s.redo]:
 		expect(apply.call(), "write, undo and redo submit the same stroke to the display")
 		var present := CyrmMap.cell_at(map, s.layer, Vector2i.ZERO) == _stone
 		var tiles := c._tiles[s.layer]
@@ -270,7 +270,7 @@ func _canvas_display(tree: SceneTree, editor: MapEditor) -> void:
 					and is_equal_approx(tiles.get_cell_tile_data(cell).modulate.a, 3.0 / 7.0), "material phase and tint opacity reach the tile")
 	if DisplayServer.get_name() != "headless":
 		s.layer = CyrmMap.LAYER_COUNT - 1
-		for apply: Callable in [s.put_cells.bind(PackedInt32Array([3, 2, 0xeb286600, 4, 2, 0x12a8c4ad])), s.travel.bind(-1), s.travel.bind(1)]:
+		for apply: Callable in [s.put_cells.bind(PackedInt32Array([3, 2, 0xeb286600, 4, 2, 0x12a8c4ad])), s.undo, s.redo]:
 			expect(apply.call(), "color edit or history step commits")
 			await RenderingServer.frame_post_draw
 			var bytes := (c.planes[s.layer] as Sprite2D).texture.get_image().get_data()
@@ -737,8 +737,8 @@ func _workflow(tree: SceneTree) -> void:
 	expect(not time.editable and editor.canvas.preview_minute < 0.0, "returning to paint restores unlit colors")
 	expect(s.selection == step and s.revision == revision and editor.canvas.zoom == 13 and editor.canvas.origin == Vector2(91, 33), "return preserves view, selection and history")
 	expect(Settings.sp_map_path == settings_path and FileAccess.get_file_as_bytes(path) == old_bytes, "trial preserves saved map and normal launch preference")
-	expect(s.travel(-1) and not s.dirty(), "step can still be undone after trial")
-	s.travel(1)
+	expect(s.undo() and not s.dirty(), "step can still be undone after trial")
+	s.redo()
 	editor._choose_tool("brush")
 	var width: SpinBox = editor._inspector.param_rows.width.get_child(1)
 	width.get_line_edit().grab_focus()

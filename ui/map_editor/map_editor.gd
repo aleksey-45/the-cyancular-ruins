@@ -238,7 +238,8 @@ func _reflect_ink() -> void:
 
 func _travel(direction: int) -> void:
 	canvas.cancel()
-	session.travel(direction)
+	if direction < 0: session.undo()
+	else: session.redo()
 
 func _cut() -> void:
 	if not session.locked[session.layer] and session.copy_selection(): session.clear_selection()

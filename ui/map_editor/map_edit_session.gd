@@ -73,9 +73,9 @@ func mark_saved(filename: String) -> void:
 	changed.emit()
 
 # 撤销和重做记录分别保存下一次操作要恢复的内容和修订号。
-func _record(edit: Dictionary, direction: int) -> void:
+func _record(inverse: Callable, cost: int, direction: int) -> void:
+	var edit := {"apply": inverse, "cost": cost, "revision": revision}
 	var undoing := direction < 0
-	edit.revision = revision
 	if direction == 0:
 		_redo.clear()
 		_serial += 1
@@ -85,23 +85,28 @@ func _record(edit: Dictionary, direction: int) -> void:
 		revision = source.pop_back().revision
 	var destination := _redo if undoing else _undo
 	destination.append(edit)
-	var cost: int = edit.get("cost", POINT_EDIT_BYTES)
 	_bytes += -cost if undoing else cost
 	while _undo.size() > 1 and (_undo.size() > 200 or _bytes > 64 * 1024 * 1024):
-		_bytes -= int(_undo.pop_front().get("cost", POINT_EDIT_BYTES))
+		_bytes -= int(_undo.pop_front().cost)
 
-func travel(direction: int) -> bool:
-	var source := _undo if direction < 0 else _redo
-	if absi(direction) != 1 or source.is_empty(): return false
-	var edit: Dictionary = source.back()
-	if edit.has("layer"): return put_cells(edit.value, edit.layer, direction)
-	if edit.has("point_id"): return commit_point(edit.point_id, edit.value, direction) >= 0
-	if edit.value is Dictionary: return _replace_map(edit.value, direction)
-	put_notes(edit.value, direction)
+func undo() -> bool:
+	return _replay(_undo, -1)
+
+func redo() -> bool:
+	return _replay(_redo, 1)
+
+func _replay(history: Array[Dictionary], direction: int) -> bool:
+	if history.is_empty(): return false
+	var apply: Callable = history.back().apply
+	apply.call(direction)
 	return true
 
-func put_cells(changes: PackedInt32Array, target_layer := layer, direction := 0) -> bool:
-	if changes.is_empty() or (direction == 0 and locked[target_layer]): return false
+func put_cells(changes: PackedInt32Array, target_layer := layer) -> bool:
+	if changes.is_empty() or locked[target_layer]: return false
+	_put_cells(0, changes, target_layer)
+	return true
+
+func _put_cells(direction: int, changes: PackedInt32Array, target_layer: int) -> void:
 	# 写入前读取所有旧值，确保重复修改的子格也能恢复到本次操作前的状态。
 	var previous := changes.duplicate()
 	var cells: PackedInt32Array = map.layers[target_layer]
@@ -109,10 +114,9 @@ func put_cells(changes: PackedInt32Array, target_layer := layer, direction := 0)
 	for i in range(0, changes.size(), 3):
 		previous[i + 2] = cells[changes[i + 1] * width + changes[i]]
 	CyrmMap.write_cells(map, target_layer, changes)
-	_record({"layer": target_layer, "value": previous, "cost": changes.size() * 4}, direction)
+	_record(_put_cells.bind(previous, target_layer), changes.size() * 4, direction)
 	cells_changed.emit(target_layer, changes)
 	changed.emit()
-	return true
 
 func selected_point() -> Dictionary:
 	return map.points.get(selected_point_id, {})
@@ -130,19 +134,22 @@ func point_ids() -> Array[int]:
 func dragged_point_cell(cell: Vector2i, from_subcell: Vector2i, to_subcell: Vector2i) -> Vector2i:
 	return (cell + to_subcell - from_subcell).clamp(Vector2i.ZERO, map.size - Vector2i.ONE)
 
-func commit_point(id: int, target: Variant, direction := 0) -> int:
+func commit_point(id: int, target: Variant) -> int:
 	if id < 0: return -1
+	_put_point(0, id, target)
+	return id
+
+func _put_point(direction: int, id: int, target: Variant) -> void:
 	var previous: Dictionary = map.points.get(id, {})
 	var row: Dictionary = previous.merged({"cell": target}, true) if target is Vector2i else target
-	if previous == row: return id
+	if previous == row: return
 	if row.is_empty(): map.points.erase(id)
 	else: map.points[id] = row
-	_record({"point_id": id, "value": previous}, direction)
+	_record(_put_point.bind(id, previous), POINT_EDIT_BYTES, direction)
 	_next_point_id = maxi(_next_point_id, id + 1)
 	if previous.is_empty() or row.is_empty(): selected_point_id = -1
 	points_changed.emit(id if previous.get("kind") == row.get("kind") else -1)
 	changed.emit()
-	return id
 
 func place_point(row: Dictionary) -> int:
 	if row.kind in ["player", "player2"]:
@@ -150,22 +157,27 @@ func place_point(row: Dictionary) -> int:
 		if id >= 0: return commit_point(id, row)
 	return commit_point(_next_point_id, row)
 
-func put_notes(text: String, direction := 0) -> void:
+func put_notes(text: String) -> void:
+	_put_notes(0, text)
+
+func _put_notes(direction: int, text: String) -> void:
 	if text == map.notes: return
 	var previous: String = map.notes
 	map.notes = text
-	_record({"value": previous, "cost": maxi(text.length(), previous.length()) * 4}, direction)
+	_record(_put_notes.bind(previous), maxi(text.length(), previous.length()) * 4, direction)
 	changed.emit()
 
 func resize_map(dimensions: Vector2i) -> bool:
-	return dimensions != map.size and _replace_map(CyrmMap.resized(map, dimensions))
-
-func _replace_map(document: Dictionary, direction := 0) -> bool:
+	if dimensions == map.size: return false
+	var document := CyrmMap.resized(map, dimensions)
 	if document.is_empty(): return false
-	var cost := maxi(map.layers[0].size(), document.layers[0].size()) * CyrmMap.LAYER_COUNT * 4
-	_record({"value": map, "cost": cost}, direction)
-	_set_map(document, map.points.size() != document.points.size())
+	_replace_map(0, document)
 	return true
+
+func _replace_map(direction: int, document: Dictionary) -> void:
+	var cost := maxi(map.layers[0].size(), document.layers[0].size()) * CyrmMap.LAYER_COUNT * 4
+	_record(_replace_map.bind(map), cost, direction)
+	_set_map(document, map.points.size() != document.points.size())
 
 func _region_cells(area: Rect2i, pixels: PackedInt32Array = map.layers[layer], source: Rect2i = bounds) -> PackedInt32Array:
 	var changes := cell_buffer(area.get_area())
@@ -220,6 +232,6 @@ func move_selection(offset: Vector2i) -> bool:
 		changes[i] += offset.x
 		changes[i + 1] += offset.y
 		if not dest.has_point(cell): CyrmMap.append_cell(changes, cell.x, cell.y, 0)
-	if not put_cells(changes): return false
+	put_cells(changes)
 	selection = dest
 	return true
