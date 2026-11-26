@@ -1,16 +1,7 @@
 class_name LobbyView
 extends Control
 
-# 联机大厅视图(设计系统 v2):全部由容器 + UiKit/UiDesign token 构建,无绝对坐标、无手写 StyleBox、无 Color 字面量。
-# 版式 = UiKit.page(Margin SP_6 → VBox SP_5)
-#   标题(HeaderStrip) / 说明 / 工具栏(Bar:昵称 + 房间号 + 加入 + 创建)
-#   / 筛选行(4 个 toggle) / 房间卡片列表(Card → ScrollContainer → LobbyRoomCard,空态覆盖)
-#   / 状态条(StatusBar:状态文本 + 返回主菜单)
-# 弹层 = 全屏 CenterContainer 居中的面板:
-#   建房 = LobbyCreatePanel(自行套 v2 皮,本文件只负责显隐 + 遮罩)、
-#   等待室 = LobbyWaitPanel(同上)、加入房间 = 本文件用 UiDesign.skin_menu_panel 自建的小对话框。
-# ★ 保留 siri 的 LAN 契约与全部对外 signal(join_requested 带 endpoint)、mount / present_rooms /
-#   set_status / select_filter / show_wait / close_create 入口;行为与迁移前等价。
+# 联机大厅视图。点击局域网房间卡片时，通过信号把房间号与主机端点交给控制器。
 
 signal nickname_changed(text: String)
 signal filter_changed(mode: String)
@@ -31,16 +22,13 @@ const FILTERS := [
 	[PvpSession.MODE_TEAM, "团队对抗"],
 	[PvpSession.MODE_ROYALE, "大乱斗"],
 ]
-# 团队/大乱斗筛选的文字色(调色板单一来源 = UiDesign;其余筛选走 Theme 默认色)。
 const FILTER_COLORS := {
 	PvpSession.MODE_TEAM: UiDesign.C_MODE_TEAM,
 	PvpSession.MODE_ROYALE: UiDesign.C_MODE_ROYALE,
 }
-# 房间号输入框下限:6 个 H2 字宽(32 × 6 = 192,够放 8 位数字 + 内边距;内容驱动下限)。
+# 房间号输入框为 8 位数字和内边距预留空间。
 const CODE_MIN_UNITS := 6
-# 建房弹层的压暗量:0.55 与迁移前一致(颜色取 token,alpha 是本页版式参数,同 match_result)。
 const DIM_ALPHA := 0.55
-# 加入房间对话框的内容下限宽度:SP_10 × 6 = 480(内容驱动,不写固定 rect)。
 const JOIN_MIN_W := UiDesign.SP_10 * 6
 # 大厅内容区宽度上限为 1472 像素。在 1920 像素的逻辑视口中居中时，两侧各留 224 像素。
 const PAGE_MAX_W := 1472
@@ -73,7 +61,7 @@ func mount(nickname: String, prefs: Dictionary) -> void:
 	_build_overlays(prefs)
 
 
-## 用当前发现的房间重建卡片列表;筛选在视图内完成。
+## 重建符合当前筛选条件的已发现房间列表。
 func present_rooms(rooms: Array[Dictionary]) -> void:
 	_rooms.clear()
 	for room in rooms:
@@ -104,7 +92,6 @@ func show_wait(room: Dictionary) -> void:
 	_display_code(room.get("code", ""))
 
 
-## 收起等待室(等价于 show_wait({}));保留独立入口便于外部显式关闭。
 func close_wait() -> void:
 	show_wait({})
 
@@ -207,7 +194,7 @@ func _build_filters(page: VBoxContainer) -> void:
 		button.button_group = group
 		button.custom_minimum_size = Vector2(UiDesign.SP_10 * 3, UiDesign.SP_9)
 		if FILTER_COLORS.has(mode):
-			# 模式色 = 调色板 token(选中/悬停也保持模式色,同迁移前 TeamFilter/RoyaleFilter 的语义)。
+			# 团队和大乱斗筛选项在选中或悬停时也使用各自的颜色。
 			button.add_theme_color_override("font_color", FILTER_COLORS[mode])
 			button.add_theme_color_override("font_pressed_color", FILTER_COLORS[mode])
 			button.add_theme_color_override("font_hover_color", FILTER_COLORS[mode])
@@ -236,7 +223,7 @@ func _build_browser(page: VBoxContainer) -> void:
 	_list.add_theme_constant_override("separation", UiDesign.SP_3)
 	_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_scroll.add_child(_list)
-	# 首帧(第一次 present_rooms 之前)只有空态:列表先收起,避免空 Scroll 与空态同显。
+	# 首次收到房间列表前只显示空列表提示。
 	_scroll.visible = false
 
 	_empty = UiDesign.ui_label("暂无房间（可输入房码加入）", "dim")
@@ -309,7 +296,6 @@ func _overlay_center(layer_name: String) -> CenterContainer:
 	return center
 
 
-# 手输房号加入的小对话框(迁移前用 UiFactory.framed + 固定 rect;现在 PanelCarved + CenterContainer)。
 func _build_join() -> void:
 	_join = PanelContainer.new()
 	_join.name = "JoinDialog"

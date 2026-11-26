@@ -57,7 +57,7 @@ static func respawn_cells(map: Dictionary) -> Dictionary:
 		if point.kind == "respawn": sides[point.side].append(point.cell)
 	return sides
 
-## 合格出生点能容纳的开局人数。零表示该模式无法开局。
+## 根据合格的联机复活点计算开局人数上限。零表示该模式无法开局。
 static func player_limit(sides: Dictionary, mode: String, options := {}) -> int:
 	var a: int = sides[1].size()
 	var b: int = sides[2].size()
@@ -67,7 +67,7 @@ static func player_limit(sides: Dictionary, mode: String, options := {}) -> int:
 	var per_side := TeamRules.MAX_TEAM if mode == WorldSpec.TEAM else 1
 	return limit if mini(a, b) >= per_side else 0
 
-## 联机共用地图标注的出生点，开局时检查净空、支撑及连通性。
+## 联机开局校验地图标注的复活点，包括净空、支撑和连通性。
 static func validate_multiplayer_spawns(map: Dictionary) -> String:
 	TileDefs.load_defs()
 	var descriptors: PackedInt32Array = map.layers[CyrmMap.SCENE]

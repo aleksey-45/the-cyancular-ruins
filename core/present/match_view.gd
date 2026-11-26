@@ -219,9 +219,6 @@ func _mount_watch(clock: MatchFrame.Clock) -> void:
 	watch.position = Vector2(24, 124)
 	_hud.add_child(watch)
 	var solo := _mode == MatchFrame.Mode.SOLO
-	# 时间模式符号(◁◁/▶▶)只用 v2 的 UiDesign.label + 字号 token,不再走旧 UiFactory:
-	# 32×2=64(单人中央巨字)/ T_H1=48(联机顶部),两者都在像素字体 16 倍数网格上。
-	# 不新增 TimeSymbolHud 文件:本符号只有"文字 + 颜色 + 呼吸透明度"三件事,再包一层组件没有收益。
 	_symbol = UiDesign.label("◁ ◁", UiDesign.T_H2 * 2 if solo else UiDesign.T_H1,
 			TIME_REWIND if solo else UiDesign.C_TEXT)
 	_symbol.set_anchors_preset(Control.PRESET_CENTER if solo else Control.PRESET_CENTER_TOP)

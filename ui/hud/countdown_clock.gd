@@ -1,11 +1,7 @@
 class_name CountdownClock
 extends RefCounted
 
-# 开局倒计时走秒器(纯逻辑,不碰 UI/节点):接口与 main 的 countdown_clock.gd 逐字一致,
-# 供 Broadcast 一类宿主复制计数逻辑时直接 new + tick。三条硬规则:
-#   · 重复 start 只采纳**更短**的剩余、绝不回拨(服务器 0.5s 重播当前剩余,数字单调不增);
-#   · 显示 ceil(剩余) 且钳到至少 1 ⇒ 3→2→1 一个不落;
-#   · 停表(tick 到 <=0)只发一次 TICK_FINISHED,之后是 TICK_IDLE。
+# 开局倒计时收到新的剩余时间时取较小值，避免服务器重复通知使显示数字回跳。
 
 const TICK_IDLE := 0
 const TICK_RUNNING := 1

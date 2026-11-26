@@ -1,9 +1,7 @@
 class_name Minimap
 extends CanvasLayer
 
-# 右下角圆形小地图。玩家位于小地图中央；可见范围跨过地图边缘时背景接着显示另一侧瓦片，
-# 玩家标记取跨地图边缘的最短偏移，只绘制落在圆内的标记。
-# ★ HUD 坐标纪律：位置只用 anchors + UiDesign.MARGIN / SP_* 表达，不再从 1920×1440 反推圆心。
+# 圆形小地图以本地玩家为中心。跨过地图边缘时连续显示另一侧地形，玩家标记也取跨边界的最短偏移。
 
 const RADIUS_PX := 140.0     # 小地图在 HUD 上的半径，单位为像素。
 const RANGE_CELLS := 200.0   # 从玩家位置向外显示的子格数。
@@ -12,7 +10,6 @@ const EDGE := float(UiDesign.MARGIN)                             # 屏幕右边�
 const EDGE_BOTTOM := float(UiDesign.MARGIN + UiDesign.SP_8)      # 底部再让出延迟读数的高度。
 const RING_PX := 4.0
 
-# 地形底色也由 v2 调色板派生（颜色定义只住 UiDesign，本文件不写 Color 字面量）。
 const TILE_EMPTY_ALPHA := 0.55
 const TILE_LIQUID_ALPHA := 0.85
 const TILE_SOLID_ALPHA := 0.95
@@ -29,7 +26,7 @@ func _init(map: Dictionary) -> void:
 
 func _ready() -> void:
 	layer = 131
-	# 小地图可能先于其它世界绘制建出来：材质表按需加载，避免 is_liquid 读到空表。
+	# 小地图可能先于世界画布创建，先加载材质表供地形着色使用。
 	TileDefs.load_defs()
 	var cells: PackedInt32Array = _map.layers[CyrmMap.SCENE]
 	var cols: int = _map.size.x
@@ -58,7 +55,6 @@ func _ready() -> void:
 	_mat.set_shader_parameter("radius", RADIUS_PX)
 	_mat.set_shader_parameter("ring", RING_PX)
 
-	# 右下角：锚 bottom-right，位置只由 MARGIN/SP_* token 与固定像素半径决定。
 	_view = ColorRect.new()
 	_view.name = "Circle"
 	_view.material = _mat
@@ -73,7 +69,7 @@ func _ready() -> void:
 	_view.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_view)
 
-	# 标记层铺满视口，按自身中心绘制（锚点解析后即小地图圆心），不再持有绝对圆心常量。
+	# 玩家标记的偏移以小地图圆心为参考。
 	_dots = Dots.new()
 	_dots.name = "Markers"
 	add_child(_dots)
@@ -86,7 +82,6 @@ func present(frame: MatchFrame) -> void:
 	if frame.actors.is_empty():
 		_dots.queue_redraw()
 		return
-	# 本地玩家永远在圆心；其余标记只保留落进圆内的。
 	_dots.markers.append([Vector2.ZERO, frame.actors[0].name_color(frame.mode)])
 	if frame.radar_players:
 		for i in range(1, frame.actors.size()):
@@ -98,7 +93,6 @@ func present(frame: MatchFrame) -> void:
 	_dots.queue_redraw()
 
 
-# 圆内标记层：自己绘制在控件中心，标记偏移以圆心为参考。
 class Dots extends Control:
 	const DOT_PX := 8.0
 	const RING_SELF_PX := 4.0
@@ -117,7 +111,7 @@ class Dots extends Control:
 
 	func _draw() -> void:
 		var center := size * 0.5
-		# 本地玩家：先画一圈白描边，再让彩色标记压在上面（绘制顺序 = 后画在上）。
+		# 白色外圈用于识别本地玩家。
 		draw_rect(Rect2(center - Vector2.ONE * (DOT_PX * 0.5 + RING_SELF_PX),
 				Vector2.ONE * (DOT_PX + 2.0 * RING_SELF_PX)), Color.WHITE)
 		for marker in markers:

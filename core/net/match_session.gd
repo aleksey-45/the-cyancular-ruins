@@ -134,7 +134,7 @@ func predict(record: Array) -> Dictionary:
 	_advance_prediction(_clock.advance(ActorStep.DT, world.tick, limit))
 	return view()
 
-## 采用可用快照并重放旧输入，再由调用者绑定本步的新输入。
+## 处理可用的权威快照。校正需要回滚时，恢复权威状态并重放未确认的输入。
 func reconcile(ping_ms: int) -> Dictionary:
 	replay_ticks = 0
 	var anchor := _take_anchor()

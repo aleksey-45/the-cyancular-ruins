@@ -1,10 +1,7 @@
 class_name EnemyHpBar
 extends Node2D
 
-# 敌人头顶血条(世界坐标自绘):深色底槽 + 按比例填充。接口与 main 的 enemy_hp_bar.gd 一致 ——
-# 宿主(副本/分身表现层)设 `ratio` 即可,本类自己 queue_redraw。
-# 自绘控件(画布例外):几何常量留在局部空间;颜色取 v2 token —— 旧版绿/红改为与 HUD 同源的
-# 「强调青常态 / 危险红残血」,低血阈值与 main 相同(25%)。
+# 敌人头顶的血条使用世界坐标绘制，生命值低于 25% 时转为红色。
 
 const SIZE := Vector2(84, 9)
 const LOW_RATIO := 0.25

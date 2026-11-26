@@ -1,11 +1,10 @@
 class_name WeaponSlots
 extends Control
 
-# 左下角容量格子（4×2，三态色）。布局由 HUD 的容器驱动；本控件只按布局数据自绘格子，
-# 颜色全部引用 UI 设计系统 v2 的 UiDesign slot token（不写 Color 字面量）。
+# 按背包容量和武器占格数绘制容量格。
 
 const COLS := 4
-const CELL := 22.0       # 格子边长（设计像素档；4×2 布局与格子大小不 token 化）
+const CELL := 22.0
 const GAP := 3.0         # 格子间距
 const PAD := 6.0         # 面板四周留白
 const PANEL_W := COLS * CELL + (COLS - 1) * GAP + PAD * 2.0

@@ -1,6 +1,6 @@
 # 渲染
 
-单人和对战使用 Godot 的 Mobile 渲染方法和 1920×1440 逻辑视口。`MatchController` 用 `MatchSampler` 对本地模拟与服务器状态采样，再由 `MatchPresenter` 组装 `MatchFrame`。两个对局场景都实例化同一棵视图子树，其中声明了世界视口、摄像机、地形、画布、后期处理、HUD 和暂停菜单。`MatchView` 将帧数据交给这些节点。场景树独立推进受击反馈、后期效果和联机倒计时，单人暂停或联机断线期间这些效果仍可更新。[对局控制器](../scenes/match_controller.gd) · [表现数据组装](../core/present/match_presenter.gd) · [对局场景](../scenes/match_view.tscn) · [视图更新](../core/present/match_view.gd)
+单人和对战使用 Godot 的 Mobile 渲染方法和 1920×1440 逻辑视口。`MatchController` 用 `MatchSampler` 对本地模拟与服务器状态采样，再由 `MatchPresenter` 组装 `MatchFrame`。单人和联机对局共用 `MatchView`，由它更新世界画面、后期效果和 HUD。场景树独立推进受击反馈、后期效果和联机倒计时，单人暂停或联机断线期间这些效果仍可更新。[对局控制器](../scenes/match_controller.gd) · [表现数据组装](../core/present/match_presenter.gd) · [对局场景](../scenes/match_view.tscn) · [视图更新](../core/present/match_view.gd)
 
 `WorldView` 根据角色动作与受击状态选择动画，计算武器和特效的显示位置。`WorldCanvas` 批量绘制角色、武器、掉落物、弹丸和残影的贴图，也绘制光束、弹道线、伤害数字、名牌和生命条。控制器按武器发射位置与弹道参数计算瞄准辅助线。爆炸碎屑根据引爆位置附近的地形生成。[世界视图](../core/present/world_view.gd) · [世界画布](../core/present/world_canvas.gd)
 
@@ -18,7 +18,7 @@
 
 `TerrainAtlas` 根据地图纹理和色彩参数生成墙体及水体图集。`TerrainView` 绘制场景层，在地图边缘覆盖半个视野加 512 世界像素，并按子格更新被破坏或恢复的墙体。水面按色彩参数分批，顶点着色器根据关卡传入的时间改变波形。[地形图集](../core/present/terrain_atlas.gd) · [地形视图](../core/present/terrain_view.gd) · [水面](../core/present/water_surface_batch.gd)
 
-对局默认以 1.00× 显示 1920×1440 世界像素的矩形视野，窗口等比缩放。按 `Delete` 切换鱼眼畸变。后期处理读取世界视口纹理，添加受击时的红色闪光、低生命值暗角和时间技能滤镜。HUD 绘制在后期处理图层之上。主菜单按 `newfactory` 场景层的子格索引取样瓦片纹理，脚本更新视野中心与旋转角度，着色器处理鱼眼畸变、模糊和色差。[后期处理](../core/present/post_process.gd) · [主菜单背景](../core/present/menu_background.gd)
+对局默认以 1.00× 显示 1920×1440 世界像素的矩形视野，窗口等比缩放。按 `Delete` 切换鱼眼畸变。后期处理读取世界视口纹理，添加受击时的红色闪光、低生命值暗角和时间技能滤镜。HUD 绘制在后期处理层上方，避免界面文字和图标受畸变与时间技能滤镜影响。主菜单按 `newfactory` 场景层的子格索引取样瓦片纹理，脚本更新视野中心与旋转角度，着色器处理鱼眼畸变、模糊和色差。[后期处理](../core/present/post_process.gd) · [主菜单背景](../core/present/menu_background.gd)
 
 ## 单人片头
 

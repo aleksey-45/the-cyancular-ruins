@@ -13,7 +13,6 @@ const ENEMY_CLIPS := [&"sleeping", &"fall_asleep", &"wake_up", &"jump", &"dashin
 const PLAYER_GLOW := Color(0.30, 0.62, 1.0)
 const ENEMY_GLOW := Color(1.0, 0.94, 0.86)
 const ELITE_GLOW := Color(2.0, 1.64, 0.12)
-# 残影规则(挤压参数不在这里:走 SquashTracker + PlayerConfig/EnemyConfig)。
 const DASH_GHOST_INTERVAL := 0.03
 const DASH_GHOST_LIFE := 0.20
 const HASTE_GHOST_INTERVAL := 0.03
@@ -36,17 +35,14 @@ const SPLASH := {"life": 0.4, "count": 8, "spread": deg_to_rad(80), "speed": Vec
 		"gravity": 700.0, "size": Vector2(4, 10)}
 const BUBBLES := {"life": 0.7, "count": 5, "spread": deg_to_rad(24), "speed": Vector2(40, 90),
 		"gravity": -30.0, "size": Vector2(2, 4)}
-# 敌人头顶血条中心相对角色锚点的偏移 = 旧 canvas 版 Rect2(at + (-42, -112.5), (84, 9)) 的中心:
-# 血条贴在名字上方,尺寸/低血阈值由 EnemyHpBar 组件决定(84×9、25%)。
+# 血条的纵向偏移相对角色锚点，使其显示在名字上方。
 const HP_BAR_CENTER := Vector2(0.0, -108.0)
 
 enum Effect { BLAST, PARTICLES, NUMBER, GRAIN }
 
 var _canvas: WorldCanvas
 var _size: Vector2
-# 挤压拉伸:每个实体一个 tracker(SquashTracker 从 PlayerConfig/EnemyConfig 取参数)。
 var _squash := {}
-# 残影绘制与回收由 AfterImageField 负责。
 var _after := AfterImageField.new()
 var _ghost_after := {}
 var _hit_prev := {}
@@ -58,9 +54,7 @@ var _paths := {}
 var _next_paths := {}
 var _effects := [[], [], [], []]
 var _hits := {}
-# 世界坐标 HUD 小组件(拾取提示 / 换弹圆环 / 敌人头顶血条):全部挂到 WorldCanvas 下,
-# 与 canvas 绘制共享同一世界变换;组件只管画,数据仍由本表现层从 MatchFrame 喂。
-# 懒创建 + 池化:只有真正要显示时才 new,避免每帧增删节点。
+# 按需创建拾取提示和敌人血条，后续帧复用已创建的节点。
 var _pickup_nodes: Array[PickupPrompt] = []
 var _reload_node: ReloadRing
 var _hp_nodes: Array[EnemyHpBar] = []
@@ -78,7 +72,7 @@ func reset() -> void:
 	_hit_prev.clear()
 	_downed_prev.clear()
 	_alternate = false
-	# 重开对局/重录时世界内 HUD 组件一并复位,避免上一局的提示、圆环、血条残留一帧以上。
+	# 重开时也重置世界内提示，避免上一局的提示残留。
 	for node in _pickup_nodes:
 		if is_instance_valid(node):
 			node.hide()
@@ -132,7 +126,7 @@ func present(frame: MatchFrame, grain_target := Vector2.ZERO) -> void:
 	_canvas.set_daylight(frame.day_minute)
 	_canvas.begin(frame.actors.size())
 	_after.present(frame.now, frame.focus, _canvas, _size)
-	# 换弹圆环先藏起,只有本帧真有本地角色换弹时下面才显示;血条在名字循环里按需显示。
+	# 上一帧的换弹环先隐藏，由当前帧的换弹状态决定是否显示。
 	if is_instance_valid(_reload_node):
 		_reload_node.hide()
 	var prompts := 0
@@ -146,7 +140,6 @@ func present(frame: MatchFrame, grain_target := Vector2.ZERO) -> void:
 					not weapon["projectile"]["blast"].is_empty(), pose.bow_draw < 0.0)
 		if not pose.name.is_empty():
 			_nameplate(pose.anchor, pose.name, pose.name_color(frame.mode))
-			# 只有带血量(设置开启且未倒地)的角色才画血条;语义与原 canvas 版逐项一致。
 			if pose.health >= 0.0:
 				var bar := _hp_bar(bars)
 				bar.position = pose.anchor + HP_BAR_CENTER
@@ -278,11 +271,7 @@ func _enemy_clip(pose: MatchFrame.Pose) -> StringName:
 			return start
 	return ENEMY_CLIPS[pose.state]
 
-# 残影触发规则(统一走 AfterImageField;旧 _trail/_draw_trails 已删除):
-#   玩家:加速(单人红/蓝交替) > 加速(队伍色) > 远端回溯(前景) > 冲刺(队伍色);
-#         受击/倒地各补一条一次性短残影。
-#   敌人:take_off/charge 期间低强度冷白残影(可选表现,不改变 squash 手感)。
-# 连续残影按 pose.id 记 deadline,避免每帧刷屏;一次性残影按 hit/downed 边沿触发。
+# 持续动作按各自的间隔生成残影。玩家进入受击状态或角色进入倒地状态时生成一次。
 func _afterimages(pose: MatchFrame.Pose, frame: MatchFrame, image: AtlasTexture,
 		visual: Transform2D, tint: Color) -> void:
 	var now := frame.now
@@ -290,7 +279,6 @@ func _afterimages(pose: MatchFrame.Pose, frame: MatchFrame, image: AtlasTexture,
 	var was_downed := bool(_downed_prev.get(pose.id, false))
 	_downed_prev[pose.id] = pose.downed
 	if pose.downed:
-		# 倒地/死亡:白色淡出残影,只在进入倒地的第一帧发一条。
 		if not was_downed:
 			_after.spawn(now, image, visual, DEATH_GHOST,
 					WorldCanvas.Pass.NORMAL, DEATH_GHOST_LIFE)
@@ -333,8 +321,7 @@ func _afterimages(pose: MatchFrame.Pose, frame: MatchFrame, image: AtlasTexture,
 			return
 	if now < float(_ghost_after.get(pose.id, 0.0)):
 		return
-	# 红/蓝交替只在真正 spawn 的那一帧翻转。旧 _trail 的 deadline 早退在翻色之前,
-	# 若按帧翻转、而 spawn 每两帧一次,就会每次落到同一奇偶 → 拖影只有一种颜色。
+	# 仅在生成残影时切换红蓝颜色，避免固定采样间隔总选到同一种颜色。
 	if alternate:
 		color = HASTE_GHOST_WARM if _alternate else HASTE_GHOST_COOL
 		_alternate = not _alternate
@@ -355,8 +342,6 @@ func _trajectory(id: int, at: Vector2) -> void:
 	if path.size() > 1:
 		_canvas.line(path, Color(1, 1, 1, 0.55), 2.5)
 
-# 拾取提示 = v2 PickupPrompt 组件(世界内 Node2D 自绘):盒子 50×50、挂点 = 拾取物上方
-# GAP_ABOVE(64px),位置/尺寸与原 canvas 版逐项一致;底色/描边/按键字改由组件按 v2 token 决定。
 func _show_pickup_prompt(index: int, at: Vector2) -> void:
 	var node := _pickup_prompt_node(index)
 	node.position = at + Vector2(0.0, -PickupPrompt.GAP_ABOVE)
@@ -372,10 +357,7 @@ func _pickup_prompt_node(index: int) -> PickupPrompt:
 	return _pickup_nodes[index]
 
 
-# 世界内 HUD 组件的挂载父节点 = WorldCanvas 的 overlay CanvasLayer(follow_viewport,世界坐标、
-# 压在世界绘制之上)。挂在 overlay 而不是 canvas 本体有两个原因:与旧 canvas 手绘提示同处
-# 「不被 CanvasModulate 昼夜压暗」的那一层(战斗/拾取提示夜里也要读得清),且盖在角色 sprite 之上。
-# overlay 在 WorldCanvas._ready 里创建;极端的先 bind 后 ready 顺序下退回 canvas 本体(世界坐标一致)。
+# 提示跟随视口，沿用世界坐标，绘制在角色上方且不受昼夜环境色调制。
 func _hud_parent() -> Node2D:
 	return _canvas._overlay if _canvas._overlay != null else _canvas
 
@@ -443,9 +425,6 @@ func _nameplate(at: Vector2, name: String, color: Color) -> void:
 	_canvas.text_at(name, at + Vector2(0, -78), Color(color, 0.85), true)
 
 
-# 血条 = v2 EnemyHpBar 组件(世界内自绘 84×9 条,残血 <25% 转危险红)。挂 overlay 层:
-# 与 PickupPrompt/ReloadRing 同层(那两个在 _ready 里自设 z_index=100;本组件按 main 契约不自设层位),
-# 保证压在角色 sprite / 前景武器 / canvas 标记之上,且不被昼夜环境光压暗。
 func _hp_bar(index: int) -> EnemyHpBar:
 	while _hp_nodes.size() <= index:
 		var node := EnemyHpBar.new()
@@ -463,8 +442,6 @@ func _guide(points: PackedVector2Array, color: Color, explosive: bool, overlay: 
 		_canvas.circle(points[-1], 20.0, Color(1.0, 0.4, 0.2, 0.16), true)
 		_canvas.circle(points[-1], 9.0, Color(1.0, 0.4, 0.2, 0.48), true)
 
-# 换弹圆环 = v2 ReloadRing 组件(世界内自绘):半径 24 / 环宽 9 / 中心在角色后侧
-# -58*facing / -44,位置与几何与原 canvas 版逐项一致;底环/进度弧/数字配色改走 v2 token。
 func _reload(at: Vector2, facing: int, progress: float, remaining: float) -> void:
 	if not is_instance_valid(_reload_node):
 		_reload_node = ReloadRing.new()

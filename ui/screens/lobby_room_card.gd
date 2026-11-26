@@ -1,13 +1,11 @@
 class_name LobbyRoomCard
 extends Button
 
-# 联机大厅中的局域网房间卡片。用 RowButton 主题变体处理悬停、按下和禁用等状态。
+# 局域网房间卡片。悬停、按下和禁用样式来自 RowButton 主题类型变体。
 # 子控件忽略鼠标输入，整张卡片可点击。点击后，控制器根据广播中的服务器地址尝试直连。
-# 卡片的最小高度取决于内容。字体和颜色沿用 UI v2 主题。
 
 signal join_requested(code: String, endpoint: Dictionary)
 
-# 卡片最小高度的下限为 112 像素。
 const CARD_MIN_H := UiDesign.SP_9 + UiDesign.SP_8
 
 var _info: Dictionary = {}

@@ -1,14 +1,11 @@
 class_name ReloadRing
 extends Node2D
 
-# 换弹圆环:角色后侧的小圆环 + 一位小数倒计时。接口与 main 的 reload_ring.gd 一致 ——
-# 宿主每帧调 `set_progress(progress, remain)`;由 player_present 之类的表现层负责挂接/显隐。
-# 本控件是自绘控件(画布例外),几何常量留在局部空间;颜色/字体取 v2 设计系统 token。
-# 语义色按设计系统 HUD 规则:装填进度 = 强调青(C_ACCENT),底环 = 弱化描边色压暗,数字 = C_TEXT。
+# 在角色后侧绘制换弹进度和剩余时间。
 
 const RADIUS := 24.0
 const WIDTH := 9.0
-const FONT_SIZE := UiDesign.T_H2   # 32:像素字体只在 16 的倍数下锐利
+const FONT_SIZE := UiDesign.T_H2
 
 const C_BACK := Color(UiDesign.C_BORDER_DIM, 0.22)
 const C_ARC := Color(UiDesign.C_ACCENT, 0.9)

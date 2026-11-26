@@ -1,15 +1,12 @@
 class_name WatchHud
 extends Control
 
-# 怀表 HUD(UI 设计系统 v2):白色短针转满一圈表示时间颗粒余额达到上限;红色长针显示已用的
-# 短期额度,超过一圈表示开始透支。表盘中央显示剩余短期额度,透支后改用红色负数显示透支量。
-# 数据源 = match_controller 采样出来的 MatchFrame.Clock,本文件只负责显示,不持有时间经济数据。
-# 视觉 = UiDesign token + Theme 2.0 variation(字体/字号/配色都来自设计系统);
-# 表盘纹理同时被 beta 卡片复用,所以 DIAL 保持 Texture2D 常量(scenes/beta_menu.gd 直接取用)。
+# 白色短针显示时间颗粒余额，红色长针显示短期消耗。透支时表盘中央显示红色负数。
+# 表盘纹理也用于 Beta 模式卡片。
 
 const DIAL := preload("res://assets/textures/watch_dial.png")
-const BIG_FONT := 96                # 表盘右侧主读数(16 的倍数,满足 UiDesign.style_control 的约束)
-const SHORT_HAND_LEN := 0.30        # 短针长度 = 表盘直径的比例(自绘表盘,不参与布局规则)
+const BIG_FONT := 96
+const SHORT_HAND_LEN := 0.30
 const LONG_HAND_LEN := 0.42
 const SHORT_HAND_W := 4.0
 const LONG_HAND_W := 3.0
@@ -35,7 +32,7 @@ func _init(clock: MatchFrame.Clock) -> void:
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	theme = UiDesign.MENU_THEME
-	# HUD anchor:根控件就取表盘尺寸,由 match_view 摆位置;match_view 还拿它的圆心当颗粒飞行目标。
+	# 表盘圆心也是时间颗粒飞行的目标。
 	size = DIAL.get_size()
 	_build()
 
@@ -54,7 +51,6 @@ func _build() -> void:
 	readout.name = "Readout"
 	readout.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	readout.add_theme_constant_override("separation", UiDesign.SP_3)
-	# 读数贴在表盘右侧、整体比表盘上缘高 SP_4(HUD anchor + token,不再写像素坐标)。
 	readout.anchor_left = 1.0
 	readout.anchor_right = 1.0
 	readout.offset_left = UiDesign.SP_3
@@ -71,14 +67,13 @@ func _build() -> void:
 	_center.set_anchors_and_offsets_preset(Control.PRESET_CENTER, Control.PRESET_MODE_MINSIZE)
 	_disp = _clock.balance if _clock != null else 0.0
 
-# 小字走 Theme 2.0 variation(主题没有 96 号档,主读数改用 UiDesign.label 的 token 字号)。
 func _themed_label(variation: StringName) -> Label:
 	var l := Label.new()
 	l.theme_type_variation = variation
 	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return l
 
-# HUD 文字压在实时画面上,沿用像素描边保证可读;描边色取设计系统的深底 token。
+# 文字描边让读数在游戏画面上更清楚。
 func _outline(l: Label, size: int) -> void:
 	l.add_theme_constant_override("outline_size", maxi(size / 12, 4))
 	l.add_theme_color_override("font_outline_color", UiDesign.C_BG)
@@ -100,7 +95,6 @@ func present(clock: MatchFrame.Clock, delta: float) -> void:
 	_lock_flash_t = maxf(_lock_flash_t - delta, 0.0)
 	queue_redraw()
 
-# 主读数配色:回溯 = 危险红,加速 = 紫色时间状态色(设计系统暂无 haste 专用 token,见迁移报告)。
 func _readout_color(clock: MatchFrame.Clock) -> Color:
 	if clock.rewind:
 		return UiDesign.C_DANGER
@@ -134,6 +128,6 @@ func tremble() -> void:
 	_tremble_t = TREMBLE_TIME
 
 
-# 达到透支上限导致时间技能停用时,长针闪烁提示。
+# 达到透支上限并停用时间技能时，长针闪烁。
 func flash_locked() -> void:
 	_lock_flash_t = LOCK_FLASH_TIME
