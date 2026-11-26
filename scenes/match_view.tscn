@@ -7,7 +7,7 @@
 [ext_resource type="Script" path="res://core/present/post_process.gd" id="5"]
 [ext_resource type="Script" path="res://ui/hud/hud.gd" id="6"]
 [ext_resource type="Script" path="res://ui/hud/combat_feedback.gd" id="7"]
-[ext_resource type="Script" path="res://ui/screens/pause_menu.gd" id="8"]
+[ext_resource type="PackedScene" path="res://ui/screens/pause_menu.tscn" id="8"]
 [ext_resource type="Script" path="res://core/present/record/recorder.gd" id="9"]
 
 [node name="View" type="Node"]
@@ -36,10 +36,7 @@ script = ExtResource("6")
 [node name="Feedback" type="CanvasLayer" parent="."]
 script = ExtResource("7")
 
-[node name="Pause" type="CanvasLayer" parent="."]
-layer = 145
-process_mode = 3
-script = ExtResource("8")
+[node name="Pause" parent="." instance=ExtResource("8")]
 
 [node name="Recorder" type="Node" parent="."]
 script = ExtResource("9")

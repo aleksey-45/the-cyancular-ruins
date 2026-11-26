@@ -10,7 +10,7 @@
 
 ## 对局加载
 
-单人和联机进场共用加载界面，依次显示准备、构建、挂载和就绪。场景构建与挂载在主线程分阶段执行，切换期间的联机消息由 `NetSession` 暂存。构建失败时，加载界面会显示错误和返回按钮。返回主菜单或大厅时会短暂显示过场遮罩。[加载流程](../core/present/scene_transition.gd) · [联机会话](../core/net/net_session.gd)
+单人和联机进场共用加载界面，显示当前的构建或挂载阶段。切换期间的联机消息由 `NetSession` 暂存。加载失败时可点击「返回」或按 Esc 关闭提示。返回主菜单或大厅时会短暂显示过场遮罩。[加载流程](../core/present/scene_transition.gd) · [联机会话](../core/net/net_session.gd)
 
 ## 对局 HUD
 

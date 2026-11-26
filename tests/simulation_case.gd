@@ -54,6 +54,15 @@ func run(tree: SceneTree) -> void:
 	cleanup()
 	_detached_match()
 	await _solo_scene(tree)
+	await _loading_failure(tree)
+
+func _loading_failure(tree: SceneTree) -> void:
+	await SceneTransition.change_with_builder(tree, func() -> Node: return null, "载入中")
+	var screen := LoadingScreen.find(tree)
+	var back: Button = screen.get_node("%Back")
+	back.pressed.emit()
+	expect(back.visible and screen.is_queued_for_deletion(), "the loading scene's Back button dismisses a failed transition")
+	await tree.process_frame
 
 func _detached_match() -> void:
 	var map := CyrmMap.load_file("res://maps/demo.cyrm")

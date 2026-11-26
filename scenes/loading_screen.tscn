@@ -1,8 +1,5 @@
 [gd_scene load_steps=3 format=3]
 
-; 载入界面(P0,设计系统 v2):CanvasLayer(200) 全屏遮罩 + HeaderStrip + 阶段进度条。
-; 场景只保留结构;颜色/字号/间距/卡片最小宽度由 ui/screens/loading_screen.gd 用 UiDesign token 补齐。
-; 遮罩是全屏 ColorRect(mouse_filter=STOP),加载期间键盘输入由脚本在 _input 里吞掉。
 [ext_resource type="Script" path="res://ui/screens/loading_screen.gd" id="1_loading"]
 [ext_resource type="Theme" path="res://ui/theme/menu_theme_v2.tres" id="2_theme"]
 
@@ -11,98 +8,56 @@ layer = 200
 process_mode = 3
 script = ExtResource("1_loading")
 
-[node name="Root" type="Control" parent="."]
-layout_mode = 3
+[node name="Dim" type="ColorRect" parent="."]
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
+color = Color(0.039, 0.059, 0.094, 1)
+
+[node name="Center" type="CenterContainer" parent="."]
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
 theme = ExtResource("2_theme")
-mouse_filter = 2
 
-[node name="Dim" type="ColorRect" parent="Root"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-mouse_filter = 0
-
-[node name="Center" type="CenterContainer" parent="Root"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-mouse_filter = 2
-
-[node name="Card" type="PanelContainer" parent="Root/Center"]
+[node name="Card" type="PanelContainer" parent="Center"]
+custom_minimum_size = Vector2(640, 0)
 layout_mode = 2
 theme_type_variation = &"Card"
 
-[node name="Body" type="VBoxContainer" parent="Root/Center/Card"]
+[node name="Body" type="VBoxContainer" parent="Center/Card"]
 layout_mode = 2
 theme_override_constants/separation = 24
 
-[node name="Header" type="PanelContainer" parent="Root/Center/Card/Body"]
+[node name="Header" type="PanelContainer" parent="Center/Card/Body"]
 layout_mode = 2
 theme_type_variation = &"HeaderStrip"
 
-[node name="HeaderText" type="Label" parent="Root/Center/Card/Body/Header"]
+[node name="HeaderText" type="Label" parent="Center/Card/Body/Header"]
+unique_name_in_owner = true
 layout_mode = 2
-text = "载 入 中"
+theme_type_variation = &"HeaderTitle"
+text = "载入中"
 horizontal_alignment = 1
 
-[node name="Status" type="Label" parent="Root/Center/Card/Body"]
+[node name="Status" type="Label" parent="Center/Card/Body"]
+unique_name_in_owner = true
 layout_mode = 2
 theme_type_variation = &"Body"
-horizontal_alignment = 1
-
-[node name="Bar" type="Control" parent="Root/Center/Card/Body"]
-custom_minimum_size = Vector2(0, 8)
-layout_mode = 2
-mouse_filter = 2
-
-[node name="Track" type="ColorRect" parent="Root/Center/Card/Body/Bar"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-mouse_filter = 2
-
-[node name="Fill" type="ColorRect" parent="Root/Center/Card/Body/Bar"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 0.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-mouse_filter = 2
-
-[node name="Percent" type="Label" parent="Root/Center/Card/Body"]
-layout_mode = 2
-theme_type_variation = &"Body"
-horizontal_alignment = 2
-
-[node name="Hint" type="Label" parent="Root/Center/Card/Body"]
-layout_mode = 2
-theme_type_variation = &"Dim"
-horizontal_alignment = 1
-
-[node name="Error" type="Label" parent="Root/Center/Card/Body"]
-visible = false
-layout_mode = 2
-theme_type_variation = &"Body"
+theme_override_font_sizes/font_size = 24
 horizontal_alignment = 1
 autowrap_mode = 3
 
-[node name="Back" type="Button" parent="Root/Center/Card/Body"]
+[node name="Back" type="Button" parent="Center/Card/Body"]
+unique_name_in_owner = true
 visible = false
 layout_mode = 2
 theme_type_variation = &"Quiet"
 text = "返回"
+
+[connection signal="pressed" from="Center/Card/Body/Back" to="." method="queue_free"]
