@@ -145,7 +145,7 @@ func _aim_guide(row: Array, pose: MatchFrame.Pose, world_haste: bool) -> PackedV
 	else:
 		var length := float(weapon.get("guide_length", 600.0)) * pose.scale.x
 		points = PackedVector2Array([muzzle, muzzle + direction * length])
-	return Transform2D(0.0, GridPathfinder.toroidal_delta_px(row[Actor.POS], pose.anchor, _terrain.map_size)) * points
+	return Transform2D(0.0, ToroidalGrid.toroidal_delta_px(row[Actor.POS], pose.anchor, _terrain.map_size)) * points
 
 func _player_cues(id: int, row: Array, health: Array, pos: Vector2, rewind: bool) -> void:
 	var before: Array = _actors.get(id, [])
@@ -282,7 +282,7 @@ func _sample_objects(sample: Dictionary, own: Array, rewind: bool) -> void:
 		var at: float = sample["combat_tick"] if ShotRules.shooter_role(id) == _role else sample["remote_tick"]
 		frame.sample_beam(sample["beams"][id], at)
 	for row: Array in sample["pickups"].values():
-		var offset := GridPathfinder.toroidal_delta_px(own[Actor.POS], row[WeaponPickup.POS], _terrain.map_size)
+		var offset := ToroidalGrid.toroidal_delta_px(own[Actor.POS], row[WeaponPickup.POS], _terrain.map_size)
 		var unlocked: bool = row[WeaponPickup.LOCKED_ROLE] != _role or sample["pickup_tick"] >= row[WeaponPickup.UNLOCK_TICK]
 		var in_reach := offset.length_squared() <= CFG.weapon_pickup_radius ** 2
 		var available: bool = in_reach and unlocked and row[WeaponPickup.TYPE] in _spec.weapons
@@ -309,4 +309,4 @@ func _splash(id: int, bounds: Rect2, velocity: Vector2) -> void:
 		_splash_after[id] = frame.now + (WCFG.water_fx_splash_interval if surface else WCFG.water_fx_bubble_interval)
 
 func _near(pos: Vector2) -> Vector2:
-	return GridPathfinder.anchor_to_nearest(pos, frame.focus, _terrain.map_size)
+	return ToroidalGrid.anchor_to_nearest(pos, frame.focus, _terrain.map_size)

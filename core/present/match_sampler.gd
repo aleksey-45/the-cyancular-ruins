@@ -65,10 +65,10 @@ func sample(now: float, alpha: float) -> Dictionary:
 		else:
 			var shown := _between(_replacement[0], _replacement[1], alpha) + _residual(now)
 			var corrected := _between(_replacement[2], _replacement[3], alpha)
-			_offset = GridPathfinder.toroidal_delta_px(corrected, shown, _map_size)
+			_offset = ToroidalGrid.toroidal_delta_px(corrected, shown, _map_size)
 		_corrected_at = now
 		_replacement = []
-	var focus := GridPathfinder.wrap_to_range(base + _residual(now), _map_size)
+	var focus := ToroidalGrid.wrap_to_range(base + _residual(now), _map_size)
 	var projectiles := _sample_projectiles(_current, _previous, _current, alpha, 0.0)
 	var pickups: Dictionary = _current["pickups"]
 	var beams: Dictionary = _current["beams"]
@@ -126,7 +126,7 @@ func _sample_players(source: Dictionary, right: Dictionary, weight: float, ahead
 			var whole := floorf(ahead)
 			var decay := pow(_knock_decay, whole)
 			var knock_ticks := (1.0 - decay) / (1.0 - _knock_decay) + (ahead - whole) * decay
-			pos = GridPathfinder.wrap_to_range(pos + (velocity * ahead + row[Actor.KNOCK_VEL] * knock_ticks) * ActorStep.DT, _map_size)
+			pos = ToroidalGrid.wrap_to_range(pos + (velocity * ahead + row[Actor.KNOCK_VEL] * knock_ticks) * ActorStep.DT, _map_size)
 		poses[id] = [pos, velocity, row]
 	return poses
 
@@ -146,7 +146,7 @@ func _sample_projectiles(source: Dictionary, left: Dictionary, right: Dictionary
 			pos = _between(first[BulletBody.MOTION_POS], last[BulletBody.MOTION_POS], weight)
 			rotation = lerp_angle(first[BulletBody.ROTATION], last[BulletBody.ROTATION], weight)
 		if ahead > 0.0 and not (source["players"].has(role) and source["players"][role][Actor.REWIND]):
-			pos = GridPathfinder.wrap_to_range(pos + row[BulletBody.MOTION_VEL] * ahead * ActorStep.DT, _map_size)
+			pos = ToroidalGrid.wrap_to_range(pos + row[BulletBody.MOTION_VEL] * ahead * ActorStep.DT, _map_size)
 		result[id] = [row[BulletBody.SNAP_TYPE], pos, rotation]
 	return result
 
@@ -158,7 +158,7 @@ func _sample_pickups(source: Dictionary, right: Dictionary, weight: float, ahead
 		if not next.is_empty() and weight > 0.0 and weight < 1.0:
 			row[WeaponPickup.POS] = _between(row[WeaponPickup.POS], next[WeaponPickup.POS], weight)
 		elif ahead > 0.0:
-			row[WeaponPickup.POS] = GridPathfinder.wrap_to_range(row[WeaponPickup.POS] + row[WeaponPickup.VEL] * ahead * ActorStep.DT, _map_size)
+			row[WeaponPickup.POS] = ToroidalGrid.wrap_to_range(row[WeaponPickup.POS] + row[WeaponPickup.VEL] * ahead * ActorStep.DT, _map_size)
 		result[id] = row
 	return result
 
@@ -170,7 +170,7 @@ func _merge_remote(owned: Dictionary, others: Dictionary) -> Dictionary:
 	return result
 
 func _between(a: Vector2, b: Vector2, weight: float) -> Vector2:
-	return GridPathfinder.wrap_to_range(a + GridPathfinder.toroidal_delta_px(a, b, _map_size) * weight, _map_size)
+	return ToroidalGrid.wrap_to_range(a + ToroidalGrid.toroidal_delta_px(a, b, _map_size) * weight, _map_size)
 
 func _residual(now: float) -> Vector2:
 	return _offset * clampf(1.0 - (now - _corrected_at) / CORRECTION_TIME, 0.0, 1.0)

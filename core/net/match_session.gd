@@ -160,7 +160,7 @@ func reconcile(ping_ms: int) -> Dictionary:
 		if life_changed or current_changed or old_prev[Actor.POS] != new_prev[Actor.POS]:
 			update["replacement"] = [old_prev[Actor.POS], old_local[Actor.POS], new_prev[Actor.POS], new_local[Actor.POS], life_changed]
 		if current_changed and old_end == world.tick and PerformanceStats.is_enabled():
-			var distance := GridPathfinder.toroidal_delta_px(old_local[Actor.POS], new_local[Actor.POS], world.terrain.map_size).length()
+			var distance := ToroidalGrid.toroidal_delta_px(old_local[Actor.POS], new_local[Actor.POS], world.terrain.map_size).length()
 			var reason := "respawn" if life_changed else ("rewind" if auth[Actor.REWIND] or old_local[Actor.REWIND] else "state")
 			PerformanceStats.record_correction(role, start, world.tick, reason, distance)
 	PerformanceStats.end(PerformanceStats.CLIENT_AUTHORITY, started)
@@ -237,7 +237,7 @@ func _player_matches(at: int, actual: Array) -> bool:
 	var predicted: Array = _predicted_player.get(at, [])
 	if predicted.is_empty():
 		return false
-	var offset := GridPathfinder.toroidal_delta_px(predicted[Actor.POS], actual[Actor.POS], world.terrain.map_size)
+	var offset := ToroidalGrid.toroidal_delta_px(predicted[Actor.POS], actual[Actor.POS], world.terrain.map_size)
 	if offset.length_squared() > POSITION_TOLERANCE_PX * POSITION_TOLERANCE_PX:
 		return false
 	for field in range(Actor.POS + 1, Actor.SIZE):

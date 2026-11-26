@@ -233,7 +233,7 @@ func _on_death() -> void:
 
 
 func _smash_player(impact: float, impact_up: float) -> void:
-	var away := GridPathfinder.toroidal_delta_px(position, player.position, terrain.map_size).normalized()
+	var away := ToroidalGrid.toroidal_delta_px(position, player.position, terrain.map_size).normalized()
 	if away == Vector2.ZERO:
 		away = Vector2(-float(player.facing_direction), 0.0)
 	player.velocity = away * impact
@@ -275,7 +275,7 @@ func _wake_ready(delta: float, distance: float, duration: float) -> bool:
 
 
 func _toroidal_dist_to(pos: Vector2) -> float:
-	return GridPathfinder.toroidal_delta_px(position, pos, terrain.map_size).length()
+	return ToroidalGrid.toroidal_delta_px(position, pos, terrain.map_size).length()
 
 
 func toroidal_dist_to_player() -> float:
@@ -288,11 +288,11 @@ func toroidal_dir_to_player() -> Vector2:
 	return delta.normalized()
 
 func toroidal_delta_to_player() -> Vector2:
-	return GridPathfinder.toroidal_delta_px(position, player.position, terrain.map_size)
+	return ToroidalGrid.toroidal_delta_px(position, player.position, terrain.map_size)
 
 # 地图两侧相连。越界后，敌人回到地图范围内的对应坐标。
 func _wrap() -> void:
-	position = GridPathfinder.wrap_to_range(position, terrain.map_size)
+	position = ToroidalGrid.wrap_to_range(position, terrain.map_size)
 
 func capture_state() -> Array:
 	var row := []

@@ -289,7 +289,7 @@ static func source_role(source: ActorBody) -> int:
 
 func _delta(from: Vector2, to: Vector2) -> Vector2:
 	var size := terrain.map_size
-	return GridPathfinder.toroidal_delta_px(from, to, size)
+	return ToroidalGrid.toroidal_delta_px(from, to, size)
 
 func hit_direction(from: Vector2, to: Vector2) -> Vector2:
 	var delta := _delta(from, to)

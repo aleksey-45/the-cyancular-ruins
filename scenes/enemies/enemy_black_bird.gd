@@ -177,7 +177,7 @@ func _find_flank_cell() -> bool:
 	var player_px := terrain.cell_center(player_cell)
 	var bird_px := terrain.cell_center(terrain.cell(position))
 	# 对比水平和垂直距离，选择相距较远的轴来判定玩家的另一侧。
-	var off := GridPathfinder.toroidal_delta_px(player_px, bird_px, terrain.map_size)
+	var off := ToroidalGrid.toroidal_delta_px(player_px, bird_px, terrain.map_size)
 	var sx := signf(off.x)
 	var sy := signf(off.y)
 	var use_x := absf(off.x) >= absf(off.y)
@@ -194,7 +194,7 @@ func _find_flank_cell() -> bool:
 		for dx in range(-max_r, max_r + 1):
 			var c := Vector2i(posmod(player_cell.x + dx, terrain.columns), posmod(player_cell.y + dy, terrain.rows))
 			var c_px := terrain.cell_center(c)
-			var rel := GridPathfinder.toroidal_delta_px(player_px, c_px, terrain.map_size)
+			var rel := ToroidalGrid.toroidal_delta_px(player_px, c_px, terrain.map_size)
 			var dlen := rel.length()
 			if dlen < min_d or dlen > max_d:
 				continue

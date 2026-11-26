@@ -20,7 +20,7 @@ var _wheel_direction := 0
 
 static func aim_direction(origin: Vector2, facing: int, map_size: Vector2, base: Vector2,
 		zoom: float, mouse_offset: Vector2) -> Vector2:
-	var center := GridPathfinder.anchor_to_nearest(base, origin + Vector2(0, CFG.cam_y_bias), map_size)
+	var center := ToroidalGrid.anchor_to_nearest(base, origin + Vector2(0, CFG.cam_y_bias), map_size)
 	var direction := center + mouse_offset / zoom - origin
 	return Vector2(facing, 0.0) if direction.length_squared() < 0.0001 else direction.normalized()
 

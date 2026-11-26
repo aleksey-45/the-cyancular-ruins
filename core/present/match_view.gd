@@ -211,7 +211,7 @@ func _apply_cues(frame: MatchFrame) -> void:
 					camera.fire(cue[2])
 			"blast":
 				_world.blast(cue[1], frame.now)
-				var distance: float = frame.focus.distance_to(GridPathfinder.anchor_to_nearest(cue[1], frame.focus, _world._size))
+				var distance: float = frame.focus.distance_to(ToroidalGrid.anchor_to_nearest(cue[1], frame.focus, _world._size))
 				camera.blast(distance, WeaponRegistry.blast_definition(cue[2])["radius"])
 
 func _mount_watch(clock: MatchFrame.Clock) -> void:

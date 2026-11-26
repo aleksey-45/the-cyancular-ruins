@@ -331,7 +331,7 @@ func _afterimages(pose: MatchFrame.Pose, frame: MatchFrame, image: AtlasTexture,
 func _trajectory(id: int, at: Vector2) -> void:
 	var path: PackedVector2Array = _paths.get(id, PackedVector2Array())
 	if not path.is_empty():
-		var shift := GridPathfinder.anchor_to_nearest(path[-1], at, _size) - path[-1]
+		var shift := ToroidalGrid.anchor_to_nearest(path[-1], at, _size) - path[-1]
 		if shift != Vector2.ZERO:
 			for i in path.size():
 				path[i] += shift
@@ -369,7 +369,7 @@ func _draw_effects(frame: MatchFrame, grain_target: Vector2) -> void:
 	for beam: Array in frame.beams:
 		var points: PackedVector2Array = beam[0]
 		var alpha: float = beam[1]
-		var offset := GridPathfinder.anchor_to_nearest(points[0], frame.focus, _size) - points[0]
+		var offset := ToroidalGrid.anchor_to_nearest(points[0], frame.focus, _size) - points[0]
 		points = Transform2D(0.0, offset) * points
 		_canvas.line(points, Color(0.1, 0.35, 1.0, 0.30 * alpha), 10.0)
 		_canvas.line(points, Color(1, 1, 1, 0.95 * alpha), 3.0)
@@ -380,7 +380,7 @@ func _draw_effects(frame: MatchFrame, grain_target: Vector2) -> void:
 		for i in range(rows.size() - 1, -1, -1):
 			var row: Array = rows[i]
 			var age := now - float(row[1])
-			var at := GridPathfinder.anchor_to_nearest(row[0], frame.focus, _size)
+			var at := ToroidalGrid.anchor_to_nearest(row[0], frame.focus, _size)
 			match kind:
 				Effect.BLAST:
 					var index := EXPLOSION_FRAMES.bsearch(age)

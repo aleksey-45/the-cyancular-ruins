@@ -182,7 +182,7 @@ func _move_actor(delta: float) -> void:
 	if not sim_downed:
 		slide_reactions(incoming)
 	var size := terrain.map_size
-	position = GridPathfinder.wrap_to_range(position, size)
+	position = ToroidalGrid.wrap_to_range(position, size)
 	sync_collision_geometry()
 
 func brake(delta: float) -> void:
@@ -415,7 +415,7 @@ func slide_reactions(incoming: Vector2) -> void:
 		var layer := PhysicsServer2D.body_get_collision_layer(contact[Contact.BODY])
 		if (layer & CollisionWorld.LAYER_TERRAIN) == 0 or incoming.dot(normal) >= 0.0:
 			continue
-		var point := GridPathfinder.wrap_to_range((contact[Contact.POINT] as Vector2) - normal, terrain.map_size)
+		var point := ToroidalGrid.wrap_to_range((contact[Contact.POINT] as Vector2) - normal, terrain.map_size)
 		if terrain.elastic_alive(point):
 			velocity = velocity.slide(normal) + normal * CFG.elastic_bounce
 			break
@@ -470,7 +470,7 @@ func apply_recoil(push: float) -> void:
 	velocity = v
 
 func apply_impulse(source: Vector2, force: float) -> void:
-	var away := GridPathfinder.toroidal_delta_px(source, position, terrain.map_size)
+	var away := ToroidalGrid.toroidal_delta_px(source, position, terrain.map_size)
 	if away.is_zero_approx():
 		away = Vector2(-float(facing_direction), 0.0)
 	else:

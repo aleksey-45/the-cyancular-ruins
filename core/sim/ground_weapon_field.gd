@@ -60,7 +60,7 @@ func nearest(player: Player) -> WeaponPickup:
 	var best: WeaponPickup
 	var best_distance := INF
 	for item: WeaponPickup in items.values():
-		var offset := GridPathfinder.toroidal_delta_px(player.position, item.position, _terrain.map_size)
+		var offset := ToroidalGrid.toroidal_delta_px(player.position, item.position, _terrain.map_size)
 		var distance := offset.length_squared()
 		if available(player, item.type_id, item.locked_role, item.unlock_tick, tick, distance) \
 				and (best == null or distance < best_distance or (distance == best_distance and item.inst < best.inst)):
@@ -93,7 +93,7 @@ func _drop(player: Player, item: Dictionary) -> void:
 				Vector2(CFG.weapon_drop_speed * player.facing_direction, -CFG.weapon_drop_up), player.role)
 
 func scatter(floors: Array[Vector2i], types: Array[int], rng: RandomNumberGenerator) -> void:
-	var cells := GridPathfinder.spread_cells(floors, types.size() * 2, 40, _terrain.columns, _terrain.rows, rng)
+	var cells := SpawnPicker.spread_cells(floors, types.size() * 2, 40, _terrain.columns, _terrain.rows, rng)
 	for i in cells.size():
 		var pickup := spawn(types[i / 2], WeaponInventory.DEFAULT_CARRIED, _terrain.cell_center(cells[i]), Vector2.ZERO)
 		pickup.settle_on_spawn_floor()

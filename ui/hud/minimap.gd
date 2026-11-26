@@ -76,7 +76,7 @@ func _ready() -> void:
 
 func present(frame: MatchFrame) -> void:
 	var pos := frame.focus
-	var canonical := GridPathfinder.wrap_to_range(pos, _map_size)
+	var canonical := ToroidalGrid.wrap_to_range(pos, _map_size)
 	_mat.set_shader_parameter("center_cell", canonical / float(CyrmMap.CELL_SIZE))
 	_dots.markers.clear()
 	if frame.actors.is_empty():
@@ -86,7 +86,7 @@ func present(frame: MatchFrame) -> void:
 	if frame.radar_players:
 		for i in range(1, frame.actors.size()):
 			var pose := frame.actors[i]
-			var offset := GridPathfinder.toroidal_delta_px(pos, pose.anchor, _map_size) \
+			var offset := ToroidalGrid.toroidal_delta_px(pos, pose.anchor, _map_size) \
 					* (PX_PER_CELL / CyrmMap.CELL_SIZE)
 			if offset.length_squared() <= RADIUS_PX * RADIUS_PX:
 				_dots.markers.append([offset, pose.name_color(frame.mode)])

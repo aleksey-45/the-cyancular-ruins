@@ -254,7 +254,7 @@ func _update_hover_anchor() -> void:
 # 飞鸟以固定速度靠近目标。本帧可以到达时，直接设置节点坐标，避免越过目标。
 func _glide_to(point: Vector2, delta: float) -> void:
 	var spd := ECFG.fly_bird_fly_speed
-	var to_target := GridPathfinder.toroidal_delta_px(position, point, terrain.map_size)
+	var to_target := ToroidalGrid.toroidal_delta_px(position, point, terrain.map_size)
 	if to_target.length() <= spd * delta:
 		position = point
 		velocity = Vector2.ZERO
@@ -298,7 +298,7 @@ func _bullet_v0() -> float:
 	var drop := maxf(player.position.y - position.y, ECFG.fly_bird_bullet_min_drop)
 	var t := sqrt(2.0 * drop / WCFG.gravity0)
 	var pred := player.position + player.velocity * t
-	var dx := GridPathfinder.toroidal_delta_px(position, pred, terrain.map_size).x
+	var dx := ToroidalGrid.toroidal_delta_px(position, pred, terrain.map_size).x
 	return clampf(absf(dx) / t, ECFG.fly_bird_bullet_min_speed,
 			ECFG.fly_bird_bullet_max_speed) * signf(dx)
 
@@ -370,7 +370,7 @@ func _start_landing() -> void:
 
 
 func _player_home_dist() -> float:
-	return GridPathfinder.toroidal_delta_px(player.position, _spawn_pos, terrain.map_size).length()
+	return ToroidalGrid.toroidal_delta_px(player.position, _spawn_pos, terrain.map_size).length()
 
 
 func _takeoff_velocity() -> void:
@@ -400,7 +400,7 @@ func _follow_path(delta: float, fallback_target: Vector2 = Vector2.INF) -> void:
 	var spd := ECFG.fly_bird_fly_speed
 	while _path_index < _path.size():
 		var target := terrain.cell_center(_path[_path_index])
-		var to_target := GridPathfinder.toroidal_delta_px(position, target, terrain.map_size)
+		var to_target := ToroidalGrid.toroidal_delta_px(position, target, terrain.map_size)
 		if to_target.length() <= spd * delta:
 			position = target
 			_path_index += 1
@@ -440,7 +440,7 @@ func _bird_can_pass(cell: Vector2i) -> bool:
 	var bounds := Rect2(center + _fly_box_min, _fly_box_max - _fly_box_min)
 	if terrain.rect_overlaps(bounds, true):
 		return false
-	var anchored := GridPathfinder.anchor_to_nearest(center, position, terrain.map_size)
+	var anchored := ToroidalGrid.anchor_to_nearest(center, position, terrain.map_size)
 	bounds.position = anchored + _fly_box_min
 	for obstacle in _obstacle_boxes:
 		if bounds.intersects(obstacle):
@@ -459,7 +459,7 @@ func _collect_obstacles() -> void:
 
 
 func _anchored_obstacle(rect: Rect2) -> Rect2:
-	var anchored := GridPathfinder.anchor_to_nearest(rect.get_center(), position, terrain.map_size)
+	var anchored := ToroidalGrid.anchor_to_nearest(rect.get_center(), position, terrain.map_size)
 	return Rect2(anchored - rect.size * 0.5, rect.size)
 
 

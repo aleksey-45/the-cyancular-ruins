@@ -130,7 +130,7 @@ func corridor_contacts(points: PackedVector2Array, radius: float, mask: int, exc
 		return out
 	var size := map_size
 	var seen := {}
-	var first := GridPathfinder.wrap_to_range(points[0], size)
+	var first := ToroidalGrid.wrap_to_range(points[0], size)
 	_corridor_at(first, first, radius, mask, exclude, points[0] - first, seen, out)
 	for i in range(points.size() - 1):
 		var a := points[i]
@@ -140,14 +140,14 @@ func corridor_contacts(points: PackedVector2Array, radius: float, mask: int, exc
 		if length <= 0.0:
 			continue
 		var dir := motion / length
-		var p := GridPathfinder.wrap_to_range(a, size)
+		var p := ToroidalGrid.wrap_to_range(a, size)
 		var remaining := length
 		while remaining > 0.0:
 			var run := seam_run(p, dir, size, remaining)
 			# 先在地图范围内检测这一段，再把命中位置换回绘制光束时所用的坐标。
 			_corridor_at(p, p + dir * run, radius, mask, exclude,
 					a + dir * (length - remaining) - p, seen, out)
-			p = GridPathfinder.wrap_to_range(p + dir * run, size)
+			p = ToroidalGrid.wrap_to_range(p + dir * run, size)
 			remaining -= run
 	return out
 

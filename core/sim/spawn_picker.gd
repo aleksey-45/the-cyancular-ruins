@@ -43,7 +43,7 @@ static func pick(pool: Array, occupied: Array[Vector2i], avoid: Array[Vector2i],
 			continue
 		var distance := PREFERRED_DISTANCE
 		for other in avoid:
-			distance = mini(distance, GridPathfinder.toroidal_dist(cell, other, size.x, size.y))
+			distance = mini(distance, ToroidalGrid.toroidal_dist(cell, other, size.x, size.y))
 		if distance == PREFERRED_DISTANCE:
 			return cell
 		if distance > best_distance:
@@ -169,3 +169,26 @@ static func _clear_region(cells: PackedInt32Array, size: Vector2i, start: Vector
 				clear[next] = 2
 				queue.append(next)
 	return clear
+
+static func spread_cells(cells: Array[Vector2i], count: int, clearance: int, cols: int, rows: int,
+		rng: RandomNumberGenerator) -> Array[Vector2i]:
+	var picked: Array[Vector2i] = []
+	count = mini(count, cells.size())
+	var pool := cells.duplicate()
+	MathUtil.shuffle(pool, rng)
+	var cl := clearance
+	while picked.size() < count:
+		for c in pool:
+			if picked.size() >= count:
+				break
+			if picked.has(c):
+				continue
+			var ok := true
+			for p in picked:
+				if ToroidalGrid.toroidal_dist(c, p, cols, rows) < cl:
+					ok = false
+					break
+			if ok:
+				picked.append(c)
+		cl = maxi(0, cl - 5)
+	return picked

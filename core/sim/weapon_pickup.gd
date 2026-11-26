@@ -34,7 +34,7 @@ func _init(map: Terrain, id: int, type: int, ammo: int, pos: Vector2, vel: Vecto
 	carried = ammo
 	velocity = vel
 	var bounds: Rect2 = WeaponRegistry.definition(type)["pickup_bounds"]
-	super(map, bounds.size * WORLD_SCALE, Transform2D(0.0, GridPathfinder.wrap_to_range(pos, map.map_size)), LAYER, MASK)
+	super(map, bounds.size * WORLD_SCALE, Transform2D(0.0, ToroidalGrid.wrap_to_range(pos, map.map_size)), LAYER, MASK)
 
 func settle_on_spawn_floor() -> void:
 	var from := transform
@@ -43,7 +43,7 @@ func settle_on_spawn_floor() -> void:
 	var hit := CollisionWorld.probe_body(rid, from, Vector2.DOWN * CyrmMap.CELL_SIZE, _motion)
 	PhysicsServer2D.body_set_collision_mask(rid, MASK)
 	if hit and _motion.get_collision_normal().y < -0.5:
-		position = GridPathfinder.wrap_to_range(from.origin + _motion.get_travel(), terrain.map_size)
+		position = ToroidalGrid.wrap_to_range(from.origin + _motion.get_travel(), terrain.map_size)
 		velocity = Vector2.ZERO
 		_grounded = true
 		_settled = true
@@ -77,6 +77,6 @@ func simulate_tick(delta: float) -> void:
 				_grounded = false
 				_settled = false
 				break
-	var wrapped := GridPathfinder.wrap_to_range(position, terrain.map_size)
+	var wrapped := ToroidalGrid.wrap_to_range(position, terrain.map_size)
 	if position != wrapped:
 		position = wrapped

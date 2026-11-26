@@ -73,7 +73,7 @@ func empty() -> bool:
 
 func cell(position: Vector2) -> Vector2i:
 	if empty(): return Vector2i.ZERO
-	return GridPathfinder.cell_of(position, SUB_SIZE, columns, rows)
+	return ToroidalGrid.cell_of(position, SUB_SIZE, columns, rows)
 
 func _material(index: int) -> int:
 	return CyrmMap.tile_material(_cells[index])
@@ -132,12 +132,12 @@ func cell_center(at: Vector2i) -> Vector2:
 func line_of_sight(from: Vector2, to: Vector2) -> bool:
 	if empty():
 		return true
-	var delta := GridPathfinder.toroidal_delta_px(from, to, map_size)
+	var delta := ToroidalGrid.toroidal_delta_px(from, to, map_size)
 	if delta.is_zero_approx():
 		return true
 	var size := map_size
 	var dir := delta.normalized()
-	var p := GridPathfinder.wrap_to_range(from, size)
+	var p := ToroidalGrid.wrap_to_range(from, size)
 	var remaining := delta.length()
 	var crossed_seam := false
 	while remaining > 0.0:
@@ -145,7 +145,7 @@ func line_of_sight(from: Vector2, to: Vector2) -> bool:
 		var start := p - dir * 0.5 if crossed_seam else p
 		if not _ray_between(start, p + dir * run).is_empty():
 			return false
-		p = GridPathfinder.wrap_to_range(p + dir * run, size)
+		p = ToroidalGrid.wrap_to_range(p + dir * run, size)
 		remaining -= run
 		crossed_seam = true
 	return true
@@ -170,7 +170,7 @@ func trace_beam(origin: Vector2, direction: Vector2, length: float, max_bounces:
 		points.append(origin + d * length)
 		return {"points": points, "contacts": contacts, "hit_points": hit_points}
 	var size := map_size
-	var p := GridPathfinder.wrap_to_range(origin, size)
+	var p := ToroidalGrid.wrap_to_range(origin, size)
 	var shift := origin - p
 	var remaining := length
 	var bounces := 0
@@ -195,14 +195,14 @@ func trace_beam(origin: Vector2, direction: Vector2, length: float, max_bounces:
 			crossed_seam = false
 			d = d.bounce(normal)
 			q = point + d * 0.5
-			p = GridPathfinder.wrap_to_range(q, size)
+			p = ToroidalGrid.wrap_to_range(q, size)
 			shift += q - p
 			remaining -= 0.5
 			continue
 		remaining -= run
 		ended_on_hit = false
 		crossed_seam = true
-		p = GridPathfinder.wrap_to_range(q, size)
+		p = ToroidalGrid.wrap_to_range(q, size)
 		shift += q - p
 	if not ended_on_hit:
 		points.append(p + shift)
@@ -297,7 +297,7 @@ func damage_blast(center: Vector2, radius: float, damage: int) -> int:
 			if _material(i) == 0 or _hp[i] <= 0 \
 					or (TileDefs.damage_masks[_material(i)] & TileDefs.DamageMask.EXPLOSION) == 0:
 				continue
-			var d := GridPathfinder.toroidal_delta_px(center, Vector2((sx + 0.5) * SUB_SIZE, (sy + 0.5) * SUB_SIZE), map_size).length()
+			var d := ToroidalGrid.toroidal_delta_px(center, Vector2((sx + 0.5) * SUB_SIZE, (sy + 0.5) * SUB_SIZE), map_size).length()
 			if d <= radius:
 				var block := Vector2i(sx, sy) / DAMAGE_BLOCK_SUBS
 				nearest[block] = minf(nearest.get(block, INF), d)
@@ -401,7 +401,7 @@ func _lay_shapes(rects: Array) -> void:
 		_placements.append([shape, Transform2D(0.0, rect.position)])
 		# 为地图边缘附近的矩形添加另一侧的碰撞形状，覆盖越界后的移动和查询。
 		var box := Rect2(rect.position - rect.size * 0.5, rect.size)
-		var copies := GridPathfinder.seam_copy_range(box, map_size, margin)
+		var copies := ToroidalGrid.seam_copy_range(box, map_size, margin)
 		for y in range(copies.position.y, copies.end.y):
 			for x in range(copies.position.x, copies.end.x):
 				if x != 0 or y != 0:

@@ -43,7 +43,7 @@ func _init(map: Terrain, id: int, type: int, source: ActorBody, pos: Vector2, ve
 		mask |= CollisionWorld.LAYER_ENEMY
 		mask |= (CollisionWorld.LAYER_TEAM_A | CollisionWorld.LAYER_TEAM_B) if owner.team == 0 \
 				else CollisionWorld.team_layer(3 - owner.team)
-	var pose := Transform2D(vel.angle(), GridPathfinder.wrap_to_range(pos, map.map_size))
+	var pose := Transform2D(vel.angle(), ToroidalGrid.wrap_to_range(pos, map.map_size))
 	super(map, (definition["shape"] as Vector2) * float(spec["size"]), pose, 0, mask)
 	PhysicsServer2D.body_add_collision_exception(rid, shooter.rid)
 
@@ -91,7 +91,7 @@ func _sweep(step: Vector2) -> AdvanceResult:
 	return AdvanceResult.MOVED
 
 func _wrap_bounds() -> void:
-	var wrapped := GridPathfinder.wrap_to_range(position, terrain.map_size)
+	var wrapped := ToroidalGrid.wrap_to_range(position, terrain.map_size)
 	if wrapped != position:
 		position = wrapped
 

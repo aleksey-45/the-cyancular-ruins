@@ -55,7 +55,7 @@ func advance(delta: float, position_to_follow: Vector2, size: Vector2, speed_x: 
 		_bound = true
 	else:
 		# 地图边缘相接。摄像机先移到离跟随目标最近的一侧，避免沿整个地图宽度或高度移动。
-		base_position = GridPathfinder.anchor_to_nearest(base_position, desired, size)
+		base_position = ToroidalGrid.anchor_to_nearest(base_position, desired, size)
 		var dx := desired.x - base_position.x
 		if absf(dx) > CFG.cam_deadzone:
 			base_position.x += (dx - signf(dx) * CFG.cam_deadzone) \

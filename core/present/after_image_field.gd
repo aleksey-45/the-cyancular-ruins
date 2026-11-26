@@ -38,7 +38,7 @@ func present(now: float, anchor: Vector2, canvas: WorldCanvas, size: Vector2) ->
 		var color: Color = row[3]
 		color.a *= clampf(1.0 - age / lifetime, 0.0, 1.0)
 		var pose: Transform2D = row[2]
-		pose.origin = GridPathfinder.anchor_to_nearest(pose.origin, anchor, size)
+		pose.origin = ToroidalGrid.anchor_to_nearest(pose.origin, anchor, size)
 		var image: AtlasTexture = row[1]
 		canvas.sprite(image.atlas, image.region, pose, color, row[4])
 

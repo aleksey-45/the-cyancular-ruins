@@ -74,7 +74,7 @@ func _paint_wall(index: int, alive: bool) -> void:
 	var sub := Vector2i(index % _span.x, index / _span.x)
 	var quad := (sub.y % ATLAS_SIDE) * ATLAS_SIDE + sub.x % ATLAS_SIDE
 	var atlas := TerrainAtlas.atlas_coords(row, quad)
-	var copies := GridPathfinder.seam_copy_range(Rect2(Vector2(sub), Vector2.ONE), Vector2(_span), _margin / SUB)
+	var copies := ToroidalGrid.seam_copy_range(Rect2(Vector2(sub), Vector2.ONE), Vector2(_span), _margin / SUB)
 	for y in range(copies.position.y, copies.end.y):
 		for x in range(copies.position.x, copies.end.x):
 			var cell := sub + Vector2i(x, y) * _span
@@ -97,7 +97,7 @@ func _add_water(rows: Dictionary) -> void:
 		var atlas := TerrainAtlas.atlas_coords(rows[body], quad.y * ATLAS_SIDE + quad.x)
 		var bounds := Rect2(Vector2(cell), Vector2.ONE)
 		if surface: bounds = bounds.grow_individual(0, WCFG.water_sway_amp / SUB, 0, 0)
-		var copies := GridPathfinder.seam_copy_range(bounds, Vector2(_span), _margin / SUB)
+		var copies := ToroidalGrid.seam_copy_range(bounds, Vector2(_span), _margin / SUB)
 		for y in range(copies.position.y, copies.end.y):
 			for x in range(copies.position.x, copies.end.x):
 				var at := cell + Vector2i(x, y) * _span

@@ -196,7 +196,7 @@ func _team_respawn(tree: SceneTree) -> void:
 		picked[rules.spawn_for(players, 2)] = true
 	var size: Vector2i = info.size
 	expect(picked.size() > 1 and picked.keys().all(func(cell: Vector2i) -> bool:
-		var distance := GridPathfinder.toroidal_dist(cell, respawn[1][1], size.x, size.y)
+		var distance := ToroidalGrid.toroidal_dist(cell, respawn[1][1], size.x, size.y)
 		return respawn[1].has(cell) and cell != respawn[1][0] and distance >= SpawnPicker.PREFERRED_DISTANCE),
 			"team respawn varies among free points at least eight cells from the enemy")
 	# 让队友占用所有己方复活点，比较启用和关闭角色碰撞时的选点结果。
