@@ -1,107 +1,107 @@
 class_name EnemyConfig
 extends Resource
 
-# 定义敌人参数及其默认值。字段以前缀区分敌人类型，对局使用 enemy_config.tres 中的数值。
+# 敌人调参值见 enemy_config.tres。字段前缀区分通用参数和各类敌人。
 
-@export var shared_hit_reaction_time: float = 0.1
-@export var shared_corpse_time: float = 0.5
-@export var shared_turn_min_interval: float = 0.5
-@export var shared_bird_swim_speed: float = 260.0
-@export var shared_bird_buoyancy_k: float = 6.0
-@export var shared_bird_max_float: float = 260.0
-@export var shared_bird_max_sink: float = 160.0
-@export var shared_bird_water_damp: float = 5.0
-@export var shared_drown_interval: float = 1.5
-@export var shared_drown_damage: int = 5
+@export var shared_hit_reaction_time: float
+@export var shared_corpse_time: float
+@export var shared_turn_min_interval: float
+@export var shared_bird_swim_speed: float
+@export var shared_bird_buoyancy_k: float
+@export var shared_bird_max_float: float
+@export var shared_bird_max_sink: float
+@export var shared_bird_water_damp: float
+@export var shared_drown_interval: float
+@export var shared_drown_damage: int
 # 挤压与拉伸参数见 core/present/squash_tracker.gd。
 # 敌鸟的跳跃和冲刺分别沿用起飞（take_off）和蓄力冲撞（charge）的形变强度。
-@export var shared_squash_amount: float = 0.06
-@export var shared_squash_recover: float = 16.0
-@export var shared_squash_take_off: float = 0.8
-@export var shared_squash_charge: float = 0.9
-@export var shared_squash_land_min_vy: float = 220.0
-@export var shared_squash_land_ref_vy: float = 900.0
-@export var shared_squash_land: float = 1.0
-@export var shared_squash_hurt: float = 0.5
-@export var shared_squash_air: float = 0.1
-@export var shared_squash_air_ref_vy: float = 700.0
-@export var jump_bird_wake_radius: float = 900.0
-@export var jump_bird_wake_time: float = 0.5
-@export var jump_bird_settle_time: float = 0.5
-@export var jump_bird_give_up_radius: float = 1100.0
-@export var jump_bird_lunge_range: float = 400.0
-@export var jump_bird_lunge_max_dist: float = 450.0
-@export var jump_bird_lunge_speed: float = 1100.0
-@export var jump_bird_lunge_windup: float = 0.30
-@export var jump_bird_hop_interval: float = 0.55
-@export var jump_bird_hop_horizontal_speed: float = 240.0
-@export var jump_bird_hop_jump_velocity: float = -750.0
-@export var jump_bird_back_hop_up: float = -520.0
-@export var jump_bird_back_hop_away: float = 320.0
-@export var fly_bird_wake_radius: float = 1100.0
-@export var fly_bird_wake_time: float = 0.5
-@export var fly_bird_settle_time: float = 0.5
-@export var fly_bird_max_chase_distance: float = 2000.0
-@export var fly_bird_home_range: float = 2000.0
-@export var fly_bird_hover_altitude: float = 40.0
-@export var fly_bird_hover_offset_x: float = 260.0
-@export var fly_bird_hover_offset_y: float = 240.0
-@export var fly_bird_fly_speed: float = 320.0
-@export var fly_bird_take_off_speed: float = 750.0
-@export var fly_bird_take_off_time: float = 0.5
-@export var fly_bird_shoot_range: float = 800.0
-@export var fly_bird_shoot_reacquire_margin: float = 160.0
-@export var fly_bird_shoot_position_radius: float = 120.0
-@export var fly_bird_shoot_cooldown: float = 1.6
-@export var fly_bird_strafe_range: float = 180.0
-@export var fly_bird_strafe_duration: float = 0.3
-@export var fly_bird_bullet_damage: int = 2
-@export var fly_bird_bullet_range: float = 2000.0
-@export var fly_bird_bullet_gravity: float = 0.85
-@export var fly_bird_bullet_size: float = 1.2
-@export var fly_bird_bullet_min_speed: float = 312.5
-@export var fly_bird_bullet_max_speed: float = 2000.0
-@export var fly_bird_bullet_min_drop: float = 30.0
-@export var fly_bird_charge_hp_fraction: float = 0.25
-@export var fly_bird_charge_range: float = 1300.0
-@export var fly_bird_charge_speed: float = 1000.0
-@export var fly_bird_charge_timeout: float = 2.5
-@export var fly_bird_charge_damage: int = 5
-@export var fly_bird_charge_impact: float = 1500.0
-@export var fly_bird_charge_impact_up: float = 500.0
-@export var fly_bird_shoot_recoil: float = 500.0
-@export var fly_bird_repath_interval: float = 0.75
-@export var fly_bird_arrival_radius: float = 50.0
-@export var fly_bird_landing_time: float = 0.4
-@export var fly_bird_path_max_visit: int = 600
-@export var fly_bird_search_radius_cells: int = 180
-@export var fly_bird_escape_search_range: int = 360
-@export var fly_bird_escape_max_descent: int = 160
-@export var black_bird_wake_radius: float = 1000.0
-@export var black_bird_wake_time: float = 0.625
-@export var black_bird_settle_time: float = 0.625
-@export var black_bird_sleep_radius: float = 1200.0
-@export var black_bird_wander_speed: float = 300.0
-@export var black_bird_wander_min_t: float = 1.0
-@export var black_bird_wander_max_t: float = 3.0
-@export var black_bird_wander_idle_max: float = 1.5
-@export var black_bird_wander_jump_velocity: float = -500.0
-@export var black_bird_take_off_jump_velocity: float = -1000.0
-@export var black_bird_flank_check_interval: float = 1.0
-@export var black_bird_teleport_min_range: float = 128.0
-@export var black_bird_teleport_max_range: float = 384.0
-@export var black_bird_teleport_drop: float = 250.0
-@export var black_bird_landing_timeout: float = 0.3
-@export var black_bird_teleport_prep_time: float = 0.6
-@export var black_bird_teleport_entry_time: float = 0.1
-@export var black_bird_teleport_hover_time: float = 0.7
-@export var black_bird_charge_prep_time: float = 0.4
-@export var black_bird_teleport_cooldown: float = 3.0
-@export var black_bird_charge_speed: float = 900.0
-@export var black_bird_charge_damage: int = 7
-@export var black_bird_charge_impact: float = 1500.0
-@export var black_bird_charge_impact_up: float = 500.0
-@export var black_bird_charge_timeout: float = 2.5
-@export var black_bird_charge_jump_velocity: float = -650.0
-@export var black_bird_back_hop_up: float = -500.0
-@export var black_bird_back_hop_away: float = 800.0
+@export var shared_squash_amount: float
+@export var shared_squash_recover: float
+@export var shared_squash_take_off: float
+@export var shared_squash_charge: float
+@export var shared_squash_land_min_vy: float
+@export var shared_squash_land_ref_vy: float
+@export var shared_squash_land: float
+@export var shared_squash_hurt: float
+@export var shared_squash_air: float
+@export var shared_squash_air_ref_vy: float
+@export var jump_bird_wake_radius: float
+@export var jump_bird_wake_time: float
+@export var jump_bird_settle_time: float
+@export var jump_bird_give_up_radius: float
+@export var jump_bird_lunge_range: float
+@export var jump_bird_lunge_max_dist: float
+@export var jump_bird_lunge_speed: float
+@export var jump_bird_lunge_windup: float
+@export var jump_bird_hop_interval: float
+@export var jump_bird_hop_horizontal_speed: float
+@export var jump_bird_hop_jump_velocity: float
+@export var jump_bird_back_hop_up: float
+@export var jump_bird_back_hop_away: float
+@export var fly_bird_wake_radius: float
+@export var fly_bird_wake_time: float
+@export var fly_bird_settle_time: float
+@export var fly_bird_max_chase_distance: float
+@export var fly_bird_home_range: float
+@export var fly_bird_hover_altitude: float
+@export var fly_bird_hover_offset_x: float
+@export var fly_bird_hover_offset_y: float
+@export var fly_bird_fly_speed: float
+@export var fly_bird_take_off_speed: float
+@export var fly_bird_take_off_time: float
+@export var fly_bird_shoot_range: float
+@export var fly_bird_shoot_reacquire_margin: float
+@export var fly_bird_shoot_position_radius: float
+@export var fly_bird_shoot_cooldown: float
+@export var fly_bird_strafe_range: float
+@export var fly_bird_strafe_duration: float
+@export var fly_bird_bullet_damage: int
+@export var fly_bird_bullet_range: float
+@export var fly_bird_bullet_gravity: float
+@export var fly_bird_bullet_size: float
+@export var fly_bird_bullet_min_speed: float
+@export var fly_bird_bullet_max_speed: float
+@export var fly_bird_bullet_min_drop: float
+@export var fly_bird_charge_hp_fraction: float
+@export var fly_bird_charge_range: float
+@export var fly_bird_charge_speed: float
+@export var fly_bird_charge_timeout: float
+@export var fly_bird_charge_damage: int
+@export var fly_bird_charge_impact: float
+@export var fly_bird_charge_impact_up: float
+@export var fly_bird_shoot_recoil: float
+@export var fly_bird_repath_interval: float
+@export var fly_bird_arrival_radius: float
+@export var fly_bird_landing_time: float
+@export var fly_bird_path_max_visit: int
+@export var fly_bird_search_radius_cells: int
+@export var fly_bird_escape_search_range: int
+@export var fly_bird_escape_max_descent: int
+@export var black_bird_wake_radius: float
+@export var black_bird_wake_time: float
+@export var black_bird_settle_time: float
+@export var black_bird_sleep_radius: float
+@export var black_bird_wander_speed: float
+@export var black_bird_wander_min_t: float
+@export var black_bird_wander_max_t: float
+@export var black_bird_wander_idle_max: float
+@export var black_bird_wander_jump_velocity: float
+@export var black_bird_take_off_jump_velocity: float
+@export var black_bird_flank_check_interval: float
+@export var black_bird_teleport_min_range: float
+@export var black_bird_teleport_max_range: float
+@export var black_bird_teleport_drop: float
+@export var black_bird_landing_timeout: float
+@export var black_bird_teleport_prep_time: float
+@export var black_bird_teleport_entry_time: float
+@export var black_bird_teleport_hover_time: float
+@export var black_bird_charge_prep_time: float
+@export var black_bird_teleport_cooldown: float
+@export var black_bird_charge_speed: float
+@export var black_bird_charge_damage: int
+@export var black_bird_charge_impact: float
+@export var black_bird_charge_impact_up: float
+@export var black_bird_charge_timeout: float
+@export var black_bird_charge_jump_velocity: float
+@export var black_bird_back_hop_up: float
+@export var black_bird_back_hop_away: float

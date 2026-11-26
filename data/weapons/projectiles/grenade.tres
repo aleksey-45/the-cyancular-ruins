@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="ProjectileDef" format=3]
+
+[ext_resource type="Script" path="res://core/config/projectile_def.gd" id="1"]
+
+[resource]
+script = ExtResource("1")
+shape = Vector2(12, 8)
+wall_effect = 0
+wall_bounce = true
+wall_fuse = 0.3
+actor_bounce = true
+actor_fuse = 0.1
+npc_impulse = 2
+single_direct = true
+blast = {"radius": 350.0, "damage": 35, "impact": 3000.0}

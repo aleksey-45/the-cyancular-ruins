@@ -1,6 +1,8 @@
 # 武器与装备
 
-[武器目录](../data/weapons/catalog.tres)引用手枪、步枪、M82A1、S686、榴弹发射器、激光枪、复合弓和 M249 的 `.tres` 资源。每份 `WeaponDef` 定义武器 ID、攻击参数、图集区域和拾取范围，`WeaponRegistry` 加载后以只读字典提供。
+[武器目录](../data/weapons/catalog.tres)决定可用武器及其顺序。每份 `WeaponDef` 用独立字段选择开火方式、移动惩罚和攻击类型，数值和图集区域填在 `data` 中。注册表加载后按武器 ID 提供配置。ID 也用于联机快照和禁用武器列表。
+
+弹丸武器引用 `ProjectileDef`。普通枪械共用弹丸的碰撞形状和接触规则，弓箭调整形状，榴弹配置反弹、引信和爆炸。光束在自己的武器资源中配置射程、反射次数和命中半径。 [普通弹丸](../data/weapons/projectiles/round.tres) · [弓箭弹丸](../data/weapons/projectiles/arrow.tres) · [榴弹](../data/weapons/projectiles/grenade.tres)
 
 `GunBody` 根据武器配置处理按下攻击键开火、按住连射、松开开火和蓄力后松开发射，同时更新瞄准、装填、射击间隔和后坐力。 [武器资源脚本](../core/config/weapon_def.gd) · [武器逻辑](../core/sim/gun_body.gd)
 

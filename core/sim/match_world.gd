@@ -1,6 +1,8 @@
 class_name MatchWorld
 extends RefCounted
 
+const TCFG: TimeConfig = preload("res://core/config/time_config.tres")
+
 enum Command { START, SUICIDE, LEAVE, RESTART }
 enum EnemyView { POS, VEL, SLOT, FRAMES, SCALE, ACTIVITY, FACING, GROUNDED, HP, DOWNED,
 	HIT_LEFT, ACTIVE, ELITE, BLACK_BIRD, LUNGE, BOUNDS }
@@ -195,7 +197,7 @@ func _step_solo_time(inputs: Dictionary, commands: Array) -> bool:
 
 func _restart_solo() -> void:
 	world_time.mode = WorldTime.Mode.NONE
-	world_time.history = TimeHistory.new(TimeParams.SNAP_SECONDS)
+	world_time.history = TimeHistory.new(TCFG.SNAP_SECONDS)
 	combat.clear()
 	combat.clear_enemies()
 	combat.ground.clear()
@@ -246,7 +248,7 @@ func _advance_round() -> void:
 				for player: Player in players.values():
 					player.apply_authoritative_state(player.sim_max_hp, player.max_waterproof, false)
 		Phase.MATCH_OVER:
-			combat.clear_blasts()
+			combat.finish_match()
 
 func _settle_downs_and_respawns() -> void:
 	for role: int in players:
@@ -283,7 +285,7 @@ func _remove_role(role: int) -> void:
 	if personal_time != null:
 		personal_time.remove_role(role)
 	if rules.role_left(players.keys()):
-		combat.clear_blasts()
+		combat.finish_match()
 
 func _credit_hit(attacker: int, victim: Player, damage: int) -> void:
 	var role := victim.role

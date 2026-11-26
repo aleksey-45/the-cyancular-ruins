@@ -1,6 +1,8 @@
 class_name GrainAccount
 extends RefCounted
 
+const TCFG: TimeConfig = preload("res://core/config/time_config.tres")
+
 # 单人和 Beta 模式使用相同的时间技能消耗规则，这里保存余额、短期消耗量和透支量。
 
 enum { BALANCE, SHORT_USED, LOAN_USED, LOCKED }
@@ -16,9 +18,9 @@ var loan_used: float = 0.0
 var locked := false
 
 
-func _init(initial: float = TimeParams.GRAIN_INITIAL, cap_: float = TimeParams.GRAIN_CAP,
-		window_ := TimeParams.SHORT_WINDOW, regen_ := TimeParams.SHORT_REGEN,
-		loan_max_ := TimeParams.LOAN_LIMIT) -> void:
+func _init(initial: float = TCFG.GRAIN_INITIAL, cap_: float = TCFG.GRAIN_CAP,
+		window_ := TCFG.SHORT_WINDOW, regen_ := TCFG.SHORT_REGEN,
+		loan_max_ := TCFG.LOAN_LIMIT) -> void:
 	cap = cap_
 	window = window_
 	regen_rate = regen_

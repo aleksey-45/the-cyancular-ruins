@@ -1,22 +1,22 @@
 class_name TimeConfig
 extends Resource
 
-# 定义单人时间技能参数及其默认值。对局使用 time_config.tres 中的数值。
+# 时间技能的数值见 time_config.tres。
 
-@export var GRAIN_INITIAL: int = 1000
-@export var GRAIN_CAP: int = 5000
-@export var SHORT_WINDOW: float = 400.0
-@export var SHORT_REGEN: float = 50.0
-@export var LOAN_LIMIT: float = 100.0
-@export var COST_REWIND: float = 120.0
-@export var COST_HASTE: float = 80.0
-@export var SNAP_HZ: int = 20
-@export var SNAP_SECONDS: float = 40.0
-@export var REWIND_START_MULT: float = 3.0
-@export var REWIND_RAMP_TIME: float = 0.35
-@export var HASTE_PLAYER: float = 2.0
-@export var HASTE_WORLD: float = 0.5
-@export var LOAN_ENEMY_SPEED_BONUS: float = 0.5
-@export var LOAN_PITCH_RANGE: float = 0.5
-@export var ELITE_GRAIN_DROP: int = 300
-@export var ELITE_GRAIN_DELAY_TICKS: int = 36
+@export var GRAIN_INITIAL: int
+@export var GRAIN_CAP: int
+@export var SHORT_WINDOW: float
+@export var SHORT_REGEN: float
+@export var LOAN_LIMIT: float
+@export var COST_REWIND: float
+@export var COST_HASTE: float
+@export var SNAP_HZ: int
+@export var SNAP_SECONDS: float
+@export var REWIND_START_MULT: float
+@export var REWIND_RAMP_TIME: float
+@export var HASTE_PLAYER: float
+@export var HASTE_WORLD: float
+@export var LOAN_ENEMY_SPEED_BONUS: float
+@export var LOAN_PITCH_RANGE: float
+@export var ELITE_GRAIN_DROP: int
+@export var ELITE_GRAIN_DELAY_TICKS: int

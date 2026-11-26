@@ -57,7 +57,7 @@ func charge_ratio() -> float:
 	return charge_for_hold(definition, hold_elapsed)
 
 static func charge_for_hold(spec: Dictionary, elapsed: float) -> float:
-	return elapsed / float(spec["charge_time"]) if spec["trigger"] == WeaponRegistry.Trigger.CHARGE_RELEASE else 1.0
+	return elapsed / float(spec["charge_time"]) if spec["trigger"] == WeaponDef.Trigger.CHARGE_RELEASE else 1.0
 
 func step(actor: Player, input: ActorInput, delta: float) -> Vector2:
 	if input.pressed & ActorInput.BIT_RELOAD:
@@ -77,7 +77,7 @@ func step(actor: Player, input: ActorInput, delta: float) -> Vector2:
 	var pressed := (input.pressed & ActorInput.BIT_ATTACK) != 0
 	var released := (input.released & ActorInput.BIT_ATTACK) != 0
 	match definition["trigger"]:
-		WeaponRegistry.Trigger.RELEASE:
+		WeaponDef.Trigger.RELEASE:
 			if pressed:
 				aiming = true
 			if released:
@@ -85,7 +85,7 @@ func step(actor: Player, input: ActorInput, delta: float) -> Vector2:
 				_try_fire(actor, input.aim)
 			if not held and not pressed:
 				aiming = false
-		WeaponRegistry.Trigger.CHARGE_RELEASE:
+		WeaponDef.Trigger.CHARGE_RELEASE:
 			if carried == 0 and (held or pressed):
 				start_reload()
 			if reloading or carried == 0:
@@ -99,7 +99,7 @@ func step(actor: Player, input: ActorInput, delta: float) -> Vector2:
 				hold_elapsed = minf(hold_elapsed + delta, definition["charge_time"])
 			else:
 				cancel_aim()
-		WeaponRegistry.Trigger.AUTO:
+		WeaponDef.Trigger.AUTO:
 			var delay: float = definition["trigger_delay"]
 			if released or not (held or pressed):
 				hold_elapsed = 0.0
@@ -107,12 +107,12 @@ func step(actor: Player, input: ActorInput, delta: float) -> Vector2:
 				hold_elapsed = minf(hold_elapsed + delta, delay)
 				if hold_elapsed >= delay:
 					_try_fire(actor, input.aim)
-		WeaponRegistry.Trigger.PRESS:
+		WeaponDef.Trigger.PRESS:
 			if pressed:
 				_try_fire(actor, input.aim)
 	var penalty: int = definition["penalty"]
-	var slowed := penalty != WeaponRegistry.Penalty.NONE and fire_cd_timer > 0.0 \
-			or penalty == WeaponRegistry.Penalty.AIM_OR_COOLDOWN and aiming
+	var slowed := penalty != WeaponDef.Penalty.NONE and fire_cd_timer > 0.0 \
+			or penalty == WeaponDef.Penalty.AIM_OR_COOLDOWN and aiming
 	return definition["move"] if slowed else Vector2.ONE
 
 func aim_at(actor: Player, input_aim: Vector2) -> void:
@@ -137,17 +137,15 @@ func _fire(actor: Player, aim: Vector2) -> void:
 	if has_magazine() and carried == 0:
 		start_reload()
 		return
-	var cap: int = definition["live_cap"]
 	# 同类弹丸达到场上数量上限时，跳过开火，不扣减弹药。
-	if cap > 0 and actor.combat.count_projectiles(type_id, actor) >= cap:
+	if not actor.combat.can_fire(type_id, actor, definition["live_cap"]):
 		return
 	fire_cd_timer = definition["cooldown"]
 	var pose := muzzle_pose(actor, aim)
 	actor.shot_serial += 1
 	actor.last_shot_type = type_id
-	var speed_mult := actor.personal_haste_mult if definition["attack"] == WeaponRegistry.Attack.PROJECTILE else 1.0
 	actor.combat_requests.append({"kind": "fire", "type_id": type_id, "serial": actor.shot_serial,
-		"pos": pose.origin, "dir": pose.x, "charge": charge_ratio(), "speed_mult": speed_mult})
+		"pos": pose.origin, "dir": pose.x, "charge": charge_ratio(), "speed_mult": actor.personal_haste_mult})
 	if has_magazine():
 		carried -= 1
 		if carried == 0:

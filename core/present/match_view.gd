@@ -1,6 +1,8 @@
 class_name MatchView
 extends Node
 
+const TCFG: TimeConfig = preload("res://core/config/time_config.tres")
+
 const CFG: PlayerConfig = preload("res://core/config/player_config.tres")
 
 const TIME_REWIND := Color(0.86, 0.90, 0.95, 0.55)
@@ -167,7 +169,7 @@ func present(delta: float, frame: MatchFrame) -> void:
 	if _mode == MatchFrame.Mode.SOLO:
 		_time_of_day.text = Daylight.time_text(frame.day_minute)
 		var clock := frame.clock
-		Sfx.pitch_mult = clampf(1.0 + TimeParams.LOAN_PITCH_RANGE * clock.loan_depth
+		Sfx.pitch_mult = clampf(1.0 + TCFG.LOAN_PITCH_RANGE * clock.loan_depth
 				+ (0.12 if clock.haste else -0.15 if clock.rewind else 0.0), 0.7, 1.8)
 		var offset := watch.get_global_rect().get_center() - get_viewport().get_visible_rect().size * 0.5
 		grain_target = camera.get_screen_center_position() + offset / camera.zoom
@@ -199,7 +201,7 @@ func _apply_cues(frame: MatchFrame) -> void:
 			"hit": feedback.show_hit()
 			"kill": feedback.show_kill(cue[1])
 			"streak_reset": feedback.reset_streak()
-			"grain": _world.grain(cue[1], frame.now, TimeParams.ELITE_GRAIN_DELAY_TICKS * ActorStep.DT)
+			"grain": _world.grain(cue[1], frame.now, TCFG.ELITE_GRAIN_DELAY_TICKS * ActorStep.DT)
 			"grain_received": watch.tremble()
 			"loan_locked": watch.flash_locked()
 			"fire":

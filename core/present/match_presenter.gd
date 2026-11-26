@@ -1,6 +1,8 @@
 class_name MatchPresenter
 extends RefCounted
 
+const TCFG: TimeConfig = preload("res://core/config/time_config.tres")
+
 const Actor := preload("res://core/sim/player_state_schema.gd")
 const Enemy := MatchWorld.EnemyView
 const Pose := MatchSampler.Pose
@@ -137,7 +139,7 @@ func _aim_guide(row: Array, pose: MatchFrame.Pose, world_haste: bool) -> PackedV
 	var direction := pose.aim.x
 	var points: PackedVector2Array
 	if weapon.has("arc_time"):
-		var dt := ActorStep.DT * (TimeParams.HASTE_PLAYER if world_haste else 1.0)
+		var dt := ActorStep.DT * (TCFG.HASTE_PLAYER if world_haste else 1.0)
 		var speed := ShotRules.launch_speed(weapon, charge) * float(row[Actor.HASTE_MULT])
 		points = ShotRules.trace_arc(_terrain, muzzle, direction * speed, weapon, dt, weapon["arc_time"])
 	else:
@@ -213,7 +215,7 @@ func _clock(account: Array, rewind: bool, haste: bool) -> void:
 	clock.cap = _account.cap
 	var loan: float = account[GrainAccount.LOAN_USED]
 	var used: float = account[GrainAccount.SHORT_USED]
-	var window := _account.window if _account.window > 0.0 else TimeParams.SHORT_WINDOW
+	var window := _account.window if _account.window > 0.0 else TCFG.SHORT_WINDOW
 	clock.borrowed = loan > 0.5
 	clock.allowance = -roundi(loan) if clock.borrowed else roundi(_account.window - used)
 	clock.long_turns = clampf((used + loan) / window, 0.0, 1.0 + _account.loan_max / window)

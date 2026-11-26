@@ -1,41 +1,37 @@
 class_name WeaponRegistry
 extends RefCounted
 
-enum Type { PISTOL = 1, RIFLE = 2, M82 = 3, S686 = 4, GRENADE = 5, LASER = 6, COMPOUND_BOW = 7, M249 = 8 }
-enum Trigger { PRESS, AUTO, RELEASE, CHARGE_RELEASE }
-enum Penalty { NONE, COOLDOWN, AIM_OR_COOLDOWN }
-enum Attack { PROJECTILE, BEAM, MELEE }
+const ECFG: EnemyConfig = preload("res://core/config/enemy_config.tres")
+const CATALOG: WeaponCatalog = preload("res://data/weapons/catalog.tres")
 
-const DEFAULTS := {"trigger": Trigger.PRESS, "trigger_delay": 0.0, "penalty": Penalty.NONE, "move": Vector2.ONE,
-	"attack": Attack.PROJECTILE, "projectile": CombatProfiles.ROUND,
-	"muzzle": Vector2.ZERO, "pitch": 90.0, "recoil": 0.0,
-	"size": 1.0, "gravity": 0.0, "count": 1, "spread": 0.0, "live_cap": 0,
-	"shot_sound": "shoot", "npc_hit_sound": "hit", "projectile_region": Rect2(2, 1, 11, 4)}
-static var BIRD_BOMB := {"projectile": CombatProfiles.BIRD_BOMB, "size": EnemyParams.FlyBird.bullet_size,
-	"gravity": EnemyParams.FlyBird.bullet_gravity, "range": EnemyParams.FlyBird.bullet_range,
-	"damage": EnemyParams.FlyBird.bullet_damage, "impact": -1.0, "npc_hit_sound": "",
+static var _bird_bomb := {"projectile": CombatProfiles.BIRD_BOMB, "size": ECFG.fly_bird_bullet_size,
+	"gravity": ECFG.fly_bird_bullet_gravity, "range": ECFG.fly_bird_bullet_range,
+	"damage": ECFG.fly_bird_bullet_damage, "impact": -1.0,
 	"projectile_region": Rect2(28, 1, 10, 9)}
-const WEAPON_COUNT := 8
-# 武器数值的唯一来源：data/weapons/*.tres + catalog.tres（见 WeaponDef）。
-const CATALOG := preload("res://data/weapons/catalog.tres")
+static var _definitions := _load_definitions(CATALOG.weapons)
 
-static var _definitions := _load_definitions()
-
-static func _load_definitions() -> Dictionary:
+static func _load_definitions(weapons: Array[WeaponDef]) -> Dictionary:
 	var result := {}
-	for def: WeaponDef in CATALOG.weapons:
-		if def == null or def.weapon_id <= 0 or def.data.is_empty():
-			push_error("WeaponCatalog: 无效的武器条目")
-			continue
-		var spec: Dictionary = def.data.duplicate(true)
+	var projectiles: Dictionary[ProjectileDef, Dictionary] = {}
+	for weapon: WeaponDef in weapons:
+		var spec := {"trigger_delay": 0.0, "move": Vector2.ONE, "live_cap": 0,
+			"shot_sound": "shoot"}.merged(weapon.data, true)
+		spec["trigger"] = weapon.trigger
+		spec["penalty"] = weapon.penalty
+		spec["attack"] = weapon.attack
+		if weapon.attack == WeaponDef.Attack.PROJECTILE:
+			var projectile := weapon.projectile
+			if not projectiles.has(projectile):
+				projectiles[projectile] = projectile.definition()
+			spec["projectile"] = projectiles[projectile]
+			spec.merge({"size": 1.0, "gravity": 0.0, "count": 1, "spread": 0.0,
+				"projectile_region": Rect2(2, 1, 11, 4)})
 		spec.make_read_only()
-		result[def.weapon_id] = spec
-	if result.size() != WEAPON_COUNT:
-		push_error("WeaponCatalog: 期望 %d 种武器,实际 %d 种" % [WEAPON_COUNT, result.size()])
+		result[weapon.weapon_id] = spec
 	return result
 
 static func projectile_definition(type_id: int) -> Dictionary:
-	return BIRD_BOMB if type_id == CombatProfiles.BIRD_BOMB_TYPE else _definitions[type_id]
+	return _bird_bomb if type_id == CombatProfiles.BIRD_BOMB_TYPE else _definitions[type_id]
 
 static func blast_definition(type_id: int) -> Dictionary:
 	return projectile_definition(type_id)["projectile"]["blast"]

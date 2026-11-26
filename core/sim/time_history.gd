@@ -1,6 +1,8 @@
 class_name TimeHistory
 extends RefCounted
 
+const TCFG: TimeConfig = preload("res://core/config/time_config.tres")
+
 enum Sample { COMMIT, TIME, ACTOR, PROJECTILES, ENVIRONMENT }
 enum State { TIME, SINCE_SAMPLE, REWOUND, SAMPLES }
 
@@ -32,7 +34,7 @@ func record(delta: float, at: int, sample: Callable) -> void:
 	rewound = -1.0
 	time += delta
 	_since_sample += delta
-	if _since_sample < TimeParams.SNAP_INTERVAL:
+	if _since_sample < 1.0 / TCFG.SNAP_HZ:
 		return
 	_since_sample = 0.0
 	var values: Array = sample.call()
@@ -54,7 +56,8 @@ func backward(delta: float) -> Array:
 	if rewound < 0.0:
 		rewound = 0.0
 		_since_sample = 0.0
-	var target := maxf(oldest_time(), time - TimeParams.rewind_delta(rewound, delta))
+	var ramp := clampf(rewound / TCFG.REWIND_RAMP_TIME, 0.0, 1.0)
+	var target := maxf(oldest_time(), time - delta * lerpf(TCFG.REWIND_START_MULT, 1.0, ramp))
 	rewound += time - target
 	time = target
 	var end := _samples.size()

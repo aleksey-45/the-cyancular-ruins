@@ -235,7 +235,7 @@ func _mirrored_collision(tree: SceneTree) -> void:
 	var parent := world_with_walls(tree, 16, 16, {Vector2i(10, 8): texture})
 	var actor := player(parent)
 	var sim := parent.combat
-	var pistol := WeaponRegistry.Type.PISTOL
+	var pistol := WeaponType.PISTOL
 	var bullet := sim.spawn_projectile(1, pistol, actor, Vector2(740, 544), Vector2.LEFT * 600.0)
 	expect(bullet.advance_physics(0.1) == BulletBody.AdvanceResult.TERRAIN_HIT,
 			"canonical projectile hits the interior wall")
@@ -273,7 +273,7 @@ func _mirrored_collision(tree: SceneTree) -> void:
 	expect(ranged.advance_physics(0.1) == BulletBody.AdvanceResult.RANGE_END
 			and ranged.position.x >= 0.0 and ranged.position.x < 1024.0,
 			"range end uses the same canonical exit")
-	var shell := sim.spawn_projectile(3, WeaponRegistry.Type.GRENADE, actor, Vector2(1010, 300), Vector2.RIGHT * 3000.0)
+	var shell := sim.spawn_projectile(3, WeaponType.GRENADE, actor, Vector2(1010, 300), Vector2.RIGHT * 3000.0)
 	sim.step_projectile(shell, 0.1)
 	expect(shell.velocity.x < 0.0 and is_equal_approx(shell.fuse_duration, 0.3)
 			and shell.position.x >= 0.0 and shell.position.x < 1024.0,

@@ -3,26 +3,21 @@ extends RefCounted
 
 const WCFG: WorldConfig = preload("res://core/config/world_config.tres")
 
-static func prepare(terrain: Terrain, shot: Dictionary, spec: Dictionary) -> void:
-	var pos: Vector2 = shot["pos"]
-	var dir: Vector2 = shot["dir"]
-	match spec["attack"]:
-		WeaponRegistry.Attack.PROJECTILE:
-			shot["vectors"] = projectile_velocities(shot["role"], shot, spec)
-		WeaponRegistry.Attack.BEAM:
-			var trace := terrain.trace_beam(pos, dir, spec["range"], spec["bounces"])
-			shot["trace"] = trace
-			shot["vectors"] = trace["points"]
-		WeaponRegistry.Attack.MELEE:
-			shot["vectors"] = PackedVector2Array([pos, pos + dir * float(spec["range"])])
-
-static func projectiles(combat: CombatSimulator, actor: Player, shot: Dictionary, spec: Dictionary) -> void:
+static func projectiles(combat: CombatSimulator, actor: Player, shot: Dictionary, spec: Dictionary) -> PackedVector2Array:
 	var id := shot_id(actor.role, shot["serial"])
-	var velocities: PackedVector2Array = shot["vectors"]
+	var rng := RandomNumberGenerator.new()
+	rng.seed = ("%d:%d" % [actor.role, shot["serial"]]).hash()
+	var spread := deg_to_rad(spec["spread"])
+	var direction: Vector2 = shot["dir"]
+	var speed := launch_speed(spec, shot["charge"]) * float(shot["speed_mult"])
 	var damage := attack_damage(spec, shot["charge"])
-	for pellet in velocities.size():
-		var key := pellet_id(id, pellet)
-		combat.spawn_projectile(key, shot["type_id"], actor, shot["pos"], velocities[pellet], damage)
+	var velocities := PackedVector2Array()
+	for pellet in int(spec["count"]):
+		var angle := direction.angle() + rng.randf_range(-spread, spread)
+		var velocity := Vector2.from_angle(angle) * speed
+		velocities.append(velocity)
+		combat.spawn_projectile(pellet_id(id, pellet), shot["type_id"], actor, shot["pos"], velocity, damage)
+	return velocities
 
 static func shot_id(role: int, serial: int) -> int:
 	return (role << 48) | (serial << 8)
@@ -45,18 +40,6 @@ static func launch_speed(spec: Dictionary, charge: float) -> float:
 	var speed: float = spec["speed"]
 	return lerpf(spec.get("min_speed", speed), speed, charge)
 
-static func projectile_velocities(role: int, shot: Dictionary, spec: Dictionary) -> PackedVector2Array:
-	var rng := RandomNumberGenerator.new()
-	rng.seed = ("%d:%d" % [role, shot["serial"]]).hash()
-	var spread := deg_to_rad(spec["spread"])
-	var direction: Vector2 = shot["dir"]
-	var speed := launch_speed(spec, shot["charge"]) * float(shot["speed_mult"])
-	var velocities := PackedVector2Array()
-	for _pellet in int(spec["count"]):
-		var angle := direction.angle() + rng.randf_range(-spread, spread)
-		velocities.append(Vector2.from_angle(angle) * speed)
-	return velocities
-
 static func flight_velocity(terrain: Terrain, at: Vector2, velocity: Vector2, gravity: float, delta: float) -> Vector2:
 	velocity.y += WCFG.gravity0 * gravity * delta
 	return velocity * Water.bullet_drag_factor(terrain.water(at), WCFG.water_bullet_drag, delta)
@@ -78,10 +61,31 @@ static func trace_arc(terrain: Terrain, at: Vector2, velocity: Vector2, spec: Di
 			break
 	return points
 
-static func hitscan(combat: CombatSimulator, shooter: Player, shot: Dictionary, spec: Dictionary) -> void:
-	var points: PackedVector2Array = shot["vectors"]
-	var block_walls: bool = spec["attack"] == WeaponRegistry.Attack.MELEE
-	var damage := attack_damage(spec, shot["charge"])
+static func beam(combat: CombatSimulator, shooter: Player, shot: Dictionary, spec: Dictionary) -> PackedVector2Array:
+	var terrain := combat.terrain
+	var trace := terrain.trace_beam(shot["pos"], shot["dir"], spec["range"], spec["bounces"])
+	var points: PackedVector2Array = trace["points"]
+	_hit_corridor(combat, shooter, points, spec, shot["charge"], false)
+	var seen := {}
+	for cell: Vector2i in trace["contacts"]:
+		var block := cell / Terrain.BEAM_BLOCK_SUBS
+		if seen.has(block):
+			continue
+		var tex := terrain.material_at(cell)
+		if TileDefs.explosion_destroyable(tex):
+			seen[block] = true
+			combat.record_destruction(shooter.role, terrain.damage_beam(cell, spec["tile_chip"]))
+	return points
+
+static func melee(combat: CombatSimulator, shooter: Player, shot: Dictionary, spec: Dictionary) -> PackedVector2Array:
+	var from: Vector2 = shot["pos"]
+	var points := PackedVector2Array([from, from + shot["dir"] * float(spec["range"])])
+	_hit_corridor(combat, shooter, points, spec, shot["charge"], true)
+	return points
+
+static func _hit_corridor(combat: CombatSimulator, shooter: Player, points: PackedVector2Array,
+		spec: Dictionary, charge: float, block_walls: bool) -> void:
+	var damage := attack_damage(spec, charge)
 	var space := combat.terrain.physics
 	var contacts := space.corridor_contacts(points, spec["hit_radius"], CombatSimulator.ACTOR_LAYERS, [shooter.rid])
 	for contact: Array in contacts:
@@ -91,22 +95,6 @@ static func hitscan(combat: CombatSimulator, shooter: Player, shot: Dictionary, 
 		var at: Vector2 = points[0] if block_walls else contact[CollisionWorld.CorridorContact.POINT]
 		combat.resolve_hit(shooter, target, CombatProfiles.DIRECT, at, damage, spec["impact"],
 				combat.hit_direction(at, target.position))
-
-	if block_walls:
-		return
-	var trace: Dictionary = shot["trace"]
-	var terrain := combat.terrain
-	var seen := {}
-	var cells: Array = trace["contacts"]
-	for index in cells.size():
-		var cell: Vector2i = cells[index]
-		var block := cell / Terrain.BEAM_BLOCK_SUBS
-		if seen.has(block):
-			continue
-		var tex := terrain.material_at(cell)
-		if TileDefs.explosion_destroyable(tex):
-			seen[block] = true
-			combat.record_destruction(shooter.role, terrain.damage_beam(cell, spec["tile_chip"]))
 
 static func step_projectile(combat: CombatSimulator, bullet: BulletBody, delta: float) -> void:
 	var advance := bullet.advance_physics(delta)

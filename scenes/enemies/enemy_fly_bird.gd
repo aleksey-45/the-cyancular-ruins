@@ -46,11 +46,11 @@ func _setup() -> void:
 	var bounds := kind.hulls[1].get_rect()
 	_fly_box_min = bounds.position * scale
 	_fly_box_max = bounds.end * scale
-	wake_radius = EnemyParams.FlyBird.wake_radius
+	wake_radius = ECFG.fly_bird_wake_radius
 	waterproof_max = 10
-	_repath_phase = combat.rng.randf() * EnemyParams.FlyBird.repath_interval
+	_repath_phase = combat.rng.randf() * ECFG.fly_bird_repath_interval
 	_spawn_pos = position
-	_home_cell = terrain.cell(_spawn_pos + Vector2.UP * EnemyParams.FlyBird.hover_altitude)
+	_home_cell = terrain.cell(_spawn_pos + Vector2.UP * ECFG.fly_bird_hover_altitude)
 
 func _move_slide(travel: Vector2) -> void:
 	super(travel)
@@ -64,7 +64,7 @@ func _ai(delta: float) -> void:
 		_update_facing()
 	match state:
 		State.SLEEP:
-			if _wake_ready(delta, dist, EnemyParams.FlyBird.wake_time):
+			if _wake_ready(delta, dist, ECFG.fly_bird_wake_time):
 				_set_state(State.TAKE_OFF)
 
 				activity = Activity.TAKE_OFF
@@ -85,7 +85,7 @@ func _ai(delta: float) -> void:
 
 func _tick_take_off(delta: float) -> void:
 	_state_timer += delta
-	if _state_timer >= EnemyParams.FlyBird.take_off_time:
+	if _state_timer >= ECFG.fly_bird_take_off_time:
 		_set_state(State.FLY)
 		use_gravity = false
 		activity = Activity.FLY
@@ -93,29 +93,29 @@ func _tick_take_off(delta: float) -> void:
 
 
 func _tick_fly(delta: float, dist: float) -> void:
-	if _player_home_dist() > EnemyParams.FlyBird.home_range:
+	if _player_home_dist() > ECFG.fly_bird_home_range:
 		_start_return()
 		return
-	if dist > EnemyParams.FlyBird.max_chase_distance:
+	if dist > ECFG.fly_bird_max_chase_distance:
 		_start_return()
 		return
 	_update_charge_intent_if_needed()
 	if intent == Intent.CHARGE:
 		if _try_charge():
 			return
-	elif dist <= EnemyParams.FlyBird.shoot_range and _shot_clear() and _near_shoot_pos():
+	elif dist <= ECFG.fly_bird_shoot_range and _shot_clear() and _near_shoot_pos():
 		_start_shoot()
 		return
 	_repath_timer -= delta
 	if _repath_timer <= 0.0:
-		_repath_timer = EnemyParams.FlyBird.repath_interval + _repath_phase
-		_repath_to(terrain.cell(_shoot_pos() + Vector2.UP * EnemyParams.FlyBird.hover_altitude))
+		_repath_timer = ECFG.fly_bird_repath_interval + _repath_phase
+		_repath_to(terrain.cell(_shoot_pos() + Vector2.UP * ECFG.fly_bird_hover_altitude))
 	# 沿路径飞行或绕过障碍都不可行时，才直接飞向投弹点。
 	_follow_path(delta, _shoot_pos() if _path.is_empty() else Vector2.INF)
 
 
 func _tick_shoot(delta: float, dist: float) -> void:
-	if _player_home_dist() > EnemyParams.FlyBird.home_range:
+	if _player_home_dist() > ECFG.fly_bird_home_range:
 		_start_return()
 		return
 	_update_charge_intent_if_needed()
@@ -125,7 +125,7 @@ func _tick_shoot(delta: float, dist: float) -> void:
 		_set_state(State.FLY)
 		_schedule_repath()
 		return
-	elif dist > EnemyParams.FlyBird.shoot_range + EnemyParams.FlyBird.shoot_reacquire_margin:
+	elif dist > ECFG.fly_bird_shoot_range + ECFG.fly_bird_shoot_reacquire_margin:
 		_set_state(State.FLY)
 		_schedule_repath()
 		return
@@ -134,7 +134,7 @@ func _tick_shoot(delta: float, dist: float) -> void:
 	if _strafe_target != Vector2.INF:
 		_strafe_timer -= delta
 		_glide_to(_strafe_target, delta)
-		if _strafe_timer <= 0.0 or _toroidal_dist_to(_strafe_target) <= EnemyParams.FlyBird.fly_speed * delta:
+		if _strafe_timer <= 0.0 or _toroidal_dist_to(_strafe_target) <= ECFG.fly_bird_fly_speed * delta:
 			_strafe_target = Vector2.INF
 	else:
 		_glide_to(_hover_anchor, delta)
@@ -147,7 +147,7 @@ func _tick_shoot(delta: float, dist: float) -> void:
 		# 炸弹抛出后会下落，因此只在飞鸟不低于玩家时投弹。
 		if position.y <= player.position.y:
 			_fire_parabolic()
-		_shoot_timer = EnemyParams.FlyBird.shoot_cooldown
+		_shoot_timer = ECFG.fly_bird_shoot_cooldown
 		_start_strafe()
 
 
@@ -156,15 +156,15 @@ func _tick_charge(delta: float) -> void:
 	if touches_player():
 		_hit_charge_player()
 		_begin_death()
-	elif _state_timer >= EnemyParams.FlyBird.charge_timeout:
+	elif _state_timer >= ECFG.fly_bird_charge_timeout:
 		_begin_death()
 
 
 func _tick_return(delta: float, dist: float) -> void:
 	if _landing:
 		_state_timer += delta
-		if _state_timer >= EnemyParams.FlyBird.landing_time:
-			_settle_sleep(EnemyParams.FlyBird.settle_time)
+		if _state_timer >= ECFG.fly_bird_landing_time:
+			_settle_sleep(ECFG.fly_bird_settle_time)
 			_set_state(State.SLEEP)
 			stance = 0
 			_landing = false
@@ -173,9 +173,9 @@ func _tick_return(delta: float, dist: float) -> void:
 	else:
 		_repath_timer -= delta
 		if _repath_timer <= 0.0:
-			_repath_timer = EnemyParams.FlyBird.repath_interval + _repath_phase
+			_repath_timer = ECFG.fly_bird_repath_interval + _repath_phase
 			# 玩家离得太远时，仍继续返回出生点，但暂时不重新寻路。
-			if dist <= EnemyParams.FlyBird.max_chase_distance:
+			if dist <= ECFG.fly_bird_max_chase_distance:
 				_repath_to(_home_cell)
 		_follow_path(delta, _spawn_pos)
 
@@ -205,8 +205,8 @@ func _shoot_side() -> float:
 func _shoot_side_compute(geo: float) -> float:
 	var p := player.position
 	for side in [geo, -geo]:
-		var pos := p + Vector2(side * EnemyParams.FlyBird.hover_offset_x,
-				-EnemyParams.FlyBird.hover_offset_y)
+		var pos := p + Vector2(side * ECFG.fly_bird_hover_offset_x,
+				-ECFG.fly_bird_hover_offset_y)
 		if TileDefs.is_blocked(terrain.material_at(terrain.cell(pos))):
 			continue
 		if terrain.line_of_sight(pos, p):
@@ -223,14 +223,14 @@ func _shoot_side_geo() -> float:
 func _shoot_pos() -> Vector2:
 	var p := player.position
 	var side := _shoot_side()
-	var pos := p + Vector2(side * EnemyParams.FlyBird.hover_offset_x, -EnemyParams.FlyBird.hover_offset_y)
+	var pos := p + Vector2(side * ECFG.fly_bird_hover_offset_x, -ECFG.fly_bird_hover_offset_y)
 	if TileDefs.is_blocked(terrain.material_at(terrain.cell(pos))):
-		pos = p + Vector2(-side * EnemyParams.FlyBird.hover_offset_x, -EnemyParams.FlyBird.hover_offset_y)
+		pos = p + Vector2(-side * ECFG.fly_bird_hover_offset_x, -ECFG.fly_bird_hover_offset_y)
 	return pos
 
 
 func _near_shoot_pos() -> bool:
-	return _toroidal_dist_to(_shoot_pos()) <= EnemyParams.FlyBird.shoot_position_radius
+	return _toroidal_dist_to(_shoot_pos()) <= ECFG.fly_bird_shoot_position_radius
 
 
 func _start_shoot() -> void:
@@ -243,17 +243,17 @@ func _start_shoot() -> void:
 func _update_hover_anchor() -> void:
 	# 默认在玩家斜上方悬停，原位置被地形占据时移到玩家另一侧。
 	var p := player.position
-	_hover_anchor = p + Vector2(_hover_side * EnemyParams.FlyBird.hover_offset_x,
-			-EnemyParams.FlyBird.hover_offset_y)
+	_hover_anchor = p + Vector2(_hover_side * ECFG.fly_bird_hover_offset_x,
+			-ECFG.fly_bird_hover_offset_y)
 	if TileDefs.is_blocked(terrain.material_at(terrain.cell(_hover_anchor))):
 		_hover_side = -_hover_side
-		_hover_anchor = p + Vector2(_hover_side * EnemyParams.FlyBird.hover_offset_x,
-				-EnemyParams.FlyBird.hover_offset_y)
+		_hover_anchor = p + Vector2(_hover_side * ECFG.fly_bird_hover_offset_x,
+				-ECFG.fly_bird_hover_offset_y)
 
 
 # 飞鸟以固定速度靠近目标。本帧可以到达时，直接设置节点坐标，避免越过目标。
 func _glide_to(point: Vector2, delta: float) -> void:
-	var spd := EnemyParams.FlyBird.fly_speed
+	var spd := ECFG.fly_bird_fly_speed
 	var to_target := GridPathfinder.toroidal_delta_px(position, point, terrain.map_size)
 	if to_target.length() <= spd * delta:
 		position = point
@@ -266,9 +266,9 @@ func _start_strafe() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = (combat.tick << 32) | slot
 	_strafe_target = position + Vector2(
-			rng.randf_range(-EnemyParams.FlyBird.strafe_range, EnemyParams.FlyBird.strafe_range),
-			rng.randf_range(-EnemyParams.FlyBird.strafe_range, EnemyParams.FlyBird.strafe_range))
-	_strafe_timer = EnemyParams.FlyBird.strafe_duration
+			rng.randf_range(-ECFG.fly_bird_strafe_range, ECFG.fly_bird_strafe_range),
+			rng.randf_range(-ECFG.fly_bird_strafe_range, ECFG.fly_bird_strafe_range))
+	_strafe_timer = ECFG.fly_bird_strafe_duration
 
 
 # 只有与上次检测处在同一对子格而且缓存未到期，才继续使用上次的视线结果。
@@ -289,29 +289,29 @@ func _fire_parabolic() -> void:
 	var v0 := _bullet_v0()
 	combat.spawn_enemy_projectile(CombatProfiles.BIRD_BOMB_TYPE, self, Vector2(v0, 0.0))
 	# 后坐力让飞鸟在水平方向向弹丸的反方向移动。
-	velocity += Vector2(-signf(v0) * EnemyParams.FlyBird.shoot_recoil, 0.0)
+	velocity += Vector2(-signf(v0) * ECFG.fly_bird_shoot_recoil, 0.0)
 
 
 # 用高度差估算弹丸落到玩家的高度需要多久，再预测那时的玩家位置。
 # 算出的弹丸水平速度同时决定飞鸟的朝向。
 func _bullet_v0() -> float:
-	var drop := maxf(player.position.y - position.y, EnemyParams.FlyBird.bullet_min_drop)
+	var drop := maxf(player.position.y - position.y, ECFG.fly_bird_bullet_min_drop)
 	var t := sqrt(2.0 * drop / WCFG.gravity0)
 	var pred := player.position + player.velocity * t
 	var dx := GridPathfinder.toroidal_delta_px(position, pred, terrain.map_size).x
-	return clampf(absf(dx) / t, EnemyParams.FlyBird.bullet_min_speed,
-			EnemyParams.FlyBird.bullet_max_speed) * signf(dx)
+	return clampf(absf(dx) / t, ECFG.fly_bird_bullet_min_speed,
+			ECFG.fly_bird_bullet_max_speed) * signf(dx)
 
 
 
 func _update_charge_intent_if_needed() -> void:
 	# 生命值降到上限的四分之一以下时，飞鸟转为寻找冲撞机会。
-	if intent == Intent.SHOOT and hp < kind.hp * EnemyParams.FlyBird.charge_hp_fraction:
+	if intent == Intent.SHOOT and hp < kind.hp * ECFG.fly_bird_charge_hp_fraction:
 		intent = Intent.CHARGE
 
 
 func _try_charge() -> bool:
-	if toroidal_dist_to_player() > EnemyParams.FlyBird.charge_range:
+	if toroidal_dist_to_player() > ECFG.fly_bird_charge_range:
 		return false
 	# 发动冲撞前也检查视线，避免向被地形挡住的玩家冲撞。
 	if not _shot_clear():
@@ -325,7 +325,7 @@ func _start_charge() -> void:
 
 	use_gravity = false  # 冲撞期间不受重力影响，因此可以沿指定方向直线飞行。
 	var dir := toroidal_dir_to_player()
-	velocity = dir * EnemyParams.FlyBird.charge_speed
+	velocity = dir * ECFG.fly_bird_charge_speed
 	activity = Activity.CHARGE
 
 
@@ -341,8 +341,8 @@ func _on_charge_impact() -> void:
 
 func _hit_charge_player() -> void:
 	if combat.resolve_hit(self, player, CombatProfiles.FLY_CHARGE,
-			position, EnemyParams.FlyBird.charge_damage, -1.0):
-		_smash_player(EnemyParams.FlyBird.charge_impact, EnemyParams.FlyBird.charge_impact_up)
+			position, ECFG.fly_bird_charge_damage, -1.0):
+		_smash_player(ECFG.fly_bird_charge_impact, ECFG.fly_bird_charge_impact_up)
 
 
 func _start_return() -> void:
@@ -350,14 +350,14 @@ func _start_return() -> void:
 	_landing = false
 	activity = Activity.FLY
 	# 返回出生点前，若玩家仍在追击距离内就重新寻路，否则只清空原路径。
-	if toroidal_dist_to_player() <= EnemyParams.FlyBird.max_chase_distance:
+	if toroidal_dist_to_player() <= ECFG.fly_bird_max_chase_distance:
 		_repath_to(_home_cell)
 	else:
 		_path = []
 
 
 func _home_reached() -> bool:
-	return _toroidal_dist_to(_spawn_pos) <= EnemyParams.FlyBird.arrival_radius
+	return _toroidal_dist_to(_spawn_pos) <= ECFG.fly_bird_arrival_radius
 
 
 func _start_landing() -> void:
@@ -375,7 +375,7 @@ func _player_home_dist() -> float:
 
 func _takeoff_velocity() -> void:
 	var dir := toroidal_dir_to_player()
-	var s := EnemyParams.FlyBird.take_off_speed
+	var s := ECFG.fly_bird_take_off_speed
 	velocity = Vector2(dir.x * s, -s * 0.75)
 	use_gravity = true
 
@@ -397,7 +397,7 @@ func _follow_path(delta: float, fallback_target: Vector2 = Vector2.INF) -> void:
 		if fallback_target != Vector2.INF:
 			_glide_to(_escape_target if _escape_target != Vector2.INF else fallback_target, delta)
 		return
-	var spd := EnemyParams.FlyBird.fly_speed
+	var spd := ECFG.fly_bird_fly_speed
 	while _path_index < _path.size():
 		var target := terrain.cell_center(_path[_path_index])
 		var to_target := GridPathfinder.toroidal_delta_px(position, target, terrain.map_size)
@@ -416,8 +416,8 @@ func _find_escape_column() -> Vector2:
 	var cols := terrain.columns
 	var rows := terrain.rows
 	var bc := terrain.cell(position)
-	var width := mini(cols / 2, EnemyParams.FlyBird.escape_search_range)
-	for drop in range(1, mini(rows - 1, EnemyParams.FlyBird.escape_max_descent) + 1):
+	var width := mini(cols / 2, ECFG.fly_bird_escape_search_range)
+	for drop in range(1, mini(rows - 1, ECFG.fly_bird_escape_max_descent) + 1):
 		var row := posmod(bc.y + drop, rows)
 		for dist in range(1, width + 1):
 			for side in [-1, 1]:
@@ -464,7 +464,7 @@ func _anchored_obstacle(rect: Rect2) -> Rect2:
 
 
 func _schedule_repath() -> void:
-	_repath_timer = EnemyParams.FlyBird.repath_interval + _repath_phase
+	_repath_timer = ECFG.fly_bird_repath_interval + _repath_phase
 
 
 func _repath_to(cell: Vector2i) -> void:
@@ -474,7 +474,7 @@ func _repath_to(cell: Vector2i) -> void:
 	_path_target = cell
 	_collect_obstacles()
 	_path = GridPathfinder.find_path(Vector2i(terrain.columns, terrain.rows), terrain.cell(position), cell,
-			_bird_can_pass, EnemyParams.FlyBird.path_max_visit, EnemyParams.FlyBird.search_radius_cells)
+			_bird_can_pass, ECFG.fly_bird_path_max_visit, ECFG.fly_bird_search_radius_cells)
 	_path_index = 0
 	# 若未找到任何路径，尝试选取侧方或下方的临时绕行点。
 	_escape_target = _find_escape_column() if _path.is_empty() else Vector2.INF

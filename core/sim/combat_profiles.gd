@@ -11,8 +11,6 @@ const FLY_BIRD_WET_MULT := 1.5
 
 const DIRECT := {"targets": Target.OPPONENT | Target.NPC,
 	"water": Water.NONE, "npc_impulse": NpcImpulse.ADD}
-const GRENADE_DIRECT := {"targets": Target.OPPONENT | Target.NPC,
-	"water": Water.NONE, "npc_impulse": NpcImpulse.DEFAULT}
 const BLAST := {"targets": PLAYERS | Target.NPC,
 	"water": Water.BLAST, "npc_impulse": NpcImpulse.SET}
 const ENEMY_HIT := {"targets": PLAYERS, "respects_iframes": true, "water": Water.NONE}
@@ -22,28 +20,6 @@ const SMASH := {"targets": PLAYERS, "water": Water.NONE}
 const DROWN := {"targets": PLAYERS | Target.NPC,
 	"water": Water.NONE, "npc_impulse": NpcImpulse.ADD}
 
-const ROUND := {
-	"shape": Vector2(12, 6),
-	"wall": {"bounce": false, "fuse": 0.0, "effect": ContactEffect.CHIP_SUB},
-	"actor": {"bounce": false, "fuse": 0.0, "effect": ContactEffect.HIT},
-	"hit": DIRECT,
-	"blast": {},
-}
-const ARROW := {
-	"shape": Vector2(20, 4),
-	"wall": ROUND["wall"],
-	"actor": ROUND["actor"],
-	"hit": DIRECT,
-	"blast": {},
-}
-const GRENADE := {
-	"single_direct": true,
-	"shape": Vector2(12, 8),
-	"wall": {"bounce": true, "fuse": 0.3, "effect": ContactEffect.NONE},
-	"actor": {"bounce": true, "fuse": 0.1, "effect": ContactEffect.HIT},
-	"hit": GRENADE_DIRECT,
-	"blast": {"radius": 350.0, "damage": 35, "impact": 3000.0},
-}
 const BIRD_BOMB := {
 	"collision_layers": CollisionWorld.LAYER_TEAM_A,
 	"shape": Vector2(10, 10),

@@ -1,59 +1,33 @@
 [gd_resource type="Resource" script_class="WeaponDef" format=3]
 
 [ext_resource type="Script" path="res://core/config/weapon_def.gd" id="1_to6mt"]
+[ext_resource type="Resource" path="res://data/weapons/projectiles/round.tres" id="2_projectile"]
 
 [resource]
 script = ExtResource("1_to6mt")
 weapon_id = 2
+trigger = 1
+penalty = 1
+projectile = ExtResource("2_projectile")
 data = {
-"attack": 0,
 "cooldown": 0.1,
-"count": 1,
 "damage": 4,
-"gravity": 0.0,
 "impact": 500.0,
 "kick": 6.0,
-"live_cap": 0,
 "mag": 30,
 "move": Vector2(0.7, 0.8),
 "muzzle": Vector2(31, 6),
 "name": "步枪",
-"npc_hit_sound": "hit",
-"penalty": 1,
 "pickup_bounds": Rect2(-27.5, -9, 55, 18),
 "pitch": 60.0,
-"projectile": {
-"actor": {
-"bounce": false,
-"effect": 2,
-"fuse": 0.0
-},
-"blast": {},
-"hit": {
-"npc_impulse": 0,
-"targets": 12,
-"water": 0
-},
-"shape": Vector2(12, 6),
-"wall": {
-"bounce": false,
-"effect": 1,
-"fuse": 0.0
-}
-},
-"projectile_region": Rect2(2, 1, 11, 4),
 "range": 1600.0,
 "recoil": 80.0,
 "region": Rect2(108, 2, 55, 20),
 "reload": 1.8,
 "shake": 3.0,
 "shake_time": 0.12,
-"shot_sound": "shoot",
-"size": 1.0,
 "speed": 2000.0,
 "spread": 0.8,
 "sprite_offset": Vector2(12, 11),
-"tier": 1,
-"trigger": 1,
-"trigger_delay": 0.0
+"tier": 1
 }

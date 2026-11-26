@@ -1,6 +1,8 @@
 class_name EnemyBase
 extends ActorBody
 
+const ECFG: EnemyConfig = preload("res://core/config/enemy_config.tres")
+
 const WCFG: WorldConfig = preload("res://core/config/world_config.tres")
 
 # 各类敌人共用这套移动和伤害规则，行动方式由各自的脚本实现。
@@ -165,7 +167,7 @@ func hurt(damage: int, knock_dir: Vector2, knock_strength: float = 0.0, set_velo
 	if is_dead:
 		return
 	hp -= damage
-	hit_reaction_left = EnemyParams.shared.hit_reaction_time
+	hit_reaction_left = ECFG.shared_hit_reaction_time
 	if hp <= 0:
 		_begin_death()
 
@@ -188,21 +190,21 @@ func _apply_water(delta: float) -> void:
 	_swimming = depth != -INF
 	if _swimming:
 		var surface_y := feet.y - depth
-		var target_vy := clampf((surface_y - position.y) * EnemyParams.shared.bird_buoyancy_k,
-			-EnemyParams.shared.bird_max_float, EnemyParams.shared.bird_max_sink)
-		velocity.y = MathUtil.approach(velocity.y, target_vy, EnemyParams.shared.bird_water_damp, delta)
+		var target_vy := clampf((surface_y - position.y) * ECFG.shared_bird_buoyancy_k,
+			-ECFG.shared_bird_max_float, ECFG.shared_bird_max_sink)
+		velocity.y = MathUtil.approach(velocity.y, target_vy, ECFG.shared_bird_water_damp, delta)
 		var dir := _water_swim_dir()
-		velocity.x = MathUtil.approach(velocity.x, dir.x * EnemyParams.shared.bird_swim_speed,
-			EnemyParams.shared.bird_water_damp, delta)
+		velocity.x = MathUtil.approach(velocity.x, dir.x * ECFG.shared_bird_swim_speed,
+			ECFG.shared_bird_water_damp, delta)
 	if is_dead:
 		return
 	var submerged := Water.head_submerged(terrain, bounds)
 	if submerged and _waterproof == 0:
 		_drown_timer += delta
-		if _drown_timer >= EnemyParams.shared.drown_interval:
+		if _drown_timer >= ECFG.shared_drown_interval:
 			_drown_timer = 0.0
 			combat.resolve_hit(null, self, CombatProfiles.DROWN, position,
-					EnemyParams.shared.drown_damage, 0.0)
+					ECFG.shared_drown_damage, 0.0)
 		return
 	_drown_timer = 0.0
 	if submerged:
@@ -222,7 +224,7 @@ func _begin_death() -> void:
 		return
 	is_dead = true
 	combat.enemy_kills += 1
-	corpse_left = EnemyParams.shared.corpse_time
+	corpse_left = ECFG.shared_corpse_time
 	_on_death()
 
 
@@ -242,7 +244,7 @@ func _smash_player(impact: float, impact_up: float) -> void:
 func _set_facing(left: bool) -> void:
 	if _turn_cooldown > 0.0 or facing_left == left:
 		return
-	_turn_cooldown = EnemyParams.shared.turn_min_interval
+	_turn_cooldown = ECFG.shared_turn_min_interval
 	facing_left = left
 
 

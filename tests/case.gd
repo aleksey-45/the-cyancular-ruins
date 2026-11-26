@@ -1,5 +1,7 @@
 extends RefCounted
 
+enum WeaponType { PISTOL = 1, RIFLE, M82, S686, GRENADE, LASER, COMPOUND_BOW, M249 }
+
 class TestWorld extends Node2D:
 	var combat: CombatSimulator
 

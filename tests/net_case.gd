@@ -350,7 +350,7 @@ func _codec() -> void:
 	var world := host.world
 	world.rules.phase = MatchRules.Phase.PLAYING
 	var actor := world.players[1]
-	actor.weapons.set_initial_inventory([WeaponRegistry.Type.GRENADE])
+	actor.weapons.set_initial_inventory([WeaponType.GRENADE])
 	var sender := NetCodec.new()
 	var receiver := NetCodec.new()
 	var sibling := NetCodec.new()
@@ -404,7 +404,7 @@ func _codec() -> void:
 	var offset := world.terrain.cell(actor.position)
 	actor.position = world.terrain.cell_center(offset + Vector2i(2, 0))
 	world.combat.clear()
-	world.combat.submit_blast(ShotRules.shot_id(1, 8), actor.position, WeaponRegistry.Type.GRENADE)
+	world.combat.submit_blast(ShotRules.shot_id(1, 8), actor.position, WeaponType.GRENADE)
 	var ending := host.packet({})
 	var end_wire := sender.encode_state(PackedByteArray(), NetCodec.StateBatch.new(ending))
 	expect(_state(fresh, end_wire) == ending, "a projectile removal and a pending blast are separate state")

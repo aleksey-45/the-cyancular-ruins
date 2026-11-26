@@ -1,15 +1,17 @@
 [gd_resource type="Resource" script_class="WeaponDef" format=3]
 
 [ext_resource type="Script" path="res://core/config/weapon_def.gd" id="1_x0civ"]
+[ext_resource type="Resource" path="res://data/weapons/projectiles/grenade.tres" id="2_projectile"]
 
 [resource]
 script = ExtResource("1_x0civ")
 weapon_id = 5
+trigger = 2
+penalty = 2
+projectile = ExtResource("2_projectile")
 data = {
 "arc_time": 3.0,
-"attack": 0,
 "cooldown": 1.4,
-"count": 1,
 "damage": 5,
 "gravity": 0.45,
 "impact": 10.0,
@@ -19,34 +21,8 @@ data = {
 "move": Vector2(0.5, 0.8),
 "muzzle": Vector2(31, 8),
 "name": "榴弹发射器",
-"npc_hit_sound": "",
-"penalty": 2,
 "pickup_bounds": Rect2(-25.5, -10.5, 51, 21),
 "pitch": 60.0,
-"projectile": {
-"actor": {
-"bounce": true,
-"effect": 2,
-"fuse": 0.1
-},
-"blast": {
-"damage": 35,
-"impact": 3000.0,
-"radius": 350.0
-},
-"hit": {
-"npc_impulse": 2,
-"targets": 12,
-"water": 0
-},
-"shape": Vector2(12, 8),
-"single_direct": true,
-"wall": {
-"bounce": true,
-"effect": 0,
-"fuse": 0.3
-}
-},
 "projectile_region": Rect2(2, 9, 12, 6),
 "range": 2500.0,
 "recoil": 1100.0,
@@ -57,9 +33,6 @@ data = {
 "shot_sound": "shoot_heavy",
 "size": 1.5,
 "speed": 1375.0,
-"spread": 0.0,
 "sprite_offset": Vector2(11, 8),
-"tier": 2,
-"trigger": 2,
-"trigger_delay": 0.0
+"tier": 2
 }

@@ -1,5 +1,8 @@
 extends "res://tests/case.gd"
 
+const TCFG: TimeConfig = preload("res://core/config/time_config.tres")
+const ECFG: EnemyConfig = preload("res://core/config/enemy_config.tres")
+
 const WCFG: WorldConfig = preload("res://core/config/world_config.tres")
 
 const CFG: PlayerConfig = preload("res://core/config/player_config.tres")
@@ -70,7 +73,7 @@ func _detached_match() -> void:
 	sim.time_field = WorldTime.new(GrainAccount.new())
 	var actor := sim.add_player(1)
 	actor.spawn_at(SpawnPicker.single_spawn(map))
-	actor.weapons.set_initial_inventory([WeaponRegistry.Type.RIFLE])
+	actor.weapons.set_initial_inventory([WeaponType.RIFLE])
 	var enemies: Array = map.points.values().filter(func(p: Dictionary) -> bool: return p.kind == "enemy")
 	for entry: Dictionary in enemies:
 		sim.add_enemy(entry["type"], actor, CyrmMap.world_position(entry.cell))
@@ -89,7 +92,7 @@ func _detached_match() -> void:
 
 func _solo_scene(tree: SceneTree) -> void:
 	var map := CyrmMap.load_file("res://maps/newfactory.cyrm")
-	var level := SoloLevel.create(map, SpawnPicker.single_spawn(map), [WeaponRegistry.Type.RIFLE])
+	var level := SoloLevel.create(map, SpawnPicker.single_spawn(map), [WeaponType.RIFLE])
 	tree.root.add_child(level)
 	var game := level.session.world
 	var sim := game.combat
@@ -169,7 +172,7 @@ class ActorDisplay extends Node:
 
 func _display(parent: Node, actor: Player) -> ActorDisplay:
 	var display := ActorDisplay.new()
-	var spec := WorldSpec.solo(_document, Vector2i.ZERO, [WeaponRegistry.Type.RIFLE], 0)
+	var spec := WorldSpec.solo(_document, Vector2i.ZERO, [WeaponType.RIFLE], 0)
 	display.presenter = MatchPresenter.new(spec, _terrain, actor.role, null)
 	display._frame = display.presenter.frame
 	display._world.bind(canvas_for(parent), _terrain.map_size)
@@ -190,7 +193,7 @@ func _draw_actor(display: ActorDisplay, actor: Player) -> void:
 			display._world.motion(cue[1], cue[2], frame.now, cue[3])
 	display._world.present(frame)
 
-func _record_time(sim: CombatSimulator, actor: Player, delta := TimeParams.SNAP_INTERVAL) -> void:
+func _record_time(sim: CombatSimulator, actor: Player, delta := 1.0 / TCFG.SNAP_HZ) -> void:
 	sim.time_field.history.record(delta, sim.tick, sim.time_field._sample.bind(sim, actor))
 
 func _actor_animation(tree: SceneTree) -> void:
@@ -303,13 +306,17 @@ func _water(tree: SceneTree) -> void:
 	var bird := sim.add_enemy("jump_bird", actor, Vector2(352.0, 8.0))
 	bird._waterproof = 0
 	hp = bird.hp
-	bird._apply_water(EnemyParams.shared.drown_interval)
-	expect(bird.velocity.y < 0.0 and bird.velocity.y >= -EnemyParams.shared.bird_max_float
-			and bird.hp == hp - EnemyParams.shared.drown_damage,
+	bird._apply_water(ECFG.shared_drown_interval)
+	expect(bird.velocity.y < 0.0 and bird.velocity.y >= -ECFG.shared_bird_max_float
+			and bird.hp == hp - ECFG.shared_drown_damage,
 			"an enemy in a full water column ascends at a finite speed and takes drowning damage")
 	cleanup()
 
 func _equipment(tree: SceneTree) -> void:
+	var ids := WeaponRegistry.all_ids()
+	expect(ids == WeaponRegistry.CATALOG.weapons.map(func(weapon: WeaponDef) -> int: return weapon.weapon_id)
+			and ids.all(func(id: int) -> bool: return id > 0 and id <= 255),
+			"the catalog supplies unique wire IDs in resource order")
 	var parent := world(tree)
 	var actor := player(parent)
 	var initial := actor.capture_state()
@@ -322,13 +329,13 @@ func _equipment(tree: SceneTree) -> void:
 	expect(actor.position.x > initial[POS].x, "movement still uses the real actor shape")
 	var display := _display(parent, actor)
 	var attack := ActorInput.BIT_ATTACK
-	for type_id: int in WeaponRegistry.all_ids():
+	for type_id: int in ids:
 		var spec := WeaponRegistry.definition(type_id)
 		actor.weapons.set_initial_inventory([type_id])
 		var sim := parent.combat
 		var before := actor.capture_state()
 		var record := _attack(attack, attack)
-		if spec["trigger"] in [WeaponRegistry.Trigger.RELEASE, WeaponRegistry.Trigger.CHARGE_RELEASE]:
+		if spec["trigger"] in [WeaponDef.Trigger.RELEASE, WeaponDef.Trigger.CHARGE_RELEASE]:
 			expect(_fires(ActorStep.step(actor, record)).is_empty() and (actor.equipped as GunBody).aiming,
 					"release weapon %d aims on press" % type_id)
 			record = _attack(0, 0, attack)
@@ -342,40 +349,41 @@ func _equipment(tree: SceneTree) -> void:
 			before = actor.capture_state()
 		var actions := ActorStep.step(actor, record)
 		var after := actor.capture_state()
-		expect(_fires(actions).size() == 1 and after[INV][WeaponInventory.CARRIED] == before[INV][WeaponInventory.CARRIED] - 1,
-				"equipped rule %d produces one shot and spends one round" % type_id)
+		var spent := int(spec.has("mag"))
+		expect(_fires(actions).size() == 1 and after[INV][WeaponInventory.CARRIED] == before[INV][WeaponInventory.CARRIED] - spent,
+				"equipped rule %d produces one shot and accounts for ammo" % type_id)
 		_draw_actor(display, actor)
 		expect(actor.capture_state() == after, "presentation leaves rule %d unchanged" % type_id)
 		actor.restore_state(before)
 		expect(ActorStep.step(actor, record) == actions and actor.capture_state() == after,
 				"restored rule %d reproduces both state and muzzle action" % type_id)
 		submit(actor, actions)
-		var count := 0 if spec["attack"] == WeaponRegistry.Attack.BEAM else int(spec["count"])
+		var count := int(spec["count"]) if spec["attack"] == WeaponDef.Attack.PROJECTILE else 0
 		expect(sim.projectiles.size() == count, "shot %d produces the configured number of projectiles" % type_id)
 		sim.clear()
 
 	display.free()
 	var weapons := actor.weapons
-	weapons.set_initial_inventory([WeaponRegistry.Type.RIFLE, WeaponRegistry.Type.COMPOUND_BOW])
+	weapons.set_initial_inventory([WeaponType.RIFLE, WeaponType.COMPOUND_BOW])
 	actor.equipped.carried = 3
-	var added := weapons.pick_up(WeaponRegistry.Type.PISTOL, 5)
+	var added := weapons.pick_up(WeaponType.PISTOL, 5)
 	expect(added == {"ok": true, "dropped": {}} and weapons.snapshot()[WeaponInventory.CARRIED] == 3,
 			"pickup fills available space and saves the previous weapon's ammo")
 	actor.equipped.fire_cd_timer = 0.25
 	var full_loadout := actor.capture_state()
-	expect(not weapons.pick_up(WeaponRegistry.Type.M249, 7)["ok"] and actor.capture_state() == full_loadout,
+	expect(not weapons.pick_up(WeaponType.M249, 7)["ok"] and actor.capture_state() == full_loadout,
 			"replacing a pistol with a heavy weapon at capacity leaves the loadout intact")
 	actor.equipped.carried = 4
 	var inst := weapons.current_inst()
-	var replaced := weapons.pick_up(WeaponRegistry.Type.PISTOL, 1)
+	var replaced := weapons.pick_up(WeaponType.PISTOL, 1)
 	var replacement_inst := weapons.current_inst()
-	expect(replaced == {"ok": true, "dropped": {"type": WeaponRegistry.Type.PISTOL, "carried": 4}}
+	expect(replaced == {"ok": true, "dropped": {"type": WeaponType.PISTOL, "carried": 4}}
 			and replacement_inst > inst and weapons.inst_at_index(2) == replacement_inst
 			and actor.equipped.carried == 1 and actor.equipped.fire_cd_timer == 0.25,
 			"a same-type replacement gets a fresh ID and keeps its slot, both ammo counts and cooldown")
 	actor.restore_state(full_loadout)
 	var restored_inst := weapons.current_inst()
-	weapons.pick_up(WeaponRegistry.Type.PISTOL, 1)
+	weapons.pick_up(WeaponType.PISTOL, 1)
 	expect(restored_inst == inst and weapons.current_inst() == replacement_inst,
 			"exact restoration reuses the captured weapon allocator on the new branch")
 	cleanup()
@@ -383,7 +391,7 @@ func _equipment(tree: SceneTree) -> void:
 func _inventory_rewind(tree: SceneTree) -> void:
 	var actor := player(world(tree))
 	var weapons := actor.weapons
-	weapons.set_initial_inventory([WeaponRegistry.Type.RIFLE, WeaponRegistry.Type.PISTOL])
+	weapons.set_initial_inventory([WeaponType.RIFLE, WeaponType.PISTOL])
 	var rifle := weapons.current_inst()
 	var pistol := weapons.inst_at_index(1)
 	weapons.equip_inst(pistol)
@@ -441,8 +449,9 @@ func _inventory_rewind(tree: SceneTree) -> void:
 func _compound_bow(tree: SceneTree) -> void:
 	var parent := world_with_walls(tree, 32, 32, {})
 	var actor := player(parent)
+	var sim := parent.combat
 	_place(actor, Vector2(384, 384))
-	actor.weapons.set_initial_inventory([WeaponRegistry.Type.COMPOUND_BOW])
+	actor.weapons.set_initial_inventory([WeaponType.COMPOUND_BOW])
 	var bow := actor.equipped as GunBody
 	var attack := ActorInput.BIT_ATTACK
 	expect(bow.carried == 1, "a fresh bow carries one arrow")
@@ -450,9 +459,11 @@ func _compound_bow(tree: SceneTree) -> void:
 			"a release on a newly equipped bow does not fire")
 	var tap := _fires(ActorStep.step(actor, _attack(0, attack, attack)))
 	expect(tap.size() == 1 and tap[0]["charge"] == 0.0, "a tap shoots at minimum charge")
-	var tap_velocity := ShotRules.projectile_velocities(actor.role, tap[0], bow.definition)
-	expect(is_equal_approx(tap_velocity[0].length(), 600.0) and bow.carried == 0 and bow.reloading,
+	submit(actor, tap)
+	var tap_id := ShotRules.shot_id(actor.role, tap[0]["serial"])
+	expect(is_equal_approx(sim.projectiles[tap_id].velocity.length(), 600.0) and bow.carried == 0 and bow.reloading,
 			"a tap launches at 600 px/s and immediately starts reloading the one-arrow bow")
+	sim.erase_projectile(tap_id)
 	var hold := _attack(attack, 0)
 	ActorStep.step(actor, hold)
 	expect(not bow.aiming, "the bow cannot draw during reload")
@@ -473,7 +484,6 @@ func _compound_bow(tree: SceneTree) -> void:
 	var nocked: Transform2D = sprite[2]
 	expect(sprite[0] == WorldView.BULLETS and nocked.origin.is_equal_approx(guide[0]),
 			"the drawn arrow is centered at the start of its guide")
-	var sim := parent.combat
 	var release := ActorStep.step(actor, _attack(0, 0, attack))
 	submit(actor, release)
 	var arrow: BulletBody = sim.projectiles.values()[0]
@@ -509,7 +519,7 @@ func _compound_bow(tree: SceneTree) -> void:
 func _m249(tree: SceneTree) -> void:
 	var parent := world_with_walls(tree, 16, 16, {})
 	var actor := player(parent)
-	actor.weapons.set_initial_inventory([WeaponRegistry.Type.M249, WeaponRegistry.Type.PISTOL])
+	actor.weapons.set_initial_inventory([WeaponType.M249, WeaponType.PISTOL])
 	var attack := ActorInput.BIT_ATTACK
 	var hold := _attack(attack, 0)
 	var gun := actor.equipped as GunBody
@@ -538,7 +548,7 @@ func _rounds(tree: SceneTree) -> void:
 	var parent := world(tree)
 	var actor := player(parent)
 	var sim := parent.combat
-	var bullet := sim.spawn_projectile(1, WeaponRegistry.Type.PISTOL, actor,
+	var bullet := sim.spawn_projectile(1, WeaponType.PISTOL, actor,
 			Vector2(136, 160), Vector2.DOWN * 900.0)
 	var hit_sub := Vector2i(8, 12)
 	var before := _terrain.get_hp(hit_sub)
@@ -572,7 +582,7 @@ func _rounds(tree: SceneTree) -> void:
 		actor_with_team.set_team_collision(actor_with_team.team, false)
 	sim = parent.combat
 	var hp := victim.sim_hp
-	bullet = sim.spawn_projectile(1, WeaponRegistry.Type.PISTOL, shooter,
+	bullet = sim.spawn_projectile(1, WeaponType.PISTOL, shooter,
 			Vector2(1000, 512), Vector2.RIGHT * 30000.0)
 	sim.step_projectiles(ActorStep.DT)
 	expect(victim.sim_hp == hp - bullet.hit_damage and ally.sim_hp == ally.sim_max_hp and sim.projectiles.is_empty(),
@@ -582,7 +592,7 @@ func _rounds(tree: SceneTree) -> void:
 	victim.force_down()
 	victim.sync_collision_geometry()
 	hp = victim.sim_hp
-	sim.spawn_projectile(2, WeaponRegistry.Type.PISTOL, shooter,
+	sim.spawn_projectile(2, WeaponType.PISTOL, shooter,
 			Vector2(1000, 512), Vector2.RIGHT * 30000.0)
 	sim.step_projectiles(ActorStep.DT)
 	expect(victim.sim_hp == hp and sim.projectiles.is_empty(),
@@ -597,8 +607,8 @@ func _grenade(tree: SceneTree) -> void:
 	_place(victim, Vector2(600, 512), 2)
 	var sim := parent.combat
 
-	var type_id := WeaponRegistry.Type.GRENADE
-	shooter.weapons.set_initial_inventory([type_id, WeaponRegistry.Type.PISTOL])
+	var type_id := WeaponType.GRENADE
+	shooter.weapons.set_initial_inventory([type_id, WeaponType.PISTOL])
 	var bullet := sim.spawn_projectile(1, type_id, shooter, Vector2(500, 512), Vector2.RIGHT * 6000.0)
 	var hp := victim.sim_hp
 	victim.rewinding = true
@@ -617,7 +627,7 @@ func _grenade(tree: SceneTree) -> void:
 		sim.step_projectiles(ActorStep.DT)
 	expect(victim.sim_hp == settled and sim.pending_blasts.keys() == [1] and sim.projectiles.is_empty(),
 			"the grenade detonates once without repeating contact damage")
-	sim.clear_blasts()
+	sim.finish_match()
 	for id in [2, 3, 4]:
 		sim.spawn_projectile(id, type_id, shooter, Vector2(50 + id, 100), Vector2.RIGHT)
 	var pistol: int = shooter.weapons.inst_at_index(1)
@@ -649,7 +659,7 @@ func _beam(tree: SceneTree) -> void:
 	_place(near, Vector2(480, 544), 2)
 	_place(far, Vector2(650, 544), 2)
 	_place(ally, Vector2(340, 544), 1)
-	shooter.weapons.set_initial_inventory([WeaponRegistry.Type.LASER])
+	shooter.weapons.set_initial_inventory([WeaponType.LASER])
 	var attack := ActorInput.BIT_ATTACK
 	var shots := ActorStep.step(shooter, _attack(attack, attack))
 	var before := near.sim_hp
@@ -661,13 +671,13 @@ func _beam(tree: SceneTree) -> void:
 	_record_time(sim, shooter)
 	var fired := sim.resolve_requests([shooter.role])
 	var beams: Array = [fired.values()[0]["vectors"]]
-	var damage: int = WeaponRegistry.definition(WeaponRegistry.Type.LASER)["damage"]
+	var damage: int = WeaponRegistry.definition(WeaponType.LASER)["damage"]
 	expect(near.sim_hp == before - damage and far.sim_hp == before - damage,
 			"the authoritative beam hits multiple targets, each once across reflections")
 	expect(ally.sim_hp == before and shooter.sim_hp == before, "the beam skips its shooter and allies")
 	expect(_terrain.material_at(cell * 4) == 0, "the first beam destroys the wall in terrain data immediately")
 	ActorStep.step(ally, NEUTRAL_INPUT)
-	var bullet := sim.spawn_projectile(1, WeaponRegistry.Type.PISTOL, shooter,
+	var bullet := sim.spawn_projectile(1, WeaponType.PISTOL, shooter,
 			Vector2(872, 544), Vector2.RIGHT * 3000.0)
 	sim.step_projectile(bullet, ActorStep.DT)
 	expect(sim.projectiles.is_empty(), "a projectile still collides with the broken wall in the same tick")
@@ -680,13 +690,13 @@ func _beam(tree: SceneTree) -> void:
 	next["serial"] += 1
 	beams.append(sim.fire(shooter, next)["vectors"])
 	expect(beams.back().size() == 2, "the tick-end collision refresh removes the wall for the following beam")
-	var laser := WeaponRegistry.definition(WeaponRegistry.Type.LASER)
-	WeaponRegistry._definitions[WeaponRegistry.Type.LASER] = laser.merged({"min_damage": 2})
+	var laser := WeaponRegistry.definition(WeaponType.LASER)
+	WeaponRegistry._definitions[WeaponType.LASER] = laser.merged({"min_damage": 2})
 	next["charge"] = 0.25
 	next["serial"] += 1
 	before = near.sim_hp
 	sim.fire(shooter, next)
-	WeaponRegistry._definitions[WeaponRegistry.Type.LASER] = laser
+	WeaponRegistry._definitions[WeaponType.LASER] = laser
 	expect(near.sim_hp == before - 3, "a charged beam uses its interpolated damage")
 	_terrain.commit()
 	var lit := sim.beams.duplicate()
@@ -695,7 +705,7 @@ func _beam(tree: SceneTree) -> void:
 		sim.step({})
 	_record_time(sim, shooter)
 	expect(lit.size() == 4 and sim.beams.is_empty(), "overlapping beams expire after fifteen simulation ticks")
-	sim.time_field.rewind(sim, shooter, TimeParams.SNAP_INTERVAL * 0.5 / TimeParams.REWIND_START_MULT)
+	sim.time_field.rewind(sim, shooter, (1.0 / TCFG.SNAP_HZ) * 0.5 / TCFG.REWIND_START_MULT)
 	expect(sim.beams == lit, "world rewind restores the original paths after the wall was destroyed")
 	sim.time_field.rewind(sim, shooter, 1.0)
 	expect(sim.beams.is_empty(), "rewinding past the shots removes their beams")
@@ -703,10 +713,14 @@ func _beam(tree: SceneTree) -> void:
 
 func _melee(tree: SceneTree) -> void:
 	const TYPE_ID := 9
-	WeaponRegistry._definitions[TYPE_ID] = WeaponRegistry.DEFAULTS.merged({
-		"tier": WeaponInventory.TIER_LIGHT, "attack": WeaponRegistry.Attack.MELEE,
+	var melee := WeaponDef.new()
+	melee.weapon_id = TYPE_ID
+	melee.attack = WeaponDef.Attack.MELEE
+	melee.data = {
+		"tier": WeaponInventory.TIER_LIGHT, "muzzle": Vector2.ZERO, "pitch": 90.0, "recoil": 0.0,
 		"cooldown": 0.3, "damage": 7, "impact": 120.0, "range": 115.0, "hit_radius": 16.0,
-	}, true)
+	}
+	WeaponRegistry._definitions.merge(WeaponRegistry._load_definitions([melee]))
 	var parent := world_from_solid(tree, 8, 8, func(x: int, y: int) -> bool: return x == 3 and y == 8)
 	var shooter := player(parent, 1)
 	var target := player(parent, 2)
@@ -734,7 +748,7 @@ func _melee(tree: SceneTree) -> void:
 	WeaponRegistry._definitions.erase(TYPE_ID)
 
 func _combat_phase(tree: SceneTree, melee_type: int) -> void:
-	for type_id: int in [WeaponRegistry.Type.LASER, WeaponRegistry.Type.PISTOL, melee_type]:
+	for type_id: int in [WeaponType.LASER, WeaponType.PISTOL, melee_type]:
 		var parent := world_with_walls(tree, 16, 16, {})
 		var shooter := player(parent, 1)
 		var target := player(parent, 2)
@@ -767,7 +781,7 @@ func _blast(tree: SceneTree) -> void:
 	var hp := near.sim_hp
 	near.sim_iframes = 1.0
 	sim.tick = 100
-	sim.submit_blast(ShotRules.shot_id(near.role, 1), Vector2(936, 544), WeaponRegistry.Type.GRENADE)
+	sim.submit_blast(ShotRules.shot_id(near.role, 1), Vector2(936, 544), WeaponType.GRENADE)
 	for at in [100, 101, 102]:
 		sim.tick = at
 		sim.settle_blasts()
@@ -790,7 +804,7 @@ func _shared_combat_tick(tree: SceneTree) -> void:
 	var host_player := player(host)
 	for actor: Player in [solo_player, host_player]:
 		_place(actor, Vector2(260, 135))
-		actor.weapons.set_initial_inventory([WeaponRegistry.Type.GRENADE])
+		actor.weapons.set_initial_inventory([WeaponType.GRENADE])
 	var single := local.combat
 	single.time_field = WorldTime.new(GrainAccount.new())
 	var server := host.combat
@@ -834,7 +848,7 @@ func _damage_numbers(tree: SceneTree) -> void:
 	var bird := sim.add_enemy("jump_bird", shooter, Vector2.ZERO)
 	var view := WorldView.new()
 	view.bind(canvas_for(parent), _terrain.map_size)
-	var spec := WorldSpec.solo(_document, Vector2i.ZERO, [WeaponRegistry.Type.RIFLE], 0)
+	var spec := WorldSpec.solo(_document, Vector2i.ZERO, [WeaponType.RIFLE], 0)
 	var props := MatchWorld.new()
 	props.combat = sim
 	props.terrain = _terrain
@@ -868,7 +882,7 @@ func _world_rewind(tree: SceneTree) -> void:
 	bird.velocity = Vector2(12, -7)
 	var bird_hp := bird.hp
 	var id := (actor.role << 48) | 256
-	var bullet := sim.spawn_projectile(id, WeaponRegistry.Type.GRENADE, actor,
+	var bullet := sim.spawn_projectile(id, WeaponType.GRENADE, actor,
 			Vector2(100, 128), Vector2.RIGHT * 200.0)
 	bullet.start_fuse(0.3)
 	bullet.fuse_elapsed = 0.1
@@ -876,7 +890,7 @@ func _world_rewind(tree: SceneTree) -> void:
 	var before := bullet.motion_state()
 	var initial := actor.position
 	var rewind := sim.time_field
-	var dt := 1.0 / TimeParams.SNAP_HZ
+	var dt := 1.0 / TCFG.SNAP_HZ
 	_record_time(sim, actor, dt)
 	expect(not rewind.history.can_rewind() and sim.projectiles.get(id) == bullet, "one newly recorded frame cannot start rewind or clear live projectiles")
 	sim.erase_projectile(id)
@@ -916,10 +930,10 @@ func _world_rewind(tree: SceneTree) -> void:
 	_record_time(sim, actor, dt)
 	expect(not bird.active and bird.collision_layer == 0 and sim.enemies[bird.slot] == bird,
 			"an expired corpse keeps its slot without collision")
-	rewind.rewind(sim, actor, dt / TimeParams.REWIND_START_MULT)
+	rewind.rewind(sim, actor, dt / TCFG.REWIND_START_MULT)
 	expect(bird.active and bird.is_dead and bird.corpse_left == remaining and bird.collision_layer == CollisionWorld.LAYER_ENEMY,
 			"rewinding into the corpse interval restores collision and its remaining lifetime")
-	rewind.rewind(sim, actor, TimeParams.SNAP_SECONDS)
+	rewind.rewind(sim, actor, TCFG.SNAP_SECONDS)
 	expect(bird.active and not bird.is_dead and bird.hp == bird_hp, "rewinding before the kill revives the same slot")
 	cleanup()
 
@@ -932,11 +946,11 @@ func _rewound_blast(tree: SceneTree) -> void:
 	var sim := parent.combat
 	sim.time_field = WorldTime.new(GrainAccount.new())
 	var rewind := sim.time_field
-	var dt := 1.0 / TimeParams.SNAP_HZ
+	var dt := 1.0 / TCFG.SNAP_HZ
 	var wall := block_hp(sim.terrain, cell)
 	var hp := actor.sim_hp
 	var id := ShotRules.shot_id(actor.role, 1)
-	var shot := sim.spawn_projectile(id, WeaponRegistry.Type.GRENADE, actor, Vector2(936, 544), Vector2.RIGHT)
+	var shot := sim.spawn_projectile(id, WeaponType.GRENADE, actor, Vector2(936, 544), Vector2.RIGHT)
 	shot.start_fuse(ActorStep.DT)
 	var inputs := {actor.role: NEUTRAL_INPUT}
 	_record_time(sim, actor, dt)
@@ -953,7 +967,7 @@ func _rewound_blast(tree: SceneTree) -> void:
 	_record_time(sim, actor, dt * 0.5)
 	_record_time(sim, actor, dt * 0.5)
 	sim.time_field.mode = WorldTime.Mode.REWIND
-	rewind.rewind(sim, actor, dt * 0.25 / TimeParams.REWIND_START_MULT)
+	rewind.rewind(sim, actor, dt * 0.25 / TCFG.REWIND_START_MULT)
 	for i in 4:
 		rewind.rewind(sim, actor, 0.0)
 		sim.step(inputs)
@@ -1002,7 +1016,7 @@ func _rewound_enemy_action(tree: SceneTree) -> void:
 	flyer._shoot_timer = 0.0
 	sim.spawn_enemy_projectile(CombatProfiles.BIRD_BOMB_TYPE, flyer, Vector2.RIGHT * 100.0)
 	var rewind := sim.time_field
-	var dt := 1.0 / TimeParams.SNAP_HZ
+	var dt := 1.0 / TCFG.SNAP_HZ
 	_record_time(sim, actor, dt)
 	sim.step({1: NEUTRAL_INPUT})
 	var jump := jumper.capture_state()
@@ -1024,30 +1038,30 @@ func _rewound_enemy_action(tree: SceneTree) -> void:
 func _rewind_window(tree: SceneTree) -> void:
 	var parent := world(tree)
 	var actor := player(parent)
-	var rewind := TimeHistory.new(TimeParams.SNAP_SECONDS)
+	var rewind := TimeHistory.new(TCFG.SNAP_SECONDS)
 	var sample := func() -> Array: return [actor.capture_state(), {}]
 	var dt := 0.0625
-	var window := int(TimeParams.SNAP_SECONDS / dt)
+	var window := int(TCFG.SNAP_SECONDS / dt)
 	var samples := 2 * window + 4
 	for index in samples:
 		actor.position.x = 64.0 + index * 0.25
 		rewind.record(dt, index, sample)
 	var end := samples * dt
-	var backwards := TimeParams.SNAP_SECONDS * 0.5 + dt * 0.5
+	var backwards := TCFG.SNAP_SECONDS * 0.5 + dt * 0.5
 	var target := end - backwards
 	var expected_x := 64.0 + (floori(target / dt) - 1) * 0.25
-	actor.rewind_state(rewind.backward(backwards / TimeParams.REWIND_START_MULT)[TimeHistory.Sample.ACTOR], true)
+	actor.rewind_state(rewind.backward(backwards / TCFG.REWIND_START_MULT)[TimeHistory.Sample.ACTOR], true)
 	expect(actor.position.x == expected_x, "rewind finds the preceding frame across the wrapped buffer")
 	rewind.record(0.0, samples, sample)
 	expect(is_equal_approx(rewind.time, target), "rewind exits at the target time between recorded frames")
 	actor.position.x = 480.0
 	rewind.record(dt, samples, sample)
-	actor.rewind_state(rewind.backward(dt * 0.25 / TimeParams.REWIND_START_MULT)[TimeHistory.Sample.ACTOR], true)
+	actor.rewind_state(rewind.backward(dt * 0.25 / TCFG.REWIND_START_MULT)[TimeHistory.Sample.ACTOR], true)
 	expect(actor.position.x == expected_x, "recording after rewind discards the former future")
-	actor.rewind_state(rewind.backward(TimeParams.SNAP_SECONDS + 1.0)[TimeHistory.Sample.ACTOR], true)
+	actor.rewind_state(rewind.backward(TCFG.SNAP_SECONDS + 1.0)[TimeHistory.Sample.ACTOR], true)
 	rewind.record(0.0, samples, sample)
 	expect(actor.position.x == 64.0 + (samples - 1 - window) * 0.25
-			and is_equal_approx(rewind.time, end - TimeParams.SNAP_SECONDS),
+			and is_equal_approx(rewind.time, end - TCFG.SNAP_SECONDS),
 			"rewinding beyond the window clamps to the oldest retained frame and its time")
 	cleanup()
 
@@ -1075,7 +1089,7 @@ func _enemy_time(tree: SceneTree) -> void:
 		bird.position = Vector2(200.0, 80.0)
 		bird.velocity = Vector2(60.0, 0.0)
 		bird.simulate_tick(ActorStep.DT)
-		var expected := TimeParams.HASTE_PLAYER if elite else TimeParams.HASTE_WORLD
+		var expected := TCFG.HASTE_PLAYER if elite else TCFG.HASTE_WORLD
 		expect(is_equal_approx(bird.position.x - 200.0, expected) and bird.velocity.x == 60.0,
 				"enemy horizontal displacement uses one time multiplier (elite=%s)" % elite)
 	var flyer := parent.combat.add_enemy("fly_bird", target, Vector2.ZERO) as EnemyFlyBird
@@ -1278,14 +1292,14 @@ func _grain_rewards(tree: SceneTree) -> void:
 	combat.time_field = field
 	var elite := combat.add_enemy("black_bird", player(parent), Vector2.ZERO) as EnemyBlackBird
 	elite._begin_death()
-	for i in TimeParams.ELITE_GRAIN_DELAY_TICKS - 1:
+	for i in TCFG.ELITE_GRAIN_DELAY_TICKS - 1:
 		field.step_rewards()
 	expect(field.account.balance == 0.0, "crystals wait for the reward tick")
 	field.step_rewards()
-	expect(account.balance == TimeParams.ELITE_GRAIN_DROP,
+	expect(account.balance == TCFG.ELITE_GRAIN_DROP,
 			"the elite's reward settles on its tick without a camera, HUD, or crystal effect")
 	field.step_rewards()
-	expect(account.balance == TimeParams.ELITE_GRAIN_DROP, "the reward is delivered once")
+	expect(account.balance == TCFG.ELITE_GRAIN_DROP, "the reward is delivered once")
 	cleanup()
 
 func _shared_rewind_history(tree: SceneTree) -> void:
@@ -1294,12 +1308,12 @@ func _shared_rewind_history(tree: SceneTree) -> void:
 	var second := player(parent, 2)
 	var sim := parent.combat
 	var time := PersonalTime.new({}, [1, 2])
-	var dt := TimeParams.SNAP_INTERVAL
+	var dt := 1.0 / TCFG.SNAP_HZ
 	var id := ShotRules.shot_id(first.role, 1)
-	var shell := sim.spawn_projectile(id, WeaponRegistry.Type.GRENADE, first, Vector2(180, 64), Vector2.RIGHT)
+	var shell := sim.spawn_projectile(id, WeaponType.GRENADE, first, Vector2(180, 64), Vector2.RIGHT)
 	var gone := ShotRules.shot_id(first.role, 2)
-	sim.spawn_projectile(gone, WeaponRegistry.Type.PISTOL, first, Vector2(260, 64), Vector2.LEFT)
-	var remote := sim.spawn_projectile(ShotRules.shot_id(second.role, 1), WeaponRegistry.Type.PISTOL,
+	sim.spawn_projectile(gone, WeaponType.PISTOL, first, Vector2(260, 64), Vector2.LEFT)
+	var remote := sim.spawn_projectile(ShotRules.shot_id(second.role, 1), WeaponType.PISTOL,
 			second, Vector2(310, 64), Vector2.RIGHT)
 	for i in range(1, 4):
 		sim.tick = i * 3
@@ -1311,7 +1325,7 @@ func _shared_rewind_history(tree: SceneTree) -> void:
 		for actor: Player in [first, second]:
 			time.histories[actor.role].record(dt, sim.tick, PersonalTime._sample.bind(sim, actor))
 	sim.erase_projectile(gone)
-	sim.submit_blast(ShotRules.shot_id(1, 3), shell.position, WeaponRegistry.Type.GRENADE)
+	sim.submit_blast(ShotRules.shot_id(1, 3), shell.position, WeaponType.GRENADE)
 	var pending := sim.pending_blasts.duplicate(true)
 	var sub := Vector2i(8, 12)
 	sim.terrain.apply_at(sim.terrain.version, {sub: 0})
@@ -1322,7 +1336,7 @@ func _shared_rewind_history(tree: SceneTree) -> void:
 	ShotRules._projectile_hit(sim, shell, Vector2.RIGHT)
 	var hit_hp := second.sim_hp
 	var late_id := ShotRules.shot_id(first.role, 8)
-	sim.spawn_projectile(late_id, WeaponRegistry.Type.PISTOL, first, Vector2(220, 64), Vector2.RIGHT)
+	sim.spawn_projectile(late_id, WeaponType.PISTOL, first, Vector2(220, 64), Vector2.RIGHT)
 	time.advance(sim, {1: _attack(ActorInput.BIT_REWIND, 0), 2: NEUTRAL_INPUT}, 10)
 	expect(first.position.x == 102.0 and shell.position.x == 182.0 and is_equal_approx(shell.fuse_elapsed, 0.02)
 			and second.position.x == 203.0 and remote.position.x == 313.0 and sim.tick == 9,
@@ -1345,7 +1359,7 @@ func _personal_rewind() -> void:
 	server.rules.phase = MatchRules.Phase.PLAYING
 	var first := server.players[1]
 	var second := server.players[2]
-	first.weapons.set_initial_inventory([WeaponRegistry.Type.RIFLE])
+	first.weapons.set_initial_inventory([WeaponType.RIFLE])
 	var epoch := host._buffers[1].epoch
 	for at in range(1, 11):
 		first.sim_hp = 20 + at
@@ -1409,8 +1423,8 @@ func _pickup_order(tree: SceneTree) -> void:
 	var actor := player(parent)
 	actor.position = Vector2(0, 64)
 	var ground := GroundWeaponField.new(_terrain)
-	var one := ground.spawn( WeaponRegistry.Type.PISTOL, 1, Vector2(_terrain.map_size.x - 24, 64), Vector2.ZERO)
-	var two := ground.spawn( WeaponRegistry.Type.PISTOL, 2, Vector2(24, 64), Vector2.ZERO)
+	var one := ground.spawn( WeaponType.PISTOL, 1, Vector2(_terrain.map_size.x - 24, 64), Vector2.ZERO)
+	var two := ground.spawn( WeaponType.PISTOL, 2, Vector2(24, 64), Vector2.ZERO)
 	ground.items.erase(one.inst)
 	ground.items[one.inst] = one
 	expect(ground.nearest(actor) == one, "pickup ties across the seam choose the lowest ID regardless of insertion order")
@@ -1432,7 +1446,7 @@ func _pickup_landing(tree: SceneTree) -> void:
 	var field := GroundWeaponField.new(_terrain)
 	for preplaced in [true, false]:
 		var at := Vector2(160.0 if preplaced else 352.0, floor_y - CyrmMap.CELL_SIZE * 0.5)
-		var bow := field.spawn( WeaponRegistry.Type.COMPOUND_BOW, WeaponInventory.DEFAULT_CARRIED, at, Vector2.ZERO)
+		var bow := field.spawn( WeaponType.COMPOUND_BOW, WeaponInventory.DEFAULT_CARRIED, at, Vector2.ZERO)
 		if preplaced:
 			bow.settle_on_spawn_floor()
 		else:
@@ -1689,14 +1703,14 @@ func _team_setup() -> void:
 	var roles := [1, 2, 3]
 	var invalid := arena(WorldSpec.TEAM, roles, teams, {"disabled_weapons": disabled}).world
 	expect(not invalid.problem.is_empty() and invalid.combat == null, "disabling all weapons rejects the match")
-	disabled.erase(WeaponRegistry.Type.PISTOL)
+	disabled.erase(WeaponType.PISTOL)
 	var host := arena(WorldSpec.TEAM, roles, teams, {"disabled_weapons": disabled}, "res://maps/demo.cyrm")
 	var world := host.world
 	expect(world.problem.is_empty(), "the team match loads and validates its map")
 	for p: Player in world.players.values():
 		expect(p.collision_mask == CollisionWorld.LAYER_TERRAIN,
 				"players collide with terrain only; NPC contact is damage-only")
-		expect(p.equipped != null and p.equipped.type_id == WeaponRegistry.Type.PISTOL,
+		expect(p.equipped != null and p.equipped.type_id == WeaponType.PISTOL,
 				"each player starts equipped when only one type is enabled")
 	expect(world.rules.phase == MatchRules.Phase.WAITING and is_zero_approx(world.rules.round_timer),
 			"setup starts in WAITING with a zero timer")

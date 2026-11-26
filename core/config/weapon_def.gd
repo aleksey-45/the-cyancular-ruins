@@ -1,8 +1,13 @@
 class_name WeaponDef
 extends Resource
 
-# 单个武器的完整定义(数值 + 弹道引用)。字段保持 Dictionary:
-# 可选键(arc_time/charge_*/bounces/guide_length/draw_length/…)不强行补默认,
-# 避免改变 definition().has() 的语义。运行时由 WeaponRegistry 转成只读 Dictionary。
-@export var weapon_id: int = 0
+enum Trigger { PRESS, AUTO, RELEASE, CHARGE_RELEASE }
+enum Penalty { NONE, COOLDOWN, AIM_OR_COOLDOWN }
+enum Attack { PROJECTILE, BEAM, MELEE }
+
+@export var weapon_id: int
+@export var trigger: Trigger = Trigger.PRESS
+@export var penalty: Penalty = Penalty.NONE
+@export var attack: Attack = Attack.PROJECTILE
+@export var projectile: ProjectileDef
 @export var data: Dictionary = {}

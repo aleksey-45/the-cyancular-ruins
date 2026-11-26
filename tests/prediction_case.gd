@@ -43,19 +43,19 @@ func _checkpoint_continuation() -> void:
 	var world := host.world
 	var one := world.players[1]
 	var two := world.players[2]
-	one.weapons.set_initial_inventory([WeaponRegistry.Type.GRENADE, WeaponRegistry.Type.PISTOL])
+	one.weapons.set_initial_inventory([WeaponType.GRENADE, WeaponType.PISTOL])
 	for at in 12:
 		host.fixed_step({1: [1.0, 0, 0, 0, 0, Vector2.RIGHT]})
 	var id := ShotRules.shot_id(1, 11)
-	var bullet := world.combat.spawn_projectile(id, WeaponRegistry.Type.GRENADE, one,
+	var bullet := world.combat.spawn_projectile(id, WeaponType.GRENADE, one,
 			one.position + Vector2(72, -48), Vector2(130, -27), 13)
 	bullet.traveled = 152.75
 	bullet.start_fuse(0.25)
 	bullet.fuse_elapsed = 0.1
 	bullet.direct_hit = true
 	var task := ShotRules.shot_id(2, 1)
-	world.combat.submit_blast(task, two.position + Vector2(20, 0), WeaponRegistry.Type.GRENADE)
-	var drop := world.combat.ground.spawn(WeaponRegistry.Type.PISTOL, 4, one.position, Vector2(0, -80), 2)
+	world.combat.submit_blast(task, two.position + Vector2(20, 0), WeaponType.GRENADE)
+	var drop := world.combat.ground.spawn(WeaponType.PISTOL, 4, one.position, Vector2(0, -80), 2)
 	two.sim_hp = 1
 	two.sim_iframes = 0.0
 	var cell := _wall(world.spec.map)
@@ -186,7 +186,7 @@ func _position_tolerance() -> void:
 func _buffered_input() -> void:
 	var host := _beta()
 	var world := host.world
-	world.players[2].weapons.set_initial_inventory([WeaponRegistry.Type.RIFLE])
+	world.players[2].weapons.set_initial_inventory([WeaponType.RIFLE])
 	var client := MatchSession.open_remote(_baseline(host), 100)
 	var max_replay := 0
 	var attack := ActorInput.BIT_ATTACK
@@ -223,7 +223,7 @@ func _sample_bow_and_death() -> void:
 	var host := _beta()
 	var world := host.world
 	var bow := world.players[2]
-	bow.weapons.set_initial_inventory([WeaponRegistry.Type.COMPOUND_BOW])
+	bow.weapons.set_initial_inventory([WeaponType.COMPOUND_BOW])
 	for i in 24:
 		host.fixed_step({2: [0.0, ActorInput.BIT_ATTACK, 0, 0, 0, Vector2.RIGHT]})
 	var left := host.packet({})
@@ -296,7 +296,7 @@ func _load_match(tree: SceneTree) -> void:
 	var host := _beta()
 	var actor := host.world.players[1]
 	host.world.rules.phase = MatchRules.Phase.WAITING
-	actor.weapons.set_initial_inventory([WeaponRegistry.Type.PISTOL, WeaponRegistry.Type.RIFLE])
+	actor.weapons.set_initial_inventory([WeaponType.PISTOL, WeaponType.RIFLE])
 	var payload := _baseline(host)
 	PvpSession.begin_match(payload, payload["map"])
 	var terrain := host.world.terrain
@@ -312,7 +312,7 @@ func _load_match(tree: SceneTree) -> void:
 	for i in MatchSession.MAX_REPLAY:
 		host.fixed_step()
 	actor.position += Vector2(96.0, -128.0)
-	actor.weapons.set_initial_inventory([WeaponRegistry.Type.PISTOL, WeaponRegistry.Type.GRENADE])
+	actor.weapons.set_initial_inventory([WeaponType.PISTOL, WeaponType.GRENADE])
 	var newest := host.packet({})
 	NetSession._on_state(newest)
 	var client: PvpMatchClient = preload("res://scenes/pvp_game.tscn").instantiate()

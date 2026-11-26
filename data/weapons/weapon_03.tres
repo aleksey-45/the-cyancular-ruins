@@ -1,48 +1,26 @@
 [gd_resource type="Resource" script_class="WeaponDef" format=3]
 
 [ext_resource type="Script" path="res://core/config/weapon_def.gd" id="1_3lf34"]
+[ext_resource type="Resource" path="res://data/weapons/projectiles/round.tres" id="2_projectile"]
 
 [resource]
 script = ExtResource("1_3lf34")
 weapon_id = 3
+trigger = 2
+penalty = 2
+projectile = ExtResource("2_projectile")
 data = {
-"attack": 0,
 "cooldown": 1.2,
-"count": 1,
 "damage": 30,
-"gravity": 0.0,
 "guide_length": 1000.0,
 "impact": 1800.0,
 "kick": 12.0,
-"live_cap": 0,
 "mag": 5,
 "move": Vector2(0.5, 0.6),
 "muzzle": Vector2(54, 5),
 "name": "重狙 M82A1",
-"npc_hit_sound": "hit",
-"penalty": 2,
 "pickup_bounds": Rect2(-42, -7.5, 84, 16),
 "pitch": 65.0,
-"projectile": {
-"actor": {
-"bounce": false,
-"effect": 2,
-"fuse": 0.0
-},
-"blast": {},
-"hit": {
-"npc_impulse": 0,
-"targets": 12,
-"water": 0
-},
-"shape": Vector2(12, 6),
-"wall": {
-"bounce": false,
-"effect": 1,
-"fuse": 0.0
-}
-},
-"projectile_region": Rect2(2, 1, 11, 4),
 "range": 2000.0,
 "recoil": 1200.0,
 "region": Rect2(22, 0.351734, 84, 17.6483),
@@ -52,9 +30,6 @@ data = {
 "shot_sound": "shoot_heavy",
 "size": 1.25,
 "speed": 3750.0,
-"spread": 0.0,
 "sprite_offset": Vector2(24, 9),
-"tier": 2,
-"trigger": 2,
-"trigger_delay": 0.0
+"tier": 2
 }

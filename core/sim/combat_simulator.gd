@@ -104,13 +104,15 @@ func resolve_requests(roles: Array) -> Dictionary:
 func fire(actor: Player, action: Dictionary) -> Dictionary:
 	var spec := WeaponRegistry.definition(action["type_id"])
 	var shot := action.merged({"role": actor.role}, true)
-	ShotRules.prepare(terrain, shot, spec)
-	if spec["attack"] == WeaponRegistry.Attack.PROJECTILE:
-		ShotRules.projectiles(self, actor, shot, spec)
-	else:
-		if spec["attack"] == WeaponRegistry.Attack.BEAM:
-			beams[ShotRules.shot_id(actor.role, shot["serial"])] = [tick + BEAM_TICKS, shot["vectors"]]
-		ShotRules.hitscan(self, actor, shot, spec)
+	match spec["attack"]:
+		WeaponDef.Attack.PROJECTILE:
+			shot["vectors"] = ShotRules.projectiles(self, actor, shot, spec)
+		WeaponDef.Attack.BEAM:
+			var points := ShotRules.beam(self, actor, shot, spec)
+			beams[ShotRules.shot_id(actor.role, shot["serial"])] = [tick + BEAM_TICKS, points]
+			shot["vectors"] = points
+		WeaponDef.Attack.MELEE:
+			shot["vectors"] = ShotRules.melee(self, actor, shot, spec)
 	return shot
 
 func spawn_enemy_projectile(type_id: int, enemy: EnemyBase, velocity: Vector2) -> void:
@@ -125,12 +127,15 @@ func spawn_projectile(id: int, type_id: int, source: ActorBody, pos: Vector2, ve
 	projectiles[id] = bullet
 	return bullet
 
-func count_projectiles(type_id: int, owner: Player) -> int:
-	var count := 0
+func can_fire(type_id: int, owner: Player, live_cap: int) -> bool:
+	if live_cap == 0:
+		return true
 	for bullet: BulletBody in projectiles.values():
 		if bullet.type_id == type_id and bullet.shooter == owner:
-			count += 1
-	return count
+			live_cap -= 1
+			if live_cap == 0:
+				return false
+	return true
 
 func erase_projectile(id: int) -> void:
 	projectiles[id].release()
@@ -140,9 +145,10 @@ func clear() -> void:
 	for id: int in projectiles.keys():
 		erase_projectile(id)
 	beams.clear()
-	clear_blasts()
+	pending_blasts.clear()
 
-func clear_blasts() -> void:
+## 结算画面保留在场攻击。待结算的伤害随对局结束。
+func finish_match() -> void:
 	pending_blasts.clear()
 
 func step_projectiles(delta: float) -> void:
